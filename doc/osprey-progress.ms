@@ -5218,6 +5218,173 @@ a clock and a console, against
 .CW portdat.h .
 Both sizes are written down here rather than begun.
 .NH 1
+Making the demonstrations real
+.PP
+Everything above is checked on a booted kernel, and much of it is
+checked in a form that is a demonstration: the mechanism is real, the
+shape around it was the quickest that would let the mechanism be seen.
+Read on 4 September against the tree, these are the places where a
+quick shape stands in for the real one, in the order they should be
+made real, each with what the real form is and what will prove it.
+The reasons for the order: the first two are under everything and
+cheap; the storage and the wire come next because the migration and
+the cache are built on them; authority comes before anything is called
+finished; the two kernel bugs are last only because they are the least
+predictable.
+.PP
+.B "1.  The console never bypasses its task."
+When the queue to the console task is full a print waits twenty
+milliseconds and then writes the port, ahead of what is queued.  The
+real form: a print in process context sleeps on the console container's
+room rendezvous
+.CW ( ospreyroomrend ,
+which the task's take of its output queue wakes) until there is room,
+without bound; only a panic, and a print from interrupt context, go to
+the port, and the user-fault line of
+.CW trap.c
+becomes an ordinary print since it no longer needs to.  Proof: the
+direct-byte count the kernel prints at exit is zero on every check, the
+eight-hundred-sleep drain in
+.CW legacyp9.c
+is removed, and the group and exec criteria hold across ten boots.
+.PP
+.B "2.  A reply wakes whom it is for."
+.CW ospreyawaitreply
+is woken by
+.CW ospreywakeup ,
+which wakes every container's three rendezvous on every routed reply.
+The real form: the route reports which containers received replies and
+only their reply rendezvous are woken.  Proof: the round-trip number
+does not regress and a count of spurious wakeups, printed at exit, is
+zero.
+.PP
+.B "3.  Reclamation paid for by the reservation, not by a number."
+The tick takes up to eight reclaim steps.  The real form: the tick
+steps while the storage task's reservation has budget left in this
+period \- the kernel tells the task, on its tick, what of its budget
+remains, and the task steps until that or the log is half free \- so a
+writer pays only when the log is full of live data.  Proof: no
+.CW "reclaim for a writer"
+under a client writing at ring speed, and the status line's
+.CW used
+never above
+.CW budget .
+.PP
+.B "4.  The network driver waits, it does not spin."
+.CW vnet_send
+spins for a transmit slot.  The real form: the medium keeps a transmit
+queue, the pump moves frames to the ring as the device's interrupt
+frees slots (the semaphore the loop already selects on), and the slice's
+transmit buffers are made sixteen with the
+.CW txbuf
+tunable.  Proof: a megabyte over the cable with no drops, its throughput
+printed, and the driver's spin count gone from the code.
+.PP
+.B "5.  The ring medium carries frames both ways without polling."
+Frames from the server end wait for the client's next request, which
+the client makes on every tick.  The real form: the server puts frames
+on the client container's output queue, which the client's select takes
+by an arm of its own, and frames are staged in the slice's packet
+buffers rather than the data area, so the MTU is the buffer's and
+nothing polls.  Proof: the client's loop makes no empty polls, printed
+as zero, and a frame's latency is a wakeup, not a tick.
+.PP
+.B "6.  Migration that carries what a process has."
+Open files do not cross; the arrived process has no buddy image and so
+every page is carried; one process may cross at a time; the sender
+parks for up to a minute; pages cross in halves through the data area.
+The real form: the header names the program and the buddy at the far
+end lays its image out, so only pages that differ from the image cross
+and the rest page in there; the buddy's descriptor table \- name, mode,
+offset \- crosses in the header and is reopened at the far end; pages
+are staged whole in the packet buffers;
+.CW migout
+is a table; the parked process waits on the transfer's own progress.
+Proof: the arrived process reads
+.CW /n/hello
+through a descriptor it opened before crossing, a process with forty
+dirty pages crosses with only those carried, and two cross at once.
+.PP
+.B "7.  A group member that is blocked still crosses."
+A member that never comes back to user mode refuses the move.  The
+real form is Plan 9's own: the member's sleep is interrupted with a
+note, its call returns
+.CW Eintr
+on the way out and it stops there, and it retries after arriving.
+Proof: a thread blocked in a long sleep crosses with its parent.
+.PP
+.B "8.  The personality's \[*p]p wire checks who is asking."
+.CW Tauth
+is refused there because the personality has no key.  The real form:
+the kernel has the key and checks tickets already; the personality asks
+it
+.CW ( ReqCheckticket ,
+an xcall) and gives the session the name in the ticket, and an open of
+a file that is somebody's is refused to a session that is nobody's.
+Proof: in the two-machine check a session without a ticket is refused
+a file and one with a ticket is given it.
+.PP
+.B "9.  The cache is a file system."
+.CW #K
+is read-only, holds eight names, and its streams never stop.  The real
+form: a write through the cache is a \[*p]p write and close on the wire
+and the stream then says the new version; the directory is the server's
+root listing; an entry is dropped, its stream stopped, when its fid's
+lease lapses or the table is full.  Proof: a write through
+.CW /n
+read back on the server, nine files cached and one evicted.
+.PP
+.B "10.  Authority on the kernel's requests."
+Any container may set the time of day, move itself to the wire, or post
+itself a note.  The real form: the grants the kernel already keeps carry
+a capability word, set at boot, and each request of a task's own
+checks it \- the clock to the container holding the console, the wire
+to a container whose server holds the network device.  Proof: a legacy
+container's
+.CW ReqSettime
+refused and the server's accepted, printed by the kernel.
+.PP
+.B "11.  Configuration read, not derived."
+Addresses come from the MAC, roles from its last byte, ports are
+constants.  The real form: a file in the store,
+.CW /n/net ,
+read at boot, giving address, peer and ports, so both machines boot the
+same image with different files.  Proof: the two-machine check writes
+the two files onto the two images first.
+.PP
+.B "12.  The firewall's rule set by policy."
+The rule goes up on a datagram from the client.  The real form: the
+rule is an attribute of the container over \[*p]p, written by whoever
+holds the container.  Proof: installed and lifted by \[*p]p writes and
+counted.
+.PP
+.B "13.  The loader refuses, and the stall is understood."
+A load region the firmware will not give up is read into anyway, and
+the console driver restarts a stalled boot.  The real form: refuse and
+print the memory map; and count stalls over twenty boots with
+.CW claimpages
+in place \- if none, remove the restart.  Proof: the count.
+.PP
+.B "14.  One layout for the data area."
+Offsets for 9P, \[*p]p, frames, migration, the console, the block and
+network descriptors are constants in five files.  The real form: one
+enum in
+.CW ospreyabi.h
+that every user reads, with a static check that nothing overlaps.
+Proof: the enum, and the build failing if it is wrong.
+.PP
+.B "15.  The pc64 interrupt-path bug."
+The standing corrupted return
+.CW ( "pc=0xffffffff" ),
+reproduced reliably by a user driver taking a legacy interrupt at CPL3
+and now seen as an idle server faulting after a two-machine run.  The
+plan: the arm64 port's bug of the same shape was a trap argument
+aliasing a saved register; instrument the pc64 trap entry to checksum
+the saved frame on entry and exit for interrupts from user mode, run
+the i8042 reproduction, and find the field that changes.  Proof: the
+reproduction runs a hundred boots clean and the idle fault is gone from
+the two-machine runs.
+.NH 1
 Not attempted
 .PP
 The presentation describes a microkernel with library operating systems
