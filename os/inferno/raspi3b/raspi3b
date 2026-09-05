@@ -28,10 +28,22 @@ dev
 	draw
 	pointer
 	usb
+	ether		netif
+	ip	ip ipv6 ipaux ptclbsum parseip eipfmt classmask equivip parseether iproute arp chandial netlog ethermedium plan9 nullmedium pktmedium nat
+
+
+ip
+	tcp
+	udp
+	ipifc
+	icmp
+	icmp6
 
 
 link
 	usbdwc
+	ethermedium
+	loopbackmedium
 
 lib
 	interp
