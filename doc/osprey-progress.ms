@@ -5529,13 +5529,15 @@ on a local move as on the wire.  Proof, the two-machine check's
 fifteenth criterion: the thread had counted to 1 before the crossing
 and to 17 after it, and said its minute's sleep was interrupted.
 .PP
-Open, seen twice and not since: after the boot program's exit, when a
-run goes on long enough, the server personality faulted returning into
-address \-1 on a kproc stack of zeros
+That post-exit fault \- the server personality returning into address
+\-1 on a kproc stack of zeros
 .CW ( "user fault: read addr=0xffffffff pc=0xffffffff" ,
-pid 6).  The fault dump prints the frames below the stack pointer and
-the registers now, direct to the port, so the next one will say where
-it came from.
+pid 6) \- was run down under item 9, whose caching file system made it
+happen every run: it was the one shared reply buffer of the
+cooperative scheduler, reset by a stream tick under a group that had
+slept mid-build.  The fault dump that prints the frames below the
+stack pointer and the registers, direct to the port, is what placed
+it; item 9 has the fix.
 .PP
 .B "8.  The personality's \[*p]p wire checks who is asking."
 Done.  The kernel has the key and checks tickets already, so the
