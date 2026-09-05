@@ -1,0 +1,222 @@
+.TH BTFS 4
+.SH NAME
+btfs, btbench \- Bluetooth Low Energy as a file system
+.SH SYNOPSIS
+.B bt/btfs
+[
+.B -u
+] [
+.BI -m " mountpoint"
+] [
+.BI -k " keyfile"
+] [
+.I controller
+]
+.PP
+.B bt/btbench
+[
+.I controller
+[
+.I mountpoint
+]
+]
+.SH DESCRIPTION
+.I Btfs
+is a Bluetooth Low Energy stack.  All of it above the controller is
+an ordinary user program: the kernel carries HCI packets and does
+nothing else, which it already knows how to do \- a byte stream
+through
+.IR devuart (3)
+for a UART-attached controller, endpoints through
+.IR devusb (3)
+for a USB one.
+.PP
+Bluetooth's own structure is a hierarchy \- a controller, the devices
+it can hear, the services each device has, the characteristics inside
+a service \- so
+.I btfs
+serves it as one, and that name space is the whole interface.  There
+are no other calls: a program uses Bluetooth here by opening, reading
+and writing files.
+.PP
+.I Controller
+names the transport.  For the default H4 transport it is a byte
+stream and, optionally, its speed and whether to use RTS/CTS flow
+control:
+.IP
+.EX
+bt/btfs /dev/eia1!115200!fc
+.EE
+.PP
+It may instead be a
+.IR dial (2)
+string, which is how a machine whose only serial port is its console
+reaches a controller elsewhere; the framing is the same either way.
+With
+.B -u
+the transport is USB instead, and
+.I controller
+is the device directory under
+.B /dev/usb
+.RB ( ep3.0 ,
+say), or empty to take the first Bluetooth controller found there.
+.PP
+.B -m
+gives the mount point, default
+.BR /net/bt .
+.B -k
+names a file the bonding keys are read from at start and written back
+to as they are made; without it they last only as long as
+.I btfs
+does.
+.SS The name space
+.TF /net/bt/0/remote/ADDR/gatt
+.PD
+.TP
+.B /net/bt/0/addr
+The controller's own address.
+.TP
+.B /net/bt/0/version
+What the controller says it is.
+.TP
+.B /net/bt/0/state
+One line: the address, whether it is scanning, how many devices have
+been heard, how many connections are open, and the controller's ACL
+packet size and buffer count.
+.TP
+.B /net/bt/0/scan
+.B on
+or
+.BR off .
+.TP
+.B /net/bt/0/bonds
+One line per bond: the peer, its address type, and the keys.
+.TP
+.B /net/bt/0/ctl
+Writing
+.B "scan on"
+or
+.B "scan off"
+starts and stops scanning.
+.B "connect \fIaddr\fP [public|random]",
+.BI "disconnect " addr
+and
+.BI "pair " addr
+act on one device.
+.TP
+.B /net/bt/0/remote/\fIADDR\fP/
+A device that has been heard from, named by its address written most
+significant byte first.  It holds
+.BR addr ,
+.B type
+(public or random),
+.B rssi
+and
+.B name
+from its advertisement,
+.B adv
+(the whole advertisement in hexadecimal),
+.BR state ,
+and a
+.B ctl
+that takes
+.BR connect ,
+.B disconnect
+and
+.B pair
+without an address.
+.TP
+.B /net/bt/0/remote/\fIADDR\fP/gatt/
+Appears when the device is connected: a directory per service, named
+by its UUID, holding a file per characteristic, named by its UUID.
+Reading one reads the characteristic off the device; writing one
+writes it.
+.PD
+.PP
+A characteristic that notifies or indicates also has a
+.IB uuid .notify
+beside it.  Opening that file subscribes to the characteristic, each
+read returns the next notification whole, and closing it
+unsubscribes.
+.PP
+So a battery level is
+.IP
+.EX
+cat /net/bt/0/remote/345678ABCDEF/gatt/180f/2a19
+.EE
+.PP
+and watching it change is
+.IP
+.EX
+cat /net/bt/0/remote/345678ABCDEF/gatt/180f/2a19.notify
+.EE
+.SS Btbench
+.I Btbench
+starts
+.I btfs
+on the transport it is given and then drives the whole stack through
+its files, printing what happens at each step: the controller, a
+scan, what answered, a connection, the remote device's whole GATT
+database, a characteristic read, three notifications, pairing, and a
+disconnection.  It is the test program, and it runs unchanged under
+.IR emu (1)
+and inside the native kernels.
+.SH SOURCE
+.B /appl/cmd/bt
+.br
+.B /appl/lib/bt
+.br
+.B /module/bt.m
+.SH SEE ALSO
+.IR bt (2),
+.IR dial (2),
+.IR devuart (3),
+.IR devusb (3),
+.IR usbd (8)
+.SH BUGS
+.PP
+This is Bluetooth Low Energy only.  There is no Bluetooth Classic:
+no inquiry, no SDP, no RFCOMM, no HID, no PAN, and no audio.  L2CAP
+here is the fixed channels an LE link uses \- ATT, LE signalling and
+security management \- and the length and CID framing under them;
+there are no connection-oriented channels.
+.PP
+Pairing is LE legacy pairing with a zero temporary key, which is Just
+Works: it establishes an encrypted link and a bond, and it gives no
+protection at all against a man in the middle.  There is no passkey
+entry and no numeric comparison.  LE Secure Connections is not
+implemented \- it needs P-256 elliptic curve Diffie-Hellman, which is
+not here \- so a device that insists on it will not pair, and says so.
+.PP
+The USB transport
+.RB ( -u )
+is written and compiles but has never moved a packet.  There is no
+USB Bluetooth controller on the bench and no emulated one, so nothing
+about it is demonstrated; only the H4 transport is.
+.PP
+On
+.B pc64
+the H4 transport over the second serial port makes the kernel fault:
+sustained traffic on that uart ends in a general protection violation
+at the
+.B IRETQ
+in
+.B _intrr
+.RB ( os/inferno/pc64/l.s ),
+with a corrupt interrupt frame.  That is a fault in the kernel's own
+interrupt return, not in this stack: the same Dis code over a
+.IR dial (2)
+transport completes on the same
+.B pc64
+kernel and on
+.BR riscv64 .
+See
+.B doc/inferno-ports.ms.
+.PP
+Only the initiating (central) side is implemented.  This stack does
+not advertise and cannot be connected to.
+.PP
+A device that rotates its address \- which most modern peripherals do
+\- is a new device to this stack every time.  The identity key a bond
+distributes is stored and never used to resolve one, so a bond cannot
+be matched to the device it was made with.

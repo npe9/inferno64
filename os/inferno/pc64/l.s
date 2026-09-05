@@ -1013,10 +1013,30 @@ _intrcommon:
 
 	PUSHW	GS
 	PUSHW	FS
-	MOVW	ES, AX	/* PUSHW ES is invalid in amd64, but showing the value for debugging */
-	PUSHW	AX
-	MOVW	DS, AX	/* PUSHW DS is invalid in amd64, but showing the value as JMP uses it */
-	PUSHW	AX
+	/*
+	 * ES and DS are kept for debugging (PUSHW ES and PUSHW DS are
+	 * invalid in amd64, so they have to go through a register).
+	 * AX is the only register available here -- every other one is
+	 * still the interrupted code's and has not been saved yet -- so
+	 * the interrupted AX is stashed and put back before it is saved
+	 * below.  Reading ES and DS straight into AX, as this did,
+	 * overwrote the low 16 bits of the interrupted code's RAX with
+	 * the DS selector, at every interrupt and every exception: a
+	 * live pointer in AX came back with its low half replaced.
+	 * That is the corruption behind the pc64 heap faults and
+	 * general protection violations; it fires oftener the more
+	 * interrupts there are.  9front's own l.s does not read these
+	 * registers at all (it reserves the slots with SUBQ) precisely
+	 * because there is nothing to read them with.
+	 * See doc/inferno-ports.ms.
+	 */
+	SUBQ	$4, SP		/* the ES and DS slots */
+	PUSHQ	AX		/* the interrupted code's AX */
+	MOVW	ES, AX
+	MOVW	AX, 10(SP)
+	MOVW	DS, AX
+	MOVW	AX, 8(SP)
+	POPQ	AX		/* give it back before it is saved */
 
 	PUSHQ	R15		/* RMACH m-> */
 	PUSHQ	R14		/* RUSER up-> */

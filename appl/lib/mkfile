@@ -1,6 +1,7 @@
 <../../mkconfig
 
 DIRS=\
+	bt\
 	convcs\
 	crypt\
 	ecmascript\

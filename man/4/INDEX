@@ -3,6 +3,8 @@
 9srvfs 9srvfs
 acme acme
 archfs archfs
+btbench btfs
+btfs btfs
 cpu grid-cpu
 dbfs dbfs
 dossrv dossrv

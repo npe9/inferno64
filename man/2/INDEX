@@ -549,3 +549,11 @@ spinorbit spinorbit
 oscillator oscillator
 reaction reaction
 rotatinghoop rotatinghoop
+att bt
+bt bt
+btusb bt
+gatt bt
+h4 bt
+hci bt
+l2cap bt
+smp bt

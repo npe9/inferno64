@@ -1,0 +1,11 @@
+<../../../mkconfig
+
+TARG=\
+	btfs.dis\
+	btbench.dis\
+
+SYSMODULES=
+
+DISBIN=$ROOT/$DISROOT/bt
+
+<$ROOT/mkfiles/mkdis

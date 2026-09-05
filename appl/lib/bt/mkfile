@@ -1,0 +1,17 @@
+<../../../mkconfig
+
+TARG=\
+	bt.dis\
+	h4.dis\
+	btusb.dis\
+	hci.dis\
+	l2cap.dis\
+	att.dis\
+	gatt.dis\
+	smp.dis\
+
+SYSMODULES=
+
+DISBIN=$ROOT/$DISROOT/lib/bt
+
+<$ROOT/mkfiles/mkdis

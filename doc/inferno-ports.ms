@@ -18904,3 +18904,342 @@ at offset 0; the read succeeds and the interrupt is delivered so the
 GICv3 conclusion is unaffected, and it is identical on v2, so it
 predates this work \(em the init reads a block other than 0, or the
 print is wrong.
+.NH 1
+Bluetooth: a stack in user space, and two pc64 faults it uncovered
+.PP
+Bluetooth was on the list of things a modern machine has and no board
+here had.  It is now built, and it is built the way the brief asked
+for: almost nothing in the kernel.  A Bluetooth controller speaks HCI
+over a transport, and the kernel already carries both transports a
+controller uses \(em a byte stream through
+.CW os/inferno/port/devuart.c
+for a UART-attached radio, endpoints through
+.CW os/inferno/port/devusb.c
+for a USB one.  Everything above the wire is an ordinary Limbo
+program, and what it exposes is a name space, not an interface:
+.EX
+	/net/bt/0/addr version state scan bonds ctl
+	/net/bt/0/remote/AA1122334455/addr type rssi name adv state ctl
+	/net/bt/0/remote/AA1122334455/gatt/180f/2a19
+	/net/bt/0/remote/AA1122334455/gatt/180f/2a19.notify
+.EE
+Reading the last-but-one file reads the battery level off the device;
+opening the last one subscribes to it and each read is the next
+notification.  There are no other calls.
+.PP
+The pieces, and what each is:
+.CW module/bt.m
+declares the layers and the transport interface;
+.CW appl/lib/bt/bt.b
+is the little-endian accessors and the spellings everything shares;
+.CW appl/lib/bt/h4.b
+frames packets on a byte stream;
+.CW appl/lib/bt/btusb.b
+carries them on a USB controller's three endpoints;
+.CW appl/lib/bt/hci.b
+is the controller \(em command serialisation, event parsing, ACL
+fragmentation and reassembly, and credit accounting against the
+controller's ACL buffers;
+.CW appl/lib/bt/l2cap.b
+is length and CID framing and the LE signalling channel;
+.CW appl/lib/bt/att.b
+is the attribute protocol, one outstanding request at a time;
+.CW appl/lib/bt/gatt.b
+is service, characteristic and descriptor discovery over it;
+.CW appl/lib/bt/smp.b
+is LE legacy pairing, whose key functions
+.CW c1
+and
+.CW s1
+are built out of AES-128 and so need nothing but
+.I crypt (2);
+.CW appl/cmd/bt/btfs.b
+serves the name space; and
+.CW appl/cmd/bt/btbench.b
+drives the whole of it through files and says what happened.
+.CW btfs (4)
+documents the lot.
+.NH 2
+The bench, and what it is not
+.PP
+QEMU removed its Bluetooth devices years ago and there is no radio on
+the build machine, so there is no emulated controller to talk to.
+What there is instead is
+.CW scripts/bthci.py :
+a controller model on the host end of the guest's serial port or of a
+TCP connection.  It speaks H4, answers HCI commands, advertises two
+devices, accepts an LE connection, serves a small GATT database over
+ATT, and pairs.  It is written against the specification independently
+of the Limbo, including its own AES-128 (checked against the FIPS-197
+vector) and its own
+.CW c1 ,
+so a pairing that completes means both sides computed the same
+commitment from the same exchange \(em the model rejects a wrong one.
+.PP
+What that proves is framing, command serialisation, ACL fragmentation
+and flow control, L2CAP, ATT, GATT and SMP against an independent
+implementation.  What it cannot prove is anything about a radio, real
+controller timing, or vendor firmware.  It is a model, and this
+document says so rather than letting a passing run imply otherwise.
+.PP
+The model is strictly reactive: it sends nothing until the guest has
+sent something.  That is not politeness.  The bench loses the first
+byte written into a uart that has only just been enabled \(em seen
+live, a ten byte host greeting arrived as nine \(em so a model that
+spoke first would desynchronise the guest's H4 parser through no fault
+of the guest.
+.NH 2
+What ran, and where
+.PP
+The same
+.CW btbench
+runs unchanged under
+.I emu
+on the build host, and inside the native kernels through
+.CW os/inferno/init/btinit.b ,
+which takes the transport from a
+.CW bt=
+boot argument (
+.I setconfenv
+in
+.CW os/inferno/pc/bootargs.c
+puts it in the environment device) and otherwise from what the board
+has.  It completes on all three:
+.CW emu ,
+riscv64
+.CW virt
+(the
+.CW virtbt
+configuration, over TCP, because that board's one uart is its
+console), and pc64 (the
+.CW pc64bt
+configuration, over TCP).  A complete run reads the controller's
+address and version, scans and finds both advertised devices with
+their names and RSSI, connects, walks the remote device's whole GATT
+database into files, reads the device name and the battery level off
+it, takes three notifications through the
+.CW .notify
+stream, pairs \(em the link comes back
+.CW encrypted
+and the bond with its LTK, EDIV, rand, IRK and CSRK appears in
+.CW /net/bt/0/bonds
+\(em and disconnects.
+.PP
+Three real bugs in the stack were found live getting there, none of
+them by reading:
+.IP \(bu
+.CW att.b 's
+session lock is a channel taken by sending into it, and
+.CW Att.start
+primed it, so the very first ATT request blocked for ever.  Found by
+bisecting the hang with prints under
+.I emu ,
+which is where the debug loop is thirty seconds instead of three
+minutes.
+.IP \(bu
+Every HCI command spawned a timeout process that sent on an unbuffered
+channel, so each command that answered in time left a process blocked
+for ever on it.  Buffered.
+.IP \(bu
+The notification stream used
+.CW styxservers->readbytes ,
+which applies the read offset, so the second read of a
+.CW .notify
+file looked like an end of file.  A stream is not a file; it now
+replies with the notification whole and ignores the offset.
+.PP
+Two more were found by review rather than by a failure, and the bench
+was changed so they are not merely asserted.
+.CW btfs
+tore down every device's gatt tree when any one link closed \(em it
+walked the whole node table removing service directories without
+asking whose they were \(em and it called nametree's
+.CW Tree
+from three processes at once (the scanner making device nodes, a
+connection making a gatt subtree, a closing link taking one down)
+though
+.CW Tree
+sends on one channel and reads its reply from another, both shared, so
+two callers can take each other's answer.  The first is scoped to the
+device now; the second goes through a lock.  The bench used to turn
+scanning off before connecting, which serialised the two writers by
+accident and tested neither; it leaves scanning on through the
+connection and the discovery after it, and all three benches complete
+that way.
+.PP
+A fourth thing found the same way is not a bug in the stack and is
+recorded because it wastes a session if it is not: riscv64
+.CW virt
+loses the console after about 128 characters of a single
+.CW print ,
+and does not come back.  The bench printed the bond it had just made
+\(em one line, longer than that \(em and the console stopped
+mid-line, so the run looked like a hang at exactly the interesting
+moment.  It was not: the controller model went on receiving the
+disconnect the program sent afterwards, so the program had run to the
+end and only the output was gone.  pc64 prints the same line whole.
+.CW btbench
+now says everything in short pieces, which sidesteps it; the console
+itself is untouched and unexplained.
+.NH 2
+The pc64 interrupt entry corrupts AX
+.PP
+.CW os/inferno/pc64/l.s ,
+in
+.CW _intrcommon ,
+saved the segment registers for debugging:
+.EX
+	PUSHW	GS
+	PUSHW	FS
+	MOVW	ES, AX
+	PUSHW	AX
+	MOVW	DS, AX
+	PUSHW	AX
+.EE
+.CW PUSHW\ ES
+and
+.CW PUSHW\ DS
+are invalid in amd64, so the values have to go through a register, and
+AX is the only one available \(em every other register is still the
+interrupted code's and has not been saved yet.  AX is the interrupted
+code's too.  It is pushed fifteen instructions later, by which time its
+low sixteen bits are the DS selector.  So every interrupt and every
+exception on pc64 returned to the interrupted instruction with the low
+half of its RAX replaced.  A live pointer in AX came back mangled.
+.PP
+9front's own
+.CW l.s ,
+which this was derived from, does not read those registers at all: it
+reserves the slots with a
+.CW SUBQ
+and leaves them, precisely because there is nothing to read them with.
+The fix keeps the diagnostic and stops the corruption \(em stash AX
+below the two reserved slots, fill them, and put AX back before it is
+saved.  pc64 completes the whole Bluetooth bench over TCP with it in,
+so it is not a regression; but it did not fix the fault below, and it
+was found by reading rather than by a test that failed before and
+passes after, so what it is is a real defect removed, not a
+demonstrated cure.  It is the right shape for the heap corruption this
+document has been chasing on pc64 \(em non-deterministic, worse under
+load, pointers coming back with zeroed low bits \(em and that is a
+reason to look again at those captures, not a claim to have closed
+them.
+.NH 2
+pc64 faults on sustained uart traffic
+.PP
+The H4 transport over pc64's second serial port does not survive.  The
+fault is deterministic and it has nothing to do with Bluetooth: an init
+that does nothing but write 64 byte blocks to
+.CW /dev/eia1
+and read them back from a host-side echo panics the same way, with no
+part of the stack loaded.
+.PP
+The signature, identical across rebuilds:
+.EX
+	CS 0008  SS 0000  PC _intrr+32  TYPE 0D  ERROR 1F40
+	returning to linkproc+9
+.EE
+.CW _intrr+32
+is the
+.CW IRETQ .
+Its frame's SS slot reads
+.CW 0x1f40 ,
+and the general protection fault's error code is
+.CW 0x1f40 :
+the processor is rejecting exactly that selector, so the interrupt
+frame the
+.CW IRETQ
+is unwinding is not the one the processor pushed.  Other runs of the
+same kernel fail differently \(em a Dis heap block freed twice, or
+.CW markheap
+finding a word that should be a pointer and is not \(em which is the
+same corruption arriving somewhere else.  The
+.CW linkproc+9
+return address puts the interrupted code at the first instant a new
+Dis process has interrupts enabled.
+.PP
+This is open.  It is a fault in the kernel's own interrupt return, not
+in anything above it: the identical Dis code over a
+.I dial (2)
+transport completes on the same pc64 kernel and on riscv64.  It
+matters beyond the bench, because H4 over a uart is the transport the
+Raspberry Pi's onboard radio uses, so the Pi path is blocked behind it.
+The reproducer is cheap and deterministic, which is more than the
+earlier pc64 captures offered:
+.CW os/inferno/pc64/pc64bt
+with an init that floods
+.CW /dev/eia1 ,
+and
+.CW os/inferno/pc64/tools/resolve_ipc64_syms.py
+against the exact binary to read the addresses back.
+.NH 2
+What is not there
+.PP
+Bluetooth Classic is not implemented at all: no inquiry, no SDP, no
+RFCOMM, no HID, no PAN, no audio.  L2CAP here is the fixed channels an
+LE link uses and the framing under them; there are no
+connection-oriented channels.  Pairing is LE legacy Just Works, which
+gives an encrypted link and a bond and no protection whatever against
+a man in the middle; LE Secure Connections needs P-256, which is not
+here, and a device that insists on it is told so.  Only the initiating
+side exists \(em this cannot advertise and cannot be connected to.
+.PP
+The USB transport is written and compiles and has never moved a
+packet.  There is no USB Bluetooth controller on the bench and no
+emulated one.  It is written against the same
+.CW devusb
+the HID and mass-storage paths are verified against, and its
+descriptor walk and endpoint setup follow
+.CW appl/cmd/usb/usbd.b ,
+but none of that is a demonstration and it is not offered as one.
+.NH 2
+Portable to 9front
+.PP
+The stack is meant to be carried to 9front, and the split is what
+makes that cheap rather than the source being shared \(em it cannot
+be, because a native Inferno has no C user space and 9front has no Dis
+interpreter.  What ports is the architecture, the interfaces and the
+name space, and the transliteration is mechanical because the protocol
+code is deliberately plain: byte arrays in, byte arrays out, over an
+explicit session record, with channels only at the seams between
+layers and never inside protocol logic.  Each file becomes one C file
+with a struct and functions:
+.EX
+	appl/lib/bt/h4.b     one C file over the same /dev/eia*
+	appl/lib/bt/btusb.b  one nusb program over the same /dev/usb
+	appl/lib/bt/hci.b    a proc, a QLock, a Rendez for credits
+	appl/lib/bt/l2cap.b  a proc per link, a Queue per CID
+	appl/lib/bt/att.b    a proc, a QLock, a Rendez
+	appl/lib/bt/gatt.b   the same three discovery loops
+	appl/lib/bt/smp.b    the same state machine over libsec's aes
+	appl/cmd/bt/btfs.b   the same name space over lib9p
+.EE
+The transport seam is the one 9front already has: this tree's
+.CW devusb
+is 9front's, taken across earlier, so the endpoint files are the same
+files; and
+.CW devuart
+serves
+.CW /dev/eia*
+on both.  Because the served name space is identical, everything above
+it \(em scripts, programs, the bench \(em ports unchanged.  None of
+that is verified: there is no 9front user space or toolchain in this
+tree,
+.CW os/9front
+being a kernel only, so shipping C that cannot be built or booted
+would be exactly the kind of thing this repository forbids.  The
+mapping is a plan, and it is recorded as one.
+.PP
+Osprey gets nothing here, and the reason is not neglect.  Osprey is a
+microkernel with library operating systems above it: its unit of
+execution is a task, its central call is
+.CW select ,
+and a driver there is a task selecting on its own message queue, on a
+semaphore an interrupt raises, and on its output queue.  It runs no
+Dis, so none of this Limbo can land on it, and the file server that
+holds the whole design together has nothing to serve into.  Bluetooth
+on Osprey would be a third transliteration, against that task and
+select model rather than against processes and channels \(em the HCI
+transport as a driver task, the layers above it as a library operating
+system, the name space as whatever Osprey offers in its place.  It is
+not attempted and it is not sketched beyond this paragraph.
