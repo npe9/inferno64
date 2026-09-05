@@ -5910,3 +5910,102 @@ What is left is breadth, not kind: the buddy maps the file calls the
 demonstration makes \- open, read, write, close, create, remove, stat,
 seek, pipe, bind, mount, errstr \- and rc or rio would need far more of
 the Plan 9 ABI than that.
+.NH 1
+Running real programs on the two personalities: a plan
+.PP
+A program runs on the microkernel two ways, and rio should run both.
+On the server personality (the p9pair, p9buddy and p9linux configs) a
+program runs in its own container and a peer container \- the buddy \-
+answers its system calls over the ring; this is arrangement two, a
+process boundary between the program and the OS.  On the library-OS
+personality (p964, xup64) the personality is compiled as a library
+linked into the task, and the program calls
+.CW namec
+and
+.CW open
+as ordinary functions in its own address space, only the four
+microkernel services trapping to the kernel; this is arrangement three,
+the exokernel shape.  Today a hand-written demonstration binary runs on
+two, and the library-OS task runs as itself on three; neither starts an
+arbitrary program, and rio runs only on the full
+.CW pc64
+kernel.  The plan brings a real program, and then rio, to both.
+.NH 2
+Track two: the server personality runs an arbitrary program, then rio
+.PP
+.B "Phase 2.1: exec carries arguments, and an arbitrary in-tree binary runs."
+The exec request passes only the program's name today
+.CW ( ring_exec ,
+.CW ReqExec ),
+and the a.out is entered with
+.CW argv0
+the name and nothing more.  A real program wants
+.CW argc
+and
+.CW argv .
+The request carries an argument vector, the kernel lays it on the new
+program's stack the Plan 9 way \- the strings, the pointer array,
+.CW argc ,
+and the
+.CW _tos \-
+and an ordinary in-tree libc program, not the hand-written demo, runs
+under the buddy: the tree already builds several
+.CW ( Osprey/amd64/bin :
+.CW o9cat ,
+.CW netsrv ,
+.CW fb ) .
+Proof:
+.CW o9cat
+is embedded as
+.CW /boot/cat ,
+exec'd with a file argument, and prints that file's bytes, read through
+the buddy's file calls.
+.PP
+.B "Phase 2.2: a shell."
+A shell forks, execs, waits and pipes \- the buddy answers all four
+already.  What it wants beyond the demonstration's file calls is the
+handful a real program's libc reaches for: heap growth
+.CW ( brk ),
+.CW dup ,
+.CW fd2path ,
+.CW sleep ,
+the note calls in full.  Each missing one is added and proven by a
+program that makes it.  A small shell, built in-tree against the same
+libc, runs under the buddy and executes a script that runs a command and
+pipes its output to another.
+.PP
+.B "Phase 2.3: rio."
+rio is 9front source this tree does not carry, so its binary is built on
+the disk against the disk's libc and carried in, the way the draw
+server's compositing core already is.  The buddy answers the rest of the
+ABI rio's libc uses, and rio's name space \- given by the buddy \- holds
+.CW /dev/draw ,
+.CW /dev/mouse
+and
+.CW /dev/kbd ,
+served by the user-level drivers already built.  Proof: rio draws its
+menu and sweeps a window on the server personality, as it does on
+.CW pc64 ,
+but with its system calls answered by a peer container over the ring.
+.NH 2
+Track three: the library-OS personality execs a program, then rio
+.PP
+.B "Phase 3.1: exec in place."
+The library-OS task is its own program; to run another it execs in
+place \- a library
+.CW exec
+that reads a binary through the task's own name space, lays its
+segments over the current address space, and jumps to its entry, the
+personality library part of the new binary as of the old.  Proof: the
+library-OS task execs a second library-OS program that prints and exits,
+the name space it built still under it.
+.PP
+.B "Phase 3.2: a real program, then rio, linked with the library."
+A real program \- a command, then a shell, then rio \- is linked with
+the personality library into one microkernel task and run by the exec of
+3.1, drawing to the same
+.CW /dev/draw
+the draw server holds.  This is the exokernel end of the paper: rio with
+its operating system a library in its own address space, on the
+microkernel, no process boundary and no kernel personality.  It is the
+longest of the phases, and honestly named as the last.
