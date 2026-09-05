@@ -1,33 +1,37 @@
 .TH LIFE 1
 .SH NAME
-life \- Conway's Game of Life
+life \- cellular automaton demo, per-pixel
 .SH SYNOPSIS
 .B temple/life
 .SH DESCRIPTION
 .I Life
-implements Conway's Game of Life.
+is a port of the TempleOS graphics demo
+.BR Life.HC ,
+a cellular automaton run per-pixel on a 640x480 board.
 It runs under
 .IR wm (1).
 .PP
-Button 1 paints live cells while the simulation runs. The r key randomizes; space clears.
+The board starts empty.
+Hold button 1 and drag to draw green lines of live cells;
+the line thickness follows the mouse speed, so fast strokes are
+fat and slow ones thin.
+Drawing restarts the generation in progress from the modified
+board, and the simulation keeps running while you draw.
 .PP
-The controls are:
-.TF space
-.TP
-.B LMB
-Paint live cells
-.TP
-.B r
-Randomize
-.TP
-.B space
-Clear
-.TP
-.B Esc / q
-Quit
-.PD
+The rule is the demo's own variant, not classic Conway:
+counting the 3x3 neighbourhood
+.I including
+the cell itself, a live cell survives when the count is 3 and a
+dead cell is born when the count is 2.
+The border pixels are permanently dead; there is no wraparound.
+A new generation is computed roughly every 50 milliseconds.
+.PP
+Any key that produces a character exits.
 .SH SOURCE
 .B /appl/temple/life.b
 .SH SEE ALSO
 .IR temple (1),
 .IR wm (1)
+.SH BUGS
+The original runs fullscreen and borderless; this is an ordinary
+640x480 window.
