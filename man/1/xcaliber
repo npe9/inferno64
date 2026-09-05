@@ -1,30 +1,104 @@
 .TH XCALIBER 1
 .SH NAME
-xcaliber \- space combat game
+xcaliber \- soft-body space combat game
 .SH SYNOPSIS
 .B temple/xcaliber
 .SH DESCRIPTION
-.I XCaliber
-is a space combat game.
+.I Xcaliber
+is a port of the TempleOS game
+.IR X-Caliber .
 It runs under
 .IR wm (1).
 .PP
-Turn, thrust, and fire in mass-spring space combat under a chase camera.
+Every ship is a breakable mass-spring truss integrated by
+.IR ode (2).
+The player's ship has five masses and seven springs: a nose,
+two mid-body gun mounts, and two outrigger wing engines.
+Springs snap when the force on them exceeds their strength,
+so damage is progressive:
+losing a wing loses that engine (and the missile mounted on it);
+breaking a core body spring destroys the ship.
+Enemy ships are a three-mass triangle and a five-mass ship with
+purple pods; an enemy dies when two of its springs break
+or when any of its masses overheats.
+.PP
+Flight is by differential thrust.
+The cursor keys run the wing engines, so turning is an emergent
+effect of thrusting one wing; there is no direct rotation.
+Cursor-down engages the anti-spin stabilizer, which
+throttles the engines against the ship's measured spin.
+.PP
+Weapons improve with the level:
+one antimatter-ball gun on level 1, three guns on level 2,
+five on level 3, and from level 4 the laser, which is held on
+with the space bar, heats up (watch the temperature bar under the
+control panel), and cuts out when it overheats until it cools.
+The size and fuse of antimatter balls are tunable; when a ball's
+fuse expires it bursts into antimatter splats that home on ships
+and heat them.
+Two guided wing missiles lock onto the nearest enemy in a cone
+ahead of the ship (a red circle marked
+.B L
+or
+.B R
+shows the lock) and detonate on proximity or fuse.
+.PP
+Solar storms arrive from the left after an alarm tone:
+face away from the sun or the ion shower will overheat the ship.
+If a wing is bent toward the body, a spacewalker can be sent out
+to straighten it; the walk takes seven and a half seconds, during
+which the engines and guns are dead.
+.PP
+The control panel at the bottom right has a
+.B SpaceWalk
+button, click-to-set
+.B Size
+and
+.B Fuse
+sliders for the antimatter balls, and the laser temperature bar.
+.PP
+The best score and the one-time help messages persist across runs
+via
+.IR scorestore (2).
 .PP
 The controls are:
-.TF space
+.TF "shift-up/down"
 .TP
-.B Left / a
-Turn left
+.B left / right
+Run the left/right wing engine
 .TP
-.B Right / d
-Turn right
+.B up
+Run both engines
 .TP
-.B Up / w
-Thrust
+.B down
+Anti-spin stabilizer
 .TP
 .B space
-Fire
+Fire guns; from level 4, hold for the laser
+.TP
+.B ctrl-left / z
+Launch the left missile
+.TP
+.B ctrl-right / x
+Launch the right missile
+.TP
+.B shift-up/down
+Larger/smaller shot; also
+.B p
+and
+.B o
+.TP
+.B shift-right/left
+Longer/shorter fuse; also
+.B ]
+and
+.B [
+.TP
+.B w
+Spacewalk (when a wing is bent)
+.TP
+.B + / -
+Change level
 .TP
 .B Enter
 Restart
@@ -32,11 +106,30 @@ Restart
 .B Esc / q
 Quit
 .PD
+.SH FILES
+.TF /icons/temple/xcaliber_*.bit
+.TP
+.B /icons/temple/xcaliber_*.bit
+sprites from the original's DolDoc bins
+.TP
+.B /fonts/temple/temple.font
+the 8x8 system font used for all text
+.PD
 .SH SOURCE
 .B /appl/temple/xcaliber.b
 .SH SEE ALSO
 .IR temple (1),
 .IR draw3d (2),
 .IR ode (2),
+.IR scorestore (2),
 .IR tone (2),
 .IR wm (1)
+.SH BUGS
+The laser's hit test is geometric (the nearest mass on the ray)
+rather than the original's per-pixel screen probe.
+The original's noise and sweep sound effects are approximated
+with stepped tones on a single voice.
+The shift and ctrl cursor chords work only where the platform
+delivers shifter key events; the plain-key equivalents above
+always work.
+There is no pull-down menu tree.
