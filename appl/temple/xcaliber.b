@@ -1793,7 +1793,7 @@ drawpopup(w, h: int, msg: string)
 # TempleOS semitone (ona) to Hz: 440*2^((ona-49)/12)
 onafreq(ona: real): int
 {
-	return int (440.0 * math->pow(2.0, (ona-49.0)/12.0));
+	return int (440.0 * math->pow(2.0, (ona-60.0)/12.0));
 }
 
 freq2ona(f: real): real

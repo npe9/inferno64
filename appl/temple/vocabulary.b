@@ -54,8 +54,8 @@ Kpos: con 4;
 Kextra: con 5;
 
 # TempleOS Snd(ona): freq = 440*2^((ona-49)/12)
-SNDHI: con 1865;	# Snd(74), correct
-SNDLO: con 370;		# Snd(46), incorrect
+SNDHI: con 988;	# Snd(74), correct
+SNDLO: con 196;		# Snd(46), incorrect
 
 Entry: adt {
 	word: string;

@@ -482,10 +482,10 @@ sdrand(): real
 	return real lcgseed / 2147483648.0;
 }
 
-# Snd(ona): freq = 440*2^((ona-49)/12)
+# Snd(ona): freq = 440*2^((ona-60)/12)
 onafreq(ona: int): int
 {
-	return int (440.0 * math->pow(2.0, real (ona-49) / 12.0));
+	return int (440.0 * math->pow(2.0, real (ona-60) / 12.0));
 }
 
 sndona(ona, ms, gatems: int)

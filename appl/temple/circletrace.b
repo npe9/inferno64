@@ -37,10 +37,10 @@ Circletrace: module
 RADIUS: con 100;
 CIRCUMFERENCE: con 2.0 * Math->Pi * real RADIUS;
 
-# TempleOS Snd(ona) is semitones: freq = 440*2^((ona-49)/12)
-SND86: con 3729;	# new-best jingle
-SND62: con 932;		# ordinary completion
-SND34: con 185;		# trace too short
+# TempleOS Snd(ona) is semitones: freq = 440*2^((ona-60)/12) (Ona2Freq: ona 60 = 440Hz)
+SND86: con 1976;	# new-best jingle
+SND62: con 494;		# ordinary completion
+SND34: con 98;		# trace too short
 
 win: ref Window;
 ink: array of ref Image;

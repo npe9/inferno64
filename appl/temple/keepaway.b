@@ -362,8 +362,8 @@ rnds(): real		# RandI16/I16_MAX: -1..1
 
 onafreq(ona: int): int
 {
-	# TempleOS Snd(ona): freq = 440*2^((ona-49)/12)
-	return int (440.0 * math->pow(2.0, real(ona-49)/12.0) + 0.5);
+	# TempleOS Snd(ona): freq = 440*2^((ona-60)/12)
+	return int (440.0 * math->pow(2.0, real(ona-60)/12.0) + 0.5);
 }
 
 noise(ms, o1, o2: int)

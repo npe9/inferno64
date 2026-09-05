@@ -81,8 +81,8 @@ PI: con Math->Pi;
 NEARZ: con 10.0;		# world-space near plane for polygon clipping
 NORMEPS: con 1612;		# 0.10 * 127^2: TestSameSlope threshold, quantized
 BIGELEV: con 999999999;		# I64_MAX stand-in: off-map elevation
-SNDFISH: con 1865;		# Snd(74) = 440*2^((74-49)/12) Hz
-SNDBEEP: con 932;		# Beep() ~ Snd(62) Hz
+SNDFISH: con 988;		# Snd(74) = 440*2^((74-60)/12) Hz (Ona2Freq: ona 60 = 440Hz)
+SNDBEEP: con 494;		# Beep() ~ Snd(62) Hz
 
 win: ref Window;
 font: ref Font;

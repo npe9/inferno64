@@ -2,7 +2,7 @@ implement Asciiorgan;
 
 # TempleOS Demo/Snd/ASCIIOrgan.HC — ASCII chart + sustained-tone organ.
 # Original: each GetChar() does Snd(ch-CH_ESC) — Snd takes an ona (semitone,
-# freq = 440*2^((ona-49)/12)) and HOLDS the tone until the next call; Esc
+# freq = 440*2^((ona-60)/12)) and HOLDS the tone until the next call; Esc
 # silences (Snd; = ona 0 = off) and exits.  Chart chars print in RED, the
 # <SHIFT-ESC> prompt in GREEN, and a clickable "Click for better organ"
 # sprite links to Apps/Psalmody.
@@ -38,7 +38,7 @@ Command: module
 };
 
 CHESC: con 16r1b;	# TempleOS CH_ESC
-A4ONA: con 49;		# TempleOS Snd(): ona 49 = A4 = 440Hz, ona 0 = off
+A4ONA: con 60;		# TempleOS Ona2Freq: ona 60 = A4 = 440Hz, ona 0 = off
 
 top: ref Toplevel;
 have_tone := 0;
@@ -124,7 +124,7 @@ init(ctxt: ref Context, nil: list of string)
 	}
 }
 
-# TempleOS Snd(ona): freq = 440*2^((ona-49)/12), rounded
+# TempleOS Snd(ona): freq = 440*2^((ona-60)/12), rounded
 onafreq(ona: int): int
 {
 	f := int (440.0 * math->pow(2.0, real (ona - A4ONA) / 12.0) + 0.5);

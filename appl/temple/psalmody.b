@@ -301,7 +301,7 @@ quit()
 
 # --- sound -------------------------------------------------------------
 
-# TempleOS Snd(ona): 88-key ona, freq = 440*2^((ona-49)/12), 0 = off
+# TempleOS Snd(ona): 88-key ona, freq = 440*2^((ona-60)/12), 0 = off
 sndona(ona: int)
 {
 	if(!have_tone)
@@ -309,7 +309,7 @@ sndona(ona: int)
 	if(ona <= 0)
 		tone->snd(0);
 	else
-		tone->snd(int (440.0 * math->pow(2.0, real(ona-49)/12.0)));
+		tone->snd(int (440.0 * math->pow(2.0, real(ona-60)/12.0)));
 }
 
 stopsnd()

@@ -51,7 +51,7 @@ AI_NOTHING, AI_TARGET, AI_RANDOM, AI_AI_NUM: con iota;
 FRAMES: con 6;
 FIX: con 4294967296.0;			# 2^32, one pixel in 32.32 fixed point
 FORCE_SCALE: con 400000000.0 / FIX;	# original j=400000000*z on fixed velocities
-SND_FREQ: con 3729;			# Snd(86): 440*2^((86-49)/12) Hz
+SND_FREQ: con 1976;			# Snd(86): 440*2^((86-60)/12) Hz (Ona2Freq: ona 60 = 440Hz)
 
 Trooper: adt {
 	x, y, dx, dy: real;		# px, px/tick (original 32.32 fixed /2^32)
