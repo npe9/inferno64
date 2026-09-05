@@ -276,13 +276,28 @@ checked on a booted kernel.  What the sources describe that is built
 and checked is in the sections below.  What follows is everything
 either source describes, or the built parts imply, in the order it
 was done, each item ending with what of it, if anything, remains.
-Read on 4 September, what remains across all of them is: the raw-flash
-tier of item 3 and the second machine of item 9, both of which want a
-board this tree has no Osprey target for; the talk's number, item 10, which is structural; and the demonstration
-scale of item 12; item 10's microkernel number is measured (108 \(mcs
-a request between two personalities under QEMU) but its task and its
-hardware figure are not.  Slide 15 \- processes sharing an address space
-migrating as a group \- is whole, on one machine and across a wire.
+Read on 4 September, and worked through again on 5 September as the
+demonstration items below were made real, what remains across all of
+them is of two kinds.  Board-bound, wanting a board this tree has no
+Osprey target for: the raw-flash tier of item 3, a non-amd64 second
+machine for item 9 (the second machine itself is real now \- two amd64
+kernels on a socket cable, each driving a user-space virtio-net device,
+running tcp.c to tcp.c and migrating a process between them, twenty
+criteria of
+.CW osprey-check-p9wire ),
+and the hardware figure of the talk's number, item 10.  Structural: the
+talk's 270-nanosecond round trip, item 10, needs a task that is not a
+Plan 9 process, which this kernel's is (the microkernel number is
+measured, 56 \(mcs a request between two personalities under QEMU after
+the demonstrations' item 2, but that is a Proc waking a Proc, not a
+task); and rio, which runs on the full
+.CW pc64
+personality above the microkernel-exposed frame buffer and interrupt
+rings, does not yet run on the microkernel itself as a library
+personality with exec.  Slide 15 \- processes sharing an address space
+migrating as a group \- is whole, on one machine and across a wire, and
+the migrated process carries its descriptor table and its private name
+space with it.
 .PP
 .B "1.  Starting a program in a container: exec."
 Built, above: the
