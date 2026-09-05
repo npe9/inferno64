@@ -9,7 +9,22 @@ is a bridge builder.
 It runs under
 .IR wm (1).
 .PP
-Place masses and members (m/c/s/w), then space to run the simulation. Keys v and d select move and delete; n starts a new bridge.
+Build a bridge to hold up the red masses, which grow and shrink as the
+simulation runs.
+Place masses and members (m/c/s/w), then press space to run the simulation.
+The lowest cost bridge that stays standing wins.
+Keys v and d select move and delete.
+The cost and elapsed time are shown at the top of the window, and the run
+state and current mode are also on-screen buttons at the top left, which
+may be clicked.
+.PP
+Pressing space to run snapshots the design.
+Enter then restarts from that snapshot, so a bridge may be tried, restarted
+and tweaked repeatedly.
+Ctrl-N discards the snapshot and starts again from the default bridge.
+Designs may be written to and read from
+.B $home/span
+with Ctrl-A and Ctrl-O.
 .PP
 The controls are:
 .TF space
@@ -33,7 +48,7 @@ Move mode
 Delete mode
 .TP
 .B LMB
-Place/edit per mode
+Place/edit per mode; press the run or mode button
 .TP
 .B RMB
 Cycle mode
@@ -42,13 +57,30 @@ Cycle mode
 Run/stop simulation
 .TP
 .B Enter
-Restart
+Restart from the design as it was when the run began
 .TP
-.B n
-New bridge
+.B Ctrl-N
+New bridge, discarding the saved design
 .TP
-.B Esc / q
-Quit
+.B Ctrl-O
+Open a saved design from
+.B $home/span
+.TP
+.B Ctrl-A
+Save the design to
+.B $home/span
+.TP
+.B Esc
+Save the design, then exit
+.TP
+.B q
+Exit without saving
+.PD
+.SH FILES
+.TF $home/span
+.TP
+.B $home/span
+saved designs, one file per design
 .PD
 .SH SOURCE
 .B /appl/temple/span.b
@@ -56,3 +88,9 @@ Quit
 .IR temple (1),
 .IR ode (2),
 .IR wm (1)
+.SH BUGS
+The TempleOS File and Play pulldown menus are not drawn; every menu action
+is on a key or on one of the two on-screen buttons.
+Shift-Esc (abort without saving) is
+.B q
+here, because the keyboard channel does not distinguish it from Esc.
