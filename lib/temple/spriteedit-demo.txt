@@ -1,14 +1,27 @@
-TempleOS-style sprite command stream demo.
+TempleOS-style sprite element-list demo.
+Edit the sprites with:  temple/spriteedit lib/temple/spriteedit-demo.txt face
+The sprite is an ordered list of drawing elements, one per line, replayed in
+order -- the same vocabulary as lib/temple/sprites/*.spr.
 
-.SPRITE bitmap 8 8 r8g8b8a8
-. . . . . . . .
-. . . -2995457 -2995457 . . .
-. . -2995457 -16776961 -16776961 -2995457 . .
-. -2995457 -16776961 -1 -1 -16776961 -2995457 .
-. -2995457 -16776961 -1 -1 -16776961 -2995457 .
-. . -2995457 -16776961 -16776961 -2995457 . .
-. . . -2995457 -2995457 . . .
-. . . . . . . .
+.SPRITE face
+color 14
+circle 0 0 20
+floodfill 0 0
+color 0
+thick 2
+circle -7 -7 2
+circle 7 -7 2
+bspline2 3 -9 5 0 0 13 0 9 5 0
+.ENDSPRITE
+
+.SPRITE flag
+color 4
+rect -20 -30 21 -9
+color 0
+thick 1
+line -20 -30 -20 10
+color 15
+text -16 -26 'HI'
 .ENDSPRITE
 
 .MESH pyramid 5 6

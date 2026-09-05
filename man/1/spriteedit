@@ -1,6 +1,6 @@
 .TH SPRITEEDIT 1
 .SH NAME
-spriteedit \- edit TempleOS-style sprites embedded in text
+spriteedit \- TempleOS-style vector sprite (element-list) editor
 .SH SYNOPSIS
 .B temple/spriteedit
 [
@@ -9,82 +9,178 @@ spriteedit \- edit TempleOS-style sprites embedded in text
 .I name
 ]
 ]
+.br
+.B temple/spriteedit
+.B -t
+.I in
+.I out
+[
+.I name
+]
 .SH DESCRIPTION
 .I Spriteedit
-is an Inferno RGBA sprite editor modelled on the TempleOS DolDoc sprite editor.
-Its source format is an ordinary text block, so sprites can be kept inside
-Limbo source, troff input, documentation, or a standalone asset file.
+is a port of the TempleOS DolDoc sprite editor.
+A sprite is not a grid of pixels but an ordered list of drawing
+elements \- color and dither-color changes, pen thickness, planar
+symmetry, points, lines, arrows, filled rectangles, circles, ellipses,
+regular polygons, polylines, freehand poly-points, quadratic and cubic
+B-splines (open and closed), flood fills, bitmaps, and text in the 8\(mu8
+system font \- replayed in order through the drawing context.
+The editor inserts, selects, and transforms those elements.
 .PP
-The block format is
+On disk each element is one text line, the same vocabulary that
+.B scripts/tos_extract_sprites.py
+writes into
+.BR lib/temple/sprites/*.spr ,
+so sprites move freely between the two:
 .EX
-.SPRITE cursor 2 2 r8g8b8a8
--16776961 -1
-. 862388223
-.ENDSPRITE
+color 4
+thick 2
+line 1 -15 7 -3
+polygon 0 0 20 20 0.0 6
+text -11 -12 'Hello'
 .EE
-Pixels are signed 32-bit Inferno
-.B r8g8b8a8
-values separated by spaces.  A dot denotes a transparent pixel.  RGB sliders
-and the r/R, g/G, and b/B keys edit the current full-colour paint value.
-.PP
-Mesh elements use the companion textual form
-.EX
-.MESH pyramid 4 2
-v -20 -20 0
-v 20 -20 0
-v 20 20 0
-v -20 20 0
-f 12 0 1 2
-f 12 0 2 3
-.ENDMESH
-.EE
-where each face contains an Inferno RGBA value followed by three vertex
-indices.  Mesh mode presents an editable orthographic view alongside a live
-filled perspective preview.  Clicking selects a vertex, dragging moves it in
-the current plane, and Tab cycles through XY, XZ, and ZY planes.  Space records
-the selected vertex for a face, T creates a triangle from the last three
-recorded vertices, and V creates a vertex at the origin.
-.PP
-If the named block already exists, saving replaces only that block and
-preserves all surrounding text.  If it does not exist, a new block is
-appended.  With no arguments the editor uses
-.BR /tmp/sprite.txt
-and the object name
+A file may be such a bare element list (a
+.B .spr
+file), or the list may be embedded in any host text document between
+.BI ".SPRITE " name
+and
+.BR .ENDSPRITE ;
+saving replaces only the named block and preserves the surrounding
+text, echoing DolDoc's sprites-inside-documents.
+Legacy raster blocks
+.RB ( ".SPRITE name w h r8g8b8a8" )
+load as a single
+.B bitmap
+element.
+A
+.BI ".MESH " name
+block opens the 3D mesh editor instead.
+With no arguments the editor uses
+.B /tmp/sprite.spr
+and the name
 .BR sprite .
 .PP
-The controls are:
-.TF "Right button"
+The window shows the sprite replayed on a white page (origin at the
+crosshair), with the element-list side bar on the left: every element as
+a one-line summary, the red entry being the current insertion point.
+Clicking an entry moves the insertion point; right-clicking an entry
+selects or unselects that element.
+New elements are inserted at the insertion point, and take their color,
+thickness, and symmetry from the elements before it.
+The 16-color TempleOS palette sits above the side bar; clicking a color
+inserts a
+.B color
+element (the
+.B T
+cell inserts the transparent color).
+The title bar tracks the current tool.
+.PP
+The
+.B "Sprite Main Menu"
+fills the canvas at start and whenever the right mouse button is
+released; click an entry to arm a tool, then draw on the canvas with
+rubber-band drags exactly as in TempleOS: lines, arrows, and rectangles
+drag from anchor to release; circles drag out a radius; ellipses and
+polygons drag out the radii, then turn to set the rotation and click;
+polylines and B-splines are placed click by click and finished with the
+right button; poly-points record a freehand stroke; text is typed first
+and then placed with the mouse.
+Flood fills are affected by whatever is underneath when they replay.
+The screen-capture entries capture a dragged-out rectangle of the
+editor's own canvas as a
+.B bitmap
+element (optionally making one palette color transparent), and
+\(lqConvert to BitMap or Edit BitMap\(rq opens a zoomed pixel editor on
+a bitmap element (left button paints the palette ink, right button
+erases to transparent).
+.PP
+The
+.B "Sprite Edit Menu"
+holds the element operations: select/unselect all, select or unselect
+elements by nearest control point or by dragged rectangles, shift
+individual control points (4\(mu4 black/white handles; red when
+selected), shift the selected elements, rotate or scale the selected
+elements (rectangles promote to rotated rectangles, exactly as
+TempleOS's transform does), set the origin, insert a shift sub-origin,
+delete the selected elements, and insert another sprite file's elements
+at the insertion point.
+\(lqEdit as Text\(rq simply saves \- the on-disk form is already the
+textual element code.
+In the point modes,
+.B p
+and
+.B r
+switch between nearest-point and rectangle variants.
+.SS Keys
 .TP
-.B Left button
-Paint with the selected palette colour.
+.B Esc
+Exit the sprite, keeping changes (in a sub-mode, back out one level).
 .TP
-.B Right button
-Erase to transparency.
+.B q
+Exit, saving.
 .TP
-.B r/R, g/G, b/B
-Decrease or increase the corresponding colour channel.
+.B A
+Abort: restore the file as it was loaded, then exit.
 .TP
-.B X
-Select transparent ink.
+.B c
+Eye-dropper: insert a
+.B color
+element of the color under the mouse.
 .TP
-.B S
-Save the embedded block.
+.B t
+Insert the transparent color.
 .TP
-.B L
-Reload it from disk.
+.B d
+Delete the selected elements (in a menu).
 .TP
-.B N
-Clear the sprite.
+.B s
+Save.
 .TP
+.B l
+Reload from disk.
+.SS Mesh mode
+A
+.B .MESH
+block opens the orthographic mesh editor: dragging moves the nearest
+vertex in the current plane,
 .B Tab
-Cycle the mesh editing plane.
+cycles XY/XZ/ZY,
+.B v
+places a vertex at the mouse,
+.B Space
+marks the selected vertex,
+.B T
+makes a triangle of the last three marks,
+.B g
+toggles a grid, and the palette row at the bottom sets the face color.
+.SS Self test
+.EX
+temple/spriteedit -t in out [name]
+.EE
+loads
+.I in
+headlessly and saves it to
+.IR out ;
+element lists round-trip byte-identical.
+.SH FILES
+.TF lib/temple/spriteedit-demo.txt
 .TP
-.B Q, Escape
-Quit.
-.PD
+.B lib/temple/sprites/*.spr
+element lists extracted from the TempleOS distribution
+.TP
+.B lib/temple/spriteedit-demo.txt
+a demo host document with embedded sprites and a mesh
 .SH SOURCE
 .B /appl/temple/spriteedit.b
 .SH SEE ALSO
-.IR acme (1),
-.IR plumb (1),
 .IR wm (1)
+.SH BUGS
+The sprite is edited over a plain white page rather than a live
+document, control-point handles do not blink, and transforms move
+bitmap elements without resampling them.
+.B mesh
+elements inside a sprite are inert placeholders; meshes are edited
+through
+.B .MESH
+blocks.
