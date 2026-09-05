@@ -1,27 +1,63 @@
 .TH TOTHEFRONT 1
 .SH NAME
-tothefront \- turn-based wargame
+tothefront \- hex-grid wargame
 .SH SYNOPSIS
 .B temple/tothefront
 .SH DESCRIPTION
-.I ToTheFront
-is a turn-based wargame.
+.I Tothefront
+is a port of the TempleOS hex-grid wargame
+.IR ToTheFront .
 It runs under
 .IR wm (1).
 .PP
-Button 1 selects, moves, and attacks on a grid; space ends the phase. The opposing side is played by the machine.
+Two sides of 32 units (infantry, artillery, light and medium tanks)
+fight on a randomly generated hex map of plains, woods, mountains,
+rivers and roads.
+At start-up the game prompts for a hex game seed and then asks,
+for each player, whether that side is played by a human or by the
+stock machine controller, so human-vs-human hotseat, human-vs-AI
+on either side, and AI-vs-AI all work.
+.PP
+Each turn has six sub-phases with alternating initiative:
+each player in turn plots artillery fire, moves, then fires directly.
+Movement pays per-hex costs (roads are fast, woods and mountains slow,
+rivers consume all movement, tanks pay to turn), and tanks face one
+of six directions; armour protection depends on the attacker's bearing.
+Direct fire rolls to-hit against accuracy, range, a woods penalty and
+a high-ground bonus; artillery fire is plotted blind inside a range
+circle, resolves at the end of the turn, scatters on a miss, and
+blasts seven hexes.
+Tanks overrun infantry and infantry close-assault tanks by moving
+into their hex.
+Line of sight is blocked by woods and mountains and hides unseen
+enemy units from each player's view.
+The full arithmetic of every attack is printed to a combat log.
+The last side with units standing wins.
 .PP
 The controls are:
 .TF space
 .TP
 .B LMB
-Select unit / move / attack per phase
+Select a unit; release on a hex to plot, move, or fire
 .TP
-.B space / n
-End phase (player 0)
+.B space / RMB
+End the current phase
 .TP
-.B Enter / r
-Restart
+.B s
+Toggle the line-of-sight overlay from the cursor hex
+(the original holds SHIFT)
+.TP
+.B 1, 2
+Show player 1's or player 2's view
+.TP
+.B c
+View the combat odds log (Esc returns)
+.TP
+.B d
+Set the animation delay
+.TP
+.B Enter
+Start a new game
 .TP
 .B Esc / q
 Quit
@@ -32,3 +68,8 @@ Quit
 .IR temple (1),
 .IR tone (2),
 .IR wm (1)
+.SH BUGS
+The original loads user-written HolyC AI controllers from
+.BR ~/ToTheFront ;
+only the two stock controllers (Human, SimpleAI) are available here.
+There is no pull-down menu bar; every menu entry is bound to its key.
