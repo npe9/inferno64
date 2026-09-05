@@ -66,7 +66,7 @@ one hardcoded input path, both noted in the script.
 .NH 1
 What the toolchain was missing
 .PP
-Five things, all real, none of them anticipated.
+Seven things, all real, none of them anticipated.
 .NH 2
 mk could not run rc
 .PP
@@ -142,6 +142,55 @@ unset variable from an empty one, so the Inferno build is unaffected,
 and the distinction is carried by
 .CW emptyisnolist
 in the two dialect files rather than guessed at.
+.NH 2
+A variable a recursive mk inherited arrived as one word
+.PP
+The other half of the same story.
+.CW exportenv
+writes a list out joined by
+.CW IWS
+\(em 01 when the shell is rc, which is the character rc itself splits
+the environment on \(em and
+.CW readenv
+in
+.CW utils/mk/Posix.c
+did not split it again on the way back in.
+.CW Plan9.c
+has always split, in
+.CW encodenulls ;
+this file had no equivalent.
+.PP
+Under rc that was invisible where it mattered least and wrong where it
+mattered: rc splits the environment itself, so a recipe ran with the
+right arguments, but mk's echo of every recursive recipe showed the
+words run together with the separators unprinted, and a mkfile
+appending to an inherited variable was appending to one word.  With
+that fixed the per-architecture mkfile turned out to be adding the
+include path a second time at every level of recursion, which is why
+.CW INCLUDES
+is now set before
+.CW sys/src/mkfile.proto
+\(em which is where
+.CW CFLAGS
+is built out of it \(em rather than after, and why
+.CW LDFLAGS
+is assigned rather than appended.
+.NH 2
+The compiler had no __func__
+.PP
+.CW ext4srv
+names the function it is in from every one of its assertions.  C99
+spells that
+.CW __func__ ,
+9front's cc has it in
+.CW fndecls ,
+and this tree's did not.  It is now the same code: a local
+.CW "const char"
+array declared at the head of the body, before any statement can refer
+to it, and given a value only where the body did refer to it, so
+nothing is emitted for the thousands of functions in this tree that do
+not.  Checked against a program using it in one function and not
+another: two strings in the assembly and none for the third function.
 .NH 2
 The assembler had no JMPF
 .PP
@@ -220,6 +269,51 @@ shims, because this tree's host header is
 and
 .CW _assert ,
 which 9front's libc has and lib9 does not.
+.PP
+Four whole programs are built for the host besides:
+.CW mpc ,
+which libsec and libauthsrv generate source with;
+.CW yacc ,
+because the parser this tree's
+.CW iyacc
+writes calls
+.CW sprint ,
+which APE's libap has not got;
+.CW cpp ,
+because APE's headers use
+.CW #if
+and no kencc understands it; and
+.CW size .
+That last one is not 9front's source.  cwfs's mkfile runs
+.CW "size $target"
+after linking, and here that name reaches the Xcode
+.I size ,
+which reads Mach-O and refuses anything else.  9front's own size goes
+through libmach, which is a great deal of 9front to bring across for
+three numbers, so
+.CW 9front-glue/host/size.c
+reads the a.out header directly and takes the magic numbers from this
+tree's own
+.CW utils/include/a.out.h
+\(em the same file the loaders write them from.  It was checked
+against a hex dump of a freshly linked
+.CW kbdfs .
+.PP
+It prints what 9front's size prints, which is not what this tree's
+.I ksize
+prints.  size reports the three sizes in the header:
+.CW text ,
+.CW data ,
+.CW bss .
+ksize reports the loaded image, and its first number is the header's
+.CW data
+field.  On the same
+.CW 9pc64
+size says
+.CW "774058t + 3433584d + 291324b"
+and ksize says
+.CW "3433584t + 289216d + 0b" .
+Neither is wrong and they are not comparable.
 .NH 1
 What builds
 .PP
@@ -239,35 +333,53 @@ sources, and
 .CW libmach ,
 which needed binary literals in the compiler.
 .PP
-Sixteen of the seventeen APE libraries, which is all of them that
-have sources here; see below.
+Fifteen of the sixteen APE libraries, which is all of them that have
+sources here; see below.
 .PP
-Of the command directories under
-.CW sys/src/cmd ,
-126 of 134 build and install, and 559 programs end up in
+Every command directory under
+.CW sys/src/cmd :
+133 of them plus the single-file programs the
+.CW cmd
+mkfile builds itself, and 646 programs end up in
 .CW 9front/amd64/bin .
-That directory was emptied before the run, so the number is what this
-toolchain built, not what has accumulated in it.  The count is from
-the run before the last two rewrite rules landed \(em the
-.CW -I/sys/include/ape
-and
-.CW lib/keyboard
-ones below \(em and it has not been taken again since.  The only
-directory those rules touch is
-.CW aux ,
-which still fails for the reason named below, so 126 and 8 are
-unchanged by them.
-.CW scripts/sweep9front.sh
-produces it, and it builds each directory on its own rather than
-stopping at the first failure the way
+The one directory that installs nothing is
+.CW test ,
+which is a suite of tests to run rather than programs to install; the
+.CW cmd
+mkfile leaves it out of its own DIRS for that reason.
 .CW mk install
-does, which is the only way to see what is actually missing.  It
-builds them in name order and independently, so a directory that
-needs a library another one builds can fail on order alone:
+at the top of
+.CW sys/src/cmd
+also runs to the end.
+.PP
+The count comes from
+.CW scripts/sweep9front.sh ,
+which builds each directory on its own rather than stopping at the
+first failure the way
+.CW mk install
+does \(em the only way to see what is actually missing while a port is
+unfinished.  Both
+.CW 9front/amd64/bin
+and
+.CW 9front/amd64/lib
+were emptied before this run and the libraries rebuilt first, so 646
+is what this toolchain built and every one of them is linked against
+libraries this toolchain also built.
+.PP
+The sweep builds in name order, so a directory that links a library
+another one builds where it sits can fail on order alone:
 .CW bzfs
 wants
-.CW bzip2 's,
-and comes first.
+.CW bzip2 's
+.CW libbzip2 ,
+and comes first.  Whatever fails is therefore tried once more after
+the sweep has been round once.  Nothing needed that on this run,
+because
+.CW libbzip2
+was already sitting in
+.CW bzip2/lib
+from an earlier build; on a tree that has never been built it is what
+takes bzfs from a failure to a pass.
 .NH 1
 Bugs in this tree's tools, found by building 9front with them
 .PP
@@ -399,8 +511,60 @@ the triples the case conversions do.
 in
 .CW lib9
 runs it.
+.IP \(bu
+Not a tool but the driver:
+.CW scripts/mk9front.sh
+makes the target directories a 9front machine already has by grepping
+the mkfiles for BIN, LIB and DIR assignments, and it took the value
+whole.  A trailing comment became part of the directory name, an
+assignment with two values became one name with a space in it, and a
+value naming an archive was dropped rather than reduced to the
+directory holding it \(em which is why
+.CW 9front/amd64/lib/ape
+did not exist and every APE library failed to archive the moment
+.CW 9front/amd64/lib
+was emptied and rebuilt.  Not noticed for as long as the directory
+happened to be left over from an earlier run.
 .NH 1
-A bug in 9front, found the same way
+Two bugs in 9front, found the same way
+.PP
+.CW aux/kbdfs 's
+.CW mklatin
+turns
+.CW lib/keyboard
+into the header kbdfs compiles against.  Its trie nodes hold the key
+sequence in a three-byte field \(em
+.CW MAXLD+1 ,
+and kbdfs assumes MAXLD is 2 \(em and it fills that field with
+.EX
+	strcpy((*tp)->seq, seq);
+	(*tp)->seq[q+1-(uchar*)seq] = '\e0';
+.EE
+which copies the whole sequence and then truncates it.
+.CW lib/keyboard
+has eighty three-character sequences \(em
+.CW -*l ,
+.CW DvZ ,
+.CW _"U
+and the rest \(em so those write four bytes into three.  On 9front the
+fourth byte lands in the padding between the field and the
+.CW Rune
+array that follows it and nothing shows.  Built for this machine it is
+.CW __strcpy_chk
+that sees it: the tool dies on SIGTRAP having printed nothing at all,
+which is what took the whole of
+.CW aux
+down.  The import copies only the prefix the node is for \(em which is
+what the next line truncates to anyway \(em and asserts that it fits,
+which is what a future
+.CW lib/keyboard
+with a four-character sequence would hit instead of the corruption.
+.PP
+The generated
+.CW latin1.h
+is byte for byte what the unpatched program produces when the check is
+compiled out, which is how the change was told apart from a change in
+the output.
 .PP
 .CW libc/ucd/mkrunetype ,
 the generator that makes libc's Unicode tables, walks a rune's
@@ -466,7 +630,7 @@ does, running the source through
 .CW cpp
 and then the compiler, and linking against
 .CW ape/libap.a .
-Sixteen of the seventeen APE libraries build, and with them
+Fifteen of the sixteen APE libraries build, and with them
 .CW compress ,
 .CW eqn ,
 .CW grap ,
@@ -543,63 +707,65 @@ here, and
 which is nothing here and is documented as nothing in
 .CW hostsupp.c .
 .NH 1
-What does not build yet
+What is not there
 .PP
-Eight of the 134 command directories, and they are eight separate
-problems rather than one.
+Every command directory builds.  What is missing is elsewhere, and
+worth naming.
 .IP \(bu
+.CW libz
+for APE.  Upstream ships its mkfile and a proto file and no zlib
+sources at all, so it does not build on a 9front machine either.
+.IP \(bu
+.CW ape/cmd ,
+which is pdksh, because
+.CW mk install
+under
+.CW sys/src/ape
+stops at libz before reaching it.  Nothing in the userland needs it.
+.IP \(bu
+The runtime data the import leaves behind: fonts, ndb, the troff
+tables.  A deployed root needs them and no compiler produces them.
+.IP \(bu
+.CW sys/src/9 ,
+the kernel, which
+.CW os/9front
+holds instead, and
+.CW sys/src/boot ,
+which the sweep does not cover.
+.PP
+The eight directories this document used to list here \(em
 .CW aux ,
-because of
-.CW kbdfs :
-its
-.CW mklatin
-turns
-.CW lib/keyboard
-into a header, and built for this machine it traps rather than
-running.  Everything else under
-.CW aux
-builds, including
-.CW antiword ,
-which needed one more rewrite rule (its mkfile writes
-.CW -I/sys/include/ape
-outright) found after the sweep.
-.IP \(bu
 .CW jpg ,
-whose table generator is a host tool that wants
-.CW cmap2rgb
-from libdraw.  There is no libdraw for the host and no reason to
-build one except this.
-.IP \(bu
 .CW bzfs ,
-which wants
-.CW bzip2 's
-library and is built before it.  That is the sweep's ordering, not a
-failure to compile: it builds when
-.CW bzip2
-has been.
-.IP \(bu
 .CW cwfs ,
 .CW ext4srv ,
-.CW nusb :
-compile errors not yet read.
-.IP \(bu
+.CW nusb ,
 .CW test ,
-which has no
-.CW install
-target at all, and the top of
+and the top of
 .CW cmd
-itself, which fails because it loops into
-.CW aux .
-.PP
-None of this is doubt about the chain.  Every one of these has a
-program beside it that built.
+\(em all build now, and every one of them turned out to be its own
+separate thing: an overflow in mklatin,
+.CW cmap2rgb ,
+the sweep's ordering, a
+.I size
+that reads Mach-O,
+.CW __func__ ,
+a data file the import was not bringing across, and a directory that
+was never meant to install anything.
 .NH 1
 Building it
 .EX
 	scripts/mk9front.sh 9front-src/sys/src libs
+	scripts/mk9front.sh 9front-src/sys/src/ape install
 	scripts/mk9front.sh 9front-src/sys/src/cmd install
 	scripts/sweep9front.sh
 .EE
+The order matters: the libraries first, because everything links
+against them, then APE (which stops at libz and is meant to), then the
+commands.  The sweep is not part of building \(em it builds everything
+again, one directory at a time, and reports.  It is there to answer
+"what is missing", and after a run of the three lines above the answer
+should be nothing.
 The driver sets what 9front's mkfiles expect:
 .CW ROOT ,
 an rc to run recipes under,
@@ -724,10 +890,46 @@ a bundled ghostscript, 31 MB, which nothing needs to build a system.
 .CW lib
 and
 .CW sys/lib
-\(em fonts, ndb, troff tables: runtime data, not source.
-.CW lib/ucd
-is the exception and does come across, because libc generates its
-Unicode tables from it, which makes it a build input.
+\(em fonts, ndb, troff tables: runtime data, not source.  Four things
+under them are exceptions and do come across, because a build reads
+them:
+.CW lib/ucd ,
+from which libc generates its Unicode tables;
+.CW sys/lib/yaccpar
+and
+.CW yaccpars ,
+the skeletons every grammar in the tree is built from;
+.CW lib/keyboard ,
+which kbdfs turns into a header; and
+.CW sys/lib/scsicodes ,
+which nusb's disk driver turns into
+.CW scsierrs.c .
+.PP
+One more thing is left out, and not on purpose.  A macOS filesystem is
+case-insensitive by default, so of two upstream files whose names
+differ only in case only one can exist here \(em and it is not
+announced: git says so once when it clones and nothing says so
+afterwards, which is how three of devpost's troff font descriptions
+went missing before anyone noticed.  The import compares what it
+copied against upstream's index by name (asking the filesystem whether
+.CW rc/bin/Kill
+exists in a directory holding
+.CW rc/bin/kill
+gets the wrong answer) and writes the difference into
+.CW 9front-src/MANIFEST .
+On this machine it is five files:
+.CW rc/bin/Kill ,
+awk's
+.CW T.fmt.broken ,
+and
+.CW devpost.add 's
+.CW C1 ,
+.CW C2
+and
+.CW C3 .
+No build needs any of them.  A deployed root wants the last three, and
+this is where someone finds out; on a case-sensitive filesystem the
+list is empty.
 .NH 1
 Toward a full system
 .PP
@@ -746,10 +948,10 @@ and also
 and the font and keyboard directories, which is where the mkfiles put
 runtime data.  So the tree fills itself in as more of it builds.
 .PP
-What is left, in order: the eight directories above; then the runtime
-data the import deliberately leaves behind \(em fonts, ndb, the troff
-tables \(em which a deployed root needs and no compiler produces;
-then an image.  The pieces for the last part are here \(em
+What is left, in order: the runtime data the import deliberately
+leaves behind \(em fonts, ndb, the troff tables \(em which a deployed
+root needs and no compiler produces; then an image.  The pieces for
+the last part are here \(em
 .CW .qemu/9front-root.qcow2
 is a full 9front installation the tests boot, and
 .CW scripts/mkosprey-efi-iso.sh
