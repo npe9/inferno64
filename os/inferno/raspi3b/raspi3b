@@ -143,6 +143,7 @@ root
 	/dis/sh.dis
 	/dis/sh/std.dis
 	/dis/usb/usbd.dis
+	/dis/usb/etherusb.dis
 	/dis/unmount.dis
 	/dis/disk/kfs.dis
 	/dis/disk/kfs64.dis

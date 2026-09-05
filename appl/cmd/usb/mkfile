@@ -2,6 +2,7 @@
 
 TARG=\
 	usbd.dis\
+	etherusb.dis\
 
 SYSMODULES=
 

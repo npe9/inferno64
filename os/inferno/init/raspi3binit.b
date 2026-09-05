@@ -159,6 +159,22 @@ usbcheck()
 	# split interrupt transfers, HID translation, cons -- end to end.
 	spawn kbdreport();
 	sys->print("USB-OK\n");
+	ethercheck();
+}
+
+# Phase 3 de-risk: the Limbo USB-ethernet server serves the netif file
+# interface, self-mounts, and binds it as devip's ethernet.  Running it
+# proves chandial's clone/connect/data dance is satisfiable from Limbo
+# (ETHERBIND-OK) and that outgoing frames reach the driver (ETHERTX from
+# the ARP an added address provokes).  The USB half comes next.
+ethercheck()
+{
+	eth := load Command "/dis/usb/etherusb.dis";
+	if(eth == nil){
+		sys->print("ETHER-FAIL load: %r\n");
+		return;
+	}
+	spawn eth->init(nil, "etherusb" :: "/net.alt" :: nil);
 }
 
 kbdreport()
