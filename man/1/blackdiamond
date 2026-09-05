@@ -9,7 +9,11 @@ is a downhill skiing game.
 It runs under
 .IR wm (1).
 .PP
-Ski downhill past obstacles on a depth-scaled slope. Steer left and right; collisions add penalty.
+Ski 3000 pixels downhill past trees, rocks and wolves to the finish.
+Wolves chase the skier while they are on screen.
+A chair-lift cable spans the sky above its base tower.
+Every frame spent overlapping an obstacle adds to the penalty
+(and holds a warning tone); the lowest penalty is kept as the best score.
 .PP
 The controls are:
 .TF space
@@ -20,8 +24,17 @@ Move skier left (wrap)
 .B Right
 Move skier right (wrap)
 .TP
-.B Enter / r / space
-Restart after game over
+.B Up
+Climb back uphill
+.TP
+.B Down
+Skip ahead downhill
+.TP
+.B space / r
+Give up: ski back to the top, then restart the same course
+.TP
+.B Enter
+New game on a fresh random course, any time
 .TP
 .B Esc / q
 Quit
@@ -30,6 +43,5 @@ Quit
 .B /appl/temple/blackdiamond.b
 .SH SEE ALSO
 .IR temple (1),
-.IR draw3d (2),
 .IR tone (2),
 .IR wm (1)
