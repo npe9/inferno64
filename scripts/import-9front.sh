@@ -539,6 +539,15 @@ sys/src/cmd/postscript/hardcopy/hardcopy
 sys/src/cmd/postscript/printfont/printfont
 sys/src/cmd/postscript/psencoding/psencoding
 sys/src/cmd/postscript/mpictures/tmac.pictures
+sys/src/ape/lib/ap/syscall/gencall
+sys/src/libc/ucd/runebreakdata
+sys/src/libc/ucd/runeistypedata
+sys/src/libc/ucd/runenormdata
+sys/src/libc/ucd/runetotypedata
+sys/src/libsec/port/jacobian.c
+sys/src/libsec/port/secp256k1.c
+sys/src/libsec/port/secp256r1.c
+sys/src/libsec/port/secp384r1.c
 
 # the instruction-name table each compiler and loader builds from its
 # own header with mkenam
