@@ -86,14 +86,20 @@ priority; 4-6 are the MTA/server side.
   control (`x` must not flush). Still to do in M2: reply/forward (r/R/a/m/M),
   the pipe/shell escapes (|, ||, !), and filing (f).
 
-  **Gotcha for M2's remainder and M3:** running an Inferno sub-command in the
-  reader by `spawn`+`load`+`init` (to pipe a message to a command, or to hand a
-  reply to `upas/send`) ends the parent's command-reader loop after the first
-  sub-command - the child `sh`/command disturbs the shared fd0 even with
-  FORKFD and fd0 rebound, so the parent's next read of its own command stream
-  returns EOF. This needs a proper sub-process story (a clean namespace/fd
-  handoff, or reading commands from a Chan the child can't reach) before
-  reply/forward/pipe land. It is the open blocker on finishing M2/M3.
+  **Hosted-emu sub-command finding (precise):** a spawned child that *reads its
+  stdin* corrupts the parent's own stdin - after it runs, the parent's next
+  read returns EOF - and FORKFD does **not** isolate this (fd0's underlying
+  Chan is shared; even dup'ing another file onto the child's fd0 doesn't save
+  the parent). A child that does *not* read stdin (e.g. `echo`, or `upas/send`
+  given a message **file** argument rather than stdin) leaves the parent
+  intact. So:
+    - reply/forward and marshal are NOT blocked: run `upas/send`/`marshal` with
+      the draft as a file argument, never piped on stdin.
+    - the pipe escapes `|`/`||` (which by definition feed a filter on stdin)
+      are the one casualty; deferred as a hosted-emu limitation, works on
+      native Inferno where fd groups isolate properly. `!cmd` is fine for
+      commands that don't read stdin.
+  This is a hosted-`emu` fd-group limitation, not a upas bug.
 
 ## Testing
 

@@ -39,6 +39,20 @@ than a plausible claim: several things in this tree looked obviously right,
 were measured, and turned out to be wrong. Prefer "tried, did not work, here is
 the evidence" to quiet omission.
 
+## Standing task: upas to Plan 9 feature-equivalence
+
+There is an active, standing goal: bring the Inferno `upas` mail system to
+**feature-equivalence with Plan 9's upas**, including the graphical clients -
+both a **Tk** mail client and an **acme** mail client. Until that goal is
+reached, **do not stop and do not ask for feedback**: work through the
+milestones in `doc/upas-plan.md`, committing each, and keep going across turns.
+Treat "is upas done?" as answered by the plan doc's checklist, not by asking.
+The only reasons to pause are the narrow exceptions above (genuinely
+outward-facing actions such as sending real mail to third parties, or a true
+external blocker) - and even then, record it and continue with whatever else on
+the checklist is still movable. When the whole checklist, Tk and acme clients
+included, is done and tested, say so plainly.
+
 See `CLAUDE.md` for the fuller working agreement in this repository - evidence
 discipline, what `os/` is off-limits to, build and staging rules, and the traps
 that have already cost real time.
