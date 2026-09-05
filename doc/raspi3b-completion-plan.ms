@@ -134,14 +134,44 @@ Phase 1's interrupt transfers.  Verify under QEMU with -device usb-kbd
 -device usb-mouse (or the input record/replay harness): keys reach the
 shell, the cursor moves on the framebuffer.
 .NH 1
-Phase 3: LAN9514 USB Ethernet -- native networking
+Phase 3: USB Ethernet -- native networking -- Stage 1 done
 .PP
 The Pi's onboard 10/100 ethernet is an SMSC LAN9514 (hub + ethernet) on
-USB.  A USB-ethernet class driver registers an ether(3) card backed by
-two bulk endpoints, into /net/ether0.  Depends on Phase 1 bulk transfers
-and hub enumeration.  Verify under QEMU (the LAN9514 sits behind the DWC2
-hub): DHCP over SLIRP and an ICMP echo to the gateway, reusing the
-sifiveu/virtarm64 dhcpclient test.
+USB.  Unlike the kernel HCD, the ethernet driver is a Limbo program, for
+two structural reasons established during the port: devip's "ether"
+medium is file-based (ethermedium.c binds an ethernet device purely by
+path, via namec/chandial on clone/addr/N/data), so a userspace server
+speaking the netif protocol can BE devip's ethernet; and a kernel
+devether card cannot, because it is probed at boot -- before usbd has
+enumerated any USB NIC -- and has no in-kernel path to the DWC2 bulk
+endpoints, which are reached only through the #U file interface.  This is
+9front's nusb/ether architecture.
+.PP
+Prerequisite (done): the board config gained the IP stack and the
+ethermedium/loopbackmedium links, which the copied virtarm64 config had
+dropped.
+.PP
+Stage 1 (done): etherusb.b serves the netif file interface -- clone (open
+allocates a conversation, the fid becomes its ctl), addr, per-conversation
+ctl/data, the connect/promiscuous/nonblocking verbs -- and self-mounts it.
+Verified, and this was the design's one real risk: the server binds
+itself as an ipifc's ethernet (bind ether succeeds, so chandial's
+clone/connect/data dance is satisfiable from a Limbo styx server), and
+adding an address provokes an ARP that arrives at the driver's transmit
+path.  Two netif-protocol constraints surfaced: the server loop must run
+before the self-mount (mount is a synchronous 9P handshake), and the
+interface sits one directory below the mount point (chandial rejects a
+single-component path).
+.PP
+Stage 2 (next): open the device's bulk endpoints through #U, wire RX
+frames to the deferred data reads and TX writes to the bulk-out pipe, set
+the real MAC, and the chip init.  QEMU does not model the LAN9514, so the
+QEMU-testable path is -device usb-net (a CDC/RNDIS-class device), which
+exercises the whole Limbo server and the bulk path but not the SMSC
+register init; write the LAN9514 init from the 9front donor for the real
+Pi and label plainly which half QEMU proves.  Verify under QEMU: DHCP
+over SLIRP and an ICMP echo to the gateway, reusing the sifiveu/virtarm64
+dhcpclient test.
 .NH 1
 Phase 4: USB mass storage
 .PP
