@@ -1,37 +1,129 @@
 .TH BUDGET 1
 .SH NAME
-budget \- simple ledger
+budget \- TempleOS budget ledger
 .SH SYNOPSIS
 .B temple/budget
 .SH DESCRIPTION
 .I Budget
-is a simple ledger.
+is a port of the TempleOS
+.B Apps/Budget
+ledger.
 It runs under
-.IR wm (1).
+.IR wm (1),
+in the TempleOS 8x8 font and 16-color palette.
 .PP
-Enter date, accounts, amount, and description in a Tk form. Add, delete, save, and load transactions; a view field shows an account balance.
+The ledger holds dated entries, each moving an
+.I amount
+from a
+.I credit
+(from) account to a
+.I debit
+(to) account.
+Every row shows, in the original's layout,
+.IP
+.EX
+date credit debit:balance amount:desc
+.EE
 .PP
-The controls are:
-.TF space
+where
+.I balance
+is the running balance of the
+.I view account
+(initially
+.BR BANK ):
+crediting the view account subtracts, debiting it adds.
+Rows are colored by the credit account's color and kept sorted by date.
+.PP
+Entries are added and edited in the form strip:
+Date, Amount, Credit(from)Acct, Debit(to)Acct, Desc, then
+.B Ok
+(or Enter in any field).
+Leaving credit or debit blank offers the account picker,
+as the original form does.
+A date may be given as
+.IB mm / dd / yy
+or
+.IB mm / dd / yyyy
+(two-digit years above 2050 are taken as the previous century),
+or as one of
 .TP
-.B Add / Delete / Save / Load / Quit buttons
-Ledger operations
+.B *
+today (also the empty string)
 .TP
-.B view account entry
-Filter/balance for named account
+.B [
+the date of the first entry
 .TP
-.B Esc / q
-Quit
+.B ]
+the date of the last entry
 .PD
+.PP
+Periodic
+.I templates
+generate scheduled copies of an entry between a start and an end date.
+The types are Interval (every
+.I period
+days), Monthly, Bimonthly, Semiannual and Annual.
+Template-generated rows appear in the ledger but are not saved;
+pressing Enter on one edits its template,
+and deleting one deletes the whole template with all its copies.
+.SS Keys and menus
+The File, Edit and View menus carry the same commands as the original.
+With the ledger focused:
+.TP
+.B n
+new entry
+.TP
+.B c
+copy the current row into a new entry
+.TP
+.B p
+periodic: expand a schedule starting at the current row once into real
+entries (the first occurrence is skipped; it is the row itself)
+.TP
+.B t
+new template
+.TP
+.B Enter
+edit the current row in place (a template copy edits its template)
+.TP
+.B Ctrl-Y
+delete the current row (a template copy deletes its template and copies)
+.TP
+.B a
+edit the accounts: one per line, a color number 0\-15 then the name
+.TP
+.B v
+choose the view account from the picker
+.TP
+.B up/down, mouse
+move the current row
+.TP
+.B Esc, q
+exit, saving the ledger
+.PD
+.PP
+.B File\(->Abort
+exits without saving (the original's Shift-Esc).
+All other exits, including the window's close control, save first.
 .SH FILES
 .TP
 .B $home/lib/temple-budget.txt
-Preferred.
+accounts, templates and entries, tab-separated
 .TP
 .B /tmp/temple-budget.txt
-Fallback.
+fallback when there is no home
 .SH SOURCE
 .B /appl/temple/budget.b
 .SH SEE ALSO
 .IR temple (1),
 .IR wm (1)
+.SH BUGS
+The DolDoc popup forms and menus are rendered as Tk strips and panels;
+Ok or Enter submits them, where TempleOS submitted forms with Esc.
+Shift-Esc cannot be distinguished on the keyboard channel, so abort
+without saving is only on the File menu.
+.PP
+Persistence is a text file, not the original's
+.B Bgt.DATA.Z
+binary and string table, and account colors live in it rather than in
+.BR Accts.DD.Z .
