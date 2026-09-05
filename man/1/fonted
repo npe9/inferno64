@@ -5,42 +5,61 @@ fonted \- bitmap font editor
 .B temple/fonted
 .SH DESCRIPTION
 .I FontEd
-is a bitmap font editor.
+is a port of the TempleOS 8x8 system font editor.
 It runs under
 .IR wm (1).
 .PP
-Select a glyph from the chart and toggle pixels in the magnified grid. The s key writes a hex dump under /tmp.
+A 16\(mu16 chart shows all 256 glyphs, seeded from the authentic
+TempleOS system font, rendered live from the editable bitmaps; the
+selected glyph blinks and is magnified in a blow-up grid where
+individual pixels are painted.
+Saving writes a hex dump in the original
+.B FESave
+format: one 64-bit word per glyph
+.RB ( 0x%016X, ,
+row 0 in the low byte, least-significant bit leftmost) with
+.BI // c
+comments for printable characters \(em paste-ready for the TempleOS
+.BR Kernel/FontStd.HC .
 .PP
 The controls are:
 .TF space
 .TP
-.B LMB on chart
+.B LMB or RMB on chart
 Select glyph
 .TP
-.B LMB on big grid
-Toggle pixel bit
+.B LMB on blow-up
+Set pixel (paints while dragged)
 .TP
-.B , / <
-Previous character
+.B RMB on blow-up
+Clear pixel (paints while dragged)
 .TP
-.B . / >
-Next character
+.B Arrow keys
+Move the selection by \(+-1 (left/right) or \(+-16 (up/down)
 .TP
-.B *
-Fill / related edit action
+.B Any printable key
+Jump to that character's glyph
 .TP
-.B s
-Save hex to /tmp/temple-font.hex
+.B Ctrl-A
+Save the hex dump
 .TP
-.B Esc / q
-Quit
+.B Esc
+Save, then exit
+.TP
+.B Del
+Exit without saving (the original's Shift-Esc)
 .PD
 .SH FILES
 .TP
 .B /tmp/temple-font.hex
-Data file.
+Saved font dump.
 .SH SOURCE
 .B /appl/temple/fonted.b
 .SH SEE ALSO
 .IR temple (1),
 .IR wm (1)
+.SH BUGS
+The original's
+.B <CTRL-ALT-f>
+main/aux system font toggle swaps the live console font and has no
+Inferno equivalent; the banner is shown but the toggle does nothing.
