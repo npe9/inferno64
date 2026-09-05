@@ -19,7 +19,7 @@ usage:VQ:
 	echo '	clean, nuke'
 
 %.c %.tab.h:D: %.y
-	yacc $YFLAGS -o $stem.c -s $stem $stem.y
+	$YACC $YFLAGS -o $stem.c -s $stem $stem.y
 
 %.$O: $HFILES
 
@@ -36,7 +36,7 @@ $BIN/cp: $O.cp
 	`{if(~ $objtype $cputype) echo ./$O.cp; if not echo cp} $prereq $target
 
 $BIN/init: $O.init  # hack, install location is not target
-	cp $O.init /$objtype/init
+	cp $O.init $ROOT/9front/$objtype/init
 
 %.acid: %.c $HFILES
 	$CC $CFLAGS -a $stem.c >$target

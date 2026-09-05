@@ -1,4 +1,4 @@
-</$objtype/mkfile
+<$ROOT/9front-src/$objtype/mkfile
 
 TARG=boothead.$objtype jtagload.$objtype
 

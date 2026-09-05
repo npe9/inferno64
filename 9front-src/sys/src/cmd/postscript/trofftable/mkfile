@@ -7,10 +7,10 @@ SYSTEM=plan9
 VERSION=3.3.1
 
 ROOT=
-FONTDIR=$ROOT/sys/lib/troff/font
-MAN1DIR=$ROOT/tmp
-POSTBIN=$ROOT/sys/lib/postscript/bin
-POSTLIB=$ROOT/sys/lib/postscript/prologues
+FONTDIR=$ROOT/9front/sys/lib/troff/font
+MAN1DIR=/tmp
+POSTBIN=$ROOT/9front/sys/lib/postscript/bin
+POSTLIB=$ROOT/9front/sys/lib/postscript/prologues
 
 
 all :V: trofftable

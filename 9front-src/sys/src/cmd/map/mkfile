@@ -25,8 +25,8 @@ $LIB:V:
 installall:V:
 	for(objtype in $CPUS)
 		mk install
-	cp map.rc /rc/bin/map
-	cp mapdemo.rc /rc/bin/mapdemo
+	cp map.rc $ROOT/9front/rc/bin/map
+	cp mapdemo.rc $ROOT/9front/rc/bin/mapdemo
 
 clean nuke:V:
 	@{ cd libmap; mk $target }

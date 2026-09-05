@@ -60,7 +60,7 @@ PIECES=\
 8.multi:V: mkmulti mkfile
 	mkmulti $PIECES 
 	ls -l 8.multi
-	ls -l /386/bin/$PIECES | awk '{s += $6} END{print s}'
+	ls -l $ROOT/9front/386/bin/$PIECES | awk '{s += $6} END{print s}'
 
 scripts:V:
 	rm -rf ../../pc/multi
@@ -71,6 +71,6 @@ scripts:V:
 		chmod +x ../../pc/multi/$b
 	}
 
-BIN=/sys/lib/dist/bin/$objtype
+BIN=$ROOT/9front/sys/lib/dist/bin/$objtype
 <$ROOT/9front-src/sys/src/cmd/mkmany
 

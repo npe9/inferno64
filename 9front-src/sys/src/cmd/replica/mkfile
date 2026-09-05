@@ -27,7 +27,7 @@ $O.applychanges: revproto.$O
 ${SCRIPTS:%=$BIN/%}:
 	for(i in $target){
 		echo '#!/bin/rc'
-		echo 'exec /rc/bin/replica/'^`{basename $i}^' $*'
+		echo 'exec $ROOT/9front/rc/bin/replica/'^`{basename $i}^' $*'
 	} >$i
 	chmod +x $target
 

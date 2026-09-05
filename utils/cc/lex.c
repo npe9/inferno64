@@ -796,6 +796,16 @@ tnum:
 				yyerror("malformed hex constant");
 			goto ncu;
 		}
+	if(c == 'b' || c == 'B')
+		for(;;) {
+			SYMBPUT(cp, c);
+			c = GETC();
+			if(c == '0' || c == '1')
+				continue;
+			if(cp == symb+2)
+				yyerror("malformed binary constant");
+			goto ncu;
+		}
 	if(c < '0' || c > '7')
 		goto dc;
 	for(;;) {
@@ -920,7 +930,7 @@ caseout:
 /*
  * convert a string, s, to vlong in *v
  * return conversion overflow.
- * required syntax is [0[x]]d*
+ * required syntax is [0[x|b]]d*
  */
 int
 mpatov(char *s, vlong *v)
@@ -948,6 +958,8 @@ oct:
 	c = *s;
 	if(c == 'x' || c == 'X')
 		goto hex;
+	if(c == 'b' || c == 'B')
+		goto bin;
 	while(c = *s++) {
 		if(c >= '0' || c <= '7')
 			nn = n*8 + c-'0';
@@ -973,6 +985,18 @@ hex:
 		else
 			goto bad;
 		nn = n*16 + c;
+		if(n < 0 && nn >= 0)
+			goto bad;
+		n = nn;
+	}
+	goto out;
+
+bin:
+	s++;
+	while(c = *s++) {
+		if(c != '0' && c != '1')
+			goto bad;
+		nn = n*2 + c-'0';
 		if(n < 0 && nn >= 0)
 			goto bad;
 		n = nn;

@@ -2,7 +2,7 @@
 #include <libc.h>
 #include <disk.h>
 #include <fis.h>
-#include </sys/src/cmd/scuzz/scsireq.h>
+#include <sys/src/cmd/scuzz/scsireq.h>
 #include "smart.h"
 
 enum{

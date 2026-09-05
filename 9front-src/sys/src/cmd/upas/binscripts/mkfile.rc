@@ -8,15 +8,15 @@ installall:Q:	install
 	;
 
 install:V:
-	cp mail.rc /rc/bin/mail
+	cp mail.rc $ROOT/9front/rc/bin/mail
 
 safeinstall:V:
-	cp mail.rc /rc/bin/mail
+	cp mail.rc $ROOT/9front/rc/bin/mail
 
 safeinstallall:V:
-	cp mail.rc /rc/bin/mail
+	cp mail.rc $ROOT/9front/rc/bin/mail
 
 clean:Q:
 	;
 nuke:V:
-	rm -f /rc/bin/mail
+	rm -f $ROOT/9front/rc/bin/mail

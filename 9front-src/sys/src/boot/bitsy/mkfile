@@ -1,6 +1,6 @@
 objtype=arm
 <$ROOT/9front-src/$objtype/mkfile
-BIN=/arm
+BIN=$ROOT/9front/arm
 
 TARG=\
 	inflate\

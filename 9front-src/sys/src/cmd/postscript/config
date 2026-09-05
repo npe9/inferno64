@@ -2,10 +2,10 @@ SYSTEM=plan9
 VERSION=3.3.1
 
 ROOT=
-POSTBIN=$ROOT/$objtype/bin/aux
+POSTBIN=$ROOT/9front/$objtype/bin/aux
 DKHOST=FALSE
 DKSTREAMS=FALSE
 ROUNDPAGE=TRUE
 
-FONTDIR=/sys/lib/troff/font
-POSTLIB=/sys/lib/postscript/prologues
+FONTDIR=$ROOT/9front/sys/lib/troff/font
+POSTLIB=$ROOT/9front/sys/lib/postscript/prologues

@@ -8,7 +8,7 @@
  * bits of floating point in memory may be reversed lsw/msw
  * unions of double & 2*float & 2*long have no padding
  */
-#include "/sparc/include/ureg.h"
+#include "sparc/include/ureg.h"
 #define	USERADDR	0xC0000000
 #define	UREGADDR	(USERADDR+BY2PG-4-0xA0)
 #define USER_REG(x)	(UREGADDR+(ulong)(x))

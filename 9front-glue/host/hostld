@@ -5,8 +5,8 @@
 : "${ROOT:?ROOT must be set}"
 host=$ROOT/$(/usr/bin/sed -n 's/^SYSHOST=\([^ 	]*\).*/\1/p' "$ROOT/mkconfig")/$(/usr/bin/sed -n 's/^OBJTYPE=\([^ 	]*\).*/\1/p' "$ROOT/mkconfig")
 supp=${TMPDIR:-/tmp}/9front-hostsupp.$$.o
-cc -c -w -I"$ROOT/9front-src/host/include" -I"$host/include" -I"$ROOT/include" \
-	-o "$supp" "$ROOT/9front-src/host/hostsupp.c" || exit 1
+cc -c -w -I"$ROOT/9front-glue/host/include" -I"$host/include" -I"$ROOT/include" \
+	-o "$supp" "$ROOT/9front-glue/host/hostsupp.c" || exit 1
 cc -w "$@" "$supp" "$host/lib/libbio.a" "$host/lib/lib9.a"
 st=$?
 rm -f "$supp"

@@ -188,10 +188,20 @@ makes amd64 9front objects and
 .CW mkrunetype ,
 which turns the Unicode data files into libc's tables, has to run on
 the build host.  The mkfiles ask for the host's compiler by reading
-.CW /$cputype/mkfile ;
-the import points that at
+.CW /$cputype/mkfile ,
+and a mkfile that needs a whole tool built for the host \(em awk's
+.CW maketab
+\(em runs
+.CW mk
+again with
+.CW objtype=$cputype .
+The build sets
+.CW cputype=host
+and the import writes
 .CW 9front-src/host/mkfile ,
-which names two wrappers around the host
+a copy of
+.CW 9front-glue/host/mkfile ,
+where it is maintained.  It names two wrappers around the host
 .CW cc
 that build against this tree's own host
 .CW lib9
@@ -212,77 +222,228 @@ which 9front's libc has and lib9 does not.
 .NH 1
 What builds
 .PP
-.CW libc ,
-except for the Unicode tables:
-.CW 9sys ,
-.CW 9syscall ,
-.CW fmt ,
-.CW port
-and the amd64 assembly, 259 objects.
-.PP
-Thirty-six of the thirty-nine libraries under
-.CW sys/src .
-.PP
-And a linked binary:
-.CW cat
-builds and links against that libc and is an amd64 Plan 9
-.CW a.out ,
-which is the milestone that says the whole chain works \(em compiler,
-assembler, archiver, loader, headers, and the mkfiles driving them.
-.NH 1
-What does not build yet
-.IP \(bu
+All thirty-nine libraries under
+.CW sys/src ,
+from source, including the three that were open questions:
+.CW libc
+with its Unicode tables,
 .CW libsec
 and
 .CW libauthsrv
-want
-.CW mpc ,
-which compiles their
+with the elliptic-curve arithmetic
+.CW mpc
+generates from their
 .CW .mp
-sources and is itself a 9front program.  It is the same host-tool
-problem
-.CW mkrunetype
-had and it is solved the same way; it has not been done.
+sources, and
+.CW libmach ,
+which needed binary literals in the compiler.
+.PP
+Of the command directories under
+.CW sys/src/cmd ,
+112 of 134 build and install; 513 programs are in
+.CW 9front/amd64/bin
+after a sweep.  That is what is present in the target tree, not a
+count of what one run compiled: the tree accumulates, and a program
+that built yesterday and fails today is still sitting in it.
+.CW scripts/sweep9front.sh
+is what produces the number, and it builds each directory on its own
+rather than stopping at the first failure the way
+.CW mk install
+does, which is the only way to see what is actually missing.
+.NH 1
+Five bugs in this tree's tools, found by building 9front with them
+.PP
+None of these are 9front's.  They are in
+.CW utils ,
+they are all old, and each one had been sitting under some program
+this tree has never compiled.
 .IP \(bu
-.CW libmach
-uses binary literals \(em
+.CW utils/cc
+had no binary constants.
 .CW 0b111110
-\(em which 9front's
+is in
+.CW libmach 's
+power64 disassembler and 9front's own
 .CW 6c
-takes and this tree's does not.  That is a small addition to
-.CW utils/cc 's
-number scanner and it has not been made.
+takes it.  Added to the number scanner and to
+.CW mpatov ,
+which turns the scanned text into a value.
 .IP \(bu
-.CW libc/ucd ,
-which generates libc's Unicode tables.  Its generator now compiles and
-links as a host tool, and then does not terminate: two runs spun at
-100% of a core for eleven minutes without writing a table, so
-something this tree's
-.CW lib9
-does differently from 9front's libc keeps a loop in it going.  It is
-excluded from the build until that is found, which means
-.CW isalpharune
-and its relatives are missing from
-.CW libc.a .
-.CW yacc
-is the first program that wants them, and because it is a program the
-rest of the build needs, this is what stands between here and a
-command sweep worth reporting.
+.CW utils/libregexp 's
+.CW optimize
+relocates a compiled program after
+.CW realloc
+moves it, and held the displacement in an
+.CW int .
+On a 64-bit host
+.CW realloc
+can move a block further than an
+.CW int
+reaches, the truncated displacement is added to every pointer in the
+program, and the next match reads a wild address.
+.CW mk
+hit it on
+.CW libc/spim 's
+regular-expression rules and died of a bus error, which stopped
+.CW mk clean
+in
+.CW libc
+and so stopped the library sweep before it began.  The displacement
+is an
+.CW intptr
+now.
 .IP \(bu
-The commands.  There are 155 of them in
-.CW sys/src/cmd
-alone and they are built by
-.CW mkmany ,
-which stops at the first failure rather than carrying on, so one
-broken program hides the rest.  The sweep gets as far as
+Every linker in
+.CW utils
+names a floating-point constant by printing the two halves of its
+.CW Ieee
+with
+.CW "$%lux.%lux"
+into
+.CW char
+.CW literal[32] ,
+and the comment beside it says the result is 18 characters at most.
+It is, where
+.CW long
+is 32 bits.  Where it is 64 the halves are sign-extended, a negative
+one prints sixteen digits instead of eight, and the name overruns the
+buffer into
+.CW nerrors ,
+which is the next thing in bss.  So
+.CW 6l
+linked
+.CW clock ,
+finished, saw a nonzero error count that no
+.CW diag
+had ever incremented, deleted the output and exited 1 with nothing
+printed at all.  Found with a watchpoint on
+.CW nerrors .
+The two halves are masked to 32 bits now, in all eleven linkers.
+.IP \(bu
+.CW utils/mk
+exported a variable with an empty value to a recipe, which
+.I rc
+reads as a one-element list containing the empty string rather than as
+nothing.  Fixed earlier in the port;
+.CW emptyisnolist
+in
+.CW rc.c
+is the flag.
+.IP \(bu
+Not this tree's, but the same shape: plan9port's
+.I rc
+runs a script named on the command line by sourcing it, and
+.CW .
+looks the name up on
+.CW $path ,
+which has no current directory during a build.  9front's
+.CW 9l/mkcname
+is run as
+.CW "rc mkcname" .
+.CW 9front-glue/bin/rc
+gives the name a directory and passes it on.
+.NH 1
+A bug in 9front, found the same way
+.PP
+.CW libc/ucd/mkrunetype ,
+the generator that makes libc's Unicode tables, walks a rune's
+decomposition chain with
+.EX
+	for(x = i, n = 0; r1 = mydecomp[x]>>16; x = r1)
+.EE
+and
+.CW mydecomp
+is an array of signed
+.CW int .
+A singleton decomposition whose target has bit 15 set \(em U+F900, the
+first CJK compatibility ideograph, goes to U+8C48 \(em is stored as
+0x8C480000, which is negative, and the arithmetic shift sign-extends
+it to 0xFFFF8C48.  That is not in the range the loop recognises as a
+marker, so it becomes the next index and the walk reads
+.CW mydecomp[-1] .
+On a 9front machine whatever precedes
+.CW mydecomp
+in bss is zero and the walk stops there by luck.  Here the array
+before it is
+.CW mytolower ,
+every element of which
+.CW main
+has just set to \-1, so the walk follows \-1 to \-1 for ever: that is
+the eleven minutes at 100% of a core this document used to report as
+an unexplained hang.  The import shifts through
+.CW uint ,
+which is the reading the loop wants.
+.PP
+The four tables the generator then writes are in
+.CW libc.a
+and
 .CW yacc ,
-which cannot link without the Unicode tables above.  No number is
-claimed here because none has been measured.
+which is what wanted
+.CW isalpharune ,
+links.  They have not been checked against Unicode's own conformance
+data:
+.CW libc/test
+has the programs that would do it and they are amd64 Plan 9 binaries,
+which this machine cannot run.  What is verified is that the generator
+runs, terminates and writes four tables, and that what links against
+them works.
+.NH 1
+What does not build yet
+.PP
+Twenty-two of the 134 command directories.  They fall into four
+groups.
+.IP \(bu
+APE, the ANSI/POSIX environment:
+.CW compress ,
+.CW eqn ,
+.CW grap ,
+.CW pic ,
+.CW spin
+and parts of
+.CW aux
+and
+.CW lp
+are written against it, their mkfiles set
+.CW CC=pcc ,
+and 9front's
+.CW pcc
+is a program that runs on 9front.
+.CW 9front-glue/bin/pcc
+is a driver for it in the shell; the APE libraries it links against
+have not been built yet.
+.IP \(bu
+Directories with their own libraries built into the directory \(em
+.CW mothra ,
+.CW nusb ,
+.CW upas ,
+.CW map ,
+.CW scat ,
+.CW bzip2 ,
+.CW jpg ,
+.CW audio .
+Each is its own small problem rather than one shared cause.
+.IP \(bu
+.CW ext4srv ,
+.CW hgfs ,
+.CW troff ,
+.CW cwfs :
+compile errors that have not been read yet.
+.IP \(bu
+.CW test ,
+which has no
+.CW install
+target at all, and the top of
+.CW cmd
+itself, which fails because it loops into the directories above.
+.PP
+None of this is doubt about the chain.  Every one of these has a
+program beside it that built.
 .NH 1
 Building it
 .EX
-	scripts/mk9front.sh 9front-src/sys/src/libc install
-	scripts/mk9front.sh 9front-src/sys/src/cmd cat.install
+	scripts/mk9front.sh 9front-src/sys/src libs
+	scripts/mk9front.sh 9front-src/sys/src/cmd install
+	scripts/sweep9front.sh
 .EE
 The driver sets what 9front's mkfiles expect:
 .CW ROOT ,
@@ -292,20 +453,28 @@ so
 .CW 6l
 finds
 .CW -lc
-in the target tree, and a path with
-.CW 9front-src/bin
+in the target tree,
+.CW cputype
+for the tools that must run here, the target
+.CW bin
+subdirectories a 9front machine already has, the host tools the build
+runs rather than installs, and a path with
+.CW 9front-glue/bin
 first \(em where
 .CW mk
 is
 .CW mkrc ,
 .CW ar
 is
-.CW iar
-and
+.CW iar ,
 .CW yacc
 is
-.CW iyacc
-\(em then this tree's compilers, then a Plan 9 user space for
+.CW iyacc ,
+.CW pcc
+is the APE driver and
+.CW rc
+is the shim above \(em then this tree's compilers, then a Plan 9 user
+space for
 .CW sed
 and
 .CW tr ,
@@ -324,6 +493,43 @@ It is not needed to compile anything: host tools are built against
 this tree's own libraries, which is deliberate \(em the plan9port on
 the machine this was written on cannot link a hello-world, and the
 build does not depend on it being able to.
+.NH 1
+Nothing under 9front-src is written by hand
+.PP
+Everything in
+.CW 9front-src
+is what
+.CW scripts/import-9front.sh
+put there.  What is ours lives outside it, in
+.CW 9front-glue :
+the
+.CW mk ,
+.CW ar ,
+.CW yacc ,
+.CW rc
+and
+.CW pcc
+shims, and the host compiler wrappers.  The import begins by removing
+the whole imported tree, so anything kept inside it would be lost on
+the next one; and an edit made there by hand would be undone silently,
+which is worse.  A change that the imported tree needs goes in the
+script, as a rule.
+.PP
+This was not true when the tree was first committed.  The build glue
+lived under
+.CW 9front-src ,
+where re-running the import would have deleted it, and twenty-one C
+files carried the absolute path of the machine they were imported on,
+because the rewrite of their
+.CW #include
+lines wrote it in.  Those includes now lose their leading slash and
+are found through
+.CW -I$ROOT/9front-src ,
+so the tree names no machine but through
+.CW ROOT ,
+which comes from the environment.  Re-running the import over the
+committed tree changes nothing, which is the property that makes
+moving to a newer upstream one command.
 .NH 1
 What is left out of the import
 .IP \(bu
@@ -345,23 +551,31 @@ Unicode tables from it, which makes it a build input.
 .NH 1
 Toward a full system
 .PP
-The order is: make the Unicode tables build, then the two libraries
-that want
-.CW mpc ,
-then the commands, then a root to put them in.  The tree already has the pieces for the last part \(em
+.CW $ROOT/9front
+is the root of the system being built: what a deployed 9front would
+have at
+.CW / .
+The import rewrites every install path in the tree to sit under it \(em
+.CW /$objtype/bin
+and
+.CW /$objtype/lib ,
+and also
+.CW /sys/lib ,
+.CW /rc/bin ,
+.CW /acme
+and the font and keyboard directories, which is where the mkfiles put
+runtime data.  So the tree fills itself in as more of it builds.
+.PP
+What is left, in order: the APE libraries, so the dozen commands
+written against them build; the twenty-two directories above; then the
+runtime data the import deliberately leaves behind, which a deployed
+root needs and no compiler produces; then an image.  The pieces for
+the last part are here \(em
 .CW .qemu/9front-root.qcow2
 is a full 9front installation the tests boot, and
 .CW scripts/mkosprey-efi-iso.sh
-knows how to make an image \(em so the deployable end is a root built
-from
-.CW 9front/amd64/bin
-plus the runtime data the import leaves behind, booted by the
+knows how to make a bootable image \(em with the
 .CW 9pc64
 that
 .CW os/9front
-already builds.  None of that is done, and the honest statement of
-where this stands is: the toolchain is proved, libc and
-thirty-six of thirty-nine libraries are built, one command compiles
-and links into a valid amd64
-.CW a.out ,
-and what remains is understood work rather than doubt.
+already builds.

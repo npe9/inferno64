@@ -1,5 +1,5 @@
 LIB=../cc/cc.a$O
-BIN=/$objtype/bin
+BIN=$ROOT/9front/$objtype/bin
 D=${T:%=%c}
 
 default:V: $O.out

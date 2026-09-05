@@ -234,7 +234,9 @@ optimize(Reprog *pp)
 	int size;
 	Reprog *npp;
 	Reclass *cl;
-	int diff;
+	intptr diff;		/* a pointer difference, not an int: realloc
+				 * can move the program further than 2GB and
+				 * an int truncates that to a wrong address */
 
 	/*
 	 *  get rid of NOOP chains

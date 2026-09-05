@@ -7,7 +7,7 @@
 #include <u.h>
 #include <libc.h>
 #include <bio.h>
-#include "/Users/npe/src/inferno64-branches/pr-bluetooth/9front-src/sys/src/cmd/8c/8.out.h"
+#include "sys/src/cmd/8c/8.out.h"
 
 typedef struct Sym Sym;
 struct Sym

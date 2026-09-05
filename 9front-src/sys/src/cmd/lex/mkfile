@@ -18,4 +18,4 @@ BIN=$ROOT/9front/$objtype/bin
 installall:V:
 	for(objtype in $CPUS)
 		mk install
-	cp ncform /sys/lib/lex
+	cp ncform $ROOT/9front/sys/lib/lex

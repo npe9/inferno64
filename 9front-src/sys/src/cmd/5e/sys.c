@@ -3,7 +3,7 @@
 #include <thread.h>
 #include "dat.h"
 #include "fns.h"
-#include </sys/src/libc/9syscall/sys.h>
+#include <sys/src/libc/9syscall/sys.h>
 
 static u32int
 arg(int n)

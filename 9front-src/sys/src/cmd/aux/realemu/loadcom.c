@@ -1,7 +1,7 @@
 #include <u.h>
 #include <libc.h>
 
-#include "/Users/npe/src/inferno64-branches/pr-bluetooth/9front-src/386/include/ureg.h"
+#include "386/include/ureg.h"
 
 static uchar buf[0xFF01];
 

@@ -4,7 +4,7 @@
 #include <u.h>
 #include <libc.h>
 #include <bio.h>
-#include "/Users/npe/src/inferno64-branches/pr-bluetooth/9front-src/sparc64/include/ureg.h"
+#include "sparc64/include/ureg.h"
 #include <mach.h>
 
 #define	REGOFF(x)	(ulong)(&((struct Ureg *) 0)->x)

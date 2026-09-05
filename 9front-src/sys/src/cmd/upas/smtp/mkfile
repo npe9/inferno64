@@ -30,12 +30,12 @@ $O.smtpd:\
 $O.smtp: rfc822.tab.$O mxdial.$O
 
 smtpd.tab.c: smtpd.y
-	yacc -o xxx smtpd.y
+	$YACC -o xxx smtpd.y
 	sed 's/yy/zz/g' < xxx > $target
 	rm xxx
 
 rfc822.tab.c rfc822.tab.h:D: rfc822.y
-	yacc -d -s rfc822 rfc822.y
+	$YACC -d -s rfc822 rfc822.y
 
 $O.parsetest: rfc822.tab.$O
 

@@ -1,0 +1,36 @@
+#!/bin/sh
+#
+# 9front's mkfiles run a few of their steps as "rc script": 9l's
+# mkcname, which drives ed over l.h to make a table of class names, is
+# one.  plan9port's rc runs a named script by sourcing it -- ". file"
+# -- and the "." builtin looks the name up on $path, which does not
+# have the current directory on it during a build, so a script named
+# without a directory is not found and the step fails with
+#
+#	rc: .: can't open: No such file or directory
+#
+# A name with a slash in it is opened as given, so that is what this
+# passes on.  Everything else goes through untouched.
+# scripts/mk9front.sh puts this directory first on the path.
+#
+: "${RCSHELL:=rc}"
+
+case "${1:-}" in
+''|-*)	exec "$RCSHELL" "$@";;
+esac
+
+script=$1
+shift
+case "$script" in
+*/*)	;;
+*)	script=./$script;;
+esac
+set -- "$script" "$@"
+
+# quote each word for rc, in which '' inside a quoted word is a quote
+q=
+for a in "$@"; do
+	a=$(printf '%s' "$a" | /usr/bin/sed "s/'/''/g")
+	q="$q '$a'"
+done
+exec "$RCSHELL" -c ".$q"

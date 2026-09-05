@@ -97,6 +97,24 @@ y.debug
 
 # ignore 9front, OpenBSD and Inferno native binaries
 /9front/*/bin/*
+
+# 9front/ is the root of the system scripts/mk9front.sh builds: what a
+# deployed 9front would have at /.  Everything the build puts there is
+# output, including the sweep's logs and the host tools it makes on the
+# way; the headers and mkfiles already tracked under it are not.
+/9front/*/lib/*.a
+/9front/*/lib/ape/
+/9front/*/include/ape/
+/9front/*/include/ureg.h
+/9front/*/init
+/9front/*/9pc64
+/9front/include/
+/9front/host/
+/9front/sweep/
+/9front/sys/
+/9front/rc/
+/9front/lib/
+/9front/acme/
 /OpenBSD/*/bin/*
 /Inferno/*/bin/*
 /Inferno/*/pbs

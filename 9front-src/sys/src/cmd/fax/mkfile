@@ -30,5 +30,5 @@ $O.faxsend: $SEND
 	$LD -o $target $prereq
 
 install.rc:V:
-	mkdir /sys/lib/fax
-	cp receiverc /sys/lib/fax
+	mkdir $ROOT/9front/sys/lib/fax
+	cp receiverc $ROOT/9front/sys/lib/fax

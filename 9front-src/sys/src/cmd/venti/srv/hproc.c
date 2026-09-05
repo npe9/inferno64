@@ -2,7 +2,7 @@
 #include <bio.h>
 #include <mach.h>
 #include <ureg.h>
-#include "/Users/npe/src/inferno64-branches/pr-bluetooth/9front-src/sys/src/libthread/threadimpl.h"
+#include "sys/src/libthread/threadimpl.h"
 #include "dat.h"
 #include "fns.h"
 

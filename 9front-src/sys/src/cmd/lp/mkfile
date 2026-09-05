@@ -13,9 +13,9 @@ BIN=$ROOT/9front/$objtype/bin/aux
 <$ROOT/9front-src/sys/src/cmd/mkmany
 CFLAGS=-Dplan9
 
-installall:V:	/sys/lib/lp/bin/lpsend.rc
+installall:V:	$ROOT/9front/sys/lib/lp/bin/lpsend.rc
 
-/sys/lib/lp/bin/lpsend.rc:	lpsend.rc
+$ROOT/9front/sys/lib/lp/bin/lpsend.rc:	lpsend.rc
 	cp $target $prereq
 	
 $O.lpdsend:	lpdsend.$O

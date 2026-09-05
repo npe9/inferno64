@@ -1116,7 +1116,7 @@ loop:
 			goto casdef;
 		if(p->from.type == D_FCONST) {
 			/* size sb 9 max */
-			sprint(literal, "$%lux", ieeedtof(&p->from.ieee));
+			sprint(literal, "$%lux", ieeedtof(&p->from.ieee) & 0xffffffffUL);
 			s = lookup(literal, 0);
 			if(s->type == 0) {
 				s->type = SBSS;
@@ -1162,7 +1162,7 @@ loop:
 		if(p->from.type == D_FCONST) {
 			/* size sb 18 max */
 			sprint(literal, "$%lux.%lux",
-				p->from.ieee.l, p->from.ieee.h);
+				p->from.ieee.l & 0xffffffffUL, p->from.ieee.h & 0xffffffffUL);
 			s = lookup(literal, 0);
 			if(s->type == 0) {
 				s->type = SBSS;

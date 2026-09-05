@@ -1,7 +1,7 @@
-</$objtype/mkfile
+<$ROOT/9front-src/$objtype/mkfile
 
 mklatin.$cputype:	mklatin.$O
 	$LD $LDFLAGS -o $target $prereq
 
-</sys/src/cmd/mkone
+<$ROOT/9front-src/sys/src/cmd/mkone
 

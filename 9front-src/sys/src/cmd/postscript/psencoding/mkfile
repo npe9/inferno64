@@ -2,7 +2,7 @@
 
 <../config
 
-POSTBIN=$ROOT/rc/bin/postscript
+POSTBIN=$ROOT/9front/rc/bin/postscript
 
 all:V:	psencoding
 

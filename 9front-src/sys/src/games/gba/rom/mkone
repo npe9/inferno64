@@ -12,7 +12,7 @@ $O.out:	l.$O $OFILES $LIB
 
 %.$O:	$HFILES
 
-l.$O:	/sys/src/games/gba/rom/l.s
+l.$O:	$ROOT/9front-src/sys/src/games/gba/rom/l.s
 	$AS $AFLAGS $prereq
 
 %.$O:	%.c

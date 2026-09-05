@@ -1,4 +1,4 @@
-#!/bin/awk -f
+#!/usr/bin/awk -f
 {	e = e $2 ", "
 	s = s sprintf("[%s] \"%s\", (int(*)(...))%s,\n",
 		$2, tolower($2), tolower($2))

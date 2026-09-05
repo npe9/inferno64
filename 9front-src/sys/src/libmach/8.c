@@ -7,7 +7,7 @@
 #include <mach.h>
 
 #pragma pack on
-#include "/Users/npe/src/inferno64-branches/pr-bluetooth/9front-src/386/include/ureg.h"
+#include "386/include/ureg.h"
 #pragma pack off
 
 #define	REGOFF(x)	(uintptr)(&((struct Ureg *) 0)->x)

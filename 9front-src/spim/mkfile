@@ -1,6 +1,41 @@
-</sys/src/mkfile.proto
+#
+# The per-architecture mkfile every 9front library and command mkfile
+# includes.  The middle of it is upstream's, naming the compilers for
+# this architecture; scripts/import-9front.sh wraps it in what differs
+# on a build machine that is not 9front, and rewrites it again on
+# every import, so do not edit it here.
+#
+# ROOT must be in the environment.  Everything below, and every mkfile
+# the import rewrote, is written in terms of it.
+#
+
+# The shell every recipe runs under.  9front's mkfiles are rc scripts,
+# and a recursive mk does not inherit a MKSHELL given on the command
+# line, so it is set here, where all of them include it.  mkrc parses
+# rc's syntax; this makes it run rc as well, through mkshell() in
+# utils/mk/Posix.c.  The name is MKSH, not MKSHELL: mkfiles already in
+# this tree set MKSHELL and have always been built under sh whatever
+# it said.
+MKSH=$RCSHELL
+
+<$ROOT/9front-src/sys/src/mkfile.proto
 
 CC=0c
 LD=0l
 O=0
 AS=0a
+
+# this tree's archiver and yacc, not the host's
+AR=iar
+ARFLAGS=vu
+YACC=iyacc
+
+# 9front's own headers, and nothing from the Inferno side: a 9front
+# program sees the system it is being built for and no other.  The
+# tree root is on the path too, for the thirty-five sources that name
+# a header by what was an absolute path on a 9front machine.
+INCLUDES=-I$ROOT/9front-src/$objtype/include -I$ROOT/9front-src/sys/include -I$ROOT/9front-src
+CFLAGS=$CFLAGS $INCLUDES
+
+BIN=$ROOT/9front/$objtype/bin
+LIBDIR=$ROOT/9front/$objtype/lib

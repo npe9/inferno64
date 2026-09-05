@@ -20,7 +20,7 @@ typedef unsigned long ulong;
 typedef unsigned long long uvlong;
 typedef unsigned char uchar;
 
-#include	"/Users/npe/src/inferno64-branches/pr-bluetooth/9front-src/sys/include/tos.h"
+#include	"sys/include/tos.h"
 
 extern	void*	sbrk(ulong);
 extern	long	_callpc(void**);

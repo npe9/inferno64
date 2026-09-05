@@ -14,7 +14,7 @@
 char 	errbuf[ERRMAX];
 ulong	nofunc;
 
-#include "/Users/npe/src/inferno64-branches/pr-bluetooth/9front-src/sys/src/libc/9syscall/sys.h"
+#include "sys/src/libc/9syscall/sys.h"
 
 char *sysctab[]={
 	[SYSR1]		"SYSR1",

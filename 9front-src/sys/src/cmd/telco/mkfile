@@ -7,5 +7,5 @@ BIN=$ROOT/9front/$objtype/bin
 <$ROOT/9front-src/sys/src/cmd/mkone
 
 install.rc:V:
-	cp telcodata telcofax /rc/bin/service
-	chmod +x /rc/bin/service/telcofax /rc/bin/service/telcodata
+	cp telcodata telcofax $ROOT/9front/rc/bin/service
+	chmod +x $ROOT/9front/rc/bin/service/telcofax $ROOT/9front/rc/bin/service/telcodata

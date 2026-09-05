@@ -29,7 +29,7 @@ clean:V:
 	rm -f [$OS].out *.[$OS] y.tab.? rc.*
 
 poot:V:	merge
-	merge /lib/font/bit/gb/*.7000.24 > /dev/null
+	merge $ROOT/9front/lib/font/bit/gb/*.7000.24 > /dev/null
 
 merge:	merge.c
 	$CC -w merge.c && vl -o merge merge.$O && rm merge.$O
@@ -41,7 +41,7 @@ fonts:V:	v.out rc.jis rc.big5
 rc.jis:VQD:
 	awk 'BEGIN {
 		fontsize = 512		# set this to chars/subfont
-		dest = "/lib/font/bit/jis"
+		dest = "$ROOT/9front/lib/font/bit/jis"
 		print "#!/bin/rc"
 		printf "v.out -s 0x3000 0x303f > %s/jis3000.16\n", dest
 		printf "v.out -s 0x30a1 0x30fe > %s/katakana.16\n", dest
@@ -60,7 +60,7 @@ rc.jis:VQD:
 rc.big5:VQD:
 	awk 'BEGIN {
 		fontsize = 512		# set this to chars/subfont
-		dest = "/lib/font/bit/big5"
+		dest = "$ROOT/9front/lib/font/bit/big5"
 		print "#!/bin/rc"
 		for(i = 19968; i < 40869; i += fontsize)
 			printf "v.out -5 -s 0x%x 0x%x > %s/%x.16\n", i, i+fontsize-1, dest, i
@@ -75,7 +75,7 @@ rc.gb:VQD:
 	z=$3
 	awk 'BEGIN {
 		fontsize = 512		# set this to chars/subfont
-		dest = "/lib/font/bit/gb/'$"x'."
+		dest = "$ROOT/9front/lib/font/bit/gb/'$"x'."
 		opt = "'$"y'"
 		sz = "'$"z'"
 		print "#!/bin/rc"

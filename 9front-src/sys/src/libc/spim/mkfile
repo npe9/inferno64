@@ -40,11 +40,11 @@ OFILES=\
 	${CFILES:%.c=%.$O}\
 
 MIPSS=`{echo $MIPSSFILES | sed 's/\.s//g; s/ /|/g'}
-^($MIPSS)\.$O:R:	'../mips/\1.s'
-	$AS $AFLAGS ../mips/$stem1.s
+^($MIPSS)\.$O:R:	'..$ROOT/9front/mips/\1.s'
+	$AS $AFLAGS ..$ROOT/9front/mips/$stem1.s
 
 MIPSC=`{echo $MIPSCFILES | sed 's/\.c//g; s/ /|/g'}
-^($MIPSC)\.$O:R:	'../mips/\1.c'
-	$CC $CFLAGS ../mips/$stem1.c
+^($MIPSC)\.$O:R:	'..$ROOT/9front/mips/\1.c'
+	$CC $CFLAGS ..$ROOT/9front/mips/$stem1.c
 
 <$ROOT/9front-src/sys/src/cmd/mksyslib

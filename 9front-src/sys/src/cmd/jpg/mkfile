@@ -30,7 +30,7 @@ LIB=
 BIN=$ROOT/9front/$objtype/bin
 
 <$ROOT/9front-src/sys/src/cmd/mkmany
-c=`{sed -n 's/^O=//p' $ROOT/9front-src/host/mkfile}
+c=`{sed -n 's/^O=//p' $ROOT/9front-src/$cputype/mkfile}
 
 $O.tga:		$IMFILES readtga.$O tga.$O
 $O.jpg:		$IMFILES readjpg.$O jpg.$O

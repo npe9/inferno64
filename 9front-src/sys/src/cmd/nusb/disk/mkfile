@@ -18,6 +18,6 @@ BIN=$ROOT/9front/$objtype/bin/nusb
 CFLAGS=-I../lib $CFLAGS
 CLEANFILES=scsierrs.c
 
-scsierrs.c: /sys/lib/scsicodes mkscsierrs
+scsierrs.c: $ROOT/9front/sys/lib/scsicodes mkscsierrs
 	./mkscsierrs >scsierrs.c
 

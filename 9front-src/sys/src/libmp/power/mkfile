@@ -1,5 +1,5 @@
 objtype=power
-</power/mkfile
+<$ROOT/9front-src/power/mkfile
 
 LIB=$ROOT/9front/$objtype/lib/libmp.a
 SFILES=\

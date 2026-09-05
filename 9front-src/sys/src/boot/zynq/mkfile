@@ -1,6 +1,6 @@
 objtype=arm
 <$ROOT/9front-src/$objtype/mkfile
-BIN=/arm
+BIN=$ROOT/9front/arm
 TARG=fsbl fsbl.img
 FSBLFILES=fsbl.$O ddr.$O main.$O mmc.$O net.$O div.$O qspi.$O
 TEXTBASE=0xfffc0000

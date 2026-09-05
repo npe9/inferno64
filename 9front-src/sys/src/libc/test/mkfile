@@ -11,8 +11,8 @@ TEST=\
 
 <$ROOT/9front-src/sys/src/cmd/mktest
 
-/lib/ucd/%:
+$ROOT/9front-src/lib/ucd/%:
 	cd /lib/ucd && mk $stem
 
-runebreak.test:	/lib/ucd/GraphemeBreakTest.txt /lib/ucd/WordBreakTest.txt
-runenorm.test: /lib/ucd/NormalizationTest.txt
+runebreak.test:	$ROOT/9front-src/lib/ucd/GraphemeBreakTest.txt $ROOT/9front-src/lib/ucd/WordBreakTest.txt
+runenorm.test: $ROOT/9front-src/lib/ucd/NormalizationTest.txt

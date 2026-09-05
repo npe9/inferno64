@@ -5,4 +5,4 @@
 # lib9 and libbio, the same way everything under utils/ is.
 : "${ROOT:?ROOT must be set}"
 host=$ROOT/$(/usr/bin/sed -n 's/^SYSHOST=\([^ 	]*\).*/\1/p' "$ROOT/mkconfig")/$(/usr/bin/sed -n 's/^OBJTYPE=\([^ 	]*\).*/\1/p' "$ROOT/mkconfig")
-exec cc -c -w -Wno-main -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -I"$ROOT/9front-src/host/include" -I"$host/include" -I"$ROOT/include" "$@"
+exec cc -c -w -Wno-main -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -I"$ROOT/9front-glue/host/include" -I"$host/include" -I"$ROOT/include" "$@"

@@ -6,8 +6,8 @@ SYSTEM=plan9
 VERSION=3.3.1
 
 ROOT=
-MAN1DIR=$ROOT/tmp
-POSTBIN=$ROOT/sys/lib/postscript/bin
+MAN1DIR=/tmp
+POSTBIN=$ROOT/9front/sys/lib/postscript/bin
 
 COMMONDIR=../common
 

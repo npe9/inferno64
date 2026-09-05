@@ -1,4 +1,4 @@
-#!/bin/awk -f
+#!/usr/bin/awk -f
 # makes a table of character sets from http://www.iana.org/assignments/character-sets/character-sets.xml
 # and tcs.txt
 

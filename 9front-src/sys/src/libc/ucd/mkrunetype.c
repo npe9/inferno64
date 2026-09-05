@@ -491,7 +491,7 @@ markbreak(void)
 	int i, s, e;
 	uchar v;
 
-	ob = b = slurp("/Users/npe/src/inferno64-branches/pr-bluetooth/9front-src/lib/ucd/WordBreakProperty.txt");
+	ob = b = slurp("../../../../lib/ucd/WordBreakProperty.txt");
 	while((dot = getextraline(&b, &s, &e)) != nil){
 		v = 0;
 		if(strstr(dot, "ExtendNumLet") != nil)
@@ -520,7 +520,7 @@ markbreak(void)
 			mybreak[i] = v;
 	}
 	free(ob);
-	ob = b = slurp("/Users/npe/src/inferno64-branches/pr-bluetooth/9front-src/lib/ucd/GraphemeBreakProperty.txt");
+	ob = b = slurp("../../../../lib/ucd/GraphemeBreakProperty.txt");
 	while((dot = getextraline(&b, &s, &e)) != nil){
 		v = 0;
 		if(strstr(dot, "; Prepend #") != nil)
@@ -547,7 +547,7 @@ markbreak(void)
 			mybreak[i] |= v;
 	}
 	free(ob);
-	ob = b = slurp("/Users/npe/src/inferno64-branches/pr-bluetooth/9front-src/lib/ucd/emoji-data.txt");
+	ob = b = slurp("../../../../lib/ucd/emoji-data.txt");
 	while((dot = getextraline(&b, &s, &e)) != nil){
 		v = 0;
 		if(strstr(dot, "; Extended_Pictographic") != nil)
@@ -556,7 +556,7 @@ markbreak(void)
 			mybreak[i] |= v;
 	}
 	free(ob);
-	ob = b = slurp("/Users/npe/src/inferno64-branches/pr-bluetooth/9front-src/lib/ucd/DerivedNormalizationProps.txt");
+	ob = b = slurp("../../../../lib/ucd/DerivedNormalizationProps.txt");
 	while((dot = getextraline(&b, &s, &e)) != nil){
 		v = 0;
 		if(strstr(dot, "; NFC_QC; N") != nil)
@@ -582,7 +582,7 @@ markexclusions(void)
 	int i;
 	uint x;
 
-	ob = b = slurp("/Users/npe/src/inferno64-branches/pr-bluetooth/9front-src/lib/ucd/CompositionExclusions.txt");
+	ob = b = slurp("../../../../lib/ucd/CompositionExclusions.txt");
 	while(p = nextln(&b)){
 		if(p[0] == 0 || p[0] == '#')
 			continue;
@@ -611,7 +611,7 @@ findlongchain(void)
 	int i, n, x, r1;
 
 	for(i = 0; i < NRUNES; i++)
-	for(x = i, n = 0; r1 = mydecomp[x]>>16; x = r1){
+	for(x = i, n = 0; r1 = (uint)mydecomp[x]>>16; x = r1){
 		if(++n > maxdchain)
 			maxdchain = n;
 		if(r1 >= DSTART && r1 <0xF8FF)
@@ -635,7 +635,7 @@ main(int argc, char **argv)
 	int i, code, last;
 	int decomp[2], *ip;
 
-	oin = in = slurp("/Users/npe/src/inferno64-branches/pr-bluetooth/9front-src/lib/ucd/UnicodeData.txt");
+	oin = in = slurp("../../../../lib/ucd/UnicodeData.txt");
 	for(i = 0; i < NRUNES; i++){
 		mytoupper[i] = -1;
 		mytolower[i] = -1;

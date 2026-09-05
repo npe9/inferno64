@@ -1,0 +1,29 @@
+#
+# The settings a mkfile picks up when it needs a tool that runs on the
+# *build* machine rather than on 9front.  A mkfile asks for them with
+#
+#	eval `{grep '^[A-Z]' $ROOT/9front-glue/host/mkfile}
+#
+# On a 9front machine the build host and the target are the same
+# machine and that grep reads /$cputype/mkfile.  Here they are not:
+# 6c makes amd64 9front objects, and a generator like libc/ucd's
+# mkrunetype has to run on the host doing the building.
+# scripts/import-9front.sh points that grep at this file, which names
+# a host compiler that understands Plan 9 C -- plan9port's, already
+# required for rc.
+#
+# Only the names a host tool needs are set: CC, LD, O and the flags.
+# Nothing here is used to build anything that runs on 9front.
+#
+
+# Every line here that starts with a capital is eval'd by the mkfile
+# that greps this file, so none of them may have an empty value: rc
+# parses "B= C=3" as B being set to the list (C=3), and a 9front
+# machine never hits it because its own /$cputype/mkfile has no empty
+# assignment either.  Where a flag is not wanted, give one that does
+# nothing rather than nothing at all.
+CC=$ROOT/9front-glue/host/hostcc
+LD=$ROOT/9front-glue/host/hostld
+O=o
+CFLAGS=-w
+LDFLAGS=-w

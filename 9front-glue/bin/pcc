@@ -1,0 +1,101 @@
+#!/bin/sh
+#
+# pcc -- the APE compiler driver, for a build machine that is not
+# 9front.
+#
+# APE is 9front's ANSI/POSIX environment: a second set of headers and
+# a second libc, which a dozen commands (compress, the troff
+# preprocessors, spin) are written against.  Their mkfiles set CC=pcc
+# and LD=pcc, and 9front's pcc is a program that runs on 9front -- it
+# is built by this tree for amd64 and this machine cannot execute it.
+# So the driver is here instead, in the shell, doing what
+# sys/src/cmd/pcc.c does:
+#
+#	compiling	cpp -D__STDC__=1 -N -I<ape includes> | $CC
+#	linking		$LD ... $ROOT/9front/$objtype/lib/ape/libap.a
+#
+# with one difference.  9front's pcc pipes every source through the
+# standalone cpp; this uses the compiler's own preprocessor, which is
+# the same one 6c uses for everything else in the tree.  If an APE
+# source turns out to need what cpp does and 6c's does not, that is
+# where to look first.
+#
+# ROOT and objtype must be set; scripts/mk9front.sh sets both.
+
+set -eu
+: "${ROOT:?ROOT must be set}"
+: "${objtype:=amd64}"
+
+case $objtype in
+spim)	cc=0c; ld=0l; o=0;;
+68000)	cc=1c; ld=1l; o=1;;
+68020)	cc=2c; ld=2l; o=2;;
+arm)	cc=5c; ld=5l; o=5;;
+amd64)	cc=6c; ld=6l; o=6;;
+arm64)	cc=7c; ld=7l; o=7;;
+386)	cc=8c; ld=8l; o=8;;
+power64) cc=9c; ld=9l; o=9;;
+sparc)	cc=kc; ld=kl; o=k;;
+power)	cc=qc; ld=ql; o=q;;
+mips)	cc=vc; ld=vl; o=v;;
+*)	echo "pcc: no compiler for objtype $objtype" >&2; exit 1;;
+esac
+
+ape="-I$ROOT/9front-src/$objtype/include/ape -I$ROOT/9front-src/sys/include/ape"
+
+cflag=
+oname=$o.out
+oflag=
+ccargs=
+ldargs=
+srcs=
+objs=
+
+while [ $# -gt 0 ]; do
+	a=$1
+	case $a in
+	-c)	cflag=1;;
+	-o)	shift; oflag=1; oname=$1;;
+	-o*)	oflag=1; oname=${a#-o};;
+	-l)	shift; objs="$objs $ROOT/9front/$objtype/lib/ape/lib$1.a";;
+	-l*)	objs="$objs $ROOT/9front/$objtype/lib/ape/lib${a#-l}.a";;
+	-[IDU]) shift; ccargs="$ccargs $a$1";;
+	-[IDU]*) ccargs="$ccargs $a";;
+	-[wBFNSTV]) ccargs="$ccargs $a";;
+	-s*)	ccargs="$ccargs $a";;
+	-p)	ldargs="$ldargs -p";;
+	-v)	ldargs="$ldargs -v";;
+	-a|-aa)	ccargs="$ccargs $a"; cflag=1;;
+	-*)	echo "pcc: flag $a ignored" >&2;;
+	*.c)	srcs="$srcs $a"; objs="$objs ${a%.c}.$o";;
+	*.a|*.$o|*.a$o|*.o)
+		objs="$objs $a";;
+	*)	echo "pcc: argument $a ignored" >&2;;
+	esac
+	shift
+done
+
+if [ -z "$objs" ]; then
+	echo "pcc: no files to compile or load" >&2
+	exit 1
+fi
+
+for s in $srcs; do
+	if [ -n "$cflag" ] && [ -n "$oflag" ]; then
+		out=$oname
+	else
+		out=$(basename "${s%.c}").$o
+	fi
+	# shellcheck disable=SC2086
+	$cc -D__STDC__=1 $ape $ccargs -o "$out" "$s"
+done
+
+if [ -z "$cflag" ]; then
+	# shellcheck disable=SC2086
+	$ld -o "$oname" $ldargs $objs "$ROOT/9front/$objtype/lib/ape/libap.a"
+	case "$objs" in
+	*' '*)	;;
+	*.a)	;;
+	*)	rm -f $objs;;
+	esac
+fi

@@ -1,1 +1,1 @@
-BIN=/$objtype/bin/audio
+BIN=$ROOT/9front/$objtype/bin/audio

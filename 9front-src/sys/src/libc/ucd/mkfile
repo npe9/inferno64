@@ -35,7 +35,7 @@ UCD=\
 
 $DATA:	$UCD
 	@{
-		eval `{grep '^[A-Z]' $ROOT/9front-src/host/mkfile}
+		eval `{grep '^[A-Z]' $ROOT/9front-src/$cputype/mkfile}
 		$CC $CFLAGS -o mkrunetype.$O mkrunetype.c
 		$LD $LDFLAGS -o $O.mkrunetype mkrunetype.$O
 		./$O.mkrunetype

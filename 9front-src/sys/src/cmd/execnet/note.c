@@ -3,7 +3,7 @@
 #include <u.h>
 #include <libc.h>
 #include <thread.h>
-#include "/Users/npe/src/inferno64-branches/pr-bluetooth/9front-src/sys/src/libthread/threadimpl.h"
+#include "sys/src/libthread/threadimpl.h"
 
 int	_threadnopasser;
 

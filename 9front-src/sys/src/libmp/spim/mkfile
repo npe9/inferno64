@@ -13,7 +13,7 @@ HFILES=$ROOT/9front-src/$objtype/include/u.h $ROOT/9front-src/sys/include/mp.h .
 
 OFILES=${SFILES:%.s=%.$O}
 
-%.$O:	../mips/%.s
-	$AS -I../mips $AFLAGS ../mips/$stem.s
+%.$O:	..$ROOT/9front/mips/%.s
+	$AS -I../mips $AFLAGS ..$ROOT/9front/mips/$stem.s
 
 <$ROOT/9front-src/sys/src/cmd/mksyslib

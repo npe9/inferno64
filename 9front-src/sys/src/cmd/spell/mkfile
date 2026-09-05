@@ -8,12 +8,12 @@ HFILES =\
 
 BIN=$ROOT/9front/$objtype/bin/aux
 <$ROOT/9front-src/sys/src/cmd/mkone
-cpuobjtype=`{sed -n 's/^O=//p' $ROOT/9front-src/host/mkfile}
+cpuobjtype=`{sed -n 's/^O=//p' $ROOT/9front-src/$cputype/mkfile}
 
 all:V:	lib 
 
 lib:	amspell brspell
-	for (i in $prereq) cp $i /sys/lib/$i
+	for (i in $prereq) cp $i $ROOT/9front/sys/lib/$i
 
 brspell: $cpuobjtype.pcode  list british local stop
 	./$cpuobjtype.pcode list british local stop >$target
@@ -30,7 +30,7 @@ pcode.$cputype:	pcode.$O $HFILES
 
 installall:V:
 	for(objtype in $CPUS) mk install
-	cp spell.rc /rc/bin/spell
+	cp spell.rc $ROOT/9front/rc/bin/spell
 	mk lib
 
 nuke:V:

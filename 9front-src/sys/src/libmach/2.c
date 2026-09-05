@@ -2,7 +2,7 @@
  * 68020 definition
  */
 #include <u.h>
-#include "/Users/npe/src/inferno64-branches/pr-bluetooth/9front-src/68020/include/ureg.h"
+#include "68020/include/ureg.h"
 #include <libc.h>
 #include <bio.h>
 #include <mach.h>

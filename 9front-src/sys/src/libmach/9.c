@@ -5,7 +5,7 @@
 #include <u.h>
 #include <libc.h>
 #include <bio.h>
-#include "/Users/npe/src/inferno64-branches/pr-bluetooth/9front-src/power64/include/ureg.h"
+#include "power64/include/ureg.h"
 #include <mach.h>
 
 

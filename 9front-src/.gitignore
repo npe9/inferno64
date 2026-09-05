@@ -1,0 +1,3 @@
+# written by scripts/import-9front.sh; see the note there
+!sys/src/cmd/awk/test/*
+!sys/src/cmd/test/patch/*.patch

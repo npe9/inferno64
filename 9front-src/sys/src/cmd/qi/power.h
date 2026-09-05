@@ -8,7 +8,7 @@
  *	unions of double & vlong have no padding
  *	vlongs provide at least 64 bits precision
  */
-#include "/power/include/ureg.h"
+#include "power/include/ureg.h"
 #define	USERADDR	0xC0000000
 #define	UREGADDR	(USERADDR+BY2PG-4-0xA0)
 #define USER_REG(x)	(UREGADDR+(ulong)(x))

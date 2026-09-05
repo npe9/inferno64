@@ -12,7 +12,7 @@ BIN=$ROOT/9front/$objtype/bin
 	lp -m.9 -dstdout >$target
 
 %.pdf:DQ: %.ps
-	cat /sys/doc/docfonts $stem.ps >_$stem.ps
+	cat $ROOT/9front/sys/doc/docfonts $stem.ps >_$stem.ps
 	ps2pdf _$stem.ps $stem.pdf && rm -f _$stem.ps
 
 <$ROOT/9front-src/sys/src/cmd/mkone

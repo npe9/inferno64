@@ -9,7 +9,7 @@
 #include <thread.h>
 #include <9p.h>
 
-#include "/Users/npe/src/inferno64-branches/pr-bluetooth/9front-src/386/include/ureg.h"
+#include "386/include/ureg.h"
 
 enum {
 	MEMSIZE = 0x100000,
