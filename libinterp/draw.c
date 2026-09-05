@@ -219,15 +219,12 @@ lookupimage(Draw_Image *di)
 	i = ((DImage*)di)->image;
 	if(i == nil)
 		return nil;
-	{
-		Rectangle dclipr = IRECT(di->clipr);
-		if(!eqrect(dclipr, i->clipr) || di->repl!=i->repl){
-			disp = i->display;
-			locked = lockdisplay(disp);
-			replclipr(i, di->repl, dclipr);
-			if(locked)
-				unlockdisplay(disp);
-		}
+	if(!eqrect(IRECT(di->clipr), i->clipr) || di->repl!=i->repl){
+		disp = i->display;
+		locked = lockdisplay(disp);
+		replclipr(i, di->repl, IRECT(di->clipr));
+		if(locked)
+			unlockdisplay(disp);
 	}
 	return i;
 }
@@ -596,11 +593,7 @@ imagedraw(void *fp, int op)
 		return;
 	}
 	locked = lockdisplay(d->display);
-	{
-		Rectangle _r = IRECT(f->r);
-		Point _p = IPOINT(f->p);
-		drawop(d, _r, s, m, _p, op);
-	}
+	drawop(d, IRECT(f->r), s, m, IPOINT(f->p), op);
 	checkflush(f->dst);
 	if(locked)
 		unlockdisplay(d->display);

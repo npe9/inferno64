@@ -658,6 +658,22 @@ lcgen(Node *n, Node *nn)
 			diag(n, "unknown op in lcgen: %O", n->op);
 			break;
 		}
+		if(n->op == OINDREG && n->reg == REGSP) {
+			/*
+			 * Address of a stack slot.  A plain MOV $off(REGSP),reg
+			 * drops the SP base: REGSP==REGZERO==31, so the operand
+			 * classifies as the bare constant off (see 7l span.c
+			 * aclass).  Emit an ADD instead -- for ADD/SUB, register
+			 * 31 reads as SP -- so the address is SP+off, not off.
+			 */
+			Node nsp, *nc;
+			nodreg(&nsp, n, REGSP);
+			nsp.type = types[TIND];
+			nc = nodconst(n->xoffset);
+			nc->type = types[TIND];
+			gopcode(OADD, nc, &nsp, nn);
+			break;
+		}
 		nod = *n;
 		nod.op = OADDR;
 		nod.left = n;
