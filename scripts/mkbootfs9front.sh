@@ -25,6 +25,12 @@
 # toolchain compiled.  Run scripts/mkroot9front.sh first: the proto
 # names rc scripts and keyboard maps that no compiler produces.
 #
+# The archive is written where the kernel mkfile takes it from,
+# which is os/9front/boot rather than the configuration's own
+# directory: bootmkfile has a rule copying it across, and writing
+# only the copy would leave the next mk restoring the old one over
+# it.
+#
 # Usage: scripts/mkbootfs9front.sh [-o objtype] [kernel-directory]
 # Default kernel directory: os/9front/pc64.
 
@@ -73,12 +79,15 @@ for p in ../boot/*.proto; do
 	fi
 done
 
+out=$ROOT/os/9front/boot/$conf.bootfs.paq
+
 echo "protos: $protos"
 rm -rf "$conf.bootfs"
 # shellcheck disable=SC2086
 "$bin/mkbootfs" -d "$conf.bootfs" -s "$ROOT/9front" $protos
 n=$(find "$conf.bootfs" -type f | wc -l | tr -d ' ')
-"$bin/mkpaqfs" -9 -b 65536 -o "$conf.bootfs.paq" "$conf.bootfs"
+"$bin/mkpaqfs" -9 -b 65536 -o "$out" "$conf.bootfs"
 rm -rf "$conf.bootfs"
+rm -f "$conf.bootfs.paq"
 
-echo "$conf.bootfs.paq: $n files, $(wc -c < "$conf.bootfs.paq" | tr -d ' ') bytes"
+echo "$out: $n files, $(wc -c < "$out" | tr -d ' ') bytes"

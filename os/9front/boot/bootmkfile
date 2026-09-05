@@ -12,8 +12,12 @@ bootsys.$O:	$BOOTDIR/bootsys.s
 boot:	boot.$O bootlib.$O bootsys.$O $ROOT/Inferno/$OBJTYPE/lib/libkern.a
 	$LD -l -o $target $prereq
 
-# The boot filesystem is an architecture-independent build input.  Keeping it
-# with the 9front portable boot sources lets hosted Inferno builds avoid a
-# dependency on 9front's disk/mkfs and mkpaqfs host commands.
+# The boot filesystem is an architecture-independent build input, kept
+# here with the portable boot sources rather than in each
+# configuration's directory.  It used to be here because there was no
+# way to make one: it wants 9front's disk/mkfs and mkpaqfs, which are
+# 9front commands.  There is now -- scripts/mkbootfs9front.sh, over
+# host builds of mkpaqfs and of the part of disk/mkfs a boot file
+# system needs -- and this is the file it writes.
 $CONF.bootfs.paq bootfs.paq:D:	$BOOTDIR/$CONF.bootfs.paq
 	cp $prereq $target

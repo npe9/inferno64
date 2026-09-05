@@ -53,7 +53,32 @@ doswit(Node *n)
 		if(isv)
 			q->val = c->val;
 		else
-			q->val = (long)c->val;	/* cast ensures correct value for 32-bit switch on 64-bit architecture */
+			/*
+			 * A 32-bit switch is compared with a 32-bit
+			 * instruction, so a case value is truncated
+			 * to 32 bits here -- and the truncation has
+			 * to be signed, because swit1 builds a binary
+			 * search over these values in the order they
+			 * sort and emits a signed comparison (OGT,
+			 * which is JGT) to walk it.  The two must
+			 * agree or the search goes down the wrong
+			 * side.
+			 *
+			 * It says int and not long.  This is 9front's
+			 * line and on 9front long is 32 bits, so it
+			 * truncates; this compiler is built by the
+			 * host's cc, where long is 64 bits and the
+			 * cast does nothing.  The values then sorted
+			 * unsigned while the branch compared signed,
+			 * and every switch whose cases straddle
+			 * 0x80000000 went to the wrong half.  libc's
+			 * pool allocator is one: blockcheck switches
+			 * on a ulong magic whose cases run from
+			 * 0x0A110C09 to 0xEC5E1A0D, so an allocated
+			 * block was reported as "bad magic" and
+			 * paqfs died in the middle of a 9front boot.
+			 */
+			q->val = (int)c->val;
 		q++;
 	}
 	qsort(iq, nc, sizeof(C1), swcmp);
@@ -105,7 +130,7 @@ doswit(Node *n)
 		for(j = i; j < nc; j++){
 			if((iq[j].val>>32) != iqh[nh].val)
 				break;
-			q->val = (long)iq[j].val;
+			q->val = (int)iq[j].val;	/* see above */
 			q->label = iq[j].label;
 			q++;
 		}

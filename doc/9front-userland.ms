@@ -512,6 +512,58 @@ in
 .CW lib9
 runs it.
 .IP \(bu
+.CW utils/cc 's
+.CW doswit
+truncates a case value to 32 bits for a 32-bit switch, and the line
+that does it is
+.EX
+	q->val = (long)c->val;	/* cast ensures correct value
+				   for 32-bit switch on 64-bit
+				   architecture */
+.EE
+which is 9front's own line and correct there, because on 9front
+.CW long
+is 32 bits.  This compiler is built by the host's cc, where
+.CW long
+is 64 bits and the cast does nothing at all.
+.PP
+That matters because the truncation has to be signed.
+.CW swit1
+sorts the case values, builds a binary search over them, and walks it
+with
+.CW OGT ,
+which is
+.CW JGT :
+a signed comparison.  With the cast doing nothing the values sorted
+unsigned and the branch compared signed, so any switch whose cases
+straddle
+.CW 0x80000000
+went down the wrong half of the tree and fell through to
+.CW default .
+.PP
+libc's pool allocator is such a switch.
+.CW blockcheck
+switches on a
+.CW ulong
+magic whose cases run from
+.CW 0x0A110C09
+to
+.CW 0xEC5E1A0D ,
+so a correctly allocated block was reported as
+.CW "bad magic" ,
+the allocator panicked, and
+.CW paqfs
+died in the middle of a 9front boot with the kernel's own boot file
+system in its hands.  Found by reading the generated code:
+.CW "6c -K -S"
+prints the case tree it built and the assembly beside it, and the
+tree was in one order and the comparison in the other.  With
+.CW int
+in place of
+.CW long
+the cases sort signed, the pivot lands where the branch expects it,
+and paqfs mounts the boot file system.
+.IP \(bu
 Not a tool but the driver:
 .CW scripts/mk9front.sh
 makes the target directories a 9front machine already has by grepping
@@ -948,10 +1000,73 @@ and also
 and the font and keyboard directories, which is where the mkfiles put
 runtime data.  So the tree fills itself in as more of it builds.
 .PP
-What is left, in order: the runtime data the import deliberately
-leaves behind \(em fonts, ndb, the troff tables \(em which a deployed
-root needs and no compiler produces; then an image.  The pieces for
-the last part are here \(em
+.PP
+.CW scripts/mkroot9front.sh
+fills the rest of it in: the rc scripts from the imported tree, and
+from an upstream checkout the runtime data the import deliberately
+leaves behind \(em fonts, ndb, the troff and postscript tables,
+keyboard maps \(em plus the dist skeleton and the kernel.  The copy
+is no-clobber and runs after the build, so nothing generated is
+replaced by upstream's copy of it.  Eight and a half thousand files,
+223 MB.
+.PP
+.CW scripts/mkbootfs9front.sh
+then builds the kernel's own boot file system out of what this
+toolchain compiled.  A 9front kernel carries a small file system
+inside it \(em paqfs and factotum as separate images, and a paq
+archive holding the dozen programs the boot needs before there is a
+real root \(em and which programs go in it is named by proto files
+under
+.CW os/9front/boot .
+The script picks them by the rule in 9front's own
+.CW sys/src/9/boot/bootmkfile ,
+which for pc64 comes to
+.CW bootfs.proto
+and
+.CW disk.proto ,
+83 files.  Two more host tools do the work:
+.CW mkpaqfs ,
+9front's own source built against this tree's libflate and libsec,
+and
+.CW mkbootfs ,
+ours, which is the part of
+.I "disk/mkfs"
+a boot file system needs written over 9front's own proto reader.  The
+archive it writes replaces one that had been checked in since before
+there was any way to make one.
+.PP
+With that the kernel boots.
+.CW paqfs
+mounts the archive and prints its label and fingerprint,
+.CW bootrc
+runs, the SATA disk is found and its file server started, and the
+boot reaches
+.EX
+	pc64.bootfs: Sat Sep  5 06:06:20 GMT 2026
+	fingerprint: e83ac22cb5a5f75f023384a5bee70a4c79555891
+	boot: paqfs done
+	boot: bootrc
+	sdE0: LLBA 7,720,960 sectors
+	  QEMU HARDDISK 2.5+ QM00005 [newdrive]
+	user[glenda]:
+.EE
+\(em the login prompt, with every program that ran to get there
+compiled by this tree.  The disk is
+.CW .qemu/9front-root.qcow2 ,
+an existing 9front installation, so what is proved is the kernel, the
+boot file system and the programs in it, not a root this tree
+produced; a root of our own wants an image, which is the next thing.
+.PP
+Getting there took one more discovery, and it is a warning as much as
+a finding:
+.I mk
+compares source times, so when only the compiler changes nothing
+recompiles.  A whole "rebuild" after the switch fix produced a
+userland still carrying the old code, and the boot failed exactly as
+before \(em byte for byte, which is what made it look like the fix
+had done nothing.  The objects have to be deleted by hand.
+.PP
+What is left: an image of our own.  The pieces for it are here \(em
 .CW .qemu/9front-root.qcow2
 is a full 9front installation the tests boot, and
 .CW scripts/mkosprey-efi-iso.sh
