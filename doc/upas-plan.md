@@ -86,20 +86,25 @@ priority; 4-6 are the MTA/server side.
   control (`x` must not flush). Still to do in M2: reply/forward (r/R/a/m/M),
   the pipe/shell escapes (|, ||, !), and filing (f).
 
-  **Hosted-emu sub-command finding (precise):** a spawned child that *reads its
-  stdin* corrupts the parent's own stdin - after it runs, the parent's next
-  read returns EOF - and FORKFD does **not** isolate this (fd0's underlying
-  Chan is shared; even dup'ing another file onto the child's fd0 doesn't save
-  the parent). A child that does *not* read stdin (e.g. `echo`, or `upas/send`
-  given a message **file** argument rather than stdin) leaves the parent
-  intact. So:
-    - reply/forward and marshal are NOT blocked: run `upas/send`/`marshal` with
-      the draft as a file argument, never piped on stdin.
-    - the pipe escapes `|`/`||` (which by definition feed a filter on stdin)
-      are the one casualty; deferred as a hosted-emu limitation, works on
-      native Inferno where fd groups isolate properly. `!cmd` is fine for
-      commands that don't read stdin.
-  This is a hosted-`emu` fd-group limitation, not a upas bug.
+  **Hosted-emu sub-command finding (corrected, verified with a discriminating
+  test):** the earlier "reading stdin corrupts the parent" theory was WRONG. A
+  spawned child that only reads a file on its fd0 leaves the parent intact; what
+  kills the parent is the child command **terminating via the Dis `exit`
+  statement** (or an uncaught `raise`) - it takes the parent (proc group) down
+  with it. So the split is by how a command's `init` ENDS:
+    - commands whose `init` returns cleanly are safe to `spawn`+`load`+`init`
+      and wait on: `echo`, `upas/fs` (nedmail already starts it this way), and
+      crucially **`upas/send`**, which only `raise`s on error and returns
+      normally on success (verified: spawning `upas/send -N` composes and the
+      parent survives).
+    - commands whose `init` calls `exit` (`wc`, `sh`, most CLI filters) kill the
+      parent. Wrap the child's `init` call in an exception handler to contain a
+      `raise`; nothing in-process contains an `exit`.
+  Consequence: reply/forward and marshal are NOT blocked - they drive
+  `upas/send` (clean-returning) with the draft as a file argument. The pipe
+  escapes `|`/`||`, which feed the message to an arbitrary filter that almost
+  always ends in `exit`, are the casualty; deferred as a hosted-emu limitation
+  (works on native Inferno). This is a hosted-`emu` limitation, not a upas bug.
 
 ## Testing
 

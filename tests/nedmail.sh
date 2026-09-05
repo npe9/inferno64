@@ -66,4 +66,37 @@ else
 	fail "x exited but the message was removed anyway (flush happened without q)"
 fi
 
-echo "NEDMAIL: PASS - reader lists/searches/prints, and delete flushes through /mail/fs/ctl only on q"
+# --- reply composition (no SMTP config -> compose-only, shows the draft) ---
+makembox "$work/rep.mbox"
+cat > "$work/rep.sh" <<'EOS'
+#!/dis/sh
+upas/nedmail -f /.nedmailtmp/rep.mbox
+EOS
+cp "$work/rep.sh" "$root/nedrep.sh"
+# reply-with-quote to message 2 (Bob/second), plus an extra recipient
+rout=$(printf '2\nR extra@x\nthanks Bob\n.\nq\n' | timeout 40 "$emu" -r"$root" sh /nedrep.sh 2>&1) || true
+rm -f "$root/nedrep.sh"
+echo "===== reply =====" ; echo "$rout"
+echo "$rout" | grep -q 'Subject: Re: second' || fail "reply subject not 'Re: second'"
+echo "$rout" | grep -q 'extra@x' || fail "reply did not include the extra recipient"
+echo "$rout" | grep -q 'thanks Bob' || fail "reply body missing"
+echo "$rout" | grep -q '> body two' || fail "reply did not quote the original body"
+echo "NEDMAIL: reply composes (To/Subject Re:/typed body/quoted original): PASS"
+
+# --- forward composition ---
+makembox "$work/fwd.mbox"
+cat > "$work/fwd.sh" <<'EOS'
+#!/dis/sh
+upas/nedmail -f /.nedmailtmp/fwd.mbox
+EOS
+cp "$work/fwd.sh" "$root/nedfwd.sh"
+fout=$(printf '3\nm friend@x\nq\n' | timeout 40 "$emu" -r"$root" sh /nedfwd.sh 2>&1) || true
+rm -f "$root/nedfwd.sh"
+echo "===== forward =====" ; echo "$fout"
+echo "$fout" | grep -q 'To: friend@x' || fail "forward recipient missing"
+echo "$fout" | grep -q 'Subject: Fwd: third' || fail "forward subject not 'Fwd: third'"
+echo "$fout" | grep -q 'forwarded message' || fail "forward marker missing"
+echo "$fout" | grep -q 'body three' || fail "forwarded body missing"
+echo "NEDMAIL: forward composes (To/Subject Fwd:/original body): PASS"
+
+echo "NEDMAIL: PASS - reader lists/searches/prints, deletes flush through ctl only on q, reply/forward compose through upas/send"

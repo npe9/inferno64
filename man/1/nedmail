@@ -9,6 +9,9 @@ nedmail \- reading mail
 ] [
 .B -m
 .I name
+] [
+.B -c
+.I smtpconfig
 ]
 .SH DESCRIPTION
 .I Nedmail
@@ -35,6 +38,12 @@ on it first.
 .B -m
 selects the mailbox name to read (default
 .BR mbox ).
+.B -c
+names the SMTP configuration file used by reply and forward (default
+.BR /mail/lib/smtp );
+see
+.B Sending
+below.
 .PP
 At the prompt, which shows the current message number, a line is
 .IB address command " " args
@@ -116,8 +125,40 @@ quit, deleting the marked messages from the mailbox
 .B x
 quit without deleting anything
 .TP
+.BR r ", " R " [" \fIaddr\fP ]
+reply to the sender (and any extra
+.IR addr );
+.B R
+also quotes the original.
+The reply body is typed at the prompt and ended with a line containing only
+.BR . .
+.TP
+.BR a ", " A " [" \fIaddr\fP ]
+reply to the sender and all original recipients;
+.B A
+quotes the original.
+.TP
+.BR m ", " M " " \fIaddr\fP ...
+forward the message to
+.IR addr ;
+.B M
+first reads a covering note (ended with
+.BR . ).
+.TP
 .B help
 print a command summary
+.SS Sending
+Reply and forward compose a message and hand it to
+.IR upas-send (1)
+over TLS. The server and credentials come from the SMTP configuration file
+.RB ( -c ,
+default
+.BR /mail/lib/smtp ),
+one
+.I "key value"
+per line, keys
+.BR server ", " ip ", " port ", " user ", " passfile " and " from .
+With no configuration file the message is composed and shown but not sent.
 .SH EXAMPLE
 Read an mbox, delete the second message, and quit:
 .EX
@@ -138,19 +179,18 @@ Read an mbox, delete the second message, and quit:
 .IR upas-fetch (1),
 .IR upas-send (1)
 .SH BUGS
-This is the reader core. Reply and forward
-.RB ( r ,
-.BR R ,
-.BR a ,
-.BR m ,
-.BR M ),
-the pipe and shell escapes
+The pipe and shell escapes
 .RB ( \(ba ,
 .BR \(ba\(ba ,
 .BR ! )
 and message filing
 .RB ( f )
-are not yet implemented; they await the
-.I marshal
-milestone (see
-.BR doc/upas-plan.md ).
+are not implemented: in the hosted
+.I emu
+a spawned filter that ends with the
+.I exit
+instruction takes the reader down with it, so piping a message to an
+arbitrary command is unsafe there (it works on native Inferno). See
+.BR doc/upas-plan.md .
+Reply reads its body from the command stream, so it is not a full-screen
+editor; there is no address-book alias expansion yet.

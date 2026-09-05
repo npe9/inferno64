@@ -51,10 +51,21 @@ Message: adt {
 
 FSROOT:	con "/mail/fs";
 stdout: ref Iobuf;
+cmdin: ref Iobuf;		# where reader commands (and reply bodies) come from
 mbname := "mbox";
 mbox: array of ref Message;
 cur := 0;			# index into mbox
 startedfs := 0;
+
+# outbound SMTP configuration for reply/forward, read from a config file
+# (default /mail/lib/smtp, or -c). Absent config => compose-only (no send).
+smtpconf := "/mail/lib/smtp";
+cf_server := "";
+cf_ip := "";
+cf_port := "";
+cf_user := "";
+cf_passfile := "";
+cf_from := "";
 
 init(nil: ref Draw->Context, argv: list of string)
 {
@@ -72,9 +83,11 @@ init(nil: ref Draw->Context, argv: list of string)
 		case opt {
 		"-f" =>	if(argv == nil) usage(); file = hd argv; argv = tl argv;
 		"-m" =>	if(argv == nil) usage(); mbname = hd argv; argv = tl argv;
+		"-c" =>	if(argv == nil) usage(); smtpconf = hd argv; argv = tl argv;
 		* =>	usage();
 		}
 	}
+	loadconfig();
 
 	# make sure upas/fs is serving /mail/fs.
 	(ok, nil) := sys->stat(FSROOT + "/ctl");
@@ -89,14 +102,14 @@ init(nil: ref Draw->Context, argv: list of string)
 	cur = 0;
 	stdout.flush();
 
-	cin := bufio->fopen(sys->fildes(0), Bufio->OREAD);
+	cmdin = bufio->fopen(sys->fildes(0), Bufio->OREAD);
 	for(;;){
 		prompt := ": ";
 		if(len mbox > 0 && cur < len mbox)
 			prompt = sys->sprint("%d: ", mbox[cur].num);
 		stdout.puts(prompt);
 		stdout.flush();
-		line := cin.gets('\n');
+		line := cmdin.gets('\n');
 		if(line == nil){		# EOF: flush deletes and go
 			quit(1);
 			break;
@@ -159,6 +172,10 @@ docmd(line: string): int
 	"=" =>	stdout.puts(sys->sprint("%d\n", mbox[target].num));
 	"w" =>	cur = target; savecmd(cur, args, 0);
 	"s" =>	cur = target; savecmd(cur, args, 1);
+	"r" or "R" or "a" or "A" =>
+		cur = target; replycmd(cur, cmd, args);
+	"m" or "M" =>
+		cur = target; forwardcmd(cur, cmd, args);
 	"y" or "i" =>
 		resync();
 	"q" =>	quit(1); return -1;
@@ -467,6 +484,279 @@ quit(flush: int)
 	stdout.flush();
 	if(startedfs)
 		sys->unmount(nil, FSROOT);
+}
+
+# ---- reply / forward (deliver through upas/send) ----
+
+# read a message body from the command stream up to a line containing just ".".
+readbody(): array of byte
+{
+	s := "";
+	for(;;){
+		l := cmdin.gets('\n');
+		if(l == nil)
+			break;
+		if(l == ".\n" || l == ".")
+			break;
+		s += l;
+	}
+	return array of byte s;
+}
+
+replycmd(i: int, kind, args: string)
+{
+	m := mbox[i];
+	# recipients: r/R -> reply-to (or from); a/A -> from plus original to+cc
+	rcpts: list of string;
+	dst := m.replyto;
+	if(dst == "")
+		dst = m.from;
+	rcpts = addrs(dst);
+	if(kind == "a" || kind == "A")
+		rcpts = dedup(concat(rcpts, concat(addrs(m.mto), addrs(m.cc))));
+	# extra addresses named on the command line
+	if(args != "")
+		rcpts = dedup(concat(rcpts, addrs(args)));
+	if(rcpts == nil){
+		stdout.puts("!no reply address\n");
+		return;
+	}
+	subj := "Re: " + strstate(m.subject);
+
+	stdout.puts("(enter message, end with a line containing only '.')\n");
+	stdout.flush();
+	body := readbody();
+
+	# for R/A, append the quoted original beneath the new text
+	full := body;
+	if(kind == "R" || kind == "A"){
+		q := "\n" + quotebody(m);
+		nb := array[len full + len q] of byte;
+		nb[0:] = full;
+		nb[len full:] = array of byte q;
+		full = nb;
+	}
+	sendcomposed(full, subj, rcpts);
+}
+
+forwardcmd(i: int, kind, args: string)
+{
+	m := mbox[i];
+	rcpts := addrs(args);
+	if(rcpts == nil){
+		stdout.puts("!usage: m addr [addr...]\n");
+		return;
+	}
+	subj := "Fwd: " + m.subject;
+	# body: an intro (for M) then the original message body
+	intro := "";
+	if(kind == "M"){
+		stdout.puts("(enter covering note, end with '.')\n");
+		stdout.flush();
+		intro = string readbody() + "\n";
+	}
+	orig := readfile(m.path + "/body");
+	if(orig == nil)
+		orig = array[0] of byte;
+	head := array of byte (intro + "----- forwarded message -----\n");
+	full := array[len head + len orig] of byte;
+	full[0:] = head;
+	full[len head:] = orig;
+	sendcomposed(full, subj, rcpts);
+}
+
+# write the body to a temp file and hand it to upas/send with the configured
+# server + credentials. With no server configured, compose-only (-N) so the
+# result is shown rather than silently dropped.
+sendcomposed(body: array of byte, subj: string, rcpts: list of string)
+{
+	from := cf_from;
+	if(from == "")
+		from = "nobody@localhost";
+	tmp := sys->sprint("/tmp/nedreply.%d", sys->pctl(0, nil));
+	fd := sys->create(tmp, Sys->OWRITE, 8r600);
+	if(fd == nil){
+		stdout.puts(sys->sprint("!create %s: %r\n", tmp));
+		return;
+	}
+	sys->write(fd, body, len body);
+	fd = nil;
+
+	# build the upas/send argv in order:
+	#   send [-s server -a ip -p port -u user -P passfile | -N] -f from
+	#        (-t rcpt)... -j subj tmpfile
+	serveropts: list of string;
+	if(cf_server != ""){
+		serveropts = "-s" :: cf_server :: nil;
+		if(cf_ip != "")
+			serveropts = app(serveropts, "-a" :: cf_ip :: nil);
+		if(cf_port != "")
+			serveropts = app(serveropts, "-p" :: cf_port :: nil);
+		if(cf_user != "")
+			serveropts = app(serveropts, "-u" :: cf_user :: nil);
+		if(cf_passfile != "")
+			serveropts = app(serveropts, "-P" :: cf_passfile :: nil);
+	}else
+		serveropts = "-N" :: nil;		# no server: compose only
+	rcptopts: list of string;
+	for(rl := rcpts; rl != nil; rl = tl rl)
+		rcptopts = app(rcptopts, "-t" :: hd rl :: nil);
+	argv := app("send" :: nil,
+		app(serveropts,
+		app("-f" :: from :: nil,
+		app(rcptopts, "-j" :: subj :: tmp :: nil))));
+
+	if(cf_server == "")
+		stdout.puts("(no /mail/lib/smtp; composing only)\n");
+	stdout.flush();
+	sync := chan of int;
+	spawn runsend(argv, sync);
+	<-sync;
+	sys->remove(tmp);
+	if(cf_server != "")
+		stdout.puts(sys->sprint("sent to %s\n", joinsp(rcpts)));
+}
+
+runsend(argv: list of string, sync: chan of int)
+{
+	# upas/send returns cleanly on success and only raises on error, so it
+	# is safe to spawn+load+init (unlike commands that end in `exit').
+	c := load Command "/dis/upas/send.dis";
+	if(c == nil){
+		sys->fprint(sys->fildes(2), "nedmail: load upas/send: %r\n");
+		sync <-= 0;
+		return;
+	}
+	{
+		c->init(nil, argv);
+	}exception e{
+	"fail:*" =>
+		sys->fprint(sys->fildes(2), "nedmail: send: %s\n", e);
+	}
+	sync <-= 0;
+}
+
+loadconfig()
+{
+	data := readfile(smtpconf);
+	if(data == nil)
+		return;
+	(nil, lines) := sys->tokenize(string data, "\n");
+	for(; lines != nil; lines = tl lines){
+		(n, f) := sys->tokenize(hd lines, " \t");
+		if(n < 2)
+			continue;
+		v := hd tl f;
+		case hd f {
+		"server" =>	cf_server = v;
+		"ip" =>		cf_ip = v;
+		"port" =>	cf_port = v;
+		"user" =>	cf_user = v;
+		"passfile" =>	cf_passfile = v;
+		"from" =>	cf_from = v;
+		}
+	}
+}
+
+# ---- reply/forward helpers ----
+
+quotebody(m: ref Message): string
+{
+	body := readfile(m.path + "/body");
+	who := m.from;
+	if(who == "")
+		who = "someone";
+	s := who + " writes:\n";
+	if(body != nil){
+		(nil, lines) := sys->tokenize(string body, "\n");
+		for(; lines != nil; lines = tl lines)
+			s += "> " + hd lines + "\n";
+	}
+	return s;
+}
+
+# strip leading "Re: " (any number) from a subject
+strstate(s: string): string
+{
+	for(;;){
+		s = trim(s);
+		if(len s >= 3 && (s[0:3] == "Re:" || s[0:3] == "RE:" || s[0:3] == "re:"))
+			s = s[3:];
+		else
+			break;
+	}
+	return s;
+}
+
+# split an address field into individual addresses on commas
+addrs(s: string): list of string
+{
+	(nil, parts) := sys->tokenize(s, ",");
+	l: list of string;
+	for(; parts != nil; parts = tl parts){
+		a := trim(hd parts);
+		if(a != "")
+			l = a :: l;
+	}
+	# restore order
+	r: list of string;
+	for(; l != nil; l = tl l)
+		r = hd l :: r;
+	return r;
+}
+
+concat(a, b: list of string): list of string
+{
+	r := b;
+	# prepend a's elements (order preserved by reversing twice not needed here;
+	# order isn't significant for recipients)
+	for(; a != nil; a = tl a)
+		r = hd a :: r;
+	return r;
+}
+
+dedup(l: list of string): list of string
+{
+	seen: list of string;
+	out: list of string;
+	for(; l != nil; l = tl l){
+		x := hd l;
+		dup := 0;
+		for(s := seen; s != nil; s = tl s)
+			if(hd s == x)
+				dup = 1;
+		if(!dup){
+			seen = x :: seen;
+			out = x :: out;
+		}
+	}
+	r: list of string;
+	for(; out != nil; out = tl out)
+		r = hd out :: r;
+	return r;
+}
+
+# append list b after list a, preserving order.
+app(a, b: list of string): list of string
+{
+	r := b;			# will prepend a's elements in reverse
+	ra: list of string;
+	for(; a != nil; a = tl a)
+		ra = hd a :: ra;	# reverse a
+	for(; ra != nil; ra = tl ra)
+		r = hd ra :: r;		# prepend reversed-a onto b -> a ++ b
+	return r;
+}
+
+joinsp(l: list of string): string
+{
+	s := "";
+	for(; l != nil; l = tl l){
+		if(s != "")
+			s += " ";
+		s += hd l;
+	}
+	return s;
 }
 
 # ---- mailbox reading ----
