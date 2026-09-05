@@ -1036,15 +1036,22 @@ guessing a Readfn/Buffer struct-\fIreturn\fP ABI mismatch was wrong on
 both counts: it was an argument, in replclipr/bufimage, and the
 mechanism was regret aliasing REGARG.
 .PP
-A
-.I second ,
-distinct struct-by-value argument miscompilation survives that fix -
-imagedraw()'s drawop(d, IRECT(f->r), ...) arrived with a corrupt
-rectangle - and is
-.I not
-yet root-caused; libinterp/draw.c works around it by materialising
-IRECT/IPOINT into locals before the call.  So the compiler is not proven
-correct for struct-by-value arguments; that is the open thread here.
+A second symptom - imagedraw()'s drawop(d, IRECT(f->r), ...) arriving
+with a corrupt rectangle (a code address in min.x), and lookupimage()'s
+eqrect(IRECT(di->clipr), ...) comparing garbage and firing a spurious
+replclipr the shared screen rejected - turned out to be one deeper 7c
+bug, now root-caused and fixed.  On arm64 REGSP and REGZERO are both
+register 31.  lcgen() addressed a stack slot with MOV $off(REGSP),reg;
+in the object that operand classifies as a bare constant (7l aclass:
+a->reg == REGZERO), so the SP base is dropped and the register gets off,
+not SP+off.  A struct-by-value argument built into the outgoing arg area
+is thus written through the constant, and the callee reads the slot's
+stale value.  Fix in utils/7c/cgen.c: address a REGSP slot with ADD
+$off, REGSP, reg - ADD/SUB read register 31 as SP.  Both source
+workarounds are gone; the draw device renders with unmodified draw.c.
+(This is why it never showed in a -S of imagedraw in isolation: the
+symptom depends on the constant/SP classification 7l does at link time.)
+The lesson: fix the tool, not the caller (AGENTS.md).
 (Do NOT start from the VideoCore GPU; the firmware framebuffer is the
 path.)
 .IP 3.
