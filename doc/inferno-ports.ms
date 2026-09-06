@@ -19173,6 +19173,121 @@ and
 .CW os/inferno/pc64/tools/resolve_ipc64_syms.py
 against the exact binary to read the addresses back.
 .NH 2
+Resolvable private addresses
+.PP
+A modern peripheral advertises from an address it changes every few
+minutes.  The stack took each one for a new device, so
+.CW /net/bt/0/remote
+filled with strangers, and the identity resolving key a bond had
+distributed sat in the bond doing nothing: the device a bond was made
+with could never be found again.  That is the one gap in this stack
+that makes it look broken against ordinary hardware without any
+hardware being involved, and it is closed.
+.PP
+The arithmetic is
+.CW ah (k,r),
+which is
+.CW e (k,
+.CW r
+padded to a block) taken modulo 2**24 \(em the same AES-128 the
+pairing functions are built out of, so nothing new was needed.  The
+top three bytes of a resolvable address are the random the peripheral
+chose and the bottom three are its hash under the device's key;
+running
+.CW ah
+again over every stored bond's key is the whole of recognising it.
+.CW appl/lib/bt/smp.b
+has
+.CW ah
+and
+.CW resolve ,
+.CW appl/lib/bt/bt.b
+has
+.CW resolvable
+(a random address whose most significant byte begins 01),
+.CW btfs
+tries every bond against every private address it hears, and a
+resolved device keeps one directory named by its identity address
+while its
+.CW addr
+file follows it to wherever it is answering now.  A new
+.CW identity
+file says what is behind the address.
+.PP
+The controller-side resolving list \(em handing the keys to the radio
+and letting it do this \(em is not implemented.  It is the same idea
+and the faster path, and nothing here needs it.
+.PP
+A device first heard from a private address and paired only afterwards
+keeps the directory name it was given before there was a key to
+resolve it with.  The name is settled at the moment the device is
+created, and a directory a client may be holding open is not renamed
+underneath it.
+.CW btfs (4)
+says so rather than leaving it to be found.
+.NH 2
+How that was checked, and why the bench was not enough by itself
+.PP
+The controller model is what everything else in this stack is verified
+against, and for this one function it could not be: the model and the
+Limbo are written in the same place from the same reading of the
+specification, so a byte order or padding mistake shared between them
+would agree with itself and pass.  Bluetooth reverses every argument
+and every answer between its own order and AES's, and that reversal is
+exactly what a shared mistake would get wrong.
+.PP
+So
+.CW ah
+is pinned to a vector from neither side: bluez
+.CW unit/test-crypto.c 's
+.CW test_sih ,
+.EX
+	k    cdcc72dd868ccdce22fda121097d7d45
+	r    63f569
+	ah   da4819
+.EE
+all in Bluetooth order.  Both implementations assert it \(em
+.CW scripts/bthci.py
+at import,
+.CW btbench
+before it opens a transport \(em so a run that gets past the first
+line has agreed with an outside answer, not merely with itself.
+.PP
+The model then advertises a
+.I fresh
+resolvable address every round once the keys have gone out and the
+link that carried them has closed, so what is exercised is resolution
+against a changing address rather than one lucky comparison.
+.CW btbench
+asserts what the name space must look like through it: the same number
+of devices under
+.CW remote
+as before, an
+.CW addr
+that has visibly changed, an
+.CW identity
+naming the device that paired.  It then asks the resolver directly,
+through
+.CW smp->parse
+on the bond
+.CW btfs
+wrote out, that the key resolves the live address, that the same key
+with one bit flipped does not, and that a public address is never
+resolvable \(em because a comparison that always answered yes would
+pass everything above it.
+.PP
+Two deliberate breaks were made to check the bench can see one, since
+a test that has only ever passed has not been tested.  Padding the
+block at the wrong end stopped the run on the first line with
+.CW "want DA4819 got 5FBF8B" .
+Comparing the wrong halves of the address left
+.CW ah
+correct and the vector passing, and the run then filled
+.CW remote
+with 23 devices in place of 2 and failed all three name space
+assertions \(em which is precisely the behaviour this work removes.
+Restored, the bench passes.
+.NH 2
 What is not there
 .PP
 Bluetooth Classic is not implemented at all: no inquiry, no SDP, no
@@ -19234,9 +19349,8 @@ What the stack still needs before it is useful against a real device,
 and a plan for the 9front implementation, are set out separately in
 .CW doc/bluetooth-plan.ms
 so this record stays a record.  The short of it: no real controller
-has been talked to yet; a resolvable private address is never
-resolved, so a bond cannot survive a modern peripheral rotating its
-address; LE Secure Connections needs P-256 and AES-CMAC and
+has been talked to yet; LE Secure Connections needs P-256 and
+AES-CMAC and
 .CW libsec
 has no elliptic curve code at all; and the peripheral role, Classic
 and audio do not exist.

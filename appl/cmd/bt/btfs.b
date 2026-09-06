@@ -64,7 +64,7 @@ Btfs: module
 	init:	fn(nil: ref Draw->Context, argv: list of string);
 };
 
-Kroot, Kctlr, Kaddr, Kver, Kctl, Kstate, Kscan, Kremotes, Kbonds,
+Kroot, Kctlr, Kaddr, Kver, Kctl, Kstate, Kscan, Kremotes, Kbonds, Kdident,
 	Kdev, Kdaddr, Kdtype, Kdrssi, Kdname, Kdadv, Kdstate, Kdctl,
 	Kdgatt, Ksvc, Kchar, Kcnotify: con iota;
 
@@ -81,8 +81,15 @@ Cnode: adt {
 Dev: adt {
 	q:	big;		# its directory
 	gq:	big;		# its gatt directory
-	addr:	array of byte;
+	dir:	string;		# the name of that directory, which is the
+				# identity address once one is known and the
+				# advertised address until then
+	addr:	array of byte;	# where it is answering now: for a device
+				# using resolvable private addresses this is
+				# the current one, and it changes underneath
 	atype:	int;
+	id:	array of byte;	# its identity address, from a bond, or nil
+	idtype:	int;
 	name:	string;
 	rssi:	int;
 	adv:	array of byte;
@@ -356,10 +363,19 @@ advproc()
 			return;
 		<-devlock;
 		d := finddev(a.addr);
+		if(d == nil)
+			d = resolved(a.atype, a.addr);
 		if(d == nil){
-			d = newdev(a.addr, a.atype);
+			d = newdev(bt->addrstr(a.addr), a.addr, a.atype);
 			devs = d :: devs;
 		}
+		#
+		# a device that rotates its address is the same device
+		# and keeps its directory, but the address to connect to
+		# is the one it is answering on now, not the one it was
+		# first seen from.
+		#
+		d.addr = a.addr;
 		d.rssi = a.rssi;
 		d.atype = a.atype;
 		if(len a.data > 0)
@@ -380,26 +396,69 @@ finddev(addr: array of byte): ref Dev
 	return nil;
 }
 
+#
+# the path walk names a device by its directory, which is its identity
+# address once there is a bond to give one -- not by whatever address
+# it is advertising from this minute.
+#
 finddevstr(s: string): ref Dev
 {
 	for(l := devs; l != nil; l = tl l)
-		if(bt->addrstr((hd l).addr) == s)
+		if((hd l).dir == s)
 			return hd l;
 	return nil;
 }
 
-newdev(addr: array of byte, atype: int): ref Dev
+#
+# A resolvable private address is a stranger until some bond's
+# identity resolving key accounts for it.  Try every bond; a match
+# names the device, and the device already has a directory under that
+# name if it has ever been seen.  This is what makes a bond usable:
+# without it a peripheral that rotates its address every fifteen
+# minutes is a new device in /net/bt/0/remote every fifteen minutes
+# and the keys stored against the old one are never reachable again.
+#
+resolved(atype: int, addr: array of byte): ref Dev
+{
+	if(!bt->resolvable(atype, addr))
+		return nil;
+	for(bl := bonds; bl != nil; bl = tl bl){
+		b := hd bl;
+		if(!smp->resolve(b, atype, addr))
+			continue;
+		id := bt->straddr(b.addr);
+		if(id == nil)
+			continue;
+		for(l := devs; l != nil; l = tl l)
+			if((hd l).id != nil && bt->addrstr((hd l).id) == b.addr)
+				return hd l;
+		#
+		# resolved to a bond whose device is not in the table:
+		# the directory is named by the identity, not by the
+		# address it happens to be using.
+		#
+		d := newdev(b.addr, addr, atype);
+		d.id = id;
+		d.idtype = b.atype;
+		devs = d :: devs;
+		return d;
+	}
+	return nil;
+}
+
+newdev(name: string, addr: array of byte, atype: int): ref Dev
 {
 	d := ref Dev;
+	d.dir = name;
 	d.addr = addr;
 	d.atype = atype;
 	d.state = "seen";
 	d.lock = chan[1] of int;
 	d.lock <-= 1;
-	name := bt->addrstr(addr);
 	d.q = newnode(Kdev, d, nil, name);
 	create(qremotes(), mkdir(name, d.q));
 	mkfd(d.q, "addr", Kdaddr, 8r444, d, nil);
+	mkfd(d.q, "identity", Kdident, 8r444, d, nil);
 	mkfd(d.q, "type", Kdtype, 8r444, d, nil);
 	mkfd(d.q, "rssi", Kdrssi, 8r444, d, nil);
 	mkfd(d.q, "name", Kdname, 8r444, d, nil);
@@ -554,6 +613,8 @@ doread(m: ref Tmsg.Read)
 		srv.reply(styxservers->readstr(m, bt->addrstr(n.dev.addr) + "\n"));
 	Kdtype =>
 		srv.reply(styxservers->readstr(m, bt->atypestr(n.dev.atype) + "\n"));
+	Kdident =>
+		srv.reply(styxservers->readstr(m, identtext(n.dev)));
 	Kdrssi =>
 		srv.reply(styxservers->readstr(m, sprint("%d\n", n.dev.rssi)));
 	Kdname =>
@@ -582,6 +643,21 @@ ctlrstate(): string
 	(sz, nb) := hci->aclmtu();
 	return sprint("addr %s scan %s devices %d connections %d aclsize %d aclbufs %d\n",
 		bt->addrstr(hci->localaddr()), sc, nd, len hci->conns(), sz, nb);
+}
+
+#
+# the identity behind the address, when a bond has given one.  A
+# device that has never paired has no identity to state, and one that
+# is not using a private address is already answering on its own.
+#
+identtext(d: ref Dev): string
+{
+	if(d.id == nil)
+		return "none\n";
+	s := bt->addrstr(d.id) + " " + bt->atypestr(d.idtype);
+	if(bt->resolvable(d.atype, d.addr))
+		s += " resolved from " + bt->addrstr(d.addr);
+	return s + "\n";
 }
 
 devstate(d: ref Dev): string
@@ -756,7 +832,7 @@ target(d: ref Dev, f: list of string): (ref Dev, string)
 		atype := Bt->Apublic;
 		if(tl f != nil && hd tl f == "random")
 			atype = Bt->Arandom;
-		dd = newdev(addr, atype);
+		dd = newdev(a, addr, atype);
 		devs = dd :: devs;
 	}
 	devlock <-= 1;
@@ -920,6 +996,19 @@ pair(d: ref Dev): string
 	if(e != nil)
 		return e;
 	addbond(b);
+	#
+	# the peer's identity address, which is what its resolvable
+	# private addresses will resolve to from here on.  Its directory
+	# keeps the name it was created with: renaming a directory a
+	# client may be holding open is not something this does, so a
+	# device first seen from a private address and paired afterwards
+	# stays under the address it was first seen from.  btfs(4) says
+	# so.
+	#
+	if(b.addr != nil){
+		d.id = bt->straddr(b.addr);
+		d.idtype = b.atype;
+	}
 	return nil;
 }
 

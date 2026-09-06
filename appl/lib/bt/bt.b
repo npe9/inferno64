@@ -154,6 +154,20 @@ lower(s: string): string
 	return s;
 }
 
+#
+# A resolvable private address is a random address whose most
+# significant byte begins 01.  An address is six bytes least
+# significant first, so that byte is the last one.  Public addresses
+# are never resolvable, and the other two random kinds -- static (11)
+# and non-resolvable private (00) -- are not either.
+#
+resolvable(atype: int, a: array of byte): int
+{
+	if(atype != Arandom || len a != Baddrlen)
+		return 0;
+	return (int a[Baddrlen-1] & Rpamask) == Rpatop;
+}
+
 opcode(ogf, ocf: int): int
 {
 	return ((ogf & 16r3f) << 10) | (ocf & 16r3ff);

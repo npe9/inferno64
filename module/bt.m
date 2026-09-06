@@ -32,6 +32,15 @@ Bt: module
 	Apublic:	con 0;
 	Arandom:	con 1;
 
+	# A random address says what kind it is in the top two bits of
+	# its most significant byte: 01 is resolvable private -- three
+	# bytes of random and three of ah(irk, random), which only the
+	# holder of the identity resolving key can undo -- 11 is static
+	# and 00 is non-resolvable private.  Neither of the last two is
+	# resolvable, and a public address never is.
+	Rpatop:		con 16r40;
+	Rpamask:	con 16rc0;
+
 	get16:	fn(a: array of byte, o: int): int;
 	get24:	fn(a: array of byte, o: int): int;
 	get32:	fn(a: array of byte, o: int): int;
@@ -51,6 +60,11 @@ Bt: module
 	# written as they are rather than expanded into the base UUID
 	uuid:	fn(a: array of byte, o, n: int): string;
 	uuidbytes:	fn(s: string): array of byte;
+
+	# is this address one a bond's identity resolving key could
+	# explain?  Only says the address has the shape; smp->resolve
+	# says whether a particular key actually accounts for it.
+	resolvable:	fn(atype: int, a: array of byte): int;
 
 	opcode:	fn(ogf, ocf: int): int;
 	hcierr:	fn(status: int): string;
@@ -298,6 +312,18 @@ Smp: module
 
 	init:	fn(bt: Bt, hci: Hci, l2: L2cap): string;
 	parse:	fn(s: string): ref Bond;
+
+	# ah(k, r), the random address hash: e(k, r padded to a block)
+	# taken modulo 2^24, which is to say its low three bytes.  It is
+	# what a peripheral used to build the resolvable private address
+	# it is advertising from, and running it again is the only way
+	# to recognise the peripheral behind one.
+	ah:	fn(k, r: array of byte): array of byte;
+
+	# does this bond's identity resolving key account for this
+	# address?  False for an address that is not resolvable, and for
+	# a bond that distributed no key.
+	resolve:	fn(b: ref Bond, atype: int, addr: array of byte): int;
 
 	# pair as the initiator over an already open connection
 	pair:	fn(c: ref Hci->Conn, m: ref L2cap->Mux, iocap: int): (ref Bond, string);

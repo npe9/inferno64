@@ -23,6 +23,10 @@ What the stack still needs
 Four groups, roughly in the order they stop being optional: the things
 that block any real device at all, the shape of what is already built,
 the peripheral role, and then the profiles.
+One item has come out of the first group since it was written:
+resolvable private addresses are done.  What is left in it is a
+controller and the pc64 uart fault under it, LE Secure Connections,
+and somewhere to ask the user.
 .NH 2
 Blocking: nothing real can be talked to yet
 .PP
@@ -58,21 +62,36 @@ It is a fault in the kernel's interrupt return, not in this stack, but
 it stands between the H4 transport and any board where the controller
 is on a serial line, which is to say between here and the Pi.
 .PP
-.B "Resolvable private addresses."
-This is the gap most likely to make the stack look broken against a
-device someone actually owns.  Modern peripherals \(em phones,
-watches, a good many sensors \(em advertise from an address that
-rotates every few minutes, and the whole point of the IRK a bond
-distributes is to recognise the device behind it.  The stack stores
-the IRK and does nothing with it, so a bonded device is a stranger
-again a quarter of an hour later and there is no way to reconnect to a
-bond.  What is needed is the
+.B "Resolvable private addresses \(em done."
+This was the gap most likely to make the stack look broken against a
+device someone actually owns, and it is closed.  Modern peripherals
+\(em phones, watches, a good many sensors \(em advertise from an
+address that rotates every few minutes, and the whole point of the IRK
+a bond distributes is to recognise the device behind it; the stack
+stored the IRK and did nothing with it, so a bonded device was a
+stranger again a quarter of an hour later.
 .CW ah
-function (AES again, so no new arithmetic) to test a resolvable
-address against every stored IRK, and the device directory then named
-by the identity address rather than by whatever it is advertising from
-this minute.  A controller-side resolving list is the faster path and
-the same idea.
+is in
+.CW appl/lib/bt/smp.b
+beside the other AES-built functions,
+.CW btfs
+tries every stored bond's key against every resolvable address it
+hears, and the device directory is named by the identity address
+rather than by whatever the device is advertising from this minute,
+with
+.CW addr
+following it and an
+.CW identity
+file saying what is behind it.  What is
+.I not
+done is the controller-side resolving list, which is the same idea
+done by the radio and would be the faster path; nothing needs it yet.
+.PP
+The one place the shape shows is a device first heard from a private
+address and paired only afterwards: its directory keeps the name it
+was given before there was a key to resolve it with.
+.I btfs (4)
+says so.
 .PP
 .B "LE Secure Connections."
 Pairing here is LE legacy, and a device that requires Secure

@@ -25,6 +25,9 @@ include "sys.m";
 	sys: Sys;
 include "draw.m";
 include "sh.m";
+include "bt.m";
+	bt: Bt;
+	smp: Smp;
 
 Btbench: module
 {
@@ -103,9 +106,52 @@ say(s: string)
 	sys->print("%s\n", s);
 }
 
+#
+# ah is what recognises a device behind a resolvable private address,
+# and it is the one function here whose byte order the controller
+# model cannot check -- both are written in the same place from the
+# same reading, so a shared mistake would agree with itself.  This
+# vector comes from neither: it is bluez unit/test-crypto.c's
+# test_sih.  It runs before anything else, because everything the
+# private-address part of this bench claims rests on it.
+#
+Ahkey:	con "cdcc72dd868ccdce22fda121097d7d45";
+Ahr:	con "63f569";
+Ahwant:	con "DA4819";
+
+checkah(): int
+{
+	got := smp->ah(bt->unhex(Ahkey), bt->unhex(Ahr));
+	if(got == nil || bt->hex(got) != Ahwant){
+		sys->print("BT: ah vector FAILED: want %s got %s\n",
+			Ahwant, bt->hex(got));
+		return 0;
+	}
+	sys->print("BT: ah vector ok (%s)\n", Ahwant);
+	return 1;
+}
+
 init(nil: ref Draw->Context, argv: list of string)
 {
 	sys = load Sys Sys->PATH;
+
+	bt = load Bt Bt->PATH;
+	if(bt == nil){
+		sys->print("BT: cannot load %s: %r\n", Bt->PATH);
+		return;
+	}
+	bt->init();
+	smp = load Smp Smp->PATH;
+	if(smp == nil){
+		sys->print("BT: cannot load %s: %r\n", Smp->PATH);
+		return;
+	}
+	if((se := smp->init(bt, nil, nil)) != nil){
+		sys->print("BT: smp init: %s\n", se);
+		return;
+	}
+	if(!checkah())
+		return;
 
 	spec := "/dev/eia1";
 	if(tl argv != nil)
@@ -206,6 +252,80 @@ init(nil: ref Draw->Context, argv: list of string)
 		sys->print("BT: disconnect: %s\n", e);
 	sys->sleep(500);
 	show(dev + "/state");
+
+	#
+	# The device now rotates a resolvable private address.  Nothing
+	# above needed a bond; this is the part that does.  What is
+	# being asserted is that the rotation is invisible in the name
+	# space: the same directory, named by the identity address, no
+	# new strangers under remote/, and the addr file following the
+	# device to wherever it is answering now.
+	#
+	sys->print("BT: private addresses\n");
+	before := len remotes;
+	first, last: string;
+	for(i := 0; i < 12; i++){
+		sys->sleep(500);
+		a := trim(readfile(dev + "/addr"));
+		if(first == nil)
+			first = a;
+		last = a;
+		if(first != nil && last != first)
+			break;
+	}
+	after := lsdir(mnt + "/0/remote");
+	say("BT: identity " + trim(readfile(dev + "/identity")));
+	sys->print("BT: addr was %s now %s\n", first, last);
+	sys->print("BT: remote/ held %d devices, now %d\n", before, len after);
+	ok := 1;
+	if(len after != before){
+		sys->print("BT: FAILED: a rotating address made a new device\n");
+		ok = 0;
+	}
+	if(last == first){
+		sys->print("BT: FAILED: the address never rotated, so nothing was resolved\n");
+		ok = 0;
+	}
+	if(trim(readfile(dev + "/identity")) == "none"){
+		sys->print("BT: FAILED: no identity behind the private address\n");
+		ok = 0;
+	}
+	#
+	# Resolution is a comparison, and a comparison that always says
+	# yes would pass everything above.  The bond btfs wrote out is
+	# the same text smp->parse reads, so the same key can be asked
+	# directly: it must account for the address the device is
+	# answering on, must not account for it once one bit of the key
+	# is wrong, and must not account for a public address at all,
+	# since a public address is never resolvable.
+	#
+	bond := smp->parse(hd lines(readfile(mnt + "/0/bonds")));
+	live := bt->straddr(last);
+	if(bond == nil || bond.irk == nil || live == nil){
+		sys->print("BT: FAILED: no bond to check resolution against\n");
+		ok = 0;
+	} else {
+		if(!smp->resolve(bond, Bt->Arandom, live)){
+			sys->print("BT: FAILED: the bond does not resolve the address it is advertising from\n");
+			ok = 0;
+		}
+		wrong := smp->parse(hd lines(readfile(mnt + "/0/bonds")));
+		wrong.irk[0] = wrong.irk[0] ^ byte 1;
+		if(smp->resolve(wrong, Bt->Arandom, live)){
+			sys->print("BT: FAILED: a wrong key resolved the address, so nothing is being compared\n");
+			ok = 0;
+		}
+		if(smp->resolve(bond, Bt->Apublic, live)){
+			sys->print("BT: FAILED: a public address was treated as resolvable\n");
+			ok = 0;
+		}
+		if(ok)
+			sys->print("BT: the key resolves it, a wrong key does not, a public address is not resolvable\n");
+	}
+
+	if(ok)
+		sys->print("BT: resolved every rotation to %s\n", hd remotes);
+
 	writefile(mnt + "/0/ctl", "scan off");
 	sys->print("BT: done\n");
 }

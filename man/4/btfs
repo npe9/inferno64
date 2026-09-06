@@ -106,8 +106,18 @@ act on one device.
 .TP
 .B /net/bt/0/remote/\fIADDR\fP/
 A device that has been heard from, named by its address written most
-significant byte first.  It holds
+significant byte first \- or, once a bond gives it one, by its
+identity address, so a device that rotates a resolvable private
+address keeps one directory rather than gaining one every few minutes.
+It holds
 .BR addr ,
+which is the address it is answering on now and changes under a
+rotating device,
+.B identity
+(the identity address behind it and the address it was resolved from,
+or
+.B none
+for a device that has not distributed an identity key),
 .B type
 (public or random),
 .B rssi
@@ -216,10 +226,26 @@ See
 Only the initiating (central) side is implemented.  This stack does
 not advertise and cannot be connected to.
 .PP
-A device that rotates its address \- which most modern peripherals do
-\- is a new device to this stack every time.  The identity key a bond
-distributes is stored and never used to resolve one, so a bond cannot
-be matched to the device it was made with.
+A resolvable private address is resolved against every stored bond's
+identity resolving key, so a device that rotates its address \- which
+most modern peripherals do \- stays one device under one directory,
+named by its identity, and the bond made with it remains reachable.
+Resolution is done here rather than by handing the keys to the
+controller's resolving list.
+.PP
+The name a directory is given when the device is first heard from is
+kept.  So a device first seen from a private address, and paired only
+afterwards, keeps the directory named by that first private address
+even though its later addresses resolve to it: the name is settled
+before there is a key to resolve it with, and a directory a client may
+be holding open is not renamed underneath it.  Its
+.B identity
+file says what it really is.
+.PP
+Pairing is still LE legacy Just Works, so the identity key is
+distributed without protection against a man in the middle, and
+resolution is only as trustworthy as the pairing that produced the
+key.
 .PP
 .B doc/bluetooth-plan.ms
 lists what is missing in the order the pieces block each other, and

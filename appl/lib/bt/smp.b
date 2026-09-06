@@ -358,6 +358,55 @@ e(k, m: array of byte): array of byte
 	return reverse(b);
 }
 
+#
+# ah(k, r): the random address hash.  r is the three random bytes a
+# peripheral chose; r' is r padded to a block with zeros, and the
+# hash is e(k, r') taken modulo 2^24 -- its low three bytes, which
+# is to say the first three, because everything here is least
+# significant byte first.
+#
+# Checked against a published vector rather than only against our own
+# controller model, since the model and this are written in the same
+# place and a shared byte-order mistake would agree with itself.  The
+# vector is bluez unit/test-crypto.c's test_sih:
+#
+#	k    cdcc72dd868ccdce22fda121097d7d45
+#	r    63f569
+#	ah   da4819
+#
+# all three in Bluetooth order.  btbench runs it before it does
+# anything else.
+#
+ah(k, r: array of byte): array of byte
+{
+	if(len k != 16 || len r != 3)
+		return nil;
+	rp := array[16] of byte;
+	rp[0:] = r;
+	for(i := 3; i < 16; i++)
+		rp[i] = byte 0;
+	return e(k, rp)[0:3];
+}
+
+#
+# does this bond's identity resolving key account for this address?
+# The top three bytes of a resolvable private address are the random
+# the peripheral chose, the bottom three the hash it computed over
+# them; recomputing the hash with the key the peer distributed is the
+# whole of recognising it.
+#
+resolve(b: ref Bond, atype: int, addr: array of byte): int
+{
+	if(b == nil || b.irk == nil || len b.irk != 16)
+		return 0;
+	if(!bt->resolvable(atype, addr))
+		return 0;
+	h := ah(b.irk, addr[3:6]);
+	if(h == nil)
+		return 0;
+	return same(h, addr[0:3]);
+}
+
 reverse(a: array of byte): array of byte
 {
 	r := array[len a] of byte;

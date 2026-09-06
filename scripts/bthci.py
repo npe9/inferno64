@@ -128,6 +128,39 @@ def s1(k, r1, r2):
 
 # ---------------------------------------------------------------- the model
 
+def swap(b):
+    return bytes(reversed(b))
+
+def e(k, m):
+    """The Bluetooth security function: AES-128 of one block, with both
+    arguments and the answer in Bluetooth's least-significant-byte-first
+    order rather than AES's."""
+    return swap(aes128_encrypt_block(swap(k), swap(m)))
+
+def ah(k, r):
+    """The random address hash: e(k, r padded to a block) mod 2**24.
+    k and r are in Bluetooth order, and so is the answer."""
+    assert len(k) == 16 and len(r) == 3
+    return e(k, r + bytes(13))[0:3]
+
+# bluez unit/test-crypto.c, test_sih -- a vector from neither side of
+# this bench, so a byte-order mistake shared between the model and the
+# Limbo cannot pass it.
+assert ah(bytes.fromhex('cdcc72dd868ccdce22fda121097d7d45'),
+          bytes.fromhex('63f569')) == bytes.fromhex('da4819'), 'ah is wrong'
+
+def rpa(irk):
+    """A fresh resolvable private address for this identity resolving
+    key: three random bytes with the top two bits marking it resolvable,
+    and their hash under the key.  Least significant byte first, so the
+    hash comes first and the random last."""
+    prand = bytearray(os.urandom(3))
+    prand[2] = (prand[2] & 0x3f) | 0x40
+    prand = bytes(prand)
+    return ah(irk, prand) + prand
+
+IRK = bytes(range(16, 32))                    # what pairing distributes
+
 ADDR = bytes.fromhex('554433221100')          # AA1122334455 written down
 PEERS = [
     (bytes.fromhex('efcdab785634'), 0, 'thermometer'),   # 3456 78AB CDEF
@@ -168,6 +201,12 @@ class Model:
         self.smp = {}
         self.notified = 0
         self.stop = False
+        # set once the keys have been distributed and the link is down:
+        # from then on the sensor stops advertising from its identity
+        # address and rotates a resolvable private address instead, the
+        # way a peripheral that cares about being followed does.
+        self.rotate = None
+        self.rotations = 0
         self.trace = []
 
     # ------------------------------------------------ wire
@@ -235,6 +274,9 @@ class Model:
             time.sleep(0.05)
             self.event(0x05, bytes([0]) + struct.pack('<H', h) + bytes([0x16]))
             self.handle = None
+            if self.smp.get('bonded'):
+                self.rotate = self.peer
+                log('the sensor starts rotating a private address')
         elif op == 0x2018:                     # LE Rand
             self.cmd_complete(op, bytes([0]) + os.urandom(8))
         elif op == 0x2017:                     # LE Encrypt
@@ -252,6 +294,12 @@ class Model:
             for addr, atype, name in PEERS:
                 if not self.scanning:
                     break
+                if self.rotate is not None and (atype, addr) == self.rotate:
+                    # a new one every round, so what is being tested is
+                    # resolution against a changing address rather than
+                    # one lucky comparison
+                    addr, atype = rpa(IRK), 1
+                    self.rotations += 1
                 ad = bytes([2, 0x01, 0x06])
                 nm = name.encode()
                 ad += bytes([len(nm) + 1, 0x09]) + nm
@@ -279,7 +327,8 @@ class Model:
         ltk = bytes(range(16))
         self.smp_send(bytes([0x06]) + ltk)
         self.smp_send(bytes([0x07]) + struct.pack('<H', 0x1234) + bytes(range(8)))
-        self.smp_send(bytes([0x08]) + bytes(range(16, 32)))
+        self.smp_send(bytes([0x08]) + IRK)
+        self.smp['bonded'] = True
         self.smp_send(bytes([0x09]) + bytes([self.peer[0]]) + self.peer[1])
         self.smp_send(bytes([0x0a]) + bytes(range(32, 48)))
 
