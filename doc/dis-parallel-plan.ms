@@ -784,11 +784,35 @@ says which is which, and
 already spells the same idea
 .CW ns->reg .
 .PP
-Measured, not asserted: the spawn storm runs six of six clean, the pc64
-kernel builds and boots exactly as before, and the eleven TSan
-signatures above are the same set with the change in and with it
-reversed \- the second five of those ten runs were a control taken by
-reversing the patch and rebuilding.
+Measured, not asserted.  The spawn storm runs six of six clean.  The
+eleven TSan signatures above are the same set with the change in and
+with it reversed \- the second five of those ten runs were a control
+taken by reversing the patch and rebuilding.  And pc64 was compared
+against itself: two kernels were built, one from this commit and one
+from its parent, and booted alternately at
+.CW "-smp 1" ,
+fourteen times each on an otherwise idle machine.  Two of fourteen clean
+either way, with the same spread of panics \- page fault, general
+protection violation,
+.CW "movp: bad sv" ,
+.CW alloc:D2B ,
+.CW smalloc
+with an absurd size.  That is the pre-existing corruption of
+.CW doc/inferno-ports.ms ,
+unmoved.
+.PP
+Two of fourteen deserves a note of its own, because it is much worse
+than the fifteen and sixteen of twenty this branch measured earlier in
+the same investigation.  Nothing here caused it \- the parent commit
+scores the same \- but the baseline has moved since that figure was
+taken and the two are not comparable.  Whatever moved it is upstream of
+everything in this document, and it makes the point
+.CW doc/multicore-plan.ms
+already argues: the uniprocessor baseline has to be fixed and, more to
+the point, has to be
+.I watched ,
+before any of the phases below can be told apart from it.  A comparison
+against a known-good is worth nothing when the known-good drifts.
 .NH 2
 Phase 1b is not Phase 1a, and it does not land alone
 .PP
