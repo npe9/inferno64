@@ -1113,6 +1113,94 @@ barrier that concurrent marking wants is already being executed on every
 pointer store, so the second option is cheaper here than the literature
 suggests.
 .NH 2
+The decision, and the measurement that makes it
+.PP
+That choice was left open above.  It can be closed, and the evidence is
+already in the tree \-
+.CW emu/port/devmem.c
+publishes the collector's counters as
+.CW "#%/memgc" ,
+and
+.CW tmp/gcstat.sh
+runs the same sixty-seven spawn storm and reads them.  For one run:
+.IP
+.nf
+runs      34017        epochs     224
+idlepass  34006        inspects   1185418
+busy         11        destroy    1765
+idle        830        sweeps     1251
+partial     818        halted        0
+.fi
+.PP
+Three things in that, and each of them bears on the choice.
+.IP \(bu
+.B "The collector is an idle-time activity, almost entirely."
+34006 of 34017 calls to
+.CW rungc()
+come from
+.CW execatidle() ,
+and eleven from the busy path in
+.CW vmachine() ,
+which fires every 256 quanta or when memory is low.
+.IP \(bu
+.B "It already yields to the mutator, constantly."
+818 of the 830 entries to
+.CW execatidle()
+broke out early because work arrived \- the
+.CW "vmq != nil || runhd != runtl"
+test.  The design is already incremental and already interruptible.
+.IP \(bu
+.B "An epoch is small."
+224 epochs over 1185418 inspections is about 5300 object visits per
+complete tricolour cycle, in slices of about 35 \- the adaptive
+.CW quanta
+budget runs from 50 to 750 and most slices end early.
+.PP
+The first point is the one that decides it, and not in the direction it
+first appears.  "Nothing is runnable" is a property of the whole
+machine, and it is exactly what Phase 2 takes apart: with per-processor
+run queues there is no longer a cheap global answer to it, and on N
+processors the state itself becomes rare.  So the trigger has to be
+rebuilt whichever marking strategy is chosen, and the path that becomes
+the main one is the busy path \- the one with eleven uses on the clock
+today, which is to say the untuned one.
+.PP
+Given that, take
+.B "stop-the-world with parallel marking"
+first.  Three reasons, in order of weight.
+.IP 1.
+It needs no new atomicity in the barrier, because nothing mutates during
+the pause.  That matters more here than anywhere else in this document:
+the barrier's atomicity is the one thing that cannot be tested until
+there are two interpreters, and a design that does not depend on it can
+be built and trusted before that.
+.IP 2.
+The measured epoch is small.  5300 object visits is a pause of the order
+of tens of microseconds, against a
+.CW PQUANTA
+of 2048 instructions whose own duration already varies by more than that
+between a big core and a little one.  The thing stop-the-world is
+usually rejected for does not apply at this size.
+.IP 3.
+It makes the trigger explicit and testable.  A stop-the-world collector
+is a decision to collect, taken at a point in the code; the current one
+is a side effect of the machine happening to be idle, which is not a
+policy that can be reasoned about on a multiprocessor.
+.PP
+Concurrent marking stays the eventual target, and section 1's point
+about the barrier is still true \- it is already being executed, so the
+usual objection to concurrent marking is already paid for.  But it
+should be arrived at from a working stop-the-world collector with a real
+trigger, not instead of one.
+.PP
+One negative result worth keeping:
+.CW halted
+is 0.
+.CW gchalt
+never fired at all in this workload, so whatever ordering it needs is
+neither exercised nor measured today.  Do not design around it; find out
+what sets it first.
+.NH 2
 Phase 5a, as landed \- the seam, not the gate
 .PP
 The gate that stopped Phase 1b and stops Phase 2 at
