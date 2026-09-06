@@ -146,6 +146,9 @@ without an address.
 .B /net/bt/0/remote/\fIADDR\fP/gatt/
 Appears when the device is connected: a directory per service, named
 by its UUID, holding a file per characteristic, named by its UUID.
+A value longer than the link's ATT MTU is read in pieces with Read
+Blob and written in pieces with Prepare Write, committed with one
+Execute Write, so neither direction is limited by the MTU.
 Reading one reads the characteristic off the device; writing one
 writes it.
 .PD

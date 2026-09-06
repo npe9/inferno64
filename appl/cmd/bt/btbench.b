@@ -195,7 +195,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	"rejoin" =>
 		rejoin();
 		return;
-	"stall" or "late" or "early" or "orphan" or "orphanlive" =>
+	"stall" or "late" or "early" or "orphan" or "orphanlive" or "badprepare" =>
 		conntest(mode);
 		return;
 	}
@@ -258,6 +258,33 @@ init(nil: ref Draw->Context, argv: list of string)
 			sys->print("BT: notification %d: battery = %d%%\n", i, int buf[0]);
 		}
 		nfd = nil;
+	}
+
+	#
+	# A long write: a value that will not fit in one ATT request, so
+	# it has to be queued in pieces and committed.  Reading it back
+	# uses the Read Blob loop, so the two long paths check each
+	# other -- and the value is not a repeated byte, because a
+	# length that came out right with the pieces in the wrong order
+	# would still look right if it were.
+	#
+	longw := mnt + "/0/remote/" + hd remotes + "/gatt/fff0/fff1";
+	want := "";
+	for(k := 0; k < 200; k++)
+		want[len want] = 'a' + (k % 26);
+	sys->print("BT: long write %d bytes\n", len want);
+	if((e = writefile(longw, want)) != nil)
+		sys->print("BT: FAILED: long write: %s\n", e);
+	else {
+		got := readfile(longw);
+		if(got != want){
+			sys->print("BT: FAILED: read back %d bytes of %d\n", len got, len want);
+			if(len got > 40)
+				sys->print("BT: got %s...\n", got[0:40]);
+			else
+				sys->print("BT: got %s\n", got);
+		} else
+			sys->print("BT: long write read back whole, %d bytes\n", len got);
 	}
 
 	sys->print("BT: pair\n");
@@ -401,6 +428,10 @@ conntest(mode: string)
 	dev := mnt + "/0/remote/" + hd remotes;
 	sys->print("BT: %s connect %s\n", mode, hd remotes);
 	e := writefile(dev + "/ctl", "connect");
+	if(mode == "badprepare"){
+		badprepare(dev, e);
+		return;
+	}
 	st := trim(readfile(dev + "/state"));
 	ok := 1;
 	case mode {
@@ -473,6 +504,43 @@ conntest(mode: string)
 		} else
 			sys->print("BT: the link carries ATT: name = %s\n", v);
 	}
+	writefile(dev + "/ctl", "disconnect");
+	writefile(mnt + "/0/ctl", "scan off");
+	sys->print("BT: done\n");
+}
+
+#
+# A server whose Prepare Write response does not echo what was sent.
+# The write has to fail rather than go on to Execute, and the value on
+# the device has to be left as it was: a client that ignores the echo
+# commits whatever the server queued instead, which is the one place in
+# ATT where not reading the answer writes wrong bytes to the device
+# rather than merely losing them.
+#
+badprepare(dev: string, e: string)
+{
+	if(e != nil){
+		sys->print("BT: FAILED: connect: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	f := dev + "/gatt/fff0/fff1";
+	before := readfile(f);
+	want := "";
+	for(k := 0; k < 200; k++)
+		want[len want] = 'a' + (k % 26);
+	ok := 1;
+	if((e = writefile(f, want)) == nil){
+		sys->print("BT: FAILED: a corrupted echo was accepted\n");
+		ok = 0;
+	} else
+		sys->print("BT: long write refused: %s\n", e);
+	after := readfile(f);
+	if(after != before){
+		sys->print("BT: FAILED: the value changed anyway, %d bytes\n", len after);
+		ok = 0;
+	} else if(ok)
+		sys->print("BT: the value is untouched and the queue was cancelled\n");
 	writefile(dev + "/ctl", "disconnect");
 	writefile(mnt + "/0/ctl", "scan off");
 	sys->print("BT: done\n");

@@ -19477,6 +19477,47 @@ The lock itself has no such phase, and cannot have one against a
 controller model with a single connection; it is a fix found by
 reading, and this says so.
 .NH 2
+Writing more than fits
+.PP
+Reading a characteristic longer than the ATT MTU already worked \(em
+Read Blob in a loop until the server hands back less than a full
+response.  Writing one did not: there is no long form of Write
+Request, and the code said so by refusing.
+.PP
+ATT's answer is a queue.  Prepare Write carries a handle, an offset
+and as much of the value as the MTU leaves room for after the five
+bytes of opcode, handle and offset; Execute Write then commits the
+queue, or cancels it.
+.CW Gatt.write
+uses one Write Request when the value fits and the queue when it does
+not, so nothing above it changed.
+.PP
+The server echoes each piece it queues, and the echo is checked \(em
+handle, offset and every byte.  This is the one place in ATT where not
+reading the answer writes the wrong bytes to the device rather than
+merely losing them: a client that ignores the echo goes on to Execute
+and commits whatever the server understood.  A mismatch, or any error
+during the queueing, sends Execute Write with the cancel flag, so the
+server is not left holding half a value for whoever commits next.
+.PP
+The bench writes two hundred bytes over a hundred byte MTU \(em three
+prepared pieces \(em and reads them back through the Read Blob loop,
+so the two long paths check each other.  The value is
+.CW abcdefg...
+rather than a repeated byte, because pieces committed in the wrong
+order would still come back the right length.
+.CW bthci.py
+grew the characteristic to write to, and the two opcodes.
+.PP
+.CW --corrupt-prepare
+is the check that the echo is really looked at: the model returns one
+byte it was not sent, and the
+.CW badprepare
+phase asserts that the write is refused with
+.CW "the server queued different bytes"
+and that the value on the device is unchanged \(em the model's own log
+showing the queue cancelled rather than committed.
+.NH 2
 What is not there
 .PP
 Bluetooth Classic is not implemented at all: no inquiry, no SDP, no

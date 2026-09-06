@@ -216,16 +216,75 @@ read(s: ref Sess, h: int): (array of byte, string)
 	return (v, nil);
 }
 
+#
+# A value that fits in one request is written with one.  A longer one
+# is queued at the server in pieces with Prepare Write and then
+# committed with Execute Write, which is the only way ATT has of
+# writing more than an MTU and the counterpart of the Read Blob loop
+# above.
+#
 write(s: ref Sess, h: int, v: array of byte): string
 {
-	if(3 + len v > s.mtu)
-		return "value longer than the ATT MTU";
-	q := array[3 + len v] of byte;
-	q[0] = byte Att->Rwrite;
-	bt->put16(q, 1, h);
-	q[3:] = v;
-	(nil, e) := att->request(s, q);
-	return e;
+	if(3 + len v <= s.mtu){
+		q := array[3 + len v] of byte;
+		q[0] = byte Att->Rwrite;
+		bt->put16(q, 1, h);
+		q[3:] = v;
+		(nil, e) := att->request(s, q);
+		return e;
+	}
+	return longwrite(s, h, v);
+}
+
+#
+# Prepare Write carries a handle, an offset and as much of the value
+# as the MTU leaves room for: the opcode, the handle and the offset
+# are five bytes of it.  The server echoes back what it queued, and
+# this checks the echo -- a server that queued something else would
+# otherwise be committed to it by the Execute below, which is the one
+# place in ATT where not looking at the answer writes the wrong bytes
+# to the device rather than merely losing them.
+#
+# Anything that goes wrong cancels the queue rather than leaving the
+# server holding half a value for the next client to commit.
+#
+longwrite(s: ref Sess, h: int, v: array of byte): string
+{
+	chunk := s.mtu - 5;
+	if(chunk < 1)
+		return "the ATT MTU leaves no room for a long write";
+	for(off := 0; off < len v; off += chunk){
+		n := len v - off;
+		if(n > chunk)
+			n = chunk;
+		q := array[5 + n] of byte;
+		q[0] = byte Att->Rprepare;
+		bt->put16(q, 1, h);
+		bt->put16(q, 3, off);
+		q[5:] = v[off:off+n];
+		(p, e) := att->request(s, q);
+		if(e != nil)
+			return cancelwrite(s, e);
+		if(len p != 5 + n || bt->get16(p, 1) != h || bt->get16(p, 3) != off)
+			return cancelwrite(s, "the server queued a different handle or offset");
+		for(i := 0; i < n; i++)
+			if(p[5+i] != v[off+i])
+				return cancelwrite(s, "the server queued different bytes");
+	}
+	x := array[2] of byte;
+	x[0] = byte Att->Rexecute;
+	x[1] = byte Att->Xwrite;
+	(nil, xe) := att->request(s, x);
+	return xe;
+}
+
+cancelwrite(s: ref Sess, why: string): string
+{
+	x := array[2] of byte;
+	x[0] = byte Att->Rexecute;
+	x[1] = byte Att->Xcancel;
+	att->request(s, x);
+	return why;
 }
 
 #

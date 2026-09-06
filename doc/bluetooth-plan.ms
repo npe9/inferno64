@@ -144,9 +144,12 @@ has no case for them.  Nothing needs them until audio does, and audio
 needs a good deal more than that, but the packets arriving and going
 nowhere should be said out loud.
 .IP \(bu
-ATT has no prepare/execute write, so a value longer than the MTU can
-be read (through Read Blob) and cannot be written.  No Read Multiple,
-no signed writes.
+ATT does prepare/execute write now, so a value longer than the MTU can
+be written as well as read: the pieces are queued with Prepare Write
+and committed with Execute Write, the server's echo of each piece is
+checked, and anything that does not match cancels the queue rather
+than committing whatever the server understood.  Still no Read
+Multiple and no signed writes.
 .IP \(bu
 GATT ignores the Service Changed indication, does no caching, and does
 not follow included services.  A device that rearranges its database

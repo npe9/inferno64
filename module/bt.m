@@ -209,7 +209,15 @@ Att: module
 	Rreadgroupresp:	con 16r11;
 	Rwrite:		con 16r12;
 	Rwriteresp:	con 16r13;
+	Rprepare:	con 16r16;
+	Rprepareresp:	con 16r17;
+	Rexecute:	con 16r18;
+	Rexecuteresp:	con 16r19;
 	Rwritecmd:	con 16r52;
+
+	# Execute Write flags
+	Xcancel:	con 0;
+	Xwrite:		con 1;
 	Rnotify:	con 16r1b;
 	Rindicate:	con 16r1d;
 	Rconfirm:	con 16r1e;

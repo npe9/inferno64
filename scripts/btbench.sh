@@ -6,9 +6,10 @@
 # Two phases, because the second is the one a bond exists for:
 #
 #	pair	the whole stack -- controller, scan, connect, GATT,
-#		notifications, pairing -- ending with the bond written
-#		to a key file, and then the device rotating a
-#		resolvable private address while it is watched
+#		notifications, a long write and its read back, pairing
+#		-- ending with the bond written to a key file, and then
+#		the device rotating a resolvable private address while
+#		it is watched
 #	rejoin	the same bond met again, read from that key file, with
 #		nothing pairing in the session and the device rotating
 #		from the start
@@ -27,6 +28,10 @@
 #	orphanlive
 #		the same, except a connection turns up late rather than
 #		a refusal: it must be closed, not merely ignored
+#	badprepare
+#		a server whose Prepare Write echo does not match what
+#		was sent: the long write must be refused and the value
+#		left alone
 #
 # emu does not exit when btbench returns, because btfs is still serving
 # in a process it spawned.  So each phase runs emu in the background and
@@ -105,4 +110,5 @@ run late --late-connect late
 run early --early-connect early
 run orphan --orphan-connect orphan
 run orphanlive --orphan-live orphanlive
+run badprepare --corrupt-prepare badprepare
 echo "BENCH PASS"

@@ -84,6 +84,13 @@ orphan_connect = '--orphan-connect' in sys.argv
 # when it finds it and close it, not merely ignore it.
 orphan_live = '--orphan-live' in sys.argv
 
+# --corrupt-prepare: the Prepare Write response echoes a byte that was
+# not sent.  A client that does not read the echo commits whatever the
+# server queued, which is the one place in ATT where ignoring the
+# answer writes wrong bytes to the device rather than losing them.
+# The write must fail and the value must be left alone.
+corrupt_prepare = '--corrupt-prepare' in sys.argv
+
 def log(*a):
     if verbose:
         print('bthci:', *a, file=sys.stderr, flush=True)
@@ -222,17 +229,22 @@ PEERS = [
 SVC = [
     (0x0001, 0x0005, 0x1800),
     (0x0010, 0x0013, 0x180f),
+    # a writable characteristic with room for a value longer than any
+    # MTU this bench negotiates, so a long write has somewhere to go
+    (0x0020, 0x0022, 0xfff0),
 ]
 # characteristic declarations: (decl handle, props, value handle, uuid)
 CHARS = [
     (0x0002, 0x02, 0x0003, 0x2a00),
     (0x0004, 0x02, 0x0005, 0x2a01),
     (0x0011, 0x12, 0x0012, 0x2a19),
+    (0x0021, 0x0a, 0x0022, 0xfff1),
 ]
 VALUES = {
     0x0003: b'inferno-bench',
     0x0005: bytes([0x00, 0x00]),
     0x0012: bytes([90]),
+    0x0022: b'',
 }
 DESCS = [(0x0013, 0x2902)]
 
@@ -260,6 +272,7 @@ class Model:
         self.rounds = 0
         self.stalled = None       # an attempt deliberately left unanswered
         self.stalls = 0
+        self.prepared = []        # (handle, offset, value) queued by Prepare Write
         self.trace = []
 
     # ------------------------------------------------ wire
@@ -533,6 +546,35 @@ class Model:
             if off >= len(v):
                 return self.acl(4, bytes([0x0d]))
             self.acl(4, bytes([0x0d]) + v[off:off+self.mtu-1])
+        elif op == 0x16:                                  # Prepare Write
+            h, off = struct.unpack('<HH', p[1:5])
+            v = p[5:]
+            if h not in VALUES:
+                return self.att_err(op, h, 0x01)
+            if len(p) > self.mtu:
+                return self.att_err(op, h, 0x0d)          # invalid attribute length
+            self.prepared.append((h, off, v))
+            if corrupt_prepare and v:
+                v = bytes([v[0] ^ 0xff]) + v[1:]
+                log('echoing a byte that was not sent')
+            # the response echoes exactly what was queued, so the
+            # client can see the server understood it
+            self.acl(4, bytes([0x17]) + struct.pack('<HH', h, off) + v)
+        elif op == 0x18:                                  # Execute Write
+            flags = p[1]
+            q, self.prepared = self.prepared, []
+            if flags == 0:
+                log('write queue cancelled, %d parts dropped' % len(q))
+                return self.acl(4, bytes([0x19]))
+            for h, off, v in q:
+                cur = VALUES.get(h, b'')
+                if off > len(cur):
+                    cur = cur + bytes(off - len(cur))
+                VALUES[h] = cur[:off] + v + cur[off+len(v):]
+            if q:
+                log('committed %d parts, %s is now %d bytes'
+                    % (len(q), hex(q[0][0]), len(VALUES[q[0][0]])))
+            self.acl(4, bytes([0x19]))
         elif op == 0x12:                                  # Write
             h = struct.unpack('<H', p[1:3])[0]
             v = p[3:]
