@@ -1,0 +1,44 @@
+.TH POLEZEROS 1
+.SH NAME
+polezeros \- a transfer function, coloured
+.SH SYNOPSIS
+.B temple/polezeros
+.SH DESCRIPTION
+.I PoleZeros
+is a port of the TempleOS
+.B Demo/Graphics/PoleZeros.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+Every pixel of the window is a point in the complex plane, and its colour
+is the magnitude of the rational function whose roots are two zeros and
+whose poles are two poles \- the picture engineers draw as a pole-zero
+plot, except that this is the surface itself rather than a diagram of it.
+Holding the right button swaps magnitude for phase.
+.PP
+The scale is not chosen.  The program renders, sums what it drew,
+rescales and renders again, stopping when the total stops moving, which
+is an auto-exposure loop and is why the picture looks right for any
+arrangement of poles you drag them into.
+.PP
+Dragging picks whichever pole or zero is nearest the cursor by squared
+distance and moves it.
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B LMB
+Drag the nearest pole or zero
+.TP
+.B RMB
+Show phase instead of magnitude
+.TP
+.B "any key"
+Exit
+.PD
+.SH SOURCE
+.B /appl/temple/polezeros.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

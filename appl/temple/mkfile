@@ -136,7 +136,10 @@ TARG=\
 	edsprite.dis\
 	shading.dis\
 	wallpaperfish.dis\
-	waterfowl.dis
+	waterfowl.dis\
+	morsecode.dis\
+	polezeros.dis\
+	transform.dis
 
 DISBIN=$ROOT/dis/temple
 

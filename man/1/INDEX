@@ -399,6 +399,7 @@ mktextlist sh-sexprs
 mload sh-mload
 mltest mltest
 monitor grid-monitor
+morsecode morsecode
 mount bind
 mousedemo mousedemo
 mpexpr sh-expr
@@ -436,6 +437,7 @@ pid sh-std
 pinboard pinboard
 pipe sh-std
 plumb plumb
+polezeros polezeros
 poll collab-clients
 poller collab-clients
 polyhedra wm-misc
@@ -581,6 +583,7 @@ tothefront tothefront
 touch touch
 toupper sh-string
 tr tr
+transform transform
 treecheckers treecheckers
 tsort tsort
 type sh-alphabet

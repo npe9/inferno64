@@ -1,0 +1,38 @@
+.TH MORSECODE 1
+.SH NAME
+morsecode \- a straight key you tap
+.SH SYNOPSIS
+.B temple/morsecode
+.SH DESCRIPTION
+.I MorseCode
+is a port of the TempleOS
+.B Demo/Snd/MorseCode.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+The whole decoder is two numbers.  A key held for under a hundred and
+forty milliseconds is a dot and longer is a dash; a gap of three hundred
+milliseconds or more ends the letter.  Nothing is calibrated to your
+speed and nothing adapts.  A tone sounds while the key is down and stops
+on release, as a real straight key does.
+.PP
+Above the key is the whole International Morse alphabet \- letters,
+digits and punctuation \- in four columns of thirteen, as the original
+prints it.
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B "any key"
+Tap to send
+.TP
+.B Esc / q
+Exit
+.PD
+.SH SOURCE
+.B /appl/temple/morsecode.b
+.SH SEE ALSO
+.IR temple (1),
+.IR tone (2),
+.IR wm (1)
