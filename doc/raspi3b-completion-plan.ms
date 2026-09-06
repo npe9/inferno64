@@ -639,11 +639,27 @@ and keeps doing so, on a real Pi as much as under an emulator, so a
 kernel that arms one on every boot just to look at it is a kernel that
 can brick its own boot.
 .PP
-PWM (0x3f20c000) is
-.B "not attempted yet."
-QEMU's raspi3b models no PWM block.  That is no longer a reason to
-leave it alone \- a model can be written, as the watchdog and GPIO ones
-were \- but it is the next item rather than a finished one.
+PWM (0x3f20c000) is still
+.B "not attempted,"
+and now for one reason rather than two.  QEMU's raspi3b maps nothing at
+.CW PWM_OFFSET
+\- not even an unimplemented stub \- but that is no longer the
+obstacle it was, since a model can be written as the watchdog and GPIO
+ones were.  The reason that survives is the other one: there is nothing
+here PWM would let the board do that it cannot already, and no driver
+wanting it.  Writing both halves of a device nothing consumes would
+produce a test that only proves the two agree with each other.
+.PP
+So PWM waits behind the two unmodelled devices that do have consumers:
+an SMSC LAN9514, which would run the roughly thousand lines of the
+SMSC path in
+.CW appl/cmd/usb/etherusb.b
+that have never executed, and an SDIO function, which is what Phase 6
+and
+.CW sdhcibcm.c 's
+.CW sdiocmd52 / sdiocmd53
+are blocked on.  If PWM is picked up later, the plan should first say
+what would use it.
 .NH 1
 Parallel: the kfs create failure -- re-diagnosed, and it is not what the old note said
 .PP

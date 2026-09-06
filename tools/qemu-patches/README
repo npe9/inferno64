@@ -95,7 +95,16 @@ relinking:
 	mk
 
 The touch is needed because mk rebuilds an object whose timestamp
-merely ties with its source.
+merely ties with its source, and the two are written in the same
+second.  It also dates the objects to 2030, so mk will never rebuild
+them again.  Delete them to get back to a default kernel:
+
+	rm -f pmbcm.7 sdhcibcm.7
+	mk
+
+Do not leave a self-test kernel installed in Inferno/aarch64/bin: it
+reboot-loops on stock qemu, which is a confusing artifact to leave for
+someone else.
 
 What they print, against patched qemu with a 16M raw SD image
 (-drive file=sd.img,if=sd,format=raw):
