@@ -410,9 +410,19 @@ in its
 section and therefore interprets.  Any board that wants both the JIT
 and more than one processor needs that fixed first.
 .PP
-The honest conclusion: Dis executes one program at a time, system-wide,
-and the useful parallelism in a native Inferno is in the kernel around
-it.  A Limbo program does not get faster on four processors.  A system
+This section's title is about the interpreter as it stands, and should
+be read that way: it is a statement about the present design, not a
+proof that no design could be parallel.
+.CW doc/dis-parallel-plan.ms
+is what changing it would cost \- a per-context register file, a
+scheduling context on Go's P, a lock per channel, per-context
+allocation, and a collector that does not keep its mark state in file
+statics \- and why reference counting, which Go does not have and Dis
+cannot drop, is the ceiling on how far it goes.
+.PP
+The honest conclusion for this document: Dis executes one program at a
+time, system-wide, and the useful parallelism in a native Inferno is in
+the kernel around it.  A Limbo program does not get faster on four processors.  A system
 serving files over the network while running Limbo does.
 .NH 1
 The blocker: the uniprocessor baseline
