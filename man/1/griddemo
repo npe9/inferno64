@@ -1,0 +1,51 @@
+.TH GRIDDEMO 1
+.SH NAME
+griddemo \- plot pixels snapped to a lattice
+.SH SYNOPSIS
+.B temple/griddemo
+.SH DESCRIPTION
+.I GridDemo
+is a port of the TempleOS
+.B Demo/Graphics/Grid.HC
+demonstration, whose entry point is
+.B GridDemo()
+\- the name this port takes, since
+.B grid
+in section 1 is already
+.IR grid-session (1).
+It runs under
+.IR wm (1).
+.PP
+It is
+.IR mousedemo (1)
+with the pointer snapped to a five-pixel lattice and the arrow cursor
+replaced by a five-pixel square, which is what the original changes:
+.B ms_grid.snap
+with
+.B ms_grid.x
+and
+.B ms_grid.y
+set to
+.BR GRID ,
+and
+.B gr.fp_draw_ms
+pointed at a routine that draws a
+.B GrRect
+instead of an arrow.
+Plotted points therefore land only on multiples of five.
+.PP
+The controls are:
+.TF "left button"
+.TP
+.B "mouse move"
+Move the snapped cursor
+.TP
+.B "left button"
+Clear and exit
+.PD
+.SH SOURCE
+.B /appl/temple/griddemo.b
+.SH SEE ALSO
+.IR temple (1),
+.IR mousedemo (1),
+.IR wm (1)

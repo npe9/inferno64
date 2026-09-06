@@ -102,7 +102,11 @@ TARG=\
 	whap.dis\
 	xcaliber.dis\
 	zing.dis\
-	zoneout.dis
+	zoneout.dis\
+	bspline.dis\
+	griddemo.dis\
+	mousedemo.dis\
+	speedline.dis
 
 DISBIN=$ROOT/dis/temple
 

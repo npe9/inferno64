@@ -93,7 +93,8 @@ mods := array[] of {
 	"strut", "symmetry", "talons", "thedead", "tictactoe",
 	"timeclock", "titanium", "tothefront", "treecheckers", "varoom",
 	"vocabulary", "wenceslas", "whap", "xcaliber", "zing",
-	"zoneout"
+	"zoneout",
+	"bspline", "griddemo", "mousedemo", "speedline"
 };
 
 init(ctxt: ref Context, argv: list of string)

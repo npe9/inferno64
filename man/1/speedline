@@ -1,0 +1,40 @@
+.TH SPEEDLINE 1
+.SH NAME
+speedline \- drawing program whose pen thickens with speed
+.SH SYNOPSIS
+.B temple/speedline
+.SH DESCRIPTION
+.I SpeedLine
+is a port of the TempleOS
+.B Demo/Graphics/Speedline.HC
+drawing program.
+It runs under
+.IR wm (1).
+.PP
+Draw with the left button held.
+For every pointer movement the pen thickness is set to
+0.04 times the pointer speed, so a slow careful stroke is a hairline
+and a fast flick is a fat one.
+That is the whole idea of the program.
+.PP
+The right button offers the sixteen palette colours; click one to draw
+in it, or press a key to keep the current colour.
+Any key clears and exits.
+.PP
+The controls are:
+.TF "right button"
+.TP
+.B "left button"
+Draw
+.TP
+.B "right button"
+Choose a colour
+.TP
+.B "any key"
+Clear and exit
+.PD
+.SH SOURCE
+.B /appl/temple/speedline.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

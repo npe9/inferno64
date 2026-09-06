@@ -35,6 +35,7 @@ bounce bounce
 box box
 broke tiny
 brutus brutus
+bspline bspline
 budget budget
 builtin sh
 cal cal
@@ -321,6 +322,7 @@ grid-ns grid-ns
 grid-query grid-query
 grid-register grid-register
 grid-session grid-session
+griddemo griddemo
 gridstart gridstart
 grmodels grmodels
 gunzip gzip
@@ -389,6 +391,7 @@ mload sh-mload
 mltest mltest
 monitor grid-monitor
 mount bind
+mousedemo mousedemo
 mpexpr sh-expr
 mprof mprof
 munload sh-mload
@@ -498,6 +501,7 @@ sort sort
 span span
 speak speak
 speakertest speakertest
+speedline speedline
 split sh-std
 splitl sh-string
 splitr sh-string

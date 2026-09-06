@@ -1,0 +1,42 @@
+.TH BSPLINE 1
+.SH NAME
+bspline \- quadratic and cubic B-splines through the same points
+.SH SYNOPSIS
+.B temple/bspline
+.SH DESCRIPTION
+.I BSpline
+is a port of the TempleOS
+.B Demo/Graphics/BSpline.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+Click up to sixteen control points with the left button, each marked
+with a green circle, and press the right button when finished.
+The same points are then drawn through twice: the quadratic
+.RB ( Gr2BSpline )
+in red and the cubic
+.RB ( Gr3BSpline )
+in blue, both closed.
+Comparing them is the demonstration \- the quadratic touches the
+midpoint of every edge of the control polygon and the cubic passes
+through none of the points at all.
+.PP
+The controls are:
+.TF "right button"
+.TP
+.B "left button"
+Place a control point
+.TP
+.B "right button"
+Finish and draw
+.TP
+.B "any key"
+Exit, once the curves are drawn
+.PD
+.SH SOURCE
+.B /appl/temple/bspline.b
+.SH SEE ALSO
+.IR temple (1),
+.IR zing (1),
+.IR wm (1)

@@ -1,0 +1,35 @@
+.TH MOUSEDEMO 1
+.SH NAME
+mousedemo \- plot pixels under the mouse
+.SH SYNOPSIS
+.B temple/mousedemo
+.SH DESCRIPTION
+.I MouseDemo
+is a port of the TempleOS
+.B Demo/Graphics/MouseDemo.HC
+demonstration, which is eight lines long.
+It runs under
+.IR wm (1).
+.PP
+It plots a single pixel wherever the pointer is, over and over, until
+the left button is pressed.
+That it plots continuously rather than only on movement is the point:
+hold the pointer still and the same pixel is redrawn, sweep it quickly
+and the trail is dotted, because nothing is interpolated between
+positions.
+.PP
+The controls are:
+.TF "left button"
+.TP
+.B "mouse move"
+Move the pen
+.TP
+.B "left button"
+Clear and exit
+.PD
+.SH SOURCE
+.B /appl/temple/mousedemo.b
+.SH SEE ALSO
+.IR temple (1),
+.IR griddemo (1),
+.IR wm (1)
