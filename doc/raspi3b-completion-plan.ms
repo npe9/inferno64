@@ -255,10 +255,20 @@ a
 .CW Tval
 in both functions so every deadline comparison is signed against signed
 and a bad value would fire early instead of wedging the queue.  Twelve
-boards carry copies of this timer queue and all twelve are fixed;
-raspi3b, virt, virtarm64, sifiveu and virt32 were booted afterwards,
-armv7, mangopi, shakti, spike, virts and virt32s compile, and armv7m has
-no mkfile in the tree to build with.
+boards carry copies of this timer queue and all twelve are fixed.  What
+each claim rests on, exactly: raspi3b, virtarm64, sifiveu and virt32
+were booted afterwards and reach an interactive shell (RASPI3B-SH-OK,
+SIFIVEU-SH-OK, and a prompt on the two virts); virt was booted and gets
+as far as
+.CW "sh loaded" ,
+which is where its diskless run stops anyway; armv7, mangopi, shakti,
+spike, virts and virt32s compile but were not booted; and armv7m has no
+mkfile in the tree to build with at all.  The sifiveu and virtarm64
+kernels in those boots also carried uncommitted device-table edits
+.CW ( sifiveu.c ,
+.CW virtarm64.c )
+already in the tree from other in-flight board work \- the timer queue
+does not depend on them, but the boots were not of a clean checkout.
 .PP
 Left for the real board: the SMSC init path above, and the interrupt
 endpoint (link status) which neither chip path uses yet.
