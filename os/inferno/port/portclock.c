@@ -162,6 +162,12 @@ hzclock(Ureg *ur)
 	if(m->machno == 0)
 		checkalarms();
 
+	/* MULTICORE INSTRUMENTATION - temporary: one dump once a stall has set in */
+	if(m->machno == 0 && m->ticks == 40*HZ){
+		extern void disdump(void);
+		disdump();
+	}
+
 	if(up && up->state == Running){
 		/* user profiling clock */
 		Tos *tos = (Tos*)(USTKTOP-sizeof(Tos));

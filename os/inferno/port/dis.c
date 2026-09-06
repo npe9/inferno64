@@ -21,12 +21,10 @@ struct
 	Prog*	head;
 	Prog*	tail;
 	Rendez	irend;
-	int	idle;
+	int	nidle;		/* interpreters parked on idlevmq */
 	int	nyield;
 	int	creating;
-	Proc*	vmq;		/* queue of procs wanting vm */
-	Proc*	vmqt;
-	Proc*	idlevmq;	/* queue of procs wanting work */
+	Proc*	idlevmq;	/* interpreters with no program to run */
 	Atidle*	idletasks;
 } isched;
 
@@ -37,6 +35,96 @@ uvlong	gcidle;
 uvlong	gcidlepass;
 uvlong	gcpartial;
 int keepbroken = 1;
+int nvm;	/* MULTICORE INSTRUMENTATION - temporary: VM holders */
+int maxnvm;
+
+/*
+ * Dis executes one program at a time, system-wide.
+ *
+ * This is not a scaling choice, it is what the interpreter is.  The
+ * virtual machine's register set is the single global REG R
+ * (libinterp/xec.c:11); irestore() loads it from a Prog and isave()
+ * stores it back (libinterp/xec.c:2280); and every JIT backend
+ * compiles the absolute address of that one object into the code it
+ * emits -- comp-amd64.c alone has eight con((uintptr)&R, RTMP).  Two
+ * processors interpreting at once share one register file.
+ *
+ * The isched.idle/vmq/idlevmq handshake this replaces was meant to be
+ * that exclusion and was not.  Instrumenting vmachine()'s xec() call
+ * with a counter showed ten kernel processes inside xec() at once on a
+ * four processor boot; "movp: bad sv", "movp: bad dv-freed" and the
+ * decref underflows all came from there.
+ *
+ * A QLock, not a Lock: the holder blocks in Dis system calls, and
+ * qunlock() hands the lock to the head of its own FIFO queue rather
+ * than dropping it, which is what makes iyield() a real yield.
+ *
+ * vmheld is per-process and makes both operations idempotent.  That is
+ * what lets this survive the error path: propex()/nexterror() longjmps
+ * out of xec() straight back to vmachine()'s waserror() block, over
+ * any unlock in between.  An earlier attempt at a single Dis lock was
+ * reverted for exactly that reason -- the history is in the long
+ * comment in emu/port/dis.c's vmachine() -- and the flag is the answer
+ * to it: the recovery path calls vmrelease() and it does the right
+ * thing whether or not the lock survived the jump.
+ */
+static QLock vmlock;
+
+static void
+vmacquire(void)
+{
+	if(up->vmheld == 0){
+		qlock(&vmlock);
+		up->vmheld = 1;
+		{	/* MULTICORE INSTRUMENTATION - temporary */
+			int n = ainc(&nvm);
+			if(n > maxnvm){
+				maxnvm = n;
+				print("nvm: %d hold the vm, cpu%d %s\n",
+					n, m->machno, up->text);
+			}
+		}
+	}
+}
+
+/*
+ * An interpreter with nothing to run parks itself on isched.idlevmq and
+ * gives up the processor; this is what restarts one.  It is not the VM
+ * lock -- a woken interpreter still has to take that -- it only says
+ * "there is work now".
+ *
+ * A Rendez holds exactly one sleeper, so the idle interpreters cannot
+ * simply sleep() on a shared one; doing that produced "double sleep
+ * called from vmachine+0x22b" the moment a second interpreter went
+ * idle.  Parking with state Queueing and restarting with ready() is
+ * what the code this replaced already did, and it takes any number.
+ */
+static void
+wakeidle(void)
+{
+	Proc *p;
+
+	lock(&isched.l);
+	p = isched.idlevmq;
+	if(p != nil){
+		isched.idlevmq = p->vmnext;
+		p->vmnext = nil;
+		isched.nidle--;
+	}
+	unlock(&isched.l);
+	if(p != nil)
+		ready(p);
+}
+
+static void
+vmrelease(void)
+{
+	if(up->vmheld){
+		adec(&nvm);	/* MULTICORE INSTRUMENTATION - temporary */
+		up->vmheld = 0;
+		qunlock(&vmlock);
+	}
+}
 static Prog*	proghash[64];
 
 /*
@@ -78,7 +166,7 @@ int
 tready(void *a)
 {
 	USED(a);
-	return isched.runhd != nil || isched.vmq != nil;
+	return isched.runhd != nil;
 }
 
 Prog*
@@ -134,7 +222,7 @@ execatidle(void)
 
 	done = gccolor+3;
 	while(gccolor < done && gcruns()) {
-		if(isched.vmq != nil || isched.runhd != isched.runtl) {
+		if(isched.runhd != isched.runtl) {
 			gcpartial++;
 			break;
 		}
@@ -900,32 +988,9 @@ schedmod(Module *m)
 void
 acquire(void)
 {
-	int empty;
 	Prog *p;
 
-	lock(&isched.l);
-	if(isched.idle) {
-		isched.idle = 0;
-		unlock(&isched.l);
-	}
-	else {
-		up->qnext = nil;
-		if(isched.vmq != nil){
-			empty = 0;
-			isched.vmqt->qnext = up;
-		}else{
-			isched.vmq = up;
-			empty = 1;
-		}
-		isched.vmqt = up;
-
-		up->state = Queueing;
-		up->pc = getcallerpc(&empty);
-		unlock(&isched.l);
-		if(empty)
-			wakeup(&isched.irend);
-		sched();
-	}
+	vmacquire();
 
 	if(up->type == Interp) {
 		p = up->iprog;
@@ -935,6 +1000,11 @@ acquire(void)
 	else
 		p = up->prog;
 
+	/*
+	 * Unlocked on purpose: the VM lock is held from here until the
+	 * matching release(), and nothing touches the run queue without
+	 * it.
+	 */
 	p->state = Pready;
 	p->link = isched.runhd;
 	isched.runhd = p;
@@ -945,8 +1015,7 @@ acquire(void)
 void
 release(void)
 {
-	Proc *p, **pq;
-	int f;
+	int spawn;
 
 	if(up->type == Interp){
 		if(up->iprog != nil)
@@ -957,86 +1026,52 @@ release(void)
 		delrun(Prelease);
 	}
 
+	/*
+	 * This process is about to block.  If programs are left on the run
+	 * queue and no interpreter is sitting idle to pick them up, make
+	 * one: otherwise a single blocking Dis system call stops every
+	 * Limbo program in the system, which is the whole reason this
+	 * kernel spawns "dis" processes at all.  isched.creating keeps two
+	 * releases in a row from making two.
+	 */
 	lock(&isched.l);
-	if(*(pq = &isched.vmq) == nil && *(pq = &isched.idlevmq) == nil) {
-		isched.idle = 1;
-		f = isched.creating;
+	spawn = 0;
+	if(isched.runhd != nil && isched.nidle == 0 && isched.creating == 0){
 		isched.creating = 1;
-		unlock(&isched.l);
-		if(f == 0)
-			/*
-			 * flags=0 left this kproc's pgrp/fgrp/egrp at
-			 * whatever newproc()'s recycled Proc slot last
-			 * had -- rptproc(), the same acquire()/release()
-			 * pattern this loop uses, passes KPDUP for exactly
-			 * this reason.  The per-iteration up->fgrp = o->fgrp
-			 * below resyncs before every xec(), but code that
-			 * can run before this kproc's first loop iteration
-			 * (startup(), the waserror() scaffolding) still sees
-			 * whatever newproc() handed it otherwise.
-			 */
-			kproc("dis", vmachine, nil, KPDUP);
-		return;
+		spawn = 1;
 	}
-	p = *pq;
-	*pq = p->qnext;
 	unlock(&isched.l);
 
-	ready(p);
+	vmrelease();
+	wakeidle();
+
+	if(spawn)
+		kproc("dis", vmachine, nil, KPDUP);
 }
 
 void
 iyield(void)
 {
-	Proc *p;
-
-	lock(&isched.l);
-	p = isched.vmq;
-	if(p == nil) {
-		unlock(&isched.l);
+	if(up->vmheld == 0)
 		return;
-	}
-	isched.nyield++;
-	isched.vmq = p->qnext;
-
 	if(up->iprog != nil)
 		panic("iyield but iprog, type %d", up->type);
-	if(up->type != Interp){
-		static int once;
-		if(!once++)
-			print("tell charles: #%p->type==%d\n", up, up->type);
-	}
-	up->qnext = isched.idlevmq;
-	isched.idlevmq = up;
-
-	up->state = Queueing;
-	up->pc = getcallerpc(&p);
-	unlock(&isched.l);
-	ready(p);
-	sched();
+	isched.nyield++;
+	vmrelease();
+	vmacquire();
 }
 
 void
 startup(void)
 {
-	int x;
-
 	up->type = Interp;
 	up->iprog = nil;
 
 	lock(&isched.l);
 	isched.creating = 0;
-	if(isched.idle) {
-		isched.idle = 0;
-		unlock(&isched.l);
-		return;
-	}
-	up->qnext = isched.idlevmq;
-	isched.idlevmq = up;
-	up->state = Queueing;
-	up->pc = getcallerpc(&x);
 	unlock(&isched.l);
-	sched();
+
+	vmacquire();
 }
 
 void
@@ -1186,11 +1221,34 @@ vmachine(void*)
 		clockcheck();
 
 		if(tready(nil) == 0) {
+			/*
+			 * execatidle() collects and calls addrun/delrunq, so
+			 * it wants the VM held.  Parking must not hold it, or
+			 * every Limbo program in the system stops here.
+			 */
 			execatidle();
-			sleep(&isched.irend, tready, 0);
+			vmrelease();
+			lock(&isched.l);
+			if(tready(nil) == 0){
+				/*
+				 * Re-checked under isched.l: the VM was given
+				 * up above, so another process may have made a
+				 * program ready and called wakeidle() before
+				 * this one was on the list to be found.
+				 */
+				up->vmnext = isched.idlevmq;
+				isched.idlevmq = up;
+				isched.nidle++;
+				up->state = Queueing;
+				up->pc = getcallerpc(&r);
+				unlock(&isched.l);
+				sched();
+			} else
+				unlock(&isched.l);
+			vmacquire();
 		}
 
-		if(isched.vmq != nil && (isched.runhd == nil || ++cycles > 2)){
+		if(vmlock.head != nil && (isched.runhd == nil || ++cycles > 2)){
 			iyield();
 			cycles = 0;
 		}
@@ -1298,8 +1356,6 @@ disinit(void *a)
 	o->errstr = o->errbuf0;
 	o->syserrstr = o->errbuf1;
 
-	isched.idle = 1;
-
 	if(kopen("#c/cons", OREAD) != 0)
 		panic("failed to make fd0 from #c/cons");
 	kopen("#c/cons", OWRITE);
@@ -1322,4 +1378,61 @@ pushrun(Prog *p)
 	isched.runhd = p;
 	if(p->link == nil)
 		isched.runtl = p;
+}
+
+/*
+ * One dump of the Dis scheduler's state: who holds the interpreter, who
+ * is parked waiting for work, every live Prog, and every live kernel
+ * process with the Rendez it is asleep on.  Meant to be called once,
+ * from a clock handler, after a stall has set in.
+ *
+ * NOTE: this is a reimplementation.  An earlier disdump() existed in
+ * this tree as uncommitted work and was destroyed by a bad edit while
+ * the multicore work was going on; it could not be recovered from any
+ * commit or worktree.  os/inferno/raspi3b/clock.c calls this and needs
+ * it to link.  What it prints is what its caller's comment said it
+ * printed, written fresh against the structures here -- it is not the
+ * original text.
+ */
+void
+disdump(void)
+{
+	static char *pstate[] = {
+		"alt", "send", "recv", "debug",
+		"ready", "release", "exiting", "broken",
+	};
+	extern char *statename[];
+	char mbuf[64];
+	Prog *p;
+	Proc *q;
+	int i;
+
+	print("\ndis: vmlocked %d nidle %d creating %d runhd %#p runtl %#p\n",
+		vmlock.locked, isched.nidle, isched.creating,
+		isched.runhd, isched.runtl);
+
+	for(p = isched.runhd; p != nil; p = p->link)
+		print("dis: runq prog %d %s\n", p->pid,
+			(uint)p->state < nelem(pstate)? pstate[p->state]: "?");
+
+	for(p = isched.head; p != nil; p = p->next){
+		modstatus(&p->R, mbuf, sizeof mbuf);
+		print("dis: prog %d %s %s\n", p->pid,
+			(uint)p->state < nelem(pstate)? pstate[p->state]: "?", mbuf);
+	}
+
+	for(q = vmlock.head; q != nil; q = q->qnext)
+		print("dis: waiting for the vm: proc %d %s\n", q->pid, q->text);
+
+	for(q = isched.idlevmq; q != nil; q = q->vmnext)
+		print("dis: parked for work: proc %d %s\n", q->pid, q->text);
+
+	for(i = 0; i < conf.nproc; i++){
+		q = proctab(i);
+		if(q->state == Dead)
+			continue;
+		print("dis: proc %d %s %s type %d vmheld %d iprog %#p r %#p sleeppc %#p qpc %#p\n",
+			q->pid, q->text, statename[q->state], q->type,
+			q->vmheld, q->iprog, q->r, q->sleeppc, q->qpc);
+	}
 }
