@@ -16,16 +16,27 @@ implement Talons;
 # buffer across cores; this port paints panels far-to-near through a
 # direct Limbo port of EDTransform rather than math/draw3d (whose
 # project() pays a 4x4 matmul per vertex in Limbo — far too slow for
-# the thousands of terrain vertices per frame).
+# the thousands of terrain vertices per frame).  The depth buffer
+# itself is measured, not guessed: math/polyfill's z-buffered fill is
+# interpreted Limbo where Image.fillpoly is a native draw call, and on
+# a load of 200 quads and 300 triangles a frame it costs 7.18ms a frame
+# against 0.07ms — a hundred times over, before this game's real panel
+# count is reached.  See doc/temple-plan.md.
 #
 # Original tick structure: AnimateTask runs on wall time (tS) throttled
 # by Refresh (~30fps winmgr), so its per-iteration speed constants map
 # 1:1 onto this port's 33ms tick; movement and the water auto-pitch are
 # ms-scaled exactly as in the original.
 #
-# GAP: map is 512x512 (original 1024x1024) — the full-size panel and
-#   normal tables exceed the default emu heap; bump/fish/boat/tree/bird
-#   densities are kept per-area so the world feels the same.
+# GAP: map is 512x512 (original 1024x1024).  Measured: at 1024x1024 the
+#   world generates in 341ms into 207851 panels and 6272 objects, and it
+#   plays — but only with `emu -pheap=40000000` or more, where emu's
+#   default heap is 32MB, and the demo has to work when it is started
+#   from the wm menu with no flags.  To try it, set MAPW/MAPH to 1024,
+#   BIRDN to 256 (B_NUM) and the obx.. arrays to 16384 (4096 silently
+#   drops objects past 6272), and pass the flag.  Bump/fish/boat/tree
+#   densities are per-panel probabilities and scale by themselves;
+#   BIRDN is the one fixed count.
 # GAP: painter sort instead of a depth buffer — rare wrong overlaps
 #   where a tall tree/bird should be hidden by nearer terrain (the
 #   original's unlocked multicore depth buffer glitched there too).

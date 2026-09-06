@@ -16,7 +16,26 @@ implement Varoom;
 #
 # GAP: TempleOS MenuPush menu bar omitted (no equivalent); keys are in varoom(1)
 # GAP: GrFillPoly3's per-pixel depth buffer approximated with a painter's-
-#      algorithm sort; the multi-CPU JobQue fan-out is single-threaded
+#      algorithm sort; the multi-CPU JobQue fan-out is single-threaded.
+#      This one was measured before it was accepted.  math/polyfill has a
+#      real per-pixel z-buffer and math/draw3d's fillpoly3 drives it, and
+#      it is what 3dpoly, zoneout and wenceslas use — but it is
+#      interpreted Limbo where Image.fillpoly is a native draw call.  On
+#      a synthetic frame of 200 quads and 300 triangles, well under this
+#      game's load, the z-buffered fill costs 7.18ms a frame against
+#      0.07ms for the plain one, a hundred times over, with another
+#      0.68ms a frame just to clear a 640x480 depth buffer.  A racing
+#      game cannot pay that, so the sort stays.
+#      What the sort actually loses is narrow.  The original gives every
+#      sprite one depth (Sprite3B with z+GR_Z_ALL, and GR_Z_ALL is only
+#      I32_MAX/2, a bias to keep z positive), so for whole objects a
+#      back-to-front sort by that same depth agrees with the depth buffer
+#      exactly.  It differs in two places: where a track polygon's
+#      interpolated depth crosses a sprite's single depth — a bush
+#      standing on the road, whose base should be cut by nearer tarmac
+#      and whose top should not — and between the triangles of one car
+#      mesh, which are sorted by centroid here and resolved per pixel
+#      there.
 # GAP: Noise(500,22,34) approximated by rapid random snd() steps
 
 include "sys.m";

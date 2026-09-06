@@ -268,12 +268,38 @@ Closable, and being closed:
   explosion ring or an enemy's drawn body, none of which is a mass, and
   passes through white text. Both are now present, and the frame is composed
   offscreen so the walk can read it back.
-- `talons`' halved map and painter sort, `varoom`'s painter sort. draw3d's
-  z-buffer (`setz`/`clearz`/`setzclip` + `fillpoly3`) is what `3dpoly`,
-  `zoneout` and `wenceslas` already use, and the z-sense reconciliation is
-  settled. A painter sort and a z-buffer agree on most frames, so the check
-  that discriminates is a frame with two polygons that genuinely
-  interpenetrate: the sort must pick one whole, the z-buffer shows both.
+- `talons`' halved map and painter sort, `varoom`'s painter sort. **Both
+  measured, both staying as they are** — see below.
+
+**The z-buffer is not affordable in these two, and that is a measurement.**
+`math/polyfill` has a real per-pixel z-buffer and `math/draw3d`'s
+`fillpoly3` drives it; `3dpoly`, `zoneout` and `wenceslas` all use it. But
+`polyfill->fillpoly` is interpreted Limbo where `Image.fillpoly` is a
+native draw call. On a synthetic frame of 200 quads and 300 triangles —
+lighter than `varoom`'s real load — it costs **7.18ms a frame against
+0.07ms**, a hundred times over, plus **0.68ms a frame** to clear a 640x480
+depth buffer. That is the whole reason the two big painter sorts exist,
+and it should be re-measured, not re-argued, if anyone tries again.
+
+What the sort actually loses in `varoom` is narrow, and worth knowing
+before spending on it. The original gives every *sprite* a single depth —
+`Sprite3B(dc,x,y,z+GR_Z_ALL,img)`, and `GR_Z_ALL` is only `I32_MAX/2`, a
+bias to keep z positive, not a "no depth" flag — so for whole objects a
+back-to-front sort by that same depth agrees with a depth buffer exactly.
+It differs in two places: where a track polygon's *interpolated* depth
+crosses a sprite's single depth (a bush on the road, whose base should be
+cut by nearer tarmac and whose top should not), and between the triangles
+of one car mesh, sorted by centroid here and resolved per pixel there.
+
+**`talons`' map is a heap limit, and now a numbered one.** At the
+original's 1024x1024 the world generates in 341ms into 207851 panels and
+6272 objects and plays fine — but only with `emu -pheap=40000000` or more,
+where emu's default heap is 32MB; at 32MB it dies in `dopanels` with
+`out of memory: heap`. The demo has to work started from the wm menu with
+no flags, so it stays at 512x512. To try the full size: `MAPW`/`MAPH` to
+1024, `BIRDN` to 256 (`B_NUM`), the `obx`.. arrays to 16384 (4096 silently
+drops objects past 6272), and pass the flag. The bump, fish, boat and tree
+densities are per-panel probabilities and scale by themselves.
 
 Not closable, and not worth attempting:
 
