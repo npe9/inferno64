@@ -220,6 +220,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	"params" =>
 		paramphase();
 		return;
+	"included" =>
+		included();
+		return;
 	}
 	case mode {
 	"stall" or "late" or "early" or "orphan" or "orphanlive" or "badprepare" =>
@@ -531,6 +534,73 @@ conntest(mode: string)
 		} else
 			sys->print("BT: the link carries ATT: name = %s\n", v);
 	}
+	writefile(dev + "/ctl", "disconnect");
+	writefile(mnt + "/0/ctl", "scan off");
+	sys->print("BT: done\n");
+}
+
+#
+# A service that includes another.  The included one here is a
+# secondary service, which by definition does not appear in primary
+# service discovery -- so a client that ignores include declarations
+# cannot reach its characteristics at all.  That is what makes this
+# lost attributes rather than a lost cross reference.
+#
+included()
+{
+	remotes := lsdir(mnt + "/0/remote");
+	if(remotes == nil){
+		sys->print("BT: FAILED: nothing was advertising\n");
+		return;
+	}
+	dev := mnt + "/0/remote/" + hd remotes;
+	if((e := writefile(dev + "/ctl", "connect")) != nil){
+		sys->print("BT: FAILED: connect: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	ok := 1;
+	svcs := lsdir(dev + "/gatt");
+	got := 0;
+	for(l := svcs; l != nil; l = tl l)
+		if(hd l == "fffa")
+			got = 1;
+	if(!got){
+		sys->print("BT: FAILED: the secondary service was not reached\n");
+		ok = 0;
+	} else
+		sys->print("BT: the secondary service is there among %d\n", len svcs);
+	#
+	# the relationship, not only the service
+	#
+	inc := trim(readfile(dev + "/gatt/fff2/included"));
+	if(!hasword(inc, "fffa")){
+		sys->print("BT: FAILED: fff2/included reads %s\n", inc);
+		ok = 0;
+	} else
+		sys->print("BT: fff2 includes: %s\n", inc);
+	#
+	# and its characteristic reads, which is the attribute that
+	# would otherwise be unreachable
+	#
+	v := trim(readfile(dev + "/gatt/fffa/fffb"));
+	if(v != "only reachable through the include"){
+		sys->print("BT: FAILED: fffa/fffb reads %s\n", v);
+		ok = 0;
+	} else
+		sys->print("BT: fffa/fffb reads: %s\n", v);
+	#
+	# a service that includes nothing has no such file, so the file
+	# says something rather than being there for every service
+	#
+	if((fd := sys->open(dev + "/gatt/1800/included", Sys->OREAD)) != nil){
+		sys->print("BT: FAILED: 1800 has an included file and includes nothing\n");
+		ok = 0;
+	} else
+		sys->print("BT: a service that includes nothing has no included file\n");
+	fd = nil;
+	if(ok)
+		sys->print("BT: includes followed\n");
 	writefile(dev + "/ctl", "disconnect");
 	writefile(mnt + "/0/ctl", "scan off");
 	sys->print("BT: done\n");

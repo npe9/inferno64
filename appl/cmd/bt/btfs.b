@@ -64,7 +64,7 @@ Btfs: module
 	init:	fn(nil: ref Draw->Context, argv: list of string);
 };
 
-Kroot, Kctlr, Kaddr, Kver, Kctl, Kstate, Kscan, Kremotes, Kbonds, Kdident,
+Kroot, Kctlr, Kaddr, Kver, Kctl, Kstate, Kscan, Kremotes, Kbonds, Kdident, Kinc,
 	Kdev, Kdaddr, Kdtype, Kdrssi, Kdname, Kdadv, Kdstate, Kdctl,
 	Kdgatt, Ksvc, Kchar, Kcnotify: con iota;
 
@@ -110,6 +110,7 @@ Node: adt {
 	dev:	ref Dev;
 	cn:	ref Cnode;
 	name:	string;
+	text:	string;	# what a Kinc file reads as
 };
 
 srv:	ref Styxserver;
@@ -234,7 +235,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	nodes = array[64] of ref Node;
 	# node 0 is the root of the served tree, so the first name
 	# created below does not take its qid
-	nodes[0] = ref Node(Qroot, Kroot, nil, nil, ".");
+	nodes[0] = ref Node(Qroot, Kroot, nil, nil, ".", nil);
 	nextq = 1;
 	readkeys();
 
@@ -318,7 +319,7 @@ newnode(kind: int, d: ref Dev, cn: ref Cnode, name: string): big
 		nodes = a;
 	}
 	q := big nextq;
-	nodes[nextq] = ref Node(q, kind, d, cn, name);
+	nodes[nextq] = ref Node(q, kind, d, cn, name, nil);
 	nextq++;
 	return q;
 }
@@ -781,6 +782,8 @@ doread(m: ref Tmsg.Read)
 		srv.reply(styxservers->readstr(m, bt->atypestr(n.dev.atype) + "\n"));
 	Kdident =>
 		srv.reply(styxservers->readstr(m, identtext(n.dev)));
+	Kinc =>
+		srv.reply(styxservers->readstr(m, n.text));
 	Kdrssi =>
 		srv.reply(styxservers->readstr(m, sprint("%d\n", n.dev.rssi)));
 	Kdname =>
@@ -1103,10 +1106,41 @@ discover(d: ref Dev): string
 	(svcs, e) := gatt->services(d.sess);
 	if(e != nil)
 		return e;
-	for(l := svcs; l != nil; l = tl l){
-		s := hd l;
+	#
+	# The list is walked rather than iterated, because discovering a
+	# service can add to it: an included service need not be a
+	# primary one, and a secondary service appears nowhere else, so
+	# its characteristics are reachable through the include or not
+	# at all.  A service already in the tree is not added twice, and
+	# that is also what stops two services that include each other
+	# from being followed for ever.
+	#
+	done: list of (int, int);
+	todo := svcs;
+	while(todo != nil){
+		s := hd todo;
+		todo = tl todo;
+		seen := 0;
+		for(dl := done; dl != nil; dl = tl dl){
+			(ds, de) := hd dl;
+			if(ds == s.start && de == s.end)
+				seen = 1;
+		}
+		if(seen)
+			continue;
+		done = (s.start, s.end) :: done;
 		sq := newnode(Ksvc, d, nil, s.uuid);
 		create(d.gq, mkdir(s.uuid, sq));
+		(incs, ie) := gatt->includes(d.sess, s);
+		if(ie == nil && incs != nil){
+			inctext := "";
+			for(il := incs; il != nil; il = tl il)
+				inctext += sprint("%s %4.4ux %4.4ux\n",
+					(hd il).uuid, (hd il).start, (hd il).end);
+			iq := mkfd(sq, "included", Kinc, 8r444, d, nil);
+			nodes[int iq].text = inctext;
+			todo = appendsvcs(todo, incs);
+		}
 		(cs, ce) := gatt->chars(d.sess, s);
 		if(ce != nil)
 			continue;
@@ -1298,6 +1332,23 @@ dropdev(d: ref Dev)
 			remove(n.q);
 	}
 	remove(d.q);
+}
+
+#
+# put the included services at the end of the list being walked, so
+# they are discovered after everything already there
+#
+appendsvcs(l: list of ref Gatt->Service, more: list of ref Gatt->Service): list of ref Gatt->Service
+{
+	r: list of ref Gatt->Service;
+	for(; l != nil; l = tl l)
+		r = hd l :: r;
+	for(; more != nil; more = tl more)
+		r = hd more :: r;
+	rr: list of ref Gatt->Service;
+	for(; r != nil; r = tl r)
+		rr = hd r :: rr;
+	return rr;
 }
 
 removetree(d: ref Dev)

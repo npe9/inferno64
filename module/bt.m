@@ -312,6 +312,15 @@ Gatt: module
 
 	services:	fn(s: ref Att->Sess): (list of ref Service, string);
 	chars:		fn(s: ref Att->Sess, svc: ref Service): (list of ref Char, string);
+
+	# the services this one includes.  An include declaration names
+	# a handle range and, for a 16 bit UUID, the UUID itself; for a
+	# 128 bit one it does not, and the included service's own
+	# declaration has to be read to find out what it is.  An
+	# included service need not be a primary one, so it need not
+	# appear in services() at all -- which is why ignoring these
+	# loses attributes rather than only losing a relationship.
+	includes:	fn(s: ref Att->Sess, svc: ref Service): (list of ref Service, string);
 	descriptors:	fn(s: ref Att->Sess, c: ref Char): string;
 	read:		fn(s: ref Att->Sess, h: int): (array of byte, string);
 	write:		fn(s: ref Att->Sess, h: int, v: array of byte): string;

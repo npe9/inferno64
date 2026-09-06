@@ -19598,6 +19598,47 @@ it drops the link, because a device that has stopped advertising and
 is then disconnected is eligible the moment it is, and that is
 correct.
 .NH 2
+Services that include others
+.PP
+An include declaration names another service's handle range, and its
+UUID when that is a 16 bit one; a 128 bit UUID is not in the
+declaration and the included service's own declaration has to be read
+for it.  Nothing here read them.
+.PP
+That is not only a lost cross reference.  An included service need not
+be a primary one, and a secondary service by definition does not
+appear in primary service discovery \(em so its characteristics were
+reachable through the include and nowhere else, which is to say not at
+all.
+.PP
+.CW Gatt.includes
+walks them, and
+.CW btfs 's
+discovery follows them: the list of services being walked is a work
+queue rather than a fixed list, an included service that is not
+already in the tree is added to it, and one that is is not added twice
+\(em which is also what stops two services that include each other
+from being followed for ever.  Each service that includes others gets
+an
+.CW included
+file naming them; a service that includes none does not have the file
+at all, so its absence says something.
+.PP
+The first version of this walked the list with an index and appended
+to the list, which in Limbo makes a new list the walk is not looking
+at, so nothing was ever followed.
+.PP
+The
+.CW included
+phase has the model carry a primary service including a secondary one
+whose characteristic is reachable no other way.  It asserts the
+secondary service's directory is there, that the relationship reads,
+that the characteristic reads, and that a service including nothing
+has no
+.CW included
+file.  Without the follow, the directory does not exist and the read
+fails with it.
+.NH 2
 Connection parameters, asked for and answered honestly
 .PP
 A peripheral cannot change the connection parameters; it asks the

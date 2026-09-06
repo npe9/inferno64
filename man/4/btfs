@@ -193,6 +193,13 @@ mean the same thing; a client that wants one reopens it.  The
 subscription to Service Changed itself is not rewritten unless its own
 descriptor moved, since it belongs to the link rather than to a walk
 of the database.
+A service that includes others has an
+.B included
+file listing them, one per line as UUID, first handle and last, and
+each is a directory here too \- including a secondary service, which
+primary discovery does not report and which would otherwise be
+unreachable.
+.PP
 A value longer than the link's ATT MTU is read in pieces with Read
 Blob and written in pieces with Prepare Write, committed with one
 Execute Write, so neither direction is limited by the MTU.

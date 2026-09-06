@@ -76,6 +76,69 @@ services(s: ref Sess): (list of ref Service, string)
 # the one before the next characteristic starts, or the end of the
 # service -- which is what says where its descriptors are.
 #
+#
+# The services a service includes.  The declaration carries the
+# included service's handle range, and its UUID only when that is a 16
+# bit one; a 128 bit UUID is not in the declaration and the included
+# service's own declaration has to be read for it.
+#
+# This matters more than a cross reference: an included service may be
+# a secondary one, which by definition does not appear in the primary
+# service discovery, so its characteristics are reachable through the
+# include and nowhere else.
+#
+includes(s: ref Sess, svc: ref Service): (list of ref Service, string)
+{
+	r: list of ref Service;
+	start := svc.start;
+	for(;;){
+		if(start > svc.end)
+			break;
+		q := array[7] of byte;
+		q[0] = byte Att->Rreadtype;
+		bt->put16(q, 1, start);
+		bt->put16(q, 3, svc.end);
+		bt->put16(q, 5, Uinclude);
+		(p, e) := att->request(s, q);
+		if(e != nil){
+			if(iserr(e, Notfound))
+				break;
+			return (rev(r), e);
+		}
+		if(len p < 2)
+			return (rev(r), "short read by type response");
+		l := int p[1];
+		if(l != 6 && l != 8)
+			return (rev(r), "bad include declaration");
+		last := 0;
+		for(o := 2; o + l <= len p; o += l){
+			dh := bt->get16(p, o);
+			istart := bt->get16(p, o+2);
+			iend := bt->get16(p, o+4);
+			u := "";
+			if(l == 8)
+				u = bt->uuid(p, o+6, 2);
+			else {
+				#
+				# a 128 bit UUID, which the declaration
+				# does not carry: read the included
+				# service's own declaration for it
+				#
+				(v, ve) := read(s, istart);
+				if(ve != nil)
+					return (rev(r), ve);
+				u = bt->uuid(v, 0, len v);
+			}
+			r = ref Service(istart, iend, u) :: r;
+			last = dh;
+		}
+		if(last == 0 || last >= svc.end)
+			break;
+		start = last + 1;
+	}
+	return (rev(r), nil);
+}
+
 chars(s: ref Sess, svc: ref Service): (list of ref Char, string)
 {
 	r: list of ref Char;

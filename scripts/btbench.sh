@@ -38,6 +38,10 @@
 #	forget	everything stops advertising: the device nothing is
 #		holding must leave the name space, the connected one
 #		must stay and still work
+#	included
+#		a service that includes a secondary service, which
+#		primary discovery cannot see: its characteristics must
+#		be reachable, and the relationship must be readable
 #	params	the peripheral asking the central to change the
 #		connection parameters, and this side asking for its
 #		own.  What the peer is *told* matters as much as what
@@ -145,6 +149,7 @@ run badprepare --corrupt-prepare badprepare
 run refuseexec --refuse-execute badprepare
 run forget --one-goes-quiet forget
 run sweeprace "--one-goes-quiet --late-connect" sweeprace
+run included "" included
 run params --ask-params params
 y=`grep -c 'the central said yes' "$OUT/bthci-params.log" || true`
 n=`grep -c 'the central said no' "$OUT/bthci-params.log" || true`

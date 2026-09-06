@@ -265,6 +265,23 @@ SVC = [
     # Generic Attribute, whose one characteristic is how a device says
     # its database has moved
     (0x0030, 0x0033, 0x1801),
+    # a primary service that includes a secondary one
+    (0x0060, 0x0064, 0xfff2),
+]
+
+# Secondary services.  These are deliberately NOT in SVC: a secondary
+# service does not appear in primary service discovery, so a client
+# that ignores include declarations cannot reach it at all -- which is
+# what makes ignoring them lose attributes and not merely a cross
+# reference.
+SECONDARY = [
+    (0x0070, 0x0072, 0xfffa),
+]
+
+# include declarations: (handle, included start, included end, uuid or
+# None for a 128 bit one the declaration may not carry)
+INCLUDES = [
+    (0x0061, 0x0070, 0x0072, 0xfffa),
 ]
 
 # what appears when the database moves, under --service-changed.  Two
@@ -283,6 +300,8 @@ CHARS = [
     (0x0011, 0x12, 0x0012, 0x2a19),
     (0x0021, 0x0a, 0x0022, 0xfff1),
     (0x0031, 0x20, 0x0032, 0x2a05),          # indicate only
+    (0x0062, 0x02, 0x0063, 0xfff3),
+    (0x0071, 0x02, 0x0072, 0xfffb),
 ]
 VALUES = {
     0x0003: b'inferno-bench',
@@ -290,6 +309,8 @@ VALUES = {
     0x0012: bytes([90]),
     0x0022: b'',
     0x0032: b'',
+    0x0063: b'in the including service',
+    0x0072: b'only reachable through the include',
 }
 
 # client characteristic configuration, per descriptor handle
@@ -602,6 +623,14 @@ class Model:
         elif op == 0x08:                                  # Read By Type
             start, end = struct.unpack('<HH', p[1:5])
             typ = struct.unpack('<H', p[5:7])[0]
+            if typ == 0x2802:                             # Include
+                out = b''
+                for h, istart, iend, u in INCLUDES:
+                    if start <= h <= end:
+                        out += struct.pack('<HHHH', h, istart, iend, u)
+                if not out:
+                    return self.att_err(op, start, 0x0a)
+                return self.acl(4, bytes([0x09, 8]) + out)
             if typ != 0x2803:
                 return self.att_err(op, start, 0x0a)
             out = b''

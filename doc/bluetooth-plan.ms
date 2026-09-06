@@ -154,11 +154,12 @@ Multiple and no signed writes.
 .IP \(bu
 GATT subscribes to Service Changed now, and walks the database again
 when the device says it has moved, so a device that rearranges itself
-is no longer believed on the stale copy.  It still does no caching and
-does not follow included services; the rediscovery is wholesale rather
-than confined to the range the device names, which is deliberate,
-since a device that has just said it rearranged itself has least claim
-to have got that range right.
+is no longer believed on the stale copy.  Included services are followed, so a secondary service \(em which
+primary discovery cannot see \(em is reachable through the service
+that includes it.  It still does no caching, and the rediscovery is
+wholesale rather than confined to the range the device names, which is
+deliberate: a device that has just said it rearranged itself has least
+claim to have got that range right.
 .IP \(bu
 A device that stops answering is forgotten, after
 .CW -a
