@@ -673,9 +673,17 @@ lines(s: string): list of string
 
 hasword(s, w: string): int
 {
-	for(i := 0; i + len w <= len s; i++)
-		if(s[i:i+len w] == w)
-			return 1;
+	for(i := 0; i + len w <= len s; i++){
+		if(s[i:i+len w] != w)
+			continue;
+		# a whole word: "connections 1" must not match
+		# "connections 10"
+		if(i > 0 && s[i-1] != ' ')
+			continue;
+		if(i + len w < len s && s[i + len w] != ' ')
+			continue;
+		return 1;
+	}
 	return 0;
 }
 

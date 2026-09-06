@@ -91,6 +91,11 @@ orphan_live = '--orphan-live' in sys.argv
 # The write must fail and the value must be left alone.
 corrupt_prepare = '--corrupt-prepare' in sys.argv
 
+# --refuse-execute: the pieces queue cleanly and the commit is refused.
+# A client that does not look at the Execute Write response reports a
+# write that never happened.
+refuse_execute = '--refuse-execute' in sys.argv
+
 def log(*a):
     if verbose:
         print('bthci:', *a, file=sys.stderr, flush=True)
@@ -563,6 +568,9 @@ class Model:
         elif op == 0x18:                                  # Execute Write
             flags = p[1]
             q, self.prepared = self.prepared, []
+            if refuse_execute and flags != 0:
+                log('refusing to commit %d parts' % len(q))
+                return self.att_err(op, 0, 0x08)          # insufficient authorisation
             if flags == 0:
                 log('write queue cancelled, %d parts dropped' % len(q))
                 return self.acl(4, bytes([0x19]))

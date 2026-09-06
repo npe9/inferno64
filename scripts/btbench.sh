@@ -32,6 +32,9 @@
 #		a server whose Prepare Write echo does not match what
 #		was sent: the long write must be refused and the value
 #		left alone
+#	refuseexec
+#		a server that queues the pieces cleanly and refuses to
+#		commit them: the same assertions, reached the other way
 #
 # emu does not exit when btbench returns, because btfs is still serving
 # in a process it spawned.  So each phase runs emu in the background and
@@ -111,4 +114,5 @@ run early --early-connect early
 run orphan --orphan-connect orphan
 run orphanlive --orphan-live orphanlive
 run badprepare --corrupt-prepare badprepare
+run refuseexec --refuse-execute badprepare
 echo "BENCH PASS"

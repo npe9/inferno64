@@ -19517,6 +19517,24 @@ phase asserts that the write is refused with
 .CW "the server queued different bytes"
 and that the value on the device is unchanged \(em the model's own log
 showing the queue cancelled rather than committed.
+.PP
+.CW --refuse-execute
+reaches the same assertions the other way: the pieces queue cleanly
+and the commit is refused.
+.CW Att.request
+already checked both the error opcode and that the answer is the one
+the request asked for, and this is what says so out loud \(em the
+write fails with the controller's own reason,
+.CW "handle 0x0000: insufficient authorisation" ,
+rather than a client that never looked reporting a write that did not
+happen.
+.PP
+.CW Conntimeout
+is twenty seconds and the phases that wait it out are most of the
+bench's two and a half minutes.  Making it settable from outside would
+be quicker and is not done: it would be a change to the stack for the
+convenience of testing it, and the number a real controller is given
+to answer in is not the bench's business.
 .NH 2
 What is not there
 .PP
