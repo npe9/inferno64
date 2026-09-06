@@ -22,7 +22,7 @@ in
 and every JIT backend compiles that object's absolute address into the
 code it emits.  Two processors interpreting at once share one register
 file.  This is not a lock to be refined later; it is what the
-interpreter is.  Section 3.
+interpreter is.  Section 4.
 .IP 2.
 .B "The uniprocessor baseline is not stable."
 This tree panics at
@@ -32,7 +32,7 @@ and did so before any of this work: general protection violations, page
 faults and Dis heap double-frees, at roughly half of all boots.  It is a
 known bug with a long hunt already recorded in
 .CW doc/inferno-ports.ms .
-Multicore cannot be demonstrated on top of it.  Section 6.
+Multicore cannot be demonstrated on top of it.  Section 5.
 .PP
 So the deliverable is a multiprocessor
 .I kernel
@@ -836,9 +836,9 @@ paths.  The single-core microcontroller boards \-
 want none of this and should keep
 .CW "MAXMACH 1" .
 .PP
-None of it should start before section 6 is closed, for the reason
-section 6 gives: a board whose uniprocessor baseline crashes at half of
-all boots cannot tell a porting bug from the bug it inherited.
+None of it should start before section 5 is closed, for the reason
+section 5 gives: a board whose uniprocessor baseline crashes at four
+boots in five cannot tell a porting bug from the bug it inherited.
 .NH 1
 NUMA, and the modern machine
 .PP
@@ -901,7 +901,7 @@ about memory placement.
 .CW coherence()
 is a full barrier on amd64 and the code uses it correctly at the lock
 release.  ARM64 and RISC-V are weakly ordered, and every board added
-under section 8 inherits that question.  The rule should be stated in
+under section 7 inherits that question.  The rule should be stated in
 one place \- which operations imply which barriers \- rather than
 rediscovered per board.  This costs nothing now and prevents a class of
 bug that is very expensive to find later.
