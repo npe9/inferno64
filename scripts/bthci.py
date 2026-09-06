@@ -697,8 +697,12 @@ class Model:
         # supervision timeout is far too short for that latency, which
         # is the rule that keeps a link from dropping every time the
         # peripheral uses its latency
+        # the third is exactly the boundary: timeout * 4 == (1 +
+        # latency) * max, which the specification refuses.  A
+        # peripheral minding its battery asks for precisely this.
         for mn, mx, lat, to in ((0x0018, 0x0028, 4, 0x0100),
-                                (0x0018, 0x0028, 400, 0x000a)):
+                                (0x0018, 0x0028, 400, 0x000a),
+                                (0x0028, 0x0028, 0, 10)):
             self.sigid = getattr(self, 'sigid', 0) + 1
             body = struct.pack('<HHHH', mn, mx, lat, to)
             self.acl(5, bytes([0x12, self.sigid, len(body), 0]) + body)

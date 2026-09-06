@@ -148,12 +148,12 @@ run sweeprace "--one-goes-quiet --late-connect" sweeprace
 run params --ask-params params
 y=`grep -c 'the central said yes' "$OUT/bthci-params.log" || true`
 n=`grep -c 'the central said no' "$OUT/bthci-params.log" || true`
-if [ "$y" != 1 ] || [ "$n" != 1 ]; then
+if [ "$y" != 1 ] || [ "$n" != 2 ]; then
 	echo "=== phase params ==="
-	echo "BENCH FAIL (params): the peer was told yes $y times and no $n; wanted 1 and 1"
+	echo "BENCH FAIL (params): the peer was told yes $y times and no $n; wanted 1 and 2"
 	exit 1
 fi
-echo "the peer was told yes once and no once, as it should be"
+echo "the peer was told yes once and no twice, as it should be"
 run sco --sco sco
 run changed --service-changed changed
 #

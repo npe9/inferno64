@@ -19652,6 +19652,22 @@ for.
 The first version of the phase watched the connection interval and
 passed without anything having happened: the link already starts at
 the interval the model asks for.  It watches the latency now.
+.PP
+The rule itself was off by one.  The specification says the timeout
+shall be
+.I greater
+than (1 + latency) times the interval times two, which in HCI units is
+.CW "timeout * 4 > (1 + latency) * max" ,
+and this rejected only what was strictly worse than that \(em so
+equality, the boundary itself, was accepted.  That is not a corner: a
+peripheral minding its battery asks for exactly the boundary.  Checked
+against bluez's and Zephyr's own validation rather than against the
+arithmetic being done twice by the same person, both of which reject
+at
+.CW <= .
+The model asks for it as a third request, and with the old comparison
+the phase reports the link changed to a timeout of 10 and the peer
+told yes twice.
 .NH 2
 The sweep and a connection in flight
 .PP

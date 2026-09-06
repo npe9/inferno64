@@ -218,10 +218,13 @@ paramsok(min, max, latency, timeout: int): string
 		return "supervision timeout out of range";
 	#
 	# both sides in milliseconds: the interval is 1.25ms and the
-	# timeout 10ms, so (1+latency) * max * 1.25 * 2 <= timeout * 10
-	# becomes (1+latency) * max <= timeout * 4.
+	# timeout 10ms, so the specification's "the timeout shall be
+	# greater than (1 + latency) * interval * 2" becomes
+	# timeout * 4 > (1 + latency) * max.  Greater, not at least:
+	# equality is refused, which matters because a peripheral
+	# minding its battery asks for exactly the boundary.
 	#
-	if((1 + latency) * max > timeout * 4)
+	if((1 + latency) * max >= timeout * 4)
 		return "the supervision timeout is too short for that latency";
 	return nil;
 }

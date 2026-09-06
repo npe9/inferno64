@@ -634,6 +634,21 @@ paramphase()
 		ok = 0;
 	} else
 		sys->print("BT: refused before it was sent: %s\n", e);
+	#
+	# the peer's third request is the boundary itself: a timeout
+	# exactly (1 + latency) times the interval, which the
+	# specification refuses and an implementation that tests for
+	# "shorter than" rather than "not longer than" accepts.  It
+	# arrives while this waits, and it must leave the link alone.
+	#
+	settled := trim(readfile(dev + "/state"));
+	sys->sleep(5000);
+	last := trim(readfile(dev + "/state"));
+	if(last != settled){
+		sys->print("BT: FAILED: the boundary request changed the link: %s\n", last);
+		ok = 0;
+	} else
+		sys->print("BT: the boundary request left it alone\n");
 	if(ok){
 		v := trim(readfile(dev + "/gatt/1800/2a00"));
 		if(v != "inferno-bench"){
