@@ -90,6 +90,7 @@ misc
 	screenbcm
 	randomvirtarm64
 	sdhostbcm
+	sdhcibcm
 
 mod
 	sys

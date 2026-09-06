@@ -12,6 +12,61 @@ Shell: module { init: fn(nil: ref Draw->Context, argv: list of string); };
 Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
 # Read/write the SD card exposed by devsd (#S) as /dev/sdM0/data - the
 # BCM2835 SDHOST native-SD path.  Boot with -sd <image>.
+# Phase 5: the Arasan SDHCI (the "EMMC" block), the controller the
+# BCM43430 Wi-Fi hangs off over SDIO.  The SoC wires the one SD card to
+# either SDHOST or Arasan depending on the GPIO 48-53 alt function, and
+# each driver routes the pins in its own online(), so opening
+# /dev/sdH0 first hands the card to the Arasan.  Doing that before
+# sdcheck() exercises this controller's register interface, command
+# engine and PIO data path against a real card, and sdcheck() then
+# takes the card back to SDHOST -- so one boot proves both controllers
+# and that the routing works in both directions.  Boot with -sd <img>.
+sdhcicheck()
+{
+	fd := sys->open("/dev/sdH0/data", Sys->ORDWR);
+	if(fd == nil){
+		sys->print("SDHCI-NONE (no /dev/sdH0/data: %r)\n");
+		return;
+	}
+	buf := array[512] of byte;
+	if(sys->pread(fd, buf, len buf, big 0) != len buf){
+		sys->print("SDHCI-FAIL read: %r\n");
+		return;
+	}
+	sys->print("SDHCI block0 %02x%02x%02x%02x sig %02x%02x\n",
+		int buf[0], int buf[1], int buf[2], int buf[3],
+		int buf[510], int buf[511]);
+	wbuf := array[512] of byte;
+	for(i := 0; i < len wbuf; i++)
+		wbuf[i] = byte (16rA0 + (i & 16rf));
+	if(sys->pwrite(fd, wbuf, len wbuf, big (5*512)) != len wbuf){
+		sys->print("SDHCI-WFAIL write: %r\n");
+		return;
+	}
+	rbuf := array[512] of byte;
+	if(sys->pread(fd, rbuf, len rbuf, big (5*512)) != len rbuf){
+		sys->print("SDHCI-WFAIL readback: %r\n");
+		return;
+	}
+	for(i = 0; i < len rbuf; i++)
+		if(rbuf[i] != wbuf[i]){
+			sys->print("SDHCI-WRITE-MISMATCH at %d\n", i);
+			return;
+		}
+	sys->print("SDHCI block5 wrote %02x%02x readback %02x%02x (SDHCI-WRITE-OK)\n",
+		int wbuf[0], int wbuf[1], int rbuf[0], int rbuf[1]);
+	# the geometry devsd derived from the CSD -- if the 136-bit
+	# response were unpacked wrongly this is where it shows
+	cfd := sys->open("/dev/sdH0/ctl", Sys->OREAD);
+	if(cfd != nil){
+		cbuf := array[512] of byte;
+		cn := sys->read(cfd, cbuf, len cbuf);
+		if(cn > 0)
+			sys->print("SDHCI ctl: %s", string cbuf[0:cn]);
+	}
+	sys->print("SDHCI-OK\n");
+}
+
 sdcheck()
 {
 	fd := sys->open("/dev/sdM0/data", Sys->ORDWR);
@@ -357,6 +412,7 @@ init()
 	sys->print("RASPI3B-OK\n");
 
 	sys->bind("#S", "/dev", sys->MAFTER);
+	sdhcicheck();
 	sdcheck();
 	drawtest();
 	usbcheck();

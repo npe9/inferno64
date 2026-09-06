@@ -379,14 +379,74 @@ line that prints alongside the write is the open arm64 multi-kproc
 error-stack bug noted under the kfs item below; it does not stop the
 write.
 .NH 1
-Phase 5: Arasan SDHCI / SDIO -- the second SD controller
+Phase 5: Arasan SDHCI / SDIO -- the second SD controller -- card path DONE, SDIO written and unverified
 .PP
-The BCM2837's second SD controller (Arasan SDHCI, 0x3f300000).  SDHOST
-already drives the card, which deliberately leaves Arasan free for the
-Wi-Fi SDIO.  QEMU routes -sd to the Arasan SDHCI by default (SDHOST needs
-the GPIO alt0 we set), and models a generic SDHCI (hw/sd/sdhci.c), so the
-controller init and a block read are QEMU-verifiable.  The real point is
-the SDIO transport for Phase 6.
+.CW sdhcibcm.c
+drives the BCM2837's second SD controller (Arasan SDHCI, 0x3f300000), a
+standard SD Host Controller rather than the SDHOST block: reset, bus
+power, the identification clock, the CMD0/CMD8/ACMD41/CMD2/CMD3/CMD9/
+CMD7/CMD16 bring-up, and CMD17/CMD24 single-block PIO through the data
+port.  It plugs into devsd as
+.CW /dev/sdH0
+alongside SDHOST's
+.CW /dev/sdM0 .
+.PP
+.B "One card, two controllers, and the pins decide."
+The SoC wires the card slot to whichever block owns GPIO 48-53: alt0 is
+SDHOST, alt3 is the Arasan.  Both drivers route the pins in their own
+.CW online() ,
+so whichever unit is opened first takes the card and the other then
+reports no media.  That is the hardware, not an emulator artifact --
+there is one card and one set of pins.  On a real Pi 3B you want SDHOST
+on the card and this controller left for the Wi-Fi, which sits on its
+own pins (GPIO 34-39 alt3), so in the arrangement that matters the two
+never contend at all.
+.PP
+Verified on a booted kernel
+.CW ( "-drive if=sd,format=raw,file=<img>" ),
+one boot exercising both controllers and the routing in both
+directions:
+.CW sdhcicheck()
+opens
+.CW /dev/sdH0
+first, so the Arasan takes the card, reads block 0 and gets the FAT
+boot sector
+.CW ( "block0 eb3c904d sig 55aa" ),
+writes block 5 and reads it back byte for byte (SDHCI-WRITE-OK), and
+reports
+.CW "geometry 32768 512" \-
+exactly the 16MB image's 32768 sectors, which is what proves the CSD was
+unpacked correctly.  (It had not been at first: SDHCI stores a 136-bit
+response as resp[127:8] with only the low 24 bits of RESP3 valid, and
+the first cut mis-ordered the words.  A capacity merely large enough to
+cover the blocks under test would have hidden it; the geometry line is
+there so it cannot.)  The write reached the medium: block 5 of the host
+image afterwards holds a0 a1 a2 ... af.  Then
+.CW sdcheck()
+opens
+.CW /dev/sdM0 ,
+SDHOST takes the pins back, and its own read, write and 4-block tests
+still pass (SD-OK) \- so the card moves between controllers and both
+work.
+.PP
+.B "The SDIO half is written and unverified, and Phase 6 should not assume otherwise."
+.CW sdiocmd52()
+(IO_RW_DIRECT) and
+.CW sdiocmd53()
+(IO_RW_EXTENDED, byte and block mode, with the partial-word tail
+handled) are the transport
+.CW ether4330
+will want, written from the SDIO Simplified Specification.  Nothing has
+ever run them: an SD memory card rejects both commands, and QEMU models
+no SDIO device to answer them.  The SD-card results above say the
+register interface, the command engine and the PIO data path are sound;
+they say nothing whatever about CMD52 and CMD53.
+.PP
+Also not done: no interrupt is wired (every wait is a bounded poll, as
+in sdhostbcm.c), no DMA -- the controller supports SDMA/ADMA and this
+uses the PIO data port -- no multi-block command, no high-speed or
+4-bit bus-width switch, so the card runs at the identification divider
+throughout, and no real hardware has been near it.
 .NH 1
 Phase 6: BCM43430 Wi-Fi over SDIO
 .PP
