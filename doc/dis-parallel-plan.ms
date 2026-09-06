@@ -1119,10 +1119,21 @@ That choice was left open above.  It can be closed, and the evidence is
 already in the tree \-
 .CW emu/port/devmem.c
 publishes the collector's counters as
-.CW "#%/memgc" ,
-and
-.CW tmp/gcstat.sh
-runs the same sixty-seven spawn storm and reads them.  For one run:
+.CW "#%/memgc" .
+Reading them after the same sixty-seven spawn storm is four lines of
+.CW sh ,
+which is worth writing out because
+.CW tmp
+is not under version control:
+.IP
+.nf
+load std
+bind '#%' /dev
+for(i in 1 2 3 ... 67){ sh -n -c 'true' }
+cat /dev/memgc
+.fi
+.PP
+For one run:
 .IP
 .nf
 runs      34017        epochs     224
