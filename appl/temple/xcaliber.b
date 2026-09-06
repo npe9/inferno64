@@ -23,8 +23,25 @@ implement Xcaliber;
 # stand-ins for the adaptive integrator: wall penetration capped at 4px and
 # contact acceleration at 1e5 before the accel_limit clip.
 #
-# GAP: laser hit test is geometric (nearest mass on the ray), not the
-#      original's GrPeek pixel collision.
+# The laser is two separate things and they do not agree.  What it damages
+# is chosen geometrically, in the derivative, by taking the nearest mass
+# whose perpendicular offset from the beam is inside its own radius:
+#
+#	if (Abs(D3Dot(&p1,&p2))<tmpm->radius && D3Dot(&p1,&p)<0.0)
+#
+# but what is *drawn* is a pixel walk.  Line() is given &LaserPlot as its
+# plot callback,
+#
+#	c=GrPeek(dc,x,y);
+#	if (c!=BLACK && c!=WHITE) return FALSE; else { GrPlot(dc,x,y); return TRUE; }
+#
+# and returning FALSE ends the line, so the beam stops at the first pixel
+# already occupied by anything that is not the background or white text.
+# A shot in flight, an explosion ring, a missile marker or an enemy's
+# drawn body all stop it, and none of them is a mass, so the beam
+# regularly ends short of what it is actually burning.  Both are here:
+# the geometric test picks the target, and the drawn beam is walked
+# against the frame, which is why the frame is composed offscreen.
 # GAP: Noise()/Sweep() are approximated with stepped tones (one voice).
 # GAP: no pull-down menu tree; keys are on the man page.  One-time popups
 #      are drawn in-window, not as system popups.
@@ -1428,6 +1445,8 @@ newgame()
 
 org: Point;
 cimg: ref Image;
+buf: ref Image;			# the frame, composed offscreen so the
+				# laser can read it back
 
 pt2(x, y: real): Point
 {
@@ -1500,10 +1519,15 @@ drawit()
 	img := win.image;
 	if(img == nil)
 		return;
-	cimg = img;
-	org = img.r.min;
+	if(buf == nil || buf.r.dx() != img.r.dx() || buf.r.dy() != img.r.dy())
+		buf = img.display.newimage(Rect((0, 0),
+			(img.r.dx(), img.r.dy())), Draw->RGB24, 0, Draw->Black);
+	if(buf == nil)
+		return;
+	cimg = buf;
+	org = buf.r.min;
 	(w, h) := dims();
-	img.draw(img.r, pal[BLACK], nil, (0, 0));
+	cimg.draw(cimg.r, pal[BLACK], nil, (0, 0));
 
 	gtext(0, 0, sys->sprint("Level:%d Score:%d High Score:%d",
 		level, score, best_score), WHITE);
@@ -1622,19 +1646,16 @@ drawit()
 		}
 	}
 
-	# laser beam
+	# laser beam, walked pixel by pixel against the frame as LaserPlot
+	# does — not shortened to whatever the geometric test picked
 	if(human != nil && human.lasering && !human.laser_overheat &&
 			!human.exploding && (level >= 4 || level <= 0)){
 		(px, py) := fwdaxis(human);
-		reach := 800.0;
-		(bsp, bi) := laserhit();
-		if(bsp != nil){
-			dx := bsp.p[bi].x - human.p[0].x;
-			dy := bsp.p[bi].y - human.p[0].y;
-			reach = math->sqrt(dx*dx + dy*dy);
-		}
-		gline(human.p[0].x + 10.0*px, human.p[0].y + 10.0*py,
-			human.p[0].x + reach*px, human.p[0].y + reach*py, LTBLUE);
+		x1 := human.p[0].x + 10.0*px;
+		y1 := human.p[0].y + 10.0*py;
+		reach := laserreach(x1, y1, px, py, 790.0);
+		if(reach > 0.0)
+			gline(x1, y1, x1 + reach*px, y1 + reach*py, LTBLUE);
 	}
 
 	# missile target markers
@@ -1653,6 +1674,7 @@ drawit()
 	if(state == SPOPUP && popupq != nil)
 		drawpopup(w, h, hd popupq);
 
+	img.draw(img.r, buf, nil, buf.r.min);
 	img.flush(Draw->Flushnow);
 }
 
@@ -1887,4 +1909,52 @@ timer(c: chan of int, ms: int)
 		sys->sleep(ms);
 		c <-= 1;
 	}
+}
+
+# LaserPlot: walk the beam a pixel at a time and stop at the first pixel
+# that is neither BLACK nor WHITE.  The frame is already composed in buf,
+# so this is one readpixels of the beam's bounding box and then a march;
+# the run of accepted pixels is contiguous, so the caller draws it as one
+# line rather than plotting each.  Returns how far the beam gets.
+laserreach(x1, y1, dx, dy: real, maxd: real): real
+{
+	x2 := x1 + maxd*dx;
+	y2 := y1 + maxd*dy;
+	# bounding box of the segment, clipped to the frame
+	r := Rect((int x1, int y1), (int x1 + 1, int y1 + 1));
+	if(int x2 < r.min.x) r.min.x = int x2;
+	if(int y2 < r.min.y) r.min.y = int y2;
+	if(int x2 + 1 > r.max.x) r.max.x = int x2 + 1;
+	if(int y2 + 1 > r.max.y) r.max.y = int y2 + 1;
+	if(r.min.x < 0) r.min.x = 0;
+	if(r.min.y < 0) r.min.y = 0;
+	if(r.max.x > buf.r.max.x) r.max.x = buf.r.max.x;
+	if(r.max.y > buf.r.max.y) r.max.y = buf.r.max.y;
+	if(r.dx() <= 0 || r.dy() <= 0)
+		return 0.0;
+	b := array[r.dx()*r.dy()*3] of byte;
+	if(buf.readpixels(r, b) < 0)
+		return maxd;		# no readback: the whole beam
+	n := int maxd;
+	step := 1.0;
+	if(n < 1)
+		return 0.0;
+	last := 0.0;
+	for(i := 0; i <= n; i++){
+		t := real i * step;
+		ix := int (x1 + t*dx);
+		iy := int (y1 + t*dy);
+		if(ix < r.min.x || ix >= r.max.x || iy < r.min.y || iy >= r.max.y)
+			break;
+		o := ((iy - r.min.y)*r.dx() + (ix - r.min.x))*3;
+		c0 := int b[o];
+		c1 := int b[o+1];
+		c2 := int b[o+2];
+		black := c0 == 0 && c1 == 0 && c2 == 0;
+		white := c0 == 255 && c1 == 255 && c2 == 255;
+		if(!black && !white)
+			break;
+		last = t;
+	}
+	return last;
 }

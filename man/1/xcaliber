@@ -125,8 +125,16 @@ the 8x8 system font used for all text
 .IR tone (2),
 .IR wm (1)
 .SH BUGS
-The laser's hit test is geometric (the nearest mass on the ray)
-rather than the original's per-pixel screen probe.
+The laser is two things that do not agree, and both are the
+original's.
+What it damages is chosen geometrically, in the derivative: the
+nearest mass whose perpendicular offset from the beam is inside
+its own radius.
+What is drawn is a pixel walk \- the beam is laid down a pixel at
+a time and stops at the first that is neither black nor white \-
+so a shot in flight, an explosion ring or an enemy's drawn body
+will end it short of what it is actually burning, and white text
+will not.
 The original's noise and sweep sound effects are approximated
 with stepped tones on a single voice.
 The shift and ctrl cursor chords work only where the platform

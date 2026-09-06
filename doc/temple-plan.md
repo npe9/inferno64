@@ -254,16 +254,39 @@ gap it names are the ones to look for next time.
   order as `Adam/Gr/Gr.HH`, all thirty of them, and both kinds are drawn,
   created, dragged and serialised.
 
-**Declared deviations** — in the file headers already, honest, still not 1:1:
-`talons` (map halved to 512x512 with the bird count scaled to keep density;
-painter sort rather than the depth buffer), `varoom` (painter's algorithm
-instead of GrFillPoly3's per-pixel depth buffer), `xcaliber` (geometric laser
-hit test rather than the per-pixel GrPeek beam guard), `tothefront` (no
-user-written HolyC AI files from ~/ToTheFront), `psalmody` (fixed GodSongStr
-settings, no Help.DD viewer, no compressed .HC.Z songs), `budget` (TSV rather
-than Bgt.DATA.Z/Strs.DD.Z), `god` (GodDoodle out of scope), `timeclock`
-(text records rather than compressed CDate, and end of file does not end a
-description).
+**Declared deviations** — in the file headers already, honest, still not 1:1.
+
+Closable, and being closed:
+
+- `xcaliber`'s laser. **Done.** The old note said the hit test was geometric
+  rather than the original's `GrPeek` probe, and that was wrong about the
+  original: `X-Caliber.HC` picks what the beam *damages* geometrically too,
+  in the derivative, by nearest mass within its own radius of the ray. What
+  is per-pixel is the beam that gets *drawn* — `Line()` is handed
+  `&LaserPlot`, which reads each pixel and ends the line at the first that is
+  neither BLACK nor WHITE. So the beam stops on a shot in flight, an
+  explosion ring or an enemy's drawn body, none of which is a mass, and
+  passes through white text. Both are now present, and the frame is composed
+  offscreen so the walk can read it back.
+- `talons`' halved map and painter sort, `varoom`'s painter sort. draw3d's
+  z-buffer (`setz`/`clearz`/`setzclip` + `fillpoly3`) is what `3dpoly`,
+  `zoneout` and `wenceslas` already use, and the z-sense reconciliation is
+  settled. A painter sort and a z-buffer agree on most frames, so the check
+  that discriminates is a frame with two polygons that genuinely
+  interpenetrate: the sort must pick one whole, the z-buffer shows both.
+
+Not closable, and not worth attempting:
+
+- `tothefront` (no user-written HolyC AI files from ~/ToTheFront) would need
+  a HolyC interpreter.
+- `psalmody` (no compressed `.HC.Z` songs), `budget` (TSV rather than
+  `Bgt.DATA.Z`/`Strs.DD.Z`) and half of `timeclock` (text records rather than
+  compressed `CDate`) would need a Limbo *compressor* for TempleOS's LZW;
+  `scripts/tos_expand.py` only decompresses, and it is Python, not in-tree.
+- `god`'s GodDoodle is a separate program.
+- `psalmody`'s fixed GodSongStr settings and missing Help.DD viewer.
+- `timeclock`'s other half — end of file does not end a description — is a
+  behaviour difference rather than a format one, and is worth a look.
 
 **Platform-level and recurring**, declared in about twenty headers and
 unlikely to change: the `MenuPush` pull-down bars, `WinMax` fullscreen
