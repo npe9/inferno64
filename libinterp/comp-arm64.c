@@ -2258,11 +2258,11 @@ macfrp(void)
 	nilcheck = code;
 	BCOND(EQ, 0);			/* H → return */
 
-	mem(Ldw, O(Heap, ref) - sizeof(Heap), RA0, RA2);
+	mem(Ldw32, O(Heap, ref) - sizeof(Heap), RA0, RA2);
 	SUBS_IMM(RA2, RA2, 1);
 	destroy = code;
 	BCOND(EQ, 0);			/* was last ref → destroy */
-	mem(Stw, O(Heap, ref) - sizeof(Heap), RA0, RA2);
+	mem(Stw32, O(Heap, ref) - sizeof(Heap), RA0, RA2);
 	done = code;
 	B_IMM(0);			/* → return */
 
@@ -2287,9 +2287,9 @@ maccolr(void)
 {
 	u32int *done;
 
-	mem(Ldw, O(Heap, ref) - sizeof(Heap), RA1, RA0);
+	mem(Ldw32, O(Heap, ref) - sizeof(Heap), RA1, RA0);
 	ADD_IMM(RA0, RA0, 1);
-	mem(Stw, O(Heap, ref) - sizeof(Heap), RA1, RA0);
+	mem(Stw32, O(Heap, ref) - sizeof(Heap), RA1, RA0);
 
 	mem(Ldw32, O(Heap, color) - sizeof(Heap), RA1, RA0);
 	con((uvlong)&mutator, RA2);
@@ -2331,11 +2331,11 @@ macret(void)
 	nomrlab = code - 1;
 
 	mem(Ldw, O(REG, M), RREG, RA2);
-	mem(Ldw, O(Heap, ref) - sizeof(Heap), RA2, RA3);
+	mem(Ldw32, O(Heap, ref) - sizeof(Heap), RA2, RA3);
 	SUB_IMM(RA3, RA3, 1);
 	CBZ_X(RA3, 0);
 	noreflab = code - 1;
-	mem(Stw, O(Heap, ref) - sizeof(Heap), RA2, RA3);
+	mem(Stw32, O(Heap, ref) - sizeof(Heap), RA2, RA3);
 
 	mem(Ldw, O(Frame, mr), RFP, RA1);
 	mem(Stw, O(REG, M), RREG, RA1);
@@ -2471,9 +2471,9 @@ macmcal(void)
 	PATCH_BCOND(hasprog);
 	MOV_REG(RFP, RA2);
 	mem(Stw, O(REG, M), RREG, RA3);
-	mem(Ldw, O(Heap, ref) - sizeof(Heap), RA3, RA1);
+	mem(Ldw32, O(Heap, ref) - sizeof(Heap), RA3, RA1);
 	ADD_IMM(RA1, RA1, 1);
-	mem(Stw, O(Heap, ref) - sizeof(Heap), RA3, RA1);
+	mem(Stw32, O(Heap, ref) - sizeof(Heap), RA3, RA1);
 	mem(Ldw, O(Modlink, MP), RA3, RMP);
 	mem(Stw, O(REG, MP), RREG, RMP);
 	mem(Ldw32, O(Modlink, compiled), RA3, RA1);
