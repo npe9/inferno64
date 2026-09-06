@@ -574,15 +574,111 @@ QEMU's raspi3b models no PWM block, so a driver would be written blind
 and unrunnable, and there is nothing here it would let the board do that
 it cannot already.  It belongs with Phase 6 as real-hardware work.
 .NH 1
-Parallel: the kfs create deadlock
+Parallel: the kfs create failure -- re-diagnosed, and it is not what the old note said
 .PP
 Independent of USB and not blocking (dossrv, ramfs and 9660srv all run
-over the working SD block device).  Worth fixing for a reliable native
-writable filesystem.  The lead is the multi-kproc mount handoff on arm64:
-pid 1 is not resumed after yielding at error()'s spllo() to the spawned
-kfs kproc, which then blocks -- a sleep/wakeup or Dis release()/acquire
-token bug (see doc/inferno-driver-plan.ms).  Tackle when a native FS is
-wanted.
+over the working SD block device), but worth fixing for a reliable
+native writable filesystem.  The reproducer is still
+.CW sdfs()
+in
+.CW raspi3binit.b ,
+and it still fails.  What it is doing, however, is not what
+.CW doc/inferno-driver-plan.ms
+concluded, and that note should not be relied on.
+.PP
+.B "The old diagnosis was a printing artifact."
+It said pid 1 enters
+.CW error()
+and stalls in its prologue right after
+.CW spllo() ,
+because a print on
+.CW error() 's
+first line never appeared "even ungated", and that raspi3b never reaches
+.CW mntwalk 's
+.CW waserror()
+recovery.  Neither holds.  Instrumented with
+.CW iprint
+instead of
+.CW print ,
+the unwind is complete and ordinary:
+.CW error()
+is entered, passes
+.CW spllo() ,
+reaches
+.CW nexterror() ,
+and both of
+.CW mntwalk 's
+.CW waserror()
+handlers fire and recover, exactly as they do on the USB/dossrv path.
+The reason the earlier prints vanished is that
+.CW print()
+queues through
+.CW serialoq
+(devcons.c's
+.CW putstrn0 ),
+and the kproc that drains that queue is itself blocked by the time the
+failure happens, so the output is written and never emerges.
+.CW iprint
+goes to the uart directly and shows everything.  Any conclusion in that
+document drawn from a print that "never fired" is suspect for the same
+reason.
+.PP
+.B "It is not a deadlock, and the Styx conversation succeeds."
+Tracing every 9P message across the mount shows the whole exchange
+completing: Tattach/Rattach, then Twalk answered with Rerror
+("directory entry not found" \- correct Styx, the create's existence
+check), then Twalk/Rwalk, then
+.B Tcreate answered with Rcreate,
+then Tclunk/Rclunk.
+.CW kcreate()
+returns a valid descriptor \- fd 6 \- so the file is created on the kfs
+filesystem and the kernel has an open channel for it.
+.PP
+The failure is entirely after that success.  The newly created fid is
+clunked, the next use of the descriptor raises
+.CW "fd out of range or not open" ,
+and an empty error string then propagates out of the Init prog, which
+.CW vmachine() 's
+handler cannot place (an empty
+.CW errstr
+makes
+.CW handler()
+return 0), so the prog exits.  The board never reaches its shell because
+.I init
+died, not because anything is wedged: the proc dump at that point shows
+the interpreter idle on
+.CW isched.irend
+and the remaining procs in
+.CW qwait ,
+which is what an idle machine looks like once its init has gone.
+.PP
+.B "One hypothesis tested and rejected."
+.CW newfd()
+installs the descriptor in
+.CW up->fgrp
+while
+.CW mkfd()
+takes its reference from
+.CW up->env->fgrp ,
+and
+.CW Sys_create()
+does a
+.CW release() / acquire()
+between them, so those two Fgrps diverging would explain the symptom
+precisely.  They do not: printed either side of the window they are the
+same pointer throughout.  Whatever closes the descriptor is elsewhere.
+.PP
+Where to look next: what clunks the created fid between
+.CW kcreate() 's
+success and the Limbo
+.CW FD
+being used \- the
+.CW Sys_create()
+window around
+.CW release() / acquire()
+(a moved frame, or the FD heap object being collected), rather than the
+scheduler or the error machinery, both of which this pass showed
+working.
 .NH 1
 When this is done
 .PP
