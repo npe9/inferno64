@@ -121,6 +121,20 @@ nodes:	array of ref Node;
 nextq:	int;
 devs:	list of ref Dev;
 devlock:	chan of int;
+#
+# devlock covers devs and the Dev fields the scanner writes.  bonds is
+# a second shared list with a second set of writers -- pair() adding
+# one, readkeys() loading them at startup -- and since a resolvable
+# address is resolved by walking it, the scanning process reads it on
+# every advertisement from a private address.  It gets its own lock
+# rather than being folded into devlock, because pair() cannot hold
+# devlock: it is reached through target(), which takes it.
+#
+# Order, where both are held: devlock then bondlock.  resolved() is
+# the only place that does, and nothing takes devlock while holding
+# bondlock.
+#
+bondlock:	chan of int;
 scanning:	int;
 bonds:	list of ref Bond;
 keyfile:	string;
@@ -192,6 +206,8 @@ init(nil: ref Draw->Context, argv: list of string)
 
 	devlock = chan[1] of int;
 	devlock <-= 1;
+	bondlock = chan[1] of int;
+	bondlock <-= 1;
 	treelock = chan[1] of int;
 	treelock <-= 1;
 	nodes = array[64] of ref Node;
@@ -422,16 +438,34 @@ resolved(atype: int, addr: array of byte): ref Dev
 {
 	if(!bt->resolvable(atype, addr))
 		return nil;
-	for(bl := bonds; bl != nil; bl = tl bl){
+	<-bondlock;
+	bl := bonds;
+	bondlock <-= 1;
+	for(; bl != nil; bl = tl bl){
 		b := hd bl;
 		if(!smp->resolve(b, atype, addr))
 			continue;
 		id := bt->straddr(b.addr);
 		if(id == nil)
 			continue;
-		for(l := devs; l != nil; l = tl l)
-			if((hd l).id != nil && bt->addrstr((hd l).id) == b.addr)
-				return hd l;
+		for(l := devs; l != nil; l = tl l){
+			d := hd l;
+			if(d.id != nil && bt->addrstr(d.id) == b.addr)
+				return d;
+			#
+			# the device is listed under its identity address
+			# already -- it was heard from directly before, or
+			# a saved key file gave the bond back after a
+			# restart and nothing has set the identity on it
+			# yet.  Adopt it; making a second directory of the
+			# same name would be the bug.
+			#
+			if(d.dir == b.addr){
+				d.id = id;
+				d.idtype = b.atype;
+				return d;
+			}
+		}
 		#
 		# resolved to a bond whose device is not in the table:
 		# the directory is named by the identity, not by the
@@ -674,6 +708,15 @@ devstate(d: ref Dev): string
 }
 
 bondtext(): string
+{
+	<-bondlock;
+	s := bondtext0();
+	bondlock <-= 1;
+	return s;
+}
+
+# with bondlock already held
+bondtext0(): string
 {
 	s := "";
 	for(l := bonds; l != nil; l = tl l)
@@ -1006,20 +1049,25 @@ pair(d: ref Dev): string
 	# so.
 	#
 	if(b.addr != nil){
+		<-devlock;
 		d.id = bt->straddr(b.addr);
 		d.idtype = b.atype;
+		devlock <-= 1;
 	}
 	return nil;
 }
 
 addbond(b: ref Bond)
 {
+	<-bondlock;
 	nl: list of ref Bond;
 	for(l := bonds; l != nil; l = tl l)
 		if((hd l).addr != b.addr)
 			nl = hd l :: nl;
 	bonds = b :: nl;
-	writekeys();
+	s := bondtext0();
+	bondlock <-= 1;
+	writekeys(s);
 }
 
 readkeys()
@@ -1027,8 +1075,18 @@ readkeys()
 	if(keyfile == nil)
 		return;
 	fd := sys->open(keyfile, Sys->OREAD);
-	if(fd == nil)
+	if(fd == nil){
+		#
+		# no key file yet is the ordinary first run and says
+		# nothing.  A key file that is there and will not open is
+		# every bond silently gone, which is worth a line.
+		#
+		(ok, nil) := sys->stat(keyfile);
+		if(ok == 0)
+			sys->fprint(sys->fildes(2),
+				"btfs: cannot read %s, so no bond is loaded: %r\n", keyfile);
 		return;
+	}
 	buf := array[8192] of byte;
 	s := "";
 	for(;;){
@@ -1038,22 +1096,32 @@ readkeys()
 		s += string buf[0:n];
 	}
 	(nil, lines) := sys->tokenize(s, "\n");
+	nb: list of ref Bond;
 	for(; lines != nil; lines = tl lines){
 		b := smp->parse(hd lines);
 		if(b != nil)
-			bonds = b :: bonds;
+			nb = b :: nb;
 	}
+	<-bondlock;
+	for(; nb != nil; nb = tl nb)
+		bonds = hd nb :: bonds;
+	bondlock <-= 1;
 }
 
-writekeys()
+writekeys(s: string)
 {
 	if(keyfile == nil)
 		return;
 	fd := sys->create(keyfile, Sys->OWRITE, 8r600);
-	if(fd == nil)
+	if(fd == nil){
+		# a bond that was not written down is a bond that will not
+		# be there next time; say so rather than losing it quietly
+		sys->fprint(sys->fildes(2), "btfs: cannot write %s: %r\n", keyfile);
 		return;
-	s := bondtext();
-	sys->write(fd, array of byte s, len array of byte s);
+	}
+	b := array of byte s;
+	if(sys->write(fd, b, len b) != len b)
+		sys->fprint(sys->fildes(2), "btfs: writing %s: %r\n", keyfile);
 }
 
 fail(s: string)

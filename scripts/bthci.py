@@ -34,6 +34,14 @@ import os, socket, struct, sys, threading, time
 
 verbose = '--verbose' in sys.argv or '-v' in sys.argv
 
+# --bonded: the guest already holds the bond, from a key file rather
+# than from pairing in this session.  The sensor advertises from its
+# identity address for a few rounds and then rotates a resolvable
+# private address, without any pairing happening first -- which is what
+# a peripheral looks like the second time you meet it, and the only way
+# to exercise resolution against a bond nothing in this run created.
+bonded = '--bonded' in sys.argv
+
 def log(*a):
     if verbose:
         print('bthci:', *a, file=sys.stderr, flush=True)
@@ -207,6 +215,7 @@ class Model:
         # way a peripheral that cares about being followed does.
         self.rotate = None
         self.rotations = 0
+        self.rounds = 0
         self.trace = []
 
     # ------------------------------------------------ wire
@@ -294,6 +303,10 @@ class Model:
             for addr, atype, name in PEERS:
                 if not self.scanning:
                     break
+                if bonded and atype == 1 and addr == PEERS[1][0] \
+                   and self.rounds >= 3 and self.rotate is None:
+                    self.rotate = (atype, addr)
+                    log('the sensor starts rotating a private address')
                 if self.rotate is not None and (atype, addr) == self.rotate:
                     # a new one every round, so what is being tested is
                     # resolution against a changing address rather than
@@ -305,6 +318,7 @@ class Model:
                 ad += bytes([len(nm) + 1, 0x09]) + nm
                 rep = bytes([1, 0x00, atype]) + addr + bytes([len(ad)]) + ad + bytes([256 - 60])
                 self.event(0x3e, bytes([0x02]) + rep)
+            self.rounds += 1
             time.sleep(0.3)
 
     def connect(self, atype, addr):

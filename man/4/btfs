@@ -242,10 +242,26 @@ be holding open is not renamed underneath it.  Its
 .B identity
 file says what it really is.
 .PP
+A bond read from the
+.B -k
+key file at startup resolves addresses just as one made in the session
+does, so a device bonded with earlier is recognised again without
+pairing.
+.PP
 Pairing is still LE legacy Just Works, so the identity key is
 distributed without protection against a man in the middle, and
 resolution is only as trustworthy as the pairing that produced the
 key.
+.PP
+.B scripts/btbench.sh
+runs
+.I btbench
+under
+.I emu
+against the controller model in
+.B scripts/bthci.py ,
+in two phases -- pairing, then meeting the bond again from a key file
+\- and exits non-zero if either fails.
 .PP
 .B doc/bluetooth-plan.ms
 lists what is missing in the order the pieces block each other, and

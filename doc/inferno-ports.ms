@@ -19276,7 +19276,43 @@ with one bit flipped does not, and that a public address is never
 resolvable \(em because a comparison that always answered yes would
 pass everything above it.
 .PP
-Two deliberate breaks were made to check the bench can see one, since
+Meeting the device again is the case the whole thing is for, and it is
+a second phase of the bench rather than an argument.  The first phase
+ends with the bond written to a key file; the second starts
+.CW btfs
+on that file with the model already bonded, so nothing pairs, the
+device is heard from its identity address for a few rounds and then
+rotates, and the bond that recognises it came off disk.  Both ways in
+are covered by that: a device already listed under its identity being
+adopted when its first private address resolves, and a bond whose
+device has not been heard from at all getting a directory named by the
+identity.  Without the first, the second phase makes a duplicate --
+three devices where there are two, an
+.CW identity
+that stays
+.CW none ,
+an
+.CW addr
+that never follows the rotation -- which is what happens with the
+adoption removed, checked by removing it.
+.PP
+Two silent failures were found building that phase and are fixed:
+.CW btfs
+returned without a word when it could not write the key file and when
+it could not read one that was there, so a bond could be made,
+reported, and quietly not kept.  Both say so now.  (Under
+.I emu
+neither path is reachable by accident: emu runs as
+.CW inferno
+while the tree belongs to the host user, so the bench has to give it
+somewhere writable.  That is the bench's problem and not the stack's,
+and it is only visible because the errors are no longer swallowed.)
+.PP
+.CW scripts/btbench.sh
+runs both phases and exits non-zero on either, so the claim above is a
+command rather than a description.
+.PP
+Three deliberate breaks were made to check the bench can see one, since
 a test that has only ever passed has not been tested.  Padding the
 block at the wrong end stopped the run on the first line with
 .CW "want DA4819 got 5FBF8B" .
@@ -19285,8 +19321,9 @@ Comparing the wrong halves of the address left
 correct and the vector passing, and the run then filled
 .CW remote
 with 23 devices in place of 2 and failed all three name space
-assertions \(em which is precisely the behaviour this work removes.
-Restored, the bench passes.
+assertions \(em which is precisely the behaviour this work removes.  Removing the adoption of a device
+already listed under its identity failed the rejoin phase in the three
+ways above.  Restored, both phases pass five times running.
 .NH 2
 What is not there
 .PP

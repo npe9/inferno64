@@ -154,17 +154,30 @@ init(nil: ref Draw->Context, argv: list of string)
 		return;
 
 	spec := "/dev/eia1";
+	keyfile, mode: string;
 	if(tl argv != nil)
 		spec = hd tl argv;
 	if(tl argv != nil && tl tl argv != nil)
 		mnt = hd tl tl argv;
+	rest := argv;
+	for(skip := 0; skip < 3 && rest != nil; skip++)
+		rest = tl rest;
+	if(rest != nil){
+		keyfile = hd rest;
+		rest = tl rest;
+	}
+	if(rest != nil)
+		mode = hd rest;
 
 	btfs := load Command "/dis/bt/btfs.dis";
 	if(btfs == nil){
 		sys->print("BT: cannot load /dis/bt/btfs.dis: %r\n");
 		return;
 	}
-	btfs->init(nil, "btfs" :: "-m" :: mnt :: spec :: nil);
+	args := "btfs" :: "-m" :: mnt :: spec :: nil;
+	if(keyfile != nil)
+		args = "btfs" :: "-m" :: mnt :: "-k" :: keyfile :: spec :: nil;
+	btfs->init(nil, args);
 	sys->sleep(500);
 
 	show(mnt + "/0/addr");
@@ -177,6 +190,11 @@ init(nil: ref Draw->Context, argv: list of string)
 	sys->sleep(2000);
 	show(mnt + "/0/scan");
 	show(mnt + "/0/state");
+
+	if(mode == "rejoin"){
+		rejoin();
+		return;
+	}
 
 	remotes := lsdir(mnt + "/0/remote");
 	if(remotes == nil){
@@ -310,10 +328,15 @@ init(nil: ref Draw->Context, argv: list of string)
 			ok = 0;
 		}
 		wrong := smp->parse(hd lines(readfile(mnt + "/0/bonds")));
-		wrong.irk[0] = wrong.irk[0] ^ byte 1;
-		if(smp->resolve(wrong, Bt->Arandom, live)){
-			sys->print("BT: FAILED: a wrong key resolved the address, so nothing is being compared\n");
+		if(wrong == nil || wrong.irk == nil){
+			sys->print("BT: FAILED: could not read the bond back a second time\n");
 			ok = 0;
+		} else {
+			wrong.irk[0] = wrong.irk[0] ^ byte 1;
+			if(smp->resolve(wrong, Bt->Arandom, live)){
+				sys->print("BT: FAILED: a wrong key resolved the address, so nothing is being compared\n");
+				ok = 0;
+			}
 		}
 		if(smp->resolve(bond, Bt->Apublic, live)){
 			sys->print("BT: FAILED: a public address was treated as resolvable\n");
@@ -326,6 +349,85 @@ init(nil: ref Draw->Context, argv: list of string)
 	if(ok)
 		sys->print("BT: resolved every rotation to %s\n", hd remotes);
 
+	writefile(mnt + "/0/ctl", "scan off");
+	sys->print("BT: done\n");
+}
+
+#
+# Meeting a bonded device again, which is the case a key file exists
+# for and the one this stack could not do at all until resolution was
+# built.  Nothing pairs here: the bond came off disk before anything
+# was heard from, so the identity it names has to be recognised in an
+# address the device chose after that.  The device advertises from its
+# identity address for a few rounds first and then rotates, so both
+# paths are covered -- the device already in the table under its
+# identity being adopted, and a bond whose device has not been heard
+# from getting a directory named by the identity rather than by the
+# address of the minute.
+#
+rejoin()
+{
+	bl := lines(readfile(mnt + "/0/bonds"));
+	if(bl == nil){
+		sys->print("BT: FAILED: no bond was loaded from the key file\n");
+		return;
+	}
+	say("BT: bond from file " + hd bl);
+	bond := smp->parse(hd bl);
+	if(bond == nil || bond.irk == nil){
+		sys->print("BT: FAILED: the bond in the key file has no identity key\n");
+		return;
+	}
+	sys->print("BT: rejoin %s\n", bond.addr);
+
+	dev := mnt + "/0/remote/" + bond.addr;
+	seen := 0;
+	first, last: string;
+	for(i := 0; i < 30; i++){
+		sys->sleep(500);
+		if(!seen){
+			for(rl := lsdir(mnt + "/0/remote"); rl != nil; rl = tl rl)
+				if(hd rl == bond.addr)
+					seen = 1;
+			if(!seen)
+				continue;
+		}
+		a := trim(readfile(dev + "/addr"));
+		if(a == nil || a[0] == 'c')	# "cannot open"
+			continue;
+		if(first == nil)
+			first = a;
+		last = a;
+		if(last != first && bt->resolvable(Bt->Arandom, bt->straddr(last)))
+			break;
+	}
+	if(!seen){
+		sys->print("BT: FAILED: the bonded device never appeared under its identity\n");
+		return;
+	}
+	remotes := lsdir(mnt + "/0/remote");
+	say("BT: identity " + trim(readfile(dev + "/identity")));
+	sys->print("BT: addr was %s now %s\n", first, last);
+	sys->print("BT: remote/ holds %d devices\n", len remotes);
+	ok := 1;
+	if(len remotes != 2){
+		sys->print("BT: FAILED: a rotating address made a new device\n");
+		ok = 0;
+	}
+	if(last == first){
+		sys->print("BT: FAILED: the address never rotated\n");
+		ok = 0;
+	}
+	if(trim(readfile(dev + "/identity")) == "none"){
+		sys->print("BT: FAILED: the bond from the key file gave no identity\n");
+		ok = 0;
+	}
+	if(!smp->resolve(bond, Bt->Arandom, bt->straddr(last))){
+		sys->print("BT: FAILED: the stored key does not resolve the address\n");
+		ok = 0;
+	}
+	if(ok)
+		sys->print("BT: rejoined %s from a key file, with no pairing\n", bond.addr);
 	writefile(mnt + "/0/ctl", "scan off");
 	sys->print("BT: done\n");
 }

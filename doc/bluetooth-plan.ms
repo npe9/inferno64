@@ -87,6 +87,11 @@ file saying what is behind it.  What is
 done is the controller-side resolving list, which is the same idea
 done by the radio and would be the faster path; nothing needs it yet.
 .PP
+A bond survives a restart with it: a key file read at startup
+recognises the device behind an address it chose afterwards, with
+nothing pairing in that session, which is the thing a bond is for and
+the thing this stack could not do.
+.PP
 The one place the shape shows is a device first heard from a private
 address and paired only afterwards: its directory keeps the name it
 was given before there was a key to resolve it with.

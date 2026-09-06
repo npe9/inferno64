@@ -36,6 +36,10 @@ y.debug
 /libinterp/loadermod.h
 /libinterp/mathmod.h
 /libinterp/runt.h
+# Since a Dis word became the target's word, these are generated once
+# per width into libinterp/w<n>/ instead; the paths above are what the
+# build used to leave behind and are kept for a tree built before that.
+/libinterp/w*/
 /libinterp/sysmod.h
 /libinterp/tkmod.h
 
@@ -481,3 +485,9 @@ os/inferno/shakti/shakti.c
 
 # generated config C for the raspi3b board
 os/inferno/raspi3b/raspi3b.c
+
+# where the Bluetooth bench mounts btfs and keeps a key file under emu
+/mnt/
+
+# importing scripts/bthci.py to check its own vectors leaves this
+/scripts/__pycache__/
