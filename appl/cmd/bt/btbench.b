@@ -195,7 +195,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	"rejoin" =>
 		rejoin();
 		return;
-	"stall" or "late" or "early" or "orphan" =>
+	"stall" or "late" or "early" or "orphan" or "orphanlive" =>
 		conntest(mode);
 		return;
 	}
@@ -383,6 +383,13 @@ init(nil: ref Draw->Context, argv: list of string)
 #		anyone is waiting, and sends a refusal long afterwards.
 #		The next connect must not be handed it.  Same assertions
 #		as stall: the first fails, the second works.
+#	orphanlive
+#		the same, except what turns up late is a connection, on
+#		a handle of its own.  The controller is now holding a
+#		link this side gave up on.  Discarding it silently would
+#		leave it up for ever with a Cstate nothing removes, so
+#		the controller's connection count must come back to one
+#		-- the new link and not the abandoned one.
 #
 conntest(mode: string)
 {
@@ -397,15 +404,15 @@ conntest(mode: string)
 	st := trim(readfile(dev + "/state"));
 	ok := 1;
 	case mode {
-	"stall" or "orphan" =>
-		if(mode == "orphan"){
+	"stall" or "orphan" or "orphanlive" =>
+		if(mode == "orphan" || mode == "orphanlive"){
 			#
 			# the refusal is deliberately sent late; wait
 			# until it has been, so the next connect is made
 			# with it already sitting in the channel rather
 			# than racing it.
 			#
-			sys->print("BT: waiting for the late refusal\n");
+			sys->print("BT: waiting for what the controller sends late\n");
 			sys->sleep(8000);
 		}
 		if(e == nil){
@@ -438,6 +445,21 @@ conntest(mode: string)
 			ok = 0;
 		} else
 			sys->print("BT: connected: %s\n", st);
+	}
+	if(ok && mode == "orphanlive"){
+		#
+		# the abandoned link has to have been closed, not merely
+		# ignored: the controller's count is the only place that
+		# shows it, since nothing above ever knew the handle.
+		#
+		sys->sleep(1000);
+		cs := trim(readfile(mnt + "/0/state"));
+		if(!hasword(cs, "connections 1")){
+			sys->print("BT: FAILED: %s\n", cs);
+			sys->print("BT: FAILED: the abandoned link was not closed\n");
+			ok = 0;
+		} else
+			sys->print("BT: the abandoned link was closed: %s\n", cs);
 	}
 	if(ok){
 		#
@@ -579,6 +601,14 @@ lines(s: string): list of string
 	for(; l != nil; l = tl l)
 		r = hd l :: r;
 	return r;
+}
+
+hasword(s, w: string): int
+{
+	for(i := 0; i + len w <= len s; i++)
+		if(s[i:i+len w] == w)
+			return 1;
+	return 0;
 }
 
 hasletter(s: string): int

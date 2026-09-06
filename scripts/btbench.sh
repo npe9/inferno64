@@ -24,6 +24,9 @@
 #		reached from outside
 #	orphan	a completion owed and sent long after anyone was waiting
 #		for it: the attempt after it must not be handed it
+#	orphanlive
+#		the same, except a connection turns up late rather than
+#		a refusal: it must be closed, not merely ignored
 #
 # emu does not exit when btbench returns, because btfs is still serving
 # in a process it spawned.  So each phase runs emu in the background and
@@ -101,4 +104,5 @@ run stall --stall-connect stall
 run late --late-connect late
 run early --early-connect early
 run orphan --orphan-connect orphan
+run orphanlive --orphan-live orphanlive
 echo "BENCH PASS"

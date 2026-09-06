@@ -19393,6 +19393,30 @@ its own \(em nothing filters which completion a waiter accepts,
 deliberately, since matching addresses would fail against a controller
 that resolves privacy itself and reports the identity address.  Each
 attempt drains the channel before it starts.
+.IP \(bu
+What that drain throws away may be a connection, and the event that
+carried it has already put a
+.CW Cstate
+in
+.CW states .
+Nothing would ever take it out:
+.CW closeconn
+runs on a Disconnection Complete, and none is coming for a handle
+nothing above knows about, so the link stays up on the controller for
+ever and
+.CW /net/bt/0/state
+counts it.  A discarded connection is closed rather than dropped.
+.PP
+One more, of a different kind: the wait after a cancel reported every
+failure as
+.CW "connection timed out" ,
+discarding what the controller actually said.  Unknown Connection
+Identifier does read as a timeout, but anything else \(em a connection
+that failed to be established, say \(em is a real failure whose reason
+is the useful half, and on hardware those are the interesting ones.
+The status is passed through now, the way
+.CW docmd
+has always passed a command's.
 .NH 2
 Four ways for a controller to answer late, and a test for each
 .PP
@@ -19423,6 +19447,14 @@ put the answer in front of the waiter before it waits.
 owes a completion, refuses the cancel, and sends a refusal six seconds
 after anyone stopped waiting for it.  The next connect must not be
 handed it.
+.IP \(bu
+.CW --orphan-live
+does the same but sends a connection rather than a refusal, on a
+handle of its own so which link a Disconnect names is never in doubt.
+The controller is then holding a link this side gave up on, and
+.CW /net/bt/0/state
+must come back to one connection \(em the new link and not the
+abandoned one.
 .PP
 Each phase reads a characteristic afterwards, so what is asserted is a
 link that carries ATT rather than a state file that says connected.
@@ -19436,7 +19468,11 @@ without the wait after the cancel, the
 phase does the same; without the drain, the
 .CW orphan
 phase's second connect fails with the first attempt's
-.CW "unknown connection identifier" .
+.CW "unknown connection identifier" ;
+and with the drain discarding a link instead of closing it, the
+.CW orphanlive
+phase finds two connections where there should be one, with the
+controller's own log showing no Disconnect for the abandoned handle.
 The lock itself has no such phase, and cannot have one against a
 controller model with a single connection; it is a fix found by
 reading, and this says so.

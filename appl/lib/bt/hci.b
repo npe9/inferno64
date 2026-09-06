@@ -332,9 +332,21 @@ doleconnect(p: array of byte): (ref Conn, string)
 	# that does not answer even that from poisoning every connection
 	# afterwards.
 	#
+	# What is discarded here may be a connection.  The event that
+	# carried it has already put a Cstate in states, and nothing
+	# will ever take it out again: closeconn runs on a Disconnection
+	# Complete, and no such event is coming for a handle nobody
+	# above knows about.  So a discarded connection is closed rather
+	# than merely dropped -- otherwise the leak this whole thing is
+	# about survives in the one place that throws a link away on
+	# purpose.
+	#
 	alt {
-	<-connc =>	;
-	* =>		;
+	(c, err) := <-connc =>
+		if(err == nil && c != nil)
+			disconnect(c);
+	* =>
+		;
 	}
 
 	(st, nil, e) := cmd(bt->opcode(Ogle, 16r000d), p);
@@ -383,8 +395,15 @@ cancelled(): (ref Conn, string)
 	spawn timer(Cancelwait, tick);
 	alt {
 	(c, err) := <-connc =>
+		#
+		# what the controller said, not what this side assumed.
+		# A cancelled attempt comes back Unknown Connection
+		# Identifier and reads as a timeout; anything else is a
+		# real failure and the reason is the useful part of it,
+		# which is exactly the case that matters on hardware.
+		#
 		if(err != nil)
-			return (nil, "connection timed out");
+			return (nil, "connection timed out: " + err);
 		return (c, nil);
 	<-tick =>
 		#

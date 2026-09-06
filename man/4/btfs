@@ -103,6 +103,13 @@ starts and stops scanning.
 and
 .BI "pair " addr
 act on one device.
+.B connect
+waits for the controller to establish the link and fails with
+.B "connection timed out"
+followed by what the controller said, if it said anything; a
+connection that completes just as the wait runs out is returned rather
+than thrown away, and one that completes after that is closed when it
+is found.
 .TP
 .B /net/bt/0/remote/\fIADDR\fP/
 A device that has been heard from, named by its address written most

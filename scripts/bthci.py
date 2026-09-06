@@ -78,6 +78,12 @@ early_connect = '--early-connect' in sys.argv
 # next attempt must not be handed it.
 orphan_connect = '--orphan-connect' in sys.argv
 
+# --orphan-live: the same, except what turns up late is a connection
+# rather than a refusal.  The controller now holds a link the guest
+# gave up on and does not know about, so the guest has to notice it
+# when it finds it and close it, not merely ignore it.
+orphan_live = '--orphan-live' in sys.argv
+
 def log(*a):
     if verbose:
         print('bthci:', *a, file=sys.stderr, flush=True)
@@ -326,7 +332,7 @@ class Model:
         elif op == 0x200e:                     # LE Create Connection Cancel
             if self.stalled is None:
                 self.cmd_complete(op, bytes([0]))
-            elif orphan_connect:
+            elif orphan_connect or orphan_live:
                 atype, addr = self.stalled
                 self.stalled = None
                 self.cmd_complete(op, bytes([0x0c]))   # command disallowed
@@ -395,7 +401,8 @@ class Model:
 
     def connect(self, atype, addr):
       try:
-        if (stall_connect or late_connect or orphan_connect) and self.stalls == 0:
+        if (stall_connect or late_connect or orphan_connect or orphan_live) \
+           and self.stalls == 0:
             self.stalls += 1
             self.stalled = (atype, addr)
             log('leaving the first connection unanswered')
@@ -409,15 +416,21 @@ class Model:
     def orphan(self, atype, addr):
         # long after the guest has stopped waiting for it
         time.sleep(6)
+        if orphan_live:
+            log('sending the connection nobody is waiting for')
+            self.complete(atype, addr, 0x0041)
+            return
         log('sending the completion nobody is waiting for')
         self.event(0x3e, bytes([0x01, 0x02]) + struct.pack('<H', 0)
                    + bytes([0x01, atype]) + addr
                    + struct.pack('<HHH', 0, 0, 0) + bytes([0]))
 
-    def complete(self, atype, addr):
-        self.handle = 0x0040
+    def complete(self, atype, addr, handle=0x0040):
+        # the orphan gets a handle of its own, so which link a
+        # Disconnect refers to is never in doubt
+        self.handle = handle
         self.peer = (atype, addr)
-        self.event(0x3e, bytes([0x01, 0x00]) + struct.pack('<H', self.handle)
+        self.event(0x3e, bytes([0x01, 0x00]) + struct.pack('<H', handle)
                    + bytes([0x01, atype]) + addr
                    + struct.pack('<HHH', 0x0028, 0, 0x002a) + bytes([0]))
 
