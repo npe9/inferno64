@@ -1,24 +1,41 @@
 implement Etherusb;
 
 #
-# USB ethernet: serve the netif (#l-style) file interface devip's
-# ethermedium binds to, backed -- eventually -- by a USB ethernet
-# device's bulk endpoints.  This first stage serves the interface with a
-# canned MAC and proves the medium binds from Limbo: ethermedium.c reaches
-# an ethernet device purely by path (namec/chandial on clone/addr/N/data),
-# so a Limbo styx server that speaks the netif protocol can BE devip's
-# ethernet, getting ARP, IPv6 ND and multicast-MAC mapping from the kernel.
+# USB ethernet: a Limbo driver in the shape of 9front's nusb/ether.
+# It serves the netif (#l-style) file interface devip's ethermedium
+# binds to, backed by a USB ethernet device's bulk endpoints reached
+# through #U.  ethermedium.c reaches an ethernet device purely by path
+# (namec/chandial on clone/addr/N/data), so this styx server IS devip's
+# ethernet, getting ARP, IPv6 ND and multicast-MAC mapping from the
+# kernel.  A kernel devether card cannot take this role: it is probed at
+# boot, before usbd has enumerated any USB NIC.
 #
 # The netif protocol (os/inferno/port/netif.c, os/inferno/ip/chandial.c):
 #  - open <path>/clone -> allocates a conversation, the fid now IS that
 #    conversation's ctl; reading it returns the conversation number.
-#  - write "connect <ethertype>" to the ctl to filter the conversation.
+#  - write "connect <ethertype>" to the ctl to filter the conversation
+#    (ethermedium dials "...!0x800", "...!0x86DD" and "...!0x806").
 #  - open <path>/N/data -> the frames of that type (full ethernet frames).
 #  - read <path>/addr -> the MAC address as hex text.
 #
-# Stage 1 (this file): interface + self-mount + bind, no USB yet.  Data
-# reads block (no frames arrive), data writes (outgoing frames from the IP
-# stack -- an ARP once an address is added) are reported, proving TX.
+# Two devices are driven:
+#  - CDC Ethernet Control Model (class 2, subclass 6), the class QEMU's
+#    -device usb-net offers in its second configuration.  One frame per
+#    bulk transfer; a frame that is a multiple of maxpkt is terminated
+#    by a zero-length packet.  This is the QEMU-verified path.
+#  - SMSC LAN95xx (the Pi 3B's onboard LAN9514, vid 0424 did ec00):
+#    vendor register access over ep0, 4-byte rx status words and 8-byte
+#    tx command words around each frame, register init after 9front's
+#    smsc.c.  QEMU does not model the chip, so this path is written for
+#    the real board and is NOT emulator-verified.
+#
+# usbd starts this program with the device's ep0 name (epN.0) once it
+# has enumerated and configured the device; usbd closes its own ep0
+# data file first, since the kernel allows one open of an endpoint.
+#
+#	etherusb [-d] [-m mnt] [-a mac] epN.0
+#
+# Without a device it serves a canned MAC (the Stage 1 bind test).
 #
 
 include "sys.m";
@@ -47,11 +64,16 @@ Etherusb: module {
 Qroot, Qether, Qclone, Qaddr: con big iota;
 Cbase: con big 16;
 
+Nqueue: con 64;		# frames held per conversation when nobody is reading
+Ntx: con 32;		# frames queued for the transmit process
+
 Conn: adt {
 	n:	int;
-	etype:	int;		# ethertype filter, -1 == unset
+	etype:	int;		# ethertype filter: 0 none yet, <0 all
 	promisc: int;
 	reads:	list of ref Tmsg.Read;	# deferred data reads
+	frames:	list of array of byte;	# queued frames, newest first
+	nframes: int;
 };
 
 conns: array of ref Conn;
@@ -59,7 +81,54 @@ nconn := 0;
 mac := array[6] of byte;
 srv: ref Styxserver;
 tree: ref Tree;
-debug := 0;
+debug := 0;		# raised by -d
+txc: chan of array of byte;
+promisc := 0;
+ndrop := 0;
+
+# USB request type bits, standard requests and descriptor types
+Rh2d: con 0;
+Rd2h: con 16r80;
+Rstd: con 0;
+Rclass: con 16r20;
+Rvendor: con 16r40;
+Rdev: con 0;
+Riface: con 1;
+Rgetdesc: con 6;
+Rsetconf: con 9;
+Rsetiface: con 11;
+Ddev: con 1;
+Dconf: con 2;
+Dstring: con 3;
+Diface: con 4;
+Dep: con 5;
+Dcs: con 16r24;		# class-specific (CDC functional descriptors)
+Ucdelay: con 50;
+Uctries: con 4;
+
+# CDC ECM
+CDCETHER: con 16r0f;	# ethernet networking functional descriptor
+CDCSETFILTER: con 16r43;
+FILTERPROMISC: con 1;
+FILTERALLMULTI: con 2;
+FILTERDIRECTED: con 4;
+FILTERBROADCAST: con 8;
+
+Dev: adt {
+	name:	string;		# epN.M
+	id:	int;
+	cfd:	ref Sys->FD;	# /dev/usb/epN.M/ctl
+	dfd:	ref Sys->FD;	# /dev/usb/epN.M/data
+	vid, did: int;
+};
+
+Kcanned, Kecm, Ksmsc: con iota;
+kind := Kcanned;
+dev: ref Dev;
+bin, bout: ref Dev;		# bulk in / out endpoints
+inmaxpkt := 64;
+outmaxpkt := 64;
+ctliface := 0;			# ECM control interface number
 
 badmod(p: string)
 {
@@ -92,13 +161,38 @@ init(nil: ref Draw->Context, argv: list of string)
 	if(nametree == nil) badmod(Nametree->PATH);
 	nametree->init();
 
-	mnt := "/n/eth";
-	argv = tl argv;
-	if(argv != nil){ mnt = hd argv; argv = tl argv; }
+	mnt := "/net.alt";
+	devname: string;
+	macarg: string;
+	for(argv = tl argv; argv != nil; argv = tl argv){
+		a := hd argv;
+		if(a == "-d")
+			debug++;
+		else if(a == "-m" && tl argv != nil){
+			argv = tl argv;
+			mnt = hd argv;
+		} else if(a == "-a" && tl argv != nil){
+			argv = tl argv;
+			macarg = hd argv;
+		} else
+			devname = a;
+	}
 
-	# canned MAC for stage 1 (locally-administered)
+	# canned MAC (locally-administered) until a device supplies one
 	mac[0]=byte 16r02; mac[1]=byte 16r00; mac[2]=byte 16r00;
 	mac[3]=byte 16r11; mac[4]=byte 16r22; mac[5]=byte 16r33;
+	if(macarg != nil && parsemac(macarg, mac) < 0){
+		sys->print("etherusb: bad mac %s\n", macarg);
+		return;
+	}
+
+	if(devname != nil){
+		err := devsetup(devname, macarg != nil);
+		if(err != nil){
+			sys->print("ETHERUSB-FAIL %s: %s\n", devname, err);
+			return;
+		}
+	}
 
 	conns = array[16] of ref Conn;
 
@@ -119,65 +213,628 @@ init(nil: ref Draw->Context, argv: list of string)
 	tree.create(Qether, dir("clone", 8r666, Qclone));
 	tree.create(Qether, dir("addr", 8r444, Qaddr));
 
+	rxc := chan of array of byte;
+	txc = chan[Ntx] of array of byte;
+	if(dev != nil){
+		spawn rxproc(rxc);
+		spawn txproc();
+	}
+
 	# spawn the server loop BEFORE mounting: mount performs the 9P
 	# handshake against our styx server, so the loop that answers it must
 	# already be running or mount deadlocks.
-	spawn server(tchan);
+	spawn server(tchan, rxc);
 
 	if(sys->mount(p[1], nil, mnt, Sys->MREPL, "") < 0){
 		sys->print("etherusb: mount %s: %r\n", mnt);
 		return;
 	}
 	p[1] = nil;
-	sys->print("ETHERUSB serving %s\n", mnt);
+	sys->print("ETHERUSB serving %s/ether mac %s %s\n", mnt, macstr(), kindname());
 
-	bindtest(mnt);
-
-	# keep the process alive so the server proc and etherread4 keep running
+	# keep the process alive so the server and transfer procs keep running
 	c := chan of int;
 	<-c;
 }
 
-# Drive the ipifc bind, the actual de-risk: if chandial's
-# clone/connect/data dance is served correctly by our styx server, the
-# bind returns without error and the kernel spawns etherread4.
-bindtest(mnt: string)
+kindname(): string
 {
-	if(sys->bind("#I", "/net", Sys->MAFTER) < 0){
-		sys->print("ETHERUSB-FAIL bind #I: %r\n");
-		return;
+	case kind {
+	Kecm =>		return "(CDC ECM " + dev.name + ")";
+	Ksmsc =>	return "(SMSC LAN95xx " + dev.name + ")";
 	}
-	cfd := sys->open("/net/ipifc/clone", Sys->ORDWR);
-	if(cfd == nil){
-		sys->print("ETHERUSB-FAIL ipifc clone: %r\n");
-		return;
-	}
-	buf := array[32] of byte;
-	n := sys->read(cfd, buf, len buf);
-	if(n <= 0){
-		sys->print("ETHERUSB-FAIL ipifc read: %r\n");
-		return;
-	}
-	ifc := string buf[0:n];
-	for(i := 0; i < len ifc && ifc[i] == ' '; i++) ;
-	ifc = ifc[i:];
-	ethpath := mnt + "/ether";
-	if(sys->fprint(cfd, "bind ether %s", ethpath) < 0){
-		sys->print("ETHERUSB-FAIL bind ether: %r\n");
-		return;
-	}
-	sys->print("ETHERBIND-OK ifc %s bound ether %s\n", ifc, ethpath);
-	if(sys->fprint(cfd, "add 10.0.0.2 255.255.255.0") < 0){
-		sys->print("ETHERUSB add: %r\n");
-		return;
-	}
-	sys->print("ETHERADD-OK (watch for an ARP frame on TX)\n");
+	return "(no device, canned)";
 }
 
-server(tchan: chan of ref Tmsg)
+macstr(): string
 {
+	s := "";
+	for(i := 0; i < 6; i++)
+		s += sys->sprint("%2.2ux", int mac[i]);
+	return s;
+}
+
+parsemac(s: string, m: array of byte): int
+{
+	n := 0;
+	v := 0;
+	nd := 0;
+	for(i := 0; i < len s; i++){
+		c := s[i];
+		d := -1;
+		if(c >= '0' && c <= '9')
+			d = c - '0';
+		else if(c >= 'a' && c <= 'f')
+			d = c - 'a' + 10;
+		else if(c >= 'A' && c <= 'F')
+			d = c - 'A' + 10;
+		else if(c == ':' || c == '-')
+			continue;
+		else
+			return -1;
+		v = v<<4 | d;
+		if(++nd == 2){
+			if(n >= 6)
+				return -1;
+			m[n++] = byte v;
+			v = 0;
+			nd = 0;
+		}
+	}
+	if(n != 6 || nd != 0)
+		return -1;
+	return 0;
+}
+
+#
+# the device: open ep0, identify it, bring it up, make the bulk endpoints
+#
+devsetup(name: string, havemac: int): string
+{
+	dev = opendev(name);
+	if(dev == nil)
+		return sys->sprint("open %s: %r", name);
+	if(opendevdata(dev) < 0)
+		return sys->sprint("open %s data: %r", name);
+	(r, dd) := usbin(dev, Rd2h|Rstd|Rdev, Rgetdesc, Ddev<<8, 0, 18);
+	if(r < 18)
+		return "device descriptor";
+	dev.vid = int dd[8] | int dd[9]<<8;
+	dev.did = int dd[10] | int dd[11]<<8;
+	nconf := int dd[17];
+	if(dev.vid == 16r0424)
+		return smscsetup(havemac);
+	return ecmsetup(nconf);
+}
+
+# walk a configuration descriptor's interfaces/endpoints.  Returns, for
+# the ECM case: (confval, ctl iface, imac string index, data iface, data
+# alt, bulk in ep, in maxpkt, bulk out ep, out maxpkt), with -1 for what
+# was not found.  For a vendor device the bulk endpoints of the first
+# interface are what matter.
+Cfg: adt {
+	confval: int;
+	ctliface: int;
+	imac:	int;
+	dataiface: int;
+	altn:	int;
+	inep, inmax: int;
+	outep, outmax: int;
+	intrep: int;
+};
+
+readconf(c: int): (ref Cfg, array of byte)
+{
+	(r, cd) := usbin(dev, Rd2h|Rstd|Rdev, Rgetdesc, Dconf<<8 | c, 0, 9);
+	if(r < 9)
+		return (nil, nil);
+	total := int cd[2] | int cd[3]<<8;
+	if(total > 1024)
+		total = 1024;
+	(r, cd) = usbin(dev, Rd2h|Rstd|Rdev, Rgetdesc, Dconf<<8 | c, 0, total);
+	if(r < 9)
+		return (nil, nil);
+	cf := ref Cfg(int cd[5], -1, -1, -1, -1, -1, 0, -1, 0, -1);
+	iface := -1;
+	altn := 0;
+	class := 0;
+	sub := 0;
+	i := 0;
+	while(i + 1 < r){
+		l := int cd[i];
+		t := int cd[i+1];
+		if(l < 2)
+			break;
+		case t {
+		Diface =>
+			if(i + 9 > r)
+				break;
+			iface = int cd[i+2];
+			altn = int cd[i+3];
+			class = int cd[i+5];
+			sub = int cd[i+6];
+			if(class == 2 && sub == 6)
+				cf.ctliface = iface;
+		Dcs =>
+			if(class == 2 && sub == 6 && l >= 13 && int cd[i+2] == CDCETHER)
+				cf.imac = int cd[i+3];
+		Dep =>
+			if(i + 7 > r)
+				break;
+			addr := int cd[i+2];
+			attr := int cd[i+3];
+			maxpkt := int cd[i+4] | int cd[i+5]<<8;
+			isdata := class == 10 || class == 16rff;
+			if(isdata && (attr & 3) == 2){
+				# a data interface alt with both bulk endpoints
+				# wins; ECM's alt 0 has none
+				if(cf.dataiface != iface || cf.altn != altn){
+					cf.dataiface = iface;
+					cf.altn = altn;
+					cf.inep = cf.outep = -1;
+				}
+				if(addr & 16r80){
+					cf.inep = addr & 16r0f;
+					cf.inmax = maxpkt;
+				} else {
+					cf.outep = addr & 16r0f;
+					cf.outmax = maxpkt;
+				}
+			} else if((attr & 3) == 3 && (addr & 16r80))
+				cf.intrep = addr & 16r0f;
+		}
+		i += l;
+	}
+	return (cf, cd);
+}
+
+#
+# CDC Ethernet Control Model
+#
+ecmsetup(nconf: int): string
+{
+	cf: ref Cfg;
+	for(c := 0; c < nconf; c++){
+		(cf, nil) = readconf(c);
+		if(cf != nil && cf.ctliface >= 0 && cf.inep >= 0 && cf.outep >= 0)
+			break;
+		cf = nil;
+	}
+	if(cf == nil)
+		return "no CDC ECM configuration with bulk endpoints";
+	kind = Kecm;
+	ctliface = cf.ctliface;
+	if(usbcmd(dev, Rh2d|Rstd|Rdev, Rsetconf, cf.confval, 0, nil, 0) < 0)
+		return sys->sprint("set configuration %d: %r", cf.confval);
+	# ECM's data interface has an alternate setting with the endpoints
+	if(usbcmd(dev, Rh2d|Rstd|Riface, Rsetiface, cf.altn, cf.dataiface, nil, 0) < 0)
+		return sys->sprint("set interface %d alt %d: %r", cf.dataiface, cf.altn);
+	# the MAC is a string descriptor of 12 hex digits (UTF-16LE)
+	if(cf.imac > 0){
+		(r, sd) := usbin(dev, Rd2h|Rstd|Rdev, Rgetdesc, Dstring<<8 | cf.imac, 16r0409, 64);
+		if(r < 2 + 24)
+			return "MAC string descriptor";
+		s := "";
+		for(i := 2; i + 1 < int sd[0] && i + 1 < r; i += 2)
+			s[len s] = int sd[i];
+		if(parsemac(s, mac) < 0)
+			return "bad MAC string " + s;
+	}
+	if(openeps(cf) < 0)
+		return sys->sprint("endpoints: %r");
+	ecmfilter();
+	return nil;
+}
+
+# SetEthernetPacketFilter (ECM 6.2.4).  QEMU's usb-net does not
+# implement it (it stalls the request and delivers everything anyway),
+# so a failure here is reported, not fatal; a real ECM device wants it.
+ecmfilter()
+{
+	f := FILTERDIRECTED|FILTERBROADCAST|FILTERALLMULTI;
+	if(promisc)
+		f |= FILTERPROMISC;
+	if(cmdreq(dev, Rh2d|Rclass|Riface, CDCSETFILTER, f, ctliface, nil, 0) < 0)
+		sys->print("etherusb: %s: set packet filter %#x: %r (ignored)\n", dev.name, f);
+}
+
+#
+# SMSC LAN95xx, after 9front's nusb/ether/smsc.c (and Linux smsc95xx).
+# Registers are read and written with vendor requests A1/A0 on ep0, a
+# 4-byte little-endian value, the register address in wIndex.
+#
+Idrev: con 16r00;
+Intsts: con 16r08;
+Txcfg: con 16r10;
+Hwcfg: con 16r14;
+Pmctrl: con 16r20;
+Afccfg: con 16r2C;
+E2pcmd: con 16r30;
+E2pdata: con 16r34;
+Burstcap: con 16r38;
+Intepctl: con 16r68;
+Bulkdelay: con 16r6C;
+Maccr: con 16r100;
+Addrh: con 16r104;
+Addrl: con 16r108;
+Hashh: con 16r10C;
+Hashl: con 16r110;
+MIIaddr: con 16r114;
+MIIdata: con 16r118;
+Flow: con 16r11C;
+Vlan1: con 16r120;
+Coecr: con 16r130;
+
+Bir: con 1<<12;		# Hwcfg: bulk in empty response
+Rxdoff: con 3<<9;	# Hwcfg: rx data offset
+Mef: con 1<<5;		# Hwcfg: multiple ethernet frames per transfer
+Lrst: con 1<<3;		# Hwcfg: lite reset
+Bce: con 1<<1;		# Hwcfg: burst cap enable
+Phyrst: con 1<<4;	# Pmctrl
+E2pbusy: con 1<<31;	# E2pcmd
+E2ptimeout: con 1<<10;
+E2pread: con 0;
+Mcpas: con 1<<19;	# Maccr: multicast pass
+Prms: con 1<<18;	# Maccr: promiscuous
+Hpfilt: con 1<<13;	# Maccr: hash perfect filter
+Txen: con 1<<3;
+Rxen: con 1<<2;
+Txon: con 1<<2;		# Txcfg
+Txcoe: con 1<<16;	# Coecr
+Rxcoe: con 1<<0;
+MIIwrite: con 1<<1;
+MIIbusy: con 1<<0;
+Phyint: con 1<<15;	# Intepctl
+PHYinternal: con 1;
+Afcdefault: con 16rF830A1;
+Hsburst: con 37;	# Burstcap in 512-byte high-speed packets
+Fsburst: con 129;	# in 64-byte full-speed packets
+Defbulkdly: con 16r2000;
+Ethp8021q: con 16r8100;
+MACoffset: con 1;	# EEPROM byte offset of the MAC
+Rxerror: con 16r8000;	# rx status word
+Txfirst: con 16r2000;	# tx command word A
+Txlast: con 16r1000;
+Resettime: con 1000;
+E2pbusytime: con 1000;
+# PHY (MII) registers
+Bmcr: con 0;
+Bmsr: con 1;
+Anar: con 4;
+Bmcrreset: con 1<<15;
+Bmcranenable: con 1<<12;
+Bmcrrestart: con 1<<9;
+Anardefault: con 16r0DE1;	# 10/100 half/full, pause, 802.3 selector
+Phyintsrc: con 29;
+Phyintmask: con 30;
+Anegcomp: con 1<<6;
+Linkdown: con 1<<4;
+
+wr(reg, val: int): int
+{
+	b := array[4] of byte;
+	b[0] = byte val; b[1] = byte (val>>8); b[2] = byte (val>>16); b[3] = byte (val>>24);
+	if(usbcmd(dev, Rh2d|Rvendor|Rdev, 16rA0, 0, reg, b, 4) < 0){
+		sys->print("etherusb: smsc write reg %#x: %r\n", reg);
+		return -1;
+	}
+	return 0;
+}
+
+rr(reg: int): int
+{
+	(n, b) := usbin(dev, Rd2h|Rvendor|Rdev, 16rA1, 0, reg, 4);
+	if(n < 4){
+		sys->print("etherusb: smsc read reg %#x: %r\n", reg);
+		return -1;
+	}
+	return int b[0] | int b[1]<<8 | int b[2]<<16 | int b[3]<<24;
+}
+
+miird(idx: int): int
+{
+	wr(MIIaddr, PHYinternal<<11 | idx<<6);
+	for(i := 0; i < 100 && (rr(MIIaddr) & MIIbusy); i++)
+		;
+	return rr(MIIdata);
+}
+
+miiwr(idx, val: int)
+{
+	wr(MIIdata, val);
+	wr(MIIaddr, PHYinternal<<11 | idx<<6 | MIIwrite);
+	for(i := 0; i < 100 && (rr(MIIaddr) & MIIbusy); i++)
+		;
+}
+
+eepromr(off: int, buf: array of byte): int
+{
+	for(i := 0; i < E2pbusytime; i++)
+		if((rr(E2pcmd) & E2pbusy) == 0)
+			break;
+	if(i == E2pbusytime)
+		return -1;
+	for(i = 0; i < len buf; i++){
+		wr(E2pcmd, E2pbusy|E2pread|(off+i));
+		v := 0;
+		for(j := 0; j < E2pbusytime; j++){
+			v = rr(E2pcmd) & (E2pbusy|E2ptimeout);
+			if(v != E2pbusy)
+				break;
+		}
+		if(v & E2ptimeout)
+			return -1;
+		buf[i] = byte rr(E2pdata);
+	}
+	return 0;
+}
+
+# wait for a self-clearing reset bit
+doreset(reg, bit: int): int
+{
+	if(wr(reg, bit) < 0)
+		return -1;
+	for(i := 0; i < Resettime/10; i++){
+		if((rr(reg) & bit) == 0)
+			return 0;
+		sys->sleep(10);
+	}
+	return -1;
+}
+
+phyinit()
+{
+	miiwr(Bmcr, Bmcrreset);
+	for(i := 0; i < Resettime/10; i++){
+		if((miird(Bmcr) & Bmcrreset) == 0)
+			break;
+		sys->sleep(10);
+	}
+	miiwr(Anar, Anardefault);
+	miird(Phyintsrc);			# clear pending
+	miiwr(Phyintmask, Anegcomp|Linkdown);
+	miiwr(Bmcr, miird(Bmcr)|Bmcranenable|Bmcrrestart);
+}
+
+# the MAC: the chip's EEPROM if there is one and it is programmed,
+# else the board's address from the firmware (/env/ethaddr, which the
+# Pi 3B kernel sets from the VideoCore mailbox), else what -a gave
+smscmac(havemac: int): string
+{
+	ea := array[6] of byte;
+	if(eepromr(MACoffset, ea) == 0){
+		blank := 1;
+		for(i := 0; i < 6; i++)
+			if(ea[i] != byte 16rff && ea[i] != byte 0)
+				blank = 0;
+		if(!blank){
+			mac[0:] = ea;
+			return nil;
+		}
+	}
+	if(havemac)
+		return nil;
+	fd := sys->open("/env/ethaddr", Sys->OREAD);
+	if(fd != nil){
+		buf := array[64] of byte;
+		n := sys->read(fd, buf, len buf);
+		if(n > 0 && parsemac(string buf[0:n], mac) == 0)
+			return nil;
+	}
+	return "no MAC: EEPROM blank, no /env/ethaddr, no -a";
+}
+
+smscsetup(havemac: int): string
+{
+	kind = Ksmsc;
+	(cf, nil) := readconf(0);
+	if(cf == nil || cf.inep < 0 || cf.outep < 0)
+		return "no bulk endpoints in configuration 1";
+	id := rr(Idrev);
+	if(id < 0)
+		return "cannot read ID_REV";
+	sys->print("etherusb: smsc id_rev %#8.8ux\n", id);
+	if(doreset(Hwcfg, Lrst) < 0)
+		return "lite reset timed out";
+	if(doreset(Pmctrl, Phyrst) < 0)
+		return "PHY reset timed out";
+	err := smscmac(havemac);
+	if(err != nil)
+		return err;
+	wr(Addrl, int mac[0] | int mac[1]<<8 | int mac[2]<<16 | int mac[3]<<24);
+	wr(Addrh, int mac[4] | int mac[5]<<8);
+	# burst mode: several frames per bulk-in transfer, each 4-aligned,
+	# no rx data offset (the frame follows its status word directly)
+	wr(Hwcfg, (rr(Hwcfg) & ~Rxdoff) | Bir | Mef | Bce);
+	if(cf.inmax >= 512)
+		wr(Burstcap, Hsburst);
+	else
+		wr(Burstcap, Fsburst);
+	wr(Bulkdelay, Defbulkdly);
+	wr(Intsts, ~0);
+	wr(Afccfg, Afcdefault);
+	wr(Vlan1, Ethp8021q);
+	wr(Coecr, rr(Coecr) & ~(Txcoe|Rxcoe));	# no checksum offload
+	wr(Hashh, 0);
+	wr(Hashl, 0);
+	wr(Maccr, rr(Maccr) & ~(Mcpas|Prms|Hpfilt));
+	phyinit();
+	wr(Intepctl, rr(Intepctl) | Phyint);
+	wr(Maccr, rr(Maccr) | Txen | Rxen);
+	wr(Txcfg, Txon);
+	if(openeps(cf) < 0)
+		return sys->sprint("endpoints: %r");
+	return nil;
+}
+
+smscpromisc(on: int)
+{
+	v := rr(Maccr);
+	if(on)
+		v |= Prms | Mcpas;
+	else
+		v &= ~(Prms | Mcpas);
+	wr(Maccr, v);
+}
+
+#
+# the bulk endpoints, made on ep0's ctl and opened as their own files
+#
+# devusb keys endpoints by number, so an IN and an OUT endpoint that
+# share a number (QEMU's usb-net: EP2 in and EP2 out) are one "rw"
+# endpoint whose data file is read and written; the HCD serialises the
+# two directions separately.
+openeps(cf: ref Cfg): int
+{
+	inmaxpkt = cf.inmax;
+	outmaxpkt = cf.outmax;
+	if(cf.inep == cf.outep){
+		if(devctl(dev, sys->sprint("new %d bulk rw", cf.inep)) < 0)
+			return -1;
+		bin = opendev(sys->sprint("ep%d.%d", dev.id, cf.inep));
+		if(bin == nil)
+			return -1;
+		bout = bin;
+		if(devctl(bin, sys->sprint("maxpkt %d", inmaxpkt)) < 0)
+			return -1;
+		if(debug)
+			devctl(bin, "debug 2");
+		bin.dfd = sys->open("/dev/usb/" + bin.name + "/data", Sys->ORDWR);
+		if(bin.dfd == nil)
+			return -1;
+		sys->print("etherusb: %s: bulk in/out %s (%d)\n", dev.name, bin.name, inmaxpkt);
+		return 0;
+	}
+	if(devctl(dev, sys->sprint("new %d bulk r", cf.inep)) < 0)
+		return -1;
+	if(devctl(dev, sys->sprint("new %d bulk w", cf.outep)) < 0)
+		return -1;
+	bin = opendev(sys->sprint("ep%d.%d", dev.id, cf.inep));
+	bout = opendev(sys->sprint("ep%d.%d", dev.id, cf.outep));
+	if(bin == nil || bout == nil)
+		return -1;
+	if(devctl(bin, sys->sprint("maxpkt %d", inmaxpkt)) < 0)
+		return -1;
+	if(devctl(bout, sys->sprint("maxpkt %d", outmaxpkt)) < 0)
+		return -1;
+	if(debug){
+		devctl(bin, "debug 2");
+		devctl(bout, "debug 2");
+	}
+	bin.dfd = sys->open("/dev/usb/" + bin.name + "/data", Sys->OREAD);
+	bout.dfd = sys->open("/dev/usb/" + bout.name + "/data", Sys->OWRITE);
+	if(bin.dfd == nil || bout.dfd == nil)
+		return -1;
+	sys->print("etherusb: %s: bulk in %s (%d) out %s (%d)\n",
+		dev.name, bin.name, inmaxpkt, bout.name, outmaxpkt);
+	return 0;
+}
+
+#
+# receive: one process reads the bulk-in endpoint forever and hands
+# whole frames to the server loop, which owns the conversations
+#
+rxproc(rxc: chan of array of byte)
+{
+	nbuf := 2048;
+	if(kind == Ksmsc){
+		if(inmaxpkt >= 512)
+			nbuf = Hsburst*512;
+		else
+			nbuf = Fsburst*64;
+	}
+	buf := array[nbuf] of byte;
+	nzero := 0;
 	for(;;){
-		gm := <-tchan;
+		n := sys->read(bin.dfd, buf, len buf);
+		if(n < 0){
+			sys->print("etherusb: %s: receive stopped: %r\n", dev.name);
+			return;
+		}
+		if(n == 0){
+			# a stalled/halted endpoint reads as 0: do not spin
+			if(nzero++ < 3)
+				sys->print("etherusb: %s: empty read\n", bin.name);
+			sys->sleep(10);
+			continue;
+		}
+		nzero = 0;
+		if(kind == Ksmsc)
+			smscrx(buf[0:n], rxc);
+		else if(n >= 14){
+			f := array[n] of byte;
+			f[0:] = buf[0:n];
+			rxc <-= f;
+		}
+	}
+}
+
+# a burst: [4-byte status][frame incl. FCS][pad to 4]...  The status
+# word's bits 16-29 are the frame length including its 4-byte FCS.
+smscrx(b: array of byte, rxc: chan of array of byte)
+{
+	while(len b >= 4){
+		sts := int b[0] | int b[1]<<8 | int b[2]<<16 | int b[3]<<24;
+		n := (sts>>16) & 16r3fff;
+		b = b[4:];
+		if(n < 4 || n > len b)
+			break;
+		if((sts & Rxerror) == 0 && n - 4 >= 14){
+			f := array[n-4] of byte;	# strip the FCS
+			f[0:] = b[0:n-4];
+			rxc <-= f;
+		}
+		n = (n + 3) & ~3;
+		if(n > len b)
+			break;
+		b = b[n:];
+	}
+}
+
+#
+# transmit: frames queued by the server loop go out on the bulk-out
+# endpoint, one transfer each, with the zero-length packet a frame
+# that is an exact multiple of maxpkt needs to be delimited
+#
+txproc()
+{
+	zlp := array[0] of byte;
+	for(;;){
+		f := <-txc;
+		n := len f;
+		if(kind == Ksmsc){
+			t := array[8+n] of byte;
+			a := n | Txfirst | Txlast;
+			t[0] = byte a; t[1] = byte (a>>8); t[2] = byte (a>>16); t[3] = byte (a>>24);
+			t[4] = byte n; t[5] = byte (n>>8); t[6] = byte (n>>16); t[7] = byte (n>>24);
+			t[8:] = f;
+			f = t;
+		} else if(n < 60){
+			# minimum ethernet frame; ECM devices do not pad
+			t := array[60] of { * => byte 0 };
+			t[0:] = f;
+			f = t;
+		}
+		if(debug)
+			sys->print("etherusb: tx write %d\n", len f);
+		if(sys->write(bout.dfd, f, len f) != len f){
+			sys->print("etherusb: %s: transmit: %r\n", dev.name);
+			continue;
+		}
+		if(debug)
+			sys->print("etherusb: tx done %d\n", len f);
+		if(len f % outmaxpkt == 0)
+			sys->write(bout.dfd, zlp, 0);
+	}
+}
+
+#
+# the styx server: conversations, deferred reads, and frame delivery
+#
+server(tchan: chan of ref Tmsg, rxc: chan of array of byte)
+{
+	for(;;) alt {
+	gm := <-tchan =>
 		if(gm == nil){
 			tree.quit();
 			exit;
@@ -185,6 +842,8 @@ server(tchan: chan of ref Tmsg)
 		e := handle(gm);
 		if(e != nil)
 			srv.reply(ref Rmsg.Error(gm.tag, e));
+	f := <-rxc =>
+		deliver(f);
 	}
 }
 
@@ -208,7 +867,12 @@ handle(gm: ref Tmsg): string
 		if(fid.path == Qclone){
 			# allocate a conversation; the fid becomes its ctl
 			n := nconn++;
-			conns[n] = ref Conn(n, -1, 0, nil);
+			if(n >= len conns){
+				nc := array[2*len conns] of ref Conn;
+				nc[0:] = conns;
+				conns = nc;
+			}
+			conns[n] = ref Conn(n, 0, 0, nil, nil, 0);
 			cdir := Cbase + big(n*3);
 			tree.create(Qether, dir(string n, Sys->DMDIR|8r555, cdir));
 			tree.create(cdir, dir("ctl", 8r666, cdir+big 1));
@@ -224,21 +888,23 @@ handle(gm: ref Tmsg): string
 		(fid, err) := srv.canread(m);
 		if(fid == nil)
 			return err;
-		(cn, kind) := convof(fid.path);
+		(cn, fk) := convof(fid.path);
 		if(fid.path == Qaddr){
-			s := "";
-			for(i := 0; i < 6; i++)
-				s += sys->sprint("%2.2ux", int mac[i]);
-			srv.reply(styxservers->readstr(m, s));
+			srv.reply(styxservers->readstr(m, macstr()));
 			return nil;
 		}
-		if(kind == 1){			# ctl read -> conversation number
+		if(fk == 1){			# ctl read -> conversation number
 			srv.reply(styxservers->readstr(m, string cn + "\n"));
 			return nil;
 		}
-		if(kind == 2){			# data read -> defer until a frame arrives
-			conns[cn].reads = m :: conns[cn].reads;
-			return nil;		# no reply now (blocks, as ether reads do)
+		if(fk == 2){			# data read: a queued frame, else wait
+			c := conns[cn];
+			if(c.frames != nil){
+				f := oldest(c);
+				srv.reply(ref Rmsg.Read(m.tag, f[0:min(m.count, len f)]));
+			} else
+				c.reads = m :: c.reads;
+			return nil;
 		}
 		srv.read(m);			# directories via the navigator
 		return nil;
@@ -246,50 +912,262 @@ handle(gm: ref Tmsg): string
 		(fid, err) := srv.canwrite(m);
 		if(fid == nil)
 			return err;
-		(cn, kind) := convof(fid.path);
-		if(kind == 1){			# ctl: connect/promiscuous/nonblocking/...
-			ctl(cn, string m.data);
+		(cn, fk) := convof(fid.path);
+		if(fk == 1){			# ctl: connect/promiscuous/nonblocking/...
+			e := ctl(cn, string m.data);
+			if(e != nil)
+				return e;
 			srv.reply(ref Rmsg.Write(m.tag, len m.data));
 			return nil;
 		}
-		if(kind == 2){			# data: a frame to transmit
+		if(fk == 2){			# data: a frame to transmit
 			transmit(cn, m.data);
 			srv.reply(ref Rmsg.Write(m.tag, len m.data));
 			return nil;
 		}
 		return "cannot write here";
+	Flush =>
+		# a flushed read must not be answered later
+		for(i := 0; i < nconn; i++){
+			c := conns[i];
+			l: list of ref Tmsg.Read;
+			for(; c.reads != nil; c.reads = tl c.reads)
+				if((hd c.reads).tag != m.oldtag)
+					l = hd c.reads :: l;
+			c.reads = l;
+		}
+		srv.default(gm);
+	Clunk =>
+		fid := srv.getfid(m.fid);
+		if(fid != nil){
+			(cn, fk) := convof(fid.path);
+			if(fk == 2 && cn < nconn)
+				conns[cn].reads = nil;
+		}
+		srv.default(gm);
 	* =>
 		srv.default(gm);
 	}
 	return nil;
 }
 
-ctl(cn: int, s: string)
+min(a, b: int): int
+{
+	if(a < b)
+		return a;
+	return b;
+}
+
+# frames are kept newest-first; take the oldest
+oldest(c: ref Conn): array of byte
+{
+	l: list of array of byte;
+	for(; tl c.frames != nil; c.frames = tl c.frames)
+		l = hd c.frames :: l;
+	f := hd c.frames;
+	c.frames = nil;
+	for(; l != nil; l = tl l)
+		c.frames = hd l :: c.frames;
+	c.nframes--;
+	return f;
+}
+
+# an ethertype as chandial/ethermedium write it: "0x800", "0x86DD",
+# "0x806", or decimal; -1 means every frame
+etype(s: string): int
+{
+	if(len s > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')){
+		v := 0;
+		for(i := 2; i < len s; i++){
+			c := s[i];
+			if(c >= '0' && c <= '9')
+				v = v*16 + c - '0';
+			else if(c >= 'a' && c <= 'f')
+				v = v*16 + c - 'a' + 10;
+			else if(c >= 'A' && c <= 'F')
+				v = v*16 + c - 'A' + 10;
+			else
+				break;
+		}
+		return v;
+	}
+	return int s;
+}
+
+ctl(cn: int, s: string): string
 {
 	(nil, flds) := sys->tokenize(s, " \t\n");
 	if(flds == nil)
-		return;
+		return nil;
 	cmd := hd flds;
+	c := conns[cn];
 	case cmd {
 	"connect" =>
-		if(tl flds != nil)
-			conns[cn].etype = int hd tl flds;
+		if(tl flds == nil)
+			return "bad connect";
+		t := etype(hd tl flds);
+		if(t > 0)
+			for(i := 0; i < nconn; i++)
+				if(i != cn && conns[i].etype == t)
+					return "type in use";
+		c.etype = t;
 	"promiscuous" =>
-		conns[cn].promisc = 1;
+		if(!c.promisc){
+			c.promisc = 1;
+			if(promisc++ == 0)
+				setpromisc(1);
+		}
 	* =>
 		;			# nonblocking, bridge, headersonly, addmulti, ... accepted
 	}
 	if(debug)
 		sys->print("etherusb: conn %d ctl %q\n", cn, s);
+	return nil;
+}
+
+setpromisc(on: int)
+{
+	case kind {
+	Kecm =>		ecmfilter();
+	Ksmsc =>	smscpromisc(on);
+	}
 }
 
 transmit(cn: int, frame: array of byte)
 {
-	# Stage 1: report the outgoing frame instead of sending it.  An ARP
-	# request (ethertype 0x0806 at bytes 12-13) here proves the whole
-	# TX path from the IP stack through the bound medium to us.
-	t := 0;
-	if(len frame >= 14)
-		t = (int frame[12] << 8) | int frame[13];
-	sys->print("ETHERTX conn %d %d bytes type %#4.4x\n", cn, len frame, t);
+	if(len frame < 14)
+		return;
+	if(debug){
+		t := (int frame[12] << 8) | int frame[13];
+		sys->print("etherusb: tx conn %d %d bytes type %#4.4x\n", cn, len frame, t);
+	}
+	if(dev == nil){
+		# no device (the Stage 1 bind test): report the frame instead
+		t := (int frame[12] << 8) | int frame[13];
+		sys->print("ETHERTX conn %d %d bytes type %#4.4x\n", cn, len frame, t);
+		return;
+	}
+	f := array[len frame] of byte;
+	f[0:] = frame;
+	alt {
+	txc <-= f =>
+		;
+	* =>
+		ndrop++;		# transmit queue full: drop, as a NIC would
+	}
+}
+
+# a received frame goes to every conversation whose type matches (or
+# that asked for all), answering a waiting read or queueing it
+deliver(f: array of byte)
+{
+	t := (int f[12] << 8) | int f[13];
+	if(debug)
+		sys->print("etherusb: rx %d bytes type %#4.4x\n", len f, t);
+	for(i := 0; i < nconn; i++){
+		c := conns[i];
+		# netif: type 0 (not yet connected) receives nothing, a
+		# negative type receives everything
+		if(c.etype != t && c.etype >= 0)
+			continue;
+		if(c.reads != nil){
+			# oldest read first
+			l: list of ref Tmsg.Read;
+			for(; tl c.reads != nil; c.reads = tl c.reads)
+				l = hd c.reads :: l;
+			m := hd c.reads;
+			c.reads = nil;
+			for(; l != nil; l = tl l)
+				c.reads = hd l :: c.reads;
+			srv.reply(ref Rmsg.Read(m.tag, f[0:min(m.count, len f)]));
+		} else if(c.nframes < Nqueue){
+			c.frames = f :: c.frames;
+			c.nframes++;
+		} else
+			ndrop++;
+	}
+}
+
+#
+# devices and control transfers, as usbd does them
+#
+opendev(name: string): ref Dev
+{
+	d := ref Dev;
+	d.name = name;
+	d.id = int name[2:];	# "epN.M"
+	d.cfd = sys->open("/dev/usb/" + name + "/ctl", Sys->ORDWR);
+	if(d.cfd == nil){
+		sys->fprint(sys->fildes(2), "etherusb: %s: ctl: %r\n", name);
+		return nil;
+	}
+	return d;
+}
+
+opendevdata(d: ref Dev): int
+{
+	d.dfd = sys->open("/dev/usb/" + d.name + "/data", Sys->ORDWR);
+	if(d.dfd == nil)
+		return -1;
+	return 0;
+}
+
+devctl(d: ref Dev, s: string): int
+{
+	if(debug)
+		sys->print("etherusb: %s: ctl %s\n", d.name, s);
+	if(sys->fprint(d.cfd, "%s", s) < 0)
+		return -1;
+	return 0;
+}
+
+# a control transfer with no data phase, or with data to the device
+usbcmd(d: ref Dev, rtype, req, value, index: int, data: array of byte, count: int): int
+{
+	r := -1;
+	for(i := 0; i < Uctries; i++){
+		r = cmdreq(d, rtype, req, value, index, data, count);
+		if(r >= 0)
+			break;
+		sys->sleep(Ucdelay);
+	}
+	return r;
+}
+
+# a control transfer that reads count bytes back from the device
+usbin(d: ref Dev, rtype, req, value, index, count: int): (int, array of byte)
+{
+	buf := array[count] of byte;
+	for(i := 0; i < Uctries; i++){
+		if(cmdreq(d, rtype, req, value, index, nil, count) < 0){
+			sys->sleep(Ucdelay);
+			continue;
+		}
+		n := sys->read(d.dfd, buf, count);
+		if(n > 0)
+			return (n, buf);
+		sys->sleep(Ucdelay);
+	}
+	return (-1, nil);
+}
+
+cmdreq(d: ref Dev, rtype, req, value, index: int, data: array of byte, count: int): int
+{
+	nd := 0;
+	if(data != nil)
+		nd = len data;
+	w := array[8+nd] of byte;
+	w[0] = byte rtype;
+	w[1] = byte req;
+	w[2] = byte value;
+	w[3] = byte (value>>8);
+	w[4] = byte index;
+	w[5] = byte (index>>8);
+	w[6] = byte count;
+	w[7] = byte (count>>8);
+	if(nd > 0)
+		w[8:] = data;
+	if(sys->write(d.dfd, w, len w) != len w)
+		return -1;
+	return nd;
 }

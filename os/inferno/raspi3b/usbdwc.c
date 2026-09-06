@@ -121,6 +121,13 @@ dmabufalloc(long n)
 {
 	void *p;
 
+	/*
+	 * A zero-length transfer (a bulk ZLP terminating a frame that is
+	 * an exact multiple of maxpkt, as CDC ECM requires) still needs a
+	 * real DMA address to program; give it one whole line.
+	 */
+	if(n <= 0)
+		n = 1;
 	p = mallocalign(ROUND(n, Cachelinesz), Cachelinesz, 0, 0);
 	if(p == nil)
 		error(Enomem);
@@ -329,13 +336,43 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 	hc->hcdma  = dmaaddr(a);
 
 	split = hc->hcsplt & Spltena;
-	if(ep->ttype == Tbulk && dir == Epin || ep->ttype == Tintr && split)
+	/*
+	 * A non-split bulk IN lets the core retry NAKs itself (DMA mode)
+	 * and only reports the halt; nothing else waits on it.  A split
+	 * transfer is different: the core halts on each NAK'd complete-
+	 * split and software reissues it, and the whole time ctlr->split
+	 * is held nothing else can run a split -- so a bulk IN waiting for
+	 * a frame from a full-speed NIC behind the hub must give the lock
+	 * up between retries, or the transmit on the same device deadlocks
+	 * behind it.  Unmasking Nak on every split channel does that: each
+	 * NAK ends this attempt (tsleep, unlock, retry below).
+	 */
+	if(ep->ttype == Tbulk && dir == Epin && !split)
 		imask = Chhltd;
 	else
 		imask = Chhltd|Nak;
 
 	nleft = len;
+	chan = hc - r->hchan;
+	hcdma = hctsiz = 0;
 	for(;;){
+		/*
+		 * Emulator gap.  QEMU keeps retrying a NAK'd bulk packet
+		 * after the channel was halted (Chdis does not cancel its
+		 * pending service), so between two attempts of a NAK'd
+		 * split the transfer can complete behind our back into the
+		 * same buffer.  Take such a late terminal event as this
+		 * attempt's result, against the previous attempt's hcdma
+		 * and hctsiz, instead of discarding it and re-enabling the
+		 * channel over the delivered data.  Real hardware halts on
+		 * Chdis and this never fires.
+		 */
+		ilock(ctlr);
+		i = ctlr->hcintr[chan];
+		ctlr->hcintr[chan] = 0;
+		iunlock(ctlr);
+		if(split && (i & ~(Chhltd|Nak|Ack|Nyet)) != 0 && (i & Chhltd))
+			goto Result;
 		hcdma = hc->hcdma;
 		hctsiz = hc->hctsiz;
 		hc->hctsiz = hctsiz & ~Dopng;
@@ -348,7 +385,6 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 		if((i = hc->hcint) != 0)
 			hc->hcint = i;
 
-		chan = hc - r->hchan;
 		if(split){
 			qlock(&ctlr->split);
 			if(waserror()){
@@ -412,6 +448,7 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 			poperror();
 		}
 
+	Result:
 		if((i & Xfercomp) == 0 && i != (Chhltd|Ack) && i != Chhltd){
 			if(i & Stall)
 				error(Estalled);
@@ -647,6 +684,24 @@ usbintr(Ureg*, void *a)
 			 */
 			v = hc->hcint;
 			hc->hcint = v;
+			/*
+			 * On silicon a NAK'd split halts the channel (Nak comes
+			 * with Chhltd).  QEMU's model does no split transactions
+			 * at all: a NAK'd bulk/control packet is retried every
+			 * quarter millisecond with the channel left enabled, and
+			 * only Nak is reported.  Halt it here so the waiter's
+			 * attempt ends as it would on hardware -- chanio then
+			 * sleeps, releases ctlr->split and retries -- instead of
+			 * the channel sitting enabled with the split lock held
+			 * until the device finally has data.  (Emulator gap: this
+			 * branch never runs on the real DWC2.)
+			 */
+			if((hc->hcsplt & Spltena) && (v & Nak) && (v & Chhltd) == 0
+			&& (hc->hcchar & Chen)){
+				hc->hcchar |= Chen | Chdis;
+				ctlr->hcintr[i] |= v;
+				continue;	/* Chhltd follows on the next pass */
+			}
 			if((hc->hcsplt & Spltena) && splitcontinue(ctlr, hc, v, i))
 				continue;
 			ctlr->hcintr[i] |= v;
