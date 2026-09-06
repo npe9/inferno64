@@ -210,6 +210,40 @@ struct
 	Atidle*	idletasks;
 } isched;
 
+/* Three places look at isched.vmq without holding isched.l, and all
+ * three are deliberate: tready(), which Sleep() calls as its wakeup
+ * condition while holding up->rlock and irend.l; the "someone wants the
+ * VM, stop collecting" test in execatidle(); and the iyield() test in
+ * vmachine().  None of the reads is load-bearing.  tready() is safe
+ * because
+ * every writer of vmq calls Wakeup(&isched.irend) *after* dropping
+ * isched.l, and Wakeup and Sleep serialise on irend.l -- so Sleep
+ * either sees the condition true or has registered itself before
+ * releasing that lock, and the wakeup cannot be lost.  vmachine()'s
+ * test is a heuristic whose only action is iyield(), which retakes
+ * isched.l and rechecks.
+ *
+ * They are still racing reads of a word another thread writes, which is
+ * undefined behaviour whatever the hardware does, and they were two of
+ * the eleven signatures ThreadSanitizer reports (doc/dis-parallel-plan.ms
+ * section 4).  Say so to the compiler rather than taking the lock:
+ * taking isched.l inside a condition function already called under two
+ * other locks would add a lock-order edge on the path every idle
+ * transition runs through, to protect a value that is rechecked under
+ * the lock a moment later anyway.
+ */
+#define	ISCHEDPEEK(f)	__atomic_load_n(&isched.f, __ATOMIC_RELAXED)
+/* and the matching writes.  A relaxed load paired with a plain store is
+ * still a data race -- the model needs both sides to be atomic, not one
+ * -- so vmq's three writers say so too.  They all still hold isched.l,
+ * which is what actually orders the handoff; this only tells the
+ * compiler the word may be read concurrently, and costs nothing on any
+ * machine emu runs on.  vmq is the whole of it: it is the only isched
+ * field the tool ever caught being written under the lock and read
+ * without it.
+ */
+#define	ISCHEDPOKE(p, v)	__atomic_store_n((p), (v), __ATOMIC_RELAXED)
+
 extern	int	bflag;
 int	cflag = 1;	/* JIT on by default; -c0 selects interpreter */
 uvlong	gcbusy;
@@ -240,7 +274,7 @@ int
 tready(void *a)
 {
 	USED(a);
-	return isched.runhd != nil || isched.vmq != nil;
+	return ISCHEDPEEK(runhd) != nil || ISCHEDPEEK(vmq) != nil;
 }
 
 Prog*
@@ -285,7 +319,7 @@ execatidle(void)
 	addrun(up->prog);
 	done = gccolor+3;
 	while(gccolor < done && gcruns()) {
-		if(isched.vmq != nil || isched.runhd != isched.runtl) {
+		if(ISCHEDPEEK(vmq) != nil || isched.runhd != isched.runtl) {
 			gcpartial++;
 			break;
 		}
@@ -1021,7 +1055,7 @@ acquire(void)
 			empty = 0;
 			isched.vmqt->qnext = up;
 		}else{
-			isched.vmq = up;
+			ISCHEDPOKE(&isched.vmq, up);
 			empty = 1;
 		}
 		isched.vmqt = up;
@@ -1072,7 +1106,7 @@ release(void)
 		return;
 	}
 	p = *pq;
-	*pq = p->qnext;
+	ISCHEDPOKE(pq, p->qnext);
 	unlock(&isched.l);
 
 	osready(p);		/* wake up thread to run VM */
@@ -1091,7 +1125,7 @@ iyield(void)
 		return;
 	}
 	isched.nyield++;
-	isched.vmq = p->qnext;
+	ISCHEDPOKE(&isched.vmq, p->qnext);
 
 	if(up->iprog != nil)
 		panic("iyield but iprog, type %d", up->type);
@@ -1360,7 +1394,7 @@ vmachine(void *a)
 			strcpy(up->text, "dis");
 		}
 
-		if(isched.vmq != nil && (isched.runhd == nil || ++cycles > 2)){
+		if(ISCHEDPEEK(vmq) != nil && (isched.runhd == nil || ++cycles > 2)){
 			iyield();
 			cycles = 0;
 		}
