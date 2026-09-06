@@ -130,10 +130,29 @@ The three that call `newimage` (`3dpoly`, `shading`, `wenceslas`) use it
 for small textures and masks, not for a frame buffer, so none of the nine
 is blocked by point 2 and all nine can move together.
 
-*Evidence:* per-port ms/frame before and after, and
-`INFERNO_METAL_STATS=1` showing `g3_calls` rise from zero with
-`soft_fallbacks` still zero. Negative control: put the load line back and
-watch `g3_calls` return to zero.
+*Evidence:* `INFERNO_METAL_STATS=1` showing `g3_calls` rise from zero
+with `soft_fallbacks` still zero. Negative control: put the load line
+back and watch `g3_calls` return to zero.
+
+**Done.** Eight ports changed (`castlefrankenstein` already did it), and
+each was run for eight seconds under `emu-cocoa` with the counters on.
+Highest `g3_calls` seen in a 30-frame window, `soft_fallbacks` zero in
+every case:
+
+| port | `g3_calls` | port | `g3_calls` |
+| --- | --- | --- | --- |
+| `shading` | 30720 | `rotatetank` | 2460 |
+| `castlefrankenstein` | 20550 | `pick3d` | 1560 |
+| `zoneout` | 17220 | `shadow` | 1320 |
+| `wenceslas` | 55440 | `3dpoly` | 300 |
+| | | `spriteplot3d` | 240 |
+
+`wenceslas` reports zero when simply started, because its 3D is behind
+`if(page >= 3)` and the two popup pages need a keypress to dismiss — the
+`doc/temple-plan.md` rule about a demo that starts and survives, exactly.
+Forcing `page := 3` gives the 55440 above. That port also carried the
+negative control: with `page` still forced and only the load line put
+back to `Draw3d->PATH`, `g3_calls` returns to 0.
 
 ### Phase 2 — draw where the GPU can see it
 

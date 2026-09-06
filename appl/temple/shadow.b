@@ -75,7 +75,14 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	draw = load Draw Draw->PATH;
 	math = load Math Math->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
-	draw3d = load Draw3d Draw3d->PATH;
+	# Prefer the protocol-backed provider: it hands geometry to the
+	# device, and thence to Metal where the host has it, instead of
+	# projecting and rasterizing in Limbo.  It falls back to its own
+	# software paths by itself when the probe finds no device, so the
+	# load below is only for the file being absent.
+	draw3d = load Draw3d "/dis/math/draw3ddev.dis";
+	if(draw3d == nil)
+		draw3d = load Draw3d Draw3d->PATH;
 	if(draw3d == nil){
 		sys->fprint(sys->fildes(2), "rotatetank: no draw3d: %r\n");
 		return;
