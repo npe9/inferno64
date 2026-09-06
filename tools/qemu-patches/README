@@ -141,9 +141,10 @@ its own boot is not worth having on by default.
 			has no SD card.
 
 	-DSDIOTEST	sdhcibcm.c: bring up an SDIO function and move
-			data through it with CMD52 and CMD53.  Bringing
-			SDIO up resets the Arasan, which an SD card
-			sitting on it would not enjoy.
+			data through it with CMD52 and CMD53, in byte
+			mode and block mode.  Bringing SDIO up resets
+			the Arasan, which an SD card sitting on it
+			would not enjoy.
 
 Build them by compiling the two files by hand with the define, then
 relinking:
@@ -199,6 +200,18 @@ What they print, against patched qemu with a 16M raw SD image
 	sdhci: alt0 released the card, alt3 took it back
 	SDROUTE-OK
 	SDHCI-OK
+
+With -DSDIOTEST and -device sd-io, on the Pi wiring (card on SDHOST,
+I/O function on the Arasan):
+
+	sdio: 1 I/O function(s), rca 0x...
+	sdio: CCCR revision 0x32
+	SDIO-OK CMD52 and CMD53 carried data through function 1, byte and block mode
+	SDHCI-NONE (no /dev/sdH0/data: file does not exist)
+	SD-OK
+
+SDHCI-NONE is the correct result there, not a failure: the Arasan has
+the I/O function, so the card stays on SDHOST.
 
 Against stock qemu the watchdog test reboot-loops and never reaches a
 banner, and the routing test reports SDROUTE-FAIL.  The default kernel,

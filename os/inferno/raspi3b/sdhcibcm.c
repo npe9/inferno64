@@ -637,6 +637,7 @@ SDifc sdhcibcmifc = {
 void
 sdiocheck(void)
 {
+	static uchar blkbuf[Secsize], blkback[Secsize];
 	uchar buf[64], back[64];
 	int nfn, rev, i, v;
 
@@ -691,10 +692,34 @@ sdiocheck(void)
 		return;
 	}
 	if(memcmp(buf, back, sizeof buf) != 0){
-		print("SDIO-FAIL CMD53 read back %#2.2ux %#2.2ux, wrote %#2.2ux %#2.2ux\n",
+		print("SDIO-FAIL CMD53 byte mode read back %#2.2ux %#2.2ux, wrote %#2.2ux %#2.2ux\n",
 			back[0], back[1], buf[0], buf[1]);
 		return;
 	}
-	print("SDIO-OK CMD52 and CMD53 carried data through function 1\n");
+
+	/*
+	 * Block mode as well, which takes a different path through
+	 * sdiocmd53: the block count goes in Blksizecnt, Tmblkcnt is set,
+	 * and the transfer waits on Readready/Writeready per block rather
+	 * than moving one run of bytes.  ether4330 uploads firmware this
+	 * way, so it is worth exercising.
+	 */
+	for(i = 0; i < Secsize; i++)
+		blkbuf[i] = 0x5a ^ i;
+	memset(blkback, 0, Secsize);
+	if(sdiocmd53(1, 0x800, 1, 1, 1, blkbuf, 1) != 1){
+		print("SDIO-FAIL CMD53 block write\n");
+		return;
+	}
+	if(sdiocmd53(1, 0x800, 0, 1, 1, blkback, 1) != 1){
+		print("SDIO-FAIL CMD53 block read\n");
+		return;
+	}
+	if(memcmp(blkbuf, blkback, Secsize) != 0){
+		print("SDIO-FAIL CMD53 block mode read back %#2.2ux %#2.2ux, wrote %#2.2ux %#2.2ux\n",
+			blkback[0], blkback[1], blkbuf[0], blkbuf[1]);
+		return;
+	}
+	print("SDIO-OK CMD52 and CMD53 carried data through function 1, byte and block mode\n");
 }
 #endif

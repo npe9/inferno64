@@ -549,9 +549,18 @@ Arasan and to keep the card routing away from it.  Against that,
 reports
 .CW "sdio: 1 I/O function(s)" ,
 reads the CCCR revision with CMD52, enables function 1 and waits for it
-to report ready, then writes 64 bytes with CMD53 and reads them back
-identical:
+to report ready, then moves data with CMD53 both ways and both ways
+round \- 64 bytes in byte mode, and a 512-byte block in block mode,
+which is a different path through
+.CW sdiocmd53
+(the count goes in
+.CW Blksizecnt ,
+.CW Tmblkcnt
+is set, and the transfer waits per block rather than moving one run of
+bytes).  Both read back identical:
 .CW SDIO-OK .
+Block mode is what ether4330 uploads firmware with, so it is the half
+worth having covered.
 .PP
 Deliberately, it is a
 .I generic
