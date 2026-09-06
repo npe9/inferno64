@@ -752,8 +752,15 @@ rxproc(rxc: chan of array of byte)
 			return;
 		}
 		if(n == 0){
-			# a stalled/halted endpoint reads as 0: do not spin
-			if(nzero++ < 3)
+			# Nothing to read.  On the SMSC chip that is normal and
+			# expected: smscsetup sets Hwcfg's Bir, which asks the
+			# chip to answer an empty receive FIFO with a zero
+			# length packet instead of holding the transfer off, so
+			# an idle link reads 0 continuously.  On anything else a
+			# zero read means a stalled or halted endpoint and is
+			# worth saying so once.  Either way, sleep rather than
+			# spin.
+			if(kind != Ksmsc && nzero++ < 3)
 				sys->print("etherusb: %s: empty read\n", bin.name);
 			sys->sleep(10);
 			continue;

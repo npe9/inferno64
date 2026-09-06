@@ -178,9 +178,47 @@ exercises end to end; and SMSC LAN95xx, written from 9front's
 .CW nusb/ether/smsc.c
 \- register read/write over vendor control transfers, EEPROM, MII, PHY
 init, and the chip's 4-byte RX header \- for the Pi's onboard LAN9514.
-QEMU models no LAN9514, so
-.B "the SMSC half is unverified and waits on the real board;"
-the ECM half is what the boot below proves.  The Pi's LAN9514 carries no
+Stock QEMU models no LAN9514, so this half was written blind and had
+never once executed.  It does now:
+.CW tools/qemu-patches/0003
+adds a
+.CW usb-lan9514
+device \- vendor requests A0/A1 for register access, the transmit
+command words, the receive status word and FCS, burst packing under
+MEF and the burst cap, and the internal PHY at address 1 \- taken from
+the LAN9512/LAN9514 datasheet and Linux's
+.CW smsc95xx ,
+not from what
+.CW etherusb.b
+happens to emit.  With it the SMSC path runs end to end:
+.CW "smsc id_rev 0xec000002" ,
+both resets, the EEPROM falling through to
+.CW /env/ethaddr ,
+.CW ETHERBIND-OK ,
+.CW "ETHER-DHCP-OK ip=10.0.2.15 gw=10.0.2.2"
+and
+.CW ETHER-PING-DONE ,
+with no complaint from the model.  This is
+.B qemu+patch
+evidence and still wants a run on the board, but it is no longer
+unexecuted code.
+.PP
+Running it found two bugs, both of which would have bitten on hardware.
+A frame crosses the bulk endpoints as a run of 64-byte packets ended by
+a short one, in both directions; the model's refusal to accept a
+transmit whose command words disagreed with the bytes actually
+transferred is what exposed the first, and a 600-byte receive that
+would not fit in one packet exposed the second.  And
+.CW rxproc
+warned "empty read" on every idle poll: with
+.CW Hwcfg 's
+.CW Bir
+set \- which
+.CW smscsetup
+sets itself \- a zero-length read is the chip's documented answer to an
+empty receive FIFO, not the stalled endpoint the code assumed.
+.PP
+The Pi's LAN9514 carries no
 MAC EEPROM either, so the firmware's GET_BOARD_MAC_ADDRESS
 .CW ( mailbox.c 's
 .CW mboxgetmac )
@@ -281,8 +319,9 @@ build.  Like the tracked
 .CW .j
 objects, they are build output that every build dirties.)
 .PP
-Left for the real board: the SMSC init path above, and the interrupt
-endpoint (link status) which neither chip path uses yet.
+Left for the real board: the interrupt endpoint (link status), which
+neither chip path uses yet and which the model has nothing to report
+on, since a host network backend never changes state.
 .NH 1
 Phase 4: USB mass storage -- DONE under QEMU
 .PP
@@ -650,11 +689,8 @@ here PWM would let the board do that it cannot already, and no driver
 wanting it.  Writing both halves of a device nothing consumes would
 produce a test that only proves the two agree with each other.
 .PP
-So PWM waits behind the two unmodelled devices that do have consumers:
-an SMSC LAN9514, which would run the roughly thousand lines of the
-SMSC path in
-.CW appl/cmd/usb/etherusb.b
-that have never executed, and an SDIO function, which is what Phase 6
+So PWM waits behind the unmodelled device that does have a consumer:
+an SDIO function, which is what Phase 6
 and
 .CW sdhcibcm.c 's
 .CW sdiocmd52 / sdiocmd53

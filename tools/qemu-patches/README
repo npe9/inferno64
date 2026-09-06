@@ -69,6 +69,24 @@ THE PATCHES
 	With the patch alt3 selects SDHCI, so the routing is real: the
 	card can be handed to SDHOST and taken back.
 
+0003 hw/usb: model the SMSC LAN9514 ethernet controller.
+
+	The Pi's onboard network adapter.  Stock qemu offers usb-net,
+	which is CDC ECM, and nothing that answers the vendor requests
+	and framing an smsc95xx-style driver uses, so the SMSC half of
+	appl/cmd/usb/etherusb.b -- about a thousand lines -- had never
+	executed.
+
+	The model covers the ethernet function: vendor requests A0/A1
+	for register access, the transmit command words, the receive
+	status word and FCS, burst packing under MEF and the burst
+	cap, and the internal PHY at address 1.  No EEPROM is fitted,
+	as on a Pi, so a driver falls back to the firmware's MAC.
+
+	Run it with:
+
+		-device usb-lan9514,netdev=n0 -netdev user,id=n0
+
 SELF-TESTS
 
 Two kernel self-tests are compiled out by default, because each can
@@ -118,3 +136,12 @@ What they print, against patched qemu with a 16M raw SD image
 Against stock qemu the watchdog test reboot-loops and never reaches a
 banner, and the routing test reports SDROUTE-FAIL.  The default kernel,
 with neither define, boots clean on both.
+
+The LAN9514 needs no define.  With patched qemu and the device
+attached, a default kernel prints:
+
+	etherusb: smsc id_rev 0xec000002
+	ETHERUSB serving /net.alt/ether mac 525400123456 (SMSC LAN95xx ep3.0)
+	ETHERBIND-OK
+	ETHER-DHCP-OK ip=10.0.2.15 gw=10.0.2.2
+	ETHER-PING-DONE
