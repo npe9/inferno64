@@ -8,7 +8,8 @@
 #define DBG if(0) print
 static int debug = 0;
 
-REG	R;			/* Virtual Machine registers */
+static	REG	_R;		/* Virtual Machine registers */
+REG*	curR = &_R;		/* interp.h: #define R (*curR) */
 String	snil;			/* String known to be zero length */
 
 /* Diagnostic: ring buffer of the last few instructions xec() dispatched
@@ -362,17 +363,17 @@ badptrslot(void *bad, void *addr, char *which)
 
 	xp = currun();
 	/*
-	 * xp->R (currun()'s Prog struct, i.e. p->R) is NOT the live
-	 * register file -- xec() only copies R into p->R at entry and
-	 * p->R back out at the very end of its whole PQUANTA=2048
+	 * xp->reg (currun()'s Prog struct, i.e. p->reg) is NOT the live
+	 * register file -- xec() only copies R into p->reg at entry and
+	 * p->reg back out at the very end of its whole PQUANTA=2048
 	 * instruction quantum (see xec(), further down this file).  For
-	 * every instruction in between, including this one, p->R is stale
+	 * every instruction in between, including this one, p->reg is stale
 	 * by however many instructions have run so far this quantum.  The
 	 * live state, valid at exactly this point, is the plain global R
 	 * -- already in scope here, no currun() needed to reach it.  Every
-	 * xp->R.FP/SP/TS/PC read in this file's probes was reading that
+	 * xp->reg.FP/SP/TS/PC read in this file's probes was reading that
 	 * stale copy; scanframe() (below) already got this right for its
-	 * own module name and left the xp->R version only as a redundant
+	 * own module name and left the xp->reg version only as a redundant
 	 * second print.  See doc/inferno-ports.ms.
 	 */
 	if(R.M != nil && R.M->m != nil){
@@ -1067,7 +1068,7 @@ OP(spawn)
 	Prog *p;
 
 	p = newprog(currun(), R.M);
-	p->R.PC = *(Inst**)R.d;
+	p->reg.PC = *(Inst**)R.d;
 	newstack(p);
 	unframe();
 }
@@ -1085,9 +1086,9 @@ OP(mspawn)
 	p = newprog(currun(), ml);
 	o = W(m);
 	if(o >= 0)
-		p->R.PC = ml->links[o].u.pc;
+		p->reg.PC = ml->links[o].u.pc;
 	else
-		p->R.PC = ml->m->ext[-o-1].u.pc;
+		p->reg.PC = ml->m->ext[-o-1].u.pc;
 	newstack(p);
 	unframe();
 }
@@ -1155,7 +1156,7 @@ scanframe(Frame *f, char *opname)
 		print("%s: bad slot in frame, module %s\n", opname, R.M->m->name);
 		showframe((void*)f, f->t);
 		/*
-		 * currun()->R (xp->R below) is stale mid-quantum -- see
+		 * currun()->reg (xp->reg below) is stale mid-quantum -- see
 		 * badptrslot()'s comment above -- so this second print used
 		 * to name a different instruction/module than the first one
 		 * above it, which already reads the live global R correctly.
@@ -1562,7 +1563,7 @@ OP(isend)
 
 	cqdel(&c->recv);
 	if(p->state == Palt)
-		altdone(p->R.s, p, c, 1);
+		altdone(p->reg.s, p, c, 1);
 
 	R.m = &c->mid;
 	R.d = p->ptr;
@@ -1597,7 +1598,7 @@ OP(irecv)
 
 	cqdel(&c->send);
 	if(p->state == Palt)
-		altdone(p->R.s, p, c, 0);
+		altdone(p->reg.s, p, c, 0);
 
 	if(c->buf != H){
 		cgetb(c, R.d);
@@ -2282,14 +2283,14 @@ isave(void)
 	Prog *p;
 
 	p = delrun(Prelease);
-	p->R = R;
+	p->reg = R;
 	return p;
 }
 
 void
 irestore(Prog *p)
 {
-	R = p->R;
+	R = p->reg;
 	R.IC = 1;
 }
 
@@ -2342,9 +2343,9 @@ showprog(Prog *p)
 	DBG("Prog state %d pid %d ticks %lud\n",
 		p->state, p->pid, p->ticks);
 	DBG("\tpc 0x%p module %s %s\n",
-		p->R.PC, p->R.M->m->name, p->R.M->m->path);
-	sp = p->R.SP;
-	ex = p->R.EX;
+		p->reg.PC, p->reg.M->m->name, p->reg.M->m->path);
+	sp = p->reg.SP;
+	ex = p->reg.EX;
 	while(ex != nil) {
 		sx = (Stkext*)ex;
 		fp = sx->reg.tos.fu;
@@ -2367,7 +2368,7 @@ xec(Prog *p)
 {
 	int op;
 
-	R = p->R;
+	R = p->reg;
 	R.MP = R.M->MP;
 	R.IC = p->quanta;
 
@@ -2440,5 +2441,5 @@ xec(Prog *p)
 */
 	} while(--R.IC != 0);
 
-	p->R = R;
+	p->reg = R;
 }

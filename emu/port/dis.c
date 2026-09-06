@@ -352,8 +352,8 @@ newprog(Prog *p, Modlink *m)
 	h = D2H(m);
 	AINC(&h->ref);
 	Setmark(h);
-	n->R.M = m;
-	n->R.MP = m->MP;
+	n->reg.M = m;
+	n->reg.MP = m->MP;
 	if(m->MP != H)
 		Setmark(D2H(m->MP));
 	addrun(n);
@@ -502,7 +502,7 @@ exprog(Prog *p, char *exc)
 	/* similar code to killprog but not quite */
 	switch(p->state) {
 	case Palt:
-		altdone(p->R.s, p, nil, -1);
+		altdone(p->reg.s, p, nil, -1);
 		break;
 	case Psend:
 		cqdelp(&p->chan->send, p);
@@ -585,7 +585,7 @@ killprog(Prog *p, char *cause)
 
 	switch(p->state) {
 	case Palt:
-		altdone(p->R.s, p, nil, -1);
+		altdone(p->reg.s, p, nil, -1);
 		break;
 	case Psend:
 		cqdelp(&p->chan->send, p);
@@ -628,11 +628,11 @@ killprog(Prog *p, char *cause)
 
 	propex(p, "killed");
 
-	snprint(msg, sizeof(msg), "%d \"%s\":%s", p->pid, p->R.M->m->name, cause);
+	snprint(msg, sizeof(msg), "%d \"%s\":%s", p->pid, p->reg.M->m->name, cause);
 
 	p->state = Pexiting;
 	gclock();
-	destroystack(&p->R);
+	destroystack(&p->reg);
 	delprog(p, msg);
 	gcunlock();
 
@@ -968,8 +968,8 @@ schedmod(Module *m)
 	p = newprog(nil, ml);
 	h = D2H(ml);
 	ADEC(&h->ref);
-	p->R.PC = m->entry;
-	/* newstack() below does memmove(p->R.FP, f, f->t->size) - f->t is
+	p->reg.PC = m->entry;
+	/* newstack() below does memmove(p->reg.FP, f, f->t->size) - f->t is
 	 * m->entryt here, the *complete* entry-frame type covering every
 	 * local the module's init() declares, which is routinely far
 	 * bigger than sizeof(Frame). A bare on-stack `Frame f` (as this
@@ -987,7 +987,7 @@ schedmod(Module *m)
 	f->t = m->entryt;
 	newstack(p);
 	free(f);
-	initmem(m->entryt, p->R.FP);
+	initmem(m->entryt, p->reg.FP);
 
 	return p;
 }
@@ -997,9 +997,9 @@ static char*
 m(Prog *p)
 {
 	if(p)
-		if(p->R.M)
-			if(p->R.M->m)
-				return p->R.M->m->name;
+		if(p->reg.M)
+			if(p->reg.M->m)
+				return p->reg.M->m->name;
 	return "nil";
 }
 */
@@ -1161,7 +1161,7 @@ progexit(void)
 			char *pc = strstr(estr, "pc=");
 
 			if(pc != nil)
-				R.PC = r->R.PC = (Inst*)strtol(pc+3, nil, 0);	/* for debugging */
+				R.PC = r->reg.PC = (Inst*)strtol(pc+3, nil, 0);	/* for debugging */
 		}
 		print("[%s] Broken: pid %d \"%s\"\n", m->name, getpid(), estr);
 	}
@@ -1236,10 +1236,10 @@ disfault(void *reg, char *msg)
 	 * one-line message and even the call stack below don't, since
 	 * several different ops share the same source line/PC bucketing.
 	 *
-	 * Deliberately the GLOBAL R here, not p->R: xec() only writes
-	 * p->R = R back on a *normal* quantum exit (falls off the bottom
+	 * Deliberately the GLOBAL R here, not p->reg: xec() only writes
+	 * p->reg = R back on a *normal* quantum exit (falls off the bottom
 	 * of the do-while, or blocks cleanly). A mid-instruction native
-	 * fault skips that entirely, so p->R is stale - frozen at wherever
+	 * fault skips that entirely, so p->reg is stale - frozen at wherever
 	 * this proc's *previous* quantum happened to end, which is
 	 * whatever instruction the scheduler last preempted it at, not
 	 * where it just crashed. The live global R (xec.c) is what the

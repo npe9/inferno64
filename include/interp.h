@@ -242,7 +242,7 @@ struct Progs
 
 struct Prog
 {
-	REG		R;		/* Register set */
+	REG		reg;		/* Register set */
 	Prog*		link;		/* Run queue */
 	Channel*		chan;	/* Channel pointer */
 	void*		ptr;		/* Channel data pointer */
@@ -421,7 +421,28 @@ extern	Type	Tbyte;
 extern	Type Tword;
 extern	Type Tlong;
 extern	Type Treal;
-extern	REG	R;
+/* The Dis register file.  Phase 1a of doc/dis-parallel-plan.ms: what
+ * used to be the object `REG R' is now a pointer to it, and every one
+ * of the 1921 `R.field' references in the tree redirects through the
+ * macro without an edit.  While curR never changes this is exactly the
+ * old program -- including for the code generators, whose
+ * con((uintptr)&R, RTMP) becomes con((uintptr)curR, RTMP), a constant
+ * for as long as curR is one.
+ *
+ * The point of the indirection is Phase 1b, where curR becomes
+ * per-executor so that two threads can be inside xec() at once.  That
+ * is NOT what this is yet, and it must not be done on its own: the
+ * collector's root walk (libinterp/gc.c) marks from root->reg.M/SP/EX,
+ * i.e. from p->reg, and xec() only writes p->reg back at the end of a whole
+ * PQUANTA window.  Today that is safe because the collector only runs
+ * between xec() calls.  With a genuinely per-executor R, a collector on
+ * one thread would walk a stale p->reg for a Prog mid-quantum on another
+ * and miss every root live only in that thread's registers.  Phase 1b
+ * therefore lands with Phase 5, not before.  A sanitizer cannot catch
+ * this: a missing root is not a data race.
+ */
+extern	REG*	curR;
+#define	R	(*curR)
 extern	String	snil;
 extern	void	(*optab[256])(void);
 extern	void	(*comvec)(void);

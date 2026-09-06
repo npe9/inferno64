@@ -418,9 +418,9 @@ rootset(Prog *root)
 		DP("Prog state %d pid %d ticks %ld\n",
 			root->state, root->pid, root->ticks);
 		DP("\tpc 0x%p module %s %s\n",
-			root->R.PC, root->R.M->m->name, root->R.M->m->path);
-		sp = root->R.SP;
-		ex = root->R.EX;
+			root->reg.PC, root->reg.M->m->name, root->reg.M->m->path);
+		sp = root->reg.SP;
+		ex = root->reg.EX;
 		while(ex != nil) {
 			sx = (Stkext*)ex;
 			fp = sx->reg.tos.fu;
@@ -445,7 +445,7 @@ rootset(Prog *root)
 		root = root->next;
 	}*/
 	while(root != nil) {
-		ml = root->R.M;
+		ml = root->reg.M;
 		h = D2H(ml);
 		Setmark(h);
 		mp = ml->MP;
@@ -454,8 +454,8 @@ rootset(Prog *root)
 			Setmark(h);
 		}
 
-		sp = root->R.SP;
-		ex = root->R.EX;
+		sp = root->reg.SP;
+		ex = root->reg.EX;
 		while(ex != nil) {
 			sx = (Stkext*)ex;
 			fp = sx->reg.tos.fu;

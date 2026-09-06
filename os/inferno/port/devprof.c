@@ -556,7 +556,7 @@ cpxec(Prog *p)
 	Record *r;
 	Prog *n;
 
-	R = p->R;
+	R = p->reg;
 	R.MP = R.M->MP;
 	R.IC = p->quanta;
 
@@ -594,7 +594,7 @@ cpxec(Prog *p)
 		}while(--R.IC != 0);
 	}
 
-	p->R = R;
+	p->reg = R;
 }
 
 /* memory profiling */

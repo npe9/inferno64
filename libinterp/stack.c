@@ -54,13 +54,13 @@ newstack(Prog *p)
 	f->lr = nil;
 	f->mr = nil;
 	f->fp = nil;
-	l = p->R.M->m->ss;
+	l = p->reg.M->m->ss;
 	/* 16 bytes for Stkext record keeping
 		changed to 40 bytes for amd64 */
 	if(l < t->size+sizeof(Stkext))
 		l = t->size+sizeof(Stkext);
 	/*
-	 * newstack()'s own memmove(p->R.FP, f, t->size) below only ever
+	 * newstack()'s own memmove(p->reg.FP, f, t->size) below only ever
 	 * covers the first t->size bytes of this l-byte extent -- the
 	 * rest (l can run well past t->size; this hunt's own destroy()/
 	 * movp comments already named this exact gap: "whatever a
@@ -85,19 +85,19 @@ newstack(Prog *p)
 	ns->reg.SP = nil;
 	ns->reg.TS = nil;
 	ns->reg.EX = nil;
-	p->R.EX = ns->stack;
-	p->R.TS = ns->stack + l;
-	p->R.SP = ns->reg.tos.fu + t->size;
-	p->R.FP = ns->reg.tos.fu;
+	p->reg.EX = ns->stack;
+	p->reg.TS = ns->stack + l;
+	p->reg.SP = ns->reg.tos.fu + t->size;
+	p->reg.FP = ns->reg.tos.fu;
 
 	DBG("newstack R.EX stack extend 0x%p\n"
 		"\tTR type register 0x%p R.SP 0x%p R.TS top of stack 0x%p\n"
 		"\tR.FP=0x%p R.SP-R.FP=%zd t->size=%d called by 0x%p\n",
-		p->R.EX, ns->reg.TR,
-		p->R.SP, p->R.TS,
-		p->R.FP, p->R.SP - p->R.FP, t->size, getcallerpc(&p));
-	memmove(p->R.FP, f, t->size);
-	f = (Frame*)p->R.FP;
+		p->reg.EX, ns->reg.TR,
+		p->reg.SP, p->reg.TS,
+		p->reg.FP, p->reg.SP - p->reg.FP, t->size, getcallerpc(&p));
+	memmove(p->reg.FP, f, t->size);
+	f = (Frame*)p->reg.FP;
 	f->t = nil;
 }
 

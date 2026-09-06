@@ -210,7 +210,7 @@ found:
 		R.PC = (Inst*)((uintptr)m->prog+newpc);
 	else
 		R.PC = m->prog+newpc;
-	memmove(&p->R, &R, sizeof(R));
+	memmove(&p->reg, &R, sizeof(R));
 	p->kill = nil;
 	destroy(p->exval);
 	p->exval = H;
