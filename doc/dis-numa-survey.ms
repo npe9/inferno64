@@ -144,6 +144,45 @@ A load, an add and a store.  There is no
 .CW LDXR/STXR
 pair and no LSE
 .CW LDADD .
+.PP
+Reading that closely turned up something bigger than the atomicity, and
+it is fixed:
+.CW Ldw
+and
+.CW Stw
+are the file's own names for
+.I 64-bit
+load and store, and
+.CW Heap.ref
+is an
+.CW int
+at offset 4 with
+.CW Type*
+.CW t
+at offset 8, so all four reference-count sites were reading and writing
+both fields at once.  The decref then tested the whole 64-bit result
+for zero, which is "is
+.CW ref-1
+together with the low half of
+.CW t
+zero?" \- never true for a live pointer, so the destroy branch was
+unreachable and the store put
+.CW ref
+back as 0 on an object that stayed linked.  The hosted arm64 JIT died on
+every run with
+.CW "marklist: bad container ... ref 0" .
+.CW Ldw32/Stw32
+fixes it, the same width mistake
+.CW os/inferno/virtarm64/l.s
+records
+.CW _tas
+making on
+.CW Lock.key ,
+in a third place \- and the colour code a few lines below in the same
+function had it right all along.
+.PP
+So the barrier is now correct on one processor and still not atomic on
+two.  What follows is about the second half.
 .CW comp-amd64.c
 and
 .CW comp-386.c

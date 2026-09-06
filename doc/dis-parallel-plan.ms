@@ -1247,6 +1247,22 @@ sets, and it is why the work in this document is done under
 .CW -c0 ,
 but it should be a decision rather than an accident.
 .PP
+It had also been hiding something.  Working under
+.CW -c0
+throughout meant nobody ran the hosted JIT, and the hosted arm64 JIT
+did not work at all: the reference-count sites in
+.CW comp-arm64.c
+used the file's 64-bit
+.CW Ldw/Stw
+on the 32-bit
+.CW Heap.ref ,
+which made the "last reference" test unreachable and left objects at
+.CW "ref 0" .
+That is fixed, and the fix is worth more to this plan than its size
+suggests: Phase 6 now has a working hosted baseline on arm64 to change
+against, where before there was nothing to compare to.  A phase that
+cannot be tested is a phase that gets written twice.
+.PP
 The scope is smaller than a raw count suggests.  Four backends are
 stubs \-
 .CW comp-riscv64.c ,
