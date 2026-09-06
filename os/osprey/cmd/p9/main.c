@@ -891,6 +891,30 @@ p9paircli(void)
 			if(id >= 0 && ring_wait(&st) == 0)
 				print("p9: pair-client: wait: /boot/sh (container %ld) exited with status %ld - it ran a script with a pipeline in it\n", id, st);
 		}
+		/*
+		 * And a program this tree did not write: /boot/kbdsrv is
+		 * os/osprey/cmd/draw/kbd.c linked against the 9front
+		 * libraries built from source in 9front/src - libthread and
+		 * lib9p above the source-built libc, three segments and a
+		 * hundred kilobytes of image, where every legacy program
+		 * before it was a few tens.  It takes an argument, asks the
+		 * kernel for the keyboard ring as a segment and says what it
+		 * found.  What this settles is that a binary of that shape
+		 * lays out, is entered through init9main.c and runs its libc
+		 * on the server personality.
+		 */
+		{
+			extern long ring_execv(char**);
+			char *kargv[3];
+
+			kargv[0] = "/boot/kbdsrv";
+			kargv[1] = "-m/dev";
+			kargv[2] = nil;
+			id = ring_execv(kargv);
+			print("p9: pair-client: exec /boot/kbdsrv started container %ld\n", id);
+			if(id >= 0 && ring_wait(&st) == 0)
+				print("p9: pair-client: wait: /boot/kbdsrv (container %ld) exited with status %ld\n", id, st);
+		}
 	}
 	/*
 	 * The device-carried medium: put a network frame on the ring to the

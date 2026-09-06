@@ -395,6 +395,12 @@ def main():
          and re.search(r"p9: pair-client: wait: /boot/sh \(container \d+\) exited with status 0 - it ran a script with a pipeline in it", t) is not None),
         ("and a pipeline in it: the shell makes a pipe, dups one end onto each stage's standard descriptor and execs both, and the first stage's whole output crosses the pipe to the second, which reads it to end of file - the writer's end closing, not a call giving up - and writes it out",
          pipelineran(t)),
+        ("a program this tree did not write runs on the server personality: /boot/kbdsrv is os/osprey/cmd/draw/kbd.c linked against the 9front libraries built from the source in 9front/src - libthread and lib9p above the source-built libc, a hundred kilobytes in three segments where every legacy program before it was a few tens - and the buddy lays it out, the kernel pages it in and enters it through init9main.c, and its own main() runs",
+         re.search(r'buddy: exec /boot/kbdsrv for container \d+: a Plan 9 a\.out, text \d+ data \d+ bss \d+', t) is not None
+         and re.search(r'osprey buddy: /boot/kbdsrv laid out by the buddy: entry 0x200028, 3 segments', t) is not None
+         and re.search(r'p9: pair-client: wait: /boot/kbdsrv \(container \d+\) exited with status 0', t) is not None),
+        ("and it says why it stopped: this machine has no keyboard ring to attach, so the program's sysfatal prints the kernel's own reason through %r - errstr(2) is a call the buddy answers out of the error string it keeps, and a call the kernel served itself is one the buddy never saw fail",
+         'kbdsrv: segattach kbdring: bad arg in system call' in t),
         ("wait is answered by somebody: the client's wait returns the child's exit status",
          re.search(r'p9: pair-client: wait: container \d+ exited with status 0', t) is not None
          and 'panic' not in t and 'killed by SIGSEGV' not in t),	# the Linux child takes one SIGSEGV on purpose

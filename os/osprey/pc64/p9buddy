@@ -211,8 +211,10 @@ port
 		buf = va_arg(list, char*);
 		len = va_arg(list, long);
 		off = va_arg(list, vlong);
-		if(fd >= 3 && ospreybuddyhas())	/* a file descriptor: the buddy holds the file, not the console */
+		if(fd >= 3 && ospreybuddyhas()){	/* a file descriptor: the buddy holds the file, not the console */
+			up->errstr[0] = 0;		/* forwarded: the buddy owns the error from here */
 			return ospreybuddyforward(51, (uintptr*)up->s.args);	/* PWRITE */
+		}
 		USED(fd, off);
 		if(len <= 0)
 			return 0;
@@ -392,6 +394,39 @@ port
 	};
 	int nsyscall = nelem(systab);
 
+	/*
+	 * A call the buddy answers, and the one exception: errstr(2).  The
+	 * buddy answers it out of the error string it keeps per container,
+	 * which is right for the calls the buddy served and empty for the
+	 * ones this kernel served itself, which the buddy never saw fail.
+	 * up->errstr is both the message and the flag - a call sent out
+	 * clears it, a kernel-served failure leaves its message there
+	 * through error() - and this is the same arrangement as p9pair's,
+	 * which is where it is explained at length.
+	 */
+	uintptr ospreysyscallout(ulong scallnr)
+	{
+		enum { ERRSTR = 41 };
+		uintptr *a;
+		char *buf;
+		long n, m;
+
+		a = (uintptr*)up->s.args;
+		if(scallnr == ERRSTR && up->errstr[0] != 0){
+			buf = (char*)a[0];
+			n = (long)a[1];
+			if(n <= 0)
+				return (uintptr)-1;
+			validaddr((uintptr)buf, n, 1);
+			for(m = 0; m < n - 1 && up->errstr[m] != 0; m++)
+				buf[m] = up->errstr[m];
+			buf[m] = 0;
+			return (uintptr)(m + 1);
+		}
+		up->errstr[0] = 0;
+		return (uintptr)ospreybuddyforward(scallnr, a);
+	}
+
 	int dosyscall(ulong scallnr, Sargs *args, uintptr *retp)
 	{
 		int s;
@@ -404,7 +439,7 @@ port
 			if(scallnr < (ulong)nsyscall && systab[scallnr] != nil)
 				*retp = systab[scallnr]((va_list)up->s.args);
 			else if(ospreybuddyhas())	/* a container with a server: its buddy answers */
-				*retp = (uintptr)ospreybuddyforward(scallnr, (uintptr*)up->s.args);
+				*retp = (uintptr)ospreysyscallout(scallnr);
 			else {
 				print("osprey user: unimplemented syscall %uld\n", scallnr);
 				*retp = (uintptr)-1;

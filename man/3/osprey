@@ -1256,7 +1256,25 @@ programs need three \-
 and the Dir conversions build there and nothing that boots reaches them
 yet; they are what
 .I rio
-will reach.
+will reach.  One of the four has been run: the pair check execs
+.B /boot/kbdsrv
+in a container, where the buddy lays it out and the kernel enters it
+through
+.BR /os/osprey/pc/init9main.c ,
+and it fails on the keyboard ring this machine does not have, which is
+the answer it should give.
+.I rio
+and the draw and mouse servers have not been run, .  The frame buffer is
+not what stands in the way of them: the EFI loader writes
+.B *bootscreen
+into
+.B plan9.ini
+and the microkernel boot exposes the screen as the
+.B framebuffer
+segment on this personality as on any other.  What the pair
+personality does not expose is the keyboard and mouse rings, which
+.B ospreymouseexpose
+gives only to the full personality.
 .PP
 .PP
 .B /scripts/osprey-check-portable.sh

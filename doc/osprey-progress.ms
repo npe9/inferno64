@@ -7072,6 +7072,112 @@ array spends per byte of program is about 5.0 megabytes of source on
 top of the 3428634 that
 .CW p9prog.i
 already is.
+.PP
+.B "2.3d: the first of the four, run."
+The four binaries of 2.3c built and had not been run, so the next step
+was to run one, and the one to pick was the smallest: the keyboard
+server,
+.CW os/osprey/cmd/draw/kbd.c ,
+a hundred kilobytes of image where every legacy program before it was a
+few tens.
+.CW buildkbdsrv.sh
+turns it into
+.CW kbdsrvprog.i
+and the personality carries it as
+.CW /boot/kbdsrv ;
+the pair client execs it with an argument.  What the log says, in order:
+the buddy laid it out
+.CW ( "a Plan 9 a.out, text 74648 data 26224 bss 1400" ),
+the kernel demand-paged its five pages from the buddy, it was entered at
+.CW 0x200028
+through
+.CW os/osprey/pc/init9main.c
+\- the entry nothing had run until now \-
+.CW ARGBEGIN
+parsed the
+.CW -m/dev
+it was given, it asked for the segment it needs, said why it could not
+have it, and exited 0 to a client that reaped it.  So a program of that
+shape runs: three segments, its own
+.CW main () ,
+.CW libthread
+and
+.CW lib9p
+above the source-built libc.  The pair check is 83.
+.PP
+It could only fail, and that is the point of it: this machine has no
+keyboard ring to attach.  What it found on the way is that it could not
+say so.  The line was
+.CW "segattach kbdring: " ,
+a colon and nothing, because
+.CW errstr (2)
+is a call like any other and the buddy answers it out of the error
+string it keeps per container \- which is right for every call the buddy
+served and empty for the ones this kernel served itself, which the buddy
+never saw fail.
+.CW up->errstr
+is now both the message and the flag: a call forwarded to the buddy
+clears it, because from then on the buddy owns the answer; a
+kernel-served call that fails leaves its message there through
+.CW error ();
+and
+.CW errstr (2)
+is answered in the kernel whenever there is one to answer with, and
+forwarded when there is not.  The line is
+.CW "/boot/kbdsrv: segattach kbdring: bad arg in system call"
+now, and that is a criterion.
+.CW p9buddy
+has the same arrangement for the same reason.
+.CW p9linux
+does not and should not: a Linux binary has no
+.CW errstr (2)
+to ask.
+.PP
+The limit is worth writing down rather than leaving to be discovered.
+The invariant is only "a forwarded call clears it", so a kernel-served
+call that
+.I succeeds
+between the failure and the
+.CW errstr (2)
+leaves the older message standing.  Plan 9 has that hazard too and for
+the same reason, and what makes the keyboard server's line right is that
+.CW sysfatal 's
+own write to descriptor 2 is kernel-served and does not clear it.
+.PP
+I expected the frame buffer to be what stood in the way of the other
+three, and the same log says it does not.  The
+.CW p9pair
+kernel carries
+.CW headless
+and its check boots QEMU with no display, so I read the draw server's
+.CW segattach(0, ""framebuffer"", ...)
+as unanswerable there.  Line 65 of the boot says otherwise:
+.CW "osprey fb: exposed 1280x800x32 at pa 0x80000000 size 4992000 as \(dqframebuffer\(dq" .
+The EFI loader writes
+.CW *bootscreen
+into
+.CW plan9.ini
+by itself, and
+.CW ospreyframebuffer ()
+in the microkernel boot path reads it, so a container on this
+personality can map the screen today.  What the pair personality really
+does not have is the keyboard and mouse rings, and that is deliberate
+rather than missing:
+.CW ospreymouseexpose ()
+is called only where the kernel is the full personality, and the
+library-OS boot arms the same interrupt into a container instead.
+.PP
+So the next of the four is the draw server, which wants the frame
+buffer and nothing else \-
+.CW oscursorstart ()
+returns quietly when there is no mouse ring \- and which is also the
+first thing in this tree that will reach
+.CW malloc
+and
+.CW pool
+out of
+.CW libc9.a ,
+the members 2.3c could only say were built.
 .NH 2
 Track three: the library-OS personality execs a program, then rio
 .PP
@@ -7412,7 +7518,7 @@ check clean, the two-machine check run once:
 .CW pc64
 61,
 .CW p9pair
-81,
+83,
 .CW p9buddy
 5,
 .CW p9linux

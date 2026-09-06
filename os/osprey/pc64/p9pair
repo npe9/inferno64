@@ -230,10 +230,20 @@ port
 		 * makes, and only a redirected descriptor leaves the console
 		 * path.
 		 */
-		if(fd >= 0 && fd < 3 && (up->buddyredir & (1 << fd)) != 0 && ospreybuddyhas())
+		/*
+		 * A write that goes out to the buddy hands it the error
+		 * string too, the same as any other forwarded call: see
+		 * ospreysyscallout below for why up->errstr is cleared on
+		 * the way out.
+		 */
+		if(fd >= 0 && fd < 3 && (up->buddyredir & (1 << fd)) != 0 && ospreybuddyhas()){
+			up->errstr[0] = 0;
 			return ospreybuddyforward(51, (uintptr*)up->s.args);	/* PWRITE */
-		if(fd >= 3 && ospreybuddyhas())	/* a file descriptor: the buddy holds the file, not the console */
+		}
+		if(fd >= 3 && ospreybuddyhas()){	/* a file descriptor: the buddy holds the file, not the console */
+			up->errstr[0] = 0;
 			return ospreybuddyforward(51, (uintptr*)up->s.args);	/* PWRITE */
+		}
 		USED(fd, off);
 		if(len <= 0)
 			return 0;
@@ -563,6 +573,47 @@ port
 	};
 	int nsyscall = nelem(systab);
 
+	/*
+	 * A call the buddy answers, and the one exception.
+	 *
+	 * errstr(2) is a call like any other and the buddy answers it out
+	 * of the error string it keeps per container, which is right for
+	 * every call the buddy served and wrong for the ones this kernel
+	 * served itself: the buddy never saw those fail and has nothing to
+	 * say about them.  A program that asks segattach for a segment
+	 * this machine does not have gets -1 and then an empty %r, which
+	 * is how the keyboard server's "segattach kbdring: " came to end
+	 * in a colon and nothing.
+	 *
+	 * up->errstr is both the message and the flag.  A call sent out to
+	 * the buddy clears it, because from then on the buddy owns the
+	 * answer; a kernel-served call that fails leaves its message
+	 * there through error(); and errstr(2) is answered here whenever
+	 * there is one to answer with, and forwarded when there is not.
+	 */
+	uintptr ospreysyscallout(ulong scallnr)
+	{
+		enum { ERRSTR = 41 };
+		uintptr *a;
+		char *buf;
+		long n, m;
+
+		a = (uintptr*)up->s.args;
+		if(scallnr == ERRSTR && up->errstr[0] != 0){
+			buf = (char*)a[0];
+			n = (long)a[1];
+			if(n <= 0)
+				return (uintptr)-1;
+			validaddr((uintptr)buf, n, 1);
+			for(m = 0; m < n - 1 && up->errstr[m] != 0; m++)
+				buf[m] = up->errstr[m];
+			buf[m] = 0;
+			return (uintptr)(m + 1);
+		}
+		up->errstr[0] = 0;
+		return (uintptr)ospreybuddyforward(scallnr, a);
+	}
+
 	int dosyscall(ulong scallnr, Sargs *args, uintptr *retp)
 	{
 		int s;
@@ -579,7 +630,7 @@ port
 			else if(scallnr < (ulong)nsyscall && systab[scallnr] != nil)
 				*retp = systab[scallnr]((va_list)up->s.args);
 			else if(ospreybuddyhas())	/* a Plan 9 program exec started: its server answers */
-				*retp = (uintptr)ospreybuddyforward(scallnr, (uintptr*)up->s.args);
+				*retp = (uintptr)ospreysyscallout(scallnr);
 			else {
 				print("osprey user: unimplemented syscall %uld\n", scallnr);
 				*retp = (uintptr)-1;
