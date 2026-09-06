@@ -5,27 +5,67 @@ wenceslas \- snow rescue game
 .B temple/wenceslas
 .SH DESCRIPTION
 .I Wenceslas
-is a snow rescue game.
+is a port of the TempleOS
+.B Demo/Games/Wenceslas.HC
+game of Good King Wenceslas.
 It runs under
 .IR wm (1).
 .PP
-Walk through the snow, leave footprints, and burn trees with space so peasants stay warm.
+It opens with the carol, on two pages, and then the instructions; any
+key turns each page, and the last one starts the clock.
+.PP
+Ten peasants wander a snowfield.
+Walk the king over a tree and press space to set it alight; a peasant
+that comes within twenty pixels of a burning tree stops there to warm
+itself, and one that reaches the house in the middle goes inside.
+Peasants steer toward the king's own footprints, preferring the
+freshest within fifteen pixels, so the king leads them by walking.
+The clock stops when no peasant is left out in the cold, and the best
+time is kept between runs.
+.PP
+Footprints are dark for two seconds and then fade into the snow, which
+keeps falling and settling on the king, the peasants, the trees and
+the house.
 .PP
 The controls are:
 .TF space
 .TP
-.B arrows / wasd
-Move king
+.B "any key"
+Turn the opening pages
+.TP
+.B arrows
+Move the king
 .TP
 .B space
-Burn trees (warmth)
+Set light to any tree the king is standing on
 .TP
-.B Enter / r
+.B Enter
 Restart
 .TP
 .B Esc / q
 Quit
 .PD
+.SH FILES
+.TP
+.B /icons/temple/wenceslas_1.mesh
+The king's three animation frames
+.RB ( wenceslas_1 ,
+.BR 2 ,
+.BR 3 )
+and the peasant's
+.RB ( 4 ,
+.BR 5 ,
+.BR 6 ),
+as meshes.
+.TP
+.B /icons/temple/wenceslas_7.bit
+Tree, its two burning frames, house and open door
+.RB ( wenceslas_7
+through
+.BR 11 ),
+each with a
+.B .mask
+alongside.
 .SH SOURCE
 .B /appl/temple/wenceslas.b
 .SH SEE ALSO
@@ -33,3 +73,12 @@ Quit
 .IR draw3d (2),
 .IR tone (2),
 .IR wm (1)
+.SH BUGS
+The original's File and Play pulldown menus are not drawn; every entry
+is on a key, and there are no
+.B wasd
+alternatives to the arrows because the original has none.
+.PP
+The opening pages do not scroll as
+.I PopUpOk
+does; each is shown whole.
