@@ -112,14 +112,17 @@ them have been checked against the original rather than merely written.
 **`Apps` is complete** apart from `Apps/X-Caliber`, which is ported as
 `xcaliber`.
 
-**`Demo/Graphics` is the frontier: 39 unported.** Sizes are the readable
+**`Demo/Graphics` is the frontier: 35 unported.** Sizes are the readable
 text lines of the `.HC`, which is a fair proxy for the work:
 
-- Small, no sprite bins (under ~50 lines): `mousedemo` (10), `scrncapture`
-  (13), `winzbuf` (21), `palette` (23), `charanimation` (25),
-  `spriteputext` (21), `bspline` (30), `spriteraw` (32), `pantext` (33),
-  `blot` (35), `sunmoon` (36), `grid` (27), `balloon` (28),
-  `speedline` (46).
+Four are now done — `mousedemo`, `griddemo` (the name `grid` in section 1
+belongs to `grid-session`, so the port takes the original's `GridDemo()`
+entry point), `bspline` and `speedline` — leaving 35.
+
+- Small, no sprite bins (under ~50 lines): `scrncapture` (13), `winzbuf`
+  (21), `palette` (23), `charanimation` (25), `spriteputext` (21),
+  `spriteraw` (32), `pantext` (33), `blot` (35), `sunmoon` (36),
+  `balloon` (28).
 - Middling: `spriteplot3d` (32), `spritetext` (28), `rotatetank` (38),
   `extents` (41), `spriteplot` (45), `predatorprey` (69),
   `lowpassfilter` (74), `shadow` (78), `wallpaperfish` (84),
@@ -140,6 +143,11 @@ Two notes for whoever starts on these:
   elastic balls in fixed point — and is faithful. The tracked
   `icons/temple/collision_1.bit` and `_2.bit` belong to the *graphics*
   one, an unported `ROP_COLLISION` mouse demo, and the name is taken.
+- Several of these lean on machinery TempleOS has and this tree does not,
+  and the honest port is of the *content* rather than the mechanism:
+  `winzbuf` reads `gr.win_z_buf`, `pantext` slides `gr.pan_text_x`,
+  `charanimation` patches `text.font` in place, `palette` writes the VGA
+  palette registers. Say so in the file rather than pretending.
 - `Balloon.HC` writes VGA planes directly through `OutU8`. What is worth
   porting is its content: the 60-byte Commodore 64 balloon sprite, moved
   down the screen. There is a stale `dis/temple/balloon.dis` from an
