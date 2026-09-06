@@ -139,10 +139,11 @@ one that was merely late; and an attempt drains the channel before it
 starts, so a controller that owes an event and sends it long
 afterwards cannot poison the next connection.
 .IP \(bu
-SCO packets are framed by the transport and then dropped: the reader
-has no case for them.  Nothing needs them until audio does, and audio
-needs a good deal more than that, but the packets arriving and going
-nowhere should be said out loud.
+SCO packets are still dropped \(em nothing needs them until audio
+does, and audio needs a good deal more than a reader case \(em but
+they are no longer dropped in silence: the first says so and the rest
+are counted into
+.CW /net/bt/0/state .
 .IP \(bu
 ATT does prepare/execute write now, so a value longer than the MTU can
 be written as well as read: the pieces are queued with Prepare Write

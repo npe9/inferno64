@@ -101,6 +101,13 @@ refuse_execute = '--refuse-execute' in sys.argv
 # client that believes the copy it walked first will never see it.
 service_changed = '--service-changed' in sys.argv
 
+# --sco: send SCO packets once the link is up.  Nothing here asked for
+# a voice channel and the guest has nothing to do with them; what is
+# being checked is that they are counted and said out loud rather than
+# vanishing, and that a packet type nobody handles does not put the H4
+# parser out of step with the stream.
+sco = '--sco' in sys.argv
+
 def log(*a):
     if verbose:
         print('bthci:', *a, file=sys.stderr, flush=True)
@@ -465,6 +472,18 @@ class Model:
                    + bytes([0x01, atype]) + addr
                    + struct.pack('<HHH', 0, 0, 0) + bytes([0]))
 
+    def scostream(self):
+        # three of them, interleaved with nothing, on the connection's
+        # own handle
+        for i in range(3):
+            time.sleep(0.3)
+            if self.handle is None:
+                return
+            body = bytes([i]) * 10
+            self.send(bytes([3]) + struct.pack('<H', self.handle)
+                      + bytes([len(body)]) + body)
+        log('sent 3 SCO packets')
+
     def complete(self, atype, addr, handle=0x0040):
         # the orphan gets a handle of its own, so which link a
         # Disconnect refers to is never in doubt
@@ -473,6 +492,8 @@ class Model:
         self.event(0x3e, bytes([0x01, 0x00]) + struct.pack('<H', handle)
                    + bytes([0x01, atype]) + addr
                    + struct.pack('<HHH', 0x0028, 0, 0x002a) + bytes([0]))
+        if sco:
+            threading.Thread(target=self.scostream, daemon=True).start()
 
     def encrypt_up(self):
         time.sleep(0.05)

@@ -19536,6 +19536,28 @@ be quicker and is not done: it would be a change to the stack for the
 convenience of testing it, and the number a real controller is given
 to answer in is not the bench's business.
 .NH 2
+SCO, said out loud
+.PP
+The transport frames SCO packets and
+.CW hci 's
+reader had no case for them, so they vanished.  There is no audio here
+and there will not be for a long time, and a voice channel needs a
+great deal more than a reader case \(em but a packet arriving and
+going nowhere in silence cannot be told apart from a transport that
+lost it, and a controller sending SCO to a host that asked for no
+voice channel is worth knowing about either way.  The first one now
+says so, the rest are counted, and the count appears in
+.CW /net/bt/0/state
+when there is one.
+.PP
+The
+.CW sco
+phase has the model send three of them on the connection's own handle
+once the link is up.  It asserts the count reaches three, and then
+reads a characteristic: what matters as much as the count is that a
+packet type nothing handles does not put the H4 parser out of step
+with the stream behind it.
+.NH 2
 A device that moves its database, and says so
 .PP
 A GATT database is not fixed.  A device may rearrange it \(em firmware

@@ -690,8 +690,13 @@ ctlrstate(): string
 	if(scanning)
 		sc = "on";
 	(sz, nb) := hci->aclmtu();
-	return sprint("addr %s scan %s devices %d connections %d aclsize %d aclbufs %d\n",
+	s := sprint("addr %s scan %s devices %d connections %d aclsize %d aclbufs %d",
 		bt->addrstr(hci->localaddr()), sc, nd, len hci->conns(), sz, nb);
+	# only when there are any: a controller that has never sent one
+	# has nothing to report, and the line is what btfs(4) describes
+	if((n := hci->scodropped()) > 0)
+		s += sprint(" scodropped %d", n);
+	return s + "\n";
 }
 
 #

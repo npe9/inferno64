@@ -135,6 +135,12 @@ Hci: module
 	localver:	fn(): string;
 	aclmtu:		fn(): (int, int);	# payload size, buffer count
 
+	# SCO packets the transport framed and this dropped.  Nothing
+	# above the transport has a use for them until there is audio,
+	# and until then a count is the honest thing to publish: they
+	# arrived, and they went nowhere.
+	scodropped:	fn(): int;
+
 	cmd:	fn(op: int, p: array of byte): (int, array of byte, string);
 
 	lescan:	fn(on: int): string;

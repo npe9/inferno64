@@ -35,6 +35,9 @@
 #	refuseexec
 #		a server that queues the pieces cleanly and refuses to
 #		commit them: the same assertions, reached the other way
+#	sco	a controller sending SCO to a host that never asked for a
+#		voice channel: the packets must be counted and said out
+#		loud, and the link must keep its place in the stream
 #	changed	a device that rearranges its database while connected
 #		and indicates Service Changed: the name space must
 #		follow, on the same link
@@ -125,6 +128,7 @@ run orphan --orphan-connect orphan
 run orphanlive --orphan-live orphanlive
 run badprepare --corrupt-prepare badprepare
 run refuseexec --refuse-execute badprepare
+run sco --sco sco
 run changed --service-changed changed
 #
 # one write of the Service Changed descriptor, for two indications and

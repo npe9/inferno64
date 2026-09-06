@@ -203,6 +203,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	"changed" =>
 		changed();
 		return;
+	"sco" =>
+		scophase();
+		return;
 	}
 	case mode {
 	"stall" or "late" or "early" or "orphan" or "orphanlive" or "badprepare" =>
@@ -517,6 +520,77 @@ conntest(mode: string)
 	writefile(dev + "/ctl", "disconnect");
 	writefile(mnt + "/0/ctl", "scan off");
 	sys->print("BT: done\n");
+}
+
+#
+# A controller that sends SCO packets to a host that never asked for a
+# voice channel.  There is no audio here and nothing above the
+# transport wants them, so they are dropped -- but counted and said
+# out loud, because a silent drop cannot be told apart from a
+# transport that lost them.  What matters as much is that a packet
+# type nothing handles does not put the H4 parser out of step: the
+# link has to keep working afterwards.
+#
+scophase()
+{
+	remotes := lsdir(mnt + "/0/remote");
+	if(remotes == nil){
+		sys->print("BT: FAILED: nothing was advertising\n");
+		return;
+	}
+	dev := mnt + "/0/remote/" + hd remotes;
+	if((e := writefile(dev + "/ctl", "connect")) != nil){
+		sys->print("BT: FAILED: connect: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	n := 0;
+	st: string;
+	for(i := 0; i < 20 && n < 3; i++){
+		sys->sleep(500);
+		st = trim(readfile(mnt + "/0/state"));
+		n = counted(st);
+	}
+	ok := 1;
+	if(n != 3){
+		sys->print("BT: FAILED: %s\n", st);
+		sys->print("BT: FAILED: 3 SCO packets were sent, %d counted\n", n);
+		ok = 0;
+	} else
+		sys->print("BT: %d SCO packets arrived and were counted: %s\n", n, st);
+	#
+	# and the link still carries ATT, so the parser kept its place
+	# in the stream through packets it had no case for.
+	#
+	v := trim(readfile(dev + "/gatt/1800/2a00"));
+	if(v != "inferno-bench"){
+		sys->print("BT: FAILED: the link is out of step: %s\n", v);
+		ok = 0;
+	} else
+		sys->print("BT: the link still carries ATT: %s\n", v);
+	writefile(dev + "/ctl", "disconnect");
+	writefile(mnt + "/0/ctl", "scan off");
+	sys->print("BT: done\n");
+}
+
+#
+# the scodropped field of the controller's state line, or 0 if it has
+# none, which is what a controller that has never sent one shows
+#
+counted(s: string): int
+{
+	w := "scodropped ";
+	for(i := 0; i + len w < len s; i++){
+		if(s[i:i+len w] != w)
+			continue;
+		if(i > 0 && s[i-1] != ' ')
+			continue;
+		v := 0;
+		for(j := i + len w; j < len s && s[j] >= '0' && s[j] <= '9'; j++)
+			v = v*10 + (s[j] - '0');
+		return v;
+	}
+	return 0;
 }
 
 #

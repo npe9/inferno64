@@ -79,6 +79,7 @@ credits:	chan of int;
 states:		list of ref Cstate;
 statelock:	chan of int;
 running:	int;
+scodrop:	int;
 
 laddr:	array of byte;
 lver:	string;
@@ -196,6 +197,11 @@ localaddr(): array of byte
 localver(): string
 {
 	return lver;
+}
+
+scodropped(): int
+{
+	return scodrop;
 }
 
 aclmtu(): (int, int)
@@ -530,6 +536,21 @@ reader()
 		case ptype {
 		Bt->Hcievt =>	event(p);
 		Bt->Hciacl =>	acldata(p);
+		Bt->Hcisco =>
+			#
+			# The transport frames these and nothing above
+			# wants them: there is no audio here, and a voice
+			# channel needs a great deal more than a reader
+			# case.  They are counted and the first is said
+			# out loud rather than vanishing -- a controller
+			# sending SCO to a host that asked for none is
+			# worth knowing about, and a silent drop is
+			# indistinguishable from a transport losing them.
+			#
+			if(scodrop == 0)
+				sys->fprint(sys->fildes(2),
+					"hci: a SCO packet arrived and there is nothing to do with it; counting the rest\n");
+			scodrop++;
 		}
 	}
 }
