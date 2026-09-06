@@ -134,7 +134,7 @@ Phase 1's interrupt transfers.  Verify under QEMU with -device usb-kbd
 -device usb-mouse (or the input record/replay harness): keys reach the
 shell, the cursor moves on the framebuffer.
 .NH 1
-Phase 3: USB Ethernet -- native networking -- Stage 1 done
+Phase 3: USB Ethernet -- native networking -- DONE under QEMU
 .PP
 The Pi's onboard 10/100 ethernet is an SMSC LAN9514 (hub + ethernet) on
 USB.  Unlike the kernel HCD, the ethernet driver is a Limbo program, for
@@ -163,15 +163,105 @@ before the self-mount (mount is a synchronous 9P handshake), and the
 interface sits one directory below the mount point (chandial rejects a
 single-component path).
 .PP
-Stage 2 (next): open the device's bulk endpoints through #U, wire RX
-frames to the deferred data reads and TX writes to the bulk-out pipe, set
-the real MAC, and the chip init.  QEMU does not model the LAN9514, so the
-QEMU-testable path is -device usb-net (a CDC/RNDIS-class device), which
-exercises the whole Limbo server and the bulk path but not the SMSC
-register init; write the LAN9514 init from the 9front donor for the real
-Pi and label plainly which half QEMU proves.  Verify under QEMU: DHCP
-over SLIRP and an ICMP echo to the gateway, reusing the sifiveu/virtarm64
-dhcpclient test.
+.B "Stage 2 (done): the bulk path, the chip init, and an address by DHCP."
+usbd recognises a USB ethernet -- a CDC Ethernet Control Model interface
+(class 2, subclass 6) in any configuration, or one of the SMSC LAN95xx
+ids -- and hands its ep0 to
+.CW etherusb ,
+which opens the device's bulk in/out endpoints through
+.CW #U ,
+runs the chip init, and pumps frames between them and the netif files it
+serves.  Two chip paths: ECM (set the packet filter, read the MAC from
+the string descriptor), which QEMU's
+.CW usb-net
+exercises end to end; and SMSC LAN95xx, written from 9front's
+.CW nusb/ether/smsc.c
+\- register read/write over vendor control transfers, EEPROM, MII, PHY
+init, and the chip's 4-byte RX header \- for the Pi's onboard LAN9514.
+QEMU models no LAN9514, so
+.B "the SMSC half is unverified and waits on the real board;"
+the ECM half is what the boot below proves.  The Pi's LAN9514 carries no
+MAC EEPROM either, so the firmware's GET_BOARD_MAC_ADDRESS
+.CW ( mailbox.c 's
+.CW mboxgetmac )
+is published as
+.CW /env/ethaddr
+for the driver to fall back on.
+.PP
+Verified on a booted kernel
+.CW ( "qemu-system-aarch64 -M raspi3b -m 1G -nographic -kernel iraspi3b
+.CW "-device usb-net,netdev=n0 -netdev user,id=n0" ):
+usbd enumerates the hub and the NIC
+.CW ( "vid 0525 did a4a2 class 2" ),
+starts
+.CW etherusb ,
+which serves
+.CW /net.alt/ether ;
+devip binds it as ipifc 0's ethernet (ETHERBIND-OK); DHCP completes over
+the USB link \- discover, offer, request and ack all crossing the bulk
+endpoints in both directions \- giving
+.CW 10.0.2.15
+with gateway
+.CW 10.0.2.2
+(ETHER-DHCP-OK); and
+.CW ping
+gets replies to all three of its echo requests (ETHER-PING-DONE), after
+which the board boots on to its shell (RASPI3B-SH-OK).
+.PP
+.B "The bug this stage actually turned on: every timed sleep died the moment DHCP succeeded."
+Stage 2's code worked before this was found \- DHCP completed and the
+first ping was answered \- and then the whole machine went quiet: the
+clock kept ticking, but no Limbo process ever ran again.  The cause was
+not in the driver.  Each board's soft-timer queue
+.CW ( stubs.c )
+converted a sleep's nanoseconds to fastticks as
+.CW "(tns * hz) / 1000000000LL" ,
+a signed 64-bit multiply that overflows once
+.CW tns
+passes
+.CW 2**63/hz
+\- about 147 seconds against the Pi's 62.5MHz counter.  The moment its
+lease was granted,
+.CW dhcpclient 's
+.CW thebigsleep()
+asked for 32400 seconds (T1 of an 86400-second lease); the product
+wrapped, and
+.CW twhen
+came out negative.  From there the two halves of the queue disagreed
+about its sign:
+.CW timerinsert()
+compares
+.CW Tval
+against
+.CW Tval ,
+signed, so the bad timer sorted to the
+.I head ;
+.CW timercheck()
+compared it against an unsigned
+.CW now ,
+which read that negative deadline as enormous, so the loop stopped at
+the head and never reached anything queued behind it.  One overlong
+sleep therefore froze every
+.CW tsleep
+on the machine permanently, while
+.CW timersoon()
+returned the same huge value and let the HZ tick carry on \- which is
+why the console kept printing and nothing else moved.  The fix converts
+in whole seconds plus a scaled remainder
+.CW ( ns2ticks() ),
+which cannot overflow, and makes
+.CW now
+a
+.CW Tval
+in both functions so every deadline comparison is signed against signed
+and a bad value would fire early instead of wedging the queue.  Twelve
+boards carry copies of this timer queue and all twelve are fixed;
+raspi3b, virt, virtarm64, sifiveu and virt32 were booted afterwards,
+armv7, mangopi, shakti, spike, virts and virt32s compile, and armv7m has
+no mkfile in the tree to build with.
+.PP
+Left for the real board: the SMSC init path above, and the interrupt
+endpoint (link status) which neither chip path uses yet.
 .NH 1
 Phase 4: USB mass storage
 .PP

@@ -144,6 +144,13 @@ root
 	/dis/sh/std.dis
 	/dis/usb/usbd.dis
 	/dis/usb/etherusb.dis
+	/dis/ip/ping.dis
+	/dis/lib/dhcpclient.dis
+	/dis/lib/dial.dis
+	/dis/lib/ip.dis
+	/dis/lib/rand.dis
+	/dis/lib/random.dis
+	/dis/lib/timers.dis
 	/dis/unmount.dis
 	/dis/disk/kfs.dis
 	/dis/disk/kfs64.dis

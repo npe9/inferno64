@@ -30,6 +30,15 @@ Usbd: module
 	init:	fn(nil: ref Draw->Context, argv: list of string);
 };
 
+# a class driver started as a separate program (9front's nusb shape):
+# it is given the device's ep0 name and drives it through #U itself
+Command: module
+{
+	init:	fn(ctxt: ref Draw->Context, argv: list of string);
+};
+ETHERUSB: con "/dis/usb/etherusb.dis";
+ETHERMNT: con "/net.alt";
+
 # request type bits and standard requests (USB 2.0 chapter 9)
 Rh2d: con 0;
 Rd2h: con 16r80;
@@ -355,7 +364,72 @@ attachdev(pp: ref Port)
 		diskstart(d, bin, bout);
 		return;
 	}
-	sys->print("usbd: %s: no boot-protocol HID or mass-storage interface, left configured\n", d.name);
+	if(etherprobe(d)){
+		etherstart(d);
+		return;
+	}
+	sys->print("usbd: %s: no boot-protocol HID, mass-storage or ethernet interface, left configured\n", d.name);
+}
+
+#
+# USB ethernet: a CDC Ethernet Control Model interface (class 2,
+# subclass 6) in any configuration -- QEMU's usb-net offers RNDIS in
+# its first configuration and ECM in its second -- or the SMSC
+# LAN95xx family (vendor class) the Pi's onboard LAN9514 belongs to.
+# The driver itself is etherusb, a separate program that speaks the
+# netif file protocol so devip can bind it as the machine's ethernet;
+# usbd only recognises the device and hands it ep0.
+#
+etherprobe(d: ref Dev): int
+{
+	if(d.vid == 16r0424)
+		case d.did {
+		16rec00 or 16r9500 or 16r9505 or 16r9e00 or 16r9e01 or
+		16r9900 or 16r9901 or 16r9904 or 16r9905 or 16r9906 or
+		16r9907 or 16r9908 or 16r9909 or 16r9530 or 16r9730 or
+		16r9e08 or 16r9e09 =>
+			return 1;
+		}
+	(r, dd) := usbin(d, Rd2h|Rstd|Rdev, Rgetdesc, Ddev<<8, 0, 18);
+	if(r < 18)
+		return 0;
+	nconf := int dd[17];
+	for(c := 0; c < nconf; c++){
+		(r, cd) := usbin(d, Rd2h|Rstd|Rdev, Rgetdesc, Dconf<<8 | c, 0, 9);
+		if(r < 9)
+			continue;
+		total := int cd[2] | int cd[3]<<8;
+		if(total > 512)
+			total = 512;
+		(r, cd) = usbin(d, Rd2h|Rstd|Rdev, Rgetdesc, Dconf<<8 | c, 0, total);
+		if(r < 9)
+			continue;
+		i := 0;
+		while(i + 1 < r){
+			l := int cd[i];
+			t := int cd[i+1];
+			if(l < 2)
+				break;
+			if(t == Diface && i + 8 <= r && int cd[i+5] == 2 && int cd[i+6] == 6)
+				return 1;
+			i += l;
+		}
+	}
+	return 0;
+}
+
+etherstart(d: ref Dev)
+{
+	eth := load Command ETHERUSB;
+	if(eth == nil){
+		sys->fprint(sys->fildes(2), "usbd: %s: load %s: %r\n", d.name, ETHERUSB);
+		return;
+	}
+	# the driver reopens ep0's data file for its own control transfers;
+	# the kernel allows one open of an endpoint, so let go of ours
+	d.dfd = nil;
+	sys->print("usbd: %s: ethernet, starting etherusb\n", d.name);
+	spawn eth->init(nil, "etherusb" :: "-m" :: ETHERMNT :: d.name :: nil);
 }
 
 #

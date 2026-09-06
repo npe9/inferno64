@@ -168,6 +168,42 @@ mailboxinit(void)
 }
 
 /*
+ * The board's ethernet MAC from the firmware (GET_BOARD_MAC_ADDRESS, tag
+ * 0x00010003; 6-byte value in an 8-byte buffer).  On a real Pi this is
+ * the b8:27:eb address derived from the board serial, which the onboard
+ * LAN9514 does not carry in an EEPROM -- the USB ethernet driver has no
+ * other source for it.  QEMU's property channel answers with the NIC's
+ * configured MAC.  Returns 0 and fills mac on success, -1 otherwise.
+ */
+int
+mboxgetmac(uchar *mac)
+{
+	static u32 raw[8+4];
+	u32 *buf;
+	int i;
+
+	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
+	buf[0] = 8*4;			/* total bytes */
+	buf[1] = 0;			/* request */
+	buf[2] = 0x00010003;		/* tag: get board MAC address */
+	buf[3] = 8;			/* value buffer size */
+	buf[4] = 0;			/* request code */
+	buf[5] = 0;			/* <- mac[0..3] */
+	buf[6] = 0;			/* <- mac[4..5] */
+	buf[7] = 0;			/* end tag */
+	if(mboxprop(buf) < 0)
+		return -1;
+	if((buf[4] & 0x80000000) == 0 || (buf[4] & 0x7fffffff) < 6)
+		return -1;
+	for(i = 0; i < 6; i++)
+		mac[i] = ((uchar*)&buf[5])[i];
+	for(i = 0; i < 6; i++)
+		if(mac[i] != 0)
+			return 0;
+	return -1;			/* all zero: no address */
+}
+
+/*
  * Switch a firmware-managed power domain (USB HCD, SD, etc.) on or off
  * through SET_POWER_STATE (tag 0x00028001).  The value is the device id
  * plus a state word: bit0 = on, bit1 = wait for the domain to settle.

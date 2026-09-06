@@ -195,6 +195,26 @@ init0(void)
 
 	chandevinit();
 	poperror();
+
+	/*
+	 * Publish the board MAC the firmware knows (mailbox.c) as
+	 * /env/ethaddr so the Limbo USB ethernet driver (etherusb) can
+	 * give the LAN9514, which has no EEPROM on the Pi, its address.
+	 */
+	if(waserror() == 0){
+		extern int mboxgetmac(uchar*);
+		uchar mac[6];
+		char buf[32];
+
+		if(mboxgetmac(mac) == 0){
+			snprint(buf, sizeof buf, "%2.2ux%2.2ux%2.2ux%2.2ux%2.2ux%2.2ux",
+				mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+			ksetenv("ethaddr", buf, 0);
+			print("MBOX ethaddr %s\n", buf);
+		}else
+			print("MBOX no board mac\n");
+		poperror();
+	}
 	disinit("/osinit.dis");
 }
 

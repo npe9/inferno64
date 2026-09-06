@@ -4,6 +4,9 @@ include "sys.m";
 include "draw.m";
 	draw: Draw;
 	Display, Image, Rect, Point: import draw;
+include "dhcpclient.m";
+	dhcpclient: Dhcpclient;
+	Bootconf, Lease: import dhcpclient;
 Init: module { init: fn(); };
 Shell: module { init: fn(nil: ref Draw->Context, argv: list of string); };
 Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
@@ -162,19 +165,56 @@ usbcheck()
 	ethercheck();
 }
 
-# Phase 3 de-risk: the Limbo USB-ethernet server serves the netif file
-# interface, self-mounts, and binds it as devip's ethernet.  Running it
-# proves chandial's clone/connect/data dance is satisfiable from Limbo
-# (ETHERBIND-OK) and that outgoing frames reach the driver (ETHERTX from
-# the ARP an added address provokes).  The USB half comes next.
+# Phase 3: USB ethernet.  usbd starts etherusb for a CDC ECM or SMSC
+# LAN95xx device; etherusb serves the netif file interface at
+# /net.alt/ether over the device's bulk endpoints.  Bind it as devip's
+# ethernet and get an address by DHCP -- discover/offer/request/ack
+# cross the USB link in both directions, so ETHER-DHCP-OK proves the
+# whole path: styx server, bulk in and out, the DWC2 driver -- then
+# ping the gateway.  Boot with -device usb-net,netdev=n0 -netdev
+# user,id=n0 (SLIRP answers DHCP at 10.0.2.2).
 ethercheck()
 {
-	eth := load Command "/dis/usb/etherusb.dis";
-	if(eth == nil){
-		sys->print("ETHER-FAIL load: %r\n");
+	addr := "/net.alt/ether/addr";
+	for(i := 0; i < 100; i++){
+		if(sys->open(addr, Sys->OREAD) != nil)
+			break;
+		sys->sleep(100);
+	}
+	if(sys->open(addr, Sys->OREAD) == nil){
+		sys->print("ETHER-NONE (no USB ethernet served at %s)\n", addr);
 		return;
 	}
-	spawn eth->init(nil, "etherusb" :: "/net.alt" :: nil);
+	sys->bind("#I", "/net", Sys->MAFTER);
+	cfd := sys->open("/net/ipifc/clone", Sys->ORDWR);
+	if(cfd == nil || sys->fprint(cfd, "bind ether /net.alt/ether") < 0){
+		sys->print("ETHER-FAIL bind ether: %r\n");
+		return;
+	}
+	sys->print("ETHERBIND-OK\n");
+	dhcpclient = load Dhcpclient Dhcpclient->PATH;
+	if(dhcpclient == nil){
+		sys->print("ETHER-FAIL load dhcpclient: %r\n");
+		return;
+	}
+	dhcpclient->init();
+	cfg := Bootconf.new();
+	lease: ref Lease;
+	err: string;
+	(cfg, lease, err) = dhcpclient->dhcp("/net", cfd, addr, cfg, nil);
+	if(err != nil || cfg == nil || cfg.ip == nil){
+		sys->print("ETHER-DHCP-FAIL %s\n", err);
+		return;
+	}
+	sys->print("ETHER-DHCP-OK ip=%s gw=%s\n", cfg.ip, cfg.ipgw);
+	ping := load Command "/dis/ip/ping.dis";
+	if(ping == nil){
+		sys->print("ETHER-PING-NONE load: %r\n");
+		return;
+	}
+	ping->init(nil, "ping" :: "-n" :: "3" :: cfg.ipgw :: nil);
+	sys->print("ETHER-PING-DONE\n");
+	lease = nil;
 }
 
 kbdreport()
