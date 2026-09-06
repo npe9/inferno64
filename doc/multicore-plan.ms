@@ -517,10 +517,37 @@ setting
 compiles in.  Six runs, six clean completions.  Natively, sixteen boots
 in twenty panic.
 .PP
-What that does and does not say.  It does not clear
-.CW libinterp :
-emu links its own build of it, and a bug that needs a particular heap
-layout to show would not show there.  What it does say is that the
+Two caveats, and they matter enough that this result is a direction and
+not a conclusion.
+.PP
+The emulator binary used is dated 24 August, and things have moved since
+\-
+.CW mkfiles/mkdis
+changed on the 28th and
+.CW dis/sh.dis
+was rebuilt on the 29th.  So "emu is clean" could as easily mean "the
+bug is newer than this binary", which would point at
+.CW libinterp
+rather than away from it.  Rebuilding emu would settle it, and emu does
+not currently build: linking against the present
+.CW libinterp
+fails on
+.CW _printfreehist
+and
+.CW _checkfreeptr ,
+which
+.CW OP(movp) 's
+and
+.CW destroy() 's
+probes call and which live in
+.CW os/inferno/port/alloc.c ,
+a file no hosted build has.  Worth fixing on its own account \- an emu
+that cannot be built cannot be used as the control it is useful as.
+.PP
+And it does not clear
+.CW libinterp
+even if the binary were current: emu links its own build of it, and a
+bug that needs a particular heap layout to show would not show there.  What it does say is that the
 interpreter's logic and the
 .CW .dis
 files are not sufficient on their own to produce the corruption.  The
@@ -635,6 +662,53 @@ and the string it was handed would turn a misleading
 panic into a direct description of the corrupt object, at the first
 place that notices.
 .NH 2
+The sanitiser build, and what it caught
+.PP
+.CW MacOSX/arm64/bin/emu-cocoa-asan
+is an AddressSanitizer build sitting untracked in the tree, dated 4
+September.  Run against the same stress loop it reports exactly one
+error:
+.IP
+.nf
+ERROR: AddressSanitizer: stack-buffer-overflow
+READ of size 136 ...
+    #0 memcpy
+    #1 newstack
+    #2 schedmod
+    #3 disinit
+    [32, 64) 'f' (line 955)
+.fi
+.PP
+That is the bare on-stack
+.CW "Frame f"
+in
+.CW schedmod() :
+.CW newstack()
+does
+.CW "memmove(p->R.FP, f, f->t->size)"
+where
+.CW f->t
+is the module's complete entry-frame type, far larger than a
+.CW Frame
+header, so the copy reads past it into whatever the C stack held next.
+.PP
+It is already fixed.  Both
+.CW emu/port/dis.c
+and
+.CW os/inferno/port/dis.c
+now allocate
+.CW "mallocz(m->entryt->size, 1)" ,
+and the comment in the native one records the hunt that found it.  The
+sanitiser binary predates the fix \- ASAN reports
+.CW f
+as a 32-byte object, which is the struct, where the present source has
+a pointer.
+.PP
+So the run says nothing about the live bug, and it says something about
+method: the most useful instrument in this tree is a stale binary of a
+program that no longer builds.  Fixing that is worth more than another
+hypothesis.
+.NH 2
 The kernel stack: tested, and it is not that
 .PP
 The emulator result points underneath the interpreter, and one
@@ -712,11 +786,30 @@ and
 .CW sched()
 reads it back on every call.
 .PP
-Twelve boots: eleven panicked, and the guard was never touched, not
-once.  So the kernel stacks are not running past their bottoms, and the
-corruption is not coming from there.  The probe is cheap and stays in;
-it is a standing answer to a question that would otherwise be asked
-again.
+Twelve boots: eleven panicked, and the guard was never touched.
+.PP
+That alone is not quite an answer, because a guard band only catches a
+stack that walks down through it.  A single function whose frame is
+larger than the band decrements the stack pointer straight past it and
+writes its locals below
+.CW kstack+0
+without ever storing into the band.  So the probe also keeps the
+smallest headroom it has ever seen \-
+.CW "(uintptr)&local - (uintptr)up->kstack" ,
+one subtraction on each
+.CW sched() \-
+and
+.CW panic()
+prints it, so the boots that fail early report as well as the ones that
+survive.
+.PP
+Across eight more boots, five of them panicking, the least headroom ever
+seen was
+.B 29528
+of 32768 bytes.  The deepest any kernel stack got was about 3240 bytes,
+a tenth of what it has, and the guard was untouched again.  The
+hypothesis is dead, not merely unproven, and the probe stays in as a
+standing answer.
 .PP
 Two other things fell out of the same round and are recorded so nobody
 repeats them.  Memory size barely matters: twelve boots at each of
@@ -728,7 +821,11 @@ and
 .CW 2048
 panicked 8, 8, 7 and 6 times, so an eight-fold change in the pool
 arenas moves the rate very little and pool sizing is not the dominant
-term.  And the same failure rate holds with
+term.  Those four ran back to back on one kernel, which is why they are
+comparable; the rate itself wanders between batches \- 80%, 67%, 92% on
+the same code \- so any two arms meant to be compared have to be
+interleaved in one batch, and twelve boots an arm resolves very little
+against that.  And the same failure rate holds with
 .CW nvm
 pinned at
 .CW 1 ,

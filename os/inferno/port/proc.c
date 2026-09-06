@@ -229,14 +229,31 @@ procswitch(void)
  * have shown; the point is to learn whether the guard is ever touched,
  * not to stop at it.
  */
+uintptr kstackmin = ~(uintptr)0;	/* MULTICORE INSTRUMENTATION - temporary */
+char *kstackminproc = "none";
+
 void
 kstackcheck(char *where)
 {
 	static int reported;
 	uchar *g;
+	uintptr head;
 	int i;
 
-	if(reported || up == nil || up->kstack == nil || up->kstackpainted == 0)
+	if(up == nil || up->kstack == nil || up->kstackpainted == 0)
+		return;
+	/*
+	 * Headroom, not just guard integrity: a single frame bigger than
+	 * the guard band decrements SP straight past it and writes below
+	 * kstack+0 without ever storing into the band.  The minimum of
+	 * this over a boot answers the question outright.
+	 */
+	head = (uintptr)&head - (uintptr)up->kstack;
+	if(head < kstackmin && head < KSTACK){
+		kstackmin = head;
+		kstackminproc = up->text;
+	}
+	if(reported)
 		return;
 	g = (uchar*)up->kstack;
 	for(i = 0; i < KSTACKGUARD; i++){

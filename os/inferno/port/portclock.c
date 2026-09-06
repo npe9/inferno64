@@ -165,6 +165,11 @@ hzclock(Ureg *ur)
 	/* MULTICORE INSTRUMENTATION - temporary: one dump once a stall has set in */
 	if(m->machno == 0 && m->ticks == 40*HZ){
 		extern void disdump(void);
+		extern uintptr kstackmin;
+		extern char *kstackminproc;
+
+		print("kstack: least headroom seen %zud of %d bytes, in \"%s\"\n",
+			kstackmin, KSTACK, kstackminproc);
 		disdump();
 	}
 
