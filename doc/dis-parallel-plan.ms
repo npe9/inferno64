@@ -489,12 +489,101 @@ And they are real.  The
 .CW dis.c
 four are the interesting ones, because TSan names the object: "Location
 is global
-.CW isched ".
-That is
+.CW isched ",
+and all four are one defect seen from both ends:
 .CW isched.vmq
-being written by one thread and read by another with nothing between
-them \- the same defect this branch already fixed on the native side,
-found independently by the tool, in emu, where it is still live.
+is written in
+.CW acquire()
+under
+.CW isched.l
+and read in
+.CW tready() ,
+.CW execatidle()
+and
+.CW vmachine()
+without it.
+.NH 2
+The first thing the instrument found, and what it was not
+.PP
+It is worth saying what this
+.I "is not" ,
+because the obvious reading is wrong and this document made it before
+correcting itself.  It is not emu's arbitration being broken the way
+the native side's was.
+.CW isched.idle/vmq/idlevmq
+already gives one
+.CW xec()
+at a time in emu, and it hands the VM over with
+.CW osblock/osready
+directly between the two procs rather than through a shared
+.CW Rendez ,
+so it never had the double-sleep failure that forced the native
+rewrite.  There is nothing there to repair.
+.PP
+What is wrong is smaller and is exactly what the tool said: three
+unsynchronised reads.  All three are heuristics with a locked recheck
+immediately behind them \-
+.CW vmachine() 's
+only action is
+.CW iyield() ,
+which retakes
+.CW isched.l
+and looks again \- and
+.CW tready() 's
+correctness comes from a different lock entirely: every writer of
+.CW vmq
+calls
+.CW "Wakeup(&isched.irend)"
+.I after
+dropping
+.CW isched.l ,
+and
+.CW Sleep
+either sees the condition true or registers itself, both under
+.CW irend.l ,
+so the wakeup cannot be lost.
+.PP
+So the fix is to say what is meant rather than to take the lock.
+Taking
+.CW isched.l
+inside
+.CW tready()
+would add a lock-order edge \-
+.CW up->rlock
+to
+.CW irend.l
+to
+.CW isched.l \-
+on the path every idle transition runs through, to protect a value
+rechecked under the lock a moment later.  Relaxed atomics remove the
+undefined behaviour and leave the algorithm alone.
+.PP
+One thing to get right, and the first attempt got it wrong: both sides
+have to be atomic.  With only the three reads annotated the tool still
+reported all four, correctly, because a relaxed load paired with a plain
+store is still a data race \- the model wants both halves, not one.
+Annotating
+.CW vmq 's
+three writers as well is what closes it.  They keep
+.CW isched.l ;
+the annotation only says the word may be read concurrently.
+.PP
+Measured the same way, five runs before and five after: eleven
+signatures become seven, every
+.CW dis.c
+one gone, and reports per run fall from 58\-74 to 26\-34.
+.PP
+The seven that remain are a separate finding and are left open here
+rather than chased:
+.CW __wrap_malloc
+against
+.CW poolfree
+on emu's global pool
+.CW table ,
+with
+.CW pexit
+on one side of it.  That is a proc tearing down against an allocation,
+in emu's allocator, and it has nothing to do with the Dis scheduler.
 .PP
 So the instrument works, it took two small changes to make it work, and
 the first thing it said was that the analysis in
@@ -541,6 +630,13 @@ system that is not a cost, it is a redesign.  emu needs
 storage for
 .CW curR .
 Say it plainly: the macro is free natively and is not free hosted.
+.IP
+Read that bullet with the section below on Phase 1b, not on its own.
+.CW "__thread REG R"
+in emu is one word and looks like the whole of Phase 1, and it is the
+right destination, but doing it before the collector is ready silently
+breaks the root set in a way no sanitizer will report.  The bullet
+describes the mechanism; the condition for using it is over there.
 .PP
 .PP
 .B "One fork inside this phase, and it is a correctness fork, not a
