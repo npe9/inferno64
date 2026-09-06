@@ -10,7 +10,14 @@ implement Timeclock;
 # GAP: in the GUI the description is typed (multi-line Tk text box) before
 #      punching rather than in the original's modal GetStr prompt after the
 #      punch; the command-line mode prompts after the punch like the original,
-#      but the description ends on EOF or a lone '.' line instead of <ESC>.
+#      but the description ends on a lone '.' line instead of <ESC>.
+# BUG: end-of-file does not end the description.  readdesc() below stops when
+#      sys->read returns <= 0, which is correct, but on a host-redirected
+#      stdin under emu that read never returns 0 at EOF -- it blocks.
+#      Measured both ways: `printf 'x\n.\n' | emu -r. temple/timeclock out`
+#      exits 0 and writes the record, `printf 'x\n' | ...` hangs until killed,
+#      the same under emu-g and emu-cocoa.  Give the description as arguments,
+#      or end it with a dot.
 
 include "sys.m";
 	sys: Sys;

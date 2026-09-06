@@ -42,8 +42,7 @@ or
 On the command line the description may be given as arguments; if it
 is not, it is read from standard input after the punch, as
 .I GetStr
-does in the original, ending at end of file or at a line containing
-only a dot.
+does in the original, ending at a line containing only a dot.
 .PP
 The controls are:
 .TF "Punch In / Punch Out"
@@ -76,3 +75,14 @@ records, compressed, in
 this stores uncompressed text, so the two files are not interchangeable.
 In the window the description is typed before the punch rather than
 prompted for after it.
+.PP
+End of file does not end the description, so a punch whose description
+comes from a redirected standard input must end with a dot or it waits
+forever.
+.I readdesc
+stops when the read returns zero, which is correct, but on a
+host-redirected standard input under
+.IR emu (1)
+that never happens at end of file; the same hang affects other commands
+in this tree that read all of standard input.
+Passing the description as arguments avoids it.
