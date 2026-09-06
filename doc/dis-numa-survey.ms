@@ -576,3 +576,15 @@ to break anything today, twelve runs of the spawn storm with the JIT
 on.  Nothing can be shown about the collector's shared words at one
 interpreter at all.  Whoever picks this up should take the tractable
 half first rather than re-deriving why neither looked tractable.
+.PP
+That is now done for arm64: the four reference-count updates in
+.CW comp-arm64.c
+are store-conditional loops, verified as not breaking anything by
+twelve runs with the JIT on, and explicitly not verified as atomic,
+because one interpreter cannot show that.  386 and amd64 remain, and
+.CW doc/dis-parallel-plan.ms
+records which of their sites are a
+.CW LOCK
+prefix and which one needs a
+.CW CMPXCHG
+loop.  Item 3 is half done; item 2 is untouched and still the gate.

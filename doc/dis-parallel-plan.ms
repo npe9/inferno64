@@ -1223,6 +1223,88 @@ Left last on purpose, because it is the only phase that cannot be done
 by a macro, and because on the boards that matter it is not on the
 critical path.
 .PP
+.B "arm64 is done."
+All four
+.CW Heap.ref
+updates in
+.CW comp-arm64.c
+are
+.CW LDXRW/STXRW
+retry loops.  The interesting half was not the encodings but the
+semantics: both decrements deliberately branch away
+.I without
+storing when the count would reach zero \-
+.CW macfrp
+leaves
+.CW "ref == 1"
+for
+.CW rdestroy() ,
+which does its own decrement, and
+.CW macret
+punts the return to the interpreter, which expects the count
+untouched \- so the loops preserve that and the branch lands on a
+.CW CLREX .
+The encodings were checked against the system assembler rather than
+trusted, for the reason
+.CW os/inferno/virtarm64/l.s
+gives twice already.
+.PP
+.CW h->color
+and
+.CW nprop
+are left as plain stores.  A single aligned 32-bit store does not tear;
+what they lack is ordering, and what ordering they need is a property of
+the Phase 5 collector, which does not exist yet.  A barrier on every
+pointer store is a known cost for an unknown requirement.
+.NH 2
+What 386 and amd64 still need, and why it is not done here
+.PP
+Written down rather than attempted, because this machine cannot run
+either backend and a store-conditional loop written blind into an
+emitter is precisely how the
+.CW _tas
+bug shipped.  The work is not uniform, and knowing which half is which
+is most of it.
+.PP
+Three of the five sites are a one-byte
+.CW LOCK
+prefix in front of the existing instruction, because they already
+modify and then test:
+.CW comp-amd64.c
+lines 1643, 1686 and 1722 are
+.CW Oincrm ,
+and 1641 is
+.CW Odecrm
+followed by
+.CW JNE ,
+where
+.CW "LOCK DEC"
+sets the same flag from the same result.  Emit
+.CW 0xf0
+before the opcode byte;
+.CW modrm()
+writes that byte first, so the prefix goes in ahead of the call.
+.PP
+The fifth is not.
+.CW macfrp
+does
+.IP
+.nf
+CMP  ref, $1
+JEQ  .+4        /* skip the DEC: leave it for rdestroy */
+DEC  ref
+.fi
+.PP
+which is a test and then a modify, two operations that a
+.CW LOCK
+on the second cannot join.  It needs the same shape arm64 now has \- a
+.CW CMPXCHG
+retry loop that compares, branches out without storing, and otherwise
+stores the decrement \- and it should be written by someone who can run
+it.
+.CW comp-386.c
+is the same five sites in the same shapes.
+.PP
 One correction to "not on the critical path", from
 .CW doc/dis-numa-survey.ms :
 it is not on the critical path for
