@@ -510,6 +510,24 @@ Sys_mount(void *fp)
 	release();
 	*f->ret = kmount(fdchk(f->fd), fdchk(f->afd), string2c(f->on), f->flags, string2c(f->spec));
 	acquire();
+	/*
+	 * mount(2) consumes the descriptor: bindmount() ends its success
+	 * path with fdclose(up->fgrp, fd, 0), so the number is free again
+	 * the moment this returns.  The Limbo FD handed in still carries
+	 * that number, though, and freeFD() -- its finaliser -- closes it
+	 * a second time whenever the program finally drops the handle.  By
+	 * then the kernel has very likely reissued the number, so the
+	 * second close lands on an unrelated file: mount a pipe, create a
+	 * file in the same fgrp, and the create gets the pipe's old
+	 * descriptor and has it pulled out from under it (the kfs create
+	 * failure, where the create succeeds over Styx and is then clunked
+	 * from underneath).  Mark the handle spent; freeFD already skips a
+	 * negative fd, and a program that goes on using it now gets a
+	 * clean error instead of somebody else's file.  Only on success --
+	 * a failed mount does not close anything.
+	 */
+	if(*f->ret >= 0 && f->fd != (Sys_FD*)H)
+		f->fd->fd = -1;
 }
 
 void
