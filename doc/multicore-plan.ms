@@ -554,6 +554,21 @@ probes call and which live in
 a file no hosted build has.  Worth fixing on its own account \- an emu
 that cannot be built cannot be used as the control it is useful as.
 .PP
+.B "Since resolved."
+.CW inferno-rio 's
+commit
+.CW 1a55f0c9
+is that repair; cherry-picked here as
+.CW 2c33d1e2 ,
+emu links again, and the stress loop run under an emu built from
+.I current
+source is clean six times out of six.  So the staleness objection is
+answered and the result stands rather than merely pointing: the same
+interpreter, the same
+.CW .dis
+files and the same workload do not corrupt on the host, on today's
+code.
+.PP
 And it does not clear
 .CW libinterp
 even if the binary were current: emu links its own build of it, and a

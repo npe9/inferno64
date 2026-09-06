@@ -196,6 +196,51 @@ all written against it, and
 .CW currun()
 in particular meaning "the head", which is the same thing as "the
 program being interpreted" only while there is one interpreter.
+.NH 2
+The program table and the module list
+.PP
+Two more, smaller and easier to miss than the four above, and both on
+paths two programs take at once.
+.PP
+.CW os/inferno/port/dis.c
+has
+.IP
+.nf
+static Prog*	proghash[64];
+.fi
+.PP
+and
+.CW pidlook()
+walks a bucket chain with no lock anywhere.  Every
+.CW spawn
+inserts,
+.CW delprog
+removes, and every
+.CW /prog
+read goes through it \- the boot logs in
+.CW doc/multicore-plan.ms
+show
+.CW "devprog: progpid progpid() reached, count 10"
+on the way to a shell.  Two programs spawning at once race on a bucket.
+.PP
+.CW libinterp/load.c
+has a global
+.CW "Module *modules"
+threaded through
+.CW m->link ,
+inserted with a bare
+.IP
+.nf
+m->link = modules;
+modules = m;
+.fi
+.PP
+and walked by the module lookup.  Module loading is the other thing two
+programs do simultaneously, and it is unprotected in the same way.
+.PP
+Neither is hard \- a lock, or per-context shards with a global fallback
+\- but they belong on the list, because this is the class of thing that
+gets found by a crash rather than by a plan.
 .NH 1
 What Go gives us, and where it stops
 .PP
@@ -322,7 +367,17 @@ a file no hosted build has.  Commit
 on
 .CW inferno-rio \-
 .I "emu: dumpstack and printfreehist, so the shared crash-hunt hooks link on a host" \-
-is exactly that repair.  Take it first.
+is exactly that repair.
+.PP
+.B "Verified."
+Cherry-picked onto this branch
+.CW ( 2c33d1e2 ),
+emu links, and the resulting
+.CW o.emu-cocoa \-
+built from current source, not the 24 August binary the last round had
+to rely on \- runs the spawn storm six times out of six clean.  So Step
+0 is one command and it is known to be sufficient, rather than hoped
+to be.
 .PP
 Then build emu with
 .CW -fsanitize=thread ,
@@ -375,6 +430,72 @@ storage for
 .CW curR .
 Say it plainly: the macro is free natively and is not free hosted.
 .PP
+.PP
+.B "One fork inside this phase, and it is a correctness fork, not a
+taste one."
+.CW curR
+can point at
+.CW up->reg \-
+a register file owned by the executing context \- or at
+.CW &p->R ,
+the one already inside each
+.CW Prog .
+Go's model argues for the second: in Go the register and stack state
+lives in the
+.CW g ,
+and here that would make
+.CW isave()
+and
+.CW irestore()
+disappear, which is a real simplification.
+.PP
+Take the first anyway, and here is why, so that nobody undoes it.
+Today
+.CW p->R
+is a snapshot that lags: the note at
+line 1264 of
+.CW os/inferno/port/alloc.c
+records that it is "only refreshed at the start and end of
+.CW xec() 's
+whole PQUANTA=2048-instruction quantum, not per instruction".  And the
+collector reads it.
+.CW libinterp/gc.c 's
+root walk is
+.IP
+.nf
+while(root != nil) {
+	ml = root->R.M;
+	...
+	sp = root->R.SP;
+	ex = root->R.EX;
+.fi
+.PP
+\- it takes
+.CW Prog->R
+as the root set and traverses the Dis stack from
+.CW R.SP
+through the
+.CW Stkext
+chain at
+.CW R.EX .
+Pointing
+.CW curR
+at
+.CW &p->R
+turns a quiet quantum-boundary snapshot into live, per-instruction
+mutable state that a concurrent collector reads while the mutator
+writes it \- a race that does not exist today and would be created by
+the change that looks like a simplification.
+.PP
+So:
+.CW up->reg ,
+with
+.CW "isave / irestore"
+kept as the barrier between the live registers and the collector's
+view.  If a later design does want
+.CW &p->R ,
+it has to answer the root-set question first.
+.PP
 The 109 address-taken sites split in two.  Those that hand a
 .CW REG*
 to something already parameterised \-
@@ -385,9 +506,19 @@ are already in the right shape and need nothing.  Those that assume the
 singleton are the work, and 109 is the upper bound on it, not the
 estimate.
 .PP
-Verified by: an unchanged single-threaded interpreter.  This phase
-changes no behaviour at all and every existing test should be
-bit-identical.  If anything moves, stop.
+Verified by: an unchanged single-threaded interpreter.  There is no test
+suite to appeal to \- native panics on four boots in five and the
+console cannot take input, which is why
+.CW doc/multicore-plan.ms
+has a phase devoted to building one \- so the concrete harness is the
+one that already exists:
+.CW tmp/spawnstress.sh ,
+the sixty-seven spawn storm from
+.CW /dis/init ,
+under
+.CW "o.emu-cocoa -c0" ,
+which runs six of six clean today.  This phase changes no behaviour at
+all.  If that moves, stop.
 .NH 2
 Phase 2 \- introduce P
 .PP
@@ -493,6 +624,28 @@ all interpret.  The JIT is live in emu, where
 defaults to 1.  So Phase 6 gates hosted parallel Dis and does not gate
 native parallel Dis at all, which is a useful thing to know before
 budgeting it.
+.PP
+The sibling branches were checked for prior art and have none.
+.CW comp-amd64.c
+and
+.CW comp-arm64.c
+differ substantially between
+.CW multicore ,
+.CW amd64jit ,
+.CW termux ,
+.CW ILP64 ,
+.CW arm64
+and
+.CW main \-
+by hundreds and by thousands of lines \- but every one of them reaches
+the register file the same way, through
+.CW &R
+as a compile-time constant, six to fifteen times.  The divergence is in
+how much of the instruction set each compiles, not in how it addresses
+.CW R .
+Nobody has started this.  The counts above are
+.CW multicore 's;
+a backend taken from another branch brings its own.
 .PP
 Two changes per backend, and neither is a substitution.
 .IP 1.
