@@ -196,8 +196,6 @@ static char *opnames[MAXDIS] = {
 struct
 {
 	Lock	l;
-	Prog*	runhd;
-	Prog*	runtl;
 	Prog*	head;
 	Prog*	tail;
 	Rendez	irend;
@@ -243,6 +241,11 @@ struct
  * without it.
  */
 #define	ISCHEDPOKE(p, v)	__atomic_store_n((p), (v), __ATOMIC_RELAXED)
+/* and the same for the run queue, which moved to the execution context
+ * in Phase 2 but is read by tready() from a thread that does not hold
+ * the VM, exactly as before.
+ */
+#define	PCTXPEEK(f)	__atomic_load_n(&curP->f, __ATOMIC_RELAXED)
 
 extern	int	bflag;
 int	cflag = 1;	/* JIT on by default; -c0 selects interpreter */
@@ -274,7 +277,7 @@ int
 tready(void *a)
 {
 	USED(a);
-	return ISCHEDPEEK(runhd) != nil || ISCHEDPEEK(vmq) != nil;
+	return PCTXPEEK(runhd) != nil || ISCHEDPEEK(vmq) != nil;
 }
 
 Prog*
@@ -319,7 +322,7 @@ execatidle(void)
 	addrun(up->prog);
 	done = gccolor+3;
 	while(gccolor < done && gcruns()) {
-		if(ISCHEDPEEK(vmq) != nil || isched.runhd != isched.runtl) {
+		if(ISCHEDPEEK(vmq) != nil || curP->runhd != curP->runtl) {
 			gcpartial++;
 			break;
 		}
@@ -457,10 +460,10 @@ delprog(Prog *p, char *msg)
 		panic("lost pid");
 	*ph = p->pidlink;
 
-	if(p == isched.runhd) {
-		isched.runhd = p->link;
+	if(p == curP->runhd) {
+		curP->runhd = p->link;
 		if(p->link == nil)
-			isched.runtl = nil;
+			curP->runtl = nil;
 	}
 	p->state = 0xdeadbeef;
 	free(o->user);
@@ -610,7 +613,7 @@ killprog(Prog *p, char *cause)
 	Osenv *env;
 	char msg[ERRMAX+2*KNAMELEN];
 
-	if(p == isched.runhd) {
+	if(p == curP->runhd) {
 		p->kill = "";
 		p->flags |= Pkilled;
 		p->state = Pexiting;
@@ -919,12 +922,12 @@ addrun(Prog *p)
 	}
 	p->state = Pready;
 	p->link = nil;
-	if(isched.runhd == nil)
-		isched.runhd = p;
+	if(curP->runhd == nil)
+		curP->runhd = p;
 	else
-		isched.runtl->link = p;
+		curP->runtl->link = p;
 
-	isched.runtl = p;
+	curP->runtl = p;
 }
 
 Prog*
@@ -932,11 +935,11 @@ delrun(int state)
 {
 	Prog *p;
 
-	p = isched.runhd;
+	p = curP->runhd;
 	p->state = state;
-	isched.runhd = p->link;
+	curP->runhd = p->link;
 	if(p->link == nil)
-		isched.runtl = nil;
+		curP->runtl = nil;
 
 	return p;
 }
@@ -947,7 +950,7 @@ delrunq(Prog *p)
 	Prog *prev, *f;
 
 	prev = nil;
-	for(f = isched.runhd; f; f = f->link) {
+	for(f = curP->runhd; f; f = f->link) {
 		if(f == p)
 			break;
 		prev = f;
@@ -955,11 +958,11 @@ delrunq(Prog *p)
 	if(f == nil)
 		return;
 	if(prev == nil)
-		isched.runhd = p->link;
+		curP->runhd = p->link;
 	else
 		prev->link = p->link;
-	if(p == isched.runtl)
-		isched.runtl = prev;
+	if(p == curP->runtl)
+		curP->runtl = prev;
 }
 
 Prog*
@@ -967,7 +970,7 @@ delruntail(int state)
 {
 	Prog *p;
 
-	p = isched.runtl;
+	p = curP->runtl;
 	delrunq(p);
 	p->state = state;
 	return p;
@@ -976,7 +979,7 @@ delruntail(int state)
 Prog*
 currun(void)
 {
-	return isched.runhd;
+	return curP->runhd;
 }
 
 Prog*
@@ -1076,10 +1079,10 @@ acquire(void)
 		p = up->prog;
 
 	p->state = Pready;
-	p->link = isched.runhd;
-	isched.runhd = p;
+	p->link = curP->runhd;
+	curP->runhd = p;
 	if(p->link == nil)
-		isched.runtl = p;
+		curP->runtl = p;
 
 	strcpy(up->text, "dis");
 }
@@ -1343,7 +1346,7 @@ vmachine(void *a)
 	/* GC-LOCK HISTORY: r->xec(r) below runs with no lock held, and
 	 * multiple vmachine kprocs (spun up by release() whenever a proc
 	 * blocks on native I/O) each independently pull procs off
-	 * isched.runhd and call xec() in parallel - genuine concurrent
+	 * curP->runhd and call xec() in parallel - genuine concurrent
 	 * execution, not hypothetical. libinterp/heap.c's destroy() used to
 	 * decrement refcounts with a plain, non-atomic `--h->ref`, so two
 	 * threads decrementing the same object's refcount at once was a
@@ -1394,12 +1397,12 @@ vmachine(void *a)
 			strcpy(up->text, "dis");
 		}
 
-		if(ISCHEDPEEK(vmq) != nil && (isched.runhd == nil || ++cycles > 2)){
+		if(ISCHEDPEEK(vmq) != nil && (curP->runhd == nil || ++cycles > 2)){
 			iyield();
 			cycles = 0;
 		}
 
-		r = isched.runhd;
+		r = curP->runhd;
 		if(r != nil) {
 			o = r->osenv;
 			up->env = o;
@@ -1408,17 +1411,17 @@ vmachine(void *a)
 			r->xec(r);
 			FPsave(&o->fpu);
 
-			if(isched.runhd != nil)
-			if(r == isched.runhd)
-			if(isched.runhd != isched.runtl) {
-				isched.runhd = r->link;
+			if(curP->runhd != nil)
+			if(r == curP->runhd)
+			if(curP->runhd != curP->runtl) {
+				curP->runhd = r->link;
 				r->link = nil;
-				isched.runtl->link = r;
-				isched.runtl = r;
+				curP->runtl->link = r;
+				curP->runtl = r;
 			}
 			up->env = &up->defenv;
 		}
-		if(isched.runhd != nil)
+		if(curP->runhd != nil)
 		if((++gccounter&0xFF) == 0 || memlow()) {
 			gcbusy++;
 			up->type = BusyGC;
@@ -1484,8 +1487,8 @@ pushrun(Prog *p)
 	if(p->addrun != nil)
 		panic("pushrun addrun");
 	p->state = Pready;
-	p->link = isched.runhd;
-	isched.runhd = p;
+	p->link = curP->runhd;
+	curP->runhd = p;
 	if(p->link == nil)
-		isched.runtl = p;
+		curP->runtl = p;
 }

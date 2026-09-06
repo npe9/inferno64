@@ -967,6 +967,113 @@ Verified by:
 set to 1 throughout, behaving exactly as Phase 1, and only then raised.
 Every step is a comparison against a known-good.
 .NH 2
+Phase 2a, as landed
+.PP
+.CW Pctx
+exists, in
+.CW include/interp.h ,
+and there is exactly one of it.  It holds the register file and the run
+queue:
+.IP
+.nf
+struct Pctx
+{
+	REG	reg;		/* this context's Dis register file */
+	Prog*	runhd;		/* this context's run queue */
+	Prog*	runtl;
+};
+.fi
+.PP
+.CW libinterp/xec.c
+declares the one instance and
+.CW curP
+points at it, with
+.CW curR
+now
+.CW "&_pctx.reg"
+rather than a register file of its own \- so the two indirections
+converge on one object and there is one switch to throw rather than two.
+That matters because the gate is the same gate: more than one
+.CW Pctx
+means more than one thread inside
+.CW xec() ,
+which is precisely the condition that lets a collector walk a stale
+.CW p->reg .
+Phase 2-at-\c
+.CW n \c
+-greater-than-one and Phase 1b are blocked by Phase 5 together, and
+putting the register file in
+.CW Pctx
+is what stops a later reader raising one without the other.
+.PP
+The redirect is mechanical and covers both kernels at once \- 34 sites
+in
+.CW emu/port/dis.c
+and 39 in
+.CW os/inferno/port/dis.c ,
+which had diverged in the vm-handoff code but not here \- and the two
+fields are gone from both
+.CW isched
+structs so that nothing can reach them by the old name.
+.PP
+What deliberately did
+.I not
+move is
+.CW isched.head/tail ,
+the list of every
+.CW Prog
+in the system, because
+.CW execatidle()
+hands
+.CW isched.head
+straight to
+.CW rungc()
+as the root list.  Splitting that per-context divides the root set and
+loses objects: the same failure Phase 1b is waiting on, from the other
+direction, and no more visible to a race detector.  The root list is
+global and stays global.
+.PP
+Two things are inventoried here rather than fixed, because both are
+behaviour changes that belong to the step that raises
+.CW n :
+.IP \(bu
+.CW addrun() 's
+.CW p->addrun
+hook \-
+.CW cwakeme
+in
+.CW dis.c ,
+.CW dbgaddrun
+in
+.CW devprog.c \-
+is a per-\c
+.CW Prog
+override of where a program gets queued.  With more than one queue it
+has to be told which.
+.IP \(bu
+.CW delprog()
+and
+.CW killprog()
+test
+.CW "p == curP->runhd"
+to unlink a dying program.  With more than one queue the program may be
+at the head of a different one.
+.PP
+.CW currun()
+is left alone on purpose.  It returns the head of the run queue, and
+"current program" and "head of run queue" are the same thing only while
+there is one interpreter \- disentangling them is a behaviour change and
+wants its own commit and its own verification, not a ride on a
+mechanical redirect.
+.PP
+Measured: spawn storm six of six; the ThreadSanitizer signature set is
+the same seven, checked by content and not by count, which also says
+the tool did not start reporting the run queue at its new address; pc64
+builds, and against its parent kernel booted alternately fourteen times
+each it scores the same as the table in
+.CW doc/multicore-plan.ms
+section 5.
+.NH 2
 Phase 3 \- allocation
 .PP
 Per-P caches over

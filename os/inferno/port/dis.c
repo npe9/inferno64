@@ -16,8 +16,6 @@ void	vmachine(void*);
 struct
 {
 	Lock	l;
-	Prog*	runhd;
-	Prog*	runtl;
 	Prog*	head;
 	Prog*	tail;
 	Rendez	irend;
@@ -166,7 +164,7 @@ int
 tready(void *a)
 {
 	USED(a);
-	return isched.runhd != nil;
+	return curP->runhd != nil;
 }
 
 Prog*
@@ -202,7 +200,7 @@ accountant(void)
 {
 	Prog *p;
 
-	p = isched.runhd;
+	p = curP->runhd;
 	if(p != nil)
 		p->ticks++;
 }
@@ -222,7 +220,7 @@ execatidle(void)
 
 	done = gccolor+3;
 	while(gccolor < done && gcruns()) {
-		if(isched.runhd != isched.runtl) {
+		if(curP->runhd != curP->runtl) {
 			gcpartial++;
 			break;
 		}
@@ -381,10 +379,10 @@ delprog(Prog *p, char *msg)
 		panic("lost pid");
 	*ph = p->pidlink;
 
-	if(p == isched.runhd) {
-		isched.runhd = p->link;
+	if(p == curP->runhd) {
+		curP->runhd = p->link;
 		if(p->link == nil)
-			isched.runtl = nil;
+			curP->runtl = nil;
 	}
 	p->state = 0xdeadbeef;
 	free(o->user);
@@ -553,7 +551,7 @@ killprog(Prog *p, char *cause)
 	Osenv *env;
 	char msg[ERRMAX+2*KNAMELEN];
 
-	if(p == isched.runhd) {
+	if(p == curP->runhd) {
 		p->kill = "";
 		p->flags |= Pkilled;
 		p->state = Pexiting;
@@ -873,12 +871,12 @@ addrun(Prog *p)
 		panic("addrun of ready prog %8.8p by %8.8zux\n", p, getcallerpc(&p));
 	p->state = Pready;
 	p->link = nil;
-	if(isched.runhd == nil)
-		isched.runhd = p;
+	if(curP->runhd == nil)
+		curP->runhd = p;
 	else
-		isched.runtl->link = p;
+		curP->runtl->link = p;
 
-	isched.runtl = p;
+	curP->runtl = p;
 }
 
 Prog*
@@ -886,11 +884,11 @@ delrun(int state)
 {
 	Prog *p;
 
-	p = isched.runhd;
+	p = curP->runhd;
 	p->state = state;
-	isched.runhd = p->link;
+	curP->runhd = p->link;
 	if(p->link == nil)
-		isched.runtl = nil;
+		curP->runtl = nil;
 
 	return p;
 }
@@ -901,7 +899,7 @@ delrunq(Prog *p)
 	Prog *prev, *f;
 
 	prev = nil;
-	for(f = isched.runhd; f; f = f->link) {
+	for(f = curP->runhd; f; f = f->link) {
 		if(f == p)
 			break;
 		prev = f;
@@ -909,11 +907,11 @@ delrunq(Prog *p)
 	if(f == nil)
 		return;
 	if(prev == nil)
-		isched.runhd = p->link;
+		curP->runhd = p->link;
 	else
 		prev->link = p->link;
-	if(p == isched.runtl)
-		isched.runtl = prev;
+	if(p == curP->runtl)
+		curP->runtl = prev;
 }
 
 Prog*
@@ -921,8 +919,8 @@ delruntail(int state)
 {
 	Prog *p;
 
-	p = isched.runtl;
-	delrunq(isched.runtl);
+	p = curP->runtl;
+	delrunq(curP->runtl);
 	p->state = state;
 	return p;
 }
@@ -930,7 +928,7 @@ delruntail(int state)
 Prog*
 currun(void)
 {
-	return isched.runhd;
+	return curP->runhd;
 }
 
 Prog*
@@ -1006,10 +1004,10 @@ acquire(void)
 	 * it.
 	 */
 	p->state = Pready;
-	p->link = isched.runhd;
-	isched.runhd = p;
+	p->link = curP->runhd;
+	curP->runhd = p;
 	if(p->link == nil)
-		isched.runtl = p;
+		curP->runtl = p;
 }
 
 void
@@ -1036,7 +1034,7 @@ release(void)
 	 */
 	lock(&isched.l);
 	spawn = 0;
-	if(isched.runhd != nil && isched.nidle == 0 && isched.creating == 0){
+	if(curP->runhd != nil && isched.nidle == 0 && isched.creating == 0){
 		isched.creating = 1;
 		spawn = 1;
 	}
@@ -1248,12 +1246,12 @@ vmachine(void*)
 			vmacquire();
 		}
 
-		if(vmlock.head != nil && (isched.runhd == nil || ++cycles > 2)){
+		if(vmlock.head != nil && (curP->runhd == nil || ++cycles > 2)){
 			iyield();
 			cycles = 0;
 		}
 
-		r = isched.runhd;
+		r = curP->runhd;
 		if(r != nil) {
 			o = r->osenv;
 			up->env = o;
@@ -1266,13 +1264,13 @@ vmachine(void*)
 			r->xec(r);
 			up->env->fpuostate = fpusave();
 
-			if(isched.runhd != nil)
-			if(r == isched.runhd)
-			if(isched.runhd != isched.runtl) {
-				isched.runhd = r->link;
+			if(curP->runhd != nil)
+			if(r == curP->runhd)
+			if(curP->runhd != curP->runtl) {
+				curP->runhd = r->link;
 				r->link = nil;
-				isched.runtl->link = r;
-				isched.runtl = r;
+				curP->runtl->link = r;
+				curP->runtl = r;
 			}
 			up->env = &up->defenv;
 		}
@@ -1281,7 +1279,7 @@ vmachine(void*)
 		 * set — that panics "pushrun addrun" (seen on virt at
 		 * interactive sh with wm/toolbar load).
 		 */
-		if(isched.runhd != nil)
+		if(curP->runhd != nil)
 		if(up->iprog == nil)
 		if((++gccounter & 0xFF) == 0){
 			r = (Prog*)up->prog;
@@ -1374,10 +1372,10 @@ pushrun(Prog *p)
 		return;
 	}
 	p->state = Pready;
-	p->link = isched.runhd;
-	isched.runhd = p;
+	p->link = curP->runhd;
+	curP->runhd = p;
 	if(p->link == nil)
-		isched.runtl = p;
+		curP->runtl = p;
 }
 
 /*
@@ -1409,9 +1407,9 @@ disdump(void)
 
 	print("\ndis: vmlocked %d nidle %d creating %d runhd %#p runtl %#p\n",
 		vmlock.locked, isched.nidle, isched.creating,
-		isched.runhd, isched.runtl);
+		curP->runhd, curP->runtl);
 
-	for(p = isched.runhd; p != nil; p = p->link)
+	for(p = curP->runhd; p != nil; p = p->link)
 		print("dis: runq prog %d %s\n", p->pid,
 			(uint)p->state < nelem(pstate)? pstate[p->state]: "?");
 

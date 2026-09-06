@@ -8,8 +8,9 @@
 #define DBG if(0) print
 static int debug = 0;
 
-static	REG	_R;		/* Virtual Machine registers */
-REG*	curR = &_R;		/* interp.h: #define R (*curR) */
+static	Pctx	_pctx;		/* the one execution context (interp.h) */
+Pctx*	curP = &_pctx;
+REG*	curR = &_pctx.reg;		/* interp.h: #define R (*curR) */
 String	snil;			/* String known to be zero length */
 
 /* Diagnostic: ring buffer of the last few instructions xec() dispatched

@@ -67,6 +67,7 @@ typedef struct REG	REG;
 typedef struct Frame	Frame;
 typedef union  Stkext	Stkext;
 typedef struct Atidle	Atidle;
+typedef struct Pctx	Pctx;
 typedef struct Altc	Altc;
 typedef struct Except Except;
 typedef struct Handler Handler;
@@ -227,6 +228,34 @@ struct REG
 	WORD		t;		/* Middle temporary */
 	WORD		st;		/* Source temporary */
 	WORD		dt;		/* Destination temporary */
+};
+
+/* An execution context for Dis: the state that becomes per-processor
+ * when there is more than one interpreter running at a time.  Phase 2
+ * of doc/dis-parallel-plan.ms, and like Phase 1a it arrives as pure
+ * indirection -- there is exactly one Pctx, curP is constant, and this
+ * is the same program it was.
+ *
+ * What is in here is what a second interpreter would need its own copy
+ * of.  What is deliberately NOT in here is isched.head/tail, the list
+ * of every Prog in the system, which execatidle() hands to rungc() as
+ * the root list.  Splitting that per-context would divide the root set
+ * and lose objects, which is the same failure Phase 1b is waiting on
+ * the collector for, and just as invisible to a race detector.  The
+ * root list is global and stays global.
+ *
+ * Raising the number of these above one is gated on Phase 5 for exactly
+ * the reason Phase 1b is: two contexts means two threads inside xec(),
+ * which is the condition that lets a collector walk a stale p->reg.
+ * The register file lives here so that there is one switch to throw and
+ * one gate in front of it, rather than two mechanisms a later reader
+ * could raise independently.
+ */
+struct Pctx
+{
+	REG	reg;		/* this context's Dis register file */
+	Prog*	runhd;		/* this context's run queue */
+	Prog*	runtl;
 };
 
 struct Progs
@@ -441,7 +470,8 @@ extern	Type Treal;
  * therefore lands with Phase 5, not before.  A sanitizer cannot catch
  * this: a missing root is not a data race.
  */
-extern	REG*	curR;
+extern	Pctx*	curP;
+extern	REG*	curR;		/* == &curP->reg */
 #define	R	(*curR)
 extern	String	snil;
 extern	void	(*optab[256])(void);
