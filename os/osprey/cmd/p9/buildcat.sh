@@ -6,15 +6,16 @@ set -e
 cd "$(dirname "$0")/../../../.."
 P=os/osprey/cmd/p9
 LIBINC="-I Osprey/amd64/include -I Osprey/include -I include -I $P"
-OBJ="os/osprey/pc64/init9prog.6"
+OBJ="os/osprey/pc64/init9prog.6 os/osprey/pc64/init9tos.6"
 6c $LIBINC -o /tmp/catp9.6 $P/catp9.c
 OBJ="$OBJ /tmp/catp9.6"
-SUP=""
-for m in utfnlen vsnprint dofmt vfprint; do
-	6c $LIBINC -o /tmp/cat_$m.6 lib9/$m.c
-	SUP="$SUP /tmp/cat_$m.6"
-done
-6l -l -R4096 -o /tmp/catp9 $OBJ $SUP Osprey/amd64/lib/libc.a
+# The four lib9 modules that used to be linked ahead of the archive are
+# gone: they were a workaround for the members this linker cannot read,
+# and 9front/amd64/lib-src/libc9.a - the same libc built from source with
+# this tree's own 6c - answers all of them and the thirty others besides.
+# The prebuilt archive stays after it, for the generated system-call
+# stubs it is the only source of.
+6l -l -R4096 -o /tmp/catp9 $OBJ 9front/amd64/lib-src/libc9.a Osprey/amd64/lib/libc.a
 python3 - "$PWD/os/osprey/pc64/catprog.i" <<'PY'
 import sys
 data=open('/tmp/catp9','rb').read()

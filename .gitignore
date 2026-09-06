@@ -438,3 +438,7 @@ os/inferno/shakti/shakti.c
 
 # generated config C for the raspi3b board
 os/inferno/raspi3b/raspi3b.c
+
+# --- 9front userland built from the source in 9front/src (added 2026-09-06) ---
+/9front/amd64/lib-src/
+/9front/amd64/bin-src/

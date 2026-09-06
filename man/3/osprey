@@ -1216,6 +1216,49 @@ where twelve hundred give
 .BR "direct 953 copied 257" .
 .PP
 .PP
+.B /scripts/osprey-check-userland.sh
+boots nothing either.  It builds the ten 9front libraries out of the
+source carried in
+.B /9front/src
+with this tree's own
+.IR 6c ,
+links
+.I rio
+and the draw, mouse and keyboard servers against them, and asserts of
+each of the four binaries that it is a Plan 9 amd64
+.B a.out
+entered at
+.BR UTZERO+0x28 ,
+where the loader enters one.  It is a build check and nothing more: the
+four binaries have not been run.  What has been run is the C library
+underneath them.
+.B libc9.a
+is what
+.BR /boot/cat ,
+.BR /boot/exec ,
+.BR /boot/sh
+and
+.B /boot/legacy
+link, ahead of the prebuilt
+.B libc.a
+which stays behind it for the generated system-call stubs, so every
+criterion of
+.B /scripts/osprey-check-p9pair.py
+is a line that a program built against that library printed.  Of the 34
+members of the prebuilt archive this linker cannot read, those four
+programs need three \-
+.IR vfprint ,
+.IR dofmt ,
+.I vsnprint
+\- so what the criteria exercise of it is the formatting path.
+.I pool ,
+.I malloc
+and the Dir conversions build there and nothing that boots reaches them
+yet; they are what
+.I rio
+will reach.
+.PP
+.PP
 .B /scripts/osprey-check-portable.sh
 boots nothing.  It compiles every source in
 .B /os/osprey/policy
@@ -1243,14 +1286,21 @@ a
 .B ulong
 compiles on both.
 .PP
-The three above are sixty-six lines.  Each says
+Each of the five above says
 .B ok
 or
 .B FAIL
-a line at a time and keeps its logs when anything failed.  All three want
+a line at a time and keeps its logs when anything failed.  The three
+that boot a machine \-
+.BR osprey-check.py ,
+.B osprey-check-wire.py
+and
+.B osprey-check-net.py
+\- want
 .B .qemu/9front-root.qcow2
 and an ISO built by
-.BR /scripts/mkosprey-efi-iso.sh .
+.BR /scripts/mkosprey-efi-iso.sh ;
+the two that boot nothing want neither.
 .SH WHAT IT COSTS
 .PP
 Writing

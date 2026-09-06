@@ -11,6 +11,12 @@
 # a sweep that had every configuration in it but that one.  So the sweep
 # is written down here, and pc64 is first in it.
 #
+# The two at the end are not kernels.  The userland check builds the
+# 9front libraries and the four graphics binaries from the source in
+# 9front/src; the portable one builds the policy layer for 386 and
+# riscv64.  Neither boots anything, and both are here because both are
+# things that break silently when nobody runs them.
+#
 # usage: sh scripts/osprey-check-all.sh [-w N]
 #   -w N   run the personality's two-machine check (p9wire) N times
 #          (default 1); it is the one that has shown transients, and
@@ -70,5 +76,7 @@ while [ $i -le $wire ]; do
 	run p9wire scripts/osprey-check-p9wire.py
 	i=`expr $i + 1`
 done
+echo "=== the 9front userland this tree builds itself ==="
+sh scripts/osprey-check-userland.sh
 echo "=== portable ==="
 sh scripts/osprey-check-portable.sh

@@ -953,6 +953,36 @@ TEXT touser(SB), 1, $-4
 	BYTE $0x48; SYSRET			/* SYSRETQ */
 
 /*
+ * As touser, but the stack pointer and the argument register are set
+ * apart: RARG names the argument vector, and SP is given separately,
+ * below it.
+ *
+ * They cannot be the same word.  6c on amd64 passes a function's first
+ * argument in RARG and gives it a home in the caller's frame at 8(SP),
+ * and a function that still wants the argument after a call spills it
+ * there - the entries in os/osprey/pc/init9*.c do, because they hand
+ * the vector to init9tos and then use it again.  If SP named the vector
+ * itself, that spill would land on the vector's second word: argv[1]
+ * for a program given an argument, and for a program given none the nil
+ * that ends the vector, after which the walk to the end runs off into
+ * whatever is above and the word past the nil - the address of the Tos -
+ * is read from the wrong place.  Two words of room below the vector is
+ * all it takes, and the caller leaves them.
+ */
+TEXT touserv(SB), 1, $-4
+	MOVQ	sp+8(FP), DX			/* the stack, before SP moves */
+	SWAPGS
+
+	MOVL	$0, RMACH
+	MOVL	$0, RUSER
+
+	MOVQ	$(UTZERO+0x28), CX		/* ip */
+	MOVL	$0x200, R11			/* flags */
+	MOVQ	DX, SP				/* sp, and RARG still holds argv */
+
+	BYTE $0x48; SYSRET			/* SYSRETQ */
+
+/*
  * As touser, but the instruction pointer is the loaded program's own
  * entry (an ELF binary enters at e_entry, not the a.out convention),
  * taken from the global ospreyuserentry the loader set.

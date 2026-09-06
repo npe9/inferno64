@@ -6415,6 +6415,31 @@ So rio's binary is built where the toolchain matches the archives \-
 which is the disk, as the paragraph above said, but for the linker's
 reason and not for want of source.
 .PP
+That last step is wrong.  It was committed, it stood for two phases,
+and 2.3c below is what replaced it, so it is worth saying exactly where
+the reasoning went off.  The stubs never needed generating, because the
+stubs were never the part this linker cannot read.  Counted this time
+rather than carried forward: 31 of the 34 unreadable members have a
+same-named source file at that revision, 58 members have no same-named
+source in the import, and 55 of those 58 read fine.  Two of that 58 are
+there by choice rather than by absence:
+.CW main9
+and
+.CW main9p
+do exist at that revision and were deliberately not taken, because this
+tree enters a program through its own glue.  Counted against 9front
+rather than against the import, then: 33 of the 34 unreadable members
+have source at that revision, and the one that does not is
+.CW runenorm ,
+a generated table nothing here reaches.  The claim the composition
+rests on is narrower and it holds: not one of the 34 is a system-call
+stub, so the stubs \- the members with no source at all \- are every one
+of them readable.  So the two halves compose:
+build from source what the linker rejects, keep the archive for what it
+is the only source of, and put the source-built archive first on the
+link line.  I did not try it because I had concluded it was impossible;
+the conclusion was one unchecked step long.
+.PP
 The other cost is the one to size before starting.  What rio and its
 four libraries ask of the kernel, counted over their sources at that
 revision:
@@ -6804,6 +6829,249 @@ ordering.
 .PP
 Ten criteria of the pair check hold the six calls, the fork's working
 directory and the Tos apart, and the pair check is 81 where it was 71.
+.PP
+.B "2.3c: the userland this tree builds itself."
+The correction above is what made 2.3c worth trying, and the trying
+took an afternoon.
+.CW 9front/src
+holds 471 files imported from 9front at
+.CW a0a079f4054f88eabcb2c2e6d20f3ee4a1908b78 ,
+the revision this work has been reading all along: 52 headers, 220
+files of
+.CW libc
+.CW ( port ,
+.CW fmt ,
+.CW 9sys ,
+.CW amd64 ),
+63 of
+.CW libdraw ,
+35 of
+.CW libthread ,
+25 of
+.CW lib9p ,
+21 of
+.CW libmemdraw ,
+17 of
+.CW libauth ,
+13 of
+.CW libmemlayer ,
+9 of
+.CW libframe ,
+3 of
+.CW libplumb ,
+1 of
+.CW libcomplete ,
+and the 12 of
+.CW cmd/rio .
+.CW 9front/src/README
+records the revision, what was left out and why, and that there are no
+local changes to any of it \- the import is verbatim, and the two files
+deliberately not taken are
+.CW main9.s
+and
+.CW main9p.s ,
+whose job this tree's own entry glue does.
+.PP
+.CW os/osprey/cmd/p9/build9front.sh
+compiles the ten libraries with this tree's
+.CW 6c
+into
+.CW 9front/amd64/lib-src :
+.CW libc9.a
+is 524102 bytes,
+.CW libdraw.a
+376296,
+.CW libmemdraw.a
+320356, and the rest smaller.
+.CW build9bin.sh
+links four binaries into
+.CW 9front/amd64/bin-src
+against them and the prebuilt archive behind them: rio at 369713 bytes,
+and the draw, mouse and keyboard servers of
+.CW os/osprey/cmd/draw
+at 298081, 158217 and 158893.  Two link lines, not one, because rio
+brings its own
+.CW main
+and
+.CW lib9p
+brings another.
+.PP
+The part that matters more than the four binaries is what the same
+archive did to the programs that already boot.
+.CW buildcat.sh ,
+.CW buildexec.sh ,
+.CW buildsh.sh
+and
+.CW buildlegacy.sh
+each used to compile four modules out of
+.CW lib9/
+and link them ahead of
+.CW Osprey/amd64/lib/libc.a :
+.CW utfnlen ,
+.CW vsnprint ,
+.CW dofmt ,
+.CW vfprint ,
+the workaround named in the paragraphs above.  All four are gone.  The
+line is now
+.CW libc9.a
+first and the prebuilt archive behind it, and the archive is there for
+one thing only \- the generated system-call stubs, which are the part
+no source at that revision contains.  So the source-built C library is
+not an artifact off to the side that was linked once and measured: it
+is in the boot image, and the criteria of the pair check are what say
+it runs.
+.PP
+What exactly it runs is worth being exact about, because the check
+cannot say it and I had to ask the linker.  Removing
+.CW libc9.a
+and adding back one member at a time until the link is clean names the
+members each program actually requires from the unreadable 34, and for
+all four programs it is the same three:
+.CW vfprint ,
+.CW dofmt ,
+.CW vsnprint .
+Every line those programs print \- which is every criterion the pair
+check matches \- goes through formatting code compiled here from
+source.  The fourth module the old workaround carried,
+.CW utfnlen ,
+was never required at all; it was linked because it was named on the
+command line.  What the criteria do
+.I not
+reach is
+.CW pool ,
+.CW malloc
+and the Dir conversions: those are in
+.CW libc9.a ,
+they build, and nothing that boots calls them yet.  That is not a
+weakness of the arrangement, it is the same observation as before from
+the other side \- they are exactly what rio reaches and these four
+programs do not.
+.PP
+.B "What the switch found: the entry spilled its argument onto the vector."
+The first sweep after the four programs were pointed at
+.CW libc9.a
+failed 25 of the 81 pair criteria, and the console says where: the
+legacy program printed its working-directory lines and then
+.CW "user fault: read addr=0x40 pc=0x201b1a" .
+The linker's own listing
+.CW ( 6l
+.CW -a )
+names that instruction
+.CW "MOVL 64(CX),CX" ,
+two instructions after
+.CW "MOVQ _tos+0(SB),CX" ,
+and the register dump has
+.CW "cx 0x0" .
+Offset 0x40 of a
+.CW Tos
+is
+.CW pid ,
+and the line is
+.CW nsec.c 's
+.CW "*pidp == _tos->pid" .
+So
+.CW _tos
+was nil, and nsec(2) was simply the first code this tree has ever run
+that dereferences it.
+.PP
+It was nil because the entry overwrote the vector it was given.  6c on
+amd64 passes a function's first argument in
+.CW RARG
+and gives that register a home in the caller's frame at
+.CW 8(SP) ;
+a function that wants the argument after a call spills it there.  The
+kernel entered a program with
+.CW SP
+equal to the argument vector, so that home is the vector's own second
+word.  For a program with an argument it is
+.CW argv[1] ;
+for a program with none it is the nil that ends the vector, and the
+entry's walk to that nil then runs off into whatever is above and reads
+the word past the end - the address of the Tos - from the wrong place.
+.CW touserv
+in
+.CW pc64/l.s
+is the fix: it sets the stack two words below the vector and leaves
+.CW RARG
+naming the vector, which is the only thing the two ever had to agree
+about.
+.PP
+The archive switch did not cause this and it is worth being exact about
+what did, because the two arrived in the same sweep.
+.CW init9prog.6
+is not built any differently by it.  The spill arrived with
+.CW init9tos.c ,
+the factoring that put a call between receiving the vector and using
+it; before that
+.CW _main
+had no call in between and 6c had no reason to spill.
+.CW 6c
+.CW -S
+shows it plainly:
+.CW init9.c ,
+the flat-loaded entry, compiles to no such store, which is why
+.CW pc64 ,
+whose
+.CW init0
+enters that one, was never affected and stays on
+.CW touser ;
+.CW init9prog.c ,
+which the four legacy programs take, and
+.CW init9main.c ,
+which so far only the four graphics binaries take and nothing has run,
+both open with
+.CW "MOVQ BP,argv+0(FP)" .
+This is the first sweep since that factoring, and it caught both halves
+of the clobber at once: the nil-terminator half in the program with no
+arguments, and the
+.CW argv[1]
+half in
+.CW /boot/cat ,
+which is given a file to print.  Nothing latent shipped -
+.CW init9tos.c
+is part of this same piece of work and was never committed broken - but
+the ordering is worth keeping: the factoring was written, tested against
+the check it was written for, and the sweep that would have caught it
+was the one this section is about.
+.PP
+The switch found one more, in the build script rather than the kernel.
+.CW iar
+.CW vu
+replaces a member only if the new one is newer, and
+.CW libc/amd64
+is compiled seconds after
+.CW libc/port
+in the same run: fourteen of 9front's amd64 implementations \-
+.CW memmove.s ,
+.CW strcpy.s ,
+.CW getcallerpc.s
+and eleven others \- were losing to the portable C they are meant to
+replace, which is not what 9front's own build does.  It is
+.CW iar
+.CW rvc
+now, and the set of source files each of the four programs is built
+from is the set the old link had, exactly, less
+.CW utfnlen.c ,
+which the old link carried because it was named on the command line and
+which nothing needs.  This was not the cause of the 25 failures; it was
+found looking for it.
+.PP
+.CW scripts/osprey-check-userland.sh
+is the twelfth check, and it is a build check, which is the honest
+name for it: it asserts that the ten libraries build, that the four
+binaries link, and that each is a Plan 9 amd64
+.CW a.out
+with the 40-byte header and the entry at
+.CW UTZERO+0x28
+where the loader enters one.  Rio and the three servers have not been
+run.  Nothing yet carries them into a container; that is 2.3d, and the
+size to know before starting it is that the four binaries come to
+984904 bytes, which at the five bytes of C an
+.CW .i
+array spends per byte of program is about 5.0 megabytes of source on
+top of the 3428634 that
+.CW p9prog.i
+already is.
 .NH 2
 Track three: the library-OS personality execs a program, then rio
 .PP
@@ -7086,10 +7354,11 @@ longest of the phases, and honestly named as the last.
 .NH 1
 Checking, all of it
 .PP
-There are eleven checks in
+There are twelve checks in
 .CW scripts/ ,
-one for each thing that boots and one for each pair of machines, and
-for most of this work I was running eight of them.  The three I was not
+one for each thing that boots, one for each pair of machines, and one
+for the userland this tree builds from source, and for most of this
+work I was running eight of them.  The three I was not
 running were
 .CW osprey-check.py ,
 which boots the full 9front personality on
@@ -7134,20 +7403,23 @@ ends in
 The general shape is worth keeping: a calling convention was changed
 and tested against the callers that the same commit changed.
 .CW scripts/osprey-check-all.sh
-is the answer \- seven configuration builds, then all eleven checks in
-order, with the wire check repeated because it had been flaky.  The
-tally as this is written, every configuration building and every check
-clean:
+is the answer \- seven configuration builds, then all twelve checks in
+order, with
+.CW -w
+to repeat the two-machine check, which is the one that had been flaky.
+The tally as this is written, every configuration building and every
+check clean, the two-machine check run once:
 .CW pc64
 61,
 .CW p9pair
-78,
+81,
 .CW p9buddy
 5,
 .CW p9linux
 12,
 .CW p964
-29, keyboard 6, micro 7, user 10, net 13, wire 14, two-machine 20, and
-two portable builds.  A criterion is a sentence a booted kernel printed
+29, keyboard 6, micro 7, user 10, net 13, wire 14, two-machine 20, the
+six criteria of the userland the tree builds itself, and two portable
+builds.  A criterion is a sentence a booted kernel printed
 in answer to a command typed at its prompt, so a clean check is also
 the prompt having been reached.

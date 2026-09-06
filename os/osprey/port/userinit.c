@@ -28,6 +28,7 @@ extern int ospreyp9pair;
 extern int ospreyp9buddy;
 extern int ospreyp9linux;
 extern void touserat(char*);
+extern void touserv(char*, char*);
 extern int ospreyuserprep(void);
 extern int ospreyframebuffer(void);
 
@@ -675,7 +676,13 @@ ospreyenteruservec(char **argv, int argc)
 
 	splhi();
 	fpukexit(nil);
-	touser((char*)sp);		/* the first argument register holds argv */
+	/*
+	 * The argument register holds the vector; the stack starts two
+	 * words below it, which is where the entry spills that register
+	 * (see touserv in pc64/l.s).  Without the gap the spill lands on
+	 * argv[1].
+	 */
+	touserv((char*)sp, (char*)(sp - 2*sizeof(uintptr)));
 }
 
 void

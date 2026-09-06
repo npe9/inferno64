@@ -1,0 +1,59 @@
+9front userland source, carried so that this tree can build it itself.
+
+Revision
+	a0a079f4054f88eabcb2c2e6d20f3ee4a1908b78
+	from git.9front.org/plan9front/9front, every directory below taken
+	at that one revision.  The include set in include/ is sys/include
+	at the same revision; libc/{port,fmt,9sys,amd64} is sys/src/libc;
+	the lib* directories are sys/src/lib*; cmd/rio is sys/src/cmd/rio.
+
+Why it is here
+	9front/amd64/lib holds prebuilt archives, and nothing in this tree
+	had ever linked them.  The reason is that it cannot: those objects
+	were made by 9front's own 6c, which emits instructions past the end
+	of this linker's table, and 6l here reads 228 of the 262 members of
+	libc.a and rejects 34 with "opcode out of range".  The compiler is
+	not the problem - this tree's 6c compiles current 9front source
+	with no warnings - so the answer is to build from source, and the
+	source is what was missing.
+
+What is not here
+	libc/9syscall.  The system-call stubs are generated on a real Plan
+	9 out of a sys.h and the kernel's own table, so there is no source
+	file to build; they come from the prebuilt archive, which is linked
+	after the source-built libc and answers only what the source
+	cannot.  They are also every one of them readable by this linker.
+
+	libc/amd64/main9.s and main9p.s, libc's own entry.  These exist at
+	that revision; they are left out by choice, not by absence.  This tree's
+	programs are entered by os/osprey/pc/init9*.c instead, because the
+	kernel here enters a program with the argument vector in the first
+	register rather than the Tos, and because that member is one of the
+	34 this linker cannot read.
+
+	Every architecture of libc but amd64.  libthread's directory was
+	taken whole, 386.c and arm.c and the rest with it; the build
+	script names the one file it compiles and skips those.
+
+How it is built
+	os/osprey/cmd/p9/build9front.sh	the ten libraries, to 9front/amd64/lib-src
+	os/osprey/cmd/p9/build9bin.sh	rio and the draw, mouse and keyboard
+					servers, to 9front/amd64/bin-src
+
+	Both are generated directories and are not tracked.
+
+Who links it
+	lib-src/libc9.a is not off to the side.  The four legacy programs
+	the pair personality boots - catp9, execp9, shp9 and legacyp9 -
+	link it ahead of the prebuilt archive, in place of the four lib9
+	modules they used to compile as a workaround, so the criteria of
+	scripts/osprey-check-p9pair.py are what say this library runs and
+	not merely links.  Of the 34 members the linker cannot read, those
+	four programs require three - vfprint, dofmt and vsnprint - so
+	what the criteria exercise is the formatting path.  pool, malloc
+	and the Dir conversions build here and are not yet reached by
+	anything that boots; they are what rio reaches.
+
+Local changes
+	None.  Every file below is as it is at that revision; anything this
+	tree needs differently is done in os/osprey, not here.
