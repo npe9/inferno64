@@ -1055,9 +1055,37 @@ _intrestore:
 	POPQ	R11
 	POPQ	R12
 	POPQ	R13
+
+	/*
+	 * A kernel-mode return must NOT reload RMACH and RUSER from this
+	 * frame.  trap() can reach sched(), and a process that gives up
+	 * the processor here may be resumed on a different one; the
+	 * scheduler that resumes it leaves the *new* processor's Mach in
+	 * RMACH and the process in RUSER, which are the correct values.
+	 * The words saved on entry name the processor the trap was taken
+	 * on, so restoring them hands the process a stale m -- it then
+	 * reads and writes another processor's Mach, and m->ilockdepth in
+	 * particular fluctuates underneath it.  That was a panic from
+	 * sched() ("cpu2: ilockdepth -2/-1/0/1, sched called from
+	 * acquire+0xff") within a second of every -smp 2 or -smp 4 boot.
+	 *
+	 * This is the nested check the comment above _strayintr says was
+	 * removed; it is not about code segments or tasks, it is about
+	 * more than one processor.  9front's l.s keeps it for this reason
+	 * (its _iretnested).  A return to user mode still restores both,
+	 * since there the words are the interrupted program's registers.
+	 */
+	CMPQ	48(SP), $KESEL
+	JEQ	_iretnested
+
 	POPQ	R14		/* RUSER up-> */
 	POPQ	R15		/* RMACH m-> */
+	JMP	_iretsegs
 
+_iretnested:
+	ADDQ	$16, SP	/* leave RUSER and RMACH as this processor set them */
+
+_iretsegs:
 	ADDQ $8, SP		/* to ignore the [DEFG]S registers as they should not be changing */
 
 	ADDQ	$16, SP	/* pop error code and trap type */

@@ -227,6 +227,7 @@ void
 sched(void)
 {
 	Proc *p;
+	int s;
 
 	if(m->ilockdepth != 0)
 		panic("cpu%d: ilockdepth %d, last lock %#p at %#p, sched called from %#p",
@@ -261,9 +262,15 @@ sched(void)
 			return;
 		}
 		up->delaysched = 0;
-		splhi();
+		/*
+		 * splx(s), not spllo(): sched() is reached from callers that
+		 * had already raised spl, and lowering unconditionally hands
+		 * them interrupts back inside their own critical section.
+		 * 9front's sched() saves and restores for this reason.
+		 */
+		s = splhi();
 		procswitch();
-		spllo();
+		splx(s);
 		return;
 	}
 	/* if up == nil, it is the scheduler process after the
@@ -821,8 +828,10 @@ void
 sleep(Rendez *r, int (*f)(void*), void *arg)
 {
 	int s;
+	uintptr callerpc;		/* XXX temporary */
 	void (*pt)(Proc*, int, vlong);
 
+	callerpc = getcallerpc(&r);	/* XXX temporary */
 	if(up == nil)
 		panic("sleep() not in process (%zux)", getcallerpc(&r));
 	/*
@@ -870,6 +879,7 @@ sleep(Rendez *r, int (*f)(void*), void *arg)
 			pt(up, SSleep, 0);
 		up->state = Wakeme;
 		up->r = r;	/* for swiproc */
+		up->sleeppc = callerpc;	/* XXX temporary */
 		unlock(&up->rlock);
 		unlock(r);
 		procswitch();
