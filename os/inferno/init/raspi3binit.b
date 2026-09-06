@@ -175,14 +175,30 @@ usbcheck()
 # -drive if=none,id=d0,file=<img>,format=raw -device usb-storage,drive=d0
 diskcheck()
 {
-	disk := "/chan/usbdisk0";
-	for(i := 0; i < 50; i++){
-		if(sys->open(disk, Sys->OREAD) != nil)
-			break;
-		sys->sleep(100);
+	# usbd names each disk usbdisk0, usbdisk1, ... in the order it
+	# serves them, so do not assume usbdisk0: scan /chan for whichever
+	# one turned up.  Only the first is mounted; a second stick would
+	# need a second mountpoint.
+	disk := "";
+	for(i := 0; i < 50 && disk == nil; i++){
+		cfd := sys->open("/chan", Sys->OREAD);
+		if(cfd != nil){
+			for(;;){
+				(n, dirs) := sys->dirread(cfd);
+				if(n <= 0)
+					break;
+				for(j := 0; j < n; j++)
+					if(len dirs[j].name >= 7 && dirs[j].name[0:7] == "usbdisk"){
+						disk = "/chan/" + dirs[j].name;
+						break;
+					}
+			}
+		}
+		if(disk == nil)
+			sys->sleep(100);
 	}
-	if(sys->open(disk, Sys->OREAD) == nil){
-		sys->print("DISK-NONE (no USB mass storage at %s)\n", disk);
+	if(disk == nil){
+		sys->print("DISK-NONE (no USB mass storage under /chan)\n");
 		return;
 	}
 	dossrv := load Command "/dis/dossrv.dis";
