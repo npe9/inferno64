@@ -289,6 +289,7 @@ ebook ebook
 echo echo
 edit wm-misc
 develop develop
+edsprite edsprite
 elephantwalk elephantwalk
 els sh-sexprs
 emu emu
@@ -508,6 +509,7 @@ sh-string sh-string
 sh-test sh-test
 sh-tk sh-tk
 sha1sum sum
+shading shading
 shadow shadow
 sieve math-misc
 sig man
@@ -600,6 +602,8 @@ vixen vixen
 vocabulary vocabulary
 voicetest voicetest
 wallpaperctrl wallpaperctrl
+wallpaperfish wallpaperfish
+waterfowl waterfowl
 wav2iaf auplay
 wc wc
 webgrab webgrab

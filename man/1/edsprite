@@ -1,0 +1,35 @@
+.TH EDSPRITE 1
+.SH NAME
+edsprite \- outline a sprite by reading it back
+.SH SYNOPSIS
+.B temple/edsprite
+.SH DESCRIPTION
+.I EdSprite
+is a port of the TempleOS
+.B Demo/Graphics/EdSprite.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+Twelve sprites given a black outline one pixel wide, by the simplest
+method there is: draw each into a buffer one pixel larger all round, walk
+every transparent pixel, and blacken it if any of its eight neighbours is
+neither transparent, nor black, nor off the edge.  No edge detection and
+no geometry \- it reads back the pixels it has just drawn.
+.PP
+The original prints the outlined sprites to the command line so they can
+be cut and pasted into source; here they are drawn in a row, since a
+sprite in this tree is a file rather than a run of characters in a
+document.
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B "any key"
+Exit
+.PD
+.SH SOURCE
+.B /appl/temple/edsprite.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

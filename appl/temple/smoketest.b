@@ -99,7 +99,8 @@ mods := array[] of {
 	"blot", "charanimation", "palette", "pantext", "scrncapture", "sunmoon", "winzbuf",
 	"3dpoly", "pick", "rotatetank", "shadow",
 	"balloon", "scrollbars", "slider", "wallpaperctrl",
-	"commonancestor", "lowpassfilter", "mathaudiodemo", "predatorprey"
+	"commonancestor", "lowpassfilter", "mathaudiodemo", "predatorprey",
+	"edsprite", "shading", "wallpaperfish", "waterfowl"
 };
 
 init(ctxt: ref Context, argv: list of string)

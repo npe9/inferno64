@@ -132,7 +132,11 @@ TARG=\
 	commonancestor.dis\
 	lowpassfilter.dis\
 	mathaudiodemo.dis\
-	predatorprey.dis
+	predatorprey.dis\
+	edsprite.dis\
+	shading.dis\
+	wallpaperfish.dis\
+	waterfowl.dis
 
 DISBIN=$ROOT/dis/temple
 

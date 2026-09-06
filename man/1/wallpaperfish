@@ -1,0 +1,38 @@
+.TH WALLPAPERFISH 1
+.SH NAME
+wallpaperfish \- an aquarium for a desktop
+.SH SYNOPSIS
+.B temple/wallpaperfish
+.SH DESCRIPTION
+.I WallPaperFish
+is a port of the TempleOS
+.B Demo/Graphics/WallPaperFish.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+Sixteen critters of three kinds, each a four-frame cycle whose middle
+frame is shared going out and coming back.  Positions are kept in fixed
+point, which is why a critter that swims off one edge reappears at the
+other for nothing, and one swimming left is drawn mirrored about a
+vertical line through itself rather than from a second set of sprites.
+The water is one diagonal every twenty pixels with an offset that is a
+triangle wave of the clock, so the whole rack slides.
+.PP
+The original replaces the desktop's own paint routine and has to be
+included into the system task so its code outlives the program \- "Would
+crash when code mem was freed."  An Inferno client cannot paint
+.IR wm (1)'s
+background, so this draws in its own window.
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B "any key"
+Exit
+.PD
+.SH SOURCE
+.B /appl/temple/wallpaperfish.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

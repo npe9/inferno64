@@ -1,0 +1,44 @@
+.TH SHADING 1
+.SH NAME
+shading \- flat shading from one cross product
+.SH SYNOPSIS
+.B temple/shading
+.SH DESCRIPTION
+.I Shading
+is a port of the TempleOS
+.B Demo/Graphics/Shading.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+A sphere of eight rings by thirty-two faces, the upper half blue and the
+lower red, lit by the mouse.  There is no shading model beyond a single
+dot product: the face normal is the cross product of two of its edges,
+normalised, put through the same matrix as the vertices, and dotted with
+the light vector.  A face turned away gets a dither of black against its
+colour; one facing the light gets a dither of the colour against its
+bright twin, which in this palette is the same hue with the intensity bit
+flipped.  Two palette entries and a dither give a whole ramp.
+.PP
+The original dithers by drawing a random number per pixel; this port uses
+an ordered pattern of seventeen levels, which gives the same ramp without
+the noise.  The 0.03 of slop on every quad is the original's, and its
+comment says why: "Gaps appear without this."
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B "mouse move"
+Move the light
+.TP
+.B arrows
+Turn the sphere
+.TP
+.B "any other key"
+Exit
+.PD
+.SH SOURCE
+.B /appl/temple/shading.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)
