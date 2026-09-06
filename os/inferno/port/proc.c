@@ -223,12 +223,41 @@ procswitch(void)
  *  If changing this routine, look also at sleep().  It
  *  contains a copy of the guts of sched().
  */
+/*
+ * MULTICORE INSTRUMENTATION - temporary.  See newproc().  Reports once
+ * and keeps going, so the boot that follows still shows what it would
+ * have shown; the point is to learn whether the guard is ever touched,
+ * not to stop at it.
+ */
+void
+kstackcheck(char *where)
+{
+	static int reported;
+	uchar *g;
+	int i;
+
+	if(reported || up == nil || up->kstack == nil || up->kstackpainted == 0)
+		return;
+	g = (uchar*)up->kstack;
+	for(i = 0; i < KSTACKGUARD; i++){
+		if(g[i] != KSTACKFILL){
+			reported = 1;
+			print("kstack overflow: proc %d \"%s\" guard[%d] = %#ux, "
+				"kstack %#p top %#p, sp about %#p, at %s\n",
+				up->pid, up->text, i, g[i], up->kstack,
+				(uchar*)up->kstack+KSTACK, &g, where);
+			break;
+		}
+	}
+}
+
 void
 sched(void)
 {
 	Proc *p;
 	int s;
 
+	kstackcheck("sched");
 	if(m->ilockdepth != 0)
 		panic("cpu%d: ilockdepth %d, last lock %#p at %#p, sched called from %#p",
 			m->machno,
@@ -695,6 +724,19 @@ newproc(void)
 	if(p == nil || (p->kstack == nil && (p->kstack = malloc(KSTACK)) == nil)){
 		unlock(&procalloc);
 		return nil;
+	}
+	if(p->kstackpainted == 0){
+		/*
+		 * MULTICORE INSTRUMENTATION - temporary.  The kernel stack is
+		 * a plain malloc() out of the main pool: ordinary pool blocks
+		 * sit on either side of it and there is no guard page, because
+		 * it is a buffer and not a mapping.  A stack that runs past
+		 * its bottom writes into its neighbour, which is what this
+		 * tree's heap corruption looks like from the far side.  Paint
+		 * the low end once; kstackcheck() below reads it back.
+		 */
+		memset(p->kstack, KSTACKFILL, KSTACKGUARD);
+		p->kstackpainted = 1;
 	}
 	procalloc.free = p->qnext;
 	p->qnext = nil;

@@ -30,6 +30,10 @@
 
 #define	MAXMACH		128			/* max # cpus system can run */
 #define	KSTACK		(32*KiB)	/* Size of kernel stack */
+/* MULTICORE INSTRUMENTATION - temporary: painted guard band at the low
+ * (growth) end of every kernel stack.  See os/inferno/port/proc.c. */
+#define	KSTACKGUARD	128
+#define	KSTACKFILL	0xA5
 #define	MACHSIZE	(2*KSTACK)
 
 /*

@@ -778,6 +778,7 @@ struct Proc
 	void	*iprog;
 	void	*prog;
 	s32	vmheld;		/* holds the Dis interpreter lock (dis.c) */
+	s32	kstackpainted;	/* MULTICORE INSTRUMENTATION - temporary */
 	Proc*	vmnext;		/* dis.c's isched.idlevmq; NOT qnext, which
 				 * qlock() uses for the VM lock's own queue */
 	int	type;		/* Unknown/IdleGC/Interp/... */

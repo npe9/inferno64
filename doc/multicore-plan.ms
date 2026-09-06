@@ -635,6 +635,114 @@ and the string it was handed would turn a misleading
 panic into a direct description of the corrupt object, at the first
 place that notices.
 .NH 2
+The kernel stack: tested, and it is not that
+.PP
+The emulator result points underneath the interpreter, and one
+difference underneath it is worth testing before anything else,
+because it would produce this exact fingerprint and it is one line to
+try.
+.PP
+A native Dis program is interpreted on an Inferno kernel stack.
+.CW os/inferno/pc64/mem.h
+sets
+.IP
+.nf
+#define	KSTACK		(32*KiB)	/* Size of kernel stack */
+.fi
+.PP
+and
+.CW os/inferno/port/proc.c
+allocates it with
+.IP
+.nf
+p->kstack = malloc(KSTACK)
+.fi
+.PP
+\- out of the main pool, with the ordinary pool blocks of other objects
+on either side of it, and no guard page, because it is a buffer and not
+a mapping.  Under the emulator the same interpreter runs on a host
+thread stack that
+.CW emu/port/kproc-pthreads.c
+sets to 512KB, sixteen times larger, with a real guard page under it.
+.PP
+So a kernel stack that runs a little past its bottom writes straight
+into whatever pool block is next to it, and every symptom this hunt has
+collected is what that looks like from the far side: a
+.CW Path
+with a garbage
+.CW len ,
+a
+.CW Type
+whose size field reads as ASCII text, a pointer slot holding a small
+non-\c
+.CW H
+value,
+.CW alloc:D2B
+on a block whose header no longer says what it said, and a different
+failure every boot depending on which allocation happened to be the
+neighbour.
+.PP
+It is worth saying what does not obviously support this: 32KiB is not a
+small stack by the standards of this family \-
+.CW os/9front/pc64/mem.h
+sets
+.CW KSTACK
+to
+.CW 8KiB
+and 9front is fine on it.  But 9front does not interpret Dis on that
+stack, and this kernel does:
+.CW xec()
+and the
+.CW OP(mcall)
+builtins run on the same 32KiB as the whole device and file system
+path beneath them.
+.PP
+.B "Refuted."
+Tested by detection rather than by raising
+.CW KSTACK ,
+which would have been the weaker experiment and would also have moved
+.CW MACHSIZE ,
+.CW "2*KSTACK" ,
+out of the fixed data-area layout the boot checks at compile time.  A
+128-byte band at the low end of every kernel stack is painted
+.CW 0xA5
+once in
+.CW newproc() ,
+and
+.CW sched()
+reads it back on every call.
+.PP
+Twelve boots: eleven panicked, and the guard was never touched, not
+once.  So the kernel stacks are not running past their bottoms, and the
+corruption is not coming from there.  The probe is cheap and stays in;
+it is a standing answer to a question that would otherwise be asked
+again.
+.PP
+Two other things fell out of the same round and are recorded so nobody
+repeats them.  Memory size barely matters: twelve boots at each of
+.CW -m
+.CW 256 ,
+.CW 512 ,
+.CW 1024
+and
+.CW 2048
+panicked 8, 8, 7 and 6 times, so an eight-fold change in the pool
+arenas moves the rate very little and pool sizing is not the dominant
+term.  And the same failure rate holds with
+.CW nvm
+pinned at
+.CW 1 ,
+which is section 5's result from another angle.
+.PP
+What survives, after this round, is the emulator result of 5.1: the
+same interpreter, the same
+.CW .dis
+files and the same workload do not corrupt when the memory underneath
+them is the host's rather than
+.CW os/inferno/port/alloc.c 's.
+Not the stack.  Not the pool sizing.  The allocator itself, what it
+hands out, and who else is writing to it.
+.NH 2
 Ordering, and a rule broken
 .PP
 Section 1's rule applies to this plan's own ordering, and was broken
