@@ -437,15 +437,19 @@ The order the work goes in
 Following the same rule as the rest of this branch: fix what is wrong
 before adding what is missing.
 .IP 1.
-.CW ainc/adec
-for arm64, as a
-.CW LDADD
-or an
-.CW LDXR/STXR
-loop in
-.CW libkern .
-Small, self-contained, and correct on its own terms whether or not
-anything else is done.
+.B Done .
+.CW libkern/ainc-aarch64.s
+is an
+.CW LDXRW/STXRW
+loop, and the two C definitions are gone.  It follows the operand-order
+and register-width traps that
+.CW os/inferno/virtarm64/l.s
+already records from
+.CW _tas ,
+because both of them assemble cleanly and do the wrong thing.  Checked
+by booting virtarm64 under qemu with each implementation and diffing
+the console: identical but for the build date, one kprof sample and the
+qemu pid.
 .IP 2.
 The collector's shared words become atomic, and
 .CW h->color
