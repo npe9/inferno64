@@ -100,7 +100,7 @@ timerset(vlong when)
 {
 	uvlong now, hznext, w;
 
-	now = fastticks(nil);
+	now = (Tval)fastticks(nil);
 	hznext = now + m->cpuhz/HZ;
 	if(hznext == now)
 		hznext = now + 1;
@@ -111,6 +111,32 @@ timerset(vlong when)
 	if(w > hznext)
 		w = hznext;
 	*(volatile uvlong*)(uintptr)(CLINT + ClintMtimecmp) = w;
+}
+
+/*
+ * Nanoseconds to fastticks, without the overflow the obvious
+ * expression has.  tns*hz overflows a signed 64-bit multiply once tns
+ * passes 2^63/hz -- about 147 seconds against a 62.5MHz counter -- and
+ * dhcpclient's thebigsleep() asks for 32400 seconds (T1 of an
+ * 86400-second lease) the moment DHCP succeeds.  The wrapped product
+ * makes twhen negative, timerinsert() sorts Tval signed so the bad
+ * timer takes the head of the queue, and timercheck()'s test against
+ * an unsigned now then reads that negative deadline as enormous and
+ * stops at the head -- so every timer queued behind it is unreachable
+ * and every timed sleep on the machine hangs for good.  Split the
+ * conversion into whole seconds plus a scaled remainder: exact, and it
+ * cannot overflow for any deadline this side of a thousand years.
+ */
+static Tval
+ns2ticks(vlong ns, uvlong hz)
+{
+	uvlong s, r;
+
+	if(ns <= 0)
+		return 0;
+	s = (uvlong)ns / 1000000000ULL;
+	r = (uvlong)ns % 1000000000ULL;
+	return (Tval)(s * hz + (r * hz) / 1000000000ULL);
 }
 
 static void
@@ -131,7 +157,7 @@ void
 timeradd(Timer *nt)
 {
 	Timer *t, **l;
-	uvlong now;
+	Tval now;
 
 	ilock(&timerlock);
 	if(nt->tt != nil){
@@ -144,15 +170,15 @@ timeradd(Timer *nt)
 		}
 		nt->tt = nil;
 	}
-	now = fastticks(nil);
+	now = (Tval)fastticks(nil);
 	if(nt->tns <= 0)
 		nt->tns = 1;
 	if(nt->tmode == Tperiodic){
 		if(nt->twhen == 0)
 			nt->twhen = now;
-		nt->twhen += (uvlong)((nt->tns * (vlong)m->cpuhz) / 1000000000LL);
+		nt->twhen += ns2ticks(nt->tns, m->cpuhz);
 	}else
-		nt->twhen = now + (uvlong)((nt->tns * (vlong)m->cpuhz) / 1000000000LL);
+		nt->twhen = now + ns2ticks(nt->tns, m->cpuhz);
 	if(nt->twhen <= now)
 		nt->twhen = now + 1;
 	timerinsert(nt);
@@ -183,10 +209,10 @@ void
 timercheck(Ureg *u)
 {
 	Timer *t;
-	uvlong now;
+	Tval now;
 	int mode;
 
-	now = fastticks(nil);
+	now = (Tval)fastticks(nil);
 	ilock(&timerlock);
 	while((t = timerhead) != nil && t->twhen <= now){
 		timerhead = t->tnext;
@@ -199,13 +225,13 @@ timercheck(Ureg *u)
 		ilock(&timerlock);
 		/* Requeue periodic timers (port/random seed sampling). */
 		if(mode == Tperiodic && t->tmode == Tperiodic){
-			now = fastticks(nil);
-			t->twhen += (uvlong)((t->tns * (vlong)m->cpuhz) / 1000000000LL);
+			now = (Tval)fastticks(nil);
+			t->twhen += ns2ticks(t->tns, m->cpuhz);
 			if(t->twhen <= now)
 				t->twhen = now + 1;
 			timerinsert(t);
 		}
-		now = fastticks(nil);
+		now = (Tval)fastticks(nil);
 	}
 	/*
 	 * Do not program mtimecmp here — clockintr picks
