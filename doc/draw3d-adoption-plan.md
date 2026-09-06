@@ -37,63 +37,77 @@ Two further facts about that table set the agenda:
 
 `draw3dbench(1)` (`appl/cmd/draw3dbench.b`, added with this plan) draws
 one deterministic scene through both providers, into two destinations.
-Three runs on this machine, spread ±3%:
+Under `emu-cocoa` at 640x480, `-n 120`, JIT (the default); the software
+column is interpreted Limbo, so `-c0` moves it a great deal further and
+the protocol column much less, which makes these the *conservative*
+ratios:
 
-| scene | destination | software | protocol |
-| --- | --- | --- | --- |
-| 64 large triangles | window layer | 5.57 ms/frame | **0.79 ms/frame** |
-| 64 large triangles | offscreen buffer | 5.80 ms/frame | 7.75 ms/frame |
-| 512 small triangles | window layer | 4.35 ms/frame | 8.50 ms/frame |
-| 512 small triangles | offscreen buffer | 4.55 ms/frame | 3.38 ms/frame |
+| scene | destination | software | protocol | `-c0` software | `-c0` protocol |
+| --- | --- | --- | --- | --- | --- |
+| 64 large triangles | window layer | 5.64 ms | **0.88 ms** | 68.6 ms | 7.30 ms |
+| 64 large triangles | offscreen buffer | 5.85 ms | 7.80 ms | 72.1 ms | 14.8 ms |
+| 512 small triangles | window layer | 4.52 ms | **1.52 ms** | 33.2 ms | 9.63 ms |
+| 512 small triangles | offscreen buffer | 4.66 ms | 3.46 ms | 35.1 ms | 11.9 ms |
 
-Five things follow, and each of them changes a phase below.
+Five things follow, and each of them set a phase below.
 
-**1. Metal is real here, and it wins seven to one on the scene shape the
-ports actually have.** With `INFERNO_METAL_STATS=1`, `g3_calls` is zero
-through both software cases and in the thousands through the protocol
-cases, with `soft_fallbacks=0` throughout — the geometry genuinely
-reaches the GPU rather than falling back inside devdraw. A wall-sized
-triangle is what `castlefrankenstein`, `dungen`, `stadium` and `varoom`
-draw, and for those the app's own frame cost drops from 5.6 ms to
-0.79 ms.
+**1. Metal is real here, and the protocol provider wins on both scenes
+when it can reach the GPU.** 6.4x on wall-sized triangles, 3.0x on many
+small ones, and more of both at `-c0`. With `INFERNO_METAL_STATS=1`,
+`g3_calls` is zero through the software cases and in the thousands
+through the protocol cases, with `soft_fallbacks=0` throughout, so the
+geometry genuinely reaches the GPU rather than falling back inside
+devdraw.
 
 **2. An offscreen buffer gets no GPU at all.** `metal_queue_fillpoly3d()`
 in `emu/MacOSX/win-cocoa.m` returns 0 unless the destination is `gscreen`,
 `screenimage`, or a *fully clear* layer of the screen; anything else is
-refused before a vertex is looked at. So a port that composes its frame
-into a `newimage` buffer and blits at the end — 34 of the 144 do allocate
-such a buffer — cannot be accelerated, and through the protocol provider
-it is *slower* than the software one (7.75 vs 5.80 ms), because it pays
-the wire cost and still rasterises on the CPU. Loading `draw3ddev.dis`
-without also moving the destination is a pessimisation, not an
-optimisation.
+refused before a vertex is looked at. A program that composes its frame
+into a `newimage` buffer and blits at the end cannot be accelerated, and
+through the protocol provider that costs it 7.80 ms against the software
+provider's 5.85 on the large-triangle scene — the wire cost on top of a
+CPU rasterisation. Loading `draw3ddev.dis` without also checking where
+the frame is drawn can be a pessimisation rather than an optimisation.
 
 **3. The wire is already batched; the argument for a mesh call is not
 syscalls.** `Display.writedraw` (`libinterp/draw.c:1227`) calls
 `bufimage()`, which appends to the display's buffer and flushes later —
 one message is a `memmove`, not a write. A batch entry point is still
-worth having, but for Limbo-side per-call cost (measured at about 6.6 µs
-per triangle on the protocol path with the GPU out of the picture) and
-for the ring in point 5, not for system calls.
+worth having, for Limbo-side per-call cost (the protocol path costs about
+6.8 us per triangle with the GPU out of the picture, against roughly 3 us
+with it), but not for system calls.
 
-**4. GPU pixels cannot be read back through a window layer.** After a
-protocol frame into `win.image`, `readpixels` on that layer returns
-nothing lit; the same read of the display's screen image sees the
-geometry. The readback machinery does run — `readbacks` counts up, and
-devdraw's read message calls `gpudrawreadback()` — so this is a hole in
-the layer read path, not a missing readback. It matters because several
-ports query pixels: `xcaliber`'s laser walk, `ropcollision`'s collision
-count, flood fills.
+**4. A readback after a GPU pass returns none of the geometry.** The
+software provider, drawing the 64-triangle scene into `win.image`, reads
+back 210183 lit pixels through that window layer and 226349 through the
+display's screen image; the difference, 16166, is the wm border around
+the window. The protocol provider on the same scene reads back **0**
+through the layer and **exactly 16166** through the screen — the border
+and nothing else. So layer reads are not the problem (the software
+control proves they work), and this is not a partial readback: the GPU's
+output does not come back at all. The readback machinery does run —
+`readbacks` counts up, and devdraw's read message calls
+`gpudrawreadback()` — it just produces nothing. This matters because
+several ports query pixels: `xcaliber`'s laser walk, `ropcollision`'s
+collision count, flood fills.
 
-**5. There is no back-pressure signal, only a spin.** Geometry the GPU has
-not yet presented lives in a fixed 49152-vertex ring
-(`MaxGPUTriVerts`), drained only by `present_softscreen()` on the main
-thread. `Flushnow` does *not* drain it — `metal_flush_geom()` only
-snapshots the softscreen. When a program submits faster than the
-presenter runs, `metal_tri3d_reserve()` spins in `osyield()` until it
-catches up. That, not per-triangle cost, is what the 8.50 ms figure in
-the 512-triangle row measures. There is also a ceiling of
-`MaxG3Batches = 64` distinct model/projection transforms per frame.
+**5. A reproducible one-off stall, cause unidentified.** At exactly
+`-n 60` — the old default — the 512-triangle protocol case takes 8.4 ms
+per frame instead of 1.5, and the per-frame maximum shows why: a single
+414 ms stall in one frame. It is absent at `-n 10`, `20`, `40`, `50`,
+`55` and `120` (worst frame 2-3 ms), reproducible at `-n 60` across
+runs, and decays through `-n 65`, `80` and `100`. The obvious suspect is
+the geometry ring — 49152 vertices (`MaxGPUTriVerts`), drained only by
+`present_softscreen()` on the main thread, with `Flushnow` *not* draining
+it (`metal_flush_geom()` only snapshots the softscreen) and
+`metal_tri3d_reserve()` spinning in `osyield()` until the presenter
+catches up. But saturation would predict a stall at a fixed frame count
+and worse behaviour at more frames, and `-n 120` is clean, so the ring is
+not what this measurement shows. The ring and the missing back-pressure
+signal are real properties of the code and are dealt with in Phase 5;
+this particular stall is an open question with a one-command reproducer.
+There is also a ceiling of `MaxG3Batches = 64` distinct model/projection
+transforms per frame.
 
 ## Order of work
 
@@ -111,8 +125,10 @@ primitive has a software branch behind it. The idiom only guards against
 the `.dis` file being absent, which is worth keeping for exactly that
 reason, but it is not what makes the fallback work.
 
-Do **not** do this for a port whose frame goes into an offscreen buffer
-until Phase 2 has moved it; per point 2 that would make it slower.
+Checked before proposing it: all nine draw straight into `win.image`.
+The three that call `newimage` (`3dpoly`, `shading`, `wenceslas`) use it
+for small textures and masks, not for a frame buffer, so none of the nine
+is blocked by point 2 and all nine can move together.
 
 *Evidence:* per-port ms/frame before and after, and
 `INFERNO_METAL_STATS=1` showing `g3_calls` rise from zero with
@@ -121,7 +137,10 @@ watch `g3_calls` return to zero.
 
 ### Phase 2 — draw where the GPU can see it
 
-Audit the in-scope ports for a `newimage` frame buffer and split them:
+Phase 1's nine are clear, but 34 of the 144 ports do allocate an
+offscreen frame buffer, and the eight `sprite2d` ports and the eight
+hand-rolled ones have not been checked. Audit those sixteen and split
+them:
 
 - **Double buffering only.** Draw straight into the window layer; it is
   already backed, and `wmclient` handles the flush. These move now.
@@ -133,15 +152,23 @@ Audit the in-scope ports for a `newimage` frame buffer and split them:
 *Evidence:* the port's own lit-pixel count is unchanged (the frame must
 look the same), and `g3_calls` becomes nonzero.
 
-### Phase 3 — fix layer readback
+### Phase 3 — make the GPU readback produce pixels
 
-Point 4 above is a bug with a one-line reproducer in `draw3dbench(1)`.
-Until it is fixed, any port that mixes GPU 3D with `readpixels` silently
-reads black, which is worse than being slow.
+Point 4 is a bug with a two-line reproducer in `draw3dbench(1)`, and it
+already has its own control: the software provider reads back correctly
+on the same scene through the same code, so the fault is in what the
+readback writes and not in reading a layer. Until it is fixed, any port
+that mixes GPU 3D with `readpixels` silently reads black, which is worse
+than being slow.
 
-*Evidence:* `draw3dbench`'s last line reports a nonzero count for the
-window layer. Negative control: revert the fix, confirm it returns to
-zero.
+Start by checking whether `metal_readback_geom()` is writing into
+`gscreen` while the reader is looking at `screenimage` or at the layer's
+backing store; the two are distinguished in `metal_queue_fillpoly3d()`
+and may not be the same image here.
+
+*Evidence:* `draw3dbench`'s last two lines agree between providers.
+Negative control: revert the fix, confirm the protocol row returns to
+0 / 16166.
 
 ### Phase 4 — close the z gap in the Limbo fallback
 
@@ -171,13 +198,15 @@ call, `Gr3Mesh(dc, vertex_cnt, p, tri_cnt, tri)`; the audit's §2 is about
 its absence.
 
 While in there, deal with the ring: a mesh larger than what is free
-should fail cleanly or drain, not spin, and `MaxG3Batches = 64` needs
-either raising or a documented limit.
+should fail cleanly or drain, not spin in `osyield()`, and
+`MaxG3Batches = 64` needs either raising or a documented limit. The
+stall in point 5 is the thing to chase here, since this is the code it
+would live in.
 
 *Evidence:* `draw3dbench` grows a mesh case; the protocol figure for 512
-small triangles must fall, and the spin in point 5 must stop showing up
-as a stall. Measure with the GPU out of the picture too (offscreen
-destination), so the Limbo-side saving is separable from the Metal one.
+small triangles must fall. Measure with the GPU out of the picture too
+(offscreen destination), so the Limbo-side saving is separable from the
+Metal one, and re-run the `-n` sweep to see whether the stall is gone.
 
 ### Phase 6 — the display-list sprite type
 
@@ -245,6 +274,11 @@ pre-migration render.
   thread and `Flushnow` does not force it, so a tight render loop
   measures submission, not display. Use `draw3dbench -p` when you want
   the per-30-frame `INFERNO_METAL_STATS` line to appear at all.
+- **Sweep the frame count before quoting a per-frame figure.** A single
+  frame count can sit on an artifact: `-n 60` reports 8.4 ms/frame where
+  `-n 55` and `-n 120` report 1.5, and only the per-frame maximum shows
+  that the difference is one 414 ms stall rather than a slower renderer.
+  `draw3dbench` prints `worst=` for exactly this reason.
 - **A demo that starts and survives proves startup.** Same rule as
   `doc/temple-plan.md`: no input is delivered, so the interesting code
   never runs. Assert on numbers.

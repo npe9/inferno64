@@ -48,7 +48,7 @@ Sleep 16ms per frame, so that presentation is not the limit and
 prints its per-30-frame counters during the run
 .TP
 .BI -n " frames"
-Frames per case (default 60)
+Frames per case (default 120)
 .PD
 .SH EXAMPLE
 Confirm that geometry really reaches the GPU rather than falling back:
@@ -68,25 +68,34 @@ stays at zero.
 .IR polyfill (2),
 .IR draw (3)
 .SH BUGS
-Pixels drawn by the Metal geometry path cannot be read back through a
-window layer: after a protocol frame into
-.BR win.image ,
-.I readpixels
-on that layer returns nothing, while the same read of the display's own
-screen image sees the geometry.
-The readback itself runs \-
-.B readbacks
-counts up \- so this is a gap in the layer read path, not a missing
+A readback after a Metal geometry pass returns none of the geometry.
+The software provider reads the 64-triangle scene back as 210183 lit
+pixels through the window layer and 226349 through the display's screen
+image, the difference being the window's border; the protocol provider
+reads back 0 through the layer and exactly that border, 16166, through
+the screen.
+So reading a layer is not the problem, and this is not a partial
 readback.
+The readback runs \-
+.B readbacks
+counts up \- and produces nothing.
 .PP
-The geometry the GPU has not yet presented lives in a fixed ring of
-49152 vertices, drained only by the presenter on the main thread.
+At exactly
+.B -n 60
+the 512-triangle protocol case reports 8.4ms a frame instead of 1.5,
+because of a single 414ms stall in one frame.
+It is absent at 10, 20, 40, 50, 55 and 120 frames, reproducible at 60,
+and decays through 65, 80 and 100.
+The cause is not known.
+The obvious suspect is the fixed 49152-vertex ring that holds geometry
+the presenter has not yet drawn \-
 .I Flushnow
-does not drain it.
-A program submitting more than about 16000 triangles between presents
-blocks in the submission call until the presenter catches up, so the
-figure for many small triangles measures presentation throughput rather
-than the cost of a triangle.
+does not drain it, and the submission call spins until the main thread
+catches up \- but saturation would get worse with more frames, not
+better, so that is not what this is.
+Sweep
+.B -n
+before quoting any per-frame figure.
 .PP
 Only
 .I fillpoly3

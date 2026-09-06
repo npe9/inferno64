@@ -18,10 +18,10 @@ implement Draw3dbench;
 #     opposite directions, so a scene of many small triangles and one of
 #     few large ones are separate measurements.
 #
-# lit= counts pixels that are not black.  Timing alone cannot tell a fast
-# renderer from one that silently drew nothing, and the GPU path really
-# does report zero here when read through a window layer - see BUGS in
-# draw3dbench(1).
+# lit= counts pixels that are not black: timing alone cannot tell a fast
+# renderer from one that silently drew nothing.  worst= is the slowest
+# single frame, which is what distinguishes a uniformly slower renderer
+# from one stall - see BUGS in draw3dbench(1) for why that matters here.
 
 include "sys.m";
 	sys: Sys;
@@ -52,7 +52,7 @@ Draw3dbench: module
 };
 
 win: ref Window;
-nframe := 60;
+nframe := 120;	# 60 lands on the stall in draw3dbench(1)'s BUGS
 paced := 0;
 verbose := 0;
 
@@ -151,8 +151,11 @@ bench(what: string, path: string, dst: ref Image, col: ref Image,
 	d3->setcolour(c, col);
 	d3->viewport(c, dst.r.min.x, dst.r.min.y, dst.r.max.x, dst.r.max.y);
 	normal := Vector(0.0, 0.0, 1.0);
+	worst := 0;
+	worstf := -1;
 	t0 := sys->millisec();
 	for(f := 0; f < nframe; f++){
+		fs := sys->millisec();
 		d3->mode(Draw3d->PROJ);
 		d3->identity();
 		d3->frustum(0.1, 0.1, 100.0);
@@ -164,18 +167,34 @@ bench(what: string, path: string, dst: ref Image, col: ref Image,
 		for(i := 0; i < len tri; i++)
 			d3->fillpoly3(c, tri[i], normal, 0.5 + real (i%8)/16.0);
 		dst.flush(Draw->Flushnow);
+		fe := sys->millisec();
+		if(fe - fs > worst){
+			worst = fe - fs;
+			worstf = f;
+		}
 		if(paced)
 			sys->sleep(16);
 	}
 	t1 := sys->millisec();
-	sys->print("draw3dbench: %s %d frames of %d tris: %d ms (%d us/frame) lit=%d\n",
-		what, nframe, len tri, t1-t0, ((t1-t0)*1000)/nframe, litpixels(dst));
+	sys->print("draw3dbench: %s %d frames of %d tris: %d ms (%d us/frame) worst=%d ms at frame %d lit=%d\n",
+		what, nframe, len tri, t1-t0, ((t1-t0)*1000)/nframe, worst, worstf, litpixels(dst));
 }
 
-# Where the pixels a GPU pass produced can actually be read back from.
+# Where the pixels a pass produced can actually be read back from, for
+# both providers.  The software provider is the control: if it reports
+# the same count through the window layer and through the screen image,
+# then a difference in the protocol column is about GPU output and not
+# about layers.
 readback(d: ref Display, col: ref Image, tri: array of array of Vector)
 {
-	d3 := load Draw3d "/dis/math/draw3ddev.dis";
+	rb("software", Draw3d->PATH, d, col, tri);
+	rb("protocol", "/dis/math/draw3ddev.dis", d, col, tri);
+}
+
+rb(what: string, path: string, d: ref Display, col: ref Image,
+	tri: array of array of Vector)
+{
+	d3 := load Draw3d path;
 	if(d3 == nil)
 		return;
 	d3->init();
@@ -194,8 +213,10 @@ readback(d: ref Display, col: ref Image, tri: array of array of Vector)
 	d3->clearz(c);
 	for(i := 0; i < len tri; i++)
 		d3->fillpoly3(c, tri[i], Vector(0.0, 0.0, 1.0), 0.8);
-	sys->print("draw3dbench: protocol readback: window layer lit=%d, screen image lit=%d\n",
-		litpixels(win.image), litpixels(d.image));
+	lay := litpixels(win.image);
+	scr := litpixels(d.image);
+	sys->print("draw3dbench: %s readback: window layer lit=%d, screen image lit=%d\n",
+		what, lay, scr);
 }
 
 # Pixels that are not black, counted through an RGB24 scratch so the
