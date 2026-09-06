@@ -244,23 +244,37 @@ The
 .CW "isched.idle / vmq / idlevmq"
 handshake in
 .CW os/inferno/port/dis.c
-looks like a token \- one interpreter at a time \- and is not one.  A
-counter around
-.CW vmachine() 's
-.CW xec()
-call printed
+looks like a token \- one interpreter at a time \- and is not one.  A counter
+between
+.CW acquire()
+and
+.CW release() ,
+on a four processor boot, printed
 .IP
 .nf
-nvm: 10 hold the vm
+nvm: 3 hold the vm
 .fi
 .PP
-on a four processor boot: ten kernel processes interpreting at once
-against one register file.  That is where
-.CW "movp: bad sv" ,
-.CW "movp: bad dv-freed"
-and the
-.CW decref
-underflows came from.
+\- two and three across three runs.  Two processes holding what has to
+be exclusive is already fatal, because what they share is the register
+file.
+.PP
+A retraction belongs here.  The first version of this measurement
+counted processes nested inside
+.CW vmachine() 's
+.CW xec()
+call rather than processes holding the VM, and reported
+.CW 10 .
+That counter was wrong for the purpose: a process that calls
+.CW release()
+inside a Dis system call and then blocks on I/O is still nested in the
+.CW xec
+C frame, so the count included processes that had correctly given the
+VM up.  The
+.CW 10
+was quoted in the commit that made this change and in the first version
+of this document; the number that supports the claim is two to three,
+measured with the lock compiled out and the correct counter left in.
 .PP
 Replaced with one
 .CW QLock .
@@ -338,9 +352,7 @@ at
 .CW 2
 or
 .CW 4 ,
-where it reached
-.CW 10
-before.
+where it reached two and three before.
 .NH 1
 Why the interpreter can never be parallel here
 .PP
@@ -418,28 +430,44 @@ never above
 So the remaining failures are not that race.  The control experiment
 settles what they are.
 .PP
-Built at
-.CW f2cfed69 ,
-before any of this work, and booted at
+Twenty boots of each of the two kernels, at
 .CW -smp
-.CW 1 :
-one general protection violation in three runs.  The committed baseline
-at
-.CW -smp
-.CW 1 :
-four failures in five runs \- general protection violation, page fault,
-invalid opcode.  With the VM lock, at
-.CW -smp
-.CW 1 :
-two failures in four \-
-.CW "movp: bad dv" ,
-.CW alloc:D2B:free .
+.CW 1 ,
+same command, same host:
+.IP
+.nf
+                    panicked   survived
+before the VM lock    16/20       4/20
+with the VM lock      15/20       5/20
+.fi
 .PP
-One processor.  No migration, no shared
+The lock does not move it.  One processor: no migration, no shared
 .CW Mach ,
-no second interpreter.  This tree has a memory-corruption bug that has
-nothing to do with more than one processor, and it fires at roughly
-half of all boots.
+no second interpreter, and
+.CW nvm
+never above
+.CW 1 .
+This tree has a memory-corruption bug that has nothing to do with more
+than one processor, and it fires on about four boots in five.
+.PP
+The kinds of failure moved even though the rate did not, which is worth
+recording but not over-reading.  Before: seven general protection
+violations, three page faults, three invalid opcodes, and one each of
+.CW smalloc ,
+.CW incref
+and
+.CW alloc:D2B .
+After: six page faults, three
+.CW movp
+captures, two
+.CW alloc:D2B ,
+and one each of
+.CW unload ,
+.CW smalloc ,
+.CW incref
+and invalid opcode.  A different draw from the same distribution is the
+simplest reading of that at this sample size, and this document has
+already had to retract one over-read number.
 .PP
 It is not new and it is not unknown.
 .CW doc/inferno-ports.ms
