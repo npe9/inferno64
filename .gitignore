@@ -1,5 +1,12 @@
 # object files, libraries, etc
 *.[8qkv5967o]
+# ...but the font subfonts are named for their code page, not for a
+# compiler: fonts/lucm/latin1.9, fonts/pelm/latin1.8 and friends are
+# source and were being ignored by the glob above purely because 9, 8
+# and 5 are also objtype letters.  24 of them are tracked, so the ignore
+# had no effect; it would have bitten whoever next removed and re-added
+# one.
+!/fonts/**
 *.obj
 [8qkv965o].out
 [8qkv965o].emu
