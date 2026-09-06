@@ -256,8 +256,16 @@ gap it names are the ones to look for next time.
 
 **Declared deviations** — in the file headers already, honest, still not 1:1.
 
-Closable, and being closed:
+Closable, and closed:
 
+- `timeclock`'s "end of file does not end a description". **Done, and not
+  in the port.** `readdesc()` stopped when the read returned <= 0, which
+  was right; emu never returned 0. Host stdin reaching EOF killed the
+  keyboard slave without telling the console queue, so any reader of
+  `/dev/cons` blocked for ever — `temple/timeclock`, every `p9/cmd` tool's
+  bare-stdin fallback, a piped `emu` shell. Fixed in
+  `emu/port/devcons.c` (`kbdhangup`), `b6d495fd`, with a negative control.
+  The other half of that entry — binary compressed `CDate` records — stays.
 - `xcaliber`'s laser. **Done.** The old note said the hit test was geometric
   rather than the original's `GrPeek` probe, and that was wrong about the
   original: `X-Caliber.HC` picks what the beam *damages* geometrically too,
@@ -311,8 +319,6 @@ Not closable, and not worth attempting:
   `scripts/tos_expand.py` only decompresses, and it is Python, not in-tree.
 - `god`'s GodDoodle is a separate program.
 - `psalmody`'s fixed GodSongStr settings and missing Help.DD viewer.
-- `timeclock`'s other half — end of file does not end a description — is a
-  behaviour difference rather than a format one, and is worth a look.
 
 **Platform-level and recurring**, declared in about twenty headers and
 unlikely to change: the `MenuPush` pull-down bars, `WinMax` fullscreen
