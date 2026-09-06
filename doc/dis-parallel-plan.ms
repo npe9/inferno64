@@ -460,9 +460,11 @@ become 14.
 And the fourteen are real.  Six are
 .CW acquire
 at
-.CW emu/port/dis.c :1024 and six are
+line 1024 of
+.CW emu/port/dis.c
+and six are
 .CW vmachine
-at :1357 and :1363, and TSan names the object: "Location is global
+at lines 1357 and 1363, and TSan names the object: "Location is global
 .CW isched ".
 That is
 .CW isched.vmq
