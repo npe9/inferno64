@@ -42,6 +42,42 @@ verbose = '--verbose' in sys.argv or '-v' in sys.argv
 # to exercise resolution against a bond nothing in this run created.
 bonded = '--bonded' in sys.argv
 
+# --stall-connect: the first LE Create Connection is never answered, so
+# the guest's own connection timeout is what ends it.  The cancel that
+# follows succeeds, and the Connection Complete the specification
+# promises after a successful cancel arrives with Unknown Connection
+# Identifier (0x02).  The second attempt behaves normally.
+stall_connect = '--stall-connect' in sys.argv
+
+# --late-connect: the same, except the connection completes just as the
+# guest gives up.  The cancel is refused with Command Disallowed (0x0c)
+# and the Connection Complete arrives with a live handle -- the case
+# where giving up and tearing down would throw away the connection that
+# was asked for, and where dropping it on the floor leaks it.
+late_connect = '--late-connect' in sys.argv
+
+# --instant-connect: Command Status and Connection Complete back to
+# back with no pause between them, so the completion can reach the
+# guest before the process that asked for it has got as far as waiting.
+instant_connect = '--instant-connect' in sys.argv
+
+# --early-connect: the Connection Complete before the Command Status.
+# No controller does this and the specification does not allow it; it
+# is fault injection, and it is here because it is the only way from
+# outside to put the completion in front of the guest while the process
+# that will wait for it is still waiting for something else.  A stack
+# that loses the answer to that loses it to an ordinary race too, just
+# more rarely.
+early_connect = '--early-connect' in sys.argv
+
+# --orphan-connect: a controller that owes an event and does not send
+# it when it should.  The first attempt is unanswered, the cancel is
+# refused as if the connection had won the race -- and then no
+# completion arrives until long after the guest has given up waiting
+# for one, so the refusal it finally sends belongs to nothing.  The
+# next attempt must not be handed it.
+orphan_connect = '--orphan-connect' in sys.argv
+
 def log(*a):
     if verbose:
         print('bthci:', *a, file=sys.stderr, flush=True)
@@ -216,6 +252,8 @@ class Model:
         self.rotate = None
         self.rotations = 0
         self.rounds = 0
+        self.stalled = None       # an attempt deliberately left unanswered
+        self.stalls = 0
         self.trace = []
 
     # ------------------------------------------------ wire
@@ -271,12 +309,46 @@ class Model:
             if self.scanning:
                 threading.Thread(target=self.advertise, daemon=True).start()
         elif op == 0x200d:                     # LE Create Connection
-            self.cmd_status(op)
             atype = params[5]
             addr = params[6:12]
-            threading.Thread(target=self.connect, args=(atype, addr), daemon=True).start()
+            if early_connect:
+                self.complete(atype, addr)
+                self.cmd_status(op)
+                return
+            self.cmd_status(op)
+            if instant_connect:
+                # in the same handler, so the two land back to back
+                # rather than a thread's scheduling apart
+                self.complete(atype, addr)
+            else:
+                threading.Thread(target=self.connect, args=(atype, addr),
+                                 daemon=True).start()
         elif op == 0x200e:                     # LE Create Connection Cancel
-            self.cmd_complete(op, bytes([0]))
+            if self.stalled is None:
+                self.cmd_complete(op, bytes([0]))
+            elif orphan_connect:
+                atype, addr = self.stalled
+                self.stalled = None
+                self.cmd_complete(op, bytes([0x0c]))   # command disallowed
+                log('owing a completion, and not sending it yet')
+                threading.Thread(target=self.orphan, args=(atype, addr),
+                                 daemon=True).start()
+            elif late_connect:
+                # the connection won the race: the cancel is refused and
+                # the completion is a real one
+                atype, addr = self.stalled
+                self.stalled = None
+                self.cmd_complete(op, bytes([0x0c]))   # command disallowed
+                log('the cancel lost the race; the connection is up')
+                self.complete(atype, addr)
+            else:
+                atype, addr = self.stalled
+                self.stalled = None
+                self.cmd_complete(op, bytes([0]))
+                log('the attempt is cancelled')
+                self.event(0x3e, bytes([0x01, 0x02]) + struct.pack('<H', 0)
+                           + bytes([0x01, atype]) + addr
+                           + struct.pack('<HHH', 0, 0, 0) + bytes([0]))
         elif op == 0x0406:                     # Disconnect
             self.cmd_status(op)
             h = struct.unpack('<H', params[0:2])[0]
@@ -323,14 +395,31 @@ class Model:
 
     def connect(self, atype, addr):
       try:
-        time.sleep(0.1)
+        if (stall_connect or late_connect or orphan_connect) and self.stalls == 0:
+            self.stalls += 1
+            self.stalled = (atype, addr)
+            log('leaving the first connection unanswered')
+            return
+        if not instant_connect:
+            time.sleep(0.1)
+        self.complete(atype, addr)
+      except Exception as ex:
+        print('bthci: connect thread: %r' % (ex,), flush=True)
+
+    def orphan(self, atype, addr):
+        # long after the guest has stopped waiting for it
+        time.sleep(6)
+        log('sending the completion nobody is waiting for')
+        self.event(0x3e, bytes([0x01, 0x02]) + struct.pack('<H', 0)
+                   + bytes([0x01, atype]) + addr
+                   + struct.pack('<HHH', 0, 0, 0) + bytes([0]))
+
+    def complete(self, atype, addr):
         self.handle = 0x0040
         self.peer = (atype, addr)
         self.event(0x3e, bytes([0x01, 0x00]) + struct.pack('<H', self.handle)
                    + bytes([0x01, atype]) + addr
                    + struct.pack('<HHH', 0x0028, 0, 0x002a) + bytes([0]))
-      except Exception as ex:
-        print('bthci: connect thread: %r' % (ex,), flush=True)
 
     def encrypt_up(self):
         time.sleep(0.05)

@@ -191,8 +191,12 @@ init(nil: ref Draw->Context, argv: list of string)
 	show(mnt + "/0/scan");
 	show(mnt + "/0/state");
 
-	if(mode == "rejoin"){
+	case mode {
+	"rejoin" =>
 		rejoin();
+		return;
+	"stall" or "late" or "early" or "orphan" =>
+		conntest(mode);
 		return;
 	}
 
@@ -349,6 +353,105 @@ init(nil: ref Draw->Context, argv: list of string)
 	if(ok)
 		sys->print("BT: resolved every rotation to %s\n", hd remotes);
 
+	writefile(mnt + "/0/ctl", "scan off");
+	sys->print("BT: done\n");
+}
+
+#
+# What happens to a connection attempt the controller does not answer
+# in time, and to the completion that turns up afterwards.  Three
+# shapes, one per mode, all of them driven by the controller model
+# holding something back rather than by anything here pretending:
+#
+#	stall	the attempt is never answered, the cancel succeeds, and
+#		the completion the specification promises after a
+#		successful cancel says Unknown Connection Identifier.
+#		The connect must fail, the device must not claim to be
+#		connected, and -- the point -- the *next* connect must
+#		work, which it will not if the refusal was left lying in
+#		the channel for it to pick up.
+#	late	the connection comes up just as the attempt gives up, so
+#		the cancel is refused and the completion is real.  The
+#		connect must succeed: it is the connection that was
+#		asked for, only late, and throwing it away would leave
+#		it up on the controller with nothing owning it.
+#	early	the completion arrives before the command status, which
+#		is a controller doing something it may not do and is the
+#		only way from outside to put the answer in front of the
+#		waiter before it waits.  The connect must work.
+#	orphan	the controller owes a completion, does not send it while
+#		anyone is waiting, and sends a refusal long afterwards.
+#		The next connect must not be handed it.  Same assertions
+#		as stall: the first fails, the second works.
+#
+conntest(mode: string)
+{
+	remotes := lsdir(mnt + "/0/remote");
+	if(remotes == nil){
+		sys->print("BT: FAILED: nothing was advertising\n");
+		return;
+	}
+	dev := mnt + "/0/remote/" + hd remotes;
+	sys->print("BT: %s connect %s\n", mode, hd remotes);
+	e := writefile(dev + "/ctl", "connect");
+	st := trim(readfile(dev + "/state"));
+	ok := 1;
+	case mode {
+	"stall" or "orphan" =>
+		if(mode == "orphan"){
+			#
+			# the refusal is deliberately sent late; wait
+			# until it has been, so the next connect is made
+			# with it already sitting in the channel rather
+			# than racing it.
+			#
+			sys->print("BT: waiting for the late refusal\n");
+			sys->sleep(8000);
+		}
+		if(e == nil){
+			sys->print("BT: FAILED: an unanswered attempt reported success\n");
+			ok = 0;
+		} else
+			sys->print("BT: connect said: %s\n", e);
+		if(len st >= 9 && st[0:9] == "connected"){
+			sys->print("BT: FAILED: state says %s after a failed connect\n", st);
+			ok = 0;
+		}
+		sys->print("BT: connect again\n");
+		if((e = writefile(dev + "/ctl", "connect")) != nil){
+			sys->print("BT: FAILED: the next connect failed too: %s\n", e);
+			ok = 0;
+		} else {
+			st = trim(readfile(dev + "/state"));
+			if(!(len st >= 9 && st[0:9] == "connected")){
+				sys->print("BT: FAILED: state says %s\n", st);
+				ok = 0;
+			} else
+				sys->print("BT: connected after the cancelled attempt: %s\n", st);
+		}
+	* =>
+		if(e != nil){
+			sys->print("BT: FAILED: connect: %s\n", e);
+			ok = 0;
+		} else if(!(len st >= 9 && st[0:9] == "connected")){
+			sys->print("BT: FAILED: state says %s\n", st);
+			ok = 0;
+		} else
+			sys->print("BT: connected: %s\n", st);
+	}
+	if(ok){
+		#
+		# and the link works, not merely exists: a characteristic
+		# read is a round trip through L2CAP and ATT.
+		#
+		v := trim(readfile(dev + "/gatt/1800/2a00"));
+		if(v != "inferno-bench"){
+			sys->print("BT: FAILED: the link does not carry ATT: %s\n", v);
+			ok = 0;
+		} else
+			sys->print("BT: the link carries ATT: name = %s\n", v);
+	}
+	writefile(dev + "/ctl", "disconnect");
 	writefile(mnt + "/0/ctl", "scan off");
 	sys->print("BT: done\n");
 }

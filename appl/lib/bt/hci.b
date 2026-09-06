@@ -26,6 +26,7 @@ include "bt.m";
 
 Cmdtimeout:	con 10000;	# ms a controller has to answer a command
 Conntimeout:	con 20000;	# ms to establish an LE connection
+Cancelwait:	con 3000;	# ms for the completion a cancel is promised
 
 # opcode groups
 Oglink:		con 16r01;
@@ -96,7 +97,15 @@ init(b: Bt, tr: Bttransport): string
 	# queue for a while, not merely because the reader of it
 	# happened to be busy when the last one arrived
 	advc = chan[16] of ref Adv;
-	connc = chan of (ref Conn, string);
+	#
+	# Buffered by one.  The event process offers the completion with
+	# a default arm and drops it if nobody is waiting, and there is a
+	# window between the Command Status coming back and the caller
+	# reaching its alt where nobody is.  Losing it there costs the
+	# whole connection timeout and leaves a live link on the
+	# controller that nothing here owns.
+	#
+	connc = chan[1] of (ref Conn, string);
 	statelock = chan[1] of int;
 	statelock <-= 1;
 	aclsize = 27;
@@ -313,6 +322,21 @@ leconnect(atype: int, addr: array of byte): (ref Conn, string)
 
 doleconnect(p: array of byte): (ref Conn, string)
 {
+	#
+	# Load bearing, not tidiness.  Nothing filters which completion
+	# a waiter accepts -- with connlock held there is only one
+	# attempt, so nothing needs to -- which means an answer left in
+	# the channel by an attempt that gave up would be handed to this
+	# one as its own.  The wait after a cancel below is what should
+	# stop one ever being left, and this is what stops a controller
+	# that does not answer even that from poisoning every connection
+	# afterwards.
+	#
+	alt {
+	<-connc =>	;
+	* =>		;
+	}
+
 	(st, nil, e) := cmd(bt->opcode(Ogle, 16r000d), p);
 	if(e != nil)
 		return (nil, e);
@@ -335,8 +359,40 @@ doleconnect(p: array of byte): (ref Conn, string)
 			return (nil, err);
 		return (c, nil);
 	<-tick =>
-		cmd(bt->opcode(Ogle, 16r000e), nil);	# LE Create Connection Cancel
-		return (nil, "connection timed out");
+		return cancelled();
+	}
+}
+
+#
+# The attempt has run out of time.  Cancelling it does not make the
+# completion go away: the specification says a successful cancel is
+# followed by an LE Connection Complete carrying Unknown Connection
+# Identifier, and that a cancel which arrives after the connection is
+# up is refused with Command Disallowed and the real completion stands.
+# So there is always one more event to take, and taking it is the
+# difference between a tidy failure and a connection left up on the
+# controller that nothing here knows about.
+#
+# A connection that arrives this way is returned rather than torn down.
+# It is the connection the caller asked for; it was only late.
+#
+cancelled(): (ref Conn, string)
+{
+	cmd(bt->opcode(Ogle, 16r000e), nil);	# LE Create Connection Cancel
+	tick := chan[1] of int;
+	spawn timer(Cancelwait, tick);
+	alt {
+	(c, err) := <-connc =>
+		if(err != nil)
+			return (nil, "connection timed out");
+		return (c, nil);
+	<-tick =>
+		#
+		# a controller that owes an event and does not send it.
+		# The next attempt drains the channel before it starts,
+		# so a late one cannot be mistaken for that attempt's.
+		#
+		return (nil, "connection timed out, and the cancel was not answered either");
 	}
 }
 

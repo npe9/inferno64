@@ -19351,6 +19351,96 @@ assertions \(em which is precisely the behaviour this work removes.  Removing th
 already listed under its identity failed the rejoin phase in the three
 ways above.  Restored, both phases pass five times running.
 .NH 2
+The connection that arrives when nobody is waiting
+.PP
+Every HCI command goes through
+.CW cmdlock ,
+so one is outstanding at a time and each caller gets its own reply.
+.CW leconnect
+is the one other request whose answer comes back as an event rather
+than as a reply, and it had no such lock: two callers both waited on
+.CW connc
+and either could take the other's answer.  It has one now.
+.PP
+Reading the same function turned up three more, none of which the lock
+touches, all of them about a completion arriving when the caller is
+not at its
+.CW alt .
+The event process offers it with a default arm and drops it if nobody
+is waiting.
+.IP \(bu
+There is a window between the Command Status coming back and the
+caller reaching the
+.CW alt ,
+and a completion that lands in it was thrown away \(em costing the
+whole twenty second connection timeout and leaving a link up on the
+controller that nothing here owned.
+.CW connc
+is buffered by one.
+.IP \(bu
+Cancelling an attempt does not make its completion go away.  The
+specification says a successful cancel is followed by an LE Connection
+Complete carrying Unknown Connection Identifier, and that a cancel
+arriving after the connection is up is refused with Command Disallowed
+while the real completion stands.  So there is always one more event
+to take.  It is taken now, and a connection that turns out to have
+come up is returned rather than dropped: it is the connection that was
+asked for, only late.
+.IP \(bu
+A controller that owes an event and sends it long after anyone stopped
+waiting would leave it in the channel for the next attempt to take as
+its own \(em nothing filters which completion a waiter accepts,
+deliberately, since matching addresses would fail against a controller
+that resolves privacy itself and reports the identity address.  Each
+attempt drains the channel before it starts.
+.NH 2
+Four ways for a controller to answer late, and a test for each
+.PP
+None of this was reachable from the bench as it stood:
+.CW bthci.py
+answered every connection after a fixed hundred milliseconds, so the
+connection timeout never fired, the cancel path never ran, and the
+window between asking and waiting was never hit.  It has four more
+modes now, and each is a phase of
+.CW scripts/btbench.sh :
+.IP \(bu
+.CW --stall-connect
+never answers the first attempt, so the guest's own timeout ends it,
+and answers the cancel with the promised Unknown Connection
+Identifier.  The connect must fail, the device must not claim to be
+connected, and the next connect must work.
+.IP \(bu
+.CW --late-connect
+lets the connection come up as the attempt gives up: the cancel is
+refused and the completion is real.  The connect must succeed.
+.IP \(bu
+.CW --early-connect
+sends the completion before the Command Status.  No controller may do
+that; it is fault injection, and it is the only way from outside to
+put the answer in front of the waiter before it waits.
+.IP \(bu
+.CW --orphan-connect
+owes a completion, refuses the cancel, and sends a refusal six seconds
+after anyone stopped waiting for it.  The next connect must not be
+handed it.
+.PP
+Each phase reads a characteristic afterwards, so what is asserted is a
+link that carries ATT rather than a state file that says connected.
+.PP
+Each of the three fixes has the phase that fails without it, checked by
+taking it out again: unbuffered, the
+.CW early
+phase reports a connection timed out where the link is up;
+without the wait after the cancel, the
+.CW late
+phase does the same; without the drain, the
+.CW orphan
+phase's second connect fails with the first attempt's
+.CW "unknown connection identifier" .
+The lock itself has no such phase, and cannot have one against a
+controller model with a single connection; it is a fix found by
+reading, and this says so.
+.NH 2
 What is not there
 .PP
 Bluetooth Classic is not implemented at all: no inquiry, no SDP, no

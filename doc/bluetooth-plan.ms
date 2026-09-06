@@ -130,8 +130,14 @@ and the 0 is written into it.  A second radio has nowhere to go.
 takes a lock now, as the command path always has, so two callers
 cannot take each other's answer off the one channel the completion
 arrives on.  A controller will only have one LE Create Connection
-outstanding anyway.  What the lock does not cover is a completion that
-outlives the attempt that asked for it; that is a separate item below.
+outstanding anyway.  A completion that outlives the attempt that
+asked for it is handled too: the channel it arrives on is buffered, so
+one cannot be lost in the window between asking and waiting; a
+cancelled attempt waits for the completion the specification promises
+will follow, and returns the connection if it turns out to be a real
+one that was merely late; and an attempt drains the channel before it
+starts, so a controller that owes an event and sends it long
+afterwards cannot poison the next connection.
 .IP \(bu
 SCO packets are framed by the transport and then dropped: the reader
 has no case for them.  Nothing needs them until audio does, and audio

@@ -12,6 +12,18 @@
 #	rejoin	the same bond met again, read from that key file, with
 #		nothing pairing in the session and the device rotating
 #		from the start
+#	stall	a connection attempt the controller never answers, and
+#		the Unknown Connection Identifier that follows the
+#		cancel: the connect must fail and the next one must work
+#	late	the connection completing just as the attempt gives up,
+#		so the cancel is refused and the completion is real: the
+#		connect must succeed rather than lose the link
+#	early	the completion in front of the command status, which is
+#		fault injection rather than anything a controller may
+#		do, and is how the window between asking and waiting is
+#		reached from outside
+#	orphan	a completion owed and sent long after anyone was waiting
+#		for it: the attempt after it must not be handed it
 #
 # emu does not exit when btbench returns, because btfs is still serving
 # in a process it spawned.  So each phase runs emu in the background and
@@ -85,4 +97,8 @@ run pair "" full
 #
 chmod 666 "$ROOT/mnt/keys/btkeys"
 run rejoin --bonded rejoin
+run stall --stall-connect stall
+run late --late-connect late
+run early --early-connect early
+run orphan --orphan-connect orphan
 echo "BENCH PASS"
