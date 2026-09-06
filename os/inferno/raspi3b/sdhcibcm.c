@@ -348,15 +348,78 @@ sdhcicardinit(Ctlr *c)
 }
 
 /*
- * SDIO, for Phase 6's BCM43430.  CMD52 (IO_RW_DIRECT) moves one byte to
+ * SDIO bring-up.
+ *
+ * A Pi keeps the SD card on SDHOST, which owns GPIO 48-53 in alt0, and
+ * gives this controller the Wi-Fi chip on its own pins, GPIO 34-39 in
+ * alt3.  So this path must not go near the card pins: taking them
+ * would steal the card from the other controller, which is the whole
+ * reason it is a separate entry point from sdhcicardinit() rather than
+ * a flag on it.  Both share sdhcictlrinit(), which brings up the
+ * controller and knows nothing about what is on the far end of it.
+ *
+ * The sequence is the SDIO one, not the memory-card one: no CMD8, no
+ * ACMD41, no CSD.  An I/O-only function answers none of those.
+ */
+int
+sdioinit(void)
+{
+	Ctlr *c = &sdhcictlr;
+	u32 *r;
+	u32 ocr;
+	int i;
+
+	if(c->r == nil)
+		c->r = (u32*)SDHCI;
+	r = c->r;
+
+	for(i = 34; i <= 39; i++)
+		gpiofsel(i, Alt3);
+
+	if(sdhcictlrinit(c) < 0)
+		return -1;
+	if(sdhcicmd(c, 0, 0, Respnone) < 0)		/* GO_IDLE */
+		return -1;
+
+	/*
+	 * CMD5 with a zero argument asks what the card is; the R4 response
+	 * carries the number of I/O functions in bits 30:28 and the
+	 * voltage window it supports in bits 23:0.  Repeating CMD5 with
+	 * that window set waits for bit 31, the ready bit.  R4 has neither
+	 * a CRC nor a command index, so neither is checked.
+	 */
+	if(sdhcicmd(c, 5, 0, Resp48) < 0)
+		return -1;
+	ocr = r[Resp0];
+	if(((ocr >> 28) & 7) == 0)
+		return -1;				/* no I/O function here */
+	for(i = 0; i < 1000; i++){
+		if(sdhcicmd(c, 5, ocr & 0x00ffffff, Resp48) < 0)
+			return -1;
+		ocr = r[Resp0];
+		if(ocr & 0x80000000)
+			break;
+	}
+	if((ocr & 0x80000000) == 0)
+		return -1;
+
+	if(sdhcicmd(c, 3, 0, Resp48|Cmdcrcchk|Cmdixchk) < 0)	/* RELATIVE_ADDR */
+		return -2;
+	c->rca = r[Resp0] >> 16;
+	if(sdhcicmd(c, 7, c->rca<<16, Resp48busy|Cmdcrcchk|Cmdixchk) < 0)
+		return -3;				/* SELECT */
+	return (ocr >> 28) & 7;
+}
+
+/*
+ * CMD52 (IO_RW_DIRECT) moves one byte to
  * or from a function's register space; CMD53 (IO_RW_EXTENDED) moves a
  * run of bytes or blocks.  Both are the transport ether4330 needs.
  *
- * UNVERIFIED.  An SD memory card answers neither command, and QEMU
- * models no SDIO device, so nothing in this tree has ever exercised
- * these two functions.  They are written from the SDIO Simplified
- * Specification and are here so Phase 6 has a transport to build on;
- * do not read a passing SD-card test as covering them.
+ * Written from the SDIO Simplified Specification.  An SD memory card
+ * answers neither command, so a passing SD-card test says nothing
+ * about them; they are exercised instead against the SDIO function
+ * model in tools/qemu-patches, which is what sdiocheck() drives.
  */
 int
 sdiocmd52(int fn, int addr, int write, int val)
@@ -558,3 +621,80 @@ SDifc sdhcibcmifc = {
 	nil,				/* rtopctl */
 	nil,				/* wtopctl */
 };
+
+/*
+ * Drive the SDIO transport end to end: bring a function up, read the
+ * card common control registers with CMD52, write and read a register
+ * back, then move a buffer both ways with CMD53 and check it survived.
+ *
+ * Not run by default.  Bringing SDIO up resets this controller and
+ * issues CMD0/CMD5, which an SD memory card sitting on it would not
+ * enjoy; on a Pi the card is on SDHOST and there is no conflict, but
+ * that is a property of the board's wiring rather than of this file.
+ * Build with -DSDIOTEST.
+ */
+#ifdef SDIOTEST
+void
+sdiocheck(void)
+{
+	uchar buf[64], back[64];
+	int nfn, rev, i, v;
+
+	v = 0;
+
+	nfn = sdioinit();
+	if(nfn < 0){
+		print("SDIO-NONE bring-up stopped at %s\n",
+			nfn == -2? "CMD3 (relative address)":
+			nfn == -3? "CMD7 (select)":
+			"CMD0/CMD5 (no I/O function answered)");
+		return;
+	}
+	print("sdio: %d I/O function(s), rca %#ux\n", nfn, sdhcictlr.rca);
+
+	rev = sdiocmd52(0, 0x00, 0, 0);		/* CCCR revision */
+	if(rev < 0){
+		print("SDIO-FAIL CMD52 read of CCCR revision\n");
+		return;
+	}
+	print("sdio: CCCR revision %#2.2ux\n", rev);
+
+	/* Enable function 1 and wait for it to report ready. */
+	if(sdiocmd52(0, 0x02, 1, 1<<1) < 0){
+		print("SDIO-FAIL CMD52 write of IOEx\n");
+		return;
+	}
+	for(i = 0; i < 100; i++){
+		v = sdiocmd52(0, 0x03, 0, 0);	/* IORx */
+		if(v < 0){
+			print("SDIO-FAIL CMD52 read of IORx\n");
+			return;
+		}
+		if(v & (1<<1))
+			break;
+		delay(1);
+	}
+	if((v & (1<<1)) == 0){
+		print("SDIO-FAIL function 1 never became ready\n");
+		return;
+	}
+
+	for(i = 0; i < sizeof buf; i++)
+		buf[i] = 0xa0 + i;
+	memset(back, 0, sizeof back);
+	if(sdiocmd53(1, 0x400, 1, 0, 1, buf, sizeof buf) != sizeof buf){
+		print("SDIO-FAIL CMD53 write\n");
+		return;
+	}
+	if(sdiocmd53(1, 0x400, 0, 0, 1, back, sizeof back) != sizeof back){
+		print("SDIO-FAIL CMD53 read\n");
+		return;
+	}
+	if(memcmp(buf, back, sizeof buf) != 0){
+		print("SDIO-FAIL CMD53 read back %#2.2ux %#2.2ux, wrote %#2.2ux %#2.2ux\n",
+			back[0], back[1], buf[0], buf[1]);
+		return;
+	}
+	print("SDIO-OK CMD52 and CMD53 carried data through function 1\n");
+}
+#endif

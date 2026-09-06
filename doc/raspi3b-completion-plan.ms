@@ -525,27 +525,77 @@ uses the PIO data port -- no multi-block command, no high-speed or
 4-bit bus-width switch, so the card runs at the identification divider
 throughout, and no real hardware has been near it.
 .NH 1
-Phase 6: BCM43430 Wi-Fi over SDIO
+Phase 6: BCM43430 Wi-Fi over SDIO \- transport runs, the chip does not
 .PP
 The onboard Broadcom BCM43430 Wi-Fi hangs off SDIO (via Arasan), the
 piece 9front's ether4330 already handles: firmware upload plus the SDIO
-transport, presenting an ether(3) card into /net.  Depends on Phase 5's
-SDIO transport.  QEMU does not model the Wi-Fi chip, so this is
-structured against the donor and validated on real hardware.  The SDIO
-transport cannot be exercised there either \- which corrects what this
-plan used to say.  QEMU 10.1.3's raspi3b models
-.CW bcm2835-rng ,
-.CW bcm2835-powermgt ,
-.CW bcm2835-thermal ,
-.CW bcm2835-otp
-and both SD controllers, but no SDIO peripheral of any kind, and
-.CW "-device help"
-offers nothing to attach to one.  Phase 5's
-.CW sdiocmd52 /
+transport, presenting an ether(3) card into /net.
+.PP
+.B "The transport now runs; the phase is still blocked."
+Stock QEMU models no SDIO peripheral of any kind, so
+.CW sdiocmd52
+and
 .CW sdiocmd53
-are therefore unrunnable here, not merely untested: an SD memory card
-rejects both commands and there is no other device to answer them.
-This is the first phase where the emulator stops helping altogether.
+were unrunnable rather than merely untested: an SD memory card rejects
+both commands and there was no other device to answer them.
+.CW tools/qemu-patches/0004
+adds a generic
+.CW sd-io
+function \- CCCR at function 0, one I/O function behind it, CMD5,
+CMD3, CMD7, CMD52 and CMD53, written from the SDIO simplified
+specification \- and 0005 teaches the GPIO block to place it on the
+Arasan and to keep the card routing away from it.  Against that,
+.CW sdiocheck()
+reports
+.CW "sdio: 1 I/O function(s)" ,
+reads the CCCR revision with CMD52, enables function 1 and waits for it
+to report ready, then writes 64 bytes with CMD53 and reads them back
+identical:
+.CW SDIO-OK .
+.PP
+Deliberately, it is a
+.I generic
+function and not a BCM43430.  Modelling the Wi-Fi part would put both
+halves in this tree with nothing to consume them \- there is no
+ether4330 here and no firmware loader \- which proves only that the two
+agree with each other.  What the generic function proves is narrower
+and real: the transport carries data.
+.PP
+So this phase is
+.B "not done."
+What is now true is that Phase 5's
+.CW sdiocmd52 / sdiocmd53
+have executed and carry data correctly, tier
+.B qemu+patch .
+Wi-Fi itself still wants ether4330, the firmware upload, and the board.
+.PP
+.B "One boot, the whole Pi arrangement."
+With the function attached the emulated board is wired the way a real
+Pi 3B is, and all three paths work at once:
+.CW SDIO-OK
+on the Arasan,
+.CW SD-OK
+on SDHOST's
+.CW /dev/sdM0 ,
+and
+.CW SDHCI-NONE
+\- which is the correct answer, not a failure, because on that wiring
+the Arasan has the Wi-Fi function and not the card.  The memory-card
+probe that
+.CW sdhcicardinit()
+sends is refused by the function
+.CW ( "Unknown CMD8" ),
+which is the model declining to pretend to be a card.
+.PP
+Getting there needed a guest change worth naming:
+.CW sdhcicardinit()
+took GPIO 48-53 unconditionally, which on this wiring would steal the
+card from SDHOST.  SDIO bring-up is now a separate entry point,
+.CW sdioinit() ,
+sharing
+.CW sdhcictlrinit()
+but running the SDIO identification sequence \- no CMD8, no ACMD41, no
+CSD \- and never touching the card pins.
 .NH 1
 Phase 7: watchdog, RNG, PWM -- RNG and reset DONE, PWM not attempted
 .PP

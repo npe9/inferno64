@@ -87,6 +87,43 @@ THE PATCHES
 
 		-device usb-lan9514,netdev=n0 -netdev user,id=n0
 
+0004 hw/sd: model a generic SDIO function.
+
+	qemu implements SD and eMMC memory cards and no SDIO at all,
+	so sdhcibcm.c's sdiocmd52 and sdiocmd53 -- Phase 6's transport
+	-- were unrunnable rather than merely untested.
+
+	sd-io is an I/O-only function: CCCR at function 0, one I/O
+	function behind it, and CMD5/CMD3/CMD7/CMD52/CMD53.  It
+	answers nothing else -- CMD8, ACMD41 and CMD9 are absent on
+	purpose, so a memory-card probe is refused rather than
+	indulged.
+
+	It is deliberately generic and not a BCM43430.  There is no
+	ether4330 in this tree and no firmware loader, so a Wi-Fi
+	model would have no consumer and would prove only that the two
+	halves agree with each other.
+
+0005 hw/gpio/bcm2835_gpio: place an I/O function, and never displace one.
+
+	The card routing assumed the only device on these buses was
+	the card.  With an SDIO function present it would reparent the
+	function as though it were the card, breaking it and stranding
+	the real card.  Move only a removable card, find it wherever
+	it is, and refuse a bus that already holds a device; settle a
+	non-card device onto the Arasan, which is the only controller
+	this SoC wires one to.
+
+	Run it with:
+
+		-device sd-io
+
+	The function needs no bus argument: it is settled onto the
+	Arasan on the guest's first pin programming.  Attaching it
+	gives the wiring a real Pi 3B has -- card on SDHOST, Wi-Fi on
+	the Arasan -- so SDHCI-NONE is then the correct result, not a
+	failure.
+
 SELF-TESTS
 
 Two kernel self-tests are compiled out by default, because each can
@@ -102,6 +139,11 @@ its own boot is not worth having on by default.
 	-DSDROUTETEST	sdhcibcm.c: route the card to SDHOST and
 			back.  If it cannot be taken back, the board
 			has no SD card.
+
+	-DSDIOTEST	sdhcibcm.c: bring up an SDIO function and move
+			data through it with CMD52 and CMD53.  Bringing
+			SDIO up resets the Arasan, which an SD card
+			sitting on it would not enjoy.
 
 Build them by compiling the two files by hand with the define, then
 relinking:
@@ -120,9 +162,34 @@ them again.  Delete them to get back to a default kernel:
 	rm -f pmbcm.7 sdhcibcm.7
 	mk
 
+Deleting the objects is not always enough on its own: mk compares the
+kernel against them, and with them gone it can decide there is nothing
+to do and leave the old kernel in place.  If iraspi3b still has the
+self-test strings in it, force the issue:
+
+	rm -f pmbcm.7 sdhcibcm.7 main.7 iraspi3b
+	touch pmbcm.c sdhcibcm.c main.c
+	mk
+	strings iraspi3b | grep -c SDIO-OK	# expect 0
+
 Do not leave a self-test kernel installed in Inferno/aarch64/bin: it
 reboot-loops on stock qemu, which is a confusing artifact to leave for
 someone else.
+
+CHANGING LIMBO
+
+A change to a .b under appl/ does not reach the kernel by rebuilding
+the kernel: the board's root image is built from the installed .dis
+files, and the image is only regenerated when it is missing.  So:
+
+	cd appl/cmd/usb && mk etherusb.dis
+	cp etherusb.dis $ROOT/dis/usb/
+	cd $ROOT/os/inferno/raspi3b
+	rm -f raspi3b.root.s raspi3b.root.7
+	mk
+
+Skipping either the copy or the rm leaves the old code running, which
+looks exactly like a change that did not work.
 
 What they print, against patched qemu with a 16M raw SD image
 (-drive file=sd.img,if=sd,format=raw):
