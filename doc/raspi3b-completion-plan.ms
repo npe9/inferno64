@@ -265,9 +265,21 @@ which is where its diskless run stops anyway; armv7, mangopi, shakti,
 spike, virts and virt32s compile but were not booted; and armv7m has no
 mkfile in the tree to build with at all.  All five boots were
 re-run from a clean checkout of this commit, in a worktree of its own,
-after an earlier round had been done in a tree carrying other in-flight
-board work; the results were the same, so no uncommitted edit is
-propping any of them up.
+and every result held, so no uncommitted edit is propping any of them
+up.  (An earlier note here called the modified
+.CW sifiveu.c
+and
+.CW virtarm64.c
+in the first round somebody's in-flight edits.  They are not: portmkfile
+generates
+.CW $CONF.c
+from the board config with
+.CW mkdevc ,
+the copies committed in the tree are stale against their configs, and a
+clean checkout regenerates exactly the same two files the moment you
+build.  Like the tracked
+.CW .j
+objects, they are build output that every build dirties.)
 .PP
 Left for the real board: the SMSC init path above, and the interrupt
 endpoint (link status) which neither chip path uses yet.
