@@ -863,15 +863,21 @@ target(d: ref Dev, f: list of string): (ref Dev, string)
 		return (d, nil);
 	if(f == nil)
 		return (nil, "which device?");
-	a := hd f;
+	#
+	# A directory is named by addrstr, which writes hexadecimal in
+	# upper case, and this name comes from whatever the client
+	# typed.  Put it through straddr and addrstr first, so a lower
+	# case address neither misses the device that is already there
+	# nor makes a second directory the scanner and the bonds -- both
+	# of which spell it the other way -- would then fail to match.
+	#
+	addr := bt->straddr(hd f);
+	if(addr == nil)
+		return (nil, "not an address");
+	a := bt->addrstr(addr);
 	<-devlock;
 	dd := finddevstr(a);
 	if(dd == nil){
-		addr := bt->straddr(a);
-		if(addr == nil){
-			devlock <-= 1;
-			return (nil, "not an address");
-		}
 		atype := Bt->Apublic;
 		if(tl f != nil && hd tl f == "random")
 			atype = Bt->Arandom;

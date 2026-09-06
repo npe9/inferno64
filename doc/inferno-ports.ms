@@ -19308,6 +19308,32 @@ while the tree belongs to the host user, so the bench has to give it
 somewhere writable.  That is the bench's problem and not the stack's,
 and it is only visible because the errors are no longer swallowed.)
 .PP
+One more duplicate came out of the same review and is fixed.  A
+directory is named by
+.CW addrstr ,
+which writes hexadecimal in upper case, and the control file names a
+device by whatever the client typed \(em
+.CW straddr
+accepts either case.  So
+.CW "connect 345678abcdef"
+missed the device the scanner had already listed as
+.CW 345678ABCDEF
+and made a second directory beside it, which nothing would ever match
+again.
+.CW target
+now puts the name through
+.CW straddr
+and
+.CW addrstr
+before either the lookup or the creation.  The rejoin phase asserts it
+by naming a device in lower case on
+.CW ctl ,
+and with the fix taken out again it fails with three devices where
+there are two \(em though only after the address it names was changed
+to one with a letter in it, since the first attempt used
+.CW 060504030201
+and lower case did nothing to it.
+.PP
 .CW scripts/btbench.sh
 runs both phases and exits non-zero on either, so the claim above is a
 command rather than a description.

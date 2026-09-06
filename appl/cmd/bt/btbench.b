@@ -426,6 +426,33 @@ rejoin()
 		sys->print("BT: FAILED: the stored key does not resolve the address\n");
 		ok = 0;
 	}
+	#
+	# The control file names a device by whatever the client typed,
+	# and a directory is named by addrstr, which writes upper case.
+	# Naming the bonded device in lower case must find the device
+	# that is already there rather than making a second one that
+	# neither the scanner nor the bond would ever match again.
+	# disconnect is used because it goes through the same lookup and
+	# asks nothing of the controller when the device is not
+	# connected.
+	#
+	mixed: string;
+	for(rl := remotes; rl != nil; rl = tl rl)
+		if(hasletter(hd rl))
+			mixed = hd rl;
+	if(mixed == nil)
+		sys->print("BT: no device with a letter in its address; lower case not checked\n");
+	else {
+		writefile(mnt + "/0/ctl", "disconnect " + lower(mixed));
+		nn := lsdir(mnt + "/0/remote");
+		if(len nn != len remotes){
+			sys->print("BT: FAILED: %s in lower case made a second directory (%d, was %d)\n",
+				mixed, len nn, len remotes);
+			ok = 0;
+		} else
+			sys->print("BT: %s named in lower case on ctl found the same device\n", mixed);
+	}
+
 	if(ok)
 		sys->print("BT: rejoined %s from a key file, with no pairing\n", bond.addr);
 	writefile(mnt + "/0/ctl", "scan off");
@@ -448,6 +475,26 @@ lines(s: string): list of string
 	r: list of string;
 	for(; l != nil; l = tl l)
 		r = hd l :: r;
+	return r;
+}
+
+hasletter(s: string): int
+{
+	for(i := 0; i < len s; i++)
+		if((s[i] >= 'A' && s[i] <= 'F') || (s[i] >= 'a' && s[i] <= 'f'))
+			return 1;
+	return 0;
+}
+
+lower(s: string): string
+{
+	r := "";
+	for(i := 0; i < len s; i++){
+		c := s[i];
+		if(c >= 'A' && c <= 'Z')
+			c += 'a' - 'A';
+		r[len r] = c;
+	}
 	return r;
 }
 
