@@ -120,7 +120,11 @@ TARG=\
 	pantext.dis\
 	scrncapture.dis\
 	sunmoon.dis\
-	winzbuf.dis
+	winzbuf.dis\
+	3dpoly.dis\
+	pick.dis\
+	rotatetank.dis\
+	shadow.dis
 
 DISBIN=$ROOT/dis/temple
 

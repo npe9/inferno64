@@ -1,0 +1,39 @@
+.TH 3DPOLY 1
+.SH NAME
+3dpoly \- filled polygons, a depth buffer and a mirror
+.SH SYNOPSIS
+.B temple/3dpoly
+.SH DESCRIPTION
+.I 3DPoly
+is a port of the TempleOS
+.B Demo/Graphics/3DPoly.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+Three parallel quadrilaterals at three depths, in green, red and blue,
+and two more joining them, dithered so the connecting faces read as
+blends of the faces they join.  The whole tumbles on three rates \- 2.1,
+1.1 and 0.5 degrees a frame \- which share no common factor, so it never
+repeats.
+.PP
+The other half is symmetry.  The device context is given two points, the
+centre of the window and the cursor, and everything drawn afterwards is
+drawn again reflected in the line through them, which the light blue line
+marks.  Move the mouse and the mirror swings.
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B "mouse move"
+Swing the mirror
+.TP
+.B "any key"
+Exit
+.PD
+.SH SOURCE
+.B /appl/temple/3dpoly.b
+.SH SEE ALSO
+.IR temple (1),
+.IR draw3d (2),
+.IR wm (1)

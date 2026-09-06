@@ -1,0 +1,32 @@
+.TH ROTATETANK 1
+.SH NAME
+rotatetank \- a mesh under four matrices
+.SH SYNOPSIS
+.B temple/rotatetank
+.SH DESCRIPTION
+.I RotateTank
+is a port of the TempleOS
+.B Demo/Graphics/RotateTank.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+Nothing but a mesh sprite and four matrix calls a frame.  The angles are
+sines of the wall clock rather than counters, so the motion is a slow
+rock rather than a spin: yaw and roll on a ten-second period, pitch on
+five.  The scale is a sawtooth of period five, so the tank swells from a
+quarter size to one and a quarter and snaps back.  The window is squared
+off to twenty-four character cells each way, as the original sets it.
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B "any key"
+Exit
+.PD
+.SH SOURCE
+.B /appl/temple/rotatetank.b
+.SH SEE ALSO
+.IR temple (1),
+.IR draw3d (2),
+.IR wm (1)

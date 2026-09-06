@@ -1,4 +1,5 @@
 ! sh-std
+3dpoly 3dpoly
 9win 9win
 abc alphabet-abc
 about wm-misc
@@ -425,6 +426,7 @@ pen keyboard
 perms math-misc
 phontest phontest
 pi math-misc
+pick pick
 pid sh-std
 pinboard pinboard
 pipe sh-std
@@ -465,6 +467,7 @@ rget sh-file2chan
 rm tiny
 rocket rocket
 rocketscience rocketscience
+rotatetank rotatetank
 rread sh-file2chan
 rreadone sh-file2chan
 rt wm-misc
@@ -499,6 +502,7 @@ sh-string sh-string
 sh-test sh-test
 sh-tk sh-tk
 sha1sum sum
+shadow shadow
 sieve math-misc
 sig man
 sleep sleep
