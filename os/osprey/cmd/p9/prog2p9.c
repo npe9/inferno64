@@ -20,8 +20,9 @@
 #include "p9lib.h"
 
 void
-p9start(P9lib *lib)
+p9start(P9lib *lib, char **argv)
 {
+	USED(argv);
 	char buf[128];
 	long n;
 	int fd;

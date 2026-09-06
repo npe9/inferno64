@@ -46,7 +46,7 @@ p9setup(void)
 }
 
 extern void p9execfile(void);	/* p9exec.c: the second program, as /boot/prog2 */
-extern int p9exec(char *name);	/* p9exec.c: read it through the name space and run it */
+extern int p9exec(char *name, char **argv);	/* p9exec.c: read it through the name space and run it */
 
 void
 p9main(void)
@@ -434,7 +434,7 @@ p9main(void)
 	 * one of its own, which is read back here afterwards: proof that the
 	 * name space under it is this one and that it is still here.
 	 */
-	p9exec("/boot/prog2");
+	p9exec("/boot/prog2", nil);
 	{
 		int fd;
 		long m;
@@ -449,6 +449,24 @@ p9main(void)
 			p9close(fd);
 		} else
 			print("p9: the second program left nothing to read\n");
+	}
+
+	/*
+	 * And a real command: /boot/libcat is catp9.c, the same source as
+	 * the cat that runs under the buddy on the server personality, with
+	 * no line changed.  What differs is the link - against p9crt.c,
+	 * which is this personality standing in for libc's system calls -
+	 * so its open, read, close, dup, fd2path and sbrk are calls into
+	 * the file system in its own address space, not traps.  One program,
+	 * two arrangements: a process boundary there, none here.
+	 */
+	{
+		char *catargv[3];
+
+		catargv[0] = "/boot/libcat";
+		catargv[1] = "/hello";
+		catargv[2] = nil;
+		p9exec("/boot/libcat", catargv);
 	}
 
 	poperror();

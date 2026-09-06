@@ -12,6 +12,14 @@
  * The two are linked separately, so what crosses between them is this
  * table and nothing else; version says which table, and a program that
  * does not know it refuses rather than calls into the wrong offsets.
+ *
+ * exits is the loader's own: a program that ends does not end the task,
+ * it returns to the personality that called it.
+ *
+ * A loaded program is entered as
+ *	void p9start(P9lib *lib, char **argv)
+ * and p9start must be the first thing in its text, since that is how the
+ * loader recovers the address the program was linked at (p9exec.c).
  */
 typedef struct P9lib P9lib;
 struct P9lib {
@@ -21,17 +29,21 @@ struct P9lib {
 	long	(*read)(int fd, void *buf, long n);
 	long	(*write)(int fd, void *buf, long n);
 	void	(*close)(int fd);
+	vlong	(*seek)(int fd, vlong off, int type);
+	int	(*dup)(int fd);
+	int	(*fd2path)(int fd, char *buf, int nbuf);
+	void	(*exits)(char *status);
 };
 
 enum {
-	P9libversion	= 1,
+	P9libversion	= 2,
 	/*
-	 * Where a loaded program is linked and laid down: well above the
-	 * personality's own image (its bss ends near 7MB) and well below the
-	 * stack.  The program is linked at this address and the library
-	 * asks the kernel for the address space at it, so the two agree by
-	 * a constant rather than by relocation, which this compiler does
-	 * not do.
+	 * Where a loaded program is linked: well above the personality's own
+	 * image (its bss ends near 7MB) and well below the stack.  The
+	 * loader does not take this on trust - it works the address out of
+	 * the binary's entry and refuses one that would land on the
+	 * personality - so a program only has to be linked somewhere clear.
 	 */
 	P9progbase	= 0x1000000,
+	P9progbase2	= 0x1400000,
 };

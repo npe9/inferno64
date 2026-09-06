@@ -6374,6 +6374,66 @@ growing another number; every configuration that offers
 .CW segattach
 offers it.
 .PP
+.B "3.2a: a real command, its operating system a library in its own address space.  Done."
+.CW /boot/libcat
+is
+.CW catp9.c
+\- the same source as the cat that runs under the buddy on the server
+personality, with no line changed.  What differs is the link.  It is
+linked against
+.CW p9crt.c ,
+which defines
+.CW open ,
+.CW create ,
+.CW read ,
+.CW write ,
+.CW close ,
+.CW seek ,
+.CW dup ,
+.CW fd2path ,
+.CW sbrk
+and
+.CW exits
+itself, so the linker never pulls libc's system-call stub for any of
+them: those calls go to the personality in the program's own address
+space instead.  One program, two arrangements \- a process boundary and
+a ring on the server personality, and here none at all.  It takes an
+argument vector, grows a heap, opens
+.CW /hello ,
+dups the descriptor, asks its path and reads the file, and the file it
+reads is one the 9P server holds across the ring, named with no device
+in it and resolved through the personality's own mount.  Then it exits,
+and exit is a call to the loader: the operating system outlives the
+program it ran.
+.PP
+Two things the program needed that a kernel would otherwise have given
+it.  Its descriptors are its own: the personality hands out whatever
+number is free, which may be 0, 1 or 2, and for a program those three
+are the console, which the personality does not hold \- so
+.CW p9crt.c
+keeps a table, as the buddy keeps one for the legacy binary it serves,
+and numbers the program's files from three up.  Without it a program
+that opened a file and got 1 would write its output into that file, or
+to the console, by luck rather than by meaning.  And its heap is its
+own, a megabyte in its own bss, because
+.CW brk
+on this address space is the personality's business \- the personality's
+segments are laid out around the program, not below it \- so a loaded
+program brings its heap rather than asking the kernel for one.
+.PP
+What is left of 3.2 is a shell and rio, and what they need is named
+rather than guessed.  A shell wants processes, and the library-OS task
+has none to give: its own concurrency is the cooperative kprocs of
+.CW p9sched.c ,
+which are threads of the personality and not things a program can fork.
+rio wants
+.CW /dev/draw ,
+.CW /dev/mouse
+and
+.CW /dev/kbd ,
+which the user-level drivers already built serve, and a name space that
+holds them.  Neither is reached by more of what 3.2a did.
+.PP
 .B "Phase 3.2: a real program, then rio, linked with the library."
 A real program \- a command, then a shell, then rio \- is linked with
 the personality library into one microkernel task and run by the exec of

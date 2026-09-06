@@ -103,6 +103,17 @@ def main():
                     'prog2: created #e/fromprog2 through the same name space and wrote it' in t
                     and 'p9 exec: /boot/prog2 returned; the personality is still here, its name space never reloaded' in t
                     and 'p9: read what the second program wrote, through the same name space: "written by the second program"' in t))
+    results.append(("and a real command runs on it: /boot/libcat is catp9.c, the same source as the cat that runs under the buddy on the server personality with no line changed, linked against the personality instead of against a kernel's system calls - it takes an argument vector, grows a heap, opens a file, dups the descriptor, asks its path and reads it, and every one of those is a call in its own address space",
+                    'cat: started with 2 arguments; argv[0] = /boot/libcat' in t
+                    and re.search(r'cat: sbrk grew the heap \d+ bytes at [0-9a-f]+, now to [0-9a-f]+; \d+ bytes written and read back, 0 wrong', t) is not None
+                    and re.search(r"cat: dup'd descriptor \d+ to \d+ through the buddy; /hello through the duplicate ->", t) is not None
+                    and re.search(r'cat: descriptor \d+ is /hello, by fd2path', t) is not None))
+    results.append(("and the file it reads is the 9P server's, across the ring: the command names /hello with no device in it and the personality resolves it through its own mount, so a program with no kernel personality under it reads a file another container holds",
+                    'hello from the 9P server, a container across the ring' in t
+                    and 'cat: <- end of /hello through the duplicate' in t))
+    results.append(("and the command exits into the personality that loaded it, not out of the task: exit is a call to the loader here, so the operating system outlives the program it ran",
+                    'p9 exec: /boot/libcat exited with status "", into the personality that loaded it, not out of the task' in t
+                    and 'p9 exec: /boot/libcat returned; the personality is still here, its name space never reloaded' in t))
     results.append(("and it exits through the microkernel's minimal syscall interface, no in-kernel personality",
                     'the program exited' in t and 'panic' not in t))
 
