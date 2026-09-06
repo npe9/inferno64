@@ -1,0 +1,36 @@
+.TH PREDATORPREY 1
+.SH NAME
+predatorprey \- Lotka-Volterra, plotted against its own rate
+.SH SYNOPSIS
+.B temple/predatorprey
+.SH DESCRIPTION
+.I PredatorPrey
+is a port of the TempleOS
+.B Demo/Graphics/PredatorPrey.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+"Classic 2nd order nonlinear ordinary differential equation", integrated
+by plain Euler at a millionth of a time unit with ten thousand of those
+between plotted points.  What is plotted is not the populations against
+time but each population against its own rate of change, which turns the
+cycle into a closed loop; trajectory after trajectory starts from a
+random pair and is drawn over the last, so the whole family of orbits
+becomes visible.
+.PP
+The original runs one trajectory per core and waits on a bitmask.  Dis
+execution here is serialised, so they run one after another, which
+changes the order they appear in and nothing else.
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B "any key"
+Dismiss the opening panel; another exits
+.PD
+.SH SOURCE
+.B /appl/temple/predatorprey.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

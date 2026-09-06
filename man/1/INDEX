@@ -66,6 +66,7 @@ collab-clients collab-clients
 collision collision
 colors wm-misc
 comm comm
+commonancestor commonancestor
 connect collab
 cook cook
 corpus corpus
@@ -364,6 +365,7 @@ logon logon
 logwindow logwindow
 look look
 lookman man
+lowpassfilter lowpassfilter
 ls ls
 lstar gettar
 lszip getzip
@@ -380,6 +382,7 @@ mash-tk mash-tk
 massspring massspring
 match sh-regex
 math-misc math-misc
+mathaudiodemo mathaudiodemo
 maze maze
 mc mc
 md5sum sum
@@ -436,6 +439,7 @@ poll collab-clients
 poller collab-clients
 polyhedra wm-misc
 powers math-misc
+predatorprey predatorprey
 prefix sh-string
 primes math-misc
 prof prof

@@ -1,0 +1,34 @@
+.TH MATHAUDIODEMO 1
+.SH NAME
+mathaudiodemo \- the waveform library, plotted
+.SH SYNOPSIS
+.B temple/mathaudiodemo
+.SH DESCRIPTION
+.I MathAudioDemo
+is a port of the TempleOS
+.B Demo/Graphics/MathAudioDemo.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+Three pages, each a trigonometric function in red with its two cheap
+audio stand-ins over it in blue and green: sine against the sawtooths,
+cosine against the cawtooths, sine against the triangles.  The kernel's
+own comments say what the pairs are for \- a sawtooth is "think
+(Sin+1)/2" \- and seeing them on the same axes is the demo: how far a
+sawtooth is from a sine, and how little that matters at audio rates.
+.PP
+The functions are transcribed from the kernel, including the sign split
+for a negative argument.
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B "any key"
+Add the next curve, or turn the page; the last exits
+.PD
+.SH SOURCE
+.B /appl/temple/mathaudiodemo.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

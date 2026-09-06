@@ -1,0 +1,33 @@
+.TH LOWPASSFILTER 1
+.SH NAME
+lowpassfilter \- four ways to draw the same step response
+.SH SYNOPSIS
+.B temple/lowpassfilter
+.SH DESCRIPTION
+.I LowPassFilter
+is a port of the TempleOS
+.B Demo/Graphics/LowPassFilter.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+A blue square wave, then the same first-order step response four times
+over, a keypress apart.  Cyan is the closed-form exponential.  Black is
+the one-line recurrence everybody writes, y = 0.99y + 0.01x, which lands
+on the same curve only because the step happens to be one every sample.
+Red is the kernel's own filter, which takes the step length as an
+argument and so gives the same answer when the steps are ragged \- and
+here they are random lengths, which is the point.  Green is that filter
+ten times faster, to show what the coefficient means.
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B "any key"
+Add the next curve; the last exits
+.PD
+.SH SOURCE
+.B /appl/temple/lowpassfilter.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)
