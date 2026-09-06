@@ -19566,7 +19566,19 @@ file across it loses the file, and the subscription behind it stood
 against a handle that may no longer mean the same thing.  Nothing is
 resubscribed.
 .I btfs (4)
-says so rather than leaving it to be discovered.
+says so rather than leaving it to be discovered, and the phase asserts
+it \(em not because losing it is good, but because a client that hangs
+there and a client that is told the file has gone look the same from
+outside until one of them is checked.
+.PP
+The subscription belongs to the link and not to a walk of the
+database, so a rediscovery does not write the descriptor again unless
+the descriptor has itself moved.  Otherwise every indication answers
+itself with another write, and a device that treated a write as a
+change would never settle.  The model moves its database twice, four
+seconds apart, and the harness counts the writes: one, for two
+indications and the two rediscoveries they caused.  Without the guard
+there are three.
 .PP
 The
 .CW changed

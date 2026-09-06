@@ -247,9 +247,15 @@ SVC = [
     (0x0030, 0x0033, 0x1801),
 ]
 
-# what appears when the database moves, under --service-changed
-LATER_SVC = (0x0040, 0x0042, 0xfff5)
-LATER_CHAR = (0x0041, 0x02, 0x0042, 0xfff6)
+# what appears when the database moves, under --service-changed.  Two
+# of them, a few seconds apart, because one indication cannot show
+# whether the client's answer to one settles or feeds the next.
+LATER = [
+    ((0x0040, 0x0042, 0xfff5), (0x0041, 0x02, 0x0042, 0xfff6),
+     0x0042, b'the service that arrived later'),
+    ((0x0050, 0x0052, 0xfff7), (0x0051, 0x02, 0x0052, 0xfff8),
+     0x0052, b'and one more after that'),
+]
 # characteristic declarations: (decl handle, props, value handle, uuid)
 CHARS = [
     (0x0002, 0x02, 0x0003, 0x2a00),
@@ -264,7 +270,6 @@ VALUES = {
     0x0012: bytes([90]),
     0x0022: b'',
     0x0032: b'',
-    0x0042: b'the service that arrived later',
 }
 
 # client characteristic configuration, per descriptor handle
@@ -280,7 +285,6 @@ class Model:
         self.handle = None
         self.peer = None
         self.mtu = 100
-        self.cccd = 0
         self.acl_in = b''
         self.pending_acl = 0
         self.smp = {}
@@ -608,8 +612,7 @@ class Model:
                 CCCD[h] = struct.unpack('<H', v[:2])[0]
                 self.acl(4, bytes([0x13]))
                 if h == 0x0013:
-                    self.cccd = CCCD[h]
-                    if self.cccd & 1:
+                    if CCCD[h] & 1:
                         threading.Thread(target=self.notify, daemon=True).start()
                 elif h == 0x0033 and service_changed and CCCD[h] & 2:
                     threading.Thread(target=self.move_database,
@@ -628,26 +631,28 @@ class Model:
             self.att_err(op, 0, 0x06)                     # request not supported
 
     def move_database(self):
-        # after the guest has finished walking what is there now
-        time.sleep(2)
-        if LATER_SVC in SVC:
-            return
-        SVC.append(LATER_SVC)
-        CHARS.append(LATER_CHAR)
-        log('the database moved: %s appeared' % hex(LATER_SVC[2]))
-        # the affected range, which is the new service and not the
-        # whole database -- a client that reads the range rather than
-        # rediscovering wholesale has something honest to read
-        self.acl(4, bytes([0x1d]) + struct.pack('<H', 0x0032)
-                 + struct.pack('<HH', LATER_SVC[0], LATER_SVC[1]))
+        for svc, char, vh, val in LATER:
+            # after the guest has finished walking what is there now
+            time.sleep(4)
+            if svc in SVC:
+                continue
+            SVC.append(svc)
+            CHARS.append(char)
+            VALUES[vh] = val
+            log('the database moved: %s appeared' % hex(svc[2]))
+            # the affected range, which is the new service and not the
+            # whole database -- a client that reads the range rather
+            # than rediscovering wholesale has something honest to read
+            self.acl(4, bytes([0x1d]) + struct.pack('<H', 0x0032)
+                     + struct.pack('<HH', svc[0], svc[1]))
 
     def notify(self):
         level = 90
-        while self.cccd & 1 and self.handle is not None:
+        while CCCD[0x0013] & 1 and self.handle is not None:
             time.sleep(0.5)
             level = level - 1 if level > 0 else 100
             VALUES[0x0012] = bytes([level])
-            if self.cccd & 1:
+            if CCCD[0x0013] & 1:
                 self.acl(4, bytes([0x1b]) + struct.pack('<H', 0x0012) + bytes([level]))
                 self.notified += 1
 

@@ -91,6 +91,7 @@ Dev: adt {
 	id:	array of byte;	# its identity address, from a bond, or nil
 	idtype:	int;
 	scv:	int;		# the Service Changed value handle, or 0
+	sccccd:	int;		# the descriptor its subscription was written to
 	name:	string;
 	rssi:	int;
 	adv:	array of byte;
@@ -959,9 +960,23 @@ discover(d: ref Dev): string
 			# subscription; what it costs is one CCCD write
 			# per connection to a device that has one.
 			#
+			#
+			# the device's own way of saying it has moved
+			# things.  The subscription belongs to the link,
+			# not to this walk of the database, so a
+			# rediscovery does not write the descriptor again
+			# unless the descriptor itself has moved --
+			# otherwise every indication would answer itself
+			# with another write, and a device that took a
+			# write for a change would never settle.
+			#
 			if(s.uuid == "1801" && ch.uuid == "2a05"){
-				if(gatt->subscribe(d.sess, ch, 1) == nil)
+				if(ch.cccd != 0 && ch.cccd == d.sccccd)
 					d.scv = ch.vhandle;
+				else if(gatt->subscribe(d.sess, ch, 1) == nil){
+					d.scv = ch.vhandle;
+					d.sccccd = ch.cccd;
+				}
 			}
 		}
 	}
@@ -1033,6 +1048,7 @@ watcher(d: ref Dev)
 		d.mux = nil;
 		d.state = "disconnected: " + why;
 		droptree(d);
+		d.sccccd = 0;	# the link took the subscription with it
 	}
 	d.lock <-= 1;
 }
@@ -1059,6 +1075,10 @@ droptree(d: ref Dev)
 		d.gq = big 0;
 	}
 	d.scv = 0;
+	# d.sccccd is not cleared here: it records what was written to
+	# the device over this link, which a rediscovery does not undo.
+	# The watcher clears it when the link goes, because that is what
+	# forgets it.
 }
 
 #

@@ -126,6 +126,19 @@ run orphanlive --orphan-live orphanlive
 run badprepare --corrupt-prepare badprepare
 run refuseexec --refuse-execute badprepare
 run changed --service-changed changed
+#
+# one write of the Service Changed descriptor, for two indications and
+# the two rediscoveries they caused.  The subscription belongs to the
+# link, not to a walk of the database; re-writing it per rediscovery is
+# how a device that took a write for a change would never settle.
+#
+n=`grep -c 'att 0x12 123300' "$OUT/bthci-changed.log" || true`
+if [ "$n" != 1 ]; then
+	echo "=== phase changed ==="
+	echo "BENCH FAIL (changed): the descriptor was written $n times, wanted 1"
+	exit 1
+fi
+echo "the Service Changed descriptor was written once, for two indications"
 run stalefid "" stalefid
 #
 # three Read Requests for the device name: the one the phase makes

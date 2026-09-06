@@ -549,25 +549,53 @@ changed()
 			return;
 		}
 	#
+	# a notification stream held across the rediscovery.  It is
+	# documented to go away with the rest of the tree, and what
+	# matters is that it fails rather than hangs -- a hang and a
+	# documented loss look the same to a client that never returns.
+	#
+	nfd := sys->open(dev + "/gatt/180f/2a19.notify", Sys->OREAD);
+	nbuf := array[64] of byte;
+	if(nfd == nil)
+		sys->print("BT: FAILED: cannot open the notify stream: %r\n");
+	else if(sys->read(nfd, nbuf, len nbuf) <= 0)
+		sys->print("BT: FAILED: the notify stream gave nothing\n");
+	else
+		sys->print("BT: subscribed before the change\n");
+
+	#
 	# nothing here asks for anything: the device indicates, btfs
 	# walks the database again, and the name space changes under a
-	# link that was never dropped.
+	# link that was never dropped.  Twice, so what is seen is that
+	# the answer to one indication settles rather than feeding the
+	# next.
 	#
 	found := 0;
 	after: list of string;
-	for(i := 0; i < 20 && !found; i++){
+	for(i := 0; i < 40 && !found; i++){
 		sys->sleep(500);
 		after = lsdir(dev + "/gatt");
+		got := 0;
 		for(l = after; l != nil; l = tl l)
-			if(hd l == "fff5")
-				found = 1;
+			if(hd l == "fff5" || hd l == "fff7")
+				got++;
+		if(got == 2)
+			found = 1;
 	}
 	ok := 1;
+	if(nfd != nil){
+		if(sys->read(nfd, nbuf, len nbuf) > 0){
+			sys->print("BT: FAILED: the notify stream outlived the rediscovery\n");
+			ok = 0;
+		} else
+			sys->print("BT: the notify stream ended, as btfs(4) says: %r\n");
+		nfd = nil;
+	}
 	if(!found){
-		sys->print("BT: FAILED: the service that appeared was never noticed\n");
+		sys->print("BT: FAILED: both services that appeared were not noticed\n");
 		ok = 0;
 	} else {
-		sys->print("BT: services now: %d, including fff5\n", len after);
+		sys->print("BT: services now: %d, including fff5 and fff7\n", len after);
 		st := trim(readfile(dev + "/state"));
 		if(!(len st >= 9 && st[0:9] == "connected")){
 			sys->print("BT: FAILED: the link went away: %s\n", st);
@@ -576,10 +604,16 @@ changed()
 			sys->print("BT: on the same link: %s\n", st);
 		v := trim(readfile(dev + "/gatt/fff5/fff6"));
 		if(v != "the service that arrived later"){
-			sys->print("BT: FAILED: the new characteristic reads %s\n", v);
+			sys->print("BT: FAILED: the first new characteristic reads %s\n", v);
 			ok = 0;
 		} else
-			sys->print("BT: the new characteristic reads: %s\n", v);
+			sys->print("BT: the first new characteristic reads: %s\n", v);
+		v = trim(readfile(dev + "/gatt/fff7/fff8"));
+		if(v != "and one more after that"){
+			sys->print("BT: FAILED: the second new characteristic reads %s\n", v);
+			ok = 0;
+		} else
+			sys->print("BT: the second new characteristic reads: %s\n", v);
 	}
 	if(ok){
 		#
