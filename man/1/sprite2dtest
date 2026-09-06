@@ -1,0 +1,60 @@
+.TH SPRITE2DTEST 1
+.SH NAME
+sprite2dtest \- check that draw3d's sprite2d places pixels exactly
+.SH SYNOPSIS
+.B sprite2dtest
+[
+.I provider
+]
+.SH DESCRIPTION
+.IR Draw3d (2)'s
+.I sprite2d
+is a rotating, scaling resample, and two of its cases have an answer
+that does not depend on the resampler at all: at 1:1 with no rotation it
+must reproduce the source exactly, and a quarter turn must reproduce the
+source turned by hand.
+.I Sprite2dtest
+renders both through
+.I sprite2d
+and through a plain masked
+.IR draw ,
+which is the oracle, and compares every pixel.
+It covers square and oblong sources from 7 to 207 pixels, with and
+without a mask, and quarter, half and three-quarter turns.
+.PP
+.I Provider
+is the implementation to test, by path; the default is
+.BR /dis/math/draw3d.dis .
+Give an older or deliberately altered one to run the same cases as a
+control.
+.PP
+The last line is
+.B PASS
+or
+.BR FAIL .
+.SH EXAMPLE
+.EX
+emu\-cocoa \-r. /dis/sprite2dtest.dis
+.EE
+.SH SOURCE
+.B /appl/cmd/sprite2dtest.b
+.SH SEE ALSO
+.IR draw3d (2),
+.IR draw3dbench (1)
+.SH BUGS
+It needs a window, so it runs under
+.I emu\-cocoa
+and not
+.IR emu\-g .
+.PP
+Only the two cases with a resampler-independent answer are checked.
+An arbitrary angle or scale has no oracle here, so a resample that is
+exact at a quarter turn and wrong at thirty degrees would pass.
+.PP
+Only
+.I sprite2d
+is covered.
+The
+.I sprite3
+family shares the same transform but reaches it by a different route and
+is not tested.

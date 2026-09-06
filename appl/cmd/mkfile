@@ -115,6 +115,7 @@ TARG=\
 	say.dis\
 	schedcmp.dis\
 	sparsetest.dis\
+	sprite2dtest.dis\
 	styxlog.dis\
 	faultprobe.dis\
 	runtests.dis\

@@ -662,6 +662,79 @@ spriteat(c: ref Context, p: Vector, img, mask: ref Image, scale: real, degz: rea
 }
 
 # Software Z-rotate blit (nearest-neighbour) for Sprite3ZB.
+
+
+# Truncate towards zero for a non-negative argument.  Limbo's int rounds
+# to nearest and rounds a half away from zero, so int(0.5) is 1 - which
+# on a 1:1 sprite made every column come out one to the right and lost
+# the leftmost one entirely.  emu/port/devdraw.c's d3spritez, the same
+# resample in C, samples pixel centres and truncates with a C cast; this
+# is that, so the two agree.
+ifloor(v: real): int
+{
+	i := int v;
+	if(real i > v)
+		i--;
+	return i;
+}
+
+# If t is -1 everywhere except one run of exactly 0,1,..,n-1, return
+# where that run starts, else -1.  That shape means the resample is the
+# identity and the caller can hand the source image straight to draw().
+runstart(t: array of int, n: int): int
+{
+	s := -1;
+	for(i := 0; i < len t; i++){
+		if(t[i] == -1){
+			if(s >= 0 && i - s >= n)
+				continue;
+			if(s >= 0)
+				return -1;
+			continue;
+		}
+		if(s < 0){
+			if(t[i] != 0)
+				return -1;
+			s = i;
+		}
+		if(t[i] != i - s)
+			return -1;
+	}
+	if(s < 0 || len t - s < n)
+		return -1;
+	return s;
+}
+
+# The unrotated resample, driven by the two hoisted tables.  One row of
+# the source is one row of the destination, so it goes a row at a time
+# through draw() rather than a pixel at a time through a byte array,
+# which also keeps the source's own mask instead of rebuilding one.
+blitsep(dst: ref Image, sp: Point, bw, bh: int, img, mask: ref Image,
+	ucol, vrow: array of int)
+{
+	ox := sp.x - bw/2;
+	oy := sp.y - bh/2;
+	for(y := 0; y < bh; y++){
+		v := vrow[y];
+		if(v < 0)
+			continue;
+		for(x := 0; x < bw; ){
+			u := ucol[x];
+			if(u < 0){
+				x++;
+				continue;
+			}
+			# Longest run of consecutive source columns: one draw.
+			x2 := x + 1;
+			while(x2 < bw && ucol[x2] == ucol[x2-1] + 1)
+				x2++;
+			n := x2 - x;
+			dst.draw(Rect((ox+x, oy+y), (ox+x2, oy+y+1)), img, mask,
+				Point(img.r.min.x + u, img.r.min.y + v));
+			x += n;
+		}
+	}
+}
 transformsprite(dst: ref Image, sp: Point, sw, sh: int,
 	img, mask: ref Image, degz: real, flipx: int)
 {
@@ -672,23 +745,67 @@ transformsprite(dst: ref Image, sp: Point, sw, sh: int,
 	rad := Pi * degz / 180.0;
 	cs := math->cos(rad);
 	sn := math->sin(rad);
-	# Bounding box of rotated rectangle
+	# Half-extents of the rotated rectangle, per axis.  This used to take
+	# the larger of the two for both, so the box was always square: a
+	# 16x9 sprite got an 18x18 box, and being odd it could not sit at the
+	# box's centre, which put it a row above where it was asked for.
+	# emu/port/devdraw.c's d3spritez keeps the axes apart; so does this.
 	hx := real sw / 2.0;
 	hy := real sh / 2.0;
-	maxe := 0.0;
-	for(sx := -1; sx <= 1; sx += 2)
-		for(sy := -1; sy <= 1; sy += 2){
-			rx := real sx * hx * cs - real sy * hy * sn;
-			ry := real sx * hx * sn + real sy * hy * cs;
-			if(rx < 0.0) rx = -rx;
-			if(ry < 0.0) ry = -ry;
-			if(rx > maxe) maxe = rx;
-			if(ry > maxe) maxe = ry;
-		}
-	bw := int (maxe * 2.0) + 2;
-	bh := bw;
+	acs := cs;
+	if(acs < 0.0) acs = -acs;
+	asn := sn;
+	if(asn < 0.0) asn = -asn;
+	bw := int ((acs * hx + asn * hy) * 2.0) + 2;
+	bh := int ((asn * hx + acs * hy) * 2.0) + 2;
 	if(bw < 2 || bh < 2)
 		return;
+	# With no rotation the inverse transform is separable: the source
+	# column depends only on x and the source row only on y.  Hoisting
+	# it into two tables costs bw+bh reals instead of bw*bh of them,
+	# and - the case that matters - when the tables come out as the
+	# identity, the whole operation is a masked blit and can go native.
+	# The tables are built from the same expressions the general loop
+	# uses, so the pixels chosen are identical by construction rather
+	# than by an argument about rounding.
+	if(degz == 0.0){
+		cx0 := real bw / 2.0;
+		cy0 := real bh / 2.0;
+		ucol := array[bw] of int;
+		for(x := 0; x < bw; x++){
+			lx := real x + 0.5 - cx0;
+			if(flipx)
+				lx = -lx;
+			u := -1;
+			if(lx >= -hx && lx < hx){
+				u = ifloor((lx + hx) * real iw / real sw);
+				if(u < 0 || u >= iw)
+					u = -1;
+			}
+			ucol[x] = u;
+		}
+		vrow := array[bh] of int;
+		for(y := 0; y < bh; y++){
+			ly := real y + 0.5 - cy0;
+			v := -1;
+			if(ly >= -hy && ly < hy){
+				v = ifloor((ly + hy) * real ih / real sh);
+				if(v < 0 || v >= ih)
+					v = -1;
+			}
+			vrow[y] = v;
+		}
+		x0 := runstart(ucol, iw);
+		y0 := runstart(vrow, ih);
+		if(x0 >= 0 && y0 >= 0){
+			dst.draw(Rect((sp.x - bw/2 + x0, sp.y - bh/2 + y0),
+				(sp.x - bw/2 + x0 + iw, sp.y - bh/2 + y0 + ih)),
+				img, mask, img.r.min);
+			return;
+		}
+		blitsep(dst, sp, bw, bh, img, mask, ucol, vrow);
+		return;
+	}
 	disp := dst.display;
 	if(disp == nil)
 		return;
@@ -718,13 +835,13 @@ transformsprite(dst: ref Image, sp: Point, sw, sh: int,
 	dstb := array[dbpl * bh] of { * => byte 0 };
 	dmpl := (bw + 7) / 8;
 	dmsk := array[dmpl * bh] of { * => byte 0 };
-	cx := real (bw - 1) / 2.0;
-	cy := real (bh - 1) / 2.0;
+	cx := real bw / 2.0;
+	cy := real bh / 2.0;
 	for(y := 0; y < bh; y++){
 		for(x := 0; x < bw; x++){
 			# inverse rotate into sprite local coords (-sw/2..sw/2)
-			dx := real x - cx;
-			dy := real y - cy;
+			dx := real x + 0.5 - cx;
+			dy := real y + 0.5 - cy;
 			lx := dx * cs + dy * sn;
 			ly := -dx * sn + dy * cs;
 			if(flipx)
@@ -732,8 +849,16 @@ transformsprite(dst: ref Image, sp: Point, sw, sh: int,
 			if(lx < -hx || lx >= hx || ly < -hy || ly >= hy)
 				continue;
 			# map to source pixel
-			u := int ((lx + hx) * real iw / real sw);
-			v := int ((ly + hy) * real ih / real sh);
+			# ifloor(), inlined: this is the innermost loop, and a
+			# call per pixel cost 40% of it.
+			uf := (lx + hx) * real iw / real sw;
+			u := int uf;
+			if(real u > uf)
+				u--;
+			vf := (ly + hy) * real ih / real sh;
+			v := int vf;
+			if(real v > vf)
+				v--;
 			if(u < 0 || u >= iw || v < 0 || v >= ih)
 				continue;
 			opaque := 1;

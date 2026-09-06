@@ -535,6 +535,7 @@ splitr sh-string
 splitstrl sh-string
 splitstrr sh-string
 spree-join spree-join
+sprite2dtest sprite2dtest
 spriteplot spriteplot
 spriteplot3d spriteplot3d
 spriteput spriteput

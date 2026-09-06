@@ -107,7 +107,60 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	bench("  software buffer", Draw3d->PATH, buf, col, large);
 	bench("  protocol window", "/dis/math/draw3ddev.dis", win.image, col, large);
 	bench("  protocol buffer", "/dis/math/draw3ddev.dis", buf, col, large);
+	sprites(d, buf);
 	readback(d, col, large);
+}
+
+# sprite2d is the other half of what appl/temple asks draw3d for, and
+# eight ports use it and nothing else.  It is worth measuring separately
+# because it is the same Limbo pixel loop in BOTH providers - neither
+# sends a message - so the provider column here is a control that should
+# come out flat, and the interesting comparison is against the native
+# Image.draw that a rotation of zero degrees reduces to.
+sprites(d: ref Display, dst: ref Image)
+{
+	sys->print("draw3dbench: sprite2d\n");
+	spr(d, dst, 16, 0.0);
+	spr(d, dst, 64, 0.0);
+	spr(d, dst, 220, 0.0);
+	spr(d, dst, 220, 30.0);
+}
+
+spr(d: ref Display, dst: ref Image, size: int, degz: real)
+{
+	img := d.newimage(Rect((0,0),(size,size)), dst.chans, 0, Draw->Red);
+	mask := d.newimage(Rect((0,0),(size,size)), Draw->GREY1, 0, int 16rFFFFFFFF);
+	if(img == nil || mask == nil)
+		return;
+	n := 200;
+	for(pass := 0; pass < 2; pass++){
+		path := Draw3d->PATH;
+		what := "software";
+		if(pass == 1){
+			path = "/dis/math/draw3ddev.dis";
+			what = "protocol";
+		}
+		d3 := load Draw3d path;
+		if(d3 == nil)
+			continue;
+		d3->init();
+		t0 := sys->millisec();
+		for(i := 0; i < n; i++)
+			d3->sprite2d(dst, Point(320, 240), img, mask,
+				size, size, degz, 0);
+		t1 := sys->millisec();
+		sys->print("draw3dbench:   %s %dx%d at %g deg: %d us/sprite\n",
+			what, size, size, degz, ((t1-t0)*1000)/n);
+	}
+	# The floor: what the same placement costs as a native blit, which
+	# is what a zero rotation with no scaling actually reduces to.
+	t0 := sys->millisec();
+	for(i := 0; i < n; i++)
+		dst.draw(Rect((320-size/2,240-size/2),(320+size/2,240+size/2)),
+			img, mask, img.r.min);
+	t1 := sys->millisec();
+	sys->print("draw3dbench:   native %dx%d blit: %d us/sprite\n",
+		size, size, ((t1-t0)*1000)/n);
 }
 
 # A deterministic scene: n triangles of the given world-space radius,
