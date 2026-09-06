@@ -5989,6 +5989,125 @@ program that makes it.  A small shell, built in-tree against the same
 libc, runs under the buddy and executes a script that runs a command and
 pipes its output to another.
 .PP
+.B "2.2a: dup."
+Done.
+.CW DUP 's
+Plan 9 number (5) is reused by the personality for select-over-arms,
+which the ring clients call, so for a legacy program the number had to
+mean two things at once.  The config's
+.CW xselect
+branches on
+.CW up->buddyimage :
+a program whose text and data are a buddy image dups through the buddy's
+descriptor table
+.CW ( Bdupfd ),
+everything else runs the real select.  The distinguisher had to be that
+and not merely having a server \- a ring client has a server too, and
+clobbering its select with a dup regressed seventeen pair criteria until
+the branch was narrowed.
+.CW /boot/cat
+dups the descriptor it opened and reads the file through the duplicate.
+.PP
+.B "2.2b: brk and fd2path."
+Done, and they divide the way the paper's two halves do.  Heap growth is
+memory, which is the microkernel's own service and not a file the buddy
+holds, so
+.CW brk_
+is answered in the kernel
+.CW ( ospreybuddybrk ,
+called from the config's
+.CW xbrk
+for a buddy image and from
+.CW ibrk
+on
+.CW BSEG
+for anything else): it moves the top of the same heap segment
+.CW ospreyexecbuddy
+made a page above the image.  An ask below that segment's base is not a
+refusal but the truth about the layout \- the span from the linker's
+.CW end
+to the page boundary the heap begins at is inside the image's own bss,
+which the buddy already supplies as zeros \- so libc's first
+.CW sbrk ,
+which asks for
+.CW end
+plus a few bytes, succeeds having moved nothing.
+.CW fd2path
+is the other half: the buddy holds the descriptor table, so it answers
+from the
+.CW Chan 's
+own path in the name space the container's buddy resolved it in
+.CW ( p9fd2path ,
+by
+.CW chanpath ).
+.PP
+Two things in it are worth writing down.
+.CW fd2path (2)
+yields 0, not a byte count, and the kernel's copy-back is driven by the
+count, so the buddy answers with the length it wrote \- which says how
+much to copy \- and the kernel turns that into the call's 0; without the
+translation the program would read an uninitialised buffer and a test
+that printed it could still look plausible.  And a small
+.CW malloc
+would prove nothing about growth, since it lands inside the image's own
+bss:
+.CW /boot/cat
+asks for half a megabyte, far past the one page exec left above the
+image, writes a pattern the length of it and reads every byte back \-
+which the check asserts by the break really moving that far, not merely
+by the call returning.
+.PP
+The heap crosses a wire now too.  The migration header carried the
+segment array after two words; a process that arrived on another machine
+got
+.CW linuxheap
+set to \-1, so its first
+.CW brk
+there would be refused for want of a heap even though the segment had
+crossed by index like all the others.  The header carries two more words
+\- the heap segment's index and the break in it \- and the taker restores
+them.  The header's shape was written down twice, in the kernel and in
+the personality that walks it
+.CW ( p9ip.c 's
+.CW "hdr + 2" ),
+and growing it in one place broke every migration criterion of the wire
+check until the constant moved to
+.CW ospreydata.h
+.CW ( Odmighdrwords )
+where both sides read it: the same duplicated-layout hazard item 14
+removed for the data area, in the one header it had not reached.
+.PP
+.CW sleep
+and the note calls are already in and already proven: a legacy process
+gets Plan 9's
+.CW sleep (2)
+with the milliseconds it asked for
+.CW ( xsleep 's
+.CW buddyimage
+branch, item 9's minute-long sleep), and
+.CW notify (2)
+and
+.CW noted (2)
+are answered by the config
+.CW ( xnotify ,
+.CW xnoted )
+with two pair criteria over them \- a note that is not a fault,
+delivered to the program's handler and resumed from with
+.CW noted(NCONT) ,
+and a declined fault the program catches itself.  What is left of 2.2 is
+the shell.
+.PP
+All of this is the
+.CW p9pair
+configuration, whose check runs the legacy program with a full buddy
+beside it; the
+.CW p9buddy
+and
+.CW p9linux
+configurations carry neither the dup branch nor
+.CW xbrk ,
+and their legacy demonstrations do not reach for either.
+.PP
 .B "Phase 2.3: rio."
 rio is 9front source this tree does not carry, so its binary is built on
 the disk against the disk's libc and carried in, the way the draw

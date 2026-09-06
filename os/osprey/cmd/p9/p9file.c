@@ -555,6 +555,32 @@ p9bind(char *name, char *old, int flag)
 
 /* duplicate a descriptor: a new fd on the same channel (shared offset) */
 int
+/*
+ * fd2path(2)'s answer for a descriptor: the path the name space resolved
+ * it to, which the Chan carries.  Returns the number of bytes written,
+ * the terminator included, so that the caller knows how much to carry
+ * back; -1 when the descriptor is not open.
+ */
+int
+p9fd2path(int fd, char *buf, int nbuf)
+{
+	Chan *c;
+	char *path;
+	int n;
+
+	if(nbuf <= 0)
+		return -1;
+	c = fdtochan(fd, -1, 0, 0);	/* no iref: nothing is kept past this call */
+	path = chanpath(c);
+	n = strlen(path) + 1;
+	if(n > nbuf)
+		n = nbuf;
+	memmove(buf, path, n);
+	buf[n-1] = 0;
+	return n;
+}
+
+int
 p9dup(int oldfd)
 {
 	Chan *c;

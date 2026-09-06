@@ -46,6 +46,7 @@ enum {
 	RFORK	= 19,
 	BIND	= 2,
 	MOUNT	= 46,
+	FD2PATH	= 23,
 	/* rfork flags (portdat.h), which the shim headers here do not carry */
 	RFNAMEG	 = (1<<0),
 	RFPROC	 = (1<<4),
@@ -758,6 +759,33 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 		/* fstat(fd, edir, nedir): the raw stat message to cdata[Dataoff], a1 = nedir */
 		bfd = fdof(img, a0);
 		r = bfd < 0 ? -1 : p9fstatraw(bfd, cdata + Dataoff, (int)a1);
+		break;
+
+	case FD2PATH:
+		/*
+		 * fd2path(fd, buf, nbuf): the path the descriptor resolved to,
+		 * written to cdata[Dataoff], a1 = nbuf.  The buddy holds the
+		 * descriptor table, so the name space that answers is this
+		 * personality's - the path the process sees is the one its
+		 * container's name space gave.  The byte count goes back, the
+		 * terminator included; the kernel turns it into fd2path's 0.
+		 * The three console descriptors have no file behind them here,
+		 * so they answer with the name a Plan 9 program expects.
+		 */
+		bfd = fdof(img, a0);
+		if(bfd == Fdcons && (int)a1 > 0){
+			char *cons = "/dev/cons";
+			int n = strlen(cons) + 1;
+
+			if(n > (int)a1)
+				n = (int)a1;
+			memmove(cdata + Dataoff, cons, n);
+			((char*)(cdata + Dataoff))[n-1] = 0;
+			r = n;
+		} else if(bfd < 0)
+			r = -1;
+		else
+			r = p9fd2path(bfd, (char*)(cdata + Dataoff), (int)a1);
 		break;
 
 	case STAT:

@@ -13,3 +13,4 @@ int	p9pipe(int fd[2]);			/* two descriptors on a pipe */
 int	p9mount(int fd, char *old, int flag, char *spec);	/* mount a 9P connection onto old */
 int	p9bind(char *name, char *old, int flag);	/* bind name onto old */
 int	p9dup(int oldfd);			/* duplicate a descriptor onto a new one */
+int	p9fd2path(int fd, char *buf, int nbuf);	/* the path a descriptor resolved to; bytes written, terminator included */

@@ -267,6 +267,24 @@ port
 		ospreyawaitreply(2);
 		return 0;
 	}
+	/*
+	 * brk_(addr): heap growth, which a real program's libc reaches
+	 * through sbrk and its malloc through that.  Memory is the
+	 * microkernel's own service, not a file the buddy holds, so this is
+	 * answered here and never forwarded.  A legacy program - one whose
+	 * text and data are a buddy image - grows the heap segment exec made
+	 * a page above its image; anything else is the ordinary bss segment
+	 * a program loaded by userinit has.
+	 */
+	uintptr xbrk(va_list list)
+	{
+		extern long ospreybuddybrk(uintptr);
+		uintptr addr = va_arg(list, uintptr);
+
+		if(up->buddyimage)
+			return (uintptr)ospreybuddybrk(addr);
+		return ibrk(addr, BSEG);
+	}
 	uintptr xexits(va_list list)
 	{
 		USED(list);
@@ -415,6 +433,7 @@ port
 		[28]	xnotify,	/* NOTIFY: register a note handler */
 		[29]	xnoted,		/* NOTED: the handler returns; NCONT resumes */
 		[17]	xsleep,		/* SLEEP: yield and service the ring */
+		[24]	xbrk,		/* BRK_: heap growth, the address-space service */
 		[30]	xsegattach,	/* SEGATTACH */
 		[51]	xpwrite,	/* PWRITE */
 		[60]	ospreyxcall,	/* above the Plan 9 table, which a legacy binary uses whole: a request of the task's own, answered now */

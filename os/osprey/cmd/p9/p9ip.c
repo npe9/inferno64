@@ -710,6 +710,7 @@ enum {
 	Migoff		= Odmig,
 	Migrxoff	= Odmigrx,
 	Mighalf		= 2048,
+	Mighdrwords	= Odmighdrwords,	/* the header words before the segment array: count, flags, heap index, break */
 	Migport		= 9006,
 };
 extern uchar *p9srvdata(void);
@@ -829,7 +830,7 @@ migsend(void *a)
 		pipwire_put(wfd, rec, 8 + rn + 1);
 	}
 	for(i = 0; i < nseg; i++){
-		uvlong *seg = hdr + 2 + 4*i;		/* idx, type, base, top */
+		uvlong *seg = hdr + Mighdrwords + 4*i;	/* idx, type, base, top */
 		uvlong next;
 
 		if(seg[1] & (1<<8))			/* shared with the first member: carried with it, shared again there */

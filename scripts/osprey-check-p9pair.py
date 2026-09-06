@@ -20,6 +20,18 @@ env = dict(os.environ, PATH=os.path.join(ROOT, 'MacOSX/arm64/bin') + ':' + os.en
 def plain(s):
     return re.sub(r'\x1b\[[0-9;=?]*[a-zA-Z]', '', s)
 
+def heapgrew(t):
+    """The sbrk line: the break really moved by what was asked, and every
+    byte of the pattern read back.  The heap segment exec leaves above a
+    legacy image is one page, so a break that moved half a megabyte is a
+    segment the kernel grew, not memory that was already there."""
+    m = re.search(r'cat: sbrk grew the heap (\d+) bytes at ([0-9a-f]+), now to ([0-9a-f]+); \d+ bytes written and read back, (\d+) wrong', t)
+    if m is None:
+        return False
+    asked, start, now, wrong = int(m.group(1)), int(m.group(2), 16), int(m.group(3), 16), int(m.group(4))
+    return wrong == 0 and asked == 512*1024 and now - start == asked
+
+
 def main():
     keep = '-k' in sys.argv[1:]
     r = subprocess.run(['mk', 'CONF=p9pair', '9p9pair'], cwd='os/osprey/pc64',
@@ -282,6 +294,11 @@ def main():
         ("dup(2) is served by the buddy for a legacy program: /boot/cat dup's the descriptor it opened, and reads the file's contents through the duplicate - the buddy's descriptor table, not the personality's select-over-arms which shares dup's syscall number",
          re.search(r"cat: dup'd descriptor \d+ to \d+ through the buddy; /n/hello through the duplicate ->", t) is not None
          and 'cat: <- end of /n/hello through the duplicate' in t),
+        ("brk_(2) grows a legacy program's heap: /boot/cat's libc sbrk's half a megabyte - far past the one page exec left above the image, so the kernel must really grow the segment - writes a pattern the length of it and reads every byte back unchanged",
+         heapgrew(t)),
+        ("fd2path(2) is served by the buddy: /boot/cat asks the path of the descriptor it dup'd and is told /n/hello - the name the buddy's own name space resolved it in, not a name the program had",
+         re.search(r'cat: descriptor \d+ is /n/hello, by fd2path through the buddy', t) is not None
+         and 'cat: fd2path of' not in t),
         ("wait is answered by somebody: the client's wait returns the child's exit status",
          re.search(r'p9: pair-client: wait: container \d+ exited with status 0', t) is not None
          and 'panic' not in t and 'killed by SIGSEGV' not in t),	# the Linux child takes one SIGSEGV on purpose

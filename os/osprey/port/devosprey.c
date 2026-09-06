@@ -2469,7 +2469,7 @@ enum {
 	Bopen = 14, Bclose = 4, Bread = 15, Bpread = 50,
 	Bwrite = 20, Bpwrite = 51, Bseek = 39, Boseek = 16,
 	Bcreate = 22, Bremove = 25, Bfstat = 43, Bstat = 42, Berrstr = 41, Bpipe = 21,
-	Brfork = 19, Bbind = 2, Bmount = 46, Bawait = 47,
+	Brfork = 19, Bbind = 2, Bmount = 46, Bawait = 47, Bfd2path = 23,
 	/*
 	 * Not system calls: what the kernel asks the buddy on a legacy
 	 * process's behalf beyond its traps.  exec has the buddy lay a
@@ -2862,6 +2862,9 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 	case Bfstat:				/* fstat(fd, edir, nedir): message back at Bdataoff */
 		ab[1] = a[0]; ab[2] = a[2]; ab[3] = 0;
 		break;
+	case Bfd2path:				/* fd2path(fd, buf, nbuf): the path back at Bdataoff */
+		ab[1] = a[0]; ab[2] = a[2]; ab[3] = 0;
+		break;
 	case Bstat:				/* stat(name, edir, nedir): name at Bnameoff, message back at Bdataoff */
 		nd = ospreydata(p, Bnameoff, 256);
 		if(nd == nil)
@@ -2921,14 +2924,22 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 	if(status < 0)
 		return -1;
 
-	if((scallnr == Bread || scallnr == Bpread || scallnr == Bfstat || scallnr == Bstat || scallnr == Berrstr) && status > 0){
-		/* read/fstat/stat return their bytes in a[1]; errstr in a[0] */
+	if((scallnr == Bread || scallnr == Bpread || scallnr == Bfstat || scallnr == Bstat || scallnr == Berrstr || scallnr == Bfd2path) && status > 0){
+		/* read/fstat/stat/fd2path return their bytes in a[1]; errstr in a[0] */
 		uchar *dst = (uchar*)(scallnr == Berrstr ? a[0] : a[1]);
 		dd = ospreydata(p, Bdataoff, status);
 		if(dd != nil)
 			for(i = 0; i < status; i++)
 				dst[i] = dd[i];
 	}
+	/*
+	 * fd2path(2) yields 0, not a count: the buddy answers with the
+	 * length of the path it wrote, which is what says how much to copy
+	 * back, and the count becomes the call's 0 here.  Without this the
+	 * program would see a byte count where its libc expects success.
+	 */
+	if(scallnr == Bfd2path && status > 0)
+		return 0;
 	if(scallnr == Bpipe && status == 0){
 		/* the two descriptors, two ints, back into the process's fd[2] */
 		dd = ospreydata(p, Bdataoff, 2*sizeof(int));
@@ -3728,6 +3739,7 @@ enum {
 	Migoff		= 1024,		/* the sender's staging area in its data area: a header */
 	Migrxoff	= 5120,		/* the receiver's, clear of the sender's and the block device's ring */
 	Mighalf		= 2048,		/* the room a header has there */
+	Mighdrwords	= Odmighdrwords,	/* words before the segment array: count, flags, heap index, break; ospreydata.h holds the layout */
 	Nmigin		= 3,		/* arrivals being filled at once */
 	Nmigout		= 4,		/* departures in flight at once */
 	Migrxslot0	= 18,		/* packet buffer slots of an arrival's pages: two each; the driver's rings and receive buffers are 0-17 */
@@ -3860,7 +3872,7 @@ ospreymigcall(int op, uvlong *arg, uvlong *ubuf)
 		if((d = ospreydata(up->osprey, Migoff, Mighalf)) == nil)
 			return -1;
 		hdr = (uvlong*)d;
-		ms = (Migseg*)(hdr + 2);
+		ms = (Migseg*)(hdr + Mighdrwords);
 		nseg = 0;
 		for(i = 0; i < NSEG; i++){
 			if((s = p->seg[i]) == nil)
@@ -3875,7 +3887,16 @@ ospreymigcall(int op, uvlong *arg, uvlong *ubuf)
 		}
 		hdr[0] = nseg;
 		hdr[1] = p->buddyimage ? Migimage : 0;
-		n = 2*sizeof(uvlong) + nseg*sizeof(Migseg);
+		/*
+		 * The heap: which of the carried segments brk grows, and where
+		 * the break stands in it.  The segments cross by index, so the
+		 * far side has the segment; without these two words it would
+		 * not know which one it was, and the first brk after a move
+		 * would be refused for want of a heap.  Its index, or -1.
+		 */
+		hdr[2] = (uvlong)(vlong)p->linuxheap;
+		hdr[3] = p->linuxbrk;
+		n = Mighdrwords*sizeof(uvlong) + nseg*sizeof(Migseg);
 		*(uvlong*)(d + n) = uregsize();
 		n += sizeof(uvlong);
 		memmove(d + n, p->dbgreg, uregsize());
@@ -3945,8 +3966,8 @@ ospreymigcall(int op, uvlong *arg, uvlong *ubuf)
 		flags = hdr[1];
 		if(nseg < 0 || nseg > NSEG)
 			return -1;
-		ms = (Migseg*)(hdr + 2);
-		n = 2*sizeof(uvlong) + nseg*sizeof(Migseg);
+		ms = (Migseg*)(hdr + Mighdrwords);
+		n = Mighdrwords*sizeof(uvlong) + nseg*sizeof(Migseg);
 		if(*(uvlong*)(d + n) != uregsize() || n + sizeof(uvlong) + uregsize() > Mighalf || uregsize() > sizeof migin[x].ureg)
 			return -1;		/* a frame of another shape: another kernel, or another machine */
 		memmove(migin[x].ureg, d + n + sizeof(uvlong), uregsize());
@@ -4010,8 +4031,16 @@ ospreymigcall(int op, uvlong *arg, uvlong *ubuf)
 		p->kp = 0;
 		p->oslinux = 0;
 		p->buddyimage = (flags & Migimage) != 0;
-		p->linuxheap = -1;
-		p->linuxbrk = 0;
+		/*
+		 * The heap comes with the header: the segment it grows is one
+		 * of the carried ones, named by the index the sender wrote, so
+		 * a brk after the move grows the same memory it grew before.
+		 * A sender that had no heap sends -1 and this has none either.
+		 */
+		p->linuxheap = (int)(vlong)hdr[2];
+		if(p->linuxheap < 0 || p->linuxheap >= NSEG || p->seg[p->linuxheap] == nil)
+			p->linuxheap = -1;
+		p->linuxbrk = p->linuxheap < 0 ? 0 : hdr[3];
 		p->linuxmmapnext = 0;
 		p->linuxsighandler = 0;
 		p->linuxsigrestorer = 0;

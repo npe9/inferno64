@@ -256,6 +256,43 @@ ospreylinuxbrk(uintptr addr)
 	return addr;
 }
 
+/*
+ * Plan 9's brk_(addr) for a legacy program the buddy loaded: heap
+ * growth, which is the microkernel's own address-space service and not
+ * the buddy's file.  It moves the top of the same heap segment
+ * ospreyexecbuddy made a page above the image, and returns 0 or -1 the
+ * way brk_(2) does rather than the address Linux's brk returns.
+ *
+ * The clamp below the base is not a refusal but the truth about the
+ * layout: the a.out's own bss runs from the linker's `end` up to the
+ * page boundary that the heap segment begins at, and those pages are
+ * already mapped - the buddy supplies them as zeros (the third piece it
+ * lays out has filesz 0).  libc's first sbrk asks for `end` plus a few
+ * bytes, which is inside that span, so nothing has to move and the call
+ * succeeds having moved nothing.  Only an ask past the image's end
+ * reaches ibrk and really grows the segment.
+ */
+long
+ospreybuddybrk(uintptr addr)
+{
+	Segment *s;
+
+	if(up->linuxheap < 0 || (s = up->seg[up->linuxheap]) == nil)
+		return -1;
+	if(addr == 0)
+		return 0;
+	if(addr <= s->base){
+		up->linuxbrk = addr;
+		return 0;		/* still inside the image's own bss */
+	}
+	if(waserror())
+		return -1;
+	ibrk(addr, up->linuxheap);
+	poperror();
+	up->linuxbrk = addr;
+	return 0;
+}
+
 uintptr
 ospreylinuxmmap(uintptr addr, uintptr len, int prot, int flags, int fd, vlong off)
 {

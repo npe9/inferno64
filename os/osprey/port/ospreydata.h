@@ -41,6 +41,7 @@ enum {
 	/* a server carrying or taking a process over the wire */
 	Odmig		= 1024,		/* the migration header (segments, register frame) */
 	Odmiglen	= 2048,
+	Odmighdrwords	= 4,		/* words of the migration header before its segment array: the segment count, the flags, the heap segment's index and the break in it */
 	Odmigrx		= 5120,		/* the receiver's staging, clear of the sender's and the block ring */
 	Odmigrxlen	= 2048,
 
