@@ -139,7 +139,11 @@ TARG=\
 	waterfowl.dis\
 	morsecode.dis\
 	polezeros.dis\
-	transform.dis
+	transform.dis\
+	elephant.dis\
+	lattice.dis\
+	lighttable.dis\
+	pick3d.dis
 
 DISBIN=$ROOT/dis/temple
 

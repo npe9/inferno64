@@ -1,0 +1,61 @@
+.TH LIGHTTABLE 1
+.SH NAME
+lighttable \- a two-dimensional optics bench
+.SH SYNOPSIS
+.B temple/lighttable
+.SH DESCRIPTION
+.I LightTable
+is a port of the TempleOS
+.B Demo/Graphics/LightTable.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+Draw mirrors and lenses, then fire photons at them and watch them
+reflect and refract.
+.PP
+Two ideas hold it up.  The optics live in a bitmap rather than in a list
+of shapes, so a spline, a freehand line and a flood-filled blob are all
+the same thing to a photon.  And the surface normal is recovered from
+that bitmap by geometry alone \- sweep an arc each side of the incoming
+direction, coarse to fine, for the two points where the surface crosses a
+small circle, and take the perpendicular of the chord \- with no stored
+gradients and no analytic curve, which is why anything you can draw
+refracts correctly.  The fine bitmap is at a larger scale than the
+display so that search has sub-pixel detail to work with, which is what
+the original's opening comment is about.
+.PP
+Reflection is one line and refraction is Snell's law with an index of 1.5
+inside a lens, falling back to reflection when the angle passes the
+critical one.
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B 0-5
+Drawing mode: mirror line, mirror spline, lens line, lens spline, lens
+fill, test ray
+.TP
+.B LMB
+Draw, or fire a burst in test-ray mode
+.TP
+.B .
+End a spline
+.TP
+.B r
+Two hundred and fifty-six photons at random
+.TP
+.B n
+Show the normals
+.TP
+.B Enter
+Clear
+.TP
+.B q
+Exit
+.PD
+.SH SOURCE
+.B /appl/temple/lighttable.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

@@ -290,6 +290,7 @@ echo echo
 edit wm-misc
 develop develop
 edsprite edsprite
+elephant elephant
 elephantwalk elephantwalk
 els sh-sexprs
 emu emu
@@ -351,9 +352,11 @@ join spree-join
 keepaway keepaway
 keyboard keyboard
 kill tiny
+lattice lattice
 lc ls
 len sh-string
 life life
+lighttable lighttable
 limbo limbo
 limborepl limborepl
 lines lines
@@ -433,6 +436,7 @@ perms math-misc
 phontest phontest
 pi math-misc
 pick pick
+pick3d pick3d
 pid sh-std
 pinboard pinboard
 pipe sh-std

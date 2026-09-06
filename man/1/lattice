@@ -1,0 +1,66 @@
+.TH LATTICE 1
+.SH NAME
+lattice \- a turtle with width, curvature and layers
+.SH SYNOPSIS
+.B temple/lattice
+.SH DESCRIPTION
+.I Lattice
+is a port of the TempleOS
+.B Demo/Graphics/Lattice.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+The pen is a segment, not a point: every micro-step draws a line across
+the turtle's width perpendicular to its heading, so a stroke is a ribbon
+with its own edge colour, and the number of micro-steps is chosen from
+the width and the speed together, which keeps a fat fast stroke from
+coming out as dashes.
+.PP
+The curvature comes from a table of thirty-five entries, and the table is
+the interesting part: two pi over 1, 2, 3, 4, 5, 6, 8, 9, 10, 12, 15, 18,
+20, 24, 30, 36, 40 and their negatives, with zero in the middle.  Every
+entry closes a circle in a whole number of steps, so a curve always comes
+back to where it started.
+.PP
+The z is a layer, kept in the depth buffer, so a stroke on a higher layer
+covers lower ones however they are drawn.
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B space
+Step the turtle
+.TP
+.B "left / right"
+Turn the curvature table
+.TP
+.B "up / down"
+Accelerate, brake
+.TP
+.B + / -
+Wider, narrower
+.TP
+.B 0-9
+Layer
+.TP
+.B c
+Colour, middle then edge
+.TP
+.B e
+Rounded ends on or off
+.TP
+.B LMB
+Move the turtle; RMB aims it
+.TP
+.B Enter
+Clear
+.TP
+.B q
+Exit
+.PD
+.SH SOURCE
+.B /appl/temple/lattice.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)
