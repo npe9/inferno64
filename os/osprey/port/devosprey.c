@@ -2524,6 +2524,8 @@ ospreybuddycall(Ospreyproc *p, int tries)
  */
 static long ospreymovekern(Ospreyproc*, uvlong*, int);
 static long ospreymigcall(int op, uvlong *arg, uvlong *ubuf);
+static int ospreystartedby(Ospreyproc*, Ospreyproc*);
+static int ospreynotecontainer(Ospreyproc*, char*, int);
 uintptr
 #define ReqIoport 20	/* xcall op: grant I/O ports (above ReqPip 18) */
 #define ReqKbdnotify 21	/* xcall op: route IRQ1 to the caller as a notification */
@@ -2542,6 +2544,7 @@ uintptr
 #define ReqCheckticket 34	/* xcall op: a ticket in the caller's data area at arg[0]; the kernel says whom it names, or no */
 #define ReqTicket 35	/* xcall op: a ticket for the name at arg[0] in the caller's data area, for the caller's container, good arg[1] seconds */
 #define ReqNsec 36	/* xcall op: the kernel's clock in nanoseconds, which the personality serves as /dev/bintime */
+#define ReqPostnote 37	/* xcall op: post a note to a container the caller serves, on behalf of one it also serves */
 ospreyxcall(va_list list)
 {
 	uvlong op, *ubuf, arg[Ospreynarg];
@@ -2652,6 +2655,68 @@ ospreyxcall(va_list list)
 		if(ospreyaccount(up->osprey, &ubuf[0], &ubuf[1], &ubuf[2], &ubuf[4]) < 0)
 			return -1;
 		ubuf[3] = ospreyhz;
+		return 0;
+	}
+	if(op == ReqPostnote){
+		/*
+		 * postnote(2), which is not a system call: libc writes
+		 * /proc/n/note or /proc/n/notepg, and it is the personality
+		 * that holds a program's name space, so the write arrives at
+		 * the personality and the personality asks here.  The note
+		 * itself is the kernel's to post - it is the kernel that holds
+		 * the processes - so this is where the two meet.
+		 *
+		 * arg[0] is the container to post to, arg[1] the container
+		 * asking (which is not the caller: the caller is the
+		 * personality, speaking for one of the containers it serves),
+		 * and arg[2] is non-zero for the group form.  The note's text
+		 * is at Odnote in the caller's data area, a fixed place both
+		 * sides read out of ospreydata.h: a request carries three
+		 * words and no more (Ospreynarg), so an offset would have cost
+		 * the slot the group flag needs.
+		 *
+		 * Authority is two questions and both are asked.  May this
+		 * personality speak for the asking container - is it one this
+		 * caller serves?  And may that container post to the target -
+		 * is the target itself, or a container it started?  A
+		 * container may interrupt what it started and nothing else,
+		 * which is the least that lets a window system stop the
+		 * command in a window, and is not "any container may note any
+		 * other".
+		 */
+		Ospreyproc *target, *asking;
+		char note[Odnotelen];
+		uchar *nd;
+		int i;
+
+		if((target = ospreylookup(arg[0])) == nil){
+			print("osprey: a note was asked for container %llud, which is not a container\n", arg[0]);
+			return -1;
+		}
+		if((asking = ospreylookup(arg[1])) == nil || ospreyserverof(asking) != up->osprey){
+			print("osprey: container %llud asked to note on behalf of %llud, which it does not serve\n",
+				up->osprey != nil ? ospreyid(up->osprey) : 0, arg[1]);
+			return -1;		/* the caller does not serve the container it speaks for */
+		}
+		if(target != asking && !ospreystartedby(asking, target)){
+			print("osprey: container %llud asked to note container %llud and was refused: it did not start it\n",
+				ospreyid(asking), ospreyid(target));
+			return -1;
+		}
+		if((nd = ospreydata(up->osprey, Odnote, Odnotelen)) == nil){
+			print("osprey: the note window is outside container %llud's data area\n",
+				up->osprey != nil ? ospreyid(up->osprey) : 0);
+			return -1;
+		}
+		for(i = 0; i < Odnotelen - 1 && nd[i] != 0; i++)
+			note[i] = nd[i];
+		note[i] = 0;
+		i = ospreynotecontainer(target, note, arg[2] != 0);
+		if(i <= 0){
+			print("osprey: container %llud has no process to give the note \"%s\" to\n", ospreyid(target), note);
+			return -1;
+		}
+		ubuf[0] = i;
 		return 0;
 	}
 	if(op == ReqNsec){
@@ -3594,6 +3659,64 @@ enum {
 	Xreplydone = 1,		/* device does not include; the adapter checks the same values */
 };
 static uvlong ospreynextid = 100;	/* container identities for programs exec starts */
+
+/*
+ * Did this container start that one?  The child table is what records
+ * it: exec puts an entry there and so does the kernel's own fork, and
+ * the entry is what a wait is answered from.  Authority to post a note
+ * is asked of the same table, so a container may interrupt exactly what
+ * it started.
+ */
+static int
+ospreystartedby(Ospreyproc *parent, Ospreyproc *child)
+{
+	Ospreychild *e;
+	int yes = 0;
+
+	qlock(&ospreylock);
+	for(e = ospreychildren; e < &ospreychildren[nelem(ospreychildren)]; e++)
+		if(e->used && e->parent == parent && e->child == child){
+			yes = 1;
+			break;
+		}
+	qunlock(&ospreylock);
+	return yes;
+}
+
+/*
+ * Post a note to a container's process, and for the group form to every
+ * container it started as well - which is what a process group is here:
+ * a container and what came out of it.  Returns how many processes were
+ * given the note, so that a personality can tell "nobody" from "one".
+ */
+static int
+ospreynotecontainer(Ospreyproc *c, char *note, int group)
+{
+	Ospreychild *e;
+	Proc *q;
+	int x, n;
+
+	n = 0;
+	if(group){
+		qlock(&ospreylock);
+		for(e = ospreychildren; e < &ospreychildren[nelem(ospreychildren)]; e++){
+			if(!e->used || e->parent != c || e->done)
+				continue;
+			x = ospreyindex(e->child);
+			if(x >= 0 && x < nelem(ospreyprocs) && (q = ospreyprocs[x]) != nil){
+				postnote(q, 1, note, NUser);
+				n++;
+			}
+		}
+		qunlock(&ospreylock);
+	}
+	x = ospreyindex(c);
+	if(x >= 0 && x < nelem(ospreyprocs) && (q = ospreyprocs[x]) != nil){
+		postnote(q, 1, note, NUser);
+		n++;
+	}
+	return n;
+}
 
 static void
 ospreyexecproc(void *a)
@@ -5561,8 +5684,16 @@ ospreyinit(void)
 	 */
 	if(ospreyp9)
 		ospreysetsize("data", 2*BY2PG, 0);
-		ospreysetsize("pktbuf", 32, 0);	/* the user-space network driver's receive ring of 16, and room for more */
-		ospreysetsize("txbuf", 16, 0);	/* and its transmit ring */
+	/*
+	 * These two are every configuration's and not the personality's.
+	 * They were written under the branch above and indented as if they
+	 * belonged to it, which they never did - the if has no braces - and
+	 * the network checks depend on their being unconditional, so they
+	 * are set out here rather than left reading as a branch they are
+	 * not part of.
+	 */
+	ospreysetsize("pktbuf", 32, 0);	/* the user-space network driver's receive ring of 16, and room for more */
+	ospreysetsize("txbuf", 16, 0);	/* and its transmit ring */
 	for(i = 0; i < nelem(ospreysizeconf); i++){
 		if((cf = getconf(ospreysizeconf[i].conf)) == nil)
 			continue;

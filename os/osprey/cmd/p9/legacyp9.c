@@ -21,6 +21,13 @@
 static volatile int galarm;
 
 /*
+ * Who this process is, for the note handler to say.  A fork copies it,
+ * so each process of the demonstration names itself and a note posted
+ * to a whole group can be told apart in the log.
+ */
+static char *gwho = "legacy";
+
+/*
  * A note handler: the ordinary Plan 9 kind, registered with notify(2).
  * When the program faults, the microkernel delivers the note here (the
  * buddy is not involved - a note is the process's own), and it catches
@@ -35,6 +42,11 @@ nhandler(void *ureg, char *msg)
 		galarm = 1;
 		print("legacy: my note handler got the alarm note I asked for: \"%s\"; noted(NCONT)\n", msg);
 		noted(NCONT);
+	}
+	if(strncmp(msg, "interrupt", 9) == 0){
+		/* postnote(2)'s note, from the process that started this one */
+		print("%s: my note handler got the note posted to it: \"%s\"; exiting on it\n", gwho, msg);
+		exits("interrupted");
 	}
 	if(strncmp(msg, "osprey:", 7) == 0){
 		/* not a fault: continue where the note interrupted */
@@ -396,6 +408,108 @@ startboot(char *argv0, char **argv)
 		}
 		if(ffd >= 0)
 			close(ffd);
+	}
+
+	/*
+	 * postnote(2): the last of the calls rio's libc uses that this
+	 * personality did not answer, and it is not a system call - libc
+	 * opens /proc/<pid>/note and writes the note's text.  So it is a
+	 * file, served here by the personality that holds this program's
+	 * name space, and the write turns into one request to the kernel,
+	 * which holds the processes.  This is what a window system does to
+	 * the command in a window when the delete key is struck.
+	 */
+	{
+		int pid, n2, k;
+		char abuf[128];
+
+		pid = rfork(RFPROC);
+		if(pid == 0){
+			/*
+			 * The child: a note handler of its own, then it waits
+			 * to be interrupted.  The handler is nhandler, which
+			 * this program registers below - registered here too,
+			 * since a fork's child inherits the handler only if
+			 * the parent had one already, and this one is first.
+			 */
+			gwho = "legacy child";
+			notify(nhandler);
+			for(k = 0; k < 200; k++)
+				sleep(20);
+			print("legacy: BUG: the child was never interrupted\n");
+			_exits(nil);
+		}
+		if(pid < 0)
+			print("legacy: rfork(RFPROC) for the note test failed\n");
+		else {
+			sleep(100);		/* let it reach its handler-registered wait */
+			if(postnote(PNPROC, pid, "interrupt") < 0){
+				char eb[ERRMAX];
+
+				eb[0] = 0;
+				errstr(eb, sizeof eb);
+				print("legacy: BUG: postnote to my own child %d was refused: %s\n", pid, eb);
+			}
+			else
+				print("legacy: posted the note \"interrupt\" to the child I started, container %d, by writing /proc/%d/note\n", pid, pid);
+			/*
+			 * And a container this one did not start: the client,
+			 * container 1, which is not a child of this one.  The
+			 * kernel refuses it - a container may interrupt what it
+			 * started and nothing else.
+			 */
+			if(postnote(PNPROC, 1, "interrupt") < 0)
+				print("legacy: and posting a note to container 1, which I did not start, was refused - authority for a note is having started it\n");
+			else
+				print("legacy: BUG: I was allowed to note a container I did not start\n");
+			if((n2 = await(abuf, sizeof abuf - 1)) > 0){
+				abuf[n2] = 0;
+				print("legacy: reaped the child I interrupted; its wait message: \"%s\"\n", abuf);
+			} else
+				print("legacy: await() after the note returned nothing\n");
+		}
+
+		/*
+		 * And the group form, which is the one rio uses: a note to a
+		 * container and to everything that container started.  The
+		 * child here starts one of its own first, so the walk has
+		 * something to find - a window's command with something under
+		 * it, which is the shape a window system interrupts.
+		 */
+		pid = rfork(RFPROC);
+		if(pid == 0){
+			int gk;
+
+			gwho = "legacy child";
+			notify(nhandler);
+			gk = rfork(RFPROC);
+			if(gk == 0){
+				gwho = "legacy grandchild";
+				notify(nhandler);
+				for(k = 0; k < 200; k++)
+					sleep(20);
+				print("legacy: BUG: the grandchild was never interrupted\n");
+				_exits(nil);
+			}
+			for(k = 0; k < 200; k++)
+				sleep(20);
+			print("legacy: BUG: the child of the group was never interrupted\n");
+			_exits(nil);
+		}
+		if(pid < 0)
+			print("legacy: rfork(RFPROC) for the group note test failed\n");
+		else {
+			sleep(300);	/* let the child fork its own and both reach their handlers */
+			if(postnote(PNGROUP, pid, "interrupt the group") < 0)
+				print("legacy: BUG: postnote to the group of container %d was refused\n", pid);
+			else
+				print("legacy: posted the note \"interrupt the group\" to container %d and everything it started, by writing /proc/%d/notepg\n", pid, pid);
+			if((n2 = await(abuf, sizeof abuf - 1)) > 0){
+				abuf[n2] = 0;
+				print("legacy: reaped the group's head; its wait message: \"%s\"\n", abuf);
+			} else
+				print("legacy: await() after the group note returned nothing\n");
+		}
 	}
 
 	/*

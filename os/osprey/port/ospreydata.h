@@ -44,6 +44,8 @@ enum {
 	Odmighdrwords	= 4,		/* words of the migration header before its segment array: the segment count, the flags, the heap segment's index and the break in it */
 	Odmigrx		= 5120,		/* the receiver's staging, clear of the sender's and the block ring */
 	Odmigrxlen	= 2048,
+	Odnote		= 7168,		/* a note a personality asks its kernel to post, past the migration staging */
+	Odnotelen	= 128,
 
 	/* pi-p tickets, in a server's or a client's data area */
 	Odticket	= 3072,		/* a ticket the wire server gives its kernel to check */
@@ -87,6 +89,7 @@ enum {
 		+ 1/(Ospreyblkoff + 128 <= Ospreynetoff)
 		+ 1/(Ospreynetoff + 128 <= Ospreyblkring)
 		+ 1/(Ospreyblkring + 1024 <= Odmigrx)
+		+ 1/(Odmigrx + Odmigrxlen <= Odnote)
 		/* a legacy container's data area */
 		+ 1/(Odbuddyarg + Odbuddyarglen <= Odbuddyname)
 		+ 1/(Odbuddyname + Odbuddynamelen <= Odbuddydata)

@@ -20,7 +20,7 @@ OBJ="os/osprey/pc64/init9.6"
 for f in $P/main.c $P/p9shim.c os/osprey/port/chan.c os/osprey/port/dev.c \
          os/osprey/port/pgrp.c os/osprey/port/devroot.c \
          os/osprey/port/devenv.c os/osprey/port/qio.c os/osprey/port/devmnt.c os/osprey/port/devpipe.c os/osprey/port/devsrv.c \
-         $P/dev9ploop.c $P/p9file.c $P/p9srv.c $P/p9buddy.c $P/p9linuxfile.c $P/devlfs.c $P/pipfsrv.c $P/p9ip.c $P/p9sched.c $P/p9kbd.c $P/devcache.c $P/devtime.c $P/p9proc.c \
+         $P/dev9ploop.c $P/p9file.c $P/p9srv.c $P/p9buddy.c $P/p9linuxfile.c $P/devlfs.c $P/pipfsrv.c $P/p9ip.c $P/p9sched.c $P/p9kbd.c $P/devcache.c $P/devtime.c $P/devnote.c $P/p9proc.c \
          os/osprey/port/netif.c os/osprey/port/parse.c \
          os/osprey/ip/ip.c os/osprey/ip/ipaux.c os/osprey/ip/iproute.c os/osprey/ip/ipifc.c \
          os/osprey/ip/netlog.c os/osprey/ip/ipmux.c os/osprey/ip/arp.c os/osprey/ip/icmp.c \

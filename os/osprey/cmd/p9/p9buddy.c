@@ -981,13 +981,76 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
  * forwarded call's number and scalar arguments as a block of uvlongs at
  * cdata[Argoff]: number, then the three scalars.
  */
+/*
+ * Which container is this process serving right now?
+ *
+ * A device the personality serves - the note tree below /proc - has to
+ * know whose call it is answering, and devtab->write is handed only a
+ * Chan.  The buddy serves one call at a time on each of its worker
+ * processes, so the answer is a property of the running process, and it
+ * is recorded here around the call rather than in one global that four
+ * workers would overwrite each other in.
+ */
+enum { Nserving = 8 };
+static struct {
+	Proc	*p;
+	uvlong	container;
+} serving[Nserving];
+
+static void
+p9serving(uvlong container)
+{
+	int i, free;
+
+	free = -1;
+	for(i = 0; i < Nserving; i++){
+		if(serving[i].p == up){
+			/*
+			 * container 0 gives the slot back rather than storing
+			 * a zero in it.  A Proc comes out of a pool and is
+			 * reused, so a slot left standing on a dead one would
+			 * hand its container to whatever process took that
+			 * Proc next - and that container is the ASKER in the
+			 * note's authority check, so a stale slot is authority
+			 * given to the wrong container.
+			 */
+			if(container == 0)
+				serving[i].p = nil;
+			serving[i].container = container;
+			return;
+		}
+		if(serving[i].p == nil && free < 0)
+			free = i;
+	}
+	if(container == 0 || free < 0)
+		return;			/* nothing to give back, or more servers than slots: the device asks and is told nobody */
+	serving[free].p = up;
+	serving[free].container = container;
+}
+
+/* the container the running process is answering for, or 0 for none */
+uvlong
+p9servingcontainer(void)
+{
+	int i;
+
+	for(i = 0; i < Nserving; i++)
+		if(serving[i].p == up)
+			return serving[i].container;
+	return 0;
+}
+
 long
 p9buddy_serve(uchar *cdata, uvlong container)
 {
 	uvlong *ab;
+	long r;
 
 	ab = (uvlong*)(cdata + Argoff);
-	return p9buddy_syscall(container, ab[0], ab[1], ab[2], ab[3], cdata);
+	p9serving(container);
+	r = p9buddy_syscall(container, ab[0], ab[1], ab[2], ab[3], cdata);
+	p9serving(0);			/* the slot goes back before this process serves anything else */
+	return r;
 }
 
 /*

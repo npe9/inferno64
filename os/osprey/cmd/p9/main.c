@@ -62,6 +62,17 @@ p9setup(void)
 		print("p9: #T bound onto /dev; nsec(2) reads /dev/bintime, the kernel's clock\n");
 	} else
 		print("p9: could not bind #T onto /dev: %s\n", up->errstr);
+	/*
+	 * And the note tree onto /proc, for the same reason: postnote(2) is
+	 * a write to /proc/n/note, not a system call, so the file has to be
+	 * in the name space a legacy program runs in.
+	 */
+	if(!waserror()){
+		p9bind("#p", "/proc", MAFTER);
+		poperror();
+		print("p9: #p bound onto /proc; postnote(2) writes /proc/n/note, and the kernel posts it\n");
+	} else
+		print("p9: could not bind #p onto /proc: %s\n", up->errstr);
 	print("p9: name space up, root attached\n");
 }
 

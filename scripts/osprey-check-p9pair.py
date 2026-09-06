@@ -341,6 +341,22 @@ def main():
         ("and a legacy program is given a Tos: the kernel fills it and passes its address past the end of the argument vector, and the entry gives libc that and its private words - without them nsec(2) stores through a nil private on its first call",
          'legacy: nsec() ran forward' in t
          and 'legacy process osprey-exec killed by note: sys: trap: fault write addr=0x0' not in t),
+        ("postnote(2) is not a system call either but a write to /proc/n/note, and the personality serves that too: the program posts \"interrupt\" to a container it started, the note reaches that program's notify(2) handler, and it exits on it - which is what a window system does to the command in a window",
+         'p9: #p bound onto /proc; postnote(2) writes /proc/n/note, and the kernel posts it' in t
+         and re.search(r'legacy: posted the note "interrupt" to the child I started, container \d+, by writing /proc/\d+/note', t) is not None
+         and 'legacy child: my note handler got the note posted to it: "interrupt"; exiting on it' in t
+         and 'legacy: BUG: the child was never interrupted' not in t
+         and 'legacy: BUG: postnote to my own child' not in t),
+        ("and the group form, which is the one rio uses: a note to a container and to everything that container started - the child and the grandchild under it both take it and both end on it, from one write to /proc/n/notepg",
+         re.search(r'legacy: posted the note "interrupt the group" to container \d+ and everything it started, by writing /proc/\d+/notepg', t) is not None
+         and 'legacy child: my note handler got the note posted to it: "interrupt the group"; exiting on it' in t
+         and 'legacy grandchild: my note handler got the note posted to it: "interrupt the group"; exiting on it' in t
+         and 'legacy: BUG: the grandchild was never interrupted' not in t
+         and 'legacy: BUG: the child of the group was never interrupted' not in t),
+        ("and the authority for a note is having started what it goes to: the same program's note to a container it did not start is refused by the kernel, which is where the question belongs - the personality only says who is asking",
+         re.search(r'osprey: container \d+ asked to note container 1 and was refused: it did not start it', t) is not None
+         and 'legacy: and posting a note to container 1, which I did not start, was refused - authority for a note is having started it' in t
+         and 'legacy: BUG: I was allowed to note a container I did not start' not in t),
         ("a note that is not a fault: posted by request, delivered to the program's notify(2) handler, and noted(NCONT) resumes the interrupted program at the instruction after the call - the continuation the legacy ABI was missing",
          'legacy: my note handler got a note that is not a fault: "osprey: a note by request"; noted(NCONT)' in t
          and 'legacy: resumed after the note - noted(NCONT) brought me back to the instruction after the call (7)' in t),

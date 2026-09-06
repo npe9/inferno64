@@ -6465,7 +6465,9 @@ and
 would want: the buddy is a file personality and those seven are time,
 notes, and a place to block.  The other two are files, which is the
 opposite of what this counting assumed and is the first thing the
-section after this one records.
+section after this one records.  All nine are answered now, three of
+them before this measurement was taken; 2.3a and 2.3b below are where
+the other six were built, and what is left of 2.3 is the binary.
 .PP
 One of the nine looked like it would end the phase and does not.
 rio calls
@@ -6500,15 +6502,15 @@ those are built natively on the disk by
 .CW riorun.rc ;
 they are four more binaries, not one.
 .PP
-.B "2.3a: the calls beyond the files.  Five of the six, and the sixth named."
+.B "2.3a: the calls beyond the files, and the two that were files."
 Six of the nine were genuinely missing.
 .CW sleep ,
 .CW notify
 and
 .CW noted
-were already in, as the plan said.  Five of the six are in now, each
-answered where it belongs, and the sixth is named below rather than
-half-done.
+were already in, as the plan said.  All six are in now, each answered
+where it belongs, and two of them turned out to be files rather than
+calls.
 .PP
 .CW chdir (2)
 and
@@ -6674,45 +6676,98 @@ Tos and gives libc its privates.  The two differ in nothing else, and
 the word past the vector's nil is there for both: one reads it, one
 ignores it.
 .PP
-.B "What is left of the gap: postnote."
+.B "postnote, the sixth, and where the authority for a note lives."
 .CW postnote (PNGROUP, ...)
 is how rio interrupts what it started
 .CW ( wind.c 's
 .CW interruptproc ),
 and libc's postnote is not a call either: it writes
-.CW /proc/\fIn\fP/notepg .
-The buddy has no
-.CW /proc ,
-and giving it one means a small file tree whose write reaches the kernel
-to post the note, since it is the kernel that holds the processes.  That
-is the one item of the six not built, and it is named here rather than
-approximated.
-.PP
-It is also the only one of the six whose answer is not already written
-somewhere.
+.CW /proc/n/notepg ,
+with the process id in the name.  It is the only one of the six whose
+answer was not already written somewhere:
 .CW chdir
 and
 .CW unmount
 had bodies in
 .CW sysfile.c
-to port;
+to port,
 .CW alarm
 and
 .CW rendezvous
 had bodies in
 .CW sysproc.c
-and machinery this kernel still links.
-.CW postnote
-has neither.  It wants a file tree the buddy does not have, and a write
-on that tree has to reach the kernel, which means a request beside
-.CW ReqNote
-\- and
-.CW ReqNote
-posts a note to the
-.I caller ,
-while what rio does is post one to a process group it started.  Whose
-processes a container may post to, and how it names them, is a question
-about authority and not about a file, and it is where 2.3b starts.
+over machinery this kernel still links, and this had neither.
+.PP
+.CW devnote.c
+is the file tree, bound as
+.CW #p
+onto
+.CW /proc ,
+and it holds two files under any number:
+.CW note
+and
+.CW notepg .
+The number is a container's identity, which is what a legacy program has
+for a process id \-
+.CW rfork (2)
+returns it and
+.CW await (2)
+reports it \- and any number walks, because this personality does not
+hold the kernel's table of containers and a listing it invented would be
+a listing of nothing real.  Nothing lists there, and the code says so
+rather than papering over it.
+.PP
+The write is where the two halves meet.  The personality serves the
+file, because a name space is the personality's; the kernel posts the
+note, because the processes are the kernel's.  So the write becomes one
+request
+.CW ( ReqPostnote ),
+and the request carries three words, which is all a request carries
+.CW ( Ospreynarg ):
+the container to post to, the container asking, and whether it is the
+group form, with the text at a fixed window in the caller's data area
+.CW ( Odnote )
+rather than at an offset, because an offset would have cost the word the
+group flag needs.  A count above three is refused by the call with no
+word about why, which is how the first version failed \- silently, and
+looking like an authority refusal.
+.PP
+Authority is the part worth stating, and it is two questions, both
+asked.  The caller is the personality and not the program, so the first
+is whether this personality may speak for the container it names: is
+that container one it serves?  The second is the program's own: may that
+container post to the target \- is the target itself, or a container it
+started?  The child table the kernel already keeps for
+.CW await
+is what answers it, so a container may interrupt exactly what it
+started.  That is the least that lets a window system stop the command
+in a window, and it is not "any container may note any other": the
+program's note to container 1, which it did not start, is refused, and
+the refusal is the kernel's, the personality only saying who is asking.
+.PP
+The group form is the one rio uses, and it is the one worth exercising
+rather than merely writing: a note to a container reaches every
+container that one started, so the demonstration's child forks one of
+its own before it waits, which is a window's command with something
+under it.  One write to
+.CW /proc/n/notepg
+and both the child and the grandchild take the note and end on it.  One
+thing that demonstration leaves behind is worth writing down: the
+grandchild's entry in the kernel's child table is never reclaimed.  The
+table is freed only by a successful
+.CW await ,
+its parent ends on the same note, and nobody waits for it, so a group
+noted this way costs an entry of the eight for the rest of the boot.
+The demonstration leaks one and the run is clean; a program that
+interrupted groups all day would fill it, and the failure then is
+.CW rfork
+returning \-1 somewhere else entirely.
+.PP
+What does not cross is the exit status.  A container's wait message is
+.CW "0 0 0 ''"
+whatever it exited with, which is older than this work and is not
+claimed here: the criteria are that the note arrived at the handler and
+the program ended on it, which is what the log shows.
 .PP
 One ordering fault came out of the runs.  The user-fault dump in
 .CW trap.c
@@ -6747,9 +6802,8 @@ by every configuration is the rest of it \-
 the buddy, the request the clock is read through, and the console
 ordering.
 .PP
-Seven criteria of the pair check hold the five calls, the fork's
-working directory and the Tos apart, and the pair check is 78 where it
-was 71.
+Ten criteria of the pair check hold the six calls, the fork's working
+directory and the Tos apart, and the pair check is 81 where it was 71.
 .NH 2
 Track three: the library-OS personality execs a program, then rio
 .PP
