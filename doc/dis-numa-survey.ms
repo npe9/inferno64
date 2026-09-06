@@ -183,6 +183,51 @@ function had it right all along.
 .PP
 So the barrier is now correct on one processor and still not atomic on
 two.  What follows is about the second half.
+.PP
+And one more thing about the native side of the same path, found while
+checking whether the JIT was reachable there.  Both arm64 boards flush
+the instruction cache like this:
+.IP
+.nf
+int
+segflush(void *p, ulong l)
+{
+	USED(p, l);
+	return 1;
+}
+.fi
+.PP
+.CW ( os/inferno/virtarm64/main.c
+and
+.CW os/inferno/raspi3b/main.c ).
+The arm64 backend calls
+.CW segflush(start, sz)
+after emitting code, and on arm64 the instruction and data caches are
+not coherent, so writing code and jumping to it without a clean to the
+point of unification and an
+.CW "IC IVAU"
+is wrong on
+.I one
+core, before any question of broadcasting to others.
+.PP
+It is latent, because both boards set
+.CW "cflag = 0"
+and interpret.  It is also not far from fixed:
+.CW os/inferno/raspi3b/l.s
+already has
+.CW cacheiinv()
+.CW ( "IC IALLU" ,
+verified byte-for-byte against
+.CW "7l -a" )
+and the
+.CW "DC CVAC"
+loops beside it.
+.CW virtarm64
+has no cache maintenance at all.  Left undone deliberately: nothing
+runs it, and building it now would mean shipping untested code down a
+path with no caller.  Worth doing the day anyone sets
+.CW cflag
+on either board, and worth knowing about before rather than after.
 .CW comp-amd64.c
 and
 .CW comp-386.c

@@ -1263,6 +1263,23 @@ suggests: Phase 6 now has a working hosted baseline on arm64 to change
 against, where before there was nothing to compare to.  A phase that
 cannot be tested is a phase that gets written twice.
 .PP
+It closes a gap in the phases already landed, too.  Phase 1a turned
+.CW "con((uintptr)&R, RTMP)"
+into
+.CW "con((uintptr)curR, RTMP)"
+in every code generator and argued it was correct because
+.CW curR
+is constant \- but that argument was never run, because the only JIT on
+this machine did not work.  It runs now: the spawn storm is twelve of
+twelve with the JIT on at the current tree, which exercises the
+compiled path through
+.CW curR ,
+through
+.CW Pctx ,
+and through
+.CW progreg() .
+The argument was right; it is no longer only an argument.
+.PP
 The scope is smaller than a raw count suggests.  Four backends are
 stubs \-
 .CW comp-riscv64.c ,
