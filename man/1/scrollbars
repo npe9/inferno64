@@ -1,0 +1,42 @@
+.TH SCROLLBARS 1
+.SH NAME
+scrollbars \- a window onto something much bigger
+.SH SYNOPSIS
+.B temple/scrollbars
+.SH DESCRIPTION
+.I ScrollBars
+is a port of the TempleOS
+.B Demo/Graphics/ScrollBars.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+A map of 2048 pixels square with 256 trees on it, seen through a window
+a fraction of the size.  The program does not manage the scrolling: it
+declares the range and the window manager draws the bars, handles the
+dragging and hands back a position, which the drawing subtracts.  The
+original's aside \- "Check bounds if you wish better performance" \- is
+that it draws all 256 trees whether or not they are on screen, and so
+does this.
+.PP
+.IR wm (1)
+has no scroll bars to declare a range to, so the port draws its own along
+the right and bottom edges and drags them itself.
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B LMB
+Drag a scroll bar
+.TP
+.B arrows
+Scroll
+.TP
+.B "any other key"
+Exit
+.PD
+.SH SOURCE
+.B /appl/temple/scrollbars.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

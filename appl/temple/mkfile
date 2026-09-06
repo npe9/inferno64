@@ -124,7 +124,11 @@ TARG=\
 	3dpoly.dis\
 	pick.dis\
 	rotatetank.dis\
-	shadow.dis
+	shadow.dis\
+	balloon.dis\
+	scrollbars.dis\
+	slider.dis\
+	wallpaperctrl.dis
 
 DISBIN=$ROOT/dis/temple
 

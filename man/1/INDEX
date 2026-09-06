@@ -25,6 +25,7 @@ auplay auplay
 autoconvert sh-alphabet
 autodeclare sh-alphabet
 avr avr
+balloon balloon
 basename basename
 battlelines battlelines
 bigguns bigguns
@@ -478,6 +479,7 @@ rwrite sh-file2chan
 say say
 schedcmp schedcmp
 scrncapture scrncapture
+scrollbars scrollbars
 secstore secstore
 secstoretest secstoretest
 send sh-tk
@@ -507,6 +509,7 @@ sieve math-misc
 sig man
 sleep sleep
 slice sh-string
+slider slider
 sort sort
 span span
 speak speak
@@ -592,6 +595,7 @@ view wm-misc
 vixen vixen
 vocabulary vocabulary
 voicetest voicetest
+wallpaperctrl wallpaperctrl
 wav2iaf auplay
 wc wc
 webgrab webgrab

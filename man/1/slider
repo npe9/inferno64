@@ -1,0 +1,36 @@
+.TH SLIDER 1
+.SH NAME
+slider \- writing a control
+.SH SYNOPSIS
+.B temple/slider
+.SH DESCRIPTION
+.I Slider
+is a port of the TempleOS
+.B Demo/Graphics/Slider.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+"It's conceptually easy to do a ctrl, but tedious.  You have complete
+freedom."  A control in TempleOS is four function pointers and a state
+blob \- draw, click, update-derived-values, and flags asking for the mouse
+\- and an editor template writes all of that out so you need only fill in
+the drawing.  This one is two vertical sliders in a red-bordered blue box
+with their values 0 to 10 printed beneath.  The update-derived-values
+call re-centres the control and clamps its positions whenever the window
+changes, which is what keeps a control honest across a resize.
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B LMB
+Move a slider
+.TP
+.B "any key"
+Read the values, then exit
+.PD
+.SH SOURCE
+.B /appl/temple/slider.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

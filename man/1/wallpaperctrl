@@ -1,0 +1,41 @@
+.TH WALLPAPERCTRL 1
+.SH NAME
+wallpaperctrl \- a control on the wallpaper
+.SH SYNOPSIS
+.B temple/wallpaperctrl
+.SH DESCRIPTION
+.I WallPaperCtrl
+is a port of the TempleOS
+.B Demo/Graphics/WallPaperCtrl.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+The control is
+.IR slider (1)'s,
+unchanged.  What differs is where it lives: it is queued on the system
+task that owns the desktop rather than on a window, which is why the
+original has to be included into that task rather than run.  So the
+slider sits on the wallpaper, under every window, and still takes clicks.
+.PP
+An Inferno client cannot put anything on
+.IR wm (1)'s
+background, and nothing here corresponds to being included into the
+desktop task, so the port draws the wallpaper in its own window and puts
+the slider on that \- which shows the control and its backdrop but not the
+one thing the demo is about.
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B LMB
+Move a slider
+.TP
+.B "any key"
+Read the values, then exit
+.PD
+.SH SOURCE
+.B /appl/temple/wallpaperctrl.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

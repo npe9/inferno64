@@ -1,0 +1,35 @@
+.TH BALLOON 1
+.SH NAME
+balloon \- the Commodore 64 balloon sprite
+.SH SYNOPSIS
+.B temple/balloon
+.SH DESCRIPTION
+.I Balloon
+is a port of the TempleOS
+.B Demo/Graphics/Balloon.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+Twenty rows of three bytes: the balloon sprite from a Commodore 64, at
+its original twenty-four by twenty-one, one bit to the pixel, falling
+fifty rows down a cleared screen.
+.PP
+Everything else in the original is the VGA \- interrupts off, the plane
+mask set so a write lands in the red, green and intensity planes at once,
+and the sprite poked into the framebuffer a byte at a time.  There is no
+framebuffer to poke here, so the port draws the same bits as pixels: the
+data, the shape, the yellow and the fall are the original's, but the
+mechanism it is really showing off is not reproducible outside a VGA.
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B "any key"
+Exit
+.PD
+.SH SOURCE
+.B /appl/temple/balloon.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)
