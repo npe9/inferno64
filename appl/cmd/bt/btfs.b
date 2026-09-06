@@ -181,7 +181,14 @@ init(nil: ref Draw->Context, argv: list of string)
 		'u' =>	usb = 1;
 		'm' =>	mnt = arg->arg();
 		'k' =>	keyfile = arg->arg();
-		'a' =>	ageout = int arg->arg();
+		'a' =>
+			v := arg->arg();
+			# 0 is a real answer -- keep everything -- so a
+			# argument that is not a number must not quietly
+			# become it
+			if(!digits(v))
+				arg->usage();
+			ageout = int v;
 		* =>	arg->usage();
 		}
 	a := arg->argv();
@@ -390,6 +397,16 @@ mkfile(name: string, q: big, mode: int): Sys->Dir
 	return d;
 }
 
+digits(s: string): int
+{
+	if(s == nil)
+		return 0;
+	for(i := 0; i < len s; i++)
+		if(s[i] < '0' || s[i] > '9')
+			return 0;
+	return 1;
+}
+
 daytime(): int
 {
 	return int (sys->millisec() / 1000);
@@ -421,6 +438,23 @@ reaper()
 		if(ageout <= 0 || !scanning)
 			continue;
 		now := daytime();
+		#
+		# Taken in two parts, and the order matters both ways.
+		# dropdev needs the device's own lock -- it takes the
+		# gatt tree down, which connect() and rediscover() do
+		# under that lock -- and connect() holds it for as long
+		# as a connection attempt takes, which is twenty seconds
+		# against a controller that never answers.  Waiting for
+		# it with devlock held would stop the scanner and every
+		# control write for that long, so the candidates are
+		# taken out of devs under devlock, devlock is dropped,
+		# and each is then waited for on its own.
+		#
+		# Nothing holds a device's lock and then asks for
+		# devlock, so this order cannot deadlock: pair() is the
+		# one place that wants both and it lets go of the
+		# device's lock first.
+		#
 		<-devlock;
 		keep: list of ref Dev;
 		gone: list of ref Dev;
@@ -432,14 +466,30 @@ reaper()
 				gone = d :: gone;
 		}
 		devs = keep;
+		devlock <-= 1;
 		for(l = gone; l != nil; l = tl l){
 			d := hd l;
+			<-d.lock;
+			#
+			# it was chosen without its lock, so it may have
+			# become something worth keeping while this was
+			# waiting for it -- a connection that had not
+			# finished when the sweep looked, or a bond that
+			# has just given it an identity.  Put it back.
+			#
+			if(d.conn != nil || d.id != nil){
+				d.lock <-= 1;
+				<-devlock;
+				devs = d :: devs;
+				devlock <-= 1;
+				continue;
+			}
 			sys->fprint(sys->fildes(2),
 				"btfs: %s: not heard from for %ds, forgotten\n",
 				d.dir, now - d.seen);
 			dropdev(d);
+			d.lock <-= 1;
 		}
-		devlock <-= 1;
 	}
 }
 

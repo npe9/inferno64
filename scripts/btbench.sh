@@ -38,6 +38,10 @@
 #	forget	everything stops advertising: the device nothing is
 #		holding must leave the name space, the connected one
 #		must stay and still work
+#	sweeprace
+#		the sweep choosing a device while a connection to it is
+#		still in flight, and the connection then succeeding: it
+#		must not be forgotten
 #	sco	a controller sending SCO to a host that never asked for a
 #		voice channel: the packets must be counted and said out
 #		loud, and the link must keep its place in the stream
@@ -132,6 +136,7 @@ run orphanlive --orphan-live orphanlive
 run badprepare --corrupt-prepare badprepare
 run refuseexec --refuse-execute badprepare
 run forget --one-goes-quiet forget
+run sweeprace "--one-goes-quiet --late-connect" sweeprace
 run sco --sco sco
 run changed --service-changed changed
 #

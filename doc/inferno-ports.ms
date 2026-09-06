@@ -19583,6 +19583,57 @@ that the connected one is not, and that it still reads a
 characteristic \(em so what stayed is the device and not just its
 name.  Without the sweep the first assertion fails; without the
 exception for a connected device, the second and third do.
+.PP
+It then turns scanning off and waits past the ageout again, because
+the third rule is the one most likely to be noticed if it were wrong
+\(em a user turns scanning off, walks away, and comes back to an empty
+directory.  Sweeping regardless of scanning fails it.
+.NH 2
+The sweep and a connection in flight
+.PP
+Choosing what to forget needs the device table's lock; forgetting it
+needs the device's own, because it takes the gatt tree down, which
+.CW connect
+and the rediscovery do under that lock.  Waiting for a device's lock
+while holding the table's would stop the scanner and every control
+write for as long as a connection attempt takes, which against a
+controller that never answers is twenty seconds.
+.PP
+So the sweep takes its candidates out of the table, drops the table's
+lock, and waits for each device on its own \(em and a device chosen
+that way can have become something worth keeping while the sweep was
+waiting for it, because a connection was being made to it that had not
+finished when the sweep looked.
+.CW connect
+sets
+.CW d.conn
+only when
+.CW leconnect
+returns.  Each candidate is therefore looked at again once its lock is
+held, and one that is now connected, or has been given an identity by
+a bond, goes back in the table.
+.PP
+Nothing holds a device's lock and then asks for the table's, so the
+order cannot deadlock:
+.CW pair
+is the one place that wants both and it lets go of the device's first.
+.PP
+The
+.CW sweeprace
+phase makes that window as wide as it goes:
+.CW --one-goes-quiet
+stops all advertising and
+.CW --late-connect
+lets the connection complete only after the guest has given up waiting
+for it, with
+.CW "-a 6"
+so the sweep is certain to have chosen the device first.  Without the
+second look the phase reports the device forgotten while connecting to
+it.
+.PP
+.CW -a
+also validates its argument now.  0 means keep everything, so a
+argument that is not a number must not quietly become it.
 .NH 2
 SCO, said out loud
 .PP

@@ -177,7 +177,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	# a list grows at the head, so this is built from the last
 	# argument backwards and comes out in order
 	args := spec :: nil;
-	if(mode == "forget")
+	if(mode == "forget" || mode == "sweeprace")
 		args = "-a" :: "6" :: args;
 	if(keyfile != nil)
 		args = "-k" :: keyfile :: args;
@@ -213,6 +213,9 @@ init(nil: ref Draw->Context, argv: list of string)
 		return;
 	"forget" =>
 		forget();
+		return;
+	"sweeprace" =>
+		sweeprace();
 		return;
 	}
 	case mode {
@@ -531,6 +534,60 @@ conntest(mode: string)
 }
 
 #
+# The sweep and a connection in flight.  A device is chosen for
+# forgetting without its own lock, because waiting for that lock under
+# devlock would stop the scanner for as long as a connection attempt
+# takes.  So it can be chosen while a connection is being made to it
+# and no advertisement has arrived for longer than the ageout -- and
+# the connection can then succeed.  Forgetting it at that point would
+# take a live device out of the name space.
+#
+# The model stops advertising and lets the connection complete only
+# after the guest has given up waiting for it, which is the longest
+# that window can be.  btfs is started with -a 6, so the sweep is
+# certain to have chosen the device before the connection lands.
+#
+sweeprace()
+{
+	remotes := lsdir(mnt + "/0/remote");
+	if(remotes == nil){
+		sys->print("BT: FAILED: nothing was advertising\n");
+		return;
+	}
+	dev := "060504030201";
+	sys->print("BT: connecting while everything goes quiet\n");
+	e := writefile(mnt + "/0/remote/" + dev + "/ctl", "connect");
+	if(e != nil){
+		sys->print("BT: FAILED: connect: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	ok := 1;
+	after := lsdir(mnt + "/0/remote");
+	found := 0;
+	for(l := after; l != nil; l = tl l)
+		if(hd l == dev)
+			found = 1;
+	if(!found){
+		sys->print("BT: FAILED: the device was forgotten while connecting to it\n");
+		ok = 0;
+	} else
+		sys->print("BT: it survived the sweep: %s\n",
+			trim(readfile(mnt + "/0/remote/" + dev + "/state")));
+	if(ok){
+		v := trim(readfile(mnt + "/0/remote/" + dev + "/gatt/1800/2a00"));
+		if(v != "inferno-bench"){
+			sys->print("BT: FAILED: it reads %s\n", v);
+			ok = 0;
+		} else
+			sys->print("BT: and works: %s\n", v);
+	}
+	writefile(mnt + "/0/remote/" + dev + "/ctl", "disconnect");
+	writefile(mnt + "/0/ctl", "scan off");
+	sys->print("BT: done\n");
+}
+
+#
 # A device that stops answering leaves the name space; one that keeps
 # answering does not.  Without that, a scan in a room with a hundred
 # devices in it fills /net/bt/0/remote and nothing ever comes back out.
@@ -603,7 +660,23 @@ forget()
 	writefile(mnt + "/0/remote/" + kept + "/ctl", "disconnect");
 	if(ok)
 		sys->print("BT: remote/ went from %d to %d\n", len before, len after);
+	#
+	# and with scanning off nothing is arriving, so age says nothing
+	# about what is there and nothing more may be forgotten -- the
+	# rule most likely to be noticed if it were wrong, since it is
+	# the one where a user turns scanning off, walks away, and comes
+	# back to an empty directory.
+	#
 	writefile(mnt + "/0/ctl", "scan off");
+	held := lsdir(mnt + "/0/remote");
+	sys->sleep(9000);
+	quiet2 := lsdir(mnt + "/0/remote");
+	if(len quiet2 != len held){
+		sys->print("BT: FAILED: %d devices were forgotten with scanning off\n",
+			len held - len quiet2);
+		ok = 0;
+	} else
+		sys->print("BT: with scanning off, %d stayed past the ageout\n", len held);
 	sys->print("BT: done\n");
 }
 
@@ -665,7 +738,7 @@ scophase()
 counted(s: string): int
 {
 	w := "scodropped ";
-	for(i := 0; i + len w < len s; i++){
+	for(i := 0; i + len w <= len s; i++){
 		if(s[i:i+len w] != w)
 			continue;
 		if(i > 0 && s[i-1] != ' ')
