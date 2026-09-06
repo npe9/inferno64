@@ -72,6 +72,7 @@ TARG=\
 	disdump.dis\
 	disrepl.dis\
 	limborepl.dis\
+	draw3dbench.dis\
 	drawbind.dis\
 	dossrv.dis\
 	du.dis\

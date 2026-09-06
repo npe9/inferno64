@@ -1,0 +1,222 @@
+implement Draw3dbench;
+
+# Measures the two math/draw3d providers against each other on the same
+# scene: the software rasteriser (/dis/math/draw3d.dis) and the /dev/draw
+# protocol provider (/dis/math/draw3ddev.dis), which on a Metal host does
+# the transform and the fill on the GPU.
+#
+# Two axes matter and neither is obvious from reading the code:
+#
+#   * destination.  emu/MacOSX/win-cocoa.m's metal_queue_fillpoly3d()
+#     returns 0 unless dst is the screen image or a fully-clear layer of
+#     it, so a port that composes its frame into an offscreen buffer and
+#     blits gets no GPU at all - and pays the wire cost on top of the
+#     software one.  Both destinations are timed here so the difference
+#     is a number rather than an argument.
+#
+#   * triangle size.  Per-triangle overhead and per-pixel cost pull in
+#     opposite directions, so a scene of many small triangles and one of
+#     few large ones are separate measurements.
+#
+# lit= counts pixels that are not black.  Timing alone cannot tell a fast
+# renderer from one that silently drew nothing, and the GPU path really
+# does report zero here when read through a window layer - see BUGS in
+# draw3dbench(1).
+
+include "sys.m";
+	sys: Sys;
+
+include "draw.m";
+	draw: Draw;
+	Display, Image, Point, Rect: import draw;
+
+include "math.m";
+	math: Math;
+
+include "math/polyfill.m";
+include "math/draw3d.m";
+	draw3d: Draw3d;
+	Vector: import draw3d;
+
+include "tk.m";
+
+include "wmclient.m";
+	wmclient: Wmclient;
+	Window: import wmclient;
+
+include "arg.m";
+
+Draw3dbench: module
+{
+	init:	fn(ctxt: ref Draw->Context, argv: list of string);
+};
+
+win: ref Window;
+nframe := 60;
+paced := 0;
+verbose := 0;
+
+usage()
+{
+	sys->fprint(sys->fildes(2), "usage: draw3dbench [-p] [-n frames]\n");
+	raise "fail:usage";
+}
+
+init(ctxt: ref Draw->Context, argv: list of string)
+{
+	sys = load Sys Sys->PATH;
+	draw = load Draw Draw->PATH;
+	math = load Math Math->PATH;
+	wmclient = load Wmclient Wmclient->PATH;
+	arg := load Arg Arg->PATH;
+
+	arg->init(argv);
+	arg->setusage("draw3dbench [-p] [-n frames]");
+	while((o := arg->opt()) != 0)
+		case o {
+		'p' =>	paced = 1;
+		'n' =>	nframe = int arg->earg();
+		'v' =>	verbose = 1;
+		* =>	arg->usage();
+		}
+	if(nframe < 1)
+		usage();
+
+	sys->pctl(Sys->NEWPGRP, nil);
+	wmclient->init();
+	if(ctxt == nil)
+		ctxt = wmclient->makedrawcontext();
+	win = wmclient->window(ctxt, "draw3dbench", Wmclient->Appl);
+	win.reshape(Rect((0,0),(640,480)));
+	win.onscreen(nil);
+	d := win.display;
+
+	col := d.color(Draw->Red);
+	buf := d.newimage(Rect((0,0),(640,480)), win.image.chans, 0, Draw->Black);
+
+	small := scene(512, 1.0);
+	large := scene(64, 6.0);
+
+	sys->print("draw3dbench: 512 small triangles\n");
+	bench("  software window", Draw3d->PATH, win.image, col, small);
+	bench("  software buffer", Draw3d->PATH, buf, col, small);
+	bench("  protocol window", "/dis/math/draw3ddev.dis", win.image, col, small);
+	bench("  protocol buffer", "/dis/math/draw3ddev.dis", buf, col, small);
+	sys->print("draw3dbench: 64 large triangles\n");
+	bench("  software window", Draw3d->PATH, win.image, col, large);
+	bench("  software buffer", Draw3d->PATH, buf, col, large);
+	bench("  protocol window", "/dis/math/draw3ddev.dis", win.image, col, large);
+	bench("  protocol buffer", "/dis/math/draw3ddev.dis", buf, col, large);
+	readback(d, col, large);
+}
+
+# A deterministic scene: n triangles of the given world-space radius,
+# scattered on a shell in front of the eye.  Deterministic so two
+# providers get bit-identical geometry.
+scene(n: int, size: real): array of array of Vector
+{
+	tri := array[n] of array of Vector;
+	seed := 12345;
+	for(i := 0; i < n; i++){
+		v := array[3] of Vector;
+		seed = (seed*1103515245 + 12345) & 16r7fffffff;
+		a := real (seed % 3600) / 3600.0 * 6.283185;
+		seed = (seed*1103515245 + 12345) & 16r7fffffff;
+		b := real (seed % 3600) / 3600.0 * 3.14159;
+		cx := 3.0*math->cos(a)*math->sin(b);
+		cy := 3.0*math->sin(a)*math->sin(b);
+		cz := 3.0*math->cos(b) - 9.0;
+		for(j := 0; j < 3; j++){
+			t := 2.094395 * real j;
+			v[j] = Vector(cx + size*math->cos(t), cy + size*math->sin(t),
+				cz + size*0.1*real j);
+		}
+		tri[i] = v;
+	}
+	return tri;
+}
+
+bench(what: string, path: string, dst: ref Image, col: ref Image,
+	tri: array of array of Vector)
+{
+	d3 := load Draw3d path;
+	if(d3 == nil){
+		sys->print("draw3dbench: %s: load %s: %r\n", what, path);
+		return;
+	}
+	d3->init();
+	c := d3->context(dst);
+	d3->setzarea(c, dst.r);
+	d3->setz(c, 1);
+	d3->setcolour(c, col);
+	d3->viewport(c, dst.r.min.x, dst.r.min.y, dst.r.max.x, dst.r.max.y);
+	normal := Vector(0.0, 0.0, 1.0);
+	t0 := sys->millisec();
+	for(f := 0; f < nframe; f++){
+		d3->mode(Draw3d->PROJ);
+		d3->identity();
+		d3->frustum(0.1, 0.1, 100.0);
+		d3->mode(Draw3d->MODEL);
+		d3->identity();
+		d3->rotatey(real f * 6.0);
+		d3->clearz(c);
+		dst.draw(dst.r, dst.display.black, nil, dst.r.min);
+		for(i := 0; i < len tri; i++)
+			d3->fillpoly3(c, tri[i], normal, 0.5 + real (i%8)/16.0);
+		dst.flush(Draw->Flushnow);
+		if(paced)
+			sys->sleep(16);
+	}
+	t1 := sys->millisec();
+	sys->print("draw3dbench: %s %d frames of %d tris: %d ms (%d us/frame) lit=%d\n",
+		what, nframe, len tri, t1-t0, ((t1-t0)*1000)/nframe, litpixels(dst));
+}
+
+# Where the pixels a GPU pass produced can actually be read back from.
+readback(d: ref Display, col: ref Image, tri: array of array of Vector)
+{
+	d3 := load Draw3d "/dis/math/draw3ddev.dis";
+	if(d3 == nil)
+		return;
+	d3->init();
+	c := d3->context(win.image);
+	d3->setzarea(c, win.image.r);
+	d3->setz(c, 1);
+	d3->setcolour(c, col);
+	d3->viewport(c, win.image.r.min.x, win.image.r.min.y,
+		win.image.r.max.x, win.image.r.max.y);
+	win.image.draw(win.image.r, d.black, nil, win.image.r.min);
+	d3->mode(Draw3d->PROJ);
+	d3->identity();
+	d3->frustum(0.1, 0.1, 100.0);
+	d3->mode(Draw3d->MODEL);
+	d3->identity();
+	d3->clearz(c);
+	for(i := 0; i < len tri; i++)
+		d3->fillpoly3(c, tri[i], Vector(0.0, 0.0, 1.0), 0.8);
+	sys->print("draw3dbench: protocol readback: window layer lit=%d, screen image lit=%d\n",
+		litpixels(win.image), litpixels(d.image));
+}
+
+# Pixels that are not black, counted through an RGB24 scratch so the
+# count means the same thing whatever the destination's channels are.
+litpixels(dst: ref Image): int
+{
+	r := dst.r;
+	w := r.dx();
+	h := r.dy();
+	scr := dst.display.newimage(Rect((0,0),(w,h)), Draw->RGB24, 0, Draw->Black);
+	if(scr == nil)
+		return -1;
+	scr.draw(scr.r, dst, nil, r.min);
+	buf := array[w*3] of byte;
+	n := 0;
+	for(y := 0; y < h; y++){
+		if(scr.readpixels(Rect((0,y),(w,y+1)), buf) != len buf)
+			return -2;
+		for(x := 0; x < w; x++)
+			if(buf[x*3] != byte 0 || buf[x*3+1] != byte 0 || buf[x*3+2] != byte 0)
+				n++;
+	}
+	return n;
+}

@@ -27,6 +27,18 @@ plausible-looking guesses:
   in. It is byte-identical to Terry's own `/Adam/God/Vocab.DD`, junk
   included, and `GodWord` really can say `tcosa10`.
 
+## Graphics: the draw3d side
+
+Two companion documents cover the 3D pipeline the ports draw through:
+`doc/draw3d-templeos-audit.md` is where `math/draw3d`'s vocabulary falls
+short of TempleOS's, and `doc/draw3d-adoption-plan.md` is the ordered,
+measured plan for putting the ports onto it and thereby onto the GPU.
+The headline number from the second: the protocol provider renders a
+wall-sized-triangle scene in 0.79 ms/frame against the software
+provider's 5.57, but only when the destination is the window layer — an
+offscreen frame buffer gets no GPU at all and is *slower* through the
+protocol. `draw3dbench(1)` is the harness.
+
 ## Getting the source and the art
 
 **The GitHub mirrors are corrupted.** `/Users/npe/src/TempleOS`,

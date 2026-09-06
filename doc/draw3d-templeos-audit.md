@@ -6,6 +6,10 @@ claim below was checked against `/tmp/tos` (expand the ISO — see
 `doc/temple-plan.md`) and against `appl/math/draw3d.b`,
 `appl/math/draw3ddev.b` and `module/draw.m`, not recalled.
 
+What to *do* about it is a separate document:
+`doc/draw3d-adoption-plan.md`, which orders the work and measures what
+adoption is actually worth.
+
 The short answer: **draw3d is a competent immediate-mode 3D library and
 TempleOS's is a retained-mode one.** The single biggest gap is not a
 missing function, it is a missing *type* — and most of the rest follows

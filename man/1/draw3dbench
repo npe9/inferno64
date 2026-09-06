@@ -1,0 +1,100 @@
+.TH DRAW3DBENCH 1
+.SH NAME
+draw3dbench \- compare the software and protocol draw3d providers
+.SH SYNOPSIS
+.B draw3dbench
+[
+.B -p
+] [
+.B -n
+.I frames
+]
+.SH DESCRIPTION
+.I Draw3dbench
+draws the same scene through both providers of the
+.IR draw3d (2)
+interface \-
+.B /dis/math/draw3d.dis
+(software: projection and rasterization in Limbo) and
+.B /dis/math/draw3ddev.dis
+(the
+.IR draw (3)
+protocol, which on a Metal host does the transform and the fill on the
+GPU) \- and reports milliseconds per frame and the number of lit pixels.
+.PP
+It varies two things that are not obvious from reading either provider.
+.PP
+The first is the destination.
+The Metal geometry path refuses any destination that is not the screen
+image or a fully clear layer of it, so a program that composes its frame
+into an offscreen buffer and blits gets no GPU at all, and through the
+protocol provider pays the wire cost on top of the software one.
+Both destinations are timed.
+.PP
+The second is triangle size.
+Per-call overhead and per-pixel cost pull in opposite directions, so a
+scene of 512 small triangles and one of 64 wall-sized triangles are
+separate measurements.
+.PP
+The last line reports where the pixels a GPU pass produced can be read
+back from.
+.PP
+The options are:
+.TF "-n frames"
+.TP
+.B -p
+Sleep 16ms per frame, so that presentation is not the limit and
+.B INFERNO_METAL_STATS
+prints its per-30-frame counters during the run
+.TP
+.BI -n " frames"
+Frames per case (default 60)
+.PD
+.SH EXAMPLE
+Confirm that geometry really reaches the GPU rather than falling back:
+.IP
+.EX
+INFERNO_METAL_STATS=1 emu-cocoa -r. /dis/draw3dbench.dis -p
+.EE
+.PP
+.B g3_calls
+is nonzero only while the protocol cases run, and
+.B soft_fallbacks
+stays at zero.
+.SH SOURCE
+.B /appl/cmd/draw3dbench.b
+.SH SEE ALSO
+.IR draw3d (2),
+.IR polyfill (2),
+.IR draw (3)
+.SH BUGS
+Pixels drawn by the Metal geometry path cannot be read back through a
+window layer: after a protocol frame into
+.BR win.image ,
+.I readpixels
+on that layer returns nothing, while the same read of the display's own
+screen image sees the geometry.
+The readback itself runs \-
+.B readbacks
+counts up \- so this is a gap in the layer read path, not a missing
+readback.
+.PP
+The geometry the GPU has not yet presented lives in a fixed ring of
+49152 vertices, drained only by the presenter on the main thread.
+.I Flushnow
+does not drain it.
+A program submitting more than about 16000 triangles between presents
+blocks in the submission call until the presenter catches up, so the
+figure for many small triangles measures presentation throughput rather
+than the cost of a triangle.
+.PP
+Only
+.I fillpoly3
+is measured.
+.IR line3 ,
+.IR plot3 ,
+the
+.I sprite3
+family and
+.I fillpoly3g
+have their own paths in both providers and are not covered.
