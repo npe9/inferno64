@@ -160,9 +160,15 @@ than confined to the range the device names, which is deliberate,
 since a device that has just said it rearranged itself has least claim
 to have got that range right.
 .IP \(bu
-Devices are never forgotten.  A scan in a busy room fills
+A device that stops answering is forgotten, after
+.CW -a
+seconds and five minutes by default, so a scan in a busy room no
+longer fills
 .CW /net/bt/0/remote
-and nothing ages out of it, and the node table behind it only grows.
+for ever.  A connected device, a device with an identity from a bond,
+and everything while scanning is off are kept regardless.  The node
+table behind it still only grows, since qids are not reused; what a
+forgotten device frees is its entries in it, not the array.
 .IP \(bu
 Connection parameters can be accepted when the peer asks and never
 requested when we want them, which matters for latency and for battery

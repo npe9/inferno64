@@ -10,6 +10,8 @@ btfs, btbench \- Bluetooth Low Energy as a file system
 ] [
 .BI -k " keyfile"
 ] [
+.BI -a " seconds"
+] [
 .I controller
 ]
 .PP
@@ -18,6 +20,12 @@ btfs, btbench \- Bluetooth Low Energy as a file system
 .I controller
 [
 .I mountpoint
+[
+.I keyfile
+[
+.I mode
+]
+]
 ]
 ]
 .SH DESCRIPTION
@@ -147,6 +155,19 @@ that takes
 and
 .B pair
 without an address.
+.B state
+says how long ago the device was last heard from when it is not
+connected.
+.PP
+A device that stops answering is forgotten after the time given by
+.B -a
+(five minutes by default; 0 keeps everything), so a scan in a busy
+room does not fill this directory for ever.  Three things are never
+forgotten: a connected device, because it is plainly there and an
+advertisement is not how it is being talked to; a device with an
+identity from a bond, because a bond exists in order to find that
+device again; and every device while scanning is off, because then
+nothing is arriving and age says nothing about what is there.
 .TP
 .B /net/bt/0/remote/\fIADDR\fP/gatt/
 Appears when the device is connected: a directory per service, named

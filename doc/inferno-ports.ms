@@ -19536,6 +19536,54 @@ be quicker and is not done: it would be a change to the stack for the
 convenience of testing it, and the number a real controller is given
 to answer in is not the bench's business.
 .NH 2
+Forgetting a device
+.PP
+Nothing ever left
+.CW /net/bt/0/remote .
+A scan in a room with a hundred devices in it filled the directory and
+the node table behind it, and a device heard once at the far end of a
+corridor stayed for the life of the program.
+.PP
+Every device now records when its last advertisement arrived, a sweep
+every five seconds drops the ones that have stopped answering, and
+.CW state
+says how long ago an unconnected device was last heard from.  How long
+is
+.CW -a
+seconds, five minutes by default, and 0 keeps everything, which is
+what someone who wants the old behaviour asks for.
+.PP
+Three are kept whatever their age, each for a reason worth stating
+rather than leaving to be read out of a condition: a connected device,
+because it is plainly there and an advertisement is not how it is
+being talked to; a device with an identity from a bond, because a bond
+exists in order to find that device again and forgetting it undoes the
+pairing; and every device while scanning is off, because then nothing
+is arriving and age says nothing about what is there.
+.PP
+Removing a device is not removing its directory.  Nametree does not
+take a subtree out \(em which is why tearing down a gatt tree is a loop
+\(em so
+.CW dropdev
+removes the device's own files, and its gatt tree if it has one, and
+then the directory.
+.PP
+The
+.CW forget
+phase starts
+.CW btfs
+with
+.CW "-a 6" ,
+because a bench that waited out five minutes is a bench nobody runs
+and the number is the only thing that changes.  The model stops
+advertising anything after a few rounds, so what is left afterwards is
+left for a reason other than having been heard from: the phase
+connects to one device first, and asserts that the other is forgotten,
+that the connected one is not, and that it still reads a
+characteristic \(em so what stayed is the device and not just its
+name.  Without the sweep the first assertion fails; without the
+exception for a connected device, the second and third do.
+.NH 2
 SCO, said out loud
 .PP
 The transport frames SCO packets and

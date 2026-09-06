@@ -90,6 +90,7 @@ Dev: adt {
 	atype:	int;
 	id:	array of byte;	# its identity address, from a bond, or nil
 	idtype:	int;
+	seen:	int;		# when its last advertisement arrived
 	scv:	int;		# the Service Changed value handle, or 0
 	sccccd:	int;		# the descriptor its subscription was written to
 	name:	string;
@@ -140,6 +141,16 @@ bondlock:	chan of int;
 scanning:	int;
 bonds:	list of ref Bond;
 keyfile:	string;
+#
+# how long a device that is not answering stays in /net/bt/0/remote.  A
+# scan in a room with a hundred devices in it fills the directory and
+# the table behind it, and nothing here is interested in a device that
+# stopped advertising a quarter of an hour ago.  0 keeps everything,
+# which is what the -a flag is for when someone wants the old
+# behaviour.
+#
+ageout:	int	= 300;
+Reapevery:	con 5;	# seconds between sweeps
 mtpt:	con "/net/bt";
 
 init(nil: ref Draw->Context, argv: list of string)
@@ -163,13 +174,14 @@ init(nil: ref Draw->Context, argv: list of string)
 	mnt := mtpt;
 
 	arg->init(argv);
-	arg->setusage("btfs [-u] [-m mountpoint] [-k keyfile] [device]");
+	arg->setusage("btfs [-u] [-m mountpoint] [-k keyfile] [-a seconds] [device]");
 	usb := 0;
 	while((c := arg->opt()) != 0)
 		case c {
 		'u' =>	usb = 1;
 		'm' =>	mnt = arg->arg();
 		'k' =>	keyfile = arg->arg();
+		'a' =>	ageout = int arg->arg();
 		* =>	arg->usage();
 		}
 	a := arg->argv();
@@ -235,6 +247,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	# no NEWPGRP: the mount below belongs in the name space of
 	# whoever started btfs, not in a private one
 	spawn advproc();
+	spawn reaper();
 	spawn serve(tchan);
 
 	if(sys->mount(fds[1], nil, mnt, Sys->MREPL, nil) < 0)
@@ -385,6 +398,51 @@ daytime(): int
 #
 # advertising reports: a device appears the first time it is heard
 #
+#
+# Devices that have stopped answering leave /net/bt/0/remote.  Without
+# this a scan in a busy room fills the directory and the node table
+# behind it and nothing ever comes back out.
+#
+# Three are kept whatever their age, and each for a reason worth
+# stating rather than leaving to be read out of the condition:
+#
+#	a connected device, because it is plainly there and an
+#	advertisement is not how it is being talked to;
+#	a device with an identity from a bond, because a bond exists in
+#	order to find that device again and forgetting it undoes the
+#	work of pairing;
+#	every device, while scanning is off, because then nothing is
+#	arriving and age says nothing about whether a device is there.
+#
+reaper()
+{
+	for(;;){
+		sys->sleep(Reapevery * 1000);
+		if(ageout <= 0 || !scanning)
+			continue;
+		now := daytime();
+		<-devlock;
+		keep: list of ref Dev;
+		gone: list of ref Dev;
+		for(l := devs; l != nil; l = tl l){
+			d := hd l;
+			if(d.conn != nil || d.id != nil || now - d.seen < ageout)
+				keep = d :: keep;
+			else
+				gone = d :: gone;
+		}
+		devs = keep;
+		for(l = gone; l != nil; l = tl l){
+			d := hd l;
+			sys->fprint(sys->fildes(2),
+				"btfs: %s: not heard from for %ds, forgotten\n",
+				d.dir, now - d.seen);
+			dropdev(d);
+		}
+		devlock <-= 1;
+	}
+}
+
 advproc()
 {
 	c := hci->advs();
@@ -409,6 +467,7 @@ advproc()
 		d.addr = a.addr;
 		d.rssi = a.rssi;
 		d.atype = a.atype;
+		d.seen = daytime();
 		if(len a.data > 0)
 			d.adv = a.data;
 		nm := advname(a.data);
@@ -502,6 +561,7 @@ newdev(name: string, addr: array of byte, atype: int): ref Dev
 	d.addr = addr;
 	d.atype = atype;
 	d.state = "seen";
+	d.seen = daytime();
 	d.lock = chan[1] of int;
 	d.lock <-= 1;
 	d.q = newnode(Kdev, d, nil, name);
@@ -717,6 +777,8 @@ identtext(d: ref Dev): string
 devstate(d: ref Dev): string
 {
 	s := d.state;
+	if(d.conn == nil)
+		s += sprint(", last heard from %ds ago", daytime() - d.seen);
 	if(d.conn != nil){
 		s = sprint("connected handle %d", d.conn.handle);
 		if(d.conn.encrypted)
@@ -1118,6 +1180,24 @@ rediscover(d: ref Dev)
 	if(e != nil)
 		sys->fprint(sys->fildes(2),
 			"btfs: %s: discovering again: %s\n", d.dir, e);
+}
+
+#
+# Everything that belongs to one device: its own files, which hang off
+# its directory, and then the directory.  Removing the directory alone
+# would leave the files in the tree with no parent -- nametree does not
+# take a subtree out, which is why the teardown of a gatt tree is a
+# loop as well.
+#
+dropdev(d: ref Dev)
+{
+	droptree(d);
+	for(i := 0; i < nextq; i++){
+		n := nodes[i];
+		if(n != nil && n.dev == d && n.q != d.q)
+			remove(n.q);
+	}
+	remove(d.q);
 }
 
 removetree(d: ref Dev)

@@ -174,9 +174,14 @@ init(nil: ref Draw->Context, argv: list of string)
 		sys->print("BT: cannot load /dis/bt/btfs.dis: %r\n");
 		return;
 	}
-	args := "btfs" :: "-m" :: mnt :: spec :: nil;
+	# a list grows at the head, so this is built from the last
+	# argument backwards and comes out in order
+	args := spec :: nil;
+	if(mode == "forget")
+		args = "-a" :: "6" :: args;
 	if(keyfile != nil)
-		args = "btfs" :: "-m" :: mnt :: "-k" :: keyfile :: spec :: nil;
+		args = "-k" :: keyfile :: args;
+	args = "btfs" :: "-m" :: mnt :: args;
 	btfs->init(nil, args);
 	sys->sleep(500);
 
@@ -205,6 +210,9 @@ init(nil: ref Draw->Context, argv: list of string)
 		return;
 	"sco" =>
 		scophase();
+		return;
+	"forget" =>
+		forget();
 		return;
 	}
 	case mode {
@@ -518,6 +526,83 @@ conntest(mode: string)
 			sys->print("BT: the link carries ATT: name = %s\n", v);
 	}
 	writefile(dev + "/ctl", "disconnect");
+	writefile(mnt + "/0/ctl", "scan off");
+	sys->print("BT: done\n");
+}
+
+#
+# A device that stops answering leaves the name space; one that keeps
+# answering does not.  Without that, a scan in a room with a hundred
+# devices in it fills /net/bt/0/remote and nothing ever comes back out.
+#
+# btfs is started here with a short -a, because the default is five
+# minutes and a bench that waited that out would be a bench nobody
+# runs.  The number is the only thing that changes.
+#
+forget()
+{
+	before := lsdir(mnt + "/0/remote");
+	sys->print("BT: heard from %d devices\n", len before);
+	if(len before != 2){
+		sys->print("BT: FAILED: wanted 2 to start with\n");
+		sys->print("BT: done\n");
+		return;
+	}
+	quiet := "345678ABCDEF";		# nothing keeps this one
+	kept := "060504030201";		# this one is connected to
+	say("BT: " + quiet + ": " + trim(readfile(mnt + "/0/remote/" + quiet + "/state")));
+	#
+	# everything stops advertising shortly.  What is left afterwards
+	# is left for a reason other than having been heard from: this
+	# one is connected, and a connected device is plainly there
+	# whatever its last advertisement says.
+	#
+	if((e := writefile(mnt + "/0/remote/" + kept + "/ctl", "connect")) != nil){
+		sys->print("BT: FAILED: connect: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	sys->print("BT: connected to %s\n", kept);
+
+	after: list of string;
+	found := 1;
+	for(i := 0; i < 40 && found; i++){
+		sys->sleep(500);
+		after = lsdir(mnt + "/0/remote");
+		found = 0;
+		for(l := after; l != nil; l = tl l)
+			if(hd l == quiet)
+				found = 1;
+	}
+	ok := 1;
+	if(found){
+		sys->print("BT: FAILED: the device that went quiet is still there\n");
+		ok = 0;
+	} else
+		sys->print("BT: the device that went quiet was forgotten\n");
+	still := 0;
+	for(l := after; l != nil; l = tl l)
+		if(hd l == kept)
+			still = 1;
+	if(!still){
+		sys->print("BT: FAILED: the connected device was forgotten too\n");
+		ok = 0;
+	} else
+		sys->print("BT: the connected one stayed: %s\n",
+			trim(readfile(mnt + "/0/remote/" + kept + "/state")));
+	#
+	# and it is still usable, so what stayed is the device and not
+	# just its name
+	#
+	v := trim(readfile(mnt + "/0/remote/" + kept + "/gatt/1800/2a00"));
+	if(v != "inferno-bench"){
+		sys->print("BT: FAILED: the connected device reads %s\n", v);
+		ok = 0;
+	} else
+		sys->print("BT: and still works: %s\n", v);
+	writefile(mnt + "/0/remote/" + kept + "/ctl", "disconnect");
+	if(ok)
+		sys->print("BT: remote/ went from %d to %d\n", len before, len after);
 	writefile(mnt + "/0/ctl", "scan off");
 	sys->print("BT: done\n");
 }

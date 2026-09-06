@@ -108,6 +108,12 @@ service_changed = '--service-changed' in sys.argv
 # parser out of step with the stream.
 sco = '--sco' in sys.argv
 
+# --one-goes-quiet: the thermometer advertises for a few rounds and
+# then stops, while the sensor keeps going.  A device that has stopped
+# answering should leave the name space; one that is still answering
+# should not.
+one_goes_quiet = '--one-goes-quiet' in sys.argv
+
 def log(*a):
     if verbose:
         print('bthci:', *a, file=sys.stderr, flush=True)
@@ -428,6 +434,13 @@ class Model:
             for addr, atype, name in PEERS:
                 if not self.scanning:
                     break
+                if one_goes_quiet and self.rounds > 4:
+                    # after a few rounds nothing advertises at all, so
+                    # what stays in the name space stays for a reason
+                    # other than having been heard from
+                    if self.rounds == 5:
+                        log('everything stops advertising')
+                    continue
                 if bonded and atype == 1 and addr == PEERS[1][0] \
                    and self.rounds >= 3 and self.rotate is None:
                     self.rotate = (atype, addr)
