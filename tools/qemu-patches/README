@@ -1,0 +1,111 @@
+QEMU device models for the Raspberry Pi 3B port
+===============================================
+
+Patches against qemu v10.1.3, the version these boards are tested on.
+They are here because parts of the Pi 3B are either unmodelled by QEMU
+or modelled in a way that cannot exercise the guest driver: without
+them the corresponding kernel code is written blind.
+
+To apply and build:
+
+	git clone --depth 1 --branch v10.1.3 \
+		https://gitlab.com/qemu-project/qemu.git
+	cd qemu && git am /path/to/tools/qemu-patches/*.patch
+	mkdir build && cd build
+	../configure --target-list=aarch64-softmmu --disable-docs \
+		--disable-fuse --disable-jack
+	ninja
+
+Run the result by explicit path; do not install over a packaged qemu.
+On macOS the binary is qemu-system-aarch64-unsigned, which runs fine
+under TCG.
+
+EVIDENCE TIERS.  Results in doc/raspi3b-completion-plan.ms are labelled
+by what they were checked against, strongest first:
+
+	hardware	a real Raspberry Pi 3B
+	qemu		a device model QEMU already shipped
+	qemu+patch	a device model in this directory
+
+qemu+patch is the weakest of the three and is called out wherever it is
+used.  Both halves are ours there, so a passing test can mean the model
+implements the driver's bug.  Two rules keep that honest, and they are
+worth keeping when adding to this series:
+
+  - write the model from the hardware documentation or an existing
+    Linux/9front driver, not from what the Inferno driver happens to
+    emit, and say in the patch where it deviates;
+
+  - make the model reject protocol violations rather than tolerate
+    them.  QEMU's own usb-msd answering "Bad CBW size" is what caught
+    the dropped bulk maxpkt in appl/cmd/usb/usbd.b; a permissive model
+    would have hidden it.
+
+THE PATCHES
+
+0001 bcm2835_powermgt: model the watchdog countdown.
+
+	Stock QEMU resets the machine the instant a guest sets RSTC's
+	full-reset bit, and logs PM_WDOG as unimplemented.  The
+	watchdog therefore cannot be armed, watched, fed or stopped,
+	and os/inferno/raspi3b/pmbcm.c's arm-and-stop self-test
+	reboot-loops against it.
+
+	With the patch the counter ticks at 65536 Hz, counts only
+	while RSTC selects full-reset, reads back the time remaining,
+	and freezes where it stopped.  Linux's reboot path is
+	unaffected: it arms with 10 ticks, about 150us.
+
+0002 bcm2835_gpio: honour alt3 on the SD card pins.
+
+	Stock QEMU recognises only alt0 (SDHOST) on GPIO 48-53.  The
+	alt3 write that hands the card to the Arasan SDHCI block --
+	what sdhcibcm.c does, and what the hardware requires -- is
+	ignored, so the card stays wherever it was parented.  Since it
+	is parented to SDHCI at reset, the SDHCI driver appears to
+	work while its routing write does nothing, and a driver that
+	omitted the write entirely would pass identically.
+
+	With the patch alt3 selects SDHCI, so the routing is real: the
+	card can be handed to SDHOST and taken back.
+
+SELF-TESTS
+
+Two kernel self-tests are compiled out by default, because each can
+leave the board unusable if the hardware does not behave -- on a real
+Pi as much as under an emulator -- and a boot-time check that can brick
+its own boot is not worth having on by default.
+
+	-DWDOGSELFTEST	pmbcm.c: arm the watchdog, watch it count
+			down, stop it.  If the stop does not take, the
+			machine reboots 8 seconds later, and again
+			after that.
+
+	-DSDROUTETEST	sdhcibcm.c: route the card to SDHOST and
+			back.  If it cannot be taken back, the board
+			has no SD card.
+
+Build them by compiling the two files by hand with the define, then
+relinking:
+
+	cd os/inferno/raspi3b
+	mk
+	7c -wFV -DWDOGSELFTEST -DSDROUTETEST ... pmbcm.c sdhcibcm.c
+	touch -t 203001010000 pmbcm.7 sdhcibcm.7
+	mk
+
+The touch is needed because mk rebuilds an object whose timestamp
+merely ties with its source.
+
+What they print, against patched qemu with a 16M raw SD image
+(-drive file=sd.img,if=sd,format=raw):
+
+	WDOG-PRESENT loaded and holding while disarmed
+	WDOG-OK armed, counted down and stopped
+	sdhci: alt0 released the card, alt3 took it back
+	SDROUTE-OK
+	SDHCI-OK
+
+Against stock qemu the watchdog test reboot-loops and never reaches a
+banner, and the routing test reports SDROUTE-FAIL.  The default kernel,
+with neither define, boots clean on both.

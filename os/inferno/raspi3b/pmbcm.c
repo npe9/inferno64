@@ -86,28 +86,73 @@ pmreset(void)
 }
 
 /*
- * Probe the block without arming a reset.  Loading PM_WDOG is
- * harmless on its own: on real silicon nothing happens until PM_RSTC's
- * WRCFG field is set to full-reset, which is what starts the countdown.
- * So write the counter, read it back, and report -- this proves the
- * password-protected register write reaches the block, and it says
- * whether the emulator models a countdown at all.
+ * Arm the watchdog, watch it count down, and stop it again.
+ *
+ * This is a real test of the block and it is deliberately not run at
+ * boot.  If the stop does not take, the machine reboots 8 seconds
+ * later and keeps doing so -- on a real Pi as much as under an
+ * emulator -- so a kernel that arms a watchdog on every boot just to
+ * look at it is a kernel that can brick its own boot.  Build with
+ * -DWDOGSELFTEST to run it.
+ */
+#ifdef WDOGSELFTEST
+static void
+wdogselftest(u32 loaded)
+{
+	u32 *r = pm();
+	u32 armed, stopped, after;
+
+	r[Rstc] = Password | (r[Rstc] & Rstcwrcfgclr) | Rstcfullreset;
+	delay(100);
+	armed = r[Wdog] & Wdogmask;		/* armed: must be falling */
+
+	wdogstop();
+	stopped = r[Wdog] & Wdogmask;
+	delay(100);
+	after = r[Wdog] & Wdogmask;		/* stopped: must hold again */
+
+	print("pm: armed %ud stopped %ud/%ud\n", armed, stopped, after);
+	if(armed >= loaded)
+		print("WDOG-FAIL armed counter did not fall\n");
+	else if(after != stopped)
+		print("WDOG-FAIL counter still running after stop\n");
+	else
+		print("WDOG-OK armed, counted down and stopped\n");
+}
+#endif
+
+/*
+ * Probe the block without arming a reset.
+ *
+ * Two things are checkable safely, and both are checked here.  A
+ * password write must reach the counter, which a read-back proves.
+ * And the counter must NOT move while the watchdog is disarmed: on
+ * this SoC nothing counts until PM_RSTC's WRCFG field selects full
+ * reset, so a counter that falls on its own is a broken block, and one
+ * that holds still is behaving exactly as it should.
  */
 void
 pminit(void)
 {
 	u32 *r = pm();
-	u32 a, b;
+	u32 loaded, idle;
 
 	r[Wdog] = Password | (8 * Wdoghz);
-	a = r[Wdog] & Wdogmask;
-	delay(100);
-	b = r[Wdog] & Wdogmask;
-	if(a == 0){
+	loaded = r[Wdog] & Wdogmask;
+	if(loaded == 0){
 		print("WDOG-FAIL counter reads 0 after a password write\n");
 		return;
 	}
-	print("pm: watchdog at %#p loaded %ud, %ud after 100ms%s\n",
-		(void*)PMBASE, a, b,
-		b < a? " (counting) WDOG-OK": " (emulator: no countdown) WDOG-STATIC");
+	delay(100);
+	idle = r[Wdog] & Wdogmask;
+	print("pm: watchdog at %#p loaded %ud idle %ud\n",
+		(void*)PMBASE, loaded, idle);
+	if(idle != loaded){
+		print("WDOG-FAIL counter ran while disarmed\n");
+		return;
+	}
+	print("WDOG-PRESENT loaded and holding while disarmed\n");
+#ifdef WDOGSELFTEST
+	wdogselftest(loaded);
+#endif
 }

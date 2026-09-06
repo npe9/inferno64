@@ -402,6 +402,44 @@ on the card and this controller left for the Wi-Fi, which sits on its
 own pins (GPIO 34-39 alt3), so in the arrangement that matters the two
 never contend at all.
 .PP
+.B "The routing write was doing nothing, and the test still passed."
+Stock QEMU 10.1.3 recognises only alt0 on GPIO 48-53; the alt3 write
+that hands the card to the Arasan matched nothing in
+.CW hw/gpio/bcm2835_gpio.c
+and was silently dropped.  The SDHCI path passed anyway, because the
+card is parented to SDHCI at reset and devsd probes lazily, so nothing
+ever moved it away.  A driver that omitted the routing write entirely
+would have passed the same test identically \- which is exactly the
+shape of an emulator-only pass.
+.PP
+.CW tools/qemu-patches/0002
+makes alt3 select the Arasan, so the routing is real and can be
+falsified.  With it, a round trip \- hand the card to SDHOST, take it
+back \- reports
+.CW "alt0 released the card, alt3 took it back" ,
+.CW SDROUTE-OK ,
+and block 0 reads correctly afterwards; without it the same kernel
+reports
+.CW SDROUTE-FAIL
+and the board ends up with no SD card.  This is
+.B qemu+patch
+evidence.
+.PP
+Two guest bugs fell out of writing that test, both of which would have
+bitten on hardware.  Losing the card raises a card-removal interrupt,
+and the controller will not report the new insertion until that status
+is acknowledged, so the round trip hung until
+.CW sdhcibcm.c
+cleared it; and card detect does not settle the instant the pins
+switch, so the status has to be waited for rather than read straight
+away.  Losing the card also drops the controller's clock and power,
+so
+.CW sdhcictlrinit()
+has to run again before identification.  The round trip lives behind
+.CW -DSDROUTETEST ,
+since a controller that cannot take the card back leaves the board with
+no SD card at all.
+.PP
 Verified on a booted kernel
 .CW ( "-drive if=sd,format=raw,file=<img>" ),
 one boot exercising both controllers and the routing in both
@@ -550,29 +588,62 @@ to
 to PM_RSTC: three boot banners inside one emulator run, and the
 "nothing happened" marker after the write never printed.
 .PP
-.B "Emulator gap, named because it is load-bearing."
-QEMU models no watchdog countdown.  Loading PM_WDOG reads back exactly
-what was written (524288 for 8 seconds, unchanged 100ms later), and the
-reset happens the instant PM_RSTC's WRCFG field is set to full-reset,
-whatever the counter says.  So on QEMU an arm
+.B "Emulator gap, closed by co-designing the device model."
+Stock QEMU 10.1.3 models no watchdog countdown.  Loading PM_WDOG reads
+back exactly what was written, and the reset happens the instant
+PM_RSTC's WRCFG field is set to full-reset, whatever the counter says.
+So on stock QEMU an arm
 .I is
 a reset: an early
 .CW pminit()
-that armed the watchdog to test the countdown put the board into a
-reboot loop, 167 banners in forty seconds.  That is why
+that armed the watchdog to watch it count down put the board into a
+reboot loop, 167 banners in forty seconds.
+.PP
+That gap is now closed from the other side.
+.CW tools/qemu-patches/0001
+gives
+.CW hw/misc/bcm2835_powermgt.c
+a real counter: it ticks at 65536 Hz, counts only while RSTC selects
+full-reset, reads back the time remaining, and freezes where it stopped
+\- which is what the SoC does and what Linux's
+.CW bcm2835_wdt
+driver assumes.  Against that model the full arm, count-down and stop
+sequence passes:
+.CW ( "loaded 524288 idle 524288 armed 517731 stopped 517730/517730" ),
+and the 6557 ticks lost over a 100ms delay come to 100.03ms, so the
+rate is right and not merely nonzero.
+.PP
+This is
+.B qemu+patch
+evidence, the weakest of the three tiers described in
+.CW tools/qemu-patches/README :
+both the driver and the device model are ours, so the test proves they
+agree, not that either matches silicon.  The register semantics were
+taken from Linux's driver rather than from what
+.CW pmbcm.c
+emits, which is the main thing keeping that agreement honest.  The
+watchdog still wants a run on the board.
+.PP
+.B "The self-test is compiled out."
 .CW pminit()
-now loads PM_WDOG only and never touches PM_RSTC.  The countdown, the
-feed-the-dog behaviour and
-.CW wdogstop()
-are therefore
-.B unverified
-and wait on the board; the reset itself is proven.
+does only what is safe on any hardware: it writes the counter, reads it
+back, and checks that it does
+.I not
+move while disarmed \- which is the required behaviour, not a
+deficiency, and passes on stock and patched QEMU alike
+.CW ( WDOG-PRESENT ).
+The arm-and-stop sequence lives behind
+.CW -DWDOGSELFTEST .
+A watchdog whose stop does not take reboots the machine 8 seconds later
+and keeps doing so, on a real Pi as much as under an emulator, so a
+kernel that arms one on every boot just to look at it is a kernel that
+can brick its own boot.
 .PP
 PWM (0x3f20c000) is
-.B "not attempted."
-QEMU's raspi3b models no PWM block, so a driver would be written blind
-and unrunnable, and there is nothing here it would let the board do that
-it cannot already.  It belongs with Phase 6 as real-hardware work.
+.B "not attempted yet."
+QEMU's raspi3b models no PWM block.  That is no longer a reason to
+leave it alone \- a model can be written, as the watchdog and GPIO ones
+were \- but it is the next item rather than a finished one.
 .NH 1
 Parallel: the kfs create failure -- re-diagnosed, and it is not what the old note said
 .PP

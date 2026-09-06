@@ -200,6 +200,52 @@ sdhcictlrinit(Ctlr *c)
 }
 
 /*
+ * Prove that the GPIO alt function really moves the card between the
+ * two controllers, rather than the card merely happening to sit on
+ * this one already.  Alt0 hands the card pins to SDHOST, which must
+ * make it vanish from here; Alt3 takes them back, which must make it
+ * reappear.  Identification runs afterwards and starts with GO_IDLE,
+ * so the round trip leaves nothing to clean up.
+ *
+ * Not run by default: it is a diagnostic, and a controller that cannot
+ * take the card back leaves the board with no SD card at all.  Build
+ * with -DSDROUTETEST.
+ */
+#ifdef SDROUTETEST
+static void
+sdhciroutetest(Ctlr *c)
+{
+	u32 *r = c->r;
+	int i, released, regained;
+
+	for(i = 48; i <= 53; i++)
+		gpiofsel(i, Alt0);		/* hand the card to SDHOST */
+	released = (r[Status] & Cardinserted) == 0;
+	for(i = 48; i <= 53; i++)
+		gpiofsel(i, Alt3);		/* take it back */
+	/*
+	 * Card detect does not settle the instant the pins are switched.
+	 * Losing the card raised a card-removal interrupt, and the
+	 * controller will not report the new insertion until that status
+	 * is acknowledged, so clear it (the status bits are write-one-to-
+	 * clear) and then wait for the card to be seen.
+	 */
+	r[Interrupt] = r[Interrupt];
+	for(i = 0; i < 300; i++){
+		if(r[Status] & Cardinserted)
+			break;
+		delay(10);
+	}
+	regained = (r[Status] & Cardinserted) != 0;
+
+	print("sdhci: alt0 %s the card, alt3 %s\n",
+		released? "released": "DID NOT release",
+		regained? "took it back": "DID NOT take it back");
+	print("%s\n", released && regained? "SDROUTE-OK": "SDROUTE-FAIL");
+}
+#endif
+
+/*
  * Card bring-up over the standard SD identification sequence.  Returns
  * 1 with the card selected and sized, 0 if nothing answers.
  */
@@ -220,6 +266,16 @@ sdhcicardinit(Ctlr *c)
 		return 0;
 	if((r[Status] & Cardinserted) == 0)
 		return 0;			/* nothing in the slot */
+
+#ifdef SDROUTETEST
+	/*
+	 * Losing and regaining the card drops the controller's clock and
+	 * power, so bring it up again before identifying the card.
+	 */
+	sdhciroutetest(c);
+	if(sdhcictlrinit(c) < 0)
+		return 0;
+#endif
 
 	if(sdhcicmd(c, 0, 0, Respnone) < 0)		/* GO_IDLE */
 		return 0;
