@@ -5,36 +5,63 @@ zoneout \- tank shooter
 .B temple/zoneout
 .SH DESCRIPTION
 .I ZoneOut
-is a tank shooter.
+is a port of the TempleOS
+.B Demo/Games/ZoneOut.HC
+tank shooter.
 It runs under
 .IR wm (1).
 .PP
-Turn and drive with wasd or the arrows; space fires. Destroy every tank on the plain.
+It opens with Terry Davis's own dialog \-
+.RB \(lq "I refuse to rip-off the original, so this is intentionally crappy" \(rq
+\- which any key dismisses, starting the clock.
+Ten enemy tanks wander a plain under a scrolling horizon.
+Turn, drive and shoot them all; the elapsed time is scored and the
+best kept between runs.
+.PP
+Tanks and shots are the original's own mesh sprites, drawn through
+.IR draw3d (2)
+with a depth buffer, and the horizon is its 1280-pixel panorama tiled
+three times so it scrolls seamlessly through a full turn.
 .PP
 The controls are:
 .TF space
 .TP
-.B Left / a
+.B "any key"
+Dismiss the opening dialog
+.TP
+.B Left
 Turn left
 .TP
-.B Right / d
+.B Right
 Turn right
 .TP
-.B Up / w
+.B Up
 Move forward
 .TP
-.B Down / s
+.B Down
 Move back
 .TP
 .B space
 Fire
 .TP
-.B Enter / r
+.B Enter
 Restart
 .TP
 .B Esc / q
 Quit
 .PD
+.SH FILES
+.TP
+.B /icons/temple/zoneout_1.mesh
+Tank, hit tank and shot meshes
+.RB ( zoneout_1 ,
+.BR zoneout_2 ,
+.BR zoneout_3 ).
+.TP
+.B /icons/temple/zoneout_4.bit
+The horizon panorama, with its
+.B .mask
+alongside.
 .SH SOURCE
 .B /appl/temple/zoneout.b
 .SH SEE ALSO
@@ -42,3 +69,24 @@ Quit
 .IR draw3d (2),
 .IR tone (2),
 .IR wm (1)
+.SH BUGS
+The original's File and Play pulldown menus are not drawn; every entry
+is on a key.
+It has no
+.B wasd
+alternatives to the arrow keys, and this port no longer offers them
+either.
+.PP
+A shot leaves the gun at
+.BR TANK_HEIGHT ,
+which in the original's screen-down coordinates puts it below the
+enemy tanks' origins rather than level with their guns, and a tank
+within range of a shot is lifted by the distance to it, so it springs
+up and settles as the shot arrives.
+Both are reproduced as written.
+.PP
+The original's transform clamps depth to 1 instead of clipping, so
+geometry behind the eye is smeared to enormous coordinates;
+.IR draw3d (2)
+rejects a triangle with a vertex behind the eye instead.
+Both put it off the screen.

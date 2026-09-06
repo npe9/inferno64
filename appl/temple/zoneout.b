@@ -1,16 +1,44 @@
 implement Zoneout;
 
-# TempleOS Demo/Games/ZoneOut.HC — tank shooter in faux-3D
-# GAP: no Sprite3YB tanks/shots / scrolling sky sprites — ellipses + bands
-# GAP: no GrPrint HUD — corner bars
-# GAP: SongTask music loop omitted
+# TempleOS Demo/Games/ZoneOut.HC — tank shooter.
+#
+# Terry's own PopUpOk opens it: "I refuse to rip-off the original / so this
+# is intentionally crappy".  The quirks below are his, and are reproduced
+# rather than tidied.
+#
+# The world is drawn through ZOTransform, which is Mat4x4RotX(pi/16) *
+# Mat4x4RotY(us.angle - pi/2) * Mat4x4TranslationEqu(-us) followed by a
+# perspective divide: x' = SCRN_SCALE/2 * x/z, y' = SCRN_SCALE/2 *
+# (y+TANK_HEIGHT)/z, about the window centre.  That is an ordinary camera
+# plus a shifted y, so it is expressed here as draw3d(2) matrices — the
+# TANK_HEIGHT as an eye-space translate, the divide as frustumoffset() —
+# rather than a per-vertex settransform closure.  draw3d's perspective
+# divides by -z, so the view matrix ends with a scale(1,1,-1) to hand it
+# ZoneOut's +z-forward eye space.
+#
+# Tanks, hit tanks and shots are SPT_MESH sprites (bins 1, 2, 3) blitted by
+# Sprite3YB with the object's -angle, over DCDepthBufAlloc's depth buffer;
+# here that is draw3d's z-buffer and one fillpoly3 per triangle in the
+# mesh's own TempleOS palette colour.  The sky panorama is bin 4, a plain
+# screen-space Sprite3 drawn three times at 1280-pixel spacing before the
+# transform is installed.
+#
+# GAP: MenuPush File/Play menu bar; every entry is on its key already.
+# GAP: ZOTransform clamps z to 1 rather than clipping, so geometry behind
+#      the eye is smeared to enormous coordinates instead of vanishing;
+#      draw3d rejects a triangle with a vertex behind the eye.  Both put it
+#      off-screen, but the original would smear a straddling triangle.
+# GAP: the original redraws through the window manager at ~30fps while
+#      AnimateTask runs at 50Hz; the same split is kept here.  A whole
+#      frame — ten tanks, 820 triangles, plus the clear — measures 1.9ms
+#      on this tree, so nothing is culled or simplified for speed.
 
 include "sys.m";
 	sys: Sys;
 
 include "draw.m";
 	draw: Draw;
-	Display, Image, Point, Rect: import draw;
+	Display, Font, Image, Point, Rect: import draw;
 
 include "math.m";
 	math: Math;
@@ -32,6 +60,11 @@ include "tone.m";
 include "scorestore.m";
 	scorestore: Scorestore;
 
+include "math/polyfill.m";
+include "math/draw3d.m";
+	draw3d: Draw3d;
+	Vector: import Draw3d;
+
 Zoneout: module
 {
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
@@ -41,6 +74,24 @@ THEM_NUM: con 10;
 SCRN_SCALE: con 512;
 TANK_HEIGHT: con 32;
 PI: con 3.141592653589793;
+
+# TempleOS FONT_WIDTH / FONT_HEIGHT
+FW: con 8;
+FH: con 8;
+
+# the window the sky arithmetic assumes: Wrap() spans (-pi,pi], so
+# 640*Wrap(2*angle)/pi spans (-640,640], one sprite width per wrap.
+SCRW: con 640;
+SCRH: con 480;
+SKYW: con 1280;
+SKYY: con 90;
+
+# TempleOS palette indices used below
+BLACK, BLUE, GREEN, CYAN, RED, PURPLE, BROWN, LTGRAY: con iota;
+DKGRAY, LTBLUE, LTGREEN, LTCYAN, LTRED, LTPURPLE, YELLOW, WHITE: con iota + 8;
+
+Tri: adt { col, a, b, c: int; };
+Mesh: adt { v: array of Vector; f: array of Tri; };
 
 Obj: adt {
 	x, y, z, angle: real;
@@ -52,7 +103,12 @@ Shot: adt {
 };
 
 win: ref Window;
+d3c: ref Draw3d->Context;
+font: ref Font;
 ink: array of ref Image;
+tankm, hitm, shotm: ref Mesh;
+sky, skymask: ref Image;
+
 us: Obj;
 them: array of Obj;
 shots: list of ref Shot;
@@ -60,6 +116,7 @@ num_them := THEM_NUM;
 game_t0, game_tf: real;
 best_score := 9999.0;
 have_tone := 0;
+help := 1;			# the opening PopUpOk
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
@@ -70,6 +127,12 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	rand = load Rand Rand->PATH;
 	tone = load Tone Tone->PATH;
 	scorestore = load Scorestore Scorestore->PATH;
+	draw3d = load Draw3d Draw3d->PATH;
+	if(draw3d == nil){
+		sys->fprint(sys->fildes(2), "zoneout: no draw3d: %r\n");
+		return;
+	}
+	draw3d->init();
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
 	if(tone != nil && tone->init() == nil)
@@ -81,26 +144,44 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	win = wmclient->window(ctxt, "TempleOS ZoneOut", Wmclient->Appl);
 	d := win.display;
+	font = Font.open(d, "/fonts/temple/temple.font");
+	if(font == nil)
+		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+
+	# the exact TempleOS 16-color palette, index = TempleOS color
 	ink = array[16] of ref Image;
 	cols := array[] of {
-		Draw->Black, Draw->Blue, Draw->Green, Draw->Cyan,
-		Draw->Red, Draw->Magenta, Draw->Darkyellow, Draw->Grey,
-		int 16r444444FF, Draw->Paleblue, Draw->Palegreen, Draw->Palebluegreen,
-		int 16rFF8888FF, int 16rFF88FFFF, Draw->Yellow, Draw->White
+		int 16r000000FF, int 16r0000AAFF, int 16r00AA00FF, int 16r00AAAAFF,
+		int 16rAA0000FF, int 16rAA00AAFF, int 16rAA5500FF, int 16rAAAAAAFF,
+		int 16r555555FF, int 16r5555FFFF, int 16r55FF55FF, int 16r55FFFFFF,
+		int 16rFF5555FF, int 16rFF55FFFF, int 16rFFFF55FF, int 16rFFFFFFFF
 	};
 	for(i := 0; i < 16; i++)
 		ink[i] = d.color(cols[i]);
+
+	tankm = loadmesh("/icons/temple/zoneout_1.mesh");
+	hitm = loadmesh("/icons/temple/zoneout_2.mesh");
+	shotm = loadmesh("/icons/temple/zoneout_3.mesh");
+	sky = d.open("/icons/temple/zoneout_4.bit");
+	skymask = d.open("/icons/temple/zoneout_4.mask");
+
 	if(scorestore != nil)
 		best_score = scorestore->loadreal("zoneout", best_score);
 
 	them = array[THEM_NUM] of Obj;
 	game_init();
-	win.reshape(Rect((0, 0), (640, 480)));
+	win.reshape(Rect((0, 0), (SCRW, SCRH)));
 	win.onscreen("place");
 	win.startinput("kbd" :: nil);
 
+	if(have_tone)
+		spawn songtask();
+
+	# AnimateTask's Sleep(20); the winmgr's own ~30fps redraw is a
+	# separate count of those ticks.
 	ticks := chan of int;
 	spawn timer(ticks, 20);
+	nt := 0;
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -108,8 +189,12 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	k := <-win.ctxt.kbd =>
 		key(k);
 	<-ticks =>
-		animate();
-		redraw();
+		if(!help)
+			animate();
+		if(++nt >= 2){		# 20ms ticks -> ~33ms frames
+			nt = 0;
+			redraw();
+		}
 	}
 }
 
@@ -128,25 +213,30 @@ game_init()
 
 key(k: int)
 {
-	if(game_tf != 0.0 && k != '\n' && k != 'r' && k != 'R' &&
-	   k != 16r1b && k != 'q' && k != 'Q')
+	if(help){
+		# PopUpOk: any key dismisses it and starts the clock
+		if((k & Keyboard->Keyup) != Keyboard->Keyup){
+			help = 0;
+			game_t0 = now();
+		}
 		return;
+	}
 	case k {
 	16r1b or 'q' or 'Q' =>
 		if(have_tone)
 			tone->stop();
 		exit;
-	'\n' or 'r' or 'R' =>
+	'\n' =>
 		game_init();
 	' ' =>
 		fire();
-	Keyboard->Left or 'a' or 'A' =>
+	Keyboard->Left =>
 		us.angle += PI / 256.0;
-	Keyboard->Right or 'd' or 'D' =>
+	Keyboard->Right =>
 		us.angle -= PI / 256.0;
-	Keyboard->Up or 'w' or 'W' =>
+	Keyboard->Up =>
 		move_us(us.angle);
-	Keyboard->Down or 's' or 'S' =>
+	Keyboard->Down =>
 		move_us(us.angle + PI);
 	}
 }
@@ -157,20 +247,20 @@ move_us(dir: real)
 	us.z += 0.1 * real SCRN_SCALE * math->sin(dir);
 }
 
+# Fire(): the shot starts at the tank, at TANK_HEIGHT.  TempleOS y grows
+# downward, so a shot is drawn below the enemy tanks' origins, not level
+# with their guns.  That is what the original does.
 fire()
 {
-	if(game_tf != 0.0)
-		return;
 	s := ref Shot(us.x, real TANK_HEIGHT, us.z, us.angle, now());
 	shots = s :: shots;
 	if(have_tone)
-		tone->beep(74, 60);
+		tone->beep(ona2freq(74.0), 60);
 }
 
+# AnimateTask: Sleep(20) between steps, so these are per-20ms rates.
 animate()
 {
-	if(game_tf != 0.0)
-		return;
 	ts := now();
 	for(i := 0; i < THEM_NUM; i++){
 		t := them[i];
@@ -179,62 +269,120 @@ animate()
 		t.angle += rnreal() / 100.0;
 		them[i] = t;
 	}
-	hit_r2 := (SCRN_SCALE/2) * (SCRN_SCALE/2);
-	newshots: list of ref Shot;
+	live: list of ref Shot;
 	for(sl := shots; sl != nil; sl = tl sl){
 		sh := hd sl;
 		if(ts - sh.t0 > 1.0)
 			continue;
 		sh.x += 0.25 * real SCRN_SCALE * math->cos(sh.angle);
 		sh.z += 0.25 * real SCRN_SCALE * math->sin(sh.angle);
-		for(i := 0; i < THEM_NUM; i++){
-			t := them[i];
-			if(t.hit)
-				continue;
-			dd := int((t.x - sh.x)*(t.x - sh.x) + (t.z - sh.z)*(t.z - sh.z));
-			if(dd < hit_r2){
-				t.hit = 1;
-				them[i] = t;
-				num_them--;
-				if(num_them == 0){
-					game_tf = ts;
-					if(game_tf - game_t0 < best_score){
-						best_score = game_tf - game_t0;
-						if(scorestore != nil)
-							scorestore->savereal("zoneout", best_score);
-					}
-					if(have_tone)
-						tone->stop();
-				}
-			}
-		}
-		newshots = sh :: newshots;
+		live = sh :: live;
 	}
-	shots = rev(newshots);
+	shots = rev(live);
 }
 
-project(wx, wy, wz: real): (int, int, real)
+# --- meshes -------------------------------------------------------------
+
+loadmesh(path: string): ref Mesh
 {
-	img := win.image;
-	cx := 320; cy := 240;
-	if(img != nil){
-		cx = img.r.dx() / 2;
-		cy = img.r.dy() / 2;
+	fd := sys->open(path, Sys->OREAD);
+	if(fd == nil)
+		return nil;
+	buf := array[32768] of byte;
+	n := sys->read(fd, buf, len buf);
+	if(n <= 0)
+		return nil;
+	(nil, lines) := sys->tokenize(string buf[0:n], "\n");
+	if(lines == nil)
+		return nil;
+	(nil, h) := sys->tokenize(hd lines, " \t");
+	if(len h != 3 || hd h != "mesh")
+		return nil;
+	nv := int hd tl h;
+	nf := int hd tl tl h;
+	m := ref Mesh(array[nv] of Vector, array[nf] of Tri);
+	vi := 0;
+	fi := 0;
+	for(lines = tl lines; lines != nil; lines = tl lines){
+		(nil, t) := sys->tokenize(hd lines, " \t\r");
+		if(t == nil)
+			continue;
+		if(hd t == "v" && len t == 4 && vi < nv){
+			t = tl t;
+			x := real int hd t; t = tl t;
+			y := real int hd t; t = tl t;
+			m.v[vi++] = Vector(x, y, real int hd t);
+		}else if(hd t == "f" && len t == 5 && fi < nf){
+			t = tl t;
+			c := int hd t; t = tl t;
+			a := int hd t; t = tl t;
+			b := int hd t; t = tl t;
+			m.f[fi++] = Tri(c, a, b, int hd t);
+		}
 	}
-	tx := wx - us.x;
-	ty := wy - us.y;
-	tz := wz - us.z;
-	yaw := us.angle - PI/2.0;
-	rx := tx*math->cos(yaw) - tz*math->sin(yaw);
-	rz := tx*math->sin(yaw) + tz*math->cos(yaw);
-	pitch := PI / 16.0;
-	ry := ty*math->cos(pitch) - rz*math->sin(pitch);
-	rz2 := ty*math->sin(pitch) + rz*math->cos(pitch);
-	if(rz2 < 1.0)
-		rz2 = 1.0;
-	sx := int(real(SCRN_SCALE)/2.0 * rx / rz2);
-	sy := int(real(SCRN_SCALE)/2.0 * (ry + real TANK_HEIGHT) / rz2);
-	return (cx + sx, cy + sy, rz2);
+	if(vi != nv || fi != nf)
+		return nil;
+	return m;
+}
+
+# Sprite3YB(dc,x,y,z,mesh,-angle): the mesh sits at (x,y,z) turned about
+# world-up.  draw3d's rotatey and this -angle agree: the mesh's +x nose
+# ends up along (cos angle, sin angle) in the (x,z) plane, which is the
+# direction MoveUs() and the enemy walk uses.
+drawmesh(m: ref Mesh, x, y, z, angle: real)
+{
+	if(m == nil)
+		return;
+	ca := math->cos(-angle);
+	sa := math->sin(-angle);
+	nv := len m.v;
+	wv := array[nv] of Vector;
+	for(i := 0; i < nv; i++){
+		v := m.v[i];
+		wv[i] = Vector(x + ca*v.x + sa*v.z, y + v.y, z - sa*v.x + ca*v.z);
+	}
+	tri := array[3] of Vector;
+	for(i = 0; i < len m.f; i++){
+		f := m.f[i];
+		if(f.a >= nv || f.b >= nv || f.c >= nv)
+			continue;
+		tri[0] = wv[f.a];
+		tri[1] = wv[f.b];
+		tri[2] = wv[f.c];
+		draw3d->setcolour(d3c, ink[f.col & 15]);
+		draw3d->fillpoly3(d3c, tri, Vector(0.0, 0.0, 0.0), 1.0);
+	}
+}
+
+# ZOTransform as matrices.  Model/view is read right to left:
+# translate to the eye, RotY(angle-pi/2), RotX(pi/16), lift by TANK_HEIGHT
+# in eye space, then negate z because draw3d divides by -z while ZoneOut
+# divides by +z.  RotX's sign is the one that puts the ground below the
+# horizon.  The projection's SCRN_SCALE/2 over the viewport half-extent is
+# the original's own scale, kept correct across a resize.
+setup3d(img: ref Image)
+{
+	if(d3c == nil)
+		d3c = draw3d->context(img);
+	else
+		draw3d->resize(d3c, img);
+	draw3d->viewport(d3c, img.r.min.x, img.r.min.y, img.r.max.x, img.r.max.y);
+	draw3d->setz(d3c, 1);
+	draw3d->clearz(d3c);
+	draw3d->setzclip(d3c, 1);
+
+	draw3d->mode(Draw3d->MODEL);
+	draw3d->identity();
+	draw3d->scale(1.0, 1.0, -1.0);
+	draw3d->translate(0.0, real TANK_HEIGHT, 0.0);
+	draw3d->rotatex(180.0 / 16.0);
+	draw3d->rotatey((us.angle - PI/2.0) * 180.0 / PI);
+	draw3d->translate(-us.x, -us.y, -us.z);
+
+	draw3d->mode(Draw3d->PROJ);
+	draw3d->identity();
+	draw3d->frustumoffset((real SCRN_SCALE/2.0) / d3c.mx,
+		(real SCRN_SCALE/2.0) / d3c.my, 0.0);
 }
 
 redraw()
@@ -242,92 +390,169 @@ redraw()
 	img := win.image;
 	if(img == nil)
 		return;
+	o := img.r.min;
 	w := img.r.dx();
 	h := img.r.dy();
-	o := img.r.min;
 	cx := w / 2;
 	cy := h / 2;
 
-	# sky + ground bands (scrolling backdrop substitute)
-	bg_off := int(640.0 * wrap2(us.angle) / (2.0*PI));
-	for(b := -1; b <= 2; b++){
-		bx := b*640 - bg_off;
-		img.draw(Rect((o.x+bx, o.y), (o.x+bx+640, o.y+h/3)), ink[10], nil, Point(0, 0));
-		img.draw(Rect((o.x+bx, o.y+h/3), (o.x+bx+640, o.y+h)), ink[2], nil, Point(0, 0));
+	# "$$BG,LTCYAN$$": the document background under everything
+	img.draw(img.r, ink[LTCYAN], nil, Point(0, 0));
+
+	# three screen-space Sprite3 copies of the sky panorama, before the
+	# transform is installed: 640*Wrap(2*angle)/pi spans exactly one
+	# sprite width, so the three tile without a seam at the wrap.
+	if(sky != nil){
+		sx := int(real SCRW * wrappi(2.0 * us.angle) / PI);
+		for(k := -1; k <= 1; k++)
+			blit(img, sky, skymask, o.x + sx + k*SKYW, o.y + SKYY);
 	}
 
-	hit_r2 := (SCRN_SCALE/2) * (SCRN_SCALE/2);
+	setup3d(img);
+
+	# DrawIt registers the hits and sinks the tank as it draws: a tank
+	# within SCRN_SCALE/2 of any shot is marked hit, and its drawn y is
+	# raised by Sqrt(dd) for every such shot — further shots move it
+	# more, so it springs up and settles as the shot arrives.
+	hitr2 := real (SCRN_SCALE/2) * real (SCRN_SCALE/2);
 	for(i := 0; i < THEM_NUM; i++){
 		t := them[i];
-		ey := t.y;
+		y := t.y;
 		for(sl := shots; sl != nil; sl = tl sl){
 			sh := hd sl;
-			dd := int((t.x - sh.x)*(t.x - sh.x) + (t.z - sh.z)*(t.z - sh.z));
-			if(dd < hit_r2)
-				ey -= math->sqrt(real dd);
+			dd := (t.x - sh.x)*(t.x - sh.x) + (t.z - sh.z)*(t.z - sh.z);
+			if(dd < hitr2){
+				y -= math->sqrt(dd);
+				if(!t.hit){
+					t.hit = 1;
+					them[i] = t;
+					if(--num_them == 0){
+						game_tf = now();
+						if(game_tf - game_t0 < best_score){
+							best_score = game_tf - game_t0;
+							if(scorestore != nil)
+								scorestore->savereal("zoneout", best_score);
+						}
+					}
+				}
+			}
 		}
-		(sx, sy, zd) := project(t.x, ey, t.z);
-		rad := int(18.0 / zd);
-		if(rad < 3)
-			rad = 3;
-		col := ink[4];
+		m := tankm;
 		if(t.hit)
-			col = ink[7];
-		img.ellipse(Point(o.x+sx, o.y+sy), rad, rad, 0, col, Point(0, 0));
-		if(!t.hit){
-			(tx, ty, nil) := project(t.x, ey, t.z + 20.0);
-			img.line(Point(o.x+sx, o.y+sy), Point(o.x+tx, o.y+ty),
-				Draw->Enddisc, Draw->Enddisc, 1, ink[0], Point(0, 0));
-		}
+			m = hitm;
+		drawmesh(m, t.x, y, t.z, t.angle);
 	}
 	for(sl := shots; sl != nil; sl = tl sl){
 		sh := hd sl;
-		(sx, sy, zd) := project(sh.x, sh.y, sh.z);
-		rad := int(6.0 / zd);
-		if(rad < 2)
-			rad = 2;
-		img.ellipse(Point(o.x+sx, o.y+sy), rad, rad, 0, ink[14], Point(0, 0));
+		drawmesh(shotm, sh.x, sh.y, sh.z, sh.angle);
 	}
 
-	if(game_tf != 0.0 && (sys->millisec()/500)%2 == 0)
-		img.draw(Rect((o.x+cx-70, o.y+cy-12), (o.x+cx+70, o.y+cy+12)), ink[4], nil, Point(0, 0));
-	else{
-		img.line(Point(o.x+cx-5, o.y+cy), Point(o.x+cx+5, o.y+cy),
-			Draw->Endsquare, Draw->Endsquare, 1, ink[2], Point(0, 0));
-		img.line(Point(o.x+cx, o.y+cy-5), Point(o.x+cx, o.y+cy+5),
-			Draw->Endsquare, Draw->Endsquare, 1, ink[2], Point(0, 0));
-	}
-
+	# The crosshair is drawn LTGREEN, then drawn again in BLACK while the
+	# game is still running — so it reads black in play and green once the
+	# last tank is down.
+	cross(img, o.x+cx, o.y+cy, ink[LTGREEN]);
 	tt := now();
-	if(game_tf != 0.0)
+	if(game_tf != 0.0){
+		if(blink())
+			img.text(Point(o.x+cx-(FW*14)/2, o.y+cy-FH/2), ink[RED],
+				Point(0, 0), font, "Game Completed");
 		tt = game_tf;
-	elapsed := tt - game_t0;
-	# enemy/time/best bars
-	enemy_w := (w - 40) * num_them / THEM_NUM;
-	time_w := int(real(w - 40) * elapsed / (best_score + 0.01));
-	if(time_w > w - 40)
-		time_w = w - 40;
-	if(time_w < 0)
-		time_w = 0;
-	best_w := int(real(w - 40) * best_score / (best_score + 1.0));
-	if(best_w > w - 40)
-		best_w = w - 40;
-	if(best_w < 0)
-		best_w = 0;
-	img.draw(Rect((o.x+10, o.y+h-10), (o.x+10+enemy_w, o.y+h-6)), ink[4], nil, Point(0, 0));
-	img.draw(Rect((o.x+20, o.y+h-18), (o.x+20+time_w, o.y+h-14)), ink[14], nil, Point(0, 0));
-	img.draw(Rect((o.x+30, o.y+h-26), (o.x+30+best_w, o.y+h-22)), ink[11], nil, Point(0, 0));
+	}else
+		cross(img, o.x+cx, o.y+cy, ink[BLACK]);
+
+	if(font != nil)
+		img.text(Point(o.x, o.y), ink[BLACK], Point(0, 0), font,
+			sys->sprint("Enemy:%d Time:%3.2f Best:%3.2f",
+				num_them, tt-game_t0, best_score));
+	if(help)
+		popup(img, o, w, h);
 	img.flush(Draw->Flushnow);
 }
 
-wrap2(a: real): real
+cross(img: ref Image, x, y: int, col: ref Image)
+{
+	img.line(Point(x-5, y), Point(x+5, y), Draw->Endsquare, Draw->Endsquare,
+		0, col, Point(0, 0));
+	img.line(Point(x, y-5), Point(x, y+5), Draw->Endsquare, Draw->Endsquare,
+		0, col, Point(0, 0));
+}
+
+# The original's opening PopUpOk, verbatim.
+popup(img: ref Image, o: Point, w, h: int)
+{
+	lines := array[] of {
+		"I refuse to rip-off the original",
+		"so this is intentionally crappy",
+		"and included for demonstration",
+		"purposes.",
+		"",
+		"Write games, don't play them.",
+	};
+	if(font == nil)
+		return;
+	pad := 12;
+	tw := 0;
+	for(i := 0; i < len lines; i++){
+		lw := font.width(lines[i]);
+		if(lw > tw)
+			tw = lw;
+	}
+	bw := tw + 2*pad;
+	bh := (len lines + 2)*(font.height+2) + 2*pad;
+	bx := o.x + (w - bw)/2;
+	by := o.y + (h - bh)/2;
+	img.draw(Rect((bx-2, by-2), (bx+bw+2, by+bh+2)), ink[BLACK], nil, Point(0, 0));
+	img.draw(Rect((bx, by), (bx+bw, by+bh)), ink[WHITE], nil, Point(0, 0));
+	y := by + pad;
+	for(i = 0; i < len lines; i++){
+		img.text(Point(bx+pad, y), ink[BLACK], Point(0, 0), font, lines[i]);
+		y += font.height + 2;
+	}
+	ok := "any key";
+	img.text(Point(bx + (bw - font.width(ok))/2, y + font.height/2),
+		ink[BLUE], Point(0, 0), font, ok);
+}
+
+blit(img, src, mask: ref Image, x, y: int)
+{
+	if(src == nil)
+		return;
+	img.draw(src.r.addpt(Point(x, y)), src, mask, src.r.min);
+}
+
+# TempleOS Blink is 2.5Hz: ToI64(tS*2*2.5)&1
+blink(): int
+{
+	return int(now() * 5.0) & 1;
+}
+
+# Wrap(x) folds into (-pi,pi]
+wrappi(a: real): real
 {
 	two := 2.0 * PI;
-	while(a >= two)
+	a = math->fmod(a, two);
+	if(a > PI)
 		a -= two;
-	while(a < 0.0)
+	if(a <= -PI)
 		a += two;
 	return a;
+}
+
+# Kernel/KMisc.HC Ona2Freq: 440.0/32*2^(ona/12), so ona 60 is 440Hz
+ona2freq(ona: real): int
+{
+	return int(440.0/32.0 * math->pow(2.0, ona/12.0));
+}
+
+songtask()
+{
+	# SongTask's four looped Play() strings, verbatim
+	for(;;){
+		tone->play("5sD4B5D4B5qEsG4B5G4B5eD4GsB5F4B5FeD4A5qFG");
+		tone->play("5sD4B5D4B5qEsG4B5G4B5eD4GsB5F4B5FeD4A5qFG");
+		tone->play("5eGDsFGFGqDE4eB5E4sG5D4G5DqF4sGAGA");
+		tone->play("5eGDsFGFGqDE4eB5E4sG5D4G5DqF4sGAGA");
+	}
 }
 
 rev(l: list of ref Shot): list of ref Shot
@@ -347,7 +572,7 @@ rnreal(): real
 {
 	if(rand == nil)
 		return real(sys->millisec() & 1023) / 1023.0;
-	return real(rand->rand(1000)) / 1000.0;
+	return real(rand->rand(1000000)) / 1000000.0;
 }
 
 timer(c: chan of int, ms: int)
