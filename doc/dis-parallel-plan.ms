@@ -388,6 +388,97 @@ build the tree already keeps in
 and put both in the mkfiles rather than leaving them as untracked
 binaries that go stale \- which is what happened to the ASAN one, and it
 cost this round a false lead.
+.PP
+.B Done.
+.CW emu/MacOSX/mkfile
+takes
+.CW SANCFLAGS
+and
+.CW SANLDFLAGS
+from the environment \- from the environment, and not from mk's command
+line, because mk reads a value beginning with a minus as an attribute:
+.IP
+.nf
+SANCFLAGS='-fsanitize=thread -fno-omit-frame-pointer' \e
+SANLDFLAGS=-fsanitize=thread mk
+.fi
+.NH 2
+What the instrument had to be taught first
+.PP
+A tool that cannot see the locks reports every critical section, and
+that is what happened on the first run: eight spawns of a shell,
+.B "947 data races" ,
+the bulk of them inside
+.CW poolalloc ,
+.CW poolfree
+and
+.CW pooldel .
+That is not the allocator being wrong.  It is the allocator being the
+most lock-protected code in the system.
+.PP
+.CW emu/port/lock.c
+is invisible to ThreadSanitizer twice over.
+.CW lock()
+is built on
+.CW _tas() ,
+hand-written assembly the tool does not instrument and cannot know is an
+acquire; and
+.CW unlock()
+was
+.IP
+.nf
+coherencefn();
+l->val = 0;
+.fi
+.PP
+a plain store, which the tool sees as an ordinary racing write \- and
+which is a data race under the C memory model however the hardware
+behaves.
+.PP
+Two changes, and the count is the measurement:
+.IP \(bu
+.CW __tsan_acquire
+and
+.CW __tsan_release
+around the
+.CW _tas
+success paths and in
+.CW unlock \-
+the interface that exists for a synchronisation primitive the compiler
+did not generate, compiling to nothing without
+.CW -fsanitize=thread .
+947 reports become 122.
+.IP \(bu
+.CW unlock 's
+store becomes
+.CW "__atomic_store_n(&l->val, 0, __ATOMIC_RELEASE)" ,
+which says what
+.CW coherencefn()
+and the assignment meant, to the compiler and to the tool at once.  122
+become 14.
+.PP
+And the fourteen are real.  Six are
+.CW acquire
+at
+.CW emu/port/dis.c :1024 and six are
+.CW vmachine
+at :1357 and :1363, and TSan names the object: "Location is global
+.CW isched ".
+That is
+.CW isched.vmq
+being written by one thread and read by another with nothing between
+them \- the same defect this branch already fixed on the native side,
+found independently by the tool, in emu, where it is still live.  The
+rest are
+.CW "qproduce / notempty"
+in
+.CW qio.c
+and a handful in the pool.
+.PP
+So the instrument works, it took two small changes to make it work, and
+the first thing it said was that the analysis in
+.CW doc/multicore-plan.ms
+section 3.2 was right about a kernel it was not looking at.
 .NH 1
 The phases
 .NH 2
