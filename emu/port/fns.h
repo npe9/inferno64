@@ -89,6 +89,7 @@ int		isdotdot(char*);
 int		iseve(void);
 int		kannounce(char*, char*);
 int		kdial(char*, char*, char*, int*);
+void		kbdhangup(void);
 void		kproc(char*, void (*)(void*), void*, int);
 void	kprocinit(Proc*);
 int		kfgrpclose(Fgrp*, int);

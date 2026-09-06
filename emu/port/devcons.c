@@ -95,7 +95,21 @@ static struct
 
 	Rune	c;
 	int	count;
+	int	eof;		/* host stdin reached end of file */
 } kbd;
+
+/*
+ * Host stdin is at end of file.  Nothing used to tell the console queue,
+ * so consread blocked in qread(kbdq) for ever.  Hang the queue up; only
+ * kbdq, so that a partial last line already in kbd.line still reaches
+ * the reader before the EOF does.
+ */
+void
+kbdhangup(void)
+{
+	if(kbdq != nil)
+		qhangup(kbdq, nil);
+}
 
 void
 kbdslave(void *a)
@@ -362,8 +376,27 @@ consread(Chan *c, void *va, long n, vlong offset)
 			error(Enonexist);
 
 		while(!qcanread(lineq)) {
-			if(qread(kbdq, &ch, 1) == 0)
-				continue;
+			/*
+			 * A zero from kbdq means the queue has been hung up,
+			 * which kbdhangup() does when host stdin reaches end
+			 * of file.  This used to `continue', so a Dis program
+			 * reading /dev/cons spun here for ever instead of
+			 * seeing EOF - `printf 'x\n' | emu -r. prog' hung
+			 * where the same input ending in a dot did not.  Push
+			 * out whatever was typed without a newline behind it,
+			 * then report EOF from here on.
+			 */
+			if(kbd.eof || qread(kbdq, &ch, 1) == 0){
+				kbd.eof = 1;
+				if(kbd.x > 0){
+					qwrite(lineq, kbd.line, kbd.x);
+					kbd.x = 0;
+					break;
+				}
+				qunlock(&kbd.q);
+				poperror();
+				return 0;
+			}
 			send = 0;
 			if(ch == 0){
 				/* flush output on rawoff -> rawon */

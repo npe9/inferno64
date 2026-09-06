@@ -76,13 +76,17 @@ this stores uncompressed text, so the two files are not interchangeable.
 In the window the description is typed before the punch rather than
 prompted for after it.
 .PP
-End of file does not end the description, so a punch whose description
-comes from a redirected standard input must end with a dot or it waits
+End of file used to be listed here as a bug: a punch whose description
+came from a redirected standard input had to end with a dot or it waited
 forever.
-.I readdesc
-stops when the read returns zero, which is correct, but on a
-host-redirected standard input under
+.I Readdesc
+stopped when the read returned zero, which was right, but under
 .IR emu (1)
-that never happens at end of file; the same hang affects other commands
-in this tree that read all of standard input.
-Passing the description as arguments avoids it.
+that never happened \- host standard input reaching end of file killed the
+keyboard slave without telling the console queue, so any reader of
+.B /dev/cons
+blocked.
+That is fixed in
+.IR emu (1)
+itself, and the same hang went with it for every other command in this
+tree that reads all of standard input.

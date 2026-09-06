@@ -346,8 +346,10 @@ readkbd(void)
 	n = read(0, buf, sizeof(buf));
 	if(n < 0)
 		fprint(2, "keyboard read: %s\n", strerror(errno));
-	if(n <= 0)
+	if(n <= 0){
+		kbdhangup();	/* or a reader of /dev/cons waits for ever */
 		pexit("keyboard thread", 0);
+	}
 
 	switch(buf[0]) {
 	case '\r':
