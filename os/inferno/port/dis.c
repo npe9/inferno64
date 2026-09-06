@@ -1177,6 +1177,19 @@ vmachine(void*)
 
 	/* cleans out the exception stack (error labels) */
 	while(waserror()) {
+		/*
+		 * A Dis exception leaves xec() by longjmp, so the
+		 * curP->curprog = nil at the bottom of the handler never
+		 * runs and the name would dangle -- past the Prog's own
+		 * destruction, in the exit case.  progreg() only compares
+		 * the pointer, never follows it, but a later Prog allocated
+		 * at the same address would be handed the wrong register
+		 * file.  Clear it here, where every non-local exit from the
+		 * interpreter lands.  The answer this restores is the right
+		 * one: exception.c has already synced p->reg from R on the
+		 * path that carries on executing.
+		 */
+		curP->curprog = nil;
 		DBG("vmachine waserror() loop up->env->errstr %s\n",  up->env->errstr);
 		if(up->type != Interp)
 			panic("vmachine: non-interp kproc");

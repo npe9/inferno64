@@ -470,6 +470,14 @@ A quantum that is a deadline and not an instruction count, if and when
 a big.LITTLE part is a target rather than a hypothetical.
 .PP
 Items 1 through 3 are correctness.  Items 4 through 6 are performance.
-Only item 1 is worth doing before there is a second interpreter to
-exercise it, and it is worth doing then because it is small and because
-it is wrong today in a way that is easy to forget.
+.PP
+Read "only item 1 is worth doing now" as a statement about
+.I testability ,
+not about priority.  Items 2 and 3 are the gate: until the collector's
+shared words and the code generators' write barrier are atomic, a
+second interpreter is not correct, and no amount of the rest makes it
+so.  They are not done yet because neither can be verified at one
+interpreter \- there is nothing for the atomicity to protect against
+until something runs concurrently, so landing them now would mean
+landing untested code that looks finished.  Item 1 was different: it is
+small, it is self-contained, and a differential boot tests it today.
