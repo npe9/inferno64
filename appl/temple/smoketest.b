@@ -95,7 +95,8 @@ mods := array[] of {
 	"vocabulary", "wenceslas", "whap", "xcaliber", "zing",
 	"zoneout",
 	"bspline", "griddemo", "mousedemo", "speedline",
-	"extents", "spriteplot", "spriteplot3d", "spriteput", "spriteputext", "spriteraw", "spritetext"
+	"extents", "spriteplot", "spriteplot3d", "spriteput", "spriteputext", "spriteraw", "spritetext",
+	"blot", "charanimation", "palette", "pantext", "scrncapture", "sunmoon", "winzbuf"
 };
 
 init(ctxt: ref Context, argv: list of string)

@@ -1,0 +1,36 @@
+.TH CHARANIMATION 1
+.SH NAME
+charanimation \- an animated font glyph
+.SH SYNOPSIS
+.B temple/charanimation
+.SH DESCRIPTION
+.I CharAnimation
+is a port of the TempleOS
+.B Demo/Graphics/CharAnimation.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+A TempleOS font is 256 glyphs of eight bytes and
+.B text.font
+is a pointer at it, so copying the font, repointing that global and
+rewriting the eight bytes of the space character makes every space
+already on the screen ripple without anything being redrawn.  The four
+masks are one diagonal shifted a pixel at a time, which is what makes it
+flow rather than flicker.
+.PP
+There is no shared font to repoint here, so this port draws the wave
+glyph itself wherever a space falls in its own text.  The original
+changes every space on the display.
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B "any key"
+Exit
+.PD
+.SH SOURCE
+.B /appl/temple/charanimation.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

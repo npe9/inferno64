@@ -1,0 +1,39 @@
+.TH WINZBUF 1
+.SH NAME
+winzbuf \- which window owns each cell of the screen
+.SH SYNOPSIS
+.B temple/winzbuf
+.SH DESCRIPTION
+.I WinZBuf
+is a port of the TempleOS
+.B Demo/Graphics/WinZBuf.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+TempleOS keeps one entry per character cell of the screen naming the
+window that owns it, and compositing is a lookup in that array rather
+than a walk of a window list.  The original plots it one pixel to the
+cell, so the picture in the corner is a little map of the desktop: move a
+window and its patch moves.
+.PP
+.IR wm (1)
+has no equivalent to expose \- an Inferno client sees only its own image
+\- so this port owns the windows it maps.  Drag the three panes and the
+map below them updates the same way.  The idea is the original's; the
+scope is one window instead of the display.
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B LMB
+Drag a pane
+.TP
+.B "any key"
+Exit
+.PD
+.SH SOURCE
+.B /appl/temple/winzbuf.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

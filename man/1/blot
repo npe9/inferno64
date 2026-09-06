@@ -1,0 +1,33 @@
+.TH BLOT 1
+.SH NAME
+blot \- device contexts, brushes and blots
+.SH SYNOPSIS
+.B temple/blot
+.SH DESCRIPTION
+.I Blot
+is a port of the TempleOS
+.B Demo/Graphics/Blot.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+Two off-screen device contexts.  The small one is a monochrome brush \- a
+filled circle with a diagonal through it \- and setting it as the pen
+makes a circle stamp the brush at each plotted point instead of a pixel,
+which is what turns the big ring into a chain.  Clearing the brush puts
+the pen back to a plain thick line.  The large context is then blotted
+across the window in steps of four, and at the end the brush itself is
+turned into a sprite and drawn, a device context and a sprite being two
+views of the same pixels.
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B "any key"
+Exit, once the blot has finished
+.PD
+.SH SOURCE
+.B /appl/temple/blot.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)

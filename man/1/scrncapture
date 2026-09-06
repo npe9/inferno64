@@ -1,0 +1,37 @@
+.TH SCRNCAPTURE 1
+.SH NAME
+scrncapture \- capture the screen to a file and back
+.SH SYNOPSIS
+.B temple/scrncapture
+.SH DESCRIPTION
+.I ScrnCapture
+is a port of the TempleOS
+.B Demo/Graphics/ScrnCapture.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+Take a picture, put it in a file, and paint the file back.  The
+original's comment points at how Stadium's background was made: capture a
+drawing once, ship the capture.
+.PP
+An Inferno program can read only the pixels of its own window, so this
+captures the window rather than the display.
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B "any key"
+Capture, then read back, then exit
+.PD
+.SH SOURCE
+.B /appl/temple/scrncapture.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)
+.SH FILES
+.TP
+.B /usr/$user/demoscrnshot
+The capture, in the format
+.IR image (6)
+describes.

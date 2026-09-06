@@ -113,7 +113,14 @@ TARG=\
 	spriteput.dis\
 	spriteputext.dis\
 	spriteraw.dis\
-	spritetext.dis
+	spritetext.dis\
+	blot.dis\
+	charanimation.dis\
+	palette.dis\
+	pantext.dis\
+	scrncapture.dis\
+	sunmoon.dis\
+	winzbuf.dis
 
 DISBIN=$ROOT/dis/temple
 

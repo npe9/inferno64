@@ -29,6 +29,7 @@ battlelines battlelines
 bigguns bigguns
 bind bind
 blackdiamond blackdiamond
+blot blot
 blur blur
 bombergolf bombergolf
 bounce bounce
@@ -46,6 +47,7 @@ castlefrankenstein castlefrankenstein
 cat cat
 cd cd
 chan sh-tk
+charanimation charanimation
 chardemo chardemo
 charon charon
 chat collab-clients
@@ -411,6 +413,8 @@ ohgreat ohgreat
 or sh-std
 os os
 p p
+palette palette
+pantext pantext
 parse sh-std
 parts math-misc
 passwd passwd
@@ -470,6 +474,7 @@ runtests runtests
 rwrite sh-file2chan
 say say
 schedcmp schedcmp
+scrncapture scrncapture
 secstore secstore
 secstoretest secstoretest
 send sh-tk
@@ -530,6 +535,7 @@ styxlog styxlog
 styxreplay styxreplay
 styxtest styxtest
 sum sum
+sunmoon sunmoon
 sweeper wm-misc
 symmetry symmetry
 tail tail
@@ -592,6 +598,7 @@ while sh-std
 whiteboard collab-clients
 win acme
 winctl wm-misc
+winzbuf winzbuf
 wish wish
 wm wm
 wm-misc wm-misc

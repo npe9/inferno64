@@ -1,0 +1,35 @@
+.TH PALETTE 1
+.SH NAME
+palette \- the sixteen colours are not fixed
+.SH SYNOPSIS
+.B temple/palette
+.SH DESCRIPTION
+.I Palette
+is a port of the TempleOS
+.B Demo/Graphics/Palette.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+Sixteen swatches, each labelled with its colour name on its own
+background.  A key rewrites every palette entry to a grey ramp and the
+same swatches come back grey \- still naming BLUE and RED \- because a
+colour index means whatever the palette says it means.  A second key sets
+white alone back, and a third restores the rest.
+.PP
+This is a hardware palette register in the original.  Inferno resolves a
+colour when the image is made, so the port keeps the palette in an array
+and repaints from it: the same thing happens to the same drawing, but it
+does not reach across the display.
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B "any key"
+Advance a stage; the last exits
+.PD
+.SH SOURCE
+.B /appl/temple/palette.b
+.SH SEE ALSO
+.IR temple (1),
+.IR wm (1)
