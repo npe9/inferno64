@@ -285,6 +285,23 @@ port
 			return (uintptr)ospreybuddybrk(addr);
 		return ibrk(addr, BSEG);
 	}
+	/*
+	 * exec(2): the program replaces itself with another.  This is the
+	 * exec a shell makes after it forks, as against the exec request a
+	 * container puts on the ring to start a program beside it - the
+	 * same buddy lays the binary out, but the address space it lands in
+	 * is the caller's own, and the caller's descriptors survive it.
+	 * Only a legacy program the buddy loaded has an image to replace.
+	 */
+	uintptr xexec(va_list list)
+	{
+		char *name = va_arg(list, char*);
+		char **argv = va_arg(list, char**);
+
+		if(!up->buddyimage)
+			return (uintptr)-1;
+		return (uintptr)ospreyexecself(name, argv);
+	}
 	uintptr xexits(va_list list)
 	{
 		USED(list);
@@ -429,6 +446,7 @@ port
 
 	Xsyscall *systab[] = {
 		[5]	xselect,	/* DUP number reused: select over arms */
+		[7]	xexec,		/* EXEC: the program replaces itself, its descriptors kept */
 		[8]	xexits,		/* EXITS */
 		[28]	xnotify,	/* NOTIFY: register a note handler */
 		[29]	xnoted,		/* NOTED: the handler returns; NCONT resumes */

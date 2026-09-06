@@ -19,6 +19,7 @@
 #include	"linuxprog.i"
 #include	"legacyprog.i"
 #include	"catprog.i"
+#include	"execprog.i"
 
 void
 p9linuxfile(void)
@@ -26,4 +27,5 @@ p9linuxfile(void)
 	addbootfile("linux", linuxprog, sizeof linuxprog);
 	addbootfile("legacy", legacyprog, sizeof legacyprog);
 	addbootfile("cat", catprog, sizeof catprog);
+	addbootfile("exec", execprog, sizeof execprog);
 }

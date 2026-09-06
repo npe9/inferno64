@@ -6094,8 +6094,83 @@ are answered by the config
 with two pair criteria over them \- a note that is not a fault,
 delivered to the program's handler and resumed from with
 .CW noted(NCONT) ,
-and a declined fault the program catches itself.  What is left of 2.2 is
-the shell.
+and a declined fault the program catches itself.
+.PP
+.B "2.2c: exec(2) in place."
+Done.  A shell forks and then execs, and the exec it makes is not the
+one the personality had: the exec request
+.CW ( ring_execv )
+starts a program in a container of its own, while this one replaces the
+caller's own program in the caller's own container, keeping its
+descriptors.  It is in two parts and the order between them is the whole
+of it.  Everything that can fail happens first, while the process is
+still whole: the name and the argument vector are copied out of the
+address space that is about to go \- they live in it, and the entry path
+reads them after the mapping has changed \- and the buddy is asked to lay
+the new binary out.  Either can refuse, and a refusal is
+.CW \-1
+to a process that goes on running.  Only then does the second part run,
+which cannot fail into anything the caller could survive: the old
+segments go, the new ones are made, and the process enters the new
+program without returning through the system call
+.CW ( ospreyexecself ,
+the config's
+.CW xexec ).
+.PP
+The buddy had to change with it.  Its
+.CW EXEC
+closed the running image's file before it knew whether the new binary
+would parse, so an exec of a name that is not there left a process that
+could no longer fault a page \- a shell's mistyped command would have
+killed the shell rather than printed an error.  It now reads the new
+binary into locals and commits the image record only when it has parsed,
+which is what makes the refusal a refusal.  And leaving the kernel by
+the entry path rather than by the system call's return leaves the call's
+error label standing unless it is dropped: not an error the first time
+or the tenth, an overflow after enough execs, which is why
+.CW /boot/exec
+execs twenty times over and reads through the descriptor it opened
+before the first every time.
+.PP
+Two bugs fell out of it, and the second is worth the space.  The first:
+Plan 9's
+.CW seek (2)
+yields its answer through a pointer libc passes as the first argument
+.CW ( "seek(vlong *ret, fd, n, type)" ,
+as
+.CW sysseek
+has it), and the buddy's marshalling read the descriptor out of that
+pointer's slot, so a legacy program's every seek had been of a descriptor
+made from an address.  The second is underneath it: a Plan 9 system
+call's arguments arrive one to an eight-byte slot, but an
+.CW int
+fills four of its slot and the other four are whatever the stack held \-
+.CW 0xfefefefe ,
+the fill a fresh stack carries \- so the descriptor, mode and flag
+arguments were reaching the buddy with rubbish in their top halves, and
+had been working by whatever happened to lie there.  The seek was
+failing or not by the same luck, which is what made it visible at all.
+.PP
+The cut to four bytes has to be a mask.  This tree's
+.CW 6c
+does not emit a narrowing cast to an unsigned type from a 64-bit value:
+.CW (uint)x
+and
+.CW (ulong)x
+of a
+.CW uvlong
+compile to the whole eight bytes with no truncation at all, while
+.CW (int)x
+compiles to
+.CW MOVLQSX
+and is right.  So the first cut of the fix changed nothing, and the
+instrumentation that showed
+.CW 0xfefefefe00000003
+arriving at the buddy showed it arriving there after the fix too.
+.CW "& 0xffffffffULL"
+is what the code uses, and the reason is written beside it.
+.PP
+What is left of 2.2 is the shell.
 .PP
 All of this is the
 .CW p9pair

@@ -184,6 +184,19 @@ enum {
 int
 ospreyexecbuddy(char *name)
 {
+	return ospreyexecbuddy1(name, 0);
+}
+
+/*
+ * The same, with replace saying the caller already has an address space
+ * that this image is to take the place of - exec(2) in place, as against
+ * the fresh process the exec request starts.  The old segments go only
+ * after the buddy has laid the new binary out, so a name it will not lay
+ * out leaves the caller running on the image it had.
+ */
+int
+ospreyexecbuddy1(char *name, int replace)
+{
 	Ospreybuddyseg segs[8];
 	uvlong entry, segva, segend, top;
 	int n, i, seg, npg, kind;
@@ -191,6 +204,32 @@ ospreyexecbuddy(char *name)
 	n = ospreybuddyexec(name, &entry, segs, nelem(segs), &kind);
 	if(n < 0)
 		return -1;
+	if(replace){
+		/*
+		 * Now, and not before: the new image is known, so the old
+		 * address space can go.  Every segment, the stack included -
+		 * exec keeps no memory, and what a process holds across it is
+		 * its descriptors, which are the buddy's and untouched.  A note
+		 * handler is code in the text that is going, so it goes too;
+		 * the mapped-file records are of an address space that no
+		 * longer exists.
+		 */
+		qlock(&up->seglock);
+		for(i = 0; i < NSEG; i++)
+			if(up->seg[i] != nil){
+				putseg(up->seg[i]);
+				up->seg[i] = nil;
+			}
+		qunlock(&up->seglock);
+		flushmmu();
+		for(i = 0; i < nelem(up->linuxmap); i++)
+			up->linuxmap[i].len = 0;
+		up->notify = nil;
+		up->notified = 0;
+		up->nnote = 0;
+		up->notepending = 0;
+		up->lastnote = nil;
+	}
 	up->oslinux = kind == 0;	/* an ELF is a Linux process; an a.out a Plan 9 one */
 	up->buddyimage = 1;		/* either way its pages are the buddy's */
 	ospreyuserentry = entry;
@@ -593,6 +632,77 @@ ospreyenteruserargs(char *packed)
 		argv[argc++] = "";
 	}
 	ospreyenteruservec(argv, argc);
+}
+
+/*
+ * exec(2) in place, for a legacy process the buddy loaded.  The exec
+ * request (devosprey.c) starts a program in a container of its own; this
+ * is the other exec, the one a program makes for itself - what a shell
+ * does after it forks, and what the personality could not offer before.
+ *
+ * It is in two parts, and the order between them is the whole of it.
+ * First everything that can fail, while the process is still whole: the
+ * name and the argument vector are copied out of the address space that
+ * is about to go (they live in it, and ospreyenteruservec reads them
+ * after the mapping has changed, so kernel copies are not tidiness but
+ * necessity), and the buddy is asked to lay the new binary out.  Either
+ * can refuse, and a refusal returns -1 to a process that goes on running
+ * - the buddy commits nothing of its image record until the new binary
+ * has parsed.  Only then the second part, which cannot fail into
+ * anything the caller could survive: the old segments go, the new ones
+ * are made, and the process enters the new program.  It does not return.
+ */
+int
+ospreyexecself(char *uname, char **uargv)
+{
+	char name[128], packed[512];
+	char *p;
+	int i, n, np;
+
+	validaddr((uintptr)uname, 1, 0);
+	for(n = 0; n < (int)sizeof name - 1; n++){
+		validaddr((uintptr)&uname[n], 1, 0);
+		if((name[n] = uname[n]) == 0)
+			break;
+	}
+	name[n] = 0;
+	np = 0;
+	if(uargv != nil)
+		for(i = 0; i < 32; i++){
+			validaddr((uintptr)&uargv[i], sizeof(char*), 0);
+			if((p = uargv[i]) == nil)
+				break;
+			while(np < (int)sizeof packed - 2){
+				validaddr((uintptr)p, 1, 0);
+				if((packed[np] = *p++) == 0)
+					break;
+				np++;
+			}
+			packed[np++] = 0;
+		}
+	if(np == 0){			/* no vector at all: the program's own name is argv[0] */
+		for(i = 0; i <= n; i++)
+			packed[np++] = name[i];
+	}
+	packed[np] = 0;			/* the double nul ospreyenteruserargs ends on */
+
+	if(ospreyexecbuddy1(name, 1) < 0)
+		return -1;
+	kstrdup(&up->text, name);
+	/*
+	 * The system call's own bookkeeping, which the entry below walks out
+	 * of rather than returning through.  insyscall and the error label
+	 * dosyscall pushed would otherwise be left standing, and the label
+	 * is the one that bites quietly: it is not an error the first time
+	 * or the tenth, it is an overflow after enough execs, which is why
+	 * the check execs twenty times over.
+	 */
+	up->insyscall = 0;
+	up->nerrlab = 0;
+	if(up->oslinux)
+		ospreyenteruserat();	/* an ELF: at its entry, the Linux way */
+	ospreyenteruserargs(packed);	/* an a.out: the Plan 9 way, with its vector */
+	return -1;			/* neither returns */
 }
 
 /*

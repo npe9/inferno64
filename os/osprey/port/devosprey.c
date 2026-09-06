@@ -2792,7 +2792,7 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 		case 0:  scallnr = Bread;  break;	/* read */
 		case 2:  scallnr = Bopen;  break;	/* open */
 		case 3:  scallnr = Bclose; break;	/* close */
-		case 8:  scallnr = Bseek;  break;	/* lseek */
+		case 8:  scallnr = Boseek; break;	/* lseek(fd, off, whence): the argument shape Plan 9's oseek has, not seek's, whose answer goes through a pointer Linux does not pass */
 		case 1:  scallnr = Bwrite; break;	/* write */
 		default: return -1;
 		}
@@ -2802,6 +2802,27 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 	if(ab == nil)
 		return -1;
 	ab[0] = scallnr;
+
+	/*
+	 * A Plan 9 system call's arguments arrive one to an eight-byte slot,
+	 * but an int fills only four of its slot and the other four are
+	 * whatever the caller's stack held there - 0xfefefefe, as it turns
+	 * out, the fill a fresh stack carries.  The kernel's own va_arg
+	 * reads the four (u.h); the slots are indexed here instead, so every
+	 * int argument has to be cut to four bytes or the buddy is handed a
+	 * descriptor, a mode or a flag with rubbish in its top half.  It had
+	 * been working by luck: what found it was a legacy program whose
+	 * seek worked or failed by what happened to lie on its stack.
+	 *
+	 * The mask, and not a cast: this tree's 6c drops a narrowing cast to
+	 * an unsigned type from a 64-bit value.  (uint)x and (ulong)x of a
+	 * uvlong both compile to the whole eight bytes, no truncation
+	 * emitted at all, while (int)x compiles to MOVLQSX and is right.  So
+	 * the first cut of this fix changed nothing, and the instrumentation
+	 * that showed 0xfefefefe00000003 arriving at the buddy after it
+	 * showed it too.
+	 */
+#define Aint(x)	((uvlong)(x) & 0xffffffffULL)
 
 	switch(scallnr){
 	case Bopen:				/* open(name, mode) */
@@ -2814,13 +2835,13 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 				nd[i] = name[i];
 			nd[i] = 0;
 		}
-		ab[1] = 0; ab[2] = a[1]; ab[3] = 0;
+		ab[1] = 0; ab[2] = Aint(a[1]); ab[3] = 0;
 		break;
-	case Bclose:
-		ab[1] = a[0]; ab[2] = 0; ab[3] = 0;
+	case Bclose:				/* close(fd) */
+		ab[1] = Aint(a[0]); ab[2] = 0; ab[3] = 0;
 		break;
-	case Bread: case Bpread:		/* read(fd,buf,n) / pread(fd,buf,n,off) */
-		ab[1] = a[0];
+	case Bread: case Bpread:		/* read(fd,buf,n) / pread(fd,buf,n,off): n is a long, its slot whole */
+		ab[1] = Aint(a[0]);
 		ab[2] = a[2];
 		ab[3] = scallnr == Bpread ? a[3] : (uvlong)-1;
 		break;
@@ -2829,11 +2850,23 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 		if(dd != nil)
 			for(i = 0; i < (long)a[2]; i++)
 				dd[i] = ((uchar*)a[1])[i];
-		ab[1] = a[0]; ab[2] = a[2];
+		ab[1] = Aint(a[0]); ab[2] = a[2];
 		ab[3] = scallnr == Bpwrite ? a[3] : (uvlong)-1;
 		break;
-	case Bseek: case Boseek:
-		ab[1] = a[0]; ab[2] = a[1]; ab[3] = a[2];
+	case Bseek:
+		/*
+		 * seek(vlong *ret, fd, n, type).  Plan 9's seek(2) yields its
+		 * answer through a pointer, which libc passes as the first
+		 * argument and whose slot the fd was being read from here: a
+		 * legacy program's every seek was of a descriptor made from an
+		 * address, and failed.  What found it was a program that read a
+		 * file twice, seeking back between - the second read went on
+		 * where the first stopped instead of at the start.
+		 */
+		ab[1] = Aint(a[1]); ab[2] = a[2]; ab[3] = Aint(a[3]);
+		break;
+	case Boseek:				/* oseek(fd, n, type): the old form, its answer the call's own */
+		ab[1] = Aint(a[0]); ab[2] = a[1]; ab[3] = Aint(a[2]);
 		break;
 	case Bcreate:				/* create(name, mode, perm) */
 		nd = ospreydata(p, Bnameoff, 256);
@@ -2845,7 +2878,7 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 				nd[i] = name[i];
 			nd[i] = 0;
 		}
-		ab[1] = 0; ab[2] = a[1]; ab[3] = a[2];	/* mode, perm */
+		ab[1] = 0; ab[2] = Aint(a[1]); ab[3] = Aint(a[2]);	/* mode, perm */
 		break;
 	case Bremove:				/* remove(name) */
 		nd = ospreydata(p, Bnameoff, 256);
@@ -2860,10 +2893,10 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 		ab[1] = 0; ab[2] = 0; ab[3] = 0;
 		break;
 	case Bfstat:				/* fstat(fd, edir, nedir): message back at Bdataoff */
-		ab[1] = a[0]; ab[2] = a[2]; ab[3] = 0;
+		ab[1] = Aint(a[0]); ab[2] = Aint(a[2]); ab[3] = 0;
 		break;
 	case Bfd2path:				/* fd2path(fd, buf, nbuf): the path back at Bdataoff */
-		ab[1] = a[0]; ab[2] = a[2]; ab[3] = 0;
+		ab[1] = Aint(a[0]); ab[2] = Aint(a[2]); ab[3] = 0;
 		break;
 	case Bstat:				/* stat(name, edir, nedir): name at Bnameoff, message back at Bdataoff */
 		nd = ospreydata(p, Bnameoff, 256);
@@ -2875,16 +2908,16 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 				nd[i] = name[i];
 			nd[i] = 0;
 		}
-		ab[1] = 0; ab[2] = a[2]; ab[3] = 0;
+		ab[1] = 0; ab[2] = Aint(a[2]); ab[3] = 0;
 		break;
 	case Berrstr:				/* errstr(buf, nbuf): text back at Bdataoff */
-		ab[1] = 0; ab[2] = a[1]; ab[3] = 0;
+		ab[1] = 0; ab[2] = Aint(a[1]); ab[3] = 0;
 		break;
 	case Bpipe:				/* pipe(fd[2]): two ints back at Bdataoff */
 		ab[1] = 0; ab[2] = 0; ab[3] = 0;
 		break;
 	case Brfork:				/* rfork(flags) */
-		ab[1] = a[0]; ab[2] = 0; ab[3] = 0;
+		ab[1] = Aint(a[0]); ab[2] = 0; ab[3] = 0;
 		break;
 	case Bbind:				/* bind(name, old, flag): name at Bnameoff, old just past it */
 		nd = ospreydata(p, Bnameoff, 512);
@@ -2899,7 +2932,7 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 				nd[128+i] = old[i];
 			nd[128+i] = 0;
 		}
-		ab[1] = a[2]; ab[2] = 0; ab[3] = 0;	/* the flag */
+		ab[1] = Aint(a[2]); ab[2] = 0; ab[3] = 0;	/* the flag */
 		break;
 	case Bmount:				/* mount(fd, afd, old, flag, spec): old at Bnameoff, spec just past it */
 		nd = ospreydata(p, Bnameoff, 512);
@@ -2914,11 +2947,12 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 				nd[128+i] = spec[i];
 			nd[128+i] = 0;
 		}
-		ab[1] = a[0]; ab[2] = a[3]; ab[3] = 0;	/* fd, flag */
+		ab[1] = Aint(a[0]); ab[2] = Aint(a[3]); ab[3] = 0;	/* fd, flag */
 		break;
 	default:
 		return -1;			/* a trap the buddy does not emulate */
 	}
+#undef Aint
 
 	status = ospreybuddycall(p, 400);
 	if(status < 0)
@@ -2927,6 +2961,14 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 	if((scallnr == Bread || scallnr == Bpread || scallnr == Bfstat || scallnr == Bstat || scallnr == Berrstr || scallnr == Bfd2path) && status > 0){
 		/* read/fstat/stat/fd2path return their bytes in a[1]; errstr in a[0] */
 		uchar *dst = (uchar*)(scallnr == Berrstr ? a[0] : a[1]);
+		/*
+		 * The buffer is the program's, and these calls never went
+		 * through sysfile.c, which is where a Plan 9 kernel checks a
+		 * user pointer.  Check it here: a bad one is the program's
+		 * error, and errors out of the call, not a kernel write to an
+		 * address the program does not own.
+		 */
+		validaddr((uintptr)dst, status, 1);
 		dd = ospreydata(p, Bdataoff, status);
 		if(dd != nil)
 			for(i = 0; i < status; i++)
@@ -2940,8 +2982,18 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 	 */
 	if(scallnr == Bfd2path && status > 0)
 		return 0;
+	/*
+	 * seek(2) likewise: the new offset goes to the caller's vlong and
+	 * the call itself yields 0, which is what its libc stub checks.
+	 */
+	if(scallnr == Bseek && status >= 0){
+		validaddr(a[0], sizeof(vlong), 1);
+		*(vlong*)a[0] = status;
+		return 0;
+	}
 	if(scallnr == Bpipe && status == 0){
 		/* the two descriptors, two ints, back into the process's fd[2] */
+		validaddr(a[0], 2*sizeof(int), 1);
 		dd = ospreydata(p, Bdataoff, 2*sizeof(int));
 		if(dd != nil)
 			for(i = 0; i < (long)(2*sizeof(int)); i++)

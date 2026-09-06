@@ -6,6 +6,8 @@ void		addbootfile(char*, uchar*, ulong);
 int		ospreybuddyexec(char*, uvlong*, Ospreybuddyseg*, int, int*);
 int		ospreybuddyfault(uintptr, uintptr, int);
 int		ospreyexecbuddy(char*);
+int		ospreyexecbuddy1(char*, int);
+int		ospreyexecself(char*, char**);
 int		ospreybuddyhas(void);
 void		ospreyenteruser(char*);
 void		ospreyenteruserat(void);

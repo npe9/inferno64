@@ -32,6 +32,29 @@ def heapgrew(t):
     return wrong == 0 and asked == 512*1024 and now - start == asked
 
 
+def execinplace(t):
+    """Twenty generations of exec, the last one reading the file through the
+    descriptor opened before the first, and an exit status of 0."""
+    if 'exec: generation 20 read through the inherited descriptor' not in t:
+        return False
+    if 'read nothing' in t or 'seek of descriptor' in t:
+        return False
+    if 'exec: 20 generations, each a whole exec of this binary in this same process, and the descriptor opened before the first is still open' not in t:
+        return False
+    return re.search(r"p9: pair-client: wait: /boot/exec \(container \d+\) exited with status 0 - it exec'd itself in place twenty times", t) is not None
+
+
+def seekworks(t):
+    """The same first line read twice with a seek back to the start between,
+    and the same again after twenty execs."""
+    r = re.findall(r'exec: generation (\d+) read through the inherited descriptor \d+: (.*)', t)
+    if len(r) < 4:
+        return False
+    gens = [g for g, _ in r]
+    texts = set(x for _, x in r)
+    return gens[:2] == ['0', '0'] and gens[-1] == '20' and len(texts) == 1
+
+
 def main():
     keep = '-k' in sys.argv[1:]
     r = subprocess.run(['mk', 'CONF=p9pair', '9p9pair'], cwd='os/osprey/pc64',
@@ -296,6 +319,13 @@ def main():
          and 'cat: <- end of /n/hello through the duplicate' in t),
         ("brk_(2) grows a legacy program's heap: /boot/cat's libc sbrk's half a megabyte - far past the one page exec left above the image, so the kernel must really grow the segment - writes a pattern the length of it and reads every byte back unchanged",
          heapgrew(t)),
+        ("exec(2) in place for a legacy program - the exec a shell makes after it forks, not the ring request that starts a program beside it: /boot/exec replaces itself with itself twenty times in the one container, keeps across every one of them the descriptor it opened before the first, and exits 0",
+         execinplace(t)),
+        ("and a bad name is a refusal, not a killing: the exec of a path that is not there returns -1 and the program goes on running and reading from the image it is on - the buddy commits nothing of its image record until the new binary has parsed",
+         'exec: exec of /boot/notthere was refused, as it should be, and I am still running' in t
+         and 'exec: BUG:' not in t),
+        ("seek(2) reaches the buddy with the descriptor the program named: the program reads the file's first line, seeks back to the start and reads it again, and gets the same bytes - Plan 9's seek yields its answer through a pointer it passes first, whose slot the descriptor was being read from",
+         seekworks(t)),
         ("fd2path(2) is served by the buddy: /boot/cat asks the path of the descriptor it dup'd and is told /n/hello - the name the buddy's own name space resolved it in, not a name the program had",
          re.search(r'cat: descriptor \d+ is /n/hello, by fd2path through the buddy', t) is not None
          and 'cat: fd2path of' not in t),

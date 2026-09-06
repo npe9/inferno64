@@ -711,6 +711,25 @@ p9paircli(void)
 			if(id >= 0 && ring_wait(&st) == 0)
 				print("p9: pair-client: wait: /boot/cat (container %ld) exited with status %ld - it read /n/hello through the buddy and wrote it out\n", id, st);
 		}
+		/*
+		 * exec(2) in place: /boot/exec replaces itself twenty times over
+		 * in the one container this starts, keeping the descriptor it
+		 * opened before the first exec, and is refused an exec of a name
+		 * that is not there without dying of it.  This is the exec a
+		 * shell makes after it forks, as against the ring request just
+		 * above, which starts a program in a container of its own.
+		 */
+		{
+			extern long ring_execv(char**);
+			char *exargv[2];
+
+			exargv[0] = "/boot/exec";
+			exargv[1] = nil;
+			id = ring_execv(exargv);
+			print("p9: pair-client: exec /boot/exec started container %ld\n", id);
+			if(id >= 0 && ring_wait(&st) == 0)
+				print("p9: pair-client: wait: /boot/exec (container %ld) exited with status %ld - it exec'd itself in place twenty times\n", id, st);
+		}
 	}
 	/*
 	 * The device-carried medium: put a network frame on the ring to the

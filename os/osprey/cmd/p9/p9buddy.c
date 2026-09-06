@@ -170,30 +170,39 @@ readat(int fd, vlong off, uchar *buf, long n)
  * ELF header and the program headers, keep the loadable ones, and write
  * the layout for the kernel at out: entry, the count, then each
  * segment's address, memory size and flags.  Returns the count, or -1.
+ *
+ * Nothing of the container's current image is touched until the new one
+ * has parsed.  A process that execs is running on the image this record
+ * describes, and it goes on faulting pages out of it: an exec that fails
+ * - a name that is not there, a file that is neither an ELF nor an amd64
+ * a.out - must leave the process able to run, so the new file is opened
+ * and read into locals and only then committed here.  Before this, a
+ * failed exec closed the running image's file and left the process
+ * unpageable, which is not a refusal but a killing.
  */
 static long
 p9buddy_exec(uvlong container, char *name, uchar *out)
 {
 	Img *img;
 	uchar hdr[64], ph[56];
-	uvlong phoff, *d;
-	int phentsize, phnum, i;
+	uvlong phoff, *d, nentry;
+	int phentsize, phnum, i, nfd, nkind, nnph;
+	struct { uvlong off, va, filesz, memsz, flags; } nphs[Maxph];
 
 	if((img = imgof(container, 1)) == nil)
 		return -1;
-	if(img->fd >= 0){
-		p9close(img->fd);
-		img->fd = -1;
-	}
 	if(waserror()){
 		print("buddy: exec %s: %s\n", name, up->errstr);
 		return -1;
 	}
-	img->fd = p9open(name, 0);
+	nfd = p9open(name, 0);
 	poperror();
-	kstrcpy(img->name, name, sizeof img->name);
-	if(readat(img->fd, 0, hdr, sizeof hdr) < 0)
+	if(nfd < 0)
 		return -1;
+	if(readat(nfd, 0, hdr, sizeof hdr) < 0){
+		p9close(nfd);
+		return -1;
+	}
 	if(hdr[0] != 0x7f || hdr[1] != 'E'){
 		/*
 		 * A Plan 9 a.out: eight big-endian words - magic, text, data,
@@ -212,6 +221,7 @@ p9buddy_exec(uvlong container, char *name, uchar *out)
 		magic = be(hdr, 4);
 		if((magic & 0xffff) != 0x8a97){	/* amd64's magic */
 			print("buddy: exec %s: neither an ELF nor an amd64 a.out\n", name);
+			p9close(nfd);
 			return -1;
 		}
 		textsz = be(hdr+4, 4);
@@ -222,42 +232,59 @@ p9buddy_exec(uvlong container, char *name, uchar *out)
 		adata = (Utzero + tseg + Pagesz-1) & ~(uvlong)(Pagesz-1);
 		abss = (adata + datasz + Pagesz-1) & ~(uvlong)(Pagesz-1);
 		ebss = (adata + datasz + bsssz + Pagesz-1) & ~(uvlong)(Pagesz-1);
-		img->kind = 1;
-		img->entry = Utzero + hdrsz;
-		img->nph = 3;
-		img->ph[0].flags = 5; img->ph[0].off = 0;    img->ph[0].va = Utzero; img->ph[0].filesz = tseg;   img->ph[0].memsz = tseg;
-		img->ph[1].flags = 6; img->ph[1].off = tseg; img->ph[1].va = adata;  img->ph[1].filesz = datasz; img->ph[1].memsz = datasz;
-		img->ph[2].flags = 6; img->ph[2].off = 0;    img->ph[2].va = abss;   img->ph[2].filesz = 0;      img->ph[2].memsz = ebss - abss;
-		d = (uvlong*)out;
-		d[0] = img->entry;
-		d[1] = img->kind;
-		for(i = 0; i < img->nph; i++){
-			d[2+3*i] = img->ph[i].va;
-			d[3+3*i] = img->ph[i].memsz;
-			d[4+3*i] = img->ph[i].flags;
-		}
+		nkind = 1;
+		nentry = Utzero + hdrsz;
+		nnph = 3;
+		nphs[0].flags = 5; nphs[0].off = 0;    nphs[0].va = Utzero; nphs[0].filesz = tseg;   nphs[0].memsz = tseg;
+		nphs[1].flags = 6; nphs[1].off = tseg; nphs[1].va = adata;  nphs[1].filesz = datasz; nphs[1].memsz = datasz;
+		nphs[2].flags = 6; nphs[2].off = 0;    nphs[2].va = abss;   nphs[2].filesz = 0;      nphs[2].memsz = ebss - abss;
 		print("buddy: exec %s for container %llud: a Plan 9 a.out, text %llud data %llud bss %llud\n",
 			name, container, textsz, datasz, bsssz);
-		return img->nph;
+	} else {
+		nkind = 0;
+		nentry = le(hdr+24, 8);
+		phoff = le(hdr+32, 8);
+		phentsize = le(hdr+54, 2);
+		phnum = le(hdr+56, 2);
+		nnph = 0;
+		for(i = 0; i < phnum && nnph < Maxph; i++){
+			if(readat(nfd, phoff + (uvlong)i*phentsize, ph, sizeof ph) < 0){
+				p9close(nfd);
+				return -1;
+			}
+			if(le(ph, 4) != 1)		/* PT_LOAD */
+				continue;
+			nphs[nnph].flags = le(ph+4, 4);
+			nphs[nnph].off = le(ph+8, 8);
+			nphs[nnph].va = le(ph+16, 8);
+			nphs[nnph].filesz = le(ph+32, 8);
+			nphs[nnph].memsz = le(ph+40, 8);
+			nnph++;
+		}
+		print("buddy: exec %s for container %llud: entry %#llux, %d loadable segments\n",
+			name, container, nentry, nnph);
 	}
-	img->kind = 0;
-	img->entry = le(hdr+24, 8);
-	phoff = le(hdr+32, 8);
-	phentsize = le(hdr+54, 2);
-	phnum = le(hdr+56, 2);
-	img->nph = 0;
-	for(i = 0; i < phnum && img->nph < Maxph; i++){
-		if(readat(img->fd, phoff + (uvlong)i*phentsize, ph, sizeof ph) < 0)
-			return -1;
-		if(le(ph, 4) != 1)		/* PT_LOAD */
-			continue;
-		img->ph[img->nph].flags = le(ph+4, 4);
-		img->ph[img->nph].off = le(ph+8, 8);
-		img->ph[img->nph].va = le(ph+16, 8);
-		img->ph[img->nph].filesz = le(ph+32, 8);
-		img->ph[img->nph].memsz = le(ph+40, 8);
-		img->nph++;
+
+	/*
+	 * Committed: the new binary parsed, so the old image's file is
+	 * closed and this one takes its place.  Up to here nothing of the
+	 * running image had changed, which is what lets a failed exec
+	 * return -1 to a process that goes on running.
+	 */
+	if(img->fd >= 0)
+		p9close(img->fd);
+	img->fd = nfd;
+	img->kind = nkind;
+	img->entry = nentry;
+	img->nph = nnph;
+	for(i = 0; i < nnph; i++){
+		img->ph[i].off = nphs[i].off;
+		img->ph[i].va = nphs[i].va;
+		img->ph[i].filesz = nphs[i].filesz;
+		img->ph[i].memsz = nphs[i].memsz;
+		img->ph[i].flags = nphs[i].flags;
 	}
+	kstrcpy(img->name, name, sizeof img->name);
 	d = (uvlong*)out;
 	d[0] = img->entry;
 	d[1] = img->kind;
@@ -266,8 +293,6 @@ p9buddy_exec(uvlong container, char *name, uchar *out)
 		d[3+3*i] = img->ph[i].memsz;
 		d[4+3*i] = img->ph[i].flags;
 	}
-	print("buddy: exec %s for container %llud: entry %#llux, %d loadable segments\n",
-		name, container, img->entry, img->nph);
 	return img->nph;
 }
 
