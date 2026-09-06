@@ -177,14 +177,20 @@ These are bugs, not design gaps, and are worth separating out.
   signature and `appl/math/draw3d.b`'s own comment says so: the code
   "always derives its own screen-space normal from the projected vertices
   for the z-plane fit".
-- **`sprite3`, `sprite3zb`, `sprite3yb` and `sprite3mat` do not use the
-  z-buffer**, in either provider: they project and blit, and never touch
-  `c.zstate`. `module/math/draw3d.m` says `zenable` means "use z-buffer
-  for fillpoly3 / **sprites**", which is wrong. TempleOS's `Sprite3B`
-  family writes the depth buffer, and `varoom`, `titanium`, `keepaway`
-  and `talons` all depend on that.
-- **`line3` and `plot3` do not use the z-buffer either.** TempleOS's
-  `GrPlot3B` sets `dc->db_z` and plots through the depth buffer.
+- **In Limbo, `sprite3*`, `line3` and `plot3` do not use the z-buffer** —
+  in either provider: they project and blit and never touch `c.zstate`.
+  But that is only half the story, and the half that matters is the other
+  one: **on the protocol path the device does depth-test them.**
+  `emu/port/devdraw.c`'s `d3spritez()` walks the sprite's pixels calling
+  `d3zpixel(cl, p, eyez)`, `d3ellipsez()` does the same for circles and
+  ellipses, and `gpudrawsprite()` is handed `ez` for the Metal path. So
+  `module/math/draw3d.m`'s "`zenable`: use z-buffer for fillpoly3 /
+  **sprites**" is right for `draw3ddev.dis` talking to a device that
+  answers the probe, and wrong for `draw3d.dis` and for `draw3ddev.dis`'s
+  own software fallback. That asymmetry is the single most important fact
+  for anyone planning migration: the vocabulary is *richest in C at the
+  device*, thinner in `draw3ddev.b`, thinnest in `draw3d.b` — and almost
+  nothing in `appl/temple/` uses the device at all.
 - **`polyfill->fillpoly` wrote depth one column past each row.** Found by
   running the nine draw3d demos while auditing: `temple/shadow` raised
   `array bounds error` a few frames in, and did so on unmodified draw3d
