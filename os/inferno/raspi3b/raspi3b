@@ -115,6 +115,7 @@ root
 	/env	/
 	/fd	/
 	/n	/
+	/n/dos	/
 	/net	/
 	/net.alt	/
 	/nvfs	/
@@ -144,6 +145,7 @@ root
 	/dis/sh/std.dis
 	/dis/usb/usbd.dis
 	/dis/usb/etherusb.dis
+	/dis/dossrv.dis
 	/dis/ip/ping.dis
 	/dis/lib/dhcpclient.dis
 	/dis/lib/dial.dis

@@ -321,6 +321,8 @@ attachdev(pp: ref Port)
 	ums := 0;		# in a Bulk-Only mass-storage interface
 	bin := -1;		# its bulk in endpoint number
 	bout := -1;		# its bulk out endpoint number
+	binmax := 0;		# and their wMaxPacketSize, which a new
+	boutmax := 0;		# endpoint does not get by itself
 	i := 0;
 	while(i + 1 < r){
 		l := int cd[i];
@@ -351,17 +353,20 @@ attachdev(pp: ref Port)
 					return;
 				}
 				if(ums && (attr & 3) == 2){
-					if(addr & 16r80)
+					if(addr & 16r80){
 						bin = addr & 16r0f;
-					else
+						binmax = maxpkt;
+					}else{
 						bout = addr & 16r0f;
+						boutmax = maxpkt;
+					}
 				}
 			}
 		}
 		i += l;
 	}
 	if(bin >= 0 && bout >= 0){
-		diskstart(d, bin, bout);
+		diskstart(d, bin, bout, binmax, boutmax);
 		return;
 	}
 	if(etherprobe(d)){
@@ -600,7 +605,7 @@ Bstate: adt {
 	bsize:	int;
 };
 
-diskstart(d: ref Dev, bin, bout: int)
+diskstart(d: ref Dev, bin, bout, binmax, boutmax: int)
 {
 	b := ref Bstate(nil, nil, 0, 0, 512);
 	if(devctl(d, sys->sprint("new %d 2 r", bin)) < 0 ||
@@ -612,6 +617,15 @@ diskstart(d: ref Dev, bin, bout: int)
 	b.outep = opendev(sys->sprint("ep%d.%d", d.id, bout));
 	if(b.inep == nil || b.outep == nil)
 		return;
+	# a new endpoint starts at devusb's default maxpkt of 8 (devusb.c
+	# ep->maxpkt = 8); leaving it there splits the 31-byte command
+	# wrapper and the device answers "Bad CBW size" and stalls.  Give
+	# each endpoint the wMaxPacketSize its descriptor declared.
+	if(binmax > 0 && devctl(b.inep, sys->sprint("maxpkt %d", binmax)) < 0 ||
+	   boutmax > 0 && devctl(b.outep, sys->sprint("maxpkt %d", boutmax)) < 0){
+		sys->fprint(sys->fildes(2), "usbd: %s: mass-storage maxpkt: %r\n", d.name);
+		return;
+	}
 	b.inep.dfd = sys->open("/dev/usb/" + b.inep.name + "/data", Sys->OREAD);
 	b.outep.dfd = sys->open("/dev/usb/" + b.outep.name + "/data", Sys->OWRITE);
 	if(b.inep.dfd == nil || b.outep.dfd == nil){

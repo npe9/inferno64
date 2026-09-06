@@ -162,7 +162,103 @@ usbcheck()
 	# split interrupt transfers, HID translation, cons -- end to end.
 	spawn kbdreport();
 	sys->print("USB-OK\n");
+	diskcheck();
 	ethercheck();
+}
+
+# Phase 4: USB mass storage.  usbd's Bulk-Only Transport driver serves
+# the stick as a flat file at /chan/usbdisk0, turning byte-range reads
+# and writes into SCSI READ(10)/WRITE(10) over the bulk endpoints;
+# dossrv mounts the FAT filesystem on that file at /n/dos.  Listing the
+# directory proves the read path end to end, and creating a file and
+# reading it back proves the write path.  Boot with
+# -drive if=none,id=d0,file=<img>,format=raw -device usb-storage,drive=d0
+diskcheck()
+{
+	disk := "/chan/usbdisk0";
+	for(i := 0; i < 50; i++){
+		if(sys->open(disk, Sys->OREAD) != nil)
+			break;
+		sys->sleep(100);
+	}
+	if(sys->open(disk, Sys->OREAD) == nil){
+		sys->print("DISK-NONE (no USB mass storage at %s)\n", disk);
+		return;
+	}
+	dossrv := load Command "/dis/dossrv.dis";
+	if(dossrv == nil){
+		sys->print("DISK-FAIL load dossrv: %r\n");
+		return;
+	}
+	spawn dossrv->init(nil, "dossrv" :: "-f" :: disk :: "-m" :: "/n/dos" :: nil);
+
+	# /n/dos exists in the root either way, so an open proves nothing;
+	# wait for the mount by waiting for entries to appear under it
+	names := "";
+	first := "";
+	for(i = 0; i < 50; i++){
+		names = "";
+		first = "";
+		dfd := sys->open("/n/dos", Sys->OREAD);
+		if(dfd != nil){
+			for(;;){
+				(n, dirs) := sys->dirread(dfd);
+				if(n <= 0)
+					break;
+				for(j := 0; j < n; j++){
+					names += " " + dirs[j].name;
+					if(first == nil && (dirs[j].mode & Sys->DMDIR) == 0)
+						first = dirs[j].name;
+				}
+			}
+		}
+		if(names != nil)
+			break;
+		sys->sleep(100);
+	}
+	if(names == nil){
+		sys->print("DISK-DOS-FAIL nothing under /n/dos: %r\n");
+		return;
+	}
+	sys->print("DISK-DOS-OK /n/dos:%s\n", names);
+
+	if(first != nil){
+		fd := sys->open("/n/dos/" + first, Sys->OREAD);
+		buf := array[512] of byte;
+		n := -1;
+		if(fd != nil)
+			n = sys->read(fd, buf, len buf);
+		if(n <= 0)
+			sys->print("DISK-READ-FAIL %s: %r\n", first);
+		else
+			sys->print("DISK-READ-OK %s %d bytes %q\n", first, n, string buf[0:n]);
+	}
+
+	# the write path: create, write, close, reopen, read back.  This is
+	# a read-modify-write of a 512-byte block through SCSI WRITE(10).
+	msg := array of byte "written by inferno on the pi\n";
+	wfd := sys->create("/n/dos/pi.txt", Sys->OWRITE, 8r666);
+	if(wfd == nil){
+		sys->print("DISK-WRITE-FAIL create: %r\n");
+		return;
+	}
+	if(sys->write(wfd, msg, len msg) != len msg){
+		sys->print("DISK-WRITE-FAIL write: %r\n");
+		return;
+	}
+	wfd = nil;
+	rfd := sys->open("/n/dos/pi.txt", Sys->OREAD);
+	if(rfd == nil){
+		sys->print("DISK-WRITE-FAIL reopen: %r\n");
+		return;
+	}
+	rbuf := array[512] of byte;
+	rn := sys->read(rfd, rbuf, len rbuf);
+	if(rn != len msg || string rbuf[0:rn] != string msg){
+		sys->print("DISK-WRITE-FAIL readback got %d %q\n", rn, string rbuf[0:rn]);
+		return;
+	}
+	sys->print("DISK-WRITE-OK pi.txt %d bytes read back\n", rn);
 }
 
 # Phase 3: USB ethernet.  usbd starts etherusb for a CDC ECM or SMSC

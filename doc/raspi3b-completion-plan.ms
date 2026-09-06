@@ -284,12 +284,100 @@ objects, they are build output that every build dirties.)
 Left for the real board: the SMSC init path above, and the interrupt
 endpoint (link status) which neither chip path uses yet.
 .NH 1
-Phase 4: USB mass storage
+Phase 4: USB mass storage -- DONE under QEMU
 .PP
-Bulk-Only Transport mass-storage class -> an sd(3) block device
-(/dev/sdU0/data) -> dossrv or kfs.  Depends on Phase 1 bulk.  Verify
-under QEMU with -device usb-storage: read/write the block device, mount a
-FAT partition through dossrv.
+Bulk-Only Transport (class 8, protocol 0x50): two bulk endpoints carry a
+31-byte command wrapper holding a SCSI CDB, the data, and a 13-byte
+status wrapper.  usbd drives test-unit-ready, inquiry, read capacity and
+READ(10)/WRITE(10), and serves the device as a flat file through
+.CW file2chan
+at
+.CW /chan/usbdisk0 ,
+turning a byte-range read or write into whole-block SCSI with a
+read-modify-write on the unaligned edges.
+.CW dossrv
+mounts the FAT filesystem on that file at
+.CW /n/dos .
+.PP
+.B "Note a deviation from this plan's own wording:"
+what is delivered is that flat file, not an
+.CW sd (3)
+device at
+.CW /dev/sdU0/data .
+The goal the phase was written for \- a mountable FAT filesystem off a
+USB stick \- is met, and dossrv wants a file rather than an sd device
+anyway; but nothing here registers an sd controller, so
+.CW kfs
+over
+.CW sd (3),
+and anything else that expects
+.CW /dev/sdU0 ,
+still has no path.
+.PP
+.B "The bug that was actually in the way."
+The descriptor walk in
+.CW attachdev
+read each endpoint's
+.CW wMaxPacketSize
+and passed it to
+.CW hidstart ,
+but for the mass-storage branch it kept only the endpoint
+.I numbers
+and dropped the size.  A newly created endpoint starts at devusb's
+default of 8
+.CW ( devusb.c :
+.CW "ep->maxpkt = 8" ),
+so the 31-byte command wrapper went out in 8-byte pieces, QEMU's
+.CW usb-msd
+answered
+.CW "Bad CBW size"
+on every attempt, and the inquiry came back
+.CW "endpoint stalled" .
+.CW etherusb
+had always set
+.CW maxpkt
+explicitly and so never hit this; the storage path now carries the two
+bulk endpoints' declared sizes and sets them the same way.
+.PP
+Verified on a booted kernel
+.CW ( "-drive if=none,id=d0,file=<img>,format=raw -device usb-storage,drive=d0" ):
+usbd finds the device, reports
+.CW "disk \(dqQEMU    QEMU HARDDISK   2.5+\(dq 32768 blocks x 512 bytes" ,
+reads block 0 and sees the FAT signature (DISK-BLK-OK), and serves
+.CW /chan/usbdisk0 ;
+dossrv mounts it and the directory lists
+.CW hello.txt
+and
+.CW phase4.txt
+(DISK-DOS-OK); the first file's bytes read back correctly
+(DISK-READ-OK); and a file created from Inferno, written, closed,
+reopened and re-read matches (DISK-WRITE-OK).  The write reached the
+medium and not just a cache: after the run the host's FAT image
+contains
+.CW PI.TXT
+holding "written by inferno on the pi", read back with
+.CW mtools .
+A second boot with
+.CW usb-storage
+and
+.CW usb-net
+attached together runs both off the one hub \- disk mounted and written,
+DHCP and three ping replies, on to the shell \- which also exercises two
+devices contending for the DWC2 split lock Phase 3 had to fix.
+.PP
+Not done, and not claimed: no partition table is parsed, so the image
+must be a bare FAT filesystem rather than an MBR-partitioned disk; only
+LUN 0 is addressed; there is no removable-media, medium-change or
+error-recovery handling (a stalled endpoint is not cleared and retried);
+and no real USB stick has been tried, only QEMU's
+.CW usb-msd .
+The file created on the FAT filesystem also gets a nonsense timestamp
+(2098) \- the board has no RTC and nothing had set the clock, but the
+cause was not chased down.  The
+.CW "mntwalk waserror()"
+line that prints alongside the write is the open arm64 multi-kproc
+error-stack bug noted under the kfs item below; it does not stop the
+write.
 .NH 1
 Phase 5: Arasan SDHCI / SDIO -- the second SD controller
 .PP
