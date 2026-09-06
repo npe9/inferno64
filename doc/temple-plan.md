@@ -104,6 +104,34 @@ Two cheaper and stronger checks, both used on `zoneout` and `wenceslas`:
 pipe, buffering makes it look hung. Its `run` mode needs a draw context and
 fails under `emu-g`.
 
+## Auditing a port against its original
+
+Done 2026-09-06 over all 61 ports that have an original. Four automated
+passes; three of them turned out to be mostly noise, which is worth knowing
+before anyone runs them again.
+
+**Comparing function names is useless.** The ports rename everything —
+`DrawIt` becomes `redraw`, `AnimateTask` becomes `animate`, `CleanUp`
+vanishes into the garbage collector. By that measure `psalmody` was missing
+31 of 45 functions; it has the clipboard, the octave, the tempo control and
+the meters, under Limbo names. Same for `budget`'s "missing" file
+persistence, which is there as TSV.
+
+**`RegWrite`/`RegDft` is a false positive**: all fourteen ports that would
+need it use `scorestore` instead.
+
+**`Play()` melodies are all present**, verbatim, in every one of the twelve
+ports whose original has a `SongTask`. Sound is not where the gaps are.
+
+**Two passes are worth running.** Compare every numeric `#define` of the
+original against the port's own `NAME: con VALUE`, matching names
+underscore- and case-insensitively and allowing a `.0` suffix on the value —
+without those three tolerances it is all false positives. And compare the
+string literals the original *prints*: ports rename functions but they
+quote the original's text, so a printed string that appears nowhere is a
+feature that was not ported. That pass is what found the four demos below
+that draw no text at all.
+
 ## State
 
 **`Demo/Games` is complete.** All 30 are ported, and as of this note all of
@@ -135,6 +163,49 @@ entry point), `bspline` and `speedline` — leaving 35.
 
 `Demo/Snd` has two left: `morsecode` (161) and `waterfowl` (82, one sprite
 bin, 300KB of sound data).
+
+### What is left inside the ports that exist
+
+**Undeclared deviations** — the port differs and does not say so:
+
+- `bigguns` halves the world silently. `MAP_WIDTH` is 2048 in BigGuns.HC and
+  1024 in the port; `DUST_NUM` is 512 and the port uses 256. `MAP_WIDTH`
+  drives `elevs[]`, the horizontal scroll range and the dust wrap, so this is
+  not cosmetic. It also never shows the opening `PopUpOk` — which is Terry's
+  "I refuse to rip-off the original ... Write games, don't play them.", the
+  same text `zoneout` now carries — nor "The map scrolls.", and it does not
+  use `ROP_COLLISION`. Its one GAP line covers the scroll widgets, not any
+  of this.
+- **Four ports open no font and draw no text at all**: `bigguns`,
+  `massspring`, `maze`, `hanoi`. Absent with it are MassSpring's
+  "Left-Click to place mass / Right-Click and drag to place spring / Springs
+  are 100 pixs long.", Maze's "Solve maze starting at right click.", and
+  Hanoi's `Disk: %d from %d to %d` move readout.
+- **Four ports are silent where the original beeps**, and none of them
+  references `tone(2)`: `digits` (`Beep;Beep;` on a wrong answer), `maze`
+  (leaving the maze), `tictactoe` (`Beep` for player one and `Beep(74)` for
+  player two on an illegal click — two different pitches), `hanoi` (on
+  completion).
+- `digits` reworded the instructions instead of using the original's, and
+  `logic` shows only the three-input worked example, not the four-input one
+  ("enter A=0xFF00, B=0xF0F0, C=0xCCCC and D=0xAAAA").
+- `spriteedit` covers element kinds 0-24 but `SPT_ROTATED_RECT` and
+  `SPT_SHIFTABLE_MESH` are not obviously among them; worth one check.
+
+**Declared deviations** — in the file headers already, honest, still not 1:1:
+`talons` (map halved to 512x512 with the bird count scaled to keep density;
+painter sort rather than the depth buffer), `varoom` (painter's algorithm
+instead of GrFillPoly3's per-pixel depth buffer), `xcaliber` (geometric laser
+hit test rather than the per-pixel GrPeek beam guard), `tothefront` (no
+user-written HolyC AI files from ~/ToTheFront), `psalmody` (fixed GodSongStr
+settings, no Help.DD viewer, no compressed .HC.Z songs), `budget` (TSV rather
+than Bgt.DATA.Z/Strs.DD.Z), `god` (GodDoodle out of scope), `timeclock`
+(text records rather than compressed CDate, and end of file does not end a
+description).
+
+**Platform-level and recurring**, declared in about twenty headers and
+unlikely to change: the `MenuPush` pull-down bars, `WinMax` fullscreen
+borderless operation, the `PopUp*` dialog family, and `ROP_XOR`.
 
 Notes for whoever starts on these:
 
