@@ -263,12 +263,11 @@ as far as
 .CW "sh loaded" ,
 which is where its diskless run stops anyway; armv7, mangopi, shakti,
 spike, virts and virt32s compile but were not booted; and armv7m has no
-mkfile in the tree to build with at all.  The sifiveu and virtarm64
-kernels in those boots also carried uncommitted device-table edits
-.CW ( sifiveu.c ,
-.CW virtarm64.c )
-already in the tree from other in-flight board work \- the timer queue
-does not depend on them, but the boots were not of a clean checkout.
+mkfile in the tree to build with at all.  All five boots were
+re-run from a clean checkout of this commit, in a worktree of its own,
+after an earlier round had been done in a tree carrying other in-flight
+board work; the results were the same, so no uncommitted edit is
+propping any of them up.
 .PP
 Left for the real board: the SMSC init path above, and the interrupt
 endpoint (link status) which neither chip path uses yet.
