@@ -69,14 +69,23 @@ stays at zero.
 .IR draw (3)
 .SH BUGS
 A readback after a Metal geometry pass returns none of the geometry.
-The software provider reads the 64-triangle scene back as 210183 lit
-pixels through the window layer and 226349 through the display's screen
-image, the difference being the window's border; the protocol provider
-reads back 0 through the layer and exactly that border, 16166, through
-the screen.
+The 64-triangle scene is looked at twice, because a
+.I draw
+into a scratch image copies bytes and never gives the device a chance to
+bring GPU output back, while a
+.I readpixels
+straight off the target goes through the draw device's read message,
+which calls the readback hook first.
+Both agree.
+Through the software provider the window layer reads back 210183 lit
+pixels either way, and the display's screen image 226349 pixels or
+258365 nonzero bytes.
+Through the protocol provider the layer reads back nothing at all, and
+the screen reads back 16166 pixels and 48182 bytes \- which is exactly
+the window's border in each metric, the software provider's screen count
+less its layer count.
 So reading a layer is not the problem, and this is not a partial
-readback.
-The readback runs \-
+readback: the readback runs \-
 .B readbacks
 counts up \- and produces nothing.
 .PP

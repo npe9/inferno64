@@ -213,10 +213,36 @@ rb(what: string, path: string, d: ref Display, col: ref Image,
 	d3->clearz(c);
 	for(i := 0; i < len tri; i++)
 		d3->fillpoly3(c, tri[i], Vector(0.0, 0.0, 1.0), 0.8);
-	lay := litpixels(win.image);
-	scr := litpixels(d.image);
-	sys->print("draw3dbench: %s readback: window layer lit=%d, screen image lit=%d\n",
-		what, lay, scr);
+	# Two ways of looking, because they exercise different code.  A
+	# draw() into a scratch image copies bytes and never gives the
+	# device a chance to bring GPU output back; a readpixels() straight
+	# off the target goes through devdraw's read message, which calls
+	# gpudrawreadback() first.  If the GPU path is working, only the
+	# second can see it - which is itself worth knowing, because a port
+	# that composites its window into a buffer is doing the first.
+	sys->print("draw3dbench: %s readback: layer draw=%d read=%d, screen draw=%d read=%d\n",
+		what, litpixels(win.image), litdirect(win.image),
+		litpixels(d.image), litdirect(d.image));
+}
+
+# Bytes that are not zero, read straight off the image.  Coarser than
+# litpixels - it counts bytes, and what a zero byte means depends on the
+# channel layout - but it is the only one of the two that can observe a
+# GPU readback, because nothing is copied before the read.
+litdirect(dst: ref Image): int
+{
+	r := dst.r;
+	bpl := (r.dx() * dst.depth + 7) / 8;
+	buf := array[bpl] of byte;
+	n := 0;
+	for(y := r.min.y; y < r.max.y; y++){
+		if(dst.readpixels(Rect((r.min.x, y), (r.max.x, y+1)), buf) != bpl)
+			return -1;
+		for(i := 0; i < bpl; i++)
+			if(buf[i] != byte 0)
+				n++;
+	}
+	return n;
 }
 
 # Pixels that are not black, counted through an RGB24 scratch so the

@@ -77,19 +77,30 @@ worth having, for Limbo-side per-call cost (the protocol path costs about
 6.8 us per triangle with the GPU out of the picture, against roughly 3 us
 with it), but not for system calls.
 
-**4. A readback after a GPU pass returns none of the geometry.** The
-software provider, drawing the 64-triangle scene into `win.image`, reads
-back 210183 lit pixels through that window layer and 226349 through the
-display's screen image; the difference, 16166, is the wm border around
-the window. The protocol provider on the same scene reads back **0**
-through the layer and **exactly 16166** through the screen — the border
-and nothing else. So layer reads are not the problem (the software
-control proves they work), and this is not a partial readback: the GPU's
-output does not come back at all. The readback machinery does run —
-`readbacks` counts up, and devdraw's read message calls
-`gpudrawreadback()` — it just produces nothing. This matters because
-several ports query pixels: `xcaliber`'s laser walk, `ropcollision`'s
-collision count, flood fills.
+**4. A readback after a GPU pass returns none of the geometry.**
+`draw3dbench` looks twice, because the two ways of looking exercise
+different code. A `draw()` into a scratch image copies bytes and never
+gives the device a chance to bring GPU output back; a `readpixels()`
+straight off the target goes through devdraw's read message, which calls
+`gpudrawreadback()` first. Both agree, and the software provider is the
+control:
+
+| provider | layer, via draw | layer, direct read | screen, via draw | screen, direct read |
+| --- | --- | --- | --- | --- |
+| software | 210183 | 210183 | 226349 | 258365 |
+| protocol | **0** | **0** | **16166** | **48182** |
+
+(The draw columns count pixels and the read columns count nonzero bytes,
+so read across a row, not down a column.) The window's border is
+226349 - 210183 = 16166 pixels and 258365 - 210183 = 48182 bytes — which
+is exactly, in both metrics, what the protocol provider's screen read
+returns. It gets back the border and not one pixel of geometry, and
+through the window layer it gets back nothing at all. Layer reads are
+therefore not the problem, the software control proves them working on
+the same scene through the same code, and this is not a partial readback.
+The machinery does run — `readbacks` counts up — it just produces
+nothing. This matters because several ports query pixels: `xcaliber`'s
+laser walk, `ropcollision`'s collision count, flood fills.
 
 **5. A reproducible one-off stall, cause unidentified.** At exactly
 `-n 60` — the old default — the 512-triangle protocol case takes 8.4 ms
