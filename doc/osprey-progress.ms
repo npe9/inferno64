@@ -6170,9 +6170,95 @@ arriving at the buddy showed it arriving there after the fix too.
 .CW "& 0xffffffffULL"
 is what the code uses, and the reason is written beside it.
 .PP
-What is left of 2.2 is the shell.
+.B "2.2d: the shell."
+Done.
+.CW /boot/sh
+is an ordinary Plan 9 program - one command a line, words at blanks,
+stages at
+.CW | ,
+.CW #
+a comment; no quoting, no variables, no redirection to a file, a shell
+for the demonstration and not one to live in.  It is the smallest
+program that needs all four of the things a shell needs: it forks a
+process for each stage, execs it in place, makes a pipe and dups one end
+onto each stage's standard descriptor, and waits for each and reads its
+exit status.  It reads its script from a file the client wrote to the
+disk over 9P, so the script is a file in the buddy's name space like any
+other, and every one of its calls is answered by a peer container over
+the ring.  Proof: the script's first line runs a command, its second is
+a pipeline, and the four hundred and eighty-five bytes of
+.CW /n/hello
+cross the pipe from one legacy process to another and are counted at the
+far end.
 .PP
-All of this is the
+Two things had to change under it, and both are about the shape of the
+personality rather than about the shell.
+.PP
+The first: a forwarded system call is served on a kproc now, not in the
+service loop's own call stack.  Serving inline is fine while every call
+answers at once, and a pipe is the first that does not - the pipeline's
+second stage reads a pipe its first stage has not written yet, the read
+blocks in the buddy, and blocking there blocks the loop that would have
+carried the first stage's write.  The whole personality stopped and its
+cooperative scheduler said exactly what had happened
+.CW ( "no runnable proc" ).
+This is the same shape item 12 found on the pi-p server, and it has the
+same answer.  A pool of four workers, not a kproc for each container: a
+kproc costs a 32K stack and a slot in the scheduler's table, and a
+container that never blocks would spend both for the whole boot; with
+all four busy the call is served inline as before, which is no worse
+than it was.  Every write to the reply queue stays in the service loop,
+so two workers finishing at once cannot cross there - item 9's lesson,
+applied before it could be relearned.  A call that does not block still
+finishes in the pass that dispatched it, since
+.CW runkprocs
+runs the worker at once rather than at the next tick; the kernel's wait
+for a forwarded call is thirty seconds now rather than the eight hundred
+milliseconds its own asks of the buddy get, because a read of a pipe
+waits on another process and not on the buddy.
+.PP
+The second is where a write goes.  A legacy program's writes to 0, 1 and
+2 went straight to the console, by the number, which is right until a
+shell dups a pipe onto 1: the first stage's output then went to the
+console and the second stage read an empty pipe.  Routing every write to
+the buddy instead fixes that - the buddy holds the descriptor table and
+prints the console ones itself - and it was tried, and it broke the two
+note criteria: it turns every legacy
+.CW print
+into a ring round trip, and so into a call a note can interrupt, and an
+interrupted call and the one the note handler makes share the
+container's one data area, so a line was lost and another printed twice.
+What is in the tree instead keeps the console path and marks the
+exception: the kernel sees every
+.CW dup
+and
+.CW close
+a legacy program makes, so it knows which of 0, 1 and 2 have had
+something else put on them
+.CW ( up->buddyredir ,
+carried across fork and across an exec in place, cleared for a program
+the exec request starts), and only a redirected descriptor leaves the
+console path.  The interrupted-call hazard is still there for a
+forwarded call a note interrupts; it is now reached only by a program
+that redirects, and it is written down here rather than papered over.
+.PP
+One more bug was under the pipeline, and it is worth saying how it was
+caught rather than only what it was.  When a container went, the buddy
+closed its descriptors from three upward, which is right only while
+nothing has redirected: a shell puts the pipe's write end on descriptor
+one, so the write end outlived the process that held it and the reader
+at the other end never saw end of file.  What made this hard to see is
+that the pipeline worked anyway - every byte crossed, the count at the
+far end was the whole of the first stage's output, and the second stage
+finished - because the forwarded call's own thirty-second bound
+eventually gave up and the program read
+.CW \-1
+where it expected 0.  The two are the same byte count.  So the program
+says which it got, and the criterion asserts the 0: without that line
+the test passed while the pipe was broken, for thirty-five seconds a
+run, and would have gone on passing.
+.PP
+Phase 2.2 is done, and all of it is the
 .CW p9pair
 configuration, whose check runs the legacy program with a full buddy
 beside it; the
@@ -6180,8 +6266,14 @@ beside it; the
 and
 .CW p9linux
 configurations carry neither the dup branch nor
-.CW xbrk ,
-and their legacy demonstrations do not reach for either.
+.CW xbrk
+nor
+.CW xexec ,
+and their legacy demonstrations do not reach for any of them.  What the
+buddy answers is now open, read, write, close, create, remove, stat,
+fstat, seek, fd2path, dup, pipe, bind, mount, errstr, rfork, await and
+exec, with brk in the kernel beside them - enough for a shell, and named
+here so that what rio will want beyond it can be measured against it.
 .PP
 .B "Phase 2.3: rio."
 rio is 9front source this tree does not carry, so its binary is built on

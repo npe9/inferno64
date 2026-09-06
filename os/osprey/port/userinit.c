@@ -232,6 +232,8 @@ ospreyexecbuddy1(char *name, int replace)
 	}
 	up->oslinux = kind == 0;	/* an ELF is a Linux process; an a.out a Plan 9 one */
 	up->buddyimage = 1;		/* either way its pages are the buddy's */
+	if(!replace)
+		up->buddyredir = 0;	/* a program the exec request started: 0, 1 and 2 are the console the buddy gives it.  An exec in place keeps them, as it keeps the descriptors */
 	ospreyuserentry = entry;
 	up->seg[SSEG] = newseg(SG_STACK | SG_NOEXEC, USTKTOP-USTKSIZE, USTKSIZE/BY2PG);
 	seg = TSEG;

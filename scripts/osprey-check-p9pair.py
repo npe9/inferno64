@@ -32,6 +32,20 @@ def heapgrew(t):
     return wrong == 0 and asked == 512*1024 and now - start == asked
 
 
+def pipelineran(t):
+    """The second stage read the whole file from its standard input, and the
+    shell reaped three stages in all (one for the first line, two for the
+    pipeline)."""
+    if 'sh: /boot/cat /n/hello | /boot/cat' not in t:
+        return False
+    m = re.search(r'cat: (\d+) bytes read from my standard input and written to my standard output; the read ended with (-?\d+)', t)
+    if m is None or int(m.group(1)) <= 0:
+        return False
+    if int(m.group(2)) != 0:		# 0 is end of file; -1 would be the call giving up with the same count
+        return False
+    return len(re.findall(r"sh: a stage of the pipeline ended: \d+ \d+ \d+ \d+ ''", t)) == 3
+
+
 def execinplace(t):
     """Twenty generations of exec, the last one reading the file through the
     descriptor opened before the first, and an exit status of 0."""
@@ -329,6 +343,13 @@ def main():
         ("fd2path(2) is served by the buddy: /boot/cat asks the path of the descriptor it dup'd and is told /n/hello - the name the buddy's own name space resolved it in, not a name the program had",
          re.search(r'cat: descriptor \d+ is /n/hello, by fd2path through the buddy', t) is not None
          and 'cat: fd2path of' not in t),
+        ("a shell, on the server personality: /boot/sh - an ordinary Plan 9 program - reads a script the client wrote to the disk, and for each line forks a process, execs it in place and waits for its exit status, all four answered by a peer container over the ring",
+         'sh: reading the script /n/script, my file calls answered by the buddy' in t
+         and 'sh: /boot/cat /n/hello' in t
+         and 'sh: the script is done' in t
+         and re.search(r"p9: pair-client: wait: /boot/sh \(container \d+\) exited with status 0 - it ran a script with a pipeline in it", t) is not None),
+        ("and a pipeline in it: the shell makes a pipe, dups one end onto each stage's standard descriptor and execs both, and the first stage's whole output crosses the pipe to the second, which reads it to end of file - the writer's end closing, not a call giving up - and writes it out",
+         pipelineran(t)),
         ("wait is answered by somebody: the client's wait returns the child's exit status",
          re.search(r'p9: pair-client: wait: container \d+ exited with status 0', t) is not None
          and 'panic' not in t and 'killed by SIGSEGV' not in t),	# the Linux child takes one SIGSEGV on purpose

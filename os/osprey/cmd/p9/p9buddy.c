@@ -98,7 +98,14 @@ struct Img {
 	int	nbind;			/* path binds it made in that name space, recorded so migration can replay them */
 	struct { char new[80], old[80]; int flag; } bind[8];
 };
-enum { Nimg = 8 };
+/*
+ * A record per container the buddy answers for, freed when the kernel
+ * says the container is gone (p9buddy_gone, on ReqGone).  Eight was
+ * enough while one program ran at a time; a shell running a two-stage
+ * pipeline holds two at once beside whatever else the boot is running,
+ * so there is room for more of them now.
+ */
+enum { Nimg = 32 };
 static Img imgs[Nimg];
 
 /* the image of a container, making one when told to */
@@ -346,7 +353,17 @@ p9buddy_gone(uvlong container)
 		return;
 	if(img->fd >= 0)
 		p9close(img->fd);
-	for(i = 3; i < Nfd; i++)
+	/*
+	 * Every descriptor, 0, 1 and 2 included: the console sentinel is
+	 * negative and passes over, but a shell that redirected a stage put
+	 * a real one there, and a pipe's write end left open outlives the
+	 * process that held it - the reader at the other end then never sees
+	 * end of file.  Starting at 3 was right only while nothing redirected;
+	 * what it cost was a pipeline whose second stage read every byte and
+	 * then waited for the call's own bound to give up, with the same byte
+	 * count to show for it either way.
+	 */
+	for(i = 0; i < Nfd; i++)
 		if(img->fds[i] >= 0)
 			p9close(img->fds[i]);
 	if(img->pgrp != nil)
@@ -893,4 +910,109 @@ p9buddy_serve(uchar *cdata, uvlong container)
 
 	ab = (uvlong*)(cdata + Argoff);
 	return p9buddy_syscall(container, ab[0], ab[1], ab[2], ab[3], cdata);
+}
+
+/*
+ * The workers that serve a forwarded system call, so that one which
+ * blocks does not block the service loop.  A pipe is what makes this
+ * necessary: a shell's second stage reads a pipe its first stage has not
+ * written yet, and the read waits for a process the same loop would have
+ * had to carry.  The pool lives here rather than in the ring loop
+ * because a kproc and a Rendez are kernel-header things and that loop is
+ * compiled against the user headers; what crosses is three plain-typed
+ * calls.
+ *
+ * A pool of four, not a kproc per container: a kproc costs a 32K stack
+ * and a slot in the scheduler's table, and a container that never blocks
+ * would spend both for the whole boot.  With all four busy the caller
+ * serves the call itself, as it always did, which is no worse than
+ * before.  The workers are started from the service task so they inherit
+ * its name space, which is the buddy's own - the one a container without
+ * a private name space runs its calls in; a container with one has it
+ * swapped in and out around the call, on the worker's own Proc, so two
+ * workers cannot restore over each other.
+ */
+enum { Nworker = 4 };
+typedef struct Job Job;
+struct Job {
+	int	busy;			/* a worker holds it */
+	/*
+	 * Written by the worker, read by the service loop, with no barrier
+	 * and no lock: this scheduler is cooperative and nothing else runs
+	 * personality code, so a switch happens only where a proc sleeps and
+	 * the two never touch this word at once.  A preemptive tick here
+	 * would break that quietly.
+	 */
+	int	done;			/* it has an answer waiting to be posted */
+	uvlong	container, sequence;	/* whose call, and which, so the reply can be addressed */
+	uchar	*cdata;			/* the caller's data area, where its arguments are */
+	long	result;
+	Rendez	r;
+};
+static Job jobs[Nworker];
+
+static int
+havework(void *a)
+{
+	Job *j = a;
+
+	return j->busy && !j->done;
+}
+
+static void
+buddyworker(void *a)
+{
+	Job *j = a;
+
+	for(;;){
+		ksleep(&j->r, havework, j);
+		j->result = p9buddy_serve(j->cdata, j->container);
+		j->done = 1;
+	}
+}
+
+int
+p9buddy_workers(void)
+{
+	int w;
+
+	for(w = 0; w < Nworker; w++)
+		kproc("p9-buddyworker", buddyworker, &jobs[w]);
+	return 1;
+}
+
+int
+p9buddy_dispatch(uchar *cdata, uvlong container, uvlong sequence)
+{
+	Job *j;
+
+	for(j = jobs; j < jobs + Nworker; j++)
+		if(!j->busy){
+			j->container = container;
+			j->sequence = sequence;
+			j->cdata = cdata;
+			j->result = -1;
+			j->done = 0;
+			j->busy = 1;
+			wakeup(&j->r);
+			return 1;
+		}
+	return 0;
+}
+
+int
+p9buddy_reap(uvlong *container, uvlong *sequence, long *result)
+{
+	Job *j;
+
+	for(j = jobs; j < jobs + Nworker; j++)
+		if(j->busy && j->done){
+			*container = j->container;
+			*sequence = j->sequence;
+			*result = j->result;
+			j->busy = 0;
+			j->done = 0;
+			return 1;
+		}
+	return 0;
 }

@@ -217,6 +217,21 @@ port
 		buf = va_arg(list, char*);
 		len = va_arg(list, long);
 		off = va_arg(list, vlong);
+		/*
+		 * A legacy program that has dup'd something onto 0, 1 or 2 - a
+		 * shell redirecting a pipeline's stage - writes that descriptor
+		 * to the buddy, which holds the pipe.  Deciding by the number
+		 * alone put a pipeline's first stage on the console and left
+		 * the second reading an empty pipe; routing every write to the
+		 * buddy instead would fix that too, but it turns every legacy
+		 * print into a ring round trip and so into a call a note can
+		 * interrupt, which the note criteria showed.  So the kernel
+		 * keeps the mark: it sees every dup and close a legacy program
+		 * makes, and only a redirected descriptor leaves the console
+		 * path.
+		 */
+		if(fd >= 0 && fd < 3 && (up->buddyredir & (1 << fd)) != 0 && ospreybuddyhas())
+			return ospreybuddyforward(51, (uintptr*)up->s.args);	/* PWRITE */
 		if(fd >= 3 && ospreybuddyhas())	/* a file descriptor: the buddy holds the file, not the console */
 			return ospreybuddyforward(51, (uintptr*)up->s.args);	/* PWRITE */
 		USED(fd, off);

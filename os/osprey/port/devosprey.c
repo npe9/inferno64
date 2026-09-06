@@ -2480,6 +2480,7 @@ enum {
 	 */
 	Bexec = 100, Bpage = 101, Bmappage = 102, Bforkfds = 103, Bdupfd = 104,
 	Bdup = 5,
+	Bsyscalltries = 15000,	/* 2 ms each: thirty seconds for a call that may block on another process */
 	Bargoff = Odbuddyarg, Bnameoff = Odbuddyname, Bdataoff = Odbuddydata,
 	Reqsyscall = 15,	/* above every request in policy/syscall.h; the same number in cmd/p9 */
 };
@@ -2722,12 +2723,25 @@ ospreybuddydup(int oldfd, int newfd)
 {
 	extern long ospreybuddyforward(ulong, uintptr*);
 	uintptr a[2];
+	long r;
 
 	if(!ospreybuddyhas())
 		return -1;
 	a[0] = (uintptr)oldfd;
 	a[1] = (uintptr)newfd;
-	return (long)ospreybuddyforward(Bdup, a);
+	r = (long)ospreybuddyforward(Bdup, a);
+	/*
+	 * A dup onto 0, 1 or 2 is a shell redirecting: that descriptor is no
+	 * longer this personality's console but a file or a pipe the buddy
+	 * holds, so writes to it must go to the buddy from now on.  The
+	 * kernel sees every dup a legacy program makes (the config routes
+	 * them here), which is what lets it keep the console fast path for
+	 * every program that has not redirected - a legacy program's print
+	 * stays one call and does not become a ring round trip.
+	 */
+	if(r >= 0 && r < 3)
+		up->buddyredir |= 1 << r;
+	return r;
 }
 
 int
@@ -2839,6 +2853,9 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 		break;
 	case Bclose:				/* close(fd) */
 		ab[1] = Aint(a[0]); ab[2] = 0; ab[3] = 0;
+		/* the buddy puts a closed 0, 1 or 2 back to the console, so the redirect is off */
+		if((long)a[0] >= 0 && (long)a[0] < 3)
+			up->buddyredir &= ~(1 << (int)a[0]);
 		break;
 	case Bread: case Bpread:		/* read(fd,buf,n) / pread(fd,buf,n,off): n is a long, its slot whole */
 		ab[1] = Aint(a[0]);
@@ -2954,7 +2971,17 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 	}
 #undef Aint
 
-	status = ospreybuddycall(p, 400);
+	/*
+	 * A forwarded system call may legitimately take a long time - a read
+	 * of a pipe waits for whoever writes it, which is another process
+	 * entirely and may not have run yet - so it is given far longer than
+	 * the kernel's own asks of the buddy (a page, a descriptor clone),
+	 * which either answer at once or have gone wrong.  Thirty seconds:
+	 * past it the call is -1 to the program, which for a read is an
+	 * error and not an end of file, so a pipeline that outran it would
+	 * say so rather than quietly read short.
+	 */
+	status = ospreybuddycall(p, Bsyscalltries);
 	if(status < 0)
 		return -1;
 
@@ -3706,6 +3733,7 @@ ospreyforkkern(Ospreyproc *parent, ulong flag)
 	/* the child runs the buddy's image the same way the parent does */
 	p->osprey = c;
 	p->buddyimage = up->buddyimage;
+	p->buddyredir = up->buddyredir;	/* its descriptors are cloned from this one's, redirections and all */
 	p->oslinux = up->oslinux;
 	p->linuxheap = up->linuxheap;
 	p->linuxbrk = up->linuxbrk;
@@ -4083,6 +4111,7 @@ ospreymigcall(int op, uvlong *arg, uvlong *ubuf)
 		p->kp = 0;
 		p->oslinux = 0;
 		p->buddyimage = (flags & Migimage) != 0;
+		p->buddyredir = 0;		/* the far buddy reopens its descriptors; 0, 1 and 2 are the console there */
 		/*
 		 * The heap comes with the header: the segment it grows is one
 		 * of the carried ones, named by the index the sender wrote, so
@@ -4332,6 +4361,7 @@ ospreymoveproc(Proc *q, Ospreyproc *c, Segment **shared, Proc *sharer)
 
 	p->osprey = c;
 	p->buddyimage = q->buddyimage;
+	p->buddyredir = q->buddyredir;
 	p->oslinux = q->oslinux;
 	p->linuxheap = q->linuxheap;
 	p->linuxbrk = q->linuxbrk;
@@ -4718,6 +4748,7 @@ ospreymovekern(Ospreyproc *old, uvlong *ubuf, int group)
 
 	p->osprey = c;
 	p->buddyimage = up->buddyimage;
+	p->buddyredir = up->buddyredir;	/* its descriptors are cloned from this one's, redirections and all */
 	p->oslinux = up->oslinux;
 	p->linuxheap = up->linuxheap;
 	p->linuxbrk = up->linuxbrk;

@@ -63,6 +63,29 @@ struct Arm { uvlong op, obj, buf; };
 
 extern long p9srv_serve(uchar *msg, long n, uchar *rbuf, long rmax);
 extern long p9buddy_serve(uchar *cdata, uvlong container);
+
+/*
+ * Forwarded legacy system calls, served on kprocs of their own; the pool
+ * is in p9buddy.c, which is compiled against the kernel headers, where a
+ * kproc and a Rendez are, and three plain-typed calls cross to here.
+ *
+ * They used to be served inline, in this loop's own call stack, which is
+ * fine while every one of them answers at once.  A pipe does not: a
+ * shell's second stage reads a pipe its first stage has not written yet,
+ * the read blocks in the buddy, and blocking there blocks the loop that
+ * would have carried the first stage's write - the whole personality
+ * deadlocked, and its cooperative scheduler said so ("no runnable
+ * proc").  Same shape as the pi-p server serving one connection at a
+ * time, and the same answer: the call waits somewhere other than here.
+ *
+ * Every write to the reply queue stays in this loop.  Only it moves
+ * pq->put, so two workers finishing at once cannot cross there - the
+ * shape of the bug run down on the one shared reply buffer.
+ */
+extern int p9buddy_workers(void);				/* start the pool */
+extern int p9buddy_dispatch(uchar *cdata, uvlong container, uvlong sequence);	/* 1: a worker took it */
+extern int p9buddy_reap(uvlong *container, uvlong *sequence, long *result);	/* 1: one has finished */
+static int workersup;
 extern void p9buddy_gone(uvlong container);
 extern void p9blk(uchar *base);		/* blkvirtio.c: the user-level block driver */
 extern void p9lfsmount(void);		/* main.c: the log-structured store, mounted at /n */
@@ -185,6 +208,28 @@ srvcall(uchar *base, Omap *map, uvlong op, uvlong a0, uvlong a1)
 	return 0;
 }
 
+/*
+ * Post a reply for every worker that has finished.  Called from the
+ * service loop and nowhere else, so the reply queue keeps one writer.
+ */
+static void
+reapjobs(Queue *pq, Msg *repm)
+{
+	Msg rep;
+	uvlong container, sequence;
+	long result, k;
+
+	while(p9buddy_reap(&container, &sequence, &result)){
+		for(k = 0; k < (long)sizeof rep; k++)
+			((uchar*)&rep)[k] = 0;
+		rep.container = container;
+		rep.sequence = sequence;
+		rep.arg[0] = (uvlong)result;
+		repm[pq->put % pq->size] = rep;
+		pq->put++;
+	}
+}
+
 /* returns 1 when a request was served, 2 for an empty frame poll, 0 when the tick was, -1 for neither */
 static int
 serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
@@ -199,6 +244,7 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 	 * stream of requests the ring is always ready, so the tick - at most
 	 * one every 10 ms - would never be taken if it came second.
 	 */
+	reapjobs(pq, repm);		/* whatever a worker finished while this loop was away */
 	arm[0].op = OSdown;		/* the clock: reclamation's turn */
 	arm[0].obj = Ticksem;
 	arm[0].buf = 0;
@@ -304,7 +350,20 @@ serve1(Queue *pq, Msg *repm, Msg *reqp, Arm *arm, uchar *cdata, uvlong cid)
 			rn = ospreymediumreceive(clientbase + clientmap->pktbuf + toff*clientmap->pktbufsize, (long)tlen, req.container);
 		rep.arg[0] = (uvlong)rn;
 	} else if(req.op == Reqsyscall){
-		rn = p9buddy_serve(cdata, req.container);	/* a forwarded legacy system call, or exec/page */
+		/*
+		 * A forwarded legacy system call, or exec/page.  Given to a
+		 * worker so that one which blocks - a read of a pipe nobody has
+		 * written yet - does not block this loop; runkprocs lets it run
+		 * at once rather than at the next tick, so a call that does not
+		 * block is still answered in this pass, at the cost of a
+		 * switch.  One that does block is answered by reapjobs later.
+		 */
+		if(workersup && p9buddy_dispatch(cdata, req.container, req.sequence)){
+			runkprocs();
+			reapjobs(pq, repm);
+			return 1;
+		}
+		rn = p9buddy_serve(cdata, req.container);	/* every worker busy: inline, as it was */
 		rep.arg[0] = (uvlong)rn;
 	} else
 		rep.arg[0] = 2;
@@ -433,6 +492,13 @@ p9serveloop(char *arg)
 		puts("p9 server: the reservation was refused\n");
 	if(srvcall(base, map, ReqTick, Ticksem, 0) < 0)
 		puts("p9 server: the tick was refused\n");
+	/*
+	 * The workers, started from this task so that they inherit its name
+	 * space - a kproc takes the creator's pgrp, egrp and fgrp - which is
+	 * the buddy's own, the one a container without a private name space
+	 * runs its calls in.
+	 */
+	workersup = p9buddy_workers();
 	puts("p9 server: serving this name space over the ring\n");
 	/*
 	 * Serve until the machine stops: the kernel ends the boot when the

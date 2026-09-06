@@ -635,6 +635,30 @@ p9paircli(void)
 			} else
 				print("p9: pair-client: create /n/clientmade over 9P: %s\n", up->errstr);
 
+			/*
+			 * The shell's script, on the server's disk: the shell is a
+			 * legacy binary, so the file its calls reach is the buddy's,
+			 * and the buddy's /n is this store.  Written here over 9P
+			 * the same way /n/hello is.
+			 */
+			names[0] = "n";
+			if(!waserror()){
+				static char scr[] =
+					"# a script the shell runs on the server personality\n"
+					"/boot/cat /n/hello\n"
+					"/boot/cat /n/hello | /boot/cat\n";
+
+				hc = cclone(root);
+				if(walk(&hc, names, 1, 1, nil) < 0)
+					error("no /n at the server");
+				hc = devtab[hc->type]->create(hc, "script", ORDWR, 0666);
+				devtab[hc->type]->write(hc, scr, sizeof scr - 1, 0);
+				cclose(hc);
+				poperror();
+				print("p9: pair-client: wrote /n/script over 9P, two lines, the second a pipeline\n");
+			} else
+				print("p9: pair-client: create /n/script over 9P: %s\n", up->errstr);
+
 			names[0] = "n"; names[1] = "clientmade";
 			if(!waserror()){
 				hc = cclone(root);
@@ -729,6 +753,27 @@ p9paircli(void)
 			print("p9: pair-client: exec /boot/exec started container %ld\n", id);
 			if(id >= 0 && ring_wait(&st) == 0)
 				print("p9: pair-client: wait: /boot/exec (container %ld) exited with status %ld - it exec'd itself in place twenty times\n", id, st);
+		}
+		/*
+		 * A shell.  /boot/sh is an ordinary Plan 9 program that reads a
+		 * script and, for each line, forks a process for each stage,
+		 * makes a pipe between them, execs each child in place and
+		 * waits for it - fork, exec, pipe and wait, all four answered
+		 * by a peer container over the ring.  The script's second line
+		 * is a pipeline, so the bytes of /n/hello cross a pipe from one
+		 * legacy process to another.
+		 */
+		{
+			extern long ring_execv(char**);
+			char *shargv[3];
+
+			shargv[0] = "/boot/sh";
+			shargv[1] = "/n/script";
+			shargv[2] = nil;
+			id = ring_execv(shargv);
+			print("p9: pair-client: exec /boot/sh /n/script started container %ld\n", id);
+			if(id >= 0 && ring_wait(&st) == 0)
+				print("p9: pair-client: wait: /boot/sh (container %ld) exited with status %ld - it ran a script with a pipeline in it\n", id, st);
 		}
 	}
 	/*
