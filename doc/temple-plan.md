@@ -100,7 +100,7 @@ Two cheaper and stronger checks, both used on `zoneout` and `wenceslas`:
   the drawn bounding box against the mesh's own extents.
 
 `appl/temple/smoketest.b` loads every module (`emu-g -r. temple/smoketest`,
-253 of 253 at the time of writing). Redirect it to a *file* — through a
+290 of 290 at the time of writing). Redirect it to a *file* — through a
 pipe, buffering makes it look hung. Its `run` mode needs a draw context and
 fails under `emu-g`.
 
@@ -140,29 +140,31 @@ them have been checked against the original rather than merely written.
 **`Apps` is complete** apart from `Apps/X-Caliber`, which is ported as
 `xcaliber`.
 
-**`Demo/Graphics` is the frontier: 35 unported.** Sizes are the readable
-text lines of the `.HC`, which is a fair proxy for the work:
+**`Demo/Graphics` and `Demo/Snd` are complete.** All 39 that were
+unported have been written, wired into `appl/temple/mkfile` and
+`smoketest.b`, given a `man/1` page and a `man/1/INDEX` entry.  The
+smoketest loads 290 of 290 clean and each new demo survives eight seconds
+under `emu-cocoa`.
 
-Four are now done — `mousedemo`, `griddemo` (the name `grid` in section 1
-belongs to `grid-session`, so the port takes the original's `GridDemo()`
-entry point), `bspline` and `speedline` — leaving 35.
+Three naming notes for anyone reading the list:
 
-- Small, no sprite bins (under ~50 lines): `scrncapture` (13), `winzbuf`
-  (21), `palette` (23), `charanimation` (25), `spriteputext` (21),
-  `spriteraw` (32), `pantext` (33), `blot` (35), `sunmoon` (36),
-  `balloon` (28).
-- Middling: `spriteplot3d` (32), `spritetext` (28), `rotatetank` (38),
-  `extents` (41), `spriteplot` (45), `predatorprey` (69),
-  `lowpassfilter` (74), `shadow` (78), `wallpaperfish` (84),
-  `scrollbars` (95), `mathaudiodemo` (96), `pick` (96), `wallpaperctrl`
-  (96), `slider` (98), `3dpoly` (107), `commonancestor` (111).
-- Large: `shading` (154), `polezeros` (158), `lattice` (252),
-  `elephant` (256), `pick3d` (284), `transform` (233), `edsprite` (54 but
-  12 sprite bins), `lighttable` (592), `spriteput` (18 lines, 25KB of
-  sprite data).
+- `Grid.HC` is ported as **`griddemo`**, because `grid` in section 1
+  already belongs to `grid-session(1)`.  `GridDemo()` is the original's
+  own entry point.
+- `3DPoly.HC` is `3dpoly.b` with `implement Poly3d`, since a Limbo module
+  name cannot start with a digit.
+- `Demo/Graphics/Collision.HC` is still unported and its name is taken by
+  the `Demo/Games` one; see the note below.
 
-`Demo/Snd` has two left: `morsecode` (161) and `waterfowl` (82, one sprite
-bin, 300KB of sound data).
+Seven of them cannot reproduce the mechanism the original exists to show,
+and say so in the file and the man page rather than pretending:
+`balloon` (VGA plane-mask pokes into a framebuffer), `charanimation`
+(repointing `text.font` so every space on the display ripples), `pantext`
+(`gr.pan_text_x/y`, which moves everything already drawn), `palette`
+(hardware palette registers), `winzbuf` (the window manager's own
+per-cell ownership array), `wallpaperctrl` and `wallpaperfish` (controls
+and a paint routine installed on the desktop task).  In each the content
+is ported and the mechanism is named as absent.
 
 ### What is left inside the ports that exist
 
