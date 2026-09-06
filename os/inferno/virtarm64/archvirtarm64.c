@@ -116,33 +116,11 @@ cmpswap(s32 *addr, s32 old, s32 new)
 
 /*
  * interp.h's AINC/ADEC (libinterp's Dis reference-counting primitives)
- * -- spl-masked, same uniprocessor assumption cmpswap above already
- * makes (MAXMACH is 1 on this board).  Nothing in os/inferno provides
- * these for the "arm" (5c) objtype yet; every other board either
- * never actually links a caller of them or has its own equivalent
- * this port didn't inherit.
+ * used to live here as spl-masked ++/--, which excludes an interrupt on
+ * this processor and nothing else.  They are now libkern/ainc-aarch64.s,
+ * a real LDXRW/STXRW pair, so that they stay correct when MAXMACH stops
+ * being 1.  See doc/dis-numa-survey.ms.
  */
-int
-ainc(int *addr)
-{
-	int s, r;
-
-	s = splhi();
-	r = ++*addr;
-	splx(s);
-	return r;
-}
-
-int
-adec(int *addr)
-{
-	int s, r;
-
-	s = splhi();
-	r = --*addr;
-	splx(s);
-	return r;
-}
 
 long
 archkprofmicrosecondspertick(void)
