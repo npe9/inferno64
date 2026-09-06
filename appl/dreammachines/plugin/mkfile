@@ -5,6 +5,16 @@ TARG=\
 	toycpu.dis\
 	tutor.dis\
 
+#
+#	mkdis expands ${SYSMODULES:%=$MODDIR/%}, so a mkfile that does not
+#	declare SYSMODULES leaves the literal word as a prerequisite and mk
+#	stops with "don't know how to make 'SYSMODULES'".  These are the
+#	modules under module/ that this directory includes.
+#
+SYSMODULES=\
+	sys.m\
+
+
 DISBIN=$ROOT/$DISROOT/dreammachines/plugin
 
 <$ROOT/mkfiles/mkdis

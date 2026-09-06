@@ -106,8 +106,12 @@ TARG=\
 
 DISBIN=$ROOT/$DISROOT/temple
 
-<$ROOT/mkfiles/mkdis
-
+#
+#	mkdis expands ${SYSMODULES:%=$MODDIR/%} where it is included, so
+#	this list has to be declared before that line -- below it, mk sees
+#	an empty variable, leaves the literal word as a prerequisite, and
+#	stops with "don't know how to make 'SYSMODULES'".
+#
 SYSMODULES=\
 	draw.m\
 	sys.m\
@@ -124,3 +128,6 @@ SYSMODULES=\
 	liveplot.m\
 	numerics.m\
 	plot.m\
+
+
+<$ROOT/mkfiles/mkdis

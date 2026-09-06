@@ -180,6 +180,24 @@ TARG=\
 	twomagnet.dis\
 	bernoulli.dis\
 
+#
+#	mkdis expands ${SYSMODULES:%=$MODDIR/%}, so a mkfile that does not
+#	declare SYSMODULES leaves the literal word as a prerequisite and mk
+#	stops with "don't know how to make 'SYSMODULES'".  These are the
+#	modules under module/ that this directory includes.
+#
+SYSMODULES=\
+	draw.m\
+	env.m\
+	math.m\
+	numerics.m\
+	paramtracks.m\
+	plot.m\
+	sys.m\
+	tk.m\
+	wmclient.m\
+
+
 DISBIN=$ROOT/$DISROOT/danby
 
 <$ROOT/mkfiles/mkdis

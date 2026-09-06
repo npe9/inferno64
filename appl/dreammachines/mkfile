@@ -27,6 +27,23 @@ TARG=\
 	toycpu.dis\
 	videosynth.dis\
 
+#
+#	mkdis expands ${SYSMODULES:%=$MODDIR/%}, so a mkfile that does not
+#	declare SYSMODULES leaves the literal word as a prerequisite and mk
+#	stops with "don't know how to make 'SYSMODULES'".  These are the
+#	modules under module/ that this directory includes.
+#
+SYSMODULES=\
+	bufio.m\
+	draw.m\
+	math.m\
+	sys.m\
+	tk.m\
+	tkclient.m\
+	tone.m\
+	wmclient.m\
+
+
 DISBIN=$ROOT/$DISROOT/dreammachines
 
 <$ROOT/mkfiles/mkdis
