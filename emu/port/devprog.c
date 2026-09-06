@@ -1406,6 +1406,7 @@ dbgxec(Prog *p)
 	}
 
 	R = p->reg;
+	curP->curprog = p;	/* R now holds p's live roots; see progreg() */
 	R.MP = R.M->MP;
 
 	R.IC = p->quanta;
@@ -1483,6 +1484,7 @@ save:
 		strcpy(buf, "stopped");
 
 	p->reg = R;
+	curP->curprog = nil;
 
 	if(env->debug == nil) {
 		poperror();

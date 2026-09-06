@@ -2285,6 +2285,7 @@ isave(void)
 
 	p = delrun(Prelease);
 	p->reg = R;
+	curP->curprog = nil;
 	return p;
 }
 
@@ -2292,6 +2293,7 @@ void
 irestore(Prog *p)
 {
 	R = p->reg;
+	curP->curprog = p;
 	R.IC = 1;
 }
 
@@ -2370,6 +2372,7 @@ xec(Prog *p)
 	int op;
 
 	R = p->reg;
+	curP->curprog = p;
 	R.MP = R.M->MP;
 	R.IC = p->quanta;
 
@@ -2443,4 +2446,51 @@ xec(Prog *p)
 	} while(--R.IC != 0);
 
 	p->reg = R;
+	curP->curprog = nil;
+}
+
+/*
+ * Where a program's live roots are.
+ *
+ * p->reg is a snapshot that lags.  xec() copies R in at entry and
+ * writes it back only when the whole PQUANTA window ends, so for the
+ * program that is actually executing, p->reg is stale for every
+ * instruction in between and the live values are in the context's
+ * register file.  The collector wants the live ones: libinterp/gc.c
+ * takes Prog->reg as the root set and walks the Dis stack from reg.SP
+ * through the Stkext chain at reg.EX, and a root it cannot see is an
+ * object the sweeper takes.
+ *
+ * Today this is the identity, everywhere, and that was checked rather
+ * than assumed.  With one context the collector only runs between
+ * quanta -- from vmachine()'s BusyGC block or from execatidle() -- and
+ * p->reg has just been written back at both.  A probe in rungc() that
+ * printed whenever it ran with a live curprog never fired, under the
+ * spawn storm and under the profiler.
+ *
+ * The three other paths that load R from a Prog looked at first like
+ * stale windows and are not: dbgxec() in devprog.c, cpxec() in
+ * devprof.c and bxec() in devbench.c are alternative p->xec handlers,
+ * each the same load-quantum-store shape as xec() itself, so the
+ * collector cannot run inside one either.  They maintain curprog for
+ * the same reason xec() does, which is that the invariant has to hold
+ * whichever handler is running, not just the usual one.
+ *
+ * So this is the seam and not a fix: it stops being the identity when
+ * there is more than one context, and a collector on one thread walks
+ * programs running mid-quantum on another.
+ *
+ * The invariant that makes this work is curP->curprog: it names the
+ * program whose live registers the context's register file holds, and
+ * it is set at every point R is loaded from a Prog and cleared at
+ * every point a program stops running.  It is NOT cleared by
+ * exception.c's memmove(&p->reg, &R, ...), which syncs the snapshot
+ * while the program carries on executing rather than handing it over.
+ */
+REG*
+progreg(Prog *p)
+{
+	if(p == curP->curprog)
+		return curR;
+	return &p->reg;
 }

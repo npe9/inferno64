@@ -1113,6 +1113,110 @@ barrier that concurrent marking wants is already being executed on every
 pointer store, so the second option is cheaper here than the literature
 suggests.
 .NH 2
+Phase 5a, as landed \- the seam, not the gate
+.PP
+The gate that stopped Phase 1b and stops Phase 2 at
+.CW n
+greater than one is one specific thing: the collector reads
+.CW Prog->reg
+as the root set, and
+.CW Prog->reg
+is a quantum out of date for whichever program is running.  Phase 5a
+puts that question in one place and answers it, without yet changing
+the answer:
+.IP
+.nf
+REG*
+progreg(Prog *p)
+{
+	if(p == curP->curprog)
+		return curR;
+	return &p->reg;
+}
+.fi
+.PP
+.CW Pctx
+gains
+.CW curprog ,
+naming the program whose live registers the context's register file
+holds, and
+.CW libinterp/gc.c 's
+root walk asks
+.CW progreg()
+instead of taking
+.CW "&root->reg"
+for granted.  With one context this is the identity and the collector
+marks exactly what it marked before.  With more than one it is the
+difference between a correct root set and a sweeper that takes live
+objects.
+.PP
+Maintaining
+.CW curprog
+is bounded, and the count is why this was worth landing rather than
+just writing down: seven places load
+.CW R
+from a
+.CW Prog
+and seven store it back, and they pair exactly \-
+.CW isave/irestore ,
+.CW xec()
+itself, and three alternative
+.CW p->xec
+handlers.  The two
+.CW memmove(&p->reg, &R, ...)
+calls in
+.CW exception.c
+are deliberately not touched: they sync the snapshot while the program
+carries on executing, which is not a handover.
+.PP
+Two things were checked rather than assumed, and one of them corrected
+a claim this document was about to make.
+.IP \(bu
+That the identity really holds.  A temporary probe in
+.CW rungc()
+printed whenever the collector ran with a live
+.CW curprog .
+It never fired \- not under the spawn storm, not under
+.CW /dis/prof.dis .
+.IP \(bu
+That
+.CW dbgxec() ,
+.CW cpxec()
+and
+.CW bxec()
+are not latent bugs.  They looked like stale windows \- each loads
+.CW R
+from a
+.CW Prog
+and runs instructions \- and the first draft of the code comment said a
+collection in that window would already be missing roots.  It would not.
+All three are alternative
+.CW p->xec
+handlers with the same load-quantum-store shape as
+.CW xec() ,
+so the collector cannot run inside one either.  They maintain
+.CW curprog
+anyway, because the invariant has to hold whichever handler is running.
+.PP
+Say plainly what this is not.  The gate is still shut.  Phase 5 proper
+\- making
+.CW gchalt
+and
+.CW nprop
+atomic, giving the mark state a home per collection, and choosing
+between stop-the-world with parallel marking and Go-style concurrent
+marking \- is untouched, and none of it can be verified at
+.CW n
+of one either.  What Phase 5a buys is that when the answer changes, it
+changes in one function, and the three device handlers will already be
+telling the truth about which program they are running.
+.PP
+Measured: spawn storm six of six, the same seven ThreadSanitizer
+signatures by content, and the pc64 kernel against its parent booted
+alternately fourteen times each \- four survived against two, which is
+the same spread every other pair in this document has shown at that
+sample size, and both sit on the 4/20-5/20 of the table.
+.NH 2
 Phase 6 \- the code generators
 .PP
 Left last on purpose, because it is the only phase that cannot be done

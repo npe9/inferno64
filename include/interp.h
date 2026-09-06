@@ -254,6 +254,7 @@ struct REG
 struct Pctx
 {
 	REG	reg;		/* this context's Dis register file */
+	Prog*	curprog;	/* whose live registers `reg' holds, or nil */
 	Prog*	runhd;		/* this context's run queue */
 	Prog*	runtl;
 };
@@ -471,6 +472,7 @@ extern	Type Treal;
  * this: a missing root is not a data race.
  */
 extern	Pctx*	curP;
+REG*	progreg(Prog*);	/* where a program's live roots are; see xec.c */
 extern	REG*	curR;		/* == &curP->reg */
 #define	R	(*curR)
 extern	String	snil;
