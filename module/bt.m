@@ -121,6 +121,13 @@ Hci: module
 		atype:	int;
 		addr:	array of byte;
 		encrypted:	int;
+		# what the link is running at now: the interval in units
+		# of 1.25ms, the number of connection events the
+		# peripheral may skip, and the supervision timeout in
+		# units of 10ms
+		interval:	int;
+		latency:	int;
+		timeout:	int;
 		up:	chan of array of byte;	# whole L2CAP frames
 		closed:	chan of string;
 	};
@@ -140,6 +147,17 @@ Hci: module
 	# and until then a count is the honest thing to publish: they
 	# arrived, and they went nowhere.
 	scodropped:	fn(): int;
+
+	# ask the controller to run the link at different parameters.
+	# The answer is an event, not a reply, so this returns when the
+	# controller has accepted the request rather than when the link
+	# has changed; the Conn's own fields say what it is running at.
+	leconnupdate:	fn(c: ref Conn, min, max, latency, timeout: int): string;
+
+	# are these parameters ones a controller will take?  The ranges
+	# are the specification's, and the last is the rule that keeps a
+	# link from timing out before the peripheral is obliged to speak
+	paramsok:	fn(min, max, latency, timeout: int): string;
 
 	cmd:	fn(op: int, p: array of byte): (int, array of byte, string);
 

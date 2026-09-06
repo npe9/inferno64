@@ -19588,6 +19588,70 @@ It then turns scanning off and waits past the ageout again, because
 the third rule is the one most likely to be noticed if it were wrong
 \(em a user turns scanning off, walks away, and comes back to an empty
 directory.  Sweeping regardless of scanning fails it.
+.PP
+That assertion then failed once and was right to.  The sweep looks at
+scanning when it starts, and the restructuring below lets it choose a
+device while scanning is on and forget it after scanning has gone off.
+Scanning is looked at again with the device's lock held, so the rule
+is true rather than nearly true; the phase turns scanning off before
+it drops the link, because a device that has stopped advertising and
+is then disconnected is eligible the moment it is, and that is
+correct.
+.NH 2
+Connection parameters, asked for and answered honestly
+.PP
+A peripheral cannot change the connection parameters; it asks the
+central over L2CAP, and the central performs the update.  So a central
+that accepts is undertaking to do it.  This one accepted every request
+without looking at it and then did nothing, which is the one answer
+worse than refusing: the peripheral believes the link is running at
+what it asked for and adjusts its behaviour \(em its sleep, its
+latency \(em to match a link that never changed.
+.PP
+The request is now read, checked against the ranges the specification
+gives and against the one rule between them that matters \(em a
+supervision timeout shorter than the longest the peripheral may stay
+silent drops the link every time the peripheral uses its latency \(em
+and either refused or carried out with
+.CW Hci.leconnupdate .
+The answer goes out before the update, because the peer is entitled to
+see it before the link changes under it.
+.PP
+The other half did not exist:
+.CW params
+on a device's
+.CW ctl
+asks from this side.
+.CW Conn
+carries what the link is running at, taken from the Connection
+Complete and rewritten by the Connection Update Complete, and
+.CW state
+shows it.
+.PP
+The
+.CW params
+phase has the model ask twice \(em once for something a controller
+will take, once for a timeout far too short for the latency wanted \(em
+then asks from this side, then asks for something impossible from this
+side and requires it to be refused before it is sent.
+.PP
+What the peer is told matters as much as what the link does, and the
+phase cannot see it, so the harness checks the controller's log: yes
+once and no once.  That is not fussiness.  With the check in
+.CW l2cap
+removed, the link still does not change \(em
+.CW leconnupdate
+refuses the impossible request too \(em so every assertion inside the
+guest passes while the peer has been told yes twice.  Only the log
+shows it.
+.PP
+Removing the update instead reproduces the old behaviour, and the
+phase reports that the link never took the parameters the peer asked
+for.
+.PP
+The first version of the phase watched the connection interval and
+passed without anything having happened: the link already starts at
+the interval the model asks for.  It watches the latency now.
 .NH 2
 The sweep and a connection in flight
 .PP

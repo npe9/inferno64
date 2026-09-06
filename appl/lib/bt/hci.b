@@ -45,6 +45,7 @@ Elemeta:	con 16r3e;
 # LE meta subevents
 Sconn:		con 16r01;
 Sadv:		con 16r02;
+Supdate:	con 16r03;
 Sltkreq:	con 16r05;
 
 Cstate: adt {
@@ -197,6 +198,64 @@ localaddr(): array of byte
 localver(): string
 {
 	return lver;
+}
+
+#
+# The ranges a controller will take, from the specification, and the
+# one rule between them that matters: a link whose supervision timeout
+# is shorter than the longest the peripheral may stay silent drops
+# every time the peripheral exercises its latency.
+#
+paramsok(min, max, latency, timeout: int): string
+{
+	if(min < 6 || min > 3200 || max < 6 || max > 3200)
+		return "connection interval out of range";
+	if(min > max)
+		return "the smallest connection interval is larger than the largest";
+	if(latency < 0 || latency > 499)
+		return "peripheral latency out of range";
+	if(timeout < 10 || timeout > 3200)
+		return "supervision timeout out of range";
+	#
+	# both sides in milliseconds: the interval is 1.25ms and the
+	# timeout 10ms, so (1+latency) * max * 1.25 * 2 <= timeout * 10
+	# becomes (1+latency) * max <= timeout * 4.
+	#
+	if((1 + latency) * max > timeout * 4)
+		return "the supervision timeout is too short for that latency";
+	return nil;
+}
+
+#
+# Ask the controller to run the link at different parameters.  A
+# central does this itself; a peripheral asks for it over L2CAP and
+# the central does it on the peripheral's behalf, which is what makes
+# accepting an L2CAP request an obligation rather than a courtesy.
+#
+# This returns when the controller has taken the request.  The link
+# changes later, and the Connection Update Complete event is what
+# writes the new values into the Conn.
+#
+leconnupdate(c: ref Conn, min, max, latency, timeout: int): string
+{
+	if(c == nil)
+		return "not connected";
+	if((e := paramsok(min, max, latency, timeout)) != nil)
+		return e;
+	p := array[14] of byte;
+	bt->put16(p, 0, c.handle);
+	bt->put16(p, 2, min);
+	bt->put16(p, 4, max);
+	bt->put16(p, 6, latency);
+	bt->put16(p, 8, timeout);
+	bt->put16(p, 10, 0);	# minimum connection length
+	bt->put16(p, 12, 0);	# maximum
+	(st, nil, ce) := cmd(bt->opcode(Ogle, 16r0013), p);
+	if(ce != nil)
+		return ce;
+	if(st != 0)
+		return bt->hcierr(st);
+	return nil;
 }
 
 scodropped(): int
@@ -643,6 +702,9 @@ lemeta(sub: int, b: array of byte)
 		c.addr = array[Bt->Baddrlen] of byte;
 		c.addr[0:] = b[5:5+Bt->Baddrlen];
 		c.encrypted = 0;
+		c.interval = bt->get16(b, 11);
+		c.latency = bt->get16(b, 13);
+		c.timeout = bt->get16(b, 15);
 		c.up = chan of array of byte;
 		c.closed = chan[1] of string;
 		<-statelock;
@@ -652,6 +714,27 @@ lemeta(sub: int, b: array of byte)
 		connc <-= (c, nil) =>	;
 		* =>	;	# nobody asked for it
 		}
+	Supdate =>
+		#
+		# the link is now running at something else, either
+		# because this side asked or because the peripheral did
+		# and this side agreed.  A failure says so and leaves the
+		# parameters as they were, which is what the controller
+		# does.
+		#
+		if(len b < 9)
+			return;
+		if(int b[0] != 0){
+			sys->fprint(sys->fildes(2),
+				"hci: connection update refused: %s\n", bt->hcierr(int b[0]));
+			return;
+		}
+		s := findstate(bt->get16(b, 1));
+		if(s == nil)
+			return;
+		s.c.interval = bt->get16(b, 3);
+		s.c.latency = bt->get16(b, 5);
+		s.c.timeout = bt->get16(b, 7);
 	Sadv =>
 		if(len b < 1)
 			return;

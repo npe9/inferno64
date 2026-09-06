@@ -116,6 +116,16 @@ starts and stops scanning.
 and
 .BI "pair " addr
 act on one device.
+.BI "params " "min max latency timeout"
+on a device's own
+.B ctl
+asks the controller to run the link at those parameters: the
+connection interval in units of 1.25ms, how many connection events the
+peripheral may skip, and the supervision timeout in units of 10ms.
+Values a controller would refuse are refused here instead of being
+sent.  A peripheral cannot change them itself and asks over L2CAP; a
+request that is accepted is carried out, which is why one that cannot
+be is refused rather than accepted and forgotten.
 .B connect
 waits for the controller to establish the link and fails with
 .B "connection timed out"
@@ -157,7 +167,7 @@ and
 without an address.
 .B state
 says how long ago the device was last heard from when it is not
-connected.
+connected, and what the link is running at when it is.
 .PP
 A device that stops answering is forgotten after the time given by
 .B -a

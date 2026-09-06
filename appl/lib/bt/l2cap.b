@@ -142,10 +142,25 @@ demux(m: ref Mux)
 
 #
 # LE signalling.  A peripheral asks the central to change the
-# connection parameters; accepting is the polite answer and keeps
-# battery-powered devices from dropping the link.  Anything else
-# gets a command reject saying the command is not understood.
+# connection parameters, and accepting is not a courtesy: a peripheral
+# cannot change them itself, so the central that says yes is
+# undertaking to perform the update.  This used to answer yes to
+# anything and then do nothing, which is the one answer that is worse
+# than no -- the peripheral believes the link is running at what it
+# asked for and adjusts its behaviour to match.
 #
+# So the parameters are checked, a request outside what a controller
+# will take is refused, and an accepted one is carried out.  Anything
+# that is not a parameter request gets a command reject saying the
+# command is not understood.
+#
+doupdate(c: ref Hci->Conn, min, max, latency, timeout: int)
+{
+	if((e := hci->leconnupdate(c, min, max, latency, timeout)) != nil)
+		sys->fprint(sys->fildes(2),
+			"l2cap: accepted a parameter update and could not do it: %s\n", e);
+}
+
 signal(m: ref Mux, p: array of byte)
 {
 	if(len p < 4)
@@ -157,12 +172,37 @@ signal(m: ref Mux, p: array of byte)
 		return;
 	case code {
 	Cparamreq =>
+		result := 0;		# accepted
+		min := 0;
+		max := 0;
+		latency := 0;
+		timeout := 0;
+		if(dlen < 8)
+			result = 1;	# rejected
+		else {
+			min = bt->get16(p, 4);
+			max = bt->get16(p, 6);
+			latency = bt->get16(p, 8);
+			timeout = bt->get16(p, 10);
+			if((e := hci->paramsok(min, max, latency, timeout)) != nil){
+				sys->fprint(sys->fildes(2),
+					"l2cap: refusing %d-%d latency %d timeout %d: %s\n",
+					min, max, latency, timeout, e);
+				result = 1;
+			}
+		}
 		r := array[6] of byte;
 		r[0] = byte Cparamresp;
 		r[1] = byte id;
 		bt->put16(r, 2, 2);
-		bt->put16(r, 4, 0);	# accepted
+		bt->put16(r, 4, result);
 		send(m, Cle, r);
+		#
+		# after the answer, not before: the peer is entitled to
+		# see the response before the link changes under it.
+		#
+		if(result == 0)
+			spawn doupdate(m.c, min, max, latency, timeout);
 	Cparamresp =>
 		;
 	* =>

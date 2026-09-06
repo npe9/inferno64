@@ -217,6 +217,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	"sweeprace" =>
 		sweeprace();
 		return;
+	"params" =>
+		paramphase();
+		return;
 	}
 	case mode {
 	"stall" or "late" or "early" or "orphan" or "orphanlive" or "badprepare" =>
@@ -534,6 +537,117 @@ conntest(mode: string)
 }
 
 #
+# Connection parameters.  A peripheral cannot change them; it asks the
+# central, and a central that says yes has undertaken to perform the
+# update.  Saying yes and doing nothing is worse than saying no,
+# because the peripheral then believes the link is running at what it
+# asked for.
+#
+# The model asks twice: once for something a controller will take and
+# once for a supervision timeout far too short for the latency it
+# wants, which is the rule that keeps a link from dropping every time
+# the peripheral exercises that latency.  The first must be accepted
+# and must change the link; the second must be refused.  Then this
+# side asks for something of its own, which is the half that did not
+# exist at all.
+#
+paramphase()
+{
+	remotes := lsdir(mnt + "/0/remote");
+	if(remotes == nil){
+		sys->print("BT: FAILED: nothing was advertising\n");
+		return;
+	}
+	dev := mnt + "/0/remote/" + hd remotes;
+	if((e := writefile(dev + "/ctl", "connect")) != nil){
+		sys->print("BT: FAILED: connect: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	first := trim(readfile(dev + "/state"));
+	sys->print("BT: at first: %s\n", first);
+	ok := 1;
+	#
+	# the peripheral asks.  What is watched is the link, not the
+	# answer: the answer is in the controller's log and the link is
+	# what the peripheral will believe.
+	#
+	#
+	# the latency, not the interval: the link already starts at
+	# interval 40, so watching that would pass without anything
+	# having happened -- which it did, the first time this was
+	# written.
+	#
+	want := "latency 4";
+	changed := 0;
+	st: string;
+	for(i := 0; i < 24 && !changed; i++){
+		sys->sleep(500);
+		st = trim(readfile(dev + "/state"));
+		if(hasword(st, want))
+			changed = 1;
+	}
+	if(!changed){
+		sys->print("BT: FAILED: %s\n", st);
+		sys->print("BT: FAILED: the link never took the parameters the peer asked for\n");
+		ok = 0;
+	} else
+		sys->print("BT: the peer asked and the link changed: %s\n", st);
+	#
+	# and the second request, which is out of range, must leave it
+	# alone
+	#
+	sys->sleep(4000);
+	after := trim(readfile(dev + "/state"));
+	if(after != st){
+		sys->print("BT: FAILED: an impossible request changed the link: %s\n", after);
+		ok = 0;
+	} else
+		sys->print("BT: the impossible one left it alone\n");
+	#
+	# now this side asks
+	#
+	if((e = writefile(dev + "/ctl", "params 24 24 0 200")) != nil){
+		sys->print("BT: FAILED: params: %s\n", e);
+		ok = 0;
+	} else {
+		mine := 0;
+		for(j := 0; j < 20 && !mine; j++){
+			sys->sleep(500);
+			st = trim(readfile(dev + "/state"));
+			if(hasword(st, "interval 24"))
+				mine = 1;
+		}
+		if(!mine){
+			sys->print("BT: FAILED: %s\n", st);
+			sys->print("BT: FAILED: the link did not take what this side asked for\n");
+			ok = 0;
+		} else
+			sys->print("BT: this side asked and the link changed: %s\n", st);
+	}
+	#
+	# a request no controller would take must be refused here rather
+	# than sent
+	#
+	if((e = writefile(dev + "/ctl", "params 24 24 400 10")) == nil){
+		sys->print("BT: FAILED: an impossible request was sent anyway\n");
+		ok = 0;
+	} else
+		sys->print("BT: refused before it was sent: %s\n", e);
+	if(ok){
+		v := trim(readfile(dev + "/gatt/1800/2a00"));
+		if(v != "inferno-bench"){
+			sys->print("BT: FAILED: the link stopped working: %s\n", v);
+			ok = 0;
+		} else
+			sys->print("BT: the link still works: %s\n", v);
+	}
+	writefile(dev + "/ctl", "disconnect");
+	writefile(mnt + "/0/ctl", "scan off");
+	sys->print("BT: done\n");
+}
+
+#
 # The sweep and a connection in flight.  A device is chosen for
 # forgetting without its own lock, because waiting for that lock under
 # devlock would stop the scanner for as long as a connection attempt
@@ -657,7 +771,6 @@ forget()
 		ok = 0;
 	} else
 		sys->print("BT: and still works: %s\n", v);
-	writefile(mnt + "/0/remote/" + kept + "/ctl", "disconnect");
 	if(ok)
 		sys->print("BT: remote/ went from %d to %d\n", len before, len after);
 	#
@@ -667,7 +780,15 @@ forget()
 	# the one where a user turns scanning off, walks away, and comes
 	# back to an empty directory.
 	#
+	# Scanning goes off before the link does, on purpose: a device
+	# that has stopped advertising and is then disconnected is
+	# eligible the moment it is, and that is correct.  What is being
+	# asserted here is that scanning off stops the sweep, not that a
+	# disconnected device is kept.
+	#
 	writefile(mnt + "/0/ctl", "scan off");
+	sys->sleep(500);
+	writefile(mnt + "/0/remote/" + kept + "/ctl", "disconnect");
 	held := lsdir(mnt + "/0/remote");
 	sys->sleep(9000);
 	quiet2 := lsdir(mnt + "/0/remote");

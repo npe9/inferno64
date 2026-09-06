@@ -477,7 +477,14 @@ reaper()
 			# finished when the sweep looked, or a bond that
 			# has just given it an identity.  Put it back.
 			#
-			if(d.conn != nil || d.id != nil){
+			#
+			# scanning is looked at again as well: it can be
+			# turned off between the sweep choosing a device
+			# and getting its lock, and "nothing is forgotten
+			# while scanning is off" should be true rather
+			# than nearly true.
+			#
+			if(d.conn != nil || d.id != nil || !scanning){
 				d.lock <-= 1;
 				<-devlock;
 				devs = d :: devs;
@@ -835,6 +842,13 @@ devstate(d: ref Dev): string
 			s += " encrypted";
 		if(d.sess != nil)
 			s += sprint(" mtu %d", d.sess.mtu);
+		#
+		# what the link is actually running at, which is not
+		# what was asked for if the peer has since asked for
+		# something else and this side agreed
+		#
+		s += sprint(" interval %d latency %d timeout %d",
+			d.conn.interval, d.conn.latency, d.conn.timeout);
 	}
 	return s + "\n";
 }
@@ -977,6 +991,34 @@ ctlwrite(m: ref Tmsg.Write, d: ref Dev, s: string)
 			e = ee;
 		else
 			e = pair(dd);
+	"params" =>
+		#
+		# ask for different connection parameters.  A peripheral
+		# can only ask; the central is the side that can do it,
+		# and this is the side that is the central.
+		#
+		# Written to the device's own ctl and not to the
+		# controller's: every other verb there takes an address
+		# and would leave four numbers behind it to be told apart
+		# from an optional "random", which is a spelling nobody
+		# should have to get right.
+		#
+		if(d == nil){
+			e = "write params to the device's own ctl";
+			break;
+		}
+		if(len4(f) != 4){
+			e = "usage: params min max latency timeout";
+			break;
+		}
+		<-d.lock;
+		c := d.conn;
+		d.lock <-= 1;
+		if(c == nil)
+			e = "not connected";
+		else
+			e = hci->leconnupdate(c, int hd f, int hd tl f,
+				int hd tl tl f, int hd tl tl tl f);
 	"debug" =>
 		;
 	* =>
@@ -987,6 +1029,14 @@ ctlwrite(m: ref Tmsg.Write, d: ref Dev, s: string)
 		return;
 	}
 	srv.reply(ref Rmsg.Write(m.tag, len m.data));
+}
+
+len4(l: list of string): int
+{
+	n := 0;
+	for(; l != nil && n < 5; l = tl l)
+		n++;
+	return n;
 }
 
 target(d: ref Dev, f: list of string): (ref Dev, string)

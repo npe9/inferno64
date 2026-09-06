@@ -170,9 +170,14 @@ and everything while scanning is off are kept regardless.  The node
 table behind it still only grows, since qids are not reused; what a
 forgotten device frees is its entries in it, not the array.
 .IP \(bu
-Connection parameters can be accepted when the peer asks and never
-requested when we want them, which matters for latency and for battery
-on the other end.
+Connection parameters are checked when the peer asks, carried out when
+they are accepted, and can be asked for from this side with
+.CW params
+on a device's
+.CW ctl .
+Accepting used to be unconditional and was followed by nothing at all,
+which is the one answer worse than refusing: a peripheral that is told
+yes adjusts its behaviour to a link that never changed.
 .IP \(bu
 L2CAP has no credit-based flow control, so LE connection-oriented
 channels \(em which is how anything bulk moves over LE \(em are not

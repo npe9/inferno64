@@ -38,6 +38,14 @@
 #	forget	everything stops advertising: the device nothing is
 #		holding must leave the name space, the connected one
 #		must stay and still work
+#	params	the peripheral asking the central to change the
+#		connection parameters, and this side asking for its
+#		own.  What the peer is *told* matters as much as what
+#		the link does, so this phase also checks the
+#		controller's log: yes to the request a controller would
+#		take, no to the one it would not.  Accepting an
+#		impossible request and then failing to perform it
+#		leaves the link right and the peer wrong.
 #	sweeprace
 #		the sweep choosing a device while a connection to it is
 #		still in flight, and the connection then succeeding: it
@@ -137,6 +145,15 @@ run badprepare --corrupt-prepare badprepare
 run refuseexec --refuse-execute badprepare
 run forget --one-goes-quiet forget
 run sweeprace "--one-goes-quiet --late-connect" sweeprace
+run params --ask-params params
+y=`grep -c 'the central said yes' "$OUT/bthci-params.log" || true`
+n=`grep -c 'the central said no' "$OUT/bthci-params.log" || true`
+if [ "$y" != 1 ] || [ "$n" != 1 ]; then
+	echo "=== phase params ==="
+	echo "BENCH FAIL (params): the peer was told yes $y times and no $n; wanted 1 and 1"
+	exit 1
+fi
+echo "the peer was told yes once and no once, as it should be"
 run sco --sco sco
 run changed --service-changed changed
 #

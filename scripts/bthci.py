@@ -114,6 +114,13 @@ sco = '--sco' in sys.argv
 # should not.
 one_goes_quiet = '--one-goes-quiet' in sys.argv
 
+# --ask-params: the peripheral asks the central to change the
+# connection parameters over L2CAP, twice -- once for something a
+# controller will take and once for something it will not.  A central
+# that says yes has undertaken to perform the update, so the model
+# checks that the HCI command actually arrives.
+ask_params = '--ask-params' in sys.argv
+
 def log(*a):
     if verbose:
         print('bthci:', *a, file=sys.stderr, flush=True)
@@ -313,6 +320,8 @@ class Model:
         self.stalled = None       # an attempt deliberately left unanswered
         self.stalls = 0
         self.prepared = []        # (handle, offset, value) queued by Prepare Write
+        self.updates = []         # parameter updates the central performed
+        self.paramresults = []    # what it answered to each request
         self.trace = []
 
     # ------------------------------------------------ wire
@@ -382,6 +391,17 @@ class Model:
             else:
                 threading.Thread(target=self.connect, args=(atype, addr),
                                  daemon=True).start()
+        elif op == 0x2013:                     # LE Connection Update
+            h, mn, mx, lat, to = struct.unpack('<HHHHH', params[0:10])
+            self.cmd_status(op)
+            self.updates.append((mn, mx, lat, to))
+            log('connection update to %d-%d latency %d timeout %d'
+                % (mn, mx, lat, to))
+            time.sleep(0.05)
+            # the interval the controller settles on, which is its
+            # choice within the range asked for
+            self.event(0x3e, bytes([0x03, 0x00]) + struct.pack('<H', h)
+                       + struct.pack('<HHH', mx, lat, to))
         elif op == 0x200e:                     # LE Create Connection Cancel
             if self.stalled is None:
                 self.cmd_complete(op, bytes([0]))
@@ -507,6 +527,8 @@ class Model:
                    + struct.pack('<HHH', 0x0028, 0, 0x002a) + bytes([0]))
         if sco:
             threading.Thread(target=self.scostream, daemon=True).start()
+        if ask_params:
+            threading.Thread(target=self.askparams, daemon=True).start()
 
     def encrypt_up(self):
         time.sleep(0.05)
@@ -549,6 +571,10 @@ class Model:
             self.smp_in(payload)
         elif cid == 5:
             log('signalling %s' % payload.hex())
+            if len(payload) >= 6 and payload[0] == 0x13:   # parameter response
+                r = struct.unpack('<H', payload[4:6])[0]
+                self.paramresults.append(r)
+                log('the central said %s' % ('yes' if r == 0 else 'no'))
 
     # ------------------------------------------------ ATT
     def att_err(self, op, handle, err):
@@ -663,6 +689,21 @@ class Model:
             log('indication confirmed')
         else:
             self.att_err(op, 0, 0x06)                     # request not supported
+
+    def askparams(self):
+        # once the link is up and the guest has settled
+        time.sleep(2)
+        # one a controller will take, then one it will not: the
+        # supervision timeout is far too short for that latency, which
+        # is the rule that keeps a link from dropping every time the
+        # peripheral uses its latency
+        for mn, mx, lat, to in ((0x0018, 0x0028, 4, 0x0100),
+                                (0x0018, 0x0028, 400, 0x000a)):
+            self.sigid = getattr(self, 'sigid', 0) + 1
+            body = struct.pack('<HHHH', mn, mx, lat, to)
+            self.acl(5, bytes([0x12, self.sigid, len(body), 0]) + body)
+            log('asked for %d-%d latency %d timeout %d' % (mn, mx, lat, to))
+            time.sleep(3)
 
     def move_database(self):
         for svc, char, vh, val in LATER:
