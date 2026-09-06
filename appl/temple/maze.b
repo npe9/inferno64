@@ -1,15 +1,35 @@
 implement Maze;
 
-# TempleOS Demo/Games/Maze.HC — Draw grid stand-in for text_base layer
-# LMB draw walls; RMB solve from cell; c clear; q quit
-# GAP: TempleOS text_base ATTR chars → pixel cells
+# TempleOS Demo/Games/Maze.HC — draw a maze, then watch it solved.
+#
+# The demonstration is really about the text base layer: gr.text_base is
+# cleared thirty times a second, so DrawIt keeps its own permanent U32
+# array and MemCpy's it in every frame, then TextPrints the two lines of
+# instructions over the top:
+#
+#	TextPrint(task,0,0,ATTR>>8,"Draw a maze with left bttn.");
+#	TextPrint(task,0,1,ATTR>>8,"Solve maze starting at right click.");
+#
+# SolveMaze is a depth-first walk with its stack in globals, because "the
+# system stk size is limited, so it's a bad habit" to put 2048-entry
+# arrays on it.  Escaping the maze is two Beeps.
+#
+# GAP: TempleOS text_base ATTR chars → pixel cells.  A wall is an
+#      inverted space, the trail is '.' and the start is '*'; here they
+#      are coloured cells.
 
 include "sys.m";
 	sys: Sys;
 
 include "draw.m";
 	draw: Draw;
-	Display, Image, Point, Rect: import draw;
+	Display, Font, Image, Point, Rect: import draw;
+
+include "math.m";
+	math: Math;
+
+include "tone.m";
+	tone: Tone;
 
 include "tk.m";
 
@@ -25,9 +45,13 @@ Maze: module
 COLS: con 40;
 ROWS: con 24;
 CELL: con 16;
+STK_SIZE: con 2048;
+A4ONA: con 60;			# Ona2Freq: ona 60 is 440Hz
 
 win: ref Window;
+font: ref Font;
 ink: array of ref Image;
+have_tone := 0;
 cell: array of array of int;	# 0 empty, 1 wall, 2 path
 solving := 0;
 
@@ -51,6 +75,13 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		d.color(Draw->Grey),
 		* => d.color(Draw->Blue)
 	};
+	font = Font.open(d, "/fonts/temple/temple.font");
+	if(font == nil)
+		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+	math = load Math Math->PATH;
+	tone = load Tone Tone->PATH;
+	if(tone != nil && tone->init() == nil)
+		have_tone = 1;
 	cell = array[ROWS] of { * => array[COLS] of { * => 0 } };
 	win.reshape(Rect((0, 0), (COLS*CELL, ROWS*CELL+20)));
 	win.onscreen("place");
@@ -105,8 +136,9 @@ ptr(p: ref Draw->Pointer)
 solve(sx, sy: int)
 {
 	solving = 1;
-	# DFS with stack
-	STK: con 2048;
+	# the depth-first walk, with its stack out of line as the original
+	# insists on
+	STK: con STK_SIZE;
 	xs := array[STK] of int;
 	ys := array[STK] of int;
 	dirs := array[STK] of int;
@@ -119,6 +151,7 @@ solve(sx, sy: int)
 	xs[sp] = x; ys[sp] = y; dirs[sp] = dir; sp++;
 	for(;;){
 		if(x < 0 || x >= COLS || y < 0 || y >= ROWS){
+			spawn beeps(2);	# Beep;Beep; — out of the maze
 			solving = 0;
 			redraw();
 			return;
@@ -126,7 +159,6 @@ solve(sx, sy: int)
 		if(cell[y][x] == 0)
 			cell[y][x] = 2;
 		redraw();
-		sys->sleep(30);
 		nx := x + dx[dir];
 		ny := y + dy[dir];
 		blocked := nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS || cell[ny][nx] == 1 || cell[ny][nx] == 2;
@@ -151,6 +183,7 @@ solve(sx, sy: int)
 			}
 			xs[sp] = x; ys[sp] = y; dirs[sp] = dir; sp++;
 			x = nx; y = ny;
+			sys->sleep(100);
 		}
 	}
 }
@@ -173,5 +206,34 @@ redraw()
 			img.draw(Rect((o.x+x*CELL, o.y+y*CELL), (o.x+x*CELL+CELL-1, o.y+y*CELL+CELL-1)),
 				col, nil, Point(0, 0));
 		}
+	# the two TextPrints, on top of the maze as they are in the original
+	if(font != nil){
+		img.text(o, ink[1], Point(0, 0), font,
+			"Draw a maze with left bttn.");
+		img.text(Point(o.x, o.y + font.height), ink[1], Point(0, 0), font,
+			"Solve maze starting at right click.");
+	}
 	img.flush(Draw->Flushnow);
+}
+
+# Beep: Snd(62) for 500ms then silence for 200ms, n times.  Spawned, so
+# a fanfare does not freeze the window the way the original's does.
+beeps(n: int)
+{
+	if(!have_tone)
+		return;
+	for(i := 0; i < n; i++){
+		tone->beep(onafreq(62), 500);
+		sys->sleep(700);
+	}
+}
+
+onafreq(ona: int): int
+{
+	if(math == nil)
+		return 494;
+	f := int (440.0 * math->pow(2.0, real (ona - A4ONA) / 12.0) + 0.5);
+	if(f < 1)
+		f = 1;
+	return f;
 }

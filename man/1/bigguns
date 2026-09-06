@@ -5,11 +5,30 @@ bigguns \- artillery game
 .B temple/bigguns
 .SH DESCRIPTION
 .I BigGuns
-is a artillery game.
+is a port of the TempleOS
+.B Demo/Games/BigGuns.HC
+artillery game.
 It runs under
 .IR wm (1).
 .PP
-Aim a barrel on a scrolling height-map, fire shells under gravity, and pan the camera with comma and full stop.
+Aim a barrel on a scrolling height-map, fire shells under gravity, and
+pan the camera with comma and full stop.  Craters are cut into the
+height-map, so the ground a later shell lands on is the ground the
+earlier ones left.  The map is 2048 pixels wide and there are 512 dust
+motes blowing across it on the wind.
+.PP
+A shell hits when its own circle touches the ground, not when its centre
+passes a number.  The original asks that question by drawing the circle
+into the map in
+.BR ROP_COLLISION ,
+a raster operation that paints nothing and counts the pixels it would
+have set that are not the sky colour; since the map holds nothing but the
+terrain, that reduces exactly to asking whether any point of a radius-2
+circle is at or below the elevation, which is what is done here.
+.PP
+Two panels open it, both the original's: Terry Davis's \fI"I refuse to
+rip-off the original, so this is intentionally crappy"\fP, and then
+\fI"The map scrolls."\fP  Any key dismisses each.
 .PP
 The controls are:
 .TF space

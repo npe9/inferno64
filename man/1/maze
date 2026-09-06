@@ -5,11 +5,20 @@ maze \- maze editor and solver
 .B temple/maze
 .SH DESCRIPTION
 .I Maze
-is a maze editor and solver.
+is a port of the TempleOS
+.B Demo/Games/Maze.HC
+maze editor and solver.
 It runs under
 .IR wm (1).
 .PP
-Button 1 draws walls; button 2 solves a path from the clicked cell. The c key clears the grid.
+Button 1 draws walls; button 2 solves a path from the clicked cell, a
+depth-first walk that backs up when it runs out of directions.  Two beeps
+when it gets out.  The c key clears the grid.
+.PP
+The original is a demonstration of the text base layer: that layer is
+cleared thirty times a second, so the program keeps its own permanent
+array of characters and copies it in every frame, then prints the two
+lines of instructions over the top.  Those two lines are drawn here too.
 .PP
 The controls are:
 .TF space
@@ -30,4 +39,5 @@ Quit
 .B /appl/temple/maze.b
 .SH SEE ALSO
 .IR temple (1),
+.IR tone (2),
 .IR wm (1)

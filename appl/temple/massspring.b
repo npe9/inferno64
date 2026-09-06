@@ -1,14 +1,26 @@
 implement Massspring;
 
-# TempleOS Demo/Games/MassSpring.HC — uses /dis/lib/ode.dis
-# LMB place mass; RMB-drag connect spring; Enter restart; q quit
+# TempleOS Demo/Games/MassSpring.HC — a mass-and-spring toy over the ODE
+# solver.
+#
+# It opens with a PopUpOk, reproduced here verbatim, typo included:
+#
+#	"Left-Click to place mas\n"
+#	"Right-Click and drag to\n"
+#	"connect with spring.\n\n"
+#	"Springs are 100 pixs long."
+#
+# The point of the demo is that everything after that is the solver's:
+# masses and springs go into an ODE and it integrates them, so the drags
+# and the acceleration limit are the only tuning there is.  Uses
+# /dis/lib/ode.dis.
 
 include "sys.m";
 	sys: Sys;
 
 include "draw.m";
 	draw: Draw;
-	Display, Image, Point, Rect: import draw;
+	Display, Font, Image, Point, Rect: import draw;
 
 include "math.m";
 	math: Math;
@@ -18,6 +30,8 @@ include "tk.m";
 include "wmclient.m";
 	wmclient: Wmclient;
 	Window: import wmclient;
+
+include "keyboard.m";
 
 include "rand.m";
 	rand: Rand;
@@ -32,8 +46,10 @@ Massspring: module
 };
 
 win: ref Window;
+font: ref Font;
 sim: ref ODE;
-red, black, white: ref Image;
+red, black, white, blue: ref Image;
+help := 1;			# the opening PopUpOk
 drag1: ref Mass;
 lastl := 0;
 lastr := 0;
@@ -60,9 +76,13 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	win = wmclient->window(ctxt, "TempleOS MassSpring", Wmclient->Appl);
 	d := win.display;
+	font = Font.open(d, "/fonts/temple/temple.font");
+	if(font == nil)
+		font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	red = d.color(Draw->Red);
 	black = d.color(Draw->Black);
 	white = d.color(Draw->White);
+	blue = d.color(int 16r0000AAFF);
 
 	reset();
 	win.reshape(Rect((0, 0), (640, 480)));
@@ -81,6 +101,13 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		win.pointer(*p);
 		ptr(p);
 	k := <-win.ctxt.kbd =>
+		if((k & Keyboard->Keyup) == Keyboard->Keyup)
+			continue;
+		if(help){		# PopUpOk: any key dismisses it
+			help = 0;
+			redraw();
+			continue;
+		}
 		case k {
 		16r1b or 'q' or 'Q' =>
 			exit;
@@ -88,6 +115,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 			reset();
 		}
 	<-ticks =>
+		if(help)
+			continue;	# the PopUpOk holds the simulation
 		step();
 		redraw();
 	}
@@ -108,7 +137,7 @@ reset()
 ptr(p: ref Draw->Pointer)
 {
 	img := win.image;
-	if(img == nil)
+	if(img == nil || help)
 		return;
 	x := real(p.xy.x - img.r.min.x);
 	y := real(p.xy.y - img.r.min.y);
@@ -207,6 +236,8 @@ redraw()
 			r = 2;
 		img.ellipse(Point(int m.x, int m.y).add(o), r, r, 0, black, Point(0, 0));
 	}
+	if(help)
+		popup(img, o, img.r.dx(), img.r.dy());
 	img.flush(Draw->Flushnow);
 }
 
@@ -223,4 +254,39 @@ timer(c: chan of int, ms: int)
 		sys->sleep(ms);
 		c <-= 1;
 	}
+}
+
+# The original's opening PopUpOk, verbatim — "mas" is Terry's.
+popup(img: ref Image, o: Point, w, h: int)
+{
+	lines := array[] of {
+		"Left-Click to place mas",
+		"Right-Click and drag to",
+		"connect with spring.",
+		"",
+		"Springs are 100 pixs long.",
+	};
+	if(font == nil)
+		return;
+	pad := 12;
+	tw := 0;
+	for(i := 0; i < len lines; i++){
+		lw := font.width(lines[i]);
+		if(lw > tw)
+			tw = lw;
+	}
+	bw := tw + 2*pad;
+	bh := (len lines + 2)*(font.height+2) + 2*pad;
+	bx := o.x + (w - bw)/2;
+	by := o.y + (h - bh)/2;
+	img.draw(Rect((bx-2, by-2), (bx+bw+2, by+bh+2)), black, nil, Point(0, 0));
+	img.draw(Rect((bx, by), (bx+bw, by+bh)), white, nil, Point(0, 0));
+	y := by + pad;
+	for(i = 0; i < len lines; i++){
+		img.text(Point(bx+pad, y), black, Point(0, 0), font, lines[i]);
+		y += font.height + 2;
+	}
+	ok := "any key";
+	img.text(Point(bx + (bw - font.width(ok))/2, y + font.height/2),
+		blue, Point(0, 0), font, ok);
 }

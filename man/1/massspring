@@ -5,11 +5,22 @@ massspring \- mass-spring sandbox
 .B temple/massspring
 .SH DESCRIPTION
 .I MassSpring
-is a mass-spring sandbox.
+is a port of the TempleOS
+.B Demo/Games/MassSpring.HC
+sandbox.
 It runs under
 .IR wm (1).
 .PP
-Button 1 places masses; button-2 drag connects springs. Enter clears the world.
+Button 1 places masses; a button-2 drag connects two of them with a
+spring.  Enter clears the world.  Everything after that belongs to the
+ODE solver \- the masses and springs go into an
+.IR ode (2)
+system and it integrates them, so the two drag terms and the
+acceleration limit are the only tuning there is.
+.PP
+It opens with the original's panel, typo and all: \fI"Left-Click to place
+mas / Right-Click and drag to connect with spring. / Springs are 100 pixs
+long."\fP  Any key dismisses it.
 .PP
 The controls are:
 .TF space

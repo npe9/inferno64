@@ -5,11 +5,21 @@ hanoi \- Towers of Hanoi animation
 .B temple/hanoi
 .SH DESCRIPTION
 .I Hanoi
-implements Towers of Hanoi animation.
+is a port of the TempleOS
+.B Demo/Graphics/Hanoi.HC
+Towers of Hanoi animation.
 It runs under
 .IR wm (1).
 .PP
-Six disks move automatically among three poles. Enter restarts the animation.
+Six disks move automatically among three poles, the animation of each
+move sitting inside the classic three-line recursion.  The readout at the
+top left \- \fIDisk: n from p to q\fP \- is that recursion talking, so
+the disk numbers it names run large-to-small as the stack unwinds.  Two
+beeps when it finishes.  Enter restarts it.
+.PP
+The disks take their colours from
+.B gr_rainbow_10
+(Adam/Gr/GrPalette.HC), so the smallest disk on top is black.
 .PP
 The controls are:
 .TF space
@@ -24,4 +34,5 @@ Quit
 .B /appl/temple/hanoi.b
 .SH SEE ALSO
 .IR temple (1),
+.IR tone (2),
 .IR wm (1)

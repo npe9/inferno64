@@ -192,31 +192,47 @@ is ported and the mechanism is named as absent.
 
 ### What is left inside the ports that exist
 
-**Undeclared deviations** — the port differs and does not say so:
+**Undeclared deviations** — the port differs and does not say so. As of
+2026-09-06 the list below is closed; it is kept because the *kinds* of
+gap it names are the ones to look for next time.
 
-- `bigguns` halves the world silently. `MAP_WIDTH` is 2048 in BigGuns.HC and
-  1024 in the port; `DUST_NUM` is 512 and the port uses 256. `MAP_WIDTH`
-  drives `elevs[]`, the horizontal scroll range and the dust wrap, so this is
-  not cosmetic. It also never shows the opening `PopUpOk` — which is Terry's
-  "I refuse to rip-off the original ... Write games, don't play them.", the
-  same text `zoneout` now carries — nor "The map scrolls.", and it does not
-  use `ROP_COLLISION`. Its one GAP line covers the scroll widgets, not any
-  of this.
-- **Four ports open no font and draw no text at all**: `bigguns`,
-  `massspring`, `maze`, `hanoi`. Absent with it are MassSpring's
-  "Left-Click to place mass / Right-Click and drag to place spring / Springs
-  are 100 pixs long.", Maze's "Solve maze starting at right click.", and
-  Hanoi's `Disk: %d from %d to %d` move readout.
-- **Four ports are silent where the original beeps**, and none of them
-  references `tone(2)`: `digits` (`Beep;Beep;` on a wrong answer), `maze`
-  (leaving the maze), `tictactoe` (`Beep` for player one and `Beep(74)` for
-  player two on an illegal click — two different pitches), `hanoi` (on
-  completion).
-- `digits` reworded the instructions instead of using the original's, and
-  `logic` shows only the three-input worked example, not the four-input one
-  ("enter A=0xFF00, B=0xF0F0, C=0xCCCC and D=0xAAAA").
-- `spriteedit` covers element kinds 0-24 but `SPT_ROTATED_RECT` and
-  `SPT_SHIFTABLE_MESH` are not obviously among them; worth one check.
+- `bigguns` halved the world silently: `MAP_WIDTH` is 2048 in BigGuns.HC
+  and was 1024 in the port, `DUST_NUM` is 512 and the port used 256.
+  `MAP_WIDTH` drives `elevs[]`, the scroll range and the dust wrap, so it
+  was not cosmetic. It also never showed either `PopUpOk` — Terry's "I
+  refuse to rip-off the original ... Write games, don't play them." and
+  "The map scrolls." — and did not use `ROP_COLLISION`, testing a shot's
+  centre against `elevs[]` instead of its circle. *Fixed*: both constants,
+  both panels, and the circle test. Since the map holds nothing but the
+  terrain, `ROP_COLLISION` against `bkcolor=LTCYAN` reduces exactly to
+  asking whether any point of a radius-2 circle is at or below `elevs[]`;
+  a real map bitmap would buy nothing.
+- **Four ports opened no font and drew no text at all**: `bigguns`,
+  `massspring`, `maze`, `hanoi`. *Fixed*: MassSpring's `PopUpOk`
+  ("Left-Click to place mas", typo included), Maze's two `TextPrint`
+  lines, and Hanoi's `Disk:%d from %d to %d` move readout are all
+  present; `bigguns`' only text was its two panels.
+- **Four ports were silent where the original beeps**: `digits`, `maze`,
+  `tictactoe`, `hanoi`. *Fixed* through `tone(2)`. `Beep` is
+  `Kernel/KMisc.HC`'s `Beep(I8 ona=62)` — `Snd(ona)` for 500ms then
+  silence for 200ms — so the port computes the frequency from the ona the
+  same way `asciiorgan` does, and `tictactoe` keeps the original's two
+  pitches, 62 for player one and 74 for player two. The fanfares are
+  spawned rather than run inline, because three of them inline would
+  freeze the window for two seconds; the original does freeze.
+- `digits` had reworded instructions and its own colour names. *Fixed*:
+  the original's text, and `ST_RAINBOW_10`'s names and palette values —
+  BLACK, BROWN, RED, LTRED, YELLOW, GREEN, BLUE, PURPLE, LTGRAY, WHITE,
+  which are TempleOS's names and not the resistor code's, even though the
+  text says electrical engineering colour codes. Same for `hanoi`, whose
+  disks are `gr_rainbow_10`.
+- `logic` showed only the three-input worked example. *Fixed*: `Init`
+  prints one example or the other according to the table size, and the
+  port now does the same.
+- `spriteedit`'s `SPT_ROTATED_RECT` and `SPT_SHIFTABLE_MESH`: *checked,
+  nothing wrong*. The port's kind constants are `iota` over the same
+  order as `Adam/Gr/Gr.HH`, all thirty of them, and both kinds are drawn,
+  created, dragged and serialised.
 
 **Declared deviations** — in the file headers already, honest, still not 1:1:
 `talons` (map halved to 512x512 with the bird count scaled to keep density;

@@ -117,7 +117,7 @@ cfg := array[] of {
 	"pack .f.g.l .f.g.e -side left -padx 4",
 	"frame .f.b",
 	"button .f.b.run -text {Run synthesis} -command {send cmd run}",
-	"label .f.b.h -text {example A=F0 B=CC C=AA out=96 · q quit}",
+	"label .f.b.h -text {For example, enter A=0xF0, B=0xCC and C=0xAA. · q quit}",
 	"pack .f.b.run .f.b.h -side left -padx 8",
 	"text .f.t -width 78 -height 4 -state disabled",
 	"panel .f.p -bd 1 -relief sunken",
@@ -198,6 +198,13 @@ run()
 		show("Too large\n");
 		return;
 	}
+	# Init prints one example or the other, chosen by the table size
+	show("\nEnter the hex truth table column values of inputs.\n");
+	eg := "For example, enter A=0xF0, B=0xCC and C=0xAA.";
+	if(tsize > 16r100)
+		eg = "For example, enter A=0xFF00, B=0xF0F0, C=0xCCCC and D=0xAAAA.";
+	show(eg + "\n");
+	cmd(top, ".f.b.h configure -text {" + eg + " · q quit}");
 	gate = array[tsize] of { * => GT_NULL };
 	in1 = array[tsize] of int;
 	in2 = array[tsize] of int;

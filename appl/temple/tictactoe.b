@@ -1,13 +1,34 @@
 implement Tictactoe;
 
-# TempleOS Demo/Games/TicTacToe.HC — Wmclient+Draw
+# TempleOS Demo/Games/TicTacToe.HC — noughts and crosses, two players at
+# one mouse.
+#
+# The sound carries the whole interface.  TakeTurn beeps at the top of
+# its loop and then waits for a click, so a turn opens with a beep and an
+# illegal click beeps again — and the two players have different pitches:
+#
+#	if (player==1) Beep; else Beep(74);
+#
+# Beep's default ona is 62 and 74 is the octave above it, so you can hear
+# whose turn it is and whether the click took.  A win is three of that
+# player's beep.  There is no computer opponent and no draw message; the
+# game just stops after nine moves.
+#
+# GAP: the original says "$GREEN$CTRL-ALT-c$FG$ to exit."; under wm(1)
+#      that key belongs to the window manager, so this says q.
 
 include "sys.m";
 	sys: Sys;
 
 include "draw.m";
 	draw: Draw;
-	Display, Image, Point, Rect: import draw;
+	Display, Font, Image, Point, Rect: import draw;
+
+include "math.m";
+	math: Math;
+
+include "tone.m";
+	tone: Tone;
 
 include "tk.m";
 
@@ -20,8 +41,12 @@ Tictactoe: module
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+A4ONA: con 60;			# Ona2Freq: ona 60 is 440Hz
+
 win: ref Window;
+font: ref Font;
 ink: array of ref Image;
+have_tone := 0;
 board: array of int;	# 0 empty, 1 X, 2 O
 player := 1;
 gameover := 0;
@@ -39,12 +64,20 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		ctxt = wmclient->makedrawcontext();
 	win = wmclient->window(ctxt, "TempleOS TicTacToe", Wmclient->Appl);
 	d := win.display;
+	font = Font.open(d, "/fonts/temple/temple.font");
+	if(font == nil)
+		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+	math = load Math Math->PATH;
+	tone = load Tone Tone->PATH;
+	if(tone != nil && tone->init() == nil)
+		have_tone = 1;
+	# the exact TempleOS 16-colour palette, index = TempleOS colour
 	ink = array[16] of ref Image;
 	cols := array[] of {
-		Draw->Black, Draw->Blue, Draw->Green, Draw->Cyan,
-		Draw->Red, Draw->Magenta, Draw->Darkyellow, Draw->Grey,
-		int 16r444444FF, Draw->Paleblue, Draw->Palegreen, Draw->Palebluegreen,
-		int 16rFF8888FF, int 16rFF88FFFF, Draw->Yellow, Draw->White
+		int 16r000000FF, int 16r0000AAFF, int 16r00AA00FF, int 16r00AAAAFF,
+		int 16rAA0000FF, int 16rAA00AAFF, int 16rAA5500FF, int 16rAAAAAAFF,
+		int 16r555555FF, int 16r5555FFFF, int 16r55FF55FF, int 16r55FFFFFF,
+		int 16rFF5555FF, int 16rFF55FFFF, int 16rFFFF55FF, int 16rFFFFFFFF
 	};
 	for(i := 0; i < 16; i++)
 		ink[i] = d.color(cols[i]);
@@ -85,14 +118,21 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 click(x, y: int)
 {
-	if(x < 100 || x >= 400 || y < 100 || y >= 400)
+	# TakeTurn's loop beeps and asks again until the click is inside the
+	# board and on an empty square
+	if(x < 100 || x >= 400 || y < 100 || y >= 400){
+		spawn beeps(player, 1);
 		return;
+	}
 	i := (x - 100) / 100 + ((y - 100) / 100) * 3;
-	if(i < 0 || i >= 9 || board[i] != 0)
+	if(i < 0 || i >= 9 || board[i] != 0){
+		spawn beeps(player, 1);
 		return;
+	}
 	board[i] = player;
 	if(winner(player)){
 		gameover = 1;
+		spawn beeps(player, 3);	# three of the winner's own beep
 		return;
 	}
 	n := 0;
@@ -145,6 +185,12 @@ redraw(mx, my: int)
 		else
 			drawo(mx, my);
 	}
+	if(font != nil){
+		w := font.width("q");
+		img.text(o, ink[2], Point(0, 0), font, "q");
+		img.text(Point(o.x+w, o.y), ink[0], Point(0, 0), font,
+			" to exit.");
+	}
 	img.flush(Draw->Flushnow);
 }
 
@@ -161,4 +207,30 @@ drawo(x, y: int)
 	img := win.image;
 	o := img.r.min;
 	img.ellipse(Point(x,y).add(o), 25, 25, 2, ink[1], Point(0,0));
+}
+
+# Beep for player 1 and Beep(74) for player 2: Snd(ona) for 500ms, then
+# silence for 200ms, n times.  Spawned, so three of them do not freeze
+# the window the way the original's do.
+beeps(p, n: int)
+{
+	if(!have_tone)
+		return;
+	ona := 62;
+	if(p == 2)
+		ona = 74;
+	for(i := 0; i < n; i++){
+		tone->beep(onafreq(ona), 500);
+		sys->sleep(700);
+	}
+}
+
+onafreq(ona: int): int
+{
+	if(math == nil)
+		return 494;
+	f := int (440.0 * math->pow(2.0, real (ona - A4ONA) / 12.0) + 0.5);
+	if(f < 1)
+		f = 1;
+	return f;
 }

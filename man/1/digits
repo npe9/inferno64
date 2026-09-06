@@ -5,11 +5,26 @@ digits \- digit memory game
 .B temple/digits
 .SH DESCRIPTION
 .I Digits
-is a digit memory game.
+is a port of the TempleOS
+.B Demo/Games/Digits.HC
+memory game.
 It runs under
 .IR wm (1).
 .PP
-A digit pattern is shown in Tk, then typed back. Wrong guesses end the round; length grows after successes.
+A digit pattern is shown, then typed back; it grows by one digit each
+time it is got right, and a wrong digit ends the round with two beeps and
+the answer.
+.PP
+What the original is really demonstrating is the Define entry \- a list
+of zero-terminated strings loaded into the symbol table under one name
+and printed back with the
+.B %Z
+format code, which is how both the colour and its name come out of the
+same list.  That list is
+.BR ST_RAINBOW_10 :
+BLACK, BROWN, RED, LTRED, YELLOW, GREEN, BLUE, PURPLE, LTGRAY, WHITE.
+They are TempleOS's colour names, not the resistor code's, even though
+the text calls them electrical engineering colour codes.
 .PP
 The controls are:
 .TF space
@@ -27,4 +42,5 @@ Quit
 .B /appl/temple/digits.b
 .SH SEE ALSO
 .IR temple (1),
+.IR tone (2),
 .IR wm (1)

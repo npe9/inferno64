@@ -1,13 +1,35 @@
 implement Hanoi;
 
-# TempleOS Demo/Graphics/Hanoi.HC — animated Towers of Hanoi
+# TempleOS Demo/Graphics/Hanoi.HC — animated Towers of Hanoi.
+#
+# MoveDisks is the whole program: the classic three-line recursion, with
+# the animation of the move sitting in the middle of it.  Each call
+# clears the document and prints
+#
+#	"$$CM+BY,0,0$$Disk:%d from %d to %d\n",TopDisk(src_pole),
+#		src_pole,dst_pole
+#
+# so the readout at the top left is the recursion talking, and the disk
+# numbers it names run large-to-small as the stack unwinds.  MySleep is
+# Sleep(3) a pixel and throws if a key has been hit, which is how a run
+# is abandoned; two Beeps and a PressAKey end it.
+#
+# The disks take their colours from gr_rainbow_10 (Adam/Gr/GrPalette.HC),
+# which is BLACK, BROWN, RED, LTRED, YELLOW, GREEN, BLUE, PURPLE, LTGRAY,
+# WHITE — and disk 0 is the smallest, so the little one on top is black.
 
 include "sys.m";
 	sys: Sys;
 
 include "draw.m";
 	draw: Draw;
-	Display, Image, Point, Rect: import draw;
+	Display, Font, Image, Point, Rect: import draw;
+
+include "math.m";
+	math: Math;
+
+include "tone.m";
+	tone: Tone;
 
 include "tk.m";
 
@@ -21,12 +43,20 @@ Hanoi: module
 };
 
 DISKS: con 6;
-PED: con 20;
-DH: con 7;
-DW: con 5;
+PED: con 20;			# PEDESTAL_HEIGHT
+DH: con 7;			# DISK_HEIGHT
+DW: con 5;			# DISK_UNIT_WIDTH
+FH: con 8;			# FONT_HEIGHT
+A4ONA: con 60;			# Ona2Freq: ona 60 is 440Hz
+
+# gr_rainbow_10, in TempleOS colour indices
+rainbow10 := array[] of {0, 6, 4, 12, 14, 2, 1, 5, 7, 15};
 
 win: ref Window;
+font: ref Font;
 ink: array of ref Image;
+have_tone := 0;
+msg := "";
 poles_x: array of int;
 disks_x, disks_y, disks_pole: array of int;
 quitreq := 0;
@@ -44,12 +74,20 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	win = wmclient->window(ctxt, "TempleOS Hanoi", Wmclient->Appl);
 	d := win.display;
+	font = Font.open(d, "/fonts/temple/temple.font");
+	if(font == nil)
+		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+	math = load Math Math->PATH;
+	tone = load Tone Tone->PATH;
+	if(tone != nil && tone->init() == nil)
+		have_tone = 1;
+	# the exact TempleOS 16-colour palette, index = TempleOS colour
 	ink = array[16] of ref Image;
 	cols := array[] of {
-		Draw->Black, Draw->Blue, Draw->Green, Draw->Cyan,
-		Draw->Red, Draw->Magenta, Draw->Darkyellow, Draw->Grey,
-		int 16r444444FF, Draw->Paleblue, Draw->Palegreen, Draw->Palebluegreen,
-		int 16rFF8888FF, int 16rFF88FFFF, Draw->Yellow, Draw->White
+		int 16r000000FF, int 16r0000AAFF, int 16r00AA00FF, int 16r00AAAAFF,
+		int 16rAA0000FF, int 16rAA00AAFF, int 16rAA5500FF, int 16rAAAAAAFF,
+		int 16r555555FF, int 16r5555FFFF, int 16r55FF55FF, int 16r55FFFFFF,
+		int 16rFF5555FF, int 16rFF55FFFF, int 16rFFFF55FF, int 16rFFFFFFFF
 	};
 	for(i := 0; i < 16; i++)
 		ink[i] = d.color(cols[i]);
@@ -151,6 +189,8 @@ movedisks(src, dst, num: int)
 	top := topdisk(src);
 	if(top < 0)
 		return;
+	# DocClear, then "$CM+BY,0,0$Disk:%d from %d to %d\n"
+	msg = sys->sprint("Disk:%d from %d to %d", top, src, dst);
 	img := win.image;
 	h := 400;
 	if(img != nil)
@@ -187,6 +227,11 @@ animate()
 	moving = 1;
 	sys->sleep(400);
 	movedisks(0, 2, DISKS);
+	if(!quitreq){
+		spawn beeps(2);		# Beep; Beep;
+		msg = "";		# DocClear, then PressAKey
+		redraw();
+	}
 	moving = 0;
 }
 
@@ -201,10 +246,10 @@ redraw()
 	for(i := 0; i < 3; i++)
 		poles_x[i] = (1+i)*img.r.dx()/4;
 	# pedestal
-	img.draw(Rect((o.x+poles_x[0]-50, o.y+h-PED), (o.x+poles_x[2]+50, o.y+h-12)),
-		ink[0], nil, Point(0, 0));
-	img.draw(Rect((o.x+poles_x[0]-49, o.y+h-PED+1), (o.x+poles_x[2]+49, o.y+h-14)),
-		ink[8], nil, Point(0, 0));
+	img.draw(Rect((o.x+poles_x[0]-50, o.y+h-PED),
+		(o.x+poles_x[2]+50, o.y+h-PED+PED-FH)), ink[0], nil, Point(0, 0));
+	img.draw(Rect((o.x+poles_x[0]-49, o.y+h-PED+1),
+		(o.x+poles_x[2]+49, o.y+h-PED+1+PED-FH-2)), ink[8], nil, Point(0, 0));
 	for(i = 0; i < 3; i++){
 		img.draw(Rect((o.x+poles_x[i]-3, o.y+h-PED-(DISKS+1)*(DH+1)),
 			(o.x+poles_x[i]+4, o.y+h-PED)), ink[0], nil, Point(0, 0));
@@ -216,7 +261,32 @@ redraw()
 		img.draw(Rect((o.x+disks_x[i]-hw, o.y+disks_y[i]-DH/2),
 			(o.x+disks_x[i]+hw+1, o.y+disks_y[i]+DH/2)), ink[0], nil, Point(0, 0));
 		img.draw(Rect((o.x+disks_x[i]-hw+1, o.y+disks_y[i]-DH/2+1),
-			(o.x+disks_x[i]+hw, o.y+disks_y[i]+DH/2-1)), ink[i+1], nil, Point(0, 0));
+			(o.x+disks_x[i]+hw, o.y+disks_y[i]+DH/2-1)),
+			ink[rainbow10[i]], nil, Point(0, 0));
 	}
+	if(font != nil && msg != "")
+		img.text(o, ink[0], Point(0, 0), font, msg);
 	img.flush(Draw->Flushnow);
+}
+
+# Beep: Snd(62) for 500ms then silence for 200ms, n times.  Spawned, so
+# a fanfare does not freeze the window the way the original's does.
+beeps(n: int)
+{
+	if(!have_tone)
+		return;
+	for(i := 0; i < n; i++){
+		tone->beep(onafreq(62), 500);
+		sys->sleep(700);
+	}
+}
+
+onafreq(ona: int): int
+{
+	if(math == nil)
+		return 494;
+	f := int (440.0 * math->pow(2.0, real (ona - A4ONA) / 12.0) + 0.5);
+	if(f < 1)
+		f = 1;
+	return f;
 }

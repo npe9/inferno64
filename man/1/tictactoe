@@ -5,11 +5,24 @@ tictactoe \- tic-tac-toe
 .B temple/tictactoe
 .SH DESCRIPTION
 .I TicTacToe
-is a tic-tac-toe.
+is a port of the TempleOS
+.B Demo/Games/TicTacToe.HC
+game.
 It runs under
 .IR wm (1).
 .PP
-Button 1 places marks for two local players on a 3×3 board.
+Button 1 places marks for two local players on a 3×3 board.  There is
+no computer opponent and no draw message; the game just stops after nine
+moves.
+.PP
+The sound carries the interface.  The two players have different pitches
+\- the original's
+.B Beep
+and
+.BR "Beep(74)" ,
+an octave apart \- and an illegal click beeps in the current player's
+pitch, so you can hear whose turn it is and whether the click took.  A
+win is three of that player's beep.
 .PP
 The controls are:
 .TF space
@@ -27,4 +40,5 @@ Quit
 .B /appl/temple/tictactoe.b
 .SH SEE ALSO
 .IR temple (1),
+.IR tone (2),
 .IR wm (1)

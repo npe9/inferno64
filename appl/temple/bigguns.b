@@ -1,7 +1,31 @@
 implement Bigguns;
 
-# TempleOS Demo/Games/BigGuns.HC — ODE artillery
-# GAP: no map scroll widgets / GrFloodFill terrain
+# TempleOS Demo/Games/BigGuns.HC — artillery over the ODE solver, and a
+# lecture on fixed point: the terrain is generated with the elevation
+# held as a 32.32 fixed-point number and only its integer half kept.
+#
+# Two PopUpOks open it, both reproduced here: Terry's "I refuse to
+# rip-off the original", and then "The map scrolls."
+#
+# A shot hits when its own circle touches the map, not when its centre
+# passes a number:
+#
+#	map->color=ROP_COLLISION;
+#	map->bkcolor=LTCYAN;
+#	map->collision_cnt=0;
+#	GrCircle(map,tmpm->x,tmpm->y,2);
+#	if (map->collision_cnt) tmpm->collision=TRUE;
+#
+# a circle drawn in a raster op that paints nothing and counts the pixels
+# it would have set that are not the sky colour.  The map holds nothing
+# but the terrain, so that reduces exactly to asking whether any point of
+# a radius-2 circle is at or below elevs[] — which is what is done here,
+# rather than the centre test the port used to have.
+#
+# Craters are cut into elevs and the map is redrawn, so the ground a
+# later shot lands on is the ground the earlier ones left.
+#
+# GAP: no map scroll widgets; the view is moved with , and . instead.
 # left/right aim  space=fire  Enter=restart  q=quit
 
 include "sys.m";
@@ -9,7 +33,7 @@ include "sys.m";
 
 include "draw.m";
 	draw: Draw;
-	Display, Image, Point, Rect: import draw;
+	Display, Font, Image, Point, Rect: import draw;
 
 include "math.m";
 	math: Math;
@@ -41,14 +65,16 @@ Bigguns: module
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
-MAPW: con 1024;
-MAPH: con 400;
-DUST: con 256;
+MAPW: con 2048;			# MAP_WIDTH
+MAPH: con 400;			# MAP_HEIGHT
+DUST: con 512;			# DUST_NUM
 PI: con 3.141592653589793;
 
 win: ref Window;
+font: ref Font;
 sim: ref ODE;
 ink: array of ref Image;
+help := 2;			# the two opening PopUpOks
 guns, gunmasks: array of ref Image;
 elevs: array of int;
 dustx, dusty: array of int;
@@ -86,12 +112,17 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	win = wmclient->window(ctxt, "TempleOS BigGuns", Wmclient->Appl);
 	d := win.display;
+	font = Font.open(d, "/fonts/temple/temple.font");
+	if(font == nil)
+		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+	# the exact TempleOS 16-colour palette, index = TempleOS colour: the
+	# sky is LTCYAN, the ground BROWN, the dust LTGRAY
 	ink = array[16] of ref Image;
 	cols := array[] of {
-		Draw->Black, Draw->Blue, Draw->Green, Draw->Cyan,
-		Draw->Red, Draw->Magenta, Draw->Darkyellow, Draw->Grey,
-		int 16r87CEEBFF, Draw->Paleblue, Draw->Palegreen, int 16r8B4513FF,
-		int 16rFF8888FF, int 16rFF88FFFF, Draw->Yellow, Draw->White
+		int 16r000000FF, int 16r0000AAFF, int 16r00AA00FF, int 16r00AAAAFF,
+		int 16rAA0000FF, int 16rAA00AAFF, int 16rAA5500FF, int 16rAAAAAAFF,
+		int 16r555555FF, int 16r5555FFFF, int 16r55FF55FF, int 16r55FFFFFF,
+		int 16rFF5555FF, int 16rFF55FFFF, int 16rFFFF55FF, int 16rFFFFFFFF
 	};
 	for(i := 0; i < 16; i++)
 		ink[i] = d.color(cols[i]);
@@ -119,8 +150,17 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	p := <-win.ctxt.ptr =>
 		win.pointer(*p);
 	k := <-win.ctxt.kbd =>
+		if((k & Keyboard->Keyup) == Keyboard->Keyup)
+			continue;
+		if(help){		# PopUpOk: any key dismisses one
+			help--;
+			redraw();
+			continue;
+		}
 		key(k);
 	<-ticks =>
+		if(help)
+			continue;	# the PopUpOks hold the game
 		if(recoil > 0)
 			recoil--;
 		step();
@@ -227,7 +267,7 @@ manage()
 		hit := 0;
 		if(ix < 0 || ix >= MAPW)
 			hit = 1;
-		else if(int m.y >= elevs[ix])
+		else if(collides(int m.x, int m.y))
 			hit = 1;
 		if(hit)
 			kill = m :: kill;
@@ -256,7 +296,7 @@ redraw()
 	w := img.r.dx();
 	h := img.r.dy();
 	# sky
-	img.draw(img.r, ink[8], nil, Point(0, 0));
+	img.draw(img.r, ink[11], nil, Point(0, 0));	# LTCYAN
 	# terrain silhouette
 	for(x := 0; x < w; x++){
 		mx := camx + x;
@@ -264,7 +304,7 @@ redraw()
 			continue;
 		ey := elevs[mx];
 		if(ey < h)
-			img.draw(Rect((o.x+x, o.y+ey), (o.x+x+1, o.y+h)), ink[11], nil, Point(0, 0));
+			img.draw(Rect((o.x+x, o.y+ey), (o.x+x+1, o.y+h)), ink[6], nil, Point(0, 0));
 		if(ey > 0 && ey < h)
 			img.draw(Rect((o.x+x, o.y+ey), (o.x+x+1, o.y+ey+1)), ink[0], nil, Point(0, 0));
 	}
@@ -277,7 +317,7 @@ redraw()
 		if(dy < elevs[dx]){
 			sx := dx - camx;
 			if(sx >= 0 && sx < w && dy < h)
-				img.draw(Rect((o.x+sx, o.y+dy), (o.x+sx+1, o.y+dy+1)), ink[7], nil, Point(0, 0));
+				img.draw(Rect((o.x+sx, o.y+dy), (o.x+sx+1, o.y+dy+1)), ink[7], nil, Point(0, 0));	# LTGRAY
 		}
 	}
 	# gun base
@@ -314,6 +354,8 @@ redraw()
 		if(sx >= 0 && sx < w && sy >= 0 && sy < h)
 			img.fillellipse(Point(o.x+sx, o.y+sy), 2, 2, ink[0], Point(0, 0));
 	}
+	if(help)
+		popup(img, o, w, h);
 	img.flush(Draw->Flushnow);
 }
 
@@ -344,4 +386,63 @@ timer(c: chan of int, ms: int)
 		sys->sleep(ms);
 		c <-= 1;
 	}
+}
+
+# ROP_COLLISION with bkcolor=LTCYAN, for GrCircle(map,x,y,2): the map has
+# nothing on it but the ground, so a pixel of the circle is a collision
+# exactly when it is at or below elevs[].
+collides(x, y: int): int
+{
+	for(dx := -2; dx <= 2; dx++){
+		d := 2*2 - dx*dx;
+		dy := 0;
+		while(dy*dy <= d)
+			dy++;
+		dy--;
+		cx := x + dx;
+		if(cx < 0 || cx >= MAPW)
+			return 1;
+		if(y + dy >= elevs[cx])
+			return 1;
+	}
+	return 0;
+}
+
+# The two opening PopUpOks, verbatim.  help counts down, so the first
+# key shows the second panel and the second starts the game.
+popup(img: ref Image, o: Point, w, h: int)
+{
+	lines := array[] of {"The map scrolls."};
+	if(help > 1)
+		lines = array[] of {
+			"I refuse to rip-off the original",
+			"so this is intentionally crappy",
+			"and included for demonstration",
+			"purposes.",
+			"",
+			"Write games, don't play them.",
+		};
+	if(font == nil)
+		return;
+	pad := 12;
+	tw := 0;
+	for(i := 0; i < len lines; i++){
+		lw := font.width(lines[i]);
+		if(lw > tw)
+			tw = lw;
+	}
+	bw := tw + 2*pad;
+	bh := (len lines + 2)*(font.height+2) + 2*pad;
+	bx := o.x + (w - bw)/2;
+	by := o.y + (h - bh)/2;
+	img.draw(Rect((bx-2, by-2), (bx+bw+2, by+bh+2)), ink[0], nil, Point(0, 0));
+	img.draw(Rect((bx, by), (bx+bw, by+bh)), ink[15], nil, Point(0, 0));
+	y := by + pad;
+	for(i = 0; i < len lines; i++){
+		img.text(Point(bx+pad, y), ink[0], Point(0, 0), font, lines[i]);
+		y += font.height + 2;
+	}
+	ok := "any key";
+	img.text(Point(bx + (bw - font.width(ok))/2, y + font.height/2),
+		ink[1], Point(0, 0), font, ok);
 }
