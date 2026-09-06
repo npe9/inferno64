@@ -20,9 +20,10 @@
 #include "p9lib.h"
 
 void
-p9start(P9lib *lib, char **argv)
+p9start(P9lib *lib, char **argv, int *std)
 {
 	USED(argv);
+	USED(std);		/* it writes on the console, which the loader gives it */
 	char buf[128];
 	long n;
 	int fd;

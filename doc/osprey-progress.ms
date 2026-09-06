@@ -6460,18 +6460,142 @@ on this address space is the personality's business \- the personality's
 segments are laid out around the program, not below it \- so a loaded
 program brings its heap rather than asking the kernel for one.
 .PP
-What is left of 3.2 is a shell and rio, and what they need is named
-rather than guessed.  A shell wants processes, and the library-OS task
-has none to give: its own concurrency is the cooperative kprocs of
+.B "3.2b: processes, and a shell that uses them.  Done."
+3.2a left one thing named as what a shell would need: the library-OS
+task had no processes to give a program, its own concurrency being the
+cooperative kprocs of
 .CW p9sched.c ,
-which are threads of the personality and not things a program can fork.
-rio wants
+which are threads of the personality.  That is now what a program can
+ask for, and it is asked for in the shape the arrangement allows rather
+than in Plan 9's.
+.PP
+fork is not a thing a library operating system can offer.
+.CW rfork(RFPROC)
+splits a flow of control inside one address space, and a library cannot
+split its caller's C stack \- not without copying it, pointers into it
+and all.  So the primitive is the one a shell was using fork and exec
+together for, fused.
+.CW spawn
+loads a program, gives it a kproc of its own and a descriptor table of
+its own, and answers with a number;
+.CW wait
+blocks until that number ends and yields its status;
+.CW pipe
+is the personality's own.  The three are new entries in the table a
+loaded program is handed
+.CW ( p9lib.h ,
+version 3), and the program's standard descriptors come with it: a
+loaded program is entered as
+.CW "p9start(P9lib *lib, char **argv, int *std)" ,
+where each of
+.CW std[0..2]
+is a descriptor of the personality's or \-1 for the machine's console,
+which the personality does not hold.
+.PP
+Two things a spawned program gets that the personality's own kprocs do
+not.  Its own
+.CW Fgrp :
+.CW kproc ()
+shares the creating proc's descriptor table by pointer, which is right
+for the stack's read kprocs and wrong for a program, because a pipeline
+only reaches end of file when every copy of the write end is closed.  So
+the child's table is built empty \-
+.CW dupfgrp(nil)
+\- and only the descriptors
+.CW spawn
+was handed are put in it, referenced again so that the parent closing
+its own copies does not take the child's away.  And its own exit: a
+program the personality runs to completion ends by longjmp back into
+.CW p9exec ,
+a spawned one by ending its kproc, and
+.CW p9anyexits
+decides which from the flow of control it is called on, so both kinds of
+program are handed the same table.
+.PP
+.CW /boot/libsh
+is that shell.  It is
+.I not
+.CW shp9.c ,
+the shell that runs on the server personality, and the reason is the
+arrangement rather than an omission: that shell forks and execs, and
+neither is a thing this one can do.  The claim 3.2a earned \- one
+program, two arrangements \- is a claim about commands, and it still
+holds:
+.CW catp9.c
+is the same source on both.  It is not a claim about shells, and the
+source says so rather than pretending.  What both shells understand is
+the same script: one command a line, words on blanks, stages on
+.CW | ,
+.CW #
+to end of line a comment.
+.PP
+The script the personality writes and runs has four lines.
+.CW "/boot/libcat /hello"
+runs a command on a spawned process and the shell waits for its status.
+.CW "/boot/libcat /hello | /boot/libwc"
+is a pipeline: two programs at two addresses, each with a descriptor
+table of its own, the first's standard output and the second's standard
+input the two ends of one pipe of the personality's, and the shell
+closing its own copies of both.  The third,
+.CW "/boot/libgen 200000 | /boot/libwc" ,
+is there because the second proves less than it looks: 454 bytes fit in
+a pipe, so nothing had to block and "a pipeline ran" would only mean the
+writer finished before the reader started.  200000 bytes do not fit in
+32768, so the writer blocks and the reader must run to drain it, six
+times over, and the far end counts all 200000 \- the two stages are
+alive at once, in one address space, with no process boundary and no
+trap but the console.  The fourth,
+.CW "/boot/libcat /hello | /boot/libcat" ,
+asks for two of one image at once, and is there so that the limit below
+is a thing that happens rather than a thing written down.
+.PP
+The honest limit is the link map.  A program is at the address it was
+linked for and nothing here relocates it, so two of the same program
+cannot run at once: they would be the one image, sharing its one data
+segment, and each program's descriptor table and heap live in that
+segment.
+.CW p9spawn
+refuses that by name \- the fourth script line asks for it and is told
+no, and the shell carries on \- rather than letting two instances
+quietly corrupt each other, and each program that may run beside another
+is linked at a base of its own \- prog2 at 16M, libcat at 20M, libwc at 24M, libsh at 28M,
+libgen at 32M.  A program run twice in succession is fine: the loader
+zeroes the region before laying the file in it again, so its bss starts
+empty the second time as it did the first.  Lifting the limit wants
+either relocation or every mutable thing in a program's image reached
+through a per-process pointer, and neither is here.
+.PP
+There are three ways out of a loaded program, and the third was nearly
+missed: a raise.  A fresh kproc has no error label of its own, and the
+personality's entry points do raise \- a write into a pipe whose reader
+has gone is an error and not a short count, and
+.CW p9write 's
+own handler ends in
+.CW nexterror ().
+Without a label in
+.CW procstart
+that raise would unwind off the top of a spawned program's stack into
+nothing.  The fourth script line is what shows it: the stage that was
+started writes into a pipe whose reader was refused, and the error
+becomes that program's wait status,
+.CW Ehungup ,
+which the shell prints before finishing its script.
+.PP
+One thing the checks turned up on the way.
+.CW conf.pipeqsize
+was never set, so it was zero and every pipe write filled its queue by
+definition: the writer slept until the far end drained it, every time.
+That worked, and hid what a pipeline does \- there was no size to
+exceed.  It is 32K now, which is Plan 9's, and the third script line is
+what proves the flow control is real.
+.PP
+What is left of 3.2 is rio.  It wants
 .CW /dev/draw ,
 .CW /dev/mouse
 and
 .CW /dev/kbd ,
 which the user-level drivers already built serve, and a name space that
-holds them.  Neither is reached by more of what 3.2a did.
+holds them.
 .PP
 .B "Phase 3.2: a real program, then rio, linked with the library."
 A real program \- a command, then a shell, then rio \- is linked with

@@ -31,6 +31,14 @@ void
 p9setup(void)
 {
 	p9init();
+	/*
+	 * How much a pipe holds before its writer waits for its reader.
+	 * Nothing set this, so it was zero: every write filled the queue by
+	 * definition and the writer slept until the far end drained it, which
+	 * worked but is not what a pipe is.  This is the size Plan 9 uses.
+	 */
+	conf.pipeqsize = 32*1024;
+	print("p9: a pipe holds %lud bytes before its writer waits for its reader\n", conf.pipeqsize);
 	chandevreset();
 	up->pgrp = newpgrp();
 	up->egrp = smalloc(sizeof(Egrp));
@@ -467,6 +475,43 @@ p9main(void)
 		catargv[1] = "/hello";
 		catargv[2] = nil;
 		p9exec("/boot/libcat", catargv);
+	}
+
+	/*
+	 * And a shell, with processes under it.  The personality now starts
+	 * a program on a flow of control of its own - a kproc with a
+	 * descriptor table of its own - so a program can start other
+	 * programs and wait for them, which is what a shell is (p9proc.c).
+	 * The script's second line is a pipeline, so cat's bytes reach wc
+	 * through a pipe of this personality's, in this one address space,
+	 * with no process boundary anywhere and no trap but the console.
+	 *
+	 * The shell is not shp9.c, the server personality's shell, and the
+	 * reason is written down in shlib.c: fork and exec are not things a
+	 * library operating system can offer its caller.  The commands are
+	 * the same source on both, which is the claim that was earned.
+	 */
+	{
+		char *shargv[3];
+		char *script =
+			"/boot/libcat /hello\n"
+			"/boot/libcat /hello | /boot/libwc\n"
+			"/boot/libgen 200000 | /boot/libwc\n"
+			"/boot/libcat /hello | /boot/libcat\n";
+		int fd;
+
+		fd = p9create("#e/script", OWRITE, 0666);
+		if(fd < 0)
+			print("p9: cannot write the script for the shell\n");
+		else {
+			p9write(fd, script, strlen(script));
+			p9close(fd);
+			print("p9: wrote a script of four lines, the last three pipelines\n");
+			shargv[0] = "/boot/libsh";
+			shargv[1] = "#e/script";
+			shargv[2] = nil;
+			p9exec("/boot/libsh", shargv);
+		}
 	}
 
 	poperror();

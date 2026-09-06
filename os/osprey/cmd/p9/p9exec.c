@@ -36,6 +36,9 @@
 #include "p9lib.h"
 #include "prog2.i"		/* uchar prog2[]: the second program, as a file */
 #include "libcatprog.i"		/* uchar libcatprog[]: cat, linked against this personality */
+#include "libwcprog.i"		/* uchar libwcprog[]: wc, the far end of a pipeline */
+#include "libshprog.i"		/* uchar libshprog[]: the shell that runs on this personality */
+#include "libgenprog.i"		/* uchar libgenprog[]: the near end of a pipeline */
 
 extern int	p9open(char *name, int mode);
 extern int	p9create(char *name, int mode, ulong perm);
@@ -47,6 +50,11 @@ extern int	p9dup(int fd);
 extern int	p9fd2path(int fd, char *buf, int nbuf);
 extern char	end[];		/* the personality's own image ends here */
 extern void	addbootfile(char *name, uchar *data, ulong len);
+extern int	p9pipe(int fd[2]);
+extern int	p9spawn(char *name, char **argv, int *std);
+extern int	p9waitpid(int pid, char *status, int nstatus);
+extern void	p9anyexits(char *status);
+extern int	p9procbusy(uvlong base);
 
 /*
  * The second program is a file in this personality's own file system,
@@ -58,6 +66,9 @@ p9execfile(void)
 {
 	addbootfile("prog2", prog2, sizeof prog2);
 	addbootfile("libcat", libcatprog, sizeof libcatprog);
+	addbootfile("libwc", libwcprog, sizeof libwcprog);
+	addbootfile("libsh", libshprog, sizeof libshprog);
+	addbootfile("libgen", libgenprog, sizeof libgenprog);
 }
 
 static uvlong
@@ -100,7 +111,7 @@ readall(int fd, uchar *buf, long max)
 static jmp_buf p9execjmp;
 static char *p9execstatus;
 
-static void
+void
 p9execexits(char *status)
 {
 	p9execstatus = status;
@@ -108,18 +119,63 @@ p9execexits(char *status)
 }
 
 /*
- * Load and run the program named in this task's name space, with the
- * argument vector given.  Returns 0 when it ran, -1 when it could not
- * be loaded.
+ * The one table every loaded program is handed.  It is read-only and the
+ * same for all of them; what differs between a program the personality
+ * runs to completion and one it spawns is where exits goes, and that is
+ * decided by p9anyexits from the flow of control it is called on, not by
+ * a table of its own.
+ */
+static P9lib p9thelib;
+
+P9lib*
+p9libtable(void)
+{
+	p9thelib.version = P9libversion;
+	p9thelib.open = p9open;
+	p9thelib.create = p9create;
+	p9thelib.read = p9read;
+	p9thelib.write = p9write;
+	p9thelib.close = p9close;
+	p9thelib.seek = p9seek;
+	p9thelib.dup = p9dup;
+	p9thelib.fd2path = p9fd2path;
+	p9thelib.exits = p9anyexits;
+	p9thelib.pipe = p9pipe;
+	p9thelib.spawn = p9spawn;
+	p9thelib.wait = p9waitpid;
+	return &p9thelib;
+}
+
+/*
+ * The address space a loaded program is given is asked for once and
+ * kept.  A program run a second time is laid into the same region, so
+ * the region is zeroed before the file is copied into it and the
+ * program's bss starts empty the second time as it did the first - which
+ * is what a fresh image means, and what a program that keeps a table or
+ * a heap cursor in its bss (p9crt.c does both) depends on.
+ *
+ * The consequence is the honest limit of this arrangement: two of the
+ * same program cannot run at once, because they would be the one image
+ * sharing its one data segment.  Two different programs can, which is
+ * what a pipeline is.  p9spawn refuses the first rather than letting two
+ * instances quietly corrupt each other.
+ */
+enum { Nattach = 8 };
+static uvlong attached[Nattach];
+static int nattached;
+
+/*
+ * Read the program named in this task's name space and lay it in this
+ * address space at the address it was linked for.  Answers 0 with its
+ * entry and its base, or -1.
  */
 int
-p9exec(char *name, char **argv)
+p9load(char *name, uvlong *entryp, uvlong *basep)
 {
 	uchar hdr[40];
 	uvlong magic, textsz, datasz, bsssz, hdrsz, entry, tseg, adata, imgsz, progbase;
 	uchar *base;
-	P9lib lib;
-	int fd;
+	int fd, i, have;
 	long n;
 
 	if((fd = p9open(name, OREAD)) < 0){
@@ -159,6 +215,17 @@ p9exec(char *name, char **argv)
 		p9close(fd);
 		return -1;
 	}
+	/*
+	 * Before anything is written: an image with a program running in it
+	 * is not free to be laid over, and the zeroing below would take that
+	 * program's data out from under it.
+	 */
+	if(p9procbusy(progbase)){
+		print("p9 exec: %s is already running at %#llux; it is one image and cannot be two programs\n",
+			name, progbase);
+		p9close(fd);
+		return -1;
+	}
 	adata = (progbase + tseg + 4095) & ~(uvlong)4095;
 	imgsz = (adata + datasz + bsssz + 4095) & ~(uvlong)4095;
 	imgsz -= progbase;
@@ -168,16 +235,28 @@ p9exec(char *name, char **argv)
 	 * a program into and then run.  Everything after this is the
 	 * library's own work.
 	 */
-	base = (uchar*)segattach(0, "code", (void*)(uintptr)progbase, (ulong)imgsz);
-	if(base == (uchar*)-1 || (uvlong)(uintptr)base != progbase){
-		print("p9 exec: the kernel would not give me %llud bytes of address space at %#llux for the program\n",
-			imgsz, progbase);
-		p9close(fd);
-		return -1;
+	have = 0;
+	for(i = 0; i < nattached; i++)
+		if(attached[i] == progbase)
+			have = 1;
+	if(have)
+		base = (uchar*)(uintptr)progbase;
+	else {
+		base = (uchar*)segattach(0, "code", (void*)(uintptr)progbase, (ulong)imgsz);
+		if(base == (uchar*)-1 || (uvlong)(uintptr)base != progbase){
+			print("p9 exec: the kernel would not give me %llud bytes of address space at %#llux for the program\n",
+				imgsz, progbase);
+			p9close(fd);
+			return -1;
+		}
+		if(nattached < Nattach)
+			attached[nattached++] = progbase;
 	}
 	print("p9 exec: %s: text %llud, data %llud, bss %llud; %llud bytes of address space at %#llux, entry %#llux\n",
 		name, textsz, datasz, bsssz, imgsz, progbase, entry);
 
+	/* a fresh image: whatever a previous run of it left is not its own */
+	memset(base, 0, (long)imgsz);
 	/* the text, its header with it, exactly as the file has it */
 	p9seek(fd, 0, 0);
 	if((n = readall(fd, base, (long)tseg)) != (long)tseg){
@@ -195,21 +274,32 @@ p9exec(char *name, char **argv)
 		}
 	}
 	p9close(fd);
+	*entryp = entry;
+	*basep = progbase;
+	return 0;
+}
 
-	lib.version = P9libversion;
-	lib.open = p9open;
-	lib.create = p9create;
-	lib.read = p9read;
-	lib.write = p9write;
-	lib.close = p9close;
-	lib.seek = p9seek;
-	lib.dup = p9dup;
-	lib.fd2path = p9fd2path;
-	lib.exits = p9execexits;
+/*
+ * Load and run the program named in this task's name space, with the
+ * argument vector given, to completion on this flow of control.
+ * Returns 0 when it ran, -1 when it could not be loaded.
+ */
+int
+p9exec(char *name, char **argv)
+{
+	uvlong entry, progbase;
+	int std[3];
+
+	if(p9load(name, &entry, &progbase) < 0)	/* it refuses an image already running */
+		return -1;
+	USED(progbase);
+	/* its standard descriptors are the machine's console, which the
+	 * personality does not hold: -1 says so */
+	std[0] = std[1] = std[2] = -1;
 	print("p9 exec: entering %s at %#llux with the personality's own name space under it\n", name, entry);
 	p9execstatus = nil;
 	if(setjmp(p9execjmp) == 0)
-		((void(*)(P9lib*, char**))(uintptr)entry)(&lib, argv);
+		((void(*)(P9lib*, char**, int*))(uintptr)entry)(p9libtable(), argv, std);
 	else
 		print("p9 exec: %s exited with status \"%s\", into the personality that loaded it, not out of the task\n",
 			name, p9execstatus == nil ? "" : p9execstatus);

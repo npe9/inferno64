@@ -33,16 +33,16 @@ extern void startboot(char *argv0, char **argv);
  * address the program was linked at (p9exec.c).  Everything else, the
  * descriptor table below included, comes after it.
  */
-static void fdinit(void);
+static void fdinit(int *std);
 static int fdof(int fd);
 static int fdnew(int pfd);
 
 void
-p9start(P9lib *lib, char **argv)
+p9start(P9lib *lib, char **argv, int *std)
 {
 	static char *noargv[] = { "prog", nil };
 
-	fdinit();
+	fdinit(std);
 	p9lib = lib;
 	if(lib == nil || lib->version != P9libversion){
 		/* nothing to call: say so on the console, which is the kernel's */
@@ -64,9 +64,14 @@ p9start(P9lib *lib, char **argv)
  * table of its own a program that opened a file and got 1 would write
  * its output into that file, or into the console, by luck rather than by
  * meaning.  So the program keeps a table, the way the buddy keeps one
- * for the legacy binary it serves: 0, 1 and 2 are the console here and
- * nothing else, and every file the program opens is numbered from three
- * up and stands for a descriptor of the personality's.
+ * for the legacy binary it serves: every file the program opens is
+ * numbered from three up and stands for a descriptor of the
+ * personality's.
+ *
+ * 0, 1 and 2 are what the loader handed the program in std: a
+ * descriptor of the personality's when it was started with one - a pipe
+ * from a shell, say - and the machine's console when it was not, which
+ * is what a program the personality runs itself gets.
  */
 enum {
 	Nfd	= 32,
@@ -76,12 +81,14 @@ enum {
 static int fdmap[Nfd];
 
 static void
-fdinit(void)
+fdinit(int *std)
 {
 	int i;
 
 	for(i = 0; i < Nfd; i++)
-		fdmap[i] = i < 3 ? Fdcons : Fdfree;
+		fdmap[i] = Fdfree;
+	for(i = 0; i < 3; i++)
+		fdmap[i] = (std == nil || std[i] < 0) ? Fdcons : std[i];
 }
 
 /* the personality's descriptor a program's number stands for, or Fdfree */
@@ -167,7 +174,7 @@ close(int fd)
 		return -1;
 	if(pfd != Fdcons)
 		p9lib->close(pfd);
-	fdmap[fd] = fd < 3 ? Fdcons : Fdfree;
+	fdmap[fd] = Fdfree;
 	return 0;
 }
 
@@ -229,6 +236,53 @@ fd2path(int fd, char *buf, int nbuf)
 		return 0;
 	}
 	return p9lib->fd2path(pfd, buf, nbuf) > 0 ? 0 : -1;
+}
+
+/*
+ * Processes, for a program that starts other programs.  A pipe is the
+ * personality's, in the program's own numbering; spawn is given the
+ * program's numbers for what the child's standard input and output are
+ * to be and hands the personality its own; a program number that is the
+ * console, or is not open, is -1 - the child gets the console for it.
+ */
+int
+pipe(int fd[2])
+{
+	int p[2];
+
+	if(p9lib->pipe(p) < 0)
+		return -1;
+	fd[0] = fdnew(p[0]);
+	fd[1] = fdnew(p[1]);
+	if(fd[0] < 0 || fd[1] < 0){
+		/* fdnew closes what it could not find a number for, so what is
+		 * still open here is only what it did place */
+		if(fd[0] >= 0)
+			close(fd[0]);
+		if(fd[1] >= 0)
+			close(fd[1]);
+		return -1;
+	}
+	return 0;
+}
+
+int
+spawn(char *name, char **argv, int in, int out)
+{
+	int std[3];
+
+	/* a number that is the console, or is not open, is Fdcons or
+	 * Fdfree: both negative, and both mean the console to the child */
+	std[0] = in < 0 || fdof(in) < 0 ? -1 : fdof(in);
+	std[1] = out < 0 || fdof(out) < 0 ? -1 : fdof(out);
+	std[2] = -1;
+	return p9lib->spawn(name, argv, std);
+}
+
+int
+awaitpid(int pid, char *status, int nstatus)
+{
+	return p9lib->wait(pid, status, nstatus);
 }
 
 void
