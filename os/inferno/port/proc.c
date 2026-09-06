@@ -229,6 +229,20 @@ procswitch(void)
  * have shown; the point is to learn whether the guard is ever touched,
  * not to stop at it.
  */
+/*
+ * The guard band this instrumentation paints.  pc64/mem.h defines
+ * these; the other fifteen boards' mem.h do not, and proc.c is
+ * portable -- so it carries defaults rather than requiring sixteen
+ * mem.h edits for a temporary probe.  Without them every native board
+ * except pc64 failed to compile at "name not declared: KSTACKGUARD".
+ */
+#ifndef KSTACKGUARD
+#define	KSTACKGUARD	128
+#endif
+#ifndef KSTACKFILL
+#define	KSTACKFILL	0xA5
+#endif
+
 uintptr kstackmin = ~(uintptr)0;	/* MULTICORE INSTRUMENTATION - temporary */
 char *kstackminproc = "none";
 
