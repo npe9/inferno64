@@ -222,8 +222,8 @@ struct
  * isched.l and rechecks.
  *
  * They are still racing reads of a word another thread writes, which is
- * undefined behaviour whatever the hardware does, and they were two of
- * the eleven signatures ThreadSanitizer reports (doc/dis-parallel-plan.ms
+ * undefined behaviour whatever the hardware does, and they were three
+ * of the eleven signatures ThreadSanitizer reports (doc/dis-parallel-plan.ms
  * section 4).  Say so to the compiler rather than taking the lock:
  * taking isched.l inside a condition function already called under two
  * other locks would add a lock-order edge on the path every idle

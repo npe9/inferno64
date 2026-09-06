@@ -565,3 +565,14 @@ interpreter \- there is nothing for the atomicity to protect against
 until something runs concurrently, so landing them now would mean
 landing untested code that looks finished.  Item 1 was different: it is
 small, it is self-contained, and a differential boot tests it today.
+.PP
+One correction to that, from fixing the arm64 JIT's width bug: item 3
+became testable before item 2 did.  The dependency order is unchanged \-
+the collector still gates everything \- but the
+.I actionability
+order is now inverted between them.  The arm64 backend has a working
+hosted baseline, so making its barrier atomic can at least be shown not
+to break anything today, twelve runs of the spawn storm with the JIT
+on.  Nothing can be shown about the collector's shared words at one
+interpreter at all.  Whoever picks this up should take the tractable
+half first rather than re-deriving why neither looked tractable.

@@ -2466,7 +2466,9 @@ xec(Prog *p)
  * quanta -- from vmachine()'s BusyGC block or from execatidle() -- and
  * p->reg has just been written back at both.  A probe in rungc() that
  * printed whenever it ran with a live curprog never fired, under the
- * spawn storm and under the profiler.
+ * spawn storm and under the profiler -- both at -c0.  The probe was
+ * removed before the hosted arm64 JIT was fixed, so the compiled path
+ * rests on the argument above and not on that measurement.
  *
  * The three other paths that load R from a Prog looked at first like
  * stale windows and are not: dbgxec() in devprog.c, cpxec() in
