@@ -8,6 +8,7 @@ int		ospreybuddyfault(uintptr, uintptr, int);
 int		ospreyexecbuddy(char*);
 int		ospreyexecbuddy1(char*, int);
 int		ospreyexecself(char*, char**);
+uintptr		ospreysegcode(uintptr, ulong);
 int		ospreybuddyhas(void);
 void		ospreyenteruser(char*);
 void		ospreyenteruserat(void);

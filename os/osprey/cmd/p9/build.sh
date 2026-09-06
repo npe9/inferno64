@@ -50,6 +50,11 @@ done
 OBJ="$OBJ /tmp/p9_ring9p.6"
 6c $LIBINC -o /tmp/p9_p9pairsrv.6 $P/p9pairsrv.c
 OBJ="$OBJ /tmp/p9_p9pairsrv.6"
+# the library operating system's own loader: it reads a program through
+# the name space and calls it, so it needs libc's segattach, not the
+# name space's segattach - the user headers, as above
+6c $LIBINC -I os/osprey/pc64 -o /tmp/p9_p9exec.6 $P/p9exec.c	# prog2.i is generated there
+OBJ="$OBJ /tmp/p9_p9exec.6"
 6c $LIBINC -o /tmp/p9_blkvirtio.6 $P/blkvirtio.c
 OBJ="$OBJ /tmp/p9_blkvirtio.6"
 6c $LIBINC -o /tmp/p9_netvirtio.6 $P/netvirtio.c

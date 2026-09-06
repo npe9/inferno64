@@ -45,6 +45,9 @@ p9setup(void)
 	print("p9: name space up, root attached\n");
 }
 
+extern void p9execfile(void);	/* p9exec.c: the second program, as /boot/prog2 */
+extern int p9exec(char *name);	/* p9exec.c: read it through the name space and run it */
+
 void
 p9main(void)
 {
@@ -57,6 +60,7 @@ p9main(void)
 		print("p9: error: %s\n", up->errstr);
 		exits("error");
 	}
+	p9execfile();		/* the second program, a file in this personality's own file system */
 	p9setup();
 
 	c = namec("/", Aopen, OREAD, 0);
@@ -419,6 +423,32 @@ p9main(void)
 			a, fd, fd2, (int)b, (char*)buf);
 		p9close(fd);
 		p9close(fd2);
+	}
+
+	/*
+	 * And a second program, run by this one: the personality reads
+	 * /boot/prog2 through the name space it built, lays it in its own
+	 * address space and calls it, handing it the table of its own entry
+	 * points.  The program opens and reads a file by calling this
+	 * personality - an ordinary call, no trap and no ring - and creates
+	 * one of its own, which is read back here afterwards: proof that the
+	 * name space under it is this one and that it is still here.
+	 */
+	p9exec("/boot/prog2");
+	{
+		int fd;
+		long m;
+
+		fd = p9open("/fromprog2", OREAD);
+		if(fd < 0)
+			fd = p9open("#e/fromprog2", OREAD);
+		if(fd >= 0){
+			m = p9read(fd, buf, sizeof buf - 1);
+			buf[m < 0 ? 0 : m] = 0;
+			print("p9: read what the second program wrote, through the same name space: \"%s\"\n", (char*)buf);
+			p9close(fd);
+		} else
+			print("p9: the second program left nothing to read\n");
 	}
 
 	poperror();

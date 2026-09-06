@@ -93,6 +93,16 @@ def main():
                     'posted the personality' in t and m4 is not None and int(m4.group(1)) >= 10))
     results.append(("and it duplicates a descriptor, the two sharing one channel and offset (what a shell redirects with)",
                     'the rest on its dup fd 2: " from the 9P server' in t))
+    results.append(("and it loads a second program and runs it: the personality reads /boot/prog2 through the name space it built, asks the kernel only for the address space, lays the binary in it and calls its entry - the loading a library operating system does for itself",
+                    re.search(r'osprey user: \d+ bytes of address space at 0x1000000 for a program the caller loads itself', t) is not None
+                    and re.search(r'p9 exec: /boot/prog2: text \d+, data \d+, bss \d+; \d+ bytes of address space at 0x1000000, entry 0x1000028', t) is not None
+                    and 'prog2: I am the second program on the library-OS personality, loaded into its address space and called by it' in t))
+    results.append(("and that program reaches the file system by calling the personality, not by trapping: it opens and reads /greeting through the entry points it was handed, in its own address space",
+                    'prog2: opened and read /greeting by calling the personality, no trap and no ring: "hello osprey"' in t))
+    results.append(("and the name space under it is the one the first program built, still live: the second program creates a file in it and the first reads that file back afterwards, the personality never reloaded",
+                    'prog2: created #e/fromprog2 through the same name space and wrote it' in t
+                    and 'p9 exec: /boot/prog2 returned; the personality is still here, its name space never reloaded' in t
+                    and 'p9: read what the second program wrote, through the same name space: "written by the second program"' in t))
     results.append(("and it exits through the microkernel's minimal syscall interface, no in-kernel personality",
                     'the program exited' in t and 'panic' not in t))
 

@@ -6301,6 +6301,79 @@ personality library part of the new binary as of the old.  Proof: the
 library-OS task execs a second library-OS program that prints and exits,
 the name space it built still under it.
 .PP
+.B "Done, and the plan as phrased is not what was built."
+The two halves of that sentence cannot both hold, and the link map says
+why.  The personality's live state \-
+.CW up ,
+the arena's cursor, the cooperative scheduler's run queue, the ring
+mappings, the IP stack's route generations \- is in the
+.I data
+segment, not the bss:
+.CW 6l
+puts a file-scope scalar there whether it is initialised or not, and of
+the three hundred and forty-one named data symbols in the linked
+personality, those are among them, while
+.CW arena
+itself and
+.CW slices
+are in the bss.  Replace the data segment, as an exec in place would,
+and the name space's roots go with it \- the arena's bytes survive in
+the bss with nothing pointing at them, which is worse than losing them.
+Keep the data segment and the new binary has none of its own, its string
+constants included, since
+.CW 6c
+emits those as data.  There is no cut between the two, so "lays its
+segments over the current address space" and "the name space it built
+still under it" name different programs.
+.PP
+What is built keeps the half that was the point.  The personality is not
+reloaded; the program is loaded.
+.CW /boot/prog2
+is a separately linked binary, at
+.CW 0x1000000
+\- above the personality's image, which ends near seven megabytes, and
+well below the stack \- read through the name space the first program
+built, laid into the address space beside it, and called at its entry
+with a table of the personality's own entry points
+.CW ( p9lib.h ).
+It opens
+.CW /greeting
+and reads it by
+.I calling
+the personality, an ordinary call in its own address space with no trap
+and no ring, which is what track three of the plan is for; and it
+creates a file of its own that the first program reads back afterwards,
+so the name space under it is not merely of the same kind but the same
+one, still live, never rebuilt.  Three criteria of the
+.CW p964
+check (twenty now) hold the three claims apart: that it was loaded and
+entered, that it reached the file system by call, and that the name
+space survived.
+.PP
+The one thing it asks a kernel for is the address space, and that is the
+whole of what a library operating system should have to ask.
+.CW segattach
+with the name
+.CW code
+is a region the caller may write a program into and then run
+.CW ( ospreysegcode ):
+demand-zero, so nothing is carried until it is touched, writable because
+the loader writes the program in, and executable because the program
+then runs there \-
+.CW flushme
+on the segment, the same mark exec puts on a text segment, which is what
+.CW fault ()
+reads to leave
+.CW PTENOEXEC
+off.  A real
+.CW SG_TEXT
+segment will not do: it is mapped read-only and pages from an image, and
+this memory has no file behind it, only the loader's copy.  The
+microkernel's address-space service keeps its one call rather than
+growing another number; every configuration that offers
+.CW segattach
+offers it.
+.PP
 .B "Phase 3.2: a real program, then rio, linked with the library."
 A real program \- a command, then a shell, then rio \- is linked with
 the personality library into one microkernel task and run by the exec of

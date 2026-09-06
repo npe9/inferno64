@@ -346,6 +346,14 @@ port
 		for(i = 0; i < (int)sizeof kn - 1 && name[i] != 0; i++)
 			kn[i] = name[i];
 		kn[i] = 0;
+		/*
+		 * "code": not a named segment of the container's but a region
+		 * the caller may write a program into and then run - what a
+		 * library operating system needs when it loads a program
+		 * itself.  The address-space service keeps its one call.
+		 */
+		if(strcmp(kn, "code") == 0)
+			return ospreysegcode(va, len);
 		if(len == 0)
 			len = ospreyslicesize();	/* the whole slice */
 		{

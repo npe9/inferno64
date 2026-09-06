@@ -334,6 +334,49 @@ ospreybuddybrk(uintptr addr)
 	return 0;
 }
 
+/*
+ * A region of the caller's address space it may write a program into and
+ * then run: the one thing a library operating system has to ask a kernel
+ * for when it loads a program itself.  Demand-zero, so nothing is
+ * carried until it is touched; writable, because the loader writes the
+ * program in; and executable, because the program then runs there -
+ * which is what flushme means to fault(), the same mark exec puts on a
+ * text segment.  A real text segment would not do: SG_TEXT is mapped
+ * read-only and pages from an image, and this memory has no file behind
+ * it, only the loader's copy.
+ *
+ * Reached by segattach with the name "code", so the microkernel's
+ * address-space service keeps the one call it had rather than growing
+ * another number.
+ */
+uintptr
+ospreysegcode(uintptr va, ulong len)
+{
+	Segment *s;
+	int sno;
+
+	if(va == 0 || (va & (BY2PG-1)) != 0 || len == 0)
+		return (uintptr)-1;
+	len = PGROUND(len);
+	if(va + len >= USTKTOP-USTKSIZE || isoverlap(va, len) != nil)
+		return (uintptr)-1;
+	for(sno = 0; sno < NSEG; sno++)
+		if(up->seg[sno] == nil && sno != ESEG)
+			break;
+	if(sno == NSEG)
+		return (uintptr)-1;
+	if(waserror())
+		return (uintptr)-1;
+	s = newseg(SG_BSS, va, len/BY2PG);
+	poperror();
+	if(s == nil)
+		return (uintptr)-1;
+	s->flushme = 1;			/* code is fetched from it: fault() maps it executable */
+	up->seg[sno] = s;
+	print("osprey user: %lud bytes of address space at %#llux for a program the caller loads itself\n", (ulong)len, (uvlong)va);
+	return va;
+}
+
 uintptr
 ospreylinuxmmap(uintptr addr, uintptr len, int prot, int flags, int fd, vlong off)
 {
