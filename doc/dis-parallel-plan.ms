@@ -1280,6 +1280,20 @@ and through
 .CW progreg() .
 The argument was right; it is no longer only an argument.
 .PP
+And the Step 0 instrument now covers the configuration people actually
+run.  Every race measurement in this document was taken at
+.CW -c0 ,
+because that was the only thing that worked; with the JIT on, five runs
+give the same seven signatures, compared by content, and 20 to 24
+reports a run against 26 to 34.  Read the smaller number as less
+coverage rather than fewer races: ThreadSanitizer does not instrument
+the code the JIT emits, so accesses from compiled Dis are invisible to
+it.  What the result does say is that the compiled path introduces no
+new race in the C runtime, and that the seven survivors are the pool
+and
+.CW qio
+set either way.
+.PP
 The scope is smaller than a raw count suggests.  Four backends are
 stubs \-
 .CW comp-riscv64.c ,
