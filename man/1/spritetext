@@ -1,0 +1,32 @@
+.TH SPRITETEXT 1
+.SH NAME
+spritetext \- read a sprite as text
+.SH SYNOPSIS
+.B temple/spritetext
+.SH DESCRIPTION
+.I SpriteText
+is a port of the TempleOS
+.B Demo/Graphics/SpriteText.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+A sprite is a queue of drawing elements, and this walks one twice: first
+printing a one-line summary of every element, then listing the whole
+thing as the code that would rebuild it.
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B up / down
+Scroll
+.TP
+.B "any other key"
+Exit
+.PD
+.SH SOURCE
+.B /appl/temple/spritetext.b
+.SH SEE ALSO
+.IR temple (1),
+.IR spriteedit (1),
+.IR wm (1)

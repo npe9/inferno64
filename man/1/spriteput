@@ -1,0 +1,31 @@
+.TH SPRITEPUT 1
+.SH NAME
+spriteput \- sprites stored in the source file
+.SH SYNOPSIS
+.B temple/spriteput
+.SH DESCRIPTION
+.I SpritePut
+is a port of the TempleOS
+.B Demo/Graphics/SpritePut.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+The US flag three times and the US map once, which is what the original
+prints.  The point is where the pictures live: the binary sprite sits in
+the source file after the text, addressed by a bin number, and
+.B $SP,"",BI=1$
+is the placeholder the editor shows in text mode.
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B "any key"
+Exit
+.PD
+.SH SOURCE
+.B /appl/temple/spriteput.b
+.SH SEE ALSO
+.IR temple (1),
+.IR spriteedit (1),
+.IR wm (1)

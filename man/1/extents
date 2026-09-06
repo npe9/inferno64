@@ -1,0 +1,32 @@
+.TH EXTENTS 1
+.SH NAME
+extents \- the two kinds of sprite extent
+.SH SYNOPSIS
+.B temple/extents
+.SH DESCRIPTION
+.I Extents
+is a port of the TempleOS
+.B Demo/Graphics/Extents.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+A sprite is drawn with a three-pixel pen and the box the device context
+recorded as actually painted is drawn round it in red.  A key then
+replaces the picture with the sprite's own extents, which are measured
+from the sprite rather than from anything drawn, and so differ: by the
+draw position, and by the pen, which fattens the marks beyond what the
+sprite says.
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B "any key"
+Show the printed extents, then exit
+.PD
+.SH SOURCE
+.B /appl/temple/extents.b
+.SH SEE ALSO
+.IR temple (1),
+.IR spriteedit (1),
+.IR wm (1)

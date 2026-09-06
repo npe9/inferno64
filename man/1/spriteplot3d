@@ -1,0 +1,30 @@
+.TH SPRITEPLOT3D 1
+.SH NAME
+spriteplot3d \- a mesh sprite turning under a matrix
+.SH SYNOPSIS
+.B temple/spriteplot3d
+.SH DESCRIPTION
+.I SpritePlot3D
+is a port of the TempleOS
+.B Demo/Graphics/SpritePlot3D.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+A mesh sprite rotates about X once every hundred frames and about Z once
+every hundred and thirty.  The two rates share no common factor, so the
+model never repeats an attitude.  It is drawn without perspective against
+a depth buffer.
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B "any key"
+Exit
+.PD
+.SH SOURCE
+.B /appl/temple/spriteplot3d.b
+.SH SEE ALSO
+.IR temple (1),
+.IR spriteedit (1),
+.IR wm (1)

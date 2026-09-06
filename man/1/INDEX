@@ -291,6 +291,7 @@ engridden gridstart
 env sh-std
 exit sh
 expr sh-expr
+extents extents
 factor math-misc
 faultprobe faultprobe
 fc fc
@@ -508,6 +509,12 @@ splitr sh-string
 splitstrl sh-string
 splitstrr sh-string
 spree-join spree-join
+spriteplot spriteplot
+spriteplot3d spriteplot3d
+spriteput spriteput
+spriteputext spriteputext
+spriteraw spriteraw
+spritetext spritetext
 squirt squirt
 stack stack
 stackv stack

@@ -1,0 +1,32 @@
+.TH SPRITERAW 1
+.SH NAME
+spriteraw \- a sprite built by hand, element by element
+.SH SYNOPSIS
+.B temple/spriteraw
+.SH DESCRIPTION
+.I SpriteRaw
+is a port of the TempleOS
+.B Demo/Graphics/SpriteRaw.HC
+demonstration.
+It runs under
+.IR wm (1).
+.PP
+"Normally, you make sprites with <CTRL-r>.  This shows how to build a
+sprite by hand."  A green triangle with a flooded interior, assembled
+from a colour element, three lines and a flood fill.  The element list is
+printed under the drawing in the same vocabulary
+.IR spriteedit (1)
+edits, so the hand-built sprite can be read as well as drawn.
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B "any key"
+Exit
+.PD
+.SH SOURCE
+.B /appl/temple/spriteraw.b
+.SH SEE ALSO
+.IR temple (1),
+.IR spriteedit (1),
+.IR wm (1)

@@ -106,7 +106,14 @@ TARG=\
 	bspline.dis\
 	griddemo.dis\
 	mousedemo.dis\
-	speedline.dis
+	speedline.dis\
+	extents.dis\
+	spriteplot.dis\
+	spriteplot3d.dis\
+	spriteput.dis\
+	spriteputext.dis\
+	spriteraw.dis\
+	spritetext.dis
 
 DISBIN=$ROOT/dis/temple
 
