@@ -100,7 +100,7 @@ Two cheaper and stronger checks, both used on `zoneout` and `wenceslas`:
   the drawn bounding box against the mesh's own extents.
 
 `appl/temple/smoketest.b` loads every module (`emu-g -r. temple/smoketest`,
-249 of 249 at the time of writing). Redirect it to a *file* — through a
+253 of 253 at the time of writing). Redirect it to a *file* — through a
 pipe, buffering makes it look hung. Its `run` mode needs a draw context and
 fails under `emu-g`.
 
@@ -136,7 +136,7 @@ entry point), `bspline` and `speedline` — leaving 35.
 `Demo/Snd` has two left: `morsecode` (161) and `waterfowl` (82, one sprite
 bin, 300KB of sound data).
 
-Two notes for whoever starts on these:
+Notes for whoever starts on these:
 
 - `Demo/Graphics/Collision.HC` is a different program from
   `Demo/Games/Collision.HC`. The port `collision` is the games one — 64
