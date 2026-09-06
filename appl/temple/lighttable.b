@@ -10,11 +10,11 @@ implement Lighttable;
 #	            n2 = (next==LENS_COLOR) ? 1.5 : 1.0;
 #	            n1 Sin(theta1) == n2 Sin(theta2)
 #	FindNormal: back up one step and walk forward to find the fine-
-#	            grained point of contact, then sweep an arc of radius
-#	            bmp_norm_radius each side of the incoming direction,
-#	            coarse to fine, for the two points where the surface
-#	            crosses the circle; the normal is perpendicular to the
-#	            chord between them, turned to face the photon.
+#	            grained point of contact, then sweep two arcs of radius
+#	            bmp_norm_radius out from theta+pi+-pi/4, coarse to
+#	            fine, for the two points where the surface crosses the
+#	            circle; the normal is perpendicular to the chord
+#	            between them, turned the way the photon is going.
 #	RayBurst:   a photon along the drag, then pairs offset by 2, 5 and 8
 #	            along the perpendicular — WING=9.
 #
@@ -34,6 +34,9 @@ implement Lighttable;
 #      a lock; Dis execution is serialised, so this keeps one list.
 # GAP: its pull-down menu holds the six drawing modes with check marks;
 #      here they are on keys, listed at the foot of the window.
+# GAP: PhotonNew allocates without limit; this keeps a fixed array of
+#      MAXPHOTONS and drops new photons once it is full.  Photons are
+#      never destroyed in either, since they bounce off the border.
 
 include "sys.m";
 	sys: Sys;
@@ -66,9 +69,15 @@ BORDER: con 10;
 WING: con 9;
 VECTOR: con 20;
 BABY_STEPS: con 4;
-SCALE: con 4;			# bmp_scale: the fine grid per display pixel
-NORM_RADIUS: con 12;		# bmp_norm_radius, in fine units
 MAXPHOTONS: con 2048;
+# The original asks how much memory to give the fine bitmap and defaults
+# to sixteen megabytes, then derives everything else from it:
+#	bmp_scale=Sqrt(bmp_mem/2*8*pix_height/pix_width)/pix_height;
+#	find_normal_dist_sqr=2*Sqr(bmp_scale);
+#	bmp_norm_radius=Min(10*bmp_scale,250);
+# so at 640x480 the fine grid is about fifteen cells to the display pixel.
+BMP_MEM: con 16*1024*1024;
+INHIBIT_DIST_SQR: con 4.0;	# D3DistSqr(&p_normal_inhibit,&p)<4.0
 
 # the drawing modes, in the original's order
 LTM_REFLECT_LINE, LTM_REFLECT_SPLINE, LTM_REFRACT_LINE,
@@ -89,15 +98,17 @@ mw, mh: int;
 # the fine bitmaps, one bit a fine pixel
 reflectb, refractb: array of byte;
 fw, fh, fstride: int;
+bmpscale, normradius, normdistsqr: real;
 
 px, py, vx, vy, nx, ny: array of real;
+inhx, inhy: array of real;	# Photon.p_normal_inhibit
 np := 0;
 mode := LTM_REFLECT_LINE;
 shownormals := 0;
 dragx, dragy: int;
 dragging := 0;
 splinepts: list of Point;
-photoncnt, mirrorcnt, snellcnt, zeronormal: int;
+photoncnt, mirrorcnt, snellcnt, normalinhibit, zeronormal: int;
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
@@ -133,6 +144,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	vy = array[MAXPHOTONS] of real;
 	nx = array[MAXPHOTONS] of real;
 	ny = array[MAXPHOTONS] of real;
+	inhx = array[MAXPHOTONS] of real;
+	inhy = array[MAXPHOTONS] of real;
 
 	win.reshape(Rect((0, 0), (640, 480)));
 	win.onscreen("place");
@@ -192,13 +205,19 @@ setup()
 		return;
 	mw = img.r.dx();
 	mh = img.r.dy();
-	fw = mw*SCALE;
-	fh = mh*SCALE;
+	bmpscale = math->sqrt(real(BMP_MEM/2)*8.0*real mh/real mw)/real mh;
+	normdistsqr = 2.0*bmpscale*bmpscale;
+	normradius = 10.0*bmpscale;
+	if(normradius > 250.0)
+		normradius = 250.0;
+	fw = int(bmpscale*real mw);
+	fh = int(bmpscale*real mh);
 	fstride = (fw + 7)/8;
 	map = array[mw*mh] of { * => byte 0 };
 	reflectb = array[fstride*fh] of { * => byte 0 };
 	refractb = array[fstride*fh] of { * => byte 0 };
 	np = 0;
+	photoncnt = mirrorcnt = snellcnt = normalinhibit = zeronormal = 0;
 }
 
 key(k: int)
@@ -244,7 +263,7 @@ stroke(x1, y1, x2, y2, kind: int)
 	n := absi(x2-x1);
 	if(absi(y2-y1) > n)
 		n = absi(y2-y1);
-	n *= SCALE;
+	n = int(real n*bmpscale);
 	if(n < 1)
 		n = 1;
 	b := reflectb;
@@ -252,13 +271,13 @@ stroke(x1, y1, x2, y2, kind: int)
 		b = refractb;
 	for(i := 0; i <= n; i++){
 		t := real i/real n;
-		fx := real(x1*SCALE) + t*real((x2-x1)*SCALE);
-		fy := real(y1*SCALE) + t*real((y2-y1)*SCALE);
+		fx := (real x1 + t*real(x2-x1))*bmpscale;
+		fy := (real y1 + t*real(y2-y1))*bmpscale;
 		for(dy := -1; dy <= 1; dy++)
 			for(dx := -1; dx <= 1; dx++)
 				bplot(b, int fx + dx, int fy + dy);
-		cx := int(fx/real SCALE);
-		cy := int(fy/real SCALE);
+		cx := int(fx/bmpscale);
+		cy := int(fy/bmpscale);
 		if(cx >= 0 && cx < mw && cy >= 0 && cy < mh)
 			map[cy*mw + cx] = byte kind;
 	}
@@ -327,10 +346,13 @@ floodfill(sx, sy: int)
 		while(x1 < mw-1 && map[y*mw + x1 + 1] == byte 0)
 			x1++;
 		for(x := x0; x <= x1; x++){
+			# only the coarse map is filled.  "The coarse gets
+			# flood-filled but the fine grained is only
+			# outlines" is the first line of the original, and
+			# it is load-bearing: filling the fine bitmap too
+			# would leave the normal search with a solid
+			# interior and no surface to find.
 			map[y*mw + x] = byte 2;
-			for(fy := y*SCALE; fy < (y+1)*SCALE; fy++)
-				for(fx := x*SCALE; fx < (x+1)*SCALE; fx++)
-					bplot(refractb, fx, fy);
 			if(y > 0 && map[(y-1)*mw + x] == byte 0 && sp < len stack-1)
 				stack[sp++] = (y-1)*mw + x;
 			if(y < mh-1 && map[(y+1)*mw + x] == byte 0 && sp < len stack-1)
@@ -348,6 +370,7 @@ newphoton(x, y, dx, dy: real)
 	px[np] = x; py[np] = y;
 	vx[np] = dx; vy[np] = dy;
 	nx[np] = 0.0; ny[np] = 0.0;
+	inhx[np] = 0.0; inhy[np] = 0.0;
 	np++;
 	photoncnt++;
 }
@@ -382,36 +405,76 @@ randomburst()
 	}
 }
 
-# FindNormal: recover a normal from the bitmap alone.  Sweep an arc of
-# radius NORM_RADIUS each side of the incoming direction, coarse then
-# fine, for where the surface crosses the circle; the normal is
-# perpendicular to the chord between those two crossings.
-findnormal(b: array of byte, i: int): int
+# FindNormal: recover a normal from the bitmap alone.  Back the photon up
+# one step and walk it forward at fine-bitmap resolution to get the point
+# of contact, then sweep an arc of radius bmp_norm_radius from that point
+# for the two places the surface crosses the circle; the normal is
+# perpendicular to the chord between them, turned away from the photon.
+#
+# The two arcs matter more than they look.  Each starts 45 degrees off the
+# *backward* direction and widens, one to each side, and between them they
+# cover the whole circle — including the wedge either side of the way the
+# photon is going, which is exactly where the crossings are at grazing
+# incidence.  A search that skips that wedge finds nothing on a shallow
+# hit and falls back to a normal along the ray, which reflects the photon
+# straight back the way it came.
+findnormal(b: array of byte, i: int)
 {
 	th := math->atan2(vy[i], vx[i]);
-	cx := px[i]*real SCALE;
-	cy := py[i]*real SCALE;
+	inhx[i] = px[i];
+	inhy[i] = py[i];
+
+	# D3SubEqu(&tmpp->p,&tmpp->v), then forward while the fine bitmap
+	# is still clear and we have not gone further than
+	# find_normal_dist_sqr
+	px[i] -= vx[i];
+	py[i] -= vy[i];
+	cx := px[i]*bmpscale;
+	cy := py[i]*bmpscale;
+	wx := cx;
+	wy := cy;
+	while(!bpeek(b, int wx, int wy) &&
+	      (wx-cx)*(wx-cx) + (wy-cy)*(wy-cy) < normdistsqr){
+		wx += vx[i];
+		wy += vy[i];
+	}
+	cx = wx;
+	cy = wy;
+	px[i] = cx/bmpscale;
+	py[i] = cy/bmpscale;
+
 	(ok1, a1) := arcfind(b, cx, cy, th, -1.0);
 	(ok2, a2) := arcfind(b, cx, cy, th, 1.0);
-	if(!ok1 || !ok2){
-		nx[i] = math->cos(th);
-		ny[i] = math->sin(th);
-		zeronormal++;
-		return 0;
+	p1x, p1y, p2x, p2y: real;
+	if(ok1){
+		p1x = cx + normradius*math->cos(a1);
+		p1y = cy + normradius*math->sin(a1);
+	}else{
+		# The original falls back to D3Copy(&p1,&tmpp->p), which is
+		# the photon in *display* coordinates where everything else
+		# here is in fine ones.  Kept as written: with both arcs
+		# covering the circle it is all but unreachable, and the
+		# |p1-p2| test below catches the degenerate case anyway.
+		p1x = px[i];
+		p1y = py[i];
 	}
-	p1x := cx + real NORM_RADIUS*math->cos(a1);
-	p1y := cy + real NORM_RADIUS*math->sin(a1);
-	p2x := cx + real NORM_RADIUS*math->cos(a2);
-	p2y := cy + real NORM_RADIUS*math->sin(a2);
+	if(ok2){
+		p2x = cx + normradius*math->cos(a2);
+		p2y = cy + normradius*math->sin(a2);
+	}else{
+		p2x = px[i];
+		p2y = py[i];
+	}
 	dx := p1x - p2x;
 	dy := p1y - p2y;
 	if(dx*dx + dy*dy < 0.01){
 		nx[i] = math->cos(th);
 		ny[i] = math->sin(th);
 		zeronormal++;
-		return 0;
+		return;
 	}
-	# perpendicular to the chord, turned to face the photon
+	# perpendicular to the chord, turned to point the way the photon is
+	# going rather than back at it
 	ex := dy;
 	ey := -dx;
 	if(ex*vx[i] + ey*vy[i] < 0.0){
@@ -421,21 +484,36 @@ findnormal(b: array of byte, i: int): int
 	d := math->sqrt(ex*ex + ey*ey);
 	nx[i] = ex/d;
 	ny[i] = ey/d;
-	return 1;
 }
 
+# One of the original's two arc searches.  side -1 sweeps out from
+# theta+pi-pi/4 and side 1 from theta+pi+pi/4; each covers a quarter turn
+# to either side first, then three quarters of a turn on its own side, and
+# the whole thing repeats at a quarter of the step if nothing was hit.
 arcfind(b: array of byte, cx, cy, th, side: real): (int, real)
 {
-	# coarse to fine, as the original's step loop does
+	base := th + PI + side*PI/4.0;
 	step := 1.0;
 	while(step >= 0.01){
+		inc := step*PI/normradius;
 		phi := 0.0;
-		while(phi <= 3.0*PI/4.0){
-			a := th + side*(PI/4.0 + phi);
-			if(bpeek(b, int(cx + real NORM_RADIUS*math->cos(a)),
-				int(cy + real NORM_RADIUS*math->sin(a))))
+		while(phi <= PI/4.0){
+			a := base + side*phi;
+			if(bpeek(b, int(cx + normradius*math->cos(a)),
+				int(cy + normradius*math->sin(a))))
 				return (1, a);
-			phi += step*PI/real NORM_RADIUS;
+			a = base - side*phi;
+			if(bpeek(b, int(cx + normradius*math->cos(a)),
+				int(cy + normradius*math->sin(a))))
+				return (1, a);
+			phi += inc;
+		}
+		while(phi <= 3.0*PI/4.0){
+			a := base + side*phi;
+			if(bpeek(b, int(cx + normradius*math->cos(a)),
+				int(cy + normradius*math->sin(a))))
+				return (1, a);
+			phi += inc;
 		}
 		step /= 4.0;
 	}
@@ -454,26 +532,42 @@ mirror(i: int)
 	mirrorcnt++;
 }
 
-# n1 Sin(theta1) == n2 Sin(theta2), with 1.5 inside a lens
+# n1 Sin(theta1) == n2 Sin(theta2), with 1.5 inside a lens.  theta1 comes
+# from the dot product, and which side of the normal the refracted ray
+# leaves on is decided by Wrap(theta-theta_n).
+#
+# GAP: the original computes ASin(n1 Sin(theta1)/n2) with no guard, so a
+#      ray past the critical angle takes the arcsine of a number greater
+#      than one.  Here it is clamped, which sends that ray out along the
+#      surface; a physical model would reflect it instead.
 snell(i, last, next: int)
 {
 	th := math->atan2(vy[i], vx[i]);
-	findnormal(refractb, i);
-	thn := math->atan2(ny[i], nx[i]);
 	n1 := 1.0;
 	if(last == 2)
 		n1 = 1.5;
 	n2 := 1.0;
 	if(next == 2)
 		n2 = 1.5;
-	t1 := wrap(th - thn);
-	s2 := n1/n2*math->sin(t1);
-	if(s2 > 1.0 || s2 < -1.0){
-		mirror(i);		# total internal reflection
-		return;
-	}
+	findnormal(refractb, i);
+	thn := math->atan2(ny[i], nx[i]);
+	d := nx[i]*vx[i] + ny[i]*vy[i];
+	if(d > 1.0)
+		d = 1.0;
+	if(d < -1.0)
+		d = -1.0;
+	t1 := math->acos(d);
+	s2 := n1*math->sin(t1)/n2;
+	if(s2 > 1.0)
+		s2 = 1.0;
+	if(s2 < -1.0)
+		s2 = -1.0;
 	t2 := math->asin(s2);
-	a := thn + t2;
+	a: real;
+	if(wrap(th - thn) >= 0.0)
+		a = thn + t2;
+	else
+		a = thn - t2;
 	vx[i] = math->cos(a);
 	vy[i] = math->sin(a);
 	snellcnt++;
@@ -490,35 +584,64 @@ wrap(a: real): real
 	return a;
 }
 
+# MPAnimateTask's inner loop.  A photon moves one unit per frame, taken in
+# BABY_STEPS pieces so a boundary is not stepped over; it bounces off the
+# BORDER walls rather than leaving, so the population only ever grows.
+#
+# p_normal_inhibit is the guard that keeps a photon from bending twice at
+# the same place: FindNormal records where it was called, and any further
+# crossing within two pixels of that point is counted and ignored.  It is
+# cleared, by being set to (0,0), on any step that is neither inhibited
+# nor a crossing — and (0,0) is outside the border, so a cleared inhibit
+# never matches.
 animate()
 {
-	i := 0;
-	while(i < np){
-		alive := 1;
+	for(i := 0; i < np; i++){
 		for(s := 0; s < BABY_STEPS; s++){
 			lastc := cell(px[i], py[i]);
-			px[i] += vx[i];
-			py[i] += vy[i];
-			if(px[i] < 0.0 || px[i] >= real mw ||
-			   py[i] < 0.0 || py[i] >= real mh){
-				alive = 0;
-				break;
+			px[i] += vx[i]/real BABY_STEPS;
+			py[i] += vy[i]/real BABY_STEPS;
+			if(px[i] < real BORDER){
+				px[i] = real(2*BORDER) - px[i];
+				vx[i] = -vx[i];
+			}
+			if(px[i] >= real(mw-BORDER)){
+				px[i] -= px[i] - real(mw-BORDER);
+				vx[i] = -vx[i];
+			}
+			if(py[i] < real BORDER){
+				py[i] = real(2*BORDER) - py[i];
+				vy[i] = -vy[i];
+			}
+			if(py[i] >= real(mh-BORDER)){
+				py[i] -= py[i] - real(mh-BORDER);
+				vy[i] = -vy[i];
 			}
 			nextc := cell(px[i], py[i]);
-			if(nextc == lastc)
-				continue;
-			if(nextc == 1 || lastc == 1)
-				mirror(i);
-			else
-				snell(i, lastc, nextc);
+			ddx := inhx[i] - px[i];
+			ddy := inhy[i] - py[i];
+			inhibit := ddx*ddx + ddy*ddy < INHIBIT_DIST_SQR;
+			if(lastc != nextc){
+				if((lastc == 0 && nextc == 2) ||
+				   (lastc == 2 && nextc == 0)){
+					if(inhibit)
+						normalinhibit++;
+					else
+						snell(i, lastc, nextc);
+				}else if(lastc == 0 && nextc == 1){
+					if(inhibit)
+						normalinhibit++;
+					else
+						mirror(i);
+				}else if(!inhibit){
+					inhx[i] = 0.0;
+					inhy[i] = 0.0;
+				}
+			}else if(!inhibit){
+				inhx[i] = 0.0;
+				inhy[i] = 0.0;
+			}
 		}
-		if(!alive){
-			np--;
-			px[i] = px[np]; py[i] = py[np];
-			vx[i] = vx[np]; vy[i] = vy[np];
-			nx[i] = nx[np]; ny[i] = ny[np];
-		}else
-			i++;
 	}
 }
 
@@ -576,10 +699,13 @@ redraw()
 
 	if(font != nil){
 		img.text(o, ink[15], Point(0, 0), font,
-			sys->sprint("Scale:%d (%d,%d)-->(%d,%d)", SCALE, mw, mh, fw, fh));
+			sys->sprint("Mem:0x%X %dMeg Scale:%.3f (%d,%d)-->(%d,%d)",
+				fstride*fh*2, fstride*fh*2/1024/1024, bmpscale,
+				mw, mh, fw, fh));
 		img.text(Point(o.x, o.y + font.height), ink[15], Point(0, 0), font,
-			sys->sprint("PhotonCnt:%d MirrorCnt:%d SnellCnt:%d ZeroNormal:%d  live:%d",
-				photoncnt, mirrorcnt, snellcnt, zeronormal, np));
+			sys->sprint("PhotonCnt:%d MirrorCnt:%d SnellCnt:%d SnellInhibit:%d ZeroNormal:%d",
+				photoncnt, mirrorcnt, snellcnt, normalinhibit,
+				zeronormal));
 		img.text(Point(o.x, img.r.max.y - 2*font.height), ink[14],
 			Point(0, 0), font,
 			sys->sprint("mode: %s", modenames[mode]));

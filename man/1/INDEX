@@ -479,6 +479,7 @@ rget sh-file2chan
 rm tiny
 rocket rocket
 rocketscience rocketscience
+ropcollision ropcollision
 rotatetank rotatetank
 rread sh-file2chan
 rreadone sh-file2chan

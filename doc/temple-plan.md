@@ -99,8 +99,31 @@ Two cheaper and stronger checks, both used on `zoneout` and `wenceslas`:
   pixels for one and zero for the other says which mesh was drawn. Compare
   the drawn bounding box against the mesh's own extents.
 
+Both of those found real defects in `lighttable`, which is worth
+recording because it was written from the same reading of the original
+that then turned out to be too loose. A probe that fires one photon at a
+straight mirror at twelve angles of incidence and compares the reflected
+direction against `2*theta_n + pi - theta_in` showed errors of up to 159
+degrees past 46 degrees of incidence, three mirror events where there
+should be one, and the zero-normal fallback firing. The cause was the
+arc search in `FindNormal`: the original sweeps two arcs outward from
+`theta+pi±pi/4` which together cover the whole circle, and the port swept
+`theta±pi/4` to `theta±pi`, missing the wedge either side of the way the
+photon is going — which is exactly where the crossings are on a grazing
+hit. Restoring the original's sweep brought every angle from 7 to 79
+degrees within 0.9 degrees, and the old sweep put back as a negative
+control brought the failure back. A second probe against Snell's law
+agrees to within 0.15 degrees from 5 to 69 degrees. Three other
+deviations came out of the same reading: the photon moved `v` per baby
+step rather than `v/BABY_STEPS` per step, photons were destroyed at the
+edge instead of bouncing off the border, `p_normal_inhibit` was missing
+altogether, and the flood fill filled the *fine* bitmap as well as the
+coarse map — against the original's own first line, "the coarse gets
+flood-filled but the fine grained is only outlines", which is what stops
+the inside of a lens being a surface.
+
 `appl/temple/smoketest.b` loads every module (`emu-g -r. temple/smoketest`,
-290 of 290 at the time of writing). Redirect it to a *file* — through a
+291 of 291 at the time of writing). Redirect it to a *file* — through a
 pipe, buffering makes it look hung. Its `run` mode needs a draw context and
 fails under `emu-g`.
 
@@ -140,11 +163,11 @@ them have been checked against the original rather than merely written.
 **`Apps` is complete** apart from `Apps/X-Caliber`, which is ported as
 `xcaliber`.
 
-**`Demo/Graphics` and `Demo/Snd` are complete.** All 39 that were
+**`Demo/Graphics` and `Demo/Snd` are complete.** All 40 that were
 unported have been written, wired into `appl/temple/mkfile` and
 `smoketest.b`, given a `man/1` page and a `man/1/INDEX` entry.  The
-smoketest loads 290 of 290 clean and each new demo survives eight seconds
-under `emu-cocoa`.
+smoketest loads 291 of 291 clean and each new demo survives under
+`emu-cocoa`.
 
 Three naming notes for anyone reading the list:
 
@@ -153,8 +176,9 @@ Three naming notes for anyone reading the list:
   own entry point.
 - `3DPoly.HC` is `3dpoly.b` with `implement Poly3d`, since a Limbo module
   name cannot start with a digit.
-- `Demo/Graphics/Collision.HC` is still unported and its name is taken by
-  the `Demo/Games` one; see the note below.
+- `Demo/Graphics/Collision.HC` is **`ropcollision`**, because `collision`
+  belongs to the `Demo/Games` program of the same name, which is a
+  different demo (64 elastic balls) and is faithfully ported.
 
 Seven of them cannot reproduce the mechanism the original exists to show,
 and say so in the file and the man page rather than pretending:
@@ -211,11 +235,6 @@ borderless operation, the `PopUp*` dialog family, and `ROP_XOR`.
 
 Notes for whoever starts on these:
 
-- `Demo/Graphics/Collision.HC` is a different program from
-  `Demo/Games/Collision.HC`. The port `collision` is the games one — 64
-  elastic balls in fixed point — and is faithful. The tracked
-  `icons/temple/collision_1.bit` and `_2.bit` belong to the *graphics*
-  one, an unported `ROP_COLLISION` mouse demo, and the name is taken.
 - Several of these lean on machinery TempleOS has and this tree does not,
   and the honest port is of the *content* rather than the mechanism:
   `winzbuf` reads `gr.win_z_buf`, `pantext` slides `gr.pan_text_x`,

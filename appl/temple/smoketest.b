@@ -97,7 +97,7 @@ mods := array[] of {
 	"bspline", "griddemo", "mousedemo", "speedline",
 	"extents", "spriteplot", "spriteplot3d", "spriteput", "spriteputext", "spriteraw", "spritetext",
 	"blot", "charanimation", "palette", "pantext", "scrncapture", "sunmoon", "winzbuf",
-	"3dpoly", "pick", "rotatetank", "shadow",
+	"3dpoly", "pick", "ropcollision", "rotatetank", "shadow",
 	"balloon", "scrollbars", "slider", "wallpaperctrl",
 	"commonancestor", "lowpassfilter", "mathaudiodemo", "predatorprey",
 	"edsprite", "shading", "wallpaperfish", "waterfowl",

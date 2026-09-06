@@ -123,6 +123,7 @@ TARG=\
 	winzbuf.dis\
 	3dpoly.dis\
 	pick.dis\
+	ropcollision.dis\
 	rotatetank.dis\
 	shadow.dis\
 	balloon.dis\

@@ -1,0 +1,52 @@
+.TH ROPCOLLISION 1
+.SH NAME
+ropcollision \- drawing a sprite to ask what it would have hit
+.SH SYNOPSIS
+.B temple/ropcollision
+.SH DESCRIPTION
+.I Ropcollision
+is a port of the TempleOS
+.B Demo/Graphics/Collision.HC
+demonstration.
+It runs under
+.IR wm (1).
+It is a different program from
+.B Demo/Games/Collision.HC,
+which is ported as
+.IR collision (1).
+.PP
+One sprite follows the pointer and one sits in the middle of the window.
+The demonstration is the raster operation
+.BR ROP_COLLISION ,
+which draws nothing: it walks the pixels the sprite would have set and
+counts each one that is already something other than the background
+colour.  So the centre sprite is drawn twice a frame, once invisibly to
+ask what it would have landed on, and once for real \- in a second,
+taller shape if the answer was anything at all.  The running count is
+printed at the left of the window.
+.PP
+Because the test is the sprite's own pixels rather than its bounding box,
+a shape can be moved through a hole in another shape without ever
+registering a hit.
+.PP
+This tree has no such raster operation, so the frame is composed
+offscreen and the centre sprite's mask is walked against it, in the
+original's order: the pointer sprite is already drawn when the question
+is asked, and the count is printed afterwards, so the text can never
+contribute to it.
+.PP
+The controls are:
+.TF "any key"
+.TP
+.B "the pointer"
+Move the first sprite
+.TP
+.B "any key"
+Exit
+.PD
+.SH SOURCE
+.B /appl/temple/ropcollision.b
+.SH SEE ALSO
+.IR temple (1),
+.IR collision (1),
+.IR wm (1)
