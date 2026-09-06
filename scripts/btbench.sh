@@ -35,6 +35,9 @@
 #	refuseexec
 #		a server that queues the pieces cleanly and refuses to
 #		commit them: the same assertions, reached the other way
+#	changed	a device that rearranges its database while connected
+#		and indicates Service Changed: the name space must
+#		follow, on the same link
 #	stalefid	a characteristic file kept open across a disconnect
 #		and a reconnect: the old name must be gone.  What the
 #		fix for it changes is not visible from inside the guest
@@ -122,6 +125,7 @@ run orphan --orphan-connect orphan
 run orphanlive --orphan-live orphanlive
 run badprepare --corrupt-prepare badprepare
 run refuseexec --refuse-execute badprepare
+run changed --service-changed changed
 run stalefid "" stalefid
 #
 # three Read Requests for the device name: the one the phase makes

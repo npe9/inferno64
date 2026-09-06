@@ -90,6 +90,7 @@ Dev: adt {
 	atype:	int;
 	id:	array of byte;	# its identity address, from a bond, or nil
 	idtype:	int;
+	scv:	int;		# the Service Changed value handle, or 0
 	name:	string;
 	rssi:	int;
 	adv:	array of byte;
@@ -952,6 +953,16 @@ discover(d: ref Dev): string
 			if(ch.props & (Gatt->Pnotify|Gatt->Pindicate))
 				cn.nq = mkfd(sq, ch.uuid + ".notify", Kcnotify, 8r444, d, cn);
 			d.chars = cn :: d.chars;
+			#
+			# the device's own way of saying it has moved
+			# things.  Subscribing is an ordinary indication
+			# subscription; what it costs is one CCCD write
+			# per connection to a device that has one.
+			#
+			if(s.uuid == "1801" && ch.uuid == "2a05"){
+				if(gatt->subscribe(d.sess, ch, 1) == nil)
+					d.scv = ch.vhandle;
+			}
 		}
 	}
 	return nil;
@@ -972,6 +983,29 @@ notifier(d: ref Dev)
 			continue;
 		h := bt->get16(p, 1);
 		v := p[3:];
+		if(d.scv != 0 && h == d.scv){
+			#
+			# The value is the range of handles that moved.
+			# The whole tree is built again regardless: this
+			# has no cache to invalidate part of, and half a
+			# rediscovery would leave the range's own
+			# boundaries to be trusted, which is what a
+			# device that has just told us it rearranged
+			# itself has least claim to.  The range is said
+			# out loud so what was ignored is visible.
+			#
+			first := 0;
+			last := 0;
+			if(len v >= 4){
+				first = bt->get16(v, 0);
+				last = bt->get16(v, 2);
+			}
+			sys->fprint(sys->fildes(2),
+				"btfs: %s: service changed %#4.4ux-%#4.4ux, discovering again\n",
+				d.dir, first, last);
+			spawn rediscover(d);
+			continue;
+		}
 		for(l := d.chars; l != nil; l = tl l){
 			cn := hd l;
 			if(cn.c.vhandle == h){
@@ -998,19 +1032,33 @@ watcher(d: ref Dev)
 		d.sess = nil;
 		d.mux = nil;
 		d.state = "disconnected: " + why;
-		for(l := d.chars; l != nil; l = tl l){
-			cn := hd l;
-			if(cn.nq != big 0)
-				remove(cn.nq);
-			remove(cn.q);
-		}
-		d.chars = nil;
-		if(d.gq != big 0){
-			removetree(d);
-			d.gq = big 0;
-		}
+		droptree(d);
 	}
 	d.lock <-= 1;
+}
+
+#
+# take the whole gatt tree down: the characteristic files, which hang
+# off the service directories, then the service directories and the
+# gatt directory itself.  Called with d.lock held, by the watcher when
+# the link goes and by the rediscovery below when the device says its
+# database has moved -- one function rather than two copies, because
+# the two used to be one copy and a half.
+#
+droptree(d: ref Dev)
+{
+	for(l := d.chars; l != nil; l = tl l){
+		cn := hd l;
+		if(cn.nq != big 0)
+			remove(cn.nq);
+		remove(cn.q);
+	}
+	d.chars = nil;
+	if(d.gq != big 0){
+		removetree(d);
+		d.gq = big 0;
+	}
+	d.scv = 0;
 }
 
 #
@@ -1020,6 +1068,33 @@ watcher(d: ref Dev)
 # the device it belongs to, and taking down one link must not empty
 # the gatt tree of another that is still connected.
 #
+#
+# The device says its database has moved.  Take the tree down and walk
+# it again on the same link -- the connection is fine, it is the
+# picture of it that is stale.  Under d.lock, so it cannot run beside a
+# read or a connection, and spawned by the notifier rather than done in
+# it, so notifications keep being delivered while it runs.
+#
+# A client that had a .notify file open loses it: the file is removed
+# with the rest of the tree and the subscription that stood behind it
+# was made against a handle that may no longer mean the same thing.
+# btfs(4) says so.
+#
+rediscover(d: ref Dev)
+{
+	<-d.lock;
+	if(d.sess == nil){
+		d.lock <-= 1;
+		return;
+	}
+	droptree(d);
+	e := discover(d);
+	d.lock <-= 1;
+	if(e != nil)
+		sys->fprint(sys->fildes(2),
+			"btfs: %s: discovering again: %s\n", d.dir, e);
+}
+
 removetree(d: ref Dev)
 {
 	# qids are never reused -- nextq only grows -- so this walks the

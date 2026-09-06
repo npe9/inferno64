@@ -256,6 +256,12 @@ Gatt: module
 	Uchar:		con 16r2803;
 	Ucccd:		con 16r2902;
 
+	# the Generic Attribute service and its Service Changed
+	# characteristic, which a device indicates on when the database
+	# under it has moved
+	Ugattsvc:	con 16r1801;
+	Uchanged:	con 16r2a05;
+
 	Pbroadcast:	con 16r01;
 	Pread:		con 16r02;
 	Pwritenoresp:	con 16r04;

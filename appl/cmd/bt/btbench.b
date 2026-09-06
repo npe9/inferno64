@@ -200,6 +200,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	"stalefid" =>
 		stalefid();
 		return;
+	"changed" =>
+		changed();
+		return;
 	}
 	case mode {
 	"stall" or "late" or "early" or "orphan" or "orphanlive" or "badprepare" =>
@@ -510,6 +513,86 @@ conntest(mode: string)
 			ok = 0;
 		} else
 			sys->print("BT: the link carries ATT: name = %s\n", v);
+	}
+	writefile(dev + "/ctl", "disconnect");
+	writefile(mnt + "/0/ctl", "scan off");
+	sys->print("BT: done\n");
+}
+
+#
+# A device that rearranges its database while it is connected, and
+# says so.  The name space has to follow: the service that appeared
+# must be there, without a disconnection, and its characteristic must
+# read.  A client that believed the copy it walked first would never
+# see it -- which is what this stack did until it subscribed to
+# Service Changed.
+#
+changed()
+{
+	remotes := lsdir(mnt + "/0/remote");
+	if(remotes == nil){
+		sys->print("BT: FAILED: nothing was advertising\n");
+		return;
+	}
+	dev := mnt + "/0/remote/" + hd remotes;
+	if((e := writefile(dev + "/ctl", "connect")) != nil){
+		sys->print("BT: FAILED: connect: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	before := lsdir(dev + "/gatt");
+	sys->print("BT: services at first: %d\n", len before);
+	for(l := before; l != nil; l = tl l)
+		if(hd l == "fff5"){
+			sys->print("BT: FAILED: the later service was there all along\n");
+			sys->print("BT: done\n");
+			return;
+		}
+	#
+	# nothing here asks for anything: the device indicates, btfs
+	# walks the database again, and the name space changes under a
+	# link that was never dropped.
+	#
+	found := 0;
+	after: list of string;
+	for(i := 0; i < 20 && !found; i++){
+		sys->sleep(500);
+		after = lsdir(dev + "/gatt");
+		for(l = after; l != nil; l = tl l)
+			if(hd l == "fff5")
+				found = 1;
+	}
+	ok := 1;
+	if(!found){
+		sys->print("BT: FAILED: the service that appeared was never noticed\n");
+		ok = 0;
+	} else {
+		sys->print("BT: services now: %d, including fff5\n", len after);
+		st := trim(readfile(dev + "/state"));
+		if(!(len st >= 9 && st[0:9] == "connected")){
+			sys->print("BT: FAILED: the link went away: %s\n", st);
+			ok = 0;
+		} else
+			sys->print("BT: on the same link: %s\n", st);
+		v := trim(readfile(dev + "/gatt/fff5/fff6"));
+		if(v != "the service that arrived later"){
+			sys->print("BT: FAILED: the new characteristic reads %s\n", v);
+			ok = 0;
+		} else
+			sys->print("BT: the new characteristic reads: %s\n", v);
+	}
+	if(ok){
+		#
+		# and what was there before still works, so what was
+		# proved is that the tree was walked again rather than
+		# replaced by whatever arrived last.
+		#
+		v := trim(readfile(dev + "/gatt/1800/2a00"));
+		if(v != "inferno-bench"){
+			sys->print("BT: FAILED: the old characteristic reads %s\n", v);
+			ok = 0;
+		} else
+			sys->print("BT: the old characteristic still reads: %s\n", v);
 	}
 	writefile(dev + "/ctl", "disconnect");
 	writefile(mnt + "/0/ctl", "scan off");

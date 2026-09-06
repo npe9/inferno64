@@ -129,6 +129,19 @@ request(s: ref Sess, req: array of byte): (array of byte, string)
 	if(int r[0] == Rerror){
 		if(len r < 5)
 			return (nil, "malformed error response");
+		#
+		# an error response names the request it failed, and that
+		# has to be this one.  A server that answers something
+		# which is not a request at all -- a Handle Value
+		# Confirmation, say -- puts an error in front of whatever
+		# the client asks next, and without this the client wears
+		# it: seen live, a rediscovery after a Service Changed
+		# failing with "request not supported" for a confirmation
+		# it had just sent.
+		#
+		if(int r[1] != int req[0])
+			return (nil, sys->sprint("an error for request %#2.2ux, not %#2.2ux",
+				int r[1], int req[0]));
 		return (nil, sys->sprint("handle %#4.4ux: %s", bt->get16(r, 2), errstr(int r[4])));
 	}
 	if(int r[0] != (int req[0]) + 1)

@@ -96,6 +96,11 @@ corrupt_prepare = '--corrupt-prepare' in sys.argv
 # write that never happened.
 refuse_execute = '--refuse-execute' in sys.argv
 
+# --service-changed: once the guest has subscribed to Service Changed,
+# the database moves -- a service appears -- and the device says so.  A
+# client that believes the copy it walked first will never see it.
+service_changed = '--service-changed' in sys.argv
+
 def log(*a):
     if verbose:
         print('bthci:', *a, file=sys.stderr, flush=True)
@@ -237,21 +242,34 @@ SVC = [
     # a writable characteristic with room for a value longer than any
     # MTU this bench negotiates, so a long write has somewhere to go
     (0x0020, 0x0022, 0xfff0),
+    # Generic Attribute, whose one characteristic is how a device says
+    # its database has moved
+    (0x0030, 0x0033, 0x1801),
 ]
+
+# what appears when the database moves, under --service-changed
+LATER_SVC = (0x0040, 0x0042, 0xfff5)
+LATER_CHAR = (0x0041, 0x02, 0x0042, 0xfff6)
 # characteristic declarations: (decl handle, props, value handle, uuid)
 CHARS = [
     (0x0002, 0x02, 0x0003, 0x2a00),
     (0x0004, 0x02, 0x0005, 0x2a01),
     (0x0011, 0x12, 0x0012, 0x2a19),
     (0x0021, 0x0a, 0x0022, 0xfff1),
+    (0x0031, 0x20, 0x0032, 0x2a05),          # indicate only
 ]
 VALUES = {
     0x0003: b'inferno-bench',
     0x0005: bytes([0x00, 0x00]),
     0x0012: bytes([90]),
     0x0022: b'',
+    0x0032: b'',
+    0x0042: b'the service that arrived later',
 }
-DESCS = [(0x0013, 0x2902)]
+
+# client characteristic configuration, per descriptor handle
+CCCD = {0x0013: 0, 0x0033: 0}
+DESCS = [(0x0013, 0x2902), (0x0033, 0x2902)]
 
 class Model:
     def __init__(self, conn):
@@ -540,8 +558,8 @@ class Model:
             self.acl(4, bytes([0x05, 1]) + out)
         elif op == 0x0a:                                  # Read
             h = struct.unpack('<H', p[1:3])[0]
-            if h == 0x0013:
-                return self.acl(4, bytes([0x0b]) + struct.pack('<H', self.cccd))
+            if h in CCCD:
+                return self.acl(4, bytes([0x0b]) + struct.pack('<H', CCCD[h]))
             if h not in VALUES:
                 return self.att_err(op, h, 0x01)
             self.acl(4, bytes([0x0b]) + VALUES[h][:self.mtu-1])
@@ -586,18 +604,42 @@ class Model:
         elif op == 0x12:                                  # Write
             h = struct.unpack('<H', p[1:3])[0]
             v = p[3:]
-            if h == 0x0013:
-                self.cccd = struct.unpack('<H', v[:2])[0]
+            if h in CCCD:
+                CCCD[h] = struct.unpack('<H', v[:2])[0]
                 self.acl(4, bytes([0x13]))
-                if self.cccd & 1:
-                    threading.Thread(target=self.notify, daemon=True).start()
+                if h == 0x0013:
+                    self.cccd = CCCD[h]
+                    if self.cccd & 1:
+                        threading.Thread(target=self.notify, daemon=True).start()
+                elif h == 0x0033 and service_changed and CCCD[h] & 2:
+                    threading.Thread(target=self.move_database,
+                                     daemon=True).start()
                 return
             if h in VALUES:
                 VALUES[h] = v
                 return self.acl(4, bytes([0x13]))
             self.att_err(op, h, 0x03)
+        elif op == 0x1e:                                  # Handle Value Confirmation
+            # the answer to an indication, not a request: answering it
+            # would put an error response in front of the client's next
+            # request
+            log('indication confirmed')
         else:
             self.att_err(op, 0, 0x06)                     # request not supported
+
+    def move_database(self):
+        # after the guest has finished walking what is there now
+        time.sleep(2)
+        if LATER_SVC in SVC:
+            return
+        SVC.append(LATER_SVC)
+        CHARS.append(LATER_CHAR)
+        log('the database moved: %s appeared' % hex(LATER_SVC[2]))
+        # the affected range, which is the new service and not the
+        # whole database -- a client that reads the range rather than
+        # rediscovering wholesale has something honest to read
+        self.acl(4, bytes([0x1d]) + struct.pack('<H', 0x0032)
+                 + struct.pack('<HH', LATER_SVC[0], LATER_SVC[1]))
 
     def notify(self):
         level = 90

@@ -151,9 +151,13 @@ checked, and anything that does not match cancels the queue rather
 than committing whatever the server understood.  Still no Read
 Multiple and no signed writes.
 .IP \(bu
-GATT ignores the Service Changed indication, does no caching, and does
-not follow included services.  A device that rearranges its database
-between connections will be believed on the stale copy.
+GATT subscribes to Service Changed now, and walks the database again
+when the device says it has moved, so a device that rearranges itself
+is no longer believed on the stale copy.  It still does no caching and
+does not follow included services; the rediscovery is wholesale rather
+than confined to the range the device names, which is deliberate,
+since a device that has just said it rearranged itself has least claim
+to have got that range right.
 .IP \(bu
 Devices are never forgotten.  A scan in a busy room fills
 .CW /net/bt/0/remote

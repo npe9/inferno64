@@ -19536,6 +19536,74 @@ be quicker and is not done: it would be a change to the stack for the
 convenience of testing it, and the number a real controller is given
 to answer in is not the bench's business.
 .NH 2
+A device that moves its database, and says so
+.PP
+A GATT database is not fixed.  A device may rearrange it \(em firmware
+changes, a mode changes, a service appears \(em and the way it says so
+is an indication on the Service Changed characteristic of the Generic
+Attribute service, carrying the range of handles that moved.  This
+stack stored none of that: it walked the database once per connection
+and believed that copy until the link closed.
+.PP
+.CW btfs
+subscribes to Service Changed while it is discovering, if the device
+has one, and an indication on it takes the whole gatt tree down and
+walks it again on the same link \(em the connection is fine, it is the
+picture of it that is stale.  The rediscovery runs in a process of its
+own under the device's lock, so notifications keep being delivered
+while it runs and it cannot overlap a read or a connection.
+.PP
+The range the device names is read and printed and then not used: the
+tree is rebuilt wholesale.  There is no cache here to invalidate part
+of, and trusting the range would mean trusting the boundaries of a
+device that has just said it rearranged itself, which is what it has
+least claim to.  That is a choice rather than an omission and the code
+says so.
+.PP
+A client holding a
+.CW .notify
+file across it loses the file, and the subscription behind it stood
+against a handle that may no longer mean the same thing.  Nothing is
+resubscribed.
+.I btfs (4)
+says so rather than leaving it to be discovered.
+.PP
+The
+.CW changed
+phase connects, counts the services, and then asks for nothing: the
+model's
+.CW --service-changed
+adds a service two seconds after the guest subscribes and indicates
+the range it occupies.  The phase waits for
+.CW fff5
+to appear under
+.CW gatt/ ,
+checks the link was never dropped, reads the new characteristic, and
+reads an old one \(em so what is asserted is that the tree was walked
+again rather than replaced by whatever arrived last.  Without the
+subscription, and with the subscription but no rediscovery, the
+service is never noticed and the phase says so.
+.NH 2
+Two things the new phase found
+.PP
+The model answered a Handle Value Confirmation as though it were a
+request, with
+.CW "request not supported" .
+A confirmation is the answer to an indication and takes no answer of
+its own; the model was wrong and is fixed.
+.PP
+What it exposed is not.
+.CW Att.request
+took any error response as the answer to the outstanding request, and
+an error response says which request it failed.  So the confirmation's
+error landed in front of the rediscovery and failed it \(em
+.CW "btfs: 060504030201: discovering again: handle 0x0000: request not
+supported" .
+.CW request
+now checks that field, the way it already checked that a successful
+answer is the one the request asked for.  Found because a bench phase
+failed, not by reading.
+.NH 2
 A file that has gone
 .PP
 Every characteristic file is torn out of the name space when the link
