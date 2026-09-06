@@ -224,6 +224,222 @@ See
 A tank shooter in perspective.
 See
 .IR zoneout (1).
+.SS Graphics
+.TP
+.B temple/3dpoly
+Filled polygons over a depth buffer, with a mirrored copy.
+See
+.IR 3dpoly (1).
+.TP
+.B temple/balloon
+The Commodore 64 balloon sprite, moving down the screen.
+See
+.IR balloon (1).
+.TP
+.B temple/blot
+Device contexts, brushes and blots.
+See
+.IR blot (1).
+.TP
+.B temple/bspline
+A quadratic and a cubic B-spline through the same control points.
+See
+.IR bspline (1).
+.TP
+.B temple/charanimation
+An animated font glyph.
+See
+.IR charanimation (1).
+.TP
+.B temple/commonancestor
+A binary search tree, and four lines that find a common ancestor.
+See
+.IR commonancestor (1).
+.TP
+.B temple/edsprite
+Outline a sprite by reading its own pixels back.
+See
+.IR edsprite (1).
+.TP
+.B temple/elephant
+Two drawings, blended.
+See
+.IR elephant (1).
+.TP
+.B temple/extents
+The two kinds of sprite extent, drawn together.
+See
+.IR extents (1).
+.TP
+.B temple/griddemo
+Plot pixels snapped to a lattice.
+See
+.IR griddemo (1).
+.TP
+.B temple/lattice
+A turtle with width, curvature and layers.
+See
+.IR lattice (1).
+.TP
+.B temple/lighttable
+A two-dimensional optics bench: draw mirrors and lenses, then fire photons.
+See
+.IR lighttable (1).
+.TP
+.B temple/lowpassfilter
+Four ways to draw the same step response.
+See
+.IR lowpassfilter (1).
+.TP
+.B temple/mathaudiodemo
+The waveform library, plotted.
+See
+.IR mathaudiodemo (1).
+.TP
+.B temple/morsecode
+A straight key you tap.
+See
+.IR morsecode (1).
+.TP
+.B temple/mousedemo
+Plot a pixel under the mouse, over and over.
+See
+.IR mousedemo (1).
+.TP
+.B temple/palette
+The sixteen colours are not fixed.
+See
+.IR palette (1).
+.TP
+.B temple/pantext
+The text layer slides within its grid.
+See
+.IR pantext (1).
+.TP
+.B temple/pick
+Picking without a hit test: drawing the sprites is the pick.
+See
+.IR pick (1).
+.TP
+.B temple/pick3d
+Everything hangs off a point.
+See
+.IR pick3d (1).
+.TP
+.B temple/polezeros
+A transfer function, coloured.
+See
+.IR polezeros (1).
+.TP
+.B temple/predatorprey
+Lotka-Volterra, plotted against its own rate.
+See
+.IR predatorprey (1).
+.TP
+.B temple/ropcollision
+Drawing a sprite to ask what it would have hit.
+See
+.IR ropcollision (1).
+.TP
+.B temple/rotatetank
+A mesh under four matrices.
+See
+.IR rotatetank (1).
+.TP
+.B temple/scrncapture
+Capture the screen to a file and back.
+See
+.IR scrncapture (1).
+.TP
+.B temple/scrollbars
+A window onto something much bigger.
+See
+.IR scrollbars (1).
+.TP
+.B temple/shading
+Flat shading from one cross product.
+See
+.IR shading (1).
+.TP
+.B temple/shadow
+A shadow is the same model, sheared.
+See
+.IR shadow (1).
+.TP
+.B temple/slider
+Writing a control.
+See
+.IR slider (1).
+.TP
+.B temple/speedline
+A drawing program whose pen thickens with the speed of the mouse.
+See
+.IR speedline (1).
+.TP
+.B temple/spriteedit
+A vector sprite editor, an element list at a time.
+See
+.IR spriteedit (1).
+.TP
+.B temple/spriteplot
+Sweep a sprite across the screen.
+See
+.IR spriteplot (1).
+.TP
+.B temple/spriteplot3d
+A mesh sprite turning under a matrix.
+See
+.IR spriteplot3d (1).
+.TP
+.B temple/spriteput
+Sprites stored in the source file.
+See
+.IR spriteput (1).
+.TP
+.B temple/spriteputext
+A sprite borrowed from another file.
+See
+.IR spriteputext (1).
+.TP
+.B temple/spriteraw
+A sprite built by hand, element by element.
+See
+.IR spriteraw (1).
+.TP
+.B temple/spritetext
+Read a sprite as text.
+See
+.IR spritetext (1).
+.TP
+.B temple/sunmoon
+Two kinds of dithered flood fill.
+See
+.IR sunmoon (1).
+.TP
+.B temple/transform
+The fourth row of the transformation matrix.
+See
+.IR transform (1).
+.TP
+.B temple/wallpaperctrl
+A control on the wallpaper.
+See
+.IR wallpaperctrl (1).
+.TP
+.B temple/wallpaperfish
+An aquarium for a desktop.
+See
+.IR wallpaperfish (1).
+.TP
+.B temple/waterfowl
+Bryant, a bird, and a song.
+See
+.IR waterfowl (1).
+.TP
+.B temple/winzbuf
+Which window owns each cell of the screen.
+See
+.IR winzbuf (1).
 .SS Demos
 .TP
 .B temple/asciiorgan

@@ -198,9 +198,8 @@ reset()
 		dustx[i] = rn(MAPW);
 		dusty[i] = rn(MAPH);
 	}
-	camx = gunx - 320;
-	if(camx < 0) camx = 0;
-	if(camx > MAPW - 640) camx = MAPW - 640;
+	camx = gunx - vieww()/2;
+	clampcam();
 }
 
 key(k: int)
@@ -222,10 +221,10 @@ key(k: int)
 			gunang = 0.0;
 	',' =>
 		camx -= 20;
-		if(camx < 0) camx = 0;
+		clampcam();
 	'.' =>
 		camx += 20;
-		if(camx > MAPW - 640) camx = MAPW - 640;
+		clampcam();
 	}
 }
 
@@ -401,7 +400,8 @@ collides(x, y: int): int
 		dy--;
 		cx := x + dx;
 		if(cx < 0 || cx >= MAPW)
-			return 1;
+			continue;	# GrCircle clips; leaving is ManageShots'
+					# own bounds test, not a collision
 		if(y + dy >= elevs[cx])
 			return 1;
 	}
@@ -445,4 +445,24 @@ popup(img: ref Image, o: Point, w, h: int)
 	ok := "any key";
 	img.text(Point(bx + (bw - font.width(ok))/2, y + font.height/2),
 		ink[1], Point(0, 0), font, ok);
+}
+
+# horz_scroll.min=0, horz_scroll.max=MAP_WIDTH-pix_width
+vieww(): int
+{
+	img := win.image;
+	if(img == nil)
+		return 640;
+	return img.r.dx();
+}
+
+clampcam()
+{
+	hi := MAPW - vieww();
+	if(hi < 0)
+		hi = 0;
+	if(camx > hi)
+		camx = hi;
+	if(camx < 0)
+		camx = 0;
 }

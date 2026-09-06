@@ -122,6 +122,25 @@ coarse map — against the original's own first line, "the coarse gets
 flood-filled but the fine grained is only outlines", which is what stops
 the inside of a lens being a surface.
 
+A soak run on the same harness closes what those two probes did not
+reach: exit from a lens (the `n1=1.5` direction, where the arcsine clamp
+lives), the border bounce, and `p_normal_inhibit` under load. Under the
+critical angle the exits agree with Snell to within 0.7 degrees; past it
+the clamp sends the ray out along the surface, as its GAP line says. Two
+hundred and fifty-six photons over three hundred frames stay at 256 —
+none escapes, all bounce — with the counters proportionate (80 mirrors,
+104 refractions, 48 inhibited) and no zero-normal fallbacks, and the
+whole run takes 18ms, 0.06ms a frame against a 20ms timer. Worth doing
+because `findnormal` is two arc searches of a few hundred `bpeek` calls
+each and a photon sliding along a boundary could in principle re-fire it
+every few steps; it does not.
+
+**A demo that starts under `emu-cocoa` and survives proves startup and
+nothing else.** With no input delivered, `lighttable` has no photons and
+`ropcollision` has never seen the pointer, so in both cases the code
+under test never runs. Use it to catch a module that raises on load, and
+the probes for everything else.
+
 `appl/temple/smoketest.b` loads every module (`emu-g -r. temple/smoketest`,
 291 of 291 at the time of writing). Redirect it to a *file* — through a
 pipe, buffering makes it look hung. Its `run` mode needs a draw context and
@@ -166,8 +185,9 @@ them have been checked against the original rather than merely written.
 **`Demo/Graphics` and `Demo/Snd` are complete.** All 40 that were
 unported have been written, wired into `appl/temple/mkfile` and
 `smoketest.b`, given a `man/1` page and a `man/1/INDEX` entry.  The
-smoketest loads 291 of 291 clean and each new demo survives under
-`emu-cocoa`.
+smoketest loads 291 of 291 clean, each new demo starts under `emu-cocoa`
+without raising, and `man/1/temple` lists them all under a `Graphics`
+heading.
 
 Three naming notes for anyone reading the list:
 

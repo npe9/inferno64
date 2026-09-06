@@ -158,7 +158,6 @@ solve(sx, sy: int)
 		}
 		if(cell[y][x] == 0)
 			cell[y][x] = 2;
-		redraw();
 		nx := x + dx[dir];
 		ny := y + dy[dir];
 		blocked := nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS || cell[ny][nx] == 1 || cell[ny][nx] == 2;
@@ -183,6 +182,10 @@ solve(sx, sy: int)
 			}
 			xs[sp] = x; ys[sp] = y; dirs[sp] = dir; sp++;
 			x = nx; y = ny;
+			# the original's Sleep(100) is on the advance branch
+			# only, and DrawIt runs on the 30fps refresh — so
+			# redraw here rather than on every backtrack
+			redraw();
 			sys->sleep(100);
 		}
 	}
