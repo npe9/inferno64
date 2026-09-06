@@ -3238,7 +3238,18 @@ uvlong kdebugputsbytes;		/* main.c counts what went out through the bare console
  * queue cannot yet.  Only the FIFO itself overflowing - the task sixteen
  * kilobytes behind - or a panic goes to the port.
  */
-enum { Consfifo = 16*1024 };
+/*
+ * The FIFO the console task drains.  When it fills, the caller writes
+ * the port itself instead of queueing - which is right for a panic and
+ * wrong for everything else: the task is pushing queued bytes at the
+ * same moment, so the two writers cross and a line comes out cut in
+ * half.  That is what the check transients were, every one of them: a
+ * criterion matching a whole sentence, and the sentence split by a
+ * kernel print that went round the queue.  128K rather than 16K, so a
+ * burst is queued rather than overtaking; the count of what still went
+ * direct is printed at the end of a run, and it is the number to watch.
+ */
+enum { Consfifo = 128*1024 };
 static char consfifo[Consfifo];
 static ulong consin, consout;		/* under ospreyconslock; consin - consout is what waits */
 static ulong consslotsum[Nconsslot];	/* a checksum of each slot as filled, checked when the task starts to push it */

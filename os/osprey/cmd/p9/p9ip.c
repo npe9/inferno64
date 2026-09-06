@@ -559,6 +559,37 @@ wiresrv(void *)
  * the session has a name and reads the file.
  */
 int pipwire_connectto(char *addr, int *dfdp);
+
+/*
+ * Connect to the other machine's pi-p wire, trying for a while.  The two
+ * machines boot independently and neither waits for the other, so the
+ * first connect can arrive before the far end is listening; a single try
+ * made both ticket checks fail together, now and then, for a reason that
+ * had nothing to do with tickets.  This is the same wait the migration
+ * path already makes for the same reason.
+ */
+static int
+pipconnecttries(int *dfdp)
+{
+	char a[48];
+	int wfd, try;
+
+	snprint(a, sizeof a, "connect %s!%d", netpeer, netpipport);
+	for(try = 0;; try++){
+		if(!waserror()){
+			wfd = pipwire_connectto(a, dfdp);
+			poperror();
+			if(try > 0)
+				print("p9 ip: pi-p across the cable: connected on try %d\n", try + 1);
+			return wfd;
+		}
+		if(try >= 20)
+			error("the other machine's pi-p wire did not answer in twenty tries");
+		if(*dfdp >= 0){ p9close(*dfdp); *dfdp = -1; }
+		tsleep(&up->sleep, return0, nil, 500);
+	}
+}
+
 static void
 pipacrosscable(void)
 {
@@ -579,7 +610,8 @@ pipacrosscable(void)
 		return;
 	}
 	/* as nobody */
-	{ char a[48]; snprint(a, sizeof a, "connect %s!%d", netpeer, netpipport); wfd = pipwire_connectto(a, &dfd); }
+	dfd = -1;
+	wfd = pipconnecttries(&dfd);
 	tn = 0;
 	tn += pip_tsession(tg+tn, 1, 0);
 	tn += pip_topen(tg+tn, 2, 0, 1, 0, "/n/hello");
@@ -603,7 +635,8 @@ pipacrosscable(void)
 	if((ticket = pip_ticket()) == nil)
 		error("my kernel would not sign a ticket (no key set?)");
 	print("p9 ip: pi-p across the cable: my kernel signed a ticket for \"%s\": \"%s\"\n", eve, ticket);
-	{ char a[48]; snprint(a, sizeof a, "connect %s!%d", netpeer, netpipport); wfd = pipwire_connectto(a, &dfd); }
+	dfd = -1;
+	wfd = pipconnecttries(&dfd);
 	tn = 0;
 	tn += pip_tsession(tg+tn, 4, 0);
 	tn += pip_tauth(tg+tn, 5, ticket);

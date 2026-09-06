@@ -6274,6 +6274,45 @@ buddy answers is now open, read, write, close, create, remove, stat,
 fstat, seek, fd2path, dup, pipe, bind, mount, errstr, rfork, await and
 exec, with brk in the kernel beside them - enough for a shell, and named
 here so that what rio will want beyond it can be measured against it.
+.NH 2
+Three things the checks turned up, and what they were
+.PP
+Five phases in one run of work left three checks failing once each and
+passing on retry \- the note criterion, a pair criterion, two wire
+criteria \- and a "transient" recorded three times is a finding, not
+noise.  All three were the same thing, and the evidence is a line in a
+wire log:
+.CW "\&...it opened /n/hello thuser fault: read addr=0x0..." .
+The sentence the criterion matched was cut in half by a kernel print.
+.PP
+Both writers already go through the console task's FIFO
+.CW ( putstrn0
+routes the kernel's print there when a task is running, and the
+personality's write reaches the same
+.CW ospreyconsput
+under the same lock), so the order is one queue \- until the queue
+fills.  A full FIFO makes the caller write the port itself, which is
+right for a panic and wrong for everything else: the task is pushing
+queued bytes at that moment and the two writers cross.  The FIFO was
+sixteen kilobytes and a run put a kilobyte and a half round it.  It is a
+hundred and twenty-eight now, and three wire runs in a row are clean
+where single runs had been failing; the count of what still went direct
+is printed at the end of a run and is the number to watch.
+.PP
+Two real faults were under those runs as well.  The personality's arena
+\- a bump allocator that never frees \- ended a two-machine run at
+4183184 of 4194304 bytes used and panicked in
+.CW kproc
+for want of a stack.  What ate it is kprocs: every one costs a 32K stack
+out of the arena and none is given back, a kproc per pi-p connection and
+four more for the workers of 2.2d.  Twelve megabytes now, which costs no
+memory until touched \- the arena is bss, and the kernel fills a bss
+page only when it is first written.  And the pi-p wire's connect had one
+try: the two machines boot independently and neither waits, so a connect
+that arrived before the far end was listening failed both ticket
+criteria together for a reason that had nothing to do with tickets.  It
+retries now, the same wait the migration path already makes for the same
+reason.
 .PP
 .B "Phase 2.3: rio."
 rio is 9front source this tree does not carry, so its binary is built on
