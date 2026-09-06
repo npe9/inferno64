@@ -454,16 +454,125 @@ The onboard Broadcom BCM43430 Wi-Fi hangs off SDIO (via Arasan), the
 piece 9front's ether4330 already handles: firmware upload plus the SDIO
 transport, presenting an ether(3) card into /net.  Depends on Phase 5's
 SDIO transport.  QEMU does not model the Wi-Fi chip, so this is
-structured against the donor and validated on real hardware; the SDIO
-transport itself can be exercised on QEMU's SDHCI.
+structured against the donor and validated on real hardware.  The SDIO
+transport cannot be exercised there either \- which corrects what this
+plan used to say.  QEMU 10.1.3's raspi3b models
+.CW bcm2835-rng ,
+.CW bcm2835-powermgt ,
+.CW bcm2835-thermal ,
+.CW bcm2835-otp
+and both SD controllers, but no SDIO peripheral of any kind, and
+.CW "-device help"
+offers nothing to attach to one.  Phase 5's
+.CW sdiocmd52 /
+.CW sdiocmd53
+are therefore unrunnable here, not merely untested: an SD memory card
+rejects both commands and there is no other device to answer them.
+This is the first phase where the emulator stops helping altogether.
 .NH 1
-Phase 7: watchdog, RNG, PWM -- small BCM283x drivers
+Phase 7: watchdog, RNG, PWM -- RNG and reset DONE, PWM not attempted
 .PP
-Individually small: the hardware RNG (0x3f104000, modeled by QEMU as
-bcm2835_rng.c) feeding /dev/random; the watchdog (PM_WDOG in the
-power-management block, which also drives reset) as a control file; PWM
-(0x3f20c000) as a device file.  RNG and watchdog are QEMU-verifiable; PWM
-is largely real-hardware.
+.B "The hardware RNG, and why it mattered."
+.CW rngbcm.c
+brings up the BCM2835 generator at 0x3f104000 and hands
+.CW hwrandbuf
+to
+.CW randomvirtarm64.c ,
+which already preferred it.  Until now this board's
+.CW /dev/random
+was that file's fallback: a tick-seeded LCG its own comment calls
+smoke/dev only.  A deterministic sequence off a boot-time seed is not
+entropy, and everything downstream \- keyring, TLS nonces \- was only as
+good as that.
+.CW rnginit()
+refuses to install itself unless two freshly drawn words differ and are
+not both zero, so a stuck generator leaves the software fallback in
+place rather than silently replacing it with a constant.
+.PP
+Verified on a booted kernel: the generator comes up (RNG-OK), and
+.CW /dev/random
+yields sixteen bytes that differ on every boot \- three resets inside one
+emulator process gave c40860dd..., 7052c80a... and 6ecf4e49..., same
+process, different bytes, which is precisely what the LCG could not do.
+What this does not say is anything about the quality of the entropy:
+under emulation these bytes come from QEMU's host PRNG.  The plumbing is
+proven; the randomness is the silicon's business.
+.PP
+.B "The watchdog, and a reset that only ever worked on the emulator."
+.CW pmbcm.c
+drives the power-management block at 0x3f100000.  On this SoC a reset
+.I is
+a watchdog expiry \- there is no separate reset register \- so
+.CW wdogset() ,
+.CW wdogstop()
+and
+.CW pmreset()
+are one driver, and every write carries the 0x5a password without which
+the block ignores it in silence.
+.PP
+The reason this is more than a small driver:
+.CW archreboot()
+called PSCI SYSTEM_RESET, which QEMU answers and a real Pi 3B does not.
+The board has no ATF and no secure-monitor firmware behind HVC, so on
+the hardware that call reached nothing and the machine never rebooted \-
+an emulator-only path sitting in the reset path, exactly the shape
+AGENTS.md warns about.  It now uses the PM watchdog, the way Linux's
+.CW bcm2835_restart
+does.
+.PP
+A second gap was underneath it:
+.CW devcons.c 's
+.CW /dev/reboot
+handler was a bare
+.CW "/* TODO rebootcmd(...) */" ,
+so writing "reboot" did nothing at all, on every board in the tree.  It
+now calls
+.CW exit(0) ,
+which shuts the devices down and calls
+.CW archreboot() \-
+the same thing
+.CW main.c 's
+own
+.CW reboot()
+does.  Loading a different kernel image first, which
+.CW rebootcmd()
+would have added, is still not implemented; a reboot restarts the
+machine.
+.PP
+Verified on a booted kernel, driving the whole chain from Limbo \-
+.CW /dev/reboot
+to
+.CW exit(0)
+to
+.CW archreboot()
+to
+.CW pmreset()
+to PM_RSTC: three boot banners inside one emulator run, and the
+"nothing happened" marker after the write never printed.
+.PP
+.B "Emulator gap, named because it is load-bearing."
+QEMU models no watchdog countdown.  Loading PM_WDOG reads back exactly
+what was written (524288 for 8 seconds, unchanged 100ms later), and the
+reset happens the instant PM_RSTC's WRCFG field is set to full-reset,
+whatever the counter says.  So on QEMU an arm
+.I is
+a reset: an early
+.CW pminit()
+that armed the watchdog to test the countdown put the board into a
+reboot loop, 167 banners in forty seconds.  That is why
+.CW pminit()
+now loads PM_WDOG only and never touches PM_RSTC.  The countdown, the
+feed-the-dog behaviour and
+.CW wdogstop()
+are therefore
+.B unverified
+and wait on the board; the reset itself is proven.
+.PP
+PWM (0x3f20c000) is
+.B "not attempted."
+QEMU's raspi3b models no PWM block, so a driver would be written blind
+and unrunnable, and there is nothing here it would let the board do that
+it cannot already.  It belongs with Phase 6 as real-hardware work.
 .NH 1
 Parallel: the kfs create deadlock
 .PP

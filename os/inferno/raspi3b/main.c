@@ -149,6 +149,16 @@ main(void)
 		mailboxinit();
 	}
 
+	{	/* hardware RNG: replaces the software LCG behind /dev/random */
+		extern void rnginit(void);
+		rnginit();
+	}
+
+	{	/* power management: the watchdog, and the reset it drives */
+		extern void pminit(void);
+		pminit();
+	}
+
 	procinit();
 	links();
 	screeninit();

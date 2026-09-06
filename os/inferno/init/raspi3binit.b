@@ -67,6 +67,37 @@ sdhcicheck()
 	sys->print("SDHCI-OK\n");
 }
 
+# Phase 7: /dev/random, now fed by the BCM2835 hardware RNG rather
+# than the tick-seeded LCG randomvirtarm64.c falls back to.  Printing
+# the bytes is the only check worth making from here: they must differ
+# from one boot to the next, which the LCG's boot-seeded sequence did
+# not reliably do.
+rngcheck()
+{
+	fd := sys->open("/dev/random", Sys->OREAD);
+	if(fd == nil){
+		sys->print("RANDOM-NONE: %r\n");
+		return;
+	}
+	buf := array[16] of byte;
+	if(sys->read(fd, buf, len buf) != len buf){
+		sys->print("RANDOM-FAIL read: %r\n");
+		return;
+	}
+	s := "";
+	zero := 1;
+	for(i := 0; i < len buf; i++){
+		s += sys->sprint("%02x", int buf[i]);
+		if(buf[i] != byte 0)
+			zero = 0;
+	}
+	if(zero){
+		sys->print("RANDOM-FAIL all zero\n");
+		return;
+	}
+	sys->print("RANDOM-OK %s\n", s);
+}
+
 sdcheck()
 {
 	fd := sys->open("/dev/sdM0/data", Sys->ORDWR);
@@ -411,6 +442,7 @@ init()
 	sys->bind("#e", "/env", sys->MREPL|sys->MCREATE);
 	sys->print("RASPI3B-OK\n");
 
+	rngcheck();
 	sys->bind("#S", "/dev", sys->MAFTER);
 	sdhcicheck();
 	sdcheck();

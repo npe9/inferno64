@@ -1013,7 +1013,17 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 		ct = lookupcmd(cb, rebootmsg, nelem(rebootmsg));
 		switch(ct->index) {
 		case CMreboot:
-			/* TODO rebootcmd(cb->nf-1, cb->f+1); */
+			/*
+			 * Was a bare TODO, so writing "reboot" to /dev/reboot
+			 * silently did nothing on every board.  exit(0) is the
+			 * reboot path already: it shuts the devices down and
+			 * calls archreboot(), which is what main.c's own
+			 * reboot() does.  Loading a new kernel image first --
+			 * what rebootcmd() would have added -- is still not
+			 * implemented, so a reboot restarts the machine rather
+			 * than booting something else.
+			 */
+			exit(0);
 			break;
 		case CMpanic:
 			*(ulong*)0=0;

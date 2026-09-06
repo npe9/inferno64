@@ -44,8 +44,14 @@ archconsole(void)
 void
 archreboot(void)
 {
-	/* PSCI SYSTEM_RESET (0x84000009); QEMU restarts the machine */
-	psci(0x84000009ULL, 0, 0, 0);
+	/*
+	 * The PM watchdog, not PSCI: a bare-metal Pi 3B has no firmware
+	 * behind HVC to answer SYSTEM_RESET, so the PSCI call this used
+	 * to make worked only under emulation.  See pmbcm.c.
+	 */
+	extern void pmreset(void);
+
+	pmreset();
 	for(;;)
 		idle();
 }

@@ -91,6 +91,8 @@ misc
 	randomvirtarm64
 	sdhostbcm
 	sdhcibcm
+	rngbcm
+	pmbcm
 
 mod
 	sys
