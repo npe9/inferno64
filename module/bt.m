@@ -189,10 +189,19 @@ L2cap: module
 	Cle:	con 5;
 	Csmp:	con 6;
 
+	# One channel on a link.  A fixed channel is nothing but a CID
+	# and the queue of frames that arrived for it; the credit-based
+	# channels add to this adt rather than to a second one, so that
+	# the demultiplexer has a single thing to look up.
+	Chan: adt {
+		cid:	int;			# the CID the peer sends to
+		rq:	chan of array of byte;	# frames up from the link
+	};
+
 	Mux: adt {
 		c:	ref Hci->Conn;
 		mtu:	int;
-		chans:	list of (int, chan of array of byte);
+		chans:	list of ref Chan;
 		reply:	chan of int;
 	};
 

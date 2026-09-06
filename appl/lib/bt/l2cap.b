@@ -54,32 +54,36 @@ start(c: ref Conn): ref Mux
 open(m: ref Mux, cid: int): chan of array of byte
 {
 	<-m.reply;
-	for(l := m.chans; l != nil; l = tl l){
-		(id, ch) := hd l;
-		if(id == cid){
-			m.reply <-= 1;
-			return ch;
-		}
+	c := lookup(m, cid);
+	if(c == nil){
+		c = ref Chan;
+		c.cid = cid;
+		c.rq = chan[Qdepth] of array of byte;
+		m.chans = c :: m.chans;
 	}
-	ch := chan[Qdepth] of array of byte;
-	m.chans = (cid, ch) :: m.chans;
 	m.reply <-= 1;
-	return ch;
+	return c.rq;
 }
 
-find(m: ref Mux, cid: int): chan of array of byte
+#
+# lookup runs with the mux lock already held; find takes it.  Keeping
+# the two apart is what lets the demultiplexer hold the lock across a
+# lookup and the work that follows from it.
+#
+lookup(m: ref Mux, cid: int): ref Chan
+{
+	for(l := m.chans; l != nil; l = tl l)
+		if((hd l).cid == cid)
+			return hd l;
+	return nil;
+}
+
+find(m: ref Mux, cid: int): ref Chan
 {
 	<-m.reply;
-	ch: chan of array of byte;
-	for(l := m.chans; l != nil; l = tl l){
-		(id, c) := hd l;
-		if(id == cid){
-			ch = c;
-			break;
-		}
-	}
+	c := lookup(m, cid);
 	m.reply <-= 1;
-	return ch;
+	return c;
 }
 
 send(m: ref Mux, cid: int, p: array of byte): string
@@ -98,9 +102,8 @@ stop(m: ref Mux)
 	m.chans = nil;
 	m.reply <-= 1;
 	for(; l != nil; l = tl l){
-		(nil, ch) := hd l;
 		alt {
-		ch <-= nil =>	;
+		(hd l).rq <-= nil =>	;
 		* =>	;
 		}
 	}
@@ -124,11 +127,11 @@ demux(m: ref Mux)
 				signal(m, p);
 				continue;
 			}
-			ch := find(m, cid);
-			if(ch == nil)
+			c := find(m, cid);
+			if(c == nil)
 				continue;	# nobody opened that channel
 			alt {
-			ch <-= p =>	;
+			c.rq <-= p =>	;
 			* =>	;		# the consumer is behind: drop
 			}
 		why := <-m.c.closed =>
