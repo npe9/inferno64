@@ -61,6 +61,16 @@ Reply: adt {
 
 t:	Bttransport;
 cmdlock:	chan of int;
+#
+# A controller will have one LE Create Connection outstanding and no
+# more, so two callers starting a connection at once is not something
+# to serialise inside the controller -- the second command is simply
+# refused.  It is something to serialise here, because both callers
+# then wait on connc and either can take the other's answer.  The
+# command path has had this since it was written; this is the same
+# thing for the one other request whose answer comes back as an event.
+#
+connlock:	chan of int;
 replyc:		chan of ref Reply;
 advc:		chan of ref Adv;
 connc:		chan of (ref Conn, string);
@@ -80,6 +90,7 @@ init(b: Bt, tr: Bttransport): string
 	bt = b;
 	t = tr;
 	cmdlock = chan[1] of int;
+	connlock = chan[1] of int;
 	replyc = chan of ref Reply;
 	# buffered: a report is dropped only when nothing has read the
 	# queue for a while, not merely because the reader of it
@@ -294,12 +305,28 @@ leconnect(atype: int, addr: array of byte): (ref Conn, string)
 	bt->put16(p, 21, 0);		# minimum connection length
 	bt->put16(p, 23, 0);		# maximum
 
+	connlock <-= 1;
+	r := doleconnect(p);
+	<-connlock;
+	return r;
+}
+
+doleconnect(p: array of byte): (ref Conn, string)
+{
 	(st, nil, e) := cmd(bt->opcode(Ogle, 16r000d), p);
 	if(e != nil)
 		return (nil, e);
 	if(st != 0)
 		return (nil, bt->hcierr(st));
 
+	#
+	# No filter on which completion this is.  With connlock held
+	# there is one attempt outstanding, so a completion that arrives
+	# is necessarily this one's -- including on a controller that
+	# does address resolution itself and reports the peer's identity
+	# address rather than the address we dialled, where matching the
+	# two would throw a live connection away.
+	#
 	tick := chan[1] of int;
 	spawn timer(Conntimeout, tick);
 	alt {

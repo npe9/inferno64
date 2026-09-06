@@ -127,11 +127,11 @@ serves
 and the 0 is written into it.  A second radio has nowhere to go.
 .IP \(bu
 .CW Hci.leconnect
-takes no lock and there is one channel for the answer, so two
-connections started at once race for it \(em and a controller will
-only have one LE Create Connection outstanding anyway, so the second
-gets a flat refusal.  It needs the same treatment the command path
-already has.
+takes a lock now, as the command path always has, so two callers
+cannot take each other's answer off the one channel the completion
+arrives on.  A controller will only have one LE Create Connection
+outstanding anyway.  What the lock does not cover is a completion that
+outlives the attempt that asked for it; that is a separate item below.
 .IP \(bu
 SCO packets are framed by the transport and then dropped: the reader
 has no case for them.  Nothing needs them until audio does, and audio
