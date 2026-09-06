@@ -489,6 +489,154 @@ array-zeroing fix was tried against it and explicitly retracted as the
 cause
 .CW ( f1a01e07 ).
 .PP
+.NH 2
+The same interpreter does not corrupt on the host
+.PP
+One experiment worth recording, because it is cheap and it points
+somewhere.
+.PP
+The native
+.CW /dis/init
+in this tree carries a deliberate provocation \- a
+.I "TEMPORARY diagnostic stress loop (determinism check phase)"
+that runs
+.CW "sh -n -c 'true'"
+sixty-seven times, a spawn and module-load storm through exactly the
+.CW OP(mcall)
+path the hunt is looking at.  That loop is why a native boot fails so
+often; it was put there to make the bug fire.
+.PP
+That same loop was run under the hosted emulator, on the same tree,
+against the same
+.CW .dis
+files, with
+.CW -c0
+so that the interpreter rather than the JIT executes it \- the same
+setting
+.CW os/inferno/pc64/pc64
+compiles in.  Six runs, six clean completions.  Natively, sixteen boots
+in twenty panic.
+.PP
+What that does and does not say.  It does not clear
+.CW libinterp :
+emu links its own build of it, and a bug that needs a particular heap
+layout to show would not show there.  What it does say is that the
+interpreter's logic and the
+.CW .dis
+files are not sufficient on their own to produce the corruption.  The
+two sides differ in what sits underneath: emu allocates through
+.CW emu/port/alloc.c
+and the host's memory, native through
+.CW os/inferno/port/alloc.c ,
+.CW xalloc.c
+and
+.CW poolsizeinit 's
+arenas; emu's processes are host threads, native's are this kernel's
+own, with its own stacks and its own trap path.  The next probes should
+be aimed there rather than at the opcodes, which is where several
+refuted rounds have already been spent.
+.NH 2
+Two captures that name their own arithmetic
+.PP
+Two of the failures in the twenty-boot runs carry values worth decoding
+rather than filing, because both say where they came from.
+.IP
+.nf
+panic: smalloc: size 18446744073441179736 > mainmem
+	maxsize 262987776, pc=0x286add		(addelem+0x8b)
+arena too large: heap size 1768843609 ...
+	pc=0x2f2d81				(nheap+0x22)
+.fi
+.PP
+The first is
+.CW 0xFFFFFFFFF000F858 :
+the sign extension of the 32-bit value
+.CW 0xF000F858 ,
+which is
+.CW -268371880 .
+.CW addelem
+in
+.CW os/inferno/port/chan.c
+computes
+.IP
+.nf
+	int a, i;
+	i = strlen(s);
+	a = p->len+1+i+1;
+	if(a > p->alen){
+		a += PATHSLOP;
+		t = smalloc(a);
+.fi
+.PP
+.CW a
+is an
+.CW int ,
+.CW smalloc
+takes a
+.CW usize ,
+and a negative
+.CW int
+sign-extends on the way.  So the captured number is not a wrapped
+subtraction reaching
+.CW smalloc
+by accident; it is exactly this line, with a
+.CW Path
+whose
+.CW len
+or whose
+.CW s
+was already garbage.  The second value,
+.CW 1768843609 ,
+is
+.CW 0x696E6959 ,
+which is the four ASCII bytes
+.CW Yini :
+a
+.CW Type 's
+size field read out of something holding text.
+.PP
+Both are consequences, not causes \- a corrupt
+.CW Path
+and a corrupt
+.CW Type \-
+and they agree with the first capture this work took, a
+.CW decref
+underflow at
+.CW pathclose+0x18
+on a kernel
+.CW Path
+rather than a Dis heap object.  The
+.CW Path
+code itself is not where to look: every one of
+.CW copypath ,
+.CW uniquepath ,
+.CW pathclose ,
+.CW newpath
+and
+.CW addelem
+is identical to
+.CW os/9front/port/chan.c 's
+apart from this tree's own
+.CW checktracked()
+probes.  Something is writing over these objects, or handing back a
+stale one; the arithmetic above is only how it becomes visible.
+.PP
+One thing worth doing on its own account:
+.CW addelem 's
+.CW int
+is silent about it.  A check there that reports the
+.CW Path ,
+its
+.CW len ,
+its
+.CW alen
+and the string it was handed would turn a misleading
+.CW smalloc
+panic into a direct description of the corrupt object, at the first
+place that notices.
+.NH 2
+Ordering, and a rule broken
+.PP
 Section 1's rule applies to this plan's own ordering, and was broken
 once already: the first version of this document made a stable single
 processor baseline the first phase, and that step was skipped in favour
