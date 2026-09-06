@@ -6327,6 +6327,176 @@ served by the user-level drivers already built.  Proof: rio draws its
 menu and sweeps a window on the server personality, as it does on
 .CW pc64 ,
 but with its system calls answered by a peer container over the ring.
+.PP
+.B "What 2.3 costs, measured before building it."
+One clause of the paragraph above is wrong and the rest is right for a
+reason already written down higher up: the section on the draw server
+records that this host's linker cannot read the prebuilt 9front
+libraries, and that building on the disk is what that costs.  What
+follows is the same fact counted, and the ABI measured against it.
+.PP
+The wrong clause is that rio is source the tree cannot have.  It is twelve files \-
+.CW rio.c ,
+.CW data.c ,
+.CW fsys.c ,
+.CW scrl.c ,
+.CW time.c ,
+.CW util.c ,
+.CW wctl.c ,
+.CW wind.c ,
+.CW xfid.c ,
+.CW dat.h ,
+.CW fns.h ,
+.CW mkfile
+\- 6407 lines at 9front revision
+.CW a0a079f4054f88eabcb2c2e6d20f3ee4a1908b78 ,
+and its mkfile names five libraries:
+.CW libdraw ,
+.CW libframe ,
+.CW libthread ,
+.CW libplumb ,
+.CW libc .
+The tree already carries all five, built, in
+.CW 9front/amd64/lib ,
+with their headers in
+.CW 9front/include ,
+and the tree's own
+.CW 6c
+compiles all nine of rio's C files against those headers with no
+warnings, and compiles the four libraries' own sources too \- 63 of
+.CW libdraw ,
+9 of
+.CW libframe ,
+25 of
+.CW libthread ,
+3 of
+.CW libplumb .
+The compiler is not the problem.
+.PP
+The linker is, and the count is the part that is new.  Nothing in this
+tree has ever linked
+.CW 9front/amd64/lib ,
+and the reason is that it cannot:
+.CW 6l
+here reads 228 of the 262 members of
+.CW libc.a
+and rejects the other 34 with
+.CW "opcode out of range 665" ,
+and rejects one member of
+.CW libdraw.a
+the same way.  Those archives were built by 9front's own
+.CW 6c ,
+which emits instructions past the end of this linker's table.  The
+tree has a workaround for this already, without naming it as one:
+.CW buildsh.sh
+compiles four modules out of
+.CW lib9/
+and links them ahead of the archive, and all four \-
+.CW utfnlen ,
+.CW vsnprint ,
+.CW dofmt ,
+.CW vfprint
+\- are in the 34.  It works for a program that formats a little.  It
+does not scale to rio, which reaches the allocator
+.CW ( pool ,
+.CW malloc ),
+the rune formatter and the Dir conversions, and the archive's own
+decomposition is not 9front's source decomposition \- 57 of its members
+have no same-named source file at that revision, which are the
+generated system-call stubs and the Unicode tables.  Building a libc
+here from source would mean generating those stubs, and
+.CW sys/src/libc/9syscall
+carries only a
+.CW mkfile
+and
+.CW sys.h ;
+the numbers would have to come from this kernel's table, not 9front's.
+So rio's binary is built where the toolchain matches the archives \-
+which is the disk, as the paragraph above said, but for the linker's
+reason and not for want of source.
+.PP
+The other cost is the one to size before starting.  What rio and its
+four libraries ask of the kernel, counted over their sources at that
+revision:
+.CW alarm ,
+.CW bind ,
+.CW chdir ,
+.CW close ,
+.CW create ,
+.CW dup ,
+.CW errstr ,
+.CW exec ,
+.CW mount ,
+.CW noted ,
+.CW notify ,
+.CW open ,
+.CW pipe ,
+.CW pread ,
+.CW read ,
+.CW write ,
+.CW remove ,
+.CW rendezvous ,
+.CW rfork ,
+.CW seek ,
+.CW sleep ,
+.CW stat ,
+.CW fstat ,
+.CW unmount ,
+.CW nsec ,
+and
+.CW postnote ,
+which is not a system call but a write to
+.CW /proc/n/note ,
+with the process id in it.
+The buddy answers open, read, write, close, create, remove, stat,
+fstat, seek, fd2path, dup, pipe, bind, mount, errstr, rfork, await and
+exec.  The gap is
+.CW alarm ,
+.CW chdir ,
+.CW notify ,
+.CW noted ,
+.CW postnote ,
+.CW rendezvous ,
+.CW sleep ,
+.CW nsec
+and
+.CW unmount
+\- nine, and none of them a file operation, which is the shape one
+would want: the buddy is a file personality and the nine are time,
+notes, and a place to block.
+.PP
+One of the nine looked like it would end the phase and does not.
+rio calls
+.CW proccreate
+six times, which is
+.CW rfork(RFPROC|RFMEM)
+\- a second kernel process in the same address space \- and two
+containers sharing an address space is not what a process boundary
+between a program and its operating system means.  But the address
+space is the microkernel's to give, not the buddy's, the way
+.CW brk
+already is, and
+.CW legacyp9.c
+already asks for
+.CW rfork(RFPROC|RFMEM)
+twice and gets it.  So
+.CW proccreate
+is answered where it belongs and the file half still crosses the ring.
+.PP
+And rio is not the only binary to carry.  The
+.CW p9pair
+container has no 9front userland at all, so
+.CW /dev/draw ,
+.CW /dev/mouse
+and
+.CW /dev/kbd
+have to be served inside it, which means the draw server and the mouse
+and keyboard servers come in beside rio, or the personality serves them
+itself.  On
+.CW pc64
+those are built natively on the disk by
+.CW riorun.rc ;
+they are four more binaries, not one.
 .NH 2
 Track three: the library-OS personality execs a program, then rio
 .PP
@@ -6606,3 +6776,71 @@ the draw server holds.  This is the exokernel end of the paper: rio with
 its operating system a library in its own address space, on the
 microkernel, no process boundary and no kernel personality.  It is the
 longest of the phases, and honestly named as the last.
+.NH 1
+Checking, all of it
+.PP
+There are eleven checks in
+.CW scripts/ ,
+one for each thing that boots and one for each pair of machines, and
+for most of this work I was running eight of them.  The three I was not
+running were
+.CW osprey-check.py ,
+which boots the full 9front personality on
+.CW pc64 ,
+.CW osprey-check-net.py
+and
+.CW osprey-check-wire.py .
+That is how
+.CW pc64
+came to be broken for four commits.  Phase 2.1 gave a loaded program an
+argument vector by changing what
+.CW _main
+in
+.CW os/osprey/pc/init9.c
+takes \- the name of the program became the whole vector \- and every
+path that enters a program through
+.CW ospreyenteruservec
+was given the matching stack in the same commit.
+.CW init0 ()
+in
+.CW os/osprey/pc64/main.c
+was not, because it is the one caller that does not go through that
+vector: it is the full personality's own path, the one configuration of
+the seven that takes neither
+.CW ospreyuser
+nor
+.CW ospreymicro .
+It went on building the 9front layout, in which the top word of the
+stack is the nil return PC and the vector starts above it, so
+.CW argv[0]
+was that nil and
+.CW sysexec
+refused it:
+.CW "boot process died: bad arg in system call" .
+It builds the vector now, and the slot that held the return PC holds
+.CW argv[0] ,
+which nothing returns through because
+.CW startboot
+ends in
+.CW _exits .
+.PP
+The general shape is worth keeping: a calling convention was changed
+and tested against the callers that the same commit changed.
+.CW scripts/osprey-check-all.sh
+is the answer \- seven configuration builds, then all eleven checks in
+order, with the wire check repeated because it had been flaky.  The
+tally as this is written, every configuration building and every check
+clean:
+.CW pc64
+61,
+.CW p9pair
+71,
+.CW p9buddy
+5,
+.CW p9linux
+12,
+.CW p964
+29, keyboard 6, micro 7, user 10, net 13, wire 14, two-machine 20, and
+two portable builds.  A criterion is a sentence a booted kernel printed
+in answer to a command typed at its prompt, so a clean check is also
+the prompt having been reached.
