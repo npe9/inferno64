@@ -391,7 +391,11 @@ toclip(e: Vector): (real, real, int)
 project(c: ref Context, v: Vector): (Point, real, int)
 {
 	ms.cur = c;
-	matmul();
+	# No matmul() here.  It multiplied prjl by modl into ms.mull, which
+	# nothing in this file or in the module's callers ever reads --
+	# toeye() uses the model matrix and toclip() the projection, both
+	# directly -- so it was a 4x4 by 4x4 product thrown away once a
+	# vertex.  It cost 43% of project() with the JIT and 71% at -c0.
 	(e, ok) := toeye(c, v);
 	if(!ok)
 		return (Point(0, 0), e.z, 0);

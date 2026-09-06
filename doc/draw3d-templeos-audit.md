@@ -167,9 +167,12 @@ These are bugs, not design gaps, and are worth separating out.
   and **read nowhere in either file**; `toeye()` uses `hd ms.modl` and
   `toclip()` uses `hd ms.prjl` directly. Nothing outside draw3d calls
   `matmul()` (`appl/wm/collide.b` has its own `m_matmul`). Measured over
-  20000 projections: **7ms → 4ms with the JIT, 59ms → 17ms at `-c0`** —
-  43% and 71% of `project()`'s cost respectively. This is the cost
-  `talons` felt and routed around.
+  20000 projections, five runs each way: **6ms → 2ms with the JIT and
+  52ms → 14ms at `-c0`**, so two thirds of `project()`'s cost and three
+  quarters of it respectively. This is what `talons` felt and routed
+  around. **Fixed**; 960 projections over 24 combinations of viewport,
+  projection and model matrix are byte-identical before and after, in
+  both providers.
 - **`fillpoly3`'s `normal` parameter is dead.** It is in the public
   signature and `appl/math/draw3d.b`'s own comment says so: the code
   "always derives its own screen-space normal from the projected vertices
