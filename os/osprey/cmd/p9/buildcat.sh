@@ -6,7 +6,7 @@ set -e
 cd "$(dirname "$0")/../../../.."
 P=os/osprey/cmd/p9
 LIBINC="-I Osprey/amd64/include -I Osprey/include -I include -I $P"
-OBJ="os/osprey/pc64/init9.6"
+OBJ="os/osprey/pc64/init9prog.6"
 6c $LIBINC -o /tmp/catp9.6 $P/catp9.c
 OBJ="$OBJ /tmp/catp9.6"
 SUP=""

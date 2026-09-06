@@ -50,6 +50,18 @@ p9setup(void)
 	up->slash->path = newpath("/");
 	up->dot = cclone(up->slash);
 	chandevinit();
+	/*
+	 * The time device onto /dev, so that a program's nsec(2) - which is
+	 * a read of /dev/bintime and not a system call - finds the file.
+	 * The name space a legacy program runs in is this one, so the file
+	 * has to be here for the buddy to answer an open of it.
+	 */
+	if(!waserror()){
+		p9bind("#T", "/dev", MAFTER);
+		poperror();
+		print("p9: #T bound onto /dev; nsec(2) reads /dev/bintime, the kernel's clock\n");
+	} else
+		print("p9: could not bind #T onto /dev: %s\n", up->errstr);
 	print("p9: name space up, root attached\n");
 }
 

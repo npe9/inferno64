@@ -6461,9 +6461,11 @@ exec.  The gap is
 .CW nsec
 and
 .CW unmount
-\- nine, and none of them a file operation, which is the shape one
-would want: the buddy is a file personality and the nine are time,
-notes, and a place to block.
+\- nine.  Seven of them are not file operations, which is the shape one
+would want: the buddy is a file personality and those seven are time,
+notes, and a place to block.  The other two are files, which is the
+opposite of what this counting assumed and is the first thing the
+section after this one records.
 .PP
 One of the nine looked like it would end the phase and does not.
 rio calls
@@ -6497,6 +6499,257 @@ itself.  On
 those are built natively on the disk by
 .CW riorun.rc ;
 they are four more binaries, not one.
+.PP
+.B "2.3a: the calls beyond the files.  Five of the six, and the sixth named."
+Six of the nine were genuinely missing.
+.CW sleep ,
+.CW notify
+and
+.CW noted
+were already in, as the plan said.  Five of the six are in now, each
+answered where it belongs, and the sixth is named below rather than
+half-done.
+.PP
+.CW chdir (2)
+and
+.CW unmount (2)
+are the buddy's, because a working directory and a mount point are name
+space and the buddy is the name space.  The working directory is the
+.I container's ,
+not the worker's: the buddy answers a call on one of four shared worker
+processes, so setting
+.CW up->dot
+would put whichever container chdir'd last in front of every other.  It
+is kept beside the container's
+.CW Pgrp
+and swapped in around its calls the same way, and swapped back with a
+flag rather than with a nil test, since a worker's own dot may be nil
+and nil would then mean both "nothing saved" and "put nil back".  It
+crosses a fork with the name space, as Plan 9's does: the child of a
+container that had chdir'd would otherwise start with none and fall
+back to the worker's, which is the buddy's own root, and its relative
+names would resolve somewhere its parent had never been.  It does not
+cross a migration, and that is a limit and not an oversight: a crossing
+rebuilds the private name space by replaying the binds recorded for it,
+and the working directory has no such record in the wire form.  A
+container that chdirs and then moves is at the buddy's root on the far
+side \- and since a move carries a group, a parent that chdir'd, forked
+and then moved loses it on both sides, the child's inherited directory
+with it.  Carrying it wants a record in the migration's wire form
+beside the binds, which is a change to a layout two machines read and
+is not made here.
+.CW unmount
+is
+.CW sysunmount 's
+body, which this configuration cuts: the mount point is named with
+.CW Amount
+and what is taken off it with
+.CW Aunmount ,
+and
+.CW cunmount
+takes the mount point first.  Written the other way round it
+dereferences a nil at
+.CW mnt->umh
+and takes the buddy down, which is what the first run did.
+.PP
+.CW alarm (2)
+and
+.CW rendezvous (2)
+are the kernel's, because a clock and a place to block are not files.
+.CW alarm
+is two lines over
+.CW procalarm ,
+and the two lines were not the work: nothing on this path had ever
+started the alarm kproc.
+.CW init0
+starts it for the full personality;
+.CW proc0 's
+microkernel branch did not, so
+.CW procalarm
+recorded the deadline and no process ever read it - an alarm set was an
+alarm that could not arrive.
+.CW rendezvous
+is Plan 9's
+.CW sysrendezvous ,
+also cut with sysproc.c, over machinery that is not cut: the
+.CW Rgrp
+and its hash, the
+.CW Rendezvous
+process state proc.c already unwinds when a note arrives, and
+.CW newrgrp .
+The group is made on the first
+.CW rfork(RFPROC|RFMEM)
+and shared with the child, so a thread and the process that made it can
+meet and a plain fork's child cannot meet a stranger's tag.  This is
+what
+.CW proccreate
+is built on, and rio makes six of them.
+.PP
+.B "nsec(2) is not a system call, and neither is postnote."
+The measurement above counted names in the sources and called all of
+them calls.  Two are not.  9front's
+.CW nsec (2)
+reads
+.CW /dev/bintime
+and takes the first eight bytes of it, big-endian; the
+.CW _NSEC
+trap is there for binary compatibility and no current libc uses it.  So
+a program asking the time is asking its
+.I name space ,
+and the file has to be in it.  It is now:
+.CW devtime.c ,
+one file, bound as
+.CW #T
+onto
+.CW /dev ,
+in the personality that holds a legacy program's name space.  The clock
+behind it is not the personality's - this is a user task and
+.CW p9shim.c 's
+.CW seconds ()
+answers 0 - so each read asks the kernel (a new request,
+.CW ReqNsec ,
+beside the
+.CW ReqSettime
+that sets it) rather than caching a value that would be stale by the
+next read.
+.CW _NSEC
+is answered too, in the kernel beside it, for a program whose libc is
+old enough to use it.
+.PP
+That left a program still dying on its first
+.CW nsec ,
+and the reason is worth keeping.  libc's
+.CW nsec
+keeps its
+.CW /dev/bintime
+descriptor in a
+.I private
+\- one word per process, from
+.CW privalloc (2)
+\- and its callers do not check what
+.CW privalloc
+returns.  It returns nil when there are no privates, and there were
+none: the block is set up by
+.CW _callmain ,
+which runs from libc's own
+.CW _main ,
+which is a member of the archive this host's linker cannot read, and
+.CW init9.c
+is the entry instead.  So every legacy program this tree builds had no
+privates and no Tos at all, and the first call that wanted either stored
+through a nil.  Both are
+.CW init9.c 's
+now, since it is what stands in for
+.CW _main :
+the privates are an array on its own
+.I frame ,
+not in the bss, because
+.CW rfork(RFPROC|RFMEM)
+copies the stack and shares the bss and a private has to be per process;
+and the Tos is filled by the kernel and its address passed one word past
+the argument vector's nil, because the first argument register carries
+the vector where Plan 9 would have carried the Tos.
+.CW ospreyenteruservec
+lays it out, which is where
+.CW ospreyenteruserargs
+and so every exec goes as well.
+.PP
+There are two entries now, and the reason is a segment.
+.CW init9.c
+is the entry a flat-loaded program takes: the file server of the
+microkernel configurations is loaded by
+.CW ospreyloadprog
+as one
+.CW "SG_TEXT | SG_RONLY"
+segment, its strings on the stack and no data segment at all, so it
+cannot store into libc's data - and setting
+.CW _privates
+is exactly that store.  The first sweep with one entry showed it at
+once: every microkernel configuration faulted writing an address in its
+own image four instructions into the program.
+.CW init9prog.c
+is the entry for a program that has a data segment of its own, which is
+every legacy binary the buddy lays out, and it is the one that takes the
+Tos and gives libc its privates.  The two differ in nothing else, and
+the word past the vector's nil is there for both: one reads it, one
+ignores it.
+.PP
+.B "What is left of the gap: postnote."
+.CW postnote (PNGROUP, ...)
+is how rio interrupts what it started
+.CW ( wind.c 's
+.CW interruptproc ),
+and libc's postnote is not a call either: it writes
+.CW /proc/\fIn\fP/notepg .
+The buddy has no
+.CW /proc ,
+and giving it one means a small file tree whose write reaches the kernel
+to post the note, since it is the kernel that holds the processes.  That
+is the one item of the six not built, and it is named here rather than
+approximated.
+.PP
+It is also the only one of the six whose answer is not already written
+somewhere.
+.CW chdir
+and
+.CW unmount
+had bodies in
+.CW sysfile.c
+to port;
+.CW alarm
+and
+.CW rendezvous
+had bodies in
+.CW sysproc.c
+and machinery this kernel still links.
+.CW postnote
+has neither.  It wants a file tree the buddy does not have, and a write
+on that tree has to reach the kernel, which means a request beside
+.CW ReqNote
+\- and
+.CW ReqNote
+posts a note to the
+.I caller ,
+while what rio does is post one to a process group it started.  Whose
+processes a container may post to, and how it names them, is a question
+about authority and not about a file, and it is where 2.3b starts.
+.PP
+One ordering fault came out of the runs.  The user-fault dump in
+.CW trap.c
+was
+.CW iprint ,
+which writes the port directly.  That is right when the machine is going
+down and wrong for a fault a program survives \- two of the
+demonstrations fault on purpose \- because it crosses whatever the
+console task is pushing and cuts a line in half, and a criterion that
+matches a whole sentence then fails on a sentence with a register dump
+spliced through it.  It goes through the console queue now, in order
+with everything else, except for a fault taken by the console task
+itself: that one still writes the port, because the queue it would go
+into is the one only that task drains.
+.PP
+The three kernel-side entries are
+.CW p9pair 's
+alone, as
+.CW xbrk
+and
+.CW xexec
+already were:
+.CW p9buddy
+and
+.CW p9linux
+carry neither the alarm nor the rendezvous nor the
+.CW _NSEC
+entry, and their demonstrations do not reach for them.  What is shared
+by every configuration is the rest of it \-
+.CW init9.c ,
+.CW ospreyenteruservec ,
+the buddy, the request the clock is read through, and the console
+ordering.
+.PP
+Seven criteria of the pair check hold the five calls, the fork's
+working directory and the Tos apart, and the pair check is 78 where it
+was 71.
 .NH 2
 Track three: the library-OS personality execs a program, then rio
 .PP
@@ -6834,7 +7087,7 @@ clean:
 .CW pc64
 61,
 .CW p9pair
-71,
+78,
 .CW p9buddy
 5,
 .CW p9linux

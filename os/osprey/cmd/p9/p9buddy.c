@@ -47,6 +47,8 @@ enum {
 	BIND	= 2,
 	MOUNT	= 46,
 	FD2PATH	= 23,
+	CHDIR	= 3,
+	UNMOUNT	= 35,
 	/* rfork flags (portdat.h), which the shim headers here do not carry */
 	RFNAMEG	 = (1<<0),
 	RFPROC	 = (1<<4),
@@ -94,6 +96,7 @@ struct Img {
 	} ph[Maxph];
 	char	err[ERRMAX];		/* the last error, for the process's errstr(2) */
 	Pgrp	*pgrp;			/* its own name space once it rforks RFNAMEG; nil = the buddy's shared one */
+	Chan	*dot;			/* its own working directory once it chdirs; nil = the buddy's own */
 	int	nsforked;		/* it rforked a private name space (RFNAMEG) */
 	int	nbind;			/* path binds it made in that name space, recorded so migration can replay them */
 	struct { char new[80], old[80]; int flag; } bind[8];
@@ -368,6 +371,8 @@ p9buddy_gone(uvlong container)
 			p9close(img->fds[i]);
 	if(img->pgrp != nil)
 		closepgrp(img->pgrp);		/* the container's own name space, if it rforked one */
+	if(img->dot != nil)
+		cclose(img->dot);		/* and its own working directory, if it chdir'd */
 	memset(img, 0, sizeof *img);
 }
 
@@ -595,6 +600,15 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 	long r;
 	int bfd;
 	Pgrp *savedpgrp = nil;
+	Chan *saveddot = nil;
+	/*
+	 * A separate flag, not saveddot != nil: a worker's dot may itself
+	 * be nil, and then nil cannot mean both "nothing saved" and "put
+	 * nil back".  Skipping the restore would leave a container's own
+	 * directory installed on a shared worker, which is the thing the
+	 * swap exists to prevent.
+	 */
+	int dotsaved = 0;
 
 	img = imgof(container, 1);
 
@@ -620,6 +634,17 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 		savedpgrp = up->pgrp;
 		up->pgrp = img->pgrp;
 	}
+	/*
+	 * And its own working directory, for the same reason and swapped the
+	 * same way: a relative name a container opens has to resolve against
+	 * the directory that container chdir'd to, not the worker's, which is
+	 * the buddy's own and shared by every container at once.
+	 */
+	if(img != nil && img->dot != nil){
+		saveddot = up->dot;
+		dotsaved = 1;
+		up->dot = img->dot;
+	}
 
 	/*
 	 * Any file trap that raises an error is answered -1, and the error
@@ -629,6 +654,8 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 	if(waserror()){
 		if(savedpgrp != nil)
 			up->pgrp = savedpgrp;
+		if(dotsaved)
+			up->dot = saveddot;
 		if(img != nil)
 			kstrcpy(img->err, up->errstr, sizeof img->err);
 		return -1;
@@ -697,6 +724,20 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 			cimg->nsforked = img->nsforked;	/* the child holds the same private ns, and its record of the binds that made it, for its own migration */
 			cimg->nbind = img->nbind;
 			memmove(cimg->bind, img->bind, sizeof cimg->bind);
+		}
+		/*
+		 * And the working directory, which a fork inherits on Plan 9.
+		 * Without this a child of a container that had chdir'd starts
+		 * with none and falls back to the worker's - the buddy's own
+		 * root - so its relative names resolve somewhere its parent
+		 * never was.  The channel is referenced again, since each
+		 * container closes its own on the way out.
+		 */
+		if(img->dot != nil){
+			if(cimg->dot != nil)
+				cclose(cimg->dot);
+			cimg->dot = img->dot;
+			incref(cimg->dot);
 		}
 		r = 0;
 		break;
@@ -888,6 +929,41 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 		r = bfd < 0 ? -1 : p9mount(bfd, (char*)(cdata + Nameoff), (int)a1, (char*)(cdata + Nameoff + 128));
 		break;
 
+	case CHDIR:
+	{
+		/*
+		 * chdir(name): name at Nameoff.  The container's working
+		 * directory is its own, kept here beside its name space, so
+		 * that two containers can be in two directories at once - which
+		 * they could not be if this set the worker's dot, since the
+		 * worker is shared and the next call would run in whatever
+		 * directory the last container chose.
+		 */
+		Chan *nc = p9chdirchan((char*)(cdata + Nameoff));
+
+		if(img == nil){
+			cclose(nc);
+			r = -1;
+			break;
+		}
+		if(img->dot != nil)
+			cclose(img->dot);
+		img->dot = nc;
+		if(!dotsaved){
+			saveddot = up->dot;
+			dotsaved = 1;
+		}
+		up->dot = nc;		/* the rest of this call runs there too */
+		r = 0;
+		break;
+	}
+
+	case UNMOUNT:
+		/* unmount(name, old): name at Nameoff, old at Nameoff+128; an
+		 * empty name means everything mounted on old */
+		r = p9unmount((char*)(cdata + Nameoff), (char*)(cdata + Nameoff + 128));
+		break;
+
 	default:
 		r = -1;		/* a trap this buddy does not emulate */
 		break;
@@ -895,6 +971,8 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 	poperror();
 	if(savedpgrp != nil)
 		up->pgrp = savedpgrp;
+	if(dotsaved)
+		up->dot = saveddot;
 	return r;
 }
 

@@ -553,6 +553,54 @@ p9bind(char *name, char *old, int flag)
 	return 0;
 }
 
+/*
+ * chdir(2) and unmount(2), the two name-space calls the file layer did
+ * not have.  chdir yields the channel the name resolves to rather than
+ * setting up->dot: the caller here is a buddy worker serving one
+ * container's call, and up is the worker, whose dot is the buddy's own -
+ * a container's working directory has to be the container's, kept beside
+ * its Pgrp and swapped in around its calls the same way.  A caller that
+ * wants the plain effect closes the old channel and keeps this one.
+ */
+Chan*
+p9chdirchan(char *name)
+{
+	Chan *c;
+
+	c = namec(name, Atodir, 0, 0);
+	return c;
+}
+
+/*
+ * unmount(name, old): take one thing off a mount point, or clear it.
+ * An empty name is Plan 9's "everything mounted on old".  The body is
+ * sysunmount's, which this configuration cuts: the mount point is named
+ * with Amount and what is being taken off with Aunmount, and cunmount
+ * takes the mount point first - the other order dereferences a nil.
+ */
+int
+p9unmount(char *name, char *old)
+{
+	Chan *cmounted, *cmount;
+
+	cmounted = nil;
+	cmount = namec(old, Amount, 0, 0);
+	if(waserror()){
+		cclose(cmount);
+		if(cmounted != nil)
+			cclose(cmounted);
+		nexterror();
+	}
+	if(name != nil && *name != 0)
+		cmounted = namec(name, Aunmount, OREAD, 0);
+	cunmount(cmount, cmounted);
+	poperror();
+	cclose(cmount);
+	if(cmounted != nil)
+		cclose(cmounted);
+	return 0;
+}
+
 /* duplicate a descriptor: a new fd on the same channel (shared offset) */
 int
 /*

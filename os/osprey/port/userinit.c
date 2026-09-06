@@ -633,14 +633,44 @@ ospreyenteruservec(char **argv, int argc)
 			memmove((void*)sp, argv[i], n);
 			straddr[i] = sp;
 		}
-		/* the pointer array, 16-aligned, below the strings */
+		/*
+		 * The pointer array, 16-aligned, below the strings:
+		 * argv[0]..argv[argc-1], the nil that ends the vector, and
+		 * one word past the nil holding the address of the Tos.
+		 *
+		 * That last word is this kernel's own, and it is here because
+		 * a program entered this way never runs libc's _main.  On
+		 * Plan 9 the kernel leaves the Tos in AX and main9.s stores
+		 * it in _tos; here AX carries the argument vector instead, so
+		 * the pointer has to travel somewhere, and the end of the
+		 * vector is the one place the entry can find it without a
+		 * second convention.  init9.c reads it.  Without a Tos, libc
+		 * faults the first time a program asks the time: nsec(2)
+		 * reads /dev/bintime and keeps its descriptor in a private,
+		 * and the private it keeps is indexed by _tos->pid.
+		 */
 		sp &= ~(uintptr)15;
-		sp -= (uintptr)(argc + 1) * sizeof(uintptr);
+		sp -= (uintptr)(argc + 2) * sizeof(uintptr);
 		sp &= ~(uintptr)15;
 		uargv = (uintptr*)sp;
 		for(i = 0; i < argc; i++)
 			uargv[i] = straddr[i];
 		uargv[argc] = 0;
+		uargv[argc+1] = USTKTOP - sizeof(Tos);
+	}
+
+	/*
+	 * And fill it.  Only what a program actually reads is set: the pid,
+	 * which libc's getpid(2) and its per-process privates use, and the
+	 * cycle frequency, which is 0 when the machine has no counter and
+	 * is read as "do not use cycles" rather than as a rate.
+	 */
+	{
+		Tos *tos = (Tos*)(USTKTOP - sizeof(Tos));
+
+		memset(tos, 0, sizeof *tos);
+		tos->pid = up->pid;
+		tos->cyclefreq = m->cyclefreq;
 	}
 
 	splhi();
@@ -771,6 +801,16 @@ proc0(void*)
 		 * calls for it reaches through the syscall interface, not
 		 * through a name space the kernel set up.
 		 */
+		/*
+		 * The alarm kproc, which the full personality starts in
+		 * init0 and this path never did.  alarm(2) posts a note when
+		 * a process's time comes, and the posting is this kproc's:
+		 * without it procalarm records the deadline and nothing ever
+		 * reads it, so a legacy program that sets an alarm waits for
+		 * a note that cannot arrive.  checkalarms, on the clock tick,
+		 * is what wakes it.
+		 */
+		kproc("alarm", alarmkproc, 0);
 		ospreyuserprep();
 		ospreyframebuffer();
 		if(ospreyp9linux){

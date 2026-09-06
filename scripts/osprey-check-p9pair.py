@@ -312,6 +312,35 @@ def main():
         ("and the stream is the lease's heartbeat: past the server's three-second lease an entry is still held and read from the copy - before, a streamed fid lapsed and the copy went stale for good",
          "p9 ip: cache: 3500 ms later /n/cachef8 is still held - read from the copy; the stream's frames renewed its lease on the server" in t
          and 'past the lease: the entry is dropped' not in t),
+        # The five calls beyond the file traps that rio's libc uses.  Two
+        # are the buddy's, since a working directory and a mount point are
+        # name-space things; three are the kernel's, since a clock, a note
+        # and a place to block are not files.
+        ("chdir(2) is the buddy's, and the working directory is the container's own: the program chdirs to /n and opens a relative name, which the buddy resolves against that container's directory and not its worker's",
+         re.search(r'legacy: chdir\'d to /n and opened the relative name hello, which reads: "version \d+ of forty', t) is not None),
+        ("and a fork inherits that working directory, while a child's own chdir does not move its parent: the two containers run their calls on the same shared workers, so a directory kept on the worker would move both",
+         'legacy: the forked child inherited the working directory: it opened the relative name hello too' in t
+         and 'legacy: and the child chdir\'d to / on its own, where the relative name is n/hello' in t
+         and 'legacy: and my own working directory did not move when my child chdir\'d: hello still opens here' in t
+         and 'legacy: BUG: the forked child did not inherit the working directory' not in t
+         and 'legacy: BUG: my working directory moved when my child chdir\'d' not in t),
+        ("unmount(2) takes a container's own mount off its own mount point: the file readable through the mount a moment before is not reachable after it, and nothing else lost a name",
+         'legacy: unmounted /mnt; /mnt/n/hello is no longer reachable, which is what unmount means' in t
+         and 'legacy: BUG: /mnt/n/hello still readable after unmount' not in t),
+        ("nsec(2) is not a system call but a read of /dev/bintime, and the personality serves that file out of the kernel's clock: the program's two readings run forward across a sleep",
+         'p9: #T bound onto /dev; nsec(2) reads /dev/bintime, the kernel\'s clock' in t
+         and re.search(r'legacy: nsec\(\) ran forward (\d+) milliseconds over a 50 millisecond sleep', t) is not None
+         and 'legacy: BUG: nsec() did not run forward' not in t),
+        ("alarm(2) is answered by the kernel and delivered by the alarm kproc, which the microkernel path had never started: the program asks for a note in 150 milliseconds, its handler gets it, and noted(NCONT) carries it on",
+         'legacy: my note handler got the alarm note I asked for: "alarm"; noted(NCONT)' in t
+         and 'legacy: alarm(150) delivered its note and I woke to it' in t
+         and 'legacy: BUG: alarm(150) never delivered a note' not in t),
+        ("rendezvous(2) between two processes of one address space: a thread forked with RFMEM meets the program on a tag and each takes the word the other left - libthread's proccreate is this, and rio makes six of them",
+         'legacy: rendezvous on tag 0x9001 met my thread and took the word it left: 0x1234' in t
+         and 'legacy: BUG: rendezvous returned' not in t),
+        ("and a legacy program is given a Tos: the kernel fills it and passes its address past the end of the argument vector, and the entry gives libc that and its private words - without them nsec(2) stores through a nil private on its first call",
+         'legacy: nsec() ran forward' in t
+         and 'legacy process osprey-exec killed by note: sys: trap: fault write addr=0x0' not in t),
         ("a note that is not a fault: posted by request, delivered to the program's notify(2) handler, and noted(NCONT) resumes the interrupted program at the instruction after the call - the continuation the legacy ABI was missing",
          'legacy: my note handler got a note that is not a fault: "osprey: a note by request"; noted(NCONT)' in t
          and 'legacy: resumed after the note - noted(NCONT) brought me back to the instruction after the call (7)' in t),

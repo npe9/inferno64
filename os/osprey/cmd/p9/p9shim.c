@@ -235,7 +235,8 @@ extern Dev srvdevtab;
 extern Dev lfsdevtab;
 extern Dev ipdevtab;
 extern Dev cachedevtab;
-Dev *devtab[] = { &rootdevtab, &envdevtab, &mntdevtab, &looploopdevtab, &expdevtab, &pipedevtab, &srvdevtab, &lfsdevtab, &ipdevtab, &cachedevtab, nil };
+extern Dev timedevtab;
+Dev *devtab[] = { &rootdevtab, &envdevtab, &mntdevtab, &looploopdevtab, &expdevtab, &pipedevtab, &srvdevtab, &lfsdevtab, &ipdevtab, &cachedevtab, &timedevtab, nil };
 
 long	kerndate = 0;
 

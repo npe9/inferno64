@@ -2470,6 +2470,7 @@ enum {
 	Bwrite = 20, Bpwrite = 51, Bseek = 39, Boseek = 16,
 	Bcreate = 22, Bremove = 25, Bfstat = 43, Bstat = 42, Berrstr = 41, Bpipe = 21,
 	Brfork = 19, Bbind = 2, Bmount = 46, Bawait = 47, Bfd2path = 23,
+	Bchdir = 3, Bunmount = 35,
 	/*
 	 * Not system calls: what the kernel asks the buddy on a legacy
 	 * process's behalf beyond its traps.  exec has the buddy lay a
@@ -2540,6 +2541,7 @@ uintptr
 #define ReqKick 33	/* xcall op: a server has put work on a container's output queue in memory; wake that container's select */
 #define ReqCheckticket 34	/* xcall op: a ticket in the caller's data area at arg[0]; the kernel says whom it names, or no */
 #define ReqTicket 35	/* xcall op: a ticket for the name at arg[0] in the caller's data area, for the caller's container, good arg[1] seconds */
+#define ReqNsec 36	/* xcall op: the kernel's clock in nanoseconds, which the personality serves as /dev/bintime */
 ospreyxcall(va_list list)
 {
 	uvlong op, *ubuf, arg[Ospreynarg];
@@ -2650,6 +2652,19 @@ ospreyxcall(va_list list)
 		if(ospreyaccount(up->osprey, &ubuf[0], &ubuf[1], &ubuf[2], &ubuf[4]) < 0)
 			return -1;
 		ubuf[3] = ospreyhz;
+		return 0;
+	}
+	if(op == ReqNsec){
+		/*
+		 * The clock, read.  ReqSettime is how a task sets it; this is
+		 * how one reads it, and it is here rather than left to the
+		 * personality because the personality has no clock of its own
+		 * - p9shim.c's seconds() answers 0.  What a program actually
+		 * calls is nsec(2), and 9front's nsec(2) is not a system call
+		 * at all: it reads /dev/bintime.  So the personality serves
+		 * that file (devtime.c) out of this.
+		 */
+		ubuf[0] = (uvlong)todget(nil, nil);
 		return 0;
 	}
 	if(op == ReqNote){
@@ -2965,6 +2980,43 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 			nd[128+i] = 0;
 		}
 		ab[1] = Aint(a[0]); ab[2] = Aint(a[3]); ab[3] = 0;	/* fd, flag */
+		break;
+	case Bchdir:				/* chdir(name): name at Bnameoff */
+		nd = ospreydata(p, Bnameoff, 256);
+		if(nd == nil)
+			return -1;
+		{
+			char *name = (char*)a[0];
+			for(i = 0; i < 255 && name[i] != 0; i++)
+				nd[i] = name[i];
+			nd[i] = 0;
+		}
+		ab[1] = 0; ab[2] = 0; ab[3] = 0;
+		break;
+	case Bunmount:				/* unmount(name, old): name at Bnameoff, old just past it */
+		nd = ospreydata(p, Bnameoff, 512);
+		if(nd == nil)
+			return -1;
+		{
+			/*
+			 * name may be nil, which is Plan 9's "everything mounted
+			 * on old": it crosses as an empty string, since what the
+			 * buddy reads is a byte at a fixed offset and there is no
+			 * nil to send.
+			 */
+			char *name = (char*)a[0], *old = (char*)a[1];
+			if(name == nil)
+				nd[0] = 0;
+			else {
+				for(i = 0; i < 127 && name[i] != 0; i++)
+					nd[i] = name[i];
+				nd[i] = 0;
+			}
+			for(i = 0; i < 127 && old[i] != 0; i++)
+				nd[128+i] = old[i];
+			nd[128+i] = 0;
+		}
+		ab[1] = 0; ab[2] = 0; ab[3] = 0;
 		break;
 	default:
 		return -1;			/* a trap the buddy does not emulate */
@@ -3375,6 +3427,20 @@ ospreyconsdrained(Ospreyproc *p)
 		wakeup(&ospreyselrend[x]);
 }
 
+/*
+ * Is the running process the console task's own?  A fault it takes must
+ * not be printed into the queue it is itself supposed to drain: those
+ * bytes would sit there until it ran again, which is exactly what a
+ * faulting task may not do.  trap.c asks this and writes the port
+ * directly for that one process, and goes through the queue - in order
+ * with everything else - for every other.
+ */
+int
+ospreyisconsoleproc(void)
+{
+	return up != nil && up->osprey != nil && up->osprey == ospreyconsproc;
+}
+
 /* a task's write to the console: through the console task, or the port when there is none */
 void
 ospreyconsolewrite(char *s, int n)
@@ -3684,6 +3750,24 @@ ospreyforkkern(Ospreyproc *parent, ulong flag)
 	p->pgrp = up->pgrp;		/* share the namespace, like a thread fork */
 	if(p->pgrp != nil)
 		incref(p->pgrp);
+	/*
+	 * The rendezvous group.  Two processes that share an address space
+	 * (RFMEM) are what rendezvous(2) is for - it is how libthread's
+	 * proccreate hands a new proc its argument and how the two then
+	 * synchronise - so they must be in one group, and a plain fork's
+	 * child must not be, or an unrelated program's tag could meet this
+	 * one's.  The group is made here on the parent when it has none,
+	 * because it has to exist before there is anyone to share it with;
+	 * pgrp.c, which is where a full kernel makes it, is cut from every
+	 * configuration this path serves.
+	 */
+	if(flag & RFMEM){
+		if(up->rgrp == nil)
+			up->rgrp = newrgrp();
+		p->rgrp = up->rgrp;
+		incref(p->rgrp);
+	} else
+		p->rgrp = nil;
 	/*
 	 * Craft the child's return frame: it pops out of the scheduler in
 	 * user mode at the parent's fork point, with the return register 0.

@@ -7,7 +7,7 @@ set -e
 cd "$(dirname "$0")/../../../.."
 P=os/osprey/cmd/p9
 LIBINC="-I Osprey/amd64/include -I Osprey/include -I include -I $P"
-OBJ="os/osprey/pc64/init9.6"
+OBJ="os/osprey/pc64/init9prog.6"
 6c $LIBINC -o /tmp/legacyp9.6 $P/legacyp9.c
 6a -o /tmp/legacyxcall.6 $P/legacyxcall.s
 OBJ="$OBJ /tmp/legacyp9.6 /tmp/legacyxcall.6"

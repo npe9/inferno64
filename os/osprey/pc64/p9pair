@@ -467,6 +467,85 @@ port
 		return 0;
 	}
 
+	/*
+	 * alarm(ms): the process asks to be sent an "alarm" note that many
+	 * milliseconds from now, 0 to cancel, and gets back what was left of
+	 * any alarm already set.  It is the kernel's, not the buddy's: the
+	 * clock and the note are both here, and alarm.c is linked into this
+	 * configuration whole - only sysproc.c, which held the two-line
+	 * wrapper, is cut.
+	 */
+	uintptr xalarm(va_list list)
+	{
+		return (uintptr)procalarm(va_arg(list, ulong));
+	}
+
+	/*
+	 * _nsec(): nanoseconds since the epoch.  On a 64-bit machine libc's
+	 * nsec(2) takes the answer in the return register and passes no
+	 * pointer, which is what the port's own sys_nsec does; the same is
+	 * done here rather than forwarded, because the time of day is the
+	 * machine's and the buddy has no better one.
+	 */
+	uintptr xnsec(va_list list)
+	{
+		USED(list);
+		return (uintptr)todget(nil, nil);
+	}
+
+	/*
+	 * rendezvous(tag, value): two processes sharing an address space
+	 * meet on a tag and swap a word, the first to arrive sleeping until
+	 * the second comes.  This is libthread's proccreate handing a new
+	 * proc its argument, and it is the one call of the nine that is not
+	 * a file, a time or a note: it is a place to block, and the place is
+	 * the address space, so the kernel answers it.
+	 *
+	 * The body is Plan 9's sysrendezvous, which is in sysproc.c and cut
+	 * from this configuration; what is not cut is the machinery it uses
+	 * - the Rgrp and its hash in portdat.h, the Rendezvous process state
+	 * proc.c already unwinds when a note arrives, and newrgrp in proc.c.
+	 * The group itself is made on the first RFMEM fork (devosprey.c) so
+	 * that a thread and the process that made it are in one, and a
+	 * process that has none is alone and can only wait to be joined.
+	 */
+	uintptr xrendezvous(va_list list)
+	{
+		uintptr tag, val, new;
+		Proc *p, **l;
+
+		tag = va_arg(list, uintptr);
+		new = va_arg(list, uintptr);
+		if(up->rgrp == nil)
+			up->rgrp = newrgrp();
+		l = &REND(up->rgrp, tag);
+
+		lock(up->rgrp);
+		for(p = *l; p != nil; p = p->rendhash){
+			if(p->rendtag == tag){
+				*l = p->rendhash;
+				val = p->rendval;
+				p->rendval = new;
+				unlock(up->rgrp);
+				ready(p);
+				return val;
+			}
+			l = &p->rendhash;
+		}
+
+		/* nobody there yet: sleep on the tag until the other one comes */
+		up->rendtag = tag;
+		up->rendval = new;
+		up->rendhash = *l;
+		*l = up;
+		up->state = Rendezvous;
+		unlock(up->rgrp);
+
+		sched();
+
+		return up->rendval;
+	}
+
 	Xsyscall *systab[] = {
 		[5]	xselect,	/* DUP number reused: select over arms */
 		[7]	xexec,		/* EXEC: the program replaces itself, its descriptors kept */
@@ -477,6 +556,9 @@ port
 		[24]	xbrk,		/* BRK_: heap growth, the address-space service */
 		[30]	xsegattach,	/* SEGATTACH */
 		[51]	xpwrite,	/* PWRITE */
+		[6]	xalarm,		/* ALARM: a note this many milliseconds from now */
+		[34]	xrendezvous,	/* RENDEZVOUS: two processes of one address space meet */
+		[53]	xnsec,		/* _NSEC: nanoseconds, the machine's clock */
 		[60]	ospreyxcall,	/* above the Plan 9 table, which a legacy binary uses whole: a request of the task's own, answered now */
 	};
 	int nsyscall = nelem(systab);
