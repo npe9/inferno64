@@ -801,15 +801,31 @@ with an absurd size.  That is the pre-existing corruption of
 .CW doc/inferno-ports.ms ,
 unmoved.
 .PP
-Two of fourteen deserves a note of its own, because it is much worse
-than the fifteen and sixteen of twenty this branch measured earlier in
-the same investigation.  Two candidates have been ruled out by the same
-alternating method, so that the next person does not spend the time
-twice.
-.IP \(bu
-Phase 1a itself: the parent commit scores the same, two of fourteen.
-.IP \(bu
-This branch's own kernel instrumentation \- the
+Two of fourteen wants checking against the figure this branch measured
+earlier in the same investigation, and the check is worth writing down
+because the first attempt at it got the direction backwards.  That
+earlier run is the table in
+.CW doc/multicore-plan.ms
+section 5:
+.IP
+.nf
+                    panicked   survived
+before the VM lock    16/20       4/20
+with the VM lock      15/20       5/20
+.fi
+.PP
+Those are
+.I panics ,
+not survivals \- four and five boots in twenty came up, which is the
+same "four boots in five" the verification note above already quotes.
+Against that, two, two and four of fourteen is the same rate.  The
+baseline has not moved.  Nothing here made anything worse, and the
+known-good such as it is remains usable as a known-good.
+.PP
+Two things were nonetheless ruled out along the way, by the same
+alternating method, and they are worth keeping so nobody spends the
+time twice: Phase 1a itself, since the parent commit scores identically;
+and this branch's own kernel instrumentation \- the
 .CW kstackcheck()
 call in
 .CW sched() ,
@@ -821,23 +837,21 @@ in
 .CW hzclock() .
 A kernel with all three removed scores four of fourteen against two of
 fourteen for the kernel that keeps them, which at that sample size is
-noise, and both are nowhere near fifteen of twenty.  The
+noise.  The
 .CW disdump()
-could not have been implicated anyway: it fires at
+was never a candidate on the arithmetic either: it fires at
 .CW "m->ticks == 40*HZ" ,
-which with
+forty seconds at
 .CW HZ
-of 100 is forty seconds, and these boots are given thirty and panic in
-the first two.
+of 100, and these boots are given thirty and panic in the first two.
 .PP
-So the baseline has moved and it is not either of those.  Whatever moved
-it is upstream of everything in this document, and it makes the point
-.CW doc/multicore-plan.ms
-already argues: the uniprocessor baseline has to be fixed and, more to
-the point, has to be
-.I watched ,
-before any of the phases below can be told apart from it.  A comparison
-against a known-good is worth nothing when the known-good drifts.
+The moral is not about the kernel.  A rate quoted without its
+denominator's polarity is a trap, and this document walked into it: the
+number was carried forward from a summary as "15/20" with the sense
+inverted, and two paragraphs of explanation were then written for a
+drift that never happened.  Where a phase below says to compare against
+a known-good, compare against the table, not against a remembered
+number.
 .NH 2
 Phase 1b is not Phase 1a, and it does not land alone
 .PP
