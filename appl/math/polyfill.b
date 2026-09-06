@@ -84,10 +84,22 @@ fillline(dst: ref Image, left: int, right: int, y: int, src: ref Image, p: Point
 	dst.line((left, y), (right, y), Endsquare, Endsquare, 0, src, p);
 }
 
-filllinez(dst: ref Image, left: int, right: int, y: int, z: int, e: int, dx: int, k: int, zbuf0: array of int, zbuf1: array of int, src: ref Image, p: Point)
+# The span is inclusive of `right', but xscan clamps it to the clip
+# rectangle's max.x, which is exclusive - so the last pixel of a span that
+# reaches the right-hand edge indexes one past this row of the depth
+# buffer.  On any row but the last that quietly wrote a depth value into
+# column 0 of the row below (measured: a triangle running off the right
+# edge clobbered twelve rows); on the last row it walked off the array and
+# raised.  kend is the index one past this row, and the depth loop stops
+# there.  The fill still runs to `right' as it always did, because the
+# draw device clips the extra column away by itself.
+filllinez(dst: ref Image, left: int, right: int, y: int, z: int, e: int, dx: int, k: int, kend: int, zbuf0: array of int, zbuf1: array of int, src: ref Image, p: Point)
 {
 	prevx := ∞;
-	for(x := left; x <= right; x++){
+	xlim := right;
+	if(k + (right - left) >= kend)
+		xlim = left + (kend - 1 - k);
+	for(x := left; x <= xlim; x++){
 		if(z+e < zbuf0[k] || (z-e <= zbuf1[k] && x != right && prevx != ∞)){
 			zbuf0[k] = z-e;
 			zbuf1[k] = z+e;
@@ -314,7 +326,7 @@ xscan(dst: ref Image, seg: array of ref Seg, segtab: array of ref Seg, nseg: int
 				continue;
 			if(ix2 > maxx)
 				ix2 = maxx;
-			filllinez(dst, ix, ix2, iy, zv+ix*dx, er, dx, k+ix-zr.min.x, zbuf0, zbuf1, src, spt);
+			filllinez(dst, ix, ix2, iy, zv+ix*dx, er, dx, k+ix-zr.min.x, k+xlen, zbuf0, zbuf1, src, spt);
 		}
 		y += (1<<fixshift);
 		iy++;

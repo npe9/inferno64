@@ -185,6 +185,22 @@ These are bugs, not design gaps, and are worth separating out.
   and `talons` all depend on that.
 - **`line3` and `plot3` do not use the z-buffer either.** TempleOS's
   `GrPlot3B` sets `dc->db_z` and plots through the depth buffer.
+- **`polyfill->fillpoly` wrote depth one column past each row.** Found by
+  running the nine draw3d demos while auditing: `temple/shadow` raised
+  `array bounds error` a few frames in, and did so on unmodified draw3d
+  too. `xscan` clamps a span's right end to the clip rectangle's
+  `max.x`, which is *exclusive*, but `filllinez` fills `[left,right]`
+  *inclusive* — so a span reaching the right-hand edge indexed one past
+  its row of the depth buffer. On any row but the last that quietly wrote
+  a depth value into column 0 of the row below (measured: a triangle
+  running off the right edge clobbered twelve consecutive rows); on the
+  last row it left the array and raised. **Fixed**: the depth loop stops
+  at the row end, the fill still runs to `right` because the draw device
+  clips the extra column itself. A 400-polygon z-buffered scene kept
+  strictly inside the buffer renders bit-identically, pixels and depth,
+  before and after; the same scene allowed to cross the edge renders
+  identical *pixels* and a different depth buffer, which is the stray
+  writes going away.
 
 ## What this cost, ranked
 
