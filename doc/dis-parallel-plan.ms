@@ -803,10 +803,35 @@ unmoved.
 .PP
 Two of fourteen deserves a note of its own, because it is much worse
 than the fifteen and sixteen of twenty this branch measured earlier in
-the same investigation.  Nothing here caused it \- the parent commit
-scores the same \- but the baseline has moved since that figure was
-taken and the two are not comparable.  Whatever moved it is upstream of
-everything in this document, and it makes the point
+the same investigation.  Two candidates have been ruled out by the same
+alternating method, so that the next person does not spend the time
+twice.
+.IP \(bu
+Phase 1a itself: the parent commit scores the same, two of fourteen.
+.IP \(bu
+This branch's own kernel instrumentation \- the
+.CW kstackcheck()
+call in
+.CW sched() ,
+the guard painting in
+.CW newproc() ,
+and the one-shot
+.CW disdump()
+in
+.CW hzclock() .
+A kernel with all three removed scores four of fourteen against two of
+fourteen for the kernel that keeps them, which at that sample size is
+noise, and both are nowhere near fifteen of twenty.  The
+.CW disdump()
+could not have been implicated anyway: it fires at
+.CW "m->ticks == 40*HZ" ,
+which with
+.CW HZ
+of 100 is forty seconds, and these boots are given thirty and panic in
+the first two.
+.PP
+So the baseline has moved and it is not either of those.  Whatever moved
+it is upstream of everything in this document, and it makes the point
 .CW doc/multicore-plan.ms
 already argues: the uniprocessor baseline has to be fixed and, more to
 the point, has to be
