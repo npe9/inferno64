@@ -1072,6 +1072,17 @@ boots in five cannot tell a porting bug from the bug it inherited.
 .NH 1
 NUMA, and the modern machine
 .PP
+This section is about the
+.I kernel .
+The same question for the Dis runtime \- whether
+.CW libinterp
+is correct on a multiprocessor, on asymmetric cores, and on NUMA \- is
+answered separately in
+.CW doc/dis-numa-survey.ms ,
+and the answer is different for each of the three: not correct on a
+multiprocessor, correct but unfair on big.LITTLE, correct and blind on
+NUMA.
+.PP
 This section is deliberately last and deliberately cautious, because
 the honest answer to "what about NUMA" in this kernel today is that it
 is the wrong question by several orders of magnitude, and saying that

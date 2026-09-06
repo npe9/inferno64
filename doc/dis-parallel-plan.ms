@@ -1223,6 +1223,30 @@ Left last on purpose, because it is the only phase that cannot be done
 by a macro, and because on the boards that matter it is not on the
 critical path.
 .PP
+One correction to "not on the critical path", from
+.CW doc/dis-numa-survey.ms :
+it is not on the critical path for
+.I performance ,
+but it is squarely on the one for
+.I correctness .
+The reference-count update and the colour write barrier are emitted
+inline and non-atomically by all three live backends \-
+.CW comp-arm64.c
+does a plain load-add-store on
+.CW Heap.ref ,
+and neither
+.CW comp-amd64.c
+nor
+.CW comp-386.c
+contains a
+.CW LOCK
+prefix anywhere.  So a parallel interpreter is correct only with
+.CW cflag
+at 0 until this phase is done.  That is what every native board already
+sets, and it is why the work in this document is done under
+.CW -c0 ,
+but it should be a decision rather than an accident.
+.PP
 The scope is smaller than a raw count suggests.  Four backends are
 stubs \-
 .CW comp-riscv64.c ,
