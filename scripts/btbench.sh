@@ -35,6 +35,13 @@
 #	refuseexec
 #		a server that queues the pieces cleanly and refuses to
 #		commit them: the same assertions, reached the other way
+#	stalefid	a characteristic file kept open across a disconnect
+#		and a reconnect: the old name must be gone.  What the
+#		fix for it changes is not visible from inside the guest
+#		-- the client's own channel has gone either way -- so
+#		this phase also counts what reached the controller: a
+#		stale read that still resolved would send one more ATT
+#		Read of handle 0x0003 than the phase asks for.
 #
 # emu does not exit when btbench returns, because btfs is still serving
 # in a process it spawned.  So each phase runs emu in the background and
@@ -115,4 +122,18 @@ run orphan --orphan-connect orphan
 run orphanlive --orphan-live orphanlive
 run badprepare --corrupt-prepare badprepare
 run refuseexec --refuse-execute badprepare
+run stalefid "" stalefid
+#
+# three Read Requests for the device name: the one the phase makes
+# before the disconnect, and the two the readfile after the reconnect
+# makes (styx reads until the file is short).  A fourth is the stale
+# fid still resolving to the characteristic it named.
+#
+n=`grep -c 'att 0x0a 0a0300' "$OUT/bthci-stalefid.log" || true`
+if [ "$n" != 3 ]; then
+	echo "=== phase stalefid ==="
+	echo "BENCH FAIL (stalefid): the controller saw $n reads of the device name, wanted 3"
+	exit 1
+fi
+echo "the controller saw $n reads of the device name, as it should"
 echo "BENCH PASS"

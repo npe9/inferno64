@@ -196,6 +196,13 @@ init(nil: ref Draw->Context, argv: list of string)
 		rejoin();
 		return;
 	"stall" or "late" or "early" or "orphan" or "orphanlive" or "badprepare" =>
+		;
+	"stalefid" =>
+		stalefid();
+		return;
+	}
+	case mode {
+	"stall" or "late" or "early" or "orphan" or "orphanlive" or "badprepare" =>
 		conntest(mode);
 		return;
 	}
@@ -504,6 +511,78 @@ conntest(mode: string)
 		} else
 			sys->print("BT: the link carries ATT: name = %s\n", v);
 	}
+	writefile(dev + "/ctl", "disconnect");
+	writefile(mnt + "/0/ctl", "scan off");
+	sys->print("BT: done\n");
+}
+
+#
+# A file kept open across a disconnect and a reconnect.  The
+# characteristic it named is gone -- the whole gatt tree is torn down
+# when the link closes and built again from scratch -- so reading the
+# old fid has to fail.  While the node table kept the entry after the
+# tree had dropped it, the read went through the old characteristic's
+# handle on the new session instead, which is a wrong answer rather
+# than a missing one.
+#
+stalefid()
+{
+	remotes := lsdir(mnt + "/0/remote");
+	if(remotes == nil){
+		sys->print("BT: FAILED: nothing was advertising\n");
+		return;
+	}
+	dev := mnt + "/0/remote/" + hd remotes;
+	if((e := writefile(dev + "/ctl", "connect")) != nil){
+		sys->print("BT: FAILED: connect: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	f := dev + "/gatt/1800/2a00";
+	fd := sys->open(f, Sys->OREAD);
+	if(fd == nil){
+		sys->print("BT: FAILED: cannot open %s: %r\n", f);
+		sys->print("BT: done\n");
+		return;
+	}
+	buf := array[256] of byte;
+	n := sys->read(fd, buf, len buf);
+	if(n <= 0){
+		sys->print("BT: FAILED: the first read failed: %r\n");
+		sys->print("BT: done\n");
+		return;
+	}
+	sys->print("BT: open and read: %s\n", string buf[0:n]);
+
+	writefile(dev + "/ctl", "disconnect");
+	sys->sleep(1000);
+	if((e = writefile(dev + "/ctl", "connect")) != nil){
+		sys->print("BT: FAILED: reconnect: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	sys->print("BT: reconnected, the tree was built again\n");
+
+	ok := 1;
+	n = sys->read(fd, buf, len buf);
+	if(n > 0){
+		sys->print("BT: FAILED: the stale fid read %d bytes: %s\n",
+			n, string buf[0:n]);
+		ok = 0;
+	} else
+		sys->print("BT: the stale fid reads nothing: %r\n");
+	fd = nil;
+	#
+	# and the new file is there and works, so what was proved above
+	# is that the old name went away rather than that the whole tree
+	# did.
+	#
+	v := trim(readfile(f));
+	if(v != "inferno-bench"){
+		sys->print("BT: FAILED: the new file reads %s\n", v);
+		ok = 0;
+	} else
+		sys->print("BT: the new file reads %s\n", v);
 	writefile(dev + "/ctl", "disconnect");
 	writefile(mnt + "/0/ctl", "scan off");
 	sys->print("BT: done\n");

@@ -19536,6 +19536,37 @@ be quicker and is not done: it would be a change to the stack for the
 convenience of testing it, and the number a real controller is given
 to answer in is not the bench's business.
 .NH 2
+A file that has gone
+.PP
+Every characteristic file is torn out of the name space when the link
+closes and built again on the next connection, because the device may
+have rearranged its database in between.  The tree lost them; the node
+table did not.
+.CW node ()
+turns a fid's qid back into a
+.CW Node ,
+and it kept answering with the removed one, so a client holding a
+characteristic file open across a disconnect and a reconnect read
+through the old
+.CW Cnode
+\(em the old handle, on the new session.  Removing a node now empties
+its slot in the table too, and the read finds nothing there.
+.PP
+The difference this makes cannot be seen from inside the guest, and
+the phase that tests it says so by testing something else.  The
+client's own channel to the removed file has gone either way, so the
+read fails either way; what changes is that the request no longer
+reaches the device.  The
+.CW stalefid
+phase opens the device name, reads it, disconnects, reconnects, and
+reads the old fid \(em and
+.CW scripts/btbench.sh
+then counts what the controller model saw: three Read Requests for
+that handle, the one before the disconnect and the two the read after
+it makes.  With the table left as it was there are four, and the extra
+one is an ATT request sent to a real device on behalf of a file that
+no longer exists.
+.NH 2
 What is not there
 .PP
 Bluetooth Classic is not implemented at all: no inquiry, no SDP, no

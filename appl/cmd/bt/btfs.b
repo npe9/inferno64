@@ -330,11 +330,24 @@ create(parent: big, d: Sys->Dir)
 	treelock <-= 1;
 }
 
+#
+# Removing a node takes it out of the node table as well as out of the
+# tree.  A fid walked before the removal still names the qid, and node()
+# is what turns that back into a Node: while the table kept the entry, a
+# client holding a characteristic file open across a disconnect and a
+# reconnect read through the old Cnode -- the old handle, on the new
+# session, against a database the device may have rearranged in
+# between.  It now finds nothing there and gets an error, which is what
+# a file that has gone should do.
+#
 remove(q: big)
 {
 	<-treelock;
 	tree.remove(q);
 	treelock <-= 1;
+	i := int q;
+	if(i >= 0 && i < nextq)
+		nodes[i] = nil;
 }
 
 mkdir(name: string, q: big): Sys->Dir
@@ -1009,12 +1022,9 @@ watcher(d: ref Dev)
 #
 removetree(d: ref Dev)
 {
-	# nodes are never reclaimed -- nextq only grows -- so a device
-	# that connects and disconnects repeatedly leaves dead service
-	# nodes here that every later teardown walks past and asks the
-	# tree to remove again.  The tree says it does not have them and
-	# that answer is discarded, so it costs a walk and nothing else;
-	# it is left this way deliberately rather than by oversight.
+	# qids are never reused -- nextq only grows -- so this walks the
+	# whole table.  The entries it has already removed are nil and
+	# cost nothing but the walk.
 	for(i := 0; i < nextq; i++){
 		n := nodes[i];
 		if(n != nil && n.kind == Ksvc && n.dev == d)
