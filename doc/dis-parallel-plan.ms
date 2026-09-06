@@ -454,28 +454,47 @@ store becomes
 .CW "__atomic_store_n(&l->val, 0, __ATOMIC_RELEASE)" ,
 which says what
 .CW coherencefn()
-and the assignment meant, to the compiler and to the tool at once.  122
-become 14.
+and the assignment meant, to the compiler and to the tool at once.  The
+count drops again, by about the same factor.
+.NH 2
+The count is not the measurement; the signature set is
 .PP
-And the fourteen are real.  Six are
-.CW acquire
-at
-line 1024 of
-.CW emu/port/dis.c
-and six are
-.CW vmachine
-at lines 1357 and 1363, and TSan names the object: "Location is global
+An earlier draft of this section reported the residue as a number \-
+"122 become 14" \- on the strength of a single run.  That number does not
+reproduce.  Ten runs of the same binary on the same input, five before
+Phase 1a and five after, gave 29, 66, 68, 68, 66, 66, 70, 72, 74 and 74
+reports.  A race is reported when two threads happen to touch the same
+address in an order the tool can see, and how often that happens in a
+given run is a property of that run's scheduling, not of the program.
+Quoting it as a scalar reads like a measurement and is not one.
+.PP
+What is stable across all ten runs is the set of distinct top frames,
+and it is small enough to print in full:
+.IP
+.nf
+acquire         dis.c:1024
+vmachine        dis.c:1357
+vmachine        dis.c:1363
+tready          dis.c:243
+__wrap_malloc   alloc.c:642
+poolfree        alloc.c:463, 466, 476, 477
+qproduce        qio.c:755, 763
+.fi
+.PP
+Eleven signatures, identical in both sets of five runs.  That is the
+baseline a later phase gets compared against, and the comparison is a
+set difference, not a subtraction.
+.PP
+And they are real.  The
+.CW dis.c
+four are the interesting ones, because TSan names the object: "Location
+is global
 .CW isched ".
 That is
 .CW isched.vmq
 being written by one thread and read by another with nothing between
 them \- the same defect this branch already fixed on the native side,
-found independently by the tool, in emu, where it is still live.  The
-rest are
-.CW "qproduce / notempty"
-in
-.CW qio.c
-and a handful in the pool.
+found independently by the tool, in emu, where it is still live.
 .PP
 So the instrument works, it took two small changes to make it work, and
 the first thing it said was that the analysis in
@@ -612,6 +631,157 @@ under
 .CW "o.emu-cocoa -c0" ,
 which runs six of six clean today.  This phase changes no behaviour at
 all.  If that moves, stop.
+.NH 2
+Phase 1a, as landed
+.PP
+The indirection is in.
+.CW libinterp/xec.c
+now has
+.IP
+.nf
+static	REG	_R;
+REG*	curR = &_R;
+.fi
+.PP
+and
+.CW include/interp.h
+has
+.CW "extern REG* curR"
+and the macro.  While
+.CW curR
+never changes this is the old program exactly, the code generators
+included:
+.CW "con((uintptr)&R, RTMP)"
+becomes
+.CW "con((uintptr)curR, RTMP)" ,
+which is a constant for as long as
+.CW curR
+is one.
+.PP
+One thing the plan did not foresee.  An object-like macro expands
+wherever its name appears as a token, and that includes after
+.CW -> \-
+so
+.CW p->R
+became
+.CW p->(*curR) ,
+and it does not compile.
+.CW Prog
+had a member named
+.CW R
+too.  The two populations turn out to be very lopsided: 1276 references
+to the global against 128 to the member, of which every one is genuinely
+.CW Prog 's
+(the rest of the tree's
+.CW .R
+hits are comments, format strings, and an nVidia register block that
+never includes
+.CW interp.h ).
+So the member was renamed
+.CW "Prog.reg" ,
+which is the smaller edit by a factor of ten and reads better besides \-
+.CW p->reg
+against a global
+.CW R
+says which is which, and
+.CW Stkext
+already spells the same idea
+.CW ns->reg .
+.PP
+Measured, not asserted: the spawn storm runs six of six clean, the pc64
+kernel builds and boots exactly as before, and the eleven TSan
+signatures above are the same set with the change in and with it
+reversed \- the second five of those ten runs were a control taken by
+reversing the patch and rebuilding.
+.NH 2
+Phase 1b is not Phase 1a, and it does not land alone
+.PP
+.CW __thread REG R
+in emu looks like the whole of Phase 1 in one word, and the decomposition
+behind it is right:
+.CW p->reg
+is the saved state,
+.CW R
+is the live per-executor state, and
+.CW "isave / irestore"
+already move between them.  It must not be done yet, and the reason is
+the collector again \- a second time, in a different place from the
+.CW &p->R
+argument above.
+.PP
+.CW rungc()
+marks from
+.CW root->reg.M/SP/EX .
+That is the
+.I saved
+register file, and it is stale mid-quantum:
+.CW xec()
+copies
+.CW R
+in at entry and writes
+.CW p->reg
+back at the end of the whole PQUANTA window, not per instruction.
+Today that is safe, and the reason is exactly what per-executor
+.CW R
+removes: the collector only ever runs from
+.CW vmachine 's
+BusyGC block or from
+.CW execatidle() ,
+both of them
+.I between
+.CW xec()
+calls, at which point every
+.CW Prog 's
+.CW p->reg
+is current.
+.PP
+With a genuinely per-executor
+.CW R
+and two threads inside
+.CW xec()
+at once, thread B collects while thread A is mid-quantum on some
+.CW Prog .
+That
+.CW Prog 's
+.CW p->reg
+is stale, so anything reachable only from A's live registers \- an
+object just allocated into
+.CW R.s
+or
+.CW R.d ,
+a frame pushed since the quantum began \- is not a root, the mark phase
+misses it, and the sweeper takes it.  The symptom would be
+.CW "movp: bad dv-freed" ,
+and the hunt would start in the wrong place.
+.PP
+Note what this defeats.  A missing root is not a data race: no two
+threads touch the same address, so the instrument built in Step 0 is
+blind to it by construction.  This is the class of bug that the whole
+plan has to reason its way past rather than measure its way past.
+.PP
+So Phase 1b lands with Phase 5, and the condition is stated as a
+disjunction so that either half satisfies it: per-executor
+.CW R
+is safe once the collector stops trusting
+.CW p->reg
+for a running
+.CW Prog ,
+or once
+.CW xec()
+writes it back more often than once a quantum.  Until one of those is
+true, keep
+.CW curR
+constant.
+.PP
+A note in passing for Phase 6, found while checking the macro:
+.CW comp-arm64.c
+line 57 reads
+.CW "RREG = 20" ,
+with the comment "X20:
+.CW &R
+(callee-saved)".  That backend has already reserved a register for the
+address of the register file.  Making it per-context there is loading a
+different value into X20, not finding a register.
 .NH 2
 Phase 2 \- introduce P
 .PP
