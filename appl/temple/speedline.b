@@ -13,11 +13,15 @@ implement Speedline;
 # hairline and a fast flick is a fat one.  Right button is PopUpColor; a
 # key press ends it and DCFill clears.
 #
-# ms.speed is the pointer's speed in pixels per second, which TempleOS
-# maintains for exactly this sort of thing; here it is measured from the
-# gap between consecutive pointer events.  PopUpColor's list is drawn in
-# the window as the sixteen palette entries, since wm(1) has no pop-up
-# menu of the TempleOS kind.
+# GAP: ms.speed is the pointer's own speed, which TempleOS maintains
+#      continuously and independently of how often a program reads it.
+#      Here it is derived from the interval between consecutive Inferno
+#      pointer events, which is only an approximation of it: if the host
+#      coalesces a fast flick into one event with a long interval, the
+#      derived speed is low and the stroke comes out thin where the
+#      original would draw it fat.  Not verified against a real hand.
+# GAP: PopUpColor's list is drawn in the window as the sixteen palette
+#      entries, since wm(1) has no pop-up menu of the TempleOS kind.
 
 include "sys.m";
 	sys: Sys;
@@ -34,6 +38,8 @@ include "tk.m";
 include "wmclient.m";
 	wmclient: Wmclient;
 	Window: import wmclient;
+
+include "keyboard.m";
 
 Speedline: module
 {
@@ -90,14 +96,18 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
 		win.wmctl(ctl);
-	<-win.ctxt.kbd =>
-		if(picking)
+	k := <-win.ctxt.kbd =>
+		# the loop ends on MSG_KEY_DOWN with a non-zero character, so a
+		# key-up (which Inferno delivers as Keyup|k) must not end it
+		if((k & Keyboard->Keyup) == Keyboard->Keyup)
+			continue;
+		if(picking){
 			picking = 0;
-		else{
+			clear();
+		}else{
 			clear();		# DCFill, then out
 			exit;
 		}
-		redrawpicker();
 	p := <-win.ctxt.ptr =>
 		win.pointer(*p);
 		img := win.image;

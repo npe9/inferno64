@@ -30,6 +30,8 @@ include "wmclient.m";
 	wmclient: Wmclient;
 	Window: import wmclient;
 
+include "keyboard.m";
+
 Bspline: module
 {
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
@@ -80,8 +82,10 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	ctl = <-win.ctxt.ctl =>
 		win.wmctl(ctl);
 		redraw();
-	<-win.ctxt.kbd =>
-		if(done)			# PressAKey; DCFill
+	k := <-win.ctxt.kbd =>
+		# PressAKey waits for a key-down; Inferno delivers key-up as
+		# Keyup|k and it must not count
+		if((k & Keyboard->Keyup) != Keyboard->Keyup && done)
 			exit;
 	p := <-win.ctxt.ptr =>
 		win.pointer(*p);
