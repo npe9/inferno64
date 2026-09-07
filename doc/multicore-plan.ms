@@ -1271,6 +1271,44 @@ early, and that is a question about
 and
 .CW freemod() \-
 a much smaller place to look than the whole interpreter.
+.NH 2
+A constraint on how it can be investigated
+.PP
+The obvious next step was to watch that one
+.CW Type \-
+its address is stable across rebuilds \- and print every change to its
+reference count with the caller, since an imbalance there is the bug.
+That does not work, and the reason is worth recording so nobody spends
+an afternoon on it.
+.PP
+With
+.CW twnote()
+calls added at the four places a
+.CW Type 's
+count moves, six boots produced no corruption at all.  Removing them
+again, six boots produced three, at the same
+.CW "type 0x437d0d38 ref 0 size 0" .
+The instrumentation does not fix it; it hides it.  A handful of
+function calls in the reference-counting path perturb the timing enough
+to close the window entirely.
+.PP
+So this cannot be chased by printing from inside the refcount path.
+What is still available: the reference counts can be
+.I checked
+rather than traced \- an assertion that fires without printing on the
+common path, a count kept in a variable and reported once at the end,
+or a check at
+.CW freemod()
+that the types it is about to free are not still referenced by any live
+object.  The last of those is expensive but runs once per module
+unload, not per reference, and would name the offending module rather
+than the offending line.
+.PP
+It is also worth saying what the sensitivity implies.  A window this
+narrow, closed by a few extra calls, is consistent with the shape
+already established \- a single-processor bug that a second processor
+only perturbs into view \- and it is why the pc64 side of this hunt has
+been able to add instrumentation for years without ever cornering it.
 .PP
 What is still not done, so the state is not overstated: GICv3 (the
 redistributor is per processor and this board derives one fixed base),
