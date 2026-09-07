@@ -1022,24 +1022,50 @@ actually achieved, so a caller can look.  48kHz needs the clock
 manager's fractional divider: a 3.072MHz bit clock is 19.2MHz/6.25, not
 an integer, and the 12.12 fixed-point divisor lands it exactly.
 .PP
-Three other things a driver gets wrong are written into the file.  The
+Four other things a driver gets wrong are written into the file.  The
 FIFOs must be primed before TXON, because the serialiser starts
 clocking at once and an empty TX FIFO underflows on the first frame.
 TXCLR and RXCLR are self-clearing and take two PCM clocks, so reading
-them back to confirm a clear is a mistake.  And the block needs the
-same kill/wait/set/enable dance with the 0x5a password that the PWM
-clock does.
+them back to confirm a clear is a mistake.  The block needs the same
+kill/wait/set/enable dance with the 0x5a password that the PWM clock
+does.  And CS_A must never be read-modify-written.
+.PP
+That last one bit this driver before it was written down.  TXERR and
+RXERR are write-one-to-clear, so an innocent
+.CW "r[Cs] &= ~(Txon|Rxon)"
+in
+.CW i2sstop()
+reads the register with an error bit set, writes it back set, and
+clears the error as a side effect \- losing the one piece of
+information worth having after an underflow.  It went unnoticed because
+the test that should have caught it then wrote its own explicit clear
+over dead ground.  The driver now keeps a shadow of the writable bits
+and writes CS_A absolutely, and the exercise stops the block with TXERR
+deliberately set and checks it survives; against the old code that
+reports
+.CW "I2S-FAIL stopping the block cleared TXERR" .
+This is not an emulator artifact \- it is how the silicon behaves.
 .PP
 The exercise checks the FIFOs and their flags statically, then the
 error and interrupt-status bits \- easy to get backwards, since both
 are write-one-to-clear \- and then the frame rate itself, by timing how
 long the serialiser takes to drain a full 64-word FIFO against the 1MHz
-system timer.  That last one is the only check that matters.  A block
-whose registers all read back correctly and whose serialiser runs at
-the wrong rate is a working driver and broken audio, and an independent
-clock is the only thing that tells them apart here rather than in a
-DAC.  It reports draining 64 frames in 1356 microseconds against 1333
-expected, and filling the RX FIFO in 1358.
+system timer, and to fill the RX FIFO the same way.  It reports
+draining 64 frames in 1341 microseconds against 1333 expected, and
+filling in 1341.  The reception half is a separate result rather than a
+restatement of the first: with the RXON write removed the RX FIFO never
+fills and the check times out, so it is measuring the receive path and
+not just the frame clock.
+.PP
+What the timing establishes, and what it does not, is worth being
+plain about, because this is
+.I qemu+patch
+tier and both halves are ours.  An independent clock catches a wrong
+divisor \- which is the failure that gives a working driver and audio
+at the wrong pitch, and which no amount of reading registers back would
+show.  It cannot catch a misreading of the datasheet's channel position
+or width encoding that the model and the driver happen to share; only a
+DAC on a real Pi settles that.
 .PP
 The model has no audio backend: TX data is discarded and RX reads
 zeroes, which is what an unconnected DIN pin gives on a board.  One

@@ -29,6 +29,16 @@
  *     act.  Reading them back to confirm the clear is a mistake: they
  *     read zero even while the clear is in progress.
  *
+ * 5.  CS_A must never be read-modify-written.  TXERR and RXERR are
+ *     write-one-to-clear, so an innocent-looking r[Cs] |= Txon reads
+ *     the register with an error bit set, writes it back set, and
+ *     clears the error as a side effect -- losing the one piece of
+ *     information you would want after an underflow.  So this file
+ *     keeps a shadow of the writable bits and always writes CS_A
+ *     absolutely.  This is not an emulator artifact; it is how the
+ *     silicon behaves, and it is the single easiest way to write a
+ *     driver that loses errors it appeared to check for.
+ *
  * The best-practices configuration is i2sconfig(48000): 64-clock
  * frames, two 32-bit channel slots carrying 16-bit samples left
  * justified, frame sync low for the left channel -- which is plain
@@ -128,6 +138,32 @@ static u32*
 cm(void)
 {
 	return (u32*)CPRMAN;
+}
+
+/*
+ * A shadow of the writable control bits of CS_A.  Everything below
+ * writes the register from this rather than from a read of it; see
+ * point 5 at the top of the file for why that is not fussiness.
+ */
+static u32 csshadow;
+
+/* Set the control bits absolutely. */
+static void
+cswrite(u32 bits)
+{
+	csshadow = bits;
+	i2s()[Cs] = csshadow;
+}
+
+/*
+ * Clear write-one-to-clear status bits, leaving the control bits where
+ * they are.  Passing a self-clearing bit such as Txclr through here is
+ * correct too: it acts once and reads back zero.
+ */
+static void
+csack(u32 bits)
+{
+	i2s()[Cs] = csshadow | bits;
 }
 
 /*
@@ -236,8 +272,8 @@ i2sconfig(ulong rate)
 	r[Rxc] = chan;
 
 	/* Enable, then clear both FIFOs; the clears are self-clearing. */
-	r[Cs] = Csen;
-	r[Cs] = Csen | Txclr | Rxclr;
+	cswrite(Csen);
+	csack(Txclr | Rxclr);
 
 	return bitclk / Framebits;
 }
@@ -246,9 +282,7 @@ i2sconfig(ulong rate)
 void
 i2sstop(void)
 {
-	u32 *r = i2s();
-
-	r[Cs] &= ~(Txon|Rxon);
+	cswrite(csshadow & ~(Txon|Rxon));
 }
 
 /*
@@ -332,9 +366,39 @@ i2sinit(void)
 		return;
 	}
 
-	/* TXERR is write-one-to-clear; INTSTC latched it too. */
+	/*
+	 * Stopping the block must not lose the error.  This is the
+	 * regression test for point 5 at the top of the file: written as
+	 * r[Cs] &= ~(Txon|Rxon), i2sstop() reads CS with TXERR set,
+	 * writes it back set, and clears it as a side effect.
+	 */
+	i2sstop();
+	if((r[Cs] & Txerr) == 0){
+		print("I2S-FAIL stopping the block cleared TXERR (cs %#ux)\n",
+			r[Cs]);
+		return;
+	}
+
+	/* TXERR is write-one-to-clear, and clearing it must not stop the block. */
+	csack(Txerr);
+	if(r[Cs] & Txerr){
+		print("I2S-FAIL TXERR did not clear on write-one (cs %#ux)\n",
+			r[Cs]);
+		return;
+	}
+	if((r[Cs] & Csen) == 0){
+		print("I2S-FAIL clearing TXERR also disabled the block (cs %#ux)\n",
+			r[Cs]);
+		return;
+	}
+
+	/*
+	 * With the interrupt enabled, a fresh overrun must latch in
+	 * INTSTC as well as in CS.  The FIFO is still full, so overrunning
+	 * it again is all it takes.
+	 */
 	r[Inten] = Itxerr;
-	r[Cs] |= Txerr;			/* re-latch with the interrupt enabled */
+	r[Fifo] = 0xdeadbeef;
 	if((r[Intstc] & Itxerr) == 0){
 		print("I2S-FAIL TXERR did not latch in INTSTC (%#ux)\n",
 			r[Intstc]);
@@ -346,12 +410,7 @@ i2sinit(void)
 		return;
 	}
 	r[Inten] = 0;
-	r[Cs] = (r[Cs] & ~(Txon|Rxon)) | Txerr;
-	if(r[Cs] & Txerr){
-		print("I2S-FAIL TXERR did not clear on write-one (cs %#ux)\n",
-			r[Cs]);
-		return;
-	}
+	csack(Txerr);
 
 	/*
 	 * Reading the RX FIFO while it is empty is a driver bug, and the
@@ -363,7 +422,12 @@ i2sinit(void)
 		print("I2S-FAIL reading an empty RX FIFO did not raise RXERR\n");
 		return;
 	}
-	r[Cs] |= Rxerr;
+	csack(Rxerr);
+	if(r[Cs] & (Txerr|Rxerr)){
+		print("I2S-FAIL errors still set before timing (cs %#ux)\n",
+			r[Cs]);
+		return;
+	}
 
 	/*
 	 * The dynamic check.  The TX FIFO is still full; start the
@@ -371,11 +435,17 @@ i2sinit(void)
 	 * is 64 frames, so 1333us, and the system timer is the judge.
 	 */
 	t1 = systmrread();
-	r[Cs] |= Txon;
+	cswrite(csshadow | Txon);
 	for(i = 0; i < Timeout; i++)
 		if(r[Cs] & Txe)
 			break;
 	t2 = systmrread();
+	/*
+	 * The drain loop breaks the instant TXE sets, which is one frame
+	 * before the serialiser actually underflows.  Give it that frame,
+	 * so stopping has a real error to preserve.
+	 */
+	delay(1);
 	i2sstop();
 	if(i == Timeout){
 		print("I2S-FAIL TX FIFO never drained (cs %#ux)\n", r[Cs]);
@@ -392,15 +462,25 @@ i2sinit(void)
 		return;
 	}
 
+	/*
+	 * The serialiser has been underflowing for a millisecond, so
+	 * TXERR must be set here -- and must have survived i2sstop().
+	 */
+	if((r[Cs] & Txerr) == 0){
+		print("I2S-FAIL underflow after the drain did not raise TXERR, "
+			"or stopping cleared it (cs %#ux)\n", r[Cs]);
+		return;
+	}
+
 	print("i2s: pcm at %#p, %lud Hz frames, TX drained %d in %lud us "
 		"(%lud expected)\n", (void*)I2S0, rate, Fifodepth, elapsed,
 		expect);
 
 	/* And the same for reception: time the RX FIFO filling. */
-	r[Cs] |= Txclr | Rxclr;
-	r[Cs] |= Txerr | Rxerr;
+	csack(Txclr | Rxclr);
+	csack(Txerr | Rxerr);
 	t1 = systmrread();
-	r[Cs] |= Rxon;
+	cswrite(csshadow | Rxon);
 	for(i = 0; i < Timeout; i++)
 		if(r[Cs] & Rxf)
 			break;
@@ -421,7 +501,7 @@ i2sinit(void)
 	}
 	print("i2s: RX filled %d in %lud us\n", Fifodepth, elapsed);
 
-	r[Cs] = 0;
+	cswrite(0);
 	print("I2S-OK 48kHz frames, both FIFOs, errors, and the frame rate "
 		"timed against the system timer\n");
 }
