@@ -1423,6 +1423,71 @@ for a live object still pointing at a type about to be freed \- has not
 been run, and on this evidence it may well hide the bug too.  The
 leak-versus-no-leak comparison worked only because it removed work
 instead of adding it.
+.NH 2
+The object is a stack frame, and frames hold types uncounted
+.PP
+The tracker reports, every time,
+.IP
+.nf
+typetagp 0x437ed378 obj 0x437ed360 diff 0x18
+.fi
+.PP
+\- the type tag lies 24 bytes into the object rather than in its
+.CW Heap
+header.
+.CW Frame 's
+.CW t
+field is at offset 24.  The things being corrupted are Dis stack
+frames.
+.PP
+And
+.CW OP(frame)
+is
+.IP
+.nf
+t = R.M->type[W(s)];
+...
+f->t  = t;
+f->mr = nil;
+initmemtt(t, f, &f->t);
+.fi
+.PP
+with no
+.CW "AINC(&t->ref)" .
+Every heap-allocated object takes a reference on its type \-
+.CW heap()
+and
+.CW heapz()
+both do, and
+.CW nheap()
+has no type \- but a frame does not, because a frame is stack and its
+module is supposed to outlive it.
+.PP
+That is the invariant, and it is the one being broken: the shell loads
+.CW /dis/cd.dis ,
+a frame of one of its types goes on a Dis stack, the shell drops the
+module, and
+.CW freemod()
+frees the type the frame still names.  The next
+.CW freeptrs(f, f->t) \-
+which
+.CW OP(mcall) 's
+native branch and
+.CW OP(ret)
+both perform \- reads a freed
+.CW Type ,
+walks a garbage pointer map, and destroys whatever the wrong offsets
+name.  That is
+.CW "mcall / movp / destroy"
+in one sentence, and it is why all three opcodes have been implicated
+for as long as the hunt has run.
+.PP
+Two ways to fix it, and choosing between them is a design decision
+rather than a measurement: give frames a counted reference on their
+type, which costs an atomic pair on every call and return; or make the
+thing that keeps a module loaded account for frames still on a stack,
+which costs nothing per call and requires knowing where those frames
+are.  The reproducer can check either.
 .PP
 What is still not done, so the state is not overstated: GICv3 (the
 redistributor is per processor and this board derives one fixed base),
