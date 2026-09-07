@@ -8,6 +8,9 @@ obj.map
 vc*.pdb
 *.a
 
+# Limbo symbol tables: generated beside every .dis, never source
+*.sbl
+
 # yacc artifacts
 y.output
 y.tab.[ch]
