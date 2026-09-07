@@ -15,6 +15,13 @@ extern void	vectrap(void);
 extern void	vectorinit(void*);
 
 /*
+ * The built table, for any processor that comes up later.  It is
+ * assembled once and never written again, so a secondary installs the
+ * same one rather than building its own.
+ */
+void	*vectab;
+
+/*
  * The AArch64 exception-vector table: VBAR_EL1 must point at a
  * 2048-byte-aligned block of 16 128-byte slots, one per (exception
  * level x SP bank x class) combination -- see the ARM ARM's "Vector
@@ -137,6 +144,7 @@ vectorbuild(void)
 		else
 			slot[0] = insn_b(&slot[0], slot);	/* "b ." */
 	}
+	vectab = v;
 	vectorinit(v);
 }
 

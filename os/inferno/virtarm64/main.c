@@ -44,6 +44,8 @@ void
 secmain(void)
 {
 	Mach *mm;
+	extern void *vectab;
+	extern void vectorinit(void*);
 
 	/*
 	 * Read back what this processor put in TPIDR_EL1.  Through a
@@ -53,6 +55,14 @@ secmain(void)
 	 */
 	mm = (Mach*)gettpidr();
 	seccflag = (uintptr)mm;
+	/*
+	 * Install the vector table cpu0 built.  Until this runs, any
+	 * fault on this processor goes to whatever VBAR_EL1 reset left
+	 * and is simply lost; after it, a fault is reported like any
+	 * other.  The table is shared and read-only once built.
+	 */
+	if(vectab != nil)
+		vectorinit(vectab);
 	secalive = 5;
 	for(;;){
 		mm->ticks++;
