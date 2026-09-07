@@ -35,6 +35,8 @@ extern int image_pool_pcnt;
 /* volatile: cpu0 polls these in a loop and cpu1 is the only writer */
 static uvlong	secstackbuf[KSTACK/sizeof(uvlong)];
 uintptr		secstacktop;
+Mach		mach1;		/* cpu1's own Mach */
+uintptr		secmach;	/* &mach1, read by _secondary */
 volatile uintptr	secsp;
 volatile uintptr	seccflag;	/* set only by C on cpu1 */
 volatile uintptr	secalive;
@@ -43,18 +45,20 @@ volatile uintptr	seccount;
 void
 secmain(void)
 {
-	seccflag = 0xc0ffee;
+	Mach *mm;
+
+	/*
+	 * Read back what this processor put in TPIDR_EL1.  Through a
+	 * pointer, deliberately: 7c hoists a direct global out of a loop
+	 * but reloads a dereference, which is the rule os/9front's whole
+	 * multiprocessor discipline rests on -- see doc/multicore-plan.ms.
+	 */
+	mm = (Mach*)gettpidr();
+	seccflag = (uintptr)mm;
 	secalive = 5;
 	for(;;){
-		seccount++;
-		/*
-		 * 7c accepts volatile and ignores it -- with both operands
-		 * declared volatile it still hoists the global into a
-		 * register for the whole loop and never stores.  A real call
-		 * it cannot see through is what forces the store, which is
-		 * the Plan 9 idiom for a spin loop and matters for every
-		 * flag poll a second processor will ever do.
-		 */
+		mm->ticks++;
+		seccount = mm->ticks;
 		coherence();
 	}
 }
@@ -77,13 +81,19 @@ smpprobe(void)
 	print("smp: PSCI %#llux, cpu1 %s\n", psci(0x84000000ULL, 0, 0, 0),
 		psci(0xc4000004ULL, 1, 0, 0) == 1 ? "off" : "not off");
 	secstacktop = ((uintptr)secstackbuf + sizeof secstackbuf) & ~(uintptr)15;
+	memset(&mach1, 0, sizeof mach1);
+	mach1.machno = 1;
+	secmach = (uintptr)&mach1;
+	settpidr((uintptr)m);		/* cpu0 takes its own slot too */
 	r = psci(0xc4000003ULL, 1, (uintptr)_secondary, 0);
 	print("smp: PSCI CPU_ON cpu1 entry %#llux -> %lld\n", (uvlong)(uintptr)_secondary, r);
 	if(r != 0)
 		return;
 	for(i = 0; i < 100 && secalive == 0; i++)
 		delay(10);
-	print("smp: cpu1 stage %llud sp %#llux cflag %#llux\n", (uvlong)secalive, (uvlong)secsp, (uvlong)seccflag);
+	print("smp: cpu0 tpidr %#llux (m %#llux), cpu1 stage %llud tpidr %#llux (mach1 %#llux)\n",
+		(uvlong)gettpidr(), (uvlong)(uintptr)m, (uvlong)secalive,
+		(uvlong)seccflag, (uvlong)(uintptr)&mach1);
 	/*
 	 * alive 1 = reached the entry, 2 = stack up, 3 = running C.
 	 * seccount is incremented by cpu1 in a loop, so two reads a
@@ -91,8 +101,8 @@ smpprobe(void)
 	 */
 	c0 = seccount;
 	delay(50);
-	print("smp: cpu1 alive %llud, seccount %llud -> %llud (%s)\n",
-		(uvlong)secalive, (uvlong)c0, (uvlong)seccount,
+	print("smp: cpu1 machno %d, its Mach.ticks %llud -> %llud (%s)\n",
+		mach1.machno, (uvlong)c0, (uvlong)seccount,
 		seccount != c0 ? "running" : "stopped");
 }
 

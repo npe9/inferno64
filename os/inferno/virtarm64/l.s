@@ -14,6 +14,7 @@
 #define	D_CPACR_EL1	SYSARG5(3,0,1,0,2)
 #define	D_CTR_EL0	SYSARG5(3,3,0,0,1)
 #define	D_MPIDR_EL1	SYSARG5(3,0,0,0,5)
+#define	D_TPIDR_EL1	SYSARG5(3,0,13,0,4)
 #define	D_CNTFRQ_EL0	SYSARG5(3,3,14,0,0)
 #define	D_CNTPCT_EL0	SYSARG5(3,3,14,0,1)
 #define	D_CNTP_CTL_EL0	SYSARG5(3,3,14,2,1)
@@ -166,6 +167,9 @@ TEXT	_secondary(SB), 1, $-4
 	MOV	$2, R1
 	MOV	R1, secalive(SB)
 	DSB	$15
+	MOV	secmach(SB), R1		/* this processor's own Mach */
+	MSR	R1, SPR(D_TPIDR_EL1)
+	ISB	$15
 	MOV	$3, R1
 	MOV	R1, secalive(SB)
 	DSB	$15
@@ -310,6 +314,22 @@ TEXT	seticceoir(SB), 1, $-4
  * than assuming one.  On a big.LITTLE part the clusters need not agree,
  * which is exactly why the minimum is the one to use.
  */
+/*
+ * TPIDR_EL1 is the per-processor scratch register the architecture
+ * reserves for exactly this: somewhere for a kernel to keep "which
+ * processor am I".  It is what an arm64 port uses where pc64 uses the
+ * GS base, and it is the piece a shared "Mach *m" global cannot
+ * provide once there is more than one processor.
+ */
+TEXT	settpidr(SB), 1, $-4
+	MSR	R0, SPR(D_TPIDR_EL1)
+	ISB	$15
+	RET	R30
+
+TEXT	gettpidr(SB), 1, $-4
+	MRS	SPR(D_TPIDR_EL1), R0
+	RET	R30
+
 TEXT	getmpidr(SB), 1, $-4
 	MRS	SPR(D_MPIDR_EL1), R0
 	RET	R30
