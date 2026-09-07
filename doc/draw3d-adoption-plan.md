@@ -418,6 +418,50 @@ re-measure whether the sort can go.
 *Evidence:* per port, frame time and a pixel comparison against the
 pre-migration render.
 
+### Phase 10 — `sprite2d` on the GPU
+
+The biggest single lever left, and the one nothing above reaches. Rotated
+2D sprites are what the temple ports actually spend their time on, and
+they are entirely interpreted Limbo in **both** providers:
+
+| sprite | software | protocol | native `Image.draw` |
+| --- | --- | --- | --- |
+| 16x16, 0° | 5 µs | 5 µs | 0 µs |
+| 220x220, 0° | 35 µs | 40 µs | 35 µs |
+| 220x220, 30° | **2670 µs** | **2690 µs** | 30 µs |
+
+A rotation costs seventy-six times what the same blit costs upright, and
+the protocol column is flat because `sprite2d` in `draw3ddev.b` does not
+send a message at all — it calls the same `transformsprite` the software
+provider does. Meanwhile `metal_queue_sprite` already exists, already
+does exactly this job as a textured quad, and is already reachable — by
+`sprite3*`, which `appl/wm/draw3ddemo.b` calls and no temple port does.
+
+So the GPU can do this today and nothing asks it to. Two figures say why
+that is a phase and not an afternoon:
+
+- **All eight `sprite2d` callers are on the software provider.** They are
+  `bigguns`, `bombergolf`, `elephantwalk`, `rocket`, `rocketscience`,
+  `squirt`, `tothefront`, `xcaliber`. None of the nine ports Phase 1
+  moved to `draw3ddev` calls `sprite2d` at all, so the two sets do not
+  overlap and moving the message would benefit nobody until those eight
+  move too.
+- **Two of the eight draw into an offscreen `buffer`** (`elephantwalk`,
+  `rocket`), which `metal_queue_sprite` rejects outright — same
+  destination gate as Phase 2, and the same answer needed.
+
+The work is therefore four parts, in this order: a screen-space sprite
+message (`'j'` carries a *world* vertex and a scale and lets the device
+project, which is wrong for a 2D placement — this wants centre, width,
+height, angle and a mirror flag); the device handler, with the existing
+`d3spritez` as its in-C fallback; the offscreen destination from Phase 2;
+and only then the eight ports.
+
+`sprite2dtest(1)` is the gate, and it was built for this: its three
+families — 1:1, quarter turns, doublings — are the ones whose answer does
+not depend on the resampler, so a bilinear GPU path has to pass them
+exactly as the Limbo one does.
+
 ## What this plan is not doing
 
 - **The 125 ports with no 3D.** They stay as they are.
@@ -433,6 +477,19 @@ pre-migration render.
 - **`emu-g` has no Metal and no `Draw`.** The GPU path cannot be covered
   headlessly, so every phase needs its software-fallback equivalent
   checked as well, and `draw3dbench` has to be run under `emu-cocoa`.
+- **The GPU is deliberately no longer colour-identical to the software
+  renderer, as of 2026-09-07.** `fgmain` shades `fillpoly3` faces per
+  pixel — a geometric normal from `dfdx`/`dfdy` of the eye position, an
+  eye-space key light, a Blinn-Phong lobe and a Fresnel rim — because a
+  fragment shader gets that for nothing and an interpreted Limbo inner
+  loop cannot. So the nine ports on `draw3ddev` look different under
+  `emu-cocoa` than under `emu-g`, **on purpose**. A face-on red triangle
+  reads 255,0,0 through the software provider and 253,17,17 through the
+  GPU. `INFERNO_METAL_FLAT` turns the shading off and restores exact
+  agreement; run that before treating a colour difference between the
+  two backends as a regression. `draw3dbench`'s agreement check compares
+  geometry — centroid and lit-pixel count — and the dominant colour
+  component, not the exact colour, for the same reason.
 - **Presentation is coalesced.** `present_on_main()` runs on the main
   thread and `Flushnow` does not force it, so a tight render loop
   measures submission, not display. Use `draw3dbench -p` when you want
