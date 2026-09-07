@@ -31,12 +31,16 @@
 enum {
 	Qdir = 0,
 	Qbintime,
+	Qtime,
 	ReqNsec = 36,		/* devosprey.c's xcall op */
+	Numsize = 12,		/* devcons's own column widths, so that a */
+	Vlnumsize = 22,	/* program reading either file counts the same */
 };
 
 static Dirtab timedir[] = {
 	".",		{Qdir, 0, QTDIR},	0,	DMDIR|0555,
 	"bintime",	{Qbintime},		24,	0444,
+	"time",		{Qtime},		Numsize+4*Vlnumsize,	0444,
 };
 
 extern long ospreyxcall(int, uvlong*, long);
@@ -58,6 +62,37 @@ put64(uchar *p, uvlong v)
 {
 	p[0] = v >> 56; p[1] = v >> 48; p[2] = v >> 40; p[3] = v >> 32;
 	p[4] = v >> 24; p[5] = v >> 16; p[6] = v >> 8;  p[7] = v;
+}
+
+/*
+ * /dev/time, the text form, which is devcons's in a Plan 9 kernel:
+ * seconds, then nanoseconds, then the fast-tick counter, its frequency
+ * and the monotonic clock, in devcons's own column widths so that a
+ * program counting characters counts the same here.  rio reads it - the
+ * first field is the mtime it stamps its own files with - and a program
+ * that opens it and gets nothing back stamps them from whatever was on
+ * its stack.
+ */
+static long
+timetext(void *a, long n, vlong off)
+{
+	char str[Numsize + 4*Vlnumsize + 8];
+	uvlong t;
+	long m;
+
+	t = (uvlong)p9nsec();
+	m = snprint(str, sizeof str, "%*llud %*llud %*llud %*llud %*llud ",
+		Numsize-1, t/1000000000ULL,
+		Vlnumsize-1, t,
+		Vlnumsize-1, t,
+		Vlnumsize-1, (uvlong)1000000000ULL,
+		Vlnumsize-1, t);
+	if(off < 0 || off >= (vlong)m)
+		return 0;
+	if(n > (long)m - (long)off)
+		n = (long)m - (long)off;
+	memmove(a, str + off, n);
+	return n;
 }
 
 static Chan*

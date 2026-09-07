@@ -852,8 +852,19 @@ proc0(void*)
 			 * The paired personality: this task is the client, its
 			 * buddy the server it delegates to.  Enter as the pair
 			 * client, which mounts the buddy over the ring.
+			 *
+			 * A machine starts a window system because it was
+			 * configured to, and this one is no different: with
+			 * *riodemo= in plan9.ini the client also execs rio and
+			 * leaves it running, and without it the machine is the
+			 * machine every check that is not about rio was written
+			 * against.  A window system is a standing load - three
+			 * readers blocked on files, a draw server answering
+			 * them - and the two-machine checks, which run two of
+			 * these at once and carry processes between them, are
+			 * not the place to put one.
 			 */
-			ospreyenteruser("c");
+			ospreyenteruser(getconf("*riodemo") != nil ? "c rio" : "c");
 			panic("ospreyenteruser returned");
 		}
 		up->kp = 0;

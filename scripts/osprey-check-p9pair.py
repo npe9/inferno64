@@ -32,6 +32,30 @@ def drewfromanother(t):
     return int(m.group(1), 16) == 0xff0000 and int(m.group(2), 16) == 0x00ff00
 
 
+def riopainted(t):
+    """What the screen reads back after rio has had it.  rio fills its
+    view with its own background, 0x777777FF, so on this XRGB32 frame
+    buffer every word the probe samples - the centre and four points
+    well inside the corners - is 0x00777777.  Checked as numbers, out of
+    the memory the display controller scans, not as a message rio
+    printed."""
+    m = re.search(r'draw: the screen reads back centre (0x[0-9a-f]+), corners '
+                  r'(0x[0-9a-f]+) (0x[0-9a-f]+) (0x[0-9a-f]+) (0x[0-9a-f]+)', t)
+    if m is None:
+        return False
+    return all(int(g, 16) == 0x777777 for g in m.groups())
+
+
+def rioalive(t):
+    """rio is still there when the machine idles.  The kernel's last dump
+    names every process still running; a window system that started and
+    died would have painted the screen just the same, so this is what
+    tells the two apart."""
+    if "rio: can't" in t:
+        return False
+    return len(re.findall(r'osprey proc: container \d+ pid \d+ /boot/rio: \w+', t)) >= 2
+
+
 def mouserecord(t):
     """The record /dev/mouse returned.  rio's form is 'm' then four
     twelve-column decimal fields - x, y, buttons, milliseconds - so this
@@ -113,7 +137,7 @@ def main():
     if r.returncode != 0:
         print('FAIL 9p9pair did not build'); print(r.stdout[-800:]); print(r.stderr[-800:]); return 1
     subprocess.run(['sh', 'scripts/mkosprey-efi-iso.sh'],
-                   env=dict(env, OSPREY_KERNEL=os.path.join(ROOT, 'os/osprey/pc64/9p9pair'), OSPREY_INI='ospreykey=this machine\'s secret'),
+                   env=dict(env, OSPREY_KERNEL=os.path.join(ROOT, 'os/osprey/pc64/9p9pair'), OSPREY_INI='ospreykey=this machine\'s secret\n*riodemo=1'),
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     log = tempfile.mktemp(prefix='osprey-p9pair-', suffix='.log')
     # a raw disk image for the user-level block driver: sector 0 says who wrote it,
@@ -462,6 +486,14 @@ def main():
          and 'draw: one container holds /dev/draw, /dev/mouse and /dev/kbd - the three rio wants' in t),
         ("and /dev/mouse answers a read with a mouse record: the driver's decoded position and buttons in rio's own m-record form, with the kernel's clock for the timestamp, answered without waiting for a movement nobody made",
          mouserecord(t)),
+        ("rio runs: 9front's own window system, 6407 lines this tree builds itself and nothing in it written or changed for this machine, laid out by the buddy and entered through init9main.c - started through the same draw binary with -x, which mounts /srv/draw at /dev and execs rio in place so that rio opens /dev/draw and finds the screen where a window system expects it",
+         re.search(r'buddy: exec /boot/rio for container \d+: a Plan 9 a\.out, text \d+ data \d+ bss \d+', t) is not None
+         and re.search(r'osprey buddy: /boot/rio laid out by the buddy: entry 0x200028, 3 segments', t) is not None
+         and 'draw: /srv/draw mounted at /dev; becoming /boot/rio in place' in t),
+        ("and it paints the screen: rio's own background, 0x777777, is the word at the centre and at four points inside the corners of the frame buffer, read back by a container that drew nothing and only mapped the screen the kernel exposes",
+         riopainted(t)),
+        ("and it is still running when the machine idles: rio's libthread procs are containers the kernel forked, they are in the kernel's last dump of what is running, and rio printed no complaint - a window system that started and died would have left the same pixels",
+         rioalive(t)),
         ("wait is answered by somebody: the client's wait returns the child's exit status",
          re.search(r'p9: pair-client: wait: container \d+ exited with status 0', t) is not None
          and 'panic' not in t and 'killed by SIGSEGV' not in t),	# the Linux child takes one SIGSEGV on purpose

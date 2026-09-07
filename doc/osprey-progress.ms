@@ -7780,6 +7780,325 @@ mount can find them, and
 takes the segment to attach as an argument \- which is what the check's
 negative control for the error path uses, a name no kernel has, rather
 than depending on the real ring being absent from this configuration.
+.PP
+.B "2.3h: rio runs."
+9front's window system runs on the server personality, its system calls
+answered by a peer container over the ring.  It is the 6407 lines of
+.CW 9front/src/cmd/rio
+this tree builds itself, and not a line of it was written or changed for
+this machine.  It opens
+.CW /dev/draw ,
+takes the whole 1280x800 screen, allocates a screen of its own on it,
+paints it with its own background \- so the frame buffer word at the
+centre and at four points inside the corners is
+.CW 0x00777777 ,
+read back by a container that drew nothing \- brings up its 9P file
+server, forks its libthread procs, and is still running, all of it, when
+the machine idles at the end of the boot.  The pair check is 94.
+.PP
+It is started by the draw binary again, with
+.CW -x :
+that container mounts
+.CW /srv/draw
+at
+.CW /dev
+and execs rio in place, so rio opens
+.CW /dev/draw
+and finds the screen where a window system expects it.  A program that
+only opens the file cannot find a server posted in
+.CW /srv
+by itself, and on a real machine it is whatever starts the window system
+that puts the screen in its name space.  Here that is the exec, and the
+mount stays under the program it becomes.
+.PP
+Six things were in the way, and rio named five of them itself \- its
+startup is a fixed sequence and each step has its own message, so the
+log said which.
+.PP
+.CW /mnt/temp
+did not exist.  rio's
+.CW cexecpipe
+binds the pipe device onto it, opens the two ends through it and
+unmounts it again, and a bind whose mount point does not exist fails:
+.CW "rio: can't create file system server: Enonexist: '/mnt/temp'" .
+On a real Plan 9 machine the root a program sees is the file server's
+and that directory is in it; here the root device is the root, so the
+mount point has to be there.  The root device holds one level of
+directories and now holds two, with
+.CW temp
+in
+.CW /mnt .
+.PP
+The environment was not in the name space.
+.CW getenv (2)
+and
+.CW putenv (2)
+are opens of
+.CW /env/<name> ,
+not system calls, so
+.CW #e
+is bound onto
+.CW /env
+now; rio puts the name of the pipe it posted in
+.CW /srv
+there, under
+.CW wsys ,
+which is how a command in a window finds the window system that started
+it.
+.PP
+.CW /dev/time
+was not there.  It is devcons's text form \- seconds, nanoseconds, the
+fast-tick counter, its frequency and the monotonic clock, in devcons's
+own column widths \- and rio reads its first field as the time it stamps
+its own files with.  A program that opens it and gets nothing stamps them
+from whatever was on its stack.  It is a second file of
+.CW #T
+now, beside
+.CW bintime .
+.PP
+.CW /dev/cons
+and
+.CW /dev/consctl
+were not there either, and rio will not believe it has a keyboard
+without them: its keyboard proc opens both and gives up if either fails,
+and only then looks for
+.CW /dev/kbd
+and prefers it.  Both are files of
+.CW #m
+now, beside the two 2.3g added:
+.CW cons
+is the same runes as
+.CW kbd
+without the leading
+.CW c ,
+which is what cons is on a Plan 9 machine, and
+.CW consctl
+takes
+.CW rawon
+and
+.CW rawoff
+and does nothing with them, because nothing here is cooked \- this
+device never echoes and never assembles a line.
+.PP
+Then the one that was not rio's to name.  A forwarded call waited
+fifteen thousand two-millisecond sleeps \- thirty seconds \- and then
+returned \-1 with no reason.  A read of a keyboard is answered when a key
+is pressed and not before, and nobody is at this machine's keyboard, so
+rio's keyboard reader took that \-1 thirty seconds in, ended its loop and
+shut rio down; its mouse reader did the same.  The screen was already
+grey by then, which is why the pixels alone do not tell a window system
+that started from one that runs, and why the criterion is the kernel's
+last dump of what is running instead.  A call that blocks is not a call
+that failed.  The wait is not bounded by a count now; what ends it is
+the two things that mean no answer is coming \- the server is gone, or a
+note is pending for this process, which is how Plan 9 interrupts a
+blocked call and which now sets
+.CW interrupted
+as the reason.
+.PP
+The first cut of that wait was a poll, and the poll took the machine
+down.  A blocked caller woke every two milliseconds, serviced its ring
+and looked for the reply, for as long as it stayed blocked; rio parks
+three readers, so three kernel processes woke five hundred times a
+second for as long as rio ran.  The server loop was driven through a
+hundred and ninety-two thousand requests in one boot of the two-machine
+check, and that boot ended in
+.CW "panic: ilock ... key 0xdeaddead ... held by pc ..." ,
+which is
+.CW timerdel
+spinning a million times on the timer list that
+.CW timerintr
+was holding \- the same signature, and the same cause, as the flood of
+frames recorded higher up in this document.  The symbols came out of the
+kernel's own table:
+.CW 0xdeaddead
+is not freed memory, it is what
+.CW tas
+writes into a lock word, so the panic says only that a lock was held too
+long.
+.PP
+So the wait is not a poll.  It sleeps on the container's own reply
+rendezvous \-
+.CW ospreyawaitreply (),
+which the server's routing wakes when a reply for that container lands,
+and which was already there and had no caller \- with twenty
+milliseconds as the backstop for a reply arriving by some path that does
+not wake it.  The same boot now serves a third of the requests it did,
+and fewer per tick.  Two other ways of ending the wait were tried and
+taken out: a note pending for the process, which is what Plan 9 does and
+is wrong here because migration posts a note to park a process and the
+call it is making must still finish on the way out; and a single look at
+whether the server is gone, which failed six of the migration criteria
+in one run in four, because a container carried over the wire has its
+delegation taken down and put up again and a call in flight sees no
+server for a moment.  Fifty consecutive looks with no server is what
+ends it now.
+.PP
+And the buddy's workers went from four to twelve.  A forwarded call runs
+on a worker and a blocking read holds one for as long as it blocks: rio
+parks one on
+.CW /dev/kbd ,
+one on
+.CW /dev/mouse
+and one on its own 9P pipe, and holds them for as long as it runs.  Four
+left one worker for everything else.
+.PP
+Two things found on the way and written down rather than fixed.
+.PP
+The client personality's cooperative scheduler has no idle.  A first cut
+had the pair client
+.CW tsleep
+for six seconds to let rio paint, and the machine died with
+.CW "p9sched: no runnable proc (deadlock), tick 0" :
+if every proc of that personality is in a timed sleep, nothing advances
+the clock that would wake them, and
+.CW sched ()
+panics rather than waiting.  The waiting belongs in a container \-
+.CW sleep (2)
+there is the kernel's, and the kernel has a clock \- so the probe that
+reads the screen waits six seconds itself, in a container of its own,
+and the client does not sleep at all.  That the personality's scheduler
+cannot idle is still true, and is a thing to fix rather than to route
+around twice.
+.PP
+And a note is addressed by a number that means two things.  rio's
+.CW killprocs
+writes
+.CW /proc/<pid>/note
+with the pid
+.CW getpid (2)
+gave it, and the kernel resolves that number as a container id:
+.CW "osprey: a note was asked for container 32, which is not a container"
+while the container whose pid is 32 is container 124.  It does not fire
+while rio stays up, and it is what breaks first when a window tries to
+kill the command in it.
+.PP
+And a window system is a standing load, which is why rio is started
+because the machine was configured to start one:
+.CW *riodemo=
+in
+.CW plan9.ini ,
+which the pair check and the rio check set and nothing else does.  The
+two-machine check boots the same kernel, so it had been running two
+window systems while carrying processes between them; with rio off it
+is clean three runs in a row, and a check that is not about rio boots
+the machine it was written against.
+.PP
+What those runs turned up before the gate is worth having.  Two of them
+ended in
+.CW "panic: ilock ... key 0xdeaddead ... held by pc ..." ,
+and the kernel's own symbol table says the waiter was
+.CW timerdel
+and the holder
+.CW timeradd ,
+on the timer list \- two short critical sections that walk a list and
+program a clock, and cannot take long.  What
+.CW ilock
+does when a lock is held is spin a million turns of a load and then
+panic, and a million turns of a load on an emulated processor is about
+ten milliseconds.  Ten milliseconds is not a deadlock: it is what
+happens when the host takes away the virtual processor that holds the
+lock and runs something else, which two of these machines and a build
+on the same host will do.  The bound is wall time now \- ten seconds.
+.PP
+Which clock measures it is the whole of the care in that change.  The
+obvious one,
+.CW fastticks ,
+is wrong: it goes through
+.CW arch\->fastclock ,
+and on a machine without a usable cycle counter that is
+.CW i8253read ,
+which takes an
+.CW ilock
+of its own.  A processor spinning for the i8253's lock would have
+called the very thing it was waiting for, and spun inside its own spin
+until the stack ran out.  So the spin reads
+.CW spinticks ,
+which is the cycle counter and nothing else \- a register read, no lock
+\- and which returns a zero frequency when there is no cycle counter to
+read, in which case the count is what the panic is on, as it always
+was.  On the machine these checks boot,
+.CW spinticks
+answers 999220880 ticks a second \- measured with a probe put in
+.CW timersinit
+for one boot and taken out again, since nothing in the tree prints it
+\- so it is the wall-clock bound that is in force here and not the
+fallback.
+.PP
+One more care, of the same kind.  The lock is not held while this
+spins, so nothing pins the proc to a processor:
+.CW splx
+at the top of each turn lets it be preempted and come back on another
+one, whose cycle counter is a different counter and can read lower.
+Subtracting one processor's ticks from another's is an unsigned wrap
+and an instant false panic, so the machine number is kept beside the
+start and the measurement begins again when it changes.  QEMU
+synchronises the counters it presents, so nothing here would ever have
+shown it.
+.PP
+One more thing the sweep turned up, and it is not rio's.  The two
+criteria about pi-p across the cable failed in one sweep in three and
+passed in the others, and this document's own standard is that a
+transient recorded three times is a finding.  It is one: the two-machine
+check gave each machine four minutes, and a machine that had done the
+whole migration exchange - every process carried both ways with its
+pages, its descriptors and its name space - was sometimes still paging
+.CW /boot/cat
+in when its time ran out.  Both kept logs ended mid-boot, six hundred
+lines short of where a passing run ends, and the ticket lines the two
+criteria match had simply not been printed yet.  The failure was for
+want of a boot, not for want of a ticket.  Seven minutes now: the
+deadline is not part of what is being checked, and it is set where load
+cannot reach it.
+.PP
+.B "2.3i: rio hears the button."
+Painting the screen is not listening to a mouse: a window system that
+started and then sat deaf would leave the same pixels.  So the button is
+pressed at it.
+.CW scripts/osprey-check-rio.py
+boots the machine twice, moves the mouse the same way in both, and holds
+button 3 down in one of them; QEMU dumps the screen it is scanning out
+at the end of each, and the two are compared.  They differ by a block of
+pixels the size of a menu, where the pointer is, every one of which was
+the background before, and most of what they became is
+.CW 0xeaffea
+and
+.CW 0x448844
+\- DPalegreygreen and DGreygreen, the colours
+.CW data.c
+asks for - with black text on them.  rio's menu, in rio's own colours,
+because a button was pressed.
+.PP
+What that press crossed, in order: QEMU's PS/2 controller, the IRQ12 the
+microkernel routes to the personality's container as a bare
+notification, the user-space i8042 driver that reads port
+.CW 0x60
+with its own
+.CW inb ,
+.CW devinput.c 's
+decode of the three-byte packet into a position and a button mask,
+.CW /dev/mouse ,
+a forwarded read answered by the buddy over the ring, rio's mouse proc,
+and then back the other way through
+.CW /dev/draw
+to the draw server in a container of its own, which wrote the frame
+buffer the emulator then dumped.  Nothing on that path is a stub.
+.PP
+The first cut of the check looked for white, because rio's
+.CW cols[BACK]
+is white, and found none: the menu is not drawn in
+.CW cols[BACK] .
+Comparing the two screens rather than counting one colour is what
+turned "no white" into a bounding box and a histogram, and the
+histogram named the colours.
+.PP
+What is not claimed.  No window has been made and none swept: that wants
+a mouse button, and nothing on this machine presses one yet.  There is
+no pointer on the screen either \- the arrow is drawn by the draw
+server's cursor out of the mouse ring, and this configuration exposes no
+mouse ring, so the position
+.CW /dev/mouse
+reports is right and there is nothing drawn at it.
 .NH 2
 Track three: the library-OS personality execs a program, then rio
 .PP

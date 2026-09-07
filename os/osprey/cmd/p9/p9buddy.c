@@ -1123,7 +1123,13 @@ p9buddy_serve(uchar *cdata, uvlong container)
  * swapped in and out around the call, on the worker's own Proc, so two
  * workers cannot restore over each other.
  */
-enum { Nworker = 4 };
+/*
+ * Twelve, not four.  A forwarded call runs on a worker and a blocking
+ * read holds one for as long as it blocks: rio parks one on /dev/kbd,
+ * one on /dev/mouse and one on its own 9P pipe, and holds them for as
+ * long as it runs.  Four left one worker for everything else.
+ */
+enum { Nworker = 12 };
 typedef struct Job Job;
 struct Job {
 	int	busy;			/* a worker holds it */

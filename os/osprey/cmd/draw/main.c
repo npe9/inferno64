@@ -43,7 +43,7 @@ extern void oscursorstart(void);
 
 /* the frame buffer the microkernel exposed, attached by kshim.c */
 extern ulong *ospreyfb;
-extern int ospreyfbwid;
+extern int ospreyfbwid, ospreyfbhgt;
 extern void ospreyfbattach(void);
 
 static void
@@ -416,6 +416,40 @@ threedevices(char *mtpt)
 	fprint(2, "draw: one container holds /dev/draw, /dev/mouse and /dev/kbd - the three rio wants\n");
 }
 
+/*
+ * Read the frame buffer back and say what is on it, at the centre and
+ * at four points well inside the corners.  Nothing is drawn: the point
+ * is to see what some other program left there.
+ */
+/*
+ * The libc sleep(2), which kshim.h has taken the name of for the
+ * kernel's own ksleep.  A container may sleep - the kernel answers
+ * sleep(2) for a program of the buddy's - and this is how the probe
+ * waits for the window system to paint before it looks.
+ */
+static void
+pause(int ms)
+{
+#undef sleep
+	extern long sleep(long);
+	sleep(ms);
+#define sleep ksleep
+}
+
+static void
+screenprobe(int ms)
+{
+	if(ms > 0){
+		fprint(2, "draw: waiting %d ms before looking at the screen\n", ms);
+		pause(ms);
+	}
+	ospreyfbattach();
+	fprint(2, "draw: the screen reads back centre %#.8lux, corners %#.8lux %#.8lux %#.8lux %#.8lux\n",
+		pixel(ospreyfbwid/2, ospreyfbhgt/2),
+		pixel(40, 40), pixel(ospreyfbwid-40, 40),
+		pixel(40, ospreyfbhgt-40), pixel(ospreyfbwid-40, ospreyfbhgt-40));
+}
+
 static void
 otherclient(char *mtpt)
 {
@@ -447,11 +481,14 @@ otherclient(char *mtpt)
 void
 main(int argc, char **argv)
 {
-	char *mtpt;
-	int client;
+	char *mtpt, *becomes;
+	int client, probe, probems;
 
 	mtpt = "/dev";
 	client = 0;
+	probe = 0;
+	probems = 0;
+	becomes = nil;
 	ARGBEGIN{
 	case 'm':
 		mtpt = EARGF(usage());
@@ -459,8 +496,45 @@ main(int argc, char **argv)
 	case 'c':
 		client = 1;
 		break;
+	case 'x':
+		becomes = EARGF(usage());
+		break;
+	case 'P':
+		probe = 1;
+		probems = atoi(EARGF(usage()));
+		break;
 	}ARGEND;
 	USED(argc, argv);
+
+	/*
+	 * -P samples the screen and says what is on it, without a draw
+	 * client and without the server: the frame buffer is a segment
+	 * this kernel exposes, so a program can read the memory the
+	 * display controller scans and report it.  It is how a check
+	 * looks at what another program drew.
+	 */
+	if(probe){
+		screenprobe(probems);
+		exits(nil);
+	}
+	/*
+	 * -x mounts the draw server into this container's name space and
+	 * then becomes the named program, in place.  A program that only
+	 * opens /dev/draw - rio does - cannot find a server posted in
+	 * /srv by itself, and a window system's screen is put in its name
+	 * space by whatever starts it.  That is this, and then exec(2)
+	 * leaves the mount under the program it becomes.
+	 */
+	if(becomes != nil){
+		char *a[2];
+
+		mountsrv("draw", mtpt);
+		fprint(2, "draw: /srv/draw mounted at %s; becoming %s in place\n", mtpt, becomes);
+		a[0] = becomes;
+		a[1] = nil;
+		exec(becomes, a);
+		sysfatal("exec %s: %r", becomes);
+	}
 
 	/*
 	 * -c is the same binary run as nothing but a draw client, in a

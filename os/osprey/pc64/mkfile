@@ -229,7 +229,7 @@ p9prog.i:	init9.$O $ROOT/os/osprey/cmd/p9/build.sh \
 		$ROOT/os/osprey/cmd/p9/dev9ploop.c $ROOT/os/osprey/cmd/p9/ring9p.c $ROOT/os/osprey/cmd/p9/p9pairsrv.c \
 		$ROOT/os/osprey/cmd/p9/p9file.c $ROOT/os/osprey/cmd/p9/p9srv.c $ROOT/os/osprey/cmd/p9/p9buddy.c \
 		$ROOT/os/osprey/port/devpipe.c $ROOT/os/osprey/port/devsrv.c $ROOT/os/osprey/cmd/p9/nsdat.h $ROOT/os/osprey/cmd/p9/dat.h \
-		$ROOT/os/osprey/cmd/p9/p9linuxfile.c linuxprog.i legacyprog.i catprog.i execprog.i shprog.i kbdsrvprog.i drawsrvprog.i prog2.i libcatprog.i libwcprog.i libshprog.i libgenprog.i $ROOT/os/osprey/cmd/p9/p9exec.c $ROOT/os/osprey/cmd/p9/devtime.c $ROOT/os/osprey/cmd/p9/devnote.c $ROOT/os/osprey/cmd/p9/devinput.c $ROOT/os/osprey/cmd/p9/p9proc.c $ROOT/os/osprey/cmd/p9/p9lib.h $ROOT/os/osprey/cmd/p9/blkvirtio.c $ROOT/os/osprey/cmd/p9/devlfs.c $ROOT/os/osprey/cmd/p9/xcall.s $ROOT/os/osprey/cmd/p9/pipfsrv.c $ROOT/os/osprey/cmd/p9/p9ip.c $ROOT/os/osprey/cmd/p9/p9sched.c $ROOT/os/osprey/cmd/p9/p9kbd.c $ROOT/os/osprey/ip/loopbackmedium.c $ROOT/os/osprey/ip/ospreymedium.c
+		$ROOT/os/osprey/cmd/p9/p9linuxfile.c linuxprog.i legacyprog.i catprog.i execprog.i shprog.i kbdsrvprog.i drawsrvprog.i rioprog.i prog2.i libcatprog.i libwcprog.i libshprog.i libgenprog.i $ROOT/os/osprey/cmd/p9/p9exec.c $ROOT/os/osprey/cmd/p9/devtime.c $ROOT/os/osprey/cmd/p9/devnote.c $ROOT/os/osprey/cmd/p9/devinput.c $ROOT/os/osprey/cmd/p9/p9proc.c $ROOT/os/osprey/cmd/p9/p9lib.h $ROOT/os/osprey/cmd/p9/blkvirtio.c $ROOT/os/osprey/cmd/p9/devlfs.c $ROOT/os/osprey/cmd/p9/xcall.s $ROOT/os/osprey/cmd/p9/pipfsrv.c $ROOT/os/osprey/cmd/p9/p9ip.c $ROOT/os/osprey/cmd/p9/p9sched.c $ROOT/os/osprey/cmd/p9/p9kbd.c $ROOT/os/osprey/ip/loopbackmedium.c $ROOT/os/osprey/ip/ospreymedium.c
 	sh $ROOT/os/osprey/cmd/p9/build.sh
 
 # The four legacy programs link libc9.a - the C library this tree builds
@@ -278,6 +278,12 @@ kbdsrvprog.i:	init9main.$O init9tos.$O $ROOT/9front/amd64/lib-src/libc9.a \
 		$ROOT/os/osprey/cmd/p9/build9bin.sh $ROOT/os/osprey/cmd/p9/build9prog.sh \
 		$ROOT/os/osprey/cmd/draw/kbd.c
 	sh $ROOT/os/osprey/cmd/p9/build9prog.sh kbdsrv
+
+rioprog.i:	init9main.$O init9tos.$O $ROOT/9front/amd64/lib-src/libc9.a \
+		$ROOT/os/osprey/cmd/p9/build9bin.sh $ROOT/os/osprey/cmd/p9/build9prog.sh \
+		$ROOT/9front/src/cmd/rio/rio.c $ROOT/9front/src/cmd/rio/wind.c \
+		$ROOT/9front/src/cmd/rio/fsys.c $ROOT/9front/src/cmd/rio/xfid.c
+	sh $ROOT/os/osprey/cmd/p9/build9prog.sh rio
 
 drawsrvprog.i:	init9main.$O init9tos.$O $ROOT/9front/amd64/lib-src/libc9.a \
 		$ROOT/os/osprey/cmd/p9/build9bin.sh $ROOT/os/osprey/cmd/p9/build9prog.sh \

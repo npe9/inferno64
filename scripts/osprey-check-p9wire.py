@@ -24,9 +24,19 @@ def plain(s):
 
 def boot(netdev, mac, until, log, img, delay=0):
     time.sleep(delay)		# the listening end must be up before the other connects
+    # Seven minutes, not four.  Two of these boots run at once, on a host
+    # that is also building, and each does the whole migration exchange -
+    # every process carried both ways with its pages, its descriptors and
+    # its name space - before the pi-p phase the last criteria are about.
+    # At four minutes a machine that had done all of that would sometimes
+    # be paging /boot/cat in when its time ran out, and the two ticket
+    # criteria failed for want of a boot rather than for want of a ticket:
+    # both kept logs ended mid-boot, six hundred lines short of where a
+    # passing run ends.  The deadline is not part of what is being
+    # checked, so it is set where load cannot reach it.
     subprocess.run(['./scripts/osprey-console.py', '-q', '-p', '2',
                     '-n', 'virtio-net-pci,disable-legacy=on,mac=' + mac, '--netdev', netdev,
-                    '-l', log, '--blk', img, '-t', '240', '-u', until],
+                    '-l', log, '--blk', img, '-t', '420', '-u', until],
                    env=env, capture_output=True, text=True)
 
 def main():

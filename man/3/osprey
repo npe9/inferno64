@@ -1295,7 +1295,23 @@ of
 .BR /os/osprey/cmd/p9/devinput.c ,
 which the pair check reads from a container that started none of them.
 .I rio
-itself has not been run.  The draw server's mount is
+runs: the pair check starts it through
+.B /boot/drawsrv
+.BR -x ,
+which mounts
+.B /srv/draw
+at
+.B /dev
+and execs
+.B /boot/rio
+in place, and rio takes the screen, paints it with its own background
+and is still running when the machine idles.  rio hears the mouse:
+.B /scripts/osprey-check-rio.py
+boots the machine twice, moves the mouse the same way in both and holds
+button 3 down in one, and the two screens QEMU dumps differ by a block
+of rio's own menu colours where the pointer is.  No window has been made
+and none swept.
+The draw server's mount is
 reachable from another container:
 .I postmountsrv
 posts its pipe in
@@ -1318,6 +1334,17 @@ and opens
 beside it: one container holding the three files
 .I rio
 reads.
+.PP
+.B /scripts/osprey-check-rio.py
+boots
+.B p9pair
+twice with
+.B *riodemo=1
+in
+.BR plan9.ini ,
+which is what makes the pair client exec rio and leave it running; a
+kernel booted without it runs no window system, which is why the checks
+that are not about rio are unaffected by one.
 .PP
 .B /scripts/osprey-check-portable.sh
 boots nothing.  It compiles every source in

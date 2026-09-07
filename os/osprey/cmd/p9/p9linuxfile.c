@@ -23,6 +23,7 @@
 #include	"shprog.i"
 #include	"kbdsrvprog.i"
 #include	"drawsrvprog.i"
+#include	"rioprog.i"
 
 void
 p9linuxfile(void)
@@ -40,4 +41,5 @@ p9linuxfile(void)
 	 */
 	addbootfile("kbdsrv", kbdsrvprog, sizeof kbdsrvprog);
 	addbootfile("drawsrv", drawsrvprog, sizeof drawsrvprog);
+	addbootfile("rio", rioprog, sizeof rioprog);
 }

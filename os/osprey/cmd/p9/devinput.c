@@ -39,7 +39,17 @@
  * a bind of it succeeds and puts the IP stack's files on /dev, and the
  * open of /dev/mouse that follows says only that it does not exist.
  *
- * A read of either file waits.  It waits on a worker, because a
+ * There are two more files, and they are here because rio opens them
+ * before it will believe it has a keyboard: it opens /dev/cons and
+ * /dev/consctl and gives up if either fails, and only then does it look
+ * for /dev/kbd and prefer it.  So cons is the same runes as kbd without
+ * the leading c - which is what cons is on a Plan 9 machine, the
+ * keyboard as characters - and consctl takes rawon and rawoff and does
+ * nothing with them, because there is no cooked mode here to turn off:
+ * this device never echoes and never assembles a line.  A write to cons
+ * goes to the console, which is what makes it a console.
+ *
+ * A read of kbd, cons or mouse waits.  It waits on a worker, because a
  * forwarded call runs on one, and there are four of them; rio parks two
  * of the four for as long as it runs, which is worth knowing before a
  * fifth blocking reader is added.
@@ -49,6 +59,8 @@ enum {
 	Qdir = 0,
 	Qkbd,
 	Qmouse,
+	Qcons,
+	Qconsctl,
 
 	Nrune	= 64,		/* the keyboard's queue of runes */
 	Winw	= 1280,		/* the exposed frame buffer, as kbd.c and mouse.c have it */
@@ -59,6 +71,8 @@ static Dirtab inputdir[] = {
 	".",		{Qdir, 0, QTDIR},	0,	DMDIR|0555,
 	"kbd",		{Qkbd},			0,	0666,
 	"mouse",	{Qmouse},		0,	0666,
+	"cons",		{Qcons},		0,	0666,
+	"consctl",	{Qconsctl},		0,	0222,
 };
 
 static Rune	kq[Nrune];
@@ -193,6 +207,14 @@ inputread(Chan *c, void *a, long n, vlong)
 		m = 1 + runetochar(buf+1, &r);
 		buf[m++] = 0;		/* rio overwrites the last byte with 0 */
 		break;
+	case Qcons:
+		ksleep(&kr, haverune, nil);
+		r = kq[kout++ % Nrune];
+		m = runetochar(buf, &r);	/* the character itself, uncooked */
+		break;
+	case Qconsctl:
+		error(Eperm);
+		return 0;
 	case Qmouse:
 		mark = (ulong)(uintptr)c->aux;
 		ksleep(&mr, moved, &mark);
@@ -228,6 +250,12 @@ inputwrite(Chan *c, void *a, long n, vlong)
 	char buf[64], *f[4];
 	int nf;
 
+	if((ulong)c->qid.path == Qconsctl)
+		return n;		/* rawon, rawoff: nothing here is cooked */
+	if((ulong)c->qid.path == Qcons){
+		print("%.*s", (int)n, (char*)a);
+		return n;
+	}
 	if((ulong)c->qid.path != Qmouse)
 		error(Eperm);
 	if(n <= 0 || n >= (long)sizeof buf)

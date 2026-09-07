@@ -2481,7 +2481,20 @@ enum {
 	 */
 	Bexec = 100, Bpage = 101, Bmappage = 102, Bforkfds = 103, Bdupfd = 104,
 	Bdup = 5,
-	Bsyscalltries = 15000,	/* 2 ms each: thirty seconds for a call that may block on another process */
+	/*
+	 * The wait for a forwarded call is not bounded by a count.  It was
+	 * fifteen thousand two-millisecond sleeps - thirty seconds - and a
+	 * call that had not been answered by then returned -1 with no
+	 * reason.  A read of a keyboard is answered when a key is pressed
+	 * and not before, and a window system's is not pressed for as long
+	 * as nobody is at the machine: rio's keyboard reader took the -1
+	 * thirty seconds in, ended its loop and shut rio down, and its
+	 * mouse reader did the same.  A call that blocks is not a call that
+	 * failed.  What ends the wait instead is the two things that mean
+	 * no answer is coming: the server is gone, or a note is pending for
+	 * this process - which is how Plan 9 interrupts a blocked call.
+	 */
+	Bsyscalltries = 0,	/* no count: see ospreybuddycall */
 	Bargoff = Odbuddyarg, Bnameoff = Odbuddyname, Bdataoff = Odbuddydata,
 	Reqsyscall = 15,	/* above every request in policy/syscall.h; the same number in cmd/p9 */
 };
@@ -2490,25 +2503,61 @@ enum {
  * Put one request to the buddy and wait for its answer: submit on the
  * legacy container's ring so the delegation carries it to the buddy,
  * service and sleep until the buddy's task has replied, and hand back
- * the reply's value.  tries bounds the wait, in 2 ms sleeps.
+ * the reply's value.  A positive tries bounds the wait in 2 ms sleeps,
+ * for a call the kernel makes on its own account and must not hang on;
+ * zero waits for as long as there is a server to answer and no note to
+ * interrupt it, which is what a blocking read needs.
  */
 static long
 ospreybuddycall(Ospreyproc *p, int tries)
 {
 	uvlong sarg[Ospreynarg], rop, rarg[Ospreynarg];
 	long status;
-	int i;
+	int i, nogone;
 
 	memset(sarg, 0, sizeof sarg);
 	sarg[0] = ospreyindex(p);	/* which slot this container's slice is: the server maps that one */
 	if(ospreysubmit(p, Reqsyscall, sarg) < 0)
 		return -1;
 	status = -1;
-	for(i = 0; i < tries; i++){
+	nogone = 0;
+	for(i = 0; tries <= 0 || i < tries; i++){
 		ospreyservicecaller();
 		if(ospreycollect(p, &rop, &status, rarg) == 0)
 			return status;
-		tsleep(&up->sleep, return0, nil, 2);
+		if(tries > 0){
+			tsleep(&up->sleep, return0, nil, 2);
+			continue;
+		}
+		/*
+		 * An unbounded wait sleeps on the container's own reply
+		 * rendezvous, which the server's routing wakes when a reply
+		 * for this container lands, and not on a two-millisecond
+		 * timer.  The timer is what the first cut used, and a caller
+		 * that blocks for as long as rio's keyboard reader does then
+		 * wakes five hundred times a second for ever: three of those
+		 * drove the server loop through a hundred and ninety thousand
+		 * requests in one boot and ended in "ilock ... key 0xdeaddead"
+		 * with timerdel waiting on the timer list that timerintr was
+		 * holding.  Twenty milliseconds is only the backstop for a
+		 * reply that arrives by some path that does not wake it.
+		 *
+		 * The only thing that ends the wait is that there is nobody
+		 * left to answer it, and even that is not decided on one
+		 * look: a container carried over the wire has its delegation
+		 * taken down and put up again, and a call in flight then sees
+		 * no server for a moment.  A note does not end it either -
+		 * interrupting a blocked call on up->notepending is what Plan
+		 * 9 does and is wrong here, because migration posts a note to
+		 * park a process and the call it is making must still finish
+		 * on the way out.
+		 */
+		if(ospreyserverof(p) == nil){
+			if(++nogone > 50)
+				return -1;
+		} else
+			nogone = 0;
+		ospreyawaitreply(20);
 	}
 	return -1;
 }

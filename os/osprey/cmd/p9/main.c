@@ -11,6 +11,7 @@ extern void exits(char*);
 extern void p9clientnet(void);		/* p9ip.c: the client container's own stack, over the ring wire */
 void p9server(char *arg);
 void p9paircli(void);
+int p9riodemo;		/* *riodemo= in plan9.ini: also exec rio and leave it running */
 void p9server(char *arg);
 void p9setup(void);
 
@@ -63,6 +64,20 @@ p9setup(void)
 		print("p9: #T bound onto /dev; nsec(2) reads /dev/bintime, the kernel's clock\n");
 	} else
 		print("p9: could not bind #T onto /dev: %s\n", up->errstr);
+	/*
+	 * The environment onto /env, where a program's getenv(2) and
+	 * putenv(2) look for it: both are opens of /env/<name>, not system
+	 * calls, so the device has to be under that name in the name space
+	 * a container's calls are resolved in.  rio puts the name of the
+	 * pipe it posted in /srv there, under wsys, which is how a command
+	 * in a window finds the window system that started it.
+	 */
+	if(!waserror()){
+		p9bind("#e", "/env", MREPL|MCREATE);
+		poperror();
+		print("p9: #e bound onto /env; getenv(2) and putenv(2) are opens of /env/<name>\n");
+	} else
+		print("p9: could not bind #e onto /env: %s\n", up->errstr);
 	/*
 	 * The input device onto /dev, so that a program's /dev/kbd and
 	 * /dev/mouse are the keyboard and mouse this personality's own
@@ -1012,6 +1027,54 @@ p9paircli(void)
 			if(id >= 0 && ring_wait(&st) == 0)
 				print("p9: pair-client: wait: /boot/drawsrv -c (container %ld) exited with status %ld\n", id, st);
 		}
+		/*
+		 * And rio.  It is 9front's own window system, 6407 lines this
+		 * tree now builds itself, and nothing about it was written or
+		 * changed for this machine.  It is started through the same
+		 * draw binary with -x: that container mounts /srv/draw at
+		 * /dev and execs rio in place, so rio opens /dev/draw and
+		 * finds the screen where a window system expects it.  It is
+		 * not waited for - a window system does not exit - so what it
+		 * did is read off the screen afterwards.
+		 */
+		if(p9riodemo){
+			extern long ring_execv(char**);
+			char *rargv[3];
+
+			rargv[0] = "/boot/drawsrv";
+			rargv[1] = "-x/boot/rio";
+			rargv[2] = nil;
+			id = ring_execv(rargv);
+			print("p9: pair-client: exec /boot/rio started container %ld\n", id);
+		}
+		/*
+		 * And what is on the screen now.  A container of its own,
+		 * which draws nothing: it maps the frame buffer the kernel
+		 * exposes and reads it.
+		 */
+		if(p9riodemo){
+			extern long ring_execv(char**);
+			char *pargv[3];
+
+			/*
+			 * The waiting is the probe's, in its own container.
+			 * The client cannot wait: this personality's
+			 * cooperative scheduler has no idle - if every proc
+			 * of it is in a timed sleep, nothing advances the
+			 * clock that would wake them, and sched() panics
+			 * with "no runnable proc (deadlock), tick 0".  A
+			 * tsleep here to let rio paint did exactly that.
+			 * sleep(2) in a container is the kernel's, and the
+			 * kernel has a clock.
+			 */
+			pargv[0] = "/boot/drawsrv";
+			pargv[1] = "-P6000";
+			pargv[2] = nil;
+			id = ring_execv(pargv);
+			print("p9: pair-client: exec /boot/drawsrv -P started container %ld\n", id);
+			if(id >= 0 && ring_wait(&st) == 0)
+				print("p9: pair-client: wait: /boot/drawsrv -P (container %ld) exited with status %ld\n", id, st);
+		}
 	}
 	/*
 	 * The device-carried medium: put a network frame on the ring to the
@@ -1188,6 +1251,8 @@ startboot(char *argv0, char **argv)
 		exits(nil);
 	}
 	if(argv0 != nil && argv0[0] == 'c'){
+		/* "c rio": the kernel was configured to start a window system */
+		p9riodemo = strstr(argv0, "rio") != nil;
 		p9paircli();		/* the buddy's client: mount it and read its files */
 		exits(nil);
 	}
