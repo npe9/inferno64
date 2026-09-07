@@ -22,6 +22,13 @@ def main() -> int:
 
     image = Image.open(args.source).convert("L")
     width, height = image.size
+    # Correct only because this writes a rectangle at the origin.  Plan 9
+    # lays a row out relative to a byte boundary, not to the rectangle's
+    # left edge, so a 1-bit image whose r.min.x is not a multiple of 8
+    # needs an extra byte per line and starts its first pixel part way
+    # into the first byte.  See k1_bytesperline() in tos_extract_sprites.py,
+    # which is a transcription of libdraw/bytesperline.c; assuming this
+    # formula there left 85 of the tree's 230 .mask files unreadable.
     stride = (width + 7) // 8
     data = bytearray(stride * height)
     pixels = image.load()

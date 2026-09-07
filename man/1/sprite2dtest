@@ -9,10 +9,11 @@ sprite2dtest \- check that draw3d's sprite2d places pixels exactly
 .SH DESCRIPTION
 .IR Draw3d (2)'s
 .I sprite2d
-is a rotating, scaling resample, and two of its cases have an answer
+is a rotating, scaling resample, and three of its cases have an answer
 that does not depend on the resampler at all: at 1:1 with no rotation it
-must reproduce the source exactly, and a quarter turn must reproduce the
-source turned by hand.
+must reproduce the source exactly, a quarter turn must reproduce the
+source turned by hand, and doubling must turn every source pixel into a
+2\(mu2 block.
 .I Sprite2dtest
 renders both through
 .I sprite2d
@@ -20,7 +21,12 @@ and through a plain masked
 .IR draw ,
 which is the oracle, and compares every pixel.
 It covers square and oblong sources from 7 to 207 pixels, with and
-without a mask, and quarter, half and three-quarter turns.
+without a mask; quarter, half and three-quarter turns; and doublings.
+The three exercise different code:
+1:1 takes the identity blit,
+the turns take the general rotated loop,
+and only the doublings reach the separable unrotated path that every
+scaled call without a rotation goes through.
 .PP
 .I Provider
 is the implementation to test, by path; the default is
@@ -47,7 +53,7 @@ It needs a window, so it runs under
 and not
 .IR emu\-g .
 .PP
-Only the two cases with a resampler-independent answer are checked.
+Only the three cases with a resampler-independent answer are checked.
 An arbitrary angle or scale has no oracle here, so a resample that is
 exact at a quarter turn and wrong at thirty degrees would pass.
 .PP

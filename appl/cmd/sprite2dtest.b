@@ -81,11 +81,78 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	}
 	sys->print("sprite2dtest: %s: %d quarter turns, %d differ from a rotated source\n",
 		path, tot, bad);
+	failed += bad;
+	tot = bad = 0;
+	for(mi = 0; mi < 2; mi++){
+		sz3 := 7 :: 8 :: 16 :: 33 :: 64 :: nil;
+		for(l3 := sz3; l3 != nil; l3 = tl l3)
+			twice(d, hd l3, mi);
+	}
+	sys->print("sprite2dtest: %s: %d doublings, %d differ from a doubled source\n",
+		path, tot, bad);
 	if(bad != 0 || failed){
 		sys->print("sprite2dtest: FAIL\n");
 		raise "fail:sprite2d is not exact";
 	}
 	sys->print("sprite2dtest: PASS\n");
+}
+
+# Doubling is exact too: every source pixel must come out as a 2x2
+# block.  This is the only case here that goes through the separable
+# unrotated path with a scale, which the 1:1 cases skip - they take the
+# identity blit - and the quarter turns never reach.
+twice(d: ref Display, n, withmask: int)
+{
+	img := d.newimage(Rect((0,0),(n,n)), Draw->CMAP8, 0, Draw->Black);
+	dbl := d.newimage(Rect((0,0),(2*n,2*n)), Draw->CMAP8, 0, Draw->Black);
+	if(img == nil || dbl == nil)
+		return;
+	b := array[n*n] of byte;
+	bb := array[4*n*n] of byte;
+	for(y := 0; y < n; y++)
+		for(x := 0; x < n; x++){
+			v := byte (1 + (x*7 + y*13) % 200);
+			b[y*n+x] = v;
+			bb[(2*y)*2*n + 2*x] = v;
+			bb[(2*y)*2*n + 2*x+1] = v;
+			bb[(2*y+1)*2*n + 2*x] = v;
+			bb[(2*y+1)*2*n + 2*x+1] = v;
+		}
+	img.writepixels(img.r, b);
+	dbl.writepixels(dbl.r, bb);
+	mask: ref Image = nil;
+	bmask: ref Image = nil;
+	if(withmask){
+		mbpl := (n+7)/8;
+		bbpl := (2*n+7)/8;
+		mb := array[mbpl*n] of byte;
+		bm := array[bbpl*2*n] of byte;
+		for(y = 0; y < n; y++)
+			for(x = 0; x < n; x++)
+				if(((x+y) & 3) != 0){
+					mb[y*mbpl + (x>>3)] |= byte (16r80 >> (x&7));
+					for(dy := 0; dy < 2; dy++)
+						for(dx := 0; dx < 2; dx++){
+							px := 2*x+dx;
+							bm[(2*y+dy)*bbpl + (px>>3)] |= byte (16r80 >> (px&7));
+						}
+				}
+		mask = d.newimage(Rect((0,0),(n,n)), Draw->GREY1, 0, 0);
+		bmask = d.newimage(Rect((0,0),(2*n,2*n)), Draw->GREY1, 0, 0);
+		mask.writepixels(mask.r, mb);
+		bmask.writepixels(bmask.r, bm);
+	}
+	a := d.newimage(Rect((0,0),(640,480)), Draw->RGB24, 0, Draw->Black);
+	c := d.newimage(Rect((0,0),(640,480)), Draw->RGB24, 0, Draw->Black);
+	if(a == nil || c == nil)
+		return;
+	d3->sprite2d(a, Point(320,240), img, mask, 2*n, 2*n, 0.0, 0);
+	c.draw(Rect((320-n, 240-n), (320+n, 240+n)), dbl, bmask, dbl.r.min);
+	tot++;
+	if(!same(a, c)){
+		bad++;
+		sys->print("sprite2dtest: DOUBLE DIFFER %dx%d mask=%d\n", n, n, withmask);
+	}
 }
 
 # A quarter turn is exact whatever the resampler does, so it can be
