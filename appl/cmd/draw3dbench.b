@@ -110,7 +110,89 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	sprites(d, buf);
 	readback(d, col, large);
 	agree(d);
+	gradient(d);
 	fringe(d);
+}
+
+# How many distinct colours does ONE face come out in?
+#
+# This is the whole difference the Metal fragment shader makes, in a
+# single number.  fillpoly3 hands a face one colour, so the software
+# rasteriser fills it with exactly that colour and no other: one.  fgmain
+# lights it per pixel from the geometric normal and the view vector, and
+# V varies across the face, so the specular and rim terms give a gradient
+# that a flat fill cannot produce at any cost.
+#
+# The triangle is deliberately steep - it runs from near the eye to far
+# from it - because a face-on one has almost no variation in V and would
+# under-report.  Counting DISTINCT colours rather than measuring a range
+# means the answer does not depend on which particular lighting model is
+# in the shader, only on whether there is one.
+gradient(d: ref Display)
+{
+	sys->print("draw3dbench: shading within one face\n");
+	sw := gradient1(d, Draw3d->PATH);
+	gp := gradient1(d, "/dis/math/draw3ddev.dis");
+	sys->print("draw3dbench:   distinct colours in one face: software %d, GPU %d\n",
+		sw, gp);
+	if(gp <= sw)
+		sys->print("draw3dbench:   the GPU is not shading (INFERNO_METAL_FLAT set?)\n");
+}
+
+gradient1(d: ref Display, path: string): int
+{
+	d3 := load Draw3d path;
+	if(d3 == nil)
+		return -1;
+	d3->init();
+	img := win.image;
+	img.draw(img.r, d.black, nil, img.r.min);
+	c := d3->context(img);
+	d3->setzarea(c, img.r);
+	d3->setz(c, 1);
+	d3->viewport(c, img.r.min.x, img.r.min.y, img.r.max.x, img.r.max.y);
+	d3->mode(Draw3d->PROJ); d3->identity(); d3->frustum(0.1, 0.1, 100.0);
+	d3->mode(Draw3d->MODEL); d3->identity();
+	d3->clearz(c);
+	d3->setcolour(c, d.color(Draw->Red));
+	tri := array[3] of Vector;
+	# Steep: two corners close, the apex a long way back.
+	tri[0] = Vector(-1.2, -0.9, -1.5);
+	tri[1] = Vector( 1.2, -0.9, -1.5);
+	tri[2] = Vector( 0.0,  1.1, -9.0);
+	d3->fillpoly3(c, tri, Vector(0.0, 0.0, 1.0), 1.0);
+	return ncolours(d.image, img.r);
+}
+
+ncolours(dst: ref Image, r: Rect): int
+{
+	(r, nil) = r.clip(dst.r);
+	bpl := (r.dx() * dst.depth + 7) / 8;
+	pxb := dst.depth / 8;
+	if(pxb < 3 || r.dx() < 1 || r.dy() < 1)
+		return -1;
+	buf := array[bpl] of byte;
+	# 18 bits of colour: fine enough to count gradient steps (at full
+	# 24-bit precision the same face reads 63 colours against this
+	# quantisation's 16, and the software renderer's 1 either way) and
+	# small enough that the table is 256K rather than 16M.
+	seen := array[262144] of byte;
+	n := 0;
+	for(y := r.min.y; y < r.max.y; y++){
+		if(dst.readpixels(Rect((r.min.x, y), (r.max.x, y+1)), buf) != bpl)
+			return -1;
+		for(x := 0; x*pxb + 2 < bpl; x++){
+			rr := int buf[x*pxb]; gg := int buf[x*pxb+1]; bb := int buf[x*pxb+2];
+			if(rr < 8 && gg < 8 && bb < 8)
+				continue;	# the black ground
+			k := (rr>>2)<<12 | (gg>>2)<<6 | (bb>>2);
+			if(seen[k] == byte 0){
+				seen[k] = byte 1;
+				n++;
+			}
+		}
+	}
+	return n;
 }
 
 # Does a GPU sprite have a dark halo where its mask ends?

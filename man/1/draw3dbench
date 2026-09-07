@@ -67,6 +67,23 @@ turns the shading off, and then the two agree exactly; that is the
 control to run if a difference here is ever suspected of being more
 than shading.
 .PP
+Between them is a one-number summary of what the fragment shader is
+worth: how many distinct colours a
+.I single
+face comes out in.
+.I Fillpoly3
+hands a face one colour, so the software rasteriser fills it with that
+colour and no other \- one \- while the GPU lights it per pixel and the
+view vector varies across the face.
+The triangle is steep, running from near the eye to far from it, because
+a face-on one has almost no variation in V and would under-report.
+Counting distinct colours rather than measuring a range keeps the answer
+independent of which lighting model is in the shader: software 1, GPU
+16 at the 18-bit quantisation the test uses and 63 at full precision.
+With
+.B INFERNO_METAL_FLAT
+set the GPU reads 1 as well, which is the control.
+.PP
 The last section checks how a GPU sprite composites at the edge of its
 mask, through
 .IR sprite3zb ,
