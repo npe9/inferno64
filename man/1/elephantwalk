@@ -1,27 +1,72 @@
 .TH ELEPHANTWALK 1
 .SH NAME
-elephantwalk \- animated elephant
+elephantwalk \- walk a rocking elephant about the screen
 .SH SYNOPSIS
 .B temple/elephantwalk
 .SH DESCRIPTION
 .I ElephantWalk
-is a animated elephant.
+is a port of the TempleOS
+.B Demo/Games/ElephantWalk.HC
+demonstration.
 It runs under
 .IR wm (1).
 .PP
-Move an elephant around the panel with wasd or the arrows.
+The elephant is a single sprite, and the whole of the demonstration is
+the one line that draws it:
+.IP
+.EX
+Sprite3ZB(gr.dc,x,y,0,$IB,"<1>",BI=1$,Sin(8*tS)/4);
+.EE
+.PP
+.IR Sprite3ZB 's
+last argument is a rotation about z in radians, so the elephant is
+tilted by up to about fourteen degrees either way each time it is
+drawn, and the original's loop blocks waiting for a key \- so that is
+once per step.
+The elephant rocks as it walks.
+.PP
+The rotation is about the sprite's own origin rather than the middle of
+its bitmap.
+The bin's rectangle is (\-124,\-100)\-(95,136), which puts the origin
+near the elephant's shoulder, and that is what it pivots around.
+.PP
+The elephant faces the other way while it is walking right \- the
+original sets
+.B DCF_SYMMETRY
+only when x has increased, so a vertical step clears it again.
+Steps are 32 pixels and walk off one edge and back on at the other.
 .PP
 The controls are:
-.TF space
+.TF "arrows / wasd"
 .TP
 .B arrows / wasd
-Move elephant
+Walk 32 pixels
 .TP
 .B Esc / q
 Quit
+.PD
+.SH FILES
+.TF /icons/temple/elephantwalk_1.bit
+.TP
+.B /icons/temple/elephantwalk_1.bit
+the sprite, from the bin in ElephantWalk.HC
 .PD
 .SH SOURCE
 .B /appl/temple/elephantwalk.b
 .SH SEE ALSO
 .IR temple (1),
+.IR elephant (1),
+.IR draw3d (2),
 .IR wm (1)
+.SH BUGS
+The original redraws only when a key arrives, so the rock is sampled
+once a step rather than animated continuously, and this follows it.
+A free-running version would look smoother and would not be the same
+program.
+.PP
+There is no window border, no
+.B WinMax
+and no
+.BR AutoComplete ;
+the panel is a fixed 500 by 360 and the wrap is at its edges rather
+than the screen's.
