@@ -275,6 +275,55 @@ poolchain(Pool *p)
 	return p->chain;
 }
 
+/*
+ * TEMPORARY, pc64 corruption hunt.  The surviving lead in
+ * doc/inferno-ports.ms points at this file and xalloc.c rather than at
+ * libinterp, and this session's boot logs sharpen it: chan.c's
+ * checktracked() reports a *run* of words inside one live Dis heap
+ * object going to zero, at checkpoints that bracket smalloc() calls in
+ * copypath().  A run of words zeroed under a fresh allocation is what
+ * an allocator handing out memory that is still live looks like.
+ *
+ * Every pool arena comes from xalloc() (poolalloc below).  If xalloc
+ * ever returned the same region twice, two pools would overlap, and
+ * the heap pool's live objects would sit inside blocks the main pool
+ * believes it owns.  That is a static property once both arenas exist,
+ * so a periodic sweep is enough to catch it.  Prints and continues;
+ * silence is a negative result and worth as much.
+ *
+ * Result so far: silence.  Six boots, swept at 1, 3 and 10 seconds,
+ * no overlap between any two arenas of any two pools.  So the pools do
+ * not share memory and xalloc() is not handing the same region out
+ * twice -- whatever zeroes those words reaches them another way.  Kept
+ * wired and silent rather than deleted, because it costs three sweeps
+ * of a handful of arenas per boot and it is the kind of thing that is
+ * only ever missing when it would have helped.
+ */
+void
+poolcheckoverlap(char *where)
+{
+	int i, j;
+	Bhdr *a, *b;
+	uintptr as, ae, bs, be;
+
+	for(i = 0; i < table.n; i++)
+	for(a = table.pool[i].chain; a != nil; a = a->clink){
+		as = (uintptr)a;
+		ae = as + a->csize;
+		for(j = i; j < table.n; j++)
+		for(b = table.pool[j].chain; b != nil; b = b->clink){
+			if(a == b)
+				continue;
+			bs = (uintptr)b;
+			be = bs + b->csize;
+			if(as < be && bs < ae)
+				print("pooloverlap(%s): %s [%#p,%#p) overlaps %s [%#p,%#p)\n",
+					where, table.pool[i].name, (void*)as, (void*)ae,
+					table.pool[j].name, (void*)bs, (void*)be);
+		}
+	}
+}
+
 void
 pooldel(Pool *p, Bhdr *t)
 {

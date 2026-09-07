@@ -163,6 +163,15 @@ hzclock(Ureg *ur)
 		checkalarms();
 
 	/* MULTICORE INSTRUMENTATION - temporary: one dump once a stall has set in */
+	/*
+	 * Silent unless it finds something.  Three sweeps a boot of a
+	 * handful of arenas; see poolcheckoverlap() in port/alloc.c for
+	 * what it is looking for and why it has so far never fired.
+	 */
+	if(m->machno == 0 && (m->ticks == 1*HZ || m->ticks == 3*HZ || m->ticks == 10*HZ)){
+		extern void poolcheckoverlap(char*);
+		poolcheckoverlap("clock");
+	}
 	if(m->machno == 0 && m->ticks == 40*HZ){
 		extern void disdump(void);
 		extern uintptr kstackmin;
