@@ -636,12 +636,21 @@ rread(int fd, void *va, long n, vlong *offp)
 	path.s[0] = '\0';
 	path.off = -1;
 	if(waserror()){
+		/*
+		 * up->env->errstr, not %r.  In hosted emu lib9's errfmt reads
+		 * the HOST errno through rerrstr, so %r here printed whatever
+		 * the last libc call left behind - "No such file or directory"
+		 * for an Inferno error that was nothing of the sort.  Forcing
+		 * this path with error(Egreg) printed "Undefined error: 0"
+		 * where the actual error was "jim'll fix it".
+		 */
 		if(strcmp(up->env->errstr, Eintr) != 0){
 			if(path.s[0] == '\0')
-				print("rread fd %d n %ld failed before the fd resolved: %r\n", fd, n);
+				print("rread fd %d n %ld failed before the fd resolved: %s\n",
+					fd, n, up->env->errstr);
 			else
-				print("rread %s (fd %d) n %ld at %lld failed: %r\n",
-					(char*)path.s, fd, n, path.off);
+				print("rread %s (fd %d) n %ld at %lld failed: %s\n",
+					(char*)path.s, fd, n, path.off, up->env->errstr);
 		}
 		return -1;
 	}
