@@ -53,6 +53,7 @@
 #define	THERMAL		(BCMPERIPH + 0x212000)	/* BCM2835 temperature sensor */
 #define	DMA0		(BCMPERIPH + 0x007000)	/* BCM2835 DMA, channels 0-14 */
 #define	AUX0		(BCMPERIPH + 0x215000)	/* BCM2835 AUX: mini UART, SPI1/2 */
+#define	ARMTIMER	(BCMPERIPH + 0x00b400)	/* BCM2835 ARM timer (SP804-like) */
 
 
 /* Mach struct above typical kernel image */

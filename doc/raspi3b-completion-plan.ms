@@ -920,6 +920,43 @@ keeps them; the divisor now reads 270, which is
 exactly.  That patch also reports a guest selecting 7-bit data, since
 that is the mistake the erratum invites.
 .NH 1
+Blocks QEMU stubbed out, now modelled and driven
+.PP
+.B "The ARM timer"
+.CW ( armtmrbcm.c ,
+0x3f00b400, and
+.CW tools/qemu-patches/0009 )
+was an unimplemented device in QEMU: reads returned zero, writes were
+logged, and a guest saw a timer that never counted.  The datasheet
+calls it "an SP804, but not fully compatible", and the
+incompatibilities are exactly what a stock SP804 driver gets wrong.
+The counter is 16-bit unless CONTROL bit 1 selects 23-bit \- not 32,
+so a 32-bit period is silently truncated.  There is a pre-divider
+between the APB clock and the counter that an SP804 has no equivalent
+of, resetting to 0x7d so the counter runs at apb/126 until something
+says otherwise.  And there is a second, free-running up-counter with
+its own prescaler that an SP804 does not have at all.
+.PP
+LOAD and RELOAD are not interchangeable either: LOAD reloads the
+counter at once and restarts the period in progress, while RELOAD
+changes the value taken at the next wrap and leaves the current period
+alone.  Changing a running periodic rate through LOAD costs one short
+or long tick every time.
+.PP
+The check runs both counters and measures them against a clock that
+shares nothing with either.  The countdown comes out at
+.CW "1984126 Hz" ,
+which is 250MHz / 126 \- the reset pre-divider, exactly.  The
+free-running counter advances 5008500 ticks while the 1MHz system timer
+sees 20034 microseconds, and 20034 * 250 is 5008500 \- also exactly.
+Two counters agreeing to the tick is worth more than either reading
+alone.
+.PP
+The APB clock is the core clock, which the firmware scales, so this is
+a poor timer for wall-clock work and a good one for periodic
+interrupts.  The board keeps the ARM generic timer for scheduling; this
+is here because it is part of the SoC and was previously invisible.
+.NH 1
 Parallel: the kfs create failure -- re-diagnosed, and it is not what the old note said
 .PP
 Independent of USB and not blocking (dossrv, ramfs and 9660srv all run

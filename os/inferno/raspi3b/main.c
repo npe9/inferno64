@@ -171,7 +171,9 @@ main(void)
 				dmainit();
 				{
 					extern void auxinit(void);
+					extern void armtmrinit(void);
 					auxinit();
+					armtmrinit();
 				}
 			}
 		}
