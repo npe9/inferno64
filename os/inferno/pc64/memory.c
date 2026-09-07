@@ -737,7 +737,7 @@ memreserve(uintptr pa, uintptr size)
 void
 meminit(void)
 {
-	uintptr base, size;
+	uintptr base, size, pa;
 	Confmem *cm;
 	int i;
 
@@ -764,13 +764,23 @@ meminit(void)
 				MemMin, (void *)base, size);
 			continue;
 		}
-		base = memmapalloc(base, size, BY2PG, MemRAM);
-		DP("memmapalloc() base 0x%zx\n", base);
-		if(base == -1){
-			print("base == -1\n");
+		/* the result goes in its own variable: assigning it to base
+		 * loses the map entry this iteration is on, and on the -1
+		 * failure path the loop step then restarts from
+		 * memmapnext(-1, MemRAM) -- the first entry again -- and
+		 * never terminates.  A UEFI memory map takes that path
+		 * (os/inferno/boot/efi/efi.c's memconf builds *e820= from
+		 * it) where a multiboot one did not, so this hung every
+		 * boot through the EFI loader and no boot under -kernel.
+		 */
+		pa = memmapalloc(base, size, BY2PG, MemRAM);
+		DP("memmapalloc() base 0x%zx\n", pa);
+		if(pa == -1){
+			print("meminit: no RAM allocated at 0x%p size 0x%zd\n",
+				(void *)base, size);
 			continue;
 		}
-		cm->base = base;
+		cm->base = pa;
 		cm->npage = size/BY2PG;
 		DP("	cm->base 0x%zx cm->npage 0x%zux %zud\n", cm->base, cm->npage, cm->npage);
 		cm++;

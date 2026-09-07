@@ -1,29 +1,27 @@
 <../../../../mkconfig
-objtype=386
-SYSTARG=$OSTARG
-OBJTYPE=386
+SYSTARG=Inferno
+OBJTYPE=amd64
 BIN=$ROOT/Inferno/$OBJTYPE
 LIBDIR=$ROOT/Inferno/$OBJTYPE/lib
-LIBDIRS=$ROOT/libfis $ROOT/libflate $ROOT/libkern
-LIBS=\
-	libfis\
-	libflate\
-	libkern\
-
-LIBFILES=${LIBS:%=$LIBDIR/%.a}
 <$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
 
-BIN=$ROOT/Inferno/$OBJTYPE
-
-TARG=bootia32.efi bootx64.efi efiboot.fat
+# bootx64.efi alone.  bootia32.efi wants a whole Inferno/386 target
+# (headers and an 8l), which this tree does not build, and no UEFI
+# machine a cloud provider rents runs 32 bit firmware; efiboot.fat's
+# recipe below wants Plan 9's disk/format and dossrv, so the EFI system
+# partition is built on the host by scripts/mkinferno-efi-iso.sh with
+# mtools instead.
+TARG=bootx64.efi
 HFILES=fns.h mem.h
 IMAGEBASE=0x8000
 LINKBASE=0x8200
 
 # The loader is freestanding: it uses only the kernel-side headers, so the
 # include path is set per object type rather than taken from the host mkfile.
-INC32=-I$ROOT/9front/386/include -I$ROOT/9front/include -I$ROOT/include
-INC64=-I$ROOT/9front/amd64/include -I$ROOT/9front/include -I$ROOT/include
+# Inferno's own headers: a file under os/inferno may not name another
+# flavour's target tree, and the loader needs only <u.h> and <a.out.h>.
+INC32=-I$ROOT/Inferno/386/include -I$ROOT/include
+INC64=-I$ROOT/Inferno/amd64/include -I$ROOT/include
 CFLAGS=-FTVw
 CFLAGS32=$CFLAGS $INC32
 CFLAGS64=$CFLAGS $INC64

@@ -19,7 +19,7 @@ all:V:	$TOOLS
 install:V: $TOOLS
 
 aout2efi:	aout2efi.c
-	$CC -o $target aout2efi.c
+	$LD -o $target aout2efi.c
 
 aout2imxrt:	aout2imxrt.c
-	$CC -o $target aout2imxrt.c
+	$LD -o $target aout2imxrt.c

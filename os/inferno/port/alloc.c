@@ -1234,11 +1234,27 @@ poolsize(Pool *p, uintptr max, int contig)
 	else
 		p->ressize = max-RESERVED;
 	if (contig && max > 0) {
-		p->chunk = max-1024;
-		print("poolsize: poolalloc() contig chunk 0x%zx %zd\n", p->chunk, p->chunk);
+		/* what is left, not the whole pool.  The probe exists to
+		 * leave the pool holding one contiguous arena; asking for
+		 * max-1024 works only while nothing has been allocated
+		 * from the pool yet.  A machine whose loader hands over a
+		 * framebuffer -- every UEFI machine, so every cloud one --
+		 * has already drawn through imagmem in bootscreeninit by
+		 * the time this runs, so arenasize is a few megabytes and
+		 * the request cannot fit under maxsize: poolalloc() fails
+		 * and this panicked, on hardware that has the memory.
+		 */
+		if(max > p->arenasize + 1024)
+			p->chunk = max - p->arenasize - 1024;
+		else
+			p->chunk = 0;
+		print("poolsize: poolalloc() contig chunk 0x%zx %zd (arena 0x%zx)\n",
+			p->chunk, p->chunk, p->arenasize);
+		if(p->chunk == 0)
+			return;
 		x = poolalloc(p, p->chunk);
 		if(x == nil)
-			panic("poolsize: don't have %d bytes\n", p->chunk);
+			panic("poolsize: don't have %zd bytes\n", p->chunk);
 		print("poolsize: before poolfree()\n");
 		poolfree(p, x);
 		print("poolsize: after poolfree()\n");

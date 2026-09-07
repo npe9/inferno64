@@ -445,3 +445,10 @@ os/inferno/raspi3b/raspi3b.c
 
 # python byte-code from the check scripts importing one another
 /scripts/__pycache__/
+
+# EFI loader and boot-image artifacts
+/.qemu/
+os/inferno/boot/efi/bootx64.efi
+os/inferno/boot/efi/bootx64.out
+tools/aout2efi
+tools/aout2imxrt
