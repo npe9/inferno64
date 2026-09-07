@@ -787,6 +787,7 @@ lemeta(x: ref Ctlr, sub: int, b: array of byte)
 		c.timeout = bt->get16(b, 15);
 		c.up = chan of array of byte;
 		c.closed = chan[1] of string;
+		c.ltkreq = chan[1] of (array of byte, int);
 		<-x.statelock;
 		x.states = ref Cstate(c, nil, 0) :: x.states;
 		x.statelock <-= 1;
@@ -833,6 +834,29 @@ lemeta(x: ref Ctlr, sub: int, b: array of byte)
 		s.c.interval = bt->get16(b, 3);
 		s.c.latency = bt->get16(b, 5);
 		s.c.timeout = bt->get16(b, 7);
+	Sltkreq =>
+		#
+		# The central has started encryption and the controller
+		# wants the key.  A peripheral that does not answer this
+		# leaves the link unencrypted and the central waiting,
+		# so it goes to the process pairing on that link rather
+		# than being dropped as an event nobody asked for.
+		#
+		if(len b < 12)
+			return;
+		s := findstate(x, bt->get16(b, 0));
+		if(s == nil)
+			return;
+		rand := array[8] of byte;
+		rand[0:] = b[2:10];
+		alt {
+		s.c.ltkreq <-= (rand, bt->get16(b, 10)) =>	;
+		* =>
+			sys->fprint(sys->fildes(2),
+				"hci: nothing is pairing on handle %d; refusing the key request\n",
+				s.c.handle);
+			spawn negltk(s.c);
+		}
 	Sadv =>
 		if(len b < 1)
 			return;
@@ -942,4 +966,36 @@ closeconn(x: ref Ctlr, handle: int, why: string)
 dropconn(c: ref Conn)
 {
 	disconnect(c);
+}
+
+negltk(c: ref Conn)
+{
+	leltknegreply(c);
+}
+
+leltkreply(c: ref Conn, ltk: array of byte): string
+{
+	if(len ltk != 16)
+		return "a long term key is sixteen bytes";
+	p := array[18] of byte;
+	bt->put16(p, 0, c.handle);
+	p[2:] = ltk;
+	(st, nil, e) := cmd(c.x, bt->opcode(Ogle, 16r001a), p);
+	if(e != nil)
+		return e;
+	if(st != 0)
+		return bt->hcierr(st);
+	return nil;
+}
+
+leltknegreply(c: ref Conn): string
+{
+	p := array[2] of byte;
+	bt->put16(p, 0, c.handle);
+	(st, nil, e) := cmd(c.x, bt->opcode(Ogle, 16r001b), p);
+	if(e != nil)
+		return e;
+	if(st != 0)
+		return bt->hcierr(st);
+	return nil;
 }

@@ -243,6 +243,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	"server" =>
 		server();
 		return;
+	"paired" =>
+		paired();
+		return;
 	"cocrefuse" =>
 		cocrefuse();
 		return;
@@ -2194,6 +2197,91 @@ server()
 	if(ok)
 		sys->print("BT: our own client walked our own server\n");
 	writefile(dev + "/ctl", "disconnect");
+	writefile(mnt + "/0/ctl", "advertise off");
+	writefile(mnt + "/0/ctl", "scan off");
+	sys->print("BT: done\n");
+}
+
+
+# the long term key out of a line of /net/bt/N/bonds
+keyof(s: string): string
+{
+	(nil, f) := sys->tokenize(s, " \t");
+	for(; f != nil; f = tl f){
+		if(hd f != "ltk")
+			continue;
+		if(tl f == nil)
+			break;
+		return hd tl f;
+	}
+	return "";
+}
+
+#
+# A peer pairing with us: the responder half of SMP, which nothing
+# else in this bench reaches.
+#
+# The loopback cannot test this, and the reason is worth stating.  The
+# two addresses go into the confirm value, in the order initiator then
+# responder, so both ends have to agree on which two addresses are on
+# the link.  A wire joining two links that the controller reported
+# with different peer addresses cannot satisfy that: our initiator
+# computes over one pair and our responder over another, and the
+# confirm legitimately does not match.  So this phase is a single
+# link, with the model as the peer and as the controller in between.
+#
+paired()
+{
+	ok := 1;
+	if((ne := writefile(mnt + "/0/ctl", "advname inferno-bt")) != nil){
+		sys->print("BT: FAILED: advname: %s\n", ne);
+		sys->print("BT: done\n");
+		return;
+	}
+	if((ae := writefile(mnt + "/0/ctl", "advertise on")) != nil){
+		sys->print("BT: FAILED: advertise on: %s\n", ae);
+		sys->print("BT: done\n");
+		return;
+	}
+	dev := mnt + "/0/remote/" + Peerin;
+	#
+	# the peer connects and then pairs.  What says it worked is the
+	# link becoming encrypted, which the controller only allows when
+	# the key this side handed it is the key the peer derived.
+	#
+	enc := 0;
+	for(i := 0; i < 40 && !enc; i++){
+		sys->sleep(500);
+		if(hasword(trim(readfile(dev + "/state")), "encrypted"))
+			enc = 1;
+	}
+	if(!enc){
+		sys->print("BT: FAILED: the link never became encrypted: %s\n",
+			trim(readfile(dev + "/state")));
+		ok = 0;
+	} else
+		sys->print("BT: the peer paired with us: %s\n", trim(readfile(dev + "/state")));
+
+	#
+	# and the bond it produced, which names the peer, this
+	# controller, and the key this side chose and gave it
+	#
+	bl := lines(readfile(mnt + "/0/bonds"));
+	found := "";
+	for(; bl != nil; bl = tl bl)
+		if(hasstr(hd bl, Peerin))
+			found = hd bl;
+	if(found == ""){
+		sys->print("BT: FAILED: pairing left no bond\n");
+		ok = 0;
+	} else if(keyof(found) == ""){
+		sys->print("BT: FAILED: the bond has no key: %s\n", found);
+		ok = 0;
+	} else
+		sys->print("BT: the bond: %s\n", found);
+
+	if(ok)
+		sys->print("BT: a peer paired with us and the link is encrypted\n");
 	writefile(mnt + "/0/ctl", "advertise off");
 	writefile(mnt + "/0/ctl", "scan off");
 	sys->print("BT: done\n");

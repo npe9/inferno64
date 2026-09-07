@@ -477,3 +477,170 @@ s1(k, r1, r2: array of byte): array of byte
 	r[8:] = r1[0:8];
 	return e(k, r);
 }
+
+#
+# The responder: a peer has connected to us and asked to pair.
+#
+# The same state machine as pair() with the two sides exchanged, and
+# the differences are worth naming because they are where a
+# transliteration goes wrong.  The initiator commits first, so here the
+# peer's confirm arrives before ours goes out, and ours is computed
+# from our own random which the peer has not seen.  c1() takes the
+# initiator's address and then the responder's, in that order, whoever
+# is calling it -- so the arguments that were "us, them" in pair() are
+# "them, us" here.  And the confirm to check is the peer's, against the
+# random it sends afterwards.
+#
+# Then the peer starts encryption and the controller asks us for the
+# key, which is the one thing a peripheral does that a central never
+# does.
+#
+respond(c: ref Conn, m: ref Mux): (ref Bond, string)
+{
+	ch := l2cap->open(m, L2cap->Csmp);
+	(preq, e0) := await(ch, Preq);
+	if(e0 != nil)
+		return (nil, e0);
+	if(len preq < 7)
+		return (nil, "short pairing request");
+	if(int preq[3] & Asc){
+		fail(m, 16r05);		# pairing not supported
+		return (nil, "the peer wants LE Secure Connections, which this stack does not do");
+	}
+
+	#
+	# What we will distribute: a long term key and the numbers that
+	# name it, so the peer can come back without pairing again.  We
+	# ask for nothing: this side does not resolve a central's
+	# private address and has nothing to do with its keys.
+	#
+	pres := array[7] of byte;
+	pres[0] = byte Presp;
+	pres[1] = byte Ionoio;
+	pres[2] = byte 0;			# no out of band data
+	pres[3] = byte Abonding;
+	pres[4] = byte 16;
+	pres[5] = byte Kenc;			# we distribute the key
+	pres[6] = byte 0;			# and want none of theirs
+	if((e := l2cap->send(m, L2cap->Csmp, pres)) != nil)
+		return (nil, e);
+
+	tk := array[16] of byte;
+	for(i := 0; i < 16; i++)
+		tk[i] = byte 0;
+
+	(srand, e1) := random16(c.x);
+	if(e1 != nil)
+		return (nil, e1);
+
+	# the initiator is the peer; the responder is us
+	ia := c.addr;
+	iat := c.atype;
+	ra := hci->localaddr(c.x);
+	rat := Bt->Apublic;
+
+	(mc, e2) := await(ch, Pconfirm);
+	if(e2 != nil)
+		return (nil, e2);
+	if(len mc < 17)
+		return (nil, "short pairing confirm");
+	mconfirm := mc[1:17];
+
+	sconfirm := c1(tk, srand, preq, pres, iat, rat, ia, ra);
+	cf := array[17] of byte;
+	cf[0] = byte Pconfirm;
+	cf[1:] = sconfirm;
+	if((e3 := l2cap->send(m, L2cap->Csmp, cf)) != nil)
+		return (nil, e3);
+
+	(mr, e4) := await(ch, Prandom);
+	if(e4 != nil)
+		return (nil, e4);
+	if(len mr < 17)
+		return (nil, "short pairing random");
+	mrand := mr[1:17];
+
+	# the peer committed before it had seen ours; check it did not
+	# choose its random afterwards
+	want := c1(tk, mrand, preq, pres, iat, rat, ia, ra);
+	if(!same(want, mconfirm)){
+		fail(m, 16r04);		# confirm value failed
+		return (nil, "pairing confirm does not match: the peer is not who it said");
+	}
+
+	rf := array[17] of byte;
+	rf[0] = byte Prandom;
+	rf[1:] = srand;
+	if((e5 := l2cap->send(m, L2cap->Csmp, rf)) != nil)
+		return (nil, e5);
+
+	stk := s1(tk, srand, mrand);
+
+	#
+	# The peer now starts encryption with the short term key and
+	# the controller asks us for it.  Nothing above can carry on
+	# until that is answered: an unanswered key request is a link
+	# that never becomes encrypted and a peer that waits for one.
+	#
+	tick := chan[1] of int;
+	spawn timer(Encwait, tick);
+	alt {
+	(nil, nil) := <-c.ltkreq =>
+		if((e6 := hci->leltkreply(c, stk)) != nil)
+			return (nil, "answering the key request: " + e6);
+	<-tick =>
+		return (nil, "the peer never asked for the key");
+	}
+
+	for(i = 0; i < Encwait/100 && !c.encrypted; i++)
+		sys->sleep(100);
+	if(!c.encrypted)
+		return (nil, "the link did not become encrypted");
+
+	#
+	# and now our keys, so the peer can come back.  The long term
+	# key is ours to choose; the diversifier and random name it, and
+	# a later key request carrying them is how we know which one is
+	# wanted.
+	#
+	(ltk, e7) := random16(c.x);
+	if(e7 != nil)
+		return (nil, e7);
+	(rnd, e8) := hci->lerand(c.x);
+	if(e8 != nil)
+		return (nil, e8);
+	ediv := (int rnd[0] | (int rnd[1] << 8)) & 16rffff;
+
+	ek := array[17] of byte;
+	ek[0] = byte Penckey;
+	ek[1:] = ltk;
+	if((e9 := l2cap->send(m, L2cap->Csmp, ek)) != nil)
+		return (nil, e9);
+	mi := array[11] of byte;
+	mi[0] = byte Pmasterid;
+	bt->put16(mi, 1, ediv);
+	mi[3:] = rnd;
+	if((e10 := l2cap->send(m, L2cap->Csmp, mi)) != nil)
+		return (nil, e10);
+
+	b := ref Bond;
+	b.addr = bt->addrstr(c.addr);
+	b.local = bt->addrstr(hci->localaddr(c.x));
+	b.atype = c.atype;
+	b.ltk = ltk;
+	b.ediv = ediv;
+	b.rand = rnd;
+	return (b, nil);
+}
+
+#
+# tell the peer why, rather than going quiet.  A peer that gets no
+# answer waits out its own thirty second timeout and learns nothing.
+#
+fail(m: ref Mux, reason: int)
+{
+	p := array[2] of byte;
+	p[0] = byte Pfailed;
+	p[1] = byte reason;
+	l2cap->send(m, L2cap->Csmp, p);
+}

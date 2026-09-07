@@ -66,6 +66,11 @@
 #		The advertisement is checked against what the
 #		controller actually received, not only against what the
 #		name space says
+#	paired	a peer pairing with us: the responder half of SMP, and
+#		the Long Term Key Request a peripheral answers when the
+#		central starts encryption.  The model is the peer and
+#		the controller, and it checks from the other side that
+#		the confirm matched and the two keys agreed
 #	server	the GATT server: a database built through ctl, read as
 #		files, and served to a peer.  The model is a wire for
 #		this phase and the client that walks the database is
@@ -264,6 +269,27 @@ echo "the peer saw the name the phase advertised"
 # the point, since a model that did would be a second implementation
 # from the same reading, able to share a mistake with the first.
 #
+#
+# A peer pairing with us: the responder half of SMP.  A single link,
+# not the loopback -- the two addresses go into the confirm value in
+# the order initiator then responder, so a wire joining two links the
+# controller reported with different peers cannot satisfy both ends.
+#
+run paired "--peripheral --pairin" paired
+#
+# and what the model saw from the other side: the confirm this stack
+# computed as the responder matched, and the key it handed the
+# controller was the key the peer derived.  Neither is visible from
+# inside the guest, which only sees that the link came up encrypted.
+#
+n=`grep -c 'the responder confirm matches' "$OUT/bthci-paired.log" || true`
+m=`grep -c 'the guest derived the same short term key' "$OUT/bthci-paired.log" || true`
+if [ "$n" != 1 ] || [ "$m" != 1 ]; then
+	echo "=== phase paired ==="
+	echo "BENCH FAIL (paired): confirm matched $n times and the key agreed $m; wanted 1 and 1"
+	exit 1
+fi
+echo "the peer saw our confirm match and our key agree"
 run server "--loopback --badwrite" server
 #
 # and what the server said to a peer that wrote an attribute it was

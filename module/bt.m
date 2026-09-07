@@ -189,6 +189,16 @@ Hci: module
 		timeout:	int;
 		up:	chan of array of byte;	# whole L2CAP frames
 		#
+		# The controller asking for the key to encrypt this link
+		# with, which is what a peripheral gets when the central
+		# starts encryption.  Carries the random number and the
+		# diversifier that name the key; both are zero when the
+		# key being asked for is the short term one pairing has
+		# just produced.  Buffered, because the request arrives
+		# when the central feels like it.
+		#
+		ltkreq:	chan of (array of byte, int);
+		#
 		# Why the link went away, and a broadcast rather than a
 		# message: more than one process waits for it -- the
 		# L2CAP demultiplexer, and whoever above is watching the
@@ -259,6 +269,11 @@ Hci: module
 	lerand:		fn(x: ref Ctlr): (array of byte, string);
 	leencrypt:	fn(x: ref Ctlr, key, plain: array of byte): (array of byte, string);
 	lestartencrypt:	fn(c: ref Conn, rand: array of byte, ediv: int, ltk: array of byte): string;
+
+	# the peripheral's answer to that request: here is the key, or
+	# there is no key for what you named
+	leltkreply:	fn(c: ref Conn, ltk: array of byte): string;
+	leltknegreply:	fn(c: ref Conn): string;
 };
 
 #
@@ -603,4 +618,9 @@ Smp: module
 
 	# pair as the initiator over an already open connection
 	pair:	fn(c: ref Hci->Conn, m: ref L2cap->Mux, iocap: int): (ref Bond, string);
+
+	# and as the responder: wait for a peer to ask, answer it,
+	# hand the controller the key it then asks for, and distribute
+	# a long term key so the peer can come back
+	respond:	fn(c: ref Hci->Conn, m: ref L2cap->Mux): (ref Bond, string);
 };

@@ -328,8 +328,16 @@ to before anything else exists.  It is not shown here \- it is not
 part of what is being published, it is how a change to what is
 published is announced.
 .PP
-Pairing from this side is not there: a peer cannot pair with this
-stack, only with a device this stack connected to.
+A peer that connects may also pair.  This side answers as the
+responder, hands the controller the key when the peer starts
+encryption, and distributes a long term key; what comes of it is a
+bond like any other, in
+.B bonds
+and in the key file, naming the peer and the controller it was made
+on.  It is Just Works, so it gives no protection against a man in the
+middle, exactly as pairing in the other direction does not.  A bonded
+peer that comes back has to pair again: a key request naming a stored
+key is not yet answered from the key file.
 .TP
 .B /net/bt/\fIN\fP/remote/\fIADDR\fP/l2cap/
 One file per open LE credit-based channel, named by its PSM in four

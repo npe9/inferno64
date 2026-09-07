@@ -149,6 +149,16 @@ loopback = '--loopback' in sys.argv
 # anything the guest's client asked for.
 badwrite = '--badwrite' in sys.argv
 
+# --pairin: with --peripheral, the model does not stop at opening a
+# link to the guest: it initiates pairing over it, so what is exercised
+# is the guest's SMP *responder* -- the half a peripheral needs and
+# which nothing else in this bench reaches.  The model already has c1
+# and s1, written here and validated in the other direction by the
+# pair phase, where the guest initiates and this model responds; using
+# them the other way round tests the new half against an implementation
+# that already agrees with the old one.
+pairin = '--pairin' in sys.argv
+
 # --addr XXXXXXXXXXXX: this controller's own BD_ADDR, most significant
 # byte first, so two models in one bench are two radios and not the
 # same one twice.  A bond records the controller it was made on, and
@@ -407,6 +417,8 @@ class Model:
         self.paramresults = []    # what it answered to each request
         self.trace = []
         # LE credit-based channels, keyed by the CID the guest sends to
+        self.smp2 = {}            # this model's own pairing, as the initiator
+        self.ltkgiven = None      # what the peripheral answered a key request with
         self.badpending = False   # an injected write is waiting for its answer
         self.inhandle = None      # the link the model opened to the guest
         self.outhandle = None     # the link the guest opened to the model
@@ -575,7 +587,23 @@ class Model:
             self.cmd_complete(op, bytes([0]) + aes128_encrypt_block(k, p))
         elif op == 0x2019:                     # LE Start Encryption
             self.cmd_status(op)
-            threading.Thread(target=self.encrypt_up, daemon=True).start()
+            if loopback:
+                # the central started encryption on one link; the
+                # controller's job is to ask the peripheral on the
+                # other for the key and compare the two
+                threading.Thread(target=self.encrypt_across,
+                                 args=(params,), daemon=True).start()
+            else:
+                threading.Thread(target=self.encrypt_up, daemon=True).start()
+        elif op == 0x201a:                     # LE Long Term Key Request Reply
+            handle = struct.unpack('<H', params[0:2])[0]
+            self.ltkgiven = params[2:18]
+            self.cmd_complete(op, bytes([0]) + struct.pack('<H', handle))
+        elif op == 0x201b:                     # LE Long Term Key Request Negative Reply
+            handle = struct.unpack('<H', params[0:2])[0]
+            self.ltkgiven = None
+            print('bthci: the peripheral has no key for that request', flush=True)
+            self.cmd_complete(op, bytes([0]) + struct.pack('<H', handle))
         else:
             log('unknown command %#06x' % op)
             self.cmd_complete(op, bytes([0x01]))     # unknown HCI command
@@ -667,6 +695,118 @@ class Model:
         if ask_params:
             threading.Thread(target=self.askparams, daemon=True).start()
 
+    #
+    # Two links, one wire, and the controller in the middle.  The
+    # central hands the key it derived to its own controller; the
+    # peripheral is asked for the key it derived and hands that over.
+    # A real controller compares them and encrypts only if they agree,
+    # which is the whole of what encryption proves about pairing --
+    # and it is a comparison, not an implementation of SMP, so the
+    # model can make it without becoming a second implementation of
+    # the thing under test.
+    #
+    def encrypt_across(self, params):
+        rand = params[2:10]
+        ediv = struct.unpack('<H', params[10:12])[0]
+        want = params[12:28]
+        self.ltkgiven = None
+        if self.inhandle is None:
+            print('bthci: encryption asked for with no second link', flush=True)
+            return
+        self.event(0x3e, bytes([0x05]) + struct.pack('<H', self.inhandle)
+                   + rand + struct.pack('<H', ediv))
+        for _ in range(100):
+            if self.ltkgiven is not None:
+                break
+            time.sleep(0.05)
+        if self.ltkgiven is None:
+            print('bthci: the peripheral never answered the key request', flush=True)
+            self.event(0x08, bytes([0x05]) + struct.pack('<H', self.outhandle) + bytes([0]))
+            return
+        if self.ltkgiven != want:
+            print('bthci: the two sides derived different keys, so no encryption',
+                  flush=True)
+            self.event(0x08, bytes([0x06]) + struct.pack('<H', self.outhandle) + bytes([0]))
+            self.event(0x08, bytes([0x06]) + struct.pack('<H', self.inhandle) + bytes([0]))
+            return
+        print('bthci: both sides derived the same key; the link is encrypted', flush=True)
+        self.event(0x08, bytes([0]) + struct.pack('<H', self.inhandle) + bytes([1]))
+        self.event(0x08, bytes([0]) + struct.pack('<H', self.outhandle) + bytes([1]))
+
+    #
+    # The model as the initiator.  The guest is the peripheral on this
+    # link, so it is the responder, and the addresses go into c1 in the
+    # order the specification names them: the initiator's first, which
+    # here is this model's.
+    #
+    def pair_out(self, myaddr):
+        self.smp2 = {'ia': myaddr, 'iat': 0, 'ra': ADDR, 'rat': 0}
+        preq = bytes([0x01, 0x03, 0x00, 0x01, 16, 0x00, 0x00])
+        self.smp2['preq'] = preq
+        self.smp2['mrand'] = os.urandom(16)
+        print('bthci: pairing with the guest', flush=True)
+        self.acl(6, preq)
+
+    def smp_initiator(self, p):
+        code = p[0]
+        d = self.smp2
+        if code == 0x02:                                  # Pairing Response
+            d['pres'] = p
+            tk = bytes(16)
+            mc = c1(tk, d['mrand'], d['preq'][:7], d['pres'][:7],
+                    d['iat'], d['rat'], d['ia'], d['ra'])
+            self.acl(6, bytes([0x03]) + mc)
+        elif code == 0x03:                                # Pairing Confirm
+            d['sconfirm'] = p[1:17]
+            self.acl(6, bytes([0x04]) + d['mrand'])
+        elif code == 0x04:                                # Pairing Random
+            srand = p[1:17]
+            tk = bytes(16)
+            want = c1(tk, srand, d['preq'][:7], d['pres'][:7],
+                      d['iat'], d['rat'], d['ia'], d['ra'])
+            if want != d['sconfirm']:
+                print('bthci: the responder confirm does not match', flush=True)
+                self.acl(6, bytes([0x05, 0x04]))
+                return
+            d['stk'] = s1(tk, srand, d['mrand'])
+            print('bthci: the responder confirm matches', flush=True)
+            threading.Thread(target=self.ask_for_key, daemon=True).start()
+        elif code == 0x06:                                # Encryption Information
+            d['ltk'] = p[1:17]
+            print('bthci: the guest distributed a long term key', flush=True)
+        elif code == 0x07:                                # Central Identification
+            print('bthci: and the numbers that name it: ediv %#06x'
+                  % struct.unpack('<H', p[1:3])[0], flush=True)
+        elif code == 0x05:
+            print('bthci: the guest refused to pair: %s' % p.hex(), flush=True)
+
+    #
+    # As the controller: the central has started encryption, so ask the
+    # peripheral for the key and see whether it is the one this side
+    # derived.  That comparison is the whole of what encryption proves
+    # about a pairing, and it is a comparison rather than a second
+    # implementation of the derivation.
+    #
+    def ask_for_key(self):
+        time.sleep(0.1)
+        self.ltkgiven = None
+        self.event(0x3e, bytes([0x05]) + struct.pack('<H', self.inhandle)
+                   + bytes(8) + bytes(2))
+        for _ in range(100):
+            if self.ltkgiven is not None:
+                break
+            time.sleep(0.05)
+        if self.ltkgiven is None:
+            print('bthci: the guest never answered the key request', flush=True)
+            return
+        if self.ltkgiven != self.smp2['stk']:
+            print('bthci: the guest derived a different key, so no encryption',
+                  flush=True)
+            self.event(0x08, bytes([0x06]) + struct.pack('<H', self.inhandle) + bytes([0]))
+            return
+        print('bthci: the guest derived the same short term key', flush=True)
+        self.event(0x08, bytes([0]) + struct.pack('<H', self.inhandle) + bytes([1]))
+
     def encrypt_up(self):
         time.sleep(0.05)
         self.event(0x08, bytes([0]) + struct.pack('<H', self.handle) + bytes([1]))
@@ -709,7 +849,10 @@ class Model:
         if cid == 4:
             self.att(payload)
         elif cid == 6:
-            self.smp_in(payload)
+            if pairin:
+                self.smp_initiator(payload)
+            else:
+                self.smp_in(payload)
         elif cid == 5:
             log('signalling %s' % payload.hex())
             if len(payload) >= 6 and payload[0] == 0x13:   # parameter response
@@ -1069,6 +1212,10 @@ class Model:
               + struct.pack('<HHHB', 0x0028, 0, 0x002a, 0)
         self.event(0x3e, bytes([0x01]) + rep)
         print('bthci: connected to the guest, handle %#06x' % self.inhandle, flush=True)
+        if pairin:
+            time.sleep(1)
+            self.pair_out(addr)
+            return
         if loopback:
             if badwrite:
                 time.sleep(1)

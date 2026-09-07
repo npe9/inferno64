@@ -20255,6 +20255,64 @@ goes, which is what actually forgets it.  With the clearing put back
 the phase reports the characteristic missing, which is what it
 reported before the fix.
 .NH 2
+The responder, and why the wire could not test it
+.PP
+.CW smp.b
+now has the other half: a peer connects, asks to pair, and this side
+answers.  The state machine is the initiator's with the two sides
+exchanged, and the differences are exactly where a transliteration
+goes wrong.  The initiator commits first, so the peer's confirm
+arrives before ours goes out and ours is computed from a random the
+peer has not seen.
+.CW c1 ()
+takes the initiator's address and then the responder's, in that
+order, whoever is calling it \(em so the arguments that read "us,
+them" in
+.CW pair ()
+read "them, us" here.  And what is checked is the peer's confirm
+against the random it sends afterwards.
+.PP
+Then the part a central never does: the peer starts encryption and the
+controller asks
+.I us
+for the key, as an LE Long Term Key Request.  A peripheral that does
+not answer leaves the link unencrypted and the peer waiting, so the
+request goes to the process pairing on that link \(em on a channel in
+the
+.CW Conn
+\(em rather than being dropped as an event nobody asked for.  This
+side then distributes a long term key and the numbers that name it, so
+the peer can come back without pairing again.
+.PP
+The loopback cannot test any of it, and the reason is worth stating
+because it is a property of the protocol and not of the bench.  The
+two addresses go into the confirm value, initiator first; both ends
+have to agree which two addresses are on the link.  A wire joining two
+links that the controller reported with different peer addresses
+cannot satisfy that \(em our initiator computes over one pair and our
+responder over another, and the confirm legitimately does not match.
+The first run of the phase said exactly that, and it was right.
+.PP
+So this phase is a single link with the model as the peer and as the
+controller between.  The model already has
+.CW c1
+and
+.CW s1 ,
+written here and validated in the other direction by the
+.CW pair
+phase, where the guest initiates and the model responds; using them
+the other way round tests the new half against an implementation that
+already agrees with the old one.  As the controller it does what a
+controller does: asks the peripheral for the key, compares it with the
+one the central handed over, and reports the link encrypted only if
+they are the same.  That comparison is the whole of what encryption
+proves about a pairing, and it is a comparison rather than a second
+derivation.
+.PP
+Two deliberate breakages, both caught by the link never coming up
+encrypted: a responder that puts its own address where the
+initiator's belongs, and one that never answers the key request.
+.NH 2
 The bench now runs the interpreter, and why
 .PP
 With the second radio in, the bench started failing in emu rather than
@@ -20388,19 +20446,25 @@ stack is unchanged; what changes is which of two interpreters executes
 them.  The JIT is the next thing to fix, and it is written down here
 rather than worked around in silence.
 .NH 2
-One phase that is not reliable
+Three phases that are not reliable
 .PP
-The
-.CW orphanlive
-phase failed once in this session and passed on the next run of the
-same binaries, with nothing between the two but a re-run.  Nothing in
-the credit-based channel work touches connection handling, so this is
-most likely a race that was already there \(em that phase turns on a
-connection completing after the attempt has given up, and it is the
-one phase whose timing is deliberately marginal.  It is recorded
-rather than explained: one observation is not a diagnosis, and a
-phase that flakes without a note is a phase that will waste somebody's
-afternoon later.
+.CW orphanlive ,
+.CW sco
+and
+.CW early
+have each failed once in this session and passed on the next run of
+the same binaries, with nothing between the two but a re-run.  All
+three turn on timing that is deliberately marginal \(em a completion
+that arrives after the attempt gave up, a completion that arrives
+before the command status, a stream of packets nobody asked for \(em
+and none of them is near the work that was being done when it failed.
+.PP
+It is recorded rather than explained.  One observation is not a
+diagnosis; three observations across three phases with one thing in
+common \(em they are the phases whose timing is on purpose tight \(em
+is a pattern worth writing down and not yet a cause.  A phase that
+flakes without a note is a phase that will waste somebody's afternoon
+later.
 .NH 2
 What is not there
 .PP

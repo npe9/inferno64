@@ -236,11 +236,16 @@ Every database carries a Generic Attribute service with Service
 Changed in it, so the database may grow while a peer is connected: the
 handles the peer already holds stay right, and what it has not seen it
 is told about.
+A peer can pair with this side too: SMP has its responder half, the
+Long Term Key Request a peripheral gets when the central starts
+encryption is answered, and a long term key is distributed so the peer
+can come back.  It is Just Works, like the initiator, with all that
+implies.
 .PP
-What is missing on that side is the responder half of SMP, so a peer
-cannot pair with this side.  The Long Term Key Request event a
-peripheral gets when the peer starts encryption is not handled
-either.
+What is missing on that side is a peer coming back \(em a key request
+naming a stored key by its diversifier is answered only for the short
+term key of the pairing in progress, so a bonded peer reconnecting has
+to pair again \(em and everything Secure Connections needs.
 .NH 2
 Profiles, in the brief's order
 .IP 1.

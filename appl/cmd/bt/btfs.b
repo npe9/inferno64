@@ -2038,6 +2038,13 @@ inproc(r: ref Radio)
 		d.state = "connected";
 		d.seen = daytime();
 		spawn watcher(d);
+		#
+		# and wait for the peer to pair, if it wants to.  In its
+		# own process: it waits for the peer to start and then
+		# for the controller to ask for the key, and the link is
+		# usable meanwhile.
+		#
+		spawn responder(d);
 		d.lock <-= 1;
 		sys->fprint(sys->fildes(2), "btfs: %s connected to us\n", name);
 	}
@@ -2141,4 +2148,32 @@ writelocal(m: ref Tmsg.Write, n: ref Node)
 	if((e = gattsrv->notify(n.rad.db, n.lc.vh, m.data)) != nil)
 		sys->fprint(sys->fildes(2), "btfs: telling a peer the value changed: %s\n", e);
 	srv.reply(ref Rmsg.Write(m.tag, len m.data));
+}
+
+
+#
+# A peer pairing with us.  Whatever comes of it is a bond like any
+# other and goes in the same list and the same key file: it names the
+# peer, the controller it was made on, and the key this side chose.
+#
+responder(d: ref Dev)
+{
+	c := d.conn;
+	m := d.mux;
+	if(c == nil || m == nil)
+		return;
+	(b, e) := smp->respond(c, m);
+	if(e != nil){
+		#
+		# Only worth a line when the peer actually started.  A
+		# link that closes without anyone pairing ends this the
+		# same way, and saying so every time would be a message
+		# per connection that means nothing.
+		#
+		if(c.encrypted || e != "the link went away")
+			sys->fprint(sys->fildes(2), "btfs: %s: pairing: %s\n", d.dir, e);
+		return;
+	}
+	addbond(d.r, b);
+	sys->fprint(sys->fildes(2), "btfs: %s paired with us\n", d.dir);
 }
