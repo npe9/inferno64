@@ -20138,6 +20138,59 @@ degree of parallel Dis execution that nothing else here does.  It is
 the heaviest user of the thing that is known to be unsound, which is
 why it is the thing that found it.
 .PP
+The obvious suspect in
+.CW comp-arm64.c
+turned out not to be the answer, and it is worth saying which and why.
+.CW Heap.ref
+is an
+.CW int ,
+and every other int field the arm64 backend touches \(em
+.CW Heap.color ,
+.CW Modlink.compiled ,
+.CW Type.size
+\(em is loaded with
+.CW Ldw32 .
+.CW Heap.ref
+is loaded with
+.CW Ldw ,
+which on arm64 is the
+.I 64
+bit load; the mnemonic came across from
+.CW comp-arm.c ,
+where
+.CW Ldw
+is the 32 bit word.  At an offset of \-20 from the object that reads
+.CW ref
+together with the low half of
+.CW Heap.t ,
+so the "was that the last reference" test is zero only when
+.CW ref
+is one
+.I and
+the low half of
+.CW t
+is zero, and
+.CW t
+is never nil for a live object.  The store puts
+.CW ref
+back correctly, so the counting is right and only the test is dead.
+.PP
+Narrowing all four accesses to 32 bits did not help, and the reason it
+did not is the useful part: rebuilding
+.CW emu-g
+from the tree's
+.I unmodified
+sources reproduces the fault by itself.  The committed binary and the
+committed sources do not agree, and a fresh build reports, through the
+tree's own heap watchdog,
+.QP
+track: CHANGED TO BAD VALUE ... new 0x1 ... checkpoint iload:before-readmod
+.LP
+on the compiled path before any Dis has run.  So the width is wrong
+and worth fixing, but it is not what breaks the JIT, and it is not
+claimed to be.  The change was reverted rather than committed on a
+hunch; what is committed is the observation.
+.PP
 Three runs on
 .CW -c0
 pass every phase; four of six on the JIT do not.  So the bench passes
