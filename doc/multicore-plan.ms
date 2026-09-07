@@ -1537,13 +1537,57 @@ So the premature
 .CW Type
 free is real and now fixable, and it is
 .I not
-the corruption.  The corruption is something zeroing words inside a
-live object, at
-.CW IMCALL ,
-with its type intact \- which is where the next attempt should start,
-and it should not start from the assumption that a
-.CW Type
-is involved at all.
+the corruption.
+.NH 2
+And a caution about the reproducer itself
+.PP
+One thing was never checked while all of the above was being measured,
+and it should have been first: whether the
+.CW virtarm64
+"corruption" breaks anything.  It does not.  Every boot on this board
+that tripped the tracker \- across every configuration, baseline,
+.CW leaktypes ,
+.CW framerefs ,
+.CW secsched
+\- still reached
+.CW CHANTEST-OK
+with no panic.  Not one failed.
+.PP
+On pc64 the same diagnostic fires and the machine panics much of the
+time.  Here it fires and nothing happens.  So "one boot in ten
+corrupts" was really "one boot in ten
+.I trips
+.CW checktracked() ",
+and the classifier that counted those as failures was counting a
+diagnostic, not a fault.
+.PP
+That has to be treated as a live possibility rather than argued away:
+a popped Dis frame's memory, reused and reinitialised by a later frame
+of the same type at the same address, would produce exactly this
+report, because the tracker's staleness check compares the type tag and
+an identical type tag does not look stale.  The addresses do not settle
+it \- the tracked object sits outside the reporting proc's own stack
+extent, so if it is a frame it is in another
+.CW Stkext \-
+but they do not rule it out either.
+.PP
+What this costs: the link between the
+.CW virtarm64
+switch and pc64's panics is weaker than the earlier sections claim.
+What it does not cost: the
+.CW framerefs
+result stands on its own, because it was measured against the
+.CW Type 's
+own reference count and not against the tracker's verdict, and frames
+holding uncounted type references is a real defect either way.
+.PP
+The next thing to do is therefore not another hypothesis.  It is to
+find out whether
+.CW checktracked()
+firing on this board means anything at all \- by checking whether the
+watched address is inside a live frame or a dead one at the moment it
+fires.  Until that is known, this board reproduces a print, and every
+conclusion drawn from its rate should be read with that in mind.
 .PP
 What is still not done, so the state is not overstated: GICv3 (the
 redistributor is per processor and this board derives one fixed base),
