@@ -58,6 +58,16 @@ enum {
 	Apbhz	= 250000000,	/* core clock; see the note above */
 
 	Timeout	= 1000000,
+
+	/*
+	 * Sampling for the self-test below.  Nsample intervals of
+	 * Samplems each must cover more than one period of the 100Hz
+	 * countdown, so that a wrap is actually exercised, while each
+	 * single interval stays well short of a period so the
+	 * subtraction across it is unambiguous.
+	 */
+	Nsample	= 8,
+	Samplems = 3,
 };
 
 static u32*
@@ -108,10 +118,13 @@ void
 armtmrinit(void)
 {
 	u32 *r = at();
-	u32 predivider, rate, v1, v2, f1, f2;
+	u32 predivider, rate, load, period, f1, f2;
+	u32 v[Nsample];
 	uvlong s1, s2;
+	uvlong t[Nsample];
 	ulong elapsedus, frticks, expect;
 	long err;
+	int i;
 	extern uvlong systmrread(void);
 
 	predivider = r[Predivider] & 0x3ff;
@@ -125,19 +138,45 @@ armtmrinit(void)
 	rate = Apbhz / (predivider + 1);
 
 	armtmrstart(100);			/* 100Hz, i.e. 10ms a period */
-	v1 = r[Value];
+	load = r[Load];
+	period = load + 1;			/* it sits at zero for one tick */
+
 	f1 = r[Freerun];
 	s1 = systmrread();
-	delay(20);
-	v2 = r[Value];
+	for(i = 0; i < Nsample; i++){
+		v[i] = r[Value];
+		t[i] = systmrread();
+		delay(Samplems);
+	}
 	f2 = r[Freerun];
 	s2 = systmrread();
 
-	if(v1 == v2){
-		print("ARMTIMER-FAIL countdown did not move (%ud)\n", v1);
-		armtmrstop();
-		return;
+	/*
+	 * Check every interval, not just the endpoints.  A counter that
+	 * has stopped, or that parks at zero instead of wrapping, passes a
+	 * simple "did it move" test whenever the first and last reads
+	 * happen to differ; it cannot pass this one.  The samples are
+	 * spaced well under one period so the subtraction below is
+	 * unambiguous across a wrap.
+	 */
+	for(i = 1; i < Nsample; i++){
+		ulong fell, want;
+
+		fell = ((ulong)v[i-1] + period - v[i]) % period;
+		want = (ulong)(((t[i] - t[i-1]) * rate) / 1000000);
+		err = (long)fell - (long)want;
+		if(err < 0)
+			err = -err;
+		if(want == 0 || err > (long)(want/4)){
+			print("ARMTIMER-FAIL countdown fell %lud in %lud us, "
+				"expected %lud (sample %d: %ud -> %ud)\n",
+				fell, (ulong)(t[i] - t[i-1]), want, i,
+				v[i-1], v[i]);
+			armtmrstop();
+			return;
+		}
 	}
+
 	if(f2 == f1){
 		print("ARMTIMER-FAIL free-running counter did not move (%ud)\n", f1);
 		armtmrstop();
@@ -156,8 +195,9 @@ armtmrinit(void)
 	if(err < 0)
 		err = -err;
 
-	print("armtimer: countdown %ud->%ud at %ud Hz, free-running +%lud in %lud us\n",
-		v1, v2, rate, frticks, elapsedus);
+	print("armtimer: countdown load %ud at %ud Hz, %d samples wrapped cleanly\n",
+		load, rate, Nsample);
+	print("armtimer: free-running +%lud in %lud us\n", frticks, elapsedus);
 	armtmrstop();
 
 	if(expect == 0 || err > (long)(expect/4)){
@@ -165,5 +205,6 @@ armtmrinit(void)
 			"(+%lud vs %lud expected)\n", frticks, expect);
 		return;
 	}
-	print("ARMTIMER-OK both counters run, and agree with the system timer\n");
+	print("ARMTIMER-OK countdown wraps at its programmed rate, "
+		"free-running agrees with the system timer\n");
 }
