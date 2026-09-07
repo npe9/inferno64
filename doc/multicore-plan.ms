@@ -1309,6 +1309,72 @@ narrow, closed by a few extra calls, is consistent with the shape
 already established \- a single-processor bug that a second processor
 only perturbs into view \- and it is why the pc64 side of this hunt has
 been able to add instrumentation for years without ever cornering it.
+.NH 2
+Confirmed by removal, which the timing could not fake
+.PP
+The way past that constraint was to take work away rather than add it:
+.CW freemod() 's
+.CW freetype()
+loop was skipped entirely, leaking the module's types, and the
+reproducer run again.
+.IP
+.nf
+                    freed/garbage Types      IMCALL failures
+not leaking (6)     14 across three types              12
+leaking (8)                          0                   0
+.fi
+.PP
+The
+.I character
+of the failure changes and not merely its rate, which is what
+distinguishes this from the timing sensitivity above.  Every capture
+without the leak has a
+.CW Type
+that is dead or overwritten \-
+.CW "ref 0 size 0" ,
+or a
+.CW ref
+of 1953066601 beside a
+.CW size
+of 1132271384, which is a path string lying in a
+.CW Type
+and the same shape as this hunt's old
+.CW "\(lqYini\(rq"
+capture.  Every capture with the leak has a
+.CW Type
+that is entirely valid:
+.CW "ref 1 size 136 np 3" .
+.PP
+So the chain is closed.  A module is unloaded while objects created
+from its types are still live;
+.CW freemod()
+releases the types; an object keeps pointing at freed memory; that
+memory is handed out and cleared; the tracker sees the words go to
+zero.  Every link of that was measured.
+.PP
+What is left with the leak on is a
+.I different
+failure, and smaller:
+.CW ILOAD
+rather than
+.CW IMCALL ,
+at
+.CW readmod:after-parsemod
+rather than mid-instruction, on a
+.CW Type
+that is intact.  A second bug, not this one, and now separable from it
+for the first time.
+.PP
+The leak is not the fix.  It trades a use-after-free for a leak on
+every module unload.  The fix is whatever reference the unloading
+module should have been holding, or should have been held on it \-
+which is now a question about
+.CW OP(mcall) ,
+.CW unload()
+and
+.CW lookmod() ,
+with a switch that turns the symptom on and off to check any answer
+against.
 .PP
 What is still not done, so the state is not overstated: GICv3 (the
 redistributor is per processor and this board derives one fixed base),
