@@ -19985,6 +19985,173 @@ a channel is not an attribute, and a Service Changed indication says
 nothing about it, so rediscovery leaves it where it is.  The link
 going away takes it, along with everything else the link carried.
 .NH 2
+Two radios, and a compiler that could not have one
+.PP
+.CW btfs
+served
+.CW /net/bt/0
+with the 0 written into it, and everything a controller has \(em its
+transport, its command lock, its ACL credits, its links, the devices
+it has heard, the bonds made on it \(em was the program's own
+variables.  A second radio had nowhere to go.
+.PP
+The fix is the obvious one and the layers above it barely notice.
+Everything that was
+.CW hci.b 's
+module state becomes a
+.CW Ctlr ,
+every function there takes one, and a
+.CW Conn
+carries the controller its link is on.
+.CW att.b
+and
+.CW gatt.b
+do not touch HCI at all;
+.CW l2cap.b
+changes in one line, because everything it asks for it asks about a
+.CW Conn ;
+.CW smp.b
+changes in three, for the same reason.  What this rests on is that a
+second
+.CW load
+of one Dis path has its own module data \(em two radios in one program
+rather than two programs \(em which was checked with a four line
+program before any of it was written, because the whole design falls
+over if it is not true.
+.PP
+Then the compiler refused to build it.
+.EX
+	fatal limbo compiler error:
+	  can't deal with newcw 112(72(fp)),48(0(fp))'s m mode
+.EE
+A buffered channel whose size comes out of an adt reached through a
+ref \(em
+.CW "chan[x.aclbufs] of int" ,
+which is what
+.CW Ctlr
+makes of
+.CW "chan[aclbufs] of int"
+\(em is the middle operand of
+.CW newcw ,
+and a middle operand cannot be an indirect addressing mode.
+.CW genop
+in
+.CW limbo/gen.c
+says so and dies rather than emit one;
+.CW genchan
+had no such check and emitted one anyway, and
+.CW resolvepcs
+fell over it.  The fix is in
+.CW ecom.c ,
+where
+.CW Ochan
+now evaluates a size at
+.CW Radr
+or above into a temporary first, the same way a cross module call
+already does with an indirect index.  Three lines, and it is the
+compiler that is wrong rather than the program: nothing in the
+language says a channel's size may not come out of an adt.
+.PP
+.CW tests/chanadt.b
+is the regression, and it makes every kind of channel that way \(em
+the width is chosen per element type and only some of them go through
+the same instruction.  With the fix taken out again it does not
+compile.  The whole of
+.CW appl
+was rebuilt with the new compiler afterwards, because a change in the
+code generator is a change to everything.
+.PP
+The bench phase for two radios is not "two directories appear", which
+would pass however much they shared.  Both models present the same
+peripheral rotating the same resolvable private address; the key file
+says the bond was made on the first radio's address and the second
+answers on a different one.  So the first radio folds every rotation
+back onto one directory and reads an identity there, and the second
+gains a stranger every round and reads
+.CW none .
+With bonds shared between the radios \(em the shape a first attempt
+would naturally have \(em all three of those assertions fail at once.
+.NH 2
+The bench now runs the interpreter, and why
+.PP
+With the second radio in, the bench started failing in emu rather than
+in Bluetooth: a
+.CW "double sleep"
+in the Dis scheduler on one run, a native fault reported as
+.CW "Interp faults with no dis prog"
+on another, and phases that simply stopped on two more \(em four
+failures in six runs, in four different phases, with nothing in common
+above emu.
+.PP
+That is not a new bug and it is not this stack's.
+.CW emu/port/dis.c
+records it against itself: multiple
+.CW vmachine
+kprocs run
+.CW xec ()
+in parallel, every genuinely shared reference count was made atomic
+across
+.CW libinterp
+and
+.CW emu/port
+to make that safe, and the note ends
+.QP
+REMAINING GAP: this only covers the interpreted (\-c0) path.
+libinterp/comp-arm64.c \(em the JIT backend, which is what actually
+runs by default \(em emits plain, non-atomic load/modify/store machine
+code for the same h->ref field.  That's a separate, harder,
+architecture-specific fix and is NOT done.  Everything in this
+investigation was validated with \-c0.
+.LP
+There are four such sequences in
+.CW comp-arm64.c ,
+a
+.CW Ldw ,
+an add or subtract, and a
+.CW Stw
+on
+.CW Heap.ref ,
+and two of them branch away to destroy the object without storing at
+all \(em so two threads can both see the count reach zero and both
+free it.  Making them atomic needs load-exclusive/store-exclusive
+loops in the generated code and, for the two that free, a change to
+the convention that leaves
+.CW ref
+at one for
+.CW rdestroy ().
+It is a real fix and it is not a small one, and it is in
+.CW libinterp ,
+not here.
+.PP
+What made it fire is this stack.  Every
+.CW spawn
+that then blocks on the host \(em a transport reader, a timer, a
+connection attempt, a read of a channel file \(em is a
+.CW release ()
+in emu, and every
+.CW release ()
+can spin up another
+.CW vmachine
+kproc.  The Bluetooth bench with two radios has more processes waiting
+on host I/O at once than anything else in the tree, so it reaches a
+degree of parallel Dis execution that nothing else here does.  It is
+the heaviest user of the thing that is known to be unsound, which is
+why it is the thing that found it.
+.PP
+Three runs on
+.CW -c0
+pass every phase; four of six on the JIT do not.  So the bench passes
+.CW -c0
+and says so.  Running a Bluetooth test on a code generator that is
+documented as racy makes every failure ambiguous, and an ambiguous
+bench is worse than a slower one.  The Dis is identical either way \(em
+the same
+.CW .dis
+files, the same instructions \(em so what the phases assert about the
+stack is unchanged; what changes is which of two interpreters executes
+them.  The JIT is the next thing to fix, and it is written down here
+rather than worked around in silence.
+.NH 2
 One phase that is not reliable
 .PP
 The

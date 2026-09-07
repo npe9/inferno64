@@ -489,7 +489,7 @@ connect(m: ref Mux, psm: int): (ref Chan, string)
 	# segmented.  That is the ordinary case on a small controller,
 	# not a corner of one.
 	#
-	(aclsz, nil) := hci->aclmtu();
+	(aclsz, nil) := hci->aclmtu(m.c.x);
 	mps := aclsz - 4;
 	if(mps < 23)
 		mps = 23;

@@ -60,6 +60,12 @@
 #	changed	a device that rearranges its database while connected
 #		and indicates Service Changed: the name space must
 #		follow, on the same link
+#	two	two controllers in one btfs: /net/bt/0 and /net/bt/1 with
+#		their own devices, their own scanning and their own
+#		bonds.  The assertion that matters is the last: both
+#		radios meet the same peripheral rotating the same
+#		private address, and only the radio the bond was made on
+#		may resolve it
 #	coc	an LE credit-based channel: a 512 byte SDU out through a
 #		23 byte MPS and the same bytes back through a 40 byte
 #		one, then a second SDU on the credits the first gave
@@ -101,7 +107,21 @@ OBJTYPE=${OBJTYPE:-`sed -n 's/^OBJTYPE=//p' "$ROOT/mkconfig" | head -1`}
 SYSTARG=${SYSTARG:-`sed -n 's/^SYSHOST=\([A-Za-z0-9]*\).*/\1/p' "$ROOT/mkconfig" | head -1`}
 PATH=$ROOT/$SYSTARG/$OBJTYPE/bin:$PATH
 export PATH
-EMU=${EMU:-emu-g}
+#
+# -c0, the interpreter, not the JIT.  libinterp/comp-arm64.c loads and
+# stores Heap.ref -- an int -- as a 64-bit word, so its "was that the
+# last reference" test compares ref against ref together with the low
+# half of Heap.t and never fires; nothing the compiled path drops is
+# destroyed, counts run past zero, and heap.c frees on its own
+# reckoning while a compiled frame still holds the pointer.  This bench
+# is the heaviest user of parallel Dis execution in the tree -- every
+# transport reader, timer and blocking file read is a release() in emu,
+# and every release() can spin up another vmachine -- so it is what
+# finds it: four failures in six runs, in four different phases, none
+# of them above emu.  Set EMU to override; the .dis files are identical
+# either way, so what the phases assert about the stack is unchanged.
+#
+EMU=${EMU:-emu-g -c0}
 OUT=${OUT:-`mktemp -d`}
 
 #
@@ -114,14 +134,22 @@ mkdir -p "$ROOT/mnt/bt" "$ROOT/mnt/keys"
 chmod 777 "$ROOT/mnt/keys"
 rm -f "$ROOT/mnt/keys/btkeys"
 
-run() {		# $1 phase, $2 model flag, $3 bench mode
+PORT2=`expr $PORT + 1`
+
+run() {		# $1 phase, $2 model flag, $3 bench mode, $4 second model flag
 	pkill -f "bthci.py $PORT" 2>/dev/null || true
+	pkill -f "bthci.py $PORT2" 2>/dev/null || true
 	sleep 1
 	python3 "$ROOT/scripts/bthci.py" $PORT --verbose $2 > "$OUT/bthci-$1.log" 2>&1 &
+	spec2=""
+	if [ -n "$4" ]; then
+		python3 "$ROOT/scripts/bthci.py" $PORT2 --verbose $4 > "$OUT/bthci-$1-2.log" 2>&1 &
+		spec2="tcp!127.0.0.1!$PORT2"
+	fi
 	sleep 1
 	: > "$OUT/bench-$1.out"
 	$EMU -r "$ROOT" /dis/bt/btbench.dis "tcp!127.0.0.1!$PORT" \
-		/mnt/bt /mnt/keys/btkeys $3 > "$OUT/bench-$1.out" 2>&1 &
+		/mnt/bt /mnt/keys/btkeys $3 $spec2 > "$OUT/bench-$1.out" 2>&1 &
 	emupid=$!
 	i=0
 	while [ $i -lt 240 ]; do
@@ -137,6 +165,7 @@ run() {		# $1 phase, $2 model flag, $3 bench mode
 	kill $emupid 2>/dev/null || true
 	wait $emupid 2>/dev/null || true
 	pkill -f "bthci.py $PORT" 2>/dev/null || true
+	pkill -f "bthci.py $PORT2" 2>/dev/null || true
 	echo "=== phase $1 ==="
 	cat "$OUT/bench-$1.out"
 	if grep -q '^BT: FAILED' "$OUT/bench-$1.out"; then
@@ -192,6 +221,13 @@ if [ "$n" != 1 ]; then
 	exit 1
 fi
 echo "the Service Changed descriptor was written once, for two indications"
+#
+# Two radios in one btfs.  The second answers on a different BD_ADDR,
+# so the bond in the key file -- which records the radio it was made
+# on -- belongs to the first and not to it.  Both present the same
+# peripheral rotating the same private address.
+#
+run two --bonded two "--bonded --addr 001122334466"
 run coc "" coc
 #
 # The controller's own log, because the guest cannot see the

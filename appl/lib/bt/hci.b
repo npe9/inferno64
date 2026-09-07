@@ -48,57 +48,44 @@ Sadv:		con 16r02;
 Supdate:	con 16r03;
 Sltkreq:	con 16r05;
 
-Cstate: adt {
-	c:	ref Conn;
-	acc:	array of byte;	# an L2CAP frame being reassembled
-	want:	int;
-};
-
-Reply: adt {
-	op:	int;
-	status:	int;
-	p:	array of byte;
-	err:	string;
-};
-
-t:	Bttransport;
-cmdlock:	chan of int;
 #
-# A controller will have one LE Create Connection outstanding and no
-# more, so two callers starting a connection at once is not something
-# to serialise inside the controller -- the second command is simply
-# refused.  It is something to serialise here, because both callers
-# then wait on connc and either can take the other's answer.  The
-# command path has had this since it was written; this is the same
-# thing for the one other request whose answer comes back as an event.
+# Nothing here is module state any more.  A controller is a ref Ctlr
+# and every function takes one, or takes a Conn and reaches the
+# controller through it: two radios in one program are then two
+# objects rather than two programs.
 #
-connlock:	chan of int;
-replyc:		chan of ref Reply;
-advc:		chan of ref Adv;
-connc:		chan of (ref Conn, string);
-credits:	chan of int;
-states:		list of ref Cstate;
-statelock:	chan of int;
-running:	int;
-scodrop:	int;
-
-laddr:	array of byte;
-lver:	string;
-aclsize:	int;
-aclbufs:	int;
-
-init(b: Bt, tr: Bttransport): string
+init(b: Bt): string
 {
 	sys = load Sys Sys->PATH;
 	bt = b;
-	t = tr;
-	cmdlock = chan[1] of int;
-	connlock = chan[1] of int;
-	replyc = chan of ref Reply;
+	return nil;
+}
+
+#
+# reset a controller, then ask it what it is and how much it can
+# hold.  Nothing above here works until this has run.
+#
+start(tr: Bttransport): (ref Ctlr, string)
+{
+	x := ref Ctlr;
+	x.t = tr;
+	x.cmdlock = chan[1] of int;
+	#
+	# A controller will have one LE Create Connection outstanding
+	# and no more, so two callers starting a connection at once is
+	# not something to serialise inside the controller -- the second
+	# command is simply refused.  It is something to serialise here,
+	# because both callers then wait on connc and either can take
+	# the other's answer.  The command path has had this since it
+	# was written; this is the same thing for the one other request
+	# whose answer comes back as an event.
+	#
+	x.connlock = chan[1] of int;
+	x.replyc = chan of ref Reply;
 	# buffered: a report is dropped only when nothing has read the
 	# queue for a while, not merely because the reader of it
 	# happened to be busy when the last one arrived
-	advc = chan[16] of ref Adv;
+	x.advc = chan[16] of ref Adv;
 	#
 	# Buffered by one.  The event process offers the completion with
 	# a default arm and drops it if nobody is waiting, and there is a
@@ -107,97 +94,91 @@ init(b: Bt, tr: Bttransport): string
 	# whole connection timeout and leaves a live link on the
 	# controller that nothing here owns.
 	#
-	connc = chan[1] of (ref Conn, string);
-	statelock = chan[1] of int;
-	statelock <-= 1;
-	aclsize = 27;
-	aclbufs = 1;
-	credits = chan[1] of int;
-	return nil;
-}
+	x.connc = chan[1] of (ref Conn, string);
+	x.statelock = chan[1] of int;
+	x.statelock <-= 1;
+	x.aclsize = 27;
+	x.aclbufs = 1;
+	x.credits = chan[1] of int;
 
-#
-# reset the controller, then ask it what it is and how much it can
-# hold.  Nothing above here works until this has run.
-#
-start(): string
-{
-	running = 1;
-	spawn reader();
+	x.running = 1;
+	spawn reader(x);
 
-	(st, nil, e) := cmd(bt->opcode(Ogctl, 16r0003), nil);	# Reset
+	(st, nil, e) := cmd(x, bt->opcode(Ogctl, 16r0003), nil);	# Reset
 	if(e != nil)
-		return "reset: " + e;
+		return (nil, "reset: " + e);
 	if(st != 0)
-		return "reset: " + bt->hcierr(st);
+		return (nil, "reset: " + bt->hcierr(st));
 
 	p: array of byte;
-	(st, p, e) = cmd(bt->opcode(Oginfo, 16r0001), nil);	# Read Local Version
+	(st, p, e) = cmd(x, bt->opcode(Oginfo, 16r0001), nil);	# Read Local Version
 	if(e == nil && st == 0 && len p >= 8)
-		lver = sys->sprint("hci %d rev %#4.4ux lmp %d subver %#4.4ux manufacturer %#4.4ux",
+		x.lver = sys->sprint("hci %d rev %#4.4ux lmp %d subver %#4.4ux manufacturer %#4.4ux",
 			int p[0], bt->get16(p, 1), int p[3], bt->get16(p, 6), bt->get16(p, 4));
 
-	(st, p, e) = cmd(bt->opcode(Oginfo, 16r0009), nil);	# Read BD_ADDR
+	(st, p, e) = cmd(x, bt->opcode(Oginfo, 16r0009), nil);	# Read BD_ADDR
 	if(e != nil)
-		return "read BD_ADDR: " + e;
+		return (nil, "read BD_ADDR: " + e);
 	if(st != 0)
-		return "read BD_ADDR: " + bt->hcierr(st);
+		return (nil, "read BD_ADDR: " + bt->hcierr(st));
 	if(len p < Bt->Baddrlen)
-		return "read BD_ADDR: short answer";
-	laddr = array[Bt->Baddrlen] of byte;
-	laddr[0:] = p[0:Bt->Baddrlen];
+		return (nil, "read BD_ADDR: short answer");
+	x.laddr = array[Bt->Baddrlen] of byte;
+	x.laddr[0:] = p[0:Bt->Baddrlen];
 
 	# the event mask a controller powers up with hides the LE meta
 	# event, so ask for everything
 	mask := array[8] of byte;
 	for(i := 0; i < 8; i++)
 		mask[i] = byte 16rff;
-	cmd(bt->opcode(Ogctl, 16r0001), mask);			# Set Event Mask
+	cmd(x, bt->opcode(Ogctl, 16r0001), mask);		# Set Event Mask
 	lemask := array[8] of byte;
 	for(i = 0; i < 8; i++)
 		lemask[i] = byte 0;
 	lemask[0] = byte 16r1f;		# connection complete .. long term key request
-	cmd(bt->opcode(Ogle, 16r0001), lemask);			# LE Set Event Mask
+	cmd(x, bt->opcode(Ogle, 16r0001), lemask);		# LE Set Event Mask
 
-	(st, p, e) = cmd(bt->opcode(Ogle, 16r0002), nil);	# LE Read Buffer Size
+	(st, p, e) = cmd(x, bt->opcode(Ogle, 16r0002), nil);	# LE Read Buffer Size
 	if(e == nil && st == 0 && len p >= 3){
-		aclsize = bt->get16(p, 0);
-		aclbufs = int p[2];
+		x.aclsize = bt->get16(p, 0);
+		x.aclbufs = int p[2];
 	}
-	if(aclsize == 0 || aclbufs == 0){
+	if(x.aclsize == 0 || x.aclbufs == 0){
 		# a controller with no separate LE buffers shares the
 		# BR/EDR ones, which is what Read Buffer Size reports
-		(st, p, e) = cmd(bt->opcode(Oginfo, 16r0005), nil);
+		(st, p, e) = cmd(x, bt->opcode(Oginfo, 16r0005), nil);
 		if(e == nil && st == 0 && len p >= 7){
-			aclsize = bt->get16(p, 0);
-			aclbufs = bt->get16(p, 3);
+			x.aclsize = bt->get16(p, 0);
+			x.aclbufs = bt->get16(p, 3);
 		}
 	}
-	if(aclsize < 27)
-		aclsize = 27;
-	if(aclbufs < 1)
-		aclbufs = 1;
-	credits = chan[aclbufs] of int;
-	for(i = 0; i < aclbufs; i++)
-		credits <-= 1;
-	return nil;
+	if(x.aclsize < 27)
+		x.aclsize = 27;
+	if(x.aclbufs < 1)
+		x.aclbufs = 1;
+	x.credits = chan[x.aclbufs] of int;
+	for(i = 0; i < x.aclbufs; i++)
+		x.credits <-= 1;
+	return (x, nil);
 }
 
-stop()
+stop(x: ref Ctlr)
 {
-	running = 0;
-	if(t != nil)
-		t->close();
+	if(x == nil)
+		return;
+	x.running = 0;
+	if(x.t != nil)
+		x.t->close();
 }
 
-localaddr(): array of byte
+localaddr(x: ref Ctlr): array of byte
 {
-	return laddr;
+	return x.laddr;
 }
 
-localver(): string
+localver(x: ref Ctlr): string
 {
-	return lver;
+	return x.lver;
 }
 
 #
@@ -253,7 +234,7 @@ leconnupdate(c: ref Conn, min, max, latency, timeout: int): string
 	bt->put16(p, 8, timeout);
 	bt->put16(p, 10, 0);	# minimum connection length
 	bt->put16(p, 12, 0);	# maximum
-	(st, nil, ce) := cmd(bt->opcode(Ogle, 16r0013), p);
+	(st, nil, ce) := cmd(c.x, bt->opcode(Ogle, 16r0013), p);
 	if(ce != nil)
 		return ce;
 	if(st != 0)
@@ -261,28 +242,28 @@ leconnupdate(c: ref Conn, min, max, latency, timeout: int): string
 	return nil;
 }
 
-scodropped(): int
+scodropped(x: ref Ctlr): int
 {
-	return scodrop;
+	return x.scodrop;
 }
 
-aclmtu(): (int, int)
+aclmtu(x: ref Ctlr): (int, int)
 {
-	return (aclsize, aclbufs);
+	return (x.aclsize, x.aclbufs);
 }
 
-advs(): chan of ref Adv
+advs(x: ref Ctlr): chan of ref Adv
 {
-	return advc;
+	return x.advc;
 }
 
-conns(): list of ref Conn
+conns(x: ref Ctlr): list of ref Conn
 {
-	<-statelock;
+	<-x.statelock;
 	l: list of ref Conn;
-	for(s := states; s != nil; s = tl s)
+	for(s := x.states; s != nil; s = tl s)
 		l = (hd s).c :: l;
-	statelock <-= 1;
+	x.statelock <-= 1;
 	return l;
 }
 
@@ -290,15 +271,15 @@ conns(): list of ref Conn
 # one command at a time: take the lock, send it, wait for the
 # controller's answer or for the clock to run out
 #
-cmd(op: int, p: array of byte): (int, array of byte, string)
+cmd(x: ref Ctlr, op: int, p: array of byte): (int, array of byte, string)
 {
-	cmdlock <-= 1;
-	r := docmd(op, p);
-	<-cmdlock;
+	x.cmdlock <-= 1;
+	r := docmd(x, op, p);
+	<-x.cmdlock;
 	return (r.status, r.p, r.err);
 }
 
-docmd(op: int, p: array of byte): ref Reply
+docmd(x: ref Ctlr, op: int, p: array of byte): ref Reply
 {
 	if(len p > 255)
 		return ref Reply(op, 0, nil, "command parameters too long");
@@ -307,7 +288,7 @@ docmd(op: int, p: array of byte): ref Reply
 	w[2] = byte len p;
 	if(p != nil)
 		w[3:] = p;
-	if((e := t->write(Bt->Hcicmd, w)) != nil)
+	if((e := x.t->write(Bt->Hcicmd, w)) != nil)
 		return ref Reply(op, 0, nil, e);
 	# buffered, so the timer process can put its tick down and
 	# leave; an unbuffered one would block for ever on a command
@@ -316,7 +297,7 @@ docmd(op: int, p: array of byte): ref Reply
 	spawn timer(Cmdtimeout, tick);
 	for(;;){
 		alt {
-		r := <-replyc =>
+		r := <-x.replyc =>
 			if(r.op != op)
 				continue;	# an answer to something already given up on
 			return r;
@@ -332,7 +313,7 @@ timer(ms: int, c: chan of int)
 	c <-= 1;
 }
 
-lescan(on: int): string
+lescan(x: ref Ctlr, on: int): string
 {
 	if(on){
 		# passive scan, a 60 ms window in a 60 ms interval, our
@@ -343,7 +324,7 @@ lescan(on: int): string
 		bt->put16(p, 3, 16r0060);	# window
 		p[5] = byte 0;			# own address: public
 		p[6] = byte 0;			# accept all advertisements
-		(st, nil, e) := cmd(bt->opcode(Ogle, 16r000b), p);
+		(st, nil, e) := cmd(x, bt->opcode(Ogle, 16r000b), p);
 		if(e != nil)
 			return e;
 		if(st != 0)
@@ -352,7 +333,7 @@ lescan(on: int): string
 	q := array[2] of byte;
 	q[0] = byte on;
 	q[1] = byte 0;		# report duplicates: btfs wants the rssi to move
-	(st, nil, e) := cmd(bt->opcode(Ogle, 16r000c), q);
+	(st, nil, e) := cmd(x, bt->opcode(Ogle, 16r000c), q);
 	if(e != nil)
 		return e;
 	if(st != 0)
@@ -364,7 +345,7 @@ lescan(on: int): string
 # LE Create Connection answers with a command status; the connection
 # itself arrives later as an LE Connection Complete event
 #
-leconnect(atype: int, addr: array of byte): (ref Conn, string)
+leconnect(x: ref Ctlr, atype: int, addr: array of byte): (ref Conn, string)
 {
 	if(len addr != Bt->Baddrlen)
 		return (nil, "not an address");
@@ -382,13 +363,13 @@ leconnect(atype: int, addr: array of byte): (ref Conn, string)
 	bt->put16(p, 21, 0);		# minimum connection length
 	bt->put16(p, 23, 0);		# maximum
 
-	connlock <-= 1;
-	r := doleconnect(p);
-	<-connlock;
+	x.connlock <-= 1;
+	r := doleconnect(x, p);
+	<-x.connlock;
 	return r;
 }
 
-doleconnect(p: array of byte): (ref Conn, string)
+doleconnect(x: ref Ctlr, p: array of byte): (ref Conn, string)
 {
 	#
 	# Load bearing, not tidiness.  Nothing filters which completion
@@ -410,14 +391,14 @@ doleconnect(p: array of byte): (ref Conn, string)
 	# purpose.
 	#
 	alt {
-	(c, err) := <-connc =>
+	(c, err) := <-x.connc =>
 		if(err == nil && c != nil)
 			disconnect(c);
 	* =>
 		;
 	}
 
-	(st, nil, e) := cmd(bt->opcode(Ogle, 16r000d), p);
+	(st, nil, e) := cmd(x, bt->opcode(Ogle, 16r000d), p);
 	if(e != nil)
 		return (nil, e);
 	if(st != 0)
@@ -434,12 +415,12 @@ doleconnect(p: array of byte): (ref Conn, string)
 	tick := chan[1] of int;
 	spawn timer(Conntimeout, tick);
 	alt {
-	(c, err) := <-connc =>
+	(c, err) := <-x.connc =>
 		if(err != nil)
 			return (nil, err);
 		return (c, nil);
 	<-tick =>
-		return cancelled();
+		return cancelled(x);
 	}
 }
 
@@ -456,13 +437,13 @@ doleconnect(p: array of byte): (ref Conn, string)
 # A connection that arrives this way is returned rather than torn down.
 # It is the connection the caller asked for; it was only late.
 #
-cancelled(): (ref Conn, string)
+cancelled(x: ref Ctlr): (ref Conn, string)
 {
-	cmd(bt->opcode(Ogle, 16r000e), nil);	# LE Create Connection Cancel
+	cmd(x, bt->opcode(Ogle, 16r000e), nil);	# LE Create Connection Cancel
 	tick := chan[1] of int;
 	spawn timer(Cancelwait, tick);
 	alt {
-	(c, err) := <-connc =>
+	(c, err) := <-x.connc =>
 		#
 		# what the controller said, not what this side assumed.
 		# A cancelled attempt comes back Unknown Connection
@@ -488,7 +469,7 @@ disconnect(c: ref Conn): string
 	p := array[3] of byte;
 	bt->put16(p, 0, c.handle);
 	p[2] = byte 16r13;		# remote user terminated the connection
-	(st, nil, e) := cmd(bt->opcode(Oglink, 16r0006), p);
+	(st, nil, e) := cmd(c.x, bt->opcode(Oglink, 16r0006), p);
 	if(e != nil)
 		return e;
 	if(st != 0)
@@ -506,8 +487,8 @@ acl(c: ref Conn, p: array of byte): string
 	first := 1;
 	while(off < len p){
 		n := len p - off;
-		if(n > aclsize)
-			n = aclsize;
+		if(n > c.x.aclsize)
+			n = c.x.aclsize;
 		pb := 16r01;		# a continuing fragment
 		if(first)
 			pb = 16r02;	# the first packet of a message
@@ -515,9 +496,9 @@ acl(c: ref Conn, p: array of byte): string
 		bt->put16(w, 0, (c.handle & 16r0fff) | (pb << 12));
 		bt->put16(w, 2, n);
 		w[4:] = p[off:off+n];
-		<-credits;
-		if((e := t->write(Bt->Hciacl, w)) != nil){
-			credits <-= 1;
+		<-c.x.credits;
+		if((e := c.x.t->write(Bt->Hciacl, w)) != nil){
+			c.x.credits <-= 1;
 			return e;
 		}
 		off += n;
@@ -526,9 +507,9 @@ acl(c: ref Conn, p: array of byte): string
 	return nil;
 }
 
-lerand(): (array of byte, string)
+lerand(x: ref Ctlr): (array of byte, string)
 {
-	(st, p, e) := cmd(bt->opcode(Ogle, 16r0018), nil);
+	(st, p, e) := cmd(x, bt->opcode(Ogle, 16r0018), nil);
 	if(e != nil)
 		return (nil, e);
 	if(st != 0)
@@ -546,14 +527,14 @@ lerand(): (array of byte, string)
 # whoever calls this reverses them; smp here uses crypt(2) and does
 # not need the controller at all.
 #
-leencrypt(key, plain: array of byte): (array of byte, string)
+leencrypt(x: ref Ctlr, key, plain: array of byte): (array of byte, string)
 {
 	if(len key != 16 || len plain != 16)
 		return (nil, "LE Encrypt takes two 16 byte arguments");
 	p := array[32] of byte;
 	p[0:] = key;
 	p[16:] = plain;
-	(st, r, e) := cmd(bt->opcode(Ogle, 16r0017), p);
+	(st, r, e) := cmd(x, bt->opcode(Ogle, 16r0017), p);
 	if(e != nil)
 		return (nil, e);
 	if(st != 0)
@@ -574,7 +555,7 @@ lestartencrypt(c: ref Conn, rand: array of byte, ediv: int, ltk: array of byte):
 	p[2:] = rand;
 	bt->put16(p, 10, ediv);
 	p[12:] = ltk;
-	(st, nil, e) := cmd(bt->opcode(Ogle, 16r0019), p);
+	(st, nil, e) := cmd(c.x, bt->opcode(Ogle, 16r0019), p);
 	if(e != nil)
 		return e;
 	if(st != 0)
@@ -585,19 +566,19 @@ lestartencrypt(c: ref Conn, rand: array of byte, ediv: int, ltk: array of byte):
 #
 # the one process that reads the transport
 #
-reader()
+reader(x: ref Ctlr)
 {
-	while(running){
-		(ptype, p, e) := t->read();
+	while(x.running){
+		(ptype, p, e) := x.t->read();
 		if(e != nil){
-			if(running)
+			if(x.running)
 				sys->fprint(sys->fildes(2), "hci: %s\n", e);
-			running = 0;
+			x.running = 0;
 			return;
 		}
 		case ptype {
-		Bt->Hcievt =>	event(p);
-		Bt->Hciacl =>	acldata(p);
+		Bt->Hcievt =>	event(x, p);
+		Bt->Hciacl =>	acldata(x, p);
 		Bt->Hcisco =>
 			#
 			# The transport frames these and nothing above
@@ -609,15 +590,15 @@ reader()
 			# worth knowing about, and a silent drop is
 			# indistinguishable from a transport losing them.
 			#
-			if(scodrop == 0)
+			if(x.scodrop == 0)
 				sys->fprint(sys->fildes(2),
 					"hci: a SCO packet arrived and there is nothing to do with it; counting the rest\n");
-			scodrop++;
+			x.scodrop++;
 		}
 	}
 }
 
-event(p: array of byte)
+event(x: ref Ctlr, p: array of byte)
 {
 	if(len p < 2)
 		return;
@@ -637,11 +618,11 @@ event(p: array of byte)
 			st = int r[0];
 			r = r[1:];
 		}
-		post(ref Reply(op, st, r, nil));
+		post(x, ref Reply(op, st, r, nil));
 	Ecmdstatus =>
 		if(len b < 4)
 			return;
-		post(ref Reply(bt->get16(b, 2), int b[0], nil, nil));
+		post(x, ref Reply(bt->get16(b, 2), int b[0], nil, nil));
 	Enumpkts =>
 		if(len b < 1)
 			return;
@@ -653,36 +634,36 @@ event(p: array of byte)
 			n := bt->get16(b, o+2);
 			for(j := 0; j < n; j++)
 				alt {
-				credits <-= 1 =>	;
+				x.credits <-= 1 =>	;
 				* =>	;	# the controller gave back more than it took
 				}
 		}
 	Edisconn =>
 		if(len b < 4)
 			return;
-		closeconn(bt->get16(b, 1), bt->hcierr(int b[3]));
+		closeconn(x, bt->get16(b, 1), bt->hcierr(int b[3]));
 	Eencchange =>
 		if(len b < 4)
 			return;
-		s := findstate(bt->get16(b, 1));
+		s := findstate(x, bt->get16(b, 1));
 		if(s != nil && int b[0] == 0)
 			s.c.encrypted = int b[3] != 0;
 	Elemeta =>
 		if(len b < 1)
 			return;
-		lemeta(int b[0], b[1:]);
+		lemeta(x, int b[0], b[1:]);
 	}
 }
 
-post(r: ref Reply)
+post(x: ref Ctlr, r: ref Reply)
 {
 	alt {
-	replyc <-= r =>	;
+	x.replyc <-= r =>	;
 	* =>	;	# nobody is waiting: the command already gave up
 	}
 }
 
-lemeta(sub: int, b: array of byte)
+lemeta(x: ref Ctlr, sub: int, b: array of byte)
 {
 	case sub {
 	Sconn =>
@@ -691,7 +672,7 @@ lemeta(sub: int, b: array of byte)
 		st := int b[0];
 		if(st != 0){
 			alt {
-			connc <-= (nil, bt->hcierr(st)) =>	;
+			x.connc <-= (nil, bt->hcierr(st)) =>	;
 			* =>	;
 			}
 			return;
@@ -699,6 +680,7 @@ lemeta(sub: int, b: array of byte)
 		if(len b < 18)
 			return;
 		c := ref Conn;
+		c.x = x;
 		c.handle = bt->get16(b, 1);
 		c.role = int b[3];
 		c.atype = int b[4];
@@ -710,11 +692,11 @@ lemeta(sub: int, b: array of byte)
 		c.timeout = bt->get16(b, 15);
 		c.up = chan of array of byte;
 		c.closed = chan[1] of string;
-		<-statelock;
-		states = ref Cstate(c, nil, 0) :: states;
-		statelock <-= 1;
+		<-x.statelock;
+		x.states = ref Cstate(c, nil, 0) :: x.states;
+		x.statelock <-= 1;
 		alt {
-		connc <-= (c, nil) =>	;
+		x.connc <-= (c, nil) =>	;
 		* =>	;	# nobody asked for it
 		}
 	Supdate =>
@@ -732,7 +714,7 @@ lemeta(sub: int, b: array of byte)
 				"hci: connection update refused: %s\n", bt->hcierr(int b[0]));
 			return;
 		}
-		s := findstate(bt->get16(b, 1));
+		s := findstate(x, bt->get16(b, 1));
 		if(s == nil)
 			return;
 		s.c.interval = bt->get16(b, 3);
@@ -760,7 +742,7 @@ lemeta(sub: int, b: array of byte)
 				rssi -= 256;
 			o += 10 + dlen;
 			alt {
-			advc <-= ref Adv(evtype, atype, addr, rssi, data) =>	;
+			x.advc <-= ref Adv(evtype, atype, addr, rssi, data) =>	;
 			* =>	;	# nobody is scanning: drop it
 			}
 		}
@@ -771,7 +753,7 @@ lemeta(sub: int, b: array of byte)
 # ACL up: fragments of one L2CAP frame, in order, on a handle.  The
 # frame's own length header says how much is coming.
 #
-acldata(p: array of byte)
+acldata(x: ref Ctlr, p: array of byte)
 {
 	if(len p < 4)
 		return;
@@ -782,7 +764,7 @@ acldata(p: array of byte)
 	if(len p < 4 + dlen)
 		return;
 	d := p[4:4+dlen];
-	s := findstate(handle);
+	s := findstate(x, handle);
 	if(s == nil)
 		return;
 	case pb {
@@ -809,31 +791,31 @@ acldata(p: array of byte)
 	}
 }
 
-findstate(handle: int): ref Cstate
+findstate(x: ref Ctlr, handle: int): ref Cstate
 {
-	<-statelock;
+	<-x.statelock;
 	r: ref Cstate;
-	for(l := states; l != nil; l = tl l)
+	for(l := x.states; l != nil; l = tl l)
 		if((hd l).c.handle == handle){
 			r = hd l;
 			break;
 		}
-	statelock <-= 1;
+	x.statelock <-= 1;
 	return r;
 }
 
-closeconn(handle: int, why: string)
+closeconn(x: ref Ctlr, handle: int, why: string)
 {
-	<-statelock;
+	<-x.statelock;
 	nl: list of ref Cstate;
 	s: ref Cstate;
-	for(l := states; l != nil; l = tl l)
+	for(l := x.states; l != nil; l = tl l)
 		if((hd l).c.handle == handle)
 			s = hd l;
 		else
 			nl = hd l :: nl;
-	states = nl;
-	statelock <-= 1;
+	x.states = nl;
+	x.statelock <-= 1;
 	if(s == nil)
 		return;
 	if(why == nil)

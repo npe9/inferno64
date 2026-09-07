@@ -120,11 +120,14 @@ The shape of what is built
 None of these stop a device working; all of them are places the
 current shape runs out.
 .IP \(bu
-One controller.
-.CW btfs
-serves
-.CW /net/bt/0
-and the 0 is written into it.  A second radio has nowhere to go.
+Several controllers.  Each device named on
+.CW btfs 's
+command line becomes one numbered directory, and a radio's devices,
+links, scanning and bonds are its own; the node table, the mount point
+and the key file are shared.  A bond records the controller it was
+made on, because a long term key is agreed between one peripheral and
+one radio and the peripheral stores this side's identity address with
+it.
 .IP \(bu
 .CW Hci.leconnect
 takes a lock now, as the command path always has, so two callers

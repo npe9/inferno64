@@ -118,7 +118,51 @@ Hci: module
 		data:	array of byte;
 	};
 
+	# An L2CAP frame being reassembled on one link, and a command's
+	# answer.  Both are the reader process's business and nobody
+	# else's; they are here rather than private to hci.b only
+	# because Ctlr holds them and Ctlr has to be nameable from
+	# outside.
+	Cstate: adt {
+		c:	ref Conn;
+		acc:	array of byte;
+		want:	int;
+	};
+
+	Reply: adt {
+		op:	int;
+		status:	int;
+		p:	array of byte;
+		err:	string;
+	};
+
+	#
+	# One controller.  This used to be the module's own variables,
+	# which meant one radio per program however many were plugged
+	# in.  Everything a controller has that another controller does
+	# not share is here: its transport, its command lock, its ACL
+	# credits, its links, and what it said it was.
+	#
+	Ctlr: adt {
+		t:		Bttransport;
+		cmdlock:	chan of int;
+		connlock:	chan of int;
+		replyc:		chan of ref Reply;
+		advc:		chan of ref Adv;
+		connc:		chan of (ref Conn, string);
+		credits:	chan of int;
+		states:		list of ref Cstate;
+		statelock:	chan of int;
+		running:	int;
+		scodrop:	int;
+		laddr:		array of byte;
+		lver:		string;
+		aclsize:	int;
+		aclbufs:	int;
+	};
+
 	Conn: adt {
+		x:	ref Ctlr;	# the controller this link is on
 		handle:	int;
 		role:	int;
 		atype:	int;
@@ -135,21 +179,23 @@ Hci: module
 		closed:	chan of string;
 	};
 
-	init:	fn(bt: Bt, t: Bttransport): string;
+	init:	fn(bt: Bt): string;
 
-	# reset the controller and read what identifies it
-	start:	fn(): string;
-	stop:	fn();
+	# reset a controller, read what identifies it, and return it.
+	# Every call is a different radio; nothing here is shared
+	# between them.
+	start:	fn(t: Bttransport): (ref Ctlr, string);
+	stop:	fn(x: ref Ctlr);
 
-	localaddr:	fn(): array of byte;
-	localver:	fn(): string;
-	aclmtu:		fn(): (int, int);	# payload size, buffer count
+	localaddr:	fn(x: ref Ctlr): array of byte;
+	localver:	fn(x: ref Ctlr): string;
+	aclmtu:		fn(x: ref Ctlr): (int, int);	# payload size, buffer count
 
 	# SCO packets the transport framed and this dropped.  Nothing
 	# above the transport has a use for them until there is audio,
 	# and until then a count is the honest thing to publish: they
 	# arrived, and they went nowhere.
-	scodropped:	fn(): int;
+	scodropped:	fn(x: ref Ctlr): int;
 
 	# ask the controller to run the link at different parameters.
 	# The answer is an event, not a reply, so this returns when the
@@ -162,19 +208,19 @@ Hci: module
 	# link from timing out before the peripheral is obliged to speak
 	paramsok:	fn(min, max, latency, timeout: int): string;
 
-	cmd:	fn(op: int, p: array of byte): (int, array of byte, string);
+	cmd:	fn(x: ref Ctlr, op: int, p: array of byte): (int, array of byte, string);
 
-	lescan:	fn(on: int): string;
-	advs:	fn(): chan of ref Adv;
+	lescan:	fn(x: ref Ctlr, on: int): string;
+	advs:	fn(x: ref Ctlr): chan of ref Adv;
 
-	leconnect:	fn(atype: int, addr: array of byte): (ref Conn, string);
+	leconnect:	fn(x: ref Ctlr, atype: int, addr: array of byte): (ref Conn, string);
 	disconnect:	fn(c: ref Conn): string;
-	conns:		fn(): list of ref Conn;
+	conns:		fn(x: ref Ctlr): list of ref Conn;
 
 	acl:	fn(c: ref Conn, p: array of byte): string;
 
-	lerand:		fn(): (array of byte, string);
-	leencrypt:	fn(key, plain: array of byte): (array of byte, string);
+	lerand:		fn(x: ref Ctlr): (array of byte, string);
+	leencrypt:	fn(x: ref Ctlr, key, plain: array of byte): (array of byte, string);
 	lestartencrypt:	fn(c: ref Conn, rand: array of byte, ediv: int, ltk: array of byte): string;
 };
 
@@ -409,6 +455,10 @@ Smp: module
 	Bond: adt {
 		addr:	string;		# the peer, written down
 		atype:	int;
+		# the controller it was made on, written down.  Empty for
+		# a bond read from a key file written before there was
+		# more than one controller to make it on.
+		local:	string;
 		ltk:	array of byte;
 		ediv:	int;
 		rand:	array of byte;

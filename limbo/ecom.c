@@ -967,8 +967,20 @@ ecom(Src *src, Node *nto, Node *n)
 		tfree(&tto);
 		break;
 	case Ochan:
-		if(left && left->addable >= Rcant)
-			left = eacom(left, &tl, nto);
+		/*
+		 * the buffer size is the middle operand of newc*, and a
+		 * middle operand cannot be an indirect mode: resolvepcs
+		 * has no case for one and dies.  So anything at Radr or
+		 * above -- chan[x.n] of int, where x is a ref adt, is
+		 * the everyday way to reach one -- is evaluated into a
+		 * temporary first, the same way an indirect index is
+		 * before a cross module call.
+		 */
+		if(left != nil && left->addable >= Ralways){
+			talloc(&tl, left->ty, nil);
+			ecom(&left->src, &tl, left);
+			left = &tl;
+		}
 		genchan(src, left, n->ty->tof, nto);
 		tfree(&tl);
 		break;

@@ -121,6 +121,16 @@ one_goes_quiet = '--one-goes-quiet' in sys.argv
 # checks that the HCI command actually arrives.
 ask_params = '--ask-params' in sys.argv
 
+# --addr XXXXXXXXXXXX: this controller's own BD_ADDR, most significant
+# byte first, so two models in one bench are two radios and not the
+# same one twice.  A bond records the controller it was made on, and
+# with one address between them that record would be worthless.
+def _argaddr():
+    if '--addr' in sys.argv:
+        h = sys.argv[sys.argv.index('--addr') + 1]
+        return bytes(reversed(bytes.fromhex(h)))
+    return None
+
 # --coc-overrun: on an LE credit-based channel the peripheral sends one
 # segment more than the credits it was given.  The guest must treat
 # that as the protocol violation it is and take the channel down,
@@ -272,7 +282,7 @@ def rpa(irk):
 
 IRK = bytes(range(16, 32))                    # what pairing distributes
 
-ADDR = bytes.fromhex('554433221100')          # AA1122334455 written down
+ADDR = _argaddr() or bytes.fromhex('554433221100')   # 001122334455 written down
 PEERS = [
     (bytes.fromhex('efcdab785634'), 0, 'thermometer'),   # 3456 78AB CDEF
     (bytes.fromhex('010203040506'), 1, 'sensor'),        # random address

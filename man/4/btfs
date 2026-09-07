@@ -12,7 +12,7 @@ btfs, btbench \- Bluetooth Low Energy as a file system
 ] [
 .BI -a " seconds"
 ] [
-.I controller
+.I controller ...
 ]
 .PP
 .B bt/btbench
@@ -24,6 +24,9 @@ btfs, btbench \- Bluetooth Low Energy as a file system
 .I keyfile
 [
 .I mode
+[
+.I controller2
+]
 ]
 ]
 ]
@@ -60,6 +63,20 @@ It may instead be a
 .IR dial (2)
 string, which is how a machine whose only serial port is its console
 reaches a controller elsewhere; the framing is the same either way.
+.PP
+Several may be named, and each becomes one numbered directory:
+.IP
+.EX
+bt/btfs /dev/eia1!115200!fc /dev/eia2!115200!fc
+.EE
+.PP
+gives
+.B /net/bt/0
+and
+.BR /net/bt/1 .
+They are two radios in one program and not two programs, so the node
+table, the mount point and the key file are shared while the devices,
+the links, the scanning and the bonds are not.
 With
 .B -u
 the transport is USB instead, and
@@ -81,13 +98,16 @@ does.
 .TF /net/bt/0/remote/ADDR/gatt
 .PD
 .TP
-.B /net/bt/0/addr
-The controller's own address.
+.B /net/bt/\fIN\fP/addr
+The controller's own address.  There is one numbered directory per
+controller, in the order the devices were given on the command line,
+and nothing is shared between them: a device heard on one radio, a
+link, a scan and a bond all belong to the radio they happened on.
 .TP
-.B /net/bt/0/version
+.B /net/bt/\fIN\fP/version
 What the controller says it is.
 .TP
-.B /net/bt/0/state
+.B /net/bt/\fIN\fP/state
 One line: the address, whether it is scanning, how many devices have
 been heard, how many connections are open, and the controller's ACL
 packet size and buffer count.  A
@@ -97,15 +117,25 @@ no audio here, nothing above the transport has a use for them, and
 they are counted rather than dropped in silence, where they could not
 be told from a transport losing them.
 .TP
-.B /net/bt/0/scan
+.B /net/bt/\fIN\fP/scan
 .B on
 or
 .BR off .
 .TP
-.B /net/bt/0/bonds
-One line per bond: the peer, its address type, and the keys.
+.B /net/bt/\fIN\fP/bonds
+One line per bond: the peer, its address type, the keys, and
+.BI on " addr" ,
+the controller the bond was made on.  A long term key is agreed
+between one peripheral and one radio, and the peripheral stores this
+side's identity address alongside it, so a bond made on one radio is
+not a bond on another and is not offered to it.  The key file named by
+.B -k
+holds every controller's bonds together and each line says whose it
+is; a line that does not say, from a file written when there was only
+one controller to make a bond on, is offered to every controller and
+btfs says so once.
 .TP
-.B /net/bt/0/ctl
+.B /net/bt/\fIN\fP/ctl
 Writing
 .B "scan on"
 or
@@ -144,7 +174,7 @@ connection that completes just as the wait runs out is returned rather
 than thrown away, and one that completes after that is closed when it
 is found.
 .TP
-.B /net/bt/0/remote/\fIADDR\fP/
+.B /net/bt/\fIN\fP/remote/\fIADDR\fP/
 A device that has been heard from, named by its address written most
 significant byte first \- or, once a bond gives it one, by its
 identity address, so a device that rotates a resolvable private
@@ -189,7 +219,7 @@ identity from a bond, because a bond exists in order to find that
 device again; and every device while scanning is off, because then
 nothing is arriving and age says nothing about what is there.
 .TP
-.B /net/bt/0/remote/\fIADDR\fP/gatt/
+.B /net/bt/\fIN\fP/remote/\fIADDR\fP/gatt/
 Appears when the device is connected: a directory per service, named
 by its UUID, holding a file per characteristic, named by its UUID.
 If the device has a Service Changed characteristic it is subscribed
@@ -217,7 +247,7 @@ Reading one reads the characteristic off the device; writing one
 writes it.
 .PD
 .TP
-.B /net/bt/0/remote/\fIADDR\fP/l2cap/
+.B /net/bt/\fIN\fP/remote/\fIADDR\fP/l2cap/
 One file per open LE credit-based channel, named by its PSM in four
 hexadecimal digits.  This is not part of the GATT tree and does not go
 away when the device says its database has moved: a channel is not an

@@ -166,8 +166,14 @@ init(nil: ref Draw->Context, argv: list of string)
 		keyfile = hd rest;
 		rest = tl rest;
 	}
-	if(rest != nil)
+	if(rest != nil){
 		mode = hd rest;
+		rest = tl rest;
+	}
+	# a second controller, for the phase that needs two
+	spec2: string;
+	if(rest != nil)
+		spec2 = hd rest;
 
 	btfs := load Command "/dis/bt/btfs.dis";
 	if(btfs == nil){
@@ -177,6 +183,8 @@ init(nil: ref Draw->Context, argv: list of string)
 	# a list grows at the head, so this is built from the last
 	# argument backwards and comes out in order
 	args := spec :: nil;
+	if(spec2 != nil)
+		args = spec :: spec2 :: nil;
 	if(mode == "forget" || mode == "sweeprace")
 		args = "-a" :: "6" :: args;
 	if(keyfile != nil)
@@ -225,6 +233,9 @@ init(nil: ref Draw->Context, argv: list of string)
 		return;
 	"coc" or "cocstingy" =>
 		cocphase(mode);
+		return;
+	"two" =>
+		twophase();
 		return;
 	"cocrefuse" =>
 		cocrefuse();
@@ -1649,9 +1660,18 @@ onesdu(fd: ref Sys->FD, c: chan of (int, array of byte, string))
 
 sdu(fd: ref Sys->FD, ms: int): (int, array of byte, string)
 {
-	c := chan of (int, array of byte, string);
+	#
+	# Both buffered by one.  Whichever of the two loses the race
+	# still has its answer to put down, and an unbuffered channel
+	# would leave it blocked on a send nobody will ever take -- a
+	# process leaked per read, which over a phase that reads two
+	# hundred times is a hundred processes sitting in the scheduler
+	# for no reason.  hci.b says the same thing about its command
+	# timer; this is the same mistake in a new place.
+	#
+	c := chan[1] of (int, array of byte, string);
 	spawn onesdu(fd, c);
-	tc := chan of int;
+	tc := chan[1] of int;
 	spawn tick(ms, tc);
 	alt {
 	(n, b, e) := <-c =>
@@ -1665,4 +1685,136 @@ tick(ms: int, c: chan of int)
 {
 	sys->sleep(ms);
 	c <-= 1;
+}
+
+#
+# Two controllers in one btfs.  /net/bt/0 used to have the 0 written
+# into it, so this is the phase that says the number came from
+# somewhere.
+#
+# What it is really testing is not that two directories appear -- that
+# would pass however much the two radios shared.  It is that a bond
+# belongs to the radio it was made on.  Both models present the same
+# peripheral rotating the same resolvable private address; the key
+# file says the bond was made on the first radio's address, and the
+# second radio has a different one.  So the first must resolve the
+# device to its identity and the second must not, and a stack with one
+# shared bond list passes on the first radio and fails here.
+#
+Sensorid:	con "060504030201";
+
+twophase()
+{
+	ok := 1;
+	a0 := trim(readfile(mnt + "/0/addr"));
+	a1 := trim(readfile(mnt + "/1/addr"));
+	if(a0 == "" || a1 == ""){
+		sys->print("BT: FAILED: two controllers were asked for and %q, %q came back\n", a0, a1);
+		sys->print("BT: done\n");
+		return;
+	}
+	if(a0 == a1){
+		sys->print("BT: FAILED: both radios report %s\n", a0);
+		ok = 0;
+	} else
+		sys->print("BT: two radios: %s and %s\n", a0, a1);
+
+	#
+	# scanning is the radio's own state, not the program's
+	#
+	if(trim(readfile(mnt + "/1/scan")) != "off"){
+		sys->print("BT: FAILED: scanning one radio turned the other on\n");
+		ok = 0;
+	} else
+		sys->print("BT: the second radio is not scanning because the first is\n");
+
+	b0 := lines(readfile(mnt + "/0/bonds"));
+	b1 := lines(readfile(mnt + "/1/bonds"));
+	if(b0 == nil){
+		sys->print("BT: FAILED: the first radio loaded no bond from the key file\n");
+		ok = 0;
+	} else
+		sys->print("BT: the first radio's bond: %s\n", hd b0);
+	if(b1 != nil){
+		sys->print("BT: FAILED: the bond made on one radio was given to the other: %s\n", hd b1);
+		ok = 0;
+	} else
+		sys->print("BT: the second radio has no bond, which is whose it is not\n");
+
+	if((e := writefile(mnt + "/1/ctl", "scan on")) != nil)
+		sys->print("BT: scan on 1: %s\n", e);
+	sys->sleep(4000);
+
+	#
+	# Both radios have heard the sensor's identity address plainly:
+	# it advertises from it for the first few rounds and only then
+	# starts rotating.  So the directory being there proves nothing,
+	# and what it resolved to is the whole question.  The radio with
+	# the bond folds every rotation back onto the one directory; the
+	# radio without one gains a new stranger every round.
+	#
+	r0 := lsdir(mnt + "/0/remote");
+	r1 := lsdir(mnt + "/1/remote");
+	sys->print("BT: radio 0 sees %d devices, radio 1 sees %d\n", len r0, len r1);
+	if(!listed(r0, Sensorid)){
+		sys->print("BT: FAILED: the radio with the bond did not resolve the sensor\n");
+		ok = 0;
+	}
+	i0 := trim(readfile(mnt + "/0/remote/" + Sensorid + "/identity"));
+	if(!hasword(i0, "resolved")){
+		sys->print("BT: FAILED: radio 0's sensor identity reads %q\n", i0);
+		ok = 0;
+	} else
+		sys->print("BT: radio 0: %s\n", i0);
+	i1 := trim(readfile(mnt + "/1/remote/" + Sensorid + "/identity"));
+	if(i1 != "none"){
+		sys->print("BT: FAILED: radio 1 has no bond and its sensor identity reads %q\n", i1);
+		ok = 0;
+	} else
+		sys->print("BT: radio 1: the sensor has no identity there, which is right\n");
+	if(len r1 <= len r0){
+		sys->print("BT: FAILED: the radio with no bond did not gain a directory per rotation: %d against %d\n",
+			len r1, len r0);
+		ok = 0;
+	} else
+		sys->print("BT: radio 1 gained %d strangers where radio 0 kept %d devices\n",
+			len r1, len r0);
+
+	#
+	# and the link is the radio's: connecting on the second one
+	# works and says so in that radio's own state
+	#
+	dev := mnt + "/1/remote/345678ABCDEF";
+	if((ce := writefile(mnt + "/1/ctl", "connect 345678ABCDEF")) != nil){
+		sys->print("BT: FAILED: connect on the second radio: %s\n", ce);
+		ok = 0;
+	} else {
+		st := trim(readfile(dev + "/state"));
+		if(!hasword(st, "connected")){
+			sys->print("BT: FAILED: second radio's device state: %s\n", st);
+			ok = 0;
+		} else
+			sys->print("BT: connected through the second radio: %s\n", st);
+		s0 := trim(readfile(mnt + "/0/state"));
+		if(!hasword(s0, "connections") || hasword(s0, "connections 1")){
+			sys->print("BT: FAILED: the first radio counts the second's link: %s\n", s0);
+			ok = 0;
+		} else
+			sys->print("BT: the first radio's state is its own: %s\n", s0);
+		writefile(dev + "/ctl", "disconnect");
+	}
+
+	if(ok)
+		sys->print("BT: two controllers, each with its own devices and its own bonds\n");
+	writefile(mnt + "/0/ctl", "scan off");
+	writefile(mnt + "/1/ctl", "scan off");
+	sys->print("BT: done\n");
+}
+
+listed(l: list of string, s: string): int
+{
+	for(; l != nil; l = tl l)
+		if(hd l == s)
+			return 1;
+	return 0;
 }

@@ -83,9 +83,18 @@ init(b: Bt, h: Hci, l: L2cap): string
 
 Bond.text(b: self ref Bond): string
 {
-	return sys->sprint("%s %s ltk %s ediv %d rand %s irk %s csrk %s",
+	s := sys->sprint("%s %s ltk %s ediv %d rand %s irk %s csrk %s",
 		b.addr, bt->atypestr(b.atype), bt->hex(b.ltk), b.ediv,
 		bt->hex(b.rand), bt->hex(b.irk), bt->hex(b.csrk));
+	#
+	# which controller the bond was made on.  A long term key is
+	# agreed between one peripheral and one radio, and the
+	# peripheral stores this side's identity address with it, so a
+	# bond made on one radio is not a bond on another.
+	#
+	if(b.local != nil)
+		s += " on " + b.local;
+	return s;
 }
 
 parse(s: string): ref Bond
@@ -115,6 +124,7 @@ parse(s: string): ref Bond
 		"rand" =>	b.rand = bt->unhex(v);
 		"irk" =>	b.irk = bt->unhex(v);
 		"csrk" =>	b.csrk = bt->unhex(v);
+		"on" =>		b.local = v;
 		}
 	}
 	return b;
@@ -154,11 +164,11 @@ pair(c: ref Conn, m: ref Mux, iocap: int): (ref Bond, string)
 	for(i := 0; i < 16; i++)
 		tk[i] = byte 0;
 
-	(mrand, e3) := random16();
+	(mrand, e3) := random16(c.x);
 	if(e3 != nil)
 		return (nil, e3);
 
-	ia := hci->localaddr();
+	ia := hci->localaddr(c.x);
 	iat := Bt->Apublic;
 	ra := c.addr;
 	rat := c.atype;
@@ -212,6 +222,7 @@ pair(c: ref Conn, m: ref Mux, iocap: int): (ref Bond, string)
 	# order it likes, and then stops
 	b := ref Bond;
 	b.addr = bt->addrstr(c.addr);
+	b.local = bt->addrstr(hci->localaddr(c.x));
 	b.atype = c.atype;
 	nwant := 0;
 	if(respkeys & Kenc)
@@ -328,12 +339,12 @@ failstr(p: array of byte): string
 	return sys->sprint("pairing failed: reason %#2.2ux", r);
 }
 
-random16(): (array of byte, string)
+random16(x: ref Hci->Ctlr): (array of byte, string)
 {
-	(a, e) := hci->lerand();
+	(a, e) := hci->lerand(x);
 	if(e != nil)
 		return (nil, e);
-	(b, e2) := hci->lerand();
+	(b, e2) := hci->lerand(x);
 	if(e2 != nil)
 		return (nil, e2);
 	r := array[16] of byte;

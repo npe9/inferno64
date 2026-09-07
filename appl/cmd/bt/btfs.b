@@ -92,6 +92,7 @@ Cnode: adt {
 };
 
 Dev: adt {
+	r:	ref Radio;	# the controller it was heard on
 	q:	big;		# its directory
 	gq:	big;		# its gatt directory
 	dir:	string;		# the name of that directory, which is the
@@ -122,6 +123,7 @@ Dev: adt {
 Node: adt {
 	q:	big;
 	kind:	int;
+	rad:	ref Radio;	# for the controller's own files
 	dev:	ref Dev;
 	cn:	ref Cnode;
 	name:	string;
@@ -139,8 +141,27 @@ tree:	ref Tree;
 treelock:	chan of int;
 nodes:	array of ref Node;
 nextq:	int;
-devs:	list of ref Dev;
-devlock:	chan of int;
+#
+# One controller and everything that belongs to it alone: the radio
+# itself, the devices it has heard, and the bonds made on it.  This
+# used to be the program's own variables and /net/bt/0 had the 0
+# written into it; a second radio had nowhere to go.
+#
+Radio: adt {
+	n:	int;			# which /net/bt/N
+	x:	ref Hci->Ctlr;
+	t:	Bttransport;
+	spec:	string;
+	q:	big;			# its directory
+	rq:	big;			# its remote directory
+	scanning:	int;
+	devs:	list of ref Dev;
+	devlock:	chan of int;
+	bonds:	list of ref Bond;
+	bondlock:	chan of int;
+};
+
+radios:	list of ref Radio;
 #
 # devlock covers devs and the Dev fields the scanner writes.  bonds is
 # a second shared list with a second set of writers -- pair() adding
@@ -154,9 +175,13 @@ devlock:	chan of int;
 # the only place that does, and nothing takes devlock while holding
 # bondlock.
 #
-bondlock:	chan of int;
-scanning:	int;
-bonds:	list of ref Bond;
+#
+# The key file holds every controller's bonds, each line saying which
+# controller it was made on, so writing it is not one radio's business
+# and takes a lock of its own.  Order: keylock, then a radio's
+# bondlock.  Nothing takes keylock while holding a bondlock.
+#
+keylock:	chan of int;
 keyfile:	string;
 #
 # how long a device that is not answering stays in /net/bt/0/remote.  A
@@ -186,12 +211,11 @@ init(nil: ref Draw->Context, argv: list of string)
 		fail(sprint("cannot load %s: %r", Bt->PATH));
 	bt->init();
 
-	tspec := "";
 	tpath := Bttransport->H4PATH;
 	mnt := mtpt;
 
 	arg->init(argv);
-	arg->setusage("btfs [-u] [-m mountpoint] [-k keyfile] [-a seconds] [device]");
+	arg->setusage("btfs [-u] [-m mountpoint] [-k keyfile] [-a seconds] [device ...]");
 	usb := 0;
 	while((c := arg->opt()) != 0)
 		case c {
@@ -208,17 +232,14 @@ init(nil: ref Draw->Context, argv: list of string)
 			ageout = int v;
 		* =>	arg->usage();
 		}
-	a := arg->argv();
-	if(a != nil)
-		tspec = hd a;
+	specs := arg->argv();
 	if(usb)
 		tpath = Bttransport->USBPATH;
-	else if(tspec == nil)
-		tspec = "/dev/eia1!115200";
+	else if(specs == nil)
+		specs = "/dev/eia1!115200" :: nil;
+	if(specs == nil)
+		fail("no controller: say which device to open");
 
-	t = load Bttransport tpath;
-	if(t == nil)
-		fail(sprint("cannot load %s: %r", tpath));
 	hci = load Hci Hci->PATH;
 	l2cap = load L2cap L2cap->PATH;
 	att = load Att Att->PATH;
@@ -227,9 +248,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	if(hci == nil || l2cap == nil || att == nil || gatt == nil || smp == nil)
 		fail(sprint("cannot load the stack: %r"));
 
-	if((e := t->init(bt, tspec)) != nil)
-		fail("transport: " + e);
-	if((e = hci->init(bt, t)) != nil)
+	if((e := hci->init(bt)) != nil)
 		fail("hci: " + e);
 	if((e = l2cap->init(bt, hci)) != nil)
 		fail("l2cap: " + e);
@@ -239,21 +258,16 @@ init(nil: ref Draw->Context, argv: list of string)
 		fail("gatt: " + e);
 	if((e = smp->init(bt, hci, l2cap)) != nil)
 		fail("smp: " + e);
-	if((e = hci->start()) != nil)
-		fail("controller: " + e);
 
-	devlock = chan[1] of int;
-	devlock <-= 1;
-	bondlock = chan[1] of int;
-	bondlock <-= 1;
+	keylock = chan[1] of int;
+	keylock <-= 1;
 	treelock = chan[1] of int;
 	treelock <-= 1;
 	nodes = array[64] of ref Node;
 	# node 0 is the root of the served tree, so the first name
 	# created below does not take its qid
-	nodes[0] = ref Node(Qroot, Kroot, nil, nil, ".", nil, nil);
+	nodes[0] = ref Node(Qroot, Kroot, nil, nil, nil, ".", nil, nil);
 	nextq = 1;
-	readkeys();
 
 	navops: chan of ref Navop;
 	(tree, navops) = nametree->start();
@@ -266,11 +280,46 @@ init(nil: ref Draw->Context, argv: list of string)
 	srv.replychan = chan of ref Rmsg;
 	spawn replier(srv.replychan);
 
-	build();
+	buildroot();
+
+	#
+	# One radio per device named on the command line.  Each gets its
+	# own transport and its own controller: a second load of the
+	# same module has its own module data, which is what makes two
+	# radios in one program possible at all.
+	#
+	n := 0;
+	rl: list of ref Radio;
+	for(sl := specs; sl != nil; sl = tl sl){
+		r := ref Radio;
+		r.n = n++;
+		r.spec = hd sl;
+		r.devlock = chan[1] of int;
+		r.devlock <-= 1;
+		r.bondlock = chan[1] of int;
+		r.bondlock <-= 1;
+		r.t = load Bttransport tpath;
+		if(r.t == nil)
+			fail(sprint("cannot load %s: %r", tpath));
+		if((te := r.t->init(bt, r.spec)) != nil)
+			fail(sprint("transport %s: %s", r.spec, te));
+		(x, ce) := hci->start(r.t);
+		if(ce != nil)
+			fail(sprint("controller %s: %s", r.spec, ce));
+		r.x = x;
+		buildradio(r);
+		rl = r :: rl;
+	}
+	# built head first, so put them back in the order they were given
+	for(; rl != nil; rl = tl rl)
+		radios = hd rl :: radios;
+
+	readkeys();
 
 	# no NEWPGRP: the mount below belongs in the name space of
 	# whoever started btfs, not in a private one
-	spawn advproc();
+	for(al := radios; al != nil; al = tl al)
+		spawn advproc(hd al);
 	spawn reaper();
 	spawn serve(tchan);
 
@@ -296,38 +345,32 @@ replier(c: chan of ref Rmsg)
 #
 # the fixed part of the name space
 #
-build()
+buildroot()
 {
 	create(Qroot, mkdir(".", Qroot));
-	q0 := newnode(Kctlr, nil, nil, "0");
-	create(Qroot, mkdir("0", q0));
-	mkf(q0, "addr", Kaddr, 8r444);
-	mkf(q0, "version", Kver, 8r444);
-	mkf(q0, "state", Kstate, 8r444);
-	mkf(q0, "scan", Kscan, 8r444);
-	mkf(q0, "bonds", Kbonds, 8r444);
-	mkf(q0, "ctl", Kctl, 8r666);
-	qr := newnode(Kremotes, nil, nil, "remote");
-	create(q0, mkdir("remote", qr));
 }
 
-qremotes(): big
+#
+# one controller's fixed files.  The number is the radio's, not a
+# constant: /net/bt/0 and /net/bt/1 are two radios in one program
+# rather than two programs.
+#
+buildradio(r: ref Radio)
 {
-	for(i := 0; i < nextq; i++)
-		if(nodes[i] != nil && nodes[i].kind == Kremotes)
-			return nodes[i].q;
-	return Qroot;
+	name := string r.n;
+	r.q = newnode(Kctlr, r, nil, nil, name);
+	create(Qroot, mkdir(name, r.q));
+	mkf(r.q, "addr", Kaddr, 8r444, r);
+	mkf(r.q, "version", Kver, 8r444, r);
+	mkf(r.q, "state", Kstate, 8r444, r);
+	mkf(r.q, "scan", Kscan, 8r444, r);
+	mkf(r.q, "bonds", Kbonds, 8r444, r);
+	mkf(r.q, "ctl", Kctl, 8r666, r);
+	r.rq = newnode(Kremotes, r, nil, nil, "remote");
+	create(r.q, mkdir("remote", r.rq));
 }
 
-qctlr(): big
-{
-	for(i := 0; i < nextq; i++)
-		if(nodes[i] != nil && nodes[i].kind == Kctlr)
-			return nodes[i].q;
-	return Qroot;
-}
-
-newnode(kind: int, d: ref Dev, cn: ref Cnode, name: string): big
+newnode(kind: int, r: ref Radio, d: ref Dev, cn: ref Cnode, name: string): big
 {
 	if(nextq >= len nodes){
 		a := array[2*len nodes] of ref Node;
@@ -335,7 +378,7 @@ newnode(kind: int, d: ref Dev, cn: ref Cnode, name: string): big
 		nodes = a;
 	}
 	q := big nextq;
-	nodes[nextq] = ref Node(q, kind, d, cn, name, nil, nil);
+	nodes[nextq] = ref Node(q, kind, r, d, cn, name, nil, nil);
 	nextq++;
 	return q;
 }
@@ -348,16 +391,16 @@ node(q: big): ref Node
 	return nodes[i];
 }
 
-mkf(parent: big, name: string, kind, mode: int): big
+mkf(parent: big, name: string, kind, mode: int, r: ref Radio): big
 {
-	q := newnode(kind, nil, nil, name);
+	q := newnode(kind, r, nil, nil, name);
 	create(parent, mkfile(name, q, mode));
 	return q;
 }
 
 mkfd(parent: big, name: string, kind, mode: int, d: ref Dev, cn: ref Cnode): big
 {
-	q := newnode(kind, d, cn, name);
+	q := newnode(kind, d.r, d, cn, name);
 	create(parent, mkfile(name, q, mode));
 	return q;
 }
@@ -452,85 +495,93 @@ reaper()
 {
 	for(;;){
 		sys->sleep(Reapevery * 1000);
-		if(ageout <= 0 || !scanning)
+		if(ageout <= 0)
 			continue;
-		now := daytime();
-		#
-		# Taken in two parts, and the order matters both ways.
-		# dropdev needs the device's own lock -- it takes the
-		# gatt tree down, which connect() and rediscover() do
-		# under that lock -- and connect() holds it for as long
-		# as a connection attempt takes, which is twenty seconds
-		# against a controller that never answers.  Waiting for
-		# it with devlock held would stop the scanner and every
-		# control write for that long, so the candidates are
-		# taken out of devs under devlock, devlock is dropped,
-		# and each is then waited for on its own.
-		#
-		# Nothing holds a device's lock and then asks for
-		# devlock, so this order cannot deadlock: pair() is the
-		# one place that wants both and it lets go of the
-		# device's lock first.
-		#
-		<-devlock;
-		keep: list of ref Dev;
-		gone: list of ref Dev;
-		for(l := devs; l != nil; l = tl l){
-			d := hd l;
-			if(d.conn != nil || d.id != nil || now - d.seen < ageout)
-				keep = d :: keep;
-			else
-				gone = d :: gone;
-		}
-		devs = keep;
-		devlock <-= 1;
-		for(l = gone; l != nil; l = tl l){
-			d := hd l;
-			<-d.lock;
-			#
-			# it was chosen without its lock, so it may have
-			# become something worth keeping while this was
-			# waiting for it -- a connection that had not
-			# finished when the sweep looked, or a bond that
-			# has just given it an identity.  Put it back.
-			#
-			#
-			# scanning is looked at again as well: it can be
-			# turned off between the sweep choosing a device
-			# and getting its lock, and "nothing is forgotten
-			# while scanning is off" should be true rather
-			# than nearly true.
-			#
-			if(d.conn != nil || d.id != nil || !scanning){
-				d.lock <-= 1;
-				<-devlock;
-				devs = d :: devs;
-				devlock <-= 1;
-				continue;
-			}
-			sys->fprint(sys->fildes(2),
-				"btfs: %s: not heard from for %ds, forgotten\n",
-				d.dir, now - d.seen);
-			dropdev(d);
-			d.lock <-= 1;
-		}
+		for(rl := radios; rl != nil; rl = tl rl)
+			sweep(hd rl);
 	}
 }
 
-advproc()
+sweep(r: ref Radio)
 {
-	c := hci->advs();
+	if(!r.scanning)
+		return;
+	now := daytime();
+	#
+	# Taken in two parts, and the order matters both ways.
+	# dropdev needs the device's own lock -- it takes the
+	# gatt tree down, which connect() and rediscover() do
+	# under that lock -- and connect() holds it for as long
+	# as a connection attempt takes, which is twenty seconds
+	# against a controller that never answers.  Waiting for
+	# it with devlock held would stop the scanner and every
+	# control write for that long, so the candidates are
+	# taken out of devs under devlock, devlock is dropped,
+	# and each is then waited for on its own.
+	#
+	# Nothing holds a device's lock and then asks for
+	# devlock, so this order cannot deadlock: pair() is the
+	# one place that wants both and it lets go of the
+	# device's lock first.
+	#
+	<-r.devlock;
+	keep: list of ref Dev;
+	gone: list of ref Dev;
+	for(l := r.devs; l != nil; l = tl l){
+		d := hd l;
+		if(d.conn != nil || d.id != nil || now - d.seen < ageout)
+			keep = d :: keep;
+		else
+			gone = d :: gone;
+	}
+	r.devs = keep;
+	r.devlock <-= 1;
+	for(l = gone; l != nil; l = tl l){
+		d := hd l;
+		<-d.lock;
+		#
+		# it was chosen without its lock, so it may have
+		# become something worth keeping while this was
+		# waiting for it -- a connection that had not
+		# finished when the sweep looked, or a bond that
+		# has just given it an identity.  Put it back.
+		#
+		#
+		# scanning is looked at again as well: it can be
+		# turned off between the sweep choosing a device
+		# and getting its lock, and "nothing is forgotten
+		# while scanning is off" should be true rather
+		# than nearly true.
+		#
+		if(d.conn != nil || d.id != nil || !r.scanning){
+			d.lock <-= 1;
+			<-r.devlock;
+			r.devs = d :: r.devs;
+			r.devlock <-= 1;
+			continue;
+		}
+		sys->fprint(sys->fildes(2),
+			"btfs: %s: not heard from for %ds, forgotten\n",
+			d.dir, now - d.seen);
+		dropdev(d);
+		d.lock <-= 1;
+	}
+}
+
+advproc(r: ref Radio)
+{
+	c := hci->advs(r.x);
 	for(;;){
 		a := <-c;
 		if(a == nil)
 			return;
-		<-devlock;
-		d := finddev(a.addr);
+		<-r.devlock;
+		d := finddev(r, a.addr);
 		if(d == nil)
-			d = resolved(a.atype, a.addr);
+			d = resolved(r, a.atype, a.addr);
 		if(d == nil){
-			d = newdev(bt->addrstr(a.addr), a.addr, a.atype);
-			devs = d :: devs;
+			d = newdev(r, bt->addrstr(a.addr), a.addr, a.atype);
+			r.devs = d :: r.devs;
 		}
 		#
 		# a device that rotates its address is the same device
@@ -547,14 +598,14 @@ advproc()
 		nm := advname(a.data);
 		if(nm != nil)
 			d.name = nm;
-		devlock <-= 1;
+		r.devlock <-= 1;
 	}
 }
 
-finddev(addr: array of byte): ref Dev
+finddev(r: ref Radio, addr: array of byte): ref Dev
 {
 	s := bt->addrstr(addr);
-	for(l := devs; l != nil; l = tl l)
+	for(l := r.devs; l != nil; l = tl l)
 		if(bt->addrstr((hd l).addr) == s)
 			return hd l;
 	return nil;
@@ -565,9 +616,9 @@ finddev(addr: array of byte): ref Dev
 # address once there is a bond to give one -- not by whatever address
 # it is advertising from this minute.
 #
-finddevstr(s: string): ref Dev
+finddevstr(r: ref Radio, s: string): ref Dev
 {
-	for(l := devs; l != nil; l = tl l)
+	for(l := r.devs; l != nil; l = tl l)
 		if((hd l).dir == s)
 			return hd l;
 	return nil;
@@ -582,13 +633,13 @@ finddevstr(s: string): ref Dev
 # minutes is a new device in /net/bt/0/remote every fifteen minutes
 # and the keys stored against the old one are never reachable again.
 #
-resolved(atype: int, addr: array of byte): ref Dev
+resolved(r: ref Radio, atype: int, addr: array of byte): ref Dev
 {
 	if(!bt->resolvable(atype, addr))
 		return nil;
-	<-bondlock;
-	bl := bonds;
-	bondlock <-= 1;
+	<-r.bondlock;
+	bl := r.bonds;
+	r.bondlock <-= 1;
 	for(; bl != nil; bl = tl bl){
 		b := hd bl;
 		if(!smp->resolve(b, atype, addr))
@@ -596,7 +647,7 @@ resolved(atype: int, addr: array of byte): ref Dev
 		id := bt->straddr(b.addr);
 		if(id == nil)
 			continue;
-		for(l := devs; l != nil; l = tl l){
+		for(l := r.devs; l != nil; l = tl l){
 			d := hd l;
 			if(d.id != nil && bt->addrstr(d.id) == b.addr)
 				return d;
@@ -619,18 +670,19 @@ resolved(atype: int, addr: array of byte): ref Dev
 		# the directory is named by the identity, not by the
 		# address it happens to be using.
 		#
-		d := newdev(b.addr, addr, atype);
+		d := newdev(r, b.addr, addr, atype);
 		d.id = id;
 		d.idtype = b.atype;
-		devs = d :: devs;
+		r.devs = d :: r.devs;
 		return d;
 	}
 	return nil;
 }
 
-newdev(name: string, addr: array of byte, atype: int): ref Dev
+newdev(r: ref Radio, name: string, addr: array of byte, atype: int): ref Dev
 {
 	d := ref Dev;
+	d.r = r;
 	d.dir = name;
 	d.addr = addr;
 	d.atype = atype;
@@ -638,8 +690,8 @@ newdev(name: string, addr: array of byte, atype: int): ref Dev
 	d.seen = daytime();
 	d.lock = chan[1] of int;
 	d.lock <-= 1;
-	d.q = newnode(Kdev, d, nil, name);
-	create(qremotes(), mkdir(name, d.q));
+	d.q = newnode(Kdev, r, d, nil, name);
+	create(r.rq, mkdir(name, d.q));
 	mkfd(d.q, "addr", Kdaddr, 8r444, d, nil);
 	mkfd(d.q, "identity", Kdident, 8r444, d, nil);
 	mkfd(d.q, "type", Kdtype, 8r444, d, nil);
@@ -778,18 +830,18 @@ doread(m: ref Tmsg.Read)
 	}
 	case n.kind {
 	Kaddr =>
-		srv.reply(styxservers->readstr(m, bt->addrstr(hci->localaddr()) + "\n"));
+		srv.reply(styxservers->readstr(m, bt->addrstr(hci->localaddr(n.rad.x)) + "\n"));
 	Kver =>
-		srv.reply(styxservers->readstr(m, hci->localver() + "\n"));
+		srv.reply(styxservers->readstr(m, hci->localver(n.rad.x) + "\n"));
 	Kstate =>
-		srv.reply(styxservers->readstr(m, ctlrstate()));
+		srv.reply(styxservers->readstr(m, ctlrstate(n.rad)));
 	Kscan =>
 		s := "off\n";
-		if(scanning)
+		if(n.rad.scanning)
 			s = "on\n";
 		srv.reply(styxservers->readstr(m, s));
 	Kbonds =>
-		srv.reply(styxservers->readstr(m, bondtext()));
+		srv.reply(styxservers->readstr(m, bondtext(n.rad)));
 	Kctl or Kdctl =>
 		srv.reply(styxservers->readstr(m, ""));
 	Kdaddr =>
@@ -819,20 +871,20 @@ doread(m: ref Tmsg.Read)
 	}
 }
 
-ctlrstate(): string
+ctlrstate(r: ref Radio): string
 {
-	<-devlock;
-	nd := len devs;
-	devlock <-= 1;
+	<-r.devlock;
+	nd := len r.devs;
+	r.devlock <-= 1;
 	sc := "off";
-	if(scanning)
+	if(r.scanning)
 		sc = "on";
-	(sz, nb) := hci->aclmtu();
+	(sz, nb) := hci->aclmtu(r.x);
 	s := sprint("addr %s scan %s devices %d connections %d aclsize %d aclbufs %d",
-		bt->addrstr(hci->localaddr()), sc, nd, len hci->conns(), sz, nb);
+		bt->addrstr(hci->localaddr(r.x)), sc, nd, len hci->conns(r.x), sz, nb);
 	# only when there are any: a controller that has never sent one
 	# has nothing to report, and the line is what btfs(4) describes
-	if((n := hci->scodropped()) > 0)
+	if((n := hci->scodropped(r.x)) > 0)
 		s += sprint(" scodropped %d", n);
 	return s + "\n";
 }
@@ -885,19 +937,19 @@ devstate(d: ref Dev): string
 	return s;
 }
 
-bondtext(): string
+bondtext(r: ref Radio): string
 {
-	<-bondlock;
-	s := bondtext0();
-	bondlock <-= 1;
+	<-r.bondlock;
+	s := bondtext0(r);
+	r.bondlock <-= 1;
 	return s;
 }
 
-# with bondlock already held
-bondtext0(): string
+# with the radio's bondlock already held
+bondtext0(r: ref Radio): string
 {
 	s := "";
-	for(l := bonds; l != nil; l = tl l)
+	for(l := r.bonds; l != nil; l = tl l)
 		s += (hd l).text() + "\n";
 	return s;
 }
@@ -955,9 +1007,9 @@ dowrite(m: ref Tmsg.Write)
 	}
 	case n.kind {
 	Kctl =>
-		spawn ctlwrite(m, nil, string m.data);
+		spawn ctlwrite(m, n.rad, nil, string m.data);
 	Kdctl =>
-		spawn ctlwrite(m, n.dev, string m.data);
+		spawn ctlwrite(m, n.dev.r, n.dev, string m.data);
 	Kchar =>
 		spawn writechar(m, n);
 	Kcoc =>
@@ -989,7 +1041,7 @@ writechar(m: ref Tmsg.Write, n: ref Node)
 # the control commands.  A device's own ctl file takes the same
 # words without the address.
 #
-ctlwrite(m: ref Tmsg.Write, d: ref Dev, s: string)
+ctlwrite(m: ref Tmsg.Write, r: ref Radio, d: ref Dev, s: string)
 {
 	(nil, f) := sys->tokenize(s, " \t\r\n");
 	if(f == nil){
@@ -1004,23 +1056,23 @@ ctlwrite(m: ref Tmsg.Write, d: ref Dev, s: string)
 		on := 1;
 		if(f != nil && hd f == "off")
 			on = 0;
-		e = hci->lescan(on);
+		e = hci->lescan(r.x, on);
 		if(e == nil)
-			scanning = on;
+			r.scanning = on;
 	"connect" =>
-		(dd, ee) := target(d, f);
+		(dd, ee) := target(r, d, f);
 		if(ee != nil)
 			e = ee;
 		else
 			e = connect(dd);
 	"disconnect" =>
-		(dd, ee) := target(d, f);
+		(dd, ee) := target(r, d, f);
 		if(ee != nil)
 			e = ee;
 		else
 			e = disconnect(dd);
 	"pair" =>
-		(dd, ee) := target(d, f);
+		(dd, ee) := target(r, d, f);
 		if(ee != nil)
 			e = ee;
 		else
@@ -1098,7 +1150,7 @@ len4(l: list of string): int
 	return n;
 }
 
-target(d: ref Dev, f: list of string): (ref Dev, string)
+target(r: ref Radio, d: ref Dev, f: list of string): (ref Dev, string)
 {
 	if(d != nil)
 		return (d, nil);
@@ -1116,16 +1168,16 @@ target(d: ref Dev, f: list of string): (ref Dev, string)
 	if(addr == nil)
 		return (nil, "not an address");
 	a := bt->addrstr(addr);
-	<-devlock;
-	dd := finddevstr(a);
+	<-r.devlock;
+	dd := finddevstr(r, a);
 	if(dd == nil){
 		atype := Bt->Apublic;
 		if(tl f != nil && hd tl f == "random")
 			atype = Bt->Arandom;
-		dd = newdev(a, addr, atype);
-		devs = dd :: devs;
+		dd = newdev(r, a, addr, atype);
+		r.devs = dd :: r.devs;
 	}
-	devlock <-= 1;
+	r.devlock <-= 1;
 	return (dd, nil);
 }
 
@@ -1139,7 +1191,7 @@ connect(d: ref Dev): string
 		d.lock <-= 1;
 		return nil;
 	}
-	(c, e) := hci->leconnect(d.atype, d.addr);
+	(c, e) := hci->leconnect(d.r.x, d.atype, d.addr);
 	if(e != nil){
 		d.lock <-= 1;
 		return e;
@@ -1157,7 +1209,7 @@ connect(d: ref Dev): string
 
 discover(d: ref Dev): string
 {
-	d.gq = newnode(Kdgatt, d, nil, "gatt");
+	d.gq = newnode(Kdgatt, d.r, d, nil, "gatt");
 	create(d.q, mkdir("gatt", d.gq));
 	(svcs, e) := gatt->services(d.sess);
 	if(e != nil)
@@ -1185,7 +1237,7 @@ discover(d: ref Dev): string
 		if(seen)
 			continue;
 		done = (s.start, s.end) :: done;
-		sq := newnode(Ksvc, d, nil, s.uuid);
+		sq := newnode(Ksvc, d.r, d, nil, s.uuid);
 		create(d.gq, mkdir(s.uuid, sq));
 		(incs, ie) := gatt->includes(d.sess, s);
 		if(ie == nil && incs != nil){
@@ -1443,7 +1495,7 @@ pair(d: ref Dev): string
 	d.lock <-= 1;
 	if(e != nil)
 		return e;
-	addbond(b);
+	addbond(d.r, b);
 	#
 	# the peer's identity address, which is what its resolvable
 	# private addresses will resolve to from here on.  Its directory
@@ -1454,27 +1506,34 @@ pair(d: ref Dev): string
 	# so.
 	#
 	if(b.addr != nil){
-		<-devlock;
+		<-d.r.devlock;
 		d.id = bt->straddr(b.addr);
 		d.idtype = b.atype;
-		devlock <-= 1;
+		d.r.devlock <-= 1;
 	}
 	return nil;
 }
 
-addbond(b: ref Bond)
+addbond(r: ref Radio, b: ref Bond)
 {
-	<-bondlock;
+	<-r.bondlock;
 	nl: list of ref Bond;
-	for(l := bonds; l != nil; l = tl l)
+	for(l := r.bonds; l != nil; l = tl l)
 		if((hd l).addr != b.addr)
 			nl = hd l :: nl;
-	bonds = b :: nl;
-	s := bondtext0();
-	bondlock <-= 1;
-	writekeys(s);
+	r.bonds = b :: nl;
+	r.bondlock <-= 1;
+	savekeys();
 }
 
+#
+# The key file is one file for every controller, and each line says
+# which controller its bond was made on.  A line that does not say --
+# one written before there was more than one controller to make a bond
+# on -- goes to every controller, which is what it meant when there
+# was only one, and is said out loud once rather than being guessed at
+# in silence.
+#
 readkeys()
 {
 	if(keyfile == nil)
@@ -1507,10 +1566,39 @@ readkeys()
 		if(b != nil)
 			nb = b :: nb;
 	}
-	<-bondlock;
-	for(; nb != nil; nb = tl nb)
-		bonds = hd nb :: bonds;
-	bondlock <-= 1;
+	said := 0;
+	for(; nb != nil; nb = tl nb){
+		b := hd nb;
+		if(b.local == nil && !said){
+			sys->fprint(sys->fildes(2),
+				"btfs: %s has bonds that do not say which controller they were made on; every controller is offered them\n",
+				keyfile);
+			said = 1;
+		}
+		for(rl := radios; rl != nil; rl = tl rl){
+			r := hd rl;
+			if(b.local != nil && b.local != bt->addrstr(hci->localaddr(r.x)))
+				continue;
+			<-r.bondlock;
+			r.bonds = b :: r.bonds;
+			r.bondlock <-= 1;
+		}
+	}
+}
+
+#
+# every controller's bonds, written out together.  A bond belongs to
+# one radio and the file belongs to none of them, so this takes a lock
+# of its own rather than any radio's.
+#
+savekeys()
+{
+	<-keylock;
+	s := "";
+	for(rl := radios; rl != nil; rl = tl rl)
+		s += bondtext(hd rl);
+	writekeys(s);
+	keylock <-= 1;
 }
 
 writekeys(s: string)
@@ -1602,7 +1690,7 @@ cocopen(d: ref Dev, psm: int): string
 	}
 	co := ref Coc(psm, c, big 0);
 	if(d.lq == big 0){
-		d.lq = newnode(Kdl2cap, d, nil, "l2cap");
+		d.lq = newnode(Kdl2cap, d.r, d, nil, "l2cap");
 		create(d.q, mkdir("l2cap", d.lq));
 	}
 	co.q = mkfd(d.lq, sprint("%4.4ux", psm), Kcoc, 8r666, d, nil);
