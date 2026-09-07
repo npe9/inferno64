@@ -1,20 +1,78 @@
-implement Knuckleball;
+implement Trajectory;
+
+# danby/knuckleball - Pitching a knuckleball
+#
+# The equations, the parameters and everything else model-specific are
+# in this file.  The window, the integrator and the controls are the
+# shared trajectory viewer's; init() at the foot of the file starts it and
+# hands it this module back.
+
 include "sys.m";
 include "draw.m";
+include "math.m";
+	math: Math;
+include "danby/ballistics.m";
+	ballistics: Ballistics;
+include "danby/trajectory.m";
+
+new(): ref Model
+{
+	math = load Math Math->PATH;
+	ballistics = load Ballistics Ballistics->PATH;
+	return ref Model(array[] of {32.0,-0.02,0.004,1.4,48.0,9.81});
+}
+
+title(): string
+{
+	return "Pitching a knuckleball";
+}
+
+parameterlabels(): array of string
+{
+	return array[] of {"speed", "angle", "drag", "flutter", "frequency", "gravity"};
+}
+
+parameterranges(): array of real
+{
+	return array[] of {50.0,0.3,0.02,4.0,100.0,20.0};
+}
+
+initialstate(model: ref Model): array of real
+{
+	p := model.parameter;
+	return array[] of {0.0,1.8,p[0]*math->cos(p[1]),p[0]*math->sin(p[1])};
+}
+
+maxtime(nil: ref Model): real
+{
+	return 0.65;
+}
+
+Model.rhs(model: self ref Model, t: real, state, derivative: array of real)
+{
+	p := model.parameter;
+	flutter := p[3]*math->sin(p[4]*t);
+	derivative[0] = state[2];
+	derivative[1] = state[3];
+	(derivative[2],derivative[3]) = ballistics->acceleration(
+		state[2],state[3],p[2],0.0,0.0,p[5],flutter);
+}
+
+evaluate(model: ref Model, t: real, state, derivative: array of real)
+{
+	model.rhs(t,state,derivative);
+}
+
 Command: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
-Knuckleball: module
-{
-	init: fn(ctxt: ref Draw->Context, argv: list of string);
-};
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	client := load Command "/dis/temple/trajectory.dis";
-	if(client == nil)
-		raise "fail:Knuckleball: cannot load trajectory interface";
-	client->init(ctxt,
-		"knuckleball" :: "/dis/danby/plugin/knuckleball.dis" ::
+	viewer := load Command "/dis/temple/trajectory.dis";
+	if(viewer == nil)
+		raise "fail:knuckleball: cannot load the trajectory viewer";
+	viewer->init(ctxt, "knuckleball" :: "/dis/danby/knuckleball.dis" ::
 		"danby-knuckleball" :: nil);
 }
