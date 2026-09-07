@@ -860,6 +860,65 @@ blown forever, and the rows can be locked against further writing.  A
 boot-time self-test that wrote there would quietly consume a board's
 fuses the first time it ran on hardware, so this reads and nothing
 else.  That is a hardware constraint, not an emulator one.
+.PP
+.B "The DMA engine"
+.CW ( dmabcm.c ,
+0x3f007000) is how this SoC moves bulk data without the CPU, and it is
+unlike the rest of the board because the engine reads its instructions
+from memory: a 32-byte control block giving transfer info, source,
+destination, length, stride and the address of the next block.  The
+driver hands over an address, not a command, and chaining through
+NEXTCONBK is the point \- a whole scatter-gather list runs without the
+CPU waking once.
+.PP
+Two things there are easy to get wrong and both would only bite on the
+board.  Every address in a control block, and the block's own address,
+is a
+.I bus
+address: the engine is a bus master and sees RAM through the
+0xC0000000 uncached alias, as the VideoCore and the USB core do.  And
+the block and its data must be visible to something that is not reading
+through the CPU's caches, so
+.CW dmacopy()
+cleans the control block, the source
+.I and
+the destination before starting, and invalidates the destination
+afterwards.  The emulator is coherent and would forgive all of it.
+.CW DMA-OK
+copies 256 bytes and compares them byte for byte, with a destination
+pre-filled with a value that is neither zero nor the source, so a
+transfer that silently does nothing shows as the fill rather than as a
+plausible result.
+.PP
+.B "The AUX mini UART"
+.CW ( auxbcm.c ,
+0x3f215000) is the Pi's second serial port, and on a Pi 3B usually the
+console, the PL011 having been given to the Bluetooth part.  Three of
+its habits are worth writing down.  AUX_ENABLES gates the registers and
+not merely the function, so until bit 0 is set every mini UART register
+reads zero and writes vanish \- including the ones you would use to
+find out why.  The line control register's data-length field is
+documented as one bit and is two: 8-bit data is 3, not 1, and following
+the datasheet gives 7-bit characters, which look like text that is
+subtly wrong rather than like a failure.  And the baud divisor derives
+from the core clock, not a fixed oscillator, which is why a Pi's mini
+UART console garbles when the core clock is scaled.
+.PP
+This was checked through the pin rather than by reading a status bit:
+QEMU wires the AUX block to the second serial port, so with
+.CW "-serial mon:stdio -serial file:aux.log"
+the string this driver transmits arrives in that file.
+.PP
+It also found a gap.  The divisor read back as zero, because LCR, MCR,
+CNTL, SCRATCH and BAUD were unimplemented in QEMU \- reads returned zero
+or a constant, writes were discarded.  On the SoC they hold what a
+guest puts in them, and a driver reads the divisor back to confirm the
+rate it asked for.
+.CW tools/qemu-patches/0008
+keeps them; the divisor now reads 270, which is
+.CW "250000000 / (8 * 115200) - 1"
+exactly.  That patch also reports a guest selecting 7-bit data, since
+that is the mistake the erratum invites.
 .NH 1
 Parallel: the kfs create failure -- re-diagnosed, and it is not what the old note said
 .PP

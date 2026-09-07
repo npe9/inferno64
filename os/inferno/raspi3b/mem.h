@@ -51,6 +51,8 @@
 #define	PWM0		(BCMPERIPH + 0x20c000)	/* BCM2835 PWM */
 #define	SYSTMR		(BCMPERIPH + 0x003000)	/* BCM2835 system timer, 1MHz */
 #define	THERMAL		(BCMPERIPH + 0x212000)	/* BCM2835 temperature sensor */
+#define	DMA0		(BCMPERIPH + 0x007000)	/* BCM2835 DMA, channels 0-14 */
+#define	AUX0		(BCMPERIPH + 0x215000)	/* BCM2835 AUX: mini UART, SPI1/2 */
 
 
 /* Mach struct above typical kernel image */

@@ -166,7 +166,13 @@ main(void)
 			therminit();
 			{
 				extern void otpinit(void);
+				extern void dmainit(void);
 				otpinit();
+				dmainit();
+				{
+					extern void auxinit(void);
+					auxinit();
+				}
 			}
 		}
 #ifdef SDIOTEST
