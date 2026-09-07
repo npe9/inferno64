@@ -76,12 +76,17 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	recompute();
 	win.reshape(Rect((0,0),(920,620)));
 	win.onscreen("place");
-	win.startinput("kbd"::nil);
+	win.startinput("kbd"::"ptr"::nil);
 	redraw();
 	for(;;) alt {
 	ctl := <-win.ctl or ctl = <-win.ctxt.ctl =>
 		win.wmctl(ctl);
 		redraw();
+	pointerev := <-win.ctxt.ptr =>
+		# The titlebar is drawn by this window and only sees a click
+		# if the program hands it one: without this arm the move,
+		# resize and menu buttons on the window do nothing at all.
+		win.pointer(*pointerev);
 	key := <-win.ctxt.kbd =>
 		case key {
 		16r1b or 'q' or 'Q' => win.wmctl("exit");

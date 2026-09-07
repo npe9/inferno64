@@ -88,13 +88,18 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	win.reshape(Rect((0, 0), (640, 480)));
 	win.onscreen("place");
-	win.startinput("kbd" :: nil);
+	win.startinput("kbd" :: "ptr" :: nil);
 	redraw();
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
 		win.wmctl(ctl);
 		redraw();
+	pointerev := <-win.ctxt.ptr =>
+		# The titlebar is drawn by this window and only sees a click
+		# if the program hands it one: without this arm the move,
+		# resize and menu buttons on the window do nothing at all.
+		win.pointer(*pointerev);
 	k := <-win.ctxt.kbd =>
 		if((k & Keyboard->Keyup) == Keyboard->Keyup)
 			continue;

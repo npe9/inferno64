@@ -184,7 +184,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		bestscore = scorestore->loadint("titanium", bestscore);
 	win.reshape(Rect((0, 0), (640, 480)));
 	win.onscreen("place");
-	win.startinput("kbd" :: "keyup" :: nil);
+	win.startinput("kbd" :: "keyup" :: "ptr" :: nil);
 	gphase = PHINTRO;
 
 	ticks := chan of int;
@@ -193,6 +193,11 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
 		win.wmctl(ctl);
+	pointerev := <-win.ctxt.ptr =>
+		# The titlebar is drawn by this window and only sees a click
+		# if the program hands it one: without this arm the move,
+		# resize and menu buttons on the window do nothing at all.
+		win.pointer(*pointerev);
 	k := <-win.ctxt.kbd =>
 		keydown(k);
 	<-ticks =>
