@@ -1067,10 +1067,37 @@ corruption, at
 the same opcode, the same module, the same instruction index this board
 now produces on demand.
 .PP
-So the pc64 corruption is not a pc64 defect.  It is what this kernel
-does when a second processor touches shared state, and pc64 has had
-.CW MAXMACH
-at 128 the whole time.  The two investigations are one investigation.
+So the two investigations are one investigation.  But the obvious
+reading of that \- "the pc64 corruption is what this kernel does when a
+second processor touches shared state" \- is wrong, and worth writing
+down as wrong because it is the first thing anyone will think.
+.PP
+Every pc64 boot measured here ran at
+.CW "-smp 1" .
+One processor, and it still corrupts.  So a second processor is not
+what causes this; on
+.CW virtarm64
+it is only what makes it appear.
+.PP
+Two further checks say the same thing from the other side.  The VM lock
+holds:
+.CW nvm ,
+the count of processors inside the interpreter, never rises above 1
+across four boots with
+.CW secsched
+set, and the holder is always cpu0 \- cpu1 never enters
+.CW xec()
+at all.  So this is not two processors in the interpreter, and it is
+not the collector.  What is left is a bug that one processor can hit on
+its own, which a second processor perturbs the timing enough to expose:
+constantly on pc64, one boot in ten here.
+.PP
+That is a better position than it sounds.  A latent single-processor
+bug with a switch that changes how often it fires is far easier to work
+on than a rare one with no switch at all, and it means the reproducer
+is useful to the
+.CW doc/inferno-ports.ms
+hunt without either investigation having to wait for the other.
 .PP
 What is still not done, so the state is not overstated: GICv3 (the
 redistributor is per processor and this board derives one fixed base),
