@@ -33,6 +33,7 @@
 #include "mem.h"
 #include "dat.h"
 #include "fns.h"
+#include "ureg.h"
 
 enum {
 	Load	= 0x00/4,
@@ -68,12 +69,39 @@ enum {
 	 */
 	Nsample	= 8,
 	Samplems = 3,
+
+	/*
+	 * The ARM timer's interrupt is bit 0 of the controller's basic
+	 * bank, which trap.c carries as IRQ 64.  Nothing on this board
+	 * used the basic bank before: gicenable() armed it and nothing
+	 * dispatched it.
+	 */
+	Armtimerirq = 64,
+	Intrhz	= 100,
+	Intrms	= 50,		/* 100Hz for 50ms is 5 interrupts */
 };
 
 static u32*
 at(void)
 {
 	return (u32*)ARMTIMER;
+}
+
+static ulong armtmrintrs;
+
+static void
+armtmrintr(Ureg*, void*)
+{
+	u32 *r = at();
+
+	/*
+	 * Ack first.  IRQACK is write-only and clears the interrupt at
+	 * the source; the line is level, so leaving it asserted would
+	 * re-enter this handler the instant it returns and wedge the
+	 * board -- the usual way a first interrupt test takes one down.
+	 */
+	r[Irqack] = 1;
+	armtmrintrs++;
 }
 
 /*
@@ -207,4 +235,77 @@ armtmrinit(void)
 	}
 	print("ARMTIMER-OK countdown wraps at its programmed rate, "
 		"free-running agrees with the system timer\n");
+}
+
+/*
+ * The interrupt, checked separately and later.
+ *
+ * It cannot be checked from armtmrinit().  Every device init on this
+ * board runs before init0() calls spllo(), so trap() is not entered at
+ * all at that point -- a counter in trap() reads zero entries there.
+ * An interrupt test run with interrupts masked reports "delivers
+ * nothing" whatever the hardware does: a test that cannot pass is as
+ * useless as one that cannot fail.
+ *
+ * So this runs from init0(), after chandevinit(), where interrupts are
+ * live.  It checks the thing a counter test cannot stand in for: the
+ * block can count perfectly and still never deliver, which is exactly
+ * what it did until trap() learned to read the controller's basic
+ * bank.  Counting against an independent clock catches a timer that
+ * delivers at the wrong rate as well as one that never delivers.
+ */
+void
+armtmrintrcheck(void)
+{
+	u32 *r = at();
+	u32 predivider, rate, load;
+	uvlong s1, s2;
+	ulong elapsedus, expect;
+	long err;
+	extern uvlong systmrread(void);
+
+	predivider = r[Predivider] & 0x3ff;
+	if(predivider == 0 && r[Control] == 0)
+		return;			/* no block; armtmrinit() said so */
+	rate = Apbhz / (predivider + 1);
+	load = rate / Intrhz;
+	if(load == 0)
+		load = 1;
+
+	armtmrintrs = 0;
+	intrenable(Armtimerirq, armtmrintr, nil, 0, "armtimer");
+	r[Control] = C23bit | Cpre1;		/* mode before load */
+	r[Load] = load;
+	r[Irqack] = 1;				/* drop anything stale */
+	r[Control] = C23bit | Cpre1 | Cenable | Cinten;
+
+	s1 = systmrread();
+	delay(Intrms);
+	s2 = systmrread();
+	armtmrstop();
+	r[Irqack] = 1;
+
+	elapsedus = (ulong)(s2 - s1);
+	expect = (ulong)(((uvlong)elapsedus * Intrhz) / 1000000);
+	err = (long)armtmrintrs - (long)expect;
+	if(err < 0)
+		err = -err;
+	print("armtimer: %lud interrupts in %lud us at %d Hz\n",
+		armtmrintrs, elapsedus, Intrhz);
+	if(armtmrintrs == 0){
+		print("ARMTIMER-INTR-FAIL counts correctly but delivers nothing\n");
+		return;
+	}
+	/*
+	 * Half the expected count plus one is the tolerance: delay() is
+	 * a busy loop that the clock interrupt itself preempts, so the
+	 * window is not exact, and at 100Hz over 50ms the count is
+	 * small enough that a single missed edge is a fifth of it.
+	 */
+	if(expect == 0 || err > (long)(expect/2 + 1)){
+		print("ARMTIMER-INTR-FAIL %lud interrupts, expected about %lud\n",
+			armtmrintrs, expect);
+		return;
+	}
+	print("ARMTIMER-INTR-OK interrupt arrives at the programmed rate\n");
 }

@@ -259,6 +259,15 @@ init0(void)
 			print("MBOX no board mac\n");
 		poperror();
 	}
+	/*
+	 * Interrupts are live from here (spllo() at the top of init0),
+	 * which is the earliest the ARM timer's delivery can be tested
+	 * at all -- see armtmrintrcheck().
+	 */
+	{
+		extern void armtmrintrcheck(void);
+		armtmrintrcheck();
+	}
 	disinit("/osinit.dis");
 }
 

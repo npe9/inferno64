@@ -1000,6 +1000,64 @@ a poor timer for wall-clock work and a good one for periodic
 interrupts.  The board keeps the ARM generic timer for scheduling; this
 is here because it is part of the SoC and was previously invisible.
 .PP
+.B "And its interrupt, which is the third bank."
+Saying a timer is "a good one for periodic interrupts" and then never
+delivering one is the kind of claim this document is supposed not to
+make, so
+.CW armtmrintrcheck()
+now programs it at 100Hz with
+.CW Cinten
+set and counts what arrives.
+.PP
+Nothing arrived at first, and the registers said why:
+.CW RAWIRQ
+and
+.CW MSKIRQ
+both 1, so the timer was asserting;
+.CW IRQ_PENDING_BASIC
+bit 0 set and
+.CW IRQ_ENABLE_BASIC
+bit 0 set, so the controller had it pending and enabled.  Pending,
+enabled, and dispatched by nobody \- the same shape as the PL011 fault
+in the console chapter, one bank over.  The BCM2835 controller has
+three pending registers, not two: the ARM basic bank at offset 0, and
+the two GPU banks at 4 and 8.
+.CW trap()
+now reads all three, and the ARM timer's interrupt is IRQ 64.
+.PP
+The basic bank needs a mask the GPU banks do not.  Only bits 0..7 of
+.CW IRQ_PENDING_BASIC
+are sources; bits 8 and 9 say merely "something is pending in bank 1 /
+bank 2", and bits 10..20 are duplicate copies of eleven selected GPU
+IRQs \- 57, the PL011, among them.  Dispatching on those would run a
+handler twice for one interrupt.
+.PP
+The check also has to run in the right place.  It cannot live in
+.CW armtmrinit()
+with the counter tests: every device init on this board runs before
+.CW init0()
+calls
+.CW spllo() ,
+and a counter in
+.CW trap()
+reads zero entries there \- the CPU is not taking interrupts at all
+yet.  A test for interrupt delivery run with interrupts masked reports
+"delivers nothing" whatever the hardware does, which fails for the
+wrong reason as surely as the counter test could have passed for one.
+So it runs from
+.CW init0() ,
+after
+.CW chandevinit() ,
+and reports
+.CW ARMTIMER-INTR-OK
+with 4 interrupts counted in 50013us at 100Hz.
+.PP
+.CW intrenable()
+now panics above the basic bank rather than accepting a number nothing
+can deliver.  IRQ 33 was accepted for the console, armed in a register
+nobody read, and cost a long time to find; the next wrong number
+should be loud.
+.PP
 .B "The I2S/PCM serialiser"
 .CW ( i2sbcm.c ,
 0x3f203000, and
@@ -1367,11 +1425,42 @@ can be set in
 .CW devuart.c
 opened the output queue with flags of 0.  With
 .CW Qkick
-the peak queue length falls from 1121 to 79 and both
+the queue drains and both
 .CW SD-FS-CREATE-OK
 and
 .CW RASPI3B-SH-OK
 appear, on stock QEMU as well as the patched build.
+.PP
+The queue depths, since three drivers are described in this chapter
+and each has its own:
+.IP \(bu
+Broken, no
+.CW Qkick :
+climbs monotonically to 1121 and is never once observed to fall.
+.IP \(bu
+.CW Qkick ,
+fill loop unbounded at 128: peaks at 79.
+.IP \(bu
+As shipped \-
+.CW Qkick
+plus a fill loop capped at
+.CW Fifodepth
+\- peaks at 337.  Higher, and expected to be: each kick now moves 16
+bytes and hands the remainder to the interrupt rather than emptying the
+queue in one call, so more of the output is in flight at any moment.
+It is bounded and it drains, which is the property that matters; 337 is
+a twentieth of the 8K queue.
+.PP
+All three figures are measured with the
+.CW track: ,
+.CW devprog:
+and
+.CW newa:
+instrumentation left in
+.CW libinterp
+by earlier work still present, and that instrumentation is the dominant
+console load on every boot \- see the note at the end of this chapter.
+Anyone who removes it will measure lower numbers than these.
 .PP
 .B "The transmit interrupt, and why claiming it worked was wrong."
 .CW Qkick
@@ -1475,6 +1564,33 @@ console until the console is ruled out.
 is now called on every boot rather than commented out, and
 .CW SD-FS-CREATE-OK
 is part of the regression.
+.PP
+.B "Not fixed here: the interpreter's tracking instrumentation."
+Earlier debugging left a live object-tracking facility in
+.CW libinterp/heap.c ,
+and
+.CW xec.c
+calls
+.CW checktracked()
+from the interpreter's inner loop \- at
+.CW xec.c:2431 ,
+with the checkpoint name "instr", once per Dis instruction.  It prints
+.CW track: ,
+.CW devprog:
+and
+.CW newa:
+lines throughout every boot and is the largest single source of console
+traffic on this board.
+.PP
+It is left alone deliberately.  It is in
+.CW libinterp ,
+which every platform in the tree shares, not in
+.CW os/inferno/raspi3b ,
+so gating or removing it is a change to every port at once and belongs
+to whoever owns that decision.  It is recorded here because it distorts
+every console measurement above, and because a per-instruction check in
+the interpreter's hot path is a performance question as much as a noise
+one.
 .NH 1
 When this is done
 .PP

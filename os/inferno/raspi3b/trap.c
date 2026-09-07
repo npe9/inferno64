@@ -162,7 +162,22 @@ enum {
 	CntpIStatus	= 1<<2,		/* CNTP_CTL_EL0.ISTATUS: timer fired */
 	IrqEnable1	= 0x10,
 	IrqPending1	= 0x04,
+	IrqPendingBasic	= 0x00,
 	Ngpubank	= 2,		/* GPU IRQs 0..63, in two registers */
+
+	/*
+	 * The ARM basic bank, carried here as IRQs 64..71 so that one
+	 * flat number space covers the whole controller.  Only bits
+	 * 0..7 of IRQ_PENDING_BASIC are sources (bit 0 is the ARM
+	 * timer); bits 8 and 9 merely say "something is pending in
+	 * bank 1 / bank 2", and bits 10..20 are duplicate copies of
+	 * eleven selected GPU IRQs -- 57, the PL011, among them.
+	 * Dispatching on those would run a handler twice.  Basicmask
+	 * is what keeps this to real sources.
+	 */
+	Basicbase	= 64,
+	Nbasicirq	= 8,
+	Basicmask	= 0xff,
 };
 
 static void
@@ -175,6 +190,11 @@ gicenable(int irq)
 	if(irq == GicPPITimer)		/* generic timer: enabled by clock.c */
 		return;
 	ic = (u32*)IRQBASE;
+	/*
+	 * 0x10/0x14 are ENABLE_1 and ENABLE_2; 0x18 is ENABLE_BASIC,
+	 * which is where irq/32 == 2 lands, so IRQs 64..71 enable
+	 * themselves correctly with the same arithmetic.
+	 */
 	ic[IrqEnable1/4 + irq/32] = 1 << (irq%32);
 }
 
@@ -225,6 +245,19 @@ trap(Ureg *ur)
 					f(ur, irqarg[v]);
 			}
 		}
+		/*
+		 * The basic bank is a third pending register, and not
+		 * adjacent to the other two -- it sits below them, at
+		 * offset 0, so it cannot be folded into the loop above.
+		 */
+		pend = ic[IrqPendingBasic/4] & Basicmask;
+		for(irq = 0; irq < Nbasicirq; irq++){
+			if((pend & (1<<irq)) == 0)
+				continue;
+			v = Basicbase + irq;
+			if((f = irqhandler[v]) != nil)
+				f(ur, irqarg[v]);
+		}
 		return;
 	default:
 		/*
@@ -263,7 +296,14 @@ void
 intrenable(int v, void (*f)(Ureg*, void*), void *a, int tbdf, char *name)
 {
 	USED(tbdf, name);
-	if(v <= 0 || v >= GicIRQMax)
+	/*
+	 * Anything above the basic bank is enabled by nobody and
+	 * dispatched by nobody.  Fail here rather than silently: a
+	 * source armed in the controller and never delivered is a
+	 * quiet fault that costs a long time to find, which is
+	 * exactly what IRQ 33 did to the console.
+	 */
+	if(v <= 0 || v >= Basicbase + Nbasicirq)
 		panic("intrenable: irq %d", v);
 	irqhandler[v] = f;
 	irqarg[v] = a;
