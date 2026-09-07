@@ -919,6 +919,15 @@ keeps them; the divisor now reads 270, which is
 .CW "250000000 / (8 * 115200) - 1"
 exactly.  That patch also reports a guest selecting 7-bit data, since
 that is the mistake the erratum invites.
+.PP
+.CW AUX-OK
+appears on stock QEMU as well as on the patched build, and the two are
+not equally strong.  On stock the transmit path works and the divisor
+reads back zero, so the check passes on the strength of the
+transmission alone; on the patched build it passes with the readback
+agreeing too.  Both are
+.I qemu
+tier, but only the second actually confirms the rate.
 .NH 1
 Blocks QEMU stubbed out, now modelled and driven
 .PP
@@ -947,15 +956,132 @@ The check runs both counters and measures them against a clock that
 shares nothing with either.  The countdown comes out at
 .CW "1984126 Hz" ,
 which is 250MHz / 126 \- the reset pre-divider, exactly.  The
-free-running counter advances 5008500 ticks while the 1MHz system timer
-sees 20034 microseconds, and 20034 * 250 is 5008500 \- also exactly.
-Two counters agreeing to the tick is worth more than either reading
-alone.
+free-running counter advances 6012500 ticks while the 1MHz system timer
+sees 24047 microseconds, and 24047 * 250 is 6011750 \- agreeing to
+within a part in eight thousand.  Two counters agreeing that closely is
+worth more than either reading alone.
+.PP
+The first version of both halves passed, and both were wrong.  The
+guest read the countdown twice twenty milliseconds apart and passed if
+the readings differed, which is far too weak: it passes for a counter
+that has stopped anywhere other than where it started.  Sampling the
+counter eight times at three milliseconds instead \- long enough in
+total to cross a wrap, short enough per interval that the subtraction
+across one is unambiguous \- showed it reading
+.CW "0 0 7757 1804 15691 9739" ,
+correct at the end and parked at zero at the start.
+.PP
+The model was driving the countdown with a QEMU ptimer and returning
+.CW ptimer_get_count()
+for VALUE.  That returns a hard zero for any read taken after the
+counter has expired but before ptimer's callback has been serviced;
+.CW hw/core/ptimer.c
+clamps it to "prevent timer underflowing if it should already have
+triggered", and no policy flag changes that.  Under TCG a guest in a
+calibration loop starves the main loop, so the window is milliseconds
+wide.  Real silicon never parks: the counter free-runs and a read lands
+wherever it lands.
+.PP
+.CW tools/qemu-patches/0010
+computes both counters on demand from the virtual clock \- which is
+what the free-running counter, the one that had always read correctly,
+was already doing \- and leaves a plain QEMUTimer to deliver only the
+interrupt, so the value and the deadline come from one base and cannot
+drift apart however late a callback runs.  The same eight samples then
+read
+.CW "19647 13639 7684 1732 15618 9633" :
+5953 ticks an interval at the programmed rate, wrapping cleanly through
+the 19842-tick period.  Run against the old model the new check reports
+.CW "ARMTIMER-FAIL countdown fell 1858 in 3003 us, expected 5958" ,
+which is how a test earns its keep.
 .PP
 The APB clock is the core clock, which the firmware scales, so this is
 a poor timer for wall-clock work and a good one for periodic
 interrupts.  The board keeps the ARM generic timer for scheduling; this
 is here because it is part of the SoC and was previously invisible.
+.PP
+.B "The I2S/PCM serialiser"
+.CW ( i2sbcm.c ,
+0x3f203000, and
+.CW tools/qemu-patches/0011 )
+was the last of the stubs, and nothing in the tree wanted it either, so
+both halves are new: a model and a driver that is also the worked
+example of how to configure the block.  It is the SoC's audio port \-
+a frame of programmable length clocked out of a 64-word TX FIFO and in
+to a 64-word RX FIFO on GPIO 18-21, which is how a DAC or a MEMS
+microphone HAT attaches to a Pi.
+.PP
+The awkward part is that it has no rate of its own.  The sample rate is
+the clock manager's PCM clock divided by the frame length in bits, so
+it is set in two registers at once \- CM_PCMDIV and MODE_A's FLEN \-
+and getting one right and the other wrong gives audio at the wrong
+pitch rather than an error.
+.CW i2sconfig()
+therefore derives both from a single requested rate and returns what it
+actually achieved, so a caller can look.  48kHz needs the clock
+manager's fractional divider: a 3.072MHz bit clock is 19.2MHz/6.25, not
+an integer, and the 12.12 fixed-point divisor lands it exactly.
+.PP
+Three other things a driver gets wrong are written into the file.  The
+FIFOs must be primed before TXON, because the serialiser starts
+clocking at once and an empty TX FIFO underflows on the first frame.
+TXCLR and RXCLR are self-clearing and take two PCM clocks, so reading
+them back to confirm a clear is a mistake.  And the block needs the
+same kill/wait/set/enable dance with the 0x5a password that the PWM
+clock does.
+.PP
+The exercise checks the FIFOs and their flags statically, then the
+error and interrupt-status bits \- easy to get backwards, since both
+are write-one-to-clear \- and then the frame rate itself, by timing how
+long the serialiser takes to drain a full 64-word FIFO against the 1MHz
+system timer.  That last one is the only check that matters.  A block
+whose registers all read back correctly and whose serialiser runs at
+the wrong rate is a working driver and broken audio, and an independent
+clock is the only thing that tells them apart here rather than in a
+DAC.  It reports draining 64 frames in 1356 microseconds against 1333
+expected, and filling the RX FIFO in 1358.
+.PP
+The model has no audio backend: TX data is discarded and RX reads
+zeroes, which is what an unconnected DIN pin gives on a board.  One
+departure from the datasheet is deliberate and is flagged in the model
+as well as here \- its TXTHR and RXTHR description is defective, giving
+four settings but identical text for 01 and 10 with the fraction
+missing.  The hardware uses quarters, and that is what is implemented.
+.NH 1
+What stays unmodelled, and why
+.PP
+The remaining
+.CW create_unimp
+blocks in QEMU's Pi peripherals are not a to-do list.  Each is left
+alone for a reason, and the reason is never that the emulator would be
+hard to extend.
+.PP
+.B "The BSC slave"
+(0x3f214000) is documented, and useless here.  It makes the Pi an I2C
+or SPI
+.I slave ,
+so exercising it needs a master on the other end of the wire.  There is
+nothing on the other end of the wire.
+.PP
+.B "The secondary memory interface"
+(0x3f600000) is documented only in fragments.  Its register semantics
+are not public in enough detail to model faithfully, and a model
+written from guesswork would be inventing behaviour for a driver to
+match \- which is the exact failure the evidence tiers in
+.CW tools/qemu-patches/README
+exist to prevent.
+.PP
+.B "AUX SPI1 and SPI2"
+(inside 0x3f215000) are real and documented, but
+.CW spibcm.c
+already drives SPI0 and the AUX SPIs are the same protocol through a
+different register layout.  Modelling them would add a model and a
+driver and demonstrate nothing that SPI0 does not.
+.PP
+.B "TXP, DBUS, AVE0, V3D and SDRAMC"
+are internal to the SoC.  They are either undocumented, driven only by
+the VideoCore firmware, or \- in V3D's case \- a GPU, which is out of
+scope for this port by the same decision that leaves out OpenGL below.
 .NH 1
 Parallel: the kfs create failure -- re-diagnosed, and it is not what the old note said
 .PP

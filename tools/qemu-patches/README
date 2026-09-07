@@ -41,6 +41,20 @@ worth keeping when adding to this series:
     the dropped bulk maxpkt in appl/cmd/usb/usbd.b; a permissive model
     would have hidden it.
 
+WHAT COULD GO UPSTREAM.  Two of these are plain qemu bugs, independent
+of Inferno and of this port, and could be sent to qemu-devel on their
+own:
+
+	0006	cprman matched the wrong mux's divisor register.
+		Affects every clock mux, so every guest.
+	0008	the mini UART dropped its storage registers, so a
+		driver could not read back what it had written.
+
+0010 is a bug in 0009, not in qemu; it is kept as a separate patch
+because the reasoning is worth reading.  Everything else adds a device
+model qemu does not have, and only matters to someone emulating a Pi in
+this much detail.
+
 THE PATCHES
 
 0001 bcm2835_powermgt: model the watchdog countdown.
@@ -148,6 +162,74 @@ THE PATCHES
 	and a duty cycle cannot be measured.  The registers, the FIFO
 	discipline and the error reporting are modelled, which is the
 	part a driver gets wrong.
+
+	Needs no command-line argument; the block is part of the SoC.
+
+0008 hw/char/bcm2835_aux: keep the mini UART's storage registers.
+
+	A real qemu bug.  LCR, MCR, CNTL, SCRATCH and the baud rate
+	divisor were decoded and discarded, so a driver could not read
+	back what it had just written and had no way to tell a mini
+	UART it had configured from one it had not.  MSR now reports
+	CTS and DSR asserted, CNTL resets to 0x3 as the datasheet
+	says, and a 7-bit LCR selection is reported rather than
+	silently ignored.
+
+	Needs no command-line argument, but the mini UART is a second
+	serial port, so seeing its output takes a second -serial:
+
+		-serial mon:stdio -serial file:aux.log
+
+	Without that the AUX result still appears on the console --
+	auxbcm.c reports through print() -- but nothing written to the
+	mini UART itself is visible anywhere.
+
+0009 hw/timer: model the BCM2835 ARM timer.
+
+	create_unimp(... "bcm2835-sp804" ...) mapped nothing, and the
+	datasheet is explicit that this is not an SP804: the counter
+	is 23-bit rather than 32, there is a pre-divider between the
+	APB clock and the counter, and there is a second free-running
+	up-counter with its own prescaler.  A stock SP804 driver gets
+	the countdown roughly right and the free-running counter not
+	at all.
+
+0010 hw/timer: compute the ARM timer counters from the clock.
+
+	A bug in 0009, kept separate because the reasoning generalises.
+	Driving the countdown with a ptimer and reporting
+	ptimer_get_count() for VALUE reads back a hard zero for any
+	access taken after the counter expired but before ptimer's
+	callback ran -- hw/core/ptimer.c clamps to 0 to "prevent timer
+	underflowing if it should already have triggered", whatever
+	the policy flags say.  Under TCG a guest in a calibration loop
+	starves the main loop, so that window is milliseconds wide,
+	and a guest polling VALUE saw the counter parked at zero
+	instead of wrapping.
+
+	Both counters are now computed on demand from the virtual
+	clock and a plain QEMUTimer delivers only the interrupt, so
+	the value and the deadline come from one base and cannot
+	drift.  include/hw/ptimer.h says new devices should not use
+	PTIMER_POLICY_LEGACY; this one uses no ptimer at all.
+
+0011 hw/audio: model the BCM2835 I2S/PCM interface.
+
+	I2S_OFFSET was another create_unimp, so a guest could neither
+	set a sample rate nor move a frame.  Both 64-word FIFOs, the
+	frame and channel configuration, the thresholds, the sync
+	flags, the write-one-to-clear error bits, the DMA request
+	levels and the interrupt, clocked from the clock manager's pcm
+	mux.  The FIFOs are advanced on demand for the reason 0010
+	gives.
+
+	No audio backend: TX data is discarded and RX reads zeroes,
+	which is what an unconnected DIN pin gives on a board.
+
+	One deliberate departure from the datasheet, and it is in a
+	comment in the model too: its TXTHR and RXTHR description is
+	defective -- four settings, but the text for 01 and 10 is
+	identical and omits the fraction.  The hardware uses quarters.
 
 	Needs no command-line argument; the block is part of the SoC.
 
