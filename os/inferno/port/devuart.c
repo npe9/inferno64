@@ -50,7 +50,17 @@ uartenable(Uart *p)
 	else
 		qreopen(p->iq);
 	if(p->oq == nil){
-		if((p->oq = qopen(8*1024, 0, uartkick, p)) == nil){
+		/*
+		 * Qkick, not 0: "always call the kick routine after qwrite"
+		 * (portdat.h).  Without it qbwrite() calls the kick only
+		 * when it is waking a starving reader, and nothing reads
+		 * this queue -- the uart drains it from the kick.  So output
+		 * moved only by coincidence, and a workload that stopped
+		 * producing those coincidences lost every byte written to
+		 * the console from that point on while the machine carried
+		 * on running.
+		 */
+		if((p->oq = qopen(8*1024, Qkick, uartkick, p)) == nil){
 			qfree(p->iq);
 			p->iq = nil;
 			return nil;

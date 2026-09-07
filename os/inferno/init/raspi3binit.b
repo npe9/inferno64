@@ -449,13 +449,12 @@ init()
 	drawtest();
 	usbcheck();
 	# sdfs() reams a kfs onto the SD card, mounts it over a pipe, and
-	# creates a file.  The ream and every SD write succeed, but the
-	# create-over-mount hangs: pid 1's Twalk gets its Rerror and then the
-	# error unwinds past mntwalk's own waserror handler instead of into
-	# it, so pid 1 never issues the Tcreate.  It is the open arm64
-	# multi-kproc error-stack bug (doc/inferno-driver-plan.ms); left
-	# uncalled so the board boots clean.  Uncomment to reproduce.
-	# sdfs();
+	# creates a file through the mount.  It works, and it was always
+	# working: what used to look like a hang here was the console
+	# output queue never being drained, so SD-FS-CREATE-OK was written
+	# and never emitted.  See the uart fix in os/inferno/port/devuart.c
+	# and doc/raspi3b-completion-plan.ms.
+	sdfs();
 
 	shell = load Shell "/dis/sh.dis";
 	if(shell == nil){ sys->print("init: load sh: %r\n"); exit; }

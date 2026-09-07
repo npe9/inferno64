@@ -1281,180 +1281,133 @@ presents a directory as a FAT16 volume \- and
 .CW tools/qemu-patches/README
 now carries the full invocation.
 .NH 1
-Parallel: the kfs create failure -- re-diagnosed, and it is not what the old note said
+The kfs create failure was the console, and the create always worked
 .PP
-Independent of USB and not blocking (dossrv, ramfs and 9660srv all run
-over the working SD block device), but worth fixing for a reliable
-native writable filesystem.  The reproducer is still
+There is no kfs create bug.  There never was one.  The create succeeds,
 .CW sdfs()
-in
-.CW raspi3binit.b ,
-and it still fails.  What it is doing, however, is not what
-.CW doc/inferno-driver-plan.ms
-concluded, and that note should not be relied on.
-.PP
-.B "The old diagnosis was a printing artifact."
-It said pid 1 enters
-.CW error()
-and stalls in its prologue right after
-.CW spllo() ,
-because a print on
-.CW error() 's
-first line never appeared "even ungated", and that raspi3b never reaches
-.CW mntwalk 's
-.CW waserror()
-recovery.  Neither holds.  Instrumented with
-.CW iprint
-instead of
-.CW print ,
-the unwind is complete and ordinary:
-.CW error()
-is entered, passes
-.CW spllo() ,
-reaches
-.CW nexterror() ,
-and both of
-.CW mntwalk 's
-.CW waserror()
-handlers fire and recover, exactly as they do on the USB/dossrv path.
-The reason the earlier prints vanished is that
-.CW print()
-queues through
-.CW serialoq
-(devcons.c's
-.CW putstrn0 ),
-and the kproc that drains that queue is itself blocked by the time the
-failure happens, so the output is written and never emerges.
-.CW iprint
-goes to the uart directly and shows everything.  Any conclusion in that
-document drawn from a print that "never fired" is suspect for the same
-reason.
-.PP
-.B "It is not a deadlock, and the Styx conversation succeeds."
-Tracing every 9P message across the mount shows the whole exchange
-completing: Tattach/Rattach, then Twalk answered with Rerror
-("directory entry not found" \- correct Styx, the create's existence
-check), then Twalk/Rwalk, then
-.B Tcreate answered with Rcreate,
-then Tclunk/Rclunk.
-.CW kcreate()
-returns a valid descriptor \- fd 6 \- so the file is created on the kfs
-filesystem and the kernel has an open channel for it.
-.PP
-The failure is entirely after that success.  The newly created fid is
-clunked, the next use of the descriptor raises
-.CW "fd out of range or not open" ,
-and an empty error string then propagates out of the Init prog, which
-.CW vmachine() 's
-handler cannot place (an empty
-.CW errstr
-makes
-.CW handler()
-return 0), so the prog exits.  The board never reaches its shell because
+runs to its end, and
 .I init
-died, not because anything is wedged: the proc dump at that point shows
-the interpreter idle on
-.CW isched.irend
-and the remaining procs in
-.CW qwait ,
-which is what an idle machine looks like once its init has gone.
+carries on and starts the shell.  What failed was the console: every
+byte written to it after a certain point was queued and never emitted,
+so
+.CW SD-FS-CREATE-OK
+was produced and never seen, and a working board looked like a wedged
+one.
 .PP
-.B "One hypothesis tested and rejected."
-.CW newfd()
-installs the descriptor in
-.CW up->fgrp
-while
-.CW mkfd()
-takes its reference from
-.CW up->env->fgrp ,
+.B "How it was found."
+Not by pursuing the saved Dis state, which was the recorded next step.
+The one hard fact was that the created FD reached refcount zero, and a
+refcount reaches zero in only a few ways, which
+.CW freeFD 's
+own
+.CW swept
+argument tells apart without needing
+.CW destroy() 's
+caller pc \- a value this tree had already recorded as untrustworthy.
+Every FD in the whole boot came back
+.CW "swept 0" :
+never the collector, always an ordinary
+.CW destroy() .
+.PP
+That killed the garbage-collector hypothesis, and printing the running
+module and PC at each free killed the rest.  The two frees blamed on the
+create both landed at Init instruction 1064, and
+.CW raspi3binit.sbl
+maps 1063 and 1064 to
+.I "line 458" \-
+the
+.CW sdfs()
+call site itself, not anything inside it.  So those frees were
+.CW sdfs()
+returning normally and its frame being torn down, which is correct
+behaviour and not a bug at all.  Instruction 1065 is line 460, and the
+trace showed the
+.CW Readdir ,
+.CW Env ,
+.CW Sh
 and
-.CW Sys_create()
-does a
-.CW release() / acquire()
-between them, so those two Fgrps diverging would explain the symptom
-precisely.  They do not: printed either side of the window they are the
-same pointer throughout.  Whatever closes the descriptor is elsewhere.
+.CW Echo
+modules running after it: the shell had loaded and run.
 .PP
+.B "The actual bug."
+Console output goes through
+.CW serialoq ,
+which the uart drains from its kick routine.  But
+.CW qbwrite()
+calls a queue's kick only when it is waking a starving reader or when
+.CW Qkick
+is set on the queue, and
+.CW Qkick
+appears exactly once in
+.CW os/inferno/port/qio.c \-
+in that test.  Nothing ever set it.  Nothing reads
+.CW serialoq
+either, since the uart drains it from the kick.  So console output
+moved only by coincidence, and a workload that stopped producing those
+coincidences lost every byte from that point on.
 .PP
-.B "A second pass found and fixed a real bug here, which is nonetheless not this one."
+Measured directly: with
+.CW sdfs()
+running,
+.CW qlen
+on the console queue climbs monotonically to 1121 and is never once
+observed to fall.
+.CW RASPI3B-SH-OK
+reaches the console driver \- the string is there, with the queue only
+1121 bytes deep, nowhere near its 8K limit \- and is never emitted.  On
+an ordinary boot the queue peaks at 33 and drains, which is why this
+was only ever seen under kfs.
+.PP
+.CW portdat.h
+documents the fix in its own comment on the flag:
+.CW Qkick ,
+"always call the kick routine after qwrite", and the same line says it
+can be set in
+.CW qopen .
+.CW devuart.c
+opened the output queue with flags of 0.  With
+.CW Qkick
+the peak queue length falls from 1121 to 79 and both
+.CW SD-FS-CREATE-OK
+and
+.CW RASPI3B-SH-OK
+appear, on stock QEMU as well as the patched build.
+.PP
+.B "And a second, latent one."
+The PL011 driver never enabled the transmit interrupt \-
+.CW uartvirtarm64.c
+unmasked
+.CW UartIMSCRX
+alone, and
+.CW uartintr
+only drained the receiver.
+.CW UartIMSCTX
+was defined and unused.  On QEMU that is survivable because the model
+accepts a byte instantly, so the kick alone keeps up; on a board, where
+the FIFO fills and output has to resume when it drains, it would not
+be.  The handler now restarts transmission and the kick asks for the
+interrupt exactly while there is something left to send, clearing the
+mask when there is not so an idle FIFO cannot storm.
+.PP
+.B "What this says about the old diagnosis."
+The chapter this replaces was careful, and its measurements were sound:
+the Styx does complete, the fgrp does not diverge, the frame does not
+move, and the
 .CW mount (2)
-consumes its descriptor:
-.CW bindmount()
-ends its success path with
-.CW "fdclose(up->fgrp, fd, 0)" ,
-so the number is free again the moment
-.CW sys->mount
-returns.  The Limbo
-.CW FD
-handed in still carries that number, though, and
-.CW freeFD() \-
-its finaliser \- closes it a second time whenever the program drops the
-handle.  By then the kernel has very likely reissued the number, so the
-second close lands on an unrelated file.  Traced live in the reproducer:
-.CW sys->pipe
-gives fds 6 and 7,
-.CW sys->mount
-consumes 6, the create is then handed 6 again
-.CW ( "newfd fg 0x390d550 fd 6 maxfd 5" ),
-and the stale pipe handle closes it underneath.
-.CW Sys_mount()
-now marks the handle spent on success, so the second close cannot
-happen; a program that goes on using it gets a clean error instead of
-somebody else's file.  Verified not to regress anything: the full
-board \- SD card, USB stick through dossrv (which mounts a pipe exactly
-this way), USB ethernet \- still passes every marker.
+double-close it found on the way was a real bug and is really fixed.
+What it lacked was a reason to doubt that the absence of a marker meant
+the absence of the work.  It had even recorded the mechanism \- that
+.CW print()
+queues and can be swallowed, which is why
+.CW iprint
+was used for the tracing \- without applying it to the marker whose
+absence defined the bug.  A missing marker is evidence about the
+console until the console is ruled out.
 .PP
-That fix does
-.I not
-cure the kfs create, so it is not offered as one.  With it in place the
-create still fails identically, because the first close is the create's
-.I own
-FD object, freed at refcount 0 the instant after
-.CW "*f->ret = mkfd(fd)"
-stores it.
-.PP
-.B "What the last pass narrowed it to."
-Two hypotheses are now dead by measurement, not argument.  The Dis frame
-does not move across the call: the
-.CW f
-and
-.CW f->ret
-pointers are identical either side of
-.CW Sys_create() 's
-.CW release() / acquire() .
-And nothing is wrong with the mount, the fgrp, the descriptor machinery
-or the transport in this program:
-.CW sys->open("/tmp")
-through the very same mount, in the same prog and the same fgrp, using
-the same
-.CW release() / acquire() -then- mkfd()
-shape, returns a working handle and
-.CW fstat
-through it succeeds (SD-FS-OPEN-OK, SD-FS-STAT-OK).
-.PP
-What is left is specific to
-.CW create ,
-and the one thing create does that open does not is take an
-.CW error()
-unwind in the middle of the call \- the benign walk-Rerror of its own
-existence check, recovered inside
-.CW mntwalk .
-The create's Styx completes after that (Twalk/Rwalk, Tcreate/Rcreate)
-and
-.CW kcreate()
-returns a valid descriptor; the FD object built from it is then dropped
-before the Limbo assignment can take effect, and an empty error string
-eventually propagates out of the prog, which
-.CW vmachine()
-cannot place and so exits.  The next pass should look at what that
-mid-call unwind does to the saved Dis state \- the prog is
-.CW release() d
-and its registers are in
-.CW up->iprog
-across the whole of
-.CW kcreate() \-
-rather than at the frame, the fgrp or the transport, all three of which
-are now ruled out.
+.CW sdfs()
+is now called on every boot rather than commented out, and
+.CW SD-FS-CREATE-OK
+is part of the regression.
 .NH 1
 When this is done
 .PP

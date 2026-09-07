@@ -39,10 +39,12 @@ uartintr(Ureg*, void *arg)
 {
 	Uart *uart;
 	Ctlr *c;
-	int i, ch;
+	int i, ch, mis;
 
 	uart = arg;
 	c = uart->regs;
+	mis = csr32r(c, UartMIS);
+
 	for(i = 0; i < 128; i++){
 		if(csr32r(c, UartFR) & UartFRRXFE)
 			break;
@@ -50,6 +52,17 @@ uartintr(Ureg*, void *arg)
 		uartrecv(uart, ch);
 	}
 	csr32w(c, UartICR, UartICRALL);
+
+	/*
+	 * Restart transmission.  Without this the console output queue is
+	 * drained only as a side effect of qbwrite()'s wakeup path, which
+	 * fires when a reader was starving and not otherwise: nothing
+	 * reads serialoq, so under load the queue grows without bound and
+	 * every byte written to the console is silently lost while the
+	 * machine runs on.  See the comment on virtarm64_kick().
+	 */
+	if(mis & UartIMSCTX)
+		uartkick(uart);
 }
 
 static void
@@ -87,6 +100,29 @@ virtarm64_kick(Uart *uart)
 			break;
 		csr32w(c, UartDR, *uart->op++);
 	}
+
+	/*
+	 * Ask for a transmit interrupt exactly while there is something
+	 * left to send.
+	 *
+	 * This is what makes output independent of who happens to call
+	 * the kick.  qbwrite() invokes a queue's kick only when a starving
+	 * reader is being woken or when Qkick is set, and nothing sets
+	 * Qkick anywhere in the tree; nothing reads the console output
+	 * queue either, since the uart drains it from here.  So without a
+	 * transmit interrupt the queue is drained only by coincidence,
+	 * and a workload that stops producing those coincidences -- kfs
+	 * running, say -- loses every byte of console output from that
+	 * point on while the machine carries on perfectly well.
+	 *
+	 * Leaving the mask set once the FIFO has drained would have the
+	 * PL011 re-assert immediately and storm, so it is cleared as soon
+	 * as there is nothing left.
+	 */
+	if(uart->op < uart->oe || (uart->oq != nil && qlen(uart->oq) > 0))
+		csr32w(c, UartIMSC, UartIMSCRX|UartIMSCTX);
+	else
+		csr32w(c, UartIMSC, UartIMSCRX);
 }
 
 static void

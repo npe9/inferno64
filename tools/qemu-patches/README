@@ -340,8 +340,10 @@ attached; DOS-FAIL means one was, with no filesystem on it.  A plain
 zeroed image gives the second, and on macOS newfs_msdos cannot format a
 file ("Cannot get partition offset"), so the way to get a real FAT
 filesystem is qemu's own vvfat: file=fat:rw:<directory> presents that
-directory as a FAT16 volume.  With it the board reports DISK-BLK,
-DISK-DOS, DISK-READ and DISK-WRITE.
+directory as a FAT16 volume.  With it the board reports DISK-BLK-OK,
+DISK-DOS-OK and DISK-READ-OK.  DISK-WRITE-FAIL is expected: qemu'''s
+vvfat write support is experimental and does not carry these writes.
+Use a real FAT image if the write path matters.
 
 SELF-TESTS
 
