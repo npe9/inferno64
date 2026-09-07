@@ -822,10 +822,23 @@ Against that, two, two and four of fourteen is the same rate.  The
 baseline has not moved.  Nothing here made anything worse, and the
 known-good such as it is remains usable as a known-good.
 .PP
-Two things were nonetheless ruled out along the way, by the same
+Four things were nonetheless ruled out along the way, by the same
 alternating method, and they are worth keeping so nobody spends the
-time twice: Phase 1a itself, since the parent commit scores identically;
-and this branch's own kernel instrumentation \- the
+time twice.  Two came in from
+.CW osprey-port
+and
+.CW raspi3b-port
+and are real fixes that simply do not bear on this: the timer overflow
+.CW ( "a sleep longer than 2^63/hz ns" ,
+which pc64 cannot hit because it has no
+.CW twhen
+soft-timer queue at all \- the bug lives only in the boards with the
+.CW stubs.c
+timer code) and
+.CW mount(2) 's
+double-closed descriptor, 2 of 14 either side.  The other two are Phase
+1a itself, since the parent commit scores identically; and this branch's
+own kernel instrumentation \- the
 .CW kstackcheck()
 call in
 .CW sched() ,
