@@ -13,6 +13,7 @@ int		blocklen(Block*);
 int	breakhit(Ureg *ur, Proc*);
 void		callwithureg(void(*)(Ureg*));
 char*		chanpath(Chan*);
+void		chanok(Chan*, char*);
 int		canlock(Lock*);
 int		canqlock(QLock*);
 void		cclose(Chan*);

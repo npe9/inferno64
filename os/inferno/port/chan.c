@@ -654,6 +654,24 @@ ccloseq(Chan *c)
 }
 
 /*
+ * cclone() panicked with "c ... ref 0 flag 0x10" -- CFREE, a Chan on
+ * the free list -- called from cunique+0x30, which is namec()'s
+ * Aopen path.  Something releases the Chan namec is still holding.
+ * This says at which of namec's steps it first looks freed, so the
+ * next capture names the step rather than the victim.  pc64-only,
+ * temporary.  See doc/inferno-cloud-plan.ms.
+ */
+void
+chanok(Chan *c, char *where)
+{
+	if(c == nil)
+		panic("chanok: %s: c nil", where);
+	if(c->ref < 1 || (c->flag&CFREE) != 0)
+		panic("chanok: %s: c %#p ref %d flag %#ux type %d",
+			where, c, c->ref, c->flag, c->type);
+}
+
+/*
  * Make sure we have the only copy of c.  (Copy on write.)
  */
 Chan*
@@ -672,6 +690,7 @@ cunique(Chan *c)
 	if(c->ref != 1){
 		trackpoint = "cunique:before-cclone";
 		checktracked();
+		chanok(c, "cunique:before-cclone");
 		nc = cclone(c);
 		trackpoint = "cunique:after-cclone";
 		checktracked();
@@ -1650,6 +1669,7 @@ namec(char *aname, int amode, int omode, ulong perm)
 	}
 	trackpoint = "namec:after-walk";
 	checktracked();
+	chanok(c, "namec:after-walk");
 	}
 
 	if(e.mustbedir && (c->qid.type&QTDIR) == 0)
@@ -1698,10 +1718,12 @@ namec(char *aname, int amode, int omode, ulong perm)
 		m = nil;
 		trackpoint = "namec:before-domount";
 		checktracked();
+		chanok(c, "namec:before-domount");
 		if(!nomount)
 			domount(&c, &m, &path);
 		trackpoint = "namec:after-domount";
 		checktracked();
+		chanok(c, "namec:after-domount");
 		if(waserror()){
 			putmhead(m);
 			nexterror();

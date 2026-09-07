@@ -432,6 +432,112 @@ call.  The configuration value itself is whole, and
 .CW e820scan
 parses all of it.
 .NH 1
+The heap fault, and what a capture is worth
+.PP
+Item 1 is not closed.  What this round added is three things about it
+that were not known, and one about the instrument rather than the bug.
+.PP
+.B "A new signature, on the Chan side."
+.CW "panic: cclone: c 0xae0d40 ref 0 flag 0x10" ,
+where
+.CW 0x10
+is
+.CW CFREE
+\(en a Chan on the free list \(en with the caller pc resolving through
+the kernel's own symbol table to
+.CW cunique+0x30 ,
+which is
+.CW namec 's
+.CW Aopen
+path.  So a Chan that
+.CW namec
+is still holding gets released underneath it.  That is not the Dis
+heap, and it is the first time this fault has been seen on the kernel's
+own reference counts.
+.CW os/inferno/port/chan.c 's
+.CW chanok
+now asserts the Chan is live at
+.CW namec:after-walk ,
+.CW namec:before-domount ,
+.CW namec:after-domount
+and
+.CW cunique:before-cclone ,
+so the next occurrence names the step rather than the victim.  It has
+not fired in twelve boots since.
+.PP
+.B "The Dis side, from the allocator's own record."
+.CW alloc:D2B:destroy-entry
+with
+.CW _poolfault
+reporting the same block freed twice from the same pc, once under
+module
+.CW $Sys
+and once under
+.CW Sh .
+The pc resolves inside
+.CW destroy
+both times.  Neither signature reliably precedes the other in a log:
+in three failures the Dis one was first with no Chan complaint before
+it, and in the fourth the Chan one was first with no Dis complaint.
+They are not obviously one causing the other.
+.PP
+.B "The fault moves when the code moves."
+Twelve boots of the kernel before
+.CW chanok
+was added reached a shell four times; twelve of the same kernel with it
+added reached a shell nine times, and the failures changed shape
+.CW ( "dup pid" ,
+.CW "movp: bad sv" ,
+a page fault, where before they were
+.CW destroy-entry
+and
+.CW cclone ).
+Adding an assertion cannot fix a refcount bug.  What that says is that
+the fault is sensitive to layout or timing, and the practical
+consequence is a warning: a change that only moves code around will
+look like a fix on a twelve-boot sample and will not be one.  Nothing
+here should be called fixed on a boot count alone.
+.PP
+.B "A tracker report is not by itself evidence."
+One boot printed three
+.CW "track: CHANGED TO BAD VALUE"
+reports and then reached the shell prompt normally.  Their "old" values
+decode to ASCII shell text and the
+.CW Type
+they name reported
+.CW "size 10 np 10"
+on the first report and
+.CW "size 0 np 0"
+on the next two \(en freed and reused memory that the tracker's
+.CW typetagp
+staleness check did not catch.  The capture this section's first
+paragraph rests on is not of that kind: a
+.CW "movp: bad dv 0"
+panic on the same address followed it immediately.  That is the test to
+apply.  A
+.CW track:
+line with no panic on the same address behind it is noise, and chasing
+one costs a round.
+.PP
+One hypothesis is ruled out rather than left open:
+.CW os/inferno/pc64/l.s 's
+.CW _clearbss
+does clear
+.CW edata
+to
+.CW end
+before
+.CW main ,
+so an unzeroed BSS is not why
+.CW proghash
+held a process at the first
+.CW newprog .
+It rounds the count down to a whole number of doublewords, so up to
+three bytes at
+.CW end
+are left, which is not enough to matter and is noted so it is not
+re-derived.
+.NH 1
 If a guest counts
 .PP
 Everything above takes "bare metal" literally.  Relax it to "the

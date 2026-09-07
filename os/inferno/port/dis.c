@@ -189,7 +189,16 @@ newprog(Prog *p, Modlink *m)
 
 	ph = pidlook(n->pid);
 	if(*ph != nil)
-		panic("dup pid");
+		/*
+		 * Seen once in twelve boots, at the very first Dis process
+		 * ("Initial Dis: /osinit.dis"), where proghash cannot
+		 * legitimately hold anything yet -- l.s's _clearbss does
+		 * clear edata..end, so it is not an unzeroed table.  Say
+		 * what is in the way rather than only that something is.
+		 * pc64-only, temporary.  See doc/inferno-cloud-plan.ms.
+		 */
+		panic("dup pid %d: pidnum %d, slot %#p holds prog %#p pid %d",
+			n->pid, pidnum, ph, *ph, (*ph)->pid);
 	n->pidlink = nil;
 	*ph = n;
 
