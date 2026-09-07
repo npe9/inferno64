@@ -52,8 +52,31 @@ doswit(Node *n)
 		q->label = c->label;
 		if(isv)
 			q->val = c->val;
-		else
-			q->val = (long)c->val;	/* cast ensures correct value for 32-bit switch on 64-bit architecture */
+		else {
+			/*
+			 * A 32-bit switch is compared signed: gen() in
+			 * pgen.c coerces the expression to long and says
+			 * so, and the swit1 of each backend emits a
+			 * signed branch for the pivot of its binary
+			 * search - read back out of the assembly for
+			 * 6c, 8c, 7c and 5c.  The case
+			 * values must therefore be sign-extended from
+			 * 32 bits, or the sort here and the comparison
+			 * there disagree.  The cast to long did that
+			 * when long was 32 bits, which it is on Plan 9
+			 * and is not on the machines this compiler is
+			 * built on now; there a case value with the top
+			 * bit set - 0xBA5EBA11, say - sorted above the
+			 * positive ones, and the signed search then
+			 * walked into the wrong half and fell out at
+			 * default.  Written without a cast so that it
+			 * does not depend on the width of the host's
+			 * long again.
+			 */
+			q->val = c->val & 0xFFFFFFFFLL;
+			if(q->val & 0x80000000LL)
+				q->val -= (vlong)1 << 32;
+		}
 		q++;
 	}
 	qsort(iq, nc, sizeof(C1), swcmp);

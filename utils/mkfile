@@ -34,10 +34,20 @@ ALWAYS=\
 #	tl encodes both.  They are how the Cortex-M boards under
 #	os/inferno are built.
 #
+#	6a/6c/6l, the amd64 toolchain every pc64 and Osprey kernel is
+#	built with, and 0a/0c/0l, the riscv one, were both missing from
+#	this list: they were built once by hand and never again, so a
+#	change to the shared front end in cc/ silently did not reach
+#	them - a fix to pswt.c came out of "mk install" with the amd64
+#	compiler unchanged, and the bug it fixed still in every kernel.
+#
 NOTPLAN9=\
 	5a\
 	5c\
 	5l\
+	6a\
+	6c\
+	6l\
 	8a\
 	8c\
 	8l\
@@ -61,6 +71,9 @@ NOTPLAN9=\
 	jl\
 	tc\
 	tl\
+	0a\
+	0c\
+	0l\
 	mk\
 	ksize\
 	kstrip\

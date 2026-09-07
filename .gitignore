@@ -442,3 +442,6 @@ os/inferno/raspi3b/raspi3b.c
 # --- 9front userland built from the source in 9front/src (added 2026-09-06) ---
 /9front/amd64/lib-src/
 /9front/amd64/bin-src/
+
+# python byte-code from the check scripts importing one another
+/scripts/__pycache__/

@@ -915,6 +915,27 @@ p9paircli(void)
 			if(id >= 0 && ring_wait(&st) == 0)
 				print("p9: pair-client: wait: /boot/kbdsrv (container %ld) exited with status %ld\n", id, st);
 		}
+		/*
+		 * And the draw server, which is the one of the four that can
+		 * do its work here: it wants the frame buffer, which this
+		 * kernel exposes as a segment, and nothing else - its cursor
+		 * gives up quietly when there is no mouse ring.  It is also
+		 * the first program in this tree to reach the allocator of
+		 * the source-built libc: memimageinit and the memdraw layer
+		 * are malloc and pool.
+		 */
+		{
+			extern long ring_execv(char**);
+			char *dargv[3];
+
+			dargv[0] = "/boot/drawsrv";
+			dargv[1] = "-m/dev";
+			dargv[2] = nil;
+			id = ring_execv(dargv);
+			print("p9: pair-client: exec /boot/drawsrv started container %ld\n", id);
+			if(id >= 0 && ring_wait(&st) == 0)
+				print("p9: pair-client: wait: /boot/drawsrv (container %ld) exited with status %ld\n", id, st);
+		}
 	}
 	/*
 	 * The device-carried medium: put a network frame on the ring to the

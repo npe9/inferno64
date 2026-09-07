@@ -20,6 +20,18 @@ env = dict(os.environ, PATH=os.path.join(ROOT, 'MacOSX/arm64/bin') + ':' + os.en
 def plain(s):
     return re.sub(r'\x1b\[[0-9;=?]*[a-zA-Z]', '', s)
 
+def drewpixels(t):
+    """The two words read back out of the frame buffer after the draws.
+    XRGB32 puts the pixel in memory as 0x00RRGGBB, so the box is 0x00ff00
+    and the ground 0x0000ff - the colours the client asked for, checked
+    as numbers rather than matched as text."""
+    m = re.search(r'draw: two draws crossed the pipe and reached the screen: '
+                  r'the frame buffer word inside the box is (0x[0-9a-f]+) and outside it (0x[0-9a-f]+)', t)
+    if m is None:
+        return False
+    return int(m.group(1), 16) == 0x00ff00 and int(m.group(2), 16) == 0x0000ff
+
+
 def heapgrew(t):
     """The sbrk line: the break really moved by what was asked, and every
     byte of the pattern read back.  The heap segment exec leaves above a
@@ -338,6 +350,9 @@ def main():
         ("rendezvous(2) between two processes of one address space: a thread forked with RFMEM meets the program on a tag and each takes the word the other left - libthread's proccreate is this, and rio makes six of them",
          'legacy: rendezvous on tag 0x9001 met my thread and took the word it left: 0x1234' in t
          and 'legacy: BUG: rendezvous returned' not in t),
+        ("and what RFMEM shares is the heap as well as the image: a buffer malloc gave the parent before the fork is written by the thread and read back by the parent - which is what makes one allocator serve both, and what lib9p's postmountsrv depends on",
+         'legacy: and the heap is shared too:' in t
+         and 'sbrk memory is not shared across RFMEM' not in t),
         ("and a legacy program is given a Tos: the kernel fills it and passes its address past the end of the argument vector, and the entry gives libc that and its private words - without them nsec(2) stores through a nil private on its first call",
          'legacy: nsec() ran forward' in t
          and 'legacy process osprey-exec killed by note: sys: trap: fault write addr=0x0' not in t),
@@ -401,6 +416,14 @@ def main():
          and re.search(r'p9: pair-client: wait: /boot/kbdsrv \(container \d+\) exited with status 0', t) is not None),
         ("and it says why it stopped: this machine has no keyboard ring to attach, so the program's sysfatal prints the kernel's own reason through %r - errstr(2) is a call the buddy answers out of the error string it keeps, and a call the kernel served itself is one the buddy never saw fail",
          'kbdsrv: segattach kbdring: bad arg in system call' in t),
+        ("the draw server runs, and the screen the microkernel exposed is a draw device: /boot/drawsrv is os/osprey/cmd/draw linked against the same source-built 9front libraries, three hundred kilobytes of libmemdraw, libmemlayer, libdraw and lib9p above libc; it maps the frame buffer, initialises the kernel's own devdraw.c in user space, and postmountsrv forks a container that answers 9P on a pipe and mounts it at /dev",
+         re.search(r'buddy: exec /boot/drawsrv for container \d+: a Plan 9 a\.out, text \d+ data \d+ bss \d+', t) is not None
+         and re.search(r'draw: the frame buffer is mapped at 0x[0-9a-f]+, 4096000 bytes', t) is not None
+         and 'draw: the mount returned; the first client of the server starts' in t),
+        ("and a client of it draws: the program opens /dev/draw/new through the mount, is given the client number and a 1280x800 x8r8g8b8 screen, and writes draw messages - allocate three images, fill the screen, put a box in it - every one of which crosses the pipe to the server container",
+         re.search(r'draw: the first client is client \d+ of the server, and the screen it is given is 1280x800, channel\s+x8r8g8b8', t) is not None),
+        ("and the pixels are there: the frame buffer is read back afterwards, and the word inside the box is the green that was asked for and the word outside it the blue the screen was filled with - not a return code, the memory the display controller scans",
+         drewpixels(t)),
         ("wait is answered by somebody: the client's wait returns the child's exit status",
          re.search(r'p9: pair-client: wait: container \d+ exited with status 0', t) is not None
          and 'panic' not in t and 'killed by SIGSEGV' not in t),	# the Linux child takes one SIGSEGV on purpose

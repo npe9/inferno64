@@ -7080,7 +7080,7 @@ server,
 .CW os/osprey/cmd/draw/kbd.c ,
 a hundred kilobytes of image where every legacy program before it was a
 few tens.
-.CW buildkbdsrv.sh
+.CW build9prog.sh
 turns it into
 .CW kbdsrvprog.i
 and the personality carries it as
@@ -7103,7 +7103,7 @@ shape runs: three segments, its own
 .CW libthread
 and
 .CW lib9p
-above the source-built libc.  The pair check is 83.
+above the source-built libc.  The pair check is 83 at this point.
 .PP
 It could only fail, and that is the point of it: this machine has no
 keyboard ring to attach.  What it found on the way is that it could not
@@ -7178,6 +7178,285 @@ and
 out of
 .CW libc9.a ,
 the members 2.3c could only say were built.
+.PP
+.B "2.3e: the draw server, and the compiler bug under it."
+The draw server is the second of the four and the first thing in this
+tree to call
+.CW malloc
+in a container.  It ran, and it panicked:
+.CW "bad magic" ,
+out of
+.CW blockcheck ()
+in libc's
+.CW pool.c ,
+on the very first block the program allocated.
+.PP
+The block was not corrupt.
+.CW panicblock ()
+dumps what it rejected, and every field of the dump was right: the
+magic was
+.CW 0x0A110C09 ,
+which is
+.CW ALLOC_MAGIC ;
+the size was 96, which is the header, the two words
+.CW malloc
+puts in front for its tags, sixty-four bytes of data and the tail; the
+tail's two magic bytes were
+.CW 0xBE
+and
+.CW 0xEF ,
+its back pointer reached the header again, and the four guard bytes
+past the end of the data were the
+.CW datamagic
+pattern for their addresses.  The string the program had just written
+was there to read.  So the value the
+.CW switch
+had read and the value the dump printed were not the same value, and
+that is not something memory does between two instructions of one
+thread.
+.PP
+It was the compiler.
+.CW blockcheck ()
+switches on
+.CW b->magic ,
+a
+.CW ulong ,
+with six cases, and six is enough that
+.CW swit1 ()
+compiles a binary search rather than a chain of tests.
+.CW "6c -S"
+shows the pivot:
+.CW "CMPL AX,$-894431969"
+then
+.CW JGT ,
+a
+.I signed
+branch \-
+.CW UNALLOC_MAGIC ,
+and the half it selects holds
+.CW DEAD_MAGIC
+and
+.CW ARENATAIL_MAGIC
+only.
+.CW "6c -K"
+shows the table it was searching, and it was sorted
+.I unsigned :
+.CW ALLOC_MAGIC
+first, because
+.CW 0x0A110C09
+is the smallest of the six as an unsigned number and the largest as a
+signed one.  Sorted one way, searched the other.  Every allocated block
+in the program fell through to
+.CW default ,
+which is
+.CW "bad magic" .
+.PP
+The front end is where it comes from, and the comment two lines above
+the fault says what was intended.
+.CW gen ()
+in
+.CW utils/cc/pgen.c
+coerces a switch expression to
+.CW long
+and writes
+.CW "/* always signed */" ,
+so every backend's pivot branch is signed on purpose; and
+.CW doswit ()
+in
+.CW utils/cc/pswt.c
+wrote
+.CW "q->val = (long)c->val" ,
+with a comment saying the cast is what gets a 32-bit switch right on a
+64-bit machine.  It is \- on Plan 9, where
+.CW long
+is 32 bits and the cast sign-extends.  These compilers are built by the
+host's own C compiler, where
+.CW long
+is 64 bits and the cast does nothing at all, so a case value with the
+top bit set stayed positive and sorted above every other.  The fix is
+to sign-extend from 32 bits without naming a type whose width can move
+again.  It is in the front end, where the table is built, so every
+backend that takes its cases from
+.CW doswit ()
+is fixed at once rather than eleven times; the pivot branch was read
+back out of
+.CW "6c -S"
+for
+.CW 6c ,
+.CW 8c ,
+.CW 7c
+and
+.CW 5c ,
+which are the four this tree builds kernels with.
+.PP
+How far it reached is a question worth answering rather than assuming,
+and the answer is measurable: build the old compiler beside the new one
+and compile every file twice.  Of the 9front userland \- libc,
+libthread, libdraw, libframe, libplumb, libcomplete, libmemdraw,
+libmemlayer, lib9p, libauth, rio and the four servers \- exactly one
+file's code changed, and it is
+.CW pool.c .
+Of the 59 files the
+.CW p9pair
+configuration compiles for itself, none.  That sweep did not recompile
+the libraries the kernel links \-
+.CW libospreykern ,
+.CW libosprey ,
+.CW libaml ,
+.CW libkern ,
+.CW libsec ,
+.CW libmp
+and
+.CW libfis
+\- so nothing is claimed about them beyond the shape of the bug: a
+switch of five cases or more on an unsigned value, one of whose case
+constants has bit 31 set.  A grep is more alarming than the truth here:
+.CW date.c ,
+.CW rio.c
+and
+.CW wctl.c
+all switch on a value with
+.CW "case -1:"
+among small positives, which looks like the same shape, but a negative
+constant was stored as a negative number by the old front end too, so
+those tables were always sorted and searched the same way.  What was
+wrong was only the unsigned constant with bit 31 set, and in this whole
+userland only
+.CW pool.c
+has one.
+.PP
+Two build traps came out of the same afternoon and are fixed with it.
+.CW utils/mkfile
+listed neither
+.CW 6a/6c/6l ,
+the amd64 toolchain every kernel in this branch is built with, nor
+.CW 0a/0c/0l ,
+the riscv one: they had been built once by hand and never again, so
+.CW "mk install"
+in
+.CW utils
+rebuilt ten compilers and quietly not those six.  They are in the list
+now.  And
+.CW build9prog.sh
+linked its program only
+.I "if the binary was missing" ,
+so a boot ran a drawsrv from an earlier build and reported symptoms
+that had already been fixed.  mk decides when that script runs, from
+the sources the
+.CW pc64
+mkfile names; the script now always links.
+.PP
+With the compiler right, the draw server runs.
+.CW memimageinit ()
+sets up memdraw's shared images, the device's own
+.CW reset ()
+and
+.CW init ()
+run,
+.CW oscursorstart ()
+returns quietly because there is no mouse ring on this personality, and
+.CW postmountsrv ()
+forks a container that answers 9P on a pipe and mounts it at
+.CW /dev .
+The screen is the frame buffer the microkernel exposed: 1280x800,
+.CW x8r8g8b8 ,
+4096000 bytes, the same one
+.CW "osprey fb: exposed"
+names at boot.
+.PP
+The mount is only half an answer, so the program is its own first
+client.  It opens
+.CW /dev/draw/new
+through the mount it just made, reads back from the ctl file the client
+number and the screen's channel and rectangle, and writes five draw
+messages to the data file beside it: three
+.CW b 's
+to allocate a blue pixel, a green pixel and a one-bit mask of ones, and
+two
+.CW d 's
+to fill the screen with the blue and put a 300x200 box of green in it.
+That is what libdraw does, written out by hand so the demonstration is
+the protocol and not a second library.  Every one of those opens, reads
+and writes crosses the pipe to the other container.
+.PP
+And then it reads the frame buffer back, because a return code is not a
+picture.  The word inside the box is
+.CW 0x00ff00
+and the word outside it
+.CW 0x0000ff ,
+which are the two colours asked for, in the order
+.CW x8r8g8b8
+puts them in memory.  Those are checked as numbers in the check, not
+matched as text.  The pair check is 87.
+.PP
+Getting there cost one more finding, and it is about the shape of a
+program rather than about draw.
+.CW segattach (2)
+adds a segment to the address space of the process that calls it, and
+.CW RFMEM
+shares the segments that exist at the fork.  The server attached the
+screen lazily, on the first client's attach \- which happens in the
+9P child, after the fork \- so the parent held the pointer with nothing
+mapped under it and faulted the first time it read a pixel.  The screen
+belongs to the program, not to one of its processes, so it is attached
+before the program has more than one:
+.CW ospreyfbattach ()
+in
+.CW kshim.c ,
+called from
+.CW main ()
+ahead of
+.CW postmountsrv .
+.PP
+That fault also showed up a defect in the personality itself worth
+fixing on the way.
+.CW panic ()
+in
+.CW p9shim.c
+was
+.CW "USED(fmt); print(\(dqp9: panic: %s\(dq, fmt)" ,
+so every panic printed its format string and threw its arguments away:
+the line that came out was
+.CW "no runnable proc (deadlock), tick %lud" ,
+literally.  It formats now.
+.PP
+One property the draw server leans on was worth proving on its own,
+so the legacy demonstration proves it: the fork
+.CW postmountsrv
+makes is
+.CW RFMEM ,
+and what that shares has to include the heap, or the parent and the
+9P child would each be allocating out of what they both believed was
+their own arena.  The
+.CW rfork (RFPROC|RFMEM)
+in
+.CW legacyp9.c
+now writes into a buffer
+.CW malloc
+gave the parent before the fork and the parent reads it back after, so
+"one address space" is checked for
+.CW sbrk
+memory and not only for the bss the migration test already covered.
+That is one more criterion, and it is what lets one
+.CW mainmem
+serve both halves of a lib9p server.
+.PP
+The honest limit of 2.3e is the name space.
+.CW postmountsrv
+mounts the server in the name space of the process that called it, and
+that process is the container the client started; when the
+demonstration ends, the container ends and the mount with it.  Nothing
+else on the machine can reach
+.CW /dev/draw
+yet.
+.CW postsrv ()
+already takes a name and posts the pipe to
+.CW /srv
+when given one, and
+.CW /srv
+is where a second container would find it; that, and the mouse and
+keyboard rings the pair personality does not arm, are what rio needs
+and what comes next.
 .NH 2
 Track three: the library-OS personality execs a program, then rio
 .PP

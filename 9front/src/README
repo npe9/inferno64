@@ -7,6 +7,14 @@ Revision
 	at the same revision; libc/{port,fmt,9sys,amd64} is sys/src/libc;
 	the lib* directories are sys/src/lib*; cmd/rio is sys/src/cmd/rio.
 
+	One header the build needs is not under this directory:
+	libc/amd64/notejmp.c includes <ureg.h>, and the amd64 Ureg lives
+	in 9front/amd64/include/ureg.h beside the u.h and lib9.h that were
+	already there.  It was untracked until now, so a fresh clone could
+	not build libc; it is tracked.  Nothing else the build includes
+	resolves outside 9front/src/include and 9front/amd64/include -
+	all twenty-five of them were checked.
+
 Why it is here
 	9front/amd64/lib holds prebuilt archives, and nothing in this tree
 	had ever linked them.  The reason is that it cannot: those objects

@@ -1229,9 +1229,10 @@ each of the four binaries that it is a Plan 9 amd64
 .B a.out
 entered at
 .BR UTZERO+0x28 ,
-where the loader enters one.  It is a build check and nothing more: the
-four binaries have not been run.  What has been run is the C library
-underneath them.
+where the loader enters one.  It is a build check and nothing more; two
+of the four are also run, by
+.BR /scripts/osprey-check-p9pair.py .
+What has been run all along is the C library underneath them.
 .B libc9.a
 is what
 .BR /boot/cat ,
@@ -1251,31 +1252,42 @@ programs need three \-
 .IR dofmt ,
 .I vsnprint
 \- so what the criteria exercise of it is the formatting path.
-.I pool ,
+.I pool
+and
 .I malloc
-and the Dir conversions build there and nothing that boots reaches them
-yet; they are what
-.I rio
-will reach.  One of the four has been run: the pair check execs
+are reached now, by the draw server; the Dir conversions still are not.
+Two of the four have been run.  The pair check execs
 .B /boot/kbdsrv
 in a container, where the buddy lays it out and the kernel enters it
 through
 .BR /os/osprey/pc/init9main.c ,
 and it fails on the keyboard ring this machine does not have, which is
-the answer it should give.
-.I rio
-and the draw and mouse servers have not been run, .  The frame buffer is
-not what stands in the way of them: the EFI loader writes
+the answer it should give.  It then execs
+.BR /boot/drawsrv ,
+which maps the frame buffer the microkernel exposed, runs the kernel's
+own
+.I devdraw.c
+in user space,
+.I postmountsrv 's
+its 9P server into a container of its own and mounts it at
+.BR /dev ;
+a client in the mounting process then draws through
+.B /dev/draw
+and reads the pixels back out of the frame buffer.  The frame buffer
+was never what stood in the way: the EFI loader writes
 .B *bootscreen
 into
 .B plan9.ini
 and the microkernel boot exposes the screen as the
 .B framebuffer
-segment on this personality as on any other.  What the pair
-personality does not expose is the keyboard and mouse rings, which
+segment on this personality as on any other.  What the pair personality
+does not expose is the keyboard and mouse rings, which
 .B ospreymouseexpose
-gives only to the full personality.
-.PP
+gives only to the full personality, so
+.I rio
+and the mouse server have not been run.  Nor is the draw server's mount
+reachable from any other container yet: it lives in the name space of
+the process that made it.
 .PP
 .B /scripts/osprey-check-portable.sh
 boots nothing.  It compiles every source in

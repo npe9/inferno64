@@ -212,11 +212,21 @@ freeb(Block *b)
 	}
 }
 
+/*
+ * A panic used to print its format string and throw the arguments away,
+ * so every panic in this personality read as literal %lud and said
+ * nothing about why.
+ */
 _Noreturn void
 panic(char *fmt, ...)
 {
-	USED(fmt);
-	print("p9: panic: %s\n", fmt);
+	char buf[256];
+	va_list a;
+
+	va_start(a, fmt);
+	vseprint(buf, buf+sizeof buf, fmt, a);
+	va_end(a);
+	print("p9: panic: %s\n", buf);
 	exits("panic");
 }
 

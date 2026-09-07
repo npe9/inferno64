@@ -22,6 +22,7 @@
 #include	"execprog.i"
 #include	"shprog.i"
 #include	"kbdsrvprog.i"
+#include	"drawsrvprog.i"
 
 void
 p9linuxfile(void)
@@ -38,4 +39,5 @@ p9linuxfile(void)
 	 * other binary the buddy lays out.
 	 */
 	addbootfile("kbdsrv", kbdsrvprog, sizeof kbdsrvprog);
+	addbootfile("drawsrv", drawsrvprog, sizeof drawsrvprog);
 }

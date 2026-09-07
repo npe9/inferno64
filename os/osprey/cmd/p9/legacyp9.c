@@ -59,6 +59,7 @@ nhandler(void *ureg, char *msg)
 
 /* shared with a thread made by rfork(RFPROC|RFMEM): in the data segment, so both see it */
 static volatile int gshared, gstop;
+static char *gheap;		/* a buffer on the heap, for the RFMEM sharing check */
 
 /* forty pages of the bss, each written before the crossing: pages that differ from the image, which is what a crossing carries */
 enum { Ndirty = 40 };
@@ -328,10 +329,28 @@ startboot(char *argv0, char **argv)
 			int tid;
 			void *got;
 
+			/*
+			 * And the part of "one address space" that the bss
+			 * check further down does not reach: the heap.  A
+			 * buffer this process allocated before the fork -
+			 * memory sbrk grew, not memory the program was loaded
+			 * with - is written by the thread and read back here.
+			 * The allocator of a program that forks this way keeps
+			 * its arena there, so if that memory were copied
+			 * rather than shared, two processes would each be
+			 * allocating out of what they both believed was
+			 * theirs.
+			 */
+			if(gheap == nil)
+				gheap = malloc(64);
+			if(gheap != nil)
+				strcpy(gheap, "written by the parent");
 			tid = rfork(RFPROC|RFMEM);
 			if(tid < 0)
 				print("legacy: rfork(RFPROC|RFMEM) for the rendezvous failed\n");
 			else if(tid == 0){
+				if(gheap != nil)
+					strcpy(gheap, "written by the thread, in the address space they share");
 				rendezvous((void*)0x9001, (void*)0x1234);
 				_exits(nil);
 			} else {
@@ -345,6 +364,12 @@ startboot(char *argv0, char **argv)
 				if((n = await(abuf, sizeof abuf - 1)) > 0){
 					abuf[n] = 0;
 					print("legacy: reaped the thread I rendezvoused with\n");
+				}
+				if(gheap != nil){
+					if(strcmp(gheap, "written by the thread, in the address space they share") == 0)
+						print("legacy: and the heap is shared too: what my thread wrote into a buffer malloc gave me reads back here as \"%s\"\n", gheap);
+					else
+						print("legacy: BUG: the heap buffer still reads \"%s\" - sbrk memory is not shared across RFMEM\n", gheap);
 				}
 			}
 		}
