@@ -870,24 +870,50 @@ number.
 What fourteen boots can and cannot show
 .PP
 Every "not a regression" in this document rests on booting two kernels
-alternately fourteen times each, and that method is weaker than the way
-those results were first written up.  Here is the same kernel, or
-kernels differing by changes since shown to be no-ops, across this
-session's runs:
+alternately fourteen times each, and the method was measuring the wrong
+thing.  It counted a boot as a survivor when the log held no
+.CW panic .
+That is not the same as a boot that worked.
+.PP
+Classified properly, the 126 pc64 boots collected in this session come
+out:
 .IP
 .nf
-1, 2, 2, 2, 3, 4, 5    survivors of 14
+panic                                   104
+corruption detected, no panic            15
+reached userspace                         4
+hung, silently                            3
 .fi
 .PP
-Survival is about 19 percent, so fourteen independent boots have a
-standard deviation of roughly 1.4 survivors, and a spread of 1 to 5 is
-ordinary binomial noise rather than anything about the code.  A
-fourteen-boot pair therefore cannot resolve a difference smaller than
-about three survivors.  Every A/B here should be read as "no
-.I detectable
-difference", which is a much weaker claim than "no difference", and the
-right response to wanting the stronger one is more boots, not more
-confidence.
+The middle group is the one the old count got wrong: those boots printed
+.CW markheap
+complaints, a
+.CW track:
+capture or a
+.CW dumpstack
+and carried on without panicking, and were scored as successes.  So the
+real rate at which this kernel boots to a shell is about three percent,
+not the nineteen the earlier figures implied, and most of what those
+figures called survivors were boots that had already detected their own
+corruption.
+.PP
+The consequence for everything above is blunt.  At a three percent
+success rate a fourteen-boot arm expects
+.I "half a success" ,
+so none of the A/B comparisons in this document could have distinguished
+anything, in either direction.  They are not evidence that the changes
+are harmless; they are not evidence of anything.  What they do establish
+is weaker and still worth having: no change made here turned a kernel
+that mostly panics into one that panics differently or fails to build,
+and the emu-side tests \- the spawn storm, the TSan signature set, the
+channel tests \- are unaffected by any of this, since they pass at rates
+where fourteen trials mean something.
+.PP
+.CW tmp/boottrial.sh
+and
+.CW tmp/classify.sh
+are the corrected harness.  Anything comparing kernels should use the
+four categories, and should want hundreds of boots rather than fourteen.
 .PP
 One of those numbers was also read too early.  The
 .CW mount(2)
