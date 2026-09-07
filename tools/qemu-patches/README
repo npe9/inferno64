@@ -57,6 +57,45 @@ this much detail \- which is most of the series, and increasingly so as
 it grows.  Do not read the section above as a to-do list for upstream:
 two patches of twelve are general-purpose fixes and the rest are not.
 
+WHAT HAS BEEN CROSS-CHECKED.  Several of these models were written
+from the datasheet and from recollection of a Linux driver, which is
+worth exactly as much as the recollection.  They have since been
+checked, register by register, against Linux 6.17:
+
+	AUX SPI		drivers/spi/spi-bcm2835aux.c -- every CNTL0,
+			CNTL1 and STAT field matched; four names did
+			not, and 0013 fixes those.
+	I2S/PCM		sound/soc/bcm/bcm2835-i2s.c -- every CS_A,
+			MODE_A and channel field matched, including
+			that CHWID holds the width less 8.
+	DMA		drivers/dma/bcm2835-dma.c -- the control block
+			layout, every TI and CS bit, and the global
+			enable at 0xff0.
+	clock manager	drivers/clk/bcm/clk-bcm2835.c -- the 0x5a
+			password, CM_PCMCTL/DIV at 0x098/0x09c,
+			CM_PWMCTL/DIV at 0x0a0/0x0a4, KILL bit 5 and
+			BUSY bit 7, and the kill-then-wait sequence.
+	PWM		drivers/pwm/pwm-bcm2835.c -- enable at bit 0,
+			mark/space at bit 7, channel 2 eight bits up.
+	watchdog	drivers/watchdog/bcm2835_wdt.c -- the register
+			offsets and SECS_TO_WDOG_TICKS(x) ((x) << 16),
+			which is the 65536Hz tick 0001 models.
+	mini UART	drivers/tty/serial/8250/8250_bcm2835aux.c --
+			CNTL at 0x60 with RXEN 1 and TXEN 2, which is
+			the 0x3 reset value 0008 restores.
+	thermal		arch/arm/boot/dts/broadcom/bcm2837.dtsi --
+			coefficients <(-538) 412000>.  Note the chip:
+			bcm2835 and bcm2836 use 407000, and a Pi 3B is
+			a bcm2837.
+
+One model could not be checked this way.  Linux does not drive the
+BCM2835 ARM timer at all -- there is no driver and no device tree node
+for it, because the system timer and the ARM generic timer are used
+instead -- so 0009's 23-bit mode, pre-divider and free-running counter
+rest on the datasheet alone.  That is also why the guest-side check in
+armtmrbcm.c measures both counters against an independent clock rather
+than trusting either.
+
 THE PATCHES
 
 0001 bcm2835_powermgt: model the watchdog countdown.
