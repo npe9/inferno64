@@ -118,6 +118,11 @@ drawmodinit(void)
 	TImage = dtype(freedrawimage, sizeof(DImage), imagemap, sizeof(imagemap));
 	TScreen = dtype(freedrawscreen, sizeof(DScreen), screenmap, sizeof(screenmap));
 	TDisplay = dtype(freedrawdisplay, sizeof(DDisplay), displaymap, sizeof(displaymap));
+	/* so /dev/memheap's census names these rather than printing a Type* */
+	heapaudittype("Font", &TFont);
+	heapaudittype("Image", &TImage);
+	heapaudittype("Screen", &TScreen);
+	heapaudittype("Display", &TDisplay);
 	builtinmod("$Draw", Drawmodtab, Drawmodlen);
 }
 

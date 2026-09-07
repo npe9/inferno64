@@ -2189,6 +2189,21 @@ keyringmodinit(void)
 	if((sav = dsainit()) != nil)
 		algs[nalg++] = sav;
 
+	/*
+	 * These are static to this file, so heapaudit.c's old "extern Type*
+	 * TSigAlg" and friends never resolved to them - they were undefined
+	 * references that went unnoticed only because nothing ever linked
+	 * heapaudit.o.  Registering them here is what actually makes
+	 * /dev/memheap name a leaked key or digest state.
+	 */
+	heapaudittype("SigAlg", &TSigAlg);
+	heapaudittype("SK", &TSK);
+	heapaudittype("PK", &TPK);
+	heapaudittype("Certificate", &TCertificate);
+	heapaudittype("DigestState", &TDigestState);
+	heapaudittype("DESstate", &TDESstate);
+	heapaudittype("Authinfo", &TAuthinfo);
+
 	fmtinstall('U', big64conv);
 	/* %B in libkeyring *alg.c is base64 (same as %U / big64conv) */
 	fmtinstall('B', big64conv);

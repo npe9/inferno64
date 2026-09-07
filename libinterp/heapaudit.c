@@ -43,24 +43,10 @@ struct Typed
 	0
 };
 
-extern Type* TDisplay;
-extern Type* TFont;
-extern Type* TImage;
-extern Type* TScreen;
 extern Type* TFD;
 extern Type* TFileIO;
 extern Type* Tread;
 extern Type* Twrite;
-extern Type* fakeTkTop;
-
-extern Type* TSigAlg;
-extern Type* TCertificate;
-extern Type* TSK;
-extern Type* TPK;
-extern Type* TDigestState;
-extern Type* TAuthinfo;
-extern Type* TDESstate;
-extern Type* TIPint;
 
 struct Ptyped
 {
@@ -68,30 +54,48 @@ struct Ptyped
 	Type**	ptr;
 } ptypes[] =
 {
-	{"Display",	&TDisplay},
-	{"Font",	&TFont},
-	{"Image",	&TImage},
-	{"Screen",	&TScreen},
-
-	{"SigAlg",	&TSigAlg},
-	{"Certificate",	&TCertificate},
-	{"SK",		&TSK},
-	{"PK",		&TPK},
-	{"DigestState",	&TDigestState},
-	{"Authinfo",	&TAuthinfo},
-	{"DESstate",	&TDESstate},
-	{"IPint",	&TIPint},
-
 	{"FD",		&TFD},
 	{"FileIO",	&TFileIO},
 
 /*	{"Fioread",	&Tread},	*/
 /*	{"Fiowrite",	&Twrite},	*/
 
-	{"TkTop",	&fakeTkTop},
-
 	0
 };
+
+/*
+ * Named heap types belonging to modules that are not in every configuration.
+ * These used to be listed above through extern Type* declarations, which made
+ * heapaudit.o reference draw.o and tk.o - so as soon as anything called
+ * heapaudit(), the linker dragged the whole graphics stack into
+ * configurations that have none.  emu-g links neither libdraw nor libtk and
+ * the link failed outright.  The modules now hand in their own names as they
+ * create the types, so heapaudit.o depends on nothing outside itself and
+ * reports whatever happens to be linked.
+ */
+enum { Nreg = 32 };
+
+static struct
+{
+	char*	name;
+	Type**	ptr;
+} regtypes[Nreg];
+static int nregtype;
+
+void
+heapaudittype(char *name, Type **tp)
+{
+	int i;
+
+	for(i = 0; i < nregtype; i++)
+		if(regtypes[i].ptr == tp)
+			return;
+	if(nregtype >= Nreg)
+		return;
+	regtypes[nregtype].name = name;
+	regtypes[nregtype].ptr = tp;
+	nregtype++;
+}
 
 static Audit **
 auditentry(Type *t)
@@ -170,18 +174,29 @@ heapaudit(void)
 			}
 	}
 
+	/*
+	 * These two loops used to "break" after the first type they found,
+	 * which left every other builtin and pointer type to be printed by
+	 * the sweep below as a bare Type* address.  The break belongs in the
+	 * module loop above (one line per module, keyed off its first audited
+	 * type); here it just threw the names away.
+	 */
 	for(i = 0; (t = types[i].ptr) != nil; i++)
 		if((a = *auditentry(t)) != nil){
 			conslog("%8ld %8lud %s\n", a->n, a->size, types[i].name);
 			a->size = 0;
-			break;
 		}
 
 	for(i = 0; ptypes[i].name != nil; i++)
 		if((a = *auditentry(*ptypes[i].ptr)) != nil){
 			conslog("%8ld %8lud %s\n", a->n, a->size, ptypes[i].name);
 			a->size = 0;
-			break;
+		}
+
+	for(i = 0; i < nregtype; i++)
+		if((a = *auditentry(*regtypes[i].ptr)) != nil){
+			conslog("%8ld %8lud %s\n", a->n, a->size, regtypes[i].name);
+			a->size = 0;
 		}
 
 	ntype = 0;

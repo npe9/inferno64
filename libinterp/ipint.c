@@ -39,6 +39,7 @@ ipintsmodinit(void)
 	/* can be called from modinit, Keyring or Crypt */
 	if(TIPint == nil)
 		TIPint = dtype(freeIPint, sizeof(IPint), IPintmap, sizeof(IPintmap));
+	heapaudittype("IPint", &TIPint);	/* named in /dev/memheap's census */
 	builtinmod("$IPints", IPintsmodtab, IPintsmodlen);
 }
 

@@ -482,6 +482,8 @@ extern	void		go(Module*);
 extern	int		handler(char*);
 extern	Heap*	heap(Type*);
 extern	Heap*	heaparray(Type*, int);
+extern	void		heapaudit(void);
+extern	void		heapaudittype(char*, Type**);
 extern	void		(*heapmonitor)(int, void*, ulong);
 extern	int		heapref(void*);
 extern	Heap*		heapz(Type*);

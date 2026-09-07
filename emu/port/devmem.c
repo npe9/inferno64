@@ -423,6 +423,23 @@ memread(Chan *c, void *va, long count, vlong offset)
 			m += 4*4;
 		}
 		return m-(uchar*)va;
+	case Qheap:
+		/*
+		 * A per-type census of the Dis heap: one line per module type
+		 * and per builtin type, with the live count and the bytes it
+		 * holds.  This is the leak-attribution counterpart to
+		 * /dev/memory, which only says which pool grew.
+		 *
+		 * heapaudit() has been in libinterp all along but was reachable
+		 * from nowhere: memheap was in memdir with no case here, so a
+		 * read of it fell through to Egreg.  It reports through the
+		 * console (conslog is print), not through this buffer, so the
+		 * read itself returns nothing; a Limbo caller reads once and
+		 * looks at the console.
+		 */
+		if(offset == 0)
+			heapaudit();
+		return 0;
 	case Qgc:
 		s = malloc(READSTR);
 		if(s == nil)
