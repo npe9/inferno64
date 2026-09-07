@@ -42,9 +42,6 @@ column is interpreted Limbo, so `-c0` moves it a great deal further and
 the protocol column much less, which makes these the *conservative*
 ratios:
 
-(Read the protocol column as "what the app's frame loop costs", not as
-"what it costs to render this" - see point 1.)
-
 | scene | destination | software | protocol | `-c0` software | `-c0` protocol |
 | --- | --- | --- | --- | --- | --- |
 | 64 large triangles | window layer | 5.64 ms | **0.88 ms** | 68.6 ms | 7.30 ms |
@@ -54,39 +51,43 @@ ratios:
 
 Five things follow, and each of them set a phase below.
 
-**1. The GPU path submits geometry that Metal does not draw. The timings
-below are real; what they time is not a render.** Corrected 2026-09-06,
-having been stated the other way round first, which is the most
-important thing in this document.
+**1. Metal now draws. It did not until 2026-09-06, and the first two
+versions of this document claimed a GPU win on the strength of a
+submission counter.** `g3_calls` counts submissions, not pixels; the
+pixels were not arriving.
 
-`g3_calls` counts *submissions*, not pixels, and it was the only evidence
-behind the original claim. Three later measurements say the pixels never
-arrive:
+The cause: draw3d's own projection leaves clip *w* as the eye z, and its
+camera looks down −Z, so **w is negative for everything in front of the
+eye**. The software rasteriser does not care — it divides by w, and a
+negative one just mirrors — but Metal clips to `0 <= z <= w` and
+`-w <= x,y <= w`, which discards every vertex with w < 0. That was the
+whole scene, silently. `vgmain` now negates the clip vector when w is
+negative, which leaves x/w and y/w exactly as they were.
 
-- One large red triangle, one frame, held on screen. Captured from
-  outside emu, against the same desktop, the software provider puts 8762
-  strongly-red samples on the screen and the protocol provider puts 87 -
-  which is the background.
-- The readback pass runs on that geometry, with 192 vertices in one
-  batch and an encoder created, and `getBytes` leaves gscreen's nonzero
-  byte count *exactly* unchanged at 48182, the window border.
-- The nine ports Phase 1 moved still render, because they draw a great
-  deal in 2D as well; their 3D content has not been isolated.
+Three plausible guesses were wrong before that one, and each had to be
+ruled out rather than argued away: the readback texture's `RGBA8Unorm`
+against the pipelines' `BGRA8Unorm`; the missing `dstflush` on devdraw's
+GPU-T&L branch (a real latent bug — a client that draws only 3D never
+asks for a present — but not this); and the overlay pass, which discards
+where the softscreen is unchanged and so never covered the geometry.
+Replacing the vertex shader's transform with a hard-coded NDC triangle
+was what showed the pipeline itself worked.
 
-Two hypotheses tested and rejected. The readback texture is
-`RGBA8Unorm` where every geometry pipeline declares `BGRA8Unorm`, which
-looked like the answer; making them agree changed nothing. And the
-GPU-T&L branch in `emu/port/devdraw.c` jumps to `gdone` without a
-`dstflush`, so nothing asks for a present after 3D geometry is queued -
-a real latent bug, since a client that draws *only* 3D never presents at
-all - but adding the flush did not make the triangle appear either.
+**Still wrong, and the next thing to fix: the GPU renders the scene
+unmirrored where the software path mirrors it.** Three triangles — red,
+green, blue, left to right in world space — come out red-green-blue
+through Metal and blue-green-red through `draw3d.dis`. Dividing by a
+negative w flips x and y, every port's camera was tuned against that, so
+it is the GPU that has to match, not the other way round.
 
-So the cause is still open, and it is now the first thing to fix: until
-it is, `D3CapGPU` is a fast way of drawing nothing. The timings that
-follow are what the app's own frame loop costs, which is a real number
-and the reason the protocol provider is worth having even on the CPU
-path - `draw3ddev.dis` falls back to devdraw's C rasteriser, which is
-much faster than Limbo - but they are not evidence of GPU rendering.
+**And the readback was never broken.** It reported the window border and
+nothing else because there was nothing else; with the clip fixed,
+`draw3dbench`'s readback line goes from 16166 to 225862. What remains
+true is narrower: reading GPU output requires a `readpixels` *straight
+off the image*, since that goes through devdraw's read message and calls
+`gpudrawreadback()`. Copying the image into a scratch with `draw()`
+first, which is what a port compositing its window into a buffer does,
+still sees nothing.
 
 **2. An offscreen buffer gets no GPU at all.** `metal_queue_fillpoly3d()`
 in `emu/MacOSX/win-cocoa.m` returns 0 unless the destination is `gscreen`,
@@ -212,21 +213,21 @@ Each phase names the evidence that closes it. A phase is not done because
 the code compiles; it is done when the stated number moved and a negative
 control put it back.
 
-### Phase 0 — make the Metal geometry path draw at all
+### Phase 0 — make the Metal geometry path agree with the software one
 
-Point 1. Nothing else in this plan means anything until a triangle
-submitted to `gpudrawfillpoly3d` appears on the screen. The reproducer
-is a dozen lines: one `fillpoly3` of a large triangle into a `wmclient`
-window through `/dis/math/draw3ddev.dis`, held on screen, captured from
-outside.
+**Half done.** The clip fix in point 1 landed, so Metal draws; the
+mirror does not match yet, and until it does no port can be trusted to
+the GPU, because every camera in the tree was set up against the
+software renderer's flip.
 
-Two things to fix on the way, both real whatever the main cause turns
-out to be: the readback texture's pixel format disagrees with every
-geometry pipeline's, and the GPU-T&L branch never requests a present.
+Two smaller things are still open and both are real: the GPU-T&L branch
+in `emu/port/devdraw.c` reaches `gdone` without a `dstflush`, so a
+client that draws *only* 3D never asks for a present and shows nothing;
+and the readback texture is `RGBA8Unorm` where every geometry pipeline
+declares `BGRA8Unorm`.
 
-*Evidence:* the capture shows the triangle, and `draw3dbench`'s readback
-line stops reading back the border alone. Negative control: revert, and
-both go back.
+*Evidence:* the three-triangle capture comes out in the same order
+through both providers. Negative control: revert, and they mirror.
 
 ### Phase 1 — reach the device at all
 
