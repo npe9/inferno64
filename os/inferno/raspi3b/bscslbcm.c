@@ -272,10 +272,9 @@ bscslinit(void)
 	r[Cr] = Cen | Ci2c | Ctxe | Crxe | Cbrk;
 	r[Cr] = Cen | Ci2c | Ctxe | Crxe;
 	r[Rsr] = 0;
-	for(i = 0; i < Maxfifo; i++)
-		out[0] = 0;
-	for(depth = 0; depth < Maxfifo; depth++){
-		uchar b = depth;
+	for(i = 0; i < Maxfifo; i++){
+		uchar b = i;
+
 		if(bcmi2cwrite(m, Slvaddr, &b, 1) < 0)
 			break;
 		if(r[Fr] & Frxff)
