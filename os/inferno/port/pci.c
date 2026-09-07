@@ -1022,15 +1022,96 @@ pcimsidisable(Pcidev *p)
 }
 
 enum {
-	MSIXCtrl = 0x02,
+	MSIXCtrl	= 0x02,	/* message control (16 bit) */
+	MSIXTbl		= 0x04,	/* table offset, and BIR in its low 3 bits */
+
+	MSIXEnable	= 1<<15,
+	MSIXFuncMask	= 1<<14,
+	MSIXSizeMask	= 0x7FF,
+
+	MSIXEntSize	= 16,	/* addr lo, addr hi, data, vector control */
+	MSIXEntMask	= 1,	/* bit 0 of a vector's control word */
 };
 
 static int
+pcigetmsix(Pcidev *p)
+{
+	if(p->msix != 0)
+		return p->msix;
+	return p->msix = pcicap(p, PciCapMSIX);
+}
+
+/*
+ * How many vectors the device's table holds, or -1 if it has no MSI-X
+ * capability.  A driver that wants a queue per vector asks this first.
+ */
+int
+pcimsixcount(Pcidev *p)
+{
+	int off;
+
+	if((off = pcigetmsix(p)) < 0)
+		return -1;
+	return (pcicfgr16(p, off + MSIXCtrl) & MSIXSizeMask) + 1;
+}
+
+/*
+ * MSI-X differs from MSI in where the message lives: not in
+ * configuration space but in a table in one of the device's own BARs,
+ * one 16-byte entry per vector, which is why this needs vmap() and MSI
+ * does not.  Parts that carry no INTx pin at all -- Amazon's ENA, and
+ * the current Intel and Mellanox 100G parts -- can be interrupted no
+ * other way.
+ */
+int
+pcimsixenable(Pcidev *p, int vec, uvlong addr, ulong data)
+{
+	int off, nvec, bir;
+	uvlong base;
+	u32int tbl;
+	uchar *e;
+
+	if((off = pcigetmsix(p)) < 0)
+		return -1;
+	nvec = (pcicfgr16(p, off + MSIXCtrl) & MSIXSizeMask) + 1;
+	if(vec < 0 || vec >= nvec)
+		return -1;
+
+	if(p->msixtbl == nil){
+		tbl = pcicfgr32(p, off + MSIXTbl);
+		bir = tbl & 7;
+		if(bir >= nelem(p->mem))
+			return -1;
+		base = p->mem[bir].bar;
+		if(base == 0 || (base & 1) != 0)	/* must be a memory bar */
+			return -1;
+		base &= ~0xFULL;
+		p->msixtbl = vmap(base + (tbl & ~7), nvec*MSIXEntSize);
+		if(p->msixtbl == nil)
+			return -1;
+	}
+
+	/* the vector stays masked while its address and data change */
+	e = (uchar*)p->msixtbl + vec*MSIXEntSize;
+	*(u32int*)(e+12) = MSIXEntMask;
+	coherence();
+	*(u32int*)(e+0) = addr;
+	*(u32int*)(e+4) = addr>>32;
+	*(u32int*)(e+8) = data;
+	coherence();
+	*(u32int*)(e+12) = 0;
+
+	pcicfgw16(p, off + MSIXCtrl,
+		(pcicfgr16(p, off + MSIXCtrl) & ~MSIXFuncMask) | MSIXEnable);
+	return 0;
+}
+
+int
 pcimsixdisable(Pcidev *p)
 {
 	int off;
 
-	if((off = pcicap(p, PciCapMSIX)) < 0)
+	if((off = pcigetmsix(p)) < 0)
 		return -1;
 	pcicfgw16(p, off + MSIXCtrl, 0);
 	return 0;
