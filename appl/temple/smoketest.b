@@ -1,6 +1,7 @@
 implement Smoketest;
 
-# Load every temple/*.dis as Command; optionally spawn init briefly.
+# Load every appl/temple and appl/danby module as Command; optionally spawn
+# init briefly.
 # Usage: temple/smoketest           — load-only
 #        temple/smoketest run       — load + 300ms init under wmclient context
 
@@ -30,79 +31,78 @@ Smoketest: module
 	init:	fn(ctxt: ref Context, argv: list of string);
 };
 
-mods := array[] of {
-	"asciiorgan", "battlelines", "bigguns", "blackdiamond", "bombergolf",
-	"bounce", "box", "budget", "cartesian", "castlefrankenstein",
-	"chardemo", "circletrace", "collision", "digits", "doodle",
-	"population", "ecology", "periodicvolterra", "predatorfishing",
-	"logisticprey", "logisticpredators", "alternativepredation", "maypredator",
-	"internalcompetition", "cooperation",
-	"childcare",
-	"manyspecies",
-	"violetsantsrodents", "parasite", "cannibalism",
-	"changingenvironment", "lakepollution", "budworm",
-	"epidemic", "tennis", "orbit", "modeling", "stability",
-	"chaosintro", "chaosdynamics", "chaos", "chaosmap",
-	"diseasebirthdeath1", "diseasebirthdeath2",
-	"crossinfection", "incubation", "seasonaldisease", "malaria",
-	"gonorrhea", "hiv", "weightchange",
-	"heartbeat",
-	"lanchester", "fishingone",
-	"productionexchange", "fishingtwo", "twocapital",
-	"spinningball",
-	"baseballpitch", "knuckleball", "flyball", "softballpitch", "golfdrive",
-	"soccerkick", "cricketbowl", "cricketswing",
-	"badminton", "tabletennis", "basketball", "badfootball", "discus", "javelin",
-	"skijump",
-	"running", "diving", "polevault",
-	"flight", "hovercraft", "shipmotion", "balloon",
-	"joggingcompanion", "bungee", "yoyo", "amusementchaos", "spacestationball",
-	"fireworks",
-	"threebody", "moontrip", "lagrange1", "lagrange2",
-	"skylab", "icbmrange", "icbmaccuracy", "aerobraking",
-	"rocketintro", "multistagerocket",
-	"rocket2d", "lowthrust", "reentry", "spaceyoyo", "stretchyoyo",
-	"cometcatch", "jupiterboost", "grandtour",
-	"perihelion", "poyntingrobertson", "galaxies", "venushead",
-	"heliumburning", "starmodel", "whitedwarf",
-	"simplependulum", "pendulumperiod", "dampedpendulum", "drypendulum",
-	"clockpendulum", "windpendulum", "loadedpendulum", "synchronousmotor",
-	"gravitypendulum", "magneticpendulum2d", "swing1", "swing2",
-	"varyingpendulum", "swingingcenser", "movingpivot", "pegpendulum",
-	"slidingpendulum1", "slidingpendulum2", "atwoodpendulum", "tablependulum",
-	"doublependulum", "wheelpendulum", "magneticpendulum3d", "dumbbellsatellite",
-	"moonrotation", "hyperionrotation", "mercuryrotation", "tidalrotation",
-	"nonlinearsprings", "duffing", "vanderpol", "variationparameters",
-	"columnbuckling", "catastrophemachine", "attractingwires", "violinbow",
-	"carrierlanding", "springpivot", "springpendulum", "chaoticwheel",
-	"decomposition", "enzymekinetics", "enzymeapplication", "moreenzyme", "stillmoreenzyme",
-	"brusselator", "oregonator", "reactorstability", "tankcontrol", "reservoir",
-	"fireflies", "pursuit", "lowbombing", "carbonmicrophone",
-	"rotatingring1", "rotatingring2", "compass", "pistonflywheel",
-	"wattgovernor", "dynamoreversal", "twomagnet", "bernoulli",
-	"euler", "truncation", "methodorder", "eulerorder", "heun", "rungekutta", "stepsize", "rkf45",
-	"odesystems", "rkf45scalar", "rkf45system", "solverdebug", "solverrun",
-	"meaning", "instructions", "solutions", "existence", "chapter1assignments",
-	"harvest", "competition", "foodchain", "forcedpendulum", "migration", "methods", "sirs", "vaccination",
-	"strains", "drug", "price", "firms", "boom", "arms",
-	"danbytest", "dungen", "elephantwalk", "flapbat", "flattops", "fonted",
-	"god", "grmodels", "halogen", "hanoi", "keepaway",
-	"life", "lines", "logic", "massspring", "maze", "numericstest",
-	"netofdots", "ohgreat", "pdelab", "psalmody", "raindrops", "rawhide",
-	"rocket", "rocketscience", "span", "squirt", "stadium",
-	"strut", "symmetry", "talons", "thedead", "tictactoe",
-	"timeclock", "titanium", "tothefront", "treecheckers", "varoom",
-	"vocabulary", "wenceslas", "whap", "xcaliber", "zing",
-	"zoneout",
-	"bspline", "griddemo", "mousedemo", "speedline",
-	"extents", "spriteplot", "spriteplot3d", "spriteput", "spriteputext", "spriteraw", "spritetext",
-	"blot", "charanimation", "palette", "pantext", "scrncapture", "sunmoon", "winzbuf",
-	"3dpoly", "pick", "ropcollision", "rotatetank", "shadow",
-	"balloon", "scrollbars", "slider", "wallpaperctrl",
-	"commonancestor", "lowpassfilter", "mathaudiodemo", "predatorprey",
-	"edsprite", "shading", "wallpaperfish", "waterfowl",
-	"morsecode", "polezeros", "transform",
-	"elephant", "lattice", "lighttable", "pick3d"
+# appl/temple/*.b, installed by appl/temple/mkfile into /dis/temple.
+tmods := array[] of {
+	"3dpoly", "arms", "asciiorgan", "balloon", "battlelines",
+	"bigguns", "blackdiamond", "blot", "bombergolf", "bounce",
+	"box", "bspline", "budget", "cartesian", "castlefrankenstein",
+	"chaosdynamics", "chaosintro", "chapter1assignments", "charanimation", "chardemo",
+	"circletrace", "collision", "commonancestor", "danbytest", "delab",
+	"digits", "doodle", "drug", "dungen", "edsprite",
+	"elephant", "elephantwalk", "euler", "eulerorder", "existence",
+	"extents", "firms", "flapbat", "flattops", "flight3d",
+	"fonted", "god", "griddemo", "grmodels", "halogen",
+	"hanoi", "harvest", "heun", "instructions", "keepaway",
+	"lattice", "life", "lighttable", "lines", "logic",
+	"lowpassfilter", "massspring", "mathaudiodemo", "maze", "meaning",
+	"mechanism", "methodorder", "methods", "modeling", "morsecode",
+	"mousedemo", "netofdots", "numericstest", "odesystems", "ohgreat",
+	"orbit", "orbital", "palette", "pantext", "pdelab",
+	"pick", "pick3d", "polezeros", "population", "populations",
+	"predatorprey", "price", "profile", "psalmody", "raindrops",
+	"rawhide", "rkf45", "rkf45scalar", "rkf45system", "rocket",
+	"rocketscience", "ropcollision", "rotatetank", "rungekutta", "scrncapture",
+	"scrollbars", "shading", "shadow", "sirs", "slider",
+	"solutions", "solverdebug", "solverlab", "solverrun", "span",
+	"speedline", "spriteedit", "spriteplot", "spriteplot3d", "spriteput",
+	"spriteputext", "spriteraw", "spritetext", "squirt", "stability",
+	"stadium", "stepsize", "strains", "strut", "sunmoon",
+	"symmetry", "talons", "tennis", "thedead", "tictactoe",
+	"timeclock", "titanium", "tothefront", "trajectory", "transform",
+	"treecheckers", "truncation", "varoom", "vocabulary", "wallpaperctrl",
+	"wallpaperfish", "waterfowl", "wenceslas", "whap", "winzbuf",
+	"xcaliber", "zing", "zoneout"
+};
+
+# appl/danby/*.b, installed by appl/danby/mkfile into /dis/danby — a
+# separate DISBIN, so these must NOT be looked for under /dis/temple.
+# The eleven that are model libraries rather than Commands (atmosphere,
+# ballistics, cartpendulum, doublependulumlib, gravity, oscillator, pendulum,
+# propulsion, reaction, rotatinghoop, spinorbit) have no init(ctxt, argv) and
+# are left out: "load Command" on one is a link typecheck failure, not a bug.
+dmods := array[] of {
+	"aerobraking", "alternativepredation", "amusementchaos", "attractingwires", "atwoodpendulum",
+	"badfootball", "badminton", "balloon", "baseballpitch", "basketball",
+	"bernoulli", "boom", "brusselator", "budworm", "bungee",
+	"cannibalism", "carbonmicrophone", "carrierlanding", "catastrophemachine", "changingenvironment",
+	"chaosmap", "chaoticwheel", "childcare", "clockpendulum", "columnbuckling",
+	"cometcatch", "compass", "competition", "cooperation", "cricketbowl",
+	"cricketswing", "crossinfection", "dampedpendulum", "decomposition", "discus",
+	"diseasebirthdeath1", "diseasebirthdeath2", "diving", "doublependulum", "drypendulum",
+	"duffing", "dumbbellsatellite", "dynamoreversal", "ecology", "enzymeapplication",
+	"enzymekinetics", "epidemic", "fireflies", "fireworks", "fishingone",
+	"fishingtwo", "flight", "flyball", "foodchain", "forcedpendulum",
+	"galaxies", "golfdrive", "gonorrhea", "grandtour", "gravitypendulum",
+	"heartbeat", "heliumburning", "hiv", "hovercraft", "hyperionrotation",
+	"icbmaccuracy", "icbmrange", "incubation", "internalcompetition", "javelin",
+	"joggingcompanion", "jupiterboost", "knuckleball", "lagrange1", "lagrange2",
+	"lakepollution", "lanchester", "limitstogrowth", "loadedpendulum", "logisticpredators",
+	"logisticprey", "lorenz", "lowbombing", "lowthrust", "magneticpendulum2d",
+	"magneticpendulum3d", "malaria", "manyspecies", "maypredator", "mercuryrotation",
+	"migration", "moonrotation", "moontrip", "moreenzyme", "movingpivot",
+	"multistagerocket", "nonlinearsprings", "oregonator", "parasite", "pegpendulum",
+	"pendulumperiod", "perihelion", "periodicvolterra", "pistonflywheel", "polevault",
+	"poyntingrobertson", "predatorfishing", "productionexchange", "pursuit", "reactorstability",
+	"reentry", "reservoir", "rocket2d", "rocketintro", "rotatingring1",
+	"rotatingring2", "running", "seasonaldisease", "shipmotion", "simplependulum",
+	"skijump", "skylab", "slidingpendulum1", "slidingpendulum2", "soccerkick",
+	"softballpitch", "spacestationball", "spaceyoyo", "spinningball", "springpendulum",
+	"springpivot", "stability", "starmodel", "stillmoreenzyme", "stretchyoyo",
+	"swing1", "swing2", "swingingcenser", "synchronousmotor", "tablependulum",
+	"tabletennis", "tankcontrol", "threebody", "tidalrotation", "twocapital",
+	"twomagnet", "vaccination", "vanderpol", "variationparameters", "varyingpendulum",
+	"venushead", "violetsantsrodents", "violinbow", "wattgovernor", "weightchange",
+	"wheelpendulum", "whitedwarf", "windpendulum", "yoyo"
 };
 
 init(ctxt: ref Context, argv: list of string)
@@ -166,39 +166,51 @@ init(ctxt: ref Context, argv: list of string)
 	ok := 0;
 	bad := 0;
 	total := 0;
-	for(i := 0; i < len mods; i++){
-		if(!wanted(mods[i],argv))
-			continue;
-		total++;
-		path := "/dis/temple/" + mods[i] + ".dis";
-		c := load Command path;
-		if(c == nil){
-			sys->print("FAIL load %s: %r\n", mods[i]);
-			bad++;
-			continue;
+	# Two DISBINs: appl/temple installs into /dis/temple, appl/danby into
+	# /dis/danby.  Looking for both under /dis/temple used to "pass" only
+	# because stale copies of the danby models were left there by an older
+	# layout; a clean tree would have failed 155 of them.
+	for(pass := 0; pass < 2; pass++){
+		dir := "/dis/temple/";
+		mods := tmods;
+		if(pass){
+			dir = "/dis/danby/";
+			mods = dmods;
 		}
-		sys->print("OK   load %s\n", mods[i]);
-		ok++;
-		if(dorun){
-			pidc := chan of int;
-			outcome := chan of int;
-			spawn runone(c, ctxt, mods[i], pidc, outcome);
-			pid := <-pidc;
-			deadline := chan of int;
-			spawn delay(deadline,350);
-			alt {
-			failed := <-outcome =>
-				if(failed){
-					ok--;
-					bad++;
-				}
-			<-deadline =>
-				# A healthy graphical command remains in its event loop.
-				fd := sys->open("/prog/"+string pid+"/ctl", Sys->OWRITE);
-				if(fd != nil)
-					sys->fprint(fd, "killgrp");
+		for(i := 0; i < len mods; i++){
+			if(!wanted(mods[i],argv))
+				continue;
+			total++;
+			path := dir + mods[i] + ".dis";
+			c := load Command path;
+			if(c == nil){
+				sys->print("FAIL load %s: %r\n", mods[i]);
+				bad++;
+				continue;
 			}
-			sys->sleep(50);
+			sys->print("OK   load %s\n", mods[i]);
+			ok++;
+			if(dorun){
+				pidc := chan of int;
+				outcome := chan of int;
+				spawn runone(c, ctxt, mods[i], pidc, outcome);
+				pid := <-pidc;
+				deadline := chan of int;
+				spawn delay(deadline,350);
+				alt {
+				failed := <-outcome =>
+					if(failed){
+						ok--;
+						bad++;
+					}
+				<-deadline =>
+					# A healthy graphical command remains in its event loop.
+					fd := sys->open("/prog/"+string pid+"/ctl", Sys->OWRITE);
+					if(fd != nil)
+						sys->fprint(fd, "killgrp");
+				}
+				sys->sleep(50);
+			}
 		}
 	}
 	mode := " [load]";
