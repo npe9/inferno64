@@ -11,6 +11,7 @@ DIRS=\
 #
 TOOLS=\
 	aout2efi\
+	aout2elf\
 	aout2imxrt\
 
 <$ROOT/mkfiles/mksubdirs
@@ -20,6 +21,9 @@ install:V: $TOOLS
 
 aout2efi:	aout2efi.c
 	$LD -o $target aout2efi.c
+
+aout2elf:	aout2elf.c
+	$LD -o $target aout2elf.c
 
 aout2imxrt:	aout2imxrt.c
 	$LD -o $target aout2imxrt.c

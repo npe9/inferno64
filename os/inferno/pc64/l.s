@@ -88,6 +88,37 @@ TEXT _multibootentry<>(SB), 1, $-4
 TEXT multibootptr(SB), 1, $-4
 	LONG	$0
 
+/*
+ * The x86/HVM direct boot ABI -- Xen's PVH entry, and the same one
+ * QEMU's -kernel loader, Firecracker and Cloud Hypervisor take for an
+ * ELF kernel.  The loader jumps here in 32-bit protected mode with
+ * flat segments, paging off and interrupts off, which is exactly the
+ * state _protected below expects, with BX holding the physical address
+ * of a struct hvm_start_info.
+ *
+ * Nothing is moved first.  A multiboot loader lays the data segment
+ * down immediately behind the text and _multibootentry above has to
+ * slide it up to the page boundary the kernel was linked for; an ELF
+ * loader puts it where it belongs, because tools/aout2elf gives the
+ * data a program header of its own.
+ *
+ * The header below is how tools/aout2elf finds this entry to put in
+ * the ELF's XEN_ELFNOTE_PHYS32_ENTRY note, the same way a multiboot
+ * loader finds the header above by scanning for its magic.
+ */
+TEXT _pvhheader<>(SB), 1, $-4
+	LONG	$0x21485650			/* PVH! */
+	LONG	$_pvhentry<>-KZERO(SB)
+
+TEXT _pvhentry<>(SB), 1, $-4
+	MOVL	BX, pvhptr-KZERO(SB)
+	MOVL	$_protected<>-KZERO(SB), AX
+	JMP*	AX
+
+/* hvm_start_info pointer (physical address) */
+TEXT pvhptr(SB), 1, $-4
+	LONG	$0
+
 TEXT _gdt<>(SB), 1, $-4
 	/* null descriptor */
 	LONG	$0

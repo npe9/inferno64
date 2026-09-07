@@ -458,3 +458,6 @@ os/inferno/pc64/apbootstrap.i
 os/inferno/pc64/apbootstrap.out
 os/inferno/pc64/rebootcode.i
 os/inferno/pc64/rebootcode.out
+tools/aout2elf
+Inferno/amd64/ipc64.elf
+os/inferno/pc64/ipc64.elf
