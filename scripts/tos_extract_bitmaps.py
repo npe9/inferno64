@@ -108,24 +108,23 @@ def bitmap(blob: bytes) -> tuple[int, int, int, int, bytes] | None:
 # files in icons/temple could not be opened at all.  Their sprites then
 # drew with no mask, which in draw3d's sprite2d meant the whole rotated
 # bounding box came out as a solid black rectangle.
-def _cdiv(a: int, b: int) -> int:
-    """Integer division truncating towards zero, as C does; Python floors."""
-    q = abs(a) // abs(b)
-    return -q if (a < 0) != (b < 0) else q
+def _ceildiv(a: int, b: int) -> int:
+    """ceil(a/b) for a positive b, matching libdraw's ceildiv()."""
+    return (a + b - 1) // b if a >= 0 else -((-a) // b)
 
 
 def k1_bytesperline(minx: int, maxx: int) -> int:
     """libdraw's bytesperline() for a 1-bit image, transcribed."""
     if minx >= 0:
-        return _cdiv(maxx + 7, 8) - _cdiv(minx, 8)
-    return _cdiv(-minx + 7, 8) + _cdiv(maxx + 7, 8)
+        return _ceildiv(maxx, 8) - minx // 8
+    return _ceildiv(-minx, 8) + _ceildiv(maxx, 8)
 
 
 def k1_firstbit(minx: int) -> int:
     """x coordinate that the first byte of a row starts at."""
     if minx >= 0:
-        return _cdiv(minx, 8) * 8
-    return -(_cdiv(-minx + 7, 8) * 8)
+        return minx // 8 * 8
+    return -(_ceildiv(-minx, 8) * 8)
 
 def write_images(
     dst: Path, x0: int, y0: int, width: int, height: int, pixels: bytes
