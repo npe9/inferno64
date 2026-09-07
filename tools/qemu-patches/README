@@ -83,6 +83,11 @@ checked, register by register, against Linux 6.17:
 	mini UART	drivers/tty/serial/8250/8250_bcm2835aux.c --
 			CNTL at 0x60 with RXEN 1 and TXEN 2, which is
 			the 0x3 reset value 0008 restores.
+	SMI		the Raspberry Pi kernel's
+			include/linux/broadcom/bcm2835_smi.h, which
+			documents what every bit does rather than
+			naming it.  Upstream Linux has no driver, which
+			is what made this block look undocumented.
 	thermal		arch/arm/boot/dts/broadcom/bcm2837.dtsi --
 			coefficients <(-538) 412000>.  Note the chip:
 			bcm2835 and bcm2836 use 407000, and a Pi 3B is

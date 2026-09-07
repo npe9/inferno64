@@ -174,10 +174,12 @@ main(void)
 					extern void armtmrinit(void);
 					extern void i2sinit(void);
 					extern void auxspiinit(void);
+					extern void smiinit(void);
 					auxinit();
 					armtmrinit();
 					i2sinit();
 					auxspiinit();
+					smiinit();
 				}
 			}
 		}

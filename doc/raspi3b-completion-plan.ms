@@ -1125,6 +1125,63 @@ block's model and SPI0's complete a transfer inside the register write
 that starts it, so that wait spins zero times and a driver without it
 looks perfect here and reads stale words on a board.  It is written
 from what the silicon does.
+.PP
+.B "The secondary memory interface"
+.CW ( smibcm.c ,
+0x3f600000, and
+.CW tools/qemu-patches/0014 )
+was recorded in this document as unmodelable, on the grounds that its
+register semantics were not public in enough detail.  That was true of
+what was to hand and not of what exists: the Raspberry Pi kernel's
+.CW include/linux/broadcom/bcm2835_smi.h
+documents what every bit does rather than merely naming it, which is a
+higher standard than several blocks in this series were built from.
+Upstream Linux has no driver, which is what made it look undocumented.
+.PP
+SMI drives a parallel bus off the SoC on GPIO 0-25 in alt1 \- address,
+data and strobes \- and is how a Pi talks to an FPGA, a parallel LCD
+controller or a camera sensor.  It has two register sets for two jobs:
+direct mode asserts one address and one word, for registers on the far
+side, and programmed mode moves a length through a FIFO, for bulk.
+.PP
+It is the only peripheral on this SoC whose
+.I timing
+is programmable the way a memory controller's is.  A word takes setup +
+strobe + hold + pace cycles of the SMI clock, all set per device, and
+there are four independent device banks so one bus can carry
+peripherals that need different timing.  Getting that arithmetic wrong
+gives a bus running at the wrong speed rather than an error, which on a
+board means marginal signals rather than a visible failure.
+.PP
+Three things this block gets a driver wrong are written into the file.
+DONE means different things in each direction: for a write it is set
+when the last word has gone, and for a read not until the FIFO has been
+emptied as well, so a driver that waits on DONE and only then starts
+reading waits forever.  SMIFD's two counters are six bits, so they
+saturate at 63 and cannot express a full 64-word FIFO, and a driver
+that drains exactly FCNT words leaves one behind.  And SMICS must not
+be read-modify-written, for the reason
+.CW i2sbcm.c
+learnt the hard way.
+.PP
+There is no device on the far side of the pins and there cannot be one:
+QEMU has no abstraction for a parallel memory-mapped peripheral, so
+unlike the AUX SPI this cannot borrow a model somebody else wrote.
+That puts it at the same tier as the PWM \- registers, FIFO discipline
+and error reporting modelled, nothing reaching a pin.
+.PP
+So the check leans on the one thing that can be measured
+independently.  The exercise programs 32 setup, 64 strobe and 32 hold
+cycles at 1.28MHz, which is 128 cycles a word and so 10000 words a
+second, and times a 64-word programmed read against the 1MHz system
+timer: 6441 microseconds against 6400 expected.  That is what gives the
+device settings registers an observable consequence instead of leaving
+them as storage.  The FIFO depth is measured rather than assumed \- it
+fills until TXD clears and reports 64 \- because a test built on a
+remembered constant passes for the wrong reason on the day the constant
+is wrong, and both error paths are exercised: AFERR by over- and
+under-running the FIFO, and SETERR by writing a settings register
+during a transfer, which needs neither a FIFO nor a device.
 .NH 1
 What stays unmodelled, and why
 .PP
@@ -1158,13 +1215,6 @@ pin strap a real board uses.  Either the datasheet's section 11 or the
 vendor tree's driver would unblock this, and neither is much work once
 one is in hand.
 .PP
-.B "The secondary memory interface"
-(0x3f600000) is blocked the same way, and it was checked the same way:
-Linux 6.17 has no
-.CW bcm2835-smi
-either.  Its register semantics are not public in enough detail to
-model faithfully, and a model written from guesswork would be inventing
-behaviour for a driver to match.
 .PP
 .B "TXP, DBUS, AVE0, V3D and SDRAMC"
 are internal to the SoC.  They are either undocumented, driven only by
