@@ -901,6 +901,37 @@ boots reaching the marker is a number, and 20 of 25 is a regression
 from 25 of 25 rather than an impression.
 .NH 2
 Phase 2 \- finish the multiprocessor kernel
+.PP
+.B "Before any of it: 7c ignores volatile."
+Found while starting a second processor on
+.CW virtarm64 ,
+and it changes how every item below has to be written.
+.IP
+.nf
+extern volatile unsigned long long f, g;
+void loopv(void) { f = 2; for(;;) g++; }
+
+	MOV	g+0(SB),R9	/* g loaded once */
+	MOV	$2,R1		/* f = 2, never stored */
+	ADD	$1,R9,R9	/* g++ in a register, for ever */
+.fi
+.PP
+Both operands are declared
+.CW volatile
+and the compiler hoists them regardless \- long-standing behaviour of
+the Ken compilers, which accept the keyword and ignore it.  So no spin
+loop, flag poll or lock retry in this kernel can be written the way it
+would be in C elsewhere.  What forces the load and the store is a call
+the compiler cannot see through:
+.CW coherence()
+in the loop body is the idiom, and it is what makes the secondary's own
+loop work.  Anything below that waits on another processor \- an
+.CW active.machs
+bit, a
+.CW flushmmu
+handshake, a collector's stop-the-world acknowledgement \- has to be
+built on that and not on
+.CW volatile .
 .IP 2.1
 Audit the kernel globals written from more than one processor: what
 .CW machinit
