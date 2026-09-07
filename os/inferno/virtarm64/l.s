@@ -12,6 +12,7 @@
 #define	D_ESR_EL1	SYSARG5(3,0,5,2,0)
 #define	D_FAR_EL1	SYSARG5(3,0,6,0,0)
 #define	D_CPACR_EL1	SYSARG5(3,0,1,0,2)
+#define	D_CTR_EL0	SYSARG5(3,3,0,0,1)
 #define	D_CNTFRQ_EL0	SYSARG5(3,3,14,0,0)
 #define	D_CNTPCT_EL0	SYSARG5(3,3,14,0,1)
 #define	D_CNTP_CTL_EL0	SYSARG5(3,3,14,2,1)
@@ -230,6 +231,32 @@ TEXT	getpfr0(SB), 1, $-4
 
 TEXT	seticceoir(SB), 1, $-4
 	MSR	R0, SPR(D_ICC_EOIR1_EL1)
+	RET	R30
+
+/*
+ * Cache maintenance, for segflush().  Encodings taken from
+ * os/inferno/raspi3b/l.s, which records verifying them byte-for-byte
+ * against 7l -a: DC CVAC,X0 == 0xd50b7a20 and IC IALLU == 0xd508751f.
+ * DC and IC are SYS aliases and 7a has no optab row for the mnemonics,
+ * so they are written as SYS with the address in R0.
+ *
+ * getctr() gives CTR_EL0 so the C side can stride by the smallest
+ * cache line present (DminLine, bits 19:16, bytes = 4<<field) rather
+ * than assuming one.  On a big.LITTLE part the clusters need not agree,
+ * which is exactly why the minimum is the one to use.
+ */
+TEXT	getctr(SB), 1, $-4
+	MRS	SPR(D_CTR_EL0), R0
+	RET	R30
+
+TEXT	dccvac(SB), 1, $-4		/* clean the D-line at R0 to PoC */
+	SYS	R0, $SYSARG5(0,3,7,10,1)
+	RET	R30
+
+TEXT	cacheiinv(SB), 1, $-4		/* IC IALLU, then make it stick */
+	SYS	$SYSARG5(0,0,7,5,0)
+	DSB	$15
+	ISB	$15
 	RET	R30
 
 TEXT	_tas(SB), 1, $-4

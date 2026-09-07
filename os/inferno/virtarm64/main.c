@@ -20,9 +20,18 @@ extern int heap_pool_pcnt;
 extern int image_pool_pcnt;
 
 int
+/*
+ * Make newly written instructions fetchable: clean the JIT's stores out
+ * of the D-cache to the point of coherency, then drop the stale I-cache
+ * lines, with cacheiinv()'s DSB/ISB ordering the next fetch behind it.
+ * arm64's I- and D-caches are not coherent, so this is required on one
+ * core, never mind several.  Was a no-op; see doc/dis-numa-survey.ms.
+ */
+int
 segflush(void *p, ulong l)
 {
-	USED(p, l);
+	cacheflush(p, l);
+	cacheiinv();
 	return 1;
 }
 
@@ -273,4 +282,34 @@ ulong
 va2pa(void *v)
 {
 	return (ulong)v;
+}
+
+/*
+ * Smallest data-cache line in bytes, from CTR_EL0.DminLine (bits 19:16,
+ * log2 of the line size in 4-byte words).  DC by VA must stride by the
+ * minimum line present or it skips lines; on a big.LITTLE part the
+ * clusters need not report the same geometry, which is exactly why the
+ * minimum is the one to use.
+ */
+static usize
+dlinesz(void)
+{
+	static usize ls;
+
+	if(ls == 0)
+		ls = 4UL << ((getctr() >> 16) & 0xf);
+	return ls;
+}
+
+void
+cacheflush(void *va, usize len)
+{
+	uintptr a, e, ls;
+
+	ls = dlinesz();
+	a = (uintptr)va & ~(ls - 1);
+	e = (uintptr)va + len;
+	for(; a < e; a += ls)
+		dccvac(a);
+	coherence();
 }

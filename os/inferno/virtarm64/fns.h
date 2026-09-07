@@ -13,6 +13,10 @@ uvlong	timersoon(void);
 uvlong	fastticks(uvlong*);
 ulong	tk2ms(ulong);
 void	coherence(void);
+u32	getctr(void);			/* CTR_EL0, for the cache line sizes */
+void	dccvac(uintptr);		/* clean one D-line to PoC */
+void	cacheiinv(void);		/* invalidate the whole I-cache */
+void	cacheflush(void*, usize);	/* clean a D-cache range to PoC */
 void	delay(int);
 void	dumpstack(void);
 void	fpinit(void);

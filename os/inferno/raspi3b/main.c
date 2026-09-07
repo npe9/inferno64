@@ -20,9 +20,24 @@ extern int heap_pool_pcnt;
 extern int image_pool_pcnt;
 
 int
+/*
+ * Make newly written instructions fetchable.  The arm64 I- and D-caches
+ * are not coherent with each other, so code the JIT has just stored
+ * sits in the D-cache while the I-cache may still hold whatever was at
+ * those addresses before: clean the writes out to the point of
+ * coherency, then drop the stale instruction lines and let the
+ * barriers in cacheiinv() order the next fetch behind it.
+ *
+ * This was USED(p, l); return 1; -- a no-op -- which was harmless only
+ * because every board here sets cflag = 0 and interprets.  It is wrong
+ * on one core before any question of other cores; see
+ * doc/dis-numa-survey.ms.
+ */
+int
 segflush(void *p, ulong l)
 {
-	USED(p, l);
+	cacheflush(p, l);
+	cacheiinv();
 	return 1;
 }
 
