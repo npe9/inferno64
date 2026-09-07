@@ -2280,6 +2280,38 @@ paired()
 	} else
 		sys->print("BT: the bond: %s\n", found);
 
+	#
+	# And the peer comes back.  It closes the link, opens it again,
+	# and starts encryption naming the key this side distributed;
+	# nothing pairs a second time.  That the key was found is the
+	# controller's to say -- the guest only sees a link that came up
+	# encrypted -- so scripts/btbench.sh reads the controller's log
+	# for it.  What this side can see is that it happened without
+	# another bond appearing.
+	#
+	before := len lines(readfile(mnt + "/0/bonds"));
+	again := 0;
+	for(i = 0; i < 40 && !again; i++){
+		sys->sleep(500);
+		if(hasword(trim(readfile(dev + "/state")), "encrypted")
+		&& !hasword(trim(readfile(dev + "/state")), "handle 65"))
+			again = 1;
+	}
+	if(!again){
+		sys->print("BT: FAILED: the peer did not come back encrypted: %s\n",
+			trim(readfile(dev + "/state")));
+		ok = 0;
+	} else {
+		after := len lines(readfile(mnt + "/0/bonds"));
+		if(after != before){
+			sys->print("BT: FAILED: coming back made %d bonds where there were %d\n",
+				after, before);
+			ok = 0;
+		} else
+			sys->print("BT: it came back on the bond it had: %s\n",
+				trim(readfile(dev + "/state")));
+	}
+
 	if(ok)
 		sys->print("BT: a peer paired with us and the link is encrypted\n");
 	writefile(mnt + "/0/ctl", "advertise off");

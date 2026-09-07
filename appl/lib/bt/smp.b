@@ -495,10 +495,49 @@ s1(k, r1, r2: array of byte): array of byte
 # key, which is the one thing a peripheral does that a central never
 # does.
 #
-respond(c: ref Conn, m: ref Mux): (ref Bond, string)
+respond(c: ref Conn, m: ref Mux, known: ref Bond): (ref Bond, string)
 {
 	ch := l2cap->open(m, L2cap->Csmp);
-	(preq, e0) := await(ch, Preq);
+	#
+	# Two things can arrive first.  A peer that has never been here
+	# asks to pair.  A peer that has been here starts encryption
+	# straight away, and what arrives is the controller asking for
+	# the key it named -- which is the bond, and answering it is the
+	# whole point of having kept one.
+	#
+	preq: array of byte;
+	e0: string;
+	for(;;){
+		alt {
+		p := <-ch =>
+			if(p == nil)
+				return (nil, "the link went away");
+			if(len p >= 1 && int p[0] == Preq){
+				preq = p;
+				break;
+			}
+			# anything else before pairing has begun is
+			# nothing this side asked for
+			continue;
+		(rand, ediv) := <-c.ltkreq =>
+			if(known != nil && known.ltk != nil && ediv == known.ediv
+			&& same(rand, known.rand)){
+				if((ke := hci->leltkreply(c, known.ltk)) != nil)
+					sys->fprint(sys->fildes(2),
+						"smp: answering a key request: %s\n", ke);
+			}else{
+				#
+				# a key we do not have.  Say so, rather
+				# than leaving the peer waiting: a
+				# negative reply is what tells it to
+				# pair again.
+				#
+				hci->leltknegreply(c);
+			}
+			continue;
+		}
+		break;
+	}
 	if(e0 != nil)
 		return (nil, e0);
 	if(len preq < 7)

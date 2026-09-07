@@ -622,5 +622,10 @@ Smp: module
 	# and as the responder: wait for a peer to ask, answer it,
 	# hand the controller the key it then asks for, and distribute
 	# a long term key so the peer can come back
-	respond:	fn(c: ref Hci->Conn, m: ref L2cap->Mux): (ref Bond, string);
+	# known is the bond already held for this peer, or nil.  A
+	# controller asking for a key by its diversifier is asking for
+	# that one, and answering it is what lets a bonded peer come
+	# back without pairing again.
+	respond:	fn(c: ref Hci->Conn, m: ref L2cap->Mux,
+				known: ref Bond): (ref Bond, string);
 };

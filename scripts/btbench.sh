@@ -275,7 +275,7 @@ echo "the peer saw the name the phase advertised"
 # the order initiator then responder, so a wire joining two links the
 # controller reported with different peers cannot satisfy both ends.
 #
-run paired "--peripheral --pairin" paired
+run paired "--peripheral --pairin --rebond" paired
 #
 # and what the model saw from the other side: the confirm this stack
 # computed as the responder matched, and the key it handed the
@@ -290,6 +290,20 @@ if [ "$n" != 1 ] || [ "$m" != 1 ]; then
 	exit 1
 fi
 echo "the peer saw our confirm match and our key agree"
+#
+# and that the bonded peer came back on the key this side distributed,
+# without pairing again.  Whether the key was found is the
+# controller's to see; the guest only sees a link that came up
+# encrypted, and a stack that pairs afresh every time would look the
+# same from inside it.
+#
+n=`grep -c 'came back on the bond, without pairing again' "$OUT/bthci-paired.log" || true`
+if [ "$n" != 1 ]; then
+	echo "=== phase paired ==="
+	echo "BENCH FAIL (paired): the peer came back on its bond $n times, wanted 1"
+	exit 1
+fi
+echo "and it came back on that bond without pairing again"
 run server "--loopback --badwrite" server
 #
 # and what the server said to a peer that wrote an attribute it was

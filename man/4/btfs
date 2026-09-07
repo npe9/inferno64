@@ -335,9 +335,13 @@ bond like any other, in
 .B bonds
 and in the key file, naming the peer and the controller it was made
 on.  It is Just Works, so it gives no protection against a man in the
-middle, exactly as pairing in the other direction does not.  A bonded
-peer that comes back has to pair again: a key request naming a stored
-key is not yet answered from the key file.
+middle, exactly as pairing in the other direction does not.
+.PP
+A peer that has paired before does not pair again: it starts
+encryption naming the key it was given, and that key is found in the
+bond and handed to the controller.  A key that is named and not held
+is answered with the negative reply, which is what tells the peer to
+pair afresh rather than leaving it waiting.
 .TP
 .B /net/bt/\fIN\fP/remote/\fIADDR\fP/l2cap/
 One file per open LE credit-based channel, named by its PSM in four

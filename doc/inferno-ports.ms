@@ -20312,6 +20312,23 @@ derivation.
 Two deliberate breakages, both caught by the link never coming up
 encrypted: a responder that puts its own address where the
 initiator's belongs, and one that never answers the key request.
+.PP
+A peer that has paired before does not pair again \(em it starts
+encryption naming the key it was given \(em so the responder waits for
+either a Pairing Request or a key request, whichever comes first, and
+answers the second from the bond.  A key that is named and not held
+gets the negative reply, which is what tells a peer to pair afresh
+instead of waiting for something that is not coming.
+.PP
+The phase has the peer close the link, open it again, and start
+encryption on the key it was given.  What this side can see is that it
+came up encrypted and no second bond appeared; whether the right key
+was found is the controller's to say, so
+.CW scripts/btbench.sh
+reads the controller's log for it.  A stack that quietly paired afresh
+every time would look identical from inside the guest.  With the
+lookup removed the negative reply goes out and the link never
+encrypts, which is the honest failure.
 .NH 2
 The bench now runs the interpreter, and why
 .PP

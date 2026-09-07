@@ -2162,7 +2162,19 @@ responder(d: ref Dev)
 	m := d.mux;
 	if(c == nil || m == nil)
 		return;
-	(b, e) := smp->respond(c, m);
+	#
+	# what is already known about this peer, if anything.  A peer
+	# that has been here before starts encryption rather than
+	# pairing, and the key it names is in that bond.
+	#
+	<-d.r.bondlock;
+	known: ref Bond;
+	for(bl := d.r.bonds; bl != nil; bl = tl bl)
+		if((hd bl).addr == d.dir || (hd bl).addr == bt->addrstr(c.addr))
+			known = hd bl;
+	d.r.bondlock <-= 1;
+
+	(b, e) := smp->respond(c, m, known);
 	if(e != nil){
 		#
 		# Only worth a line when the peer actually started.  A
@@ -2176,4 +2188,9 @@ responder(d: ref Dev)
 	}
 	addbond(d.r, b);
 	sys->fprint(sys->fildes(2), "btfs: %s paired with us\n", d.dir);
+	#
+	# and go back to waiting.  The peer may start encryption again
+	# on this same link, and the key it names is now one we have.
+	#
+	spawn responder(d);
 }

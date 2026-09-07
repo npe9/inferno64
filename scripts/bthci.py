@@ -159,6 +159,14 @@ badwrite = '--badwrite' in sys.argv
 # that already agrees with the old one.
 pairin = '--pairin' in sys.argv
 
+# --rebond: with --pairin, the peer does not stop at pairing.  It
+# closes the link, opens it again, and starts encryption naming the
+# long term key the guest distributed -- which is what a bonded device
+# does every time afterwards, and which only works if the guest can
+# find that key again from its diversifier.  The guest must not be
+# asked to pair a second time.
+rebond = '--rebond' in sys.argv
+
 # --addr XXXXXXXXXXXX: this controller's own BD_ADDR, most significant
 # byte first, so two models in one bench are two radios and not the
 # same one twice.  A bond records the controller it was made on, and
@@ -418,6 +426,7 @@ class Model:
         self.trace = []
         # LE credit-based channels, keyed by the CID the guest sends to
         self.smp2 = {}            # this model's own pairing, as the initiator
+        self.negative = False     # the peripheral said it has no such key
         self.ltkgiven = None      # what the peripheral answered a key request with
         self.badpending = False   # an injected write is waiting for its answer
         self.inhandle = None      # the link the model opened to the guest
@@ -602,6 +611,7 @@ class Model:
         elif op == 0x201b:                     # LE Long Term Key Request Negative Reply
             handle = struct.unpack('<H', params[0:2])[0]
             self.ltkgiven = None
+            self.negative = True
             print('bthci: the peripheral has no key for that request', flush=True)
             self.cmd_complete(op, bytes([0]) + struct.pack('<H', handle))
         else:
@@ -775,8 +785,12 @@ class Model:
             d['ltk'] = p[1:17]
             print('bthci: the guest distributed a long term key', flush=True)
         elif code == 0x07:                                # Central Identification
+            d['ediv'] = struct.unpack('<H', p[1:3])[0]
+            d['rand'] = p[3:11]
             print('bthci: and the numbers that name it: ediv %#06x'
-                  % struct.unpack('<H', p[1:3])[0], flush=True)
+                  % d['ediv'], flush=True)
+            if rebond:
+                threading.Thread(target=self.come_back, daemon=True).start()
         elif code == 0x05:
             print('bthci: the guest refused to pair: %s' % p.hex(), flush=True)
 
@@ -805,6 +819,47 @@ class Model:
             self.event(0x08, bytes([0x06]) + struct.pack('<H', self.inhandle) + bytes([0]))
             return
         print('bthci: the guest derived the same short term key', flush=True)
+        self.event(0x08, bytes([0]) + struct.pack('<H', self.inhandle) + bytes([1]))
+
+    #
+    # A bonded peer coming back: close the link, open it again, and
+    # start encryption naming the key that was distributed.  The guest
+    # has to find it from the diversifier and answer with it; if it
+    # cannot, the honest answer is the negative reply and the peer
+    # would have to pair again, which is exactly what this checks does
+    # not happen.
+    #
+    def come_back(self):
+        d = self.smp2
+        time.sleep(2)
+        print('bthci: closing the link and coming back', flush=True)
+        self.event(0x05, bytes([0x00]) + struct.pack('<H', self.inhandle) + bytes([0x13]))
+        time.sleep(2)
+        addr = bytes.fromhex('efbeadde0000')
+        self.inhandle = 0x0042
+        rep = struct.pack('<BHBB', 0x00, self.inhandle, 0x01, 0x00) + addr \
+              + struct.pack('<HHHB', 0x0028, 0, 0x002a, 0)
+        self.event(0x3e, bytes([0x01]) + rep)
+        time.sleep(1)
+        self.ltkgiven = None
+        self.negative = False
+        self.event(0x3e, bytes([0x05]) + struct.pack('<H', self.inhandle)
+                   + d['rand'] + struct.pack('<H', d['ediv']))
+        for _ in range(100):
+            if self.ltkgiven is not None or self.negative:
+                break
+            time.sleep(0.05)
+        if self.negative:
+            print('bthci: the guest has no key for the bond it made', flush=True)
+            return
+        if self.ltkgiven is None:
+            print('bthci: the guest never answered the second key request', flush=True)
+            return
+        if self.ltkgiven != d['ltk']:
+            print('bthci: the guest answered with a different key', flush=True)
+            return
+        print('bthci: the guest came back on the bond, without pairing again',
+              flush=True)
         self.event(0x08, bytes([0]) + struct.pack('<H', self.inhandle) + bytes([1]))
 
     def encrypt_up(self):

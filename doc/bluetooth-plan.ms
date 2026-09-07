@@ -241,11 +241,13 @@ Long Term Key Request a peripheral gets when the central starts
 encryption is answered, and a long term key is distributed so the peer
 can come back.  It is Just Works, like the initiator, with all that
 implies.
+A peer that has paired before comes back on that bond: it starts
+encryption naming the key it was given, and the key is found from its
+diversifier and handed to the controller, so nothing pairs twice.
 .PP
-What is missing on that side is a peer coming back \(em a key request
-naming a stored key by its diversifier is answered only for the short
-term key of the pairing in progress, so a bonded peer reconnecting has
-to pair again \(em and everything Secure Connections needs.
+What is missing on that side is everything Secure Connections needs,
+and a passkey or numeric comparison; the peripheral role here is Just
+Works and no more, in both directions.
 .NH 2
 Profiles, in the brief's order
 .IP 1.
