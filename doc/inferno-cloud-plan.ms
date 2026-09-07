@@ -473,19 +473,45 @@ kernel is a different port, not a driver.  Do not start here.
 .IP "\f(CWHVM\fP" 10
 A full machine: firmware, an emulated NIC and an emulated IDE
 controller from the device model in dom0, and PV drivers optional and
-only for speed.  This is the cheapest Xen by a wide margin, because
+only for speed.  This was the cheapest Xen by a wide margin and it is now free, because
+the one driver it wanted is in.
 .CW pc64
-already has the NICs \(en
+already had the NICs \(en
 .CW ether8139 ,
 .CW etherigbe ,
 .CW ether82563 ,
-whichever the host presents.  What it does not have is IDE.
-.CW os/inferno/pc/sdata.c
-is in the tree and commented out of the configuration
-.CW ( "# ata" ),
-written for the 386 board and not compiled against this one since;
+whichever the host presents \(en and lacked IDE.
+.CW os/inferno/pc/sdata.c ,
+this tree's own, is not the driver to use: it was written against the
+older Inferno
+.CW SDifc ,
+and since 9front's
+.CW devsd
+and
+.CW sd.h
+were taken into
+.CW os/inferno
+it does not compile here at all.
 .CW os/9front/pc/sdide.c
-is the copy-in alternative under the flavour rule.  One driver.
+is written against exactly the
+.CW sd.h
+this tree now has, so it is copied in under the flavour rule and
+compiles unchanged, with no edits of any kind, linked as
+.CW "sdide pci sdscsi" .
+.PP
+Verified live on
+.CW "qemu -machine pc"
+\(en i440fx and PIIX3 IDE, which is the machine a Xen HVM domain's
+device model presents: both channels enumerate
+.CW ( "QEMU HARDDISK"
+with DMA and LBA48,
+.CW "QEMU DVD-ROM"
+as ATAPI),
+.CW /dev/sdC0/data
+returns the sector the host wrote into it, and DHCP gets a lease over
+the emulated NIC \(en tested with both an RTL8139 and an e1000, since
+which of the two a host offers varies.  That is the whole Xen HVM
+device set working at once.
 .IP "\f(CWPVH\fP" 10
 Hardware virtualisation, no emulated devices, no firmware: the guest is
 entered directly and everything it talks to is a PV device.  The entry
@@ -577,7 +603,7 @@ Counting only what is not already in the tree:
 KVM / virtio        nothing.  Works today.
 QEMU, Firecracker,
 Cloud Hypervisor    nothing.  The PVH entry is in.
-Xen HVM             one driver: IDE.
+Xen HVM             nothing.  Works today: IDE landed.
 Xen PVH             xenbus, grant tables, event channels,
                     blkfront, netfront.
 AWS Nitro           multi-vector MSI-X, then ENA.
@@ -682,19 +708,24 @@ at all and it is most of the market, not one provider: GCE is only the
 one with a documented import path for an image nobody recognises.
 What is left of it is an account, an upload and a boot log.
 .IP 4.
-.B "Xen HVM: the IDE driver."
-One driver buys the whole Xen HVM population, AWS's remaining Xen
-generations among them, because the emulated NIC beside that disk is
-already driven.
-.CW os/inferno/pc/sdata.c
-first \(en it is in the tree, commented out of the configuration, and
-has not been compiled against this board \(en and
-.CW os/9front/pc/sdide.c
-copied in if it will not come.  On AWS this needs
-.CW os/inferno/boot/pc
-as well, since those generations answer
+.B "Xen HVM."
+Done: 9front's
+.CW sdide
+copied in, verified on i440fx with PIIX3 IDE and both emulated NICs.
+That is the whole Xen HVM population, on a self-managed host or a
+provider's.  AWS's remaining Xen generations additionally need
+.CW os/inferno/boot/pc ,
+since they answer
 .CW legacy-bios
-alone.
+alone, and that loader is a 386 target this tree does not build \(en
+no
+.CW Inferno/386/include ,
+no 386
+.CW libkern ,
+.CW libfis
+or
+.CW libflate .
+On a Xen host one controls, OVMF for the domain avoids all of it.
 .IP 5.
 .B "MSI-X."
 The single-vector half is done and verified against NVMe, per section

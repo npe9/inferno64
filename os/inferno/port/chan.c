@@ -659,11 +659,25 @@ ccloseq(Chan *c)
 Chan*
 cunique(Chan *c)
 {
+	extern void checktracked(void);
+	extern char *trackpoint;
 	Chan *nc;
 
+	/*
+	 * namec:after-cunique has caught a Dis frame word going from H to
+	 * zero, and namec:after-domount before it had not, so whatever
+	 * writes it runs in here.  These three narrow that to cclone or
+	 * cclose.  See doc/inferno-cloud-plan.ms.
+	 */
 	if(c->ref != 1){
+		trackpoint = "cunique:before-cclone";
+		checktracked();
 		nc = cclone(c);
+		trackpoint = "cunique:after-cclone";
+		checktracked();
 		cclose(c);
+		trackpoint = "cunique:after-cclose";
+		checktracked();
 		c = nc;
 	}
 
