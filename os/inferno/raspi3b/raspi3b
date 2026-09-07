@@ -99,6 +99,7 @@ misc
 	dmabcm
 	auxbcm
 	armtmrbcm
+	i2sbcm
 
 mod
 	sys
