@@ -60,6 +60,12 @@
 #	changed	a device that rearranges its database while connected
 #		and indicates Service Changed: the name space must
 #		follow, on the same link
+#	peripheral
+#		the stack advertising and a peer opening a link to it,
+#		which is the half of Bluetooth it could not do at all.
+#		The advertisement is checked against what the
+#		controller actually received, not only against what the
+#		name space says
 #	two	two controllers in one btfs: /net/bt/0 and /net/bt/1 with
 #		their own devices, their own scanning and their own
 #		bonds.  The assertion that matters is the last: both
@@ -227,6 +233,25 @@ echo "the Service Changed descriptor was written once, for two indications"
 # on -- belongs to the first and not to it.  Both present the same
 # peripheral rotating the same private address.
 #
+#
+# The other half: the stack advertising and a peer opening a link to
+# it.  Nothing above L2CAP answers on that link yet -- there is no
+# GATT server -- so what this asserts is the advertisement, the link,
+# and which side opened it.
+#
+run peripheral --peripheral peripheral
+#
+# and what the peer actually saw: the flags every discoverable device
+# sends, then the complete local name the phase asked for.  A name
+# that never reached the controller is a device nobody can find by it.
+#
+n=`grep -c 'adv data 0201060b09696e6665726e6f2d6274' "$OUT/bthci-peripheral.log" || true`
+if [ "$n" != 1 ]; then
+	echo "=== phase peripheral ==="
+	echo "BENCH FAIL (peripheral): the peer saw the advertised name $n times, wanted 1"
+	exit 1
+fi
+echo "the peer saw the name the phase advertised"
 run two --bonded two "--bonded --addr 001122334466"
 run coc "" coc
 #

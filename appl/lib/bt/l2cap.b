@@ -209,6 +209,18 @@ demux(m: ref Mux)
 		why := <-m.c.closed =>
 			if(why == nil)
 				why = "disconnected";
+			#
+			# Put it back.  The reason is a broadcast with
+			# one token in it, and the process watching the
+			# device is waiting on the same channel; taking
+			# it and keeping it left that process asleep on
+			# a link that had gone, and the name space
+			# saying the device was still connected.
+			#
+			alt {
+			m.c.closed <-= why =>	;
+			* =>	;
+			}
 			stop(m);
 			return;
 		}

@@ -121,6 +121,14 @@ one_goes_quiet = '--one-goes-quiet' in sys.argv
 # checks that the HCI command actually arrives.
 ask_params = '--ask-params' in sys.argv
 
+# --peripheral: the model plays the central for once.  It waits for the
+# guest to enable advertising, checks that what is advertised is what
+# the guest was told to advertise, opens a link to it -- an LE
+# Connection Complete with role 0x01, meaning the guest is the
+# peripheral -- and later closes it.  This is the half of Bluetooth the
+# stack could not do at all: being found, and being connected to.
+peripheral = '--peripheral' in sys.argv
+
 # --addr XXXXXXXXXXXX: this controller's own BD_ADDR, most significant
 # byte first, so two models in one bench are two radios and not the
 # same one twice.  A bond records the controller it was made on, and
@@ -379,6 +387,9 @@ class Model:
         self.paramresults = []    # what it answered to each request
         self.trace = []
         # LE credit-based channels, keyed by the CID the guest sends to
+        self.advertising = False
+        self.advdata = b''
+        self.advparams = None
         self.coc = {}
         self.cocsigid = 0x40
         self.cocsdus = []         # whole SDUs this side reassembled
@@ -428,6 +439,36 @@ class Model:
             # deliberately small: two buffers, so the guest's ACL
             # credit accounting is exercised rather than bypassed
             self.cmd_complete(op, bytes([0]) + struct.pack('<HB', 27, 2))
+        elif op == 0x2006:                     # LE Set Advertising Parameters
+            if len(params) != 15:
+                print('bthci: adv params are %d bytes, want 15' % len(params), flush=True)
+                self.cmd_complete(op, bytes([0x12]))   # invalid parameters
+            else:
+                mn, mx, ty, own = struct.unpack('<HHBB', params[0:6])
+                self.advparams = (mn, mx, ty, own)
+                print('bthci: adv params %d-%d type %#04x own %d'
+                      % (mn, mx, ty, own), flush=True)
+                self.cmd_complete(op, bytes([0]))
+        elif op == 0x2008 or op == 0x2009:     # LE Set Advertising / Scan Response Data
+            if len(params) != 32:
+                # a controller refuses anything but the fixed block
+                print('bthci: adv data is %d bytes, want 32' % len(params), flush=True)
+                self.cmd_complete(op, bytes([0x12]))
+            else:
+                n = params[0]
+                d = params[1:1+n]
+                if op == 0x2008:
+                    self.advdata = d
+                    print('bthci: adv data %s' % d.hex(), flush=True)
+                else:
+                    print('bthci: scan response %s' % d.hex(), flush=True)
+                self.cmd_complete(op, bytes([0]))
+        elif op == 0x200a:                     # LE Set Advertise Enable
+            self.advertising = params[0] != 0
+            print('bthci: advertising %s' % ('on' if self.advertising else 'off'), flush=True)
+            self.cmd_complete(op, bytes([0]))
+            if self.advertising and peripheral:
+                threading.Thread(target=self.connect_in, daemon=True).start()
         elif op == 0x200b:                     # LE Set Scan Parameters
             self.cmd_complete(op, bytes([0]))
         elif op == 0x200c:                     # LE Set Scan Enable
@@ -581,8 +622,13 @@ class Model:
         # Disconnect refers to is never in doubt
         self.handle = handle
         self.peer = (atype, addr)
+        # Role 0x00: the guest asked for this link, so the guest is the
+        # central.  It said 0x01 for years because nothing above looked
+        # at the field; the peripheral role is what made it matter, and
+        # a guest that believes a link it opened was opened to it hands
+        # the connection to the wrong half of itself.
         self.event(0x3e, bytes([0x01, 0x00]) + struct.pack('<H', handle)
-                   + bytes([0x01, atype]) + addr
+                   + bytes([0x00, atype]) + addr
                    + struct.pack('<HHH', 0x0028, 0, 0x002a) + bytes([0]))
         if sco:
             threading.Thread(target=self.scostream, daemon=True).start()
@@ -917,6 +963,27 @@ class Model:
             self.acl(5, bytes([0x12, self.sigid, len(body), 0]) + body)
             log('asked for %d-%d latency %d timeout %d' % (mn, mx, lat, to))
             time.sleep(3)
+
+    #
+    # The central half: open a link to the guest and then close it.
+    # The handle is a different one from the outgoing side's, so a
+    # phase that has both cannot confuse them.
+    #
+    def connect_in(self):
+        time.sleep(2)
+        if not self.advertising:
+            return
+        addr = bytes.fromhex('efbeadde0000')     # 0000 DEAD BEEF written down
+        self.handle = 0x0041
+        self.peer = (0, addr)
+        rep = struct.pack('<BHBB', 0x00, self.handle, 0x01, 0x00) + addr \
+              + struct.pack('<HHHB', 0x0028, 0, 0x002a, 0)
+        self.event(0x3e, bytes([0x01]) + rep)
+        print('bthci: connected to the guest, handle %#06x' % self.handle, flush=True)
+        time.sleep(6)
+        print('bthci: closing the link to the guest', flush=True)
+        self.event(0x05, bytes([0x00]) + struct.pack('<H', self.handle) + bytes([0x13]))
+        self.handle = None
 
     def move_database(self):
         for svc, char, vh, val in LATER:

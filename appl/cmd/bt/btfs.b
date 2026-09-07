@@ -155,6 +155,9 @@ Radio: adt {
 	q:	big;			# its directory
 	rq:	big;			# its remote directory
 	scanning:	int;
+	advertising:	int;
+	advname:	string;		# what the advertisement says we are
+	advset:		int;		# have the parameters been set
 	devs:	list of ref Dev;
 	devlock:	chan of int;
 	bonds:	list of ref Bond;
@@ -318,8 +321,10 @@ init(nil: ref Draw->Context, argv: list of string)
 
 	# no NEWPGRP: the mount below belongs in the name space of
 	# whoever started btfs, not in a private one
-	for(al := radios; al != nil; al = tl al)
+	for(al := radios; al != nil; al = tl al){
 		spawn advproc(hd al);
+		spawn inproc(hd al);
+	}
 	spawn reaper();
 	spawn serve(tchan);
 
@@ -879,9 +884,12 @@ ctlrstate(r: ref Radio): string
 	sc := "off";
 	if(r.scanning)
 		sc = "on";
+	ad := "off";
+	if(r.advertising)
+		ad = "on";
 	(sz, nb) := hci->aclmtu(r.x);
-	s := sprint("addr %s scan %s devices %d connections %d aclsize %d aclbufs %d",
-		bt->addrstr(hci->localaddr(r.x)), sc, nd, len hci->conns(r.x), sz, nb);
+	s := sprint("addr %s scan %s advertise %s devices %d connections %d aclsize %d aclbufs %d",
+		bt->addrstr(hci->localaddr(r.x)), sc, ad, nd, len hci->conns(r.x), sz, nb);
 	# only when there are any: a controller that has never sent one
 	# has nothing to report, and the line is what btfs(4) describes
 	if((n := hci->scodropped(r.x)) > 0)
@@ -911,6 +919,10 @@ devstate(d: ref Dev): string
 		s += sprint(", last heard from %ds ago", daytime() - d.seen);
 	if(d.conn != nil){
 		s = sprint("connected handle %d", d.conn.handle);
+		if(d.conn.role == Hci->Rperipheral)
+			s += " peripheral";	# the peer opened this one
+		else
+			s += " central";
 		if(d.conn.encrypted)
 			s += " encrypted";
 		if(d.sess != nil)
@@ -1130,6 +1142,30 @@ ctlwrite(m: ref Tmsg.Write, r: ref Radio, d: ref Dev, s: string)
 			break;
 		}
 		e = cocclose(d, hexnum(hd f));
+	"advertise" =>
+		#
+		# Be findable.  A peer that scans sees this side and can
+		# open a link to it, which is the half of Bluetooth the
+		# stack could not do at all before.
+		#
+		on := 1;
+		if(f != nil && hd f == "off")
+			on = 0;
+		e = advertise(r, on);
+	"advname" =>
+		if(f == nil){
+			e = "usage: advname name";
+			break;
+		}
+		r.advname = hd f;
+		#
+		# A controller takes new advertising data while it is
+		# advertising, so a name can be changed without stopping
+		# and starting, and the peer sees the new one on the
+		# next advertisement.
+		#
+		if(r.advertising)
+			e = hci->leadvdata(r.x, addata(r));
 	"debug" =>
 		;
 	* =>
@@ -1350,6 +1386,11 @@ watcher(d: ref Dev)
 {
 	c := d.conn;
 	why := <-c.closed;
+	# and back, for anyone else waiting on the same link
+	alt {
+	c.closed <-= why =>	;
+	* =>	;
+	}
 	<-d.lock;
 	if(d.conn == c){
 		d.conn = nil;
@@ -1826,4 +1867,106 @@ writecoc(m: ref Tmsg.Write, n: ref Node)
 		return;
 	}
 	srv.reply(ref Rmsg.Write(m.tag, len m.data));
+}
+
+
+#
+# The advertisement: the flags every discoverable device sends, and
+# the complete local name.  Thirty one bytes in all, so a long name is
+# cut rather than making the whole thing fail -- a controller refuses
+# the command outright, which would leave the stack silently not
+# advertising.
+#
+addata(r: ref Radio): array of byte
+{
+	name := r.advname;
+	if(name == nil)
+		name = "inferno";
+	nm := array of byte name;
+	if(len nm > 31 - 5)
+		nm = nm[0:31-5];
+	a := array[5 + len nm] of byte;
+	a[0] = byte 2;
+	a[1] = byte 16r01;	# flags
+	a[2] = byte 16r06;	# LE general discoverable, no BR/EDR
+	a[3] = byte (1 + len nm);
+	a[4] = byte 16r09;	# complete local name
+	a[5:] = nm;
+	return a;
+}
+
+advertise(r: ref Radio, on: int): string
+{
+	if(!on){
+		e := hci->leadvertise(r.x, 0);
+		if(e == nil)
+			r.advertising = 0;
+		return e;
+	}
+	#
+	# The parameters go in once.  A controller will not take them
+	# while it is advertising, so setting them every time would mean
+	# stopping first, and there is nothing here that wants changing
+	# between one advertisement and the next.
+	#
+	if(!r.advset){
+		if((e := hci->leadvparams(r.x, 1)) != nil)
+			return e;
+		r.advset = 1;
+	}
+	if((de := hci->leadvdata(r.x, addata(r))) != nil)
+		return de;
+	if((ee := hci->leadvertise(r.x, 1)) != nil)
+		return ee;
+	r.advertising = 1;
+	return nil;
+}
+
+#
+# Links a peer opened to this side.  The device gets a directory like
+# any other, named by the address it connected from; what is different
+# is that nothing here asked for it, so there is no discovery to do
+# and no gatt tree to build.  A peer that goes on to send ATT requests
+# gets no answer: there is no server yet, and btfs(4) says so.
+#
+inproc(r: ref Radio)
+{
+	c := hci->incoming(r.x);
+	for(;;){
+		conn := <-c;
+		if(conn == nil)
+			return;
+		name := bt->addrstr(conn.addr);
+		<-r.devlock;
+		d := finddev(r, conn.addr);
+		if(d == nil)
+			d = resolved(r, conn.atype, conn.addr);
+		if(d == nil){
+			d = newdev(r, name, conn.addr, conn.atype);
+			r.devs = d :: r.devs;
+		}
+		r.devlock <-= 1;
+
+		<-d.lock;
+		if(d.conn != nil){
+			#
+			# already connected, on a link this side opened.
+			# Two links to one device is not something the
+			# name space can show, so the new one goes.
+			#
+			d.lock <-= 1;
+			sys->fprint(sys->fildes(2),
+				"btfs: %s: a peer connected to a device already connected; closing it\n",
+				name);
+			hci->disconnect(conn);
+			continue;
+		}
+		d.conn = conn;
+		d.mux = l2cap->start(conn);
+		d.state = "connected";
+		d.seen = daytime();
+		spawn watcher(d);
+		d.lock <-= 1;
+		sys->fprint(sys->fildes(2), "btfs: %s connected to us\n", name);
+	}
 }

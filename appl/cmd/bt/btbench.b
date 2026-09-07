@@ -237,6 +237,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	"two" =>
 		twophase();
 		return;
+	"peripheral" =>
+		peripheral();
+		return;
 	"cocrefuse" =>
 		cocrefuse();
 		return;
@@ -1815,6 +1818,117 @@ listed(l: list of string, s: string): int
 {
 	for(; l != nil; l = tl l)
 		if(hd l == s)
+			return 1;
+	return 0;
+}
+
+#
+# The other half of Bluetooth: being found, and being connected to.
+# Everything above this in the bench has the stack opening links; this
+# is the stack advertising and a peer opening one to it.
+#
+# What is not here is anything above L2CAP on that link.  There is no
+# GATT server yet, so a peer that goes on to ask for attributes gets
+# no answer.  The phase says what is real -- the advertisement, the
+# link, the direction it was opened from -- and does not pretend the
+# rest.
+#
+Peerin:	con "0000DEADBEEF";
+
+peripheral()
+{
+	ok := 1;
+	if((e := writefile(mnt + "/0/ctl", "advname inferno-bt")) != nil){
+		sys->print("BT: FAILED: advname: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	if((ae := writefile(mnt + "/0/ctl", "advertise on")) != nil){
+		sys->print("BT: FAILED: advertise on: %s\n", ae);
+		sys->print("BT: done\n");
+		return;
+	}
+	st := trim(readfile(mnt + "/0/state"));
+	#
+	# "advertise on" and not merely "on": scanning is on too, and a
+	# test that matched either word would pass with advertising off.
+	#
+	if(!hasstr(st, "advertise on")){
+		sys->print("BT: FAILED: state does not say it is advertising: %s\n", st);
+		ok = 0;
+	} else
+		sys->print("BT: %s\n", st);
+
+	#
+	# the peer connects.  It takes a couple of seconds to decide,
+	# and then holds the link for a few more.
+	#
+	dev := mnt + "/0/remote/" + Peerin;
+	got := 0;
+	for(i := 0; i < 20 && !got; i++){
+		sys->sleep(500);
+		s := trim(readfile(dev + "/state"));
+		if(hasword(s, "connected"))
+			got = 1;
+	}
+	if(!got){
+		sys->print("BT: FAILED: nothing connected to us\n");
+		ok = 0;
+	} else {
+		s := trim(readfile(dev + "/state"));
+		if(!hasword(s, "peripheral")){
+			sys->print("BT: FAILED: connected, but not as the peripheral: %s\n", s);
+			ok = 0;
+		} else
+			sys->print("BT: a peer opened a link to us: %s\n", s);
+		#
+		# and it is this side's controller that says so, not a
+		# guess: the link is in the count of connections
+		#
+		cs := trim(readfile(mnt + "/0/state"));
+		if(!hasword(cs, "connections") || hasword(cs, "connections 0")){
+			sys->print("BT: FAILED: the controller counts no connection: %s\n", cs);
+			ok = 0;
+		}
+	}
+
+	#
+	# the peer closes it, and the name space follows
+	#
+	gone := 0;
+	for(j := 0; j < 30 && !gone; j++){
+		sys->sleep(500);
+		s := trim(readfile(dev + "/state"));
+		if(hasword(s, "disconnected:"))
+			gone = 1;
+	}
+	if(!gone){
+		sys->print("BT: FAILED: the peer closed the link and the tree did not notice: %s\n",
+			trim(readfile(dev + "/state")));
+		ok = 0;
+	} else
+		sys->print("BT: the peer closed it: %s\n", trim(readfile(dev + "/state")));
+
+	if((oe := writefile(mnt + "/0/ctl", "advertise off")) != nil){
+		sys->print("BT: FAILED: advertise off: %s\n", oe);
+		ok = 0;
+	}
+	st = trim(readfile(mnt + "/0/state"));
+	if(!hasstr(st, "advertise off")){
+		sys->print("BT: FAILED: still advertising: %s\n", st);
+		ok = 0;
+	}
+	if(ok)
+		sys->print("BT: advertised, was found, and was connected to\n");
+	writefile(mnt + "/0/ctl", "scan off");
+	sys->print("BT: done\n");
+}
+
+
+hasstr(s, w: string): int
+{
+	for(i := 0; i + len w <= len s; i++)
+		if(s[i:i+len w] == w)
 			return 1;
 	return 0;
 }

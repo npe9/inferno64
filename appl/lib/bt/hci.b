@@ -95,6 +95,13 @@ start(tr: Bttransport): (ref Ctlr, string)
 	# controller that nothing here owns.
 	#
 	x.connc = chan[1] of (ref Conn, string);
+	#
+	# Buffered, because a peer connects when it feels like it and
+	# not when something here is reading.  A link that does not fit
+	# is closed rather than dropped: nothing above would own it, and
+	# a link nothing owns stays up on the controller for ever.
+	#
+	x.inc = chan[4] of ref Conn;
 	x.statelock = chan[1] of int;
 	x.statelock <-= 1;
 	x.aclsize = 27;
@@ -255,6 +262,94 @@ aclmtu(x: ref Ctlr): (int, int)
 advs(x: ref Ctlr): chan of ref Adv
 {
 	return x.advc;
+}
+
+incoming(x: ref Ctlr): chan of ref Conn
+{
+	return x.inc;
+}
+
+advertising(x: ref Ctlr): int
+{
+	return x.adv;
+}
+
+#
+# Advertising.  A hundred to a hundred and fifty milliseconds on all
+# three advertising channels, from this controller's own address,
+# accepting a connection from anyone.  Connectable undirected is the
+# only kind worth having here: the point of advertising at all is to
+# be connected to.
+#
+Advmin:	con 16r00a0;	# 100 ms in 0.625 ms units
+Advmax:	con 16r00f0;	# 150 ms
+
+leadvparams(x: ref Ctlr, connectable: int): string
+{
+	p := array[15] of byte;
+	bt->put16(p, 0, Advmin);
+	bt->put16(p, 2, Advmax);
+	if(connectable)
+		p[4] = byte 16r00;	# ADV_IND
+	else
+		p[4] = byte 16r03;	# ADV_NONCONN_IND
+	p[5] = byte Bt->Apublic;	# our own address
+	p[6] = byte 0;			# no directed peer, so the
+	for(i := 0; i < Bt->Baddrlen; i++)	# address below is unused
+		p[7+i] = byte 0;
+	p[13] = byte 16r07;		# all three advertising channels
+	p[14] = byte 0;			# accept anyone
+	(st, nil, e) := cmd(x, bt->opcode(Ogle, 16r0006), p);
+	if(e != nil)
+		return e;
+	if(st != 0)
+		return bt->hcierr(st);
+	return nil;
+}
+
+#
+# Both data commands take a fixed 32 byte block: a length and 31 bytes
+# of which only that many are significant.  Sending fewer is a common
+# way to have a controller refuse the command.
+#
+advblock(x: ref Ctlr, ocf: int, ad: array of byte): string
+{
+	if(len ad > 31)
+		return sys->sprint("%d bytes of advertising data: the most is 31", len ad);
+	p := array[32] of byte;
+	p[0] = byte len ad;
+	for(i := 0; i < 31; i++)
+		p[1+i] = byte 0;
+	p[1:] = ad;
+	(st, nil, e) := cmd(x, bt->opcode(Ogle, ocf), p);
+	if(e != nil)
+		return e;
+	if(st != 0)
+		return bt->hcierr(st);
+	return nil;
+}
+
+leadvdata(x: ref Ctlr, ad: array of byte): string
+{
+	return advblock(x, 16r0008, ad);
+}
+
+leadvresp(x: ref Ctlr, ad: array of byte): string
+{
+	return advblock(x, 16r0009, ad);
+}
+
+leadvertise(x: ref Ctlr, on: int): string
+{
+	p := array[1] of byte;
+	p[0] = byte on;
+	(st, nil, e) := cmd(x, bt->opcode(Ogle, 16r000a), p);
+	if(e != nil)
+		return e;
+	if(st != 0)
+		return bt->hcierr(st);
+	x.adv = on;
+	return nil;
 }
 
 conns(x: ref Ctlr): list of ref Conn
@@ -695,6 +790,24 @@ lemeta(x: ref Ctlr, sub: int, b: array of byte)
 		<-x.statelock;
 		x.states = ref Cstate(c, nil, 0) :: x.states;
 		x.statelock <-= 1;
+		if(c.role == Rperipheral){
+			#
+			# A peer opened this one.  It must not go to
+			# connc: with connlock held there is one attempt
+			# outstanding and nothing filters what it
+			# accepts, so a link nobody asked for would be
+			# handed to a leconnect as its own answer -- the
+			# right shape of thing, the wrong device.
+			#
+			alt {
+			x.inc <-= c =>	;
+			* =>
+				# nothing above is listening, so nothing
+				# would own it
+				spawn dropconn(c);
+			}
+			return;
+		}
 		alt {
 		x.connc <-= (c, nil) =>	;
 		* =>	;	# nobody asked for it
@@ -824,4 +937,9 @@ closeconn(x: ref Ctlr, handle: int, why: string)
 	s.c.closed <-= why =>	;
 	* =>	;
 	}
+}
+
+dropconn(c: ref Conn)
+{
+	disconnect(c);
 }

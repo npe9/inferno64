@@ -20072,6 +20072,61 @@ gains a stranger every round and reads
 With bonds shared between the radios \(em the shape a first attempt
 would naturally have \(em all three of those assertions fail at once.
 .NH 2
+The other half, and one token for two waiters
+.PP
+Everything in this stack until now had it opening links.  It could not
+advertise, so it could not be found, could not be connected to, and
+could not be a device \(em which rules out the whole second half of
+what Bluetooth is for.  It can now:
+.CW "advertise on"
+on a controller's
+.CW ctl
+starts connectable undirected advertising carrying the flags every
+discoverable device sends and the name
+.CW advname
+was given, and a link a peer opens arrives under
+.CW remote
+like any other with
+.CW state
+saying which side opened it.
+.PP
+A link a peer opens must not arrive where
+.CW leconnect
+is waiting.  With
+.CW connlock
+held there is one attempt outstanding and nothing filters what it
+accepts \(em deliberately, because a controller that resolves privacy
+itself reports an identity address that would not match what was
+dialled \(em so a connection nobody asked for would be handed to that
+caller as its own answer: the right shape of thing and the wrong
+device.  Incoming links get their own channel, buffered because a peer
+connects when it feels like it, and one that does not fit is closed
+rather than dropped, since nothing above would own it.
+.PP
+The phase found a bug that the central path had been getting away
+with.
+.CW Conn.closed
+carries one reason and two processes wait on it: the L2CAP
+demultiplexer, which tears the channels down, and the watcher, which
+is what makes the name space say the device has gone.  Whoever got
+there first kept it.  On an outgoing link the watcher usually won, so
+nothing showed; on an incoming one the demultiplexer did, and the tree
+went on saying a device was connected to a link that had closed.  The
+reason is now put back by whoever takes it, and
+.CW bt.m
+says so where the field is declared.  With the reput taken out the
+phase reports exactly what it reported before the fix.
+.PP
+And the controller model had the role field wrong from the beginning.
+LE Connection Complete carries
+.I this
+side's role, and the model answered 0x01 \(em peripheral \(em for every
+link, including the ones the guest asked for.  Nothing had ever looked
+at the field, so it cost nothing until something did; then every
+outgoing connection in the bench went to the half of the stack that
+handles links opened to it.  A field nobody reads is a field nobody
+has checked.
+.NH 2
 The bench now runs the interpreter, and why
 .PP
 With the second radio in, the bench started failing in emu rather than

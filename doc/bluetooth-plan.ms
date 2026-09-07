@@ -201,13 +201,27 @@ at once and can reconfigure them.
 .NH 2
 The peripheral role
 .PP
-The stack can only initiate.  It cannot advertise, so it cannot be
-found, cannot be connected to, and cannot be a device.  That rules out
-the whole second half of what Bluetooth is for: exposing this machine
-as a keyboard, a sensor, or anything a phone would connect to.  It
-needs advertising, a GATT server (a database served from the name
-space rather than discovered into it, which is the same tree read the
-other way), and the responder half of SMP.
+The stack can advertise and can be connected to.
+.CW "advertise on"
+on a controller's
+.CW ctl
+starts connectable undirected advertising carrying the flags and the
+name
+.CW advname
+was given, and a link a peer opens arrives under
+.CW remote
+like any other, with
+.CW state
+saying which side opened it.
+.PP
+What is missing is everything above L2CAP on such a link.  There is no
+GATT server \(em a database served from the name space rather than
+discovered into it, which is the same tree read the other way \(em so
+a peer that connects and asks for attributes gets no answer at all.
+And there is no responder half of SMP, so a peer cannot pair with this
+side; the Long Term Key Request event a peripheral gets when the peer
+starts encryption is not handled either.  Until those two exist this
+side can be found and connected to and is of no use once it has been.
 .NH 2
 Profiles, in the brief's order
 .IP 1.

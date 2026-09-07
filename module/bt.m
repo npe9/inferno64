@@ -143,6 +143,12 @@ Hci: module
 	# not share is here: its transport, its command lock, its ACL
 	# credits, its links, and what it said it was.
 	#
+	# our role on a link, as the controller reports it in LE
+	# Connection Complete: central if we opened it, peripheral if a
+	# peer opened it to us.
+	Rcentral:	con 0;
+	Rperipheral:	con 1;
+
 	Ctlr: adt {
 		t:		Bttransport;
 		cmdlock:	chan of int;
@@ -159,6 +165,8 @@ Hci: module
 		lver:		string;
 		aclsize:	int;
 		aclbufs:	int;
+		adv:		int;		# is it advertising
+		inc:		chan of ref Conn;	# links a peer opened
 	};
 
 	Conn: adt {
@@ -176,6 +184,15 @@ Hci: module
 		latency:	int;
 		timeout:	int;
 		up:	chan of array of byte;	# whole L2CAP frames
+		#
+		# Why the link went away, and a broadcast rather than a
+		# message: more than one process waits for it -- the
+		# L2CAP demultiplexer, and whoever above is watching the
+		# device -- and there is one reason to go round.  So
+		# whoever takes it puts it back, and every waiter sees
+		# it.  Taking it and keeping it leaves the others
+		# waiting for ever on a link that has gone.
+		#
 		closed:	chan of string;
 	};
 
@@ -212,6 +229,22 @@ Hci: module
 
 	lescan:	fn(x: ref Ctlr, on: int): string;
 	advs:	fn(x: ref Ctlr): chan of ref Adv;
+
+	# Advertising, which is how this side is found at all.  The
+	# parameters are set once and the data can be changed while it
+	# is running, which is what a controller allows and what saves
+	# stopping and starting to change a name.
+	leadvparams:	fn(x: ref Ctlr, connectable: int): string;
+	leadvdata:	fn(x: ref Ctlr, ad: array of byte): string;
+	leadvresp:	fn(x: ref Ctlr, ad: array of byte): string;
+	leadvertise:	fn(x: ref Ctlr, on: int): string;
+	advertising:	fn(x: ref Ctlr): int;
+
+	# Links a peer opened to this side.  They arrive here and not on
+	# the channel leconnect waits on: a connection nobody asked for
+	# handed to a caller that asked for a different one is that
+	# caller's answer, and it would be the wrong device.
+	incoming:	fn(x: ref Ctlr): chan of ref Conn;
 
 	leconnect:	fn(x: ref Ctlr, atype: int, addr: array of byte): (ref Conn, string);
 	disconnect:	fn(c: ref Conn): string;
