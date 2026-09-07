@@ -1050,13 +1050,42 @@ after
 .CW chandevinit() ,
 and reports
 .CW ARMTIMER-INTR-OK
-with 4 interrupts counted in 50013us at 100Hz.
+with 19 interrupts counted in 200019us at 100Hz, twice running.
+.PP
+The window is 200ms rather than the 50ms it takes to prove delivery,
+because a test that only proves delivery is weaker than the counter
+checks beside it and this chapter presents them as equals.  At 50ms the
+expected count is 5, a single missed edge is a fifth of it, and the
+tolerance needed to absorb that would pass a timer running at half or
+double the programmed rate.  At 200ms it is about 20, one edge is 5%,
+and the bound can be a quarter \- the same as the counter checks.  It
+costs 150ms of boot.
 .PP
 .CW intrenable()
 now panics above the basic bank rather than accepting a number nothing
-can deliver.  IRQ 33 was accepted for the console, armed in a register
-nobody read, and cost a long time to find; the next wrong number
-should be loud.
+can deliver, and
+.CW GicIRQMax
+is 72 \- the real end of this controller's number space \- rather than
+the 96 inherited from the
+.CW "-M virt"
+board this file was adapted from, where it left room for virtio slots
+that raspi3b does not have.  IRQ 33 was accepted for the console, armed
+in a register nobody read, and cost a long time to find; the next wrong
+number is loud.
+.PP
+One more quiet refusal came out with it.
+.CW gicenable()
+skipped IRQ 30 as "the generic timer, enabled by clock.c".  That is
+virt-board legacy too:
+.CW clock.c
+drives the generic timer through
+.CW timerie()
+and never calls
+.CW intrenable()
+at all, while 30 is an ordinary GPU source on this controller.  The
+special case did nothing but silently refuse to enable one real IRQ \-
+the same failure as the other two, and it had not bitten yet only
+because nothing on the board has claimed 30.
 .PP
 .B "The I2S/PCM serialiser"
 .CW ( i2sbcm.c ,

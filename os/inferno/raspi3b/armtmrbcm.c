@@ -78,7 +78,16 @@ enum {
 	 */
 	Armtimerirq = 64,
 	Intrhz	= 100,
-	Intrms	= 50,		/* 100Hz for 50ms is 5 interrupts */
+	/*
+	 * Long enough that the count is worth a tight bound.  At 100Hz
+	 * a 50ms window gives 5 interrupts, and a single missed edge is
+	 * a fifth of that -- so the tolerance has to be wide enough to
+	 * let a timer running at half or double the programmed rate
+	 * through, which is the very thing worth catching.  200ms gives
+	 * about 20, where a quarter is a real bound and one missed edge
+	 * is 5%.  It costs 150ms of boot.
+	 */
+	Intrms	= 200,
 };
 
 static u32*
@@ -297,12 +306,12 @@ armtmrintrcheck(void)
 		return;
 	}
 	/*
-	 * Half the expected count plus one is the tolerance: delay() is
-	 * a busy loop that the clock interrupt itself preempts, so the
-	 * window is not exact, and at 100Hz over 50ms the count is
-	 * small enough that a single missed edge is a fifth of it.
+	 * A quarter, matching the counter checks above: delay() is a
+	 * busy loop the clock interrupt preempts, so the window is not
+	 * exact, but over 200ms that is noise rather than a fifth of
+	 * the measurement.
 	 */
-	if(expect == 0 || err > (long)(expect/2 + 1)){
+	if(expect == 0 || err > (long)(expect/4)){
 		print("ARMTIMER-INTR-FAIL %lud interrupts, expected about %lud\n",
 			armtmrintrs, expect);
 		return;

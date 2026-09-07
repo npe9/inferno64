@@ -87,7 +87,17 @@ enum {
 	GicdCTLR_ARE	= 1<<4,		/* affinity routing enable */
 	GicdCTLR_EN1	= 1<<1,		/* enable group 1 (with ARE set) */
 
-	GicIRQMax	= 96,		/* 32 virtio slots start at 48; plenty of room */
+	/*
+	 * The whole of the BCM2835 controller's number space, as
+	 * trap.c flattens it: GPU IRQs 0..63 across the two GPU
+	 * pending registers, then the eight ARM basic sources as
+	 * 64..71.  There is nothing above that to dispatch, and
+	 * intrenable() panics rather than accept a number there.
+	 * (The old bound of 96 left room for virtio slots on the
+	 * -M virt board this file was adapted from; raspi3b has no
+	 * virtio and no GIC.)
+	 */
+	GicIRQMax	= 72,
 	GicSpiBase	= 32,
 	GicPPITimer	= 30,		/* non-secure physical timer, from the DTB */
 };

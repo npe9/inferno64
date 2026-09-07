@@ -187,8 +187,14 @@ gicenable(int irq)
 
 	if(irq <= 0 || irq >= GicIRQMax)
 		return;
-	if(irq == GicPPITimer)		/* generic timer: enabled by clock.c */
-		return;
+	/*
+	 * There was a special case here skipping GicPPITimer (30) as
+	 * "the generic timer, enabled by clock.c".  That is virt-board
+	 * legacy: clock.c drives the generic timer through timerie()
+	 * and never calls intrenable() at all, while 30 is a perfectly
+	 * ordinary GPU IRQ on this controller -- so the special case
+	 * did nothing but silently refuse to enable one real source.
+	 */
 	ic = (u32*)IRQBASE;
 	/*
 	 * 0x10/0x14 are ENABLE_1 and ENABLE_2; 0x18 is ENABLE_BASIC,
@@ -303,7 +309,7 @@ intrenable(int v, void (*f)(Ureg*, void*), void *a, int tbdf, char *name)
 	 * quiet fault that costs a long time to find, which is
 	 * exactly what IRQ 33 did to the console.
 	 */
-	if(v <= 0 || v >= Basicbase + Nbasicirq)
+	if(v <= 0 || v >= GicIRQMax)
 		panic("intrenable: irq %d", v);
 	irqhandler[v] = f;
 	irqarg[v] = a;
