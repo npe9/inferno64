@@ -708,28 +708,40 @@ tkfocus(TkTop *top, char *arg, char **ret)
 
 	global = 0;
 	
+	/*
+	 * tkparse's name list belongs to the caller, and this was the one
+	 * caller in libtk that asked for one and never freed it: every
+	 * "focus .widget" leaked a TkName, which is 128 bytes of the main
+	 * pool per window opened, for ever.  Found by histogramming live
+	 * blocks by allocpc through /dev/memleak.  Every return below goes
+	 * through Out now rather than each one growing its own free.
+	 */
 	names = nil;
 	e = tkparse(top, arg, tko, &names);
 	if (e != nil)
-		return e;
+		goto Out;
 
 	if(names == nil){
-		if(global)
-			return tkvalue(ret, "%d", top->focused);
+		if(global){
+			e = tkvalue(ret, "%d", top->focused);
+			goto Out;
+		}
 		tk = top->ctxt->tkkeygrab;
 		if (tk != nil && tk->name != nil)
-			return tkvalue(ret, "%s", tk->name->name);
-		return nil;
+			e = tkvalue(ret, "%s", tk->name->name);
+		goto Out;
 	}
 
 	if(global){
 		tksetglobalfocus(top, atoi(names->name));
-		return nil;
+		goto Out;
 	}
 
 	wp = mallocz(Tkmaxitem, 0);
-	if(wp == nil)
-		return TkNomem;
+	if(wp == nil){
+		e = TkNomem;
+		goto Out;
+	}
 
 	tkword(top, arg, wp, wp+Tkmaxitem, nil);
 	if (!strcmp(wp, "next")) {
@@ -746,14 +758,17 @@ tkfocus(TkTop *top, char *arg, char **ret)
 		if(tk == nil){
 			tkerr(top, wp);
 			free(wp);
-			return TkBadwp;
+			e = TkBadwp;
+			goto Out;
 		}
 		dir = 0;
 	}
 	free(wp);
 
 	tksetkeyfocus(top, tk, dir);
-	return nil;
+Out:
+	tkfreename(names);
+	return e;
 }
 
 char*
