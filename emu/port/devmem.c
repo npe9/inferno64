@@ -12,7 +12,8 @@ enum
 	Qevent,
 	Qprof,
 	Qheap,
-	Qgc
+	Qgc,
+	Qleak
 };
 
 static
@@ -26,7 +27,98 @@ Dirtab memdir[] =
 	"memprof",	{Qprof},	0,			0444,
 	"memheap",	{Qheap},	0,			0444,
 	"memgc",		{Qgc},	0,			0444,
+	"memleak",	{Qleak},	0,			0444,
 };
+
+/*
+ * Every Bhdr carries the pc that allocated it (include/pool.h), which the
+ * free-block poisoning in alloc.c already reports.  Nothing histogrammed it
+ * over the LIVE blocks, which is what a leak looks like: /dev/memory says a
+ * pool grew, /dev/memheap says which Dis type is holding it, and neither
+ * says which line of C never freed it.  Reading this walks every pool and
+ * reports live blocks grouped by their allocating pc.
+ *
+ * The pc is a host address, so it is printed both raw and as an offset from
+ * poolalloc, which is what survives ASLR: symbolise with
+ * nm(poolalloc) + offset against the binary.
+ *
+ * Diff two reads across the operation under test; the pc whose count grew
+ * by one per iteration is the leak.
+ */
+enum {
+	Nleakpc = 1024,
+	Nleakreport = 48
+};
+
+static struct
+{
+	intptr	pc;
+	ulong	n;
+	uintptr	size;
+	int	pool;
+} leaktab[Nleakpc];
+static int nleakpc;
+static int leaklost;
+
+static char*
+leakaudit(int pno, Bhdr *b)
+{
+	int i;
+
+	if(b->magic != MAGIC_A && b->magic != MAGIC_I)
+		return nil;
+	for(i = 0; i < nleakpc; i++)
+		if(leaktab[i].pc == b->allocpc && leaktab[i].pool == pno){
+			leaktab[i].n++;
+			leaktab[i].size += b->size;
+			return nil;
+		}
+	if(nleakpc >= Nleakpc){
+		leaklost++;
+		return nil;
+	}
+	leaktab[nleakpc].pc = b->allocpc;
+	leaktab[nleakpc].pool = pno;
+	leaktab[nleakpc].n = 1;
+	leaktab[nleakpc].size = b->size;
+	nleakpc++;
+	return nil;
+}
+
+static void
+leakreport(void)
+{
+	int i, j, best, reported;
+	char *e;
+	static char *poolname[] = { "main", "heap", "image" };
+
+	nleakpc = 0;
+	leaklost = 0;
+	if((e = poolaudit(leakaudit)) != nil){
+		print("memleak: %s\n", e);
+		return;
+	}
+	print("memleak: %d distinct allocation sites, poolalloc=%#p\n",
+		nleakpc, poolalloc);
+	if(leaklost)
+		print("memleak: %d blocks past the %d-site table\n",
+			leaklost, Nleakpc);
+	for(reported = 0; reported < Nleakreport; reported++){
+		best = -1;
+		for(j = 0; j < nleakpc; j++)
+			if(leaktab[j].n != 0 &&
+			   (best < 0 || leaktab[j].size > leaktab[best].size))
+				best = j;
+		if(best < 0)
+			break;
+		i = leaktab[best].pool;
+		print("%10lud %10zud %-6s poolalloc%+zd\n",
+			leaktab[best].n, leaktab[best].size,
+			i >= 0 && i < nelem(poolname) ? poolname[i] : "?",
+			(intptr)(leaktab[best].pc - (intptr)poolalloc));
+		leaktab[best].n = 0;
+	}
+}
 
 enum
 {
@@ -439,6 +531,10 @@ memread(Chan *c, void *va, long count, vlong offset)
 		 */
 		if(offset == 0)
 			heapaudit();
+		return 0;
+	case Qleak:
+		if(offset == 0)
+			leakreport();
 		return 0;
 	case Qgc:
 		s = malloc(READSTR);
