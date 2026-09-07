@@ -39,6 +39,43 @@ provider's 5.57, but only when the destination is the window layer — an
 offscreen frame buffer gets no GPU at all and is *slower* through the
 protocol. `draw3dbench(1)` is the harness.
 
+## Sprite3 places by the ORIGIN, sprite2d places the middle
+
+The single most repeated porting mistake in this tree, found 2026-09-06
+after "the elephant is wrong" and then swept for.
+
+TempleOS's `Sprite3(dc,x,y,z,elems)` puts the *bin rectangle's (0,0)* at
+(x,y), and `Sprite3ZB(dc,x,y,z,elems,theta)` turns it about that same
+point, with `theta` in **radians**. The rectangles are not centred: the
+elephant's is (-124,-100)-(95,136), so its origin is at its shoulder;
+`squirt`'s nozzle is (-1,-5)-(25,5), so it swings about the hose end
+twenty-five pixels from its tip; the backdrops are (0,-117)-(641,2), so
+they hang above the ground line.
+
+`draw3d`'s `sprite2d` places the *middle of the bitmap*. The two are
+different by however far the origin sits from the centre, which was 124
+pixels for the elephant, 47 for a backdrop, 18 for `bigguns`' barrel and
+12 for `squirt`'s nozzle. Ports that got this wrong compensated with
+hand-measured constants that were close but never right.
+
+Two idioms, and both are now in more than one port:
+
+- Unrotated: `img.draw(spr.r.addpt(Point(x, y)), spr, msk, spr.r.min)`.
+  Note the source point - `Point(0,0)` reads the wrong part of a sprite
+  whose rectangle does not start at the origin.
+- Rotated: carry the origin-to-middle offset through the mirror and the
+  rotation and ask `sprite2d` for the middle where it lands. See
+  `appl/temple/bigguns.b:sprorigin` or `bombergolf.b:drawrot`.
+
+A symmetry plane (`DCF_SYMMETRY|DCF_JUST_MIRROR`) applied to a rotated
+sprite is a flipped sprite turned the other way, since M.R(a) = R(-a).M.
+
+Checked across every port that uses a sprite: `bombergolf` and
+`rocketscience` already did it right, `elephant` did it right for its
+scene; `elephantwalk`, `bigguns`, `squirt` and `rocket` did not and now
+do. `rocket` and `rocketscience` still centre their *rotated* sprites,
+whose origins are half a pixel off centre, which is not worth the code.
+
 ## The `.mask` files were laid out wrongly
 
 Fixed 2026-09-06; here because the failure was invisible and the symptom

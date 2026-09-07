@@ -295,9 +295,13 @@ redraw()
 		return;
 	o := img.r.min;
 	img.draw(img.r, ink[2], nil, Point(0, 0));
+	# Sprite3(dc,0,GROUND_Y,0,<4>): the backdrop's own rect is
+	# (0,-117)-(641,2), so it hangs above the ground line and pokes two
+	# pixels below it.  The -70/+48 here was a guess, and reading the
+	# source at (0,0) rather than the rect's own min read the wrong part
+	# of it as well.
 	if(sprites[4] != nil)
-		img.draw(Rect((o.x, o.y+groundy-70), (o.x+640, o.y+groundy+48)),
-			sprites[4], masks[4], Point(0, 0));
+		sprput(img, o.x, o.y+groundy, sprites[4], masks[4]);
 	else
 		img.draw(Rect((o.x, o.y+groundy), (o.x+img.r.dx(), o.y+img.r.dy())), ink[1], nil, Point(0, 0));
 
@@ -332,7 +336,7 @@ redraw()
 		r := int m.radius;
 		if(m.userdata == MT_DROP){
 			if(sprites[3] != nil)
-				img.draw(Rect((p.x-3, p.y-3), (p.x+4, p.y+4)), sprites[3], masks[3], Point(0, 0));
+				sprput(img, p.x, p.y, sprites[3], masks[3]);
 			else
 				img.fillellipse(p, r, r, ink[3], Point(0, 0));
 		}
@@ -341,14 +345,49 @@ redraw()
 		p := Point(o.x+int faucet.x, o.y+int faucet.y);
 		img.draw(Rect((p.x+8, p.y), (p.x+16, o.y+groundy)), ink[0], nil, Point(0, 0));
 		if(sprites[1] != nil)
-			img.draw(Rect((p.x-14, p.y-13), (p.x+15, p.y+13)), sprites[1], masks[1], Point(0, 0));
+			sprput(img, p.x, p.y, sprites[1], masks[1]);
 	}
 	if(nozzle != nil && sprites[2] != nil){
+		# Sprite3ZB(dc,tmpm->x,tmpm->y,0,<2>,nozzle_a).  The nozzle's rect
+		# is (-1,-5)-(25,5): its origin is at the hose end and the barrel
+		# runs 25 pixels out from there, so it swings about its base and
+		# not about the middle of its bitmap, twelve pixels along.
 		p := Point(o.x+int nozzle.x, o.y+int nozzle.y);
-		draw3d->sprite2d(img, p, sprites[2], masks[2], 25, 9,
+		sprorigin(img, p.x, p.y, sprites[2], masks[2],
 			nozzle_ang*180.0/3.141592653589793, 0);
 	}
 	img.flush(Draw->Flushnow);
+}
+
+# TempleOS's Sprite3 places a sprite by its ORIGIN - the (0,0) of the
+# bin's own rectangle - so the destination is that rectangle moved to the
+# wanted point, and the source point is the rectangle's own min.  Passing
+# a hand-measured box and Point(0,0) reads the wrong part of the sprite
+# and puts it in the wrong place, by however far the origin sits from the
+# middle: twelve pixels for the nozzle, forty-seven for the backdrop.
+sprput(img: ref Image, x, y: int, spr, msk: ref Image)
+{
+	if(spr == nil)
+		return;
+	img.draw(spr.r.addpt(Point(x, y)), spr, msk, spr.r.min);
+}
+
+# The same, for Sprite3ZB, which also turns about that origin.  sprite2d
+# places the middle of the bitmap, so carry the origin-to-middle offset
+# through the rotation and ask for the middle where it lands.
+sprorigin(img: ref Image, x, y: int, spr, msk: ref Image, deg: real, flipx: int)
+{
+	if(spr == nil)
+		return;
+	ox := real spr.r.min.x + real spr.r.dx() / 2.0;
+	oy := real spr.r.min.y + real spr.r.dy() / 2.0;
+	if(flipx)
+		ox = -ox;
+	rad := deg * 3.141592653589793 / 180.0;
+	cs := math->cos(rad);
+	sn := math->sin(rad);
+	draw3d->sprite2d(img, Point(x + int (ox*cs - oy*sn), y + int (ox*sn + oy*cs)),
+		spr, msk, spr.r.dx(), spr.r.dy(), deg, flipx);
 }
 
 songloop()

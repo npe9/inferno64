@@ -209,7 +209,12 @@ paint()
 	buffer.draw(buffer.r, display.color(Draw->Cyan), nil, Point(0, 0));
 	cx := buffer.r.dx()/2;
 	if(ground != nil){
-		p0 := Point(0, gy - ground.r.dy()/2);
+		# Sprite3(dc,0,GROUND_Y,0,<2>).  The backdrop's own rect is
+		# (0,-117)-(641,2), so placing it by its origin hangs it above
+		# the ground line with two pixels below.  Centring the bitmap on
+		# the ground line instead, which is what gy - dy/2 did, put it
+		# fifty-eight pixels low.
+		p0 := Point(0, gy);
 		buffer.draw(ground.r.addpt(p0), ground, nil, ground.r.min);
 	}else
 		buffer.draw(Rect((0, gy), (buffer.r.dx(), buffer.r.dy())),
