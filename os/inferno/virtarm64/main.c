@@ -19,7 +19,6 @@ extern int main_pool_pcnt;
 extern int heap_pool_pcnt;
 extern int image_pool_pcnt;
 
-int
 /*
  * Make newly written instructions fetchable: clean the JIT's stores out
  * of the D-cache to the point of coherency, then drop the stale I-cache
@@ -27,6 +26,64 @@ int
  * arm64's I- and D-caches are not coherent, so this is required on one
  * core, never mind several.  Was a no-op; see doc/dis-numa-survey.ms.
  */
+/*
+ * Bring-up probe for a second processor.  secmain() runs on the
+ * secondary with a stack and nothing else: no Mach, so no up/m, which
+ * means no print() and no lock -- it may only touch these two words.
+ * cpu0 polls them.
+ */
+/* volatile: cpu0 polls these in a loop and cpu1 is the only writer */
+static uvlong	secstackbuf[KSTACK/sizeof(uvlong)];
+uintptr		secstacktop;
+volatile uintptr	secsp;
+volatile uintptr	secalive;
+volatile uintptr	seccount;
+
+void
+secmain(void)
+{
+	secalive = 5;	/* reached C */
+	for(;;)
+		seccount++;
+}
+
+/*
+ * PSCI CPU_ON (SMC64 0xc4000003): target, entry point, context.  QEMU
+ * virt's conduit is HVC, which psci() in l.s already uses for
+ * SYSTEM_RESET and SYSTEM_OFF.  Returns the PSCI status: 0 success,
+ * -2 invalid parameters, -4 already on, -3 denied.
+ */
+void
+smpprobe(void)
+{
+	extern void _secondary(void), _main(void);
+	void main(void);
+	vlong r;
+	int i;
+	uvlong c0;
+
+	print("smp: PSCI %#llux, cpu1 %s\n", psci(0x84000000ULL, 0, 0, 0),
+		psci(0xc4000004ULL, 1, 0, 0) == 1 ? "off" : "not off");
+	secstacktop = ((uintptr)secstackbuf + sizeof secstackbuf) & ~(uintptr)15;
+	r = psci(0xc4000003ULL, 1, (uintptr)_secondary, 0);
+	print("smp: PSCI CPU_ON cpu1 entry %#llux -> %lld\n", (uvlong)(uintptr)_secondary, r);
+	if(r != 0)
+		return;
+	for(i = 0; i < 100 && secalive == 0; i++)
+		delay(10);
+	print("smp: cpu1 reached stage %llud, sp %#llux\n", (uvlong)secalive, (uvlong)secsp);
+	/*
+	 * alive 1 = reached the entry, 2 = stack up, 3 = running C.
+	 * seccount is incremented by cpu1 in a loop, so two reads a
+	 * moment apart say whether it is still going.
+	 */
+	c0 = seccount;
+	delay(50);
+	print("smp: cpu1 alive %llud, seccount %llud -> %llud (%s)\n",
+		(uvlong)secalive, (uvlong)c0, (uvlong)seccount,
+		seccount != c0 ? "running" : "stopped");
+}
+
 int
 segflush(void *p, ulong l)
 {
@@ -158,6 +215,7 @@ main(void)
 
 	print("\nInferno %s\n", VERSION);
 	print("conf %s (%lud) jit %d\n\n", conffile, kerndate, cflag);
+	smpprobe();
 
 	userinit();
 	schedinit();

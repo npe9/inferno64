@@ -13,6 +13,7 @@
 #define	D_FAR_EL1	SYSARG5(3,0,6,0,0)
 #define	D_CPACR_EL1	SYSARG5(3,0,1,0,2)
 #define	D_CTR_EL0	SYSARG5(3,3,0,0,1)
+#define	D_MPIDR_EL1	SYSARG5(3,0,0,0,5)
 #define	D_CNTFRQ_EL0	SYSARG5(3,3,14,0,0)
 #define	D_CNTPCT_EL0	SYSARG5(3,3,14,0,1)
 #define	D_CNTP_CTL_EL0	SYSARG5(3,3,14,2,1)
@@ -128,6 +129,69 @@ TEXT	_main(SB), 1, $-4
 dead:
 	B	dead
 
+/*
+ * Secondary-processor entry, for PSCI CPU_ON.  QEMU virt starts a
+ * secondary at the same exception level as the primary with the MMU
+ * off, and this board never turns the MMU on (mmu.c: "identity/
+ * physical addressing throughout"), so there are no page tables to
+ * build and the entry address is its own physical address.  That is
+ * most of what makes arm64 bring-up hard elsewhere and it simply does
+ * not arise here.
+ *
+ * Deliberately minimal: its own stack, the static base register, then
+ * C.  It does not touch Mach, the GIC or the scheduler -- MAXMACH is
+ * still 1 and this is only the proof that the processor starts and
+ * executes.
+ */
+TEXT	_secondary(SB), 1, $-4
+	MOV	$setSB(SB), R28
+	/*
+	 * Signal before anything that can fault.  VBAR_EL1 is whatever
+	 * reset left it on this processor -- trapinit() only ever ran on
+	 * cpu0 -- so any exception here vanishes into an unknown vector
+	 * with nothing to report it.  Set the flag first, then try the
+	 * things that might not work.
+	 */
+	MOV	$1, R1
+	MOV	R1, secalive(SB)
+	DSB	$15
+	/*
+	 * The stack top comes from C, already rounded down to 16.  AArch64
+	 * faults on a misaligned SP the moment anything uses it as a base,
+	 * and a GLOBL's address carries no such guarantee -- which is what
+	 * stopped this at "alive 2": the entry ran, and secmain()'s
+	 * prologue died on the first store through an odd SP, into a
+	 * VBAR this processor never had set.
+	 */
+	MOV	secstacktop(SB), R2
+	MOV	R2, RSP
+	MOV	R2, secsp(SB)		/* what SP did we actually get? */
+	MOV	$2, R1
+	MOV	R1, secalive(SB)
+	DSB	$15
+	MOV	$3, R1			/* about to call C */
+	MOV	R1, secalive(SB)
+	DSB	$15
+	/*
+	 * The loop is here rather than in C because BL secmain(SB) does
+	 * not survive: the processor reaches this point with the stack
+	 * pointer it was given, correct and 16-byte aligned, and never
+	 * arrives in the C function.  Something in 7c's prologue wants
+	 * more of a world than a bare secondary has -- almost certainly a
+	 * register this entry does not set up.  Worth chasing when the
+	 * secondary needs to do more than count; for the purpose of
+	 * showing that a second processor runs, assembly is enough and
+	 * makes the result unambiguous.
+	 */
+	MOV	$4, R1
+	MOV	R1, secalive(SB)
+secloop:
+	MOV	seccount(SB), R1
+	ADD	$1, R1, R1
+	MOV	R1, seccount(SB)
+	DSB	$15
+	B	secloop
+
 GLOBL	dtbptr(SB), $8
 GLOBL	stack(SB), $KSTACK
 GLOBL	mach0(SB), $(4*1024)
@@ -175,6 +239,25 @@ TEXT	getcallerpc(SB), 1, $-4
  * HVC #0 uses them and returns the result in x0.
  */
 TEXT	psci(SB), 1, $-4
+	/*
+	 * Load the four SMCCC arguments from the caller's frame.  They are
+	 * NOT already in R0-R3: 7c passes arguments on the stack here, and
+	 * an argument probe (arg0..arg3 stubs returning R0..R3 for a call
+	 * of 0x11,0x22,0x33,0x44) reads back 0x11, 0x1a, 0x22, 0x44 -- the
+	 * first happens to be in R0 and the rest are leftovers from
+	 * materialising the constants.
+	 *
+	 * This stub used to assume R0-R3 and say so in a comment.  It
+	 * worked anyway for every caller it had, because SYSTEM_RESET and
+	 * SYSTEM_OFF take no argument past the function ID in R0.  It
+	 * fails for everything that does: CPU_ON returned INVALID_PARAMS,
+	 * and AFFINITY_INFO answered 0 for every target including nonsense
+	 * ones, which is what pointed at the arguments rather than at the
+	 * PSCI implementation.
+	 */
+	MOV	a1+8(FP), R1
+	MOV	a2+16(FP), R2
+	MOV	a3+24(FP), R3
 	HVC	$0
 	RET	R30
 
@@ -245,6 +328,10 @@ TEXT	seticceoir(SB), 1, $-4
  * than assuming one.  On a big.LITTLE part the clusters need not agree,
  * which is exactly why the minimum is the one to use.
  */
+TEXT	getmpidr(SB), 1, $-4
+	MRS	SPR(D_MPIDR_EL1), R0
+	RET	R30
+
 TEXT	getctr(SB), 1, $-4
 	MRS	SPR(D_CTR_EL0), R0
 	RET	R30
