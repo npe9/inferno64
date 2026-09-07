@@ -49,6 +49,8 @@
 #define	SPI0		(BCMPERIPH + 0x204000)	/* BCM2835 SPI0 */
 #define	CPRMAN		(BCMPERIPH + 0x101000)	/* BCM2835 clock manager */
 #define	PWM0		(BCMPERIPH + 0x20c000)	/* BCM2835 PWM */
+#define	SYSTMR		(BCMPERIPH + 0x003000)	/* BCM2835 system timer, 1MHz */
+#define	THERMAL		(BCMPERIPH + 0x212000)	/* BCM2835 temperature sensor */
 
 
 /* Mach struct above typical kernel image */

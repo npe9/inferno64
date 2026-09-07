@@ -802,6 +802,65 @@ come on by themselves and a duty cycle cannot be measured here.  The
 registers, the FIFO discipline and the error reporting are what a
 driver gets wrong, and those are covered.
 .NH 1
+Blocks QEMU models that nothing was driving
+.PP
+Three peripherals the emulator implements properly and this board
+simply never touched.  No QEMU work was needed for any of them; the gap
+was entirely on this side, and each is now brought up and checked at
+boot alongside i2c, spi and the rest.
+.PP
+.B "The system timer"
+.CW ( systmrbcm.c ,
+0x3f003000) is a free-running 64-bit counter at a fixed 1MHz.  It is
+not the timer the scheduler runs on \- that is the ARM generic timer in
+.CW clock.c ,
+whose rate is whatever CNTFRQ reports \- and that independence is the
+point.  Reading both and comparing catches a wrong frequency, which is
+otherwise very hard to see: it shows up only as timeouts that are
+mysteriously off by a constant factor.  Over a 50ms
+.CW delay()
+paced by the generic timer, the system timer measures
+.CW "50038 us"
+\- agreement to better than a part in a thousand, from two clocks that
+share nothing.
+.PP
+The 64-bit counter sits behind a 32-bit bus, so
+.CW systmrread()
+reads high, low, high again and retries if the high word moved.
+Without that the timestamp jumps backwards by about 71 minutes, roughly
+once every 71 minutes.
+.PP
+.B "The temperature sensor"
+.CW ( thermbcm.c ,
+0x3f212000) returns a 10-bit ADC reading, not a temperature.  The
+conversion has a
+.I negative
+slope \- degrees C = 412 - 0.538 * adc \- so a larger reading means a
+colder die, and getting it backwards yields a driver that reports the
+chip cooling as it heats, which only shows up under load.  Done in
+millidegrees with integers, since this is a kernel: ADC 719 gives
+.CW "25.178 C" ,
+matching the fixed 25 degrees the model reports.
+.PP
+.B "The OTP fuses and board identity"
+.CW ( mailbox.c )
+come through the firmware mailbox, which is the documented way to reach
+them on a Pi \- the block's MMIO register interface is not implemented
+in QEMU and is not publicly documented, so driving it would have meant
+inventing a protocol.  GET_BOARD_REVISION returns
+.CW 0x00a02082 ,
+which is the genuine revision code for a Pi 3 Model B, and
+GET_CUSTOMER_OTP returns the eight customer rows, all unprogrammed.
+The serial reads zero, which is the emulator declining to invent one.
+.PP
+.B "Read-only, deliberately."
+SET_CUSTOMER_OTP sits on the other side of the same interface and does
+exactly what one-time-programmable means: a fuse blown on a real Pi is
+blown forever, and the rows can be locked against further writing.  A
+boot-time self-test that wrote there would quietly consume a board's
+fuses the first time it ran on hardware, so this reads and nothing
+else.  That is a hardware constraint, not an emulator one.
+.NH 1
 Parallel: the kfs create failure -- re-diagnosed, and it is not what the old note said
 .PP
 Independent of USB and not blocking (dossrv, ramfs and 9660srv all run

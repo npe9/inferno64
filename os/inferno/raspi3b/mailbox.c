@@ -204,6 +204,92 @@ mboxgetmac(uchar *mac)
 }
 
 /*
+ * Board identity, from the firmware: the revision code says which Pi
+ * this is, and the serial is the SoC's unique number.  Both come out
+ * of OTP on real hardware and both are what a board reports about
+ * itself, so they are worth having.
+ */
+int
+mboxgetrevserial(u32 *rev, uvlong *serial)
+{
+	static u32 raw[10+4];
+	u32 *buf;
+
+	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
+	buf[0] = 10*4;
+	buf[1] = 0;
+	buf[2] = 0x00010002;		/* tag: get board revision */
+	buf[3] = 4;
+	buf[4] = 0;
+	buf[5] = 0;			/* <- revision */
+	buf[6] = 0;			/* end tag (rewritten below) */
+	buf[7] = 0;
+	buf[8] = 0;
+	buf[9] = 0;
+	if(mboxprop(buf) < 0)
+		return -1;
+	if((buf[4] & 0x80000000) == 0)
+		return -1;
+	*rev = buf[5];
+
+	buf[0] = 10*4;
+	buf[1] = 0;
+	buf[2] = 0x00010004;		/* tag: get board serial */
+	buf[3] = 8;
+	buf[4] = 0;
+	buf[5] = 0;			/* <- serial low */
+	buf[6] = 0;			/* <- serial high */
+	buf[7] = 0;			/* end tag */
+	if(mboxprop(buf) < 0)
+		return -1;
+	if((buf[4] & 0x80000000) == 0)
+		return -1;
+	*serial = (uvlong)buf[6]<<32 | buf[5];
+	return 0;
+}
+
+/*
+ * Read the customer OTP rows -- eight 32-bit fuses the board owner may
+ * program once, and only once.
+ *
+ * READ ONLY, deliberately.  There is a SET_CUSTOMER_OTP (0x00038021)
+ * on the other side of this same interface, and it does exactly what
+ * one-time-programmable means: a fuse blown on a real Pi is blown
+ * forever, and the rows can additionally be locked against any further
+ * write.  A boot-time self-test that wrote here would quietly consume
+ * a board's fuses the first time it ran on hardware, so this reads and
+ * nothing else.
+ */
+int
+mboxgetotp(u32 *rows, int n)
+{
+	static u32 raw[16+4];
+	u32 *buf;
+	int i;
+
+	if(n <= 0 || n > 8)
+		return -1;
+	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
+	buf[0] = (6 + 2 + n) * 4;
+	buf[1] = 0;
+	buf[2] = 0x00030021;		/* tag: get customer OTP */
+	buf[3] = (2 + n) * 4;		/* value buffer: start, count, rows */
+	buf[4] = 8;			/* request length */
+	buf[5] = 0;			/* start row */
+	buf[6] = n;			/* how many */
+	for(i = 0; i < n; i++)
+		buf[7+i] = 0;
+	buf[7+n] = 0;			/* end tag */
+	if(mboxprop(buf) < 0)
+		return -1;
+	if((buf[4] & 0x80000000) == 0)
+		return -1;
+	for(i = 0; i < n; i++)
+		rows[i] = buf[7+i];
+	return 0;
+}
+
+/*
  * Switch a firmware-managed power domain (USB HCD, SD, etc.) on or off
  * through SET_POWER_STATE (tag 0x00028001).  The value is the device id
  * plus a state word: bit0 = on, bit1 = wait for the domain to settle.
@@ -282,4 +368,35 @@ mboxfballoc(int w, int h, uintptr *fbpa, u32 *pitch, u32 *fbsize)
 	*fbsize = tag[1];
 	*pitch = *pitchslot;
 	return 0;
+}
+
+/*
+ * Report what the board says about itself, and the customer OTP rows.
+ * Read-only: see mboxgetotp.
+ */
+void
+otpinit(void)
+{
+	u32 rev, rows[8];
+	uvlong serial;
+	int i, n;
+
+	if(mboxgetrevserial(&rev, &serial) < 0){
+		print("OTP-NONE firmware did not answer board revision/serial\n");
+		return;
+	}
+	print("board: revision %#8.8ux serial %.16llux\n", rev, serial);
+
+	if(mboxgetotp(rows, 8) < 0){
+		print("OTP-FAIL firmware did not answer GET_CUSTOMER_OTP\n");
+		return;
+	}
+	n = 0;
+	for(i = 0; i < 8; i++)
+		if(rows[i] != 0)
+			n++;
+	print("otp: customer rows %.8ux %.8ux %.8ux %.8ux %.8ux %.8ux %.8ux %.8ux (%d set)\n",
+		rows[0], rows[1], rows[2], rows[3],
+		rows[4], rows[5], rows[6], rows[7], n);
+	print("OTP-OK board identity and customer OTP read (never written)\n");
 }

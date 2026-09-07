@@ -94,6 +94,8 @@ misc
 	rngbcm
 	pmbcm
 	pwmbcm
+	systmrbcm
+	thermbcm
 
 mod
 	sys

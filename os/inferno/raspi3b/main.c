@@ -159,7 +159,15 @@ main(void)
 		pminit();
 		{
 			extern void pwminit(void);
+			extern void systmrinit(void);
+			extern void therminit(void);
 			pwminit();
+			systmrinit();
+			therminit();
+			{
+				extern void otpinit(void);
+				otpinit();
+			}
 		}
 #ifdef SDIOTEST
 		{
