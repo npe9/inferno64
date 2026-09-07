@@ -477,8 +477,17 @@ ports moved. End to end into the window, 640x480:
 
 The offscreen-destination blocker turned out not to be one: `d3spritez`
 in C is the fallback there and is itself about a hundred times faster
-than the Limbo loop, so `elephantwalk` and `rocket` gain too without
-`metal_queue_sprite` ever seeing them.
+than the Limbo loop, so the ports that compose into a buffer gain too
+without `metal_queue_sprite` ever seeing them.
+
+**Three of the eight are on that C path and not the GPU one** —
+`elephantwalk` and `rocket` draw into a Tk `buffer`, and `xcaliber`
+composes into `buf` (`cimg = buf`). Measuring any of them with
+`INFERNO_METAL_STATS` shows `spr_calls=0`, which is correct and not a
+sign the feature is broken; that reading cost time once already. The
+five that do reach the GPU are `bigguns`, `bombergolf`, `rocketscience`,
+`squirt` and `tothefront` — observed live at 30 sprites per 30 presents
+for `rocketscience` and 350 for `bombergolf`.
 
 `sprite2d` sends the message only when there is resampling to do. An
 upright sprite at its own size is a plain masked `draw`, and handing

@@ -382,3 +382,7 @@ lib/ml/voices/
 # one command: python3 lib/ml/mklexicon.py, which needs espeak-ng on the host
 # and nothing at run time. Same reason as the voice above.
 lib/ml/en_US.dict
+
+# Python bytecode from the scripts/ extractors
+__pycache__/
+*.pyc
