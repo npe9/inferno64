@@ -1254,6 +1254,33 @@ are internal to the SoC.  They are either undocumented, driven only by
 the VideoCore firmware, or \- in V3D's case \- a GPU, which is out of
 scope for this port by the same decision that leaves out OpenGL below.
 .NH 1
+What DISK-NONE means, since it has been misread
+.PP
+.CW DISK-NONE
+is not a failure and is not the kfs bug below.  It is
+.CW raspi3binit.b
+saying no USB mass storage appeared under
+.CW /chan ,
+which is the correct result when no stick was attached.  Attach one and
+the marker changes:
+.CW DOS-FAIL
+if the image has no filesystem on it, and
+.CW DISK-BLK ,
+.CW DISK-DOS ,
+.CW DISK-READ ,
+.CW DISK-WRITE
+if it has.  All four pass.
+.PP
+Getting a real FAT filesystem into the image is the only awkward part,
+and it is awkward for a reason worth writing down: on macOS
+.CW newfs_msdos
+cannot format a plain file, giving "Cannot get partition offset".
+QEMU's own vvfat does it without any host tool \-
+.CW file=fat:rw:<directory>
+presents a directory as a FAT16 volume \- and
+.CW tools/qemu-patches/README
+now carries the full invocation.
+.NH 1
 Parallel: the kfs create failure -- re-diagnosed, and it is not what the old note said
 .PP
 Independent of USB and not blocking (dossrv, ramfs and 9660srv all run

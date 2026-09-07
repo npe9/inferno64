@@ -320,6 +320,29 @@ THE PATCHES
 	drivers/spi/spi-bcm2835aux.c and then checked against it;
 	every one matched.  Four names did not.  No functional change.
 
+EXERCISING THE WHOLE BOARD
+
+The markers a boot prints depend on what is attached.  With nothing on
+the command line the SD, USB-storage and ethernet paths report -NONE,
+which is correct and is not a failure.  Everything at once:
+
+	qemu-system-aarch64 -M raspi3b -m 1G -nographic -kernel iraspi3b \
+		-drive file=sd.img,if=sd,format=raw \
+		-device usb-lan9514,netdev=n0 -netdev user,id=n0 \
+		-drive if=none,format=raw,id=mtd0,file=flash.img \
+		-device m25p16,bus=aux-spi1,cs=0,drive=mtd0 \
+		-drive if=none,id=stick,format=raw,file=fat:rw:/some/dir \
+		-device usb-storage,drive=stick \
+		-serial mon:stdio -serial file:aux.log
+
+The USB stick is worth a note.  DISK-NONE means no mass storage was
+attached; DOS-FAIL means one was, with no filesystem on it.  A plain
+zeroed image gives the second, and on macOS newfs_msdos cannot format a
+file ("Cannot get partition offset"), so the way to get a real FAT
+filesystem is qemu's own vvfat: file=fat:rw:<directory> presents that
+directory as a FAT16 volume.  With it the board reports DISK-BLK,
+DISK-DOS, DISK-READ and DISK-WRITE.
+
 SELF-TESTS
 
 Two kernel self-tests are compiled out by default, because each can
