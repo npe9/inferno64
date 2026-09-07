@@ -32,10 +32,15 @@ lockloop(Lock *l, uintptr pc)
 		dumpaproc(p);
 }
 
+enum {
+	Ilocksecs = 10,	/* a spin this long is a deadlock, whatever the machine */
+};
+
 void
 lock(Lock *l)
 {
-	int i;
+	uvlong t0, hz;
+	int i, mno, started;
 	uintptr pc;
 
 	pc = getcallerpc(&l);
@@ -57,6 +62,19 @@ lock(Lock *l)
 	if(up)
 		up->nlocks--;
 
+	/*
+	 * The same bound, and for the same reason, as ilock's below: a
+	 * million turns of a load is about ten milliseconds on an emulated
+	 * processor, and ten milliseconds of waiting is not a deadlock when
+	 * the host has taken the processor that holds the lock away.  This
+	 * one was found the way the other was, by a panic that printed
+	 * "key 0x0" - the lock was already free by the time the message was
+	 * formatted, which is a thing a deadlock cannot do.
+	 */
+	t0 = 0;
+	hz = 0;
+	mno = 0;
+	started = 0;
 	for(;;){
 		i = 0;
 		while(l->key){
@@ -69,9 +87,20 @@ lock(Lock *l)
 					l, pc, up ? up->pid : 0, l->pc, l->p ? l->p->pid : 0);
 				up->edf->d = µs();	/* yield to process with lock */
 			}
-			if(i++ > 1000000)
-				panic("lock %#p key %#lux pc %#p held by pc %#p proc %lud",
-					l, l->key, pc, l->pc, l->p ? l->p->pid : 0);
+			if(i++ > 1000000){
+				/* the proc is not pinned here either: see ilock */
+				if(started == 0 || mno != m->machno){
+					t0 = spinticks(&hz);
+					if(hz == 0)
+						panic("lock %#p key %#lux pc %#p held by pc %#p proc %lud",
+							l, l->key, pc, l->pc, l->p ? l->p->pid : 0);
+					mno = m->machno;
+					started = 1;
+				} else if(spinticks(&hz) - t0 > hz * Ilocksecs)
+					panic("lock %#p key %#lux pc %#p held by pc %#p proc %lud for %d seconds",
+						l, l->key, pc, l->pc, l->p ? l->p->pid : 0, Ilocksecs);
+				i = 0;
+			}
 		}
 		if(up)
 			up->nlocks++;
@@ -91,10 +120,6 @@ lock(Lock *l)
 			up->nlocks--;
 	}
 }
-
-enum {
-	Ilocksecs = 10,	/* a spin this long is a deadlock, whatever the machine */
-};
 
 
 void
