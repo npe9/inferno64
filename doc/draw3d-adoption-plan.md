@@ -228,12 +228,23 @@ lands and what colour it is; they agree to within a pixel, reproducibly.
 That check is the thing to run before trusting any of the timings above,
 because both of the bugs it caught were invisible to a timing.
 
-Two smaller things are still open and both are real: the GPU-T&L branch
-in `emu/port/devdraw.c` reaches `gdone` without a `dstflush`, so a
-client that draws *only* 3D never asks for a present and shows nothing
-until something else damages the screen; and the readback texture is
-`RGBA8Unorm` where every geometry pipeline declares `BGRA8Unorm`, which
-did no harm here but is not right.
+One thing is still open. **A client that draws only 3D shows nothing,
+even when it flushes.** Every other primitive here ends in a
+`dstflush`, which is what records damage and eventually schedules a
+present; the GPU-T&L branch falls straight through to `gdone` without
+one. That looked like the answer and is not: adding
+`dstflush(dst, dst->clipr)` there does not make such a client's window
+show anything, so it was reverted rather than shipped on a guess.
+Whatever the cause, it does not affect the ports, which all draw a
+background or a HUD in 2D as well - the reproducer has to draw its
+first frame and then nothing but `fillpoly3`.
+
+The readback texture's `RGBA8Unorm` against the pipelines'
+`BGRA8Unorm` is *not* a bug to fix, which took a measurement to
+establish: the shader writes r,g,b,a, an `RGBA8Unorm` target puts them
+in memory as R,G,B,A, and that is exactly the order `gscreen` (XBGR32)
+wants. Changing the texture to match the pipeline would break the
+readback.
 
 A trap worth keeping: **do not flush before reading back.** A present
 drains the GPU's geometry queue, and the readback then has nothing to
