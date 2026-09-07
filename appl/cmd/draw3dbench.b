@@ -321,11 +321,68 @@ chanstat(dst: ref Image, r: Rect, mode: int): int
 # Image.draw that a rotation of zero degrees reduces to.
 sprites(d: ref Display, dst: ref Image)
 {
-	sys->print("draw3dbench: sprite2d\n");
+	# Two destinations, same as the triangle cases and for the same
+	# reason: the GPU sprite path takes the screen or a fully-clear
+	# layer of it and nothing else, so an offscreen buffer measures the
+	# Limbo resampler in both providers and the window measures what a
+	# port on draw3ddev actually gets.
+	sys->print("draw3dbench: sprite2d into an offscreen buffer\n");
 	spr(d, dst, 16, 0.0);
 	spr(d, dst, 64, 0.0);
 	spr(d, dst, 220, 0.0);
 	spr(d, dst, 220, 30.0);
+	sprsc(d, dst, 64, 220);
+	sys->print("draw3dbench: sprite2d into the window\n");
+	spr(d, win.image, 16, 0.0);
+	spr(d, win.image, 64, 0.0);
+	spr(d, win.image, 220, 0.0);
+	spr(d, win.image, 220, 30.0);
+	sprsc(d, win.image, 64, 220);
+}
+
+# Upright but scaled: the separable path in the Limbo resampler, and the
+# one case where the answer is not obvious from the two above - there is
+# no native blit that does it, but nor is there a rotation to pay for.
+sprsc(d: ref Display, dst: ref Image, size, upto: int)
+{
+	img := d.newimage(Rect((0,0),(size,size)), dst.chans, 0, Draw->Red);
+	mask := d.newimage(Rect((0,0),(size,size)), Draw->GREY1, 0, int 16rFFFFFFFF);
+	if(img == nil || mask == nil)
+		return;
+	n := 200;
+	for(pass := 0; pass < 2; pass++){
+		path := Draw3d->PATH;
+		what := "software";
+		if(pass == 1){
+			path = "/dis/math/draw3ddev.dis";
+			what = "protocol";
+		}
+		d3 := load Draw3d path;
+		if(d3 == nil)
+			continue;
+		d3->init();
+		t0 := sys->millisec();
+		for(i := 0; i < n; i++)
+			d3->sprite2d(dst, Point(320, 240), img, mask, upto, upto, 0.0, 0);
+		drain(d);
+		t1 := sys->millisec();
+		sys->print("draw3dbench:   %s %dx%d scaled to %d: %d us/sprite\n",
+			what, size, size, upto, ((t1-t0)*1000)/n);
+	}
+}
+
+# Queueing a GPU sprite is nearly free; the drawing happens when the
+# frame is presented or read back.  Timing the calls alone would report
+# "0 us" and mean nothing, so every batch below ends with a read of one
+# row of the display's screen image, which runs the readback hook and
+# waits for the GPU.  That is once per batch because it is once per
+# frame in a real port, and the software rows pay the same read so the
+# comparison stays like for like.
+drain(d: ref Display)
+{
+	buf := array[(4 * d.image.depth + 7) / 8] of byte;
+	d.image.readpixels(Rect(d.image.r.min, (d.image.r.min.x+4, d.image.r.min.y+1)),
+		buf);
 }
 
 spr(d: ref Display, dst: ref Image, size: int, degz: real)
@@ -350,6 +407,7 @@ spr(d: ref Display, dst: ref Image, size: int, degz: real)
 		for(i := 0; i < n; i++)
 			d3->sprite2d(dst, Point(320, 240), img, mask,
 				size, size, degz, 0);
+		drain(d);
 		t1 := sys->millisec();
 		sys->print("draw3dbench:   %s %dx%d at %g deg: %d us/sprite\n",
 			what, size, size, degz, ((t1-t0)*1000)/n);
@@ -360,6 +418,7 @@ spr(d: ref Display, dst: ref Image, size: int, degz: real)
 	for(i := 0; i < n; i++)
 		dst.draw(Rect((320-size/2,240-size/2),(320+size/2,240+size/2)),
 			img, mask, img.r.min);
+	drain(d);
 	t1 := sys->millisec();
 	sys->print("draw3dbench:   native %dx%d blit: %d us/sprite\n",
 		size, size, ((t1-t0)*1000)/n);

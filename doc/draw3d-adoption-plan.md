@@ -418,7 +418,7 @@ re-measure whether the sort can go.
 *Evidence:* per port, frame time and a pixel comparison against the
 pre-migration render.
 
-### Phase 10 — `sprite2d` on the GPU
+### Phase 10 — `sprite2d` on the GPU — **done, 2026-09-07**
 
 The biggest single lever left, and the one nothing above reaches. Rotated
 2D sprites are what the temple ports actually spend their time on, and
@@ -459,8 +459,68 @@ and only then the eight ports.
 
 `sprite2dtest(1)` is the gate, and it was built for this: its three
 families — 1:1, quarter turns, doublings — are the ones whose answer does
-not depend on the resampler, so a bilinear GPU path has to pass them
-exactly as the Limbo one does.
+not depend on the resampler, so a GPU path has to pass them exactly as
+the Limbo one does.
+
+**What was actually done.** A `'J'` message (screen space: centre, size,
+angle, mirror — no projection, no depth, since a 2D sprite has none of
+those and `'j'`'s world point would have put the current matrices in the
+way), a `gpudrawsprite2d` hook, `metal_queue_sprite2d`, and `d3spritez`
+as the in-C fallback for destinations the GPU will not take. The eight
+ports moved. End to end into the window, 640x480:
+
+| sprite | software | protocol |
+| --- | --- | --- |
+| 220x220 at 30° | 2725 µs | **65 µs** |
+| 64x64 scaled to 220 | 6690 µs | **50 µs** |
+| upright, any size | unchanged | unchanged |
+
+The offscreen-destination blocker turned out not to be one: `d3spritez`
+in C is the fallback there and is itself about a hundred times faster
+than the Limbo loop, so `elephantwalk` and `rocket` gain too without
+`metal_queue_sprite` ever seeing them.
+
+`sprite2d` sends the message only when there is resampling to do. An
+upright sprite at its own size is a plain masked `draw`, and handing
+*that* to the GPU measured 60 µs against 5 µs for a 64x64: the sprite
+queue is drained by presentation, so a tight loop of cheap sprites
+throttles to the present rate. The wins are all in the cases a blit
+cannot do.
+
+The sprite sampler is **point**, not bilinear, for `sprite2d`. The art is
+8x8-grid pixel art and bilinear magnification blurs it; and the same call
+reaches the GPU or the Limbo resampler depending only on the
+destination, so anything but point sampling would change a sprite's
+appearance when it moved from a window into a buffer. `sprite3` keeps the
+smooth filter, having no exact oracle to match.
+
+**Four real bugs fell out of making the two paths agree**, none of which
+a reading would have found:
+
+- `d3spritez` centred its box on the requested point, where
+  `transformsprite` centres a `bw` box at `c - bw/2` (integer) and then
+  samples about `bw/2.0` — half a pixel apart whenever a dimension is
+  odd. 21 of `sprite2dtest`'s 24 identity cases differed on that alone.
+- `d3maskset` read bit 7 of the mask byte for every pixel instead of
+  bit `x&7`, so seven pixels in eight took their neighbour's coverage.
+  `metal_upload_sprite_tex` had the same bug independently.
+- `metal_upload_sprite_tex` took depth 8 to mean grey, so every CMAP8
+  sprite — which is every `.bit` file in `icons/temple` — drew on the
+  GPU in greyscale. It converts through `memdraw` now, which knows every
+  channel this tree has.
+- `d3spritez` never range-checked the source index the Limbo path
+  guards.
+
+**One hazard left, not currently reachable.** A `'J'` sprite is queued at
+depth 0, which is nearer than anything `eye_to_depth` produces, so it
+always passes the depth test — that is the painter-order 2D behaviour it
+replaces. But the sprite pass shares one depth state, so when depth
+writes are on it also *writes* 0 over the sprite's rectangle, and a
+`fillpoly3` drawn afterwards in the same frame would be hidden. Nothing
+does that today: the eight `sprite2d` ports draw no 3D and the nine 3D
+ports call no `sprite2d`. If the two ever meet, the fix is to split the
+sprite pass into a depth-writing encoder and a non-writing one rather
+than to change the depth value.
 
 ## What this plan is not doing
 

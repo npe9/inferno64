@@ -96,7 +96,17 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	draw = load Draw Draw->PATH;
 	math = load Math Math->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
-	draw3d = load Draw3d Draw3d->PATH;
+	# The device provider, for sprite2d: it sends the rotation or the
+	# scale to the GPU as a textured quad instead of resampling it in
+	# interpreted Limbo, and falls back to the same C resampler in
+	# devdraw.c when the destination is not one the GPU can draw into.
+	# 220x220 at 30 degrees measured 2725us a sprite through the Limbo
+	# path and 65us through this one, end to end.  It degrades on its
+	# own when there is no device, so the second load is only for the
+	# .dis file being absent.
+	draw3d = load Draw3d "/dis/math/draw3ddev.dis";
+	if(draw3d == nil)
+		draw3d = load Draw3d Draw3d->PATH;
 	ode = load Ode Ode->PATH;
 	tone = load Tone Tone->PATH;
 	rand = load Rand Rand->PATH;

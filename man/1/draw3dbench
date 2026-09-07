@@ -36,6 +36,40 @@ Per-call overhead and per-pixel cost pull in opposite directions, so a
 scene of 512 small triangles and one of 64 wall-sized triangles are
 separate measurements.
 .PP
+.PP
+.I Sprite2d
+is timed separately, into both destinations, because it is what the
+appl/temple ports lean on and it is the other half of what
+.IR draw3d (2)
+is asked for.
+Queueing a GPU sprite is nearly free and the drawing happens at
+presentation, so timing the calls alone would report zero and mean
+nothing; every batch therefore ends with a read of one row of the
+display's screen image, which runs the readback hook and waits for the
+GPU.
+That is once per batch because it is once per frame in a real port, and
+the software rows pay the same read.
+Into the window, at 640\(mu480:
+.PP
+.EX
+                          software   protocol
+16\(mu16 upright                 0 us        0 us
+64\(mu64 upright                 5 us        5 us
+220\(mu220 upright              45 us       45 us
+220\(mu220 at 30 degrees      2725 us       65 us
+64\(mu64 scaled to 220        6690 us       50 us
+.EE
+.PP
+The upright rows are equal on purpose:
+.I sprite2d
+hands the device only the calls that need resampling, since a sprite
+drawn upright at its own size is a plain masked
+.I draw
+and nothing beats that.
+Handing those to the GPU as well measured 60 us against 5 us for a
+64\(mu64, because the sprite queue is drained by presentation and a
+tight loop of cheap sprites throttles to the present rate.
+.PP
 The last two sections are correctness rather than speed.
 One reports where the pixels a GPU pass produced can be read back from.
 The other draws a red, a green and a blue triangle at known world

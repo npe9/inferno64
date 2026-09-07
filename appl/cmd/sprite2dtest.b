@@ -90,6 +90,16 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	}
 	sys->print("sprite2dtest: %s: %d doublings, %d differ from a doubled source\n",
 		path, tot, bad);
+	failed += bad;
+	tot = bad = 0;
+	for(mi = 0; mi < 2; mi++){
+		sz4 := 7 :: 8 :: 16 :: 33 :: 64 :: nil;
+		for(l4 := sz4; l4 != nil; l4 = tl l4)
+			for(qq := 0; qq <= 3; qq++)
+				onscreen(d, hd l4, qq, mi);
+	}
+	sys->print("sprite2dtest: %s: %d on-screen cases, %d differ from a plain draw\n",
+		path, tot, bad);
 	if(bad != 0 || failed){
 		sys->print("sprite2dtest: FAIL\n");
 		raise "fail:sprite2d is not exact";
@@ -253,6 +263,146 @@ one(d: ref Display, iw, ih, withmask: int)
 		bad++;
 		sys->print("sprite2dtest: DIFFER %dx%d mask=%d\n", iw, ih, withmask);
 	}
+}
+
+# Every case above draws into an offscreen image, which is the only
+# destination a GPU sprite path will not take: emu's metal_queue_sprite
+# needs the screen or a fully-clear layer of it.  So none of them touch
+# the GPU, and without this family the whole 'J' message could be broken
+# and the test would still pass.
+#
+# Here the destination is the window, and the pixels are read back off
+# the display's own screen image - the only way to see GPU output from
+# inside emu, and specifically not a draw() copy, which a GPU pass is
+# invisible to.  The oracle is the same plain masked draw as everywhere
+# else, done into the same window and read the same way, so the window
+# border and the layer offset cancel.
+onscreen(d: ref Display, n, q, withmask: int)
+{
+	img := d.newimage(Rect((0,0),(n,n)), Draw->CMAP8, 0, Draw->Black);
+	if(img == nil)
+		return;
+	b := array[n*n] of byte;
+	for(y := 0; y < n; y++)
+		for(x := 0; x < n; x++)
+			b[y*n+x] = byte (1 + (x*7 + y*13) % 200);
+	img.writepixels(img.r, b);
+	# The oracle, turned by hand exactly as quarter() does it.
+	rb := array[n*n] of byte;
+	for(y = 0; y < n; y++)
+		for(x = 0; x < n; x++){
+			dx := x; dy := y;
+			for(k := 0; k < q; k++){
+				t := dx;
+				dx = n-1-dy;
+				dy = t;
+			}
+			rb[dy*n+dx] = b[y*n+x];
+		}
+	rot := d.newimage(Rect((0,0),(n,n)), Draw->CMAP8, 0, Draw->Black);
+	if(rot == nil)
+		return;
+	rot.writepixels(rot.r, rb);
+	mask: ref Image = nil;
+	rotm: ref Image = nil;
+	if(withmask){
+		mbpl := (n+7)/8;
+		mb := array[mbpl*n] of byte;
+		rm := array[mbpl*n] of byte;
+		for(y = 0; y < n; y++)
+			for(x = 0; x < n; x++)
+				if(((x+y) & 3) != 0){
+					mb[y*mbpl + (x>>3)] |= byte (16r80 >> (x&7));
+					dx := x; dy := y;
+					for(k := 0; k < q; k++){
+						t := dx;
+						dx = n-1-dy;
+						dy = t;
+					}
+					rm[dy*mbpl + (dx>>3)] |= byte (16r80 >> (dx&7));
+				}
+		mask = d.newimage(Rect((0,0),(n,n)), Draw->GREY1, 0, 0);
+		rotm = d.newimage(Rect((0,0),(n,n)), Draw->GREY1, 0, 0);
+		mask.writepixels(mask.r, mb);
+		rotm.writepixels(rotm.r, rm);
+	}
+	w := win.image;
+	ctr := Point(w.r.min.x + w.r.dx()/2, w.r.min.y + w.r.dy()/2);
+	# The sprite first, then the oracle, each read back before the next
+	# is drawn.
+	w.draw(w.r, d.black, nil, w.r.min);
+	d3->sprite2d(w, ctr, img, mask, n, n, real (90*q), 0);
+	ga := grab(d, w.r);
+	w.draw(w.r, d.black, nil, w.r.min);
+	w.draw(Rect((ctr.x - n/2, ctr.y - n/2), (ctr.x - n/2 + n, ctr.y - n/2 + n)),
+		rot, rotm, rot.r.min);
+	gc := grab(d, w.r);
+	tot++;
+	if(ga == nil || gc == nil || !eq(ga, gc)){
+		bad++;
+		sys->print("sprite2dtest: SCREEN DIFFER %dx%d q=%d mask=%d lit a=%d c=%d nd=%d\n",
+			n, n, q, withmask, lit(ga), lit(gc), ndiff(ga, gc));
+	}
+}
+
+grab(d: ref Display, r: Rect): array of byte
+{
+	dst := d.image;
+	(r, nil) = r.clip(dst.r);
+	pxb := dst.depth / 8;
+	if(pxb < 3 || r.dx() < 1 || r.dy() < 1)
+		return nil;
+	bpl := (r.dx() * dst.depth + 7) / 8;
+	# R, G and B only.  The screen is XBGR32 and the fourth byte is the
+	# X: nothing displays it, memdraw and the Metal blend disagree about
+	# what to leave there, and comparing it fails all 40 cases on a
+	# byte no one can see.  That was the first reading of this test.
+	out := array[3 * r.dx() * r.dy()] of byte;
+	row := array[bpl] of byte;
+	o := 0;
+	for(y := 0; y < r.dy(); y++){
+		if(dst.readpixels(Rect((r.min.x, r.min.y+y), (r.max.x, r.min.y+y+1)),
+		    row) != bpl)
+			return nil;
+		for(x := 0; x < r.dx(); x++){
+			out[o++] = row[x*pxb];
+			out[o++] = row[x*pxb+1];
+			out[o++] = row[x*pxb+2];
+		}
+	}
+	return out;
+}
+
+lit(a: array of byte): int
+{
+	if(a == nil)
+		return -1;
+	n := 0;
+	for(i := 0; i+2 < len a; i += 3)
+		if(int a[i] > 8 || int a[i+1] > 8 || int a[i+2] > 8)
+			n++;
+	return n;
+}
+
+ndiff(a, b: array of byte): int
+{
+	if(a == nil || b == nil || len a != len b)
+		return -1;
+	n := 0;
+	for(i := 0; i < len a; i++)
+		if(a[i] != b[i])
+			n++;
+	return n;
+}
+
+eq(a, b: array of byte): int
+{
+	if(len a != len b)
+		return 0;
+	for(i := 0; i < len a; i++)
+		if(a[i] != b[i])
+			return 0;
+	return 1;
 }
 
 same(a, c: ref Image): int

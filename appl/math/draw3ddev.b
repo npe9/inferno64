@@ -46,6 +46,7 @@ D3CapReadback:	con 1<<7;
 D3CapNearClip:	con 1<<8;
 D3CapDepthOrder: con 1<<9;
 D3CapGouraud:	con 1<<10;
+D3CapSprite2d:	con 1<<12;	# 1<<11 is D3LIMIT on the device side
 D3CapCore: con D3CapMatrix|D3CapFill|D3CapLine|D3CapPlot|D3CapSprite|D3CapEllipse;
 
 Mstate: adt
@@ -300,16 +301,27 @@ mfree(m: Matrix)
 	ms.freel = m :: ms.freel;
 }
 
+# Ask the device what it can do, once.  This used to live inside
+# context(), which is fine for the 3D calls - they all take a Context -
+# but sprite2d takes only a destination image, and the eight ports that
+# use sprite2d and nothing else never build a Context at all.  They would
+# have found haveproto still 0 and quietly kept the Limbo resampler.
+ensureproto(d: ref Display)
+{
+	if(d == nil || probed)
+		return;
+	protocaps = probe(d);
+	haveproto = (protocaps & D3CapMatrix) != 0;
+	probed = 1;
+	if(!haveproto)
+		sys->fprint(sys->fildes(2), "draw3ddev: no draw3d letters; software fallback\n");
+}
+
 context(dst: ref Image): ref Context
 {
 	ensure();
-	if(dst != nil && dst.display != nil && !probed){
-		protocaps = probe(dst.display);
-		haveproto = (protocaps & D3CapMatrix) != 0;
-		probed = 1;
-		if(!haveproto)
-			sys->fprint(sys->fildes(2), "draw3ddev: no draw3d letters; software fallback\n");
-	}
+	if(dst != nil)
+		ensureproto(dst.display);
 	c := ref Context;
 	c.dst = dst;
 	c.zenable = 1;
@@ -1313,6 +1325,45 @@ sprite2d(dst: ref Image, center: Point, img, mask: ref Image,
 		return;
 	if(width <= 0) width = img.r.dx();
 	if(height <= 0) height = img.r.dy();
+	# Only when there is something to resample.  A sprite drawn upright
+	# at its own size with no mirror is a plain masked draw(2), and
+	# transformsprite() below already recognises that and issues one -
+	# which is the fastest thing there is.  Handing it to the device
+	# instead measured 60us against 5us for a 64x64: the GPU sprite
+	# queue is drained by presentation, so a tight loop of cheap sprites
+	# throttles to the present rate rather than going faster.  The wins
+	# are all in the cases the blit cannot do.
+	#
+	# The device advertises D3CapSprite2d only where a GPU can take the
+	# message, so this is not "send it and hope": with no GPU the C
+	# resampler in devdraw.c would still beat the Limbo one below, but it
+	# is a second implementation of the same sampling rules and
+	# sprite2dtest(1) was written against this one.
+	work := degz != 0.0 || flipx || width != img.r.dx() || height != img.r.dy();
+	ensureproto(dst.display);
+	if(work && haveproto && (protocaps & D3CapSprite2d) != 0){
+		fl := 0;
+		mid := 0;
+		if(mask != nil){
+			fl |= 1;
+			mid = mask.id();
+		}
+		if(flipx)
+			fl |= 2;
+		msg := array[1+4+4+4+1+4+4+4+4+4] of byte;
+		msg[0] = byte 'J';
+		puti32(msg, 1, dst.id());
+		puti32(msg, 5, img.id());
+		puti32(msg, 9, mid);
+		msg[13] = byte fl;
+		puti32(msg, 14, center.x);
+		puti32(msg, 18, center.y);
+		puti32(msg, 22, width);
+		puti32(msg, 26, height);
+		putf32(msg, 30, degz);
+		writemsg(dst.display, msg);
+		return;
+	}
 	transformsprite(dst, center, width, height, img, mask, degz, flipx);
 }
 

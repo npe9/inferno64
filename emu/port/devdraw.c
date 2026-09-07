@@ -268,6 +268,13 @@ int	(*gpuvideonext)(void *sess, Memimage *dst);
 void	(*gpuvideoclose)(void *sess);
 int	(*gpudrawplot)(Memimage*, Point, Memimage*, int, float);
 int	(*gpudrawsprite)(Memimage*, Point, int, int, float, Memimage*, Memimage*, float, int);
+/*
+ * Screen-space 2D sprite ('J'): centre, size in pixels, rotation and a
+ * mirror flag, with no projection and no depth.  Separate from
+ * gpudrawsprite because that one takes a WORLD point and an eye z, which
+ * a sprite2d has neither of.
+ */
+int	(*gpudrawsprite2d)(Memimage*, Point, int, int, Memimage*, Memimage*, float, int, int);
 int	(*gpudrawellipse)(Memimage*, Point, int, int, int, int, Memimage*, int, float);
 void	(*gpudrawflush)(void);
 void	(*gpudrawreadback)(void);
@@ -1836,7 +1843,9 @@ enum {
 	D3CapReadback	= 1<<7,
 	D3CapNearClip	= 1<<8,
 	D3CapDepthOrder	= 1<<9,
-	D3CapGouraud	= 1<<10
+	D3CapGouraud	= 1<<10,
+	/* 1<<11 is D3LIMIT above, so the next capability is 1<<12. */
+	D3CapSprite2d	= 1<<12
 };
 
 static float
@@ -2255,19 +2264,26 @@ d3maskset(Memimage *mask, Point p)
 	if(q == nil)
 		return 0;
 	if(mask->depth == 1)
-		return (q[0] & 0x80) != 0;
+		/*
+		 * byteaddr() gives the byte holding pixel p.x; WHICH bit is
+		 * p.x&7 from the top, and this used to test bit 7 always - so
+		 * seven mask pixels in every eight read their neighbour's
+		 * coverage.  Every mask=1 case in sprite2dtest(1) differed on
+		 * this once the box convention above was fixed.
+		 */
+		return (q[0] & (0x80 >> (p.x & 7))) != 0;
 	return q[0] != 0;
 }
 
 /* Rotated/scaled sprite fallback with constant billboard depth. */
 static void
 d3spritez(Client *cl, Memimage *dst, Point c, int sw, int sh, float eyez,
-	Memimage *src, Memimage *mask, float degz, int op)
+	Memimage *src, Memimage *mask, float degz, int flipx, int usez, int op)
 {
 	Rectangle r;
 	Point p, sp, mp;
-	float rad, cs, sn, hx, hy, ex, ey, lx, ly;
-	int x, y, iw, ih, mw, mh;
+	float rad, cs, sn, hx, hy, lx, ly, cxf, cyf;
+	int x, y, iw, ih, mw, mh, bw, bh, u, v;
 
 	iw = Dx(src->r); ih = Dy(src->r);
 	if(iw < 1 || ih < 1 || sw < 1 || sh < 1)
@@ -2275,10 +2291,28 @@ d3spritez(Client *cl, Memimage *dst, Point c, int sw, int sh, float eyez,
 	rad = degz*(float)M_PI/180.0f;
 	cs = cosf(rad); sn = sinf(rad);
 	hx = sw*0.5f; hy = sh*0.5f;
-	ex = fabsf(cs)*hx + fabsf(sn)*hy;
-	ey = fabsf(sn)*hx + fabsf(cs)*hy;
-	r = Rect((int)floorf(c.x-ex), (int)floorf(c.y-ey),
-		(int)ceilf(c.x+ex), (int)ceilf(c.y+ey));
+	/*
+	 * The box, and the sampling centre inside it, exactly as
+	 * transformsprite() in appl/math/draw3ddev.b computes them - the
+	 * two have to agree pixel for pixel, since the same sprite2d call
+	 * reaches one or the other depending only on whether a GPU took it.
+	 *
+	 * The subtlety is the half pixel.  The Limbo code puts the box at
+	 * c - bw/2 with INTEGER division and then samples about the box's
+	 * real centre, bw/2.0.  Those differ by half a pixel when bw is odd,
+	 * which is whenever the sprite has an odd dimension, and this
+	 * function used to sample about c itself: a 7-wide sprite landed a
+	 * pixel to the left of where both the Limbo resampler and a plain
+	 * draw(2) of the same rectangle put it.  21 of sprite2dtest(1)'s 24
+	 * identity cases differed on that alone.
+	 */
+	bw = (int)((fabsf(cs)*hx + fabsf(sn)*hy)*2.0f) + 2;
+	bh = (int)((fabsf(sn)*hx + fabsf(cs)*hy)*2.0f) + 2;
+	if(bw < 2 || bh < 2)
+		return;
+	r = Rect(c.x - bw/2, c.y - bh/2, c.x - bw/2 + bw, c.y - bh/2 + bh);
+	cxf = (float)(c.x - bw/2) + bw*0.5f;
+	cyf = (float)(c.y - bh/2) + bh*0.5f;
 	if(!rectclip(&r, dst->clipr))
 		return;
 	mw = mask != nil ? Dx(mask->r) : 0;
@@ -2286,12 +2320,20 @@ d3spritez(Client *cl, Memimage *dst, Point c, int sw, int sh, float eyez,
 	for(y = r.min.y; y < r.max.y; y++)
 		for(x = r.min.x; x < r.max.x; x++){
 			/* Inverse screen rotation into the unrotated billboard. */
-			lx = (x+0.5f-c.x)*cs + (y+0.5f-c.y)*sn;
-			ly = -(x+0.5f-c.x)*sn + (y+0.5f-c.y)*cs;
+			lx = (x+0.5f-cxf)*cs + (y+0.5f-cyf)*sn;
+			ly = -(x+0.5f-cxf)*sn + (y+0.5f-cyf)*cs;
+			/* After the inverse rotation, exactly where
+			 * transformsprite() in appl/math/draw3ddev.b puts it,
+			 * so the two agree pixel for pixel. */
+			if(flipx)
+				lx = -lx;
 			if(lx < -hx || lx >= hx || ly < -hy || ly >= hy)
 				continue;
-			sp = Pt(src->r.min.x + (int)((lx+hx)*iw/sw),
-				src->r.min.y + (int)((ly+hy)*ih/sh));
+			u = (int)((lx+hx)*iw/sw);
+			v = (int)((ly+hy)*ih/sh);
+			if(u < 0 || u >= iw || v < 0 || v >= ih)
+				continue;	/* the Limbo path guards this too */
+			sp = Pt(src->r.min.x + u, src->r.min.y + v);
 			mp = ZP;
 			if(mask != nil){
 				mp = Pt(mask->r.min.x + (int)((lx+hx)*mw/sw),
@@ -2300,7 +2342,7 @@ d3spritez(Client *cl, Memimage *dst, Point c, int sw, int sh, float eyez,
 					continue;
 			}
 			p = Pt(x, y);
-			if(!d3zpixel(cl, p, eyez))
+			if(usez && !d3zpixel(cl, p, eyez))
 				continue;
 			memdraw(dst, Rect(x, y, x+1, y+1), src, sp,
 				mask != nil ? mask : memopaque, mp, op);
@@ -2419,6 +2461,7 @@ drawmesg(Client *client, void *av, int n)
 		case 'g':
 		case 'h':
 		case 'j':
+		case 'J':
 		case 'k':
 		case 'q':
 		case 'M':
@@ -3090,6 +3133,14 @@ drawmesg(Client *client, void *av, int n)
 				value |= D3CapGPU;
 			if(gpudrawreadback != nil)
 				value |= D3CapReadback;
+			/*
+			 * Only when a GPU can actually take it.  With no GPU
+			 * the message would be a slower route to the same C
+			 * loop, and the Limbo caller's own resampler is the
+			 * one every sprite2dtest(1) case was written against.
+			 */
+			if(gpudrawsprite2d != nil)
+				value |= D3CapSprite2d;
 			u = byteaddr(i, i->r.min);
 			u[0] = value;
 			u[1] = value>>8;
@@ -3606,12 +3657,78 @@ drawmesg(Client *client, void *av, int n)
 				if(gpudrawsprite != nil)
 					gpudone = gpudrawsprite(dst, sp, sw, sh, ez, src, mask, degz, op);
 				if(!gpudone){
-					d3spritez(client, dst, sp, sw, sh, ez, src, mask, degz, op);
+					d3spritez(client, dst, sp, sw, sh, ez, src, mask, degz, 0, 1, op);
 					dr = Rect(sp.x - sw, sp.y - sh, sp.x + sw + 1, sp.y + sh + 1);
 					dstflush(dst, dr);
 				}else
 					dstflush(dst, Rect(sp.x - sw/2, sp.y - sh/2,
 						sp.x - sw/2 + sw, sp.y - sh/2 + sh));
+			}
+			continue;
+
+		/*
+		 * sprite2d: 'J' id[4] imgid[4] maskid[4] flags[1] cx[4] cy[4]
+		 *           w[4] h[4] degz[4]
+		 *
+		 * Screen space, no projection and no depth - the 2D half of
+		 * draw3d, and the one appl/temple actually leans on.  It is a
+		 * separate message from 'j' rather than a flag on it because
+		 * 'j' carries a WORLD point and a scale and lets the device
+		 * project; a 2D sprite has neither, and giving it a fake world
+		 * point would put the current matrices in the way of a call
+		 * that has nothing to do with them.
+		 *
+		 * flags: bit0 a mask follows in maskid, bit1 mirror in x.
+		 */
+		case 'J':
+			printmesg(fmt="LLLb", a, 0);
+			m = 1+4+4+4+1+4+4+4+4+4;
+			if(n < m)
+				error(Eshortdraw);
+			dst = drawimage(client, a+1);
+			src = drawimage(client, a+5);
+			{
+				u32 maskid;
+				int flags, gpudone, sw, sh, flipx;
+				float degz;
+				Point sp;
+				Memimage *mask;
+				DImage *dmask;
+
+				maskid = BG32INT(a+9);
+				flags = a[13];
+				sp.x = BG32INT(a+14);
+				sp.y = BG32INT(a+18);
+				sw = BG32INT(a+22);
+				sh = BG32INT(a+26);
+				degz = bgfloat(a+30);
+				flipx = (flags & 2) != 0;
+				if(sw < 1 || sh < 1)
+					continue;
+				mask = nil;
+				if((flags & 1) && maskid != 0){
+					dmask = drawlookup(client, (int)maskid, 1);
+					if(dmask != nil)
+						mask = dmask->image;
+				}
+				op = drawclientop(client);
+				gpudone = 0;
+				if(gpudrawsprite2d != nil)
+					gpudone = gpudrawsprite2d(dst, sp, sw, sh, src,
+						mask, degz, flipx, op);
+				if(!gpudone){
+					/*
+					 * eyez is unused with usez 0; the box is the
+					 * rotated extent, which is why it is not just
+					 * sw x sh.
+					 */
+					d3spritez(client, dst, sp, sw, sh, 0.0f, src,
+						mask, degz, flipx, 0, op);
+					dstflush(dst, Rect(sp.x - sw - sh, sp.y - sw - sh,
+						sp.x + sw + sh + 1, sp.y + sw + sh + 1));
+				}else
+					dstflush(dst, Rect(sp.x - sw - sh, sp.y - sw - sh,
+						sp.x + sw + sh + 1, sp.y + sw + sh + 1));
 			}
 			continue;
 

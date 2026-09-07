@@ -28,6 +28,33 @@ the turns take the general rotated loop,
 and only the doublings reach the separable unrotated path that every
 scaled call without a rotation goes through.
 .PP
+A fourth family draws into the
+.I window
+instead of an offscreen image, and it is there for a specific reason:
+the GPU sprite path in
+.I emu
+takes the screen or a fully-clear layer of it and nothing else, so every
+case above misses it entirely and the whole
+.B J
+message could be broken while the test passed.
+The on-screen family covers the same sizes and quarter turns, reads the
+result back off the display's own screen image \- a
+.I readpixels
+and specifically not a
+.IR draw ,
+which GPU output is invisible to \- and compares it against the same
+plain masked draw done into the same window, so the border and the layer
+offset cancel.
+It compares red, green and blue only: the screen is
+.B XBGR32
+and nothing displays the fourth byte, on which
+.I memdraw
+and the Metal blend disagree.
+.PP
+Deliberately offsetting the GPU sprite by three pixels fails all forty
+on-screen cases and none of the others, which is what establishes that
+the family reaches the GPU at all.
+.PP
 .I Provider
 is the implementation to test, by path; the default is
 .BR /dis/math/draw3d.dis .
@@ -63,4 +90,10 @@ is covered.
 The
 .I sprite3
 family shares the same transform but reaches it by a different route and
-is not tested.
+is not tested; the mask-edge cases in
+.IR draw3dbench (1)
+are what exercise it.
+.PP
+The on-screen family draws one sprite at the middle of the window and
+compares the whole window, so it would not catch a second sprite drawn
+somewhere the first was not.

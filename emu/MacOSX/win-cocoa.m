@@ -242,6 +242,7 @@ typedef struct GPUSprite GPUSprite;
 struct GPUSprite {
 	GPUTexVert	v[6];	/* two tris */
 	id<MTLTexture>	tex;
+	int		nearest;	/* point-sample: see metal_present_sprites */
 };
 
 /* LRU cache of uploaded sprite textures (keyed by Memimage + mask + size). */
@@ -470,6 +471,7 @@ extern int	(*gpudrawfillpoly3g)(Memimage*, float*, float*, float*, float*, int, 
 	int, float*, float*, float, float, float, float);
 extern int	(*gpudrawplot)(Memimage*, Point, Memimage*, int, float);
 extern int	(*gpudrawsprite)(Memimage*, Point, int, int, float, Memimage*, Memimage*, float, int);
+extern int	(*gpudrawsprite2d)(Memimage*, Point, int, int, Memimage*, Memimage*, float, int, int);
 extern Memimage* (*gpuimagealloc)(Rectangle, u32);
 extern int	(*gpuimagefree)(Memimage*);
 extern int	(*gpuimagedecode)(Memimage*, uchar*, int, int);
@@ -526,6 +528,7 @@ static float	eye_to_depth(float);
 static void	metal_clear_sprite_tex_cache(void);
 static void	metal_forget_sprite_tex(Memimage*);
 static id<MTLTexture>	metal_sprite_tex(Memimage*, Memimage*);
+static int	metal_queue_sprite2d(Memimage*, Point, int, int, Memimage*, Memimage*, float, int, int);
 static void	mark_view_dirty(void);
 static void	metal_damage_note(Rectangle);
 static int	metal_flush_damage(Rectangle);
@@ -660,6 +663,7 @@ metal_init(void)
 	gpudrawfillpoly3g = metal_queue_fillpoly3g;
 	gpudrawplot = metal_queue_plot;
 	gpudrawsprite = metal_queue_sprite;
+	gpudrawsprite2d = metal_queue_sprite2d;
 	gpuimagealloc = metal_image_alloc;
 	gpuimagefree = metal_image_free;
 	gpuimagedecode = metal_image_decode;
@@ -2404,9 +2408,9 @@ metal_upload_sprite_tex(Memimage *img, Memimage *mask)
 {
 	MTLTextureDescriptor *td;
 	id<MTLTexture> tex;
+	Memimage *col, *alp;
 	int w, h, x, y;
 	uchar *rgba, *p, *mp;
-	u32 pix;
 	MTLRegion region;
 
 	if(img == nil || img->data == nil || img->data->bdata == nil)
@@ -2415,76 +2419,75 @@ metal_upload_sprite_tex(Memimage *img, Memimage *mask)
 	h = Dy(img->r);
 	if(w < 1 || h < 1 || w > 2048 || h > 2048)
 		return nil;
-	rgba = malloc((size_t)w * h * 4);
-	if(rgba == nil)
+	/*
+	 * Convert through memdraw rather than reading the sprite's own
+	 * pixels and guessing at their layout.  This used to take depth 8
+	 * to mean grey and replicate the byte into r, g and b - so every
+	 * CMAP8 sprite, which is every .bit file in icons/temple, drew on
+	 * the GPU in greyscale - and to take any depth 32 to be XBGR32.
+	 * memdraw already knows every channel this tree has, including the
+	 * palette, and gets sub-byte greys right as well; one scratch image
+	 * for colour and one for coverage costs an allocation on a path
+	 * whose result is cached anyway.
+	 */
+	col = allocmemimage(Rect(0, 0, w, h), XBGR32);
+	if(col == nil)
 		return nil;
+	memfillcolor(col, DTransparent);
+	memdraw(col, col->r, img, img->r.min, memopaque, ZP, S);
+	alp = nil;
+	if(mask != nil){
+		alp = allocmemimage(Rect(0, 0, w, h), GREY8);
+		if(alp == nil){
+			freememimage(col);
+			return nil;
+		}
+		memfillcolor(alp, DBlack);
+		memdraw(alp, alp->r, mask, mask->r.min, memopaque, ZP, S);
+	}
+	rgba = malloc((size_t)w * h * 4);
+	if(rgba == nil){
+		freememimage(col);
+		freememimage(alp);
+		return nil;
+	}
 	for(y = 0; y < h; y++){
+		p = byteaddr(col, Pt(0, y));
+		mp = alp != nil ? byteaddr(alp, Pt(0, y)) : nil;
 		for(x = 0; x < w; x++){
-			p = byteaddr(img, Pt(img->r.min.x + x, img->r.min.y + y));
-			if(p == nil){
+			/* XBGR32 lays a pixel out as R, G, B, X in memory. */
+			rgba[(y*w+x)*4+0] = p[x*4+0];
+			rgba[(y*w+x)*4+1] = p[x*4+1];
+			rgba[(y*w+x)*4+2] = p[x*4+2];
+			rgba[(y*w+x)*4+3] = 255;
+			if(mp != nil && mp[x] == 0){
+				/*
+				 * PREMULTIPLIED alpha, and the reason is not
+				 * tidiness.  The sampler filters, so at a mask
+				 * edge it returns the average of a covered texel
+				 * and an uncovered one.  Averaging straight
+				 * colours mixes in whatever the invisible texel
+				 * held - black, in every .bit sprite here, since
+				 * that is what surrounds the shape - and the
+				 * visible edge comes out dark.  Measured before
+				 * this existed, white sprite on a green ground:
+				 * the minimum green byte in the frame was 191
+				 * where the software blit gives 255.  Zeroing a
+				 * fully transparent texel's colour IS the
+				 * premultiplied form for a binary mask (rgb*0).
+				 * The pipeline's source RGB factor is One to
+				 * match and ftmain keeps the product
+				 * premultiplied; the three go together.
+				 */
 				rgba[(y*w+x)*4+0] = 0;
 				rgba[(y*w+x)*4+1] = 0;
 				rgba[(y*w+x)*4+2] = 0;
 				rgba[(y*w+x)*4+3] = 0;
-				continue;
-			}
-			if(img->depth == 32){
-				rgba[(y*w+x)*4+0] = p[0];
-				rgba[(y*w+x)*4+1] = p[1];
-				rgba[(y*w+x)*4+2] = p[2];
-				rgba[(y*w+x)*4+3] = 255;
-			}else if(img->depth == 8){
-				rgba[(y*w+x)*4+0] = p[0];
-				rgba[(y*w+x)*4+1] = p[0];
-				rgba[(y*w+x)*4+2] = p[0];
-				rgba[(y*w+x)*4+3] = 255;
-			}else{
-				pix = 0;
-				memmove(&pix, p, img->depth > 32 ? 4 : (img->depth+7)/8);
-				rgba[(y*w+x)*4+0] = (uchar)(pix & 0xff);
-				rgba[(y*w+x)*4+1] = (uchar)((pix>>8) & 0xff);
-				rgba[(y*w+x)*4+2] = (uchar)((pix>>16) & 0xff);
-				rgba[(y*w+x)*4+3] = 255;
-			}
-			if(mask != nil){
-				mp = byteaddr(mask, Pt(mask->r.min.x + x, mask->r.min.y + y));
-				if(mp == nil || (mask->depth >= 8 && mp[0] == 0))
-					rgba[(y*w+x)*4+3] = 0;
-				else if(mask->depth == 1){
-					/* GREY1: bit 7 is leftmost in the byte from byteaddr. */
-					if((mp[0] & 0x80) == 0)
-						rgba[(y*w+x)*4+3] = 0;
-				}
-				/*
-				 * PREMULTIPLIED alpha, and the reason is not
-				 * tidiness.  The sampler filters linearly, so half
-				 * way across a mask edge it returns the average of a
-				 * covered texel and an uncovered one.  Averaging
-				 * straight (non-premultiplied) colours mixes in
-				 * whatever the invisible texel happened to hold -
-				 * black, in every .bit sprite in this tree, since
-				 * that is what surrounds the shape - and the visible
-				 * edge comes out dark.  Measured before this line
-				 * existed, white sprite on a green ground: the
-				 * minimum green byte in the frame was 191 where the
-				 * software blit gives 255.  Zeroing the colour of a
-				 * fully transparent texel IS the premultiplied form
-				 * for a binary mask (rgb*0), and then the average of
-				 * (white,1) and (0,0) is (0.5,0.5) - which composites
-				 * as half-covered white, the right answer.
-				 * The pipeline's source RGB blend factor is One to
-				 * match, and ftmain keeps the product premultiplied;
-				 * the three go together, and changing any one alone
-				 * makes it worse rather than better.
-				 */
-				if(rgba[(y*w+x)*4+3] == 0){
-					rgba[(y*w+x)*4+0] = 0;
-					rgba[(y*w+x)*4+1] = 0;
-					rgba[(y*w+x)*4+2] = 0;
-				}
 			}
 		}
 	}
+	freememimage(col);
+	freememimage(alp);
 	td = [MTLTextureDescriptor
 		texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
 		width:w height:h mipmapped:NO];
@@ -3402,17 +3405,22 @@ metal_sprite_tex(Memimage *img, Memimage *mask)
 	return tex;
 }
 
-/* sprite3 ('j'): textured Metal quad with depth; degz rotates in screen space. */
+/*
+ * Textured Metal quad, screen space, optionally mirrored, at a given
+ * depth.  Both sprite entry points end up here: sprite3 ('j') arrives
+ * with an eye z it wants turned into depth, sprite2d ('J') with no depth
+ * of its own at all.
+ */
 static int
-metal_queue_sprite(Memimage *dst, Point sp, int sw, int sh, float ez,
-	Memimage *img, Memimage *mask, float degz, int op)
+metal_queue_sprite_at(Memimage *dst, Point sp, int sw, int sh, float z,
+	Memimage *img, Memimage *mask, float degz, int flipx, int nearest, int op)
 {
 	Memimage *pix;
 	Point a;
-	float z, hx, hy, cs, sn, rad, lx, ly, rx, ry;
+	float hx, hy, cs, sn, rad, lx, ly, rx, ry, cxf, cyf;
 	GPUSprite *spr;
 	id<MTLTexture> tex;
-	int i;
+	int i, bw, bh;
 	static const float uv[6][2] = {
 		{0,0},{1,0},{1,1},
 		{0,0},{1,1},{0,1},
@@ -3442,7 +3450,22 @@ metal_queue_sprite(Memimage *dst, Point sp, int sw, int sh, float ez,
 	sn = sinf(rad);
 	hx = (float)sw * 0.5f;
 	hy = (float)sh * 0.5f;
-	z = eye_to_depth(ez);
+	/*
+	 * The same half pixel devdraw.c's d3spritez() has to allow for, and
+	 * for the same reason: transformsprite() in appl/math/draw3ddev.b
+	 * puts its box at centre - bw/2 with INTEGER division and then
+	 * samples about the box's real centre bw/2.0, so the effective
+	 * centre is half a pixel right and down whenever the box is odd -
+	 * which is whenever the sprite has an odd dimension.  Centring the
+	 * quad on the requested point instead left every odd-sized sprite
+	 * sampling a texel out: sprite2dtest(1)'s on-screen family passed
+	 * at 8, 16 and 64 and failed at 7 and 33, every rotation, with the
+	 * right coverage and the wrong content.
+	 */
+	bw = (int)((fabsf(cs)*hx + fabsf(sn)*hy)*2.0f) + 2;
+	bh = (int)((fabsf(sn)*hx + fabsf(cs)*hy)*2.0f) + 2;
+	cxf = (float)(a.x - bw/2) + bw*0.5f;
+	cyf = (float)(a.y - bh/2) + bh*0.5f;
 	retry:
 	lock(&mtl_geom_lock);
 	if(ngsprites >= MaxGPUSprites){
@@ -3453,15 +3476,19 @@ metal_queue_sprite(Memimage *dst, Point sp, int sw, int sh, float ez,
 	}
 	spr = &gsprites[ngsprites];
 	spr->tex = tex;
+	spr->nearest = nearest;
 	for(i = 0; i < 6; i++){
 		lx = corner[i][0] * hx;
 		ly = corner[i][1] * hy;
 		rx = lx * cs - ly * sn;
 		ry = lx * sn + ly * cs;
-		spr->v[i].x = (float)a.x + rx;
-		spr->v[i].y = (float)a.y + ry;
+		spr->v[i].x = cxf + rx;
+		spr->v[i].y = cyf + ry;
 		spr->v[i].z = z;
-		spr->v[i].u = uv[i][0];
+		/* Mirroring is a u flip, not a negative width: the quad's
+		 * corners and its rotation stay exactly as they are, so the
+		 * sprite turns about the same point either way. */
+		spr->v[i].u = flipx ? 1.0f - uv[i][0] : uv[i][0];
 		spr->v[i].v = uv[i][1];
 		spr->v[i].r = 1.0f;
 		spr->v[i].g = 1.0f;
@@ -3472,6 +3499,29 @@ metal_queue_sprite(Memimage *dst, Point sp, int sw, int sh, float ez,
 	metal_spr_calls++;
 	unlock(&mtl_geom_lock);
 	return 1;
+}
+
+/* sprite3 ('j'): placed by a projected world point, depth-tested. */
+static int
+metal_queue_sprite(Memimage *dst, Point sp, int sw, int sh, float ez,
+	Memimage *img, Memimage *mask, float degz, int op)
+{
+	return metal_queue_sprite_at(dst, sp, sw, sh, eye_to_depth(ez),
+		img, mask, degz, 0, 0, op);
+}
+
+/*
+ * sprite2d ('J'): screen space, no projection, no depth of its own.
+ * Depth 0 is nearer than anything eye_to_depth can produce, so it passes
+ * a LessEqual test whatever is already there - which is the 2D
+ * behaviour, painter order, that the Limbo resampler this replaces has.
+ */
+static int
+metal_queue_sprite2d(Memimage *dst, Point sp, int sw, int sh,
+	Memimage *img, Memimage *mask, float degz, int flipx, int op)
+{
+	return metal_queue_sprite_at(dst, sp, sw, sh, 0.0f,
+		img, mask, degz, flipx, 1, op);
 }
 
 /* circle/ellipse ('q'): tessellate into Metal triangles or line loop. */
@@ -3555,7 +3605,7 @@ metal_present_sprites(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	MTLRenderPassDescriptor *rp;
 	MTLLoadAction zload;
 	MTLSamplerDescriptor *sd;
-	static id<MTLSamplerState> sprsamp;
+	static id<MTLSamplerState> sprsamp, sprsampn;
 
 	lock(&mtl_geom_lock);
 	if(ngsprites == 0 || cmd == nil || drawabletex == nil || mtl_sprite_pipe == nil){
@@ -3574,6 +3624,24 @@ metal_present_sprites(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 		sd.minFilter = MTLSamplerMinMagFilterLinear;
 		sd.magFilter = MTLSamplerMinMagFilterLinear;
 		sprsamp = [mtl_device newSamplerStateWithDescriptor:sd];
+		/*
+		 * A second, point-sampling one for sprite2d.  Two reasons, and
+		 * the second is the binding one.  The art is 8x8-grid pixel
+		 * art from TempleOS, and magnifying it bilinearly blurs it -
+		 * not what a GPU is for here.  And the same sprite2d call
+		 * reaches this path or the Limbo resampler depending only on
+		 * whether the destination is a GPU target, so anything but
+		 * point sampling would make a sprite change appearance the
+		 * moment it moved from a window into an offscreen buffer.
+		 * Point sampling is what lets sprite2dtest(1) check GPU output
+		 * for exact equality against a plain draw(2).
+		 * sprite3, which places a billboard by projection and has no
+		 * such exact oracle, keeps the smooth filter.
+		 */
+		sd = [[MTLSamplerDescriptor alloc] init];
+		sd.minFilter = MTLSamplerMinMagFilterNearest;
+		sd.magFilter = MTLSamplerMinMagFilterNearest;
+		sprsampn = [mtl_device newSamplerStateWithDescriptor:sd];
 	}
 	wh[0] = (float)pw;
 	wh[1] = (float)ph;
@@ -3603,7 +3671,8 @@ metal_present_sprites(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 		[enc setVertexBuffer:vbuf offset:voff atIndex:0];
 		[enc setVertexBytes:wh length:sizeof(wh) atIndex:1];
 		[enc setFragmentTexture:gsprites[i].tex atIndex:0];
-		[enc setFragmentSamplerState:sprsamp atIndex:0];
+		[enc setFragmentSamplerState:gsprites[i].nearest ? sprsampn : sprsamp
+			atIndex:0];
 		[enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:6];
 		[enc endEncoding];
 		gsprites[i].tex = nil;
