@@ -850,6 +850,18 @@ lookmod(char *s)
 	return nil;
 }
 
+/*
+ * Diagnostic switch, off.  Setting it stops freemod() releasing the
+ * module's types, which trades a leak for the use-after-free below --
+ * not a fix, but the experiment that identified this loop.  With the
+ * virtarm64 reproducer (see doc/multicore-plan.ms): eight boots leaking
+ * showed no freed or garbage Type and no IMCALL failure at all, against
+ * six boots not leaking that showed both, twelve times over.  So a
+ * module is being unloaded while objects created from its types are
+ * still live, and this is where the types die.
+ */
+int leaktypes = 0;
+
 void
 freemod(Module *m)
 {
@@ -859,8 +871,9 @@ freemod(Module *m)
 	Import *i1, **i2;
 
 	if(m->type != nil) {
-		for(i = 0; i < m->ntype; i++)
-			freetype(m->type[i]);
+		if(!leaktypes)
+			for(i = 0; i < m->ntype; i++)
+				freetype(m->type[i]);
 		free(m->type);
 	}
 	free(m->name);
