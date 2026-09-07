@@ -39,6 +39,13 @@ uintptr		secmach;	/* &mach1, read by _secondary */
 volatile uintptr	secsp;
 volatile uintptr	seccflag;	/* set only by C on cpu1 */
 int		secgic = -1;
+/*
+ * Off.  cpu1 can enter the scheduler -- it works, and it runs
+ * processes -- but it corrupts the Dis heap about one boot in ten, with
+ * the same track: signature doc/inferno-ports.ms is chasing on pc64.
+ * Set to 1 to reproduce; see the commit and doc/multicore-plan.ms.
+ */
+int		secsched = 0;
 volatile uintptr	secalive;
 volatile uintptr	seccount;
 
@@ -59,6 +66,17 @@ secmain(void)
 		clockinit();		/* this processor's own generic timer */
 	secalive = 5;
 	spllo();			/* take interrupts on this processor */
+	/*
+	 * Into the scheduler.  The portable run queue is already locked
+	 * (Schedq embeds a Lock and proc.c takes it), which is the Plan 9
+	 * heritage this kernel kept, so the question is whether anything
+	 * else in the path assumes cpu0 -- which is what this is finding
+	 * out.  schedinit() does not return.
+	 */
+	active.machs[m->machno] = 1;
+	coherence();
+	if(secsched)
+		schedinit();
 	for(;;){
 		seccount = mm->ticks;
 		coherence();
@@ -88,6 +106,7 @@ smpprobe(void)
 	mach1.machno = 1;
 	secmach = (uintptr)&mach1;
 	machp[1] = &mach1;
+	conf.nmach = 2;		/* cpu1 is about to exist */
 	settpidr((uintptr)m);		/* cpu0 takes its own slot too */
 	r = psci(0xc4000003ULL, 1, (uintptr)_secondary, 0);
 	print("smp: PSCI CPU_ON cpu1 entry %#llux -> %lld\n", (uvlong)(uintptr)_secondary, r);
