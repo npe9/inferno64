@@ -1,0 +1,63 @@
+.TH TONETEST 1
+.SH NAME
+tonetest \- check that tone(2) synthesises what it claims
+.SH SYNOPSIS
+.B tonetest
+[
+.B -v
+]
+.SH DESCRIPTION
+.I Tonetest
+plays through
+.IR tone (2)'s
+real code path and then reads back the samples it wrote, rather than
+taking "it made a noise" as evidence.  It creates
+.B /tmp/tonetest
+holding an
+.B audio
+and an
+.B audioctl
+file and binds that directory over
+.B /dev
+with
+.BR MBEFORE ,
+so the library opens ordinary files and the PCM can be examined.  This
+works whether or not the host has a sound device.
+.PP
+Three properties are checked.
+.TP
+.B a note has a shape
+The
+.B string
+voice's first and last two hundred samples are compared against the
+middle of the note.  A voice with an attack and a release is quiet at
+both ends; a beeper is not.
+.TP
+.B a voice has a timbre
+A Goertzel filter measures the energy at twice the fundamental of C5.
+The
+.B sine
+voice must have almost none there and the
+.B organ
+voice must have a good deal.
+.TP
+.B parts mix
+A single part playing C must contain almost no G; two parts playing C and
+G together must contain both.  This is the property a one-bit square wave
+cannot have at all.
+.PP
+.B -v
+prints the measured numbers as well as the verdict.
+.SH SOURCE
+.B /appl/cmd/tonetest.b
+.SH SEE ALSO
+.IR tone (2),
+.IR audio (3)
+.SH BUGS
+The checks are of kind rather than of quality: they establish that a note
+is shaped, that a voice has harmonics and that parts mix, not that any of
+it is in tune with an instrument or pleasant to listen to.
+.PP
+The captured files under
+.B /tmp/tonetest
+are left behind.

@@ -1,6 +1,6 @@
 .TH TONE 2
 .SH NAME
-tone: init, snd, beep, stop, play \- simple tones and scored melodies
+tone: init, snd, beep, stop, play, voicenames, setvoice, playparts, settempo \- a small synthesiser
 .SH SYNOPSIS
 .EX
 include "tone.m";
@@ -13,30 +13,44 @@ snd:  fn(freq: int);
 beep: fn(freq, duration_ms: int);
 stop: fn();
 play: fn(score: string): string;
+
+voicenames: fn(): list of string;
+setvoice:   fn(name: string): string;
+playparts:  fn(parts: array of string): string;
+settempo:   fn(quarter_ms: int);
 .EE
 .SH DESCRIPTION
 .I Tone
 .RB ( /dis/lib/tone.dis )
-generates simple monophonic audio for Inferno applications.
-It writes PCM to the device described in
+writes 16-bit stereo PCM to the device described in
 .IR audio (3)
 at
 .B Tone->Rate
-samples per second (22050 Hz), matching the usual emulator default.
-Applications use it for short beeps and for compact melody strings.
+samples per second (22050 Hz).
+.PP
+The TempleOS programs this library was first written for drove a one-bit
+square wave through a timer chip, so a note there is a frequency and
+nothing else: full amplitude at the instant it starts, silence at the
+instant it ends, one note at a time.  Inferno is under no such
+obligation, and
+.I tone
+is not one now.  A voice is a harmonic series with an attack, a decay to
+a sustain level, and a release; several voices play at once.
 .PP
 .B Init
-opens the audio device.
-It returns
-.B nil
-on success, or a diagnostic string if audio is unavailable.
-Callers that treat sound as optional (most TempleOS games) simply leave a
-flag clear when
+does
+.I not
+open the audio device \(em opening it costs about 150ms on a hosted
+emulator, and forty programs in this tree called
 .B init
-fails.
+before putting their window up.  It loads what the library needs and
+returns
+.B nil
+if the library is usable.  The device is opened on the first note, and a
+failure to open it is reported once.
 .PP
 .B Snd
-starts a continuous square-ish tone at
+starts a continuous tone at
 .I freq
 Hertz.
 A frequency of
@@ -104,6 +118,64 @@ background phrases while a pause flag is clear.
 		tone->stop();
 	}
 .EE
+.SH VOICES
+.B Voicenames
+returns the built-in voices, in order:
+.BR sine ,
+.BR organ ,
+.BR string ,
+.BR reed ,
+.BR bell ,
+.B pluck
+and
+.BR flute .
+.B Setvoice
+selects one and returns
+.B nil
+or a diagnostic naming what is available; it rebuilds the wavetable, so
+call it between notes rather than during one.  The default is
+.BR organ .
+.B Sine
+is the old behaviour, kept so that a caller can ask for it back.
+.PP
+Each voice is a list of harmonic amplitudes summed once into a
+single-cycle wavetable when the voice is chosen, so a note costs a table
+lookup and a linear interpolation per sample rather than one
+.B sin
+per harmonic per sample.  At 22050Hz with six harmonics and four parts
+that is the difference between about half a million
+.B sin
+calls a second and none.
+.SH POLYPHONY
+.B Playparts
+plays several scores at once, one per part, all starting together; each
+part uses the same syntax as
+.BR play ,
+which is
+.B playparts
+with a single part.  The parts are mixed and the sum scaled by the square
+root of their number.
+.PP
+.B Settempo
+sets the quarter-note length in milliseconds for both, 500 (120bpm) by
+default; the other durations scale with it.
+.SH BUGS
+.B Stop
+does not interrupt a
+.B play
+or
+.B playparts
+already under way \(em it takes effect at the next note started by
+.B snd
+or
+.BR beep .
+.PP
+A voice's envelope applies to every note of a score equally; there is no
+per-note dynamic, and no way to slur two notes into one.
+.PP
+The harmonic amplitudes are fixed per voice rather than varying with
+pitch, so the top of a voice's range is brighter than an instrument's
+would be.
 .SH SOURCE
 .B /appl/lib/tone.b
 .br
