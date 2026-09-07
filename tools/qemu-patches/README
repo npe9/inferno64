@@ -143,6 +143,26 @@ device shared by every ARM board rather than add a missing peripheral.
 			every boot.  See the console chapter of
 			doc/raspi3b-completion-plan.ms.
 
+	sd		The SD model does not enforce bus width.
+			ACMD6 (hw/sd/sd.c) records the requested
+			width in sd_status[0] bits 7:6 and nothing
+			else in the model ever reads it -- a
+			byte-oriented model has no data lines to
+			narrow -- so a card transfers identically at
+			one bit and at four.
+
+			The guest still makes the switch and still
+			checks it, by reading DAT_BUS_WIDTH back with
+			ACMD13, because the sequence and its ordering
+			are what a real card cares about: setting the
+			host's four-bit bit before the card has
+			accepted ACMD6 corrupts data rather than
+			failing.  But the marker is
+			SDHCI-4BIT-ACCEPTED, not -OK, because what
+			passed is the command sequence and not the
+			electrical change.  Only real hardware can
+			give the second.
+
 THE PATCHES
 
 0001 bcm2835_powermgt: model the watchdog countdown.

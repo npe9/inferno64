@@ -599,9 +599,49 @@ they say nothing whatever about CMD52 and CMD53.
 .PP
 Also not done: no interrupt is wired (every wait is a bounded poll, as
 in sdhostbcm.c), no DMA -- the controller supports SDMA/ADMA and this
-uses the PIO data port -- no multi-block command, no high-speed or
-4-bit bus-width switch, so the card runs at the identification divider
-throughout, and no real hardware has been near it.
+uses the PIO data port -- no multi-block command, no high-speed switch,
+so the card runs at the identification divider throughout, and no real
+hardware has been near it.
+.PP
+.B "The four-bit bus, and what an emulator can and cannot say about it."
+The card and the host are now moved to the four-bit data bus after
+SELECT, which is the first half of what that list used to say was
+missing.  Only one order is safe, and it is worth writing down because
+the wrong one does not fail: the card accepts the width by ACMD6
+first, and the host's
+.CW Control0
+bit is set second.  A host reading four lines from a card still
+driving one reads whatever the three idle lines are sitting at.  That
+is corruption, not an error, and nothing reports it.
+.PP
+It is checked by reading it back rather than by assuming the command
+took.  ACMD13
+.CW ( SD_STATUS )
+returns 64 bytes, most significant first, and
+.CW DAT_BUS_WIDTH
+is bits 7:6 of the first: 0 is one bit, 2 is four.  The card reports 2,
+and the existing
+.CW SDHCI-WRITE-OK
+and
+.CW SDHCI-OK
+block transfers run afterwards and still read back what they wrote --
+the card saying it accepted, and the host half agreeing.  Asking for
+one bit instead makes the check report
+.CW "SDHCI-4BIT-FAIL card reports DAT_BUS_WIDTH 0" ,
+so the assertion is not vacuous.
+.PP
+The marker is
+.CW SDHCI-4BIT-ACCEPTED
+and not
+.CW -OK
+on purpose.  QEMU's SD model records the width in
+.CW sd_status[0]
+and nothing else ever reads it: ACMD6 in
+.CW hw/sd/sd.c
+does exactly that and no more, because a byte-oriented model has no
+wire to narrow.  So what passes here is that the command sequence is
+accepted and the data path still works.  It is not evidence that four
+lines are being driven, and only a real card can give that.
 .NH 1
 Phase 6: BCM43430 Wi-Fi over SDIO \- transport runs, the chip does not
 .PP

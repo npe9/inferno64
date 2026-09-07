@@ -249,6 +249,87 @@ sdhciroutetest(Ctlr *c)
  * Card bring-up over the standard SD identification sequence.  Returns
  * 1 with the card selected and sized, 0 if nothing answers.
  */
+/*
+ * Move the card and the host to the four-bit data bus.
+ *
+ * ACMD6 needs the card in transfer state, so this runs after SELECT.
+ * Only one order is safe: the card accepts the width first, the host's
+ * Control0 bit is set second.  A host reading four lines from a card
+ * still driving one does not fail -- it reads whatever the three idle
+ * lines happen to be sitting at, which is corruption rather than an
+ * error, and the reason this is written as a sequence rather than two
+ * independent writes.
+ *
+ * Checked by reading it back rather than by assuming the command took.
+ * ACMD13 (SD_STATUS) returns 64 bytes, transmitted most significant
+ * first, whose first byte carries DAT_BUS_WIDTH in bits 7:6 -- 0 is
+ * one bit, 2 is four.  The card reporting 4 is what says it accepted;
+ * the block reads that follow are what say the host half agrees.
+ *
+ * What this cannot show under an emulator: QEMU's SD model records the
+ * width in sd_status[0] and nothing else ever reads it (ACMD6 in
+ * hw/sd/sd.c does exactly that and no more), because a byte-oriented
+ * model has no wire to narrow.  So a passing read here proves the
+ * command sequence is accepted and the data path still works, not that
+ * four lines are being driven.  On a real card a wrong width corrupts
+ * data, and that is what this sequence is for.
+ */
+static int
+sdhciwiden(Ctlr *c)
+{
+	u32 *r = c->r;
+	uchar b[64];
+	u32 w;
+	int i, width;
+
+	if(sdhcicmd(c, 55, c->rca<<16, Resp48|Cmdcrcchk|Cmdixchk) < 0){	/* APP_CMD */
+		print("SDHCI-4BIT-FAIL APP_CMD refused\n");
+		return -1;
+	}
+	if(sdhcicmd(c, 6, 2, Resp48|Cmdcrcchk|Cmdixchk) < 0){		/* ACMD6 */
+		print("SDHCI-4BIT-FAIL SET_BUS_WIDTH refused\n");
+		return -1;
+	}
+	r[Control0] |= Hcdatawidth4;
+
+	if(sdhcicmd(c, 55, c->rca<<16, Resp48|Cmdcrcchk|Cmdixchk) < 0){
+		print("SDHCI-4BIT-FAIL APP_CMD before SD_STATUS refused\n");
+		return -1;
+	}
+	r[Blksizecnt] = (1<<16) | sizeof b;
+	if(sdhcicmd(c, 13, 0, Resp48|Cmdcrcchk|Cmdixchk|Cmdisdata|Tmblkcnt|Tmdatdirread) < 0){
+		print("SDHCI-4BIT-FAIL SD_STATUS refused\n");
+		return -1;
+	}
+	if(awaitbit(&r[Interrupt], Readready, 1) < 0){
+		print("SDHCI-4BIT-FAIL SD_STATUS never became readable\n");
+		return -1;
+	}
+	r[Interrupt] = Readready;
+	for(i = 0; i < sizeof b; i += 4){
+		w = r[Data];
+		b[i] = w;
+		b[i+1] = w>>8;
+		b[i+2] = w>>16;
+		b[i+3] = w>>24;
+	}
+	if(awaitbit(&r[Interrupt], Datadone, 1) < 0){
+		print("SDHCI-4BIT-FAIL SD_STATUS did not complete\n");
+		return -1;
+	}
+	r[Interrupt] = Datadone;
+
+	width = (b[0] >> 6) & 3;
+	if(width != 2){
+		print("SDHCI-4BIT-FAIL card reports DAT_BUS_WIDTH %d, wanted 2 (four bit)\n",
+			width);
+		return -1;
+	}
+	print("SDHCI-4BIT-ACCEPTED card reports DAT_BUS_WIDTH four bit; "
+		"qemu's model records the width and transfers the same either way\n");
+	return 0;
+}
+
 static int
 sdhcicardinit(Ctlr *c)
 {
@@ -344,6 +425,7 @@ sdhcicardinit(Ctlr *c)
 		return 0;
 	if(sdhcicmd(c, 16, Secsize, Resp48|Cmdcrcchk|Cmdixchk) < 0)	/* SET_BLOCKLEN */
 		return 0;
+	sdhciwiden(c);
 	return c->sectors != 0;
 }
 
