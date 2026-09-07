@@ -24,8 +24,28 @@ include "math/draw3d.m";
 LIMIT: con real (1<<11);
 Pi: con Math->Pi;
 
-D3CapMatrix, D3CapFill, D3CapLine, D3CapPlot, D3CapSprite, D3CapEllipse: con 1<<iota;
-D3CapGPU, D3CapReadback, D3CapNearClip, D3CapDepthOrder, D3CapGouraud: con 1<<iota;
+# iota RESTARTS in every con declaration - measured, not assumed:
+#	A, B, C: con 1<<iota;   D, E: con 1<<iota;
+# gives A=1 B=2 C=4 D=1 E=2.  So the second line here used to number
+# D3CapGPU..D3CapGouraud 1<<0..1<<4, aliasing them onto
+# D3CapMatrix..D3CapSprite.  Nothing misbehaved, because the device
+# advertises all ten and the two bits actually tested (D3CapDepthOrder
+# and D3CapGouraud, aliased onto D3CapPlot and D3CapSprite) were
+# therefore set anyway - but the moment the device stopped offering
+# plot or sprite, depth ordering and Gouraud would have switched
+# themselves off with no connection to either.  Spelled out now, and
+# these must match emu/port/devdraw.c's enum.
+D3CapMatrix:	con 1<<0;
+D3CapFill:	con 1<<1;
+D3CapLine:	con 1<<2;
+D3CapPlot:	con 1<<3;
+D3CapSprite:	con 1<<4;
+D3CapEllipse:	con 1<<5;
+D3CapGPU:	con 1<<6;
+D3CapReadback:	con 1<<7;
+D3CapNearClip:	con 1<<8;
+D3CapDepthOrder: con 1<<9;
+D3CapGouraud:	con 1<<10;
 D3CapCore: con D3CapMatrix|D3CapFill|D3CapLine|D3CapPlot|D3CapSprite|D3CapEllipse;
 
 Mstate: adt
