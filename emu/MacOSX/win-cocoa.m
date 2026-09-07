@@ -79,6 +79,14 @@ static id<MTLRenderPipelineState>	mtl_pipe;		/* softscreen / under blit */
 static id<MTLRenderPipelineState>	mtl_overlay_pipe;	/* softscreen where ≠ under */
 static id<MTLRenderPipelineState>	mtl_geom_pipe;		/* BGRA8+depth lines+tris+points */
 static id<MTLRenderPipelineState>	mtl_geom3d_pipe;	/* raw-vertex tris: GPU does model*proj+viewport */
+/*
+ * fgmain's per-pixel shading switch (see the comment on fgmain).  On by
+ * default; INFERNO_METAL_FLAT turns it off, restoring the flat per-face
+ * colour the software rasteriser produces.  That is the control the
+ * software-vs-GPU agreement check in draw3dbench(1) runs against, and the
+ * way to get a like-for-like A/B of any port's look.
+ */
+static float				mtl_shade = 1.0f;
 static id<MTLRenderPipelineState>	mtl_sprite_pipe;	/* textured quads + depth + blend */
 static id<MTLDepthStencilState>	mtl_depth_on;
 static id<MTLDepthStencilState>	mtl_depth_off;
@@ -337,7 +345,7 @@ static NSString *const kSoftscreenMetalSrc =
 	 * agreement check.)
 	 */
 	"struct G3Xform { float4x4 model; float4x4 proj; };\n"
-	"struct G3Out { float4 pos [[position]]; float4 color; float ez; };\n"
+	"struct G3Out { float4 pos [[position]]; float4 color; float3 eye; };\n"
 	"/* GPU-T&L: raw model-space vertex in. model then proj (proj already has\n"
 	"   the viewport scale and screen→Metal-NDC map folded in by\n"
 	"   d3combineproj, so this outputs a genuine clip.xyzw) - a real hardware\n"
@@ -363,14 +371,66 @@ static NSString *const kSoftscreenMetalSrc =
 	"  G3Out o;\n"
 	"  o.pos = c;\n"
 	"  o.color = float4(i.r, i.g, i.b, i.a);\n"
-	"  o.ez = e.z;\n"
+	"  o.eye = e.xyz;\n"
 	"  return o;\n"
 	"}\n"
 	"struct G3FragOut { float4 color [[color(0)]]; float depth [[depth(any)]]; };\n"
-	"fragment G3FragOut fgmain(G3Out in [[stage_in]]) {\n"
+	/*
+	 * Per-pixel shading.  The software rasteriser gives a fillpoly3 face
+	 * one flat colour - whatever `lit` the caller passed - because
+	 * anything per-pixel in an interpreted inner loop is unaffordable
+	 * (measured: polyfill->fillpoly is 7.18ms a frame where the native
+	 * Image.fillpoly is 0.07ms).  A GPU is running a fragment for every
+	 * covered pixel regardless, so here the per-pixel version is free.
+	 *
+	 * The face normal comes from the screen-space derivatives of the
+	 * interpolated eye-space position, so it needs no per-vertex normal -
+	 * there is none on the wire, and adding one would be a draw3d(2)
+	 * interface change every port would have to adopt.  dfdx/dfdy are a
+	 * fragment-shader primitive with no CPU equivalent that is not a
+	 * whole extra pass, which is rather the point.
+	 *
+	 * Lighting is in EYE space: a three-quarter key, a weak opposite
+	 * fill, a Blinn-Phong lobe and a Fresnel rim.  Eye space means no
+	 * scene knowledge is needed and no port has to place a light, and it
+	 * is what makes the result read as a lit solid rather than a set of
+	 * flat facets: diffuse is constant across a flat triangle, but the
+	 * specular and rim terms are not, since V varies per pixel.
+	 *
+	 * shade.x = 0 reproduces the old flat output exactly - that is what
+	 * INFERNO_METAL_FLAT selects, and it is the control for the
+	 * software-vs-GPU agreement check in draw3dbench(1).
+	 */
+	"fragment G3FragOut fgmain(G3Out in [[stage_in]],\n"
+	"    constant float4 &shade [[buffer(0)]]) {\n"
 	"  G3FragOut o;\n"
-	"  o.color = in.color;\n"
-	"  o.depth = 0.5 + atan(-in.ez) / M_PI_F;\n"
+	"  float4 c = in.color;\n"
+	"  if(shade.x > 0.0) {\n"
+	"    /* Locals, not file-scope constants: an MSL `constant` needs a\n"
+	"       constant initialiser, and normalize() is not one - a global\n"
+	"       one makes the whole library fail to compile with \"cannot have\n"
+	"       global constructors\", which silently drops the entire GUI to\n"
+	"       the CPU rasteriser. */\n"
+	"    float3 KEY = normalize(float3(-0.35, 0.55, 0.75));\n"
+	"    float3 FILL = normalize(float3(0.5, -0.25, 0.4));\n"
+	"    float3 p = in.eye;\n"
+	"    float3 v = normalize(-p);\n"
+	"    float3 g = cross(dfdx(p), dfdy(p));\n"
+	"    float gl = length(g);\n"
+	"    /* A triangle that rasterises to a sliver has parallel\n"
+	"       derivatives and no usable normal; face the eye instead of\n"
+	"       dividing by zero and shading it NaN. */\n"
+	"    float3 n = gl > 1e-20 ? g/gl : v;\n"
+	"    if(dot(n, v) < 0.0) n = -n;\n"
+	"    float nv = saturate(dot(n, v));\n"
+	"    float diff = 0.55 + 0.40*saturate(dot(n, KEY))\n"
+	"                      + 0.15*saturate(dot(n, FILL));\n"
+	"    float spec = pow(saturate(dot(n, normalize(KEY + v))), 28.0) * 0.35;\n"
+	"    float rim = pow(1.0 - nv, 3.0) * 0.20;\n"
+	"    c.rgb = saturate(c.rgb*diff + spec + rim);\n"
+	"  }\n"
+	"  o.color = c;\n"
+	"  o.depth = 0.5 + atan(-in.eye.z) / M_PI_F;\n"
 	"  return o;\n"
 	"}\n"
 	"struct TIn { float x, y, z, u, v, r, g, b, a; };\n"
@@ -504,8 +564,18 @@ metal_init(void)
 	if(mtl_queue == nil)
 		return -1;
 	lib = [mtl_device newLibraryWithSource:kSoftscreenMetalSrc options:nil error:&err];
-	if(lib == nil)
+	if(lib == nil){
+		/*
+		 * Without this the whole GUI silently drops to the CPU
+		 * rasteriser on a one-character shader typo, reporting only
+		 * "no Metal device/pipeline" - which reads as "this machine
+		 * has no GPU".  Say what the compiler actually said.
+		 */
+		fprint(2, "emu: Metal shader compile failed: %s\n",
+			err == nil ? "(no error given)" :
+			[[err localizedDescription] UTF8String]);
 		return -1;
+	}
 	pd = [[MTLRenderPipelineDescriptor alloc] init];
 	pd.vertexFunction = [lib newFunctionWithName:@"vmain"];
 	pd.fragmentFunction = [lib newFunctionWithName:@"fmain"];
@@ -547,6 +617,7 @@ metal_init(void)
 	mtl_geom3d_pipe = [mtl_device newRenderPipelineStateWithDescriptor:pd error:&err];
 	if(mtl_geom3d_pipe == nil)
 		return -1;
+	mtl_shade = getenv("INFERNO_METAL_FLAT") != nil ? 0.0f : 1.0f;
 
 	/* Textured sprites: sample + alpha discard, depth tested. */
 	pd = [[MTLRenderPipelineDescriptor alloc] init];
@@ -1685,6 +1756,7 @@ metal_present_tris3d(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	MTLRenderPassDescriptor *rp;
 	MTLLoadAction zload;
 	G3Batch *batches;
+	float shade[4];
 
 	lock(&mtl_geom_lock);
 	n = ng3triverts;
@@ -1741,6 +1813,9 @@ metal_present_tris3d(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	[enc setRenderPipelineState:mtl_geom3d_pipe];
 	[enc setDepthStencilState:mtl_zenable ? mtl_depth_on : mtl_depth_off];
 	[enc setVertexBuffer:vbuf offset:voff atIndex:0];
+	shade[0] = mtl_shade;
+	shade[1] = shade[2] = shade[3] = 0.0f;
+	[enc setFragmentBytes:shade length:sizeof shade atIndex:0];
 	for(i = 0; i < nb; i++){
 		if(batches[i].count == 0)
 			continue;

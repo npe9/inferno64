@@ -40,16 +40,32 @@ The last two sections are correctness rather than speed.
 One reports where the pixels a GPU pass produced can be read back from.
 The other draws a red, a green and a blue triangle at known world
 positions through both providers and checks that they land in the same
-place and come out the same colour \- the two bugs that kept the Metal
-geometry path from ever drawing were one of each, a clip that threw the
-whole scene away and a channel order that turned red into blue, and
-neither would have shown up in a timing.
+place, cover the same number of pixels, and are dominated by the same
+colour component \- the two bugs that kept the Metal geometry path from
+ever drawing were one of each, a clip that threw the whole scene away
+and a channel order that turned red into blue, and neither would have
+shown up in a timing.
 It reads the display's own screen image with
 .IR readpixels ,
 which is the only way to see GPU output from inside
 .IR emu ,
 and it does not flush first: a present would drain the GPU's queue and
 leave the readback nothing to replay.
+.PP
+What it checks is
+.I geometry ,
+not colour: the Metal fragment shader shades per pixel and the software
+rasteriser gives a face one flat colour, so the two are meant to differ
+in shade.
+The mean colour of each triangle is printed for both, so the difference
+is visible \- a face-on red triangle reads 255,0,0 through the software
+provider and about 253,17,17 through the GPU, the extra being the
+specular lobe.
+Setting
+.B INFERNO_METAL_FLAT
+turns the shading off, and then the two agree exactly; that is the
+control to run if a difference here is ever suspected of being more
+than shading.
 .PP
 The options are:
 .TF "-n frames"
@@ -61,6 +77,17 @@ prints its per-30-frame counters during the run
 .TP
 .BI -n " frames"
 Frames per case (default 120)
+.PD
+.PP
+Two environment variables matter to what it measures:
+.TF INFERNO_METAL_STATS
+.TP
+.B INFERNO_METAL_STATS
+Print the Metal counters every 30 presents
+.TP
+.B INFERNO_METAL_FLAT
+Turn off the per-pixel shading in the Metal geometry shader, so the GPU
+reproduces the software rasteriser's flat per-face colour exactly
 .PD
 .SH EXAMPLE
 Confirm that geometry really reaches the GPU rather than falling back:
@@ -80,26 +107,25 @@ stays at zero.
 .IR polyfill (2),
 .IR draw (3)
 .SH BUGS
-A readback after a Metal geometry pass returns none of the geometry.
-The 64-triangle scene is looked at twice, because a
+A Metal geometry pass can be read back, but only through a
+.IR readpixels ,
+never through a
+.IR draw .
+The 64-triangle scene is looked at twice for that reason: a
 .I draw
 into a scratch image copies bytes and never gives the device a chance to
 bring GPU output back, while a
 .I readpixels
 straight off the target goes through the draw device's read message,
 which calls the readback hook first.
-Both agree.
-Through the software provider the window layer reads back 210183 lit
-pixels either way, and the display's screen image 226349 pixels or
-258365 nonzero bytes.
-Through the protocol provider the layer reads back nothing at all, and
-the screen reads back 16166 pixels and 48182 bytes \- which is exactly
-the window's border in each metric, the software provider's screen count
-less its layer count.
-So reading a layer is not the problem, and this is not a partial
-readback: the readback runs \-
-.B readbacks
-counts up \- and produces nothing.
+The software provider agrees between the two \- the window layer reads
+331763 lit pixels whichever way it is asked \- but the protocol
+provider reads 0 through the
+.I draw
+and 1280370 through the
+.IR readpixels .
+So anything that copies a layer's bytes rather than reading its pixels
+will see a GPU-drawn frame as empty.
 .PP
 At exactly
 .B -n 60

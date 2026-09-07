@@ -250,29 +250,40 @@ agree(d: ref Display)
 	bad := 0;
 	names := array[] of {"red", "green", "blue"};
 	for(i := 0; i < len sw; i++){
-		(sx, sc) := sw[i];
-		(gx, gc) := gp[i];
+		(sx, sn, sr, sg, sb, sc) := sw[i];
+		(gx, gn, gr, gg, gb, gc) := gp[i];
 		off := sx - gx;
 		if(off < 0)
 			off = -off;
-		ok := off <= 2 && sc == gc;
+		# Coverage, not exact colour: fgmain shades per pixel, so the
+		# GPU's triangle is deliberately not the same colour as the
+		# software one.  What must still match is WHERE it is and how
+		# much of the screen it covers - geometry - plus which
+		# component dominates, which no plausible shading inverts.
+		# 2% of the software count, or one pixel of an empty one.
+		cov := sn - gn;
+		if(cov < 0)
+			cov = -cov;
+		ok := sn > 0 && gn > 0 && off <= 2 && sc == gc && cov*50 <= sn;
 		if(!ok)
 			bad++;
 		v := "ok";
 		if(!ok)
 			v = "DIFFER";
-		sys->print("draw3dbench:   %s: software x=%d %s, GPU x=%d %s  %s\n",
-			names[i], sx, sc, gx, gc, v);
+		sys->print("draw3dbench:   %s: software x=%d n=%d rgb=%d,%d,%d %s\n",
+			names[i], sx, sn, sr, sg, sb, sc);
+		sys->print("draw3dbench:        GPU x=%d n=%d rgb=%d,%d,%d %s  %s\n",
+			gx, gn, gr, gg, gb, gc, v);
 	}
 	if(bad)
 		sys->print("draw3dbench:   the GPU path does not match the software one\n");
 }
 
-frames(d: ref Display, path: string): array of (int, string)
+frames(d: ref Display, path: string): array of (int, int, int, int, int, string)
 {
-	out := array[3] of (int, string);
+	out := array[3] of (int, int, int, int, int, string);
 	for(i := 0; i < 3; i++)
-		out[i] = (-1, "?");
+		out[i] = (-1, 0, 0, 0, 0, "?");
 	d3 := load Draw3d path;
 	if(d3 == nil)
 		return out;
@@ -303,20 +314,23 @@ frames(d: ref Display, path: string): array of (int, string)
 	return out;
 }
 
-# centroid x and the dominant channel of the lit pixels, read straight
-# off the image so the GPU's own output is what is measured
-litmean(dst: ref Image, r: Rect): (int, string)
+# Centroid x, lit-pixel count, mean colour and dominant channel of the
+# lit pixels, read straight off the image so the GPU's own output is what
+# is measured.  The count is the coverage figure agree() compares: two
+# renderers of the same geometry must light the same pixels even when
+# they deliberately light them different colours.
+litmean(dst: ref Image, r: Rect): (int, int, int, int, int, string)
 {
 	(r, nil) = r.clip(dst.r);
 	bpl := (r.dx() * dst.depth + 7) / 8;
 	pxb := dst.depth / 8;
 	if(pxb < 3 || r.dx() < 1 || r.dy() < 1)
-		return (-1, "?");
+		return (-1, 0, 0, 0, 0, "?");
 	buf := array[bpl] of byte;
 	sx := 0; n := 0; sr := 0; sg := 0; sb := 0;
 	for(y := r.min.y; y < r.max.y; y++){
 		if(dst.readpixels(Rect((r.min.x, y), (r.max.x, y+1)), buf) != bpl)
-			return (-1, "?");
+			return (-1, 0, 0, 0, 0, "?");
 		for(x := 0; x*pxb + 2 < bpl; x++){
 			b0 := int buf[x*pxb]; b1 := int buf[x*pxb+1]; b2 := int buf[x*pxb+2];
 			mx := b0; if(b1 > mx) mx = b1; if(b2 > mx) mx = b2;
@@ -328,14 +342,14 @@ litmean(dst: ref Image, r: Rect): (int, string)
 		}
 	}
 	if(n == 0)
-		return (-1, "nothing drawn");
+		return (-1, 0, 0, 0, 0, "nothing drawn");
 	sr /= n; sg /= n; sb /= n;
 	# the screen image is XBGR32: R, G, B in memory
 	if(sr >= sg && sr >= sb)
-		return (sx/n, "red");
+		return (sx/n, n, sr, sg, sb, "red");
 	if(sg >= sb)
-		return (sx/n, "green");
-	return (sx/n, "blue");
+		return (sx/n, n, sr, sg, sb, "green");
+	return (sx/n, n, sr, sg, sb, "blue");
 }
 
 # Where the pixels a pass produced can actually be read back from, for
