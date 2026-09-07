@@ -248,6 +248,11 @@ usbcheck()
 	# split interrupt transfers, HID translation, cons -- end to end.
 	spawn kbdreport();
 	sys->print("USB-OK\n");
+	# Spawned, not called: the check waits a bounded time for events
+	# that only arrive if a mouse is attached, and a boot with none
+	# should not stall for that window.  The marker appears when the
+	# check resolves, which may be after later ones.
+	spawn mousecheck();
 	diskcheck();
 	ethercheck();
 }
@@ -415,6 +420,113 @@ ethercheck()
 	lease = nil;
 }
 
+# Phase 2's other half: a boot-protocol USB mouse, through usbd's HID
+# decode, to #m/pointer.
+#
+# Two things are asserted, and the second is the one worth having.
+# Motion proves the path carries data at all.  The buttons prove
+# usbd.b's HID-to-devpointer remap, which is bit-shuffling that until
+# now had never once executed -- there was no /dev/pointer for the
+# reader to open.  HID reports left in bit 0, right in bit 1 and
+# middle in bit 2; devpointer wants 1, 4 and 2.  Right and middle are
+# therefore transposed, and a motion-only test cannot see it.  So both
+# are injected and both are checked: right must arrive as 4 and middle
+# as 2, which fails if the shuffle is dropped or reversed.
+#
+# Movement is asserted as growth between consecutive events, not as a
+# coordinate.  The first event a fresh reader sees is the cursor's own
+# starting position -- 320 240, the middle of the screen -- delivered
+# whether or not any mouse exists, and not anything a mouse did.  It is
+# the baseline and is not counted: counting it made a board with no
+# mouse attached report FAIL, on the strength of an event the pointer
+# device produces by itself.
+#
+# USB-MOUSE-NONE means no events arrived within the window, which is
+# what an invocation with no -device usb-mouse should say and is not a
+# failure.  It cannot distinguish that from a mouse that enumerated
+# and then said nothing at all; a mouse that speaks and is decoded
+# wrongly gives USB-MOUSE-FAIL.
+mousecheck()
+{
+	fd := sys->open("/dev/pointer", Sys->OREAD);
+	if(fd == nil){
+		sys->print("USB-MOUSE-NONE /dev/pointer: %r\n");
+		return;
+	}
+	evc := chan of string;
+	tmo := chan of int;
+	spawn mousereadproc(fd, evc);
+	spawn mousetimer(tmo, 25000);
+
+	prevx := -1;
+	moved := 0;
+	buttons := 0;
+	nev := 0;
+loop:
+	for(;;) alt {
+	ev := <-evc =>
+		(nf, flds) := sys->tokenize(ev, " \t\n");
+		if(nf < 4)
+			continue;
+		flds = tl flds;			# drop the leading "m"
+		x := int hd flds;
+		b := int hd tl tl flds;
+		if(prevx < 0){
+			# The first event is the cursor's own starting
+			# position, delivered whether or not any mouse
+			# exists.  It is the baseline, not evidence.
+			prevx = x;
+			continue;
+		}
+		nev++;
+		if(x > prevx)
+			moved = 1;
+		prevx = x;
+		buttons |= b;
+		if(moved && (buttons & 4) != 0 && (buttons & 2) != 0)
+			break loop;
+	<-tmo =>
+		break loop;
+	}
+
+	if(nev == 0){
+		sys->print("USB-MOUSE-NONE no pointer events (no mouse attached?)\n");
+		return;
+	}
+	if(!moved){
+		sys->print("USB-MOUSE-FAIL %d events, none moved x\n", nev);
+		return;
+	}
+	if(buttons == 0){
+		sys->print("USB-MOUSE-FAIL %d events, motion but no button\n", nev);
+		return;
+	}
+	# Right must land on 4 and middle on 2.  Either missing means
+	# usbd's HID-to-devpointer shuffle is wrong in one direction.
+	if((buttons & 4) == 0 || (buttons & 2) == 0){
+		sys->print("USB-MOUSE-FAIL button bits %d, wanted right (4) and middle (2); usbd's HID remap disagrees with devpointer\n", buttons);
+		return;
+	}
+	sys->print("USB-MOUSE-OK %d events, motion and buttons %d through usbd's HID decode to #m/pointer\n", nev, buttons);
+}
+
+mousereadproc(fd: ref Sys->FD, evc: chan of string)
+{
+	buf := array[64] of byte;
+	for(;;){
+		n := sys->read(fd, buf, len buf);
+		if(n <= 0)
+			return;
+		evc <-= string buf[0:n];
+	}
+}
+
+mousetimer(tmo: chan of int, ms: int)
+{
+	sys->sleep(ms);
+	tmo <-= 1;
+}
+
 kbdreport()
 {
 	fd := sys->open("/dev/keyboard", Sys->OREAD);
@@ -439,6 +551,13 @@ init()
 	sys->bind("#p", "/prog", sys->MREPL);
 	sys->bind("#d", "/fd", sys->MREPL);
 	sys->bind("#c", "/dev", sys->MAFTER);
+	# #m is the pointer device.  Without this bind /dev/pointer does
+	# not exist, and usbd's mouse reader -- which is already written
+	# and already finds the mouse -- dies on its first open with
+	# "usbd: /dev/pointer: file does not exist".  That is the whole
+	# of what was missing: the enumeration, the HID decode and the
+	# devpointer end were all in place and unreachable.
+	sys->bind("#m", "/dev", sys->MAFTER);
 	sys->bind("#e", "/env", sys->MREPL|sys->MCREATE);
 	sys->print("RASPI3B-OK\n");
 

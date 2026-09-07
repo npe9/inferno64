@@ -79,7 +79,7 @@ refuses the "hub" ctl command for a busy endpoint -- so newhub now
 closes the data file after confighub and before "hub", reopening it
 after.
 .NH 1
-Phase 2: USB keyboard -- DONE, end to end
+Phase 2: USB keyboard and mouse -- DONE, end to end
 .PP
 No new driver was needed: usbd's boot-keyboard reader already translates
 HID usage codes to UTF-8 and writes them to /dev/keyboard, which devcons
@@ -89,9 +89,87 @@ Verified whole: with -device usb-kbd, injecting "hello\\n" at the QEMU
 monitor makes raspi3binit's reader print h e l l o and a newline from
 /dev/keyboard -- QEMU keyboard, through the root hub, through the DWC2
 driver's split interrupt transfers, through usbd's HID translation, to
-cons.  The mouse (boot-protocol, to #m/pointer) is the same shape and
-follows usbd's existing mouse reader; it is left for a pointer-wiring
-pass on this board.
+cons.  .PP
+.B "The mouse, and how little was actually missing."
+Everything but one line was already there.
+.CW usbd.b
+enumerates the boot mouse, decodes its HID reports and writes
+.CW "m x y b"
+to
+.CW /dev/pointer ;
+.CW devpointer.c
+is in the board's device list and its
+.CW #m
+is built into the kernel.  What was missing is that
+.CW raspi3binit.b
+never bound
+.CW #m
+into
+.CW /dev ,
+so the file the reader opens did not exist.  The symptom was one line
+in a boot log that had been there all along:
+.CW "usbd: ep3.0: boot mouse on ep3.1"
+immediately followed by
+.CW "usbd: /dev/pointer: file does not exist" .
+The enumeration, the HID decode and the pointer device were all
+working and unreachable from each other.
+.PP
+With the bind,
+.CW USB-MOUSE-OK :
+motion and buttons arrive through usbd's decode to
+.CW #m/pointer ,
+identically on stock QEMU and the patched build, since none of this is
+a model change.
+.PP
+.B "What the check asserts, and why the button half matters."
+Motion only proves the path carries data.  The buttons prove usbd's
+HID-to-devpointer remap, which had never once executed \- there was no
+.CW /dev/pointer
+for the reader to open, so the line sat there being read and never
+run.  HID puts left in bit 0, right in bit 1 and middle in bit 2;
+devpointer wants 1, 4 and 2.  Right and middle are transposed, and a
+motion-only test cannot see a transposition.  Both are injected and
+both are checked \- right must arrive as 4 and middle as 2 \- so
+dropping or reversing the shuffle fails.  It reports
+.CW "buttons 6" ,
+which is 4 and 2 together.
+.PP
+Two things about the harness are worth writing down, because both
+produced a wrong answer first.
+.IP \(bu
+QEMU's monitor help for
+.CW mouse_button
+says "1=L, 2=M, 4=R".  It is wrong.  The values are
+.CW MOUSE_EVENT_LBUTTON
+1,
+.CW MOUSE_EVENT_RBUTTON
+2 and
+.CW MOUSE_EVENT_MBUTTON
+4
+.CW ( include/ui/console.h ),
+so 4 is middle and 2 is right.  Injecting 4 and expecting a right-click
+made a correct remap look transposed.
+.IP \(bu
+The first event any fresh reader of
+.CW /dev/pointer
+gets is the cursor's own starting position \- 320 240, the middle of
+the screen \- delivered whether or not a mouse exists.  Taking it as
+the motion baseline hides the real deltas, which start again from 0,
+and counting it as an event made a board with no mouse attached report
+.CW USB-MOUSE-FAIL
+on the strength of something the pointer device produces by itself.
+It is the baseline and it is not counted.
+.PP
+.CW USB-MOUSE-NONE
+means no events arrived in the window, which is what an invocation
+without
+.CW "-device usb-mouse"
+says and is not a failure.  It cannot distinguish that from a mouse
+that enumerated and then said nothing; a mouse that speaks and is
+decoded wrongly gives
+.CW USB-MOUSE-FAIL .
+The check is spawned rather than called, so a boot with no mouse does
+not stall for the window.
 .NH 1
 Phase 1 (historical): the DWC2 controller
 .PP

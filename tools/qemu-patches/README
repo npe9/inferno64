@@ -372,6 +372,32 @@ which is correct and is not a failure.  Everything at once:
 		-device usb-storage,drive=stick \
 		-serial mon:stdio -serial file:aux.log
 
+The mouse is not in that line, deliberately.  A boot-protocol mouse
+reports nothing until something moves it, so attaching -device usb-mouse
+and leaving it alone gives USB-MOUSE-NONE -- correct, since no events
+arrived, but it reads as "no mouse attached".  The check needs events
+injected, which needs the monitor on a socket:
+
+	qemu-system-aarch64 -M raspi3b -m 1G -nographic -kernel iraspi3b \
+		-drive file=sd.img,if=sd,format=raw \
+		-device usb-mouse -monitor unix:/tmp/mon.sock,server,nowait
+
+then, once the log shows "usbd: ep3.0: boot mouse on ep3.1", send over
+that socket:
+
+	mouse_move 40 40      (several times)
+	mouse_button 2        then mouse_button 0
+	mouse_button 4        then mouse_button 0
+
+and the board reports USB-MOUSE-OK with buttons 6.
+
+Note the button numbers.  The monitor's own help for mouse_button says
+"1=L, 2=M, 4=R" and is wrong: include/ui/console.h defines
+MOUSE_EVENT_LBUTTON 1, MOUSE_EVENT_RBUTTON 2 and MOUSE_EVENT_MBUTTON 4,
+so 2 is right and 4 is middle.  The check wants both, because HID and
+devpointer transpose right and middle and a motion-only test cannot see
+that.
+
 The USB stick is worth a note.  DISK-NONE means no mass storage was
 attached; DOS-FAIL means one was, with no filesystem on it.  A plain
 zeroed image gives the second, and on macOS newfs_msdos cannot format a
