@@ -96,23 +96,17 @@ include "danby/mechanism.m";
 	shipmotion: Mechanism;
 	balloon: Mechanism;
 	joggingcompanion: Mechanism;
-	amusementchaos: Mechanism;
 	spacestationball: Mechanism;
 	fireworks: Mechanism;
 	venushead: Mechanism;
 	synchronousmotor: Mechanism;
-	swing1: Mechanism;
-	swing2: Mechanism;
 	magneticpendulum3d: Mechanism;
 	catastrophemachine: Mechanism;
 	violinbow: Mechanism;
 	carrierlanding: Mechanism;
-	chaoticwheel: Mechanism;
 	fireflies: Mechanism;
-	pursuit: Mechanism;
 	lowbombing: Mechanism;
 	carbonmicrophone: Mechanism;
-	compass: Mechanism;
 	pistonflywheel: Mechanism;
 	wattgovernor: Mechanism;
 	dynamoreversal: Mechanism;
@@ -231,13 +225,10 @@ init(nil: ref Draw->Context, nil: list of string)
 	shipmotion = load Mechanism "/dis/danby/shipmotion.dis";
 	balloon = load Mechanism "/dis/danby/balloon.dis";
 	joggingcompanion = load Mechanism "/dis/danby/joggingcompanion.dis";
-	amusementchaos = load Mechanism "/dis/danby/amusementchaos.dis";
 	spacestationball = load Mechanism "/dis/danby/spacestationball.dis";
 	fireworks = load Mechanism "/dis/danby/fireworks.dis";
 	venushead = load Mechanism "/dis/danby/venushead.dis";
 	synchronousmotor = load Mechanism "/dis/danby/synchronousmotor.dis";
-	swing1 = load Mechanism "/dis/danby/swing1.dis";
-	swing2 = load Mechanism "/dis/danby/swing2.dis";
 	# slidingpendulum1 is now a mechlab(2) script rather than a Mechanism
 	# module - mechlabtest(1) checks it, including the momentum law that
 	# used to be checked here.
@@ -245,12 +236,9 @@ init(nil: ref Draw->Context, nil: list of string)
 	catastrophemachine = load Mechanism "/dis/danby/catastrophemachine.dis";
 	violinbow = load Mechanism "/dis/danby/violinbow.dis";
 	carrierlanding = load Mechanism "/dis/danby/carrierlanding.dis";
-	chaoticwheel = load Mechanism "/dis/danby/chaoticwheel.dis";
 	fireflies = load Mechanism "/dis/danby/fireflies.dis";
-	pursuit = load Mechanism "/dis/danby/pursuit.dis";
 	lowbombing = load Mechanism "/dis/danby/lowbombing.dis";
 	carbonmicrophone = load Mechanism "/dis/danby/carbonmicrophone.dis";
-	compass = load Mechanism "/dis/danby/compass.dis";
 	pistonflywheel = load Mechanism "/dis/danby/pistonflywheel.dis";
 	wattgovernor = load Mechanism "/dis/danby/wattgovernor.dis";
 	dynamoreversal = load Mechanism "/dis/danby/dynamoreversal.dis";
@@ -304,19 +292,18 @@ init(nil: ref Draw->Context, nil: list of string)
 			rocket2d == nil || reentry == nil || lowthrust == nil ||
 			running == nil || diving == nil || polevault == nil ||
 			flightmodel == nil || hovercraft == nil || shipmotion == nil ||
-			balloon == nil || joggingcompanion == nil || amusementchaos == nil || spacestationball == nil ||
+			balloon == nil || joggingcompanion == nil || spacestationball == nil ||
 			fireworks == nil ||
 			threebody == nil || moontrip == nil ||
 			lagrange1 == nil || lagrange2 == nil || cometcatch == nil ||
 			jupiterboost == nil || grandtour == nil || perihelion == nil ||
 			poyntingrobertson == nil || galaxies == nil || venushead == nil ||
 			starmodel == nil || whitedwarf == nil ||
-			synchronousmotor == nil || swing1 == nil || swing2 == nil ||
+			synchronousmotor == nil ||
 			magneticpendulum3d == nil ||
 			catastrophemachine == nil || violinbow == nil ||
-			carrierlanding == nil ||
-			chaoticwheel == nil || fireflies == nil || pursuit == nil ||
-			lowbombing == nil || carbonmicrophone == nil || compass == nil || pistonflywheel == nil ||
+			carrierlanding == nil || fireflies == nil ||
+			lowbombing == nil || carbonmicrophone == nil || pistonflywheel == nil ||
 			wattgovernor == nil || dynamoreversal == nil ||
 			bernoulli == nil)
 		raise "fail:danbytest: missing module";
@@ -416,23 +403,17 @@ testtrajectory()
 	checkmechanism(shipmotion,"ship motion");
 	checkmechanism(balloon,"balloon");
 	checkmechanism(joggingcompanion,"jogging companion");
-	checkmechanism(amusementchaos,"amusement chaos");
 	checkmechanism(spacestationball,"space-station ball");
 	checkmechanism(fireworks,"fireworks");
 	checkmechanism(venushead,"Venus ray geometry");
 	checkmechanism(synchronousmotor,"synchronous motor");
-	checkmechanism(swing1,"child swing 1");
-	checkmechanism(swing2,"child swing 2");
 	checkmechanism(magneticpendulum3d,"magnetic pendulum 3d");
 	checkmechanism(catastrophemachine,"catastrophe machine");
 	checkmechanism(violinbow,"violin bow");
 	checkmechanism(carrierlanding,"carrier landing");
-	checkmechanism(chaoticwheel,"chaotic driven wheel");
 	checkmechanism(fireflies,"fireflies");
-	checkmechanism(pursuit,"pursuit curves");
 	checkmechanism(lowbombing,"low-level bombing");
 	checkmechanism(carbonmicrophone,"carbon microphone");
-	checkmechanism(compass,"oscillating compass");
 	checkmechanism(pistonflywheel,"piston and flywheel");
 	checkmechanism(wattgovernor,"Watt governor");
 	checkmechanism(dynamoreversal,"reversal dynamo");
