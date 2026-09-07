@@ -223,11 +223,46 @@ and the
 .CW "DC CVAC"
 loops beside it.
 .CW virtarm64
-has no cache maintenance at all.  Left undone deliberately: nothing
-runs it, and building it now would mean shipping untested code down a
-path with no caller.  Worth doing the day anyone sets
+had no cache maintenance at all.
+.PP
+.B "Done, and the day arrived sooner than expected."
+Both boards now flush properly:
+.CW raspi3b
+from the primitives it already had,
+.CW virtarm64
+from
+.CW getctr/dccvac/cacheiinv
+newly added to its
+.CW l.s
+with the encodings
+.CW raspi3b/l.s
+records verifying byte-for-byte against
+.CW "7l -a" ,
+and a clean loop that strides by
+.CW CTR_EL0 's
+minimum line rather than assuming one \- which is also what a
+big.LITTLE part needs, its clusters not being obliged to report the
+same geometry.
+.PP
+And with that the arm64 JIT runs on real hardware emulation, which is
+the thing none of this could be checked against before.  Built with
+.CW "cflag = 1" ,
+.CW virtarm64
+boots and executes compiled Dis 14 times out of 14 clean \- through
+.CW DIS-STRESS-OK ,
+.CW VIRT-OK ,
+.CW ROOT-CMDS-OK
+and
+.CW CHANTEST-OK ,
+no panic, no corruption check firing \- the same score as the
+interpreter.  Three things had to be true together: this flush, the
+.CW Ldw/Stw
+width fix, and the atomic reference counts.
 .CW cflag
-on either board, and worth knowing about before rather than after.
+stays 0 by default, because turning it on is a policy choice about a
+board that is now this branch's native verification baseline, and
+changing what the baseline runs mid-plan changes what every later
+comparison means.
 .CW comp-amd64.c
 and
 .CW comp-386.c
