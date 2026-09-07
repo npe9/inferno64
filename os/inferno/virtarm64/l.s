@@ -146,51 +146,33 @@ dead:
 TEXT	_secondary(SB), 1, $-4
 	MOV	$setSB(SB), R28
 	/*
-	 * Signal before anything that can fault.  VBAR_EL1 is whatever
-	 * reset left it on this processor -- trapinit() only ever ran on
-	 * cpu0 -- so any exception here vanishes into an unknown vector
-	 * with nothing to report it.  Set the flag first, then try the
-	 * things that might not work.
+	 * Stage markers, stored before each thing that could fail.  This
+	 * processor has whatever VBAR_EL1 reset left it -- trapinit() only
+	 * ever ran on cpu0 -- so a fault here disappears into an unknown
+	 * vector with nothing to report it, and the last marker cpu0 can
+	 * see is the only evidence of how far this got.
 	 */
 	MOV	$1, R1
 	MOV	R1, secalive(SB)
 	DSB	$15
 	/*
-	 * The stack top comes from C, already rounded down to 16.  AArch64
-	 * faults on a misaligned SP the moment anything uses it as a base,
-	 * and a GLOBL's address carries no such guarantee -- which is what
-	 * stopped this at "alive 2": the entry ran, and secmain()'s
-	 * prologue died on the first store through an odd SP, into a
-	 * VBAR this processor never had set.
+	 * The stack top comes from C, already rounded down to 16, because
+	 * AArch64 faults on a misaligned SP as soon as anything uses it as
+	 * a base and a GLOBL's address carries no such guarantee.
 	 */
 	MOV	secstacktop(SB), R2
 	MOV	R2, RSP
-	MOV	R2, secsp(SB)		/* what SP did we actually get? */
+	MOV	R2, secsp(SB)
 	MOV	$2, R1
 	MOV	R1, secalive(SB)
 	DSB	$15
-	MOV	$3, R1			/* about to call C */
+	MOV	$3, R1
 	MOV	R1, secalive(SB)
 	DSB	$15
-	/*
-	 * The loop is here rather than in C because BL secmain(SB) does
-	 * not survive: the processor reaches this point with the stack
-	 * pointer it was given, correct and 16-byte aligned, and never
-	 * arrives in the C function.  Something in 7c's prologue wants
-	 * more of a world than a bare secondary has -- almost certainly a
-	 * register this entry does not set up.  Worth chasing when the
-	 * secondary needs to do more than count; for the purpose of
-	 * showing that a second processor runs, assembly is enough and
-	 * makes the result unambiguous.
-	 */
-	MOV	$4, R1
-	MOV	R1, secalive(SB)
-secloop:
-	MOV	seccount(SB), R1
-	ADD	$1, R1, R1
-	MOV	R1, seccount(SB)
-	DSB	$15
-	B	secloop
+	BL	secmain(SB)
+	/* secmain() does not return; if it ever does, stop here quietly */
+secdead:
+	B	secdead
 
 GLOBL	dtbptr(SB), $8
 GLOBL	stack(SB), $KSTACK

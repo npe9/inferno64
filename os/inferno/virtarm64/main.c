@@ -36,15 +36,27 @@ extern int image_pool_pcnt;
 static uvlong	secstackbuf[KSTACK/sizeof(uvlong)];
 uintptr		secstacktop;
 volatile uintptr	secsp;
+volatile uintptr	seccflag;	/* set only by C on cpu1 */
 volatile uintptr	secalive;
 volatile uintptr	seccount;
 
 void
 secmain(void)
 {
-	secalive = 5;	/* reached C */
-	for(;;)
+	seccflag = 0xc0ffee;
+	secalive = 5;
+	for(;;){
 		seccount++;
+		/*
+		 * 7c accepts volatile and ignores it -- with both operands
+		 * declared volatile it still hoists the global into a
+		 * register for the whole loop and never stores.  A real call
+		 * it cannot see through is what forces the store, which is
+		 * the Plan 9 idiom for a spin loop and matters for every
+		 * flag poll a second processor will ever do.
+		 */
+		coherence();
+	}
 }
 
 /*
@@ -71,7 +83,7 @@ smpprobe(void)
 		return;
 	for(i = 0; i < 100 && secalive == 0; i++)
 		delay(10);
-	print("smp: cpu1 reached stage %llud, sp %#llux\n", (uvlong)secalive, (uvlong)secsp);
+	print("smp: cpu1 stage %llud sp %#llux cflag %#llux\n", (uvlong)secalive, (uvlong)secsp, (uvlong)seccflag);
 	/*
 	 * alive 1 = reached the entry, 2 = stack up, 3 = running C.
 	 * seccount is incremented by cpu1 in a loop, so two reads a
