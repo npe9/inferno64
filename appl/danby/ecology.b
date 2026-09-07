@@ -1,4 +1,4 @@
-implement Twospecies;
+implement Ecology;
 include "sys.m";
  sys: Sys;
 include "draw.m";
@@ -16,6 +16,8 @@ include "plot.m";
 include "env.m";
  env: Env;
 include "danby/twospecies.m";
+Ecology: module { init: fn(ctxt: ref Draw->Context, argv: list of string);
+ };
 win: ref Window;
 font: ref Font;
 bg, fg, grid, live, accent: ref Image;
@@ -28,7 +30,7 @@ paused := 0;
 w: ref Numerics->Workspace;
 graph: ref Plotter;
 modelmodule: Twospecies;
-model: ref Model;
+model: ref Twospecies->Model;
 modellabels: array of string;
 modelranges: array of real;
 modeltitle := "Predator and prey";
@@ -56,13 +58,14 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		if(tl tl argv != nil)
 			manpage = hd tl tl argv;
 	}else{
-		modelmodule = load Twospecies "/dis/danby/ecology.dis";
-		if(modelmodule == nil)
-			raise "fail:Ecology: cannot load ecology model";
-		model = modelmodule->new();
-		modellabels = modelmodule->parameterlabels();
-		modelranges = modelmodule->parameterranges();
-		modeltitle = modelmodule->title();
+		# No model named: run this file's own Lotka-Volterra pair, the
+		# one written out in derivs() below.  It used to be loaded back
+		# from appl/danby/plugin/ecology.dis through the same interface
+		# as everyone else, which put the equations somewhere the reader
+		# of this file never saw.
+		modeltitle = "Lotka-Volterra predator and prey";
+		modellabels = array[] of {"prey birth", "predation", "predator death"};
+		modelranges = array[] of {3.0, 4.0, 3.0};
 	}
 	if(env != nil){ env->clone();
 	 env->setenv("wmman", manpage);
@@ -150,6 +153,17 @@ pointer(p: ref Draw->Pointer)
 			if(j >= len model.parameter)
 				j = len model.parameter-1;
 			model.parameter[j] = modelranges[j]*f;
+		}else{
+			# this file's own three parameters, in the same order
+			# as modellabels above
+			if(j > 2)
+				j = 2;
+			v := modelranges[j]*f;
+			case j {
+			0 => birth = v;
+			1 => predation = v;
+			2 => death = v;
+			}
 		}
 	}else{
 		y[0]=1.5*real(r.max.y-58-p.xy.y)/real(r.dy()-93);
@@ -235,51 +249,12 @@ timer(c:chan of int){for(;;){sys->sleep(25);
 c<-=1;
 }}
 
-# The equations below were in appl/danby/plugin/ecology.b, loaded by path.
-# This file is both the program that shows them and the shared viewer for
-# the other eight Twospecies models, so with no model named on the command
-# line it now loads itself.
-
-new(): ref Model
-{
-	return ref Model(array[] of {1.5, 2.0, 1.0, 0.75});
-}
-
-title(): string
-{
-	return "Lotka-Volterra predator and prey";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"prey birth", "predation", "conversion", "predator death"};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {3.0, 4.0, 3.0, 3.0};
-}
-
-Model.rhs(model: self ref Model, nil: real,
-		state, derivative: array of real)
-{
-	p := model.parameter;
-	derivative[0] = p[0]*state[0]-p[1]*state[0]*state[1];
-	derivative[1] = p[2]*state[0]*state[1]-p[3]*state[1];
-}
-
-Model.equilibrium(model: self ref Model): (real, real)
-{
-	p := model.parameter;
-	return (p[3]/p[2],p[0]/p[1]);
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-fixedpoint(model: ref Model): (real, real)
-{
-	return model.equilibrium();
-}
+# This file's own model - the Lotka-Volterra pair in derivs() above - used to
+# live in appl/danby/plugin/ecology.b and be loaded back through the Twospecies
+# interface.  It is written out here instead.
+#
+# This file does NOT implement Twospecies, deliberately.  A module that
+# implements an interface links every "load <interface>" it performs against
+# its own function set, private functions included, so implementing Twospecies
+# here made loading any of the other eight Twospecies models fail with
+# "link typecheck Twospecies->derivs()".
