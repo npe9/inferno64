@@ -83,6 +83,11 @@ checked, register by register, against Linux 6.17:
 	mini UART	drivers/tty/serial/8250/8250_bcm2835aux.c --
 			CNTL at 0x60 with RXEN 1 and TXEN 2, which is
 			the 0x3 reset value 0008 restores.
+	BSC slave	the BCM2835 ARM Peripherals datasheet, section
+			11, which specifies every bit of CR, FR, RSR,
+			DR, IFLS and IMSC.  No Linux driver exists for
+			it, upstream or in the vendor tree, which is
+			what made it look undocumented.
 	SMI		the Raspberry Pi kernel's
 			include/linux/broadcom/bcm2835_smi.h, which
 			documents what every bit does rather than

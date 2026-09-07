@@ -175,11 +175,13 @@ main(void)
 					extern void i2sinit(void);
 					extern void auxspiinit(void);
 					extern void smiinit(void);
+					extern void bscslinit(void);
 					auxinit();
 					armtmrinit();
 					i2sinit();
 					auxspiinit();
 					smiinit();
+					bscslinit();
 				}
 			}
 		}

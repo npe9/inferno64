@@ -56,6 +56,7 @@
 #define	ARMTIMER	(BCMPERIPH + 0x00b400)	/* BCM2835 ARM timer (SP804-like) */
 #define	I2S0		(BCMPERIPH + 0x203000)	/* BCM2835 I2S/PCM serialiser */
 #define	SMI0		(BCMPERIPH + 0x600000)	/* BCM2835 secondary memory iface */
+#define	BSCSL		(BCMPERIPH + 0x214000)	/* BCM2835 SPI/BSC slave */
 
 
 /* Mach struct above typical kernel image */

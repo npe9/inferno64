@@ -1182,39 +1182,72 @@ remembered constant passes for the wrong reason on the day the constant
 is wrong, and both error paths are exercised: AFERR by over- and
 under-running the FIFO, and SETERR by writing a settings register
 during a transfer, which needs neither a FIFO nor a device.
+.PP
+.B "The SPI/BSC slave"
+.CW ( bscslbcm.c ,
+0x3f214000, and
+.CW tools/qemu-patches/0015 )
+is the one peripheral here that makes the Pi the
+.I slave :
+another chip on the I2C bus addresses it and the Pi answers.  It is how
+a Pi is made to look like a peripheral to a microcontroller, and how
+the VideoCore boots a host.
+.PP
+This document twice gave a wrong reason for leaving it alone.  Neither
+survived contact with the sources.  It does not need an external
+master, because the Pi has its own and QEMU models it; and its register
+semantics are not unavailable, because the datasheet's section 11
+specifies every bit of CR, FR, RSR, DR, IFLS and IMSC.  Linux having no
+driver \- neither upstream nor in the Raspberry Pi tree \- is what made
+it look undocumented.
+.PP
+It is modelled as an I2C slave on BSC0's bus, which is the master the
+ARM can reach, so
+.CW bscslbcm.c
+drives both ends of every transfer.  On a board that is a jumper
+between GPIO 0/1 and 18/19.  What makes this worth more than a
+loopback is that the master is
+.CW hw/i2c/bcm2835_i2c.c ,
+which is not part of this series and was not touched to make it work:
+a byte that arrives at the slave has been through code this port did
+not write.
+.PP
+Four things a driver gets wrong are written into the file, and three
+are peculiar to this block.  RSR's two error bits are cleared by
+writing
+.I zero
+to them \- every other error bit on this SoC, the PWM's and the I2S's
+and the SMI's and the AUX SPI's, is write-one-to-clear, so the usual
+idiom leaves the error set forever while appearing to clear it.  The
+exercise checks that both ways round: writing the bit back must
+.I not
+clear it.  A disabled block does not answer its address at all, so a
+master sees no device rather than a broken one, and that is checked
+before the block is enabled so a later success cannot be mistaken for a
+block that answers regardless.  Transmission and reception are
+separately enabled.  And DR carries the FIFO levels, the busy flags and
+both error bits alongside the data byte, while FR reports the same
+flags at different bit positions.
+.PP
+The exercise moves four bytes each way through the Pi's own master,
+underruns the transmit FIFO by reading it empty, overruns the receive
+FIFO from the master side, and measures the receive FIFO at 16 deep
+rather than assuming a number the datasheet does not give.
 .NH 1
 What stays unmodelled, and why
 .PP
 The remaining
 .CW create_unimp
-blocks in QEMU's Pi peripherals are not a to-do list.  Each is left
-alone for a reason, and the reason is never that the emulator would be
-hard to extend.
-.PP
-.B "The BSC slave"
-(0x3f214000) is blocked on documentation that can be checked.  Linux
-6.17 has no driver for it \- it exists only in the Raspberry Pi vendor
-tree \- and the datasheet section describing it was not available here.
-The register offsets are recoverable; the bit semantics of CR and FR
-are not, and a model built on a remembered bit layout is a model a
-driver is then written to match.  That is the both-halves-ours failure
-the evidence tiers in
-.CW tools/qemu-patches/README
-exist to prevent, and it is worse than the PWM's missing serialiser,
-where the register semantics were solid and only the behaviour was
-absent.
-.PP
-Note what is
-.I not
-the blocker, since it was recorded as one here and is not: exercising
-it needs no external master.  The Pi has three I2C masters of its own,
-QEMU models them with real buses, and
-.CW i2cbcm.c
-already drives BSC0, so attaching the slave to that bus would model the
-pin strap a real board uses.  Either the datasheet's section 11 or the
-vendor tree's driver would unblock this, and neither is much work once
-one is in hand.
-.PP
+blocks in QEMU's Pi peripherals are not a to-do list.  What is left is
+short, because everything else that was on it turned out to be there
+for a bad reason.  Three blocks were written up here as unmodelable \-
+the PWM because nothing wanted it, the BSC slave because it needed a
+master that did not exist, SMI because its registers were not
+documented \- and all three verdicts fell the moment somebody went and
+looked: at QEMU's own I2C models, at the Raspberry Pi kernel's headers,
+at the datasheet itself.  The pattern is worth naming, because it cost
+this document four wrong entries: "not documented" nearly always meant
+"not documented in what was already open".
 .PP
 .B "TXP, DBUS, AVE0, V3D and SDRAMC"
 are internal to the SoC.  They are either undocumented, driven only by

@@ -48,8 +48,8 @@ enum {
  * Write n bytes to slave addr.  Returns 0, or -1 if the slave did not
  * acknowledge its address (Serr).
  */
-static int
-i2cwrite(u32 *r, int addr, uchar *buf, int n)
+int
+bcmi2cwrite(u32 *r, int addr, uchar *buf, int n)
 {
 	int i;
 
@@ -65,8 +65,8 @@ i2cwrite(u32 *r, int addr, uchar *buf, int n)
 /*
  * Read n bytes from slave addr.  Returns n, or -1 on address NAK.
  */
-static int
-i2cread(u32 *r, int addr, uchar *buf, int n)
+int
+bcmi2cread(u32 *r, int addr, uchar *buf, int n)
 {
 	int i;
 
@@ -98,15 +98,15 @@ i2cinit(void)
 
 	w[0] = Off;
 	w[1] = Mark;
-	if(i2cwrite(r, Ds1338, w, 2) < 0){
+	if(bcmi2cwrite(r, Ds1338, w, 2) < 0){
 		print("i2c: bsc0 at %#p up, no slave at %#ux\n",
 			(void*)I2C0, Ds1338);
 		return;
 	}
 	ptr = Off;
-	i2cwrite(r, Ds1338, &ptr, 1);	/* set read pointer */
+	bcmi2cwrite(r, Ds1338, &ptr, 1);	/* set read pointer */
 	v = 0;
-	i2cread(r, Ds1338, &v, 1);
+	bcmi2cread(r, Ds1338, &v, 1);
 	print("i2c: bsc0 at %#p: ds1338 nvram[%#ux] wrote %#ux read %#ux %s\n",
 		(void*)I2C0, Off, Mark, v,
 		v == Mark? "(ok)": "(MISMATCH)");

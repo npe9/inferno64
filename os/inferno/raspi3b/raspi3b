@@ -102,6 +102,7 @@ misc
 	i2sbcm
 	auxspibcm
 	smibcm
+	bscslbcm
 
 mod
 	sys
