@@ -1,122 +1,67 @@
-implement Mechanism;
+implement Polevault;
 
-# danby/polevault - The pole vault
+# danby/polevault - the pole vault
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {9.0,5.0,1800.0,35.0,75.0,9.81});
-}
-
-title(): string
-{
-	return "The pole vault";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"run speed", "pole length", "stiffness", "damping", "mass", "gravity"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {1.0,2.0,200.0,0.0,40.0,0.0};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {14.0,6.5,4000.0,150.0,120.0,20.0};
-}
-
-initialstate(model: ref Model): array of real
-{
-	p := model.parameter;
-	return array[] of {-0.9,p[0]/p[1],0.0,p[0]*0.18};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 4.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	theta := state[0];
-	omega := state[1];
-	flex := state[2];
-	flexvelocity := state[3];
-	derivative[0] = omega;
-	derivative[1] = -p[5]/p[1]*math->sin(theta)+
-		p[2]*flex/(p[4]*p[1]*p[1])-0.08*omega;
-	derivative[2] = flexvelocity;
-	derivative[3] = -p[2]*flex/p[4]-p[3]*flexvelocity/p[4]-
-		p[1]*omega*omega*0.08;
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(model: ref Model, state: array of real): array of real
-{
-	length := model.parameter[1];
-	theta := state[0];
-	flex := state[2];
-	topx := length*math->sin(theta);
-	topy := length*math->cos(theta);
-	midx := 0.5*topx+flex*math->cos(theta);
-	midy := 0.5*topy-flex*math->sin(theta);
-	return array[] of {
-		0.0,0.0,
-		midx,midy,
-		topx,topy,
-		topx+0.3*math->sin(theta),topy+0.3*math->cos(theta),
-		topx-0.55*math->cos(theta),topy+0.55*math->sin(theta),
-		-1.0,0.0,
-		1.0,0.0
-	};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,1,2,2,3,2,4,5,0,0,6};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"height", "pole energy"};
-}
-
-observables(model: ref Model, state: array of real): array of real
-{
-	height := model.parameter[1]*math->cos(state[0]);
-	energy := 0.5*model.parameter[2]*state[2]*state[2];
-	return array[] of {height,energy};
-}
-
-Command: module
+Polevault: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title The pole vault\n" +
+	"param run_speed 9.0 1.0 14.0\n" +
+	"param pole_length 5.0 2.0 6.5\n" +
+	"param stiffness 1800.0 200.0 4000.0\n" +
+	"param damping 35.0 0.0 150.0\n" +
+	"param mass 75.0 40.0 120.0\n" +
+	"param gravity 9.81 0.0 20.0\n" +
+	"maxtime 4.0\n" +
+	"state theta - 0.9\n" +
+	"state omega run_speed over pole_length\n" +
+	"state flex 0.0\n" +
+	"state flexrate run_speed 0.18\n" +
+	"eq s sin { theta }\n" +
+	"eq c cos { theta }\n" +
+	"eq topx pole_length s\n" +
+	"eq topy pole_length c\n" +
+	"eq midx 0.5 topx + flex c\n" +
+	"eq midy 0.5 topy - flex s\n" +
+	"derivative theta omega\n" +
+	"derivative omega { - gravity over pole_length } s + { stiffness flex } over { mass pole_length pole_length } - 0.08 omega\n" +
+	"derivative flex flexrate\n" +
+	"derivative flexrate { - stiffness flex } over mass - { damping flexrate } over mass - pole_length omega omega 0.08\n" +
+	"point plant 0.0 , 0.0\n" +
+	"point pole_middle midx , midy\n" +
+	"point pole_top topx , topy\n" +
+	"point vaulter_head { topx + 0.3 s } , { topy + 0.3 c }\n" +
+	"point vaulter_hip { topx - 0.55 c } , { topy + 0.55 s }\n" +
+	"point runway_left - 1.0 , 0.0\n" +
+	"point runway_right 1.0 , 0.0\n" +
+	"link plant pole_middle\n" +
+	"link pole_middle pole_top\n" +
+	"link pole_top vaulter_head\n" +
+	"link pole_top vaulter_hip\n" +
+	"link runway_left plant\n" +
+	"link plant runway_right\n" +
+	"observable height pole_length c\n" +
+	"observable pole_energy 0.5 stiffness flex flex\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:polevault: cannot load the mechanism viewer";
-	viewer->init(ctxt, "polevault" :: "/dis/danby/polevault.dis" ::
-		"danby-polevault" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:polevault: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "polevault", SPEC)) != nil)
+		raise "fail:polevault: "+e;
 }

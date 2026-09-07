@@ -1,104 +1,63 @@
-implement Mechanism;
+implement Venushead;
 
-# danby/venushead - On Venus, could you see the back of your head?
+# danby/venushead - on Venus, could you see the back of your head?
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {1.0,0.08,0.25,1.7,0.2,1.0});
-}
-
-title(): string
-{
-	return "On Venus, could you see the back of your head?";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"planet radius", "density gradient", "ray angle", "eye height", "curvature", "light speed"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.5,0.0,-1.2,0.1,0.0,0.2};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {3.0,0.5,1.2,3.0,1.5,2.0};
-}
-
-initialstate(model: ref Model): array of real
-{
-	p := model.parameter;
-	return array[] of {p[0]+0.05*p[3],0.0,p[4],p[2]};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 12.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	r := state[0];
-	rayangle := state[3];
-	derivative[0] = p[5]*math->cos(rayangle);
-	derivative[1] = p[5]*math->sin(rayangle)/r;
-	derivative[2] = 0.0;
-	derivative[3] = p[1]*math->sin(rayangle)-p[5]*math->sin(rayangle)/r;
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(model: ref Model, state: array of real): array of real
-{
-	r := model.parameter[0];
-	x := state[0]*math->cos(state[1]);
-	y := state[0]*math->sin(state[1]);
-	return array[] of {-r,0.0,0.0,-r,r,0.0,0.0,r,x,y,r,0.0,r+0.15,0.0};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,1,2,2,3,3,0,4,5,5,6};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"ray radius", "wrapped angle"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {state[0],state[1]};
-}
-
-Command: module
+Venushead: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title On Venus, could you see the back of your head?\n" +
+	"param planet_radius 1.0 0.5 3.0\n" +
+	"param density_gradient 0.08 0.0 0.5\n" +
+	"param ray_angle 0.25 -1.2 1.2\n" +
+	"param eye_height 1.7 0.1 3.0\n" +
+	"param curvature 0.2 0.0 1.5\n" +
+	"param light_speed 1.0 0.2 2.0\n" +
+	"maxtime 12.0\n" +
+	"state r planet_radius + 0.05 eye_height\n" +
+	"state wrapped 0.0\n" +
+	"state bend curvature\n" +
+	"state heading ray_angle\n" +
+	"eq s sin { heading }\n" +
+	"eq c cos { heading }\n" +
+	"derivative r light_speed c\n" +
+	"derivative wrapped { light_speed s } over r\n" +
+	"derivative bend 0.0\n" +
+	"derivative heading density_gradient s - { light_speed s } over r\n" +
+	"point limb_west { - planet_radius } , 0.0\n" +
+	"point limb_south 0.0 , { - planet_radius }\n" +
+	"point limb_east planet_radius , 0.0\n" +
+	"point limb_north 0.0 , planet_radius\n" +
+	"point ray { r cos { wrapped } } , { r sin { wrapped } }\n" +
+	"point observer planet_radius , 0.0\n" +
+	"point head { planet_radius + 0.15 } , 0.0\n" +
+	"link limb_west limb_south\n" +
+	"link limb_south limb_east\n" +
+	"link limb_east limb_north\n" +
+	"link limb_north limb_west\n" +
+	"link ray observer\n" +
+	"link observer head\n" +
+	"observable ray_radius r\n" +
+	"observable wrapped_angle wrapped\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:venushead: cannot load the mechanism viewer";
-	viewer->init(ctxt, "venushead" :: "/dis/danby/venushead.dis" ::
-		"danby-venushead" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:venushead: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "venushead", SPEC)) != nil)
+		raise "fail:venushead: "+e;
 }

@@ -195,8 +195,24 @@ checkspec(name, spec: string)
 		sys->print("     %s: %d params, %d states, %d points, %d links\n",
 			name, len m.parameter, len m.statenames,
 			len m.pointnames, len links/2);
-	if(name == "slidingpendulum1")
+	case name {
+	"slidingpendulum1" =>
 		checkmomentum(name, m);
+	"running" =>
+		# the fourth state is distance, so its rate is the speed
+		if(deriv[3] != state[0])
+			fail(sys->sprint("%s: distance rate %g is not the speed %g",
+				name, deriv[3], state[0]));
+	"diving" =>
+		# the diver leaves the board at the takeoff speed
+		launch := math->sqrt(state[2]*state[2]+state[3]*state[3]);
+		d := launch-m.parameter[0];
+		if(d < 0.0)
+			d = -d;
+		if(d > 1.0e-12)
+			fail(sys->sprint("%s: launch speed %g is not the takeoff %g",
+				name, launch, m.parameter[0]));
+	}
 }
 
 mom: ref Model;

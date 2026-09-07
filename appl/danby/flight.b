@@ -1,121 +1,69 @@
-implement Mechanism;
+implement Flight;
 
-# danby/flight - The dynamics of flight
+# danby/flight - the dynamics of flight
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {1800.0,0.38,0.025,850.0,1.8,9.81});
-}
-
-title(): string
-{
-	return "The dynamics of flight";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"thrust", "lift", "drag", "mass", "pitch control", "gravity"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.0,0.0,0.0,300.0,0.0,0.0};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {5000.0,1.0,0.1,1800.0,5.0,20.0};
-}
-
-initialstate(nil: ref Model): array of real
-{
-	return array[] of {0.0,100.0,55.0,0.05,0.12,0.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 30.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	speed := state[2];
-	if(speed < 1.0)
-		speed = 1.0;
-	pathangle := state[3];
-	pitch := state[4];
-	alpha := pitch-pathangle;
-	lift := p[1]*alpha*speed*speed;
-	drag := p[2]*speed*speed;
-	derivative[0] = speed*math->cos(pathangle);
-	derivative[1] = speed*math->sin(pathangle);
-	derivative[2] = (p[0]*math->cos(alpha)-drag)/p[3]-
-		p[5]*math->sin(pathangle);
-	derivative[3] = (lift+p[0]*math->sin(alpha))/(p[3]*speed)-
-		p[5]*math->cos(pathangle)/speed;
-	derivative[4] = state[5];
-	derivative[5] = p[4]*alpha-1.2*state[5];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(nil: ref Model, state: array of real): array of real
-{
-	x := 0.0;
-	y := 1.5;
-	c := math->cos(state[4]);
-	s := math->sin(state[4]);
-	return array[] of {
-		x-1.0*c,y-1.0*s,
-		x+1.2*c,y+1.2*s,
-		x-0.1*s,y+0.1*c,
-		x+0.65*s,y-0.65*c,
-		-1.5,0.0,
-		1.5,0.0
-	};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,2,3,4,5};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"altitude", "speed"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {state[1],state[2]};
-}
-
-Command: module
+Flight: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title The dynamics of flight\n" +
+	"param thrust 1800.0 0.0 5000.0\n" +
+	"param lift 0.38 0.0 1.0\n" +
+	"param drag 0.025 0.0 0.1\n" +
+	"param mass 850.0 300.0 1800.0\n" +
+	"param pitch_control 1.8 0.0 5.0\n" +
+	"param gravity 9.81 0.0 20.0\n" +
+	"maxtime 30.0\n" +
+	"state x 0.0\n" +
+	"state altitude 100.0\n" +
+	"state airspeed 55.0\n" +
+	"state pathangle 0.05\n" +
+	"state pitch 0.12\n" +
+	"state pitchrate 0.0\n" +
+	# the aerodynamics are meaningless below a metre a second, and the path
+	# angle divides by the speed, so it is held there
+	"eq speed { airspeed + 1.0 + abs { airspeed - 1.0 } } over 2.0\n" +
+	"eq alpha pitch - pathangle\n" +
+	"eq liftforce lift alpha speed speed\n" +
+	"eq dragforce drag speed speed\n" +
+	"eq c cos { pitch }\n" +
+	"eq s sin { pitch }\n" +
+	"derivative x speed cos { pathangle }\n" +
+	"derivative altitude speed sin { pathangle }\n" +
+	"derivative airspeed { thrust cos { alpha } - dragforce } over mass - gravity sin { pathangle }\n" +
+	"derivative pathangle { liftforce + thrust sin { alpha } } over { mass speed } - { gravity cos { pathangle } } over speed\n" +
+	"derivative pitch pitchrate\n" +
+	"derivative pitchrate pitch_control alpha - 1.2 pitchrate\n" +
+	"point tail { - c } , { 1.5 - s }\n" +
+	"point nose { 1.2 c } , { 1.5 + 1.2 s }\n" +
+	"point wing_root { - 0.1 s } , { 1.5 + 0.1 c }\n" +
+	"point wing_tip { 0.65 s } , { 1.5 - 0.65 c }\n" +
+	"point ground_left - 1.5 , 0.0\n" +
+	"point ground_right 1.5 , 0.0\n" +
+	"link tail nose\n" +
+	"link wing_root wing_tip\n" +
+	"link ground_left ground_right\n" +
+	"observable altitude altitude\n" +
+	"observable speed airspeed\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:flight: cannot load the mechanism viewer";
-	viewer->init(ctxt, "flight" :: "/dis/danby/flight.dis" ::
-		"danby-flight" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:flight: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "flight", SPEC)) != nil)
+		raise "fail:flight: "+e;
 }

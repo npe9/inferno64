@@ -1,118 +1,70 @@
-implement Mechanism;
+implement Diving;
 
-# danby/diving - Diving
+# danby/diving - diving
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {5.5,0.85,4.0,0.35,0.025,9.81});
-}
-
-title(): string
-{
-	return "Diving";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"takeoff", "angle", "angular momentum", "tuck", "drag", "gravity"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.0,0.0,-10.0,0.1,0.0,0.0};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {12.0,1.5,10.0,1.0,0.1,20.0};
-}
-
-initialstate(model: ref Model): array of real
-{
-	p := model.parameter;
-	inertia := 0.15+0.85*p[3];
-	return array[] of {0.0,3.0,p[0]*math->cos(p[1]),p[0]*math->sin(p[1]),
-		0.0,p[2]/inertia};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 3.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	speed := math->sqrt(state[2]*state[2]+state[3]*state[3]);
-	derivative[0] = state[2];
-	derivative[1] = state[3];
-	derivative[2] = -p[4]*speed*state[2];
-	derivative[3] = -p[5]-p[4]*speed*state[3];
-	derivative[4] = state[5];
-	derivative[5] = -0.08*state[5];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(model: ref Model, state: array of real): array of real
-{
-	theta := state[4];
-	length := 0.7+0.9*model.parameter[3];
-	dx := length*math->sin(theta);
-	dy := length*math->cos(theta);
-	x := state[0];
-	y := state[1];
-	return array[] of {
-		-1.2,3.0,
-		-0.2,3.0,
-		x,y,
-		x+0.5*dx,y+0.5*dy,
-		x-0.5*dx,y-0.5*dy,
-		x+0.35*dy,y-0.35*dx,
-		x-0.35*dy,y+0.35*dx
-	};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,3,2,2,4,2,5,2,6};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"height", "rotations"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {state[1],state[4]/(2.0*Math->Pi)};
-}
-
-Command: module
+Diving: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Diving\n" +
+	"param takeoff 5.5 0.0 12.0\n" +
+	"param angle 0.85 0.0 1.5\n" +
+	"param angular_momentum 4.0 -10.0 10.0\n" +
+	"param tuck 0.35 0.1 1.0\n" +
+	"param drag 0.025 0.0 0.1\n" +
+	"param gravity 9.81 0.0 20.0\n" +
+	"maxtime 3.0\n" +
+	"state x 0.0\n" +
+	"state y 3.0\n" +
+	"state vx takeoff cos { angle }\n" +
+	"state vy takeoff sin { angle }\n" +
+	"state theta 0.0\n" +
+	# an initial value may use the parameters and nothing else - eq lines are
+	# evaluated per step, not at reset - so the tucked inertia is written out
+	"state spin angular_momentum over { 0.15 + 0.85 tuck }\n" +
+	"eq speed sqrt { vx vx + vy vy }\n" +
+	"eq length 0.7 + 0.9 tuck\n" +
+	"eq dx length sin { theta }\n" +
+	"eq dy length cos { theta }\n" +
+	"derivative x vx\n" +
+	"derivative y vy\n" +
+	"derivative vx - drag speed vx\n" +
+	"derivative vy - gravity - drag speed vy\n" +
+	"derivative theta spin\n" +
+	"derivative spin - 0.08 spin\n" +
+	"point board_back - 1.2 , 3.0\n" +
+	"point board_tip - 0.2 , 3.0\n" +
+	"point hips x , y\n" +
+	"point head { x + 0.5 dx } , { y + 0.5 dy }\n" +
+	"point feet { x - 0.5 dx } , { y - 0.5 dy }\n" +
+	"point arm_a { x + 0.35 dy } , { y - 0.35 dx }\n" +
+	"point arm_b { x - 0.35 dy } , { y + 0.35 dx }\n" +
+	"link board_back board_tip\n" +
+	"link head hips\n" +
+	"link hips feet\n" +
+	"link hips arm_a\n" +
+	"link hips arm_b\n" +
+	"observable height y\n" +
+	"observable rotations theta over { 2.0 PI }\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:diving: cannot load the mechanism viewer";
-	viewer->init(ctxt, "diving" :: "/dis/danby/diving.dis" ::
-		"danby-diving" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:diving: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "diving", SPEC)) != nil)
+		raise "fail:diving: "+e;
 }

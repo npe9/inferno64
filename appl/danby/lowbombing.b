@@ -1,111 +1,67 @@
-implement Mechanism;
+implement Lowbombing;
 
-# danby/lowbombing - Low-level bombing
+# danby/lowbombing - low-level bombing
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {3.0,1.4,9.81,0.08,0.0});
-}
-
-title(): string
-{
-	return "Low-level bombing";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"aircraft speed", "release height", "gravity", "drag", "release delay"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.2,0.2,0.1,0.0,0.0};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {10.0,5.0,20.0,2.0,3.0};
-}
-
-initialstate(model: ref Model): array of real
-{
-	return array[] of {-3.0,model.parameter[1],-3.0,model.parameter[1],
-		model.parameter[0],0.0,0.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 8.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	derivative[0] = p[0];
-	derivative[1] = 0.0;
-	if(state[6] < p[4]){
-		derivative[2] = p[0];
-		derivative[3] = 0.0;
-		derivative[4] = 0.0;
-		derivative[5] = 0.0;
-	}else{
-		speed := math->sqrt(state[4]*state[4]+state[5]*state[5]);
-		derivative[2] = state[4];
-		derivative[3] = state[5];
-		derivative[4] = -p[3]*speed*state[4];
-		derivative[5] = -p[2]-p[3]*speed*state[5];
-	}
-	derivative[6] = 1.0;
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {state[0],state[1],state[2],state[3],-4.0,0.0,6.0,0.0,
-		2.0,0.0,2.0,0.35};
-}
-
-links(): array of int
-{
-	return array[] of {2,3,4,5};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"bomb range", "bomb height"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {state[2],state[3]};
-}
-
-Command: module
+Lowbombing: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Low-level bombing\n" +
+	"param aircraft_speed 3.0 0.2 10.0\n" +
+	"param release_height 1.4 0.2 5.0\n" +
+	"param gravity 9.81 0.1 20.0\n" +
+	"param drag 0.08 0.0 2.0\n" +
+	"param release_delay 0.0 0.0 3.0\n" +
+	"maxtime 8.0\n" +
+	"state aircraft_x - 3.0\n" +
+	"state aircraft_y release_height\n" +
+	"state bomb_x - 3.0\n" +
+	"state bomb_y release_height\n" +
+	"state bomb_vx aircraft_speed\n" +
+	"state bomb_vy 0.0\n" +
+	"state clock 0.0\n" +
+	# Before release the bomb is still on the aircraft; after it, it
+	# falls.  "clock >= delay" is 1 - step(delay - clock): step is zero
+	# AT zero, so the complement is the >= the original tests, exactly.
+	"eq released 1.0 - step { release_delay - clock }\n" +
+	"eq carried 1.0 - released\n" +
+	"eq speed sqrt { bomb_vx bomb_vx + bomb_vy bomb_vy }\n" +
+	"derivative aircraft_x aircraft_speed\n" +
+	"derivative aircraft_y 0.0\n" +
+	"derivative bomb_x carried aircraft_speed + released bomb_vx\n" +
+	"derivative bomb_y released bomb_vy\n" +
+	"derivative bomb_vx released { - drag speed bomb_vx }\n" +
+	"derivative bomb_vy released { - gravity - drag speed bomb_vy }\n" +
+	"derivative clock 1.0\n" +
+	"point aircraft aircraft_x , aircraft_y\n" +
+	"point bomb bomb_x , bomb_y\n" +
+	"point ground_left - 4.0 , 0.0\n" +
+	"point ground_right 6.0 , 0.0\n" +
+	"point target_base 2.0 , 0.0\n" +
+	"point target_top 2.0 , 0.35\n" +
+	"link ground_left ground_right\n" +
+	"link target_base target_top\n" +
+	"observable bomb_range bomb_x\n" +
+	"observable bomb_height bomb_y\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:lowbombing: cannot load the mechanism viewer";
-	viewer->init(ctxt, "lowbombing" :: "/dis/danby/lowbombing.dis" ::
-		"danby-lowbombing" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:lowbombing: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "lowbombing", SPEC)) != nil)
+		raise "fail:lowbombing: "+e;
 }

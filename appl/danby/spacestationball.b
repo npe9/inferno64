@@ -1,107 +1,66 @@
-implement Mechanism;
+implement Spacestationball;
 
-# danby/spacestationball - Playing ball in a space station
+# danby/spacestationball - playing ball in a space station
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {8.0,0.35,2.0,0.4,0.02,1.0});
-}
-
-title(): string
-{
-	return "Playing ball in a space station";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"station radius", "rotation", "throw speed", "throw angle", "drag", "ball mass"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {2.0,-1.0,0.0,-3.14,0.0,0.1};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {20.0,1.0,8.0,3.14,0.2,5.0};
-}
-
-initialstate(model: ref Model): array of real
-{
-	p := model.parameter;
-	return array[] of {0.0,0.7*p[0],p[2]*math->cos(p[3]),p[2]*math->sin(p[3])};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 20.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	omega := p[1];
-	derivative[0] = state[2];
-	derivative[1] = state[3];
-	derivative[2] = 2.0*omega*state[3]+omega*omega*state[0]-
-		p[4]*state[2]/p[5];
-	derivative[3] = -2.0*omega*state[2]+omega*omega*state[1]-
-		p[4]*state[3]/p[5];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(model: ref Model, state: array of real): array of real
-{
-	r := model.parameter[0];
-	return array[] of {
-		-r,0.0,-0.7*r,-0.7*r,0.0,-r,0.7*r,-0.7*r,r,0.0,
-		0.7*r,0.7*r,0.0,r,-0.7*r,0.7*r,state[0],state[1]
-	};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,0};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"radius", "speed"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {math->sqrt(state[0]*state[0]+state[1]*state[1]),
-		math->sqrt(state[2]*state[2]+state[3]*state[3])};
-}
-
-Command: module
+Spacestationball: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Playing ball in a space station\n" +
+	"param station_radius 8.0 2.0 20.0\n" +
+	"param rotation 0.35 -1.0 1.0\n" +
+	"param throw_speed 2.0 0.0 8.0\n" +
+	"param throw_angle 0.4 -3.14 3.14\n" +
+	"param drag 0.02 0.0 0.2\n" +
+	"param ball_mass 1.0 0.1 5.0\n" +
+	"maxtime 20.0\n" +
+	"state x 0.0\n" +
+	"state y 0.7 station_radius\n" +
+	"state vx throw_speed cos { throw_angle }\n" +
+	"state vy throw_speed sin { throw_angle }\n" +
+	# in the rotating frame the ball feels Coriolis and centrifugal terms
+	"derivative x vx\n" +
+	"derivative y vy\n" +
+	"derivative vx 2.0 rotation vy + rotation rotation x - { drag vx } over ball_mass\n" +
+	"derivative vy - 2.0 rotation vx + rotation rotation y - { drag vy } over ball_mass\n" +
+	"point hull_w { - station_radius } , 0.0\n" +
+	"point hull_sw { - 0.7 station_radius } , { - 0.7 station_radius }\n" +
+	"point hull_s 0.0 , { - station_radius }\n" +
+	"point hull_se { 0.7 station_radius } , { - 0.7 station_radius }\n" +
+	"point hull_e station_radius , 0.0\n" +
+	"point hull_ne { 0.7 station_radius } , { 0.7 station_radius }\n" +
+	"point hull_n 0.0 , station_radius\n" +
+	"point hull_nw { - 0.7 station_radius } , { 0.7 station_radius }\n" +
+	"point ball x , y\n" +
+	"link hull_w hull_sw\n" +
+	"link hull_sw hull_s\n" +
+	"link hull_s hull_se\n" +
+	"link hull_se hull_e\n" +
+	"link hull_e hull_ne\n" +
+	"link hull_ne hull_n\n" +
+	"link hull_n hull_nw\n" +
+	"link hull_nw hull_w\n" +
+	"observable radius sqrt { x x + y y }\n" +
+	"observable speed sqrt { vx vx + vy vy }\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:spacestationball: cannot load the mechanism viewer";
-	viewer->init(ctxt, "spacestationball" :: "/dis/danby/spacestationball.dis" ::
-		"danby-spacestationball" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:spacestationball: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "spacestationball", SPEC)) != nil)
+		raise "fail:spacestationball: "+e;
 }

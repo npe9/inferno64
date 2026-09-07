@@ -1,105 +1,68 @@
-implement Mechanism;
+implement Joggingcompanion;
 
-# danby/joggingcompanion - Jogging with a companion
+# danby/joggingcompanion - jogging with a companion
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {3.2,0.8,1.5,0.7,0.45,70.0});
-}
-
-title(): string
-{
-	return "Jogging with a companion";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"leader pace", "response", "spacing", "drag", "coupling", "mass"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.5,0.0,0.2,0.0,0.0,35.0};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {8.0,3.0,5.0,2.0,2.0,120.0};
-}
-
-initialstate(nil: ref Model): array of real
-{
-	return array[] of {0.0,2.0,-2.5,1.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 25.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	separationerror := (state[0]-state[2])-p[2];
-	derivative[0] = state[1];
-	derivative[1] = p[1]*(p[0]-state[1])-p[3]*state[1]/p[5];
-	derivative[2] = state[3];
-	derivative[3] = p[1]*(p[0]-state[3])+p[4]*separationerror-
-		p[3]*state[3]/p[5];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(nil: ref Model, state: array of real): array of real
-{
-	separation := state[0]-state[2];
-	return array[] of {
-		0.0,0.0,0.0,1.0,0.0,1.4,-0.35,0.45,0.35,0.45,
-		-separation,0.0,-separation,1.0,-separation,1.4,
-		-separation-0.35,0.45,-separation+0.35,0.45
-	};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,1,2,1,3,1,4,5,6,6,7,6,8,6,9};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"leader speed", "separation"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {state[1],state[0]-state[2]};
-}
-
-Command: module
+Joggingcompanion: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Jogging with a companion\n" +
+	"param leader_pace 3.2 0.5 8.0\n" +
+	"param response 0.8 0.0 3.0\n" +
+	"param spacing 1.5 0.2 5.0\n" +
+	"param drag 0.7 0.0 2.0\n" +
+	"param coupling 0.45 0.0 2.0\n" +
+	"param mass 70.0 35.0 120.0\n" +
+	"maxtime 25.0\n" +
+	"state leader_x 0.0\n" +
+	"state leader_v 2.0\n" +
+	"state follower_x - 2.5\n" +
+	"state follower_v 1.0\n" +
+	"eq separation leader_x - follower_x\n" +
+	"eq separationerror separation - spacing\n" +
+	"derivative leader_x leader_v\n" +
+	"derivative leader_v response { leader_pace - leader_v } - { drag leader_v } over mass\n" +
+	"derivative follower_x follower_v\n" +
+	"derivative follower_v response { leader_pace - follower_v } + coupling separationerror - { drag follower_v } over mass\n" +
+	"point leader_feet 0.0 , 0.0\n" +
+	"point leader_hip 0.0 , 1.0\n" +
+	"point leader_head 0.0 , 1.4\n" +
+	"point leader_hand_left - 0.35 , 0.45\n" +
+	"point leader_hand_right 0.35 , 0.45\n" +
+	"point follower_feet { - separation } , 0.0\n" +
+	"point follower_hip { - separation } , 1.0\n" +
+	"point follower_head { - separation } , 1.4\n" +
+	"point follower_hand_left { - separation - 0.35 } , 0.45\n" +
+	"point follower_hand_right { - separation + 0.35 } , 0.45\n" +
+	"link leader_feet leader_hip\n" +
+	"link leader_hip leader_head\n" +
+	"link leader_hip leader_hand_left\n" +
+	"link leader_hip leader_hand_right\n" +
+	"link follower_feet follower_hip\n" +
+	"link follower_hip follower_head\n" +
+	"link follower_hip follower_hand_left\n" +
+	"link follower_hip follower_hand_right\n" +
+	"observable leader_speed leader_v\n" +
+	"observable separation separation\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:joggingcompanion: cannot load the mechanism viewer";
-	viewer->init(ctxt, "joggingcompanion" :: "/dis/danby/joggingcompanion.dis" ::
-		"danby-joggingcompanion" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:joggingcompanion: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "joggingcompanion", SPEC)) != nil)
+		raise "fail:joggingcompanion: "+e;
 }

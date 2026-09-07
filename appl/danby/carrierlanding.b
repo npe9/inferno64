@@ -1,107 +1,64 @@
-implement Mechanism;
+implement Carrierlanding;
 
-# danby/carrierlanding - Landing an airplane on an aircraft carrier
+# danby/carrierlanding - landing an airplane on an aircraft carrier
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {8.0,12.0,1.2,0.5,0.18,0.7});
-}
-
-title(): string
-{
-	return "Landing an airplane on an aircraft carrier";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"aircraft mass", "cable stiffness", "cable slack", "damping", "deck heave", "heave rate"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.5,0.1,0.1,0.0,0.0,0.1};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {30.0,80.0,4.0,10.0,1.0,4.0};
-}
-
-initialstate(nil: ref Model): array of real
-{
-	return array[] of {-2.8,3.2,0.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 18.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	deck := p[4]*math->sin(state[2]);
-	length := math->sqrt(state[0]*state[0]+deck*deck);
-	tension := 0.0;
-	if(length > p[2])
-		tension = p[1]*(length-p[2])*(length-p[2]);
-	direction := 0.0;
-	if(length > 1.0e-6)
-		direction = state[0]/length;
-	derivative[0] = state[1];
-	derivative[1] = (-tension*direction-p[3]*state[1])/p[0];
-	derivative[2] = p[5];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(model: ref Model, state: array of real): array of real
-{
-	deck := model.parameter[4]*math->sin(state[2]);
-	return array[] of {-3.5,deck,3.5,deck,state[0],deck+0.2,
-		state[0]-0.35,deck+0.2,state[0]+0.35,deck+0.2,0.0,deck};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,2,3,3,4,2,5};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"aircraft position", "aircraft speed"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {state[0],state[1]};
-}
-
-Command: module
+Carrierlanding: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Landing an airplane on an aircraft carrier\n" +
+	"param aircraft_mass 8.0 0.5 30.0\n" +
+	"param cable_stiffness 12.0 0.1 80.0\n" +
+	"param cable_slack 1.2 0.1 4.0\n" +
+	"param damping 0.5 0.0 10.0\n" +
+	"param deck_heave 0.18 0.0 1.0\n" +
+	"param heave_rate 0.7 0.1 4.0\n" +
+	"maxtime 18.0\n" +
+	"state x - 2.8\n" +
+	"state v 3.2\n" +
+	"state phase 0.0\n" +
+	"eq deck deck_heave sin { phase }\n" +
+	"eq cable sqrt { x x + deck deck }\n" +
+	# the arrester cable pulls only once it is stretched past its slack, and
+	# only along its own line - which is undefined at the origin
+	"eq taut step { cable - cable_slack }\n" +
+	"eq tension taut cable_stiffness { cable - cable_slack } { cable - cable_slack }\n" +
+	"eq reaches step { cable - 0.000001 }\n" +
+	"eq direction reaches x over { cable + 1.0 - reaches }\n" +
+	"derivative x v\n" +
+	"derivative v { - tension direction - damping v } over aircraft_mass\n" +
+	"derivative phase heave_rate\n" +
+	"point deck_aft - 3.5 , deck\n" +
+	"point deck_bow 3.5 , deck\n" +
+	"point aircraft x , { deck + 0.2 }\n" +
+	"point wing_port { x - 0.35 } , { deck + 0.2 }\n" +
+	"point wing_starboard { x + 0.35 } , { deck + 0.2 }\n" +
+	"point cable_anchor 0.0 , deck\n" +
+	"link deck_aft deck_bow\n" +
+	"link aircraft wing_port\n" +
+	"link wing_port wing_starboard\n" +
+	"link aircraft cable_anchor\n" +
+	"observable aircraft_position x\n" +
+	"observable aircraft_speed v\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:carrierlanding: cannot load the mechanism viewer";
-	viewer->init(ctxt, "carrierlanding" :: "/dis/danby/carrierlanding.dis" ::
-		"danby-carrierlanding" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:carrierlanding: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "carrierlanding", SPEC)) != nil)
+		raise "fail:carrierlanding: "+e;
 }

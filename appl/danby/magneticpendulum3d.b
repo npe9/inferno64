@@ -1,118 +1,77 @@
-implement Mechanism;
+implement Magneticpendulum3d;
 
-# danby/magneticpendulum3d - A magnetic pendulum in three dimensions
+# danby/magneticpendulum3d - a magnetic pendulum in three dimensions
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {0.35,0.2,1.3,0.16,0.2,0.8});
-}
-
-title(): string
-{
-	return "A magnetic pendulum in three dimensions";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"initial x", "initial y", "spring", "damping", "magnet strength", "spacing"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {-1.5,-1.5,0.1,0.0,0.0,0.2};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {1.5,1.5,5.0,1.5,1.5,1.5};
-}
-
-initialstate(model: ref Model): array of real
-{
-	return array[] of {model.parameter[0],model.parameter[1],0.75,0.0,0.0,0.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 35.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	acceleration := array[] of {-p[2]*state[0]-p[3]*state[3],
-		-p[2]*state[1]-p[3]*state[4],-p[2]*(state[2]-0.75)-p[3]*state[5]};
-	for(i := 0; i < 4; i++){
-		a := 2.0*Math->Pi*real(i)/4.0;
-		mx := p[5]*math->cos(a);
-		my := p[5]*math->sin(a);
-		dx := mx-state[0];
-		dy := my-state[1];
-		dz := -state[2];
-		r2 := dx*dx+dy*dy+dz*dz+0.05;
-		force := p[4]/(r2*math->sqrt(r2));
-		acceleration[0] += force*dx;
-		acceleration[1] += force*dy;
-		acceleration[2] += force*dz;
-	}
-	derivative[0] = state[3];
-	derivative[1] = state[4];
-	derivative[2] = state[5];
-	derivative[3] = acceleration[0];
-	derivative[4] = acceleration[1];
-	derivative[5] = acceleration[2];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(model: ref Model, state: array of real): array of real
-{
-	d := model.parameter[5];
-	projectedy := state[1]-0.45*state[2];
-	return array[] of {state[0],projectedy,d,0.0,0.0,d,-d,0.0,
-		0.0,-d,0.0,-0.45*1.5};
-}
-
-links(): array of int
-{
-	return array[] of {0,5};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"horizontal radius", "height"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {math->sqrt(state[0]*state[0]+state[1]*state[1]),state[2]};
-}
-
-Command: module
+Magneticpendulum3d: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title A magnetic pendulum in three dimensions\n" +
+	"param initial_x 0.35 -1.5 1.5\n" +
+	"param initial_y 0.2 -1.5 1.5\n" +
+	"param spring 1.3 0.1 5.0\n" +
+	"param damping 0.16 0.0 1.5\n" +
+	"param magnet_strength 0.2 0.0 1.5\n" +
+	"param spacing 0.8 0.2 1.5\n" +
+	"maxtime 35.0\n" +
+	"state x initial_x\n" +
+	"state y initial_y\n" +
+	"state z 0.75\n" +
+	"state vx 0.0\n" +
+	"state vy 0.0\n" +
+	"state vz 0.0\n" +
+	# four magnets a quarter turn apart on the floor, written out
+	"eq d1x spacing - x\n" +
+	"eq d1y - y\n" +
+	"eq r1 d1x d1x + d1y d1y + z z + 0.05\n" +
+	"eq f1 magnet_strength over { r1 sqrt { r1 } }\n" +
+	"eq d3x - spacing - x\n" +
+	"eq d3y - y\n" +
+	"eq r3 d3x d3x + d3y d3y + z z + 0.05\n" +
+	"eq f3 magnet_strength over { r3 sqrt { r3 } }\n" +
+	"eq d4x - x\n" +
+	"eq d4y - spacing - y\n" +
+	"eq r4 d4x d4x + d4y d4y + z z + 0.05\n" +
+	"eq f4 magnet_strength over { r4 sqrt { r4 } }\n" +
+	"eq d2ax - x\n" +
+	"eq d2ay spacing - y\n" +
+	"eq r2 d2ax d2ax + d2ay d2ay + z z + 0.05\n" +
+	"eq f2 magnet_strength over { r2 sqrt { r2 } }\n" +
+	"eq dz - z\n" +
+	"derivative x vx\n" +
+	"derivative y vy\n" +
+	"derivative z vz\n" +
+	"derivative vx - spring x - damping vx + f1 d1x + f2 d2ax + f3 d3x + f4 d4x\n" +
+	"derivative vy - spring y - damping vy + f1 d1y + f2 d2ay + f3 d3y + f4 d4y\n" +
+	"derivative vz - spring { z - 0.75 } - damping vz + f1 dz + f2 dz + f3 dz + f4 dz\n" +
+	"point bob x , { y - 0.45 z }\n" +
+	"point magnet_east spacing , 0.0\n" +
+	"point magnet_north 0.0 , spacing\n" +
+	"point magnet_west { - spacing } , 0.0\n" +
+	"point magnet_south 0.0 , { - spacing }\n" +
+	"point floor 0.0 , { - 0.45 1.5 }\n" +
+	"link bob floor\n" +
+	"observable horizontal_radius sqrt { x x + y y }\n" +
+	"observable height z\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:magneticpendulum3d: cannot load the mechanism viewer";
-	viewer->init(ctxt, "magneticpendulum3d" :: "/dis/danby/magneticpendulum3d.dis" ::
-		"danby-magneticpendulum3d" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:magneticpendulum3d: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "magneticpendulum3d", SPEC)) != nil)
+		raise "fail:magneticpendulum3d: "+e;
 }

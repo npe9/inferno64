@@ -88,19 +88,6 @@ include "danby/flight3d.m";
 	badfootball: Flight3d;
 	icbmaccuracy: Flight3d;
 include "danby/mechanism.m";
-	running: Mechanism;
-	diving: Mechanism;
-	polevault: Mechanism;
-	flightmodel: Mechanism;
-	hovercraft: Mechanism;
-	shipmotion: Mechanism;
-	joggingcompanion: Mechanism;
-	spacestationball: Mechanism;
-	fireworks: Mechanism;
-	venushead: Mechanism;
-	magneticpendulum3d: Mechanism;
-	carrierlanding: Mechanism;
-	lowbombing: Mechanism;
 include "danby/orbital.m";
 	threebody: Orbital;
 	moontrip: Orbital;
@@ -207,22 +194,9 @@ init(nil: ref Draw->Context, nil: list of string)
 	cricketswing = load Flight3d "/dis/danby/cricketswing.dis";
 	badfootball = load Flight3d "/dis/danby/badfootball.dis";
 	icbmaccuracy = load Flight3d "/dis/danby/icbmaccuracy.dis";
-	running = load Mechanism "/dis/danby/running.dis";
-	diving = load Mechanism "/dis/danby/diving.dis";
-	polevault = load Mechanism "/dis/danby/polevault.dis";
-	flightmodel = load Mechanism "/dis/danby/flight.dis";
-	hovercraft = load Mechanism "/dis/danby/hovercraft.dis";
-	shipmotion = load Mechanism "/dis/danby/shipmotion.dis";
-	joggingcompanion = load Mechanism "/dis/danby/joggingcompanion.dis";
-	spacestationball = load Mechanism "/dis/danby/spacestationball.dis";
-	fireworks = load Mechanism "/dis/danby/fireworks.dis";
-	venushead = load Mechanism "/dis/danby/venushead.dis";
 	# slidingpendulum1 is now a mechlab(2) script rather than a Mechanism
 	# module - mechlabtest(1) checks it, including the momentum law that
 	# used to be checked here.
-	magneticpendulum3d = load Mechanism "/dis/danby/magneticpendulum3d.dis";
-	carrierlanding = load Mechanism "/dis/danby/carrierlanding.dis";
-	lowbombing = load Mechanism "/dis/danby/lowbombing.dis";
 	threebody = load Orbital "/dis/danby/threebody.dis";
 	moontrip = load Orbital "/dis/danby/moontrip.dis";
 	lagrange1 = load Orbital "/dis/danby/lagrange1.dis";
@@ -240,47 +214,36 @@ init(nil: ref Draw->Context, nil: list of string)
 	galaxies = load Orbital "/dis/danby/galaxies.dis";
 	starmodel = load Profile "/dis/danby/starmodel.dis";
 	whitedwarf = load Profile "/dis/danby/whitedwarf.dis";
-	if(numerics == nil || math == nil || chaosmap == nil ||
-			forcedpendulum == nil || lorenz == nil ||
-			periodicvolterra == nil || predatorfishing == nil ||
-			logisticprey == nil || logisticpredators == nil ||
-			alternativepredation == nil || maypredator == nil ||
-			internalcompetition == nil || cooperation == nil ||
-			competition == nil || childcare == nil ||
-			manyspecies == nil || foodchainmodel == nil ||
-			violetsantsrodents == nil || parasite == nil ||
-			cannibalism == nil || changingenvironment == nil ||
+	if(
+			numerics == nil || math == nil || chaosmap == nil ||
+			forcedpendulum == nil || lorenz == nil || periodicvolterra == nil ||
+			predatorfishing == nil || logisticprey == nil || logisticpredators == nil ||
+			alternativepredation == nil || maypredator == nil || internalcompetition == nil ||
+			cooperation == nil || competition == nil || childcare == nil ||
+			manyspecies == nil || foodchainmodel == nil || violetsantsrodents == nil ||
+			parasite == nil || cannibalism == nil || changingenvironment == nil ||
 			lakepollution == nil || budworm == nil || heliumburning == nil ||
 			decomposition == nil || enzymekinetics == nil || enzymeapplication == nil ||
 			moreenzyme == nil || stillmoreenzyme == nil || brusselator == nil ||
 			oregonator == nil || reactorstability == nil || tankcontrol == nil ||
-			reservoir == nil ||
-			epidemicmodel == nil || vaccinationmodel == nil ||
-			migrationmodel == nil || diseasebirthdeath1 == nil ||
-			diseasebirthdeath2 == nil || crossinfection == nil ||
-			incubation == nil || seasonaldisease == nil || malaria == nil ||
-			gonorrhea == nil || hiv == nil || weightchange == nil || heartbeat == nil ||
-			lanchester == nil || fishingone == nil ||
-			productionexchange == nil || fishingtwo == nil ||
+			reservoir == nil || epidemicmodel == nil || vaccinationmodel == nil ||
+			migrationmodel == nil || diseasebirthdeath1 == nil || diseasebirthdeath2 == nil ||
+			crossinfection == nil || incubation == nil || seasonaldisease == nil ||
+			malaria == nil || gonorrhea == nil || hiv == nil ||
+			weightchange == nil || heartbeat == nil || lanchester == nil ||
+			fishingone == nil || productionexchange == nil || fishingtwo == nil ||
 			boommodel == nil || twocapital == nil || spinningball == nil ||
 			baseballpitch == nil || knuckleball == nil || flyball == nil ||
 			softballpitch == nil || golfdrive == nil || soccerkick == nil ||
 			cricketbowl == nil || cricketswing == nil || badminton == nil ||
 			tabletennis == nil || basketball == nil || badfootball == nil ||
-			discus == nil || javelin == nil || skijump == nil || skylab == nil ||
-			icbmrange == nil || icbmaccuracy == nil ||
+			discus == nil || javelin == nil || skijump == nil ||
+			skylab == nil || icbmrange == nil || icbmaccuracy == nil ||
 			rocket2d == nil || reentry == nil || lowthrust == nil ||
-			running == nil || diving == nil || polevault == nil ||
-			flightmodel == nil || hovercraft == nil || shipmotion == nil || joggingcompanion == nil || spacestationball == nil ||
-			fireworks == nil ||
-			threebody == nil || moontrip == nil ||
-			lagrange1 == nil || lagrange2 == nil || cometcatch == nil ||
-			jupiterboost == nil || grandtour == nil || perihelion == nil ||
-			poyntingrobertson == nil || galaxies == nil || venushead == nil ||
-			starmodel == nil || whitedwarf == nil ||
-			magneticpendulum3d == nil ||
-			carrierlanding == nil ||
-			lowbombing == nil)
+			threebody == nil || moontrip == nil || lagrange1 == nil ||
+			lagrange2 == nil || cometcatch == nil || jupiterboost == nil ||
+			grandtour == nil || perihelion == nil || poyntingrobertson == nil ||
+			galaxies == nil || starmodel == nil || whitedwarf == nil)
 		raise "fail:danbytest: missing module";
 	testmap();
 	testpendulum();
@@ -370,19 +333,6 @@ testtrajectory()
 	checktrajectoryfinite(rocket2d,"two-dimensional rocket");
 	checktrajectoryfinite(reentry,"re-entry");
 	checkflight3dfinite(icbmaccuracy,"ICBM accuracy");
-	checkmechanism(running,"running");
-	checkmechanism(diving,"diving");
-	checkmechanism(polevault,"pole vault");
-	checkmechanism(flightmodel,"flight");
-	checkmechanism(hovercraft,"hovercraft");
-	checkmechanism(shipmotion,"ship motion");
-	checkmechanism(joggingcompanion,"jogging companion");
-	checkmechanism(spacestationball,"space-station ball");
-	checkmechanism(fireworks,"fireworks");
-	checkmechanism(venushead,"Venus ray geometry");
-	checkmechanism(magneticpendulum3d,"magnetic pendulum 3d");
-	checkmechanism(carrierlanding,"carrier landing");
-	checkmechanism(lowbombing,"low-level bombing");
 	checkorbital(threebody,"three body");
 	checkorbital(moontrip,"Moon trip");
 	checkorbital(lagrange1,"Lagrange 1");
@@ -396,16 +346,8 @@ testtrajectory()
 	checkorbital(galaxies,"galaxies");
 	checkprofile(starmodel,"stellar model");
 	checkprofile(whitedwarf,"white dwarf");
-	runner := running->new();
-	runnerstate := running->initialstate(runner);
-	runnerderivative := array[len runnerstate] of real;
-	running->evaluate(runner,0.0,runnerstate,runnerderivative);
-	check("running distance rate",runnerderivative[3],runnerstate[0],0.0);
-	diver := diving->new();
-	diverstate := diving->initialstate(diver);
-	check("diving launch speed",
-		math->sqrt(diverstate[2]*diverstate[2]+diverstate[3]*diverstate[3]),
-		diver.parameter[0],1.0e-12);
+	# running's and diving's own property checks moved to mechlabtest(1)
+	# with the models themselves.
 }
 
 checkprofile(profilemodule: Profile, name: string)

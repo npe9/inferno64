@@ -1,109 +1,62 @@
-implement Mechanism;
+implement Hovercraft;
 
-# danby/hovercraft - The motion of a hovercraft
+# danby/hovercraft - the motion of a hovercraft
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {900.0,1.8,500.0,0.35,650.0,1.4});
-}
-
-title(): string
-{
-	return "The motion of a hovercraft";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"thrust", "drag", "mass", "rudder", "inertia", "yaw damping"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.0,0.0,100.0,-1.0,100.0,0.0};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {2500.0,8.0,1200.0,1.0,1500.0,5.0};
-}
-
-initialstate(nil: ref Model): array of real
-{
-	return array[] of {0.0,0.0,0.0,0.0,0.0,0.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 25.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	heading := state[4];
-	derivative[0] = state[2];
-	derivative[1] = state[3];
-	derivative[2] = (p[0]*math->cos(heading)-p[1]*state[2])/p[2];
-	derivative[3] = (p[0]*math->sin(heading)-p[1]*state[3])/p[2];
-	derivative[4] = state[5];
-	derivative[5] = (p[0]*p[3]-p[5]*state[5])/p[4];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(nil: ref Model, state: array of real): array of real
-{
-	c := math->cos(state[4]);
-	s := math->sin(state[4]);
-	return array[] of {
-		1.0*c,1.0*s,
-		-0.7*c-0.6*s,-0.7*s+0.6*c,
-		-0.7*c+0.6*s,-0.7*s-0.6*c,
-		0.0,0.0
-	};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,1,2,2,0,3,0};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"speed", "heading"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	speed := math->sqrt(state[2]*state[2]+state[3]*state[3]);
-	return array[] of {speed,state[4]};
-}
-
-Command: module
+Hovercraft: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title The motion of a hovercraft\n" +
+	"param thrust 900.0 0.0 2500.0\n" +
+	"param drag 1.8 0.0 8.0\n" +
+	"param mass 500.0 100.0 1200.0\n" +
+	"param rudder 0.35 -1.0 1.0\n" +
+	"param inertia 650.0 100.0 1500.0\n" +
+	"param yaw_damping 1.4 0.0 5.0\n" +
+	"maxtime 25.0\n" +
+	"state x 0.0\n" +
+	"state y 0.0\n" +
+	"state vx 0.0\n" +
+	"state vy 0.0\n" +
+	"state heading 0.0\n" +
+	"state yawrate 0.0\n" +
+	"eq c cos { heading }\n" +
+	"eq s sin { heading }\n" +
+	"derivative x vx\n" +
+	"derivative y vy\n" +
+	"derivative vx { thrust c - drag vx } over mass\n" +
+	"derivative vy { thrust s - drag vy } over mass\n" +
+	"derivative heading yawrate\n" +
+	"derivative yawrate { thrust rudder - yaw_damping yawrate } over inertia\n" +
+	"point bow c , s\n" +
+	"point port { - 0.7 c - 0.6 s } , { - 0.7 s + 0.6 c }\n" +
+	"point starboard { - 0.7 c + 0.6 s } , { - 0.7 s - 0.6 c }\n" +
+	"point centre 0.0 , 0.0\n" +
+	"link bow port\n" +
+	"link port starboard\n" +
+	"link starboard bow\n" +
+	"link centre bow\n" +
+	"observable speed sqrt { vx vx + vy vy }\n" +
+	"observable heading heading\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:hovercraft: cannot load the mechanism viewer";
-	viewer->init(ctxt, "hovercraft" :: "/dis/danby/hovercraft.dis" ::
-		"danby-hovercraft" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:hovercraft: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "hovercraft", SPEC)) != nil)
+		raise "fail:hovercraft: "+e;
 }
