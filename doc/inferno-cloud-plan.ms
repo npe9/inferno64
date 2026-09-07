@@ -135,9 +135,58 @@ loader or a multiboot boot loader.  A cloud machine is UEFI class 3,
 has no CSM, and cannot start that image at all.  Until this round
 there was no path onto any of the hardware in section 1.
 .PP
-.B "MSI is already wired, MSI-X is not."
+.B "The image shapes the providers take."
+.CW scripts/mkinferno-efi-iso.sh
+builds a UEFI ISO, which is what a KVM-over-IP console with virtual
+media mounts.
+.CW scripts/mkinferno-efi-disk.sh
+builds the other one, and it is the one that matters: a raw disk with a
+GPT and an EFI system partition holding the loader, the kernel and
+.CW plan9.ini .
+That single image is what AWS imports as an EBS snapshot and registers
+as an AMI, what Compute Engine takes as
+.CW disk.raw
+inside a gzipped tar (which the script writes when
+.CW INFERNO_GCE_TAR
+names one), what OCI's Bring Your Own Image takes, and what a rented
+machine in rescue mode
+.CW dd s
+to its disk.  Verified: the image boots under edk2 on QEMU q35 from a
+virtio-blk disk \(en no CD, no multiboot \(en to an interactive shell
+prompt at 128 MiB, and into
+.CW /dis/init
+at the 1 GiB Compute Engine insists on (its importer wants a whole
+number of gigabytes, the file named
+.CW disk.raw ,
+and the archive in the old GNU tar format, all of which the script now
+produces; the archive itself has not been through that importer, only
+the disk inside it has been booted).
+.CW scripts/mkgptdisk.py
+writes the partition table, because a Mac has no
+.CW sgdisk ,
+.CW gdisk
+or
+.CW parted
+and the layout is too small to take a dependency for.
+.PP
+.B "PXE is built and still untested."
+.CW os/inferno/boot/efi/pxe.c
+compiles and links into the loader, and would fetch
+.CW /cfg/pxe/<mac>
+or
+.CW /cfg/pxe/default
+over TFTP and then the kernel named by
+.CW bootfile= .
+It could not be exercised here: the edk2 firmware available on this
+host has no network stack compiled in, so it offers no network boot
+entry at all and drops to the EFI shell whether or not QEMU is given a
+UEFI option ROM for the NIC.  Testing it wants an OVMF built with
+NetworkPkg.  This matters for OCI, whose custom-iPXE flow is the
+cheapest way onto its bare metal.
+.PP
+.B "MSI was already wired; MSI-X is now."
 .CW os/inferno/port/pci.c
-has
+had
 .CW pcimsienable
 and
 .CW pcimsidisable ,
@@ -145,17 +194,50 @@ and
 .CW os/inferno/pc/mp.c 's
 .CW mpintrassign
 tries MSI before the INTx path, gated on
-.CW *nomsi .
-Any driver that calls
+.CW *nomsi ,
+so any driver calling
 .CW intrenable
 with a PCI
 .CW tbdf
-gets a single MSI vector under
+already got a single MSI vector under
 .CW archacpi
-without doing anything.  What does not exist anywhere in
+without doing anything.  What did not exist anywhere in
 .CW os/inferno
-is MSI-X: no capability walk, no BAR-mapped vector table, no
-multi-vector allocation.  That distinction decides section 4.
+was MSI-X, and it does now:
+.CW pcimsixcount
+reports how many vectors a device's table holds and
+.CW pcimsixenable
+.CW vmap s
+that table out of the BAR its capability names and writes one 16-byte
+entry.  That is the whole difference from MSI \(en the message lives in
+the device's own memory rather than in configuration space \(en and it
+is what a part with no INTx pin and no MSI capability needs.
+.PP
+.CW mpintrassign
+takes MSI-X only when
+.CW *msix
+is set in
+.CW plan9.ini ,
+and the reason it is not the default was measured rather than assumed.
+With
+.CW *msix=1 ,
+.CW ipc64dev
+on QEMU q35 reports
+.CW "msix: sdN (nvme) ... enabled"
+and then reads back the sector the host wrote into the NVMe disk, so
+MSI-X really carries that completion interrupt; on the same boot the
+virtio NIC also takes a vector and then never interrupts again, and
+DHCP fails, because a virtio-pci device sends nothing until its driver
+has written a vector into its own
+.CW queue_msix_vector
+register.  Turning MSI-X on underneath a driver that does not know
+about it silences the device.  So the flag exercises the plumbing, and
+a driver that wants MSI-X \(en ENA, one vector per queue \(en is
+written against
+.CW pcimsixcount
+and
+.CW pcimsixenable
+directly.
 .PP
 .B "The drivers that are linked."
 .CW pc64
@@ -187,12 +269,20 @@ without writing a line of driver code.  It is not enough for any of
 the five large providers.
 .PP
 .B "Boot stability."
-Ten boots under
-.CW "qemu -kernel" :
-seven reach a shell prompt, three panic in the Dis heap.  The same
-measurement in
+Three sets of ten boots of the same kernel, counted the same way \(en a
+run counts only if the log ends at the shell's
+.CW ;
+prompt:
+.IP
+.nf
+\f(CW-kernel\fP, 512 MiB     6 prompt   2 panic   2 module load failed
+\f(CW-kernel\fP, 1 GiB       6 prompt   4 panic   0
+UEFI ISO, 1 GiB       4 prompt   4 panic   2 module load failed
+.fi
+.PP
+The comparison
 .CW doc/inferno-ports.ms
-recorded fifteen crashes out of fifteen, and the difference is not a
+records is fifteen crashes out of fifteen, and the difference is not a
 kernel fix: it is that
 .CW dis/init
 carried a three-hundred-iteration
@@ -202,8 +292,35 @@ loop marked TEMPORARY from that hunt, and
 is not in
 .CW pc64 's
 root, so every boot spun on the error and drove the allocator into the
-fault.  Reverted.  The remaining three in ten are the real heap bug,
-and they are the same fault the UEFI path hits.
+fault.  Reverted.
+.PP
+What is left is one bug, not several.  Every failure in all thirty runs
+is the Dis heap:
+.CW "movp: bad dv" ,
+.CW "alloc:D2B:destroy-entry" ,
+a page fault on a pointer read out of a corrupted object, a general
+protection violation, and the two quieter shapes \(en
+.CW "cannot load /dis/lib/styx.dis: file does not exist"
+and a module whose type signature no longer matches \(en which are the
+same corruption landing on a name or a tag rather than a pointer.  A
+run that fails that way does not panic, which is why counting panics
+alone overstates how often a boot succeeds.
+.PP
+Four in ten on the UEFI path against six on the other, at the same
+memory size, is the only difference between them, and ten runs is not
+enough to say it is real rather than noise.  If it is real, the likely
+reason is that the UEFI path has a framebuffer: the loader hands over
+.CW *bootscreen ,
+.CW bootscreeninit
+draws through
+.CW imagmem ,
+and the image pool is exercised before
+.CW /dis/init
+ever runs, where under
+.CW -kernel
+it is untouched.  That is worth knowing because every cloud machine
+hands over a framebuffer, so the port will live on the busier of the
+two paths.
 .NH 1
 The three bugs the UEFI path found
 .PP
@@ -360,9 +477,9 @@ or describes it in the ACPI SPCR table, is not handled.
 The order
 .IP 1.
 .B "The heap fault."
-Three boots in ten panic in the Dis heap, on both boot paths.
-Everything below is worth less on a kernel that fails one boot in
-three, and a rented machine is the worst place to debug one.  The
+Four boots in ten reach a shell on the UEFI path, six on the other.
+Everything below is worth less on a kernel that fails half its boots,
+and a rented machine is the worst place to debug one.  The
 mechanism is recorded in
 .CW doc/inferno-ports.ms ;
 it is not this plan's to re-derive, but it is this plan's blocker.
@@ -376,17 +493,22 @@ is assumed rather than read out of ACPI's SPCR table \(en and a machine
 that puts its console elsewhere is silent in exactly the same way.
 .IP 3.
 .B "Boot on GCE."
-UEFI, virtio-net, a compiled-in root: every piece exists.  This is the
-first cloud machine Inferno can run on and it needs no new driver.
-The work is image plumbing \(en a raw disk with a GPT and an EFI
-system partition, packed the way Compute Engine wants it \(en not
-kernel work.
+UEFI, virtio-net, a compiled-in root: every piece exists, and the
+image plumbing is done \(en
+.CW scripts/mkinferno-efi-disk.sh
+with
+.CW INFERNO_GCE_TAR
+writes an archive to Compute Engine's documented requirements, though
+not yet one that has been through its importer.  This is the first cloud
+machine Inferno can run on, it needs no new driver, and what is left
+of it is an account, an upload and a boot log.
 .IP 4.
 .B "MSI-X."
-.CW pcimsixenable ,
-the vector table in its own BAR, and multi-vector allocation in
-.CW mpintrassign .
-This is the gate on AWS, on X710/E810 metal, and on anything modern.
+The single-vector half is done and verified against NVMe, per section
+2.  What is left is multi-vector allocation \(en a vector per queue,
+which is how ENA and the current Intel parts are meant to be driven \(en
+and it is better done alongside the first driver that needs it than
+before.
 .IP 5.
 .B "ENA."
 Then AWS, first on a cheap virtual instance, then on
