@@ -39,6 +39,39 @@ provider's 5.57, but only when the destination is the window layer — an
 offscreen frame buffer gets no GPU at all and is *slower* through the
 protocol. `draw3dbench(1)` is the harness.
 
+## The `.mask` files were laid out wrongly
+
+Fixed 2026-09-06; here because the failure was invisible and the symptom
+looked like something else entirely.
+
+Plan 9 lays an image row out relative to a **byte boundary**, not to the
+rectangle's left edge: `libdraw/bytesperline.c` gives a 1-bit image whose
+`r.min.x` is not a multiple of 8 an extra byte per line, and its first
+pixel starts part way into the first byte. Both sprite extractors wrote
+`(width + 7) // 8` bytes with the first pixel at bit 0. The result:
+
+- **85 of the 230 `.mask` files were short** and `Display.open` failed on
+  them outright, returning nil.
+- **146 of them were misaligned** by up to seven pixels, including many
+  that opened fine.
+
+A port whose mask came back nil then passed nil to `draw3d`'s `sprite2d`,
+which built no coverage mask and drew its whole bounding box - so the
+sprite appeared as a **solid black rectangle** with the art inside it.
+That is what "the alpha on sprites is wrong" looks like from the outside,
+and it is three bugs deep from the byte layout that caused it.
+
+All 230 masks were repacked in place from the pixels they already held;
+no re-extraction was needed. `sprite2d` now always builds its coverage
+mask, so a missing mask degrades to an unmasked sprite rather than a
+black box.
+
+Still broken: `asciiorgan_1`. Its rectangle is `(-108,-56)-(-51,1)`, the
+only asset lying entirely to the left of the origin, and both its `.bit`
+and `.mask` fail `memload` with "bad writeimage call" even at the size
+`bytesperline` asks for. `unitsperline` computes that size through an
+unsigned wraparound for a negative `r.max.x`; that is where to start.
+
 ## Getting the source and the art
 
 **The GitHub mirrors are corrupted.** `/Users/npe/src/TempleOS`,

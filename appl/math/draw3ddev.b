@@ -1203,12 +1203,16 @@ transformsprite(dst: ref Image, sp: Point, sw, sh: int,
 	tmp := disp.newimage(Rect((0, 0), (bw, bh)), img.chans, 0, 0);
 	if(tmp == nil)
 		return;
-	tmpm: ref Image = nil;
-	if(mask != nil){
-		tmpm = disp.newimage(Rect((0, 0), (bw, bh)), Draw->GREY1, 0, 0);
-		if(tmpm == nil)
-			return;
-	}
+	# The coverage mask is not optional.  It used to be built only when
+	# the caller supplied a mask of its own, so a sprite with no mask -
+	# and 85 of this tree's 230 .mask files fail to open, see
+	# icons/temple - was drawn as the whole bw x bh box, padding
+	# included, which for a CMAP8 tmp is a solid black rectangle around
+	# the art.  Every pixel this loop actually writes sets its bit; the
+	# rest stay clear and never reach the destination.
+	tmpm := disp.newimage(Rect((0, 0), (bw, bh)), Draw->GREY1, 0, 0);
+	if(tmpm == nil)
+		return;
 	# Source pixels
 	sbpl := (iw * img.depth + 7) / 8;
 	src := array[sbpl * ih] of byte;
@@ -1273,13 +1277,11 @@ transformsprite(dst: ref Image, sp: Point, sw, sh: int,
 				dstb[di+3] = src[si+3];
 			}else
 				continue;
-			if(tmpm != nil)
-				dmsk[y * dmpl + (x >> 3)] |= byte (16r80 >> (x & 7));
+			dmsk[y * dmpl + (x >> 3)] |= byte (16r80 >> (x & 7));
 		}
 	}
 	tmp.writepixels(tmp.r, dstb);
-	if(tmpm != nil)
-		tmpm.writepixels(tmpm.r, dmsk);
+	tmpm.writepixels(tmpm.r, dmsk);
 	dr := Rect((sp.x - bw/2, sp.y - bh/2), (sp.x - bw/2 + bw, sp.y - bh/2 + bh));
 	dst.draw(dr, tmp, tmpm, Point(0, 0));
 }

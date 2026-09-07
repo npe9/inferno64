@@ -99,13 +99,42 @@ def bitmap(blob: bytes) -> tuple[int, int, int, int, bytes] | None:
     return x, y, width, height, blob[17:end]
 
 
+# Plan 9 lays a row out relative to a byte boundary, not to the
+# rectangle's left edge, so a 1-bit image whose r.min.x is not a
+# multiple of 8 needs an extra byte per line and starts its first pixel
+# part way into the first byte.  Writing (width + 7) // 8 bytes with the
+# first pixel at bit 0 - which this script used to do - produced a file
+# short of what libdraw's readimage expects, and 84 of the 230 .mask
+# files in icons/temple could not be opened at all.  Their sprites then
+# drew with no mask, which in draw3d's sprite2d meant the whole rotated
+# bounding box came out as a solid black rectangle.
+def _cdiv(a: int, b: int) -> int:
+    """Integer division truncating towards zero, as C does; Python floors."""
+    q = abs(a) // abs(b)
+    return -q if (a < 0) != (b < 0) else q
+
+
+def k1_bytesperline(minx: int, maxx: int) -> int:
+    """libdraw's bytesperline() for a 1-bit image, transcribed."""
+    if minx >= 0:
+        return _cdiv(maxx + 7, 8) - _cdiv(minx, 8)
+    return _cdiv(-minx + 7, 8) + _cdiv(maxx + 7, 8)
+
+
+def k1_firstbit(minx: int) -> int:
+    """x coordinate that the first byte of a row starts at."""
+    if minx >= 0:
+        return _cdiv(minx, 8) * 8
+    return -(_cdiv(-minx + 7, 8) * 8)
+
 def write_images(
     dst: Path, x0: int, y0: int, width: int, height: int, pixels: bytes
 ) -> None:
     stride = (width + 7) & ~7
+    mask_stride = k1_bytesperline(x0, x0 + width)
+    bit0 = k1_firstbit(x0)
     image = bytearray(width * height)
-    mask = bytearray((width + 7) // 8 * height)
-    mask_stride = (width + 7) // 8
+    mask = bytearray(mask_stride * height)
     for y in range(height):
         for x in range(width):
             colour = pixels[y * stride + x]
@@ -114,7 +143,8 @@ def write_images(
             if colour >= len(CMAP):
                 raise ValueError(f"unsupported TempleOS palette index {colour}")
             image[y * width + x] = CMAP[colour]
-            mask[y * mask_stride + x // 8] |= 0x80 >> (x & 7)
+            b = x0 + x - bit0
+            mask[y * mask_stride + b // 8] |= 0x80 >> (b & 7)
     rect = (field(x0), field(y0), field(x0 + width), field(y0 + height))
     dst.with_suffix(".bit").write_bytes(b"".join((field("m8"), *rect)) + image)
     dst.with_suffix(".mask").write_bytes(b"".join((field("k1"), *rect)) + mask)
