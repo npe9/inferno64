@@ -105,6 +105,7 @@ enum {
 	Alt0		= 4,	/* GPIO fsel: SDHOST owns the card pins */
 	Alt3		= 7,	/* GPIO fsel: this controller owns them */
 
+	Maxspeedmhz	= 25,	/* SD default speed; high speed is a separate switch */
 	Timeout		= 1000000,	/* bounded register polls */
 };
 
@@ -249,6 +250,72 @@ sdhciroutetest(Ctlr *c)
  * Card bring-up over the standard SD identification sequence.  Returns
  * 1 with the card selected and sized, 0 if nothing answers.
  */
+/*
+ * Leave the identification divider behind.
+ *
+ * Identification runs at 400kHz or less; default speed is 25MHz, and
+ * the card has been in transfer state since SELECT, so there is no
+ * reason to stay slow.  The divider field is the 8-bit "divided clock"
+ * form in Control1 bits 8-15: SDCLK is the base clock over 2*N, with
+ * N of 0 meaning the base clock undivided.  The base is in the
+ * capabilities register, bits 8-15, in MHz.
+ *
+ * The sequence is mandatory and is the reason this is not one write.
+ * SDCLK must be stopped before the divider changes and restarted after
+ * it is stable; changing the divider under a running clock is what the
+ * SDHCI specification forbids and what silicon punishes.  QEMU
+ * enforces the important half of it -- sdhci_can_issue_command()
+ * refuses every command while SDHC_CLOCK_IS_ON is false -- so failing
+ * to restart the clock here stops the board dead rather than passing
+ * quietly, which is the one part of this an emulator can check.
+ *
+ * What it cannot check is the rate.  Nothing in the model times a
+ * transfer against SDCLK, so the divider value itself has no
+ * observable effect; a card that would need 40 clocks and gets 4 reads
+ * identically here.  The marker says ACCEPTED for that reason.
+ */
+static void
+sdhcispeed(Ctlr *c)
+{
+	u32 *r = c->r;
+	u32 ctl;
+	int basemhz, n;
+
+	basemhz = (r[Capabilities] >> 8) & 0xff;
+	if(basemhz == 0){
+		print("SDHCI-SPEED-NONE capabilities report no base clock; "
+			"staying at the identification divider\n");
+		return;
+	}
+	/*
+	 * Smallest N with base/(2N) <= 25MHz, and N of 0 (undivided)
+	 * only if the base is already slow enough.
+	 */
+	for(n = 0; n < 0x80; n++)
+		if(n == 0){
+			if(basemhz <= Maxspeedmhz)
+				break;
+		}else if(basemhz <= 2*n*Maxspeedmhz)
+			break;
+
+	ctl = r[Control1];
+	r[Control1] = ctl & ~Clken;			/* stop SDCLK first */
+	ctl = (ctl & ~(0xff << 8)) | (n << 8);
+	r[Control1] = ctl & ~Clken;			/* then the divider */
+	if(awaitbit(&r[Control1], Clkstable, 1) < 0){
+		print("SDHCI-SPEED-FAIL clock did not restabilise at divider %d\n", n);
+		return;
+	}
+	r[Control1] |= Clken;				/* and start it again */
+
+	if(n == 0)
+		print("SDHCI-SPEED-ACCEPTED base %dMHz undivided\n", basemhz);
+	else
+		print("SDHCI-SPEED-ACCEPTED base %dMHz / %d = about %dMHz "
+			"(was the identification divider 0x80)\n",
+			basemhz, 2*n, basemhz/(2*n));
+}
+
 /*
  * Move the card and the host to the four-bit data bus.
  *
@@ -426,6 +493,7 @@ sdhcicardinit(Ctlr *c)
 	if(sdhcicmd(c, 16, Secsize, Resp48|Cmdcrcchk|Cmdixchk) < 0)	/* SET_BLOCKLEN */
 		return 0;
 	sdhciwiden(c);
+	sdhcispeed(c);
 	return c->sectors != 0;
 }
 

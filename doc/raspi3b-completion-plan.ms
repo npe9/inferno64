@@ -599,9 +599,8 @@ they say nothing whatever about CMD52 and CMD53.
 .PP
 Also not done: no interrupt is wired (every wait is a bounded poll, as
 in sdhostbcm.c), no DMA -- the controller supports SDMA/ADMA and this
-uses the PIO data port -- no multi-block command, no high-speed switch,
-so the card runs at the identification divider throughout, and no real
-hardware has been near it.
+uses the PIO data port -- no multi-block command, no high-speed
+function switch, and no real hardware has been near it.
 .PP
 .B "The four-bit bus, and what an emulator can and cannot say about it."
 The card and the host are now moved to the four-bit data bus after
@@ -642,6 +641,40 @@ does exactly that and no more, because a byte-oriented model has no
 wire to narrow.  So what passes here is that the command sequence is
 accepted and the data path still works.  It is not evidence that four
 lines are being driven, and only a real card can give that.
+.PP
+.B "And off the identification divider."
+The clock followed the bus width.  Identification runs at 400kHz or
+less and the card has been in transfer state since SELECT, so there
+was no reason to stay there; the capabilities register reports a 52MHz
+base, and the divider now comes from it rather than being pinned at
+0x80.  The result is 13MHz, not 25: the divided-clock form gives base
+over 2N, 52/2 is 26 and default speed tops out at 25, so N is 2 and
+the choice is deliberately the conservative side of the limit.  It is
+still 64 times the identification rate.
+.PP
+The sequence is the part worth having.  SDCLK must be stopped before
+the divider changes and restarted once it is stable, and changing a
+divider under a running clock is what the specification forbids.
+Unusually for this document, the emulator does check the important
+half:
+.CW sdhci_can_issue_command()
+refuses every command while
+.CW SDHC_CLOCK_IS_ON
+is false, so leaving the clock stopped does not pass quietly.
+Deleting the restart turns
+.CW SDHCI-WRITE-OK
+and
+.CW SDHCI-OK
+into
+.CW SDHCI-FAIL ,
+which is how that was confirmed rather than assumed.
+.PP
+The rate itself is still unobservable -- nothing in the model times a
+transfer against SDCLK, so a card given four clocks where it needs
+forty reads identically -- which is why this marker is
+.CW SDHCI-SPEED-ACCEPTED
+too.  The high-speed CMD6 function switch, which would take this past
+25MHz, is a separate card state transition and is not attempted.
 .NH 1
 Phase 6: BCM43430 Wi-Fi over SDIO \- transport runs, the chip does not
 .PP
