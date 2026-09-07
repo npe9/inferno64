@@ -1,103 +1,60 @@
-implement Mechanism;
+implement Yoyo;
 
-# danby/yoyo - A model for the motion of a yo-yo
+# danby/yoyo - a model for the motion of a yo-yo
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {1.2,0.04,0.12,0.08,0.02,9.81});
-}
-
-title(): string
-{
-	return "A model for the motion of a yo-yo";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"string length", "axle radius", "mass", "inertia", "friction", "gravity"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.2,0.01,0.03,0.005,0.0,0.0};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {3.0,0.15,0.5,0.3,0.2,20.0};
-}
-
-initialstate(nil: ref Model): array of real
-{
-	return array[] of {0.0,0.0,0.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 8.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	effectivemass := p[2]+p[3]/(p[1]*p[1]);
-	acceleration := (p[2]*p[5]-p[4]*state[1])/effectivemass;
-	if(state[0] >= p[0] && state[1] > 0.0)
-		acceleration = -0.8*p[5];
-	derivative[0] = state[1];
-	derivative[1] = acceleration;
-	derivative[2] = state[1]/p[1];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(nil: ref Model, state: array of real): array of real
-{
-	x := 0.25*math->sin(state[2]);
-	y := -state[0];
-	return array[] of {0.0,0.0,0.0,y,x,y,-x,y};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,2,3};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"depth", "angular speed"};
-}
-
-observables(model: ref Model, state: array of real): array of real
-{
-	return array[] of {state[0],state[1]/model.parameter[1]};
-}
-
-Command: module
+Yoyo: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title A model for the motion of a yo-yo\n" +
+	"param string_length 1.2 0.2 3.0\n" +
+	"param axle_radius 0.04 0.01 0.15\n" +
+	"param mass 0.12 0.03 0.5\n" +
+	"param inertia 0.08 0.005 0.3\n" +
+	"param friction 0.02 0.0 0.2\n" +
+	"param gravity 9.81 0.0 20.0\n" +
+	"maxtime 8.0\n" +
+	"state depth 0.0\n" +
+	"state speed 0.0\n" +
+	"state spin 0.0\n" +
+	"eq effectivemass mass + inertia over { axle_radius axle_radius }\n" +
+	"eq freefall { mass gravity - friction speed } over effectivemass\n" +
+	# At the end of the string, going down, the yo-yo turns round.
+	# "depth >= length" is 1 - step(length - depth): step is zero AT
+	# zero, so its complement is the >= that the original tests, exactly
+	# and not within an epsilon of it.
+	"eq caught { 1.0 - step { string_length - depth } } step { speed }\n" +
+	"eq acceleration { 1.0 - caught } freefall - caught 0.8 gravity\n" +
+	"derivative depth speed\n" +
+	"derivative speed acceleration\n" +
+	"derivative spin speed over axle_radius\n" +
+	"point hand 0.0 , 0.0\n" +
+	"point axle 0.0 , { - depth }\n" +
+	"point rim_a { 0.25 sin { spin } } , { - depth }\n" +
+	"point rim_b { - 0.25 sin { spin } } , { - depth }\n" +
+	"link hand axle\n" +
+	"link rim_a rim_b\n" +
+	"observable depth depth\n" +
+	"observable angular_speed speed over axle_radius\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:yoyo: cannot load the mechanism viewer";
-	viewer->init(ctxt, "yoyo" :: "/dis/danby/yoyo.dis" ::
-		"danby-yoyo" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:yoyo: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "yoyo", SPEC)) != nil)
+		raise "fail:yoyo: "+e;
 }

@@ -1,108 +1,62 @@
-implement Mechanism;
+implement Spaceyoyo;
 
-# danby/spaceyoyo - De-spinning a satellite: a space yo-yo
+# danby/spaceyoyo - de-spinning a satellite with a space yo-yo
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {3.0,0.8,12.0,80.0,0.12,1.2});
-}
-
-title(): string
-{
-	return "De-spinning a satellite: a space yo-yo";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"tether length", "tip mass", "satellite inertia", "initial spin", "damping", "deployment"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.5,0.05,1.0,-200.0,0.0,0.1};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {10.0,5.0,50.0,200.0,1.0,5.0};
-}
-
-initialstate(model: ref Model): array of real
-{
-	return array[] of {0.0,model.parameter[3],0.05,model.parameter[5]};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 20.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	radius := state[2];
-	radialvelocity := state[3];
-	totalinertia := p[2]+2.0*p[1]*radius*radius;
-	angularmomentum := (p[2]+2.0*p[1]*0.05*0.05)*p[3];
-	derivative[0] = angularmomentum/totalinertia;
-	derivative[1] = -p[4]*state[1]-4.0*p[1]*radius*radialvelocity*
-		state[1]/totalinertia;
-	derivative[2] = radialvelocity;
-	derivative[3] = radius*state[1]*state[1]-0.4*radialvelocity;
-	if(radius >= p[0] && radialvelocity > 0.0)
-		derivative[3] -= 12.0*(radius-p[0]);
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(nil: ref Model, state: array of real): array of real
-{
-	c := math->cos(state[0]);
-	s := math->sin(state[0]);
-	r := state[2];
-	return array[] of {0.0,0.0,r*c,r*s,-r*c,-r*s,-0.4*s,0.4*c,0.4*s,-0.4*c};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,0,2,3,4};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"spin", "deployment"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {state[1],state[2]};
-}
-
-Command: module
+Spaceyoyo: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title De-spinning a satellite: a space yo-yo\n" +
+	"param tether_length 3.0 0.5 10.0\n" +
+	"param tip_mass 0.8 0.05 5.0\n" +
+	"param satellite_inertia 12.0 1.0 50.0\n" +
+	"param initial_spin 80.0 -200.0 200.0\n" +
+	"param damping 0.12 0.0 1.0\n" +
+	"param deployment 1.2 0.1 5.0\n" +
+	"maxtime 20.0\n" +
+	"state angle 0.0\n" +
+	"state spin initial_spin\n" +
+	"state radius 0.05\n" +
+	"state radialspeed deployment\n" +
+	"eq totalinertia satellite_inertia + 2.0 tip_mass radius radius\n" +
+	"eq angularmomentum { satellite_inertia + 2.0 tip_mass 0.05 0.05 } initial_spin\n" +
+	# the tether stops paying out at full length, and only while going out
+	"eq stopped { 1.0 - step { tether_length - radius } } step { radialspeed }\n" +
+	"eq c cos { angle }\n" +
+	"eq s sin { angle }\n" +
+	"derivative angle angularmomentum over totalinertia\n" +
+	"derivative spin - damping spin - { 4.0 tip_mass radius radialspeed spin } over totalinertia\n" +
+	"derivative radius radialspeed\n" +
+	"derivative radialspeed radius spin spin - 0.4 radialspeed - stopped 12.0 { radius - tether_length }\n" +
+	"point hub 0.0 , 0.0\n" +
+	"point tip_a { radius c } , { radius s }\n" +
+	"point tip_b { - radius c } , { - radius s }\n" +
+	"point body_a { - 0.4 s } , { 0.4 c }\n" +
+	"point body_b { 0.4 s } , { - 0.4 c }\n" +
+	"link hub tip_a\n" +
+	"link hub tip_b\n" +
+	"link body_a body_b\n" +
+	"observable spin spin\n" +
+	"observable deployment radius\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:spaceyoyo: cannot load the mechanism viewer";
-	viewer->init(ctxt, "spaceyoyo" :: "/dis/danby/spaceyoyo.dis" ::
-		"danby-spaceyoyo" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:spaceyoyo: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "spaceyoyo", SPEC)) != nil)
+		raise "fail:spaceyoyo: "+e;
 }

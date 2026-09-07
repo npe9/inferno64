@@ -1,104 +1,59 @@
-implement Mechanism;
+implement Stretchyoyo;
 
-# danby/stretchyoyo - De-spinning a satellite: the stretch yo-yo
+# danby/stretchyoyo - de-spinning a satellite with a stretch yo-yo
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {3.0,0.8,12.0,80.0,18.0,0.7});
-}
-
-title(): string
-{
-	return "De-spinning a satellite: the stretch yo-yo";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"rest length", "tip mass", "satellite inertia", "initial spin", "stiffness", "damping"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.5,0.05,1.0,-200.0,1.0,0.0};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {10.0,5.0,50.0,200.0,80.0,4.0};
-}
-
-initialstate(model: ref Model): array of real
-{
-	return array[] of {0.0,model.parameter[3],0.7*model.parameter[0],0.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 25.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	r := state[2];
-	rdot := state[3];
-	inertia := p[2]+2.0*p[1]*r*r;
-	derivative[0] = state[1];
-	derivative[1] = -4.0*p[1]*r*rdot*state[1]/inertia;
-	derivative[2] = rdot;
-	derivative[3] = r*state[1]*state[1]-p[4]*(r-p[0])/p[1]-p[5]*rdot;
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(nil: ref Model, state: array of real): array of real
-{
-	c := math->cos(state[0]);
-	s := math->sin(state[0]);
-	r := state[2];
-	return array[] of {0.0,0.0,r*c,r*s,-r*c,-r*s,-0.4*s,0.4*c,0.4*s,-0.4*c};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,0,2,3,4};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"spin", "stretch"};
-}
-
-observables(model: ref Model, state: array of real): array of real
-{
-	return array[] of {state[1],state[2]-model.parameter[0]};
-}
-
-Command: module
+Stretchyoyo: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title De-spinning a satellite: the stretch yo-yo\n" +
+	"param rest_length 3.0 0.5 10.0\n" +
+	"param tip_mass 0.8 0.05 5.0\n" +
+	"param satellite_inertia 12.0 1.0 50.0\n" +
+	"param initial_spin 80.0 -200.0 200.0\n" +
+	"param stiffness 18.0 1.0 80.0\n" +
+	"param damping 0.7 0.0 4.0\n" +
+	"maxtime 25.0\n" +
+	"state angle 0.0\n" +
+	"state spin initial_spin\n" +
+	"state radius 0.7 rest_length\n" +
+	"state radialspeed 0.0\n" +
+	"eq inertia satellite_inertia + 2.0 tip_mass radius radius\n" +
+	"eq c cos { angle }\n" +
+	"eq s sin { angle }\n" +
+	"derivative angle spin\n" +
+	"derivative spin { - 4.0 tip_mass radius radialspeed spin } over inertia\n" +
+	"derivative radius radialspeed\n" +
+	"derivative radialspeed radius spin spin - { stiffness { radius - rest_length } } over tip_mass - damping radialspeed\n" +
+	"point hub 0.0 , 0.0\n" +
+	"point tip_a { radius c } , { radius s }\n" +
+	"point tip_b { - radius c } , { - radius s }\n" +
+	"point body_a { - 0.4 s } , { 0.4 c }\n" +
+	"point body_b { 0.4 s } , { - 0.4 c }\n" +
+	"link hub tip_a\n" +
+	"link hub tip_b\n" +
+	"link body_a body_b\n" +
+	"observable spin spin\n" +
+	"observable stretch radius - rest_length\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:stretchyoyo: cannot load the mechanism viewer";
-	viewer->init(ctxt, "stretchyoyo" :: "/dis/danby/stretchyoyo.dis" ::
-		"danby-stretchyoyo" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:stretchyoyo: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "stretchyoyo", SPEC)) != nil)
+		raise "fail:stretchyoyo: "+e;
 }

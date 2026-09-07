@@ -1,104 +1,55 @@
-implement Mechanism;
+implement Twomagnet;
 
-# danby/twomagnet - A two-magnet toy
+# danby/twomagnet - a two-magnet toy
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {1.0,0.35,0.12,1.2,0.75,0.3});
-}
-
-title(): string
-{
-	return "A two-magnet toy";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"spring", "magnetic strength", "damping", "magnet spacing", "height", "initial x"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.05,0.0,0.0,0.2,0.05,-2.0};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {8.0,5.0,2.0,3.0,2.0,2.0};
-}
-
-initialstate(model: ref Model): array of real
-{
-	return array[] of {model.parameter[5],0.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 35.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	force := -p[0]*state[0]-p[2]*state[1];
-	for(side := -1; side <= 1; side += 2){
-		dx := real(side)*p[3]-state[0];
-		r2 := dx*dx+p[4]*p[4];
-		force += p[1]*dx/(r2*math->sqrt(r2));
-	}
-	derivative[0] = state[1];
-	derivative[1] = force;
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(model: ref Model, state: array of real): array of real
-{
-	d := model.parameter[3];
-	h := model.parameter[4];
-	return array[] of {state[0],h,-d,0.0,d,0.0,0.0,2.0*h};
-}
-
-links(): array of int
-{
-	return array[] of {0,3};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"position", "velocity"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {state[0],state[1]};
-}
-
-Command: module
+Twomagnet: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title A two-magnet toy\n" +
+	"param spring 1.0 0.05 8.0\n" +
+	"param magnetic_strength 0.35 0.0 5.0\n" +
+	"param damping 0.12 0.0 2.0\n" +
+	"param magnet_spacing 1.2 0.2 3.0\n" +
+	"param height 0.75 0.05 2.0\n" +
+	"param initial_x 0.3 -2.0 2.0\n" +
+	"maxtime 35.0\n" +
+	"state x initial_x\n" +
+	"state v 0.0\n" +
+	# the original's loop over the two magnets, written out
+	"eq dxa - magnet_spacing - x\n" +
+	"eq r2a dxa dxa + height height\n" +
+	"eq dxb magnet_spacing - x\n" +
+	"eq r2b dxb dxb + height height\n" +
+	"eq pull magnetic_strength dxa over { r2a sqrt { r2a } } + magnetic_strength dxb over { r2b sqrt { r2b } }\n" +
+	"derivative x v\n" +
+	"derivative v - spring x - damping v + pull\n" +
+	"point bob x , height\n" +
+	"point magnet_a { - magnet_spacing } , 0.0\n" +
+	"point magnet_b magnet_spacing , 0.0\n" +
+	"point pivot 0.0 , { 2.0 height }\n" +
+	"link bob pivot\n" +
+	"observable position x\n" +
+	"observable velocity v\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:twomagnet: cannot load the mechanism viewer";
-	viewer->init(ctxt, "twomagnet" :: "/dis/danby/twomagnet.dis" ::
-		"danby-twomagnet" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:twomagnet: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "twomagnet", SPEC)) != nil)
+		raise "fail:twomagnet: "+e;
 }

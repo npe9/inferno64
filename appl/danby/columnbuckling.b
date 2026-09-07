@@ -1,95 +1,53 @@
-implement Mechanism;
+implement Columnbuckling;
 
-# danby/columnbuckling - Dynamic buckling of a column
+# danby/columnbuckling - dynamic buckling of a column
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	return ref Model(array[] of {1.0,1.3,1.0,0.12,0.08});
-}
-
-title(): string
-{
-	return "Dynamic buckling of a column";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"mass", "compressive load", "post-buckling", "damping", "initial offset"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.1,-2.0,0.05,0.0,-1.0};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {5.0,5.0,5.0,2.0,1.0};
-}
-
-initialstate(model: ref Model): array of real
-{
-	return array[] of {model.parameter[4],0.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 30.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	derivative[0] = state[1];
-	derivative[1] = (p[1]*state[0]-p[2]*state[0]*state[0]*state[0]-
-		p[3]*state[1])/p[0];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(nil: ref Model, state: array of real): array of real
-{
-	x := state[0];
-	return array[] of {0.0,-1.5,0.65*x,-0.5,x,0.5,0.0,1.5,-0.5,-1.5,0.5,-1.5};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,1,2,2,3,4,5};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"lateral deflection", "velocity"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {state[0],state[1]};
-}
-
-Command: module
+Columnbuckling: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Dynamic buckling of a column\n" +
+	"param mass 1.0 0.1 5.0\n" +
+	"param compressive_load 1.3 -2.0 5.0\n" +
+	"param post_buckling 1.0 0.05 5.0\n" +
+	"param damping 0.12 0.0 2.0\n" +
+	"param initial_offset 0.08 -1.0 1.0\n" +
+	"maxtime 30.0\n" +
+	"state x initial_offset\n" +
+	"state v 0.0\n" +
+	"derivative x v\n" +
+	"derivative v { compressive_load x - post_buckling x x x - damping v } over mass\n" +
+	"point foot 0.0 , - 1.5\n" +
+	"point lower { 0.65 x } , - 0.5\n" +
+	"point upper x , 0.5\n" +
+	"point head 0.0 , 1.5\n" +
+	"point base_left - 0.5 , - 1.5\n" +
+	"point base_right 0.5 , - 1.5\n" +
+	"link foot lower\n" +
+	"link lower upper\n" +
+	"link upper head\n" +
+	"link base_left base_right\n" +
+	"observable lateral_deflection x\n" +
+	"observable velocity v\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:columnbuckling: cannot load the mechanism viewer";
-	viewer->init(ctxt, "columnbuckling" :: "/dis/danby/columnbuckling.dis" ::
-		"danby-columnbuckling" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:columnbuckling: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "columnbuckling", SPEC)) != nil)
+		raise "fail:columnbuckling: "+e;
 }

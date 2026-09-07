@@ -1,104 +1,57 @@
-implement Mechanism;
+implement Dumbbellsatellite;
 
-# danby/dumbbellsatellite - A dumbbell satellite
+# danby/dumbbellsatellite - a dumbbell satellite
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {2.0,0.55,1.0,0.9,0.015});
-}
-
-title(): string
-{
-	return "A dumbbell satellite";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"orbit radius", "body length", "orbital rate", "initial attitude", "damping"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {1.0,0.1,0.05,-3.0,0.0};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {5.0,2.0,3.0,3.0,0.5};
-}
-
-initialstate(model: ref Model): array of real
-{
-	return array[] of {0.0,model.parameter[3],0.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 30.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	derivative[0] = p[2];
-	derivative[1] = state[2];
-	derivative[2] = -1.5*p[2]*p[2]*math->sin(2.0*state[1])-p[4]*state[2];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(model: ref Model, state: array of real): array of real
-{
-	p := model.parameter;
-	cx := p[0]*math->cos(state[0]);
-	cy := p[0]*math->sin(state[0]);
-	absangle := state[0]+state[1];
-	h := p[1]/2.0;
-	dx := h*math->cos(absangle);
-	dy := h*math->sin(absangle);
-	return array[] of {0.0,0.0,cx-dx,cy-dy,cx+dx,cy+dy,cx,cy};
-}
-
-links(): array of int
-{
-	return array[] of {1,2,0,3};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"orbital phase", "relative attitude"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {state[0],state[1]};
-}
-
-Command: module
+Dumbbellsatellite: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title A dumbbell satellite\n" +
+	"param orbit_radius 2.0 1.0 5.0\n" +
+	"param body_length 0.55 0.1 2.0\n" +
+	"param orbital_rate 1.0 0.05 3.0\n" +
+	"param initial_attitude 0.9 -3.0 3.0\n" +
+	"param damping 0.015 0.0 0.5\n" +
+	"maxtime 30.0\n" +
+	"state phase 0.0\n" +
+	"state attitude initial_attitude\n" +
+	"state rate 0.0\n" +
+	"eq cx orbit_radius cos { phase }\n" +
+	"eq cy orbit_radius sin { phase }\n" +
+	"eq absangle phase + attitude\n" +
+	"eq h body_length over 2.0\n" +
+	"eq dx h cos { absangle }\n" +
+	"eq dy h sin { absangle }\n" +
+	"derivative phase orbital_rate\n" +
+	"derivative attitude rate\n" +
+	"derivative rate - 1.5 orbital_rate orbital_rate sin { 2.0 attitude } - damping rate\n" +
+	"point centre 0.0 , 0.0\n" +
+	"point end_a { cx - dx } , { cy - dy }\n" +
+	"point end_b { cx + dx } , { cy + dy }\n" +
+	"point body cx , cy\n" +
+	"link end_a end_b\n" +
+	"link centre body\n" +
+	"observable orbital_phase phase\n" +
+	"observable relative_attitude attitude\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:dumbbellsatellite: cannot load the mechanism viewer";
-	viewer->init(ctxt, "dumbbellsatellite" :: "/dis/danby/dumbbellsatellite.dis" ::
-		"danby-dumbbellsatellite" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:dumbbellsatellite: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "dumbbellsatellite", SPEC)) != nil)
+		raise "fail:dumbbellsatellite: "+e;
 }

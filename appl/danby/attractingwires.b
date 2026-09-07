@@ -1,97 +1,55 @@
-implement Mechanism;
+implement Attractingwires;
 
-# danby/attractingwires - Two attracting current-carrying wires
+# danby/attractingwires - two attracting current-carrying wires
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	return ref Model(array[] of {1.0,1.0,0.35,2.0,0.12,1.4});
-}
-
-title(): string
-{
-	return "Two attracting current-carrying wires";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"mass", "support spring", "current force", "rest spacing", "damping", "initial spacing"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.1,0.05,0.0,0.4,0.0,0.15};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {5.0,8.0,5.0,4.0,2.0,4.0};
-}
-
-initialstate(model: ref Model): array of real
-{
-	return array[] of {model.parameter[5],0.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 25.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	spacing := state[0];
-	if(spacing < 0.05)
-		spacing = 0.05;
-	derivative[0] = state[1];
-	derivative[1] = (p[1]*(p[3]-spacing)-p[2]/spacing-p[4]*state[1])/p[0];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(nil: ref Model, state: array of real): array of real
-{
-	h := state[0]/2.0;
-	return array[] of {-h,-1.2,-h,1.2,h,-1.2,h,1.2,-2.0,0.0,2.0,0.0};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,2,3,4,5};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"wire spacing", "closing speed"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {state[0],state[1]};
-}
-
-Command: module
+Attractingwires: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Two attracting current-carrying wires\n" +
+	"param mass 1.0 0.1 5.0\n" +
+	"param support_spring 1.0 0.05 8.0\n" +
+	"param current_force 0.35 0.0 5.0\n" +
+	"param rest_spacing 2.0 0.4 4.0\n" +
+	"param damping 0.12 0.0 2.0\n" +
+	"param initial_spacing 1.4 0.15 4.0\n" +
+	"maxtime 25.0\n" +
+	"state spacing initial_spacing\n" +
+	"state closing 0.0\n" +
+	"eq d { spacing + 0.05 + abs { spacing - 0.05 } } over 2.0\n" +
+	"eq h spacing over 2.0\n" +
+	"derivative spacing closing\n" +
+	"derivative closing { support_spring { rest_spacing - d } - current_force over d - damping closing } over mass\n" +
+	"point wire_a_bottom { - h } , - 1.2\n" +
+	"point wire_a_top { - h } , 1.2\n" +
+	"point wire_b_bottom h , - 1.2\n" +
+	"point wire_b_top h , 1.2\n" +
+	"point bench_left - 2.0 , 0.0\n" +
+	"point bench_right 2.0 , 0.0\n" +
+	"link wire_a_bottom wire_a_top\n" +
+	"link wire_b_bottom wire_b_top\n" +
+	"link bench_left bench_right\n" +
+	"observable wire_spacing spacing\n" +
+	"observable closing_speed closing\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:attractingwires: cannot load the mechanism viewer";
-	viewer->init(ctxt, "attractingwires" :: "/dis/danby/attractingwires.dis" ::
-		"danby-attractingwires" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:attractingwires: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "attractingwires", SPEC)) != nil)
+		raise "fail:attractingwires: "+e;
 }

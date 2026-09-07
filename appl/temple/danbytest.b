@@ -96,23 +96,15 @@ include "danby/mechanism.m";
 	shipmotion: Mechanism;
 	balloon: Mechanism;
 	joggingcompanion: Mechanism;
-	bungee: Mechanism;
-	yoyo: Mechanism;
 	amusementchaos: Mechanism;
 	spacestationball: Mechanism;
 	fireworks: Mechanism;
-	spaceyoyo: Mechanism;
-	stretchyoyo: Mechanism;
 	venushead: Mechanism;
 	synchronousmotor: Mechanism;
-	magneticpendulum2d: Mechanism;
 	swing1: Mechanism;
 	swing2: Mechanism;
 	magneticpendulum3d: Mechanism;
-	dumbbellsatellite: Mechanism;
-	columnbuckling: Mechanism;
 	catastrophemachine: Mechanism;
-	attractingwires: Mechanism;
 	violinbow: Mechanism;
 	carrierlanding: Mechanism;
 	chaoticwheel: Mechanism;
@@ -124,7 +116,6 @@ include "danby/mechanism.m";
 	pistonflywheel: Mechanism;
 	wattgovernor: Mechanism;
 	dynamoreversal: Mechanism;
-	twomagnet: Mechanism;
 	bernoulli: Mechanism;
 include "danby/orbital.m";
 	threebody: Orbital;
@@ -240,26 +231,18 @@ init(nil: ref Draw->Context, nil: list of string)
 	shipmotion = load Mechanism "/dis/danby/shipmotion.dis";
 	balloon = load Mechanism "/dis/danby/balloon.dis";
 	joggingcompanion = load Mechanism "/dis/danby/joggingcompanion.dis";
-	bungee = load Mechanism "/dis/danby/bungee.dis";
-	yoyo = load Mechanism "/dis/danby/yoyo.dis";
 	amusementchaos = load Mechanism "/dis/danby/amusementchaos.dis";
 	spacestationball = load Mechanism "/dis/danby/spacestationball.dis";
 	fireworks = load Mechanism "/dis/danby/fireworks.dis";
-	spaceyoyo = load Mechanism "/dis/danby/spaceyoyo.dis";
-	stretchyoyo = load Mechanism "/dis/danby/stretchyoyo.dis";
 	venushead = load Mechanism "/dis/danby/venushead.dis";
 	synchronousmotor = load Mechanism "/dis/danby/synchronousmotor.dis";
-	magneticpendulum2d = load Mechanism "/dis/danby/magneticpendulum2d.dis";
 	swing1 = load Mechanism "/dis/danby/swing1.dis";
 	swing2 = load Mechanism "/dis/danby/swing2.dis";
 	# slidingpendulum1 is now a mechlab(2) script rather than a Mechanism
 	# module - mechlabtest(1) checks it, including the momentum law that
 	# used to be checked here.
 	magneticpendulum3d = load Mechanism "/dis/danby/magneticpendulum3d.dis";
-	dumbbellsatellite = load Mechanism "/dis/danby/dumbbellsatellite.dis";
-	columnbuckling = load Mechanism "/dis/danby/columnbuckling.dis";
 	catastrophemachine = load Mechanism "/dis/danby/catastrophemachine.dis";
-	attractingwires = load Mechanism "/dis/danby/attractingwires.dis";
 	violinbow = load Mechanism "/dis/danby/violinbow.dis";
 	carrierlanding = load Mechanism "/dis/danby/carrierlanding.dis";
 	chaoticwheel = load Mechanism "/dis/danby/chaoticwheel.dis";
@@ -271,7 +254,6 @@ init(nil: ref Draw->Context, nil: list of string)
 	pistonflywheel = load Mechanism "/dis/danby/pistonflywheel.dis";
 	wattgovernor = load Mechanism "/dis/danby/wattgovernor.dis";
 	dynamoreversal = load Mechanism "/dis/danby/dynamoreversal.dis";
-	twomagnet = load Mechanism "/dis/danby/twomagnet.dis";
 	bernoulli = load Mechanism "/dis/danby/bernoulli.dis";
 	threebody = load Orbital "/dis/danby/threebody.dis";
 	moontrip = load Orbital "/dis/danby/moontrip.dis";
@@ -322,23 +304,20 @@ init(nil: ref Draw->Context, nil: list of string)
 			rocket2d == nil || reentry == nil || lowthrust == nil ||
 			running == nil || diving == nil || polevault == nil ||
 			flightmodel == nil || hovercraft == nil || shipmotion == nil ||
-			balloon == nil || joggingcompanion == nil || bungee == nil ||
-			yoyo == nil || amusementchaos == nil || spacestationball == nil ||
+			balloon == nil || joggingcompanion == nil || amusementchaos == nil || spacestationball == nil ||
 			fireworks == nil ||
-			spaceyoyo == nil || stretchyoyo == nil ||
 			threebody == nil || moontrip == nil ||
 			lagrange1 == nil || lagrange2 == nil || cometcatch == nil ||
 			jupiterboost == nil || grandtour == nil || perihelion == nil ||
 			poyntingrobertson == nil || galaxies == nil || venushead == nil ||
 			starmodel == nil || whitedwarf == nil ||
-			synchronousmotor == nil ||
-			magneticpendulum2d == nil || swing1 == nil || swing2 == nil ||
-			magneticpendulum3d == nil || dumbbellsatellite == nil || columnbuckling == nil ||
-			catastrophemachine == nil || attractingwires == nil || violinbow == nil ||
+			synchronousmotor == nil || swing1 == nil || swing2 == nil ||
+			magneticpendulum3d == nil ||
+			catastrophemachine == nil || violinbow == nil ||
 			carrierlanding == nil ||
 			chaoticwheel == nil || fireflies == nil || pursuit == nil ||
 			lowbombing == nil || carbonmicrophone == nil || compass == nil || pistonflywheel == nil ||
-			wattgovernor == nil || dynamoreversal == nil || twomagnet == nil ||
+			wattgovernor == nil || dynamoreversal == nil ||
 			bernoulli == nil)
 		raise "fail:danbytest: missing module";
 	testmap();
@@ -437,23 +416,15 @@ testtrajectory()
 	checkmechanism(shipmotion,"ship motion");
 	checkmechanism(balloon,"balloon");
 	checkmechanism(joggingcompanion,"jogging companion");
-	checkmechanism(bungee,"bungee");
-	checkmechanism(yoyo,"yo-yo");
 	checkmechanism(amusementchaos,"amusement chaos");
 	checkmechanism(spacestationball,"space-station ball");
 	checkmechanism(fireworks,"fireworks");
-	checkmechanism(spaceyoyo,"space yo-yo");
-	checkmechanism(stretchyoyo,"stretch yo-yo");
 	checkmechanism(venushead,"Venus ray geometry");
 	checkmechanism(synchronousmotor,"synchronous motor");
-	checkmechanism(magneticpendulum2d,"magnetic pendulum 2d");
 	checkmechanism(swing1,"child swing 1");
 	checkmechanism(swing2,"child swing 2");
 	checkmechanism(magneticpendulum3d,"magnetic pendulum 3d");
-	checkmechanism(dumbbellsatellite,"dumbbell satellite");
-	checkmechanism(columnbuckling,"column buckling");
 	checkmechanism(catastrophemachine,"catastrophe machine");
-	checkmechanism(attractingwires,"attracting wires");
 	checkmechanism(violinbow,"violin bow");
 	checkmechanism(carrierlanding,"carrier landing");
 	checkmechanism(chaoticwheel,"chaotic driven wheel");
@@ -465,7 +436,6 @@ testtrajectory()
 	checkmechanism(pistonflywheel,"piston and flywheel");
 	checkmechanism(wattgovernor,"Watt governor");
 	checkmechanism(dynamoreversal,"reversal dynamo");
-	checkmechanism(twomagnet,"two-magnet toy");
 	checkmechanism(bernoulli,"Bernoulli problem");
 	checkorbital(threebody,"three body");
 	checkorbital(moontrip,"Moon trip");

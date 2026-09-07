@@ -1,104 +1,55 @@
-implement Mechanism;
+implement Bungee;
 
-# danby/bungee - A bungee jump
+# danby/bungee - a bungee jump
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {18.0,55.0,45.0,12.0,0.8,9.81});
-}
-
-title(): string
-{
-	return "A bungee jump";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"cord length", "stiffness", "mass", "damping", "air drag", "gravity"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {2.0,5.0,25.0,0.0,0.0,0.0};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {40.0,180.0,120.0,60.0,5.0,20.0};
-}
-
-initialstate(nil: ref Model): array of real
-{
-	return array[] of {0.0,0.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 25.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	distance := state[0];
-	velocity := state[1];
-	extension := distance-p[0];
-	if(extension < 0.0)
-		extension = 0.0;
-	cordforce := p[1]*extension;
-	if(extension > 0.0)
-		cordforce += p[3]*velocity;
-	derivative[0] = velocity;
-	derivative[1] = p[5]-(cordforce+p[4]*velocity)/p[2];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {0.0,0.0,0.0,-state[0],-0.6,0.0,0.6,0.0};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,2,3};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"fall distance", "speed"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {state[0],state[1]};
-}
-
-Command: module
+Bungee: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title A bungee jump\n" +
+	"param cord_length 18.0 2.0 40.0\n" +
+	"param stiffness 55.0 5.0 180.0\n" +
+	"param mass 45.0 25.0 120.0\n" +
+	"param damping 12.0 0.0 60.0\n" +
+	"param air_drag 0.8 0.0 5.0\n" +
+	"param gravity 9.81 0.0 20.0\n" +
+	"maxtime 25.0\n" +
+	"state distance 0.0\n" +
+	"state speed 0.0\n" +
+	# the cord pulls only once it is taut, and only then does its damper act
+	"eq slack distance - cord_length\n" +
+	"eq extension { slack + abs { slack } } over 2.0\n" +
+	"eq taut step { slack }\n" +
+	"eq cordforce stiffness extension + taut damping speed\n" +
+	"derivative distance speed\n" +
+	"derivative speed gravity - { cordforce + air_drag speed } over mass\n" +
+	"point platform 0.0 , 0.0\n" +
+	"point jumper 0.0 , { - distance }\n" +
+	"point rail_left - 0.6 , 0.0\n" +
+	"point rail_right 0.6 , 0.0\n" +
+	"link platform jumper\n" +
+	"link rail_left rail_right\n" +
+	"observable fall_distance distance\n" +
+	"observable speed speed\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:bungee: cannot load the mechanism viewer";
-	viewer->init(ctxt, "bungee" :: "/dis/danby/bungee.dis" ::
-		"danby-bungee" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:bungee: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "bungee", SPEC)) != nil)
+		raise "fail:bungee: "+e;
 }
