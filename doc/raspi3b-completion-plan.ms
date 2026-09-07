@@ -737,24 +737,70 @@ and keeps doing so, on a real Pi as much as under an emulator, so a
 kernel that arms one on every boot just to look at it is a kernel that
 can brick its own boot.
 .PP
-PWM (0x3f20c000) is still
-.B "not attempted,"
-and now for one reason rather than two.  QEMU's raspi3b maps nothing at
-.CW PWM_OFFSET
-\- not even an unimplemented stub \- but that is no longer the
-obstacle it was, since a model can be written as the watchdog and GPIO
-ones were.  The reason that survives is the other one: there is nothing
-here PWM would let the board do that it cannot already, and no driver
-wanting it.  Writing both halves of a device nothing consumes would
-produce a test that only proves the two agree with each other.
+PWM (0x3f20c000) is
+.B DONE
+under QEMU, model and driver both.
 .PP
-So PWM waits behind the unmodelled device that does have a consumer:
-an SDIO function, which is what Phase 6
-and
-.CW sdhcibcm.c 's
-.CW sdiocmd52 / sdiocmd53
-are blocked on.  If PWM is picked up later, the plan should first say
-what would use it.
+Nothing on the board wanted it and QEMU mapped nothing there \- not
+even an unimplemented stub, so a guest reached unassigned memory.  Both
+halves now exist:
+.CW tools/qemu-patches/0007
+models the block, and
+.CW pwmbcm.c
+drives it.  The driver is written as the worked example of how to bring
+a clock-fed BCM2835 peripheral up, because the order matters and is not
+obvious: give the block a clock from the clock manager first (a channel
+enabled before that sits there doing nothing), stop the clock before
+changing its divisor and wait for BUSY to fall (a divisor written to a
+running clock is ignored), carry the 0x5a password on every clock
+manager write, and only then route the pin.  It also names the
+distinction a PWM driver most often gets wrong: mark/space mode emits
+one contiguous pulse per period, which is what a servo measures, while
+balanced mode spreads the on-cycles through the period, which is what a
+light or a motor wants.  Both produce the same average voltage and
+different behaviour.
+.PP
+.CW pwminit()
+exercises the clock manager, both duty modes, the FIFO's full and empty
+flags, and both error bits including that they are cleared by writing
+one to them:
+.CW "PWM-OK clock, mark/space, balanced, FIFO full/empty and errors" .
+On stock QEMU it reports
+.CW PWM-NONE
+and the board carries on, since the block is genuinely absent there.
+.PP
+.B "It found a real QEMU bug."
+The first attempt reported the clock started when it had not: the
+driver returned a frequency it had computed itself rather than one the
+hardware confirmed.  Checking CM_PWMCTL's BUSY bit instead showed the
+clock manager had accepted the programming and done nothing with it.
+The cause is in
+.CW hw/misc/bcm2835_cprman.c :
+.CW update_mux_from_cm()
+matches a mux's divisor register at
+.CW "cm_offset + 4" ,
+but
+.CW cm_offset
+is a word index and a mux's CTL and DIV are adjacent words, so
+.CW "+ 4"
+names the CTL register of the mux two slots on.  CM_PWMCTL, at word 40,
+is matched by the OTP mux's 36 + 4 \- so programming the PWM clock
+updated the OTP mux and returned, and the PWM clock never started.
+.CW tools/qemu-patches/0006
+matches
+.CW "cm_offset + 1" .
+This affects every mux, not just PWM.
+.PP
+With that fixed the two sides agree independently: the driver computes
+19.2MHz / 96 = 200kHz from the divisor it wrote, and the model derives
+200kHz through the clock manager from the oscillator.  That agreement
+is worth more than either number alone.
+.PP
+What the model does not do is run a serialiser: nothing consumes the
+FIFO on its own and no waveform reaches a pin, so the GAPO bits never
+come on by themselves and a duty cycle cannot be measured here.  The
+registers, the FIFO discipline and the error reporting are what a
+driver gets wrong, and those are covered.
 .NH 1
 Parallel: the kfs create failure -- re-diagnosed, and it is not what the old note said
 .PP

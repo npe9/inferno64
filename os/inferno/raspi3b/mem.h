@@ -47,6 +47,8 @@
 #define	RNG0		(BCMPERIPH + 0x104000)	/* BCM2835 hardware RNG */
 #define	I2C0		(BCMPERIPH + 0x205000)	/* BCM2835 BSC0 (i2c-bus.0) */
 #define	SPI0		(BCMPERIPH + 0x204000)	/* BCM2835 SPI0 */
+#define	CPRMAN		(BCMPERIPH + 0x101000)	/* BCM2835 clock manager */
+#define	PWM0		(BCMPERIPH + 0x20c000)	/* BCM2835 PWM */
 
 
 /* Mach struct above typical kernel image */

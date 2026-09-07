@@ -124,6 +124,33 @@ THE PATCHES
 	the Arasan -- so SDHCI-NONE is then the correct result, not a
 	failure.
 
+0006 hw/misc/bcm2835_cprman: match a clock mux's divisor register.
+
+	A real qemu bug, found by writing the PWM driver.
+	update_mux_from_cm() matches a mux's CM_DIV at cm_offset + 4,
+	but cm_offset is a word index and CTL/DIV are adjacent words,
+	so "+ 4" names the CTL register of the mux two slots on.
+	CM_PWMCTL (word 40) is matched by the OTP mux's 36 + 4, so
+	programming the PWM clock updated the OTP mux and returned and
+	the PWM clock never started.  Affects every mux, not just PWM.
+
+0007 hw/misc: model the BCM2835 PWM.
+
+	PWM_OFFSET was defined and nothing was mapped there, so a
+	guest reached unassigned memory.  Two channels, range and data
+	registers, the shared 16-word FIFO with full/empty, the status
+	register, and the serialiser clock taken from the clock
+	manager's "pwm" mux so a channel enabled without a clock is
+	reported rather than silently idle.
+
+	No serialiser runs: nothing consumes the FIFO on its own and
+	no waveform reaches a pin, so GAPO never comes on by itself
+	and a duty cycle cannot be measured.  The registers, the FIFO
+	discipline and the error reporting are modelled, which is the
+	part a driver gets wrong.
+
+	Needs no command-line argument; the block is part of the SoC.
+
 SELF-TESTS
 
 Two kernel self-tests are compiled out by default, because each can
@@ -216,6 +243,15 @@ the I/O function, so the card stays on SDHOST.
 Against stock qemu the watchdog test reboot-loops and never reaches a
 banner, and the routing test reports SDROUTE-FAIL.  The default kernel,
 with neither define, boots clean on both.
+
+The PWM needs no define either.  A default kernel on patched qemu
+prints:
+
+	pwm: pwm at 0x3f20c000, serialiser clock 200000 Hz
+	PWM-OK clock, mark/space, balanced, FIFO full/empty and errors
+
+and on stock qemu prints PWM-NONE and carries on, the block being
+genuinely absent there.
 
 The LAN9514 needs no define.  With patched qemu and the device
 attached, a default kernel prints:

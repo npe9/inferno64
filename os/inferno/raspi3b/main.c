@@ -157,6 +157,10 @@ main(void)
 	{	/* power management: the watchdog, and the reset it drives */
 		extern void pminit(void);
 		pminit();
+		{
+			extern void pwminit(void);
+			pwminit();
+		}
 #ifdef SDIOTEST
 		{
 			extern void sdiocheck(void);
