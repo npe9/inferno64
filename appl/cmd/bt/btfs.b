@@ -322,8 +322,26 @@ init(nil: ref Draw->Context, argv: list of string)
 	rl: list of ref Radio;
 	for(sl := specs; sl != nil; sl = tl sl){
 		r := ref Radio;
+		#
+		# All of it, including the scalars that start at zero: a
+		# ref adt's integer fields hold whatever was in the heap,
+		# so a radio could otherwise begin believing it was
+		# already scanning, or advertising, or that its
+		# advertising parameters had been set.
+		#
 		r.n = n++;
 		r.spec = hd sl;
+		r.scanning = 0;
+		r.advertising = 0;
+		r.advset = 0;
+		r.advname = nil;
+		r.lq = big 0;
+		r.q = big 0;
+		r.rq = big 0;
+		r.devs = nil;
+		r.bonds = nil;
+		r.svcs = nil;
+		r.lchars = nil;
 		r.devlock = chan[1] of int;
 		r.devlock <-= 1;
 		r.bondlock = chan[1] of int;
@@ -721,6 +739,21 @@ newdev(r: ref Radio, name: string, addr: array of byte, atype: int): ref Dev
 	d.atype = atype;
 	d.state = "seen";
 	d.seen = daytime();
+	# the rest of the scalars, for the reason above
+	d.scv = 0;
+	d.sccccd = 0;
+	d.idtype = 0;
+	d.rssi = 0;
+	d.id = nil;
+	d.name = nil;
+	d.adv = nil;
+	d.conn = nil;
+	d.mux = nil;
+	d.sess = nil;
+	d.chars = nil;
+	d.cocs = nil;
+	d.lq = big 0;
+	d.gq = big 0;
 	d.lock = chan[1] of int;
 	d.lock <-= 1;
 	d.q = newnode(Kdev, r, d, nil, name);

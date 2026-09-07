@@ -85,9 +85,28 @@ open(m: ref Mux, cid: int): chan of array of byte
 	c := lookup(m, cid);
 	if(c == nil){
 		c = ref Chan;
+		#
+		# The credit fields too, though a fixed channel never
+		# reads them: a ref adt's integer fields are whatever was
+		# in the heap, and a channel whose dcid or credit count
+		# is garbage is a channel that looks open to anything
+		# that walks the list.
+		#
 		c.cid = cid;
 		c.state = Sfixed;
 		c.rq = chan[Qdepth] of array of byte;
+		c.dcid = 0;
+		c.psm = 0;
+		c.mtu = 0;
+		c.mps = 0;
+		c.dmtu = 0;
+		c.dmps = 0;
+		c.rxcred = 0;
+		c.txcred = 0;
+		c.have = 0;
+		c.pdus = 0;
+		c.sdu = nil;
+		c.err = nil;
 		m.chans = c :: m.chans;
 	}
 	m.reply <-= 1;
@@ -519,6 +538,14 @@ connect(m: ref Mux, psm: int): (ref Chan, string)
 	c := ref Chan;
 	c.cid = cid;
 	c.state = Swait;
+	c.dcid = 0;
+	c.dmtu = 0;
+	c.dmps = 0;
+	c.txcred = 0;
+	c.have = 0;
+	c.pdus = 0;
+	c.sdu = nil;
+	c.err = nil;
 	c.psm = psm;
 	c.mtu = Cmtu;
 	c.mps = mps;

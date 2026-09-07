@@ -107,7 +107,18 @@ start(tr: Bttransport): (ref Ctlr, string)
 	x.aclsize = 27;
 	x.aclbufs = 1;
 	x.credits = chan[1] of int;
-
+	#
+	# Every scalar, and not only the ones with an interesting
+	# value.  A ref adt's integer fields are whatever was in the
+	# heap -- the allocator sets the pointer words and leaves the
+	# rest -- so a counter that was a module variable, which Limbo
+	# does zero, becomes a counter that starts at anything when it
+	# moves into an adt.  scodrop did exactly that: it began at 128
+	# on this heap, one SCO packet made it 129, and the bench read
+	# a hundred and twenty nine drops from one dropped packet.
+	#
+	x.scodrop = 0;
+	x.adv = 0;
 	x.running = 1;
 	spawn reader(x);
 

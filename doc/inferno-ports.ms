@@ -20624,16 +20624,53 @@ With it in, the shell runs, and two full bench runs produced no panic,
 no native fault and no hang: what had been a different phase failing
 every time became one phase failing the same way twice.  That is what
 a fixed concurrency bug looks like from outside.
+.NH 2
+A ref adt does not zero its integers
 .PP
-What is left is that phase.  The
+That left one phase, and being able to reproduce it is what made it
+findable.  The
 .CW sco
-phase asserts that three SCO packets sent are three counted; the
-controller model sends one and the guest reports a hundred and
-twenty nine.  One fourteen byte packet on the wire cannot become a
-hundred and twenty nine reads of it, so either the count is not what
-it says or the transport is not reading what was sent.  It is
-reproducible now, which it was not before, and that is where the next
-person should start.
+phase asserts that three SCO packets sent are three counted; the model
+sent one and the guest reported a hundred and twenty nine.
+.PP
+The transport was innocent, which a print in
+.CW h4.b
+settled in one run: exactly one SCO packet was framed, with the right
+header and the right length.  A print at the counter settled the rest.
+It read a hundred and twenty eight
+.I before
+the packet arrived.
+.PP
+.CW "ref Ctlr"
+allocates an adt and sets its pointer words; its integer words are
+whatever was in the heap.
+.CW scodrop
+was a module level variable until the day the stack learned about more
+than one controller, and Limbo does zero those; moving it into an adt
+and not initialising it turned a counter that started at zero into one
+that started at whatever.  Four lines of a four line program show it
+plainly \(em allocate a ref adt after churning the heap and print its
+ints \(em and it is not a subtle rule, only an easy one to walk past
+when a variable moves.
+.PP
+So every scalar in the adts that arrived with the multiple controller
+work is now set: the controller's counters,
+.CW btfs 's
+per radio scanning and advertising flags, its per device Service
+Changed handle, and the credit fields of a fixed L2CAP channel.  The
+flags are the alarming ones \(em a radio could begin believing it was
+already advertising \(em and they explain intermittency across the
+whole bench far better than anything above, because what they hold
+depends on what the heap held, which depends on everything.
+.PP
+It is worth being plain about the order of these two.  Serialising Dis
+came first and removed the panics and the native faults; this came
+second and removed the assertion that was left.  Both were real.  But
+this one was mine, introduced in this session, and it had been failing
+phases at random for a while before it was cornered \(em which is what
+an uninitialised integer does, and why the earlier note here reaching
+for "the phases whose timing is marginal" was reaching for the wrong
+kind of explanation.
 .NH 2
 What is not there
 .PP
