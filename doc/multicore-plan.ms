@@ -1098,6 +1098,58 @@ on than a rare one with no switch at all, and it means the reproducer
 is useful to the
 .CW doc/inferno-ports.ms
 hunt without either investigation having to wait for the other.
+.NH 2
+The recipe, and why the collector-off case is the one to use
+.PP
+Two switches at the top of
+.CW os/inferno/virtarm64/main.c :
+.CW secsched
+puts cpu1 into the scheduler,
+.CW nogc
+raises
+.CW gchalt
+at boot so the collector never runs.  Booted with
+.CW "qemu-system-aarch64 -M virt -cpu cortex-a53 -smp 2" :
+.IP
+.nf
+secsched  nogc     result over ten boots
+    0       0      10 clean
+    1       0       9 clean, 1 corrupt
+    1       1       5 clean, 5 corrupt
+.fi
+.PP
+Use the third row.  Not only because it fails half the time rather than
+one time in ten, but because when it fails it fails
+.I identically :
+.IP
+.nf
+CHANGED TO BAD VALUE addr 0x437ed3b0 old 0x43716930 new 0x0
+.fi
+.PP
+the same address and the same previous value in every one of the five,
+against a pc64 needle that has never repeated an address once.  The
+whole run is deterministic enough to put a watchpoint on.
+.PP
+What the failure looks like underneath: the object at
+.CW 0x437ed360
+has words zeroed, and its
+.CW Type
+reads
+.CW "size 0 np 0" ,
+while a neighbour's reads
+.CW "size 1132271384" .
+Those are not types.  With the collector halted nothing is reclaimed by
+.I it ,
+so an object whose header has been overwritten and whose words have
+been zeroed is an object that
+.CW destroy()
+freed on a refcount reaching zero and something else then allocated and
+cleared \- which is a premature free, and is what the
+.CW "mcall / movp / destroy"
+name in
+.CW doc/inferno-ports.ms
+has meant all along.  The collector was never the suspect it looked
+like; the refcount is.
 .PP
 What is still not done, so the state is not overstated: GICv3 (the
 redistributor is per processor and this board derives one fixed base),
