@@ -502,8 +502,20 @@ destroy(void *v)
 			dumpstack();
 			abort();
 		}
-		if(n > 0 || gchalt > 64) 	/* Protect 'C' thread stack */
+		if(n > 0)
 			return;
+		if(gcdepth > 64){
+			/*
+			 * Too deep to keep recursing; protect the C stack and
+			 * leave this object for the collector, which will find
+			 * it unreachable.  Not a leak, a handover -- and it
+			 * really happens: three times in a plain shell spawn
+			 * storm, with the depth reaching 65.  Counted so that
+			 * stays visible.
+			 */
+			gcdeferred++;
+			return;
+		}
 	}
 
 	if(heapmonitor != nil)

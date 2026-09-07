@@ -414,8 +414,24 @@ struct Handler
 #define H		((void*)(-1))
 #define SEXTYPE(f)	((Stkext*)((uchar*)(f)-OA(Stkext, reg.tos.fu)))
 #define Setmark(h)	if((h)->color!=mutator) { (h)->color = propagator; nprop=1; }
-#define gclock()	gchalt++
-#define gcunlock()	gchalt--
+/*
+ * Two things, deliberately not one counter.  gcdepth is how deep this
+ * context is in nested destruction -- destroy() calls t->free() calls
+ * destroy() -- and libinterp/heap.c reads it to stop recursing before
+ * it runs out of C stack.  That is a property of one thread's stack.
+ * gchalt is "do not collect now", which is a property of the heap:
+ * libprefab raises it while building a Prefab, and the collector
+ * refuses to run while it is set.
+ *
+ * They shared a counter until now, which is harmless on one processor
+ * because the only thing nested inside a destroy is another destroy.
+ * On two it fails both ways: one processor's recursion depth would
+ * suppress another's collector, and one processor building a Prefab
+ * would make another believe it was 64 destroys deep and stop freeing.
+ * See doc/dis-parallel-plan.ms.
+ */
+#define gclock()	do{ gchalt++; if(++gcdepth > gcdepthmax) gcdepthmax = gcdepth; }while(0)
+#define gcunlock()	do{ gchalt--; gcdepth--; }while(0)
 #define gcruns()	(gchalt == 0)
 
 /* Atomic refcount inc/dec: the scheduler genuinely runs multiple native
@@ -483,6 +499,9 @@ extern	Module*	modules;
 extern	int	mutator;
 extern	int	nprop;
 extern	int	gchalt;
+extern	int	gcdepth;
+extern	int	gcdepthmax;
+extern	ulong	gcdeferred;
 extern	int	gccolor;
 extern	int	minvalid;
 

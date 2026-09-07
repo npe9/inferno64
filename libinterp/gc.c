@@ -23,6 +23,9 @@ struct Ptrhash
 
 	int	nprop;
 	int	gchalt;
+	int	gcdepth;	/* this context's destroy recursion depth */
+	int	gcdepthmax;	/* high-water mark of it, for #%/memgc */
+	ulong	gcdeferred;	/* frees the depth guard handed to the collector */
 	int	mflag;
 	int	mutator = 0;
 	int	gccolor = 3;
