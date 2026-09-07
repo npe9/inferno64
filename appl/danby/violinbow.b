@@ -1,98 +1,56 @@
-implement Mechanism;
+implement Violinbow;
 
-# danby/violinbow - A violin bow acting on a string
+# danby/violinbow - a violin bow acting on a string
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {1.0,20.0,0.25,1.0,3.0,0.06});
-}
-
-title(): string
-{
-	return "A violin bow acting on a string";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"mass", "string stiffness", "damping", "bow speed", "friction", "slip scale"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.1,0.5,0.0,-4.0,0.0,0.005};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {5.0,80.0,4.0,4.0,12.0,0.5};
-}
-
-initialstate(nil: ref Model): array of real
-{
-	return array[] of {0.0,0.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 20.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	relative := p[3]-state[1];
-	friction := p[4]*math->tanh(relative/p[5])/(1.0+4.0*relative*relative);
-	derivative[0] = state[1];
-	derivative[1] = (-p[1]*state[0]-p[2]*state[1]+friction)/p[0];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {-2.0,0.0,0.0,state[0],2.0,0.0,-1.2,0.55,1.2,0.55};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,1,2,3,4};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"string displacement", "string velocity"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {state[0],state[1]};
-}
-
-Command: module
+Violinbow: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title A violin bow acting on a string\n" +
+	"param mass 1.0 0.1 5.0\n" +
+	"param string_stiffness 20.0 0.5 80.0\n" +
+	"param damping 0.25 0.0 4.0\n" +
+	"param bow_speed 1.0 -4.0 4.0\n" +
+	"param friction 3.0 0.0 12.0\n" +
+	"param slip_scale 0.06 0.005 0.5\n" +
+	"maxtime 20.0\n" +
+	"state x 0.0\n" +
+	"state v 0.0\n" +
+	# stick-slip: the bow grips hard while the string moves with it and lets
+	# go as the relative speed grows
+	"eq relative bow_speed - v\n" +
+	"eq grip friction tanh { relative over slip_scale } over { 1.0 + 4.0 relative relative }\n" +
+	"derivative x v\n" +
+	"derivative v { - string_stiffness x - damping v + grip } over mass\n" +
+	"point bridge - 2.0 , 0.0\n" +
+	"point string 0.0 , x\n" +
+	"point nut 2.0 , 0.0\n" +
+	"point bow_left - 1.2 , 0.55\n" +
+	"point bow_right 1.2 , 0.55\n" +
+	"link bridge string\n" +
+	"link string nut\n" +
+	"link bow_left bow_right\n" +
+	"observable string_displacement x\n" +
+	"observable string_velocity v\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:violinbow: cannot load the mechanism viewer";
-	viewer->init(ctxt, "violinbow" :: "/dis/danby/violinbow.dis" ::
-		"danby-violinbow" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:violinbow: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "violinbow", SPEC)) != nil)
+		raise "fail:violinbow: "+e;
 }

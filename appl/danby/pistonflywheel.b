@@ -1,111 +1,62 @@
-implement Mechanism;
+implement Pistonflywheel;
 
-# danby/pistonflywheel - The motion of a piston and flywheel
+# danby/pistonflywheel - the motion of a piston and flywheel
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {0.65,1.5,2.0,1.0,0.18,0.8});
-}
-
-title(): string
-{
-	return "The motion of a piston and flywheel";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"crank radius", "rod length", "wheel inertia", "drive torque", "damping", "load"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.1,0.3,0.1,-5.0,0.0,0.0};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {2.0,5.0,10.0,8.0,3.0,5.0};
-}
-
-initialstate(nil: ref Model): array of real
-{
-	return array[] of {0.0,0.6};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 30.0;
-}
-
-pistonposition(model: ref Model, angle: real): real
-{
-	p := model.parameter;
-	s := p[0]*math->sin(angle);
-	inside := p[1]*p[1]-s*s;
-	if(inside < 0.0)
-		inside = 0.0;
-	return p[0]*math->cos(angle)+math->sqrt(inside);
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	loadtorque := p[5]*math->sin(state[0]);
-	derivative[0] = state[1];
-	derivative[1] = (p[3]-p[4]*state[1]-loadtorque)/p[2];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(model: ref Model, state: array of real): array of real
-{
-	p := model.parameter;
-	cx := p[0]*math->cos(state[0]);
-	cy := p[0]*math->sin(state[0]);
-	px := pistonposition(model,state[0]);
-	return array[] of {0.0,0.0,cx,cy,px,0.0,px,-0.35,px,0.35,-p[0],0.0,p[0],0.0};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,1,2,3,4,5,6};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"piston position", "wheel speed"};
-}
-
-observables(model: ref Model, state: array of real): array of real
-{
-	return array[] of {pistonposition(model,state[0]),state[1]};
-}
-
-Command: module
+Pistonflywheel: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title The motion of a piston and flywheel\n" +
+	"param crank_radius 0.65 0.1 2.0\n" +
+	"param rod_length 1.5 0.3 5.0\n" +
+	"param wheel_inertia 2.0 0.1 10.0\n" +
+	"param drive_torque 1.0 -5.0 8.0\n" +
+	"param damping 0.18 0.0 3.0\n" +
+	"param load 0.8 0.0 5.0\n" +
+	"maxtime 30.0\n" +
+	"state angle 0.0\n" +
+	"state spin 0.6\n" +
+	"eq cx crank_radius cos { angle }\n" +
+	"eq cy crank_radius sin { angle }\n" +
+	# the rod cannot reach past the crank, so the root is held at zero rather
+	# than going imaginary when the two are badly matched
+	"eq raw rod_length rod_length - cy cy\n" +
+	"eq inside { raw + abs { raw } } over 2.0\n" +
+	"eq piston cx + sqrt { inside }\n" +
+	"derivative angle spin\n" +
+	"derivative spin { drive_torque - damping spin - load sin { angle } } over wheel_inertia\n" +
+	"point hub 0.0 , 0.0\n" +
+	"point crank_pin cx , cy\n" +
+	"point piston_pin piston , 0.0\n" +
+	"point piston_bottom piston , - 0.35\n" +
+	"point piston_top piston , 0.35\n" +
+	"point guide_left { - crank_radius } , 0.0\n" +
+	"point guide_right crank_radius , 0.0\n" +
+	"link hub crank_pin\n" +
+	"link crank_pin piston_pin\n" +
+	"link piston_bottom piston_top\n" +
+	"link guide_left guide_right\n" +
+	"observable piston_position piston\n" +
+	"observable wheel_speed spin\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:pistonflywheel: cannot load the mechanism viewer";
-	viewer->init(ctxt, "pistonflywheel" :: "/dis/danby/pistonflywheel.dis" ::
-		"danby-pistonflywheel" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:pistonflywheel: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "pistonflywheel", SPEC)) != nil)
+		raise "fail:pistonflywheel: "+e;
 }

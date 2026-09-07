@@ -1,98 +1,53 @@
-implement Mechanism;
+implement Synchronousmotor;
 
-# danby/synchronousmotor - Pull-out torques of synchronous motors
+# danby/synchronousmotor - pull-out torques of synchronous motors
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {4.0,2.0,0.8,1.0,0.18,0.0});
-}
-
-title(): string
-{
-	return "Pull-out torques of synchronous motors";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"field speed", "maximum torque", "load torque", "inertia", "damping", "initial lag"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.1,0.1,-4.0,0.1,0.0,-3.14};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {10.0,8.0,4.0,5.0,2.0,3.14};
-}
-
-initialstate(model: ref Model): array of real
-{
-	return array[] of {model.parameter[5],0.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 30.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	derivative[0] = state[1];
-	derivative[1] = (p[2]-p[1]*math->sin(state[0])-p[4]*state[1])/p[3];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(nil: ref Model, state: array of real): array of real
-{
-	rotor := state[0];
-	return array[] of {0.0,0.0,math->cos(rotor),math->sin(rotor),
-		0.0,0.0,1.0,0.0,-1.0,0.0,0.0,-1.0};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,2,3,4,5};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"phase lag", "slip speed"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {state[0],state[1]};
-}
-
-Command: module
+Synchronousmotor: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Pull-out torques of synchronous motors\n" +
+	"param field_speed 4.0 0.1 10.0\n" +
+	"param maximum_torque 2.0 0.1 8.0\n" +
+	"param load_torque 0.8 -4.0 4.0\n" +
+	"param inertia 1.0 0.1 5.0\n" +
+	"param damping 0.18 0.0 2.0\n" +
+	"param initial_lag 0.0 -3.14 3.14\n" +
+	"maxtime 30.0\n" +
+	"state lag initial_lag\n" +
+	"state slip 0.0\n" +
+	"derivative lag slip\n" +
+	"derivative slip { load_torque - maximum_torque sin { lag } - damping slip } over inertia\n" +
+	"point centre 0.0 , 0.0\n" +
+	"point rotor cos { lag } , sin { lag }\n" +
+	"point stator_centre 0.0 , 0.0\n" +
+	"point stator_east 1.0 , 0.0\n" +
+	"point stator_west - 1.0 , 0.0\n" +
+	"point stator_south 0.0 , - 1.0\n" +
+	"link centre rotor\n" +
+	"link stator_centre stator_east\n" +
+	"link stator_west stator_south\n" +
+	"observable phase_lag lag\n" +
+	"observable slip_speed slip\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:synchronousmotor: cannot load the mechanism viewer";
-	viewer->init(ctxt, "synchronousmotor" :: "/dis/danby/synchronousmotor.dis" ::
-		"danby-synchronousmotor" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:synchronousmotor: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "synchronousmotor", SPEC)) != nil)
+		raise "fail:synchronousmotor: "+e;
 }

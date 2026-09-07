@@ -94,23 +94,13 @@ include "danby/mechanism.m";
 	flightmodel: Mechanism;
 	hovercraft: Mechanism;
 	shipmotion: Mechanism;
-	balloon: Mechanism;
 	joggingcompanion: Mechanism;
 	spacestationball: Mechanism;
 	fireworks: Mechanism;
 	venushead: Mechanism;
-	synchronousmotor: Mechanism;
 	magneticpendulum3d: Mechanism;
-	catastrophemachine: Mechanism;
-	violinbow: Mechanism;
 	carrierlanding: Mechanism;
-	fireflies: Mechanism;
 	lowbombing: Mechanism;
-	carbonmicrophone: Mechanism;
-	pistonflywheel: Mechanism;
-	wattgovernor: Mechanism;
-	dynamoreversal: Mechanism;
-	bernoulli: Mechanism;
 include "danby/orbital.m";
 	threebody: Orbital;
 	moontrip: Orbital;
@@ -223,26 +213,16 @@ init(nil: ref Draw->Context, nil: list of string)
 	flightmodel = load Mechanism "/dis/danby/flight.dis";
 	hovercraft = load Mechanism "/dis/danby/hovercraft.dis";
 	shipmotion = load Mechanism "/dis/danby/shipmotion.dis";
-	balloon = load Mechanism "/dis/danby/balloon.dis";
 	joggingcompanion = load Mechanism "/dis/danby/joggingcompanion.dis";
 	spacestationball = load Mechanism "/dis/danby/spacestationball.dis";
 	fireworks = load Mechanism "/dis/danby/fireworks.dis";
 	venushead = load Mechanism "/dis/danby/venushead.dis";
-	synchronousmotor = load Mechanism "/dis/danby/synchronousmotor.dis";
 	# slidingpendulum1 is now a mechlab(2) script rather than a Mechanism
 	# module - mechlabtest(1) checks it, including the momentum law that
 	# used to be checked here.
 	magneticpendulum3d = load Mechanism "/dis/danby/magneticpendulum3d.dis";
-	catastrophemachine = load Mechanism "/dis/danby/catastrophemachine.dis";
-	violinbow = load Mechanism "/dis/danby/violinbow.dis";
 	carrierlanding = load Mechanism "/dis/danby/carrierlanding.dis";
-	fireflies = load Mechanism "/dis/danby/fireflies.dis";
 	lowbombing = load Mechanism "/dis/danby/lowbombing.dis";
-	carbonmicrophone = load Mechanism "/dis/danby/carbonmicrophone.dis";
-	pistonflywheel = load Mechanism "/dis/danby/pistonflywheel.dis";
-	wattgovernor = load Mechanism "/dis/danby/wattgovernor.dis";
-	dynamoreversal = load Mechanism "/dis/danby/dynamoreversal.dis";
-	bernoulli = load Mechanism "/dis/danby/bernoulli.dis";
 	threebody = load Orbital "/dis/danby/threebody.dis";
 	moontrip = load Orbital "/dis/danby/moontrip.dis";
 	lagrange1 = load Orbital "/dis/danby/lagrange1.dis";
@@ -291,21 +271,16 @@ init(nil: ref Draw->Context, nil: list of string)
 			icbmrange == nil || icbmaccuracy == nil ||
 			rocket2d == nil || reentry == nil || lowthrust == nil ||
 			running == nil || diving == nil || polevault == nil ||
-			flightmodel == nil || hovercraft == nil || shipmotion == nil ||
-			balloon == nil || joggingcompanion == nil || spacestationball == nil ||
+			flightmodel == nil || hovercraft == nil || shipmotion == nil || joggingcompanion == nil || spacestationball == nil ||
 			fireworks == nil ||
 			threebody == nil || moontrip == nil ||
 			lagrange1 == nil || lagrange2 == nil || cometcatch == nil ||
 			jupiterboost == nil || grandtour == nil || perihelion == nil ||
 			poyntingrobertson == nil || galaxies == nil || venushead == nil ||
 			starmodel == nil || whitedwarf == nil ||
-			synchronousmotor == nil ||
 			magneticpendulum3d == nil ||
-			catastrophemachine == nil || violinbow == nil ||
-			carrierlanding == nil || fireflies == nil ||
-			lowbombing == nil || carbonmicrophone == nil || pistonflywheel == nil ||
-			wattgovernor == nil || dynamoreversal == nil ||
-			bernoulli == nil)
+			carrierlanding == nil ||
+			lowbombing == nil)
 		raise "fail:danbytest: missing module";
 	testmap();
 	testpendulum();
@@ -401,23 +376,13 @@ testtrajectory()
 	checkmechanism(flightmodel,"flight");
 	checkmechanism(hovercraft,"hovercraft");
 	checkmechanism(shipmotion,"ship motion");
-	checkmechanism(balloon,"balloon");
 	checkmechanism(joggingcompanion,"jogging companion");
 	checkmechanism(spacestationball,"space-station ball");
 	checkmechanism(fireworks,"fireworks");
 	checkmechanism(venushead,"Venus ray geometry");
-	checkmechanism(synchronousmotor,"synchronous motor");
 	checkmechanism(magneticpendulum3d,"magnetic pendulum 3d");
-	checkmechanism(catastrophemachine,"catastrophe machine");
-	checkmechanism(violinbow,"violin bow");
 	checkmechanism(carrierlanding,"carrier landing");
-	checkmechanism(fireflies,"fireflies");
 	checkmechanism(lowbombing,"low-level bombing");
-	checkmechanism(carbonmicrophone,"carbon microphone");
-	checkmechanism(pistonflywheel,"piston and flywheel");
-	checkmechanism(wattgovernor,"Watt governor");
-	checkmechanism(dynamoreversal,"reversal dynamo");
-	checkmechanism(bernoulli,"Bernoulli problem");
 	checkorbital(threebody,"three body");
 	checkorbital(moontrip,"Moon trip");
 	checkorbital(lagrange1,"Lagrange 1");
