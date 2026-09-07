@@ -148,8 +148,6 @@ TARG=\
 
 DISBIN=$ROOT/dis/temple
 
-<$ROOT/mkfiles/mkdis
-
 SYSMODULES=\
 	draw.m\
 	sys.m\
@@ -166,3 +164,6 @@ SYSMODULES=\
 	liveplot.m\
 	numerics.m\
 	plot.m\
+
+<$ROOT/mkfiles/mkdis
+

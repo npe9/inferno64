@@ -97,6 +97,14 @@ Dynsys: module
 		paramlabels:			array of string;
 		parameter, minima, maxima:	array of real;
 		maxtime:			real;
+
+		# The current time, bound to the name "t" in every expression.
+		# rhs() sets it from its own argument; observables() and
+		# points() use whatever it holds, which is the time of the step
+		# just taken.  A forced oscillator is
+		# "derivative v drive cos { frequency t } - ..." and needs
+		# nothing else.
+		time:				real;
 		statenames:			array of string;
 		observablelabels:		array of string;
 		pointnames:			array of string;
@@ -107,6 +115,7 @@ Dynsys: module
 		# no reason to poke these directly when the spec's own state/
 		# derivative/eq/observable lines already say everything they
 		# hold.
+		timesym:			ref Hoc->Sym;
 		paramsyms, statesyms, eqsyms:	array of ref Hoc->Sym;
 		initexprs, derivexprs:		array of ref Hoc->Expr;
 		eqnames:			array of string;

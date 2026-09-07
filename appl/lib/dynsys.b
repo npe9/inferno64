@@ -26,6 +26,7 @@ newmodel(): ref Model
 	# for why (it lazily loads bufio/math, which compile() needs, and
 	# which init()/run() would otherwise have loaded).
 	m.hocmod->reset();
+	m.timesym = m.hocmod->symbol("t");
 	return m;
 }
 
@@ -142,16 +143,11 @@ initialstate(m: ref Model): array of real
 	return r;
 }
 
-rhs(m: ref Model, nil: real, values, derivative: array of real)
+rhs(m: ref Model, t: real, values, derivative: array of real)
 {
-	bindparams(m);
-	n := len m.statenames;
-	i: int;
-	for(i = 0; i < n; i++)
-		m.statesyms[i].val = values[i];
-	for(i = 0; i < len m.eqexprs; i++)
-		m.eqsyms[i].val = m.hocmod->eval(m.eqexprs[i]);
-	for(i = 0; i < n; i++)
+	m.time = t;
+	bindstate(m, values);
+	for(i := 0; i < len m.statenames; i++)
 		derivative[i] = m.hocmod->eval(m.derivexprs[i]);
 }
 
@@ -182,6 +178,7 @@ points(m: ref Model, values: array of real): array of real
 bindstate(m: ref Model, values: array of real)
 {
 	bindparams(m);
+	m.timesym.val = m.time;
 	i: int;
 	for(i = 0; i < len m.statenames; i++)
 		m.statesyms[i].val = values[i];

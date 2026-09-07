@@ -183,4 +183,51 @@ TARG=\
 
 DISBIN=$ROOT/dis/danby
 
+SYSMODULES=\
+	mechlab.m\
+	danby/atmosphere.m\
+	danby/ballistics.m\
+	danby/cartpendulum.m\
+	danby/chaosmap.m\
+	danby/doublependulum.m\
+	danby/flight3d.m\
+	danby/forcedpendulum.m\
+	danby/gravity.m\
+	danby/lorenz.m\
+	danby/mechanism.m\
+	danby/orbital.m\
+	danby/oscillator.m\
+	danby/pendulum.m\
+	danby/populationmodel.m\
+	danby/profile.m\
+	danby/propulsion.m\
+	danby/reaction.m\
+	danby/rotatinghoop.m\
+	danby/spinorbit.m\
+	danby/stability.m\
+	danby/trajectory.m\
+	danby/twospecies.m\
+	draw.m\
+	dynsys.m\
+	env.m\
+	math.m\
+	numerics.m\
+	paramtracks.m\
+	plot.m\
+	string.m\
+	sys.m\
+	tk.m\
+	tkclient.m\
+	wmclient.m\
+
+
 <$ROOT/mkfiles/mkdis
+
+
+# Without these, changing a module declaration leaves every .dis here
+# stale: mkdis's own "%.dis: $MODULES $SYS_MODULE" rule is the tree's
+# way of saying a .b depends on the .m files it includes, and this
+# directory declared none.  Editing module/dynsys.m and rebuilding
+# silently left models compiled against the old adt, which then failed
+# to load with a link typecheck error against a library they had just
+# been built beside.

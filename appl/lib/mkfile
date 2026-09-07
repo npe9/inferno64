@@ -200,6 +200,10 @@ MODULES=
 
 SYSMODULES= \
 	bufio.m\
+	dynsys.m\
+	eqn2hoc.m\
+	hoc.m\
+	mechlab.m\
 	cci.m\
 	daytime.m\
 	db.m\
