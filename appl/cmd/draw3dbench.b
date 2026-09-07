@@ -109,6 +109,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	bench("  protocol buffer", "/dis/math/draw3ddev.dis", buf, col, large);
 	sprites(d, buf);
 	readback(d, col, large);
+	agree(d);
 }
 
 # sprite2d is the other half of what appl/temple asks draw3d for, and
@@ -231,6 +232,110 @@ bench(what: string, path: string, dst: ref Image, col: ref Image,
 	t1 := sys->millisec();
 	sys->print("draw3dbench: %s %d frames of %d tris: %d ms (%d us/frame) worst=%d ms at frame %d lit=%d\n",
 		what, nframe, len tri, t1-t0, ((t1-t0)*1000)/nframe, worst, worstf, litpixels(dst));
+}
+
+# Does the GPU path put the same thing on the screen as the software
+# one?  Both providers draw a red, a green and a blue triangle at known
+# world x, and the result is read back with a plain readpixels off the
+# display's own screen image - which goes through devdraw's read message
+# and calls gpudrawreadback(), the only way to see GPU output from
+# inside emu.  Position AND colour, because the two bugs that kept this
+# path from ever drawing were one of each: a clip that threw the scene
+# away, and a channel order that turned red into blue.
+agree(d: ref Display)
+{
+	sys->print("draw3dbench: software and GPU agreement\n");
+	sw := frames(d, Draw3d->PATH);
+	gp := frames(d, "/dis/math/draw3ddev.dis");
+	bad := 0;
+	names := array[] of {"red", "green", "blue"};
+	for(i := 0; i < len sw; i++){
+		(sx, sc) := sw[i];
+		(gx, gc) := gp[i];
+		off := sx - gx;
+		if(off < 0)
+			off = -off;
+		ok := off <= 2 && sc == gc;
+		if(!ok)
+			bad++;
+		v := "ok";
+		if(!ok)
+			v = "DIFFER";
+		sys->print("draw3dbench:   %s: software x=%d %s, GPU x=%d %s  %s\n",
+			names[i], sx, sc, gx, gc, v);
+	}
+	if(bad)
+		sys->print("draw3dbench:   the GPU path does not match the software one\n");
+}
+
+frames(d: ref Display, path: string): array of (int, string)
+{
+	out := array[3] of (int, string);
+	for(i := 0; i < 3; i++)
+		out[i] = (-1, "?");
+	d3 := load Draw3d path;
+	if(d3 == nil)
+		return out;
+	d3->init();
+	img := win.image;
+	c := d3->context(img);
+	d3->setzarea(c, img.r);
+	d3->setz(c, 1);
+	d3->viewport(c, img.r.min.x, img.r.min.y, img.r.max.x, img.r.max.y);
+	cols := array[] of {d.color(Draw->Red), d.color(Draw->Green), d.color(Draw->Blue)};
+	tri := array[3] of Vector;
+	for(k := 0; k < 3; k++){
+		img.draw(img.r, d.black, nil, img.r.min);
+		d3->mode(Draw3d->PROJ); d3->identity(); d3->frustum(0.1, 0.1, 100.0);
+		d3->mode(Draw3d->MODEL); d3->identity();
+		d3->clearz(c);
+		d3->setcolour(c, cols[k]);
+		wx := -1.5 + 1.5*real k;
+		tri[0] = Vector(wx-0.4, -0.6, -4.0);
+		tri[1] = Vector(wx+0.4, -0.6, -4.0);
+		tri[2] = Vector(wx,      0.6, -4.0);
+		d3->fillpoly3(c, tri, Vector(0.0, 0.0, 1.0), 1.0);
+		# No flush: the read below is what has to see the geometry, and
+		# a present would drain the GPU's queue first, leaving the
+		# readback nothing to replay into the softscreen.
+		out[k] = litmean(d.image, img.r);
+	}
+	return out;
+}
+
+# centroid x and the dominant channel of the lit pixels, read straight
+# off the image so the GPU's own output is what is measured
+litmean(dst: ref Image, r: Rect): (int, string)
+{
+	(r, nil) = r.clip(dst.r);
+	bpl := (r.dx() * dst.depth + 7) / 8;
+	pxb := dst.depth / 8;
+	if(pxb < 3 || r.dx() < 1 || r.dy() < 1)
+		return (-1, "?");
+	buf := array[bpl] of byte;
+	sx := 0; n := 0; sr := 0; sg := 0; sb := 0;
+	for(y := r.min.y; y < r.max.y; y++){
+		if(dst.readpixels(Rect((r.min.x, y), (r.max.x, y+1)), buf) != bpl)
+			return (-1, "?");
+		for(x := 0; x*pxb + 2 < bpl; x++){
+			b0 := int buf[x*pxb]; b1 := int buf[x*pxb+1]; b2 := int buf[x*pxb+2];
+			mx := b0; if(b1 > mx) mx = b1; if(b2 > mx) mx = b2;
+			mn := b0; if(b1 < mn) mn = b1; if(b2 < mn) mn = b2;
+			if(mx > 120 && mx - mn > 80){
+				sx += r.min.x + x; n++;
+				sr += b0; sg += b1; sb += b2;
+			}
+		}
+	}
+	if(n == 0)
+		return (-1, "nothing drawn");
+	sr /= n; sg /= n; sb /= n;
+	# the screen image is XBGR32: R, G, B in memory
+	if(sr >= sg && sr >= sb)
+		return (sx/n, "red");
+	if(sg >= sb)
+		return (sx/n, "green");
+	return (sx/n, "blue");
 }
 
 # Where the pixels a pass produced can actually be read back from, for

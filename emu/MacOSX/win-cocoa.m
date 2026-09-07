@@ -1193,24 +1193,38 @@ src_rgba(Memimage *src, float *r, float *g, float *b, float *a)
 	p = byteaddr(src, src->r.min);
 	if(p == nil)
 		return -1;
+	/*
+	 * A Plan 9 channel descriptor names its components from the most
+	 * significant byte down, so on a little-endian host the LAST named
+	 * component is byte 0.  RGB24 is R<<16|G<<8|B and therefore B,G,R in
+	 * memory; XBGR32 is X<<24|B<<16|G<<8|R and therefore R,G,B,X.  This
+	 * used to read p[0],p[1],p[2] as r,g,b for every channel, which is
+	 * right only for XBGR32 - so a red source came out blue on every GPU
+	 * primitive.  Nobody saw it because the geometry path drew nothing
+	 * at all until the clip fix in vgmain.
+	 */
 	*a = 1.0f;
 	switch(src->chan){
 	case RGB24:
-		*r = p[0] / 255.0f;
+		*b = p[0] / 255.0f;
 		*g = p[1] / 255.0f;
-		*b = p[2] / 255.0f;
+		*r = p[2] / 255.0f;
 		return 0;
 	case RGBA32:
-		*r = p[0] / 255.0f;
-		*g = p[1] / 255.0f;
-		*b = p[2] / 255.0f;
-		*a = p[3] / 255.0f;
+		*a = p[0] / 255.0f;
+		*b = p[1] / 255.0f;
+		*g = p[2] / 255.0f;
+		*r = p[3] / 255.0f;
 		return 0;
 	case XBGR32:
-	case XRGB32:
 		*r = p[0] / 255.0f;
 		*g = p[1] / 255.0f;
 		*b = p[2] / 255.0f;
+		return 0;
+	case XRGB32:
+		*b = p[0] / 255.0f;
+		*g = p[1] / 255.0f;
+		*r = p[2] / 255.0f;
 		return 0;
 	default:
 		if(src->depth == 32){

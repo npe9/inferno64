@@ -73,12 +73,19 @@ where the softscreen is unchanged and so never covered the geometry.
 Replacing the vertex shader's transform with a hard-coded NDC triangle
 was what showed the pipeline itself worked.
 
-**Still wrong, and the next thing to fix: the GPU renders the scene
-unmirrored where the software path mirrors it.** Three triangles — red,
-green, blue, left to right in world space — come out red-green-blue
-through Metal and blue-green-red through `draw3d.dis`. Dividing by a
-negative w flips x and y, every port's camera was tuned against that, so
-it is the GPU that has to match, not the other way round.
+A second bug was hiding behind the first, and it is fixed too:
+`src_rgba()` read bytes 0, 1 and 2 as red, green and blue for *every*
+channel, which is right only for `XBGR32`. A Plan 9 channel descriptor
+names its components from the most significant byte down, so `RGB24` —
+what `Display.color` hands out — is B, G, R in memory, and every GPU
+primitive drew a red source blue. Nobody had seen it because the
+geometry path drew nothing at all.
+
+I first read that swap as a *mirror*, from a screenshot histogram split
+into thirds: the red triangle really was on the right in both, but the
+GPU drew it blue, so the histogram said "blue on the right". The
+in-process check below found the truth in one run. Screenshot analysis
+was the wrong instrument once a readback was available.
 
 **And the readback was never broken.** It reported the window border and
 nothing else because there was nothing else; with the clip fixed,
@@ -215,19 +222,23 @@ control put it back.
 
 ### Phase 0 — make the Metal geometry path agree with the software one
 
-**Half done.** The clip fix in point 1 landed, so Metal draws; the
-mirror does not match yet, and until it does no port can be trusted to
-the GPU, because every camera in the tree was set up against the
-software renderer's flip.
+**Done.** `draw3dbench`'s last section draws a red, a green and a blue
+triangle at known world x through both providers and reports where each
+lands and what colour it is; they agree to within a pixel, reproducibly.
+That check is the thing to run before trusting any of the timings above,
+because both of the bugs it caught were invisible to a timing.
 
 Two smaller things are still open and both are real: the GPU-T&L branch
 in `emu/port/devdraw.c` reaches `gdone` without a `dstflush`, so a
-client that draws *only* 3D never asks for a present and shows nothing;
-and the readback texture is `RGBA8Unorm` where every geometry pipeline
-declares `BGRA8Unorm`.
+client that draws *only* 3D never asks for a present and shows nothing
+until something else damages the screen; and the readback texture is
+`RGBA8Unorm` where every geometry pipeline declares `BGRA8Unorm`, which
+did no harm here but is not right.
 
-*Evidence:* the three-triangle capture comes out in the same order
-through both providers. Negative control: revert, and they mirror.
+A trap worth keeping: **do not flush before reading back.** A present
+drains the GPU's geometry queue, and the readback then has nothing to
+replay into the softscreen, so the read sees an empty window. That
+looked like flakiness for a while.
 
 ### Phase 1 — reach the device at all
 
