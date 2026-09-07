@@ -174,10 +174,11 @@ The service is named again on each characteristic rather than being
 remembered between writes, so two programs writing
 .B ctl
 cannot put a characteristic in each other's service.  Handles are
-given out as attributes are added and never given out again, so a peer
-connected while the database grew would hold a stale picture of it;
-adding to the database while a link is up is refused rather than
-silently misleading the peer.
+given out as attributes are added and never given out again, so what a
+connected peer already holds stays right; what it has not seen it is
+told about, by the Service Changed indication every database carries.
+The database may therefore grow while a peer is connected, and a peer
+that subscribed walks it again.
 .B "advertise on"
 and
 .B "advertise off"
@@ -320,6 +321,12 @@ one.  A peer that asked for indications is waited for, since only one
 indication may be outstanding at a time.  The subscription belongs to
 the link and not to the database, so two peers reading the same
 characteristic may differ on whether they want to be told about it.
+.PP
+Every database carries a Generic Attribute service holding Service
+Changed, at handles one to four, so a peer has something to subscribe
+to before anything else exists.  It is not shown here \- it is not
+part of what is being published, it is how a change to what is
+published is announced.
 .PP
 Pairing from this side is not there: a peer cannot pair with this
 stack, only with a device this stack connected to.

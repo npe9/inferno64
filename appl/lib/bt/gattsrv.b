@@ -86,6 +86,13 @@ init(b: Bt, l2: L2cap): string
 	return nil;
 }
 
+#
+# Every database begins with the Generic Attribute service and the
+# Service Changed characteristic in it, so it is always handles one to
+# four and a peer that wants to be told when the database grows has
+# something to subscribe to from the start.  Adding it later would be
+# adding it after the peer had already looked.
+#
 newdb(): ref Db
 {
 	d := ref Db;
@@ -94,7 +101,40 @@ newdb(): ref Db
 	d.sess = nil;
 	d.lock = chan[1] of int;
 	d.lock <-= 1;
+	addsvc(d, uuid16(Ugattsvc));
+	(nil, vh, nil, nil) := addchar(d, uuid16(Uchanged), 16r20, nil);
+	d.changed = vh;
 	return d;
+}
+
+changedh(d: ref Db): int
+{
+	return d.changed;
+}
+
+#
+# The database grew.  Tell every peer that asked, with the range of
+# handles that appeared: a peer that caches -- which is what the
+# handles are for -- has to know which part of its picture is short.
+# Sent as an indication, so a peer that is listening confirms it and
+# this side knows it got there.
+#
+announce(d: ref Db, first, last: int)
+{
+	if(d.changed == 0 || first > last)
+		return;
+	<-d.lock;
+	any := d.sess != nil;
+	d.lock <-= 1;
+	if(!any)
+		return;
+	v := array[4] of byte;
+	bt->put16(v, 0, first);
+	bt->put16(v, 2, last);
+	setval(d, d.changed, v);
+	if((e := notify(d, d.changed, v)) != nil)
+		sys->fprint(sys->fildes(2), "gattsrv: announcing %#4.4ux-%#4.4ux: %s\n",
+			first, last, e);
 }
 
 # with the lock held: append in handle order
@@ -125,6 +165,7 @@ addsvc(d: ref Db, uuid: array of byte): (int, string)
 	<-d.lock;
 	h := add(d, ref Attr(0, uuid16(Uprimary), uuid, 1, 0));
 	d.lock <-= 1;
+	announce(d, h, h);
 	return (h, nil);
 }
 
@@ -162,7 +203,9 @@ addchar(d: ref Db, uuid: array of byte, props: int, val: array of byte): (int, i
 	ch := 0;
 	if(props & (16r10|16r20))
 		ch = add(d, ref Attr(0, uuid16(Ucccd), array[2] of {byte 0, byte 0}, 1, 1));
+	last := d.n;
 	d.lock <-= 1;
+	announce(d, dh, last);
 	return (dh, vh, ch, nil);
 }
 

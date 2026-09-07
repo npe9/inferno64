@@ -1954,6 +1954,8 @@ hasstr(s, w: string): int
 Svcuuid:	con "180f";		# battery service
 Chruuid:	con "2a19";		# battery level
 Longuuid:	con "2a29";		# manufacturer name, long enough to blob
+Latesvc:	con "181a";		# environmental sensing, added later
+Latechr:	con "2a6e";		# temperature
 
 server()
 {
@@ -2149,6 +2151,45 @@ server()
 			sys->print("BT: the client was notified: %s\n", string nv);
 	}
 	nfd = nil;
+
+	#
+	# And the database grows under the connected peer.  Handles are
+	# never given out twice, so what the client already holds stays
+	# right; what it has not seen it is told about by the Service
+	# Changed indication, and it walks the database again.  Both
+	# halves of that are this stack's own, joined by the wire.
+	#
+	if((se := writefile(mnt + "/0/ctl", "service " + Latesvc)) != nil){
+		sys->print("BT: FAILED: adding a service under a live link: %s\n", se);
+		ok = 0;
+	} else {
+		writefile(mnt + "/0/ctl", "characteristic " + Latesvc + " " + Latechr + " r");
+		writefile(mnt + "/0/gatt/" + Latesvc + "/" + Latechr, "late");
+		#
+		# Wait for the characteristic and not for its service
+		# directory.  The service and the characteristic are two
+		# additions and each announces itself, so the client
+		# rediscovers twice; after the first the directory is
+		# there and empty, and a test that stopped at the
+		# directory would read the file in the gap between them
+		# and call it a failure.
+		#
+		grew := 0;
+		lval := "";
+		for(g := 0; g < 40 && !grew; g++){
+			sys->sleep(500);
+			lval = trim(readfile(dev + "/gatt/" + Latesvc + "/" + Latechr));
+			if(lval == "late")
+				grew = 1;
+		}
+		if(!grew){
+			sys->print("BT: FAILED: the service added later never reached the client: %s\n",
+				lval);
+			ok = 0;
+		} else
+			sys->print("BT: the database grew and the client followed: %s reads %s\n",
+				Latechr, lval);
+	}
 
 	if(ok)
 		sys->print("BT: our own client walked our own server\n");

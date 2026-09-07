@@ -20224,6 +20224,37 @@ of which there is no such thing when two links are being relayed
 between; it had worked because until now there was only ever one.
 Credits are now returned on the link the packet arrived on.
 .NH 2
+A database that can grow, and a client that missed the second telling
+.PP
+Every database now begins with the Generic Attribute service and
+Service Changed in it, at handles one to four, so a peer has something
+to subscribe to before anything else exists \(em adding it later would
+be adding it after the peer had already looked.  Adding a service or a
+characteristic announces the range of handles that appeared, as an
+indication, so the database may grow under a connected peer: the
+handles it already holds stay right, because handles are never given
+out twice, and what it has not seen it is told about.
+.PP
+The phase for it adds a service and then a characteristic in it while
+the client is connected, and that found a bug in the client, which has
+been there since Service Changed was implemented on that side.
+.CW droptree
+cleared
+.CW d.scv ,
+the handle the notifier recognises Service Changed by, and a second
+indication arriving while the first was still being acted on found it
+zero: it fell through to the loop that looks for a characteristic, and
+was dropped without a word.  Two changes in quick succession \(em
+exactly what adding a service and then a characteristic in it is \(em
+left the tree short of the second.
+.PP
+The handle is no longer cleared there.  The rebuild is about to find
+the same one, and if it finds none then the last handle the device
+used is the best guess available; the watcher clears it when the link
+goes, which is what actually forgets it.  With the clearing put back
+the phase reports the characteristic missing, which is what it
+reported before the fix.
+.NH 2
 The bench now runs the interpreter, and why
 .PP
 With the second radio in, the bench started failing in emu rather than

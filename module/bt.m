@@ -514,6 +514,7 @@ Gattsrv: module
 		attrs:	list of ref Attr;	# in handle order
 		n:	int;			# the last handle given out
 		sess:	list of ref Sess;	# links it is being served on
+		changed:	int;		# the Service Changed value's handle
 		lock:	chan of int;
 	};
 
@@ -546,6 +547,16 @@ Gattsrv: module
 
 	# is anyone subscribed to it
 	subscribed:	fn(d: ref Db, vh: int): int;
+
+	# The Generic Attribute service every database carries, and the
+	# handle of the Service Changed value in it.  A peer that
+	# subscribes to it is told when the database grows, which is the
+	# only thing that makes growing it under a connected peer safe:
+	# handles are never given out twice, so what the peer holds is
+	# still right, but what it has not seen it has to be told about.
+	Ugattsvc:	con 16r1801;
+	Uchanged:	con 16r2a05;
+	changedh:	fn(d: ref Db): int;
 };
 
 Smp: module

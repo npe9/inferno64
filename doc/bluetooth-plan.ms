@@ -232,13 +232,15 @@ A peer can write, too, and a characteristic that says it notifies
 carries the descriptor a peer writes to ask for it: setting the value
 through the file is then what tells every peer that asked.  An
 indication is waited for, because only one may be outstanding.
+Every database carries a Generic Attribute service with Service
+Changed in it, so the database may grow while a peer is connected: the
+handles the peer already holds stay right, and what it has not seen it
+is told about.
 .PP
-What is missing on that side is Service Changed \(em without which the
-database cannot grow while a peer is connected, so growing it is
-refused rather than leaving the peer with stale handles \(em and the
-responder half of SMP, so a peer cannot pair with this side.  The Long
-Term Key Request event a peripheral gets when the peer starts
-encryption is not handled either.
+What is missing on that side is the responder half of SMP, so a peer
+cannot pair with this side.  The Long Term Key Request event a
+peripheral gets when the peer starts encryption is not handled
+either.
 .NH 2
 Profiles, in the brief's order
 .IP 1.

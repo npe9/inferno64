@@ -1452,6 +1452,7 @@ watcher(d: ref Dev)
 		d.state = "disconnected: " + why;
 		droptree(d);
 		dropcocs(d);	# the link took the channels with it
+		d.scv = 0;	# and the handles it was talking about
 		d.sccccd = 0;	# the link took the subscription with it
 	}
 	d.lock <-= 1;
@@ -1478,11 +1479,23 @@ droptree(d: ref Dev)
 		removetree(d);
 		d.gq = big 0;
 	}
-	d.scv = 0;
-	# d.sccccd is not cleared here: it records what was written to
-	# the device over this link, which a rediscovery does not undo.
-	# The watcher clears it when the link goes, because that is what
-	# forgets it.
+	#
+	# d.scv is not cleared here.  It was, and that lost a second
+	# Service Changed arriving while the first was still being acted
+	# on: the notifier recognises the indication by its handle, the
+	# handle was zero for as long as the rebuild took, and an
+	# indication that arrives in that window went to the loop that
+	# looks for a characteristic and was dropped.  A device that
+	# changes twice in quick succession -- adding a service and then
+	# a characteristic in it, say -- left the tree short.  The
+	# handle a rebuild is about to find again is the same handle,
+	# and if it finds none the last one the device used is the best
+	# guess there is.
+	#
+	# d.sccccd is not cleared here either: it records what was
+	# written to the device over this link, which a rediscovery does
+	# not undo.  The watcher clears both when the link goes, because
+	# that is what forgets them.
 }
 
 #
@@ -2037,10 +2050,10 @@ inproc(r: ref Radio)
 # except that these are ours and a peer that connects reads them.
 #
 # Handles are given out as attributes are added and never given out
-# again, so a peer connected while the database grew would hold a
-# stale picture of it.  That is what Service Changed is for and there
-# is none on this side yet, so adding to the database with a link on
-# it is refused rather than silently misleading the peer.
+# again, so what a connected peer already holds stays right; what it
+# has not seen it is told about, by the Service Changed indication
+# every database carries.  So the database may grow while a peer is
+# connected, and the peer walks it again.
 #
 props(s: string): int
 {
@@ -2054,21 +2067,6 @@ props(s: string): int
 		'i' =>	p |= Gatt->Pindicate;
 		}
 	return p;
-}
-
-#
-# is any link up on this radio?  A database that grows under one is a
-# peer holding handles that no longer mean what it thinks.
-#
-linked(r: ref Radio): int
-{
-	<-r.devlock;
-	l := r.devs;
-	r.devlock <-= 1;
-	for(; l != nil; l = tl l)
-		if((hd l).conn != nil)
-			return 1;
-	return 0;
 }
 
 findsvcq(r: ref Radio, uuid: string): big
@@ -2086,8 +2084,6 @@ addservice(r: ref Radio, uuid: string): string
 	u := bt->uuidbytes(uuid);
 	if(u == nil)
 		return "a UUID is 4, 8 or 32 hexadecimal digits";
-	if(linked(r))
-		return "a link is up: the handles a peer has would go stale";
 	if(findsvcq(r, uuid) != big 0)
 		return uuid + " is already there";
 	(nil, e) := gattsrv->addsvc(r.db, u);
@@ -2111,8 +2107,6 @@ addcharacteristic(r: ref Radio, svc, uuid: string, p: int): string
 	sq := findsvcq(r, svc);
 	if(sq == big 0)
 		return "no service " + svc;
-	if(linked(r))
-		return "a link is up: the handles a peer has would go stale";
 	(nil, vh, nil, e) := gattsrv->addchar(r.db, u, p, nil);
 	if(e != nil)
 		return e;
