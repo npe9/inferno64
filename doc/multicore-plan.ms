@@ -919,19 +919,102 @@ void loopv(void) { f = 2; for(;;) g++; }
 Both operands are declared
 .CW volatile
 and the compiler hoists them regardless \- long-standing behaviour of
-the Ken compilers, which accept the keyword and ignore it.  So no spin
-loop, flag poll or lock retry in this kernel can be written the way it
-would be in C elsewhere.  What forces the load and the store is a call
-the compiler cannot see through:
+the Ken compilers, which accept the keyword and ignore it.
+.PP
+But the rule is narrower than "the compiler is unreliable", and the
+difference is what makes 9front's kernel correct without
+.CW volatile
+anywhere near a spin loop.  Compiled with the same
+.CW 7c :
+.IP
+.nf
+void spinptr(S *l)  { while(l->key) ; }   /* through a pointer */
+	MOVWU	0(R9),R2	/* reloaded every iteration */
+
+void spinglob(void) { while(g) ; }        /* a direct global */
+	MOVWU	g+0(SB),R9	/* loaded ONCE, before the loop */
+.fi
+.PP
+A load through a pointer is reissued each time round; a direct global
+symbol is hoisted.  So the question for any wait loop is not whether it
+said
+.CW volatile ,
+it is how the location is reached.
+.NH 2
+What 9front does, and it is three things
+.PP
+Worth reading out of
+.CW os/9front
+rather than reinvented, because the tree is right here and the idioms
+are consistent.
+.IP 1.
+.B "Reach shared state through a pointer."
+.CW taslock.c 's
+.CW lock()
+spins on
+.CW "while(l->key)" ,
+and
+.CW proc.c 's
+.CW procflushmmu()
+polls
+.CW MACHP(nm)->proc
+and
+.CW MACHP(nm)->flushmmu .
+Neither is
+.CW volatile
+and neither needs to be: they are pointer dereferences, so the compiler
+reloads them.
+.IP 2.
+.B "Put a real call in the wait loop."
+.CW procflushmmu()
+calls
+.CW sched()
+each time round;
+.CW cpushutdown()
+in
+.CW devcons.c
+calls
+.CW delay() .
+That forces the reload for anything the compiler might otherwise keep,
+and it yields the processor instead of burning it.
+.IP 3.
+.B "Read a genuine global through a function."
+The one place 9front polls a plain global array,
+.CW cpushutdown() 's
+wait for the other processors, does it as
+.IP
+.nf
+if(memchr(active.machs, 1, MAXMACH) == nil && consactive() == 0)
+.fi
+.PP
+\- through
+.CW memchr ,
+not by indexing it in the loop condition.  Whether that was chosen for
+this reason or for brevity, it is what makes it work.
+.PP
+And on the writing side,
 .CW coherence()
-in the loop body is the idiom, and it is what makes the secondary's own
-loop work.  Anything below that waits on another processor \- an
+before publishing the flag, so the state a reader will go looking at is
+visible before the flag that sends it there:
+.IP
+.nf
+coherence();
+MACHP(nm)->flushmmu = 1;
+.fi
+.PP
+So: every Phase 2 item that waits on another processor \- an
 .CW active.machs
 bit, a
 .CW flushmmu
-handshake, a collector's stop-the-world acknowledgement \- has to be
-built on that and not on
-.CW volatile .
+handshake, a collector's stop-the-world acknowledgement \- gets built
+that way, and
+.CW volatile
+does not appear.  Where this branch has already needed it, the
+secondary's own loop on
+.CW virtarm64 ,
+a
+.CW coherence()
+call in the body is what makes the stores land.
 .IP 2.1
 Audit the kernel globals written from more than one processor: what
 .CW machinit
