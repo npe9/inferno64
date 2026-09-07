@@ -1320,6 +1320,25 @@ there.  The window does not stay, because what rio execs in it is
 .BR /bin/rc ,
 which this personality does not have.
 .PP
+.B /boot
+is bound onto
+.B /bin
+and the personality's small shell is registered as
+.B rc
+as well, because rio execs
+.B /bin/rc
+in a window and that name is written into rio.  It is not rc: one
+command a line, words at blanks, stages at
+.BR | ,
+no quoting and no variables.  It reads a line at a time from descriptor
+0 and writes to descriptor 1 when no script is named, which is what a
+window needs.  It does not run yet: libthread's
+.I procexec
+opens
+.B /fd/<n>
+before it execs anything, and this personality serves no
+.BR /fd .
+.PP
 A process forked
 .B RFNOWAIT
 keeps no wait record: the kernel's table of who started whom frees its

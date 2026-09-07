@@ -3916,12 +3916,17 @@ ospreyforkkern(Ospreyproc *parent, ulong flag)
 	uintptr va;
 	int i, x, share;
 
-	if(parent == nil || (sv = ospreyserverof(parent)) == nil)
+	if(parent == nil || (sv = ospreyserverof(parent)) == nil){
+		print("osprey fork: refused, the caller's container has no server\n");
 		return -1;			/* nobody to serve the child's image */
+	}
 	if((flag & RFPROC) == 0)
 		return -1;			/* the namespace-only forms go to the buddy */
-	if(up->dbgreg == nil)
+	if(up->dbgreg == nil){
+		print("osprey fork: refused, container %llud has no user register frame to copy\n",
+			ospreyid(parent));
 		return -1;			/* no user register frame to copy */
+	}
 
 	/*
 	 * Bring the whole image resident on the parent, so the child - whose

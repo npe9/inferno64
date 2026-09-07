@@ -8413,6 +8413,74 @@ is not a small one \- the personality's
 is a demonstration shell that reads a script, not something that reads a
 line at a time from a window's
 .CW /dev/cons .
+.B "2.3m: the shell a window would run, and why it does not run yet."
+rio execs
+.CW /bin/rc
+in a window, hard-coded, and this personality had neither the name nor
+anything to put behind it.  Both are here now.
+.CW /boot
+is bound onto
+.CW /bin ,
+and the small shell this personality already had,
+.CW /boot/sh ,
+is registered under the name
+.CW rc
+as well \- the same bytes under two names, not a copy.  It is not rc and
+does not pretend to be: one command a line, words at blanks, stages at
+.CW | ,
+no quoting and no variables.  It is a shell a window can run.
+.PP
+It had to learn to be one.  It read a whole script out of a named file
+and said what it was doing with
+.CW print ,
+which goes to the machine's console.  A window's shell reads a line at a
+time from descriptor 0 - which in a window is that window's
+.CW /dev/cons
+- and writes its prompt to descriptor 1, which is the same file; saying
+it on the console would say it where the person at the window cannot see
+it.  So there is an interactive mode, taken when no script is named or
+when the argument is the
+.CW -i
+rio passes.
+.PP
+It does not run yet, and what stops it is exact.  rio's window process
+does not call
+.CW exec (2)
+itself: it calls libthread's
+.CW procexec ,
+which wants exec's semantics out of a call that happens in another
+process, and gets them with a pipe \- the write end opened
+close-on-exec, so that the read of the other end fails if the exec
+worked and returns the error text if it did not.  Opening that end is
+.CW open("/fd/<n>",\ OWRITE|OCEXEC) ,
+and this personality serves no
+.CW /fd .
+The open fails, procexec returns before it has forked anything, and
+winshell exits "exec failed" with no exec ever attempted.  The instrument
+that showed it was a print on every
+.CW rfork
+the container made: the last one is
+.CW 0x7 ,
+which is winshell's own
+.CW RFNAMEG|RFENVG|RFFDG ,
+and libthread's exec fork never follows it.
+.PP
+So the next piece is a
+.CW #d ,
+the dup device, whose
+.CW /fd/<n>
+names descriptor n of the container that opens it.  The descriptors are
+the buddy's, so it is the personality's device to write, beside the ones
+it has.
+.PP
+The rest of this section is a list of refusals that used to be silent and
+are not any more, because every one of them cost an hour: a fork refused
+for want of the child table or of a container, a fork with no server or
+no register frame to copy, a draw server that cannot allocate a window,
+an exec whose program the buddy cannot open, an exec by a process with no
+buddy image, and an exec the buddy refused.  Each returned \-1 to a
+caller whose library turned it into "failed" and nothing else.  A
+microkernel that refuses should say which rule refused.
 .NH 2
 Track three: the library-OS personality execs a program, then rio
 .PP

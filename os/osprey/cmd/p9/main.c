@@ -94,6 +94,21 @@ p9setup(void)
 	} else
 		print("p9: could not bind #m onto /dev: %s\n", up->errstr);
 	/*
+	 * And /boot onto /bin, because rio does not ask what the shell is
+	 * called: winshell execs "/bin/rc", the name written into rio.
+	 * What answers to it here is /boot/sh, this personality's own small
+	 * shell, registered under that name as well - the same bytes under
+	 * two names, not a copy.  It is not rc and does not pretend to be:
+	 * one command a line, words at blanks, stages at |, no quoting and
+	 * no variables.  What it is is a shell a window can run.
+	 */
+	if(!waserror()){
+		p9bind("/boot", "/bin", MREPL);
+		poperror();
+		print("p9: /boot bound onto /bin; /bin/rc is /boot/sh, which is the shell rio's windows get\n");
+	} else
+		print("p9: could not bind /boot onto /bin: %s\n", up->errstr);
+	/*
 	 * And the note tree onto /proc, for the same reason: postnote(2) is
 	 * a write to /proc/n/note, not a system call, so the file has to be
 	 * in the name space a legacy program runs in.

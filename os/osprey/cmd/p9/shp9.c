@@ -126,6 +126,55 @@ runline(char *line)
 	}
 }
 
+/* this shell's own words, to the window rather than to the console */
+static void
+outs(char *s)
+{
+	write(1, s, strlen(s));
+}
+
+/*
+ * A line at a time from descriptor 0.  Read one byte at a time: the
+ * descriptor is a window's /dev/cons, a read of it returns what has
+ * been typed so far, and reading more than a line would take the next
+ * command with it.  A line of nothing but blanks is ignored, # is a
+ * comment, and end of file ends the shell - which is what closing a
+ * window does to the command in it.
+ */
+static void
+interactive(void)
+{
+	char line[Nline];
+	int n;
+	long r;
+
+	outs("sh: this is /boot/sh, the shell this personality has.  One\n"
+	     "command a line, words at blanks, stages at |, # a comment.\n"
+	     "It is not rc; /bin/rc is this, under the name rio execs.\n");
+	for(;;){
+		outs("; ");
+		n = 0;
+		for(;;){
+			r = read(0, line + n, 1);
+			if(r <= 0){
+				if(n == 0){
+					outs("\n");
+					return;		/* end of file: the window is done */
+				}
+				break;
+			}
+			if(line[n] == '\n')
+				break;
+			if(n < (int)sizeof line - 1)
+				n++;
+		}
+		line[n] = 0;
+		if(n == 0 || line[0] == '#')
+			continue;
+		runline(line);
+	}
+}
+
 void
 startboot(char *argv0, char **argv)
 {
@@ -136,9 +185,17 @@ startboot(char *argv0, char **argv)
 	USED(argv0);
 	for(argc = 0; argv[argc] != nil; argc++)
 		;
-	if(argc < 2){
-		print("sh: usage: sh script\n");
-		exits("usage");
+	/*
+	 * Interactive, which is what a window runs: no script named, or the
+	 * -i rio passes.  A line at a time off descriptor 0, which in a
+	 * window is that window's /dev/cons, and the prompt and this
+	 * shell's own words written to descriptor 1, which is the same
+	 * file.  print() goes to the machine's console and would say it
+	 * there instead, where the person at the window cannot see it.
+	 */
+	if(argc < 2 || strcmp(argv[1], "-i") == 0){
+		interactive();
+		exits(nil);
 	}
 	print("sh: reading the script %s, my file calls answered by the buddy\n", argv[1]);
 	if((fd = open(argv[1], OREAD)) < 0){

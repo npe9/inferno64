@@ -207,8 +207,13 @@ p9buddy_exec(uvlong container, char *name, uchar *out)
 	}
 	nfd = p9open(name, 0);
 	poperror();
-	if(nfd < 0)
+	if(nfd < 0){
+		/* say so: a silent -1 here is an exec that fails with no
+		 * reason anywhere, and the caller usually cannot report one */
+		print("buddy: exec %s for container %llud: cannot open it in this personality's name space\n",
+			name, container);
 		return -1;
+	}
 	if(readat(nfd, 0, hdr, sizeof hdr) < 0){
 		p9close(nfd);
 		return -1;

@@ -323,8 +323,13 @@ port
 		char *name = va_arg(list, char*);
 		char **argv = va_arg(list, char**);
 
-		if(!up->buddyimage)
+		if(!up->buddyimage){
+			/* named: a silent -1 here reaches the caller's library
+			 * as "exec failed" with nothing behind it */
+			print("osprey exec: container %llud has no buddy image, so it cannot exec\n",
+				up->osprey != nil ? ospreyid(up->osprey) : 0);
 			return (uintptr)-1;
+		}
 		return (uintptr)ospreyexecself(name, argv);
 	}
 	/*

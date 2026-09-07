@@ -33,6 +33,8 @@ p9linuxfile(void)
 	addbootfile("cat", catprog, sizeof catprog);
 	addbootfile("exec", execprog, sizeof execprog);
 	addbootfile("sh", shprog, sizeof shprog);
+	/* the same bytes under the name rio execs in a window: see main.c */
+	addbootfile("rc", shprog, sizeof shprog);
 	/*
 	 * And one the tree did not write: the keyboard server of
 	 * os/osprey/cmd/draw, linked against the 9front libraries built
