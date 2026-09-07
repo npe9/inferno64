@@ -1150,6 +1150,59 @@ name in
 .CW doc/inferno-ports.ms
 has meant all along.  The collector was never the suspect it looked
 like; the refcount is.
+.NH 2
+It is the Type that is freed, not the object
+.PP
+The tracker's report now prints
+.CW t->ref
+alongside the size, because
+.CW Type 's
+first field is its reference count.  At the corruption it reads
+.IP
+.nf
+object 0x437ed360 word 10, type 0x437d0d38 ref 0 size 0 np 0
+.fi
+.PP
+three times out of three.  A
+.CW Type
+with
+.CW "ref 0 size 0"
+has been freed and had its memory zeroed, and the object still points
+at it.  So the premature free is of the
+.I type ,
+not of the object whose words were seen going to zero \- those went to
+zero because the freed
+.CW Type 's
+memory was handed out again.  The tracker's own staleness check agrees:
+it compares the object's type tag against the one it recorded, and the
+tag still matches, so nothing reallocated the object.
+.PP
+That is a much smaller thing to look for.  Every
+.CW Type
+reference is dropped in one of six places \-
+.CW freetype()
+from
+.CW heap.c
+line 528 and
+.CW xec.c
+line 920 and
+.CW load.c
+line 863, and three open-coded
+.CW "ADEC(&t->ref) == 0"
+sites in
+.CW freearray()
+and
+.CW freelist() \-
+and with the collector halted the sweeper's is not among them.
+.PP
+One of the six is already eliminated.
+.CW freelist() 's
+.CW "ADEC(&th->t->ref)"
+is unguarded, frees nothing and carries a comment saying the type
+"should be &Tlist and ref shouldn't go to 0 here nor be 0 already" \-
+an assumption rather than a check, and the obvious suspect.  A probe
+asserting both halves ran over six boots, four of which corrupted, and
+never fired.  The assumption is sound and that line is not the bug.
 .PP
 What is still not done, so the state is not overstated: GICv3 (the
 redistributor is per processor and this board derives one fixed base),

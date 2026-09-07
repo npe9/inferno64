@@ -247,7 +247,15 @@ freelist(Heap *h, int swept)
 		th = D2H(l);
 		if(ADEC(&th->ref) != 0)
 			break;
-		ADEC(&th->t->ref);	/* should be &Tlist and ref shouldn't go to 0 here nor be 0 already */
+		/*
+		 * Unguarded on purpose, and checked: a temporary probe
+		 * asserting th->t == &Tlist and that this decrement never
+		 * reaches 0 ran over six boots of the virtarm64 reproducer,
+		 * four of which corrupted, and never fired.  The assumption
+		 * in the old comment here is sound, and this is not where
+		 * the premature Type free comes from.
+		 */
+		ADEC(&th->t->ref);	/* &Tlist; ref does not reach 0 here */
 		if(t != nil) {
 			if (t->np)
 				freeptrs(l->data, t);
@@ -829,8 +837,17 @@ checktracked(void)
 		t = track[i].t;
 		if(t != nil){
 			wordidx = (int)((uintptr*)track[i].addr - (uintptr*)track[i].obj);
-			print("track: object %#p word %d, type %#p size %d np %d map",
-				track[i].obj, wordidx, t, t->size, t->np);
+			/*
+			 * t->ref, because Type's first field is its
+			 * reference count: a Type that has been freed and
+			 * had its memory zeroed reads ref 0 size 0, and one
+			 * whose memory has been handed to something else
+			 * reads whatever that something wrote.  Which of
+			 * those it is decides whether the premature free is
+			 * of the object or of its Type.
+			 */
+			print("track: object %#p word %d, type %#p ref %d size %d np %d map",
+				track[i].obj, wordidx, t, t->ref, t->size, t->np);
 			for(j = 0; j < t->np; j++)
 				print(" %#.2ux", t->map[j]);
 			print("\n");
