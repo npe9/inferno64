@@ -295,6 +295,7 @@ prompt:
 \f(CW-kernel\fP, 512 MiB     6 prompt   2 panic   2 module load failed
 \f(CW-kernel\fP, 1 GiB       6 prompt   4 panic   0
 UEFI ISO, 1 GiB       4 prompt   4 panic   2 module load failed
+PVH ELF, 1 GiB        3 prompt   2 panic   1 module load failed  (of 6)
 .fi
 .PP
 The comparison
@@ -544,6 +545,13 @@ finds its memory, reaches
 .CW "Welcome to Inferno..."
 and spawns
 .CW "sh -n /dis/init" .
+Three of six boots reach the interactive
+.CW ;
+prompt, two panic and one fails a module load \(en the same rate and
+the same two faults
+.CW ( "movp: bad dv"
+and a general protection violation) the other two boot paths show, so
+the PVH path is no worse than they are and no better.
 What that verifies is QEMU's implementation of the ABI.  Booting as a
 Xen PVH domU is the same entry point and the same structure, but no
 Xen runs on this host and it is not claimed.
