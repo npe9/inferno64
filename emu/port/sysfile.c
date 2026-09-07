@@ -606,6 +606,16 @@ rread(int fd, void *va, long n, vlong *offp)
 	int dir;
 	Lock *cl;
 	volatile struct { Chan *c; } c;
+	/*
+	 * The path, kept across the longjmp so the message below can name the
+	 * file.  "rread fd 4 ... failed: no such file" names a descriptor
+	 * number, which by the time anyone reads the console has been closed
+	 * and probably reused - there is no way back from it to a file.  The
+	 * chan is gone by the time the outer handler runs (the inner one
+	 * ccloses it), so the name is copied out while the chan is still held
+	 * rather than dereferenced afterwards.
+	 */
+	volatile struct { char s[64]; vlong off; } path;
 	vlong off;
 
 	/*
@@ -623,13 +633,23 @@ rread(int fd, void *va, long n, vlong *offp)
 	 * "fdtochan failed" even when fdtochan had succeeded and the read was
 	 * what failed, which was actively misleading.
 	 */
+	path.s[0] = '\0';
+	path.off = -1;
 	if(waserror()){
-		if(strcmp(up->env->errstr, Eintr) != 0)
-			print("rread fd %d va 0x%p n %d offp %lld failed: %r\n", fd, va, n, offp);
+		if(strcmp(up->env->errstr, Eintr) != 0){
+			if(path.s[0] == '\0')
+				print("rread fd %d n %ld failed before the fd resolved: %r\n", fd, n);
+			else
+				print("rread %s (fd %d) n %ld at %lld failed: %r\n",
+					(char*)path.s, fd, n, path.off);
+		}
 		return -1;
 	}
 
 	c.c = fdtochan(up->env->fgrp, fd, OREAD, 1, 1);
+	if(c.c->name != nil && c.c->name->s != nil)
+		kstrcpy((char*)path.s, c.c->name->s, sizeof(path.s));
+	path.off = offp != nil ? *offp : c.c->offset;
 	if(waserror()){
 		cclose(c.c);
 		nexterror();		/* outer handler prints once */
