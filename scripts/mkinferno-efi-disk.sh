@@ -62,3 +62,34 @@ mkdir -p `dirname "$DISK"`
 rm -f "$DISK"
 python3 "$ROOT/scripts/mkgptdisk.py" "$DISK" "$ESP" "$MIB"
 ls -l "$DISK"
+
+# Compute Engine takes the image as a file named exactly disk.raw, alone
+# in a gzipped tar written in the old GNU tar format, and the raw file
+# must be a whole number of gigabytes.  INFERNO_GCE_TAR names the
+# archive to write; the disk image is left in place either way.
+#
+# Built to that documented requirement and not past it: the archive has
+# not been through Compute Engine's importer here, only the disk inside
+# it has been booted under OVMF.  GNU tar spells the format oldgnu and
+# the bsdtar on a Mac spells it gnutar, hence the probe.
+if [ -n "$INFERNO_GCE_TAR" ]; then
+	if [ `expr $MIB % 1024` -ne 0 ]; then
+		echo "gce: image is $MIB MiB; Compute Engine wants a whole" \
+		     "number of GiB, so pass 1024 or a multiple" >&2
+		exit 1
+	fi
+	TARFMT=--format=oldgnu
+	if ! tar $TARFMT -cf /dev/null -T /dev/null 2>/dev/null; then
+		TARFMT=--format=gnutar
+		tar $TARFMT -cf /dev/null -T /dev/null 2>/dev/null || TARFMT=
+	fi
+	D=`dirname "$DISK"`
+	B=`basename "$DISK"`
+	if [ "$B" != disk.raw ]; then
+		ln -f "$DISK" "$D/disk.raw" 2>/dev/null || cp "$DISK" "$D/disk.raw"
+	fi
+	tar -C "$D" $TARFMT -czf "$INFERNO_GCE_TAR" disk.raw
+	[ "$B" != disk.raw ] && rm -f "$D/disk.raw"
+	echo "gce: $INFERNO_GCE_TAR ($TARFMT)"
+	ls -l "$INFERNO_GCE_TAR"
+fi

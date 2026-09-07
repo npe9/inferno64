@@ -2,6 +2,18 @@
 # Boot the Inferno UEFI ISO under QEMU with the serial console captured.
 # The firmware is edk2 (OVMF), which is the same class of firmware a
 # cloud machine runs; there is no CSM in this path.
+#
+# .qemu/ is not carried in the tree.  The two firmware files this wants
+# come from the QEMU install:
+#	cp /opt/homebrew/share/qemu/edk2-x86_64-code.fd .qemu/edk2-code.fd
+#	cp /opt/homebrew/share/qemu/edk2-i386-vars.fd  .qemu/edk2-vars.fd
+# (a Linux host has them under /usr/share/OVMF or /usr/share/edk2).
+#
+# That build has no NetworkPkg in it, so it offers no network boot entry
+# at all and drops to the EFI shell whether or not QEMU is given a UEFI
+# option ROM for the NIC.  os/inferno/boot/efi/pxe.c therefore cannot be
+# exercised with this firmware; testing it wants an OVMF built with
+# NetworkPkg.
 # usage: scripts/qemu-inferno-efi.sh [iso] [logfile] [seconds] [extra qemu args...]
 set -e
 ROOT=`cd \`dirname "$0"\`/.. && pwd`
