@@ -24,7 +24,6 @@ include "danby/twospecies.m";
 	internalcompetition: Twospecies;
 	cooperation: Twospecies;
 	competition: Twospecies;
-	ecologymodel: Twospecies;
 include "danby/populationmodel.m";
 	childcare: Populationmodel;
 	manyspecies: Populationmodel;
@@ -200,7 +199,11 @@ init(nil: ref Draw->Context, nil: list of string)
 	internalcompetition = load Twospecies "/dis/danby/internalcompetition.dis";
 	cooperation = load Twospecies "/dis/danby/cooperation.dis";
 	competition = load Twospecies "/dis/danby/competition.dis";
-	ecologymodel = load Twospecies "/dis/danby/ecology.dis";
+	# ecology is the shared Twospecies viewer, so it deliberately does NOT
+	# implement Twospecies (fb1504e0): a module that implements an interface
+	# links its loads of that interface against its own function set.  Its
+	# own Lotka-Volterra pair is written out in appl/danby/ecology.b and is
+	# not reachable as a module, so there is nothing to check here.
 	childcare = load Populationmodel "/dis/danby/childcare.dis";
 	manyspecies = load Populationmodel "/dis/danby/manyspecies.dis";
 	foodchainmodel = load Populationmodel "/dis/danby/foodchain.dis";
@@ -354,7 +357,7 @@ init(nil: ref Draw->Context, nil: list of string)
 			logisticprey == nil || logisticpredators == nil ||
 			alternativepredation == nil || maypredator == nil ||
 			internalcompetition == nil || cooperation == nil ||
-			competition == nil || ecologymodel == nil || childcare == nil ||
+			competition == nil || childcare == nil ||
 			manyspecies == nil || foodchainmodel == nil ||
 			violetsantsrodents == nil || parasite == nil ||
 			cannibalism == nil || changingenvironment == nil ||
@@ -534,6 +537,7 @@ testtrajectory()
 	checkmechanism(movingpivot,"moving-pivot pendulum");
 	checkmechanism(pegpendulum,"peg pendulum");
 	checkmechanism(slidingpendulum1,"sliding pendulum 1");
+	testslidingpendulum();
 	checkmechanism(slidingpendulum2,"sliding pendulum 2");
 	checkmechanism(atwoodpendulum,"swinging Atwood machine");
 	checkmechanism(tablependulum,"table-coupled pendulum");
@@ -988,7 +992,6 @@ testtwospecies()
 	checktwospecies(internalcompetition,"internal competition");
 	checktwospecies(cooperation,"cooperation");
 	checktwospecies(competition,"competition");
-	checktwospecies(ecologymodel,"Volterra ecology");
 
 	may := maypredator->new();
 	state[0] = 0.0;
@@ -1039,6 +1042,41 @@ testmap()
 		fail("periodic Lyapunov",periodic,-1.0);
 	chaotic := chaosmap->lyapunov(4.0,0.217,500,10000);
 	check("r=4 Lyapunov",chaotic,0.6931471805599453,0.02);
+}
+
+# A free support carries no external horizontal force, so
+# (M+m)x' + m*l*th'*cos(th) is a first integral of the sliding pendulum -
+# including with hinge damping, which is an internal couple.  242e399d fixed
+# cartpendulum->derivatives dropping that couple's reaction on the support;
+# without the fix this drifts by ~6e-2 in thirty seconds and the whole rig
+# slides along its rail.  The check is here rather than in Python because
+# what has to be right is the Limbo.
+slidingmodel: ref Mechanism->Model;
+
+slidingrhs(t: real, state, derivative: array of real)
+{
+	slidingpendulum1->evaluate(slidingmodel,t,state,derivative);
+}
+
+testslidingpendulum()
+{
+	slidingmodel = slidingpendulum1->new();
+	p := slidingmodel.parameter;
+	if(p[5] <= 0.0)
+		fail("sliding pendulum hinge damping",p[5],0.04);
+	m := p[1];
+	l := p[2];
+	total := p[0]+p[1];
+	state := slidingpendulum1->initialstate(slidingmodel);
+	work := numerics->workspace(len state);
+	before := total*state[1]+m*l*state[3]*math->cos(state[2]);
+	t := 0.0;
+	for(i := 0; i < 30000; i++){
+		numerics->rk4(work,slidingrhs,t,0.001,state);
+		t += 0.001;
+	}
+	after := total*state[1]+m*l*state[3]*math->cos(state[2]);
+	check("sliding pendulum horizontal momentum",after,before,1.0e-10);
 }
 
 testpendulum()
