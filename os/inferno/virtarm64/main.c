@@ -38,6 +38,7 @@ Mach*		machp[MAXMACH];
 uintptr		secmach;	/* &mach1, read by _secondary */
 volatile uintptr	secsp;
 volatile uintptr	seccflag;	/* set only by C on cpu1 */
+int		secgic = -1;
 volatile uintptr	secalive;
 volatile uintptr	seccount;
 
@@ -47,28 +48,21 @@ secmain(void)
 	Mach *mm;
 	extern void *vectab;
 	extern void vectorinit(void*);
+	extern int gicsecondary(void);
 
-	/*
-	 * Read back what this processor put in TPIDR_EL1.  Through a
-	 * pointer, deliberately: 7c hoists a direct global out of a loop
-	 * but reloads a dereference, which is the rule os/9front's whole
-	 * multiprocessor discipline rests on -- see doc/multicore-plan.ms.
-	 */
 	mm = (Mach*)gettpidr();
 	seccflag = (uintptr)mm;
-	/*
-	 * Install the vector table cpu0 built.  Until this runs, any
-	 * fault on this processor goes to whatever VBAR_EL1 reset left
-	 * and is simply lost; after it, a fault is reported like any
-	 * other.  The table is shared and read-only once built.
-	 */
 	if(vectab != nil)
 		vectorinit(vectab);
+	secgic = gicsecondary();
+	if(secgic == 0)
+		clockinit();		/* this processor's own generic timer */
 	secalive = 5;
+	spllo();			/* take interrupts on this processor */
 	for(;;){
-		mm->ticks++;
 		seccount = mm->ticks;
 		coherence();
+		idle();
 	}
 }
 
@@ -111,9 +105,8 @@ smpprobe(void)
 	 */
 	c0 = seccount;
 	delay(50);
-	print("smp: MACHP(0)->machno %d, MACHP(1)->machno %d; cpu1 ticks %llud -> %llud (%s)\n",
-		MACHP(0)->machno, MACHP(1)->machno, (uvlong)c0, (uvlong)seccount,
-		seccount != c0 ? "running" : "stopped");
+	print("smp: MACHP(1)->machno %d gic %d; cpu1 clock ticks %llud -> %llud in 50ms\n",
+		MACHP(1)->machno, secgic, (uvlong)c0, (uvlong)seccount);
 }
 
 int

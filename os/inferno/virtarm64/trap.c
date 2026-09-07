@@ -243,6 +243,32 @@ gicinit(void)
 	gicenable(GicPPITimer);
 }
 
+/*
+ * The per-processor half of gicinit(), for a secondary.  On a GICv2 the
+ * cpu interface at GICC and the SGI/PPI enable bits in GICD_ISENABLER0
+ * are banked per processor: the same addresses, configuring whichever
+ * processor writes them.  So a secondary re-runs exactly those and
+ * leaves the distributor, which is global, alone.
+ *
+ * GICv3 is not done.  There the redistributor is per processor at
+ * GICR + n*stride and this board's GICR is a single fixed address --
+ * cpu0's frame -- so a secondary would need its own, which is a change
+ * to how the base is computed rather than a line added here.
+ */
+int
+gicsecondary(void)
+{
+	u32 *gicc;
+
+	if(gicv3)
+		return -1;
+	gicc = (u32*)GICC;
+	gicc[GiccPMR] = 0xff;
+	gicc[GiccCTLR] = 1;
+	gicenable(GicPPITimer);
+	return 0;
+}
+
 void
 trapinit(void)
 {

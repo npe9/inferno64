@@ -70,6 +70,19 @@ clockintr(Ureg *u)
 		kproftick((ulong)u->pc);
 
 	m->ticks++;
+	/*
+	 * checkalarms() and timercheck() walk queues shared by the whole
+	 * machine and are not safe to run from a second processor yet, and
+	 * the clock0link list below is the same.  A secondary takes its
+	 * own timer interrupt, counts it in its own Mach, rearms its own
+	 * timer and returns; that is all it is entitled to do until the
+	 * scheduler and those queues are locked.
+	 */
+	if(m->machno != 0){
+		uvlong nn = now() + m->cpuhz/HZ;
+		hwtimerset(&nn);
+		return;
+	}
 	checkalarms();
 	timercheck(u);
 
