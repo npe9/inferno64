@@ -13,6 +13,22 @@ Pctx*	curP = &_pctx;
 REG*	curR = &_pctx.reg;		/* interp.h: #define R (*curR) */
 String	snil;			/* String known to be zero length */
 
+/*
+ * Diagnostic switch, off.  A frame stores R.M->type[] in f->t and takes
+ * no reference on it, because a frame is stack and its module is meant
+ * to outlive it.  That invariant is what the virtarm64 reproducer
+ * breaks: the shell unloads /dis/cd.dis while a frame of one of its
+ * types is still on a stack, freemod() frees the type, and the next
+ * freeptrs(f, f->t) walks a freed Type.  See doc/multicore-plan.ms.
+ *
+ * Setting this counts the frame's reference.  It is NOT complete: the
+ * release below covers OP(ret) only, so a proc killed with frames on
+ * its stack leaks type references, and the JIT's own freeptrs() paths
+ * in comp-*.c are not touched (cflag is 0 on every native board).  It
+ * is here to test the diagnosis, not to ship.
+ */
+int	framerefs = 0;
+
 /* Diagnostic: ring buffer of the last few instructions xec() dispatched
  * for a given proc, so a fault report can show what actually ran
  * leading up to it - not just the single (possibly misleading) PC
@@ -706,6 +722,8 @@ OP(frame)
 	f = (Frame*)R.SP;
 	R.SP  = nsp;
 	f->t  = t;
+	if(framerefs)
+		AINC(&t->ref);
 	f->mr = nil;
 	DBG("frame frame 0x%p t 0x%p t->size %d R.SP 0x%p\n",
 		f, t, t->size, R.SP);
@@ -746,6 +764,8 @@ OP(mframe)
 	f = (Frame*)R.SP;
 	R.SP = nsp;
 	f->t = t;
+	if(framerefs)
+		AINC(&t->ref);
 	f->mr = nil;
 	DBG("\t\tmframe frame 0x%p t 0x%p t->size %d R.SP 0x%p\n",
 		f, t, t->size, R.SP);
@@ -1214,9 +1234,15 @@ OP(ret)
 
 	if(f->t == nil)
 		unextend(f);
-	else if (f->t->np) {
-		scanframe(f, "OP(ret)");
-		freeptrs(f, f->t);
+	else {
+		Type *ft = f->t;
+
+		if(ft->np) {
+			scanframe(f, "OP(ret)");
+			freeptrs(f, ft);
+		}
+		if(framerefs)
+			freetype(ft);	/* the reference OP(frame) took */
 	}
 
 	if(m != nil) {

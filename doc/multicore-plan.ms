@@ -1482,12 +1482,68 @@ name.  That is
 in one sentence, and it is why all three opcodes have been implicated
 for as long as the hunt has run.
 .PP
-Two ways to fix it, and choosing between them is a design decision
-rather than a measurement: give frames a counted reference on their
-type, which costs an atomic pair on every call and return; or make the
-thing that keeps a module loaded account for frames still on a stack,
-which costs nothing per call and requires knowing where those frames
-are.  The reproducer can check either.
+The first of the two fixes was then built and measured, behind
+.CW framerefs
+in
+.CW libinterp/xec.c :
+.CW OP(frame)
+and
+.CW OP(mframe)
+take a reference,
+.CW OP(ret)
+releases it.  And the result corrects the section above.
+.IP
+.nf
+                  IMCALL failures    Type at the corruption
+baseline (6)                   12    ref 0 size 0, ref 1953066601 ...
+leaktypes (8)                   0    ref 1 size 136
+framerefs (8)                  12    ref 1 size 88, ref 1 size 112
+.fi
+.PP
+.CW framerefs
+does what it was meant to: the Types at the very addresses that used to
+read
+.CW "ref 0 size 0"
+now read
+.CW "ref 1"
+with sensible sizes.  Frames really were holding uncounted references
+and really were outliving their modules' type tables.  That much is a
+genuine bug and it is now demonstrated rather than argued.
+.PP
+But the corruption is unchanged \- twelve
+.CW IMCALL
+failures over eight boots, the same as baseline.  So keeping the
+.CW Type
+alive does not stop the object's words going to zero, and the two are
+independent.
+.PP
+Which means the
+.CW leaktypes
+result has to be read again.  It also keeps types alive, and it removed
+the corruption entirely; but
+.CW framerefs
+keeps them alive too and removes nothing.  The difference between them
+is that
+.CW leaktypes
+additionally skips the
+.CW free(t)
+\- it changes what the allocator does with that memory.  So the honest
+reading of "confirmed by removal" above is that it was probably an
+allocation-pattern effect after all, not the causal demonstration it
+was written up as.  Two switches that both keep the type alive disagree,
+and the one that also changes allocation is the one that helped.
+.PP
+So the premature
+.CW Type
+free is real and now fixable, and it is
+.I not
+the corruption.  The corruption is something zeroing words inside a
+live object, at
+.CW IMCALL ,
+with its type intact \- which is where the next attempt should start,
+and it should not start from the assumption that a
+.CW Type
+is involved at all.
 .PP
 What is still not done, so the state is not overstated: GICv3 (the
 redistributor is per processor and this board derives one fixed base),
