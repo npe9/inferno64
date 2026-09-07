@@ -120,6 +120,63 @@ this particular stall is an open question with a one-command reproducer.
 There is also a ceiling of `MaxG3Batches = 64` distinct model/projection
 transforms per frame.
 
+## The ports still on software rendering: do they need it?
+
+Asked after Phase 1, and answered by measurement rather than by
+assumption. Two groups are left, and they need different things.
+
+**The eight `sprite2d` ports gain nothing from the provider.** `sprite2d`
+is the *same Limbo pixel loop in both providers* — neither sends a
+message — so `draw3ddemo`'s load idiom would do nothing for `bigguns`,
+`bombergolf`, `elephantwalk`, `rocket`, `rocketscience`, `squirt`,
+`tothefront` or `xcaliber`. `draw3dbench` has a sprite case that makes
+this a measurement: the provider column comes out flat, 1705 µs against
+1695 µs for a 220x220 sprite.
+
+The cost was in the loop itself, and it is now gone for the case that
+mattered. With no rotation the inverse transform is separable, so the
+real arithmetic hoists into two tables, and when those come out as the
+identity the whole operation is a masked blit: 220x220 unrotated fell
+from 1705 µs to 35 µs against a 30 µs floor for the equivalent `draw()`.
+That is `elephantwalk`'s frame cost, 1.6 ms of it. The rotated path still
+costs about 2.6 ms at that size, but no port rotates a sprite anywhere
+near it — the largest is `bombergolf`'s 84x34 at about 260 µs — so it
+does not need work. (Fixing the resample also turned up that every sprite
+in the tree was drawn a column and a row out of place; see
+`sprite2dtest(1)`.)
+
+**The eight hand-rolled ports are not slow enough to matter.** `box`,
+`dungen`, `keepaway`, `lattice`, `stadium`, `talons`, `titanium` and
+`varoom` draw with `Image.fillpoly`, `Image.line` and `Image.draw`. Those
+run in C in libmemdraw and have *no* GPU hook: devdraw's `case 'p'`/`'P'`
+and `case 'L'` call `mempoly`/`memfillpoly`/`memline` directly, and the
+`gpudraw*` hooks are wired only into the draw3d messages. So they are not
+on the GPU — but they are already in C, which is where most of the win
+would have come from.
+
+CPU used over a five-second window, one core = 100%:
+
+| port | CPU | port | CPU |
+| --- | --- | --- | --- |
+| `keepaway` | 22% | `titanium` | 4% |
+| `varoom` | 17% | `box` | 2% |
+| `stadium` | 9% | `lattice` | 1% |
+| `talons` | 8% | | |
+| `dungen` | 7% | (`tictactoe`, idle baseline) | 3% |
+
+For comparison the nine ports Phase 1 moved to the GPU run at 0–10%
+(`castlefrankenstein` 10%, `shading` and `shadow` 8%, `zoneout` 7%,
+`3dpoly` 6%, `elephantwalk` 3%, `pick3d` and `spriteplot3d` 1%,
+`rotatetank` 0%). Nothing in the tree is close to saturating a core.
+
+So Phase 9 stays where it is, and it is about vocabulary rather than
+speed: these ports grew their own projection and depth handling because
+draw3d did not offer what they needed, and the reason to move them is
+that it will. **Caveat**: these figures are from each port's idle or
+attract state, because no input is delivered — the same limit
+`doc/temple-plan.md` warns about. A port whose gameplay draws far more
+than its attract screen would not show it here.
+
 ## Order of work
 
 Each phase names the evidence that closes it. A phase is not done because
