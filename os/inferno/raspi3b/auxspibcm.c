@@ -93,6 +93,8 @@ enum {
 	Coreclk	= 250000000,		/* the AUX SPI runs off the core clock */
 
 	Alt4	= 3,			/* GPIO 16-21 carry SPI1 in alt4 */
+
+	Timeout	= 100000,
 };
 
 static u32*
@@ -165,8 +167,28 @@ static u32
 auxspiword(int reg, int nbits, u32 data)
 {
 	u32 *r = aux() + Spi1;
+	int i;
 
 	r[reg] = data << (32 - nbits);	/* transmit is left justified */
+
+	/*
+	 * Wait for the answer before reading it.  The shift takes nbits
+	 * bit-times on a board and the receive FIFO stays empty until it
+	 * finishes, so a read issued straight after the write returns a
+	 * stale word or nothing at all.  RX_EMPTY exists to be waited on.
+	 *
+	 * Under an emulator that completes the transfer inside the
+	 * register write -- which is what both this block's model and
+	 * SPI0's do -- this loop spins zero times and a driver without it
+	 * appears to work perfectly.  That is exactly why it is written
+	 * from what the hardware does rather than from what the emulator
+	 * lets us get away with.
+	 */
+	for(i = 0; i < Timeout; i++)
+		if((r[Stat] & Rxempty) == 0)
+			break;
+	if(i == Timeout)
+		return 0;
 	return r[Io] & (nbits == 32 ? ~0UL : ((1UL << nbits) - 1));
 }
 
@@ -241,8 +263,14 @@ auxspiinit(void)
 
 	/*
 	 * A shift length that is not a whole number of bytes.  This is
-	 * the thing SPI0 cannot express at all, so it is the thing worth
-	 * checking survives.
+	 * the thing SPI0 cannot express at all, so it is worth checking
+	 * that it survives into both CNTL0 and STAT.
+	 *
+	 * Note what this does and does not show.  It checks the length is
+	 * accepted and reported; it does not move 12 bits through a
+	 * peripheral, and cannot here, because QEMU's SSI bus carries
+	 * whole bytes and the model says so with a LOG_UNIMP.  On a board
+	 * this is where a 12-bit ADC would be read.
 	 */
 	if(auxspiconfig(12, 1000000) < 0){
 		print("AUXSPI-FAIL 12-bit configuration rejected\n");
@@ -320,8 +348,9 @@ auxspiinit(void)
 		return;
 	}
 
-	print("auxspi: spi1 at %#p, 12-bit shifts, %d-word FIFO\n",
-		(void*)(AUX0 + 0x80), Fifodepth);
+	print("auxspi: spi1 at %#p, %d-word FIFO; a 12-bit shift length is "
+		"accepted but not carried here\n", (void*)(AUX0 + 0x80),
+		Fifodepth);
 
 	/*
 	 * And a real transfer, in whole bytes, against whatever is on the
@@ -340,5 +369,5 @@ auxspiinit(void)
 		print("auxspi: jedec %.2ux %.2ux %.2ux\n", id[0], id[1], id[2]);
 
 	p[Cntl0] = 0;
-	print("AUXSPI-OK gate, 12-bit shift length, FIFO levels and a transfer\n");
+	print("AUXSPI-OK gate, FIFO levels, and an 8-bit transaction\n");
 }

@@ -1078,10 +1078,9 @@ missing.  The hardware uses quarters, and that is what is implemented.
 .CW ( auxspibcm.c ,
 0x3f215080 and 0x3f2150c0, and
 .CW tools/qemu-patches/0012 )
-were dismissed once in this document as a second copy of SPI0 through a
-different register layout.  That was wrong twice over.  They fell
-through to "Bad offset" in QEMU, so a guest could not use them at all;
-and they are not the same engine.  The shift length is a number of
+fell through to "Bad offset" in QEMU, so a guest could not use them at
+all.  They are not SPI0 with a different register layout.  The shift
+length is a number of
 .I bits ,
 1 to 32, not a number of bytes, so a 12-bit ADC or a 9-bit display
 controller is a single transfer here and an awkward mess on SPI0.  That
@@ -1096,26 +1095,36 @@ that writes a bare byte \- exactly right on SPI0 \- clocks out zeroes,
 and a slave receiving zeroes usually answers with zeroes rather than
 complaining.
 .PP
-Modelling it turned up a third thing, which only appeared because the
-test used a peripheral nobody here wrote.  An
+The third difference only appeared because the test used a peripheral
+nobody here wrote.  An
 .CW m25p16
-flash on the bus answered a JEDEC identify with zeroes.  The bytes were
-reaching it \- a trace showed 0x9f arriving \- but its command state
-machine had been left mid-command by earlier traffic and nothing could
-resynchronise it, because chip select never moved.  That is what the
-two register windows are
+flash answered a JEDEC identify with zeroes; a trace showed 0x9f
+reaching it, but its command state machine had been left mid-command by
+earlier traffic and nothing could resynchronise it, because chip select
+never moved.  That is what the two register windows are
 .I for :
 a write to TXHOLD keeps chip select asserted after the word and a write
-to IO drops it, so a multi-word command is one transaction.  With CS
-modelled the same flash answers
+to IO drops it, so a multi-word command is one transaction.  With chip
+select modelled the same flash answers
 .CW "jedec 20 20 15" .
 .PP
-That last result is worth more than the rest of the file.  Everything
-else here is
+That result is worth more than the rest of the file.  Everything else
+here is
 .I qemu+patch
 \- both halves ours \- but the flash is QEMU's own model, so the
-register layer is being checked against something this port did not
-write.
+register layer is checked against something this port did not write.
+.PP
+Two limits are stated in the driver rather than hidden by it.  The
+12-bit shift length is checked into CNTL0 and STAT but not carried
+through a peripheral, because QEMU's SSI bus moves whole bytes and the
+model says so; the banner says "an 8-bit transaction" for that reason.
+And
+.CW auxspiword()
+waits for RX_EMPTY to clear before reading the answer.  Both this
+block's model and SPI0's complete a transfer inside the register write
+that starts it, so that wait spins zero times and a driver without it
+looks perfect here and reads stale words on a board.  It is written
+from what the silicon does.
 .NH 1
 What stays unmodelled, and why
 .PP
@@ -1126,42 +1135,28 @@ alone for a reason, and the reason is never that the emulator would be
 hard to extend.
 .PP
 .B "The BSC slave"
-(0x3f214000) has been given two wrong reasons in this document now, and
-the second was mine.  It was first listed as useless because making the
-Pi an I2C
-.I slave
-needs a master on the other end of a wire that does not exist.  That is
-wrong: the Pi has three I2C masters of its own, QEMU models them with
-real buses
-.CW ( i2c_init_bus
-in
-.CW hw/i2c/bcm2835_i2c.c ),
-and
-.CW i2cbcm.c
-already drives BSC0.  Strapping a master to the slave is a standard
-bring-up trick on a board, and attaching the slave to BSC0's bus would
-model exactly that.  So it was corrected to say the block was tractable
-and next.
-.PP
-It is not, and the reason is a different one that only turned up on
-looking for the register description.  Linux 6.17 has no driver for
-this block at all \- it exists only in the Raspberry Pi vendor tree \-
-and the datasheet section that documents it was not available here.
-The register
-.I offsets
-are recoverable; the bit semantics of CR and FR are not.  A model built
-on a remembered bit layout would be a model a driver is then written to
-match, which is precisely the both-halves-ours failure the evidence
-tiers in
+(0x3f214000) is blocked on documentation that can be checked.  Linux
+6.17 has no driver for it \- it exists only in the Raspberry Pi vendor
+tree \- and the datasheet section describing it was not available here.
+The register offsets are recoverable; the bit semantics of CR and FR
+are not, and a model built on a remembered bit layout is a model a
+driver is then written to match.  That is the both-halves-ours failure
+the evidence tiers in
 .CW tools/qemu-patches/README
-exist to prevent, and worse than the PWM's missing serialiser, because
-there the register semantics were solid and only the behaviour was
+exist to prevent, and it is worse than the PWM's missing serialiser,
+where the register semantics were solid and only the behaviour was
 absent.
 .PP
-So the blocker is documentation that can be checked, not emulator
-support and not the absence of a master.  Either the datasheet's
-section 11 or the vendor tree's driver would unblock it, and neither is
-a large piece of work once one of them is in hand.
+Note what is
+.I not
+the blocker, since it was recorded as one here and is not: exercising
+it needs no external master.  The Pi has three I2C masters of its own,
+QEMU models them with real buses, and
+.CW i2cbcm.c
+already drives BSC0, so attaching the slave to that bus would model the
+pin strap a real board uses.  Either the datasheet's section 11 or the
+vendor tree's driver would unblock this, and neither is much work once
+one is in hand.
 .PP
 .B "The secondary memory interface"
 (0x3f600000) is blocked the same way, and it was checked the same way:
