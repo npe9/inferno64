@@ -101,8 +101,6 @@ include "danby/mechanism.m";
 	amusementchaos: Mechanism;
 	spacestationball: Mechanism;
 	fireworks: Mechanism;
-	rocketintro: Mechanism;
-	multistagerocket: Mechanism;
 	spaceyoyo: Mechanism;
 	stretchyoyo: Mechanism;
 	venushead: Mechanism;
@@ -115,21 +113,11 @@ include "danby/mechanism.m";
 	swingingcenser: Mechanism;
 	movingpivot: Mechanism;
 	pegpendulum: Mechanism;
-	slidingpendulum2: Mechanism;
 	atwoodpendulum: Mechanism;
 	tablependulum: Mechanism;
-	doublependulummodel: Mechanism;
 	wheelpendulum: Mechanism;
 	magneticpendulum3d: Mechanism;
 	dumbbellsatellite: Mechanism;
-	moonrotation: Mechanism;
-	hyperionrotation: Mechanism;
-	mercuryrotation: Mechanism;
-	tidalrotation: Mechanism;
-	nonlinearsprings: Mechanism;
-	duffing: Mechanism;
-	vanderpol: Mechanism;
-	variationparameters: Mechanism;
 	columnbuckling: Mechanism;
 	catastrophemachine: Mechanism;
 	attractingwires: Mechanism;
@@ -142,8 +130,6 @@ include "danby/mechanism.m";
 	pursuit: Mechanism;
 	lowbombing: Mechanism;
 	carbonmicrophone: Mechanism;
-	rotatingring1: Mechanism;
-	rotatingring2: Mechanism;
 	compass: Mechanism;
 	pistonflywheel: Mechanism;
 	wattgovernor: Mechanism;
@@ -269,8 +255,6 @@ init(nil: ref Draw->Context, nil: list of string)
 	amusementchaos = load Mechanism "/dis/danby/amusementchaos.dis";
 	spacestationball = load Mechanism "/dis/danby/spacestationball.dis";
 	fireworks = load Mechanism "/dis/danby/fireworks.dis";
-	rocketintro = load Mechanism "/dis/danby/rocketintro.dis";
-	multistagerocket = load Mechanism "/dis/danby/multistagerocket.dis";
 	spaceyoyo = load Mechanism "/dis/danby/spaceyoyo.dis";
 	stretchyoyo = load Mechanism "/dis/danby/stretchyoyo.dis";
 	venushead = load Mechanism "/dis/danby/venushead.dis";
@@ -286,21 +270,11 @@ init(nil: ref Draw->Context, nil: list of string)
 	# slidingpendulum1 is now a mechlab(2) script rather than a Mechanism
 	# module - mechlabtest(1) checks it, including the momentum law that
 	# used to be checked here.
-	slidingpendulum2 = load Mechanism "/dis/danby/slidingpendulum2.dis";
 	atwoodpendulum = load Mechanism "/dis/danby/atwoodpendulum.dis";
 	tablependulum = load Mechanism "/dis/danby/tablependulum.dis";
-	doublependulummodel = load Mechanism "/dis/danby/doublependulum.dis";
 	wheelpendulum = load Mechanism "/dis/danby/wheelpendulum.dis";
 	magneticpendulum3d = load Mechanism "/dis/danby/magneticpendulum3d.dis";
 	dumbbellsatellite = load Mechanism "/dis/danby/dumbbellsatellite.dis";
-	moonrotation = load Mechanism "/dis/danby/moonrotation.dis";
-	hyperionrotation = load Mechanism "/dis/danby/hyperionrotation.dis";
-	mercuryrotation = load Mechanism "/dis/danby/mercuryrotation.dis";
-	tidalrotation = load Mechanism "/dis/danby/tidalrotation.dis";
-	nonlinearsprings = load Mechanism "/dis/danby/nonlinearsprings.dis";
-	duffing = load Mechanism "/dis/danby/duffing.dis";
-	vanderpol = load Mechanism "/dis/danby/vanderpol.dis";
-	variationparameters = load Mechanism "/dis/danby/variationparameters.dis";
 	columnbuckling = load Mechanism "/dis/danby/columnbuckling.dis";
 	catastrophemachine = load Mechanism "/dis/danby/catastrophemachine.dis";
 	attractingwires = load Mechanism "/dis/danby/attractingwires.dis";
@@ -313,8 +287,6 @@ init(nil: ref Draw->Context, nil: list of string)
 	pursuit = load Mechanism "/dis/danby/pursuit.dis";
 	lowbombing = load Mechanism "/dis/danby/lowbombing.dis";
 	carbonmicrophone = load Mechanism "/dis/danby/carbonmicrophone.dis";
-	rotatingring1 = load Mechanism "/dis/danby/rotatingring1.dis";
-	rotatingring2 = load Mechanism "/dis/danby/rotatingring2.dis";
 	compass = load Mechanism "/dis/danby/compass.dis";
 	pistonflywheel = load Mechanism "/dis/danby/pistonflywheel.dis";
 	wattgovernor = load Mechanism "/dis/danby/wattgovernor.dis";
@@ -372,7 +344,7 @@ init(nil: ref Draw->Context, nil: list of string)
 			flightmodel == nil || hovercraft == nil || shipmotion == nil ||
 			balloon == nil || joggingcompanion == nil || bungee == nil ||
 			yoyo == nil || amusementchaos == nil || spacestationball == nil ||
-			fireworks == nil || rocketintro == nil || multistagerocket == nil ||
+			fireworks == nil ||
 			spaceyoyo == nil || stretchyoyo == nil ||
 			threebody == nil || moontrip == nil ||
 			lagrange1 == nil || lagrange2 == nil || cometcatch == nil ||
@@ -382,19 +354,13 @@ init(nil: ref Draw->Context, nil: list of string)
 			synchronousmotor == nil || gravitypendulum == nil ||
 			magneticpendulum2d == nil || swing1 == nil || swing2 == nil ||
 			varyingpendulum == nil || swingingcenser == nil ||
-			movingpivot == nil || pegpendulum == nil || slidingpendulum2 == nil ||
-			atwoodpendulum == nil || tablependulum == nil ||
-			doublependulummodel == nil || wheelpendulum == nil ||
-			magneticpendulum3d == nil || dumbbellsatellite == nil ||
-			moonrotation == nil || hyperionrotation == nil ||
-			mercuryrotation == nil || tidalrotation == nil ||
-			nonlinearsprings == nil || duffing == nil || vanderpol == nil ||
-			variationparameters == nil || columnbuckling == nil ||
+			movingpivot == nil || pegpendulum == nil ||
+			atwoodpendulum == nil || tablependulum == nil || wheelpendulum == nil ||
+			magneticpendulum3d == nil || dumbbellsatellite == nil || columnbuckling == nil ||
 			catastrophemachine == nil || attractingwires == nil || violinbow == nil ||
 			carrierlanding == nil || springpivot == nil || springpendulum == nil ||
 			chaoticwheel == nil || fireflies == nil || pursuit == nil ||
-			lowbombing == nil || carbonmicrophone == nil || rotatingring1 == nil ||
-			rotatingring2 == nil || compass == nil || pistonflywheel == nil ||
+			lowbombing == nil || carbonmicrophone == nil || compass == nil || pistonflywheel == nil ||
 			wattgovernor == nil || dynamoreversal == nil || twomagnet == nil ||
 			bernoulli == nil)
 		raise "fail:danbytest: missing module";
@@ -499,8 +465,6 @@ testtrajectory()
 	checkmechanism(amusementchaos,"amusement chaos");
 	checkmechanism(spacestationball,"space-station ball");
 	checkmechanism(fireworks,"fireworks");
-	checkmechanism(rocketintro,"rocket introduction");
-	checkmechanism(multistagerocket,"multi-stage rocket");
 	checkmechanism(spaceyoyo,"space yo-yo");
 	checkmechanism(stretchyoyo,"stretch yo-yo");
 	checkmechanism(venushead,"Venus ray geometry");
@@ -513,21 +477,11 @@ testtrajectory()
 	checkmechanism(swingingcenser,"swinging censer");
 	checkmechanism(movingpivot,"moving-pivot pendulum");
 	checkmechanism(pegpendulum,"peg pendulum");
-	checkmechanism(slidingpendulum2,"sliding pendulum 2");
 	checkmechanism(atwoodpendulum,"swinging Atwood machine");
 	checkmechanism(tablependulum,"table-coupled pendulum");
-	checkmechanism(doublependulummodel,"double pendulum");
 	checkmechanism(wheelpendulum,"wheel pendulum");
 	checkmechanism(magneticpendulum3d,"magnetic pendulum 3d");
 	checkmechanism(dumbbellsatellite,"dumbbell satellite");
-	checkmechanism(moonrotation,"Moon rotation");
-	checkmechanism(hyperionrotation,"Hyperion rotation");
-	checkmechanism(mercuryrotation,"Mercury rotation");
-	checkmechanism(tidalrotation,"tidal spin capture");
-	checkmechanism(nonlinearsprings,"nonlinear springs");
-	checkmechanism(duffing,"Duffing oscillator");
-	checkmechanism(vanderpol,"Van der Pol oscillator");
-	checkmechanism(variationparameters,"variation of parameters");
 	checkmechanism(columnbuckling,"column buckling");
 	checkmechanism(catastrophemachine,"catastrophe machine");
 	checkmechanism(attractingwires,"attracting wires");
@@ -540,8 +494,6 @@ testtrajectory()
 	checkmechanism(pursuit,"pursuit curves");
 	checkmechanism(lowbombing,"low-level bombing");
 	checkmechanism(carbonmicrophone,"carbon microphone");
-	checkmechanism(rotatingring1,"rotating ring 1");
-	checkmechanism(rotatingring2,"rotating ring 2");
 	checkmechanism(compass,"oscillating compass");
 	checkmechanism(pistonflywheel,"piston and flywheel");
 	checkmechanism(wattgovernor,"Watt governor");

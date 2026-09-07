@@ -1,112 +1,62 @@
-implement Mechanism;
+implement Rotatingring2;
 
-# danby/rotatingring2 - A ball in a rotating circular ring: free ring
+# danby/rotatingring2 - a ball in a rotating circular ring, with the ring free
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/rotatinghoop.m";
-	hoop: Rotatinghoop;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	hoop = load Rotatinghoop Rotatinghoop->PATH;
-	return ref Model(array[] of {1.0,9.81,1.0,1.2,3.0,0.03,0.45});
-}
-
-title(): string
-{
-	return "A ball in a rotating circular ring: free ring";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"radius", "gravity", "ball mass", "ring inertia", "angular momentum", "damping", "initial angle"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.2,0.1,0.1,0.1,0.0,0.0,-3.0};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {4.0,20.0,5.0,10.0,12.0,1.0,3.0};
-}
-
-initialstate(model: ref Model): array of real
-{
-	return array[] of {model.parameter[6],0.0,0.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 35.0;
-}
-
-ringrate(model: ref Model, angle: real): real
-{
-	p := model.parameter;
-	s := math->sin(angle);
-	return p[4]/(p[3]+p[2]*p[0]*p[0]*s*s);
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	rate := ringrate(model,state[0]);
-	derivative[0] = state[1];
-	derivative[1] = hoop->angularacceleration(state[0],state[1],p[0],p[1],rate,p[5]);
-	derivative[2] = rate;
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(model: ref Model, state: array of real): array of real
-{
-	r := model.parameter[0];
-	width := 0.35+0.65*math->fabs(math->cos(state[2]));
-	x := width*r*math->sin(state[0]);
-	y := -r*math->cos(state[0]);
-	return array[] of {-width*r,0.0,0.0,-r,width*r,0.0,0.0,r,x,y};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,1,2,2,3,3,0};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"ball angle", "ring speed"};
-}
-
-observables(model: ref Model, state: array of real): array of real
-{
-	return array[] of {state[0],ringrate(model,state[0])};
-}
-
-Command: module
+Rotatingring2: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title A ball in a rotating circular ring: free ring\n" +
+	"param radius 1.0 0.2 4.0\n" +
+	"param gravity 9.81 0.1 20.0\n" +
+	"param ball_mass 1.0 0.1 5.0\n" +
+	"param ring_inertia 1.2 0.1 10.0\n" +
+	"param angular_momentum 3.0 0.0 12.0\n" +
+	"param damping 0.03 0.0 1.0\n" +
+	"param initial_angle 0.45 -3.0 3.0\n" +
+	"maxtime 35.0\n" +
+	"state theta initial_angle\n" +
+	"state omega 0.0\n" +
+	"state spin 0.0\n" +
+	"eq s sin { theta }\n" +
+	"eq c cos { theta }\n" +
+	# the ring is free, so its rate follows from conserved angular momentum
+	"eq rate angular_momentum over { ring_inertia + ball_mass radius radius s s }\n" +
+	"eq width 0.35 + 0.65 abs { cos { spin } }\n" +
+	"eq halfspan width radius\n" +
+	"derivative theta omega\n" +
+	"derivative omega rate rate s c - gravity s over radius - damping omega\n" +
+	"derivative spin rate\n" +
+	"point ring_left - halfspan , 0.0\n" +
+	"point ring_bottom 0.0 , - radius\n" +
+	"point ring_right halfspan , 0.0\n" +
+	"point ring_top 0.0 , radius\n" +
+	"point ball { halfspan s } , { - radius c }\n" +
+	"link ring_left ring_bottom\n" +
+	"link ring_bottom ring_right\n" +
+	"link ring_right ring_top\n" +
+	"link ring_top ring_left\n" +
+	"observable ball_angle theta\n" +
+	"observable ring_speed rate\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:rotatingring2: cannot load the mechanism viewer";
-	viewer->init(ctxt, "rotatingring2" :: "/dis/danby/rotatingring2.dis" ::
-		"danby-rotatingring2" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:rotatingring2: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "rotatingring2", SPEC)) != nil)
+		raise "fail:rotatingring2: "+e;
 }

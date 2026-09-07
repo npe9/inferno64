@@ -1,96 +1,48 @@
-implement Mechanism;
+implement Vanderpol;
 
 # danby/vanderpol - Van der Pol's equation
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "danby/oscillator.m";
-	oscillator: Oscillator;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	oscillator = load Oscillator Oscillator->PATH;
-	return ref Model(array[] of {1.0,1.0,0.2,0.0});
-}
-
-title(): string
-{
-	return "Van der Pol's equation";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"mu", "frequency", "initial x", "initial velocity"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.0,0.1,-4.0,-4.0};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {8.0,5.0,4.0,4.0};
-}
-
-initialstate(model: ref Model): array of real
-{
-	return array[] of {model.parameter[2],model.parameter[3]};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 50.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	derivative[0] = state[1];
-	derivative[1] = oscillator->vanderpol(state[0],state[1],p[0],p[1]);
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {-2.0,0.0,state[0],0.0,state[0],-0.3,state[0],0.3};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,2,3};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"displacement", "velocity"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {state[0],state[1]};
-}
-
-Command: module
+Vanderpol: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Van der Pol's equation\n" +
+	"param mu 1.0 0.0 8.0\n" +
+	"param frequency 1.0 0.1 5.0\n" +
+	"param initial_x 0.2 -4.0 4.0\n" +
+	"param initial_velocity 0.0 -4.0 4.0\n" +
+	"maxtime 50.0\n" +
+	"state x initial_x\n" +
+	"state v initial_velocity\n" +
+	"derivative x v\n" +
+	"derivative v mu { 1.0 - x x } v - frequency frequency x\n" +
+	"point wall - 2.0 , 0.0\n" +
+	"point mass x , 0.0\n" +
+	"point mass_top x , - 0.3\n" +
+	"point mass_bottom x , 0.3\n" +
+	"link wall mass\n" +
+	"link mass_top mass_bottom\n" +
+	"observable displacement x\n" +
+	"observable velocity v\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:vanderpol: cannot load the mechanism viewer";
-	viewer->init(ctxt, "vanderpol" :: "/dis/danby/vanderpol.dis" ::
-		"danby-vanderpol" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:vanderpol: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "vanderpol", SPEC)) != nil)
+		raise "fail:vanderpol: "+e;
 }

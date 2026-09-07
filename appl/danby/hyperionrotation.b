@@ -1,103 +1,60 @@
-implement Mechanism;
+implement Hyperionrotation;
 
 # danby/hyperionrotation - The chaotic rotation of Hyperion
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/spinorbit.m";
-	spinorbit: Spinorbit;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	spinorbit = load Spinorbit Spinorbit->PATH;
-	return ref Model(array[] of {1.0,0.123,0.45,1.7,0.0});
-}
-
-title(): string
-{
-	return "The chaotic rotation of Hyperion";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"mean motion", "eccentricity", "triaxiality", "initial spin", "tides"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.05,0.0,0.0,0.0,0.0};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {3.0,0.8,1.0,5.0,0.2};
-}
-
-initialstate(model: ref Model): array of real
-{
-	return array[] of {0.0,0.23,model.parameter[3]*model.parameter[0]};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 60.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	spinorbit->derivatives(state,derivative,p[0],p[1],p[2],p[4]);
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(model: ref Model, state: array of real): array of real
-{
-	r := spinorbit->radius(state[0],model.parameter[1]);
-	cx := r*math->cos(state[0]);
-	cy := r*math->sin(state[0]);
-	dx := 0.27*math->cos(state[1]);
-	dy := 0.27*math->sin(state[1]);
-	return array[] of {0.0,0.0,cx-dx,cy-dy,cx+dx,cy+dy,cx,cy};
-}
-
-links(): array of int
-{
-	return array[] of {1,2,0,3};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"relative angle", "spin/orbit"};
-}
-
-observables(model: ref Model, state: array of real): array of real
-{
-	return array[] of {state[1]-state[0],state[2]/model.parameter[0]};
-}
-
-Command: module
+Hyperionrotation: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title The chaotic rotation of Hyperion\n" +
+	"param mean_motion 1.0 0.05 3.0\n" +
+	"param eccentricity 0.123 0.0 0.8\n" +
+	"param triaxiality 0.45 0.0 1.0\n" +
+	"param initial_spin 1.7 0.0 5.0\n" +
+	"param tides 0.0 0.0 0.2\n" +
+	"maxtime 60.0\n" +
+	"state f 0.0\n" +
+	"state theta 0.23\n" +
+	"state spin initial_spin mean_motion\n" +
+	"eq ecosf eccentricity cos { f }\n" +
+	"eq onemsq 1.0 - eccentricity sup 2\n" +
+	"eq r onemsq over { 1.0 + ecosf }\n" +
+	"eq factor 1.0 + ecosf\n" +
+	"eq anomalyvelocity mean_motion { factor sup 2 } over { onemsq sup 1.5 }\n" +
+	"eq cx r cos { f }\n" +
+	"eq cy r sin { f }\n" +
+	"eq dx 0.27 cos { theta }\n" +
+	"eq dy 0.27 sin { theta }\n" +
+	"derivative f anomalyvelocity\n" +
+	"derivative theta spin\n" +
+	"derivative spin { - 1.5 triaxiality { mean_motion sup 2 } sin { 2.0 { theta - f } } } over { r sup 3 } - tides { spin - anomalyvelocity }\n" +
+	"point centre 0.0 , 0.0\n" +
+	"point axis_a { cx - dx } , { cy - dy }\n" +
+	"point axis_b { cx + dx } , { cy + dy }\n" +
+	"point body cx , cy\n" +
+	"link axis_a axis_b\n" +
+	"link centre body\n" +
+	"observable relative_angle theta - f\n" +
+	"observable spin/orbit spin over mean_motion\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:hyperionrotation: cannot load the mechanism viewer";
-	viewer->init(ctxt, "hyperionrotation" :: "/dis/danby/hyperionrotation.dis" ::
-		"danby-hyperionrotation" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:hyperionrotation: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "hyperionrotation", SPEC)) != nil)
+		raise "fail:hyperionrotation: "+e;
 }

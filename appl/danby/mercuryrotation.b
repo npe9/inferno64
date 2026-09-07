@@ -1,103 +1,60 @@
-implement Mechanism;
+implement Mercuryrotation;
 
 # danby/mercuryrotation - The 3:2 rotation of Mercury
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/spinorbit.m";
-	spinorbit: Spinorbit;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	spinorbit = load Spinorbit Spinorbit->PATH;
-	return ref Model(array[] of {1.0,0.206,0.018,1.5,0.015});
-}
-
-title(): string
-{
-	return "The 3:2 rotation of Mercury";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"mean motion", "eccentricity", "triaxiality", "initial spin", "tides"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.05,0.0,0.0,0.0,0.0};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {3.0,0.8,0.5,4.0,0.5};
-}
-
-initialstate(model: ref Model): array of real
-{
-	return array[] of {0.0,0.0,model.parameter[3]*model.parameter[0]};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 55.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	spinorbit->derivatives(state,derivative,p[0],p[1],p[2],p[4]);
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(model: ref Model, state: array of real): array of real
-{
-	r := spinorbit->radius(state[0],model.parameter[1]);
-	cx := r*math->cos(state[0]);
-	cy := r*math->sin(state[0]);
-	dx := 0.18*math->cos(state[1]);
-	dy := 0.18*math->sin(state[1]);
-	return array[] of {0.0,0.0,cx-dx,cy-dy,cx+dx,cy+dy,cx,cy};
-}
-
-links(): array of int
-{
-	return array[] of {1,2,0,3};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"resonant angle", "spin/orbit"};
-}
-
-observables(model: ref Model, state: array of real): array of real
-{
-	return array[] of {2.0*state[1]-3.0*state[0],state[2]/model.parameter[0]};
-}
-
-Command: module
+Mercuryrotation: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title The 3:2 rotation of Mercury\n" +
+	"param mean_motion 1.0 0.05 3.0\n" +
+	"param eccentricity 0.206 0.0 0.8\n" +
+	"param triaxiality 0.018 0.0 0.5\n" +
+	"param initial_spin 1.5 0.0 4.0\n" +
+	"param tides 0.015 0.0 0.5\n" +
+	"maxtime 55.0\n" +
+	"state f 0.0\n" +
+	"state theta 0.0\n" +
+	"state spin initial_spin mean_motion\n" +
+	"eq ecosf eccentricity cos { f }\n" +
+	"eq onemsq 1.0 - eccentricity sup 2\n" +
+	"eq r onemsq over { 1.0 + ecosf }\n" +
+	"eq factor 1.0 + ecosf\n" +
+	"eq anomalyvelocity mean_motion { factor sup 2 } over { onemsq sup 1.5 }\n" +
+	"eq cx r cos { f }\n" +
+	"eq cy r sin { f }\n" +
+	"eq dx 0.18 cos { theta }\n" +
+	"eq dy 0.18 sin { theta }\n" +
+	"derivative f anomalyvelocity\n" +
+	"derivative theta spin\n" +
+	"derivative spin { - 1.5 triaxiality { mean_motion sup 2 } sin { 2.0 { theta - f } } } over { r sup 3 } - tides { spin - anomalyvelocity }\n" +
+	"point centre 0.0 , 0.0\n" +
+	"point axis_a { cx - dx } , { cy - dy }\n" +
+	"point axis_b { cx + dx } , { cy + dy }\n" +
+	"point body cx , cy\n" +
+	"link axis_a axis_b\n" +
+	"link centre body\n" +
+	"observable resonant_angle 2.0 theta - 3.0 f\n" +
+	"observable spin/orbit spin over mean_motion\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:mercuryrotation: cannot load the mechanism viewer";
-	viewer->init(ctxt, "mercuryrotation" :: "/dis/danby/mercuryrotation.dis" ::
-		"danby-mercuryrotation" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:mercuryrotation: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "mercuryrotation", SPEC)) != nil)
+		raise "fail:mercuryrotation: "+e;
 }

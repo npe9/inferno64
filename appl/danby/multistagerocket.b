@@ -1,105 +1,65 @@
-implement Mechanism;
+implement Multistagerocket;
 
-# danby/multistagerocket - The motion of a rocket: multi-stage rockets
+# danby/multistagerocket - the motion of a multi-stage rocket
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/propulsion.m";
-	propulsion: Propulsion;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	propulsion = load Propulsion Propulsion->PATH;
-	return ref Model(array[] of {4200.0,180.0,140.0,7.0,2200.0,9.81});
-}
-
-title(): string
-{
-	return "The motion of a rocket: multi-stage rockets";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"stage 1 thrust", "stage 1 fuel", "stage 2 fuel", "flow", "stage 2 thrust", "gravity"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {100.0,10.0,10.0,0.5,100.0,0.0};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {10000.0,500.0,400.0,25.0,8000.0,20.0};
-}
-
-initialstate(nil: ref Model): array of real
-{
-	return array[] of {0.0,0.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 60.0;
-}
-
-Model.rhs(model: self ref Model, t: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	firstburn := p[1]/p[3];
-	acceleration := 0.0;
-	if(t < firstburn)
-		acceleration = p[0]/(60.0+p[1]+p[2]-p[3]*t);
-	else if(t < firstburn+p[2]/p[3])
-		acceleration = p[4]/(25.0+p[2]-p[3]*(t-firstburn));
-	derivative[0] = state[1];
-	derivative[1] = acceleration-p[5]-0.008*state[1]*math->fabs(state[1]);
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {0.0,state[0],0.0,state[0]+1.4,-0.4,state[0],0.4,state[0]};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,0,2,0,3};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"altitude", "speed"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {state[0],state[1]};
-}
-
-Command: module
+Multistagerocket: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title The motion of a rocket: multi-stage rockets\n" +
+	"param stage_1_thrust 4200.0 100.0 10000.0\n" +
+	"param stage_1_fuel 180.0 10.0 500.0\n" +
+	"param stage_2_fuel 140.0 10.0 400.0\n" +
+	"param flow 7.0 0.5 25.0\n" +
+	"param stage_2_thrust 2200.0 100.0 8000.0\n" +
+	"param gravity 9.81 0.0 20.0\n" +
+	"maxtime 60.0\n" +
+	# Two burns, one after the other, then nothing.  step() picks the window;
+	# the fuel actually consumed is clamped into that window's own range, so
+	# each denominator stays positive outside it and the whole term is zero
+	# there anyway.
+	"eq firstburn stage_1_fuel over flow\n" +
+	"eq burned flow t\n" +
+	"eq in1 step { firstburn - t }\n" +
+	"eq in2 { 1.0 - in1 } step { firstburn + { stage_2_fuel over flow } - t }\n" +
+	"eq used1 { burned + stage_1_fuel - abs { burned - stage_1_fuel } } over 2.0\n" +
+	"eq raised burned - stage_1_fuel\n" +
+	"eq lifted { raised + abs { raised } } over 2.0\n" +
+	"eq used2 { lifted + stage_2_fuel - abs { lifted - stage_2_fuel } } over 2.0\n" +
+	"eq acc1 in1 stage_1_thrust over { 60.0 + stage_1_fuel + stage_2_fuel - used1 }\n" +
+	"eq acc2 in2 stage_2_thrust over { 25.0 + stage_2_fuel - used2 }\n" +
+	"state altitude 0.0\n" +
+	"state speed 0.0\n" +
+	"derivative altitude speed\n" +
+	"derivative speed acc1 + acc2 - gravity - 0.008 speed abs { speed }\n" +
+	"point base 0.0 , altitude\n" +
+	"point nose 0.0 , { altitude + 1.4 }\n" +
+	"point fin_left - 0.4 , altitude\n" +
+	"point fin_right 0.4 , altitude\n" +
+	"link base nose\n" +
+	"link base fin_left\n" +
+	"link base fin_right\n" +
+	"observable altitude altitude\n" +
+	"observable speed speed\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:multistagerocket: cannot load the mechanism viewer";
-	viewer->init(ctxt, "multistagerocket" :: "/dis/danby/multistagerocket.dis" ::
-		"danby-multistagerocket" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:multistagerocket: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "multistagerocket", SPEC)) != nil)
+		raise "fail:multistagerocket: "+e;
 }

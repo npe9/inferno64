@@ -1,103 +1,68 @@
-implement Mechanism;
+implement Doublependulum;
 
-# danby/doublependulum - A double pendulum
+# danby/doublependulum - a double pendulum
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/doublependulum.m";
-	doublependulum: Doublependulum;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	doublependulum = load Doublependulum Doublependulum->PATH;
-	return ref Model(array[] of {1.0,1.0,1.0,1.0,1.1,1.6,9.81,0.01});
-}
-
-title(): string
-{
-	return "A double pendulum";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"mass 1", "mass 2", "length 1", "length 2", "angle 1", "angle 2", "gravity", "damping"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.1,0.1,0.2,0.2,-3.0,-3.0,0.1,0.0};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {5.0,5.0,3.0,3.0,3.0,3.0,20.0,0.5};
-}
-
-initialstate(model: ref Model): array of real
-{
-	return array[] of {model.parameter[4],0.0,model.parameter[5],0.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 30.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	doublependulum->derivatives(state,derivative,p[0],p[1],p[2],p[3],p[6],p[7]);
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(model: ref Model, state: array of real): array of real
-{
-	p := model.parameter;
-	x1 := p[2]*math->sin(state[0]);
-	y1 := -p[2]*math->cos(state[0]);
-	x2 := x1+p[3]*math->sin(state[2]);
-	y2 := y1-p[3]*math->cos(state[2]);
-	return array[] of {0.0,0.0,x1,y1,x2,y2,-0.7,0.0,0.7,0.0};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,1,2,3,4};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"angle 1", "angle 2"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {state[0],state[2]};
-}
-
-Command: module
+Doublependulum: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title A double pendulum\n" +
+	"param mass_1 1.0 0.1 5.0\n" +
+	"param mass_2 1.0 0.1 5.0\n" +
+	"param length_1 1.0 0.2 3.0\n" +
+	"param length_2 1.0 0.2 3.0\n" +
+	"param angle_1 1.1 -3.0 3.0\n" +
+	"param angle_2 1.6 -3.0 3.0\n" +
+	"param gravity 9.81 0.1 20.0\n" +
+	"param damping 0.01 0.0 0.5\n" +
+	"maxtime 30.0\n" +
+	"state a1 angle_1\n" +
+	"state w1 0.0\n" +
+	"state a2 angle_2\n" +
+	"state w2 0.0\n" +
+	"eq delta a1 - a2\n" +
+	"eq cd cos { delta }\n" +
+	"eq sd sin { delta }\n" +
+	"eq den 2.0 mass_1 + mass_2 - mass_2 cos { 2.0 delta }\n" +
+	"eq num1 - gravity { 2.0 mass_1 + mass_2 } sin { a1 } - mass_2 gravity sin { a1 - 2.0 a2 } - 2.0 sd mass_2 { w2 w2 length_2 + w1 w1 length_1 cd }\n" +
+	"eq num2 2.0 sd { w1 w1 length_1 { mass_1 + mass_2 } + gravity { mass_1 + mass_2 } cos { a1 } + w2 w2 length_2 mass_2 cd }\n" +
+	"eq x1 length_1 sin { a1 }\n" +
+	"eq y1 - length_1 cos { a1 }\n" +
+	"eq x2 x1 + length_2 sin { a2 }\n" +
+	"eq y2 y1 - length_2 cos { a2 }\n" +
+	"derivative a1 w1\n" +
+	"derivative w1 num1 over { length_1 den } - damping w1\n" +
+	"derivative a2 w2\n" +
+	"derivative w2 num2 over { length_2 den } - damping w2\n" +
+	"point pivot 0.0 , 0.0\n" +
+	"point bob_1 x1 , y1\n" +
+	"point bob_2 x2 , y2\n" +
+	"point rail_left - 0.7 , 0.0\n" +
+	"point rail_right 0.7 , 0.0\n" +
+	"link pivot bob_1\n" +
+	"link bob_1 bob_2\n" +
+	"link rail_left rail_right\n" +
+	"observable angle_1 a1\n" +
+	"observable angle_2 a2\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:doublependulum: cannot load the mechanism viewer";
-	viewer->init(ctxt, "doublependulum" :: "/dis/danby/doublependulum.dis" ::
-		"danby-doublependulum" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:doublependulum: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "doublependulum", SPEC)) != nil)
+		raise "fail:doublependulum: "+e;
 }

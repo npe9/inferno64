@@ -1,101 +1,59 @@
-implement Mechanism;
+implement Rocketintro;
 
-# danby/rocketintro - The motion of a rocket: introduction
+# danby/rocketintro - the motion of a rocket, to begin with
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/propulsion.m";
-	propulsion: Propulsion;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	propulsion = load Propulsion Propulsion->PATH;
-	return ref Model(array[] of {2500.0,80.0,120.0,5.0,0.02,9.81});
-}
-
-title(): string
-{
-	return "The motion of a rocket: introduction";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"thrust", "dry mass", "propellant", "mass flow", "drag", "gravity"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.0,10.0,0.0,0.2,0.0,0.0};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {8000.0,300.0,500.0,20.0,0.1,20.0};
-}
-
-initialstate(nil: ref Model): array of real
-{
-	return array[] of {0.0,0.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 40.0;
-}
-
-Model.rhs(model: self ref Model, t: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	velocity := state[1];
-	derivative[0] = velocity;
-	derivative[1] = propulsion->thrustacceleration(p[0],p[1],p[2],p[3],t)-
-		p[5]-p[4]*velocity*math->fabs(velocity);
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {0.0,state[0],0.0,state[0]+1.0,-0.35,state[0],0.35,state[0]};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,0,2,0,3};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"altitude", "speed"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {state[0],state[1]};
-}
-
-Command: module
+Rocketintro: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title The motion of a rocket: introduction\n" +
+	"param thrust 2500.0 0.0 8000.0\n" +
+	"param dry_mass 80.0 10.0 300.0\n" +
+	"param propellant 120.0 0.0 500.0\n" +
+	"param mass_flow 5.0 0.2 20.0\n" +
+	"param drag 0.02 0.0 0.1\n" +
+	"param gravity 9.81 0.0 20.0\n" +
+	"maxtime 40.0\n" +
+	"state altitude 0.0\n" +
+	"state speed 0.0\n" +
+	# The engine burns while there is propellant left, and the propellant
+	# still aboard is clamped at zero - so the denominator never drops below
+	# the dry mass, and the thrust term is exactly zero after burnout.
+	# ("aboard", not "left": left is an eqn delimiter keyword.)
+	"eq remaining propellant - mass_flow t\n" +
+	"eq burning step { remaining }\n" +
+	"eq aboard { remaining + abs { remaining } } over 2.0\n" +
+	"eq acceleration burning { thrust over { dry_mass + aboard } }\n" +
+	"derivative altitude speed\n" +
+	"derivative speed acceleration - gravity - drag speed abs { speed }\n" +
+	"point base 0.0 , altitude\n" +
+	"point nose 0.0 , { altitude + 1.0 }\n" +
+	"point fin_left - 0.35 , altitude\n" +
+	"point fin_right 0.35 , altitude\n" +
+	"link base nose\n" +
+	"link base fin_left\n" +
+	"link base fin_right\n" +
+	"observable altitude altitude\n" +
+	"observable speed speed\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:rocketintro: cannot load the mechanism viewer";
-	viewer->init(ctxt, "rocketintro" :: "/dis/danby/rocketintro.dis" ::
-		"danby-rocketintro" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:rocketintro: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "rocketintro", SPEC)) != nil)
+		raise "fail:rocketintro: "+e;
 }
