@@ -1,118 +1,59 @@
-implement Mechanism;
+implement Pegpendulum;
 
-# danby/pegpendulum - A pendulum wrapped around a peg
+# danby/pegpendulum - a pendulum wrapped around a peg
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {2.0,0.75,9.81,0.04,0.8});
-}
-
-title(): string
-{
-	return "A pendulum wrapped around a peg";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"string", "initial angle", "gravity", "damping", "peg depth"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.5,-2.5,0.1,0.0,0.1};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {5.0,2.5,20.0,1.0,4.5};
-}
-
-initialstate(model: ref Model): array of real
-{
-	return array[] of {model.parameter[1],0.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 30.0;
-}
-
-effectivelength(model: ref Model, angle: real): real
-{
-	p := model.parameter;
-	l := p[0];
-	if(angle < 0.0 && p[4] < l-0.05)
-		l -= p[4];
-	return l;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	l := effectivelength(model,state[0]);
-	derivative[0] = state[1];
-	derivative[1] = -p[2]*math->sin(state[0])/l-p[3]*state[1];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(model: ref Model, state: array of real): array of real
-{
-	p := model.parameter;
-	pegdepth := p[4];
-	if(pegdepth > p[0]-0.05)
-		pegdepth = p[0]-0.05;
-	if(state[0] < 0.0){
-		l := p[0]-pegdepth;
-		x := l*math->sin(state[0]);
-		y := -pegdepth-l*math->cos(state[0]);
-		return array[] of {0.0,0.0,0.0,-pegdepth,x,y,-0.7,0.0,0.7,0.0};
-	}
-	x := p[0]*math->sin(state[0]);
-	y := -p[0]*math->cos(state[0]);
-	return array[] of {0.0,0.0,0.0,-pegdepth,x,y,-0.7,0.0,0.7,0.0};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,1,2,3,4};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"angle", "effective length"};
-}
-
-observables(model: ref Model, state: array of real): array of real
-{
-	return array[] of {state[0],effectivelength(model,state[0])};
-}
-
-Command: module
+Pegpendulum: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title A pendulum wrapped around a peg\n" +
+	"param string 2.0 0.5 5.0\n" +
+	"param initial_angle 0.75 -2.5 2.5\n" +
+	"param gravity 9.81 0.1 20.0\n" +
+	"param damping 0.04 0.0 1.0\n" +
+	"param peg_depth 0.8 0.1 4.5\n" +
+	"maxtime 30.0\n" +
+	"state theta initial_angle\n" +
+	"state omega 0.0\n" +
+	# The string catches on the peg only on the swing that is going the
+	# other way, and only if the peg is above the bob's own reach.
+	"eq fits step { string - 0.05 - peg_depth }\n" +
+	"eq wrapped fits step { - theta }\n" +
+	"eq effective string - wrapped peg_depth\n" +
+	# The drawing clamps the peg to the string, which the equations do not.
+	"eq shown_depth { peg_depth + string - 0.05 - abs { peg_depth - string + 0.05 } } over 2.0\n" +
+	"eq drawn_length string - wrapped shown_depth\n" +
+	"derivative theta omega\n" +
+	"derivative omega { - gravity sin { theta } } over effective - damping omega\n" +
+	"point anchor 0.0 , 0.0\n" +
+	"point peg 0.0 , { - shown_depth }\n" +
+	"point bob { drawn_length sin { theta } } , { - wrapped shown_depth - drawn_length cos { theta } }\n" +
+	"point rail_left - 0.7 , 0.0\n" +
+	"point rail_right 0.7 , 0.0\n" +
+	"link anchor peg\n" +
+	"link peg bob\n" +
+	"link rail_left rail_right\n" +
+	"observable angle theta\n" +
+	"observable effective_length effective\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:pegpendulum: cannot load the mechanism viewer";
-	viewer->init(ctxt, "pegpendulum" :: "/dis/danby/pegpendulum.dis" ::
-		"danby-pegpendulum" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:pegpendulum: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "pegpendulum", SPEC)) != nil)
+		raise "fail:pegpendulum: "+e;
 }

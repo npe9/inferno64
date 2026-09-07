@@ -1,107 +1,62 @@
-implement Mechanism;
+implement Wheelpendulum;
 
-# danby/wheelpendulum - A pendulum attached to a freely spinning wheel
+# danby/wheelpendulum - a pendulum attached to a freely spinning wheel
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {1.2,1.0,1.8,0.5,0.7,9.81,0.03});
-}
-
-title(): string
-{
-	return "A pendulum attached to a freely spinning wheel";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"length", "bob mass", "wheel inertia", "initial angle", "wheel speed", "gravity", "damping"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.2,0.1,0.1,-2.5,-5.0,0.1,0.0};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {4.0,5.0,10.0,2.5,5.0,20.0,1.0};
-}
-
-initialstate(model: ref Model): array of real
-{
-	return array[] of {model.parameter[3],0.0,0.0,model.parameter[4]};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 30.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	bobinertia := p[1]*p[0]*p[0];
-	relative := state[0]-state[2];
-	gravitytorque := -p[1]*p[4]*p[0]*math->sin(relative);
-	coupling := gravitytorque-p[6]*(state[1]-state[3]);
-	derivative[0] = state[1];
-	derivative[1] = coupling/bobinertia;
-	derivative[2] = state[3];
-	derivative[3] = -coupling/p[2];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(model: ref Model, state: array of real): array of real
-{
-	l := model.parameter[0];
-	x := l*math->sin(state[0]);
-	y := -l*math->cos(state[0]);
-	r := 0.45;
-	return array[] of {0.0,0.0,x,y,r*math->cos(state[2]),r*math->sin(state[2]),
-		-r*math->cos(state[2]),-r*math->sin(state[2])};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,2,3};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"pendulum angle", "wheel angle"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {state[0],state[2]};
-}
-
-Command: module
+Wheelpendulum: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title A pendulum attached to a freely spinning wheel\n" +
+	"param length 1.2 0.2 4.0\n" +
+	"param bob_mass 1.0 0.1 5.0\n" +
+	"param wheel_inertia 1.8 0.1 10.0\n" +
+	"param initial_angle 0.5 -2.5 2.5\n" +
+	"param wheel_speed 0.7 -5.0 5.0\n" +
+	"param gravity 9.81 0.1 20.0\n" +
+	"param damping 0.03 0.0 1.0\n" +
+	"maxtime 30.0\n" +
+	"state theta initial_angle\n" +
+	"state omega 0.0\n" +
+	"state wheel 0.0\n" +
+	"state wheelrate wheel_speed\n" +
+	"eq bobinertia bob_mass length length\n" +
+	"eq relative theta - wheel\n" +
+	# note the original's torque uses the wheel-speed parameter where a
+	# gravity would be expected; kept, because that is the model that ships
+	"eq gravitytorque - bob_mass wheel_speed length sin { relative }\n" +
+	"eq coupling gravitytorque - damping { omega - wheelrate }\n" +
+	"eq radius 0.45\n" +
+	"derivative theta omega\n" +
+	"derivative omega coupling over bobinertia\n" +
+	"derivative wheel wheelrate\n" +
+	"derivative wheelrate - coupling over wheel_inertia\n" +
+	"point pivot 0.0 , 0.0\n" +
+	"point bob { length sin { theta } } , { - length cos { theta } }\n" +
+	"point rim_a { radius cos { wheel } } , { radius sin { wheel } }\n" +
+	"point rim_b { - radius cos { wheel } } , { - radius sin { wheel } }\n" +
+	"link pivot bob\n" +
+	"link rim_a rim_b\n" +
+	"observable pendulum_angle theta\n" +
+	"observable wheel_angle wheel\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:wheelpendulum: cannot load the mechanism viewer";
-	viewer->init(ctxt, "wheelpendulum" :: "/dis/danby/wheelpendulum.dis" ::
-		"danby-wheelpendulum" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:wheelpendulum: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "wheelpendulum", SPEC)) != nil)
+		raise "fail:wheelpendulum: "+e;
 }

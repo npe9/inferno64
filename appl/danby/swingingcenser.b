@@ -1,103 +1,59 @@
-implement Mechanism;
+implement Swingingcenser;
 
-# danby/swingingcenser - A swinging censer
+# danby/swingingcenser - a swinging censer
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {1.4,0.25,9.81,0.12,2.0,1.8});
-}
-
-title(): string
-{
-	return "A swinging censer";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"chain", "initial angle", "gravity", "damping", "hand accel", "rhythm"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.3,-1.5,0.1,0.0,0.0,0.1};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {4.0,1.5,20.0,1.5,12.0,6.0};
-}
-
-initialstate(model: ref Model): array of real
-{
-	return array[] of {model.parameter[1],0.0,0.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 35.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	horizontalaccel := p[4]*math->cos(state[2]);
-	derivative[0] = state[1];
-	derivative[1] = (-p[2]*math->sin(state[0])-
-		horizontalaccel*math->cos(state[0]))/p[0]-p[3]*state[1];
-	derivative[2] = p[5];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(model: ref Model, state: array of real): array of real
-{
-	p := model.parameter;
-	handx := 0.3*math->sin(state[2]);
-	x := handx+p[0]*math->sin(state[0]);
-	y := -p[0]*math->cos(state[0]);
-	return array[] of {handx,0.0,x,y,-0.8,0.0,0.8,0.0,x-0.16,y,x+0.16,y};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,2,3,4,5};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"angle", "angular speed"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {state[0],state[1]};
-}
-
-Command: module
+Swingingcenser: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title A swinging censer\n" +
+	"param chain 1.4 0.3 4.0\n" +
+	"param initial_angle 0.25 -1.5 1.5\n" +
+	"param gravity 9.81 0.1 20.0\n" +
+	"param damping 0.12 0.0 1.5\n" +
+	"param hand_accel 2.0 0.0 12.0\n" +
+	"param rhythm 1.8 0.1 6.0\n" +
+	"maxtime 35.0\n" +
+	"state theta initial_angle\n" +
+	"state omega 0.0\n" +
+	"state phase 0.0\n" +
+	"eq horizontalaccel hand_accel cos { phase }\n" +
+	"eq handx 0.3 sin { phase }\n" +
+	"eq x handx + chain sin { theta }\n" +
+	"eq y - chain cos { theta }\n" +
+	"derivative theta omega\n" +
+	"derivative omega { - gravity sin { theta } - horizontalaccel cos { theta } } over chain - damping omega\n" +
+	"derivative phase rhythm\n" +
+	"point hand handx , 0.0\n" +
+	"point censer x , y\n" +
+	"point rail_left - 0.8 , 0.0\n" +
+	"point rail_right 0.8 , 0.0\n" +
+	"point censer_left { x - 0.16 } , y\n" +
+	"point censer_right { x + 0.16 } , y\n" +
+	"link hand censer\n" +
+	"link rail_left rail_right\n" +
+	"link censer_left censer_right\n" +
+	"observable angle theta\n" +
+	"observable angular_speed omega\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:swingingcenser: cannot load the mechanism viewer";
-	viewer->init(ctxt, "swingingcenser" :: "/dis/danby/swingingcenser.dis" ::
-		"danby-swingingcenser" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:swingingcenser: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "swingingcenser", SPEC)) != nil)
+		raise "fail:swingingcenser: "+e;
 }

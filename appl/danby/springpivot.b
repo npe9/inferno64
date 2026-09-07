@@ -1,106 +1,58 @@
-implement Mechanism;
+implement Springpivot;
 
-# danby/springpivot - A pendulum with a spring pivot
+# danby/springpivot - a pendulum on a spring pivot
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {1.0,1.0,1.4,8.0,9.81,0.08,0.5});
-}
-
-title(): string
-{
-	return "A pendulum with a spring pivot";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"pivot mass", "bob mass", "length", "spring", "gravity", "damping", "initial angle"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.1,0.1,0.2,0.1,0.1,0.0,-2.5};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {8.0,8.0,4.0,30.0,20.0,2.0,2.5};
-}
-
-initialstate(model: ref Model): array of real
-{
-	return array[] of {0.0,0.0,model.parameter[6],0.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 30.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	s := math->sin(state[2]);
-	c := math->cos(state[2]);
-	pivotaccel := (-p[3]*state[0]-p[5]*state[1]+
-		p[1]*p[2]*state[3]*state[3]*s+p[1]*p[4]*s*c)/
-		(p[0]+p[1]*s*s);
-	derivative[0] = state[1];
-	derivative[1] = pivotaccel;
-	derivative[2] = state[3];
-	derivative[3] = (-pivotaccel*c-p[4]*s)/p[2]-p[5]*state[3];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(model: ref Model, state: array of real): array of real
-{
-	l := model.parameter[2];
-	x := state[0]+l*math->sin(state[2]);
-	y := -l*math->cos(state[2]);
-	return array[] of {state[0],0.0,x,y,-2.0,0.0,state[0],0.0};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,2,3};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"pivot position", "angle"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {state[0],state[2]};
-}
-
-Command: module
+Springpivot: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title A pendulum with a spring pivot\n" +
+	"param pivot_mass 1.0 0.1 8.0\n" +
+	"param bob_mass 1.0 0.1 8.0\n" +
+	"param length 1.4 0.2 4.0\n" +
+	"param spring 8.0 0.1 30.0\n" +
+	"param gravity 9.81 0.1 20.0\n" +
+	"param damping 0.08 0.0 2.0\n" +
+	"param initial_angle 0.5 -2.5 2.5\n" +
+	"maxtime 30.0\n" +
+	"state x 0.0\n" +
+	"state vx 0.0\n" +
+	"state theta initial_angle\n" +
+	"state omega 0.0\n" +
+	"eq s sin { theta }\n" +
+	"eq c cos { theta }\n" +
+	"eq pivotaccel { - spring x - damping vx + bob_mass length omega omega s + bob_mass gravity s c } over { pivot_mass + bob_mass s s }\n" +
+	"derivative x vx\n" +
+	"derivative vx pivotaccel\n" +
+	"derivative theta omega\n" +
+	"derivative omega { - pivotaccel c - gravity s } over length - damping omega\n" +
+	"point pivot x , 0.0\n" +
+	"point bob { x + length s } , { - length c }\n" +
+	"point rail_left - 2.0 , 0.0\n" +
+	"point rail_right x , 0.0\n" +
+	"link pivot bob\n" +
+	"link rail_left rail_right\n" +
+	"observable pivot_position x\n" +
+	"observable angle theta\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:springpivot: cannot load the mechanism viewer";
-	viewer->init(ctxt, "springpivot" :: "/dis/danby/springpivot.dis" ::
-		"danby-springpivot" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:springpivot: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "springpivot", SPEC)) != nil)
+		raise "fail:springpivot: "+e;
 }

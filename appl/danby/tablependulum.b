@@ -1,115 +1,63 @@
-implement Mechanism;
+implement Tablependulum;
 
-# danby/tablependulum - A pendulum coupled to a mass on a table
+# danby/tablependulum - a pendulum coupled to a mass on a table
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {2.0,1.0,1.8,0.5,9.81,0.12});
-}
-
-title(): string
-{
-	return "A pendulum coupled to a mass on a table";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"table mass", "bob mass", "string length", "initial angle", "gravity", "friction"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.1,0.1,0.4,-2.0,0.1,0.0};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {10.0,10.0,5.0,2.0,20.0,2.0};
-}
-
-initialstate(model: ref Model): array of real
-{
-	return array[] of {0.65*model.parameter[2],0.0,model.parameter[3],0.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 30.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	r := state[0];
-	if(r < 0.08)
-		r = 0.08;
-	pendulumlength := p[2]-r;
-	if(pendulumlength < 0.08)
-		pendulumlength = 0.08;
-	radialaccel := (p[1]*pendulumlength*state[3]*state[3]+
-		p[1]*p[4]*math->cos(state[2])-p[5]*state[1])/(p[0]+p[1]);
-	derivative[0] = state[1];
-	derivative[1] = radialaccel;
-	derivative[2] = state[3];
-	derivative[3] = -(p[4]*math->sin(state[2])-
-		2.0*state[1]*state[3])/pendulumlength;
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(model: ref Model, state: array of real): array of real
-{
-	r := state[0];
-	if(r < 0.08)
-		r = 0.08;
-	l := model.parameter[2]-r;
-	if(l < 0.08)
-		l = 0.08;
-	x := l*math->sin(state[2]);
-	y := -l*math->cos(state[2]);
-	return array[] of {0.0,0.0,x,y,r,0.0,0.0,0.0,-2.0,0.0,2.0,0.0};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,2,3,4,5};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"table radius", "pendulum angle"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {state[0],state[2]};
-}
-
-Command: module
+Tablependulum: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title A pendulum coupled to a mass on a table\n" +
+	"param table_mass 2.0 0.1 10.0\n" +
+	"param bob_mass 1.0 0.1 10.0\n" +
+	"param string_length 1.8 0.4 5.0\n" +
+	"param initial_angle 0.5 -2.0 2.0\n" +
+	"param gravity 9.81 0.1 20.0\n" +
+	"param friction 0.12 0.0 2.0\n" +
+	"maxtime 30.0\n" +
+	"state radius 0.65 string_length\n" +
+	"state radialspeed 0.0\n" +
+	"state theta initial_angle\n" +
+	"state omega 0.0\n" +
+	# both lengths are held off zero, since either can be pulled through the
+	# hole; hoc has no max, so it is written out
+	"eq r { radius + 0.08 + abs { radius - 0.08 } } over 2.0\n" +
+	"eq hang string_length - r\n" +
+	"eq pendulumlength { hang + 0.08 + abs { hang - 0.08 } } over 2.0\n" +
+	"eq radialaccel { bob_mass pendulumlength omega omega + bob_mass gravity cos { theta } - friction radialspeed } over { table_mass + bob_mass }\n" +
+	"derivative radius radialspeed\n" +
+	"derivative radialspeed radialaccel\n" +
+	"derivative theta omega\n" +
+	"derivative omega { - { gravity sin { theta } - 2.0 radialspeed omega } } over pendulumlength\n" +
+	"point pivot 0.0 , 0.0\n" +
+	"point bob { pendulumlength sin { theta } } , { - pendulumlength cos { theta } }\n" +
+	"point table_mass_point r , 0.0\n" +
+	"point hole 0.0 , 0.0\n" +
+	"point table_left - 2.0 , 0.0\n" +
+	"point table_right 2.0 , 0.0\n" +
+	"link pivot bob\n" +
+	"link table_mass_point hole\n" +
+	"link table_left table_right\n" +
+	"observable table_radius radius\n" +
+	"observable pendulum_angle theta\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:tablependulum: cannot load the mechanism viewer";
-	viewer->init(ctxt, "tablependulum" :: "/dis/danby/tablependulum.dis" ::
-		"danby-tablependulum" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:tablependulum: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "tablependulum", SPEC)) != nil)
+		raise "fail:tablependulum: "+e;
 }

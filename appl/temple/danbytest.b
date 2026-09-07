@@ -105,17 +105,9 @@ include "danby/mechanism.m";
 	stretchyoyo: Mechanism;
 	venushead: Mechanism;
 	synchronousmotor: Mechanism;
-	gravitypendulum: Mechanism;
 	magneticpendulum2d: Mechanism;
 	swing1: Mechanism;
 	swing2: Mechanism;
-	varyingpendulum: Mechanism;
-	swingingcenser: Mechanism;
-	movingpivot: Mechanism;
-	pegpendulum: Mechanism;
-	atwoodpendulum: Mechanism;
-	tablependulum: Mechanism;
-	wheelpendulum: Mechanism;
 	magneticpendulum3d: Mechanism;
 	dumbbellsatellite: Mechanism;
 	columnbuckling: Mechanism;
@@ -123,8 +115,6 @@ include "danby/mechanism.m";
 	attractingwires: Mechanism;
 	violinbow: Mechanism;
 	carrierlanding: Mechanism;
-	springpivot: Mechanism;
-	springpendulum: Mechanism;
 	chaoticwheel: Mechanism;
 	fireflies: Mechanism;
 	pursuit: Mechanism;
@@ -259,20 +249,12 @@ init(nil: ref Draw->Context, nil: list of string)
 	stretchyoyo = load Mechanism "/dis/danby/stretchyoyo.dis";
 	venushead = load Mechanism "/dis/danby/venushead.dis";
 	synchronousmotor = load Mechanism "/dis/danby/synchronousmotor.dis";
-	gravitypendulum = load Mechanism "/dis/danby/gravitypendulum.dis";
 	magneticpendulum2d = load Mechanism "/dis/danby/magneticpendulum2d.dis";
 	swing1 = load Mechanism "/dis/danby/swing1.dis";
 	swing2 = load Mechanism "/dis/danby/swing2.dis";
-	varyingpendulum = load Mechanism "/dis/danby/varyingpendulum.dis";
-	swingingcenser = load Mechanism "/dis/danby/swingingcenser.dis";
-	movingpivot = load Mechanism "/dis/danby/movingpivot.dis";
-	pegpendulum = load Mechanism "/dis/danby/pegpendulum.dis";
 	# slidingpendulum1 is now a mechlab(2) script rather than a Mechanism
 	# module - mechlabtest(1) checks it, including the momentum law that
 	# used to be checked here.
-	atwoodpendulum = load Mechanism "/dis/danby/atwoodpendulum.dis";
-	tablependulum = load Mechanism "/dis/danby/tablependulum.dis";
-	wheelpendulum = load Mechanism "/dis/danby/wheelpendulum.dis";
 	magneticpendulum3d = load Mechanism "/dis/danby/magneticpendulum3d.dis";
 	dumbbellsatellite = load Mechanism "/dis/danby/dumbbellsatellite.dis";
 	columnbuckling = load Mechanism "/dis/danby/columnbuckling.dis";
@@ -280,8 +262,6 @@ init(nil: ref Draw->Context, nil: list of string)
 	attractingwires = load Mechanism "/dis/danby/attractingwires.dis";
 	violinbow = load Mechanism "/dis/danby/violinbow.dis";
 	carrierlanding = load Mechanism "/dis/danby/carrierlanding.dis";
-	springpivot = load Mechanism "/dis/danby/springpivot.dis";
-	springpendulum = load Mechanism "/dis/danby/springpendulum.dis";
 	chaoticwheel = load Mechanism "/dis/danby/chaoticwheel.dis";
 	fireflies = load Mechanism "/dis/danby/fireflies.dis";
 	pursuit = load Mechanism "/dis/danby/pursuit.dis";
@@ -351,14 +331,11 @@ init(nil: ref Draw->Context, nil: list of string)
 			jupiterboost == nil || grandtour == nil || perihelion == nil ||
 			poyntingrobertson == nil || galaxies == nil || venushead == nil ||
 			starmodel == nil || whitedwarf == nil ||
-			synchronousmotor == nil || gravitypendulum == nil ||
+			synchronousmotor == nil ||
 			magneticpendulum2d == nil || swing1 == nil || swing2 == nil ||
-			varyingpendulum == nil || swingingcenser == nil ||
-			movingpivot == nil || pegpendulum == nil ||
-			atwoodpendulum == nil || tablependulum == nil || wheelpendulum == nil ||
 			magneticpendulum3d == nil || dumbbellsatellite == nil || columnbuckling == nil ||
 			catastrophemachine == nil || attractingwires == nil || violinbow == nil ||
-			carrierlanding == nil || springpivot == nil || springpendulum == nil ||
+			carrierlanding == nil ||
 			chaoticwheel == nil || fireflies == nil || pursuit == nil ||
 			lowbombing == nil || carbonmicrophone == nil || compass == nil || pistonflywheel == nil ||
 			wattgovernor == nil || dynamoreversal == nil || twomagnet == nil ||
@@ -469,17 +446,9 @@ testtrajectory()
 	checkmechanism(stretchyoyo,"stretch yo-yo");
 	checkmechanism(venushead,"Venus ray geometry");
 	checkmechanism(synchronousmotor,"synchronous motor");
-	checkmechanism(gravitypendulum,"gravity pendulum");
 	checkmechanism(magneticpendulum2d,"magnetic pendulum 2d");
 	checkmechanism(swing1,"child swing 1");
 	checkmechanism(swing2,"child swing 2");
-	checkmechanism(varyingpendulum,"varying-length pendulum");
-	checkmechanism(swingingcenser,"swinging censer");
-	checkmechanism(movingpivot,"moving-pivot pendulum");
-	checkmechanism(pegpendulum,"peg pendulum");
-	checkmechanism(atwoodpendulum,"swinging Atwood machine");
-	checkmechanism(tablependulum,"table-coupled pendulum");
-	checkmechanism(wheelpendulum,"wheel pendulum");
 	checkmechanism(magneticpendulum3d,"magnetic pendulum 3d");
 	checkmechanism(dumbbellsatellite,"dumbbell satellite");
 	checkmechanism(columnbuckling,"column buckling");
@@ -487,8 +456,6 @@ testtrajectory()
 	checkmechanism(attractingwires,"attracting wires");
 	checkmechanism(violinbow,"violin bow");
 	checkmechanism(carrierlanding,"carrier landing");
-	checkmechanism(springpivot,"spring pivot");
-	checkmechanism(springpendulum,"spring pendulum");
 	checkmechanism(chaoticwheel,"chaotic driven wheel");
 	checkmechanism(fireflies,"fireflies");
 	checkmechanism(pursuit,"pursuit curves");
