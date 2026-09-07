@@ -1014,6 +1014,63 @@ fourteen clean, switched on and off by a single
 Whatever shared state a second scheduling processor touches unsafely,
 that is the thing to look at first, and this is the handle to hold it
 by.
+.NH 2
+What the reproducer has already said
+.PP
+Two results from it, one negative and one that joins this work to the
+other hunt.
+.PP
+.B "It is not the collector."
+The obvious suspect was the tricolour state \-
+.CW gccolor ,
+.CW mutator ,
+.CW nprop
+and every
+.CW h->color
+are plain words with no ordering, exactly as
+.CW doc/dis-parallel-plan.ms
+says, and a premature free would show as a run of words zeroed when the
+block is handed out again.  So the collector was halted outright
+.CW ( gchalt
+raised at boot, never lowered) and the ten boots run again.  It got
+.I worse ,
+not better: six clean, one panic, three corrupt against nine and one.
+No boot showed any allocation failure, so this is not the pool running
+dry with reclamation off.  Halting the collector does not remove the
+corruption, which retires the hypothesis rather than confirming it.
+.PP
+.B "It is mcall, and it is the same bug pc64 has."
+With the collector halted the failure is not merely reproducible, it is
+identical from run to run \- the same address, the same previous value:
+.IP
+.nf
+track: CHANGED TO BAD VALUE addr 0x437ed3b0 old 0x43716930 new 0x0
+track: instruction that just ran: op 0x09 module Sh inst 2079
+track: object 0x437ed360 type 0x437d0d38 size 0 np 0
+track: object 0x437ed2f0 type 0x437d1738 size 1132271384 np 0
+.fi
+.PP
+Opcode 9 is
+.CW IMCALL .
+The
+.CW Type
+descriptors those objects point at are not types: one reports size 0,
+the other a size of 1132271384, which is a pointer-shaped value read as
+a length \- the same shape as the
+.CW "\(lqYini\(rq"
+capture in
+.CW doc/inferno-ports.ms .
+And that document's own name for what it is chasing on pc64 is the
+.CW "mcall / movp / destroy"
+corruption, at
+.CW "op 0x09 add 0x48 module Sh inst 2079" \-
+the same opcode, the same module, the same instruction index this board
+now produces on demand.
+.PP
+So the pc64 corruption is not a pc64 defect.  It is what this kernel
+does when a second processor touches shared state, and pc64 has had
+.CW MAXMACH
+at 128 the whole time.  The two investigations are one investigation.
 .PP
 What is still not done, so the state is not overstated: GICv3 (the
 redistributor is per processor and this board derives one fixed base),
