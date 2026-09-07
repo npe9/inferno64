@@ -1209,8 +1209,69 @@ One negative result worth keeping:
 is 0.
 .CW gchalt
 never fired at all in this workload, so whatever ordering it needs is
-neither exercised nor measured today.  Do not design around it; find out
-what sets it first.
+neither exercised nor measured today.
+.NH 2
+What sets gchalt, since the answer changes the design
+.PP
+Asked because of that zero, and the answer is worse than "nothing sets
+it".
+.CW gchalt
+is two different things sharing one counter.
+.IP \(bu
+.B "Do not collect now."
+.CW libprefab
+raises it around building a Prefab \- six files, with bare
+.CW gchalt++
+and
+.CW gchalt--
+rather than the macros \- and
+.CW gclock()/gcunlock()
+wrap the
+.CW destroystack()
+plus
+.CW delprog()
+pairs in both
+.CW dis.c
+files and in
+.CW devbench.c .
+The collector reads it at the top of
+.CW rungc()
+and refuses to run.
+.IP \(bu
+.B "How deep is this destroy."
+.CW libinterp/gc.c 's
+sweeper takes
+.CW gclock()
+around every
+.CW t->free() ,
+so nested destruction pushes the same counter up, and
+.CW libinterp/heap.c
+line 505 reads it as a recursion depth:
+.CW "if(n > 0 || gchalt > 64) return;"
+\- with the comment "Protect 'C' thread stack".
+.PP
+That
+.CW return
+does not free the object.  So the second meaning is not advisory: past a
+depth of 64 the collector deliberately stops reclaiming, to keep from
+running out of C stack.
+.PP
+On one processor the overload is harmless, because the only thing that
+can be nested inside a destroy is another destroy.  On two it breaks in
+both directions at once.  Depth is a property of one thread's C stack
+and nothing else; suppression is a property of the whole heap.  So one
+processor's destroy recursion would stop another's collector, and one
+processor building a Prefab would make another believe it is sixty-four
+destroys deep and quietly stop freeing.
+.PP
+The fix is not to make
+.CW gchalt
+atomic.  Making a counter atomic that means two things gives two
+threads a consistent view of a number that was already the wrong
+number.  Split it first: a per-context depth, and a heap-wide
+suppression that a stop-the-world collector mostly does not need anyway,
+since it decides when to run rather than being asked not to.  That is
+another reason the stop-the-world shape is the cheaper one to reach.
 .NH 2
 Phase 5a, as landed \- the seam, not the gate
 .PP
