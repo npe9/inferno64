@@ -212,6 +212,59 @@ struct
 
 extern	int	bflag;
 int	cflag = 1;	/* JIT on by default; -c0 selects interpreter */
+/*
+ * Only one thread executes Dis at a time.
+ *
+ * libinterp keeps the virtual machine's registers in one global R --
+ * one program counter, one frame pointer, one module, one stack
+ * pointer -- so two threads interpreting at once are not a race to be
+ * made atomic, they are two interpreters sharing a program counter.
+ * isched's idle/vmq/idlevmq handoff is what is supposed to prevent
+ * that; this is the same claim written as a lock, so that it holds
+ * rather than being relied on.
+ *
+ * It is not held while a thread is blocked in the host.  release()
+ * drops it and acquire() takes it again, which is exactly where the
+ * VM changes hands; without that, a thread waiting on a read would
+ * hold the interpreter against everyone else.
+ *
+ * An earlier attempt at a lock here was reverted because it
+ * deadlocked, and the reason is worth keeping: xec() leaves by
+ * longjmp as well as by returning -- waserror()/nexterror() -- and
+ * the paired unlock was skipped.  So what is held is recorded on the
+ * Proc rather than in a local, these two are idempotent, and
+ * vmachine()'s recovery block, which is where every such jump lands,
+ * drops it.  pexit() drops it too: a thread that dies holding it
+ * holds it for ever.
+ */
+static Lock dislock;
+static void outdis(void);
+
+static void
+indis(char *where)
+{
+	USED(where);
+	if(up->indis)
+		return;		/* already held: acquire() from inside xec */
+	lock(&dislock);
+	up->indis = 1;
+}
+
+/* for pexit(), which is per-host and cannot see a static */
+void
+disdrop(void)
+{
+	outdis();
+}
+
+static void
+outdis(void)
+{
+	if(!up->indis)
+		return;
+	up->indis = 0;
+	unlock(&dislock);
+}
 uvlong	gcbusy;
 uvlong	gcidle;
 uvlong	gcidlepass;
@@ -1033,6 +1086,8 @@ acquire(void)
 		osblock();
 	}
 
+	indis("acquire");	/* and starts again here */
+
 	if(up->type == Interp) {
 		p = up->iprog;
 		up->iprog = nil;
@@ -1060,6 +1115,8 @@ release(void)
 		up->iprog = isave();
 	else
 		delrun(Prelease);
+
+	outdis();		/* this thread stops executing Dis here */
 
 	lock(&isched.l);
 	if(*(pq = &isched.vmq) == nil && *(pq = &isched.idlevmq) == nil) {
@@ -1224,8 +1281,19 @@ disfault(void *reg, char *msg)
 		acquire();
 
 	p = currun();
-	if(p == nil)
+	if(p == nil){
+		/*
+		 * Say what the fault was and what the scheduler looked
+		 * like.  The panic on its own names neither, and the
+		 * handlers that call this print a native backtrace only
+		 * when they can get one -- so a fault here could arrive
+		 * with no evidence whatever.
+		 */
+		print("disfault: %s: proc %s type %d iprog %p runhd %p vmq %p idlevmq %p idle %d\n",
+			msg, up->text, up->type, up->iprog,
+			isched.runhd, isched.vmq, isched.idlevmq, isched.idle);
 		panic("Interp faults with no dis prog");
+	}
 
 	/* Which Dis instruction was executing, and where (interpreted mode
 	 * only - in compiled/JIT mode R.PC is a native code address, not an
@@ -1297,6 +1365,15 @@ vmachine(void *a)
 	startup();
 
 	while(waserror()) {
+		/*
+		 * A longjmp out of xec() skips everything after the
+		 * call, so whatever said this thread was executing Dis
+		 * still says so.  This is where every such jump lands,
+		 * and so where it has to be undone -- the same hole
+		 * that made an earlier attempt at a lock here deadlock
+		 * the shell.
+		 */
+		outdis();
 		if(up->iprog != nil)
 			acquire();
 		if(handler(up->env->errstr) == 0) {
@@ -1304,6 +1381,7 @@ vmachine(void *a)
 			progexit();
 		}
 		up->env = &up->defenv;
+		outdis();
 	}
 
 	/* GC-LOCK HISTORY: r->xec(r) below runs with no lock held, and
@@ -1371,7 +1449,16 @@ vmachine(void *a)
 			up->env = o;
 
 			FPrestore(&o->fpu);
+			/*
+			 * libinterp's R is one global register set, so two
+			 * threads inside xec() at once is not a race to be
+			 * made atomic -- it is two interpreters sharing
+			 * their program counter.  The comment above says
+			 * that happens; this says whether it does.
+			 */
+			indis("vmachine");
 			r->xec(r);
+			outdis();
 			FPsave(&o->fpu);
 
 			if(isched.runhd != nil)

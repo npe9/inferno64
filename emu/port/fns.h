@@ -57,6 +57,7 @@ Devgen	devgen;
 Chan*	devopen(Chan*, int, Dirtab*, int, Devgen*);
 Walkqid*	devwalk(Chan*, Chan*, char**, int, Dirtab*, int, Devgen*);
 void		disfault(void*, char*);
+void		disdrop(void);
 void		disinit(void*);
 int		domount(Chan**, Mhead**);
 void	drawqlock(void);

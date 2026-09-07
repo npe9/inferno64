@@ -20524,7 +20524,7 @@ stack is unchanged; what changes is which of two interpreters executes
 them.  The JIT is the next thing to fix, and it is written down here
 rather than worked around in silence.
 .NH 2
-The bench is not reliable, and two of the reasons
+The bench was not reliable, and three reasons
 .PP
 Phases began failing and passing on a re-run: first one, then several,
 in no fixed place.  The note that used to be here said they were the
@@ -20552,26 +20552,88 @@ worst way for it to fail: nothing says so, and the run hangs somewhere
 else entirely.  The model now declines to send on a link that has
 gone.
 .PP
-Both were real and both are fixed, and the bench still fails about as
-often as it passes: two of two completed runs afterwards, in different
+Both were real and both are fixed, and the bench still failed about as
+often as it passed: two of two completed runs afterwards, in different
 phases, one of them with
 .CW "Interp faults with no dis prog"
 \(em a native fault inside the interpreter, on
 .CW -c0 ,
 which is the configuration this document called sound a few sections
 above.  That claim was made on three clean runs of a twenty two phase
-bench; at twenty nine phases it does not hold.
+bench; at twenty nine phases it did not hold.
 .PP
-What is left is not diagnosed.  It is a fault inside
+The third was in
 .CW emu ,
-which is where this tree's own notes put its parallel execution
-problems, and this bench is the heaviest user of them in the tree.  It
-is written down here as what it is: a bench that has outgrown its own
-reliability, with two causes found and removed and a third that has
-not been.  A green run is still a green run \(em every assertion in it
-held \(em but a red one is now as likely to be the harness as the
-stack, and that is exactly the property a bench is supposed not to
-have.
+and it is the one the other notes in this document have been circling.
+.NH 2
+One interpreter at a time
+.PP
+.CW libinterp
+keeps the virtual machine's registers in one global
+.CW R
+\(em one program counter, one frame pointer, one module, one stack
+pointer.  Two threads interpreting Dis at once is therefore not a race
+to be made atomic; it is two interpreters sharing a program counter,
+and no amount of atomics on reference counts makes it safe.  emu's
+.CW isched
+handoff \(em
+.CW idle ,
+.CW vmq ,
+.CW idlevmq
+\(em is what is supposed to guarantee exclusivity, and
+.CW dis.c 's
+own note above
+.CW xec ()
+says plainly that it does not: multiple
+.CW vmachine
+kprocs pull progs off the run queue and interpret in parallel.
+.PP
+So the guarantee is now written as a lock rather than relied upon.  It
+is not held while a thread is blocked in the host:
+.CW release ()
+drops it and
+.CW acquire ()
+takes it again, which is exactly where the VM changes hands, and
+without that a thread waiting on a read would hold the interpreter
+against everyone.
+.PP
+An earlier attempt at this was reverted because it deadlocked the
+shell, and the reason is the useful part.
+.CW xec ()
+leaves by
+.CW longjmp
+as well as by returning \(em
+.CW waserror ()/ nexterror ()
+\(em and the paired unlock was skipped, leaving the lock held by
+nobody.  So what is held is recorded on the
+.CW Proc
+rather than in a local, taking and dropping are both idempotent, and
+.CW vmachine ()'s
+recovery block, which is where every such jump lands, drops it.
+.CW pexit ()
+drops it too: a thread that dies holding it holds it for ever.  Three
+attempts to measure the problem with a counter instead of a lock were
+each unsound for one of these reasons \(em counting threads inside
+.CW xec ()
+rather than threads executing, then losing the count to a
+.CW longjmp ,
+then losing it to a thread exiting \(em which is worth recording,
+because each looked like a finding at the time.
+.PP
+With it in, the shell runs, and two full bench runs produced no panic,
+no native fault and no hang: what had been a different phase failing
+every time became one phase failing the same way twice.  That is what
+a fixed concurrency bug looks like from outside.
+.PP
+What is left is that phase.  The
+.CW sco
+phase asserts that three SCO packets sent are three counted; the
+controller model sends one and the guest reports a hundred and
+twenty nine.  One fourteen byte packet on the wire cannot become a
+hundred and twenty nine reads of it, so either the count is not what
+it says or the transport is not reading what was sent.  It is
+reproducible now, which it was not before, and that is where the next
+person should start.
 .NH 2
 What is not there
 .PP

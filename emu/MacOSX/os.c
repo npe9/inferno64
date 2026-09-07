@@ -79,6 +79,9 @@ pexit(char *msg, int t)
 	USED(t);
 	USED(msg);
 
+	/* a thread that dies executing Dis holds the interpreter for ever */
+	disdrop();
+
 	lock(&procs.l);
 	p = up;
 	if(p->prev)
@@ -134,8 +137,13 @@ printbacktrace(void)
 	int n;
 
 	n = backtrace(frames, nelem(frames));
-	if(n <= 0)
+	if(n <= 0){
+		/* say so: a silent return here is a fault report with no
+		 * evidence at all, which is what sent one investigation
+		 * looking for a caller that did not exist */
+		fprint(2, "disfault: no native backtrace available\n");
 		return;
+	}
 	fprint(2, "disfault: native backtrace (%d frames):\n", n);
 	backtrace_symbols_fd(frames, n, 2);
 }
@@ -196,8 +204,18 @@ trapUSR1(int signo)
     
     if(up->type != Interp)      /* Used to unblock pending I/O */
         return;
-    if(up->intwait == 0)        /* Not posted so its a sync error */
-        disfault(nil, Eintr);	/* Should never happen */
+    if(up->intwait == 0){
+        /*
+         * A SIGUSR1 with no interrupt pending.  This used to call
+         * disfault(Eintr), which exits(0) -- so a stray or late
+         * signal took the whole emu down without a word, which looks
+         * exactly like a program that finished early.  It is not a
+         * reason to exit: nothing was waiting for it, so there is
+         * nothing to clear and nothing to do.
+         */
+        fprint(2, "emu: SIGUSR1 with no interrupt pending on %s\n", up->text);
+        return;
+    }
     
     up->intwait = 0;		/* Clear it so the proc can continue */
 }
