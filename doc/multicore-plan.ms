@@ -935,18 +935,50 @@ as before, and at
 .CW "-smp 1"
 nothing changes.
 .PP
-What that does not include, so the state is not overstated: cpu1 has no
-GIC, no timer, no vector table and never enters the scheduler.
-.CW MAXMACH
-is still 1.  The large remaining step is that
+.IP \(bu
 .CW m
-is a plain global for the whole tree, and making its several thousand
-uses read
+and
+.CW up
+are machine registers, R27 and R26, not globals.  That was the step
+this section previously called large and it was not, because the tree
+already had the answer: pc64's
+.CW dat.h
+declares
+.CW "extern register Mach* m"
+for R15, and 7c honours the same thing.  Every
+.CW m->x
+becomes register-relative with no pointer load, so each processor has
+its own without a shared global, a
 .CW TPIDR_EL1
-is a change of its own \- 7c cannot inline the read, so it is a call
-per access unless a register is reserved, the way
-.CW comp-arm64.c
-already reserves X20 for the Dis register file.
+read per access, or turning the MMU on to map a fixed address per
+processor.  R27 and R26 are free:
+.CW comp-arm64.c 's
+JIT uses R0-R5 and R20-R22, and
+.CW l.s 's
+trap path already saved both in the
+.CW Ureg .
+.PP
+It also fixed something that was quietly wrong.
+.CW splhi()
+and
+.CW splx()
+wrote
+.CW m->splpc
+through a hard-coded
+.CW $mach0(SB) \-
+harmless while
+.CW MAXMACH
+was 1, and cpu0's Mach corrupted from another processor the moment it
+is not.  They go through the register now.
+.PP
+What this does not include, so the state is not overstated: cpu1 has no
+GIC, no timer, no vector table and never enters the scheduler, and
+.CW MAXMACH
+is still 1.  Measured at each step with the four-category classifier \-
+14 of 14 clean at
+.CW "-smp 2"
+and 14 of 14 at
+.CW "-smp 1" .
 .PP
 .B "Before any of it: 7c ignores volatile."
 Found while starting a second processor on
