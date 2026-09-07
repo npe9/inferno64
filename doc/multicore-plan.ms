@@ -971,14 +971,64 @@ harmless while
 was 1, and cpu0's Mach corrupted from another processor the moment it
 is not.  They go through the register now.
 .PP
-What this does not include, so the state is not overstated: cpu1 has no
-GIC, no timer, no vector table and never enters the scheduler, and
-.CW MAXMACH
-is still 1.  Measured at each step with the four-category classifier \-
-14 of 14 clean at
-.CW "-smp 2"
-and 14 of 14 at
-.CW "-smp 1" .
+.IP \(bu
+The exception vectors, the GIC cpu interface and the generic timer.
+cpu1 takes its own timer interrupt at HZ \- four ticks in fifty
+milliseconds \- and idles in WFI between them.
+.IP \(bu
+And it can enter the scheduler.  With
+.CW secsched
+set it calls
+.CW schedinit()
+and runs processes: 136 context switches in three seconds against
+cpu0's 334.  The portable scheduler needed nothing, which is the Plan 9
+heritage holding up \-
+.CW Schedq
+embeds a
+.CW Lock ,
+.CW proc.c
+takes it,
+.CW procalloc
+is locked.
+.NH 2
+The smallest reproducer this branch has had
+.PP
+.CW secsched
+is 0, because with it set the board corrupts about one boot in ten:
+.IP
+.nf
+track: CHANGED TO BAD VALUE addr 0x437ee0b0 old 0x43717630 new 0x0
+.fi
+.PP
+a run of words in a live Dis heap object going to zero \- the same
+signature
+.CW doc/inferno-ports.ms
+has been chasing on pc64.  Ten boots with it clear are ten clean.
+.PP
+That is worth more than the bring-up it came out of.  On pc64 this
+corruption is one boot in a hundred and twenty-six on a machine where
+almost every boot fails somehow, which makes it nearly impossible to
+bisect.  Here it is one in ten, on a board that is otherwise fourteen of
+fourteen clean, switched on and off by a single
+.CW int .
+Whatever shared state a second scheduling processor touches unsafely,
+that is the thing to look at first, and this is the handle to hold it
+by.
+.PP
+What is still not done, so the state is not overstated: GICv3 (the
+redistributor is per processor and this board derives one fixed base),
+preemption on a secondary (\c
+.CW clockintr
+returns early there, since
+.CW checkalarms()
+and
+.CW timercheck()
+walk machine-wide queues), and
+.CW active.machs
+/
+.CW conf.nmach
+still describe one processor.  Measured at each step with the
+four-category classifier.
 .PP
 .B "Before any of it: 7c ignores volatile."
 Found while starting a second processor on
