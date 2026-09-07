@@ -364,6 +364,25 @@ callbuiltin(name: string, x: real): real
 	"sqrt" =>	return errcheck(math->sqrt(x), "sqrt");
 	"int" =>	return hocint(x);
 	"abs" =>	return math->fabs(x);
+	# sign: -1, 0 or +1, the three-way one - not x/|x|, which is a NaN
+	# at zero.  Dry friction is the reason it exists here: a Coulomb
+	# term is -mu*sign(v) and is exactly zero at rest, which is a real
+	# feature of the model rather than a rounding question.
+	"sign" =>
+		if(x > 0.0)
+			return 1.0;
+		if(x < 0.0)
+			return -1.0;
+		return 0.0;
+	# step: 1 for x > 0, else 0 - the Heaviside one, zero AT zero.
+	# Between them sign and step write any two- or three-way piecewise
+	# term without the language needing a conditional: an escapement
+	# that fires only inside a window is
+	# impulse*step(width-abs(theta))*(1-2*step(-omega)).
+	"step" =>
+		if(x > 0.0)
+			return 1.0;
+		return 0.0;
 	}
 	hocerror("internal", "bad builtin");
 	return 0.0;
@@ -2039,7 +2058,8 @@ resetstate()
 	installconst("DEG", 57.29577951308232087680);
 	installconst("PHI", 1.61803398874989484820);
 	bnames := list of {"sin","cos","tan","atan","asin","acos","sinh",
-		"cosh","tanh","log","log10","exp","sqrt","int","abs"};
+		"cosh","tanh","log","log10","exp","sqrt","int","abs",
+		"sign","step"};
 	for(l := bnames; l != nil; l = tl l)
 		installbltin(hd l);
 	bin = nil;

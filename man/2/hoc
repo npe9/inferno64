@@ -159,6 +159,41 @@ say) is still reported, once per bad element.
 .I Hoc
 has no clamp, min, or max built in at all \(em a caller wanting bounded
 output must express that itself, or accept unbounded output.
+.PP
+The built-in functions are
+.BR sin ,
+.BR cos ,
+.BR tan ,
+.BR asin ,
+.BR acos ,
+.BR atan ,
+.BR sinh ,
+.BR cosh ,
+.BR tanh ,
+.BR log ,
+.BR log10 ,
+.BR exp ,
+.BR sqrt ,
+.BR int ,
+.BR abs ,
+.B sign
+and
+.BR step .
+.B Sign
+is the three-way one \(em \-1, 0 or +1 \(em not
+.IR x / \(bv x \(bv ,
+which is a NaN at zero.  Coulomb friction is why it is here: a dry
+friction term is
+.RB \(mi mu \(mu sign( v )
+and is exactly zero at rest, which is a property of the model and not a
+rounding question.
+.B Step
+is Heaviside's, 1 for a positive argument and 0 otherwise, zero
+.I at
+zero.  Between them the two write any two- or three-way piecewise term
+without the language needing a conditional: a clock escapement that
+fires only inside a window is
+.RB impulse \(mu step( width \(mi abs( theta )) \(mu (1 \(mi 2 \(mu step( \(mi omega )).
 .SH SOURCE
 .B /module/hoc.m
 .br

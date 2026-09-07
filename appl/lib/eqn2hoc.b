@@ -399,10 +399,19 @@ atomorcall(t: string): (ref Piece, string)
 	return (ref Piece(t, 1), nil);
 }
 
+# Every function hoc(2) has, so that a spec can call any of them - this
+# used to list eight of the sixteen, so "abs { x }" translated to a
+# multiplication by a variable named abs and hoc then refused it.  sqrt
+# is not here because eqn spells it as a radical and it is handled as
+# one, above.  A word is only a call when a brace group follows it, so
+# a model with a variable called "int" or "sign" is still free to have
+# one.
 ishocfn(t: string): int
 {
 	case t {
-	"sin" or "cos" or "tan" or "sinh" or "cosh" or "tanh" or "log" or "exp" =>
+	"sin" or "cos" or "tan" or "asin" or "acos" or "atan" or
+	"sinh" or "cosh" or "tanh" or "log" or "log10" or "exp" or
+	"int" or "abs" or "sign" or "step" =>
 		return 1;
 	}
 	return 0;

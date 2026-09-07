@@ -1,103 +1,52 @@
-implement Mechanism;
+implement Simplependulum;
 
-# danby/simplependulum - The simple pendulum
+# danby/simplependulum - the simple pendulum
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/pendulum.m";
-	pendulum: Pendulum;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	pendulum = load Pendulum Pendulum->PATH;
-	return ref Model(array[] of {1.0,0.7,0.0,9.81,1.0,0.0});
-}
-
-title(): string
-{
-	return "The simple pendulum";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"length", "initial angle", "initial speed", "gravity", "mass", "reference"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.1,-3.0,-8.0,0.1,0.1,0.0};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {4.0,3.0,8.0,20.0,5.0,1.0};
-}
-
-initialstate(model: ref Model): array of real
-{
-	return array[] of {model.parameter[1],model.parameter[2]};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 20.0;
-}
-
-Model.rhs(model: self ref Model, t: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	derivative[0] = state[1];
-	derivative[1] = pendulum->acceleration(t,state[0],state[1],p[0],p[3],
-		0.0,0.0,0.0,0.0,0.0,1.0);
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(model: ref Model, state: array of real): array of real
-{
-	length := model.parameter[0];
-	return array[] of {0.0,0.0,length*math->sin(state[0]),
-		-length*math->cos(state[0]),-0.7,0.0,0.7,0.0};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,2,3};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"angle", "energy"};
-}
-
-observables(model: ref Model, state: array of real): array of real
-{
-	return array[] of {state[0],pendulum->energy(state[0],state[1],
-		model.parameter[0],model.parameter[3])};
-}
-
-Command: module
+Simplependulum: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title The simple pendulum\n" +
+	"param length 1.0 0.1 4.0\n" +
+	"param initial_angle 0.7 -3.0 3.0\n" +
+	"param initial_speed 0.0 -8.0 8.0\n" +
+	"param gravity 9.81 0.1 20.0\n" +
+	"param mass 1.0 0.1 5.0\n" +
+	"param reference 0.0 0.0 1.0\n" +
+	"maxtime 20.0\n" +
+	"state theta initial_angle\n" +
+	"state omega initial_speed\n" +
+	"eq s sin { theta }\n" +
+	"eq c cos { theta }\n" +
+	"derivative theta omega\n" +
+	"derivative omega { - gravity s } over length\n" +
+	"point pivot 0.0 , 0.0\n" +
+	"point bob { length s } , { - length c }\n" +
+	"point rail_left - 0.7 , 0.0\n" +
+	"point rail_right 0.7 , 0.0\n" +
+	"link pivot bob\n" +
+	"link rail_left rail_right\n" +
+	"observable angle theta\n" +
+	"observable energy { 0.5 { length sup 2 } { omega sup 2 } } + { gravity length { 1.0 - c } }\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:simplependulum: cannot load the mechanism viewer";
-	viewer->init(ctxt, "simplependulum" :: "/dis/danby/simplependulum.dis" ::
-		"danby-simplependulum" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:simplependulum: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "simplependulum", SPEC)) != nil)
+		raise "fail:simplependulum: "+e;
 }

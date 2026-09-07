@@ -106,13 +106,6 @@ include "danby/mechanism.m";
 	spaceyoyo: Mechanism;
 	stretchyoyo: Mechanism;
 	venushead: Mechanism;
-	simplependulum: Mechanism;
-	pendulumperiod: Mechanism;
-	dampedpendulum: Mechanism;
-	drypendulum: Mechanism;
-	clockpendulum: Mechanism;
-	windpendulum: Mechanism;
-	loadedpendulum: Mechanism;
 	synchronousmotor: Mechanism;
 	gravitypendulum: Mechanism;
 	magneticpendulum2d: Mechanism;
@@ -281,13 +274,6 @@ init(nil: ref Draw->Context, nil: list of string)
 	spaceyoyo = load Mechanism "/dis/danby/spaceyoyo.dis";
 	stretchyoyo = load Mechanism "/dis/danby/stretchyoyo.dis";
 	venushead = load Mechanism "/dis/danby/venushead.dis";
-	simplependulum = load Mechanism "/dis/danby/simplependulum.dis";
-	pendulumperiod = load Mechanism "/dis/danby/pendulumperiod.dis";
-	dampedpendulum = load Mechanism "/dis/danby/dampedpendulum.dis";
-	drypendulum = load Mechanism "/dis/danby/drypendulum.dis";
-	clockpendulum = load Mechanism "/dis/danby/clockpendulum.dis";
-	windpendulum = load Mechanism "/dis/danby/windpendulum.dis";
-	loadedpendulum = load Mechanism "/dis/danby/loadedpendulum.dis";
 	synchronousmotor = load Mechanism "/dis/danby/synchronousmotor.dis";
 	gravitypendulum = load Mechanism "/dis/danby/gravitypendulum.dis";
 	magneticpendulum2d = load Mechanism "/dis/danby/magneticpendulum2d.dis";
@@ -392,9 +378,7 @@ init(nil: ref Draw->Context, nil: list of string)
 			lagrange1 == nil || lagrange2 == nil || cometcatch == nil ||
 			jupiterboost == nil || grandtour == nil || perihelion == nil ||
 			poyntingrobertson == nil || galaxies == nil || venushead == nil ||
-			starmodel == nil || whitedwarf == nil || simplependulum == nil ||
-			pendulumperiod == nil || dampedpendulum == nil || drypendulum == nil ||
-			clockpendulum == nil || windpendulum == nil || loadedpendulum == nil ||
+			starmodel == nil || whitedwarf == nil ||
 			synchronousmotor == nil || gravitypendulum == nil ||
 			magneticpendulum2d == nil || swing1 == nil || swing2 == nil ||
 			varyingpendulum == nil || swingingcenser == nil ||
@@ -520,13 +504,6 @@ testtrajectory()
 	checkmechanism(spaceyoyo,"space yo-yo");
 	checkmechanism(stretchyoyo,"stretch yo-yo");
 	checkmechanism(venushead,"Venus ray geometry");
-	checkmechanism(simplependulum,"simple pendulum");
-	checkmechanism(pendulumperiod,"pendulum period");
-	checkmechanism(dampedpendulum,"damped pendulum");
-	checkmechanism(drypendulum,"dry-friction pendulum");
-	checkmechanism(clockpendulum,"clock pendulum");
-	checkmechanism(windpendulum,"wind pendulum");
-	checkmechanism(loadedpendulum,"loaded pendulum");
 	checkmechanism(synchronousmotor,"synchronous motor");
 	checkmechanism(gravitypendulum,"gravity pendulum");
 	checkmechanism(magneticpendulum2d,"magnetic pendulum 2d");
