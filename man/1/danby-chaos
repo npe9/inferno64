@@ -41,6 +41,6 @@ equilibria are checked by the automated Danby model test.
 .SH SOURCE
 .B /appl/danby/lorenz.b
 .PP
-.B /appl/danby/plugin/lorenz.b
+.B /appl/danby/lorenz.b
 .SH SEE ALSO
 .IR numerics (2)

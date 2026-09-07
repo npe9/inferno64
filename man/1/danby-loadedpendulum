@@ -7,4 +7,4 @@ danby-loadedpendulum \- pendulum with constant applied torque
 A constant load shifts static equilibrium according to torque balance. Beyond
 the maximum gravitational restoring torque no locked equilibrium exists.
 .SH SOURCE
-.B /appl/danby/plugin/loadedpendulum.b
+.B /appl/danby/loadedpendulum.b

@@ -1,4 +1,4 @@
-implement Modelinglab;
+implement Stability;
 
 include "sys.m";
 	sys: Sys;
@@ -15,15 +15,9 @@ include "plot.m";
 	plot: Plot;
 	Plotter: import plot;
 include "danby/stability.m";
-	stability: Stability;
-	Model: import stability;
 include "env.m";
 	env: Env;
 
-Modelinglab: module
-{
-	init: fn(ctxt: ref Draw->Context, argv: list of string);
-};
 
 win: ref Window;
 font: ref Font;
@@ -44,10 +38,9 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	wmclient = load Wmclient Wmclient->PATH;
 	numerics = load Numerics Numerics->PATH;
 	plot = load Plot Plot->PATH;
-	stability = load Stability Stability->PATH;
 	env = load Env Env->PATH;
 	if(sys == nil || draw == nil || wmclient == nil || numerics == nil ||
-			plot == nil || stability == nil)
+			plot == nil)
 		raise "fail:modelinglab: missing module";
 	if(argv != nil && tl argv != nil)
 		stem = hd tl argv;
@@ -66,7 +59,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	grid = win.display.color(int 16rd6d0c4ff);
 	live = win.display.color(int 16r178f86ff);
 	accent = win.display.color(int 16rb85c38ff);
-	model = stability->new(0.18);
+	model = new(0.18);
 	work = numerics->workspace(2);
 	linearwork = numerics->workspace(2);
 	graph = plot->new(win.image,font);
@@ -200,4 +193,27 @@ timer(ticks: chan of int)
 		sys->sleep(25);
 		ticks <-= 1;
 	}
+}
+
+# The equations below were in appl/danby/plugin/stability.b, reached only
+# through Stability->PATH.  This is the program that shows them.
+
+new(growth: real): ref Model
+{
+	return ref Model(growth);
+}
+
+Model.linear(model: self ref Model, nil: real,
+		state, derivative: array of real)
+{
+	derivative[0] = model.growth*state[0]-state[1];
+	derivative[1] = state[0]+model.growth*state[1];
+}
+
+Model.rhs(model: self ref Model, nil: real,
+		state, derivative: array of real)
+{
+	radius2 := state[0]*state[0]+state[1]*state[1];
+	derivative[0] = model.growth*state[0]-state[1]-radius2*state[0];
+	derivative[1] = state[0]+model.growth*state[1]-radius2*state[1];
 }

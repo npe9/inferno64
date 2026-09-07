@@ -16,7 +16,7 @@ Drag any compartment bar.  Tracks set within-species contact, cross-species
 contact, and both recovery rates.  Space pauses, period steps, r resets, and
 q exits.
 .SH SOURCE
-.B /appl/danby/plugin/crossinfection.b
+.B /appl/danby/crossinfection.b
 .br
 .B /appl/danby/crossinfection.b
 .SH SEE ALSO

@@ -19,7 +19,7 @@ Drag a state bar to change an initial population.  The eight tracks set prey
 growth and capacity followed by attack, conversion, and death for each
 predator.  Space pauses, period steps, r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/plugin/manyspecies.b
+.B /appl/danby/manyspecies.b
 .br
 .B /appl/danby/manyspecies.b
 .br

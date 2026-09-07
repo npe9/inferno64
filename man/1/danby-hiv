@@ -16,7 +16,7 @@ educational compartment model, not a clinical forecast.
 Drag any compartment bar.  Tracks set effective contact, progression, and AIDS
 mortality.  Space pauses, period steps, r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/plugin/hiv.b
+.B /appl/danby/hiv.b
 .br
 .B /appl/danby/hiv.b
 .SH SEE ALSO

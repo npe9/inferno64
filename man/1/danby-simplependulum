@@ -7,4 +7,4 @@ danby-simplependulum \- exact nonlinear simple pendulum
 The angular acceleration is -(g/L) sin(theta). The display animates the bob and
 plots angle with conserved mechanical energy.
 .SH SOURCE
-.B /appl/danby/plugin/simplependulum.b
+.B /appl/danby/simplependulum.b

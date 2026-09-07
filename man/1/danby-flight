@@ -11,6 +11,6 @@ attack is the difference between pitch and flight-path angle.
 The aircraft drawing follows integrated pitch.  Altitude and airspeed are
 plotted against time.
 .SH SOURCE
-.B /appl/danby/plugin/flight.b
+.B /appl/danby/flight.b
 .SH SEE ALSO
 .IR mechanism (2)

@@ -8,4 +8,4 @@ Damping removes energy throughout the swing. A signed escapement impulse acts
 only inside a narrow interval around the center crossing, producing a stable
 limit-cycle amplitude instead of unbounded periodic forcing.
 .SH SOURCE
-.B /appl/danby/plugin/clockpendulum.b
+.B /appl/danby/clockpendulum.b

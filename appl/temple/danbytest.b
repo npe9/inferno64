@@ -199,8 +199,8 @@ init(nil: ref Draw->Context, nil: list of string)
 	maypredator = load Twospecies "/dis/danby/maypredator.dis";
 	internalcompetition = load Twospecies "/dis/danby/internalcompetition.dis";
 	cooperation = load Twospecies "/dis/danby/cooperation.dis";
-	competition = load Twospecies "/dis/danby/plugin/competition.dis";
-	ecologymodel = load Twospecies "/dis/danby/plugin/ecology.dis";
+	competition = load Twospecies "/dis/danby/competition.dis";
+	ecologymodel = load Twospecies "/dis/danby/ecology.dis";
 	childcare = load Populationmodel "/dis/danby/childcare.dis";
 	manyspecies = load Populationmodel "/dis/danby/manyspecies.dis";
 	foodchainmodel = load Populationmodel "/dis/danby/foodchain.dis";
@@ -221,8 +221,8 @@ init(nil: ref Draw->Context, nil: list of string)
 	reactorstability = load Populationmodel "/dis/danby/reactorstability.dis";
 	tankcontrol = load Populationmodel "/dis/danby/tankcontrol.dis";
 	reservoir = load Populationmodel "/dis/danby/reservoir.dis";
-	epidemicmodel = load Populationmodel "/dis/danby/plugin/epidemic.dis";
-	vaccinationmodel = load Populationmodel "/dis/danby/plugin/vaccination.dis";
+	epidemicmodel = load Populationmodel "/dis/danby/epidemic.dis";
+	vaccinationmodel = load Populationmodel "/dis/danby/vaccination.dis";
 	migrationmodel = load Populationmodel "/dis/danby/migration.dis";
 	diseasebirthdeath1 = load Populationmodel "/dis/danby/diseasebirthdeath1.dis";
 	diseasebirthdeath2 = load Populationmodel "/dis/danby/diseasebirthdeath2.dis";
@@ -233,12 +233,12 @@ init(nil: ref Draw->Context, nil: list of string)
 	gonorrhea = load Populationmodel "/dis/danby/gonorrhea.dis";
 	hiv = load Populationmodel "/dis/danby/hiv.dis";
 	weightchange = load Populationmodel "/dis/danby/weightchange.dis";
-	heartbeat = load Populationmodel "/dis/danby/plugin/heartbeat.dis";
+	heartbeat = load Populationmodel "/dis/danby/heartbeat.dis";
 	lanchester = load Populationmodel "/dis/danby/lanchester.dis";
 	fishingone = load Populationmodel "/dis/danby/fishingone.dis";
 	productionexchange = load Populationmodel "/dis/danby/productionexchange.dis";
 	fishingtwo = load Populationmodel "/dis/danby/fishingtwo.dis";
-	boommodel = load Populationmodel "/dis/danby/plugin/boom.dis";
+	boommodel = load Populationmodel "/dis/danby/boom.dis";
 	twocapital = load Populationmodel "/dis/danby/twocapital.dis";
 	spinningball = load Trajectory "/dis/danby/spinningball.dis";
 	baseballpitch = load Trajectory "/dis/danby/baseballpitch.dis";

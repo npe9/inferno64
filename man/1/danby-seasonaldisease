@@ -18,7 +18,7 @@ frequency, and recovery.  Space pauses, period steps, r resets, and q exits.
 .SH NUMERICS
 The time-dependent right-hand side is tested for population conservation.
 .SH SOURCE
-.B /appl/danby/plugin/seasonaldisease.b
+.B /appl/danby/seasonaldisease.b
 .br
 .B /appl/danby/seasonaldisease.b
 .SH SEE ALSO

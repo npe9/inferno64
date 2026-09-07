@@ -11,6 +11,6 @@ recovers proportionally.  Stride length converts speed into gait phase.
 The articulated runner is driven by the integrated gait phase.  The graph shows
 speed and cumulative distance, so animation and quantitative state agree.
 .SH SOURCE
-.B /appl/danby/plugin/running.b
+.B /appl/danby/running.b
 .SH SEE ALSO
 .IR mechanism (2)

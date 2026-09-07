@@ -12,6 +12,6 @@ The large plot shows height against carry distance and the smaller plot shows
 speed against time.  Tracks alter ball speed, launch angle, drag, lift,
 backspin, and gravity.
 .SH SOURCE
-.B /appl/danby/plugin/golfdrive.b
+.B /appl/danby/golfdrive.b
 .SH SEE ALSO
 .IR trajectory (2)

@@ -23,7 +23,7 @@ relaunches the ball.  Space pauses, period steps, r relaunches, and q exits.
 The regression suite turns off drag and lift and verifies the exact vacuum
 kinematic derivatives and launch-speed decomposition.
 .SH SOURCE
-.B /appl/danby/plugin/spinningball.b
+.B /appl/danby/spinningball.b
 .br
 .B /appl/danby/spinningball.b
 .br

@@ -24,7 +24,7 @@ singularity in Y/(bX).  Its positive analytic equilibrium and boundary
 derivative are checked by
 .B temple/danbytest.
 .SH SOURCE
-.B /appl/danby/plugin/maypredator.b
+.B /appl/danby/maypredator.b
 .br
 .B /appl/danby/maypredator.b
 .SH SEE ALSO

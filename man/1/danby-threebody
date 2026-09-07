@@ -11,6 +11,6 @@ show regular motion giving way to close encounters and sensitive trajectories.
 Colour-coded trails show all three paths.  Total energy and angular momentum
 are plotted as integration diagnostics.
 .SH SOURCE
-.B /appl/danby/plugin/threebody.b
+.B /appl/danby/threebody.b
 .SH SEE ALSO
 .IR orbital (2)

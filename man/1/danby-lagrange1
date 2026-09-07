@@ -8,6 +8,6 @@ Earth and Moon orbit their barycentre.  A station begins near L4 or L5 with a
 selectable displacement and velocity perturbation.  The live trails expose the
 bounded tadpole-like response possible near a stable triangular point.
 .SH SOURCE
-.B /appl/danby/plugin/lagrange1.b
+.B /appl/danby/lagrange1.b
 .SH SEE ALSO
 .IR orbital (2)

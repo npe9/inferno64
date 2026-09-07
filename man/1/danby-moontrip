@@ -11,6 +11,6 @@ Earth-bound, passes the Moon, escapes, or enters a close lunar encounter.
 The complete Earth, Moon, and spacecraft trails are drawn.  Spacecraft distance
 from each primary is plotted.
 .SH SOURCE
-.B /appl/danby/plugin/moontrip.b
+.B /appl/danby/moontrip.b
 .SH SEE ALSO
 .IR orbital (2)

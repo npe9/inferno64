@@ -21,7 +21,7 @@ migrant infection fraction.  Space pauses, period steps, r resets, and q exits.
 .SH NUMERICS
 The regression suite verifies conservation of total population under migration.
 .SH SOURCE
-.B /appl/danby/plugin/migration.b
+.B /appl/danby/migration.b
 .br
 .B /appl/danby/migration.b
 .SH SEE ALSO

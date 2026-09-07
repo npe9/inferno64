@@ -1,5 +1,19 @@
 implement Trajectory;
 
+# danby/projectile - Ballistics: a plain projectile with drag
+#
+# The unflavoured projectile, as against the sixteen sport-specific
+# Trajectory models beside it: it exposes ballistics->acceleration()'s own
+# parameters directly rather than a bat, a ball or a wind.  The equations,
+# the parameters and their ranges are here; the flight path, the telemetry
+# and the controls are the shared trajectory viewer's, started by init()
+# at the foot of the file.
+#
+# The file is projectile.b, not ballistics.b, because appl/danby/ballistics.b
+# is the Ballistics acceleration library this model calls into.
+
+include "sys.m";
+include "draw.m";
 include "math.m";
 	math: Math;
 include "danby/ballistics.m";
@@ -51,4 +65,18 @@ Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
 evaluate(model: ref Model, t: real, state, derivative: array of real)
 {
 	model.rhs(t,state,derivative);
+}
+
+Command: module
+{
+	init: fn(ctxt: ref Draw->Context, argv: list of string);
+};
+
+init(ctxt: ref Draw->Context, nil: list of string)
+{
+	viewer := load Command "/dis/temple/trajectory.dis";
+	if(viewer == nil)
+		raise "fail:projectile: cannot load the trajectory viewer";
+	viewer->init(ctxt, "projectile" :: "/dis/danby/projectile.dis" ::
+		"danby-projectile" :: nil);
 }

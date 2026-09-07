@@ -11,6 +11,6 @@ completes the flight equations.
 The spatial plot shows height versus distance and telemetry shows speed.
 Tracks alter takeoff speed, ramp angle, drag, lift, headwind, and gravity.
 .SH SOURCE
-.B /appl/danby/plugin/skijump.b
+.B /appl/danby/skijump.b
 .SH SEE ALSO
 .IR trajectory (2)

@@ -1,4 +1,4 @@
-implement Chaosmapapp;
+implement Chaosmap;
 
 include "sys.m";
 	sys: Sys;
@@ -13,14 +13,9 @@ include "plot.m";
 	plot: Plot;
 	Plotter: import plot;
 include "danby/chaosmap.m";
-	chaosmap: Chaosmap;
 include "env.m";
 	env: Env;
 
-Chaosmapapp: module
-{
-	init: fn(ctxt: ref Draw->Context, argv: list of string);
-};
 
 win: ref Window;
 font: ref Font;
@@ -35,10 +30,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	draw = load Draw Draw->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	plot = load Plot Plot->PATH;
-	chaosmap = load Chaosmap Chaosmap->PATH;
 	env = load Env Env->PATH;
 	if(sys == nil || draw == nil || wmclient == nil ||
-			plot == nil || chaosmap == nil)
+			plot == nil)
 		raise "fail:chaosmap: missing module";
 	if(env != nil){
 		env->clone();
@@ -109,10 +103,10 @@ fillbifurcation()
 		r := 2.8+1.2*real(ir)/180.0;
 		x := 0.217;
 		for(i := 0; i < 500; i++)
-			x = chaosmap->step(r,x);
+			x = step(r,x);
 		command := "bifurcation append";
 		for(i = 0; i < 80; i++){
-			x = chaosmap->step(r,x);
+			x = step(r,x);
 			command += sys->sprint(" %.9g %.9g",r,x);
 		}
 		error := graph.cmd(command);
@@ -131,12 +125,12 @@ fillselected()
 	for(i := 0; i <= 160; i++){
 		x := real(i)/160.0;
 		graph.cmd(sys->sprint("map append %.9g %.9g",
-			x,chaosmap->step(parameter,x)));
+			x,step(parameter,x)));
 	}
 	x := initial;
 	graph.cmd(sys->sprint("cobweb append %.9g 0",x));
 	for(i = 0; i < 80; i++){
-		next := chaosmap->step(parameter,x);
+		next := step(parameter,x);
 		graph.cmd(sys->sprint("cobweb append %.9g %.9g %.9g %.9g",
 			x,next,next,next));
 		x = next;
@@ -194,7 +188,7 @@ redraw()
 		"line cob diagonal x x y y colour grid width 1\n" +
 		"line cob cobweb x x y y colour accent width 1");
 	graph.draw();
-	lyapunov := chaosmap->lyapunov(parameter,initial,500,1000);
+	lyapunov := lyapunov(parameter,initial,500,1000);
 	classification := "periodic";
 	if(lyapunov > 0.0)
 		classification = "chaotic";
@@ -215,4 +209,42 @@ drawtrack(image: ref Image)
 	image.ellipse((x,y),5,5,0,accent,Point(0,0));
 	image.text((left,image.r.max.y-34),foreground,Point(0,0),font,
 		"drag: parameter r; drag cobweb: initial x");
+}
+
+# The equations below were in appl/danby/plugin/chaosmap.b, reached only
+# through Chaosmap->PATH.  This is the program that shows them.
+
+include "math.m";
+	math: Math;
+
+step(parameter, value: real): real
+{
+	return parameter*value*(1.0-value);
+}
+
+derivative(parameter, value: real): real
+{
+	return parameter*(1.0-2.0*value);
+}
+
+lyapunov(parameter, initial: real, discard, count: int): real
+{
+	if(math == nil)
+		math = load Math Math->PATH;
+	value := initial;
+	for(i := 0; i < discard; i++)
+		value = step(parameter,value);
+	sum := 0.0;
+	for(i = 0; i < count; i++){
+		value = step(parameter,value);
+		slope := derivative(parameter,value);
+		if(slope < 0.0)
+			slope = -slope;
+		if(slope < 1.0e-14)
+			slope = 1.0e-14;
+		sum += math->log(slope);
+	}
+	if(count < 1)
+		return 0.0;
+	return sum/real(count);
 }

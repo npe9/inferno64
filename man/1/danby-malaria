@@ -19,7 +19,7 @@ Drag any compartment bar.  Tracks set mosquito-to-human transmission,
 human-to-mosquito transmission, human recovery, and mosquito turnover.
 Space pauses, period steps, r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/plugin/malaria.b
+.B /appl/danby/malaria.b
 .br
 .B /appl/danby/malaria.b
 .SH SEE ALSO

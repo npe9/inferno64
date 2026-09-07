@@ -24,7 +24,7 @@ bottom tracks to alter the parameters.  Space pauses, period advances one
 display step, r resets, and q or Escape exits.
 .SH NUMERICS
 The model is implemented separately in
-.B /appl/danby/plugin/periodicvolterra.b
+.B /appl/danby/periodicvolterra.b
 and integrated with the general-purpose fourth-order Runge-Kutta routine in
 .IR numerics (2).
 .SH SOURCE

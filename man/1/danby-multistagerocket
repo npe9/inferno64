@@ -8,4 +8,4 @@ The first stage burns and is discarded before the second stage ignites. The
 mass discontinuity and separate thrust levels expose the performance reason for
 staging while gravity and drag remain active.
 .SH SOURCE
-.B /appl/danby/plugin/multistagerocket.b
+.B /appl/danby/multistagerocket.b

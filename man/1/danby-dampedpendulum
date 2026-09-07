@@ -7,4 +7,4 @@ danby-dampedpendulum \- pendulum with velocity-proportional damping
 Linear damping removes energy continuously in proportion to angular velocity;
 the energy trace shows exponential-like decay toward rest.
 .SH SOURCE
-.B /appl/danby/plugin/dampedpendulum.b
+.B /appl/danby/dampedpendulum.b

@@ -12,6 +12,6 @@ quantization.
 The spatial plot shows the complete arc and the telemetry plot shows speed.
 Tracks alter exit speed, angle, drag, lift, backspin, and gravity.
 .SH SOURCE
-.B /appl/danby/plugin/flyball.b
+.B /appl/danby/flyball.b
 .SH SEE ALSO
 .IR trajectory (2)

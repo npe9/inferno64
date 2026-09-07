@@ -8,4 +8,4 @@ Hydrostatic balance is closed by a degenerate equation of state. Moving gamma
 toward 4/3 exposes the weak dependence of total mass on central density that
 leads to the Chandrasekhar limiting-mass result.
 .SH SOURCE
-.B /appl/danby/plugin/whitedwarf.b
+.B /appl/danby/whitedwarf.b

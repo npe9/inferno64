@@ -17,7 +17,7 @@ Each pair is conserved independently and that invariant is regression-tested.
 Drag any compartment bar.  Tracks set both directional transmission rates and
 both recovery rates.  Space pauses, period steps, r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/plugin/gonorrhea.b
+.B /appl/danby/gonorrhea.b
 .br
 .B /appl/danby/gonorrhea.b
 .SH SEE ALSO

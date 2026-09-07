@@ -23,7 +23,7 @@ pauses, period steps, r resets, and q exits.
 The differential invariant is checked analytically by
 .B temple/danbytest.
 .SH SOURCE
-.B /appl/danby/plugin/lanchester.b
+.B /appl/danby/lanchester.b
 .br
 .B /appl/danby/lanchester.b
 .SH SEE ALSO

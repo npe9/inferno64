@@ -1,4 +1,4 @@
-implement Vaccination;
+implement Populationmodel;
 include "sys.m";
  sys: Sys;
 include "draw.m";
@@ -16,9 +16,6 @@ include "plot.m";
 include "env.m";
  env: Env;
 include "danby/populationmodel.m";
- vaccinationmodel: Populationmodel;
-Vaccination: module { init: fn(ctxt: ref Draw->Context, argv: list of string);
- };
 win: ref Window;
 font: ref Font;
 bg, fg, grid, live, accent: ref Image;
@@ -30,7 +27,7 @@ t := 0.0;
 paused := 0;
 w: ref Numerics->Workspace;
 graph: ref Plotter;
-model: ref Populationmodel->Model;
+model: ref Model;
 init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
@@ -39,11 +36,10 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	numerics = load Numerics Numerics->PATH;
 	plot = load Plot Plot->PATH;
 	env = load Env Env->PATH;
-	vaccinationmodel = load Populationmodel "/dis/danby/plugin/vaccination.dis";
 	if(sys == nil || draw == nil || wmclient == nil || numerics == nil ||
-			plot == nil || vaccinationmodel == nil)
+			plot == nil)
 		raise "fail:vaccination: missing module";
-	model = vaccinationmodel->new();
+	model = new();
 	if(env != nil){ env->clone();
 	 env->setenv("wmman", "danby-vaccination");
 	 }
@@ -86,9 +82,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	} redraw();
 	}
 }
-rhs(rhsTime: real, q, d: array of real)
+derivs(rhsTime: real, q, d: array of real)
 {
-	vaccinationmodel->evaluate(model,rhsTime,q,d);
+	evaluate(model,rhsTime,q,d);
 }
 reset()
 {
@@ -107,7 +103,7 @@ reset()
 }
 step()
 {
-	numerics->rk4(w, rhs, t, 0.008, y);
+	numerics->rk4(w, derivs, t, 0.008, y);
 	 t+=0.008;
 	for(i:=0;i<len y;i++)if(y[i]<0.0)y[i]=0.0;
 	graph.cmd(sys->sprint("history append %.17g %.17g %.17g %.17g %.17g",t,y[0],y[1],y[2],y[3]));
@@ -196,3 +192,49 @@ return a+int((v-lo)*real(b-a)/(hi-lo));
 timer(c:chan of int){for(;;){sys->sleep(25);
 c<-=1;
 }}
+
+# The equations below were in appl/danby/plugin/vaccination.b, loaded by path;
+# this file is the program that shows them, so they belong in it.
+
+new(): ref Model
+{
+	return ref Model(array[] of {2.2,0.55,0.20},
+		array[] of {0.792,0.01,0.0,0.198});
+}
+
+title(): string
+{
+	return "SIR epidemic with vaccination";
+}
+
+statelabels(): array of string
+{
+	return array[] of {"susceptible", "infectious", "recovered", "vaccinated"};
+}
+
+parameterlabels(): array of string
+{
+	return array[] of {"contact", "recovery", "coverage"};
+}
+
+parameterranges(): array of real
+{
+	return array[] of {5.0,2.0,0.95};
+}
+
+Model.rhs(model: self ref Model, nil: real,
+		state, derivative: array of real)
+{
+	p := model.parameter;
+	infections := p[0]*state[0]*state[1];
+	recoveries := p[1]*state[1];
+	derivative[0] = -infections;
+	derivative[1] = infections-recoveries;
+	derivative[2] = recoveries;
+	derivative[3] = 0.0;
+}
+
+evaluate(model: ref Model, t: real, state, derivative: array of real)
+{
+	model.rhs(t,state,derivative);
+}

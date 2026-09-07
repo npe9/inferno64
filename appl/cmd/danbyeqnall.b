@@ -45,12 +45,12 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		raise "fail:load";
 	}
 
-	# --- Trajectory: 11 plugins sharing the plain ballistics call
+	# --- Trajectory: 11 models sharing the plain ballistics call
 	# form (state[2],state[3],p[2],p[3],p[4],p[5],0.0) - real
-	# parameter()s from each plugin's own new(), state (vx,vy)=(10,5)
-	# for all (the formula is state-independent of WHICH plugin it
+	# parameter()s from each model's own new(), state (vx,vy)=(10,5)
+	# for all (the formula is state-independent of WHICH model it
 	# is; only the parameters differ). ---
-	plainplugins := "ballistics" :: "basketball" :: "badminton" ::
+	plainplugins := "projectile" :: "basketball" :: "badminton" ::
 		"baseballpitch" :: "discus" :: "flyball" :: "golfdrive" ::
 		"javelin" :: "softballpitch" :: nil;
 	# (speed, angle unused here - only p[2..5] feed acceleration())

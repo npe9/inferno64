@@ -11,6 +11,6 @@ sea motion visible without conflating the two axes.
 Front and side hull projections show roll and pitch; both angles are plotted
 against time.
 .SH SOURCE
-.B /appl/danby/plugin/shipmotion.b
+.B /appl/danby/shipmotion.b
 .SH SEE ALSO
 .IR mechanism (2)

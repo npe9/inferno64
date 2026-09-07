@@ -7,4 +7,4 @@ danby-stretchyoyo \- elastic-tether satellite de-spin
 Tip masses exchange rotational energy with a damped elastic radial mode. The
 display shows tether breathing while spin and extension evolve.
 .SH SOURCE
-.B /appl/danby/plugin/stretchyoyo.b
+.B /appl/danby/stretchyoyo.b

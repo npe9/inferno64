@@ -7,4 +7,4 @@ danby-skylab \- atmospheric orbital decay of Skylab
 Exponential atmospheric density and quadratic drag decelerate a large satellite;
 the rising density during descent creates positive feedback toward re-entry.
 .SH SOURCE
-.B /appl/danby/plugin/skylab.b
+.B /appl/danby/skylab.b

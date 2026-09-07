@@ -11,6 +11,6 @@ separating the path from a vacuum parabola.
 The plots show height versus distance and speed versus time.  Tracks alter
 speed, angle, drag, lift, spin, and gravity.
 .SH SOURCE
-.B /appl/danby/plugin/badminton.b
+.B /appl/danby/badminton.b
 .SH SEE ALSO
 .IR trajectory (2)

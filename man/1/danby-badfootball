@@ -11,6 +11,6 @@ plan-view path without corrupting the vertical trajectory.
 Side and plan projections show the arc and lateral wobble separately.  Tracks
 alter speed, elevation, aim, drag, wobble, and gravity.
 .SH SOURCE
-.B /appl/danby/plugin/badfootball.b
+.B /appl/danby/badfootball.b
 .SH SEE ALSO
 .IR flight3d (2)

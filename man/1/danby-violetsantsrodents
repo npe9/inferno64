@@ -14,7 +14,7 @@ Separate histories and editable current-state bars preserve all three species.
 The eight tracks control violet growth and capacity, ant benefit, rodent
 grazing, ant conversion and death, ant deterrence, and rodent death.
 .SH SOURCE
-.B /appl/danby/plugin/violetsantsrodents.b
+.B /appl/danby/violetsantsrodents.b
 .br
 .B /appl/danby/violetsantsrodents.b
 .SH SEE ALSO

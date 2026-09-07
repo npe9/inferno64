@@ -19,7 +19,7 @@ Drag the phase portrait to set initial populations and the bottom tracks to
 set birth, attack, conversion, death, and handling.  Space pauses, period
 steps, r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/plugin/alternativepredation.b
+.B /appl/danby/alternativepredation.b
 .br
 .B /appl/danby/alternativepredation.b
 .SH SEE ALSO

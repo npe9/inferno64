@@ -12,6 +12,6 @@ each fragment trajectory.
 The points separate visibly at ignition.  Mean altitude and horizontal spread
 are plotted, making burst timing and symmetry measurable.
 .SH SOURCE
-.B /appl/danby/plugin/fireworks.b
+.B /appl/danby/fireworks.b
 .SH SEE ALSO
 .IR mechanism (2)

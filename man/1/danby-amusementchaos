@@ -8,6 +8,6 @@ A damped nonlinear pendulum is forced directly and through periodic pivot
 motion.  Drive amplitude and frequency permit transitions from periodic motion
 through period multiplication to sensitive chaotic response.
 .SH SOURCE
-.B /appl/danby/plugin/amusementchaos.b
+.B /appl/danby/amusementchaos.b
 .SH SEE ALSO
 .IR mechanism (2)

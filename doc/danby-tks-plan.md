@@ -1,5 +1,23 @@
 # Danby model authoring: a real equation language, and what the "duplicates" actually are
 
+
+**Architecture update, after that:** `appl/danby/plugin/` is gone.  Every
+model that had a twelve-to-fourteen-line launcher in `appl/danby/` and its
+real content in `appl/danby/plugin/` is now one file: the seven model
+interfaces declare `init()`, so the file named after a model carries its
+title, parameters, equations, drawing and observables *and* is the command,
+whose `init()` starts the shared viewer and hands it its own path.  The
+viewers are unchanged and still own the window, the integrator and the
+controls.  The six "duplicate" hand-rolled programs below (`boom`,
+`competition`, `ecology`, `epidemic`, `heartbeat`, `vaccination`) absorbed
+their own plugins the same way, as did the four equation libraries that
+were reached only through a `PATH` into `plugin/` (`chaosmap`,
+`forcedpendulum`, `lorenz`, `stability`).  The last plugin, a plain
+Trajectory projectile that no command could reach, became
+`danby/projectile`.  The scaffold-percentage findings below are unaffected
+- they measured the model content, which did not move - but every path in
+this document that names `plugin/` is now historical.
+
 **Status update (this doc's own last edit was `79fa91fa`; since then, same
 day, later):** the harness-side adapter this doc's own "Recommended order"
 step 1 called for ("given a list of equation strings and a list of

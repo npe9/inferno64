@@ -11,6 +11,6 @@ regulation hoop height.
 The spatial graph shows the shot arc; telemetry shows speed.  Tracks change
 speed, angle, drag, lift, backspin, and gravity.
 .SH SOURCE
-.B /appl/danby/plugin/basketball.b
+.B /appl/danby/basketball.b
 .SH SEE ALSO
 .IR trajectory (2)

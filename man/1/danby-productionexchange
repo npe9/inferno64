@@ -22,7 +22,7 @@ exchange response.  Space pauses, period steps, r resets, and q exits.
 Cancellation of internal exchange in the total-stock balance is tested by
 .B temple/danbytest.
 .SH SOURCE
-.B /appl/danby/plugin/productionexchange.b
+.B /appl/danby/productionexchange.b
 .br
 .B /appl/danby/productionexchange.b
 .SH SEE ALSO

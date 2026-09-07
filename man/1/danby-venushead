@@ -9,4 +9,4 @@ refractive-index gradient. The diagram compares the curved ray with planetary
 radius and observer position; wrapped angle measures whether it returns behind
 the observer.
 .SH SOURCE
-.B /appl/danby/plugin/venushead.b
+.B /appl/danby/venushead.b

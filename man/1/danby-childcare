@@ -24,7 +24,7 @@ birth, attack, conversion, maturation, young and adult death, and care effort.
 Space pauses, period steps, r resets, and q exits.
 .SH NUMERICS
 The equation module is
-.B /appl/danby/plugin/childcare.b
+.B /appl/danby/childcare.b
 and the reusable N-state interface is
 .B /module/danby/populationmodel.m.
 The empty-population boundary and model metadata are regression-tested by

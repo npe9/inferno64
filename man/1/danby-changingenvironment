@@ -14,7 +14,7 @@ track capacity; fast forcing produces lag and a reduced response.
 Drag the population bar.  The four tracks set growth, mean capacity, variation,
 and forcing frequency.  Space pauses, period steps, r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/plugin/changingenvironment.b
+.B /appl/danby/changingenvironment.b
 .br
 .B /appl/danby/changingenvironment.b
 .SH SEE ALSO

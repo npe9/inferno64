@@ -37,7 +37,7 @@ roundoff are clamped for nonnegative population and stock models.
 .PP
 The regression suite checks conservation across all four compartments.
 .SH SOURCE
-.B /appl/danby/plugin/vaccination.b
+.B /appl/danby/vaccination.b
 .br
 .B /appl/danby/vaccination.b
 .SH SEE ALSO

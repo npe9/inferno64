@@ -1,4 +1,4 @@
-implement Chaos;
+implement Lorenz;
 
 include "sys.m";
 	sys: Sys;
@@ -20,15 +20,9 @@ include "paramtracks.m";
 	paramtracks: Paramtracks;
 	Tracks: import paramtracks;
 include "danby/lorenz.m";
-	lorenz: Lorenz;
-	Model: import lorenz;
 include "env.m";
 	env: Env;
 
-Chaos: module
-{
-	init: fn(ctxt: ref Draw->Context, argv: list of string);
-};
 
 win: ref Window;
 font: ref Font;
@@ -53,10 +47,9 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	numerics = load Numerics Numerics->PATH;
 	plot = load Plot Plot->PATH;
 	paramtracks = load Paramtracks Paramtracks->PATH;
-	lorenz = load Lorenz Lorenz->PATH;
 	env = load Env Env->PATH;
 	if(sys == nil || draw == nil || wmclient == nil || math == nil ||
-			numerics == nil || plot == nil || paramtracks == nil || lorenz == nil)
+			numerics == nil || plot == nil || paramtracks == nil)
 		raise "fail:chaos: missing module";
 	if(argv != nil && tl argv != nil)
 		lessonstem = hd tl argv;
@@ -78,7 +71,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	background = win.display.color(int 16rf4f0e7ff);
 	foreground = win.display.color(int 16r20272cff);
 	live = win.display.color(int 16r178f86ff);
-	model = lorenz->new(10.0,28.0,8.0/3.0);
+	model = new(10.0,28.0,8.0/3.0);
 	work = numerics->workspace(len state);
 	nearwork = numerics->workspace(len nearby);
 	graph = plot->new(win.image,font);
@@ -265,4 +258,25 @@ timer(ticks: chan of int)
 		sys->sleep(25);
 		ticks <-= 1;
 	}
+}
+
+# The equations below were in appl/danby/plugin/lorenz.b, reached only
+# through Lorenz->PATH.  This is the program that shows them.
+
+new(sigma, rho, beta: real): ref Model
+{
+	return ref Model(sigma,rho,beta);
+}
+
+evaluate(model: ref Model, t: real, state, derivative: array of real)
+{
+	model.rhs(t,state,derivative);
+}
+
+Model.rhs(model: self ref Model, nil: real,
+		state, derivative: array of real)
+{
+	derivative[0] = model.sigma*(state[1]-state[0]);
+	derivative[1] = state[0]*(model.rho-state[2])-state[1];
+	derivative[2] = state[0]*state[1]-model.beta*state[2];
 }

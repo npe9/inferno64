@@ -11,6 +11,6 @@ length, stiffness, damping, mass, and gravity remain directly adjustable.
 The three-point pole visibly bends while carrying the vaulter.  The graph shows
 vaulter height and elastic energy stored in the pole.
 .SH SOURCE
-.B /appl/danby/plugin/polevault.b
+.B /appl/danby/polevault.b
 .SH SEE ALSO
 .IR mechanism (2)

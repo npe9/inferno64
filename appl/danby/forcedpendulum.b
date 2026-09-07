@@ -1,4 +1,4 @@
-implement Forcedpendulumapp;
+implement Forcedpendulum;
 
 include "sys.m";
 	sys: Sys;
@@ -20,15 +20,9 @@ include "paramtracks.m";
 	paramtracks: Paramtracks;
 	Tracks: import paramtracks;
 include "danby/forcedpendulum.m";
-	forcedpendulum: Forcedpendulum;
-	Model: import forcedpendulum;
 include "env.m";
 	env: Env;
 
-Forcedpendulumapp: module
-{
-	init: fn(ctxt: ref Draw->Context, argv: list of string);
-};
 
 Pi: con 3.14159265358979323846;
 
@@ -53,10 +47,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	numerics = load Numerics Numerics->PATH;
 	plot = load Plot Plot->PATH;
 	paramtracks = load Paramtracks Paramtracks->PATH;
-	forcedpendulum = load Forcedpendulum Forcedpendulum->PATH;
 	env = load Env Env->PATH;
 	if(sys == nil || draw == nil || wmclient == nil || math == nil ||
-			numerics == nil || plot == nil || paramtracks == nil || forcedpendulum == nil)
+			numerics == nil || plot == nil || paramtracks == nil)
 		raise "fail:forcedpendulum: missing module";
 	if(env != nil){
 		env->clone();
@@ -73,7 +66,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	grid = win.display.color(int 16rd6d0c4ff);
 	live = win.display.color(int 16r178f86ff);
 	accent = win.display.color(int 16rb85c38ff);
-	model = forcedpendulum->new(0.22,1.2,2.0/3.0);
+	model = new(0.22,1.2,2.0/3.0);
 	work = numerics->workspace(len state);
 	graph = plot->new(win.image,font);
 	tracks = paramtracks->new(win.image,font);
@@ -284,4 +277,28 @@ timer(ticks: chan of int)
 		sys->sleep(25);
 		ticks <-= 1;
 	}
+}
+
+# The equations below were in appl/danby/plugin/forcedpendulum.b, reached only
+# through Forcedpendulum->PATH.  This is the program that shows them.
+
+
+new(damping, drive, frequency: real): ref Model
+{
+	if(math == nil)
+		math = load Math Math->PATH;
+	return ref Model(damping,drive,frequency);
+}
+
+Model.rhs(model: self ref Model, t: real,
+		state, derivative: array of real)
+{
+	derivative[0] = state[1];
+	derivative[1] = -math->sin(state[0])-model.damping*state[1]
+		+model.drive*math->cos(model.frequency*t);
+}
+
+Model.energy(nil: self ref Model, state: array of real): real
+{
+	return state[1]*state[1]/2.0+1.0-math->cos(state[0]);
 }

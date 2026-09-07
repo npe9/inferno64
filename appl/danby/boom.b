@@ -1,4 +1,4 @@
-implement Boom;
+implement Populationmodel;
 include "sys.m";
  sys: Sys;
 include "draw.m";
@@ -16,9 +16,6 @@ include "plot.m";
 include "env.m";
  env: Env;
 include "danby/populationmodel.m";
- boommodel: Populationmodel;
-Boom: module { init: fn(ctxt: ref Draw->Context, argv: list of string);
- };
 win: ref Window;
 font: ref Font;
 bg, fg, grid, live, accent: ref Image;
@@ -31,7 +28,7 @@ t := 0.0;
 paused := 0;
 w: ref Numerics->Workspace;
 graph: ref Plotter;
-model: ref Populationmodel->Model;
+model: ref Model;
 init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
@@ -40,11 +37,10 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	numerics = load Numerics Numerics->PATH;
 	plot = load Plot Plot->PATH;
 	env = load Env Env->PATH;
-	boommodel = load Populationmodel "/dis/danby/plugin/boom.dis";
 	if(sys == nil || draw == nil || wmclient == nil || numerics == nil ||
-			plot == nil || boommodel == nil)
+			plot == nil)
 		raise "fail:Boom: missing module";
-	model = boommodel->new();
+	model = new();
 	if(env != nil){ env->clone();
 	 env->setenv("wmman", "danby-boom");
 	 }
@@ -91,9 +87,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		redraw();
 	}
 }
-rhs(rhsTime: real, q, d: array of real)
+derivs(rhsTime: real, q, d: array of real)
 {
-	boommodel->evaluate(model,rhsTime,q,d);
+	evaluate(model,rhsTime,q,d);
 }
 reset()
 {
@@ -110,7 +106,7 @@ reset()
 }
 step()
 {
-	numerics->rk4(w, rhs, t, 0.008, y);
+	numerics->rk4(w, derivs, t, 0.008, y);
 	 t+=0.008;
 	if(y[0]<0.0)y[0]=0.0;
 	if(y[1]<0.0)y[1]=0.0;
@@ -187,4 +183,45 @@ timer(c:chan of int)
 		sys->sleep(25);
 		c<-=1;
 	}
+}
+
+# The equations below were in appl/danby/plugin/boom.b, loaded by path;
+# this file is the program that shows them, so they belong in it.
+
+new(): ref Model
+{
+	return ref Model(array[] of {0.6,1.0,0.8,1.0},array[] of {0.65,0.25});
+}
+
+title(): string
+{
+	return "Goodwin growth cycle";
+}
+
+statelabels(): array of string
+{
+	return array[] of {"wage share", "employment"};
+}
+
+parameterlabels(): array of string
+{
+	return array[] of {"wage decay", "employment to wage", "employment growth", "wage drag"};
+}
+
+parameterranges(): array of real
+{
+	return array[] of {2.0,2.0,2.0,2.0};
+}
+
+Model.rhs(model: self ref Model, nil: real,
+		state, derivative: array of real)
+{
+	p := model.parameter;
+	derivative[0] = state[0]*(-p[0]+p[1]*state[1]);
+	derivative[1] = state[1]*(p[2]-p[3]*state[0]);
+}
+
+evaluate(model: ref Model, t: real, state, derivative: array of real)
+{
+	model.rhs(t,state,derivative);
 }

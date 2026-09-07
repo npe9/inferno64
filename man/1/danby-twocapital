@@ -18,7 +18,7 @@ rates.
 .SH CONTROLS
 Drag either capital bar.  Space pauses, period steps, r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/plugin/twocapital.b
+.B /appl/danby/twocapital.b
 .br
 .B /appl/danby/twocapital.b
 .SH SEE ALSO

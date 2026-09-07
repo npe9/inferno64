@@ -18,7 +18,7 @@ recovery.  Space pauses, period steps, r resets, and q exits.
 .SH NUMERICS
 The regression suite verifies S'+E'+I'+R'=0.
 .SH SOURCE
-.B /appl/danby/plugin/incubation.b
+.B /appl/danby/incubation.b
 .br
 .B /appl/danby/incubation.b
 .SH SEE ALSO

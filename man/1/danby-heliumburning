@@ -8,4 +8,4 @@ Triple-alpha reactions convert helium to carbon; subsequent captures form
 oxygen and heavier products. Temperature and density scale rates while a
 cooling term removes accumulated thermal energy.
 .SH SOURCE
-.B /appl/danby/plugin/heliumburning.b
+.B /appl/danby/heliumburning.b

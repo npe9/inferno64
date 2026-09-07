@@ -8,4 +8,4 @@ A three-dimensional ballistic trajectory separates downrange, altitude, and
 lateral motion. Signed aim error and crosswind expose their contribution to miss
 distance in the plan view.
 .SH SOURCE
-.B /appl/danby/plugin/icbmaccuracy.b
+.B /appl/danby/icbmaccuracy.b

@@ -15,7 +15,7 @@ Drag the budworm state bar.  Tracks set intrinsic growth, foliage capacity,
 maximum bird predation, and predation saturation.  Space pauses, period steps,
 r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/plugin/budworm.b
+.B /appl/danby/budworm.b
 .br
 .B /appl/danby/budworm.b
 .SH SEE ALSO

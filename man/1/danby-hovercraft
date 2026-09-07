@@ -10,6 +10,6 @@ turns only as the integrated body heading changes.
 .SH DISPLAY
 The triangular plan view rotates with heading.  Speed and heading are plotted.
 .SH SOURCE
-.B /appl/danby/plugin/hovercraft.b
+.B /appl/danby/hovercraft.b
 .SH SEE ALSO
 .IR mechanism (2)

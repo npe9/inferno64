@@ -19,7 +19,7 @@ Drag the phase portrait to set initial populations.  The six bottom tracks set
 the two intrinsic growth rates, crowding strengths, and cross-species benefits.
 Space pauses, period steps, r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/plugin/cooperation.b
+.B /appl/danby/cooperation.b
 .br
 .B /appl/danby/cooperation.b
 .SH SEE ALSO

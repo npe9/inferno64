@@ -17,7 +17,7 @@ Space pauses, period steps, r resets, and q exits.
 The analytic mass-balance equilibrium is checked by
 .B temple/danbytest.
 .SH SOURCE
-.B /appl/danby/plugin/lakepollution.b
+.B /appl/danby/lakepollution.b
 .br
 .B /appl/danby/lakepollution.b
 .SH SEE ALSO

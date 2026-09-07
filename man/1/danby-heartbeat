@@ -22,7 +22,7 @@ pacemaker bias.  Space pauses, period steps, r resets, and q exits.
 The analytic equilibrium is checked by
 .B temple/danbytest.
 .SH SOURCE
-.B /appl/danby/plugin/heartbeat.b
+.B /appl/danby/heartbeat.b
 .br
 .B /appl/danby/heartbeat.b
 .SH SEE ALSO

@@ -8,4 +8,4 @@ Central gravity is combined with a small continuously steered acceleration.
 Prograde thrust spirals outward, retrograde thrust spirals inward, and steering
 offset creates non-tangential transfers.
 .SH SOURCE
-.B /appl/danby/plugin/lowthrust.b
+.B /appl/danby/lowthrust.b

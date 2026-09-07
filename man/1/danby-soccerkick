@@ -12,6 +12,6 @@ The upper graph is height versus downrange distance.  The lower graph is the
 plan view, lateral displacement versus downrange distance.  Tracks alter speed,
 elevation, aim, drag, curve, and gravity.
 .SH SOURCE
-.B /appl/danby/plugin/soccerkick.b
+.B /appl/danby/soccerkick.b
 .SH SEE ALSO
 .IR flight3d (2)

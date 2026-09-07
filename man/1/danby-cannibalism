@@ -16,7 +16,7 @@ Drag either state bar.  The six tracks set birth, maturation, cannibalism,
 food conversion, and young and adult death.  Space pauses, period steps,
 r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/plugin/cannibalism.b
+.B /appl/danby/cannibalism.b
 .br
 .B /appl/danby/cannibalism.b
 .SH SEE ALSO

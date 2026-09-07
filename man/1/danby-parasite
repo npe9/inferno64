@@ -15,7 +15,7 @@ Drag the host or parasite state bar.  The five tracks set host growth and
 capacity, infection, conversion, and parasite death.  Space pauses, period
 steps, r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/plugin/parasite.b
+.B /appl/danby/parasite.b
 .br
 .B /appl/danby/parasite.b
 .SH SEE ALSO

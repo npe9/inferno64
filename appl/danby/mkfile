@@ -1,12 +1,12 @@
 <../../mkconfig
 
-# plugin/ holds the pure physics-model modules (implement Mechanism, Orbital,
-# etc, no init(ctxt,argv)) that used to live directly in this directory. The
-# .b files below are now standalone Command wrappers - each loads its own
-# plugin from /dis/danby/plugin/<name>.dis and, for most, one of the shared
-# harnesses in ../temple (mechanism.dis, orbital.dis, etc) to actually run it.
-DIRS=\
-	plugin\
+# Every model here is a command in its own right: the file named after a
+# model holds that model's equations, parameters and drawing, and its
+# init() starts one of the shared viewers in ../temple (mechanism.dis,
+# orbital.dis, trajectory.dis, ...) or ecology.dis here, handing it this
+# module's own path.  There is no plugin directory any more - a launcher
+# that only said "load the viewer with plugin X" told a reader nothing
+# about the model it was named after.
 
 TARG=\
 	gravity.dis\
@@ -179,8 +179,8 @@ TARG=\
 	dynamoreversal.dis\
 	twomagnet.dis\
 	bernoulli.dis\
+	projectile.dis\
 
 DISBIN=$ROOT/dis/danby
 
 <$ROOT/mkfiles/mkdis
-<$ROOT/mkfiles/mksubdirs

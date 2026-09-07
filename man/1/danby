@@ -1034,10 +1034,14 @@ See
 .SH FILES
 .TP
 .B /dis/danby/
-Compiled commands.
+Compiled commands.  Each model is one module: the file named after it
+holds its own equations, parameters and drawing and is also the command
+that runs them.  There is no longer a
+.B plugin
+subdirectory.
 .TP
-.B /dis/danby/plugin/
-Compiled model and support library modules.
+.B /dis/temple/
+The shared viewers the models hand themselves to.
 .TP
 .B /lib/wmsetup
 Wm menu entries.

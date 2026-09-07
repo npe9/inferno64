@@ -17,7 +17,7 @@ pauses, period steps, r resets, and q exits.
 .SH NUMERICS
 The regression suite verifies conservation on the unit population simplex.
 .SH SOURCE
-.B /appl/danby/plugin/diseasebirthdeath1.b
+.B /appl/danby/diseasebirthdeath1.b
 .br
 .B /appl/danby/diseasebirthdeath1.b
 .SH SEE ALSO

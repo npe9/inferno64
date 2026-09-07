@@ -8,4 +8,4 @@ Sun and Jupiter gravitationally scatter a massless comet. The graph reports
 heliocentric specific energy: negative final energy is bound, while positive
 energy is an escaping orbit. Jupiter distance identifies the encounter.
 .SH SOURCE
-.B /appl/danby/plugin/cometcatch.b
+.B /appl/danby/cometcatch.b

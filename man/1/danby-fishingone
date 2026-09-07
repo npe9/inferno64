@@ -24,7 +24,7 @@ q exits.
 The analytic open-access equilibrium is checked by
 .B temple/danbytest.
 .SH SOURCE
-.B /appl/danby/plugin/fishingone.b
+.B /appl/danby/fishingone.b
 .br
 .B /appl/danby/fishingone.b
 .SH SEE ALSO

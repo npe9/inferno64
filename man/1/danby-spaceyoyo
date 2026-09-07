@@ -7,4 +7,4 @@ danby-spaceyoyo \- rigid-tether satellite de-spin
 Radially deploying tip masses increase rotational inertia and reduce satellite
 spin under angular-momentum conservation. Spin and deployment are plotted.
 .SH SOURCE
-.B /appl/danby/plugin/spaceyoyo.b
+.B /appl/danby/spaceyoyo.b

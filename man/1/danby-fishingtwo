@@ -19,7 +19,7 @@ Drag any state bar.  Tracks set growth, capacity, catchability, and price for
 each stock, followed by fleet cost and response.  Space pauses, period steps,
 r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/plugin/fishingtwo.b
+.B /appl/danby/fishingtwo.b
 .br
 .B /appl/danby/fishingtwo.b
 .SH SEE ALSO

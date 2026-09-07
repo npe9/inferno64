@@ -1,4 +1,4 @@
-implement Competition;
+implement Twospecies;
 include "sys.m";
  sys: Sys;
 include "draw.m";
@@ -16,9 +16,6 @@ include "plot.m";
 include "env.m";
  env: Env;
 include "danby/twospecies.m";
- competitionmodel: Twospecies;
-Competition: module { init: fn(ctxt: ref Draw->Context, argv: list of string);
- };
 win: ref Window;
 font: ref Font;
 bg, fg, grid, live, accent: ref Image;
@@ -30,7 +27,7 @@ t := 0.0;
 paused := 0;
 w: ref Numerics->Workspace;
 graph: ref Plotter;
-model: ref Twospecies->Model;
+model: ref Model;
 init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
@@ -39,11 +36,10 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	numerics = load Numerics Numerics->PATH;
 	plot = load Plot Plot->PATH;
 	env = load Env Env->PATH;
-	competitionmodel = load Twospecies "/dis/danby/plugin/competition.dis";
 	if(sys == nil || draw == nil || wmclient == nil || numerics == nil ||
-			plot == nil || competitionmodel == nil)
+			plot == nil)
 		raise "fail:Competition: missing module";
-	model = competitionmodel->new();
+	model = new();
 	if(env != nil){ env->clone();
 	 env->setenv("wmman", "danby-competition");
 	 }
@@ -92,9 +88,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		redraw();
 	}
 }
-rhs(rhsTime: real, q, d: array of real)
+derivs(rhsTime: real, q, d: array of real)
 {
-	competitionmodel->evaluate(model,rhsTime,q,d);
+	evaluate(model,rhsTime,q,d);
 }
 reset()
 {
@@ -107,7 +103,7 @@ reset()
 }
 step()
 {
-	numerics->rk4(w, rhs, t, 0.008, y);
+	numerics->rk4(w, derivs, t, 0.008, y);
 	 t+=0.008;
 	if(y[0]<0.0)y[0]=0.0;
 	if(y[1]<0.0)y[1]=0.0;
@@ -156,7 +152,7 @@ redraw()
 	graph.cmd("axis phase x species-A");
 	graph.cmd("axis phase y species-B");
 	graph.cmd("equilibrium clear");
-	(coexist,coexistb) := competitionmodel->fixedpoint(model);
+	(coexist,coexistb) := fixedpoint(model);
 	graph.cmd(sys->sprint("equilibrium append %.17g %.17g",coexist,coexistb));
 	graph.cmd("current clear");
 	graph.cmd(sys->sprint("current append %.17g %.17g",y[0],y[1]));
@@ -204,4 +200,54 @@ timer(c:chan of int)
 		sys->sleep(25);
 		c<-=1;
 	}
+}
+
+# The equations below were in appl/danby/plugin/competition.b, loaded by path;
+# this file is the program that shows them, so they belong in it.
+
+new(): ref Model
+{
+	return ref Model(array[] of {1.0, 0.8, 0.7});
+}
+
+title(): string
+{
+	return "Competition between two species";
+}
+
+parameterlabels(): array of string
+{
+	return array[] of {"growth A", "growth B", "competition"};
+}
+
+parameterranges(): array of real
+{
+	return array[] of {2.0, 2.0, 2.0};
+}
+
+Model.rhs(model: self ref Model, nil: real,
+		state, derivative: array of real)
+{
+	p := model.parameter;
+	a := state[0];			# not the global y, which is the app's
+	b := state[1];
+	derivative[0] = p[0]*a*(1.0-a-p[2]*b);
+	derivative[1] = p[1]*b*(1.0-b-p[2]*a);
+}
+
+Model.equilibrium(model: self ref Model): (real, real)
+{
+	c := model.parameter[2];		# not the global of the same name
+	coexistence := 1.0/(1.0+c);
+	return (coexistence,coexistence);
+}
+
+evaluate(model: ref Model, t: real, state, derivative: array of real)
+{
+	model.rhs(t,state,derivative);
+}
+
+fixedpoint(model: ref Model): (real, real)
+{
+	return model.equilibrium();
 }

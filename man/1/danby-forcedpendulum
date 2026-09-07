@@ -31,7 +31,7 @@ of mechanical energy over twenty simulated seconds with RK4 step 0.001.
 .SH SOURCE
 .B /module/danby/forcedpendulum.m
 .br
-.B /appl/danby/plugin/forcedpendulum.b
+.B /appl/danby/forcedpendulum.b
 .br
 .B /appl/danby/forcedpendulum.b
 .SH SEE ALSO

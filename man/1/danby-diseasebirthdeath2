@@ -19,7 +19,7 @@ and virulence.  Space pauses, period steps, r resets, and q exits.
 .SH NUMERICS
 The regression suite checks the stated total-population balance directly.
 .SH SOURCE
-.B /appl/danby/plugin/diseasebirthdeath2.b
+.B /appl/danby/diseasebirthdeath2.b
 .br
 .B /appl/danby/diseasebirthdeath2.b
 .SH SEE ALSO

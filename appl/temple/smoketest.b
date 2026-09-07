@@ -92,7 +92,7 @@ dmods := array[] of {
 	"migration", "moonrotation", "moontrip", "moreenzyme", "movingpivot",
 	"multistagerocket", "nonlinearsprings", "oregonator", "parasite", "pegpendulum",
 	"pendulumperiod", "perihelion", "periodicvolterra", "pistonflywheel", "polevault",
-	"poyntingrobertson", "predatorfishing", "productionexchange", "pursuit", "reactorstability",
+	"poyntingrobertson", "predatorfishing", "productionexchange", "projectile", "pursuit", "reactorstability",
 	"reentry", "reservoir", "rocket2d", "rocketintro", "rotatingring1",
 	"rotatingring2", "running", "seasonaldisease", "shipmotion", "simplependulum",
 	"skijump", "skylab", "slidingpendulum1", "slidingpendulum2", "soccerkick",

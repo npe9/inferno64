@@ -1,4 +1,4 @@
-implement Heartbeat;
+implement Populationmodel;
 
 include "sys.m";
 	sys: Sys;
@@ -17,17 +17,12 @@ include "plot.m";
 include "env.m";
 	env: Env;
 include "danby/populationmodel.m";
-	heartbeatmodel: Populationmodel;
 
-Heartbeat: module
-{
-	init: fn(ctxt: ref Draw->Context, argv: list of string);
-};
 
 win: ref Window;
 font: ref Font;
 bg, fg, grid, muscle, drive: ref Image;
-model: ref Populationmodel->Model;
+model: ref Model;
 state := array[] of {-1.0,0.4};
 work: ref Numerics->Workspace;
 graph: ref Plotter;
@@ -42,11 +37,10 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	numerics = load Numerics Numerics->PATH;
 	plot = load Plot Plot->PATH;
 	env = load Env Env->PATH;
-	heartbeatmodel = load Populationmodel "/dis/danby/plugin/heartbeat.dis";
 	if(sys == nil || draw == nil || wmclient == nil || numerics == nil ||
-			plot == nil || heartbeatmodel == nil)
+			plot == nil)
 		raise "fail:Heartbeat: missing module";
-	model = heartbeatmodel->new();
+	model = new();
 	if(env != nil){
 		env->clone();
 		env->setenv("wmman","danby-heartbeat");
@@ -99,9 +93,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	}
 }
 
-rhs(rhsTime: real, values, derivative: array of real)
+derivs(rhsTime: real, values, derivative: array of real)
 {
-	heartbeatmodel->evaluate(model,rhsTime,values,derivative);
+	evaluate(model,rhsTime,values,derivative);
 }
 
 reset()
@@ -116,7 +110,7 @@ reset()
 
 step()
 {
-	numerics->rk4(work,rhs,t,0.004,state);
+	numerics->rk4(work,derivs,t,0.004,state);
 	t += 0.004;
 	record();
 }
@@ -215,4 +209,51 @@ timer(ticks: chan of int)
 		sys->sleep(25);
 		ticks <-= 1;
 	}
+}
+
+# The equations below were in appl/danby/plugin/heartbeat.b, loaded by path;
+# this file is the program that shows them, so they belong in it.
+
+new(): ref Model
+{
+	return ref Model(array[] of {0.15, 1.0, -0.45},
+		array[] of {-1.0, 0.4});
+}
+
+title(): string
+{
+	return "Zeeman heartbeat model";
+}
+
+statelabels(): array of string
+{
+	return array[] of {"muscle state", "electrochemical drive"};
+}
+
+parameterlabels(): array of string
+{
+	return array[] of {"fast timescale", "tension", "pacemaker"};
+}
+
+parameterranges(): array of real
+{
+	return array[] of {0.5, 2.0, 1.0};
+}
+
+Model.rhs(model: self ref Model, nil: real,
+		state, derivative: array of real)
+{
+	p := model.parameter;
+	epsilon := p[0];
+	if(epsilon < 1.0e-4)
+		epsilon = 1.0e-4;
+	x := state[0];
+	y := state[1];
+	derivative[0] = -(x*x*x-p[1]*x+y)/epsilon;
+	derivative[1] = x-p[2];
+}
+
+evaluate(model: ref Model, t: real, state, derivative: array of real)
+{
+	model.rhs(t,state,derivative);
 }

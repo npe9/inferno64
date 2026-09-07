@@ -9,6 +9,6 @@ plus optional drag.  Reversing station rotation reverses Coriolis deflection.
 .SH DISPLAY
 The ball moves inside an octagonal station plan; radius and speed are plotted.
 .SH SOURCE
-.B /appl/danby/plugin/spacestationball.b
+.B /appl/danby/spacestationball.b
 .SH SEE ALSO
 .IR mechanism (2)

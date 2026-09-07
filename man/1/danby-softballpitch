@@ -11,6 +11,6 @@ to the larger ball.  It follows the pitch for 0.8 seconds or to ground impact.
 The plots show height against distance and speed against time.  Tracks alter
 speed, angle, drag, lift, spin, and gravity.
 .SH SOURCE
-.B /appl/danby/plugin/softballpitch.b
+.B /appl/danby/softballpitch.b
 .SH SEE ALSO
 .IR trajectory (2)

@@ -8,6 +8,6 @@ The delivery begins at release height and combines gravity, quadratic drag,
 aim, and spin-induced lateral Magnus force.  The side and plan projections make
 vertical drop and sideways deviation separately visible.
 .SH SOURCE
-.B /appl/danby/plugin/cricketbowl.b
+.B /appl/danby/cricketbowl.b
 .SH SEE ALSO
 .IR flight3d (2)

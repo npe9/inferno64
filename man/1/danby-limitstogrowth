@@ -53,7 +53,7 @@ zero rather than clamping.
 .SH SOURCE
 .B /appl/danby/limitstogrowth.b
 .br
-.B /appl/danby/plugin/limitstogrowth.b
+.B /appl/danby/limitstogrowth.b
 .br
 .B /appl/temple/populations.b
 .SH SEE ALSO

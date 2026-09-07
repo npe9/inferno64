@@ -1,0 +1,27 @@
+.TH DANBY-PROJECTILE 1
+.SH NAME
+danby-projectile \- a plain projectile with drag
+.SH SYNOPSIS
+.B danby/projectile
+.SH MODEL
+The unflavoured projectile, as against the sixteen sport-specific models
+beside it: no bat, no ball, no wind, just
+.IR ballistics (2)'s
+own acceleration exposed directly.  Speed, launch angle, drag, lift, spin
+and gravity are the parameters, and the same
+.B acceleration()
+the sports models call is what integrates them.
+.SH DISPLAY
+The spatial graph shows the flight path; telemetry shows speed.  Tracks
+change every parameter live.
+.SH SOURCE
+.B /appl/danby/projectile.b
+.SH SEE ALSO
+.IR danby (1),
+.IR trajectory (2),
+.IR ballistics (2)
+.SH BUGS
+The model is deliberately state-independent in its aerodynamics: drag and
+lift coefficients are constants, not functions of Reynolds number, so it
+does not reproduce the drag crisis that the sport models paper over with
+per-sport coefficients either.

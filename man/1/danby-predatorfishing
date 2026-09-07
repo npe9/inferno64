@@ -25,7 +25,7 @@ tracks to change birth, predation, conversion, death, and fishing effort.
 Space pauses, period advances one display step, r resets, and q or Escape exits.
 .SH NUMERICS
 The equation module is
-.B /appl/danby/plugin/predatorfishing.b
+.B /appl/danby/predatorfishing.b
 and is regression-tested by
 .B temple/danbytest.
 .SH SOURCE

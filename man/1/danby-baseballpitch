@@ -13,6 +13,6 @@ The spatial plot is height against distance; the smaller plot is speed against
 time.  Tracks alter speed, angle, drag, lift, spin, and gravity and immediately
 repeat the pitch.
 .SH SOURCE
-.B /appl/danby/plugin/baseballpitch.b
+.B /appl/danby/baseballpitch.b
 .SH SEE ALSO
 .IR trajectory (2)

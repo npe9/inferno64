@@ -17,7 +17,7 @@ fraction.  The current mass bar is directly editable.
 Tracks set intake, basal coefficient, activity, and energy density.  Space
 pauses, period steps, r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/plugin/weightchange.b
+.B /appl/danby/weightchange.b
 .br
 .B /appl/danby/weightchange.b
 .SH SEE ALSO

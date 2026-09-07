@@ -10,6 +10,6 @@ the transition from slack cord to oscillatory recovery.
 .SH DISPLAY
 The cord length follows computed fall distance; distance and speed are plotted.
 .SH SOURCE
-.B /appl/danby/plugin/bungee.b
+.B /appl/danby/bungee.b
 .SH SEE ALSO
 .IR mechanism (2)

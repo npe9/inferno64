@@ -18,7 +18,7 @@ Drag the phase portrait to set initial populations.  The six bottom tracks set
 birth, prey crowding, predation, conversion, death, and predator crowding.
 Space pauses, period steps, r resets, and q exits.
 .SH SOURCE
-.B /appl/danby/plugin/internalcompetition.b
+.B /appl/danby/internalcompetition.b
 .br
 .B /appl/danby/internalcompetition.b
 .SH SEE ALSO
