@@ -986,7 +986,20 @@ namec(char *aname, int amode, int omode, ulong perm)
 	int n, prefix, len, t, nomount, npath;
 	Chan *volatile c, *volatile cnew;
 	Cname *cname;
-	Elemlist e;
+	/*
+	 * volatile because the error handler below reads e.name, e.elems and
+	 * e.off back after a longjmp, and parsename fills them in AFTER the
+	 * waserror() that establishes it.  Without it the compiler is free to
+	 * keep them in callee-saved registers - and on arm64 it does, x24/x26/
+	 * x27 - which longjmp restores to their values at setjmp time, namely
+	 * nil.  The three frees in the handler then freed nothing at all and
+	 * the whole Elemlist leaked on every error return from namec.
+	 *
+	 * That is 384 bytes per killed process and about 3KB per window
+	 * opened and closed, in the main pool, for ever.  Found by
+	 * histogramming live blocks by allocpc through /dev/memleak.
+	 */
+	volatile Elemlist e;
 	Rune r;
 	Mhead *m;
 	char *createerr, tmperrbuf[ERRMAX];
@@ -1062,7 +1075,7 @@ namec(char *aname, int amode, int omode, ulong perm)
 	/*
 	 * Build a list of elements in the path.
 	 */
-	parsename(name, &e);
+	parsename(name, (Elemlist*)&e);
 
 	/*
 	 * On create, ....
