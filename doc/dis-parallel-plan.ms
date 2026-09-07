@@ -1100,6 +1100,72 @@ against a send, two
 .CW alt s
 over the same set in opposite orders.
 .NH 2
+The tests exist now
+.PP
+Written first, as that says, and passing:
+.CW appl/cmd/chantest.b ,
+15 of 15 with the JIT on and 15 of 15 at
+.CW -c0 .
+Four cases \- the three named above and the buffered channel, because a
+buffered
+.CW Channel
+carries a queue that the same lock has to cover.
+.PP
+The point of writing them while the answer is known is that all four
+pass trivially at one interpreter.  They are what has to
+.I still
+pass once
+.CW Channel
+grows a lock, and "still passes" means nothing unless it was passing
+before.  The lock-ordering case is the weakest of the four today \- one
+interpreter cannot deadlock, so what it pins down is only that both
+receivers make progress and between them see every value exactly once \-
+but it is the one that will fail loudest if the address-order rule is
+got wrong.
+.PP
+What the lock has to cover, from the code rather than from memory.
+.CW Channel
+has no lock field at all today; the state is
+.CW send ,
+.CW recv ,
+.CW buf ,
+.CW front
+and
+.CW size ,
+and it is mutated from nine functions across two files:
+.CW cnewc ,
+.CW cgetb ,
+.CW cputb ,
+.CW csendalt
+and the
+.CW isend/irecv
+opcodes in
+.CW xec.c ,
+and
+.CW altcomm ,
+.CW altdone ,
+.CW altmark ,
+.CW altrdy
+and
+.CW altunmark
+in
+.CW alt.c .
+The queue helpers
+.CW cqadd ,
+.CW cqdel
+and
+.CW cqdelp
+are the common path through most of them and are the natural place for
+the lock to be asserted rather than taken.
+.PP
+Not yet run on a native kernel: the board root filesystems are built
+from
+.CW os/inferno/init
+and would need
+.CW chantest
+added there.  Worth doing when the locking lands, since native is where
+a second processor will first exist.
+.NH 2
 Phase 5 \- the collector
 .PP
 Make
