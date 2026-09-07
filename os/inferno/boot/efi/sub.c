@@ -159,6 +159,7 @@ extern char *confaddr;
 extern void *jumpentry;
 void *jumpargs;
 static char *confend;
+char *confmax;		/* end of the boot-argument area, for memconf() */
 
 char*
 findconf(char *s)
@@ -220,6 +221,7 @@ Clear:
 		memset(BOOTLINE, 0, BOOTLINELEN);
 
 		confend = BOOTARGS;
+		confmax = BOOTARGS + BOOTARGSLEN;
 		memset(confend, 0, BOOTARGSLEN);
 		eficonfig(&confend);
 	}

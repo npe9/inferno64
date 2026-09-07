@@ -74,8 +74,9 @@ memconf(char **cfg)
 	};
 	UINTN mapsize, entsize;
 	EFI_MEMORY_DESCRIPTOR *t;
-	uchar mapbuf[96*1024], *p, m;
+	uchar mapbuf[96*1024], *p, m, pm;
 	UINT32 entvers;
+	uvlong base, end, pbase, pend;
 	char *s;
 
 	mapsize = sizeof(mapbuf);
@@ -88,22 +89,59 @@ memconf(char **cfg)
 	if(cfg == nil)
 		return;
 
+	/* Adjacent descriptors of the same kind are emitted as one range,
+	 * and nothing is written past confmax.  A firmware reports its
+	 * memory in hundreds of descriptors -- long runs of boot-services
+	 * code and data, one per allocation -- and each one costs 36 bytes
+	 * of a boot-argument area that is only BOOTARGSLEN (3520) bytes
+	 * and sits hard against REBOOTADDR.  Emitting them one for one
+	 * with no bound, which is what this did, overruns that area on a
+	 * machine whose map is larger than about ninety-seven entries;
+	 * QEMU's is not, a rented machine's is.  Merging is what keeps it
+	 * small, the bound is what keeps it safe when merging is not
+	 * enough, and truncating at an entry boundary leaves the kernel's
+	 * e820scan() a parseable line rather than half of one.
+	 */
 	s = *cfg;
-	for(p = mapbuf; mapsize >= entsize; p += entsize, mapsize -= entsize){
-		t = (EFI_MEMORY_DESCRIPTOR*)p;
+	pm = 0;
+	pbase = pend = 0;
+	for(p = mapbuf; ; p += entsize, mapsize -= entsize){
+		if(mapsize >= entsize){
+			t = (EFI_MEMORY_DESCRIPTOR*)p;
 
-		m = 0;
-		if(t->Type < EfiMaxMemoryType)
-			m = memtype[t->Type];
+			m = 0;
+			if(t->Type < EfiMaxMemoryType)
+				m = memtype[t->Type];
 
-		if(m == 0)
-			continue;
+			if(m == 0)
+				continue;
 
-		if(s == *cfg)
-			memmove(s, "*e820=", 6), s += 6;
-		s = hexfmt(s, 1, m), *s++ = ' ';
-		s = hexfmt(s, 16, t->PhysicalStart), *s++ = ' ';
-		s = hexfmt(s, 16, t->PhysicalStart + t->NumberOfPages * 4096ULL), *s++ = ' ';
+			base = t->PhysicalStart;
+			end = base + t->NumberOfPages * 4096ULL;
+
+			if(m == pm && base == pend){
+				pend = end;
+				continue;
+			}
+		} else {
+			m = 0;
+			base = end = 0;
+		}
+
+		if(pm != 0){
+			if(s + 40 >= confmax)
+				break;
+			if(s == *cfg)
+				memmove(s, "*e820=", 6), s += 6;
+			s = hexfmt(s, 1, pm), *s++ = ' ';
+			s = hexfmt(s, 16, pbase), *s++ = ' ';
+			s = hexfmt(s, 16, pend), *s++ = ' ';
+		}
+		if(mapsize < entsize)
+			break;
+		pm = m;
+		pbase = base;
+		pend = end;
 	}
 	*s = '\0';
 	if(s > *cfg){
