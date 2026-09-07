@@ -136,6 +136,7 @@ root
 	/dis/basename.dis
 	/dis/bind.dis
 	/dis/cat.dis
+	/dis/chantest.dis
 	/dis/cd.dis
 	/dis/echo.dis
 	/dis/grep.dis
