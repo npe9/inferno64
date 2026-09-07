@@ -12,6 +12,9 @@
 [8qkv965o].emu
 obj.out
 obj.map
+# the linked emu, named for its build directory: o.emu, o.emu-cocoa,
+# o.emu-cocoa-asan.  The [8qkv965o].emu glob above only catches "o.emu".
+o.emu*
 vc*.pdb
 *.a
 
@@ -76,6 +79,7 @@ y.debug
 /[A-Z]*/*/bin/asm
 /[A-Z]*/*/bin/data2s
 /[A-Z]*/*/bin/emu
+/[A-Z]*/*/bin/emu-*
 /[A-Z]*/*/bin/limbo
 
 /Nt/*/bin/?[acl].exe
@@ -393,6 +397,11 @@ os/pc64/forth.h
 *.sbl
 # kernel binaries: os/inferno/<board>/i<board>, os/*/pc64/9pc64 etc.
 os/inferno/*/i[a-z]*[0-9a-z]
+# ...which also matches the directory os/inferno/<board>/icons, and an
+# excluded directory cannot have its contents re-included, so the whole
+# icons tree was ignored.  Re-include the directory itself; the files
+# under it are then judged normally.
+!os/inferno/*/icons/
 !os/inferno/*/i*.[ch]
 !os/inferno/*/i*.s
 os/*/pc64/9pc64
