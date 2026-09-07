@@ -1,0 +1,106 @@
+.TH BTKEYFS 4
+.SH NAME
+btkeyfs \- Bluetooth bonds, served
+.SH SYNOPSIS
+.B bt/btkeyfs
+[
+.BI -m " mountpoint"
+] [
+.BI -f " keyfile"
+]
+.SH DESCRIPTION
+.I Btkeyfs
+keeps the long term keys that pairing produces, and serves them.  It
+is what
+.IR btfs (4)
+is given with
+.B -K
+instead of a key file of its own.
+.PP
+A bond is not part of a controller.  It outlives the
+.I btfs
+that made it, it belongs to a pair of devices rather than to the radio
+the pairing happened to go through, and it is the one thing in the
+stack that must not be readable by everything that can read a radio.
+So it is kept by a program of its own, reached the way everything else
+here is reached: by opening, reading and writing files.
+.PP
+The name space, by default at
+.BR /net/btkeys .
+It is a sibling of
+.B /net/bt
+and not a directory inside it, because
+.I btfs
+mounts on
+.B /net/bt
+with
+.BR MREPL :
+anything mounted underneath first would go when it did.
+.TP
+.B bonds
+One line per bond, in the format
+.IR bt (2)
+prints and parses \- the peer, its address type, the keys, and
+.BI on " addr" ,
+the controller the bond was made on.  It is the same text a
+.B btfs
+.B bonds
+file shows and the same text a key file holds, because it is the same
+code that writes it.
+.TP
+.B ctl
+.B bond
+followed by such a line adds it, replacing any bond for the same peer
+on the same controller.  A line with no long term key in it is
+refused: a peer that looked paired and could not encrypt would be
+worse than one that has to pair again.
+.IP
+.BI forget " addr"
+removes every bond for that peer;
+.BI "forget " addr " on " local
+removes only the one made on that controller, since the same peer may
+be bonded to two radios and forgetting it on one is not forgetting it
+on the other.
+.IP
+.B sync
+writes the store out now.  It is not usually needed: every change is
+written as it is made.
+.PP
+Both files are mode 0600 and belong to the user who started
+.IR btkeyfs .
+That is the point of the program: the radio being readable does not
+make the key readable.
+.PP
+.B -f
+names the file the store is kept in, and without it the bonds last
+only as long as the program.  The file holds exactly what
+.B bonds
+reads, so a key file written by
+.I btfs
+.B -k
+is a store
+.I btkeyfs
+can be started on, and the other way round.
+.SH EXAMPLE
+Serve the bonds, and run the stack against them:
+.IP
+.EX
+bt/btkeyfs -f /adm/btkeys
+bt/btfs -K /net/btkeys /dev/eia1!115200
+.EE
+.PP
+Forget a peer on one radio:
+.IP
+.EX
+echo forget 060504030201 on 001122334455 > /net/btkeys/ctl
+.EE
+.SH SOURCE
+.B /appl/cmd/bt/btkeyfs.b
+.SH SEE ALSO
+.IR btfs (4),
+.IR bt (2)
+.SH BUGS
+Nothing authenticates a client: whoever can walk to the mount point
+can read every key in it.  The permissions on the files are the whole
+of the protection, so where the service is mounted is the decision
+that matters.

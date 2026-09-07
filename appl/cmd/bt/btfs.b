@@ -198,13 +198,23 @@ radios:	list of ref Radio;
 # bondlock.
 #
 #
-# The key file holds every controller's bonds, each line saying which
+# Where the bonds are kept.  There are two ways: a key file this
+# process writes, which is what -k gives, and a key service this
+# process is a client of, which is what -K gives.  The service is the
+# better one -- the store outlives this btfs, two btfs on two sets of
+# radios share it, and the keys are not readable by everything that
+# can read a radio -- and the file is kept because a machine with no
+# btkeyfs mounted still has to be able to pair.  Both hold the same
+# text, so a key file is a key service's file and the other way round.
+#
+# Either way it holds every controller's bonds, each line saying which
 # controller it was made on, so writing it is not one radio's business
 # and takes a lock of its own.  Order: keylock, then a radio's
 # bondlock.  Nothing takes keylock while holding a bondlock.
 #
 keylock:	chan of int;
 keyfile:	string;
+keysrv:		string;
 #
 # how long a device that is not answering stays in /net/bt/0/remote.  A
 # scan in a room with a hundred devices in it fills the directory and
@@ -237,7 +247,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	mnt := mtpt;
 
 	arg->init(argv);
-	arg->setusage("btfs [-u5] [-m mountpoint] [-k keyfile] [-a seconds] [device ...]");
+	arg->setusage("btfs [-u5] [-m mountpoint] [-k keyfile] [-K keydir] [-a seconds] [device ...]");
 	usb := 0;
 	h5 := 0;
 	while((c := arg->opt()) != 0)
@@ -246,6 +256,7 @@ init(nil: ref Draw->Context, argv: list of string)
 		'5' =>	h5 = 1;
 		'm' =>	mnt = arg->arg();
 		'k' =>	keyfile = arg->arg();
+		'K' =>	keysrv = arg->arg();
 		'a' =>
 			v := arg->arg();
 			# 0 is a real answer -- keep everything -- so a
@@ -257,6 +268,10 @@ init(nil: ref Draw->Context, argv: list of string)
 		* =>	arg->usage();
 		}
 	specs := arg->argv();
+	# both would be two stores holding the same bonds and disagreeing
+	# about them the moment either is written without the other
+	if(keyfile != nil && keysrv != nil)
+		fail("-k and -K are two key stores: give one");
 	if(usb)
 		tpath = Bttransport->USBPATH;
 	else if(h5)
@@ -1667,7 +1682,7 @@ addbond(r: ref Radio, b: ref Bond)
 			nl = hd l :: nl;
 	r.bonds = b :: nl;
 	r.bondlock <-= 1;
-	savekeys();
+	savekeys(b);
 }
 
 #
@@ -1680,19 +1695,25 @@ addbond(r: ref Radio, b: ref Bond)
 #
 readkeys()
 {
-	if(keyfile == nil)
+	src := keyfile;
+	if(keysrv != nil)
+		src = keysrv + "/bonds";
+	if(src == nil)
 		return;
-	fd := sys->open(keyfile, Sys->OREAD);
+	fd := sys->open(src, Sys->OREAD);
 	if(fd == nil){
 		#
 		# no key file yet is the ordinary first run and says
 		# nothing.  A key file that is there and will not open is
 		# every bond silently gone, which is worth a line.
 		#
-		(ok, nil) := sys->stat(keyfile);
-		if(ok == 0)
+		# a key service that is not there is not the ordinary
+		# first run: it was named on the command line and is
+		# missing, so it is said whether it stats or not
+		(ok, nil) := sys->stat(src);
+		if(ok == 0 || keysrv != nil)
 			sys->fprint(sys->fildes(2),
-				"btfs: cannot read %s, so no bond is loaded: %r\n", keyfile);
+				"btfs: cannot read %s, so no bond is loaded: %r\n", src);
 		return;
 	}
 	buf := array[8192] of byte;
@@ -1716,7 +1737,7 @@ readkeys()
 		if(b.local == nil && !said){
 			sys->fprint(sys->fildes(2),
 				"btfs: %s has bonds that do not say which controller they were made on; every controller is offered them\n",
-				keyfile);
+				src);
 			said = 1;
 		}
 		for(rl := radios; rl != nil; rl = tl rl){
@@ -1732,24 +1753,74 @@ readkeys()
 
 #
 # every controller's bonds, written out together.  A bond belongs to
-# one radio and the file belongs to none of them, so this takes a lock
-# of its own rather than any radio's.
+# one radio and the store belongs to none of them, so this takes a
+# lock of its own rather than any radio's.
 #
-savekeys()
+# b is the bond that has just been made, or nil.  A key service is
+# told the one thing that changed, because that is what a message to
+# it means; a key file has no messages, only its contents, so it is
+# written whole either way.
+#
+savekeys(b: ref Bond)
 {
 	<-keylock;
-	s := "";
-	for(rl := radios; rl != nil; rl = tl rl)
-		s += bondtext(hd rl);
-	writekeys(s);
+	if(keysrv != nil)
+		sendkeys(b);
+	else {
+		s := "";
+		for(rl := radios; rl != nil; rl = tl rl)
+			s += bondtext(hd rl);
+		writekeys(s);
+	}
 	keylock <-= 1;
+}
+
+#
+# to the service, one bond per write: one write is one command there,
+# and a bond replaces the one for the same peer on the same
+# controller, so saying it again is saying nothing new.
+#
+sendkeys(b: ref Bond)
+{
+	fd := sys->open(keysrv + "/ctl", Sys->OWRITE);
+	if(fd == nil){
+		sys->fprint(sys->fildes(2),
+			"btfs: cannot write %s/ctl, so this bond is not kept: %r\n", keysrv);
+		return;
+	}
+	bl: list of ref Bond;
+	if(b != nil)
+		bl = b :: nil;
+	else
+		for(rl := radios; rl != nil; rl = tl rl){
+			r := hd rl;
+			<-r.bondlock;
+			for(l := r.bonds; l != nil; l = tl l)
+				bl = hd l :: bl;
+			r.bondlock <-= 1;
+		}
+	for(; bl != nil; bl = tl bl){
+		s := array of byte ("bond " + (hd bl).text());
+		if(sys->write(fd, s, len s) != len s)
+			sys->fprint(sys->fildes(2),
+				"btfs: %s/ctl: %r\n", keysrv);
+	}
 }
 
 writekeys(s: string)
 {
 	if(keyfile == nil)
 		return;
-	fd := sys->create(keyfile, Sys->OWRITE, 8r600);
+	#
+	# truncate what is there rather than making it again: create on
+	# an existing file is a create, and a store written 0600 by one
+	# user cannot be created a second time by another.  It also
+	# leaves whatever mode the file was given alone, which is the
+	# administrator's business and not this program's.
+	#
+	fd := sys->open(keyfile, Sys->OWRITE|Sys->OTRUNC);
+	if(fd == nil)
+		fd = sys->create(keyfile, Sys->OWRITE, 8r600);
 	if(fd == nil){
 		# a bond that was not written down is a bond that will not
 		# be there next time; say so rather than losing it quietly

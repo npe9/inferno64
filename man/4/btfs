@@ -10,6 +10,8 @@ btfs, btbench, bthid \- Bluetooth Low Energy as a file system
 ] [
 .BI -k " keyfile"
 ] [
+.BI -K " keydir"
+] [
 .BI -a " seconds"
 ] [
 .I controller ...
@@ -147,12 +149,35 @@ One line per bond: the peer, its address type, the keys, and
 the controller the bond was made on.  A long term key is agreed
 between one peripheral and one radio, and the peripheral stores this
 side's identity address alongside it, so a bond made on one radio is
-not a bond on another and is not offered to it.  The key file named by
+not a bond on another and is not offered to it.
+.IP
+There are two places the bonds can be kept, and
 .B -k
-holds every controller's bonds together and each line says whose it
-is; a line that does not say, from a file written when there was only
-one controller to make a bond on, is offered to every controller and
-btfs says so once.
+and
+.B -K
+are exclusive.  The key file named by
+.B -k
+is written by
+.I btfs
+itself and holds every controller's bonds together.
+.B -K
+instead names a mounted
+.IR btkeyfs (4):
+.I btfs
+then holds no key file at all, reads the bonds from the service at
+startup and sends each new one to it as it is made.  That is the
+better of the two \- the store outlives this
+.IR btfs ,
+two of them on two sets of radios share it, and the keys are not
+readable by everything that can read a radio \- and the file is kept
+because a machine with no key service mounted still has to be able to
+pair.  Both hold the same text.
+.IP
+Either way each line says which controller its bond was made on; a
+line that does not say, from a store written when there was only one
+controller to make a bond on, is offered to every controller and
+.I btfs
+says so once.
 .TP
 .B /net/bt/\fIN\fP/ctl
 Writing
@@ -352,7 +377,7 @@ responder, hands the controller the key when the peer starts
 encryption, and distributes a long term key; what comes of it is a
 bond like any other, in
 .B bonds
-and in the key file, naming the peer and the controller it was made
+and in the store, naming the peer and the controller it was made
 on.  It is Just Works, so it gives no protection against a man in the
 middle, exactly as pairing in the other direction does not.
 .PP
@@ -475,6 +500,7 @@ and inside the native kernels.
 .B /module/bt.m
 .SH SEE ALSO
 .IR bt (2),
+.IR btkeyfs (4),
 .IR dial (2),
 .IR devuart (3),
 .IR devusb (3),

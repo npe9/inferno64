@@ -102,7 +102,16 @@ parse(s: string): ref Bond
 	(n, f) := sys->tokenize(s, " \t\n");
 	if(n < 2)
 		return nil;
+	#
+	# every field, including the integers: a ref adt's integer
+	# words hold whatever was in the heap, and a line without an
+	# ediv in it would otherwise get one.
+	#
 	b := ref Bond;
+	b.atype = Bt->Apublic;
+	b.ediv = 0;
+	b.local = nil;
+	b.ltk = b.rand = b.irk = b.csrk = nil;
 	b.addr = hd f;
 	f = tl f;
 	case hd f {

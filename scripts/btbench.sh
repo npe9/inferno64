@@ -13,6 +13,15 @@
 #	rejoin	the same bond met again, read from that key file, with
 #		nothing pairing in the session and the device rotating
 #		from the start
+#	keysvc	btkeyfs on its own, with no controller in it: a bond
+#		per peer per controller, writing one twice replacing
+#		rather than doubling it, a keyless line refused, and
+#		forgetting on one controller leaving the other alone
+#	keyfs, keyrejoin
+#		the pair and rejoin phases again with the bonds in
+#		btkeyfs instead of in a file btfs writes, and the same
+#		assertions.  keynone is the control: the same rejoin
+#		against an empty store must find no bond
 #	stall	a connection attempt the controller never answers, and
 #		the Unknown Connection Identifier that follows the
 #		cancel: the connect must fail and the next one must work
@@ -164,7 +173,8 @@ rm -f "$ROOT/mnt/keys/btkeys"
 
 PORT2=`expr $PORT + 1`
 
-run() {		# $1 phase, $2 model flag, $3 bench mode, $4 second model flag
+run() {		# $1 phase, $2 model flag, $3 bench mode, $4 second model flag, $5 key file
+	keys=${5:-/mnt/keys/btkeys}
 	pkill -f "bthci.py $PORT" 2>/dev/null || true
 	pkill -f "bthci.py $PORT2" 2>/dev/null || true
 	sleep 1
@@ -177,7 +187,7 @@ run() {		# $1 phase, $2 model flag, $3 bench mode, $4 second model flag
 	sleep 1
 	: > "$OUT/bench-$1.out"
 	$EMU -r "$ROOT" /dis/bt/btbench.dis "tcp!127.0.0.1!$PORT" \
-		/mnt/bt /mnt/keys/btkeys $3 $spec2 > "$OUT/bench-$1.out" 2>&1 &
+		/mnt/bt "$keys" $3 $spec2 > "$OUT/bench-$1.out" 2>&1 &
 	emupid=$!
 	i=0
 	while [ $i -lt 240 ]; do
@@ -230,6 +240,62 @@ run pair "" full
 #
 chmod 666 "$ROOT/mnt/keys/btkeys"
 run rejoin --bonded rejoin
+#
+# The same two phases with the bonds in btkeyfs(4) instead of in a file
+# btfs writes: btfs is given -K and holds no key file at all, the bond
+# pairing produced goes to the service as a message, and the rejoin
+# reads it back from the service's own bonds file.  Everything else --
+# every assertion in both phases -- is the same, which is the point.
+#
+mkdir -p "$ROOT/mnt/btkeys"
+chmod 777 "$ROOT/mnt/btkeys"
+#
+# The store on its own first, with no controller in it: what a bond
+# means to btkeyfs, what forgetting one means, and that both are on
+# disk afterwards.  The file is made 666 here because this phase
+# rewrites it several times and emu runs as "inferno" while the tree
+# belongs to whoever checked it out; a store written 0600 by one is
+# not openable by the other.  That is this script's problem, as it is
+# for the key file above, and not the stack's.
+#
+: > "$ROOT/mnt/keys/keysvc"
+chmod 666 "$ROOT/mnt/keys/keysvc"
+run keysvc "" keyfs-keys "" /mnt/keys/keysvc
+if ! grep -q 'a bond per peer per controller' "$OUT/bench-keysvc.out"; then
+	echo "BENCH FAIL (keysvc): the key service did not keep what it was told"
+	exit 1
+fi
+rm -f "$ROOT/mnt/keys/keyfs"
+run keyfs "" keyfs-full "" /mnt/keys/keyfs
+#
+# btkeyfs wrote it, and 0600 as a file of keys should be; the chmod is
+# this script's problem, as it is for the key file above.
+#
+n=`grep -c ' ltk ' "$ROOT/mnt/keys/keyfs" 2>/dev/null || true`
+if [ "$n" != 1 ]; then
+	echo "=== phase keyfs ==="
+	echo "BENCH FAIL (keyfs): the key service holds $n bonds, wanted 1"
+	exit 1
+fi
+echo "the bond went through btkeyfs and is in its store"
+chmod 666 "$ROOT/mnt/keys/keyfs"
+run keyrejoin --bonded keyfs-rejoin "" /mnt/keys/keyfs
+#
+# The control.  The same phase against an empty store must not find a
+# bond: without it, a rejoin that passed would only show that btfs had
+# kept the key somewhere of its own.
+#
+: > "$ROOT/mnt/keys/keyfsempty"
+chmod 666 "$ROOT/mnt/keys/keyfsempty"
+if run keynone --bonded keyfs-rejoin "" /mnt/keys/keyfsempty; then
+	echo "BENCH FAIL (keynone): a rejoin from an empty key service found a bond"
+	exit 1
+fi
+if ! grep -q 'no bond was loaded' "$OUT/bench-keynone.out"; then
+	echo "BENCH FAIL (keynone): the empty store failed for some other reason"
+	exit 1
+fi
+echo "and an empty key service leaves the rejoin with no bond, as it must"
 run stall --stall-connect stall
 run late --late-connect late
 run early --early-connect early

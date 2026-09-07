@@ -36,6 +36,11 @@ Btbench: module
 
 mnt := "/net/bt";
 
+# where btkeyfs(4) goes when a phase asks for it, and the file it
+# keeps its store in
+Keymnt:	con "/mnt/btkeys";
+keysfile: string;
+
 readfile(path: string): string
 {
 	fd := sys->open(path, Sys->OREAD);
@@ -194,10 +199,41 @@ init(nil: ref Draw->Context, argv: list of string)
 		args = "-5" :: args;
 		mode = mode[3:];
 	}
+	#
+	# And keyfs-something runs it with the bonds in btkeyfs(4)
+	# rather than in a file btfs writes.  Same phase, same
+	# assertions: what changes is where the key went and where it
+	# came back from, and the point of running the whole phase over
+	# it is that nothing else may change.
+	#
+	keyfs := 0;
+	if(len mode > 6 && mode[0:6] == "keyfs-"){
+		keyfs = 1;
+		mode = mode[6:];
+	}
 	if(mode == "forget" || mode == "sweeprace")
 		args = "-a" :: "6" :: args;
-	if(keyfile != nil)
+	if(keyfs && keyfile != nil){
+		kf := load Command "/dis/bt/btkeyfs.dis";
+		if(kf == nil){
+			sys->print("BT: cannot load /dis/bt/btkeyfs.dis: %r\n");
+			return;
+		}
+		keysfile = keyfile;
+		kf->init(nil, "btkeyfs" :: "-m" :: Keymnt :: "-f" :: keyfile :: nil);
+		sys->sleep(500);
+		args = "-K" :: Keymnt :: args;
+	} else if(keyfile != nil)
 		args = "-k" :: keyfile :: args;
+	#
+	# the key service on its own, with no controller in it at all:
+	# what a bond means to it, what forgetting one means, and that
+	# both survive being written down.
+	#
+	if(mode == "keys"){
+		keysphase();
+		return;
+	}
 	args = "btfs" :: "-m" :: mnt :: args;
 	btfs->init(nil, args);
 	sys->sleep(500);
@@ -255,6 +291,13 @@ init(nil: ref Draw->Context, argv: list of string)
 	"paired" =>
 		paired();
 		return;
+	#
+	# the same phase either way: what the device sends and what has
+	# to come out of it are the same, and everything that differs is
+	# inside bthid.  A boot protocol device says which report is the
+	# keyboard by which characteristic it is; a report protocol one
+	# says it only in its report map.
+	#
 	"hid" =>
 		hid();
 		return;
@@ -1233,6 +1276,92 @@ badprepare(dev: string, e: string)
 # from getting a directory named by the identity rather than by the
 # address of the minute.
 #
+#
+# btkeyfs(4) by itself.  Nothing here is a radio: it is the store, and
+# what is checked is that a bond written to it comes back, that the
+# same peer on two controllers is two bonds, that writing one again
+# replaces rather than doubles it, and that forgetting names a peer on
+# a controller and not just a peer.
+#
+Ka:	con "060504030201 random ltk 000102030405060708090A0B0C0D0E0F ediv 4660 rand 0001020304050607 irk 101112131415161718191A1B1C1D1E1F csrk 202122232425262728292A2B2C2D2E2F on 001122334455";
+Kb:	con "060504030201 random ltk FFEEDDCCBBAA99887766554433221100 ediv 1 rand 0706050403020100 irk 101112131415161718191A1B1C1D1E1F csrk 202122232425262728292A2B2C2D2E2F on 001122334466";
+
+keysphase()
+{
+	ctl := Keymnt + "/ctl";
+	bonds := Keymnt + "/bonds";
+	ok := 1;
+
+	if((e := writefile(ctl, "bond " + Ka)) != nil){
+		sys->print("BT: FAILED: writing a bond: %s\n", e);
+		return;
+	}
+	if((e = writefile(ctl, "bond " + Kb)) != nil){
+		sys->print("BT: FAILED: writing a second bond: %s\n", e);
+		return;
+	}
+	if((n := len lines(readfile(bonds))) != 2){
+		sys->print("BT: FAILED: the same peer on two controllers reads as %d bonds, wanted 2\n", n);
+		ok = 0;
+	}
+	#
+	# again, unchanged.  A store that appended would now hold four,
+	# and every one of them would be offered to the same radio.
+	#
+	writefile(ctl, "bond " + Ka);
+	if((n = len lines(readfile(bonds))) != 2){
+		sys->print("BT: FAILED: writing a bond twice made %d of them\n", n);
+		ok = 0;
+	}
+	#
+	# a bond that says nothing a key does is not a bond, and taking
+	# it would be a peer that looks paired and cannot encrypt
+	#
+	if(writefile(ctl, "bond 060504030201 public") == nil){
+		sys->print("BT: FAILED: a line with no key was taken as a bond\n");
+		ok = 0;
+	}
+	if(writefile(ctl, "eat 060504030201") == nil){
+		sys->print("BT: FAILED: an unknown control message was accepted\n");
+		ok = 0;
+	}
+	#
+	# forgetting on one controller is not forgetting on the other
+	#
+	if((e = writefile(ctl, "forget 060504030201 on 001122334455")) != nil){
+		sys->print("BT: FAILED: forget: %s\n", e);
+		ok = 0;
+	}
+	l := lines(readfile(bonds));
+	if(len l != 1 || hd l != Kb){
+		sys->print("BT: FAILED: after forgetting one, the store holds %d bonds\n", len l);
+		for(; l != nil; l = tl l)
+			sys->print("BT:   %s\n", hd l);
+		ok = 0;
+	}
+	if(writefile(ctl, "forget 001122334455") == nil){
+		sys->print("BT: FAILED: forgetting a peer that is not there succeeded\n");
+		ok = 0;
+	}
+	#
+	# and what is on disk is what was served: a store that answered
+	# from memory and never wrote would lose everything on restart,
+	# and nothing above here could tell
+	#
+	f := lines(readfile(keysfile));
+	if(len f != 1 || hd f != Kb){
+		sys->print("BT: FAILED: the store's file holds %d bonds, wanted the one left\n", len f);
+		ok = 0;
+	}
+	if(writefile(ctl, "forget 060504030201") != nil || len lines(readfile(bonds)) != 0){
+		sys->print("BT: FAILED: forgetting without naming a controller left something\n");
+		ok = 0;
+	}
+	if(ok)
+		sys->print("BT: the key service keeps a bond per peer per controller, and writes it down\n");
+	sys->print("BT: done\n");
+}
+
 rejoin()
 {
 	bl := lines(readfile(mnt + "/0/bonds"));

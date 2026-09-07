@@ -5,6 +5,7 @@ acme acme
 archfs archfs
 btbench btfs
 btfs btfs
+btkeyfs btkeyfs
 cpu grid-cpu
 dbfs dbfs
 dossrv dossrv

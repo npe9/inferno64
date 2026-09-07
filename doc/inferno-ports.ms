@@ -18954,11 +18954,18 @@ and
 are built out of AES-128 and so need nothing but
 .I crypt (2);
 .CW appl/cmd/bt/btfs.b
-serves the name space; and
+serves the name space;
+.CW appl/cmd/bt/btkeyfs.b
+serves the bonds, so that a key outlives the
+.CW btfs
+that made it and is not readable by everything that can read a radio;
+and
 .CW appl/cmd/bt/btbench.b
 drives the whole of it through files and says what happened.
 .CW btfs (4)
-documents the lot.
+and
+.CW btkeyfs (4)
+document the lot.
 .NH 2
 The bench, and what it is not
 .PP

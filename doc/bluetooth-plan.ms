@@ -322,10 +322,34 @@ a radio: nothing here has met real controller timing, a vendor's
 firmware, or the air.  The first real device will find things this
 cannot.
 .PP
-One smaller piece belongs here: key storage should be its own service,
-as the brief suggests, rather than a file
+Key storage is now its own service, as the brief suggests, rather
+than a file
 .CW btfs
 happens to write.
+.CW btkeyfs
+serves
+.CW bonds
+and
+.CW ctl ,
+holds the store in a file of its own, and owns both files 0600 so that
+a readable radio is not a readable key.
+.CW "btfs -K"
+names it and then keeps no key file: the bonds are read from the
+service at startup and each new one is sent to it as a message.  The
+text is the same in all three places \(em the served file, the store on
+disk, and what
+.CW btfs
+shows in
+.CW /net/bt/N/bonds \(em
+because one piece of code writes it.  The bench runs the whole pair
+and rejoin pair of phases over the service as well as over a key file,
+with the same assertions, and a third phase exercises the store alone:
+a bond per peer per controller, writing one twice replacing rather
+than doubling it, a keyless line refused, and forgetting a peer on one
+controller leaving it bonded on the other.  The controls are an empty
+store, which must leave the rejoin with no bond, and \(em run by hand
+\(em a store that appends and a store that takes a keyless line, both
+of which the phase catches.
 .PP
 H5, the three-wire UART transport, is done.
 .CW btfs -5
