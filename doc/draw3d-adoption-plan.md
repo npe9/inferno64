@@ -42,6 +42,9 @@ column is interpreted Limbo, so `-c0` moves it a great deal further and
 the protocol column much less, which makes these the *conservative*
 ratios:
 
+(Read the protocol column as "what the app's frame loop costs", not as
+"what it costs to render this" - see point 1.)
+
 | scene | destination | software | protocol | `-c0` software | `-c0` protocol |
 | --- | --- | --- | --- | --- | --- |
 | 64 large triangles | window layer | 5.64 ms | **0.88 ms** | 68.6 ms | 7.30 ms |
@@ -51,13 +54,39 @@ ratios:
 
 Five things follow, and each of them set a phase below.
 
-**1. Metal is real here, and the protocol provider wins on both scenes
-when it can reach the GPU.** 6.4x on wall-sized triangles, 3.0x on many
-small ones, and more of both at `-c0`. With `INFERNO_METAL_STATS=1`,
-`g3_calls` is zero through the software cases and in the thousands
-through the protocol cases, with `soft_fallbacks=0` throughout, so the
-geometry genuinely reaches the GPU rather than falling back inside
-devdraw.
+**1. The GPU path submits geometry that Metal does not draw. The timings
+below are real; what they time is not a render.** Corrected 2026-09-06,
+having been stated the other way round first, which is the most
+important thing in this document.
+
+`g3_calls` counts *submissions*, not pixels, and it was the only evidence
+behind the original claim. Three later measurements say the pixels never
+arrive:
+
+- One large red triangle, one frame, held on screen. Captured from
+  outside emu, against the same desktop, the software provider puts 8762
+  strongly-red samples on the screen and the protocol provider puts 87 -
+  which is the background.
+- The readback pass runs on that geometry, with 192 vertices in one
+  batch and an encoder created, and `getBytes` leaves gscreen's nonzero
+  byte count *exactly* unchanged at 48182, the window border.
+- The nine ports Phase 1 moved still render, because they draw a great
+  deal in 2D as well; their 3D content has not been isolated.
+
+Two hypotheses tested and rejected. The readback texture is
+`RGBA8Unorm` where every geometry pipeline declares `BGRA8Unorm`, which
+looked like the answer; making them agree changed nothing. And the
+GPU-T&L branch in `emu/port/devdraw.c` jumps to `gdone` without a
+`dstflush`, so nothing asks for a present after 3D geometry is queued -
+a real latent bug, since a client that draws *only* 3D never presents at
+all - but adding the flush did not make the triangle appear either.
+
+So the cause is still open, and it is now the first thing to fix: until
+it is, `D3CapGPU` is a fast way of drawing nothing. The timings that
+follow are what the app's own frame loop costs, which is a real number
+and the reason the protocol provider is worth having even on the CPU
+path - `draw3ddev.dis` falls back to devdraw's C rasteriser, which is
+much faster than Limbo - but they are not evidence of GPU rendering.
 
 **2. An offscreen buffer gets no GPU at all.** `metal_queue_fillpoly3d()`
 in `emu/MacOSX/win-cocoa.m` returns 0 unless the destination is `gscreen`,
@@ -182,6 +211,22 @@ than its attract screen would not show it here.
 Each phase names the evidence that closes it. A phase is not done because
 the code compiles; it is done when the stated number moved and a negative
 control put it back.
+
+### Phase 0 — make the Metal geometry path draw at all
+
+Point 1. Nothing else in this plan means anything until a triangle
+submitted to `gpudrawfillpoly3d` appears on the screen. The reproducer
+is a dozen lines: one `fillpoly3` of a large triangle into a `wmclient`
+window through `/dis/math/draw3ddev.dis`, held on screen, captured from
+outside.
+
+Two things to fix on the way, both real whatever the main cause turns
+out to be: the readback texture's pixel format disagrees with every
+geometry pipeline's, and the GPU-T&L branch never requests a present.
+
+*Evidence:* the capture shows the triangle, and `draw3dbench`'s readback
+line stops reading back the border alone. Negative control: revert, and
+both go back.
 
 ### Phase 1 — reach the device at all
 
