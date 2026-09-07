@@ -23,7 +23,7 @@
 #define	MIN(a, b)	((a) < (b)? (a): (b))
 #define	MAX(a, b)	((a) > (b)? (a): (b))
 
-#define	MAXMACH		1
+#define	MAXMACH		4			/* cpu0 plus the secondaries PSCI can start */
 #define	HZ		100
 #define	KSTACK		(32*1024)
 

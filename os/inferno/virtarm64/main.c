@@ -34,6 +34,7 @@ extern int image_pool_pcnt;
 static uvlong	secstackbuf[KSTACK/sizeof(uvlong)];
 uintptr		secstacktop;
 Mach		mach1;		/* cpu1's own Mach */
+Mach*		machp[MAXMACH];
 uintptr		secmach;	/* &mach1, read by _secondary */
 volatile uintptr	secsp;
 volatile uintptr	seccflag;	/* set only by C on cpu1 */
@@ -92,6 +93,7 @@ smpprobe(void)
 	memset(&mach1, 0, sizeof mach1);
 	mach1.machno = 1;
 	secmach = (uintptr)&mach1;
+	machp[1] = &mach1;
 	settpidr((uintptr)m);		/* cpu0 takes its own slot too */
 	r = psci(0xc4000003ULL, 1, (uintptr)_secondary, 0);
 	print("smp: PSCI CPU_ON cpu1 entry %#llux -> %lld\n", (uvlong)(uintptr)_secondary, r);
@@ -109,8 +111,8 @@ smpprobe(void)
 	 */
 	c0 = seccount;
 	delay(50);
-	print("smp: cpu1 machno %d, its Mach.ticks %llud -> %llud (%s)\n",
-		mach1.machno, (uvlong)c0, (uvlong)seccount,
+	print("smp: MACHP(0)->machno %d, MACHP(1)->machno %d; cpu1 ticks %llud -> %llud (%s)\n",
+		MACHP(0)->machno, MACHP(1)->machno, (uvlong)c0, (uvlong)seccount,
 		seccount != c0 ? "running" : "stopped");
 }
 
@@ -186,6 +188,7 @@ machinit(void)
 	m = &mach0;
 	memset(m, 0, sizeof(Mach));
 	m->machno = 0;
+	machp[0] = m;
 	memset(&active, 0, sizeof(active));
 	active.machs[0] = 1;
 }

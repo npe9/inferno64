@@ -161,7 +161,18 @@ struct
 	s32	thunderbirdsarego;
 }active;
 
-#define	MACHP(n)	((Mach*)(void*)&mach0)
+/*
+ * A real array, not a stub returning cpu0.  It used to be
+ *
+ *	#define MACHP(n)	((Mach*)(void*)&mach0)
+ *
+ * which ignores n -- correct only while there is one processor, and
+ * silently wrong once there is not: os/inferno/port/devcons.c walks
+ * active.machs[] and calls MACHP(id) for each, and would have reported
+ * cpu0's numbers for every one of them.
+ */
+extern Mach*	machp[MAXMACH];
+#define	MACHP(n)	(machp[n])
 
 extern Mach mach0;
 /*
