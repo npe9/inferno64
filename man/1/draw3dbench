@@ -67,6 +67,34 @@ turns the shading off, and then the two agree exactly; that is the
 control to run if a difference here is ever suspected of being more
 than shading.
 .PP
+The last section checks how a GPU sprite composites at the edge of its
+mask, through
+.IR sprite3zb ,
+which
+.B /appl/wm/draw3ddemo.b
+calls and no
+.B appl/temple
+port does.
+Both cases magnify a small sprite four times, so the sampler is
+certainly filtering, and both use a metric that a resampler cannot fake
+because it is one-directional.
+.TF "bleed"
+.TP
+.B halo
+A white sprite, black outside its mask, on a green ground.
+Blending white over green cannot lower the green channel below 255
+whatever weight the filter picks, so the smallest green byte in the
+frame is 255 when the compositing is right and less when it is not.
+.TP
+.B bleed
+A white sprite, red outside its mask, on a black ground.
+The invisible red must stay invisible, so the largest amount by which
+red exceeds green is 0 when the hidden colour is not being mixed in.
+.PD
+.PP
+The software provider is the control for both: it blits through a binary
+mask with no filter, and reads 255 and 0.
+.PP
 The options are:
 .TF "-n frames"
 .TP
@@ -126,6 +154,16 @@ and 1280370 through the
 .IR readpixels .
 So anything that copies a layer's bytes rather than reading its pixels
 will see a GPU-drawn frame as empty.
+.PP
+The two mask-edge cases use different sprite sizes on purpose.
+.IR emu 's
+sprite-texture cache is keyed on the image pointer, its data pointer and
+its size, and on nothing about its contents, so a sprite freed and
+another allocated straight afterwards can land on the same addresses and
+the second draw silently uses the first's texture.
+That is fixed \- every image free now drops the cache entries naming it
+\- but the key is still content-blind, and two same-sized sprites alive
+at once and swapped in place would still collide.
 .PP
 At exactly
 .B -n 60

@@ -110,6 +110,125 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	sprites(d, buf);
 	readback(d, col, large);
 	agree(d);
+	fringe(d);
+}
+
+# Does a GPU sprite have a dark halo where its mask ends?
+#
+# metal_upload_sprite_tex() sets alpha to 0 for masked-out texels but
+# leaves their RGB alone, and the sprite sampler filters linearly.  Half
+# way across a mask boundary the sampler therefore returns the average of
+# an opaque white texel and a transparent BLACK one - rgb 0.5, a 0.5 -
+# and a straight source-alpha blend paints 0.5*0.5 + 0.5*dst where the
+# right answer is 0.5*1.0 + 0.5*dst.  The edge comes out dark.  This is
+# the same visible signature as the sprite black border of 2026-09-06,
+# with a different cause.
+#
+# The metric has to be one a resampler cannot fake, so: a white sprite on
+# a GREEN ground.  Blending white over green can never lower the green
+# channel below 255, whatever weight the filter picks - unless the colour
+# being blended in is not white.  The minimum green byte over the window
+# is therefore exactly 255 when the compositing is right and less when it
+# is not, and it says nothing about which pixels the resampler chose.
+#
+# The software provider is the control: it blits through a binary mask
+# and has no filter, so it must read 255.  Reachable through sprite3zb,
+# which appl/wm/draw3ddemo.b calls; no appl/temple port does.
+fringe(d: ref Display)
+{
+	sys->print("draw3dbench: sprite mask edges\n");
+	sw := fringe1(d, Draw3d->PATH, Draw->Green, Draw->Black, 64);
+	gp := fringe1(d, "/dis/math/draw3ddev.dis", Draw->Green, Draw->Black, 64);
+	v := "ok";
+	if(gp < 255)
+		v = "DARK HALO";
+	sys->print("draw3dbench:   halo (min green, white on green): software %d, GPU %d  %s\n",
+		sw, gp, v);
+	# Second case, isolating the OTHER half of the fix.  Above, the
+	# sprite is black outside its mask, so premultiplying (rgb*0) changes
+	# nothing and only the blend factor is under test.  Here the hidden
+	# region is RED on a black ground, so a filter that averages straight
+	# colours drags red into a white edge that should have none, and the
+	# metric is how far red runs ahead of green - zero if the invisible
+	# colour stayed invisible, ~127 if it bled.
+	sw = fringe1(d, Draw3d->PATH, Draw->Black, Draw->Red, 48);
+	gp = fringe1(d, "/dis/math/draw3ddev.dis", Draw->Black, Draw->Red, 48);
+	v = "ok";
+	if(gp > 8)
+		v = "HIDDEN COLOUR BLED";
+	sys->print("draw3dbench:   bleed (max r-g, white/red on black): software %d, GPU %d  %s\n",
+		sw, gp, v);
+}
+
+# sz differs between the two cases on purpose: metal_upload_sprite_tex's
+# texture cache is keyed on the image pointer, its data pointer and its
+# size, and nothing about its contents, so two same-sized sprites made
+# one after another can land on the same freed addresses and the second
+# silently draws with the first one's texture.  A different size is
+# enough to keep the cases independent - but see BUGS in draw3dbench(1),
+# because the underlying cache is still wrong.
+fringe1(d: ref Display, path: string, bg, outer, sz: int): int
+{
+	d3 := load Draw3d path;
+	if(d3 == nil)
+		return -1;
+	d3->init();
+	img := win.image;
+	white := d.color(Draw->White);
+	spr := d.newimage(Rect((0,0),(sz,sz)), img.chans, 0, outer);
+	msk := d.newimage(Rect((0,0),(sz,sz)), Draw->GREY8, 0, Draw->Black);
+	if(spr == nil || msk == nil)
+		return -1;
+	in := Rect((sz/5, sz/5), (sz - sz/5, sz - sz/5));
+	# Opaque only well inside the image, so the mask edge the sampler
+	# has to get right is interior to the texture and not an edge-clamp.
+	# What lies OUTSIDE the mask is the point: it is invisible, and a
+	# filter that mixes it into the visible edge is the defect.
+	# A sprite the same colour throughout has no fringe to find.
+	msk.draw(in, white, nil, (0,0));
+	spr.draw(in, white, nil, (0,0));
+	img.draw(img.r, d.color(bg), nil, img.r.min);
+	c := d3->context(img);
+	d3->setzarea(c, img.r);
+	d3->setz(c, 0);
+	d3->viewport(c, img.r.min.x, img.r.min.y, img.r.max.x, img.r.max.y);
+	d3->mode(Draw3d->PROJ); d3->identity(); d3->frustum(0.1, 0.1, 100.0);
+	d3->mode(Draw3d->MODEL); d3->identity();
+	d3->sprite3zb(c, Vector(0.0, 0.0, -4.0), spr, msk, 16.0, 30.0);
+	if(bg == Draw->Green)
+		return chanstat(d.image, img.r, 0);
+	return chanstat(d.image, img.r, 1);
+}
+
+# mode 0: the smallest green byte anywhere - 255 unless something
+# darkened a white-over-green composite.
+# mode 1: the largest excess of red over green - 0 unless red leaked in.
+chanstat(dst: ref Image, r: Rect, mode: int): int
+{
+	(r, nil) = r.clip(dst.r);
+	bpl := (r.dx() * dst.depth + 7) / 8;
+	pxb := dst.depth / 8;
+	if(pxb < 3 || r.dx() < 1 || r.dy() < 1)
+		return -1;
+	buf := array[bpl] of byte;
+	mn := 255;
+	mx := 0;
+	for(y := r.min.y; y < r.max.y; y++){
+		if(dst.readpixels(Rect((r.min.x, y), (r.max.x, y+1)), buf) != bpl)
+			return -1;
+		# XBGR32: R, G, B in memory, so red is index 0 and green is 1
+		for(x := 0; x*pxb + 2 < bpl; x++){
+			rr := int buf[x*pxb];
+			gg := int buf[x*pxb+1];
+			if(gg < mn)
+				mn = gg;
+			if(rr - gg > mx)
+				mx = rr - gg;
+		}
+	}
+	if(mode == 0)
+		return mn;
+	return mx;
 }
 
 # sprite2d is the other half of what appl/temple asks draw3d for, and

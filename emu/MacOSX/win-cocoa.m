@@ -154,6 +154,7 @@ static uvlong	metal_copy_alias_storage;
 static uvlong	metal_copy_armed;
 static uvlong	metal_copy_cancelled;
 static uvlong	metal_g3_calls;	/* gpudrawfillpoly3d successes: real GPU T&L, not CPU d3project */
+static uvlong	metal_spr_calls;	/* gpudrawsprite successes: a textured Metal quad, not d3spritez */
 static uvlong	metal_g3_tris;
 static int	metal_stat_frames;
 static id<MTLBuffer>	metal_validate_buf;
@@ -450,7 +451,12 @@ static NSString *const kSoftscreenMetalSrc =
 	"    texture2d<float> tex [[texture(0)]],\n"
 	"    sampler samp [[sampler(0)]]) {\n"
 	"  float4 t = tex.sample(samp, in.uv);\n"
-	"  float4 c = t * in.color;\n"
+	"  /* t is PREMULTIPLIED (metal_upload_sprite_tex).  in.color is a\n"
+	"     straight tint, so its alpha has to scale the colour as well as\n"
+	"     the alpha to keep the result premultiplied for the One /\n"
+	"     OneMinusSourceAlpha blend the pipeline is set up for. */\n"
+	"  float4 c = float4(t.rgb * in.color.rgb * in.color.a,\n"
+	"                    t.a * in.color.a);\n"
 	"  if(c.a < 1.0/255.0) discard_fragment();\n"
 	"  return c;\n"
 	"}\n";
@@ -518,6 +524,7 @@ static int	metal_tri_reserve(int);
 static void	metal_readback_geom(void);
 static float	eye_to_depth(float);
 static void	metal_clear_sprite_tex_cache(void);
+static void	metal_forget_sprite_tex(Memimage*);
 static id<MTLTexture>	metal_sprite_tex(Memimage*, Memimage*);
 static void	mark_view_dirty(void);
 static void	metal_damage_note(Rectangle);
@@ -625,7 +632,9 @@ metal_init(void)
 	pd.fragmentFunction = [lib newFunctionWithName:@"ftmain"];
 	pd.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
 	pd.colorAttachments[0].blendingEnabled = YES;
-	pd.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+	/* Source factor One, not SourceAlpha: the texture and ftmain's
+	 * output are premultiplied - see metal_upload_sprite_tex. */
+	pd.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorOne;
 	pd.colorAttachments[0].destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
 	pd.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorOne;
 	pd.colorAttachments[0].destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
@@ -2446,6 +2455,33 @@ metal_upload_sprite_tex(Memimage *img, Memimage *mask)
 					if((mp[0] & 0x80) == 0)
 						rgba[(y*w+x)*4+3] = 0;
 				}
+				/*
+				 * PREMULTIPLIED alpha, and the reason is not
+				 * tidiness.  The sampler filters linearly, so half
+				 * way across a mask edge it returns the average of a
+				 * covered texel and an uncovered one.  Averaging
+				 * straight (non-premultiplied) colours mixes in
+				 * whatever the invisible texel happened to hold -
+				 * black, in every .bit sprite in this tree, since
+				 * that is what surrounds the shape - and the visible
+				 * edge comes out dark.  Measured before this line
+				 * existed, white sprite on a green ground: the
+				 * minimum green byte in the frame was 191 where the
+				 * software blit gives 255.  Zeroing the colour of a
+				 * fully transparent texel IS the premultiplied form
+				 * for a binary mask (rgb*0), and then the average of
+				 * (white,1) and (0,0) is (0.5,0.5) - which composites
+				 * as half-covered white, the right answer.
+				 * The pipeline's source RGB blend factor is One to
+				 * match, and ftmain keeps the product premultiplied;
+				 * the three go together, and changing any one alone
+				 * makes it worse rather than better.
+				 */
+				if(rgba[(y*w+x)*4+3] == 0){
+					rgba[(y*w+x)*4+0] = 0;
+					rgba[(y*w+x)*4+1] = 0;
+					rgba[(y*w+x)*4+2] = 0;
+				}
 			}
 		}
 	}
@@ -2625,6 +2661,16 @@ metal_image_free(Memimage *i)
 
 	if(i == nil)
 		return 0;
+	/*
+	 * Before anything else, and whether or not this image is one of
+	 * ours: it is about to stop existing, so nothing may go on holding
+	 * a texture under its address.  gpuimagefree is called for every
+	 * non-screen image free, which makes this the one place that sees
+	 * them all.
+	 */
+	lock(&mtl_geom_lock);
+	metal_forget_sprite_tex(i);
+	unlock(&mtl_geom_lock);
 	lock(&teximg_lock);
 	for(k = 0; k < nteximg; k++)
 		if(teximg[k].img == i)
@@ -3276,6 +3322,30 @@ metal_clear_sprite_tex_cache(void)
 }
 
 /*
+ * Drop any cached sprite texture that names this image, as sprite or as
+ * mask.  Without it the cache is keyed on the Memimage pointer, its data
+ * pointer and its size and NOTHING about its contents, so a freed sprite
+ * and a differently-coloured one allocated straight afterwards land on
+ * the same addresses, hit the cache, and the second draws with the
+ * first's pixels.  Found by measurement, not by reading: draw3dbench(1)'s
+ * two mask-edge cases were both 64x64 and the second silently reused the
+ * first's texture, which made a real defect read as "no defect".
+ */
+static void
+metal_forget_sprite_tex(Memimage *i)
+{
+	int k;
+
+	for(k = 0; k < nsprtexcache; k++){
+		if(sprtexcache[k].img != i && sprtexcache[k].mask != i)
+			continue;
+		sprtexcache[k].tex = nil;
+		sprtexcache[k] = sprtexcache[--nsprtexcache];
+		k--;
+	}
+}
+
+/*
  * Cache uploaded sprite textures across 'j' draws. Temple/Castle reuse the
  * same Memimage icons every frame; avoiding re-upload is the big win.
  * Not a packed atlas — one Metal texture per distinct (img,mask) pair.
@@ -3399,6 +3469,7 @@ metal_queue_sprite(Memimage *dst, Point sp, int sw, int sh, float ez,
 		spr->v[i].a = 1.0f;
 	}
 	ngsprites++;
+	metal_spr_calls++;
 	unlock(&mtl_geom_lock);
 	return 1;
 }
@@ -3775,7 +3846,7 @@ present_softscreen(void)
 			}
 	}
 	if(getenv("INFERNO_METAL_STATS") != nil && ++metal_stat_frames >= 30){
-		fprint(2, "METALSTATS frames=%d damage_calls=%llud damage_bytes=%llud full_uploads=%llud readbacks=%llud upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud largest_copy_bytes=%llud largest_dirty_bytes=%llud copy_notes=%llud rejected=%llud reject_storage=%llud reject_damage=%llud reject_geometry=%llud alias_storage=%llud armed=%llud cancelled=%llud g3_calls=%llud g3_tris=%llud soft_fallbacks=%llud teximg_alloced=%ud teximg_declined=%ud(chan=%ud small=%ud) teximg_freed=%ud live=%d\n",
+		fprint(2, "METALSTATS frames=%d damage_calls=%llud damage_bytes=%llud full_uploads=%llud readbacks=%llud upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud largest_copy_bytes=%llud largest_dirty_bytes=%llud copy_notes=%llud rejected=%llud reject_storage=%llud reject_damage=%llud reject_geometry=%llud alias_storage=%llud armed=%llud cancelled=%llud g3_calls=%llud g3_tris=%llud spr_calls=%llud soft_fallbacks=%llud teximg_alloced=%ud teximg_declined=%ud(chan=%ud small=%ud) teximg_freed=%ud live=%d\n",
 			metal_stat_frames, metal_damage_calls, metal_damage_bytes,
 			metal_full_uploads, metal_readbacks, metal_upload_bytes,
 			metal_copy_bytes, metal_saved_bytes,
@@ -3784,9 +3855,10 @@ present_softscreen(void)
 			metal_copy_notes, metal_copy_rejected, metal_copy_reject_storage,
 			metal_copy_reject_damage, metal_copy_reject_geometry, metal_copy_alias_storage,
 			metal_copy_armed, metal_copy_cancelled, metal_g3_calls, metal_g3_tris,
+			metal_spr_calls,
 			metal_soft_fallbacks, teximg_alloced, teximg_declined,
 			teximg_nchan, teximg_nsmall, teximg_freed, nteximg);
-		metal_g3_calls = metal_g3_tris = 0;
+		metal_g3_calls = metal_g3_tris = metal_spr_calls = 0;
 		metal_soft_fallbacks = 0;
 		metal_stat_frames = 0;
 		metal_damage_calls = metal_damage_bytes = 0;
