@@ -62,6 +62,7 @@ TARG=\
 	eqnorbitaltest.dis\
 	orbitviewtest.dis\
 	danbyeqnall.dis\
+	mechlabtest.dis\
 	danbyeqntest.dis\
 	date.dis\
 	dbfs.dis\

@@ -89,6 +89,27 @@ cmd(m: ref Model, a: array of string): (int, string)
 		m.observablelabels = growstrs(m.observablelabels, a[1]);
 		m.obsexprs = growexprs(m.obsexprs, e);
 		return (1, nil);
+	"point" =>
+		# NAME XEXPR , YEXPR - a bare comma, so that neither
+		# expression has to be braced to keep the two apart.
+		comma := -1;
+		for(i := 2; i < len a; i++)
+			if(a[i] == ","){
+				comma = i;
+				break;
+			}
+		if(len a < 5 || comma < 3 || comma == len a-1)
+			return (1, "point: usage: point NAME XEXPR , YEXPR");
+		(ex, errx) := m.hocmod->compileeqn(joinwords(a[0:comma], 2));
+		if(errx != nil)
+			return (1, "point "+a[1]+" x: "+errx);
+		(ey, erry) := m.hocmod->compileeqn(joinwords(a, comma+1));
+		if(erry != nil)
+			return (1, "point "+a[1]+" y: "+erry);
+		m.pointnames = growstrs(m.pointnames, a[1]);
+		m.pointx = growexprs(m.pointx, ex);
+		m.pointy = growexprs(m.pointy, ey);
+		return (1, nil);
 	}
 	return (0, nil);
 }
@@ -136,20 +157,37 @@ rhs(m: ref Model, nil: real, values, derivative: array of real)
 
 observables(m: ref Model, values: array of real): array of real
 {
-	bindparams(m);
-	n := len m.statenames;
-	i: int;
-	for(i = 0; i < n; i++)
-		m.statesyms[i].val = values[i];
-	for(i = 0; i < len m.eqexprs; i++)
-		m.eqsyms[i].val = m.hocmod->eval(m.eqexprs[i]);
+	bindstate(m, values);
 	r := array[len m.obsexprs] of real;
-	for(i = 0; i < len m.obsexprs; i++)
+	for(i := 0; i < len m.obsexprs; i++)
 		r[i] = m.hocmod->eval(m.obsexprs[i]);
 	return r;
 }
 
+points(m: ref Model, values: array of real): array of real
+{
+	bindstate(m, values);
+	r := array[2*len m.pointx] of real;
+	for(i := 0; i < len m.pointx; i++){
+		r[2*i] = m.hocmod->eval(m.pointx[i]);
+		r[2*i+1] = m.hocmod->eval(m.pointy[i]);
+	}
+	return r;
+}
+
 # --- small helpers ---
+
+# bindstate: params, then state, then every eq in declaration order -
+# the common prologue of rhs(), observables() and points().
+bindstate(m: ref Model, values: array of real)
+{
+	bindparams(m);
+	i: int;
+	for(i = 0; i < len m.statenames; i++)
+		m.statesyms[i].val = values[i];
+	for(i = 0; i < len m.eqexprs; i++)
+		m.eqsyms[i].val = m.hocmod->eval(m.eqexprs[i]);
+}
 
 joinwords(a: array of string, from: int): string
 {

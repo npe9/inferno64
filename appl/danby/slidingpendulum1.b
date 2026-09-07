@@ -1,103 +1,72 @@
-implement Mechanism;
+implement Slidingpendulum1;
 
-# danby/slidingpendulum1 - A sliding pendulum: free support
+# danby/slidingpendulum1 - a sliding pendulum on a free support.
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared mechanism viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its state and the equations that move it, the points that draw it and
+# the two quantities it plots.  mechlab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about pendulums.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/cartpendulum.m";
-	cartpendulum: Cartpendulum;
-include "danby/mechanism.m";
+include "mechlab.m";
+	mechlab: Mechlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	cartpendulum = load Cartpendulum Cartpendulum->PATH;
-	return ref Model(array[] of {2.0,1.0,1.4,0.6,9.81,0.04});
-}
-
-title(): string
-{
-	return "A sliding pendulum: free support";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"support mass", "bob mass", "length", "initial angle", "gravity", "hinge damping"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.1,0.1,0.2,-2.5,0.1,0.0};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {10.0,10.0,5.0,2.5,20.0,1.0};
-}
-
-initialstate(model: ref Model): array of real
-{
-	return array[] of {0.0,0.0,model.parameter[3],0.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 30.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	cartpendulum->derivatives(state,derivative,p[0],p[1],p[2],p[4],
-		0.0,0.0,p[5]);
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-geometry(model: ref Model, state: array of real): array of real
-{
-	l := model.parameter[2];
-	x := state[0]+l*math->sin(state[2]);
-	y := -l*math->cos(state[2]);
-	return array[] of {state[0],0.0,x,y,state[0]-0.35,0.0,
-		state[0]+0.35,0.0,-2.0,0.0,2.0,0.0};
-}
-
-links(): array of int
-{
-	return array[] of {0,1,2,3,4,5};
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"support position", "angle"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {state[0],state[2]};
-}
-
-Command: module
+Slidingpendulum1: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title A sliding pendulum: free support\n" +
+	"param support_mass 2.0 0.1 10.0\n" +
+	"param bob_mass 1.0 0.1 10.0\n" +
+	"param length 1.4 0.2 5.0\n" +
+	"param initial_angle 0.6 -2.5 2.5\n" +
+	"param gravity 9.81 0.1 20.0\n" +
+	"param hinge_damping 0.04 0.0 1.0\n" +
+	"maxtime 30.0\n" +
+
+	"state x 0.0\n" +
+	"state vx 0.0\n" +
+	"state theta initial_angle\n" +
+	"state omega 0.0\n" +
+
+	"eq s sin { theta }\n" +
+	"eq c cos { theta }\n" +
+	# M + m sin^2(theta): the effective mass the bob swings against
+	"eq den support_mass + bob_mass { s sup 2 }\n" +
+	# the hinge damper is a couple, so its reaction acts on the support
+	# too - the term that was missing until 242e399d
+	"eq force bob_mass s { length { omega sup 2 } + gravity c } " +
+		"+ bob_mass length hinge_damping omega c\n" +
+	"eq acc force over den\n" +
+	"eq tangential { - acc c - gravity s } over length\n" +
+
+	"derivative x vx\n" +
+	"derivative vx acc\n" +
+	"derivative theta omega\n" +
+	"derivative omega tangential - hinge_damping omega\n" +
+
+	"point support x , 0.0\n" +
+	"point bob { x + length s } , { - length c }\n" +
+	"point cart_left { x - 0.35 } , 0.0\n" +
+	"point cart_right { x + 0.35 } , 0.0\n" +
+	"point rail_left - 2.0 , 0.0\n" +
+	"point rail_right 2.0 , 0.0\n" +
+	"link support bob\n" +
+	"link cart_left cart_right\n" +
+	"link rail_left rail_right\n" +
+
+	"observable support_position x\n" +
+	"observable angle theta\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/mechanism.dis";
-	if(viewer == nil)
-		raise "fail:slidingpendulum1: cannot load the mechanism viewer";
-	viewer->init(ctxt, "slidingpendulum1" :: "/dis/danby/slidingpendulum1.dis" ::
-		"danby-slidingpendulum1" :: nil);
+	mechlab = load Mechlab Mechlab->PATH;
+	if(mechlab == nil)
+		raise "fail:slidingpendulum1: cannot load mechlab";
+	if((e := mechlab->run(ctxt, "slidingpendulum1", SPEC)) != nil)
+		raise "fail:slidingpendulum1: "+e;
 }

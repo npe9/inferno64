@@ -50,6 +50,21 @@
 #                                      earlier eq by name
 #   observable LABEL EXPR...        - repeatable; same binding as
 #                                      derivative/eq
+#   point NAME XEXPR , YEXPR        - repeatable; a named point in the
+#                                      model's own coordinates, for a
+#                                      caller that draws the mechanism
+#                                      rather than only plotting it.
+#                                      The two expressions are separated
+#                                      by a bare comma so neither has to
+#                                      be braced; same binding as
+#                                      observable.  A caller reads them
+#                                      back with points(), and names its
+#                                      own links between them by the
+#                                      NAMEs - which is why they are
+#                                      named rather than positional:
+#                                      "link bob support" survives
+#                                      someone inserting a point above
+#                                      it, "link 1 0" does not.
 #
 # Every EXPR is eqn(7) syntax, compiled ONCE when its command runs, via
 # hoc(2)'s own compileeqn() - this library never loads or names
@@ -84,6 +99,7 @@ Dynsys: module
 		maxtime:			real;
 		statenames:			array of string;
 		observablelabels:		array of string;
+		pointnames:			array of string;
 
 		# Implementation detail below, set by cmd() and read by
 		# initialstate()/rhs()/observables()/check() - treat as
@@ -96,6 +112,7 @@ Dynsys: module
 		eqnames:			array of string;
 		eqexprs:			array of ref Hoc->Expr;
 		obsexprs:			array of ref Hoc->Expr;
+		pointx, pointy:			array of ref Hoc->Expr;
 	};
 
 	# newmodel: an empty Model with its own fresh hoc(2) instance,
@@ -134,4 +151,9 @@ Dynsys: module
 	# every "eq" line, then every "observable" line, in declaration
 	# order, returning one real per "observable" command.
 	observables:	fn(m: ref Model, values: array of real): array of real;
+
+	# points: as observables, but for the "point" commands - 2*n reals,
+	# x and y alternating, in declaration order, so index i of
+	# pointnames is at [2*i] and [2*i+1].
+	points:		fn(m: ref Model, values: array of real): array of real;
 };

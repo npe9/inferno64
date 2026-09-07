@@ -48,6 +48,7 @@ TARG=\
 	disks.dis\
 	dividers.dis\
 	dynsys.dis\
+	mechlab.dis\
 	env.dis\
 	eqn2hoc.dis\
 	ether.dis\
