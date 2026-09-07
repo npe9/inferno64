@@ -1126,30 +1126,50 @@ alone for a reason, and the reason is never that the emulator would be
 hard to extend.
 .PP
 .B "The BSC slave"
-(0x3f214000) was listed here as useless, on the grounds that making the
+(0x3f214000) has been given two wrong reasons in this document now, and
+the second was mine.  It was first listed as useless because making the
 Pi an I2C
 .I slave
-needs a master on the other end of a wire that does not exist.  That
-was wrong, and the thing that makes it wrong was already in the tree:
-the Pi has three I2C masters of its own, QEMU models them with real
-buses
+needs a master on the other end of a wire that does not exist.  That is
+wrong: the Pi has three I2C masters of its own, QEMU models them with
+real buses
 .CW ( i2c_init_bus
 in
 .CW hw/i2c/bcm2835_i2c.c ),
 and
 .CW i2cbcm.c
-already drives BSC0.  Strapping a master's pins to the slave's is a
-standard bring-up trick on a real board, and attaching the slave to
-BSC0's bus models exactly that.  It is tractable and it is the next
-piece, not a dead end.
+already drives BSC0.  Strapping a master to the slave is a standard
+bring-up trick on a board, and attaching the slave to BSC0's bus would
+model exactly that.  So it was corrected to say the block was tractable
+and next.
+.PP
+It is not, and the reason is a different one that only turned up on
+looking for the register description.  Linux 6.17 has no driver for
+this block at all \- it exists only in the Raspberry Pi vendor tree \-
+and the datasheet section that documents it was not available here.
+The register
+.I offsets
+are recoverable; the bit semantics of CR and FR are not.  A model built
+on a remembered bit layout would be a model a driver is then written to
+match, which is precisely the both-halves-ours failure the evidence
+tiers in
+.CW tools/qemu-patches/README
+exist to prevent, and worse than the PWM's missing serialiser, because
+there the register semantics were solid and only the behaviour was
+absent.
+.PP
+So the blocker is documentation that can be checked, not emulator
+support and not the absence of a master.  Either the datasheet's
+section 11 or the vendor tree's driver would unblock it, and neither is
+a large piece of work once one of them is in hand.
 .PP
 .B "The secondary memory interface"
-(0x3f600000) is documented only in fragments.  Its register semantics
-are not public in enough detail to model faithfully, and a model
-written from guesswork would be inventing behaviour for a driver to
-match \- which is the exact failure the evidence tiers in
-.CW tools/qemu-patches/README
-exist to prevent.
+(0x3f600000) is blocked the same way, and it was checked the same way:
+Linux 6.17 has no
+.CW bcm2835-smi
+either.  Its register semantics are not public in enough detail to
+model faithfully, and a model written from guesswork would be inventing
+behaviour for a driver to match.
 .PP
 .B "TXP, DBUS, AVE0, V3D and SDRAMC"
 are internal to the SoC.  They are either undocumented, driven only by

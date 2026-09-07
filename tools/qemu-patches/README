@@ -265,6 +265,12 @@ THE PATCHES
 	the register write that starts it, so TX_FULL never comes on
 	by itself.  Variable-width mode is logged, not modelled.
 
+0013 hw/char/bcm2835_aux: use Linux'''s names for four CNTL0 bits.
+
+	The values in 0012 were written from memory of
+	drivers/spi/spi-bcm2835aux.c and then checked against it;
+	every one matched.  Four names did not.  No functional change.
+
 SELF-TESTS
 
 Two kernel self-tests are compiled out by default, because each can
