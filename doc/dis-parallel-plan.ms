@@ -836,7 +836,8 @@ soft-timer queue at all \- the bug lives only in the boards with the
 .CW stubs.c
 timer code) and
 .CW mount(2) 's
-double-closed descriptor, 2 of 14 either side.  The other two are Phase
+double-closed descriptor, 5 of 14 against 1 of 14 \- on which see the
+note on what fourteen boots can and cannot show, below.  The other two are Phase
 1a itself, since the parent commit scores identically; and this branch's
 own kernel instrumentation \- the
 .CW kstackcheck()
@@ -865,6 +866,38 @@ inverted, and two paragraphs of explanation were then written for a
 drift that never happened.  Where a phase below says to compare against
 a known-good, compare against the table, not against a remembered
 number.
+.NH 2
+What fourteen boots can and cannot show
+.PP
+Every "not a regression" in this document rests on booting two kernels
+alternately fourteen times each, and that method is weaker than the way
+those results were first written up.  Here is the same kernel, or
+kernels differing by changes since shown to be no-ops, across this
+session's runs:
+.IP
+.nf
+1, 2, 2, 2, 3, 4, 5    survivors of 14
+.fi
+.PP
+Survival is about 19 percent, so fourteen independent boots have a
+standard deviation of roughly 1.4 survivors, and a spread of 1 to 5 is
+ordinary binomial noise rather than anything about the code.  A
+fourteen-boot pair therefore cannot resolve a difference smaller than
+about three survivors.  Every A/B here should be read as "no
+.I detectable
+difference", which is a much weaker claim than "no difference", and the
+right response to wanting the stronger one is more boots, not more
+confidence.
+.PP
+One of those numbers was also read too early.  The
+.CW mount(2)
+comparison was first written down as 2 and 2 from a tally taken while
+the boots were still running \- a log file exists from the moment the
+redirect opens, and one that has not yet panicked looks exactly like one
+that survived.  The finished run says 5 and 1.  The conclusion does not
+change, because neither figure is distinguishable from the other at this
+sample size, but a harness that counts unfinished runs as successes is
+worth fixing before it is trusted again.
 .NH 2
 Phase 1b is not Phase 1a, and it does not land alone
 .PP
