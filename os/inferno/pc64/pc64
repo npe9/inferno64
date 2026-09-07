@@ -116,6 +116,11 @@ misc
 	cga
 	uarti8250
 
+# the IDE controller a Xen HVM domain's device model presents, and
+# what QEMU gives without -device ahci.  9front's driver, taken
+# unchanged: os/inferno/pc/sdata.c is this tree's own but was
+# written against the older SDifc, and the sd.h here is 9front's.
+	sdide	pci sdscsi
 	sdiahci	pci sdscsi led
 	sdvirtio	pci sdscsi
 	sdvirtio10	pci sdscsi virtio10pc

@@ -129,12 +129,14 @@ PCArch* knownarch[] = {
 };
 
 #include "../port/sd.h"
+extern SDifc sdideifc;
 extern SDifc sdiahciifc;
 extern SDifc sdvirtioifc;
 extern SDifc sdvirtio10ifc;
 extern SDifc sdnvmeifc;
 extern SDifc sdmmcifc;
 SDifc* sdifc[] = {
+	&sdideifc,
 	&sdiahciifc,
 	&sdvirtioifc,
 	&sdvirtio10ifc,
