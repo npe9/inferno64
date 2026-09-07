@@ -319,6 +319,21 @@ static NSString *const kSoftscreenMetalSrc =
 	"}\n"
 	"fragment float4 flmain(LOut in [[stage_in]]) { return in.color; }\n"
 	"struct G3In { float x, y, z, r, g, b, a; };\n"
+	/*
+	 * Row-major, sixteen floats a matrix, exactly as draw3d's Matrix is
+	 * laid out: putmat() in appl/math/draw3ddev.b writes m[i][j] at
+	 * i*4+j and d3loadmat() reads it back in that order.  The transform
+	 * below is spelled out element by element to match, and that is
+	 * deliberate rather than untidy.
+	 *
+	 * Metal's float4x4 is COLUMN-major: M[j] is column j.  Copying these
+	 * sixteen floats into one makes M[j] our ROW j, so the idiomatic
+	 * M * v computes the transpose.  Measured, with draw3dbench's
+	 * software-vs-GPU check: float4x4 with `v * x.model` agrees with the
+	 * software renderer to the pixel, and float4x4 with `x.model * v`
+	 * draws NOTHING - the transpose puts every vertex outside the clip
+	 * volume.  Writing the products out has no such wrong spelling.
+	 */
 	"struct G3Xform { float model[16]; float proj[16]; };\n"
 	"struct G3Out { float4 pos [[position]]; float4 color; float ez; };\n"
 	"/* GPU-T&L: raw model-space vertex in. model then proj (proj already has\n"

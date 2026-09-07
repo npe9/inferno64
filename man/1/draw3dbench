@@ -128,3 +128,12 @@ the
 family and
 .I fillpoly3g
 have their own paths in both providers and are not covered.
+.PP
+The agreement check is occasionally flaky in the other direction: a
+present that lands between the drawing and the read drains the GPU's
+geometry queue, the readback then has nothing to replay, and the frame
+reports
+.B "nothing drawn"
+when it drew perfectly well.
+Re-run it; two clean runs out of three is the pattern, and a real
+failure repeats.
