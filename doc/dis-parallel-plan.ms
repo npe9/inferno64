@@ -914,6 +914,52 @@ and
 .CW tmp/classify.sh
 are the corrected harness.  Anything comparing kernels should use the
 four categories, and should want hundreds of boots rather than fourteen.
+.NH 2
+Use virtarm64 for native verification, not pc64
+.PP
+The same classifier, run against
+.CW virtarm64
+under
+.CW "qemu-system-aarch64 -M virt -cpu cortex-a53" :
+.IP
+.nf
+clean, through to CHANTEST-OK    14
+panic                             0
+corruption detected               0
+other                             0
+.fi
+.PP
+Fourteen of fourteen, against pc64's four of a hundred and twenty-six.
+So the native verification this document keeps asking for is available
+after all \- it was simply being run on the wrong board.  Every phase
+from here should be checked on
+.CW virtarm64 ,
+where fourteen boots resolve a real difference, and pc64 should be
+treated as a subject of
+.CW doc/inferno-ports.ms 's
+hunt rather than as a measuring instrument.
+.PP
+There is a second thing in that number worth stating carefully, because
+it narrows the hunt.  Both boards run the same
+.CW libinterp ,
+the same
+.CW os/inferno/port ,
+the same Dis, and
+.CW virtarm64
+exercises them hard \- a spawn storm, a module-load soak, the four
+channel tests \- fourteen times without a single
+.CW markheap
+complaint or
+.CW track:
+capture.  Whatever pc64 is doing wrong is therefore very unlikely to be
+in the portable kernel or the interpreter; it is in what differs, which
+is the board layer, the MMU and trap code, and amd64 itself.
+.PP
+The caveat, so the claim is not read as more than it is: the two boards
+do not run the same workload.  This is not a controlled comparison of
+one program on two machines, it is two programs.  What it supports is
+"the portable code is not inherently broken", which is a weaker and
+still useful statement than "the portable code is correct".
 .PP
 One of those numbers was also read too early.  The
 .CW mount(2)
