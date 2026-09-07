@@ -176,4 +176,4 @@ extern Mach mach0;
  * and restores R26/R27 in the Ureg, so a trap and return keeps it.
  */
 extern register Mach *m;			/* R27 */
-extern Proc *up;
+extern register Proc *up;			/* R26 */

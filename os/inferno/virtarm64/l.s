@@ -130,6 +130,7 @@ TEXT	_main(SB), 1, $-4
 	 * machinit(), because everything from here on may use it.
 	 */
 	MOV	$mach0(SB), R27
+	MOV	$0, R26			/* up: no process yet */
 	MOV	R0, dtbptr(SB)		/* x0 holds the DTB physical address at boot */
 	BL	main(SB)
 dead:
@@ -176,6 +177,7 @@ TEXT	_secondary(SB), 1, $-4
 	MSR	R1, SPR(D_TPIDR_EL1)
 	ISB	$15
 	MOV	R1, R27			/* ... and m, which is a register */
+	MOV	$0, R26			/* up: this processor runs no process */
 	MOV	$3, R1
 	MOV	R1, secalive(SB)
 	DSB	$15

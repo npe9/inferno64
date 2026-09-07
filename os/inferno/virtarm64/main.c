@@ -8,7 +8,6 @@
 #include "version.h"
 
 extern Mach mach0;
-Proc *up;
 Conf conf;
 
 extern ulong kerndate;
