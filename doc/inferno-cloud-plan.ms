@@ -266,10 +266,12 @@ boot-argument area that is
 at
 .CW 0x2000 .
 Each range costs 36 bytes in that fixed-width format, so about
-ninety-seven of them fill the area and the ninety-eighth writes over
-the reboot code.  A firmware reports its memory in long runs of
-one-allocation boot-services descriptors and routinely has more than
-that; QEMU's has not, which is why nothing had gone wrong yet.
+ninety-seven of them fill the area and anything past that runs into
+the reboot code.  That was never reached here and is not a fault
+anyone has seen: QEMU's map is small, and no map from a real machine
+has been measured in this tree.  It is an unbounded write against a
+fixed 3520 bytes, which is enough reason to bound it before the first
+machine is rented rather than after.
 .CW memconf
 now merges adjacent descriptors of the same kind into one range and
 stops at an entry boundary before

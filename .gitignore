@@ -452,3 +452,9 @@ os/inferno/boot/efi/bootx64.efi
 os/inferno/boot/efi/bootx64.out
 tools/aout2efi
 tools/aout2imxrt
+libinterp/w8/
+libinterp/w4/
+os/inferno/pc64/apbootstrap.i
+os/inferno/pc64/apbootstrap.out
+os/inferno/pc64/rebootcode.i
+os/inferno/pc64/rebootcode.out
