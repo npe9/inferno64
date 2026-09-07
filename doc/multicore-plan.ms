@@ -1203,6 +1203,74 @@ is unguarded, frees nothing and carries a comment saying the type
 an assumption rather than a check, and the obvious suspect.  A probe
 asserting both halves ran over six boots, four of which corrupted, and
 never fired.  The assumption is sound and that line is not the bug.
+.NH 2
+It is freemod: a module unloaded while its types are still in use
+.PP
+Every
+.CW Type
+free was then recorded in a ring \- which of the six sites, and the
+caller \- and the dead
+.CW Type
+looked up in it when the tracker fired.  Twenty-two hits across the
+corrupting boots, all of them the same:
+.IP
+.nf
+that Type was freed at site 0 pc 0x400903d8
+.fi
+.PP
+Site 0 is
+.CW freetype() ,
+and the caller resolves by printing the candidates' addresses from C,
+since the kernel links stripped:
+.CW destroy
+is at
+.CW 0x400929e0
+and
+.CW freemod
+at
+.CW 0x400903a8 ,
+so
+.CW 0x400903d8
+is
+.CW freemod+0x30 .
+.PP
+.CW freemod()
+is
+.CW libinterp/load.c :
+.IP
+.nf
+if(m->type != nil) {
+	for(i = 0; i < m->ntype; i++)
+		freetype(m->type[i]);
+	free(m->type);
+}
+.fi
+.PP
+So the premature free is not of an object, and not of a type in
+isolation: it is a
+.I module
+being torn down while objects created from its types are still live.
+Which is why the failure surfaces at
+.CW IMCALL ,
+the inter-module call \- that is where a module's reference count is
+taken and dropped, and
+.CW OP(mcall) 's
+native branch drops it with a bare
+.CW "ADEC(&h->ref)"
+that checks nothing.
+.PP
+That also explains why this looks like the
+.CW "mcall / movp / destroy"
+corruption
+.CW doc/inferno-ports.ms
+named long ago: all three are the same event seen from different
+distances.  The next question is which module reference is dropped too
+early, and that is a question about
+.CW OP(mcall) ,
+.CW unload()
+and
+.CW freemod() \-
+a much smaller place to look than the whole interpreter.
 .PP
 What is still not done, so the state is not overstated: GICv3 (the
 redistributor is per processor and this board derives one fixed base),
