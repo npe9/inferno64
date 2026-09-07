@@ -24,6 +24,7 @@ void	fpuprocrestore(Proc*);
 int	cpuidentify(void);
 void	cpuidprint(void);
 void	(*cycles)(uvlong*);
+uvlong	spinticks(uvlong*);
 void	delay(int);
 void	delayloop(int);
 void*	dmabva(int);

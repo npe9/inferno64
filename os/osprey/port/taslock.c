@@ -92,10 +92,16 @@ lock(Lock *l)
 	}
 }
 
+enum {
+	Ilocksecs = 10,	/* a spin this long is a deadlock, whatever the machine */
+};
+
+
 void
 ilock(Lock *l)
 {
-	int i, x;
+	uvlong t0, hz;
+	int i, x, mno, started;
 	uintptr pc;
 
 	pc = getcallerpc(&l);
@@ -107,12 +113,57 @@ ilock(Lock *l)
 		 * because they might just not be set yet, or
 		 * (for pc and m) the lock might have just been unlocked.
 		 */
+		/*
+		 * The bound on this spin is time, not a count of turns.  A
+		 * million turns of a load is about ten milliseconds on an
+		 * emulated processor, and ten milliseconds is not a deadlock:
+		 * it is what happens when the host takes the virtual
+		 * processor that holds the lock away and runs something else,
+		 * which two of these machines and a build will do.  That
+		 * panicked in the two-machine check with timerdel waiting on
+		 * the timer list timeradd held - two short critical sections
+		 * that cannot take long, which is how the arithmetic was
+		 * noticed.
+		 *
+		 * The clock is spinticks and not fastticks, because the clock
+		 * a spinning processor reads must not take a lock of its own:
+		 * fastticks goes through arch->fastclock, which can be the
+		 * i8253, and reading the i8253 takes an ilock.  spinticks
+		 * returns a zero frequency when there is no lock-free clock
+		 * to read, and then the count is what the panic is on, which
+		 * is what this kernel has always done.
+		 */
+		t0 = 0;
+		hz = 0;
+		mno = 0;
+		started = 0;
 		for(;;){
 			splx(x);
 			for(i = 0; l->key; i++)
-				if(i > 1000000)
-					panic("ilock %#p key %#lux pc %#p held by pc %#p proc %lud",
-						l, l->key, pc, l->pc, l->p ? l->p->pid : 0);
+				if(i > 1000000){
+					/*
+					 * The lock is not held yet, so nothing
+					 * pins this proc to a processor: splx
+					 * above lets it be preempted and come
+					 * back on another one, whose cycle
+					 * counter is a different counter.
+					 * Start the measurement again when
+					 * that happens rather than subtract
+					 * one processor's ticks from
+					 * another's.
+					 */
+					if(started == 0 || mno != m->machno){
+						t0 = spinticks(&hz);
+						if(hz == 0)
+							panic("ilock %#p key %#lux pc %#p held by pc %#p proc %lud",
+								l, l->key, pc, l->pc, l->p ? l->p->pid : 0);
+						mno = m->machno;
+						started = 1;
+					} else if(spinticks(&hz) - t0 > hz * Ilocksecs)
+						panic("ilock %#p key %#lux pc %#p held by pc %#p proc %lud for %d seconds",
+							l, l->key, pc, l->pc, l->p ? l->p->pid : 0, Ilocksecs);
+					i = 0;
+				}
 			x = splhi();
 			if(tas(&l->key) == 0)
 				goto acquire;
