@@ -1272,6 +1272,52 @@ number.  Split it first: a per-context depth, and a heap-wide
 suppression that a stop-the-world collector mostly does not need anyway,
 since it decides when to run rather than being asked not to.  That is
 another reason the stop-the-world shape is the cheaper one to reach.
+.PP
+Before splitting it, measure it, because the numbers turn out to matter.
+Two counters added to
+.CW "#%/memgc"
+say how the two meanings actually behave under the same spawn storm:
+.IP
+.nf
+depthmax  65        deferred  3        halted  0
+.fi
+.PP
+So the depth half is live and runs
+.I exactly
+onto its limit \- 65 against a guard of 64, three times per storm, each
+one an object left for the collector rather than freed on the spot \-
+while the suppression half never fires at all.  That is the worst
+arrangement a multiprocessor could inherit: the counter already sits on
+its boundary, so any second context's contribution tips it, and what
+tips it is unrelated work on another processor.
+.PP
+.B Done .
+.CW gcdepth
+is the recursion depth
+.CW heap.c
+reads;
+.CW gchalt
+stays the heap-wide suppression
+.CW rungc()
+reads.
+.CW gclock()
+raises both, because a destroy is both;
+.CW libprefab
+keeps raising
+.CW gchalt
+alone, which is what it always meant.
+.PP
+Verified behaviour-identical \-
+.CW depthmax
+65 and
+.CW deferred
+3, unchanged, with the same run and epoch ranges \- and it is worth
+being exact about what that shows.
+.CW libprefab
+is not loaded by this workload, so its contribution to the depth guard
+was zero and the split is provably a no-op here.  It says the change
+breaks nothing.  The path it actually corrects is untested, because
+nothing within reach exercises Prefab.
 .NH 2
 Phase 5a, as landed \- the seam, not the gate
 .PP
