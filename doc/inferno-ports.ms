@@ -20127,6 +20127,62 @@ outgoing connection in the bench went to the half of the stack that
 handles links opened to it.  A field nobody reads is a field nobody
 has checked.
 .NH 2
+A server, and a model reduced to a wire
+.PP
+.CW gattsrv.b
+is the same database
+.CW gatt.b
+discovers, read the other way round.  A GATT database is a flat list
+of attributes in handle order and nothing else; the structure everyone
+talks about \(em services holding characteristics holding descriptors
+\(em is a convention about what the attributes contain and where the
+boundaries fall.  So there is one table here and the shape is computed
+from it: a service runs to the handle before the next service
+declaration, worked out when the question is asked rather than stored
+in a second place that can fall out of step with the first.
+.PP
+The database is built through
+.CW ctl
+and appears under
+.CW /net/bt/N/gatt ,
+which is the remote tree read backwards.  The characteristic is named
+with its service on every line rather than a service being remembered
+between writes: a cursor in
+.CW ctl
+would mean two programs writing it could put a characteristic in each
+other's service, and nothing else in that file carries state between
+writes.
+.PP
+The interesting part is how it is tested.  A controller model that
+spoke ATT would be a second implementation written in this tree from
+the same reading of the specification as the first, and a mistake they
+shared would agree with itself \(em the hazard
+.CW ah
+was pinned to an outside vector to avoid.  So for this phase the model
+is
+.I not
+an implementation.  It is a wire: the guest opens a link out to it, it
+opens a link in to the guest, and every whole L2CAP frame arriving on
+one goes out on the other, refragmented and otherwise untouched.  What
+walks the database is
+.CW gatt.b ,
+the client twenty other phases already trust, and nothing in
+.CW scripts/bthci.py
+has to know what an attribute is.
+.PP
+Two deliberate breakages.  A service that reports it ends where it
+begins: the client then finds the service and none of its
+characteristics, and the phase says so.  And Read Blob ignoring the
+offset \(em which the phase did
+.I not
+catch at first, because the ATT MTU is negotiated to 247 and the value
+it was reading was 58 bytes, so Read Blob never ran.  The value is now
+870 bytes and varies along its length, so a blob returned from the
+wrong offset comes back as something that does not compare equal
+rather than as something that happens to.  A test that names a
+mechanism it never exercises is worse than no test, because it is
+counted.
+.NH 2
 The bench now runs the interpreter, and why
 .PP
 With the second radio in, the bench started failing in emu rather than

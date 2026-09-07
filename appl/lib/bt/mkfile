@@ -8,6 +8,7 @@ TARG=\
 	l2cap.dis\
 	att.dis\
 	gatt.dis\
+	gattsrv.dis\
 	smp.dis\
 
 #

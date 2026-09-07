@@ -156,6 +156,28 @@ Values a controller would refuse are refused here instead of being
 sent.  A peripheral cannot change them itself and asks over L2CAP; a
 request that is accepted is carried out, which is why one that cannot
 be is refused rather than accepted and forgotten.
+.BI "service " uuid
+adds a primary service to the database this side serves, and
+.BI "characteristic " "service uuid props"
+adds a characteristic to it \-
+.I props
+being the letters
+.BR r ,
+.B w
+(write with a response),
+.B W
+(write without one),
+.B n
+and
+.BR i .
+The service is named again on each characteristic rather than being
+remembered between writes, so two programs writing
+.B ctl
+cannot put a characteristic in each other's service.  Handles are
+given out as attributes are added and never given out again, so a peer
+connected while the database grew would hold a stale picture of it;
+adding to the database while a link is up is refused rather than
+silently misleading the peer.
 .B "advertise on"
 and
 .B "advertise off"
@@ -170,10 +192,7 @@ like any other, with
 .B state
 saying
 .B peripheral
-because the peer opened it rather than this side.  Nothing above
-L2CAP answers on such a link yet \- there is no GATT server here, so
-a peer that goes on to ask for attributes gets no reply.
-.BI "l2cap " psm
+because the peer opened it rather than this side.  .BI "l2cap " psm
 on a device's own
 .B ctl
 opens an LE credit-based channel to that PSM, written as four
@@ -268,6 +287,26 @@ Execute Write, so neither direction is limited by the MTU.
 Reading one reads the characteristic off the device; writing one
 writes it.
 .PD
+.TP
+.B /net/bt/\fIN\fP/gatt/
+The database this side serves, which is
+.B remote/\fIADDR\fP/gatt
+read the other way round: a directory per service, named by its UUID,
+holding a file per characteristic, named by its UUID.  Reading one
+reads what a peer reading that characteristic would get; writing one
+sets what a peer will read next.  These files are always writable
+whatever the characteristic's properties say \- the properties are
+what a
+.I peer
+may do, and this is how the owner of the database sets the value at
+all.
+.PP
+A peer that connects to this side reads them.  Discovery, reads and
+reads of values longer than the link's MTU are answered; anything else
+is answered with
+.B "Request Not Supported" ,
+which is what a server says and what a client can act on.  Writes from
+a peer, notifications, and pairing from this side are not there yet.
 .TP
 .B /net/bt/\fIN\fP/remote/\fIADDR\fP/l2cap/
 One file per open LE credit-based channel, named by its PSM in four

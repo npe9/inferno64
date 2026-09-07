@@ -214,14 +214,29 @@ like any other, with
 .CW state
 saying which side opened it.
 .PP
-What is missing is everything above L2CAP on such a link.  There is no
-GATT server \(em a database served from the name space rather than
-discovered into it, which is the same tree read the other way \(em so
-a peer that connects and asks for attributes gets no answer at all.
-And there is no responder half of SMP, so a peer cannot pair with this
-side; the Long Term Key Request event a peripheral gets when the peer
-starts encryption is not handled either.  Until those two exist this
-side can be found and connected to and is of no use once it has been.
+There is a GATT server too.
+.CW service
+and
+.CW characteristic
+on a controller's
+.CW ctl
+build a database and it appears under
+.CW /net/bt/N/gatt ,
+which is
+.CW remote/ADDR/gatt
+read the other way: reading a file reads what a peer would read,
+writing one sets what a peer will read next.  A peer that connects can
+discover the services and characteristics and read them, including
+values longer than the link's MTU.
+.PP
+What is missing on that side is writes from a peer, notifications and
+indications out, the client characteristic configuration descriptor
+behind them, and Service Changed \(em without which the database
+cannot grow while a peer is connected, so growing it is refused rather
+than leaving the peer with stale handles.  And there is no responder
+half of SMP, so a peer cannot pair with this side; the Long Term Key
+Request event a peripheral gets when the peer starts encryption is not
+handled either.
 .NH 2
 Profiles, in the brief's order
 .IP 1.

@@ -129,6 +129,16 @@ ask_params = '--ask-params' in sys.argv
 # stack could not do at all: being found, and being connected to.
 peripheral = '--peripheral' in sys.argv
 
+# --loopback: the model is a wire and nothing else.  The guest opens a
+# link out to it and it opens a link in to the guest, and every ACL
+# packet on one is delivered on the other.  So the guest's own GATT
+# client, which twenty phases already trust, walks the guest's own GATT
+# server, and nothing in this file has to understand ATT.  A model that
+# spoke ATT here would be a second implementation written from the same
+# reading as the first, and a mistake they shared would agree with
+# itself; a wire cannot.
+loopback = '--loopback' in sys.argv
+
 # --addr XXXXXXXXXXXX: this controller's own BD_ADDR, most significant
 # byte first, so two models in one bench are two radios and not the
 # same one twice.  A bond records the controller it was made on, and
@@ -387,6 +397,9 @@ class Model:
         self.paramresults = []    # what it answered to each request
         self.trace = []
         # LE credit-based channels, keyed by the CID the guest sends to
+        self.inhandle = None      # the link the model opened to the guest
+        self.outhandle = None     # the link the guest opened to the model
+        self.acl_in2 = b''        # reassembly for the second link
         self.advertising = False
         self.advdata = b''
         self.advparams = None
@@ -467,7 +480,7 @@ class Model:
             self.advertising = params[0] != 0
             print('bthci: advertising %s' % ('on' if self.advertising else 'off'), flush=True)
             self.cmd_complete(op, bytes([0]))
-            if self.advertising and peripheral:
+            if self.advertising and (peripheral or loopback):
                 threading.Thread(target=self.connect_in, daemon=True).start()
         elif op == 0x200b:                     # LE Set Scan Parameters
             self.cmd_complete(op, bytes([0]))
@@ -621,6 +634,7 @@ class Model:
         # the orphan gets a handle of its own, so which link a
         # Disconnect refers to is never in doubt
         self.handle = handle
+        self.outhandle = handle
         self.peer = (atype, addr)
         # Role 0x00: the guest asked for this link, so the guest is the
         # central.  It said 0x01 for years because nothing above looked
@@ -655,9 +669,13 @@ class Model:
     # ------------------------------------------------ ACL up from the guest
     def acldata(self, pkt):
         h = struct.unpack('<H', pkt[0:2])[0]
+        handle = h & 0x0fff
         pb = (h >> 12) & 3
         dlen = struct.unpack('<H', pkt[2:4])[0]
         d = pkt[4:4+dlen]
+        if loopback:
+            self.acldata_relay(handle, pb, d)
+            return
         if pb == 0x2:
             self.acl_in = d
         elif pb == 0x1:
@@ -684,6 +702,47 @@ class Model:
                 self.coc_signal(payload)
         elif cid in self.coc:
             self.coc_kframe(self.coc[cid], payload)
+
+    #
+    # Reassemble on whichever link it came in on, and put the whole
+    # frame out on the other.  Which handle is which matters: the two
+    # links are the two ends of one wire and a frame sent back down the
+    # link it arrived on would be this side talking to itself.
+    #
+    def acldata_relay(self, handle, pb, d):
+        if handle == self.outhandle:
+            if pb == 0x2:
+                self.acl_in = d
+            else:
+                self.acl_in += d
+            buf = self.acl_in
+            out = self.inhandle
+        elif handle == self.inhandle:
+            if pb == 0x2:
+                self.acl_in2 = d
+            else:
+                self.acl_in2 += d
+            buf = self.acl_in2
+            out = self.outhandle
+        else:
+            self.credits(1)
+            return
+        if len(buf) < 4:
+            self.credits(1)
+            return
+        flen = struct.unpack('<H', buf[0:2])[0]
+        if len(buf) < 4 + flen:
+            self.credits(1)
+            return
+        frame = buf[0:4+flen]
+        if handle == self.outhandle:
+            self.acl_in = b''
+        else:
+            self.acl_in2 = b''
+        if out is None:
+            self.credits(1)
+            return
+        self.relay(out, frame)
 
     # --------------------------------------- LE credit-based channels
     #
@@ -974,16 +1033,42 @@ class Model:
         if not self.advertising:
             return
         addr = bytes.fromhex('efbeadde0000')     # 0000 DEAD BEEF written down
-        self.handle = 0x0041
-        self.peer = (0, addr)
-        rep = struct.pack('<BHBB', 0x00, self.handle, 0x01, 0x00) + addr \
+        self.inhandle = 0x0041
+        if not loopback:
+            self.handle = self.inhandle
+            self.peer = (0, addr)
+        rep = struct.pack('<BHBB', 0x00, self.inhandle, 0x01, 0x00) + addr \
               + struct.pack('<HHHB', 0x0028, 0, 0x002a, 0)
         self.event(0x3e, bytes([0x01]) + rep)
-        print('bthci: connected to the guest, handle %#06x' % self.handle, flush=True)
+        print('bthci: connected to the guest, handle %#06x' % self.inhandle, flush=True)
+        if loopback:
+            return          # the phase closes it when it is done
         time.sleep(6)
         print('bthci: closing the link to the guest', flush=True)
-        self.event(0x05, bytes([0x00]) + struct.pack('<H', self.handle) + bytes([0x13]))
+        self.event(0x05, bytes([0x00]) + struct.pack('<H', self.inhandle) + bytes([0x13]))
         self.handle = None
+        self.inhandle = None
+
+    #
+    # A wire.  Whole L2CAP frames arriving on one link go out on the
+    # other, refragmented to the ACL size the guest was told.  Frames
+    # rather than packets, because the two directions may fragment
+    # differently and half a frame delivered on the other link would be
+    # a frame the far side never completes.
+    #
+    def relay(self, out, frame):
+        n = 27
+        off = 0
+        first = True
+        while off < len(frame) or first:
+            take = min(len(frame) - off, n)
+            pb = 0x2 if first else 0x1
+            pkt = struct.pack('<HH', (out & 0x0fff) | (pb << 12), take) \
+                  + frame[off:off+take]
+            self.send(bytes([2]) + pkt)
+            off += take
+            first = False
+        self.credits(1)
 
     def move_database(self):
         for svc, char, vh, val in LATER:

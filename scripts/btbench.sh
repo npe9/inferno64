@@ -66,6 +66,10 @@
 #		The advertisement is checked against what the
 #		controller actually received, not only against what the
 #		name space says
+#	server	the GATT server: a database built through ctl, read as
+#		files, and served to a peer.  The model is a wire for
+#		this phase and the client that walks the database is
+#		gatt.b, which twenty other phases already trust
 #	two	two controllers in one btfs: /net/bt/0 and /net/bt/1 with
 #		their own devices, their own scanning and their own
 #		bonds.  The assertion that matters is the last: both
@@ -252,6 +256,15 @@ if [ "$n" != 1 ]; then
 	exit 1
 fi
 echo "the peer saw the name the phase advertised"
+#
+# The GATT server, with the model reduced to a wire: the guest dials
+# out, the model dials in, and every frame on one link comes out on
+# the other.  So this stack's own client walks this stack's own
+# server, and nothing in the model has to understand ATT -- which is
+# the point, since a model that did would be a second implementation
+# from the same reading, able to share a mistake with the first.
+#
+run server --loopback server
 run two --bonded two "--bonded --addr 001122334466"
 run coc "" coc
 #

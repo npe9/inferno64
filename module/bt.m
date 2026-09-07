@@ -58,6 +58,10 @@ Bt: module
 	# one hexadecimal digit, or -1
 	digit:	fn(c: int): int;
 
+	# a UUID is written down in lower case, and a client that types
+	# one in upper case means the same service
+	lower:	fn(s: string): string;
+
 	# a UUID is 2, 4 or 16 bytes, little endian on the wire; it is
 	# written big endian, and the 16 bit and 32 bit forms are
 	# written as they are rather than expanded into the base UUID
@@ -474,6 +478,51 @@ Gatt: module
 # so can be done with the crypt(2) the kernel already links.  LE
 # Secure Connections needs P-256, which this does not do.
 #
+#
+# The GATT server: the same database as Gatt, read the other way.
+# Gatt discovers a peer's attributes into the name space; this serves
+# attributes out of it to a peer that has connected to us.
+#
+Gattsrv: module
+{
+	PATH:	con "/dis/lib/bt/gattsrv.dis";
+
+	# One attribute.  A UUID here is on the wire the way it goes out
+	# -- least significant byte first, two bytes or sixteen -- so
+	# nothing has to reverse it in the middle of answering.
+	Attr: adt {
+		handle:	int;
+		uuid:	array of byte;
+		val:	array of byte;
+		rd:	int;		# may a peer read it
+		wr:	int;		# may a peer write it
+	};
+
+	Db: adt {
+		attrs:	list of ref Attr;	# in handle order
+		n:	int;			# the last handle given out
+		lock:	chan of int;
+	};
+
+	init:	fn(bt: Bt, l2: L2cap): string;
+	newdb:	fn(): ref Db;
+
+	# Build the database.  A service, then its characteristics.
+	# Handles are given out in the order attributes are added and
+	# never given out again, so this happens before a peer is
+	# connected; btfs(4) says so.
+	addsvc:		fn(d: ref Db, uuid: array of byte): (int, string);
+	addchar:	fn(d: ref Db, uuid: array of byte, props: int,
+				val: array of byte): (int, int, string);
+
+	# the value a peer reads, and the value a peer last wrote
+	setval:	fn(d: ref Db, h: int, v: array of byte): string;
+	getval:	fn(d: ref Db, h: int): array of byte;
+
+	# serve this database to the peer on the far end of that link
+	serve:	fn(d: ref Db, m: ref L2cap->Mux);
+};
+
 Smp: module
 {
 	PATH:	con "/dis/lib/bt/smp.dis";

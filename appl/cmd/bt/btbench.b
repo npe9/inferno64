@@ -240,6 +240,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	"peripheral" =>
 		peripheral();
 		return;
+	"server" =>
+		server();
+		return;
 	"cocrefuse" =>
 		cocrefuse();
 		return;
@@ -1931,4 +1934,167 @@ hasstr(s, w: string): int
 		if(s[i:i+len w] == w)
 			return 1;
 	return 0;
+}
+
+#
+# The GATT server, driven by this stack's own GATT client.
+#
+# The controller model is a wire for this phase and nothing else: the
+# guest opens a link out to it, it opens a link in to the guest, and
+# every L2CAP frame on one comes out on the other.  So what walks the
+# database this side serves is gatt.b -- the client twenty other
+# phases already trust -- and not a second implementation written in
+# Python from the same reading of the specification as the first.  Two
+# implementations written in one place can share a mistake and agree
+# with each other; a wire cannot.
+#
+# The two links are two devices in the name space, on the same
+# controller: the one this side dialled, and the one that arrived.
+#
+Svcuuid:	con "180f";		# battery service
+Chruuid:	con "2a19";		# battery level
+Longuuid:	con "2a29";		# manufacturer name, long enough to blob
+
+server()
+{
+	ok := 1;
+	#
+	# the database, before anything connects: handles are given out
+	# as attributes are added and a peer that connected first would
+	# hold a stale picture of it
+	#
+	cmds := list of {
+		"service " + Svcuuid,
+		"characteristic " + Svcuuid + " " + Chruuid + " r",
+		"characteristic " + Svcuuid + " " + Longuuid + " rw",
+	};
+	for(cl := cmds; cl != nil; cl = tl cl)
+		if((e := writefile(mnt + "/0/ctl", hd cl)) != nil){
+			sys->print("BT: FAILED: %s: %s\n", hd cl, e);
+			sys->print("BT: done\n");
+			return;
+		}
+	#
+	# the values a peer will read.  The second is longer than the
+	# 23 byte default MTU on purpose, so reading it back has to go
+	# through Read Blob and not only Read.
+	#
+	if((ve := writefile(mnt + "/0/gatt/" + Svcuuid + "/" + Chruuid, "77")) != nil){
+		sys->print("BT: FAILED: setting %s: %s\n", Chruuid, ve);
+		sys->print("BT: done\n");
+		return;
+	}
+	#
+	# Longer than the ATT MTU on purpose, and by enough: the MTU is
+	# negotiated up to 247, so a value of a few dozen bytes fits in
+	# one Read and never reaches Read Blob at all.  The content
+	# varies along its length, so a blob that came back from the
+	# wrong offset is a value that does not compare equal rather
+	# than one that happens to.
+	#
+	long := "";
+	for(k := 0; k < 40; k++)
+		long += sys->sprint("%d-inferno-peripheral ", k);
+	if((le := writefile(mnt + "/0/gatt/" + Svcuuid + "/" + Longuuid, long)) != nil){
+		sys->print("BT: FAILED: setting %s: %s\n", Longuuid, le);
+		sys->print("BT: done\n");
+		return;
+	}
+
+	if((ne := writefile(mnt + "/0/ctl", "advname inferno-bt")) != nil){
+		sys->print("BT: FAILED: advname: %s\n", ne);
+		sys->print("BT: done\n");
+		return;
+	}
+	if((ae := writefile(mnt + "/0/ctl", "advertise on")) != nil){
+		sys->print("BT: FAILED: advertise on: %s\n", ae);
+		sys->print("BT: done\n");
+		return;
+	}
+
+	#
+	# wait for the peer's link, then dial back out to it.  The wire
+	# joins the two, so what this side dials is its own server.
+	#
+	inn := mnt + "/0/remote/" + Peerin;
+	got := 0;
+	for(i := 0; i < 20 && !got; i++){
+		sys->sleep(500);
+		if(hasword(trim(readfile(inn + "/state")), "connected"))
+			got = 1;
+	}
+	if(!got){
+		sys->print("BT: FAILED: nothing connected to us\n");
+		sys->print("BT: done\n");
+		return;
+	}
+	sys->print("BT: the peer is here: %s\n", trim(readfile(inn + "/state")));
+
+	remotes := lsdir(mnt + "/0/remote");
+	out := "";
+	for(rl := remotes; rl != nil; rl = tl rl)
+		if(hd rl != Peerin)
+			out = hd rl;
+	if(out == ""){
+		sys->print("BT: FAILED: nothing to dial out to\n");
+		sys->print("BT: done\n");
+		return;
+	}
+	dev := mnt + "/0/remote/" + out;
+	if((ce := writefile(dev + "/ctl", "connect")) != nil){
+		sys->print("BT: FAILED: connect %s: %s\n", out, ce);
+		sys->print("BT: done\n");
+		return;
+	}
+	sys->print("BT: dialled %s, which the wire joins to our own server\n", out);
+
+	#
+	# and now the client's view of the server, walked by gatt.b
+	#
+	svcs := lsdir(dev + "/gatt");
+	found := 0;
+	for(sl := svcs; sl != nil; sl = tl sl)
+		if(hd sl == Svcuuid)
+			found = 1;
+	if(!found){
+		sys->print("BT: FAILED: the client did not discover %s among %d services\n",
+			Svcuuid, len svcs);
+		ok = 0;
+	} else
+		sys->print("BT: the client discovered %s\n", Svcuuid);
+
+	v := trim(readfile(dev + "/gatt/" + Svcuuid + "/" + Chruuid));
+	if(v != "77"){
+		sys->print("BT: FAILED: %s reads %q, wanted 77\n", Chruuid, v);
+		ok = 0;
+	} else
+		sys->print("BT: %s reads %s, out of our own name space\n", Chruuid, v);
+
+	#
+	# the long one, which does not fit in one Read and comes back
+	# through Read Blob
+	#
+	lv := trim(readfile(dev + "/gatt/" + Svcuuid + "/" + Longuuid));
+	if(lv != long){
+		sys->print("BT: FAILED: the long value reads %q\n", lv);
+		ok = 0;
+	} else
+		sys->print("BT: the %d byte value came back whole, through Read Blob\n", len lv);
+
+	#
+	# and a handle nobody has: the server has to say so rather than
+	# answer with whatever is nearest
+	#
+	if((fd := sys->open(dev + "/gatt/" + Svcuuid + "/2a00", Sys->OREAD)) != nil){
+		sys->print("BT: FAILED: a characteristic nobody serves is there\n");
+		ok = 0;
+	}
+	fd = nil;
+
+	if(ok)
+		sys->print("BT: our own client walked our own server\n");
+	writefile(dev + "/ctl", "disconnect");
+	writefile(mnt + "/0/ctl", "advertise off");
+	writefile(mnt + "/0/ctl", "scan off");
+	sys->print("BT: done\n");
 }

@@ -52,6 +52,7 @@ include "bt.m";
 	l2cap: L2cap;
 	att: Att;
 	gatt: Gatt;
+	gattsrv: Gattsrv;
 	smp: Smp;
 	Adv, Conn: import Hci;
 	Mux: import L2cap;
@@ -67,7 +68,8 @@ Btfs: module
 
 Kroot, Kctlr, Kaddr, Kver, Kctl, Kstate, Kscan, Kremotes, Kbonds, Kdident, Kinc,
 	Kdev, Kdaddr, Kdtype, Kdrssi, Kdname, Kdadv, Kdstate, Kdctl,
-	Kdgatt, Ksvc, Kchar, Kcnotify, Kdl2cap, Kcoc: con iota;
+	Kdgatt, Ksvc, Kchar, Kcnotify, Kdl2cap, Kcoc,
+	Klocal, Klsvc, Klchar: con iota;
 
 Qroot:	con big 0;
 
@@ -129,6 +131,19 @@ Node: adt {
 	name:	string;
 	text:	string;	# what a Kinc file reads as
 	coc:	ref Coc;
+	lc:	ref Lchar;
+};
+
+#
+# One characteristic of the database this side serves, and the file
+# that is it.  Reading the file reads what a peer would read; writing
+# it sets what a peer will read next.
+#
+Lchar: adt {
+	r:	ref Radio;
+	uuid:	string;
+	vh:	int;		# the value's handle in the database
+	q:	big;
 };
 
 srv:	ref Styxserver;
@@ -158,6 +173,10 @@ Radio: adt {
 	advertising:	int;
 	advname:	string;		# what the advertisement says we are
 	advset:		int;		# have the parameters been set
+	db:	ref Gattsrv->Db;	# what a peer that connects here reads
+	lq:	big;			# the local gatt directory, or 0
+	svcs:	list of (string, big);	# service uuid to its directory
+	lchars:	list of ref Lchar;	# what each local file is
 	devs:	list of ref Dev;
 	devlock:	chan of int;
 	bonds:	list of ref Bond;
@@ -247,8 +266,10 @@ init(nil: ref Draw->Context, argv: list of string)
 	l2cap = load L2cap L2cap->PATH;
 	att = load Att Att->PATH;
 	gatt = load Gatt Gatt->PATH;
+	gattsrv = load Gattsrv Gattsrv->PATH;
 	smp = load Smp Smp->PATH;
-	if(hci == nil || l2cap == nil || att == nil || gatt == nil || smp == nil)
+	if(hci == nil || l2cap == nil || att == nil || gatt == nil
+	|| gattsrv == nil || smp == nil)
 		fail(sprint("cannot load the stack: %r"));
 
 	if((e := hci->init(bt)) != nil)
@@ -259,6 +280,8 @@ init(nil: ref Draw->Context, argv: list of string)
 		fail("att: " + e);
 	if((e = gatt->init(bt, att)) != nil)
 		fail("gatt: " + e);
+	if((e = gattsrv->init(bt, l2cap)) != nil)
+		fail("gatt server: " + e);
 	if((e = smp->init(bt, hci, l2cap)) != nil)
 		fail("smp: " + e);
 
@@ -269,7 +292,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	nodes = array[64] of ref Node;
 	# node 0 is the root of the served tree, so the first name
 	# created below does not take its qid
-	nodes[0] = ref Node(Qroot, Kroot, nil, nil, nil, ".", nil, nil);
+	nodes[0] = ref Node(Qroot, Kroot, nil, nil, nil, ".", nil, nil, nil);
 	nextq = 1;
 
 	navops: chan of ref Navop;
@@ -301,6 +324,7 @@ init(nil: ref Draw->Context, argv: list of string)
 		r.devlock <-= 1;
 		r.bondlock = chan[1] of int;
 		r.bondlock <-= 1;
+		r.db = gattsrv->newdb();
 		r.t = load Bttransport tpath;
 		if(r.t == nil)
 			fail(sprint("cannot load %s: %r", tpath));
@@ -383,7 +407,7 @@ newnode(kind: int, r: ref Radio, d: ref Dev, cn: ref Cnode, name: string): big
 		nodes = a;
 	}
 	q := big nextq;
-	nodes[nextq] = ref Node(q, kind, r, d, cn, name, nil, nil);
+	nodes[nextq] = ref Node(q, kind, r, d, cn, name, nil, nil, nil);
 	nextq++;
 	return q;
 }
@@ -871,6 +895,13 @@ doread(m: ref Tmsg.Read)
 		spawn readnotify(m, n);
 	Kcoc =>
 		spawn readcoc(m, n);
+	Klchar =>
+		#
+		# what a peer would read: the value in the database,
+		# which is what this side last set or what a peer last
+		# wrote
+		#
+		srv.reply(styxservers->readbytes(m, gattsrv->getval(n.rad.db, n.lc.vh)));
 	* =>
 		srv.reply(ref Rmsg.Error(m.tag, Enotfound));
 	}
@@ -1026,6 +1057,12 @@ dowrite(m: ref Tmsg.Write)
 		spawn writechar(m, n);
 	Kcoc =>
 		spawn writecoc(m, n);
+	Klchar =>
+		if((we := gattsrv->setval(n.rad.db, n.lc.vh, m.data)) != nil){
+			srv.reply(ref Rmsg.Error(m.tag, we));
+			return;
+		}
+		srv.reply(ref Rmsg.Write(m.tag, len m.data));
 	* =>
 		srv.reply(ref Rmsg.Error(m.tag, Eperm));
 	}
@@ -1166,6 +1203,26 @@ ctlwrite(m: ref Tmsg.Write, r: ref Radio, d: ref Dev, s: string)
 		#
 		if(r.advertising)
 			e = hci->leadvdata(r.x, addata(r));
+	"service" =>
+		#
+		# Build the database this side serves.  A service, then
+		# characteristics named with the service they belong to
+		# -- explicitly, because two processes writing ctl would
+		# otherwise interleave and a characteristic would land in
+		# whichever service the other one named last.
+		#
+		if(f == nil){
+			e = "usage: service uuid";
+			break;
+		}
+		e = addservice(r, bt->lower(hd f));
+	"characteristic" =>
+		if(len4(f) < 3){
+			e = "usage: characteristic service uuid rwn";
+			break;
+		}
+		e = addcharacteristic(r, bt->lower(hd f), bt->lower(hd tl f),
+			props(hd tl tl f));
 	"debug" =>
 		;
 	* =>
@@ -1963,10 +2020,117 @@ inproc(r: ref Radio)
 		}
 		d.conn = conn;
 		d.mux = l2cap->start(conn);
+		#
+		# a peer opened this link, so this side is the server on
+		# it.  The client half runs on links this side opens;
+		# one Dev has one link, so the two never share CID 4.
+		#
+		gattsrv->serve(r.db, d.mux);
 		d.state = "connected";
 		d.seen = daytime();
 		spawn watcher(d);
 		d.lock <-= 1;
 		sys->fprint(sys->fildes(2), "btfs: %s connected to us\n", name);
 	}
+}
+
+#
+# The database this side serves, built from ctl and read as files.
+# /net/bt/N/gatt is the mirror of /net/bt/N/remote/ADDR/gatt: the same
+# shape, a directory per service holding a file per characteristic,
+# except that these are ours and a peer that connects reads them.
+#
+# Handles are given out as attributes are added and never given out
+# again, so a peer connected while the database grew would hold a
+# stale picture of it.  That is what Service Changed is for and there
+# is none on this side yet, so adding to the database with a link on
+# it is refused rather than silently misleading the peer.
+#
+props(s: string): int
+{
+	p := 0;
+	for(i := 0; i < len s; i++)
+		case s[i] {
+		'r' =>	p |= Gatt->Pread;
+		'w' =>	p |= Gatt->Pwrite;
+		'W' =>	p |= Gatt->Pwritenoresp;
+		'n' =>	p |= Gatt->Pnotify;
+		'i' =>	p |= Gatt->Pindicate;
+		}
+	return p;
+}
+
+#
+# is any link up on this radio?  A database that grows under one is a
+# peer holding handles that no longer mean what it thinks.
+#
+linked(r: ref Radio): int
+{
+	<-r.devlock;
+	l := r.devs;
+	r.devlock <-= 1;
+	for(; l != nil; l = tl l)
+		if((hd l).conn != nil)
+			return 1;
+	return 0;
+}
+
+findsvcq(r: ref Radio, uuid: string): big
+{
+	for(l := r.svcs; l != nil; l = tl l){
+		(u, q) := hd l;
+		if(u == uuid)
+			return q;
+	}
+	return big 0;
+}
+
+addservice(r: ref Radio, uuid: string): string
+{
+	u := bt->uuidbytes(uuid);
+	if(u == nil)
+		return "a UUID is 4, 8 or 32 hexadecimal digits";
+	if(linked(r))
+		return "a link is up: the handles a peer has would go stale";
+	if(findsvcq(r, uuid) != big 0)
+		return uuid + " is already there";
+	(nil, e) := gattsrv->addsvc(r.db, u);
+	if(e != nil)
+		return e;
+	if(r.lq == big 0){
+		r.lq = newnode(Klocal, r, nil, nil, "gatt");
+		create(r.q, mkdir("gatt", r.lq));
+	}
+	sq := newnode(Klsvc, r, nil, nil, uuid);
+	create(r.lq, mkdir(uuid, sq));
+	r.svcs = (uuid, sq) :: r.svcs;
+	return nil;
+}
+
+addcharacteristic(r: ref Radio, svc, uuid: string, p: int): string
+{
+	u := bt->uuidbytes(uuid);
+	if(u == nil)
+		return "a UUID is 4, 8 or 32 hexadecimal digits";
+	sq := findsvcq(r, svc);
+	if(sq == big 0)
+		return "no service " + svc;
+	if(linked(r))
+		return "a link is up: the handles a peer has would go stale";
+	(nil, vh, e) := gattsrv->addchar(r.db, u, p, nil);
+	if(e != nil)
+		return e;
+	#
+	# Always writable here, whatever the properties say.  The
+	# properties are what a peer may do; this file is how the owner
+	# of the database sets the value a peer reads, and a read-only
+	# characteristic whose value could never be set would be a
+	# characteristic that always reads empty.
+	#
+	lc := ref Lchar(r, uuid, vh, big 0);
+	lc.q = newnode(Klchar, r, nil, nil, uuid);
+	create(sq, mkfile(uuid, lc.q, 8r666));
+	nodes[int lc.q].lc = lc;
+	r.lchars = lc :: r.lchars;
+	return nil;
 }
