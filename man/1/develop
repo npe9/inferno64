@@ -74,6 +74,16 @@ The commands are:
 .B Save
 Write the current source file.
 .TP
+.B Edit
+Cut, copy and paste through the snarf buffer,
+.IR snarf (3).
+Control-x, Control-c and Control-v invoke the three directly, and button 2
+in the text area posts the same menu.  Copy and cut act on the selection
+and do nothing without one; paste inserts at the insertion point.  Cut and
+paste record an undo step, so
+.B Undo
+reverses them like any other change.
+.TP
 .B Undo
 Undo the last textual change.  Control-underscore invokes the same command.
 .TP

@@ -55,13 +55,25 @@ cfg := array[] of {
 	"button .bar.run -text Run -command {send cmd run}",
 	"button .bar.go -text Go -command {send cmd go}",
 	"button .bar.state -text State -command {send cmd state}",
+	# There was no way to move text in or out of the editor at all: no
+	# cut, no copy, no paste, and nothing touching /dev/snarf.  Same shape
+	# as wm/edit(1)'s Edit menu, including posting it on Button-2.
+	"menubutton .bar.edit -text Edit -menu .bar.edit.m",
+	"menu .bar.edit.m",
+	".bar.edit.m add command -label Cut -command {send cmd cut}",
+	".bar.edit.m add command -label Copy -command {send cmd copy}",
+	".bar.edit.m add command -label Paste -command {send cmd paste}",
 	"label .bar.args -anchor w",
-	"pack .bar.files .bar.save .bar.undo .bar.build .bar.run .bar.go .bar.state -side left",
+	"pack .bar.files .bar.edit .bar.save .bar.undo .bar.build .bar.run .bar.go .bar.state -side left",
 	"pack .bar.args -side left -padx 8 -fill x -expand 1",
 	"frame .body",
 	"scrollbar .body.s -command {.body.t yview}",
 	"text .body.t -bg white -font /fonts/lucidasans/unicode.8.font -yscrollcommand {.body.s set}",
 	"bind .body.t <Control-_> {send cmd undo}",
+	"bind .body.t <Button-2> {.bar.edit.m post %X %Y}",
+	"bind .body.t <Control-x> {send cmd cut}",
+	"bind .body.t <Control-c> {send cmd copy}",
+	"bind .body.t <Control-v> {send cmd paste}",
 	"bind .body.t <Button-3> {send cmd lookpick %x %y}",
 	"bind .body.t <ButtonRelease-3> {send cmd lookgo}",
 	"bind .body.t <Motion-Button-3> {}",
@@ -556,6 +568,14 @@ keyinput(k: int)
 {
 	before := cmd(".body.t get 1.0 end");
 	tk->keyboard(top, k);
+	recordedit(before);
+}
+
+# Undo here is whole-buffer snapshots, so anything that changes the text
+# must take one first and compare after - not just typing.  Cut and paste
+# go through the same path rather than quietly editing behind undo's back.
+recordedit(before: string)
+{
 	after := cmd(".body.t get 1.0 end");
 	if(after == before)
 		return;
@@ -567,6 +587,47 @@ keyinput(k: int)
 	dirty = after != savedtext;
 	cmd(".bar.undo configure -state normal");
 	settitle();
+}
+
+# The selection, or nothing.  tk->cmd rather than cmd() for the get: the
+# text being fetched is the user's, and cmd() reads a leading '!' as a Tk
+# error - which is wm/edit(1)'s own compromise here too.
+snarfcopy(del: int)
+{
+	range := cmd(".body.t tag nextrange sel 1.0");
+	if(range == nil || range[0] == '!'){
+		setstatus("Nothing selected");
+		return;
+	}
+	text := tk->cmd(top, ".body.t get " + range);
+	if(text == nil)
+		return;
+	tkclient->snarfput(text);
+	if(!del){
+		setstatus("Copied " + string len text + " characters");
+		return;
+	}
+	before := cmd(".body.t get 1.0 end");
+	cmd(".body.t delete " + range);
+	cmd("update");
+	recordedit(before);
+	setstatus("Cut " + string len text + " characters");
+}
+
+snarfpaste()
+{
+	text := tkclient->snarfget();
+	if(text == nil){
+		setstatus("Snarf buffer is empty");
+		return;
+	}
+	before := cmd(".body.t get 1.0 end");
+	# a leading ' makes the rest of the line a literal, so nothing in the
+	# pasted text can be read as Tk syntax
+	cmd(".body.t insert insert '" + text);
+	cmd("update");
+	recordedit(before);
+	setstatus("Pasted " + string len text + " characters");
 }
 
 undo()
@@ -900,6 +961,9 @@ init(c: ref Draw->Context, args: list of string)
 		(nil, a) := sys->tokenize(s, " ");
 		case hd a {
 		"undo" => undo();
+		"cut" => snarfcopy(1);
+		"copy" => snarfcopy(0);
+		"paste" => snarfpaste();
 		"save" => save();
 		"build" => build();
 		"run" => spawn launch();
