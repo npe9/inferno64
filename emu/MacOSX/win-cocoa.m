@@ -196,8 +196,10 @@ struct GPUVert3D {
 };
 
 /*
- * Per-batch uniform for the GPU-T&L path: must match Metal G3Xform layout.
- * model is the real (row-major) model matrix. proj is *not* the raw draw3d
+ * Per-batch uniform for the GPU-T&L path: must match Metal G3Xform layout,
+ * which is a pair of float4x4 - so both matrices are stored COLUMN-major
+ * here, transposed out of draw3d's row-major order by g3xform_load(), and
+ * are not in draw3d's order any more. proj is *not* the raw draw3d
  * projection matrix - metal_queue_fillpoly3d folds the viewport scale
  * (mx/cx/my/cy) and the screen-pixel→Metal-NDC map (wh) into it once per
  * batch (d3combineproj), so the vertex shader can emit a genuine clip.xyzw
@@ -320,21 +322,21 @@ static NSString *const kSoftscreenMetalSrc =
 	"fragment float4 flmain(LOut in [[stage_in]]) { return in.color; }\n"
 	"struct G3In { float x, y, z, r, g, b, a; };\n"
 	/*
-	 * Row-major, sixteen floats a matrix, exactly as draw3d's Matrix is
-	 * laid out: putmat() in appl/math/draw3ddev.b writes m[i][j] at
-	 * i*4+j and d3loadmat() reads it back in that order.  The transform
-	 * below is spelled out element by element to match, and that is
-	 * deliberate rather than untidy.
-	 *
-	 * Metal's float4x4 is COLUMN-major: M[j] is column j.  Copying these
-	 * sixteen floats into one makes M[j] our ROW j, so the idiomatic
-	 * M * v computes the transpose.  Measured, with draw3dbench's
-	 * software-vs-GPU check: float4x4 with `v * x.model` agrees with the
-	 * software renderer to the pixel, and float4x4 with `x.model * v`
-	 * draws NOTHING - the transpose puts every vertex outside the clip
-	 * volume.  Writing the products out has no such wrong spelling.
+	 * draw3d's Matrix is ROW-major: putmat() in appl/math/draw3ddev.b
+	 * writes m[i][j] at i*4+j and d3loadmat() reads it back in that
+	 * order.  Metal's float4x4 is COLUMN-major - M[j] is column j - so
+	 * the two disagree, and until 2026-09-07 this shader papered over it
+	 * by spelling all sixteen products out by hand.  That put the burden
+	 * on every reader of the shader for ever.  g3xform_load() now
+	 * transposes once, in C, where the matrix is packed; the uniform the
+	 * GPU sees is genuinely column-major, so float4x4 means what it says
+	 * and `M * v` is the correct spelling here exactly as it is in every
+	 * other Metal program.  (`v * M` is now the broken one - it draws
+	 * nothing, since the transpose puts every vertex outside the clip
+	 * volume.  Measured both ways with draw3dbench's software-vs-GPU
+	 * agreement check.)
 	 */
-	"struct G3Xform { float model[16]; float proj[16]; };\n"
+	"struct G3Xform { float4x4 model; float4x4 proj; };\n"
 	"struct G3Out { float4 pos [[position]]; float4 color; float ez; };\n"
 	"/* GPU-T&L: raw model-space vertex in. model then proj (proj already has\n"
 	"   the viewport scale and screen→Metal-NDC map folded in by\n"
@@ -347,26 +349,21 @@ static NSString *const kSoftscreenMetalSrc =
 	"    constant G3In *v [[buffer(0)]],\n"
 	"    constant G3Xform &x [[buffer(1)]]) {\n"
 	"  G3In i = v[vid];\n"
-	"  float ex = i.x*x.model[0] + i.y*x.model[1] + i.z*x.model[2] + x.model[3];\n"
-	"  float ey = i.x*x.model[4] + i.y*x.model[5] + i.z*x.model[6] + x.model[7];\n"
-	"  float ez = i.x*x.model[8] + i.y*x.model[9] + i.z*x.model[10] + x.model[11];\n"
-	"  float ew = i.x*x.model[12] + i.y*x.model[13] + i.z*x.model[14] + x.model[15];\n"
-	"  if(ew != 0.0 && ew != 1.0) { ex /= ew; ey /= ew; ez /= ew; }\n"
-	"  float cx_ = ex*x.proj[0] + ey*x.proj[1] + ez*x.proj[2] + x.proj[3];\n"
-	"  float cy_ = ex*x.proj[4] + ey*x.proj[5] + ez*x.proj[6] + x.proj[7];\n"
-	"  float cw_ = ex*x.proj[12] + ey*x.proj[13] + ez*x.proj[14] + x.proj[15];\n"
+	"  float4 e = x.model * float4(i.x, i.y, i.z, 1.0);\n"
+	"  if(e.w != 0.0 && e.w != 1.0) e.xyz /= e.w;\n"
+	"  float4 c = x.proj * float4(e.xyz, 1.0);\n"
 	"  /* draw3d's own projection leaves w as the eye z and the camera\n"
-	"     looks down -Z, so cw_ is NEGATIVE for everything in FRONT of the\n"
+	"     looks down -Z, so c.w is NEGATIVE for everything in FRONT of the\n"
 	"     eye.  Metal clips to 0 <= z <= w and -w <= x,y <= w, which throws\n"
 	"     away every vertex with w < 0 - silently, and that was the whole\n"
 	"     scene: this path drew nothing at all until 2026-09-06.  Negating\n"
 	"     the clip vector leaves x/w and y/w exactly as they were and puts\n"
 	"     w on the side the hardware expects. */\n"
-	"  if(cw_ < 0.0) { cx_ = -cx_; cy_ = -cy_; cw_ = -cw_; }\n"
+	"  if(c.w < 0.0) c = -c;\n"
 	"  G3Out o;\n"
-	"  o.pos = float4(cx_, cy_, cw_*0.5, cw_);\n"
+	"  o.pos = c;\n"
 	"  o.color = float4(i.r, i.g, i.b, i.a);\n"
-	"  o.ez = ez;\n"
+	"  o.ez = e.z;\n"
 	"  return o;\n"
 	"}\n"
 	"struct G3FragOut { float4 color [[color(0)]]; float depth [[depth(any)]]; };\n"
@@ -2048,6 +2045,35 @@ d3combineproj(float *proj, float mx, float cx, float my, float cy,
 }
 
 /*
+ * Pack the per-batch uniform the GPU-T&L shaders read.  draw3d's matrices
+ * are row-major (m[i][j] at i*4+j); Metal's float4x4 is column-major.  The
+ * transpose belongs HERE, once per batch on the CPU, and not in the shader
+ * as sixteen hand-written products - see the G3Xform comment in
+ * kSoftscreenMetalSrc.  g3xform_eq compares the packed bytes, and
+ * transposition is a bijection, so batching is unaffected.
+ */
+static void
+xpose4(float *m, float *out)
+{
+	int i, j;
+
+	for(i = 0; i < 4; i++)
+		for(j = 0; j < 4; j++)
+			out[j*4 + i] = m[i*4 + j];
+}
+
+static void
+g3xform_load(GPUXform *xf, float *model, float *proj, float mx, float cx,
+	float my, float cy, float pw, float ph)
+{
+	float cp[16];
+
+	xpose4(model, xf->model);
+	d3combineproj(proj, mx, cx, my, cy, pw, ph, cp);
+	xpose4(cp, xf->proj);
+}
+
+/*
  * fillpoly3 ('g'/'k'), GPU-T&L variant: vertices are raw model-space (post
  * d3clipnear), untransformed. The model/proj multiply and viewport scale
  * that metal_queue_fillpoly's caller (d3project) does once per vertex in C
@@ -2117,8 +2143,7 @@ metal_queue_fillpoly3d(Memimage *dst, float *vx, float *vy, float *vz, int n,
 	if(need > MaxGPUTriVerts)
 		return 0;
 
-	memmove(xf.model, model, sizeof xf.model);
-	d3combineproj(proj, mx, cx, my, cy, (float)pw, (float)ph, xf.proj);
+	g3xform_load(&xf, model, proj, mx, cx, my, cy, (float)pw, (float)ph);
 
 	if(!metal_tri3d_reserve(need))
 		return 0;
@@ -2210,8 +2235,7 @@ metal_queue_fillpoly3g(Memimage *dst, float *vx, float *vy, float *vz, float *li
 	if(need > MaxGPUTriVerts)
 		return 0;
 
-	memmove(xf.model, model, sizeof xf.model);
-	d3combineproj(proj, mx, cx, my, cy, (float)pw, (float)ph, xf.proj);
+	g3xform_load(&xf, model, proj, mx, cx, my, cy, (float)pw, (float)ph);
 
 	if(!metal_tri3d_reserve(need))
 		return 0;
