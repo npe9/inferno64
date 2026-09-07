@@ -164,5 +164,16 @@ struct
 #define	MACHP(n)	((Mach*)(void*)&mach0)
 
 extern Mach mach0;
-extern Mach *m;
+/*
+ * m lives in a machine register, not in memory, so that each processor
+ * has its own.  This is what pc64 does with R15 (see its dat.h) and it
+ * is the only way a shared kernel image can give every processor a
+ * different Mach: 7c honours "extern register" and turns every m->x
+ * into a register-relative access with no load of the pointer at all.
+ *
+ * The register is R27.  It is not touched by libinterp/comp-arm64.c,
+ * whose JIT uses R0-R5 and R20-R22, and l.s's trap path already saves
+ * and restores R26/R27 in the Ureg, so a trap and return keeps it.
+ */
+extern register Mach *m;			/* R27 */
 extern Proc *up;

@@ -125,6 +125,11 @@ TEXT	_main(SB), 1, $-4
 	 * branch-folding pass.
 	 */
 	MOV	$setSB(SB), R28
+	/*
+	 * m is a register (dat.h).  Establish it before any C runs, not in
+	 * machinit(), because everything from here on may use it.
+	 */
+	MOV	$mach0(SB), R27
 	MOV	R0, dtbptr(SB)		/* x0 holds the DTB physical address at boot */
 	BL	main(SB)
 dead:
@@ -170,6 +175,7 @@ TEXT	_secondary(SB), 1, $-4
 	MOV	secmach(SB), R1		/* this processor's own Mach */
 	MSR	R1, SPR(D_TPIDR_EL1)
 	ISB	$15
+	MOV	R1, R27			/* ... and m, which is a register */
 	MOV	$3, R1
 	MOV	R1, secalive(SB)
 	DSB	$15
@@ -402,8 +408,7 @@ TEXT	splhi(SB), 1, $-4
 	MRS	DAIF, R0
 	AND	$0x80, R0, R1		/* previous I-bit, for the return value */
 	MSR	$2, DAIFSet		/* imm bit1 = IRQ */
-	MOV	$mach0(SB), R2
-	MOV	R30, 0(R2)		/* m->splpc */
+	MOV	R30, 0(R27)		/* m->splpc, this processor's */
 	MOV	R1, R0
 	RET	R30
 
@@ -415,8 +420,7 @@ TEXT	spllo(SB), 1, $-4
 	RET	R30
 
 TEXT	splx(SB), 1, $-4
-	MOV	$mach0(SB), R2
-	MOV	R30, 0(R2)
+	MOV	R30, 0(R27)		/* m->splpc, this processor's */
 	CMP	$0, R0
 	BEQ	splxlo
 	MSR	$2, DAIFSet

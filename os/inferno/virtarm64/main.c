@@ -8,7 +8,6 @@
 #include "version.h"
 
 extern Mach mach0;
-Mach *m;
 Proc *up;
 Conf conf;
 
