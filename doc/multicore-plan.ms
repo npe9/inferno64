@@ -1375,6 +1375,54 @@ and
 .CW lookmod() ,
 with a switch that turns the symptom on and off to check any answer
 against.
+.NH 2
+Which modules, and the technique that could ask
+.PP
+Recording the module path beside each freed
+.CW Type
+and dumping it only when the tracker fires names them:
+.CW /dis/cd.dis ,
+.CW /dis/echo.dis
+and
+.CW /dis/pwd.dis .
+Shell commands \- and precisely the ones
+.CW virtinit 's
+smoke script runs, since it ends with
+.CW "cd /usr/inferno; pwd" .
+So the sequence is ordinary: the shell loads a command module, runs it,
+drops it, and something created from that module's types is still alive
+when its type table goes.
+.PP
+Getting that took two tries and the failures are the useful part.  The
+first stored
+.CW m->path
+as a pointer and read back
+.CW "\(lq\(rq"
+and
+.CW "\(lqp\(rq" ,
+because
+.CW freemod()
+frees the path immediately afterwards; the ring has to copy the string.
+The second, and more important: an earlier attempt simply printed the
+path at
+.CW freemod() ,
+seven lines a boot, one per unload \- and the corruption vanished
+entirely, eight boots of nothing.
+.PP
+So the constraint is tighter than "do not instrument the refcount
+path".  Any print anywhere near this closes the window.  What works is
+to record silently into a ring and dump it only from the failure path,
+which is how both the freeing site and the module name were obtained.
+Anyone continuing should reach for that shape first rather than
+rediscovering it.
+.PP
+There is also a limit worth stating plainly: a check that would be
+genuinely decisive \- walking the heap at
+.CW freemod()
+for a live object still pointing at a type about to be freed \- has not
+been run, and on this evidence it may well hide the bug too.  The
+leak-versus-no-leak comparison worked only because it removed work
+instead of adding it.
 .PP
 What is still not done, so the state is not overstated: GICv3 (the
 redistributor is per processor and this board derives one fixed base),

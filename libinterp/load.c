@@ -852,13 +852,13 @@ lookmod(char *s)
 
 /*
  * Diagnostic switch, off.  Setting it stops freemod() releasing the
- * module's types, which trades a leak for the use-after-free below --
- * not a fix, but the experiment that identified this loop.  With the
- * virtarm64 reproducer (see doc/multicore-plan.ms): eight boots leaking
- * showed no freed or garbage Type and no IMCALL failure at all, against
- * six boots not leaking that showed both, twelve times over.  So a
- * module is being unloaded while objects created from its types are
- * still live, and this is where the types die.
+ * module's types, trading a leak for the use-after-free below.  Not a
+ * fix -- the experiment that identified this loop.  With the virtarm64
+ * reproducer (doc/multicore-plan.ms): eight boots leaking showed no
+ * freed or garbage Type and no IMCALL failure; six not leaking showed
+ * both, twelve times.  The modules whose types die are /dis/cd.dis,
+ * /dis/echo.dis and /dis/pwd.dis -- shell commands the smoke script
+ * runs and the shell then unloads.
  */
 int leaktypes = 0;
 
