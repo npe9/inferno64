@@ -62,3 +62,18 @@ Quit
 .IR ode (2),
 .IR tone (2),
 .IR wm (1)
+.SH BUGS
+The gun barrel and its base are placed by the sprite's own origin and
+turned about it, which is what
+.I Sprite3
+and
+.I Sprite3ZB
+do; the barrel's origin is eighteen pixels from the middle of its
+bitmap, so placing the bitmap instead put the gun visibly out.
+The mirror the original applies while aiming left is a symmetry plane
+through the gun, expressed here as a flipped sprite turned the other way
+\- reflecting a rotation about a vertical axis is the same as reflecting
+the source and turning the other way.
+That identity is exact at two of the four angles it was checked at and
+differs by a pixel's worth at the others, which is where the resampler
+lands rather than where the geometry says.

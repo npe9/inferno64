@@ -257,6 +257,27 @@ step()
 	ode->update(sim, 0.016);
 }
 
+# TempleOS's Sprite3 family places a sprite by its ORIGIN - the (0,0) of
+# the bin's own rectangle - and turns it about that point.  draw3d's
+# sprite2d places the middle of the bitmap, so carry the origin-to-middle
+# offset through the mirror and the rotation and ask for the middle where
+# it lands.  Getting this wrong shifts a sprite by however far its origin
+# sits from its centre, which for bigguns_1 is eighteen pixels.
+sprorigin(img: ref Image, x, y: int, spr, msk: ref Image, deg: real, flipx: int)
+{
+	if(spr == nil)
+		return;
+	ox := real spr.r.min.x + real spr.r.dx() / 2.0;
+	oy := real spr.r.min.y + real spr.r.dy() / 2.0;
+	if(flipx)
+		ox = -ox;
+	rad := deg * PI / 180.0;
+	cs := math->cos(rad);
+	sn := math->sin(rad);
+	draw3d->sprite2d(img, Point(x + int (ox*cs - oy*sn), y + int (ox*sn + oy*cs)),
+		spr, msk, spr.r.dx(), spr.r.dy(), deg, flipx);
+}
+
 manage()
 {
 	kill: list of ref Mass;
@@ -328,16 +349,43 @@ redraw()
 		bx := real gx - real recoil * c;
 		by := real gy - real recoil * s;
 		if(guns[2] != nil)
-			draw3d->sprite2d(img, Point(o.x+gx, o.y+gy-5), guns[2], gunmasks[2],
-				guns[2].r.dx(), guns[2].r.dy(), 0.0, 0);
+			# Sprite3(dc,gun_x+h,gun_y+v,0,<2>): placed by the sprite's
+			# own origin, which for bin 2 is (-14,-18) into its bitmap.
+			# The -5 that used to be here was a fudge for the same thing.
+			sprorigin(img, o.x+gx, o.y+gy, guns[2], gunmasks[2], 0.0, 0);
 		else
 			img.fillellipse(Point(o.x+gx, o.y+gy), 8, 6, ink[0], Point(0, 0));
 		if(guns[1] != nil){
-			cx := bx+15.0*c;
-			cy := by+15.0*s;
-			draw3d->sprite2d(img, Point(o.x+int cx, o.y+int cy),
-				guns[1], gunmasks[1], guns[1].r.dx(), guns[1].r.dy(),
-				gunang*180.0/PI, 0);
+			# Sprite3ZB(dc,gun_x+h-recoil*Cos(a),gun_y+v-recoil*Sin(a)-10,
+			#           0,<1>,a), with a mirror while aiming left:
+			#
+			#   if (a<-PI/2) { DCF_SYMMETRY|DCF_JUST_MIRROR;
+			#                  DCSymmetrySet(dc,gun_x+h,0,gun_x+h,1);
+			#                  a=-a-PI; }
+			#
+			# The symmetry plane is the vertical through the gun, applied
+			# to what the rotation produced.  Reflecting a rotation about
+			# a vertical axis is the same as reflecting the source and
+			# turning the other way (M.R(a) = R(-a).M), so the mirrored
+			# branch is a flipped sprite at -a with its origin reflected
+			# through the gun's x - which is what the arithmetic below
+			# does, rather than mirroring the finished frame.
+			a := gunang;
+			flip := 0;
+			if(a < -PI/2.0){
+				a = -a - PI;
+				flip = 1;
+			}
+			ac := math->cos(a);
+			as := math->sin(a);
+			ox := real gx - real recoil * ac;
+			oy := real gy - real recoil * as - 10.0;
+			if(flip){
+				ox = 2.0 * real gx - ox;
+				a = -a;
+			}
+			sprorigin(img, o.x+int ox, o.y+int oy, guns[1], gunmasks[1],
+				a*180.0/PI, flip);
 		}else{
 			ex := bx + 30.0*c;
 			ey := by + 30.0*s;
