@@ -264,7 +264,20 @@ echo "the peer saw the name the phase advertised"
 # the point, since a model that did would be a second implementation
 # from the same reading, able to share a mistake with the first.
 #
-run server --loopback server
+run server "--loopback --badwrite" server
+#
+# and what the server said to a peer that wrote an attribute it was
+# told was read-only.  A well behaved client never tries -- btfs gives
+# that file mode 0444 -- so this is the only place the server's own
+# permission check is reached, and 0x03 is Write Not Permitted.
+#
+n=`grep -c 'the read-only write was refused, error 0x03' "$OUT/bthci-server.log" || true`
+if [ "$n" != 1 ]; then
+	echo "=== phase server ==="
+	echo "BENCH FAIL (server): the read-only write was refused $n times with 0x03, wanted 1"
+	exit 1
+fi
+echo "the server refused a write to a read-only attribute"
 run two --bonded two "--bonded --addr 001122334466"
 run coc "" coc
 #

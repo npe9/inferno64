@@ -1965,7 +1965,7 @@ server()
 	#
 	cmds := list of {
 		"service " + Svcuuid,
-		"characteristic " + Svcuuid + " " + Chruuid + " r",
+		"characteristic " + Svcuuid + " " + Chruuid + " rn",
 		"characteristic " + Svcuuid + " " + Longuuid + " rw",
 	};
 	for(cl := cmds; cl != nil; cl = tl cl)
@@ -2090,6 +2090,65 @@ server()
 		ok = 0;
 	}
 	fd = nil;
+
+	#
+	# a peer writing.  What it wrote is what the file on this side
+	# reads afterwards -- the same value seen from the two ends.
+	#
+	wrote := "written by the peer";
+	if((we := writefile(dev + "/gatt/" + Svcuuid + "/" + Longuuid, wrote)) != nil){
+		sys->print("BT: FAILED: the client could not write it: %s\n", we);
+		ok = 0;
+	} else {
+		back := trim(readfile(mnt + "/0/gatt/" + Svcuuid + "/" + Longuuid));
+		if(back != wrote){
+			sys->print("BT: FAILED: the peer wrote %q and our file reads %q\n",
+				wrote, back);
+			ok = 0;
+		} else
+			sys->print("BT: the peer wrote it and our own file reads: %s\n", back);
+	}
+	#
+	# A characteristic a peer may not write.  What this shows is
+	# only that the tree does not offer the write -- btfs gives a
+	# read-only characteristic mode 0444, so it never leaves the
+	# guest.  That the *server* refuses one is a different claim and
+	# a well behaved client cannot make it; scripts/btbench.sh
+	# checks it by having the model write such an attribute itself
+	# and looking at what came back.
+	#
+	if((re := writefile(dev + "/gatt/" + Svcuuid + "/" + Chruuid, "no")) == nil){
+		sys->print("BT: FAILED: a read-only characteristic took a write\n");
+		ok = 0;
+	} else
+		sys->print("BT: the tree does not offer the write: %s\n", re);
+
+	#
+	# and notifications: the client subscribes, this side sets the
+	# value, and it arrives.  Both halves are this stack's own, so
+	# what is being tested is that they agree over a wire.
+	#
+	nfd := sys->open(dev + "/gatt/" + Svcuuid + "/" + Chruuid + ".notify", Sys->OREAD);
+	if(nfd == nil){
+		sys->print("BT: FAILED: cannot subscribe: %r\n");
+		ok = 0;
+	} else {
+		sys->sleep(500);
+		writefile(mnt + "/0/gatt/" + Svcuuid + "/" + Chruuid, "88");
+		(n2, nv, nerr) := sdu(nfd, 10000);
+		if(n2 < 0 && nerr == nil){
+			sys->print("BT: FAILED: no notification arrived\n");
+			ok = 0;
+		} else if(n2 < 0){
+			sys->print("BT: FAILED: the notification stream failed: %s\n", nerr);
+			ok = 0;
+		} else if(string nv != "88"){
+			sys->print("BT: FAILED: the notification carried %q\n", string nv);
+			ok = 0;
+		} else
+			sys->print("BT: the client was notified: %s\n", string nv);
+	}
+	nfd = nil;
 
 	if(ok)
 		sys->print("BT: our own client walked our own server\n");

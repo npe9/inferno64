@@ -1058,11 +1058,7 @@ dowrite(m: ref Tmsg.Write)
 	Kcoc =>
 		spawn writecoc(m, n);
 	Klchar =>
-		if((we := gattsrv->setval(n.rad.db, n.lc.vh, m.data)) != nil){
-			srv.reply(ref Rmsg.Error(m.tag, we));
-			return;
-		}
-		srv.reply(ref Rmsg.Write(m.tag, len m.data));
+		spawn writelocal(m, n);
 	* =>
 		srv.reply(ref Rmsg.Error(m.tag, Eperm));
 	}
@@ -2117,7 +2113,7 @@ addcharacteristic(r: ref Radio, svc, uuid: string, p: int): string
 		return "no service " + svc;
 	if(linked(r))
 		return "a link is up: the handles a peer has would go stale";
-	(nil, vh, e) := gattsrv->addchar(r.db, u, p, nil);
+	(nil, vh, nil, e) := gattsrv->addchar(r.db, u, p, nil);
 	if(e != nil)
 		return e;
 	#
@@ -2133,4 +2129,22 @@ addcharacteristic(r: ref Radio, svc, uuid: string, p: int): string
 	nodes[int lc.q].lc = lc;
 	r.lchars = lc :: r.lchars;
 	return nil;
+}
+
+
+#
+# Setting a value this side serves.  Writing the file is what tells
+# every peer that asked for notifications, so it is done in its own
+# process: an indication waits for the peer to confirm it, and a write
+# of a file should not hold the whole server up while it does.
+#
+writelocal(m: ref Tmsg.Write, n: ref Node)
+{
+	if((e := gattsrv->setval(n.rad.db, n.lc.vh, m.data)) != nil){
+		srv.reply(ref Rmsg.Error(m.tag, e));
+		return;
+	}
+	if((e = gattsrv->notify(n.rad.db, n.lc.vh, m.data)) != nil)
+		sys->fprint(sys->fildes(2), "btfs: telling a peer the value changed: %s\n", e);
+	srv.reply(ref Rmsg.Write(m.tag, len m.data));
 }

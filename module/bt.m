@@ -498,9 +498,22 @@ Gattsrv: module
 		wr:	int;		# may a peer write it
 	};
 
+	# One link this database is being served on.  A subscription
+	# belongs to the link and not to the database: two peers may
+	# want notifications from the same characteristic and only one
+	# of them may have asked.
+	Sess: adt {
+		m:	ref L2cap->Mux;
+		mtu:	int;
+		cccd:	list of (int, int);	# handle, what this peer wrote
+		confirm: chan of int;		# an indication was answered
+		up:	int;
+	};
+
 	Db: adt {
 		attrs:	list of ref Attr;	# in handle order
 		n:	int;			# the last handle given out
+		sess:	list of ref Sess;	# links it is being served on
 		lock:	chan of int;
 	};
 
@@ -512,8 +525,11 @@ Gattsrv: module
 	# never given out again, so this happens before a peer is
 	# connected; btfs(4) says so.
 	addsvc:		fn(d: ref Db, uuid: array of byte): (int, string);
+	# the declaration's handle, the value's, and the client
+	# characteristic configuration descriptor's -- 0 when the
+	# properties do not ask for one.
 	addchar:	fn(d: ref Db, uuid: array of byte, props: int,
-				val: array of byte): (int, int, string);
+				val: array of byte): (int, int, int, string);
 
 	# the value a peer reads, and the value a peer last wrote
 	setval:	fn(d: ref Db, h: int, v: array of byte): string;
@@ -521,6 +537,15 @@ Gattsrv: module
 
 	# serve this database to the peer on the far end of that link
 	serve:	fn(d: ref Db, m: ref L2cap->Mux);
+
+	# The value changed here.  Every peer that asked for
+	# notifications on it is told, and every peer that asked for
+	# indications is told and waited for.  A peer that asked for
+	# neither is not written to at all.
+	notify:	fn(d: ref Db, vh: int, v: array of byte): string;
+
+	# is anyone subscribed to it
+	subscribed:	fn(d: ref Db, vh: int): int;
 };
 
 Smp: module

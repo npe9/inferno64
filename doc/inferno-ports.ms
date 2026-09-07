@@ -20183,6 +20183,47 @@ rather than as something that happens to.  A test that names a
 mechanism it never exercises is worse than no test, because it is
 counted.
 .NH 2
+A test that could not be made by a well behaved client
+.PP
+The server takes writes now, and a characteristic that says it
+notifies carries the descriptor a peer writes to ask for them:
+setting the value through the file is what tells every peer that
+asked.  The subscription belongs to the link and not to the database,
+which is what the specification says and also the only thing that
+makes sense \(em two peers reading the same characteristic may differ
+on whether they want to be told about it.  An indication is waited
+for, since only one may be outstanding at a time, and sending the next
+before the first is confirmed is how a peer starts dropping them.
+.PP
+One assertion in the phase was worthless and looked like the opposite.
+It wrote a read-only characteristic through the client and reported
+that the write was refused \(em which it was, by
+.CW btfs
+giving that file mode 0444 on the
+.I client
+side.  The write never left the guest, so the
+.I server 's
+permission check was not reached at all, and the line that said it was
+refused would have gone on saying so with the check taken out.
+.PP
+A well behaved client cannot make that test, because the tree it is
+reading tells it not to.  So for one frame the model stops being a
+wire and behaves as a peer that does not play by the rules: it writes
+handle 1, the first service declaration, which is readable and never
+writable, and intercepts the answer rather than relaying it \(em the
+answer is the model's and not anything the guest's client asked for.
+.CW scripts/btbench.sh
+then checks the error code was 0x03, Write Not Permitted.  With the
+permission check removed the write is taken and no refusal is logged.
+.PP
+The injection turned up a smaller thing on the way.
+.CW credits ()
+in the model built its Number Of Completed Packets event from
+.CW self.handle ,
+of which there is no such thing when two links are being relayed
+between; it had worked because until now there was only ever one.
+Credits are now returned on the link the packet arrived on.
+.NH 2
 The bench now runs the interpreter, and why
 .PP
 With the second radio in, the bench started failing in emu rather than

@@ -45,6 +45,12 @@ Rreadblob:	con 16r0c;
 Rreadblobresp:	con 16r0d;
 Rreadgroup:	con 16r10;
 Rreadgroupresp:	con 16r11;
+Rwrite:		con 16r12;
+Rwriteresp:	con 16r13;
+Rnotify:	con 16r1b;
+Rindicate:	con 16r1d;
+Rconfirm:	con 16r1e;
+Rwritecmd:	con 16r52;
 
 # the errors this side can raise
 Einvalidhandle:	con 16r01;
@@ -53,9 +59,21 @@ Ewritenotperm:	con 16r03;
 Enotsupported:	con 16r06;
 Einvalidoffset:	con 16r07;
 Enotfound:	con 16r0a;
+Ebadlength:	con 16r0d;
 
 Uprimary:	con 16r2800;
 Uchar:		con 16r2803;
+Ucccd:		con 16r2902;
+
+# what a peer writes into a client characteristic configuration
+Cnotify:	con 16r0001;
+Cindicate:	con 16r0002;
+
+# how long a peer has to confirm an indication.  The specification
+# allows thirty seconds; ten is longer than a working link takes and
+# short enough that a peer that has stopped answering does not hold a
+# writer up for half a minute.
+Ackwait:	con 10000;
 
 Defmtu:	con 23;
 Maxmtu:	con 247;
@@ -73,6 +91,7 @@ newdb(): ref Db
 	d := ref Db;
 	d.attrs = nil;
 	d.n = 0;
+	d.sess = nil;
 	d.lock = chan[1] of int;
 	d.lock <-= 1;
 	return d;
@@ -115,14 +134,14 @@ addsvc(d: ref Db, uuid: array of byte): (int, string)
 # The declaration's value has the value handle in it, so the two have
 # to be added together or the handle in the first would be a guess.
 #
-addchar(d: ref Db, uuid: array of byte, props: int, val: array of byte): (int, int, string)
+addchar(d: ref Db, uuid: array of byte, props: int, val: array of byte): (int, int, int, string)
 {
 	if(len uuid != 2 && len uuid != 16)
-		return (0, 0, "a UUID is two bytes or sixteen");
+		return (0, 0, 0, "a UUID is two bytes or sixteen");
 	<-d.lock;
 	if(d.attrs == nil){
 		d.lock <-= 1;
-		return (0, 0, "no service to put it in");
+		return (0, 0, 0, "no service to put it in");
 	}
 	dh := d.n + 1;
 	vh := d.n + 2;
@@ -134,8 +153,17 @@ addchar(d: ref Db, uuid: array of byte, props: int, val: array of byte): (int, i
 	rd := (props & 16r02) != 0;			# read
 	wr := (props & (16r04|16r08)) != 0;		# write, with or without response
 	add(d, ref Attr(0, uuid, val, rd, wr));
+	#
+	# A characteristic that notifies or indicates carries the
+	# descriptor a peer writes to say it wants them.  Without it the
+	# properties would promise something a peer has no way to ask
+	# for.
+	#
+	ch := 0;
+	if(props & (16r10|16r20))
+		ch = add(d, ref Attr(0, uuid16(Ucccd), array[2] of {byte 0, byte 0}, 1, 1));
 	d.lock <-= 1;
-	return (dh, vh, nil);
+	return (dh, vh, ch, nil);
 }
 
 find(d: ref Db, h: int): ref Attr
@@ -205,24 +233,76 @@ sameuuid(a, b: array of byte): int
 
 serve(d: ref Db, m: ref Mux)
 {
-	spawn server(d, m);
+	s := ref Sess;
+	s.m = m;
+	s.mtu = Defmtu;
+	s.cccd = nil;
+	s.confirm = chan[1] of int;
+	s.up = 1;
+	<-d.lock;
+	d.sess = s :: d.sess;
+	d.lock <-= 1;
+	spawn server(d, s);
 }
 
-server(d: ref Db, m: ref Mux)
+server(d: ref Db, s: ref Sess)
 {
-	rq := l2cap->open(m, L2cap->Cattr);
-	mtu := Defmtu;
+	rq := l2cap->open(s.m, L2cap->Cattr);
 	for(;;){
 		p := <-rq;
 		if(p == nil)
-			return;
+			break;
 		if(len p < 1)
 			continue;
-		(r, nmtu) := request(d, mtu, p);
-		mtu = nmtu;
+		if(int p[0] == Rconfirm){
+			#
+			# the answer to an indication.  Non-blocking: a
+			# confirmation nobody is waiting for is a peer
+			# answering something already given up on, and
+			# the reader must not stop for it.
+			#
+			alt {
+			s.confirm <-= 1 =>	;
+			* =>	;
+			}
+			continue;
+		}
+		r := request(d, s, p);
 		if(r != nil)
-			l2cap->send(m, L2cap->Cattr, r);
+			l2cap->send(s.m, L2cap->Cattr, r);
 	}
+	#
+	# the link has gone: take the session out, so a value written
+	# here is not offered to a peer that is no longer there
+	#
+	<-d.lock;
+	s.up = 0;
+	l: list of ref Sess;
+	for(sl := d.sess; sl != nil; sl = tl sl)
+		if(hd sl != s)
+			l = hd sl :: l;
+	d.sess = l;
+	d.lock <-= 1;
+}
+
+# what this peer wrote into a configuration descriptor
+cccdof(s: ref Sess, h: int): int
+{
+	for(l := s.cccd; l != nil; l = tl l){
+		(ch, v) := hd l;
+		if(ch == h)
+			return v;
+	}
+	return 0;
+}
+
+setcccd(s: ref Sess, h, v: int)
+{
+	l: list of (int, int);
+	for(cl := s.cccd; cl != nil; cl = tl cl)
+		if((hd cl).t0 != h)
+			l = hd cl :: l;
+	s.cccd = (h, v) :: l;
 }
 
 err(op, h, e: int): array of byte
@@ -241,13 +321,13 @@ err(op, h, e: int): array of byte
 # server does and what a client can act on -- as against silence,
 # which a client can only time out on.
 #
-request(d: ref Db, mtu: int, p: array of byte): (array of byte, int)
+request(d: ref Db, s: ref Sess, p: array of byte): array of byte
 {
 	op := int p[0];
 	case op {
 	Rmtureq =>
 		if(len p < 3)
-			return (err(op, 0, Einvalidhandle), mtu);
+			return err(op, 0, Einvalidhandle);
 		peer := bt->get16(p, 1);
 		mine := Maxmtu;
 		r := array[3] of byte;
@@ -262,19 +342,172 @@ request(d: ref Db, mtu: int, p: array of byte): (array of byte, int)
 			n = mine;
 		if(n < Defmtu)
 			n = Defmtu;
-		return (r, n);
+		s.mtu = n;
+		return r;
 	Rreadgroup =>
-		return (readgroup(d, mtu, p), mtu);
+		return readgroup(d, s.mtu, p);
 	Rreadtype =>
-		return (readtype(d, mtu, p), mtu);
+		return readtype(d, s.mtu, p);
 	Rfindinfo =>
-		return (findinfo(d, mtu, p), mtu);
+		return findinfo(d, s.mtu, p);
 	Rread =>
-		return (read(d, mtu, p), mtu);
+		return read(d, s, p);
 	Rreadblob =>
-		return (readblob(d, mtu, p), mtu);
+		return readblob(d, s, p);
+	Rwrite or Rwritecmd =>
+		return write(d, s, p);
 	}
-	return (err(op, 0, Enotsupported), mtu);
+	return err(op, 0, Enotsupported);
+}
+
+#
+# A peer writing.  A configuration descriptor is this peer's own and
+# is kept with the session; anything else is the value, which is what
+# the file in the name space then reads.  A Write Command gets no
+# answer at all, not even an error: that is what makes it a command.
+#
+write(d: ref Db, s: ref Sess, p: array of byte): array of byte
+{
+	op := int p[0];
+	if(len p < 3){
+		if(op == Rwritecmd)
+			return nil;
+		return err(op, 0, Einvalidhandle);
+	}
+	h := bt->get16(p, 1);
+	v := p[3:len p];
+	<-d.lock;
+	a := find(d, h);
+	e := 0;
+	iscccd := 0;
+	if(a == nil)
+		e = Einvalidhandle;
+	else if(!a.wr)
+		e = Ewritenotperm;
+	else if(len a.uuid == 2 && bt->get16(a.uuid, 0) == Ucccd){
+		if(len v < 2)
+			e = Ebadlength;
+		else
+			iscccd = 1;
+	}
+	if(e == 0 && !iscccd){
+		nv := array[len v] of byte;
+		nv[0:] = v;
+		a.val = nv;
+	}
+	d.lock <-= 1;
+	if(e == 0 && iscccd)
+		setcccd(s, h, bt->get16(v, 0));
+	if(op == Rwritecmd)
+		return nil;
+	if(e != 0)
+		return err(op, h, e);
+	r := array[1] of byte;
+	r[0] = byte Rwriteresp;
+	return r;
+}
+
+subscribed(d: ref Db, vh: int): int
+{
+	<-d.lock;
+	ch := cccdfor(d, vh);
+	sl := d.sess;
+	d.lock <-= 1;
+	if(ch == 0)
+		return 0;
+	for(; sl != nil; sl = tl sl)
+		if(cccdof(hd sl, ch) & (Cnotify|Cindicate))
+			return 1;
+	return 0;
+}
+
+#
+# The descriptor that belongs to a value: the next attribute after it
+# whose type says so, and only before the next characteristic
+# declaration -- otherwise a characteristic with no descriptor would
+# borrow the next one's.  With the lock held.
+#
+cccdfor(d: ref Db, vh: int): int
+{
+	seen := 0;
+	for(l := d.attrs; l != nil; l = tl l){
+		a := hd l;
+		if(a.handle == vh){
+			seen = 1;
+			continue;
+		}
+		if(!seen)
+			continue;
+		if(len a.uuid == 2){
+			u := bt->get16(a.uuid, 0);
+			if(u == Ucccd)
+				return a.handle;
+			if(u == Uchar || u == Uprimary)
+				return 0;
+		}
+	}
+	return 0;
+}
+
+#
+# The value changed on this side.  Every peer that asked for
+# notifications gets one; every peer that asked for indications gets
+# one and is waited for, because the specification allows one
+# indication outstanding at a time and sending the next before the
+# first is confirmed is how a peer ends up dropping them.
+#
+notify(d: ref Db, vh: int, v: array of byte): string
+{
+	<-d.lock;
+	ch := cccdfor(d, vh);
+	sl := d.sess;
+	d.lock <-= 1;
+	if(ch == 0)
+		return nil;		# nothing may subscribe to it
+	e := "";
+	for(; sl != nil; sl = tl sl){
+		s := hd sl;
+		if(!s.up)
+			continue;
+		c := cccdof(s, ch);
+		if(c & Cnotify){
+			if((se := send(s, Rnotify, vh, v)) != nil)
+				e = se;
+		}else if(c & Cindicate){
+			if((se := send(s, Rindicate, vh, v)) != nil){
+				e = se;
+				continue;
+			}
+			tick := chan[1] of int;
+			spawn timer(Ackwait, tick);
+			alt {
+			<-s.confirm =>	;
+			<-tick =>
+				e = "the peer never confirmed the indication";
+			}
+		}
+	}
+	if(e == "")
+		return nil;
+	return e;
+}
+
+send(s: ref Sess, op, h: int, v: array of byte): string
+{
+	n := len v;
+	if(n > s.mtu - 3)
+		n = s.mtu - 3;
+	r := array[3 + n] of byte;
+	r[0] = byte op;
+	bt->put16(r, 1, h);
+	r[3:] = v[0:n];
+	return l2cap->send(s.m, L2cap->Cattr, r);
+}
+
+timer(ms: int, c: chan of int)
+{
+	sys->sleep(ms);
+	c <-= 1;
 }
 
 #
@@ -436,8 +669,9 @@ findinfo(d: ref Db, mtu: int, p: array of byte): array of byte
 	return r;
 }
 
-read(d: ref Db, mtu: int, p: array of byte): array of byte
+read(d: ref Db, s: ref Sess, p: array of byte): array of byte
 {
+	mtu := s.mtu;
 	if(len p < 3)
 		return err(int p[0], 0, Einvalidhandle);
 	h := bt->get16(p, 1);
@@ -468,8 +702,9 @@ read(d: ref Db, mtu: int, p: array of byte): array of byte
 # the length is not an error -- it is how a client that read exactly
 # mtu-1 bytes finds out there is no more -- and an offset past it is.
 #
-readblob(d: ref Db, mtu: int, p: array of byte): array of byte
+readblob(d: ref Db, s: ref Sess, p: array of byte): array of byte
 {
+	mtu := s.mtu;
 	if(len p < 5)
 		return err(int p[0], 0, Einvalidhandle);
 	h := bt->get16(p, 1);

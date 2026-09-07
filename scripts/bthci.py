@@ -139,6 +139,16 @@ peripheral = '--peripheral' in sys.argv
 # itself; a wire cannot.
 loopback = '--loopback' in sys.argv
 
+# --badwrite: with --loopback, the model stops being only a wire for
+# one frame and behaves as a peer that does not play by the rules: it
+# writes an attribute the server said was read-only.  A well behaved
+# client never tries -- btfs gives that file mode 0444, so the write is
+# refused before it leaves the guest -- so the server's own permission
+# check is reachable from nowhere else.  The answer is intercepted
+# rather than relayed, because it is this model's answer and not
+# anything the guest's client asked for.
+badwrite = '--badwrite' in sys.argv
+
 # --addr XXXXXXXXXXXX: this controller's own BD_ADDR, most significant
 # byte first, so two models in one bench are two radios and not the
 # same one twice.  A bond records the controller it was made on, and
@@ -397,6 +407,7 @@ class Model:
         self.paramresults = []    # what it answered to each request
         self.trace = []
         # LE credit-based channels, keyed by the CID the guest sends to
+        self.badpending = False   # an injected write is waiting for its answer
         self.inhandle = None      # the link the model opened to the guest
         self.outhandle = None     # the link the guest opened to the model
         self.acl_in2 = b''        # reassembly for the second link
@@ -429,8 +440,15 @@ class Model:
         pkt = struct.pack('<HH', self.handle & 0x0fff | (0x2 << 12), len(frame)) + frame
         self.send(bytes([2]) + pkt)
 
-    def credits(self, n=1):
-        self.event(0x13, bytes([1]) + struct.pack('<HH', self.handle, n))
+    def credits(self, n=1, handle=None):
+        # the handle matters: in loopback there are two links and no
+        # single "current" one, and a Number Of Completed Packets for
+        # a handle that is None is not a packet count at all
+        if handle is None:
+            handle = self.handle
+        if handle is None:
+            return
+        self.event(0x13, bytes([1]) + struct.pack('<HH', handle, n))
 
     # ------------------------------------------------ command dispatch
     def command(self, op, params):
@@ -710,6 +728,8 @@ class Model:
     # link it arrived on would be this side talking to itself.
     #
     def acldata_relay(self, handle, pb, d):
+        # one credit back per packet taken, on the link it came in on
+        self.credits(1, handle)
         if handle == self.outhandle:
             if pb == 0x2:
                 self.acl_in = d
@@ -725,22 +745,30 @@ class Model:
             buf = self.acl_in2
             out = self.outhandle
         else:
-            self.credits(1)
             return
         if len(buf) < 4:
-            self.credits(1)
             return
         flen = struct.unpack('<H', buf[0:2])[0]
         if len(buf) < 4 + flen:
-            self.credits(1)
             return
         frame = buf[0:4+flen]
         if handle == self.outhandle:
             self.acl_in = b''
         else:
             self.acl_in2 = b''
+        if handle == self.inhandle and self.badpending:
+            # our own answer, not the client's: take it and say what
+            # the server said rather than passing it on
+            self.badpending = False
+            cid = struct.unpack('<H', frame[2:4])[0]
+            p = frame[4:]
+            if cid == 4 and len(p) >= 5 and p[0] == 0x01:
+                print('bthci: the read-only write was refused, error %#04x'
+                      % p[4], flush=True)
+            else:
+                print('bthci: the read-only write got %s' % p[:8].hex(), flush=True)
+            return
         if out is None:
-            self.credits(1)
             return
         self.relay(out, frame)
 
@@ -1042,6 +1070,15 @@ class Model:
         self.event(0x3e, bytes([0x01]) + rep)
         print('bthci: connected to the guest, handle %#06x' % self.inhandle, flush=True)
         if loopback:
+            if badwrite:
+                time.sleep(1)
+                # handle 1 is the first service declaration: readable,
+                # and never writable by a peer
+                req = bytes([0x12]) + struct.pack('<H', 0x0001) + b'x'
+                frame = struct.pack('<HH', len(req), 4) + req
+                self.badpending = True
+                print('bthci: writing a read-only attribute, on purpose', flush=True)
+                self.relay(self.inhandle, frame)
             return          # the phase closes it when it is done
         time.sleep(6)
         print('bthci: closing the link to the guest', flush=True)
@@ -1068,7 +1105,6 @@ class Model:
             self.send(bytes([2]) + pkt)
             off += take
             first = False
-        self.credits(1)
 
     def move_database(self):
         for svc, char, vh, val in LATER:

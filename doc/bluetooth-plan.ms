@@ -228,15 +228,17 @@ read the other way: reading a file reads what a peer would read,
 writing one sets what a peer will read next.  A peer that connects can
 discover the services and characteristics and read them, including
 values longer than the link's MTU.
+A peer can write, too, and a characteristic that says it notifies
+carries the descriptor a peer writes to ask for it: setting the value
+through the file is then what tells every peer that asked.  An
+indication is waited for, because only one may be outstanding.
 .PP
-What is missing on that side is writes from a peer, notifications and
-indications out, the client characteristic configuration descriptor
-behind them, and Service Changed \(em without which the database
-cannot grow while a peer is connected, so growing it is refused rather
-than leaving the peer with stale handles.  And there is no responder
-half of SMP, so a peer cannot pair with this side; the Long Term Key
-Request event a peripheral gets when the peer starts encryption is not
-handled either.
+What is missing on that side is Service Changed \(em without which the
+database cannot grow while a peer is connected, so growing it is
+refused rather than leaving the peer with stale handles \(em and the
+responder half of SMP, so a peer cannot pair with this side.  The Long
+Term Key Request event a peripheral gets when the peer starts
+encryption is not handled either.
 .NH 2
 Profiles, in the brief's order
 .IP 1.

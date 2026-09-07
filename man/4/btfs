@@ -301,12 +301,28 @@ what a
 may do, and this is how the owner of the database sets the value at
 all.
 .PP
-A peer that connects to this side reads them.  Discovery, reads and
-reads of values longer than the link's MTU are answered; anything else
-is answered with
+A peer that connects to this side reads and writes them.  Discovery,
+reads, reads of values longer than the link's MTU, and writes are
+answered; anything else is answered with
 .B "Request Not Supported" ,
-which is what a server says and what a client can act on.  Writes from
-a peer, notifications, and pairing from this side are not there yet.
+which is what a server says and what a client can act on.  A write
+from a peer to a characteristic whose properties do not allow one is
+refused with
+.BR "Write Not Permitted" .
+.PP
+A characteristic whose properties include
+.B n
+or
+.B i
+carries the descriptor a peer writes to ask for notifications, and
+writing the file here is what sends them: every peer that asked gets
+one.  A peer that asked for indications is waited for, since only one
+indication may be outstanding at a time.  The subscription belongs to
+the link and not to the database, so two peers reading the same
+characteristic may differ on whether they want to be told about it.
+.PP
+Pairing from this side is not there: a peer cannot pair with this
+stack, only with a device this stack connected to.
 .TP
 .B /net/bt/\fIN\fP/remote/\fIADDR\fP/l2cap/
 One file per open LE credit-based channel, named by its PSM in four
