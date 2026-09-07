@@ -185,6 +185,15 @@ init(nil: ref Draw->Context, argv: list of string)
 	args := spec :: nil;
 	if(spec2 != nil)
 		args = spec :: spec2 :: nil;
+	#
+	# A mode named h5-something runs that phase over the three wire
+	# transport instead of H4.  Nothing above the transport changes,
+	# which is the point, so the phase itself is the same one.
+	#
+	if(len mode > 3 && mode[0:3] == "h5-"){
+		args = "-5" :: args;
+		mode = mode[3:];
+	}
 	if(mode == "forget" || mode == "sweeprace")
 		args = "-a" :: "6" :: args;
 	if(keyfile != nil)

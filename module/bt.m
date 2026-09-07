@@ -88,6 +88,7 @@ Bt: module
 Bttransport: module
 {
 	H4PATH:		con "/dis/lib/bt/h4.dis";
+	H5PATH:		con "/dis/lib/bt/h5.dis";
 	USBPATH:	con "/dis/lib/bt/btusb.dis";
 
 	# spec names the controller: for h4 the byte stream and its

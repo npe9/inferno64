@@ -3,6 +3,7 @@
 TARG=\
 	bt.dis\
 	h4.dis\
+	h5.dis\
 	btusb.dis\
 	hci.dis\
 	l2cap.dis\

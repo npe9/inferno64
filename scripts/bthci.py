@@ -175,6 +175,34 @@ rebond = '--rebond' in sys.argv
 # is a fixed layout, which is the whole reason it exists.
 hid = '--hid' in sys.argv
 
+# --h5: frame everything in H5, the three-wire transport, instead of
+# H4.  SLIP delimiters and escapes, a four byte header with sequence
+# and acknowledgement numbers, and the sync/configure handshake before
+# anything else may pass.  Above the framing nothing changes -- the
+# same commands and the same events -- which is the point of a
+# transport.
+h5 = '--h5' in sys.argv
+
+# --h5-drop-ack N: swallow the Nth acknowledgement this side would
+# send, so the guest gets none for that packet and has to send it
+# again.  Retransmission is the whole reason H5 exists and it is
+# invisible when nothing is ever lost.
+h5_drop_ack = 0
+if '--h5-drop-ack' in sys.argv:
+    h5_drop_ack = int(sys.argv[sys.argv.index('--h5-drop-ack') + 1])
+
+# --h5-dup N: send the Nth packet from this side twice with the same
+# sequence number, as a controller does when it did not see an
+# acknowledgement.  The guest must act on it once.
+h5_dup = 0
+if '--h5-dup' in sys.argv:
+    h5_dup = int(sys.argv[sys.argv.index('--h5-dup') + 1])
+
+SLIP_DELIM = 0xc0
+SLIP_ESC = 0xdb
+SLIP_ESC_DELIM = 0xdc
+SLIP_ESC_ESC = 0xdd
+
 # --addr XXXXXXXXXXXX: this controller's own BD_ADDR, most significant
 # byte first, so two models in one bench are two radios and not the
 # same one twice.  A bond records the controller it was made on, and
@@ -458,6 +486,15 @@ class Model:
         self.paramresults = []    # what it answered to each request
         self.trace = []
         # LE credit-based channels, keyed by the CID the guest sends to
+        self.h5_txseq = 0         # H5: the sequence number of the next packet out
+        self.h5_txack = 0         # what to acknowledge
+        self.h5_sent = 0          # reliable packets sent, for --h5-dup
+        self.h5_acks = 0          # acknowledgements sent, for --h5-drop-ack
+        self.h5_dupwatch = None   # an ack number only a duplicate would produce
+        self.h5_state = 'uninit'
+        self.h5_buf = bytearray()
+        self.h5_inframe = False
+        self.h5_esc = False
         self.smp2 = {}            # this model's own pairing, as the initiator
         self.negative = False     # the peripheral said it has no such key
         self.ltkgiven = None      # what the peripheral answered a key request with
@@ -474,9 +511,59 @@ class Model:
 
     # ------------------------------------------------ wire
     def send(self, data):
+        if h5:
+            return self.h5_send(data[0], data[1:])
         with self.lock:
             log('-> %s' % data[:32].hex())
             self.c.sendall(data)
+
+    #
+    # H5 out.  A packet type this side sends reliably carries a
+    # sequence number and expects an acknowledgement; an ack packet
+    # and a link message carry neither.
+    #
+    def h5_send(self, ptype, payload, reliable=None):
+        if reliable is None:
+            reliable = ptype in (0x01, 0x02, 0x04, 0x05)
+        with self.lock:
+            hdr = bytearray(4)
+            if reliable:
+                hdr[0] |= self.h5_txseq & 0x07
+                hdr[0] |= 0x80
+            hdr[0] |= (self.h5_txack & 0x07) << 3
+            hdr[1] = (ptype & 0x0f) | ((len(payload) & 0x0f) << 4)
+            hdr[2] = (len(payload) >> 4) & 0xff
+            hdr[3] = 0xff - ((hdr[0] + hdr[1] + hdr[2]) & 0xff)
+            frame = bytes(hdr) + bytes(payload)
+            out = bytearray([SLIP_DELIM])
+            for b in frame:
+                if b == SLIP_DELIM:
+                    out += bytes([SLIP_ESC, SLIP_ESC_DELIM])
+                elif b == SLIP_ESC:
+                    out += bytes([SLIP_ESC, SLIP_ESC_ESC])
+                else:
+                    out.append(b)
+            out.append(SLIP_DELIM)
+            log('h5 -> seq %d ack %d type %d len %d'
+                % (hdr[0] & 7, (hdr[0] >> 3) & 7, ptype, len(payload)))
+            self.c.sendall(bytes(out))
+            if reliable:
+                self.h5_sent += 1
+                if h5_dup and self.h5_sent == h5_dup:
+                    print('bthci: sending packet %d again, same sequence'
+                          % self.h5_txseq, flush=True)
+                    self.c.sendall(bytes(out))
+                    #
+                    # What a guest that counted the duplicate would do
+                    # next: acknowledge two packets where one was
+                    # sent.  Watched for until this side actually
+                    # sends that next packet, after which the same
+                    # number is legitimate.
+                    #
+                    self.h5_dupwatch = (self.h5_txseq + 2) & 7
+                elif self.h5_dupwatch is not None:
+                    self.h5_dupwatch = None
+                self.h5_txseq = (self.h5_txseq + 1) & 7
 
     def event(self, code, params):
         self.send(bytes([4, code, len(params)]) + params)
@@ -488,6 +575,16 @@ class Model:
         self.event(0x0f, bytes([status, 1]) + struct.pack('<H', op))
 
     def acl(self, cid, payload):
+        #
+        # A link that has gone takes its handle with it, and a thread
+        # that was sending on it -- the notification loop, say -- is
+        # still between its check and its send.  Answer that here
+        # rather than in every caller: an exception in a daemon thread
+        # is a thread that quietly stops, which is a bench that hangs
+        # somewhere else entirely.
+        #
+        if self.handle is None:
+            return
         # one ACL packet per L2CAP frame; the guest's own fragmentation
         # is exercised on the way down, not up
         frame = struct.pack('<HH', len(payload), cid) + payload
@@ -1476,6 +1573,97 @@ class Model:
         elif code == 0x05:
             log('the initiator gave up: %s' % p.hex())
 
+    # ------------------------------------------------ H5 parser
+    #
+    # The mirror of the guest's: unframe, check the header, answer the
+    # link protocol, acknowledge what is reliable, and hand the packet
+    # to the same dispatch H4 uses.  Nothing above this knows which
+    # transport is underneath.
+    #
+    def h5_in(self, data):
+        for b in data:
+            if b == SLIP_DELIM:
+                if self.h5_inframe and self.h5_buf:
+                    self.h5_frame(bytes(self.h5_buf))
+                self.h5_buf = bytearray()
+                self.h5_esc = False
+                self.h5_inframe = True
+                continue
+            if not self.h5_inframe:
+                continue
+            if self.h5_esc:
+                self.h5_esc = False
+                if b == SLIP_ESC_DELIM:
+                    b = SLIP_DELIM
+                elif b == SLIP_ESC_ESC:
+                    b = SLIP_ESC
+                else:
+                    print('bthci: bad escape %#04x' % b, flush=True)
+                    self.h5_buf = bytearray()
+                    self.h5_inframe = False
+                    continue
+            elif b == SLIP_ESC:
+                self.h5_esc = True
+                continue
+            self.h5_buf.append(b)
+
+    def h5_frame(self, p):
+        if len(p) < 4:
+            return
+        if p[3] != 0xff - ((p[0] + p[1] + p[2]) & 0xff):
+            print('bthci: h5 header checksum wrong', flush=True)
+            return
+        seq = p[0] & 7
+        ack = (p[0] >> 3) & 7
+        rel = (p[0] >> 7) & 1
+        ptype = p[1] & 0x0f
+        if self.h5_dupwatch is not None and ack == self.h5_dupwatch:
+            print('bthci: the guest acknowledged a packet that was never sent',
+                  flush=True)
+            self.h5_dupwatch = None
+        dlen = ((p[1] >> 4) & 0x0f) | (p[2] << 4)
+        if len(p) < 4 + dlen:
+            print('bthci: h5 short payload', flush=True)
+            return
+        body = p[4:4+dlen]
+        log('h5 <- seq %d type %d len %d' % (seq, ptype, dlen))
+        if ptype == 0x0f:
+            return self.h5_link(body)
+        if rel:
+            if seq != self.h5_txack:
+                # the guest sent it again because our ack was lost
+                self.h5_ack()
+                return
+            self.h5_txack = (self.h5_txack + 1) & 7
+            self.h5_ack()
+        if ptype == 0x00:
+            return
+        if self.h5_state != 'active':
+            return
+        if ptype == 1:
+            op = struct.unpack('<H', body[0:2])[0]
+            self.command(op, body[3:3+body[2]])
+        elif ptype == 2:
+            self.acldata(body)
+
+    def h5_ack(self):
+        self.h5_acks += 1
+        if h5_drop_ack and self.h5_acks == h5_drop_ack:
+            print('bthci: swallowing acknowledgement %d' % self.h5_acks, flush=True)
+            return
+        self.h5_send(0x00, b'', reliable=False)
+
+    def h5_link(self, p):
+        if p[:2] == bytes([0x01, 0x7e]):            # sync request
+            self.h5_send(0x0f, bytes([0x02, 0x7d]), reliable=False)
+        elif p[:2] == bytes([0x03, 0xfc]):          # configuration request
+            self.h5_send(0x0f, bytes([0x04, 0x7b]), reliable=False)
+            if self.h5_state != 'active':
+                self.h5_state = 'active'
+                self.h5_txseq = 0
+                self.h5_txack = 0
+                print('bthci: the H5 link is up', flush=True)
+
     # ------------------------------------------------ H4 parser
     def run(self):
         while not self.stop:
@@ -1483,6 +1671,9 @@ class Model:
             if not d:
                 print('bthci: the guest closed the connection', flush=True)
                 return
+            if h5:
+                self.h5_in(d)
+                continue
             self.buf += d
             while True:
                 if len(self.buf) < 1:

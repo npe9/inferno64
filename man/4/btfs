@@ -4,7 +4,7 @@ btfs, btbench, bthid \- Bluetooth Low Energy as a file system
 .SH SYNOPSIS
 .B bt/btfs
 [
-.B -u
+.B -u5
 ] [
 .BI -m " mountpoint"
 ] [
@@ -99,6 +99,12 @@ is the device directory under
 .RB ( ep3.0 ,
 say), or empty to take the first Bluetooth controller found there.
 .PP
+.B -5
+selects the H5 transport, the three-wire one, instead of H4.  H4 puts
+a type byte in front of a packet and trusts the wire; H5 adds SLIP
+framing, a header with sequence and acknowledgement numbers, and
+retransmission, which is what a module speaks when it has no hardware
+flow control to spare.  Nothing above the transport changes.
 .B -m
 gives the mount point, default
 .BR /net/bt .

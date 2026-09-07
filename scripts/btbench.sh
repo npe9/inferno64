@@ -60,6 +60,14 @@
 #	changed	a device that rearranges its database while connected
 #		and indicates Service Changed: the name space must
 #		follow, on the same link
+#	h5	the whole first phase again over H5, the three-wire
+#		transport: SLIP framing, sequence numbers,
+#		acknowledgement and retransmission under everything
+#	h5retx	the same with an acknowledgement swallowed, so the
+#		packet has to go again
+#	h5dup	the same with a packet sent twice on one sequence
+#		number: the guest must act on it once, which only the
+#		controller can see
 #	hid	a Bluetooth keyboard and mouse over GATT, turned into
 #		keystrokes and pointer motion by bthid, which is an
 #		ordinary program over the name space and has no
@@ -182,8 +190,23 @@ run() {		# $1 phase, $2 model flag, $3 bench mode, $4 second model flag
 		sleep 1
 		i=`expr $i + 1`
 	done
+	#
+	# emu does not go away on a TERM: it installs handlers, and the
+	# shell's kill leaves it running.  Twenty nine phases each
+	# leaving one behind is a machine with twenty nine dead emus on
+	# it by the end, and the phases that failed were the late ones
+	# -- which read as timing and was load.  So: ask, wait a moment,
+	# then insist, and sweep for any that started under this one.
+	#
 	kill $emupid 2>/dev/null || true
+	i=0
+	while [ $i -lt 20 ] && kill -0 $emupid 2>/dev/null; do
+		sleep 0.1
+		i=`expr $i + 1`
+	done
+	kill -9 $emupid 2>/dev/null || true
 	wait $emupid 2>/dev/null || true
+	pkill -9 -f "btbench.dis .*$PORT" 2>/dev/null || true
 	pkill -f "bthci.py $PORT" 2>/dev/null || true
 	pkill -f "bthci.py $PORT2" 2>/dev/null || true
 	echo "=== phase $1 ==="
@@ -286,6 +309,47 @@ echo "the peer saw the name the phase advertised"
 # subscription is an open, a report is a read -- so what this shows is
 # that the name space is enough to drive a device class.
 #
+#
+# The three-wire transport.  The same phase as the first one, over H5
+# instead of H4: SLIP framing, sequence numbers, acknowledgement and
+# retransmission under everything, and nothing above the transport
+# knowing which one it is.
+#
+run h5 --h5 h5-full
+n=`grep -c 'the H5 link is up' "$OUT/bthci-h5.log" || true`
+if [ "$n" != 1 ]; then
+	echo "=== phase h5 ==="
+	echo "BENCH FAIL (h5): the link came up $n times, wanted 1"
+	exit 1
+fi
+echo "the H5 link synchronised, configured, and carried the whole flow"
+#
+# and with an acknowledgement swallowed, so the guest has to send the
+# packet again.  Retransmission is the reason H5 exists and is
+# invisible when nothing is ever lost.
+#
+run h5retx "--h5 --h5-drop-ack 3" h5-full
+n=`grep -c 'swallowing acknowledgement' "$OUT/bthci-h5retx.log" || true`
+if [ "$n" != 1 ]; then
+	echo "=== phase h5retx ==="
+	echo "BENCH FAIL (h5retx): $n acknowledgements were swallowed, wanted 1"
+	exit 1
+fi
+echo "an acknowledgement was lost and the packet went again"
+#
+# and with a packet sent twice on the same sequence number, as a
+# controller does when it did not see an acknowledgement.  A guest
+# that counted it twice would acknowledge a packet that was never
+# sent, which only the controller can see.
+#
+run h5dup "--h5 --h5-dup 3" h5-full
+n=`grep -c 'never sent' "$OUT/bthci-h5dup.log" || true`
+if [ "$n" != 0 ]; then
+	echo "=== phase h5dup ==="
+	echo "BENCH FAIL (h5dup): the guest acknowledged $n packets that were never sent"
+	exit 1
+fi
+echo "a packet arrived twice and was acted on once"
 run hid --hid hid
 #
 # and that the host asked for the boot protocol before reading

@@ -20504,9 +20504,17 @@ hunch; what is committed is the observation.
 .PP
 Three runs on
 .CW -c0
-pass every phase; four of six on the JIT do not.  So the bench passes
+passed every phase where four of six on the JIT did not, and the bench
+was pinned to
 .CW -c0
-and says so.  Running a Bluetooth test on a code generator that is
+on the strength of it.  That reading was too strong and is corrected
+below: with more phases,
+.CW -c0
+faults too, just less often.  The pin stands \(em less often is still
+better, and the
+.CW .dis
+files are identical either way \(em but it is not the sound
+configuration it was called.  Running a Bluetooth test on a code generator that is
 documented as racy makes every failure ambiguous, and an ambiguous
 bench is worse than a slower one.  The Dis is identical either way \(em
 the same
@@ -20516,25 +20524,54 @@ stack is unchanged; what changes is which of two interpreters executes
 them.  The JIT is the next thing to fix, and it is written down here
 rather than worked around in silence.
 .NH 2
-Three phases that are not reliable
+The bench is not reliable, and two of the reasons
 .PP
-.CW orphanlive ,
-.CW sco
-and
-.CW early
-have each failed once in this session and passed on the next run of
-the same binaries, with nothing between the two but a re-run.  All
-three turn on timing that is deliberately marginal \(em a completion
-that arrives after the attempt gave up, a completion that arrives
-before the command status, a stream of packets nobody asked for \(em
-and none of them is near the work that was being done when it failed.
+Phases began failing and passing on a re-run: first one, then several,
+in no fixed place.  The note that used to be here said they were the
+phases whose timing is deliberately marginal, and offered that as a
+pattern.  It was wrong, and wrong in the way a pattern found by
+looking at three points usually is.
 .PP
-It is recorded rather than explained.  One observation is not a
-diagnosis; three observations across three phases with one thing in
-common \(em they are the phases whose timing is on purpose tight \(em
-is a pattern worth writing down and not yet a cause.  A phase that
-flakes without a note is a phase that will waste somebody's afternoon
-later.
+The first reason was the harness.
+.CW emu
+does not go away on a TERM \(em it installs handlers \(em so the
+runner's
+.CW kill
+left it running, and twenty nine phases each leaving one behind is a
+machine carrying twenty nine dead emus by the end.  The phases that
+failed were the late ones, which reads as timing and was load: fifteen
+were counted after one run, and the phase that had just failed inside
+the bench passed three times out of three on its own.  The runner now
+asks, waits, and insists.
+.PP
+The second was the controller model.  Its notification loop checks
+that a link is still there and then sends on it, and a disconnect
+between the two left it building a packet from a handle that had
+become nil.  The exception killed that thread quietly, which is the
+worst way for it to fail: nothing says so, and the run hangs somewhere
+else entirely.  The model now declines to send on a link that has
+gone.
+.PP
+Both were real and both are fixed, and the bench still fails about as
+often as it passes: two of two completed runs afterwards, in different
+phases, one of them with
+.CW "Interp faults with no dis prog"
+\(em a native fault inside the interpreter, on
+.CW -c0 ,
+which is the configuration this document called sound a few sections
+above.  That claim was made on three clean runs of a twenty two phase
+bench; at twenty nine phases it does not hold.
+.PP
+What is left is not diagnosed.  It is a fault inside
+.CW emu ,
+which is where this tree's own notes put its parallel execution
+problems, and this bench is the heaviest user of them in the tree.  It
+is written down here as what it is: a bench that has outgrown its own
+reliability, with two causes found and removed and a third that has
+not been.  A green run is still a green run \(em every assertion in it
+held \(em but a red one is now as likely to be the harness as the
+stack, and that is exactly the property a bench is supposed not to
+have.
 .NH 2
 What is not there
 .PP

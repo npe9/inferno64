@@ -237,11 +237,13 @@ init(nil: ref Draw->Context, argv: list of string)
 	mnt := mtpt;
 
 	arg->init(argv);
-	arg->setusage("btfs [-u] [-m mountpoint] [-k keyfile] [-a seconds] [device ...]");
+	arg->setusage("btfs [-u5] [-m mountpoint] [-k keyfile] [-a seconds] [device ...]");
 	usb := 0;
+	h5 := 0;
 	while((c := arg->opt()) != 0)
 		case c {
 		'u' =>	usb = 1;
+		'5' =>	h5 = 1;
 		'm' =>	mnt = arg->arg();
 		'k' =>	keyfile = arg->arg();
 		'a' =>
@@ -257,7 +259,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	specs := arg->argv();
 	if(usb)
 		tpath = Bttransport->USBPATH;
-	else if(specs == nil)
+	else if(h5)
+		tpath = Bttransport->H5PATH;
+	if(specs == nil && !usb)
 		specs = "/dev/eia1!115200" :: nil;
 	if(specs == nil)
 		fail("no controller: say which device to open");

@@ -322,11 +322,20 @@ a radio: nothing here has met real controller timing, a vendor's
 firmware, or the air.  The first real device will find things this
 cannot.
 .PP
-Two smaller pieces belong here.  Key storage should be its own
-service, as the brief suggests, rather than a file
+One smaller piece belongs here: key storage should be its own service,
+as the brief suggests, rather than a file
 .CW btfs
-happens to write; and H5, the three-wire UART transport, is what some
-modules speak instead of H4.
+happens to write.
+.PP
+H5, the three-wire UART transport, is done.
+.CW btfs -5
+selects it: SLIP framing, a four byte header with sequence and
+acknowledgement numbers, retransmission, and the sync and configure
+handshake before anything may pass.  The window is one packet, which
+is what makes the sender a loop rather than a queue with a timer per
+entry; and no CRC is asked for or sent, which the configuration
+negotiates.  Nothing above the transport changes, and the bench runs
+its whole first phase over it.
 .NH 1
 The 9front implementation
 .PP
