@@ -139,6 +139,25 @@ static void
 tkfreepanel(Tk *tk)
 {
 	TkPanel *tkp = TKobj(TkPanel, tk);
+
+	/*
+	 * Tkswept means the garbage collector has already collected the
+	 * Draw_Images this top's panelimage entries point at, and set only
+	 * t->di/dd/wreq/wmctxt back to H - pi->image is left dangling.
+	 * tkdelpanelimage identifies an entry with lookupimage(pi->image),
+	 * which reads D2H(pi->image)->t: on the swept path that is a freed
+	 * heap header, and it faults.  Seen as a segmentation violation at a
+	 * tiny address in lookupimage, under rungc, tearing down one toplevel
+	 * while the next was starting.
+	 *
+	 * There is nothing to do here on that path anyway: tkfreetop frees
+	 * the whole panelimages list itself immediately afterwards, and
+	 * deliberately does not destroy the images when swept.  label.c
+	 * already passes Tkswept down for the same reason, and frame.c has
+	 * an open question in the same shape.
+	 */
+	if(tk->flag & Tkswept)
+		return;
 	tkdelpanelimage(tk->env->top, tkp->image);
 	tkdelpanelimage(tk->env->top, tkp->matte);
 }
