@@ -1311,6 +1311,27 @@ boots the machine twice, moves the mouse the same way in both and holds
 button 3 down in one, and the two screens QEMU dumps differ by a block
 of rio's own menu colours where the pointer is.  No window has been made
 and none swept.
+.PP
+A process in a container reads its container's identity for its own pid
+\- in the
+.I Tos
+that
+.IR getpid (2)
+reads, and in
+.BR #c/pid .
+That is the number
+.IR rfork (2)
+gives the parent, the number
+.IR await (2)
+reports, and the number
+.B /proc/<n>/note
+takes, so a program that notes a pid it read for itself notes the right
+thing; a threaded program does exactly that when it exits, which is what
+rio does at the end.
+.B #c/ppid
+answers the parent container while the child table still holds it and 0
+after the parent has reaped, where Plan 9's persists.  A process that is
+not a container's reads the kernel's pid, as before.
 The draw server's mount is
 reachable from another container:
 .I postmountsrv

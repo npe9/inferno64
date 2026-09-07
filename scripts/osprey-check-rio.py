@@ -165,6 +165,10 @@ def main():
          'rio: can\'t' not in ctext and 'rio: can\'t' not in ptext
          and len(re.findall(r'osprey proc: container \d+ pid \d+ /boot/rio: \w+', ctext)) >= 2
          and len(re.findall(r'osprey proc: container \d+ pid \d+ /boot/rio: \w+', ptext)) >= 2),
+        ("and the notes rio posts are addressed to something that exists: libthread keeps the "
+         "number getpid() gave it and posts to that when it shuts down, and no boot here has "
+         "the kernel refusing one because the number named no container",
+         'which is not a container' not in ctext and 'which is not a container' not in ptext),
     ]
 
     bad = 0

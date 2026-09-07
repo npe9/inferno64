@@ -7971,7 +7971,9 @@ gave it, and the kernel resolves that number as a container id:
 .CW "osprey: a note was asked for container 32, which is not a container"
 while the container whose pid is 32 is container 124.  It does not fire
 while rio stays up, and it is what breaks first when a window tries to
-kill the command in it.
+kill the command in it.  2.3j below is that defect fixed; the paragraph
+is kept as it was written, because what it says about where the number
+came from is what led to the fix.
 .PP
 And a window system is a standing load, which is why rio is started
 because the machine was configured to start one:
@@ -8092,13 +8094,122 @@ Comparing the two screens rather than counting one colour is what
 turned "no white" into a bounding box and a histogram, and the
 histogram named the colours.
 .PP
-What is not claimed.  No window has been made and none swept: that wants
-a mouse button, and nothing on this machine presses one yet.  There is
+What is not claimed.  No window has been made and none swept.  A sweep
+is a drag with the button down over the menu's New, and the check holds
+a button rather than driving a gesture.  There is
 no pointer on the screen either \- the arrow is drawn by the draw
 server's cursor out of the mouse ring, and this configuration exposes no
 mouse ring, so the position
 .CW /dev/mouse
 reports is right and there is nothing drawn at it.
+.B "2.3j: the pid a program reads for itself."
+The kernel used to print, several times in a boot with rio in it,
+.CW "osprey: a note was asked for container 32, which is not a container" .
+It was right, and the fault was not rio's.
+.PP
+Everything a legacy program is told about a process here is a
+container's identity.
+.CW rfork
+returns one to the parent,
+.CW await
+reports one in the wait message, and
+.CW /proc/<n>/note
+\- which is what
+.CW postnote (2)
+writes, and which
+.CW devnote.c
+in the personality serves \- parses one out of the path.  Three
+agreed.  The fourth did not:
+.CW getpid (2)
+on Plan 9 is a read of one word of the Tos the kernel filled, and this
+kernel filled it, in
+.CW kexit
+and in
+.CW userinit.c ,
+with
+.CW up->pid ,
+the kernel's own process number.
+.CW #c/pid
+in
+.CW devcons.c
+gave the same number.
+.PP
+That is enough to break a threaded program.  libthread's
+.CW sched.c
+does
+.CW "p->pid = getpid()"
+for each proc it starts, and
+.CW threadexitsall
+walks that list and posts
+.CW threadint
+to every pid in it.  So rio, at the end, posted notes to kernel process
+numbers, and the kernel looked for containers with those numbers and
+found none.  Which is also why the printed complaint named 32 while the
+process list in the same log said
+.CW "container 124 pid 32" .
+.PP
+The fix is one number in two places: a process in a container reads its
+container's identity for its own pid, in the Tos and in
+.CW #c/pid ,
+and the kernel's pid everywhere else, which is what the native side
+wants.
+.CW #c/ppid
+answers the parent out of the child table, and 0 once the parent has
+reaped, where Plan 9's persists; that asymmetry is real and is written
+here rather than papered over with a fourth table to keep in step with
+container lifetime.
+.PP
+The check is a legacy program that does what rio does.  A child reads
+.CW getpid ()
+and writes it up a pipe; the parent compares it with the id
+.CW rfork
+handed back, then posts a note to the child's own number and waits for
+the child's handler to catch it.  Three criteria.  A fourth, in the rio
+check, is a guard and not a result: it says no boot had the kernel
+refuse a note for want of a container, and a boot in which rio posted
+no note at all would pass it too \- rio only posts those when it
+exits, and the check keeps it running.  An accepted note prints
+nothing, so there is no positive line to look for on that side; the
+evidence that the number is right is the legacy program's, where the
+note is posted and caught in the same boot.  The read is bounded by an
+alarm, because without
+.CW RFFDG
+the child shares this descriptor table and the pipe's write end is open
+in the parent too: a child that died before writing would otherwise
+leave the parent waiting on itself, and take the other ninety-odd
+criteria with it.
+.PP
+The negative control is the same kernel with the two Tos lines put
+back.  The child is id 108 to its parent and reads 16 for itself, the
+note to 16 is refused with
+.CW Eperm ,
+the kernel prints that a note was asked for container 16 which is not
+one, and after a move
+.CW getpid ()
+still reads 17 while the container is 109.  With the fix, all four of
+those read the same number as the parent's, the note arrives, and the
+number follows the process into the container a move gives it \- the
+new
+.CW Proc
+has not run yet when the move returns, so its first
+.CW kexit
+fills the Tos with the identity it has now.
+.PP
+One behaviour changes with this that is worth writing down.  libthread's
+.CW tinterrupt
+tries
+.CW writeprocctl
+first and falls back to
+.CW postnote ;
+on this personality the
+.CW ctl
+write has always failed, and until now the
+.CW postnote
+failed too, so a thread interrupt reached nothing.  It lands now.  A
+threaded program that interrupts its own procs will start doing so, and
+that is the intended behaviour rather than a side effect to watch for
+\- but it is new, and if a window system stops behaving as it did, this
+is the change that did it.
 .NH 2
 Track three: the library-OS personality execs a program, then rio
 .PP
@@ -8381,7 +8492,7 @@ longest of the phases, and honestly named as the last.
 .NH 1
 Checking, all of it
 .PP
-There are twelve checks in
+There are fourteen checks in
 .CW scripts/ ,
 one for each thing that boots, one for each pair of machines, and one
 for the userland this tree builds from source, and for most of this
@@ -8430,7 +8541,7 @@ ends in
 The general shape is worth keeping: a calling convention was changed
 and tested against the callers that the same commit changed.
 .CW scripts/osprey-check-all.sh
-is the answer \- seven configuration builds, then all twelve checks in
+is the answer \- seven configuration builds, then all fourteen checks in
 order, with
 .CW -w
 to repeat the two-machine check, which is the one that had been flaky.
@@ -8439,13 +8550,13 @@ check clean, the two-machine check run once:
 .CW pc64
 61,
 .CW p9pair
-83,
+97,
 .CW p9buddy
 5,
 .CW p9linux
 12,
 .CW p964
-29, keyboard 6, micro 7, user 10, net 13, wire 14, two-machine 20, the
+29, keyboard 8, rio 5, micro 7, user 10, net 13, wire 14, two-machine 20, the
 six criteria of the userland the tree builds itself, and two portable
 builds.  A criterion is a sentence a booted kernel printed
 in answer to a command typed at its prompt, so a clean check is also

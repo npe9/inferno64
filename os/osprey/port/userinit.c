@@ -670,7 +670,7 @@ ospreyenteruservec(char **argv, int argc)
 		Tos *tos = (Tos*)(USTKTOP - sizeof(Tos));
 
 		memset(tos, 0, sizeof *tos);
-		tos->pid = up->pid;
+		tos->pid = up->osprey != nil ? ospreyprocid(up) : up->pid;
 		tos->cyclefreq = m->cyclefreq;
 	}
 

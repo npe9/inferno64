@@ -538,6 +538,85 @@ startboot(char *argv0, char **argv)
 	}
 
 	/*
+	 * The identity a process has for itself.  getpid(2) on Plan 9 is a
+	 * read of one word of the Tos the kernel filled, and a threaded
+	 * program keeps the number it read there and posts notes to it
+	 * when it shuts down - libthread's threadexitsall does exactly
+	 * that, which is what rio does at the end.  So the number read
+	 * there has to be the same kind of number a note is addressed by,
+	 * which is a container's identity: the one rfork gave the parent
+	 * and the one /proc/<n>/note takes.  The child reads its own and
+	 * writes it up a pipe; the parent compares it with the id rfork
+	 * handed back and then posts a note to the child's own number.  If
+	 * the two are different kinds of number the note goes to something
+	 * else, or to nothing.
+	 */
+	{
+		int pid, k, n2, selfpid, pfd[2];
+		char pbuf[32], abuf[128];
+
+		if(pipe(pfd) < 0)
+			print("legacy: pipe() for the self-pid test failed\n");
+		else {
+			pid = rfork(RFPROC);
+			if(pid == 0){
+				gwho = "legacy self-pid child";
+				notify(nhandler);
+				n2 = snprint(pbuf, sizeof pbuf, "%d", getpid());
+				write(pfd[1], pbuf, n2);
+				for(k = 0; k < 200; k++)
+					sleep(20);
+				print("legacy: BUG: the self-pid child was never interrupted\n");
+				_exits(nil);
+			}
+			if(pid < 0)
+				print("legacy: rfork(RFPROC) for the self-pid test failed\n");
+			else {
+				selfpid = -1;
+				/*
+				 * Bounded.  Without RFFDG the child shares
+				 * this descriptor table, so the pipe's write
+				 * end is open here too and a child that never
+				 * reached its write would leave this read
+				 * waiting on a writer that is this process.
+				 * The alarm note interrupts the read and
+				 * nhandler continues from it, so a failure
+				 * here prints a BUG instead of stopping the
+				 * program and every criterion after it.
+				 */
+				alarm(5000);
+				n2 = read(pfd[0], pbuf, sizeof pbuf - 1);
+				alarm(0);
+				if(n2 > 0){
+					pbuf[n2] = 0;
+					selfpid = atoi(pbuf);
+				}
+				print("legacy: the child I started is id %d to me, and getpid() reads %d to it\n",
+					pid, selfpid);
+				if(selfpid != pid)
+					print("legacy: BUG: a process's own pid and the id its parent was given are different numbers\n");
+				if(postnote(PNPROC, selfpid, "interrupt") < 0){
+					char eb[ERRMAX];
+
+					eb[0] = 0;
+					errstr(eb, sizeof eb);
+					print("legacy: BUG: the note to %d, the number the child read for itself, was refused: %s\n",
+						selfpid, eb);
+				} else
+					print("legacy: posted a note to %d, the number the child read for itself with getpid(), and it is the same number rfork gave me\n",
+						selfpid);
+				if((n2 = await(abuf, sizeof abuf - 1)) > 0){
+					abuf[n2] = 0;
+					print("legacy: reaped the child I noted by its own pid; its wait message: \"%s\"\n", abuf);
+				} else
+					print("legacy: await() after the self-pid note returned nothing\n");
+			}
+			close(pfd[0]);
+			close(pfd[1]);
+		}
+	}
+
+	/*
 	 * Move: ask the kernel to carry this process, running, into a
 	 * container of its own - resume, not restart.  The call does not
 	 * return to this container; it returns, with the new container's
@@ -576,6 +655,10 @@ startboot(char *argv0, char **argv)
 			mbuf[mn] = 0;
 			print("legacy: I was moved: I am container %d now, my stack still holds %d, and the fd I opened before the move reads: \"%s\"\n",
 				moved, keep, mbuf);
+			if(getpid() == moved)
+				print("legacy: and getpid() reads %d after the move too - the pid a program reads for itself followed it into the new container\n", moved);
+			else
+				print("legacy: BUG: after the move getpid() reads %d but I am container %d\n", getpid(), moved);
 		} else
 			print("legacy: the kernel would not move me (%d)\n", moved);
 		if(mfd >= 0)

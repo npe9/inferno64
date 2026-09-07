@@ -288,6 +288,19 @@ def main():
          and 'the name space did not cross' not in t),
         ("and the parent reaps it: wait() returns the forked child's pid - the fork's other end, the kernel answering await for the container it made",
          re.search(r'legacy: I awaited and reaped my forked child; its wait message: "\d+ ', t) is not None),
+        ("a process's own pid is the same number its parent was given: the child reads getpid(), which is a word of the Tos the kernel filled, and it is the id rfork handed the parent - not the kernel's pid for it",
+         re.search(r'legacy: the child I started is id (\d+) to me, and getpid\(\) reads (\d+) to it', t) is not None
+         and (lambda m: m and m.group(1) == m.group(2))(
+             re.search(r'legacy: the child I started is id (\d+) to me, and getpid\(\) reads (\d+) to it', t))
+         and "legacy: BUG: a process's own pid and the id its parent was given are different numbers" not in t),
+        ("and a note addressed by that number arrives: the parent posts to the pid the child read for itself and the child's handler catches it - which is what a threaded program does to its own procs when it shuts down, and what rio does at the end",
+         re.search(r'legacy: posted a note to \d+, the number the child read for itself with getpid\(\), and it is the same number rfork gave me', t) is not None
+         and 'legacy self-pid child: my note handler got the note posted to it: "interrupt"' in t
+         and 'legacy: BUG: the note to' not in t
+         and 'which is not a container' not in t),
+        ("and the number follows a move: the process carried into a container of its own reads that container's identity for its own pid afterwards, not the one it had before",
+         re.search(r'legacy: and getpid\(\) reads (\d+) after the move too - the pid a program reads for itself followed it into the new container', t) is not None
+         and 'legacy: BUG: after the move getpid() reads' not in t),
         ("the device-carried medium: the client puts a real IP packet (an ICMP echo request) on the osprey ring to the server container, and the server receives it and hands it to the stack at its end - the medium's two ends as two containers, the kernel only routing the frame",
          'p9: pair-client: sent an ICMP echo request (10.0.0.1->10.0.0.2) to the server container over the ring - the device-carried medium' in t
          and re.search(r'osprey medium: a 28-byte frame arrived over the ring from container \d+ and was handed to the stack at this end', t) is not None),

@@ -5316,6 +5316,52 @@ ospreydumptasks(void)
 	}
 }
 
+/*
+ * The identity a process in a container has, and its parent's.
+ * Everything a legacy program is told about a process is a container
+ * identity: rfork returns one, await reports one, /proc/<n>/note names
+ * one.  So the number a program reads for its own pid has to be the
+ * same kind of number, or a program that notes a pid it read is noting
+ * something else - which is what rio does when it shuts down, and why
+ * this kernel used to print that a note was asked for a container that
+ * is not one.  Zero means the process is not a container's, and the
+ * caller reports the kernel's pid, which is what the native side wants.
+ */
+ulong
+ospreyprocid(Proc *p)
+{
+	if(p == nil || p->osprey == nil)
+		return 0;
+	return (ulong)ospreyid((Ospreyproc*)p->osprey);
+}
+
+/*
+ * The parent is read out of the child table, which is where the fork
+ * recorded it.  After the parent reaps, the entry is gone and this
+ * answers 0: the parent it had is not there to name.  Plan 9's ppid
+ * persists; this one does not, and saying 0 is better than keeping a
+ * fourth table in step with container lifetime.
+ */
+ulong
+ospreyprocparentid(Proc *p)
+{
+	Ospreychild *e;
+	Ospreyproc *c;
+	ulong id;
+
+	if(p == nil || (c = (Ospreyproc*)p->osprey) == nil)
+		return 0;
+	id = 0;
+	qlock(&ospreylock);
+	for(e = ospreychildren; e < &ospreychildren[nelem(ospreychildren)]; e++)
+		if(e->used && e->child == c){
+			id = (ulong)ospreyid(e->parent);
+			break;
+		}
+	qunlock(&ospreylock);
+	return id;
+}
+
 static int
 ospreywaitkern(Ospreyproc *parent, uvlong seq, long *status, uvlong *value)
 {

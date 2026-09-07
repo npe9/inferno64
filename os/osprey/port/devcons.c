@@ -525,10 +525,14 @@ consread(Chan *c, void *buf, long n, vlong off)
 		return qread(kprintoq, buf, n);
 
 	case Qpid:
-		return readnum((ulong)offset, buf, n, up->pid, NUMSIZE);
+		/* a container's process reads the identity its parent was
+		 * given and its notes are addressed by; see ospreyprocid */
+		return readnum((ulong)offset, buf, n,
+			up->osprey != nil ? ospreyprocid(up) : up->pid, NUMSIZE);
 
 	case Qppid:
-		return readnum((ulong)offset, buf, n, up->parentpid, NUMSIZE);
+		return readnum((ulong)offset, buf, n,
+			up->osprey != nil ? ospreyprocparentid(up) : up->parentpid, NUMSIZE);
 
 	case Qtime:
 		return readtime((ulong)offset, buf, n);

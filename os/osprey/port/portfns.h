@@ -259,6 +259,8 @@ int		noted(Ureg*, Ureg*, int);
 FPsave*		notefpsave(Proc*);
 ulong		nkpages(Confmem*);
 uvlong		ns2fastticks(uvlong);
+ulong		ospreyprocid(Proc*);
+ulong		ospreyprocparentid(Proc*);
 int		okaddr(uintptr, ulong, int);
 int		openmode(ulong);
 Block*		packblock(Block*);

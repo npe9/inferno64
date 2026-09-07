@@ -137,7 +137,13 @@ kexit(Ureg*)
 	tos = (Tos*)(USTKTOP-sizeof(Tos));
 	tos->kcycles += t - up->kentry;
 	tos->pcycles = t + up->pcycles;
-	tos->pid = up->pid;
+	/*
+	 * getpid(2) is a read of this word, and for a process in a
+	 * container it must be the container's identity: that is the
+	 * number rfork gave the parent and the number /proc/<n>/note
+	 * takes.
+	 */
+	tos->pid = up->osprey != nil ? ospreyprocid(up) : up->pid;
 }
 
 static void
