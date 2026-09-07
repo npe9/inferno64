@@ -155,7 +155,7 @@ stop(m: ref Mux)
 	# never get one now.
 	#
 	for(; pend != nil; pend = tl pend){
-		(nil, rc) := hd pend;
+		(nil, nil, rc) := hd pend;
 		alt {
 		rc <-= nil =>	;
 		* =>	;
@@ -286,7 +286,7 @@ signal(m: ref Mux, p: array of byte)
 		# for.  Handing it over rather than acting on it here is
 		# what lets connect and cclose read their own result.
 		#
-		answer(m, id, p[4:4+dlen]);
+		answer(m, id, code, p[4:4+dlen]);
 	Ccredit =>
 		if(dlen < 4)
 			return;
@@ -441,7 +441,7 @@ unchan(m: ref Mux, c: ref Chan)
 unpend(m: ref Mux, id: int)
 {
 	<-m.reply;
-	l: list of (int, chan of array of byte);
+	l: list of (int, int, chan of array of byte);
 	for(pl := m.pend; pl != nil; pl = tl pl)
 		if((hd pl).t0 != id)
 			l = hd pl :: l;
@@ -518,7 +518,7 @@ connect(m: ref Mux, psm: int): (ref Chan, string)
 	m.chans = c :: m.chans;
 	id := nextid(m);
 	rc := chan[1] of array of byte;
-	m.pend = (id, rc) :: m.pend;
+	m.pend = (id, Cconnresp, rc) :: m.pend;
 	m.reply <-= 1;
 
 	req := array[14] of byte;
@@ -605,7 +605,7 @@ cclose(m: ref Mux, c: ref Chan): string
 	dcid := c.dcid;
 	id := nextid(m);
 	rc := chan[1] of array of byte;
-	m.pend = (id, rc) :: m.pend;
+	m.pend = (id, Cdiscresp, rc) :: m.pend;
 	unchan(m, c);
 	m.reply <-= 1;
 	poke(c);
@@ -816,24 +816,13 @@ kframe(m: ref Mux, c: ref Chan, p: array of byte)
 	}
 }
 
-openchans(m: ref Mux): list of ref Chan
-{
-	<-m.reply;
-	l: list of ref Chan;
-	for(cl := m.chans; cl != nil; cl = tl cl)
-		if((hd cl).state != Sfixed)
-			l = hd cl :: l;
-	m.reply <-= 1;
-	return l;
-}
-
-answer(m: ref Mux, id: int, p: array of byte)
+answer(m: ref Mux, id, code: int, p: array of byte)
 {
 	<-m.reply;
 	rc: chan of array of byte;
 	for(pl := m.pend; pl != nil; pl = tl pl){
-		(pid, c) := hd pl;
-		if(pid == id){
+		(pid, want, c) := hd pl;
+		if(pid == id && want == code){
 			rc = c;
 			break;
 		}

@@ -1671,6 +1671,21 @@ dropcocs(d: ref Dev)
 }
 
 #
+# The channel died under the file.  L2CAP takes a channel down by
+# itself when the peer breaks the credit rules, and the file has to go
+# with it: btfs(4) says a file here is an open channel, and one whose
+# every read fails for ever is not one.  The link going away is
+# handled elsewhere, by the watcher, which takes them all at once.
+#
+reapcoc(d: ref Dev, co: ref Coc)
+{
+	<-d.lock;
+	if(co.c.state != L2cap->Sup && findcoc(d, co.psm) == co)
+		dropcoc(d, co);
+	d.lock <-= 1;
+}
+
+#
 # One read is one SDU.  A short read would lose the rest of it -- the
 # SDU is gone from the queue and there is nowhere to put the remainder
 # -- so a buffer too small to hold it is an error saying how big it
@@ -1689,6 +1704,7 @@ readcoc(m: ref Tmsg.Read, n: ref Node)
 	}
 	(v, e) := l2cap->crecv(mux, co.c);
 	if(e != nil){
+		reapcoc(d, co);
 		srv.reply(ref Rmsg.Error(m.tag, e));
 		return;
 	}
@@ -1717,6 +1733,7 @@ writecoc(m: ref Tmsg.Write, n: ref Node)
 		return;
 	}
 	if((e := l2cap->csend(mux, co.c, m.data)) != nil){
+		reapcoc(d, co);
 		srv.reply(ref Rmsg.Error(m.tag, e));
 		return;
 	}

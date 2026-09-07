@@ -19965,6 +19965,18 @@ two breakages above were caught only as a phase that ran out of time
 four minutes later, which says the same thing far less clearly, and
 the timer turns that into an assertion in ten seconds.
 .PP
+L2CAP takes a channel down by itself when the peer breaks those rules,
+and
+.CW btfs
+has to hear about it: the file is the channel, and one whose every
+read fails for ever is not an open channel.  So a read or a write that
+comes back with the channel down removes the file and the
+.CW state
+line before it answers.  With that removal taken out, the phase
+reports the file still there and
+.CW state
+still naming a channel that no longer exists.
+.PP
 A channel is a file under
 .CW l2cap/
 in the device's directory and deliberately not under
@@ -19972,6 +19984,20 @@ in the device's directory and deliberately not under
 a channel is not an attribute, and a Service Changed indication says
 nothing about it, so rediscovery leaves it where it is.  The link
 going away takes it, along with everything else the link carried.
+.NH 2
+One phase that is not reliable
+.PP
+The
+.CW orphanlive
+phase failed once in this session and passed on the next run of the
+same binaries, with nothing between the two but a re-run.  Nothing in
+the credit-based channel work touches connection handling, so this is
+most likely a race that was already there \(em that phase turns on a
+connection completing after the attempt has given up, and it is the
+one phase whose timing is deliberately marginal.  It is recorded
+rather than explained: one observation is not a diagnosis, and a
+phase that flakes without a note is a phase that will waste somebody's
+afternoon later.
 .NH 2
 What is not there
 .PP

@@ -235,7 +235,13 @@ L2cap: module
 		mtu:	int;
 		chans:	list of ref Chan;
 		nextid:	int;			# signalling identifier
-		pend:	list of (int, chan of array of byte);
+		# what is waiting for an answer: the identifier, the
+		# code the answer must carry, and where to put it.  The
+		# code is checked as well as the identifier because
+		# identifiers wrap at 255 and the credit packets churn
+		# through them, so a reused one must not be able to hand
+		# a waiter something that is not its answer.
+		pend:	list of (int, int, chan of array of byte);
 		reply:	chan of int;
 	};
 
@@ -256,7 +262,6 @@ L2cap: module
 	csend:		fn(m: ref Mux, c: ref Chan, p: array of byte): string;
 	crecv:		fn(m: ref Mux, c: ref Chan): (array of byte, string);
 	cclose:		fn(m: ref Mux, c: ref Chan): string;
-	openchans:	fn(m: ref Mux): list of ref Chan;
 };
 
 #

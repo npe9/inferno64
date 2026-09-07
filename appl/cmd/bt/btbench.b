@@ -1600,17 +1600,24 @@ cocbad(mode: string)
 			mode, why, want);
 		ok = 0;
 	}
+	#
+	# The file is the channel, so a channel L2CAP took down must
+	# take its file with it.  A file left behind whose every read
+	# fails for ever is not an open channel, and btfs(4) says a file
+	# here is one.
+	#
 	if((fd2 := sys->open(f, Sys->ORDWR)) != nil){
-		(n2, nil, e2) := sdu(fd2, 10000);
-		if(n2 >= 0)
-			sys->print("BT: FAILED: %s: the channel is still taking data\n", mode);
-		else if(e2 == nil)
-			sys->print("BT: FAILED: %s: a read on it neither returned nor failed\n", mode);
-		else
-			sys->print("BT: %s: the channel is down: %s\n", mode, e2);
+		sys->print("BT: FAILED: %s: the dead channel left its file behind\n", mode);
+		ok = 0;
 	} else
-		sys->print("BT: %s: the channel is gone\n", mode);
+		sys->print("BT: %s: the channel went and took its file\n", mode);
 	fd2 = nil;
+	st := trim(readfile(dev + "/state"));
+	if(hasword(st, "psm")){
+		sys->print("BT: FAILED: %s: state still names it: %s\n", mode, st);
+		ok = 0;
+	} else
+		sys->print("BT: %s: state no longer names it\n", mode);
 	if(ok)
 		sys->print("BT: %s: the channel went down for the right reason\n", mode);
 	writefile(dev + "/ctl", "disconnect");
