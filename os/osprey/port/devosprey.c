@@ -2830,6 +2830,32 @@ ospreybuddyhas(void)
 	return up->osprey != nil && ospreyserverof(up->osprey) != nil;
 }
 
+/*
+ * Touch every page of a user range, so that the faults it needs are
+ * taken before a forwarded call is built rather than in the middle of
+ * building one.  A page fault taken while a call is half built makes
+ * the kernel forward a page request of its own, and that request uses
+ * the same argument block in the same container's slice; the call that
+ * was being built is then submitted carrying the page request's op and
+ * arguments.  What that looked like from inside a container was its
+ * very first open(2) failing, whatever it named, with no error string
+ * set anywhere and the buddy having been asked for page 0.
+ */
+static void
+ospreytouch(uintptr va, ulong max)
+{
+	uintptr a, e;
+
+	if(max == 0)
+		return;
+	e = va + max;
+	for(a = va; a < e; a = (a + BY2PG) & ~(uintptr)(BY2PG-1))
+		if(okaddr(a, 1, 0))
+			USED(*(volatile uchar*)a);
+		else
+			return;
+}
+
 static long ospreyforkkern(Ospreyproc*, ulong);
 static long ospreylegacyawait(Ospreyproc*, uintptr, int);
 
@@ -2895,7 +2921,13 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 	ab = (uvlong*)ospreydata(p, Bargoff, 4*sizeof(uvlong));
 	if(ab == nil)
 		return -1;
-	ab[0] = scallnr;
+	/*
+	 * The call's own number goes in below, after everything that can
+	 * fault has faulted, and not here: a page fault taken while the
+	 * call is being built forwards a page request through this same
+	 * argument block, and a number written before that would be gone
+	 * by the time the call was submitted.  See ospreytouch above.
+	 */
 
 	/*
 	 * A Plan 9 system call's arguments arrive one to an eight-byte slot,
@@ -2925,6 +2957,7 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 			return -1;
 		{
 			char *name = (char*)a[0];
+			ospreytouch(a[0], 256);
 			for(i = 0; i < 255 && name[i] != 0; i++)
 				nd[i] = name[i];
 			nd[i] = 0;
@@ -2943,6 +2976,14 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 		ab[3] = scallnr == Bpread ? a[3] : (uvlong)-1;
 		break;
 	case Bwrite: case Bpwrite:		/* the data must already be at Bdataoff */
+		/*
+		 * Fault the caller's buffer in before the slice is filled,
+		 * and only as much of it as can go: ospreydata below refuses
+		 * a count past the data block, and walking a quarter of a
+		 * million pages of a segment first, to be told no, is not
+		 * work worth doing.
+		 */
+		ospreytouch(a[1], a[2] > Odbuddydatalen ? Odbuddydatalen : (ulong)a[2]);
 		dd = ospreydata(p, Bdataoff, a[2]);
 		if(dd != nil)
 			for(i = 0; i < (long)a[2]; i++)
@@ -2971,6 +3012,7 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 			return -1;
 		{
 			char *name = (char*)a[0];
+			ospreytouch(a[0], 256);
 			for(i = 0; i < 255 && name[i] != 0; i++)
 				nd[i] = name[i];
 			nd[i] = 0;
@@ -2983,6 +3025,7 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 			return -1;
 		{
 			char *name = (char*)a[0];
+			ospreytouch(a[0], 256);
 			for(i = 0; i < 255 && name[i] != 0; i++)
 				nd[i] = name[i];
 			nd[i] = 0;
@@ -3001,6 +3044,7 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 			return -1;
 		{
 			char *name = (char*)a[0];
+			ospreytouch(a[0], 256);
 			for(i = 0; i < 255 && name[i] != 0; i++)
 				nd[i] = name[i];
 			nd[i] = 0;
@@ -3022,6 +3066,8 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 			return -1;
 		{
 			char *name = (char*)a[0], *old = (char*)a[1];
+			ospreytouch(a[0], 256);
+			ospreytouch(a[1], 256);
 			for(i = 0; i < 127 && name[i] != 0; i++)
 				nd[i] = name[i];
 			nd[i] = 0;
@@ -3037,6 +3083,8 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 			return -1;
 		{
 			char *old = (char*)a[2], *spec = (char*)a[4];
+			ospreytouch(a[2], 256);
+			ospreytouch(a[4], 256);
 			for(i = 0; i < 127 && old[i] != 0; i++)
 				nd[i] = old[i];
 			nd[i] = 0;
@@ -3052,6 +3100,7 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 			return -1;
 		{
 			char *name = (char*)a[0];
+			ospreytouch(a[0], 256);
 			for(i = 0; i < 255 && name[i] != 0; i++)
 				nd[i] = name[i];
 			nd[i] = 0;
@@ -3070,6 +3119,8 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 			 * nil to send.
 			 */
 			char *name = (char*)a[0], *old = (char*)a[1];
+			ospreytouch(a[0], 256);
+			ospreytouch(a[1], 256);
 			if(name == nil)
 				nd[0] = 0;
 			else {
@@ -3098,6 +3149,7 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 	 * error and not an end of file, so a pipeline that outran it would
 	 * say so rather than quietly read short.
 	 */
+	ab[0] = scallnr;		/* last, for the reason above */
 	status = ospreybuddycall(p, Bsyscalltries);
 	if(status < 0)
 		return -1;

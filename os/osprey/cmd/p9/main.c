@@ -50,6 +50,7 @@ p9setup(void)
 	up->slash->path = newpath("/");
 	up->dot = cclone(up->slash);
 	chandevinit();
+	quotefmtinstall();		/* %q, which namelenerror() names files with */
 	/*
 	 * The time device onto /dev, so that a program's nsec(2) - which is
 	 * a read of /dev/bintime and not a system call - finds the file.
@@ -73,6 +74,23 @@ p9setup(void)
 		print("p9: #p bound onto /proc; postnote(2) writes /proc/n/note, and the kernel posts it\n");
 	} else
 		print("p9: could not bind #p onto /proc: %s\n", up->errstr);
+	/*
+	 * And the service registry onto /srv.  The personality reaches it
+	 * as #s and never needed the name, but a program does: lib9p's
+	 * postsrv creates /srv/<name> and hands the pipe to whatever opens
+	 * it, which is how a server started in one container is reachable
+	 * from another.  Without the bind the create landed on the root
+	 * device, which refuses it, and the draw server's postmountsrv
+	 * failed with Eperm.  MCREATE, because a mount point without it is
+	 * not a place a file may be made, which is the next thing the same
+	 * create said: Enocreate.
+	 */
+	if(!waserror()){
+		p9bind("#s", "/srv", MREPL|MCREATE);
+		poperror();
+		print("p9: #s bound onto /srv; a server posts its pipe there by name and another container mounts it\n");
+	} else
+		print("p9: could not bind #s onto /srv: %s\n", up->errstr);
 	print("p9: name space up, root attached\n");
 }
 
@@ -935,6 +953,27 @@ p9paircli(void)
 			print("p9: pair-client: exec /boot/drawsrv started container %ld\n", id);
 			if(id >= 0 && ring_wait(&st) == 0)
 				print("p9: pair-client: wait: /boot/drawsrv (container %ld) exited with status %ld\n", id, st);
+		}
+		/*
+		 * And the same binary again as nothing but a client, in a
+		 * container of its own.  The mount the server made lives in
+		 * the name space of the process that made it, and that
+		 * process has gone; this one finds the server the way rio
+		 * will, by the name postmountsrv posted in /srv, and mounts
+		 * it for itself.
+		 */
+		{
+			extern long ring_execv(char**);
+			char *cargv[4];
+
+			cargv[0] = "/boot/drawsrv";
+			cargv[1] = "-c";
+			cargv[2] = nil;		/* /dev is the default mount point */
+			cargv[3] = nil;
+			id = ring_execv(cargv);
+			print("p9: pair-client: exec /boot/drawsrv -c started container %ld\n", id);
+			if(id >= 0 && ring_wait(&st) == 0)
+				print("p9: pair-client: wait: /boot/drawsrv -c (container %ld) exited with status %ld\n", id, st);
 		}
 	}
 	/*

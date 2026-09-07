@@ -40,7 +40,13 @@ for f in parseip ptclbsum ipaux classmask eipfmt; do
 done
 # libc members the host linker can't read, supplied from lib9 source
 SUP=""
-for m in utfnlen convM2D convD2M convS2M convM2S fcallfmt vsnprint dofmt vfprint; do
+# fmtquote is here for %q, which namelenerror() uses to name the file an
+# error is about: without it every "... does not exist" and "permission
+# denied" from the name space came out with a literal %q in it, and the
+# draw server's postsrv failure said "Eperm: %q" instead of naming /srv.
+# runestrlen comes with it: fmtquote calls it, and it is one of the 34
+# members of the prebuilt archive this linker cannot read.
+for m in utfnlen convM2D convD2M convS2M convM2S fcallfmt vsnprint dofmt vfprint fmtquote runestrlen; do
 	6c $LIBINC -o /tmp/p9_$m.6 lib9/$m.c
 	SUP="$SUP /tmp/p9_$m.6"
 done

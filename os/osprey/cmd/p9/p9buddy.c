@@ -391,6 +391,32 @@ fdof(Img *img, uvlong fd)
 	return img->fds[fd];
 }
 
+/*
+ * Is this descriptor of the buddy's open on a file of the srv device?
+ * A container that posts a service writes the number of one of its own
+ * descriptors into a file it created in /srv, and the srv device
+ * resolves that number in the file table of whoever writes - which here
+ * is the buddy's worker, not the container.  Without a translation the
+ * name in /srv ends up holding whatever channel the worker happened to
+ * have at that number: lib9p's postsrv posted the draw server that way,
+ * and mounting the result spoke 9P at an unrelated device, which
+ * answered "unknown control request".
+ */
+static int
+issrvchan(int bfd)
+{
+	Chan *c;
+	int is;
+
+	if(waserror())
+		return 0;
+	c = fdtochan(bfd, -1, 0, 1);
+	is = devtab[c->type]->dc == 's';
+	cclose(c);
+	poperror();
+	return is;
+}
+
 static long
 fdnew(Img *img, int bfd, char *name, int mode)
 {
@@ -816,9 +842,33 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 		} else if(bfd < 0)
 			r = -1;
 		else {
+			uchar *wp = cdata + Dataoff;
+			long wn = (long)a1;
+			char sbuf[32];
+			int translated = 0;
+
+			/*
+			 * A descriptor number written to a srv file is the
+			 * container's; the srv device wants the worker's.
+			 */
+			if(issrvchan(bfd)){
+				long cfd, i;
+
+				for(cfd = 0, i = 0; i < wn && wp[i] >= '0' && wp[i] <= '9'; i++)
+					cfd = cfd*10 + (wp[i] - '0');
+				if(i == 0 || fdof(img, cfd) < 0){
+					r = -1;
+					break;
+				}
+				wn = snprint(sbuf, sizeof sbuf, "%d", fdof(img, cfd));
+				wp = (uchar*)sbuf;
+				translated = 1;
+			}
 			if(scallnr == PWRITE && (vlong)a2 >= 0)
 				p9seek(bfd, (vlong)a2, 0);
-			r = p9write(bfd, cdata + Dataoff, (long)a1);
+			r = p9write(bfd, wp, wn);
+			if(translated && r >= 0)
+				r = (long)a1;	/* the count the caller wrote */
 		}
 		break;
 

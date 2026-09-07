@@ -20,6 +20,18 @@ env = dict(os.environ, PATH=os.path.join(ROOT, 'MacOSX/arm64/bin') + ':' + os.en
 def plain(s):
     return re.sub(r'\x1b\[[0-9;=?]*[a-zA-Z]', '', s)
 
+def drewfromanother(t):
+    """The second container's readback.  Inside its own box the red it
+    asked for, and inside the first client's box but outside its own the
+    green that was already there: one screen, written by two containers
+    through one server."""
+    m = re.search(r'draw: and it drew on the same screen: inside its own box the frame buffer word is '
+                  r'(0x[0-9a-f]+), and inside the first client\'s box but outside its own it is still (0x[0-9a-f]+)', t)
+    if m is None:
+        return False
+    return int(m.group(1), 16) == 0xff0000 and int(m.group(2), 16) == 0x00ff00
+
+
 def drewpixels(t):
     """The two words read back out of the frame buffer after the draws.
     XRGB32 puts the pixel in memory as 0x00RRGGBB, so the box is 0x00ff00
@@ -287,11 +299,11 @@ def main():
          re.search(r"osprey move: container (\d+)'s process \(/boot/legacy\) resumed as container (\d+), registers and stack as they were; container \1 destroyed", t) is not None
          and re.search(r'legacy: I was moved: I am container \d+ now, my stack still holds 42, and the fd I opened before the move reads: "version 42 of forty', t) is not None
          and 'the kernel would not move me' not in t),
-        ("and the moved process is still its parent's child: it exits from the new container and the client's wait is answered with that container, not a phantom of the old",
-         re.search(r'osprey exec: container (\d+) \(/boot/legacy\) exited with status 0', t) is not None
+        ("and the moved process is still its parent's child: it exits from the new container and the client's wait is answered with that container, not a phantom of the old - it ends on the fault it caught, so the status it exits with is \"note handled\", which is a status and not a success",
+         re.search(r'osprey exec: the program exited with the status "note handled"', t) is not None
          and (lambda a, b: len(a) > 0 and b is not None and a[-1][1] == b.group(1))(
              re.findall(r"osprey move: container (\d+)'s process \(/boot/legacy\) resumed as container (\d+)", t),
-             re.search(r'osprey exec: container (\d+) \(/boot/legacy\) exited with status 0', t))),
+             re.search(r'osprey exec: container (\d+) \(/boot/legacy\) exited with status 1', t))),
         ("and as a group: a thread sharing the address space is stopped, carried along with its registers and stack into a container of its own sharing the moved memory, and goes on counting there after the move; the moved parent is still its parent and reaps it",
          re.search(r'osprey move: group member container \d+ \(pid \d+, sharing the address space\) resumed as container \d+ with container \d+\'s; container \d+ destroyed', t) is not None
          and re.search(r'legacy: moved with my thread: I am container \d+ now; the thread had counted to \d+ before the move and to \d+ after it - it came along, still running in the shared memory', t) is not None
@@ -413,9 +425,10 @@ def main():
         ("a program this tree did not write runs on the server personality: /boot/kbdsrv is os/osprey/cmd/draw/kbd.c linked against the 9front libraries built from the source in 9front/src - libthread and lib9p above the source-built libc, a hundred kilobytes in three segments where every legacy program before it was a few tens - and the buddy lays it out, the kernel pages it in and enters it through init9main.c, and its own main() runs",
          re.search(r'buddy: exec /boot/kbdsrv for container \d+: a Plan 9 a\.out, text \d+ data \d+ bss \d+', t) is not None
          and re.search(r'osprey buddy: /boot/kbdsrv laid out by the buddy: entry 0x200028, 3 segments', t) is not None
-         and re.search(r'p9: pair-client: wait: /boot/kbdsrv \(container \d+\) exited with status 0', t) is not None),
-        ("and it says why it stopped: this machine has no keyboard ring to attach, so the program's sysfatal prints the kernel's own reason through %r - errstr(2) is a call the buddy answers out of the error string it keeps, and a call the kernel served itself is one the buddy never saw fail",
-         'kbdsrv: segattach kbdring: bad arg in system call' in t),
+         and re.search(r'p9: pair-client: wait: /boot/kbdsrv \(container \d+\) exited with status 1', t) is not None),
+        ("and it says why it stopped, and its parent is told that it did: the program's sysfatal prints the kernel's own reason through %r - errstr(2) is a call the buddy answers out of the error string it keeps, and a call the kernel served itself is one the buddy never saw fail - and exits(2) carries that reason out as the container's status, where a wait can see it was not a success",
+         'kbdsrv: segattach kbdring: bad arg in system call' in t
+         and 'osprey exec: the program exited with the status "segattach kbdring: bad arg in system call"' in t),
         ("the draw server runs, and the screen the microkernel exposed is a draw device: /boot/drawsrv is os/osprey/cmd/draw linked against the same source-built 9front libraries, three hundred kilobytes of libmemdraw, libmemlayer, libdraw and lib9p above libc; it maps the frame buffer, initialises the kernel's own devdraw.c in user space, and postmountsrv forks a container that answers 9P on a pipe and mounts it at /dev",
          re.search(r'buddy: exec /boot/drawsrv for container \d+: a Plan 9 a\.out, text \d+ data \d+ bss \d+', t) is not None
          and re.search(r'draw: the frame buffer is mapped at 0x[0-9a-f]+, 4096000 bytes', t) is not None
@@ -424,6 +437,11 @@ def main():
          re.search(r'draw: the first client is client \d+ of the server, and the screen it is given is 1280x800, channel\s+x8r8g8b8', t) is not None),
         ("and the pixels are there: the frame buffer is read back afterwards, and the word inside the box is the green that was asked for and the word outside it the blue the screen was filled with - not a return code, the memory the display controller scans",
          drewpixels(t)),
+        ("and the server is reachable from outside the container that started it: postmountsrv posted its pipe in /srv - #s bound into the name space containers share - and the name outlives the process that posted it, so a second container that never had the server's mount opens /srv/draw, mounts that at /dev for itself, and the draw device gives it a client number of its own on the same 1280x800 screen",
+         re.search(r'draw: a second container found the server by name in /srv and mounted it at /dev', t) is not None
+         and re.search(r"draw: the second container's client is client \d+ of the server, and the screen it is given is 1280x800", t) is not None),
+        ("and its pixels land on the same screen the first client drew: the box it asked for is the red it asked for, and where the first client's box was and its own is not, the green is still there",
+         drewfromanother(t)),
         ("wait is answered by somebody: the client's wait returns the child's exit status",
          re.search(r'p9: pair-client: wait: container \d+ exited with status 0', t) is not None
          and 'panic' not in t and 'killed by SIGSEGV' not in t),	# the Linux child takes one SIGSEGV on purpose

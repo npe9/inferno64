@@ -7441,22 +7441,191 @@ That is one more criterion, and it is what lets one
 .CW mainmem
 serve both halves of a lib9p server.
 .PP
-The honest limit of 2.3e is the name space.
-.CW postmountsrv
-mounts the server in the name space of the process that called it, and
-that process is the container the client started; when the
-demonstration ends, the container ends and the mount with it.  Nothing
-else on the machine can reach
-.CW /dev/draw
-yet.
+The honest limit of 2.3e was the name space: the mount lived in the
+name space of the process that made it, and that process exits.  2.3f
+below lifts it.
+.PP
+.B "2.3f: the server reached from another container."
+The limit above was the name space: the draw server mounted itself in
+the name space of the process that started it, and that process exits.
 .CW postsrv ()
-already takes a name and posts the pipe to
+already knows how to do better \- given a name it creates
+.CW /srv/<name>
+and writes the pipe's end into it, which is how a Plan 9 server is
+found by anything else on the machine \- so the draw server posts as
+.CW draw ,
+and the pair client execs the same binary a second time with
+.CW -c ,
+in a container of its own, as nothing but a client.  It opens
+.CW /srv/draw ,
+mounts it at
+.CW /dev
+for itself, is given a client number of its own on the same
+1280x800 screen, and draws a box of red inside the green one the first
+client drew.  Then it reads the frame buffer back: inside its own box
+the word is
+.CW 0x00ff0000 ,
+and inside the first client's box but outside its own it is still
+.CW 0x0000ff00 .
+One screen, two containers, one server between them.  The pair check is
+89.
+.PP
+Five things were in the way, and each was a real defect rather than a
+missing feature.
+.PP
+First,
 .CW /srv
-when given one, and
+was not in any name space.  The personality reaches the service
+registry as
+.CW #s
+and had never needed the name; a program does, because
+.CW postsrv
+creates by path.  The create landed on the root device, which refuses
+it, and
+.CW postmountsrv
+failed with
+.CW Eperm .
+.CW #s
+is bound onto
 .CW /srv
-is where a second container would find it; that, and the mouse and
-keyboard rings the pair personality does not arm, are what rio needs
-and what comes next.
+now, in the name space at boot, which is the one containers share
+until they rfork one of their own.  It is bound
+.CW MREPL|MCREATE :
+without
+.CW MCREATE
+the same create said
+.CW Enocreate ,
+because a mount point that does not permit creation is not a place a
+file may be made.
+.PP
+Second, the descriptor a container posts is the container's.
+.CW postsrv
+writes the number of one of its own descriptors into the file it made
+in
+.CW /srv ,
+and the srv device resolves that number in the file table of whoever
+writes \- which for a forwarded call is the buddy's worker, not the
+container.  So
+.CW /srv/draw
+held whatever channel the worker happened to have at that number, and
+mounting it spoke 9P at an unrelated device, which answered
+.CW "unknown control request" .
+The buddy translates now: a write to a file of the srv device has its
+decimal descriptor rewritten from the container's table to the
+worker's, and the count the caller wrote is what it is told it wrote.
+.PP
+Third, the personality could not say what was wrong.
+.CW namelenerror ()
+in the name space names the file an error is about with
+.CW "%s: %#q" ,
+and
+.CW %q
+is a verb
+.CW quotefmtinstall ()
+adds \- which nothing here had called, and whose
+.CW fmtquote.c
+was not linked.  Every error from the name space came out with a
+literal
+.CW %q
+in it; the draw server's failure read
+.CW "Eperm: %q" ,
+which named neither the file nor, therefore, the missing bind.
+.CW fmtquote
+is linked now, with
+.CW runestrlen ,
+which it calls and which is one of the 34 members of the prebuilt
+archive this linker cannot read, and
+.CW quotefmtinstall ()
+is called where the name space is set up.
+.PP
+Fourth, and worst,
+.CW exits (2)
+threw its status away.  The handler was
+.CW "USED(list); ospreyexits(0)" ,
+so every program that died \- in
+.CW sysfatal ,
+say \- was reaped by its parent as having succeeded, and every "exited
+with status 0" in every log said nothing whatever.  The status string
+is copied out, printed, and a non-empty one is a non-zero exit; an
+unreadable status pointer is a failure too, and not a success by
+default.  Two criteria had to be corrected rather than kept: the
+keyboard server, which
+.I sysfatal s
+on the ring it has not got, exits 1 and says so, and the moved legacy
+process, which ends by catching the fault it was given, exits with the
+status
+.CW "note handled" .
+Both were asserting 0, and both were only ever true because the status
+was discarded.
+.PP
+Fifth, and the one that took the most boots to see: a container's
+forwarded call failed whenever the page holding the name it was called
+with was not yet resident.  The first
+.CW open (2)
+a fresh container made returned \-1 with no error string set anywhere,
+and the second of the same name succeeded; opening one directory twice
+showed it, and naming a different directory first moved the failure to
+that one.  That made it look like a property of the first call, and it
+is not.  The first open of a string faults its page in and every later
+open of the same string finds it there, so what the ordering was
+showing is resident or not, not first or not.  That is also why
+.CW /boot/cat ,
+.CW /boot/sh
+and
+.CW /boot/kbdsrv
+never tripped it: nothing they opened faulted in the middle of being
+copied.
+.PP
+Three plausible causes were tried first and each was disproved by its
+own instrumentation never firing: the request queue was ready
+.CW ( ospreysubmit
+never failed), the container's data area was mapped
+.CW ( ospreydata
+never returned nil), and the buddy was delegated
+.CW ( ospreyserverof
+was not nil).  Each of those three fixes was taken back out, because a
+retry loop on the path of every forwarded call in every configuration
+is not something to leave behind on a hunch.
+.PP
+The kernel log said the rest, in order: the call reaches
+.CW ospreybuddyforward ()
+with a good name pointer \-
+.CW 0x22ff62 ,
+the string in the program's own data \- the page holding it faults and
+is supplied by the buddy from the program's file, and then there is a
+request for the page at address
+.CW 0 ,
+which the buddy declines because no segment of the program covers it,
+and
+.CW "container 123's call 101 gave \-1: no reason set" .
+101 is the page request's own operation, not the open's.  The call
+being submitted was the page request, with the page request's
+arguments, a second time.
+.PP
+.CW ospreybuddyforward ()
+packs a forwarded call into the argument block the container shares
+with the buddy, and it wrote the operation number into the first word
+of that block
+.I before
+the switch that copies the rest.  Copying a name out of the container's
+address space is what faults, and the fault is served by a nested
+request to the same buddy through the same argument block; when that
+returns, the first word and the arguments under it are the page
+request's.  The outer call was then submitted carrying them.  The
+operation number is written last now, immediately before the submit,
+and the pages a call will read are faulted in before the block is
+filled at all:
+.CW ospreytouch ()
+reads one byte of each page of a name or of a write buffer, so the
+fault happens with nothing packed rather than half way through packing.
+The touch is bounded by the length of the data block, because the
+copy below it refuses a longer count anyway and walking a segment to be
+told no is not work worth doing.
+.PP
+This is not a regression.  It predates every phase here \- it is on the
+path of every forwarded call in every configuration with a buddy, and
+has been since the forwarder was written.  What is new is that a
+program finally opened a file whose name had not been touched yet.
 .NH 2
 Track three: the library-OS personality execs a program, then rio
 .PP

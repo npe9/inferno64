@@ -16,7 +16,7 @@
 void
 usage(void)
 {
-	fprint(2, "usage: draw [-m mtpt]\n");
+	fprint(2, "usage: draw [-c] [-m mtpt]\n");
 	exits("usage");
 }
 
@@ -211,10 +211,15 @@ enum {
 	Grey1	= 0x31,
 	Blue	= 0x0000FFFF,		/* RGBA, as the draw protocol wants */
 	Green	= 0x00FF00FF,
-	Boxx	= 100,			/* where the box goes, and how big */
+	Red	= 0xFF0000FF,
+	Boxx	= 100,			/* the first client's box */
 	Boxy	= 60,
 	Boxw	= 300,
 	Boxh	= 200,
+	Box2x	= 200,			/* the second client's, inside it */
+	Box2y	= 100,
+	Box2w	= 100,
+	Box2h	= 60,
 };
 
 static uchar*
@@ -264,29 +269,72 @@ field(char *info, int i)
 	return atoi(info + i*12);
 }
 
-static void
-firstclient(char *mtpt)
+/*
+ * Open the server's ctl file and say what it hands back: the client
+ * number, and the shape and channel of the screen it is given.  The
+ * data file beside it is where the draw messages go.
+ */
+static int
+drawopen(char *mtpt, char *who, int *wid, int *hgt)
 {
 	char buf[64], info[12*12+1];
-	uchar m[256], *p;
-	int ctl, data, id, wid, hgt;
-	ulong in, out;
+	int ctl, data, id;
 
-	fprint(2, "draw: the mount returned; the first client of the server starts\n");
 	snprint(buf, sizeof buf, "%s/draw/new", mtpt);
 	if((ctl = open(buf, ORDWR)) < 0)
 		sysfatal("open %s: %r", buf);
 	if(read(ctl, info, 12*12) != 12*12)
 		sysfatal("read %s: %r", buf);
 	info[12*12] = 0;
-	id = field(info, 0);
-	wid = field(info, 6) - field(info, 4);
-	hgt = field(info, 7) - field(info, 5);
-	fprint(2, "draw: the first client is client %d of the server, and the screen it is given is %dx%d, channel %.11s\n",
-		id, wid, hgt, info + 2*12);
+	id = atoi(info);
+	*wid = atoi(info + 6*12) - atoi(info + 4*12);
+	*hgt = atoi(info + 7*12) - atoi(info + 5*12);
+	fprint(2, "draw: %s is client %d of the server, and the screen it is given is %dx%d, channel %.11s\n",
+		who, id, *wid, *hgt, info + 2*12);
 	snprint(buf, sizeof buf, "%s/draw/%d/data", mtpt, id);
 	if((data = open(buf, ORDWR)) < 0)
 		sysfatal("open %s: %r", buf);
+	close(ctl);
+	return data;
+}
+
+/*
+ * Read the screen back.  A draw client has no business mapping the
+ * frame buffer - that is the server's - and this does it anyway,
+ * because the result of a draw is pixels and the only way to say so is
+ * to look at them.  The kernel exposes the segment to any container
+ * that asks for it, so the check can look from either end.
+ */
+static ulong
+pixel(int x, int y)
+{
+	if(ospreyfb == nil)
+		ospreyfbattach();
+	if(ospreyfb == nil)
+		sysfatal("the frame buffer could not be mapped: %r");
+	return ospreyfb[y*ospreyfbwid + x] & 0xFFFFFF;
+}
+
+/*
+ * The first client of this server, run in the process that mounted it.
+ * A draw client opens /dev/draw/new, reads from the ctl file the client
+ * number and the shape of the screen, and writes draw messages to the
+ * data file beside it.  That is all libdraw does, and doing it by hand
+ * here keeps the demonstration to the protocol and off a second
+ * library.
+ *
+ * The two halves are different containers: postmountsrv forked, the
+ * child answers 9P on the pipe, and every open, read and write below
+ * crosses it.
+ */
+static void
+firstclient(char *mtpt)
+{
+	uchar m[256], *p;
+	int data, wid, hgt;
+
+	fprint(2, "draw: the mount returned; the first client of the server starts\n");
+	data = drawopen(mtpt, "the first client", &wid, &hgt);
 
 	/*
 	 * Three images and two draws: the whole screen blue, then a box
@@ -301,41 +349,82 @@ firstclient(char *mtpt)
 	p = drawmsg(p, 0, 1, 3, 0, 0, wid, hgt);
 	p = drawmsg(p, 0, 2, 3, Boxx, Boxy, Boxx+Boxw, Boxy+Boxh);
 	if(write(data, m, p-m) != p-m)
-		sysfatal("write %s: %r", buf);
-
-	/*
-	 * And read the frame buffer back, one pixel inside the box and
-	 * one outside it.  Reading it here rather than trusting the
-	 * write's return is the point: the pixels are the result.
-	 */
-	if(ospreyfb == nil)
-		sysfatal("the frame buffer was never attached");
-	in = ospreyfb[(Boxy+Boxh/2)*ospreyfbwid + Boxx+Boxw/2];
-	out = ospreyfb[(Boxy+Boxh/2)*ospreyfbwid + Boxx+Boxw+40];
+		sysfatal("write draw messages: %r");
 	fprint(2, "draw: two draws crossed the pipe and reached the screen: the frame buffer word inside the box is %#.8lux and outside it %#.8lux\n",
-		in & 0xFFFFFF, out & 0xFFFFFF);
+		pixel(Boxx+Boxw/2, Boxy+Boxh/2), pixel(Boxx+Boxw+40, Boxy+Boxh/2));
 	close(data);
-	close(ctl);
+}
+
+/*
+ * The other end of the same server, in a container of its own: it never
+ * had the mount the server's own process made, and finds the server the
+ * way anything else on the machine would - by name in /srv, which is
+ * where postmountsrv posted the pipe.  This is what rio will do.
+ */
+static void
+otherclient(char *mtpt)
+{
+	uchar m[256], *p;
+	int fd, data, wid, hgt;
+
+	if((fd = open("/srv/draw", ORDWR)) < 0)
+		sysfatal("open /srv/draw: %r");
+	if(mount(fd, -1, mtpt, MBEFORE, "") < 0)
+		sysfatal("mount /srv/draw at %s: %r", mtpt);
+	close(fd);
+	fprint(2, "draw: a second container found the server by name in /srv and mounted it at %s\n", mtpt);
+	data = drawopen(mtpt, "the second container's client", &wid, &hgt);
+
+	/* one box of red, inside the green one the first client drew */
+	p = m;
+	p = allocimage(p, 1, Xrgb32, Red);
+	p = allocimage(p, 2, Grey1, ~0);
+	p = drawmsg(p, 0, 1, 2, Box2x, Box2y, Box2x+Box2w, Box2y+Box2h);
+	if(write(data, m, p-m) != p-m)
+		sysfatal("write draw messages: %r");
+	/*
+	 * Inside the second box, and inside the first box but outside the
+	 * second: the new colour where it was drawn and the old one where
+	 * it was not, which is one screen written by two containers.
+	 */
+	fprint(2, "draw: and it drew on the same screen: inside its own box the frame buffer word is %#.8lux, and inside the first client's box but outside its own it is still %#.8lux\n",
+		pixel(Box2x+Box2w/2, Box2y+Box2h/2), pixel(Boxx+20, Boxy+Boxh-20));
+	close(data);
 }
 
 void
 main(int argc, char **argv)
 {
 	char *mtpt;
+	int client;
 
 	mtpt = "/dev";
+	client = 0;
 	ARGBEGIN{
 	case 'm':
 		mtpt = EARGF(usage());
+		break;
+	case 'c':
+		client = 1;
+		break;
 	}ARGEND;
 	USED(argc, argv);
 
+	/*
+	 * -c is the same binary run as nothing but a draw client, in a
+	 * container of its own, to show that the server is reachable
+	 * from outside the process that started it.
+	 */
+	if(client){
+		otherclient(mtpt);
+		exits(nil);
+	}
 	memimageinit();
 	D->reset();
 	D->init();
 	ospreyfbattach();		/* the screen, before there are two of us */
 	oscursorstart();		/* the software mouse cursor */
-	postmountsrv(&drawsrv, nil, mtpt, MBEFORE);
+	postmountsrv(&drawsrv, "draw", mtpt, MBEFORE);
 	firstclient(mtpt);
 	exits(nil);
 }

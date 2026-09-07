@@ -1285,9 +1285,22 @@ does not expose is the keyboard and mouse rings, which
 .B ospreymouseexpose
 gives only to the full personality, so
 .I rio
-and the mouse server have not been run.  Nor is the draw server's mount
-reachable from any other container yet: it lives in the name space of
-the process that made it.
+and the mouse server have not been run.  The draw server's mount is
+reachable from another container:
+.I postmountsrv
+posts its pipe in
+.BR /srv ,
+which is
+.B #s
+bound into the name space containers share, and the pair check execs
+.B /boot/drawsrv
+a second time with
+.B -c
+in a container of its own, where it opens
+.BR /srv/draw ,
+mounts it at
+.B /dev
+for itself and draws on the same screen the first client drew on.
 .PP
 .B /scripts/osprey-check-portable.sh
 boots nothing.  It compiles every source in
