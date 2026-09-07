@@ -60,6 +60,24 @@
 #	changed	a device that rearranges its database while connected
 #		and indicates Service Changed: the name space must
 #		follow, on the same link
+#	coc	an LE credit-based channel: a 512 byte SDU out through a
+#		23 byte MPS and the same bytes back through a 40 byte
+#		one, then a second SDU on the credits the first gave
+#		back.  The channel is a file, and closing it takes the
+#		file with it
+#	cocstingy	the same, with the peer granting one credit at a
+#		time: the writer has to wait for credits rather than
+#		drop what it cannot send, and the SDU still arrives
+#		whole
+#	cocrefuse	a PSM nobody answers on: the peer's own reason has
+#		to reach whoever asked, not be flattened into "cannot
+#		connect"
+#	cocoverrun	a peer that sends a segment it had no credit for:
+#		the channel must go down.  Credits are the only bound
+#		on a receiver's buffers, so absorbing an unpaid segment
+#		is unbounded memory, not leniency
+#	cocbig	a peer announcing an SDU longer than the MTU this side
+#		asked for: same
 #	stalefid	a characteristic file kept open across a disconnect
 #		and a reconnect: the old name must be gone.  What the
 #		fix for it changes is not visible from inside the guest
@@ -174,6 +192,36 @@ if [ "$n" != 1 ]; then
 	exit 1
 fi
 echo "the Service Changed descriptor was written once, for two indications"
+run coc "" coc
+#
+# The controller's own log, because the guest cannot see the
+# difference: the SDU has to have arrived at the peer whole and in one
+# piece, out of the twenty three segments it was sent in.
+#
+n=`grep -c 'coc sdu 512 bytes 00070e151c232a31' "$OUT/bthci-coc.log" || true`
+if [ "$n" != 1 ]; then
+	echo "=== phase coc ==="
+	echo "BENCH FAIL (coc): the peer reassembled the 512 byte SDU $n times, wanted 1"
+	exit 1
+fi
+echo "the peer reassembled the 512 byte SDU exactly once, from its segments"
+run cocstingy --coc-stingy cocstingy
+#
+# the same assertion on the peer's side: with one credit at a time the
+# 512 bytes still have to arrive whole.  A writer that dropped what it
+# had no credit for would leave the peer with a partial SDU it never
+# finishes reassembling, which is invisible from inside the guest.
+#
+n=`grep -c 'coc sdu 512 bytes 00070e151c232a31' "$OUT/bthci-cocstingy.log" || true`
+if [ "$n" != 1 ]; then
+	echo "=== phase cocstingy ==="
+	echo "BENCH FAIL (cocstingy): the peer reassembled the SDU $n times, wanted 1"
+	exit 1
+fi
+echo "one credit at a time and the 512 bytes still arrived whole"
+run cocrefuse "" cocrefuse
+run cocoverrun --coc-overrun cocoverrun
+run cocbig --coc-bigsdu cocbig
 run stalefid "" stalefid
 #
 # three Read Requests for the device name: the one the phase makes

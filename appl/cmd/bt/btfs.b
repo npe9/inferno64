@@ -55,6 +55,7 @@ include "bt.m";
 	smp: Smp;
 	Adv, Conn: import Hci;
 	Mux: import L2cap;
+	Chan: import L2cap;
 	Sess: import Att;
 	Service, Char: import Gatt;
 	Bond: import smp;
@@ -66,9 +67,21 @@ Btfs: module
 
 Kroot, Kctlr, Kaddr, Kver, Kctl, Kstate, Kscan, Kremotes, Kbonds, Kdident, Kinc,
 	Kdev, Kdaddr, Kdtype, Kdrssi, Kdname, Kdadv, Kdstate, Kdctl,
-	Kdgatt, Ksvc, Kchar, Kcnotify: con iota;
+	Kdgatt, Ksvc, Kchar, Kcnotify, Kdl2cap, Kcoc: con iota;
 
 Qroot:	con big 0;
+
+#
+# An open LE credit-based channel and the file that is it.  It hangs
+# off the device rather than off its gatt tree, because it is not part
+# of the database: a device that says its services have moved has not
+# said anything about a channel, and rediscovery leaves it alone.
+#
+Coc: adt {
+	psm:	int;
+	c:	ref L2cap->Chan;
+	q:	big;		# the file
+};
 
 Cnode: adt {
 	c:	ref Char;
@@ -101,6 +114,8 @@ Dev: adt {
 	mux:	ref Mux;
 	sess:	ref Sess;
 	chars:	list of ref Cnode;
+	lq:	big;		# its l2cap directory, or 0
+	cocs:	list of ref Coc;
 	lock:	chan of int;
 };
 
@@ -111,6 +126,7 @@ Node: adt {
 	cn:	ref Cnode;
 	name:	string;
 	text:	string;	# what a Kinc file reads as
+	coc:	ref Coc;
 };
 
 srv:	ref Styxserver;
@@ -235,7 +251,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	nodes = array[64] of ref Node;
 	# node 0 is the root of the served tree, so the first name
 	# created below does not take its qid
-	nodes[0] = ref Node(Qroot, Kroot, nil, nil, ".", nil);
+	nodes[0] = ref Node(Qroot, Kroot, nil, nil, ".", nil, nil);
 	nextq = 1;
 	readkeys();
 
@@ -319,7 +335,7 @@ newnode(kind: int, d: ref Dev, cn: ref Cnode, name: string): big
 		nodes = a;
 	}
 	q := big nextq;
-	nodes[nextq] = ref Node(q, kind, d, cn, name, nil);
+	nodes[nextq] = ref Node(q, kind, d, cn, name, nil, nil);
 	nextq++;
 	return q;
 }
@@ -796,6 +812,8 @@ doread(m: ref Tmsg.Read)
 		spawn readchar(m, n);
 	Kcnotify =>
 		spawn readnotify(m, n);
+	Kcoc =>
+		spawn readcoc(m, n);
 	* =>
 		srv.reply(ref Rmsg.Error(m.tag, Enotfound));
 	}
@@ -853,7 +871,18 @@ devstate(d: ref Dev): string
 		s += sprint(" interval %d latency %d timeout %d",
 			d.conn.interval, d.conn.latency, d.conn.timeout);
 	}
-	return s + "\n";
+	s += "\n";
+	#
+	# one line per open credit-based channel, with the sizes both
+	# sides settled on: the MTU is the largest a read or a write may
+	# be, and the MPS is what goes on the link at once.
+	#
+	for(l := d.cocs; l != nil; l = tl l){
+		co := hd l;
+		s += sprint("l2cap psm %#4.4ux cid %#4.4ux dcid %#4.4ux mtu %d mps %d dmtu %d dmps %d\n",
+			co.psm, co.c.cid, co.c.dcid, co.c.mtu, co.c.mps, co.c.dmtu, co.c.dmps);
+	}
+	return s;
 }
 
 bondtext(): string
@@ -931,6 +960,8 @@ dowrite(m: ref Tmsg.Write)
 		spawn ctlwrite(m, n.dev, string m.data);
 	Kchar =>
 		spawn writechar(m, n);
+	Kcoc =>
+		spawn writecoc(m, n);
 	* =>
 		srv.reply(ref Rmsg.Error(m.tag, Eperm));
 	}
@@ -1022,6 +1053,31 @@ ctlwrite(m: ref Tmsg.Write, d: ref Dev, s: string)
 		else
 			e = hci->leconnupdate(c, int hd f, int hd tl f,
 				int hd tl tl f, int hd tl tl tl f);
+	"l2cap" =>
+		#
+		# open an LE credit-based channel to a PSM.  On the
+		# device's own ctl, like params, and for the same
+		# reason: everything else there takes an address.
+		#
+		if(d == nil){
+			e = "write l2cap to the device's own ctl";
+			break;
+		}
+		if(f == nil){
+			e = "usage: l2cap psm";
+			break;
+		}
+		e = cocopen(d, hexnum(hd f));
+	"unl2cap" =>
+		if(d == nil){
+			e = "write unl2cap to the device's own ctl";
+			break;
+		}
+		if(f == nil){
+			e = "usage: unl2cap psm";
+			break;
+		}
+		e = cocclose(d, hexnum(hd f));
 	"debug" =>
 		;
 	* =>
@@ -1249,6 +1305,7 @@ watcher(d: ref Dev)
 		d.mux = nil;
 		d.state = "disconnected: " + why;
 		droptree(d);
+		dropcocs(d);	# the link took the channels with it
 		d.sccccd = 0;	# the link took the subscription with it
 	}
 	d.lock <-= 1;
@@ -1326,6 +1383,7 @@ rediscover(d: ref Dev)
 dropdev(d: ref Dev)
 {
 	droptree(d);
+	dropcocs(d);
 	for(i := 0; i < nextq; i++){
 		n := nodes[i];
 		if(n != nil && n.dev == d && n.q != d.q)
@@ -1475,4 +1533,192 @@ fail(s: string)
 {
 	sys->fprint(sys->fildes(2), "btfs: %s\n", s);
 	raise "fail:" + s;
+}
+
+#
+# A PSM is written the way it appears in every specification that
+# assigns one: four hexadecimal digits, optionally with an 0x in
+# front.  A decimal spelling would be ambiguous against those.
+#
+hexnum(s: string): int
+{
+	if(len s > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))
+		s = s[2:];
+	v := 0;
+	if(len s == 0)
+		return -1;
+	for(i := 0; i < len s; i++){
+		d := bt->digit(s[i]);
+		if(d < 0)
+			return -1;
+		v = v * 16 + d;
+	}
+	if(v < 0 || v > 16rffff)
+		return -1;
+	return v;
+}
+
+findcoc(d: ref Dev, psm: int): ref Coc
+{
+	for(l := d.cocs; l != nil; l = tl l)
+		if((hd l).psm == psm)
+			return hd l;
+	return nil;
+}
+
+#
+# The connection request is not sent under d.lock: it waits for the
+# peer to answer, and holding the device lock across that would stop
+# a read of the device's name for as long as the peer felt like
+# taking.  The lock is taken to look, dropped to ask, and taken again
+# to record, and the second time it has to look again -- two writers
+# racing on the same PSM must not both end up with a channel.
+#
+cocopen(d: ref Dev, psm: int): string
+{
+	if(psm < 0)
+		return "a PSM is four hexadecimal digits";
+	<-d.lock;
+	m := d.mux;
+	if(m == nil){
+		d.lock <-= 1;
+		return "not connected";
+	}
+	if(findcoc(d, psm) != nil){
+		d.lock <-= 1;
+		return sprint("psm %#4.4ux is already open", psm);
+	}
+	d.lock <-= 1;
+
+	(c, e) := l2cap->connect(m, psm);
+	if(e != nil)
+		return e;
+
+	<-d.lock;
+	if(d.mux != m || findcoc(d, psm) != nil){
+		d.lock <-= 1;
+		l2cap->cclose(m, c);
+		return "the link changed while the channel was being opened";
+	}
+	co := ref Coc(psm, c, big 0);
+	if(d.lq == big 0){
+		d.lq = newnode(Kdl2cap, d, nil, "l2cap");
+		create(d.q, mkdir("l2cap", d.lq));
+	}
+	co.q = mkfd(d.lq, sprint("%4.4ux", psm), Kcoc, 8r666, d, nil);
+	nodes[int co.q].coc = co;
+	d.cocs = co :: d.cocs;
+	d.lock <-= 1;
+	return nil;
+}
+
+cocclose(d: ref Dev, psm: int): string
+{
+	if(psm < 0)
+		return "a PSM is four hexadecimal digits";
+	<-d.lock;
+	co := findcoc(d, psm);
+	if(co == nil){
+		d.lock <-= 1;
+		return sprint("psm %#4.4ux is not open", psm);
+	}
+	m := d.mux;
+	dropcoc(d, co);
+	d.lock <-= 1;
+	if(m != nil)
+		return l2cap->cclose(m, co.c);
+	return nil;
+}
+
+#
+# take one channel out of the tree.  Called with d.lock held.  The
+# file goes whether or not the disconnection request gets an answer:
+# the channel is finished either way, and a file that is still there
+# would be a file whose every read fails.
+#
+dropcoc(d: ref Dev, co: ref Coc)
+{
+	l: list of ref Coc;
+	for(cl := d.cocs; cl != nil; cl = tl cl)
+		if(hd cl != co)
+			l = hd cl :: l;
+	d.cocs = l;
+	if(co.q != big 0)
+		remove(co.q);
+	if(d.cocs == nil && d.lq != big 0){
+		remove(d.lq);
+		d.lq = big 0;
+	}
+}
+
+#
+# the link went away.  Every channel on it went with it; there is
+# nobody to send a disconnection request to, so the files go and that
+# is all.  Called with d.lock held.
+#
+dropcocs(d: ref Dev)
+{
+	for(l := d.cocs; l != nil; l = tl l){
+		co := hd l;
+		if(co.q != big 0)
+			remove(co.q);
+	}
+	d.cocs = nil;
+	if(d.lq != big 0){
+		remove(d.lq);
+		d.lq = big 0;
+	}
+}
+
+#
+# One read is one SDU.  A short read would lose the rest of it -- the
+# SDU is gone from the queue and there is nowhere to put the remainder
+# -- so a buffer too small to hold it is an error saying how big it
+# was, not a truncation.
+#
+readcoc(m: ref Tmsg.Read, n: ref Node)
+{
+	d := n.dev;
+	co := n.coc;
+	<-d.lock;
+	mux := d.mux;
+	d.lock <-= 1;
+	if(mux == nil || co == nil){
+		srv.reply(ref Rmsg.Error(m.tag, "not connected"));
+		return;
+	}
+	(v, e) := l2cap->crecv(mux, co.c);
+	if(e != nil){
+		srv.reply(ref Rmsg.Error(m.tag, e));
+		return;
+	}
+	if(len v > m.count){
+		srv.reply(ref Rmsg.Error(m.tag,
+			sprint("an SDU of %d bytes and a read of %d", len v, m.count)));
+		return;
+	}
+	srv.reply(ref Rmsg.Read(m.tag, v));
+}
+
+#
+# One write is one SDU.  It may block: a peer that has given no
+# credits has said it is not ready, and the bytes wait rather than
+# being thrown away.
+#
+writecoc(m: ref Tmsg.Write, n: ref Node)
+{
+	d := n.dev;
+	co := n.coc;
+	<-d.lock;
+	mux := d.mux;
+	d.lock <-= 1;
+	if(mux == nil || co == nil){
+		srv.reply(ref Rmsg.Error(m.tag, "not connected"));
+		return;
+	}
+	if((e := l2cap->csend(mux, co.c, m.data)) != nil){
+		srv.reply(ref Rmsg.Error(m.tag, e));
+		return;
+	}
+	srv.reply(ref Rmsg.Write(m.tag, len m.data));
 }

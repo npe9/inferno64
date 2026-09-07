@@ -28,8 +28,34 @@ Qdepth:	con 8;
 
 # LE signalling command codes
 Creject:	con 16r01;
+Cdiscreq:	con 16r06;
+Cdiscresp:	con 16r07;
 Cparamreq:	con 16r12;
 Cparamresp:	con 16r13;
+Cconnreq:	con 16r14;
+Cconnresp:	con 16r15;
+Ccredit:	con 16r16;
+
+# the CIDs a dynamically allocated LE channel may take
+Cdynlo:	con 16r0040;
+Cdynhi:	con 16r007f;
+
+# The response timer.  The specification allows a signalling request
+# to wait between one and sixty seconds for its answer; ten is far
+# longer than a link that is working takes and short enough that a
+# link that is not does not hold a program up for a minute.
+Rtx:	con 10000;
+
+# The largest SDU we will take.  A reader has to offer a buffer this
+# big to be sure of not truncating, and btfs(4) says so.
+Cmtu:	con 512;
+
+# Credits are per PDU and the reader consumes whole SDUs, so the
+# credits outstanding have to cover a whole SDU or a peer sending one
+# could never finish it: nothing would be handed to the reader, so no
+# credit would come back.  Twice that leaves a second SDU in flight
+# while the first is being read.
+Cslack:	con 2;
 
 init(b: Bt, h: Hci): string
 {
@@ -45,6 +71,8 @@ start(c: ref Conn): ref Mux
 	m.c = c;
 	m.mtu = 23;
 	m.chans = nil;
+	m.nextid = 1;
+	m.pend = nil;
 	m.reply = chan[1] of int;
 	m.reply <-= 1;
 	spawn demux(m);
@@ -58,6 +86,7 @@ open(m: ref Mux, cid: int): chan of array of byte
 	if(c == nil){
 		c = ref Chan;
 		c.cid = cid;
+		c.state = Sfixed;
 		c.rq = chan[Qdepth] of array of byte;
 		m.chans = c :: m.chans;
 	}
@@ -100,10 +129,35 @@ stop(m: ref Mux)
 	<-m.reply;
 	l := m.chans;
 	m.chans = nil;
+	pend := m.pend;
+	m.pend = nil;
+	for(cl := l; cl != nil; cl = tl cl){
+		c := hd cl;
+		if(c.state != Sfixed){
+			c.state = Sdown;
+			if(c.err == nil)
+				c.err = "the link went away";
+		}
+	}
 	m.reply <-= 1;
 	for(; l != nil; l = tl l){
+		c := hd l;
+		if(c.state == Sfixed){
+			alt {
+			c.rq <-= nil =>	;
+			* =>	;
+			}
+		} else
+			poke(c);
+	}
+	#
+	# anyone waiting for an answer to a signalling request will
+	# never get one now.
+	#
+	for(; pend != nil; pend = tl pend){
+		(nil, rc) := hd pend;
 		alt {
-		(hd l).rq <-= nil =>	;
+		rc <-= nil =>	;
 		* =>	;
 		}
 	}
@@ -127,9 +181,27 @@ demux(m: ref Mux)
 				signal(m, p);
 				continue;
 			}
-			c := find(m, cid);
-			if(c == nil)
+			<-m.reply;
+			c := lookup(m, cid);
+			if(c == nil){
+				m.reply <-= 1;
 				continue;	# nobody opened that channel
+			}
+			if(c.state != Sfixed){
+				#
+				# a credit-based channel: absorb the
+				# segment under the lock, because the
+				# credit accounting and the reassembly
+				# buffer are what the lock is for.  Never
+				# blocks: the queue is as deep as the
+				# credits granted, and a segment cannot
+				# arrive without one.
+				#
+				kframe(m, c, p);
+				m.reply <-= 1;
+				continue;
+			}
+			m.reply <-= 1;
 			alt {
 			c.rq <-= p =>	;
 			* =>	;		# the consumer is behind: drop
@@ -208,6 +280,56 @@ signal(m: ref Mux, p: array of byte)
 			spawn doupdate(m.c, min, max, latency, timeout);
 	Cparamresp =>
 		;
+	Cconnresp or Cdiscresp =>
+		#
+		# the answer to a request some other process is waiting
+		# for.  Handing it over rather than acting on it here is
+		# what lets connect and cclose read their own result.
+		#
+		answer(m, id, p[4:4+dlen]);
+	Ccredit =>
+		if(dlen < 4)
+			return;
+		cid := bt->get16(p, 4);
+		n := bt->get16(p, 6);
+		<-m.reply;
+		c := bydcid(m, cid);
+		if(c == nil || c.state != Sup){
+			m.reply <-= 1;
+			return;
+		}
+		if(n == 0 || c.txcred + n > 16rffff){
+			fail(m, c, sys->sprint("%d credits on top of %d, which is more than a channel can hold", n, c.txcred));
+			m.reply <-= 1;
+			return;
+		}
+		c.txcred += n;
+		m.reply <-= 1;
+		poke(c);
+	Cdiscreq =>
+		if(dlen < 4)
+			return;
+		dcid := bt->get16(p, 4);	# ours, from where the peer sits
+		scid := bt->get16(p, 6);
+		<-m.reply;
+		c := lookup(m, dcid);
+		if(c != nil && c.state != Sfixed){
+			c.state = Sdown;
+			c.err = "the peer closed the channel";
+			c.sdu = nil;
+			unchan(m, c);
+		} else
+			c = nil;
+		m.reply <-= 1;
+		if(c != nil)
+			poke(c);
+		r := array[8] of byte;
+		r[0] = byte Cdiscresp;
+		r[1] = byte id;
+		bt->put16(r, 2, 4);
+		bt->put16(r, 4, dcid);
+		bt->put16(r, 6, scid);
+		send(m, Cle, r);
 	* =>
 		r := array[6] of byte;
 		r[0] = byte Creject;
@@ -216,4 +338,522 @@ signal(m: ref Mux, p: array of byte)
 		bt->put16(r, 4, 0);	# command not understood
 		send(m, Cle, r);
 	}
+}
+
+#
+# LE credit-based channels.
+#
+# A fixed channel needs no setup: everyone agrees what CID 4 is for.
+# A credit-based channel is asked for by PSM, answered with a CID and
+# a set of limits, and then flow-controlled: the receiver hands out
+# credits, one per PDU, and the sender may not send a PDU it has no
+# credit for.  That is the whole of it, and it is the only way bulk
+# data moves over LE.
+#
+# Two sizes matter and they are not the same size.  The MTU is the
+# largest SDU -- the largest thing a reader gets in one piece.  The
+# MPS is the largest PDU -- the largest thing that goes on the link at
+# once.  An SDU longer than the MPS is segmented; the first segment
+# carries a two byte length, and that length counts toward the MPS,
+# which is the detail everyone gets wrong once.
+#
+# The credits are the reason this can be done without dropping
+# anything.  Elsewhere in this file a frame for a consumer that is
+# behind is dropped, because the alternative is to stop the HCI reader
+# and with it the controller.  Here dropping is not allowed: a
+# receiver that has granted N credits has promised to take N PDUs, and
+# a dropped segment does not lose one message, it desynchronises the
+# reassembly and every message after it is garbage.  So the credits
+# granted and the depth of the queue they feed are the same number,
+# and the credits for an SDU are given back when the reader takes it.
+# The demultiplexer then cannot block and cannot drop.
+#
+
+#
+# the peer's reasons for refusing, in its own words
+#
+connerr(res: int): string
+{
+	case res {
+	16r0002 =>	return "PSM not supported";
+	16r0004 =>	return "no resources";
+	16r0005 =>	return "insufficient authentication";
+	16r0006 =>	return "insufficient authorization";
+	16r0007 =>	return "encryption key size too short";
+	16r0008 =>	return "insufficient encryption";
+	16r0009 =>	return "invalid source CID";
+	16r000a =>	return "source CID already in use";
+	16r000b =>	return "unacceptable parameters";
+	}
+	return sys->sprint("refused, reason %#4.4ux", res);
+}
+
+timer(ms: int, c: chan of int)
+{
+	sys->sleep(ms);
+	c <-= 1;
+}
+
+#
+# wake anyone waiting on this channel.  The sender and the receiver
+# wait on separate channels: one token would otherwise be taken by
+# whichever of them happened to be there, and the other would sleep
+# through the thing it was waiting for.
+#
+poke(c: ref Chan)
+{
+	alt {
+	c.wake <-= 1 =>	;
+	* =>	;
+	}
+	alt {
+	c.rwake <-= 1 =>	;
+	* =>	;
+	}
+}
+
+# both with the mux lock held
+nextid(m: ref Mux): int
+{
+	id := m.nextid++;
+	if(m.nextid > 255)
+		m.nextid = 1;
+	return id;
+}
+
+newcid(m: ref Mux): int
+{
+	for(cid := Cdynlo; cid <= Cdynhi; cid++)
+		if(lookup(m, cid) == nil)
+			return cid;
+	return 0;
+}
+
+unchan(m: ref Mux, c: ref Chan)
+{
+	l: list of ref Chan;
+	for(cl := m.chans; cl != nil; cl = tl cl)
+		if(hd cl != c)
+			l = hd cl :: l;
+	m.chans = l;
+}
+
+unpend(m: ref Mux, id: int)
+{
+	<-m.reply;
+	l: list of (int, chan of array of byte);
+	for(pl := m.pend; pl != nil; pl = tl pl)
+		if((hd pl).t0 != id)
+			l = hd pl :: l;
+	m.pend = l;
+	m.reply <-= 1;
+}
+
+#
+# The channel is finished and the peer needs telling.  Called with the
+# lock held, so the disconnection request goes out from a separate
+# process: sending it takes an ACL buffer, which may not be there yet,
+# and the demultiplexer must not be the thing that waits for one.
+#
+fail(m: ref Mux, c: ref Chan, why: string)
+{
+	c.state = Sdown;
+	c.err = why;
+	c.sdu = nil;
+	unchan(m, c);
+	poke(c);
+	spawn discon(m, c.cid, c.dcid);
+}
+
+discon(m: ref Mux, cid, dcid: int)
+{
+	<-m.reply;
+	id := nextid(m);
+	m.reply <-= 1;
+	req := array[8] of byte;
+	req[0] = byte Cdiscreq;
+	req[1] = byte id;
+	bt->put16(req, 2, 4);
+	bt->put16(req, 4, dcid);
+	bt->put16(req, 6, cid);
+	send(m, Cle, req);
+}
+
+connect(m: ref Mux, psm: int): (ref Chan, string)
+{
+	#
+	# The MPS is what fits in one ACL packet: four bytes of that go
+	# to the L2CAP header.  A controller that will take only the
+	# 27 byte minimum therefore gives a 23 byte MPS, which is the
+	# specification's own floor, and every SDU worth sending is
+	# segmented.  That is the ordinary case on a small controller,
+	# not a corner of one.
+	#
+	(aclsz, nil) := hci->aclmtu();
+	mps := aclsz - 4;
+	if(mps < 23)
+		mps = 23;
+	if(mps > Cmtu + 2)
+		mps = Cmtu + 2;
+	ncred := (Cmtu + 2 + mps - 1) / mps;
+	cred := ncred * Cslack;
+
+	<-m.reply;
+	cid := newcid(m);
+	if(cid == 0){
+		m.reply <-= 1;
+		return (nil, "no free channel identifier on this link");
+	}
+	c := ref Chan;
+	c.cid = cid;
+	c.state = Swait;
+	c.psm = psm;
+	c.mtu = Cmtu;
+	c.mps = mps;
+	c.rxcred = cred;
+	c.sq = chan[cred] of ref Sdu;
+	c.wake = chan[1] of int;
+	c.rwake = chan[1] of int;
+	c.rq = chan[1] of array of byte;
+	m.chans = c :: m.chans;
+	id := nextid(m);
+	rc := chan[1] of array of byte;
+	m.pend = (id, rc) :: m.pend;
+	m.reply <-= 1;
+
+	req := array[14] of byte;
+	req[0] = byte Cconnreq;
+	req[1] = byte id;
+	bt->put16(req, 2, 10);
+	bt->put16(req, 4, psm);
+	bt->put16(req, 6, cid);
+	bt->put16(req, 8, c.mtu);
+	bt->put16(req, 10, c.mps);
+	bt->put16(req, 12, cred);
+	if((e := send(m, Cle, req)) != nil){
+		abandon(m, c, id);
+		return (nil, e);
+	}
+
+	tick := chan[1] of int;
+	spawn timer(Rtx, tick);
+	r: array of byte;
+	alt {
+	r = <-rc =>	;
+	<-tick =>
+		abandon(m, c, id);
+		return (nil, "the peer never answered the connection request");
+	}
+	unpend(m, id);
+	if(r == nil){
+		abandon(m, c, 0);
+		return (nil, "the link went away");
+	}
+	if(len r < 10){
+		abandon(m, c, 0);
+		return (nil, "a connection response of only " + string len r + " bytes");
+	}
+	res := bt->get16(r, 8);
+	if(res != 0){
+		abandon(m, c, 0);
+		return (nil, connerr(res));
+	}
+	dcid := bt->get16(r, 0);
+	dmtu := bt->get16(r, 2);
+	dmps := bt->get16(r, 4);
+	if(dcid < Cdynlo || dcid > Cdynhi){
+		abandon(m, c, 0);
+		return (nil, sys->sprint("the peer answered with CID %#4.4ux, which is not a dynamic one", dcid));
+	}
+	if(dmtu < 23 || dmps < 23){
+		abandon(m, c, 0);
+		return (nil, sys->sprint("the peer answered with MTU %d MPS %d, below the smallest allowed", dmtu, dmps));
+	}
+	<-m.reply;
+	c.dcid = dcid;
+	c.dmtu = dmtu;
+	c.dmps = dmps;
+	c.txcred = bt->get16(r, 6);
+	c.state = Sup;
+	m.reply <-= 1;
+	return (c, nil);
+}
+
+abandon(m: ref Mux, c: ref Chan, id: int)
+{
+	<-m.reply;
+	c.state = Sdown;
+	unchan(m, c);
+	m.reply <-= 1;
+	if(id != 0)
+		unpend(m, id);
+	poke(c);
+}
+
+cclose(m: ref Mux, c: ref Chan): string
+{
+	if(c == nil)
+		return "no channel";
+	<-m.reply;
+	if(c.state != Sup){
+		m.reply <-= 1;
+		return nil;
+	}
+	c.state = Sdown;
+	c.err = "closed here";
+	cid := c.cid;
+	dcid := c.dcid;
+	id := nextid(m);
+	rc := chan[1] of array of byte;
+	m.pend = (id, rc) :: m.pend;
+	unchan(m, c);
+	m.reply <-= 1;
+	poke(c);
+
+	req := array[8] of byte;
+	req[0] = byte Cdiscreq;
+	req[1] = byte id;
+	bt->put16(req, 2, 4);
+	bt->put16(req, 4, dcid);
+	bt->put16(req, 6, cid);
+	if((se := send(m, Cle, req)) != nil){
+		unpend(m, id);
+		return se;
+	}
+	tick := chan[1] of int;
+	spawn timer(Rtx, tick);
+	e: string;
+	alt {
+	<-rc =>	e = nil;
+	<-tick =>	e = "the peer never answered the disconnection request";
+	}
+	unpend(m, id);
+	return e;
+}
+
+#
+# one SDU out.  It is segmented at the peer's MPS, a credit is spent
+# per segment, and when the peer has given us none this waits rather
+# than dropping: the writer of a file is entitled to have its bytes
+# arrive.
+#
+csend(m: ref Mux, c: ref Chan, p: array of byte): string
+{
+	if(c == nil)
+		return "no channel";
+	<-m.reply;
+	st := c.state;
+	e := c.err;
+	dmtu := c.dmtu;
+	m.reply <-= 1;
+	if(st != Sup){
+		if(e == nil)
+			e = "the channel is not open";
+		return e;
+	}
+	if(len p > dmtu)
+		return sys->sprint("an SDU of %d bytes: the peer will take %d", len p, dmtu);
+
+	first := 1;
+	off := 0;
+	for(;;){
+		<-m.reply;
+		if(c.state != Sup){
+			e = c.err;
+			m.reply <-= 1;
+			if(e == nil)
+				e = "the channel closed while sending";
+			return e;
+		}
+		if(c.txcred == 0){
+			m.reply <-= 1;
+			<-c.wake;
+			continue;
+		}
+		c.txcred--;
+		more := c.txcred > 0;
+		dcid := c.dcid;
+		mps := c.dmps;
+		m.reply <-= 1;
+		if(more)
+			poke(c);
+
+		hdr := 0;
+		if(first)
+			hdr = 2;
+		n := len p - off;
+		if(n > mps - hdr)
+			n = mps - hdr;
+		f := array[hdr + n] of byte;
+		if(first)
+			bt->put16(f, 0, len p);
+		f[hdr:] = p[off:off+n];
+		if((se := send(m, dcid, f)) != nil)
+			return se;
+		off += n;
+		first = 0;
+		if(off >= len p)
+			break;
+	}
+	return nil;
+}
+
+#
+# one whole SDU in.  The credits it cost go back to the peer only now,
+# which is what keeps the queue it came off from ever being full.
+#
+crecv(m: ref Mux, c: ref Chan): (array of byte, string)
+{
+	if(c == nil)
+		return (nil, "no channel");
+	for(;;){
+		alt {
+		sdu := <-c.sq =>
+			credit(m, c, sdu.pdus);
+			return (sdu.data, nil);
+		* =>	;
+		}
+		<-m.reply;
+		st := c.state;
+		e := c.err;
+		m.reply <-= 1;
+		if(st != Sup){
+			alt {
+			sdu := <-c.sq =>
+				return (sdu.data, nil);
+			* =>	;
+			}
+			if(e == nil)
+				e = "the channel is closed";
+			return (nil, e);
+		}
+		alt {
+		sdu := <-c.sq =>
+			credit(m, c, sdu.pdus);
+			return (sdu.data, nil);
+		<-c.rwake =>	;
+		}
+	}
+}
+
+credit(m: ref Mux, c: ref Chan, n: int): string
+{
+	if(n <= 0)
+		return nil;
+	<-m.reply;
+	if(c.state != Sup){
+		m.reply <-= 1;
+		return nil;
+	}
+	c.rxcred += n;
+	cid := c.cid;
+	id := nextid(m);
+	m.reply <-= 1;
+	p := array[8] of byte;
+	p[0] = byte Ccredit;
+	p[1] = byte id;
+	bt->put16(p, 2, 4);
+	bt->put16(p, 4, cid);
+	bt->put16(p, 6, n);
+	return send(m, Cle, p);
+}
+
+#
+# a segment has arrived.  Runs with the mux lock held, inside the
+# demultiplexer, and must never block.
+#
+kframe(m: ref Mux, c: ref Chan, p: array of byte)
+{
+	if(c.state != Sup)
+		return;
+	if(len p > c.mps){
+		fail(m, c, sys->sprint("a %d byte segment where the most is %d", len p, c.mps));
+		return;
+	}
+	if(c.rxcred <= 0){
+		fail(m, c, "a segment the peer had no credit for");
+		return;
+	}
+	c.rxcred--;
+	if(c.sdu == nil){
+		if(len p < 2){
+			fail(m, c, "a first segment with no SDU length in it");
+			return;
+		}
+		n := bt->get16(p, 0);
+		if(n > c.mtu){
+			fail(m, c, sys->sprint("an SDU of %d bytes where the MTU is %d", n, c.mtu));
+			return;
+		}
+		c.sdu = array[n] of byte;
+		c.have = 0;
+		c.pdus = 0;
+		p = p[2:];
+	}
+	if(c.have + len p > len c.sdu){
+		fail(m, c, "more data than the SDU said it would be");
+		return;
+	}
+	c.sdu[c.have:] = p;
+	c.have += len p;
+	c.pdus++;
+	if(c.have == len c.sdu){
+		sdu := ref Sdu(c.sdu, c.pdus);
+		c.sdu = nil;
+		alt {
+		c.sq <-= sdu =>	;
+		* =>
+			#
+			# cannot happen: the queue is as deep as the
+			# credits granted and a segment cannot arrive
+			# without one.  If it ever does, say so rather
+			# than quietly losing a message.
+			#
+			fail(m, c, "the receive queue overran its credits");
+			return;
+		}
+		poke(c);
+	}
+}
+
+openchans(m: ref Mux): list of ref Chan
+{
+	<-m.reply;
+	l: list of ref Chan;
+	for(cl := m.chans; cl != nil; cl = tl cl)
+		if((hd cl).state != Sfixed)
+			l = hd cl :: l;
+	m.reply <-= 1;
+	return l;
+}
+
+answer(m: ref Mux, id: int, p: array of byte)
+{
+	<-m.reply;
+	rc: chan of array of byte;
+	for(pl := m.pend; pl != nil; pl = tl pl){
+		(pid, c) := hd pl;
+		if(pid == id){
+			rc = c;
+			break;
+		}
+	}
+	m.reply <-= 1;
+	if(rc == nil)
+		return;		# nobody is waiting: a late or a duplicate answer
+	alt {
+	rc <-= p =>	;
+	* =>	;
+	}
+}
+
+# with the lock held: the channel the peer receives on
+bydcid(m: ref Mux, dcid: int): ref Chan
+{
+	for(cl := m.chans; cl != nil; cl = tl cl){
+		c := hd cl;
+		if(c.state != Sfixed && c.dcid == dcid)
+			return c;
+	}
+	return nil;
 }

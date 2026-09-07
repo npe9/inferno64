@@ -19889,12 +19889,97 @@ it makes.  With the table left as it was there are four, and the extra
 one is an ATT request sent to a real device on behalf of a file that
 no longer exists.
 .NH 2
+Credits, and why the demultiplexer had to stop dropping
+.PP
+Everything above this in the stack moves a handful of bytes through an
+attribute.  LE connection-oriented channels are how a block of them
+moves, and they are the only part of this stack that is flow
+controlled: a receiver hands out credits, one per PDU, and a sender
+may not send a PDU it has no credit for.
+.PP
+That single rule contradicts the one the rest of
+.CW l2cap.b
+runs on.  A frame for a fixed channel whose consumer has fallen behind
+is dropped, and the comment above it says why: the demultiplexer must
+never block on a consumer, or the HCI reader behind it stops and the
+whole controller goes quiet.  For ATT that is right \(em there is one
+request outstanding and a dropped answer is one lost answer.  For a
+credit-based channel it is fatal, and not because a message is lost: a
+dropped segment desynchronises the reassembly, and the next segment's
+first two bytes are read as a length that is really data.  Every
+message after the drop is garbage.
+.PP
+The two rules are reconciled by making the credits and the queue the
+same number.  Credits are granted for exactly as many PDUs as there is
+room to queue, and they are given back when a reader takes the SDU
+they carried \(em not when the segment is absorbed.  The demultiplexer
+can then neither block nor drop, because a segment cannot arrive
+without a credit and a credit cannot exist without somewhere to put
+what it buys.  The branch that would drop is still written, and it
+takes the channel down saying the queue overran its credits, because a
+condition that cannot happen is worth one line that says so if it
+does.  That line is not decoration: with the credit check taken out
+deliberately, it is what caught the overrun.
+.PP
+Three facts here were checked against Zephyr's
+.CW subsys/bluetooth/host
+rather than reconstructed, for the same reason
+.CW ah
+was pinned to a bluez vector: the controller model and the Limbo are
+written in one place from one reading, and a shared mistake agrees
+with itself.  The signalling codes (0x14, 0x15, 0x16 beside the
+disconnection pair 0x06 and 0x07); the response result values, so a
+refusal reaches the caller as
+.QP
+PSM not supported
+.LP
+in the peer's own words rather than flattened into a failure of this
+program's choosing; and the one detail everybody gets wrong once \(em
+the two byte SDU length on the first segment counts toward the MPS, so
+the first segment carries two bytes less than the rest.
+.PP
+The MPS this side offers is what fits in one ACL packet less the four
+byte L2CAP header, which on the bench's controller \(em 27 bytes, the
+specification's minimum \(em is 23.  A 512 byte SDU is therefore
+twenty three segments, so the segmentation path is the only path there
+is rather than a corner reached by a large write.  The model answers
+with 40, so neither side's arithmetic can pass by agreeing with the
+other's, and the model checks the segment size it receives so a guest
+that forgot the two byte header is caught by the peer and not only by
+itself.
+.PP
+Four deliberate breakages, each reverted after:
+a receiver that takes a segment it had no credit for; a receiver that
+accepts an SDU longer than the MTU it asked for; a sender that drops
+what it has no credit for instead of waiting; and a sender that
+forgets the SDU length counts toward the MPS.  All four are caught,
+and the last two are caught by the peer failing to reassemble what it
+was sent \(em which is invisible from inside the guest, so
+.CW scripts/btbench.sh
+counts the model's own reassemblies.
+.PP
+The reads in these phases are done in a separate process with a timer
+beside them.  A channel that has not noticed a violation does not fail
+the read; it blocks on a reassembly that will never finish.  The first
+two breakages above were caught only as a phase that ran out of time
+four minutes later, which says the same thing far less clearly, and
+the timer turns that into an assertion in ten seconds.
+.PP
+A channel is a file under
+.CW l2cap/
+in the device's directory and deliberately not under
+.CW gatt/ :
+a channel is not an attribute, and a Service Changed indication says
+nothing about it, so rediscovery leaves it where it is.  The link
+going away takes it, along with everything else the link carried.
+.NH 2
 What is not there
 .PP
 Bluetooth Classic is not implemented at all: no inquiry, no SDP, no
 RFCOMM, no HID, no PAN, no audio.  L2CAP here is the fixed channels an
-LE link uses and the framing under them; there are no
-connection-oriented channels.  Pairing is LE legacy Just Works, which
+LE link uses, the framing under them, and LE credit-based channels;
+the enhanced form that opens several at once and can reconfigure them
+is not here.  Pairing is LE legacy Just Works, which
 gives an encrypted link and a bond and no protection whatever against
 a man in the middle; LE Secure Connections needs P-256, which is not
 here, and a device that insists on it is told so.  Only the initiating
@@ -19924,7 +20009,8 @@ with a struct and functions:
 	appl/lib/bt/h4.b     one C file over the same /dev/eia*
 	appl/lib/bt/btusb.b  one nusb program over the same /dev/usb
 	appl/lib/bt/hci.b    a proc, a QLock, a Rendez for credits
-	appl/lib/bt/l2cap.b  a proc per link, a Queue per CID
+	appl/lib/bt/l2cap.b  a proc per link, a Queue per CID,
+	                     and a Rendez per credit-based channel
 	appl/lib/bt/att.b    a proc, a QLock, a Rendez
 	appl/lib/bt/gatt.b   the same three discovery loops
 	appl/lib/bt/smp.b    the same state machine over libsec's aes

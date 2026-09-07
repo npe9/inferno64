@@ -121,6 +121,30 @@ one_goes_quiet = '--one-goes-quiet' in sys.argv
 # checks that the HCI command actually arrives.
 ask_params = '--ask-params' in sys.argv
 
+# --coc-overrun: on an LE credit-based channel the peripheral sends one
+# segment more than the credits it was given.  The guest must treat
+# that as the protocol violation it is and take the channel down,
+# rather than quietly absorbing it: credits are the only thing keeping
+# a receiver's buffer bounded, and a receiver that accepts a segment it
+# did not pay for has no bound at all.
+coc_overrun = '--coc-overrun' in sys.argv
+
+# --coc-stingy: the peripheral grants one credit at a time and takes
+# its time about the rest, so the guest's writer has to wait rather
+# than drop.  With this off the peer grants enough to keep going.
+coc_stingy = '--coc-stingy' in sys.argv
+
+# --coc-bigsdu: the peripheral announces an SDU longer than the MTU the
+# guest asked for.  The guest must refuse it.
+coc_bigsdu = '--coc-bigsdu' in sys.argv
+
+# The PSM the model's echo service answers on.  Anything else is
+# refused with "PSM not supported", which is what a real peripheral
+# does and what the guest has to report rather than swallow.
+COCPSM = 0x0080
+COCMTU = 512
+COCMPS = 40
+
 def log(*a):
     if verbose:
         print('bthci:', *a, file=sys.stderr, flush=True)
@@ -344,6 +368,10 @@ class Model:
         self.updates = []         # parameter updates the central performed
         self.paramresults = []    # what it answered to each request
         self.trace = []
+        # LE credit-based channels, keyed by the CID the guest sends to
+        self.coc = {}
+        self.cocsigid = 0x40
+        self.cocsdus = []         # whole SDUs this side reassembled
 
     # ------------------------------------------------ wire
     def send(self, data):
@@ -596,6 +624,148 @@ class Model:
                 r = struct.unpack('<H', payload[4:6])[0]
                 self.paramresults.append(r)
                 log('the central said %s' % ('yes' if r == 0 else 'no'))
+            else:
+                self.coc_signal(payload)
+        elif cid in self.coc:
+            self.coc_kframe(self.coc[cid], payload)
+
+    # --------------------------------------- LE credit-based channels
+    #
+    # The peripheral half of an LE connection-oriented channel: a PSM
+    # it answers on, an echo service behind it, and the credit
+    # accounting both ways.  Segmentation here uses a different MPS
+    # from the guest's on purpose, so neither side's arithmetic can
+    # pass by agreeing with the other's.
+    #
+    def coc_signal(self, p):
+        if len(p) < 4:
+            return
+        code, ident = p[0], p[1]
+        dlen = struct.unpack('<H', p[2:4])[0]
+        body = p[4:4+dlen]
+        if code == 0x14:                    # LE Credit Based Connection Request
+            if len(body) < 10:
+                return
+            psm, scid, mtu, mps, credits = struct.unpack('<HHHHH', body[0:10])
+            log('connection request psm %#06x scid %#06x mtu %d mps %d credits %d'
+                % (psm, scid, mtu, mps, credits))
+            if psm != COCPSM:
+                self.acl(5, bytes([0x15, ident]) + struct.pack('<H', 10)
+                         + struct.pack('<HHHHH', 0, 0, 0, 0, 0x0002))
+                log('refused: PSM not supported')
+                return
+            dcid = 0x0040 + len(self.coc)
+            ch = {'dcid': dcid, 'scid': scid, 'mtu': COCMTU, 'mps': COCMPS,
+                  'dmtu': mtu, 'dmps': mps, 'tx': credits, 'rx': 0,
+                  'sdu': None, 'have': 0, 'wake': threading.Event()}
+            # grant one credit at a time when asked to be stingy, and
+            # otherwise enough for a whole SDU of the guest's
+            ch['rx'] = 1 if coc_stingy else (COCMTU + 2 + COCMPS - 1) // COCMPS
+            self.coc[dcid] = ch
+            self.acl(5, bytes([0x15, ident]) + struct.pack('<H', 10)
+                     + struct.pack('<HHHHH', dcid, ch['mtu'], ch['mps'], ch['rx'], 0))
+            log('accepted on cid %#06x, %d credits granted' % (dcid, ch['rx']))
+        elif code == 0x16:                  # LE Flow Control Credit
+            if len(body) < 4:
+                return
+            cid, n = struct.unpack('<HH', body[0:4])
+            for ch in self.coc.values():
+                if ch['scid'] == cid:
+                    ch['tx'] += n
+                    log('the guest granted %d credits, now %d' % (n, ch['tx']))
+                    ch['wake'].set()
+        elif code == 0x06:                  # Disconnection Request
+            if len(body) < 4:
+                return
+            dcid, scid = struct.unpack('<HH', body[0:4])
+            log('the guest closed cid %#06x' % dcid)
+            ch = self.coc.pop(dcid, None)
+            if ch is not None:
+                ch['wake'].set()
+            self.acl(5, bytes([0x07, ident]) + struct.pack('<H', 4)
+                     + struct.pack('<HH', dcid, scid))
+
+    def coc_kframe(self, ch, p):
+        if len(p) > ch['mps']:
+            # the peer's own check, so a guest that forgot the two byte
+            # SDU length counts toward the MPS is caught here and not
+            # only by the arithmetic agreeing with itself
+            print('bthci: coc oversize segment %d bytes, mps %d'
+                  % (len(p), ch['mps']), flush=True)
+            return
+        if ch['rx'] <= 0:
+            log('the guest sent a segment with no credit left')
+            return
+        ch['rx'] -= 1
+        if ch['sdu'] is None:
+            if len(p) < 2:
+                return
+            n = struct.unpack('<H', p[0:2])[0]
+            ch['sdu'] = bytearray()
+            ch['want'] = n
+            p = p[2:]
+        ch['sdu'] += p
+        # a credit back for the segment, as soon as it is absorbed: a
+        # different policy from the guest's, which waits for its reader
+        self.coc_credit(ch, 1)
+        if len(ch['sdu']) >= ch['want']:
+            sdu = bytes(ch['sdu'])
+            ch['sdu'] = None
+            self.cocsdus.append(sdu)
+            log('reassembled an SDU of %d bytes' % len(sdu))
+            print('bthci: coc sdu %d bytes %s' % (len(sdu), sdu[:16].hex()), flush=True)
+            threading.Thread(target=self.coc_echo, args=(ch, sdu), daemon=True).start()
+
+    def coc_credit(self, ch, n):
+        ch['rx'] += n
+        self.cocsigid = (self.cocsigid + 1) & 0xff or 1
+        self.acl(5, bytes([0x16, self.cocsigid]) + struct.pack('<H', 4)
+                 + struct.pack('<HH', ch['scid'], n))
+
+    def coc_echo(self, ch, sdu):
+        # send it back whole, segmented at the guest's MPS and paying a
+        # credit per segment
+        if coc_bigsdu:
+            self.coc_send_raw(ch, len(sdu), sdu, claim=ch['dmtu'] + 1)
+            return
+        if coc_overrun:
+            #
+            # spend every credit the guest granted, on one byte SDUs
+            # so each costs exactly one, and then send one more.  It
+            # has to be exactly this: a segment sent while credits
+            # remain is a segment the guest is entitled to take, and a
+            # test that sends one proves nothing about the credit
+            # check.  The count comes from what the guest granted, not
+            # from a number written here.
+            #
+            n = ch['tx']
+            log('spending all %d credits, then sending one more' % n)
+            for i in range(n):
+                ch['tx'] -= 1
+                self.acl(ch['scid'], struct.pack('<H', 1) + bytes([i & 0xff]))
+            self.acl(ch['scid'], struct.pack('<H', 1) + b'\xff')
+            return
+        self.coc_send_raw(ch, len(sdu), sdu)
+
+    def coc_send_raw(self, ch, n, sdu, claim=None):
+        off = 0
+        first = True
+        while True:
+            while ch['tx'] <= 0:
+                ch['wake'].clear()
+                if not ch['wake'].wait(10):
+                    log('the guest never granted a credit')
+                    return
+                if ch['dcid'] not in self.coc:
+                    return
+            ch['tx'] -= 1
+            hdr = struct.pack('<H', claim if (first and claim is not None) else n) if first else b''
+            take = min(len(sdu) - off, ch['dmps'] - len(hdr))
+            self.acl(ch['scid'], hdr + sdu[off:off+take])
+            off += take
+            first = False
+            if off >= len(sdu):
+                break
 
     # ------------------------------------------------ ATT
     def att_err(self, op, handle, err):

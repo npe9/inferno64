@@ -55,6 +55,9 @@ Bt: module
 	hex:	fn(a: array of byte): string;
 	unhex:	fn(s: string): array of byte;
 
+	# one hexadecimal digit, or -1
+	digit:	fn(c: int): int;
+
 	# a UUID is 2, 4 or 16 bytes, little endian on the wire; it is
 	# written big endian, and the 16 bit and 32 bit forms are
 	# written as they are rather than expanded into the base UUID
@@ -189,6 +192,17 @@ L2cap: module
 	Cle:	con 5;
 	Csmp:	con 6;
 
+	# channel states
+	Sfixed, Swait, Sup, Sdown:	con iota;
+
+	# A whole service data unit, and the number of PDUs it arrived
+	# in.  The credits it cost are given back when the reader takes
+	# it, so the count has to travel with it.
+	Sdu: adt {
+		data:	array of byte;
+		pdus:	int;
+	};
+
 	# One channel on a link.  A fixed channel is nothing but a CID
 	# and the queue of frames that arrived for it; the credit-based
 	# channels add to this adt rather than to a second one, so that
@@ -196,12 +210,32 @@ L2cap: module
 	Chan: adt {
 		cid:	int;			# the CID the peer sends to
 		rq:	chan of array of byte;	# frames up from the link
+		state:	int;
+
+		# credit-based channels only
+		dcid:	int;			# the CID the peer receives on
+		psm:	int;
+		mtu:	int;			# the largest SDU we will take
+		mps:	int;			# the largest PDU we will take
+		dmtu:	int;			# the largest SDU the peer will take
+		dmps:	int;			# the largest PDU the peer will take
+		rxcred:	int;			# credits the peer still holds
+		txcred:	int;			# credits the peer has given us
+		sq:	chan of ref Sdu;	# whole SDUs up from the link
+		wake:	chan of int;		# poked for a sender: credits, or the channel going
+		rwake:	chan of int;		# poked for a reader: an SDU, or the channel going
+		sdu:	array of byte;		# the SDU being reassembled
+		have:	int;			# how much of it has arrived
+		pdus:	int;			# in how many PDUs
+		err:	string;			# why the channel went down
 	};
 
 	Mux: adt {
 		c:	ref Hci->Conn;
 		mtu:	int;
 		chans:	list of ref Chan;
+		nextid:	int;			# signalling identifier
+		pend:	list of (int, chan of array of byte);
 		reply:	chan of int;
 	};
 
@@ -210,6 +244,19 @@ L2cap: module
 	open:	fn(m: ref Mux, cid: int): chan of array of byte;
 	send:	fn(m: ref Mux, cid: int, p: array of byte): string;
 	stop:	fn(m: ref Mux);
+
+	# LE credit-based channels.  connect asks the peer for one on a
+	# PSM and comes back with it open or with the peer's reason for
+	# refusing.  csend takes one SDU, segments it and pays a credit
+	# per segment, blocking while the peer has given us none.  crecv
+	# takes one whole reassembled SDU and gives back the credits it
+	# cost.  cclose tears the channel down from this end; the peer
+	# tearing it down from its end makes crecv and csend fail.
+	connect:	fn(m: ref Mux, psm: int): (ref Chan, string);
+	csend:		fn(m: ref Mux, c: ref Chan, p: array of byte): string;
+	crecv:		fn(m: ref Mux, c: ref Chan): (array of byte, string);
+	cclose:		fn(m: ref Mux, c: ref Chan): string;
+	openchans:	fn(m: ref Mux): list of ref Chan;
 };
 
 #

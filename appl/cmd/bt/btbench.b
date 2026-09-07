@@ -223,6 +223,15 @@ init(nil: ref Draw->Context, argv: list of string)
 	"included" =>
 		included();
 		return;
+	"coc" or "cocstingy" =>
+		cocphase(mode);
+		return;
+	"cocrefuse" =>
+		cocrefuse();
+		return;
+	"cocoverrun" or "cocbig" =>
+		cocbad(mode);
+		return;
 	}
 	case mode {
 	"stall" or "late" or "early" or "orphan" or "orphanlive" or "badprepare" =>
@@ -1348,3 +1357,305 @@ trim(s: string): string
 	return s;
 }
 
+
+#
+# LE credit-based channels.  Everything above this in the bench moves
+# a handful of bytes through an attribute; this is the path that moves
+# a block of them, and the only one that is flow controlled.
+#
+# The pattern written is a counted one, not a repeated one: a
+# reassembly that put the segments back in the wrong order, or lost
+# one and slid the rest along, produces something that is still 512
+# bytes long and still looks like the pattern.  Comparing byte for
+# byte against what was sent is what catches that.
+#
+Cocsize:	con 512;
+
+pattern(n: int): array of byte
+{
+	a := array[n] of byte;
+	for(i := 0; i < n; i++)
+		a[i] = byte ((i * 7 + (i / 251) * 31) & 16rff);
+	return a;
+}
+
+samebytes(a, b: array of byte): int
+{
+	if(len a != len b)
+		return 0;
+	for(i := 0; i < len a; i++)
+		if(a[i] != b[i])
+			return 0;
+	return 1;
+}
+
+cocdev(): string
+{
+	remotes := lsdir(mnt + "/0/remote");
+	if(remotes == nil)
+		return nil;
+	dev := mnt + "/0/remote/" + hd remotes;
+	if((e := writefile(dev + "/ctl", "connect")) != nil){
+		sys->print("BT: FAILED: connect: %s\n", e);
+		return nil;
+	}
+	return dev;
+}
+
+cocphase(mode: string)
+{
+	dev := cocdev();
+	if(dev == nil){
+		sys->print("BT: FAILED: nothing to connect to\n");
+		sys->print("BT: done\n");
+		return;
+	}
+	ok := 1;
+	if((e := writefile(dev + "/ctl", "l2cap 0080")) != nil){
+		sys->print("BT: FAILED: l2cap 0080: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	st := trim(readfile(dev + "/state"));
+	if(!hasword(st, "psm") || !hasword(st, "0x0080")){
+		sys->print("BT: FAILED: state does not name the channel: %s\n", st);
+		ok = 0;
+	} else
+		sys->print("BT: state: %s\n", st);
+
+	#
+	# the file is the channel: one write is one SDU and one read is
+	# the next one whole
+	#
+	f := dev + "/l2cap/0080";
+	fd := sys->open(f, Sys->ORDWR);
+	if(fd == nil){
+		sys->print("BT: FAILED: cannot open %s: %r\n", f);
+		sys->print("BT: done\n");
+		return;
+	}
+	out := pattern(Cocsize);
+	if(sys->write(fd, out, len out) != len out){
+		sys->print("BT: FAILED: writing %d bytes: %r\n", len out);
+		ok = 0;
+	} else
+		sys->print("BT: wrote an SDU of %d bytes\n", len out);
+	(n, back, re) := sdu(fd, 15000);
+	if(n < 0 && re == nil){
+		sys->print("BT: FAILED: the SDU never came back\n");
+		ok = 0;
+	} else if(n < 0){
+		sys->print("BT: FAILED: reading it back: %s\n", re);
+		ok = 0;
+	} else if(!samebytes(back, out)){
+		sys->print("BT: FAILED: %d bytes back and they are not what went out\n", n);
+		ok = 0;
+	} else
+		sys->print("BT: read back %d bytes, the same ones\n", n);
+
+	#
+	# a second SDU on the same channel, so the credits given back
+	# for the first are the ones that carry the second
+	#
+	out2 := pattern(200);
+	if(sys->write(fd, out2, len out2) != len out2){
+		sys->print("BT: FAILED: second write: %r\n");
+		ok = 0;
+	}
+	(n, back, re) = sdu(fd, 15000);
+	if(n < 0 || !samebytes(back, out2)){
+		sys->print("BT: FAILED: the second SDU came back wrong\n");
+		ok = 0;
+	} else
+		sys->print("BT: a second SDU of %d bytes went and came back\n", n);
+	fd = nil;
+
+	if((ue := writefile(dev + "/ctl", "unl2cap 0080")) != nil){
+		sys->print("BT: FAILED: unl2cap: %s\n", ue);
+		ok = 0;
+	}
+	if((fd2 := sys->open(f, Sys->OREAD)) != nil){
+		sys->print("BT: FAILED: the file is still there after unl2cap\n");
+		ok = 0;
+	} else
+		sys->print("BT: the channel closed and its file went with it\n");
+	fd2 = nil;
+	st = trim(readfile(dev + "/state"));
+	if(hasword(st, "psm")){
+		sys->print("BT: FAILED: state still names a channel: %s\n", st);
+		ok = 0;
+	}
+	if(ok)
+		sys->print("BT: %s: an SDU went out segmented and came back whole\n", mode);
+	writefile(dev + "/ctl", "disconnect");
+	writefile(mnt + "/0/ctl", "scan off");
+	sys->print("BT: done\n");
+}
+
+#
+# A PSM nobody answers on.  The peer's own reason has to come back to
+# whoever asked; a stack that reports "cannot connect" has thrown away
+# the one piece of information the peer sent.
+#
+cocrefuse()
+{
+	dev := cocdev();
+	if(dev == nil){
+		sys->print("BT: FAILED: nothing to connect to\n");
+		sys->print("BT: done\n");
+		return;
+	}
+	e := writefile(dev + "/ctl", "l2cap 00ff");
+	if(e == nil)
+		sys->print("BT: FAILED: a PSM nobody answers on opened anyway\n");
+	else if(!hasword(e, "PSM"))
+		sys->print("BT: FAILED: refused, but as: %s\n", e);
+	else
+		sys->print("BT: refused, in the peer's words: %s\n", e);
+	if((fd := sys->open(dev + "/l2cap/00ff", Sys->OREAD)) != nil)
+		sys->print("BT: FAILED: a refused channel left a file behind\n");
+	fd = nil;
+	writefile(dev + "/ctl", "disconnect");
+	writefile(mnt + "/0/ctl", "scan off");
+	sys->print("BT: done\n");
+}
+
+#
+# The peer breaks the rules: a segment it had no credit for, or an SDU
+# longer than the MTU this side asked for.  Either is a protocol
+# violation and the channel has to go down and say why.  Absorbing it
+# is the failure being tested for -- a receiver that takes a segment
+# it did not pay for has no bound on its buffers at all.
+#
+cocbad(mode: string)
+{
+	want := "credit";
+	if(mode == "cocbig")
+		want = "MTU";
+	ok := 1;
+	dev := cocdev();
+	if(dev == nil){
+		sys->print("BT: FAILED: nothing to connect to\n");
+		sys->print("BT: done\n");
+		return;
+	}
+	if((e := writefile(dev + "/ctl", "l2cap 0080")) != nil){
+		sys->print("BT: FAILED: l2cap 0080: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	f := dev + "/l2cap/0080";
+	fd := sys->open(f, Sys->ORDWR);
+	if(fd == nil){
+		sys->print("BT: FAILED: cannot open %s: %r\n", f);
+		sys->print("BT: done\n");
+		return;
+	}
+	out := pattern(64);
+	sys->write(fd, out, len out);
+	#
+	# Nothing is read for a moment on purpose.  A credit goes back to
+	# the peer when a reader takes the SDU that spent it, so a reader
+	# running beside the peer's burst hands back the very credits the
+	# burst is meant to exhaust, and whether the last segment is paid
+	# for or not comes down to timing.  Letting the burst finish
+	# first makes the overrun the certainty it is supposed to be.
+	#
+	sys->sleep(3000);
+	#
+	# Everything the peer sent while it still had credit is
+	# legitimate and arrives; the channel goes down on what follows
+	# it.  So this reads until it fails rather than a fixed number
+	# of times -- the number the peer sent is the number of credits
+	# this side granted, which is not written down here.
+	#
+	#
+	# The reads are done in a separate process and waited for with a
+	# timer, because a channel that has not noticed the violation
+	# does not fail the read -- it blocks on a reassembly that will
+	# never finish.  Waiting for ever turns a wrong answer into a
+	# hung bench, which says the same thing far less clearly and
+	# four minutes later.
+	#
+	why := "";
+	got := 0;
+	for(i := 0; i < 200; i++){
+		(n, nil, re) := sdu(fd, 10000);
+		if(n < 0 && re == nil){
+			sys->print("BT: %s: a read waited ten seconds and neither returned data nor failed\n", mode);
+			break;
+		}
+		if(n < 0){
+			why = re;
+			break;
+		}
+		got++;
+	}
+	sys->print("BT: %d SDUs arrived before the channel went down: %s\n", got, why);
+	if(why == ""){
+		sys->print("BT: FAILED: %s: the channel never went down\n", mode);
+		ok = 0;
+	} else if(!hasword(why, want)){
+		sys->print("BT: FAILED: %s: it went down as %q, wanted %q in it\n",
+			mode, why, want);
+		ok = 0;
+	}
+	if((fd2 := sys->open(f, Sys->ORDWR)) != nil){
+		(n2, nil, e2) := sdu(fd2, 10000);
+		if(n2 >= 0)
+			sys->print("BT: FAILED: %s: the channel is still taking data\n", mode);
+		else if(e2 == nil)
+			sys->print("BT: FAILED: %s: a read on it neither returned nor failed\n", mode);
+		else
+			sys->print("BT: %s: the channel is down: %s\n", mode, e2);
+	} else
+		sys->print("BT: %s: the channel is gone\n", mode);
+	fd2 = nil;
+	if(ok)
+		sys->print("BT: %s: the channel went down for the right reason\n", mode);
+	writefile(dev + "/ctl", "disconnect");
+	writefile(mnt + "/0/ctl", "scan off");
+	sys->print("BT: done\n");
+}
+
+
+#
+# One read, in its own process, so the bench can put a timer beside
+# it.  A channel that has not noticed what it should have noticed does
+# not fail the read -- it blocks on something that will never arrive
+# -- and waiting for ever turns a wrong answer into a hung bench,
+# which says the same thing far less clearly and four minutes later.
+#
+# The three answers are apart: bytes, a failure with a reason, and
+# nothing at all.
+#
+onesdu(fd: ref Sys->FD, c: chan of (int, array of byte, string))
+{
+	buf := array[2048] of byte;
+	n := sys->read(fd, buf, len buf);
+	if(n < 0){
+		c <-= (-1, nil, sys->sprint("%r"));
+		return;
+	}
+	c <-= (n, buf[0:n], nil);
+}
+
+sdu(fd: ref Sys->FD, ms: int): (int, array of byte, string)
+{
+	c := chan of (int, array of byte, string);
+	spawn onesdu(fd, c);
+	tc := chan of int;
+	spawn tick(ms, tc);
+	alt {
+	(n, b, e) := <-c =>
+		return (n, b, e);
+	<-tc =>
+		return (-1, nil, nil);
+	}
+}
+
+tick(ms: int, c: chan of int)
+{
+	sys->sleep(ms);
+	c <-= 1;
+}

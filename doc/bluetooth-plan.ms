@@ -180,9 +180,21 @@ Accepting used to be unconditional and was followed by nothing at all,
 which is the one answer worse than refusing: a peripheral that is told
 yes adjusts its behaviour to a link that never changed.
 .IP \(bu
-L2CAP has no credit-based flow control, so LE connection-oriented
-channels \(em which is how anything bulk moves over LE \(em are not
-available.
+LE credit-based channels are there.  A channel is asked for by PSM on
+a device's
+.CW ctl
+and appears as a file under
+.CW l2cap/ ;
+one write is one SDU and one read is the next one whole.  Both
+directions are flow controlled: an SDU going out is cut at the peer's
+MPS and pays a credit per segment, waiting rather than dropping when
+the peer has granted none, and credits coming in are granted for as
+many segments as there is room for and given back when a reader takes
+the SDU they carried.  A peer that sends a segment it has not paid for
+or announces an SDU longer than the MTU loses the channel, since
+credits are the only thing bounding this side's memory.  What is not
+there is the enhanced form (0x17\-0x1a), which opens several channels
+at once and can reconfigure them.
 .NH 2
 The peripheral role
 .PP

@@ -126,6 +126,16 @@ Values a controller would refuse are refused here instead of being
 sent.  A peripheral cannot change them itself and asks over L2CAP; a
 request that is accepted is carried out, which is why one that cannot
 be is refused rather than accepted and forgotten.
+.BI "l2cap " psm
+on a device's own
+.B ctl
+opens an LE credit-based channel to that PSM, written as four
+hexadecimal digits, and
+.BI "unl2cap " psm
+closes it.  A channel that the peer refuses fails with the peer's own
+reason \(em
+.B "PSM not supported"
+and the rest \(em rather than with a word of this program's choosing.
 .B connect
 waits for the controller to establish the link and fails with
 .B "connection timed out"
@@ -206,6 +216,45 @@ Execute Write, so neither direction is limited by the MTU.
 Reading one reads the characteristic off the device; writing one
 writes it.
 .PD
+.TP
+.B /net/bt/0/remote/\fIADDR\fP/l2cap/
+One file per open LE credit-based channel, named by its PSM in four
+hexadecimal digits.  This is not part of the GATT tree and does not go
+away when the device says its database has moved: a channel is not an
+attribute and a Service Changed indication says nothing about it.  It
+does go away with the link, along with everything else the link was
+carrying.
+.PP
+One write is one SDU and one read is the next SDU whole.  A write may
+wait: credits are how the peer says it is ready, and a peer that has
+granted none has said it is not, so the bytes wait rather than being
+thrown away.  A read that offers a smaller buffer than the SDU fails
+saying how big the SDU was, because there is nowhere to put the
+remainder and a short read would lose it silently; the most this side
+will accept is 512 bytes, so a reader that offers that much never sees
+it.  The device's
+.B state
+has a line per open channel giving the PSM, both channel identifiers,
+and the SDU and PDU sizes the two sides settled on.
+.PP
+The flow control is real in both directions.  Going out, an SDU is cut
+into PDUs at the peer's maximum and a credit is spent on each.  Coming
+in, credits are granted for as many PDUs as there is room for and
+given back when a reader takes the SDU they carried, so nothing is
+ever dropped for want of somewhere to put it \(em unlike the fixed
+channels above, where a consumer that falls behind loses frames
+because the alternative is stopping the controller.  A peer that sends
+a segment it has no credit for, or announces an SDU longer than the
+MTU, has broken the only rule that bounds this side's memory, and the
+channel is closed with that reason rather than the segment absorbed.
+.PP
+So an echo service on PSM 0x0080 is
+.IP
+.EX
+echo l2cap 0080 > /net/bt/0/remote/345678ABCDEF/ctl
+echo hello > /net/bt/0/remote/345678ABCDEF/l2cap/0080
+cat /net/bt/0/remote/345678ABCDEF/l2cap/0080
+.EE
 .PP
 A characteristic that notifies or indicates also has a
 .IB uuid .notify
