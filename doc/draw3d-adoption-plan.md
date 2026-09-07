@@ -251,6 +251,14 @@ drains the GPU's geometry queue, and the readback then has nothing to
 replay into the softscreen, so the read sees an empty window. That
 looked like flakiness for a while.
 
+The nine ports Phase 1 moved were therefore rendering *without their 3D
+content* between that commit and the clip fix, which nobody would have
+noticed from a screenshot because they all draw a background and a HUD
+in 2D as well. Captured at the same four-second mark, `shading` puts
+13304 saturated samples on the screen through the GPU against the
+software provider's 12557 — agreement, for an animated demo. Before the
+fix the same comparison was 11200 against 14448, a 22% shortfall.
+
 ### Phase 1 — reach the device at all
 
 Change the nine 3D ports from `load Draw3d Draw3d->PATH` to
