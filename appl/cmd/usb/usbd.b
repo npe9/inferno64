@@ -14,7 +14,10 @@ implement Usbd;
 # What is real: root hubs (USB 2 and USB 3), external hubs behind them,
 # and boot-protocol HID keyboards and mice, which are what a machine's
 # firmware also drives.  Keys arrive as UTF-8 on /dev/keyboard, mouse
-# motion as "m x y b" on /dev/pointer.  Not done: report-descriptor
+# motion as "m x y b" on /dev/pointer; the translation itself is in
+# appl/lib/hidboot.b, because bthid reads the same reports out of a
+# GATT characteristic and a keyboard map with two homes comes to
+# disagree with itself.  Not done: report-descriptor
 # parsing (so a device that only speaks the HID report protocol, such
 # as a tablet, is configured and then ignored), mass storage, and any
 # other class.  The reference is 9front's nusb/usbd and nusb/kb;
@@ -24,6 +27,8 @@ implement Usbd;
 include "sys.m";
 	sys: Sys;
 include "draw.m";
+include "hidboot.m";
+	hidboot: Hidboot;
 
 Usbd: module
 {
@@ -100,6 +105,12 @@ debug := 0;
 init(nil: ref Draw->Context, argv: list of string)
 {
 	sys = load Sys Sys->PATH;
+	hidboot = load Hidboot Hidboot->PATH;
+	if(hidboot == nil){
+		sys->fprint(sys->fildes(2), "usbd: cannot load %s: %r\n", Hidboot->PATH);
+		return;
+	}
+	hidboot->init();
 	for(a := tl argv; a != nil; a = tl a)
 		if(hd a == "-d")
 			debug++;
@@ -401,11 +412,6 @@ hidstart(d: ref Dev, iface, proto, epn, maxpkt, ival: int)
 	}
 }
 
-# HID usage ids 4..56 of the boot keyboard, US layout, plain and shifted
-keys := array[] of {
-	"abcdefghijklmnopqrstuvwxyz1234567890\n\b\t -=[]\\#;'`,./",
-	"ABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()\n\b\t _+{}|~:\"~<>?",
-};
 
 kbdreader(d: ref Dev, ep: ref Dev)
 {
@@ -446,29 +452,12 @@ kbdreader(d: ref Dev, ep: ref Dev)
 					down = 0;
 			if(!down)
 				continue;
-			s := keysym(k, mod);
+			s := hidboot->keysym(k, mod);
 			if(s != nil)
 				sys->fprint(kfd, "%s", s);
 		}
 		prev = cur;
 	}
-}
-
-keysym(k, mod: int): string
-{
-	shift := (mod & 16r22) != 0;
-	ctl := (mod & 16r11) != 0;
-	if(k >= 4 && k <= 56){
-		c := keys[shift][k-4];
-		if(ctl && c >= 'a' && c <= 'z')
-			c -= 'a' - 1;
-		if(ctl && c >= 'A' && c <= 'Z')
-			c -= 'A' - 1;
-		return sys->sprint("%c", c);
-	}
-	if(k == 76)
-		return sys->sprint("%c", 16r7f);	# delete forward
-	return nil;		# caps lock, function and arrow keys: not mapped yet
 }
 
 mousereader(d: ref Dev, ep: ref Dev)
@@ -489,24 +478,15 @@ mousereader(d: ref Dev, ep: ref Dev)
 		}
 		if(n < 3)
 			continue;
-		hb := int rep[0];
-		x += sext(int rep[1]);
-		y += sext(int rep[2]);
+		(dx, dy, b) := hidboot->mouse(rep);
+		x += dx;
+		y += dy;
 		if(x < 0)
 			x = 0;
 		if(y < 0)
 			y = 0;
-		# HID: bit 0 left, bit 1 right, bit 2 middle; devpointer: 1, 4, 2
-		b := (hb & 1) | ((hb & 2) << 1) | ((hb & 4) >> 1);
 		sys->fprint(mfd, "m %d %d %d", x, y, b);
 	}
-}
-
-sext(v: int): int
-{
-	if(v & 16r80)
-		return v - 256;
-	return v;
 }
 
 #

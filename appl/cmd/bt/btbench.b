@@ -246,6 +246,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	"paired" =>
 		paired();
 		return;
+	"hid" =>
+		hid();
+		return;
 	"cocrefuse" =>
 		cocrefuse();
 		return;
@@ -2317,4 +2320,103 @@ paired()
 	writefile(mnt + "/0/ctl", "advertise off");
 	writefile(mnt + "/0/ctl", "scan off");
 	sys->print("BT: done\n");
+}
+
+#
+# HID over GATT: a Bluetooth keyboard and mouse turned into
+# keystrokes and motion.  bthid does the work and has no Bluetooth in
+# it at all -- the device is a directory, a subscription is an open,
+# and a report is a read -- so what this phase shows is that the name
+# space is enough to drive a device class.
+#
+# The keys and the pointer go to files rather than to /dev/keyboard
+# and /dev/pointer, which is what the -k and -p flags are for: the
+# real devices are the default and are what a machine uses, and a
+# bench that wrote to them could not read back what it wrote.
+#
+hid()
+{
+	remotes := lsdir(mnt + "/0/remote");
+	if(remotes == nil){
+		sys->print("BT: FAILED: nothing was advertising\n");
+		sys->print("BT: done\n");
+		return;
+	}
+	dev := mnt + "/0/remote/" + hd remotes;
+	if((e := writefile(dev + "/ctl", "connect")) != nil){
+		sys->print("BT: FAILED: connect: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	ok := 1;
+	svcs := lsdir(dev + "/gatt");
+	got := 0;
+	for(sl := svcs; sl != nil; sl = tl sl)
+		if(hd sl == "1812")
+			got = 1;
+	if(!got){
+		sys->print("BT: FAILED: no HID service among %d\n", len svcs);
+		sys->print("BT: done\n");
+		return;
+	}
+	sys->print("BT: the device has a HID service\n");
+
+	kf := "/tmp/bthid.keys";
+	pf := "/tmp/bthid.pointer";
+	create(kf);
+	create(pf);
+	bthid := load Command "/dis/bt/bthid.dis";
+	if(bthid == nil){
+		sys->print("BT: FAILED: cannot load /dis/bt/bthid.dis: %r\n");
+		sys->print("BT: done\n");
+		return;
+	}
+	spawn bthid->init(nil, "bthid" :: "-m" :: mnt :: "-k" :: kf :: "-p" :: pf :: nil);
+
+	#
+	# the device types bth and a shifted a, and then moves.  Wait
+	# for the keys rather than for a fixed time: the device sends
+	# when it is ready and the reader has to have got there first.
+	#
+	keys := "";
+	for(i := 0; i < 40 && keys != "bthA"; i++){
+		sys->sleep(500);
+		keys = readfile(kf);
+	}
+	if(keys != "bthA"){
+		sys->print("BT: FAILED: the keyboard produced %q, wanted \"bthA\"\n", keys);
+		ok = 0;
+	} else
+		sys->print("BT: the keyboard typed %s, shift and all\n", keys);
+
+	#
+	# and the pointer: two reports of movement, which have to add up
+	# to a position.  5+3 across and 7+2 down, with the left button
+	# down for the first and up for the second.
+	#
+	pt := "";
+	for(i = 0; i < 20 && !hasstr(pt, "m 8 9 0"); i++){
+		sys->sleep(500);
+		pt = readfile(pf);
+	}
+	if(!hasstr(pt, "m 5 7 1")){
+		sys->print("BT: FAILED: the first pointer report is missing from %q\n", pt);
+		ok = 0;
+	} else if(!hasstr(pt, "m 8 9 0")){
+		sys->print("BT: FAILED: the movement did not add up: %q\n", pt);
+		ok = 0;
+	} else
+		sys->print("BT: the pointer moved and the button was read: %s\n", pt);
+
+	if(ok)
+		sys->print("BT: a Bluetooth keyboard and mouse, out of the name space\n");
+	writefile(dev + "/ctl", "disconnect");
+	writefile(mnt + "/0/ctl", "scan off");
+	sys->print("BT: done\n");
+}
+
+create(p: string)
+{
+	fd := sys->create(p, Sys->OWRITE, 8r666);
+	fd = nil;
 }

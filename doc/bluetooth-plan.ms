@@ -252,15 +252,26 @@ Works and no more, in both directions.
 Profiles, in the brief's order
 .IP 1.
 .B "HID over GATT."
-The first genuinely useful device class and mostly parsing: the report
-map, boot versus report protocol, and then keys onto
+Done for the boot protocol.
+.CW bthid
+takes the first connected device with a 1812 service, asks for the
+boot protocol, and reads the boot keyboard and boot mouse reports off
+their
+.CW .notify
+files; keys go to
 .CW /dev/keyboard
-and motion onto
-.CW /dev/pointer ,
-exactly as
-.CW appl/cmd/usb/usbd.b
-already does for USB.  A BLE keyboard and mouse are the milestone
-worth aiming at next.
+and motion to
+.CW /dev/pointer .
+The translation is
+.CW appl/lib/hidboot.b ,
+shared with
+.CW usbd ,
+because above the transport the reports are identical.  What is left
+is the report protocol, which means parsing the report map: a device
+that will not do boot protocol is found and then left alone, exactly
+as
+.CW usbd
+leaves one.
 .IP 2.
 .B "Bluetooth Classic, at all."
 Nothing of it exists.  Inquiry, remote name requests, BR/EDR

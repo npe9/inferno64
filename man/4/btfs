@@ -1,6 +1,6 @@
 .TH BTFS 4
 .SH NAME
-btfs, btbench \- Bluetooth Low Energy as a file system
+btfs, btbench, bthid \- Bluetooth Low Energy as a file system
 .SH SYNOPSIS
 .B bt/btfs
 [
@@ -30,6 +30,19 @@ btfs, btbench \- Bluetooth Low Energy as a file system
 ]
 ]
 ]
+]
+.PP
+.B bt/bthid
+[
+.B -v
+] [
+.BI -m " mountpoint"
+] [
+.BI -k " keyfile"
+] [
+.BI -p " pointerfile"
+] [
+.I device
 ]
 .SH DESCRIPTION
 .I Btfs
@@ -399,6 +412,44 @@ and watching it change is
 .EX
 cat /net/bt/0/remote/345678ABCDEF/gatt/180f/2a19.notify
 .EE
+.SS Bthid
+.I Bthid
+turns a Bluetooth keyboard or mouse into keystrokes on
+.B /dev/keyboard
+and motion on
+.BR /dev/pointer .
+It takes the first connected device with a
+.B 1812
+service, or the device directory named on its command line, writes 0
+to the Protocol Mode characteristic to ask for the boot protocol, and
+reads the boot keyboard and boot mouse input reports off their
+.B .notify
+files.
+.PP
+There is no Bluetooth in it: the device is a directory, a
+subscription is an open, and a report is a read.  The translation of
+reports to keys and motion is
+.IR hidboot ,
+shared with
+.IR usbd (1),
+because above the transport the reports are identical.
+.PP
+A boot report is the state of the keyboard and not an event \- the
+keys that are down, in no order \- so a key that is held appears in
+every report until it is let go, and only keys that were not down
+before are typed.  What is not done is the report protocol, which
+means parsing the report map: a device that will not do boot protocol
+is found and then left alone, exactly as
+.IR usbd (1)
+leaves one.
+.PP
+.B -k
+and
+.B -p
+name files to write to instead of the real devices, which is what the
+bench uses;
+.B -v
+says what each report became.
 .SS Btbench
 .I Btbench
 starts

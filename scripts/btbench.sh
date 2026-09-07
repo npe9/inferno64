@@ -60,6 +60,11 @@
 #	changed	a device that rearranges its database while connected
 #		and indicates Service Changed: the name space must
 #		follow, on the same link
+#	hid	a Bluetooth keyboard and mouse over GATT, turned into
+#		keystrokes and pointer motion by bthid, which is an
+#		ordinary program over the name space and has no
+#		Bluetooth in it.  A key held across three reports must
+#		type once, not three times
 #	peripheral
 #		the stack advertising and a peer opening a link to it,
 #		which is the half of Bluetooth it could not do at all.
@@ -275,6 +280,26 @@ echo "the peer saw the name the phase advertised"
 # the order initiator then responder, so a wire joining two links the
 # controller reported with different peers cannot satisfy both ends.
 #
+#
+# HID over GATT: a Bluetooth keyboard and mouse.  bthid does the work
+# and has no Bluetooth in it -- the device is a directory, a
+# subscription is an open, a report is a read -- so what this shows is
+# that the name space is enough to drive a device class.
+#
+run hid --hid hid
+#
+# and that the host asked for the boot protocol before reading
+# anything.  A device sending boot reports to a host that never
+# selected boot is a device reporting in a format nobody agreed to,
+# and it is not visible from inside the guest.
+#
+n=`grep -c 'the host selected boot protocol' "$OUT/bthci-hid.log" || true`
+if [ "$n" != 1 ]; then
+	echo "=== phase hid ==="
+	echo "BENCH FAIL (hid): the host selected the boot protocol $n times, wanted 1"
+	exit 1
+fi
+echo "the host asked for the boot protocol before reading a report"
 run paired "--peripheral --pairin --rebond" paired
 #
 # and what the model saw from the other side: the confirm this stack

@@ -20330,6 +20330,59 @@ every time would look identical from inside the guest.  With the
 lookup removed the negative reply goes out and the link never
 encrypts, which is the honest failure.
 .NH 2
+A keyboard, and a table that had two homes coming
+.PP
+.CW bthid
+turns a Bluetooth keyboard or mouse into keystrokes and motion, and
+the thing worth saying about it is how little is in it.  The device is
+a directory, a subscription is an open, and a report is a read;
+.CW btfs
+has already walked the database into
+.CW /net/bt/N/remote/ADDR/gatt ,
+so there is no Bluetooth in the program at all.  That is what serving
+the stack as a name space was for, and this is the first thing that
+collects on it.
+.PP
+The reports it reads are the HID boot protocol, which
+.CW usbd
+already reads off an interrupt endpoint.  Above the transport they are
+identical, so the translation went into
+.CW appl/lib/hidboot.b
+and both use it: a keyboard map with two homes is a keyboard map that
+will come to disagree with itself.
+.PP
+Lifting it turned up nothing wrong with
+.CW usbd
+and one thing wrong with the lift.  The rows carry Escape, usage code
+41, as a literal byte, which does not show in a terminal; copying the
+line out of a
+.CW grep
+dropped it, and the copy was one character short, so every code from
+41 on gave the character belonging to the one below and code 56 ran
+off the end.  The first check said the two agreed exactly and then
+both crashed on the same input, which read like a bug in the original
+and was a bug in the copy of it.  The check was wrong as well as the
+copy: it compared a retyping against a retyping.
+.PP
+Redone against the bytes taken out of the committed file rather than
+out of a terminal, the two agree over all sixty five thousand five
+hundred and thirty six key and modifier pairs, which is what says the
+lift was mechanical.  The library builds the escape from its code
+rather than carrying it as a literal, so what sits between the newline
+and the backspace can be seen.
+.PP
+Three deliberate breakages.  The modifier byte ignored, so a shifted
+key types the unshifted character.  Pointer movement assigned rather
+than accumulated, so the second report lands where it moved rather
+than where it arrived.  And a report read as an event rather than as a
+state \(em which the phase did
+.I not
+catch at first, because the device released every key between reports
+and no key was ever held across two.  A real keyboard reports at its
+own rate and a held key is in every report until it is let go, so the
+model now holds one for three reports: with the check it types once,
+without it three times.
+.NH 2
 The bench now runs the interpreter, and why
 .PP
 With the second radio in, the bench started failing in emu rather than

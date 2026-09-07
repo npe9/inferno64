@@ -167,6 +167,14 @@ pairin = '--pairin' in sys.argv
 # asked to pair a second time.
 rebond = '--rebond' in sys.argv
 
+# --hid: the peripheral is a keyboard and a mouse over GATT.  A HID
+# service is added with the two boot reports and the protocol mode
+# characteristic in it, and once the guest has selected the boot
+# protocol and subscribed, a few keystrokes and a movement are sent as
+# notifications.  Nothing here parses a report map: the boot protocol
+# is a fixed layout, which is the whole reason it exists.
+hid = '--hid' in sys.argv
+
 # --addr XXXXXXXXXXXX: this controller's own BD_ADDR, most significant
 # byte first, so two models in one bench are two radios and not the
 # same one twice.  A bond records the controller it was made on, and
@@ -358,6 +366,23 @@ SECONDARY = [
     (0x0070, 0x0072, 0xfffa),
 ]
 
+#
+# Human Interface Device, boot protocol.  Protocol Mode is written to
+# select boot; the two input reports notify.
+#
+HIDSVC = (0x0080, 0x0089, 0x1812)
+HIDCHARS = [
+    (0x0081, 0x06, 0x0082, 0x2a4e),   # protocol mode: read, write without response
+    (0x0083, 0x12, 0x0084, 0x2a22),   # boot keyboard input report: read, notify
+    (0x0086, 0x12, 0x0087, 0x2a33),   # boot mouse input report: read, notify
+]
+HIDVALUES = {
+    0x0082: bytes([0x01]),            # report protocol until told otherwise
+    0x0084: bytes(8),
+    0x0087: bytes(3),
+}
+HIDDESCS = [(0x0085, 0x2902), (0x0088, 0x2902)]
+
 # include declarations: (handle, included start, included end, uuid or
 # None for a 128 bit one the declaration may not carry)
 INCLUDES = [
@@ -396,6 +421,14 @@ VALUES = {
 # client characteristic configuration, per descriptor handle
 CCCD = {0x0013: 0, 0x0033: 0}
 DESCS = [(0x0013, 0x2902), (0x0033, 0x2902)]
+
+if hid:
+    SVC.append(HIDSVC)
+    CHARS.extend(HIDCHARS)
+    VALUES.update(HIDVALUES)
+    DESCS.extend(HIDDESCS)
+    for h, nil in HIDDESCS:
+        CCCD[h] = 0
 
 class Model:
     def __init__(self, conn):
@@ -1217,11 +1250,25 @@ class Model:
                 elif h == 0x0033 and service_changed and CCCD[h] & 2:
                     threading.Thread(target=self.move_database,
                                      daemon=True).start()
+                elif hid and h in (0x0085, 0x0088):
+                    self.hid_maybe_start()
                 return
             if h in VALUES:
                 VALUES[h] = v
+                if hid and h == 0x0082:
+                    print('bthci: the host selected %s protocol'
+                          % ('boot' if v == bytes([0]) else 'report'), flush=True)
                 return self.acl(4, bytes([0x13]))
             self.att_err(op, h, 0x03)
+        elif op == 0x52:                                  # Write Command
+            h = struct.unpack('<H', p[1:3])[0]
+            v = p[3:]
+            if h in VALUES:
+                VALUES[h] = v
+                if hid and h == 0x0082:
+                    print('bthci: the host selected %s protocol'
+                          % ('boot' if v == bytes([0]) else 'report'), flush=True)
+            # a command gets no answer, not even an error
         elif op == 0x1e:                                  # Handle Value Confirmation
             # the answer to an indication, not a request: answering it
             # would put an error response in front of the client's next
@@ -1333,6 +1380,57 @@ class Model:
             if CCCD[0x0013] & 1:
                 self.acl(4, bytes([0x1b]) + struct.pack('<H', 0x0012) + bytes([level]))
                 self.notified += 1
+
+    #
+    # A keyboard and a mouse.  Nothing is sent until the host has both
+    # selected the boot protocol and subscribed: a device that reported
+    # before either would be reporting in a format the host has not
+    # agreed to, and to nobody.
+    #
+    def hid_maybe_start(self):
+        if VALUES.get(0x0082) != bytes([0]):
+            return
+        if not (CCCD.get(0x0085, 0) & 1) or not (CCCD.get(0x0088, 0) & 1):
+            return
+        if getattr(self, 'hidgoing', False):
+            return
+        self.hidgoing = True
+        threading.Thread(target=self.hid_type, daemon=True).start()
+
+    def hid_type(self):
+        time.sleep(0.5)
+        # usage codes for b, t, h: a word the phase can look for, and
+        # each one pressed and then released, because a boot report is
+        # the state of the keyboard and not an event
+        for k in (0x05, 0x17, 0x0b):
+            self.acl(4, bytes([0x1b]) + struct.pack('<H', 0x0084)
+                     + bytes([0, 0, k, 0, 0, 0, 0, 0]))
+            time.sleep(0.2)
+            self.acl(4, bytes([0x1b]) + struct.pack('<H', 0x0084) + bytes(8))
+            time.sleep(0.2)
+        #
+        # A shifted one, to show the modifier byte is read: left shift
+        # with the usage code for a gives A.  Sent three times, because
+        # a real keyboard reports the state of its keys at its own rate
+        # and a key that is held appears in every report until it is
+        # let go.  A host that read a report as an event rather than as
+        # a state would type it three times.
+        #
+        for _ in range(3):
+            self.acl(4, bytes([0x1b]) + struct.pack('<H', 0x0084)
+                     + bytes([0x02, 0, 0x04, 0, 0, 0, 0, 0]))
+            time.sleep(0.2)
+        self.acl(4, bytes([0x1b]) + struct.pack('<H', 0x0084) + bytes(8))
+        time.sleep(0.3)
+        # and the mouse: right and down, with the left button held.
+        # Two reports, because /dev/pointer wants a position and the
+        # device reports movement, so the second only lands where it
+        # should if the first was added to.
+        for dx, dy, b in ((5, 7, 0x01), (3, 2, 0x00)):
+            self.acl(4, bytes([0x1b]) + struct.pack('<H', 0x0087)
+                     + bytes([b, dx & 0xff, dy & 0xff]))
+            time.sleep(0.2)
+        print('bthci: the keyboard and the mouse have reported', flush=True)
 
     # ------------------------------------------------ SMP
     def smp_in(self, p):
