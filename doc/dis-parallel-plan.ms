@@ -1158,13 +1158,28 @@ and
 are the common path through most of them and are the natural place for
 the lock to be asserted rather than taken.
 .PP
-Not yet run on a native kernel: the board root filesystems are built
-from
-.CW os/inferno/init
-and would need
+They run on a native kernel too.
+.CW /dis/chantest.dis
+is in
+.CW virtarm64 's
+root file list and
+.CW virtinit 's
+smoke script runs it, last \- after
+.CW ROOT-CMDS-OK ,
+deliberately, because
 .CW chantest
-added there.  Worth doing when the locking lands, since native is where
-a second processor will first exist.
+raises on failure and a raise there would abort the script before the
+later markers printed.  Five boots under
+.CW "qemu-system-aarch64 -M virt -cpu cortex-a53" :
+five of five
+.CW CHANTEST-OK ,
+all four cases each time.
+.PP
+That matters more than the hosted result, because native is where a
+second processor will first exist, and a test that has only ever run
+under
+.CW emu
+is not the baseline this phase wants.
 .NH 2
 Phase 5 \- the collector
 .PP
