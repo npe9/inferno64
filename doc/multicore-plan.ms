@@ -902,6 +902,52 @@ from 25 of 25 rather than an impression.
 .NH 2
 Phase 2 \- finish the multiprocessor kernel
 .PP
+.B "Where this now stands on virtarm64."
+The plan below was written for pc64, on the assumption that it would be
+the multiprocessor board because it already brings processors up.  It
+boots to a shell about three percent of the time, so it is a poor place
+to build.
+.CW virtarm64
+boots fourteen of fourteen, and now starts a second processor:
+.IP \(bu
+PSCI
+.CW CPU_ON
+starts cpu1, which is straightforward here because the board never
+turns the MMU on \- identity addressing throughout \- so a secondary
+needs no page tables and its entry address is its own physical address.
+.IP \(bu
+Each processor keeps its own
+.CW Mach
+in
+.CW TPIDR_EL1 ,
+the register the architecture reserves for it, which is what pc64 uses
+the GS base for.  cpu1 reads back
+.CW "machno 1"
+and mutates only its own
+.CW Mach .
+.IP \(bu
+cpu0 meanwhile finishes
+.CW DIS-STRESS-OK ,
+.CW VIRT-OK
+and
+.CW CHANTEST-OK
+as before, and at
+.CW "-smp 1"
+nothing changes.
+.PP
+What that does not include, so the state is not overstated: cpu1 has no
+GIC, no timer, no vector table and never enters the scheduler.
+.CW MAXMACH
+is still 1.  The large remaining step is that
+.CW m
+is a plain global for the whole tree, and making its several thousand
+uses read
+.CW TPIDR_EL1
+is a change of its own \- 7c cannot inline the read, so it is a call
+per access unless a register is reserved, the way
+.CW comp-arm64.c
+already reserves X20 for the Dis register file.
+.PP
 .B "Before any of it: 7c ignores volatile."
 Found while starting a second processor on
 .CW virtarm64 ,
