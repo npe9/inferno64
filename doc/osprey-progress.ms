@@ -8053,6 +8053,16 @@ want of a boot, not for want of a ticket.  Seven minutes now: the
 deadline is not part of what is being checked, and it is set where load
 cannot reach it.
 .PP
+That last paragraph is wrong, and 2.3k below is what it should have
+said.  The lines really had not been printed, and the reason really was
+that the machine was stopped before printing them \- but not because it
+ran out of time.  It was stopped by the check, on a marker that arrives
+before the phase those two criteria are about, in the runs where two
+independent things finish in the other order.  The deadline went to
+seven minutes and the check went on failing.  The paragraph is left as
+it was written because being confidently wrong in a way that fits the
+evidence is the thing this document is for.
+.PP
 .B "2.3i: rio hears the button."
 Painting the screen is not listening to a mouse: a window system that
 started and then sat deaf would leave the same pixels.  So the button is
@@ -8210,6 +8220,75 @@ threaded program that interrupts its own procs will start doing so, and
 that is the intended behaviour rather than a side effect to watch for
 \- but it is new, and if a window system stops behaving as it did, this
 is the change that did it.
+.B "2.3k: the two-machine check was not slow, it was early."
+The two-machine check had been failing its two pi-p ticket criteria
+about one run in three, and 2.3h says why: the machines were running out
+of time.  That was wrong, and the way it was wrong is worth writing
+down, because the evidence for it looked good.  Both kept logs ended
+mid-boot, six hundred lines short of where a passing run ends, which is
+exactly what a deadline looks like.  So the deadline went from four
+minutes to seven, and the check went on failing one run in three.
+.PP
+A run of that check takes twenty-seven seconds.  Four timed runs said
+so \- 28, 27, 27, 27, one of them a failure \- and none of them came
+within six minutes of the deadline that had just been raised.  Nothing
+was slow.  What ends a run is a marker: the console stops the machine
+when it sees a line, and the line was
+.CW "osprey migrate: the exchange is complete on this machine" .
+.PP
+A machine here does two independent things.  The migration exchange runs
+in the kernel and in the migrate kprocs.  The personality's pi-p over
+the cable runs at the end of the wire client's kproc,
+.CW pipacrosscable ,
+after the bandwidth test.  Nothing sequences them, so they finish in
+either order.  In a passing run machine 2's cable lines are at 645 and
+its migration marker at 1217; in a failing run the marker is at 606 and
+the cable phase has not started.  The check was stopping the machines in
+the middle of the thing two of its criteria are about.
+.PP
+The fix is to stop on more than one line.
+.CW osprey-console.py 's
+.CW -u
+is repeatable now, and every marker given has to be seen before the
+machine is stopped, in any order.  Machine 2 waits for the migration
+marker and for the end of its own cable pi-p; machine 1 waits for the
+migration marker and for the cable's connection to close, which is what
+tells it the far machine has finished asking.  For that second one the
+server's close line had to say where the connection came from \- it
+already said so when it accepted one, and now says so when it closes
+one, so the cable's connection reads differently from the client
+container's.  The end-of-cable line is printed on the failure path too,
+and the connection dropped there, so a cable phase that fails ends the
+run instead of leaving the other machine waiting for a line that cannot
+come.
+.PP
+Fourteen consecutive clean runs after, against one failure in four and
+one in three before, and the deadline is back at four minutes where the
+timings put it.
+.PP
+The sweep that gated this turned up a second one of the same family, in
+a different check.  The one-machine wire check failed
+.CW "a key agreed over the wire, the same on both" ,
+and the kept logs say why in one line each: one machine printed
+.CW "key none"
+and the other
+.CW "key e262215259b4e333" .
+The key is agreed between the two machines, so when it appears is not
+either machine's to say, and the check read it after a fixed sleep \-
+fourteen seconds on one, ten on the other.  It now waits for the
+agreement, up to forty seconds past the sleep it already did, and prints
+what it finds either way so a real failure still reads as one.  The
+sleeps are kept as a floor so that nothing later in the script starts
+any earlier than it did.  Four clean runs after.
+.PP
+Both of these were the same mistake in two places: a check that decides
+when something is finished by counting seconds rather than by looking
+for the thing.  Neither was a kernel fault, and both had been showing up
+as "the sweep is flaky", which is the shape a check defect takes when
+nobody reads its logs.  The lesson is the one the sweep was written for: a log
+that stops early has two explanations, and "it ran out of time" is only
+one of them.  The measurement that separated them was a stopwatch, and
+it took four runs.
 .NH 2
 Track three: the library-OS personality execs a program, then rio
 .PP
@@ -8544,9 +8623,10 @@ and tested against the callers that the same commit changed.
 is the answer \- seven configuration builds, then all fourteen checks in
 order, with
 .CW -w
-to repeat the two-machine check, which is the one that had been flaky.
+to repeat the two-machine check, which was the one that had been flaky
+and, since 2.3k, is not.
 The tally as this is written, every configuration building and every
-check clean, the two-machine check run once:
+check clean, the two-machine check run three times:
 .CW pc64
 61,
 .CW p9pair
@@ -8556,7 +8636,8 @@ check clean, the two-machine check run once:
 .CW p9linux
 12,
 .CW p964
-29, keyboard 8, rio 5, micro 7, user 10, net 13, wire 14, two-machine 20, the
+29, keyboard 8, rio 5, micro 7, user 10, net 13, wire 14, two-machine 20
+three times over, the
 six criteria of the userland the tree builds itself, and two portable
 builds.  A criterion is a sentence a booted kernel printed
 in answer to a command typed at its prompt, so a clean check is also

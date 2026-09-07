@@ -30,7 +30,14 @@ def main():
 	ap.add_argument('-m', '--memory', default='1024')
 	ap.add_argument('-p', '--cpus', default='1')
 	ap.add_argument('-e', '--expect', action='append', default=[])
-	ap.add_argument('-u', '--until', default=None)
+	# Repeatable.  Two things a machine does can finish in either order -
+	# the personality's migration exchange and its pi-p over the cable are
+	# in different kprocs - so a run that stops at the first marker to
+	# arrive loses whatever the other was still doing.  Given more than
+	# once, every one of them must be seen before the run ends, in any
+	# order; they are matched against the whole of the output so far, so
+	# giving the same marker twice is the same as giving it once.
+	ap.add_argument('-u', '--until', action='append', default=None)
 	ap.add_argument('-c', '--command', action='append', default=[])
 	ap.add_argument('-q', '--quiet', action='store_true')
 	ap.add_argument('-S', '--snapshot', action='store_true',
@@ -114,7 +121,8 @@ def main():
 	for e in a.expect:
 		pat, sep, reply = e.partition('=')
 		steps.append((re.compile(pat.encode(), re.M), reply if sep else None))
-	until = re.compile(a.until.encode(), re.M) if a.until else None
+	untilall = [re.compile(u.encode(), re.M) for u in a.until] if a.until else None
+	until = list(untilall) if untilall is not None else None
 	shot_on = re.compile(a.shot_on.encode(), re.M) if a.shot_on else None
 	cmds = list(a.command)
 
@@ -167,9 +175,12 @@ def main():
 						send(reply)
 					continue
 
-			if not steps and until is not None and until.search(seen):
+			if not steps and until is not None:
+				until = [u for u in until if not u.search(seen)]
+			if not steps and until is not None and not until:
 				if cmds:
 					seen = b''
+					until = list(untilall)	# the next command waits for them again
 					deadline = time.time() + a.timeout
 					send(cmds.pop(0))
 					continue
@@ -246,7 +257,8 @@ def main():
 		log.close()
 	if status != 0:
 		sys.stderr.write('\nosprey-console: timed out waiting for %r\n' %
-			(a.until or 'end of output'))
+			([u.pattern.decode() for u in until] if until else (a.until or 'end of output')))
+	# (the markers still waited for are the ones left in until)
 	return status
 
 sys.exit(main())

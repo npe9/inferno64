@@ -24,20 +24,23 @@ def plain(s):
 
 def boot(netdev, mac, until, log, img, delay=0):
     time.sleep(delay)		# the listening end must be up before the other connects
-    # Seven minutes, not four.  Two of these boots run at once, on a host
-    # that is also building, and each does the whole migration exchange -
-    # every process carried both ways with its pages, its descriptors and
-    # its name space - before the pi-p phase the last criteria are about.
-    # At four minutes a machine that had done all of that would sometimes
-    # be paging /boot/cat in when its time ran out, and the two ticket
-    # criteria failed for want of a boot rather than for want of a ticket:
-    # both kept logs ended mid-boot, six hundred lines short of where a
-    # passing run ends.  The deadline is not part of what is being
-    # checked, so it is set where load cannot reach it.
-    subprocess.run(['./scripts/osprey-console.py', '-q', '-p', '2',
-                    '-n', 'virtio-net-pci,disable-legacy=on,mac=' + mac, '--netdev', netdev,
-                    '-l', log, '--blk', img, '-t', '420', '-u', until],
-                   env=env, capture_output=True, text=True)
+    # until is a list, and every marker in it has to be seen before the
+    # machine is stopped.  It has to be more than one, because a machine
+    # here does two independent things and they finish in either order:
+    # the migration exchange, in the kernel and the migrate kprocs, and
+    # the personality's pi-p over the cable, at the end of the wire
+    # client's.  Stopping at the migration's last line caught the cable
+    # phase about one run in four - the two ticket criteria then failed
+    # for want of a phase that had not run yet, and the kept logs ended
+    # six hundred lines short of a passing run's.  That was first read as
+    # a deadline and the deadline was raised to seven minutes; it was not
+    # one.  A run of this check takes twenty-seven seconds.
+    cmd = ['./scripts/osprey-console.py', '-q', '-p', '2',
+           '-n', 'virtio-net-pci,disable-legacy=on,mac=' + mac, '--netdev', netdev,
+           '-l', log, '--blk', img, '-t', '240']
+    for u in until:
+        cmd += ['-u', u]
+    subprocess.run(cmd, env=env, capture_output=True, text=True)
 
 def main():
     keep = '-k' in sys.argv[1:]
@@ -58,10 +61,16 @@ def main():
         open(img, 'wb').write(d)
         imgs.append(img)
     port = 17895
+    exchange = 'osprey migrate: the exchange is complete on this machine - 2 carried away, 2 taken in and done'
+    # machine 1 serves the far machine's pi-p session over the cable, and
+    # is done with it when that connection closes; machine 2 is the one
+    # that opens it, and says so when it has finished with it.
+    served = "p9 ip: pi-p wire: connection \\d+ from the cable closed"
+    asked = "p9 ip: pi-p across the cable: the connection is closed; this machine is done with the cable's pi-p"
     t1 = threading.Thread(target=boot, args=('socket,id=n0,listen=:%d' % port, '52:54:00:00:d1:01',
-                                             'osprey migrate: the exchange is complete on this machine - 2 carried away, 2 taken in and done', logs[0], imgs[0]))
+                                             [exchange, served], logs[0], imgs[0]))
     t2 = threading.Thread(target=boot, args=('socket,id=n0,connect=:%d' % port, '52:54:00:00:d1:02',
-                                             'osprey migrate: the exchange is complete on this machine - 2 carried away, 2 taken in and done', logs[1], imgs[1], 4))
+                                             [exchange, asked], logs[1], imgs[1], 4))
     t1.start(); t2.start(); t1.join(); t2.join()
     for img in imgs:
         try: os.unlink(img)

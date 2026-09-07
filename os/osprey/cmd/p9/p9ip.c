@@ -307,6 +307,7 @@ typedef struct Pipconn Pipconn;
 struct Pipconn {
 	int	dfd, lfd, conn;
 	int	closed;
+	int	cable;			/* it came over the cable, not from the client container */
 	uchar	group[2048];		/* the reader leaves one group here */
 	long	grouplen;
 	int	groupready;
@@ -360,7 +361,15 @@ pipconn(void *a)
 		tsleep(&up->sleep, return0, nil, 10);
 	}
 	pipfs_connclosed(c->dfd);		/* its streams stop; the sessions live on */
-	print("p9 ip: pi-p wire: connection %d closed; the sessions it carried live on\n", c->conn);
+	/*
+	 * Which side the connection came from, said here as well as when it
+	 * was accepted.  A run is over when the far machine's pi-p over the
+	 * cable is done, and this line is how that is known from outside:
+	 * without the origin the close of the cable's connection reads the
+	 * same as the close of the client container's.
+	 */
+	print("p9 ip: pi-p wire: connection %d from %s closed; the sessions it carried live on\n",
+		c->conn, c->cable ? "the cable" : "the client container");
 	p9close(c->dfd);
 	p9close(c->lfd);
 	free(c);
@@ -398,6 +407,7 @@ pipwire(void *a)
 		c = malloc(sizeof *c);
 		if(c == nil){ p9close(dfd); p9close(lfd); continue; }
 		memset(c, 0, sizeof *c);
+		c->cable = a != nil;
 		c->dfd = dfd; c->lfd = lfd; c->conn = conns;
 		kproc("pipconn", pipconn, c);	/* each connection served on its own kproc, so one does not block another */
 	}
@@ -605,12 +615,22 @@ pipacrosscable(void)
 	long tn, rn, off, blen;
 	int type, tag, dfd, wfd, refused, opened;
 
+	dfd = wfd = -1;
 	if(waserror()){
 		print("p9 ip: pi-p across the cable failed: %s\n", up->errstr);
+		/*
+		 * The connection is dropped and the end is said on this path
+		 * too.  The other machine is waiting for its side of this
+		 * connection to close before it stops, and a failure that
+		 * left it open would leave that machine waiting for a line
+		 * that cannot come.
+		 */
+		if(wfd >= 0) p9close(wfd);
+		if(dfd >= 0) p9close(dfd);
+		print("p9 ip: pi-p across the cable: the connection is closed; this machine is done with the cable's pi-p\n");
 		return;
 	}
 	/* as nobody */
-	dfd = -1;
 	wfd = pipconnecttries(&dfd);
 	tn = 0;
 	tn += pip_tsession(tg+tn, 1, 0);
@@ -663,6 +683,16 @@ pipacrosscable(void)
 	if(!opened)
 		print("p9 ip: pi-p across the cable: the ticketed session did not get /n/hello\n");
 	p9close(wfd); p9close(dfd);
+	wfd = dfd = -1;
+	/*
+	 * Said whether the exchange above worked or not: this is the end of
+	 * everything this machine does over the cable's pi-p, and the check
+	 * waits for it.  It has to, because this runs in the wire client's
+	 * kproc while the migration exchange runs in others, and the two
+	 * finish in either order; a run stopped at the migration's own last
+	 * line caught this phase about one time in four.
+	 */
+	print("p9 ip: pi-p across the cable: the connection is closed; this machine is done with the cable's pi-p\n");
 	poperror();
 }
 

@@ -339,7 +339,7 @@ def main():
          and "p9 ip: pi-p over the wire: a group of 5, the first saying who I am, crossed the two stacks' tcp.c across the ring and came back with 5 replies" in t
          and re.search(r'p9 ip: pi-p wire: a \d+-byte group came over the wire on connection 1, answered with \d+ bytes of replies', t) is not None),
         ("and the session outlives the connection: the connection is closed, a second one resumes the session by number, and the fid opened on the first is still open and reads",
-         'p9 ip: pi-p wire: connection 1 closed; the sessions it carried live on' in t
+         'p9 ip: pi-p wire: connection 1 from the client container closed; the sessions it carried live on' in t
          and re.search(r'p9 ip: pi-p over the wire: a new connection resumed session [0-9a-f]+ and read fid 1, still open, data \(version \d+\): "version 42 of forty', t) is not None),
         ("and isochronous data on it: a Tstream is answered on the wire (refused over the ring), and the attribute arrives three times at the asked rate with nothing sent to make it happen",
          'p9 ip: pi-p over the wire: Tstream answered, period 100 ms' in t
