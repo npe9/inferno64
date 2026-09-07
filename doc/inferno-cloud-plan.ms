@@ -131,9 +131,26 @@ which is what
 .CW os/inferno/pc64/qemu-boot.sh
 uses, is reachable only from QEMU's own
 .CW -kernel
-loader or a multiboot boot loader.  A cloud machine is UEFI class 3,
-has no CSM, and cannot start that image at all.  Until this round
-there was no path onto any of the hardware in section 1.
+loader or a multiboot boot loader, and no provider offers either.
+Until this round there was no path onto any of the hardware in
+section 1.
+.PP
+Which firmware a provider offers is not uniform, and the plan should
+not assume it is.  AWS reports the boot modes of an instance type
+through
+.CW "describe-instance-types" ,
+and the Xen generations answer
+.CW legacy-bios
+alone \(en
+.CW t2.xlarge
+is the example in AWS's own documentation \(en while Nitro types
+generally answer both.  So UEFI is the way onto a modern machine and
+onto every second-generation cloud VM, but it is not the only firmware
+in the field, and
+.CW os/inferno/boot/pc
+\(en the BIOS loader, the third one in this tree, also unbuilt \(en is
+what a legacy-BIOS-only instance needs.  It has not been built or
+booted here.
 .PP
 .B "The image shapes the providers take."
 .CW scripts/mkinferno-efi-iso.sh
@@ -414,6 +431,159 @@ call.  The configuration value itself is whole, and
 .CW e820scan
 parses all of it.
 .NH 1
+If a guest counts
+.PP
+Everything above takes "bare metal" literally.  Relax it to "the
+operating system of the machine, talking to whatever the platform
+presents, real or paravirtual" and the answer changes completely,
+because the expensive part of this port was never the hypervisor: it
+was the device model behind it.
+.PP
+There are three device models worth the name, and the tree's position
+in each is different.
+.IP "\f(CWvirtio\fP" 12
+The device model of every KVM host, which is Compute Engine, DigitalOcean,
+Linode, Vultr's cloud instances, Hetzner Cloud, OpenStack and Proxmox.
+.CW ethervirtio10
+and
+.CW sdvirtio10
+are linked into
+.CW pc64
+and work, and with UEFI now booting there is nothing left to write.
+This is not a GCE-specific win, as this document said before it: it is
+most of the market, and GCE is only the one with a documented import
+path for an image nobody recognises.
+.IP "\f(CWXen\fP" 12
+Three shapes, and they cost very different amounts.  See below.
+.IP "\f(CWHyper-V\fP" 12
+Azure.  No PCI device at all for disk or network: VMBus, with
+.CW storvsc
+and
+.CW netvsc
+as its clients.  Unchanged from section 4 \(en still the largest item.
+.NH 2
+The three shapes of a Xen guest
+.IP "\f(CWPV\fP" 10
+The classic paravirtualised guest: no hardware virtualisation, the
+guest's page tables are the hypervisor's business, and every privileged
+operation is a hypercall.  It is the most work of the three and the
+least useful: AWS dropped PV AMI support on everything modern, and a PV
+kernel is a different port, not a driver.  Do not start here.
+.IP "\f(CWHVM\fP" 10
+A full machine: firmware, an emulated NIC and an emulated IDE
+controller from the device model in dom0, and PV drivers optional and
+only for speed.  This is the cheapest Xen by a wide margin, because
+.CW pc64
+already has the NICs \(en
+.CW ether8139 ,
+.CW etherigbe ,
+.CW ether82563 ,
+whichever the host presents.  What it does not have is IDE.
+.CW os/inferno/pc/sdata.c
+is in the tree and commented out of the configuration
+.CW ( "# ata" ),
+written for the 386 board and not compiled against this one since;
+.CW os/9front/pc/sdide.c
+is the copy-in alternative under the flavour rule.  One driver.
+.IP "\f(CWPVH\fP" 10
+Hardware virtualisation, no emulated devices, no firmware: the guest is
+entered directly and everything it talks to is a PV device.  The entry
+half of this is done and verified \(en see below \(en and the device
+half is xenbus and XenStore, grant tables, event channels, and then
+.CW blkfront
+and
+.CW netfront .
+That is a bus and two class drivers, the same order of magnitude as
+Azure's VMBus, and it is what a PVH guest needs before it can read a
+disk or send a packet.
+.NH 2
+The entry point, which is done
+.PP
+The x86/HVM direct boot ABI is what a PVH guest is started through, and
+it is not Xen's alone: QEMU's own
+.CW -kernel
+loader, Firecracker and Cloud Hypervisor all implement it for an ELF
+kernel with a
+.CW XEN_ELFNOTE_PHYS32_ENTRY
+note.  One entry point, four hosts.
+.PP
+.CW os/inferno/pc64/l.s
+has
+.CW _pvhentry
+now.  The ABI hands over 32-bit protected mode with flat segments,
+paging off and interrupts off, which is exactly the state
+.CW _protected
+already expects, so the entry records
+.CW BX
+\(en the physical address of a
+.CW "struct hvm_start_info"
+\(en and jumps.
+.CW os/inferno/pc/bootargs.c 's
+.CW pvhargs
+turns that structure into the boot arguments the kernel already reads:
+the memory map into
+.CW *e820= ,
+merged and bounded for the same reasons the EFI loader's
+.CW memconf
+is, the RSDP into
+.CW *acpi=
+(a PVH guest has no BIOS area to scan for one), and the command line
+into configuration lines.
+.CW tools/aout2elf
+puts the kernel in an ELF with that note, beside
+.CW tools/aout2efi
+which puts it in a PE.
+.PP
+Verified:
+.CW "qemu-system-x86_64 -kernel ipc64.elf -append console=0" ,
+with no firmware involved in the load, prints an
+.CW *e820=
+built from
+.CW hvm_start_info ,
+finds its memory, reaches
+.CW "Welcome to Inferno..."
+and spawns
+.CW "sh -n /dis/init" .
+What that verifies is QEMU's implementation of the ABI.  Booting as a
+Xen PVH domU is the same entry point and the same structure, but no
+Xen runs on this host and it is not claimed.
+.PP
+One trap is worth repeating from
+.CW tools/aout2elf 's
+own comment, because it cost a boot: QEMU scans the first 8192 bytes
+of a
+.CW -kernel
+file for a multiboot header before it looks for the PVH note, and
+.CW l.s
+carries one 0x20 bytes into the text.  With the text at file offset
+0x1000 QEMU took the multiboot path, loaded text and data contiguously
+over an ELF laid out with data on its own page, and the kernel printed
+nothing whatever.  The text sits at 0x3000 so that header falls
+outside the window.
+.NH 2
+So what does it cost, per platform
+.PP
+Counting only what is not already in the tree:
+.IP
+.nf
+KVM / virtio        nothing.  Works today.
+QEMU, Firecracker,
+Cloud Hypervisor    nothing.  The PVH entry is in.
+Xen HVM             one driver: IDE.
+Xen PVH             xenbus, grant tables, event channels,
+                    blkfront, netfront.
+AWS Nitro           multi-vector MSI-X, then ENA.
+Azure               VMBus, storvsc, netvsc.
+Rented metal        nothing, for a box with an Intel 1G NIC
+                    and AHCI or NVMe.
+.fi
+.PP
+The order that follows from this is not the order section 5 had.  A
+KVM guest costs nothing and is most of the market; the PVH entry costs
+nothing more and adds the three microVM monitors; Xen HVM costs one
+driver.  All of that is cheaper than ENA, and none of it needs the
+multi-vector MSI-X that ENA does.
+.NH 1
 What each provider needs that is not here
 .PP
 The network device is what discriminates the list.  Everything else is
@@ -492,46 +662,72 @@ What is left of it is the console \(en the 16550 at
 is assumed rather than read out of ACPI's SPCR table \(en and a machine
 that puts its console elsewhere is silent in exactly the same way.
 .IP 3.
-.B "Boot on GCE."
-UEFI, virtio-net, a compiled-in root: every piece exists, and the
-image plumbing is done \(en
+.B "Run as a KVM guest, on somebody's hardware."
+UEFI, virtio-net, virtio-blk, a compiled-in root: every piece exists,
+and the image plumbing is done \(en
 .CW scripts/mkinferno-efi-disk.sh
 with
 .CW INFERNO_GCE_TAR
 writes an archive to Compute Engine's documented requirements, though
-not yet one that has been through its importer.  This is the first cloud
-machine Inferno can run on, it needs no new driver, and what is left
-of it is an account, an upload and a boot log.
+not yet one that has been through its importer.  This costs no driver
+at all and it is most of the market, not one provider: GCE is only the
+one with a documented import path for an image nobody recognises.
+What is left of it is an account, an upload and a boot log.
 .IP 4.
+.B "Xen HVM: the IDE driver."
+One driver buys the whole Xen HVM population, AWS's remaining Xen
+generations among them, because the emulated NIC beside that disk is
+already driven.
+.CW os/inferno/pc/sdata.c
+first \(en it is in the tree, commented out of the configuration, and
+has not been compiled against this board \(en and
+.CW os/9front/pc/sdide.c
+copied in if it will not come.  On AWS this needs
+.CW os/inferno/boot/pc
+as well, since those generations answer
+.CW legacy-bios
+alone.
+.IP 5.
 .B "MSI-X."
 The single-vector half is done and verified against NVMe, per section
 2.  What is left is multi-vector allocation \(en a vector per queue,
 which is how ENA and the current Intel parts are meant to be driven \(en
 and it is better done alongside the first driver that needs it than
 before.
-.IP 5.
+.IP 6.
 .B "ENA."
-Then AWS, first on a cheap virtual instance, then on
+Then Nitro AWS, first on a cheap virtual instance, then on
 .CW *.metal .
 The image path is raw image to S3, snapshot import, register AMI.
-.IP 6.
+Item 4 reaches AWS sooner and more cheaply, on older and slower
+machines; this one reaches the current ones.
+.IP 7.
 .B "Rented metal."
 Hetzner or Vultr, chosen for an Intel 1G NIC and AHCI or NVMe, using
 the drivers already linked.  This is the first genuine bare-metal boot
 and it can happen in parallel with 4 and 5 because it needs neither.
 Vultr additionally wants the ISO to be a hybrid image.
-.IP 7.
+.IP 8.
 .B "OCI."
 Custom iPXE at launch, chaining the loader's own PXE path
 .CW ( os/inferno/boot/efi/pxe.c ,
 which is built and untested), with the root compiled in so the iSCSI
 boot volume is not needed.
-.IP 8.
+.IP 9.
 .B "Big machines."
 x2APIC, more than 255 logical processors, memory regions above 4GB,
 and a MADT with hundreds of entries.  SMP is blocked on item 1 today.
 A metal box is where all four arrive at once.
-.IP 9.
+.IP 10.
+.B "Xen PVH's devices."
+xenbus and XenStore, grant tables, event channels,
+.CW blkfront ,
+.CW netfront .
+The entry point is already in; this is what a PVH guest needs before
+it can read a disk or send a packet.  Worth doing only after item 4
+has shown Xen is a platform this port wants to be on, since HVM
+reaches the same hosts for one driver.
+.IP 11.
 .B "Azure."
 VMBus,
 .CW storvsc ,
