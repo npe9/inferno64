@@ -91,6 +91,25 @@ def main():
     mv = _re.search(r'p9 mouse: dx=(-?\d+) dy=(-?\d+) .* read from port 0x60 in user space', t)
     results.append(("the driver read a PS/2 mouse packet by inb and decoded motion",
                     mv is not None and (int(mv.group(1)) != 0 or int(mv.group(2)) != 0)))
+    # and what reached the two files the driver feeds: devinput.c's #m, whose
+    # /dev/kbd is runes and whose /dev/mouse is an absolute position.  The
+    # driver's prints above say a byte was read off the port; these say the
+    # translation and the queue got it, which is the other half.
+    runes = set(int(x, 16) for x in
+                _re.findall(r'p9 input: /dev/kbd queued the rune (0x[0-9a-f]+)', t))
+    results.append(("and the scancodes became runes on /dev/kbd: the keys typed are the "
+                    "characters the device queued, translated through the keymap by the "
+                    "driver that read them",
+                    {ord('a'), ord('b'), ord('c'), ord(' ')} <= runes))
+    pos = _re.findall(r'p9 input: /dev/mouse is at (-?\d+) (-?\d+) (-?\d+) after a packet', t)
+    moved = False
+    if pos:
+        x, y, _ = pos[-1]
+        moved = (int(x), int(y)) != (1280//2, 800//2)
+    results.append(("and the packets became a position on /dev/mouse: the pointer is off "
+                    "the centre it was seeded at, moved by the packets the driver decoded - "
+                    "the file's state, not the driver's print",
+                    moved))
 
     ok = True
     for name, good in results:

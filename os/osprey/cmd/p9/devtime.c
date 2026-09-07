@@ -41,8 +41,9 @@ static Dirtab timedir[] = {
 
 extern long ospreyxcall(int, uvlong*, long);
 
-static vlong
-kernelnsec(void)
+/* the kernel's clock, also read by devinput.c for the mouse's timestamp */
+vlong
+p9nsec(void)
 {
 	uvlong args[5];
 
@@ -98,7 +99,7 @@ timeread(Chan *c, void *a, long n, vlong off)
 		return devdirread(c, a, n, timedir, nelem(timedir), devgen);
 	if((ulong)c->qid.path != Qbintime)
 		error(Egreg);
-	t = kernelnsec();
+	t = p9nsec();
 	/*
 	 * nanoseconds, then the fast-tick counter and its frequency.  There
 	 * is no separate fast clock here, so the nanoseconds are the ticks

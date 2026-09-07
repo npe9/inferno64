@@ -32,6 +32,19 @@ def drewfromanother(t):
     return int(m.group(1), 16) == 0xff0000 and int(m.group(2), 16) == 0x00ff00
 
 
+def mouserecord(t):
+    """The record /dev/mouse returned.  rio's form is 'm' then four
+    twelve-column decimal fields - x, y, buttons, milliseconds - so this
+    checks the shape and that the position is on the 1280x800 screen,
+    rather than matching a string the driver could print without having
+    read anything."""
+    m = re.search(r'draw: and /dev/mouse reads a record: m\s*(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)', t)
+    if m is None:
+        return False
+    x, y, b, ms = (int(g) for g in m.groups())
+    return 0 <= x < 1280 and 0 <= y < 800 and 0 <= b <= 7 and ms >= 0
+
+
 def drewpixels(t):
     """The two words read back out of the frame buffer after the draws.
     XRGB32 puts the pixel in memory as 0x00RRGGBB, so the box is 0x00ff00
@@ -426,9 +439,10 @@ def main():
          re.search(r'buddy: exec /boot/kbdsrv for container \d+: a Plan 9 a\.out, text \d+ data \d+ bss \d+', t) is not None
          and re.search(r'osprey buddy: /boot/kbdsrv laid out by the buddy: entry 0x200028, 3 segments', t) is not None
          and re.search(r'p9: pair-client: wait: /boot/kbdsrv \(container \d+\) exited with status 1', t) is not None),
-        ("and it says why it stopped, and its parent is told that it did: the program's sysfatal prints the kernel's own reason through %r - errstr(2) is a call the buddy answers out of the error string it keeps, and a call the kernel served itself is one the buddy never saw fail - and exits(2) carries that reason out as the container's status, where a wait can see it was not a success",
-         'kbdsrv: segattach kbdring: bad arg in system call' in t
-         and 'osprey exec: the program exited with the status "segattach kbdring: bad arg in system call"' in t),
+        ("and it says why it stopped, and its parent is told that it did: the same binary asked for a segment this kernel has not got - named on the command line, so that the check does not depend on a real ring being absent - its sysfatal printed the kernel's own reason through %r, errstr(2) being a call the buddy answers out of the error string it keeps and a call the kernel served itself one the buddy never saw fail, and exits(2) carried that reason out as the container's status, where a wait saw it was not a success",
+         'kbdsrv: segattach nosuchring: bad arg in system call' in t
+         and 'osprey exec: the program exited with the status "segattach nosuchring: bad arg in system call"' in t
+         and re.search(r'p9: pair-client: wait: /boot/kbdsrv -snosuchring \(container \d+\) exited with status 1', t) is not None),
         ("the draw server runs, and the screen the microkernel exposed is a draw device: /boot/drawsrv is os/osprey/cmd/draw linked against the same source-built 9front libraries, three hundred kilobytes of libmemdraw, libmemlayer, libdraw and lib9p above libc; it maps the frame buffer, initialises the kernel's own devdraw.c in user space, and postmountsrv forks a container that answers 9P on a pipe and mounts it at /dev",
          re.search(r'buddy: exec /boot/drawsrv for container \d+: a Plan 9 a\.out, text \d+ data \d+ bss \d+', t) is not None
          and re.search(r'draw: the frame buffer is mapped at 0x[0-9a-f]+, 4096000 bytes', t) is not None
@@ -442,6 +456,12 @@ def main():
          and re.search(r"draw: the second container's client is client \d+ of the server, and the screen it is given is 1280x800", t) is not None),
         ("and its pixels land on the same screen the first client drew: the box it asked for is the red it asked for, and where the first client's box was and its own is not, the green is still there",
          drewfromanother(t)),
+        ("and the three files rio wants are in that one container's name space: /dev/draw is the mount it made of the server it found in /srv, and /dev/kbd and /dev/mouse are the personality's own - served out of the user-space i8042 driver it already runs, and reached the way every other file call from a container is, through the buddy",
+         'p9: #m bound onto /dev; /dev/kbd and /dev/mouse are the i8042 driver\'s, in user space' in t
+         and 'draw: and /dev/kbd opens beside them; it is not read, because a read of it waits for a key' in t
+         and 'draw: one container holds /dev/draw, /dev/mouse and /dev/kbd - the three rio wants' in t),
+        ("and /dev/mouse answers a read with a mouse record: the driver's decoded position and buttons in rio's own m-record form, with the kernel's clock for the timestamp, answered without waiting for a movement nobody made",
+         mouserecord(t)),
         ("wait is answered by somebody: the client's wait returns the child's exit status",
          re.search(r'p9: pair-client: wait: container \d+ exited with status 0', t) is not None
          and 'panic' not in t and 'killed by SIGSEGV' not in t),	# the Linux child takes one SIGSEGV on purpose

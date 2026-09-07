@@ -7626,6 +7626,160 @@ This is not a regression.  It predates every phase here \- it is on the
 path of every forwarded call in every configuration with a buddy, and
 has been since the forwarder was written.  What is new is that a
 program finally opened a file whose name had not been touched yet.
+.PP
+.B "2.3g: the keyboard and the mouse, as the two files rio reads."
+rio reads three files:
+.CW /dev/draw ,
+.CW /dev/mouse
+and
+.CW /dev/kbd .
+2.3f put the first of them in a container's name space.  The other two
+are there now, and the container that has all three started none of
+them.
+.PP
+The plan said the keyboard and mouse rings the pair personality does
+not arm are what stands in the way, and that was wrong twice over.  It
+does arm them \- 
+.CW ospreyuserprep ()
+calls
+.CW ospreykbdenable ,
+.CW ospreymouseenable
+and
+.CW ospreyinputarm
+on every microkernel configuration \- and what it arms is not the
+polled physical segments
+.CW kbdring
+and
+.CW mousering
+that the full personality exposes and that
+.CW kbd.c
+and
+.CW mouse.c
+segattach.  It arms the other mechanism: the two interrupts as bare
+notifications to the container, with the i8042's ports granted to it,
+so that
+.CW p9kbd.c
+\- a driver in this personality, in user space \- owns the whole
+controller and reads every byte off port
+.CW 0x60
+with its own
+.CW inb .
+.PP
+The two cannot both run, and trying it hangs the boot.  Exposing the
+rings arms the kernel's own handler on IRQ1; the driver's command-byte
+handshake then spins for a reply the kernel's handler has already
+drained off
+.CW 0x60 ,
+in the unbounded
+.CW "while(!(inb(Kbdstat) & Kbdready));"
+that
+.CW ospreykbdenable
+opens with.  The boot stops between the input print and the console
+hand-off, which is what a single added print bisected it to.  The
+comment above
+.CW ospreyinputarm
+had said exactly this would happen, about arming one device while the
+other's command byte is being written; the same hazard holds for the
+two mechanisms.
+.PP
+So the driver stays where the configuration put it, and what was
+missing was never a ring: it was that
+.CW p9kbd.c
+printed what it read.  It decodes the scancodes and it assembles the
+three-byte PS/2 packets already; the whole gap was between that and a
+file.
+.CW devinput.c
+is that file \-
+.CW #m ,
+two entries,
+.CW kbd
+and
+.CW mouse .
+The driver hands it each rune it has translated (the keymap and the
+shift and control state are
+.CW kbd.c 's,
+unchanged, because there is one keyboard whichever driver reads it) and
+each mouse packet as it decoded it; the device keeps the queue and the
+absolute position, and answers reads in the two forms a Plan 9 program
+expects \-
+.CW c
+and the rune,
+.CW m
+and four twelve-column fields.  A write of
+.CW "m x y"
+moves the pointer, which is how a window system warps it.
+.PP
+Which means the driver is where it should be and the file is where it
+should be: a container asks its name space for
+.CW /dev/mouse ,
+the call is forwarded to the buddy, and the buddy is the personality
+that holds the driver.  Nothing new was asked of the kernel \- no
+segment, no second owner of the controller.  The check has the pair
+client's second draw container mount
+.CW /srv/draw
+at
+.CW /dev
+as before and then read
+.CW /dev/mouse
+and open
+.CW /dev/kbd
+beside it: one container, three files, and the mouse record is checked
+as four numbers on the 1280x800 screen rather than matched as a string.
+The pair check is 91.
+.PP
+That much is the plumbing, and the plumbing is not the decode: nothing
+moves a mouse in that check, so the position it reads back is the
+centre the device seeded, and no key is pressed, so the queue is never
+filled.  The keyboard check is where a key and a movement actually
+arrive \- it injects both over QMP - and it had been checking only that
+the driver printed what it read off the port.  It checks the other half
+now: that the scancodes became the runes
+.CW a ,
+.CW b ,
+.CW c
+and space in
+.CW /dev/kbd 's
+queue, translated through the keymap, and that the packets moved
+.CW /dev/mouse 's
+position off the centre it was seeded at.  The device says both, for
+the first eight of each and no more, because a keyboard in use is not a
+log.  That check is 8.
+.PP
+Two things found on the way.
+.CW #I
+is
+.I devip 's
+letter, so the bind of an input device by that name succeeded, put the
+IP stack's files on
+.CW /dev ,
+and left the open of
+.CW /dev/mouse
+saying only that it did not exist \- a letter collision reads exactly
+like a missing file.  It is
+.CW #m
+now, which is where Plan 9 keeps
+.CW /dev/mouse ;
+.CW /dev/kbd
+is on the console device there and is here too, because here it is one
+driver reading one controller and one letter cannot be two.
+.PP
+And a read of either file waits on a buddy worker, because that is
+where a forwarded call runs, and there are four of them.  rio will park
+two for as long as it runs.  That is not a problem yet and it is
+written down here so that the fifth blocking reader is not a surprise.
+.PP
+What
+.CW kbd.c
+and
+.CW mouse.c
+are for is unchanged: they are the full personality's drivers, on the
+configurations where the kernel exposes the rings.  Both post their
+service under a name now, so that a container which never had their
+mount can find them, and
+.CW kbd.c
+takes the segment to attach as an argument \- which is what the check's
+negative control for the error path uses, a name no kernel has, rather
+than depending on the real ring being absent from this configuration.
 .NH 2
 Track three: the library-OS personality execs a program, then rio
 .PP

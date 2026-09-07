@@ -361,17 +361,68 @@ firstclient(char *mtpt)
  * way anything else on the machine would - by name in /srv, which is
  * where postmountsrv posted the pipe.  This is what rio will do.
  */
+/*
+ * Find a server by the name it posted in /srv and mount it, the way a
+ * container that never had the mount must: the name is in the name
+ * space every container shares, the descriptor behind it is the
+ * server's pipe, and mounting it puts the server's tree under mtpt.
+ */
+static void
+mountsrv(char *name, char *mtpt)
+{
+	char path[64];
+	int fd;
+
+	snprint(path, sizeof path, "/srv/%s", name);
+	if((fd = open(path, ORDWR)) < 0)
+		sysfatal("open %s: %r", path);
+	if(mount(fd, -1, mtpt, MBEFORE, "") < 0)
+		sysfatal("mount %s at %s: %r", path, mtpt);
+	close(fd);
+}
+
+/*
+ * The three files rio wants, in one name space.  /dev/draw is this
+ * container's own mount of the draw server it found in /srv; /dev/kbd
+ * and /dev/mouse are the personality's, served out of the i8042 driver
+ * it runs in user space and reached the way every other file call from
+ * a container is reached, through the buddy.  The mouse is read once -
+ * the driver answers the first read with where the pointer is rather
+ * than waiting for a movement nobody made - and the keyboard is opened
+ * and not read, because a read of it waits for a key and nobody is at
+ * this keyboard.
+ */
+static void
+threedevices(char *mtpt)
+{
+	char buf[64], path[64];
+	int fd, n;
+
+	snprint(path, sizeof path, "%s/mouse", mtpt);
+	if((fd = open(path, ORDWR)) < 0)
+		sysfatal("open %s: %r", path);
+	n = read(fd, buf, sizeof buf - 1);
+	if(n <= 0)
+		sysfatal("read %s: %r", path);
+	buf[n] = 0;
+	close(fd);
+	fprint(2, "draw: and %s reads a record: %s\n", path, buf);
+
+	snprint(path, sizeof path, "%s/kbd", mtpt);
+	if((fd = open(path, OREAD)) < 0)
+		sysfatal("open %s: %r", path);
+	close(fd);
+	fprint(2, "draw: and %s opens beside them; it is not read, because a read of it waits for a key\n", path);
+	fprint(2, "draw: one container holds /dev/draw, /dev/mouse and /dev/kbd - the three rio wants\n");
+}
+
 static void
 otherclient(char *mtpt)
 {
 	uchar m[256], *p;
-	int fd, data, wid, hgt;
+	int data, wid, hgt;
 
-	if((fd = open("/srv/draw", ORDWR)) < 0)
-		sysfatal("open /srv/draw: %r");
-	if(mount(fd, -1, mtpt, MBEFORE, "") < 0)
-		sysfatal("mount /srv/draw at %s: %r", mtpt);
-	close(fd);
+	mountsrv("draw", mtpt);
 	fprint(2, "draw: a second container found the server by name in /srv and mounted it at %s\n", mtpt);
 	data = drawopen(mtpt, "the second container's client", &wid, &hgt);
 
@@ -390,6 +441,7 @@ otherclient(char *mtpt)
 	fprint(2, "draw: and it drew on the same screen: inside its own box the frame buffer word is %#.8lux, and inside the first client's box but outside its own it is still %#.8lux\n",
 		pixel(Box2x+Box2w/2, Box2y+Box2h/2), pixel(Boxx+20, Boxy+Boxh-20));
 	close(data);
+	threedevices(mtpt);
 }
 
 void

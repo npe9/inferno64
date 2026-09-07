@@ -64,6 +64,21 @@ p9setup(void)
 	} else
 		print("p9: could not bind #T onto /dev: %s\n", up->errstr);
 	/*
+	 * The input device onto /dev, so that a program's /dev/kbd and
+	 * /dev/mouse are the keyboard and mouse this personality's own
+	 * user-space i8042 driver is reading.  rio wants both, and both
+	 * are files here rather than a segment because on this
+	 * configuration the microkernel hands the controller to this
+	 * container as two interrupt notifications, not as the polled
+	 * rings the full personality exposes - see devinput.c.
+	 */
+	if(!waserror()){
+		p9bind("#m", "/dev", MAFTER);
+		poperror();
+		print("p9: #m bound onto /dev; /dev/kbd and /dev/mouse are the i8042 driver's, in user space\n");
+	} else
+		print("p9: could not bind #m onto /dev: %s\n", up->errstr);
+	/*
 	 * And the note tree onto /proc, for the same reason: postnote(2) is
 	 * a write to /proc/n/note, not a system call, so the file has to be
 	 * in the name space a legacy program runs in.
@@ -916,10 +931,10 @@ p9paircli(void)
 		 * lib9p above the source-built libc, three segments and a
 		 * hundred kilobytes of image, where every legacy program
 		 * before it was a few tens.  It takes an argument, asks the
-		 * kernel for the keyboard ring as a segment and says what it
-		 * found.  What this settles is that a binary of that shape
-		 * lays out, is entered through init9main.c and runs its libc
-		 * on the server personality.
+		 * kernel for the keyboard ring as a segment and serves
+		 * /dev/kbd from it.  What this settles is that a binary of
+		 * that shape lays out, is entered through init9main.c and
+		 * runs its libc on the server personality.
 		 */
 		{
 			extern long ring_execv(char**);
@@ -932,6 +947,28 @@ p9paircli(void)
 			print("p9: pair-client: exec /boot/kbdsrv started container %ld\n", id);
 			if(id >= 0 && ring_wait(&st) == 0)
 				print("p9: pair-client: wait: /boot/kbdsrv (container %ld) exited with status %ld\n", id, st);
+		}
+		/*
+		 * The negative control for the error path, and the reason
+		 * kbd.c names its segment rather than fixing it: the same
+		 * binary asked for a segment this kernel does not have.  The
+		 * call fails in the kernel, which the buddy never saw, so
+		 * errstr(2) must be answered here and exits(2) must carry the
+		 * reason out as the container's status.  Both were broken
+		 * once and neither would be noticed again without a call that
+		 * still fails.
+		 */
+		{
+			extern long ring_execv(char**);
+			char *nargv[3];
+
+			nargv[0] = "/boot/kbdsrv";
+			nargv[1] = "-snosuchring";
+			nargv[2] = nil;
+			id = ring_execv(nargv);
+			print("p9: pair-client: exec /boot/kbdsrv -snosuchring started container %ld\n", id);
+			if(id >= 0 && ring_wait(&st) == 0)
+				print("p9: pair-client: wait: /boot/kbdsrv -snosuchring (container %ld) exited with status %ld\n", id, st);
 		}
 		/*
 		 * And the draw server, which is the one of the four that can

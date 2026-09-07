@@ -1281,11 +1281,21 @@ into
 and the microkernel boot exposes the screen as the
 .B framebuffer
 segment on this personality as on any other.  What the pair personality
-does not expose is the keyboard and mouse rings, which
+does not expose is the polled keyboard and mouse rings, which
 .B ospreymouseexpose
-gives only to the full personality, so
+gives only to the full personality; it hands the i8042 to the
+personality's own container as two interrupt notifications instead, and
+.B /os/osprey/cmd/p9/p9kbd.c
+drives it there.  Its runes and mouse packets are the two files
+.B /dev/kbd
+and
+.B /dev/mouse
+of
+.BR #m ,
+.BR /os/osprey/cmd/p9/devinput.c ,
+which the pair check reads from a container that started none of them.
 .I rio
-and the mouse server have not been run.  The draw server's mount is
+itself has not been run.  The draw server's mount is
 reachable from another container:
 .I postmountsrv
 posts its pipe in
@@ -1300,7 +1310,14 @@ in a container of its own, where it opens
 .BR /srv/draw ,
 mounts it at
 .B /dev
-for itself and draws on the same screen the first client drew on.
+for itself and draws on the same screen the first client drew on, then
+reads
+.B /dev/mouse
+and opens
+.B /dev/kbd
+beside it: one container holding the three files
+.I rio
+reads.
 .PP
 .B /scripts/osprey-check-portable.sh
 boots nothing.  It compiles every source in
