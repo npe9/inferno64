@@ -100,6 +100,7 @@ misc
 	auxbcm
 	armtmrbcm
 	i2sbcm
+	auxspibcm
 
 mod
 	sys

@@ -1073,6 +1073,49 @@ departure from the datasheet is deliberate and is flagged in the model
 as well as here \- its TXTHR and RXTHR description is defective, giving
 four settings but identical text for 01 and 10 with the fraction
 missing.  The hardware uses quarters, and that is what is implemented.
+.PP
+.B "The AUX SPI masters"
+.CW ( auxspibcm.c ,
+0x3f215080 and 0x3f2150c0, and
+.CW tools/qemu-patches/0012 )
+were dismissed once in this document as a second copy of SPI0 through a
+different register layout.  That was wrong twice over.  They fell
+through to "Bad offset" in QEMU, so a guest could not use them at all;
+and they are not the same engine.  The shift length is a number of
+.I bits ,
+1 to 32, not a number of bytes, so a 12-bit ADC or a 9-bit display
+controller is a single transfer here and an awkward mess on SPI0.  That
+is the reason to reach for this block.
+.PP
+The other difference is a trap.  Transmitted data is taken from the
+.I top
+of the written word and received data arrives at the
+.I bottom :
+an 8-bit transfer sends bits 31:24 and answers in bits 7:0.  A driver
+that writes a bare byte \- exactly right on SPI0 \- clocks out zeroes,
+and a slave receiving zeroes usually answers with zeroes rather than
+complaining.
+.PP
+Modelling it turned up a third thing, which only appeared because the
+test used a peripheral nobody here wrote.  An
+.CW m25p16
+flash on the bus answered a JEDEC identify with zeroes.  The bytes were
+reaching it \- a trace showed 0x9f arriving \- but its command state
+machine had been left mid-command by earlier traffic and nothing could
+resynchronise it, because chip select never moved.  That is what the
+two register windows are
+.I for :
+a write to TXHOLD keeps chip select asserted after the word and a write
+to IO drops it, so a multi-word command is one transaction.  With CS
+modelled the same flash answers
+.CW "jedec 20 20 15" .
+.PP
+That last result is worth more than the rest of the file.  Everything
+else here is
+.I qemu+patch
+\- both halves ours \- but the flash is QEMU's own model, so the
+register layer is being checked against something this port did not
+write.
 .NH 1
 What stays unmodelled, and why
 .PP
@@ -1083,11 +1126,22 @@ alone for a reason, and the reason is never that the emulator would be
 hard to extend.
 .PP
 .B "The BSC slave"
-(0x3f214000) is documented, and useless here.  It makes the Pi an I2C
-or SPI
-.I slave ,
-so exercising it needs a master on the other end of the wire.  There is
-nothing on the other end of the wire.
+(0x3f214000) was listed here as useless, on the grounds that making the
+Pi an I2C
+.I slave
+needs a master on the other end of a wire that does not exist.  That
+was wrong, and the thing that makes it wrong was already in the tree:
+the Pi has three I2C masters of its own, QEMU models them with real
+buses
+.CW ( i2c_init_bus
+in
+.CW hw/i2c/bcm2835_i2c.c ),
+and
+.CW i2cbcm.c
+already drives BSC0.  Strapping a master's pins to the slave's is a
+standard bring-up trick on a real board, and attaching the slave to
+BSC0's bus models exactly that.  It is tractable and it is the next
+piece, not a dead end.
 .PP
 .B "The secondary memory interface"
 (0x3f600000) is documented only in fragments.  Its register semantics
@@ -1096,13 +1150,6 @@ written from guesswork would be inventing behaviour for a driver to
 match \- which is the exact failure the evidence tiers in
 .CW tools/qemu-patches/README
 exist to prevent.
-.PP
-.B "AUX SPI1 and SPI2"
-(inside 0x3f215000) are real and documented, but
-.CW spibcm.c
-already drives SPI0 and the AUX SPIs are the same protocol through a
-different register layout.  Modelling them would add a model and a
-driver and demonstrate nothing that SPI0 does not.
 .PP
 .B "TXP, DBUS, AVE0, V3D and SDRAMC"
 are internal to the SoC.  They are either undocumented, driven only by

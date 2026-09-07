@@ -53,7 +53,9 @@ own:
 0010 is a bug in 0009, not in qemu; it is kept as a separate patch
 because the reasoning is worth reading.  Everything else adds a device
 model qemu does not have, and only matters to someone emulating a Pi in
-this much detail.
+this much detail \- which is most of the series, and increasingly so as
+it grows.  Do not read the section above as a to-do list for upstream:
+two patches of twelve are general-purpose fixes and the rest are not.
 
 THE PATCHES
 
@@ -232,6 +234,36 @@ THE PATCHES
 	identical and omits the fraction.  The hardware uses quarters.
 
 	Needs no command-line argument; the block is part of the SoC.
+
+0012 hw/char/bcm2835_aux: model the two AUX SPI masters.
+
+	The AUX block holds three peripherals behind one AUX_ENABLES
+	register, and only the mini UART was modelled; 0x80 and 0xc0
+	fell through to "Bad offset".  Not a second copy of
+	hw/ssi/bcm2835_spi.c: the shift length is 1 to 32 BITS rather
+	than a whole number of bytes, and transmitted data comes from
+	the top of the written word while received data arrives at the
+	bottom.
+
+	The IO and TXHOLD windows differ in whether chip select drops
+	after the word, and modelling that was necessary rather than
+	decorative: an m25p16 answered a JEDEC identify with zeroes
+	until CS actually fell and rose, because nothing else can
+	resynchronise a peripheral's command state machine.
+
+	Attach a peripheral to exercise it:
+
+		-drive if=none,format=raw,id=mtd0,file=flash.img \
+		-device m25p16,bus=aux-spi1,cs=0,drive=mtd0
+
+	which gives "auxspi: jedec 20 20 15".  That result is the
+	strongest in the series: the flash is qemu's own model, so the
+	register layer is checked against something this port did not
+	write.
+
+	No serialiser runs, as with SPI0: a transfer completes inside
+	the register write that starts it, so TX_FULL never comes on
+	by itself.  Variable-width mode is logged, not modelled.
 
 SELF-TESTS
 
