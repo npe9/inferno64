@@ -1309,8 +1309,27 @@ and is still running when the machine idles.  rio hears the mouse:
 .B /scripts/osprey-check-rio.py
 boots the machine twice, moves the mouse the same way in both and holds
 button 3 down in one, and the two screens QEMU dumps differ by a block
-of rio's own menu colours where the pointer is.  No window has been made
-and none swept.
+of libdraw's menu colours where the pointer is.  A window is made and
+swept: New is chosen from that menu, a rectangle is swept with the
+button down, rio forks the process for the window, and that process
+mounts rio's file server for it on
+.B /mnt/wsys
+and opens
+.B /dev/cons
+there.  The window does not stay, because what rio execs in it is
+.BR /bin/rc ,
+which this personality does not have.
+.PP
+A process forked
+.B RFNOWAIT
+keeps no wait record: the kernel's table of who started whom frees its
+entry when it exits rather than holding a status nobody will collect.
+The table is what says a container may note what it started, so the
+entry lives as long as the child does and no longer.  A fork refused for
+want of that table says so on the console, as does a draw server that
+cannot allocate a window: both used to fail silently, and a caller that
+retries a silent failure for ever looks exactly like a caller that has
+stopped.
 .PP
 A process in a container reads its container's identity for its own pid
 \- in the

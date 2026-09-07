@@ -3753,8 +3753,23 @@ struct Ospreychild {
 	long	status;
 	int	waiting;	/* the parent has asked and is owed a reply */
 	uvlong	waitseq;	/* the sequence of that wait request */
+	int	nowait;		/* forked RFNOWAIT: no status is kept for it */
 };
-static Ospreychild ospreychildren[8];
+/*
+ * What this table holds is who started whom.  Two things read it: wait,
+ * which needs the entry to survive the child's exit until the parent
+ * asks; and the note rule, which needs it to say that a container may
+ * note what it started.  A child forked RFNOWAIT is one the parent has
+ * said it will never wait for - libthread forks every one of its procs
+ * that way - so its entry is freed the moment it exits rather than kept
+ * for a reap that will not come.  Without that the table fills with the
+ * dead: rio's four startup procs and every window's, and then a fork
+ * returns -1, libthread retries it silently for ever, and no window is
+ * ever made.  Sixty-four rather than eight because eight is the number
+ * that ran out, and this is one entry per live child on the machine.
+ */
+static Ospreychild ospreychildren[64];
+static int nchildfull;
 enum {
 	Xreqwait = 4,		/* ReqWait and ReplyDone in policy/syscall.h, which the */
 	Xreplydone = 1,		/* device does not include; the adapter checks the same values */
@@ -3933,12 +3948,27 @@ ospreyforkkern(Ospreyproc *parent, ulong flag)
 	for(e = ospreychildren; e < &ospreychildren[nelem(ospreychildren)]; e++)
 		if(!e->used)
 			break;
-	if(e == &ospreychildren[nelem(ospreychildren)])
+	if(e == &ospreychildren[nelem(ospreychildren)]){
+		/*
+		 * Say so.  A fork that fails here returns -1 to a caller that
+		 * usually cannot report it: libthread's scheduler retries the
+		 * same fork on every pass and says nothing, so a window system
+		 * that cannot make a window looks like a window system that
+		 * has stopped.  It took an afternoon to find that once.
+		 */
+		if(nchildfull < 8){
+			nchildfull++;
+			print("osprey fork: refused, the child table is full (%d entries)\n",
+				(int)nelem(ospreychildren));
+		}
 		return -1;			/* the child table is full */
+	}
 
 	c = ospreycreate(ospreynextid++, 40000000ULL, 800000000ULL, 200000000ULL);
-	if(c == nil)
+	if(c == nil){
+		print("osprey fork: refused, no container could be made\n");
 		return -1;
+	}
 	ospreydelegate(c, sv);
 
 	if((p = newproc()) == nil){
@@ -4066,6 +4096,7 @@ ospreyforkkern(Ospreyproc *parent, ulong flag)
 	}
 	memset(e, 0, sizeof *e);		/* a reused slot carries no stale wait or status */
 	e->used = 1;
+	e->nowait = (flag & RFNOWAIT) != 0;
 	e->child = c;
 	e->parent = parent;
 	strncpy(e->name, up->text, sizeof e->name - 1);
@@ -4988,7 +5019,9 @@ ospreymovekern(Ospreyproc *old, uvlong *ubuf, int group)
 			if(me->waiting){
 				ospreyreplylater(me->parent, me->waitseq, Xreqwait, Xreplydone, 0);
 				me->used = 0;
-			} else {
+			} else if(me->nowait)
+				me->used = 0;
+			else {
 				me->done = 1;
 				me->status = 0;
 			}
@@ -5369,8 +5402,8 @@ ospreywaitkern(Ospreyproc *parent, uvlong seq, long *status, uvlong *value)
 
 	live = nil;
 	for(e = ospreychildren; e < &ospreychildren[nelem(ospreychildren)]; e++){
-		if(!e->used || e->parent != parent)
-			continue;
+		if(!e->used || e->parent != parent || e->nowait)
+			continue;		/* RFNOWAIT: not a child wait can report */
 		if(e->done){
 			*status = Xreplydone;
 			*value = (uvlong)e->status;
@@ -5408,8 +5441,8 @@ ospreylegacyawait(Ospreyproc *parent, uintptr ubuf, int nbuf)
 		haslive = 0;
 		qlock(&ospreylock);
 		for(e = ospreychildren; e < &ospreychildren[nelem(ospreychildren)]; e++){
-			if(!e->used || e->parent != parent)
-				continue;
+			if(!e->used || e->parent != parent || e->nowait)
+				continue;		/* RFNOWAIT: not a child await can report */
 			if(e->done){
 				n = snprint(msg, sizeof msg, "%llud 0 0 0 ''", ospreyid(e->child));
 				e->used = 0;
@@ -5483,7 +5516,9 @@ ospreyexits(long status)
 	if(e->waiting){
 		ospreyreplylater(e->parent, e->waitseq, Xreqwait, Xreplydone, (uvlong)status);
 		e->used = 0;
-	} else {
+	} else if(e->nowait)
+		e->used = 0;		/* nobody will ask: keep no status, free the entry */
+	else {
 		e->done = 1;
 		e->status = status;
 	}

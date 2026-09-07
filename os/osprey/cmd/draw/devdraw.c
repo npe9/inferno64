@@ -1461,8 +1461,19 @@ drawmesg(Client *client, void *av, int n)
 					error("unknown refresh method");
 				}
 				l = memlalloc(scrn, r, reffn, 0, value);
-				if(l == 0)
+				if(l == 0){
+					/*
+					 * Say so.  A window that cannot be allocated is
+					 * refused with an Rerror the client usually throws
+					 * away - rio's allocwindow returns nil and rio
+					 * quietly abandons the sweep - so without this the
+					 * only evidence is a rectangle that never becomes
+					 * a window.
+					 */
+					print("draw: no image memory for a %dx%d window, refresh %d\n",
+						Dx(r), Dy(r), refresh);
 					error(Edrawmem);
+				}
 				addflush(l->layer->screenr);
 				l->clipr = clipr;
 				rectclip(&l->clipr, r);

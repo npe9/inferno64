@@ -24,11 +24,20 @@ os.chdir(ROOT)
 env = dict(os.environ, PATH=os.path.join(ROOT, 'MacOSX/arm64/bin') + ':' + os.environ['PATH'])
 
 Grey = (0x77, 0x77, 0x77)		# rio's background, 0x777777FF
-# rio's menu is drawn in the greygreen palette of data.c: DPalegreygreen
-# for the body a menu item sits on and DGreygreen for the highlight, with
-# black text on them.  These are the colours, not a guess at them.
-Palegreygreen = (0xea, 0xff, 0xea)	# DPalegreygreen
-Greygreen = (0x44, 0x88, 0x44)		# DGreygreen
+# The menu is libdraw's, not rio's: genmenuhit.c's menucolors makes the
+# body allocimagemix(DPalegreen, DWhite), the highlight and the text
+# DDarkgreen, and the border DMedgreen.  These are those colours, read
+# out of the constants and confirmed against a screendump - an earlier
+# version of this check called them rio's DPalegreygreen and DGreygreen,
+# which is where rio's window titles come from and not where these do.
+Menuback = (0xea, 0xff, 0xea)		# allocimagemix(DPalegreen, DWhite)
+Menuhigh = (0x44, 0x88, 0x44)		# DDarkgreen
+Menubord = (0x88, 0xcc, 0x88)		# DMedgreen
+# what a sweep is drawn in: cols[BACK] inside a border of sizecol
+White = (0xff, 0xff, 0xff)		# cols[BACK], 0xFFFFFFFF
+Red = (0xff, 0x00, 0x00)		# sizecol, DRed
+# and what a window that has been made is bordered in: rio's titlecol
+Titlecol = (0x55, 0xaa, 0xaa)		# DGreygreen, from rio's data.c
 
 
 def readppm(path):
@@ -97,6 +106,29 @@ def count(pix, colour):
     return n
 
 
+def boxof(pix, colour):
+    """The bounding box of every pixel of exactly this colour, and how
+    many there are.  A swept rectangle is known by where it is, not only
+    by what colour it is."""
+    tri = bytes(colour)
+    n = 0
+    x0 = y0 = 1 << 30
+    x1 = y1 = -1
+    w = 1280
+    i = pix.find(tri)
+    while i >= 0:
+        if i % 3 == 0:
+            n += 1
+            q = i // 3
+            x, y = q % w, q // w
+            if x < x0: x0 = x
+            if x > x1: x1 = x
+            if y < y0: y0 = y
+            if y > y1: y1 = y
+        i = pix.find(tri, i+1)
+    return n, (x0, y0, x1, y1)
+
+
 def boot(shot, inputspec, log):
     argv = ['./scripts/osprey-console.py', '-q', '-p', '2', '-n', 'e1000',
             '-l', log, '-t', '300', '-u', 'the microkernel idles',
@@ -143,7 +175,25 @@ def main():
         pw, ph, pd = ppix
     if cpix is not None and ppix is not None:
         nch, box, seen = changed(cd, pd)
-    menu = seen.get(Palegreygreen, 0) + seen.get(Greygreen, 0)
+    # and the sweep: New from the menu, then a press, a drag and a release
+    swlog, swshot = tmp('osprey-rio-sw-', '.log'), tmp('osprey-rio-sw-', '.ppm')
+    swtext, swpix = boot(swshot, 'm:240:160,s:1.0,d:right,s:1.2,u:right,s:1.5,'
+                                 'm:-400:-300,s:0.8,d:right,s:0.6,m:300:220,s:0.8,'
+                                 'u:right,s:5.0', swlog)
+    # Where it is, measured from the border rather than from the fill: a
+    # stray white pixel in the frame buffer's top-left corner - two of
+    # them, and they are there in the control shot too - would otherwise
+    # drag the box out to the origin.  The border is sizecol while the
+    # sweep is still being drawn and titlecol once it is a window, and
+    # which of those the screendump catches depends on when it is taken,
+    # so whichever is there is the one measured.
+    swwhite = count(swpix[2], White) if swpix else 0
+    swred, redbox = boxof(swpix[2], Red) if swpix else (0, (0,0,0,0))
+    swtitle, titlebox = boxof(swpix[2], Titlecol) if swpix else (0, (0,0,0,0))
+    swbox = redbox if swred > swtitle else titlebox
+    forks = lambda t: len(re.findall(r'osprey fork: container \d+ forked container \d+ \(/boot/rio\)', t))
+    cforks, swforks = forks(ctext), forks(swtext)
+    menu = seen.get(Menuback, 0) + seen.get(Menuhigh, 0)
     tight = (box[2] - box[0]) < 400 and (box[3] - box[1]) < 400
 
     results = [
@@ -157,14 +207,33 @@ def main():
          "user-space driver, /dev/mouse, a forwarded read answered over the ring, and rio, and "
          "came back through /dev/draw to the frame buffer",
          ppix is not None and (pw, ph) == (1280, 800) and nch > 3000 and tight),
-        ("and what it drew is a menu: most of what changed is rio's own menu palette - "
-         "DPalegreygreen for the body and DGreygreen for the highlight, the colours data.c "
-         "asks for - with black text on it, and every pixel of it was the background before",
+        ("and what it drew is a menu: most of what changed is libdraw's menu palette - the "
+         "mix of DPalegreen and DWhite for the body a menu item sits on, DDarkgreen for the "
+         "highlight and the text, DMedgreen for the border, which is what genmenuhit.c's "
+         "menucolors asks for - and every pixel of it was the background before",
          nch > 0 and menu > nch * 0.6 and seen.get((0, 0, 0), 0) > 100),
         ("and rio is still running in both, so what changed is the menu and not the machine",
          'rio: can\'t' not in ctext and 'rio: can\'t' not in ptext
          and len(re.findall(r'osprey proc: container \d+ pid \d+ /boot/rio: \w+', ctext)) >= 2
          and len(re.findall(r'osprey proc: container \d+ pid \d+ /boot/rio: \w+', ptext)) >= 2),
+        ("New is chosen from the menu and a rectangle swept: where the pointer was dragged "
+         "with the button down there is rio's cols[BACK], at the corners the mouse packets "
+         "put it at, inside a border of either sizecol while the sweep is still being drawn "
+         "or titlecol once it is a window - which of the two the screendump catches depends "
+         "on when it is taken, so the box is what is asserted and the border is only named",
+         swpix is not None and swwhite > 20000 and (swred > 1000 or swtitle > 1000)
+         and abs(swbox[0] - 480) < 12 and abs(swbox[1] - 260) < 12
+         and abs(swbox[2] - 780) < 12 and abs(swbox[3] - 480) < 12),
+        ("and a window is made of it: the sweep boot forks a rio the control boot does not - "
+         "the process libthread makes for winshell - and that process mounts rio's own file "
+         "server for the window on /mnt/wsys, binds it over /dev and opens /dev/cons there, "
+         "with no mount, bind or cons failure in the log.  What it then fails to run is "
+         "/bin/rc, which this personality does not have, so the window does not stay; that is "
+         "written down in doc/osprey-progress.ms and is not claimed here",
+         swforks == cforks + 1
+         and 'mount failed' not in swtext and 'bind failed' not in swtext
+         and "can't open /dev/cons" not in swtext
+         and 'the child table is full' not in swtext),
         ("and the notes rio posts are addressed to something that exists: libthread keeps the "
          "number getpid() gave it and posts to that when it shuts down, and no boot here has "
          "the kernel refusing one because the number named no container",
@@ -179,6 +248,9 @@ def main():
     print('grey in the control %d of %d; %d pixels changed, in %r, mostly %s'
           % (cgrey, 1280*800, nch, box,
              ' '.join('%02x%02x%02x=%d' % (c[0], c[1], c[2], n) for c, n in top)))
+    print('the swept rectangle %r: %d of cols[BACK], %d of sizecol, %d of titlecol; '
+          'rio forks %d in the control and %d in the sweep'
+          % (swbox, swwhite, swred, swtitle, cforks, swforks))
     if keep or bad:
         for f in files: print('log %s' % f)
     else:

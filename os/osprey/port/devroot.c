@@ -134,7 +134,8 @@ rootreset(void)
 	addrootdir("fd");
 	addrootdir("mnt");
 	rootdir[rootlist.ndir-1].qid.path = Qmnt;	/* walking into it reaches mntlist */
-	addmntdir("temp");
+	addmntdir("temp");	/* rio's cexecpipe binds #| here */
+	addmntdir("wsys");	/* and each window's own file server is mounted here */
 	addrootdir("n");
 	addrootdir("net");
 	addrootdir("net.alt");

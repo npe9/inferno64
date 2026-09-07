@@ -32,6 +32,7 @@ enum {
 	Qpid,			/* /proc/<n> */
 	Qnote,
 	Qnotepg,
+	Qstatus,
 	ReqPostnote = 37,	/* devosprey.c's xcall op */
 };
 
@@ -43,9 +44,9 @@ extern uchar *p9srvdata(void);		/* this personality's own data area */
  * The qid carries the container in its top bits and the file in its
  * bottom two, so a walk needs no table of open processes.
  */
-#define QPATH(pid, f)	(((uvlong)(pid) << 2) | (f))
-#define QPID(path)	((uvlong)(path) >> 2)
-#define QFILE(path)	((ulong)(path) & 3)
+#define QPATH(pid, f)	(((uvlong)(pid) << 3) | (f))
+#define QPID(path)	((uvlong)(path) >> 3)
+#define QFILE(path)	((ulong)(path) & 7)
 
 static Chan*
 noteattach(char *spec)
@@ -120,6 +121,8 @@ notewalk(Chan *c, Chan *nc, char **name, int nname)
 				f = Qnote;
 			else if(strcmp(name[i], "notepg") == 0)
 				f = Qnotepg;
+			else if(strcmp(name[i], "status") == 0)
+				f = Qstatus;
 			else
 				goto Nope;
 			tc->qid.path = QPATH(QPID(tc->qid.path), f);
@@ -167,18 +170,31 @@ notestat(Chan *c, uchar *dp, int n)
 	case Qnote:
 		strcpy(name, "note");
 		break;
+	case Qstatus:
+		strcpy(name, "status");
+		break;
 	default:
 		strcpy(name, "notepg");
 		break;
 	}
-	devdir(c, c->qid, name, 0, eve, f == Qdir || f == Qpid ? DMDIR|0555 : 0222, &d);
+	/*
+	 * The owner is what this file is mostly here for.  libc's
+	 * getuser(2) stats /proc/<pid>/status and takes the uid out of the
+	 * stat message; without the file it answers "none", and rio's file
+	 * server then refuses its own window's attach - the attach says
+	 * "osprey", which is who the personality runs as, and rio compares
+	 * the two.  "mount failed: permission denied", and no window.
+	 */
+	devdir(c, c->qid, name, 0, eve,
+		f == Qdir || f == Qpid ? DMDIR|0555 : f == Qstatus ? 0444 : 0222, &d);
 	return convD2M(&d, dp, n);
 }
 
 static Chan*
 noteopen(Chan *c, int omode)
 {
-	if(QFILE(c->qid.path) == Qdir || QFILE(c->qid.path) == Qpid){
+	if(QFILE(c->qid.path) == Qdir || QFILE(c->qid.path) == Qpid
+	|| QFILE(c->qid.path) == Qstatus){
 		if(openmode(omode) != OREAD)
 			error(Eperm);
 	} else if(openmode(omode) != OWRITE)
@@ -195,8 +211,30 @@ noteclose(Chan*)
 }
 
 static long
-noteread(Chan*, void*, long, vlong)
+noteread(Chan *c, void *a, long n, vlong off)
 {
+	char buf[256];
+	int i, m;
+
+	if(QFILE(c->qid.path) == Qstatus){
+		/*
+		 * The shape devproc(3) gives it: the program's name, the
+		 * user, the state, then twelve numbers.  The name is "-"
+		 * because this personality does not hold the kernel's table
+		 * of containers and so does not know it; the user is what
+		 * getuser(2) comes here for and is right.  The numbers are
+		 * zero and are not accounting this personality keeps.
+		 */
+		m = snprint(buf, sizeof buf, "%-27s%-27s%-12s", "-", eve, "Running");
+		for(i = 0; i < 12; i++)
+			m += snprint(buf+m, sizeof buf - m, "%-11d ", 0);
+		if(off >= m)
+			return 0;
+		if(n > m - off)
+			n = m - off;
+		memmove(a, buf + off, n);
+		return n;
+	}
 	/*
 	 * Nothing lists.  A directory here would have to be the kernel's
 	 * table of containers, which this personality does not hold; the

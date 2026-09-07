@@ -8076,10 +8076,25 @@ the background before, and most of what they became is
 .CW 0xeaffea
 and
 .CW 0x448844
-\- DPalegreygreen and DGreygreen, the colours
-.CW data.c
-asks for - with black text on them.  rio's menu, in rio's own colours,
-because a button was pressed.
+\- with
+.CW 0x88cc88
+around them.  Those are libdraw's, not rio's: they are what
+.CW genmenuhit.c 's
+.CW menucolors
+asks for \- the body is
+.CW allocimagemix(DPalegreen,\ DWhite) ,
+the highlight and the text
+.CW DDarkgreen ,
+the border
+.CW DMedgreen
+\- with black text on them.  This document and the check first called
+them rio's own
+.CW DPalegreygreen
+and
+.CW DGreygreen ,
+which is where a window's title bar gets its colours and not where a
+menu gets its; the numbers were right and the names were wrong, and the
+names are fixed here and in the check.
 .PP
 What that press crossed, in order: QEMU's PS/2 controller, the IRQ12 the
 microkernel routes to the personality's container as a bare
@@ -8289,6 +8304,115 @@ nobody reads its logs.  The lesson is the one the sweep was written for: a log
 that stops early has two explanations, and "it ran out of time" is only
 one of them.  The measurement that separated them was a stopwatch, and
 it took four runs.
+.B "2.3l: a window."
+The menu's New is chosen, a rectangle is swept with the button down, and
+a window is made where it was swept.  Four things had to be fixed to get
+there, and finding the first of them took an afternoon because nothing
+said anything.
+.PP
+.B "The fork ran out of table."
+rio's window is
+.CW proccreate(winshell) ,
+which libthread turns into
+.CW rfork(RFPROC|RFMEM|RFNOWAIT) ,
+and that fork returned \-1.  libthread's scheduler retries a failed
+.CW _schedfork
+on every pass and says nothing, so a window system that cannot make a
+window looks exactly like a window system that has stopped.  The kernel
+kept one table of who started whom,
+.CW ospreychildren ,
+eight entries for the whole machine, and it was full.
+.PP
+The size was not the fault, though eight is small.  The fault is that
+.CW RFNOWAIT
+was ignored.  A child forked that way is one the parent has said it will
+never wait for \- libthread forks every one of its procs that way \-
+so its entry must be freed when it exits rather than held with a status
+for a reap that will not come.  The entry cannot simply not exist: the
+same table is what says a container may note what it started, which is
+how a window system stops the command in a window, so parentage has to
+outlive nothing but the child.  The fix is a flag: the entry is made,
+and an exit frees it instead of keeping a status.  With that the table
+holds one entry per live child, and it is sixty-four now because eight
+is the number that ran out.
+.PP
+A fork that fails for want of the table says so now.  So does a draw
+server that cannot allocate a window, and for the same reason: rio's
+.CW allocwindow
+returns nil and rio abandons the sweep without a word, so the only
+evidence was a rectangle that never became a window.  Neither of those
+prints was there before; both were what the afternoon was spent doing by
+hand.
+.PP
+.B "The mount point, and who the mount was from."
+.CW winshell
+mounts rio's own file server for the window on
+.CW /mnt/wsys ,
+which did not exist \-
+.CW devroot
+had grown
+.CW /mnt/temp
+for the pipe and nothing else.  With the directory there the mount was
+refused:
+.CW "mount failed: permission denied" .
+rio's file server compares the attach's
+.CW uname
+with the user it thinks it is running as, and it gets that from
+.CW getuser (2),
+which stats
+.CW /proc/<pid>/status
+and takes the uid out of the stat message.  This personality's
+.CW /proc
+served
+.CW note
+and
+.CW notepg
+and nothing else, so
+.CW getuser
+answered
+.CW none
+while the attach said
+.CW osprey ,
+and rio refused its own window.  So
+.CW devnote.c
+serves
+.CW status
+too, in the shape
+.CW devproc (3)
+gives it, with the owner right \- which is the whole of what anything
+here reads it for.
+.PP
+What that gets: the sweep ends, rio forks the process for the window,
+that process mounts the window's file server on
+.CW /mnt/wsys ,
+binds it over
+.CW /dev
+and opens
+.CW /dev/cons
+there, and the frame is drawn in
+.CW titlecol .
+The check has seven criteria now and asserts the swept rectangle from
+the screendump and the rest from the log, because which of the two
+borders a screendump catches \- 
+.CW sizecol
+while the sweep is still being drawn,
+.CW titlecol
+once it is a window \- depends on when it is taken, and 2.3k is about
+what happens when a check decides by timing.
+.PP
+What is not claimed: the window does not stay.  What
+.CW winshell
+execs is
+.CW /bin/rc ,
+hard-coded in rio, and this personality has no
+.CW /bin/rc :
+the exec fails, the process exits "exec failed", and rio takes the
+window down again.  Giving it a shell to run is the next piece, and it
+is not a small one \- the personality's
+.CW /boot/sh
+is a demonstration shell that reads a script, not something that reads a
+line at a time from a window's
+.CW /dev/cons .
 .NH 2
 Track three: the library-OS personality execs a program, then rio
 .PP

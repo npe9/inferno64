@@ -202,6 +202,27 @@ def main():
 				def qmp(cmd, args):
 					qf.write(json.dumps({"execute":cmd,"arguments":args})+chr(10))
 					qf.flush(); qf.readline()
+				def drain():
+					"""Keep the serial line going into the log while the
+					input sequence runs.  The read loop above has stopped
+					by now, so without this everything the machine says
+					about what it was driven to do - the driver's own
+					account of the packets - is dropped on the floor,
+					and a screendump is all the evidence there is."""
+					while True:
+						b = p.stdout.read(4096)
+						if not b:
+							return
+						log.write(b); log.flush()
+						if not a.quiet:
+							sys.stdout.write(b.decode('utf-8', 'replace'))
+				def pause(secs):
+					"""sleep, draining as it goes"""
+					end = time.time() + secs
+					while time.time() < end:
+						drain()
+						time.sleep(min(0.05, max(0.0, end - time.time())))
+					drain()
 				def mrel(dx, dy):
 					# PS/2 deltas are one signed byte; send in small steps
 					while dx or dy:
@@ -210,18 +231,18 @@ def main():
 						qmp("input-send-event", {"events":[
 							{"type":"rel","data":{"axis":"x","value":sx}},
 							{"type":"rel","data":{"axis":"y","value":sy}}]})
-						time.sleep(0.03)
+						pause(0.03)
 				def mbtn(button, down):
 					qmp("input-send-event", {"events":[
 						{"type":"btn","data":{"button":button,"down":down}}]})
-					time.sleep(0.1)
+					pause(0.1)
 				# optionally drive the mouse before the shot: move a little,
 				# then hold a button down so a menu that opens on press shows.
 				if a.click:
 					mrel(240, 160)
 					if a.click != 'move':
 						mbtn(a.click, True)
-						time.sleep(0.4)
+						pause(0.4)
 				# a general mouse sequence for multi-step interactions
 				if a.input:
 					for op in a.input.split(','):
@@ -229,12 +250,12 @@ def main():
 						if f[0] == 'm':   mrel(int(f[1]), int(f[2]))
 						elif f[0] == 'd': mbtn(f[1], True)
 						elif f[0] == 'u': mbtn(f[1], False)
-						elif f[0] == 's': time.sleep(float(f[1]))
+						elif f[0] == 's': pause(float(f[1]))
 						elif f[0] == 'k': send(':'.join(f[1:]))
 						elif f[0] == 'K':
 							qmp("send-key", {"keys":[
 								{"type":"qcode","data":f[1]}]})
-							time.sleep(0.08)
+							pause(0.08)
 				qf.write(json.dumps({"execute":"screendump","arguments":{"filename":a.shot}})+chr(10)); qf.flush(); qf.readline()
 				qs.close()
 			except Exception as e:
