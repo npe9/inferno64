@@ -106,6 +106,43 @@ rest on the datasheet alone.  That is also why the guest-side check in
 armtmrbcm.c measures both counters against an independent clock rather
 than trusting either.
 
+WHERE QEMU IS MORE LENIENT THAN THE BOARD
+
+One gap was found by trying to test a driver path and discovering the
+emulator cannot produce the condition the path exists for.  It is
+recorded here rather than patched, because the fix would change a core
+device shared by every ARM board rather than add a missing peripheral.
+
+	pl011		QEMU's PL011 models no transmit FIFO.
+			PL011_FLAG_TXFF is assigned in exactly one
+			place in hw/char/pl011.c, where it is cleared,
+			and never set; every write is handed straight
+			to the chardev by qemu_chr_fe_write_all() under
+			an "XXX this blocks entire thread" comment.  So
+			FR.TXFF never reads 1, a driver that fills
+			until the FIFO is full never stops filling, and
+			the transmit-interrupt path that a real board
+			depends on to resume a long write is dead code
+			under the emulator.
+
+			Modelling it properly means baud-pacing the
+			drain -- TXFF cannot assert unless the drain is
+			slower than the guest's fill -- which would
+			change console timing for virt, vexpress,
+			raspi, cubieboard and the rest, and put the
+			qtest suite at risk.  Upstream's XXX has stood
+			for the same reason.
+
+			The driver side compensates instead:
+			uartvirtarm64.c stops its fill loop at
+			Fifodepth (16, the depth a Pi has) rather than
+			running the queue dry.  On hardware that costs
+			nothing, since TXFF would break the loop at 16
+			anyway; under QEMU it forces the FIFO-full case
+			to occur, so the interrupt path is exercised on
+			every boot.  See the console chapter of
+			doc/raspi3b-completion-plan.ms.
+
 THE PATCHES
 
 0001 bcm2835_powermgt: model the watchdog countdown.

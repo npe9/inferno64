@@ -9,6 +9,10 @@
 
 extern PhysUart virtarm64physuart;
 
+enum {
+	Fifodepth = 16,		/* PL011 TX FIFO on a Pi */
+};
+
 typedef struct Ctlr Ctlr;
 struct Ctlr {
 	u32	*base;
@@ -54,12 +58,15 @@ uartintr(Ureg*, void *arg)
 	csr32w(c, UartICR, UartICRALL);
 
 	/*
-	 * Restart transmission.  Without this the console output queue is
-	 * drained only as a side effect of qbwrite()'s wakeup path, which
-	 * fires when a reader was starving and not otherwise: nothing
-	 * reads serialoq, so under load the queue grows without bound and
-	 * every byte written to the console is silently lost while the
-	 * machine runs on.  See the comment on virtarm64_kick().
+	 * Continue a transmission the kick could not finish.  Once the
+	 * TX FIFO fills, virtarm64_kick() returns with bytes still on
+	 * the queue and arms TXIM; this is what comes back for the
+	 * remainder.  Without it a write longer than the FIFO stalls
+	 * after the first FIFO-full and the tail of it is delivered
+	 * only if some later, unrelated write happens to kick again.
+	 *
+	 * This is reached only because trap() dispatches the
+	 * controller's second GPU bank; the PL011 is GPU IRQ 57.
 	 */
 	if(mis & UartIMSCTX)
 		uartkick(uart);
@@ -93,7 +100,7 @@ virtarm64_kick(Uart *uart)
 	int i;
 
 	c = uart->regs;
-	for(i = 0; i < 128; i++){
+	for(i = 0; i < Fifodepth; i++){
 		if(csr32r(c, UartFR) & UartFRTXFF)
 			break;
 		if(uart->op >= uart->oe && uartstageoutput(uart) == 0)
@@ -105,15 +112,27 @@ virtarm64_kick(Uart *uart)
 	 * Ask for a transmit interrupt exactly while there is something
 	 * left to send.
 	 *
-	 * This is what makes output independent of who happens to call
-	 * the kick.  qbwrite() invokes a queue's kick only when a starving
-	 * reader is being woken or when Qkick is set, and nothing sets
-	 * Qkick anywhere in the tree; nothing reads the console output
-	 * queue either, since the uart drains it from here.  So without a
-	 * transmit interrupt the queue is drained only by coincidence,
-	 * and a workload that stops producing those coincidences -- kfs
-	 * running, say -- loses every byte of console output from that
-	 * point on while the machine carries on perfectly well.
+	 * Two separate things have to hold for console output to drain,
+	 * and each was broken here:
+	 *
+	 *   - something must call this kick in the first place.
+	 *     qbwrite() calls a queue's kick only when it is waking a
+	 *     starving reader or when Qkick is set, and nothing reads
+	 *     serialoq, so devuart.c must open oq with Qkick -- it now
+	 *     does.  That starts a burst.
+	 *
+	 *   - once the TX FIFO is full this returns with bytes still
+	 *     queued, and only a transmit interrupt comes back for the
+	 *     rest.  That continues the burst, and it is why the loop
+	 *     below stops at Fifodepth rather than running the queue
+	 *     dry: QEMU's PL011 models no TX FIFO at all (TXFF is never
+	 *     set, hw/char/pl011.c), so an unbounded loop always empties
+	 *     the queue in one call, never leaves TXIM armed, and the
+	 *     continuation path above is never exercised until real
+	 *     hardware runs it for the first time.  Capping the loop at
+	 *     the depth the hardware actually has costs nothing on a Pi,
+	 *     where TXFF would break the loop there anyway, and buys the
+	 *     interrupt path a test on every boot.
 	 *
 	 * Leaving the mask set once the FIFO has drained would have the
 	 * PL011 re-assert immediately and storm, so it is cleared as soon
@@ -285,7 +304,12 @@ uartconsolesetup(void)
 		return;
 	consuart->putc = consolerx;
 	/* pl011@9000000's SPI is 1 -> GIC IRQ 33 */
-	intrenable(33, uartintr, consuart, 0, "uart0");
+	/*
+	 * GPU IRQ 57.  The PL011 sits in the controller's second bank;
+	 * 33 was wrong twice over, since nothing dispatched bank 2
+	 * either until trap() learned to read IRQ_PENDING2.
+	 */
+	intrenable(57, uartintr, consuart, 0, "uart0");
 	c = consuart->regs;
 	csr32w(c, UartIMSC, UartIMSCRX);
 }

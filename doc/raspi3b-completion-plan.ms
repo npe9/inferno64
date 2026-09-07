@@ -1373,21 +1373,88 @@ and
 .CW RASPI3B-SH-OK
 appear, on stock QEMU as well as the patched build.
 .PP
-.B "And a second, latent one."
-The PL011 driver never enabled the transmit interrupt \-
-.CW uartvirtarm64.c
-unmasked
-.CW UartIMSCRX
-alone, and
+.B "The transmit interrupt, and why claiming it worked was wrong."
+.CW Qkick
+starts a burst; it cannot finish one.  On a board the TX FIFO fills
+after 16 bytes, the kick returns with the rest still queued, and only a
+transmit interrupt comes back for the remainder.  So the interrupt is
+not defence in depth here \- it is required, and
+.CW Qkick
+alone is not sufficient on hardware.
+.PP
+This chapter first claimed the handler "restarts transmission".  That
+was written from reasoning, not measurement, and it was false.  A
+counter in
 .CW uartintr
-only drained the receiver.
-.CW UartIMSCTX
-was defined and unused.  On QEMU that is survivable because the model
-accepts a byte instantly, so the kick alone keeps up; on a board, where
-the FIFO fills and output has to resume when it drains, it would not
-be.  The handler now restarts transmission and the kick asks for the
-interrupt exactly while there is something left to send, clearing the
-mask when there is not so an idle FIFO cannot storm.
+showed the handler was never entered
+.I once \-
+not for transmit, and not for receive either.  Two independent faults:
+.IP \(bu
+.CW trap()
+read only
+.CW IRQ_PENDING1
+and looped
+.CW "irq < 32" .
+The BCM2835 controller carries 64 GPU sources across two pending
+registers, and
+.CW gicenable()
+already wrote whichever ENABLE register a source belonged to \- so
+everything from 32 up was armed in the controller and dispatched by
+nobody.  Half the interrupt controller was missing.
+.IP \(bu
+The PL011 was registered at IRQ 33.  It is GPU IRQ 57
+.CW ( INTERRUPT_UART0
+in QEMU's own
+.CW raspi_platform.h ).
+Wrong number, in the bank that was never read.
+.PP
+Both are fixed:
+.CW trap()
+walks both banks, and the uart registers 57.
+.PP
+.B "Getting evidence out of an emulator that cannot supply it."
+QEMU's PL011 models no TX FIFO at all \-
+.CW PL011_FLAG_TXFF
+is assigned in exactly one place in
+.CW hw/char/pl011.c ,
+where it is
+.I cleared \-
+and every write goes out synchronously under an
+.CW XXX
+admitting the design blocks the thread.  So the FIFO never fills, an
+unbounded fill loop always empties the queue in one call, TXIM is never
+left armed, and the continuation path cannot be exercised however
+correct it is.  Patching
+.CW pl011.c
+to model a real FIFO was rejected: TXFF can only assert if the drain is
+baud-paced, which changes console timing for every PL011 board in QEMU
+and risks the qtest suite, to fix a fidelity gap in a shared core
+device rather than a missing peripheral.
+.PP
+Instead the driver's fill loop stops at
+.CW Fifodepth ,
+16, the depth a Pi actually has.  On hardware this costs nothing, since
+TXFF would break the loop there anyway; under QEMU it forces the kick
+to return with bytes queued and arms TXIM, and QEMU's unconditional
+.CW "s->int_level |= INT_TX"
+then delivers.  With the loop capped and the dispatcher still broken,
+the console dies mid-word at the first FIFO-full \- output stops at
+.CW OTP ,
+25 lines in.  With the dispatcher fixed, the transmit interrupt fires
+past 100 times a boot and every marker returns.  The hardware path now
+has a test on every boot rather than waiting for a board to run it
+first.
+.PP
+Console
+.I input
+was never affected:
+.CW clockpoll()
+in
+.CW clock.c
+polls
+.CW getc
+from the clock tick, which is why typing worked all along with the
+interrupt dead.  It still works.
 .PP
 .B "What this says about the old diagnosis."
 The chapter this replaces was careful, and its measurements were sound:

@@ -153,14 +153,16 @@ vectorbuild(void)
  */
 /* raspi3b has no GIC and QEMU maps no per-core IRQ-source register
  * (0x40000000 is RAM), so the generic timer is recognised in trap() by
- * its own CNTP_CTL ISTATUS bit.  Peripheral IRQs (unused: console is
- * polled) would come from the BCM2835 controller at IRQBASE. */
+ * its own CNTP_CTL ISTATUS bit.  Peripheral IRQs come from the BCM2835
+ * controller at IRQBASE, which splits its 64 GPU sources across two
+ * pending registers -- see the loop in trap(). */
 extern ulong getcntpctl(void);
 
 enum {
 	CntpIStatus	= 1<<2,		/* CNTP_CTL_EL0.ISTATUS: timer fired */
 	IrqEnable1	= 0x10,
 	IrqPending1	= 0x04,
+	Ngpubank	= 2,		/* GPU IRQs 0..63, in two registers */
 };
 
 static void
@@ -191,8 +193,8 @@ trapinit(void)
 void
 trap(Ureg *ur)
 {
-	u32 pend;
-	int irq;
+	u32 pend, *ic;
+	int irq, bank, v;
 	void (*f)(Ureg*, void*);
 
 	switch(ur->type){
@@ -201,12 +203,27 @@ trap(Ureg *ur)
 			clockintr(ur);
 			return;
 		}
-		pend = ((u32*)IRQBASE)[IrqPending1/4];
-		for(irq = 0; irq < 32; irq++){
-			if((pend & (1<<irq)) == 0)
-				continue;
-			if((f = irqhandler[irq]) != nil)
-				f(ur, irqarg[irq]);
+		/*
+		 * Both GPU banks.  The controller carries 64 GPU sources
+		 * in IRQ_PENDING1 (0..31) and IRQ_PENDING2 (32..63), and
+		 * gicenable() below already writes whichever ENABLE
+		 * register a source belongs to.  Reading only the first
+		 * pending register therefore left every source from 32 up
+		 * armed in the controller and never dispatched -- which is
+		 * exactly how the PL011 (GPU IRQ 57) sat enabled and
+		 * silent, and why console output had to be drained from
+		 * process context alone.
+		 */
+		ic = (u32*)IRQBASE;
+		for(bank = 0; bank < Ngpubank; bank++){
+			pend = ic[IrqPending1/4 + bank];
+			for(irq = 0; irq < 32; irq++){
+				if((pend & (1<<irq)) == 0)
+					continue;
+				v = bank*32 + irq;
+				if((f = irqhandler[v]) != nil)
+					f(ur, irqarg[v]);
+			}
 		}
 		return;
 	default:
