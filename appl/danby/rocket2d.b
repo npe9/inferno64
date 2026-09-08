@@ -1,82 +1,57 @@
-implement Trajectory;
+implement Rocket2d;
 
-# danby/rocket2d - The motion of a rocket: two-dimensional motion
+# danby/rocket2d - the two-dimensional motion of a rocket
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared trajectory viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# where it is launched from and how fast, and the accelerations that
+# shape the flight.  trajlab(2) is a library this calls with that script
+# - it owns the window, the integrator and the controls, and knows
+# nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/atmosphere.m";
-	atmosphere: Atmosphere;
-include "danby/propulsion.m";
-	propulsion: Propulsion;
-include "danby/trajectory.m";
+include "trajlab.m";
+	trajlab: Trajlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	atmosphere = load Atmosphere Atmosphere->PATH;
-	propulsion = load Propulsion Propulsion->PATH;
-	return ref Model(array[] of {3800.0,1.35,80.0,140.0,6.0,9.81});
-}
-
-title(): string
-{
-	return "The motion of a rocket: two-dimensional motion";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"thrust", "pitch", "dry mass", "propellant", "flow", "gravity"};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {10000.0,1.57,300.0,500.0,20.0,20.0};
-}
-
-initialstate(nil: ref Model): array of real
-{
-	return array[] of {0.0,0.0,0.0,0.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 80.0;
-}
-
-Model.rhs(model: self ref Model, t: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	acceleration := propulsion->thrustacceleration(p[0],p[2],p[3],p[4],t);
-	(ax, ay) := atmosphere->drag2(state[2],state[3],state[1],1.0,0.02,
-		propulsion->mass(p[2],p[3],p[4],t),1.0,8.0);
-	derivative[0] = state[2];
-	derivative[1] = state[3];
-	derivative[2] = acceleration*math->cos(p[1])+ax;
-	derivative[3] = acceleration*math->sin(p[1])+ay-p[5];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-Command: module
+Rocket2d: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title The motion of a rocket: two-dimensional motion\n" +
+	"param thrust 3800.0 0.0 10000.0\n" +
+	"param pitch 1.35 0.0 1.57\n" +
+	"param dry_mass 80.0 0.0 300.0\n" +
+	"param propellant 140.0 0.0 500.0\n" +
+	"param flow 6.0 0.0 20.0\n" +
+	"param gravity 9.81 0.0 20.0\n" +
+	"maxtime 80.0\n" +
+	"state x 0.0\n" +
+	"state y 0.0\n" +
+	"state vx 0.0\n" +
+	"state vy 0.0\n" +
+	# the engine burns while there is propellant left, and the mass aboard is
+	# clamped at zero so the denominator never drops below the dry mass
+	"eq remaining propellant - flow t\n" +
+	"eq burning step { remaining }\n" +
+	"eq aboard { remaining + abs { remaining } } over 2.0\n" +
+	"eq wet dry_mass + aboard\n" +
+	"eq acceleration burning { thrust over wet }\n" +
+	"eq alt { y + abs { y } } over 2.0\n" +
+	"eq rho exp { - alt over 8.0 }\n" +
+	"eq v sqrt { vx vx + vy vy }\n" +
+	"eq factor - 0.5 rho 0.02 v over wet\n" +
+	"derivative x vx\n" +
+	"derivative y vy\n" +
+	"derivative vx acceleration cos { pitch } + factor vx\n" +
+	"derivative vy acceleration sin { pitch } + factor vy - gravity\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/trajectory.dis";
-	if(viewer == nil)
-		raise "fail:rocket2d: cannot load the trajectory viewer";
-	viewer->init(ctxt, "rocket2d" :: "/dis/danby/rocket2d.dis" ::
-		"danby-rocket2d" :: nil);
+	trajlab = load Trajlab Trajlab->PATH;
+	if(trajlab == nil)
+		raise "fail:rocket2d: cannot load trajlab";
+	if((e := trajlab->run(ctxt, "rocket2d", SPEC)) != nil)
+		raise "fail:rocket2d: "+e;
 }

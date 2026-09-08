@@ -1,77 +1,47 @@
-implement Trajectory;
+implement Baseballpitch;
 
 # danby/baseballpitch - A model for a baseball pitch
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared trajectory viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# where it is launched from and how fast, and the accelerations that
+# shape the flight.  trajlab(2) is a library this calls with that script
+# - it owns the window, the integrator and the controls, and knows
+# nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/ballistics.m";
-	ballistics: Ballistics;
-include "danby/trajectory.m";
+include "trajlab.m";
+	trajlab: Trajlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	ballistics = load Ballistics Ballistics->PATH;
-	return ref Model(array[] of {40.0,-0.03,0.003,0.0005,180.0,9.81});
-}
-
-title(): string
-{
-	return "A model for a baseball pitch";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"speed", "angle", "drag", "lift", "spin", "gravity"};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {55.0,0.3,0.02,0.003,350.0,20.0};
-}
-
-initialstate(model: ref Model): array of real
-{
-	p := model.parameter;
-	return array[] of {0.0,1.8,p[0]*math->cos(p[1]),p[0]*math->sin(p[1])};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 0.55;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	derivative[0] = state[2];
-	derivative[1] = state[3];
-	(derivative[2],derivative[3]) = ballistics->acceleration(
-		state[2],state[3],p[2],p[3],p[4],p[5],0.0);
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-Command: module
+Baseballpitch: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title A model for a baseball pitch\n" +
+	"param speed 40.0 0.0 55.0\n" +
+	"param angle -0.03 0.0 0.3\n" +
+	"param drag 0.003 0.0 0.02\n" +
+	"param lift 0.0005 0.0 0.003\n" +
+	"param spin 180.0 0.0 350.0\n" +
+	"param gravity 9.81 0.0 20.0\n" +
+	"maxtime 0.55\n" +
+	"state x 0.0\n" +
+	"state y 1.8\n" +
+	"state vx speed cos { angle }\n" +
+	"state vy speed sin { angle }\n" +
+	"eq v sqrt { vx vx + vy vy }\n" +
+	"derivative x vx\n" +
+	"derivative y vy\n" +
+	"derivative vx - drag v vx - lift spin vy\n" +
+	"derivative vy - gravity - drag v vy + lift spin vx\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/trajectory.dis";
-	if(viewer == nil)
-		raise "fail:baseballpitch: cannot load the trajectory viewer";
-	viewer->init(ctxt, "baseballpitch" :: "/dis/danby/baseballpitch.dis" ::
-		"danby-baseballpitch" :: nil);
+	trajlab = load Trajlab Trajlab->PATH;
+	if(trajlab == nil)
+		raise "fail:baseballpitch: cannot load trajlab";
+	if((e := trajlab->run(ctxt, "baseballpitch", SPEC)) != nil)
+		raise "fail:baseballpitch: "+e;
 }

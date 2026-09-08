@@ -1,0 +1,56 @@
+.TH TRAJLABTEST 1
+.SH NAME
+trajlabtest \- check every Danby flight-path model written as a trajlab(2) script
+.SH SYNOPSIS
+.B trajlabtest
+[
+.B -v
+]
+.SH DESCRIPTION
+.I Trajlabtest
+is to
+.IR trajlab (2)
+what
+.IR poplabtest (1)
+is to
+.IR poplab (2):
+it reads the
+.B SPEC
+constant out of every model under
+.B /appl/danby
+that calls
+.BR trajlab->run ,
+so that what is checked is the string that ships.
+.PP
+Every model must parse, must have the four states a flight has, must
+have no NaN among its rates at the launch, and must satisfy the
+kinematic identity that makes those four a position and a velocity
+rather than four unrelated numbers: the first two rates are exactly the
+last two states.
+.PP
+Every model whose air can be switched off also gets the vacuum check.
+With the drag, the lift and the spin all set to zero, the horizontal
+acceleration must be exactly zero and the vertical exactly minus
+gravity, and the launch speed must be exactly the speed parameter.  That
+is the strongest single statement one can make about a ballistic model
+without integrating it, and it is checked exactly rather than within a
+tolerance.
+.PP
+.B -v
+lists each model with its parameter and state counts.
+.SH SOURCE
+.B /appl/cmd/trajlabtest.b
+.SH SEE ALSO
+.IR poplabtest (1),
+.IR mechlabtest (1),
+.IR trajlab (2)
+.SH BUGS
+A default outside its own slider range is deliberately not an error: the
+baseball and the knuckleball are pitched slightly downwards, so their
+angle is negative while the slider runs from zero, and that is the model
+as it ships.
+.PP
+Which parameter is the drag, which the lift and which the spin is a
+table in this program rather than something the spec states, so a model
+with a differently ordered parameter list would silently skip the vacuum
+check.

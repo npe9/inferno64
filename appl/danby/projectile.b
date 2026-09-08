@@ -1,82 +1,47 @@
-implement Trajectory;
+implement Projectile;
 
 # danby/projectile - Ballistics: a plain projectile with drag
 #
-# The unflavoured projectile, as against the sixteen sport-specific
-# Trajectory models beside it: it exposes ballistics->acceleration()'s own
-# parameters directly rather than a bat, a ball or a wind.  The equations,
-# the parameters and their ranges are here; the flight path, the telemetry
-# and the controls are the shared trajectory viewer's, started by init()
-# at the foot of the file.
-#
-# The file is projectile.b, not ballistics.b, because appl/danby/ballistics.b
-# is the Ballistics acceleration library this model calls into.
+# The whole model is the script below: its parameters and their ranges,
+# where it is launched from and how fast, and the accelerations that
+# shape the flight.  trajlab(2) is a library this calls with that script
+# - it owns the window, the integrator and the controls, and knows
+# nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/ballistics.m";
-	ballistics: Ballistics;
-include "danby/trajectory.m";
+include "trajlab.m";
+	trajlab: Trajlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	ballistics = load Ballistics Ballistics->PATH;
-	return ref Model(array[] of {20.0,0.79,0.005,0.0,0.0,9.81});
-}
-
-title(): string
-{
-	return "Ballistics: a plain projectile with drag";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"speed", "angle", "drag", "lift", "spin", "gravity"};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {40.0,1.57,0.02,0.01,20.0,20.0};
-}
-
-initialstate(model: ref Model): array of real
-{
-	p := model.parameter;
-	return array[] of {0.0,0.0,p[0]*math->cos(p[1]),p[0]*math->sin(p[1])};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 10.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	derivative[0] = state[2];
-	derivative[1] = state[3];
-	(derivative[2],derivative[3]) = ballistics->acceleration(
-		state[2],state[3],p[2],p[3],p[4],p[5],0.0);
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-Command: module
+Projectile: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Ballistics: a plain projectile with drag\n" +
+	"param speed 20.0 0.0 40.0\n" +
+	"param angle 0.79 0.0 1.57\n" +
+	"param drag 0.005 0.0 0.02\n" +
+	"param lift 0.0 0.0 0.01\n" +
+	"param spin 0.0 0.0 20.0\n" +
+	"param gravity 9.81 0.0 20.0\n" +
+	"maxtime 10.0\n" +
+	"state x 0.0\n" +
+	"state y 0.0\n" +
+	"state vx speed cos { angle }\n" +
+	"state vy speed sin { angle }\n" +
+	"eq v sqrt { vx vx + vy vy }\n" +
+	"derivative x vx\n" +
+	"derivative y vy\n" +
+	"derivative vx - drag v vx - lift spin vy\n" +
+	"derivative vy - gravity - drag v vy + lift spin vx\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/trajectory.dis";
-	if(viewer == nil)
-		raise "fail:projectile: cannot load the trajectory viewer";
-	viewer->init(ctxt, "projectile" :: "/dis/danby/projectile.dis" ::
-		"danby-projectile" :: nil);
+	trajlab = load Trajlab Trajlab->PATH;
+	if(trajlab == nil)
+		raise "fail:projectile: cannot load trajlab";
+	if((e := trajlab->run(ctxt, "projectile", SPEC)) != nil)
+		raise "fail:projectile: "+e;
 }

@@ -30,22 +30,6 @@ include "danby/populationmodel.m";
 	heartbeat: Populationmodel;
 	boommodel: Populationmodel;
 include "danby/trajectory.m";
-	spinningball: Trajectory;
-	baseballpitch: Trajectory;
-	knuckleball: Trajectory;
-	flyball: Trajectory;
-	softballpitch: Trajectory;
-	golfdrive: Trajectory;
-	badminton: Trajectory;
-	tabletennis: Trajectory;
-	basketball: Trajectory;
-	discus: Trajectory;
-	javelin: Trajectory;
-	skijump: Trajectory;
-	skylab: Trajectory;
-	icbmrange: Trajectory;
-	rocket2d: Trajectory;
-	reentry: Trajectory;
 include "danby/flight3d.m";
 	soccerkick: Flight3d;
 	cricketbowl: Flight3d;
@@ -103,22 +87,6 @@ init(nil: ref Draw->Context, nil: list of string)
 	vaccinationmodel = load Populationmodel "/dis/danby/vaccination.dis";
 	heartbeat = load Populationmodel "/dis/danby/heartbeat.dis";
 	boommodel = load Populationmodel "/dis/danby/boom.dis";
-	spinningball = load Trajectory "/dis/danby/spinningball.dis";
-	baseballpitch = load Trajectory "/dis/danby/baseballpitch.dis";
-	knuckleball = load Trajectory "/dis/danby/knuckleball.dis";
-	flyball = load Trajectory "/dis/danby/flyball.dis";
-	softballpitch = load Trajectory "/dis/danby/softballpitch.dis";
-	golfdrive = load Trajectory "/dis/danby/golfdrive.dis";
-	badminton = load Trajectory "/dis/danby/badminton.dis";
-	tabletennis = load Trajectory "/dis/danby/tabletennis.dis";
-	basketball = load Trajectory "/dis/danby/basketball.dis";
-	discus = load Trajectory "/dis/danby/discus.dis";
-	javelin = load Trajectory "/dis/danby/javelin.dis";
-	skijump = load Trajectory "/dis/danby/skijump.dis";
-	skylab = load Trajectory "/dis/danby/skylab.dis";
-	icbmrange = load Trajectory "/dis/danby/icbmrange.dis";
-	rocket2d = load Trajectory "/dis/danby/rocket2d.dis";
-	reentry = load Trajectory "/dis/danby/reentry.dis";
 	soccerkick = load Flight3d "/dis/danby/soccerkick.dis";
 	cricketbowl = load Flight3d "/dis/danby/cricketbowl.dis";
 	cricketswing = load Flight3d "/dis/danby/cricketswing.dis";
@@ -151,18 +119,12 @@ init(nil: ref Draw->Context, nil: list of string)
 			alternativepredation == nil || maypredator == nil || internalcompetition == nil ||
 			cooperation == nil || competition == nil || epidemicmodel == nil ||
 			vaccinationmodel == nil || heartbeat == nil || boommodel == nil ||
-			spinningball == nil || baseballpitch == nil || knuckleball == nil ||
-			flyball == nil || softballpitch == nil || golfdrive == nil ||
 			soccerkick == nil || cricketbowl == nil || cricketswing == nil ||
-			badminton == nil || tabletennis == nil || basketball == nil ||
-			badfootball == nil || discus == nil || javelin == nil ||
-			skijump == nil || skylab == nil || icbmrange == nil ||
-			icbmaccuracy == nil || rocket2d == nil || reentry == nil ||
-			lowthrust == nil || threebody == nil || moontrip == nil ||
-			lagrange1 == nil || lagrange2 == nil || cometcatch == nil ||
-			jupiterboost == nil || grandtour == nil || perihelion == nil ||
-			poyntingrobertson == nil || galaxies == nil || starmodel == nil ||
-			whitedwarf == nil)
+			badfootball == nil || icbmaccuracy == nil || lowthrust == nil ||
+			threebody == nil || moontrip == nil || lagrange1 == nil ||
+			lagrange2 == nil || cometcatch == nil || jupiterboost == nil ||
+			grandtour == nil || perihelion == nil || poyntingrobertson == nil ||
+			galaxies == nil || starmodel == nil || whitedwarf == nil)
 		raise "fail:danbytest: missing module";
 	testmap();
 	testpendulum();
@@ -187,40 +149,12 @@ testpopulations()
 
 testtrajectory()
 {
-	ball := spinningball->new();
-	ball.parameter[2] = 0.0;
-	ball.parameter[3] = 0.0;
-	ball.parameter[4] = 0.0;
-	state := spinningball->initialstate(ball);
-	derivative := array[] of {0.0,0.0,0.0,0.0};
-	spinningball->evaluate(ball,0.0,state,derivative);
-	check("ball kinematics x",derivative[0],state[2],0.0);
-	check("ball kinematics y",derivative[1],state[3],0.0);
-	check("ball vacuum horizontal acceleration",derivative[2],0.0,0.0);
-	check("ball vacuum vertical acceleration",derivative[3],
-		-ball.parameter[5],0.0);
-	check("ball launch speed",
-		math->sqrt(state[2]*state[2]+state[3]*state[3]),
-		ball.parameter[0],1.0e-12);
-	checkvacuumtrajectory(baseballpitch,"baseball pitch");
-	checkvacuumtrajectory(knuckleball,"knuckleball");
-	checkvacuumtrajectory(flyball,"fly ball");
-	checkvacuumtrajectory(softballpitch,"softball pitch");
-	checkvacuumtrajectory(golfdrive,"golf drive");
+	# every vacuum and kinematics check for this family moved to
+	# trajlabtest(1) with the models.
 	checkvacuumflight3d(soccerkick,"soccer kick");
 	checkvacuumflight3d(cricketbowl,"cricket bowl");
 	checkvacuumflight3d(cricketswing,"cricket swing");
-	checkvacuumtrajectory(badminton,"badminton");
-	checkvacuumtrajectory(tabletennis,"table tennis");
-	checkvacuumtrajectory(basketball,"basketball");
 	checkvacuumflight3d(badfootball,"bad football");
-	checkvacuumtrajectory(discus,"discus");
-	checkvacuumtrajectory(javelin,"javelin");
-	checkvacuumtrajectory(skijump,"ski jump");
-	checktrajectoryfinite(skylab,"Skylab");
-	checktrajectoryfinite(icbmrange,"ICBM range");
-	checktrajectoryfinite(rocket2d,"two-dimensional rocket");
-	checktrajectoryfinite(reentry,"re-entry");
 	checkflight3dfinite(icbmaccuracy,"ICBM accuracy");
 	checkorbital(threebody,"three body");
 	checkorbital(moontrip,"Moon trip");

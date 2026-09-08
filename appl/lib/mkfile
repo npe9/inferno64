@@ -50,6 +50,7 @@ TARG=\
 	dynsys.dis\
 	mechlab.dis\
 	poplab.dis\
+	trajlab.dis\
 	env.dis\
 	eqn2hoc.dis\
 	ether.dis\
@@ -206,6 +207,7 @@ SYSMODULES= \
 	hoc.m\
 	mechlab.m\
 	poplab.m\
+	trajlab.m\
 	cci.m\
 	daytime.m\
 	db.m\

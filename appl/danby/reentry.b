@@ -1,83 +1,55 @@
-implement Trajectory;
+implement Reentry;
 
-# danby/reentry - Reentering the Earth's atmosphere
+# danby/reentry - reentering the Earth's atmosphere
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared trajectory viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# where it is launched from and how fast, and the accelerations that
+# shape the flight.  trajlab(2) is a library this calls with that script
+# - it owns the window, the integrator and the controls, and knows
+# nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/atmosphere.m";
-	atmosphere: Atmosphere;
-include "danby/trajectory.m";
+include "trajlab.m";
+	trajlab: Trajlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	atmosphere = load Atmosphere Atmosphere->PATH;
-	return ref Model(array[] of {7.8,-0.1,0.018,4.0,8.0,9.81});
-}
-
-title(): string
-{
-	return "Reentering the Earth's atmosphere";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"speed", "entry angle", "ballistic coefficient", "lift", "scale height", "gravity"};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {12.0,0.5,0.08,12.0,20.0,20.0};
-}
-
-initialstate(model: ref Model): array of real
-{
-	p := model.parameter;
-	return array[] of {0.0,120.0,p[0]*math->cos(p[1]),p[0]*math->sin(p[1])};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 300.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	(ax, ay) := atmosphere->drag2(state[2],state[3],state[1],1.0,p[2],1.0,1.0,p[4]);
-	speed := math->sqrt(state[2]*state[2]+state[3]*state[3]);
-	if(speed > 0.0){
-		ax -= p[3]*state[3]/speed*0.001;
-		ay += p[3]*state[2]/speed*0.001;
-	}
-	derivative[0] = state[2];
-	derivative[1] = state[3];
-	derivative[2] = ax;
-	derivative[3] = ay-p[5]*0.001;
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-Command: module
+Reentry: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Reentering the Earth's atmosphere\n" +
+	"param speed 7.8 0.0 12.0\n" +
+	"param entry_angle -0.1 0.0 0.5\n" +
+	"param ballistic_coefficient 0.018 0.0 0.08\n" +
+	"param lift 4.0 0.0 12.0\n" +
+	"param scale_height 8.0 0.0 20.0\n" +
+	"param gravity 9.81 0.0 20.0\n" +
+	"maxtime 300.0\n" +
+	"state x 0.0\n" +
+	"state y 120.0\n" +
+	"state vx speed cos { entry_angle }\n" +
+	"state vy speed sin { entry_angle }\n" +
+	"eq alt { y + abs { y } } over 2.0\n" +
+	"eq rho exp { - alt over scale_height }\n" +
+	"eq v sqrt { vx vx + vy vy }\n" +
+	"eq factor - 0.5 rho ballistic_coefficient v\n" +
+	# lift acts across the flight path, so it is the velocity turned a
+	# quarter turn and scaled; at a standstill there is no path to be across
+	# and the term is dropped, which is what the original's speed test did
+	"eq moving step { v }\n" +
+	"eq unit v + 1.0 - moving\n" +
+	"derivative x vx\n" +
+	"derivative y vy\n" +
+	"derivative vx factor vx - moving lift vy 0.001 over unit\n" +
+	"derivative vy factor vy + moving lift vx 0.001 over unit - gravity 0.001\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/trajectory.dis";
-	if(viewer == nil)
-		raise "fail:reentry: cannot load the trajectory viewer";
-	viewer->init(ctxt, "reentry" :: "/dis/danby/reentry.dis" ::
-		"danby-reentry" :: nil);
+	trajlab = load Trajlab Trajlab->PATH;
+	if(trajlab == nil)
+		raise "fail:reentry: cannot load trajlab";
+	if((e := trajlab->run(ctxt, "reentry", SPEC)) != nil)
+		raise "fail:reentry: "+e;
 }

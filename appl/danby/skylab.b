@@ -1,78 +1,50 @@
-implement Trajectory;
+implement Skylab;
 
-# danby/skylab - The descent of Skylab
+# danby/skylab - the descent of Skylab
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared trajectory viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# where it is launched from and how fast, and the accelerations that
+# shape the flight.  trajlab(2) is a library this calls with that script
+# - it owns the window, the integrator and the controls, and knows
+# nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/atmosphere.m";
-	atmosphere: Atmosphere;
-include "danby/trajectory.m";
+include "trajlab.m";
+	trajlab: Trajlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	atmosphere = load Atmosphere Atmosphere->PATH;
-	return ref Model(array[] of {120.0,0.015,74.0,77000.0,28.0,9.81});
-}
-
-title(): string
-{
-	return "The descent of Skylab";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"altitude", "density", "area", "mass", "scale height", "gravity"};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {250.0,0.08,150.0,150000.0,60.0,20.0};
-}
-
-initialstate(model: ref Model): array of real
-{
-	return array[] of {0.0,model.parameter[0],7.6,0.0};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 80.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	(ax, ay) := atmosphere->drag2(state[2],state[3],state[1],2.2,p[2],p[3],
-		p[1],p[4]);
-	derivative[0] = state[2];
-	derivative[1] = state[3];
-	derivative[2] = ax;
-	derivative[3] = ay-p[5]*0.001;
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-Command: module
+Skylab: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title The descent of Skylab\n" +
+	"param altitude 120.0 0.0 250.0\n" +
+	"param density 0.015 0.0 0.08\n" +
+	"param area 74.0 0.0 150.0\n" +
+	"param mass 77000.0 0.0 150000.0\n" +
+	"param scale_height 28.0 0.0 60.0\n" +
+	"param gravity 9.81 0.0 20.0\n" +
+	"maxtime 80.0\n" +
+	"state x 0.0\n" +
+	"state y altitude\n" +
+	"state vx 7.6\n" +
+	"state vy 0.0\n" +
+	"eq alt { y + abs { y } } over 2.0\n" +
+	"eq rho density exp { - alt over scale_height }\n" +
+	"eq v sqrt { vx vx + vy vy }\n" +
+	"eq factor - 0.5 rho 2.2 area v over mass\n" +
+	"derivative x vx\n" +
+	"derivative y vy\n" +
+	"derivative vx factor vx\n" +
+	"derivative vy factor vy - gravity 0.001\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/trajectory.dis";
-	if(viewer == nil)
-		raise "fail:skylab: cannot load the trajectory viewer";
-	viewer->init(ctxt, "skylab" :: "/dis/danby/skylab.dis" ::
-		"danby-skylab" :: nil);
+	trajlab = load Trajlab Trajlab->PATH;
+	if(trajlab == nil)
+		raise "fail:skylab: cannot load trajlab";
+	if((e := trajlab->run(ctxt, "skylab", SPEC)) != nil)
+		raise "fail:skylab: "+e;
 }
