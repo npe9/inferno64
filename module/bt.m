@@ -1176,6 +1176,66 @@ Avdtp: module
 	sbcchoose:	fn(c: ref Cap): (ref Cap, string, string);
 };
 
+#
+# Hands free: the control half of HFP, which is AT commands over an
+# RFCOMM serial port.  It sits on the file btfs serves for an RFCOMM
+# channel and is a line protocol; there is no Bluetooth in it.
+#
+# What is not here is the audio.  A call's sound goes over a
+# synchronous connection -- SCO or eSCO -- which needs the controller
+# to carry it and, over USB, isochronous endpoints, and none of that
+# is verified in this tree.  So this can see a call, place one, answer
+# one and hang up, and cannot hear or be heard.
+#
+Hfp: module
+{
+	PATH:	con "/dis/lib/bt/hfp.dis";
+
+	# the service classes: a gateway is what a phone offers, and a
+	# hands free unit is what this side is
+	Uag:	con "111f";
+	Uhf:	con "111e";
+	# and the headset profile's, which is the older and smaller one
+	Uhsag:	con "1112";
+
+	Sess: adt {
+		fd:	ref Sys->FD;
+		buf:	string;			# what has arrived and is not a line yet
+		agfeatures:	int;
+		names:	list of string;		# the indicators, in the gateway's order
+		values:	list of (string, int);
+		events:	chan of string;		# what changed, for whoever watches
+		#
+		# Everything that is not an unsolicited line, on its way
+		# to whoever asked.  One process reads the port and this
+		# is how what it read gets to the asker: two readers of
+		# one buffer is two halves of one line in two places,
+		# which is what happened when there were two.
+		#
+		replies:	chan of string;
+	};
+
+	init:	fn(bt: Bt): string;
+	start:	fn(fd: ref Sys->FD): ref Sess;
+
+	# the handshake that has to happen before anything else
+	slc:	fn(s: ref Sess): string;
+
+	# one command and the lines that came back before the OK
+	command:	fn(s: ref Sess, cmd: string): (list of string, string);
+
+	# what an indicator is now, or -1 if the gateway has no such one
+	value:	fn(s: ref Sess, name: string): int;
+
+	dial:	fn(s: ref Sess, number: string): string;
+	answer:	fn(s: ref Sess): string;
+	hangup:	fn(s: ref Sess): string;
+
+	# and nothing to start: the reader is spawned by start(),
+	# because a gateway sends when it feels like it and something
+	# has to be reading from the moment the port is open.
+};
+
 Smp: module
 {
 	PATH:	con "/dis/lib/bt/smp.dis";

@@ -15,6 +15,7 @@ TARG=\
 	rfcomm.dis\
 	bnep.dis\
 	avdtp.dis\
+	hfp.dis\
 
 #
 #	mkdis makes every .dis depend on the modules named here.  bt.m is

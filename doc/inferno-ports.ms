@@ -21380,6 +21380,72 @@ rather have; and a sink that refuses, where the category it refused
 and the reason both have to reach whoever asked.
 
 .NH 2
+A telephone as files, and the same offset mistake again
+.PP
+Hands free is AT commands over an RFCOMM serial port \(em the same AT
+commands a modem took, with a set of extensions that are all the
+profile is.  So
+.CW appl/lib/bt/hfp.b
+sits on the file
+.CW btfs
+serves for an RFCOMM channel and is a line protocol with no Bluetooth
+in it, and
+.CW bthfp
+serves a telephone as
+.CW status ,
+.CW event
+and
+.CW ctl :
+a program places a call by writing to a file and learns it was
+answered by reading another.
+.PP
+The service level connection is four commands in a fixed order and a
+gateway answers nothing else until they have been asked.  What comes
+back from the third of them is the indicators the gateway keeps
+\(em whether there is a call, whether there is service, how much
+battery \(em and the order is the gateway's, not a standard one: an
+indication says which indicator changed by number, so the order has to
+be read out of the test response and kept.  The model reports call
+first and service second on purpose, because a unit that assumed the
+usual order would get them the wrong way round and the phase would
+still pass if it did not check.
+.PP
+Two bugs, and the second is one this tree has already written down
+once.
+.PP
+The first: two processes read the port.
+.CW watch()
+read lines to keep the indicators current and
+.CW command()
+read lines waiting for its answer, out of one buffer, so a line could
+arrive in two halves in two places.  One process reads it now and
+hands answers to whoever asked over a channel, which is what every
+other layer here does.
+.PP
+The second: the event file is a stream and
+.CW readstr()
+applies the read offset.  The second read of a five byte first event
+returned everything after the fifth byte of the second one, so
+.CW "call 1"
+arrived as
+.CW 1 .
+.CW btfs 's
+notification files carry a comment saying exactly this about exactly
+this function, from when it happened there; the comment was in another
+file, and the mistake was made again.  That is worth recording as a
+fact about comments rather than about offsets.
+.PP
+What is missing is the sound, and it is the same thing that was
+missing when this was written down as the last item: SCO and eSCO,
+which the controller has to carry and which over USB means
+isochronous endpoints, with iso plumbing in
+.CW devusb
+and
+.CW usbxhci
+that is still not verified.  A call can be seen, placed, answered and
+ended, and cannot be heard.
+
+.NH 2
 A native backtrace from inside the collector
 .PP
 The bench passes under

@@ -573,14 +573,38 @@ AVRCP is not implemented, and neither is
 .I devaudio
 underneath any of it.
 .IP 8.
-.B "HFP and HSP,"
-last, because they need synchronous transport: SCO and eSCO through
-the controller, which over USB means isochronous endpoints.  There is
-iso plumbing in
+.B "HFP,"
+as far as it goes without a synchronous connection.
+.CW appl/lib/bt/hfp.b
+is the service level connection and the AT commands above it, and
+.CW bthfp
+serves a telephone as three files:
+.CW status
+for the indicators,
+.CW event
+for the next thing that changed, and
+.CW ctl
+taking
+.CW dial ,
+.CW answer ,
+.CW hangup
+or a raw AT command.  So a program places a call by writing to a file
+and learns it was answered by reading another.
+.PP
+What is missing is the sound, and it is the same thing that was
+missing when this was written down as last: a call's audio goes over
+SCO or eSCO, which the controller has to carry and which over USB
+means isochronous endpoints, and there is iso plumbing in
 .CW devusb
 and
 .CW usbxhci
-and none of it is verified.
+that is still not verified.  So a call can be seen, placed, answered
+and ended here, and cannot be heard, and
+.CW bthfp
+says so when it starts rather than leaving it to be discovered by
+holding a silent telephone.  HSP is not implemented separately; a
+headset offering only the older profile is found by the same search,
+because its service class is looked for too.
 .NH 2
 The bench, and what it cannot cover
 .PP

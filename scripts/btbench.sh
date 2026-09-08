@@ -203,6 +203,13 @@
 #		is a sink offering the least of everything, where the
 #		source must configure what was offered and not what it
 #		would rather have; a2dprefuse is a sink that says no
+#	hfp	a telephone as files: find the audio gateway, open the
+#		RFCOMM channel its record names, do the service level
+#		connection, read the indicators, wait for the call the
+#		gateway makes, answer it and watch the call indicator
+#		move.  No audio: that needs a synchronous connection and
+#		there is none.  hfpnoslc is a gateway that will not say
+#		what its indicators are, where no interface may appear
 #	stalefid	a characteristic file kept open across a disconnect
 #		and a reconnect: the old name must be gone.  What the
 #		fix for it changes is not visible from inside the guest
@@ -329,8 +336,8 @@ run rejoin --bonded rejoin
 # reads it back from the service's own bonds file.  Everything else --
 # every assertion in both phases -- is the same, which is the point.
 #
-mkdir -p "$ROOT/n/btpan"
-chmod 777 "$ROOT/n" "$ROOT/n/btpan"
+mkdir -p "$ROOT/n/btpan" "$ROOT/n/bthfp"
+chmod 777 "$ROOT/n" "$ROOT/n/btpan" "$ROOT/n/bthfp"
 mkdir -p "$ROOT/mnt/btkeys"
 chmod 777 "$ROOT/mnt/btkeys"
 #
@@ -863,6 +870,22 @@ if ! grep -q 'sbc 16000 mono blocks 4 subbands 4 snr' "$OUT/bench-a2dpnarrow.out
 fi
 echo "and a sink that offers one thing gets configured for that thing"
 run a2dprefuse "--classic --brconnect --a2dp --a2dprefuse" a2dp
+#
+# A telephone.  The call control is all of it: what a call sounds like
+# goes over a synchronous connection and there is none here.
+#
+run hfp "--classic --brconnect --hfp" hfp
+for want in 'at AT+BRSF=0' 'at AT+CIND=?' 'at AT+CIND?' 'at AT+CMER=' 'the call was answered'
+do
+	n=`grep -c "$want" "$OUT/bthci-hfp.log" || true`
+	if [ "$n" != 1 ]; then
+		echo "=== phase hfp ==="
+		echo "BENCH FAIL (hfp): \"$want\" happened $n times, wanted 1"
+		exit 1
+	fi
+done
+echo "a telephone was found, answered, and read out of the name space"
+run hfpnoslc "--classic --brconnect --hfp --hfpnoslc" hfpnoslc
 if ! grep -q 'refused the codec' "$OUT/bench-a2dprefuse.out"; then
 	echo "=== phase a2dprefuse ==="
 	echo "BENCH FAIL (a2dprefuse): the refusal did not reach whoever asked"

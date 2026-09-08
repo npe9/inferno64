@@ -263,6 +263,22 @@ sdpsplit = 0
 if '--sdpsplit' in sys.argv:
     sdpsplit = int(sys.argv[sys.argv.index('--sdpsplit') + 1])
 
+# --hfp: with --brconnect, the peer is a telephone: it offers a hands
+# free audio gateway on RFCOMM channel 3, answers the service level
+# connection, and then rings.  Answering the call moves the call
+# indicator, which is what a hands free unit watches.
+#
+# There is no audio in it, on either side: what a call sounds like
+# goes over a synchronous connection and neither this model nor the
+# stack has one.
+hfp = '--hfp' in sys.argv
+
+# --hfpnoslc: the gateway refuses AT+CIND=?, so the service level
+# connection cannot be made.  A unit that carried on would be talking
+# to a gateway that has agreed to nothing and does not know what its
+# indicators mean.
+hfpnoslc = '--hfpnoslc' in sys.argv
+
 # --a2dp: with --brconnect, the peer is an audio sink.  Its service
 # record says so, it answers AVDTP on PSM 25 with one audio sink
 # endpoint, it says what SBC it will take, and it accepts a
@@ -905,6 +921,21 @@ def sink_record():
     ]
 
 
+#
+# A hands free audio gateway, which is what a telephone offers: the
+# service class, and the RFCOMM channel it answers on.
+#
+def ag_record():
+    return [
+        (0x0000, de_uint(0x00010005, 4)),
+        (0x0001, de_seq(de_uuid('111f'), de_uuid('1203'))),
+        (0x0004, de_seq(de_seq(de_uuid('0100')),
+                        de_seq(de_uuid('0003'), de_uint(3, 1)))),
+        (0x0005, de_seq(de_uuid('1002'))),
+        (0x0100, de_text('Audio Gateway')),
+    ]
+
+
 def sdp_records():
     serial = [
         (0x0000, de_uint(0x00010000, 4)),
@@ -929,6 +960,8 @@ def sdp_records():
         rs = [nap_record()]
     if a2dp:
         rs = [sink_record()]
+    if hfp:
+        rs = [ag_record()]
     out = []
     for r in rs:
         parts = []
@@ -1625,7 +1658,7 @@ class Model:
         # the CIDs mean different things there: 1 is signalling, and
         # anything else is a channel this side handed out.
         #
-        if (brl2cap or sdp or rfcomm or chid or pan or served or a2dp) \
+        if (brl2cap or sdp or rfcomm or chid or pan or served or a2dp or hfp) \
            and handle == getattr(self, 'brhandle', None):
             if served:
                 #
@@ -2280,6 +2313,19 @@ class Model:
         d = p[4:4+dlen]
         if code == 0x02:                     # Connection Request
             psm, scid = struct.unpack('<HH', d[0:4])
+            if psm == 0x0003 and hfp:
+                self.brscid = scid
+                self.brdcid = 0x0043
+                self.peercid[0x0043] = scid
+                self.rfchan = True
+                self.hfpchan = True
+                print('bthci: hfp channel', flush=True)
+                self.bracl(1, bytes([0x03, ident]) + struct.pack('<H', 8)
+                           + struct.pack('<HHHH', self.brdcid, scid, 0, 0))
+                opts = bytes([0x01, 0x02]) + struct.pack('<H', 672)
+                self.bracl(1, bytes([0x04, 0x40]) + struct.pack('<H', 4 + len(opts))
+                           + struct.pack('<HH', scid, 0) + opts)
+                return
             if psm == 0x0003 and rfcomm:
                 self.brscid = scid
                 self.brdcid = 0x0043
@@ -2346,7 +2392,7 @@ class Model:
                 if 0x0011 in self.hidcid and 0x0013 in self.hidcid:
                     threading.Thread(target=self.hid_classic, daemon=True).start()
                 return
-            if psm == 0x0001 and (sdp or chid or pan or a2dp):
+            if psm == 0x0001 and (sdp or chid or pan or a2dp or hfp):
                 self.brscid = scid
                 self.brdcid = 0x0042
                 self.peercid[0x0042] = scid
@@ -2579,6 +2625,9 @@ class Model:
             return
         if not n:
             return                             # a grant and nothing else
+        if getattr(self, 'hfpchan', False):
+            self.at_in(dlci, bytes(body))
+            return
         print('bthci: rfcomm %d bytes in' % n, flush=True)
         out = bytes(body).upper()
         if getattr(self, 'rfcred', 0) <= 0:
@@ -3020,6 +3069,70 @@ class Model:
                 b.get(v[3] & 0xF0, '?'), sb.get(v[3] & 0x0C, '?'),
                 al.get(v[3] & 0x03, '?'))
         return None
+
+    #
+    # The telephone.  AT commands in, responses out, and a call that
+    # arrives on its own -- which is the thing a hands free unit
+    # exists to be told about.
+    #
+    # The indicators are the ones every gateway keeps, in the order
+    # this gateway reports them; a unit that read the order out of the
+    # test response gets them right and one that assumed an order does
+    # not, which is why they are not in the usual one here.
+    #
+    def at_in(self, dlci, body):
+        self.atbuf = getattr(self, 'atbuf', b'') + body
+        while b'\r' in self.atbuf:
+            i = self.atbuf.index(b'\r')
+            line = self.atbuf[:i].decode('ascii', 'replace').strip()
+            self.atbuf = self.atbuf[i+1:]
+            if line:
+                self.at_line(dlci, line)
+
+    def at_send(self, dlci, s):
+        self.rf_send(dlci, 0xEF, ('\r\n%s\r\n' % s).encode(), cred=1)
+
+    def at_line(self, dlci, line):
+        print('bthci: at %s' % line, flush=True)
+        if line.startswith('AT+BRSF='):
+            self.at_send(dlci, '+BRSF: 32')
+            self.at_send(dlci, 'OK')
+        elif line == 'AT+CIND=?':
+            if hfpnoslc:
+                print('bthci: refusing the indicators', flush=True)
+                self.at_send(dlci, 'ERROR')
+                return
+            self.at_send(dlci,
+                '+CIND: ("call",(0,1)),("service",(0,1)),("battchg",(0,5))')
+            self.at_send(dlci, 'OK')
+        elif line == 'AT+CIND?':
+            self.at_send(dlci, '+CIND: 0,1,4')
+            self.at_send(dlci, 'OK')
+        elif line.startswith('AT+CMER='):
+            self.at_send(dlci, 'OK')
+            # and a call arrives a moment later
+            threading.Thread(target=self.ring, args=(dlci,),
+                             daemon=True).start()
+        elif line == 'ATA':
+            self.at_send(dlci, 'OK')
+            # the call indicator moves, which is indicator 1
+            self.at_send(dlci, '+CIEV: 1,1')
+            print('bthci: the call was answered', flush=True)
+        elif line == 'AT+CHUP':
+            self.at_send(dlci, 'OK')
+            self.at_send(dlci, '+CIEV: 1,0')
+            print('bthci: the call was ended', flush=True)
+        elif line.startswith('ATD'):
+            self.at_send(dlci, 'OK')
+            self.at_send(dlci, '+CIEV: 1,1')
+            print('bthci: dialling %s' % line[3:], flush=True)
+        else:
+            self.at_send(dlci, 'ERROR')
+
+    def ring(self, dlci):
+        time.sleep(0.6)
+        print('bthci: ringing', flush=True)
+        self.at_send(dlci, 'RING')
 
     # ------------------------------------------------ SMP
     def smp_in(self, p):

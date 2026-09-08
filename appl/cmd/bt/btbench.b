@@ -316,6 +316,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	"a2dp" or "a2dpnarrow" or "a2dprefuse" =>
 		a2dpphase(mode);
 		return;
+	"hfp" or "hfpnoslc" =>
+		hfpphase(mode);
+		return;
 	"brconnect" or "brfail" or "brincoming" =>
 		brlink(mode);
 		return;
@@ -2301,6 +2304,137 @@ a2dpphase(nil: string)
 	#
 	a2->init(nil, "bta2dp" :: "-b" :: mnt :: "-d" :: dev :: f :: nil);
 	sys->sleep(1000);
+	writefile(dev + "/ctl", "disconnect");
+	sys->print("BT: done\n");
+}
+
+#
+# A telephone as files.  bthfp finds the gateway in the device's
+# service records, opens the RFCOMM channel the record names, does the
+# service level connection, and serves the indicators; the phase then
+# reads them, waits for the call the gateway makes, answers it, and
+# watches the call indicator move.
+#
+# There is no audio in any of it, and that is the point of what is
+# left out: a call can be seen, placed, answered and ended, and not
+# heard.
+#
+Hfpmnt:	con "/n/bthfp";
+
+hfpphase(mode: string)
+{
+	if((e := writefile(mnt + "/0/ctl", "inquiry on")) != nil){
+		sys->print("BT: FAILED: inquiry on: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	for(i := 0; i < 40; i++){
+		sys->sleep(500);
+		if(hasstr(readfile(mnt + "/0/state"), "inquiry off"))
+			break;
+	}
+	dev := mnt + "/0/remote/" + Chead;
+	if((e = writefile(dev + "/ctl", "connect")) != nil){
+		sys->print("BT: FAILED: connect: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	hf := load Command "/dis/bt/bthfp.dis";
+	if(hf == nil){
+		sys->print("BT: FAILED: cannot load /dis/bt/bthfp.dis: %r\n");
+		sys->print("BT: done\n");
+		return;
+	}
+	spawn hf->init(nil, "bthfp" :: "-b" :: mnt :: "-m" :: Hfpmnt :: dev :: nil);
+	up := 0;
+	for(i = 0; i < 40 && !up; i++){
+		sys->sleep(500);
+		(st, nil) := sys->stat(Hfpmnt + "/status");
+		up = st >= 0;
+	}
+	if(mode == "hfpnoslc"){
+		#
+		# a gateway that will not say what its indicators are.
+		# A unit that carried on would be reading numbers whose
+		# meaning it invented.
+		#
+		if(up)
+			sys->print("BT: FAILED: a refused handshake served an interface anyway\n");
+		else
+			sys->print("BT: a gateway that would not say left no interface\n");
+		writefile(dev + "/ctl", "disconnect");
+		sys->print("BT: done\n");
+		return;
+	}
+	if(!up){
+		sys->print("BT: FAILED: no telephone appeared\n");
+		sys->print("BT: done\n");
+		return;
+	}
+	#
+	# the indicators, in the gateway's own order.  This gateway
+	# reports call first and service second, which is not the usual
+	# order: a unit that assumed one would have them swapped.
+	#
+	st := readfile(Hfpmnt + "/status");
+	sys->print("BT: the telephone says\n%s", st);
+	ok := 1;
+	if(!hasstr(st, "call 0") || !hasstr(st, "service 1")
+	|| !hasstr(st, "battchg 4")){
+		sys->print("BT: FAILED: the indicators read %q\n", st);
+		ok = 0;
+	}
+	#
+	# it rings, which arrives on its own and not in answer to
+	# anything
+	#
+	efd := sys->open(Hfpmnt + "/event", Sys->OREAD);
+	if(efd == nil){
+		sys->print("BT: FAILED: opening event: %r\n");
+		sys->print("BT: done\n");
+		return;
+	}
+	(n, b, re) := sdu(efd, 10000);
+	if(re != nil || n <= 0){
+		sys->print("BT: FAILED: waiting for the telephone: %s\n", re);
+		ok = 0;
+	} else {
+		ev := trim(string b[0:n]);
+		sys->print("BT: the telephone says %q\n", ev);
+		if(ev != "RING"){
+			sys->print("BT: FAILED: wanted RING\n");
+			ok = 0;
+		}
+	}
+	#
+	# and answering it moves the call indicator, which is what a
+	# hands free unit watches rather than the answer to its own
+	# command
+	#
+	if((e = writefile(Hfpmnt + "/ctl", "answer")) != nil){
+		sys->print("BT: FAILED: answer: %s\n", e);
+		ok = 0;
+	}
+	(n, b, re) = sdu(efd, 10000);
+	if(re != nil || n <= 0){
+		sys->print("BT: FAILED: nothing came of answering: %s\n", re);
+		ok = 0;
+	} else {
+		ev := trim(string b[0:n]);
+		sys->print("BT: the telephone says %q\n", ev);
+		if(ev != "call 1"){
+			sys->print("BT: FAILED: wanted the call indicator to move\n");
+			ok = 0;
+		}
+	}
+	st = readfile(Hfpmnt + "/status");
+	if(!hasstr(st, "call 1")){
+		sys->print("BT: FAILED: after answering the status reads %q\n", st);
+		ok = 0;
+	}
+	if(ok)
+		sys->print("BT: a telephone answered, out of the name space\n");
+	efd = nil;
 	writefile(dev + "/ctl", "disconnect");
 	sys->print("BT: done\n");
 }
