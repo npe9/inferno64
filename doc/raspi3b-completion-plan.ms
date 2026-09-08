@@ -611,8 +611,7 @@ no SDIO device to answer them.  The SD-card results above say the
 register interface, the command engine and the PIO data path are sound;
 they say nothing whatever about CMD52 and CMD53.
 .PP
-Also not done: no interrupt is wired (every wait is a bounded poll, as
-in sdhostbcm.c) and no real hardware has been near it.
+Also not done: no real hardware has been near it.
 .PP
 .B "The four-bit bus, and what an emulator can and cannot say about it."
 The card and the host are now moved to the four-bit data bus after
@@ -795,6 +794,57 @@ accepts either can settle.
 Two emulator-only paths, then, and no way to test either without the
 board.  The PIO data path stays, and this is recorded as a decision
 rather than as an omission.
+.PP
+.B "The interrupt is the same shape of answer."
+This chapter also listed "no interrupt is wired (every wait is a
+bounded poll, as in sdhostbcm.c)".  Nothing forbids it \- Linux carries
+no quirk against interrupts on this part, the controller's IRQ is GPU
+62, QEMU raises it, and
+.CW trap()
+has dispatched that bank since the console work.  It is still not
+worth doing.
+.PP
+Half the driver cannot use it at all.  Identification runs from
+.CW sdhcicardinit() ,
+which like every device init on this board runs before
+.CW init0()
+calls
+.CW spllo() ,
+where a counter in
+.CW trap()
+reads zero entries \- the same wall the ARM timer's check ran into.
+So identification polls whatever else changes.
+.PP
+That leaves the transfer path, and there the wait being replaced is
+not observable.  QEMU completes a command inside the register write,
+so every
+.CW awaitbit
+falls straight through; the interrupt would save a spin that measures
+zero here and cannot be measured at all without the board.  Rewriting
+the data path that carries
+.CW SDHCI-OK ,
+.CW SDHCI-MULTIBLOCK-OK ,
+.CW SD-FS-CREATE-OK
+and kfs, to replace a mechanism that works with one whose benefit is
+untestable, is the same trade refused above for DMA.
+.PP
+The two halves are at least consistent with each other, which was
+worth checking after the console.
+.CW Irptmask
+is
+.CW ~0
+so the status bits set and the polls can read them;
+.CW Irpten ,
+which is what would actually assert IRQ 62, is 0; and nothing calls
+.CW intrenable(62) .
+An interrupt armed at the controller with no handler to dispatch it is
+exactly the quiet fault that cost this port its console output, and
+this is not one.
+.PP
+So Phase 5's remaining list closes as three decisions rather than three
+omissions: no DMA, no interrupt, and no real hardware yet \- and only
+the last of those is something a future session can change without a
+board.
 .PP
 .B "Four blocks, one command."
 A request for more than one block was four commands, four responses

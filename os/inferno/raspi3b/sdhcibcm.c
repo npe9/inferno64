@@ -190,13 +190,34 @@ sdhcictlrinit(Ctlr *c)
 	 * the 8-bit "divided clock" form (Control1 bits 8-15), dividing
 	 * the base clock by 2*N; 0x80 is the largest, which is slow
 	 * enough from any plausible base clock on this part.
+	 *
+	 * Bits 16-19 are the data-timeout exponent, and 0xe is the
+	 * largest the field can express -- 0xf is reserved -- so the
+	 * timeout is 2**27 clocks.  It is set to the maximum on purpose.
+	 * Linux carries SDHCI_QUIRK_DATA_TIMEOUT_USES_SDCLK for this
+	 * part, meaning the counter runs off SDCLK rather than the
+	 * separate timeout clock, so the wall-clock timeout shortens by
+	 * whatever factor the divider is later raised by: 335s at the
+	 * 400kHz identification rate becomes about 5s once sdhcispeed()
+	 * has moved to 26MHz.  Five seconds is still far longer than any
+	 * block transfer, and there is nothing to recompute because the
+	 * field is already at its maximum -- but it is the reason
+	 * sdhcispeed() masks only bits 8-15 and leaves this alone.
 	 */
 	r[Control1] = (0x80 << 8) | (0xe << 16) | Clkintlen;
 	if(awaitbit(&r[Control1], Clkstable, 1) < 0)
 		return -1;
 	r[Control1] |= Clken;
 
-	r[Irptmask] = ~0;		/* record status; we poll, not interrupt */
+	/*
+	 * Status is recorded but no interrupt is enabled: Irptmask lets
+	 * the bits set in Interrupt so the polls below can read them,
+	 * Irpten is what would actually assert IRQ 62, and it stays 0.
+	 * Nothing calls intrenable(62) either, so the two agree -- an
+	 * interrupt armed at the controller with no handler to dispatch
+	 * it is the quiet fault that cost this port the console.
+	 */
+	r[Irptmask] = ~0;
 	r[Irpten] = 0;
 	r[Interrupt] = r[Interrupt];
 	return 0;
