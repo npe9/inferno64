@@ -158,13 +158,13 @@ parse(a: array of byte, o: int): (ref Elem, int, string)
 		# the one element with no data.  Its size index is 0,
 		# which everywhere else means one byte.
 		#
-		e := ref Elem(Enil, big 0, nil, nil, nil);
+		e := ref Elem(Enil, big 0, nil, nil, nil, nil);
 		return (e, 1, nil);
 	}
 	if(n < 0 || o + hdr + n > len a)
 		return (nil, 0, "a data element of " + string n + " bytes off the end");
 	b := a[o+hdr:o+hdr+n];
-	e := ref Elem(ty, big 0, nil, nil, nil);
+	e := ref Elem(ty, big 0, nil, nil, nil, nil);
 	case ty {
 	Euint or Ebool =>
 		for(i := 0; i < len b && i < 8; i++)
@@ -189,7 +189,14 @@ parse(a: array of byte, o: int): (ref Elem, int, string)
 		#
 		e.uuid = bt->lower(bt->hex(b));
 	Etext or Eurl =>
+		#
+		# both: the string for anything that is a name, and the
+		# bytes for anything that is not.  A HID report
+		# descriptor arrives in one of these and is full of
+		# bytes that are not characters.
+		#
 		e.s = string b;
+		e.data = b;
 	Eseq or Ealt =>
 		#
 		# built head first and turned round, so what a caller
@@ -425,6 +432,40 @@ protos(r: ref Rec): list of string
 	for(; rl != nil; rl = tl rl)
 		nl = hd rl :: nl;
 	return nl;
+}
+
+#
+# The report descriptor out of a HID record.  It is the same
+# descriptor an LE device serves as its 2a4b characteristic, so what
+# reads one reads the other: the transport differs and the bytes do
+# not.
+#
+hiddesc(r: ref Rec): array of byte
+{
+	e := r.attr(Ahiddesc);
+	if(e == nil || e.ty != Eseq)
+		return nil;
+	for(l := e.l; l != nil; l = tl l){
+		one := hd l;
+		if(one.ty != Eseq || one.l == nil || tl one.l == nil)
+			continue;
+		ty := hd one.l;
+		v := hd tl one.l;
+		if(ty.ty != Euint || int ty.n != Dreport)
+			continue;
+		if(v.ty != Etext && v.ty != Eurl)
+			continue;
+		#
+		# A descriptor of no bytes is no descriptor.  Returning
+		# an empty array rather than nil would put an empty
+		# hiddesc line in front of a reader, which reads as a
+		# device that has one.
+		#
+		if(len v.data == 0)
+			continue;
+		return v.data;
+	}
+	return nil;
 }
 
 #

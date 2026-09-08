@@ -21163,6 +21163,56 @@ authentication that fails has to reach whoever asked rather than the
 link being reported secure.
 
 .NH 2
+The same keyboard down a different pipe
+.PP
+A Bluetooth Classic keyboard is found by an inquiry, its report
+descriptor comes out of its
+.CW 1124
+service record rather than out of a characteristic, and its reports
+arrive on an L2CAP channel to the interrupt PSM with a byte of HIDP
+header in front of them.
+.CW bthid
+opens the control channel too, because HIDP is two channels and a
+device is entitled to expect both even when nothing is sent on one.
+.PP
+What makes it worth having is how little of it is new.  The report
+descriptor is byte for byte the one an LE device serves as its
+.CW 2a4b
+characteristic, so
+.CW hidreport
+parses it unchanged;
+.CW hidboot 's
+key table turns the reports into the same characters; and the bench
+phase is the LE phase's assertions, called from a second place.  That
+is not a coincidence to be pleased about, it is the thing the two
+libraries were split out for, and the phase is written so that a
+change breaking the claim breaks the phase.
+.PP
+SDP had to be fixed for it, and the bug was real rather than a
+nuisance.  A report descriptor travels in a text data element, and it
+is full of bytes that are not characters:
+.CW a1 ,
+.CW c0 ,
+every usage above 127.  The parser turned every text element into a
+Limbo string, which is UTF-8, so the descriptor came out mangled and
+nothing said so.  An element keeps its bytes as well as its string
+now, and
+.CW btfs
+writes the descriptor as a
+.CW hiddesc
+line in hexadecimal rather than leaving it in the attribute dump to be
+read out and mangled again.
+.PP
+The control is a HID record with no descriptor in it, where there is
+nothing to parse and a host that carried on would be reading reports
+whose layout it invented.  Writing it found a smaller thing: a
+descriptor of no bytes came back as an empty array rather than nil, so
+the record grew an empty
+.CW hiddesc
+line \(em which reads as a device that has one.  A descriptor of no
+bytes is no descriptor.
+
+.NH 2
 A native backtrace from inside the collector
 .PP
 The bench passes under

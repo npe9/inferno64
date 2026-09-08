@@ -804,6 +804,13 @@ Sdp: module
 		ty:	int;
 		n:	big;			# an integer or a boolean
 		s:	string;			# text or a URL
+		#
+		# and the same bytes unconverted.  A text element is not
+		# always text: the HID descriptor list carries a report
+		# descriptor in one, and its bytes are not UTF-8 and do
+		# not survive being made into a string.
+		#
+		data:	array of byte;
 		uuid:	string;			# a UUID as hexadecimal
 		l:	list of ref Elem;	# a sequence or an alternative
 
@@ -846,6 +853,17 @@ Sdp: module
 
 	# the well known name of a 16 bit UUID, or the UUID itself
 	uuidname:	fn(u: string): string;
+
+	#
+	# The HID report descriptor a record carries, or nil.  It lives
+	# in the HID descriptor list, attribute 0x0206, as a sequence of
+	# (descriptor type, bytes) pairs; type 0x22 is the report
+	# descriptor, which is the same thing hidreport(2) parses off an
+	# LE device's 2a4b characteristic.
+	#
+	Ahiddesc:	con 16r0206;
+	Dreport:	con 16r22;
+	hiddesc:	fn(r: ref Rec): array of byte;
 };
 
 #

@@ -304,6 +304,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	"classic" =>
 		classic();
 		return;
+	"chid" or "chidnodesc" =>
+		chidphase(mode);
+		return;
 	"brconnect" or "brfail" or "brincoming" =>
 		brlink(mode);
 		return;
@@ -1965,6 +1968,67 @@ sspphase(mode: string)
 	sys->print("BT: done\n");
 }
 
+#
+# The same keyboard and mouse over Bluetooth Classic.  The device is
+# found with an inquiry, its report descriptor comes out of its
+# service record rather than out of a characteristic, and its reports
+# arrive on an L2CAP channel with a byte of HIDP header in front --
+# and what has to come out the other end is what came out on LE.
+#
+chidphase(mode: string)
+{
+	if((e := writefile(mnt + "/0/ctl", "inquiry on")) != nil){
+		sys->print("BT: FAILED: inquiry on: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	for(i := 0; i < 40; i++){
+		sys->sleep(500);
+		if(hasstr(readfile(mnt + "/0/state"), "inquiry off"))
+			break;
+	}
+	dev := mnt + "/0/remote/" + Chead;
+	if((e = writefile(dev + "/ctl", "connect")) != nil){
+		sys->print("BT: FAILED: connect: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	recs := lsdir(dev + "/sdp");
+	if(len recs != 1){
+		sys->print("BT: FAILED: the device offered %d service records\n", len recs);
+		sys->print("BT: done\n");
+		return;
+	}
+	rec := readfile(dev + "/sdp/" + hd recs);
+	if(!hasstr(rec, "class 1124")){
+		sys->print("BT: FAILED: the record is not a HID one: %q\n", rec);
+		sys->print("BT: done\n");
+		return;
+	}
+	if(mode == "chidnodesc"){
+		#
+		# a HID record with no report descriptor in it.  There
+		# is nothing to parse and nothing to read, and a host
+		# that carried on would be reading reports whose layout
+		# it invented.
+		#
+		if(hasstr(rec, "hiddesc "))
+			sys->print("BT: FAILED: a record with no descriptor has one\n");
+		else
+			sys->print("BT: the record carries no report descriptor\n");
+		writefile(dev + "/ctl", "disconnect");
+		sys->print("BT: done\n");
+		return;
+	}
+	if(!hasstr(rec, "hiddesc ")){
+		sys->print("BT: FAILED: the HID record carries no report descriptor\n");
+		sys->print("BT: done\n");
+		return;
+	}
+	sys->print("BT: a Classic HID record, with a report descriptor in it\n");
+	hidcheck(dev);
+}
+
 check(dir, want, name: string): int
 {
 	d := mnt + "/0/remote/" + dir;
@@ -3200,7 +3264,6 @@ hid()
 		sys->print("BT: done\n");
 		return;
 	}
-	ok := 1;
 	svcs := lsdir(dev + "/gatt");
 	got := 0;
 	for(sl := svcs; sl != nil; sl = tl sl)
@@ -3212,7 +3275,18 @@ hid()
 		return;
 	}
 	sys->print("BT: the device has a HID service\n");
+	hidcheck(dev);
+}
 
+#
+# What bthid must produce, whichever transport it came over.  It is
+# one function because that is the claim: the same keystrokes and the
+# same movement out of the same two libraries, with only the pipe
+# underneath different.
+#
+hidcheck(dev: string)
+{
+	ok := 1;
 	kf := "/tmp/bthid.keys";
 	pf := "/tmp/bthid.pointer";
 	create(kf);

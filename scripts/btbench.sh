@@ -174,6 +174,12 @@
 #		the key must be written down.  sspbonded starts with the
 #		key already in the store, where the host gives it and
 #		nothing pairs; sspfail is an authentication that fails
+#	chid	the same keyboard and mouse over Bluetooth Classic: found
+#		with an inquiry, its report descriptor out of its service
+#		record rather than a characteristic, its reports off an
+#		L2CAP channel with a byte of HIDP header.  What has to come
+#		out is what came out on LE.  chidnodesc is a HID record
+#		with no descriptor in it, where there is nothing to read
 #	stalefid	a characteristic file kept open across a disconnect
 #		and a reconnect: the old name must be gone.  What the
 #		fix for it changes is not visible from inside the guest
@@ -726,6 +732,33 @@ if [ "$n" != 1 ] || [ "$c" != 0 ]; then
 fi
 echo "and a device with a key came back on it without pairing again"
 run sspfail "--classic --brconnect --ssp --sspfail" sspfail
+#
+# The same keyboard and mouse over Classic.  Everything under bthid is
+# different -- inquiry instead of scanning, a service record instead
+# of a characteristic, an L2CAP channel instead of a notification --
+# and what comes out the other end has to be the same.
+#
+run chid "--classic --brconnect --chid" chid
+n=`grep -c 'the classic keyboard and mouse have reported' "$OUT/bthci-chid.log" || true`
+if [ "$n" != 1 ]; then
+	echo "=== phase chid ==="
+	echo "BENCH FAIL (chid): the device reported $n times, wanted 1"
+	exit 1
+fi
+#
+# and that both channels were opened.  HIDP is two, and a host that
+# opened only the interrupt one could never send a report to the
+# device; nothing inside the guest shows the difference.
+#
+n=`grep -c 'hid channel psm 0x0011' "$OUT/bthci-chid.log" || true`
+m=`grep -c 'hid channel psm 0x0013' "$OUT/bthci-chid.log" || true`
+if [ "$n" != 1 ] || [ "$m" != 1 ]; then
+	echo "=== phase chid ==="
+	echo "BENCH FAIL (chid): control opened $n times and interrupt $m; wanted one of each"
+	exit 1
+fi
+echo "the same keyboard and mouse arrived over Classic, on both channels"
+run chidnodesc "--classic --brconnect --chid --chidnodesc" chidnodesc
 run paired "--peripheral --pairin --rebond" paired
 #
 # and what the model saw from the other side: the confirm this stack

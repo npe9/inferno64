@@ -263,6 +263,23 @@ sdpsplit = 0
 if '--sdpsplit' in sys.argv:
     sdpsplit = int(sys.argv[sys.argv.index('--sdpsplit') + 1])
 
+# --chid: with --brconnect, the peer is a Classic HID keyboard and
+# mouse.  It answers a service discovery search with a HID record
+# carrying the same report descriptor the LE device serves as its
+# report map, and it answers L2CAP on the control and interrupt PSMs;
+# once both are open it sends the same keystrokes and the same
+# movement the LE phases send, with a byte of HIDP header in front.
+#
+# The same descriptor and the same reports on purpose: what is being
+# tested is that a different transport lands in the same two
+# libraries, so anything else changing would blur that.
+chid = '--chid' in sys.argv
+
+# --chidnodesc: the HID record carries no report descriptor.  There is
+# nothing to parse and nothing to read, and a host that carried on
+# would be reading reports whose layout it invented.
+chidnodesc = '--chidnodesc' in sys.argv
+
 # --ssp: with --brconnect, the controller runs secure simple pairing
 # when the host asks it to authenticate the link: it asks for a link
 # key, is told there is none, asks what the host can display and type,
@@ -769,6 +786,43 @@ def de_seq(*parts):
 # where the RFCOMM channel number lives -- 0x0005 the browse groups it
 # is in, and 0x0100 its name.
 #
+def de_seq_of(parts):
+    b = b''.join(parts)
+    return bytes([(6 << 3) | 5, len(b)]) + b
+
+
+def de_bytes(b):
+    #
+    # A text element holding bytes that are not text: the report
+    # descriptor goes in one of these, and its length needs two bytes
+    # because a descriptor is longer than 255 more often than not.
+    #
+    if len(b) > 255:
+        return bytes([(4 << 3) | 6]) + len(b).to_bytes(2, 'big') + b
+    return bytes([(4 << 3) | 5, len(b)]) + b
+
+
+#
+# The Classic HID record: the service class, the two PSMs it is
+# reached on, and the report descriptor.  The descriptor is REPORTMAP,
+# the same one the LE device serves as its report map -- the point of
+# the phase is that a different transport reaches the same parser.
+#
+def hid_record():
+    return [
+        (0x0000, de_uint(0x00010002, 4)),
+        (0x0001, de_seq(de_uuid('1124'))),
+        (0x0004, de_seq(de_seq(de_uuid('0100'), de_uint(0x0011)),
+                        de_seq(de_uuid('0011')))),
+        (0x0005, de_seq(de_uuid('1002'))),
+        (0x0100, de_text('Classic Keyboard')),
+        # the HID descriptor list: one (descriptor type, bytes) pair,
+        # type 0x22 being the report descriptor
+        (0x0206, de_seq(de_seq(de_uint(0x22, 1),
+                               de_bytes(b'' if chidnodesc else REPORTMAP)))),
+    ]
+
+
 def sdp_records():
     serial = [
         (0x0000, de_uint(0x00010000, 4)),
@@ -786,8 +840,11 @@ def sdp_records():
         (0x0005, de_seq(de_uuid('1002'))),
         (0x0100, de_text('Headset')),
     ]
+    rs = [serial, headset]
+    if chid:
+        rs = [hid_record()]
     out = []
-    for r in (serial, headset):
+    for r in rs:
         parts = []
         for aid, val in r:
             parts.append(de_uint(aid))
@@ -1481,7 +1538,8 @@ class Model:
         # the CIDs mean different things there: 1 is signalling, and
         # anything else is a channel this side handed out.
         #
-        if (brl2cap or sdp or rfcomm) and handle == getattr(self, 'brhandle', None):
+        if (brl2cap or sdp or rfcomm or chid) \
+           and handle == getattr(self, 'brhandle', None):
             if cid == 1:
                 self.brsig(payload)
             elif cid == getattr(self, 'brdcid', None):
@@ -2104,7 +2162,27 @@ class Model:
                 self.bracl(1, bytes([0x04, 0x40]) + struct.pack('<H', 4 + len(opts))
                            + struct.pack('<HH', scid, 0) + opts)
                 return
-            if psm == 0x0001 and sdp:
+            if psm in (0x0011, 0x0013) and chid:
+                #
+                # HIDP is two channels: control, which this model
+                # never sends on, and interrupt, where the reports
+                # go.  Each gets a CID of its own, because a host
+                # that had them confused would read reports off the
+                # wrong one.
+                #
+                self.hidcid = getattr(self, 'hidcid', {})
+                dcid = 0x0050 if psm == 0x0011 else 0x0051
+                self.hidcid[psm] = (scid, dcid)
+                print('bthci: hid channel psm %#06x' % psm, flush=True)
+                self.bracl(1, bytes([0x03, ident]) + struct.pack('<H', 8)
+                           + struct.pack('<HHHH', dcid, scid, 0, 0))
+                opts = bytes([0x01, 0x02]) + struct.pack('<H', 672)
+                self.bracl(1, bytes([0x04, 0x40]) + struct.pack('<H', 4 + len(opts))
+                           + struct.pack('<HH', scid, 0) + opts)
+                if 0x0011 in self.hidcid and 0x0013 in self.hidcid:
+                    threading.Thread(target=self.hid_classic, daemon=True).start()
+                return
+            if psm == 0x0001 and (sdp or chid):
                 self.brscid = scid
                 self.brdcid = 0x0042
                 self.sdpchan = True
@@ -2417,6 +2495,33 @@ class Model:
         self.event(0x18, addr + key + bytes([0x04]))   # unauthenticated, P-192
         time.sleep(0.1)
         self.event(0x06, bytes([0]) + struct.pack('<H', self.brhandle))
+
+    #
+    # The same keystrokes and the same movement as the LE phases, over
+    # HIDP: one L2CAP frame is one message, a byte of header saying it
+    # is an input report, the report id, and then the report.
+    #
+    def hid_classic(self):
+        time.sleep(0.5)
+        scid = self.hidcid[0x0013][0]
+
+        def send(rid, body):
+            self.bracl(scid, bytes([0xA1, rid]) + body)
+
+        for k in (0x05, 0x17, 0x0b):          # b, t, h
+            send(2, bytes([0, 0, k, 0, 0, 0, 0, 0]))
+            time.sleep(0.2)
+            send(2, bytes(8))
+            time.sleep(0.2)
+        for _ in range(3):
+            send(2, bytes([0x02, 0, 0x04, 0, 0, 0, 0, 0]))
+            time.sleep(0.2)
+        send(2, bytes(8))
+        time.sleep(0.3)
+        for dx, dy, b in ((5, 7, 0x01), (3, 2, 0x00)):
+            send(1, bytes([b, dx & 0xff, dy & 0xff, 0]))
+            time.sleep(0.2)
+        print('bthci: the classic keyboard and mouse have reported', flush=True)
 
     # ------------------------------------------------ SMP
     def smp_in(self, p):

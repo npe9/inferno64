@@ -1771,6 +1771,16 @@ rectext(r: ref Rec): string
 		s += sprint("name %s\n", nm.s);
 	for(pl := sdp->protos(r); pl != nil; pl = tl pl)
 		s += sprint("proto %s\n", hd pl);
+	#
+	# A HID device's report descriptor, in hexadecimal.  It is in
+	# the attributes below as well, but as a text element whose
+	# bytes are not text: a report descriptor is full of bytes that
+	# are not characters, so the line that is meant to be read by
+	# something is this one.
+	#
+	hdesc := sdp->hiddesc(r);
+	if(hdesc != nil)
+		s += sprint("hiddesc %s\n", bt->hex(hdesc));
 	for(al := r.attrs; al != nil; al = tl al){
 		(id, v) := hd al;
 		s += sprint("attr %#4.4ux %s\n", id, v.text());

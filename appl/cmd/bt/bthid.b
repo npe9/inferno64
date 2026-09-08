@@ -25,6 +25,14 @@ implement Bthid;
 # the keyboard and which the mouse -- they have the same UUID -- so
 # the map is not an optimisation here, it is the only way to tell.
 #
+# A Classic device is the same thing over a different pipe.  There is
+# no GATT there: the device is found with SDP, its report descriptor
+# is in the HID record rather than in a characteristic, and its
+# reports arrive on an L2CAP channel to the interrupt PSM with one
+# byte of HIDP header in front of them.  Everything above that -- the
+# descriptor, the reports, what a key code means -- is the same, which
+# is why it is the same program and the same two libraries.
+#
 # The translations are hidboot(2) and hidreport(2), both shared with
 # usbd, because the reports above the transport are identical.
 #
@@ -35,6 +43,8 @@ include "draw.m";
 include "arg.m";
 include "hidboot.m";
 	hidboot: Hidboot;
+include "bt.m";
+	bt: Bt;
 include "hidreport.m";
 	hidreport: Hidreport;
 	Report: import hidreport;
@@ -52,6 +62,13 @@ Ubootmouse:	con "2a33";	# boot mouse input report
 Umap:		con "2a4b";	# report map
 Uref:		con "2908";	# report reference, one per report
 Tinput:		con 1;		# what a report reference calls an input
+
+# HID over BR/EDR: the two channels a device is reached on, and the
+# one byte of HIDP header on every report
+Uhidsvc:	con "1124";	# the service class of a Classic HID device
+Pctl:		con "0011";	# the control channel
+Pintr:		con "0013";	# the interrupt channel, where reports arrive
+Hdatain:	con 16ra1;	# a DATA message carrying an input report
 
 mnt := "/net/bt";
 kbdfile := "/dev/keyboard";
@@ -74,6 +91,16 @@ init(nil: ref Draw->Context, argv: list of string)
 		return;
 	}
 	hidreport->init();
+	#
+	# for unhex, which is what turns the report descriptor in a
+	# service record back into the bytes the device sent
+	#
+	bt = load Bt Bt->PATH;
+	if(bt == nil){
+		sys->fprint(sys->fildes(2), "bthid: cannot load %s: %r\n", Bt->PATH);
+		return;
+	}
+	bt->init();
 
 	arg->init(argv);
 	arg->setusage("bthid [-v] [-m mountpoint] [-k keyfile] [-p pointerfile] [device]");
@@ -97,6 +124,16 @@ init(nil: ref Draw->Context, argv: list of string)
 		return;
 	}
 	sys->print("bthid: %s\n", dev);
+
+	#
+	# A Classic device has no gatt tree and is not reached the same
+	# way at all, so it goes down its own path from here.  What is
+	# shared is everything after a report arrives.
+	#
+	if(exists(dev + "/sdp")){
+		classic(dev);
+		return;
+	}
 
 	svc := dev + "/gatt/" + Uhid + "/";
 
@@ -149,9 +186,219 @@ findhid(): string
 			d := rd + "/" + hd dl;
 			if(exists(d + "/gatt/" + Uhid))
 				return d;
+			#
+			# or a Classic one, which says so in its service
+			# records rather than in a service directory
+			#
+			if(hidrec(d) != "")
+				return d;
 		}
 	}
 	return "";
+}
+
+#
+# The service record of a Classic HID device: the one whose class list
+# holds 1124.  What is wanted out of it is the report descriptor, and
+# the record is where that lives on this transport.
+#
+hidrec(dev: string): string
+{
+	for(rl := lsdir(dev + "/sdp"); rl != nil; rl = tl rl){
+		s := readfile(dev + "/sdp/" + hd rl);
+		if(hasline(s, "class " + Uhidsvc))
+			return s;
+	}
+	return "";
+}
+
+hasline(s, want: string): int
+{
+	for(i := 0; i < len s; ){
+		j := i;
+		while(j < len s && s[j] != '\n')
+			j++;
+		if(len want <= j - i && s[i:i+len want] == want)
+			return 1;
+		i = j + 1;
+	}
+	return 0;
+}
+
+#
+# A Classic HID device.  Two L2CAP channels, opened through the
+# device's own ctl: control, which nothing here sends on but which a
+# device expects to exist, and interrupt, where the reports arrive.
+#
+classic(dev: string)
+{
+	rec := hidrec(dev);
+	if(rec == ""){
+		sys->fprint(sys->fildes(2),
+			"bthid: %s has no %s service record\n", dev, Uhidsvc);
+		return;
+	}
+	hex := lineval(rec, "hiddesc ");
+	if(hex == ""){
+		sys->fprint(sys->fildes(2),
+			"bthid: %s: the HID record carries no report descriptor\n", dev);
+		return;
+	}
+	(rl, pe) := hidreport->parse(bt->unhex(hex));
+	if(pe != nil)
+		sys->fprint(sys->fildes(2),
+			"bthid: %s: %s; using what was understood before it\n", dev, pe);
+	if(rl == nil){
+		sys->fprint(sys->fildes(2),
+			"bthid: %s: nothing was understood of the report descriptor\n", dev);
+		return;
+	}
+	#
+	# The control channel is opened and not used.  A device is
+	# entitled to expect it: HIDP is two channels and a host that
+	# opens only the interrupt one is a host that cannot ever send
+	# a SET_REPORT, which some devices wait for.
+	#
+	if((e := writefile(dev + "/ctl", "l2cap " + Pctl)) != nil){
+		sys->fprint(sys->fildes(2),
+			"bthid: %s: the control channel: %s\n", dev, e);
+		return;
+	}
+	if((e = writefile(dev + "/ctl", "l2cap " + Pintr)) != nil){
+		sys->fprint(sys->fildes(2),
+			"bthid: %s: the interrupt channel: %s\n", dev, e);
+		return;
+	}
+	#
+	# Which report is which is not asked here as it is on LE: a
+	# Classic device puts every report on one channel and says
+	# which by the report id in front of it, or by having only one.
+	#
+	spawn hidp(dev + "/l2cap/" + Pintr, rl);
+	for(;;)
+		sys->sleep(60000);
+}
+
+#
+# The interrupt channel.  One L2CAP frame is one HIDP message: a byte
+# of header, then the report, with the report id in front of it when
+# the descriptor gave one.  Only input reports are looked at; a device
+# that sends anything else is not saying anything a keyboard says.
+#
+hidp(f: string, rl: list of ref Report)
+{
+	fd := sys->open(f, Sys->OREAD);
+	if(fd == nil){
+		sys->fprint(sys->fildes(2), "bthid: %s: %r\n", f);
+		return;
+	}
+	kfd := sys->open(kbdfile, Sys->OWRITE);
+	mfd := sys->open(ptrfile, Sys->OWRITE);
+	if(kfd == nil || mfd == nil){
+		sys->fprint(sys->fildes(2), "bthid: %s or %s: %r\n", kbdfile, ptrfile);
+		return;
+	}
+	ided := hasid(rl);
+	prev := array[0] of int;
+	x := 0;
+	y := 0;
+	buf := array[256] of byte;
+	for(;;){
+		n := sys->read(fd, buf, len buf);
+		if(n < 0){
+			sys->fprint(sys->fildes(2), "bthid: the device is gone: %r\n");
+			return;
+		}
+		if(n < 2 || int buf[0] != Hdatain)
+			continue;
+		o := 1;
+		id := 0;
+		if(ided){
+			id = int buf[o];
+			o++;
+		}
+		r := hidreport->report(rl, id, Hidreport->Input);
+		if(r == nil)
+			continue;
+		rep := buf[o:n];
+		if(n * 8 < r.bits)
+			continue;
+		if(hidreport->kbd(r)){
+			(mod, cur) := hidreport->keys(r, rep);
+			for(i := 0; i < len cur; i++){
+				if(hidboot->held(prev, cur[i]))
+					continue;
+				s := hidboot->keysym(cur[i], mod);
+				if(s == nil)
+					continue;
+				if(verbose)
+					sys->print("bthid: key %d mod %#2.2ux -> %q\n",
+						cur[i], mod, s);
+				sys->fprint(kfd, "%s", s);
+			}
+			prev = cur;
+			continue;
+		}
+		if(!hidreport->ptr(r))
+			continue;
+		(dx, dy, b, nil) := hidreport->mouse(r, rep);
+		x += dx;
+		y += dy;
+		if(x < 0)
+			x = 0;
+		if(y < 0)
+			y = 0;
+		if(verbose)
+			sys->print("bthid: pointer %d %d %d\n", x, y, b);
+		sys->fprint(mfd, "m %d %d %d", x, y, b);
+	}
+}
+
+#
+# whether this device's reports carry an id.  A descriptor that names
+# one report id names it on every report, so one report with an id of
+# its own settles it for all of them.
+#
+hasid(rl: list of ref Report): int
+{
+	for(; rl != nil; rl = tl rl)
+		if((hd rl).id != 0)
+			return 1;
+	return 0;
+}
+
+#
+# the rest of a line beginning with that word, or the empty string
+#
+lineval(s, key: string): string
+{
+	for(i := 0; i < len s; ){
+		j := i;
+		while(j < len s && s[j] != '\n')
+			j++;
+		if(len key <= j - i && s[i:i+len key] == key)
+			return s[i+len key:j];
+		i = j + 1;
+	}
+	return "";
+}
+
+readfile(path: string): string
+{
+	fd := sys->open(path, Sys->OREAD);
+	if(fd == nil)
+		return "";
+	s := "";
+	buf := array[4096] of byte;
+	for(;;){
+		n := sys->pread(fd, buf, len buf, big len array of byte s);
+		if(n <= 0)
+			break;
+		s += string buf[0:n];
+		if(n < len buf)
+			break;
+	}
+	return s;
 }
 
 #

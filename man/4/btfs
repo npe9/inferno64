@@ -486,7 +486,11 @@ if it named itself;
 .BI proto " name parameters"
 for each protocol it is reached over, lowest first \- which is where
 an RFCOMM channel number comes from and the reason to read a record at
-all; and then
+all;
+.BI hiddesc " hex"
+when the record carries a HID report descriptor, which is a value that
+is not text and so is given in hexadecimal rather than left in the
+attribute below to be mangled; and then
 .BI attr " id value"
 for every attribute the device gave, whether or not anything here
 knows what it means, because a record holds whatever the device put in
@@ -622,6 +626,18 @@ A boot report is the state of the keyboard and not an event \- the
 keys that are down, in no order \- so a key that is held appears in
 every report until it is let go, and only keys that were not down
 before are typed.
+.PP
+A Bluetooth Classic device is the same keyboard down a different
+pipe.  There is no GATT: it is found by an inquiry, its report
+descriptor is in its
+.B 1124
+service record rather than in a characteristic \- the
+.B hiddesc
+line \- and its reports arrive on an L2CAP channel to the interrupt
+PSM with one byte of HIDP header in front of them.
+.I Bthid
+opens the control channel too, because HIDP is two and a device is
+entitled to expect both.  Everything above that is the same code.
 .PP
 A device with no Protocol Mode characteristic, or with no boot report
 behind it, speaks only the report protocol, and then the layout is

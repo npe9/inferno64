@@ -463,7 +463,38 @@ of this side's own, so a device can find the port rather than being
 told its number.
 .IP 5.
 .B "Classic HID."
-HIDP over L2CAP, for the older keyboards and mice.
+Done.  A Classic keyboard is found by an inquiry, its report
+descriptor comes out of its
+.CW 1124
+service record rather than out of a characteristic, and its reports
+arrive on an L2CAP channel to the interrupt PSM with a byte of HIDP
+header in front of them.
+.CW bthid
+opens the control channel as well, because HIDP is two channels and a
+device is entitled to expect both.
+.PP
+What makes it worth having is how little of it is new.  The report
+descriptor is the same descriptor an LE device serves as its
+.CW 2a4b
+characteristic, so
+.CW hidreport
+parses it unchanged; the reports are the same reports, so
+.CW hidboot 's
+key table turns them into the same characters; and the bench phase
+asserts the same keystrokes and the same movement as the LE one.
+Everything underneath is different \(em inquiry rather than scanning,
+a service record rather than a characteristic, an L2CAP channel rather
+than a notification \(em and nothing above the transport is.
+.PP
+One thing had to be fixed in SDP for it.  A report descriptor travels
+in a text data element and is full of bytes that are not characters,
+so the string this stack made of it was mangled; an element now keeps
+its bytes as well as its string, and
+.CW btfs
+writes the descriptor out as a
+.CW hiddesc
+line in hexadecimal rather than leaving it to be read out of the
+attribute.
 .IP 6.
 .B "PAN and BNEP,"
 and with them a binding into the IP stack so a Bluetooth link is
