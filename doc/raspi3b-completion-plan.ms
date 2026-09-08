@@ -2012,10 +2012,51 @@ It is left alone deliberately.  It is in
 which every platform in the tree shares, not in
 .CW os/inferno/raspi3b ,
 so gating or removing it is a change to every port at once and belongs
-to whoever owns that decision.  It is recorded here because it distorts
-every console measurement above, and because a per-instruction check in
-the interpreter's hot path is a performance question as much as a noise
+to whoever owns that decision \- its own comment says "pc64-only,
+temporary".  It is recorded here because it distorts every console
+measurement above, and because a per-instruction check in the
+interpreter's hot path is a performance question as much as a noise
 one.
+.PP
+.B "But it is reporting something here, and not the shape it explains."
+The first instinct on finding this much noise is to gate it off.  That
+would have been wrong, because on this board it fires twice a boot and
+the hits do not match what its author characterised as benign.
+.PP
+The comment in
+.CW checktracked()
+describes the expected false positive exactly: checkpoint
+.CW instr ,
+.CW R.d
+equal to the watched address so the op wrote it itself, old value
+.CW H ,
+new value 0, and the object being the current frame \- the signature
+of a frame word conservatively marked as a pointer in its type's map
+while actually holding a non-pointer local.  Its test for benign is
+given too: "if the system still reaches a working shell after a hit,
+the write was benign."
+.PP
+On raspi3b both hits pass that test \-
+.CW RASPI3B-SH-OK
+follows them \- and match none of that signature.  The checkpoint is
+.CW readmod:after-parsemod ,
+not
+.CW instr ;
+.CW R.d
+is 0x3939f40 and the watched addresses are 0x3b67620 and 0x3b675f0, so
+by the comment's own reasoning the write happened deeper in the call
+tree and the reported op is only the enclosing dispatch; the object at
+0x3b675b0 is not the frame, which is at 0x3939ef0; and while one word
+went from
+.CW H
+to 0, the other went from 0x3adb7f0 \- a live heap pointer \- to 0.
+.PP
+That is not a claim that there is a bug.  It is a claim that these two
+hits are unexplained by the analysis that made the noise acceptable,
+and that silencing the instrumentation would have thrown the report
+away rather than answered it.  Whoever owns the pc64 tracker should
+see this; it is why the recommendation here is to leave it running and
+not to gate it.
 .NH 1
 When this is done
 .PP
