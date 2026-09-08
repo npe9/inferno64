@@ -25,14 +25,15 @@ Space pauses, period steps, r resets, and q exits.
 .SH NUMERICS
 The equation module is
 .B /appl/danby/childcare.b
-and the reusable N-state interface is
-.B /module/danby/populationmodel.m.
-The empty-population boundary and model metadata are regression-tested by
-.B temple/danbytest.
+and the whole of it is the
+.IR poplab (2)
+script in that file.  The empty-population boundary and the parameter
+metadata are regression-tested by
+.IR poplabtest (1).
 .SH SOURCE
 .B /appl/danby/childcare.b
 .br
-.B /appl/temple/populations.b
+.B /appl/lib/poplab.b
 .SH SEE ALSO
 .IR danby-ecology (1),
 .IR numerics (2)

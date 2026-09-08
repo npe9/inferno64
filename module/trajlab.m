@@ -1,8 +1,9 @@
 # trajlab: run a flight-path model from a script.
 #
 # The same move as mechlab(2) and poplab(2), for the Trajectory family:
-# appl/temple/trajectory.b's window, integrator and controls as a library
-# the model calls, instead of a command that loads the model back.
+# the window, integrator and controls that used to live in
+# appl/temple/trajectory.b, as a library the model calls, instead of a
+# command that loads the model back.
 #
 #	trajlab->run(ctxt, "basketball", SPEC);
 #

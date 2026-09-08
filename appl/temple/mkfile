@@ -17,7 +17,6 @@ TARG=\
 	digits.dis\
 	doodle.dis\
 	population.dis\
-	populations.dis\
 	tennis.dis\
 	orbit.dis\
 	chaosintro.dis\
@@ -25,11 +24,6 @@ TARG=\
 	modeling.dis\
 	stability.dis\
 	harvest.dis\
-	trajectory.dis\
-	flight3d.dis\
-	mechanism.dis\
-	orbital.dis\
-	profile.dis\
 	methods.dis\
 	solverlab.dis\
 	delab.dis\

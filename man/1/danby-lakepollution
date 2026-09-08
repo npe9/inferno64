@@ -15,7 +15,7 @@ Drag the concentration bar.  Tracks set input mass, volume, outflow, and decay.
 Space pauses, period steps, r resets, and q exits.
 .SH NUMERICS
 The analytic mass-balance equilibrium is checked by
-.B temple/danbytest.
+.IR poplabtest (1).
 .SH SOURCE
 .B /appl/danby/lakepollution.b
 .br

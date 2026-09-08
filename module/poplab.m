@@ -1,9 +1,9 @@
 # poplab: run a population model from a script.
 #
-# The same relationship to appl/temple/populations.b that mechlab(2) has
-# to appl/temple/mechanism.b: the viewer as a library the model calls,
+# The same move mechlab(2) made: the viewer as a library the model calls,
 # driven by a script, rather than a command that loads the model back
-# through a module interface.  A model is one file:
+# through a module interface.  The command it replaced was
+# appl/temple/populations.b.  A model is one file:
 #
 #	poplab->run(ctxt, "budworm", SPEC);
 #

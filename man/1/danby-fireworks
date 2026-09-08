@@ -14,4 +14,4 @@ are plotted, making burst timing and symmetry measurable.
 .SH SOURCE
 .B /appl/danby/fireworks.b
 .SH SEE ALSO
-.IR mechanism (2)
+.IR mechlab (2)

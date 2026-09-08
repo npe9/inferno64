@@ -20,7 +20,7 @@ Drag either inventory bar.  Tracks set both production and use rates and the
 exchange response.  Space pauses, period steps, r resets, and q exits.
 .SH NUMERICS
 Cancellation of internal exchange in the total-stock balance is tested by
-.B temple/danbytest.
+.IR poplabtest (1).
 .SH SOURCE
 .B /appl/danby/productionexchange.b
 .br

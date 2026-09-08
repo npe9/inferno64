@@ -1,6 +1,6 @@
 .TH POPULATIONMODEL 2
 .SH NAME
-Populationmodel \- common interface for live compartment and population models
+Populationmodel \- test seam for the four hand-written Danby population models
 .SH SYNOPSIS
 .EX
 include "danby/populationmodel.m";
@@ -12,19 +12,32 @@ modelmodule->evaluate(model,t,state,derivative);
 .EE
 .SH DESCRIPTION
 .I Populationmodel
-is the structural interface used by independent Danby equation modules with
-an arbitrary number of nonnegative state quantities.  It separates equations
-and model metadata from integration, plotting, window management, and input.
+was the structural interface every Danby compartment model implemented, so
+that one shared client could own the window, the integrator and the controls
+while each model owned only its equations.  That relationship is now the
+other way round \(em a model is a script and
+.IR poplab (2)
+is a library it calls \(em and thirty-six of the thirty-nine models were
+rewritten that way.
 .PP
-Each implementation exports a constructor, a title, state and parameter
-labels, parameter display ranges, and an evaluation function.  The returned
-.B Model
-contains mutable parameter values and the default initial state.  Implementors
-define the ADT's
-.B rhs
-method and expose it through
-.B evaluate
-so clients need not import colliding ADT method names from several models.
+Four were not:
+.IR danby-boom (1),
+.IR danby-epidemic (1),
+.IR danby-heartbeat (1)
+and
+.IR danby-vaccination (1)
+each draw something the shared viewer never did (an overlay, a nullcline, a
+second panel), so each is a standalone program with its own window.  They
+still implement this interface, and nothing loads them through it except
+.BR temple/danbytest ,
+which uses it to reach their equations and check a fixed point or a
+conservation law without opening a window.  That is all this interface is
+now: a test seam for four programs.
+.PP
+A new model should not implement it.  Write a
+.IR poplab (2)
+script; if the display needs something poplab does not do, add it to poplab
+or write the program outright, but do not add an interface between the two.
 .SH INTERFACE
 .TP
 .B new()
@@ -37,26 +50,20 @@ Return one concise display label for every element of
 .B parameterlabels(), parameterranges()
 Return parallel arrays matching
 .BR Model.parameter .
-Every range is the positive upper endpoint used by direct-manipulation tracks.
+Every range is the positive upper endpoint.
 .TP
 .B evaluate(model,t,state,derivative)
 Evaluate the right-hand side without advancing time.  State and derivative
 must have the same length as
 .BR Model.initial .
-.SH CLIENT
-.B /dis/temple/populations.dis
-is the reusable live client.  It constructs a named Plot table, integrates
-with
-.IR numerics (2),
-draws one history per state, and supplies directly editable current-state bars
-and parameter tracks.  A public application normally wraps it with the model
-path and manual-page stem rather than duplicating the client.
+Implementors define the ADT's
+.B rhs
+method and expose it through
+.B evaluate
+so a caller need not import colliding ADT method names from several models.
 .SH FILES
 .B /module/danby/populationmodel.m
-.br
-.B /appl/temple/populations.b
-.br
-.B /dis/temple/populations.dis
 .SH SEE ALSO
-.IR numerics (2),
-.IR plot (2)
+.IR poplab (2),
+.IR poplabtest (1),
+.IR dynsys (2)

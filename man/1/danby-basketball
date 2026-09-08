@@ -13,4 +13,4 @@ speed, angle, drag, lift, backspin, and gravity.
 .SH SOURCE
 .B /appl/danby/basketball.b
 .SH SEE ALSO
-.IR trajectory (2)
+.IR trajlab (2)

@@ -10,4 +10,4 @@ to zero isolates the two effects.
 .SH SOURCE
 .B /appl/danby/tabletennis.b
 .SH SEE ALSO
-.IR trajectory (2)
+.IR trajlab (2)

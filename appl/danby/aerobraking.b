@@ -760,8 +760,8 @@ viewgeometry(view: Rect): (int, real, Point)
 	# focus body's current position, so this still reads correctly
 	# for a system whose "planet" isn't perfectly fixed (this specific
 	# model's own planet happens to be, but the shared harness this
-	# was copied from - appl/temple/orbital.b - drives other Orbital
-	# models where it need not be).
+	# was copied from - since replaced by orblab(2) - drove other
+	# orbital models where it need not be).
 	extent := 0.1;
 	for(k := 0; k < trailcount; k++){
 		index := trailnext-trailcount+k;

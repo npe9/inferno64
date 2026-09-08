@@ -37,5 +37,5 @@ its own.
 .br
 .B /appl/danby/ballistics.b
 .SH SEE ALSO
-.IR flight3d (2),
+.IR flightlab (2),
 .IR numerics (2)

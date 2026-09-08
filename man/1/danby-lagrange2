@@ -11,4 +11,4 @@ shows the finite stability region and transition to wide or escaping motion.
 .SH SOURCE
 .B /appl/danby/lagrange2.b
 .SH SEE ALSO
-.IR orbital (2)
+.IR orblab (2)

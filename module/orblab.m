@@ -1,8 +1,8 @@
 # orblab: run an N-body model from a script.
 #
 # The same move as mechlab(2), poplab(2) and trajlab(2), for the Orbital
-# family: appl/temple/orbital.b's window, integrator, trails and controls
-# as a library the model calls.
+# family: the window, integrator, trails and controls that used to live in
+# appl/temple/orbital.b, as a library the model calls.
 #
 #	orblab->run(ctxt, "threebody", SPEC);
 #

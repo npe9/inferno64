@@ -1,6 +1,39 @@
 # Danby model authoring: a real equation language, and what the "duplicates" actually are
 
 
+**Status: DONE.  Steps 2-5 are finished; everything below this block is the
+survey that led there, kept as written.**  All seven families were migrated
+onto `dynsys(2)`, and each family's shared viewer became a library the model
+calls rather than a command that loads the model back:
+
+| family | models | the library now | the command it replaced |
+| --- | --- | --- | --- |
+| Mechanism | 70 | `mechlab(2)` | `appl/temple/mechanism.b` |
+| Populationmodel | 36 | `poplab(2)` | `appl/temple/populations.b` |
+| Trajectory | 17 | `trajlab(2)` | `appl/temple/trajectory.b` |
+| Orbital | 11 | `orblab(2)` | `appl/temple/orbital.b` |
+| Twospecies | 10 | `ecolab(2)` | `appl/temple/ecology.b` |
+| Flight3d | 5 | `flightlab(2)` | `appl/temple/flight3d.b` |
+| Profile | 2 | `profilelab(2)` | `appl/temple/profile.b` |
+
+151 models, each one checked against the module it replaced - parameters,
+initial state and right-hand side at twelve pseudo-random states by twelve
+times, to 1e-9 - before its new file was written.  Each family has its own
+regression test that reads the `SPEC` constant out of the shipped source, so
+what is tested is the string that ships: `mechlabtest(1)`, `poplabtest(1)`,
+`trajlabtest(1)`, `orblabtest(1)`, `ecolabtest(1)`, `flightlabtest(1)`,
+`profilelabtest(1)`.
+
+The seven `appl/temple/` commands and six of the seven `module/danby/*.m`
+interfaces are deleted.  `module/danby/populationmodel.m` survives, but only
+as a test seam: four models (`boom`, `epidemic`, `heartbeat`, `vaccination`)
+draw something the shared viewer never did and stayed standalone programs,
+and `temple/danbytest` reaches their equations through it.
+
+Every path below that names `appl/temple/<family>.b` or
+`module/danby/<family>.m` is now historical.
+
+
 **Architecture update, after that:** `appl/danby/plugin/` is gone.  Every
 model that had a twelve-to-fourteen-line launcher in `appl/danby/` and its
 real content in `appl/danby/plugin/` is now one file: the seven model

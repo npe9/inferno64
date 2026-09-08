@@ -21,7 +21,7 @@ Drag either force bar.  Tracks set the two effectiveness coefficients.  Space
 pauses, period steps, r resets, and q exits.
 .SH NUMERICS
 The differential invariant is checked analytically by
-.B temple/danbytest.
+.IR poplabtest (1).
 .SH SOURCE
 .B /appl/danby/lanchester.b
 .br

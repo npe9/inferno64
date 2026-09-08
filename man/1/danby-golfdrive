@@ -14,4 +14,4 @@ backspin, and gravity.
 .SH SOURCE
 .B /appl/danby/golfdrive.b
 .SH SEE ALSO
-.IR trajectory (2)
+.IR trajlab (2)

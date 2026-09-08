@@ -190,23 +190,17 @@ SYSMODULES=\
 	danby/cartpendulum.m\
 	danby/chaosmap.m\
 	danby/doublependulum.m\
-	danby/flight3d.m\
 	danby/forcedpendulum.m\
 	danby/gravity.m\
 	danby/lorenz.m\
-	danby/mechanism.m\
-	danby/orbital.m\
 	danby/oscillator.m\
 	danby/pendulum.m\
 	danby/populationmodel.m\
-	danby/profile.m\
 	danby/propulsion.m\
 	danby/reaction.m\
 	danby/rotatinghoop.m\
 	danby/spinorbit.m\
 	danby/stability.m\
-	danby/trajectory.m\
-	danby/twospecies.m\
 	draw.m\
 	dynsys.m\
 	env.m\

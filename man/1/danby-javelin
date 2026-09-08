@@ -10,4 +10,4 @@ flight and exploration of release angle and aerodynamic attitude.
 .SH SOURCE
 .B /appl/danby/javelin.b
 .SH SEE ALSO
-.IR trajectory (2)
+.IR trajlab (2)

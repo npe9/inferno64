@@ -13,4 +13,4 @@ alter speed, elevation, aim, drag, wobble, and gravity.
 .SH SOURCE
 .B /appl/danby/badfootball.b
 .SH SEE ALSO
-.IR flight3d (2)
+.IR flightlab (2)

@@ -12,4 +12,4 @@ Two linked figures show separation; leader speed and separation are plotted.
 .SH SOURCE
 .B /appl/danby/joggingcompanion.b
 .SH SEE ALSO
-.IR mechanism (2)
+.IR mechlab (2)

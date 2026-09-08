@@ -10,4 +10,4 @@ bounded tadpole-like response possible near a stable triangular point.
 .SH SOURCE
 .B /appl/danby/lagrange1.b
 .SH SEE ALSO
-.IR orbital (2)
+.IR orblab (2)

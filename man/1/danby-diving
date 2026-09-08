@@ -13,4 +13,4 @@ rotations are plotted against time.
 .SH SOURCE
 .B /appl/danby/diving.b
 .SH SEE ALSO
-.IR mechanism (2)
+.IR mechlab (2)

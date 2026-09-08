@@ -13,4 +13,4 @@ against time.
 .SH SOURCE
 .B /appl/danby/shipmotion.b
 .SH SEE ALSO
-.IR mechanism (2)
+.IR mechlab (2)

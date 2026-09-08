@@ -10,4 +10,4 @@ vertical drop and sideways deviation separately visible.
 .SH SOURCE
 .B /appl/danby/cricketbowl.b
 .SH SEE ALSO
-.IR flight3d (2)
+.IR flightlab (2)

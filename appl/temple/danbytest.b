@@ -14,24 +14,11 @@ include "danby/forcedpendulum.m";
 	Model: import forcedpendulum;
 include "danby/lorenz.m";
 	lorenz: Lorenz;
-include "danby/twospecies.m";
 include "danby/populationmodel.m";
 	epidemicmodel: Populationmodel;
 	vaccinationmodel: Populationmodel;
 	heartbeat: Populationmodel;
 	boommodel: Populationmodel;
-include "danby/trajectory.m";
-include "danby/flight3d.m";
-	soccerkick: Flight3d;
-	cricketbowl: Flight3d;
-	cricketswing: Flight3d;
-	badfootball: Flight3d;
-	icbmaccuracy: Flight3d;
-include "danby/mechanism.m";
-include "danby/orbital.m";
-include "danby/profile.m";
-	starmodel: Profile;
-	whitedwarf: Profile;
 
 Danbytest: module
 {
@@ -49,36 +36,13 @@ init(nil: ref Draw->Context, nil: list of string)
 	chaosmap = load Chaosmap Chaosmap->PATH;
 	forcedpendulum = load Forcedpendulum Forcedpendulum->PATH;
 	lorenz = load Lorenz Lorenz->PATH;
-	# ecology is the shared Twospecies viewer, so it deliberately does NOT
-	# implement Twospecies (fb1504e0): a module that implements an interface
-	# links its loads of that interface against its own function set.  Its
-	# own Lotka-Volterra pair is written out in appl/danby/ecology.b and is
-	# not reachable as a module, so there is nothing to check here.
 	epidemicmodel = load Populationmodel "/dis/danby/epidemic.dis";
 	vaccinationmodel = load Populationmodel "/dis/danby/vaccination.dis";
 	heartbeat = load Populationmodel "/dis/danby/heartbeat.dis";
 	boommodel = load Populationmodel "/dis/danby/boom.dis";
-	soccerkick = load Flight3d "/dis/danby/soccerkick.dis";
-	cricketbowl = load Flight3d "/dis/danby/cricketbowl.dis";
-	cricketswing = load Flight3d "/dis/danby/cricketswing.dis";
-	badfootball = load Flight3d "/dis/danby/badfootball.dis";
-	icbmaccuracy = load Flight3d "/dis/danby/icbmaccuracy.dis";
-	# slidingpendulum1 is now a mechlab(2) script rather than a Mechanism
-	# module - mechlabtest(1) checks it, including the momentum law that
-	# used to be checked here.
-	# aerobraking is no longer an Orbital plugin: d4f6aaf2 made it a
-	# standalone command with its own equations, so there is nothing here
-	# to load as one.  This line loaded /dis/danby/plugin/aerobraking.dis,
-	# which that commit stopped building - the test has been dead since.
-	starmodel = load Profile "/dis/danby/starmodel.dis";
-	whitedwarf = load Profile "/dis/danby/whitedwarf.dis";
-	if(
-			numerics == nil || math == nil || chaosmap == nil ||
+	if(numerics == nil || math == nil || chaosmap == nil ||
 			forcedpendulum == nil || lorenz == nil || epidemicmodel == nil ||
-			vaccinationmodel == nil || heartbeat == nil || boommodel == nil ||
-			soccerkick == nil || cricketbowl == nil || cricketswing == nil ||
-			badfootball == nil || icbmaccuracy == nil || starmodel == nil ||
-			whitedwarf == nil)
+			vaccinationmodel == nil || heartbeat == nil || boommodel == nil)
 		raise "fail:danbytest: missing module";
 	testmap();
 	testpendulum();
@@ -97,168 +61,10 @@ testpopulations()
 	testextendedepidemics();
 	testhealthmodels();
 	testcompetitioneconomics();
-	testtrajectory();
-}
-
-testtrajectory()
-{
-	# every vacuum and kinematics check for this family moved to
-	# trajlabtest(1) with the models.
-	checkvacuumflight3d(soccerkick,"soccer kick");
-	checkvacuumflight3d(cricketbowl,"cricket bowl");
-	checkvacuumflight3d(cricketswing,"cricket swing");
-	checkvacuumflight3d(badfootball,"bad football");
-	checkflight3dfinite(icbmaccuracy,"ICBM accuracy");
-	checkprofile(starmodel,"stellar model");
-	checkprofile(whitedwarf,"white dwarf");
-	# running's and diving's own property checks moved to mechlabtest(1)
-	# with the models themselves.
-}
-
-checkprofile(profilemodule: Profile, name: string)
-{
-	model := profilemodule->new();
-	labels := profilemodule->parameterlabels();
-	minima := profilemodule->parameterminima();
-	maxima := profilemodule->parametermaxima();
-	if(len labels != len model.parameter || len minima != len model.parameter ||
-			len maxima != len model.parameter)
-		fail(name+" parameter metadata",real len labels,real len model.parameter);
-	data := profilemodule->profile(model,64);
-	if(len data != 192)
-		fail(name+" profile size",real len data,192.0);
-	previousradius := -1.0;
-	for(i := 0; i < 64; i++){
-		radius := data[3*i];
-		first := data[3*i+1];
-		second := data[3*i+2];
-		if(radius <= previousradius)
-			fail(name+" increasing radius",radius,previousradius);
-		if(first != first || second != second || first < 0.0 || second < 0.0)
-			fail(name+" finite nonnegative profile",first,second);
-		previousradius = radius;
-	}
-	if(len profilemodule->fieldlabels() != 2)
-		fail(name+" field metadata",real len profilemodule->fieldlabels(),2.0);
 }
 
 
-checkmechanism(mechanism: Mechanism, name: string)
-{
-	model := mechanism->new();
-	labels := mechanism->parameterlabels();
-	minima := mechanism->parameterminima();
-	maxima := mechanism->parametermaxima();
-	if(len labels != len model.parameter || len minima != len model.parameter ||
-			len maxima != len model.parameter)
-		fail(name+" parameter metadata",real len labels,real len model.parameter);
-	for(i := 0; i < len minima; i++)
-		if(minima[i] >= maxima[i])
-			fail(name+" parameter range",minima[i],maxima[i]);
-	state := mechanism->initialstate(model);
-	derivative := array[len state] of real;
-	mechanism->evaluate(model,0.0,state,derivative);
-	for(i = 0; i < len derivative; i++)
-		if(derivative[i] != derivative[i])
-			fail(name+" finite derivative",derivative[i],0.0);
-	points := mechanism->geometry(model,state);
-	links := mechanism->links();
-	if(len points == 0 || len points%2 != 0 || len links%2 != 0)
-		fail(name+" geometry",real len points,2.0);
-	for(i = 0; i < len links; i++)
-		if(links[i] < 0 || links[i] >= len points/2)
-			fail(name+" link index",real links[i],real(len points/2-1));
-	observations := mechanism->observables(model,state);
-	if(len observations != 2 || len mechanism->observablelabels() != 2)
-		fail(name+" observables",real len observations,2.0);
-	if(mechanism->maxtime(model) <= 0.0)
-		fail(name+" observation time",mechanism->maxtime(model),1.0);
-}
 
-checkvacuumflight3d(flight: Flight3d, name: string)
-{
-	model := flight->new();
-	labels := flight->parameterlabels();
-	minima := flight->parameterminima();
-	ranges := flight->parameterranges();
-	if(len model.parameter != 6 || len labels != 6 || len minima != 6 ||
-			len ranges != 6)
-		fail(name+" metadata",real len model.parameter,6.0);
-	for(i := 0; i < len minima; i++)
-		if(minima[i] >= ranges[i])
-			fail(name+" parameter range",minima[i],ranges[i]);
-	model.parameter[3] = 0.0;
-	model.parameter[4] = 0.0;
-	state := flight->initialstate(model);
-	if(len state != 6)
-		fail(name+" state size",real len state,6.0);
-	derivative := array[] of {0.0,0.0,0.0,0.0,0.0,0.0};
-	flight->evaluate(model,0.0,state,derivative);
-	check(name+" kinematics x",derivative[0],state[3],0.0);
-	check(name+" kinematics y",derivative[1],state[4],0.0);
-	check(name+" kinematics z",derivative[2],state[5],0.0);
-	check(name+" vacuum downrange acceleration",derivative[3],0.0,1.0e-13);
-	check(name+" vacuum lateral acceleration",derivative[4],0.0,1.0e-13);
-	check(name+" vacuum vertical acceleration",derivative[5],
-		-model.parameter[5],1.0e-13);
-	if(flight->maxtime(model) <= 0.0)
-		fail(name+" observation time",flight->maxtime(model),1.0);
-}
-
-checktrajectoryfinite(trajectory: Trajectory, name: string)
-{
-	model := trajectory->new();
-	state := trajectory->initialstate(model);
-	if(len state != 4)
-		fail(name+" state size",real len state,4.0);
-	derivative := array[len state] of real;
-	trajectory->evaluate(model,0.0,state,derivative);
-	for(i := 0; i < len derivative; i++)
-		if(derivative[i] != derivative[i])
-			fail(name+" finite derivative",derivative[i],0.0);
-	check(name+" kinematics x",derivative[0],state[2],0.0);
-	check(name+" kinematics y",derivative[1],state[3],0.0);
-}
-
-checkflight3dfinite(flight: Flight3d, name: string)
-{
-	model := flight->new();
-	state := flight->initialstate(model);
-	if(len state != 6)
-		fail(name+" state size",real len state,6.0);
-	derivative := array[len state] of real;
-	flight->evaluate(model,0.0,state,derivative);
-	for(i := 0; i < len derivative; i++)
-		if(derivative[i] != derivative[i])
-			fail(name+" finite derivative",derivative[i],0.0);
-	check(name+" kinematics x",derivative[0],state[3],0.0);
-	check(name+" kinematics y",derivative[1],state[4],0.0);
-	check(name+" kinematics z",derivative[2],state[5],0.0);
-}
-
-checkvacuumtrajectory(trajectory: Trajectory, name: string)
-{
-	model := trajectory->new();
-	labels := trajectory->parameterlabels();
-	ranges := trajectory->parameterranges();
-	if(len model.parameter != 6 || len labels != 6 || len ranges != 6)
-		fail(name+" metadata",real len model.parameter,6.0);
-	model.parameter[2] = 0.0;
-	model.parameter[3] = 0.0;
-	model.parameter[4] = 0.0;
-	state := trajectory->initialstate(model);
-	if(len state != 4)
-		fail(name+" state size",real len state,4.0);
-	derivative := array[] of {0.0,0.0,0.0,0.0};
-	trajectory->evaluate(model,0.0,state,derivative);
-	check(name+" kinematics x",derivative[0],state[2],0.0);
-	check(name+" kinematics y",derivative[1],state[3],0.0);
-	check(name+" vacuum horizontal acceleration",derivative[2],0.0,1.0e-13);
-	check(name+" vacuum vertical acceleration",derivative[3],
-		-model.parameter[5],1.0e-13);
-	if(trajectory->maxtime(model) <= 0.0)
-		fail(name+" observation time",trajectory->maxtime(model),1.0);
-}
 
 testcompetitioneconomics()
 {

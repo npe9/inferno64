@@ -12,4 +12,4 @@ The cord length follows computed fall distance; distance and speed are plotted.
 .SH SOURCE
 .B /appl/danby/bungee.b
 .SH SEE ALSO
-.IR mechanism (2)
+.IR mechlab (2)
