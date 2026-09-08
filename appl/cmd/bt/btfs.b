@@ -1323,7 +1323,20 @@ writechar(m: ref Tmsg.Write, n: ref Node)
 		srv.reply(ref Rmsg.Error(m.tag, "not connected"));
 		return;
 	}
-	e := gatt->write(d.sess, n.cn.c.vhandle, m.data);
+	#
+	# Which of the two writes this characteristic takes.  A
+	# characteristic that has write without response and not write
+	# must be written with a command: a Write Request to it is
+	# answered by a real device with Write Not Permitted, and the
+	# bench did not notice because the model this side was written
+	# against took either.  Wireshark did.
+	#
+	e: string;
+	if((n.cn.c.props & Gatt->Pwrite) == 0
+	&& (n.cn.c.props & Gatt->Pwritenoresp) != 0)
+		e = gatt->writecmd(d.sess, n.cn.c.vhandle, m.data);
+	else
+		e = gatt->write(d.sess, n.cn.c.vhandle, m.data);
 	d.lock <-= 1;
 	if(e != nil){
 		srv.reply(ref Rmsg.Error(m.tag, e));

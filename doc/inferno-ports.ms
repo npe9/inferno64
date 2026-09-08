@@ -21605,6 +21605,140 @@ the plan listed is implemented and is exercised by the bench: both
 roles on both transports, service discovery both ways, serial ports
 both ways, keyboards over either, a network interface, and the
 signalling under an audio stream.
+.NH 2
+A reader that is not this one
+.PP
+The limitation this record kept restating \(em that every phase in the
+Bluetooth bench is this stack talking to a model written from the same
+specifications by the same reader, so a misreading agrees with itself
+and passes \(em has now been narrowed.
+.CW "bthci.py --snoop"
+writes every HCI packet, both directions, as a
+.CW btsnoop
+capture, and the bench runs
+.CW tshark
+over each phase and fails it on any expert warning or error.
+Wireshark's dissectors were written by other people from those same
+documents, which is the whole point of them.
+.PP
+Three faults on the first run, all of which had been passing the
+bench, and all three of the same shape: a frame that declared one
+thing and carried another, with both ends of the bench agreeing about
+it.
+.CW HCI_Inquiry
+was answered with a Command Complete, when it is defined to answer
+with a Command Status \(em the model's fallback for an opcode it did
+not recognise completed it, and the guest accepted either, which is
+the right thing for a guest to do and is exactly why nothing here
+noticed.  The PAN phase sent a frame whose ethertype said ARP and
+whose body was a counted up byte pattern.  The audio phase sent six
+hundred counted up bytes down a channel that had just agreed to SBC,
+under a comment saying that nothing here pretended they were audio
+\(em which was true about the intent and did not make the bytes on the
+wire any less wrong.
+.PP
+A fourth turned up once those were fixed and the run reached further:
+the HID phase wrote Protocol Mode
+with a Write Request, and that characteristic is write without
+response and not write.  The model had declared it so all along, in
+the same table the guest read the properties out of to decide whether
+to offer a writable file; they were read for that and ignored when the
+write was made.  A real device answers such a write with Write Not
+Permitted, and the model does now, so the fix is held in place by
+something rather than by having been made.
+.PP
+And once it was the dissector that was wrong.  The Classic HID phase
+draws two malformed packets, and the bytes are right: that device
+declares Report ID 1 for the mouse and 2 for the keyboard, the reverse
+of the boot protocol's convention, on purpose, because a host that
+assumed the boot layout would have them the wrong way round and this
+phase is what catches it.
+.CW tshark
+assumes it \(em it does not take the report descriptor out of the SDP
+record to drive its HID dissector \(em reads report ID 1 as a keyboard
+report and finds four bytes where a boot keyboard report has eight.
+Swapping the identifiers on the wire makes every complaint go away,
+which is what settled it.  The check brought in to catch this side
+assuming things caught the other side assuming them.  It is declared,
+by dissector chain and not only by message, so a truncated packet in
+that same capture still fails the phase.
+.PP
+The second and third were fixed by making the bench send the real
+thing.  PAN now sends a real broadcast ARP request and the model
+builds a real ARP reply out of its fields, which is a stronger
+assertion than the echo it replaced: a reply has to be constructed by
+the far end, and a loopback anywhere along the path could have passed
+the old check.
+.CW Avdtp->sbcsilence
+builds a real SBC frame for whatever configuration was agreed \(em
+header, the length from the spec's own formula, which differs for
+joint stereo because of the join bit per subband, and the CRC, taken a
+bit at a time because what it covers is not always a whole number of
+bytes \(em with every scale factor and sample bit zero.  Still not an
+encoder, and there still is not one; it is the frame an encoder would
+emit for a block of nothing.
+.PP
+Those frames were then put to a second independent implementation.
+.CW ffmpeg
+has an SBC decoder; taken back out of the capture, the frames decode
+without a CRC error, and it derives 48 kHz stereo and 16 kHz mono from
+the bitstream alone, matching the two configurations the model
+negotiates.  That it finds every frame boundary is what confirms the
+length formula \(em get the length wrong and the next syncword is not
+where the decoder looks.  The controls bite: flipping one CRC byte
+makes
+.CW ffmpeg
+reject the frame and a wrong syncword makes it reject the stream, so
+the clean decode means something.  The check in the bench has its own
+control \(em a capture with one ACL packet truncated is failed, and
+the five real captures are not.
+.PP
+One thing got worse in the looking, or at least got seen.  Under a
+whole run
+.CW emu
+exits without a message, at a phase that varies: it was
+.CW orphan
+on one run,
+.CW brincoming
+on another,
+.CW cocoverrun
+on a third, always the guest going away rather than the model, and
+always silently \(em the controller model sees the connection close,
+which is a guest that exited and not a guest that hung.  Every one of
+those phases passes on its own, three and four times over.  It is the
+same family as the
+.CW rungc
+fault recorded above for
+.CW emu-g
+and it is no better understood.
+.PP
+So the bench tries such a phase once more, says loudly that it did,
+and names this as the reason.  A phase that failed an assertion or
+failed its capture is never retried: those are answers, and running
+them again until they change is how a bench stops meaning anything.
+The retry line being printed at all is the thing to notice, and it is
+printed rather than swallowed for that reason.
+.PP
+What none of this is, is a radio.  The routes to one are set out in
+.CW doc/bluetooth-plan.ms :
+QEMU's Bluetooth emulation was removed in 6.0, so there is nothing to
+emulate a controller with, and a real controller has to arrive by USB
+passthrough into
+.CW pc64bt
+\(em which is what would give
+.CW btusb.b
+its first real packet \(em by a UART module on
+.CW -serial ,
+or by a relay onto the
+.CW tcp!
+transport every phase of this bench already uses.  On suites: the
+SIG's PTS is the conformance suite and is what qualification means;
+BlueZ's
+.CW btvirt
+is an independently written controller emulator and is the cheapest
+next step, because it closes the same gap for behaviour that the
+dissector closes for framing; Wireshark is the one of the three that
+runs on this machine, and it is now wired in.
 .PP
 Osprey gets nothing here, and the reason is not neglect.  Osprey is a
 microkernel with library operating systems above it: its unit of

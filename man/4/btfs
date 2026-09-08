@@ -730,6 +730,19 @@ so the file must already hold SBC frames in the configuration that was
 agreed; anything else is sent faithfully and is noise.  That is said
 on the way past rather than left to be discovered by listening.
 .PP
+.BI -s " packets"
+sends that many packets of silence instead of a file.  The frames are
+real SBC in whatever configuration was just agreed \- the header, the
+length, and the CRC that configuration calls for, with every scale
+factor and sample bit zero \- built by
+.B Avdtp->sbcsilence
+in
+.BR /appl/lib/bt/avdtp.b .
+It is still not an encoder; it is the frame an encoder would emit for
+a block of nothing, and it exists because a stream whose configuration
+says SBC and whose payload is not SBC is wrong on the wire whatever
+the intent.
+.PP
 .B -d
 names the device,
 .B -b
@@ -875,6 +888,38 @@ against the controller model in
 .B scripts/bthci.py ,
 in two phases -- pairing, then meeting the bond again from a key file
 \- and exits non-zero if either fails.
+.PP
+Each phase is also captured.
+.B bthci.py --snoop
+writes every HCI packet, both directions, as
+.BR btsnoop ,
+and the bench runs
+.I tshark
+over the capture and fails the phase on an expert warning or error it
+did not declare.  A phase that injects a fault a controller may not
+commit \- 
+.B params
+sends a connection parameter request that cannot be honoured \- names
+the one complaint it is allowed to draw, by its text, so any other
+still fails it.  A capture holding no packets fails too, since that is
+what a capture that was never written looks like.
+Every other check in the bench is this stack talking to a model
+written from the same specifications by the same reader, so a
+misreading agrees with itself and passes; Wireshark's dissectors were
+written by other people, and are the one check here that does not
+share that reading.  They found three faults that the bench had been
+passing: a Command Complete answering
+.BR HCI_Inquiry ,
+which is defined to answer with a Command Status; a frame whose
+ethertype said ARP carrying a byte pattern; and a media stream that
+had agreed to SBC carrying bytes that were not SBC.  Notes are not
+failures \-
+.B "Reached ATT_MTU"
+is what a dissector says about a value longer than one packet, which
+the bench sends on purpose.  Without
+.I tshark
+the captures are still written and nothing reads them, and the bench
+says so as it starts.
 .PP
 .B doc/bluetooth-plan.ms
 lists what is missing in the order the pieces block each other, and

@@ -678,6 +678,16 @@ Gatt: module
 	descriptors:	fn(s: ref Att->Sess, c: ref Char): string;
 	read:		fn(s: ref Att->Sess, h: int): (array of byte, string);
 	write:		fn(s: ref Att->Sess, h: int, v: array of byte): string;
+
+	#
+	# A write with no response, which is a different opcode and not
+	# an option on the same one.  A characteristic says which of
+	# the two it takes, and the properties are not advice: Protocol
+	# Mode in the HID service is write without response and not
+	# write, and a Write Request to it is answered by a real device
+	# with Write Not Permitted.
+	#
+	writecmd:	fn(s: ref Att->Sess, h: int, v: array of byte): string;
 	subscribe:	fn(s: ref Att->Sess, c: ref Char, on: int): string;
 	propstr:	fn(p: int): string;
 };
@@ -1174,6 +1184,30 @@ Avdtp: module
 	#
 	Vsbc:	con 16r00;	# the codec identifier for SBC
 	sbcchoose:	fn(c: ref Cap): (ref Cap, string, string);
+
+	#
+	# One SBC frame of silence in the configuration that was
+	# agreed.  This is not an encoder and it is not audio: it is
+	# the frame an encoder would emit for a block of nothing, with
+	# the header, the length and the CRC that the agreed
+	# configuration calls for and every sample bit zero.
+	#
+	# It exists because a stream that carries something other than
+	# SBC while its configuration says SBC is a lie on the wire.
+	# The bench used to send counted-up bytes down a channel that
+	# had just agreed to SBC; both ends of the bench were content
+	# and Wireshark, which had not agreed to anything, read the
+	# capture and called the frames malformed.
+	#
+	sbcsilence:	fn(c: ref Cap): (array of byte, string);
+
+	#
+	# How many samples per channel one such frame carries, which is
+	# the blocks times the subbands.  A media packet's timestamp
+	# counts samples, so a sender needs this and cannot get it from
+	# the frame's length.
+	#
+	sbcsamples:	fn(c: ref Cap): int;
 };
 
 #

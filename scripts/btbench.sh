@@ -277,15 +277,169 @@ rm -f "$ROOT/mnt/keys/btkeys"
 
 PORT2=`expr $PORT + 1`
 
-run() {		# $1 phase, $2 model flag, $3 bench mode, $4 second model flag, $5 key file
+#
+# Wireshark, if it is here.  Every phase in this bench is this stack
+# talking to a model written from the same specifications by the same
+# reader, so a misreading agrees with itself and the phase passes.
+# tshark's dissectors were written by other people from those same
+# specifications, and pointing them at a capture of what actually went
+# down the wire is the one check here that does not share this
+# reader's understanding.
+#
+# It has already earned its place three times.  It found that the
+# model answered Inquiry with a Command Complete, which is a command
+# that is defined to answer with a Command Status; that the PAN phase
+# sent a frame whose ethertype said ARP and whose body was a counted
+# up byte pattern; and that the audio phase sent counted up bytes down
+# a channel that had just agreed to SBC.  All three passed the bench
+# before it was here.
+#
+# Notes are not failures: "Reached ATT_MTU" is what a dissector says
+# about a value longer than one packet, which this bench sends on
+# purpose.  Warnings and errors are.
+#
+TSHARK=`command -v tshark 2>/dev/null || true`
+if [ -z "$TSHARK" ]; then
+	echo "bench: no tshark, so the captures will not be read by anything"
+fi
+
+#
+# Some phases inject faults that a controller may not commit, and a
+# dissector is right to complain about those.  Skipping the check for
+# them would throw away exactly the phases where the wire is most
+# unusual, so instead each such phase says which complaint it is
+# allowed to draw, by its text.  Anything else still fails it.
+#
+allowed() {	# $1 phase: the expert messages this phase may produce
+	case "$1" in
+	params)
+		#
+		# The impossible request: a slave latency of 400 with a
+		# supervision timeout of 0.1s, which the peer sends on
+		# purpose and the guest refuses.  Wireshark is right to
+		# call it a parameter mismatch; that is the point of it.
+		#
+		echo "bluetooth:hci_h4:bthci_acl:btl2cap	Parameter mismatch" ;;
+	chid)
+		#
+		# Not our fault, and shown not to be.  The Classic HID
+		# device declares Report ID 1 for the mouse and 2 for
+		# the keyboard, which is the reverse of the boot
+		# protocol's convention, and it does so on purpose: a
+		# host that assumed the boot layout would have them
+		# exactly the wrong way round, and this phase is what
+		# would catch it.
+		#
+		# tshark assumes it.  It does not take the report
+		# descriptor out of SDP attribute 0x0206 to drive its
+		# HID dissector, so it falls back to the boot layout,
+		# reads report ID 1 as a keyboard report, finds four
+		# bytes where a boot keyboard report has eight, and
+		# calls it malformed.  Swapping the two identifiers on
+		# the wire makes every complaint go away, which is what
+		# established this: the bytes are well formed report
+		# protocol data and the disagreement is about what the
+		# identifiers mean.
+		#
+		# So the check that was brought in to catch this side
+		# assuming things caught the other side assuming them.
+		# The guest reads the descriptor -- that is what
+		# hidreport(2) is for -- and gets it right.
+		#
+		echo "bluetooth:hci_h4:bthci_acl:btl2cap:bthid:usbhid	Malformed Packet (Exception occurred)" ;;
+	*)	;;
+	esac
+}
+
+#
+# $dn rather than $n: the phase assertions below use $n for their own
+# counts, and a helper that runs inside run() must not reach into
+# them.  Nothing depends on that today because every one of them
+# assigns before it reads, which is a thing to keep true by not
+# relying on it.
+#
+dissect() {	# $1 phase, $2 capture
+	if [ -z "$TSHARK" ]; then
+		return 0
+	fi
+	#
+	# An empty capture is a failure and not a pass.  --snoop failing
+	# to reach the model is a mistake that has already been made
+	# twice here, and a check that reads nothing and says nothing
+	# is worse than no check, because it reports green.
+	#
+	# Except where a phase has no wire at all: keysvc is btkeyfs on
+	# its own, with no controller in it.  Those say so, and are
+	# then held to the opposite assertion -- no packets rather than
+	# some -- so the declaration cannot quietly cover a phase that
+	# stopped talking to its controller.
+	#
+	dn=`"$TSHARK" -r "$2" 2>/dev/null | grep -c . || true`
+	case "$1" in
+	keysvc)
+		if [ "$dn" != 0 ]; then
+			echo "BENCH FAIL ($1): $dn packets, and this phase has no controller"
+			return 1
+		fi
+		echo "no controller in this phase, and nothing on the wire"
+		return 0 ;;
+	esac
+	if [ "$dn" -lt 1 ]; then
+		echo "BENCH FAIL ($1): the capture $2 holds no packets"
+		return 1
+	fi
+	#
+	# The protocol chain as well as the message, so that an
+	# allowance names the dissector it is about: "the HID dissector
+	# says malformed" and not "malformed anywhere".
+	#
+	"$TSHARK" -r "$2" -Y '_ws.expert.severity >= 0x600000' \
+		-T fields -e frame.protocols -e _ws.expert.message 2>/dev/null \
+		| sed 's/^ *//; s/ *$//; /^$/d' | sort -u \
+		> "$OUT/expert-$1.txt"
+	dbad=0
+	while read -r dmsg; do
+		if [ -n "$dmsg" ] && ! allowed "$1" | grep -qxF "$dmsg"; then
+			echo "BENCH FAIL ($1): tshark: $dmsg"
+			dbad=1
+		fi
+	done < "$OUT/expert-$1.txt"
+	if [ "$dbad" != 0 ]; then
+		"$TSHARK" -r "$2" -q -z expert 2>/dev/null | sed -n '1,25p'
+		return 1
+	fi
+	echo "dissected $dn packets, no faults"
+	return 0
+}
+
+#
+# One attempt at a phase.  Three return codes and they mean different
+# things: 0 passed, 1 something was asserted and was not so, 2 the
+# guest never reached the end.
+#
+# The third is its own code because it is its own thing.  Under a
+# whole run emu exits without a message, at a phase that varies -- it
+# has been orphan, brincoming and cocoverrun on different runs -- and
+# every one of them passes on its own, several times over.  It is not
+# diagnosed and it is written up in doc/inferno-ports.ms.  So that
+# case, and only that case, is tried once more, loudly, and a phase
+# that fails an assertion or fails its capture is never retried:
+# those are answers, and running them again to get a different one is
+# how a bench stops meaning anything.
+#
+run1() {	# $1 phase, $2 model flag, $3 bench mode, $4 second model flag, $5 key file
 	keys=${5:-/mnt/keys/btkeys}
+	snoop="$OUT/snoop-$1.btsnoop"
 	pkill -f "bthci.py $PORT" 2>/dev/null || true
 	pkill -f "bthci.py $PORT2" 2>/dev/null || true
 	sleep 1
-	python3 "$ROOT/scripts/bthci.py" $PORT --verbose $2 > "$OUT/bthci-$1.log" 2>&1 &
+	python3 "$ROOT/scripts/bthci.py" $PORT --verbose --snoop "$snoop" $2 \
+		> "$OUT/bthci-$1.log" 2>&1 &
 	spec2=""
 	if [ -n "$4" ]; then
-		python3 "$ROOT/scripts/bthci.py" $PORT2 --verbose $4 > "$OUT/bthci-$1-2.log" 2>&1 &
+		python3 "$ROOT/scripts/bthci.py" $PORT2 --verbose \
+			--snoop "$OUT/snoop-$1-2.btsnoop" $4 \
+			> "$OUT/bthci-$1-2.log" 2>&1 &
 		spec2="tcp!127.0.0.1!$PORT2"
 	fi
 	sleep 1
@@ -330,10 +484,33 @@ run() {		# $1 phase, $2 model flag, $3 bench mode, $4 second model flag, $5 key 
 		return 1
 	fi
 	if ! grep -q '^BT: done$' "$OUT/bench-$1.out"; then
-		echo "BENCH FAIL ($1): the run did not reach the end"
-		return 1
+		return 2
+	fi
+	dissect "$1" "$snoop" || return 1
+	if [ -n "$4" ]; then
+		dissect "$1-2" "$OUT/snoop-$1-2.btsnoop" || return 1
 	fi
 	return 0
+}
+
+run() {		# the same arguments; retries a hang once, and says so
+	run1 "$@"
+	r=$?
+	if [ $r != 2 ]; then
+		return $r
+	fi
+	echo "BENCH RETRY ($1): the guest did not reach the end, running it again"
+	echo "bench: emu exits without a message under a whole run, at a phase"
+	echo "bench: that varies and that passes on its own.  Not diagnosed;"
+	echo "bench: doc/inferno-ports.ms has what is known.  This line being"
+	echo "bench: here at all is the thing to notice."
+	run1 "$@"
+	r=$?
+	if [ $r = 2 ]; then
+		echo "BENCH FAIL ($1): the run did not reach the end, twice"
+		return 1
+	fi
+	return $r
 }
 
 run pair "" full

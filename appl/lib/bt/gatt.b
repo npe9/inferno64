@@ -307,6 +307,23 @@ write(s: ref Sess, h: int, v: array of byte): string
 }
 
 #
+# The same write with the other opcode: no response, so no error
+# either, and nothing to wait for.  A value too long for the MTU
+# cannot be written this way at all -- there is no queued form of a
+# command -- so that is refused rather than silently truncated.
+#
+writecmd(s: ref Sess, h: int, v: array of byte): string
+{
+	if(3 + len v > s.mtu)
+		return "too long to write without a response";
+	q := array[3 + len v] of byte;
+	q[0] = byte Att->Rwritecmd;
+	bt->put16(q, 1, h);
+	q[3:] = v;
+	return att->command(s, q);
+}
+
+#
 # Prepare Write carries a handle, an offset and as much of the value
 # as the MTU leaves room for: the opcode, the handle and the offset
 # are five bytes of it.  The server echoes back what it queued, and

@@ -443,3 +443,157 @@ media(seq, stamp, ssrc, pt: int, payload: array of byte): array of byte
 		p[12:] = payload;
 	return p;
 }
+
+#
+# One SBC frame of silence for a configured capability.
+#
+# The frame is a four byte header -- syncword, the five fields packed
+# into one byte, the bitpool, a CRC -- and then the scale factors and
+# the sample bits, all of which are zero.  A frame of zeroes is a
+# legal bitstream that decodes to silence; what has to be right is the
+# header, the length, and the CRC over the header and the fields the
+# spec says it covers.
+#
+# The length is the spec's own formula and depends on the channel
+# mode, because joint stereo carries a join bit per subband that the
+# other modes do not.  Getting it wrong makes a frame that a
+# dissector, and a sink, will reject; there is no way to get it wrong
+# quietly.
+#
+sbcsilence(c: ref Cap): (array of byte, string)
+{
+	if(c == nil || c.cat != Cmediacodec || len c.info < 6)
+		return (nil, "not a codec capability");
+	if(int c.info[0] != Maudio || int c.info[1] != Vsbc)
+		return (nil, "not an SBC configuration");
+	#
+	# A configuration has one value in each field, unlike a
+	# capability, which has every value the endpoint will take.  If
+	# more than one bit is set here then what was passed is what a
+	# sink offered rather than what was agreed with it.
+	#
+	freq := one4(int c.info[2] >> 4);
+	mode := one4(int c.info[2] & 16rf);
+	blks := one4(int c.info[3] >> 4);
+	subs := one2((int c.info[3] >> 2) & 3);
+	alloc := one2(int c.info[3] & 3);
+	if(freq < 0 || mode < 0 || blks < 0 || subs < 0 || alloc < 0)
+		return (nil, "not one value in each field: a capability and not a configuration");
+
+	nsb := 4;
+	if(subs == 1)
+		nsb = 8;
+	nbl := 4 + 4 * blks;			# 4, 8, 12 or 16
+	nch := 2;
+	if(mode == 0)				# mono
+		nch = 1;
+	bp := int c.info[5];			# the top of the agreed range
+	if(bp < 2 || bp > 250)
+		return (nil, sys->sprint("a bitpool of %d", bp));
+
+	#
+	# allocation_method is 0 for loudness and 1 for SNR, which is
+	# the other way round from the order the capability bits are
+	# in.  subbands is 0 for four and 1 for eight, which is the
+	# same order.  This is the sort of thing that is wrong for a
+	# long time without failing.
+	#
+	amethod := 1 - alloc;			# capability 0 is snr
+	b1 := (freq << 6) | (blks << 4) | (mode << 2) | (amethod << 1) | subs;
+
+	scale := 4 * nsb * nch / 8;		# whole bytes in every case
+	abits: int;
+	case mode {
+	0 or 1 =>				# mono, dual
+		abits = nbl * nch * bp;
+	2 =>					# stereo
+		abits = nbl * bp;
+	* =>					# joint: a join bit per subband
+		abits = nsb + nbl * bp;
+	}
+	n := 4 + scale + (abits + 7) / 8;
+
+	f := array[n] of {* => byte 0};
+	f[0] = byte 16r9c;			# the syncword
+	f[1] = byte b1;
+	f[2] = byte bp;
+
+	#
+	# The CRC covers the second and third bytes of the header and
+	# then, without the syncword and without the CRC itself, the
+	# join bits if this is joint stereo and every scale factor.
+	# All of those are zero here, so what is left is to run the
+	# right number of them through it.
+	#
+	k := 4 * nch * nsb;
+	if(mode == 3)
+		k += nsb;
+	crc := 16r0f;
+	crc = crcbyte(crc, b1);
+	crc = crcbyte(crc, bp);
+	for(i := 0; i < k; i++)
+		crc = crcbit(crc, 0);
+	f[3] = byte crc;
+	return (f, nil);
+}
+
+#
+# The samples per channel in one frame of that configuration: the
+# blocks times the subbands.  -1 if the capability is not one.
+#
+sbcsamples(c: ref Cap): int
+{
+	if(c == nil || c.cat != Cmediacodec || len c.info < 6)
+		return -1;
+	if(int c.info[0] != Maudio || int c.info[1] != Vsbc)
+		return -1;
+	blks := one4(int c.info[3] >> 4);
+	subs := one2((int c.info[3] >> 2) & 3);
+	if(blks < 0 || subs < 0)
+		return -1;
+	nsb := 4;
+	if(subs == 1)
+		nsb = 8;
+	return (4 + 4 * blks) * nsb;
+}
+
+#
+# Which value a field holds, or -1 if it does not hold exactly one.
+# The capability bits run the other way from the values they stand
+# for: the top bit is the first value.
+#
+one4(v: int): int
+{
+	for(i := 0; i < 4; i++)
+		if(v == (1 << i))
+			return 3 - i;
+	return -1;
+}
+one2(v: int): int
+{
+	for(i := 0; i < 2; i++)
+		if(v == (1 << i))
+			return 1 - i;
+	return -1;
+}
+
+#
+# SBC's CRC: eight bits, polynomial 0x1D, and it starts at 0x0F rather
+# than at zero or at all ones.  It is taken a bit at a time because
+# what it covers is not a whole number of bytes: joint stereo with
+# four subbands covers thirty six bits.
+#
+crcbit(crc, bit: int): int
+{
+	t := ((crc >> 7) & 1) ^ bit;
+	crc = (crc << 1) & 16rff;
+	if(t)
+		crc ^= 16r1d;
+	return crc;
+}
+crcbyte(crc, b: int): int
+{
+	for(i := 7; i >= 0; i--)
+		crc = crcbit(crc, (b >> i) & 1);
+	return crc;
+}

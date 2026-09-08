@@ -55,6 +55,7 @@ Ourseid:	con 1;
 Chunk:		con 256;
 Gap:		con 20;		# ms between packets
 
+
 init(nil: ref Draw->Context, argv: list of string)
 {
 	sys = load Sys Sys->PATH;
@@ -72,13 +73,15 @@ init(nil: ref Draw->Context, argv: list of string)
 	}
 
 	arg->init(argv);
-	arg->setusage("bt/bta2dp [-v] [-b btmountpoint] [-d device] [file]");
+	arg->setusage("bt/bta2dp [-v] [-b btmountpoint] [-d device] [-s packets] [file]");
 	dev := "";
+	silence := 0;
 	while((c := arg->opt()) != 0)
 		case c {
 		'v' =>	verbose = 1;
 		'b' =>	btmnt = arg->arg();
 		'd' =>	dev = arg->arg();
+		's' =>	silence = int arg->arg();
 		* =>	arg->usage();
 		}
 	a := arg->argv();
@@ -182,6 +185,24 @@ init(nil: ref Draw->Context, argv: list of string)
 	}
 	sys->print("bta2dp: the stream is open\n");
 
+	if(silence > 0){
+		#
+		# Silence, in the configuration that was just agreed.
+		# This is not an encoder: it is the frame an encoder
+		# would produce for a block of nothing, and it is here
+		# so that a stream which has agreed to SBC carries SBC.
+		#
+		(sil, sre) := avdtp->sbcsilence(chosen);
+		if(sre != nil){
+			sys->fprint(sys->fildes(2), "bta2dp: silence: %s\n", sre);
+			return;
+		}
+		sys->print("bta2dp: %d byte sbc frames of silence\n", len sil);
+		quiet(mfd, sil, avdtp->sbcsamples(chosen), silence);
+		avdtp->close(s, sep.seid);
+		sys->print("bta2dp: the stream is closed\n");
+		return;
+	}
 	if(file == ""){
 		sys->print("bta2dp: no file to send; the stream is up and idle\n");
 		return;
@@ -335,4 +356,43 @@ lsdir(path: string): list of string
 	for(; l != nil; l = tl l)
 		r = hd l :: r;
 	return r;
+}
+
+#
+# The same stream, out of one frame repeated rather than out of a
+# file.  The payload header counts the frames in the packet, so this
+# says how many it put in rather than the one that stream() has to
+# claim because it cannot count frames it did not encode.
+#
+# The timestamp counts samples, and how many a frame carries depends
+# on the configuration -- sixteen blocks of eight subbands is a
+# hundred and twenty eight, four of four is sixteen -- so it is asked
+# for rather than assumed.  A constant here would have been right for
+# the configuration this was written against and wrong for the other
+# one the bench negotiates, and neither the dissector nor the decoder
+# would have said so: one does not cross-check the timestamp against
+# the codec and the other never sees it.
+#
+quiet(fd: ref Sys->FD, frame: array of byte, samples, packets: int)
+{
+	per := 1;
+	while((per + 1) * len frame + 1 <= Chunk)
+		per++;
+	p := array[1 + per * len frame] of byte;
+	p[0] = byte per;
+	for(i := 0; i < per; i++)
+		p[1 + i * len frame:] = frame;
+	seq := 0;
+	stamp := 0;
+	for(n := 0; n < packets; n++){
+		m := avdtp->media(seq, stamp, 16r5a5a5a5a, 96, p);
+		if(sys->write(fd, m, len m) != len m){
+			sys->fprint(sys->fildes(2), "bta2dp: the stream stopped: %r\n");
+			return;
+		}
+		seq = (seq + 1) & 16rffff;
+		stamp += per * samples;
+		sys->sleep(Gap);
+	}
+	sys->print("bta2dp: %d media packets sent, %d frames each\n", packets, per);
 }

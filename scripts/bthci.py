@@ -263,6 +263,20 @@ sdpsplit = 0
 if '--sdpsplit' in sys.argv:
     sdpsplit = int(sys.argv[sys.argv.index('--sdpsplit') + 1])
 
+# --snoop FILE: write every HCI packet, both directions, to a btsnoop
+# capture.  It is not for debugging this model: it is so that a dissector
+# nobody here wrote can be pointed at what the stack actually sent.
+#
+# Everything else in this bench is this stack talking to a program
+# written from the same specifications by the same reader, so a
+# misreading agrees with itself and the phase passes.  A capture read
+# by Wireshark's dissectors -- HCI, L2CAP, SDP, RFCOMM, BNEP, AVDTP,
+# ATT, SMP, written by other people from the same specifications -- is
+# the one check in this bench that does not share that reading.
+snoopfile = None
+if '--snoop' in sys.argv:
+    snoopfile = sys.argv[sys.argv.index('--snoop') + 1]
+
 # --hfp: with --brconnect, the peer is a telephone: it offers a hands
 # free audio gateway on RFCOMM channel 3, answers the service level
 # connection, and then rings.  Answering the call moves the call
@@ -972,6 +986,59 @@ def sdp_records():
     return de_seq(*out)
 
 
+#
+# btsnoop, which is what every Bluetooth capture tool reads.
+#
+#	header	"btsnoop\0", version 1, datalink, all big endian
+#	record	original length, included length, flags, drops,
+#		timestamp, then the packet with its H4 type byte
+#
+# The timestamp is microseconds since the start of year 0 in the
+# proleptic Gregorian calendar, which is the Unix epoch plus the
+# constant below; that is the one field of this format that cannot be
+# guessed at, and getting it wrong puts every packet in 1970 or 6000
+# rather than making the file unreadable.
+#
+# The flags say which way the packet went and whether it is a command
+# or event rather than data: bit 0 is 1 for controller to host, bit 1
+# is 1 for command and event.  A capture with them wrong still parses
+# and reads as a controller that answers itself.
+#
+SNOOP_EPOCH = 0x00E03AB44A676000
+SNOOP_H4 = 1002
+
+
+class Snoop:
+    def __init__(self, path):
+        self.f = open(path, 'wb')
+        self.f.write(b'btsnoop\0' + (1).to_bytes(4, 'big')
+                     + SNOOP_H4.to_bytes(4, 'big'))
+        self.lock = threading.Lock()
+
+    def packet(self, data, fromhost):
+        if not data:
+            return
+        t = data[0]
+        flags = 0 if fromhost else 1
+        if t in (1, 4):                 # a command or an event
+            flags |= 2
+        us = SNOOP_EPOCH + int(time.time() * 1000000)
+        with self.lock:
+            self.f.write(len(data).to_bytes(4, 'big')
+                         + len(data).to_bytes(4, 'big')
+                         + flags.to_bytes(4, 'big')
+                         + (0).to_bytes(4, 'big')
+                         + us.to_bytes(8, 'big')
+                         + data)
+            self.f.flush()
+
+
+snoop = Snoop(snoopfile) if snoopfile else None
+
+
+OURBD = bytes.fromhex('ccbbaa998877')[::-1]     # this peer, in HCI order
+
+
 class Model:
     def __init__(self, conn):
         self.c = conn
@@ -1026,6 +1093,17 @@ class Model:
 
     # ------------------------------------------------ wire
     def send(self, data):
+        #
+        # Snooped here, above the transport, so that the H5 phases
+        # produce a capture too.  What goes in it is the HCI packet,
+        # not the H5 frame that carried it: H5's sequence numbers,
+        # acknowledgements and retransmissions are its own business,
+        # and a btsnoop file with an H4 datalink says the packets are
+        # H4.  So the capture is of the HCI under H5, which is what
+        # can honestly be claimed for it.
+        #
+        if snoop:
+            snoop.packet(data, False)
         if h5:
             return self.h5_send(data[0], data[1:])
         with self.lock:
@@ -1357,8 +1435,19 @@ class Model:
             n = name.encode()[:248]
             self.event(0x07, bytes([0]) + addr + n + bytes(248 - len(n)))
         else:
+            #
+            # Command Status and not Command Complete.  A controller
+            # that does not know a command cannot know which event it
+            # would have answered with, and a command that is defined
+            # to answer with a status -- Inquiry, Create Connection,
+            # anything that takes time -- must not be answered with a
+            # completion.  Wireshark's dissector is what caught this:
+            # both halves of this bench took a Command Complete for
+            # Inquiry without noticing, because both were written by
+            # the same reader.
+            #
             log('unknown command %#06x' % op)
-            self.cmd_complete(op, bytes([0x01]))     # unknown HCI command
+            self.cmd_status(op, 0x01)                # unknown HCI command
 
     def advertise(self):
         while self.scanning:
@@ -1914,6 +2003,19 @@ class Model:
                 break
 
     # ------------------------------------------------ ATT
+    #
+    # Whether a value handle's characteristic declared a property.  A
+    # handle with no characteristic behind it -- a descriptor, or one
+    # a test added by hand -- is left alone: this is about holding the
+    # guest to what was advertised, not about inventing rules for
+    # attributes that never advertised anything.
+    #
+    def may_write(self, h, prop):
+        for dh, props, vh, u in CHARS:
+            if vh == h:
+                return (props & prop) != 0
+        return True
+
     def att_err(self, op, handle, err):
         self.acl(4, bytes([0x01, op]) + struct.pack('<H', handle) + bytes([err]))
 
@@ -2028,6 +2130,18 @@ class Model:
                     self.hidr_maybe_start()
                 return
             if h in VALUES:
+                #
+                # The declared properties are not advice.  A
+                # characteristic that has write without response and
+                # not write cannot be written with a Write Request,
+                # and a real device answers one with Write Not
+                # Permitted.  Protocol Mode in the HID service is
+                # exactly that, and this model used to take either,
+                # so the guest wrote it the wrong way for as long as
+                # nothing read the wire.
+                #
+                if not self.may_write(h, 0x08):
+                    return self.att_err(op, h, 0x03)
                 VALUES[h] = v
                 if hid and h == 0x0082:
                     print('bthci: the host selected %s protocol'
@@ -2038,6 +2152,12 @@ class Model:
             h = struct.unpack('<H', p[1:3])[0]
             v = p[3:]
             if h in VALUES:
+                if not self.may_write(h, 0x04):
+                    # a command gets no answer, so a refused one is
+                    # only visible here
+                    print('bthci: a write command to %#06x, which has '
+                          'no write without response' % h, flush=True)
+                    return
                 VALUES[h] = v
                 if hid and h == 0x0082:
                     print('bthci: the host selected %s protocol'
@@ -2778,6 +2898,36 @@ class Model:
         dst, src, rest = f[0:6], f[6:12], f[12:]
         print('bthci: bnep frame %d bytes type %s'
               % (len(f), rest[0:2].hex()), flush=True)
+        #
+        # An ARP request is answered with an ARP reply, and not with
+        # the request handed back with its addresses swapped.  The
+        # difference matters: a reply is built here, from the fields
+        # of the request, so a guest that receives one has proof the
+        # far end read what it sent.  An echo proves only that twelve
+        # bytes can be exchanged, and a loopback anywhere along the
+        # path would pass it.
+        #
+        # It is also the first thing a real PAN carries, and until it
+        # was written properly the frame this bench sent said ARP in
+        # its ethertype and then carried a counted-up byte pattern,
+        # which Wireshark rejected as a malformed packet and both
+        # halves of this bench accepted.
+        #
+        if rest[0:2] == b'\x08\x06' and len(rest) >= 30:
+            a = rest[2:]
+            oper = int.from_bytes(a[6:8], 'big')
+            if oper == 1:                    # a request, so answer it
+                me = OURBD[::-1]             # written order, not HCI order
+                sha, spa = a[8:14], a[14:18]
+                tpa = a[24:28]
+                reply = (a[0:6] + (2).to_bytes(2, 'big')
+                         + me + tpa + sha + spa)
+                out = src + me + b'\x08\x06' + reply
+                if pancompress:
+                    self.bracl(self.brscid, bytes([0x02]) + out[12:])
+                else:
+                    self.bracl(self.brscid, bytes([0x00]) + out)
+                return
         if pancompress:
             # both addresses left out: a link has two ends and they
             # can be worked out
@@ -3247,8 +3397,12 @@ class Model:
             return
         if ptype == 1:
             op = struct.unpack('<H', body[0:2])[0]
+            if snoop:
+                snoop.packet(bytes([1]) + body, True)
             self.command(op, body[3:3+body[2]])
         elif ptype == 2:
+            if snoop:
+                snoop.packet(bytes([2]) + body, True)
             self.acldata(body)
 
     def h5_ack(self):
@@ -3277,6 +3431,12 @@ class Model:
                 print('bthci: the guest closed the connection', flush=True)
                 return
             if h5:
+                #
+                # H5 has its own framing and its own retransmissions,
+                # so what goes in the capture is the HCI packet this
+                # reassembles, put there by h5_frame, and not the
+                # frame that carried it.
+                #
                 self.h5_in(d)
                 continue
             self.buf += d
@@ -3292,6 +3452,8 @@ class Model:
                         break
                     op = struct.unpack('<H', self.buf[1:3])[0]
                     params = self.buf[4:4+plen]
+                    if snoop:
+                        snoop.packet(self.buf[0:4+plen], True)
                     self.buf = self.buf[4+plen:]
                     self.command(op, params)
                 elif t == 2:
@@ -3301,6 +3463,8 @@ class Model:
                     if len(self.buf) < 5 + dlen:
                         break
                     pkt = self.buf[1:5+dlen]
+                    if snoop:
+                        snoop.packet(self.buf[0:5+dlen], True)
                     self.buf = self.buf[5+dlen:]
                     self.acldata(pkt)
                 else:

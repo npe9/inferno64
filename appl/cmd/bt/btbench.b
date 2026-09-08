@@ -2144,20 +2144,41 @@ panphase(mode: string)
 		return;
 	}
 	#
-	# One frame out and the same frame back with its addresses
-	# swapped, which is what the far end does.  A frame that came
-	# back unswapped would be this side's own write returning.
+	# An ARP request, which is the first thing a real PAN carries,
+	# and it is a real one: broadcast, with the twenty eight bytes
+	# ARP is, asking who has 169.254.1.2.
 	#
+	# It used to be a frame whose ethertype said ARP and whose
+	# payload was a counted-up byte pattern, which the far end
+	# handed back with its addresses swapped.  Both halves of this
+	# bench were happy with that and Wireshark was not: it read the
+	# capture and called the packet malformed.  What that phase
+	# proved was that twelve bytes could be swapped, which a
+	# loopback anywhere along the path would also do.
+	#
+	# What comes back now is a reply, built by the far end out of
+	# the fields of the request.  This side's own write cannot
+	# return as one.
 	#
 	# In the order an ethernet address is written, which is not the
 	# order a BD_ADDR goes on an HCI wire: unhex and not straddr.
 	#
-	f := array[20] of byte;
-	f[0:] = bt->unhex("CCBBAA998877");	# to the peer
-	f[6:] = bt->unhex("001122334455");	# from us
+	me := bt->unhex("001122334455");
+	peer := bt->unhex("CCBBAA998877");
+	mine := array[] of {byte 169, byte 254, byte 1, byte 1};
+	his := array[] of {byte 169, byte 254, byte 1, byte 2};
+	f := array[42] of byte;
+	f[0:] = bt->unhex("FFFFFFFFFFFF");	# a request is broadcast
+	f[6:] = me;
 	f[12] = byte 16r08; f[13] = byte 16r06;	# arp
-	for(i = 14; i < len f; i++)
-		f[i] = byte (i - 14);
+	f[14] = byte 0; f[15] = byte 1;		# over ethernet
+	f[16] = byte 16r08; f[17] = byte 0;	# for ip
+	f[18] = byte 6; f[19] = byte 4;		# address sizes
+	f[20] = byte 0; f[21] = byte 1;		# a request
+	f[22:] = me;
+	f[28:] = mine;
+	f[32:] = array[6] of {* => byte 0};	# unknown, which is the question
+	f[38:] = his;
 	if(sys->write(dfd, f, len f) != len f){
 		sys->print("BT: FAILED: writing a frame: %r\n");
 		sys->print("BT: done\n");
@@ -2182,7 +2203,31 @@ panphase(mode: string)
 		sys->print("BT: done\n");
 		return;
 	}
-	sys->print("BT: a frame went out and came back the other way round\n");
+	#
+	# and it is a reply, from the address that was asked about.
+	# An echo of the request would still be a request, and would
+	# still carry this side's own hardware address as the sender.
+	#
+	if(int g[20] != 0 || int g[21] != 2){
+		sys->print("BT: FAILED: wanted an arp reply, got operation %d\n",
+			(int g[20] << 8) | int g[21]);
+		sys->print("BT: done\n");
+		return;
+	}
+	if(bt->hex(g[22:28]) != bt->hex(peer) || bt->hex(g[28:32]) != bt->hex(his)){
+		sys->print("BT: FAILED: %s answered for %s\n",
+			bt->hex(g[22:28]), bt->hex(g[28:32]));
+		sys->print("BT: done\n");
+		return;
+	}
+	if(bt->hex(g[32:38]) != bt->hex(me) || bt->hex(g[38:42]) != bt->hex(mine)){
+		sys->print("BT: FAILED: the reply is addressed to %s\n",
+			bt->hex(g[32:38]));
+		sys->print("BT: done\n");
+		return;
+	}
+	sys->print("BT: 169.254.1.2 is at %s, which the far end had to build\n",
+		bt->hex(g[22:28]));
 	sys->print("BT: a Bluetooth link as an ethernet\n");
 	writefile(dev + "/ctl", "disconnect");
 	sys->print("BT: done\n");
@@ -2278,18 +2323,21 @@ a2dpphase(nil: string)
 		return;
 	}
 	#
-	# something to send.  It is not SBC and nothing here pretends
-	# it is: what the phase asserts is that it arrived.
+	# What goes down the stream is SBC: frames of silence, built
+	# for whatever configuration was agreed, by avdtp->sbcsilence.
 	#
-	f := "/tmp/bta2dp.media";
-	fd := sys->create(f, Sys->OWRITE, 8r666);
-	if(fd != nil){
-		b := array[600] of byte;
-		for(i = 0; i < len b; i++)
-			b[i] = byte i;
-		sys->write(fd, b, len b);
-		fd = nil;
-	}
+	# It used to be six hundred counted-up bytes, sent down a
+	# channel that had just agreed to SBC, with a comment saying
+	# that nothing here pretended they were audio.  They were not
+	# audio and they were not SBC either, and the ethertype was
+	# not the only place in this bench where a frame said one
+	# thing and carried another.  Wireshark read the capture and
+	# called them malformed; neither end of this bench had minded.
+	#
+	# They are still not audio.  A frame of silence is a real SBC
+	# frame with real sample bits that happen to be zero, and what
+	# is missing is an encoder, which is written down as missing.
+	#
 	a2 := load Command "/dis/bt/bta2dp.dis";
 	if(a2 == nil){
 		sys->print("BT: FAILED: cannot load /dis/bt/bta2dp.dis: %r\n");
@@ -2302,7 +2350,7 @@ a2dpphase(nil: string)
 	# program's output, and what matters here is what was chosen
 	# rather than that something was.
 	#
-	a2->init(nil, "bta2dp" :: "-b" :: mnt :: "-d" :: dev :: f :: nil);
+	a2->init(nil, "bta2dp" :: "-b" :: mnt :: "-d" :: dev :: "-s" :: "5" :: nil);
 	sys->sleep(1000);
 	writefile(dev + "/ctl", "disconnect");
 	sys->print("BT: done\n");
