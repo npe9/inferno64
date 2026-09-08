@@ -1631,11 +1631,71 @@ never measured by the tracker at all.
 The lasting result is the diagnostic.  Older captures in
 .CW doc/inferno-ports.ms
 were taken with the weaker check, and some fraction of them may be this
-artefact rather than the bug; re-running that hunt's reproducers
-against the fixed
-.CW checktracked()
-would say how much of its evidence base is real, and that is worth
-doing before anything else there.
+artefact rather than the bug.
+.NH 2
+What pc64 looks like through the fixed diagnostic
+.PP
+Fourteen boots with the corrected
+.CW checktracked() ,
+4512 surviving reports over the eight that fired, and the picture is
+not the one this hunt has been working from.
+.IP
+.nf
+copypath:before-mtptloop   2634        op 0x09      4509
+copypath:after-strcopy     1099        op 0x08         2
+copypath:after-alloc        408        op 0x53         1
+walk:after-ewalk            204
+walk:before-findmount       102
+instr                         3
+.fi
+.PP
+Every
+.CW Type
+in those reports is live and valid \-
+.CW "ref 1"
+with sizes of 88 to 336, no freed types and no garbage.  And three
+reports out of 4512 are at
+.CW instr .
+The corruption is not happening while Dis executes; it is happening
+inside
+.CW copypath() ,
+in the kernel's path handling.
+.PP
+The
+.CW "op 0x09"
+column is what made this look like
+.CW mcall
+for so long, and it is an artefact:
+.CW trackPC
+holds the last Dis instruction
+.I dispatched ,
+which stays where it was for the whole of a kernel call.  With a
+.CW copypath
+checkpoint the interpreter is not running at all, so that column
+records what the proc last did before entering the kernel, not what
+corrupted anything.
+.PP
+Between each pair of those checkpoints sits exactly one
+.CW smalloc() ,
+which
+.CW memset s
+what it returns \- the obvious next question, and it cannot be asked
+directly.  Recording every
+.CW smalloc()
+return and testing the corrupted address against it gave zero reports
+over eight boots while the panics continued at the same rate, seven of
+eight.  The bug did not go away; the tracker's view of it did, because
+which objects are watched is a function of layout and any change
+reshuffles it.
+.PP
+So two things for whoever continues.  The panic rate is the durable
+measurement and the tracker is not: a probe can silence the one while
+leaving the other untouched.  And the search should start in
+.CW copypath()
+and
+.CW walk() ,
+not in
+.CW OP(mcall) .
 .PP
 What is still not done, so the state is not overstated: GICv3 (the
 redistributor is per processor and this board derives one fixed base),
