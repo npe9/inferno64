@@ -721,3 +721,98 @@ code needs:
 - `sys->sprint`'s format argument must be a compile-time constant, so a
   status line whose only difference between two families is `%.3g`
   against `%.4g` is two cases, not one case with a variable.
+
+## UPDATE: what `aerobraking.b`'s comments used to carry
+
+`appl/danby/aerobraking.b` stays deliberately standalone - it is the one model
+with no library behind it, kept that way as the worked example of a model that
+is entirely its own program - but its architecture used to be described in a
+sixty-line essay at the top rather than visible in the code. The essay is gone
+and the shape is there instead:
+
+	SPEC -> loadspec() -> Model + Config -> Sim -> the application
+
+Three pieces of history from those comments are worth keeping, and this is
+where they live now.
+
+**Why "table" is the one graph line that must not be reissued.** The model
+declares its whole graph in plot(2)'s own language, as repeatable `graph` lines
+in the spec. plot(2)'s `clear` wipes view and layer state, so everything tied to
+a view - `axis`, `line` - has to be reissued after it, every frame. `table` must
+not be: plot(2)'s own `bind()` unconditionally replaces a table with a fresh,
+empty one, so reissuing `table history ...` every redraw silently erased every
+data point `record()` had just appended. `draw()` then had zero rows, reported
+no error, and drew nothing. It was found by screenshot and chased to `plot.b`'s
+source rather than guessed at. The line is now classified once, when the script
+runs, instead of being re-tested with `str->prefix` forty times a second - and
+having classified it, setup issues only the lines that are *not* reissued, which
+also stopped two `axis: no such view diagnostics` errors that every start had
+been printing to stderr for lines whose view did not exist yet.
+
+**Why the "planet" is pinned to the centre of the view.** Not an x/y bounding
+box mapped onto the view rect: that box's own centre drifts as the trail's
+extent changes even though the planet has not moved, so the planet visibly
+wandered around the screen instead of staying put while the view zoomed. A
+single uniform scale, rather than separate x and y ranges, also keeps a circular
+orbit looking circular. `orbitviewtest(1)` guards exactly this, and it needs
+`emu-cocoa` - `viewtest()` uses `Rect`, so it needs Draw loaded, which `emu-g`
+does not have. `eqnorbitaltest(1)` is the half that runs headless.
+
+**Why that test once passed for the wrong reason.** `maxtime` is 30.0 at a
+0.0025 step, so a full run is about 12000 steps. The first version of
+`orbitviewtest` ran 300, which covered 2.5% of one - nowhere near enough for
+drag to shrink the orbit, so the scale never changed and the test failed for a
+reason that had nothing to do with the code under test. It runs to 15000 now.
+
+## OPEN: a regression the collapse introduced, with a reproducer and no diagnosis
+
+`temple/smoketest run` fails two models per batch that the pre-collapse tree
+passed. Smallest reproducer, deterministic, about forty seconds:
+
+	emu-cocoa -r. temple/smoketest run budworm brusselator
+	FAIL init budworm: array bounds error
+	smoke: 1 ok, 1 fail (of 2) [run]
+
+What is established:
+
+- **It is ours.** The pre-collapse tree (`6959e60e`) passes the same
+  eight-model batch three runs out of three; the collapsed tree fails it
+  three out of three, always the same two models.
+- **It is the one-state Population models** - `budworm`,
+  `changingenvironment`, `lakepollution`, `weightchange`. No two-state or
+  larger model of any family has been seen to fail.
+- **It needs a second model in the same `emu`, but not a particular one, and
+  not a particular position.** `budworm` alone passes; `budworm` first of
+  eight fails; `budworm` alone for forty-five seconds outside `smoketest`
+  never fails at all. Widening `smoketest`'s post-`killgrp` gap from 50ms to
+  600ms changes nothing, so it is not a teardown race with the previous
+  model.
+- **`danbylabtest(1)` cannot see it.** All 151 models parse and step cleanly
+  under `emu-g`, including 2000 steps of every Population model with the same
+  `dt` and the same clamp the viewer uses. Whatever this is, it needs the
+  window.
+
+What is NOT established, and the reason: **stub-based bisection is not
+trustworthy here, because every stub changes the timing.** Disabling
+`sim.step()` in the tick arm removes the failure; so does disabling the
+negative-state clamp inside it; but stubbing `Sim.record`, `Sim.grow`,
+`redraw()`, `drawdiagram()` or the `rk4` call itself each leaves it. Those
+cannot all be true of one logic fault. Adding a `sys->fprint` to `Sim.step`
+makes it disappear entirely - the repository's own "beware diagnostics that
+move the bug" rule, met head on. Exception handlers placed around the `rk4`
+call and inside `rhs()` never fire, which is consistent with
+[[inferno-rio-exception-frame-bug]]: a VM-raised exception unwinding through
+handler-less frames does not reach them.
+
+So the honest statement is that the collapsed library perturbs the timing or
+the allocation shape of a one-state Population model's first 350ms enough to
+trigger an array bounds error somewhere in the GUI path, and the location is
+not known. Two facts verified from source along the way, both of which killed
+plausible theories: Limbo's `load` allocates a fresh data segment per call
+(`libinterp/link.c:108`), so models never share module globals; and `alt` on
+a nil channel raises a nil dereference (`libinterp/alt.c:92`).
+
+Where to start next: instrument `emu` rather than the Limbo, since the Limbo
+cannot be instrumented without moving the bug - a print in the interpreter's
+bounds-check path naming the module and PC would answer in one run what a day
+of stubbing did not.
