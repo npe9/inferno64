@@ -1743,6 +1743,72 @@ specific, self-checking, layout-independent signal of the kind
 everything else in this hunt has lacked.  They are the thing to
 instrument and count, and unlike the tracker they say what was
 corrupted rather than which watched word moved.
+.NH 2
+What the pool's own check already says
+.PP
+It needed no new instrumentation: the free-history ring this hunt
+already built \-
+.CW NFREEHIST
+raised to 4096 for exactly this \- fires and names the earlier freer.
+From one capture:
+.IP
+.nf
+alloc:D2B:destroy-entry: 78f1338 in heap: in free blk at 78f1318
+area at 78f1318: badc0c0a 80 0 0 0 0 0 ... 2e68732f7369642f
+_poolfault: 0x78f1338 was freed before, from pc=0x2f249e pid 1 module Sh
+_poolfault: 0x78f1338 was freed before, from pc=0x2f2083 pid 1 module Sh
+_poolfault: 0x78f1338 was freed before, from pc=0x2f249e pid 7 module Env
+panic: alloc:D2B:destroy-entry 78f1338 (from 2f24f3/...)
+.fi
+.PP
+Two things in that.  The same block was freed from the same pc
+repeatedly and across different procs and modules \- so this is a
+double free, which the hunt already suspected, and the ring now catches
+the first freer rather than ageing it out.
+.PP
+And the block's contents decode:
+.CW 2e68732f7369642f
+is
+.CW "/dis/sh."
+and
+.CW 736964
+is
+.CW dis .
+The thing being freed twice is a
+.I path string .
+A second capture on the main pool has the same shape.  That is a
+.CW Path ,
+allocated by
+.CW newpath()
+or
+.CW copypath()
+in
+.CW os/inferno/port/chan.c
+and released by
+.CW pathclose() ,
+which frees
+.CW p->s
+when its reference count reaches zero.
+.PP
+So the durable signal and the tracker point at the same file for once,
+and the reading is much more specific than "corruption in
+.CW copypath ":
+.CW Path
+reference counting is wrong, and a path string is freed twice.
+.PP
+The blocker is the same one
+.CW doc/inferno-ports.ms
+records for armv7: those pcs cannot be resolved to functions.
+.CW inm
+produces no output for this kernel, and a hand-written reader of the
+Plan 9 symbol table mis-parses it and returns plausible-looking
+nonsense.  Fixing that \- a working
+.CW nm
+for this objtype, or a
+.CW "6l -a"
+listing kept beside the kernel \- is worth more than any further
+probing, because every capture this hunt has taken carries pcs it
+cannot read.
 .PP
 What is still not done, so the state is not overstated: GICv3 (the
 redistributor is per processor and this board derives one fixed base),
