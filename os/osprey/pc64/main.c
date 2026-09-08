@@ -149,10 +149,24 @@ extern long regtorturecli(long);
 extern uvlong regtorturebad;
 
 /*
- * Spin in regtorture until the clock has moved, so that a clean answer
- * is a statement about interrupts and not about a loop that no
- * interrupt happened to land in.  The tick count is reported for that
- * reason: it is the evidence that anything was tested at all.
+ * A fixed number of iterations, with the clock read before and after so
+ * that the run says how many ticks it actually spanned.
+ *
+ * Fixed rather than bounded by the clock, and that is a correction: a
+ * loop that spins until the tick count has moved cannot spin, it can
+ * only wait, and on a guest whose clock advances in bursts rather than
+ * with instructions retired it waits for a very long time.  The other
+ * session on this machine measured four ticks costing thirty seconds of
+ * boot on its guest, for coverage a fixed count gave free.  This one
+ * behaves itself - a tick here is about a million iterations - but the
+ * shape is wrong either way, because it pays most exactly where it
+ * proves least.
+ *
+ * What the tick count is for is unchanged: it is the evidence that any
+ * interrupt happened at all, so a run that spanned none says so and
+ * claims nothing.  Four million iterations spans a few ticks here, and
+ * a few is enough for what this catches: an entry that loses a register
+ * loses it on every interrupt, not on a rare one.
  *
  * The interrupts-off run is the control.  If both are clean the
  * registers survive; if only the interrupts-on one is dirty the trap
@@ -163,19 +177,13 @@ extern uvlong regtorturebad;
 static void
 regcheck(void)
 {
+	enum { Niter = 4*1000*1000 };
 	ulong t0, ticks;
 	long bad, clibad;
-	int n;
 
 	clibad = regtorturecli(100*1000);
 	t0 = MACHP(0)->ticks;
-	bad = 0;
-	for(n = 0; n < 1000; n++){
-		if((bad = regtorture(100*1000)) != 0)
-			break;
-		if(MACHP(0)->ticks - t0 >= 20)	/* twenty clock ticks of them */
-			break;
-	}
+	bad = regtorture(Niter);
 	ticks = MACHP(0)->ticks - t0;
 	if(bad != 0)
 		print("osprey regcheck: register %ld came back as %#llux across an interrupt, after %lud ticks\n",
@@ -183,10 +191,10 @@ regcheck(void)
 	else if(clibad != 0)
 		print("osprey regcheck: the loop is wrong: a register moved with interrupts off\n");
 	else if(ticks == 0)
-		print("osprey regcheck: the clock did not move; nothing was tested\n");
+		print("osprey regcheck: inconclusive, no clock tick passed while it ran\n");
 	else
-		print("osprey regcheck: twelve registers survived %d passes over %lud clock ticks, and the same loop with interrupts off is clean\n",
-			n + 1, ticks);
+		print("osprey regcheck: twelve registers survived %d iterations over %lud clock ticks, and the same loop with interrupts off is clean\n",
+			Niter, ticks);
 }
 
 void

@@ -588,13 +588,13 @@ def main():
     # in the same boot, because a loop that never moved would pass the
     # first on its own.  The tick count is the evidence that any
     # interrupt happened at all.
-    m = re.search(r'osprey regcheck: twelve registers survived (\d+) passes over (\d+) clock ticks, '
+    m = re.search(r'osprey regcheck: twelve registers survived (\d+) iterations over (\d+) clock ticks, '
                   r'and the same loop with interrupts off is clean', log)
     ok = m is not None and int(m.group(2)) > 0 and int(m.group(1)) > 0
     what = ('and an interrupt gives back every register it interrupted: twelve of them held '
             'across clock ticks and compared, with the same loop under CLI as the control')
     if m:
-        what += ' (%s passes, %s ticks)' % (m.group(1), m.group(2))
+        what += ' (%s iterations, %s ticks)' % (m.group(1), m.group(2))
     print('%-4s %s' % ('ok' if ok else 'FAIL', what))
     if not ok:
         bad += 1

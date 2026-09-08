@@ -9823,8 +9823,30 @@ own: the interrupts-on run clean, and the same loop under
 .CW CLI
 clean in the same boot as the control.  The tick count is reported and
 required to be non-zero, since it is the evidence that any interrupt
-happened.  It says twelve registers survived 191 passes over 20 clock
-ticks.
+happened.
+.PP
+The loop runs a fixed number of iterations and reads the clock either
+side of it, rather than spinning until the clock has moved, and that is
+a correction rather than the first idea.  The first idea was the bound,
+and it was measured on two machines with results two orders of magnitude
+apart: on the sibling kernel's guest four ticks cost thirty seconds of
+boot, and on this one twenty ticks cost the two hundred milliseconds
+they are worth \- 241.26 seconds for the whole check against 242.69 with
+the bound gone, which is no difference at all.  A tick here is about a
+million iterations, so the loop was working the whole time rather than
+waiting.
+.PP
+So the reason to drop the bound is not that it is slow, because here it
+is not.  It is that its cost is set by the guest's clock rather than by
+the work: cheap where the clock is healthy and unbounded where it is
+not, which is backwards for a boot-time check meant to run on machines
+nobody has seen yet.  Neither of us could have said which we had without
+measuring.  Four million iterations, and however many ticks that turns
+out to span \- five, here.
+.PP
+A few ticks is enough for what this catches.  An entry that loses a
+register loses it on every interrupt, not on a rare one: the bug that
+prompted all this handed back the DS selector every single time.
 .PP
 It runs on
 .CW pc64
