@@ -647,10 +647,16 @@ The clock followed the bus width.  Identification runs at 400kHz or
 less and the card has been in transfer state since SELECT, so there
 was no reason to stay there; the capabilities register reports a 52MHz
 base, and the divider now comes from it rather than being pinned at
-0x80.  The result is 13MHz, not 25: the divided-clock form gives base
-over 2N, 52/2 is 26 and default speed tops out at 25, so N is 2 and
-the choice is deliberately the conservative side of the limit.  It is
-still 64 times the identification rate.
+0x80.  Under QEMU that lands on 13MHz, not 25: the divided-clock form
+gives base over 2N, 52/2 is 26 and default speed tops out at 25, so N
+is 2 and the choice is deliberately the conservative side of the
+limit.  It is still 64 times the identification rate.
+.PP
+The 13 is an artifact of the base QEMU reports, not the board's answer.
+On a Pi the Arasan's base comes from a firmware-configurable clock, so
+real hardware reporting anything other than 52 lands on a different
+divider.  The arithmetic is the deliverable; the number this run
+produced is not.
 .PP
 The sequence is the part worth having.  SDCLK must be stopped before
 the divider changes and restarted once it is stable, and changing a

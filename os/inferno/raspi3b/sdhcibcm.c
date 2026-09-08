@@ -767,7 +767,16 @@ sdhcibio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 				}
 			}
 		}
-		if(awaitbit(&r[Interrupt], Datadone, 1) < 0)
+		/*
+		 * A multi-block transfer that stopped part way through
+		 * is a failure, not a short read.  The command moved one
+		 * run of blocks off one address: the caller's buffer past
+		 * the point it stopped holds whatever it held before, and
+		 * reporting those bytes as having been read is worse than
+		 * reporting nothing.  Any break above therefore counts the
+		 * same as the completion timeout below.
+		 */
+		if(i < nb || awaitbit(&r[Interrupt], Datadone, 1) < 0)
 			i = 0;
 		r[Interrupt] = Datadone;
 		qunlock(c);
