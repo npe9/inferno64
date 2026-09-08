@@ -771,8 +771,8 @@ ospreyexecself(char *uname, char **uargv)
 	if(ospreyexecbuddy1(name, 1) < 0){
 		/* named, because the caller returns -1 to a library that
 		 * usually turns it into "exec failed" and nothing else */
-		print("osprey exec: container %llud could not exec %s\n",
-			up->osprey != nil ? ospreyid(up->osprey) : 0, name);
+		print("osprey exec: container %lud could not exec %s\n",
+			ospreyprocid(up), name);
 		return -1;
 	}
 	kstrdup(&up->text, name);

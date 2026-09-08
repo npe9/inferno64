@@ -8551,11 +8551,36 @@ consecutive runs, the same numbers each time.  Rendered as characters
 the window holds the shell's three lines of banner and a prompt, with
 rio's scroll bar down the left of them.
 .PP
-What is not claimed: nothing has been typed at it.  The keyboard reaches
-.CW /dev/kbd
-and rio reads it - 2.3g - but no check presses a key at a window and
-reads what the shell did with it, and until one does, "a shell in a
-window" means a shell that has started in a window and written to it.
+.PP
+And something has been typed at it.  The word
+.CW nosuchthing
+is typed at the window one key at a time through the emulated keyboard,
+with Enter after it, and the shell in the window asks the buddy for a
+program of that name:
+.CW "buddy: exec nosuchthing: Enonexist: 'nosuchthing'" .
+The word is one the shell cannot run on purpose \- what the criterion
+is about is the path, not the program.  A key crosses QEMU's i8042, the
+IRQ1 the microkernel routes to the personality's container as a bare
+notification, the user-space driver that reads port
+.CW 0x60
+with its own
+.CW inb ,
+the keymap,
+.CW /dev/kbd ,
+rio, the window's own
+.CW /dev/cons ,
+and the shell's reader; and the shell's answer goes back out
+descriptor 1 and is drawn, which the pixel count says: 3745 of
+.CW cols[TEXT]
+before the typing and 5763 after.  The complaint does not appear on the
+machine's console, which is the other half of saying that descriptor 1
+is the window.
+.PP
+Twelve criteria, three consecutive runs, the same numbers each time.
+What is not claimed: no program has been run to completion in a window,
+because the word typed was one that does not exist.  A window that runs
+.CW /boot/cat
+and shows what it echoes is the next thing to ask for.
 .NH 2
 Track three: the library-OS personality execs a program, then rio
 .PP

@@ -199,9 +199,15 @@ def main():
         nch, box, seen = changed(cd, pd)
     # and the sweep: New from the menu, then a press, a drag and a release
     swlog, swshot = tmp('osprey-rio-sw-', '.log'), tmp('osprey-rio-sw-', '.ppm')
+    # and then a word typed at it, one key at a time through the emulated
+    # keyboard, and Enter.  The word is one the shell cannot run: what it
+    # proves is the path, not the program - a key crosses the i8042, the
+    # driver, /dev/kbd, rio, the window's own /dev/cons and the shell,
+    # which parses the line and asks for a program by that name.
+    typed = ','.join('K:' + k for k in 'n o s u c h t h i n g'.split())
     swtext, swpix = boot(swshot, 'm:240:160,s:1.0,d:right,s:1.2,u:right,s:1.5,'
                                  'm:-400:-300,s:0.8,d:right,s:0.6,m:300:220,s:0.8,'
-                                 'u:right,s:12.0', swlog)
+                                 'u:right,s:8.0,' + typed + ',K:ret,s:4.0', swlog)
     # Where it is, measured from the border rather than from the fill: a
     # stray white pixel in the frame buffer's top-left corner - two of
     # them, and they are there in the control shot too - would otherwise
@@ -272,6 +278,15 @@ def main():
          "few pixels that are in the control shot too - which is rio's font, drawn through "
          "its own file server by the command running in it",
          swtext_px > 1500),
+        ("and it reads what is typed at it: the word nosuchthing is typed at the window one "
+         "key at a time and Enter after it, and the shell in the window asks the buddy for a "
+         "program of that name - which crosses the i8042, the user-space driver, /dev/kbd, "
+         "rio, the window's own /dev/cons and the shell's own reader",
+         re.search(r"buddy: exec nosuchthing: Enonexist: 'nosuchthing'", swtext) is not None),
+        ("and it answers into the window: the shell's complaint about the word does not appear "
+         "on the machine's console, because the shell's print goes to descriptor 1 and that is "
+         "the window",
+         'sh: cannot exec' not in swtext),
         ("and the notes rio posts are addressed to something that exists: libthread keeps the "
          "number getpid() gave it and posts to that when it shuts down, and no boot here has "
          "the kernel refusing one because the number named no container",

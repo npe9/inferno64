@@ -1357,6 +1357,14 @@ does to put a window's
 on 0 and 1.  A write to a standard descriptor that has been closed or
 dup'd onto goes to the file server rather than out of the console.
 .PP
+.B /scripts/osprey-check-rio.py
+types at the window: the word
+.B nosuchthing
+one key at a time through the emulated keyboard, and the shell in the
+window asks the buddy for a program of that name.  The word is one the
+shell cannot run on purpose; what is being checked is the path from the
+i8042 to the shell and back out to the screen, not the program.
+.PP
 A process forked
 .B RFNOWAIT
 keeps no wait record: the kernel's table of who started whom frees its
