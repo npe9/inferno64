@@ -45,8 +45,10 @@ conservation law: a head count that cannot change, an exchange that only
 moves goods, a fishery at rest at its bionomic equilibrium.
 .TP
 .B trajectory
-A position's rate is exactly its own velocity; and for the models with
-an air term, that zeroing drag, lift and spin leaves plain free fall.
+A position's rate is exactly its own velocity, at the start and again
+after two hundred steps of the model's own integration; and for the
+models with an air term, that zeroing drag, lift and spin leaves plain
+free fall.
 .TP
 .B orbit
 Four states per body, a position rate that is its own velocity, and the
@@ -56,7 +58,10 @@ models with an external term too \(em in those the body being pushed has
 zero mass and the body being held fixed has zero acceleration \(em so the
 one statement covers the whole family.  A model with six bodies has
 fifteen pairs and thirty reaction terms, and a sign error or a missing
-reaction in any one of them breaks this sum.
+reaction in any one of them breaks this sum.  It is checked at the
+start and again after four hundred steps, because a term that is zero
+at the model's own starting configuration and wrong once the bodies
+have moved would otherwise pass.
 .TP
 .B ecology
 The equilibrium the spec declares is one: both rates vanish there.
@@ -86,14 +91,28 @@ is checked.
 .IR danbylab (2),
 .IR dynsys (2)
 .SH BUGS
-Most of the checks are made at the model's own starting configuration
-only, not along a trajectory, so a term that is zero there and wrong
-later would pass.  The
-.B flight
+The
+.BR mechanism ,
+.B population
 and
+.B ecology
+checks are made at the model's own starting configuration only, so a
+term that is zero there and wrong later would pass.  The other four
+families do better:
+.B trajectory
+and
+.B orbit
+integrate and check again,
+.B flight
+samples the state space, and
 .B profile
-families are the exceptions: they sample the state space and the
-parameter space respectively.
+samples the parameter space.
+.PP
+The integration this test does is its own, using
+.IR numerics (2)
+directly, so that what it checks is the model's equations and not a
+second copy of the library's stepper.  Nothing here exercises that
+stepper, or the buttons, or a click in a plot.
 .PP
 Nothing here draws anything, so a model whose equations are right and
 whose picture is wrong passes.

@@ -95,6 +95,9 @@ Look: adt {
 	clickcmd:	string;	# and what it reports it as
 	dt:		real;	# one integration step
 	perframe:	int;	# and how many to a frame, 0 for a still picture
+	endsontime:	int;	# the run stops at the spec's maxtime
+	landing:	int;	# and sooner if the height crosses zero
+	floor:		int;	# no state may go negative
 };
 
 # Everything that changes as time runs.  A family uses the fields it
@@ -124,7 +127,7 @@ Sim: adt {
 	reset:		fn(s: self ref Sim);
 	step:		fn(s: self ref Sim);
 	record:		fn(s: self ref Sim);
-	land:		fn(s: self ref Sim, old: array of real, oldt: real, h: int);
+	land:		fn(s: self ref Sim, old: array of real, oldt: real);
 	grow:		fn(s: self ref Sim);
 	pushtrail:	fn(s: self ref Sim);
 	trailat:	fn(s: self ref Sim, k: int): array of real;
@@ -466,6 +469,12 @@ wantobservables(m: ref Model, n: int): string
 	return nil;
 }
 
+# Every parameter of a population or an ecology is a rate or a capacity,
+# and neither can be negative - so a slider that could reach below zero
+# would be offering a state the model has no meaning for.  This is a
+# statement about those two families' equations, not about their sliders,
+# which is why it did not go when the sliders became Tk scales.  It does
+# not hold for Trajectory or Flight, where an angle is signed.
 zerominima(m: ref Model): string
 {
 	for(i := 0; i < len m.parameter; i++)
@@ -590,6 +599,7 @@ lookof(family: int): ref Look
 	l.steps = 200;
 	l.dt = 0.005;
 	l.perframe = 4;
+	l.endsontime = 1;
 	l.graphpane = 0;
 	l.diagpane = -1;
 	left := "-side left -fill both -expand 1";
@@ -613,11 +623,15 @@ lookof(family: int): ref Look
 		l.focus = ".plot.p";
 		l.atwidth = 240;
 		l.dt = 0.008;
+		# a population runs until the window closes, and cannot go
+		# negative, which are this family's rules and not the clock's
+		(l.endsontime, l.floor) = (0, 1);
 		(l.click, l.clickcmd) = (".plot.bars", "bar");
 	Trajectory =>
 		l.panes = array[] of {pane(".plot.p", "-width 700 -height 380", whole)};
 		l.focus = ".plot.p";
 		l.perframe = 5;
+		l.landing = 1;
 	Orbit =>
 		l.panes = array[] of {
 			pane(".plot.orb", "-width 520 -height 420", left),
@@ -633,12 +647,14 @@ lookof(family: int): ref Look
 		l.percol = 2;
 		l.sliderlen = 170;
 		l.dt = 0.008;
+		(l.endsontime, l.floor) = (0, 1);
 		(l.click, l.clickcmd) = (".plot.p", "plot");
 	Flight =>
 		l.panes = array[] of {pane(".plot.p", "-width 700 -height 440", whole)};
 		l.focus = ".plot.p";
 		l.atwidth = 520;
 		l.perframe = 5;
+		l.landing = 1;
 	Profile =>
 		l.panes = array[] of {pane(".plot.p", "-width 700 -height 420", whole)};
 		l.focus = ".plot.p";
@@ -921,26 +937,23 @@ Sim.reset(s: self ref Sim)
 # One integration step, and whatever the family says ends a run.
 Sim.step(s: self ref Sim)
 {
-	old := array[len s.state] of real;
-	old[0:] = s.state;
+	old: array of real;
 	oldt := s.t;
+	if(look.landing){
+		# land() interpolates back to the crossing, so it needs the
+		# state on the near side of it; nothing else does
+		old = array[len s.state] of real;
+		old[0:] = s.state;
+	}
 	numerics->rk4(s.work, rhs, s.t, look.dt, s.state);
 	s.t += look.dt;
-
-	case cfg.family {
-	Population or Ecology =>
-		# neither a population nor a species can go negative, which is
-		# these families' own rule
+	if(look.landing)
+		s.land(old, oldt);
+	if(look.floor)
 		for(i := 0; i < len s.state; i++)
 			if(s.state[i] < 0.0)
 				s.state[i] = 0.0;
-	Trajectory =>
-		s.land(old, oldt, 1);
-	Flight =>
-		s.land(old, oldt, 2);
-	}
-
-	if(model.maxtime > 0.0 && s.t >= model.maxtime && endsontime(cfg.family)){
+	if(look.endsontime && s.t >= model.maxtime){
 		s.finished = 1;
 		s.paused = 1;
 	}
@@ -948,17 +961,18 @@ Sim.step(s: self ref Sim)
 	s.record();
 }
 
-# Population and Ecology run until the window closes; the rest stop at
-# the spec's own maxtime.
-endsontime(family: int): int
-{
-	return family != Population && family != Ecology;
-}
-
 # The flight ends where the height crosses zero, interpolated to the
-# crossing rather than to the end of the step.  h is the height's index.
-Sim.land(s: self ref Sim, old: array of real, oldt: real, h: int)
+# crossing rather than to the end of the step.
+#
+# Both flying families put the positions in the first half of the state
+# vector and their velocities in the second, and in both the height is
+# the LAST position - state[1] of four, state[2] of six.  So the index is
+# derived rather than written down per family: there is no constant here
+# to get the wrong way round, and parse() has already refused a spec
+# whose state count is not the four or six this assumes.
+Sim.land(s: self ref Sim, old: array of real, oldt: real)
 {
+	h := len s.state/2 - 1;
 	if(s.state[h] >= 0.0 || old[h] < 0.0 || oldt <= 0.0)
 		return;
 	fraction := old[h]/(old[h]-s.state[h]);

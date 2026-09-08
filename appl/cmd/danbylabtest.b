@@ -208,6 +208,12 @@ checkspec(name, spec: string)
 		if(deriv[i] != deriv[i])
 			fail(sys->sprint("%s: derivative %s is not a number at t=0",
 				name, m.statenames[i]));
+	# every check above is made at t=0, where a term that is zero there
+	# and wrong later would pass.  So the families with an invariant get
+	# it again at a state the model actually reaches, integrated here
+	# rather than asked of the library, so what is tested is the
+	# equations and not a second copy of the stepper.
+	checkalongtheway(name, m, c);
 	case c.family {
 	Danbylab->Mechanism =>
 		checkmechanism(name, m, c, state, deriv);
@@ -221,6 +227,66 @@ checkspec(name, spec: string)
 		checkecology(name, m, c);
 	Danbylab->Flight =>
 		checkflight(name, m, state);
+	}
+}
+
+
+# The families whose invariant is an identity in the equations, checked
+# again after the model has been running a while.  A conserved quantity
+# is a property of the right-hand side, not of the integrator, so the
+# tolerance does not have to absorb the integrator's own error - only
+# the size the terms have grown to.
+stepping: ref Model;
+
+steprhs(t: real, q, d: array of real)
+{
+	dynsys->rhs(stepping, t, q, d);
+}
+
+checkalongtheway(name: string, m: ref Model, c: ref Config)
+{
+	nsteps := 0;
+	dt := 0.0;
+	case c.family {
+	Danbylab->Trajectory =>
+		(nsteps, dt) = (200, 0.005);
+	Danbylab->Orbit =>
+		(nsteps, dt) = (400, 0.0025);
+	* =>
+		return;
+	}
+	stepping = m;
+	state := dynsys->initialstate(m);
+	work := numerics->workspace(len state);
+	t := 0.0;
+	for(i := 0; i < nsteps; i++){
+		# a flat trajectory ends when it lands, and past that the
+		# model is no longer describing anything
+		if(c.family == Danbylab->Trajectory && state[1] < 0.0)
+			break;
+		numerics->rk4(work, steprhs, t, dt, state);
+		t += dt;
+	}
+	deriv := array[len state] of real;
+	dynsys->rhs(m, t, state, deriv);
+	for(i = 0; i < len deriv; i++)
+		if(deriv[i] != deriv[i]){
+			fail(sys->sprint("%s: derivative %s is not a number at t=%g",
+				name, m.statenames[i], t));
+			return;
+		}
+	case c.family {
+	Danbylab->Trajectory =>
+		# the kinematic identity is exact at every state, not just the
+		# one the spec starts at
+		if(deriv[0] != state[2])
+			fail(sys->sprint("%s: at t=%g dx/dt is %g, not vx %g",
+				name, t, deriv[0], state[2]));
+		if(deriv[1] != state[3])
+			fail(sys->sprint("%s: at t=%g dy/dt is %g, not vy %g",
+				name, t, deriv[1], state[3]));
+	Danbylab->Orbit =>
+		checkinternalforces(sys->sprint("%s at t=%g", name, t), m, c, deriv);
 	}
 }
 
@@ -533,14 +599,38 @@ checkorbit(name: string, m: ref Model, c: ref Config, state, deriv: array of rea
 			fail(sys->sprint("%s: body %s: dy/dt is %g, not vy %g",
 				name, c.bodies[i], deriv[4*i+1], state[4*i+3]));
 	}
+	checkinternalforces(name, m, c, deriv);
+}
+
+# Sum m*a over every body.  The residual is compared against the size of
+# the largest term rather than against a fixed number, because a body
+# that has fallen close to another has a large acceleration and a
+# proportionally large rounding error in a sum that is still exactly zero
+# in exact arithmetic.
+checkinternalforces(name: string, m: ref Model, c: ref Config, deriv: array of real)
+{
 	mass := danbylab->masses(m, c);
 	(px, py) := (0.0, 0.0);
-	for(i = 0; i < len mass; i++){
-		px += mass[i]*deriv[4*i+2];
-		py += mass[i]*deriv[4*i+3];
+	biggest := 1.0;
+	for(i := 0; i < len mass; i++){
+		(fx, fy) := (mass[i]*deriv[4*i+2], mass[i]*deriv[4*i+3]);
+		px += fx;
+		py += fy;
+		if(absreal(fx) > biggest)
+			biggest = absreal(fx);
+		if(absreal(fy) > biggest)
+			biggest = absreal(fy);
 	}
-	near(name+": the internal forces in x", px, 0.0, 1.0e-11);
-	near(name+": the internal forces in y", py, 0.0, 1.0e-11);
+	tol := 1.0e-11*biggest;
+	near(name+": the internal forces in x", px, 0.0, tol);
+	near(name+": the internal forces in y", py, 0.0, tol);
+}
+
+absreal(x: real): real
+{
+	if(x < 0.0)
+		return -x;
+	return x;
 }
 
 
