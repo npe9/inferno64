@@ -19294,3 +19294,90 @@ page of hex into
 .CW markheap+0x14d ,
 .CW poolalloc+0x5b .
 What the guard's own report says when it fires has not been seen yet.
+.NH 2
+The guard fires, and names Tarray
+.PP
+Thirty-two boots on a kernel carrying it, all confirmed from the same
+build by
+.CW "etext 0x32cf03" .
+.CW "alloc:D2B:free 34b5f8"
+is gone, but that is arithmetic rather than evidence \(em the guard
+removes it by construction.  With 27 of 32 baseline boots panicking
+from many causes, 32 boots cannot resolve whether containment changed
+any other rate, and no claim is made that it did:
+.TS
+box, tab(;);
+l l l.
+;baseline;with guard
+_
+page fault;11;7
+general protection violation;4;5
+no panic;5;8
+movp: bad sv/dv;4;7
+decref pc;2;2
+alloc:D2B:destroy;2;2
+alloc:D2B:free (Tptr);3;0
+invalid opcode;0;1
+.TE
+.PP
+The report is the result.  One boot in 32 fired it eighteen times,
+every time on the same address:
+.P1
+freetype: static type 0x344530 ref underflow n 0, pid 45 module Env
+.P2
+.CW 0x344530
+is
+.CW Tarray+0x0 ,
+and
+.CW "n 0"
+says the decrement landed exactly on zero \(em the static's own initial
+reference, consumed.  Run through
+.CW "p9sym.py -c" ,
+the accompanying ktrace reads as a real stack for the first time in
+this hunt:
+.P1
+0x2f2725 -> reportunder+0x66
+0x2f2810 -> freetype+0x55
+0x2f246a -> destroy+0x256
+0x2e0727 -> c2string+0x77
+0x2e029b -> cvtac+0x53
+0x2ec7a3 -> xec+0x292
+0x28e890 -> vmachine+0x31c
+.P2
+.CW destroy+0x256
+is
+.CW destroy() Ns 's
+.CW freetype(t)
+call, reached from
+.CW OP(cvtac) Ns 's
+.CW destroy(*dp) .
+.PP
+The accounting says this cannot happen without an over-release, and
+that was checked rather than assumed.
+.CW heaparray()
+and
+.CW heap()
+each do one
+.CW AINC
+per object created, and every one of the six sites that sets
+.CW "h->t = &Tarray"
+increments too \(em five of them spell it
+.CW AINC(&h->t->ref) ,
+which is why a search for
+.CW AINC(&Tarray.ref)
+appears to find missing increments and does not.  Creation is 1:1 with
+destruction, so
+.CW Tarray.ref
+is exactly one more than the number of live
+.CW Array
+objects, and reaching zero means Arrays were destroyed more often than
+they were created.  That is the double free again, confirmed by a
+mechanism completely independent of the pool's magic check.
+.PP
+What this does not do is name the extra
+.CW destroy() .
+.CW Tarray.ref
+is an aggregate over every Array in the system, so the stack above is
+where the count happened to reach zero, not where the surplus release
+was.  It narrows the object kind and proves the imbalance; it does not
+locate it.
