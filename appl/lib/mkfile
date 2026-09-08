@@ -57,6 +57,7 @@ TARG=\
 	fsproto.dis\
 	hash.dis\
 	hidboot.dis\
+	hidreport.dis\
 	html.dis\
 	imageremap.dis\
 	inflate.dis\

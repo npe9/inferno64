@@ -175,6 +175,31 @@ rebond = '--rebond' in sys.argv
 # is a fixed layout, which is the whole reason it exists.
 hid = '--hid' in sys.argv
 
+# --hidreport: the peripheral is a keyboard and a mouse over GATT
+# again, but in the report protocol.  There is no Protocol Mode
+# characteristic and there are no boot reports -- a HOGP device only
+# has to have Protocol Mode if it supports boot -- so the host cannot
+# ask for the fixed layout and has to read the report map and work out
+# where the fields are.  The mouse report is deliberately four bytes
+# rather than the boot protocol's three, with a wheel on the end, so a
+# host that assumed the boot layout would be reading the wrong bytes
+# and could not be told from one that had parsed the map.
+hidreport = '--hidreport' in sys.argv
+
+# --hidswap: with --hidreport, tell the two Report Reference
+# descriptors the wrong way round -- the mouse characteristic says
+# report 2 and the keyboard says report 1 -- while sending exactly
+# what --hidreport sends.  A host that reads the descriptors then has
+# the keyboard and the pointer swapped and produces nothing; a host
+# that ignored them and guessed by order would not notice, which is
+# what makes this the control for reading them at all.
+hidswap = '--hidswap' in sys.argv
+
+# --hidnomap: with --hidreport, serve an empty Report Map.  There is
+# then nothing to say what any report contains, and a host that had
+# quietly assumed a layout would carry on regardless.
+hidnomap = '--hidnomap' in sys.argv
+
 # --h5: frame everything in H5, the three-wire transport, instead of
 # H4.  SLIP delimiters and escapes, a four byte header with sequence
 # and acknowledgement numbers, and the sync/configure handshake before
@@ -411,6 +436,98 @@ HIDVALUES = {
 }
 HIDDESCS = [(0x0085, 0x2902), (0x0088, 0x2902)]
 
+#
+# Human Interface Device, report protocol.  A report map, two Report
+# characteristics, and the Report Reference descriptor on each that
+# says which report id it carries and that it is an input report.
+#
+# The map is a real HID report descriptor and is written out item by
+# item, because what it says is the whole of what the host has to work
+# from.  It is also longer than this bench's ATT MTU, so reading it
+# takes a Read Blob as it does on a real device.
+#
+REPORTMAP = bytes([
+    # a mouse, report id 1: three button bits, five of padding, and
+    # three signed bytes -- x, y and a wheel the boot protocol has no
+    # room for
+    0x05, 0x01,             # Usage Page (Generic Desktop)
+    0x09, 0x02,             # Usage (Mouse)
+    0xa1, 0x01,             # Collection (Application)
+    0x85, 0x01,             #   Report ID (1)
+    0x09, 0x01,             #   Usage (Pointer)
+    0xa1, 0x00,             #   Collection (Physical)
+    0x05, 0x09,             #     Usage Page (Button)
+    0x19, 0x01,             #     Usage Minimum (1)
+    0x29, 0x03,             #     Usage Maximum (3)
+    0x15, 0x00,             #     Logical Minimum (0)
+    0x25, 0x01,             #     Logical Maximum (1)
+    0x75, 0x01,             #     Report Size (1)
+    0x95, 0x03,             #     Report Count (3)
+    0x81, 0x02,             #     Input (Data, Variable, Absolute)
+    0x95, 0x01,             #     Report Count (1)
+    0x75, 0x05,             #     Report Size (5)
+    0x81, 0x01,             #     Input (Constant)
+    0x05, 0x01,             #     Usage Page (Generic Desktop)
+    0x09, 0x30,             #     Usage (X)
+    0x09, 0x31,             #     Usage (Y)
+    0x09, 0x38,             #     Usage (Wheel)
+    0x15, 0x81,             #     Logical Minimum (-127)
+    0x25, 0x7f,             #     Logical Maximum (127)
+    0x75, 0x08,             #     Report Size (8)
+    0x95, 0x03,             #     Report Count (3)
+    0x81, 0x06,             #     Input (Data, Variable, Relative)
+    0xc0,                   #   End Collection
+    0xc0,                   # End Collection
+    # a keyboard, report id 2: eight modifier bits, a reserved byte,
+    # and six key codes.  The mouse is first and has the lower id on
+    # purpose: nothing but the map and the Report Reference
+    # descriptors says which of the two Report characteristics is
+    # which, so a host that assumed the first one was the keyboard
+    # would have them exactly the wrong way round.
+    0x05, 0x01,             # Usage Page (Generic Desktop)
+    0x09, 0x06,             # Usage (Keyboard)
+    0xa1, 0x01,             # Collection (Application)
+    0x85, 0x02,             #   Report ID (2)
+    0x05, 0x07,             #   Usage Page (Keyboard/Keypad)
+    0x19, 0xe0,             #   Usage Minimum (Left Control)
+    0x29, 0xe7,             #   Usage Maximum (Right GUI)
+    0x15, 0x00,             #   Logical Minimum (0)
+    0x25, 0x01,             #   Logical Maximum (1)
+    0x75, 0x01,             #   Report Size (1)
+    0x95, 0x08,             #   Report Count (8)
+    0x81, 0x02,             #   Input (Data, Variable, Absolute)
+    0x95, 0x01,             #   Report Count (1)
+    0x75, 0x08,             #   Report Size (8)
+    0x81, 0x01,             #   Input (Constant)
+    0x05, 0x07,             #   Usage Page (Keyboard/Keypad)
+    0x19, 0x00,             #   Usage Minimum (0)
+    0x29, 0xff,             #   Usage Maximum (255)
+    0x15, 0x00,             #   Logical Minimum (0)
+    0x26, 0xff, 0x00,       #   Logical Maximum (255)
+    0x75, 0x08,             #   Report Size (8)
+    0x95, 0x06,             #   Report Count (6)
+    0x81, 0x00,             #   Input (Data, Array)
+    0xc0,                   # End Collection
+])
+
+HIDRSVC = (0x0080, 0x008c, 0x1812)
+HIDRCHARS = [
+    (0x0081, 0x02, 0x0082, 0x2a4b),   # report map: read
+    (0x0083, 0x12, 0x0084, 0x2a4d),   # input report: read, notify
+    (0x0087, 0x12, 0x0088, 0x2a4d),   # input report: read, notify
+    (0x008b, 0x02, 0x008c, 0x2a4a),   # HID information: read
+]
+HIDRDESCS = [(0x0085, 0x2902), (0x0086, 0x2908),
+             (0x0089, 0x2902), (0x008a, 0x2908)]
+HIDRVALUES = {
+    0x0082: REPORTMAP,
+    0x0084: bytes(4),                 # the mouse, four bytes
+    0x0086: bytes([0x01, 0x01]),      # report id 1, input
+    0x0088: bytes(8),                 # the keyboard, eight
+    0x008a: bytes([0x02, 0x01]),      # report id 2, input
+    0x008c: bytes([0x11, 0x01, 0x00, 0x02]),   # HID 1.11, no country
+}
+
 # include declarations: (handle, included start, included end, uuid or
 # None for a 128 bit one the declaration may not carry)
 INCLUDES = [
@@ -457,6 +574,21 @@ if hid:
     DESCS.extend(HIDDESCS)
     for h, nil in HIDDESCS:
         CCCD[h] = 0
+
+if hidswap:
+    HIDRVALUES[0x0086] = bytes([0x02, 0x01])
+    HIDRVALUES[0x008a] = bytes([0x01, 0x01])
+if hidnomap:
+    HIDRVALUES[0x0082] = b''
+if hidreport:
+    SVC.append(HIDRSVC)
+    CHARS.extend(HIDRCHARS)
+    VALUES.update(HIDRVALUES)
+    DESCS.extend(HIDRDESCS)
+    # only the two client configurations are CCCDs; the Report
+    # Reference descriptors are read like any other value
+    CCCD[0x0085] = 0
+    CCCD[0x0089] = 0
 
 class Model:
     def __init__(self, conn):
@@ -1349,6 +1481,8 @@ class Model:
                                      daemon=True).start()
                 elif hid and h in (0x0085, 0x0088):
                     self.hid_maybe_start()
+                elif hidreport and h in (0x0085, 0x0089):
+                    self.hidr_maybe_start()
                 return
             if h in VALUES:
                 VALUES[h] = v
@@ -1526,6 +1660,45 @@ class Model:
         for dx, dy, b in ((5, 7, 0x01), (3, 2, 0x00)):
             self.acl(4, bytes([0x1b]) + struct.pack('<H', 0x0087)
                      + bytes([b, dx & 0xff, dy & 0xff]))
+            time.sleep(0.2)
+        print('bthci: the keyboard and the mouse have reported', flush=True)
+
+    #
+    # the same keystrokes and the same movement, in the report
+    # protocol.  Nothing waits for a protocol mode here: there is no
+    # Protocol Mode characteristic, so subscribing to both reports is
+    # the whole of what the host has to do before a device starts
+    # sending.
+    #
+    def hidr_maybe_start(self):
+        if not (CCCD.get(0x0085, 0) & 1) or not (CCCD.get(0x0089, 0) & 1):
+            return
+        if getattr(self, 'hidrgoing', False):
+            return
+        self.hidrgoing = True
+        threading.Thread(target=self.hidr_type, daemon=True).start()
+
+    def hidr_type(self):
+        time.sleep(0.5)
+        kbd = 0x0088
+        mouse = 0x0084
+        for k in (0x05, 0x17, 0x0b):          # b, t, h
+            self.acl(4, bytes([0x1b]) + struct.pack('<H', kbd)
+                     + bytes([0, 0, k, 0, 0, 0, 0, 0]))
+            time.sleep(0.2)
+            self.acl(4, bytes([0x1b]) + struct.pack('<H', kbd) + bytes(8))
+            time.sleep(0.2)
+        # left shift with a, held for three reports, as in the boot phase
+        for _ in range(3):
+            self.acl(4, bytes([0x1b]) + struct.pack('<H', kbd)
+                     + bytes([0x02, 0, 0x04, 0, 0, 0, 0, 0]))
+            time.sleep(0.2)
+        self.acl(4, bytes([0x1b]) + struct.pack('<H', kbd) + bytes(8))
+        time.sleep(0.3)
+        # and the mouse, four bytes: buttons, x, y, wheel
+        for dx, dy, b in ((5, 7, 0x01), (3, 2, 0x00)):
+            self.acl(4, bytes([0x1b]) + struct.pack('<H', mouse)
+                     + bytes([b, dx & 0xff, dy & 0xff, 0]))
             time.sleep(0.2)
         print('bthci: the keyboard and the mouse have reported', flush=True)
 

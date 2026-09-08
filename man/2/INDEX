@@ -557,3 +557,5 @@ h4 bt
 hci bt
 l2cap bt
 smp bt
+hidreport hidreport
+hidboot hidboot

@@ -272,6 +272,58 @@ that will not do boot protocol is found and then left alone, exactly
 as
 .CW usbd
 leaves one.
+.PP
+The report protocol is done too.  A device with no boot report has its
+layout read off it \(em and it is the boot reports that are looked for
+first, not Protocol Mode: writing 0 to the Protocol Mode of a device
+that has no boot report would put it in a mode it cannot report in.
+So:
+.CW 2a4b
+is a HID report descriptor and
+.CW appl/lib/hidreport.b
+walks it into a list of reports, each a list of fields with a usage, a
+bit offset, a width and a count; each
+.CW 2a4d
+Report characteristic has a
+.CW 2908
+Report Reference descriptor beside it saying which report id it
+carries.  Putting the two together is the only thing that says which
+report is the keyboard and which the pointer \(em every Report
+characteristic has the same UUID \(em and where in each report the
+modifiers, the key codes, the buttons and the axes are.  The library
+is shared with
+.CW usbd
+for the same reason
+.CW hidboot
+is, though
+.CW usbd
+does not use it yet: it still finds a boot interface or leaves the
+device alone.
+.PP
+Two things in
+.CW btfs
+had to change for it.  A service may now hold the same UUID twice, so
+when one does, every characteristic with that UUID is named
+.CW uuid.hhhh
+after its value handle rather than two files sharing one name and one
+of them being unreachable; and a characteristic's descriptors, other
+than the client configuration, are now files beside it, because a
+Report Reference is a value a client has to read.
+.PP
+The bench runs the whole HID phase again in the report protocol, with
+the same assertions: the same keystrokes, the same movement.  The
+model's device gives the mouse the lower report id and puts it first,
+so a host that guessed by order would have the two backwards.  The
+control is
+.CW --hidswap ,
+which tells the two Report Reference descriptors the wrong way round
+while sending exactly the same bytes: the phase must fail, and it
+does, with the keyboard's reports arriving as pointer motion.  Run by
+hand,
+.CW --hidnomap
+serves an empty report map and
+.CW bthid
+finds nothing to read, which is the other half of the same question.
 .IP 2.
 .B "Bluetooth Classic, at all."
 Nothing of it exists.  Inquiry, remote name requests, BR/EDR

@@ -121,6 +121,15 @@
 #		is unbounded memory, not leniency
 #	cocbig	a peer announcing an SDU longer than the MTU this side
 #		asked for: same
+#	hidreport	first the report descriptor parser against the boot
+#		keyboard descriptor from appendix B of the HID
+#		specification, which must come out as the boot layout;
+#		then the same device in the report protocol: no boot
+#		reports and two Report characteristics with one UUID
+#		between them, so the report map and the Report
+#		Reference descriptors are the only thing that says
+#		which is the keyboard.  The mouse has the lower id and
+#		comes first, so guessing gets it backwards
 #	stalefid	a characteristic file kept open across a disconnect
 #		and a reconnect: the old name must be gone.  What the
 #		fix for it changes is not visible from inside the guest
@@ -430,6 +439,47 @@ if [ "$n" != 1 ]; then
 	exit 1
 fi
 echo "the host asked for the boot protocol before reading a report"
+#
+# The same device in the report protocol: no Protocol Mode
+# characteristic, no boot reports, two Report characteristics with the
+# same UUID, and nothing but the report map and the Report Reference
+# descriptors to say which is which.  The mouse has the lower report
+# id and comes first, so a host that guessed would have them the wrong
+# way round; the phase asserts the same keystrokes and the same
+# movement as the boot one, and then which report each was.
+#
+run hidreport --hidreport hidreport
+if ! grep -q 'parses to the boot layout' "$OUT/bench-hidreport.out"; then
+	echo "=== phase hidreport ==="
+	echo "BENCH FAIL (hidreport): the report descriptor parser disagrees with the boot layout"
+	exit 1
+fi
+if ! grep -q 'is keyboard report 2' "$OUT/bench-hidreport.out" \
+|| ! grep -q 'is pointer report 1' "$OUT/bench-hidreport.out"; then
+	echo "=== phase hidreport ==="
+	echo "BENCH FAIL (hidreport): the reports were not identified from the map"
+	exit 1
+fi
+if grep -q 'selected boot protocol' "$OUT/bthci-hidreport.log"; then
+	echo "BENCH FAIL (hidreport): the host selected a boot protocol the device has not got"
+	exit 1
+fi
+#
+# The control.  The same device, sending the same bytes, with its two
+# Report Reference descriptors telling the wrong way round: a host
+# that reads them has the keyboard and the pointer swapped and
+# produces nothing, and one that ignored them and guessed by order
+# would pass this and the phase above alike.
+#
+if run hidswap "--hidreport --hidswap" hidreport; then
+	echo "BENCH FAIL (hidswap): swapped report references changed nothing"
+	exit 1
+fi
+if ! grep -q '2a4d.0088 is pointer report 1' "$OUT/bench-hidswap.out"; then
+	echo "BENCH FAIL (hidswap): the phase failed for some other reason"
+	exit 1
+fi
+echo "and the report references are what said which was which"
 run paired "--peripheral --pairin --rebond" paired
 #
 # and what the model saw from the other side: the confirm this stack

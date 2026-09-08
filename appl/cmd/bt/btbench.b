@@ -25,6 +25,9 @@ include "sys.m";
 	sys: Sys;
 include "draw.m";
 include "sh.m";
+include "hidreport.m";
+	hidreport: Hidreport;
+	Report: import hidreport;
 include "bt.m";
 	bt: Bt;
 	smp: Smp;
@@ -299,6 +302,11 @@ init(nil: ref Draw->Context, argv: list of string)
 	# says it only in its report map.
 	#
 	"hid" =>
+		hid();
+		return;
+	"hidreport" =>
+		if(!checkmap())
+			return;
 		hid();
 		return;
 	"cocrefuse" =>
@@ -1276,6 +1284,123 @@ badprepare(dev: string, e: string)
 # from getting a directory named by the identity rather than by the
 # address of the minute.
 #
+#
+# The report descriptor parser against a descriptor that is not this
+# bench's: the boot keyboard descriptor out of appendix B of the HID
+# specification, which every boot protocol keyboard sends.  What it
+# describes is the boot layout, and the boot layout is known
+# independently -- eight modifier bits, a reserved byte, six key codes,
+# and five LED bits going the other way -- so a parser that agrees with
+# it is a parser that agrees with something written down somewhere
+# else.  It also has no report ids in it, and an input and an output
+# report both numbered 0, neither of which the bench's own device has.
+#
+bootkbdmap(): array of byte
+{
+	return array[] of {
+	byte 16r05, byte 16r01,		# Usage Page (Generic Desktop)
+	byte 16r09, byte 16r06,		# Usage (Keyboard)
+	byte 16ra1, byte 16r01,		# Collection (Application)
+	byte 16r05, byte 16r07,		#   Usage Page (Key Codes)
+	byte 16r19, byte 16re0,		#   Usage Minimum (224)
+	byte 16r29, byte 16re7,		#   Usage Maximum (231)
+	byte 16r15, byte 16r00,		#   Logical Minimum (0)
+	byte 16r25, byte 16r01,		#   Logical Maximum (1)
+	byte 16r75, byte 16r01,		#   Report Size (1)
+	byte 16r95, byte 16r08,		#   Report Count (8)
+	byte 16r81, byte 16r02,		#   Input (Data, Variable, Absolute)
+	byte 16r95, byte 16r01,		#   Report Count (1)
+	byte 16r75, byte 16r08,		#   Report Size (8)
+	byte 16r81, byte 16r01,		#   Input (Constant)
+	byte 16r95, byte 16r05,		#   Report Count (5)
+	byte 16r75, byte 16r01,		#   Report Size (1)
+	byte 16r05, byte 16r08,		#   Usage Page (LEDs)
+	byte 16r19, byte 16r01,		#   Usage Minimum (1)
+	byte 16r29, byte 16r05,		#   Usage Maximum (5)
+	byte 16r91, byte 16r02,		#   Output (Data, Variable, Absolute)
+	byte 16r95, byte 16r01,		#   Report Count (1)
+	byte 16r75, byte 16r03,		#   Report Size (3)
+	byte 16r91, byte 16r01,		#   Output (Constant)
+	byte 16r95, byte 16r06,		#   Report Count (6)
+	byte 16r75, byte 16r08,		#   Report Size (8)
+	byte 16r15, byte 16r00,		#   Logical Minimum (0)
+	byte 16r25, byte 16r65,		#   Logical Maximum (101)
+	byte 16r05, byte 16r07,		#   Usage Page (Key Codes)
+	byte 16r19, byte 16r00,		#   Usage Minimum (0)
+	byte 16r29, byte 16r65,		#   Usage Maximum (101)
+	byte 16r81, byte 16r00,		#   Input (Data, Array)
+	byte 16rc0,			# End Collection
+	};
+}
+
+checkmap(): int
+{
+	hidreport = load Hidreport Hidreport->PATH;
+	if(hidreport == nil){
+		sys->print("BT: FAILED: cannot load %s: %r\n", Hidreport->PATH);
+		sys->print("BT: done\n");
+		return 0;
+	}
+	hidreport->init();
+	(rl, e) := hidreport->parse(bootkbdmap());
+	if(e != nil){
+		sys->print("BT: FAILED: the boot keyboard descriptor: %s\n", e);
+		sys->print("BT: done\n");
+		return 0;
+	}
+	ok := 1;
+	ir := hidreport->report(rl, 0, Hidreport->Input);
+	orep := hidreport->report(rl, 0, Hidreport->Output);
+	if(ir == nil || orep == nil){
+		sys->print("BT: FAILED: the descriptor has %d reports, wanted an input and an output\n",
+			len rl);
+		sys->print("BT: done\n");
+		return 0;
+	}
+	# eight modifier bits, a reserved byte, six key codes
+	if(ir.bits != 64){
+		sys->print("BT: FAILED: the boot keyboard report is %d bits, wanted 64\n", ir.bits);
+		ok = 0;
+	}
+	if(orep.bits != 8){
+		sys->print("BT: FAILED: the LED report is %d bits, wanted 8\n", orep.bits);
+		ok = 0;
+	}
+	m := ir.find(Hidreport->Pkeyboard, 16re0);
+	if(m == nil || m.off != 0 || m.size != 1 || m.count != 8){
+		sys->print("BT: FAILED: the modifiers are not eight bits at the start\n");
+		ok = 0;
+	}
+	k := ir.find(Hidreport->Pkeyboard, 4);		# the usage code for a
+	if(k == nil || k.off != 16 || k.size != 8 || k.count != 6){
+		sys->print("BT: FAILED: the key codes are not six bytes at byte two\n");
+		ok = 0;
+	}
+	l := orep.find(16r08, 1);			# Num Lock, on the LED page
+	if(l == nil || l.off != 0 || l.size != 1 || l.count != 5){
+		sys->print("BT: FAILED: the LEDs are not five bits at the start\n");
+		ok = 0;
+	}
+	#
+	# and read a report with it: left shift and the code for a, which
+	# is what the phase below sends and what the boot protocol says
+	# means a capital A
+	#
+	rep := array[] of {byte 16r02, byte 0, byte 4, byte 0, byte 0, byte 0, byte 0, byte 0};
+	(mod, keys) := hidreport->keys(ir, rep);
+	if(mod != 16r02 || len keys != 1 || keys[0] != 4){
+		sys->print("BT: FAILED: a boot report read through the map gives mod %#ux and %d keys\n",
+			mod, len keys);
+		ok = 0;
+	}
+	if(!ok){
+		sys->print("BT: done\n");
+		return 0;
+	}
+	sys->print("BT: the boot keyboard descriptor parses to the boot layout\n");
+	return 1;
+}
+
 #
 # btkeyfs(4) by itself.  Nothing here is a radio: it is the store, and
 # what is checked is that a bond written to it comes back, that the

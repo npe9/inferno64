@@ -466,6 +466,15 @@ Gatt: module
 		props:		int;
 		uuid:		string;
 		cccd:		int;	# 0 if it has none
+		#
+		# every descriptor between the value and the end of the
+		# characteristic, as (handle, uuid), in handle order.
+		# The client configuration is in here too, and cccd
+		# above is the same handle: it is called out because
+		# subscribing is what every client does and reading a
+		# descriptor is what almost none do.
+		#
+		descs:		list of (int, string);
 	};
 
 	init:	fn(bt: Bt, att: Att): string;

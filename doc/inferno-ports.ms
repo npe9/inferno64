@@ -18959,7 +18959,14 @@ serves the name space;
 serves the bonds, so that a key outlives the
 .CW btfs
 that made it and is not readable by everything that can read a radio;
+.CW appl/lib/hidboot.b
 and
+.CW appl/lib/hidreport.b
+turn HID reports into keys and motion, the first for the boot
+protocol's fixed layout and the second by walking a device's own
+report descriptor, and both are shared with
+.CW usbd
+because above the transport the reports are identical; and
 .CW appl/cmd/bt/btbench.b
 drives the whole of it through files and says what happened.
 .CW btfs (4)

@@ -168,7 +168,7 @@ chars(s: ref Sess, svc: ref Service): (list of ref Char, string)
 			props := int p[o+2];
 			vh := bt->get16(p, o+3);
 			u := bt->uuid(p, o+5, l-5);
-			r = ref Char(dh, vh, 0, props, u, 0) :: r;
+			r = ref Char(dh, vh, 0, props, u, 0, nil) :: r;
 			last = dh;
 		}
 		if(last == 0 || last >= svc.end)
@@ -230,12 +230,19 @@ descriptors(s: ref Sess, c: ref Char): string
 			u := bt->uuid(p, o+2, ul);
 			if(u == "2902")
 				c.cccd = h;
+			# built head first and turned round below, so
+			# what a caller sees is handle order
+			c.descs = (h, u) :: c.descs;
 			last = h;
 		}
 		if(last == 0 || last >= c.ehandle)
 			break;
 		start = last + 1;
 	}
+	dl: list of (int, string);
+	for(l := c.descs; l != nil; l = tl l)
+		dl = hd l :: dl;
+	c.descs = dl;
 	return nil;
 }
 

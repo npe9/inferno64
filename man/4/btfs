@@ -308,6 +308,20 @@ nothing is arriving and age says nothing about what is there.
 .B /net/bt/\fIN\fP/remote/\fIADDR\fP/gatt/
 Appears when the device is connected: a directory per service, named
 by its UUID, holding a file per characteristic, named by its UUID.
+A service may hold the same UUID twice \- HID over GATT gives every
+report the same one \- and then every characteristic with that UUID is
+named
+.BI uuid . hhhh
+instead, where
+.I hhhh
+is its value handle in four hexadecimal digits; a UUID that occurs
+once keeps its bare name.  A characteristic's descriptors, other than
+the client configuration, are files beside it named
+.IB name . uuid \fR;
+the client configuration is not one of them, since it is not a value
+to read but the subscription, and the
+.B .notify
+file is how that is offered.
 If the device has a Service Changed characteristic it is subscribed
 to, and an indication on it rebuilds this whole directory on the same
 link \- so a device that rearranges its database is followed rather
@@ -451,28 +465,47 @@ and motion on
 .BR /dev/pointer .
 It takes the first connected device with a
 .B 1812
-service, or the device directory named on its command line, writes 0
-to the Protocol Mode characteristic to ask for the boot protocol, and
-reads the boot keyboard and boot mouse input reports off their
+service, or the device directory named on its command line, and looks
+for the boot keyboard and boot mouse input reports.  If either is
+there it writes 0 to the Protocol Mode characteristic to ask for the
+boot protocol and reads the reports off their
 .B .notify
-files.
+files.  The reports are what is looked at first and the write only
+follows finding one: whether a device has a boot protocol is a
+question about its boot reports, and writing 0 to a device that has
+none would put it in a mode it cannot report in.
 .PP
 There is no Bluetooth in it: the device is a directory, a
 subscription is an open, and a report is a read.  The translation of
 reports to keys and motion is
-.IR hidboot ,
-shared with
+.IR hidboot (2)
+and
+.IR hidreport (2),
+both shared with
 .IR usbd (1),
 because above the transport the reports are identical.
 .PP
 A boot report is the state of the keyboard and not an event \- the
 keys that are down, in no order \- so a key that is held appears in
 every report until it is let go, and only keys that were not down
-before are typed.  What is not done is the report protocol, which
-means parsing the report map: a device that will not do boot protocol
-is found and then left alone, exactly as
-.IR usbd (1)
-leaves one.
+before are typed.
+.PP
+A device with no Protocol Mode characteristic, or with no boot report
+behind it, speaks only the report protocol, and then the layout is
+read off the device.  The
+.B 2a4b
+Report Map characteristic is a HID report descriptor; each
+.B 2a4d
+Report characteristic has a
+.B 2908
+Report Reference descriptor beside it saying which report id it
+carries and whether it is an input.  Putting the two together is what
+says which report is the keyboard and which the pointer, and where in
+each report the modifiers, the key codes, the buttons and the axes
+are.  It is not an optimisation: every Report characteristic has the
+same UUID, so nothing else distinguishes them, and a device is free to
+give the mouse the lower id.  A report that is neither a keyboard nor
+a pointer is left alone.
 .PP
 .B -k
 and
@@ -501,6 +534,8 @@ and inside the native kernels.
 .SH SEE ALSO
 .IR bt (2),
 .IR btkeyfs (4),
+.IR hidboot (2),
+.IR hidreport (2),
 .IR dial (2),
 .IR devuart (3),
 .IR devusb (3),

@@ -68,7 +68,7 @@ Btfs: module
 
 Kroot, Kctlr, Kaddr, Kver, Kctl, Kstate, Kscan, Kremotes, Kbonds, Kdident, Kinc,
 	Kdev, Kdaddr, Kdtype, Kdrssi, Kdname, Kdadv, Kdstate, Kdctl,
-	Kdgatt, Ksvc, Kchar, Kcnotify, Kdl2cap, Kcoc,
+	Kdgatt, Ksvc, Kchar, Kcnotify, Kdesc, Kdl2cap, Kcoc,
 	Klocal, Klsvc, Klchar: con iota;
 
 Qroot:	con big 0;
@@ -132,6 +132,7 @@ Node: adt {
 	text:	string;	# what a Kinc file reads as
 	coc:	ref Coc;
 	lc:	ref Lchar;
+	dh:	int;	# the handle a Kdesc file reads
 };
 
 #
@@ -311,7 +312,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	nodes = array[64] of ref Node;
 	# node 0 is the root of the served tree, so the first name
 	# created below does not take its qid
-	nodes[0] = ref Node(Qroot, Kroot, nil, nil, nil, ".", nil, nil, nil);
+	nodes[0] = ref Node(Qroot, Kroot, nil, nil, nil, ".", nil, nil, nil, 0);
 	nextq = 1;
 
 	navops: chan of ref Navop;
@@ -444,7 +445,7 @@ newnode(kind: int, r: ref Radio, d: ref Dev, cn: ref Cnode, name: string): big
 		nodes = a;
 	}
 	q := big nextq;
-	nodes[nextq] = ref Node(q, kind, r, d, cn, name, nil, nil, nil);
+	nodes[nextq] = ref Node(q, kind, r, d, cn, name, nil, nil, nil, 0);
 	nextq++;
 	return q;
 }
@@ -943,6 +944,8 @@ doread(m: ref Tmsg.Read)
 		srv.reply(styxservers->readstr(m, devstate(n.dev)));
 	Kchar =>
 		spawn readchar(m, n);
+	Kdesc =>
+		spawn readdesc(m, n);
 	Kcnotify =>
 		spawn readnotify(m, n);
 	Kcoc =>
@@ -1059,6 +1062,29 @@ readchar(m: ref Tmsg.Read, n: ref Node)
 		return;
 	}
 	(v, e) := gatt->read(d.sess, n.cn.c.vhandle);
+	d.lock <-= 1;
+	if(e != nil){
+		srv.reply(ref Rmsg.Error(m.tag, e));
+		return;
+	}
+	srv.reply(styxservers->readbytes(m, v));
+}
+
+#
+# a descriptor.  It is read off the device by handle rather than
+# through a Char, because a descriptor is not a characteristic: it has
+# no properties, no notification and no value handle of its own.
+#
+readdesc(m: ref Tmsg.Read, n: ref Node)
+{
+	d := n.dev;
+	<-d.lock;
+	if(d.sess == nil){
+		d.lock <-= 1;
+		srv.reply(ref Rmsg.Error(m.tag, "not connected"));
+		return;
+	}
+	(v, e) := gatt->read(d.sess, n.dh);
 	d.lock <-= 1;
 	if(e != nil){
 		srv.reply(ref Rmsg.Error(m.tag, e));
@@ -1400,9 +1426,36 @@ discover(d: ref Dev): string
 			mode := 8r444;
 			if(ch.props & (Gatt->Pwrite|Gatt->Pwritenoresp))
 				mode = 8r666;
-			cn.q = mkfd(sq, ch.uuid, Kchar, mode, d, cn);
+			#
+			# A service may hold the same UUID twice: HID over
+			# GATT gives every report the same one and tells
+			# them apart by a descriptor.  Two files of one
+			# name is one file a client can reach and one it
+			# cannot, so when a UUID occurs more than once
+			# every one of them carries its value handle.  A
+			# UUID that occurs once keeps its bare name, which
+			# is what every name in this tree already is.
+			#
+			name := ch.uuid;
+			if(dups(cs, ch.uuid) > 1)
+				name = sprint("%s.%4.4ux", ch.uuid, ch.vhandle);
+			cn.q = mkfd(sq, name, Kchar, mode, d, cn);
 			if(ch.props & (Gatt->Pnotify|Gatt->Pindicate))
-				cn.nq = mkfd(sq, ch.uuid + ".notify", Kcnotify, 8r444, d, cn);
+				cn.nq = mkfd(sq, name + ".notify", Kcnotify, 8r444, d, cn);
+			#
+			# and the descriptors, each named after the
+			# characteristic it belongs to.  The client
+			# configuration is left out: it is not a value to
+			# be read, it is the subscription, and the .notify
+			# file above is how this tree offers that.
+			#
+			for(desl := ch.descs; desl != nil; desl = tl desl){
+				(dh, du) := hd desl;
+				if(du == "2902")
+					continue;
+				dq := mkfd(sq, name + "." + du, Kdesc, 8r444, d, nil);
+				nodes[int dq].dh = dh;
+			}
 			d.chars = cn :: d.chars;
 			#
 			# the device's own way of saying it has moved
@@ -1431,6 +1484,18 @@ discover(d: ref Dev): string
 		}
 	}
 	return nil;
+}
+
+#
+# how many characteristics of this service carry that UUID
+#
+dups(cs: list of ref Char, u: string): int
+{
+	n := 0;
+	for(; cs != nil; cs = tl cs)
+		if((hd cs).uuid == u)
+			n++;
+	return n;
 }
 
 #

@@ -1,0 +1,65 @@
+.TH HIDBOOT 2
+.SH NAME
+hidboot \- the HID boot protocol
+.SH SYNOPSIS
+.EX
+include "hidboot.m";
+hidboot := load Hidboot Hidboot->PATH;
+
+init:    fn();
+keysym:  fn(k, mod: int): string;
+keysof:  fn(rep: array of byte): array of int;
+held:    fn(keys: array of int, k: int): int;
+mouse:   fn(rep: array of byte): (int, int, int);
+.EE
+.SH DESCRIPTION
+.B Hidboot
+reads the HID boot protocol: the small fixed subset of HID that a
+machine's own firmware drives before any driver is loaded.  Its
+keyboard report is eight bytes and its mouse report is three, with a
+layout that is the same on every device that claims to speak it, so
+nothing has to be read off the device \- which is the whole reason the
+boot protocol exists.
+.PP
+.B Init
+must be called before anything else.
+.PP
+.BI keysof( rep )
+is the key codes in an eight byte keyboard report, in order, with the
+empty slots and the rollover code a keyboard sends when too many keys
+are down left out.
+.PP
+A boot report is the state of the keyboard and not an event: the keys
+that are down, in no particular order.  A key that is held appears in
+every report until it is let go, so a caller keeps the previous
+report and types only what was not down before.
+.BI held( keys ,\  k )
+is what asks that question.
+.PP
+.BI keysym( k ,\  mod )
+is what key code
+.I k
+means with modifier byte
+.I mod
+\- the text to write to
+.B /dev/keyboard
+\- or nil for a key this does not map: caps lock, the function keys
+and the arrows, which need more than a character each.  The table is
+the US layout, which is what the boot protocol assumes: a device that
+speaks it reports positions, and what a position means is the host's
+business.
+.PP
+.BI mouse( rep )
+is a three byte mouse report: the movement, and then the buttons in
+the order
+.B /dev/pointer
+wants them, which is not the order HID reports them in.  The movement
+is a change and not a position, so a caller adds it up.
+.SH SOURCE
+.B /appl/lib/hidboot.b
+.SH SEE ALSO
+.IR hidreport (2),
+.IR btfs (4),
+.IR usbd (1)
+.SH BUGS
+The keyboard table is the US layout and nothing selects another.
