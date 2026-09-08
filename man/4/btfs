@@ -934,10 +934,22 @@ transport the model uses \(em so the controller, the link layer, the
 host, the SMP and the GATT server are all code this tree did not
 write.  The
 .B btvirt
-phase is the one written for that peer;
+phase is the one written for that peer, and it covers both halves:
+scanning, connecting, discovery, a read, notifications, a long write
+and pairing on LE, then an inquiry, a page, an L2CAP channel and a
+serial port over RFCOMM on BR/EDR.  Each of the last two answers in
+upper case rather than echoing, so the reply has to have been read by
+the far end.
 .B full
 fails against it, because it ends by watching a device rotate a
-resolvable private address and this peer does not rotate one.  It
+resolvable private address and this peer does not rotate one.
+.PP
+The image carries one patch,
+.BR scripts/btvirt/bthost-rfcomm-length.patch .
+BlueZ's test host stack writes the RFCOMM header's length into the
+length indicator, which TS 07.10 defines as the information field's
+length alone; its own receiver reads the field the defined way and so
+refuses frames its own sender builds.  It
 needs Docker, which is why it is not part of
 .BR btbench.sh .
 .PP

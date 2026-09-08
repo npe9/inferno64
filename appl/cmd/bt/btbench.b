@@ -468,6 +468,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	# layer, a host and a GATT server that this tree did not write.
 	#
 	if(mode == "btvirt"){
+		btvirtclassic();
 		sys->print("BT: done\n");
 		return;
 	}
@@ -3824,4 +3825,107 @@ create(p: string)
 {
 	fd := sys->create(p, Sys->OWRITE, 8r666);
 	fd = nil;
+}
+
+#
+# The Classic half of the BlueZ phase.
+#
+# Everything above this was LE.  BlueZ's emulated controllers all go
+# in one list and an inquiry walks it, so the same peer answers an
+# inquiry as well, and bthost has an L2CAP server and an RFCOMM
+# server in it.  That is the part of this stack most worth pointing at
+# someone else's implementation: RFCOMM is TS 07.10 with a Bluetooth
+# adaptation layer, written here out of the specification, and its
+# frame check sequence, its multiplexer start-up and its credits are
+# all places where two readers can differ and both be self-consistent.
+#
+# The peer is found by inquiry rather than named, because its address
+# is btvirt's to choose and not this bench's.
+#
+Bvpsm:	con "1001";
+Bvchan:	con "1";
+
+btvirtclassic()
+{
+	if((e := writefile(mnt + "/0/ctl", "inquiry on")) != nil){
+		sys->print("BT: FAILED: inquiry on: %s\n", e);
+		return;
+	}
+	for(i := 0; i < 40; i++){
+		sys->sleep(500);
+		if(hasstr(readfile(mnt + "/0/state"), "inquiry off"))
+			break;
+	}
+	addr := "";
+	for(l := lsdir(mnt + "/0/remote"); l != nil; l = tl l)
+		if(hasstr(readfile(mnt + "/0/remote/" + hd l + "/type"), "classic"))
+			addr = hd l;
+	if(addr == ""){
+		sys->print("BT: FAILED: the inquiry found no Classic device\n");
+		return;
+	}
+	sys->print("BT: inquiry found %s\n", addr);
+	dev := mnt + "/0/remote/" + addr;
+	if((e = writefile(dev + "/ctl", "connect")) != nil){
+		sys->print("BT: FAILED: connect: %s\n", e);
+		return;
+	}
+	sys->print("BT: paged %s\n", addr);
+
+	#
+	# An L2CAP channel in basic mode, and then a serial port over
+	# RFCOMM on the same link.  Both answer in upper case rather
+	# than echoing, so what comes back has to have been read by the
+	# far end: a loopback anywhere along the path would return the
+	# same bytes and fail this.
+	#
+	if((e = writefile(dev + "/ctl", "l2cap " + Bvpsm)) != nil)
+		sys->print("BT: FAILED: l2cap %s: %s\n", Bvpsm, e);
+	else
+		bvsay(dev + "/l2cap/" + Bvpsm, "a frame to bluez", "l2cap");
+
+	if((e = writefile(dev + "/ctl", "rfcomm " + Bvchan)) != nil)
+		sys->print("BT: FAILED: rfcomm %s: %s\n", Bvchan, e);
+	else
+		bvsay(dev + "/rfcomm/" + Bvchan + "/data",
+			"a serial port to bluez", "rfcomm");
+
+	writefile(dev + "/ctl", "disconnect");
+}
+
+#
+# Write a line, read the answer, and require it to be the same text in
+# upper case.
+#
+bvsay(f, what, name: string)
+{
+	fd := sys->open(f, Sys->ORDWR);
+	if(fd == nil){
+		sys->print("BT: FAILED: opening %s: %r\n", f);
+		return;
+	}
+	b := array of byte what;
+	if(sys->write(fd, b, len b) != len b){
+		sys->print("BT: FAILED: writing %s: %r\n", name);
+		return;
+	}
+	(n, rb, re) := sdu(fd, 10000);
+	if(re != nil || n <= 0){
+		sys->print("BT: FAILED: reading %s: %s\n", name, re);
+		return;
+	}
+	got := string rb[0:n];
+	want := "";
+	for(i := 0; i < len what; i++){
+		c := what[i];
+		if(c >= 'a' && c <= 'z')
+			c = c - 'a' + 'A';
+		want[len want] = c;
+	}
+	if(got != want){
+		sys->print("BT: FAILED: %s answered %q, wanted %q\n",
+			name, got, want);
+		return;
+	}
+	sys->print("BT: %s: %q came back %q\n", name, what, got);
 }

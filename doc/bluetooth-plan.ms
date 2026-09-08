@@ -936,7 +936,14 @@ subscribing writes the descriptor and three notifications arrive;
 a two hundred byte write goes out as Prepare Write and Execute Write
 and reads back whole, which is the path a bug was found in before;
 .IP \(bu
-legacy pairing completes and the link encrypts.
+legacy pairing completes and the link encrypts;
+.IP \(bu
+an inquiry finds the same peer on BR/EDR and pages it;
+.IP \(bu
+an L2CAP channel in basic mode carries a frame and the answer comes
+back in upper case;
+.IP \(bu
+a serial port over RFCOMM does the same.
 .PP
 The bond it records has an all zero long term key, and that is not a
 fault on either side:
@@ -956,6 +963,63 @@ check runs over a conversation with BlueZ as well: 129 packets, no
 expert warnings or errors, with Wireshark reading the whole SMP
 exchange and the ATT traffic.  Three implementations that do not share
 a reader now agree about those bytes.
+.PP
+The Classic half runs against it too.  Every controller btvirt makes
+goes in one list and an inquiry walks that list, so the same peer
+answers an inquiry; the phase finds it that way rather than by naming
+an address, because the address is btvirt's to choose.  It then pages
+it, opens an L2CAP channel in basic mode on a test PSM, and opens a
+serial port over RFCOMM on channel 1 \(em bthost has servers for
+both.  Each answers with the same bytes in upper case rather than
+echoing them, because an echo is a weak assertion: a loopback
+anywhere along the path passes it, and upper case has to be applied by
+whoever received it.  Both come back.
+.PP
+RFCOMM is the one most worth having.  It is TS 07.10 with a Bluetooth
+adaptation layer, written here out of the specification, and the
+multiplexer start-up, the parameter negotiation, the DLC state machine
+and the modem status exchange all now run against someone else's
+reading of the same document.  They agree.
+.PP
+The frame after them did not, and the disagreement is BlueZ's.
+.CW bthost_send_rfcomm_data
+writes
+.CW "sizeof(struct rfcomm_hdr) + len"
+into the length indicator, which TS 07.10 section 5.2.1.4 defines as
+the length of the information field alone.  Three too many: the
+address, the control and the length octet are the header, not
+information.  A 22 byte reply went out declaring 25, this stack
+refused it, and
+.CW tshark
+called the frame malformed.
+.PP
+What settles it is that BlueZ's own receiver refuses it as well.
+.CW rfcomm_uih_recv
+reads the field as the information length and drops the frame unless
+.CW "len >= hdr_len + data_len" ;
+for a frame bthost sent, that is 26 against 3 plus 25, so bthost
+cannot read back what bthost writes.  The sender and the receiver in
+one file disagree, which is why nothing here is a matter of
+interpretation: three readings \(em this stack's, Wireshark's, and
+BlueZ's own parser \(em all say the same thing about BlueZ's
+generator.  The image carries a two line patch for it,
+.CW scripts/btvirt/bthost-rfcomm-length.patch ,
+declared rather than folded into the build, and nothing else in
+BlueZ's RFCOMM is touched, because the rest of it is the point.  This
+is
+.CW emulator/bthost.c ,
+the host stack BlueZ tests with, and not the RFCOMM in the Linux
+kernel.
+.PP
+One thing found in the writing was this side's and not BlueZ's: the
+.CW status
+argument to an RFCOMM connect callback is true when the channel came
+up, not when it failed, which is the opposite of what the name
+suggests.  Reading it the other way round made a channel that opened
+perfectly well look refused, and the data hook was never installed, so
+the far end wrote into silence.  BlueZ's own
+.CW tools/rfcomm-tester.c
+ignores the argument entirely.
 .PP
 The control is the
 .CW full

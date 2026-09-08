@@ -24,6 +24,18 @@ RUN wget -q https://mirrors.edge.kernel.org/pub/linux/bluetooth/bluez-${BLUEZ}.t
 	&& tar xf bluez-${BLUEZ}.tar.xz && mv bluez-${BLUEZ} /src
 WORKDIR /src
 #
+# One patch, and it is declared rather than folded into the build:
+# bthost's RFCOMM data frames put the header length into the length
+# indicator, which TS 07.10 defines as the information field's length
+# alone.  Wireshark calls the frames malformed and the stack under
+# test refuses them.  Everything else in BlueZ's RFCOMM -- the
+# multiplexer, parameter negotiation, the DLC state machine, modem
+# status -- is left exactly as it is, because it is the point.
+#
+COPY bthost-rfcomm-length.patch /src/
+RUN patch -p1 < bthost-rfcomm-length.patch
+
+#
 # lib/bluetooth/*.h are symlinks the build makes on the way to its
 # default targets.  Naming a target directly skips that rule, so they
 # are made here instead.

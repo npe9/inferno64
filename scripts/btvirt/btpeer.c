@@ -350,6 +350,89 @@ static void make_db(void)
 	gatt_db_service_set_active(svc, true);
 }
 
+/*
+ * A BR/EDR L2CAP server and an RFCOMM server, both of which answer
+ * with the same bytes in upper case rather than echoing them.
+ *
+ * An echo is a weak assertion: a loopback anywhere along the path
+ * passes it, and this bench has already had one frame handed back to
+ * it that never reached the far end.  Upper case has to be applied by
+ * whoever received it.
+ */
+#define TESTPSM		0x1001		/* not assigned; a test PSM */
+#define RFCHAN		1
+
+static uint16_t l2cid;
+
+static void upper(uint8_t *d, const void *src, uint16_t len)
+{
+	uint16_t i;
+	const uint8_t *s = src;
+
+	for (i = 0; i < len; i++)
+		d[i] = (s[i] >= 'a' && s[i] <= 'z') ? s[i] - 32 : s[i];
+}
+
+static void l2cap_data(const void *data, uint16_t len, void *user_data)
+{
+	uint8_t buf[1024];
+
+	if (len > sizeof(buf))
+		len = sizeof(buf);
+	upper(buf, data, len);
+	printf("btpeer: l2cap %u bytes, answering in upper case\n", len);
+	fflush(stdout);
+	bthost_send_cid(host, conn_handle, l2cid, buf, len);
+}
+
+static void l2cap_conn(uint16_t handle, uint16_t cid, void *user_data)
+{
+	printf("btpeer: l2cap psm %#06x open, cid %u\n", TESTPSM, cid);
+	fflush(stdout);
+	conn_handle = handle;
+	l2cid = cid;
+	bthost_add_cid_hook(host, handle, cid, l2cap_data, NULL);
+}
+
+static void l2cap_disconn(void *user_data)
+{
+	printf("btpeer: l2cap closed\n");
+	fflush(stdout);
+}
+
+static void rfcomm_data(const void *data, uint16_t len, void *user_data)
+{
+	uint8_t buf[1024];
+
+	if (len > sizeof(buf))
+		len = sizeof(buf);
+	upper(buf, data, len);
+	printf("btpeer: rfcomm %u bytes, answering in upper case\n", len);
+	fflush(stdout);
+	bthost_send_rfcomm_data(host, conn_handle, RFCHAN, buf, len);
+}
+
+/*
+ * status is true when the channel came up, not when it failed:
+ * bthost sends the UA and then calls this with true.  Reading it the
+ * other way round -- which is the way round the name suggests --
+ * makes a channel that opened perfectly well look refused, and the
+ * data hook never gets installed, so the far end writes into silence
+ * and times out reading.  BlueZ's own tools/rfcomm-tester.c ignores
+ * the argument entirely.
+ */
+static void rfcomm_conn(uint16_t handle, uint16_t cid, void *user_data,
+								bool status)
+{
+	printf("btpeer: rfcomm channel %u %s\n", RFCHAN,
+			status ? "open" : "refused");
+	fflush(stdout);
+	if (!status)
+		return;
+	conn_handle = handle;
+	bthost_add_rfcomm_chan_hook(host, handle, RFCHAN, rfcomm_data, NULL);
+}
+
 static void connect_cb(uint16_t handle, void *user_data)
 {
 	int sv[2];
@@ -401,6 +484,18 @@ static void ready_cb(void)
 	bthost_set_adv_data(host, ad, n);
 	bthost_set_adv_enable(host, 0x01);
 	bthost_write_scan_enable(host, 0x03);	/* discoverable for BR/EDR too */
+	bthost_add_l2cap_server(host, TESTPSM, l2cap_conn, l2cap_disconn, NULL);
+	/*
+	 * RFCOMM needs both: an L2CAP server on PSM 3 to accept the
+	 * channel the multiplexer runs over, and the RFCOMM server
+	 * proper for the DLC on it.  bthost_add_rfcomm_server only
+	 * records the channel callback and registers no PSM, so
+	 * without the first line an incoming connection is refused
+	 * with "PSM not supported" and nothing says why.  BlueZ's own
+	 * tools/rfcomm-tester.c does the same two calls.
+	 */
+	bthost_add_l2cap_server(host, 0x0003, NULL, NULL, NULL);
+	bthost_add_rfcomm_server(host, RFCHAN, rfcomm_conn, NULL);
 	printf("btpeer: advertising as %s\n", advname);
 	fflush(stdout);
 }
