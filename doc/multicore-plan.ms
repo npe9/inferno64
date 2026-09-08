@@ -2241,7 +2241,7 @@ real bug, and the global
 .CW R
 would still be there.
 .NH 1
-Reading captured pcs, and a retraction
+Reading captured pcs
 .PP
 This branch's corruption captures all carried pcs nobody could read:
 .CW inm
@@ -2270,29 +2270,41 @@ and
 .CW gcdepthmax
 at offset 0, with zero bytes of the table left unconsumed.
 .PP
-Its
-.CW -c
-check matters more than its names.  A pc from
-.CW getcallerpc()
-is a return address, so it must be an instruction boundary ending in a
-call; decoding forward from the containing symbol settles it.  Six of
-the seven raw pcs this hunt recorded are not instruction boundaries at
-all, and the seventh is the return from
-.CW free() Ns 's
-indirect call to
-.CW poolfault
-\(em the reporter.  No capture names a freer.  The symbolic pcs in
-doc/inferno-ports.ms
-.CW ( destroy+703 ,
-.CW destroy+613 ,
-.CW freelist+419 ,
-.CW free+56 )
-are withdrawn, and with them the conclusion that a normal
+A correct reader was not sufficient, and the reason is the useful
+finding.  A pc means nothing except against the binary that produced
+it; this tree rebuilds constantly and its panics carry no build stamp,
+so pcs recorded in one boot were read against a later kernel in which
+the functions had moved, and resolved to confident, wrong names.
+.CW "p9sym.py -s"
+recovers the shift by finding one offset that makes every pc in a
+capture a valid call-return address \(em decisive because chance hits
+run at the call-return density, 1.87% of text bytes here.  This hunt's
+four heap.c captures all resolve at offset
+.CW +0x74 ,
+two of them to the
+.CW poolfree()
+calls in
 .CW destroy()
-exit performed the first free.  The double free itself is untouched:
-it is the pool's own magic check, and the freehist address match is
-real.  Only "by whom" was fiction.  See doc/inferno-ports.ms, "Every
-pc this hunt resolved was junk".
+and
+.CW freelist()
+exactly, which is what a freehist entry recorded by
+.CW poolfree() Ns 's
+own correctly-anchored
+.CW getcallerpc(&p)
+must be.  The earlier symbolic names in doc/inferno-ports.ms were
+wrong; the conclusion drawn from them \(em that the first free was an
+ordinary successful
+.CW destroy()
+or
+.CW freelist()
+exit, so a second independent owner held a dangling reference \(em
+stands.  One attribution moves:
+.CW freearray
+was a boundary crossing, and the pc is
+.CW freelist+0x63 .
+Two pcs remain unplaced, so
+.CW free+56
+is withdrawn.  See doc/inferno-ports.ms, "The captured pcs were right".
 .NH 1
 Ground rules
 .PP

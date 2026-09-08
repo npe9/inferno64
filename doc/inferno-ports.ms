@@ -18905,24 +18905,25 @@ GICv3 conclusion is unaffected, and it is identical on v2, so it
 predates this work \(em the init reads a block other than 0, or the
 print is wrong.
 .NH 1
-Every pc this hunt resolved was junk, and the reader was only half the reason
+The captured pcs were right; the reader and the binary were wrong
 .PP
+Every pc this hunt captured was written down unresolved, because
 .CW inm
-prints nothing for these kernels.  nm's
+prints nothing for these kernels: nm's
 .CW execsyms()
 calls
 .CW syminit()
 and returns without a message when it fails, so a kernel whose symbol
 table libmach cannot read is indistinguishable from a stripped one.
-Rather than fix that, this hunt resolved its captured pcs with two
-successive hand-written readers, and wrote their answers down:
+Two hand-written readers were used instead, and their answers \(em
 .CW destroy+703 ,
 .CW destroy+613 ,
 .CW freelist+419 ,
-.CW free+56 .
+.CW free+56
+\(em went into this document as findings.
 .PP
 .CW utils/p9sym.py
-now reads the table properly, following libmach's own
+reads the table properly, following libmach's own
 .CW syminit()
 and
 .CW decodename()
@@ -18940,9 +18941,9 @@ names are 16-bit pairs terminated
 Get either wrong and the table desyncs into names that look fine and
 cannot be falsified by inspection.  It is verified against
 .CW Inferno/amd64/ipc64
-three ways that do not merely restate each other: 24666 symbols decode
-with zero bytes of the table unconsumed (at a 32-byte header, 3 are
-left over);
+three ways that do not restate each other: 24666 symbols decode with
+zero bytes of the table unconsumed (at a 32-byte header, 3 are left
+over);
 .CW free+0x79 Ns 's
 preceding
 .CW "MOVQ $0x32d998, AX; CALL *AX"
@@ -18958,97 +18959,113 @@ and
 exactly \(em heap.c's own
 .CW "gcdepth > gcdepthmax"
 idiom.  Three absolute-addressed operands landing on distinct symbols
-at offset 0 checks the decode, not just the lookup.
+at offset 0 checks the decode, not merely the lookup.
 .PP
-Fixing the reader did not rescue a single capture.  It showed instead
-that the captured values were never pcs.  A pc recorded by
-.CW getcallerpc()
-is a return address: it must be an instruction boundary, and the
-instruction ending there must be a call.  Decoding forward from each
-containing symbol's first byte, of the seven raw pcs this hunt has on
-record, six are not instruction boundaries at all \(em they land in the
-middle of a
+That fixed half the problem and exposed the other half.  Resolved
+against the current kernel, six of the seven raw pcs on record are not
+instruction boundaries at all \(em they land in the middle of a
 .CW MOV .
+A pc recorded by
+.CW getcallerpc()
+is a return address; it must be a boundary, and the instruction ending
+there must be a call.  The reason is not that the captures are bad.
+.B "A pc is only meaningful against the exact binary that produced it" ,
+and this tree rebuilds constantly while its panics carry no build
+stamp.  These pcs were recorded during boots of kernels that no longer
+exist and read against a later one, in which the functions concerned
+had moved.
+.PP
+.CW "p9sym.py -s"
+recovers the shift: it searches for a single offset that makes every pc
+in a capture a valid call-return address.  Chance hits run at the
+call-return density \(em 1.87% of this kernel's text bytes \(em so k pcs
+agreeing on one delta is about 0.019 Ns super k per delta tried.  Four
+agreeing, over 4096 deltas, is around 5\(mu10 super -4 .
+For this hunt's four heap.c captures the answer is unambiguous:
 .TS
 box, tab(;);
 l l l.
-captured;resolves to;verdict
+captured;at build offset +0x74;call
 _
-0x2614a3;i225procstat+0x29;interior \(em impossible
-0x2f249e;destroy+0x229;interior \(em impossible
-0x2f24f3;destroy+0x27e;interior \(em impossible
-0x2f2083;freelist+0x12f;boundary, not after a call
-0x2f1f43;freearray+0xa0;interior \(em impossible
-0x28474a;free+0x79;return address
-0x28475a;realloc+0x9;interior \(em impossible
+0x2f249e;destroy+0x29d;poolfree
+0x2f24f3;destroy+0x2f2;*rax
+0x2f2083;freelist+0x1a3;poolfree
+0x2f1f43;freelist+0x63;free
 .TE
 .PP
-The one genuine return address is the return from
-.CW free() Ns 's
-indirect call to
-.CW poolfault
-\(em the code that reports the fault, not code that freed anything.
-So no capture in this hunt names a freer.
+Two of the four are the
+.CW poolfree()
+call in
+.CW destroy()
+and the
+.CW poolfree()
+call in
+.CW freelist()
+exactly.  That is precisely what a freehist entry has to be:
+.CW notefree()
+is called from
+.CW poolfree()
+with
+.CW getcallerpc(&p) ,
+and
+.CW poolfree(Pool*, void*)
+takes the
+.CW Pool*
+first, so that anchor is a correct one \(em unlike the four
+.CW D2B
+sites this document and os/inferno/port/alloc.c already document as
+mis-anchored.  The freehist ring was never affected by that bug.
 .PP
-What that retracts, specifically.
-.CW "0x79b9af8 was freed before, from pc=0x2614a3"
-was read as
-.CW free+56 ;
-the verified reader puts
-.CW 0x2614a3
-inside an i225 ethernet stat routine, mid-instruction, which is
-unrelated to freeing and cannot be a pc.  The claim built on it and on
-.CW destroy+613 / Ns .CW freelist+419
-\(em that the object was first freed by an ordinary, successful
+So the numbers in the earlier sections are wrong and the conclusion
+they supported is right.  The object that later trips
+.CW destroy-entry
+was freed the first time by an ordinary, successful
 .CW destroy()
 or
 .CW freelist()
-exit, and therefore that a second independent owner held a dangling
-reference \(em has no evidence under it.  So does
-.CW destroy+703 ,
-and with it the section "Eliminating candidates for destroy+703": four
-candidate sites were bisected against a value that was never a decoded
-pc, so their elimination establishes nothing either way.
+exit \(em not by corruption manufacturing a fake pointer, but by a
+genuine second free of a value some other, independent reference still
+held.  Read
+.CW destroy+613
+as
+.CW destroy+0x29d
+and
+.CW freelist+419
+as
+.CW freelist+0x1a3 ;
+the argument built on them stands as written.
 .PP
-What survives untouched is everything that never depended on a pc.
-The
-.CW alloc:D2B
-panic is the pool's own magic check \(em a block reached
-.CW poolfree()
-already
-.CW MAGIC_F ,
-and that is a real double free.  The freehist ring's
-.I address
-match is real too: that block genuinely had been freed earlier.  Only
-the "by whom" was fiction.  The
-.CW "in free blk"
-captures and
-.CW OP(movp) Ns 's
-.CW dv
-guard are address-based and stand as recorded.
+One attribution changes.  The pc recorded in this document under
+.CW freearray
+is
+.CW freelist+0x63
+once the offset is applied \(em it crossed a function boundary when it
+was read against the wrong build.  It is the
+.CW free()
+call in
+.CW freelist() Ns 's
+.CW freejitcode / free
+limb, and
+.CW freearray()
+is not implicated by it at all.
 .PP
-The mechanism was already predicted in this tree, in
-os/inferno/port/alloc.c's own comment: this port has four sites where
-.CW D2B Ns 's
-.CW getcallerpc(&dp)
-anchors on the wrong stack slot, because
-.CW poolfree(Pool*,void*)
-and its neighbours take the
-.CW Pool*
-first, so the a+0(FP) trick reads a slot that is not the data pointer.
-That comment said such a site "names a plausible-looking but wrong pc
-whenever it fires".  It was right, and the interior-pc result is the
-hardware confirmation of it.  It also noted that fixing every
-reachable anchor never moved
-.CW destroy+703 ,
-and treated that as a puzzle pointing to an unfound fifth site; the
-simpler reading, now available, is that the value was garbage all
-along and no anchor fix could have moved it.
+Two pcs remain unplaced: no offset makes
+.CW 0x2614a3
+or
+.CW 0x28475a
+a call return, jointly or with the others.  Unplaced means the build
+they came from is not identified \(em not that they are invalid \(em but
+.CW "0x79b9af8 was freed before, from pc=0x2614a3"
+cannot be read as
+.CW free+56
+or as anything else on this evidence, and that reading is withdrawn.
+Captures taken across a long hunt come from many different kernels;
+only pcs from one boot can be expected to share an offset.
 .PP
-Offset decoding is retired for this hunt.  The
-.CW D2BPC(b, dp, pc, tag)
-mechanism already in alloc.c supersedes it: each call site passes its
-own tag, so the next capture names the site that fired in the message
-text, with no pc involved.  Where a pc genuinely is needed,
-.CW "p9sym.py -c"
-reports whether it can be one before its name is believed.
+The lesson is a build stamp.  Nothing in a panic says which binary
+produced it, which is why a correct reader still gave confident wrong
+answers, and why
+.CW -s
+has to exist at all.  With a build id in the kernel and in the panic
+banner, a capture names its own binary and the offset search becomes a
+fallback rather than the only path.

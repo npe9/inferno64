@@ -107,20 +107,20 @@ void (*poolfault)(void *, char *, uintptr) = _poolfault;
  * directly -- the next capture answers which site fired from the
  * message text alone, no offset decoding needed.
  *
- * Resolved, and worse than assumed. destroy+703 and every other
- * symbolic pc this hunt wrote down came from hand-written readers
- * that decoded the symbol table wrong; utils/p9sym.py reads it
- * properly, and with "-c" also decodes forward from the containing
- * symbol to ask whether a value can be a pc at all. Six of the seven
- * raw pcs on record are not instruction boundaries -- they land
- * inside a MOV -- so they are not return addresses and name nobody.
- * The prediction two paragraphs up was right; the bisection above
- * therefore eliminated nothing, because it was run against a value
- * that was never a decoded pc, and no anchor fix could have moved it.
- * The double free itself is unaffected: it is this pool's own magic
- * check, and the freehist ADDRESS match is real. Only "by whom" was
- * fiction. Use the tags below; offset decoding is retired. See
- * doc/inferno-ports.ms, "Every pc this hunt resolved was junk".
+ * Resolved, and the freehist ring was never the problem.
+ * destroy+703 and the other symbolic pcs this hunt wrote down came
+ * from hand-written readers that decoded the symbol table wrong, and
+ * were then read against a kernel built later than the one that
+ * produced them -- nothing in a panic says which binary it came from.
+ * utils/p9sym.py reads the table properly, and "-s" recovers the
+ * build offset by finding the one shift that makes every pc in a
+ * capture a call-return address. At +0x74 all four heap.c captures
+ * resolve, two of them to the poolfree() calls in destroy() and
+ * freelist() exactly. That is what notefree()'s own pc must be:
+ * poolfree(Pool*, void*) takes the Pool* first, so its
+ * getcallerpc(&p) anchors correctly and is not one of the four
+ * mis-anchored D2B sites above. The ring's answers were right all
+ * along. See doc/inferno-ports.ms, "The captured pcs were right".
  */
 #define D2BPC(b, dp, pc, tag)	b = ((Bhdr*)((uchar*)(dp) - (BHDRSIZE - sizeof(Btail)))); \
 				if(b->magic != MAGIC_A && b->magic != MAGIC_I){\
