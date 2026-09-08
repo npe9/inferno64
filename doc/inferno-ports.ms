@@ -19413,3 +19413,62 @@ is an aggregate over every Array in the system, so the stack above is
 where the count happened to reach zero, not where the surplus release
 was.  It narrows the object kind and proves the imbalance; it does not
 locate it.
+.NH 2
+A third batch: no fire, and a new signature that resolves
+.PP
+Thirty-two more boots on a kernel with the report-once change
+.CW ( "etext 0x32ceee" ).
+The guard did not fire at all, so reporting-once is not verified in
+practice \(em only that nothing else broke.  At the one-in-32 rate the
+previous batch showed, zero in 32 is unsurprising (about a one in three
+chance), and no
+.CW "freetype:"
+line of either kind appeared.
+.PP
+A signature not seen in either earlier batch did appear, five times:
+.P1
+panic: smalloc: size 18446744073441179738 > mainmem maxsize 262987776, pc=0x286da7
+.P2
+.CW 0x286da7
+is
+.CW addelem+0x8b ,
+a verified return address, and
+.CW addelem()
+is os/inferno/port/chan.c:420.  The call is the
+.CW smalloc(a)
+a few lines in, with
+.P1
+	i = strlen(s);
+	a = p->len+1+i+1;
+	if(a > p->alen){
+		a += PATHSLOP;
+		t = smalloc(a);
+.P2
+.CW a
+is an
+.CW int ,
+and 18446744073441179738 is \-268371878 sign-extended, so
+.CW p->len
+is a large negative number: the
+.CW Path
+is corrupt before
+.CW addelem()
+ever touches it.  The same batch produced the first
+.CW cclose / cclone
+panics of these three runs as well, which is the same neighbourhood.
+That is the hunt's own disease again \(em a structure used after it was
+freed \(em reached through
+.CW Path
+rather than through the Dis heap.
+.PP
+Honesty about the counts: five of 32 here against none in the previous
+64, and two
+.CW cclose / cclone
+against none, look like a change and are not claimed as one.  These
+batches are far too small to compare panic-type distributions, the
+kernels either side of it differ only by which occurrences of a
+diagnostic get printed, and that cannot plausibly corrupt a
+.CW Path .
+The useful part is not the rate but the resolution: a panic that used
+to be an unreadable pc now names its line, and says what is wrong with
+the argument.
