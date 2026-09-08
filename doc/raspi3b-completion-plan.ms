@@ -599,8 +599,7 @@ they say nothing whatever about CMD52 and CMD53.
 .PP
 Also not done: no interrupt is wired (every wait is a bounded poll, as
 in sdhostbcm.c), no DMA -- the controller supports SDMA/ADMA and this
-uses the PIO data port -- no high-speed function switch, and no real
-hardware has been near it.
+uses the PIO data port -- and no real hardware has been near it.
 .PP
 .B "The four-bit bus, and what an emulator can and cannot say about it."
 The card and the host are now moved to the four-bit data bus after
@@ -679,8 +678,37 @@ The rate itself is still unobservable -- nothing in the model times a
 transfer against SDCLK, so a card given four clocks where it needs
 forty reads identically -- which is why this marker is
 .CW SDHCI-SPEED-ACCEPTED
-too.  The high-speed CMD6 function switch, which would take this past
-25MHz, is a separate card state transition and is not attempted.
+too.  .PP
+.B "High speed, which is what lifts the ceiling."
+CMD6 is two commands wearing one number: bit 31 of the argument clear
+means "check", which reports what the card can do and changes nothing,
+and set means "switch", which selects.  The other 24 bits are six
+four-bit function groups with 0xf meaning "leave this one alone", so
+0x00fffff1 asks for group 1 function 1 and 0x80fffff1 sets it.
+.PP
+Both forms answer over the data lines with the same 64-byte block, and
+reading it is the point.  A card that cannot do high speed answers the
+switch without an error and simply reports function 0 back: nothing
+fails, you merely do not get what you asked for, and then raise the
+host clock past what the card agreed to.  So the support bitmap is
+read first \- group 1 support is bytes 12 and 13, big-endian, bit 1
+being high speed \- and the selection is read back afterwards from the
+low nibble of byte 16.  The card reports support
+.CW 0x8003
+and selects function 1:
+.CW SDHCI-HISPEED-ACCEPTED .
+.PP
+Only then does the clock move, and this is the ordering that matters
+on hardware.  Raising the clock before the card has agreed runs it
+outside its own timing, which is corruption rather than an error.  With
+high speed agreed the ceiling is 50MHz, so 52/2 is now legal and the
+divider is 1 rather than 2 \- 26MHz where the previous piece got 13.
+.PP
+The fallback is the half worth testing, and it is testable.  Asking for
+a function this card does not offer gives
+.CW "SDHCI-HISPEED-NONE card supports group 1 0x8003, no high speed" ,
+and the clock then stops at the 25MHz ceiling and 13MHz, exactly as
+before.  A card that will not go fast never gets a fast clock.
 .PP
 .B "Four blocks, one command."
 A request for more than one block was four commands, four responses

@@ -105,7 +105,9 @@ enum {
 	Alt0		= 4,	/* GPIO fsel: SDHOST owns the card pins */
 	Alt3		= 7,	/* GPIO fsel: this controller owns them */
 
-	Maxspeedmhz	= 25,	/* SD default speed; high speed is a separate switch */
+	Maxspeedmhz	= 25,	/* SD default speed */
+	Hispeedmhz	= 50,	/* what CMD6's high-speed function allows */
+	Fnhispeed	= 1,	/* group 1 function number for high speed */
 	Timeout		= 1000000,	/* bounded register polls */
 };
 
@@ -275,7 +277,7 @@ sdhciroutetest(Ctlr *c)
  * identically here.  The marker says ACCEPTED for that reason.
  */
 static void
-sdhcispeed(Ctlr *c)
+sdhcispeed(Ctlr *c, int maxmhz)
 {
 	u32 *r = c->r;
 	u32 ctl;
@@ -288,14 +290,14 @@ sdhcispeed(Ctlr *c)
 		return;
 	}
 	/*
-	 * Smallest N with base/(2N) <= 25MHz, and N of 0 (undivided)
+	 * Smallest N with base/(2N) <= maxmhz, and N of 0 (undivided)
 	 * only if the base is already slow enough.
 	 */
 	for(n = 0; n < 0x80; n++)
 		if(n == 0){
-			if(basemhz <= Maxspeedmhz)
+			if(basemhz <= maxmhz)
 				break;
-		}else if(basemhz <= 2*n*Maxspeedmhz)
+		}else if(basemhz <= 2*n*maxmhz)
 			break;
 
 	ctl = r[Control1];
@@ -309,11 +311,101 @@ sdhcispeed(Ctlr *c)
 	r[Control1] |= Clken;				/* and start it again */
 
 	if(n == 0)
-		print("SDHCI-SPEED-ACCEPTED base %dMHz undivided\n", basemhz);
+		print("SDHCI-SPEED-ACCEPTED base %dMHz undivided, ceiling %dMHz\n",
+			basemhz, maxmhz);
 	else
-		print("SDHCI-SPEED-ACCEPTED base %dMHz / %d = about %dMHz "
-			"(was the identification divider 0x80)\n",
-			basemhz, 2*n, basemhz/(2*n));
+		print("SDHCI-SPEED-ACCEPTED base %dMHz / %d = about %dMHz, "
+			"ceiling %dMHz (was the identification divider 0x80)\n",
+			basemhz, 2*n, basemhz/(2*n), maxmhz);
+}
+
+/*
+ * Ask the card for high speed, which is what lifts the ceiling from
+ * 25MHz to 50.
+ *
+ * CMD6 is two commands wearing one number.  Bit 31 of the argument
+ * picks the mode: clear is "check", which reports what the card can do
+ * and changes nothing, and set is "switch", which selects.  The other
+ * 24 bits are six four-bit function groups, 0xf meaning "leave this
+ * one alone"; group 1 is the bus speed, and function 1 there is high
+ * speed.  So 0x00fffff1 asks and 0x80fffff1 sets.
+ *
+ * Both forms answer with the same 64-byte status block over the data
+ * lines, and it is worth reading rather than trusting the R1: a card
+ * that cannot do high speed answers the switch without an error and
+ * simply reports function 0 back.  Nothing fails; you just quietly do
+ * not get what you asked for, and then raise the host clock past what
+ * the card agreed to.  So the check reads the support bitmap first --
+ * group 1 support is bytes 12 and 13, big-endian, bit 1 being high
+ * speed -- and reads the selection back afterwards, from the low
+ * nibble of byte 16.
+ *
+ * Returns 1 only if the card said it supports high speed and then
+ * reported it selected.  Anything else leaves the caller at 25MHz,
+ * which is always safe.
+ */
+
+/*
+ * One command whose answer comes back over the data lines rather than
+ * in a response register, read into b.  CMD6 and ACMD13 both work this
+ * way and both return 64 bytes.
+ */
+static int
+sdhcistatusblock(Ctlr *c, int cmd, u32 arg, uchar *b, int n)
+{
+	u32 *r = c->r;
+	u32 w;
+	int i;
+
+	r[Blksizecnt] = (1<<16) | n;
+	if(sdhcicmd(c, cmd, arg,
+	    Resp48|Cmdcrcchk|Cmdixchk|Cmdisdata|Tmblkcnt|Tmdatdirread) < 0)
+		return -1;
+	if(awaitbit(&r[Interrupt], Readready, 1) < 0)
+		return -1;
+	r[Interrupt] = Readready;
+	for(i = 0; i < n; i += 4){
+		w = r[Data];
+		b[i] = w;
+		b[i+1] = w>>8;
+		b[i+2] = w>>16;
+		b[i+3] = w>>24;
+	}
+	if(awaitbit(&r[Interrupt], Datadone, 1) < 0)
+		return -1;
+	r[Interrupt] = Datadone;
+	return 0;
+}
+
+static int
+sdhcihispeed(Ctlr *c)
+{
+	uchar b[64];
+	int support, selected;
+
+	if(sdhcistatusblock(c, 6, 0x00fffff1, b, sizeof b) < 0){
+		print("SDHCI-HISPEED-NONE card did not answer the CMD6 check\n");
+		return 0;
+	}
+	support = (b[12] << 8) | b[13];
+	if((support & (1<<Fnhispeed)) == 0){
+		print("SDHCI-HISPEED-NONE card supports group 1 %#ux, no high speed\n",
+			support);
+		return 0;
+	}
+	if(sdhcistatusblock(c, 6, 0x80fffff1, b, sizeof b) < 0){
+		print("SDHCI-HISPEED-FAIL card did not answer the CMD6 switch\n");
+		return 0;
+	}
+	selected = b[16] & 0xf;
+	if(selected != Fnhispeed){
+		print("SDHCI-HISPEED-FAIL asked for function %d, card selected %d\n",
+			Fnhispeed, selected);
+		return 0;
+	}
+	print("SDHCI-HISPEED-ACCEPTED card supports group 1 %#ux and selected "
+		"high speed; ceiling now %dMHz\n", support, Hispeedmhz);
+	return 1;
 }
 
 /*
@@ -346,8 +438,7 @@ sdhciwiden(Ctlr *c)
 {
 	u32 *r = c->r;
 	uchar b[64];
-	u32 w;
-	int i, width;
+	int width;
 
 	if(sdhcicmd(c, 55, c->rca<<16, Resp48|Cmdcrcchk|Cmdixchk) < 0){	/* APP_CMD */
 		print("SDHCI-4BIT-FAIL APP_CMD refused\n");
@@ -363,28 +454,10 @@ sdhciwiden(Ctlr *c)
 		print("SDHCI-4BIT-FAIL APP_CMD before SD_STATUS refused\n");
 		return -1;
 	}
-	r[Blksizecnt] = (1<<16) | sizeof b;
-	if(sdhcicmd(c, 13, 0, Resp48|Cmdcrcchk|Cmdixchk|Cmdisdata|Tmblkcnt|Tmdatdirread) < 0){
-		print("SDHCI-4BIT-FAIL SD_STATUS refused\n");
+	if(sdhcistatusblock(c, 13, 0, b, sizeof b) < 0){		/* ACMD13 */
+		print("SDHCI-4BIT-FAIL SD_STATUS did not arrive\n");
 		return -1;
 	}
-	if(awaitbit(&r[Interrupt], Readready, 1) < 0){
-		print("SDHCI-4BIT-FAIL SD_STATUS never became readable\n");
-		return -1;
-	}
-	r[Interrupt] = Readready;
-	for(i = 0; i < sizeof b; i += 4){
-		w = r[Data];
-		b[i] = w;
-		b[i+1] = w>>8;
-		b[i+2] = w>>16;
-		b[i+3] = w>>24;
-	}
-	if(awaitbit(&r[Interrupt], Datadone, 1) < 0){
-		print("SDHCI-4BIT-FAIL SD_STATUS did not complete\n");
-		return -1;
-	}
-	r[Interrupt] = Datadone;
 
 	width = (b[0] >> 6) & 3;
 	if(width != 2){
@@ -493,7 +566,14 @@ sdhcicardinit(Ctlr *c)
 	if(sdhcicmd(c, 16, Secsize, Resp48|Cmdcrcchk|Cmdixchk) < 0)	/* SET_BLOCKLEN */
 		return 0;
 	sdhciwiden(c);
-	sdhcispeed(c);
+	/*
+	 * Order: the card must agree to high speed before the host
+	 * clock goes past what default speed allows.  Raising the
+	 * clock first would run the card outside its agreed timing,
+	 * which on real silicon is data corruption rather than an
+	 * error.
+	 */
+	sdhcispeed(c, sdhcihispeed(c)? Hispeedmhz: Maxspeedmhz);
 	return c->sectors != 0;
 }
 
