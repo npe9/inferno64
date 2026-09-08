@@ -42,13 +42,36 @@ heap(void)
 }
 
 static void
+/*
+ * A write that fails is the end of this program, and the reason is its
+ * exit status.  cat has always had to do this - a pipeline whose reader
+ * has gone is the ordinary case - and here it is what carries a
+ * hung-up pipe out to the shell that started it: the personality
+ * answers a failed write with -1 and a reason, the way a libc does,
+ * rather than raising through the program's own frames.
+ */
+static void
 catfd(int fd)
 {
-	char buf[512];
+	char buf[512], err[ERRMAX], msg[ERRMAX+64];
 	long n;
+	int k;
 
 	while((n = read(fd, buf, sizeof buf)) > 0)
-		write(1, buf, n);
+		if(write(1, buf, n) != n){
+			err[0] = 0;
+			errstr(err, sizeof err);
+			if(err[0] == 0)
+				strcpy(err, "write failed");
+			/*
+			 * To descriptor 2, not through print: print writes
+			 * descriptor 1, which is the pipe that just refused,
+			 * so the message would go nowhere.
+			 */
+			k = snprint(msg, sizeof msg, "cat: write failed: %s\n", err);
+			write(2, msg, k);
+			exits(err);
+		}
 }
 
 void

@@ -249,7 +249,28 @@ extern Dev timedevtab;
 extern Dev notedevtab;
 extern Dev dupdevtab;
 extern Dev inputdevtab;
-Dev *devtab[] = { &rootdevtab, &envdevtab, &mntdevtab, &looploopdevtab, &expdevtab, &pipedevtab, &srvdevtab, &lfsdevtab, &ipdevtab, &cachedevtab, &timedevtab, &notedevtab, &inputdevtab, &dupdevtab, nil };
+/*
+ * The kernel's interrupt-time print.  Nothing here runs at interrupt
+ * time - this personality is a program - so it is the ordinary print,
+ * under the name the device sources call it by.
+ */
+int
+iprint(char *fmt, ...)
+{
+	va_list v;
+	char buf[512];
+	int n;
+
+	va_start(v, fmt);
+	n = vseprint(buf, buf + sizeof buf, fmt, v) - buf;
+	va_end(v);
+	print("%.*s", n, buf);
+	return n;
+}
+
+extern Dev drawdevtab;		/* devdrawp9.c: the kernel's draw device, in this personality */
+
+Dev *devtab[] = { &rootdevtab, &envdevtab, &mntdevtab, &looploopdevtab, &expdevtab, &pipedevtab, &srvdevtab, &lfsdevtab, &ipdevtab, &cachedevtab, &timedevtab, &notedevtab, &inputdevtab, &dupdevtab, &drawdevtab, nil };
 
 long	kerndate = 0;
 

@@ -9138,14 +9138,167 @@ definition: the writer slept until the far end drained it, every time.
 That worked, and hid what a pipeline does \- there was no size to
 exceed.  It is 32K now, which is Plan 9's, and the third script line is
 what proves the flow control is real.
+.B "3.2c: a screen, and a program that draws on it.  Done."
+The library-OS personality had no screen at all: its twenty-nine
+criteria covered the name space, 9P, descriptors, pipes, spawn, a shell
+and pipelines, and nothing that reached the frame buffer.  This is that.
+.PP
+The plan says rio here draws "to the same /dev/draw the draw server
+holds", and the way it says it has to be read against what this
+configuration is.  On the pair personality the draw server is a legacy
+binary in a container of its own, started by the client asking the
+buddy to exec it; this personality has no buddy, and giving it one
+would make it the pair personality.  It also has, in the same section,
+"no process boundary and no kernel personality" \- so the reading that
+holds is the service, not the server: the same
+.CW devdraw.c ,
+here compiled into the personality.
+.PP
+Which turned out to be nearly free.  The kernel's draw device compiles
+against this personality's headers with two changes and no shim at all:
+the user-level draw server needs
+.CW kshim.h
+to stand in for Chan, Dev, the error stack and the allocator, and this
+personality
+.I is
+the kernel's own upper half, so those are the types its name space is
+already built from.  The two changes are an include guard, so the file
+can be reached through a wrapper that supplies the personality's
+headers instead
+.CW ( devdrawp9.c ),
+and the kernel's
+.CW readstr
+under the name the shim gave it.  Thirty-four files of
+.CW libmemdraw
+and
+.CW libmemlayer
+compile against the same headers with none.  What the device draws onto
+is
+.CW drawscreen.c :
+.CW segattach
+of the physical segment
+.CW framebuffer ,
+handed back as the Memdata whose pixels are the display's, so a draw
+lands on the screen and there is nothing to flush.
+.PP
+One thing it needed that the personality did not have.  memdraw takes
+image pixels from a Pool called
+.CW imagmem ,
+not from malloc, so that a window system's images are reused rather
+than accumulated; the personality's allocator is a bump arena whose
+free is a no-op, which is right for a name space and wrong for a
+screen.  So image memory is the kernel's own
+.CW pool.c
+over chunks taken from the bump arena as it needs them: the chunks are
+never given back, which is what a bump arena means, and the pixels
+inside them are, which is what a window system needs.
+.PP
+.CW /boot/libdraw
+is the program.  It speaks the draw protocol itself \- open
+.CW /dev/draw/new ,
+read the twelve fields, open the client's data file, write
+.CW b
+to allocate an image and
+.CW d
+to draw one into another \- rather than linking libdraw, because what
+is being shown is the path and not the library.  It paints the screen
+.CW 0x112233
+and the rectangle (200,150)-(600,450)
+.CW 0xCC7722 ,
+and those numbers are in the program and in the check, both written
+before the machine was ever booted: 120000 pixels of the one in that
+box and 904000 of the other, which is what the screendump holds.
+.PP
+Two defects in the way, and the second is the one worth keeping.
+.PP
+The first: libc's allocator keys its pool on
+.CW _tos->pid ,
+and
+.CW _tos
+is set up by libc's own
+.CW _main
+out of the page the kernel leaves at the top of the stack.  A loaded
+program is entered at
+.CW p9start ,
+not at
+.CW _main ,
+and shares the personality's address space, so it had none: the first
+.CW malloc
+read address 0x40, which is where
+.CW pid
+sits in a Tos.  A graphics program mallocs before it draws anything, so
+that was the first thing that happened.
+.CW p9crt.c
+gives a loaded program a Tos of its own.
+.PP
+The second: the name space raises.
+.CW p9open
+calls
+.CW namec ,
+and a name that is not there unwinds rather than returning \-1.  That
+is right for the personality, whose own callers are written around
+.CW waserror ,
+and wrong for the table handed to a loaded program, because that table
+is the program's libc and a libc does not raise \- a program tests the
+return and reads
+.CW errstr .
+Handing the raw entry points out meant the first open a program made of
+a file that was not there unwound off the top of the program's frames
+into whatever label the personality had up, which was not where the
+program's stack was.  It faulted, jumping to nothing:
+.CW "fault read addr=0xffffffff" ,
+with the pc the same.
+.PP
+What found it is worth saying, because it is so ordinary.
+.CW iounit (2)
+opens
+.CW /fd/<n>ctl ,
+expects the open to fail on a system that has no such file, and carries
+on with a default buffer size.  Every Plan 9 graphics program does it,
+by way of libdraw's
+.CW initdisplay ,
+and nothing in this personality had ever done it before.  Each entry
+point is now under an error label of its own and answers the way a libc
+answers, and the table has an
+.CW errstr
+of its own as well, because a library operating system that refuses
+should be able to say what it refused in the program's own words.
+.PP
+That changed one criterion, honestly rather than quietly.  The pipeline
+whose reader never arrives used to end because the write raised and the
+error label under a spawned program turned the raise into a wait status.
+Now the write answers \-1 with a reason, and
+.CW cat
+does what cat has always had to do: reports it and makes it its exit
+status, which the shell reads out of the wait.  The message goes to
+descriptor 2, because descriptor 1 is the pipe that just refused.
+.PP
+Three of the four faults in this section were found the same way, and
+the tool is worth naming: this configuration's
+.CW donotify
+now prints the user pc and the note before it panics.  A pc inside a
+loaded program's image names the program, one inside the personality's
+names the personality, and the a.out symbol table turns it into a
+function \-
+.CW plock ,
+in the first case, which is how the Tos was found.  Before that the
+console FIFO dropped everything the personality had queued behind the
+panic and there was nothing to go on at all.
 .PP
 What is left of 3.2 is rio.  It wants
 .CW /dev/draw ,
+which this section gives it,
 .CW /dev/mouse
 and
 .CW /dev/kbd ,
 which the user-level drivers already built serve, and a name space that
-holds them.
+holds them.  It also wants libdraw and libthread linked against
+.CW p9crt.c ,
+which is a longer road than this one: libdraw's own
+.CW initdisplay
+gets as far as
+.CW namedimage
+here and stops, and that is written down rather than worked around.
 .PP
 .B "Phase 3.2: a real program, then rio, linked with the library."
 A real program \- a command, then a shell, then rio \- is linked with
@@ -9224,7 +9377,7 @@ check clean, the two-machine check run three times:
 .CW p9linux
 12,
 .CW p964
-29, keyboard 8, rio 14, the window gestures 10, micro 7, user 10, net
+31, keyboard 8, rio 14, the window gestures 10, micro 7, user 10, net
 13, wire 14, two-machine 20 twice over, the
 six criteria of the userland the tree builds itself, and two portable
 builds.  A criterion is a sentence a booted kernel printed

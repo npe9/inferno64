@@ -1,4 +1,14 @@
+/*
+ * The kernel's draw device, reused whole.  It is compiled two ways: as
+ * part of the user-level draw server, where kshim.h stands in for the
+ * kernel types it uses, and as a device of the p9 personality, where
+ * those types are the personality's own - the same sources the name
+ * space is built from - and the wrapper that includes this file has
+ * already supplied them (os/osprey/cmd/p9/devdrawp9.c).
+ */
+#ifndef Drawinpersonality
 #include	"kshim.h"
+#endif
 
 #define	Image	IMAGE
 #include	<draw.h>

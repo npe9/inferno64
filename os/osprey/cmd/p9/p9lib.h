@@ -47,10 +47,18 @@ struct P9lib {
 	int	(*pipe)(int fd[2]);
 	int	(*spawn)(char *name, char **argv, int *std);
 	int	(*wait)(int pid, char *status, int nstatus);
+	/*
+	 * And why the last call failed.  The name space keeps its reason in
+	 * up->errstr, and without a way to ask for it a program's %r was
+	 * empty - libc's errstr is a system call, and the microkernel does
+	 * not answer it.  A library operating system that refuses should be
+	 * able to say what it refused, in the program's own words.
+	 */
+	int	(*errstr)(char *buf, uint nbuf);
 };
 
 enum {
-	P9libversion	= 3,
+	P9libversion	= 4,
 	/*
 	 * Where a loaded program is linked: well above the personality's own
 	 * image (its bss ends near 7MB) and well below the stack.  The
@@ -69,4 +77,5 @@ enum {
 	P9progbase3	= 0x1800000,	/* libwc, the far end of a pipeline */
 	P9progbase4	= 0x1c00000,	/* libsh, the shell */
 	P9progbase5	= 0x2000000,	/* libgen, the near end of a pipeline */
+	P9progbase6	= 0x2400000,	/* libdraw, the program that draws */
 };

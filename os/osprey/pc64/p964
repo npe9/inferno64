@@ -132,7 +132,25 @@ port
 	int openmode(ulong a)			{ USED(a); panic("microkernel: openmode"); return 0; }
 	Mount *newmount(Chan *a, int b, char *c){ USED(a,b,c); panic("microkernel: newmount"); return nil; }
 	void mountfree(Mount *a)		{ USED(a); panic("microkernel: mountfree"); }
-	int donotify(Ureg *a)			{ USED(a); panic("microkernel: donotify"); return 0; }
+	int donotify(Ureg *a)
+	{
+		USED(a);
+		/*
+		 * There is no note machinery on this configuration - one
+		 * program, no processes to post to - so a note here is a fault
+		 * in the personality or in a program it loaded, and the machine
+		 * stops.  Say where before it does: the user pc and the note
+		 * itself, with iprint, because what the personality had queued
+		 * behind it is lost when the panic floods the console.  A pc
+		 * inside a loaded program's image names the program, and one
+		 * inside the personality's names the personality.
+		 */
+		extern uintptr uregpc(void*);
+		iprint("osprey: fault at user pc %#p: %s\n", (void*)uregpc(a),
+			up->nnote > 0 ? up->note[up->nnote-1]->msg : "a note with no message");
+		panic("microkernel: donotify");
+		return 0;
+	}
 
 	/*
 	 * The microkernel's system-call interface: two calls, no more.

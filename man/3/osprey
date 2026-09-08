@@ -1377,6 +1377,42 @@ does to put a window's
 on 0 and 1.  A write to a standard descriptor that has been closed or
 dup'd onto goes to the file server rather than out of the console.
 .PP
+The library-OS personality has a screen of its own.  The kernel's draw
+device is compiled into it
+.RB ( devdrawp9.c ,
+which includes
+.B os/osprey/cmd/draw/devdraw.c
+with the personality's headers under it rather than the draw server's
+shim), bound onto
+.BR /dev ,
+and drawing on a Memdata whose pixels are the frame buffer the kernel
+exposed as the segment
+.B framebuffer
+.RB ( drawscreen.c ).
+So a program the personality loads writes the draw protocol into a file
+whose device is code in its own address space:
+.B /boot/libdraw
+does exactly that.  Image pixels come from a Pool over the personality's
+arena
+.RB ( drawpool.c ),
+because memdraw allocates and frees images and the arena's free is a
+no-op.
+.PP
+The table a loaded program is handed answers the way a libc answers.
+Its entry points are under error labels of their own, so a name that is
+not there is \-1 and a reason rather than an unwind through the
+program's frames, and it carries an
+.I errstr
+so the program can read that reason.
+.I p9crt.c
+also gives a loaded program a Tos, because libc's allocator keys its
+pool on
+.B _tos->pid
+and a program entered at
+.I p9start
+never ran libc's
+.IR _main .
+.PP
 The kernel also publishes a page as the physical segment
 .BR pointerpos ,
 x then y at offset zero, wherever a frame buffer is exposed.  It is how

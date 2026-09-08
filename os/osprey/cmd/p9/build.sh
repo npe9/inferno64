@@ -20,7 +20,7 @@ OBJ="os/osprey/pc64/init9.6"
 for f in $P/main.c $P/p9shim.c os/osprey/port/chan.c os/osprey/port/dev.c \
          os/osprey/port/pgrp.c os/osprey/port/devroot.c \
          os/osprey/port/devenv.c os/osprey/port/qio.c os/osprey/port/devmnt.c os/osprey/port/devpipe.c os/osprey/port/devsrv.c \
-         $P/dev9ploop.c $P/p9file.c $P/p9srv.c $P/p9buddy.c $P/p9linuxfile.c $P/devlfs.c $P/pipfsrv.c $P/p9ip.c $P/p9sched.c $P/p9kbd.c $P/devcache.c $P/devtime.c $P/devnote.c $P/devinput.c $P/devdup.c $P/p9proc.c \
+         $P/dev9ploop.c $P/p9file.c $P/p9srv.c $P/p9buddy.c $P/p9linuxfile.c $P/devlfs.c $P/pipfsrv.c $P/p9ip.c $P/p9sched.c $P/p9kbd.c $P/devcache.c $P/devtime.c $P/devnote.c $P/devinput.c $P/devdup.c $P/p9proc.c $P/drawpool.c \
          os/osprey/port/netif.c os/osprey/port/parse.c \
          os/osprey/ip/ip.c os/osprey/ip/ipaux.c os/osprey/ip/iproute.c os/osprey/ip/ipifc.c \
          os/osprey/ip/netlog.c os/osprey/ip/ipmux.c os/osprey/ip/arp.c os/osprey/ip/icmp.c \
@@ -32,8 +32,44 @@ for f in $P/main.c $P/p9shim.c os/osprey/port/chan.c os/osprey/port/dev.c \
 	6c $INC -o $o $f
 	OBJ="$OBJ $o"
 done
+# the draw device's two libraries, compiled against the name space's
+# headers the way the device itself is: memdraw does the drawing and
+# memlayer the windows, and both are the same sources the user-level
+# draw server links against.  Object names are prefixed because
+# libmemdraw/draw.c and libmemlayer/draw.c share a basename, as do
+# line.c, load.c, unload.c and warp.c.
+for f in 9front/src/libmemdraw/*.c; do
+	case $f in *mkcmap.c) continue ;; esac	# a host tool, not part of the library
+	6c $INC -o /tmp/p9_md_$(basename $f .c).6 $f
+	OBJ="$OBJ /tmp/p9_md_$(basename $f .c).6"
+done
+for f in 9front/src/libmemlayer/*.c; do
+	6c $INC -o /tmp/p9_ml_$(basename $f .c).6 $f
+	OBJ="$OBJ /tmp/p9_ml_$(basename $f .c).6"
+done
+
 # ip address helpers from kernlib (distinct object names: kernlib/ipaux.c
 # would collide with ip/ipaux.c on basename)
+# the draw device itself, compiled with os/osprey/cmd/draw ahead of
+# os/osprey/pc64 on the include path: devdraw.c includes "screen.h", and
+# the pc64 kernel has one of its own whose ishwimage is a macro over the
+# VGA driver's vgascreen[], which this personality has no VGA driver for.
+# The screen.h that belongs to it is the draw server's.
+6c -I os/osprey/cmd/draw $INC -o /tmp/p9_devdrawp9.6 $P/devdrawp9.c
+OBJ="$OBJ /tmp/p9_devdrawp9.6"
+
+# and the pieces of libdraw the draw device and memdraw call: the
+# arithmetic on Points and Rectangles, the channel descriptors, the
+# scan-line arithmetic, the compressed-image helpers and the built-in
+# font's unpacker.  A kernel links exactly these out of libdraw too.
+for f in bytesperline chan badrect icossin icossin2 arith computil defont rectclip drawrepl fmt; do
+	6c $INC -o /tmp/p9_ld_$f.6 9front/src/libdraw/$f.c
+	OBJ="$OBJ /tmp/p9_ld_$f.6"
+done
+
+# the pool allocator image memory is carved with
+6c $INC -o /tmp/p9_pool.6 os/osprey/kernlib/pool.c
+OBJ="$OBJ /tmp/p9_pool.6"
 for f in parseip ptclbsum ipaux classmask eipfmt; do
 	6c $LIBINC -o /tmp/p9_k_$f.6 os/osprey/kernlib/$f.c
 	OBJ="$OBJ /tmp/p9_k_$f.6"
@@ -61,6 +97,10 @@ OBJ="$OBJ /tmp/p9_p9pairsrv.6"
 # name space's segattach - the user headers, as above
 6c $LIBINC -I os/osprey/pc64 -o /tmp/p9_p9exec.6 $P/p9exec.c	# prog2.i is generated there
 OBJ="$OBJ /tmp/p9_p9exec.6"
+# the screen the draw device draws onto: libc's segattach, so the user
+# headers, as ring9p.c is
+6c $LIBINC -o /tmp/p9_drawscreen.6 $P/drawscreen.c
+OBJ="$OBJ /tmp/p9_drawscreen.6"
 6c $LIBINC -o /tmp/p9_blkvirtio.6 $P/blkvirtio.c
 OBJ="$OBJ /tmp/p9_blkvirtio.6"
 6c $LIBINC -o /tmp/p9_netvirtio.6 $P/netvirtio.c

@@ -11,6 +11,7 @@ extern void exits(char*);
 extern void p9clientnet(void);		/* p9ip.c: the client container's own stack, over the ring wire */
 void p9server(char *arg);
 void p9paircli(void);
+extern void memimageinit(void);	/* libmemdraw: the shared masks a draw reads */
 int p9riodemo;		/* *riodemo= in plan9.ini: also exec rio and leave it running */
 void p9server(char *arg);
 void p9setup(void);
@@ -93,6 +94,23 @@ p9setup(void)
 		print("p9: #m bound onto /dev; /dev/kbd and /dev/mouse are the i8042 driver's, in user space\n");
 	} else
 		print("p9: could not bind #m onto /dev: %s\n", up->errstr);
+	/*
+	 * And the draw device onto /dev beside them, so a program's
+	 * /dev/draw is this personality's own.  It is the kernel's
+	 * devdraw.c, compiled into this program (devdrawp9.c) rather than
+	 * run as a server in a container of its own: on this personality a
+	 * draw is a call in the drawing program's own address space, which
+	 * is the whole of what the library-operating-system track is for.
+	 * memimageinit is memdraw's - the shared masks every draw reads -
+	 * and the device never calls it, so it is called here.
+	 */
+	if(!waserror()){
+		memimageinit();
+		p9bind("#i", "/dev", MAFTER);
+		poperror();
+		print("p9: #i bound onto /dev; /dev/draw is the kernel's draw device, compiled into this personality\n");
+	} else
+		print("p9: could not bind #i onto /dev: %s\n", up->errstr);
 	/*
 	 * And /boot onto /bin, because rio does not ask what the shell is
 	 * called: winshell execs "/bin/rc", the name written into rio.
@@ -573,6 +591,30 @@ p9main(void)
 		catargv[1] = "/hello";
 		catargv[2] = nil;
 		p9exec("/boot/libcat", catargv);
+	}
+
+	/*
+	 * And a program that draws.  /boot/libdraw is an ordinary Plan 9
+	 * graphics program - initdraw, allocimage, draw, flushimage, out of
+	 * the real libdraw built from source - and the /dev/draw its
+	 * libdraw opens is the kernel's own devdraw.c, compiled into this
+	 * personality rather than run as a server in a container of its
+	 * own.  So the draw protocol crosses no boundary at all: the
+	 * program writes it into a file whose device is code in the same
+	 * address space, which draws on the firmware frame buffer the
+	 * microkernel exposed as a segment.  The one thing any of it asks a
+	 * kernel for is the address space.
+	 *
+	 * What it paints is stated in the program and in the check before
+	 * either was run: the screen 0x112233 and the rectangle
+	 * (200,150)-(600,450) 0xCC7722.
+	 */
+	{
+		char *dargv[2];
+
+		dargv[0] = "/boot/libdraw";
+		dargv[1] = nil;
+		p9exec("/boot/libdraw", dargv);
 	}
 
 	/*

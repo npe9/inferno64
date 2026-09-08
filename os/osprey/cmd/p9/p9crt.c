@@ -21,9 +21,30 @@
  */
 #include <u.h>
 #include <libc.h>
+#include <tos.h>
 #include "p9lib.h"
 
 P9lib *p9lib;
+
+/*
+ * The top of stack a loaded program does not have.
+ *
+ * libc's allocator keys its pool on _tos->pid: plock stores it and
+ * punlock compares it, so that a pool cannot be unlocked by a process
+ * other than the one that locked it.  _tos is set up by libc's own
+ * _main out of the page the kernel leaves at the top of the stack, and
+ * a program loaded here is entered at p9start rather than at _main and
+ * shares the personality's address space, so it has none: _tos was nil
+ * and the first malloc read address 0x40, which is where pid sits in a
+ * Tos.  A graphics program mallocs before it draws anything, so the
+ * fault was the first thing that happened.
+ *
+ * This is that Tos.  One program is one flow of control here - spawn
+ * gives a program a kproc of its own, not a second thread inside one -
+ * so the number only has to be the program's own and stay the same
+ * while it runs.
+ */
+static Tos p9tos;
 
 extern void startboot(char *argv0, char **argv);
 
@@ -42,6 +63,8 @@ p9start(P9lib *lib, char **argv, int *std)
 {
 	static char *noargv[] = { "prog", nil };
 
+	p9tos.pid = 1;			/* before anything mallocs: see p9tos above */
+	_tos = &p9tos;
 	fdinit(std);
 	p9lib = lib;
 	if(lib == nil || lib->version != P9libversion){
@@ -283,6 +306,23 @@ int
 awaitpid(int pid, char *status, int nstatus)
 {
 	return p9lib->wait(pid, status, nstatus);
+}
+
+/*
+ * errstr(2): the personality's, not the microkernel's.  libc's own is a
+ * system call the microkernel does not answer, so without this a
+ * program's %r was empty and every refusal the name space made came out
+ * as "failed" with nothing after it.
+ */
+int
+errstr(char *buf, uint nbuf)
+{
+	if(p9lib == nil || p9lib->errstr == nil){
+		if(nbuf > 0)
+			buf[0] = 0;
+		return -1;
+	}
+	return p9lib->errstr(buf, nbuf);
 }
 
 void

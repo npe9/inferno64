@@ -39,6 +39,7 @@
 #include "libwcprog.i"		/* uchar libwcprog[]: wc, the far end of a pipeline */
 #include "libshprog.i"		/* uchar libshprog[]: the shell that runs on this personality */
 #include "libgenprog.i"		/* uchar libgenprog[]: the near end of a pipeline */
+#include "libdrawprog.i"		/* uchar libdrawprog[]: the program that draws */
 
 extern int	p9open(char *name, int mode);
 extern int	p9create(char *name, int mode, ulong perm);
@@ -69,6 +70,7 @@ p9execfile(void)
 	addbootfile("libwc", libwcprog, sizeof libwcprog);
 	addbootfile("libsh", libshprog, sizeof libshprog);
 	addbootfile("libgen", libgenprog, sizeof libgenprog);
+	addbootfile("libdraw", libdrawprog, sizeof libdrawprog);
 }
 
 static uvlong
@@ -119,6 +121,26 @@ p9execexits(char *status)
 }
 
 /*
+ * The table's entry points are p9file.c's lib* wrappers, not the name
+ * space's raw ones: see the comment there.  This file is compiled
+ * against the user headers - it needs libc's segattach for the address
+ * space it lays a program into - so it cannot put up an error label
+ * itself, and the wrappers are where waserror is in scope.
+ */
+extern int	libopen(char*, int);
+extern int	libcreate(char*, int, ulong);
+extern long	libread(int, void*, long);
+extern long	libwrite(int, void*, long);
+extern void	libclose(int);
+extern vlong	libseek(int, vlong, int);
+extern int	libdup(int);
+extern int	libfd2path(int, char*, int);
+extern int	libpipe(int[2]);
+extern int	libspawn(char*, char**, int*);
+extern int	libwait(int, char*, int);
+extern int	liberrstr(char*, uint);
+
+/*
  * The one table every loaded program is handed.  It is read-only and the
  * same for all of them; what differs between a program the personality
  * runs to completion and one it spawns is where exits goes, and that is
@@ -131,18 +153,19 @@ P9lib*
 p9libtable(void)
 {
 	p9thelib.version = P9libversion;
-	p9thelib.open = p9open;
-	p9thelib.create = p9create;
-	p9thelib.read = p9read;
-	p9thelib.write = p9write;
-	p9thelib.close = p9close;
-	p9thelib.seek = p9seek;
-	p9thelib.dup = p9dup;
-	p9thelib.fd2path = p9fd2path;
+	p9thelib.open = libopen;
+	p9thelib.create = libcreate;
+	p9thelib.read = libread;
+	p9thelib.write = libwrite;
+	p9thelib.close = libclose;
+	p9thelib.seek = libseek;
+	p9thelib.dup = libdup;
+	p9thelib.fd2path = libfd2path;
 	p9thelib.exits = p9anyexits;
-	p9thelib.pipe = p9pipe;
-	p9thelib.spawn = p9spawn;
-	p9thelib.wait = p9waitpid;
+	p9thelib.pipe = libpipe;
+	p9thelib.spawn = libspawn;
+	p9thelib.wait = libwait;
+	p9thelib.errstr = liberrstr;
 	return &p9thelib;
 }
 

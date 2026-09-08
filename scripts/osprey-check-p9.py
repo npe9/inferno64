@@ -38,6 +38,52 @@ env = dict(os.environ, PATH=os.path.join(ROOT, 'MacOSX/arm64/bin') + ':' + os.en
 def plain(s):
     return re.sub(r'\x1b\[[0-9;=?]*[a-zA-Z]', '', s)
 
+
+def readppm(path):
+    """QEMU's screendump, a binary P6."""
+    try:
+        d = open(path, 'rb').read()
+    except OSError:
+        return None
+    if not d.startswith(b'P6'):
+        return None
+    fields, i = [], 2
+    while len(fields) < 3:
+        while i < len(d) and d[i:i+1].isspace():
+            i += 1
+        if d[i:i+1] == b'#':
+            while i < len(d) and d[i:i+1] != b'\n':
+                i += 1
+            continue
+        j = i
+        while j < len(d) and not d[j:j+1].isspace():
+            j += 1
+        fields.append(int(d[i:j]))
+        i = j
+    i += 1
+    w, h, _ = fields
+    return w, h, d[i:i + w*h*3]
+
+
+def boxof(pix, colour, w):
+    """How many pixels are exactly this colour and the box they lie in."""
+    tri = bytes(colour)
+    n = 0
+    x0 = y0 = 1 << 30
+    x1 = y1 = -1
+    i = pix.find(tri)
+    while i >= 0:
+        if i % 3 == 0:
+            n += 1
+            q = i // 3
+            x, y = q % w, q // w
+            if x < x0: x0 = x
+            if x > x1: x1 = x
+            if y < y0: y0 = y
+            if y > y1: y1 = y
+        i = pix.find(tri, i+1)
+    return n, (x0, y0, x1, y1)
+
 def main():
     keep = '-k' in sys.argv[1:]
     r = subprocess.run(['mk', 'CONF=p964', '9p964'], cwd='os/osprey/pc64',
@@ -50,9 +96,10 @@ def main():
                    env=dict(env, OSPREY_KERNEL=os.path.join(ROOT, 'os/osprey/pc64/9p964')),
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     log = tempfile.mktemp(prefix='osprey-p9-', suffix='.log')
+    shot = tempfile.mktemp(prefix='osprey-p9-', suffix='.ppm')
     subprocess.run(['./scripts/osprey-console.py', '-q', '-p', '2', '-n', 'e1000',
                     '-l', log, '-S', '-d', ROOT + '/.qemu/9front-root.qcow2',
-                    '-t', '150', '-u', 'the microkernel idles'],
+                    '-t', '150', '-u', 'the microkernel idles', '--shot', shot],
                    env=env, capture_output=True, text=True)
     try:
         t = plain(open(log, errors='replace').read())
@@ -133,13 +180,39 @@ def main():
     results.append(("and the limit it documents is enforced, not merely written down: the last line of the script asks for two of one image at once and the second is refused by name, because a program is at the address it was linked for and nothing here relocates it - the two would be the one image sharing its one data segment, descriptor table and heap - and the shell carries on",
                     'p9 exec: /boot/libcat is already running at 0x1400000; it is one image and cannot be two programs' in t
                     and 'libsh: /boot/libcat: cannot start it' in t))
-    results.append(("and a spawned program that fails ends with the failure as its status: the stage that was started writes into a pipe whose reader never arrived, which the personality raises rather than short-counts, and the error label a spawned program runs under turns that into a wait status instead of an unwind off the top of a fresh kproc's stack",
-                    re.search(r'p9 spawn: /boot/libcat \(\d+\) failed: Ehungup', t) is not None
+    results.append(("and a spawned program that fails ends with the failure as its status: the stage that was started writes into a pipe whose reader never arrived, the personality answers -1 and a reason the way a libc does, and the program makes that reason its exit status, which the shell reads out of the wait",
+                    'cat: write failed: Ehungup' in t
                     and 'libsh: /boot/libcat ended, status "Ehungup"' in t
                     and 'libsh: the script is done, and the personality that started me is still here' in t))
     results.append(("and the shell ends into the personality that loaded it, having run its script, with the name space it and its programs shared still the one the personality built",
                     'libsh: the script is done, and the personality that started me is still here' in t
                     and 'p9 exec: /boot/libsh returned; the personality is still here, its name space never reloaded' in t))
+    #
+    # The screen.  What the program paints is written in drawlibp9.c and
+    # here, and both were written before the machine was ever booted:
+    # the whole screen 0x112233 and the rectangle (200,150)-(600,450)
+    # 0xCC7722.  400 by 300 is 120000 pixels of the one and the rest of
+    # 1280 by 800 - 904000 - of the other, and the box the first lie in
+    # is that rectangle, its far edge exclusive as a Plan 9 rectangle's
+    # is.  Exact counts, because nothing dithers a frame buffer and
+    # nothing else is drawing on this configuration: there is no mouse
+    # driver on it, so the pointer page stays unreported and the draw
+    # server's arrow is never composited.
+    pix = readppm(shot)
+    pw = ph = 0
+    nfore = nback = 0
+    fbox = (0, 0, 0, 0)
+    if pix is not None:
+        pw, ph, pd = pix
+        nfore, fbox = boxof(pd, (0xcc, 0x77, 0x22), pw)
+        nback, _ = boxof(pd, (0x11, 0x22, 0x33), pw)
+    results.append(("and a program that draws runs on it: /boot/libdraw opens /dev/draw for a client of its own, reads the twelve fields that say what the screen is, and writes the draw protocol into it - and that /dev/draw is the kernel's own devdraw.c compiled into this personality, so the write is a call in the program's own address space and the protocol crosses no boundary at all",
+                    re.search(r'libdraw: client \d+, the screen is 0 0 1280 800,\s*x8r8g8b8\s*, through /dev/draw of the personality that loaded me', t) is not None
+                    and 'libdraw: painted the screen 112233 and 200 150 600 450 cc7722' in t))
+    results.append(("and the pixels are on the display: the screen QEMU scans out is 1280x800 and holds exactly 120000 pixels of 0xCC7722 in the rectangle (200,150)-(600,450) and 904000 of 0x112233 everywhere else - the counts and the box written down before the machine was booted, because a library operating system drawing on the firmware frame buffer either lands there or does not",
+                    pix is not None and (pw, ph) == (1280, 800)
+                    and nfore == 400*300 and fbox == (200, 150, 599, 449)
+                    and nback == 1280*800 - 400*300))
     results.append(("and it exits through the microkernel's minimal syscall interface, no in-kernel personality",
                     'the program exited' in t and 'panic' not in t))
 
@@ -148,11 +221,15 @@ def main():
         print('%-4s %s' % ('ok' if ok else 'FAIL', what))
         if not ok:
             bad += 1
+    print('the screen is %dx%d: %d of 0xCC7722 in %r, %d of 0x112233'
+          % (pw, ph, nfore, fbox, nback))
     if keep or bad:
         print('log %s' % log)
+        print('shot %s' % shot)
     else:
-        try: os.unlink(log)
-        except OSError: pass
+        for f in (log, shot, shot + '.qmp'):
+            try: os.unlink(f)
+            except OSError: pass
     return 1 if bad else 0
 
 sys.exit(main())

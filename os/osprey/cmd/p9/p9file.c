@@ -645,3 +645,177 @@ p9dup(int oldfd)
 	poperror();
 	return fd;
 }
+
+extern int	p9spawn(char*, char**, int*);	/* p9proc.c */
+extern int	p9waitpid(int, char*, int);
+
+/*
+ * The table's entry points, each under an error label of its own.
+ *
+ * The name space raises: p9open calls namec, and a name that is not
+ * there, or a device that refuses the open, unwinds rather than
+ * returning -1.  That is right for the personality, whose own callers
+ * are written around waserror, and wrong for the table, because the
+ * table is a program's libc and libc does not raise - a program tests
+ * the return and reads errstr.  Handing the raw entry points out meant
+ * that the first open a loaded program made of a file that was not
+ * there unwound off the top of the program's frames and into whatever
+ * label the personality had up, which is not where the program's stack
+ * was: it faulted, jumping to nothing.
+ *
+ * libdraw is what found it.  iounit(2) opens /fd/<n>ctl, expects the
+ * open to fail on a system that has no such file, and carries on with a
+ * default buffer size - an ordinary, correct thing for a program to do,
+ * and the first thing in this personality that ever did it.
+ *
+ * So each entry point catches and answers the way libc answers.  errstr
+ * is up->errstr either way, which is what the program's %r reads.
+ */
+int
+libopen(char *name, int mode)
+{
+	int fd;
+
+	if(waserror())
+		return -1;
+	fd = p9open(name, mode);
+	poperror();
+	return fd;
+}
+
+int
+libcreate(char *name, int mode, ulong perm)
+{
+	int fd;
+
+	if(waserror())
+		return -1;
+	fd = p9create(name, mode, perm);
+	poperror();
+	return fd;
+}
+
+long
+libread(int fd, void *buf, long n)
+{
+	long r;
+
+	if(waserror())
+		return -1;
+	r = p9read(fd, buf, n);
+	poperror();
+	return r;
+}
+
+long
+libwrite(int fd, void *buf, long n)
+{
+	long r;
+
+	if(waserror())
+		return -1;
+	r = p9write(fd, buf, n);
+	poperror();
+	return r;
+}
+
+void
+libclose(int fd)
+{
+	if(waserror())
+		return;
+	p9close(fd);
+	poperror();
+}
+
+vlong
+libseek(int fd, vlong off, int type)
+{
+	vlong r;
+
+	if(waserror())
+		return -1;
+	r = p9seek(fd, off, type);
+	poperror();
+	return r;
+}
+
+int
+libdup(int fd)
+{
+	int r;
+
+	if(waserror())
+		return -1;
+	r = p9dup(fd);
+	poperror();
+	return r;
+}
+
+int
+libfd2path(int fd, char *buf, int nbuf)
+{
+	int r;
+
+	if(waserror())
+		return -1;
+	r = p9fd2path(fd, buf, nbuf);
+	poperror();
+	return r;
+}
+
+int
+libpipe(int fd[2])
+{
+	int r;
+
+	if(waserror())
+		return -1;
+	r = p9pipe(fd);
+	poperror();
+	return r;
+}
+
+int
+libspawn(char *name, char **argv, int *std)
+{
+	int r;
+
+	if(waserror())
+		return -1;
+	r = p9spawn(name, argv, std);
+	poperror();
+	return r;
+}
+
+/*
+ * errstr(2) for a loaded program: the name space's own up->errstr, which
+ * is where every refusal above leaves its reason.  Plan 9's errstr
+ * exchanges the buffers - it writes the caller's string back into the
+ * process's - and so does this, because that is what a program that
+ * saves and restores an error message expects.
+ */
+int
+liberrstr(char *buf, uint nbuf)
+{
+	char tmp[ERRMAX];
+
+	if(nbuf == 0)
+		return -1;
+	kstrcpy(tmp, buf, sizeof tmp);
+	kstrcpy(buf, up->errstr, nbuf);
+	kstrcpy(up->errstr, tmp, sizeof up->errstr);
+	return 0;
+}
+
+int
+libwait(int pid, char *status, int nstatus)
+{
+	int r;
+
+	if(waserror())
+		return -1;
+	r = p9waitpid(pid, status, nstatus);
+	poperror();
+	return r;
+}
