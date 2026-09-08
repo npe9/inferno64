@@ -9760,6 +9760,107 @@ its operating system a library in its own address space, on the
 microkernel, no process boundary and no kernel personality.  It is the
 longest of the phases, and honestly named as the last.
 .NH 1
+Does an interrupt give back every register?
+.PP
+The trap entry is the one piece of code every configuration runs
+through, and a register it failed to give back would not look like a
+trap-entry fault from outside.  It would look like whatever the
+interrupted instruction was about to do with that register.  Compiled
+code holds a called function's return value in a register for the one
+or two instructions before it stores it, so most interrupts land where
+nothing cares, and the ones that do not become a nil where a pointer
+belonged, a fault reading a struct at a small address, or an allocator
+asked for a size with the top bit set.  All three are shapes this
+branch has seen.
+.PP
+The occasion was the sibling kernel's, not this one's.
+.CW os/inferno/pc64 's
+.CW _intrcommon
+built the Ureg's segment words with AX as its scratch
+.I before
+it pushed AX, and
+.CW MOVW
+from a segment register assembles to the 32-bit form, which
+zero-extends over the whole of RAX: every interrupt handed the
+interrupted code the DS selector \- zero \- in place of its AX.  That
+was found by another session on this machine, which measured it rather
+than reasoned it, and passed the method over.
+.PP
+This kernel's entry does not have that shape.  I checked by extracting
+.CW _strayintr
+through the start of
+.CW vectortable
+from
+.CW os/osprey/pc64/l.s
+and from
+.CW os/9front/pc64/l.s
+and diffing them: 72 lines each, no difference.  It never writes a
+segment register through a scratch at all \- it reserves those words
+with
+.CW SUBQ
+and fills the two it needs \- and AX is pushed before it is used to
+reach the vector byte.  The syscall entry, which is this kernel's own
+and not upstream's, is symmetric too: the user SP is parked at
+.CW GS:8
+before SP becomes the scratch that loads
+.CW m
+and
+.CW m->proc ,
+AX is stored to its Ureg slot before being reused to fetch that parked
+SP, and
+.CW forkret 's
+loads match the stores one for one.
+.PP
+A reading is not a measurement, though, and a one-instruction window is
+exactly what a reading misses.  So
+.CW os/osprey/pc64/regtorture.s
+measures: twelve registers loaded with distinct values and compared in
+a spin with interrupts on, called from
+.CW init0
+once the alarm kproc is up.  Both halves are required and the check
+reads both, because a loop that never ran would pass the first on its
+own: the interrupts-on run clean, and the same loop under
+.CW CLI
+clean in the same boot as the control.  The tick count is reported and
+required to be non-zero, since it is the evidence that any interrupt
+happened.  It says twelve registers survived 191 passes over 20 clock
+ticks.
+.PP
+It runs on
+.CW pc64
+only, because
+.CW init0
+is the full personality's and the six microkernel configurations say so
+themselves \- they skip it.  That is not a gap in coverage of the thing
+being measured: the trap entry is
+.CW l.$O ,
+one object, linked into all seven, so measuring it once measures the
+code every one of them runs through.
+.PP
+What it does not cover, said plainly so that a clean run is not read
+for more than it holds.  Not the syscall path: a kproc spinning with
+interrupts on is only ever preempted through
+.CW _strayintr ,
+so it never goes near
+.CW syscallentry ,
+.CW forkret
+or
+.CW touser
+\- which is to say the one part of this kernel's entry that is its own
+code rather than 9front's is the part this test does not reach.
+Covering it wants the same loop in a user program making a system call
+each time round, one for each of the two ABIs the entry serves, and
+that is written down here as the next thing rather than attempted
+badly: a hand-rolled test that gets the calling convention subtly wrong
+returns a clean answer for the wrong reason, which is worse than no
+test.  Nor does it cover R13, R14 and R15, which the loop itself uses;
+nor the segment registers, the flags, or any of the x87 and SSE state.
+.PP
+The file is copied from
+.CW os/inferno/pc64/regtorture.s
+rather than shared, because kernels in this tree are self-contained: no
+file under one flavour names another's source directory.
+.NH 1
 Checking, all of it
 .PP
 There are fifteen checks in
@@ -9819,7 +9920,7 @@ and, since 2.3k, is not.
 The tally as this is written, every configuration building and every
 check clean, the two-machine check run three times:
 .CW pc64
-61,
+62,
 .CW p9pair
 97,
 .CW p9buddy

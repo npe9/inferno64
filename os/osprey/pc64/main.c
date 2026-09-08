@@ -144,6 +144,51 @@ mach0init(void)
 	active.exiting = 0;
 }
 
+extern long regtorture(long);		/* regtorture.s */
+extern long regtorturecli(long);
+extern uvlong regtorturebad;
+
+/*
+ * Spin in regtorture until the clock has moved, so that a clean answer
+ * is a statement about interrupts and not about a loop that no
+ * interrupt happened to land in.  The tick count is reported for that
+ * reason: it is the evidence that anything was tested at all.
+ *
+ * The interrupts-off run is the control.  If both are clean the
+ * registers survive; if only the interrupts-on one is dirty the trap
+ * entry is where they go; if both are dirty the loop itself is wrong
+ * and the answer means nothing.  Running the control in the same boot
+ * is what makes the pair a measurement rather than an observation.
+ */
+static void
+regcheck(void)
+{
+	ulong t0, ticks;
+	long bad, clibad;
+	int n;
+
+	clibad = regtorturecli(100*1000);
+	t0 = MACHP(0)->ticks;
+	bad = 0;
+	for(n = 0; n < 1000; n++){
+		if((bad = regtorture(100*1000)) != 0)
+			break;
+		if(MACHP(0)->ticks - t0 >= 20)	/* twenty clock ticks of them */
+			break;
+	}
+	ticks = MACHP(0)->ticks - t0;
+	if(bad != 0)
+		print("osprey regcheck: register %ld came back as %#llux across an interrupt, after %lud ticks\n",
+			bad, regtorturebad, ticks);
+	else if(clibad != 0)
+		print("osprey regcheck: the loop is wrong: a register moved with interrupts off\n");
+	else if(ticks == 0)
+		print("osprey regcheck: the clock did not move; nothing was tested\n");
+	else
+		print("osprey regcheck: twelve registers survived %d passes over %lud clock ticks, and the same loop with interrupts off is clean\n",
+			n + 1, ticks);
+}
+
 void
 init0(void)
 {
@@ -162,6 +207,7 @@ init0(void)
 		poperror();
 	}
 	kproc("alarm", alarmkproc, 0);
+	regcheck();
 	/*
 	 * The stack initcode is entered on.  The user entry (init9.c's
 	 * _main) is handed the argument vector itself - the first argument

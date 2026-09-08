@@ -579,6 +579,25 @@ def main():
         print('%-4s %s' % ('ok' if ok else 'FAIL', what))
         if not ok:
             bad += 1
+    # Does the trap entry give back every register it interrupted?  A
+    # register it lost would not look like a trap-entry fault from
+    # outside - it would look like whatever the interrupted instruction
+    # was about to do with it - so the kernel measures it at boot rather
+    # than waiting to recognise the symptom.  Both halves are required:
+    # the interrupts-on run clean, and the interrupts-off control clean
+    # in the same boot, because a loop that never moved would pass the
+    # first on its own.  The tick count is the evidence that any
+    # interrupt happened at all.
+    m = re.search(r'osprey regcheck: twelve registers survived (\d+) passes over (\d+) clock ticks, '
+                  r'and the same loop with interrupts off is clean', log)
+    ok = m is not None and int(m.group(2)) > 0 and int(m.group(1)) > 0
+    what = ('and an interrupt gives back every register it interrupted: twelve of them held '
+            'across clock ticks and compared, with the same loop under CLI as the control')
+    if m:
+        what += ' (%s passes, %s ticks)' % (m.group(1), m.group(2))
+    print('%-4s %s' % ('ok' if ok else 'FAIL', what))
+    if not ok:
+        bad += 1
     # the uart's output leaves the machine rather than coming back to it
     ok = 'osprey uart task' in com2
     print('%-4s %s' % ('ok' if ok else 'FAIL',

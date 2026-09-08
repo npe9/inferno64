@@ -83,6 +83,7 @@ PORTOBJ=`{if [ "$CONF" = upc64 -o "$CONF" = xup64 -o "$CONF" = p964 -o "$CONF" =
 
 OBJ=\
 	l.$O\
+	regtorture.$O\
 	cga.$O\
 	fpu.$O\
 	i8253.$O\
