@@ -1696,6 +1696,53 @@ and
 .CW walk() ,
 not in
 .CW OP(mcall) .
+.NH 2
+The tracker does not predict the failure either
+.PP
+Set the two signals side by side across the same fourteen boots and
+they do not agree:
+.IP
+.nf
+4 boots panicked with no tracker report at all
+3 boots reported 168, 881 and 1493 times and never panicked
+5 boots did both
+.fi
+.PP
+So even with the liveness check the tracker is not measuring the fault.
+It is measuring something that happens near it, often, and sometimes
+neither.  A slot the type map calls a pointer holding a small value is
+not necessarily wrong \- a Limbo
+.CW adt
+with a
+.CW pick ,
+or a union, will do that legitimately \- and nothing in the check
+distinguishes those.
+.PP
+That downgrades the
+.CW copypath
+result above from "where the corruption is" to "where the tracker
+mostly fires", which is a weaker claim and the only one the numbers
+support.
+.PP
+What is left as reliable is the kernel's own integrity checks.  The
+panics across those boots:
+.IP
+.nf
+page fault                        3
+movp: bad sv                      1
+invalid opcode                    1
+general protection violation      1
+alloc:D2B:free                    1
+alloc:D2B:destroy-entry           1
+.fi
+.PP
+The two
+.CW alloc:D2B
+entries are the pool detecting a corrupted block header, which is a
+specific, self-checking, layout-independent signal of the kind
+everything else in this hunt has lacked.  They are the thing to
+instrument and count, and unlike the tracker they say what was
+corrupted rather than which watched word moved.
 .PP
 What is still not done, so the state is not overstated: GICv3 (the
 redistributor is per processor and this board derives one fixed base),
