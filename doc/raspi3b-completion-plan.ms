@@ -173,6 +173,11 @@ not stall for the window.
 .NH 1
 Phase 1 (historical): the DWC2 controller
 .PP
+.I "The chapters marked historical are the original plan text, kept for"
+.I "what it expected rather than for what happened; the chapter of the"
+.I "same number above each carries the result.  They sit here rather than"
+.I "at the end because that is where they were written."
+.PP
 The BCM2837 has one USB: a DWC2 OTG host controller at 0x3f980000.  The
 onboard LAN9514 hub+ethernet, and any keyboard, mouse or storage, all
 hang off it, so this one driver unlocks Phases 2-4.  QEMU -M raspi3b
@@ -496,7 +501,7 @@ line that prints alongside the write is the open arm64 multi-kproc
 error-stack bug noted under the kfs item below; it does not stop the
 write.
 .NH 1
-Phase 5: Arasan SDHCI / SDIO -- the second SD controller -- DONE, card path tier qemu and SDIO transport tier qemu+patch
+Phase 5: Arasan SDHCI / SDIO -- the second SD controller -- DONE
 .PP
 .CW sdhcibcm.c
 drives the BCM2837's second SD controller (Arasan SDHCI, 0x3f300000), a
