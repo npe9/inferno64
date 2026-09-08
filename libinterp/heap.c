@@ -627,29 +627,54 @@ reportunder(Type *t, int n, char *what)
  * These are every statically initialised Type in the tree, and
  * include/interp.h declares the same ten.  A new one has to be added
  * here too, or it gets handed to free() the first time its count is
- * over-decremented.
+ * over-decremented.  Returns a 1-based index so the caller can keep a
+ * per-type flag; Type itself has no spare field, and widening it would
+ * move map[], which dtype()'s sizeof(Type)-sizeof(t->map)+mapsize and
+ * the JITs' field offsets both depend on.
  */
+static Type* const statics[] = {
+	&Tarray, &Tstring, &Tlist, &Tmodlink, &Tchannel,
+	&Tptr, &Tbyte, &Tword, &Tlong, &Treal,
+};
+
 static int
 statictype(Type *t)
 {
-	return t == &Tarray || t == &Tstring || t == &Tlist
-		|| t == &Tmodlink || t == &Tchannel || t == &Tptr
-		|| t == &Tbyte || t == &Tword || t == &Tlong
-		|| t == &Treal;
+	int i;
+
+	for(i = 0; i < nelem(statics); i++)
+		if(t == statics[i])
+			return i+1;
+	return 0;
 }
 
 void
 freetype(Type *t)
 {
-	int n;
+	int i, n;
 
 	if(t == nil)
 		return;
 	n = ADEC(&t->ref);
 	if(n > 0)
 		return;
-	if(statictype(t)) {
-		reportunder(t, n, "static type");
+	if((i = statictype(t)) != 0) {
+		static uchar reported[nelem(statics)];
+
+		/*
+		 * Report the first one per type only.  Putting the reference
+		 * back restores the static but not the count of live objects
+		 * it was standing for, so the very next destroy of an object
+		 * of this type lands on zero again and reports again: the
+		 * first boot to fire this turned one real event into
+		 * eighteen identical lines.  The repeats are an artefact of
+		 * the repair, not eighteen separate underflows, and they
+		 * bury the one capture that matters.
+		 */
+		if(!reported[i-1]) {
+			reported[i-1] = 1;
+			reportunder(t, n, "static type");
+		}
 		t->ref = 1;		/* kernel data: put the static reference back */
 		return;
 	}

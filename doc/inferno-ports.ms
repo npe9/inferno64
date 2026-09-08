@@ -19320,8 +19320,7 @@ alloc:D2B:free (Tptr);3;0
 invalid opcode;0;1
 .TE
 .PP
-The report is the result.  One boot in 32 fired it eighteen times,
-every time on the same address:
+The report is the result.  One boot in 32 fired it, on one address:
 .P1
 freetype: static type 0x344530 ref underflow n 0, pid 45 module Env
 .P2
@@ -19351,6 +19350,39 @@ is
 call, reached from
 .CW OP(cvtac) Ns 's
 .CW destroy(*dp) .
+.PP
+It fired eighteen times in that boot, and seventeen of those are an
+artefact of the repair rather than separate events.  Putting the
+static's reference back restores the 1 but not the live objects it was
+standing for, so the next destroy of an
+.CW Array
+lands on zero again and reports again.
+.CW freetype()
+now reports the first occurrence per type and stays quiet after, so a
+capture is one line and not a page of them.
+.PP
+.CW "n 0"
+is worth reading carefully, because it proves more than it first
+appears to.
+.CW n
+is the count after the decrement, so the count was exactly 1 before
+it.  But this call is
+.CW destroy() Ns 's
+own
+.CW freetype(t)
+on an
+.CW Array
+that is still being destroyed \(em that object is live, and its own
+.CW AINC
+from
+.CW heaparray()
+is still outstanding.  The count should therefore have been at least 2
+here: one for the static, one for this object.  Finding 1 means the
+invariant was already short by at least one
+.I before
+this call ran, which is independent confirmation that the imbalance is
+real and, at the same time, proof that the stack above is not where
+the surplus release happened.
 .PP
 The accounting says this cannot happen without an over-release, and
 that was checked rather than assumed.
