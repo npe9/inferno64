@@ -2195,6 +2195,59 @@ whose memory has been reused by another frame of the same type would
 pass the staleness check unchanged.  That is the next thing to test,
 and it needs someone who owns the tracker.
 .NH 1
+"mk acid" on this board succeeds and produces nothing
+.PP
+Worth knowing before someone tries to debug this kernel with acid.
+.CW "mk acid"
+in
+.CW os/inferno/raspi3b
+exits 0, prints
+.CW "srclist: crackhdr: bad ELF class - not 32 bit"
+to standard error, and writes a 21-byte
+.CW iraspi3b.acid
+whose entire contents are
+.CW "include (\(dqinferno\(dq);" .
+No sources, no symbols, no error status.
+.PP
+The chain is short.
+.CW utils/libmach/executable.c:536
+accepts only
+.CW ELFCLASS32 ,
+so libmach cannot read this board's kernel at all \- and the reader
+is there, it is 32-bit only, which makes Elf64 an extension of an
+existing path rather than a new one.
+.CW srclist
+runs on libmach, so it lists nothing; the acid rule loops over nothing
+and writes only its trailing include line; and
+.CW mk
+sees a successful loop over an empty list.
+.PP
+This board's own
+.CW mkfile
+defines
+.CW "default:V: i$CONF" ,
+so an ordinary build never runs the rule and never sees this.  Only an
+explicit
+.CW "mk acid"
+does, which is why it has gone unnoticed.
+.PP
+It is recorded rather than fixed for the same reason as the tracker:
+.CW utils/libmach
+is shared by every platform and by the
+.CW acid ,
+.CW inm
+and
+.CW srclist
+tools, and Elf64 support there is a piece of work with its own
+consumers beyond this board.  The part that belongs in this document
+is the shape of the failure, which is the one this whole port keeps
+meeting: a step that reports success while doing nothing is worse than
+one that fails, because nothing downstream can tell the difference.
+Kernels here link stripped, so a
+.CW "7l -a"
+listing regenerated after each build remains the only way to turn a PC
+into a symbol on this board.
+.NH 1
 When this is done
 .PP
 With Phases 0-4 the Pi 3B is an interactive networked Inferno
