@@ -19930,3 +19930,56 @@ or one with a nil
 .CW m ,
 reports, and it prints the type and module pointers so the next
 capture says which.
+.NH 1
+What the interrupt fix does to everything above it
+.PP
+Every measurement in this document taken before the
+.CW _intrcommon
+fix was made on a kernel where every interrupt handed the interrupted
+code
+.CW "AX = 0" .
+That is not a small confound to discover at the end: it accounted for
+80 of the 82 panics in a 96-boot batch, a factor of 40.  Conclusions
+drawn under it need re-reading, and the negative ones need it most.
+.PP
+The pattern to distrust is "the probe was armed and never fired, so
+that hypothesis is refuted".  There are several here \(em
+.CW checkmarkptr()
+at 0 of 15,
+.CW ADEC(&h->ref)
+underflow at 0 of 20, the
+.CW freelist()
+tail-walk assertion over six virtarm64 boots.  Each was a sound
+experiment when it was run.  But a kernel that panics in 85% of boots
+does not get far, and a probe that never runs cannot fire: a quiet
+probe on that kernel is weaker evidence than the same probe on this
+one.  None of those hypotheses is hereby revived; they are marked as
+resting on a base that has changed, and cheap to re-run now that a
+boot lasts.
+.PP
+A narrower version of the same trap, from the cloud-port session and
+independently from the inferno-ports branch on raspi3b: a tracker hit
+clears its own watch, so a quiet
+.I earlier
+checkpoint is ambiguous between "nothing had gone wrong yet" and
+"there was nothing here to go wrong on".  Bisection by checkpoint is
+invalid reasoning on that instrument, not merely wasted effort.  What
+made those captures legible was the instrument going quiet after the
+teardown
+.CW trackclear ,
+not the bracketing.  The two probes named above are not of that kind
+\(em they are direct assertions, armed continuously, and a hit does not
+disarm them \(em so they are weakened by the confound only, not by the
+ambiguity.
+.PP
+The positive results are in better shape, because a capture that
+happened, happened.  The
+.CW alloc:D2B
+double free, the freehist address matches, the
+.CW Tptr
+and
+.CW Tarray
+underflows: all real events.  What changed is their cause.  Three
+static-Type underflows in 96 boots became zero in 96 after the fix,
+which is what "downstream" means in practice \(em and it is the model
+for how to re-read the rest.

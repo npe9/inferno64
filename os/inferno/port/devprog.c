@@ -879,7 +879,17 @@ modstatus(REG *r, char *ptr, int len)
 			return (WORD)f->lr;
 		return f->lr - f->mr->prog;
 	}
-	memmove(ptr, r->M->m->name, len);
+	/*
+	 * m->name is a NUL-terminated string and this copied a fixed len
+	 * bytes of it, so it read up to len bytes past a short name and
+	 * left ptr unterminated for the %s that both callers apply to it.
+	 * Neither is what the caller wants, and in a diagnostic reached
+	 * from a clock handler an over-read of a freed name is exactly
+	 * the wrong place to have one.  Not the cause of anything
+	 * observed -- the buffers are 64 bytes and len is sizeof of
+	 * them, so nothing overflowed -- but it is wrong as written.
+	 */
+	snprint(ptr, len, "%s", r->M->m->name);
 	if(r->M->compiled)
 		return (WORD)r->PC;
 	PC = r->PC;
