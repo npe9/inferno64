@@ -1,0 +1,127 @@
+From c93c015606a2dec2d6b54641cf9881e12a26c84b Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Tue, 8 Sep 2026 19:55:56 -0400
+Subject: [PATCH] hw/misc/bcm2835_property: report the UART clock that is
+ actually wired
+
+GET_CLOCK_RATE answered RPI_FIRMWARE_UART_CLK_RATE, a 3 MHz constant in
+raspi_platform.h, for the UART clock id.  Meanwhile bcm2835_peripherals
+drives the PL011's clk input from the CPRMAN's uart-out, which this
+machine brings up at 47999625 Hz.  The model told a guest one number
+and ran at another, sixteen times apart.
+
+That is not a rounding difference, it is the whole baud calculation.
+UARTCLK is not a property of the part -- it differs between Pi models
+and is whatever the firmware left -- so a driver cannot hardcode it and
+has to ask, which is what this tag is for.  Having asked, it computes
+IBRD/FBRD as UARTCLK/(16*baud) and writes them, and
+pl011_get_baudrate() then divides the real 48 MHz by divisors derived
+from 3 MHz.  An Inferno raspi3b kernel asking for 115200 got 1846136:
+its console was sixteen times faster than it believed, in a direction
+nothing in the guest can detect.
+
+Wire the same clock into the property device and report it.  The input
+is optional, so a board that does not connect it keeps the constant.
+With it connected the guest asks, is told 47999625, programs IBRD 26
+FBRD 3, and the model runs 115176 baud -- which is the request, to
+within what the divisors can express.
+
+qtest-aarch64: 28 Ok, 0 Fail.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ hw/arm/bcm2835_peripherals.c       |  7 +++++++
+ hw/misc/bcm2835_property.c         | 24 +++++++++++++++++++++++-
+ include/hw/misc/bcm2835_property.h |  2 ++
+ 3 files changed, 32 insertions(+), 1 deletion(-)
+
+diff --git a/hw/arm/bcm2835_peripherals.c b/hw/arm/bcm2835_peripherals.c
+index 34b1111..e0c43c0 100644
+--- a/hw/arm/bcm2835_peripherals.c
++++ b/hw/arm/bcm2835_peripherals.c
+@@ -363,6 +363,13 @@ void bcm_soc_peripherals_common_realize(DeviceState *dev, Error **errp)
+                 sysbus_mmio_get_region(SYS_BUS_DEVICE(&s->cprman), 0));
+     qdev_connect_clock_in(DEVICE(&s->uart0), "clk",
+                           qdev_get_clock_out(DEVICE(&s->cprman), "uart-out"));
++    /*
++     * The same clock reaches the firmware's GET_CLOCK_RATE, so a guest
++     * asking what UARTCLK is gets the number the PL011 is really
++     * running at rather than a constant that contradicts it.
++     */
++    qdev_connect_clock_in(DEVICE(&s->property), "uart-clk",
++                          qdev_get_clock_out(DEVICE(&s->cprman), "uart-out"));
+ 
+     memory_region_add_subregion(&s->peri_mr, ARMCTRL_IC_OFFSET,
+                 sysbus_mmio_get_region(SYS_BUS_DEVICE(&s->ic), 0));
+diff --git a/hw/misc/bcm2835_property.c b/hw/misc/bcm2835_property.c
+index a21c6a5..ae03e7e 100644
+--- a/hw/misc/bcm2835_property.c
++++ b/hw/misc/bcm2835_property.c
+@@ -15,6 +15,7 @@
+ #include "hw/arm/raspberrypi-fw-defs.h"
+ #include "system/dma.h"
+ #include "qemu/log.h"
++#include "hw/qdev-clock.h"
+ #include "qemu/module.h"
+ #include "trace.h"
+ #include "hw/arm/raspi_platform.h"
+@@ -124,7 +125,22 @@ static void bcm2835_property_mbox_push(BCM2835PropertyState *s, uint32_t value)
+                 stl_le_phys(&s->dma_as, value + 16, RPI_FIRMWARE_EMMC_CLK_RATE);
+                 break;
+             case RPI_FIRMWARE_UART_CLK_ID:
+-                stl_le_phys(&s->dma_as, value + 16, RPI_FIRMWARE_UART_CLK_RATE);
++                /*
++                 * Report the clock that is actually driving the PL011,
++                 * not a constant.  A guest computing its baud divisors
++                 * from what it is told here -- which is the only way it
++                 * can learn UARTCLK, since the rate is not a property
++                 * of the part and differs between Pi models -- has to
++                 * be told the same number pl011_get_baudrate() will
++                 * divide by, or it programs a rate the model does not
++                 * run at.  The constant said 3 MHz, a Pi 1 value, while
++                 * this machine's CPRMAN drives the UART at 48 MHz, so
++                 * such a guest was out by a factor of sixteen.
++                 */
++                stl_le_phys(&s->dma_as, value + 16,
++                            s->uart_clk && clock_is_enabled(s->uart_clk)
++                            ? clock_get_hz(s->uart_clk)
++                            : RPI_FIRMWARE_UART_CLK_RATE);
+                 break;
+             case RPI_FIRMWARE_CORE_CLK_ID:
+                 stl_le_phys(&s->dma_as, value + 16, RPI_FIRMWARE_CORE_CLK_RATE);
+@@ -521,6 +537,12 @@ static void bcm2835_property_init(Object *obj)
+ 
+     sysbus_init_mmio(SYS_BUS_DEVICE(s), &s->iomem);
+     sysbus_init_irq(SYS_BUS_DEVICE(s), &s->mbox_irq);
++
++    /*
++     * Optional: a board that does not wire it keeps the old constant
++     * for GET_CLOCK_RATE on the UART.
++     */
++    s->uart_clk = qdev_init_clock_in(DEVICE(s), "uart-clk", NULL, NULL, 0);
+ }
+ 
+ static void bcm2835_property_reset(DeviceState *dev)
+diff --git a/include/hw/misc/bcm2835_property.h b/include/hw/misc/bcm2835_property.h
+index 2f93fd0..735b6c0 100644
+--- a/include/hw/misc/bcm2835_property.h
++++ b/include/hw/misc/bcm2835_property.h
+@@ -12,6 +12,7 @@
+ #include "net/net.h"
+ #include "hw/display/bcm2835_fb.h"
+ #include "hw/nvram/bcm2835_otp.h"
++#include "hw/clock.h"
+ #include "qom/object.h"
+ 
+ #define TYPE_BCM2835_PROPERTY "bcm2835-property"
+@@ -28,6 +29,7 @@ struct BCM2835PropertyState {
+     qemu_irq mbox_irq;
+     BCM2835FBState *fbdev;
+     BCM2835OTPState *otp;
++    Clock *uart_clk;
+ 
+     MACAddr macaddr;
+     uint32_t board_rev;
+-- 
+2.51.0
+

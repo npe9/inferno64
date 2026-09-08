@@ -8,10 +8,38 @@
 #include "../port/error.h"
 
 extern PhysUart virtarm64physuart;
+extern int mboxgetclock(int, u32*);	/* mailbox.c: firmware clock rate */
+
+static int virtarm64_baud(Uart*, int);
+
+enum {
+	Putcspin = 1000000,	/* bound: a dead UART must not hang a panic */
+	Consbaud = 115200,	/* what the far end of a Pi's serial cable expects */
+	Uartclkid = 2,		/* firmware clock id for the PL011 */
+	Uartclkdflt = 48000000,	/* if the firmware will not say; Pi 3 default */
+};
+
+/*
+ * How hard the polled path has had to wait.  Reported by
+ * uartputccheck(); see the console chapter of
+ * doc/raspi3b-completion-plan.ms.
+ */
+static int putcfull;		/* writes that met a full TX FIFO */
+static int putcspin;		/* worst spin, in iterations */
+static int putcdrop;		/* writes that gave up and wrote anyway */
 
 typedef struct Ctlr Ctlr;
 struct Ctlr {
-	u32	*base;
+	/*
+	 * volatile, and it has to be.  A loop that polls FR and does
+	 * nothing else -- which is what waiting for TX FIFO room is --
+	 * lets the compiler hoist the load out and spin on a register.
+	 * virtarm64_kick() never showed this because its loop also
+	 * stores to UARTDR through the same pointer, which blocks the
+	 * optimisation; virtarm64_putc()'s wait did nothing at all until
+	 * this word was qualified.
+	 */
+	volatile u32	*base;
 };
 
 static Ctlr virtarm64ctlr = {
@@ -21,7 +49,14 @@ static Ctlr virtarm64ctlr = {
 static Uart virtarm64uart = {
 	.regs	= &virtarm64ctlr,
 	.name	= "eia0",
-	.freq	= 24000000,	/* apb-pclk, from the DTB (same as armv7) */
+	/*
+	 * Filled in from the firmware by virtarm64_enable().  The 24 MHz
+	 * that used to sit here was the -M virt apb-pclk, copied in with
+	 * the rest of the driver, and it is not this part's clock on any
+	 * Pi; it never mattered only because nothing programmed the baud
+	 * divisors either.
+	 */
+	.freq	= 0,
 	.phys	= &virtarm64physuart,
 };
 
@@ -72,10 +107,35 @@ static void
 virtarm64_enable(Uart *uart, int ie)
 {
 	Ctlr *c;
+	u32 clk;
 
 	c = uart->regs;
 	USED(ie);
+
+	/*
+	 * Ask the firmware for UARTCLK the first time through.  It is not
+	 * a property of the part and it differs between Pi models, so a
+	 * constant here would be programming the wrong baud rate on every
+	 * board that disagrees with the constant.  If the mailbox will
+	 * not answer -- it is up well before this on a Pi, but this runs
+	 * early -- fall back to the Pi 3 default rather than leaving the
+	 * divisors unwritten, and say so.
+	 */
+	if(uart->freq <= 0){
+		if(mboxgetclock(Uartclkid, &clk) == 0)
+			uart->freq = clk;
+		else {
+			uart->freq = Uartclkdflt;
+			print("uart: firmware would not report the uart clock; "
+				"assuming %d Hz\n", Uartclkdflt);
+		}
+	}
+
+	/* CR first: the divisors and LCR_H may only be changed while
+	 * the UART is disabled, and LCR_H must be written last because
+	 * writing it is what latches IBRD and FBRD. */
 	csr32w(c, UartCR, 0);
+	virtarm64_baud(uart, Consbaud);
 	csr32w(c, UartLCRH, UartLCRHWLEN8|UartLCRHFEN);
 	csr32w(c, UartCR, UartCRUARTEN|UartCRTXE|UartCRRXE);
 }
@@ -142,10 +202,34 @@ virtarm64_break(Uart*, int)
 {
 }
 
+/*
+ * Program the baud divisors.  BAUDDIV = UARTCLK/(16*baud), split into a
+ * 16-bit integer part in IBRD and a 6-bit fraction in FBRD; the pair is
+ * only latched when LCR_H is written afterwards, which is why the
+ * caller must write LCR_H last.
+ *
+ * This was a stub returning 0, so the divisors were never written at
+ * all and the part ran at whatever the firmware left.  On a Pi that is
+ * usually right by luck, since the firmware sets up the console before
+ * the kernel starts; it is right by luck all the same, and it means
+ * uart->baud reported a rate nothing had programmed.
+ */
 static int
 virtarm64_baud(Uart *uart, int baud)
 {
-	USED(uart, baud);
+	Ctlr *c;
+	u32 div;
+
+	if(baud <= 0 || uart->freq <= 0)
+		return -1;
+	c = uart->regs;
+	/* 64*UARTCLK/(16*baud) = 4*UARTCLK/baud, rounded. */
+	div = (4 * (uvlong)uart->freq + baud/2) / baud;
+	if(div < 64 || (div >> 6) > 0xffff)
+		return -1;		/* outside what the divisors can express */
+	csr32w(c, UartIBRD, div >> 6);
+	csr32w(c, UartFBRD, div & 0x3f);
+	uart->baud = baud;
 	return 0;
 }
 
@@ -221,12 +305,58 @@ virtarm64_putc(Uart *uart, int c)
 	 * never; on a Pi -- and now on the model, see
 	 * tools/qemu-patches 0018 -- a blind write to a full FIFO is a
 	 * character on the floor, and this is the path panic() and
-	 * iprint() use.  Bounded, so a dead UART cannot hang a panic.
+	 * iprint() use.  Bounded, so a dead UART cannot hang a panic;
+	 * uartputccheck() reports whether the bound is ever approached.
 	 */
-	for(i = 0; i < 1000000; i++)
+	for(i = 0; i < Putcspin; i++)
 		if((csr32r(ctlr, UartFR) & UartFRTXFF) == 0)
 			break;
+	if(i > 0){
+		putcfull++;
+		if(i > putcspin)
+			putcspin = i;
+	}
+	if(i == Putcspin)
+		putcdrop++;
 	csr32w(ctlr, UartDR, c);
+}
+
+/*
+ * Drive the polled path hard enough to fill the transmit FIFO many
+ * times over, and say what happened.  This is the path panic() and
+ * iprint() take, and it is the one path that cannot report a dropped
+ * character by any other means -- there is no queue behind it and no
+ * interrupt in front of it, so a write to a full FIFO is simply gone.
+ *
+ * The eight numbered lines below are the evidence: they are written a
+ * character at a time through virtarm64_putc(), so if the wait is
+ * wrong they arrive short, and the numbering says where.
+ */
+void
+uartputccheck(void)
+{
+	int i, full, spin, drop;
+	char buf[64];
+
+	putcfull = putcspin = putcdrop = 0;
+	for(i = 0; i < 8; i++){
+		snprint(buf, sizeof buf,
+			"uart putc burst line %d 0123456789abcdefghijklmnopqr\n", i);
+		serialputs(buf, -1);
+	}
+	full = putcfull;
+	spin = putcspin;
+	drop = putcdrop;
+
+	if(drop > 0)
+		print("UART-PUTC-FAIL %d of 8 lines hit the %d-iteration bound\n",
+			drop, Putcspin);
+	else if(full == 0)
+		print("UART-PUTC-NONE the transmit FIFO never filled; "
+			"nothing here was tested\n");
+	else
+		print("UART-PUTC-OK polled writes waited for FIFO room %d times, "
+			"worst wait %d iterations of %d\n", full, spin, Putcspin);
 }
 
 PhysUart virtarm64physuart = {

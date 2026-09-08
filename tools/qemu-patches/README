@@ -69,6 +69,17 @@ worth keeping when adding to this series:
 	against, and a rate invented inside the device would be a number
 	nobody could trace back to anything.
 
+0019 hw/misc/bcm2835_property: report the UART clock that is actually
+	wired.  GET_CLOCK_RATE answered a 3 MHz constant for the UART
+	while bcm2835_peripherals drives the PL011 from the CPRMAN's
+	uart-out at 47999625 Hz -- the model told a guest one number and
+	ran at another, sixteen times apart.  UARTCLK is not a property
+	of the part, so a driver has to ask; having asked, it computes
+	IBRD/FBRD from 3 MHz and pl011_get_baudrate() divides 48 MHz by
+	them.  An Inferno kernel asking for 115200 got 1846136, with
+	nothing in the guest able to detect it.  The clock input is
+	optional, so an unwired board keeps the constant.
+
 WHAT COULD GO UPSTREAM.  Two of these are plain qemu bugs, independent
 of Inferno and of this port, and could be sent to qemu-devel on their
 own:
@@ -77,13 +88,18 @@ own:
 		Affects every clock mux, so every guest.
 	0008	the mini UART dropped its storage registers, so a
 		driver could not read back what it had written.
+	0019	the firmware's GET_CLOCK_RATE contradicted the clock
+		wired to the PL011 by a factor of sixteen.  Affects
+		any guest that programs its baud divisors from what
+		the firmware tells it, which is the only correct way
+		to get UARTCLK.
 
 0010 is a bug in 0009, not in qemu; it is kept as a separate patch
 because the reasoning is worth reading.  Everything else adds a device
 model qemu does not have, and only matters to someone emulating a Pi in
 this much detail \- which is most of the series, and increasingly so as
 it grows.  Do not read the section above as a to-do list for upstream:
-two patches of eighteen are general-purpose fixes and the rest are not.
+three patches of nineteen are general-purpose fixes and the rest are not.
 
 WHAT HAS BEEN CROSS-CHECKED.  Several of these models were written
 from the datasheet and from recollection of a Linux driver, which is
@@ -165,11 +181,22 @@ Four answers came back, and they are not all the same kind.
 	  because the reasoning that stopped the work for two rounds is
 	  worth more on the page than a clean summary of the result.
 
+	- the firmware clock table against the clock tree: a fifth
+	  kind, which this audit did not have a category for and now
+	  does.  Nothing here is lenient and nothing is missing; two
+	  parts of the model simply disagree, and a guest doing the
+	  correct thing is punished for it.  A driver that hardcodes
+	  UARTCLK is unaffected; a driver that asks the firmware, which
+	  is the only way to be right across Pi models, is out by
+	  sixteen.  Closed by 0019.  Worth looking for more of: the
+	  question to ask a model is not only "what will it accept"
+	  but "does it tell the guest the truth about itself".
+
 	- command timing generally: a real gap, not patched.  Unlike
 	  the FIFO it has no compensation on either side and is simply
 	  a limit: no model in this series claims a service time.
 
-	- the eighteen models in this series: audited for accepting
+	- the nineteen models in this series: audited for accepting
 	  writes the datasheet forbids.  Each already carries
 	  LOG_GUEST_ERROR coverage on its own error paths -- the I2S
 	  FIFO reports TXERR on overflow and RXERR on reading empty,
@@ -239,6 +266,36 @@ The entries below give each in full.
 			output matters most.  It now waits for room.
 			See the console chapter of
 			doc/raspi3b-completion-plan.ms.
+
+	bcm2835-property
+			FIXED by 0019.  GET_CLOCK_RATE for the UART
+			returned RPI_FIRMWARE_UART_CLK_RATE, 3000000 in
+			include/hw/arm/raspi_platform.h, which is a Pi 1
+			value.  bcm2835_peripherals.c wires the PL011's
+			clk to the CPRMAN's uart-out, 47999625 Hz on
+			this machine.  Both numbers are in the same
+			tree and they differ by sixteen.
+
+			This one was found by consequence rather than
+			by reading: after 0018 the console had a
+			measurable drain rate, so pacing it wrongly
+			showed up as a boot that took 32 s instead of
+			18 s, and the pl011_baudrate_change trace named
+			the cause.  Before 0018 the model transmitted
+			write-through and a sixteen-fold baud error had
+			no observable effect at all.  Accuracy compounds:
+			the first patch is what made the second finding
+			possible.
+
+			The guest side changed too, and had to.
+			virtarm64_baud() was a stub returning 0, so the
+			divisors were never written and the part ran at
+			whatever the firmware left -- which is right by
+			luck on a Pi and hid this entirely.  It now asks
+			the mailbox for clock id 2 and programs
+			IBRD/FBRD, and Uart.freq no longer carries the
+			24 MHz -M virt apb-pclk that had been copied in
+			with the driver.
 
 	sdhci		NOT a divergence, and this entry used to say it
 			was.  The claim here was that the model is more

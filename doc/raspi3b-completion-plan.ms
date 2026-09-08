@@ -2053,19 +2053,103 @@ FIFO in place is identical to the sequence without it, and no
 appears \- the driver never writes a full FIFO.  Cost, boot to the last
 self-test marker: 15.6 s before, 17.7 s after.
 .PP
-It also caught a live bug the moment it landed.
+It also caught three live bugs, none of them in QEMU.
+.PP
+.B "One: the polled path wrote blind."
 .CW virtarm64_putc() ,
 the path
 .CW panic()
 and
 .CW iprint()
-use, wrote UARTDR blind and then spun a fixed count, with a comment
-blaming unreliable FR flags.  The flags were not unreliable; TXFF
-simply could never assert.  On a Pi that write is a dropped character
-in exactly the situation where the output matters most.  It now waits
-for room, bounded so a dead UART cannot hang a panic.  This is what
-codesign is for: the fix is in the guest, and only a more accurate
-model could have pointed at it.
+use, wrote UARTDR and then spun a fixed count, with a comment blaming
+unreliable FR flags.  The flags were not unreliable; TXFF simply could
+never assert.  On a Pi that write is a dropped character in exactly the
+situation where the output matters most.  It now waits for room,
+bounded so a dead UART cannot hang a panic.
+.PP
+.B "Two: the wait was compiled away."
+.CW Ctlr.base
+was a plain
+.CW u32* .
+A loop that polls FR and does nothing else lets the compiler hoist the
+load out and spin on a register, so the new wait did nothing whatever.
+.CW virtarm64_kick()
+had never shown this because its loop also stores to UARTDR through the
+same pointer, which blocks the optimisation.  The word is
+.CW volatile
+now.  This is the failure mode the marker suite exists to catch: the
+check said
+.CW UART-PUTC-NONE ,
+"the transmit FIFO never filled; nothing here was tested", rather than
+passing.
+.PP
+.B "Three: the baud rate was never programmed, and the model lied about the clock."
+.CW virtarm64_baud()
+was a stub returning 0.  The divisors were never written, so the part
+ran at whatever the firmware left \- right by luck on a Pi, and wrong
+in principle, since
+.CW uart->baud
+then reports a rate nothing programmed.
+.CW Uart.freq
+held 24 MHz, the
+.CW "-M virt"
+apb-pclk copied in with the driver, which is not this part's clock on
+any Pi.
+.PP
+UARTCLK cannot be hardcoded: it is not a property of the part, it
+differs between Pi models, and the only way to learn it is to ask the
+firmware.  So
+.CW virtarm64_enable()
+now asks \- mailbox tag 0x00030002, clock id 2 \- and
+.CW virtarm64_baud()
+computes IBRD/FBRD as UARTCLK/(16*baud) and writes them before LCR_H,
+which is what latches them.
+.PP
+Doing that correctly produced a boot that took 32 s instead of 18, and
+.CW pl011_baudrate_change
+named the reason: the firmware was answering 3000000, the constant
+.CW RPI_FIRMWARE_UART_CLK_RATE
+in
+.CW include/hw/arm/raspi_platform.h ,
+while the CPRMAN clock actually wired to the PL011 in
+.CW bcm2835_peripherals.c
+runs at 47999625 Hz.  Two parts of the same model, sixteen apart.  A
+guest asking for 115200 got 1846136, and nothing in the guest could
+detect it.  Patch 0019 wires the real clock into the property device
+and reports it; the guest then programs IBRD 26, FBRD 3, and the model
+runs 115176.
+.PP
+That finding is worth more than the patch.  It exists only because 0018
+gave the console a measurable drain rate: with write-through
+transmission a sixteen-fold baud error has no observable consequence at
+all.  Accuracy compounds \- the first correction is what made the
+second one visible \- and the class of divergence is one this audit had
+no category for.  Nothing was lenient and nothing was missing; the
+model simply told the guest something untrue about itself, and punished
+the guest for believing it.
+.PP
+.B "What the polled path is now known to do."
+.CW uartputccheck() ,
+called from
+.CW init0() ,
+writes eight numbered 48-character lines a character at a time through
+.CW virtarm64_putc()
+and reports what the wait had to do.  On a boot with the SD image and
+USB disk attached:
+.CW "UART-PUTC-OK polled writes waited for FIFO room 400 times, worst wait 35726 iterations of 1000000" .
+Every one of the 400 characters met a full FIFO, all eight lines
+arrive complete, and the worst wait is a twenty-eighth of the bound \-
+so the bound protects a dead UART without truncating a live one.  The
+numbering in the lines is what makes a short arrival visible.
+.PP
+The cost of all of this is a console that runs at the rate a console
+runs at.  Boot to the last self-test marker: 15.6 s with the model
+transmitting write-through, 17.7 s with the FIFO at 3 Mbaud, 45.0 s at
+a correctly programmed 115200.  The last figure is what the board does.
+The marker sequence is unchanged across all three except for
+.CW UART-PUTC
+itself, and QEMU logs no guest error, so the driver never writes a full
+FIFO.
 .PP
 Console
 .I input

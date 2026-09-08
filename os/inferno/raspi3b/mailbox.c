@@ -290,6 +290,46 @@ mboxgetotp(u32 *rows, int n)
 }
 
 /*
+ * Ask the firmware what a clock is actually running at (tag 0x00030002).
+ * Clock ids are the firmware's own: 1 EMMC, 2 UART, 3 ARM, 4 core.
+ *
+ * A PL011 driver needs this and cannot get it any other way.  The baud
+ * divisors are UARTCLK/(16*baud), and UARTCLK is whatever the firmware
+ * left the clock at -- it is not fixed by the part, it differs between
+ * Pi models, and a driver that assumes a number is programming the
+ * wrong baud rate on every board that disagrees with it.  Linux asks
+ * the same way, through clk-raspberrypi.
+ *
+ * Returns 0 and the rate in Hz, or -1.  A rate of zero is reported as
+ * a failure: the firmware says so for a clock that does not exist, and
+ * dividing by it would be worse.
+ */
+int
+mboxgetclock(int clkid, u32 *rate)
+{
+	static u32 raw[8+4];
+	u32 *buf;
+
+	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
+	buf[0] = 8 * 4;
+	buf[1] = 0;
+	buf[2] = 0x00030002;		/* tag: get clock rate */
+	buf[3] = 8;			/* value buffer: id, rate */
+	buf[4] = 4;			/* request length */
+	buf[5] = clkid;
+	buf[6] = 0;
+	buf[7] = 0;			/* end tag */
+	if(mboxprop(buf) < 0)
+		return -1;
+	if((buf[4] & 0x80000000) == 0)
+		return -1;
+	if(buf[6] == 0)
+		return -1;
+	*rate = buf[6];
+	return 0;
+}
+
+/*
  * Switch a firmware-managed power domain (USB HCD, SD, etc.) on or off
  * through SET_POWER_STATE (tag 0x00028001).  The value is the device id
  * plus a state word: bit0 = on, bit1 = wait for the domain to settle.

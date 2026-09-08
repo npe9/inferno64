@@ -268,6 +268,14 @@ init0(void)
 		extern void armtmrintrcheck(void);
 		armtmrintrcheck();
 	}
+	/*
+	 * The polled console path, which panic() and iprint() use and
+	 * which no other check reaches.
+	 */
+	{
+		extern void uartputccheck(void);
+		uartputccheck();
+	}
 	disinit("/osinit.dis");
 }
 
