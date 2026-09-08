@@ -645,18 +645,67 @@ one bit instead makes the check report
 .CW "SDHCI-4BIT-FAIL card reports DAT_BUS_WIDTH 0" ,
 so the assertion is not vacuous.
 .PP
-The marker is
+The marker was
 .CW SDHCI-4BIT-ACCEPTED
-and not
-.CW -OK
-on purpose.  QEMU's SD model records the width in
+and is now
+.CW -OK ,
+and the difference is a patch rather than a change of mind.
+.PP
+.B "Codesign: making the emulator able to fail this."
+QEMU's SD model recorded the width in
 .CW sd_status[0]
-and nothing else ever reads it: ACMD6 in
-.CW hw/sd/sd.c
-does exactly that and no more, because a byte-oriented model has no
-wire to narrow.  So what passes here is that the command sequence is
-accepted and the data path still works.  It is not evidence that four
-lines are being driven, and only a real card can give that.
+and read it nowhere afterwards, and the host's side never reached the
+card at all \-
+.CW sdhci
+wrote
+.CW hostctl1
+and nothing was told.  So every sequence passed, including the wrong
+ones, and the marker could only honestly say ACCEPTED.
+.PP
+.CW tools/qemu-patches/0017
+closes it.
+.CW sdbus_set_bus_width() ,
+mirroring the
+.CW sdbus_set_voltage()
+that was already there, carries the host's width to the card;
+.CW sd.c
+compares it against ACMD6's value at both entries to a data transfer
+and refuses, with a guest error naming both widths.  Refusing rather
+than garbling is deliberate: real hardware returns whatever the
+undriven lines are sitting at and the corruption surfaces later with
+nothing pointing at it, and a model that reproduced that faithfully
+would reproduce only the part that makes the bug hard to find.
+.PP
+Two things that patch had to get right, neither of which any test in
+the tree would have caught.  The hook belongs on
+.CW sd_class_init
+and not the common class, because eMMC carries bus width in EXT_CSD and
+never issues ACMD6 \- on the common class its card-side width would
+read one line forever and every eMMC transfer would be refused.  And
+.CW sdhci_reset()
+must push the width too: it clears
+.CW hostctl1 ,
+and a card left believing the host is still four-bit refuses
+everything after a reset.
+.PP
+.B "What it buys, and what it still does not."
+Deleting the ACMD6 while still setting
+.CW Control0
+now gives
+.CW "SDHCI-4BIT-FAIL SD_STATUS did not arrive"
+and fails every later block read.  The sequence is falsifiable, which
+is what makes the marker OK.
+.PP
+Inverting the order instead \- host bit first, ACMD6 immediately
+after \- still passes, and that is correct rather than a gap.  No data
+transfer falls in the window between the two writes, so the two ends
+never disagree while it matters.  The invariant the hardware actually
+has is "at every data transfer the two ends agree", not "the writes
+happened in this order", and that is the invariant modelled.
+.PP
+Still not shown, and not showable: that four lines are electrically
+driven.  The model has no wire to narrow.  What 0017 buys is the
+sequence and the agreement, which is the half a driver can get wrong.
 .PP
 .B "And off the identification divider."
 The clock followed the bus width.  Identification runs at 400kHz or

@@ -476,13 +476,18 @@ sdhcihispeed(Ctlr *c)
  * one bit, 2 is four.  The card reporting 4 is what says it accepted;
  * the block reads that follow are what say the host half agrees.
  *
- * What this cannot show under an emulator: QEMU's SD model records the
- * width in sd_status[0] and nothing else ever reads it (ACMD6 in
- * hw/sd/sd.c does exactly that and no more), because a byte-oriented
- * model has no wire to narrow.  So a passing read here proves the
- * command sequence is accepted and the data path still works, not that
- * four lines are being driven.  On a real card a wrong width corrupts
- * data, and that is what this sequence is for.
+ * QEMU used to record the width in sd_status[0] and read it nowhere,
+ * so any sequence passed and this check could only report ACCEPTED.
+ * tools/qemu-patches/0017 closes that: the host's width is pushed to
+ * the card through the SD bus, and a data transfer whose two ends
+ * disagree is refused with a guest error rather than served.  Omitting
+ * the ACMD6 above while still setting Control0 now fails here and
+ * fails every later block read, which is what makes this OK rather
+ * than ACCEPTED.
+ *
+ * Still not shown, and not showable: that four lines are electrically
+ * driven.  The model has no wire to narrow.  What is verified is the
+ * sequence and the agreement, which is what a driver can get wrong.
  */
 static int
 sdhciwiden(Ctlr *c)
@@ -516,8 +521,8 @@ sdhciwiden(Ctlr *c)
 			width);
 		return -1;
 	}
-	print("SDHCI-4BIT-ACCEPTED card reports DAT_BUS_WIDTH four bit; "
-		"qemu's model records the width and transfers the same either way\n");
+	print("SDHCI-4BIT-OK card reports DAT_BUS_WIDTH four bit and the host "
+		"agrees; a transfer with the two disagreeing is refused\n");
 	return 0;
 }
 
