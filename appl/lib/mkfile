@@ -52,6 +52,7 @@ TARG=\
 	poplab.dis\
 	trajlab.dis\
 	orblab.dis\
+	ecolab.dis\
 	env.dis\
 	eqn2hoc.dis\
 	ether.dis\
@@ -210,6 +211,7 @@ SYSMODULES= \
 	poplab.m\
 	trajlab.m\
 	orblab.m\
+	ecolab.m\
 	cci.m\
 	daytime.m\
 	db.m\

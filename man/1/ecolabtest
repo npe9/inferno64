@@ -1,0 +1,53 @@
+.TH ECOLABTEST 1
+.SH NAME
+ecolabtest \- check every Danby two-species model written as an ecolab(2) script
+.SH SYNOPSIS
+.B ecolabtest
+[
+.B -v
+]
+.SH DESCRIPTION
+.I Ecolabtest
+reads the
+.B SPEC
+constant out of every model under
+.B /appl/danby
+that calls
+.BR ecolab->run ,
+so that what is checked is the string that ships, and then checks that
+the spec parses, that it has two states, that no rate is a NaN at the
+start, and that the model is at rest at the equilibrium its own spec
+declares.
+.PP
+The last is the check that matters.  A two-species phase plot marks a
+fixed point and draws trajectories that are supposed to circle or
+approach it; a fixed point the equations do not actually fix is a lie on
+the screen, and it is an easy one to tell, because the equilibrium is
+written by hand as an expression in the parameters and nothing else
+forces the two to agree.  A model whose equilibrium is the origin is
+skipped, since every model of this shape fixes the origin and the check
+would pass without saying anything.
+.PP
+Two models are checked differently.
+.IR Periodicvolterra 's
+birthrate varies with time, so the point it marks is the
+.I mean
+equilibrium: the rates there are non-zero at
+.BR t =0
+and zero a quarter period later, and both halves of that are checked.
+.IR Maypredator 's
+predators have no carrying capacity of their own, so with the prey gone
+they die off at a rate set by one parameter, which is checked instead.
+.SH SOURCE
+.B /appl/cmd/ecolabtest.b
+.SH SEE ALSO
+.IR orblabtest (1),
+.IR trajlabtest (1),
+.IR poplabtest (1),
+.IR mechlabtest (1),
+.IR ecolab (2)
+.SH BUGS
+Equilibria are checked at the declared point only, not along a
+trajectory, so a term that vanishes there and is wrong elsewhere would
+pass.  Nothing checks that the equilibrium is the one a reader would
+call interesting, only that it is one.

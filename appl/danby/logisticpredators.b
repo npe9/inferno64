@@ -1,77 +1,43 @@
-implement Twospecies;
+implement Logisticpredators;
 
-# danby/logisticpredators - Predator-prey with logistic regulation of both species
+# danby/logisticpredators - predator-prey with logistic predators
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared ecology viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# the two populations and the equations that move them, and the fixed
+# point the phase plot marks.  ecolab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "danby/twospecies.m";
+include "ecolab.m";
+	ecolab: Ecolab;
 
-new(): ref Model
-{
-	return ref Model(array[] of {1.5, 1.5, 2.0, 1.0, 0.75, 1.2});
-}
-
-title(): string
-{
-	return "Predator-prey with logistic regulation of both species";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {
-		"prey growth", "prey capacity", "predation",
-		"conversion", "predator death", "predator capacity"
-	};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {3.0, 3.0, 4.0, 3.0, 3.0, 3.0};
-}
-
-Model.rhs(model: self ref Model, nil: real,
-		state, derivative: array of real)
-{
-	p := model.parameter;
-	derivative[0] = p[0]*state[0]*(1.0-state[0]/p[1])
-		-p[2]*state[0]*state[1];
-	derivative[1] = state[1]*(p[3]*state[0]-p[4])
-		*(1.0-state[1]/p[5]);
-}
-
-Model.equilibrium(model: self ref Model): (real, real)
-{
-	p := model.parameter;
-	prey := p[4]/p[3];
-	predators := p[0]*(1.0-prey/p[1])/p[2];
-	return (prey,predators);
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-fixedpoint(model: ref Model): (real, real)
-{
-	return model.equilibrium();
-}
-
-Command: module
+Logisticpredators: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Predator-prey with logistic predators\n" +
+	"param prey_growth 1.5 0.0 3.0\n" +
+	"param prey_capacity 1.5 0.0 3.0\n" +
+	"param predation 2.0 0.0 4.0\n" +
+	"param conversion 1.0 0.0 3.0\n" +
+	"param predator_death 0.75 0.0 3.0\n" +
+	"param predator_capacity 1.2 0.0 3.0\n" +
+	"maxtime 100.0\n" +
+	"state prey 0.55\n" +
+	"state predators 0.22\n" +
+	"derivative prey prey_growth prey { 1.0 - prey over prey_capacity } - predation prey predators\n" +
+	"derivative predators predators { conversion prey - predator_death } { 1.0 - predators over predator_capacity }\n" +
+	"equilibrium predator_death over conversion , prey_growth { 1.0 - { predator_death over conversion } over prey_capacity } over predation\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/danby/ecology.dis";
-	if(viewer == nil)
-		raise "fail:logisticpredators: cannot load the ecology viewer";
-	viewer->init(ctxt, "logisticpredators" :: "/dis/danby/logisticpredators.dis" ::
-		"danby-logisticpredators" :: nil);
+	ecolab = load Ecolab Ecolab->PATH;
+	if(ecolab == nil)
+		raise "fail:logisticpredators: cannot load ecolab";
+	if((e := ecolab->run(ctxt, "logisticpredators", SPEC)) != nil)
+		raise "fail:logisticpredators: "+e;
 }

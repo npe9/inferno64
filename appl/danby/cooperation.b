@@ -1,80 +1,47 @@
-implement Twospecies;
+implement Cooperation;
 
-# danby/cooperation - Cooperation between two species
+# danby/cooperation - cooperation between two species
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared ecology viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# the two populations and the equations that move them, and the fixed
+# point the phase plot marks.  ecolab(2) is a library this calls with
+# that script - it owns the window, the integrator and the controls, and
+# knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "danby/twospecies.m";
+include "ecolab.m";
+	ecolab: Ecolab;
 
-new(): ref Model
-{
-	return ref Model(array[] of {0.35, 1.0, 0.35, 0.25, 1.0, 0.3});
-}
-
-title(): string
-{
-	return "Cooperation between two species";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {
-		"growth A", "crowding A", "help from B",
-		"growth B", "crowding B", "help from A"
-	};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {2.0, 2.0, 1.5, 2.0, 2.0, 1.5};
-}
-
-Model.rhs(model: self ref Model, nil: real,
-		state, derivative: array of real)
-{
-	p := model.parameter;
-	x := state[0];
-	y := state[1];
-	derivative[0] = x*(p[0]-p[1]*x+p[2]*y);
-	derivative[1] = y*(p[3]-p[4]*y+p[5]*x);
-}
-
-Model.equilibrium(model: self ref Model): (real, real)
-{
-	p := model.parameter;
-	denominator := p[1]*p[4]-p[2]*p[5];
-	if(denominator <= 0.0)
-		return (0.0,0.0);
-	first := (p[0]*p[4]+p[2]*p[3])/denominator;
-	second := (p[1]*p[3]+p[5]*p[0])/denominator;
-	return (first,second);
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-fixedpoint(model: ref Model): (real, real)
-{
-	return model.equilibrium();
-}
-
-Command: module
+Cooperation: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Cooperation between two species\n" +
+	"param growth_A 0.35 0.0 2.0\n" +
+	"param crowding_A 1.0 0.0 2.0\n" +
+	"param help_from_B 0.35 0.0 1.5\n" +
+	"param growth_B 0.25 0.0 2.0\n" +
+	"param crowding_B 1.0 0.0 2.0\n" +
+	"param help_from_A 0.3 0.0 1.5\n" +
+	"maxtime 100.0\n" +
+	"state species_A 0.55\n" +
+	"state species_B 0.22\n" +
+	"derivative species_A species_A { growth_A - crowding_A species_A + help_from_B species_B }\n" +
+	"derivative species_B species_B { growth_B - crowding_B species_B + help_from_A species_A }\n" +
+	# The two crowdings must beat the two helps for a coexistence to exist at
+	# all; where they do not, the original reports the origin.  An
+	# equilibrium expression may use the parameters only, so the guard is
+	# written out in both coordinates rather than named once.
+	"equilibrium step { crowding_A crowding_B - help_from_B help_from_A } { growth_A crowding_B + help_from_B growth_B } over { crowding_A crowding_B - help_from_B help_from_A + 1.0 - step { crowding_A crowding_B - help_from_B help_from_A } } , step { crowding_A crowding_B - help_from_B help_from_A } { crowding_A growth_B + help_from_A growth_A } over { crowding_A crowding_B - help_from_B help_from_A + 1.0 - step { crowding_A crowding_B - help_from_B help_from_A } }\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/danby/ecology.dis";
-	if(viewer == nil)
-		raise "fail:cooperation: cannot load the ecology viewer";
-	viewer->init(ctxt, "cooperation" :: "/dis/danby/cooperation.dis" ::
-		"danby-cooperation" :: nil);
+	ecolab = load Ecolab Ecolab->PATH;
+	if(ecolab == nil)
+		raise "fail:cooperation: cannot load ecolab";
+	if((e := ecolab->run(ctxt, "cooperation", SPEC)) != nil)
+		raise "fail:cooperation: "+e;
 }

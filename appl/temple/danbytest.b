@@ -15,15 +15,6 @@ include "danby/forcedpendulum.m";
 include "danby/lorenz.m";
 	lorenz: Lorenz;
 include "danby/twospecies.m";
-	periodicvolterra: Twospecies;
-	predatorfishing: Twospecies;
-	logisticprey: Twospecies;
-	logisticpredators: Twospecies;
-	alternativepredation: Twospecies;
-	maypredator: Twospecies;
-	internalcompetition: Twospecies;
-	cooperation: Twospecies;
-	competition: Twospecies;
 include "danby/populationmodel.m";
 	epidemicmodel: Populationmodel;
 	vaccinationmodel: Populationmodel;
@@ -58,15 +49,6 @@ init(nil: ref Draw->Context, nil: list of string)
 	chaosmap = load Chaosmap Chaosmap->PATH;
 	forcedpendulum = load Forcedpendulum Forcedpendulum->PATH;
 	lorenz = load Lorenz Lorenz->PATH;
-	periodicvolterra = load Twospecies "/dis/danby/periodicvolterra.dis";
-	predatorfishing = load Twospecies "/dis/danby/predatorfishing.dis";
-	logisticprey = load Twospecies "/dis/danby/logisticprey.dis";
-	logisticpredators = load Twospecies "/dis/danby/logisticpredators.dis";
-	alternativepredation = load Twospecies "/dis/danby/alternativepredation.dis";
-	maypredator = load Twospecies "/dis/danby/maypredator.dis";
-	internalcompetition = load Twospecies "/dis/danby/internalcompetition.dis";
-	cooperation = load Twospecies "/dis/danby/cooperation.dis";
-	competition = load Twospecies "/dis/danby/competition.dis";
 	# ecology is the shared Twospecies viewer, so it deliberately does NOT
 	# implement Twospecies (fb1504e0): a module that implements an interface
 	# links its loads of that interface against its own function set.  Its
@@ -92,10 +74,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	whitedwarf = load Profile "/dis/danby/whitedwarf.dis";
 	if(
 			numerics == nil || math == nil || chaosmap == nil ||
-			forcedpendulum == nil || lorenz == nil || periodicvolterra == nil ||
-			predatorfishing == nil || logisticprey == nil || logisticpredators == nil ||
-			alternativepredation == nil || maypredator == nil || internalcompetition == nil ||
-			cooperation == nil || competition == nil || epidemicmodel == nil ||
+			forcedpendulum == nil || lorenz == nil || epidemicmodel == nil ||
 			vaccinationmodel == nil || heartbeat == nil || boommodel == nil ||
 			soccerkick == nil || cricketbowl == nil || cricketswing == nil ||
 			badfootball == nil || icbmaccuracy == nil || starmodel == nil ||
@@ -104,7 +83,6 @@ init(nil: ref Draw->Context, nil: list of string)
 	testmap();
 	testpendulum();
 	testlorenz();
-	testtwospecies();
 	testpopulations();
 	sys->print("OK   Danby model modules\n");
 }
@@ -382,56 +360,8 @@ checkpopulationmodule(modelmodule: Populationmodel, name: string, nstate: int)
 			fail(name+" finite derivative",derivative[i],0.0);
 }
 
-testtwospecies()
-{
-	seasonal := periodicvolterra->new();
-	(prey,predators) := periodicvolterra->fixedpoint(seasonal);
-	state := array[] of {prey,predators};
-	derivative := array[2] of real;
-	periodicvolterra->evaluate(seasonal,0.0,state,derivative);
-	if(derivative[0] == 0.0)
-		fail("periodic birthrate varies at t=0",derivative[0],1.0);
-	period := 2.0*3.14159265358979323846/seasonal.parameter[5];
-	periodicvolterra->evaluate(seasonal,period/4.0,state,derivative);
-	check("periodic mean equilibrium prey",derivative[0],0.0,1.0e-12);
-	check("periodic mean equilibrium predator",derivative[1],0.0,1.0e-12);
+# every two-species check moved to ecolabtest(1) with the models.
 
-	fished := predatorfishing->new();
-	(prey,predators) = predatorfishing->fixedpoint(fished);
-	state[0] = prey;
-	state[1] = predators;
-	predatorfishing->evaluate(fished,0.0,state,derivative);
-	check("fishing equilibrium prey",derivative[0],0.0,1.0e-12);
-	check("fishing equilibrium predator",derivative[1],0.0,1.0e-12);
-
-	checktwospecies(logisticprey,"logistic prey");
-	checktwospecies(logisticpredators,"logistic predators");
-	checktwospecies(alternativepredation,"alternative predation");
-	checktwospecies(maypredator,"May predator-prey");
-	checktwospecies(internalcompetition,"internal competition");
-	checktwospecies(cooperation,"cooperation");
-	checktwospecies(competition,"competition");
-
-	may := maypredator->new();
-	state[0] = 0.0;
-	state[1] = 0.5;
-	maypredator->evaluate(may,0.0,state,derivative);
-	check("May zero-prey boundary",derivative[1],
-		-may.parameter[4]*state[1],1.0e-12);
-}
-
-checktwospecies(modelmodule: Twospecies, name: string)
-{
-	model := modelmodule->new();
-	(x,y) := modelmodule->fixedpoint(model);
-	if(x <= 0.0 || y <= 0.0)
-		fail(name+" positive equilibrium",x+y,1.0);
-	state := array[] of {x,y};
-	derivative := array[2] of real;
-	modelmodule->evaluate(model,0.0,state,derivative);
-	check(name+" equilibrium x",derivative[0],0.0,1.0e-10);
-	check(name+" equilibrium y",derivative[1],0.0,1.0e-10);
-}
 
 testlorenz()
 {
