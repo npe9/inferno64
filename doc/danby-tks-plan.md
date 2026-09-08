@@ -764,7 +764,37 @@ does not have. `eqnorbitaltest(1)` is the half that runs headless.
 drag to shrink the orbit, so the scale never changed and the test failed for a
 reason that had nothing to do with the code under test. It runs to 15000 now.
 
-## OPEN: a regression the collapse introduced, with a reproducer and no diagnosis
+## FIXED: a regression the collapse introduced (kept here for the method)
+
+**Resolved.** `lookof()` left `Look.landing` unassigned for the five families
+that do not fly, and a `ref` adt whose fields are not all set carries whatever
+the allocation happened to hold. A stray non-zero `landing` sends a family
+into `Sim.land()`, whose height index is `len state/2 - 1` - which for a
+one-state population is **-1**. Every field of `Look` is set explicitly now,
+and `land()` returns instead of indexing when that index is negative, so a
+stray flag cannot reach out of bounds again.
+
+The identification is not an A/B guess. Running the reproducer under
+`emu -c0` makes the interpreter execute the index op instead of the arm64
+JIT, and this tree's existing per-op print named the shape exactly -
+
+	indf a 109d47b40 a->len 1 i -1
+
+an array of `real` of length one, indexed at -1. `len s.state/2 - 1` is the
+only expression in the library that can produce a negative index into an
+array of real. The fixed build then passed the reproducer three times where
+the unfixed build had failed it every time.
+
+It was only ever the four one-state Population models because two states give
+0, four give 1 and six give 2 - all in range. It needed a second model in the
+same `emu` because a first model is what leaves the residue the second one's
+`Look` picks up, which is also why it never reproduced standalone and why the
+four failed in varying pairs.
+
+Everything below is the record of getting there, kept because the method is
+the reusable part.
+
+### The symptom, as it presented
 
 `temple/smoketest run` fails two models per batch that the pre-collapse tree
 passed. Smallest reproducer, deterministic, about forty seconds:
@@ -843,4 +873,20 @@ making that dump safe to call from compiled context, or recording the module
 and PC in `bounds()` and decoding them afterwards, or simply running the
 reproducer under `emu` with the JIT disabled so the interpreter's existing
 per-op prints - which already name the array's length and the offending index -
-do the work.
+do the work. **That last one is what worked**, and it should have been the
+first thing tried: `emu -c0` cost one run and gave the answer.
+
+### The lesson, which is the part worth keeping
+
+Every stub changed the timing, so several mutually exclusive stubs each
+appeared to "fix" it and none of them was the fault: disabling `sim.step()`
+worked, disabling the negative-state clamp inside it worked, and stubbing
+`Sim.record`, `Sim.grow`, `redraw()`, `drawdiagram()` and the `rk4` call each
+left it alone. Those cannot all be true of one bug. A single `sys->fprint`
+made it vanish outright.
+
+The way out was not a better guess but a different instrument: stop
+perturbing the program and make the machine say what it was doing. `emu -c0`
+turns the JIT off, and the interpreter - already instrumented in this tree -
+names the array and the index. Reach for that before bisecting by deletion,
+not after.
