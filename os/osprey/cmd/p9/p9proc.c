@@ -384,6 +384,14 @@ p9proccreate(void (*f)(void*), void *arg)
  * this when the program it entered has returned: the program's own stack
  * is done with, but a proc it made is still running in its image, and
  * the personality must not go on to load something else over it.
+ *
+ * It waits by tsleep and not by sched, and the difference is the whole
+ * of it.  sched only advances the cooperative clock when the run queue
+ * is empty, and a loop that calls sched puts itself back on that queue
+ * every time round - so a proc still in a tsleep of its own would never
+ * see its deadline pass, and the two would wait for each other for good.
+ * A tsleep here leaves the queue, which lets the queue empty, which lets
+ * the clock move.
  */
 void
 p9procwaitinproc(void)
@@ -397,7 +405,7 @@ p9procwaitinproc(void)
 				n++;
 		if(n == 0)
 			break;
-		sched();		/* let them run; they end by ending their kprocs */
+		tsleep(&up->sleep, return0, nil, 10);
 	}
 	for(i = 0; i < Nproc9; i++)
 		if(proc9[i].used && proc9[i].inproc)

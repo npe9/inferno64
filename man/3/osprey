@@ -1545,6 +1545,14 @@ queue and
 .I _threadready
 wakes it there.
 .PP
+When the flow the personality entered a program on returns, the
+personality waits for the flows that program made for itself: the
+program's own stack is done with, but a proc it made may still be
+running in its image.  The wait is a timed sleep and not a yield.  A
+yield would sit on the run queue, the queue would never be empty, the
+cooperative scheduler advances its clock only when it is, and a proc
+still in a timed sleep of its own would never see its deadline pass.
+.PP
 The personality's cooperative scheduler has an idle.  An empty run
 queue is a deadlock only if every proc is asleep on a rendezvous; if
 one is asleep on a deadline it is an idle machine, and

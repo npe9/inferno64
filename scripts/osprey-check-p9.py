@@ -303,6 +303,9 @@ def main():
     results.append(("and values cross a channel between the two of them: five more, summing to 15, and this is not the same mechanism as between threads of one proc - the receiving proc has no ready thread and sleeps, and the sending proc wakes it, so this is the personality's own rendezvous and the per-process word that tells each flow which Proc it is running",
                     'libthread: 5 values crossed the same channel from a proc of its own, summing to 15' in t
                     and 'that is not the' not in t))
+    results.append(("and the personality waits for a flow of control a program made for itself, in a way that lets the clock keep moving: the second proc sleeps 300 ms past the end of the first, and the wait is a timed sleep rather than a yield - a yield would sit on the run queue, the queue would never be empty, the cooperative clock would never advance and the sleeping proc would never wake, so the two would wait for each other for good",
+                    'libthread: the second proc slept 300 ms past the end of the first, and the personality waited for it' in t
+                    and '/boot/libthread returned; the personality is still here' in t))
     results.append(("and it exits through the microkernel's minimal syscall interface, no in-kernel personality",
                     'the program exited' in t and 'panic' not in t))
 

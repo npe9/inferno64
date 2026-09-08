@@ -9667,15 +9667,52 @@ kproc's own number instead, and the check requires the two the program
 prints to differ \- two flows reading one number would mean the
 per-process word was not per-process.
 .PP
-The swap is the load-bearing part, so it has a negative control: with
-the two memmoves taken out of
+And the personality has to wait for the flows a program made for
+itself.  When the flow it entered the program on returns, the program's
+own stack is done with but a proc it made may still be running in its
+image, and loading something else over that image would be the end of
+it.  The wait is a
+.CW tsleep
+and not a loop of
 .CW sched ,
-the same boot does not merely lose the second proc, it panics before it
-gets to the shell.  It is also the one piece of this that is compiled
-into four other configurations \-
+and the difference is the whole of it:
+.CW sched
+advances the cooperative clock only when the run queue is empty, and a
+loop that calls
+.CW sched
+puts itself back on that queue every time round, so a proc still in a
+timed sleep of its own would never see its deadline pass.  The two
+would wait for each other for good.
+.PP
+That case is in the program rather than only in a comment: the second
+proc sleeps 300 ms past the end of the first, and the check reads the
+three lines in order \- the first flow's exit, then the second proc's
+report of its sleep, then the personality returning from the exec.  It
+is a negative control as well: with the wait written as a loop of
+.CW sched ,
+the same boot stops at the first of those three and eight criteria
+fail.
+.PP
+.CW pexit
+needed the same idle
+.CW sched
+had, and for the same reason: a program's second flow of control ending
+while the flow waiting for it sleeps leaves an empty run queue that is
+not the end of the machine.  It used to panic there.  It also has to
+load the resumed proc's private words, which it did not \- without that
+the next proc would run on whatever the dead one left in the block.
+Both of those are faults this section's own test found, because nothing
+before it had a program with two flows of control in it.
+.PP
+The swap is the load-bearing part, so it has a negative control too:
+with the two memmoves taken out of
+.CW sched ,
+the same boot does not merely lose the second proc \- it fails at the
+shell and dumps stack, six criteria before this section's own.  All of
+this is compiled into four other configurations as well \-
 .CW p9sched.c
-is p9pair's and p9buddy's and p9linux's and the two-machine check's as
-well \- so the whole set was run, not just p964.
+is p9pair's and p9buddy's and p9linux's and the two-machine check's \-
+so the whole set was run, not just p964.
 .PP
 .B "What rio still needs, and it is not libthread."
 3.2c named rio's wants as
@@ -9790,7 +9827,7 @@ check clean, the two-machine check run three times:
 .CW p9linux
 12,
 .CW p964
-40, keyboard 8, rio 14, the window gestures 10, micro 7, user 10, net
+41, keyboard 8, rio 14, the window gestures 10, micro 7, user 10, net
 13, wire 14, two-machine 20 twice over, the
 six criteria of the userland the tree builds itself, and two portable
 builds.  A criterion is a sentence a booted kernel printed

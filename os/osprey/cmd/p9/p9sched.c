@@ -324,7 +324,16 @@ kfastticks(uvlong *hz)
  * only where it is asked to, so the scan and the claim below are one
  * indivisible step already.
  */
-enum { Nrend = 32 };		/* tags being waited on at once */
+/*
+ * How many tags can be waited on at once.  A flow of control is inside
+ * at most one call at a time, so it can be blocked in at most one
+ * rendezvous, and the flows that can reach this are a loaded program's:
+ * the one p9exec entered on, and the ones proccreate made, which come
+ * out of p9proc.c's sixteen slots.  Seventeen is the most there can be,
+ * so this is enough with room to spare and running out is not a
+ * program's doing but a bookkeeping mistake in the personality.
+ */
+enum { Nrend = 24 };
 
 typedef struct Rend Rend;
 struct Rend {
@@ -362,10 +371,8 @@ p9rendezvous(void *tag, void *val)
 	for(i = 0; i < Nrend; i++)
 		if(!rends[i].inuse)
 			break;
-	if(i == Nrend){
-		print("p9 rendezvous: %d tags are already being waited on; refusing %#p\n", Nrend, tag);
-		return (void*)~(uintptr)0;	/* what an interrupted rendezvous answers */
-	}
+	if(i == Nrend)
+		panic("p9 rendezvous: all %d slots taken, which is more flows of control than there can be", Nrend);
 	e = &rends[i];
 	e->inuse = 1;
 	e->tag = tag;
@@ -438,11 +445,25 @@ pexit(char *msg, int freemem)
 
 	USED(msg); USED(freemem);
 	up->state = Dead;			/* our stack is leaked: we are on it */
-	p = dequeue();
+	/*
+	 * The same idle sched has, and for the same reason: an empty run
+	 * queue is not the end of the machine if some proc is waiting on a
+	 * deadline.  A program's second flow of control ending while the
+	 * flow that is waiting for it sleeps is exactly that, and it used to
+	 * panic here.
+	 *
+	 * Nothing is saved of this proc's private words - it is dead and
+	 * will not be resumed - but the next one's are loaded, as they are
+	 * in sched: without that it would run on whatever this proc left in
+	 * the block.
+	 */
+	while((p = dequeue()) == nil && idle())
+		;
 	if(p == nil)
 		panic("p9sched: last proc exited");
 	up = p;
 	p->state = Running;
+	memmove(privblock, p->priv, sizeof privblock);
 	gotolabel(&p->sched);
 	for(;;)					/* gotolabel does not return */
 		;

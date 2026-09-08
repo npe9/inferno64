@@ -31,20 +31,28 @@ enum {
 	Stack	= 8192,
 	Nsend	= 5,		/* how many values cross the channel */
 	Sum	= 15,		/* and what they come to: 1+2+3+4+5 */
+	Sleepms	= 300,		/* how long the second proc outlives the first */
 };
 
 static Channel *c;
 
+/* the sequence, and the zero that ends it */
 static void
-sender(void *a)
+sendall(void)
 {
 	int i;
 
-	USED(a);
 	for(i = 1; i <= Nsend; i++)
 		send(c, &i);
-	i = 0;			/* the end of the sequence */
+	i = 0;
 	send(c, &i);
+}
+
+static void
+sender(void *a)
+{
+	USED(a);
+	sendall();
 	threadexits(nil);
 }
 
@@ -59,7 +67,24 @@ procsender(void *a)
 {
 	print("libthread: the second proc runs as %d, and the first was %d\n",
 		getpid(), (int)(uintptr)a);
-	sender(nil);
+	sendall();
+	/*
+	 * And then this proc sleeps past the moment the first one ends.
+	 *
+	 * That is the case worth having, not a flourish.  When the flow the
+	 * personality entered the program on returns, the personality waits
+	 * for the flows the program made for itself - it must, or it would
+	 * load something else over an image still in use - and the only way
+	 * it can wait is one that lets the clock keep moving.  A wait that
+	 * merely yielded would sit on the run queue, the queue would never
+	 * be empty, the cooperative clock would never advance, and this
+	 * sleep would never end.  The two would wait for each other for
+	 * good, and the boot would stop here.
+	 */
+	sleep(Sleepms);
+	print("libthread: the second proc slept %d ms past the end of the first, and the personality waited for it\n",
+		Sleepms);
+	threadexits(nil);
 }
 
 /* count what comes off the channel until the zero that ends it */
@@ -111,5 +136,13 @@ threadmain(int argc, char **argv)
 		print("libthread: that is not the %d values summing to %d this program was written to send\n",
 			Nsend, Sum);
 	USED(pid);
-	threadexitsall(nil);
+	/*
+	 * threadexits and not threadexitsall, and the difference is the
+	 * point of the last paragraph above.  threadexitsall sets a status
+	 * every proc's scheduler checks at every thread switch, so the
+	 * second proc would end inside the send it is in the middle of and
+	 * never reach its sleep.  threadexits ends this thread; this proc
+	 * ends when its last thread does, and the second proc goes on.
+	 */
+	threadexits(nil);
 }
