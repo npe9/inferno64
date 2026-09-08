@@ -122,6 +122,23 @@ class Resolver:
 			prev = ins
 		return None
 
+	def etext(self):
+		"""End of text -- a fingerprint of the layout itself.
+
+		pc64's main.c already prints "etext 0x%p edata 0x%p end 0x%p"
+		in its Important Addresses banner, so a console log carries
+		this too.  It is a better build check than kerndate: KERNDATE
+		only changes when $CONF.c is recompiled, so a kernel relinked
+		against a changed library can carry the previous build's
+		stamp, while etext moves whenever the text does -- which is
+		exactly when captured pcs stop meaning what they said.
+		"""
+		syms, _, _, _ = readsyms(self.path, 'Tt')
+		for v, n in syms:
+			if n == 'etext':
+				return v
+		return None
+
 	def kerndate(self):
 		"""The kernel's own build stamp, read out of its data segment.
 
@@ -233,21 +250,29 @@ def main():
 	r = Resolver(av[0])
 	if not r.fns:
 		sys.exit("p9sym: no text symbols -- is %s stripped?" % av[0])
-	kd = r.kerndate()
-	print("# %d text symbols, %#x..%#x, built at %s"
-		% (len(r.fns), r.fns[0][0], r.fns[-1][0], kd if kd else "?"), file=sys.stderr)
+	kd, et = r.kerndate(), r.etext()
+	print("# %d text symbols, %#x..%#x, built at %s, etext %s"
+		% (len(r.fns), r.fns[0][0], r.fns[-1][0], kd if kd else "?",
+		   ("%#x" % et) if et else "?"), file=sys.stderr)
 	if docheck and r.md is None:
 		print("# -c given but capstone is not installed; names only", file=sys.stderr)
 	pcs = av[1:]
 	if not pcs:
 		txt = sys.stdin.read()
 		pcs = re.findall(r'(?:pc=)?0x([0-9a-f]{5,16})', txt)
-		# the boot banner names the build the capture came from
+		# the boot banner names the build the capture came from, two
+		# ways; etext is the one that tracks the text layout itself.
+		bad = None
+		for e in set(re.findall(r'etext 0x([0-9a-f]+)', txt)):
+			if et and int(e, 16) != et:
+				bad = "etext %#x, this binary %#x" % (int(e, 16), et)
 		for b in set(re.findall(r'built at (\d+)', txt)):
-			if kd and int(b) != kd:
-				print("# WARNING: capture is from a kernel built at %s, this one at %d."
-					"\n#          Names below are meaningless as printed; use -s."
-					% (b, kd), file=sys.stderr)
+			if kd and int(b) != kd and bad is None:
+				bad = "built at %s, this binary %d" % (b, kd)
+		if bad is not None:
+			print("# WARNING: capture is from a different kernel (%s)."
+				"\n#          Names below are meaningless as printed; use -s."
+				% bad, file=sys.stderr)
 	vals = [int(s, 16) for s in pcs]
 	for v in vals:
 		print(r.describe(v))
