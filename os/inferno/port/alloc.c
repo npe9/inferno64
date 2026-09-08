@@ -224,8 +224,20 @@ notefree(void *v, uintptr pc)
 		 * dominant crash of the whole hunt. pc64-only, temporary.
 		 * See doc/inferno-ports.ms.
 		 */
-		freehist[i].mname = (xp != nil && xp->reg.M != nil && xp->reg.M != H && xp->reg.M->m != nil)
-			? xp->reg.M->m->name : nil;
+		/*
+		 * This tested M against nil and H and then dereferenced
+		 * M->m, which faulted here at notefree+0xb8: the bad value
+		 * is a non-canonical pointer on an otherwise intact Modlink,
+		 * so nil and H both say "fine".  modlinkok() (dis.c) is the
+		 * check that matches the evidence, and modstatus() uses the
+		 * same one.
+		 */
+		{
+			extern int modlinkok(Modlink*);
+
+			freehist[i].mname = (xp != nil && modlinkok(xp->reg.M))
+				? xp->reg.M->m->name : nil;
+		}
 	}
 	freehistn++;
 }

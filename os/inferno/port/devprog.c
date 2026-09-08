@@ -826,6 +826,7 @@ modstatus(REG *r, char *ptr, int len)
 {
 	Inst *PC;
 	Frame *f;
+	extern int modlinkok(Modlink*);
 
 	/*
 	 * Every panic left in this port's 96-boot batches, at -smp 1 and
@@ -881,7 +882,7 @@ modstatus(REG *r, char *ptr, int len)
 		snprint(ptr, len, "[H]");
 		return 0;
 	}
-	if(D2H(r->M)->t != &Tmodlink || r->M->m == nil) {
+	if(!modlinkok(r->M)) {
 		static int said;
 
 		if(!said) {

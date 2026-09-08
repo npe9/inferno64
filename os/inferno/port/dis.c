@@ -891,6 +891,46 @@ cblock(Prog *p)
 	acquire();
 }
 
+/*
+ * Shared by the two temporary probes that walk another Prog's saved
+ * registers to name its module: devprog.c's modstatus(), reached from
+ * disdump(), and alloc.c's notefree(), the freehist ring.  Both have
+ * now faulted on this port, at modstatus+0x18 and notefree+0xb8, and
+ * both had the same incomplete guard -- M tested against nil and H,
+ * then M->m dereferenced.
+ *
+ * That guard cannot catch what actually happens.  The captured value
+ * is 0x00FF53F000E2C3F0: not nil, not H, and sitting on a Modlink
+ * whose heap type is intact, so every condition either probe tested
+ * passes.  What is wrong with it is that it is not a canonical
+ * address -- bits 63:48 are 0x00FF, so the sign bits disagree -- which
+ * is why the fault is a general protection violation with CR2 0
+ * rather than a page fault.  Testing for exactly that is both the
+ * cheapest check and the one that matches the evidence.
+ *
+ * This is why the earlier modstatus guard never reported: it asked
+ * whether the Modlink was live and whether m was nil, and in the
+ * observed failure the answer to both is "fine".
+ */
+static int
+canonical(void *v)
+{
+	uintptr a;
+
+	a = (uintptr)v;
+	return (a >> 47) == 0 || (a >> 47) == 0x1FFFF;
+}
+
+int
+modlinkok(Modlink *ml)
+{
+	if(ml == nil || ml == H || !canonical(ml))
+		return 0;
+	if(D2H(ml)->t != &Tmodlink)
+		return 0;
+	return ml->m != nil && canonical(ml->m);
+}
+
 void
 addrun(Prog *p)
 {
