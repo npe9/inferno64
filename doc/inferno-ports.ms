@@ -19472,3 +19472,81 @@ diagnostic get printed, and that cannot plausibly corrupt a
 The useful part is not the rate but the resolution: a panic that used
 to be an unreadable pc now names its line, and says what is wrong with
 the argument.
+.NH 2
+Ninety-six boots: three captures, two statics, two paths
+.PP
+Sized to the rate rather than repeated at 32.  Ninety-six boots on the
+report-once kernel
+.CW ( "etext 0x32ceee" )
+fired the guard in three, 3.1%, and each fired exactly one line \(em
+report-once verified against the previous build's eighteen from a
+single event.  Two different statics:
+.P1
+freetype: static type 0x34b5f8 ref underflow n 0, pid 15 module Env
+freetype: static type 0x332dd8 ref underflow n 0, pid 89 module Sh
+freetype: static type 0x34b5f8 ref underflow n 0, pid 90 module Env
+.P2
+.CW 0x34b5f8
+is
+.CW Tptr ,
+.CW 0x332dd8
+is
+.CW Tlist .
+The two
+.CW Tptr
+captures are the same path, in the same module, on different boots.
+.PP
+Both chains resolve completely, and every edge in them was checked
+against the disassembly rather than inferred from adjacency:
+.P1
+Tptr  (Env):  xec -> OP(tail)+0x1c -> movp+0xe1 -> destroy+0x23e
+              -> freelist+0x3c -> freetype+0x6f
+Tlist (Sh):   destroy+0x23e -> freearray+0x74 -> freeptrs+0x359
+              -> destroy+0x256 -> freetype+0x6f
+.P2
+.CW OP(tail)
+is three lines that set
+.CW "R.s = &l->tail"
+and call
+.CW movp() ,
+.CW movp
+destroys the destination slot's old value at
+.CW +0xe1 ,
+and
+.CW destroy+0x23e
+is the indirect
+.CW "t->free(h, 0)" .
+So both are entirely ordinary release paths: a list being dropped
+because a slot was overwritten, and an array's contained pointers
+being released.  Neither is doing anything wrong; by the
+.CW "n 0"
+argument above, the count was already short before either ran.
+.PP
+A caution the tool cannot remove.
+.CW dumpstack()
+prints every stack word that could be a return address, and a stale one
+left by an earlier call still passes the
+.CW -c
+test \(em it really is a return address, just not a live frame.  In the
+.CW Tptr
+stacks,
+.CW cons+0x24
+(the return from
+.CW cons() Ns 's
+own
+.CW AINC(&Tlist.ref) )
+and
+.CW new+0x54
+sit in the middle of the chain and are litter:
+.CW cons()
+contains no call to
+.CW destroy()
+at all.  What makes the chains above trustworthy is not that the words
+are adjacent but that each named function was disassembled and does
+call the next one at that offset.
+.PP
+The rate caution from the previous section was justified.  The
+.CW smalloc / addelem
+signature that appeared five times in 32 boots appeared once in these
+96 \(em 5/32 against 1/96.  Nothing had changed between them that could
+affect it, and the apparent jump was noise, as recorded.
