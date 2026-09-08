@@ -35,6 +35,27 @@ uvlong	gcpartial;
 int keepbroken = 1;
 int nvm;	/* MULTICORE INSTRUMENTATION - temporary: VM holders */
 int maxnvm;
+/*
+ * MULTICORE INSTRUMENTATION - temporary.  nvm above answers "how many
+ * processes hold the VM lock", and with one global vmlock that is 1 by
+ * construction, which says nothing about whether there is parallelism
+ * to win.  maxnrunq answers the question that actually decides whether
+ * Phase 1b and Phase 5 are worth their risk: how many Dis programs are
+ * READY at the same moment.  A high-water mark of 1 on this workload
+ * would mean a per-executor register file buys nothing here, and the
+ * measurement is much cheaper than the work.
+ *
+ * Measured by walking curP->runhd at the scheduler's own pick rather
+ * than by a counter incremented in addrun().  The queue is inserted
+ * into and removed from in five places, not just addrun()/delrun()/
+ * delrunq() -- delprog() unlinks a head directly, and the Prog that
+ * takes the VM lock is pushed on the front -- so a maintained counter
+ * would drift.  The walk is once per quantum, not once per queue
+ * operation, and is capped so its cost is bounded whatever the queue
+ * does.  It runs under the VM lock, which is what serialises the queue.
+ */
+enum { Runqcap = 64 };
+int maxnrunq;
 
 /*
  * Dis executes one program at a time, system-wide.
@@ -1266,6 +1287,18 @@ vmachine(void*)
 
 		r = curP->runhd;
 		if(r != nil) {
+			{	/* MULTICORE INSTRUMENTATION - temporary */
+				Prog *q;
+				int n = 0;
+
+				for(q = r; q != nil && n < Runqcap; q = q->link)
+					n++;
+				if(n > maxnrunq){
+					maxnrunq = n;
+					print("runq: %d dis programs ready at once, cpu%d\n",
+						n, m->machno);
+				}
+			}
 			o = r->osenv;
 			up->env = o;
 			/* Keep Proc.*grp in sync for #e/#p and namec (pctl updates Osenv). */
