@@ -811,6 +811,24 @@ checktracked(void)
 			track[i].addr = nil;
 			continue;
 		}
+		/*
+		 * Also stale if the object itself is gone.  The tag check
+		 * above compares the type, which an identical type does not
+		 * change -- a popped frame reused by another frame of the
+		 * same type passes it and then reports the reinitialised
+		 * words as corruption.  The object's own Heap header is the
+		 * independent answer, and on virtarm64 it said ref 0 for
+		 * twelve reports out of twelve: every one was a dead object,
+		 * not a corrupted one.
+		 */
+		{
+			Heap *oh = D2H(track[i].obj);
+
+			if(oh->ref <= 0 || oh->t != track[i].t){
+				track[i].addr = nil;
+				continue;
+			}
+		}
 		print("track: CHANGED TO BAD VALUE addr %#p old %#zx new %#zx "
 			"regpid %d checkpoint %s\n",
 			track[i].addr, track[i].val, v, track[i].regpid, trackpoint);
