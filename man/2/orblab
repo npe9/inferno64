@@ -1,0 +1,78 @@
+.TH ORBLAB 2
+.SH NAME
+orblab: run, parse, masses \- Danby N-body models as scripts
+.SH SYNOPSIS
+.EX
+include "sys.m";
+include "draw.m";
+include "orblab.m";
+orblab := load Orblab Orblab->PATH;
+
+err := orblab->run(ctxt, name, spec);
+(m, bodies, exprs, err) := orblab->parse(spec);
+mass := orblab->masses(m, exprs);
+.EE
+.SH DESCRIPTION
+.I Orblab
+is the Danby orbital viewer \(em window, integrator, trails and controls
+\(em as a library the model calls:
+.PP
+.EX
+orblab->run(ctxt, "threebody", SPEC);
+.EE
+.PP
+The vocabulary is
+.IR dynsys (2)'s
+\(em
+.BR param ,
+.BR maxtime ,
+.BR state ,
+.BR derivative ,
+.BR eq ,
+.B observable
+\(em plus
+.BR title ,
+.B manual
+and one line of orblab's own:
+.TP
+.BI body " name expr"
+A body, its label on the diagram, and its mass.  Repeatable.  The mass
+is an EXPRESSION over the parameters, not a number, because in this
+family a slider usually IS a mass; it is evaluated at every reset.
+.PP
+The state is four values per body in declaration order \(em
+.IR x ,
+.IR y ,
+then the two velocity components \(em so a spec with three bodies has
+twelve
+.B state
+lines.
+.I Orblab
+checks the count rather than letting a mis-shaped spec draw nonsense.
+Exactly two
+.B observable
+lines are required; they are the two traces.
+.PP
+.B Masses
+evaluates the mass expressions
+.B parse
+returned.  The parameters must already be bound, which
+.B dynsys->initialstate()
+does, so call it straight after that.
+.PP
+The window is Tk's.  The parameter sliders are Tk scales, the buttons are
+Tk buttons, the status line is a Tk label, and the layout is a Tk
+geometry manager's; the orbit diagram and the graph are two
+.IR panel (9)
+widgets holding images the library draws into.  The widgets are
+configured to the same night-sky colours as the diagram, so the window is
+one picture rather than a dark rectangle in a bright frame.
+.SH SOURCE
+.B /appl/lib/orblab.b
+.SH SEE ALSO
+.IR orblabtest (1),
+.IR mechlab (2),
+.IR poplab (2),
+.IR trajlab (2),
+.IR ecolab (2),
+.IR dynsys (2)

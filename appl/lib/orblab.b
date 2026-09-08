@@ -2,11 +2,22 @@ implement Orblab;
 
 # See module/orblab.m for the script vocabulary and why this is a library
 # the model calls rather than a module that loads the model back.
-# Everything below except parsing is appl/temple/orbital.b's own window,
-# integrator, trails and controls, unchanged in behaviour - including
-# draworbits(), whose comment explains why the focus body is pinned at
-# view centre - with the model side coming from dynsys(2) instead of from
-# eleven entry points on a loaded module.
+# The model side comes from dynsys(2) instead of from eleven entry points
+# on a loaded module.  draworbits() is unchanged in behaviour - its own
+# comment explains why the focus body is pinned at view centre.
+#
+# Tk owns the window's structure; Draw owns only the pixels of the two
+# views.  The parameter sliders are Tk scales, the buttons are Tk
+# buttons, the status line is a Tk label, and the geometry is Tk's - so
+# the 55-pixel control band, the arithmetic that divided it into columns,
+# and the "three fifths of the content, less twenty" that placed the
+# orbit diagram are gone.
+#
+# The orbits and the graph are two "panel" widgets, each holding an image
+# this library owns, the same arrangement appl/wm/coffee.b uses for its
+# animation.  This family draws on a night sky rather than on paper, so
+# the widgets are configured to match rather than sitting in a bright
+# frame around a dark picture.
 
 include "sys.m";
 	sys: Sys;
@@ -14,9 +25,10 @@ include "draw.m";
 	draw: Draw;
 	Display, Image, Font, Point, Rect: import draw;
 include "tk.m";
-include "wmclient.m";
-	wmclient: Wmclient;
-	Window: import wmclient;
+	tk: Tk;
+	Toplevel: import tk;
+include "tkclient.m";
+	tkclient: Tkclient;
 include "numerics.m";
 	numerics: Numerics;
 include "plot.m";
@@ -35,9 +47,12 @@ include "orblab.m";
 
 Ntrail: con 1600;
 
-win: ref Window;
+top: ref Toplevel;
+cmdch: chan of string;
+buffer: ref Image;	# the graph's pixels
+orb: ref Image;		# the orbit diagram's pixels
 font: ref Font;
-bg, fg, grid, firstcolour, secondcolour: ref Image;
+bg, fg: ref Image;
 bodycolour: array of ref Image;
 model: ref Model;
 bodylabels: array of string;
@@ -77,9 +92,12 @@ loaddrawmods(): string
 		numerics = load Numerics Numerics->PATH;
 	if(plot == nil)
 		plot = load Plot Plot->PATH;
-	if(wmclient == nil)
-		wmclient = load Wmclient Wmclient->PATH;
-	if(draw == nil || numerics == nil || plot == nil || wmclient == nil)
+	if(tk == nil)
+		tk = load Tk Tk->PATH;
+	if(tkclient == nil)
+		tkclient = load Tkclient Tkclient->PATH;
+	if(draw == nil || numerics == nil || plot == nil ||
+			tk == nil || tkclient == nil)
 		return "orblab: a drawing module is missing";
 	return nil;
 }
@@ -208,6 +226,43 @@ label(name: string): string
 }
 
 
+Sky: con "#080d18";	# the night the diagram is drawn on
+Ink: con "#e7edf7";	# and what is legible on it
+
+# The window: a panel for the orbits, a panel for the graph, a grid of
+# scales for the parameters, a row of buttons.  Nothing here knows a
+# pixel offset - Tk works out where everything goes, and tk->rect() says
+# afterwards where each panel ended up.
+tkcfg := array[] of {
+	". configure -background "+Sky,
+	"frame .plot -background "+Sky,
+	"panel .plot.orb -bd 0 -relief flat -width 520 -height 420",
+	"panel .plot.g -bd 0 -relief flat -width 360 -height 420",
+	"pack .plot.orb -side left -fill both -expand 1",
+	"pack .plot.g -side right -fill both -expand 1",
+	"frame .par -background "+Sky,
+	"frame .but -background "+Sky,
+	"button .but.reset -text Reset -command {send cmd reset}",
+	"button .but.pause -text Pause -command {send cmd pause}",
+	"label .but.at -text {} -background "+Sky+" -foreground "+Ink,
+	"pack .but.reset .but.pause -side left",
+	"pack .but.at -side left -padx 10",
+	"pack .but -side bottom -fill x",
+	"pack .par -side bottom -fill x",
+	"pack .plot -side top -fill both -expand 1",
+	"bind . <Key> {send cmd key %K}",
+	"bind .plot.orb <Key> {send cmd key %K}",
+	"focus .plot.orb",
+};
+
+cmd(s: string): string
+{
+	r := tk->cmd(top, s);
+	if(r != nil && r[0] == '!')
+		sys->fprint(sys->fildes(2), "orblab: %s: %s\n", s, r);
+	return r;
+}
+
 run(ctxt: ref Draw->Context, name, spec: string): string
 {
 	err: string;
@@ -225,25 +280,32 @@ run(ctxt: ref Draw->Context, name, spec: string): string
 		env->setenv("wmman", page);
 	}
 	sys->pctl(Sys->NEWPGRP, nil);
-	wmclient->init();
+	tkclient->init();
 	if(ctxt == nil)
-		ctxt = wmclient->makedrawcontext();
-	win = wmclient->window(ctxt, title, Wmclient->Appl);
-	font = Font.open(win.display, "/fonts/lucida/unicode.8.font");
-	bg = win.display.color(int 16r080d18ff);
-	fg = win.display.color(int 16re7edf7ff);
-	grid = win.display.color(int 16r394457ff);
-	firstcolour = win.display.color(int 16r4ec9b0ff);
-	secondcolour = win.display.color(int 16rf2b84bff);
+		ctxt = tkclient->makedrawcontext();
+	menu: chan of string;
+	(top, menu) = tkclient->toplevel(ctxt, "", title, Tkclient->Appl);
+	cmdch = chan[64] of string;	# tk drops what it cannot queue, so leave room
+	tk->namechan(top, cmdch, "cmd");
+	for(i := 0; i < len tkcfg; i++)
+		cmd(tkcfg[i]);
+	buildparams();
+	cmd("update");
+	tkclient->startinput(top, "kbd"::"ptr"::nil);
+	tkclient->onscreen(top, nil);
+
+	font = Font.open(top.display, "/fonts/lucida/unicode.8.font");
+	bg = top.display.color(int 16r080d18ff);
+	fg = top.display.color(int 16re7edf7ff);
 	bodycolour = array[] of {
-		win.display.color(int 16rf2b84bff),
-		win.display.color(int 16r4ec9b0ff),
-		win.display.color(int 16r70a5ffff),
-		win.display.color(int 16re77c8eff),
-		win.display.color(int 16rc792eaff),
-		win.display.color(int 16r9dd274ff)
+		top.display.color(int 16rf2b84bff),
+		top.display.color(int 16r4ec9b0ff),
+		top.display.color(int 16r70a5ffff),
+		top.display.color(int 16re77c8eff),
+		top.display.color(int 16rc792eaff),
+		top.display.color(int 16r9dd274ff)
 	};
-	graph = plot->new(win.image, font);
+	graph = plot->new(nil, font);
 	graph.cmd("table history time first second -capacity 20000");
 	graph.cmd("colour foreground 16re7edf7ff\n"+
 		"colour grid 16r394457ff\n"+
@@ -251,37 +313,131 @@ run(ctxt: ref Draw->Context, name, spec: string): string
 		"colour second 16rf2b84bff");
 	trail = array[Ntrail] of array of real;
 	reset();
-	win.reshape(Rect((0,0),(920,580)));
-	win.onscreen("place");
-	win.startinput("kbd"::"ptr"::nil);
+	resize();
 	ticks := chan of int;
 	spawn timer(ticks);
 	redraw();
 	for(;;) alt {
-	ctl := <-win.ctl or ctl = <-win.ctxt.ctl =>
-		win.wmctl(ctl);
-		if(ctl == "exit")
+	s := <-top.ctxt.kbd =>
+		tk->keyboard(top, s);
+	p := <-top.ctxt.ptr =>
+		tk->pointer(top, *p);
+	s := <-top.ctxt.ctl or s = <-top.wreq or s = <-menu =>
+		tkclient->wmctl(top, s);
+		if(s == "exit")
+			return nil;
+		resize();
+		redraw();
+	s := <-cmdch =>
+		if(control(s))
 			return nil;
 		redraw();
-	pointer := <-win.ctxt.ptr =>
-		win.pointer(*pointer);
-		handlepointer(pointer);
-		redraw();
-	key := <-win.ctxt.kbd =>
-		case key {
-		16r1b or 'q' or 'Q' =>
-			win.wmctl("exit");
-			return nil;
-		' ' => if(!finished) paused = !paused;
-		'r' or 'R' => reset();
-		'.' => if(paused && !finished) step();
-		}
 	<-ticks =>
 		if(!paused && !finished)
-			for(i := 0; i < 4 && !finished; i++)
+			for(k := 0; k < 4 && !finished; k++)
 				step();
 		redraw();
 	}
+}
+
+# One label and one scale per parameter, three parameters to a line.  A
+# scale's own -command reports the new value, so nothing here has to work
+# out which slider the pointer was over.  In this family a slider is
+# usually a mass, and a mass may have a non-zero minimum.
+buildparams()
+{
+	for(j := 0; j < len model.parameter; j++){
+		(lo, hi) := (model.minima[j], model.maxima[j]);
+		if(lo >= hi)
+			lo = hi*0.01;
+		cmd(sys->sprint("label .par.l%d -text {%s} -background %s -foreground %s",
+			j, label(model.paramlabels[j]), Sky, Ink));
+		# -bigincrement defaults to zero, and a scale with a zero big
+		# increment answers a click in its trough by re-sending the
+		# value it already had: the slider looks live and does nothing
+		cmd(sys->sprint("scale .par.s%d -from %g -to %g -resolution %g"+
+			" -bigincrement %g -orient horizontal -length 150"+
+			" -showvalue 1 -command {send cmd param %d}",
+			j, lo, hi, (hi-lo)/200.0, (hi-lo)/20.0, j));
+		cmd(sys->sprint(".par.s%d set %g", j, model.parameter[j]));
+		row := j/3;
+		col := (j%3)*2;
+		cmd(sys->sprint("grid .par.l%d -row %d -column %d -sticky w -padx 4",
+			j, row, col));
+		cmd(sys->sprint("grid .par.s%d -row %d -column %d -sticky w",
+			j, row, col+1));
+	}
+}
+
+# Tk says where each panel went; this library only has to keep images of
+# those sizes.  Does nothing at all unless a size actually changed.
+resize()
+{
+	if(top.image == nil)
+		return;
+	orb = refit(orb, ".plot.orb");
+	buffer = refit(buffer, ".plot.g");
+	graph.image = buffer;
+}
+
+refit(im: ref Image, widget: string): ref Image
+{
+	r := tk->rect(top, widget, 0);
+	(w, h) := (r.dx(), r.dy());
+	if(w <= 0 || h <= 0)
+		return im;
+	if(im != nil && im.r.dx() == w && im.r.dy() == h)
+		return im;
+	new := top.display.newimage(Rect((0,0),(w,h)), top.image.chans, 0, Draw->White);
+	if(new == nil)
+		return im;
+	tk->putimage(top, widget, new, nil);
+	return new;
+}
+
+# A Tk message.  Returns non-zero if the window is finished.
+control(s: string): int
+{
+	(nil, w) := sys->tokenize(s, " \t");
+	if(w == nil)
+		return 0;
+	case hd w {
+	"reset" =>
+		reset();
+	"pause" =>
+		if(finished)
+			return 0;
+		paused = !paused;
+		lbl := "Pause";
+		if(paused)
+			lbl = "Go";
+		cmd(sys->sprint(".but.pause configure -text %s", lbl));
+	"param" =>
+		# read every scale rather than trust one message: tk drops
+		# queued messages silently, and a dropped last drag event
+		# would otherwise leave a parameter behind the slider
+		for(j := 0; j < len model.parameter; j++)
+			model.parameter[j] = real cmd(sys->sprint(".par.s%d get", j));
+		# masses and initial positions are expressions in the
+		# parameters, so a new parameter is a new system
+		reset();
+	"key" =>
+		if(len w != 2)
+			return 0;
+		case int ("16r"+hd tl w) {
+		16r1b or 'q' or 'Q' =>
+			tkclient->wmctl(top, "exit");
+			return 1;
+		' ' =>
+			return control("pause");
+		'r' or 'R' =>
+			reset();
+		'.' =>
+			if(paused && !finished)
+				step();
+		}
+	}
+	return 0;
 }
 
 rhs(rhsTime: real, values, derivative: array of real)
@@ -303,6 +459,8 @@ reset()
 	observationmaximum[1] = 1.0;
 	graph.cmd("history clear");
 	record();
+	if(top != nil)
+		cmd(".but.pause configure -text Pause");
 }
 
 step()
@@ -339,43 +497,16 @@ record()
 		t, values[0], values[1]));
 }
 
-handlepointer(pointer: ref Draw->Pointer)
-{
-	if(!(pointer.buttons&1) || win.image == nil)
-		return;
-	r := win.image.r;
-	if(pointer.xy.y <= r.max.y-55)
-		return;
-	n := len model.parameter;
-	width := r.dx()/n;
-	which := (pointer.xy.x-r.min.x)/width;
-	if(which < 0)
-		which = 0;
-	if(which >= n)
-		which = n-1;
-	fraction := real(pointer.xy.x-(r.min.x+which*width))/real(width);
-	if(fraction < 0.01)
-		fraction = 0.01;
-	model.parameter[which] = model.minima[which]+
-		(model.maxima[which]-model.minima[which])*fraction;
-	reset();
-}
+readout := "";
 
 redraw()
 {
-	im := win.image;
-	if(im == nil)
+	if(buffer == nil || orb == nil)
 		return;
-	im.draw(im.r, bg, nil, Point(0,0));
-	content := Rect(im.r.min.add((25,38)), im.r.max.sub((18,62)));
-	middle := content.min.x+(content.dx()*3)/5;
-	orbitview := Rect(content.min, (middle-20,content.max.y));
-	draworbits(im, orbitview);
-	graph.image = im;
+	buffer.draw(buffer.r, bg, nil, Point(0,0));
+	draworbits();
 	graph.cmd("clear");
-	graph.cmd("content margin 25 38 18 62\n"+
-		"split content x orbitview 3 plotview 2 gutter 55\n"+
-		"view diagnostics plotview");
+	graph.cmd("content margin 45 22 18 30\nview diagnostics content");
 	tmax := t;
 	if(tmax < 2.0)
 		tmax = 2.0;
@@ -389,20 +520,21 @@ redraw()
 	graph.cmd("line diagnostics history x time y first colour first width 2");
 	graph.cmd("line diagnostics history x time y second colour second width 2");
 	graph.draw();
+	cmd(".plot.orb dirty; .plot.g dirty; update");
 	values := dynsys->observables(model, state);
 	status := "running";
 	if(paused)
 		status = "paused";
 	if(finished)
 		status = "complete";
-	im.text(im.r.min.add((10,18)), fg, Point(0,0), font,
-		sys->sprint("%s   %s   t %.3g   %s %.4g   %s %.4g",
-			title, status, t, label(model.observablelabels[0]), values[0],
-			label(model.observablelabels[1]), values[1]));
-	for(i := 0; i < len model.parameter; i++)
-		drawparameter(im, i, model.paramlabels[i],
-			model.parameter[i], model.maxima[i]);
-	im.flush(Draw->Flushnow);
+	# the label is a widget, so only touch it when it would change
+	now := sys->sprint("%s   t %.3g   %s %.4g   %s %.4g",
+		status, t, label(model.observablelabels[0]), values[0],
+		label(model.observablelabels[1]), values[1]);
+	if(now != readout){
+		readout = now;
+		cmd(".but.at configure -text {"+now+"}");
+	}
 }
 
 # draworbits keeps the most massive body (the "planet") pinned at the
@@ -414,8 +546,13 @@ redraw()
 # staying put while the view zoomed.  A single uniform scale (not
 # separate x and y ranges) also keeps a circular orbit looking circular
 # instead of stretched to fill whichever axis has more room.
-draworbits(im: ref Image, view: Rect)
+#
+# The diagram has a panel to itself, so its view is that panel's whole
+# image and there is no view rect to compute.
+draworbits()
 {
+	orb.draw(orb.r, bg, nil, Point(0,0));
+	view := orb.r.inset(8);
 	focus := 0;
 	for(i := 1; i < len mass; i++)
 		if(mass[i] > mass[focus])
@@ -465,7 +602,7 @@ draworbits(im: ref Image, view: Rect)
 			point := project(centre, scale, positions[2*i], positions[2*i+1],
 				positions[2*focus], positions[2*focus+1]);
 			if(haveprevious)
-				im.line(previous, point, 0, 0, 1,
+				orb.line(previous, point, 0, 0, 1,
 					bodycolour[i%len bodycolour], Point(0,0));
 			previous = point;
 			haveprevious = 1;
@@ -475,8 +612,8 @@ draworbits(im: ref Image, view: Rect)
 		radius := 4;
 		if(mass[i] > 0.1)
 			radius = 7;
-		im.ellipse(point, radius, radius, 0, bodycolour[i%len bodycolour], Point(0,0));
-		im.text(point.add((radius+3,-3)), fg, Point(0,0), font, label(bodylabels[i]));
+		orb.ellipse(point, radius, radius, 0, bodycolour[i%len bodycolour], Point(0,0));
+		orb.text(point.add((radius+3,-3)), fg, Point(0,0), font, label(bodylabels[i]));
 	}
 }
 
@@ -487,19 +624,6 @@ draworbits(im: ref Image, view: Rect)
 project(centre: Point, scale: real, x, y, cx, cy: real): Point
 {
 	return centre.add((int((x-cx)*scale), -int((y-cy)*scale)));
-}
-
-drawparameter(im: ref Image, index: int, name: string, value, maximum: real)
-{
-	width := im.r.dx()/len model.parameter;
-	x := im.r.min.x+index*width;
-	y := im.r.max.y-40;
-	im.line((x+4,y),(x+width-6,y), 0, 0, 2, grid, Point(0,0));
-	fraction := (value-model.minima[index])/(maximum-model.minima[index]);
-	knob := x+4+int(fraction*real(width-10));
-	im.ellipse((knob,y), 4, 4, 0, fg, Point(0,0));
-	im.text((x+4,im.r.max.y-17), fg, Point(0,0), font,
-		sys->sprint("%s %.3g", label(name), value));
 }
 
 timer(ticks: chan of int)

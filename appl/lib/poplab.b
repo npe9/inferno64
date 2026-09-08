@@ -2,10 +2,18 @@ implement Poplab;
 
 # See module/poplab.m for the script vocabulary and why this is a library
 # the model calls rather than a module that loads the model back.
-# Everything below except parsing is appl/temple/populations.b's own
-# window, integrator and controls, unchanged in behaviour: the model side
-# of it now comes from dynsys(2) instead of from seven entry points on a
-# loaded module.
+# Tk owns the window's structure; Draw owns only the pixels of the two
+# plots.  The parameter sliders are Tk scales, the buttons are Tk
+# buttons, the readout is a Tk label, and the geometry is Tk's, so the
+# row-of-six parameter arithmetic and the hand-placed 180-pixel bar strip
+# are gone along with every offset that went with them (42, 12, 35, 30).
+# What is left in Draw is the history plot and the state bars, both
+# redrawn wholesale every 25ms.
+#
+# Each of those is a "panel" widget holding an image this library owns,
+# the same arrangement appl/wm/coffee.b uses for its animation.  A click
+# in either arrives as a Tk binding with coordinates already relative to
+# that panel, so the hit test is the panel's own size and nothing else.
 
 include "sys.m";
 	sys: Sys;
@@ -13,9 +21,10 @@ include "draw.m";
 	draw: Draw;
 	Display, Image, Font, Point, Rect: import draw;
 include "tk.m";
-include "wmclient.m";
-	wmclient: Wmclient;
-	Window: import wmclient;
+	tk: Tk;
+	Toplevel: import tk;
+include "tkclient.m";
+	tkclient: Tkclient;
 include "numerics.m";
 	numerics: Numerics;
 include "plot.m";
@@ -29,9 +38,12 @@ include "poplab.m";
 	dynsys: Dynsys;
 	Model: import dynsys;
 
-win: ref Window;
+top: ref Toplevel;
+cmdch: chan of string;
+buffer: ref Image;	# the history plot's pixels
+bars: ref Image;	# the state bars' pixels
 font: ref Font;
-bg, fg, grid, marker: ref Image;
+bg, fg, grid: ref Image;
 palette: array of ref Image;
 palettevalue := array[] of {
 	int 16r178f86ff, int 16rb85c38ff, int 16r526fa8ff,
@@ -69,9 +81,12 @@ loaddrawmods(): string
 		numerics = load Numerics Numerics->PATH;
 	if(plot == nil)
 		plot = load Plot Plot->PATH;
-	if(wmclient == nil)
-		wmclient = load Wmclient Wmclient->PATH;
-	if(draw == nil || numerics == nil || plot == nil || wmclient == nil)
+	if(tk == nil)
+		tk = load Tk Tk->PATH;
+	if(tkclient == nil)
+		tkclient = load Tkclient Tkclient->PATH;
+	if(draw == nil || numerics == nil || plot == nil ||
+			tk == nil || tkclient == nil)
 		return "poplab: a drawing module is missing";
 	return nil;
 }
@@ -152,6 +167,40 @@ label(name: string): string
 	return s;
 }
 
+# The window: one panel for the history plot, another for the state bars,
+# a grid of scales for the parameters, a row of buttons.  Nothing here
+# knows a pixel offset - Tk works out where everything goes, and
+# tk->rect() says afterwards where each panel ended up.
+tkcfg := array[] of {
+	"frame .plot",
+	"panel .plot.p -bd 0 -relief flat -width 600 -height 380",
+	"panel .plot.bars -bd 0 -relief flat -width 180 -height 380",
+	"pack .plot.bars -side right -fill y",
+	"pack .plot.p -side left -fill both -expand 1",
+	"frame .par",
+	"frame .but",
+	"button .but.reset -text Reset -command {send cmd reset}",
+	"button .but.pause -text Pause -command {send cmd pause}",
+	"label .but.at -text {}",
+	"pack .but.reset .but.pause -side left",
+	"pack .but.at -side left -padx 10",
+	"pack .but -side bottom -fill x",
+	"pack .par -side bottom -fill x",
+	"pack .plot -side top -fill both -expand 1",
+	"bind .plot.bars <Button-1> {send cmd bar %x %y}",
+	"bind . <Key> {send cmd key %K}",
+	"bind .plot.p <Key> {send cmd key %K}",
+	"focus .plot.p",
+};
+
+cmd(s: string): string
+{
+	r := tk->cmd(top, s);
+	if(r != nil && r[0] == '!')
+		sys->fprint(sys->fildes(2), "poplab: %s: %s\n", s, r);
+	return r;
+}
+
 run(ctxt: ref Draw->Context, name, spec: string): string
 {
 	err: string;
@@ -169,22 +218,31 @@ run(ctxt: ref Draw->Context, name, spec: string): string
 		env->setenv("wmman", page);
 	}
 	sys->pctl(Sys->NEWPGRP, nil);
-	wmclient->init();
+	tkclient->init();
 	if(ctxt == nil)
-		ctxt = wmclient->makedrawcontext();
-	win = wmclient->window(ctxt, title, Wmclient->Appl);
-	font = Font.open(win.display, "/fonts/lucida/unicode.8.font");
-	bg = win.display.color(int 16rf4f0e7ff);
-	fg = win.display.color(int 16r20272cff);
-	grid = win.display.color(int 16rd6d0c4ff);
-	marker = win.display.color(int 16r20272cff);
+		ctxt = tkclient->makedrawcontext();
+	menu: chan of string;
+	(top, menu) = tkclient->toplevel(ctxt, "", title, Tkclient->Appl);
+	cmdch = chan[64] of string;	# tk drops what it cannot queue, so leave room
+	tk->namechan(top, cmdch, "cmd");
+	for(i := 0; i < len tkcfg; i++)
+		cmd(tkcfg[i]);
+	buildparams();
+	cmd("update");
+	tkclient->startinput(top, "kbd"::"ptr"::nil);
+	tkclient->onscreen(top, nil);
+
+	font = Font.open(top.display, "/fonts/lucida/unicode.8.font");
+	bg = top.display.color(int 16rf4f0e7ff);
+	fg = top.display.color(int 16r20272cff);
+	grid = top.display.color(int 16rd6d0c4ff);
 	palette = array[len palettevalue] of ref Image;
-	for(i := 0; i < len palette; i++)
-		palette[i] = win.display.color(palettevalue[i]);
+	for(i = 0; i < len palette; i++)
+		palette[i] = top.display.color(palettevalue[i]);
 	initial = dynsys->initialstate(model);
 	state = array[len initial] of real;
 	work = numerics->workspace(len state);
-	graph = plot->new(win.image, font);
+	graph = plot->new(nil, font);
 	table := "table history time";
 	for(i = 0; i < len state; i++)
 		table += " state" + string i;
@@ -194,37 +252,141 @@ run(ctxt: ref Draw->Context, name, spec: string): string
 		colours += sys->sprint("\ncolour state%d 16r%ux", i, palettevalue[i]);
 	graph.cmd(colours);
 	reset();
-	win.reshape(Rect((0,0),(800,500)));
-	win.onscreen("place");
-	win.startinput("kbd"::"ptr"::nil);
+	resize();
 	ticks := chan of int;
 	spawn timer(ticks);
 	redraw();
 	for(;;) alt {
-	ctl := <-win.ctl or ctl = <-win.ctxt.ctl =>
-		win.wmctl(ctl);
-		if(ctl == "exit")
+	s := <-top.ctxt.kbd =>
+		tk->keyboard(top, s);
+	p := <-top.ctxt.ptr =>
+		tk->pointer(top, *p);
+	s := <-top.ctxt.ctl or s = <-top.wreq or s = <-menu =>
+		tkclient->wmctl(top, s);
+		if(s == "exit")
+			return nil;
+		resize();
+		redraw();
+	s := <-cmdch =>
+		if(control(s))
 			return nil;
 		redraw();
-	pointer := <-win.ctxt.ptr =>
-		win.pointer(*pointer);
-		handlepointer(pointer);
-		redraw();
-	key := <-win.ctxt.kbd =>
-		case key {
-		16r1b or 'q' or 'Q' =>
-			win.wmctl("exit");
-			return nil;
-		' ' => paused = !paused;
-		'r' or 'R' => reset();
-		'.' => if(paused) step();
-		}
 	<-ticks =>
 		if(!paused)
-			for(i = 0; i < 4; i++)
+			for(k := 0; k < 4; k++)
 				step();
 		redraw();
 	}
+}
+
+# One label and one scale per parameter, three parameters to a line.  A
+# scale's own -command reports the new value, so nothing here has to work
+# out which slider the pointer was over, or how many fit in a row.
+buildparams()
+{
+	for(j := 0; j < len model.parameter; j++){
+		max := model.maxima[j];
+		cmd(sys->sprint("label .par.l%d -text {%s}", j, label(model.paramlabels[j])));
+		# -bigincrement defaults to zero, and a scale with a zero big
+		# increment answers a click in its trough by re-sending the
+		# value it already had: the slider looks live and does nothing
+		cmd(sys->sprint("scale .par.s%d -from %g -to %g -resolution %g"+
+			" -bigincrement %g -orient horizontal -length 150"+
+			" -showvalue 1 -command {send cmd param %d}",
+			j, max*0.01, max, max/200.0, max/20.0, j));
+		cmd(sys->sprint(".par.s%d set %g", j, model.parameter[j]));
+		row := j/3;
+		col := (j%3)*2;
+		cmd(sys->sprint("grid .par.l%d -row %d -column %d -sticky w -padx 4",
+			j, row, col));
+		cmd(sys->sprint("grid .par.s%d -row %d -column %d -sticky w",
+			j, row, col+1));
+	}
+}
+
+# Tk says where each panel went; this library only has to keep images of
+# those sizes.  Does nothing at all unless a size actually changed.
+resize()
+{
+	if(top.image == nil)
+		return;
+	buffer = refit(buffer, ".plot.p");
+	bars = refit(bars, ".plot.bars");
+	graph.image = buffer;
+}
+
+refit(im: ref Image, widget: string): ref Image
+{
+	r := tk->rect(top, widget, 0);
+	(w, h) := (r.dx(), r.dy());
+	if(w <= 0 || h <= 0)
+		return im;
+	if(im != nil && im.r.dx() == w && im.r.dy() == h)
+		return im;
+	new := top.display.newimage(Rect((0,0),(w,h)), top.image.chans, 0, Draw->White);
+	if(new == nil)
+		return im;
+	tk->putimage(top, widget, new, nil);
+	return new;
+}
+
+# A Tk message.  Returns non-zero if the window is finished.
+control(s: string): int
+{
+	(nil, w) := sys->tokenize(s, " \t");
+	if(w == nil)
+		return 0;
+	case hd w {
+	"reset" =>
+		reset();
+	"pause" =>
+		paused = !paused;
+		lbl := "Pause";
+		if(paused)
+			lbl = "Go";
+		cmd(sys->sprint(".but.pause configure -text %s", lbl));
+	"param" =>
+		# read every scale rather than trust one message: tk drops
+		# queued messages silently, and a dropped last drag event
+		# would otherwise leave a parameter behind the slider
+		for(j := 0; j < len model.parameter; j++)
+			model.parameter[j] = real cmd(sys->sprint(".par.s%d get", j));
+		# the state lines are expressions in the parameters, so a
+		# parameter change is a new problem, not a nudge to this one
+		reset();
+	"bar" =>
+		if(len w != 3 || bars == nil)
+			return 0;
+		(px, py) := (int hd tl w, int hd tl tl w);
+		height := bars.r.dy()/len state;
+		if(height <= 0)
+			return 0;
+		which := py/height;
+		if(which < 0 || which >= len state)
+			return 0;
+		state[which] = displaymax*real px/real bars.r.dx();
+		if(state[which] < 0.0)
+			state[which] = 0.0;
+		t = 0.0;
+		graph.cmd("history clear");
+		record();
+	"key" =>
+		if(len w != 2)
+			return 0;
+		case int ("16r"+hd tl w) {
+		16r1b or 'q' or 'Q' =>
+			tkclient->wmctl(top, "exit");
+			return 1;
+		' ' =>
+			return control("pause");
+		'r' or 'R' =>
+			reset();
+		'.' =>
+			if(paused)
+				step();
+		}
+	}
+	return 0;
 }
 
 rhs(rhsTime: real, values, derivative: array of real)
@@ -240,7 +402,6 @@ reset()
 	for(i := 0; i < len state; i++)
 		state[i] = initial[i];
 	t = 0.0;
-	paused = 0;
 	displaymax = 1.0;
 	for(i = 0; i < len state; i++)
 		if(state[i]*1.15 > displaymax)
@@ -270,63 +431,18 @@ record()
 	graph.cmd(command);
 }
 
-handlepointer(pointer: ref Draw->Pointer)
-{
-	if(!(pointer.buttons&1) || win.image == nil)
-		return;
-	r := win.image.r;
-	controltop := r.max.y-(controlrows()*42+12);
-	if(pointer.xy.y > controltop){
-		n := len model.parameter;
-		if(n == 0)
-			return;
-		row := (pointer.xy.y-controltop)/42;
-		if(row >= controlrows())
-			row = controlrows()-1;
-		first := row*6;
-		columns := n-first;
-		if(columns > 6)
-			columns = 6;
-		width := r.dx()/columns;
-		which := first+(pointer.xy.x-r.min.x)/width;
-		if(which < 0)
-			which = 0;
-		if(which >= n)
-			which = n-1;
-		column := which-first;
-		fraction := real(pointer.xy.x-(r.min.x+column*width))/real(width);
-		if(fraction < 0.01)
-			fraction = 0.01;
-		model.parameter[which] = model.maxima[which]*fraction;
-		reset();
-		return;
-	}
-	bararea := Rect((r.max.x-180,r.min.y+35),
-		(r.max.x-12,r.max.y-(controlrows()*42+30)));
-	if(pointer.xy.in(bararea)){
-		height := bararea.dy()/len state;
-		which := (pointer.xy.y-bararea.min.y)/height;
-		fraction := real(pointer.xy.x-bararea.min.x)/real(bararea.dx());
-		state[which] = displaymax*fraction;
-		t = 0.0;
-		graph.cmd("history clear");
-		record();
-	}
-}
+readout := "";
 
 redraw()
 {
-	im := win.image;
-	if(im == nil)
+	if(buffer == nil || bars == nil)
 		return;
-	im.draw(im.r, bg, nil, Point(0,0));
+	buffer.draw(buffer.r, bg, nil, Point(0,0));
 	tmax := t;
 	if(tmax < 10.0)
 		tmax = 10.0;
-	graph.image = im;
 	graph.cmd("clear");
-	graph.cmd(sys->sprint("content margin 48 38 200 %d\nview historyplot content",
-		controlrows()*42+20));
+	graph.cmd("content margin 48 22 18 30\nview historyplot content");
 	graph.cmd(sys->sprint("scale historyplot x 0 %.8g", tmax));
 	graph.cmd(sys->sprint("scale historyplot y 0 %.8g reverse", displaymax));
 	graph.cmd("axis historyplot x time");
@@ -336,57 +452,34 @@ redraw()
 			"line historyplot history x time y state%d colour state%d width 2",
 			i, i%len palette));
 	graph.draw();
-	drawstatebars(im);
-	im.text(im.r.min.add((10,18)), fg, Point(0,0), font,
-		sys->sprint("%s   t %.2f", title, t));
-	for(i = 0; i < len model.parameter; i++)
-		drawparameter(im, i, model.paramlabels[i],
-			model.parameter[i], model.maxima[i]);
-	im.flush(Draw->Flushnow);
-}
-
-drawstatebars(im: ref Image)
-{
-	r := Rect((im.r.max.x-180,im.r.min.y+35),
-		(im.r.max.x-12,im.r.max.y-(controlrows()*42+30)));
-	height := r.dy()/len state;
-	for(i := 0; i < len state; i++){
-		y := r.min.y+i*height;
-		im.text((r.min.x,y+font.height), fg, Point(0,0), font,
-			sys->sprint("%s %.4g", label(model.statenames[i]), state[i]));
-		track := Rect((r.min.x,y+font.height+4), (r.max.x,y+height-5));
-		im.draw(track, grid, nil, Point(0,0));
-		filled := track;
-		filled.max.x = filled.min.x+
-			int(real(track.dx())*state[i]/displaymax);
-		im.draw(filled, palette[i%len palette], nil, Point(0,0));
+	drawstatebars();
+	cmd(".plot.p dirty; .plot.bars dirty; update");
+	# the label is a widget, so only touch it when it would change
+	now := sys->sprint("t %.2f", t);
+	if(now != readout){
+		readout = now;
+		cmd(".but.at configure -text {"+now+"}");
 	}
 }
 
-drawparameter(im: ref Image, index: int, name: string, value, maximum: real)
+# The bars are their own panel, so a bar's height is the panel's height
+# divided by the number of states and nothing else.
+drawstatebars()
 {
-	row := index/6;
-	column := index%6;
-	remaining := len model.parameter-row*6;
-	columns := remaining;
-	if(columns > 6)
-		columns = 6;
-	width := im.r.dx()/columns;
-	x := im.r.min.x+column*width;
-	y := im.r.max.y-controlrows()*42+row*42+10;
-	im.line((x+4,y),(x+width-6,y), 0, 0, 2, grid, Point(0,0));
-	knob := x+4+int(value/maximum*real(width-10));
-	im.ellipse((knob,y), 4, 4, 0, marker, Point(0,0));
-	im.text((x+4,im.r.max.y-17), fg, Point(0,0), font,
-		sys->sprint("%s %.3g", label(name), value));
-}
-
-controlrows(): int
-{
-	rows := (len model.parameter+5)/6;
-	if(rows < 1)
-		rows = 1;
-	return rows;
+	bars.draw(bars.r, bg, nil, Point(0,0));
+	r := bars.r.inset(6);
+	height := r.dy()/len state;
+	for(i := 0; i < len state; i++){
+		y := r.min.y+i*height;
+		bars.text((r.min.x,y+font.height), fg, Point(0,0), font,
+			sys->sprint("%s %.4g", label(model.statenames[i]), state[i]));
+		track := Rect((r.min.x,y+font.height+4), (r.max.x,y+height-5));
+		bars.draw(track, grid, nil, Point(0,0));
+		filled := track;
+		filled.max.x = filled.min.x+
+			int(real(track.dx())*state[i]/displaymax);
+		bars.draw(filled, palette[i%len palette], nil, Point(0,0));
+	}
 }
 
 timer(ticks: chan of int)

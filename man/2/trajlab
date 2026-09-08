@@ -1,0 +1,64 @@
+.TH TRAJLAB 2
+.SH NAME
+trajlab: run, parse \- Danby flight-path models as scripts
+.SH SYNOPSIS
+.EX
+include "sys.m";
+include "draw.m";
+include "trajlab.m";
+trajlab := load Trajlab Trajlab->PATH;
+
+err := trajlab->run(ctxt, name, spec);
+(m, err) := trajlab->parse(spec);
+.EE
+.SH DESCRIPTION
+.I Trajlab
+is the Danby trajectory viewer as a library the model calls:
+.PP
+.EX
+trajlab->run(ctxt, "basketball", SPEC);
+.EE
+.PP
+The vocabulary is
+.IR dynsys (2)'s
+\(em
+.BR param ,
+.BR maxtime ,
+.BR state ,
+.BR derivative ,
+.B eq
+\(em plus
+.B title
+and
+.BR manual .
+.PP
+The state is fixed at four values, in this order: horizontal position,
+height, horizontal velocity, vertical velocity.  The viewer plots the
+first two against each other and the speed against time, and stops the
+flight when the height crosses zero from above, so the order is not a
+convention but a requirement.
+.I Trajlab
+says so, with an error from
+.B run
+or
+.BR parse ,
+rather than letting a mis-ordered spec look plausible on the screen.
+.PP
+A parameter's slider runs from zero to its maximum, as this family's
+.B parameterranges()
+always meant.
+.PP
+The window is Tk's.  The parameter sliders are Tk scales, the buttons are
+Tk buttons, the status line is a Tk label, and the layout is a Tk
+geometry manager's; the flight path and the speed trace share one
+.IR panel (9)
+widget holding an image the library draws into.
+.SH SOURCE
+.B /appl/lib/trajlab.b
+.SH SEE ALSO
+.IR trajlabtest (1),
+.IR mechlab (2),
+.IR poplab (2),
+.IR orblab (2),
+.IR ecolab (2),
+.IR dynsys (2)

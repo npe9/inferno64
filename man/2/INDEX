@@ -247,6 +247,7 @@ log1p math-elem
 login security-login
 makedrawcontext wmclient
 map lists
+masses orblab
 match filepat
 math math-0intro
 math-elem math-elem
@@ -256,6 +257,7 @@ math-intro math-0intro
 math-linalg math-linalg
 md4 keyring-sha1
 md5 keyring-sha1
+mechlab mechlab
 millisec sys-millisec
 mkbutton popup
 mkdictname translate
@@ -283,6 +285,7 @@ onscreen tkclient
 open sys-open
 opendict translate
 opendicts translate
+orblab orblab
 packdir styx
 packdirsize styx
 pair lists
@@ -301,6 +304,7 @@ point draw-point
 pointer tk
 polyfill polyfill
 pop3 pop3
+poplab poplab
 popup popup
 plot plot
 populationmodel populationmodel
@@ -503,6 +507,7 @@ toplev spki
 toplevel tkclient
 toreal string
 toupper string
+trajlab trajlab
 translate translate
 tuple cfg
 ubfa ubfa
