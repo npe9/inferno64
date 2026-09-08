@@ -1,75 +1,55 @@
-implement Populationmodel;
+implement Stillmoreenzyme;
 
-# danby/stillmoreenzyme - Cooperative two-site enzyme kinetics
+# danby/stillmoreenzyme - cooperative two-site enzyme kinetics
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared populations viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its populations and the equations that move them.  poplab(2) is a
+# library this calls with that script - it owns the window, the
+# integrator and the controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "danby/reaction.m";
-	reaction: Reaction;
-include "danby/populationmodel.m";
+include "poplab.m";
+	poplab: Poplab;
 
-new(): ref Model
-{
-	reaction = load Reaction Reaction->PATH;
-	return ref Model(array[] of {1.8,0.5,1.5,0.4,0.8},
-		array[] of {2.0,0.35,0.0,0.0,0.0});
-}
-
-title(): string
-{
-	return "Cooperative two-site enzyme kinetics";
-}
-
-statelabels(): array of string
-{
-	return array[] of {"substrate", "enzyme", "one bound", "two bound", "product"};
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"first binding", "first release", "second binding", "second release", "catalysis"};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {8.0,4.0,8.0,4.0,4.0};
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	reaction->clear(derivative);
-	f1 := reaction->flux(state,array[] of {1.0,1.0,0.0,0.0,0.0},model.parameter[0]);
-	r1 := reaction->flux(state,array[] of {0.0,0.0,1.0,0.0,0.0},model.parameter[1]);
-	f2 := reaction->flux(state,array[] of {1.0,0.0,1.0,0.0,0.0},model.parameter[2]);
-	r2 := reaction->flux(state,array[] of {0.0,0.0,0.0,1.0,0.0},model.parameter[3]);
-	cat := reaction->flux(state,array[] of {0.0,0.0,0.0,1.0,0.0},model.parameter[4]);
-	reaction->apply(derivative,array[] of {-1.0,-1.0,1.0,0.0,0.0},f1);
-	reaction->apply(derivative,array[] of {1.0,1.0,-1.0,0.0,0.0},r1);
-	reaction->apply(derivative,array[] of {-1.0,0.0,-1.0,1.0,0.0},f2);
-	reaction->apply(derivative,array[] of {1.0,0.0,1.0,-1.0,0.0},r2);
-	reaction->apply(derivative,array[] of {0.0,1.0,0.0,-1.0,2.0},cat);
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-Command: module
+Stillmoreenzyme: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Cooperative two-site enzyme kinetics\n" +
+	"param first_binding 1.8 0.0 8.0\n" +
+	"param first_release 0.5 0.0 4.0\n" +
+	"param second_binding 1.5 0.0 8.0\n" +
+	"param second_release 0.4 0.0 4.0\n" +
+	"param catalysis 0.8 0.0 4.0\n" +
+	"maxtime 100.0\n" +
+	"state substrate 2.0\n" +
+	"state enzyme 0.35\n" +
+	"state one_bound 0.0\n" +
+	"state two_bound 0.0\n" +
+	"state product 0.0\n" +
+	"eq cS { substrate + abs { substrate } } over 2.0\n" +
+	"eq cE { enzyme + abs { enzyme } } over 2.0\n" +
+	"eq c1 { one_bound + abs { one_bound } } over 2.0\n" +
+	"eq c2 { two_bound + abs { two_bound } } over 2.0\n" +
+	"eq f1 first_binding cS cE\n" +
+	"eq r1 first_release c1\n" +
+	"eq f2 second_binding cS c1\n" +
+	"eq r2 second_release c2\n" +
+	"eq cat catalysis c2\n" +
+	"derivative substrate - f1 + r1 - f2 + r2\n" +
+	"derivative enzyme - f1 + r1 + cat\n" +
+	"derivative one_bound f1 - r1 - f2 + r2\n" +
+	"derivative two_bound f2 - r2 - cat\n" +
+	"derivative product 2.0 cat\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/populations.dis";
-	if(viewer == nil)
-		raise "fail:stillmoreenzyme: cannot load the populations viewer";
-	viewer->init(ctxt, "stillmoreenzyme" :: "/dis/danby/stillmoreenzyme.dis" ::
-		"danby-stillmoreenzyme" :: nil);
+	poplab = load Poplab Poplab->PATH;
+	if(poplab == nil)
+		raise "fail:stillmoreenzyme: cannot load poplab";
+	if((e := poplab->run(ctxt, "stillmoreenzyme", SPEC)) != nil)
+		raise "fail:stillmoreenzyme: "+e;
 }

@@ -64,6 +64,7 @@ TARG=\
 	danbyeqnall.dis\
 	mechlabtest.dis\
 	tonetest.dis\
+	poplabtest.dis\
 	danbyeqntest.dis\
 	date.dis\
 	dbfs.dis\

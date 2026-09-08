@@ -1,67 +1,38 @@
-implement Populationmodel;
+implement Budworm;
 
-# danby/budworm - Spruce budworm versus balsam fir
+# danby/budworm - spruce budworm versus balsam fir
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared populations viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its populations and the equations that move them.  poplab(2) is a
+# library this calls with that script - it owns the window, the
+# integrator and the controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "danby/populationmodel.m";
+include "poplab.m";
+	poplab: Poplab;
 
-new(): ref Model
-{
-	parameters := array[] of {0.55, 3.0, 1.0, 0.5};
-	initial := array[] of {0.35};
-	return ref Model(parameters,initial);
-}
-
-title(): string
-{
-	return "Spruce budworm versus balsam fir";
-}
-
-statelabels(): array of string
-{
-	return array[] of {"budworms"};
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"growth", "foliage capacity", "bird predation", "saturation"};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {2.0, 6.0, 3.0, 2.0};
-}
-
-Model.rhs(model: self ref Model, nil: real,
-		state, derivative: array of real)
-{
-	p := model.parameter;
-	worms := state[0];
-	predation := p[2]*worms*worms/(p[3]*p[3]+worms*worms);
-	derivative[0] = p[0]*worms*(1.0-worms/p[1])-predation;
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-Command: module
+Budworm: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Spruce budworm versus balsam fir\n" +
+	"param growth 0.55 0.0 2.0\n" +
+	"param foliage_capacity 3.0 0.0 6.0\n" +
+	"param bird_predation 1.0 0.0 3.0\n" +
+	"param saturation 0.5 0.0 2.0\n" +
+	"maxtime 100.0\n" +
+	"state budworms 0.35\n" +
+	"eq predation bird_predation budworms budworms over { saturation saturation + budworms budworms }\n" +
+	"derivative budworms growth budworms { 1.0 - budworms over foliage_capacity } - predation\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/populations.dis";
-	if(viewer == nil)
-		raise "fail:budworm: cannot load the populations viewer";
-	viewer->init(ctxt, "budworm" :: "/dis/danby/budworm.dis" ::
-		"danby-budworm" :: nil);
+	poplab = load Poplab Poplab->PATH;
+	if(poplab == nil)
+		raise "fail:budworm: cannot load poplab";
+	if((e := poplab->run(ctxt, "budworm", SPEC)) != nil)
+		raise "fail:budworm: "+e;
 }

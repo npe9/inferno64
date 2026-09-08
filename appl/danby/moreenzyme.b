@@ -1,72 +1,51 @@
-implement Populationmodel;
+implement Moreenzyme;
 
-# danby/moreenzyme - Reversible enzyme kinetics
+# danby/moreenzyme - reversible enzyme kinetics
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared populations viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its populations and the equations that move them.  poplab(2) is a
+# library this calls with that script - it owns the window, the
+# integrator and the controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "danby/reaction.m";
-	reaction: Reaction;
-include "danby/populationmodel.m";
+include "poplab.m";
+	poplab: Poplab;
 
-new(): ref Model
-{
-	reaction = load Reaction Reaction->PATH;
-	return ref Model(array[] of {2.0,0.5,0.8,0.35},array[] of {1.4,0.4,0.0,0.0});
-}
-
-title(): string
-{
-	return "Reversible enzyme kinetics";
-}
-
-statelabels(): array of string
-{
-	return array[] of {"substrate", "enzyme", "complex", "product"};
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"binding", "unbinding", "forward catalysis", "reverse catalysis"};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {8.0,4.0,4.0,4.0};
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	reaction->clear(derivative);
-	bind := reaction->flux(state,array[] of {1.0,1.0,0.0,0.0},model.parameter[0]);
-	unbind := reaction->flux(state,array[] of {0.0,0.0,1.0,0.0},model.parameter[1]);
-	forward := reaction->flux(state,array[] of {0.0,0.0,1.0,0.0},model.parameter[2]);
-	reverse := reaction->flux(state,array[] of {0.0,1.0,0.0,1.0},model.parameter[3]);
-	reaction->apply(derivative,array[] of {-1.0,-1.0,1.0,0.0},bind);
-	reaction->apply(derivative,array[] of {1.0,1.0,-1.0,0.0},unbind);
-	reaction->apply(derivative,array[] of {0.0,1.0,-1.0,1.0},forward);
-	reaction->apply(derivative,array[] of {0.0,-1.0,1.0,-1.0},reverse);
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-Command: module
+Moreenzyme: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Reversible enzyme kinetics\n" +
+	"param binding 2.0 0.0 8.0\n" +
+	"param unbinding 0.5 0.0 4.0\n" +
+	"param forward_catalysis 0.8 0.0 4.0\n" +
+	"param reverse_catalysis 0.35 0.0 4.0\n" +
+	"maxtime 100.0\n" +
+	"state substrate 1.4\n" +
+	"state enzyme 0.4\n" +
+	"state complex 0.0\n" +
+	"state product 0.0\n" +
+	"eq cS { substrate + abs { substrate } } over 2.0\n" +
+	"eq cE { enzyme + abs { enzyme } } over 2.0\n" +
+	"eq cC { complex + abs { complex } } over 2.0\n" +
+	"eq cP { product + abs { product } } over 2.0\n" +
+	"eq bind binding cS cE\n" +
+	"eq unbind unbinding cC\n" +
+	"eq forward forward_catalysis cC\n" +
+	"eq reverse reverse_catalysis cE cP\n" +
+	"derivative substrate - bind + unbind\n" +
+	"derivative enzyme - bind + unbind + forward - reverse\n" +
+	"derivative complex bind - unbind - forward + reverse\n" +
+	"derivative product forward - reverse\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/populations.dis";
-	if(viewer == nil)
-		raise "fail:moreenzyme: cannot load the populations viewer";
-	viewer->init(ctxt, "moreenzyme" :: "/dis/danby/moreenzyme.dis" ::
-		"danby-moreenzyme" :: nil);
+	poplab = load Poplab Poplab->PATH;
+	if(poplab == nil)
+		raise "fail:moreenzyme: cannot load poplab";
+	if((e := poplab->run(ctxt, "moreenzyme", SPEC)) != nil)
+		raise "fail:moreenzyme: "+e;
 }

@@ -1,69 +1,42 @@
-implement Populationmodel;
+implement Diseasebirthdeath1;
 
-# danby/diseasebirthdeath1 - Disease with balanced births and deaths
+# danby/diseasebirthdeath1 - disease with balanced births and deaths
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared populations viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its populations and the equations that move them.  poplab(2) is a
+# library this calls with that script - it owns the window, the
+# integrator and the controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "danby/populationmodel.m";
+include "poplab.m";
+	poplab: Poplab;
 
-new(): ref Model
-{
-	parameters := array[] of {2.2, 0.55, 0.03};
-	initial := array[] of {0.99, 0.01, 0.0};
-	return ref Model(parameters,initial);
-}
-
-title(): string
-{
-	return "Disease with balanced births and deaths";
-}
-
-statelabels(): array of string
-{
-	return array[] of {"susceptible", "infectious", "recovered"};
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"contact", "recovery", "turnover"};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {5.0, 2.0, 0.5};
-}
-
-Model.rhs(model: self ref Model, nil: real,
-		state, derivative: array of real)
-{
-	p := model.parameter;
-	infections := p[0]*state[0]*state[1];
-	recoveries := p[1]*state[1];
-	derivative[0] = p[2]-infections-p[2]*state[0];
-	derivative[1] = infections-recoveries-p[2]*state[1];
-	derivative[2] = recoveries-p[2]*state[2];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-Command: module
+Diseasebirthdeath1: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Disease with balanced births and deaths\n" +
+	"param contact 2.2 0.0 5.0\n" +
+	"param recovery 0.55 0.0 2.0\n" +
+	"param turnover 0.03 0.0 0.5\n" +
+	"maxtime 100.0\n" +
+	"state susceptible 0.99\n" +
+	"state infectious 0.01\n" +
+	"state recovered 0.0\n" +
+	"eq infections contact susceptible infectious\n" +
+	"eq recoveries recovery infectious\n" +
+	"derivative susceptible turnover - infections - turnover susceptible\n" +
+	"derivative infectious infections - recoveries - turnover infectious\n" +
+	"derivative recovered recoveries - turnover recovered\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/populations.dis";
-	if(viewer == nil)
-		raise "fail:diseasebirthdeath1: cannot load the populations viewer";
-	viewer->init(ctxt, "diseasebirthdeath1" :: "/dis/danby/diseasebirthdeath1.dis" ::
-		"danby-diseasebirthdeath1" :: nil);
+	poplab = load Poplab Poplab->PATH;
+	if(poplab == nil)
+		raise "fail:diseasebirthdeath1: cannot load poplab";
+	if((e := poplab->run(ctxt, "diseasebirthdeath1", SPEC)) != nil)
+		raise "fail:diseasebirthdeath1: "+e;
 }

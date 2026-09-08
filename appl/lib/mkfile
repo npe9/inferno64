@@ -49,6 +49,7 @@ TARG=\
 	dividers.dis\
 	dynsys.dis\
 	mechlab.dis\
+	poplab.dis\
 	env.dis\
 	eqn2hoc.dis\
 	ether.dis\
@@ -204,6 +205,7 @@ SYSMODULES= \
 	eqn2hoc.m\
 	hoc.m\
 	mechlab.m\
+	poplab.m\
 	cci.m\
 	daytime.m\
 	db.m\

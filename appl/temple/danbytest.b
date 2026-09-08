@@ -25,22 +25,11 @@ include "danby/twospecies.m";
 	cooperation: Twospecies;
 	competition: Twospecies;
 include "danby/populationmodel.m";
-	childcare: Populationmodel;
 	manyspecies: Populationmodel;
-	foodchainmodel: Populationmodel;
 	violetsantsrodents: Populationmodel;
 	parasite: Populationmodel;
-	cannibalism: Populationmodel;
-	changingenvironment: Populationmodel;
 	lakepollution: Populationmodel;
-	budworm: Populationmodel;
 	heliumburning: Populationmodel;
-	decomposition: Populationmodel;
-	enzymekinetics: Populationmodel;
-	enzymeapplication: Populationmodel;
-	moreenzyme: Populationmodel;
-	stillmoreenzyme: Populationmodel;
-	brusselator: Populationmodel;
 	oregonator: Populationmodel;
 	reactorstability: Populationmodel;
 	tankcontrol: Populationmodel;
@@ -48,9 +37,6 @@ include "danby/populationmodel.m";
 	epidemicmodel: Populationmodel;
 	vaccinationmodel: Populationmodel;
 	migrationmodel: Populationmodel;
-	diseasebirthdeath1: Populationmodel;
-	diseasebirthdeath2: Populationmodel;
-	crossinfection: Populationmodel;
 	incubation: Populationmodel;
 	seasonaldisease: Populationmodel;
 	malaria: Populationmodel;
@@ -59,9 +45,7 @@ include "danby/populationmodel.m";
 	weightchange: Populationmodel;
 	heartbeat: Populationmodel;
 	lanchester: Populationmodel;
-	fishingone: Populationmodel;
 	productionexchange: Populationmodel;
-	fishingtwo: Populationmodel;
 	boommodel: Populationmodel;
 	twocapital: Populationmodel;
 include "danby/trajectory.m";
@@ -134,22 +118,11 @@ init(nil: ref Draw->Context, nil: list of string)
 	# links its loads of that interface against its own function set.  Its
 	# own Lotka-Volterra pair is written out in appl/danby/ecology.b and is
 	# not reachable as a module, so there is nothing to check here.
-	childcare = load Populationmodel "/dis/danby/childcare.dis";
 	manyspecies = load Populationmodel "/dis/danby/manyspecies.dis";
-	foodchainmodel = load Populationmodel "/dis/danby/foodchain.dis";
 	violetsantsrodents = load Populationmodel "/dis/danby/violetsantsrodents.dis";
 	parasite = load Populationmodel "/dis/danby/parasite.dis";
-	cannibalism = load Populationmodel "/dis/danby/cannibalism.dis";
-	changingenvironment = load Populationmodel "/dis/danby/changingenvironment.dis";
 	lakepollution = load Populationmodel "/dis/danby/lakepollution.dis";
-	budworm = load Populationmodel "/dis/danby/budworm.dis";
 	heliumburning = load Populationmodel "/dis/danby/heliumburning.dis";
-	decomposition = load Populationmodel "/dis/danby/decomposition.dis";
-	enzymekinetics = load Populationmodel "/dis/danby/enzymekinetics.dis";
-	enzymeapplication = load Populationmodel "/dis/danby/enzymeapplication.dis";
-	moreenzyme = load Populationmodel "/dis/danby/moreenzyme.dis";
-	stillmoreenzyme = load Populationmodel "/dis/danby/stillmoreenzyme.dis";
-	brusselator = load Populationmodel "/dis/danby/brusselator.dis";
 	oregonator = load Populationmodel "/dis/danby/oregonator.dis";
 	reactorstability = load Populationmodel "/dis/danby/reactorstability.dis";
 	tankcontrol = load Populationmodel "/dis/danby/tankcontrol.dis";
@@ -157,9 +130,6 @@ init(nil: ref Draw->Context, nil: list of string)
 	epidemicmodel = load Populationmodel "/dis/danby/epidemic.dis";
 	vaccinationmodel = load Populationmodel "/dis/danby/vaccination.dis";
 	migrationmodel = load Populationmodel "/dis/danby/migration.dis";
-	diseasebirthdeath1 = load Populationmodel "/dis/danby/diseasebirthdeath1.dis";
-	diseasebirthdeath2 = load Populationmodel "/dis/danby/diseasebirthdeath2.dis";
-	crossinfection = load Populationmodel "/dis/danby/crossinfection.dis";
 	incubation = load Populationmodel "/dis/danby/incubation.dis";
 	seasonaldisease = load Populationmodel "/dis/danby/seasonaldisease.dis";
 	malaria = load Populationmodel "/dis/danby/malaria.dis";
@@ -168,9 +138,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	weightchange = load Populationmodel "/dis/danby/weightchange.dis";
 	heartbeat = load Populationmodel "/dis/danby/heartbeat.dis";
 	lanchester = load Populationmodel "/dis/danby/lanchester.dis";
-	fishingone = load Populationmodel "/dis/danby/fishingone.dis";
 	productionexchange = load Populationmodel "/dis/danby/productionexchange.dis";
-	fishingtwo = load Populationmodel "/dis/danby/fishingtwo.dis";
 	boommodel = load Populationmodel "/dis/danby/boom.dis";
 	twocapital = load Populationmodel "/dis/danby/twocapital.dis";
 	spinningball = load Trajectory "/dis/danby/spinningball.dis";
@@ -219,31 +187,26 @@ init(nil: ref Draw->Context, nil: list of string)
 			forcedpendulum == nil || lorenz == nil || periodicvolterra == nil ||
 			predatorfishing == nil || logisticprey == nil || logisticpredators == nil ||
 			alternativepredation == nil || maypredator == nil || internalcompetition == nil ||
-			cooperation == nil || competition == nil || childcare == nil ||
-			manyspecies == nil || foodchainmodel == nil || violetsantsrodents == nil ||
-			parasite == nil || cannibalism == nil || changingenvironment == nil ||
-			lakepollution == nil || budworm == nil || heliumburning == nil ||
-			decomposition == nil || enzymekinetics == nil || enzymeapplication == nil ||
-			moreenzyme == nil || stillmoreenzyme == nil || brusselator == nil ||
-			oregonator == nil || reactorstability == nil || tankcontrol == nil ||
-			reservoir == nil || epidemicmodel == nil || vaccinationmodel == nil ||
-			migrationmodel == nil || diseasebirthdeath1 == nil || diseasebirthdeath2 == nil ||
-			crossinfection == nil || incubation == nil || seasonaldisease == nil ||
-			malaria == nil || gonorrhea == nil || hiv == nil ||
-			weightchange == nil || heartbeat == nil || lanchester == nil ||
-			fishingone == nil || productionexchange == nil || fishingtwo == nil ||
-			boommodel == nil || twocapital == nil || spinningball == nil ||
-			baseballpitch == nil || knuckleball == nil || flyball == nil ||
-			softballpitch == nil || golfdrive == nil || soccerkick == nil ||
-			cricketbowl == nil || cricketswing == nil || badminton == nil ||
-			tabletennis == nil || basketball == nil || badfootball == nil ||
-			discus == nil || javelin == nil || skijump == nil ||
-			skylab == nil || icbmrange == nil || icbmaccuracy == nil ||
-			rocket2d == nil || reentry == nil || lowthrust == nil ||
-			threebody == nil || moontrip == nil || lagrange1 == nil ||
-			lagrange2 == nil || cometcatch == nil || jupiterboost == nil ||
-			grandtour == nil || perihelion == nil || poyntingrobertson == nil ||
-			galaxies == nil || starmodel == nil || whitedwarf == nil)
+			cooperation == nil || competition == nil || manyspecies == nil ||
+			violetsantsrodents == nil || parasite == nil || lakepollution == nil ||
+			heliumburning == nil || oregonator == nil || reactorstability == nil ||
+			tankcontrol == nil || reservoir == nil || epidemicmodel == nil ||
+			vaccinationmodel == nil || migrationmodel == nil || incubation == nil ||
+			seasonaldisease == nil || malaria == nil || gonorrhea == nil ||
+			hiv == nil || weightchange == nil || heartbeat == nil ||
+			lanchester == nil || productionexchange == nil || boommodel == nil ||
+			twocapital == nil || spinningball == nil || baseballpitch == nil ||
+			knuckleball == nil || flyball == nil || softballpitch == nil ||
+			golfdrive == nil || soccerkick == nil || cricketbowl == nil ||
+			cricketswing == nil || badminton == nil || tabletennis == nil ||
+			basketball == nil || badfootball == nil || discus == nil ||
+			javelin == nil || skijump == nil || skylab == nil ||
+			icbmrange == nil || icbmaccuracy == nil || rocket2d == nil ||
+			reentry == nil || lowthrust == nil || threebody == nil ||
+			moontrip == nil || lagrange1 == nil || lagrange2 == nil ||
+			cometcatch == nil || jupiterboost == nil || grandtour == nil ||
+			perihelion == nil || poyntingrobertson == nil || galaxies == nil ||
+			starmodel == nil || whitedwarf == nil)
 		raise "fail:danbytest: missing module";
 	testmap();
 	testpendulum();
@@ -255,34 +218,12 @@ init(nil: ref Draw->Context, nil: list of string)
 
 testpopulations()
 {
-	model := childcare->new();
-	if(len model.initial != 3 || len childcare->statelabels() != 3)
-		fail("child-care state metadata",real len model.initial,3.0);
-	state := array[] of {0.0,0.0,0.0};
-	derivative := array[] of {0.0,0.0,0.0};
-	childcare->evaluate(model,0.0,state,derivative);
-	for(i := 0; i < len derivative; i++)
-		check("child-care empty boundary",derivative[i],0.0,0.0);
-	for(i = 0; i < len state; i++)
-		state[i] = model.initial[i];
-	childcare->evaluate(model,0.0,state,derivative);
-	for(i = 0; i < len derivative; i++)
-		if(derivative[i] != derivative[i])
-			fail("child-care finite derivative",derivative[i],0.0);
+	# childcare's own metadata and empty-population checks moved to
+	# poplabtest(1) with the model.
 	checkpopulationmodule(manyspecies,"many species",3);
-	checkpopulationmodule(foodchainmodel,"food chain",3);
 	checkpopulationmodule(violetsantsrodents,"violets ants rodents",3);
 	checkpopulationmodule(parasite,"parasite",2);
-	checkpopulationmodule(cannibalism,"cannibalism",2);
-	checkpopulationmodule(changingenvironment,"changing environment",1);
-	checkpopulationmodule(budworm,"budworm",1);
 	checkpopulationmodule(heliumburning,"helium burning",4);
-	checkpopulationmodule(decomposition,"molecular decomposition",3);
-	checkpopulationmodule(enzymekinetics,"enzyme kinetics",4);
-	checkpopulationmodule(enzymeapplication,"competitive inhibition",6);
-	checkpopulationmodule(moreenzyme,"reversible enzyme",4);
-	checkpopulationmodule(stillmoreenzyme,"cooperative enzyme",5);
-	checkpopulationmetadata(brusselator,"Brusselator",2);
 	checkpopulationmodule(oregonator,"Oregonator",3);
 	checkpopulationmetadata(reactorstability,"reactor stability",2);
 	checkpopulationmetadata(tankcontrol,"tank control",4);
@@ -529,7 +470,6 @@ checkvacuumtrajectory(trajectory: Trajectory, name: string)
 testcompetitioneconomics()
 {
 	checkpopulationmetadata(lanchester,"Lanchester",2);
-	checkpopulationmodule(fishingone,"one-species fishing",2);
 	combat := lanchester->new();
 	state := array[] of {0.9,0.7};
 	derivative := array[] of {0.0,0.0};
@@ -537,24 +477,15 @@ testcompetitioneconomics()
 	invariantderivative := 2.0*combat.parameter[1]*state[0]*derivative[0]
 		-2.0*combat.parameter[0]*state[1]*derivative[1];
 	check("Lanchester square-law invariant",invariantderivative,0.0,1.0e-14);
-	fishery := fishingone->new();
-	p := fishery.parameter;
-	stock := p[4]/(p[3]*p[2]);
-	effort := p[0]*(1.0-stock/p[1])/p[2];
-	state[0] = stock;
-	state[1] = effort;
-	fishingone->evaluate(fishery,0.0,state,derivative);
-	check("fishery stock equilibrium",derivative[0],0.0,1.0e-12);
-	check("fishery effort equilibrium",derivative[1],0.0,1.0e-12);
+	# fishingone's bionomic equilibrium moved to poplabtest(1).
 	checkpopulationmetadata(productionexchange,"production exchange",2);
-	checkpopulationmodule(fishingtwo,"two-species fishing",3);
 	checkpopulationmodule(boommodel,"Goodwin cycle",2);
 	checkpopulationmodule(twocapital,"two-capital growth",2);
 	exchange := productionexchange->new();
 	state[0] = 0.8;
 	state[1] = 0.3;
 	productionexchange->evaluate(exchange,0.0,state,derivative);
-	p = exchange.parameter;
+	p := exchange.parameter;
 	expectedtotal := p[0]+p[2]-p[1]*state[0]-p[3]*state[1];
 	check("exchange conserves transferred goods",derivative[0]+derivative[1],
 		expectedtotal,1.0e-14);
@@ -598,7 +529,6 @@ testhealthmodels()
 
 testextendedepidemics()
 {
-	checkpopulationmodule(crossinfection,"cross infection",4);
 	checkpopulationmodule(incubation,"incubation",4);
 	checkpopulationmodule(seasonaldisease,"seasonal disease",3);
 	checkpopulationmodule(malaria,"malaria",4);
@@ -626,24 +556,13 @@ testextendedepidemics()
 testvitaldisease()
 {
 	checkpopulationmetadata(migrationmodel,"disease migration",3);
-	checkpopulationmetadata(diseasebirthdeath1,"disease vital model 1",3);
-	checkpopulationmodule(diseasebirthdeath2,"disease vital model 2",3);
 	state := array[] of {0.8,0.15,0.05};
 	derivative := array[] of {0.0,0.0,0.0};
 	migration := migrationmodel->new();
 	migrationmodel->evaluate(migration,0.0,state,derivative);
 	check("migration fraction conservation",
 		derivative[0]+derivative[1]+derivative[2],0.0,1.0e-14);
-	balanced := diseasebirthdeath1->new();
-	diseasebirthdeath1->evaluate(balanced,0.0,state,derivative);
-	check("balanced vital population conservation",
-		derivative[0]+derivative[1]+derivative[2],0.0,1.0e-14);
-	unbalanced := diseasebirthdeath2->new();
-	diseasebirthdeath2->evaluate(unbalanced,0.0,state,derivative);
-	p := unbalanced.parameter;
-	expected := (p[2]-p[3])-p[4]*state[1];
-	check("independent vital population balance",
-		derivative[0]+derivative[1]+derivative[2],expected,1.0e-14);
+	# the two vital-dynamics balances moved to poplabtest(1).
 }
 
 checkpopulationmetadata(modelmodule: Populationmodel, name: string, nstate: int)

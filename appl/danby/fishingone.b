@@ -1,69 +1,43 @@
-implement Populationmodel;
+implement Fishingone;
 
-# danby/fishingone - Bioeconomics of one fish species
+# danby/fishingone - the bioeconomics of one fish species
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared populations viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its populations and the equations that move them.  poplab(2) is a
+# library this calls with that script - it owns the window, the
+# integrator and the controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "danby/populationmodel.m";
+include "poplab.m";
+	poplab: Poplab;
 
-new(): ref Model
-{
-	return ref Model(array[] of {1.0,1.5,0.7,1.2,0.45,0.8},
-		array[] of {1.0,0.35});
-}
-
-title(): string
-{
-	return "Bioeconomics of one fish species";
-}
-
-statelabels(): array of string
-{
-	return array[] of {"fish stock", "fishing effort"};
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"growth", "capacity", "catchability", "price", "cost", "effort response"};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {3.0,4.0,2.0,3.0,2.0,2.0};
-}
-
-Model.rhs(model: self ref Model, nil: real,
-		state, derivative: array of real)
-{
-	p := model.parameter;
-	stock := state[0];
-	effort := state[1];
-	harvest := p[2]*effort*stock;
-	profitpereffort := p[3]*p[2]*stock-p[4];
-	derivative[0] = p[0]*stock*(1.0-stock/p[1])-harvest;
-	derivative[1] = p[5]*effort*profitpereffort;
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-Command: module
+Fishingone: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Bioeconomics of one fish species\n" +
+	"param growth 1.0 0.0 3.0\n" +
+	"param capacity 1.5 0.0 4.0\n" +
+	"param catchability 0.7 0.0 2.0\n" +
+	"param price 1.2 0.0 3.0\n" +
+	"param cost 0.45 0.0 2.0\n" +
+	"param effort_response 0.8 0.0 2.0\n" +
+	"maxtime 100.0\n" +
+	"state fish_stock 1.0\n" +
+	"state fishing_effort 0.35\n" +
+	"eq harvest catchability fishing_effort fish_stock\n" +
+	"eq profitpereffort price catchability fish_stock - cost\n" +
+	"derivative fish_stock growth fish_stock { 1.0 - fish_stock over capacity } - harvest\n" +
+	"derivative fishing_effort effort_response fishing_effort profitpereffort\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/populations.dis";
-	if(viewer == nil)
-		raise "fail:fishingone: cannot load the populations viewer";
-	viewer->init(ctxt, "fishingone" :: "/dis/danby/fishingone.dis" ::
-		"danby-fishingone" :: nil);
+	poplab = load Poplab Poplab->PATH;
+	if(poplab == nil)
+		raise "fail:fishingone: cannot load poplab";
+	if((e := poplab->run(ctxt, "fishingone", SPEC)) != nil)
+		raise "fail:fishingone: "+e;
 }

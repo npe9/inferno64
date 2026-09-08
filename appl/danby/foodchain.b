@@ -1,75 +1,47 @@
-implement Populationmodel;
+implement Foodchain;
 
-# danby/foodchain - Plants, herbivores, and carnivores
+# danby/foodchain - plants, herbivores and carnivores
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared populations viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its populations and the equations that move them.  poplab(2) is a
+# library this calls with that script - it owns the window, the
+# integrator and the controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "danby/populationmodel.m";
+include "poplab.m";
+	poplab: Poplab;
 
-new(): ref Model
-{
-	parameters := array[] of {1.5, 1.8, 1.4, 0.85, 0.45, 1.0, 0.75, 0.35};
-	initial := array[] of {0.9, 0.22, 0.08};
-	return ref Model(parameters,initial);
-}
-
-title(): string
-{
-	return "Plants, herbivores, and carnivores";
-}
-
-statelabels(): array of string
-{
-	return array[] of {"plants", "herbivores", "carnivores"};
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {
-		"plant growth", "capacity", "grazing", "plant conversion",
-		"herbivore death", "predation", "prey conversion", "carnivore death"
-	};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {3.0, 3.0, 3.0, 2.0, 2.0, 3.0, 2.0, 2.0};
-}
-
-Model.rhs(model: self ref Model, nil: real,
-		state, derivative: array of real)
-{
-	p := model.parameter;
-	plants := state[0];
-	herbivores := state[1];
-	carnivores := state[2];
-	grazing := p[2]*plants*herbivores;
-	predation := p[5]*herbivores*carnivores;
-	derivative[0] = p[0]*plants*(1.0-plants/p[1])-grazing;
-	derivative[1] = p[3]*grazing-p[4]*herbivores-predation;
-	derivative[2] = p[6]*predation-p[7]*carnivores;
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-Command: module
+Foodchain: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Plants, herbivores, and carnivores\n" +
+	"param plant_growth 1.5 0.0 3.0\n" +
+	"param capacity 1.8 0.0 3.0\n" +
+	"param grazing 1.4 0.0 3.0\n" +
+	"param plant_conversion 0.85 0.0 2.0\n" +
+	"param herbivore_death 0.45 0.0 2.0\n" +
+	"param predation 1.0 0.0 3.0\n" +
+	"param prey_conversion 0.75 0.0 2.0\n" +
+	"param carnivore_death 0.35 0.0 2.0\n" +
+	"maxtime 100.0\n" +
+	"state plants 0.9\n" +
+	"state herbivores 0.22\n" +
+	"state carnivores 0.08\n" +
+	"eq grazed grazing plants herbivores\n" +
+	"eq predated predation herbivores carnivores\n" +
+	"derivative plants plant_growth plants { 1.0 - plants over capacity } - grazed\n" +
+	"derivative herbivores plant_conversion grazed - herbivore_death herbivores - predated\n" +
+	"derivative carnivores prey_conversion predated - carnivore_death carnivores\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/populations.dis";
-	if(viewer == nil)
-		raise "fail:foodchain: cannot load the populations viewer";
-	viewer->init(ctxt, "foodchain" :: "/dis/danby/foodchain.dis" ::
-		"danby-foodchain" :: nil);
+	poplab = load Poplab Poplab->PATH;
+	if(poplab == nil)
+		raise "fail:foodchain: cannot load poplab";
+	if((e := poplab->run(ctxt, "foodchain", SPEC)) != nil)
+		raise "fail:foodchain: "+e;
 }

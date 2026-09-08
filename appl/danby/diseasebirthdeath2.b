@@ -1,78 +1,48 @@
-implement Populationmodel;
+implement Diseasebirthdeath2;
 
-# danby/diseasebirthdeath2 - Disease with independent birth, death, and virulence
+# danby/diseasebirthdeath2 - disease with independent birth, death and virulence
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared populations viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its populations and the equations that move them.  poplab(2) is a
+# library this calls with that script - it owns the window, the
+# integrator and the controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "danby/populationmodel.m";
+include "poplab.m";
+	poplab: Poplab;
 
-new(): ref Model
-{
-	parameters := array[] of {2.2, 0.55, 0.035, 0.025, 0.08};
-	initial := array[] of {0.99, 0.01, 0.0};
-	return ref Model(parameters,initial);
-}
-
-title(): string
-{
-	return "Disease with independent birth, death, and virulence";
-}
-
-statelabels(): array of string
-{
-	return array[] of {"susceptible", "infectious", "recovered"};
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"contact", "recovery", "birth", "natural death", "virulence"};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {5.0, 2.0, 0.5, 0.5, 0.8};
-}
-
-Model.rhs(model: self ref Model, nil: real,
-		state, derivative: array of real)
-{
-	p := model.parameter;
-	susceptible := state[0];
-	infectious := state[1];
-	recovered := state[2];
-	total := susceptible+infectious+recovered;
-	if(total < 1.0e-12){
-		derivative[0] = 0.0;
-		derivative[1] = 0.0;
-		derivative[2] = 0.0;
-		return;
-	}
-	infections := p[0]*susceptible*infectious/total;
-	derivative[0] = p[2]*total-infections-p[3]*susceptible;
-	derivative[1] = infections-(p[1]+p[3]+p[4])*infectious;
-	derivative[2] = p[1]*infectious-p[3]*recovered;
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-Command: module
+Diseasebirthdeath2: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Disease with independent birth, death, and virulence\n" +
+	"param contact 2.2 0.0 5.0\n" +
+	"param recovery 0.55 0.0 2.0\n" +
+	"param birth 0.035 0.0 0.5\n" +
+	"param natural_death 0.025 0.0 0.5\n" +
+	"param virulence 0.08 0.0 0.8\n" +
+	"maxtime 100.0\n" +
+	"state susceptible 0.99\n" +
+	"state infectious 0.01\n" +
+	"state recovered 0.0\n" +
+	# the incidence is per head, so an empty population is a special case:
+	# alive is 0 there and holds the denominator at one as well as zeroing
+	# every rate, which is what the original's early return did
+	"eq total susceptible + infectious + recovered\n" +
+	"eq alive 1.0 - step { 0.000000000001 - total }\n" +
+	"eq infections alive contact susceptible infectious over { total + 1.0 - alive }\n" +
+	"derivative susceptible alive { birth total - natural_death susceptible } - infections\n" +
+	"derivative infectious infections - alive { recovery + natural_death + virulence } infectious\n" +
+	"derivative recovered alive { recovery infectious - natural_death recovered }\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/populations.dis";
-	if(viewer == nil)
-		raise "fail:diseasebirthdeath2: cannot load the populations viewer";
-	viewer->init(ctxt, "diseasebirthdeath2" :: "/dis/danby/diseasebirthdeath2.dis" ::
-		"danby-diseasebirthdeath2" :: nil);
+	poplab = load Poplab Poplab->PATH;
+	if(poplab == nil)
+		raise "fail:diseasebirthdeath2: cannot load poplab";
+	if((e := poplab->run(ctxt, "diseasebirthdeath2", SPEC)) != nil)
+		raise "fail:diseasebirthdeath2: "+e;
 }
