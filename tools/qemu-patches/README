@@ -120,10 +120,44 @@ than trusting either.
 
 WHERE QEMU IS MORE LENIENT THAN THE BOARD
 
-One gap was found by trying to test a driver path and discovering the
-emulator cannot produce the condition the path exists for.  It is
-recorded here rather than patched, because the fix would change a core
-device shared by every ARM board rather than add a missing peripheral.
+This section is the result of a deliberate audit, not a list of things
+noticed in passing.  The question asked of each device was: what does
+the guest driver do that this model cannot falsify?  Anywhere the
+answer was "something", the follow-up was whether patching the model
+would make it falsifiable, and at what cost.
+
+Four answers came back, and they are not all the same kind.
+
+	- sd, bus width: a real gap, and closed by patch 0017.  The
+	  cost was one new bus call and a comparison; the benefit is
+	  that a driver bug which corrupts every block on a real card
+	  now fails a boot.  This is what the audit was looking for.
+
+	- sdhci, DMA: NOT a gap.  This entry previously said it was,
+	  and was wrong.  Recorded below with the correction, because
+	  a claimed divergence that is not one is worse than an
+	  unrecorded one -- it invites work that cannot pay.
+
+	- pl011, transmit FIFO, and command timing generally: real
+	  gaps, deliberately not patched.  Both would mean pacing
+	  something against a clock, which changes behaviour for every
+	  board sharing the device rather than adding a missing
+	  peripheral.  The driver side compensates for the first; the
+	  second has no compensation and is simply a limit.
+
+	- the seventeen models in this series: audited for accepting
+	  writes the datasheet forbids.  Each already carries
+	  LOG_GUEST_ERROR coverage on its own error paths -- the I2S
+	  FIFO reports TXERR on overflow and RXERR on reading empty,
+	  the SMI reports its address and timing errors, the AUX SPI
+	  and the BSC slave both report theirs.  Nothing was added:
+	  writing the I2S FIFO while the block is disabled looks like
+	  a candidate until the datasheet says pre-loading before
+	  setting TXON is the documented technique, and a model that
+	  rejected it would be stricter than the part rather than
+	  truer to it.
+
+The entries below give each in full.
 
 	pl011		QEMU's PL011 models no transmit FIFO.
 			PL011_FLAG_TXFF is assigned in exactly one
