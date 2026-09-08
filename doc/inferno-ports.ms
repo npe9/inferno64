@@ -19853,3 +19853,80 @@ takes a counted reference to the Prog's own
 so for one to be stale while a live Prog names it, something is
 dropping that reference.  That is the next thing to find \(em but a
 diagnostic dump must not be the thing that panics the kernel.
+.NH 2
+Zero panics in 96 boots at -smp 2
+.PP
+With the check moved into
+.CW modstatus() ,
+96 boots at
+.CW "-smp 2"
+.CW ( "etext 0x32d008" ):
+.TS
+box, tab(;);
+l l.
+boots;96
+no panic;96
+cpu1 online;96
+runq high-water 2;96
+.TE
+.PP
+Zero.  Against the 5 of 96 the same batch produced before the guard,
+that is not luck: at a 5.2% rate, none in 96 has probability 0.948
+super 96 , about 0.006.
+.PP
+The whole sequence, one board, one command line, each batch pinned to
+its build by
+.CW etext :
+.TS
+box, tab(;);
+l l l.
+;panics;of
+_
+before the interrupt fix;82;96
+after it, -smp 1;2;96
+after it, -smp 2;5;96
+with modstatus guarded, -smp 2;0;96
+.TE
+.PP
+And in all 96 of the last batch, the run-queue high-water mark is 2:
+two Dis programs ready at once, one permitted to run, in every boot.
+.NH 2
+A flaw in the diagnostic, and what it means for the reading above
+.PP
+The guard reported once in those 96 boots, and the report was wrong:
+.P1
+modstatus: M 0xffffffffffffffff is not a live Modlink
+.P2
+.CW H
+is
+.CW "((void*)(-1))"
+(include/interp.h:414), so that
+.I is
+.CW H
+\(em the ordinary "no module" sentinel, which the
+.CW Qstatus
+read has always tested for before calling
+.CW modstatus()
+and which
+.CW disdump()
+never did.  Reporting it as corruption was wrong, and worse than
+wrong: it made the two cases indistinguishable in the log, so this
+batch cannot say which of them it stopped.  Both are plausible \(em
+.CW disdump()
+passing an
+.CW H
+straight in, or a genuinely stale
+.CW Modlink
+\(em and the zero-panic result is solid either way, but the cause is
+not established by it.
+.PP
+Separated now.
+.CW H
+and nil are legitimate and silent, printing
+.CW [H] ;
+only a non-sentinel pointer that is not a live
+.CW Modlink ,
+or one with a nil
+.CW m ,
+reports, and it prints the type and module pointers so the next
+capture says which.

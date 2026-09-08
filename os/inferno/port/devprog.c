@@ -849,13 +849,25 @@ modstatus(REG *r, char *ptr, int len)
 	 * is a real bug and is not fixed here -- but a diagnostic dump
 	 * must not be the thing that panics the kernel.
 	 */
-	if(r->M == H || r->M == nil || D2H(r->M)->t != &Tmodlink
-	|| r->M->m == nil) {
+	if(r->M == H || r->M == nil) {
+		/*
+		 * Legitimate, and silent.  H is ((void*)-1), the ordinary
+		 * "no module" sentinel -- the Qstatus read below has always
+		 * tested for it before calling here, and disdump() never
+		 * did.  A first version of this guard reported it as
+		 * corruption, which was wrong and, worse, indistinguishable
+		 * in the log from the stale pointer below.
+		 */
+		snprint(ptr, len, "[H]");
+		return 0;
+	}
+	if(D2H(r->M)->t != &Tmodlink || r->M->m == nil) {
 		static int said;
 
 		if(!said) {
 			said = 1;
-			print("modstatus: M %#p is not a live Modlink\n", r->M);
+			print("modstatus: M %#p stale: t %#p m %#p\n",
+				r->M, D2H(r->M)->t, r->M->m);
 		}
 		snprint(ptr, len, "[?]");
 		return 0;
