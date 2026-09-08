@@ -2241,6 +2241,59 @@ real bug, and the global
 .CW R
 would still be there.
 .NH 1
+Reading captured pcs, and a retraction
+.PP
+This branch's corruption captures all carried pcs nobody could read:
+.CW inm
+prints nothing for these kernels, because nm's
+.CW execsyms()
+swallows a
+.CW syminit()
+failure without a message, so an unreadable symbol table looks exactly
+like a stripped one.
+.CW utils/p9sym.py
+reads the table directly, following libmach's own
+.CW decodename()
+rules \(em 8-byte values under
+.CW HDR_MAGIC ,
+fixed-length names when the type byte lacks
+.CW 0x80 ,
+.CW z / Z
+names as
+.CW "00 00" Ns -terminated
+pairs \(em and is verified against
+.CW Inferno/amd64/ipc64
+by three absolute-addressed operands resolving to
+.CW poolfault ,
+.CW gcdepth
+and
+.CW gcdepthmax
+at offset 0, with zero bytes of the table left unconsumed.
+.PP
+Its
+.CW -c
+check matters more than its names.  A pc from
+.CW getcallerpc()
+is a return address, so it must be an instruction boundary ending in a
+call; decoding forward from the containing symbol settles it.  Six of
+the seven raw pcs this hunt recorded are not instruction boundaries at
+all, and the seventh is the return from
+.CW free() Ns 's
+indirect call to
+.CW poolfault
+\(em the reporter.  No capture names a freer.  The symbolic pcs in
+doc/inferno-ports.ms
+.CW ( destroy+703 ,
+.CW destroy+613 ,
+.CW freelist+419 ,
+.CW free+56 )
+are withdrawn, and with them the conclusion that a normal
+.CW destroy()
+exit performed the first free.  The double free itself is untouched:
+it is the pool's own magic check, and the freehist address match is
+real.  Only "by whom" was fiction.  See doc/inferno-ports.ms, "Every
+pc this hunt resolved was junk".
+.NH 1
 Ground rules
 .PP
 Every claim in this document about what the kernel does is either a

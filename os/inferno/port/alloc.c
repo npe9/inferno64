@@ -106,6 +106,21 @@ void (*poolfault)(void *, char *, uintptr) = _poolfault;
  * an explicit tag so each call site's own panic message names itself
  * directly -- the next capture answers which site fired from the
  * message text alone, no offset decoding needed.
+ *
+ * Resolved, and worse than assumed. destroy+703 and every other
+ * symbolic pc this hunt wrote down came from hand-written readers
+ * that decoded the symbol table wrong; utils/p9sym.py reads it
+ * properly, and with "-c" also decodes forward from the containing
+ * symbol to ask whether a value can be a pc at all. Six of the seven
+ * raw pcs on record are not instruction boundaries -- they land
+ * inside a MOV -- so they are not return addresses and name nobody.
+ * The prediction two paragraphs up was right; the bisection above
+ * therefore eliminated nothing, because it was run against a value
+ * that was never a decoded pc, and no anchor fix could have moved it.
+ * The double free itself is unaffected: it is this pool's own magic
+ * check, and the freehist ADDRESS match is real. Only "by whom" was
+ * fiction. Use the tags below; offset decoding is retired. See
+ * doc/inferno-ports.ms, "Every pc this hunt resolved was junk".
  */
 #define D2BPC(b, dp, pc, tag)	b = ((Bhdr*)((uchar*)(dp) - (BHDRSIZE - sizeof(Btail)))); \
 				if(b->magic != MAGIC_A && b->magic != MAGIC_I){\

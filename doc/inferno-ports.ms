@@ -18904,3 +18904,151 @@ at offset 0; the read succeeds and the interrupt is delivered so the
 GICv3 conclusion is unaffected, and it is identical on v2, so it
 predates this work \(em the init reads a block other than 0, or the
 print is wrong.
+.NH 1
+Every pc this hunt resolved was junk, and the reader was only half the reason
+.PP
+.CW inm
+prints nothing for these kernels.  nm's
+.CW execsyms()
+calls
+.CW syminit()
+and returns without a message when it fails, so a kernel whose symbol
+table libmach cannot read is indistinguishable from a stripped one.
+Rather than fix that, this hunt resolved its captured pcs with two
+successive hand-written readers, and wrote their answers down:
+.CW destroy+703 ,
+.CW destroy+613 ,
+.CW freelist+419 ,
+.CW free+56 .
+.PP
+.CW utils/p9sym.py
+now reads the table properly, following libmach's own
+.CW syminit()
+and
+.CW decodename()
+(utils/libmach/sym.c) on the two points a hand-written reader gets
+wrong: values are 8 bytes when the magic has
+.CW HDR_MAGIC ,
+which amd64's
+.CW S_MAGIC
+does, and a type byte without
+.CW 0x80
+carries an old-style fixed-length name followed by a 3-byte skip while
+.CW z / Z
+names are 16-bit pairs terminated
+.CW "00 00" .
+Get either wrong and the table desyncs into names that look fine and
+cannot be falsified by inspection.  It is verified against
+.CW Inferno/amd64/ipc64
+three ways that do not merely restate each other: 24666 symbols decode
+with zero bytes of the table unconsumed (at a 32-byte header, 3 are
+left over);
+.CW free+0x79 Ns 's
+preceding
+.CW "MOVQ $0x32d998, AX; CALL *AX"
+resolves to
+.CW poolfault+0x0
+exactly; and the pair straddling
+.CW destroy+0x229 ,
+.CW "MOVL $0x32d1f4, AX; MOVL AX, $0x32dc10" ,
+resolves to
+.CW gcdepth+0x0
+and
+.CW gcdepthmax+0x0
+exactly \(em heap.c's own
+.CW "gcdepth > gcdepthmax"
+idiom.  Three absolute-addressed operands landing on distinct symbols
+at offset 0 checks the decode, not just the lookup.
+.PP
+Fixing the reader did not rescue a single capture.  It showed instead
+that the captured values were never pcs.  A pc recorded by
+.CW getcallerpc()
+is a return address: it must be an instruction boundary, and the
+instruction ending there must be a call.  Decoding forward from each
+containing symbol's first byte, of the seven raw pcs this hunt has on
+record, six are not instruction boundaries at all \(em they land in the
+middle of a
+.CW MOV .
+.TS
+box, tab(;);
+l l l.
+captured;resolves to;verdict
+_
+0x2614a3;i225procstat+0x29;interior \(em impossible
+0x2f249e;destroy+0x229;interior \(em impossible
+0x2f24f3;destroy+0x27e;interior \(em impossible
+0x2f2083;freelist+0x12f;boundary, not after a call
+0x2f1f43;freearray+0xa0;interior \(em impossible
+0x28474a;free+0x79;return address
+0x28475a;realloc+0x9;interior \(em impossible
+.TE
+.PP
+The one genuine return address is the return from
+.CW free() Ns 's
+indirect call to
+.CW poolfault
+\(em the code that reports the fault, not code that freed anything.
+So no capture in this hunt names a freer.
+.PP
+What that retracts, specifically.
+.CW "0x79b9af8 was freed before, from pc=0x2614a3"
+was read as
+.CW free+56 ;
+the verified reader puts
+.CW 0x2614a3
+inside an i225 ethernet stat routine, mid-instruction, which is
+unrelated to freeing and cannot be a pc.  The claim built on it and on
+.CW destroy+613 / Ns .CW freelist+419
+\(em that the object was first freed by an ordinary, successful
+.CW destroy()
+or
+.CW freelist()
+exit, and therefore that a second independent owner held a dangling
+reference \(em has no evidence under it.  So does
+.CW destroy+703 ,
+and with it the section "Eliminating candidates for destroy+703": four
+candidate sites were bisected against a value that was never a decoded
+pc, so their elimination establishes nothing either way.
+.PP
+What survives untouched is everything that never depended on a pc.
+The
+.CW alloc:D2B
+panic is the pool's own magic check \(em a block reached
+.CW poolfree()
+already
+.CW MAGIC_F ,
+and that is a real double free.  The freehist ring's
+.I address
+match is real too: that block genuinely had been freed earlier.  Only
+the "by whom" was fiction.  The
+.CW "in free blk"
+captures and
+.CW OP(movp) Ns 's
+.CW dv
+guard are address-based and stand as recorded.
+.PP
+The mechanism was already predicted in this tree, in
+os/inferno/port/alloc.c's own comment: this port has four sites where
+.CW D2B Ns 's
+.CW getcallerpc(&dp)
+anchors on the wrong stack slot, because
+.CW poolfree(Pool*,void*)
+and its neighbours take the
+.CW Pool*
+first, so the a+0(FP) trick reads a slot that is not the data pointer.
+That comment said such a site "names a plausible-looking but wrong pc
+whenever it fires".  It was right, and the interior-pc result is the
+hardware confirmation of it.  It also noted that fixing every
+reachable anchor never moved
+.CW destroy+703 ,
+and treated that as a puzzle pointing to an unfound fifth site; the
+simpler reading, now available, is that the value was garbage all
+along and no anchor fix could have moved it.
+.PP
+Offset decoding is retired for this hunt.  The
+.CW D2BPC(b, dp, pc, tag)
+mechanism already in alloc.c supersedes it: each call site passes its
+own tag, so the next capture names the site that fired in the message
+text, with no pc involved.  Where a pc genuinely is needed,
+.CW "p9sym.py -c"
+reports whether it can be one before its name is believed.
