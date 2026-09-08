@@ -1332,12 +1332,30 @@ command a line, words at blanks, stages at
 .BR | ,
 no quoting and no variables.  It reads a line at a time from descriptor
 0 and writes to descriptor 1 when no script is named, which is what a
-window needs.  It does not run yet: libthread's
+window needs.  It runs: the buddy lays it out for the window's container, and what it
+writes is drawn in the window rather than on the machine's console.
+.PP
+.B #d
+is the dup device:
+.B /fd/<n>
+is descriptor n of the container that opens it, resolved through the
+buddy, which is where a container's descriptors live.  A process with no
+container to answer for gets nothing there.  libthread's
 .I procexec
 opens
 .B /fd/<n>
-before it execs anything, and this personality serves no
-.BR /fd .
+before it execs anything, which is why a window's command needs it.
+.PP
+.IR open (2)
+returns the lowest-numbered free descriptor, 0, 1 and 2 included, and a
+close of one of those frees it rather than putting the console back.
+That is how a program replaces its own standard input or output, and it
+is what rio's
+.I winshell
+does to put a window's
+.B /dev/cons
+on 0 and 1.  A write to a standard descriptor that has been closed or
+dup'd onto goes to the file server rather than out of the console.
 .PP
 A process forked
 .B RFNOWAIT

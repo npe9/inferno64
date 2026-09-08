@@ -247,8 +247,9 @@ extern Dev ipdevtab;
 extern Dev cachedevtab;
 extern Dev timedevtab;
 extern Dev notedevtab;
+extern Dev dupdevtab;
 extern Dev inputdevtab;
-Dev *devtab[] = { &rootdevtab, &envdevtab, &mntdevtab, &looploopdevtab, &expdevtab, &pipedevtab, &srvdevtab, &lfsdevtab, &ipdevtab, &cachedevtab, &timedevtab, &notedevtab, &inputdevtab, nil };
+Dev *devtab[] = { &rootdevtab, &envdevtab, &mntdevtab, &looploopdevtab, &expdevtab, &pipedevtab, &srvdevtab, &lfsdevtab, &ipdevtab, &cachedevtab, &timedevtab, &notedevtab, &inputdevtab, &dupdevtab, nil };
 
 long	kerndate = 0;
 

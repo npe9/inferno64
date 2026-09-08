@@ -109,6 +109,18 @@ p9setup(void)
 	} else
 		print("p9: could not bind /boot onto /bin: %s\n", up->errstr);
 	/*
+	 * And the dup device onto /fd.  libthread's procexec - which is how
+	 * rio starts the command in a window - opens /fd/<n> to get a second
+	 * channel on a pipe it just made, and without the device that open
+	 * fails and no exec is ever attempted.  See devdup.c.
+	 */
+	if(!waserror()){
+		p9bind("#d", "/fd", MREPL);
+		poperror();
+		print("p9: #d bound onto /fd; /fd/<n> is the calling container's descriptor n\n");
+	} else
+		print("p9: could not bind #d onto /fd: %s\n", up->errstr);
+	/*
 	 * And the note tree onto /proc, for the same reason: postnote(2) is
 	 * a write to /proc/n/note, not a system call, so the file has to be
 	 * in the name space a legacy program runs in.

@@ -3015,9 +3015,22 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 		break;
 	case Bclose:				/* close(fd) */
 		ab[1] = Aint(a[0]); ab[2] = 0; ab[3] = 0;
-		/* the buddy puts a closed 0, 1 or 2 back to the console, so the redirect is off */
+		/*
+		 * A closed 0, 1 or 2 is not the console any more.  It used to
+		 * be: the buddy put the console sentinel back, so clearing the
+		 * mark was right.  It does not now - a close frees the slot,
+		 * because open(2) must be able to return the lowest free
+		 * descriptor, which is how a program replaces its own standard
+		 * input or output.  So the mark goes ON: from the close
+		 * onwards that descriptor is whatever the buddy has for it,
+		 * which is nothing until something is opened onto it, and a
+		 * write to it is the buddy's to answer or to refuse.  rio's
+		 * winshell closes 0 and 1 and opens the window's /dev/cons on
+		 * them; with the mark cleared its shell wrote to the machine's
+		 * console instead of to the window.
+		 */
 		if((long)a[0] >= 0 && (long)a[0] < 3)
-			up->buddyredir &= ~(1 << (int)a[0]);
+			up->buddyredir |= 1 << (int)a[0];
 		break;
 	case Bread: case Bpread:		/* read(fd,buf,n) / pread(fd,buf,n,off): n is a long, its slot whole */
 		ab[1] = Aint(a[0]);

@@ -397,6 +397,23 @@ fdof(Img *img, uvlong fd)
 }
 
 /*
+ * The buddy descriptor that a container's descriptor stands for, or -1.
+ * The dup device (devdup.c) needs it: a container that opens /fd/<n>
+ * means its own descriptor n, and what the buddy holds for it is a
+ * descriptor of the buddy's.  Nothing else outside this file has any
+ * business with the table, so this is the only way out of it.
+ */
+int
+p9containerfd(uvlong container, int fd)
+{
+	Img *img;
+
+	if(fd < 0 || (img = imgof(container, 0)) == nil)
+		return -1;
+	return fdof(img, (uvlong)fd);
+}
+
+/*
  * Is this descriptor of the buddy's open on a file of the srv device?
  * A container that posts a service writes the number of one of its own
  * descriptors into a file it created in /srv, and the srv device
@@ -427,7 +444,18 @@ fdnew(Img *img, int bfd, char *name, int mode)
 {
 	int i;
 
-	for(i = 3; i < Nfd; i++)
+	/*
+	 * From 0, not from 3.  open(2) returns the lowest-numbered free
+	 * descriptor, and a program that wants to replace its standard
+	 * input or output does it by closing the one and opening the
+	 * other - rio's winshell does exactly that to put a window's
+	 * /dev/cons on 0 and 1.  Searching from 3 left those opens landing
+	 * on 5 and 6 while 0 and 1 still held the console, so the command
+	 * in a window wrote to the machine's console instead of to the
+	 * window.  A container that has not closed them still has them:
+	 * they hold the console sentinel, which is not -1.
+	 */
+	for(i = 0; i < Nfd; i++)
 		if(img->fds[i] == -1){
 			img->fds[i] = bfd;
 			if(name != nil)
@@ -816,7 +844,14 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 		if(bfd >= 0)
 			p9close(bfd);
 		if(bfd != -1){
-			img->fds[a0] = a0 < 3 ? Fdcons : -1;
+			/*
+			 * Free, including 0, 1 and 2.  These used to go back to
+			 * the console sentinel, so a close of them was not a
+			 * close: the descriptor a program had just given up was
+			 * still the console, and the open that was meant to
+			 * replace it went somewhere else.
+			 */
+			img->fds[a0] = -1;
 			img->fdname[a0][0] = 0;
 		}
 		r = bfd == -1 ? -1 : 0;

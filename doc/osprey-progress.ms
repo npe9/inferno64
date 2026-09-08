@@ -8481,6 +8481,81 @@ an exec whose program the buddy cannot open, an exec by a process with no
 buddy image, and an exec the buddy refused.  Each returned \-1 to a
 caller whose library turned it into "failed" and nothing else.  A
 microkernel that refuses should say which rule refused.
+.B "2.3n: a shell in the window."
+The window has a shell in it, and what it writes is drawn in the window.
+Three defects stood between 2.3m and that, and each was a place where
+this personality answered a call the way it was convenient rather than
+the way Plan 9 defines it.
+.PP
+.B "The dup device."
+libthread's
+.CW procexec
+opens
+.CW /fd/<n>
+before it execs anything, and there was no
+.CW /fd .
+.CW devdup.c
+is that device.  Whose descriptor n is, is the question it exists to
+answer: the descriptors of a container are the buddy's, kept per
+container in the buddy's image record, so the open asks the buddy which
+container it is answering for
+.CW ( p9servingcontainer )
+and what that container's fd n stands for
+.CW ( p9containerfd ),
+and hands back the channel that descriptor of the buddy's holds.  A
+worker with no container to answer for gets nothing, because
+.CW /fd/<n>
+would then name a descriptor of the server itself and a container could
+reach the server's files through it.
+.PP
+.B "The lowest free descriptor."
+.CW open (2)
+returns the lowest-numbered free descriptor.  That is not a detail: it
+is how a program replaces its own standard input or output, by closing
+the one and opening the other, and it is exactly what rio's
+.CW winshell
+does to put a window's
+.CW /dev/cons
+on 0 and 1.  The buddy searched from 3, and its
+.CW close
+of 0, 1 or 2 put the console sentinel back rather than freeing the slot,
+so neither half of that could work: the closes were not closes and the
+opens landed on 5 and 6.  Both are fixed, and the sentinel stays as what
+a container starts with rather than as what a close restores.
+.PP
+.B "Which writes are the console's."
+The kernel keeps a mark, a bit per standard descriptor, saying that this
+descriptor has been redirected and its writes go to the buddy; without
+one, a write to 0, 1 or 2 goes straight out of the console and a legacy
+program's print stays one call instead of a ring round trip.  The mark
+was set by watching
+.CW dup
+and cleared by watching
+.CW close ,
+which was right while a closed 0, 1 or 2 went back to being the console.
+It does not now.  So the mark goes on at the close: from there that
+descriptor is whatever the buddy has for it - nothing, until something
+is opened onto it - and the write is the buddy's to answer or to refuse.
+With the mark still being cleared, the window's shell wrote its first
+words to the machine's console, which is where they appeared, and the
+window stayed empty.
+.PP
+What that gets, and the check now asserts: the buddy lays
+.CW /bin/rc
+out for the window's container; none of the shell's words appear on the
+console this check reads; and the swept rectangle holds 3745 pixels of
+.CW cols[TEXT] ,
+counted inside the window, which is rio's font drawn through rio's own
+file server by the command running in it.  Ten criteria, three
+consecutive runs, the same numbers each time.  Rendered as characters
+the window holds the shell's three lines of banner and a prompt, with
+rio's scroll bar down the left of them.
+.PP
+What is not claimed: nothing has been typed at it.  The keyboard reaches
+.CW /dev/kbd
+and rio reads it - 2.3g - but no check presses a key at a window and
+reads what the shell did with it, and until one does, "a shell in a
+window" means a shell that has started in a window and written to it.
 .NH 2
 Track three: the library-OS personality execs a program, then rio
 .PP

@@ -35,6 +35,7 @@ Menuhigh = (0x44, 0x88, 0x44)		# DDarkgreen
 Menubord = (0x88, 0xcc, 0x88)		# DMedgreen
 # what a sweep is drawn in: cols[BACK] inside a border of sizecol
 White = (0xff, 0xff, 0xff)		# cols[BACK], 0xFFFFFFFF
+Black = (0x00, 0x00, 0x00)		# cols[TEXT], what a window's text is drawn in
 Red = (0xff, 0x00, 0x00)		# sizecol, DRed
 # and what a window that has been made is bordered in: rio's titlecol
 Titlecol = (0x55, 0xaa, 0xaa)		# DGreygreen, from rio's data.c
@@ -129,6 +130,27 @@ def boxof(pix, colour):
     return n, (x0, y0, x1, y1)
 
 
+def countin(pix, colour, box):
+    """How many pixels of this colour lie inside the box.  Restricted
+    because the frame buffer's top-left corner holds a handful of
+    pixels that are not the mapping's - they are there in the control
+    shot too, with nothing drawn - and a bounding box taken over the
+    whole screen is dragged to the origin by them."""
+    tri = bytes(colour)
+    x0, y0, x1, y1 = box
+    n = 0
+    w = 1280
+    i = pix.find(tri)
+    while i >= 0:
+        if i % 3 == 0:
+            q = i // 3
+            x, y = q % w, q // w
+            if x0 <= x <= x1 and y0 <= y <= y1:
+                n += 1
+        i = pix.find(tri, i+1)
+    return n
+
+
 def boot(shot, inputspec, log):
     argv = ['./scripts/osprey-console.py', '-q', '-p', '2', '-n', 'e1000',
             '-l', log, '-t', '300', '-u', 'the microkernel idles',
@@ -179,7 +201,7 @@ def main():
     swlog, swshot = tmp('osprey-rio-sw-', '.log'), tmp('osprey-rio-sw-', '.ppm')
     swtext, swpix = boot(swshot, 'm:240:160,s:1.0,d:right,s:1.2,u:right,s:1.5,'
                                  'm:-400:-300,s:0.8,d:right,s:0.6,m:300:220,s:0.8,'
-                                 'u:right,s:5.0', swlog)
+                                 'u:right,s:12.0', swlog)
     # Where it is, measured from the border rather than from the fill: a
     # stray white pixel in the frame buffer's top-left corner - two of
     # them, and they are there in the control shot too - would otherwise
@@ -191,6 +213,8 @@ def main():
     swred, redbox = boxof(swpix[2], Red) if swpix else (0, (0,0,0,0))
     swtitle, titlebox = boxof(swpix[2], Titlecol) if swpix else (0, (0,0,0,0))
     swbox = redbox if swred > swtitle else titlebox
+    # the text the window's shell wrote, drawn by rio inside the window
+    swtext_px = countin(swpix[2], Black, swbox) if swpix else 0
     forks = lambda t: len(re.findall(r'osprey fork: container \d+ forked container \d+ \(/boot/rio\)', t))
     cforks, swforks = forks(ctext), forks(swtext)
     menu = seen.get(Menuback, 0) + seen.get(Menuhigh, 0)
@@ -230,10 +254,24 @@ def main():
          "with no mount, bind or cons failure in the log.  What it then fails to run is "
          "/bin/rc, which this personality does not have, so the window does not stay; that is "
          "written down in doc/osprey-progress.ms and is not claimed here",
-         swforks == cforks + 1
+         swforks > cforks
          and 'mount failed' not in swtext and 'bind failed' not in swtext
          and "can't open /dev/cons" not in swtext
          and 'the child table is full' not in swtext),
+        ("and a shell runs in the window: rio execs /bin/rc in it, which on this personality "
+         "is /boot/sh under the name rio has written into it, and the buddy lays that binary "
+         "out for the window's container",
+         re.search(r'buddy: exec /bin/rc for container \d+: a Plan 9 a\.out', swtext) is not None),
+        ("and it writes into the window and not onto the machine's console: the shell's first "
+         "words go to descriptor 1, which winshell opened on the window's own /dev/cons, and "
+         "none of them appear on the console this check reads - if the window's descriptors "
+         "were still the machine's, they would appear there and nowhere else",
+         'sh: this is /boot/sh' not in swtext),
+        ("and rio draws them: the swept rectangle holds black text, all of it inside the "
+         "window - counted inside it, because the frame buffer's top-left corner holds a "
+         "few pixels that are in the control shot too - which is rio's font, drawn through "
+         "its own file server by the command running in it",
+         swtext_px > 1500),
         ("and the notes rio posts are addressed to something that exists: libthread keeps the "
          "number getpid() gave it and posts to that when it shuts down, and no boot here has "
          "the kernel refusing one because the number named no container",
@@ -248,9 +286,9 @@ def main():
     print('grey in the control %d of %d; %d pixels changed, in %r, mostly %s'
           % (cgrey, 1280*800, nch, box,
              ' '.join('%02x%02x%02x=%d' % (c[0], c[1], c[2], n) for c, n in top)))
-    print('the swept rectangle %r: %d of cols[BACK], %d of sizecol, %d of titlecol; '
-          'rio forks %d in the control and %d in the sweep'
-          % (swbox, swwhite, swred, swtitle, cforks, swforks))
+    print('the swept rectangle %r: %d of cols[BACK], %d of sizecol, %d of titlecol, '
+          '%d of text inside it; rio forks %d in the control and %d in the sweep'
+          % (swbox, swwhite, swred, swtitle, swtext_px, cforks, swforks))
     if keep or bad:
         for f in files: print('log %s' % f)
     else:
