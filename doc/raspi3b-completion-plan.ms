@@ -204,7 +204,7 @@ the mailbox (SET_POWER_STATE for the USB HCD) before it responds; QEMU
 does not require it.  Verify each milestone under QEMU with -device
 usb-kbd / usb-net attached.
 .NH 1
-Phase 2: USB keyboard and mouse -- interactive framebuffer
+Phase 2 (historical): USB keyboard and mouse
 .PP
 Boot-protocol HID keyboard and mouse, wiring the enumerated interrupt-in
 endpoints to Inferno's cons keyboard (#c) and pointer (#m).  Depends on
@@ -496,7 +496,7 @@ line that prints alongside the write is the open arm64 multi-kproc
 error-stack bug noted under the kfs item below; it does not stop the
 write.
 .NH 1
-Phase 5: Arasan SDHCI / SDIO -- the second SD controller -- card path DONE, SDIO written and unverified
+Phase 5: Arasan SDHCI / SDIO -- the second SD controller -- DONE, card path tier qemu and SDIO transport tier qemu+patch
 .PP
 .CW sdhcibcm.c
 drives the BCM2837's second SD controller (Arasan SDHCI, 0x3f300000), a
@@ -955,7 +955,7 @@ sharing
 but running the SDIO identification sequence \- no CMD8, no ACMD41, no
 CSD \- and never touching the card pins.
 .NH 1
-Phase 7: watchdog, RNG, PWM -- RNG and reset DONE, PWM not attempted
+Phase 7: watchdog, RNG, PWM -- DONE
 .PP
 .B "The hardware RNG, and why it mattered."
 .CW rngbcm.c
