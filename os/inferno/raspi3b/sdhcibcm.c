@@ -714,6 +714,66 @@ sdhcibio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 
 	USED(lun);
 	qlock(c);
+
+	/*
+	 * More than one block goes as one command.
+	 *
+	 * CMD18/CMD25 stream consecutive blocks off a single address
+	 * rather than paying a command, a response and a turnaround per
+	 * block, which is most of the cost of a small read on real
+	 * silicon.  The count goes in the top half of Blksizecnt,
+	 * Tmmultiblock and Tmblkcnt say to use it, and Tmautocmd12 has
+	 * the controller send the STOP_TRANSMISSION itself at the end:
+	 * an open-ended multiple read that nothing stops leaves the card
+	 * still sending, and the next command collides with it.
+	 *
+	 * The single-block path below is kept rather than folded into
+	 * this one.  A one-block CMD18 is legal but pointless, and
+	 * CMD17 is what the identification path and every existing
+	 * check already exercise.
+	 */
+	if(nb > 1){
+		arg = c->byteaddr? (u32)(bno*Secsize): (u32)bno;
+		r[Blksizecnt] = ((u32)nb << 16) | Secsize;
+		flags = Resp48|Cmdcrcchk|Cmdixchk|Cmdisdata|Tmblkcnt|
+			Tmmultiblock|Tmautocmd12;
+		if(!write)
+			flags |= Tmdatdirread;
+		if(sdhcicmd(c, write? 25: 18, arg, flags) < 0){
+			qunlock(c);
+			return 0;
+		}
+		for(i = 0; i < nb; i++){
+			if(write){
+				if(awaitbit(&r[Interrupt], Writeready, 1) < 0)
+					break;
+				r[Interrupt] = Writeready;
+				for(j = 0; j < Secsize; j += 4){
+					w = p[0] | p[1]<<8 | p[2]<<16 | p[3]<<24;
+					r[Data] = w;
+					p += 4;
+				}
+			}else{
+				if(awaitbit(&r[Interrupt], Readready, 1) < 0)
+					break;
+				r[Interrupt] = Readready;
+				for(j = 0; j < Secsize; j += 4){
+					w = r[Data];
+					p[0] = w;
+					p[1] = w>>8;
+					p[2] = w>>16;
+					p[3] = w>>24;
+					p += 4;
+				}
+			}
+		}
+		if(awaitbit(&r[Interrupt], Datadone, 1) < 0)
+			i = 0;
+		r[Interrupt] = Datadone;
+		qunlock(c);
+		return i * Secsize;
+	}
+
 	for(i = 0; i < nb; i++){
 		arg = c->byteaddr? (u32)((bno+i)*Secsize): (u32)(bno+i);
 		r[Blksizecnt] = (1<<16) | Secsize;

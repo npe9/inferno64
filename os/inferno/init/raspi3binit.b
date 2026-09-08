@@ -55,6 +55,34 @@ sdhcicheck()
 		}
 	sys->print("SDHCI block5 wrote %02x%02x readback %02x%02x (SDHCI-WRITE-OK)\n",
 		int wbuf[0], int wbuf[1], int rbuf[0], int rbuf[1]);
+
+	# Four blocks in one request, which the driver now sends as a
+	# single CMD25/CMD18 with auto-CMD12 rather than four CMD24/CMD17
+	# pairs.  Each block is stamped with its own index, so a
+	# multi-block transfer that streams the right bytes to the wrong
+	# offsets -- the characteristic way a block count or an
+	# auto-stop gets it wrong -- shows up as a misalignment rather
+	# than as correct-looking data.  Blocks 12-15, clear of block 5
+	# above and of the SD path's 8-11.
+	mb := array[4*512] of byte;
+	for(i = 0; i < len mb; i++)
+		mb[i] = byte (16rC0 + (i & 16rf));
+	for(k := 0; k < 4; k++)
+		mb[k*512+1] = byte k;
+	if(sys->pwrite(fd, mb, len mb, big (12*512)) != len mb){
+		sys->print("SDHCI-MB write: %r\n");
+		return;
+	}
+	mbr := array[4*512] of byte;
+	if(sys->pread(fd, mbr, len mbr, big (12*512)) != len mbr){
+		sys->print("SDHCI-MB read: %r\n");
+		return;
+	}
+	mbtag := "(SDHCI-MULTIBLOCK-OK)";
+	for(k = 0; k < 4; k++)
+		if(int mbr[k*512] != 16rC0 || int mbr[k*512+1] != k)
+			mbtag = "(SDHCI-MB-MISALIGN)";
+	sys->print("SDHCI 4-block RW %s\n", mbtag);
 	# the geometry devsd derived from the CSD -- if the 136-bit
 	# response were unpacked wrongly this is where it shows
 	cfd := sys->open("/dev/sdH0/ctl", Sys->OREAD);

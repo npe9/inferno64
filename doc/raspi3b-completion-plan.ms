@@ -599,8 +599,8 @@ they say nothing whatever about CMD52 and CMD53.
 .PP
 Also not done: no interrupt is wired (every wait is a bounded poll, as
 in sdhostbcm.c), no DMA -- the controller supports SDMA/ADMA and this
-uses the PIO data port -- no multi-block command, no high-speed
-function switch, and no real hardware has been near it.
+uses the PIO data port -- no high-speed function switch, and no real
+hardware has been near it.
 .PP
 .B "The four-bit bus, and what an emulator can and cannot say about it."
 The card and the host are now moved to the four-bit data bus after
@@ -675,6 +675,34 @@ forty reads identically -- which is why this marker is
 .CW SDHCI-SPEED-ACCEPTED
 too.  The high-speed CMD6 function switch, which would take this past
 25MHz, is a separate card state transition and is not attempted.
+.PP
+.B "Four blocks, one command."
+A request for more than one block was four commands, four responses
+and four turnarounds; it is now a single CMD18 or CMD25 with the count
+in the top half of
+.CW Blksizecnt
+and
+.CW Tmautocmd12
+set, so the controller sends the STOP_TRANSMISSION itself.  That last
+part is not decoration: an open-ended multiple read that nothing stops
+leaves the card still sending, and the next command collides with it.
+The single-block path is kept rather than folded in, since a one-block
+CMD18 is legal but pointless and CMD17 is what identification and every
+existing check already exercise.
+.PP
+The check stamps each of the four blocks with its own index, so a
+transfer that streams the right bytes to the wrong offsets \- which is
+how a wrong block count or a missing auto-stop actually fails \- reads
+back as a misalignment rather than as plausible data.
+.CW SDHCI-MULTIBLOCK-OK ,
+matching the one
+.CW sdhostbcm.c
+has had all along.  Dropping
+.CW Tmmultiblock
+and
+.CW Tmautocmd12
+makes the write fail outright, which is how the new path was confirmed
+to be the one being taken.
 .NH 1
 Phase 6: BCM43430 Wi-Fi over SDIO \- transport runs, the chip does not
 .PP
