@@ -1110,10 +1110,16 @@ devstate(d: ref Dev): string
 		#
 		# what the link is actually running at, which is not
 		# what was asked for if the peer has since asked for
-		# something else and this side agreed
+		# something else and this side agreed.  A BR/EDR link
+		# has none of these -- they are the LE connection
+		# parameters -- so it says what it is instead of three
+		# zeroes that would read as a link running at nothing.
 		#
-		s += sprint(" interval %d latency %d timeout %d",
-			d.conn.interval, d.conn.latency, d.conn.timeout);
+		if(d.conn.classic)
+			s += " br/edr";
+		else
+			s += sprint(" interval %d latency %d timeout %d",
+				d.conn.interval, d.conn.latency, d.conn.timeout);
 	}
 	s += "\n";
 	#
@@ -1464,12 +1470,28 @@ connect(d: ref Dev): string
 		d.lock <-= 1;
 		return nil;
 	}
-	(c, e) := hci->leconnect(d.r.x, d.atype, d.addr);
+	c: ref Conn;
+	e: string;
+	if(d.classic)
+		(c, e) = hci->connect(d.r.x, d.addr, d.psrm, d.clock);
+	else
+		(c, e) = hci->leconnect(d.r.x, d.atype, d.addr);
 	if(e != nil){
 		d.lock <-= 1;
 		return e;
 	}
 	d.conn = c;
+	#
+	# Nothing above L2CAP runs on a BR/EDR link yet: its signalling
+	# channel is a different CID and ATT is LE only, so a link is
+	# what there is.  It is watched like any other, so that it goes
+	# away properly when it goes away.
+	#
+	if(d.classic){
+		spawn watcher(d);
+		d.lock <-= 1;
+		return nil;
+	}
 	d.mux = l2cap->start(c);
 	d.sess = att->start(d.mux);
 	att->exchangemtu(d.sess, 247);
@@ -2307,6 +2329,20 @@ inproc(r: ref Radio)
 			continue;
 		}
 		d.conn = conn;
+		if(conn.classic){
+			#
+			# A peer paged this side.  Nothing above L2CAP
+			# runs on a BR/EDR link yet, so the link is what
+			# there is; it is still watched, so that it goes
+			# away properly when it goes.
+			#
+			d.classic = 1;
+			d.state = "connected";
+			d.seen = daytime();
+			spawn watcher(d);
+			d.lock <-= 1;
+			continue;
+		}
 		d.mux = l2cap->start(conn);
 		#
 		# a peer opened this link, so this side is the server on

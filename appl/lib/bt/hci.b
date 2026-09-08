@@ -37,6 +37,8 @@ Ogle:		con 16r08;
 # events
 Einqcomplete:	con 16r01;
 Einqresult:	con 16r02;
+Econncomplete:	con 16r03;
+Econnrequest:	con 16r04;
 Edisconn:	con 16r05;
 Eremotename:	con 16r07;
 Einqresultrssi:	con 16r22;
@@ -123,6 +125,9 @@ start(tr: Bttransport): (ref Ctlr, string)
 	#
 	x.namec = chan[1] of (string, string);
 	x.namelock = chan[1] of int;
+	x.bconnc = chan[1] of (ref Conn, string);
+	x.bconnlock = chan[1] of int;
+	x.bconnaddr = nil;
 	x.statelock = chan[1] of int;
 	x.statelock <-= 1;
 	x.aclsize = 27;
@@ -672,6 +677,160 @@ offername(x: ref Ctlr, nm, err: string)
 }
 
 #
+# A BR/EDR connection.  Create Connection answers with a Command
+# Status and the link arrives later as a Connection Complete event,
+# which is the same shape as the LE one and is built the same way: a
+# lock so there is only one attempt outstanding, a channel buffered by
+# one, and a stale answer drained before asking.
+#
+# Packet types: every ACL packet a controller may use on the link, DM1
+# through DH5.  Asking for fewer is how a link is made slower on
+# purpose and there is no reason to here.
+#
+Bpackets:	con 16rcc18;
+Bconntimeout:	con 20000;	# ms; a page that finds nothing takes about five
+
+connect(x: ref Ctlr, addr: array of byte, psrm, clock: int): (ref Conn, string)
+{
+	if(len addr != Bt->Baddrlen)
+		return (nil, "not an address");
+	p := array[13] of byte;
+	p[0:] = addr;
+	bt->put16(p, 6, Bpackets);
+	p[8] = byte psrm;
+	p[9] = byte 0;			# reserved
+	#
+	# The top bit says the clock offset is one this side actually
+	# heard, rather than a zero meaning "no idea"; without it a
+	# controller pages blind and takes as long as it takes.
+	#
+	co := 0;
+	if(clock != 0)
+		co = clock | 16r8000;
+	bt->put16(p, 10, co);
+	p[12] = byte 1;			# allow the peer to become central
+
+	x.bconnlock <-= 1;
+	x.bconnaddr = addr;
+	r := doconnect(x, p);
+	x.bconnaddr = nil;
+	<-x.bconnlock;
+	return r;
+}
+
+doconnect(x: ref Ctlr, p: array of byte): (ref Conn, string)
+{
+	alt {
+	(c, err) := <-x.bconnc =>
+		# a link left behind by an attempt that gave up is a
+		# link nothing owns, so it is closed rather than dropped
+		if(err == nil && c != nil)
+			disconnect(c);
+	* =>
+		;
+	}
+	(st, nil, e) := cmd(x, bt->opcode(Oglink, 16r0005), p);
+	if(e != nil)
+		return (nil, e);
+	if(st != 0)
+		return (nil, bt->hcierr(st));
+	tick := chan[1] of int;
+	spawn timer(Bconntimeout, tick);
+	alt {
+	(c, err) := <-x.bconnc =>
+		return (c, err);
+	<-tick =>
+		return (nil, "connection timed out");
+	}
+}
+
+#
+# A peer paged this side.  Accepting is a command whose answer is the
+# same Connection Complete event an outgoing attempt gets, so there is
+# nothing to wait for here beyond the command being taken.
+#
+# Role 1: stay the peripheral.  A controller that has just been paged
+# is the peripheral of that link already, and asking to swap is asking
+# for a role switch this stack has no use for.
+#
+accept(x: ref Ctlr, addr: array of byte)
+{
+	p := array[7] of byte;
+	p[0:] = addr;
+	p[6] = byte 1;
+	cmd(x, bt->opcode(Oglink, 16r0009), p);
+}
+
+bconncomplete(x: ref Ctlr, b: array of byte)
+{
+	if(len b < 1)
+		return;
+	st := int b[0];
+	if(st != 0){
+		alt {
+		x.bconnc <-= (nil, bt->hcierr(st)) =>	;
+		* =>	;
+		}
+		return;
+	}
+	if(len b < 11)
+		return;
+	#
+	# link type 1 is ACL; 0 is SCO, which arrives on this same event
+	# and is not a link anything here can carry L2CAP over
+	#
+	if(int b[9] != 1)
+		return;
+	c := ref Conn;
+	c.x = x;
+	c.handle = bt->get16(b, 1);
+	c.classic = 1;
+	c.atype = Bt->Apublic;		# a BD_ADDR has no type
+	c.addr = array[Bt->Baddrlen] of byte;
+	c.addr[0:] = b[3:3+Bt->Baddrlen];
+	c.encrypted = int b[10] != 0;
+	c.interval = 0;
+	c.latency = 0;
+	c.timeout = 0;
+	c.up = chan of array of byte;
+	c.closed = chan[1] of string;
+	c.ltkreq = chan[1] of (array of byte, int);
+	<-x.statelock;
+	x.states = ref Cstate(c, nil, 0) :: x.states;
+	x.statelock <-= 1;
+	#
+	# Which side opened it is not in this event, unlike the LE one,
+	# and the channel is buffered, so offering it and seeing whether
+	# the offer is taken says nothing.  What says it is the address:
+	# a link to the device this side is paging is the answer to that
+	# page, and any other link is one a peer opened.
+	#
+	if(x.bconnaddr != nil && sameaddr(x.bconnaddr, c.addr)){
+		c.role = Rcentral;
+		alt {
+		x.bconnc <-= (c, nil) =>	;
+		* =>	spawn dropconn(c);	# the attempt gave up
+		}
+		return;
+	}
+	c.role = Rperipheral;
+	alt {
+	x.inc <-= c =>	;
+	* =>	spawn dropconn(c);	# nothing above would own it
+	}
+}
+
+sameaddr(a, b: array of byte): int
+{
+	if(len a != len b)
+		return 0;
+	for(i := 0; i < len a; i++)
+		if(a[i] != b[i])
+			return 0;
+	return 1;
+}
+
+#
 # LE Create Connection answers with a command status; the connection
 # itself arrives later as an LE Connection Complete event
 #
@@ -980,6 +1139,18 @@ event(x: ref Ctlr, p: array of byte)
 		x.inqc <-= nil =>	;
 		* =>	;	# nobody is listening
 		}
+	Econncomplete =>
+		bconncomplete(x, b);
+	Econnrequest =>
+		#
+		# A peer paging this side.  Answering takes a command
+		# and the controller is waiting for it, so it is
+		# answered rather than queued behind whatever else is
+		# using the command lock: its own process.
+		#
+		if(len b < 10)
+			return;
+		spawn accept(x, b[0:Bt->Baddrlen]);
 	Einqresult =>
 		inqresult(x, b, 0);
 	Einqresultrssi =>
@@ -1049,6 +1220,7 @@ lemeta(x: ref Ctlr, sub: int, b: array of byte)
 		c.x = x;
 		c.handle = bt->get16(b, 1);
 		c.role = int b[3];
+		c.classic = 0;
 		c.atype = int b[4];
 		c.addr = array[Bt->Baddrlen] of byte;
 		c.addr[0:] = b[5:5+Bt->Baddrlen];

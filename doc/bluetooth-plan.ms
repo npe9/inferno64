@@ -353,10 +353,24 @@ the class, the clock offset and everything after them sit a byte
 apart.  Getting that wrong reads a class of device out of the middle
 of an address and is invisible until something depends on it.
 .PP
-What is left of Classic is everything a connection needs: BR/EDR
-connections, link keys and secure simple pairing, and L2CAP's
-connection-oriented channels, which LE never needed and which
-everything above Classic is built on.
+A BR/EDR link is done as well.
+.CW connect
+on a Classic device's own
+.CW ctl
+pages it and
+.CW disconnect
+takes the link down; a peer that pages this side is accepted.  The
+Connection Complete event does not say which side opened the link \(em
+the LE one does \(em so the only thing that distinguishes an answer to
+this side's page from a link a peer opened is whether the address is
+the one being paged, and that is what the code checks.  Nothing runs
+over the link: L2CAP's signalling channel is a different CID on
+Classic and none of Classic L2CAP is written.
+.PP
+So what is left of Classic is what a connection is for: link keys and
+secure simple pairing, and L2CAP's connection-oriented channels,
+which LE never needed and which everything above Classic is built
+on.
 .IP 3.
 .B SDP .
 Both halves.  Nothing Classic can be found without it.

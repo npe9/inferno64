@@ -212,6 +212,24 @@ hidnomap = '--hidnomap' in sys.argv
 # of that.
 classic = '--classic' in sys.argv
 
+# --brconnect: with --classic, the second device also answers a page,
+# so a BR/EDR link can be opened to it and taken down again.  Nothing
+# runs over the link: L2CAP's signalling channel is a different CID on
+# Classic and there is no Classic L2CAP here, so what is modelled is
+# the connection and nothing above it.
+brconnect = '--brconnect' in sys.argv
+
+# --brincoming: with --brconnect, the device pages this side once the
+# inquiry is over, so the guest gets a Connection Request it has to
+# accept.  The completion that follows is the same event an outgoing
+# attempt gets, and telling them apart is the guest's problem: the
+# event does not say which side opened the link.
+brincoming = '--brincoming' in sys.argv
+
+# --brfail: with --brconnect, the page fails with a page timeout.  A
+# connection that fails has to fail, and the one after it has to work.
+brfail = '--brfail' in sys.argv
+
 # --noeir: with --classic, neither device sends an extended inquiry
 # response, so both names have to be paged for.  It is the control for
 # the name request: a stack that read the name out of the inquiry
@@ -877,7 +895,11 @@ class Model:
             h = struct.unpack('<H', params[0:2])[0]
             time.sleep(0.05)
             self.event(0x05, bytes([0]) + struct.pack('<H', h) + bytes([0x16]))
-            self.handle = None
+            # only the link that went: a BR/EDR handle going away is
+            # not the LE one going away, and forgetting the wrong one
+            # silently stops every notification on it
+            if h == self.handle:
+                self.handle = None
             if self.smp.get('bonded'):
                 self.rotate = self.peer
                 log('the sensor starts rotating a private address')
@@ -919,6 +941,28 @@ class Model:
             print('bthci: inquiry cancelled', flush=True)
             self.inquiring = False
             self.cmd_complete(op, bytes([0]))
+        elif op == 0x0405 and brconnect:          # Create Connection
+            addr = params[0:6]
+            self.cmd_status(op)
+            if brfail and not getattr(self, 'brtried', False):
+                self.brtried = True
+                print('bthci: page fails', flush=True)
+                # 0x04 page timeout: the device did not answer
+                self.event(0x03, bytes([0x04]) + struct.pack('<H', 0)
+                           + addr + bytes([1, 0]))
+                return
+            self.brhandle = 0x0080
+            print('bthci: br/edr link to %s' % addr[::-1].hex(), flush=True)
+            self.event(0x03, bytes([0]) + struct.pack('<H', self.brhandle)
+                       + addr + bytes([1, 0]))
+        elif op == 0x0409 and brconnect:          # Accept Connection Request
+            addr = params[0:6]
+            print('bthci: the host accepted a page, role %d' % params[6],
+                  flush=True)
+            self.cmd_status(op)
+            self.brhandle = 0x0081
+            self.event(0x03, bytes([0]) + struct.pack('<H', self.brhandle)
+                       + addr + bytes([1, 0]))
         elif op == 0x0419 and classic:            # Remote Name Request
             addr = params[0:6]
             self.cmd_status(op)
@@ -1794,6 +1838,12 @@ class Model:
             self.inquiring = False
             self.event(0x01, bytes([0]))
             print('bthci: inquiry complete', flush=True)
+        if brincoming:
+            # the peer pages this side: class of device, link type ACL
+            time.sleep(0.5)
+            addr, cls, psrm, clk, name, eir = CLASSICDEVS[1]
+            print('bthci: the peer pages', flush=True)
+            self.event(0x04, addr + struct.pack('<I', cls)[:3] + bytes([1]))
 
     # ------------------------------------------------ SMP
     def smp_in(self, p):

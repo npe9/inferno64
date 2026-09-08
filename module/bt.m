@@ -199,6 +199,25 @@ Hci: module
 		inc:		chan of ref Conn;	# links a peer opened
 		inqc:		chan of ref Inq;	# what an inquiry hears
 		inq:		int;		# is an inquiry running
+		#
+		# A BR/EDR connection, which arrives as an event long
+		# after the command was answered, exactly as an LE one
+		# does.  It is a second channel and not connc because a
+		# Classic connection and an LE one can be in flight at
+		# once and neither is the other's answer.
+		#
+		bconnc:		chan of (ref Conn, string);
+		bconnlock:	chan of int;
+		#
+		# who this side is paging, or nil.  An LE Connection
+		# Complete says which side opened the link; a BR/EDR one
+		# does not, so the only thing that distinguishes a link
+		# this side asked for from one a peer opened is whether
+		# the address is the one being paged.  Written under
+		# bconnlock and read by the event process; it is one
+		# word either way.
+		#
+		bconnaddr:	array of byte;
 		namec:		chan of (string, string);
 		namelock:	chan of int;
 	};
@@ -207,6 +226,14 @@ Hci: module
 		x:	ref Ctlr;	# the controller this link is on
 		handle:	int;
 		role:	int;
+		#
+		# A BR/EDR link rather than an LE one.  It matters above
+		# here as well as in here: a BD_ADDR has no address type
+		# and never rotates, L2CAP's signalling channel is a
+		# different CID, and ATT is LE only, so nothing that
+		# assumes an LE link may be run over one.
+		#
+		classic:	int;
 		atype:	int;
 		addr:	array of byte;
 		encrypted:	int;
@@ -312,6 +339,13 @@ Hci: module
 	incoming:	fn(x: ref Ctlr): chan of ref Conn;
 
 	leconnect:	fn(x: ref Ctlr, atype: int, addr: array of byte): (ref Conn, string);
+
+	#
+	# A BR/EDR connection.  psrm and clock are what the inquiry
+	# said: they are what make the page short rather than a blind
+	# search, and 0 for both is legal and slow.
+	#
+	connect:	fn(x: ref Ctlr, addr: array of byte, psrm, clock: int): (ref Conn, string);
 	disconnect:	fn(c: ref Conn): string;
 	conns:		fn(x: ref Ctlr): list of ref Conn;
 

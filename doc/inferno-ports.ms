@@ -20879,6 +20879,44 @@ RSSI the wrong way round; a class of device would have come out of the
 middle of an address, and the two mistakes would have cancelled in the
 one place they were tested together.
 .NH 2
+A BR/EDR link, and an event that does not say whose it is
+.PP
+.CW connect
+on a Classic device's own
+.CW ctl
+pages it now, and
+.CW disconnect
+takes the link down.  A peer that pages this side is accepted, in a
+process of its own because the controller is waiting for the answer
+and would otherwise wait behind whatever else holds the command lock.
+Nothing runs over the link: L2CAP's signalling channel is a different
+CID on Classic and none of Classic L2CAP is written, so
+.CW state
+says
+.CW br/edr
+where an LE link would give its connection parameters rather than
+three zeroes that would read as a link running at nothing.
+.PP
+One thing is genuinely harder than its LE equivalent.  An LE
+Connection Complete carries the role, so a link a peer opened is
+plainly not the answer to a connection this side asked for.  The
+BR/EDR Connection Complete does not, and the channel an attempt waits
+on is buffered by one, so offering the link and seeing whether the
+offer is taken says nothing \(em an incoming link would go into the
+buffer and be handed to the next outgoing attempt as its own answer.
+What distinguishes them is the address: the controller is told who to
+page, so a completion for that device is that page's answer and any
+other is a peer's.  The address being paged is written down under the
+connection lock and compared in the event.
+.PP
+The control is worth stating because it is the whole of the piece:
+with the comparison removed and every completion taken as an answer,
+the phase where the peer pages this side leaves the device reading
+.CW "seen, last heard from 21s ago" \(em
+the link went into the buffer, nothing owned it, and the name space
+never showed it at all.
+
+.NH 2
 A native backtrace from inside the collector
 .PP
 The bench passes under

@@ -205,6 +205,19 @@ saying
 A device that sent an extended inquiry response has its name already;
 one that did not is asked, over a page that does not become a
 connection, so its name turns up a moment after it does.
+.B connect
+on such a device's own
+.B ctl
+opens a BR/EDR link to it and
+.B disconnect
+takes it down, and a peer that pages this side is accepted the same
+way an LE peer that connects is.  Nothing runs over a BR/EDR link:
+L2CAP's signalling channel is a different CID there and none of
+Classic L2CAP is written, so the link is all there is, and
+.B state
+says
+.B br/edr
+where an LE link would give its connection parameters.
 .B "connect \fIaddr\fP [public|random]",
 .BI "disconnect " addr
 and

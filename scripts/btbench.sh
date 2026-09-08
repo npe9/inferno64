@@ -136,6 +136,13 @@
 #		No scan runs, so everything in remote/ answered an
 #		inquiry.  classicnoeir is the other half: neither sends
 #		an inquiry response, so both names are paged for
+#	brconnect	a BR/EDR link, opened and taken down.  Nothing runs
+#		over it: L2CAP signalling is a different CID on Classic
+#		and there is none of it yet, so the link is what is
+#		asserted.  brfail is a page that times out, which must
+#		fail and must not poison the next attempt; brincoming is
+#		the peer paging this side, which must be accepted and
+#		must read as the peer's link and not this side's
 #	stalefid	a characteristic file kept open across a disconnect
 #		and a reconnect: the old name must be gone.  What the
 #		fix for it changes is not visible from inside the guest
@@ -525,6 +532,33 @@ if [ "$n" != 2 ]; then
 	exit 1
 fi
 echo "and with no inquiry responses both names were paged for"
+#
+# A BR/EDR link.  The three shapes are one this side opens, one the
+# page never answers, and one the peer opens.
+#
+run brconnect "--classic --brconnect" brconnect
+n=`grep -c 'br/edr link to' "$OUT/bthci-brconnect.log" || true`
+if [ "$n" != 1 ]; then
+	echo "=== phase brconnect ==="
+	echo "BENCH FAIL (brconnect): the controller paged $n times, wanted 1"
+	exit 1
+fi
+echo "a BR/EDR link was opened and taken down"
+run brfail "--classic --brconnect --brfail" brfail
+run brincoming "--classic --brconnect --brincoming" brincoming
+#
+# and that the guest answered the page rather than leaving the
+# controller waiting: role 1, staying the peripheral, which a
+# controller that has just been paged already is.  Nothing inside the
+# guest shows the difference between accepting and being accepted.
+#
+n=`grep -c 'the host accepted a page, role 1' "$OUT/bthci-brincoming.log" || true`
+if [ "$n" != 1 ]; then
+	echo "=== phase brincoming ==="
+	echo "BENCH FAIL (brincoming): the host accepted $n pages, wanted 1"
+	exit 1
+fi
+echo "and a page from the peer was accepted, as the peripheral of that link"
 run paired "--peripheral --pairin --rebond" paired
 #
 # and what the model saw from the other side: the confirm this stack

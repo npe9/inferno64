@@ -304,6 +304,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	"classic" =>
 		classic();
 		return;
+	"brconnect" or "brfail" or "brincoming" =>
+		brlink(mode);
+		return;
 	"hid" =>
 		hid();
 		return;
@@ -1493,6 +1496,100 @@ classic()
 		sys->print("BT: FAILED: state still says an inquiry is running\n");
 	else
 		sys->print("BT: an inquiry was cancelled before it ended\n");
+	sys->print("BT: done\n");
+}
+
+#
+# A BR/EDR link: opened, looked at, and taken down.  Nothing runs over
+# it -- L2CAP signalling is a different CID on Classic and there is
+# none of it here yet -- so what this asserts is the link itself: that
+# it comes up, that the name space says what it is, that it goes away
+# when it is told to, and that a page that fails fails.
+#
+brlink(mode: string)
+{
+	if((e := writefile(mnt + "/0/ctl", "inquiry on")) != nil){
+		sys->print("BT: FAILED: inquiry on: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	for(i := 0; i < 40; i++){
+		sys->sleep(500);
+		if(hasstr(readfile(mnt + "/0/state"), "inquiry off"))
+			break;
+	}
+	dev := mnt + "/0/remote/" + Chead;
+	(ok0, nil) := sys->stat(dev);
+	if(ok0 < 0){
+		sys->print("BT: FAILED: the inquiry did not find %s\n", Chead);
+		sys->print("BT: done\n");
+		return;
+	}
+
+	if(mode == "brincoming"){
+		#
+		# the peer pages this side.  Nothing here asks for
+		# anything: what is asserted is that the link arrived,
+		# that it is the peer's and not this side's, and that
+		# the name space says so.
+		#
+		st := "";
+		for(i = 0; i < 40; i++){
+			sys->sleep(500);
+			st = trim(readfile(dev + "/state"));
+			if(hasstr(st, "connected"))
+				break;
+		}
+		if(!hasstr(st, "connected") || !hasstr(st, "peripheral")){
+			sys->print("BT: FAILED: the peer's link reads %q\n", st);
+			sys->print("BT: done\n");
+			return;
+		}
+		sys->print("BT: a peer paged this side: %s\n", st);
+		writefile(dev + "/ctl", "disconnect");
+		sys->print("BT: done\n");
+		return;
+	}
+
+	if(mode == "brfail"){
+		#
+		# the page fails once.  The connect has to fail with it,
+		# and the one after it has to work -- a failed attempt
+		# that poisons the next one is the bug this shape of
+		# test is for.
+		#
+		if((e = writefile(dev + "/ctl", "connect")) == nil){
+			sys->print("BT: FAILED: a page that timed out reported success\n");
+			sys->print("BT: done\n");
+			return;
+		}
+		sys->print("BT: the page failed: %s\n", e);
+	}
+	if((e = writefile(dev + "/ctl", "connect")) != nil){
+		sys->print("BT: FAILED: connect: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	st := trim(readfile(dev + "/state"));
+	ok := 1;
+	if(!hasstr(st, "connected") || !hasstr(st, "central")
+	|| !hasstr(st, "br/edr")){
+		sys->print("BT: FAILED: the link reads %q\n", st);
+		ok = 0;
+	} else
+		sys->print("BT: %s\n", st);
+	if((e = writefile(dev + "/ctl", "disconnect")) != nil){
+		sys->print("BT: FAILED: disconnect: %s\n", e);
+		ok = 0;
+	}
+	sys->sleep(500);
+	st = trim(readfile(dev + "/state"));
+	if(!hasstr(st, "disconnected")){
+		sys->print("BT: FAILED: after a disconnect the link reads %q\n", st);
+		ok = 0;
+	}
+	if(ok)
+		sys->print("BT: a BR/EDR link, opened and taken down\n");
 	sys->print("BT: done\n");
 }
 
