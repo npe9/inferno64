@@ -1581,13 +1581,61 @@ result stands on its own, because it was measured against the
 own reference count and not against the tracker's verdict, and frames
 holding uncounted type references is a real defect either way.
 .PP
-The next thing to do is therefore not another hypothesis.  It is to
-find out whether
+That question has now been answered, and the answer is no.
+.NH 2
+The reports were dead objects, and the diagnostic is fixed
+.PP
+Printing the watched object's own
+.CW Heap
+header at every report gave
+.CW "ref 0 ... DEAD/REUSED"
+twelve times out of twelve.  Every report on this board was about an
+object that had already been freed; its memory was reused and
+reinitialised, and the tracker called that corruption.  Which is
+exactly why none of them ever led to a failure.
+.PP
+The staleness test compared the type tag at
+.CW obj+O(Frame,t)
+and nothing else, and an identical type does not change that tag \- so
+a popped frame reused by another frame of the same type walks straight
+through it.  The object's own
+.CW Heap.ref
+and
+.CW t
+are now part of the test.  On both boards:
+.IP
+.nf
+virtarm64    8 boots, 0 tracker events (was 3-5 of 8), 8 CHANTEST-OK
+pc64        14 boots, 8 tracker events, 9 panics
+.fi
+.PP
+The false positives go and the real signal stays, which is the whole
+point of the change: pc64's reports survive the check, on objects that
+are live with a matching type, so its corruption is real.
+.CW virtarm64 's
+was not.
+.PP
+So the "one boot in ten reproducer" is retired, and with it the
+sections above that reasoned from its rate \- the collector
+elimination, the
+.CW freemod
+attribution, the module names.  Those experiments measured a false
+positive's frequency.  What survives is what was measured against
+something other than the tracker's verdict:
+.CW framerefs ,
+because it was checked against the
+.CW Type 's
+own reference count, and the multiprocessor bring-up itself, which was
+never measured by the tracker at all.
+.PP
+The lasting result is the diagnostic.  Older captures in
+.CW doc/inferno-ports.ms
+were taken with the weaker check, and some fraction of them may be this
+artefact rather than the bug; re-running that hunt's reproducers
+against the fixed
 .CW checktracked()
-firing on this board means anything at all \- by checking whether the
-watched address is inside a live frame or a dead one at the moment it
-fires.  Until that is known, this board reproduces a print, and every
-conclusion drawn from its rate should be read with that in mind.
+would say how much of its evidence base is real, and that is worth
+doing before anything else there.
 .PP
 What is still not done, so the state is not overstated: GICv3 (the
 redistributor is per processor and this board derives one fixed base),
