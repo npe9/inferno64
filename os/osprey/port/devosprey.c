@@ -1867,6 +1867,7 @@ ospreyselectcaller(uvlong armoff, int narms)
 static Physseg ospreyfbseg;
 static Physseg ospreymouseseg;
 static Physseg ospreykbdseg;
+static Physseg ospreyptrseg;
 int ospreyfbw, ospreyfbh, ospreyfbd;
 extern int ospreyuser;		/* 0 = full personality (pc64), 1 = xup64 user path */
 
@@ -2180,6 +2181,51 @@ ospreymouseexpose(void)
 	print("osprey input: exposed kbd ring pa %#llux as \"kbdring\", "
 		"mouse ring pa %#llux as \"mousering\"\n",
 		(uvlong)PADDR(km), (uvlong)PADDR(mm));
+	return 0;
+}
+
+/*
+ * A page for the pointer's position, published as the physical segment
+ * "pointerpos": two ints, x then y, at offset 0.
+ *
+ * The draw server draws the arrow, because it owns the frame buffer, and
+ * to draw it it must know where the pointer is.  On the full personality
+ * it reads that out of the "mousering" page, which the aux interrupt
+ * fills with raw bytes and the user-level mouse driver decodes into a
+ * position in the same page.  On the microkernel personalities there is
+ * no such page: the PS/2 controller is granted whole to one container,
+ * whose driver reads port 0x60 itself, and the position lives in that
+ * personality's own /dev/mouse.  Arming the kernel's handler as well
+ * would drain the byte the driver's handshake waits for, so the two
+ * arrangements cannot both run - but a page holding two numbers is not
+ * an arrangement for reading the hardware, only a place for the
+ * personality that has the position to put it where the personality
+ * that has the frame buffer can see it.  Both are containers of this
+ * kernel and neither can name the other's memory; a physical segment is
+ * the memory they may share.
+ */
+static Physseg *ospreyptrpub;
+
+int
+ospreypointerexpose(void)
+{
+	uchar *pp;
+
+	if(ospreyptrpub != nil)		/* once, however many callers */
+		return 0;
+	if((pp = xspanalloc(BY2PG, BY2PG, 0)) == nil)
+		return -1;
+	memset(pp, 0, BY2PG);
+	memset(&ospreyptrseg, 0, sizeof ospreyptrseg);
+	ospreyptrseg.attr = SG_PHYSICAL;
+	ospreyptrseg.name = "pointerpos";
+	ospreyptrseg.pa = PADDR(pp);
+	ospreyptrseg.size = BY2PG;
+	if(addphysseg(&ospreyptrseg) == nil)
+		return -1;
+	ospreyptrpub = &ospreyptrseg;
+	print("osprey input: exposed a pointer position page at pa %#llux as \"pointerpos\"\n",
+		(uvlong)PADDR(pp));
 	return 0;
 }
 
@@ -5946,8 +5992,18 @@ ospreyinit(void)
 	 * mouse driver (rio needs /dev/mouse).  Not on xup64, whose proc0
 	 * arms the same interrupt into a container instead.
 	 */
-	if(ospreyframebuffer() == 0 && !ospreyuser)
-		ospreymouseexpose();
+	if(ospreyframebuffer() == 0){
+		if(!ospreyuser)
+			ospreymouseexpose();
+		/*
+		 * And a page for the pointer's position on either path: on the
+		 * full personality the mouse driver has one already inside the
+		 * mouse ring, and on the microkernel personalities this is the
+		 * only place the container that owns the PS/2 controller and
+		 * the container that owns the frame buffer can both reach.
+		 */
+		ospreypointerexpose();
+	}
 }
 
 /*

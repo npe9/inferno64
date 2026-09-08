@@ -31,6 +31,7 @@ extern void touserat(char*);
 extern void touserv(char*, char*);
 extern int ospreyuserprep(void);
 extern int ospreyframebuffer(void);
+extern int ospreypointerexpose(void);
 
 static void
 smark(char *s)
@@ -825,6 +826,7 @@ proc0(void*)
 		kproc("alarm", alarmkproc, 0);
 		ospreyuserprep();
 		ospreyframebuffer();
+		ospreypointerexpose();	/* where the personality with the mouse puts the pointer for the one with the screen */
 		if(ospreyp9linux){
 			/*
 			 * An unmodified Linux binary the buddy serves: mark this

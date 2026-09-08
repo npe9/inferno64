@@ -8126,7 +8126,7 @@ no pointer on the screen either \- the arrow is drawn by the draw
 server's cursor out of the mouse ring, and this configuration exposes no
 mouse ring, so the position
 .CW /dev/mouse
-reports is right and there is nothing drawn at it.
+reports is right and there is nothing drawn at it.  2.3q is that one.
 .B "2.3j: the pid a program reads for itself."
 The kernel used to print, several times in a boot with rio in it,
 .CW "osprey: a note was asked for container 32, which is not a container" .
@@ -8796,6 +8796,87 @@ now takes
 which photographs the screen there and then over QMP rather than at the
 end of the boot, so one machine can be looked at after each gesture
 instead of one boot per gesture.
+.B "2.3q: an arrow on the screen."
+The draw server has had a software cursor since it was written:
+.CW cursor.c
+composites the Plan 9 arrow onto the frame buffer and lifts it again,
+under a lock it shares with the 9P write path, so a draw and the cursor
+never touch the frame buffer at once.  It never ran here.  What it does
+first is
+.CW "segattach(0, \(dqmousering\(dq, 0, 4096)" ,
+and on this configuration that fails \-
+.CW "osprey user: segattach(mousering) failed: bad arg in system call"
+is in every log of every rio boot in this document, unremarked.
+.PP
+It fails for a good reason.  On the full personality the kernel's aux
+interrupt fills a page with raw PS/2 bytes, publishes it as the physical
+segment
+.CW mousering ,
+and a user-level mouse driver decodes a position into the same page for
+the cursor to read.  On the microkernel personalities the controller is
+granted whole to one container, whose driver reads port 0x60 with its
+own
+.CW inb ,
+and arming the kernel's handler as well drains the byte that driver's
+handshake is waiting for \- which is written down at 2.2 and is why
+.CW devinput.c
+exists at all.  So there is no mouse ring, and the container that knows
+where the pointer is is not the container that owns the frame buffer,
+and neither can name the other's memory.
+.PP
+A page holding two numbers is not an arrangement for reading the
+hardware.  The kernel publishes one as the physical segment
+.CW pointerpos ,
+x then y at offset zero, wherever a frame buffer is exposed;
+.CW devinput.c
+attaches it and writes the position every time a packet moves the
+pointer or a program writes
+.CW /dev/mouse ;
+and
+.CW cursor.c
+takes the mouse ring's position if there is a mouse ring and this page's
+if there is not.  Two containers of one kernel share the one page the
+kernel gave them, which is the whole of the mechanism.
+.PP
+It is worth being plain about which half was missing.  The compositing,
+the sprite, the save-and-restore, the lock against the draw path: all
+of that was already written and already correct.  What was missing was
+that nobody told it where the pointer was.
+.PP
+The check is the strong form.  The window-gesture check takes five
+screendumps, and the input sequence leaves the pointer at a different
+known point for each, so the criterion is a matrix: the arrow's black
+pixels in the 16x16 sprite box at this shot's point, and nothing at the
+other four shots' points.  It comes out diagonal \- 145 on it and 0
+off it, five times over, the same 145 pixels the arrow's mask has.  An
+arrow that were painted and never lifted would fill the matrix rather
+than its diagonal, and an arrow drawn at a stale position would put the
+145 in the wrong column.
+.PP
+The arrow waits to be told where it is.  The first cut had
+.CW cursor.c
+seed the centre of the screen and draw there, which is what it had
+always done on the full personality \- and the pair check failed at
+once:
+.CW "and it paints the screen" ,
+which reads back the middle of the frame buffer and four points inside
+its corners and wants rio's
+.CW 0x777777 ,
+found the arrow's black in the middle instead.  It was right to.  Until
+a packet has arrived there is no pointer, and an arrow before then is a
+mark on the screen that nothing put there.  So the position carries a
+third number saying it has been reported, both drivers set it when they
+publish, and the sprite draws nothing until it is set.  On the full
+personality that changes nothing, because
+.CW mouse.c
+publishes a position as it starts.
+.PP
+One number in the check moved because of this and is worth naming: after
+the second window is deleted, the rectangle it occupied holds 56 white
+pixels rather than none, and they are the arrow's outline, because the
+pointer is still where the window was pointed at.  The criterion says
+so and bounds them rather than leaving a threshold with room in it for
+something unexplained.
 .NH 2
 Track three: the library-OS personality execs a program, then rio
 .PP
@@ -9143,8 +9224,8 @@ check clean, the two-machine check run three times:
 .CW p9linux
 12,
 .CW p964
-29, keyboard 8, rio 14, the window gestures 9, micro 7, user 10, net 13,
-wire 14, two-machine 20 twice over, the
+29, keyboard 8, rio 14, the window gestures 10, micro 7, user 10, net
+13, wire 14, two-machine 20 twice over, the
 six criteria of the userland the tree builds itself, and two portable
 builds.  A criterion is a sentence a booted kernel printed
 in answer to a command typed at its prompt, so a clean check is also

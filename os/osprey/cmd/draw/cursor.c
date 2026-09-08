@@ -26,8 +26,18 @@ enum {
 	 * position here, in the same page; we only follow it, so the arrow
 	 * is always exactly where /dev/mouse says the pointer is.
 	 */
-	Posoff	= 512,		/* int mx, my - written by mouse.c */
+	Posoff	= 512,		/* int mx, my, valid - written by mouse.c */
 };
+
+/*
+ * The third int at the position is the one that says a position has been
+ * reported at all.  Until a packet has arrived there is no pointer, and
+ * an arrow drawn before then is a mark on a screen nobody put there -
+ * which the pair check noticed at once, reading back the middle of the
+ * frame buffer and finding the arrow's black where the background should
+ * have been.  So the sprite waits for it.
+ */
+enum { Valid = 2 };		/* the third int at posoff */
 
 /*
  * The Plan 9 arrow, exactly as the kernel's devmouse.c defines it: two
@@ -49,7 +59,8 @@ static uchar curset[32] = {
 };
 enum { Hotx = -1, Hoty = -1 };	/* the arrow's hotspot offset */
 
-static uchar	*ring;		/* the mousering page */
+static uchar	*ring;		/* the page the position is read out of */
+static int	posoff;		/* where in it: Posoff in the mouse ring, 0 in the pointer page */
 static int	cx, cy, shown;	/* where the sprite currently sits */
 static ulong	save[Cw*Ch];	/* pixels lifted from under the sprite */
 
@@ -118,9 +129,13 @@ cursorproc(void)
 
 	for(;;){
 		/* volatile: the position is written by another proc */
-		px = ((volatile int*)(ring + Posoff))[0];
-		py = ((volatile int*)(ring + Posoff))[1];
-		if(px != cx || py != cy){
+		if(((volatile int*)(ring + posoff))[Valid] == 0){
+			sleep(5);	/* no pointer has been reported yet */
+			continue;
+		}
+		px = ((volatile int*)(ring + posoff))[0];
+		py = ((volatile int*)(ring + posoff))[1];
+		if(!shown || px != cx || py != cy){
 			lock(&oscurlock);
 			oscursoroff();
 			cx = px;
@@ -142,9 +157,26 @@ oscursorstart(void)
 {
 	void *v;
 
+	/*
+	 * Two places the position can come from.  On the full personality
+	 * the kernel's aux interrupt fills the "mousering" page and the
+	 * user-level mouse driver decodes a position into it at Posoff.  On
+	 * the microkernel personalities the controller belongs to one
+	 * container whose own driver reads port 0x60, and that personality
+	 * writes the position into the kernel's "pointerpos" page instead -
+	 * two ints at offset 0, and nothing else in it.  Either way this
+	 * proc only follows what it is told, so the arrow is exactly where
+	 * /dev/mouse says the pointer is.
+	 */
 	v = segattach(0, "mousering", 0, 4096);	/* whole page: we read Posoff */
-	if(v == (void*)-1)
-		return;			/* no mouse exposed: just no cursor */
+	if(v != (void*)-1 && v != nil)
+		posoff = Posoff;
+	else {
+		v = segattach(0, "pointerpos", 0, 4096);
+		if(v == (void*)-1 || v == nil)
+			return;		/* no pointer exposed: just no cursor */
+		posoff = 0;
+	}
 	ring = v;
 
 	/*
@@ -159,10 +191,11 @@ oscursorstart(void)
 			return;
 		ospreyfb = v;
 	}
-	cx = ospreyfbwid/2;
-	cy = ospreyfbhgt/2;
-	((int*)(ring + Posoff))[0] = cx;	/* a valid position before mouse.c */
-	((int*)(ring + Posoff))[1] = cy;
+	/*
+	 * No seeding: the position is the mouse driver's to publish, and
+	 * this proc draws nothing until one has been.  Seeding it here put
+	 * an arrow in the middle of a screen that no pointer had reached.
+	 */
 	switch(rfork(RFPROC|RFMEM|RFNOWAIT)){
 	case -1:
 		return;

@@ -29,6 +29,7 @@ White = (0xff, 0xff, 0xff)		# cols[BACK], what a window is filled with
 Titlecol = (0x55, 0xaa, 0xaa)		# DGreygreen, the current window's border
 Lighttitle = (0x9e, 0xee, 0xee)		# DPalegreygreen, a window that is not the current one
 Menubord = (0x88, 0xcc, 0x88)		# DMedgreen, the menu's border and nothing else
+Black = (0x00, 0x00, 0x00)		# what the arrow's opaque pixels are drawn in
 
 # genmenuhit.c: Margin 4 outside the text, Vspacing 2 between lines
 Margin, Vspacing, Nitem = 4, 2, 6	# New Resize Move Delete Hide Exit
@@ -95,6 +96,15 @@ def countin(pix, colour, box, w=1280):
                 n += 1
         i = pix.find(tri, i+1)
     return n
+
+
+def arrowat(pix, pt):
+    """The arrow's black pixels in the 16x16 sprite box whose top-left
+    corner is the hotspot.  cursor.c draws the Plan 9 arrow with its
+    hotspot at (-1,-1) from the sprite, and the sprite's black rows start
+    one down and one right of that, so the black lies in exactly this
+    box."""
+    return countin(pix[2], Black, (pt[0], pt[1], pt[0]+15, pt[1]+15))
 
 
 def inset(box, d):
@@ -164,6 +174,9 @@ def main():
     Bmoved = (150, 500, 450, 700)
     Bsized = (700, 300, 1060, 560)
     shots = {k: tmp(k + '-') for k in ('a', 'b', 'm', 'r', 'd')}
+    # where the input sequence leaves the pointer when each shot is taken
+    Ptr = {'a': (680, 420), 'b': (1060, 700), 'm': (300, 600),
+           'r': (1060, 560), 'd': (880, 430)}
     glog, gend = tmp('gest-', '.log'), tmp('gest-end-')
 
     ops = []
@@ -216,6 +229,9 @@ def main():
     area = lambda b: (b[2]-b[0]-12) * (b[3]-b[1]-12)
     rcs = re.findall(r'buddy: exec /bin/rc for container (\d+)', gtext)
 
+    arrows = {k: {j: (arrowat(pix[k], Ptr[j]) if pix[k] else -1) for j in Ptr}
+              for k in Ptr}
+
     results = [
         ("a window is swept and the shot taken while the machine still runs: rio's cols[BACK] "
          "fills the rectangle the mouse was dragged over, inside a border of titlecol - this "
@@ -251,11 +267,13 @@ def main():
          "gone - where it was is rio's background, with none of its white left.  Both halves "
          "are asserted, the window there in the shot before and not there in this one: a "
          "criterion that only looked for background would pass on a rectangle that never held "
-         "a window at all, which is exactly what it did when the gestures were failing",
+         "a window at all, which is exactly what it did when the gestures were failing.  The "
+         "white that is left is the arrow's outline, 56 pixels of it, because the pointer is "
+         "still where the window was pointed at",
          pix['d'] is not None and pix['r'] is not None
          and white('r', Bsized) > area(Bsized) * 0.7
          and grey('d', Bsized) > area(Bsized) * 0.8
-         and white('d', Bsized) < 200),
+         and white('d', Bsized) < 100),
         ("and deleting one window does not take the other with it: the first window is still "
          "filled and still bordered after the second is deleted - bordered in lighttitlecol, "
          "because deleting the current window leaves rio with no current window and not with "
@@ -268,6 +286,15 @@ def main():
          "gestures above are aimed with is that height less genmenuhit.c's two margins divided "
          "by the six items - measured, not assumed",
          ok_menu and pitch == 18),
+        ("and the arrow is drawn where the pointer is and nowhere else: each of the five "
+         "shots has the Plan 9 arrow's black pixels in the 16x16 sprite box at the point the "
+         "mouse packets put the pointer at, and none of them has anything there at the four "
+         "points the other shots' pointers were at - the arrow moved rather than accumulated.  "
+         "It is the draw server that draws it, in its own container, out of a page of two "
+         "numbers this personality writes because it is the one that owns the controller",
+         all(pix[k] is not None for k in Ptr)
+         and all(arrows[k][k] > 120 for k in Ptr)
+         and all(arrows[k][j] < 20 for k in Ptr for j in Ptr if j != k)),
         ("and letting go outside the menu chooses nothing: the shot at the end of that boot has "
          "no menu on it and no window, so the menu measured above was closed by the gesture and "
          "not by the machine falling over",
@@ -280,6 +307,9 @@ def main():
     for what, ok in results:
         print('%-4s %s' % ('ok' if ok else 'FAIL', what))
         if not ok: bad += 1
+    for k in ('a', 'b', 'm', 'r', 'd'):
+        print('arrow in shot %s: %s' % (k, ' '.join('%s@%s=%d' % (j, Ptr[j], arrows[k][j])
+                                                    for j in ('a','b','m','r','d'))))
     print('the menu %r is %d high, pitch %d; /bin/rc for containers %s'
           % (mbox, mh, pitch, ' '.join(rcs)))
     for k, box in (('a', A), ('b', B), ('m', Bmoved), ('r', Bsized), ('d', Bsized)):

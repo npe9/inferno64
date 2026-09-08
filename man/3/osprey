@@ -1377,6 +1377,17 @@ does to put a window's
 on 0 and 1.  A write to a standard descriptor that has been closed or
 dup'd onto goes to the file server rather than out of the console.
 .PP
+The kernel also publishes a page as the physical segment
+.BR pointerpos ,
+x then y at offset zero, wherever a frame buffer is exposed.  It is how
+the container that owns the PS/2 controller tells the container that
+owns the frame buffer where the pointer is: the draw server's software
+cursor reads the
+.B mousering
+page where there is one and this page where there is not, and composites
+the arrow at what it finds.  Two containers of one kernel cannot name
+each other's memory; this is the page the kernel gives them to share.
+.PP
 .B /scripts/osprey-check-riowin.py
 drives the rest of the window system on one booted machine: a second
 window beside the first, then Move, Resize and Delete on it, chosen out
@@ -1384,7 +1395,9 @@ of the menu by arithmetic \- libdraw pops the menu with the last item
 hit under the pointer and spaces the items
 .B font->height+Vspacing
 apart, and the check measures that spacing off a photograph of the menu
-rather than assuming it.
+rather than assuming it.  It also checks the arrow, as a matrix: the
+sprite's black pixels at the point each of its five shots left the
+pointer at and nothing at the other four points.
 .PP
 .B /scripts/osprey-check-rio.py
 types at the window: the word

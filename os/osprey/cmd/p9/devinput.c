@@ -81,6 +81,43 @@ static Rendez	kr;
 static int	nkeysaid;
 
 static int	mx = Winw/2, my = Winh/2, mb;
+
+/*
+ * Where the pointer is, for the container that draws it.
+ *
+ * The arrow is the draw server's to composite, because the draw server
+ * owns the frame buffer, and this personality is the one that knows
+ * where the pointer is: the controller is granted whole to this
+ * container and this driver reads port 0x60 itself, so no kernel handler
+ * fills the "mousering" page the full personality's draw server reads.
+ * The kernel publishes a page for the position instead - "pointerpos",
+ * two ints at offset 0 - and this writes it every time the position
+ * changes.  Attached lazily, on the first packet, because the device is
+ * initialised before the segment exists; a personality on a kernel
+ * without one just has no arrow, as before.
+ */
+static int	*ptrpos;
+static int	ptrtried;
+
+static void
+pointerpos(void)
+{
+	void *v;
+
+	if(ptrpos == nil){
+		if(ptrtried)
+			return;
+		ptrtried = 1;
+		v = (void*)segattach(0, "pointerpos", 0, 4096);
+		if(v == (void*)-1 || v == nil)
+			return;
+		ptrpos = v;
+	}
+	ptrpos[0] = mx;
+	ptrpos[1] = my;
+	ptrpos[2] = 1;			/* and that a pointer has been reported at all */
+}
+
 static ulong	mgen = 1;		/* bumped by every change; a reader's mark */
 static Rendez	mr;
 static int	nmousesaid;
@@ -131,6 +168,7 @@ inputmouse(int dx, int dy, int buttons)
 	/* PS/2 has left, right, middle in bits 0, 1, 2; Plan 9 has 1, 2, 4 */
 	mb = (buttons & 1) | ((buttons & 4) ? 2 : 0) | ((buttons & 2) ? 4 : 0);
 	mgen++;
+	pointerpos();			/* and where the draw server should put the arrow */
 	/* and the same for the mouse: where the packet put the pointer */
 	if(nmousesaid < 8){
 		nmousesaid++;
@@ -274,6 +312,7 @@ inputwrite(Chan *c, void *a, long n, vlong)
 	if(my < 0) my = 0;
 	if(my >= Winh) my = Winh-1;
 	mgen++;
+	pointerpos();			/* a program moved the pointer: the arrow moves too */
 	wakeup(&mr);
 	return n;
 }
