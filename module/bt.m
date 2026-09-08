@@ -494,6 +494,13 @@ L2cap: module
 	Mux: adt {
 		c:	ref Hci->Conn;
 		sig:	int;			# the signalling CID for this link
+		#
+		# What this side will answer a connection request for.
+		# A PSM nobody is listening on is refused with the
+		# reason that is true; one somebody is listening on gets
+		# a channel, configured, on that channel.
+		#
+		psms:	list of (int, chan of ref Chan);
 		mtu:	int;
 		chans:	list of ref Chan;
 		nextid:	int;			# signalling identifier
@@ -527,6 +534,15 @@ L2cap: module
 	# What comes back is read and written with the same csend and
 	# crecv a credit-based channel is.
 	bconnect:	fn(m: ref Mux, psm: int): (ref Chan, string);
+
+	#
+	# and the other way round: say this side will answer a
+	# connection request on that PSM, and take the channels a peer
+	# opens off the channel this returns.  A second listen on the
+	# same PSM is the first one's channel, so two callers cannot
+	# each believe they own it.
+	#
+	listen:	fn(m: ref Mux, psm: int): chan of ref Chan;
 	csend:		fn(m: ref Mux, c: ref Chan, p: array of byte): string;
 	crecv:		fn(m: ref Mux, c: ref Chan): (array of byte, string);
 	cclose:		fn(m: ref Mux, c: ref Chan): string;
@@ -855,6 +871,33 @@ Sdp: module
 	uuidname:	fn(u: string): string;
 
 	#
+	# The server half.  A device that wants to be found by a
+	# Classic host has to answer these, and what it answers with is
+	# a set of records built the same way a client reads them.
+	#
+	# The building blocks: an element of each kind, and a sequence
+	# of them.  A record is a list of (attribute, value), and a
+	# database is a list of records -- the same Rec a client gets
+	# back, so what this side serves and what it reads are the same
+	# thing in the same shape.
+	#
+	uint:	fn(v: int, width: int): ref Elem;
+	uuidof:	fn(u: string): ref Elem;
+	text:	fn(s: string): ref Elem;
+	seq:	fn(l: list of ref Elem): ref Elem;
+
+	# a record's bytes, and a whole answer's
+	packrec:	fn(r: ref Rec): array of byte;
+
+	#
+	# Answer one request.  What goes in is a whole SDP protocol data
+	# unit and what comes out is the answer to it, or nil for a
+	# request this does not serve -- which is answered with an error
+	# rather than with silence.
+	#
+	answer:	fn(db: list of ref Rec, p: array of byte): array of byte;
+
+	#
 	# The HID report descriptor a record carries, or nil.  It lives
 	# in the HID descriptor list, attribute 0x0206, as a sequence of
 	# (descriptor type, bytes) pairs; type 0x22 is the report
@@ -891,6 +934,13 @@ Rfcomm: module
 		up:	int;
 		dead:	string;			# why it went, or nil
 		dlcs:	list of ref Dlc;
+		#
+		# Server channels this side will answer a SABM on, and
+		# where the connections a peer opens arrive.  A session
+		# started by a peer carries both directions: it may open
+		# a port on us while we open one on it.
+		#
+		chans:	list of (int, chan of ref Dlc);
 		lock:	chan of int;
 		# answers the reader hands to whoever is waiting: the
 		# DLCI, the frame or control type, and the value
@@ -927,6 +977,15 @@ Rfcomm: module
 	# one serial port, by the server channel number SDP gave
 	open:	fn(s: ref Sess, ch: int): (ref Dlc, string);
 	close:	fn(d: ref Dlc): string;
+
+	#
+	# Take a session a peer opened, and say this side will answer
+	# on a server channel.  accept() is start()'s other half: the
+	# multiplexer is already up because the peer put it up, so
+	# there is nothing to ask for.
+	#
+	accept:	fn(m: ref L2cap->Mux, ch: ref L2cap->Chan): ref Sess;
+	serve:	fn(s: ref Sess, ch: int): chan of ref Dlc;
 
 	# a stream, not records: a write longer than the frame the peer
 	# agreed to is cut into frames, and a read is whatever arrived

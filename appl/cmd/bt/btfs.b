@@ -227,6 +227,14 @@ Radio: adt {
 	#
 	authc:	chan of string;
 	authlock:	chan of int;
+	#
+	# What this side offers a Classic peer: the service records an
+	# SDP search answers with, and the serial ports they describe.
+	# It is the Classic half of db above, and it is per radio for
+	# the same reason: two radios are two devices.
+	#
+	sdpdb:	list of ref Rec;
+	serials:	list of int;
 };
 
 radios:	list of ref Radio;
@@ -420,6 +428,8 @@ init(nil: ref Draw->Context, argv: list of string)
 		r.authc = chan[1] of string;
 		r.authlock = chan[1] of int;
 		r.authlock <-= 1;
+		r.sdpdb = nil;
+		r.serials = nil;
 		r.db = gattsrv->newdb();
 		r.t = load Bttransport tpath;
 		if(r.t == nil)
@@ -1455,6 +1465,18 @@ ctlwrite(m: ref Tmsg.Write, r: ref Radio, d: ref Dev, s: string)
 			break;
 		}
 		e = hci->inquiry(r.x, hd f == "on");
+	"serial" =>
+		#
+		# Offer a serial port over RFCOMM on that channel, and
+		# publish the service record that says where it is.  A
+		# peer then finds it the way anything Classic is found
+		# rather than being told the number.
+		#
+		if(f == nil || !digits(hd f)){
+			e = "usage: serial channel";
+			break;
+		}
+		e = serial(r, int hd f);
 	"advname" =>
 		if(f == nil){
 			e = "usage: advname name";
@@ -1580,6 +1602,8 @@ connect(d: ref Dev): string
 		if((se := sdpdiscover(d)) != nil)
 			sys->fprint(sys->fildes(2), "btfs: %s: %s\n", d.dir, se);
 		d.lock <-= 1;
+		# and what a peer may ask of us on the same link
+		spawn classicserve(d);
 		return nil;
 	}
 	d.mux = l2cap->start(c);
@@ -1702,6 +1726,153 @@ discover(d: ref Dev): string
 		}
 	}
 	return nil;
+}
+
+#
+# Offer a serial port on an RFCOMM server channel.  Two things happen:
+# the channel is remembered so that a peer's session is answered on
+# it, and a service record is published so that a peer can find it.
+# Neither is any use without the other -- a port nobody can find, or a
+# record for a port that does not answer -- so they are one verb.
+#
+serial(r: ref Radio, ch: int): string
+{
+	if(ch < 1 || ch > 30)
+		return "a server channel is 1 to 30";
+	for(l := r.serials; l != nil; l = tl l)
+		if(hd l == ch)
+			return sprint("channel %d is already offered", ch);
+	r.serials = ch :: r.serials;
+	r.sdpdb = serialrec(r, ch) :: r.sdpdb;
+	return nil;
+}
+
+#
+# The record for one serial port.  It says what it is, what it is
+# called, and how it is reached: L2CAP to the RFCOMM PSM and then that
+# server channel, which is the line a client reads the number out of.
+#
+serialrec(r: ref Radio, ch: int): ref Rec
+{
+	rec := ref Rec;
+	#
+	# Handles are given out here and never given out again, the
+	# same rule the GATT database follows and for the same reason:
+	# a peer that asked once may name what it found.
+	#
+	rec.handle = 16r10000 + len r.sdpdb;
+	rec.attrs = nil;
+	al: list of (int, ref Elem);
+	al = (Sdp->Ahandle, sdp->uint(rec.handle, 4)) :: al;
+	al = (Sdp->Aclasses, sdp->seq(sdp->uuidof("1101") :: nil)) :: al;
+	al = (Sdp->Aprotos, sdp->seq(
+		sdp->seq(sdp->uuidof("0100") :: sdp->uint(Rfcomm->Psm, 2) :: nil) ::
+		sdp->seq(sdp->uuidof("0003") :: sdp->uint(ch, 1) :: nil) :: nil)) :: al;
+	al = (Sdp->Abrowse, sdp->seq(sdp->uuidof(Sdp->Upublic) :: nil)) :: al;
+	al = (Sdp->Aname, sdp->text(sprint("Serial Port %d", ch))) :: al;
+	for(; al != nil; al = tl al)
+		rec.attrs = hd al :: rec.attrs;
+	return rec;
+}
+
+#
+# The other half of a BR/EDR link: what a peer that opened it, or that
+# this side opened, may ask of us.  One process per link, started when
+# the link comes up.
+#
+# It answers service discovery from the radio's records, and hands a
+# serial port to whoever opens one on a channel this side offers.
+#
+classicserve(d: ref Dev)
+{
+	<-d.lock;
+	m := d.mux;
+	r := d.r;
+	d.lock <-= 1;
+	if(m == nil)
+		return;
+	sc := l2cap->listen(m, Sdp->Psm);
+	rc := l2cap->listen(m, Rfcomm->Psm);
+	for(;;){
+		alt {
+		ch := <-sc =>
+			if(ch == nil)
+				return;
+			spawn sdpserve(m, ch, r);
+		ch := <-rc =>
+			if(ch == nil)
+				return;
+			spawn rfserve(m, ch, r);
+		}
+	}
+}
+
+#
+# Service discovery, answered from the radio's records.  One request
+# is one answer and the channel is the peer's; when it goes, so does
+# this.
+#
+sdpserve(m: ref Mux, ch: ref Chan, r: ref Radio)
+{
+	for(;;){
+		(p, e) := l2cap->crecv(m, ch);
+		if(e != nil)
+			return;
+		<-r.bondlock;
+		db := r.sdpdb;
+		r.bondlock <-= 1;
+		a := sdp->answer(db, p);
+		if(a == nil)
+			continue;
+		if(l2cap->csend(m, ch, a) != nil)
+			return;
+	}
+}
+
+#
+# A serial port a peer opened.  The session is the peer's -- it sent
+# the SABM on DLCI 0 -- so this takes it rather than starting it, and
+# says which server channels it will answer on.
+#
+rfserve(m: ref Mux, ch: ref Chan, r: ref Radio)
+{
+	s := rfcomm->accept(m, ch);
+	cs: list of chan of ref Dlc;
+	<-r.bondlock;
+	sl := r.serials;
+	r.bondlock <-= 1;
+	for(; sl != nil; sl = tl sl)
+		cs = rfcomm->serve(s, hd sl) :: cs;
+	for(; cs != nil; cs = tl cs)
+		spawn port(hd cs);
+}
+
+#
+# One port, once a peer has opened it.  What it does is echo, because
+# there is nothing above here yet for a serial port to be: btfs offers
+# the port and something else would have to be what is on the end of
+# it.  That it echoes is said in btfs(4) rather than left to be
+# discovered.
+#
+port(c: chan of ref Dlc)
+{
+	for(;;){
+		d := <-c;
+		if(d == nil)
+			return;
+		spawn echo(d);
+	}
+}
+
+echo(d: ref Dlc)
+{
+	for(;;){
+		(p, e) := rfcomm->read(d);
+		if(e != nil)
+			return;
+		if(rfcomm->write(d, p) != nil)
+			return;
+	}
 }
 
 #
@@ -2850,6 +3021,12 @@ inproc(r: ref Radio)
 			d.seen = daytime();
 			spawn watcher(d);
 			d.lock <-= 1;
+			#
+			# A peer that paged this side is the more likely
+			# one to want something of it, so this matters
+			# more here than on a link this side opened.
+			#
+			spawn classicserve(d);
 			continue;
 		}
 		d.mux = l2cap->start(conn);

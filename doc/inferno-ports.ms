@@ -21276,6 +21276,53 @@ the one that binds and etherusb showed that works, but nothing in this
 bench runs an IP stack over it.
 
 .NH 2
+The other way round
+.PP
+Every Classic piece so far has this side asking a device for
+something.  This is the server halves of the same protocols:
+.CW "serial 5"
+on a controller's
+.CW ctl
+offers a serial port over RFCOMM on channel 5 and publishes the
+service record that says where it is, and a peer that pages this side
+can find it and open it.
+.PP
+Three server halves had to exist for that.  L2CAP had to answer a
+connection request rather than refusing every PSM, which meant a
+listener list, a channel built for a connection this side did not ask
+for, and the configuration exchange run from the other end \(em the
+same exchange, since both sides ask and both answer, so
+.CW accepted()
+is
+.CW bconnect() 's
+second half with the first half already done by the peer.  SDP had to
+answer a search, which meant building records rather than only reading
+them: they are built out of the same
+.CW Elem
+a client gets back and one function turns them into bytes, so there is
+no second encoding to disagree with the decoding.  And RFCOMM had to
+answer a session a peer started, which meant answering the SABM on
+DLCI 0, answering the parameter negotiation for a channel this side
+offers rather than refusing it as not understood, and answering the
+SABM on the channel itself.
+.PP
+The two verbs are one verb on purpose.  A port nobody can find is no
+use, and a record for a port that does not answer is worse than none,
+so
+.CW serial
+does both or neither.
+.PP
+The phase is the mirror of every other Classic one: the model pages,
+opens a channel to PSM 1, searches for the public browse group, reads
+the RFCOMM channel number out of what comes back, opens a channel to
+PSM 3, runs the whole RFCOMM handshake, and writes a line down the
+port.  What it asserts is what it found, since almost none of it shows
+from inside the guest.  The control is asking for a channel that was
+not offered, which has to be refused with DM: a server that answered a
+SABM on any channel would be offering thirty ports rather than the one
+it published.
+
+.NH 2
 A native backtrace from inside the collector
 .PP
 The bench passes under

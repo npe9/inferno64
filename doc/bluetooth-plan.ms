@@ -424,8 +424,22 @@ which may cut a record in the middle of a data element \(em so the
 bytes are joined before anything is parsed, and the bench hands the
 same answer back seventeen bytes at a time to prove it.
 .PP
-What is left is the server half: a device that wants to be found by a
-Classic host has to answer these, and nothing here does.
+The server half is done too.
+.CW "serial N"
+on a controller's
+.CW ctl
+offers a serial port over RFCOMM on that channel and publishes the
+service record that says where it is; a peer that pages this side can
+then open an L2CAP channel to PSM 1, search, read the channel number
+out of the record, open a channel to PSM 3, and open the port.  The
+records are built out of the same
+.CW Elem
+a client reads, and one function turns them into bytes \(em there is
+no second encoding here to disagree with the decoding.
+.PP
+The two verbs are one verb on purpose: a port nobody can find is no
+use, and a record for a port that does not answer is worse than
+none.
 .IP 4.
 .B "RFCOMM."
 Done, and it is what the sentence above asked for:
@@ -458,9 +472,10 @@ the rest of the framing rests on that.  The multiplexer control
 messages are from one reading of the specification and are pinned to
 nothing; that is said here rather than left to be assumed.
 .PP
-What is left of the serial port profile is the profile: an SDP record
-of this side's own, so a device can find the port rather than being
-told its number.
+The serial port profile's own record is done with it:
+.CW "serial N"
+publishes one, so a device finds the port rather than being told its
+number.
 .IP 5.
 .B "Classic HID."
 Done.  A Classic keyboard is found by an inquiry, its report

@@ -83,6 +83,7 @@ start(c: ref Conn): ref Mux
 	# 672 on BR/EDR, both of them the specification's own defaults.
 	#
 	m.sig = Cle;
+	m.psms = nil;
 	m.mtu = 23;
 	if(c.classic){
 		m.sig = Cbredr;
@@ -359,23 +360,41 @@ signal(m: ref Mux, p: array of byte)
 		answer(m, id, code, p[4:4+dlen]);
 	Cbconnreq =>
 		#
-		# a peer opening a BR/EDR channel to us.  Nothing here
-		# serves a PSM, so it is refused with the reason that is
-		# true -- the PSM is not supported -- rather than left
-		# to time out.
+		# A peer opening a BR/EDR channel to us.  If something
+		# is listening on that PSM it gets a channel; if not it
+		# is refused with the reason that is true -- the PSM is
+		# not supported -- rather than left to time out.
 		#
 		if(dlen < 4)
 			return;
+		psm := bt->get16(p, 4);
 		scid := bt->get16(p, 6);
+		<-m.reply;
+		lc := listener(m, psm);
+		cid := 0;
+		c: ref Chan;
+		if(lc != nil){
+			cid = newcid(m);
+			if(cid != 0)
+				c = newbasic(m, psm, cid, scid);
+		}
+		m.reply <-= 1;
+		res := 2;			# PSM not supported
+		if(lc != nil && c == nil)
+			res = 4;		# no resources
+		if(c != nil)
+			res = 0;
 		r := array[12] of byte;
 		r[0] = byte Cbconnresp;
 		r[1] = byte id;
 		bt->put16(r, 2, 8);
-		bt->put16(r, 4, 0);		# no CID on this side
+		bt->put16(r, 4, cid);
 		bt->put16(r, 6, scid);
-		bt->put16(r, 8, 2);		# PSM not supported
+		bt->put16(r, 8, res);
 		bt->put16(r, 10, 0);
 		spawn later(m, r);
+		if(c != nil)
+			spawn accepted(m, c, lc);
 	Cconfreq =>
 		config(m, id, p[4:4+dlen]);
 	Cinforeq =>
@@ -545,6 +564,99 @@ config(m: ref Mux, id: int, p: array of byte)
 later(m: ref Mux, p: array of byte)
 {
 	send(m, m.sig, p);
+}
+
+#
+# Say this side will answer on a PSM.  What comes back is where the
+# channels arrive; a second listen on the same PSM is the first one's
+# channel rather than a second one, because two owners of a PSM is a
+# channel handed to whichever happened to be reading.
+#
+listen(m: ref Mux, psm: int): chan of ref Chan
+{
+	<-m.reply;
+	c := listener(m, psm);
+	if(c == nil){
+		#
+		# Buffered: a peer connects when it feels like it and
+		# not when something here is reading, and a channel that
+		# does not fit is closed rather than dropped, because a
+		# channel nobody owns stays open on the peer for ever.
+		#
+		c = chan[4] of ref Chan;
+		m.psms = (psm, c) :: m.psms;
+	}
+	m.reply <-= 1;
+	return c;
+}
+
+# with the lock held
+listener(m: ref Mux, psm: int): chan of ref Chan
+{
+	for(l := m.psms; l != nil; l = tl l){
+		(p, c) := hd l;
+		if(p == psm)
+			return c;
+	}
+	return nil;
+}
+
+# with the lock held: a basic mode channel this side did not ask for
+newbasic(m: ref Mux, psm, cid, dcid: int): ref Chan
+{
+	c := ref Chan;
+	c.cid = cid;
+	c.state = Swait;
+	c.basic = 1;
+	c.confin = 0;
+	c.psm = psm;
+	c.dcid = dcid;
+	c.mtu = Bmtu;
+	c.mps = 0;
+	c.dmtu = m.mtu;
+	c.dmps = 0;
+	c.rxcred = 0;
+	c.txcred = 0;
+	c.have = 0;
+	c.pdus = 0;
+	c.sdu = nil;
+	c.err = nil;
+	c.sq = chan[Qdepth] of ref Sdu;
+	c.wake = chan[1] of int;
+	c.rwake = chan[1] of int;
+	c.rq = chan[1] of array of byte;
+	m.chans = c :: m.chans;
+	return c;
+}
+
+#
+# A channel a peer opened, once the connection response has gone.  The
+# configuration is the same exchange either way round -- both sides
+# ask and both answer -- so this is bconnect's second half with the
+# first half already done by the peer.
+#
+accepted(m: ref Mux, c: ref Chan, lc: chan of ref Chan)
+{
+	#
+	# A configuration that does not finish is not a channel, and
+	# there is nobody to tell: whoever would have taken it does not
+	# know it exists yet.  So it goes, and the peer sees the
+	# disconnection abandon sends.
+	#
+	if(configure(m, c) != nil){
+		abandon(m, c, 0);
+		return;
+	}
+	<-m.reply;
+	c.state = Sup;
+	m.reply <-= 1;
+	alt {
+	lc <-= c =>	;
+	* =>
+		# nothing is listening any more, and a channel nobody
+		# owns is worse than one that was never opened
+		cclose(m, c);
+	}
 }
 
 #

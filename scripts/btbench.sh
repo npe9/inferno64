@@ -188,6 +188,13 @@
 #		the peer leaving both addresses out, which a link with two
 #		ends can put back; pannotnap is a peer that will not be an
 #		access point and says so
+#	served	the other way round: a peer pages this side, asks it what
+#		it offers, reads the record it gets back, opens the serial
+#		port that record names and writes a line down it.  The
+#		server halves -- answering an L2CAP connection request,
+#		answering a service search out of this side's own records,
+#		and answering a SABM on a channel it offered.  servedwrong
+#		asks for a channel it did not offer, which must be refused
 #	stalefid	a characteristic file kept open across a disconnect
 #		and a reconnect: the old name must be gone.  What the
 #		fix for it changes is not visible from inside the guest
@@ -790,6 +797,39 @@ echo "a Bluetooth link served an ethernet, and a frame went both ways"
 #
 run pancompress "--classic --brconnect --pan --pancompress" pan
 run pannotnap "--classic --brconnect --pan --pannotnap" pannotnap
+#
+# The other way round: this side offering something and a peer finding
+# it.  Every other Classic phase has the guest asking a device for
+# something; this is the server halves of the same protocols.
+#
+run served "--classic --brconnect --served" served
+for want in \
+	'a channel to the guest on psm 0x0001' \
+	'the guest offers rfcomm channel 5' \
+	'a channel to the guest on psm 0x0003' \
+	'the guest sent back down a port the guest offered'
+do
+	n=`grep -c "$want" "$OUT/bthci-served.log" || true`
+	if [ "$n" != 1 ]; then
+		echo "=== phase served ==="
+		echo "BENCH FAIL (served): \"$want\" happened $n times, wanted 1"
+		exit 1
+	fi
+done
+echo "a peer found what this side offers, opened it, and was answered"
+#
+# The control: a serial port on a channel this side did not offer.  A
+# server that answered a SABM on any channel would be offering thirty
+# ports rather than the one it published.
+#
+run servedwrong "--classic --brconnect --served --servedwrong" served
+n=`grep -c 'the guest refused the port' "$OUT/bthci-servedwrong.log" || true`
+if [ "$n" != 1 ]; then
+	echo "=== phase servedwrong ==="
+	echo "BENCH FAIL (servedwrong): a channel nobody offered was refused $n times"
+	exit 1
+fi
+echo "and a channel nobody offered was refused"
 run paired "--peripheral --pairin --rebond" paired
 #
 # and what the model saw from the other side: the confirm this stack

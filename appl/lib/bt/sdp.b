@@ -469,6 +469,277 @@ hiddesc(r: ref Rec): array of byte
 }
 
 #
+# Building a record.  A server's records are the same trees a client
+# reads, so they are built out of the same Elem and turned into bytes
+# by one function -- there is no second encoding here to disagree with
+# the decoding above.
+#
+uint(v, width: int): ref Elem
+{
+	e := ref Elem(Euint, big v, nil, nil, nil, nil);
+	e.n = big v;
+	#
+	# the width is carried in the element by making the bytes now:
+	# an integer's size index is part of its encoding and not of
+	# its value, and packing it later would have to guess.
+	#
+	e.data = array[width] of byte;
+	for(i := 0; i < width; i++)
+		e.data[width-1-i] = byte (v >> (8*i));
+	return e;
+}
+
+uuidof(u: string): ref Elem
+{
+	e := ref Elem(Euuid, big 0, nil, nil, nil, nil);
+	e.uuid = u;
+	e.data = bt->unhex(u);
+	return e;
+}
+
+text(s: string): ref Elem
+{
+	e := ref Elem(Etext, big 0, s, array of byte s, nil, nil);
+	return e;
+}
+
+seq(l: list of ref Elem): ref Elem
+{
+	return ref Elem(Eseq, big 0, nil, nil, nil, l);
+}
+
+#
+# One element's bytes.  The descriptor byte is five bits of type and
+# three of size index, and a length that will not fit in the index is
+# written after it -- the same rule parse() reads, from the other
+# side.
+#
+pack(e: ref Elem): array of byte
+{
+	if(e == nil)
+		return array[1] of {byte (Enil << 3)};
+	case e.ty {
+	Euint or Esint =>
+		return leaf(e.ty, e.data);
+	Euuid =>
+		return leaf(Euuid, e.data);
+	Etext or Eurl =>
+		return leaf(e.ty, e.data);
+	Ebool =>
+		b := array[1] of byte;
+		b[0] = byte 0;
+		if(e.n != big 0)
+			b[0] = byte 1;
+		return leaf(Ebool, b);
+	Eseq or Ealt =>
+		body := array[0] of byte;
+		for(l := e.l; l != nil; l = tl l){
+			one := pack(hd l);
+			nb := array[len body + len one] of byte;
+			nb[0:] = body;
+			nb[len body:] = one;
+			body = nb;
+		}
+		return leaf(e.ty, body);
+	}
+	return array[1] of {byte (Enil << 3)};
+}
+
+#
+# A leaf of that type holding those bytes.  A fixed width type says
+# its length in the size index; anything else says it after the
+# descriptor, in as few bytes as it fits.
+#
+leaf(ty: int, b: array of byte): array of byte
+{
+	n := len b;
+	si := -1;
+	if(ty == Euint || ty == Esint || ty == Euuid || ty == Ebool){
+		case n {
+		1 =>	si = 0;
+		2 =>	si = 1;
+		4 =>	si = 2;
+		8 =>	si = 3;
+		16 =>	si = 4;
+		}
+	}
+	if(si >= 0){
+		r := array[1 + n] of byte;
+		r[0] = byte ((ty << 3) | si);
+		r[1:] = b;
+		return r;
+	}
+	if(n <= 255){
+		r := array[2 + n] of byte;
+		r[0] = byte ((ty << 3) | 5);
+		r[1] = byte n;
+		r[2:] = b;
+		return r;
+	}
+	r := array[3 + n] of byte;
+	r[0] = byte ((ty << 3) | 6);
+	put16b(r, 1, n);
+	r[3:] = b;
+	return r;
+}
+
+#
+# One record as a sequence of alternating attribute ids and values,
+# which is what a client walks.
+#
+packrec(r: ref Rec): array of byte
+{
+	l: list of ref Elem;
+	for(al := r.attrs; al != nil; al = tl al){
+		(id, v) := hd al;
+		l = v :: uint(id, 2) :: l;
+	}
+	rl: list of ref Elem;
+	for(; l != nil; l = tl l)
+		rl = hd l :: rl;
+	return pack(seq(rl));
+}
+
+#
+# Answer one request.  Only the search-and-attributes one is served:
+# it is what a client that wants whole records asks, and the other two
+# are answered with an error rather than with silence, because a
+# request nobody answers is a client that waits.
+#
+answer(db: list of ref Rec, p: array of byte): array of byte
+{
+	if(len p < 5)
+		return nil;
+	pdu := int p[0];
+	tid := get16b(p, 1);
+	plen := get16b(p, 3);
+	if(len p < 5 + plen)
+		return errresp(tid, 16r0003);	# invalid request syntax
+	body := p[5:5+plen];
+	if(pdu != Pssareq)
+		return errresp(tid, 16r0003);
+
+	#
+	# the search pattern, and then how much of an answer to give,
+	# the attributes wanted, and where the last answer stopped
+	#
+	(pat, o, pe) := parse(body, 0);
+	if(pe != nil || pat == nil || pat.ty != Eseq)
+		return errresp(tid, 16r0003);
+	if(o + 2 > len body)
+		return errresp(tid, 16r0003);
+	maxb := get16b(body, o);
+	o += 2;
+	(nil, n2, ae) := parse(body, o);
+	if(ae != nil)
+		return errresp(tid, 16r0003);
+	o += n2;
+	off := 0;
+	if(o < len body){
+		cl := int body[o];
+		if(cl > 0){
+			if(o + 1 + cl > len body)
+				return errresp(tid, 16r0006);
+			for(i := 0; i < cl; i++)
+				off = (off << 8) | int body[o+1+i];
+		}
+	}
+
+	#
+	# every record whose service class list holds every UUID the
+	# pattern named.  A pattern is an and, not an or: a client
+	# asking for two classes wants a record that is both.
+	#
+	l: list of ref Elem;
+	for(rl := db; rl != nil; rl = tl rl)
+		if(matches(hd rl, pat))
+			l = ref Elem(Eseq, big 0, nil, packrec(hd rl), nil, nil) :: l;
+	body2 := array[0] of byte;
+	for(; l != nil; l = tl l){
+		one := (hd l).data;
+		nb := array[len body2 + len one] of byte;
+		nb[0:] = body2;
+		nb[len body2:] = one;
+		body2 = nb;
+	}
+	whole := leaf(Eseq, body2);
+
+	if(off > len whole)
+		return errresp(tid, 16r0006);	# invalid continuation state
+	take := len whole - off;
+	if(maxb > 0 && take > maxb)
+		take = maxb;
+	piece := whole[off:off+take];
+	more := off + take < len whole;
+	cont := array[1] of {byte 0};
+	if(more){
+		cont = array[3] of byte;
+		cont[0] = byte 2;
+		put16b(cont, 1, off + take);
+	}
+	params := array[2 + len piece + len cont] of byte;
+	put16b(params, 0, len piece);
+	params[2:] = piece;
+	params[2+len piece:] = cont;
+	r := array[5 + len params] of byte;
+	r[0] = byte Pssaresp;
+	put16b(r, 1, tid);
+	put16b(r, 3, len params);
+	r[5:] = params;
+	return r;
+}
+
+#
+# whether a record's service class list holds every UUID the pattern
+# named
+#
+matches(r: ref Rec, pat: ref Elem): int
+{
+	cl := r.attr(Aclasses);
+	if(cl == nil)
+		return 0;
+	for(l := pat.l; l != nil; l = tl l){
+		want := hd l;
+		if(want.ty != Euuid)
+			continue;
+		got := 0;
+		for(gl := cl.l; gl != nil; gl = tl gl)
+			if((hd gl).ty == Euuid && (hd gl).uuid == want.uuid)
+				got = 1;
+		#
+		# and the browse group, which a client searching for
+		# everything a device offers asks for and which is not
+		# in the class list
+		#
+		if(!got){
+			bg := r.attr(Abrowse);
+			if(bg != nil)
+				for(bl := bg.l; bl != nil; bl = tl bl)
+					if((hd bl).ty == Euuid && (hd bl).uuid == want.uuid)
+						got = 1;
+		}
+		if(!got)
+			return 0;
+	}
+	return 1;
+}
+
+#
+# An error response carries the code and nothing else: the
+# specification allows an info field after it and there is nothing
+# here to put in one.
+#
+errresp(tid, code: int): array of byte
+{
+	r := array[7] of byte;
+	r[0] = byte Perror;
+	put16b(r, 1, tid);
+	put16b(r, 3, 2);
+	put16b(r, 5, code);
+	return r;
+}
+
+#
 # The few UUIDs worth a name here.  Everything else keeps its number:
 # a table of every assigned number would be a table to keep up to
 # date, and what a client above needs is the ones it acts on.

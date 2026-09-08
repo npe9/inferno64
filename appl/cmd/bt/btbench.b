@@ -310,6 +310,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	"pan" or "pannotnap" =>
 		panphase(mode);
 		return;
+	"served" =>
+		servedphase();
+		return;
 	"brconnect" or "brfail" or "brincoming" =>
 		brlink(mode);
 		return;
@@ -2176,6 +2179,66 @@ panphase(mode: string)
 	sys->print("BT: a frame went out and came back the other way round\n");
 	sys->print("BT: a Bluetooth link as an ethernet\n");
 	writefile(dev + "/ctl", "disconnect");
+	sys->print("BT: done\n");
+}
+
+#
+# The other way round.  Every other Classic phase has this side asking
+# a device for something; here a peer pages this side and asks it what
+# it offers, reads the record it gets back, opens the serial port that
+# record names, and writes a line down it.
+#
+# Nothing inside the guest shows most of that, so what this asserts is
+# the offer being made and the model's account of what it found.
+#
+servedphase()
+{
+	if((e := writefile(mnt + "/0/ctl", "serial 5")) != nil){
+		sys->print("BT: FAILED: serial 5: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	sys->print("BT: offering a serial port on channel 5\n");
+	#
+	# and again, which must be refused: two owners of one channel
+	# is a port whichever of them happens to read
+	#
+	if(writefile(mnt + "/0/ctl", "serial 5") == nil)
+		sys->print("BT: FAILED: the same channel was offered twice\n");
+	else
+		sys->print("BT: and the same channel cannot be offered twice\n");
+	#
+	# An inquiry, which is what makes the peer notice this side is
+	# there; everything after it is the peer's doing.  The offer
+	# above is made first on purpose: a record published after a
+	# peer has already asked is a record it will not see.
+	#
+	if((e = writefile(mnt + "/0/ctl", "inquiry on")) != nil){
+		sys->print("BT: FAILED: inquiry on: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	for(i0 := 0; i0 < 40; i0++){
+		sys->sleep(500);
+		if(hasstr(readfile(mnt + "/0/state"), "inquiry off"))
+			break;
+	}
+	dev := mnt + "/0/remote/" + Chead;
+	st := "";
+	for(i := 0; i < 60; i++){
+		sys->sleep(500);
+		st = trim(readfile(dev + "/state"));
+		if(hasstr(st, "connected"))
+			break;
+	}
+	if(!hasstr(st, "connected")){
+		sys->print("BT: FAILED: the peer never paged: %q\n", st);
+		sys->print("BT: done\n");
+		return;
+	}
+	sys->print("BT: %s\n", st);
+	sys->sleep(6000);
+	sys->print("BT: a peer found what this side offers and opened it\n");
 	sys->print("BT: done\n");
 }
 

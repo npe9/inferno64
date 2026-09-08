@@ -263,6 +263,23 @@ sdpsplit = 0
 if '--sdpsplit' in sys.argv:
     sdpsplit = int(sys.argv[sys.argv.index('--sdpsplit') + 1])
 
+# --served: the peer pages this side and then asks it what it offers,
+# which is the other way round from every other Classic phase here.
+# It searches for the public browse group, reads the record it gets
+# back, opens an RFCOMM session on the channel that record names, and
+# writes a line down it.
+#
+# What is being tested is the server halves: the guest answering an
+# L2CAP connection request, answering a service discovery search out
+# of its own records, and answering a SABM on a server channel.
+served = '--served' in sys.argv
+
+# --servedwrong: with --served, the peer asks for a serial port on a
+# channel the guest did not offer.  It has to be refused with DM: a
+# server that answered a SABM on any channel would be offering thirty
+# ports rather than the one it published.
+servedwrong = '--servedwrong' in sys.argv
+
 # --pan: with --brconnect, the peer is a network access point.  Its
 # service record says so, it answers L2CAP on the BNEP PSM, it agrees
 # to the setup, and then it echoes every ethernet frame back with the
@@ -1572,8 +1589,22 @@ class Model:
         # the CIDs mean different things there: 1 is signalling, and
         # anything else is a channel this side handed out.
         #
-        if (brl2cap or sdp or rfcomm or chid or pan) \
+        if (brl2cap or sdp or rfcomm or chid or pan or served) \
            and handle == getattr(self, 'brhandle', None):
+            if served:
+                #
+                # The other way round: this side is the client, so a
+                # frame on the signalling channel is an answer to
+                # something it asked, and a frame on a channel it
+                # opened is that service answering.
+                #
+                if cid == 1:
+                    self.srv_sig(payload)
+                elif cid == 0x0070:
+                    self.srv_sdp_answer(payload)
+                elif cid == 0x0071:
+                    self.srv_rf_in(payload)
+                return
             if cid == 1:
                 self.brsig(payload)
             elif cid == getattr(self, 'brdcid', None):
@@ -2161,6 +2192,13 @@ class Model:
             self.inquiring = False
             self.event(0x01, bytes([0]))
             print('bthci: inquiry complete', flush=True)
+        if served:
+            # page this side, then ask it what it offers
+            time.sleep(0.5)
+            addr, cls, psrm, clk, name, eir = CLASSICDEVS[1]
+            print('bthci: the peer pages, to ask what is offered', flush=True)
+            self.event(0x04, addr + struct.pack('<I', cls)[:3] + bytes([1]))
+            threading.Thread(target=self.ask_offered, daemon=True).start()
         if brincoming:
             # the peer pages this side: class of device, link type ACL
             time.sleep(0.5)
@@ -2608,6 +2646,186 @@ class Model:
             self.bracl(self.brscid, bytes([0x02]) + rest)
         else:
             self.bracl(self.brscid, bytes([0x00]) + src + dst + rest)
+
+    #
+    # The peer as a client of the guest.  Everything here is the
+    # mirror of what the guest does to the model elsewhere: an L2CAP
+    # connection request and a configuration each way, a service
+    # search, and then an RFCOMM session on the channel the answer
+    # named.
+    #
+    def ask_offered(self):
+        time.sleep(1.5)
+        self.srvcid = {}
+        self.srvpend = {}
+        # a channel to the guest's service discovery server
+        self.br_connect(0x0001, 0x0070)
+
+    def br_connect(self, psm, scid):
+        self.srvpend[scid] = psm
+        self.bracl(1, bytes([0x02, 0x50 + (scid & 0x0f)])
+                   + struct.pack('<H', 4) + struct.pack('<HH', psm, scid))
+
+    #
+    # The signalling this side sends as a client: a connection
+    # request, then a configuration request of its own, and answers to
+    # the guest's.
+    #
+    def srv_sig(self, p):
+        code, ident = p[0], p[1]
+        dlen = struct.unpack('<H', p[2:4])[0]
+        d = p[4:4+dlen]
+        if code == 0x03:                       # connection response
+            dcid, scid, res, nil = struct.unpack('<HHHH', d[0:8])
+            psm = self.srvpend.get(scid)
+            if res != 0:
+                print('bthci: the guest refused psm %#06x: %d' % (psm, res),
+                      flush=True)
+                return
+            self.srvcid[psm] = (scid, dcid)
+            print('bthci: a channel to the guest on psm %#06x' % psm, flush=True)
+            opts = bytes([0x01, 0x02]) + struct.pack('<H', 672)
+            self.bracl(1, bytes([0x04, 0x41]) + struct.pack('<H', 4 + len(opts))
+                       + struct.pack('<HH', dcid, 0) + opts)
+        elif code == 0x04:                     # the guest configuring us
+            dcid, flags = struct.unpack('<HH', d[0:4])
+            self.bracl(1, bytes([0x05, ident]) + struct.pack('<H', 6)
+                       + struct.pack('<HHH', dcid, 0, 0))
+            self.srvconfigured(dcid)
+        elif code == 0x05:                     # our configuration answered
+            pass
+
+    #
+    # Both directions configured is a channel.  The service discovery
+    # one is used at once; the RFCOMM one waits for the record that
+    # says which server channel to ask for.
+    #
+    def srvconfigured(self, dcid):
+        for psm, (scid, theirs) in list(self.srvcid.items()):
+            if scid != dcid:
+                continue
+            if psm == 0x0001 and not getattr(self, 'searched', False):
+                self.searched = True
+                threading.Thread(target=self.srv_search, daemon=True).start()
+            if psm == 0x0003 and not getattr(self, 'rfopened', False):
+                self.rfopened = True
+                threading.Thread(target=self.srv_rfcomm, daemon=True).start()
+
+    def srv_search(self):
+        time.sleep(0.3)
+        scid, dcid = self.srvcid[0x0001]
+        # the public browse group, the whole attribute range
+        pat = de_seq(de_uuid('1002'))
+        att = bytes([(1 << 3) | 5, 5, (1 << 3) | 2]) + b'\x00\x00\xff\xff'
+        body = pat + (512).to_bytes(2, 'big') + att + bytes([0])
+        req = bytes([0x06]) + (1).to_bytes(2, 'big') \
+            + len(body).to_bytes(2, 'big') + body
+        print('bthci: asking the guest what it offers', flush=True)
+        self.bracl(dcid, req)
+
+    #
+    # The answer.  What is wanted out of it is the RFCOMM channel
+    # number in the protocol descriptor list, which is the whole
+    # reason to ask.
+    #
+    def srv_sdp_answer(self, p):
+        if len(p) < 5 or p[0] != 0x07:
+            print('bthci: the guest answered pdu %#04x' % p[0], flush=True)
+            return
+        n = int.from_bytes(p[5:7], 'big')
+        body = p[7:7+n]
+        # find "uuid 0003" followed by a one byte integer: the RFCOMM
+        # protocol and its channel number
+        ch = None
+        for i in range(len(body) - 4):
+            if body[i] == 0x19 and body[i+1] == 0x00 and body[i+2] == 0x03 \
+               and body[i+3] == 0x08:
+                ch = body[i+4]
+                break
+        if ch is None:
+            print('bthci: no rfcomm channel in what the guest offered',
+                  flush=True)
+            return
+        print('bthci: the guest offers rfcomm channel %d' % ch, flush=True)
+        if servedwrong:
+            ch = ch + 1
+            print('bthci: asking for channel %d instead' % ch, flush=True)
+        self.srvchan = ch
+        self.br_connect(0x0003, 0x0071)
+
+    #
+    # And the port: a session on DLCI 0, a parameter negotiation, the
+    # data link itself, modem status, and then a line down it.
+    #
+    def srv_rfcomm(self):
+        time.sleep(0.3)
+        ch = self.srvchan
+        self.srvdlci = ch << 1 | 1     # this side did not start the session
+        self.rf_send_srv(0, 0x2F)      # SABM on DLCI 0
+
+    def rf_send_srv(self, dlci, ctrl, info=b'', cred=None):
+        scid, dcid = self.srvcid[0x0003]
+        uih = (ctrl & ~0x10) == 0xEF
+        addr = ((0x02 if not uih else 0x00) | 0x01) | (dlci << 2)
+        if cred is not None:
+            ctrl |= 0x10
+        elif not uih:
+            ctrl |= 0x10
+        hdr = bytes([addr, ctrl])
+        n = len(info)
+        lf = bytes([(n << 1) | 1]) if n <= 127 else bytes([(n << 1) & 0xFE, n >> 7])
+        body = (bytes([cred]) if cred is not None else b'') + info
+        check = self.rf_fcs(hdr) if uih else self.rf_fcs(hdr + lf)
+        self.bracl(dcid, hdr + lf + body + bytes([check]))
+
+    def srv_rf_in(self, p):
+        if len(p) < 4:
+            return
+        dlci = p[0] >> 2
+        ctrl = p[1] & ~0x10
+        o = 2
+        n = p[o] >> 1
+        o += 1 if p[o] & 1 else 2
+        cred = None
+        if ctrl == 0xEF and (p[1] & 0x10):
+            cred = p[o]
+            o += 1
+        body = p[o:o+n]
+        if ctrl == 0x63:                       # UA
+            if dlci == 0:
+                # the multiplexer is up; ask about the channel
+                v = bytes([self.srvdlci, 0xF0, 0, 0]) \
+                    + (330).to_bytes(2, 'little') + bytes([0, 5])
+                self.rf_send_srv(0, 0xEF,
+                                 bytes([0x83, (len(v) << 1) | 1]) + v)
+            else:
+                # the port is open: modem status, then a line
+                v = bytes([0x03 | (self.srvdlci << 2), 0x8D])
+                self.rf_send_srv(0, 0xEF,
+                                 bytes([0xE3, (len(v) << 1) | 1]) + v)
+                threading.Thread(target=self.srv_write, daemon=True).start()
+            return
+        if ctrl == 0x0F:
+            print('bthci: the guest refused the port', flush=True)
+            return
+        if ctrl != 0xEF:
+            return
+        if cred:
+            self.srvcred = getattr(self, 'srvcred', 0) + cred
+        if dlci == 0:
+            if len(body) >= 2 and (body[0] & 0xFC) == 0x80:
+                # the parameter negotiation answered: open the port
+                self.rf_send_srv(self.srvdlci, 0x2F)
+            return
+        if n:
+            print('bthci: the guest sent back %s' % bytes(body).decode(
+                'ascii', 'replace'), flush=True)
+
+    def srv_write(self):
+        time.sleep(0.4)
+        line = b'down a port the guest offered'
+        self.srvcred = getattr(self, 'srvcred', 0)
+        self.rf_send_srv(self.srvdlci, 0xEF, line, cred=5)
 
     # ------------------------------------------------ SMP
     def smp_in(self, p):

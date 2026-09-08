@@ -277,6 +277,22 @@ connected peer already holds stays right; what it has not seen it is
 told about, by the Service Changed indication every database carries.
 The database may therefore grow while a peer is connected, and a peer
 that subscribed walks it again.
+.BI "serial " channel
+offers a serial port over RFCOMM on that server channel to any Classic
+peer, and publishes the service record that says where it is.  The two
+go together and are one verb: a port nobody can find is no use, and a
+record for a port that does not answer is worse than none.  What is on
+the end of the port is an echo, because
+.I btfs
+serves the port and something else would have to be what is behind it.
+A channel already offered is refused rather than taken over.
+.PP
+A peer that pages this side is answered: it may open an L2CAP channel
+to the service discovery PSM and search, and what it gets back is the
+records above; and it may open one to the RFCOMM PSM and ask for a
+channel this side offered.  One that asks for a channel that was not
+offered is refused.
+.PP
 .B "advertise on"
 and
 .B "advertise off"

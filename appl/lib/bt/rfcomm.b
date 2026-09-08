@@ -116,6 +116,7 @@ start(m: ref Mux, ch: ref Chan): (ref Sess, string)
 	s.up = 0;
 	s.dead = nil;
 	s.dlcs = nil;
+	s.chans = nil;
 	s.lock = chan[1] of int;
 	s.lock <-= 1;
 	s.reply = chan[1] of (int, int, array of byte);
@@ -225,6 +226,89 @@ open(s: ref Sess, ch: int): (ref Dlc, string)
 		return (nil, e);
 	}
 	return (d, nil);
+}
+
+#
+# A session a peer opened.  The multiplexer is already up -- the peer
+# put it up with a SABM on DLCI 0 -- so there is nothing to ask for
+# and nothing to wait for; what this does is take the channel and
+# start reading it.
+#
+accept(m: ref Mux, ch: ref Chan): ref Sess
+{
+	s := ref Sess;
+	s.m = m;
+	s.ch = ch;
+	s.up = 0;
+	s.dead = nil;
+	s.dlcs = nil;
+	s.chans = nil;
+	s.lock = chan[1] of int;
+	s.lock <-= 1;
+	s.reply = chan[1] of (int, int, array of byte);
+	spawn reader(s);
+	return s;
+}
+
+#
+# Say this side answers on a server channel.  A second serve of the
+# same channel is the first one's, for the same reason two listens on
+# one PSM are one.
+#
+serve(s: ref Sess, ch: int): chan of ref Dlc
+{
+	<-s.lock;
+	c := served(s, ch);
+	if(c == nil){
+		c = chan[4] of ref Dlc;
+		s.chans = (ch, c) :: s.chans;
+	}
+	s.lock <-= 1;
+	return c;
+}
+
+# with the lock held
+served(s: ref Sess, ch: int): chan of ref Dlc
+{
+	for(l := s.chans; l != nil; l = tl l){
+		(n, c) := hd l;
+		if(n == ch)
+			return c;
+	}
+	return nil;
+}
+
+# with the lock held
+newdlc(s: ref Sess, dlci: int): ref Dlc
+{
+	d := ref Dlc;
+	d.s = s;
+	d.dlci = dlci;
+	d.state = 0;
+	d.mtu = Framesize;
+	d.credits = 0;
+	d.given = 0;
+	d.err = nil;
+	d.rq = chan[Qdepth] of array of byte;
+	d.wake = chan[1] of int;
+	s.dlcs = d :: s.dlcs;
+	return d;
+}
+
+#
+# A connection a peer opened, once the UA has gone.  The grant is what
+# lets it send; handing it over is what lets something above read it.
+#
+opened(d: ref Dlc, sc: chan of ref Dlc)
+{
+	grant(d, Credits);
+	alt {
+	sc <-= d =>	;
+	* =>
+		# nothing is serving it any more, and a port nobody owns
+		# is worse than one that was never opened
+		close(d);
+	}
 }
 
 close(d: ref Dlc): string
@@ -596,9 +680,39 @@ frame(s: ref Sess, p: array of byte)
 		if(d != nil)
 			wake(d);
 	Fsabm =>
-		# nothing here serves a server channel, so there is
-		# nothing for a peer to open
-		spawn answer(s, dlci, Fdm);
+		#
+		# A peer opening something.  DLCI 0 is the multiplexer
+		# and is always answered -- a peer may start the session
+		# rather than this side.  Any other is a server channel,
+		# and is answered only if something here serves it.
+		#
+		if(dlci == 0){
+			<-s.lock;
+			s.up = 1;
+			s.lock <-= 1;
+			spawn answer(s, 0, Fua);
+			return;
+		}
+		<-s.lock;
+		sc := served(s, dlci >> 1);
+		d := bydlci(s, dlci);
+		if(sc != nil && d == nil)
+			d = newdlc(s, dlci);
+		s.lock <-= 1;
+		if(sc == nil){
+			spawn answer(s, dlci, Fdm);
+			return;
+		}
+		spawn answer(s, dlci, Fua);
+		<-s.lock;
+		d.state = 1;
+		d.given = Credits;
+		s.lock <-= 1;
+		#
+		# and the first grant, so the peer may send without
+		# waiting for this side to say anything
+		#
+		spawn opened(d, sc);
 	Fuih =>
 		if(cred > 0){
 			<-s.lock;
@@ -667,6 +781,40 @@ control(s: ref Sess, p: array of byte)
 	#
 	if(ty == Mmsc){
 		spawn answermcc(s, Mmsc, v);
+		return;
+	}
+	if(ty == Mpn && len v >= 8){
+		#
+		# A peer asking about a channel before it opens one.  It
+		# is answered here and not left to the SABM: the answer
+		# is what settles the frame size and the credits, and a
+		# peer told "not supported" gives up rather than asking
+		# again.
+		#
+		dlci := int v[0] & 16r3f;
+		fsize := int v[4] | (int v[5] << 8);
+		if(fsize > Framesize || fsize < 1)
+			fsize = Framesize;
+		r := array[len v] of byte;
+		r[0:] = v;
+		r[1] = byte 16rf0;		# credit based, which is all this does
+		r[4] = byte fsize;
+		r[5] = byte (fsize >> 8);
+		r[7] = byte Credits;		# what the peer may send us
+		<-s.lock;
+		if(served(s, dlci >> 1) != nil){
+			d := bydlci(s, dlci);
+			if(d == nil)
+				d = newdlc(s, dlci);
+			d.mtu = fsize;
+			#
+			# and what it has given us to send with, which is
+			# in its request and nowhere else
+			#
+			d.credits = int v[7] & 7;
+		}
+		s.lock <-= 1;
+		spawn answermcc(s, Mpn, r);
 		return;
 	}
 	nsc := array[1] of byte;
