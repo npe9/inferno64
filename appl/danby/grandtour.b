@@ -1,105 +1,115 @@
-implement Orbital;
+implement Grandtour;
 
-# danby/grandtour - A grand tour of the Solar System
+# danby/grandtour - a grand tour of the Solar System
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared orbital viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its bodies and their masses, its
+# parameters and their ranges, where everything starts and the
+# accelerations between them.  orblab(2) is a library this calls with
+# that script - it owns the window, the integrator, the trails and the
+# controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/gravity.m";
-	gravity: Gravity;
-include "danby/orbital.m";
+include "orblab.m";
+	orblab: Orblab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	gravity = load Gravity Gravity->PATH;
-	return ref Model(array[] of {0.001,0.0003,5.2,9.5,0.52,0.003},
-		array[] of {1.0,0.001,0.0003,0.0});
-}
-
-title(): string
-{
-	return "A grand tour of the Solar System";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"Jupiter mass", "Saturn mass", "Jupiter radius", "Saturn radius", "launch speed", "softening"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.0001,0.00005,2.0,5.0,0.1,0.0002};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {0.01,0.003,8.0,15.0,1.2,0.05};
-}
-
-bodylabels(): array of string
-{
-	return array[] of {"Sun", "Jupiter", "Saturn", "craft"};
-}
-
-initialstate(model: ref Model): array of real
-{
-	p := model.parameter;
-	model.mass[1] = p[0];
-	model.mass[2] = p[1];
-	return array[] of {
-		0.0,0.0,0.0,0.0,
-		p[2],0.0,0.0,math->sqrt(1.0/p[2]),
-		0.0,p[3],-math->sqrt(1.0/p[3]),0.0,
-		1.2,0.0,0.0,p[4]
-	};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 120.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	gravity->derivatives(state,model.mass,1.0,model.parameter[5],derivative);
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"Jupiter distance", "Saturn distance"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	jdx := state[12]-state[4];
-	jdy := state[13]-state[5];
-	sdx := state[12]-state[8];
-	sdy := state[13]-state[9];
-	return array[] of {math->sqrt(jdx*jdx+jdy*jdy),math->sqrt(sdx*sdx+sdy*sdy)};
-}
-
-Command: module
+Grandtour: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title A grand tour of the Solar System\n" +
+	"param Jupiter_mass 0.001 0.0001 0.01\n" +
+	"param Saturn_mass 0.0003 0.00005 0.003\n" +
+	"param Jupiter_radius 5.2 2.0 8.0\n" +
+	"param Saturn_radius 9.5 5.0 15.0\n" +
+	"param launch_speed 0.52 0.1 1.2\n" +
+	"param softening 0.003 0.0002 0.05\n" +
+	"maxtime 120.0\n" +
+	"body Sun 1.0\n" +
+	"body Jupiter Jupiter_mass\n" +
+	"body Saturn Saturn_mass\n" +
+	"body craft 0.0\n" +
+	"state xS 0.0\n" +
+	"state yS 0.0\n" +
+	"state vxS 0.0\n" +
+	"state vyS 0.0\n" +
+	"state xJ Jupiter_radius\n" +
+	"state yJ 0.0\n" +
+	"state vxJ 0.0\n" +
+	"state vyJ sqrt { 1.0 over Jupiter_radius }\n" +
+	"state xA 0.0\n" +
+	"state yA Saturn_radius\n" +
+	"state vxA - sqrt { 1.0 over Saturn_radius }\n" +
+	"state vyA 0.0\n" +
+	"state xC 1.2\n" +
+	"state yC 0.0\n" +
+	"state vxC 0.0\n" +
+	"state vyC launch_speed\n" +
+	# Newtonian gravity between every pair, softened so a close
+	# approach stays finite.  4 bodies is 6 pairs, written out.
+	"eq soft2 softening softening\n" +
+	"eq dxSJ xJ - xS\n" +
+	"eq dySJ yJ - yS\n" +
+	"eq rSJ dxSJ dxSJ + dySJ dySJ + soft2\n" +
+	"eq iSJ 1.0 over { rSJ sqrt { rSJ } }\n" +
+	"eq fxSJ 1.0 dxSJ iSJ\n" +
+	"eq fySJ 1.0 dySJ iSJ\n" +
+	"eq dxSA xA - xS\n" +
+	"eq dySA yA - yS\n" +
+	"eq rSA dxSA dxSA + dySA dySA + soft2\n" +
+	"eq iSA 1.0 over { rSA sqrt { rSA } }\n" +
+	"eq fxSA 1.0 dxSA iSA\n" +
+	"eq fySA 1.0 dySA iSA\n" +
+	"eq dxSC xC - xS\n" +
+	"eq dySC yC - yS\n" +
+	"eq rSC dxSC dxSC + dySC dySC + soft2\n" +
+	"eq iSC 1.0 over { rSC sqrt { rSC } }\n" +
+	"eq fxSC 1.0 dxSC iSC\n" +
+	"eq fySC 1.0 dySC iSC\n" +
+	"eq dxJA xA - xJ\n" +
+	"eq dyJA yA - yJ\n" +
+	"eq rJA dxJA dxJA + dyJA dyJA + soft2\n" +
+	"eq iJA 1.0 over { rJA sqrt { rJA } }\n" +
+	"eq fxJA 1.0 dxJA iJA\n" +
+	"eq fyJA 1.0 dyJA iJA\n" +
+	"eq dxJC xC - xJ\n" +
+	"eq dyJC yC - yJ\n" +
+	"eq rJC dxJC dxJC + dyJC dyJC + soft2\n" +
+	"eq iJC 1.0 over { rJC sqrt { rJC } }\n" +
+	"eq fxJC 1.0 dxJC iJC\n" +
+	"eq fyJC 1.0 dyJC iJC\n" +
+	"eq dxAC xC - xA\n" +
+	"eq dyAC yC - yA\n" +
+	"eq rAC dxAC dxAC + dyAC dyAC + soft2\n" +
+	"eq iAC 1.0 over { rAC sqrt { rAC } }\n" +
+	"eq fxAC 1.0 dxAC iAC\n" +
+	"eq fyAC 1.0 dyAC iAC\n" +
+	"derivative xS vxS\n" +
+	"derivative yS vyS\n" +
+	"derivative vxS Jupiter_mass fxSJ + Saturn_mass fxSA + 0.0 fxSC\n" +
+	"derivative vyS Jupiter_mass fySJ + Saturn_mass fySA + 0.0 fySC\n" +
+	"derivative xJ vxJ\n" +
+	"derivative yJ vyJ\n" +
+	"derivative vxJ - 1.0 fxSJ + Saturn_mass fxJA + 0.0 fxJC\n" +
+	"derivative vyJ - 1.0 fySJ + Saturn_mass fyJA + 0.0 fyJC\n" +
+	"derivative xA vxA\n" +
+	"derivative yA vyA\n" +
+	"derivative vxA - 1.0 fxSA - Jupiter_mass fxJA + 0.0 fxAC\n" +
+	"derivative vyA - 1.0 fySA - Jupiter_mass fyJA + 0.0 fyAC\n" +
+	"derivative xC vxC\n" +
+	"derivative yC vyC\n" +
+	"derivative vxC - 1.0 fxSC - Jupiter_mass fxJC - Saturn_mass fxAC\n" +
+	"derivative vyC - 1.0 fySC - Jupiter_mass fyJC - Saturn_mass fyAC\n" +
+	"observable Jupiter_distance sqrt { { xC - xJ } { xC - xJ } + { yC - yJ } { yC - yJ } }\n" +
+	"observable Saturn_distance sqrt { { xC - xA } { xC - xA } + { yC - yA } { yC - yA } }\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/orbital.dis";
-	if(viewer == nil)
-		raise "fail:grandtour: cannot load the orbital viewer";
-	viewer->init(ctxt, "grandtour" :: "/dis/danby/grandtour.dis" ::
-		"danby-grandtour" :: nil);
+	orblab = load Orblab Orblab->PATH;
+	if(orblab == nil)
+		raise "fail:grandtour: cannot load orblab";
+	if((e := orblab->run(ctxt, "grandtour", SPEC)) != nil)
+		raise "fail:grandtour: "+e;
 }

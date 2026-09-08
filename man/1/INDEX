@@ -423,6 +423,7 @@ nsbuild nsbuild
 ntest sh-expr
 ohgreat ohgreat
 or sh-std
+orblabtest orblabtest
 os os
 p p
 palette palette

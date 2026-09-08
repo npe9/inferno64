@@ -38,17 +38,6 @@ include "danby/flight3d.m";
 	icbmaccuracy: Flight3d;
 include "danby/mechanism.m";
 include "danby/orbital.m";
-	threebody: Orbital;
-	moontrip: Orbital;
-	lagrange1: Orbital;
-	lagrange2: Orbital;
-	lowthrust: Orbital;
-	cometcatch: Orbital;
-	jupiterboost: Orbital;
-	grandtour: Orbital;
-	perihelion: Orbital;
-	poyntingrobertson: Orbital;
-	galaxies: Orbital;
 include "danby/profile.m";
 	starmodel: Profile;
 	whitedwarf: Profile;
@@ -95,21 +84,10 @@ init(nil: ref Draw->Context, nil: list of string)
 	# slidingpendulum1 is now a mechlab(2) script rather than a Mechanism
 	# module - mechlabtest(1) checks it, including the momentum law that
 	# used to be checked here.
-	threebody = load Orbital "/dis/danby/threebody.dis";
-	moontrip = load Orbital "/dis/danby/moontrip.dis";
-	lagrange1 = load Orbital "/dis/danby/lagrange1.dis";
-	lagrange2 = load Orbital "/dis/danby/lagrange2.dis";
 	# aerobraking is no longer an Orbital plugin: d4f6aaf2 made it a
 	# standalone command with its own equations, so there is nothing here
 	# to load as one.  This line loaded /dis/danby/plugin/aerobraking.dis,
 	# which that commit stopped building - the test has been dead since.
-	lowthrust = load Orbital "/dis/danby/lowthrust.dis";
-	cometcatch = load Orbital "/dis/danby/cometcatch.dis";
-	jupiterboost = load Orbital "/dis/danby/jupiterboost.dis";
-	grandtour = load Orbital "/dis/danby/grandtour.dis";
-	perihelion = load Orbital "/dis/danby/perihelion.dis";
-	poyntingrobertson = load Orbital "/dis/danby/poyntingrobertson.dis";
-	galaxies = load Orbital "/dis/danby/galaxies.dis";
 	starmodel = load Profile "/dis/danby/starmodel.dis";
 	whitedwarf = load Profile "/dis/danby/whitedwarf.dis";
 	if(
@@ -120,11 +98,8 @@ init(nil: ref Draw->Context, nil: list of string)
 			cooperation == nil || competition == nil || epidemicmodel == nil ||
 			vaccinationmodel == nil || heartbeat == nil || boommodel == nil ||
 			soccerkick == nil || cricketbowl == nil || cricketswing == nil ||
-			badfootball == nil || icbmaccuracy == nil || lowthrust == nil ||
-			threebody == nil || moontrip == nil || lagrange1 == nil ||
-			lagrange2 == nil || cometcatch == nil || jupiterboost == nil ||
-			grandtour == nil || perihelion == nil || poyntingrobertson == nil ||
-			galaxies == nil || starmodel == nil || whitedwarf == nil)
+			badfootball == nil || icbmaccuracy == nil || starmodel == nil ||
+			whitedwarf == nil)
 		raise "fail:danbytest: missing module";
 	testmap();
 	testpendulum();
@@ -156,17 +131,6 @@ testtrajectory()
 	checkvacuumflight3d(cricketswing,"cricket swing");
 	checkvacuumflight3d(badfootball,"bad football");
 	checkflight3dfinite(icbmaccuracy,"ICBM accuracy");
-	checkorbital(threebody,"three body");
-	checkorbital(moontrip,"Moon trip");
-	checkorbital(lagrange1,"Lagrange 1");
-	checkorbital(lagrange2,"Lagrange 2");
-	checkorbital(lowthrust,"low thrust");
-	checkorbital(cometcatch,"comet catch");
-	checkorbital(jupiterboost,"Jupiter boost");
-	checkorbital(grandtour,"grand tour");
-	checkorbital(perihelion,"perihelion");
-	checkorbital(poyntingrobertson,"Poynting-Robertson");
-	checkorbital(galaxies,"galaxies");
 	checkprofile(starmodel,"stellar model");
 	checkprofile(whitedwarf,"white dwarf");
 	# running's and diving's own property checks moved to mechlabtest(1)
@@ -200,37 +164,6 @@ checkprofile(profilemodule: Profile, name: string)
 		fail(name+" field metadata",real len profilemodule->fieldlabels(),2.0);
 }
 
-checkorbital(orbital: Orbital, name: string)
-{
-	model := orbital->new();
-	labels := orbital->parameterlabels();
-	minima := orbital->parameterminima();
-	maxima := orbital->parametermaxima();
-	if(len labels != len model.parameter || len minima != len model.parameter ||
-			len maxima != len model.parameter)
-		fail(name+" parameter metadata",real len labels,real len model.parameter);
-	if(len orbital->bodylabels() != len model.mass)
-		fail(name+" body metadata",real len orbital->bodylabels(),real len model.mass);
-	state := orbital->initialstate(model);
-	if(len state != 4*len model.mass)
-		fail(name+" state size",real len state,real(4*len model.mass));
-	derivative := array[len state] of real;
-	orbital->evaluate(model,0.0,state,derivative);
-	for(i := 0; i < len derivative; i++)
-		if(derivative[i] != derivative[i])
-			fail(name+" finite derivative",derivative[i],0.0);
-	pxrate := 0.0;
-	pyrate := 0.0;
-	for(i = 0; i < len model.mass; i++){
-		pxrate += model.mass[i]*derivative[4*i+2];
-		pyrate += model.mass[i]*derivative[4*i+3];
-	}
-	check(name+" internal force x",pxrate,0.0,1.0e-11);
-	check(name+" internal force y",pyrate,0.0,1.0e-11);
-	if(len orbital->observables(model,state) != 2 ||
-			len orbital->observablelabels() != 2)
-		fail(name+" observables",real len orbital->observables(model,state),2.0);
-}
 
 checkmechanism(mechanism: Mechanism, name: string)
 {

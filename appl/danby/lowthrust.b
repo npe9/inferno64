@@ -1,114 +1,68 @@
-implement Orbital;
+implement Lowthrust;
 
-# danby/lowthrust - The motion of a rocket: low-thrust orbits
+# danby/lowthrust - low-thrust orbits
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared orbital viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its bodies and their masses, its
+# parameters and their ranges, where everything starts and the
+# accelerations between them.  orblab(2) is a library this calls with
+# that script - it owns the window, the integrator, the trails and the
+# controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/orbital.m";
+include "orblab.m";
+	orblab: Orblab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {1.0,0.006,1.0,0.0,1.0,0.002},
-		array[] of {1.0,0.0});
-}
-
-title(): string
-{
-	return "The motion of a rocket: low-thrust orbits";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"initial radius", "thrust", "gravity", "steering offset", "initial speed", "softening"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.5,-0.02,0.2,-1.57,0.2,0.0002};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {2.0,0.02,2.0,1.57,2.0,0.02};
-}
-
-bodylabels(): array of string
-{
-	return array[] of {"planet", "craft"};
-}
-
-initialstate(model: ref Model): array of real
-{
-	p := model.parameter;
-	return array[] of {0.0,0.0,0.0,0.0,p[0],0.0,0.0,p[4]};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 80.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	x := state[4];
-	y := state[5];
-	vx := state[6];
-	vy := state[7];
-	r := math->sqrt(x*x+y*y+p[5]*p[5]);
-	speed := math->sqrt(vx*vx+vy*vy);
-	tx := 0.0;
-	ty := 0.0;
-	if(speed > 0.0){
-		c := math->cos(p[3]);
-		s := math->sin(p[3]);
-		tx = p[1]*(c*vx-s*vy)/speed;
-		ty = p[1]*(s*vx+c*vy)/speed;
-	}
-	derivative[0] = 0.0;
-	derivative[1] = 0.0;
-	derivative[2] = 0.0;
-	derivative[3] = 0.0;
-	derivative[4] = vx;
-	derivative[5] = vy;
-	derivative[6] = -p[2]*x/(r*r*r)+tx;
-	derivative[7] = -p[2]*y/(r*r*r)+ty;
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"radius", "speed"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {math->sqrt(state[4]*state[4]+state[5]*state[5]),
-		math->sqrt(state[6]*state[6]+state[7]*state[7])};
-}
-
-Command: module
+Lowthrust: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title The motion of a rocket: low-thrust orbits\n" +
+	"param initial_radius 1.0 0.5 2.0\n" +
+	"param thrust 0.006 -0.02 0.02\n" +
+	"param gravity 1.0 0.2 2.0\n" +
+	"param steering_offset 0.0 -1.57 1.57\n" +
+	"param initial_speed 1.0 0.2 2.0\n" +
+	"param softening 0.002 0.0002 0.02\n" +
+	"maxtime 80.0\n" +
+	"body planet 1.0\n" +
+	"body craft 0.0\n" +
+	"state xP 0.0\n" +
+	"state yP 0.0\n" +
+	"state vxP 0.0\n" +
+	"state vyP 0.0\n" +
+	"state xC initial_radius\n" +
+	"state yC 0.0\n" +
+	"state vxC 0.0\n" +
+	"state vyC initial_speed\n" +
+	# the planet is held fixed; the thrust points along the craft's own
+	# velocity turned by the steering offset, and there is no direction to
+	# point along at a standstill, which is what the original's speed test
+	# meant
+	"eq r sqrt { xC xC + yC yC + softening softening }\n" +
+	"eq v sqrt { vxC vxC + vyC vyC }\n" +
+	"eq moving step { v }\n" +
+	"eq unit v + 1.0 - moving\n" +
+	"eq tx moving thrust { cos { steering_offset } vxC - sin { steering_offset } vyC } over unit\n" +
+	"eq ty moving thrust { sin { steering_offset } vxC + cos { steering_offset } vyC } over unit\n" +
+	"derivative xP 0.0\n" +
+	"derivative yP 0.0\n" +
+	"derivative vxP 0.0\n" +
+	"derivative vyP 0.0\n" +
+	"derivative xC vxC\n" +
+	"derivative yC vyC\n" +
+	"derivative vxC { - gravity xC } over { r r r } + tx\n" +
+	"derivative vyC { - gravity yC } over { r r r } + ty\n" +
+	"observable radius sqrt { xC xC + yC yC }\n" +
+	"observable speed v\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/orbital.dis";
-	if(viewer == nil)
-		raise "fail:lowthrust: cannot load the orbital viewer";
-	viewer->init(ctxt, "lowthrust" :: "/dis/danby/lowthrust.dis" ::
-		"danby-lowthrust" :: nil);
+	orblab = load Orblab Orblab->PATH;
+	if(orblab == nil)
+		raise "fail:lowthrust: cannot load orblab";
+	if((e := orblab->run(ctxt, "lowthrust", SPEC)) != nil)
+		raise "fail:lowthrust: "+e;
 }

@@ -1,103 +1,88 @@
-implement Orbital;
+implement Jupiterboost;
 
-# danby/jupiterboost - Using Jupiter to boost the orbit of a spacecraft
+# danby/jupiterboost - boosting a spacecraft past Jupiter
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared orbital viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its bodies and their masses, its
+# parameters and their ranges, where everything starts and the
+# accelerations between them.  orblab(2) is a library this calls with
+# that script - it owns the window, the integrator, the trails and the
+# controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/gravity.m";
-	gravity: Gravity;
-include "danby/orbital.m";
+include "orblab.m";
+	orblab: Orblab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	gravity = load Gravity Gravity->PATH;
-	return ref Model(array[] of {0.001,5.2,0.45,0.16,0.018,1.0},
-		array[] of {1.0,0.001,0.0});
-}
-
-title(): string
-{
-	return "Using Jupiter to boost the orbit of a spacecraft";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"Jupiter mass", "Jupiter radius", "craft speed", "aim offset", "softening", "gravity"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.0001,2.0,0.05,-1.0,0.001,0.2};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {0.01,8.0,1.2,1.0,0.1,2.0};
-}
-
-bodylabels(): array of string
-{
-	return array[] of {"Sun", "Jupiter", "craft"};
-}
-
-initialstate(model: ref Model): array of real
-{
-	p := model.parameter;
-	model.mass[1] = p[0];
-	jupiterspeed := math->sqrt(p[5]/p[1]);
-	return array[] of {
-		0.0,0.0,0.0,0.0,
-		p[1],0.0,0.0,jupiterspeed,
-		p[1]-2.0,p[3],p[2],jupiterspeed
-	};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 45.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	gravity->derivatives(state,model.mass,model.parameter[5],model.parameter[4],derivative);
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"heliocentric speed", "Jupiter distance"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	jdx := state[8]-state[4];
-	jdy := state[9]-state[5];
-	return array[] of {math->sqrt(state[10]*state[10]+state[11]*state[11]),
-		math->sqrt(jdx*jdx+jdy*jdy)};
-}
-
-Command: module
+Jupiterboost: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Using Jupiter to boost the orbit of a spacecraft\n" +
+	"param Jupiter_mass 0.001 0.0001 0.01\n" +
+	"param Jupiter_radius 5.2 2.0 8.0\n" +
+	"param craft_speed 0.45 0.05 1.2\n" +
+	"param aim_offset 0.16 -1.0 1.0\n" +
+	"param softening 0.018 0.001 0.1\n" +
+	"param gravity 1.0 0.2 2.0\n" +
+	"maxtime 45.0\n" +
+	"body Sun 1.0\n" +
+	"body Jupiter Jupiter_mass\n" +
+	"body craft 0.0\n" +
+	"state xS 0.0\n" +
+	"state yS 0.0\n" +
+	"state vxS 0.0\n" +
+	"state vyS 0.0\n" +
+	"state xJ Jupiter_radius\n" +
+	"state yJ 0.0\n" +
+	"state vxJ 0.0\n" +
+	"state vyJ sqrt { gravity over Jupiter_radius }\n" +
+	"state xC Jupiter_radius - 2.0\n" +
+	"state yC aim_offset\n" +
+	"state vxC craft_speed\n" +
+	"state vyC sqrt { gravity over Jupiter_radius }\n" +
+	# Newtonian gravity between every pair, softened so a close
+	# approach stays finite.  3 bodies is 3 pairs, written out.
+	"eq soft2 softening softening\n" +
+	"eq dxSJ xJ - xS\n" +
+	"eq dySJ yJ - yS\n" +
+	"eq rSJ dxSJ dxSJ + dySJ dySJ + soft2\n" +
+	"eq iSJ 1.0 over { rSJ sqrt { rSJ } }\n" +
+	"eq fxSJ gravity dxSJ iSJ\n" +
+	"eq fySJ gravity dySJ iSJ\n" +
+	"eq dxSC xC - xS\n" +
+	"eq dySC yC - yS\n" +
+	"eq rSC dxSC dxSC + dySC dySC + soft2\n" +
+	"eq iSC 1.0 over { rSC sqrt { rSC } }\n" +
+	"eq fxSC gravity dxSC iSC\n" +
+	"eq fySC gravity dySC iSC\n" +
+	"eq dxJC xC - xJ\n" +
+	"eq dyJC yC - yJ\n" +
+	"eq rJC dxJC dxJC + dyJC dyJC + soft2\n" +
+	"eq iJC 1.0 over { rJC sqrt { rJC } }\n" +
+	"eq fxJC gravity dxJC iJC\n" +
+	"eq fyJC gravity dyJC iJC\n" +
+	"derivative xS vxS\n" +
+	"derivative yS vyS\n" +
+	"derivative vxS Jupiter_mass fxSJ + 0.0 fxSC\n" +
+	"derivative vyS Jupiter_mass fySJ + 0.0 fySC\n" +
+	"derivative xJ vxJ\n" +
+	"derivative yJ vyJ\n" +
+	"derivative vxJ - 1.0 fxSJ + 0.0 fxJC\n" +
+	"derivative vyJ - 1.0 fySJ + 0.0 fyJC\n" +
+	"derivative xC vxC\n" +
+	"derivative yC vyC\n" +
+	"derivative vxC - 1.0 fxSC - Jupiter_mass fxJC\n" +
+	"derivative vyC - 1.0 fySC - Jupiter_mass fyJC\n" +
+	"observable heliocentric_speed sqrt { vxC vxC + vyC vyC }\n" +
+	"observable Jupiter_distance sqrt { { xC - xJ } { xC - xJ } + { yC - yJ } { yC - yJ } }\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/orbital.dis";
-	if(viewer == nil)
-		raise "fail:jupiterboost: cannot load the orbital viewer";
-	viewer->init(ctxt, "jupiterboost" :: "/dis/danby/jupiterboost.dis" ::
-		"danby-jupiterboost" :: nil);
+	orblab = load Orblab Orblab->PATH;
+	if(orblab == nil)
+		raise "fail:jupiterboost: cannot load orblab";
+	if((e := orblab->run(ctxt, "jupiterboost", SPEC)) != nil)
+		raise "fail:jupiterboost: "+e;
 }

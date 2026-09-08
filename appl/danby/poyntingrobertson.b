@@ -1,105 +1,64 @@
-implement Orbital;
+implement Poyntingrobertson;
 
-# danby/poyntingrobertson - The Poynting-Robertson effect
+# danby/poyntingrobertson - the Poynting-Robertson effect
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared orbital viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its bodies and their masses, its
+# parameters and their ranges, where everything starts and the
+# accelerations between them.  orblab(2) is a library this calls with
+# that script - it owns the window, the integrator, the trails and the
+# controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/orbital.m";
+include "orblab.m";
+	orblab: Orblab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {1.0,1.0,0.015,0.18,0.001,1.0},array[] of {1.0,0.0});
-}
-
-title(): string
-{
-	return "The Poynting-Robertson effect";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"radius", "speed", "radiation drag", "radiation pressure", "softening", "gravity"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.3,0.2,0.0,0.0,0.0001,0.2};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {3.0,2.0,0.08,0.8,0.02,2.0};
-}
-
-bodylabels(): array of string
-{
-	return array[] of {"Sun", "dust"};
-}
-
-initialstate(model: ref Model): array of real
-{
-	p := model.parameter;
-	return array[] of {0.0,0.0,0.0,0.0,p[0],0.0,0.0,p[1]};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 100.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	x := state[4];
-	y := state[5];
-	vx := state[6];
-	vy := state[7];
-	r2 := x*x+y*y+p[4]*p[4];
-	r := math->sqrt(r2);
-	gravityfactor := -p[5]*(1.0-p[3])/(r2*r);
-	dragfactor := -p[2]/r2;
-	for(i := 0; i < 4; i++)
-		derivative[i] = 0.0;
-	derivative[4] = vx;
-	derivative[5] = vy;
-	derivative[6] = gravityfactor*x+dragfactor*vx;
-	derivative[7] = gravityfactor*y+dragfactor*vy;
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-observablelabels(): array of string
-{
-	return array[] of {"radius", "angular momentum"};
-}
-
-observables(nil: ref Model, state: array of real): array of real
-{
-	return array[] of {math->sqrt(state[4]*state[4]+state[5]*state[5]),
-		state[4]*state[7]-state[5]*state[6]};
-}
-
-Command: module
+Poyntingrobertson: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title The Poynting-Robertson effect\n" +
+	"param radius 1.0 0.3 3.0\n" +
+	"param speed 1.0 0.2 2.0\n" +
+	"param radiation_drag 0.015 0.0 0.08\n" +
+	"param radiation_pressure 0.18 0.0 0.8\n" +
+	"param softening 0.001 0.0001 0.02\n" +
+	"param gravity 1.0 0.2 2.0\n" +
+	"maxtime 100.0\n" +
+	"body Sun 1.0\n" +
+	"body dust 0.0\n" +
+	"state xS 0.0\n" +
+	"state yS 0.0\n" +
+	"state vxS 0.0\n" +
+	"state vyS 0.0\n" +
+	"state xD radius\n" +
+	"state yD 0.0\n" +
+	"state vxD 0.0\n" +
+	"state vyD speed\n" +
+	# radiation pressure lightens the Sun's pull and the aberration of that
+	# same radiation drags on the motion, which is the effect this shows
+	"eq r2 xD xD + yD yD + softening softening\n" +
+	"eq r sqrt { r2 }\n" +
+	"eq gravityfactor { - gravity { 1.0 - radiation_pressure } } over { r2 r }\n" +
+	"eq dragfactor { - radiation_drag } over r2\n" +
+	"derivative xS 0.0\n" +
+	"derivative yS 0.0\n" +
+	"derivative vxS 0.0\n" +
+	"derivative vyS 0.0\n" +
+	"derivative xD vxD\n" +
+	"derivative yD vyD\n" +
+	"derivative vxD gravityfactor xD + dragfactor vxD\n" +
+	"derivative vyD gravityfactor yD + dragfactor vyD\n" +
+	"observable radius sqrt { xD xD + yD yD }\n" +
+	"observable angular_momentum xD vyD - yD vxD\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/orbital.dis";
-	if(viewer == nil)
-		raise "fail:poyntingrobertson: cannot load the orbital viewer";
-	viewer->init(ctxt, "poyntingrobertson" :: "/dis/danby/poyntingrobertson.dis" ::
-		"danby-poyntingrobertson" :: nil);
+	orblab = load Orblab Orblab->PATH;
+	if(orblab == nil)
+		raise "fail:poyntingrobertson: cannot load orblab";
+	if((e := orblab->run(ctxt, "poyntingrobertson", SPEC)) != nil)
+		raise "fail:poyntingrobertson: "+e;
 }
