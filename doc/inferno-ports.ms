@@ -19983,3 +19983,104 @@ underflows: all real events.  What changed is their cause.  Three
 static-Type underflows in 96 boots became zero in 96 after the fix,
 which is what "downstream" means in practice \(em and it is the model
 for how to re-read the rest.
+.NH 2
+The guard works and the explanation does not close
+.PP
+96 boots at
+.CW "-smp 2"
+with
+.CW H
+and a stale pointer reported separately
+.CW ( "etext 0x32d050" ):
+94 clean, cpu1 up in all 96, and
+.B "zero"
+stale-Modlink reports.  Combined with the previous 96, that is 192
+boots since the guard landed with no
+.CW modstatus
+fault at all, against 5 in the 96 before it.  At that rate, none in 192
+has probability about 0.948 super 192 , around 4 in 100000, so the
+guard is doing something real.
+.PP
+But the mechanism is not established, and it is worth being plain about
+why rather than assuming the obvious.  The guard has three exits.  Two
+of them report and fired zero times in 192 boots.  So whatever it
+prevented left through the silent one \(em
+.CW M
+being
+.CW H
+or nil.  That does not fit the capture.  The faulting instruction was
+the third of the three,
+.CW "MOVQ 0x68(AX), AX" ,
+with
+.CW AX
+holding
+.CW 0x00FF53F000E2C3F0
+loaded by the second.  With
+.CW M
+equal to
+.CW H ,
+.CW "((void*)-1)" ,
+the second instruction would address
+.CW "-1 + 8" ,
+which wraps to 7: a canonical, unmapped address, so a page fault with
+.CW "CR2 = 7" ,
+not the general protection violation with
+.CW "CR2 = 0"
+that every one of those captures shows.  A non-canonical
+.CW M->m
+explains the fault exactly; an
+.CW M
+of
+.CW H
+does not.
+.PP
+So the two halves disagree: the captures say a real pointer with a bad
+.CW m ,
+and the instrumented kernel says that case never occurred in 192 boots.
+Both cannot be right, and the honest answer is that this is not
+resolved.  What is recorded, and what is not: the guard's effect is
+measured and large; its cause is asserted by nobody.  The next capture
+that fires either report will say which, and until one does the
+mechanism stays open.
+.NH 2
+-smp 4
+.PP
+Boots, four processors online, no panic, reaching the shell loop:
+.P1
+cpu0: 1002MHz AuthenticAMD AMD-K8 ...
+cpu1: 1002MHz AuthenticAMD AMD-K8 ...
+cpu2: 1002MHz AuthenticAMD AMD-K8 ...
+cpu3: 1002MHz AuthenticAMD AMD-K8 ...
+nvm: 1 hold the vm, cpu2 <nil>
+runq: 2 dis programs ready at once, cpu2
+.P2
+One boot, not a batch, so it is a smoke test and nothing more.  Note
+which processor the VM lock and the run queue report from: cpu2.  The
+kernel is genuinely running Dis on the APs, and still exactly one
+program at a time.
+.NH 2
+What is left
+.PP
+Two of 96 in the last batch, both general protection violations, both
+at
+.CW "PC 0x2006F7" ,
+which is
+.CW _intrr+0x28
+\(em the
+.CW IRETQ
+itself, with garbage selectors in the error code
+.CW ( AFC8 ,
+.CW 6978 ).
+The frame layout was checked against the built binary rather than the
+source, and balances: 15 register pushes plus
+.CW "SUBQ $8"
+on entry, 15 pops plus
+.CW "ADDQ $8"
+plus
+.CW "ADDQ $16"
+on return, landing exactly on
+.CW RIP ,
+with the nested path summing to the same 40 bytes from the
+.CW R14
+slot.  So this is corrupted frame contents, not the arithmetic changed
+by the interrupt fix.  Two samples; no theory offered.
