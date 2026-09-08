@@ -1,0 +1,781 @@
+From 108d135f4bc316f077eae39b3126936807eb0a16 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Mon, 7 Sep 2026 09:14:05 -0400
+Subject: [PATCH 15/16] hw/i2c: model the BCM2835 SPI/BSC slave, replacing the
+ unimplemented stub
+
+BSC_SL_OFFSET was create_unimp("bcm2835-spis"), so the one peripheral
+that makes a Pi an I2C target was unreachable.
+
+Modelled from the BCM2835 ARM Peripherals datasheet section 11, which
+specifies every bit of CR, FR, RSR, DR, IFLS and IMSC.  Linux has no
+driver for this block -- not upstream and not in the Raspberry Pi
+vendor tree -- so the datasheet is the only source, and it is complete.
+
+It is modelled as a QEMU I2CSlave rather than a sysbus device, so it
+sits on a real bus with a real master driving it, and is attached to
+BSC0 -- the master the ARM can reach.  Wiring a master's pins to the
+slave's is a standard bring-up arrangement on a board, and this is that
+arrangement.  The point of doing it this way is that the master side is
+hw/i2c/bcm2835_i2c.c, which is not part of this series: a byte that
+arrives here has been through code we did not write.  Nothing in that
+file was touched to make this work.
+
+Three datasheet behaviours that are easy to get backwards, modelled as
+specified rather than as convenient:
+
+  RSR's two error bits are cleared by writing ZERO to them.  Every
+  other error bit on this SoC is write-one-to-clear, so the usual idiom
+  leaves the error set forever while appearing to clear it.
+
+  A disabled block does not answer its address at all -- match_and_add
+  returns false rather than the device NAKing -- so a master sees no
+  device rather than a broken one.
+
+  DR carries the FIFO levels, busy flags and both error bits alongside
+  the data byte, and FR reports the same flags at different bit
+  positions.
+
+Not modelled, and logged rather than silently accepted: SPI slave mode,
+because QEMU has no peripheral-side SSI abstraction to attach it to.
+The GPU status and host control registers, and the ENSTAT/ENCTRL
+protocol variants that transfer them as a first data character, are
+storage -- they serve the VideoCore boot path, which has no counterpart
+here.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01BtE1mJ79fHUqzyPBaSgBKx
+---
+ hw/arm/bcm2835_peripherals.c         |  20 +-
+ hw/i2c/bcm2835_bscsl.c               | 574 +++++++++++++++++++++++++++
+ hw/i2c/meson.build                   |   1 +
+ include/hw/arm/bcm2835_peripherals.h |   3 +-
+ include/hw/i2c/bcm2835_bscsl.h       |  52 +++
+ 5 files changed, 648 insertions(+), 2 deletions(-)
+ create mode 100644 hw/i2c/bcm2835_bscsl.c
+ create mode 100644 include/hw/i2c/bcm2835_bscsl.h
+
+diff --git a/hw/arm/bcm2835_peripherals.c b/hw/arm/bcm2835_peripherals.c
+index 2fa120c..8ecb0f9 100644
+--- a/hw/arm/bcm2835_peripherals.c
++++ b/hw/arm/bcm2835_peripherals.c
+@@ -62,6 +62,9 @@ static void bcm2835_peripherals_init(Object *obj)
+ 
+     /* SMI */
+     object_initialize_child(obj, "smi", &s->smi, TYPE_BCM2835_SMI);
++
++    /* SPI/BSC slave */
++    object_initialize_child(obj, "bscsl", &s->bscsl, TYPE_BCM2835_BSCSL);
+     object_initialize_child(obj, "armtimer", &s->armtimer,
+                             TYPE_BCM2835_ARMTIMER);
+ 
+@@ -262,6 +265,22 @@ static void bcm2835_peripherals_realize(DeviceState *dev, Error **errp)
+                                               BCM2835_IC_GPU_IRQ,
+                                               INTERRUPT_I2SPCM));
+ 
++    /*
++     * SPI/BSC slave.  It is an I2C target, so it goes on a bus rather
++     * than on the sysbus, and BSC0's is the one the ARM can reach --
++     * which puts the Pi's own master on the other end of it, the way
++     * strapping the two sets of pins together does on a board.
++     */
++    if (!qdev_realize(DEVICE(&s->bscsl), BUS(s_base->i2c[0].bus), errp)) {
++        return;
++    }
++    memory_region_add_subregion(&s_base->peri_mr, BSC_SL_OFFSET,
++                                &s->bscsl.iomem);
++    qdev_connect_gpio_out(DEVICE(&s->bscsl), 0,
++                          qdev_get_gpio_in_named(DEVICE(&s_base->ic),
++                                                 BCM2835_IC_GPU_IRQ,
++                                                 INTERRUPT_I2CSPISLV));
++
+     /* SMI */
+     qdev_connect_clock_in(DEVICE(&s->smi), "clk",
+                           qdev_get_clock_out(DEVICE(&s_base->cprman), "smi-out"));
+@@ -565,7 +584,6 @@ void bcm_soc_peripherals_common_realize(DeviceState *dev, Error **errp)
+                                                  INTERRUPT_I2C));
+ 
+     create_unimp(s, &s->txp, "bcm2835-txp", TXP_OFFSET, 0x1000);
+-    create_unimp(s, &s->bscsl, "bcm2835-spis", BSC_SL_OFFSET, 0x100);
+     create_unimp(s, &s->dbus, "bcm2835-dbus", DBUS_OFFSET, 0x8000);
+     create_unimp(s, &s->ave0, "bcm2835-ave0", AVE0_OFFSET, 0x8000);
+     create_unimp(s, &s->v3d, "bcm2835-v3d", V3D_OFFSET, 0x1000);
+diff --git a/hw/i2c/bcm2835_bscsl.c b/hw/i2c/bcm2835_bscsl.c
+new file mode 100644
+index 0000000..9b55099
+--- /dev/null
++++ b/hw/i2c/bcm2835_bscsl.c
+@@ -0,0 +1,574 @@
++/*
++ * BCM2835 SPI/BSC slave emulation
++ *
++ * The one peripheral on this SoC that makes the Pi the *slave*: an I2C
++ * (or SPI) target that some other master on the bus talks to.  On a Pi
++ * it is how the VideoCore boots a host, and on a board it is how you
++ * make a Pi look like a peripheral to something else.
++ *
++ * Register layout, bit fields, reset values and behaviour are from the
++ * BCM2835 ARM Peripherals datasheet, section 11.  Linux has no driver
++ * for this block -- neither upstream nor in the Raspberry Pi vendor
++ * tree -- so the datasheet is the only source, and it is a complete
++ * one: every bit of CR, FR, RSR, DR, IFLS and IMSC is specified.
++ *
++ * The block is modelled as a QEMU I2CSlave, so it sits on a real I2C
++ * bus and a real master drives it.  On a Pi 3B it is attached to BSC0,
++ * which is the master the ARM can reach; wiring a master's pins to the
++ * slave's is a standard bring-up arrangement on a board, and this is
++ * that arrangement.  The value of doing it this way is that the master
++ * side is hw/i2c/bcm2835_i2c.c, which is not part of this series: a
++ * transfer that arrives here has been through code we did not write.
++ *
++ * THREE THINGS THE DATASHEET SAYS THAT ARE EASY TO GET BACKWARDS, and
++ * are modelled as specified rather than as convenient:
++ *
++ *   RSR's two error bits are cleared by writing ZERO to them, not one.
++ *   Every other error bit on this SoC is write-one-to-clear.
++ *
++ *   FR and DR report the same six status flags, and DR carries the
++ *   FIFO levels and both error bits alongside the data byte, so a
++ *   driver can get everything from one read.
++ *
++ *   TXFE resets to 1 and RXFE resets to 1, and CR's INV_TXF and
++ *   INV_RXF inverse-status bits change those defaults.  The inversion
++ *   is accepted and stored here; it changes what the GPU-facing status
++ *   register reports, which this model does not implement.
++ *
++ * WHAT THIS DOES NOT MODEL.  SPI mode: the block can be an SPI target
++ * instead of an I2C one, and QEMU's SSI bus has no peripheral-side
++ * abstraction to attach it to, so setting CR's SPI bit is accepted and
++ * logged.  The GPU status and host control registers, and the ENSTAT
++ * and ENCTRL protocol variants that transfer them as a first data
++ * character, are storage: they are for the VideoCore boot path, which
++ * has no counterpart here.
++ *
++ * Copyright (c) 2026 Noah Evans
++ *
++ * This work is licensed under the terms of the GNU GPL, version 2 or later.
++ * See the COPYING file in the top-level directory.
++ */
++
++#include "qemu/osdep.h"
++#include "qemu/log.h"
++#include "qemu/module.h"
++#include "hw/i2c/bcm2835_bscsl.h"
++#include "hw/irq.h"
++#include "hw/qdev-properties.h"
++#include "migration/vmstate.h"
++
++#define R_DR        0x00
++#define R_RSR       0x04
++#define R_SLV       0x08
++#define R_CR        0x0c
++#define R_FR        0x10
++#define R_IFLS      0x14
++#define R_IMSC      0x18
++#define R_RIS       0x1c
++#define R_MIS       0x20
++#define R_ICR       0x24
++#define R_DMACR     0x28
++#define R_TDR       0x2c
++#define R_GPUSTAT   0x30
++#define R_HCTRL     0x34
++#define R_DEBUG1    0x38
++#define R_DEBUG2    0x3c
++
++/* CR */
++#define CR_EN           (1u << 0)
++#define CR_SPI          (1u << 1)
++#define CR_I2C          (1u << 2)
++#define CR_CPHA         (1u << 3)
++#define CR_CPOL         (1u << 4)
++#define CR_ENSTAT       (1u << 5)
++#define CR_ENCTRL       (1u << 6)   /* read-only per the datasheet */
++#define CR_BRK          (1u << 7)
++#define CR_TXE          (1u << 8)
++#define CR_RXE          (1u << 9)
++#define CR_INV_RXF      (1u << 10)
++#define CR_TESTFIFO     (1u << 11)
++#define CR_HOSTCTRLEN   (1u << 12)
++#define CR_INV_TXF      (1u << 13)
++#define CR_WRITABLE     0x3fbf      /* everything but ENCTRL, bits 13:0 */
++
++/* FR */
++#define FR_TXBUSY       (1u << 0)
++#define FR_RXFE         (1u << 1)
++#define FR_TXFF         (1u << 2)
++#define FR_RXFF         (1u << 3)
++#define FR_TXFE         (1u << 4)
++#define FR_RXBUSY       (1u << 5)
++#define FR_TXFLEVEL_SHIFT 6
++#define FR_RXFLEVEL_SHIFT 11
++
++/* DR */
++#define DR_TXBUSY       (1u << 16)
++#define DR_RXFE         (1u << 17)
++#define DR_TXFF         (1u << 18)
++#define DR_RXFF         (1u << 19)
++#define DR_TXFE         (1u << 20)
++#define DR_RXBUSY       (1u << 21)
++#define DR_TXFLEVEL_SHIFT 22
++#define DR_RXFLEVEL_SHIFT 27
++#define DR_OE           (1u << 8)
++#define DR_UE           (1u << 9)
++
++/* RSR: cleared by writing ZERO, see the note above. */
++#define RSR_OE          (1u << 0)
++#define RSR_UE          (1u << 1)
++
++/* IMSC / RIS / MIS / ICR */
++#define INT_RX          (1u << 0)
++#define INT_TX          (1u << 1)
++#define INT_BE          (1u << 2)
++#define INT_OE          (1u << 3)
++#define INT_MASK        0xf
++
++/* SLV */
++#define SLV_ADDR_MASK   0x7f
++
++static uint32_t bscsl_ifls_level(uint32_t sel, uint32_t depth)
++{
++    switch (sel & 7) {
++    case 0:  return depth / 8;
++    case 1:  return depth / 4;
++    case 2:  return depth / 2;
++    case 3:  return depth * 3 / 4;
++    case 4:  return depth * 7 / 8;
++    default: return depth / 8;      /* 101-111 are "not used" */
++    }
++}
++
++static void bscsl_update_irq(BCM2835BscSlState *s)
++{
++    uint32_t depth = BCM2835_BSCSL_FIFO_DEPTH;
++    uint32_t ris = s->ris & (INT_BE | INT_OE);
++
++    if (s->rxlen >= bscsl_ifls_level((s->ifls >> 3) & 7, depth) &&
++        s->rxlen > 0) {
++        ris |= INT_RX;
++    }
++    if (s->txlen <= bscsl_ifls_level(s->ifls & 7, depth)) {
++        ris |= INT_TX;
++    }
++    if (s->rsr & RSR_OE) {
++        ris |= INT_OE;
++    }
++    s->ris = ris;
++
++    qemu_set_irq(s->irq, (s->ris & s->imsc & INT_MASK) != 0);
++}
++
++static uint32_t bscsl_status(BCM2835BscSlState *s, bool for_dr)
++{
++    uint32_t depth = BCM2835_BSCSL_FIFO_DEPTH;
++    uint32_t v = 0;
++    uint32_t txbusy, rxfe, txff, rxff, txfe, rxbusy, txsh, rxsh;
++
++    if (for_dr) {
++        txbusy = DR_TXBUSY; rxfe = DR_RXFE; txff = DR_TXFF;
++        rxff = DR_RXFF; txfe = DR_TXFE; rxbusy = DR_RXBUSY;
++        txsh = DR_TXFLEVEL_SHIFT; rxsh = DR_RXFLEVEL_SHIFT;
++    } else {
++        txbusy = FR_TXBUSY; rxfe = FR_RXFE; txff = FR_TXFF;
++        rxff = FR_RXFF; txfe = FR_TXFE; rxbusy = FR_RXBUSY;
++        txsh = FR_TXFLEVEL_SHIFT; rxsh = FR_RXFLEVEL_SHIFT;
++    }
++
++    if (s->txbusy) {
++        v |= txbusy;
++    }
++    if (s->rxbusy) {
++        v |= rxbusy;
++    }
++    if (s->rxlen == 0) {
++        v |= rxfe;
++    }
++    if (s->rxlen == depth) {
++        v |= rxff;
++    }
++    if (s->txlen == 0) {
++        v |= txfe;
++    }
++    if (s->txlen == depth) {
++        v |= txff;
++    }
++    v |= (s->txlen & 0x1f) << txsh;
++    v |= (s->rxlen & 0x1f) << rxsh;
++    return v;
++}
++
++static bool bscsl_enabled(BCM2835BscSlState *s)
++{
++    return (s->cr & CR_EN) && (s->cr & CR_I2C);
++}
++
++/* ---- the I2C slave side: a master on the bus driving us ---- */
++
++static int bcm2835_bscsl_event(I2CSlave *i2c, enum i2c_event event)
++{
++    BCM2835BscSlState *s = BCM2835_BSCSL(i2c);
++
++    if (!bscsl_enabled(s)) {
++        return -1;                  /* NAK: the block is off */
++    }
++
++    switch (event) {
++    case I2C_START_SEND:
++        if (!(s->cr & CR_RXE)) {
++            return -1;              /* NAK: reception disabled */
++        }
++        s->rxbusy = true;
++        break;
++
++    case I2C_START_RECV:
++        if (!(s->cr & CR_TXE)) {
++            return -1;              /* NAK: transmission disabled */
++        }
++        s->txbusy = true;
++        break;
++
++    case I2C_FINISH:
++    case I2C_NACK:
++        s->rxbusy = false;
++        s->txbusy = false;
++        break;
++
++    default:
++        break;
++    }
++    bscsl_update_irq(s);
++    return 0;
++}
++
++/* A master is writing to us. */
++static int bcm2835_bscsl_send(I2CSlave *i2c, uint8_t data)
++{
++    BCM2835BscSlState *s = BCM2835_BSCSL(i2c);
++    uint32_t tail;
++
++    if (s->rxlen == BCM2835_BSCSL_FIFO_DEPTH) {
++        /* "Set when RX FIFO is full and a new data character is received." */
++        s->rsr |= RSR_OE;
++        bscsl_update_irq(s);
++        return -1;                  /* NAK */
++    }
++    tail = (s->rxhead + s->rxlen) % BCM2835_BSCSL_FIFO_DEPTH;
++    s->rxfifo[tail] = data;
++    s->rxlen++;
++    bscsl_update_irq(s);
++    return 0;
++}
++
++/* A master is reading from us. */
++static uint8_t bcm2835_bscsl_recv(I2CSlave *i2c)
++{
++    BCM2835BscSlState *s = BCM2835_BSCSL(i2c);
++    uint8_t v;
++
++    if (s->txlen == 0) {
++        /*
++         * "Set when TX FIFO is empty and I2C master attempt to read a
++         * data character from I2C slave."  The bus still needs a byte,
++         * and an undriven SDA reads as ones.
++         */
++        s->rsr |= RSR_UE;
++        bscsl_update_irq(s);
++        return 0xff;
++    }
++    v = s->txfifo[s->txhead];
++    s->txhead = (s->txhead + 1) % BCM2835_BSCSL_FIFO_DEPTH;
++    s->txlen--;
++    bscsl_update_irq(s);
++    return v;
++}
++
++/*
++ * Only answer to our programmed address, and only while enabled.  A
++ * disabled block must not respond at all -- a master should see no
++ * device, not a device that NAKs.
++ */
++static bool bcm2835_bscsl_match(I2CSlave *candidate, uint8_t address,
++                                bool broadcast, I2CNodeList *current_devs)
++{
++    BCM2835BscSlState *s = BCM2835_BSCSL(candidate);
++
++    if (!bscsl_enabled(s)) {
++        return false;
++    }
++    if (candidate->address != address && !broadcast) {
++        return false;
++    }
++    I2CNode *node = g_malloc(sizeof(struct I2CNode));
++    node->elt = candidate;
++    QLIST_INSERT_HEAD(current_devs, node, next);
++    return true;
++}
++
++/* ---- the ARM side: the register window at 0x7e214000 ---- */
++
++static uint64_t bcm2835_bscsl_read(void *opaque, hwaddr offset, unsigned size)
++{
++    BCM2835BscSlState *s = opaque;
++    uint32_t v;
++
++    switch (offset) {
++    case R_DR:
++        v = bscsl_status(s, true);
++        if (s->rsr & RSR_OE) {
++            v |= DR_OE;
++        }
++        if (s->rsr & RSR_UE) {
++            v |= DR_UE;
++        }
++        if (s->rxlen > 0) {
++            v |= s->rxfifo[s->rxhead];
++            s->rxhead = (s->rxhead + 1) % BCM2835_BSCSL_FIFO_DEPTH;
++            s->rxlen--;
++            /*
++             * The levels and flags in the top of DR describe the FIFO
++             * as it was when the read was issued, which is what makes
++             * a single DR read enough to drive a receive loop.
++             */
++            bscsl_update_irq(s);
++        }
++        return v;
++
++    case R_RSR:
++        return s->rsr;
++    case R_SLV:
++        return s->slv;
++    case R_CR:
++        return s->cr;
++    case R_FR:
++        return bscsl_status(s, false);
++    case R_IFLS:
++        return s->ifls;
++    case R_IMSC:
++        return s->imsc;
++    case R_RIS:
++        return s->ris;
++    case R_MIS:
++        return s->ris & s->imsc;
++    case R_DMACR:
++        return s->dmacr;
++    case R_GPUSTAT:
++        return s->gpustat;
++    case R_HCTRL:
++        return s->hctrl;
++
++    case R_ICR:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "bcm2835_bscsl: read of the write-only ICR\n");
++        return 0;
++
++    case R_TDR:
++    case R_DEBUG1:
++    case R_DEBUG2:
++        /* Test and debug registers; no observable behaviour here. */
++        return 0;
++
++    default:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "bcm2835_bscsl: read of unknown offset 0x%02"
++                      HWADDR_PRIx "\n", offset);
++        return 0;
++    }
++}
++
++static void bcm2835_bscsl_write(void *opaque, hwaddr offset, uint64_t value,
++                                unsigned size)
++{
++    BCM2835BscSlState *s = opaque;
++    uint32_t tail;
++
++    switch (offset) {
++    case R_DR:
++        if (s->txlen == BCM2835_BSCSL_FIFO_DEPTH) {
++            qemu_log_mask(LOG_GUEST_ERROR,
++                          "bcm2835_bscsl: write to a full TX FIFO\n");
++            break;
++        }
++        tail = (s->txhead + s->txlen) % BCM2835_BSCSL_FIFO_DEPTH;
++        s->txfifo[tail] = value & 0xff;
++        s->txlen++;
++        bscsl_update_irq(s);
++        break;
++
++    case R_RSR:
++        /*
++         * "Cleared by writing 0 to it."  Not write-one-to-clear -- this
++         * is the one block on the SoC that goes the other way, and a
++         * driver that writes the bit back to clear it instead keeps the
++         * error set forever.
++         */
++        s->rsr &= value & (RSR_OE | RSR_UE);
++        bscsl_update_irq(s);
++        break;
++
++    case R_SLV:
++        s->slv = value & SLV_ADDR_MASK;
++        /* The address the bus matches on is programmable at run time. */
++        I2C_SLAVE(s)->address = s->slv;
++        break;
++
++    case R_CR:
++        if ((value & CR_SPI) && !(value & CR_I2C)) {
++            qemu_log_mask(LOG_UNIMP,
++                          "bcm2835_bscsl: SPI slave mode is not modelled; "
++                          "QEMU has no peripheral-side SSI abstraction\n");
++        }
++        s->cr = value & CR_WRITABLE;
++        if (value & CR_BRK) {
++            /* "Stop operation and clear the FIFOs." */
++            s->rxlen = s->rxhead = 0;
++            s->txlen = s->txhead = 0;
++            s->rxbusy = s->txbusy = false;
++            s->ris |= INT_BE;
++        }
++        bscsl_update_irq(s);
++        break;
++
++    case R_IFLS:
++        s->ifls = value & 0x3f;
++        bscsl_update_irq(s);
++        break;
++
++    case R_IMSC:
++        s->imsc = value & INT_MASK;
++        bscsl_update_irq(s);
++        break;
++
++    case R_ICR:
++        s->ris &= ~(value & INT_MASK);
++        bscsl_update_irq(s);
++        break;
++
++    case R_DMACR:
++        s->dmacr = value;
++        break;
++
++    case R_GPUSTAT:
++        s->gpustat = value;
++        break;
++
++    case R_HCTRL:
++        s->hctrl = value;
++        break;
++
++    case R_FR:
++    case R_RIS:
++    case R_MIS:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "bcm2835_bscsl: write to the read-only register at "
++                      "0x%02" HWADDR_PRIx "\n", offset);
++        break;
++
++    case R_TDR:
++    case R_DEBUG1:
++    case R_DEBUG2:
++        break;
++
++    default:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "bcm2835_bscsl: write to unknown offset 0x%02"
++                      HWADDR_PRIx "\n", offset);
++        break;
++    }
++}
++
++static const MemoryRegionOps bcm2835_bscsl_ops = {
++    .read = bcm2835_bscsl_read,
++    .write = bcm2835_bscsl_write,
++    .endianness = DEVICE_NATIVE_ENDIAN,
++    .impl.min_access_size = 4,
++    .impl.max_access_size = 4,
++};
++
++static const VMStateDescription vmstate_bcm2835_bscsl = {
++    .name = TYPE_BCM2835_BSCSL,
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .fields = (const VMStateField[]) {
++        VMSTATE_I2C_SLAVE(parent_obj, BCM2835BscSlState),
++        VMSTATE_UINT32(cr, BCM2835BscSlState),
++        VMSTATE_UINT32(rsr, BCM2835BscSlState),
++        VMSTATE_UINT32(slv, BCM2835BscSlState),
++        VMSTATE_UINT32(ifls, BCM2835BscSlState),
++        VMSTATE_UINT32(imsc, BCM2835BscSlState),
++        VMSTATE_UINT32(ris, BCM2835BscSlState),
++        VMSTATE_UINT32(dmacr, BCM2835BscSlState),
++        VMSTATE_UINT32(gpustat, BCM2835BscSlState),
++        VMSTATE_UINT32(hctrl, BCM2835BscSlState),
++        VMSTATE_UINT8_ARRAY(rxfifo, BCM2835BscSlState,
++                            BCM2835_BSCSL_FIFO_DEPTH),
++        VMSTATE_UINT8_ARRAY(txfifo, BCM2835BscSlState,
++                            BCM2835_BSCSL_FIFO_DEPTH),
++        VMSTATE_UINT32(rxlen, BCM2835BscSlState),
++        VMSTATE_UINT32(rxhead, BCM2835BscSlState),
++        VMSTATE_UINT32(txlen, BCM2835BscSlState),
++        VMSTATE_UINT32(txhead, BCM2835BscSlState),
++        VMSTATE_BOOL(rxbusy, BCM2835BscSlState),
++        VMSTATE_BOOL(txbusy, BCM2835BscSlState),
++        VMSTATE_END_OF_LIST()
++    }
++};
++
++static void bcm2835_bscsl_init(Object *obj)
++{
++    BCM2835BscSlState *s = BCM2835_BSCSL(obj);
++
++    memory_region_init_io(&s->iomem, obj, &bcm2835_bscsl_ops, s,
++                          TYPE_BCM2835_BSCSL, 0x40);
++    qdev_init_gpio_out(DEVICE(obj), &s->irq, 1);
++}
++
++static void bcm2835_bscsl_reset(DeviceState *dev)
++{
++    BCM2835BscSlState *s = BCM2835_BSCSL(dev);
++
++    s->cr = 0;
++    s->rsr = 0;
++    s->slv = 0;
++    s->ifls = 0;
++    s->imsc = 0;
++    s->ris = 0;
++    s->dmacr = 0;
++    s->gpustat = 0;
++    s->hctrl = 0;
++    s->rxlen = s->rxhead = 0;
++    s->txlen = s->txhead = 0;
++    s->rxbusy = s->txbusy = false;
++
++    qemu_set_irq(s->irq, 0);
++}
++
++static void bcm2835_bscsl_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    I2CSlaveClass *k = I2C_SLAVE_CLASS(klass);
++
++    dc->desc = "BCM2835 SPI/BSC slave";
++    device_class_set_legacy_reset(dc, bcm2835_bscsl_reset);
++    dc->vmsd = &vmstate_bcm2835_bscsl;
++
++    k->event = bcm2835_bscsl_event;
++    k->recv = bcm2835_bscsl_recv;
++    k->send = bcm2835_bscsl_send;
++    k->match_and_add = bcm2835_bscsl_match;
++}
++
++static const TypeInfo bcm2835_bscsl_info = {
++    .name          = TYPE_BCM2835_BSCSL,
++    .parent        = TYPE_I2C_SLAVE,
++    .instance_size = sizeof(BCM2835BscSlState),
++    .class_init    = bcm2835_bscsl_class_init,
++    .instance_init = bcm2835_bscsl_init,
++};
++
++static void bcm2835_bscsl_register_types(void)
++{
++    type_register_static(&bcm2835_bscsl_info);
++}
++
++type_init(bcm2835_bscsl_register_types)
+diff --git a/hw/i2c/meson.build b/hw/i2c/meson.build
+index c459adc..2e32909 100644
+--- a/hw/i2c/meson.build
++++ b/hw/i2c/meson.build
+@@ -18,4 +18,5 @@ i2c_ss.add(when: 'CONFIG_PPC4XX', if_true: files('ppc4xx_i2c.c'))
+ i2c_ss.add(when: 'CONFIG_PCA954X', if_true: files('i2c_mux_pca954x.c'))
+ i2c_ss.add(when: 'CONFIG_PMBUS', if_true: files('pmbus_device.c'))
+ i2c_ss.add(when: 'CONFIG_BCM2835_I2C', if_true: files('bcm2835_i2c.c'))
++i2c_ss.add(when: 'CONFIG_BCM2835_I2C', if_true: files('bcm2835_bscsl.c'))
+ system_ss.add_all(when: 'CONFIG_I2C', if_true: i2c_ss)
+diff --git a/include/hw/arm/bcm2835_peripherals.h b/include/hw/arm/bcm2835_peripherals.h
+index e56547a..c6a530e 100644
+--- a/include/hw/arm/bcm2835_peripherals.h
++++ b/include/hw/arm/bcm2835_peripherals.h
+@@ -28,6 +28,7 @@
+ #include "hw/timer/bcm2835_armtimer.h"
+ #include "hw/audio/bcm2835_i2s.h"
+ #include "hw/misc/bcm2835_smi.h"
++#include "hw/i2c/bcm2835_bscsl.h"
+ #include "hw/misc/bcm2835_cprman.h"
+ #include "hw/misc/bcm2835_powermgt.h"
+ #include "hw/sd/sdhci.h"
+@@ -78,7 +79,6 @@ struct BCMSocPeripheralBaseState {
+     UnimplementedDeviceState dbus;
+     UnimplementedDeviceState ave0;
+     UnimplementedDeviceState v3d;
+-    UnimplementedDeviceState bscsl;
+     DWC2State dwc2;
+     UnimplementedDeviceState sdramc;
+ };
+@@ -100,6 +100,7 @@ struct BCM2835PeripheralState {
+     BCM2835ArmTimerState armtimer;
+     BCM2835I2SState i2s;
+     BCM2835SmiState smi;
++    BCM2835BscSlState bscsl;
+     BCM2835GpioState gpio;
+ };
+ 
+diff --git a/include/hw/i2c/bcm2835_bscsl.h b/include/hw/i2c/bcm2835_bscsl.h
+new file mode 100644
+index 0000000..00e7882
+--- /dev/null
++++ b/include/hw/i2c/bcm2835_bscsl.h
+@@ -0,0 +1,52 @@
++/*
++ * BCM2835 SPI/BSC slave
++ *
++ * Copyright (c) 2026 Noah Evans
++ *
++ * This work is licensed under the terms of the GNU GPL, version 2 or later.
++ * See the COPYING file in the top-level directory.
++ */
++
++#ifndef BCM2835_BSCSL_H
++#define BCM2835_BSCSL_H
++
++#include "hw/i2c/i2c.h"
++#include "system/memory.h"
++#include "qom/object.h"
++
++#define TYPE_BCM2835_BSCSL "bcm2835-bscsl"
++OBJECT_DECLARE_SIMPLE_TYPE(BCM2835BscSlState, BCM2835_BSCSL)
++
++/*
++ * The datasheet does not state the depth.  Its level fields are five
++ * bits and its interrupt thresholds go to seven eighths, which puts it
++ * at 16 like the rest of this PrimeCell-shaped family.  The guest
++ * driver measures it rather than assuming it.
++ */
++#define BCM2835_BSCSL_FIFO_DEPTH 16
++
++struct BCM2835BscSlState {
++    I2CSlave parent_obj;
++
++    MemoryRegion iomem;
++    qemu_irq irq;
++
++    uint32_t cr;
++    uint32_t rsr;
++    uint32_t slv;
++    uint32_t ifls;
++    uint32_t imsc;
++    uint32_t ris;
++    uint32_t dmacr;
++    uint32_t gpustat;
++    uint32_t hctrl;
++
++    uint8_t rxfifo[BCM2835_BSCSL_FIFO_DEPTH];
++    uint8_t txfifo[BCM2835_BSCSL_FIFO_DEPTH];
++    uint32_t rxlen, rxhead;
++    uint32_t txlen, txhead;
++
++    bool rxbusy, txbusy;
++};
++
++#endif
+-- 
+2.51.0
+

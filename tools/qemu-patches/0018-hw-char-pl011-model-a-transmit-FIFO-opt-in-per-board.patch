@@ -1,0 +1,382 @@
+From 8d67adf8ab2b665dcfac613c8dfad1e55f290cec Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Tue, 8 Sep 2026 19:40:18 -0400
+Subject: [PATCH] hw/char/pl011: model a transmit FIFO, opt-in per board
+
+The PL011 model transmits write-through: every write to UARTDR goes
+straight into the chardev, TXFF never asserts, and a guest can push an
+unbounded number of characters in a single burst.  Real silicon cannot.
+The FIFO fills, TXFF asserts, and the driver has to stop and wait for
+the transmit interrupt that fires as room appears.
+
+The gap matters because it hides driver bugs rather than merely being
+imprecise.  A driver whose transmit-interrupt continuation is missing,
+misrouted or wrong runs perfectly against this model -- its send loop
+simply never stops early -- and stalls the first time it meets a part
+with a FIFO.  Nothing under emulation can tell the two apart.
+
+Add a tx-fifo-depth property.  At its default of zero the device
+behaves exactly as before, so no existing board changes.  Set to N it
+models an N-entry transmit FIFO drained one character at a time by a
+timer, asserting TXFF when full and raising the transmit interrupt as
+each character leaves -- enough to make the driver's continuation path
+load-bearing.  FIFO state migrates in a subsection needed only when the
+property is set.
+
+The drain rate is not a claim about serial timing.  When the guest has
+programmed IBRD/FBRD we pace against the baud rate they select; a guest
+that only ever writes UARTDR never programs them, so the board must
+name a rate in tx-drain-bps.  It has no default: a rate invented in the
+device would be a number nobody could trace back to anything, and
+realize() refuses a depth without one.
+
+bcm2835_peripherals asks for the 16x8 transmit FIFO the BCM2835
+datasheet gives UART0 (s2.2), paced at 3 Mbaud -- the fastest the part
+can be set to, its 48 MHz reference over the minimum divisor of 16 --
+so the cost in console throughput is the least of any rate the hardware
+could really run at.  Measured on an Inferno raspi3b boot: 15.6 s to
+the last self-test marker before, 17.7 s after.
+
+Verified by deleting the transmit-interrupt continuation from that
+guest's PL011 driver: with the FIFO modelled the console stops dead
+part-way through a line (51 lines of 99, truncated mid-word), which is
+the failure the board would have shown.  Against the unpatched model
+the same deletion changes nothing at all.
+
+qtest-aarch64: 28 Ok, 0 Fail, unchanged.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ hw/arm/bcm2835_peripherals.c |  16 ++++
+ hw/char/pl011.c              | 178 +++++++++++++++++++++++++++++++++++
+ include/hw/char/pl011.h      |  17 ++++
+ 3 files changed, 211 insertions(+)
+
+diff --git a/hw/arm/bcm2835_peripherals.c b/hw/arm/bcm2835_peripherals.c
+index 8ecb0f9..34b1111 100644
+--- a/hw/arm/bcm2835_peripherals.c
++++ b/hw/arm/bcm2835_peripherals.c
+@@ -389,6 +389,22 @@ void bcm_soc_peripherals_common_realize(DeviceState *dev, Error **errp)
+ 
+     /* UART0 */
+     qdev_prop_set_chr(DEVICE(&s->uart0), "chardev", serial_hd(0));
++    /*
++     * The BCM2835 datasheet gives UART0 a 16x8 transmit FIFO (s2.2), so
++     * a driver here meets a TXFF that asserts, as it does on the board.
++     * Without this the model transmits write-through, TXFF never
++     * asserts, and a driver's TX-interrupt continuation is never
++     * reached under emulation however wrong it is.
++     *
++     * The drain rate only matters because a guest that never programs
++     * IBRD/FBRD leaves the model with no baud rate to pace against.
++     * 3 Mbaud is the fastest this part can be asked to run -- its
++     * 48 MHz reference divided by the minimum divisor of 16 -- so it
++     * costs the least console throughput of any rate the hardware
++     * could actually be set to, while still being finite.
++     */
++    qdev_prop_set_uint32(DEVICE(&s->uart0), "tx-fifo-depth", 16);
++    qdev_prop_set_uint32(DEVICE(&s->uart0), "tx-drain-bps", 3000000);
+     if (!sysbus_realize(SYS_BUS_DEVICE(&s->uart0), errp)) {
+         return;
+     }
+diff --git a/hw/char/pl011.c b/hw/char/pl011.c
+index 01335d9..b5dd0fd 100644
+--- a/hw/char/pl011.c
++++ b/hw/char/pl011.c
+@@ -31,6 +31,7 @@
+ #include "chardev/char-serial.h"
+ #include "qemu/log.h"
+ #include "qemu/module.h"
++#include "qemu/timer.h"
+ #include "trace.h"
+ 
+ DeviceState *pl011_create(hwaddr addr, qemu_irq irq, Chardev *chr)
+@@ -172,6 +173,12 @@ static inline void pl011_reset_tx_fifo(PL011State *s)
+     /* Reset FIFO flags */
+     s->flags &= ~PL011_FLAG_TXFF;
+     s->flags |= PL011_FLAG_TXFE;
++
++    s->tx_pos = 0;
++    s->tx_count = 0;
++    if (s->tx_timer) {
++        timer_del(s->tx_timer);
++    }
+ }
+ 
+ static void pl011_fifo_rx_put(void *opaque, uint32_t value)
+@@ -224,6 +231,8 @@ static void pl011_loopback_tx(PL011State *s, uint32_t value)
+     pl011_fifo_rx_put(s, value);
+ }
+ 
++static void pl011_tx_fifo_enqueue(PL011State *s, uint8_t data);
++
+ static void pl011_write_txdata(PL011State *s, uint8_t data)
+ {
+     if (!(s->cr & CR_UARTEN)) {
+@@ -235,6 +244,11 @@ static void pl011_write_txdata(PL011State *s, uint8_t data)
+                       "PL011 data written to disabled TX UART\n");
+     }
+ 
++    if (s->tx_fifo_depth != 0) {
++        pl011_tx_fifo_enqueue(s, data);
++        return;
++    }
++
+     /*
+      * XXX this blocks entire thread. Rewrite to use
+      * qemu_chr_fe_write and background I/O callbacks
+@@ -355,6 +369,117 @@ static unsigned int pl011_get_baudrate(const PL011State *s)
+     return (clk / ((s->ibrd << 6) + s->fbrd)) << 2;
+ }
+ 
++/*
++ * A transmit FIFO that actually holds something.
++ *
++ * By default this device transmits straight into the chardev on every
++ * write to UARTDR, so TXFF is never set and a guest can push an
++ * unbounded amount of data through in one go.  Real silicon cannot: the
++ * FIFO fills, TXFF asserts, and the driver has to stop and wait for the
++ * transmit interrupt that fires as the FIFO drains.  A driver whose
++ * TX-interrupt continuation is missing or wrong therefore works
++ * perfectly here and stalls on the board.
++ *
++ * Setting tx-fifo-depth switches this device to a FIFO of that many
++ * entries, drained one character at a time by a timer, which is enough
++ * to make TXFF assert and the transmit interrupt path load-bearing.
++ * The property defaults to zero, so every board that does not ask for
++ * it keeps the write-through behaviour exactly as before.
++ *
++ * The drain rate is not a claim about serial timing.  If the guest has
++ * programmed the divisors we pace against the baud rate they select;
++ * otherwise -- and a guest that only ever writes UARTDR never programs
++ * them -- we pace against tx-drain-bps, which the board must state.
++ * There is no default for it, because a rate invented here would be a
++ * number nobody could trace back to anything.
++ */
++
++static int64_t pl011_tx_char_ns(const PL011State *s)
++{
++    unsigned int baud = pl011_get_baudrate(s);
++
++    if (baud == 0) {
++        baud = s->tx_drain_bps;
++    }
++    /* 8 data bits plus a start and a stop bit. */
++    return (int64_t)10 * NANOSECONDS_PER_SECOND / baud;
++}
++
++static void pl011_tx_fifo_arm(PL011State *s)
++{
++    timer_mod(s->tx_timer,
++              qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + pl011_tx_char_ns(s));
++}
++
++/*
++ * With FIFOs disabled the transmit FIFO becomes a one-byte holding
++ * register, exactly as the RX side already models.
++ */
++static inline unsigned pl011_get_tx_fifo_depth(PL011State *s)
++{
++    return pl011_is_fifo_enabled(s) ? s->tx_fifo_depth : 1;
++}
++
++static void pl011_tx_fifo_drain(void *opaque)
++{
++    PL011State *s = opaque;
++    uint8_t data;
++
++    if (s->tx_count == 0) {
++        return;
++    }
++
++    data = s->tx_fifo[s->tx_pos];
++    s->tx_pos = (s->tx_pos + 1) % s->tx_fifo_depth;
++    s->tx_count--;
++
++    qemu_chr_fe_write_all(&s->chr, &data, 1);
++    pl011_loopback_tx(s, data);
++
++    s->flags &= ~PL011_FLAG_TXFF;
++    if (s->tx_count == 0) {
++        s->flags |= PL011_FLAG_TXFE;
++    } else {
++        pl011_tx_fifo_arm(s);
++    }
++
++    /*
++     * Room has appeared in the FIFO.  This is the event the transmit
++     * interrupt reports on real silicon, and with write-through
++     * transmission there was nothing to report it about.
++     */
++    s->int_level |= INT_TX;
++    pl011_update(s);
++}
++
++static void pl011_tx_fifo_enqueue(PL011State *s, uint8_t data)
++{
++    unsigned depth = pl011_get_tx_fifo_depth(s);
++
++    if (s->tx_count >= depth) {
++        /*
++         * A PL011 discards a write to a full transmit FIFO; the driver
++         * was supposed to read TXFF first.  Say so rather than growing
++         * a queue the hardware does not have.
++         */
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "PL011 data written to a full TX FIFO\n");
++        return;
++    }
++
++    if (s->tx_count == 0) {
++        pl011_tx_fifo_arm(s);
++    }
++    s->tx_fifo[(s->tx_pos + s->tx_count) % s->tx_fifo_depth] = data;
++    s->tx_count++;
++
++    s->flags &= ~PL011_FLAG_TXFE;
++    if (s->tx_count == depth) {
++        s->flags |= PL011_FLAG_TXFF;
++    }
++    pl011_update(s);
++}
++
+ static void pl011_trace_baudrate_change(const PL011State *s)
+ {
+     trace_pl011_baudrate_change(pl011_get_baudrate(s),
+@@ -588,6 +713,27 @@ static int pl011_post_load(void *opaque, int version_id)
+     return 0;
+ }
+ 
++static bool pl011_tx_fifo_needed(void *opaque)
++{
++    PL011State *s = opaque;
++
++    return s->tx_fifo_depth != 0;
++}
++
++static const VMStateDescription vmstate_pl011_tx_fifo = {
++    .name = "pl011/tx_fifo",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .needed = pl011_tx_fifo_needed,
++    .fields = (const VMStateField[]) {
++        VMSTATE_UINT8_ARRAY(tx_fifo, PL011State, PL011_TX_FIFO_DEPTH_MAX),
++        VMSTATE_INT32(tx_pos, PL011State),
++        VMSTATE_INT32(tx_count, PL011State),
++        VMSTATE_TIMER_PTR(tx_timer, PL011State),
++        VMSTATE_END_OF_LIST()
++    }
++};
++
+ static const VMStateDescription vmstate_pl011 = {
+     .name = "pl011",
+     .version_id = 2,
+@@ -614,6 +760,7 @@ static const VMStateDescription vmstate_pl011 = {
+     },
+     .subsections = (const VMStateDescription * const []) {
+         &vmstate_pl011_clock,
++        &vmstate_pl011_tx_fifo,
+         NULL
+     }
+ };
+@@ -621,6 +768,13 @@ static const VMStateDescription vmstate_pl011 = {
+ static const Property pl011_properties[] = {
+     DEFINE_PROP_CHR("chardev", PL011State, chr),
+     DEFINE_PROP_BOOL("migrate-clk", PL011State, migrate_clk, true),
++    /*
++     * Zero keeps the historical write-through transmitter, in which
++     * TXFF never asserts.  A board that wants the FIFO its part really
++     * has sets both of these; see pl011_tx_char_ns().
++     */
++    DEFINE_PROP_UINT32("tx-fifo-depth", PL011State, tx_fifo_depth, 0),
++    DEFINE_PROP_UINT32("tx-drain-bps", PL011State, tx_drain_bps, 0),
+ };
+ 
+ static void pl011_init(Object *obj)
+@@ -645,10 +799,33 @@ static void pl011_realize(DeviceState *dev, Error **errp)
+ {
+     PL011State *s = PL011(dev);
+ 
++    if (s->tx_fifo_depth > PL011_TX_FIFO_DEPTH_MAX) {
++        error_setg(errp, "tx-fifo-depth must be at most %d",
++                   PL011_TX_FIFO_DEPTH_MAX);
++        return;
++    }
++    if (s->tx_fifo_depth != 0 && s->tx_drain_bps == 0) {
++        error_setg(errp, "tx-fifo-depth requires tx-drain-bps to be set");
++        return;
++    }
++    if (s->tx_fifo_depth != 0) {
++        s->tx_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, pl011_tx_fifo_drain, s);
++    }
++
+     qemu_chr_fe_set_handlers(&s->chr, pl011_can_receive, pl011_receive,
+                              pl011_event, NULL, s, NULL, true);
+ }
+ 
++static void pl011_unrealize(DeviceState *dev)
++{
++    PL011State *s = PL011(dev);
++
++    if (s->tx_timer) {
++        timer_free(s->tx_timer);
++        s->tx_timer = NULL;
++    }
++}
++
+ static void pl011_reset(DeviceState *dev)
+ {
+     PL011State *s = PL011(dev);
+@@ -674,6 +851,7 @@ static void pl011_class_init(ObjectClass *oc, const void *data)
+     DeviceClass *dc = DEVICE_CLASS(oc);
+ 
+     dc->realize = pl011_realize;
++    dc->unrealize = pl011_unrealize;
+     device_class_set_legacy_reset(dc, pl011_reset);
+     dc->vmsd = &vmstate_pl011;
+     device_class_set_props(dc, pl011_properties);
+diff --git a/include/hw/char/pl011.h b/include/hw/char/pl011.h
+index 299ca9b..75211c0 100644
+--- a/include/hw/char/pl011.h
++++ b/include/hw/char/pl011.h
+@@ -18,6 +18,7 @@
+ #include "hw/sysbus.h"
+ #include "chardev/char-fe.h"
+ #include "qom/object.h"
++#include "qemu/timer.h"
+ 
+ #define TYPE_PL011 "pl011"
+ OBJECT_DECLARE_SIMPLE_TYPE(PL011State, PL011)
+@@ -28,6 +29,12 @@ OBJECT_DECLARE_SIMPLE_TYPE(PL011State, PL011)
+ /* Depth of UART FIFO in bytes, when FIFO mode is enabled (else depth == 1) */
+ #define PL011_FIFO_DEPTH 16
+ 
++/*
++ * Largest transmit FIFO a board may ask for with the tx-fifo-depth
++ * property.  The PL011 itself is built with either 16 or 32 entries.
++ */
++#define PL011_TX_FIFO_DEPTH_MAX 32
++
+ struct PL011State {
+     SysBusDevice parent_obj;
+ 
+@@ -47,6 +54,16 @@ struct PL011State {
+     int read_pos;
+     int read_count;
+     int read_trigger;
++    /*
++     * Modelled transmit FIFO.  Inert unless the board sets
++     * tx-fifo-depth; see the block comment in hw/char/pl011.c.
++     */
++    uint8_t tx_fifo[PL011_TX_FIFO_DEPTH_MAX];
++    uint32_t tx_fifo_depth;
++    uint32_t tx_drain_bps;
++    int tx_pos;
++    int tx_count;
++    QEMUTimer *tx_timer;
+     CharBackend chr;
+     qemu_irq irq[6];
+     Clock *clk;
+-- 
+2.51.0
+

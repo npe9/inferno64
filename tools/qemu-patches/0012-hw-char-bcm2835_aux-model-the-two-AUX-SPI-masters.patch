@@ -1,0 +1,574 @@
+From 11a6f63eb5bbbe4644a1aaab090db7310c5ffe3a Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Mon, 7 Sep 2026 07:40:55 -0400
+Subject: [PATCH 12/16] hw/char/bcm2835_aux: model the two AUX SPI masters
+
+The AUX block holds three peripherals behind one AUX_ENABLES register.
+Only the mini UART was modelled; 0x80 and 0xc0 fell through to "Bad
+offset", so a guest could not use either SPI master at all.  The file's
+own header listed "SPI interfaces" as unimplemented.
+
+Both are modelled now, from Linux's drivers/spi/spi-bcm2835aux.c, which
+is the only complete public description of the register fields.
+AUX_ENABLES bits 1 and 2 really gate the two register windows, as they
+do on the SoC.  Bit 0 does the same for the mini UART there, but this
+model has always let the UART answer regardless, and tightening that is
+a separate change with its own risk, so the bit is stored and not
+enforced.
+
+Two things make this block genuinely different from hw/ssi/bcm2835_spi.c
+rather than a second copy of it, and both are modelled:
+
+  the shift length is 1 to 32 bits rather than a whole number of
+  bytes, so a 12-bit ADC is one transfer; and
+
+  transmitted data is taken from the top of the written word while
+  received data arrives right justified, which is what makes a driver
+  written against SPI0 clock out zeroes here.
+
+The IO and TXHOLD windows differ in whether chip select drops after the
+word, and that had to be modelled for the block to be usable at all: an
+m25p16 on the bus answered a JEDEC identify with zeroes until CS
+actually fell and rose, because nothing else can resynchronise a
+peripheral's command state machine.  Nothing wires these lines at
+machine-init time -- a peripheral arrives later from the command line
+-- so the bus children are looked up when a transfer happens.
+
+Attach a peripheral with -device m25p16,bus=aux-spi1,cs=0,drive=...
+
+No serialiser runs: a transfer completes inside the register write that
+starts it, so the TX FIFO never accumulates and TX_FULL never comes on
+by itself.  hw/ssi/bcm2835_spi.c has the same property for the same
+reason.  Variable-width mode is accepted and logged, not modelled, and
+a shift length that is not a whole number of bytes is reported, because
+QEMU's SSI bus moves whole bytes and a slave cannot see a partial one.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01BtE1mJ79fHUqzyPBaSgBKx
+---
+ hw/char/bcm2835_aux.c         | 382 ++++++++++++++++++++++++++++++++--
+ include/hw/char/bcm2835_aux.h |  25 +++
+ 2 files changed, 392 insertions(+), 15 deletions(-)
+
+diff --git a/hw/char/bcm2835_aux.c b/hw/char/bcm2835_aux.c
+index 9e4fbc9..c516dcf 100644
+--- a/hw/char/bcm2835_aux.c
++++ b/hw/char/bcm2835_aux.c
+@@ -11,17 +11,18 @@
+  *
+  * This code is licensed under the GPL.
+  *
+- * At present only the core UART functions (data path for tx/rx) are
+- * implemented. The following features/registers are unimplemented:
+- *  - Line/modem control
+- *  - Scratch register
+- *  - Extra control
+- *  - Baudrate
+- *  - SPI interfaces
++ * The mini UART's data path, its storage registers and both AUX SPI
++ * masters are implemented.  What is not: the mini UART's baud divisor
++ * does not change how fast a chardev accepts bytes, and neither SPI
++ * runs a serialiser -- a transfer completes inside the register write
++ * that starts it, so the TX FIFO never accumulates and TX_FULL never
++ * comes on by itself.  hw/ssi/bcm2835_spi.c has the same property for
++ * the same reason.
+  */
+ 
+ #include "qemu/osdep.h"
+ #include "hw/char/bcm2835_aux.h"
++#include "hw/ssi/ssi.h"
+ #include "hw/irq.h"
+ #include "hw/qdev-properties.h"
+ #include "hw/qdev-properties-system.h"
+@@ -43,6 +44,60 @@
+ #define AUX_MU_STAT_REG 0x64
+ #define AUX_MU_BAUD_REG 0x68
+ 
++/*
++ * The two SPI masters.  SPI1 is at 0x80 and SPI2 at 0xc0; the layout
++ * is identical, so the offsets below are relative to each block's
++ * base.  Register names and bit fields follow Linux's
++ * drivers/spi/spi-bcm2835aux.c, which is the only complete public
++ * description of them.
++ */
++#define AUX_SPI1_BASE   0x80
++#define AUX_SPI2_BASE   0xc0
++#define AUX_SPI_SIZE    0x40
++
++#define AUX_SPI_CNTL0   0x00
++#define AUX_SPI_CNTL1   0x04
++#define AUX_SPI_STAT    0x08
++#define AUX_SPI_PEEK    0x0c
++#define AUX_SPI_IO      0x20    /* 0x20-0x2c all write to the FIFO */
++#define AUX_SPI_TXHOLD  0x30    /* 0x30-0x3c: the same, holding CS */
++
++#define SPI_CNTL0_SPEED     0xfff00000
++#define SPI_CNTL0_CS        0x000e0000
++#define SPI_CNTL0_POSTINPUT 0x00010000
++#define SPI_CNTL0_VARCS     0x00008000
++#define SPI_CNTL0_VARWIDTH  0x00004000
++#define SPI_CNTL0_DOUTHOLD  0x00003000
++#define SPI_CNTL0_ENABLE    0x00000800
++#define SPI_CNTL0_IN_RISING 0x00000400
++#define SPI_CNTL0_CLEARFIFO 0x00000200
++#define SPI_CNTL0_OUT_RISING 0x00000100
++#define SPI_CNTL0_INVERT_CLK 0x00000080
++#define SPI_CNTL0_SHIFT_MS  0x00000040
++#define SPI_CNTL0_SHIFTLEN  0x0000003f
++
++#define SPI_CNTL1_CSHIGH    0x00000700
++#define SPI_CNTL1_TXEMPTY   0x00000080
++#define SPI_CNTL1_IDLE      0x00000040
++#define SPI_CNTL1_MSBF_IN   0x00000002
++#define SPI_CNTL1_KEEP_IN   0x00000001
++
++#define SPI_STAT_TX_LVL     0xff000000
++#define SPI_STAT_TX_LVL_SHIFT 24
++#define SPI_STAT_RX_LVL     0x00ff0000
++#define SPI_STAT_RX_LVL_SHIFT 16
++#define SPI_STAT_TX_FULL    0x00000400
++#define SPI_STAT_TX_EMPTY   0x00000200
++#define SPI_STAT_RX_FULL    0x00000100
++#define SPI_STAT_RX_EMPTY   0x00000080
++#define SPI_STAT_BUSY       0x00000040
++#define SPI_STAT_BITCOUNT   0x0000003f
++
++/* AUX_ENABLES */
++#define AUX_ENABLE_UART     0x1
++#define AUX_ENABLE_SPI1     0x2
++#define AUX_ENABLE_SPI2     0x4
++
+ /* bits in IER/IIR registers */
+ #define RX_INT  0x1
+ #define TX_INT  0x2
+@@ -63,6 +118,250 @@ static void bcm2835_aux_update(BCM2835AuxState *s)
+     qemu_set_irq(s->irq, s->iir != 0);
+ }
+ 
++/*
++ * Is this SPI's register window open?  AUX_ENABLES gates the registers
++ * themselves, not just the function: until the bit is set the whole
++ * block reads zero and swallows writes, which is the single most
++ * common way to conclude the hardware is absent when it is merely off.
++ */
++static bool aux_spi_enabled(BCM2835AuxState *s, int n)
++{
++    return (s->enables & (n == 0 ? AUX_ENABLE_SPI1 : AUX_ENABLE_SPI2)) != 0;
++}
++
++/*
++ * Drive the chip select of everything on this SPI's bus.
++ *
++ * Nothing wires these lines at machine-init time -- a peripheral
++ * arrives later, from the command line -- so the children are looked
++ * up when a transfer happens rather than connected once.  Doing this
++ * at all is what separates the two register windows below: without a
++ * CS that actually falls and rises, a peripheral with a command state
++ * machine can never be resynchronised, and a stray word leaves it
++ * answering nothing for the rest of the run.
++ */
++static void aux_spi_set_cs(BCM2835AuxSpiState *spi, bool select)
++{
++    BusState *b = BUS(spi->bus);
++    BusChild *kid;
++
++    if (spi->cs_asserted == select) {
++        return;
++    }
++    spi->cs_asserted = select;
++
++    QTAILQ_FOREACH(kid, &b->children, sibling) {
++        qemu_irq cs = qdev_get_gpio_in_named(kid->child, SSI_GPIO_CS, 0);
++
++        if (cs) {
++            /* The AUX SPI chip selects are active low. */
++            qemu_set_irq(cs, select ? 0 : 1);
++        }
++    }
++}
++
++static void aux_spi_rx_push(BCM2835AuxSpiState *spi, uint32_t v)
++{
++    uint32_t tail;
++
++    if (spi->rxlen == BCM2835_AUX_SPI_FIFO_LEN) {
++        /* The oldest word is lost, as it is on the SoC. */
++        spi->rxhead = (spi->rxhead + 1) % BCM2835_AUX_SPI_FIFO_LEN;
++        spi->rxlen--;
++    }
++    tail = (spi->rxhead + spi->rxlen) % BCM2835_AUX_SPI_FIFO_LEN;
++    spi->rxfifo[tail] = v;
++    spi->rxlen++;
++}
++
++static uint32_t aux_spi_rx_pop(BCM2835AuxSpiState *spi)
++{
++    uint32_t v;
++
++    if (spi->rxlen == 0) {
++        return 0;
++    }
++    v = spi->rxfifo[spi->rxhead];
++    spi->rxhead = (spi->rxhead + 1) % BCM2835_AUX_SPI_FIFO_LEN;
++    spi->rxlen--;
++    return v;
++}
++
++/*
++ * Shift one word.  Two things here are the whole reason this block is
++ * not interchangeable with SPI0, and both are things a driver gets
++ * wrong:
++ *
++ *   the shift length is 1 to 32 bits, not a whole number of bytes; and
++ *
++ *   transmitted data is taken from the *top* of the written word --
++ *   an 8-bit transfer sends bits 31:24 -- while received data arrives
++ *   right justified at bit 0.  The asymmetry is real and is what makes
++ *   a driver written against SPI0 send zeroes.
++ */
++static uint32_t aux_spi_shift(BCM2835AuxState *s, int n, uint32_t data)
++{
++    BCM2835AuxSpiState *spi = &s->spi[n];
++    uint32_t len = spi->cntl0 & SPI_CNTL0_SHIFTLEN;
++    uint32_t out = 0;
++    int bits;
++
++    if (spi->cntl0 & SPI_CNTL0_VARWIDTH) {
++        qemu_log_mask(LOG_UNIMP, "%s: SPI%d variable-width mode is not "
++                      "modelled; using CNTL0 shift length %u\n",
++                      __func__, n + 1, len);
++    }
++    if (len == 0 || len > 32) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "%s: SPI%d shift length %u is out of range 1-32\n",
++                      __func__, n + 1, len);
++        return 0;
++    }
++
++    for (bits = len; bits >= 8; bits -= 8) {
++        out = (out << 8) | (ssi_transfer(spi->bus, (data >> 24) & 0xff) & 0xff);
++        data <<= 8;
++    }
++    if (bits > 0) {
++        /*
++         * QEMU's SSI bus moves whole bytes, so a slave cannot see a
++         * partial one.  The register-level behaviour -- bit count,
++         * justification, FIFO levels -- is still exact; what a slave
++         * receives for the tail bits is not.
++         */
++        qemu_log_mask(LOG_UNIMP, "%s: SPI%d shift length %u is not a whole "
++                      "number of bytes; the SSI bus cannot carry the "
++                      "remaining %d bits faithfully\n",
++                      __func__, n + 1, len, bits);
++        out = (out << bits) |
++              (ssi_transfer(spi->bus, (data >> 24) & 0xff) & ((1u << bits) - 1));
++    }
++    return out;
++}
++
++static uint32_t aux_spi_stat(BCM2835AuxState *s, int n)
++{
++    BCM2835AuxSpiState *spi = &s->spi[n];
++    uint32_t v = 0;
++
++    /*
++     * The transfer completes inside the write that starts it, so the
++     * TX FIFO is always empty and the block is never busy.
++     */
++    v |= SPI_STAT_TX_EMPTY;
++    v |= (spi->cntl0 & SPI_CNTL0_SHIFTLEN);     /* BITCOUNT: bits left */
++    v |= (uint32_t)spi->rxlen << SPI_STAT_RX_LVL_SHIFT;
++    if (spi->rxlen == 0) {
++        v |= SPI_STAT_RX_EMPTY;
++    }
++    if (spi->rxlen == BCM2835_AUX_SPI_FIFO_LEN) {
++        v |= SPI_STAT_RX_FULL;
++    }
++    return v;
++}
++
++static uint64_t aux_spi_read(BCM2835AuxState *s, int n, hwaddr off)
++{
++    BCM2835AuxSpiState *spi = &s->spi[n];
++
++    if (!aux_spi_enabled(s, n)) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "%s: read of SPI%d at 0x%02" HWADDR_PRIx " with the "
++                      "block disabled in AUX_ENABLES\n", __func__, n + 1, off);
++        return 0;
++    }
++
++    switch (off) {
++    case AUX_SPI_CNTL0:
++        return spi->cntl0;
++    case AUX_SPI_CNTL1:
++        return spi->cntl1;
++    case AUX_SPI_STAT:
++        return aux_spi_stat(s, n);
++    case AUX_SPI_PEEK:
++        /* The head of the RX FIFO, without removing it. */
++        return spi->rxlen ? spi->rxfifo[spi->rxhead] : 0;
++    default:
++        if (off >= AUX_SPI_IO && off < AUX_SPI_IO + 0x10) {
++            return aux_spi_rx_pop(spi);
++        }
++        if (off >= AUX_SPI_TXHOLD && off < AUX_SPI_TXHOLD + 0x10) {
++            return aux_spi_rx_pop(spi);
++        }
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "%s: read of unknown SPI%d offset 0x%02" HWADDR_PRIx
++                      "\n", __func__, n + 1, off);
++        return 0;
++    }
++}
++
++static void aux_spi_write(BCM2835AuxState *s, int n, hwaddr off, uint64_t value)
++{
++    BCM2835AuxSpiState *spi = &s->spi[n];
++
++    if (!aux_spi_enabled(s, n)) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "%s: write to SPI%d at 0x%02" HWADDR_PRIx " with the "
++                      "block disabled in AUX_ENABLES\n", __func__, n + 1, off);
++        return;
++    }
++
++    switch (off) {
++    case AUX_SPI_CNTL0:
++        spi->cntl0 = value;
++        if (value & SPI_CNTL0_CLEARFIFO) {
++            spi->rxlen = 0;
++            spi->rxhead = 0;
++        }
++        if (!(value & SPI_CNTL0_ENABLE)) {
++            aux_spi_set_cs(spi, false);
++        }
++        break;
++
++    case AUX_SPI_CNTL1:
++        spi->cntl1 = value;
++        break;
++
++    case AUX_SPI_STAT:
++    case AUX_SPI_PEEK:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "%s: write to the read-only SPI%d register at 0x%02"
++                      HWADDR_PRIx "\n", __func__, n + 1, off);
++        break;
++
++    default:
++        if (off >= AUX_SPI_IO && off < AUX_SPI_TXHOLD + 0x10) {
++            bool hold = off >= AUX_SPI_TXHOLD;
++
++            if (!(spi->cntl0 & SPI_CNTL0_ENABLE)) {
++                qemu_log_mask(LOG_GUEST_ERROR,
++                              "%s: SPI%d transfer with CNTL0 ENABLE clear\n",
++                              __func__, n + 1);
++                break;
++            }
++            /*
++             * This is the whole difference between the two windows.  A
++             * write to TXHOLD keeps chip select asserted after the
++             * word, so a multi-word command stays one transaction; a
++             * write to IO drops it, ending the transaction.  A driver
++             * that uses IO for every word of a command sends each byte
++             * as its own transaction, which most peripherals answer by
++             * doing nothing.
++             */
++            aux_spi_set_cs(spi, true);
++            aux_spi_rx_push(spi, aux_spi_shift(s, n, value));
++            if (!hold) {
++                aux_spi_set_cs(spi, false);
++            }
++            break;
++        }
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "%s: write to unknown SPI%d offset 0x%02" HWADDR_PRIx
++                      "\n", __func__, n + 1, off);
++        break;
++    }
++}
++
+ static uint64_t bcm2835_aux_read(void *opaque, hwaddr offset, unsigned size)
+ {
+     BCM2835AuxState *s = opaque;
+@@ -73,7 +372,7 @@ static uint64_t bcm2835_aux_read(void *opaque, hwaddr offset, unsigned size)
+         return s->iir != 0;
+ 
+     case AUX_ENABLES:
+-        return 1; /* mini UART permanently enabled */
++        return s->enables;
+ 
+     case AUX_MU_IO_REG:
+         /* "DLAB bit set means access baudrate register" is NYI */
+@@ -144,6 +443,12 @@ static uint64_t bcm2835_aux_read(void *opaque, hwaddr offset, unsigned size)
+         return s->baud;
+ 
+     default:
++        if (offset >= AUX_SPI1_BASE && offset < AUX_SPI1_BASE + AUX_SPI_SIZE) {
++            return aux_spi_read(s, 0, offset - AUX_SPI1_BASE);
++        }
++        if (offset >= AUX_SPI2_BASE && offset < AUX_SPI2_BASE + AUX_SPI_SIZE) {
++            return aux_spi_read(s, 1, offset - AUX_SPI2_BASE);
++        }
+         qemu_log_mask(LOG_GUEST_ERROR, "%s: Bad offset %"HWADDR_PRIx"\n",
+                       __func__, offset);
+         return 0;
+@@ -158,11 +463,15 @@ static void bcm2835_aux_write(void *opaque, hwaddr offset, uint64_t value,
+ 
+     switch (offset) {
+     case AUX_ENABLES:
+-        if (value != 1) {
+-            qemu_log_mask(LOG_UNIMP, "%s: unsupported attempt to enable SPI"
+-                                     " or disable UART: 0x%"PRIx64"\n",
+-                          __func__, value);
+-        }
++        /*
++         * Bits 1 and 2 really gate the two SPI register windows.  Bit
++         * 0 does the same for the mini UART on the SoC, but this model
++         * has always let the UART answer regardless and tightening
++         * that is a separate change with its own risk, so the bit is
++         * stored and not enforced.
++         */
++        s->enables = value & (AUX_ENABLE_UART | AUX_ENABLE_SPI1 |
++                              AUX_ENABLE_SPI2);
+         break;
+ 
+     case AUX_MU_IO_REG:
+@@ -218,6 +527,14 @@ static void bcm2835_aux_write(void *opaque, hwaddr offset, uint64_t value,
+         break;
+ 
+     default:
++        if (offset >= AUX_SPI1_BASE && offset < AUX_SPI1_BASE + AUX_SPI_SIZE) {
++            aux_spi_write(s, 0, offset - AUX_SPI1_BASE, value);
++            break;
++        }
++        if (offset >= AUX_SPI2_BASE && offset < AUX_SPI2_BASE + AUX_SPI_SIZE) {
++            aux_spi_write(s, 1, offset - AUX_SPI2_BASE, value);
++            break;
++        }
+         qemu_log_mask(LOG_GUEST_ERROR, "%s: Bad offset %"HWADDR_PRIx"\n",
+                       __func__, offset);
+     }
+@@ -266,10 +583,26 @@ static const MemoryRegionOps bcm2835_aux_ops = {
+     .valid.max_access_size = 4,
+ };
+ 
++static const VMStateDescription vmstate_bcm2835_aux_spi = {
++    .name = "bcm2835_aux_spi",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .fields = (const VMStateField[]) {
++        VMSTATE_UINT32(cntl0, BCM2835AuxSpiState),
++        VMSTATE_UINT32(cntl1, BCM2835AuxSpiState),
++        VMSTATE_UINT32_ARRAY(rxfifo, BCM2835AuxSpiState,
++                             BCM2835_AUX_SPI_FIFO_LEN),
++        VMSTATE_UINT8(rxlen, BCM2835AuxSpiState),
++        VMSTATE_UINT8(rxhead, BCM2835AuxSpiState),
++        VMSTATE_BOOL(cs_asserted, BCM2835AuxSpiState),
++        VMSTATE_END_OF_LIST()
++    }
++};
++
+ static const VMStateDescription vmstate_bcm2835_aux = {
+     .name = TYPE_BCM2835_AUX,
+-    .version_id = 2,
+-    .minimum_version_id = 2,
++    .version_id = 3,
++    .minimum_version_id = 3,
+     .fields = (const VMStateField[]) {
+         VMSTATE_UINT8_ARRAY(read_fifo, BCM2835AuxState,
+                             BCM2835_AUX_RX_FIFO_LEN),
+@@ -282,6 +615,9 @@ static const VMStateDescription vmstate_bcm2835_aux = {
+         VMSTATE_UINT8(cntl, BCM2835AuxState),
+         VMSTATE_UINT8(scratch, BCM2835AuxState),
+         VMSTATE_UINT16(baud, BCM2835AuxState),
++        VMSTATE_UINT8(enables, BCM2835AuxState),
++        VMSTATE_STRUCT_ARRAY(spi, BCM2835AuxState, 2, 1,
++                             vmstate_bcm2835_aux_spi, BCM2835AuxSpiState),
+         VMSTATE_END_OF_LIST()
+     }
+ };
+@@ -307,6 +643,15 @@ static void bcm2835_aux_reset(DeviceState *dev)
+     s->cntl = 0x3;
+     s->scratch = 0;
+     s->baud = 0;
++
++    s->enables = 0;
++    for (int n = 0; n < 2; n++) {
++        s->spi[n].cntl0 = 0;
++        s->spi[n].cntl1 = 0;
++        s->spi[n].rxlen = 0;
++        s->spi[n].rxhead = 0;
++        s->spi[n].cs_asserted = false;
++    }
+ }
+ 
+ static void bcm2835_aux_realize(DeviceState *dev, Error **errp)
+@@ -315,6 +660,13 @@ static void bcm2835_aux_realize(DeviceState *dev, Error **errp)
+ 
+     qemu_chr_fe_set_handlers(&s->chr, bcm2835_aux_can_receive,
+                              bcm2835_aux_receive, NULL, NULL, s, NULL, true);
++
++    /*
++     * Named so that a peripheral can be attached unambiguously:
++     * -device m25p16,bus=aux-spi1,cs=0,drive=...
++     */
++    s->spi[0].bus = ssi_create_bus(dev, "aux-spi1");
++    s->spi[1].bus = ssi_create_bus(dev, "aux-spi2");
+ }
+ 
+ static const Property bcm2835_aux_props[] = {
+diff --git a/include/hw/char/bcm2835_aux.h b/include/hw/char/bcm2835_aux.h
+index dcdd59e..599fc32 100644
+--- a/include/hw/char/bcm2835_aux.h
++++ b/include/hw/char/bcm2835_aux.h
+@@ -11,6 +11,7 @@
+ 
+ #include "hw/sysbus.h"
+ #include "chardev/char-fe.h"
++#include "hw/ssi/ssi.h"
+ #include "qom/object.h"
+ 
+ #define TYPE_BCM2835_AUX "bcm2835-aux"
+@@ -18,6 +19,22 @@ OBJECT_DECLARE_SIMPLE_TYPE(BCM2835AuxState, BCM2835_AUX)
+ 
+ #define BCM2835_AUX_RX_FIFO_LEN 8
+ 
++/* Each AUX SPI has a four-entry receive FIFO. */
++#define BCM2835_AUX_SPI_FIFO_LEN 4
++
++/*
++ * One of the two AUX SPI masters.  They are identical blocks at
++ * 0x80 and 0xc0, sharing AUX_ENABLES and AUX_IRQ with the mini UART.
++ */
++typedef struct BCM2835AuxSpiState {
++    SSIBus *bus;
++    uint32_t cntl0;
++    uint32_t cntl1;
++    uint32_t rxfifo[BCM2835_AUX_SPI_FIFO_LEN];
++    uint8_t rxlen, rxhead;
++    bool cs_asserted;
++} BCM2835AuxSpiState;
++
+ struct BCM2835AuxState {
+     /*< private >*/
+     SysBusDevice parent_obj;
+@@ -41,6 +58,14 @@ struct BCM2835AuxState {
+      */
+     uint8_t lcr, mcr, cntl, scratch;
+     uint16_t baud;
++
++    /*
++     * AUX_ENABLES gates the register windows, not merely the
++     * functions: bit 1 and bit 2 must be set before SPI1's and SPI2's
++     * registers respond at all.
++     */
++    uint8_t enables;
++    BCM2835AuxSpiState spi[2];
+ };
+ 
+ #endif
+-- 
+2.51.0
+

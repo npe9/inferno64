@@ -1,0 +1,81 @@
+From dc7b88fe027c14cb02b4e9e67ca27e6541c00f91 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Mon, 7 Sep 2026 09:26:13 -0400
+Subject: [PATCH 16/16] hw/i2c/bcm2835_bscsl: delegate address matching to the
+ i2c core
+
+The match_and_add override reimplemented the core's node insertion so
+that it could refuse to answer while the block is disabled.  It is
+functionally identical to hw/i2c/core.c's i2c_slave_match today, which
+is exactly the problem: it is a copy of bus bookkeeping this file does
+not own, and a second slave on the same bus would be broken by that
+copy drifting.
+
+Keep only the part that is this block's own -- a disabled block does
+not answer its address at all, so a master sees no device rather than
+one that NAKs -- and hand the address comparison, the broadcast case
+and the list handling back to the parent implementation.
+
+That refusal is what the guest's disabled-slave check rests on, and the
+path is real: with no device claiming the address, i2c_do_start_transfer
+finds current_devs empty and returns 1, and bcm2835_i2c sets S_ERR,
+which is the bit the guest tests.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01BtE1mJ79fHUqzyPBaSgBKx
+---
+ hw/i2c/bcm2835_bscsl.c | 23 +++++++++++++----------
+ 1 file changed, 13 insertions(+), 10 deletions(-)
+
+diff --git a/hw/i2c/bcm2835_bscsl.c b/hw/i2c/bcm2835_bscsl.c
+index 9b55099..9d16229 100644
+--- a/hw/i2c/bcm2835_bscsl.c
++++ b/hw/i2c/bcm2835_bscsl.c
+@@ -283,10 +283,17 @@ static uint8_t bcm2835_bscsl_recv(I2CSlave *i2c)
+     return v;
+ }
+ 
++static bool (*bscsl_parent_match_and_add)(I2CSlave *candidate,
++                                          uint8_t address, bool broadcast,
++                                          I2CNodeList *current_devs);
++
+ /*
+- * Only answer to our programmed address, and only while enabled.  A
+- * disabled block must not respond at all -- a master should see no
+- * device, not a device that NAKs.
++ * A disabled block must not answer at all: a master should see no
++ * device, not a device that NAKs.  That is the only thing this block
++ * adds to matching -- the address comparison, the broadcast case and
++ * the bus's own bookkeeping belong to hw/i2c/core.c and are delegated
++ * rather than reimplemented, so a second slave on this bus cannot be
++ * broken by a copy of that logic drifting out of date here.
+  */
+ static bool bcm2835_bscsl_match(I2CSlave *candidate, uint8_t address,
+                                 bool broadcast, I2CNodeList *current_devs)
+@@ -296,13 +303,8 @@ static bool bcm2835_bscsl_match(I2CSlave *candidate, uint8_t address,
+     if (!bscsl_enabled(s)) {
+         return false;
+     }
+-    if (candidate->address != address && !broadcast) {
+-        return false;
+-    }
+-    I2CNode *node = g_malloc(sizeof(struct I2CNode));
+-    node->elt = candidate;
+-    QLIST_INSERT_HEAD(current_devs, node, next);
+-    return true;
++    return bscsl_parent_match_and_add(candidate, address, broadcast,
++                                      current_devs);
+ }
+ 
+ /* ---- the ARM side: the register window at 0x7e214000 ---- */
+@@ -555,6 +557,7 @@ static void bcm2835_bscsl_class_init(ObjectClass *klass, const void *data)
+     k->event = bcm2835_bscsl_event;
+     k->recv = bcm2835_bscsl_recv;
+     k->send = bcm2835_bscsl_send;
++    bscsl_parent_match_and_add = k->match_and_add;
+     k->match_and_add = bcm2835_bscsl_match;
+ }
+ 
+-- 
+2.51.0
+

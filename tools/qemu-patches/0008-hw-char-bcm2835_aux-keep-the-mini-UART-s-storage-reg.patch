@@ -1,0 +1,198 @@
+From 54016a8e4ca54185deff353057de4c58125a584e Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Sun, 6 Sep 2026 20:25:32 -0400
+Subject: [PATCH 08/16] hw/char/bcm2835_aux: keep the mini UART's storage
+ registers
+
+LCR, MCR, CNTL, SCRATCH and BAUD were unimplemented: reads returned
+zero or a constant and writes were logged and discarded.  On the SoC
+these hold what the guest puts in them, and a driver reads them back --
+the baud divisor to confirm the rate it asked for, and the scratch byte
+for no reason other than that it holds a value, which is a classic way
+to decide whether a block is present at all.  A driver that checks
+either concluded the block was dead.
+
+Keep them.  None of them changes behaviour here: the divisor does not
+make a chardev faster, and the only line-control setting that means
+anything is the data length.  CNTL keeps returning 3 out of reset, as
+it did when it was a constant, so a guest that never writes it sees
+what it saw before.  MSR reports CTS and DSR asserted rather than
+nothing, this block having no modem lines to deassert them.
+
+A guest selecting 7-bit data in LCR is reported: the field is
+documented as one bit and is two, so 8-bit data is 3 and not 1, and a
+driver that follows the datasheet gets characters that are subtly wrong
+rather than an obvious failure.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01BtE1mJ79fHUqzyPBaSgBKx
+---
+ hw/char/bcm2835_aux.c         | 62 +++++++++++++++++++++++++----------
+ include/hw/char/bcm2835_aux.h | 11 +++++++
+ 2 files changed, 55 insertions(+), 18 deletions(-)
+
+diff --git a/hw/char/bcm2835_aux.c b/hw/char/bcm2835_aux.c
+index 2b397f2..9e4fbc9 100644
+--- a/hw/char/bcm2835_aux.c
++++ b/hw/char/bcm2835_aux.c
+@@ -109,12 +109,10 @@ static uint64_t bcm2835_aux_read(void *opaque, hwaddr offset, unsigned size)
+         return res;
+ 
+     case AUX_MU_LCR_REG:
+-        qemu_log_mask(LOG_UNIMP, "%s: AUX_MU_LCR_REG unsupported\n", __func__);
+-        return 0;
++        return s->lcr;
+ 
+     case AUX_MU_MCR_REG:
+-        qemu_log_mask(LOG_UNIMP, "%s: AUX_MU_MCR_REG unsupported\n", __func__);
+-        return 0;
++        return s->mcr;
+ 
+     case AUX_MU_LSR_REG:
+         res = 0x60; /* tx idle, empty */
+@@ -124,15 +122,14 @@ static uint64_t bcm2835_aux_read(void *opaque, hwaddr offset, unsigned size)
+         return res;
+ 
+     case AUX_MU_MSR_REG:
+-        qemu_log_mask(LOG_UNIMP, "%s: AUX_MU_MSR_REG unsupported\n", __func__);
+-        return 0;
++        /* CTS and DSR are asserted; this block has no modem lines. */
++        return 0x30;
+ 
+     case AUX_MU_SCRATCH:
+-        qemu_log_mask(LOG_UNIMP, "%s: AUX_MU_SCRATCH unsupported\n", __func__);
+-        return 0;
++        return s->scratch;
+ 
+     case AUX_MU_CNTL_REG:
+-        return 0x3; /* tx, rx enabled */
++        return s->cntl;
+ 
+     case AUX_MU_STAT_REG:
+         res = 0x30e; /* space in the output buffer, empty tx fifo, idle tx/rx */
+@@ -144,8 +141,7 @@ static uint64_t bcm2835_aux_read(void *opaque, hwaddr offset, unsigned size)
+         return res;
+ 
+     case AUX_MU_BAUD_REG:
+-        qemu_log_mask(LOG_UNIMP, "%s: AUX_MU_BAUD_REG unsupported\n", __func__);
+-        return 0;
++        return s->baud;
+ 
+     default:
+         qemu_log_mask(LOG_GUEST_ERROR, "%s: Bad offset %"HWADDR_PRIx"\n",
+@@ -190,23 +186,35 @@ static void bcm2835_aux_write(void *opaque, hwaddr offset, uint64_t value,
+         break;
+ 
+     case AUX_MU_LCR_REG:
+-        qemu_log_mask(LOG_UNIMP, "%s: AUX_MU_LCR_REG unsupported\n", __func__);
++        /*
++         * The data-length field is documented as one bit and is two:
++         * 8-bit data is 3, not 1.  The datasheet erratum has it.  This
++         * only stores the value, but a guest that reads it back and
++         * finds 1 has a real bug worth seeing here.
++         */
++        s->lcr = value;
++        if ((value & 3) != 3 && (value & 3) != 0) {
++            qemu_log_mask(LOG_GUEST_ERROR,
++                          "%s: LCR data length 0x%x selects 7-bit data; "
++                          "8-bit data is 3, not 1\n", __func__,
++                          (unsigned)(value & 3));
++        }
+         break;
+ 
+     case AUX_MU_MCR_REG:
+-        qemu_log_mask(LOG_UNIMP, "%s: AUX_MU_MCR_REG unsupported\n", __func__);
++        s->mcr = value;
+         break;
+ 
+     case AUX_MU_SCRATCH:
+-        qemu_log_mask(LOG_UNIMP, "%s: AUX_MU_SCRATCH unsupported\n", __func__);
++        s->scratch = value;
+         break;
+ 
+     case AUX_MU_CNTL_REG:
+-        qemu_log_mask(LOG_UNIMP, "%s: AUX_MU_CNTL_REG unsupported\n", __func__);
++        s->cntl = value;
+         break;
+ 
+     case AUX_MU_BAUD_REG:
+-        qemu_log_mask(LOG_UNIMP, "%s: AUX_MU_BAUD_REG unsupported\n", __func__);
++        s->baud = value;
+         break;
+ 
+     default:
+@@ -260,8 +268,8 @@ static const MemoryRegionOps bcm2835_aux_ops = {
+ 
+ static const VMStateDescription vmstate_bcm2835_aux = {
+     .name = TYPE_BCM2835_AUX,
+-    .version_id = 1,
+-    .minimum_version_id = 1,
++    .version_id = 2,
++    .minimum_version_id = 2,
+     .fields = (const VMStateField[]) {
+         VMSTATE_UINT8_ARRAY(read_fifo, BCM2835AuxState,
+                             BCM2835_AUX_RX_FIFO_LEN),
+@@ -269,6 +277,11 @@ static const VMStateDescription vmstate_bcm2835_aux = {
+         VMSTATE_UINT8(read_count, BCM2835AuxState),
+         VMSTATE_UINT8(ier, BCM2835AuxState),
+         VMSTATE_UINT8(iir, BCM2835AuxState),
++        VMSTATE_UINT8(lcr, BCM2835AuxState),
++        VMSTATE_UINT8(mcr, BCM2835AuxState),
++        VMSTATE_UINT8(cntl, BCM2835AuxState),
++        VMSTATE_UINT8(scratch, BCM2835AuxState),
++        VMSTATE_UINT16(baud, BCM2835AuxState),
+         VMSTATE_END_OF_LIST()
+     }
+ };
+@@ -284,6 +297,18 @@ static void bcm2835_aux_init(Object *obj)
+     sysbus_init_irq(sbd, &s->irq);
+ }
+ 
++static void bcm2835_aux_reset(DeviceState *dev)
++{
++    BCM2835AuxState *s = BCM2835_AUX(dev);
++
++    s->lcr = 0;
++    s->mcr = 0;
++    /* The transmitter and receiver come up enabled, as they do on the SoC. */
++    s->cntl = 0x3;
++    s->scratch = 0;
++    s->baud = 0;
++}
++
+ static void bcm2835_aux_realize(DeviceState *dev, Error **errp)
+ {
+     BCM2835AuxState *s = BCM2835_AUX(dev);
+@@ -301,6 +326,7 @@ static void bcm2835_aux_class_init(ObjectClass *oc, const void *data)
+     DeviceClass *dc = DEVICE_CLASS(oc);
+ 
+     dc->realize = bcm2835_aux_realize;
++    device_class_set_legacy_reset(dc, bcm2835_aux_reset);
+     dc->vmsd = &vmstate_bcm2835_aux;
+     set_bit(DEVICE_CATEGORY_INPUT, dc->categories);
+     device_class_set_props(dc, bcm2835_aux_props);
+diff --git a/include/hw/char/bcm2835_aux.h b/include/hw/char/bcm2835_aux.h
+index 9e08179..dcdd59e 100644
+--- a/include/hw/char/bcm2835_aux.h
++++ b/include/hw/char/bcm2835_aux.h
+@@ -30,6 +30,17 @@ struct BCM2835AuxState {
+     uint8_t read_fifo[BCM2835_AUX_RX_FIFO_LEN];
+     uint8_t read_pos, read_count;
+     uint8_t ier, iir;
++    /*
++     * Storage registers.  The block keeps these for the guest and acts
++     * on none of them here: the baud divisor does not change how fast
++     * a chardev accepts bytes, the line control register's only real
++     * setting is 8-bit data, and the scratch byte has no function at
++     * all beyond being readable back.  A driver still reads them, and
++     * a scratch register that will not hold a value is a classic way
++     * to conclude a block is absent.
++     */
++    uint8_t lcr, mcr, cntl, scratch;
++    uint16_t baud;
+ };
+ 
+ #endif
+-- 
+2.51.0
+

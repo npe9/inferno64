@@ -1,0 +1,904 @@
+From c3b4ccaca3f0522dff1f9f11a4efadb0f9a8581d Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Mon, 7 Sep 2026 08:51:49 -0400
+Subject: [PATCH 14/16] hw/misc: model the BCM2835 SMI, replacing the
+ unimplemented stub
+
+SMI_OFFSET was create_unimp(), so a guest could not reach the secondary
+memory interface at all.
+
+Modelled from the Raspberry Pi kernel's
+include/linux/broadcom/bcm2835_smi.h, which is the only complete public
+description of this block: it documents what every bit does, not merely
+what it is called.  Upstream Linux has no driver for it.  Both register
+sets are covered -- direct mode's SMIDCS/SMIDA/SMIDD, and programmed
+mode's SMICS/SMIL/SMIA/SMID with the FIFO -- along with all four device
+timing banks, the DMA request thresholds, the interrupt enables, and
+the FIFO debug counters.
+
+There is no external device, and there cannot be one: SMI's whole
+purpose is the far side of its pins, and QEMU has no abstraction for a
+parallel memory-mapped peripheral to attach.  Unlike the AUX SPI in
+this series, which borrows QEMU's own m25p80, this is PWM tier -- reads
+return zeroes, writes are discarded, no signal reaches a pin.
+
+What is modelled, and is the reason it is worth having, is the timing.
+A word takes setup + strobe + hold + pace cycles of the SMI clock,
+taken from the clock manager's smi mux, exactly as the device settings
+registers say.  That turns those registers from storage a driver writes
+and never sees again into something with an observable consequence.
+
+Two behaviours worth calling out because they are what a driver gets
+wrong.  DONE is asymmetric: for a write it is set when the last word
+has gone, and for a read not until the FIFO has also been emptied, so a
+driver that waits on DONE before reading waits forever.  And SMIFD's
+counters are six bits, so they saturate at 63 and cannot express a full
+64-word FIFO -- a driver that drains exactly FCNT words leaves one
+behind.
+
+Two bugs found while writing the guest driver against it.  The
+completion test only ran on a sync that had moved a word, so DONE was
+never owed to the later access that drained the FIFO.  And a read whose
+words had all moved but whose FIFO was still full stayed ACTIVE with
+nothing scheduled to change that, so rescheduling armed a deadline
+already in the past and livelocked the main loop; nothing is scheduled
+once the last word has moved.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01BtE1mJ79fHUqzyPBaSgBKx
+---
+ hw/arm/bcm2835_peripherals.c         |  17 +-
+ hw/misc/bcm2835_smi.c                | 690 +++++++++++++++++++++++++++
+ hw/misc/meson.build                  |   1 +
+ include/hw/arm/bcm2835_peripherals.h |   3 +-
+ include/hw/misc/bcm2835_smi.h        |  59 +++
+ 5 files changed, 768 insertions(+), 2 deletions(-)
+ create mode 100644 hw/misc/bcm2835_smi.c
+ create mode 100644 include/hw/misc/bcm2835_smi.h
+
+diff --git a/hw/arm/bcm2835_peripherals.c b/hw/arm/bcm2835_peripherals.c
+index f026f15..2fa120c 100644
+--- a/hw/arm/bcm2835_peripherals.c
++++ b/hw/arm/bcm2835_peripherals.c
+@@ -59,6 +59,9 @@ static void bcm2835_peripherals_init(Object *obj)
+ 
+     /* I2S/PCM */
+     object_initialize_child(obj, "i2s", &s->i2s, TYPE_BCM2835_I2S);
++
++    /* SMI */
++    object_initialize_child(obj, "smi", &s->smi, TYPE_BCM2835_SMI);
+     object_initialize_child(obj, "armtimer", &s->armtimer,
+                             TYPE_BCM2835_ARMTIMER);
+ 
+@@ -259,6 +262,19 @@ static void bcm2835_peripherals_realize(DeviceState *dev, Error **errp)
+                                               BCM2835_IC_GPU_IRQ,
+                                               INTERRUPT_I2SPCM));
+ 
++    /* SMI */
++    qdev_connect_clock_in(DEVICE(&s->smi), "clk",
++                          qdev_get_clock_out(DEVICE(&s_base->cprman), "smi-out"));
++    if (!sysbus_realize(SYS_BUS_DEVICE(&s->smi), errp)) {
++        return;
++    }
++    memory_region_add_subregion(&s_base->peri_mr, SMI_OFFSET,
++                sysbus_mmio_get_region(SYS_BUS_DEVICE(&s->smi), 0));
++    sysbus_connect_irq(SYS_BUS_DEVICE(&s->smi), 0,
++                       qdev_get_gpio_in_named(DEVICE(&s_base->ic),
++                                              BCM2835_IC_GPU_IRQ,
++                                              INTERRUPT_SMI));
++
+     /* ARM timer */
+     if (!sysbus_realize(SYS_BUS_DEVICE(&s->armtimer), errp)) {
+         return;
+@@ -549,7 +565,6 @@ void bcm_soc_peripherals_common_realize(DeviceState *dev, Error **errp)
+                                                  INTERRUPT_I2C));
+ 
+     create_unimp(s, &s->txp, "bcm2835-txp", TXP_OFFSET, 0x1000);
+-    create_unimp(s, &s->smi, "bcm2835-smi", SMI_OFFSET, 0x100);
+     create_unimp(s, &s->bscsl, "bcm2835-spis", BSC_SL_OFFSET, 0x100);
+     create_unimp(s, &s->dbus, "bcm2835-dbus", DBUS_OFFSET, 0x8000);
+     create_unimp(s, &s->ave0, "bcm2835-ave0", AVE0_OFFSET, 0x8000);
+diff --git a/hw/misc/bcm2835_smi.c b/hw/misc/bcm2835_smi.c
+new file mode 100644
+index 0000000..a568d42
+--- /dev/null
++++ b/hw/misc/bcm2835_smi.c
+@@ -0,0 +1,690 @@
++/*
++ * BCM2835 Secondary Memory Interface emulation
++ *
++ * SMI drives a parallel bus off the SoC -- address, data and strobes on
++ * GPIO 0-25 in alt1 -- to talk to an FPGA, an LCD controller or a
++ * camera.  It has two ways of moving data.  Direct mode writes an
++ * address and a word and asserts them once.  Programmed mode is given a
++ * length and moves that many words through a FIFO, at a rate set by the
++ * per-device timing registers.
++ *
++ * Register layout, bit fields and their meanings are from the
++ * Raspberry Pi kernel's include/linux/broadcom/bcm2835_smi.h, which is
++ * the only complete public description of this block: it documents
++ * every bit, not merely their names.  Nothing here is taken from what a
++ * guest driver happens to emit.
++ *
++ * WHAT THIS DOES NOT MODEL, and it is the important part.  There is no
++ * external device.  SMI's whole purpose is the far side of those pins,
++ * and QEMU has no abstraction for a parallel memory-mapped peripheral
++ * to attach one -- unlike the AUX SPI in this series, which could
++ * borrow QEMU's own m25p80.  So a programmed or direct read returns
++ * zeroes and a write is discarded.  This is the same tier as the PWM
++ * model: the registers, the FIFO discipline and the error reporting
++ * are modelled, and no signal reaches a pin.
++ *
++ * What IS modelled, and is the reason this is worth having, is the
++ * timing.  A word takes setup + strobe + hold + pace cycles of the SMI
++ * clock, exactly as the device settings registers say, so a programmed
++ * transfer takes the time it should and DONE arrives when it should.
++ * That turns those registers from storage a driver writes and never
++ * sees again into something with an observable consequence, which is
++ * the difference between a driver that has configured the bus and one
++ * that merely thinks it has.
++ *
++ * The FIFO is advanced on demand rather than by a per-word callback,
++ * for the reason given in hw/timer/bcm2835_armtimer.c.
++ *
++ * Copyright (c) 2026 Noah Evans
++ *
++ * This work is licensed under the terms of the GNU GPL, version 2 or later.
++ * See the COPYING file in the top-level directory.
++ */
++
++#include "qemu/osdep.h"
++#include "qemu/log.h"
++#include "qemu/module.h"
++#include "qemu/timer.h"
++#include "hw/misc/bcm2835_smi.h"
++#include "hw/irq.h"
++#include "hw/qdev-clock.h"
++#include "hw/qdev-properties.h"
++#include "migration/vmstate.h"
++
++#define R_SMICS     0x00
++#define R_SMIL      0x04
++#define R_SMIA      0x08
++#define R_SMID      0x0c
++#define R_SMIDSR0   0x10
++#define R_SMIDSW0   0x14
++#define R_SMIDSR1   0x18
++#define R_SMIDSW1   0x1c
++#define R_SMIDSR2   0x20
++#define R_SMIDSW2   0x24
++#define R_SMIDSR3   0x28
++#define R_SMIDSW3   0x2c
++#define R_SMIDC     0x30
++#define R_SMIDCS    0x34
++#define R_SMIDA     0x38
++#define R_SMIDD     0x3c
++#define R_SMIFD     0x40
++
++/* SMICS */
++#define CS_RXF      (1u << 31)
++#define CS_TXE      (1u << 30)
++#define CS_RXD      (1u << 29)
++#define CS_TXD      (1u << 28)
++#define CS_RXR      (1u << 27)
++#define CS_TXW      (1u << 26)
++#define CS_AFERR    (1u << 25)
++#define CS_EDREQ    (1u << 15)
++#define CS_PXLDAT   (1u << 14)
++#define CS_SETERR   (1u << 13)
++#define CS_PVMODE   (1u << 12)
++#define CS_INTR     (1u << 11)
++#define CS_INTT     (1u << 10)
++#define CS_INTD     (1u << 9)
++#define CS_TEEN     (1u << 8)
++#define CS_PAD1     (1u << 7)
++#define CS_PAD0     (1u << 6)
++#define CS_WRITE    (1u << 5)
++#define CS_CLEAR    (1u << 4)
++#define CS_START    (1u << 3)
++#define CS_ACTIVE   (1u << 2)
++#define CS_DONE     (1u << 1)
++#define CS_ENABLE   (1u << 0)
++
++/* Bits the guest owns; the rest are status or write-one-shot. */
++#define CS_WRITABLE (CS_PXLDAT | CS_PVMODE | CS_INTR | CS_INTT | CS_INTD | \
++                     CS_TEEN | CS_PAD1 | CS_PAD0 | CS_WRITE | CS_ENABLE)
++#define CS_W1C      (CS_AFERR | CS_SETERR | CS_DONE)
++#define CS_STATUS   (CS_RXF | CS_TXE | CS_RXD | CS_TXD | CS_RXR | CS_TXW | \
++                     CS_ACTIVE)
++
++/* Device read settings */
++#define DSR_RSETUP_MASK   (0x3fu << 24)
++#define DSR_RSETUP_SHIFT  24
++#define DSR_RHOLD_MASK    (0x3fu << 16)
++#define DSR_RHOLD_SHIFT   16
++#define DSR_RPACE_MASK    (0x7fu << 8)
++#define DSR_RPACE_SHIFT   8
++#define DSR_RSTROBE_MASK  0x7fu
++
++/* Device write settings; same shape. */
++#define DSW_WSETUP_MASK   (0x3fu << 24)
++#define DSW_WSETUP_SHIFT  24
++#define DSW_WHOLD_MASK    (0x3fu << 16)
++#define DSW_WHOLD_SHIFT   16
++#define DSW_WPACE_MASK    (0x7fu << 8)
++#define DSW_WPACE_SHIFT   8
++#define DSW_WSTROBE_MASK  0x7fu
++
++/* SMIDCS */
++#define DCS_WRITE   (1u << 3)
++#define DCS_DONE    (1u << 2)
++#define DCS_START   (1u << 1)
++#define DCS_ENABLE  (1u << 0)
++
++/* SMIA / SMIDA */
++#define A_DEVICE_MASK  (3u << 8)
++#define A_DEVICE_SHIFT 8
++
++/* SMIFD */
++#define FD_FLVL_SHIFT  8
++
++static uint32_t smi_device(uint32_t addr)
++{
++    return (addr & A_DEVICE_MASK) >> A_DEVICE_SHIFT;
++}
++
++/*
++ * How many SMI clock cycles one word of a transfer takes: the setup,
++ * strobe and hold times the guest programmed, plus the inter-transfer
++ * pace.  The fields are "min 1", so a zero field is one cycle.
++ */
++static uint32_t smi_cycles_per_word(BCM2835SmiState *s, bool writing)
++{
++    uint32_t dev = smi_device(s->active ? s->address : s->da);
++    uint32_t r, setup, strobe, hold, pace;
++
++    if (writing) {
++        r = s->dsw[dev];
++        setup  = (r & DSW_WSETUP_MASK) >> DSW_WSETUP_SHIFT;
++        hold   = (r & DSW_WHOLD_MASK) >> DSW_WHOLD_SHIFT;
++        pace   = (r & DSW_WPACE_MASK) >> DSW_WPACE_SHIFT;
++        strobe = r & DSW_WSTROBE_MASK;
++    } else {
++        r = s->dsr[dev];
++        setup  = (r & DSR_RSETUP_MASK) >> DSR_RSETUP_SHIFT;
++        hold   = (r & DSR_RHOLD_MASK) >> DSR_RHOLD_SHIFT;
++        pace   = (r & DSR_RPACE_MASK) >> DSR_RPACE_SHIFT;
++        strobe = r & DSR_RSTROBE_MASK;
++    }
++    if (setup == 0) {
++        setup = 1;
++    }
++    if (strobe == 0) {
++        strobe = 1;
++    }
++    if (hold == 0) {
++        hold = 1;
++    }
++    return setup + strobe + hold + pace;
++}
++
++/* Words per second the current transfer moves, or 0 if it cannot run. */
++static uint64_t smi_word_rate(BCM2835SmiState *s)
++{
++    uint64_t hz = clock_get_hz(s->clk);
++    uint32_t cycles = smi_cycles_per_word(s, s->writing);
++
++    if (hz == 0 || cycles == 0) {
++        return 0;
++    }
++    return hz / cycles;
++}
++
++static void smi_fifo_push(BCM2835SmiState *s, uint32_t v)
++{
++    uint32_t tail;
++
++    if (s->len == BCM2835_SMI_FIFO_DEPTH) {
++        s->cs |= CS_AFERR;              /* written when full */
++        return;
++    }
++    tail = (s->head + s->len) % BCM2835_SMI_FIFO_DEPTH;
++    s->fifo[tail] = v;
++    s->len++;
++    if (s->len > s->hightide) {
++        s->hightide = s->len;
++    }
++}
++
++static uint32_t smi_fifo_pop(BCM2835SmiState *s)
++{
++    uint32_t v;
++
++    if (s->len == 0) {
++        s->cs |= CS_AFERR;              /* read when empty */
++        return 0;
++    }
++    v = s->fifo[s->head];
++    s->head = (s->head + 1) % BCM2835_SMI_FIFO_DEPTH;
++    s->len--;
++    return v;
++}
++
++static void smi_update_status(BCM2835SmiState *s)
++{
++    uint32_t depth = BCM2835_SMI_FIFO_DEPTH;
++
++    s->cs &= ~CS_STATUS;
++
++    if (!(s->cs & CS_ENABLE)) {
++        return;
++    }
++
++    if (s->len == 0) {
++        s->cs |= CS_TXE;
++    }
++    if (s->len < depth) {
++        s->cs |= CS_TXD;
++    }
++    if (s->len > 0) {
++        s->cs |= CS_RXD;
++    }
++    if (s->len == depth) {
++        s->cs |= CS_RXF;
++    }
++    /*
++     * The thresholds are given in the kernel header rather than as
++     * fractions in a datasheet table: RXR when the FIFO is more than
++     * three quarters full, or when DONE and it has not been emptied;
++     * TXW when it is less than a quarter full.
++     */
++    if (s->len > depth * 3 / 4 || ((s->cs & CS_DONE) && s->len > 0)) {
++        s->cs |= CS_RXR;
++    }
++    if (s->len < depth / 4) {
++        s->cs |= CS_TXW;
++    }
++    if (s->active) {
++        s->cs |= CS_ACTIVE;
++    }
++}
++
++static void smi_update_irq(BCM2835SmiState *s)
++{
++    bool level = false;
++
++    if ((s->cs & CS_INTR) && (s->cs & CS_RXR)) {
++        level = true;
++    }
++    if ((s->cs & CS_INTT) && (s->cs & CS_TXW)) {
++        level = true;
++    }
++    if ((s->cs & CS_INTD) && (s->cs & CS_DONE)) {
++        level = true;
++    }
++    qemu_set_irq(s->irq, level);
++}
++
++/*
++ * Bring a programmed transfer up to date: move however many words the
++ * clock says have gone by since it last ran.
++ */
++static void smi_sync(BCM2835SmiState *s)
++{
++    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++    uint64_t rate, words;
++
++    if (!s->active) {
++        smi_update_status(s);
++        return;
++    }
++
++    rate = smi_word_rate(s);
++    if (rate == 0) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "bcm2835_smi: a transfer was started with no SMI "
++                      "clock; it cannot make progress\n");
++        smi_update_status(s);
++        return;
++    }
++
++    words = (uint64_t)(now - s->start_ns) * rate / NANOSECONDS_PER_SECOND;
++    if (words > s->remaining) {
++        words = s->remaining;
++    }
++
++    while (words > 0) {
++        if (s->writing) {
++            if (s->len == 0) {
++                break;                  /* starved; wait for the guest */
++            }
++            (void)smi_fifo_pop(s);      /* clocked out to a pin, discarded */
++        } else {
++            if (s->len == BCM2835_SMI_FIFO_DEPTH) {
++                break;                  /* backed up; wait for the guest */
++            }
++            /* With no device on the bus there is nothing to read. */
++            smi_fifo_push(s, 0);
++        }
++        s->remaining--;
++        s->start_ns += NANOSECONDS_PER_SECOND / rate;
++        words--;
++    }
++
++    /*
++     * The completion test has to run on every sync, not only on one
++     * that moved a word.  For a read the last word is moved well
++     * before the guest has drained the FIFO, and DONE is owed on
++     * whichever later access empties it.
++     *
++     * The asymmetry is the one the kernel header calls out: for a read
++     * DONE is not set until the FIFO has been emptied as well, so a
++     * driver that waits on DONE and only then starts reading waits
++     * forever.
++     */
++    if (s->remaining == 0 && (s->writing || s->len == 0)) {
++        s->active = false;
++        s->cs |= CS_DONE;
++    }
++    smi_update_status(s);
++}
++
++static void smi_resched(BCM2835SmiState *s)
++{
++    uint64_t rate;
++
++    timer_del(s->timer);
++
++    if (!s->active || s->remaining == 0) {
++        /*
++         * Nothing is scheduled once the last word has moved.  A read
++         * that has run out of words is still ACTIVE -- DONE waits on
++         * the FIFO being drained -- but only a guest access can drain
++         * it, so re-arming here would fire on a deadline already in
++         * the past, over and over, and livelock the main loop.
++         */
++        return;
++    }
++    rate = smi_word_rate(s);
++    if (rate == 0) {
++        return;
++    }
++    /* Wake once for the whole remaining transfer; reads are exact. */
++    timer_mod(s->timer, s->start_ns +
++              (int64_t)((uint64_t)s->remaining * NANOSECONDS_PER_SECOND /
++                        rate) + 1);
++}
++
++static void smi_tick(void *opaque)
++{
++    BCM2835SmiState *s = opaque;
++
++    smi_sync(s);
++    smi_update_irq(s);
++    smi_resched(s);
++}
++
++static void smi_clk_update(void *opaque, ClockEvent event)
++{
++    BCM2835SmiState *s = opaque;
++
++    smi_sync(s);
++    s->start_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++    smi_resched(s);
++}
++
++/*
++ * SMIFD's two counters are six bits wide, so they saturate at 63 and
++ * cannot express a full 64-word FIFO.  That is a property of the
++ * register rather than of this model, and it matters: a driver that
++ * drains exactly FCNT words from a full FIFO leaves one behind.
++ */
++static uint32_t smifd_count(uint32_t n)
++{
++    return n > 0x3f ? 0x3f : n;
++}
++
++static uint64_t bcm2835_smi_read(void *opaque, hwaddr offset, unsigned size)
++{
++    BCM2835SmiState *s = opaque;
++    uint32_t v;
++
++    smi_sync(s);
++
++    switch (offset) {
++    case R_SMICS:
++        return s->cs;
++    case R_SMIL:
++        return s->length;
++    case R_SMIA:
++        return s->address;
++
++    case R_SMID:
++        v = smi_fifo_pop(s);
++        smi_sync(s);
++        smi_update_irq(s);
++        return v;
++
++    case R_SMIDSR0: return s->dsr[0];
++    case R_SMIDSW0: return s->dsw[0];
++    case R_SMIDSR1: return s->dsr[1];
++    case R_SMIDSW1: return s->dsw[1];
++    case R_SMIDSR2: return s->dsr[2];
++    case R_SMIDSW2: return s->dsw[2];
++    case R_SMIDSR3: return s->dsr[3];
++    case R_SMIDSW3: return s->dsw[3];
++
++    case R_SMIDC:
++        return s->dc;
++    case R_SMIDCS:
++        return s->dcs;
++    case R_SMIDA:
++        return s->da;
++
++    case R_SMIDD:
++        /* Direct mode: nothing on the bus, so nothing comes back. */
++        return s->dd;
++
++    case R_SMIFD:
++        return (smifd_count(s->hightide) << FD_FLVL_SHIFT) |
++               smifd_count(s->len);
++
++    default:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "bcm2835_smi: read of unknown offset 0x%02"
++                      HWADDR_PRIx "\n", offset);
++        return 0;
++    }
++}
++
++/*
++ * Writing a settings register while a transfer is running is an error
++ * the block reports rather than a change it accepts.
++ */
++static bool smi_settings_ok(BCM2835SmiState *s)
++{
++    if (s->active) {
++        s->cs |= CS_SETERR;
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "bcm2835_smi: settings written while a transfer was "
++                      "active; SETERR raised and the write dropped\n");
++        return false;
++    }
++    return true;
++}
++
++static void bcm2835_smi_write(void *opaque, hwaddr offset, uint64_t value,
++                              unsigned size)
++{
++    BCM2835SmiState *s = opaque;
++
++    smi_sync(s);
++
++    switch (offset) {
++    case R_SMICS:
++        s->cs &= ~(value & CS_W1C);
++        s->cs = (s->cs & ~CS_WRITABLE) | (value & CS_WRITABLE);
++
++        if (value & CS_CLEAR) {
++            s->len = 0;
++            s->head = 0;
++            s->hightide = 0;
++        }
++        if (value & CS_START) {
++            if (!(s->cs & CS_ENABLE)) {
++                qemu_log_mask(LOG_GUEST_ERROR,
++                              "bcm2835_smi: START with ENABLE clear\n");
++            } else if (s->length == 0) {
++                qemu_log_mask(LOG_GUEST_ERROR,
++                              "bcm2835_smi: START with a zero length\n");
++            } else {
++                s->active = true;
++                s->writing = (s->cs & CS_WRITE) != 0;
++                s->remaining = s->length;
++                s->hightide = s->len;
++                s->start_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++                s->cs &= ~CS_DONE;
++            }
++        }
++        smi_sync(s);
++        smi_update_irq(s);
++        smi_resched(s);
++        break;
++
++    case R_SMIL:
++        if (smi_settings_ok(s)) {
++            s->length = value;
++        }
++        break;
++
++    case R_SMIA:
++        if (smi_settings_ok(s)) {
++            s->address = value;
++        }
++        break;
++
++    case R_SMID:
++        smi_fifo_push(s, value);
++        smi_sync(s);
++        smi_update_irq(s);
++        break;
++
++    case R_SMIDSR0: if (smi_settings_ok(s)) { s->dsr[0] = value; } break;
++    case R_SMIDSW0: if (smi_settings_ok(s)) { s->dsw[0] = value; } break;
++    case R_SMIDSR1: if (smi_settings_ok(s)) { s->dsr[1] = value; } break;
++    case R_SMIDSW1: if (smi_settings_ok(s)) { s->dsw[1] = value; } break;
++    case R_SMIDSR2: if (smi_settings_ok(s)) { s->dsr[2] = value; } break;
++    case R_SMIDSW2: if (smi_settings_ok(s)) { s->dsw[2] = value; } break;
++    case R_SMIDSR3: if (smi_settings_ok(s)) { s->dsr[3] = value; } break;
++    case R_SMIDSW3: if (smi_settings_ok(s)) { s->dsw[3] = value; } break;
++
++    case R_SMIDC:
++        s->dc = value;
++        break;
++
++    case R_SMIDCS:
++        s->dcs = (s->dcs & DCS_DONE & ~value) |
++                 (value & (DCS_WRITE | DCS_ENABLE));
++        if (value & DCS_DONE) {
++            s->dcs &= ~DCS_DONE;        /* write one to clear */
++        }
++        if (value & DCS_START) {
++            if (!(value & DCS_ENABLE)) {
++                qemu_log_mask(LOG_GUEST_ERROR,
++                              "bcm2835_smi: direct START with ENABLE clear\n");
++            } else {
++                /*
++                 * A direct transfer is one word and completes at once:
++                 * with nothing on the bus there is nothing to wait for.
++                 */
++                s->dcs |= DCS_DONE;
++                if (!(value & DCS_WRITE)) {
++                    s->dd = 0;
++                }
++            }
++        }
++        break;
++
++    case R_SMIDA:
++        s->da = value;
++        break;
++
++    case R_SMIDD:
++        s->dd = value;
++        break;
++
++    case R_SMIFD:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "bcm2835_smi: write to the read-only FIFO debug "
++                      "register\n");
++        break;
++
++    default:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "bcm2835_smi: write to unknown offset 0x%02"
++                      HWADDR_PRIx "\n", offset);
++        break;
++    }
++}
++
++static const MemoryRegionOps bcm2835_smi_ops = {
++    .read = bcm2835_smi_read,
++    .write = bcm2835_smi_write,
++    .endianness = DEVICE_NATIVE_ENDIAN,
++    .impl.min_access_size = 4,
++    .impl.max_access_size = 4,
++};
++
++static int bcm2835_smi_post_load(void *opaque, int version_id)
++{
++    BCM2835SmiState *s = opaque;
++
++    s->start_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++    smi_resched(s);
++    return 0;
++}
++
++static const VMStateDescription vmstate_bcm2835_smi = {
++    .name = TYPE_BCM2835_SMI,
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .post_load = bcm2835_smi_post_load,
++    .fields = (const VMStateField[]) {
++        VMSTATE_UINT32(cs, BCM2835SmiState),
++        VMSTATE_UINT32(length, BCM2835SmiState),
++        VMSTATE_UINT32(address, BCM2835SmiState),
++        VMSTATE_UINT32_ARRAY(dsr, BCM2835SmiState, 4),
++        VMSTATE_UINT32_ARRAY(dsw, BCM2835SmiState, 4),
++        VMSTATE_UINT32(dc, BCM2835SmiState),
++        VMSTATE_UINT32(dcs, BCM2835SmiState),
++        VMSTATE_UINT32(da, BCM2835SmiState),
++        VMSTATE_UINT32(dd, BCM2835SmiState),
++        VMSTATE_UINT32_ARRAY(fifo, BCM2835SmiState, BCM2835_SMI_FIFO_DEPTH),
++        VMSTATE_UINT32(len, BCM2835SmiState),
++        VMSTATE_UINT32(head, BCM2835SmiState),
++        VMSTATE_UINT32(hightide, BCM2835SmiState),
++        VMSTATE_UINT32(remaining, BCM2835SmiState),
++        VMSTATE_INT64(start_ns, BCM2835SmiState),
++        VMSTATE_BOOL(active, BCM2835SmiState),
++        VMSTATE_BOOL(writing, BCM2835SmiState),
++        VMSTATE_END_OF_LIST()
++    }
++};
++
++static void bcm2835_smi_init(Object *obj)
++{
++    BCM2835SmiState *s = BCM2835_SMI(obj);
++
++    memory_region_init_io(&s->iomem, obj, &bcm2835_smi_ops, s,
++                          TYPE_BCM2835_SMI, 0x44);
++    sysbus_init_mmio(SYS_BUS_DEVICE(s), &s->iomem);
++    sysbus_init_irq(SYS_BUS_DEVICE(s), &s->irq);
++
++    s->clk = qdev_init_clock_in(DEVICE(s), "clk", smi_clk_update, s,
++                                ClockUpdate);
++}
++
++static void bcm2835_smi_realize(DeviceState *dev, Error **errp)
++{
++    BCM2835SmiState *s = BCM2835_SMI(dev);
++
++    s->timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, smi_tick, s);
++}
++
++static void bcm2835_smi_reset(DeviceState *dev)
++{
++    BCM2835SmiState *s = BCM2835_SMI(dev);
++    int i;
++
++    timer_del(s->timer);
++
++    s->cs = 0;
++    s->length = 0;
++    s->address = 0;
++    for (i = 0; i < 4; i++) {
++        s->dsr[i] = 0;
++        s->dsw[i] = 0;
++    }
++    s->dc = 0;
++    s->dcs = 0;
++    s->da = 0;
++    s->dd = 0;
++    s->len = 0;
++    s->head = 0;
++    s->hightide = 0;
++    s->remaining = 0;
++    s->active = false;
++    s->writing = false;
++    s->start_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++
++    qemu_set_irq(s->irq, 0);
++}
++
++static void bcm2835_smi_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++
++    dc->desc = "BCM2835 Secondary Memory Interface";
++    dc->realize = bcm2835_smi_realize;
++    device_class_set_legacy_reset(dc, bcm2835_smi_reset);
++    dc->vmsd = &vmstate_bcm2835_smi;
++}
++
++static const TypeInfo bcm2835_smi_info = {
++    .name          = TYPE_BCM2835_SMI,
++    .parent        = TYPE_SYS_BUS_DEVICE,
++    .instance_size = sizeof(BCM2835SmiState),
++    .class_init    = bcm2835_smi_class_init,
++    .instance_init = bcm2835_smi_init,
++};
++
++static void bcm2835_smi_register_types(void)
++{
++    type_register_static(&bcm2835_smi_info);
++}
++
++type_init(bcm2835_smi_register_types)
+diff --git a/hw/misc/meson.build b/hw/misc/meson.build
+index b2562f5..5279f26 100644
+--- a/hw/misc/meson.build
++++ b/hw/misc/meson.build
+@@ -91,6 +91,7 @@ system_ss.add(when: 'CONFIG_RASPI', if_true: files(
+   'bcm2835_rng.c',
+   'bcm2835_thermal.c',
+   'bcm2835_pwm.c',
++  'bcm2835_smi.c',
+   'bcm2835_cprman.c',
+   'bcm2835_powermgt.c',
+ ))
+diff --git a/include/hw/arm/bcm2835_peripherals.h b/include/hw/arm/bcm2835_peripherals.h
+index dab30f2..e56547a 100644
+--- a/include/hw/arm/bcm2835_peripherals.h
++++ b/include/hw/arm/bcm2835_peripherals.h
+@@ -27,6 +27,7 @@
+ #include "hw/misc/bcm2835_pwm.h"
+ #include "hw/timer/bcm2835_armtimer.h"
+ #include "hw/audio/bcm2835_i2s.h"
++#include "hw/misc/bcm2835_smi.h"
+ #include "hw/misc/bcm2835_cprman.h"
+ #include "hw/misc/bcm2835_powermgt.h"
+ #include "hw/sd/sdhci.h"
+@@ -78,7 +79,6 @@ struct BCMSocPeripheralBaseState {
+     UnimplementedDeviceState ave0;
+     UnimplementedDeviceState v3d;
+     UnimplementedDeviceState bscsl;
+-    UnimplementedDeviceState smi;
+     DWC2State dwc2;
+     UnimplementedDeviceState sdramc;
+ };
+@@ -99,6 +99,7 @@ struct BCM2835PeripheralState {
+     BCM2835PwmState pwm;
+     BCM2835ArmTimerState armtimer;
+     BCM2835I2SState i2s;
++    BCM2835SmiState smi;
+     BCM2835GpioState gpio;
+ };
+ 
+diff --git a/include/hw/misc/bcm2835_smi.h b/include/hw/misc/bcm2835_smi.h
+new file mode 100644
+index 0000000..86d2f6f
+--- /dev/null
++++ b/include/hw/misc/bcm2835_smi.h
+@@ -0,0 +1,59 @@
++/*
++ * BCM2835 Secondary Memory Interface
++ *
++ * Copyright (c) 2026 Noah Evans
++ *
++ * This work is licensed under the terms of the GNU GPL, version 2 or later.
++ * See the COPYING file in the top-level directory.
++ */
++
++#ifndef BCM2835_SMI_H
++#define BCM2835_SMI_H
++
++#include "hw/sysbus.h"
++#include "qemu/timer.h"
++#include "qom/object.h"
++
++#define TYPE_BCM2835_SMI "bcm2835-smi"
++OBJECT_DECLARE_SIMPLE_TYPE(BCM2835SmiState, BCM2835_SMI)
++
++/*
++ * The datasheet gives the FIFO as 64 words.  Note that SMIFD's count
++ * fields are six bits, so a full 64-word FIFO cannot be expressed
++ * through them; see the comment on smifd_count() in the .c file.
++ */
++#define BCM2835_SMI_FIFO_DEPTH 64
++
++struct BCM2835SmiState {
++    SysBusDevice busdev;
++    MemoryRegion iomem;
++    qemu_irq irq;
++
++    /* The SMI clock, from the clock manager's smi mux. */
++    Clock *clk;
++    QEMUTimer *timer;
++
++    uint32_t cs;
++    uint32_t length;
++    uint32_t address;
++    uint32_t dsr[4];
++    uint32_t dsw[4];
++    uint32_t dc;
++    uint32_t dcs;
++    uint32_t da;
++    uint32_t dd;
++
++    uint32_t fifo[BCM2835_SMI_FIFO_DEPTH];
++    uint32_t len, head;
++
++    /* High-tide mark of the FIFO count during the last transfer. */
++    uint32_t hightide;
++
++    /* The programmed transfer in progress. */
++    uint32_t remaining;
++    int64_t start_ns;
++    bool active;
++    bool writing;
++};
++
++#endif
+-- 
+2.51.0
+

@@ -1,0 +1,441 @@
+From bf6b872f4d19791570f237ce8eb4f1562691acad Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Sun, 6 Sep 2026 21:09:24 -0400
+Subject: [PATCH 10/16] hw/timer: compute the BCM2835 ARM timer counters from
+ the clock, not a ptimer
+
+The first version of this model drove the countdown with a ptimer and
+returned ptimer_get_count() for VALUE.  That reads back a hard zero for
+any access taken after the counter has expired but before ptimer's
+callback has been serviced -- hw/core/ptimer.c clamps to 0 to "prevent
+timer underflowing if it should already have triggered", independently
+of the policy flags.  Under TCG a guest in a calibration loop starves
+the main loop, so the window is milliseconds wide.
+
+A guest polling VALUE therefore saw the counter parked at zero rather
+than wrapping.  Sampling it every 3ms across a 10ms period gave
+0 0 7757 1804 15691 9739: correct once the callback caught up, and
+stuck at zero before that.  Real hardware never parks -- the counter is
+free-running silicon and a read lands wherever it lands.
+
+Compute both counters on demand from the virtual clock instead, the way
+the free-running counter already did, and keep a plain QEMUTimer purely
+to deliver the interrupt.  The interrupt deadline and the counter value
+are now derived from the same base and rate, so they cannot drift apart
+however late the callback runs.  Every register write that disturbs the
+count goes through a single rebase helper for the same reason.
+
+The same 3ms sampling now gives 19647 13639 7684 1732 15618 9633:
+5953 ticks per interval at the programmed 1984126 Hz, wrapping cleanly
+through the 19842-tick period.
+
+While here, note that include/hw/ptimer.h tells new devices not to use
+PTIMER_POLICY_LEGACY; this one no longer uses a ptimer at all.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01BtE1mJ79fHUqzyPBaSgBKx
+---
+ hw/timer/bcm2835_armtimer.c         | 243 ++++++++++++++++++++--------
+ include/hw/timer/bcm2835_armtimer.h |  14 +-
+ 2 files changed, 184 insertions(+), 73 deletions(-)
+
+diff --git a/hw/timer/bcm2835_armtimer.c b/hw/timer/bcm2835_armtimer.c
+index c0f3f94..4b99909 100644
+--- a/hw/timer/bcm2835_armtimer.c
++++ b/hw/timer/bcm2835_armtimer.c
+@@ -12,11 +12,28 @@
+  * Register layout, reset values and bit meanings are from the BCM2835
+  * ARM Peripherals datasheet (section 14), not from any guest driver.
+  *
+- * WHAT THIS DOES NOT MODEL.  The datasheet documents a "free running
+- * counter" and a halt-in-debug bit whose behaviour depends on the
+- * VideoCore side; the debug halt is ignored here.  Everything a driver
+- * programs -- load, reload, pre-divider, prescale, the two counters
+- * and the interrupt -- is modelled.
++ * WHY THE COUNTERS ARE NOT A ptimer.  The obvious implementation
++ * drives the countdown with a ptimer and reports ptimer_get_count()
++ * for VALUE.  That is wrong here in a way that shows up immediately in
++ * a guest: ptimer_get_count() returns a hard 0 for any read taken
++ * after the counter has expired but before ptimer's callback has been
++ * serviced (hw/core/ptimer.c, "Prevent timer underflowing if it should
++ * already have triggered").  Under TCG a guest sitting in a
++ * calibration loop starves the main loop, so that window is
++ * milliseconds wide, and a driver polling VALUE sees the counter
++ * parked at zero rather than wrapping.  Real hardware never parks: the
++ * counter is free-running silicon and a read lands wherever it lands.
++ *
++ * So both counters are computed on demand from the virtual clock, and
++ * the QEMUTimer here exists only to deliver the interrupt at the
++ * moment the countdown reaches zero.  The interrupt time and the
++ * counter value are derived from the same base and rate, so they
++ * cannot drift apart no matter how late the callback runs.
++ *
++ * WHAT THIS DOES NOT MODEL.  The datasheet documents a halt-in-debug
++ * bit whose behaviour depends on the VideoCore side; it is ignored
++ * here.  Everything a driver programs -- load, reload, pre-divider,
++ * prescale, the two counters and the interrupt -- is modelled.
+  *
+  * Copyright (c) 2026 Noah Evans
+  *
+@@ -78,17 +95,130 @@ static uint32_t bcm2835_armtimer_rate(BCM2835ArmTimerState *s)
+     return s->freq / (div * bcm2835_armtimer_prescale(s));
+ }
+ 
++/*
++ * The value the counter reloads with.  In 16-bit mode the counter only
++ * has 16 bits whatever the guest wrote, and saying so is the
++ * difference between a driver that finds its long timeout truncated
++ * here and one that finds it on the board.
++ */
++static uint32_t bcm2835_armtimer_limit(BCM2835ArmTimerState *s)
++{
++    uint32_t limit = s->load;
++
++    if (!(s->control & CTRL_23BIT)) {
++        limit &= 0xffff;
++    } else {
++        limit &= 0x7fffff;
++    }
++    if (limit == 0) {
++        limit = 1;
++    }
++    return limit;
++}
++
+ static void bcm2835_armtimer_update_irq(BCM2835ArmTimerState *s)
+ {
+     qemu_set_irq(s->irq, s->int_level && (s->control & CTRL_INT_ENABLE));
+ }
+ 
++/*
++ * The countdown, computed from the clock.  The counter runs from the
++ * limit down to zero and reloads, so a period is limit + 1 ticks: it
++ * is visibly at zero for one tick, which is when the interrupt is
++ * raised.
++ */
++static uint32_t bcm2835_armtimer_count(BCM2835ArmTimerState *s)
++{
++    uint32_t rate, limit;
++    uint64_t ticks, period;
++    int64_t elapsed;
++
++    if (!(s->control & CTRL_ENABLE)) {
++        return s->count_frozen;
++    }
++    rate = bcm2835_armtimer_rate(s);
++    if (rate == 0) {
++        return s->count_frozen;
++    }
++    limit = bcm2835_armtimer_limit(s);
++    period = (uint64_t)limit + 1;
++
++    elapsed = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) - s->count_base_ns;
++    if (elapsed < 0) {
++        elapsed = 0;
++    }
++    ticks = (uint64_t)elapsed * rate / NANOSECONDS_PER_SECOND;
++    return limit - (uint32_t)(ticks % period);
++}
++
++/*
++ * Re-anchor the countdown so that it reads `count` right now.  Every
++ * register write that disturbs the counter goes through here, which is
++ * what keeps the computed value and the interrupt deadline consistent.
++ */
++static void bcm2835_armtimer_rebase(BCM2835ArmTimerState *s, uint32_t count)
++{
++    uint32_t rate, limit;
++    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++
++    limit = bcm2835_armtimer_limit(s);
++    if (count > limit) {
++        /*
++         * A RELOAD smaller than the count in progress cannot be
++         * represented; the counter takes the new limit at once rather
++         * than counting down past it.
++         */
++        count = limit;
++    }
++    s->count_frozen = count;
++
++    rate = bcm2835_armtimer_rate(s);
++    if (rate == 0) {
++        s->count_base_ns = now;
++        return;
++    }
++    /* ticks elapsed into the current period == limit - count */
++    s->count_base_ns = now -
++        (int64_t)((uint64_t)(limit - count) * NANOSECONDS_PER_SECOND / rate);
++}
++
++/* Schedule the interrupt for the moment the countdown next hits zero. */
++static void bcm2835_armtimer_resched(BCM2835ArmTimerState *s)
++{
++    uint32_t rate, count;
++    uint64_t delta;
++
++    timer_del(s->irqtimer);
++
++    if (!(s->control & CTRL_ENABLE)) {
++        return;
++    }
++    rate = bcm2835_armtimer_rate(s);
++    if (rate == 0) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "bcm2835_armtimer: pre-divider and prescale leave a "
++                      "zero counter rate\n");
++        return;
++    }
++
++    /*
++     * The counter reaches zero in `count` ticks; if it is already
++     * showing zero the next zero is a whole period away.
++     */
++    count = bcm2835_armtimer_count(s);
++    delta = count ? count : (uint64_t)bcm2835_armtimer_limit(s) + 1;
++
++    timer_mod(s->irqtimer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
++              (int64_t)(delta * NANOSECONDS_PER_SECOND / rate));
++}
++
+ static void bcm2835_armtimer_tick(void *opaque)
+ {
+     BCM2835ArmTimerState *s = (BCM2835ArmTimerState *)opaque;
+ 
+     s->int_level = 1;
+     bcm2835_armtimer_update_irq(s);
++    bcm2835_armtimer_resched(s);
+ }
+ 
+ /*
+@@ -116,56 +246,6 @@ static void bcm2835_armtimer_freerun_latch(BCM2835ArmTimerState *s)
+     s->freerun_base_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+ }
+ 
+-static void bcm2835_armtimer_reload(BCM2835ArmTimerState *s, uint32_t value,
+-                                    bool reload_now)
+-{
+-    uint32_t limit = value;
+-
+-    /*
+-     * In 16-bit mode the counter only has 16 bits, whatever the guest
+-     * loaded.  Saying so is the difference between a driver that finds
+-     * its long timeout truncated here and one that finds it on the
+-     * board.
+-     */
+-    if (!(s->control & CTRL_23BIT)) {
+-        if (value > 0xffff) {
+-            qemu_log_mask(LOG_GUEST_ERROR,
+-                          "bcm2835_armtimer: load 0x%x does not fit the "
+-                          "16-bit counter; set CONTROL bit 1 for 23-bit\n",
+-                          value);
+-        }
+-        limit &= 0xffff;
+-    } else {
+-        limit &= 0x7fffff;
+-    }
+-    if (limit == 0) {
+-        limit = 1;
+-    }
+-    ptimer_set_limit(s->timer, limit, reload_now);
+-}
+-
+-static void bcm2835_armtimer_restart(BCM2835ArmTimerState *s)
+-{
+-    uint32_t rate = bcm2835_armtimer_rate(s);
+-
+-    ptimer_transaction_begin(s->timer);
+-    if (rate == 0) {
+-        qemu_log_mask(LOG_GUEST_ERROR,
+-                      "bcm2835_armtimer: pre-divider and prescale leave a "
+-                      "zero counter rate\n");
+-        ptimer_stop(s->timer);
+-    } else {
+-        ptimer_set_freq(s->timer, rate);
+-        bcm2835_armtimer_reload(s, s->load, true);
+-        if (s->control & CTRL_ENABLE) {
+-            ptimer_run(s->timer, 0);
+-        } else {
+-            ptimer_stop(s->timer);
+-        }
+-    }
+-    ptimer_transaction_commit(s->timer);
+-}
+-
+ static uint64_t bcm2835_armtimer_read(void *opaque, hwaddr offset,
+                                       unsigned size)
+ {
+@@ -175,7 +255,7 @@ static uint64_t bcm2835_armtimer_read(void *opaque, hwaddr offset,
+     case R_LOAD:
+         return s->load;
+     case R_VALUE:
+-        return ptimer_get_count(s->timer);
++        return bcm2835_armtimer_count(s);
+     case R_CONTROL:
+         return s->control;
+     case R_RAW_IRQ:
+@@ -207,14 +287,20 @@ static void bcm2835_armtimer_write(void *opaque, hwaddr offset,
+                                    uint64_t value, unsigned size)
+ {
+     BCM2835ArmTimerState *s = (BCM2835ArmTimerState *)opaque;
++    uint32_t count;
+ 
+     switch (offset) {
+     case R_LOAD:
+         /* Writing LOAD reloads the counter immediately. */
++        if (!(s->control & CTRL_23BIT) && value > 0xffff) {
++            qemu_log_mask(LOG_GUEST_ERROR,
++                          "bcm2835_armtimer: load 0x%" PRIx64 " does not fit "
++                          "the 16-bit counter; set CONTROL bit 1 for 23-bit\n",
++                          value);
++        }
+         s->load = value;
+-        ptimer_transaction_begin(s->timer);
+-        bcm2835_armtimer_reload(s, value, true);
+-        ptimer_transaction_commit(s->timer);
++        bcm2835_armtimer_rebase(s, bcm2835_armtimer_limit(s));
++        bcm2835_armtimer_resched(s);
+         break;
+ 
+     case R_RELOAD:
+@@ -224,17 +310,19 @@ static void bcm2835_armtimer_write(void *opaque, hwaddr offset,
+          * difference between the two registers, and it is why a driver
+          * changing a periodic rate should use this one.
+          */
++        count = bcm2835_armtimer_count(s);
+         s->reload = value;
+         s->load = value;
+-        ptimer_transaction_begin(s->timer);
+-        bcm2835_armtimer_reload(s, value, false);
+-        ptimer_transaction_commit(s->timer);
++        bcm2835_armtimer_rebase(s, count);
++        bcm2835_armtimer_resched(s);
+         break;
+ 
+     case R_CONTROL:
++        count = bcm2835_armtimer_count(s);
+         bcm2835_armtimer_freerun_latch(s);
+         s->control = value;
+-        bcm2835_armtimer_restart(s);
++        bcm2835_armtimer_rebase(s, count);
++        bcm2835_armtimer_resched(s);
+         bcm2835_armtimer_update_irq(s);
+         break;
+ 
+@@ -244,8 +332,10 @@ static void bcm2835_armtimer_write(void *opaque, hwaddr offset,
+         break;
+ 
+     case R_PREDIVIDER:
++        count = bcm2835_armtimer_count(s);
+         s->predivider = value & PREDIVIDER_MASK;
+-        bcm2835_armtimer_restart(s);
++        bcm2835_armtimer_rebase(s, count);
++        bcm2835_armtimer_resched(s);
+         break;
+ 
+     case R_VALUE:
+@@ -273,19 +363,29 @@ static const MemoryRegionOps bcm2835_armtimer_ops = {
+     .impl.max_access_size = 4,
+ };
+ 
++static int bcm2835_armtimer_post_load(void *opaque, int version_id)
++{
++    BCM2835ArmTimerState *s = (BCM2835ArmTimerState *)opaque;
++
++    bcm2835_armtimer_resched(s);
++    return 0;
++}
++
+ static const VMStateDescription vmstate_bcm2835_armtimer = {
+     .name = TYPE_BCM2835_ARMTIMER,
+-    .version_id = 1,
+-    .minimum_version_id = 1,
++    .version_id = 2,
++    .minimum_version_id = 2,
++    .post_load = bcm2835_armtimer_post_load,
+     .fields = (const VMStateField[]) {
+         VMSTATE_UINT32(load, BCM2835ArmTimerState),
+         VMSTATE_UINT32(control, BCM2835ArmTimerState),
+         VMSTATE_UINT32(reload, BCM2835ArmTimerState),
+         VMSTATE_UINT32(predivider, BCM2835ArmTimerState),
+         VMSTATE_INT32(int_level, BCM2835ArmTimerState),
++        VMSTATE_INT64(count_base_ns, BCM2835ArmTimerState),
++        VMSTATE_UINT32(count_frozen, BCM2835ArmTimerState),
+         VMSTATE_INT64(freerun_base_ns, BCM2835ArmTimerState),
+         VMSTATE_UINT32(freerun_base, BCM2835ArmTimerState),
+-        VMSTATE_PTIMER(timer, BCM2835ArmTimerState),
+         VMSTATE_END_OF_LIST()
+     }
+ };
+@@ -304,24 +404,25 @@ static void bcm2835_armtimer_realize(DeviceState *dev, Error **errp)
+ {
+     BCM2835ArmTimerState *s = BCM2835_ARMTIMER(dev);
+ 
+-    s->timer = ptimer_init(bcm2835_armtimer_tick, s, PTIMER_POLICY_LEGACY);
++    s->irqtimer = timer_new_ns(QEMU_CLOCK_VIRTUAL, bcm2835_armtimer_tick, s);
+ }
+ 
+ static void bcm2835_armtimer_reset(DeviceState *dev)
+ {
+     BCM2835ArmTimerState *s = BCM2835_ARMTIMER(dev);
+ 
++    timer_del(s->irqtimer);
++
+     s->load = 0;
+     s->control = CTRL_RESET;
+     s->reload = 0;
+     s->predivider = PREDIVIDER_RESET;
+     s->int_level = 0;
++    s->count_frozen = 0;
++    s->count_base_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+     s->freerun_base = 0;
+     s->freerun_base_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+ 
+-    ptimer_transaction_begin(s->timer);
+-    ptimer_stop(s->timer);
+-    ptimer_transaction_commit(s->timer);
+     bcm2835_armtimer_update_irq(s);
+ }
+ 
+diff --git a/include/hw/timer/bcm2835_armtimer.h b/include/hw/timer/bcm2835_armtimer.h
+index e8913fd..4729cee 100644
+--- a/include/hw/timer/bcm2835_armtimer.h
++++ b/include/hw/timer/bcm2835_armtimer.h
+@@ -11,7 +11,7 @@
+ #define BCM2835_ARMTIMER_H
+ 
+ #include "hw/sysbus.h"
+-#include "hw/ptimer.h"
++#include "qemu/timer.h"
+ #include "qom/object.h"
+ 
+ #define TYPE_BCM2835_ARMTIMER "bcm2835-armtimer"
+@@ -30,7 +30,13 @@ struct BCM2835ArmTimerState {
+      */
+     uint32_t freq;
+ 
+-    ptimer_state *timer;
++    /*
++     * Both counters are computed on demand from the virtual clock, so
++     * this timer exists only to deliver the interrupt.  Nothing reads
++     * a counter value out of it; see the comment in the .c file about
++     * why the counters are not driven by a ptimer.
++     */
++    QEMUTimer *irqtimer;
+ 
+     uint32_t load;
+     uint32_t control;
+@@ -38,6 +44,10 @@ struct BCM2835ArmTimerState {
+     uint32_t predivider;
+     int int_level;
+ 
++    /* Countdown: when the current period began, and its held value. */
++    int64_t count_base_ns;
++    uint32_t count_frozen;
++
+     /* Base of the free-running counter, in nanoseconds. */
+     int64_t freerun_base_ns;
+     uint32_t freerun_base;
+-- 
+2.51.0
+

@@ -1,0 +1,767 @@
+From fb575120cc8cc742e10f1958fa8df01c42fbfbe7 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Sun, 6 Sep 2026 21:28:10 -0400
+Subject: [PATCH 11/16] hw/audio: model the BCM2835 I2S/PCM interface,
+ replacing the unimplemented stub
+
+The PCM block was create_unimp(), so a guest could neither configure a
+sample rate nor move a frame: reads returned zero and writes vanished.
+
+Model it from the BCM2835 ARM Peripherals datasheet (section 8): both
+64-word FIFOs, the frame and channel configuration, the TX and RX
+thresholds, the sync flags, the write-one-to-clear error bits, the DMA
+request levels and the interrupt, with the serialiser clocked from the
+clock manager's pcm mux.
+
+The FIFOs are advanced on demand rather than by a periodic timer at the
+frame rate.  A guest may program 48kHz or 3MHz, and a callback per
+frame is either wasteful or a storm; instead every register access
+first applies however many frame periods have elapsed since the last
+one.  A read therefore always reflects the exact state the frame clock
+implies, with no dependence on callback latency -- the same reason the
+ARM timer in this series computes its counters from the clock.
+
+There is no audio backend: data clocked out of the TX FIFO is
+discarded and the RX FIFO fills with zeroes, which is what an
+unconnected DIN pin reads on a board.  Everything a driver programs is
+modelled.
+
+One deliberate departure from the datasheet, called out in a comment:
+its description of TXTHR and RXTHR is defective -- four settings, but
+the text for 01 and 10 is identical and omits the fraction ("less than
+full", "at least full").  The hardware uses quarters and that is what
+is implemented.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01BtE1mJ79fHUqzyPBaSgBKx
+---
+ hw/arm/bcm2835_peripherals.c         |  17 +-
+ hw/audio/bcm2835_i2s.c               | 571 +++++++++++++++++++++++++++
+ hw/audio/meson.build                 |   1 +
+ include/hw/arm/bcm2835_peripherals.h |   3 +-
+ include/hw/audio/bcm2835_i2s.h       |  56 +++
+ 5 files changed, 646 insertions(+), 2 deletions(-)
+ create mode 100644 hw/audio/bcm2835_i2s.c
+ create mode 100644 include/hw/audio/bcm2835_i2s.h
+
+diff --git a/hw/arm/bcm2835_peripherals.c b/hw/arm/bcm2835_peripherals.c
+index 9e65ac0..f026f15 100644
+--- a/hw/arm/bcm2835_peripherals.c
++++ b/hw/arm/bcm2835_peripherals.c
+@@ -56,6 +56,9 @@ static void bcm2835_peripherals_init(Object *obj)
+     /* Thermal */
+     object_initialize_child(obj, "thermal", &s->thermal, TYPE_BCM2835_THERMAL);
+     object_initialize_child(obj, "pwm", &s->pwm, TYPE_BCM2835_PWM);
++
++    /* I2S/PCM */
++    object_initialize_child(obj, "i2s", &s->i2s, TYPE_BCM2835_I2S);
+     object_initialize_child(obj, "armtimer", &s->armtimer,
+                             TYPE_BCM2835_ARMTIMER);
+ 
+@@ -243,6 +246,19 @@ static void bcm2835_peripherals_realize(DeviceState *dev, Error **errp)
+     memory_region_add_subregion(&s_base->peri_mr, PWM_OFFSET,
+                 sysbus_mmio_get_region(SYS_BUS_DEVICE(&s->pwm), 0));
+ 
++    /* I2S/PCM */
++    qdev_connect_clock_in(DEVICE(&s->i2s), "clk",
++                          qdev_get_clock_out(DEVICE(&s_base->cprman), "pcm-out"));
++    if (!sysbus_realize(SYS_BUS_DEVICE(&s->i2s), errp)) {
++        return;
++    }
++    memory_region_add_subregion(&s_base->peri_mr, I2S_OFFSET,
++                sysbus_mmio_get_region(SYS_BUS_DEVICE(&s->i2s), 0));
++    sysbus_connect_irq(SYS_BUS_DEVICE(&s->i2s), 0,
++                       qdev_get_gpio_in_named(DEVICE(&s_base->ic),
++                                              BCM2835_IC_GPU_IRQ,
++                                              INTERRUPT_I2SPCM));
++
+     /* ARM timer */
+     if (!sysbus_realize(SYS_BUS_DEVICE(&s->armtimer), errp)) {
+         return;
+@@ -533,7 +549,6 @@ void bcm_soc_peripherals_common_realize(DeviceState *dev, Error **errp)
+                                                  INTERRUPT_I2C));
+ 
+     create_unimp(s, &s->txp, "bcm2835-txp", TXP_OFFSET, 0x1000);
+-    create_unimp(s, &s->i2s, "bcm2835-i2s", I2S_OFFSET, 0x100);
+     create_unimp(s, &s->smi, "bcm2835-smi", SMI_OFFSET, 0x100);
+     create_unimp(s, &s->bscsl, "bcm2835-spis", BSC_SL_OFFSET, 0x100);
+     create_unimp(s, &s->dbus, "bcm2835-dbus", DBUS_OFFSET, 0x8000);
+diff --git a/hw/audio/bcm2835_i2s.c b/hw/audio/bcm2835_i2s.c
+new file mode 100644
+index 0000000..437bd5d
+--- /dev/null
++++ b/hw/audio/bcm2835_i2s.c
+@@ -0,0 +1,571 @@
++/*
++ * BCM2835 I2S/PCM audio interface emulation
++ *
++ * The PCM block is a bidirectional serialiser: a frame of programmable
++ * length is clocked out of a 64-word TX FIFO and in to a 64-word RX
++ * FIFO, once per frame period, at a rate set by the clock manager's
++ * pcm mux rather than by anything the ARM controls directly.  On a Pi
++ * it drives the GPIO 18-21 PCM pins, which is how a HAT with a DAC or
++ * a MEMS microphone is attached.
++ *
++ * Register layout, reset values and bit meanings are from the BCM2835
++ * ARM Peripherals datasheet (section 8), not from any guest driver.
++ *
++ * HOW THE FIFOS ARE ADVANCED.  Not by a periodic timer at the frame
++ * rate: a guest is free to program 48kHz or 3MHz, and a callback per
++ * frame is either wasteful or a storm.  Instead the serialiser is
++ * advanced on demand -- every register access first works out how many
++ * frame periods have elapsed since it last ran and applies that many.
++ * The QEMUTimer exists only so that an interrupt is delivered when the
++ * guest is not polling.  A read therefore always reflects the exact
++ * state the frame clock implies, which is what the guest would see on
++ * a board, and there is no dependency on how promptly a callback runs.
++ *
++ * WHAT THIS DOES NOT MODEL.  There is no audio backend: data clocked
++ * out of the TX FIFO is discarded, and the RX FIFO fills with zeroes,
++ * which is what an unconnected DIN pin reads on a board.  Everything a
++ * driver programs -- the frame and channel configuration, both FIFOs,
++ * the thresholds, the sync counter, the error bits, the DMA request
++ * levels and the interrupt -- is modelled.  The PDM and gray-code
++ * input modes are accepted and stored but do not change the framing.
++ *
++ * Copyright (c) 2026 Noah Evans
++ *
++ * This work is licensed under the terms of the GNU GPL, version 2 or later.
++ * See the COPYING file in the top-level directory.
++ */
++
++#include "qemu/osdep.h"
++#include "qemu/log.h"
++#include "qemu/module.h"
++#include "qemu/timer.h"
++#include "hw/audio/bcm2835_i2s.h"
++#include "hw/irq.h"
++#include "hw/qdev-clock.h"
++#include "hw/qdev-properties.h"
++#include "migration/vmstate.h"
++
++#define R_CS        0x00
++#define R_FIFO      0x04
++#define R_MODE      0x08
++#define R_RXC       0x0c
++#define R_TXC       0x10
++#define R_DREQ      0x14
++#define R_INTEN     0x18
++#define R_INTSTC    0x1c
++#define R_GRAY      0x20
++
++/* CS_A */
++#define CS_EN       (1 << 0)
++#define CS_RXON     (1 << 1)
++#define CS_TXON     (1 << 2)
++#define CS_TXCLR    (1 << 3)
++#define CS_RXCLR    (1 << 4)
++#define CS_TXTHR    (3 << 5)
++#define CS_TXTHR_SHIFT 5
++#define CS_RXTHR    (3 << 7)
++#define CS_RXTHR_SHIFT 7
++#define CS_DMAEN    (1 << 9)
++#define CS_TXSYNC   (1 << 13)
++#define CS_RXSYNC   (1 << 14)
++#define CS_TXERR    (1 << 15)
++#define CS_RXERR    (1 << 16)
++#define CS_TXW      (1 << 17)
++#define CS_RXR      (1 << 18)
++#define CS_TXD      (1 << 19)
++#define CS_RXD      (1 << 20)
++#define CS_TXE      (1 << 21)
++#define CS_RXF      (1 << 22)
++#define CS_RXSEX    (1 << 23)
++#define CS_SYNC     (1 << 24)
++#define CS_STBY     (1 << 25)
++
++/* The bits the guest owns; the rest are status this model computes. */
++#define CS_WRITABLE (CS_EN | CS_RXON | CS_TXON | CS_TXTHR | CS_RXTHR | \
++                     CS_DMAEN | CS_RXSEX | CS_SYNC | CS_STBY)
++/* Write-one-to-clear error bits. */
++#define CS_W1C      (CS_TXERR | CS_RXERR)
++/* Computed each time the serialiser is brought up to date. */
++#define CS_STATUS   (CS_TXW | CS_RXR | CS_TXD | CS_RXD | CS_TXE | CS_RXF | \
++                     CS_TXSYNC | CS_RXSYNC)
++
++/* MODE_A */
++#define MODE_FSLEN      0x3ff
++#define MODE_FLEN_SHIFT 10
++#define MODE_FLEN       (0x3ff << MODE_FLEN_SHIFT)
++#define MODE_CLK_DIS    (1 << 28)
++
++/* INTEN_A / INTSTC_A */
++#define INT_TXW     (1 << 0)
++#define INT_RXR     (1 << 1)
++#define INT_TXERR   (1 << 2)
++#define INT_RXERR   (1 << 3)
++#define INT_MASK    (INT_TXW | INT_RXR | INT_TXERR | INT_RXERR)
++
++/*
++ * An idle block can have an arbitrary number of frame periods behind
++ * it, but the FIFO state saturates: once TX has drained and underflowed
++ * or RX has filled and overflowed, further frames change nothing.  So
++ * applying more than a FIFO's worth is never necessary.
++ */
++#define MAX_CATCHUP (BCM2835_I2S_FIFO_DEPTH + 1)
++
++static uint32_t bcm2835_i2s_frame_bits(BCM2835I2SState *s)
++{
++    /* FLEN holds the frame length in clocks, less one. */
++    return ((s->mode & MODE_FLEN) >> MODE_FLEN_SHIFT) + 1;
++}
++
++/* Frames per second, or 0 if the serialiser is not being clocked. */
++static uint64_t bcm2835_i2s_frame_rate(BCM2835I2SState *s)
++{
++    uint64_t hz = clock_get_hz(s->clk);
++
++    if (s->mode & MODE_CLK_DIS) {
++        return 0;
++    }
++    return hz / bcm2835_i2s_frame_bits(s);
++}
++
++static void bcm2835_i2s_update_irq(BCM2835I2SState *s)
++{
++    uint32_t status = 0;
++
++    if (s->cs & CS_TXW) {
++        status |= INT_TXW;
++    }
++    if (s->cs & CS_RXR) {
++        status |= INT_RXR;
++    }
++    if (s->cs & CS_TXERR) {
++        status |= INT_TXERR;
++    }
++    if (s->cs & CS_RXERR) {
++        status |= INT_RXERR;
++    }
++    s->intstc |= status & s->inten;
++
++    qemu_set_irq(s->irq, s->intstc != 0);
++}
++
++/*
++ * Recompute the status bits from the FIFO levels.
++ *
++ * The datasheet's description of TXTHR and RXTHR is defective: it
++ * gives four settings but the text for 01 and 10 is identical and
++ * omits the fraction ("less than full", "at least full").  The
++ * hardware uses quarters, and that is what is implemented here --
++ * flagged because it is the one place in this model where the
++ * datasheet does not say what the silicon does.
++ */
++static void bcm2835_i2s_update_status(BCM2835I2SState *s)
++{
++    uint32_t txthr = (s->cs & CS_TXTHR) >> CS_TXTHR_SHIFT;
++    uint32_t rxthr = (s->cs & CS_RXTHR) >> CS_RXTHR_SHIFT;
++    uint32_t depth = BCM2835_I2S_FIFO_DEPTH;
++    bool txw, rxr;
++
++    s->cs &= ~CS_STATUS;
++
++    /*
++     * A disabled block reports no status at all -- CS_A's reset value
++     * is zero, and it stays zero until EN is set.  Computing the FIFO
++     * flags anyway would make a reset block look like an idle one.
++     */
++    if (!(s->cs & CS_EN)) {
++        return;
++    }
++
++    if (s->txlen == 0) {
++        s->cs |= CS_TXE;
++    }
++    if (s->txlen < depth) {
++        s->cs |= CS_TXD;
++    }
++    if (s->rxlen > 0) {
++        s->cs |= CS_RXD;
++    }
++    if (s->rxlen == depth) {
++        s->cs |= CS_RXF;
++    }
++
++    switch (txthr) {
++    case 0:  txw = s->txlen == 0;               break;
++    case 1:  txw = s->txlen < depth / 4;        break;
++    case 2:  txw = s->txlen < depth * 3 / 4;    break;
++    default: txw = s->txlen < depth;            break;
++    }
++    switch (rxthr) {
++    case 0:  rxr = s->rxlen >= 1;               break;
++    case 1:  rxr = s->rxlen >= depth / 4;       break;
++    case 2:  rxr = s->rxlen >= depth * 3 / 4;   break;
++    default: rxr = s->rxlen >= depth;           break;
++    }
++    if (txw) {
++        s->cs |= CS_TXW;
++    }
++    if (rxr) {
++        s->cs |= CS_RXR;
++    }
++
++    /*
++     * TXSYNC and RXSYNC report that the FIFO is in sync with the frame
++     * -- here the serialiser is always exactly on a frame boundary
++     * after a catch-up, so both are set while the block is enabled.
++     */
++    s->cs |= CS_TXSYNC | CS_RXSYNC;
++}
++
++/* Schedule the next moment an interrupt could become due. */
++static void bcm2835_i2s_resched(BCM2835I2SState *s)
++{
++    uint64_t rate;
++
++    timer_del(s->timer);
++
++    if (!(s->cs & CS_EN) || (s->inten & INT_MASK) == 0) {
++        return;
++    }
++    if (!(s->cs & (CS_TXON | CS_RXON))) {
++        return;
++    }
++    rate = bcm2835_i2s_frame_rate(s);
++    if (rate == 0) {
++        return;
++    }
++
++    /*
++     * A frame at a time would be a callback storm at audio rates, and
++     * the guest sees exact FIFO levels from any register read anyway.
++     * Waking once per FIFO-depth of frames is enough to raise the
++     * interrupt without letting a threshold go unnoticed for long.
++     */
++    timer_mod(s->timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
++              (int64_t)(BCM2835_I2S_FIFO_DEPTH * NANOSECONDS_PER_SECOND /
++                        rate) + 1);
++}
++
++/*
++ * Bring the serialiser up to date: apply every frame period that has
++ * elapsed since it last ran.
++ */
++static void bcm2835_i2s_sync(BCM2835I2SState *s)
++{
++    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++    uint64_t rate, frames, i;
++
++    rate = bcm2835_i2s_frame_rate(s);
++    if (!(s->cs & CS_EN) || rate == 0) {
++        s->last_frame_ns = now;
++        bcm2835_i2s_update_status(s);
++        return;
++    }
++
++    frames = (uint64_t)(now - s->last_frame_ns) * rate /
++             NANOSECONDS_PER_SECOND;
++    if (frames == 0) {
++        bcm2835_i2s_update_status(s);
++        return;
++    }
++    /* Consume exactly the time those frames took, not the whole gap. */
++    s->last_frame_ns += frames * NANOSECONDS_PER_SECOND / rate;
++
++    if (frames > MAX_CATCHUP) {
++        frames = MAX_CATCHUP;
++    }
++
++    for (i = 0; i < frames; i++) {
++        if (s->cs & CS_TXON) {
++            if (s->txlen > 0) {
++                /* Clocked out of DOUT and, with no backend, discarded. */
++                s->txhead = (s->txhead + 1) % BCM2835_I2S_FIFO_DEPTH;
++                s->txlen--;
++            } else {
++                s->cs |= CS_TXERR;      /* underflow */
++            }
++        }
++        if (s->cs & CS_RXON) {
++            if (s->rxlen < BCM2835_I2S_FIFO_DEPTH) {
++                uint32_t tail = (s->rxhead + s->rxlen) %
++                                BCM2835_I2S_FIFO_DEPTH;
++                /* An unconnected DIN pin reads as silence. */
++                s->rxfifo[tail] = 0;
++                s->rxlen++;
++            } else {
++                s->cs |= CS_RXERR;      /* overflow */
++            }
++        }
++    }
++
++    bcm2835_i2s_update_status(s);
++}
++
++static void bcm2835_i2s_tick(void *opaque)
++{
++    BCM2835I2SState *s = (BCM2835I2SState *)opaque;
++
++    bcm2835_i2s_sync(s);
++    bcm2835_i2s_update_irq(s);
++    bcm2835_i2s_resched(s);
++}
++
++static void bcm2835_i2s_clk_update(void *opaque, ClockEvent event)
++{
++    BCM2835I2SState *s = (BCM2835I2SState *)opaque;
++
++    /* Settle the old rate before adopting the new one. */
++    bcm2835_i2s_sync(s);
++    s->last_frame_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++    bcm2835_i2s_update_irq(s);
++    bcm2835_i2s_resched(s);
++}
++
++static uint64_t bcm2835_i2s_read(void *opaque, hwaddr offset, unsigned size)
++{
++    BCM2835I2SState *s = (BCM2835I2SState *)opaque;
++    uint32_t v;
++
++    bcm2835_i2s_sync(s);
++
++    switch (offset) {
++    case R_CS:
++        return s->cs;
++
++    case R_FIFO:
++        if (s->rxlen == 0) {
++            /*
++             * Reading an empty RX FIFO is a driver bug, and the block
++             * says so rather than inventing a sample.
++             */
++            s->cs |= CS_RXERR;
++            bcm2835_i2s_update_irq(s);
++            return 0;
++        }
++        v = s->rxfifo[s->rxhead];
++        s->rxhead = (s->rxhead + 1) % BCM2835_I2S_FIFO_DEPTH;
++        s->rxlen--;
++        bcm2835_i2s_update_status(s);
++        bcm2835_i2s_update_irq(s);
++        return v;
++
++    case R_MODE:
++        return s->mode;
++    case R_RXC:
++        return s->rxc;
++    case R_TXC:
++        return s->txc;
++    case R_DREQ:
++        return s->dreq;
++    case R_INTEN:
++        return s->inten;
++    case R_INTSTC:
++        return s->intstc;
++    case R_GRAY:
++        return s->gray;
++
++    default:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "bcm2835_i2s: read of unknown offset 0x%02"
++                      HWADDR_PRIx "\n", offset);
++        return 0;
++    }
++}
++
++static void bcm2835_i2s_write(void *opaque, hwaddr offset, uint64_t value,
++                              unsigned size)
++{
++    BCM2835I2SState *s = (BCM2835I2SState *)opaque;
++    uint32_t tail;
++
++    bcm2835_i2s_sync(s);
++
++    switch (offset) {
++    case R_CS:
++        /*
++         * TXCLR and RXCLR are self-clearing: the datasheet says the
++         * clear takes two PCM clocks, and a driver that reads the bit
++         * back expecting to see it set is wrong on hardware too.
++         */
++        if (value & CS_TXCLR) {
++            s->txlen = 0;
++            s->txhead = 0;
++        }
++        if (value & CS_RXCLR) {
++            s->rxlen = 0;
++            s->rxhead = 0;
++        }
++        s->cs &= ~(value & CS_W1C);
++        s->cs = (s->cs & ~CS_WRITABLE) | (value & CS_WRITABLE);
++
++        s->last_frame_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++        bcm2835_i2s_update_status(s);
++        bcm2835_i2s_update_irq(s);
++        bcm2835_i2s_resched(s);
++        break;
++
++    case R_FIFO:
++        if (s->txlen == BCM2835_I2S_FIFO_DEPTH) {
++            s->cs |= CS_TXERR;          /* overflow */
++            bcm2835_i2s_update_irq(s);
++            break;
++        }
++        tail = (s->txhead + s->txlen) % BCM2835_I2S_FIFO_DEPTH;
++        s->txfifo[tail] = value;
++        s->txlen++;
++        bcm2835_i2s_update_status(s);
++        bcm2835_i2s_update_irq(s);
++        break;
++
++    case R_MODE:
++        s->mode = value;
++        if (bcm2835_i2s_frame_bits(s) == 1) {
++            qemu_log_mask(LOG_GUEST_ERROR,
++                          "bcm2835_i2s: FLEN of 0 gives a one-clock frame\n");
++        }
++        s->last_frame_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++        bcm2835_i2s_resched(s);
++        break;
++
++    case R_RXC:
++        s->rxc = value;
++        break;
++    case R_TXC:
++        s->txc = value;
++        break;
++    case R_DREQ:
++        s->dreq = value;
++        break;
++
++    case R_INTEN:
++        s->inten = value & INT_MASK;
++        bcm2835_i2s_update_irq(s);
++        bcm2835_i2s_resched(s);
++        break;
++
++    case R_INTSTC:
++        s->intstc &= ~(value & INT_MASK);
++        qemu_set_irq(s->irq, s->intstc != 0);
++        break;
++
++    case R_GRAY:
++        s->gray = value;
++        break;
++
++    default:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "bcm2835_i2s: write to unknown offset 0x%02"
++                      HWADDR_PRIx "\n", offset);
++        break;
++    }
++}
++
++static const MemoryRegionOps bcm2835_i2s_ops = {
++    .read = bcm2835_i2s_read,
++    .write = bcm2835_i2s_write,
++    .endianness = DEVICE_NATIVE_ENDIAN,
++    .impl.min_access_size = 4,
++    .impl.max_access_size = 4,
++};
++
++static int bcm2835_i2s_post_load(void *opaque, int version_id)
++{
++    BCM2835I2SState *s = (BCM2835I2SState *)opaque;
++
++    s->last_frame_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++    bcm2835_i2s_resched(s);
++    return 0;
++}
++
++static const VMStateDescription vmstate_bcm2835_i2s = {
++    .name = TYPE_BCM2835_I2S,
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .post_load = bcm2835_i2s_post_load,
++    .fields = (const VMStateField[]) {
++        VMSTATE_UINT32(cs, BCM2835I2SState),
++        VMSTATE_UINT32(mode, BCM2835I2SState),
++        VMSTATE_UINT32(rxc, BCM2835I2SState),
++        VMSTATE_UINT32(txc, BCM2835I2SState),
++        VMSTATE_UINT32(dreq, BCM2835I2SState),
++        VMSTATE_UINT32(inten, BCM2835I2SState),
++        VMSTATE_UINT32(intstc, BCM2835I2SState),
++        VMSTATE_UINT32(gray, BCM2835I2SState),
++        VMSTATE_UINT32_ARRAY(txfifo, BCM2835I2SState,
++                             BCM2835_I2S_FIFO_DEPTH),
++        VMSTATE_UINT32_ARRAY(rxfifo, BCM2835I2SState,
++                             BCM2835_I2S_FIFO_DEPTH),
++        VMSTATE_UINT32(txlen, BCM2835I2SState),
++        VMSTATE_UINT32(txhead, BCM2835I2SState),
++        VMSTATE_UINT32(rxlen, BCM2835I2SState),
++        VMSTATE_UINT32(rxhead, BCM2835I2SState),
++        VMSTATE_INT64(last_frame_ns, BCM2835I2SState),
++        VMSTATE_END_OF_LIST()
++    }
++};
++
++static void bcm2835_i2s_init(Object *obj)
++{
++    BCM2835I2SState *s = BCM2835_I2S(obj);
++
++    memory_region_init_io(&s->iomem, obj, &bcm2835_i2s_ops, s,
++                          TYPE_BCM2835_I2S, 0x24);
++    sysbus_init_mmio(SYS_BUS_DEVICE(s), &s->iomem);
++    sysbus_init_irq(SYS_BUS_DEVICE(s), &s->irq);
++
++    s->clk = qdev_init_clock_in(DEVICE(s), "clk", bcm2835_i2s_clk_update, s,
++                                ClockUpdate);
++}
++
++static void bcm2835_i2s_realize(DeviceState *dev, Error **errp)
++{
++    BCM2835I2SState *s = BCM2835_I2S(dev);
++
++    s->timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, bcm2835_i2s_tick, s);
++}
++
++static void bcm2835_i2s_reset(DeviceState *dev)
++{
++    BCM2835I2SState *s = BCM2835_I2S(dev);
++
++    timer_del(s->timer);
++
++    s->cs = 0;
++    s->mode = 0;
++    s->rxc = 0;
++    s->txc = 0;
++    s->dreq = 0x30020;      /* datasheet reset value */
++    s->inten = 0;
++    s->intstc = 0;
++    s->gray = 0;
++    s->txlen = s->txhead = 0;
++    s->rxlen = s->rxhead = 0;
++    s->last_frame_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++
++    bcm2835_i2s_update_status(s);
++    qemu_set_irq(s->irq, 0);
++}
++
++static void bcm2835_i2s_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++
++    dc->desc = "BCM2835 I2S/PCM audio interface";
++    dc->realize = bcm2835_i2s_realize;
++    device_class_set_legacy_reset(dc, bcm2835_i2s_reset);
++    dc->vmsd = &vmstate_bcm2835_i2s;
++}
++
++static const TypeInfo bcm2835_i2s_info = {
++    .name          = TYPE_BCM2835_I2S,
++    .parent        = TYPE_SYS_BUS_DEVICE,
++    .instance_size = sizeof(BCM2835I2SState),
++    .class_init    = bcm2835_i2s_class_init,
++    .instance_init = bcm2835_i2s_init,
++};
++
++static void bcm2835_i2s_register_types(void)
++{
++    type_register_static(&bcm2835_i2s_info);
++}
++
++type_init(bcm2835_i2s_register_types)
+diff --git a/hw/audio/meson.build b/hw/audio/meson.build
+index 2990974..0dd1b37 100644
+--- a/hw/audio/meson.build
++++ b/hw/audio/meson.build
+@@ -15,3 +15,4 @@ system_ss.add(when: 'CONFIG_VT82C686', if_true: files('via-ac97.c'))
+ system_ss.add(when: 'CONFIG_WM8750', if_true: files('wm8750.c'))
+ system_ss.add(when: ['CONFIG_VIRTIO_SND', 'CONFIG_VIRTIO'], if_true: files('virtio-snd.c'))
+ system_ss.add(when: ['CONFIG_VIRTIO_SND', 'CONFIG_VIRTIO', 'CONFIG_VIRTIO_PCI'], if_true: files('virtio-snd-pci.c'))
++system_ss.add(when: 'CONFIG_RASPI', if_true: files('bcm2835_i2s.c'))
+diff --git a/include/hw/arm/bcm2835_peripherals.h b/include/hw/arm/bcm2835_peripherals.h
+index 602a812..dab30f2 100644
+--- a/include/hw/arm/bcm2835_peripherals.h
++++ b/include/hw/arm/bcm2835_peripherals.h
+@@ -26,6 +26,7 @@
+ #include "hw/misc/bcm2835_thermal.h"
+ #include "hw/misc/bcm2835_pwm.h"
+ #include "hw/timer/bcm2835_armtimer.h"
++#include "hw/audio/bcm2835_i2s.h"
+ #include "hw/misc/bcm2835_cprman.h"
+ #include "hw/misc/bcm2835_powermgt.h"
+ #include "hw/sd/sdhci.h"
+@@ -69,7 +70,6 @@ struct BCMSocPeripheralBaseState {
+     BCM2835MboxState mboxes;
+     SDHCIState sdhci;
+     BCM2835SDHostState sdhost;
+-    UnimplementedDeviceState i2s;
+     BCM2835SPIState spi[1];
+     BCM2835I2CState i2c[3];
+     OrIRQState orgated_i2c_irq;
+@@ -98,6 +98,7 @@ struct BCM2835PeripheralState {
+     Bcm2835ThermalState thermal;
+     BCM2835PwmState pwm;
+     BCM2835ArmTimerState armtimer;
++    BCM2835I2SState i2s;
+     BCM2835GpioState gpio;
+ };
+ 
+diff --git a/include/hw/audio/bcm2835_i2s.h b/include/hw/audio/bcm2835_i2s.h
+new file mode 100644
+index 0000000..9d79818
+--- /dev/null
++++ b/include/hw/audio/bcm2835_i2s.h
+@@ -0,0 +1,56 @@
++/*
++ * BCM2835 I2S/PCM audio interface
++ *
++ * Copyright (c) 2026 Noah Evans
++ *
++ * This work is licensed under the terms of the GNU GPL, version 2 or later.
++ * See the COPYING file in the top-level directory.
++ */
++
++#ifndef BCM2835_I2S_H
++#define BCM2835_I2S_H
++
++#include "hw/sysbus.h"
++#include "qemu/timer.h"
++#include "qom/object.h"
++
++#define TYPE_BCM2835_I2S "bcm2835-i2s"
++OBJECT_DECLARE_SIMPLE_TYPE(BCM2835I2SState, BCM2835_I2S)
++
++/* Both FIFOs are 64 words deep on this SoC. */
++#define BCM2835_I2S_FIFO_DEPTH 64
++
++struct BCM2835I2SState {
++    SysBusDevice busdev;
++    MemoryRegion iomem;
++    qemu_irq irq;
++
++    /* The PCM clock, from the clock manager's pcm mux. */
++    Clock *clk;
++
++    /*
++     * Raised when a threshold or error condition needs attention.  The
++     * FIFOs themselves are advanced on demand rather than by this
++     * timer; see the comment in the .c file.
++     */
++    QEMUTimer *timer;
++
++    uint32_t cs;
++    uint32_t mode;
++    uint32_t rxc;
++    uint32_t txc;
++    uint32_t dreq;
++    uint32_t inten;
++    uint32_t intstc;
++    uint32_t gray;
++
++    uint32_t txfifo[BCM2835_I2S_FIFO_DEPTH];
++    uint32_t rxfifo[BCM2835_I2S_FIFO_DEPTH];
++    uint32_t txlen, txhead;
++    uint32_t rxlen, rxhead;
++
++    /* When the serialiser last consumed or produced a frame. */
++    int64_t last_frame_ns;
++};
++
++#endif
+-- 
+2.51.0
+

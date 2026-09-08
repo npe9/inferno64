@@ -1915,15 +1915,20 @@ climbs monotonically to 1121 and is never once observed to fall.
 .CW Qkick ,
 fill loop unbounded at 128: peaks at 79.
 .IP \(bu
-As shipped \-
 .CW Qkick
-plus a fill loop capped at
-.CW Fifodepth
-\- peaks at 337.  Higher, and expected to be: each kick now moves 16
-bytes and hands the remainder to the interrupt rather than emptying the
-queue in one call, so more of the output is in flight at any moment.
-It is bounded and it drains, which is the property that matters; 337 is
-a twentieth of the 8K queue.
+plus a fill loop capped at 16 \- peaks at 337.  Higher, and expected to
+be: each kick now moves 16 bytes and hands the remainder to the
+interrupt rather than emptying the queue in one call, so more of the
+output is in flight at any moment.  It is bounded and it drains, which
+is the property that matters; 337 is a twentieth of the 8K queue.
+.PP
+These three were measured when the 16-byte cap was in the driver,
+standing in for a TXFF the model never asserted.  It is in the model
+now and the cap is gone \- see below \- so the third case is the
+shipping one only in the sense that the depth is still 16; it is
+imposed by
+.CW hw/char/pl011.c
+rather than by a loop bound.
 .PP
 All three figures are measured with the
 .CW track: ,
@@ -1975,38 +1980,92 @@ Both are fixed:
 .CW trap()
 walks both banks, and the uart registers 57.
 .PP
-.B "Getting evidence out of an emulator that cannot supply it."
-QEMU's PL011 models no TX FIFO at all \-
+.B "Getting evidence out of an emulator that could not supply it."
+QEMU's PL011 modelled no TX FIFO at all \-
 .CW PL011_FLAG_TXFF
 is assigned in exactly one place in
 .CW hw/char/pl011.c ,
 where it is
 .I cleared \-
-and every write goes out synchronously under an
+and every write went out synchronously under an
 .CW XXX
-admitting the design blocks the thread.  So the FIFO never fills, an
-unbounded fill loop always empties the queue in one call, TXIM is never
-left armed, and the continuation path cannot be exercised however
-correct it is.  Patching
-.CW pl011.c
-to model a real FIFO was rejected: TXFF can only assert if the drain is
-baud-paced, which changes console timing for every PL011 board in QEMU
-and risks the qtest suite, to fix a fidelity gap in a shared core
-device rather than a missing peripheral.
+admitting the design blocks the thread.  So the FIFO never filled, an
+unbounded fill loop always emptied the queue in one call, TXIM was
+never left armed, and the continuation path could not be exercised
+however correct it was.
 .PP
-Instead the driver's fill loop stops at
-.CW Fifodepth ,
-16, the depth a Pi actually has.  On hardware this costs nothing, since
-TXFF would break the loop there anyway; under QEMU it forces the kick
-to return with bytes queued and arms TXIM, and QEMU's unconditional
-.CW "s->int_level |= INT_TX"
-then delivers.  With the loop capped and the dispatcher still broken,
-the console dies mid-word at the first FIFO-full \- output stops at
-.CW OTP ,
-25 lines in.  With the dispatcher fixed, the transmit interrupt fires
-past 100 times a boot and every marker returns.  The hardware path now
-has a test on every boot rather than waiting for a board to run it
-first.
+Patching
+.CW pl011.c
+to model a real FIFO was rejected twice, on this reasoning: TXFF can
+only assert if the drain is paced against a clock, which changes
+console timing for every PL011 board in QEMU and risks the qtest suite,
+to fix a fidelity gap in a shared core device rather than to add a
+missing peripheral.  Every clause of that is true.  The conclusion is
+still wrong, and it is worth saying exactly how, because the error is
+not in any of the steps.  It is in an assumption none of them state:
+that the new behaviour has to be unconditional.  Make it a property
+that defaults to the old behaviour and no board but this one moves \-
+which is how
+.CW capareg
+and
+.CW sd-spec-version
+were already being set for this machine, two devices over in the same
+file.  A sound argument on a frame that was never examined.
+.PP
+So patch 0018 adds
+.CW tx-fifo-depth
+and
+.CW tx-drain-bps ,
+and
+.CW bcm2835_peripherals.c
+asks for the 16x8 transmit FIFO the datasheet gives UART0, drained a
+character at a time by a timer.  FR.TXFF now asserts, so the driver's
+fill loop stops on TXFF and nothing else \- the loop that runs on the
+board.  The
+.CW Fifodepth
+cap that used to stand in for it is gone.
+.PP
+The drain rate is not a claim about serial timing and the patch says
+so.  A guest that only ever writes UARTDR never programs IBRD or FBRD,
+so
+.CW pl011_get_baudrate()
+returns 0 and the model has no rate to pace against; the board must
+name one.  3 Mbaud is the fastest this part can be set to \- its 48 MHz
+reference over the minimum divisor of 16 \- so it is the cheapest rate
+in console throughput that the hardware could really run at.
+.CW tx-drain-bps
+has no default, and
+.CW realize()
+refuses a depth without one, because a rate invented inside the device
+would be a number nobody could trace back to anything.
+.PP
+.B "What the model buys that the driver-side cap could not."
+Deleting the transmit-interrupt continuation from
+.CW uartintr
+now stops the console dead part-way through a line: 51 lines of 99,
+truncated mid-word at
+.CW "ARMTIMER-INTR-OK interrupt arrives at the programm" .
+That is the failure a board would show, produced on demand.  Against
+the unpatched model the same deletion changes nothing whatever, which
+is the entire reason the cap existed.  The marker sequence with the
+FIFO in place is identical to the sequence without it, and no
+.CW LOG_GUEST_ERROR
+appears \- the driver never writes a full FIFO.  Cost, boot to the last
+self-test marker: 15.6 s before, 17.7 s after.
+.PP
+It also caught a live bug the moment it landed.
+.CW virtarm64_putc() ,
+the path
+.CW panic()
+and
+.CW iprint()
+use, wrote UARTDR blind and then spun a fixed count, with a comment
+blaming unreliable FR flags.  The flags were not unreliable; TXFF
+simply could never assert.  On a Pi that write is a dropped character
+in exactly the situation where the output matters most.  It now waits
+for room, bounded so a dead UART cannot hang a panic.  This is what
+codesign is for: the fix is in the guest, and only a more accurate
+model could have pointed at it.
 .PP
 Console
 .I input

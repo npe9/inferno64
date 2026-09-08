@@ -1,0 +1,105 @@
+From 2f210588547eed83facdfd4048b154dd36a7ac96 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Sun, 6 Sep 2026 09:29:56 -0400
+Subject: [PATCH 02/16] hw/gpio/bcm2835_gpio: honour alt3 on the SD card pins
+
+The card pins, GPIO 48-53, have exactly two routings on this SoC: alt0
+gives them to the SDHOST block and alt3 gives them to the Arasan SDHCI
+block.  Only alt0 was recognised here.  A guest programming alt3 to
+take the card for SDHCI -- which is what the hardware requires -- had
+its write silently ignored, so the card stayed on whichever controller
+it was already parented to.  With the card on SDHCI at reset that looks
+like it works, and a guest driver that never issues the routing write
+at all passes just the same; but once anything hands the card to
+SDHOST, nothing can take it back.
+
+Recognise alt3 (fsel 7) as selecting SDHCI, and fold the six repeated
+per-pin comparisons into a helper.
+
+Input (fsel 0) is kept as a selector even though it is not a hardware
+routing: it is the pins' reset state, and the card is parented to SDHCI
+at reset, so guests that never program the pins keep working.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01BtE1mJ79fHUqzyPBaSgBKx
+---
+ hw/gpio/bcm2835_gpio.c | 54 +++++++++++++++++++++++++++---------------
+ 1 file changed, 35 insertions(+), 19 deletions(-)
+
+diff --git a/hw/gpio/bcm2835_gpio.c b/hw/gpio/bcm2835_gpio.c
+index dfb5d5c..ab18cf7 100644
+--- a/hw/gpio/bcm2835_gpio.c
++++ b/hw/gpio/bcm2835_gpio.c
+@@ -65,6 +65,19 @@ static uint32_t gpfsel_get(BCM2835GpioState *s, uint8_t reg)
+     return value;
+ }
+ 
++/* Are all six card pins, GPIO 48-53, programmed to the same function? */
++static bool sd_pins_are(BCM2835GpioState *s, int fsel)
++{
++    int i;
++
++    for (i = 48; i <= 53; i++) {
++        if (s->fsel[i] != fsel) {
++            return false;
++        }
++    }
++    return true;
++}
++
+ static void gpfsel_set(BCM2835GpioState *s, uint8_t reg, uint32_t value)
+ {
+     int i;
+@@ -76,27 +89,30 @@ static void gpfsel_set(BCM2835GpioState *s, uint8_t reg, uint32_t value)
+         }
+     }
+ 
+-    /* SD controller selection (48-53) */
+-    if (s->sd_fsel != 0
+-            && (s->fsel[48] == 0) /* SD_CLK_R */
+-            && (s->fsel[49] == 0) /* SD_CMD_R */
+-            && (s->fsel[50] == 0) /* SD_DATA0_R */
+-            && (s->fsel[51] == 0) /* SD_DATA1_R */
+-            && (s->fsel[52] == 0) /* SD_DATA2_R */
+-            && (s->fsel[53] == 0) /* SD_DATA3_R */
+-            ) {
+-        /* SDHCI controller selected */
++    /*
++     * SD controller selection by the alt function on GPIO 48-53.  The
++     * SoC has exactly two routings for the card pins: alt0 (fsel 4)
++     * gives them to the SDHOST block, alt3 (fsel 7) gives them to the
++     * Arasan SDHCI block.  A guest that programs alt3 to take the card
++     * for SDHCI -- which is what the hardware requires, and what
++     * Linux's bcm2835 pinctrl does via the SoC device tree -- used to
++     * be ignored here, so the routing write did nothing and the card
++     * stayed wherever it happened to be.
++     *
++     * Input (fsel 0) is not a hardware routing at all, but it is the
++     * pins' reset state and the card is parented to SDHCI at reset, so
++     * it is kept as a selector for guests that never program the pins.
++     */
++    if (s->sd_fsel != 7 && sd_pins_are(s, 7)) {
++        /* Arasan SDHCI controller selected (alt3) */
++        sdbus_reparent_card(s->sdbus_sdhost, s->sdbus_sdhci);
++        s->sd_fsel = 7;
++    } else if (s->sd_fsel != 0 && sd_pins_are(s, 0)) {
++        /* SDHCI controller selected (pins left at their reset state) */
+         sdbus_reparent_card(s->sdbus_sdhost, s->sdbus_sdhci);
+         s->sd_fsel = 0;
+-    } else if (s->sd_fsel != 4
+-            && (s->fsel[48] == 4) /* SD_CLK_R */
+-            && (s->fsel[49] == 4) /* SD_CMD_R */
+-            && (s->fsel[50] == 4) /* SD_DATA0_R */
+-            && (s->fsel[51] == 4) /* SD_DATA1_R */
+-            && (s->fsel[52] == 4) /* SD_DATA2_R */
+-            && (s->fsel[53] == 4) /* SD_DATA3_R */
+-            ) {
+-        /* SDHost controller selected */
++    } else if (s->sd_fsel != 4 && sd_pins_are(s, 4)) {
++        /* SDHost controller selected (alt0) */
+         sdbus_reparent_card(s->sdbus_sdhci, s->sdbus_sdhost);
+         s->sd_fsel = 4;
+     }
+-- 
+2.51.0
+

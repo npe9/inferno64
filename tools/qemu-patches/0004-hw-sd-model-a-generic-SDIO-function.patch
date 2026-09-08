@@ -1,0 +1,620 @@
+From 15491cb03190e5a5e644c249f1c5cceda7f68b54 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Sun, 6 Sep 2026 10:49:08 -0400
+Subject: [PATCH 04/16] hw/sd: model a generic SDIO function
+
+QEMU implements SD and eMMC memory cards and no SDIO at all, so a guest
+driver for the SDIO transport -- CMD52 and CMD53, which is how a
+Raspberry Pi reaches its Wi-Fi part -- cannot be run at all.
+
+Add an sd-io device: an I/O-only function with the card common control
+registers at function 0, one I/O function with a register space behind
+it, and the SDIO command set.  It answers CMD5, CMD3, CMD7, CMD52 and
+CMD53.  It deliberately answers nothing else: CMD8, ACMD41 and CMD9 are
+absent from its protocol table, so a driver that probes with the memory
+card sequence is told the command is unsupported rather than being
+quietly indulged.  Register semantics are from the SDIO simplified
+specification.
+
+Protocol violations are reported rather than tolerated -- a register
+access outside the function's address space, a CMD53 to a function that
+has not been enabled and reported ready, a transfer longer than the
+model moves in one command, a voltage window it cannot supply.
+
+An I/O-only function has no CID, no CSD and no OCR in the memory sense,
+so it takes neither the card register setup in sd_reset -- which would
+call class hooks it does not provide -- nor a drive, and it reports
+itself always present since it is soldered down rather than in a slot.
+
+Also add sdbus_is_occupied() and sdbus_holds_card(), so a board can ask
+whether a bus is free and whether what is on it is a removable card
+rather than a soldered part.  An SD bus takes one device, and pin
+routing moves the card slot, not things wired to one controller.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01BtE1mJ79fHUqzyPBaSgBKx
+---
+ hw/sd/core.c       |  19 +++
+ hw/sd/sd.c         | 387 ++++++++++++++++++++++++++++++++++++++++++++-
+ include/hw/sd/sd.h |  25 +++
+ 3 files changed, 428 insertions(+), 3 deletions(-)
+
+diff --git a/hw/sd/core.c b/hw/sd/core.c
+index d3c9017..08be0af 100644
+--- a/hw/sd/core.c
++++ b/hw/sd/core.c
+@@ -43,6 +43,25 @@ static SDState *get_card(SDBus *sdbus)
+     return SDMMC_COMMON(kid->child);
+ }
+ 
++bool sdbus_is_occupied(SDBus *sdbus)
++{
++    return get_card(sdbus) != NULL;
++}
++
++bool sdbus_holds_card(SDBus *sdbus)
++{
++    SDState *card = get_card(sdbus);
++
++    return card && object_dynamic_cast(OBJECT(card), TYPE_SD_CARD);
++}
++
++bool sdbus_holds_io_function(SDBus *sdbus)
++{
++    SDState *card = get_card(sdbus);
++
++    return card && object_dynamic_cast(OBJECT(card), TYPE_SD_IO);
++}
++
+ uint8_t sdbus_get_dat_lines(SDBus *sdbus)
+ {
+     SDState *slave = get_card(sdbus);
+diff --git a/hw/sd/sd.c b/hw/sd/sd.c
+index 8c29059..3c7c95b 100644
+--- a/hw/sd/sd.c
++++ b/hw/sd/sd.c
+@@ -58,6 +58,27 @@
+ 
+ #define INVALID_ADDRESS     UINT32_MAX
+ 
++/*
++ * SDIO.  The CCCR is function 0's first 256 bytes; the FBR for
++ * function n sits at n * 0x100.  One I/O function is modelled, with a
++ * register space big enough for a driver to move real data through it.
++ */
++#define SDIO_CCCR_SIZE      0x100
++#define SDIO_FN1_SIZE       0x1000
++#define SDIO_NFUNC          1
++#define SDIO_OCR_VOLTAGE    0x00ff8000  /* 2.7-3.6V, as a Wi-Fi part offers */
++
++/* CCCR registers, from the SDIO simplified specification. */
++#define CCCR_REVISION       0x00
++#define CCCR_SD_SPEC        0x01
++#define CCCR_IO_ENABLE      0x02
++#define CCCR_IO_READY       0x03
++#define CCCR_INT_ENABLE     0x04
++#define CCCR_BUS_CONTROL    0x07
++#define CCCR_CAPABILITY     0x08
++#define CCCR_BLKSIZE_LO     0x10
++#define CCCR_BLKSIZE_HI     0x11
++
+ typedef enum {
+     sd_r0 = 0,    /* no response */
+     sd_r1,        /* normal response command */
+@@ -67,6 +88,8 @@ typedef enum {
+     sd_r3,        /* OCR register */
+     sd_r6 = 6,    /* Published RCA response */
+     sd_r7,        /* Operating voltage */
++    sd_r4,        /* SDIO operating conditions */
++    sd_r5,        /* SDIO command response */
+     sd_r1b = -1,
+     sd_illegal = -2,
+ } sd_rsp_type_t;
+@@ -172,6 +195,21 @@ struct SDState {
+     uint32_t data_offset;
+     size_t data_size;
+     uint8_t data[512];
++
++    /*
++     * SDIO.  The card common control registers are function 0's
++     * address space; one I/O function is present, and its own space
++     * is plain read/write storage so that a driver's CMD52 and CMD53
++     * can be seen to carry data rather than merely to complete.
++     */
++    uint8_t cccr[SDIO_CCCR_SIZE];
++    uint8_t fn1[SDIO_FN1_SIZE];
++    uint32_t io_rsp;            /* payload of an R4 or R5 response */
++    uint32_t io_ocr;
++    uint32_t sdio_addr;         /* CMD53 in progress */
++    uint8_t sdio_fn;
++    bool sdio_incr;
++    bool sdio_write;
+     QEMUTimer *ocr_power_timer;
+     uint8_t dat_lines;
+     bool cmd_line;
+@@ -181,6 +219,15 @@ static void sd_realize(DeviceState *dev, Error **errp);
+ 
+ static const SDProto sd_proto_spi;
+ static const SDProto sd_proto_emmc;
++static const SDProto sd_proto_sdio;
++
++static bool sd_is_sdio(SDState *sd)
++{
++    return sd->proto == &sd_proto_sdio;
++}
++
++static void sdio_reset_registers(SDState *sd);
++static void sdio_complete_write(SDState *sd);
+ 
+ static bool sd_is_spi(SDState *sd)
+ {
+@@ -253,6 +300,8 @@ static const char *sd_response_name(sd_rsp_type_t rsp)
+         [sd_r3]     = "RESP#3 (OCR reg)",
+         [sd_r6]     = "RESP#6 (RCA)",
+         [sd_r7]     = "RESP#7 (operating voltage)",
++        [sd_r4]     = "RESP#4 (SDIO operating conditions)",
++        [sd_r5]     = "RESP#5 (SDIO command)",
+     };
+     if (rsp == sd_illegal) {
+         return "ILLEGAL RESP";
+@@ -751,6 +800,11 @@ static size_t sd_response_size(SDState *sd, sd_rsp_type_t rtype)
+         assert(!sd_is_spi(sd));
+         return 4;
+ 
++    case sd_r4:
++    case sd_r5:
++        assert(!sd_is_spi(sd));
++        return 4;
++
+     case sd_r0:
+     case sd_illegal:
+         return sd_is_spi(sd) ? 1 : 0;
+@@ -889,6 +943,27 @@ static void sd_reset(DeviceState *dev)
+     uint64_t sect;
+ 
+     trace_sdcard_reset();
++    /*
++     * An I/O-only function has no CID, no CSD, no OCR in the memory
++     * sense and no write-protect groups, so it takes none of the card
++     * register setup below -- which would in any case call class hooks
++     * it does not provide.
++     */
++    if (sd_is_sdio(sd)) {
++        sdio_reset_registers(sd);
++        sd->state = sd_idle_state;
++        sd->rca = 0x0000;
++        sd->size = 0;
++        sd->blk_len = 0x200;
++        sd->expecting_acmd = false;
++        sd->dat_lines = 0xf;
++        sd->cmd_line = true;
++        sd->multi_blk_cnt = 0;
++        sd->data_offset = 0;
++        sd->data_size = 0;
++        sd_set_cardstatus(sd);
++        return;
++    }
+     if (sd->blk) {
+         blk_get_geometry(sd->blk, &sect);
+     } else {
+@@ -2238,7 +2313,7 @@ static size_t sd_do_command(SDState *sd, SDRequest *req,
+     sd_rsp_type_t rtype;
+     int rsplen;
+ 
+-    if (!sd->blk || !blk_is_inserted(sd->blk)) {
++    if (!sd_is_sdio(sd) && (!sd->blk || !blk_is_inserted(sd->blk))) {
+         return 0;
+     }
+ 
+@@ -2328,6 +2403,11 @@ send_response:
+         sd_response_r7_make(sd, response);
+         break;
+ 
++    case sd_r4:
++    case sd_r5:
++        stl_be_p(response, sd->io_rsp);
++        break;
++
+     case sd_r0:
+         /*
+          * Invalid state transition, reset implementation
+@@ -2388,7 +2468,7 @@ static void sd_write_byte(SDState *sd, uint8_t value)
+ {
+     int i;
+ 
+-    if (!sd->blk || !blk_is_inserted(sd->blk)) {
++    if (!sd_is_sdio(sd) && (!sd->blk || !blk_is_inserted(sd->blk))) {
+         return;
+     }
+ 
+@@ -2405,6 +2485,12 @@ static void sd_write_byte(SDState *sd, uint8_t value)
+                             sd->last_cmd_name,
+                             sd->current_cmd, sd->data_offset, value);
+     switch (sd->current_cmd) {
++    case 53: /* CMD53: IO_RW_EXTENDED */
++        if (sd_generic_write_byte(sd, value)) {
++            sdio_complete_write(sd);
++        }
++        break;
++
+     case 24:  /* CMD24:  WRITE_SINGLE_BLOCK */
+         if (sd_generic_write_byte(sd, value)) {
+             /* TODO: Check CRC before committing */
+@@ -2521,7 +2607,7 @@ static uint8_t sd_read_byte(SDState *sd)
+     uint8_t ret;
+     uint32_t io_len;
+ 
+-    if (!sd->blk || !blk_is_inserted(sd->blk)) {
++    if (!sd_is_sdio(sd) && (!sd->blk || !blk_is_inserted(sd->blk))) {
+         return dummy_byte;
+     }
+ 
+@@ -2551,6 +2637,7 @@ static uint8_t sd_read_byte(SDState *sd)
+     case 22: /* ACMD22: SEND_NUM_WR_BLOCKS */
+     case 30: /* CMD30:  SEND_WRITE_PROT */
+     case 51: /* ACMD51: SEND_SCR */
++    case 53: /* CMD53:  IO_RW_EXTENDED */
+     case 56: /* CMD56:  GEN_CMD */
+         sd_generic_read_byte(sd, &ret);
+         break;
+@@ -2598,6 +2685,267 @@ static bool sd_data_ready(SDState *sd)
+     return sd->state == sd_sendingdata_state;
+ }
+ 
++
++/* ------------------------------------------------------------------ *
++ * SDIO
++ *
++ * An I/O-only function: it answers the SDIO command set and none of
++ * the memory-card one.  CMD8, ACMD41 and CMD9 are absent from the
++ * protocol table on purpose, so a driver that probes with the memory
++ * sequence is told the command is unsupported rather than being
++ * quietly indulged.
++ * ------------------------------------------------------------------ */
++
++static void sdio_reset_registers(SDState *sd)
++{
++    memset(sd->cccr, 0, sizeof(sd->cccr));
++    memset(sd->fn1, 0, sizeof(sd->fn1));
++    sd->cccr[CCCR_REVISION]   = 0x32;   /* CCCR/FBR 3.00, SDIO spec 3.00 */
++    sd->cccr[CCCR_SD_SPEC]    = 0x03;
++    sd->cccr[CCCR_IO_ENABLE]  = 0x00;   /* no function enabled yet */
++    sd->cccr[CCCR_IO_READY]   = 0x00;
++    sd->cccr[CCCR_BUS_CONTROL] = 0x00;  /* 1-bit bus */
++    sd->cccr[CCCR_CAPABILITY] = 0x17;   /* SDC|SMB|SBS|S4MI */
++    sd->cccr[CCCR_BLKSIZE_LO] = 0x00;
++    sd->cccr[CCCR_BLKSIZE_HI] = 0x02;   /* 512 */
++    /* The function's own FBR says what it is: a standard I/O function. */
++    sd->fn1[0x00] = 0x00;
++    sd->fn1[0x01] = 0x00;
++    sd->io_rsp = 0;
++    sd->io_ocr = 0;
++}
++
++/*
++ * The R5 response is the card status byte in bits 15:8 and, for a
++ * read or a read-after-write, the register value in bits 7:0.
++ */
++static uint32_t sdio_r5(SDState *sd, uint8_t data, bool error)
++{
++    uint32_t flags = 0;
++
++    if (error) {
++        flags |= 1 << 14;               /* ILLEGAL_COMMAND */
++    }
++    if (sd->state == sd_transfer_state) {
++        flags |= 1 << 12;               /* IO_CURRENT_STATE = CMD */
++    }
++    return flags | data;
++}
++
++/* Is fn:addr a register this function actually has? */
++static uint8_t *sdio_reg(SDState *sd, unsigned int fn, unsigned int addr)
++{
++    if (fn == 0) {
++        if (addr < SDIO_CCCR_SIZE) {
++            return &sd->cccr[addr];
++        }
++        /* The FBR for function 1 is aliased into function 0's space. */
++        if (addr >= 0x100 && addr < 0x100 + 0x100) {
++            return &sd->fn1[addr - 0x100];
++        }
++        return NULL;
++    }
++    if (fn == 1 && addr < SDIO_FN1_SIZE) {
++        return &sd->fn1[addr];
++    }
++    return NULL;
++}
++
++/* Is function fn allowed to move data yet? */
++static bool sdio_function_ready(SDState *sd, unsigned int fn)
++{
++    if (fn == 0) {
++        return true;                    /* function 0 is always reachable */
++    }
++    if (fn > SDIO_NFUNC) {
++        return false;
++    }
++    return (sd->cccr[CCCR_IO_ENABLE] & (1 << fn)) &&
++           (sd->cccr[CCCR_IO_READY] & (1 << fn));
++}
++
++/* CMD5 */
++static sd_rsp_type_t sd_cmd_IO_SEND_OP_COND(SDState *sd, SDRequest req)
++{
++    uint32_t window = req.arg & 0x00ffffff;
++
++    if (sd->state != sd_idle_state && sd->state != sd_ready_state) {
++        return sd_invalid_state_for_cmd(sd, req);
++    }
++
++    /*
++     * A zero argument is an enquiry: report the functions present and
++     * the voltage window, with the ready bit clear.  A non-zero one
++     * asks for that window, and the card comes ready if it can supply
++     * it.
++     */
++    sd->io_ocr = SDIO_OCR_VOLTAGE | (SDIO_NFUNC << 28);
++    if (window != 0) {
++        if (!(window & SDIO_OCR_VOLTAGE)) {
++            qemu_log_mask(LOG_GUEST_ERROR,
++                          "SDIO: requested voltage window 0x%06x is not "
++                          "supported\n", window);
++            sd->io_rsp = sd->io_ocr;
++            return sd_r4;
++        }
++        sd->io_ocr |= 1u << 31;         /* ready */
++        /*
++         * An I/O-only card has no CID, so there is no CMD2 to issue:
++         * it goes straight to the identification state, where CMD3
++         * publishes its relative address.
++         */
++        sd->state = sd_identification_state;
++    }
++    sd->io_rsp = sd->io_ocr;
++    return sd_r4;
++}
++
++/* CMD52 */
++static sd_rsp_type_t sd_cmd_IO_RW_DIRECT(SDState *sd, SDRequest req)
++{
++    unsigned int fn = (req.arg >> 28) & 7;
++    unsigned int addr = (req.arg >> 9) & 0x1ffff;
++    bool write = !!(req.arg & (1u << 31));
++    bool raw = !!(req.arg & (1 << 27));
++    uint8_t val = req.arg & 0xff;
++    uint8_t *reg;
++
++    if (sd->state != sd_transfer_state) {
++        return sd_invalid_state_for_cmd(sd, req);
++    }
++
++    reg = sdio_reg(sd, fn, addr);
++    if (reg == NULL) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "SDIO: CMD52 to function %u address 0x%05x, which this "
++                      "function does not have\n", fn, addr);
++        sd->io_rsp = sdio_r5(sd, 0, true);
++        return sd_r5;
++    }
++
++    if (write) {
++        uint8_t old = *reg;
++
++        *reg = val;
++        /*
++         * Enabling a function makes it ready; the two registers are
++         * separate so that a driver can be seen to wait for the second
++         * after writing the first.
++         */
++        if (fn == 0 && addr == CCCR_IO_ENABLE) {
++            sd->cccr[CCCR_IO_READY] = val & ((1 << (SDIO_NFUNC + 1)) - 2);
++        }
++        sd->io_rsp = sdio_r5(sd, raw ? *reg : old, false);
++    } else {
++        sd->io_rsp = sdio_r5(sd, *reg, false);
++    }
++    return sd_r5;
++}
++
++/* CMD53 */
++static sd_rsp_type_t sd_cmd_IO_RW_EXTENDED(SDState *sd, SDRequest req)
++{
++    unsigned int fn = (req.arg >> 28) & 7;
++    unsigned int addr = (req.arg >> 9) & 0x1ffff;
++    unsigned int count = req.arg & 0x1ff;
++    bool write = !!(req.arg & (1u << 31));
++    bool block = !!(req.arg & (1 << 27));
++    bool incr = !!(req.arg & (1 << 26));
++    unsigned int len;
++
++    if (sd->state != sd_transfer_state) {
++        return sd_invalid_state_for_cmd(sd, req);
++    }
++    if (!sdio_function_ready(sd, fn)) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "SDIO: CMD53 to function %u before it was enabled and "
++                      "ready (IOEx 0x%02x, IORx 0x%02x)\n", fn,
++                      sd->cccr[CCCR_IO_ENABLE], sd->cccr[CCCR_IO_READY]);
++        sd->io_rsp = sdio_r5(sd, 0, true);
++        return sd_r5;
++    }
++
++    /* A count of zero means 512, in either mode. */
++    len = count ? count : 512;
++    if (block) {
++        if (len != 1) {
++            qemu_log_mask(LOG_GUEST_ERROR,
++                          "SDIO: CMD53 asks for %u blocks; this function "
++                          "moves one block per command\n", len);
++            sd->io_rsp = sdio_r5(sd, 0, true);
++            return sd_r5;
++        }
++        len = 512;
++    }
++    if (len > sizeof(sd->data)) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "SDIO: CMD53 transfer of %u bytes is too long\n", len);
++        sd->io_rsp = sdio_r5(sd, 0, true);
++        return sd_r5;
++    }
++    if (sdio_reg(sd, fn, addr) == NULL ||
++        (incr && sdio_reg(sd, fn, addr + len - 1) == NULL)) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "SDIO: CMD53 covers function %u addresses 0x%05x..0x%05x, "
++                      "which run past the end of its register space\n",
++                      fn, addr, addr + len - 1);
++        sd->io_rsp = sdio_r5(sd, 0, true);
++        return sd_r5;
++    }
++
++    sd->sdio_fn = fn;
++    sd->sdio_addr = addr;
++    sd->sdio_incr = incr;
++    sd->sdio_write = write;
++    sd->io_rsp = sdio_r5(sd, 0, false);
++
++    if (write) {
++        sd->state = sd_receivingdata_state;
++        sd->data_start = addr;
++        sd->data_offset = 0;
++        sd->data_size = len;
++        return sd_r5;
++    }
++
++    /* Gather the bytes the host is about to read. */
++    for (unsigned int i = 0; i < len; i++) {
++        uint8_t *reg = sdio_reg(sd, fn, incr ? addr + i : addr);
++
++        sd->data[i] = reg ? *reg : 0;
++    }
++    sd->state = sd_sendingdata_state;
++    sd->data_start = addr;
++    sd->data_offset = 0;
++    sd->data_size = len;
++    return sd_r5;
++}
++
++/* Hand back a CMD53 write once the whole transfer has arrived. */
++static void sdio_complete_write(SDState *sd)
++{
++    for (unsigned int i = 0; i < sd->data_size; i++) {
++        uint8_t *reg = sdio_reg(sd, sd->sdio_fn,
++                                sd->sdio_incr ? sd->sdio_addr + i
++                                              : sd->sdio_addr);
++        if (reg) {
++            *reg = sd->data[i];
++        }
++    }
++}
++
++static const SDProto sd_proto_sdio = {
++    .name = "SDIO",
++    .cmd = {
++        [0]  = {0, sd_bc,  "GO_IDLE_STATE", sd_cmd_GO_IDLE_STATE},
++        [3]  = {0, sd_bcr, "SEND_RELATIVE_ADDR", sd_cmd_SEND_RELATIVE_ADDR},
++        [5]  = {9, sd_bcr, "IO_SEND_OP_COND", sd_cmd_IO_SEND_OP_COND},
++        [7]  = {0, sd_ac,  "(DE)SELECT_CARD", sd_cmd_DE_SELECT_CARD},
++        [15] = {0, sd_ac,  "GO_INACTIVE_STATE", sd_cmd_GO_INACTIVE_STATE},
++        [52] = {9, sd_ac,  "IO_RW_DIRECT", sd_cmd_IO_RW_DIRECT},
++        [53] = {9, sd_adtc, "IO_RW_EXTENDED", sd_cmd_IO_RW_EXTENDED},
++    },
++};
++
+ static const SDProto sd_proto_spi = {
+     .name = "SPI",
+     .cmd = {
+@@ -2866,6 +3214,34 @@ static void sdmmc_common_class_init(ObjectClass *klass, const void *data)
+     sc->get_readonly = sd_get_readonly;
+ }
+ 
++/* An SDIO function is soldered down and always present. */
++static bool sdio_get_inserted(SDState *sd)
++{
++    return true;
++}
++
++static void sdio_realize(DeviceState *dev, Error **errp)
++{
++    SDState *sd = SDMMC_COMMON(dev);
++
++    if (sd->blk) {
++        error_setg(errp, "An SDIO function takes no drive");
++        return;
++    }
++    sd->spec_version = SD_PHY_SPECv3_01_VERS;
++}
++
++static void sdio_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    SDCardClass *sc = SDMMC_COMMON_CLASS(klass);
++
++    dc->desc = "SDIO I/O function";
++    dc->realize = sdio_realize;
++    sc->proto = &sd_proto_sdio;
++    sc->get_inserted = sdio_get_inserted;
++}
++
+ static void sd_class_init(ObjectClass *klass, const void *data)
+ {
+     DeviceClass *dc = DEVICE_CLASS(klass);
+@@ -2937,6 +3313,11 @@ static const TypeInfo sd_types[] = {
+         .parent         = TYPE_SDMMC_COMMON,
+         .class_init     = emmc_class_init,
+     },
++    {
++        .name           = TYPE_SD_IO,
++        .parent         = TYPE_SDMMC_COMMON,
++        .class_init     = sdio_class_init,
++    },
+ };
+ 
+ DEFINE_TYPES(sd_types)
+diff --git a/include/hw/sd/sd.h b/include/hw/sd/sd.h
+index 55d363f..da8176e 100644
+--- a/include/hw/sd/sd.h
++++ b/include/hw/sd/sd.h
+@@ -137,6 +137,8 @@ struct SDCardClass {
+     const struct SDProto *proto;
+ };
+ 
++#define TYPE_SD_IO "sd-io"
++
+ #define TYPE_SD_BUS "sd-bus"
+ OBJECT_DECLARE_TYPE(SDBus, SDBusClass,
+                     SD_BUS)
+@@ -224,6 +226,29 @@ bool sdbus_get_readonly(SDBus *sd);
+  */
+ void sdbus_reparent_card(SDBus *from, SDBus *to);
+ 
++/**
++ * sdbus_is_occupied: does this bus already hold a device?
++ *
++ * An SD bus takes one device.  A controller whose bus is already
++ * occupied -- by an SDIO function, say -- must not have a card moved
++ * onto it.
++ */
++bool sdbus_is_occupied(SDBus *sdbus);
++
++/**
++ * sdbus_holds_card: does this bus hold a removable SD card?
++ *
++ * True only for a card in a slot, not for a soldered-down device such
++ * as an eMMC or an SDIO function.  Pin routing switches the card slot
++ * between controllers; it does not move parts that are wired to one.
++ */
++bool sdbus_holds_card(SDBus *sdbus);
++
++/**
++ * sdbus_holds_io_function: does this bus hold an SDIO I/O function?
++ */
++bool sdbus_holds_io_function(SDBus *sdbus);
++
+ /* Functions to be used by SD devices to report back to qdevified controllers */
+ void sdbus_set_inserted(SDBus *sd, bool inserted);
+ void sdbus_set_readonly(SDBus *sd, bool inserted);
+-- 
+2.51.0
+

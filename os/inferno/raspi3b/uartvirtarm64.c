@@ -9,10 +9,6 @@
 
 extern PhysUart virtarm64physuart;
 
-enum {
-	Fifodepth = 16,		/* PL011 TX FIFO on a Pi */
-};
-
 typedef struct Ctlr Ctlr;
 struct Ctlr {
 	u32	*base;
@@ -97,10 +93,9 @@ static void
 virtarm64_kick(Uart *uart)
 {
 	Ctlr *c;
-	int i;
 
 	c = uart->regs;
-	for(i = 0; i < Fifodepth; i++){
+	for(;;){
 		if(csr32r(c, UartFR) & UartFRTXFF)
 			break;
 		if(uart->op >= uart->oe && uartstageoutput(uart) == 0)
@@ -123,16 +118,14 @@ virtarm64_kick(Uart *uart)
 	 *
 	 *   - once the TX FIFO is full this returns with bytes still
 	 *     queued, and only a transmit interrupt comes back for the
-	 *     rest.  That continues the burst, and it is why the loop
-	 *     below stops at Fifodepth rather than running the queue
-	 *     dry: QEMU's PL011 models no TX FIFO at all (TXFF is never
-	 *     set, hw/char/pl011.c), so an unbounded loop always empties
-	 *     the queue in one call, never leaves TXIM armed, and the
-	 *     continuation path above is never exercised until real
-	 *     hardware runs it for the first time.  Capping the loop at
-	 *     the depth the hardware actually has costs nothing on a Pi,
-	 *     where TXFF would break the loop there anyway, and buys the
-	 *     interrupt path a test on every boot.
+	 *     rest.  That continues the burst.  The loop above stops on
+	 *     TXFF and nothing else, which is what a Pi does; it used to
+	 *     be capped at sixteen as well, because QEMU's PL011 modelled
+	 *     no transmit FIFO and never set TXFF, so an unbounded loop
+	 *     always emptied the queue in one call and the continuation
+	 *     below was never reached under emulation.  The model has the
+	 *     FIFO now (tools/qemu-patches, 0018), so the cap is gone and
+	 *     the loop here is the one that runs on the board.
 	 *
 	 * Leaving the mask set once the FIFO has drained would have the
 	 * PL011 re-assert immediately and storm, so it is cleared as soon
@@ -218,14 +211,22 @@ static void
 virtarm64_putc(Uart *uart, int c)
 {
 	Ctlr *ctlr;
-	volatile int i;
+	int i;
 
 	ctlr = uart->regs;
-	/* QEMU raspi3b PL011 FR flags are unreliable; pace with a short
-	 * fixed delay (the garbling was the other cores, now parked). */
+	/*
+	 * Wait for room in the transmit FIFO.  This wrote blind and then
+	 * spun for a fixed count instead, which was safe only because
+	 * QEMU's PL011 had no transmit FIFO to overrun and set TXFF
+	 * never; on a Pi -- and now on the model, see
+	 * tools/qemu-patches 0018 -- a blind write to a full FIFO is a
+	 * character on the floor, and this is the path panic() and
+	 * iprint() use.  Bounded, so a dead UART cannot hang a panic.
+	 */
+	for(i = 0; i < 1000000; i++)
+		if((csr32r(ctlr, UartFR) & UartFRTXFF) == 0)
+			break;
 	csr32w(ctlr, UartDR, c);
-	for(i = 0; i < 30000; i++)
-		;
 }
 
 PhysUart virtarm64physuart = {

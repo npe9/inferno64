@@ -1,0 +1,543 @@
+From 1be1683251ebfcbe476c26e419d573dd10d047d3 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Sun, 6 Sep 2026 20:35:51 -0400
+Subject: [PATCH 09/16] hw/timer: model the BCM2835 ARM timer, replacing the
+ unimplemented stub
+
+The block at ARMCTRL_TIMER0_1_OFFSET was an unimplemented device: reads
+returned zero and writes were logged, so a guest saw a timer that never
+counted.
+
+The datasheet calls it "an SP804, but not fully compatible", and the
+differences are why this is its own model rather than a reuse of
+hw/timer/arm_timer.c.  The counter is 16-bit unless CONTROL bit 1
+selects 23-bit -- not 32.  There is a pre-divider between the APB clock
+and the counter, resetting to 0x7d so the counter runs at apb/126 until
+something says otherwise.  And there is a second, free-running
+up-counter with its own 8-bit prescaler, which an SP804 does not have
+at all.
+
+The countdown uses a ptimer and raises the ARM timer interrupt; the
+free-running counter has nothing to schedule, so it is computed from
+the virtual clock on read and latched when the control register
+changes.  The APB clock is a property defaulting to 250MHz, the Pi's
+core clock.
+
+Protocol violations are reported: a load that does not fit the 16-bit
+counter, a write to a read-only register, a read of the write-only
+interrupt acknowledge, and a pre-divider and prescale combination that
+leaves a zero rate.
+
+Register layout, reset values and bit meanings are from the BCM2835 ARM
+Peripherals datasheet, not from a guest driver.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01BtE1mJ79fHUqzyPBaSgBKx
+---
+ hw/arm/bcm2835_peripherals.c         |  14 +-
+ hw/timer/bcm2835_armtimer.c          | 358 +++++++++++++++++++++++++++
+ hw/timer/meson.build                 |   1 +
+ include/hw/arm/bcm2835_peripherals.h |   3 +-
+ include/hw/timer/bcm2835_armtimer.h  |  46 ++++
+ 5 files changed, 420 insertions(+), 2 deletions(-)
+ create mode 100644 hw/timer/bcm2835_armtimer.c
+ create mode 100644 include/hw/timer/bcm2835_armtimer.h
+
+diff --git a/hw/arm/bcm2835_peripherals.c b/hw/arm/bcm2835_peripherals.c
+index 8543d4d..9e65ac0 100644
+--- a/hw/arm/bcm2835_peripherals.c
++++ b/hw/arm/bcm2835_peripherals.c
+@@ -56,6 +56,8 @@ static void bcm2835_peripherals_init(Object *obj)
+     /* Thermal */
+     object_initialize_child(obj, "thermal", &s->thermal, TYPE_BCM2835_THERMAL);
+     object_initialize_child(obj, "pwm", &s->pwm, TYPE_BCM2835_PWM);
++    object_initialize_child(obj, "armtimer", &s->armtimer,
++                            TYPE_BCM2835_ARMTIMER);
+ 
+     /* GPIO */
+     object_initialize_child(obj, "gpio", &s->gpio, TYPE_BCM2835_GPIO);
+@@ -241,6 +243,17 @@ static void bcm2835_peripherals_realize(DeviceState *dev, Error **errp)
+     memory_region_add_subregion(&s_base->peri_mr, PWM_OFFSET,
+                 sysbus_mmio_get_region(SYS_BUS_DEVICE(&s->pwm), 0));
+ 
++    /* ARM timer */
++    if (!sysbus_realize(SYS_BUS_DEVICE(&s->armtimer), errp)) {
++        return;
++    }
++    memory_region_add_subregion(&s_base->peri_mr, ARMCTRL_TIMER0_1_OFFSET,
++                sysbus_mmio_get_region(SYS_BUS_DEVICE(&s->armtimer), 0));
++    sysbus_connect_irq(SYS_BUS_DEVICE(&s->armtimer), 0,
++                       qdev_get_gpio_in_named(DEVICE(&s_base->ic),
++                                              BCM2835_IC_ARM_IRQ,
++                                              INTERRUPT_ARM_TIMER));
++
+     /* Map MPHI to the peripherals memory map */
+     mphi_mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&s_base->mphi), 0);
+     memory_region_add_subregion(&s_base->peri_mr, MPHI_OFFSET, mphi_mr);
+@@ -520,7 +533,6 @@ void bcm_soc_peripherals_common_realize(DeviceState *dev, Error **errp)
+                                                  INTERRUPT_I2C));
+ 
+     create_unimp(s, &s->txp, "bcm2835-txp", TXP_OFFSET, 0x1000);
+-    create_unimp(s, &s->armtmr, "bcm2835-sp804", ARMCTRL_TIMER0_1_OFFSET, 0x40);
+     create_unimp(s, &s->i2s, "bcm2835-i2s", I2S_OFFSET, 0x100);
+     create_unimp(s, &s->smi, "bcm2835-smi", SMI_OFFSET, 0x100);
+     create_unimp(s, &s->bscsl, "bcm2835-spis", BSC_SL_OFFSET, 0x100);
+diff --git a/hw/timer/bcm2835_armtimer.c b/hw/timer/bcm2835_armtimer.c
+new file mode 100644
+index 0000000..c0f3f94
+--- /dev/null
++++ b/hw/timer/bcm2835_armtimer.c
+@@ -0,0 +1,358 @@
++/*
++ * BCM2835 ARM timer emulation
++ *
++ * The datasheet calls this "an SP804, but it is not fully compatible",
++ * and the differences are the interesting part: a 23-bit rather than a
++ * 32-bit mode, an extra pre-divider between the APB clock and the
++ * counter, and a second, free-running counter with its own prescaler
++ * that the SP804 does not have at all.  A driver written against a
++ * stock SP804 gets the countdown roughly right and the free-running
++ * counter not at all.
++ *
++ * Register layout, reset values and bit meanings are from the BCM2835
++ * ARM Peripherals datasheet (section 14), not from any guest driver.
++ *
++ * WHAT THIS DOES NOT MODEL.  The datasheet documents a "free running
++ * counter" and a halt-in-debug bit whose behaviour depends on the
++ * VideoCore side; the debug halt is ignored here.  Everything a driver
++ * programs -- load, reload, pre-divider, prescale, the two counters
++ * and the interrupt -- is modelled.
++ *
++ * Copyright (c) 2026 Noah Evans
++ *
++ * This work is licensed under the terms of the GNU GPL, version 2 or later.
++ * See the COPYING file in the top-level directory.
++ */
++
++#include "qemu/osdep.h"
++#include "qemu/log.h"
++#include "qemu/module.h"
++#include "qemu/timer.h"
++#include "hw/timer/bcm2835_armtimer.h"
++#include "hw/irq.h"
++#include "hw/qdev-properties.h"
++#include "migration/vmstate.h"
++
++#define R_LOAD          0x00
++#define R_VALUE         0x04    /* read-only */
++#define R_CONTROL       0x08
++#define R_IRQ_ACK       0x0c    /* write-only */
++#define R_RAW_IRQ       0x10    /* read-only */
++#define R_MASKED_IRQ    0x14    /* read-only */
++#define R_RELOAD        0x18
++#define R_PREDIVIDER    0x1c
++#define R_FREERUN       0x20    /* read-only */
++
++#define CTRL_23BIT      (1 << 1)    /* 0 = 16-bit counter, 1 = 23-bit */
++#define CTRL_PRESCALE   (3 << 2)    /* 0 = /1, 1 = /16, 2 = /256 */
++#define CTRL_PRESCALE_SHIFT 2
++#define CTRL_INT_ENABLE (1 << 5)
++#define CTRL_ENABLE     (1 << 7)
++#define CTRL_HALT_DEBUG (1 << 8)
++#define CTRL_FREERUN_EN (1 << 9)
++#define CTRL_FREERUN_PS (0xff << 16)
++#define CTRL_FREERUN_PS_SHIFT 16
++
++#define CTRL_RESET      0x003e0020  /* datasheet reset value */
++#define PREDIVIDER_RESET 0x0000007d
++
++#define PREDIVIDER_MASK 0x3ff
++
++static uint32_t bcm2835_armtimer_prescale(BCM2835ArmTimerState *s)
++{
++    switch ((s->control & CTRL_PRESCALE) >> CTRL_PRESCALE_SHIFT) {
++    case 0:  return 1;
++    case 1:  return 16;
++    case 2:  return 256;
++    default:
++        /* The datasheet leaves 3 undefined; the SoC treats it as /1. */
++        return 1;
++    }
++}
++
++/* The rate the countdown counter runs at. */
++static uint32_t bcm2835_armtimer_rate(BCM2835ArmTimerState *s)
++{
++    uint32_t div = (s->predivider & PREDIVIDER_MASK) + 1;
++
++    return s->freq / (div * bcm2835_armtimer_prescale(s));
++}
++
++static void bcm2835_armtimer_update_irq(BCM2835ArmTimerState *s)
++{
++    qemu_set_irq(s->irq, s->int_level && (s->control & CTRL_INT_ENABLE));
++}
++
++static void bcm2835_armtimer_tick(void *opaque)
++{
++    BCM2835ArmTimerState *s = (BCM2835ArmTimerState *)opaque;
++
++    s->int_level = 1;
++    bcm2835_armtimer_update_irq(s);
++}
++
++/*
++ * The free-running counter is a plain up-counter: it has no interrupt
++ * and nothing to schedule, so it is computed on demand from the
++ * virtual clock rather than stepped.
++ */
++static uint32_t bcm2835_armtimer_freerun(BCM2835ArmTimerState *s)
++{
++    uint32_t ps = ((s->control & CTRL_FREERUN_PS) >> CTRL_FREERUN_PS_SHIFT) + 1;
++    int64_t elapsed;
++
++    if (!(s->control & CTRL_FREERUN_EN)) {
++        return s->freerun_base;
++    }
++    elapsed = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) - s->freerun_base_ns;
++    return s->freerun_base +
++           (uint32_t)(elapsed * (s->freq / ps) / NANOSECONDS_PER_SECOND);
++}
++
++/* Latch the free-running counter so a rate or enable change is seamless. */
++static void bcm2835_armtimer_freerun_latch(BCM2835ArmTimerState *s)
++{
++    s->freerun_base = bcm2835_armtimer_freerun(s);
++    s->freerun_base_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++}
++
++static void bcm2835_armtimer_reload(BCM2835ArmTimerState *s, uint32_t value,
++                                    bool reload_now)
++{
++    uint32_t limit = value;
++
++    /*
++     * In 16-bit mode the counter only has 16 bits, whatever the guest
++     * loaded.  Saying so is the difference between a driver that finds
++     * its long timeout truncated here and one that finds it on the
++     * board.
++     */
++    if (!(s->control & CTRL_23BIT)) {
++        if (value > 0xffff) {
++            qemu_log_mask(LOG_GUEST_ERROR,
++                          "bcm2835_armtimer: load 0x%x does not fit the "
++                          "16-bit counter; set CONTROL bit 1 for 23-bit\n",
++                          value);
++        }
++        limit &= 0xffff;
++    } else {
++        limit &= 0x7fffff;
++    }
++    if (limit == 0) {
++        limit = 1;
++    }
++    ptimer_set_limit(s->timer, limit, reload_now);
++}
++
++static void bcm2835_armtimer_restart(BCM2835ArmTimerState *s)
++{
++    uint32_t rate = bcm2835_armtimer_rate(s);
++
++    ptimer_transaction_begin(s->timer);
++    if (rate == 0) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "bcm2835_armtimer: pre-divider and prescale leave a "
++                      "zero counter rate\n");
++        ptimer_stop(s->timer);
++    } else {
++        ptimer_set_freq(s->timer, rate);
++        bcm2835_armtimer_reload(s, s->load, true);
++        if (s->control & CTRL_ENABLE) {
++            ptimer_run(s->timer, 0);
++        } else {
++            ptimer_stop(s->timer);
++        }
++    }
++    ptimer_transaction_commit(s->timer);
++}
++
++static uint64_t bcm2835_armtimer_read(void *opaque, hwaddr offset,
++                                      unsigned size)
++{
++    BCM2835ArmTimerState *s = (BCM2835ArmTimerState *)opaque;
++
++    switch (offset) {
++    case R_LOAD:
++        return s->load;
++    case R_VALUE:
++        return ptimer_get_count(s->timer);
++    case R_CONTROL:
++        return s->control;
++    case R_RAW_IRQ:
++        return s->int_level;
++    case R_MASKED_IRQ:
++        return s->int_level && (s->control & CTRL_INT_ENABLE);
++    case R_RELOAD:
++        return s->reload;
++    case R_PREDIVIDER:
++        return s->predivider;
++    case R_FREERUN:
++        return bcm2835_armtimer_freerun(s);
++
++    case R_IRQ_ACK:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "bcm2835_armtimer: read of the write-only IRQ ack "
++                      "register\n");
++        return 0;
++
++    default:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "bcm2835_armtimer: read of unknown offset 0x%02"
++                      HWADDR_PRIx "\n", offset);
++        return 0;
++    }
++}
++
++static void bcm2835_armtimer_write(void *opaque, hwaddr offset,
++                                   uint64_t value, unsigned size)
++{
++    BCM2835ArmTimerState *s = (BCM2835ArmTimerState *)opaque;
++
++    switch (offset) {
++    case R_LOAD:
++        /* Writing LOAD reloads the counter immediately. */
++        s->load = value;
++        ptimer_transaction_begin(s->timer);
++        bcm2835_armtimer_reload(s, value, true);
++        ptimer_transaction_commit(s->timer);
++        break;
++
++    case R_RELOAD:
++        /*
++         * RELOAD sets the value the counter takes at its *next* wrap,
++         * without disturbing the count in progress.  That is the whole
++         * difference between the two registers, and it is why a driver
++         * changing a periodic rate should use this one.
++         */
++        s->reload = value;
++        s->load = value;
++        ptimer_transaction_begin(s->timer);
++        bcm2835_armtimer_reload(s, value, false);
++        ptimer_transaction_commit(s->timer);
++        break;
++
++    case R_CONTROL:
++        bcm2835_armtimer_freerun_latch(s);
++        s->control = value;
++        bcm2835_armtimer_restart(s);
++        bcm2835_armtimer_update_irq(s);
++        break;
++
++    case R_IRQ_ACK:
++        s->int_level = 0;
++        bcm2835_armtimer_update_irq(s);
++        break;
++
++    case R_PREDIVIDER:
++        s->predivider = value & PREDIVIDER_MASK;
++        bcm2835_armtimer_restart(s);
++        break;
++
++    case R_VALUE:
++    case R_RAW_IRQ:
++    case R_MASKED_IRQ:
++    case R_FREERUN:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "bcm2835_armtimer: write to the read-only register at "
++                      "0x%02" HWADDR_PRIx "\n", offset);
++        break;
++
++    default:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "bcm2835_armtimer: write to unknown offset 0x%02"
++                      HWADDR_PRIx "\n", offset);
++        break;
++    }
++}
++
++static const MemoryRegionOps bcm2835_armtimer_ops = {
++    .read = bcm2835_armtimer_read,
++    .write = bcm2835_armtimer_write,
++    .endianness = DEVICE_NATIVE_ENDIAN,
++    .impl.min_access_size = 4,
++    .impl.max_access_size = 4,
++};
++
++static const VMStateDescription vmstate_bcm2835_armtimer = {
++    .name = TYPE_BCM2835_ARMTIMER,
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .fields = (const VMStateField[]) {
++        VMSTATE_UINT32(load, BCM2835ArmTimerState),
++        VMSTATE_UINT32(control, BCM2835ArmTimerState),
++        VMSTATE_UINT32(reload, BCM2835ArmTimerState),
++        VMSTATE_UINT32(predivider, BCM2835ArmTimerState),
++        VMSTATE_INT32(int_level, BCM2835ArmTimerState),
++        VMSTATE_INT64(freerun_base_ns, BCM2835ArmTimerState),
++        VMSTATE_UINT32(freerun_base, BCM2835ArmTimerState),
++        VMSTATE_PTIMER(timer, BCM2835ArmTimerState),
++        VMSTATE_END_OF_LIST()
++    }
++};
++
++static void bcm2835_armtimer_init(Object *obj)
++{
++    BCM2835ArmTimerState *s = BCM2835_ARMTIMER(obj);
++
++    memory_region_init_io(&s->iomem, obj, &bcm2835_armtimer_ops, s,
++                          TYPE_BCM2835_ARMTIMER, 0x24);
++    sysbus_init_mmio(SYS_BUS_DEVICE(s), &s->iomem);
++    sysbus_init_irq(SYS_BUS_DEVICE(s), &s->irq);
++}
++
++static void bcm2835_armtimer_realize(DeviceState *dev, Error **errp)
++{
++    BCM2835ArmTimerState *s = BCM2835_ARMTIMER(dev);
++
++    s->timer = ptimer_init(bcm2835_armtimer_tick, s, PTIMER_POLICY_LEGACY);
++}
++
++static void bcm2835_armtimer_reset(DeviceState *dev)
++{
++    BCM2835ArmTimerState *s = BCM2835_ARMTIMER(dev);
++
++    s->load = 0;
++    s->control = CTRL_RESET;
++    s->reload = 0;
++    s->predivider = PREDIVIDER_RESET;
++    s->int_level = 0;
++    s->freerun_base = 0;
++    s->freerun_base_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++
++    ptimer_transaction_begin(s->timer);
++    ptimer_stop(s->timer);
++    ptimer_transaction_commit(s->timer);
++    bcm2835_armtimer_update_irq(s);
++}
++
++static const Property bcm2835_armtimer_properties[] = {
++    /* The APB clock; the Pi's core clock, nominally 250MHz. */
++    DEFINE_PROP_UINT32("clock-frequency", BCM2835ArmTimerState, freq,
++                       250000000),
++};
++
++static void bcm2835_armtimer_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++
++    dc->desc = "BCM2835 ARM timer";
++    dc->realize = bcm2835_armtimer_realize;
++    device_class_set_legacy_reset(dc, bcm2835_armtimer_reset);
++    dc->vmsd = &vmstate_bcm2835_armtimer;
++    device_class_set_props(dc, bcm2835_armtimer_properties);
++}
++
++static const TypeInfo bcm2835_armtimer_info = {
++    .name          = TYPE_BCM2835_ARMTIMER,
++    .parent        = TYPE_SYS_BUS_DEVICE,
++    .instance_size = sizeof(BCM2835ArmTimerState),
++    .class_init    = bcm2835_armtimer_class_init,
++    .instance_init = bcm2835_armtimer_init,
++};
++
++static void bcm2835_armtimer_register_types(void)
++{
++    type_register_static(&bcm2835_armtimer_info);
++}
++
++type_init(bcm2835_armtimer_register_types)
+diff --git a/hw/timer/meson.build b/hw/timer/meson.build
+index 178321c..eef831e 100644
+--- a/hw/timer/meson.build
++++ b/hw/timer/meson.build
+@@ -23,6 +23,7 @@ system_ss.add(when: 'CONFIG_NPCM7XX', if_true: files('npcm7xx_timer.c'))
+ system_ss.add(when: 'CONFIG_NRF51_SOC', if_true: files('nrf51_timer.c'))
+ system_ss.add(when: 'CONFIG_PXA2XX_TIMER', if_true: files('pxa2xx_timer.c'))
+ system_ss.add(when: 'CONFIG_RASPI', if_true: files('bcm2835_systmr.c'))
++system_ss.add(when: 'CONFIG_RASPI', if_true: files('bcm2835_armtimer.c'))
+ system_ss.add(when: 'CONFIG_SH_TIMER', if_true: files('sh_timer.c'))
+ system_ss.add(when: 'CONFIG_SLAVIO', if_true: files('slavio_timer.c'))
+ system_ss.add(when: 'CONFIG_SSE_COUNTER', if_true: files('sse-counter.c'))
+diff --git a/include/hw/arm/bcm2835_peripherals.h b/include/hw/arm/bcm2835_peripherals.h
+index d1aa792..602a812 100644
+--- a/include/hw/arm/bcm2835_peripherals.h
++++ b/include/hw/arm/bcm2835_peripherals.h
+@@ -25,6 +25,7 @@
+ #include "hw/misc/bcm2835_mphi.h"
+ #include "hw/misc/bcm2835_thermal.h"
+ #include "hw/misc/bcm2835_pwm.h"
++#include "hw/timer/bcm2835_armtimer.h"
+ #include "hw/misc/bcm2835_cprman.h"
+ #include "hw/misc/bcm2835_powermgt.h"
+ #include "hw/sd/sdhci.h"
+@@ -56,7 +57,6 @@ struct BCMSocPeripheralBaseState {
+     BCM2835SystemTimerState systmr;
+     BCM2835MphiState mphi;
+     UnimplementedDeviceState txp;
+-    UnimplementedDeviceState armtmr;
+     BCM2835PowerMgtState powermgt;
+     BCM2835CprmanState cprman;
+     PL011State uart0;
+@@ -97,6 +97,7 @@ struct BCM2835PeripheralState {
+     BCM2835RngState rng;
+     Bcm2835ThermalState thermal;
+     BCM2835PwmState pwm;
++    BCM2835ArmTimerState armtimer;
+     BCM2835GpioState gpio;
+ };
+ 
+diff --git a/include/hw/timer/bcm2835_armtimer.h b/include/hw/timer/bcm2835_armtimer.h
+new file mode 100644
+index 0000000..e8913fd
+--- /dev/null
++++ b/include/hw/timer/bcm2835_armtimer.h
+@@ -0,0 +1,46 @@
++/*
++ * BCM2835 ARM timer emulation
++ *
++ * Copyright (c) 2026 Noah Evans
++ *
++ * This work is licensed under the terms of the GNU GPL, version 2 or later.
++ * See the COPYING file in the top-level directory.
++ */
++
++#ifndef BCM2835_ARMTIMER_H
++#define BCM2835_ARMTIMER_H
++
++#include "hw/sysbus.h"
++#include "hw/ptimer.h"
++#include "qom/object.h"
++
++#define TYPE_BCM2835_ARMTIMER "bcm2835-armtimer"
++OBJECT_DECLARE_SIMPLE_TYPE(BCM2835ArmTimerState, BCM2835_ARMTIMER)
++
++struct BCM2835ArmTimerState {
++    SysBusDevice busdev;
++    MemoryRegion iomem;
++    qemu_irq irq;
++
++    /*
++     * The APB clock the block is driven from.  On a Pi this is the
++     * core clock, nominally 250MHz, and the fact that it moves when
++     * the firmware scales the core is a property of the hardware
++     * rather than of this model.
++     */
++    uint32_t freq;
++
++    ptimer_state *timer;
++
++    uint32_t load;
++    uint32_t control;
++    uint32_t reload;
++    uint32_t predivider;
++    int int_level;
++
++    /* Base of the free-running counter, in nanoseconds. */
++    int64_t freerun_base_ns;
++    uint32_t freerun_base;
++};
++
++#endif
+-- 
+2.51.0
+

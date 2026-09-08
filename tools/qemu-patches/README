@@ -53,6 +53,22 @@ worth keeping when adding to this series:
 	not the common class, since eMMC carries bus width in EXT_CSD and
 	never issues ACMD6.
 
+0018 hw/char/pl011: model a transmit FIFO, opt-in per board.
+	Adds tx-fifo-depth and tx-drain-bps properties; at the default
+	depth of zero the device is byte-identical to before, so no other
+	PL011 board's timing moves.  Set, it models a real FIFO drained a
+	character at a time by a timer, asserting FR.TXFF when full and
+	raising the transmit interrupt as room appears.  This is the entry
+	below that said the gap was real but the cost too high; making the
+	behaviour opt-in per board is what removed the cost.  bcm2835 asks
+	for the 16x8 FIFO the datasheet gives UART0, paced at 3 Mbaud --
+	the fastest the part can be set to, so the throughput cost is the
+	least of any rate the hardware could really run at.  tx-drain-bps
+	has no default and realize() refuses a depth without one: a guest
+	that never programs IBRD leaves the model no baud rate to pace
+	against, and a rate invented inside the device would be a number
+	nobody could trace back to anything.
+
 WHAT COULD GO UPSTREAM.  Two of these are plain qemu bugs, independent
 of Inferno and of this port, and could be sent to qemu-devel on their
 own:
@@ -67,7 +83,7 @@ because the reasoning is worth reading.  Everything else adds a device
 model qemu does not have, and only matters to someone emulating a Pi in
 this much detail \- which is most of the series, and increasingly so as
 it grows.  Do not read the section above as a to-do list for upstream:
-two patches of seventeen are general-purpose fixes and the rest are not.
+two patches of eighteen are general-purpose fixes and the rest are not.
 
 WHAT HAS BEEN CROSS-CHECKED.  Several of these models were written
 from the datasheet and from recollection of a Linux driver, which is
@@ -138,14 +154,22 @@ Four answers came back, and they are not all the same kind.
 	  a claimed divergence that is not one is worse than an
 	  unrecorded one -- it invites work that cannot pay.
 
-	- pl011, transmit FIFO, and command timing generally: real
-	  gaps, deliberately not patched.  Both would mean pacing
-	  something against a clock, which changes behaviour for every
-	  board sharing the device rather than adding a missing
-	  peripheral.  The driver side compensates for the first; the
-	  second has no compensation and is simply a limit.
+	- pl011, transmit FIFO: a real gap, and closed by patch 0018
+	  after this audit first rejected it.  The rejection was that
+	  pacing the drain against a clock changes behaviour for every
+	  board sharing the device.  That objection does not survive
+	  making the behaviour opt-in per board, which is how capareg
+	  and sd-spec-version already work on this machine; once the
+	  default is the old behaviour, nothing but the Pi moves.  The
+	  entry below is kept in full, with what it got wrong marked,
+	  because the reasoning that stopped the work for two rounds is
+	  worth more on the page than a clean summary of the result.
 
-	- the seventeen models in this series: audited for accepting
+	- command timing generally: a real gap, not patched.  Unlike
+	  the FIFO it has no compensation on either side and is simply
+	  a limit: no model in this series claims a service time.
+
+	- the eighteen models in this series: audited for accepting
 	  writes the datasheet forbids.  Each already carries
 	  LOG_GUEST_ERROR coverage on its own error paths -- the I2S
 	  FIFO reports TXERR on overflow and RXERR on reading empty,
@@ -159,34 +183,61 @@ Four answers came back, and they are not all the same kind.
 
 The entries below give each in full.
 
-	pl011		QEMU's PL011 models no transmit FIFO.
-			PL011_FLAG_TXFF is assigned in exactly one
-			place in hw/char/pl011.c, where it is cleared,
-			and never set; every write is handed straight
-			to the chardev by qemu_chr_fe_write_all() under
-			an "XXX this blocks entire thread" comment.  So
-			FR.TXFF never reads 1, a driver that fills
-			until the FIFO is full never stops filling, and
-			the transmit-interrupt path that a real board
-			depends on to resume a long write is dead code
+	pl011		FIXED by 0018.  QEMU's PL011 modelled no transmit
+			FIFO.  PL011_FLAG_TXFF was assigned in exactly
+			one place in hw/char/pl011.c, where it is
+			cleared, and never set; every write was handed
+			straight to the chardev by
+			qemu_chr_fe_write_all() under an "XXX this
+			blocks entire thread" comment.  So FR.TXFF
+			never read 1, a driver that fills until the
+			FIFO is full never stopped filling, and the
+			transmit-interrupt path that a real board
+			depends on to resume a long write was dead code
 			under the emulator.
 
-			Modelling it properly means baud-pacing the
-			drain -- TXFF cannot assert unless the drain is
-			slower than the guest's fill -- which would
-			change console timing for virt, vexpress,
-			raspi, cubieboard and the rest, and put the
-			qtest suite at risk.  Upstream's XXX has stood
-			for the same reason.
+			WHAT THIS ENTRY GOT WRONG, twice.  It said
+			modelling the FIFO means pacing the drain
+			against a clock, which would change console
+			timing for virt, vexpress, raspi, cubieboard
+			and the rest and put the qtest suite at risk,
+			and that upstream's XXX has stood for the same
+			reason.  Every clause of that is true and the
+			conclusion still does not follow, because it
+			assumes the new behaviour must be unconditional.
+			A property defaulting to the old behaviour
+			costs the other boards nothing -- this machine
+			was already setting capareg and sd-spec-version
+			exactly that way, two devices over.  The
+			argument was sound and the frame was wrong,
+			which is the harder kind to catch.
 
-			The driver side compensates instead:
-			uartvirtarm64.c stops its fill loop at
-			Fifodepth (16, the depth a Pi has) rather than
-			running the queue dry.  On hardware that costs
-			nothing, since TXFF would break the loop at 16
-			anyway; under QEMU it forces the FIFO-full case
-			to occur, so the interrupt path is exercised on
-			every boot.  See the console chapter of
+			The driver side used to compensate:
+			uartvirtarm64.c stopped its fill loop at
+			sixteen rather than running the queue dry, to
+			force the FIFO-full case.  With the FIFO
+			modelled that cap is gone and the loop stops on
+			TXFF and nothing else, which is the loop that
+			runs on the board.
+
+			What the model now buys, and the driver-side
+			cap never could: deleting the transmit-interrupt
+			continuation from uartvirtarm64.c stops the
+			console dead part-way through a line -- 51 lines
+			of 99, truncated mid-word.  Against the
+			unpatched model the same deletion changes
+			nothing at all.  Cost, measured on a raspi3b
+			boot to the last self-test marker: 15.6 s
+			before, 17.7 s after.
+
+			It also caught a live bug the moment it landed.
+			virtarm64_putc(), the path panic() and iprint()
+			use, wrote UARTDR blind and then spun a fixed
+			count, which was safe only because TXFF could
+			never assert; on a Pi that is a dropped
+			character in exactly the situation where the
+			output matters most.  It now waits for room.
+			See the console chapter of
 			doc/raspi3b-completion-plan.ms.
 
 	sdhci		NOT a divergence, and this entry used to say it

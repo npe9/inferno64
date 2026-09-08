@@ -1,0 +1,58 @@
+From 86cebde8f3dc324364a7dbcb75fa4ba9b4a6187b Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Mon, 7 Sep 2026 07:46:16 -0400
+Subject: [PATCH 13/16] hw/char/bcm2835_aux: use Linux's names for four AUX SPI
+ CNTL0 bits
+
+The values in this model were written from memory of
+drivers/spi/spi-bcm2835aux.c and then checked against it; every one
+matches.  Four names did not: bit 7 is CPOL rather than "invert clk",
+bit 6 is MSBF_OUT rather than "shift MS", and the two variable-mode
+bits are spelled VAR_CS and VAR_WIDTH there.  Anyone reading this model
+next to that driver should not have to translate.
+
+No functional change; the m25p16 on aux-spi1 still answers
+"jedec 20 20 15".
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01BtE1mJ79fHUqzyPBaSgBKx
+---
+ hw/char/bcm2835_aux.c | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/hw/char/bcm2835_aux.c b/hw/char/bcm2835_aux.c
+index c516dcf..a5c654c 100644
+--- a/hw/char/bcm2835_aux.c
++++ b/hw/char/bcm2835_aux.c
+@@ -65,15 +65,15 @@
+ #define SPI_CNTL0_SPEED     0xfff00000
+ #define SPI_CNTL0_CS        0x000e0000
+ #define SPI_CNTL0_POSTINPUT 0x00010000
+-#define SPI_CNTL0_VARCS     0x00008000
+-#define SPI_CNTL0_VARWIDTH  0x00004000
++#define SPI_CNTL0_VAR_CS    0x00008000
++#define SPI_CNTL0_VAR_WIDTH 0x00004000
+ #define SPI_CNTL0_DOUTHOLD  0x00003000
+ #define SPI_CNTL0_ENABLE    0x00000800
+ #define SPI_CNTL0_IN_RISING 0x00000400
+ #define SPI_CNTL0_CLEARFIFO 0x00000200
+ #define SPI_CNTL0_OUT_RISING 0x00000100
+-#define SPI_CNTL0_INVERT_CLK 0x00000080
+-#define SPI_CNTL0_SHIFT_MS  0x00000040
++#define SPI_CNTL0_CPOL      0x00000080
++#define SPI_CNTL0_MSBF_OUT  0x00000040
+ #define SPI_CNTL0_SHIFTLEN  0x0000003f
+ 
+ #define SPI_CNTL1_CSHIGH    0x00000700
+@@ -206,7 +206,7 @@ static uint32_t aux_spi_shift(BCM2835AuxState *s, int n, uint32_t data)
+     uint32_t out = 0;
+     int bits;
+ 
+-    if (spi->cntl0 & SPI_CNTL0_VARWIDTH) {
++    if (spi->cntl0 & SPI_CNTL0_VAR_WIDTH) {
+         qemu_log_mask(LOG_UNIMP, "%s: SPI%d variable-width mode is not "
+                       "modelled; using CNTL0 shift length %u\n",
+                       __func__, n + 1, len);
+-- 
+2.51.0
+

@@ -1,0 +1,152 @@
+From 0b074ab5e7bce87c11e39fe3a7a872587611da48 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Sun, 6 Sep 2026 10:59:35 -0400
+Subject: [PATCH 05/16] hw/gpio/bcm2835_gpio: place an I/O function, and never
+ displace one
+
+The card routing assumed the only thing on any of these buses was the
+card, and that the card was on this block's own bus by the time the
+block was reset.  Neither holds once a board has an SDIO function: the
+Pi arrangement is the card on SDHOST and the Wi-Fi on the Arasan, and a
+device added on the command line may not exist yet at reset.
+
+Move only a removable card, find it wherever it currently is rather
+than assuming, and refuse to move it onto a bus that already holds a
+device.  Without that the routing would reparent an SDIO function as
+though it were the card, which both breaks the function and leaves the
+real card stranded.
+
+An SDIO function on this block's own bus is not on the card slot at
+all; the only controller this SoC wires one to is the Arasan, so it is
+settled there once.  That is done lazily, on the first pin programming,
+because the device may not exist when the block is reset.  Only an SDIO
+function is placed this way: anything else soldered down, an eMMC say,
+is wired to a controller on a real board and this block has no business
+moving it.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01BtE1mJ79fHUqzyPBaSgBKx
+---
+ hw/gpio/bcm2835_gpio.c | 86 +++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 81 insertions(+), 5 deletions(-)
+
+diff --git a/hw/gpio/bcm2835_gpio.c b/hw/gpio/bcm2835_gpio.c
+index ab18cf7..287d851 100644
+--- a/hw/gpio/bcm2835_gpio.c
++++ b/hw/gpio/bcm2835_gpio.c
+@@ -65,6 +65,75 @@ static uint32_t gpfsel_get(BCM2835GpioState *s, uint8_t reg)
+     return value;
+ }
+ 
++/*
++ * Move the card between the two controllers.
++ *
++ * Only a removable card moves: the pins select which block owns the
++ * card slot, and a device that is wired to one controller -- an SDIO
++ * function on the Arasan, which is how a Pi attaches its Wi-Fi while
++ * the card stays on SDHOST -- is not on the slot and does not travel
++ * with it.  An SD bus takes one device, so the destination has to be
++ * free as well.
++ */
++/*
++ * A device attached to this block's own bus is waiting to be placed.
++ * A removable card goes wherever the pins say.  An SDIO function is
++ * not on the card slot at all, and the only controller this SoC wires
++ * one to is the Arasan, so put it there and leave it.  Anything else
++ * -- an eMMC, say -- is soldered to a controller on a real board and
++ * this block has no business moving it, so it is left alone.
++ *
++ * This is done lazily rather than at reset because a device added on
++ * the command line may not exist yet when the GPIO block is reset.
++ */
++static void bcm2835_gpio_settle(BCM2835GpioState *s)
++{
++    if (!sdbus_holds_io_function(&s->sdbus)) {
++        return;
++    }
++    if (sdbus_is_occupied(s->sdbus_sdhci)) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "bcm2835_gpio: an I/O function is attached but the "
++                      "Arasan controller already has a device\n");
++        return;
++    }
++    sdbus_reparent_card(&s->sdbus, s->sdbus_sdhci);
++}
++
++static SDBus *bcm2835_gpio_card_bus(BCM2835GpioState *s)
++{
++    if (sdbus_holds_card(&s->sdbus)) {
++        return &s->sdbus;
++    }
++    if (sdbus_holds_card(s->sdbus_sdhost)) {
++        return s->sdbus_sdhost;
++    }
++    if (sdbus_holds_card(s->sdbus_sdhci)) {
++        return s->sdbus_sdhci;
++    }
++    return NULL;
++}
++
++static void bcm2835_gpio_route_card(BCM2835GpioState *s, SDBus *to)
++{
++    SDBus *from;
++
++    bcm2835_gpio_settle(s);
++    from = bcm2835_gpio_card_bus(s);
++
++    if (from == NULL || from == to) {
++        return;
++    }
++    if (sdbus_is_occupied(to)) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "bcm2835_gpio: the card pins select a controller whose "
++                      "bus already holds a device; leaving the card where it "
++                      "is\n");
++        return;
++    }
++    sdbus_reparent_card(from, to);
++}
++
+ /* Are all six card pins, GPIO 48-53, programmed to the same function? */
+ static bool sd_pins_are(BCM2835GpioState *s, int fsel)
+ {
+@@ -105,15 +174,15 @@ static void gpfsel_set(BCM2835GpioState *s, uint8_t reg, uint32_t value)
+      */
+     if (s->sd_fsel != 7 && sd_pins_are(s, 7)) {
+         /* Arasan SDHCI controller selected (alt3) */
+-        sdbus_reparent_card(s->sdbus_sdhost, s->sdbus_sdhci);
++        bcm2835_gpio_route_card(s, s->sdbus_sdhci);
+         s->sd_fsel = 7;
+     } else if (s->sd_fsel != 0 && sd_pins_are(s, 0)) {
+         /* SDHCI controller selected (pins left at their reset state) */
+-        sdbus_reparent_card(s->sdbus_sdhost, s->sdbus_sdhci);
++        bcm2835_gpio_route_card(s, s->sdbus_sdhci);
+         s->sd_fsel = 0;
+     } else if (s->sd_fsel != 4 && sd_pins_are(s, 4)) {
+         /* SDHost controller selected (alt0) */
+-        sdbus_reparent_card(s->sdbus_sdhci, s->sdbus_sdhost);
++        bcm2835_gpio_route_card(s, s->sdbus_sdhost);
+         s->sd_fsel = 4;
+     }
+ }
+@@ -283,8 +352,15 @@ static void bcm2835_gpio_reset(DeviceState *dev)
+ 
+     s->sd_fsel = 0;
+ 
+-    /* SDHCI is selected by default */
+-    sdbus_reparent_card(&s->sdbus, s->sdbus_sdhci);
++    /*
++     * SDHCI is selected by default; if something is already wired to it,
++     * the card goes to SDHOST instead.  The card may not be on any bus
++     * yet at reset, depending on the order devices are created in, so
++     * the routing above finds it wherever it is rather than assuming it
++     * starts here.
++     */
++    bcm2835_gpio_route_card(s, sdbus_is_occupied(s->sdbus_sdhci)
++                               ? s->sdbus_sdhost : s->sdbus_sdhci);
+ 
+     s->lev0 = 0;
+     s->lev1 = 0;
+-- 
+2.51.0
+

@@ -1,0 +1,52 @@
+From f3b2088842a939c78062d6584b1f2fbb4548f197 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Sun, 6 Sep 2026 19:59:13 -0400
+Subject: [PATCH 06/16] hw/misc/bcm2835_cprman: match a clock mux's divisor
+ register, not another mux
+
+update_mux_from_cm() looks for the mux owning the register that was
+just written, matching its CM_CTL at cm_offset and its CM_DIV at
+cm_offset + 4.  But cm_offset is a word index -- it is initialised from
+R_CM_xxxCTL, which REG32 defines as the byte offset divided by four --
+and a mux's CTL and DIV are adjacent words.  So the divisor is at
+cm_offset + 1, and "+ 4" instead names the CTL register of the mux two
+slots further on.
+
+The effect is that writing a mux's CM_DIV never updates that mux, and
+writing its CM_CTL can match an earlier mux's stale "+ 4" first,
+update the wrong mux and return, leaving the intended one untouched.
+CM_PWMCTL is such a case: at word index 40 it is matched by the OTP
+mux's 36 + 4, so programming the PWM clock updated the OTP mux and the
+PWM clock never started -- its BUSY bit never came on and its output
+stayed at zero.
+
+Match cm_offset + 1.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01BtE1mJ79fHUqzyPBaSgBKx
+---
+ hw/misc/bcm2835_cprman.c | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/hw/misc/bcm2835_cprman.c b/hw/misc/bcm2835_cprman.c
+index efe6f90..abe4fcb 100644
+--- a/hw/misc/bcm2835_cprman.c
++++ b/hw/misc/bcm2835_cprman.c
+@@ -508,8 +508,12 @@ static inline void update_mux_from_cm(BCM2835CprmanState *s, size_t idx)
+ 
+     for (i = 0; i < CPRMAN_NUM_CLOCK_MUX; i++) {
+         if ((CLOCK_MUX_INIT_INFO[i].cm_offset == idx) ||
+-            (CLOCK_MUX_INIT_INFO[i].cm_offset + 4 == idx)) {
+-            /* matches CM_CTL or CM_DIV mux register */
++            (CLOCK_MUX_INIT_INFO[i].cm_offset + 1 == idx)) {
++            /*
++             * Matches this mux's CM_CTL or its CM_DIV.  cm_offset is a
++             * word index and the two registers are adjacent words, so
++             * the divisor is at cm_offset + 1.
++             */
+             clock_mux_update(&s->clock_muxes[i]);
+             return;
+         }
+-- 
+2.51.0
+

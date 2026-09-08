@@ -129,6 +129,10 @@ y.debug
 
 # ignore any *.patch files
 *.patch
+# ...except the qemu series, which tools/qemu-patches/README documents
+# by number.  Without these the README refers to files the repo does
+# not have, and the codesign half of this port cannot be reproduced.
+!tools/qemu-patches/*.patch
 
 # ignore os/boot generated files
 /Inferno/386/9bootfat

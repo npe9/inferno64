@@ -1,0 +1,254 @@
+From d7b05bb5caa460b5f722cf3900fcdd237bd46b0d Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Tue, 8 Sep 2026 07:44:39 -0400
+Subject: [PATCH] sd: refuse a data transfer whose two ends disagree about bus
+ width
+
+ACMD6 records the card's DAT_BUS_WIDTH in sd_status[0] and nothing in
+the model ever reads it again, because a byte-oriented card has no
+data lines to narrow.  The host's side is not communicated at all:
+sdhci writes hostctl1 and the card never hears about it.  So a host
+that sets its four-bit bit without ever telling the card -- or before
+the card has agreed -- transfers exactly as if it had done everything
+right, and a driver bug that corrupts every block on real hardware
+passes silently under emulation.
+
+Give the card the host's width, and refuse a transfer when the two
+disagree.  sdbus_set_bus_width() mirrors sdbus_set_voltage(); sdhci
+calls it when hostctl1 changes and again on reset, where hostctl1 is
+cleared and a stale four-bit belief would otherwise refuse everything
+afterwards.  sd.c compares it against sd_status[0] at both entries to
+a data transfer and returns sd_invalid_state_for_cmd() with a
+LOG_GUEST_ERROR line naming both widths.
+
+Refusing rather than garbling is deliberate.  Real hardware hands back
+whatever the undriven lines are sitting at and the guest sees
+corruption somewhere later with nothing pointing at the cause; a model
+that reproduced that faithfully would only be reproducing the part
+that makes the bug hard to find.
+
+The hook is on sd_class_init, not the common class: eMMC carries bus
+width in EXT_CSD and never issues ACMD6, so the card-side width would
+always read one line and every eMMC transfer would be refused.  The
+SDIO function has no memory data path to protect either.
+
+No in-tree qtest writes hostctl1's four-bit bit -- sdhci-test only
+reads capability registers, and npcm7xx_sdhci-test's init does APP_CMD,
+ACMD41, ALL_SEND_CID, SEND_RELATIVE_ADDR and SELECT with no ACMD6 and
+no HOSTCTL write, so both ends stay at one line and agree.
+qtest-aarch64 is 28 Ok / 0 Fail.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01BtE1mJ79fHUqzyPBaSgBKx
+---
+ hw/sd/core.c       | 18 +++++++++++++
+ hw/sd/sd.c         | 65 ++++++++++++++++++++++++++++++++++++++++++++++
+ hw/sd/sdhci.c      | 14 ++++++++++
+ include/hw/sd/sd.h | 12 +++++++++
+ 4 files changed, 109 insertions(+)
+
+diff --git a/hw/sd/core.c b/hw/sd/core.c
+index 08be0af..8074c67 100644
+--- a/hw/sd/core.c
++++ b/hw/sd/core.c
+@@ -109,6 +109,24 @@ void sdbus_set_voltage(SDBus *sdbus, uint16_t millivolts)
+     }
+ }
+ 
++void sdbus_set_bus_width(SDBus *sdbus, uint8_t width)
++{
++    SDState *card = get_card(sdbus);
++
++    if (card) {
++        SDCardClass *sc = SDMMC_COMMON_GET_CLASS(card);
++
++        /*
++         * Unlike set_voltage this is not asserted: eMMC and the SDIO
++         * function have no use for it, and a card that does not
++         * implement it simply is not told.
++         */
++        if (sc->set_bus_width) {
++            sc->set_bus_width(card, width);
++        }
++    }
++}
++
+ size_t sdbus_do_command(SDBus *sdbus, SDRequest *req,
+                         uint8_t *resp, size_t respsz)
+ {
+diff --git a/hw/sd/sd.c b/hw/sd/sd.c
+index 3c7c95b..6d1778d 100644
+--- a/hw/sd/sd.c
++++ b/hw/sd/sd.c
+@@ -151,6 +151,14 @@ struct SDState {
+     uint16_t rca;
+     uint32_t card_status;
+     uint8_t sd_status[64];
++    /*
++     * How many DAT lines the host says it is driving.  The card's own
++     * width lives in sd_status[0] bits 7:6, set by ACMD6; the two
++     * disagreeing means the host is reading lines the card is not
++     * driving, which on real hardware is corrupt data and not an
++     * error.  Kept here so a transfer can refuse instead.
++     */
++    uint8_t host_bus_width;
+     union {
+         uint8_t ext_csd[512];
+         struct {
+@@ -363,6 +371,48 @@ static void sd_set_voltage(SDState *sd, uint16_t millivolts)
+     }
+ }
+ 
++static void sd_set_bus_width(SDState *sd, uint8_t width)
++{
++    sd->host_bus_width = width;
++}
++
++/*
++ * The card's own DAT_BUS_WIDTH, as ACMD6 left it: sd_status[0] bits
++ * 7:6, where 0 is one line and 2 is four.
++ */
++static uint8_t sd_card_bus_width(SDState *sd)
++{
++    return ((sd->sd_status[0] >> 6) & 3) == 2 ? 4 : 1;
++}
++
++/*
++ * Refuse a data transfer whose two ends disagree about how wide the
++ * bus is.
++ *
++ * A host that sets its own four-bit bit before the card has accepted
++ * ACMD6 -- or that forgets ACMD6 entirely -- reads three lines the
++ * card is not driving.  Real hardware does not report that; it hands
++ * back whatever those lines happen to be sitting at, and the guest
++ * sees corruption somewhere later with nothing pointing at the cause.
++ * Refusing here is deliberately not that: it makes the model's
++ * complaint visible and attributable, which is the whole point of
++ * catching it in an emulator rather than on a board.
++ */
++static bool sd_bus_width_agrees(SDState *sd, SDRequest req)
++{
++    uint8_t card = sd_card_bus_width(sd);
++
++    if (sd->host_bus_width == card) {
++        return true;
++    }
++    qemu_log_mask(LOG_GUEST_ERROR,
++                  "%s: CMD%i data transfer with the host driving %d DAT "
++                  "line(s) and the card set to %d; ACMD6 and the host's "
++                  "bus width disagree\n",
++                  __func__, req.cmd, sd->host_bus_width, card);
++    return false;
++}
++
+ static enum SDCardModes sd_mode(SDState *sd)
+ {
+     switch (sd->state) {
+@@ -943,6 +993,8 @@ static void sd_reset(DeviceState *dev)
+     uint64_t sect;
+ 
+     trace_sdcard_reset();
++    /* Out of reset both ends of the bus are on one line. */
++    sd->host_bus_width = 1;
+     /*
+      * An I/O-only function has no CID, no CSD, no OCR in the memory
+      * sense and no write-protect groups, so it takes none of the card
+@@ -1435,6 +1487,9 @@ static sd_rsp_type_t sd_cmd_to_receivingdata(SDState *sd, SDRequest req,
+     if (sd->state != sd_transfer_state) {
+         return sd_invalid_state_for_cmd(sd, req);
+     }
++    if (!sd_bus_width_agrees(sd, req)) {
++        return sd_invalid_state_for_cmd(sd, req);
++    }
+     sd->state = sd_receivingdata_state;
+     sd->data_start = start;
+     sd->data_offset = 0;
+@@ -1451,6 +1506,9 @@ static sd_rsp_type_t sd_cmd_to_sendingdata(SDState *sd, SDRequest req,
+     if (sd->state != sd_transfer_state) {
+         return sd_invalid_state_for_cmd(sd, req);
+     }
++    if (!sd_bus_width_agrees(sd, req)) {
++        return sd_invalid_state_for_cmd(sd, req);
++    }
+ 
+     sd->state = sd_sendingdata_state;
+     sd->data_start = start;
+@@ -3253,6 +3311,13 @@ static void sd_class_init(ObjectClass *klass, const void *data)
+     sc->set_cid = sd_set_cid;
+     sc->set_csd = sd_set_csd;
+     sc->proto = &sd_proto_sd;
++    /*
++     * SD only.  eMMC carries its bus width in EXT_CSD and never issues
++     * ACMD6, so the card-side width this compares against would always
++     * read one line and every eMMC transfer would be refused; the SDIO
++     * function has no memory data path to protect either.
++     */
++    sc->set_bus_width = sd_set_bus_width;
+ }
+ 
+ /*
+diff --git a/hw/sd/sdhci.c b/hw/sd/sdhci.c
+index 3c897e5..1c4f1fa 100644
+--- a/hw/sd/sdhci.c
++++ b/hw/sd/sdhci.c
+@@ -299,6 +299,12 @@ static void sdhci_reset(SDHCIState *s)
+      * initialization
+      */
+     memset(&s->sdmasysad, 0, (uintptr_t)&s->capareg - (uintptr_t)&s->sdmasysad);
++    /*
++     * hostctl1 has just been cleared, so the host is back to one data
++     * line.  Say so: the card keeps its own width and a stale
++     * four-bit belief here would refuse every transfer after a reset.
++     */
++    sdbus_set_bus_width(&s->sdbus, 1);
+ 
+     /* Reset other state based on current card insertion/readonly status */
+     sdhci_set_inserted(dev, sdbus_get_inserted(&s->sdbus));
+@@ -1266,6 +1272,14 @@ sdhci_write(void *opaque, hwaddr offset, uint64_t val, unsigned size)
+         MASKED_WRITE(s->hostctl1, mask, value);
+         MASKED_WRITE(s->pwrcon, mask >> 8, value >> 8);
+         MASKED_WRITE(s->wakcon, mask >> 24, value >> 24);
++        /*
++         * Tell the card how wide the host now thinks the bus is.  The
++         * card keeps its own width from ACMD6, and a transfer whose
++         * two ends disagree is refused rather than silently reading
++         * lines nothing is driving.
++         */
++        sdbus_set_bus_width(&s->sdbus,
++                            (s->hostctl1 & SDHC_CTRL_4BITBUS) ? 4 : 1);
+         if (!(s->prnsts & SDHC_CARD_PRESENT) || ((s->pwrcon >> 1) & 0x7) < 5 ||
+                 !(s->capareg & (1 << (31 - ((s->pwrcon >> 1) & 0x7))))) {
+             s->pwrcon &= ~SDHC_POWER_ON;
+diff --git a/include/hw/sd/sd.h b/include/hw/sd/sd.h
+index da8176e..688a8ab 100644
+--- a/include/hw/sd/sd.h
++++ b/include/hw/sd/sd.h
+@@ -127,6 +127,11 @@ struct SDCardClass {
+     bool (*receive_ready)(SDState *sd);
+     bool (*data_ready)(SDState *sd);
+     void (*set_voltage)(SDState *sd, uint16_t millivolts);
++    /*
++     * The host telling the card how many data lines it is driving.
++     * Optional: a card model that does not care leaves this NULL.
++     */
++    void (*set_bus_width)(SDState *sd, uint8_t width);
+     uint8_t (*get_dat_lines)(SDState *sd);
+     bool (*get_cmd_line)(SDState *sd);
+     bool (*get_inserted)(SDState *sd);
+@@ -163,6 +168,13 @@ struct SDBusClass {
+  * an SDBus rather than directly with SDState)
+  */
+ void sdbus_set_voltage(SDBus *sdbus, uint16_t millivolts);
++/**
++ * Tell the card how many DAT lines the host is driving (1 or 4).  The
++ * card has its own idea, set by ACMD6, and the two disagreeing is a
++ * host bug that real hardware turns into corrupt data rather than an
++ * error -- so the card model reports it instead.
++ */
++void sdbus_set_bus_width(SDBus *sdbus, uint8_t width);
+ uint8_t sdbus_get_dat_lines(SDBus *sdbus);
+ bool sdbus_get_cmd_line(SDBus *sdbus);
+ /**
+-- 
+2.51.0
+

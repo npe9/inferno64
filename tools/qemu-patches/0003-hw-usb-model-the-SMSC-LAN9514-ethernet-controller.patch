@@ -1,0 +1,981 @@
+From 11d3330da1021d2320b023f5335b1438a42f2bf1 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Sun, 6 Sep 2026 10:03:41 -0400
+Subject: [PATCH 03/16] hw/usb: model the SMSC LAN9514 ethernet controller
+
+The Raspberry Pi's onboard network adapter, which qemu's raspi machines
+have no model for.  A guest driver for it can only be written blind:
+qemu offers usb-net, which is CDC ECM, and nothing that answers the
+vendor requests and framing an smsc95xx-style driver uses.
+
+This models the ethernet function -- not the hub in front of it on a
+Pi, since a guest reaches the device through whatever topology the
+machine already provides.  Registers are read and written with vendor
+requests 0xa1 and 0xa0 on endpoint 0, four bytes little-endian with
+the register offset in wIndex.  Transmit frames carry the two command
+words; received frames carry the status word, the FCS, and four byte
+alignment padding, and are packed into bursts when MEF and the burst
+cap allow it.  The internal PHY answers at address 1 through
+MII_ADDR/MII_DATA, and reports a link that is always up.
+
+No EEPROM is fitted, which is the case on a Pi: the MAC comes from the
+VideoCore firmware rather than from the chip, so an E2P_CMD completes
+immediately with the timeout bit set and a driver is expected to fall
+back to another source.
+
+The register layout, reset values and framing come from the
+LAN9512/LAN9514 datasheet and Linux's smsc95xx driver, not from any
+particular guest driver.
+
+Protocol violations are reported rather than tolerated -- a transmit
+whose command words disagree with the length actually transferred, a
+transmit with the transmitter disabled, a register access that is not
+four bytes, a write to a read-only register, an MII access to an
+absent PHY.  The first of those immediately caught a real bug when the
+model was first run against a guest.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01BtE1mJ79fHUqzyPBaSgBKx
+---
+ hw/usb/dev-lan9514.c | 916 +++++++++++++++++++++++++++++++++++++++++++
+ hw/usb/meson.build   |   1 +
+ 2 files changed, 917 insertions(+)
+ create mode 100644 hw/usb/dev-lan9514.c
+
+diff --git a/hw/usb/dev-lan9514.c b/hw/usb/dev-lan9514.c
+new file mode 100644
+index 0000000..83d10ad
+--- /dev/null
++++ b/hw/usb/dev-lan9514.c
+@@ -0,0 +1,916 @@
++/*
++ * SMSC LAN9514 USB 2.0 hub and 10/100 ethernet controller
++ *
++ * The ethernet function only: the hub in front of it on a Raspberry Pi
++ * is not modelled, because a guest reaches this device through
++ * whatever topology the machine already provides.
++ *
++ * Register layout, reset values and the transmit and receive framing
++ * are from the LAN9512/LAN9514 datasheet and Linux's smsc95xx driver
++ * (drivers/net/usb/smsc95xx.c, smsc95xx.h), not from any particular
++ * guest driver.  Where this model is deliberately narrower than the
++ * chip it says so at the point it matters.
++ *
++ * Copyright (c) 2026 Noah Evans
++ *
++ * This work is licensed under the terms of the GNU GPL, version 2 or later.
++ * See the COPYING file in the top-level directory.
++ */
++
++#include "qemu/osdep.h"
++#include "qemu/log.h"
++#include "qemu/module.h"
++#include "hw/usb.h"
++#include "hw/usb/desc.h"
++#include "hw/qdev-properties.h"
++#include "migration/vmstate.h"
++#include "net/net.h"
++#include "qapi/error.h"
++#include "qemu/error-report.h"
++
++/* Vendor requests on endpoint 0. */
++#define LAN9514_REQ_WRITE_REG   0xa0
++#define LAN9514_REQ_READ_REG    0xa1
++
++/* Device registers. */
++#define R_ID_REV        0x000
++#define R_INT_STS       0x008
++#define R_RX_CFG        0x00c
++#define R_TX_CFG        0x010
++#define R_HW_CFG        0x014
++#define R_RX_FIFO_INF   0x018
++#define R_PM_CTRL       0x020
++#define R_LED_GPIO_CFG  0x024
++#define R_GPIO_CFG      0x028
++#define R_AFC_CFG       0x02c
++#define R_E2P_CMD       0x030
++#define R_E2P_DATA      0x034
++#define R_BURST_CAP     0x038
++#define R_GPIO_WAKE     0x064
++#define R_INT_EP_CTL    0x068
++#define R_BULK_IN_DLY   0x06c
++#define R_MAC_CR        0x100
++#define R_ADDRH         0x104
++#define R_ADDRL         0x108
++#define R_HASHH         0x10c
++#define R_HASHL         0x110
++#define R_MII_ADDR      0x114
++#define R_MII_DATA      0x118
++#define R_FLOW          0x11c
++#define R_VLAN1         0x120
++#define R_COE_CR        0x130
++
++/* ID_REV: chip id in the top half, silicon revision in the bottom. */
++#define ID_REV_LAN9514  0xec000002
++
++#define HW_CFG_LRST     (1 << 3)    /* lite reset, self-clearing */
++#define HW_CFG_BCE      (1 << 1)    /* burst cap enable */
++#define HW_CFG_MEF      (1 << 5)    /* multiple ethernet frames per transfer */
++#define HW_CFG_BIR      (1 << 12)   /* bulk-in empty response */
++#define PM_CTRL_PHY_RST (1 << 4)    /* PHY reset, self-clearing */
++
++#define E2P_CMD_BUSY    (1u << 31)
++#define E2P_CMD_TIMEOUT (1 << 10)
++
++#define MII_ADDR_BUSY   (1 << 0)
++#define MII_ADDR_WRITE  (1 << 1)
++#define MII_ADDR_INDEX(v)   (((v) >> 6) & 0x1f)
++#define MII_ADDR_PHY(v)     (((v) >> 11) & 0x1f)
++
++#define MAC_CR_MCPAS    (1 << 19)   /* pass all multicast */
++#define MAC_CR_PRMS     (1 << 18)   /* promiscuous */
++#define MAC_CR_BCAST    (1 << 11)   /* set to *disable* broadcast */
++#define MAC_CR_TXEN     (1 << 3)
++#define MAC_CR_RXEN     (1 << 2)
++
++#define TX_CFG_ON       (1 << 2)
++
++/* Transmit command word A. */
++#define TX_CMD_A_LEN    0x000007ff
++#define TX_CMD_A_LAST   (1 << 12)
++#define TX_CMD_A_FIRST  (1 << 13)
++
++/* Receive status word. */
++#define RX_STS_ERROR    (1 << 15)
++#define RX_STS_LEN_SHIFT 16
++
++/* The internal PHY answers at address 1. */
++#define PHY_ADDR        1
++#define PHY_BMCR        0
++#define PHY_BMSR        1
++#define PHY_PHYID1      2
++#define PHY_PHYID2      3
++#define PHY_ANAR        4
++#define PHY_ANLPAR      5
++#define PHY_INT_SRC     29
++#define PHY_INT_MASK    30
++#define PHY_NREG        32
++
++#define BMCR_RESET      (1 << 15)
++#define BMCR_ANRESTART  (1 << 9)
++#define BMSR_ANEGCOMPLETE (1 << 5)
++#define BMSR_LINKUP     (1 << 2)
++
++#define ETH_FCS_LEN     4
++#define LAN9514_MTU     1518
++/*
++ * Frames wait here between arriving from the network and being
++ * collected by a bulk-in transfer.  The chip has a 10K receive FIFO;
++ * this holds a comparable number of full-size frames.
++ */
++#define RX_QUEUE_MAX    8
++
++#define TYPE_USB_LAN9514 "usb-lan9514"
++OBJECT_DECLARE_SIMPLE_TYPE(USBLan9514State, USB_LAN9514)
++
++typedef struct Lan9514Frame {
++    uint32_t len;                       /* status word + frame + FCS + pad */
++    uint8_t data[4 + LAN9514_MTU + ETH_FCS_LEN + 3];
++} Lan9514Frame;
++
++struct USBLan9514State {
++    USBDevice dev;
++
++    NICState *nic;
++    NICConf conf;
++
++    uint32_t id_rev;
++    uint32_t int_sts;
++    uint32_t rx_cfg;
++    uint32_t tx_cfg;
++    uint32_t hw_cfg;
++    uint32_t pm_ctrl;
++    uint32_t led_gpio_cfg;
++    uint32_t gpio_cfg;
++    uint32_t afc_cfg;
++    uint32_t e2p_cmd;
++    uint32_t e2p_data;
++    uint32_t burst_cap;
++    uint32_t gpio_wake;
++    uint32_t int_ep_ctl;
++    uint32_t bulk_in_dly;
++    uint32_t mac_cr;
++    uint32_t addrh;
++    uint32_t addrl;
++    uint32_t hashh;
++    uint32_t hashl;
++    uint32_t mii_addr;
++    uint32_t mii_data;
++    uint32_t flow;
++    uint32_t vlan1;
++    uint32_t coe_cr;
++
++    uint16_t phy[PHY_NREG];
++
++    Lan9514Frame rxq[RX_QUEUE_MAX];
++    unsigned int rxq_head;
++    unsigned int rxq_count;
++
++    /*
++     * A transmit transfer arrives as a run of USB packets ended by a
++     * short one, so it has to be reassembled before the command words
++     * at its head can be believed.
++     */
++    uint8_t txbuf[8 + LAN9514_MTU];
++    unsigned int txlen;
++
++    /*
++     * The burst currently being handed to the host, and how far into
++     * it the transfer has got.  A bulk-in transfer arrives as a run of
++     * packets, so a frame is served across as many as it takes.
++     */
++    uint8_t inbuf[RX_QUEUE_MAX * sizeof(((Lan9514Frame *)0)->data)];
++    unsigned int inlen;
++    unsigned int inptr;
++    bool inzlp;
++};
++
++enum {
++    STRING_MANUFACTURER = 1,
++    STRING_PRODUCT,
++    STRING_SERIALNUMBER,
++};
++
++static const USBDescStrings desc_strings = {
++    [STRING_MANUFACTURER] = "SMSC",
++    [STRING_PRODUCT]      = "LAN9514 Ethernet",
++    [STRING_SERIALNUMBER] = "1",
++};
++
++/*
++ * The chip is a high-speed device but negotiates full speed on a
++ * full-speed port, where the bulk endpoints carry 64 byte packets
++ * rather than 512.  A driver is expected to size its receive buffer
++ * from the endpoint it finds, so both sets are described.
++ */
++static const USBDescIface desc_iface_full = {
++    .bInterfaceNumber              = 0,
++    .bNumEndpoints                 = 3,
++    .bInterfaceClass               = 0xff,
++    .bInterfaceSubClass            = 0x00,
++    .bInterfaceProtocol            = 0xff,
++    .eps = (USBDescEndpoint[]) {
++        {
++            .bEndpointAddress      = USB_DIR_IN | 0x01,
++            .bmAttributes          = USB_ENDPOINT_XFER_BULK,
++            .wMaxPacketSize        = 64,
++        }, {
++            .bEndpointAddress      = USB_DIR_OUT | 0x02,
++            .bmAttributes          = USB_ENDPOINT_XFER_BULK,
++            .wMaxPacketSize        = 64,
++        }, {
++            .bEndpointAddress      = USB_DIR_IN | 0x03,
++            .bmAttributes          = USB_ENDPOINT_XFER_INT,
++            .wMaxPacketSize        = 16,
++            .bInterval             = 1,
++        },
++    }
++};
++
++static const USBDescDevice desc_device_full = {
++    .bcdUSB                        = 0x0200,
++    .bMaxPacketSize0               = 64,
++    .bNumConfigurations            = 1,
++    .confs = (USBDescConfig[]) {
++        {
++            .bNumInterfaces        = 1,
++            .bConfigurationValue   = 1,
++            .bmAttributes          = USB_CFG_ATT_ONE,
++            .bMaxPower             = 250,
++            .nif = 1,
++            .ifs = &desc_iface_full,
++        },
++    },
++};
++
++static const USBDescIface desc_iface = {
++    .bInterfaceNumber              = 0,
++    .bNumEndpoints                 = 3,
++    .bInterfaceClass               = 0xff,
++    .bInterfaceSubClass            = 0x00,
++    .bInterfaceProtocol            = 0xff,
++    .eps = (USBDescEndpoint[]) {
++        {
++            .bEndpointAddress      = USB_DIR_IN | 0x01,
++            .bmAttributes          = USB_ENDPOINT_XFER_BULK,
++            .wMaxPacketSize        = 512,
++        }, {
++            .bEndpointAddress      = USB_DIR_OUT | 0x02,
++            .bmAttributes          = USB_ENDPOINT_XFER_BULK,
++            .wMaxPacketSize        = 512,
++        }, {
++            .bEndpointAddress      = USB_DIR_IN | 0x03,
++            .bmAttributes          = USB_ENDPOINT_XFER_INT,
++            .wMaxPacketSize        = 16,
++            .bInterval             = 4,
++        },
++    }
++};
++
++static const USBDescDevice desc_device = {
++    .bcdUSB                        = 0x0200,
++    .bMaxPacketSize0               = 64,
++    .bNumConfigurations            = 1,
++    .confs = (USBDescConfig[]) {
++        {
++            .bNumInterfaces        = 1,
++            .bConfigurationValue   = 1,
++            .bmAttributes          = USB_CFG_ATT_ONE,
++            .bMaxPower             = 250,
++            .nif = 1,
++            .ifs = &desc_iface,
++        },
++    },
++};
++
++static const USBDesc desc_lan9514 = {
++    .id = {
++        .idVendor          = 0x0424,
++        .idProduct         = 0xec00,
++        .bcdDevice         = 0x0200,
++        .iManufacturer     = STRING_MANUFACTURER,
++        .iProduct          = STRING_PRODUCT,
++        .iSerialNumber     = STRING_SERIALNUMBER,
++    },
++    .full = &desc_device_full,
++    .high = &desc_device,
++    .str  = desc_strings,
++};
++
++static void lan9514_phy_reset(USBLan9514State *s)
++{
++    memset(s->phy, 0, sizeof(s->phy));
++    s->phy[PHY_BMCR] = 0x3100;          /* autoneg enabled, 100Mb, full duplex */
++    s->phy[PHY_BMSR] = 0x7809 | BMSR_LINKUP | BMSR_ANEGCOMPLETE;
++    s->phy[PHY_PHYID1] = 0x0007;        /* SMSC LAN911x internal PHY */
++    s->phy[PHY_PHYID2] = 0xc0d1;
++    s->phy[PHY_ANAR] = 0x01e1;
++    s->phy[PHY_ANLPAR] = 0x45e1;
++}
++
++/*
++ * A lite reset returns the data path to its power-on state.  It does
++ * not touch the PHY, the MAC address or the EEPROM interface, which is
++ * why a driver issues both LRST and PHY_RST.
++ */
++static void lan9514_lite_reset(USBLan9514State *s)
++{
++    s->int_sts = 0;
++    s->rx_cfg = 0;
++    s->tx_cfg = 0;
++    s->hw_cfg = 0;
++    s->afc_cfg = 0x00f830a1;
++    s->burst_cap = 0;
++    s->int_ep_ctl = 0;
++    s->bulk_in_dly = 0x00002000;
++    s->mac_cr = 0;
++    s->hashh = 0;
++    s->hashl = 0;
++    s->flow = 0;
++    s->vlan1 = 0;
++    s->coe_cr = 0;
++    s->rxq_head = 0;
++    s->rxq_count = 0;
++    s->txlen = 0;
++    s->inlen = 0;
++    s->inptr = 0;
++    s->inzlp = false;
++}
++
++static uint16_t lan9514_mii_read(USBLan9514State *s, unsigned int idx)
++{
++    uint16_t v;
++
++    if (idx >= PHY_NREG) {
++        return 0;
++    }
++    v = s->phy[idx];
++    if (idx == PHY_INT_SRC) {
++        s->phy[PHY_INT_SRC] = 0;        /* read to clear */
++    }
++    return v;
++}
++
++static void lan9514_mii_write(USBLan9514State *s, unsigned int idx, uint16_t v)
++{
++    if (idx >= PHY_NREG) {
++        return;
++    }
++    if (idx == PHY_BMCR) {
++        if (v & BMCR_RESET) {
++            lan9514_phy_reset(s);
++            return;                     /* reset is self-clearing */
++        }
++        /* A restart of autonegotiation completes at once: the link is
++         * a host network backend, always up and always 100Mb full. */
++        v &= ~BMCR_ANRESTART;
++        s->phy[PHY_BMSR] |= BMSR_LINKUP | BMSR_ANEGCOMPLETE;
++    }
++    if (idx == PHY_BMSR || idx == PHY_PHYID1 || idx == PHY_PHYID2) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "lan9514: write to read-only PHY register %u\n", idx);
++        return;
++    }
++    s->phy[idx] = v;
++}
++
++static void lan9514_mii_start(USBLan9514State *s, uint32_t v)
++{
++    unsigned int idx = MII_ADDR_INDEX(v);
++
++    if (MII_ADDR_PHY(v) != PHY_ADDR) {
++        /* Nothing answers at any other address; the read reads back as
++         * all ones, which is how a driver detects an absent PHY. */
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "lan9514: MII access to absent PHY %u\n",
++                      MII_ADDR_PHY(v));
++        s->mii_data = 0xffff;
++        s->mii_addr = v & ~MII_ADDR_BUSY;
++        return;
++    }
++    if (v & MII_ADDR_WRITE) {
++        lan9514_mii_write(s, idx, s->mii_data);
++    } else {
++        s->mii_data = lan9514_mii_read(s, idx);
++    }
++    s->mii_addr = v & ~MII_ADDR_BUSY;   /* the access completes at once */
++}
++
++static uint32_t lan9514_read_reg(USBLan9514State *s, uint32_t reg)
++{
++    switch (reg) {
++    case R_ID_REV:      return s->id_rev;
++    case R_INT_STS:     return s->int_sts;
++    case R_RX_CFG:      return s->rx_cfg;
++    case R_TX_CFG:      return s->tx_cfg;
++    case R_HW_CFG:      return s->hw_cfg;
++    case R_RX_FIFO_INF: return s->rxq_count;
++    case R_PM_CTRL:     return s->pm_ctrl;
++    case R_LED_GPIO_CFG: return s->led_gpio_cfg;
++    case R_GPIO_CFG:    return s->gpio_cfg;
++    case R_AFC_CFG:     return s->afc_cfg;
++    case R_E2P_CMD:     return s->e2p_cmd;
++    case R_E2P_DATA:    return s->e2p_data;
++    case R_BURST_CAP:   return s->burst_cap;
++    case R_GPIO_WAKE:   return s->gpio_wake;
++    case R_INT_EP_CTL:  return s->int_ep_ctl;
++    case R_BULK_IN_DLY: return s->bulk_in_dly;
++    case R_MAC_CR:      return s->mac_cr;
++    case R_ADDRH:       return s->addrh;
++    case R_ADDRL:       return s->addrl;
++    case R_HASHH:       return s->hashh;
++    case R_HASHL:       return s->hashl;
++    case R_MII_ADDR:    return s->mii_addr;
++    case R_MII_DATA:    return s->mii_data;
++    case R_FLOW:        return s->flow;
++    case R_VLAN1:       return s->vlan1;
++    case R_COE_CR:      return s->coe_cr;
++    default:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "lan9514: read of unknown register 0x%03x\n", reg);
++        return 0;
++    }
++}
++
++static void lan9514_write_reg(USBLan9514State *s, uint32_t reg, uint32_t v)
++{
++    switch (reg) {
++    case R_ID_REV:
++    case R_RX_FIFO_INF:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "lan9514: write to read-only register 0x%03x\n", reg);
++        break;
++    case R_INT_STS:
++        s->int_sts &= ~v;               /* write one to clear */
++        break;
++    case R_RX_CFG:      s->rx_cfg = v; break;
++    case R_TX_CFG:      s->tx_cfg = v; break;
++    case R_HW_CFG:
++        if (v & HW_CFG_LRST) {
++            lan9514_lite_reset(s);      /* clears HW_CFG, so the bit reads 0 */
++        } else {
++            s->hw_cfg = v;
++        }
++        break;
++    case R_PM_CTRL:
++        if (v & PM_CTRL_PHY_RST) {
++            lan9514_phy_reset(s);
++            s->pm_ctrl = v & ~PM_CTRL_PHY_RST;
++        } else {
++            s->pm_ctrl = v;
++        }
++        break;
++    case R_LED_GPIO_CFG: s->led_gpio_cfg = v; break;
++    case R_GPIO_CFG:    s->gpio_cfg = v; break;
++    case R_AFC_CFG:     s->afc_cfg = v; break;
++    case R_E2P_CMD:
++        /*
++         * No EEPROM is fitted -- which is the case on a Raspberry Pi,
++         * where the MAC comes from the VideoCore firmware rather than
++         * from the chip.  A command therefore completes immediately
++         * with the timeout bit set, and a driver is expected to fall
++         * back to another source for the address.
++         */
++        if (v & E2P_CMD_BUSY) {
++            s->e2p_cmd = (v & ~E2P_CMD_BUSY) | E2P_CMD_TIMEOUT;
++            s->e2p_data = 0xff;
++        } else {
++            s->e2p_cmd = v;
++        }
++        break;
++    case R_E2P_DATA:    s->e2p_data = v & 0xff; break;
++    case R_BURST_CAP:   s->burst_cap = v & 0xff; break;
++    case R_GPIO_WAKE:   s->gpio_wake = v; break;
++    case R_INT_EP_CTL:  s->int_ep_ctl = v; break;
++    case R_BULK_IN_DLY: s->bulk_in_dly = v & 0xffff; break;
++    case R_MAC_CR:      s->mac_cr = v; break;
++    case R_ADDRH:       s->addrh = v & 0xffff; break;
++    case R_ADDRL:       s->addrl = v; break;
++    case R_HASHH:       s->hashh = v; break;
++    case R_HASHL:       s->hashl = v; break;
++    case R_MII_ADDR:
++        if (v & MII_ADDR_BUSY) {
++            lan9514_mii_start(s, v);
++        } else {
++            s->mii_addr = v;
++        }
++        break;
++    case R_MII_DATA:    s->mii_data = v & 0xffff; break;
++    case R_FLOW:        s->flow = v; break;
++    case R_VLAN1:       s->vlan1 = v & 0xffff; break;
++    case R_COE_CR:      s->coe_cr = v; break;
++    default:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "lan9514: write to unknown register 0x%03x\n", reg);
++        break;
++    }
++}
++
++static void lan9514_handle_reset(USBDevice *dev)
++{
++    USBLan9514State *s = USB_LAN9514(dev);
++
++    lan9514_lite_reset(s);
++    lan9514_phy_reset(s);
++    s->pm_ctrl = 0;
++    s->e2p_cmd = 0;
++    s->e2p_data = 0;
++    s->mii_addr = 0;
++    s->mii_data = 0;
++    s->addrh = 0;
++    s->addrl = 0;
++}
++
++static void lan9514_handle_control(USBDevice *dev, USBPacket *p,
++                                   int request, int value, int index,
++                                   int length, uint8_t *data)
++{
++    USBLan9514State *s = USB_LAN9514(dev);
++    uint32_t v;
++
++    if (usb_desc_handle_control(dev, p, request, value, index, length,
++                                data) >= 0) {
++        return;
++    }
++
++    switch (request) {
++    case VendorDeviceOutRequest | LAN9514_REQ_WRITE_REG:
++        if (length != 4) {
++            qemu_log_mask(LOG_GUEST_ERROR,
++                          "lan9514: register write of %d bytes, must be 4\n",
++                          length);
++            p->status = USB_RET_STALL;
++            return;
++        }
++        v = data[0] | data[1] << 8 | data[2] << 16 | data[3] << 24;
++        lan9514_write_reg(s, index, v);
++        break;
++
++    case VendorDeviceRequest | LAN9514_REQ_READ_REG:
++        if (length != 4) {
++            qemu_log_mask(LOG_GUEST_ERROR,
++                          "lan9514: register read of %d bytes, must be 4\n",
++                          length);
++            p->status = USB_RET_STALL;
++            return;
++        }
++        v = lan9514_read_reg(s, index);
++        data[0] = v;
++        data[1] = v >> 8;
++        data[2] = v >> 16;
++        data[3] = v >> 24;
++        p->actual_length = 4;
++        break;
++
++    default:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "lan9514: unknown control request 0x%x\n", request);
++        p->status = USB_RET_STALL;
++        break;
++    }
++}
++
++/* Transmit: [TX_CMD_A][TX_CMD_B][frame], both command words little-endian. */
++static void lan9514_transmit(USBLan9514State *s)
++{
++    uint32_t cmd_a, cmd_b, len;
++
++    if (s->txlen == 0) {
++        return;
++    }
++    if (s->txlen < 8) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "lan9514: transmit of %u bytes has no command words\n",
++                      s->txlen);
++        s->txlen = 0;
++        return;
++    }
++
++    cmd_a = s->txbuf[0] | s->txbuf[1] << 8 | s->txbuf[2] << 16 | s->txbuf[3] << 24;
++    cmd_b = s->txbuf[4] | s->txbuf[5] << 8 | s->txbuf[6] << 16 | s->txbuf[7] << 24;
++    len = cmd_a & TX_CMD_A_LEN;
++
++    /*
++     * Refuse rather than tolerate: a transfer that does not describe
++     * exactly one whole frame, or that arrives with the transmitter
++     * off, is a driver bug and is reported as one.
++     */
++    if ((cmd_a & (TX_CMD_A_FIRST | TX_CMD_A_LAST)) !=
++        (TX_CMD_A_FIRST | TX_CMD_A_LAST)) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "lan9514: transmit command 0x%08x is not a whole frame; "
++                      "this model does not split frames across transfers\n",
++                      cmd_a);
++    } else if (len != s->txlen - 8) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "lan9514: transmit length %u does not match the %u "
++                      "bytes of frame in the transfer\n", len, s->txlen - 8);
++    } else if ((cmd_b & TX_CMD_A_LEN) != len) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "lan9514: transmit command words disagree on the "
++                      "length, 0x%08x and 0x%08x\n", cmd_a, cmd_b);
++    } else if (!(s->tx_cfg & TX_CFG_ON) || !(s->mac_cr & MAC_CR_TXEN)) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "lan9514: transmit with the transmitter off "
++                      "(TX_CFG 0x%08x, MAC_CR 0x%08x)\n",
++                      s->tx_cfg, s->mac_cr);
++    } else if (len < 14) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "lan9514: transmit of a %u byte runt\n", len);
++    } else {
++        qemu_send_packet(qemu_get_queue(s->nic), s->txbuf + 8, len);
++    }
++    s->txlen = 0;
++}
++
++static void lan9514_handle_dataout(USBLan9514State *s, USBPacket *p)
++{
++    size_t got = p->iov.size;
++    size_t room = sizeof(s->txbuf) - s->txlen;
++
++    if (got > room) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "lan9514: transmit transfer overruns the %zu byte "
++                      "maximum\n", sizeof(s->txbuf));
++        s->txlen = 0;
++        p->status = USB_RET_STALL;
++        return;
++    }
++    usb_packet_copy(p, s->txbuf + s->txlen, got);
++    s->txlen += got;
++
++    /*
++     * A packet shorter than the endpoint's maximum ends the transfer;
++     * a frame that is an exact multiple of it is followed by a
++     * zero-length packet to say the same thing.
++     */
++    if (got < p->ep->max_packet_size) {
++        lan9514_transmit(s);
++    }
++}
++
++/*
++ * Start a burst: pack as many queued frames as the burst cap allows
++ * into the buffer the next transfer will be served from.
++ */
++static void lan9514_start_burst(USBLan9514State *s, unsigned int maxpacket)
++{
++    unsigned int limit;
++
++    s->inlen = 0;
++    s->inptr = 0;
++    if (s->rxq_count == 0) {
++        return;
++    }
++
++    /*
++     * BURST_CAP counts endpoint-sized packets, and only applies when
++     * burst mode is enabled.  Without it, or without MEF, a transfer
++     * carries a single frame.
++     */
++    if ((s->hw_cfg & HW_CFG_BCE) && s->burst_cap != 0) {
++        limit = s->burst_cap * maxpacket;
++    } else {
++        limit = sizeof(s->inbuf);
++    }
++    if (limit > sizeof(s->inbuf)) {
++        limit = sizeof(s->inbuf);
++    }
++
++    while (s->rxq_count > 0) {
++        Lan9514Frame *f = &s->rxq[s->rxq_head];
++
++        if (s->inlen != 0 && s->inlen + f->len > limit) {
++            break;
++        }
++        memcpy(s->inbuf + s->inlen, f->data, f->len);
++        s->inlen += f->len;
++        s->rxq_head = (s->rxq_head + 1) % RX_QUEUE_MAX;
++        s->rxq_count--;
++
++        if (!(s->hw_cfg & HW_CFG_MEF)) {
++            break;                      /* one frame per transfer */
++        }
++    }
++}
++
++static void lan9514_handle_datain(USBLan9514State *s, USBPacket *p)
++{
++    unsigned int maxpacket = p->ep->max_packet_size;
++    size_t n;
++
++    if (s->inzlp) {
++        /* The burst was an exact multiple of the packet size, so it
++         * needs a zero-length packet to say where it ended. */
++        s->inzlp = false;
++        p->actual_length = 0;
++        return;
++    }
++    if (s->inptr == s->inlen) {
++        lan9514_start_burst(s, maxpacket);
++    }
++    if (s->inlen == 0) {
++        /*
++         * Nothing to hand over.  With BIR set the chip answers an
++         * empty receive FIFO with a zero-length packet rather than
++         * making the transfer wait; otherwise it holds it off.
++         */
++        if (s->hw_cfg & HW_CFG_BIR) {
++            p->actual_length = 0;
++        } else {
++            p->status = USB_RET_NAK;
++        }
++        return;
++    }
++
++    n = s->inlen - s->inptr;
++    if (n > p->iov.size) {
++        n = p->iov.size;
++    }
++    usb_packet_copy(p, s->inbuf + s->inptr, n);
++    s->inptr += n;
++    p->actual_length = n;
++
++    if (s->inptr == s->inlen && (s->inlen % maxpacket) == 0) {
++        s->inzlp = true;
++    }
++}
++
++static void lan9514_handle_data(USBDevice *dev, USBPacket *p)
++{
++    USBLan9514State *s = USB_LAN9514(dev);
++
++    switch (p->pid) {
++    case USB_TOKEN_OUT:
++        if (p->ep->nr == 2) {
++            lan9514_handle_dataout(s, p);
++            return;
++        }
++        break;
++    case USB_TOKEN_IN:
++        if (p->ep->nr == 1) {
++            lan9514_handle_datain(s, p);
++            return;
++        }
++        if (p->ep->nr == 3) {
++            /* The interrupt endpoint reports PHY events.  The link never
++             * changes here, so there is never anything to report. */
++            p->status = USB_RET_NAK;
++            return;
++        }
++        break;
++    default:
++        break;
++    }
++    p->status = USB_RET_STALL;
++}
++
++/* Does the receive filter admit this frame? */
++static bool lan9514_accept(USBLan9514State *s, const uint8_t *buf, size_t size)
++{
++    static const uint8_t bcast[6] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
++    uint8_t mac[6];
++
++    if (size < 14) {
++        return false;
++    }
++    /* The filter matches the address in ADDRL/ADDRH, which is what the
++     * driver programmed, not whatever the backend was configured with. */
++    mac[0] = s->addrl;
++    mac[1] = s->addrl >> 8;
++    mac[2] = s->addrl >> 16;
++    mac[3] = s->addrl >> 24;
++    mac[4] = s->addrh;
++    mac[5] = s->addrh >> 8;
++    if (s->mac_cr & MAC_CR_PRMS) {
++        return true;
++    }
++    if (!memcmp(buf, bcast, 6)) {
++        return !(s->mac_cr & MAC_CR_BCAST);
++    }
++    if (buf[0] & 1) {                   /* multicast */
++        return !!(s->mac_cr & MAC_CR_MCPAS);
++    }
++    return !memcmp(buf, mac, 6);
++}
++
++static ssize_t lan9514_receive(NetClientState *nc, const uint8_t *buf,
++                               size_t size)
++{
++    USBLan9514State *s = qemu_get_nic_opaque(nc);
++    Lan9514Frame *f;
++    uint32_t sts, crc, n;
++    unsigned int tail;
++
++    if (!s->dev.config || !(s->mac_cr & MAC_CR_RXEN)) {
++        return -1;
++    }
++    if (size > LAN9514_MTU) {
++        return size;                    /* accepted and dropped, as the chip does */
++    }
++    if (!lan9514_accept(s, buf, size)) {
++        return size;
++    }
++    if (s->rxq_count == RX_QUEUE_MAX) {
++        return 0;                       /* FIFO full: ask the backend to retry */
++    }
++
++    tail = (s->rxq_head + s->rxq_count) % RX_QUEUE_MAX;
++    f = &s->rxq[tail];
++
++    /*
++     * The status word carries the length including the FCS, which the
++     * chip appends and passes up rather than stripping.
++     */
++    n = size + ETH_FCS_LEN;
++    sts = n << RX_STS_LEN_SHIFT;
++    f->data[0] = sts;
++    f->data[1] = sts >> 8;
++    f->data[2] = sts >> 16;
++    f->data[3] = sts >> 24;
++    memcpy(f->data + 4, buf, size);
++
++    crc = net_crc32(buf, size);
++    f->data[4 + size + 0] = crc;
++    f->data[4 + size + 1] = crc >> 8;
++    f->data[4 + size + 2] = crc >> 16;
++    f->data[4 + size + 3] = crc >> 24;
++
++    /* Frames in a burst start on a four byte boundary. */
++    f->len = (4 + n + 3) & ~3u;
++    memset(f->data + 4 + n, 0, f->len - (4 + n));
++
++    s->rxq_count++;
++    return size;
++}
++
++static NetClientInfo net_lan9514_info = {
++    .type = NET_CLIENT_DRIVER_NIC,
++    .size = sizeof(NICState),
++    .receive = lan9514_receive,
++};
++
++static void lan9514_realize(USBDevice *dev, Error **errp)
++{
++    USBLan9514State *s = USB_LAN9514(dev);
++
++    usb_desc_create_serial(dev);
++    usb_desc_init(dev);
++
++    s->id_rev = ID_REV_LAN9514;
++    lan9514_handle_reset(dev);
++
++    qemu_macaddr_default_if_unset(&s->conf.macaddr);
++    s->nic = qemu_new_nic(&net_lan9514_info, &s->conf,
++                          object_get_typename(OBJECT(s)), dev->qdev.id,
++                          &dev->qdev.mem_reentrancy_guard, s);
++    qemu_format_nic_info_str(qemu_get_queue(s->nic), s->conf.macaddr.a);
++}
++
++static void lan9514_unrealize(USBDevice *dev)
++{
++    USBLan9514State *s = USB_LAN9514(dev);
++
++    qemu_del_nic(s->nic);
++}
++
++static const VMStateDescription vmstate_lan9514 = {
++    .name = TYPE_USB_LAN9514,
++    .unmigratable = 1,
++};
++
++static const Property lan9514_properties[] = {
++    DEFINE_NIC_PROPERTIES(USBLan9514State, conf),
++};
++
++static void lan9514_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    USBDeviceClass *uc = USB_DEVICE_CLASS(klass);
++
++    uc->realize        = lan9514_realize;
++    uc->unrealize      = lan9514_unrealize;
++    uc->product_desc   = "SMSC LAN9514 Ethernet";
++    uc->usb_desc       = &desc_lan9514;
++    uc->handle_reset   = lan9514_handle_reset;
++    uc->handle_control = lan9514_handle_control;
++    uc->handle_data    = lan9514_handle_data;
++    set_bit(DEVICE_CATEGORY_NETWORK, dc->categories);
++    dc->fw_name = "ethernet";
++    dc->vmsd = &vmstate_lan9514;
++    device_class_set_props(dc, lan9514_properties);
++}
++
++static const TypeInfo lan9514_info = {
++    .name          = TYPE_USB_LAN9514,
++    .parent        = TYPE_USB_DEVICE,
++    .instance_size = sizeof(USBLan9514State),
++    .class_init    = lan9514_class_init,
++};
++
++static void lan9514_register_types(void)
++{
++    type_register_static(&lan9514_info);
++}
++
++type_init(lan9514_register_types)
+diff --git a/hw/usb/meson.build b/hw/usb/meson.build
+index 17360a5..2476165 100644
+--- a/hw/usb/meson.build
++++ b/hw/usb/meson.build
+@@ -43,6 +43,7 @@ system_ss.add(when: 'CONFIG_USB_STORAGE_UAS', if_true: files('dev-uas.c'))
+ system_ss.add(when: 'CONFIG_USB_AUDIO', if_true: files('dev-audio.c'))
+ system_ss.add(when: 'CONFIG_USB_SERIAL', if_true: files('dev-serial.c'))
+ system_ss.add(when: 'CONFIG_USB_NETWORK', if_true: files('dev-network.c'))
++system_ss.add(when: 'CONFIG_USB_NETWORK', if_true: files('dev-lan9514.c'))
+ if host_os != 'windows'
+   system_ss.add(when: 'CONFIG_USB_STORAGE_MTP', if_true: files('dev-mtp.c'))
+ endif
+-- 
+2.51.0
+

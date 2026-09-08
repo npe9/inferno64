@@ -1,0 +1,239 @@
+From c59f1403c843b7902c75d6c50afe21696d1b8a59 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Sun, 6 Sep 2026 09:29:56 -0400
+Subject: [PATCH 01/16] hw/misc/bcm2835_powermgt: model the watchdog countdown
+
+The PM block reset the machine the instant a guest set RSTC's
+full-reset bit, with PM_WDOG a write-only scratch register logged as
+unimplemented.  That makes the watchdog untestable: a guest cannot arm
+it, watch the counter fall, feed it, or stop it, and any guest that
+loads PM_WDOG to probe the block sees a counter frozen at the value it
+wrote.
+
+Model the counter properly.  It ticks at 65536 Hz and counts down only
+while RSTC[5:4] selects full-reset, which is what the BCM2835 does and
+what Linux's bcm2835_wdt driver assumes: bcm2835_wdt_start loads
+PM_WDOG then sets WRCFG, bcm2835_wdt_stop writes PM_RSTC_RESET, and
+bcm2835_wdt_get_timeleft reads the remaining count back out of
+PM_WDOG.  Reads return the time left while running; stopping freezes
+the counter where it stood rather than restoring the loaded value.
+Expiry keeps the existing behaviour, resetting or, for the RSTS
+poweroff partition, shutting down.
+
+Arming with a zero count is reported as a guest error rather than
+quietly tolerated.
+
+Linux's reboot path is unaffected: it arms the watchdog with a count of
+10 ticks, about 150us, so the machine still resets immediately.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01BtE1mJ79fHUqzyPBaSgBKx
+---
+ hw/misc/bcm2835_powermgt.c         | 109 +++++++++++++++++++++++++----
+ include/hw/misc/bcm2835_powermgt.h |   9 +++
+ 2 files changed, 106 insertions(+), 12 deletions(-)
+
+diff --git a/hw/misc/bcm2835_powermgt.c b/hw/misc/bcm2835_powermgt.c
+index 3ec7aba..308cc30 100644
+--- a/hw/misc/bcm2835_powermgt.c
++++ b/hw/misc/bcm2835_powermgt.c
+@@ -14,15 +14,86 @@
+ #include "hw/misc/bcm2835_powermgt.h"
+ #include "migration/vmstate.h"
+ #include "system/runstate.h"
++#include "qemu/timer.h"
+ 
+ #define PASSWORD 0x5a000000
+ #define PASSWORD_MASK 0xff000000
+ 
+ #define R_RSTC 0x1c
+ #define V_RSTC_RESET 0x20
++#define M_RSTC_WRCFG 0x30     /* RSTC[5:4] selects what an expiry does */
+ #define R_RSTS 0x20
+ #define V_RSTS_POWEROFF 0x555 /* Linux uses partition 63 to indicate halt. */
+ #define R_WDOG 0x24
++#define M_WDOG_TIME 0x000fffff
++#define WDOG_HZ 65536         /* the counter ticks 65536 times a second */
++
++/*
++ * The watchdog counts down only while RSTC's WRCFG field selects
++ * full-reset, and the machine resets when the count reaches zero -- it
++ * does not reset the instant RSTC is written.  Modelling the delay is
++ * what lets a guest arm the watchdog, read the counter falling, and
++ * stop it again (or keep feeding it), which is the whole point of the
++ * block.  Linux's reboot path arms it with a count of 10 ticks, about
++ * 150us, so a real timer still reboots effectively immediately.
++ */
++
++/* Forward declaration: stopping latches the remaining count. */
++static uint32_t bcm2835_powermgt_wdog_read(BCM2835PowerMgtState *s);
++
++/*
++ * Stopping the watchdog freezes the counter where it stood; it does not
++ * restore the value that was loaded.  A guest reading PM_WDOG after a
++ * stop must see the time it had left, so latch it here.
++ */
++static void bcm2835_powermgt_wdog_stop(BCM2835PowerMgtState *s)
++{
++    if (s->expire_ns != 0) {
++        s->wdog = bcm2835_powermgt_wdog_read(s);
++    }
++    timer_del(s->timer);
++    s->expire_ns = 0;
++}
++
++static void bcm2835_powermgt_wdog_start(BCM2835PowerMgtState *s)
++{
++    uint32_t ticks = s->wdog & M_WDOG_TIME;
++
++    if (ticks == 0) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "bcm2835_powermgt: watchdog armed with a zero count\n");
++    }
++    s->expire_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)
++                 + (int64_t)ticks * NANOSECONDS_PER_SECOND / WDOG_HZ;
++    timer_mod_ns(s->timer, s->expire_ns);
++}
++
++/* Remaining count, which is what a read of PM_WDOG returns while running. */
++static uint32_t bcm2835_powermgt_wdog_read(BCM2835PowerMgtState *s)
++{
++    int64_t left;
++
++    if (s->expire_ns == 0) {
++        return s->wdog;
++    }
++    left = s->expire_ns - qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++    if (left < 0) {
++        left = 0;
++    }
++    return (uint32_t)(left * WDOG_HZ / NANOSECONDS_PER_SECOND) & M_WDOG_TIME;
++}
++
++static void bcm2835_powermgt_wdog_expired(void *opaque)
++{
++    BCM2835PowerMgtState *s = (BCM2835PowerMgtState *)opaque;
++
++    s->expire_ns = 0;
++    if ((s->rsts & 0xfff) == V_RSTS_POWEROFF) {
++        qemu_system_shutdown_request(SHUTDOWN_CAUSE_GUEST_SHUTDOWN);
++    } else {
++        qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
++    }
++}
+ 
+ static uint64_t bcm2835_powermgt_read(void *opaque, hwaddr offset,
+                                       unsigned size)
+@@ -38,7 +109,7 @@ static uint64_t bcm2835_powermgt_read(void *opaque, hwaddr offset,
+         res = s->rsts;
+         break;
+     case R_WDOG:
+-        res = s->wdog;
++        res = bcm2835_powermgt_wdog_read(s);
+         break;
+ 
+     default:
+@@ -70,12 +141,10 @@ static void bcm2835_powermgt_write(void *opaque, hwaddr offset,
+     switch (offset) {
+     case R_RSTC:
+         s->rstc = value;
+-        if (value & V_RSTC_RESET) {
+-            if ((s->rsts & 0xfff) == V_RSTS_POWEROFF) {
+-                qemu_system_shutdown_request(SHUTDOWN_CAUSE_GUEST_SHUTDOWN);
+-            } else {
+-                qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
+-            }
++        if ((value & M_RSTC_WRCFG) == V_RSTC_RESET) {
++            bcm2835_powermgt_wdog_start(s);
++        } else {
++            bcm2835_powermgt_wdog_stop(s);
+         }
+         break;
+     case R_RSTS:
+@@ -84,9 +153,12 @@ static void bcm2835_powermgt_write(void *opaque, hwaddr offset,
+         s->rsts = value;
+         break;
+     case R_WDOG:
+-        qemu_log_mask(LOG_UNIMP,
+-                      "bcm2835_powermgt_write: WDOG\n");
+-        s->wdog = value;
++        /*
++         * Loading the counter does not start it; only RSTC does.  A
++         * guest that writes WDOG and watches it is meant to see it
++         * hold still until the watchdog is armed.
++         */
++        s->wdog = value & M_WDOG_TIME;
+         break;
+ 
+     default:
+@@ -107,12 +179,14 @@ static const MemoryRegionOps bcm2835_powermgt_ops = {
+ 
+ static const VMStateDescription vmstate_bcm2835_powermgt = {
+     .name = TYPE_BCM2835_POWERMGT,
+-    .version_id = 1,
+-    .minimum_version_id = 1,
++    .version_id = 2,
++    .minimum_version_id = 2,
+     .fields = (const VMStateField[]) {
+         VMSTATE_UINT32(rstc, BCM2835PowerMgtState),
+         VMSTATE_UINT32(rsts, BCM2835PowerMgtState),
+         VMSTATE_UINT32(wdog, BCM2835PowerMgtState),
++        VMSTATE_TIMER_PTR(timer, BCM2835PowerMgtState),
++        VMSTATE_INT64(expire_ns, BCM2835PowerMgtState),
+         VMSTATE_END_OF_LIST()
+     }
+ };
+@@ -124,12 +198,23 @@ static void bcm2835_powermgt_init(Object *obj)
+     memory_region_init_io(&s->iomem, obj, &bcm2835_powermgt_ops, s,
+                           TYPE_BCM2835_POWERMGT, 0x200);
+     sysbus_init_mmio(SYS_BUS_DEVICE(s), &s->iomem);
++
++    s->timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,
++                            bcm2835_powermgt_wdog_expired, s);
++    s->expire_ns = 0;
+ }
+ 
+ static void bcm2835_powermgt_reset(DeviceState *dev)
+ {
+     BCM2835PowerMgtState *s = BCM2835_POWERMGT(dev);
+ 
++    /*
++     * Stop first: stopping latches the remaining count into wdog, which
++     * would otherwise overwrite the reset value below if the machine is
++     * reset while the watchdog is armed.
++     */
++    bcm2835_powermgt_wdog_stop(s);
++
+     /* https://elinux.org/BCM2835_registers#PM */
+     s->rstc = 0x00000102;
+     s->rsts = 0x00001000;
+diff --git a/include/hw/misc/bcm2835_powermgt.h b/include/hw/misc/bcm2835_powermgt.h
+index 303b9a6..bd0be5f 100644
+--- a/include/hw/misc/bcm2835_powermgt.h
++++ b/include/hw/misc/bcm2835_powermgt.h
+@@ -12,6 +12,7 @@
+ #define BCM2835_POWERMGT_H
+ 
+ #include "hw/sysbus.h"
++#include "qemu/timer.h"
+ #include "qom/object.h"
+ 
+ #define TYPE_BCM2835_POWERMGT "bcm2835-powermgt"
+@@ -24,6 +25,14 @@ struct BCM2835PowerMgtState {
+     uint32_t rstc;
+     uint32_t rsts;
+     uint32_t wdog;
++
++    /*
++     * The watchdog counts down only while RSTC's WRCFG field selects
++     * full-reset; expire_ns is the deadline while it is counting, and
++     * 0 when it is stopped.
++     */
++    QEMUTimer *timer;
++    int64_t expire_ns;
+ };
+ 
+ #endif
+-- 
+2.51.0
+
