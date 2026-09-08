@@ -850,14 +850,34 @@ modstatus(REG *r, char *ptr, int len)
 	 * must not be the thing that panics the kernel.
 	 */
 	if(r->M == H || r->M == nil) {
+		static int saidh;
+
 		/*
-		 * Legitimate, and silent.  H is ((void*)-1), the ordinary
-		 * "no module" sentinel -- the Qstatus read below has always
-		 * tested for it before calling here, and disdump() never
-		 * did.  A first version of this guard reported it as
-		 * corruption, which was wrong and, worse, indistinguishable
-		 * in the log from the stale pointer below.
+		 * Legitimate: H is ((void*)-1), the ordinary "no module"
+		 * sentinel.  The Qstatus read below has always tested for it
+		 * before calling here; disdump() never did.
+		 *
+		 * Reported once per boot, not silent, and that is the point.
+		 * Making it silent left an open contradiction: 192 boots
+		 * with no modstatus fault and no report from either of the
+		 * two exits that do report, which says whatever the guard
+		 * stops leaves through here -- while the captures say
+		 * otherwise, since M == H would fault on the SECOND
+		 * dereference at address -1+8 = 7, a page fault with CR2 7,
+		 * not the general protection violation with CR2 0 that every
+		 * capture shows.  One of those two readings is wrong.  If
+		 * this line appears, the silent exit is being taken and the
+		 * instruction-level reading needs revisiting; if it never
+		 * appears across a batch, the guard is not what stopped the
+		 * faults and the improvement has another cause.  Either way
+		 * the question is settled by a measurement rather than by
+		 * whichever story is more comfortable.
 		 */
+		if(!saidh) {
+			saidh = 1;
+			print("modstatus: M is %s (pid %d)\n",
+				r->M == H ? "H" : "nil", up != nil ? up->pid : -1);
+		}
 		snprint(ptr, len, "[H]");
 		return 0;
 	}
