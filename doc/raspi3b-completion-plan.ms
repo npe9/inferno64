@@ -557,6 +557,20 @@ has to run again before identification.  The round trip lives behind
 since a controller that cannot take the card back leaves the board with
 no SD card at all.
 .PP
+One caution added later, from the same cross-check that settled the
+DMA question.  The whole round trip is read through
+.CW Cardinserted ,
+and Linux carries
+.CW SDHCI_QUIRK_BROKEN_CARD_DETECTION
+for
+.CW brcm,bcm2835-sdhci :
+card detection on this part is not to be trusted.  Under QEMU the bit
+behaves, and the two guest bugs above are real bugs found through it.
+But the test's own mechanism is one the reference implementation says
+does not work on the board, so a failure of this diagnostic on real
+hardware would say nothing about the routing.  It stays compiled out,
+and now for two reasons rather than one.
+.PP
 Verified on a booted kernel
 .CW ( "-drive if=sd,format=raw,file=<img>" ),
 one boot exercising both controllers and the routing in both
@@ -598,8 +612,7 @@ register interface, the command engine and the PIO data path are sound;
 they say nothing whatever about CMD52 and CMD53.
 .PP
 Also not done: no interrupt is wired (every wait is a bounded poll, as
-in sdhostbcm.c), no DMA -- the controller supports SDMA/ADMA and this
-uses the PIO data port -- and no real hardware has been near it.
+in sdhostbcm.c) and no real hardware has been near it.
 .PP
 .B "The four-bit bus, and what an emulator can and cannot say about it."
 The card and the host are now moved to the four-bit data bus after
@@ -715,6 +728,73 @@ a function this card does not offer gives
 .CW "SDHCI-HISPEED-NONE card supports group 1 0x8003, no high speed" ,
 and the clock then stops at the 25MHz ceiling and 13MHz, exactly as
 before.  A card that will not go fast never gets a fast clock.
+.PP
+.B "The line this driver deliberately does not write."
+The standard sequence pairs CMD6 with the host's own High Speed
+Enable, Control0 bit 2.  This part is one where that bit does not
+work: Linux carries
+.CW SDHCI_QUIRK_NO_HISPD_BIT
+for
+.CW brcm,bcm2835-sdhci
+.CW ( drivers/mmc/host/sdhci-iproc.c ).
+So the card is told through CMD6 and the host follows through the
+divider alone, and nothing here touches
+.CW Control0 .
+That was true by accident before it was checked; it is now written
+down in the driver, because adding the "missing" bit is exactly the
+tidy-looking change a later reader would make.
+.NH 1
+Why the SDHCI DMA engine is not driven, which is not the same as not
+yet driven
+.PP
+This document listed "no DMA \- the controller supports SDMA/ADMA and
+this uses the PIO data port" among Phase 5's gaps, as though it were
+work not yet done.  It is not work at all, and the reason is worth
+recording so nobody spends a week on it.
+.PP
+QEMU models SDMA and ADMA fully
+.CW ( sdhci_sdma_transfer ,
+.CW get_adma_description
+in
+.CW hw/sd/sdhci.c ),
+so a DMA data path would have been straightforward to write and would
+have passed every check in this document.  Linux does not use either
+on this part.
+.CW brcm,bcm2835-sdhci
+maps to
+.CW bcm2835_data ,
+which sets
+.CW "missing_caps = true" ;
+.CW sdhci_iproc_probe
+then calls
+.CW __sdhci_read_caps
+with the driver's own capability words in place of the register's, and
+those words are
+.CW MAX_BLOCK ,
+.CW CAN_VDD_330
+and
+.CW CAN_DO_HISPD
+\- with
+.CW SDHCI_CAN_DO_SDMA
+and
+.CW SDHCI_CAN_DO_ADMA2
+present in the generic iproc entry immediately above and deliberately
+absent here.  The capability register on this part is not to be
+believed, and what replaces it says PIO.
+.PP
+So an SDMA path would work under the emulator and would be driving the
+controller in a mode the reference implementation refuses to use on
+this silicon.  There is a second reason to distrust it: the address.
+QEMU's model reads and writes ARM physical addresses, while the
+BCM2835's other bus master, the DMA engine in
+.CW dmabcm.c ,
+must be given the 0xC0000000 bus alias instead.  Which of the two the
+Arasan wants on real hardware is not something an emulator that
+accepts either can settle.
+.PP
+Two emulator-only paths, then, and no way to test either without the
+board.  The PIO data path stays, and this is recorded as a decision
+rather than as an omission.
 .PP
 .B "Four blocks, one command."
 A request for more than one block was four commands, four responses

@@ -143,6 +143,30 @@ device shared by every ARM board rather than add a missing peripheral.
 			every boot.  See the console chapter of
 			doc/raspi3b-completion-plan.ms.
 
+	sdhci		The model is more capable than the part.  It
+			implements SDMA and ADMA (sdhci_sdma_transfer,
+			get_adma_description in hw/sd/sdhci.c), so a
+			DMA data path would have been easy to write and
+			would have passed every check here.  Linux does
+			not use either on this silicon:
+			brcm,bcm2835-sdhci maps to bcm2835_data with
+			missing_caps set, and sdhci_iproc_probe then
+			substitutes capability words that list only
+			MAX_BLOCK, CAN_VDD_330 and CAN_DO_HISPD --
+			SDHCI_CAN_DO_SDMA and CAN_DO_ADMA2 appear in
+			the generic iproc entry just above and are
+			deliberately absent.  The capability register on
+			this part is not to be believed.
+
+			Two further quirks from the same entry that the
+			emulator hides: SDHCI_QUIRK_NO_HISPD_BIT, so the
+			host's Control0 bit 2 must not be set even
+			though the standard sequence pairs it with CMD6
+			(sdhcibcm.c says so in a comment, because adding
+			it is the tidy-looking change), and
+			SDHCI_QUIRK_BROKEN_CARD_DETECTION, which is the
+			mechanism the -DSDROUTETEST diagnostic reads.
+
 	sd		The SD model does not enforce bus width.
 			ACMD6 (hw/sd/sd.c) records the requested
 			width in sd_status[0] bits 7:6 and nothing

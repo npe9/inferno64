@@ -343,6 +343,14 @@ sdhcispeed(Ctlr *c, int maxmhz)
  * Returns 1 only if the card said it supports high speed and then
  * reported it selected.  Anything else leaves the caller at 25MHz,
  * which is always safe.
+ *
+ * NOTE, because it is the obvious next line and it is wrong here: do
+ * not set the host's High Speed Enable, Control0 bit 2.  The standard
+ * sequence pairs CMD6 with that bit, but this part is one of the ones
+ * where it does not work -- Linux carries SDHCI_QUIRK_NO_HISPD_BIT for
+ * brcm,bcm2835-sdhci (drivers/mmc/host/sdhci-iproc.c).  The card is
+ * told through CMD6 and the host follows through the divider alone,
+ * which is why nothing below touches Control0.
  */
 
 /*
