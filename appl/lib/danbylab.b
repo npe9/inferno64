@@ -915,7 +915,10 @@ Sim.reset(s: self ref Sim)
 		# the parameters are bound by initialstate() above, which a
 		# mass expression needs
 		s.mass = masses(model, cfg);
-		s.trail = array[Ntrail] of array of real;
+		# reused, not reallocated: a slider drag resets once per
+		# resolution step, up to two hundred times across one drag
+		if(s.trail == nil)
+			s.trail = array[Ntrail] of array of real;
 		s.trailcount = 0;
 		s.trailnext = 0;
 	Profile =>

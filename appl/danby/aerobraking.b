@@ -350,7 +350,12 @@ Sim.reset(s: self ref Sim): array of real
 	s.t = 0.0;
 	s.paused = 0;
 	s.finished = 0;
-	s.trail = array[Ntrail] of array of real;
+	# the ring is reused, not reallocated: a slider drag sends a value per
+	# resolution step, so this runs up to two hundred times across one
+	# drag, and a fresh 1600-element array each time would be that many
+	# for nothing
+	if(s.trail == nil)
+		s.trail = array[Ntrail] of array of real;
 	s.trailcount = 0;
 	s.trailnext = 0;
 	s.obsmax = array[] of {1.0, 1.0};
@@ -424,10 +429,13 @@ advance()
 	graphsample(sim.step());
 }
 
+# gerr() and not a bare cmd(): an append against a table that has been
+# replaced by an empty one succeeds at the "line" that draws it and shows
+# nothing, so this is the only place the wipe would announce itself.
 graphsample(values: array of real)
 {
-	graph.cmd(sys->sprint("history append %.17g %.17g %.17g",
-		sim.t, values[0], values[1]));
+	gerr(graph.cmd(sys->sprint("history append %.17g %.17g %.17g",
+		sim.t, values[0], values[1])));
 }
 
 
