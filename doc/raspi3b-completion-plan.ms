@@ -2046,10 +2046,24 @@ not
 is 0x3939f40 and the watched addresses are 0x3b67620 and 0x3b675f0, so
 by the comment's own reasoning the write happened deeper in the call
 tree and the reported op is only the enclosing dispatch; the object at
-0x3b675b0 is not the frame, which is at 0x3939ef0; and while one word
-went from
+0x3b675b0 is not the
+.I current
+frame, which is at 0x3939ef0; and while one word went from
 .CW H
 to 0, the other went from 0x3adb7f0 \- a live heap pointer \- to 0.
+.PP
+What the checkpoint does
+.I not
+say is where the write happened.  A hit drops its own watch
+.CW ( "track[i].addr = nil" ,
+the last line of the reporting block), so an earlier checkpoint that
+stayed quiet proves nothing unless the watch already existed when it
+ran.  These watches are created when the object is, which is inside
+the same stretch being bracketed.  The window is therefore that whole
+call and nothing narrower, and the comparison with the pc64 finding \-
+whose
+.CW before-parsemod
+ruled parsemod out for a different slot \- does not carry over.
 .PP
 That is not a claim that there is a bug.  It is a claim that these two
 hits are unexplained by the analysis that made the noise acceptable,
@@ -2084,17 +2098,53 @@ hits, 0x3acc270 of 112 bytes and 0x3adbcf0 of 408.  The flagged object
 is at 0x3b675b0 and is 144 bytes: no data segment allocated up to that
 point is either.
 .PP
-So the explanation is still open, and one plausible one is now closed.
-The remaining clue not chased here is the registration itself \-
+So that explanation is closed.  The registration shape names what the
+object is, though, and this part is derivable rather than guessed.
+.CW initmemtt()
+is passed a
 .CW typetagp
-is
-.CW obj+0x18 ,
-inside the object rather than in a heap header before it, which is not
-the shape a
-.CW heap() /
+by four callers:
+.CW heap()
+and
 .CW heapz()
-registration leaves and points at an array-element or frame watch
-instead.
+pass
+.CW &h->t ,
+which lies in the header
+.I before
+the data;
+.CW heaparray()
+passes
+.CW &a->t ;
+and
+.CW xec.c 's
+.CW frame
+instruction passes
+.CW &f->t ,
+a field
+.I inside
+the frame it just allocated.
+.CW struct Frame
+is
+.CW lr ,
+.CW fp ,
+.CW mr ,
+.CW t ,
+so on LP64
+.CW t
+is at offset 0x18 \- exactly the diff reported.
+.PP
+The flagged object is a Dis call frame, created by the
+.CW frame
+instruction at
+.CW xec.c:711 ,
+and it belongs to pid 7 while pid 1 was the process running when the
+change was noticed.  That puts it back in the same family as the
+benign case the tracker's comment describes \- a frame word
+conservatively marked as a pointer in its type's map \- but on a frame
+that is not the running one, where a frame whose call has returned and
+whose memory has been reused by another frame of the same type would
+pass the staleness check unchanged.  That is the next thing to test,
+and it needs someone who owns the tracker.
 .NH 1
 When this is done
 .PP
