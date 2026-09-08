@@ -4,6 +4,7 @@ TARG=\
 	bthid.dis\
 	btfs.dis\
 	btkeyfs.dis\
+	btpan.dis\
 	btbench.dis\
 
 #

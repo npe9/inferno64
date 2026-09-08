@@ -496,10 +496,36 @@ writes the descriptor out as a
 line in hexadecimal rather than leaving it to be read out of the
 attribute.
 .IP 6.
-.B "PAN and BNEP,"
-and with them a binding into the IP stack so a Bluetooth link is
-another
+.B "PAN and BNEP."
+Done, and the sentence it was written as is what it does:
+.CW btpan
+turns a Bluetooth link into another
 .CW /net/ether .
+.PP
+BNEP carries whole ethernet frames over an L2CAP channel, with the
+addresses left out where they can be worked out \(em a link has two
+ends, so a frame that arrived on it is from the far end and to this
+one.  The addresses themselves are the two BD_ADDRs, which is the neat
+part of the profile: a Bluetooth link already has two six byte
+addresses on it, so PAN invents no MAC.
+.CW btpan
+serves the clone, addr and numbered conversation interface devip's
+ether medium binds to \(em the same one
+.CW appl/cmd/usb/etherusb.b
+proved binds from Limbo \(em with that link underneath, so the IP
+stack above gets ARP, neighbour discovery and multicast mapping
+without knowing the wire is a radio.
+.PP
+It is an ordinary file client, like
+.CW bthid :
+it opens the L2CAP channel file
+.CW btfs
+made and does BNEP over that, so there is no Bluetooth in it beyond
+the name of the directory.  What is not tested here is the binding
+itself; the interface is the one that binds, and the phase drives it
+the way the IP stack would \(em a conversation, an ethertype, a frame
+out and a frame in \(em but nothing in this bench runs an IP stack
+over it.
 .IP 7.
 .B "A2DP and AVRCP."
 AVDTP signalling, media transport, codec negotiation, SBC at minimum,

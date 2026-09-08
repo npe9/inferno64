@@ -263,6 +263,24 @@ sdpsplit = 0
 if '--sdpsplit' in sys.argv:
     sdpsplit = int(sys.argv[sys.argv.index('--sdpsplit') + 1])
 
+# --pan: with --brconnect, the peer is a network access point.  Its
+# service record says so, it answers L2CAP on the BNEP PSM, it agrees
+# to the setup, and then it echoes every ethernet frame back with the
+# two addresses swapped -- which is what a wire with something on the
+# far end looks like from one end of it.
+pan = '--pan' in sys.argv
+
+# --pannotnap: the peer will not be a network access point and says so
+# in the setup response.  A host that ignored the response would then
+# be sending frames into a link that has agreed to nothing.
+pannotnap = '--pannotnap' in sys.argv
+
+# --pancompress: the peer answers with the compressed packet type,
+# leaving both addresses out.  A BNEP link has two ends, so they can
+# be worked out -- and a host that could not would hand up a frame
+# with no addresses in it.
+pancompress = '--pancompress' in sys.argv
+
 # --chid: with --brconnect, the peer is a Classic HID keyboard and
 # mouse.  It answers a service discovery search with a HID record
 # carrying the same report descriptor the LE device serves as its
@@ -823,6 +841,20 @@ def hid_record():
     ]
 
 
+#
+# A network access point: the service class, and the PSM BNEP is on.
+#
+def nap_record():
+    return [
+        (0x0000, de_uint(0x00010003, 4)),
+        (0x0001, de_seq(de_uuid('1116'))),
+        (0x0004, de_seq(de_seq(de_uuid('0100'), de_uint(0x000f)),
+                        de_seq(de_uuid('000f')))),
+        (0x0005, de_seq(de_uuid('1002'))),
+        (0x0100, de_text('Network Access Point')),
+    ]
+
+
 def sdp_records():
     serial = [
         (0x0000, de_uint(0x00010000, 4)),
@@ -843,6 +875,8 @@ def sdp_records():
     rs = [serial, headset]
     if chid:
         rs = [hid_record()]
+    if pan:
+        rs = [nap_record()]
     out = []
     for r in rs:
         parts = []
@@ -1538,12 +1572,14 @@ class Model:
         # the CIDs mean different things there: 1 is signalling, and
         # anything else is a channel this side handed out.
         #
-        if (brl2cap or sdp or rfcomm or chid) \
+        if (brl2cap or sdp or rfcomm or chid or pan) \
            and handle == getattr(self, 'brhandle', None):
             if cid == 1:
                 self.brsig(payload)
             elif cid == getattr(self, 'brdcid', None):
-                if getattr(self, 'rfchan', False):
+                if getattr(self, 'panchan', False):
+                    self.bnep_in(payload)
+                elif getattr(self, 'rfchan', False):
                     self.rf_in(payload)
                 elif getattr(self, 'sdpchan', False):
                     self.sdp_in(payload)
@@ -2162,6 +2198,17 @@ class Model:
                 self.bracl(1, bytes([0x04, 0x40]) + struct.pack('<H', 4 + len(opts))
                            + struct.pack('<HH', scid, 0) + opts)
                 return
+            if psm == 0x000f and pan:
+                self.brscid = scid
+                self.brdcid = 0x0060
+                self.panchan = True
+                print('bthci: bnep channel', flush=True)
+                self.bracl(1, bytes([0x03, ident]) + struct.pack('<H', 8)
+                           + struct.pack('<HHHH', self.brdcid, scid, 0, 0))
+                opts = bytes([0x01, 0x02]) + struct.pack('<H', 672)
+                self.bracl(1, bytes([0x04, 0x40]) + struct.pack('<H', 4 + len(opts))
+                           + struct.pack('<HH', scid, 0) + opts)
+                return
             if psm in (0x0011, 0x0013) and chid:
                 #
                 # HIDP is two channels: control, which this model
@@ -2182,7 +2229,7 @@ class Model:
                 if 0x0011 in self.hidcid and 0x0013 in self.hidcid:
                     threading.Thread(target=self.hid_classic, daemon=True).start()
                 return
-            if psm == 0x0001 and (sdp or chid):
+            if psm == 0x0001 and (sdp or chid or pan):
                 self.brscid = scid
                 self.brdcid = 0x0042
                 self.sdpchan = True
@@ -2522,6 +2569,45 @@ class Model:
             send(1, bytes([b, dx & 0xff, dy & 0xff, 0]))
             time.sleep(0.2)
         print('bthci: the classic keyboard and mouse have reported', flush=True)
+
+    #
+    # BNEP, from the far end of the wire.  The setup settles which end
+    # is the access point; after that every frame is echoed back with
+    # the addresses swapped, which is the smallest thing that proves a
+    # frame went out and a frame came in and they are not the same
+    # frame arriving by some other route.
+    #
+    def bnep_in(self, p):
+        if not len(p):
+            return
+        ty = p[0] & 0x7F
+        if ty == 0x01:                       # control
+            if len(p) < 2:
+                return
+            if p[1] == 0x01:                 # setup request
+                n = p[2]
+                dst = p[3:3+n].hex()
+                src = p[3+n:3+2*n].hex()
+                print('bthci: bnep setup, they want %s and are %s'
+                      % (dst, src), flush=True)
+                code = 3 if pannotnap else 0
+                self.bracl(self.brscid,
+                           bytes([0x01, 0x02]) + code.to_bytes(2, 'big'))
+            return
+        if ty != 0x00:                       # only whole frames are sent here
+            return
+        f = p[1:]
+        if len(f) < 14:
+            return
+        dst, src, rest = f[0:6], f[6:12], f[12:]
+        print('bthci: bnep frame %d bytes type %s'
+              % (len(f), rest[0:2].hex()), flush=True)
+        if pancompress:
+            # both addresses left out: a link has two ends and they
+            # can be worked out
+            self.bracl(self.brscid, bytes([0x02]) + rest)
+        else:
+            self.bracl(self.brscid, bytes([0x00]) + src + dst + rest)
 
     # ------------------------------------------------ SMP
     def smp_in(self, p):

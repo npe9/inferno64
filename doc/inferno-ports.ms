@@ -21213,6 +21213,69 @@ line \(em which reads as a device that has one.  A descriptor of no
 bytes is no descriptor.
 
 .NH 2
+A radio that is an ethernet
+.PP
+.CW btpan
+turns a Bluetooth link into another
+.CW /net/ether .
+BNEP carries whole ethernet frames over an L2CAP channel and leaves
+out the addresses that can be worked out: a link has two ends, so a
+frame that arrived on it is from the far end and to this one, and the
+compressed packet types are exactly that observation.  The addresses
+themselves are the two BD_ADDRs, which is the neat part of the
+profile \(em a Bluetooth link already has two six byte addresses on
+it, so PAN invents no MAC and this interface's
+.CW addr
+file is the controller's own.
+.PP
+What it serves is the clone, addr and numbered conversation interface
+devip's ether medium binds to, which
+.CW appl/cmd/usb/etherusb.b
+had already proved a Limbo file server can be.  So the IP stack above
+gets ARP, neighbour discovery and multicast mapping without knowing
+the wire is a radio, and the phase drives that interface the way the
+IP stack would: take a conversation, ask for an ethertype, write a
+frame, read one.
+.PP
+Like
+.CW bthid
+it is an ordinary file client.  It opens the L2CAP channel file
+.CW btfs
+made and speaks BNEP over that, so there is no Bluetooth in it beyond
+the name of a directory.  The first version of it was not: it tried to
+reach
+.CW btfs 's
+own multiplexer and channel objects, which a separate program cannot
+have, and the function that was supposed to do it was a stub returning
+nil.  The library takes a file descriptor now, which is both honest
+and the right layering \(em what
+.CW btfs
+promises about that file, one write one SDU and one read the next SDU
+whole, is exactly what BNEP wants.
+.PP
+One thing was wrong twice before it was right: byte order.  A BD_ADDR
+goes on an HCI wire least significant byte first and
+.CW bt->straddr
+turns the text round for that; an ethernet address is transmitted most
+significant byte first, which is the order it is written in.  So the
+interface reported its address backwards until
+.CW unhex
+replaced
+.CW straddr ,
+and the same mistake was in the phase that checked it \(em which is
+how a wrong answer can look right, and why the assertion compares
+against the text the controller reports rather than against something
+this program computed.
+.PP
+The controls: a peer that will not be an access point and says so in
+the setup response, where no interface may appear at all; and a peer
+that sends its frames with both addresses left out, where the same
+assertions have to pass, because putting them back is invisible from
+above.  What is not tested is the binding itself \(em the interface is
+the one that binds and etherusb showed that works, but nothing in this
+bench runs an IP stack over it.
+
+.NH 2
 A native backtrace from inside the collector
 .PP
 The bench passes under

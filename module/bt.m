@@ -943,6 +943,72 @@ Rfcomm: module
 	fcs:	fn(p: array of byte): int;
 };
 
+#
+# BNEP: ethernet frames over L2CAP, which is what the personal area
+# network profiles are made of.  A BNEP link carries whole ethernet
+# frames with their addresses left out where they can be inferred --
+# the two ends of the link are the two ends of the wire, so a frame
+# between them needs neither address written down.
+#
+# The addresses themselves are the two BD_ADDRs.  That is the neat
+# part of PAN: a Bluetooth link already has two six byte addresses on
+# it, so it can be an ethernet without inventing any.
+#
+Bnep: module
+{
+	PATH:	con "/dis/lib/bt/bnep.dis";
+
+	# BNEP is always on this PSM
+	Psm:	con 16r000f;
+
+	# the PAN service classes: a user, a network access point, and
+	# an ad hoc group
+	Upanu:	con "1115";
+	Unap:	con "1116";
+	Ugn:	con "1117";
+
+	# packet types, without the extension bit
+	Tgeneral:	con 16r00;
+	Tcontrol:	con 16r01;
+	Tcompressed:	con 16r02;
+	Tsrconly:	con 16r03;
+	Tdstonly:	con 16r04;
+	Text:		con 16r80;	# an extension header follows
+
+	# control message types
+	Cnotunderstood:	con 16r00;
+	Csetup:		con 16r01;
+	Csetupresp:	con 16r02;
+
+	#
+	# One BNEP link.  What is under it is a file: btfs serves an
+	# open L2CAP channel as one where a write is an SDU and a read
+	# is the next SDU whole, which is exactly what BNEP wants, and
+	# taking it that way is what lets the program above be an
+	# ordinary file client with no Bluetooth in it.
+	#
+	Link: adt {
+		fd:	ref Sys->FD;
+		local:	array of byte;	# our BD_ADDR, which is our MAC
+		remote:	array of byte;	# theirs
+	};
+
+	init:	fn(bt: Bt): string;
+
+	#
+	# Set up a link on an open channel to Psm: a setup request
+	# naming what this side is and what it wants the other to be,
+	# and the answer to it.  dst and src are service class UUIDs.
+	#
+	start:	fn(fd: ref Sys->FD, local, remote: array of byte,
+			dst, src: string): (ref Link, string);
+
+	# one whole ethernet frame in, and one out.  What crosses this
+	# is what crosses a wire: destination, source, type, payload.
+	send:	fn(l: ref Link, f: array of byte): string;
+	recv:	fn(l: ref Link): (array of byte, string);
+};
+
 Smp: module
 {
 	PATH:	con "/dis/lib/bt/smp.dis";

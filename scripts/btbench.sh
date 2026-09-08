@@ -180,6 +180,14 @@
 #		L2CAP channel with a byte of HIDP header.  What has to come
 #		out is what came out on LE.  chidnodesc is a HID record
 #		with no descriptor in it, where there is nothing to read
+#	pan	a Bluetooth link as an ethernet: btpan finds the access
+#		point in the device's service records, agrees the BNEP
+#		setup, and serves the clone/addr/N/data interface devip's
+#		ether medium binds to.  A frame goes out and comes back
+#		with its addresses swapped.  pancompress is the same with
+#		the peer leaving both addresses out, which a link with two
+#		ends can put back; pannotnap is a peer that will not be an
+#		access point and says so
 #	stalefid	a characteristic file kept open across a disconnect
 #		and a reconnect: the old name must be gone.  What the
 #		fix for it changes is not visible from inside the guest
@@ -306,6 +314,8 @@ run rejoin --bonded rejoin
 # reads it back from the service's own bonds file.  Everything else --
 # every assertion in both phases -- is the same, which is the point.
 #
+mkdir -p "$ROOT/n/btpan"
+chmod 777 "$ROOT/n" "$ROOT/n/btpan"
 mkdir -p "$ROOT/mnt/btkeys"
 chmod 777 "$ROOT/mnt/btkeys"
 #
@@ -759,6 +769,27 @@ if [ "$n" != 1 ] || [ "$m" != 1 ]; then
 fi
 echo "the same keyboard and mouse arrived over Classic, on both channels"
 run chidnodesc "--classic --brconnect --chid --chidnodesc" chidnodesc
+#
+# A Bluetooth link as an ethernet.  What the phase does is what the IP
+# stack would do: take a conversation, ask for an ethertype, write a
+# frame and read one.
+#
+run pan "--classic --brconnect --pan" pan
+n=`grep -c 'bnep setup, they want 1116 and are 1115' "$OUT/bthci-pan.log" || true`
+if [ "$n" != 1 ]; then
+	echo "=== phase pan ==="
+	echo "BENCH FAIL (pan): the setup asked for the wrong services $n times"
+	exit 1
+fi
+echo "a Bluetooth link served an ethernet, and a frame went both ways"
+#
+# The same with the peer leaving both addresses out of the frame it
+# sends back.  A BNEP link has two ends, so they can be worked out --
+# and the assertions are the same ones, which is the point: putting
+# them back is invisible from above.
+#
+run pancompress "--classic --brconnect --pan --pancompress" pan
+run pannotnap "--classic --brconnect --pan --pannotnap" pannotnap
 run paired "--peripheral --pairin --rebond" paired
 #
 # and what the model saw from the other side: the confirm this stack

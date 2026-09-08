@@ -307,6 +307,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	"chid" or "chidnodesc" =>
 		chidphase(mode);
 		return;
+	"pan" or "pannotnap" =>
+		panphase(mode);
+		return;
 	"brconnect" or "brfail" or "brincoming" =>
 		brlink(mode);
 		return;
@@ -2027,6 +2030,153 @@ chidphase(mode: string)
 	}
 	sys->print("BT: a Classic HID record, with a report descriptor in it\n");
 	hidcheck(dev);
+}
+
+#
+# A Bluetooth link as an ethernet.  btpan finds the access point in
+# the device's service records, opens the BNEP channel, agrees the
+# setup, and then serves the same clone/addr/N/data interface devip's
+# ether medium binds to -- so what this phase does is what the IP
+# stack would do: take a conversation, ask for an ethertype, write a
+# frame and read one.
+#
+Panmnt:	con "/n/btpan";
+
+panphase(mode: string)
+{
+	if((e := writefile(mnt + "/0/ctl", "inquiry on")) != nil){
+		sys->print("BT: FAILED: inquiry on: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	for(i := 0; i < 40; i++){
+		sys->sleep(500);
+		if(hasstr(readfile(mnt + "/0/state"), "inquiry off"))
+			break;
+	}
+	dev := mnt + "/0/remote/" + Chead;
+	if((e = writefile(dev + "/ctl", "connect")) != nil){
+		sys->print("BT: FAILED: connect: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	pan := load Command "/dis/bt/btpan.dis";
+	if(pan == nil){
+		sys->print("BT: FAILED: cannot load /dis/bt/btpan.dis: %r\n");
+		sys->print("BT: done\n");
+		return;
+	}
+	spawn pan->init(nil, "btpan" :: "-b" :: mnt :: "-m" :: Panmnt :: dev :: nil);
+	ok := 0;
+	for(i = 0; i < 40 && !ok; i++){
+		sys->sleep(500);
+		(st, nil) := sys->stat(Panmnt + "/ether/clone");
+		ok = st >= 0;
+	}
+	if(mode == "pannotnap"){
+		#
+		# the peer will not be an access point and said so.  A
+		# host that ignored the answer would serve an interface
+		# onto a link that has agreed to nothing.
+		#
+		if(ok)
+			sys->print("BT: FAILED: a refused network was served anyway\n");
+		else
+			sys->print("BT: a peer that refused the network left no interface\n");
+		writefile(dev + "/ctl", "disconnect");
+		sys->print("BT: done\n");
+		return;
+	}
+	if(!ok){
+		sys->print("BT: FAILED: no ethernet interface appeared\n");
+		sys->print("BT: done\n");
+		return;
+	}
+	#
+	# the interface's own address, which is the controller's: a PAN
+	# invents no MAC, it uses the two BD_ADDRs the link already has.
+	#
+	a := trim(readfile(Panmnt + "/ether/addr"));
+	sys->print("BT: the interface's address is %s\n", a);
+	if(a != "001122334455"){
+		sys->print("BT: FAILED: wanted the controller's own address\n");
+		sys->print("BT: done\n");
+		return;
+	}
+	#
+	# and a conversation, the way the IP stack takes one: open
+	# clone, which is then the conversation's ctl, say which
+	# ethertype, and read and write its data.
+	#
+	cfd := sys->open(Panmnt + "/ether/clone", Sys->ORDWR);
+	if(cfd == nil){
+		sys->print("BT: FAILED: opening clone: %r\n");
+		sys->print("BT: done\n");
+		return;
+	}
+	buf := array[32] of byte;
+	n := sys->read(cfd, buf, len buf);
+	if(n <= 0){
+		sys->print("BT: FAILED: reading the conversation number: %r\n");
+		sys->print("BT: done\n");
+		return;
+	}
+	cn := trim(string buf[0:n]);
+	sys->print("BT: conversation %s\n", cn);
+	if(sys->fprint(cfd, "connect %d", 16r0806) < 0){
+		sys->print("BT: FAILED: connect: %r\n");
+		sys->print("BT: done\n");
+		return;
+	}
+	dfd := sys->open(Panmnt + "/ether/" + cn + "/data", Sys->ORDWR);
+	if(dfd == nil){
+		sys->print("BT: FAILED: opening data: %r\n");
+		sys->print("BT: done\n");
+		return;
+	}
+	#
+	# One frame out and the same frame back with its addresses
+	# swapped, which is what the far end does.  A frame that came
+	# back unswapped would be this side's own write returning.
+	#
+	#
+	# In the order an ethernet address is written, which is not the
+	# order a BD_ADDR goes on an HCI wire: unhex and not straddr.
+	#
+	f := array[20] of byte;
+	f[0:] = bt->unhex("CCBBAA998877");	# to the peer
+	f[6:] = bt->unhex("001122334455");	# from us
+	f[12] = byte 16r08; f[13] = byte 16r06;	# arp
+	for(i = 14; i < len f; i++)
+		f[i] = byte (i - 14);
+	if(sys->write(dfd, f, len f) != len f){
+		sys->print("BT: FAILED: writing a frame: %r\n");
+		sys->print("BT: done\n");
+		return;
+	}
+	(rn, rb, re) := sdu(dfd, 10000);
+	if(re != nil || rn <= 0){
+		sys->print("BT: FAILED: reading a frame: %s\n", re);
+		sys->print("BT: done\n");
+		return;
+	}
+	g := rb[0:rn];
+	if(rn != len f){
+		sys->print("BT: FAILED: sent %d bytes and got %d back\n", len f, rn);
+		sys->print("BT: done\n");
+		return;
+	}
+	if(bt->hex(g[0:6]) != "001122334455"
+	|| bt->hex(g[6:12]) != "CCBBAA998877"){
+		sys->print("BT: FAILED: the frame came back addressed %s to %s\n",
+			bt->hex(g[6:12]), bt->hex(g[0:6]));
+		sys->print("BT: done\n");
+		return;
+	}
+	sys->print("BT: a frame went out and came back the other way round\n");
+	sys->print("BT: a Bluetooth link as an ethernet\n");
+	writefile(dev + "/ctl", "disconnect");
+	sys->print("BT: done\n");
 }
 
 check(dir, want, name: string): int
