@@ -4,14 +4,14 @@ implement Lagrange2;
 #
 # The whole model is the script below: its bodies and their masses, its
 # parameters and their ranges, where everything starts and the
-# accelerations between them.  orblab(2) is a library this calls with
+# accelerations between them.  danbylab(2) is a library this calls with
 # that script - it owns the window, the integrator, the trails and the
 # controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "orblab.m";
-	orblab: Orblab;
+include "danbylab.m";
+	danbylab: Danbylab;
 
 Lagrange2: module
 {
@@ -19,6 +19,7 @@ Lagrange2: module
 };
 
 SPEC: con
+	"family orbit\n" +
 	"title A space station around L4 or L5: 2\n" +
 	"param position_perturb 0.08 -0.2 0.2\n" +
 	"param speed_perturb 0.06 -0.3 0.3\n" +
@@ -83,9 +84,9 @@ SPEC: con
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	orblab = load Orblab Orblab->PATH;
-	if(orblab == nil)
-		raise "fail:lagrange2: cannot load orblab";
-	if((e := orblab->run(ctxt, "lagrange2", SPEC)) != nil)
+	danbylab = load Danbylab Danbylab->PATH;
+	if(danbylab == nil)
+		raise "fail:lagrange2: cannot load danbylab";
+	if((e := danbylab->run(ctxt, "lagrange2", SPEC)) != nil)
 		raise "fail:lagrange2: "+e;
 }

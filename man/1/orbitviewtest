@@ -65,7 +65,7 @@ naming what failed, at which step, and at which view size.
 The step cap (15000, covering the model's own full 30.0/0.0025 run)
 is specific to this one model's own timing; a test built the same way
 against a different Orbital-family model driven through
-.IR appl/lib/orblab.b
+.IR appl/lib/danbylab.b
 would need its own cap sized the same way \(em checked against that
 model's own
 .BR maxtime / step ,

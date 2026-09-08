@@ -1,0 +1,178 @@
+.TH DANBYLAB 2
+.SH NAME
+danbylab: run, parse, masses, equilibrium, march \- Danby models as scripts
+.SH SYNOPSIS
+.EX
+include "sys.m";
+include "draw.m";
+include "danbylab.m";
+danbylab := load Danbylab Danbylab->PATH;
+
+err := danbylab->run(ctxt, name, spec);
+(m, cfg, err) := danbylab->parse(spec);
+
+mass := danbylab->masses(m, cfg);
+(x, y) := danbylab->equilibrium(m, cfg);
+data := danbylab->march(m, cfg);
+.EE
+.SH DESCRIPTION
+.I Danbylab
+is the whole of the Danby viewer \(em window, integrator, history and
+controls \(em as a library the model calls with its own script:
+.PP
+.EX
+danbylab->run(ctxt, "threebody", SPEC);
+.EE
+.PP
+Two languages share that script.
+.IR Dynsys (2)
+reads the equations:
+.BR param ,
+.BR maxtime ,
+.BR state ,
+.BR derivative ,
+.BR eq ,
+.B observable
+and
+.BR point .
+.I Danbylab
+reads everything that says what the picture is, and returns it as a
+.BR Config .
+The split is the design: the model is the equations, the config is the
+picture, and
+.B parse
+returns both and opens no window, so a test can check a model's numbers
+where there is no display at all.
+.SS The shared vocabulary
+.TP
+.BI family " name"
+Which of the seven families this model belongs to \(em
+.BR mechanism ,
+.BR population ,
+.BR trajectory ,
+.BR orbit ,
+.BR ecology ,
+.B flight
+or
+.BR profile .
+Required, and required first: it chooses the panels, the graph and the
+rules a step obeys, and a family's own words are refused in any other.
+.TP
+.BI title " text..."
+The window title.  Required.
+.TP
+.BI manual " page"
+The manual page the window manager's Help menu opens.  A model that
+names none is assumed to have a page called
+.BI danby- name \fR.
+.SS The families
+.B Mechanism
+draws a linkage beside a two-trace graph.  It needs
+.B point
+lines, exactly two
+.B observable
+lines, and at least one
+.BR link :
+.TP
+.BI link " name name"
+A rod between two of the model's points.  Repeatable.
+.PP
+.B Population
+draws a stack of bars beside a graph with one trace per state; a click in
+a bar sets that state.  It has no words of its own.
+.PP
+.B Trajectory
+is a flight in a vertical plane: four states, a position and its
+velocity, and a
+.B maxtime
+the run ends at, or sooner if the height crosses zero.
+.PP
+.B Orbit
+draws bodies and their trails on a night sky, the most massive one
+pinned at the centre of the view.  Four states per body \(em
+.IR x ,
+.IR y ,
+then the two velocity components \(em and exactly two
+.B observable
+lines, which are the two traces:
+.TP
+.BI body " name expr"
+A body, its label on the diagram, and its mass.  Repeatable.  The mass
+is an EXPRESSION over the parameters, not a number, because in this
+family a slider usually IS a mass; it is evaluated at every reset.
+.PP
+.B Ecology
+draws a phase portrait beside a time series for exactly two species; a
+click in the portrait starts again at the point clicked, and a slider
+bends the trajectory that is already running rather than restarting it:
+.TP
+.BI equilibrium " xexpr " , " yexpr"
+Where the two rates vanish, as expressions over the parameters.
+Required \(em it is what this family shows.  The comma is a word of its
+own, because either half may have spaces in it.
+.TP
+.BI scale " num"
+Pin both phase axes at
+.IR num .
+Without this they grow to hold the trajectory.
+.PP
+.B Flight
+is a flight in three dimensions: six states \(em downrange, lateral and
+height, then their three velocities \(em drawn as a side view above a
+plan view.  Unlike the flat families an aim or a crosswind is signed, so
+a negative parameter minimum is meaningful.
+.PP
+.B Profile
+is a still picture: a march outward in radius rather than forward in
+time, with no clock and no Pause button.  Exactly two
+.B observable
+lines, which are the two curves:
+.TP
+.BI radius " startexpr " , " spanexpr"
+Where the march starts and how far it runs.  Required.
+.TP
+.BI samples " n"
+How many steps the march takes.  At least two; 320 by default.
+.TP
+.BI normalise " name"
+Divide the named observable by its own outermost value, so a curve that
+is an absolute quantity can share an axis with one that is a fraction.
+.SS Evaluating what the spec declared
+The three families whose extra language is arithmetic evaluate it
+through
+.IR danbylab ,
+so a test can ask for the same numbers the picture shows.
+.B Masses
+returns the
+.B body
+masses,
+.B equilibrium
+the
+.B equilibrium
+point, and
+.B march
+the profile as
+.IR samples
+triples of radius and the two observables.  Each needs the model's
+parameters already bound, which
+.B dynsys->initialstate()
+and
+.B dynsys->rhs()
+both do, so call one of those first.
+.SH SOURCE
+.B /appl/lib/danbylab.b
+.SH SEE ALSO
+.IR danbylabtest (1),
+.IR dynsys (2),
+.IR plot (2),
+.IR panel (9)
+.SH BUGS
+A window is a window: everything from
+.B run
+onward needs
+.IR draw (2)
+and
+.IR tk (2),
+and only
+.B parse
+and the three evaluators run without them.

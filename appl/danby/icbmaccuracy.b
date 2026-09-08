@@ -4,14 +4,14 @@ implement Icbmaccuracy;
 #
 # The whole model is the script below: its parameters and their ranges,
 # where the flight starts and how fast, and the accelerations that shape
-# it.  flightlab(2) is a library this calls with that script - it owns
+# it.  danbylab(2) is a library this calls with that script - it owns
 # the window, the integrator and the controls, and knows nothing about
 # this model.
 
 include "sys.m";
 include "draw.m";
-include "flightlab.m";
-	flightlab: Flightlab;
+include "danbylab.m";
+	danbylab: Danbylab;
 
 Icbmaccuracy: module
 {
@@ -19,6 +19,7 @@ Icbmaccuracy: module
 };
 
 SPEC: con
+	"family flight\n" +
 	"title The accuracy of an ICBM\n" +
 	"param speed 2.2 0.2 8.0\n" +
 	"param elevation 0.78 0.1 1.5\n" +
@@ -46,9 +47,9 @@ SPEC: con
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	flightlab = load Flightlab Flightlab->PATH;
-	if(flightlab == nil)
-		raise "fail:icbmaccuracy: cannot load flightlab";
-	if((e := flightlab->run(ctxt, "icbmaccuracy", SPEC)) != nil)
+	danbylab = load Danbylab Danbylab->PATH;
+	if(danbylab == nil)
+		raise "fail:icbmaccuracy: cannot load danbylab";
+	if((e := danbylab->run(ctxt, "icbmaccuracy", SPEC)) != nil)
 		raise "fail:icbmaccuracy: "+e;
 }

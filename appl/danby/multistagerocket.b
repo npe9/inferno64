@@ -4,14 +4,14 @@ implement Multistagerocket;
 #
 # The whole model is the script below: its parameters and their ranges,
 # its state and the equations that move it, the points that draw it and
-# the two quantities it plots.  mechlab(2) is a library this calls with
+# the two quantities it plots.  danbylab(2) is a library this calls with
 # that script - it owns the window, the integrator and the controls, and
 # knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "mechlab.m";
-	mechlab: Mechlab;
+include "danbylab.m";
+	danbylab: Danbylab;
 
 Multistagerocket: module
 {
@@ -19,6 +19,7 @@ Multistagerocket: module
 };
 
 SPEC: con
+	"family mechanism\n" +
 	"title The motion of a rocket: multi-stage rockets\n" +
 	"param stage_1_thrust 4200.0 100.0 10000.0\n" +
 	"param stage_1_fuel 180.0 10.0 500.0\n" +
@@ -57,9 +58,9 @@ SPEC: con
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	mechlab = load Mechlab Mechlab->PATH;
-	if(mechlab == nil)
-		raise "fail:multistagerocket: cannot load mechlab";
-	if((e := mechlab->run(ctxt, "multistagerocket", SPEC)) != nil)
+	danbylab = load Danbylab Danbylab->PATH;
+	if(danbylab == nil)
+		raise "fail:multistagerocket: cannot load danbylab";
+	if((e := danbylab->run(ctxt, "multistagerocket", SPEC)) != nil)
 		raise "fail:multistagerocket: "+e;
 }

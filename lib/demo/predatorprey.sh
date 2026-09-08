@@ -9,7 +9,7 @@
 # side and handed back as text.
 #
 # The same program as a Limbo command is appl/danby/ecology.b, which
-# calls ecolab(2).  This one is here to show that none of the pieces
+# calls danbylab(2).  This one is here to show that none of the pieces
 # need a Limbo program around them.
 
 load std

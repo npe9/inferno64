@@ -184,7 +184,7 @@ TARG=\
 DISBIN=$ROOT/dis/danby
 
 SYSMODULES=\
-	mechlab.m\
+	danbylab.m\
 	danby/atmosphere.m\
 	danby/ballistics.m\
 	danby/cartpendulum.m\

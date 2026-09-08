@@ -13,4 +13,4 @@ Tracks alter release speed, elevation, aim, drag, swing, and gravity.
 .SH SOURCE
 .B /appl/danby/cricketswing.b
 .SH SEE ALSO
-.IR flightlab (2)
+.IR danbylab (2)

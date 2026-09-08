@@ -4,14 +4,14 @@ implement Lowthrust;
 #
 # The whole model is the script below: its bodies and their masses, its
 # parameters and their ranges, where everything starts and the
-# accelerations between them.  orblab(2) is a library this calls with
+# accelerations between them.  danbylab(2) is a library this calls with
 # that script - it owns the window, the integrator, the trails and the
 # controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "orblab.m";
-	orblab: Orblab;
+include "danbylab.m";
+	danbylab: Danbylab;
 
 Lowthrust: module
 {
@@ -19,6 +19,7 @@ Lowthrust: module
 };
 
 SPEC: con
+	"family orbit\n" +
 	"title The motion of a rocket: low-thrust orbits\n" +
 	"param initial_radius 1.0 0.5 2.0\n" +
 	"param thrust 0.006 -0.02 0.02\n" +
@@ -60,9 +61,9 @@ SPEC: con
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	orblab = load Orblab Orblab->PATH;
-	if(orblab == nil)
-		raise "fail:lowthrust: cannot load orblab";
-	if((e := orblab->run(ctxt, "lowthrust", SPEC)) != nil)
+	danbylab = load Danbylab Danbylab->PATH;
+	if(danbylab == nil)
+		raise "fail:lowthrust: cannot load danbylab";
+	if((e := danbylab->run(ctxt, "lowthrust", SPEC)) != nil)
 		raise "fail:lowthrust: "+e;
 }

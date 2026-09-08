@@ -8,21 +8,21 @@ calls rather than a command that loads the model back:
 
 | family | models | the library now | the command it replaced |
 | --- | --- | --- | --- |
-| Mechanism | 70 | `mechlab(2)` | `appl/temple/mechanism.b` |
-| Populationmodel | 36 | `poplab(2)` | `appl/temple/populations.b` |
-| Trajectory | 17 | `trajlab(2)` | `appl/temple/trajectory.b` |
-| Orbital | 11 | `orblab(2)` | `appl/temple/orbital.b` |
-| Twospecies | 10 | `ecolab(2)` | `appl/temple/ecology.b` |
-| Flight3d | 5 | `flightlab(2)` | `appl/temple/flight3d.b` |
-| Profile | 2 | `profilelab(2)` | `appl/temple/profile.b` |
+| Mechanism | 70 | `danbylab(2)` | `appl/temple/mechanism.b` |
+| Populationmodel | 36 | `danbylab(2)` | `appl/temple/populations.b` |
+| Trajectory | 17 | `danbylab(2)` | `appl/temple/trajectory.b` |
+| Orbital | 11 | `danbylab(2)` | `appl/temple/orbital.b` |
+| Twospecies | 10 | `danbylab(2)` | `appl/temple/ecology.b` |
+| Flight3d | 5 | `danbylab(2)` | `appl/temple/flight3d.b` |
+| Profile | 2 | `danbylab(2)` | `appl/temple/profile.b` |
 
 151 models, each one checked against the module it replaced - parameters,
 initial state and right-hand side at twelve pseudo-random states by twelve
 times, to 1e-9 - before its new file was written.  Each family has its own
 regression test that reads the `SPEC` constant out of the shipped source, so
-what is tested is the string that ships: `mechlabtest(1)`, `poplabtest(1)`,
-`trajlabtest(1)`, `orblabtest(1)`, `ecolabtest(1)`, `flightlabtest(1)`,
-`profilelabtest(1)`.
+what is tested is the string that ships: `danbylabtest(1)`, `danbylabtest(1)`,
+`danbylabtest(1)`, `danbylabtest(1)`, `danbylabtest(1)`, `danbylabtest(1)`,
+`danbylabtest(1)`.
 
 The seven `appl/temple/` commands and six of the seven `module/danby/*.m`
 interfaces are deleted.  `module/danby/populationmodel.m` survives, but only
@@ -631,3 +631,93 @@ repeatable `param NAME VALUE` line binding a hoc variable any `rhs` line
 may reference, plus `lap_NAME` for a field's own five-point Laplacian and
 `h` for the current substep's `dt` - the Turing-patterns/FitzHugh-Nagumo
 generality this section asked for is already there, not still open.
+
+## UPDATE: the seven lab libraries became one, `danbylab(2)`
+
+The seven families each got their own library and their own module -
+`mechlab`, `poplab`, `trajlab`, `orblab`, `ecolab`, `flightlab`,
+`profilelab` - and that shape was wrong. Three things made it wrong, and
+the first is a defect rather than a matter of taste:
+
+**They were mutually exclusive.** Every one of the seven `.m` files did
+`include "dynsys.m";` so that a model needed only `sys.m`, `draw.m` and
+its lab. Limbo has no include guard, so a program that included two of
+them would not compile. Nothing could ever hold two families at once - a
+test over all of them, a launcher, an index - which is exactly what a
+test over all of them wanted to be.
+
+**They were three-quarters the same file.** 3660 lines over seven files,
+of which the module loading, the spec tokeniser, `title`/`manual`, the
+line-error helper, the underscore-to-space label, the Tk window, the
+parameter grid, the resize, the `param`/`reset`/`pause`/`key` messages,
+the event loop and the 25ms timer were one program written seven times.
+The `-bigincrement` fix and the fixed-width status label had to be made
+seven times; the "read every scale rather than trust one message"
+comment appears seven times. Seven copies is seven places for the same
+bug to live, and the merge found one that had already happened: the
+check that a parameter's default lies inside its own range existed in
+`mechlab` and `poplab` and in none of the other five. Applied to all
+seven it failed three trajectory models - `baseballpitch`,
+`knuckleball`, `reentry` - each declaring a launch angle whose default
+was below its own minimum, so the slider could not reach the value the
+model actually started at. Those three were fixed by making the minimum
+signed, which is the rule `flightlab` already had written down for the
+same reason ("an aim or a crosswind is signed").
+
+**Their `parse` tuples were ragged.** `(Model, string)` for three of
+them, `(Model, array of int, string)`, `(Model, array of string, array
+of ref Expr, string)`, `(Model, ref Expr, ref Expr, real, string)`,
+`(Model, ref Expr, ref Expr, int, int, string)`. Five shapes for one
+idea, and every one of them a tuple that would have to widen again the
+next time a family learned a word.
+
+`danbylab(2)` is the same program with the difference in one place per
+question rather than one file per family. `parse` returns
+`(ref Model, ref Config, string)` for all seven: the model is the
+equations, `Config` is the picture, and a family's own results are
+fields on `Config` rather than a widening tuple. A spec says which
+family it is on its first line, and a family's own words are refused in
+any other family, which is what seven libraries used to say by not
+implementing each other's vocabulary. The furniture - how many panels,
+which pane the graph goes in, the theme, the step size, the steps per
+frame - is one `lookof()` function, so what a reader used to find by
+opening seven files is now one `case`.
+
+The headless seam survived, and that was the property to check rather
+than assume: `parse` and the three evaluators (`masses`, `equilibrium`,
+`march`) need no `draw(2)` and no `tk(2)`, so `danbylabtest(1)` runs all
+151 models under `emu-g`, where there is no display at all.
+
+Some detail that used to live in comments in those seven files is here
+instead, because it is history rather than something a reader of the
+code needs:
+
+- The 55-pixel control band, the arithmetic that divided it into
+  columns, and the "three fifths of the content, less twenty" that
+  placed a diagram are all gone; Tk's geometry managers do it. The
+  magic constants 52, 58 and 93 that this thread started with have no
+  successors.
+- A Tk scale with a zero `-bigincrement` answers a click in its trough
+  by re-sending the value it already had, so the slider looks live and
+  does nothing. Every scale sets it explicitly.
+- A label's requested size follows its text, and a frame with a new
+  requested size asks the window manager to reshape the window. The
+  status text changes forty times a second; without a fixed width that
+  was a measured 36 reshape requests per 200 frames, against 1 with the
+  width nailed down.
+- A widget created after `tkclient->onscreen()` never receives a pointer
+  event - measured: a scale added afterwards reports nothing at all when
+  clicked, while a panel created before it reports every click. Every
+  widget is created before the window goes on screen.
+- `alt` on a nil channel raises a nil dereference (`libinterp/alt.c`),
+  so the still-picture family gets a real ticks channel that nothing
+  ever writes to rather than a nil one.
+- `draworbits` keeps the most massive body pinned at the centre of the
+  view and lets the scale do the work. An independent x/y bounding box
+  mapped onto the view rect was the bug: that box's own centre drifts as
+  the trail's extent changes even though the planet has not moved, so
+  the planet visibly wandered around the screen instead of staying put
+  while the view zoomed.
+- `sys->sprint`'s format argument must be a compile-time constant, so a
+  status line whose only difference between two families is `%.3g`
+  against `%.4g` is two cases, not one case with a variable.

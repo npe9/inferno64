@@ -12,4 +12,4 @@ The triangular plan view rotates with heading.  Speed and heading are plotted.
 .SH SOURCE
 .B /appl/danby/hovercraft.b
 .SH SEE ALSO
-.IR mechlab (2)
+.IR danbylab (2)

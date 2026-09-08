@@ -11,4 +11,4 @@ The ball moves inside an octagonal station plan; radius and speed are plotted.
 .SH SOURCE
 .B /appl/danby/spacestationball.b
 .SH SEE ALSO
-.IR mechlab (2)
+.IR danbylab (2)

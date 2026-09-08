@@ -13,4 +13,4 @@ are plotted as integration diagnostics.
 .SH SOURCE
 .B /appl/danby/threebody.b
 .SH SEE ALSO
-.IR orblab (2)
+.IR danbylab (2)

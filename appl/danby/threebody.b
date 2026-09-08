@@ -4,14 +4,14 @@ implement Threebody;
 #
 # The whole model is the script below: its bodies and their masses, its
 # parameters and their ranges, where everything starts and the
-# accelerations between them.  orblab(2) is a library this calls with
+# accelerations between them.  danbylab(2) is a library this calls with
 # that script - it owns the window, the integrator, the trails and the
 # controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "orblab.m";
-	orblab: Orblab;
+include "danbylab.m";
+	danbylab: Danbylab;
 
 Threebody: module
 {
@@ -19,6 +19,7 @@ Threebody: module
 };
 
 SPEC: con
+	"family orbit\n" +
 	"title The motion of three bodies\n" +
 	"param mass_A 1.0 0.1 3.0\n" +
 	"param mass_B 1.0 0.1 3.0\n" +
@@ -84,9 +85,9 @@ SPEC: con
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	orblab = load Orblab Orblab->PATH;
-	if(orblab == nil)
-		raise "fail:threebody: cannot load orblab";
-	if((e := orblab->run(ctxt, "threebody", SPEC)) != nil)
+	danbylab = load Danbylab Danbylab->PATH;
+	if(danbylab == nil)
+		raise "fail:threebody: cannot load danbylab";
+	if((e := danbylab->run(ctxt, "threebody", SPEC)) != nil)
 		raise "fail:threebody: "+e;
 }

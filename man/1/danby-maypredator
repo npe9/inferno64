@@ -22,7 +22,7 @@ support.  Space pauses, period steps, r resets, and q exits.
 The implementation handles the prey-free boundary explicitly, avoiding the
 singularity in Y/(bX).  Its positive analytic equilibrium and boundary
 derivative are checked by
-.IR ecolabtest (1).
+.IR danbylabtest (1).
 .SH SOURCE
 .B /appl/danby/maypredator.b
 .br

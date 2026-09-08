@@ -3,14 +3,14 @@ implement Foodchain;
 # danby/foodchain - plants, herbivores and carnivores
 #
 # The whole model is the script below: its parameters and their ranges,
-# its populations and the equations that move them.  poplab(2) is a
+# its populations and the equations that move them.  danbylab(2) is a
 # library this calls with that script - it owns the window, the
 # integrator and the controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "poplab.m";
-	poplab: Poplab;
+include "danbylab.m";
+	danbylab: Danbylab;
 
 Foodchain: module
 {
@@ -18,6 +18,7 @@ Foodchain: module
 };
 
 SPEC: con
+	"family population\n" +
 	"title Plants, herbivores, and carnivores\n" +
 	"param plant_growth 1.5 0.0 3.0\n" +
 	"param capacity 1.8 0.0 3.0\n" +
@@ -39,9 +40,9 @@ SPEC: con
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	poplab = load Poplab Poplab->PATH;
-	if(poplab == nil)
-		raise "fail:foodchain: cannot load poplab";
-	if((e := poplab->run(ctxt, "foodchain", SPEC)) != nil)
+	danbylab = load Danbylab Danbylab->PATH;
+	if(danbylab == nil)
+		raise "fail:foodchain: cannot load danbylab";
+	if((e := danbylab->run(ctxt, "foodchain", SPEC)) != nil)
 		raise "fail:foodchain: "+e;
 }

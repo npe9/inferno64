@@ -10,4 +10,4 @@ and aerodynamic loading.
 .SH SOURCE
 .B /appl/danby/discus.b
 .SH SEE ALSO
-.IR trajlab (2)
+.IR danbylab (2)

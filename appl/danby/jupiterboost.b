@@ -4,14 +4,14 @@ implement Jupiterboost;
 #
 # The whole model is the script below: its bodies and their masses, its
 # parameters and their ranges, where everything starts and the
-# accelerations between them.  orblab(2) is a library this calls with
+# accelerations between them.  danbylab(2) is a library this calls with
 # that script - it owns the window, the integrator, the trails and the
 # controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "orblab.m";
-	orblab: Orblab;
+include "danbylab.m";
+	danbylab: Danbylab;
 
 Jupiterboost: module
 {
@@ -19,6 +19,7 @@ Jupiterboost: module
 };
 
 SPEC: con
+	"family orbit\n" +
 	"title Using Jupiter to boost the orbit of a spacecraft\n" +
 	"param Jupiter_mass 0.001 0.0001 0.01\n" +
 	"param Jupiter_radius 5.2 2.0 8.0\n" +
@@ -80,9 +81,9 @@ SPEC: con
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	orblab = load Orblab Orblab->PATH;
-	if(orblab == nil)
-		raise "fail:jupiterboost: cannot load orblab";
-	if((e := orblab->run(ctxt, "jupiterboost", SPEC)) != nil)
+	danbylab = load Danbylab Danbylab->PATH;
+	if(danbylab == nil)
+		raise "fail:jupiterboost: cannot load danbylab";
+	if((e := danbylab->run(ctxt, "jupiterboost", SPEC)) != nil)
 		raise "fail:jupiterboost: "+e;
 }

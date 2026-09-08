@@ -4,14 +4,14 @@ implement Poyntingrobertson;
 #
 # The whole model is the script below: its bodies and their masses, its
 # parameters and their ranges, where everything starts and the
-# accelerations between them.  orblab(2) is a library this calls with
+# accelerations between them.  danbylab(2) is a library this calls with
 # that script - it owns the window, the integrator, the trails and the
 # controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "orblab.m";
-	orblab: Orblab;
+include "danbylab.m";
+	danbylab: Danbylab;
 
 Poyntingrobertson: module
 {
@@ -19,6 +19,7 @@ Poyntingrobertson: module
 };
 
 SPEC: con
+	"family orbit\n" +
 	"title The Poynting-Robertson effect\n" +
 	"param radius 1.0 0.3 3.0\n" +
 	"param speed 1.0 0.2 2.0\n" +
@@ -56,9 +57,9 @@ SPEC: con
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	orblab = load Orblab Orblab->PATH;
-	if(orblab == nil)
-		raise "fail:poyntingrobertson: cannot load orblab";
-	if((e := orblab->run(ctxt, "poyntingrobertson", SPEC)) != nil)
+	danbylab = load Danbylab Danbylab->PATH;
+	if(danbylab == nil)
+		raise "fail:poyntingrobertson: cannot load danbylab";
+	if((e := danbylab->run(ctxt, "poyntingrobertson", SPEC)) != nil)
 		raise "fail:poyntingrobertson: "+e;
 }

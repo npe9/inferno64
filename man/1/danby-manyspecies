@@ -23,7 +23,7 @@ predator.  Space pauses, period steps, r resets, and q exits.
 .br
 .B /appl/danby/manyspecies.b
 .br
-.B /appl/lib/poplab.b
+.B /appl/lib/danbylab.b
 .SH SEE ALSO
 .IR danby-foodchain (1),
 .IR numerics (2)

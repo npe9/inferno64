@@ -14,4 +14,4 @@ elevation, aim, drag, curve, and gravity.
 .SH SOURCE
 .B /appl/danby/soccerkick.b
 .SH SEE ALSO
-.IR flightlab (2)
+.IR danbylab (2)

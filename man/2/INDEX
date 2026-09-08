@@ -74,6 +74,7 @@ crypt-intro crypt-0intro
 crypt-rc4 crypt-rc4
 crypt-sha1 crypt-sha1
 csv csv
+danbylab danbylab
 daytime daytime
 dbf dbm
 dbinfo palmfile
@@ -122,7 +123,6 @@ drop string
 dsagen crypt-dsagen
 dsaprimes ipints-genprime
 dup sys-dup
-ecolab ecolab
 eggen crypt-dsagen
 element prefab-element
 elements names
@@ -132,7 +132,7 @@ encoding encoding
 entry palmfile
 env env
 environ prefab-environ
-equilibrium ecolab
+equilibrium danbylab
 erf math-elem
 erfc math-elem
 ether ether
@@ -159,7 +159,6 @@ filter-slip filter-slip
 find lists
 findattr factotum
 findattrval factotum
-flightlab flightlab
 font draw-font
 format format
 fprint sys-print
@@ -248,8 +247,8 @@ log1p math-elem
 login security-login
 makedrawcontext wmclient
 map lists
-march profilelab
-masses orblab
+march danbylab
+masses danbylab
 match filepat
 math math-0intro
 math-elem math-elem
@@ -259,7 +258,6 @@ math-intro math-0intro
 math-linalg math-linalg
 md4 keyring-sha1
 md5 keyring-sha1
-mechlab mechlab
 millisec sys-millisec
 mkbutton popup
 mkdictname translate
@@ -287,7 +285,6 @@ onscreen tkclient
 open sys-open
 opendict translate
 opendicts translate
-orblab orblab
 packdir styx
 packdirsize styx
 pair lists
@@ -306,11 +303,9 @@ point draw-point
 pointer tk
 polyfill polyfill
 pop3 pop3
-poplab poplab
 popup popup
 plot plot
 populationmodel populationmodel
-profilelab profilelab
 security security-0intro
 session session
 pow math-elem
@@ -509,7 +504,6 @@ toplev spki
 toplevel tkclient
 toreal string
 toupper string
-trajlab trajlab
 translate translate
 tuple cfg
 ubfa ubfa

@@ -4,14 +4,14 @@ implement Whitedwarf;
 #
 # The whole model is the script below: its parameters and their ranges,
 # the two quantities that vary with radius and the equations that carry
-# them outward.  profilelab(2) is a library this calls with that script -
+# them outward.  danbylab(2) is a library this calls with that script -
 # it owns the window, the march and the controls, and knows nothing about
 # this model.
 
 include "sys.m";
 include "draw.m";
-include "profilelab.m";
-	profilelab: Profilelab;
+include "danbylab.m";
+	danbylab: Danbylab;
 
 Whitedwarf: module
 {
@@ -19,6 +19,7 @@ Whitedwarf: module
 };
 
 SPEC: con
+	"family profile\n" +
 	"title The limiting mass of a white dwarf\n" +
 	"param central_density 1.0 0.1 10.0\n" +
 	"param degeneracy 1.0 0.1 5.0\n" +
@@ -40,9 +41,9 @@ SPEC: con
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	profilelab = load Profilelab Profilelab->PATH;
-	if(profilelab == nil)
-		raise "fail:whitedwarf: cannot load profilelab";
-	if((e := profilelab->run(ctxt, "whitedwarf", SPEC)) != nil)
+	danbylab = load Danbylab Danbylab->PATH;
+	if(danbylab == nil)
+		raise "fail:whitedwarf: cannot load danbylab";
+	if((e := danbylab->run(ctxt, "whitedwarf", SPEC)) != nil)
 		raise "fail:whitedwarf: "+e;
 }

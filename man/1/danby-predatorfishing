@@ -27,7 +27,7 @@ Space pauses, period advances one display step, r resets, and q or Escape exits.
 The equation module is
 .B /appl/danby/predatorfishing.b
 and is regression-tested by
-.IR ecolabtest (1).
+.IR danbylabtest (1).
 .SH SOURCE
 .B /appl/danby/predatorfishing.b
 .br

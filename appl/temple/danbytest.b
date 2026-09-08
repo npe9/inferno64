@@ -54,8 +54,8 @@ init(nil: ref Draw->Context, nil: list of string)
 testpopulations()
 {
 	# childcare's own metadata and empty-population checks moved to
-	# poplabtest(1) with the model.
-	# lakepollution's steady state moved to poplabtest(1).
+	# danbylabtest(1) with the model.
+	# lakepollution's steady state moved to danbylabtest(1).
 	testepidemics();
 	testvitaldisease();
 	testextendedepidemics();
@@ -69,7 +69,7 @@ testpopulations()
 testcompetitioneconomics()
 {
 	# lanchester's invariant, fishingone's bionomic equilibrium and
-	# productionexchange's transfer balance moved to poplabtest(1) with
+	# productionexchange's transfer balance moved to danbylabtest(1) with
 	# the models.
 	checkpopulationmodule(boommodel,"Goodwin cycle",2);
 	state := array[] of {0.9,0.7};
@@ -86,7 +86,7 @@ testcompetitioneconomics()
 testhealthmodels()
 {
 	checkpopulationmetadata(heartbeat,"heartbeat",2);
-	# gonorrhea's and weightchange's own checks moved to poplabtest(1).
+	# gonorrhea's and weightchange's own checks moved to danbylabtest(1).
 	beat := heartbeat->new();
 	x := beat.parameter[2];
 	state2 := array[] of {x,beat.parameter[1]*x-x*x*x};
@@ -99,13 +99,13 @@ testhealthmodels()
 testextendedepidemics()
 {
 	# incubation's, malaria's and seasonaldisease's conservation laws
-	# moved to poplabtest(1) with the models.
+	# moved to danbylabtest(1) with the models.
 }
 
 testvitaldisease()
 {
-	# migration's conservation law moved to poplabtest(1).
-	# the two vital-dynamics balances moved to poplabtest(1).
+	# migration's conservation law moved to danbylabtest(1).
+	# the two vital-dynamics balances moved to danbylabtest(1).
 }
 
 checkpopulationmetadata(modelmodule: Populationmodel, name: string, nstate: int)
@@ -166,7 +166,7 @@ checkpopulationmodule(modelmodule: Populationmodel, name: string, nstate: int)
 			fail(name+" finite derivative",derivative[i],0.0);
 }
 
-# every two-species check moved to ecolabtest(1) with the models.
+# every two-species check moved to danbylabtest(1) with the models.
 
 
 testlorenz()

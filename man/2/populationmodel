@@ -16,7 +16,7 @@ was the structural interface every Danby compartment model implemented, so
 that one shared client could own the window, the integrator and the controls
 while each model owned only its equations.  That relationship is now the
 other way round \(em a model is a script and
-.IR poplab (2)
+.IR danbylab (2)
 is a library it calls \(em and thirty-six of the thirty-nine models were
 rewritten that way.
 .PP
@@ -35,8 +35,8 @@ conservation law without opening a window.  That is all this interface is
 now: a test seam for four programs.
 .PP
 A new model should not implement it.  Write a
-.IR poplab (2)
-script; if the display needs something poplab does not do, add it to poplab
+.IR danbylab (2)
+script; if the display needs something danbylab does not do, add it to danbylab
 or write the program outright, but do not add an interface between the two.
 .SH INTERFACE
 .TP
@@ -64,6 +64,6 @@ so a caller need not import colliding ADT method names from several models.
 .SH FILES
 .B /module/danby/populationmodel.m
 .SH SEE ALSO
-.IR poplab (2),
-.IR poplabtest (1),
+.IR danbylab (2),
+.IR danbylabtest (1),
 .IR dynsys (2)

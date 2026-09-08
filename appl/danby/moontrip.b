@@ -4,14 +4,14 @@ implement Moontrip;
 #
 # The whole model is the script below: its bodies and their masses, its
 # parameters and their ranges, where everything starts and the
-# accelerations between them.  orblab(2) is a library this calls with
+# accelerations between them.  danbylab(2) is a library this calls with
 # that script - it owns the window, the integrator, the trails and the
 # controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "orblab.m";
-	orblab: Orblab;
+include "danbylab.m";
+	danbylab: Danbylab;
 
 Moontrip: module
 {
@@ -19,6 +19,7 @@ Moontrip: module
 };
 
 SPEC: con
+	"family orbit\n" +
 	"title A trip to the Moon\n" +
 	"param Moon_mass 0.0123 0.001 0.05\n" +
 	"param launch_radius 0.06 0.02 0.15\n" +
@@ -80,9 +81,9 @@ SPEC: con
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	orblab = load Orblab Orblab->PATH;
-	if(orblab == nil)
-		raise "fail:moontrip: cannot load orblab";
-	if((e := orblab->run(ctxt, "moontrip", SPEC)) != nil)
+	danbylab = load Danbylab Danbylab->PATH;
+	if(danbylab == nil)
+		raise "fail:moontrip: cannot load danbylab";
+	if((e := danbylab->run(ctxt, "moontrip", SPEC)) != nil)
 		raise "fail:moontrip: "+e;
 }

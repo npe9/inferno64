@@ -26,14 +26,14 @@ Space pauses, period steps, r resets, and q exits.
 The equation module is
 .B /appl/danby/childcare.b
 and the whole of it is the
-.IR poplab (2)
+.IR danbylab (2)
 script in that file.  The empty-population boundary and the parameter
 metadata are regression-tested by
-.IR poplabtest (1).
+.IR danbylabtest (1).
 .SH SOURCE
 .B /appl/danby/childcare.b
 .br
-.B /appl/lib/poplab.b
+.B /appl/lib/danbylab.b
 .SH SEE ALSO
 .IR danby-ecology (1),
 .IR numerics (2)

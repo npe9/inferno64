@@ -3,14 +3,14 @@ implement Tankcontrol;
 # danby/tankcontrol - temperature and volume control in a tank
 #
 # The whole model is the script below: its parameters and their ranges,
-# its populations and the equations that move them.  poplab(2) is a
+# its populations and the equations that move them.  danbylab(2) is a
 # library this calls with that script - it owns the window, the
 # integrator and the controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "poplab.m";
-	poplab: Poplab;
+include "danbylab.m";
+	danbylab: Danbylab;
 
 Tankcontrol: module
 {
@@ -18,6 +18,7 @@ Tankcontrol: module
 };
 
 SPEC: con
+	"family population\n" +
 	"title Temperature and volume control in a tank\n" +
 	"param level_target 1.0 0.0 3.0\n" +
 	"param temperature_target 1.0 0.0 3.0\n" +
@@ -47,9 +48,9 @@ SPEC: con
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	poplab = load Poplab Poplab->PATH;
-	if(poplab == nil)
-		raise "fail:tankcontrol: cannot load poplab";
-	if((e := poplab->run(ctxt, "tankcontrol", SPEC)) != nil)
+	danbylab = load Danbylab Danbylab->PATH;
+	if(danbylab == nil)
+		raise "fail:tankcontrol: cannot load danbylab";
+	if((e := danbylab->run(ctxt, "tankcontrol", SPEC)) != nil)
 		raise "fail:tankcontrol: "+e;
 }

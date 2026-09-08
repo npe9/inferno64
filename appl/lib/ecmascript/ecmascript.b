@@ -1123,7 +1123,7 @@ stmt(p: ref Parser)
 		patch(p, pc);
 	}
 	while(--seenlabs >= 0)
-		poplab(p);
+		danbylab(p);
 }
 
 block(p : ref Parser)
@@ -2615,7 +2615,7 @@ pushlab(p: ref Parser, s: string)
 	p.labs = ref labrec(s, 0) :: p.labs;
 }
 
-poplab(p: ref Parser)
+danbylab(p: ref Parser)
 {
 	p.labs = tl p.labs;
 }

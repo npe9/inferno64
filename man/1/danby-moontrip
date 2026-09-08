@@ -13,4 +13,4 @@ from each primary is plotted.
 .SH SOURCE
 .B /appl/danby/moontrip.b
 .SH SEE ALSO
-.IR orblab (2)
+.IR danbylab (2)

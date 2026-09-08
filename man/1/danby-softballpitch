@@ -13,4 +13,4 @@ speed, angle, drag, lift, spin, and gravity.
 .SH SOURCE
 .B /appl/danby/softballpitch.b
 .SH SEE ALSO
-.IR trajlab (2)
+.IR danbylab (2)

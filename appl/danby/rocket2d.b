@@ -4,14 +4,14 @@ implement Rocket2d;
 #
 # The whole model is the script below: its parameters and their ranges,
 # where it is launched from and how fast, and the accelerations that
-# shape the flight.  trajlab(2) is a library this calls with that script
+# shape the flight.  danbylab(2) is a library this calls with that script
 # - it owns the window, the integrator and the controls, and knows
 # nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "trajlab.m";
-	trajlab: Trajlab;
+include "danbylab.m";
+	danbylab: Danbylab;
 
 Rocket2d: module
 {
@@ -19,6 +19,7 @@ Rocket2d: module
 };
 
 SPEC: con
+	"family trajectory\n" +
 	"title The motion of a rocket: two-dimensional motion\n" +
 	"param thrust 3800.0 0.0 10000.0\n" +
 	"param pitch 1.35 0.0 1.57\n" +
@@ -49,9 +50,9 @@ SPEC: con
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	trajlab = load Trajlab Trajlab->PATH;
-	if(trajlab == nil)
-		raise "fail:rocket2d: cannot load trajlab";
-	if((e := trajlab->run(ctxt, "rocket2d", SPEC)) != nil)
+	danbylab = load Danbylab Danbylab->PATH;
+	if(danbylab == nil)
+		raise "fail:rocket2d: cannot load danbylab";
+	if((e := danbylab->run(ctxt, "rocket2d", SPEC)) != nil)
 		raise "fail:rocket2d: "+e;
 }

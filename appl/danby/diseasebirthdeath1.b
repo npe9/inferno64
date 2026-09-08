@@ -3,14 +3,14 @@ implement Diseasebirthdeath1;
 # danby/diseasebirthdeath1 - disease with balanced births and deaths
 #
 # The whole model is the script below: its parameters and their ranges,
-# its populations and the equations that move them.  poplab(2) is a
+# its populations and the equations that move them.  danbylab(2) is a
 # library this calls with that script - it owns the window, the
 # integrator and the controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "poplab.m";
-	poplab: Poplab;
+include "danbylab.m";
+	danbylab: Danbylab;
 
 Diseasebirthdeath1: module
 {
@@ -18,6 +18,7 @@ Diseasebirthdeath1: module
 };
 
 SPEC: con
+	"family population\n" +
 	"title Disease with balanced births and deaths\n" +
 	"param contact 2.2 0.0 5.0\n" +
 	"param recovery 0.55 0.0 2.0\n" +
@@ -34,9 +35,9 @@ SPEC: con
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	poplab = load Poplab Poplab->PATH;
-	if(poplab == nil)
-		raise "fail:diseasebirthdeath1: cannot load poplab";
-	if((e := poplab->run(ctxt, "diseasebirthdeath1", SPEC)) != nil)
+	danbylab = load Danbylab Danbylab->PATH;
+	if(danbylab == nil)
+		raise "fail:diseasebirthdeath1: cannot load danbylab";
+	if((e := danbylab->run(ctxt, "diseasebirthdeath1", SPEC)) != nil)
 		raise "fail:diseasebirthdeath1: "+e;
 }

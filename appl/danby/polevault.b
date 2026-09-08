@@ -4,14 +4,14 @@ implement Polevault;
 #
 # The whole model is the script below: its parameters and their ranges,
 # its state and the equations that move it, the points that draw it and
-# the two quantities it plots.  mechlab(2) is a library this calls with
+# the two quantities it plots.  danbylab(2) is a library this calls with
 # that script - it owns the window, the integrator and the controls, and
 # knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "mechlab.m";
-	mechlab: Mechlab;
+include "danbylab.m";
+	danbylab: Danbylab;
 
 Polevault: module
 {
@@ -19,6 +19,7 @@ Polevault: module
 };
 
 SPEC: con
+	"family mechanism\n" +
 	"title The pole vault\n" +
 	"param run_speed 9.0 1.0 14.0\n" +
 	"param pole_length 5.0 2.0 6.5\n" +
@@ -59,9 +60,9 @@ SPEC: con
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	mechlab = load Mechlab Mechlab->PATH;
-	if(mechlab == nil)
-		raise "fail:polevault: cannot load mechlab";
-	if((e := mechlab->run(ctxt, "polevault", SPEC)) != nil)
+	danbylab = load Danbylab Danbylab->PATH;
+	if(danbylab == nil)
+		raise "fail:polevault: cannot load danbylab";
+	if((e := danbylab->run(ctxt, "polevault", SPEC)) != nil)
 		raise "fail:polevault: "+e;
 }

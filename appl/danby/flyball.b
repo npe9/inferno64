@@ -4,14 +4,14 @@ implement Flyball;
 #
 # The whole model is the script below: its parameters and their ranges,
 # where it is launched from and how fast, and the accelerations that
-# shape the flight.  trajlab(2) is a library this calls with that script
+# shape the flight.  danbylab(2) is a library this calls with that script
 # - it owns the window, the integrator and the controls, and knows
 # nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "trajlab.m";
-	trajlab: Trajlab;
+include "danbylab.m";
+	danbylab: Danbylab;
 
 Flyball: module
 {
@@ -19,6 +19,7 @@ Flyball: module
 };
 
 SPEC: con
+	"family trajectory\n" +
 	"title Flight of a fly ball\n" +
 	"param exit_speed 45.0 0.0 70.0\n" +
 	"param angle 0.8 0.0 1.4\n" +
@@ -39,9 +40,9 @@ SPEC: con
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	trajlab = load Trajlab Trajlab->PATH;
-	if(trajlab == nil)
-		raise "fail:flyball: cannot load trajlab";
-	if((e := trajlab->run(ctxt, "flyball", SPEC)) != nil)
+	danbylab = load Danbylab Danbylab->PATH;
+	if(danbylab == nil)
+		raise "fail:flyball: cannot load danbylab";
+	if((e := danbylab->run(ctxt, "flyball", SPEC)) != nil)
 		raise "fail:flyball: "+e;
 }

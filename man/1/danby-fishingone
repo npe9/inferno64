@@ -22,7 +22,7 @@ price, cost, and effort response.  Space pauses, period steps, r resets, and
 q exits.
 .SH NUMERICS
 The analytic open-access equilibrium is checked by
-.IR poplabtest (1).
+.IR danbylabtest (1).
 .SH SOURCE
 .B /appl/danby/fishingone.b
 .br

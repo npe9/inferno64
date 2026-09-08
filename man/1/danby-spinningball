@@ -27,7 +27,7 @@ kinematic derivatives and launch-speed decomposition.
 .br
 .B /appl/danby/spinningball.b
 .br
-.B /appl/lib/trajlab.b
+.B /appl/lib/danbylab.b
 .SH SEE ALSO
-.IR trajlab (2),
+.IR danbylab (2),
 .IR numerics (2)

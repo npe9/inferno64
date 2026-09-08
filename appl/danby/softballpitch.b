@@ -4,14 +4,14 @@ implement Softballpitch;
 #
 # The whole model is the script below: its parameters and their ranges,
 # where it is launched from and how fast, and the accelerations that
-# shape the flight.  trajlab(2) is a library this calls with that script
+# shape the flight.  danbylab(2) is a library this calls with that script
 # - it owns the window, the integrator and the controls, and knows
 # nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "trajlab.m";
-	trajlab: Trajlab;
+include "danbylab.m";
+	danbylab: Danbylab;
 
 Softballpitch: module
 {
@@ -19,6 +19,7 @@ Softballpitch: module
 };
 
 SPEC: con
+	"family trajectory\n" +
 	"title Pitching a softball\n" +
 	"param speed 28.0 0.0 40.0\n" +
 	"param angle 0.04 0.0 0.4\n" +
@@ -39,9 +40,9 @@ SPEC: con
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	trajlab = load Trajlab Trajlab->PATH;
-	if(trajlab == nil)
-		raise "fail:softballpitch: cannot load trajlab";
-	if((e := trajlab->run(ctxt, "softballpitch", SPEC)) != nil)
+	danbylab = load Danbylab Danbylab->PATH;
+	if(danbylab == nil)
+		raise "fail:softballpitch: cannot load danbylab";
+	if((e := danbylab->run(ctxt, "softballpitch", SPEC)) != nil)
 		raise "fail:softballpitch: "+e;
 }

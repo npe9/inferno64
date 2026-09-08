@@ -3,14 +3,14 @@ implement Oregonator;
 # danby/oregonator - the Oregonator
 #
 # The whole model is the script below: its parameters and their ranges,
-# its populations and the equations that move them.  poplab(2) is a
+# its populations and the equations that move them.  danbylab(2) is a
 # library this calls with that script - it owns the window, the
 # integrator and the controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "poplab.m";
-	poplab: Poplab;
+include "danbylab.m";
+	danbylab: Danbylab;
 
 Oregonator: module
 {
@@ -18,6 +18,7 @@ Oregonator: module
 };
 
 SPEC: con
+	"family population\n" +
 	"title The Oregonator\n" +
 	"param timescale 3.0 0.0 12.0\n" +
 	"param q 0.002 0.0 0.05\n" +
@@ -33,9 +34,9 @@ SPEC: con
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	poplab = load Poplab Poplab->PATH;
-	if(poplab == nil)
-		raise "fail:oregonator: cannot load poplab";
-	if((e := poplab->run(ctxt, "oregonator", SPEC)) != nil)
+	danbylab = load Danbylab Danbylab->PATH;
+	if(danbylab == nil)
+		raise "fail:oregonator: cannot load danbylab";
+	if((e := danbylab->run(ctxt, "oregonator", SPEC)) != nil)
 		raise "fail:oregonator: "+e;
 }

@@ -3,14 +3,14 @@ implement Twocapital;
 # danby/twocapital - a one-sector economy with two capital stocks
 #
 # The whole model is the script below: its parameters and their ranges,
-# its populations and the equations that move them.  poplab(2) is a
+# its populations and the equations that move them.  danbylab(2) is a
 # library this calls with that script - it owns the window, the
 # integrator and the controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "poplab.m";
-	poplab: Poplab;
+include "danbylab.m";
+	danbylab: Danbylab;
 
 Twocapital: module
 {
@@ -18,6 +18,7 @@ Twocapital: module
 };
 
 SPEC: con
+	"family population\n" +
 	"title One-sector economy with two capital stocks\n" +
 	"param productivity 1.0 0.0 3.0\n" +
 	"param share_A 0.55 0.0 0.95\n" +
@@ -38,9 +39,9 @@ SPEC: con
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	poplab = load Poplab Poplab->PATH;
-	if(poplab == nil)
-		raise "fail:twocapital: cannot load poplab";
-	if((e := poplab->run(ctxt, "twocapital", SPEC)) != nil)
+	danbylab = load Danbylab Danbylab->PATH;
+	if(danbylab == nil)
+		raise "fail:twocapital: cannot load danbylab";
+	if((e := danbylab->run(ctxt, "twocapital", SPEC)) != nil)
 		raise "fail:twocapital: "+e;
 }

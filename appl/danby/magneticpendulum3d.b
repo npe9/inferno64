@@ -4,14 +4,14 @@ implement Magneticpendulum3d;
 #
 # The whole model is the script below: its parameters and their ranges,
 # its state and the equations that move it, the points that draw it and
-# the two quantities it plots.  mechlab(2) is a library this calls with
+# the two quantities it plots.  danbylab(2) is a library this calls with
 # that script - it owns the window, the integrator and the controls, and
 # knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "mechlab.m";
-	mechlab: Mechlab;
+include "danbylab.m";
+	danbylab: Danbylab;
 
 Magneticpendulum3d: module
 {
@@ -19,6 +19,7 @@ Magneticpendulum3d: module
 };
 
 SPEC: con
+	"family mechanism\n" +
 	"title A magnetic pendulum in three dimensions\n" +
 	"param initial_x 0.35 -1.5 1.5\n" +
 	"param initial_y 0.2 -1.5 1.5\n" +
@@ -69,9 +70,9 @@ SPEC: con
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	mechlab = load Mechlab Mechlab->PATH;
-	if(mechlab == nil)
-		raise "fail:magneticpendulum3d: cannot load mechlab";
-	if((e := mechlab->run(ctxt, "magneticpendulum3d", SPEC)) != nil)
+	danbylab = load Danbylab Danbylab->PATH;
+	if(danbylab == nil)
+		raise "fail:magneticpendulum3d: cannot load danbylab";
+	if((e := danbylab->run(ctxt, "magneticpendulum3d", SPEC)) != nil)
 		raise "fail:magneticpendulum3d: "+e;
 }

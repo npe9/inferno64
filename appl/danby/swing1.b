@@ -4,14 +4,14 @@ implement Swing1;
 #
 # The whole model is the script below: its parameters and their ranges,
 # its state and the equations that move it, the points that draw it and
-# the two quantities it plots.  mechlab(2) is a library this calls with
+# the two quantities it plots.  danbylab(2) is a library this calls with
 # that script - it owns the window, the integrator and the controls, and
 # knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "mechlab.m";
-	mechlab: Mechlab;
+include "danbylab.m";
+	danbylab: Danbylab;
 
 Swing1: module
 {
@@ -19,6 +19,7 @@ Swing1: module
 };
 
 SPEC: con
+	"family mechanism\n" +
 	"title A child on a swing: changing centre of mass\n" +
 	"param length 2.0 0.4 5.0\n" +
 	"param initial_angle 0.35 -1.2 1.2\n" +
@@ -50,9 +51,9 @@ SPEC: con
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	mechlab = load Mechlab Mechlab->PATH;
-	if(mechlab == nil)
-		raise "fail:swing1: cannot load mechlab";
-	if((e := mechlab->run(ctxt, "swing1", SPEC)) != nil)
+	danbylab = load Danbylab Danbylab->PATH;
+	if(danbylab == nil)
+		raise "fail:swing1: cannot load danbylab";
+	if((e := danbylab->run(ctxt, "swing1", SPEC)) != nil)
 		raise "fail:swing1: "+e;
 }

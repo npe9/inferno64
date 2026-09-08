@@ -4,14 +4,14 @@ implement Badfootball;
 #
 # The whole model is the script below: its parameters and their ranges,
 # where the flight starts and how fast, and the accelerations that shape
-# it.  flightlab(2) is a library this calls with that script - it owns
+# it.  danbylab(2) is a library this calls with that script - it owns
 # the window, the integrator and the controls, and knows nothing about
 # this model.
 
 include "sys.m";
 include "draw.m";
-include "flightlab.m";
-	flightlab: Flightlab;
+include "danbylab.m";
+	danbylab: Danbylab;
 
 Badfootball: module
 {
@@ -19,6 +19,7 @@ Badfootball: module
 };
 
 SPEC: con
+	"family flight\n" +
 	"title A badly kicked football\n" +
 	"param speed 24.0 0.0 40.0\n" +
 	"param elevation 0.55 0.0 1.3\n" +
@@ -43,9 +44,9 @@ SPEC: con
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	flightlab = load Flightlab Flightlab->PATH;
-	if(flightlab == nil)
-		raise "fail:badfootball: cannot load flightlab";
-	if((e := flightlab->run(ctxt, "badfootball", SPEC)) != nil)
+	danbylab = load Danbylab Danbylab->PATH;
+	if(danbylab == nil)
+		raise "fail:badfootball: cannot load danbylab";
+	if((e := danbylab->run(ctxt, "badfootball", SPEC)) != nil)
 		raise "fail:badfootball: "+e;
 }

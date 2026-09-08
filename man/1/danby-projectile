@@ -18,7 +18,7 @@ change every parameter live.
 .B /appl/danby/projectile.b
 .SH SEE ALSO
 .IR danby (1),
-.IR trajlab (2),
+.IR danbylab (2),
 .IR ballistics (2)
 .SH BUGS
 The model is deliberately state-independent in its aerodynamics: drag and

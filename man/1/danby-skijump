@@ -13,4 +13,4 @@ Tracks alter takeoff speed, ramp angle, drag, lift, headwind, and gravity.
 .SH SOURCE
 .B /appl/danby/skijump.b
 .SH SEE ALSO
-.IR trajlab (2)
+.IR danbylab (2)

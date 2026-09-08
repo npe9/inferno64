@@ -15,4 +15,4 @@ repeat the pitch.
 .SH SOURCE
 .B /appl/danby/baseballpitch.b
 .SH SEE ALSO
-.IR trajlab (2)
+.IR danbylab (2)

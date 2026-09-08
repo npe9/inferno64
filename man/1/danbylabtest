@@ -1,0 +1,99 @@
+.TH DANBYLABTEST 1
+.SH NAME
+danbylabtest \- check every Danby model written as a danbylab(2) script
+.SH SYNOPSIS
+.B danbylabtest
+[
+.B -v
+]
+.SH DESCRIPTION
+.I Danbylabtest
+reads the
+.B SPEC
+constant out of every model under
+.B /appl/danby
+that calls
+.BR danbylab->run ,
+so that what is checked is the string that ships rather than a copy of
+it that could drift, and checks each one.
+.PP
+Nothing here opens a window.
+.B Danbylab->parse
+is deliberately the half of the library that needs no display, so this
+runs under
+.B emu-g
+where there is no
+.IR draw (2)
+and no
+.IR tk (2)
+at all.  That is the check worth having for the equations: starting a
+demo proves it starts.
+.PP
+Every model is checked for the same four things \(em that the spec
+parses, that it declares parameters, that each parameter's default lies
+inside its own range, and that no rate is a NaN at the start.  Then it
+gets its family's:
+.TP
+.B mechanism
+At least one
+.BR link ,
+and no point that is not a number at the start.
+.TP
+.B population
+The state count its curriculum page describes, and for several models a
+conservation law: a head count that cannot change, an exchange that only
+moves goods, a fishery at rest at its bionomic equilibrium.
+.TP
+.B trajectory
+A position's rate is exactly its own velocity; and for the models with
+an air term, that zeroing drag, lift and spin leaves plain free fall.
+.TP
+.B orbit
+Four states per body, a position rate that is its own velocity, and the
+one that matters: gravity between bodies is an internal force, so summing
+mass times acceleration over every body must give zero.  It does for the
+models with an external term too \(em in those the body being pushed has
+zero mass and the body being held fixed has zero acceleration \(em so the
+one statement covers the whole family.  A model with six bodies has
+fifteen pairs and thirty reaction terms, and a sign error or a missing
+reaction in any one of them breaks this sum.
+.TP
+.B ecology
+The equilibrium the spec declares is one: both rates vanish there.
+.TP
+.B flight
+The kinematic identity at twelve states, eleven of them pseudo-random
+rather than the model's own; and free fall with every parameter zeroed
+but the launch and gravity.
+.TP
+.B profile
+Twelve marches at pseudo-random parameter settings, each checked for
+NaNs, for a radius that only increases, for curves that never go
+negative, for an enclosed mass that never falls, and for a normalised
+curve that reaches exactly one at the outer edge.
+.PP
+A family with no models left would make its checks dead code with
+nothing to say so, so an empty family is itself a failure.
+.PP
+With
+.BR -v ,
+each model's family, parameter count and state count are printed as it
+is checked.
+.SH SOURCE
+.B /appl/cmd/danbylabtest.b
+.SH SEE ALSO
+.IR danbytest (1),
+.IR danbylab (2),
+.IR dynsys (2)
+.SH BUGS
+Most of the checks are made at the model's own starting configuration
+only, not along a trajectory, so a term that is zero there and wrong
+later would pass.  The
+.B flight
+and
+.B profile
+families are the exceptions: they sample the state space and the
+parameter space respectively.
+.PP
+Nothing here draws anything, so a model whose equations are right and
+whose picture is wrong passes.

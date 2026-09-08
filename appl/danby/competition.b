@@ -4,14 +4,14 @@ implement Competition;
 #
 # The whole model is the script below: its parameters and their ranges,
 # the two populations and the equations that move them, and the fixed
-# point the phase plot marks.  ecolab(2) is a library this calls with
+# point the phase plot marks.  danbylab(2) is a library this calls with
 # that script - it owns the window, the integrator and the controls, and
 # knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "ecolab.m";
-	ecolab: Ecolab;
+include "danbylab.m";
+	danbylab: Danbylab;
 
 Competition: module
 {
@@ -19,6 +19,7 @@ Competition: module
 };
 
 SPEC: con
+	"family ecology\n" +
 	"title Competition between two species\n" +
 	"scale 1.5\n" +
 	"param growth_A 1.0 0.0 2.0\n" +
@@ -35,9 +36,9 @@ SPEC: con
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	ecolab = load Ecolab Ecolab->PATH;
-	if(ecolab == nil)
-		raise "fail:competition: cannot load ecolab";
-	if((e := ecolab->run(ctxt, "competition", SPEC)) != nil)
+	danbylab = load Danbylab Danbylab->PATH;
+	if(danbylab == nil)
+		raise "fail:competition: cannot load danbylab";
+	if((e := danbylab->run(ctxt, "competition", SPEC)) != nil)
 		raise "fail:competition: "+e;
 }

@@ -4,14 +4,14 @@ implement Pursuit;
 #
 # The whole model is the script below: its parameters and their ranges,
 # its state and the equations that move it, the points that draw it and
-# the two quantities it plots.  mechlab(2) is a library this calls with
+# the two quantities it plots.  danbylab(2) is a library this calls with
 # that script - it owns the window, the integrator and the controls, and
 # knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "mechlab.m";
-	mechlab: Mechlab;
+include "danbylab.m";
+	danbylab: Danbylab;
 
 Pursuit: module
 {
@@ -19,6 +19,7 @@ Pursuit: module
 };
 
 SPEC: con
+	"family mechanism\n" +
 	"title Curves of pursuit\n" +
 	"param speed 0.5 0.05 3.0\n" +
 	"param initial_size 1.0 0.2 3.0\n" +
@@ -66,9 +67,9 @@ SPEC: con
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	mechlab = load Mechlab Mechlab->PATH;
-	if(mechlab == nil)
-		raise "fail:pursuit: cannot load mechlab";
-	if((e := mechlab->run(ctxt, "pursuit", SPEC)) != nil)
+	danbylab = load Danbylab Danbylab->PATH;
+	if(danbylab == nil)
+		raise "fail:pursuit: cannot load danbylab";
+	if((e := danbylab->run(ctxt, "pursuit", SPEC)) != nil)
 		raise "fail:pursuit: "+e;
 }

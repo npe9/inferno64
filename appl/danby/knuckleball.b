@@ -4,14 +4,14 @@ implement Knuckleball;
 #
 # The whole model is the script below: its parameters and their ranges,
 # where it is launched from and how fast, and the accelerations that
-# shape the flight.  trajlab(2) is a library this calls with that script
+# shape the flight.  danbylab(2) is a library this calls with that script
 # - it owns the window, the integrator and the controls, and knows
 # nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "trajlab.m";
-	trajlab: Trajlab;
+include "danbylab.m";
+	danbylab: Danbylab;
 
 Knuckleball: module
 {
@@ -19,9 +19,10 @@ Knuckleball: module
 };
 
 SPEC: con
+	"family trajectory\n" +
 	"title Pitching a knuckleball\n" +
 	"param speed 32.0 0.0 50.0\n" +
-	"param angle -0.02 0.0 0.3\n" +
+	"param angle -0.02 -0.3 0.3\n" +
 	"param drag 0.004 0.0 0.02\n" +
 	"param flutter 1.4 0.0 4.0\n" +
 	"param frequency 48.0 0.0 100.0\n" +
@@ -43,9 +44,9 @@ SPEC: con
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	trajlab = load Trajlab Trajlab->PATH;
-	if(trajlab == nil)
-		raise "fail:knuckleball: cannot load trajlab";
-	if((e := trajlab->run(ctxt, "knuckleball", SPEC)) != nil)
+	danbylab = load Danbylab Danbylab->PATH;
+	if(danbylab == nil)
+		raise "fail:knuckleball: cannot load danbylab";
+	if((e := danbylab->run(ctxt, "knuckleball", SPEC)) != nil)
 		raise "fail:knuckleball: "+e;
 }

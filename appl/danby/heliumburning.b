@@ -3,14 +3,14 @@ implement Heliumburning;
 # danby/heliumburning - helium burning in a hot star
 #
 # The whole model is the script below: its parameters and their ranges,
-# its populations and the equations that move them.  poplab(2) is a
+# its populations and the equations that move them.  danbylab(2) is a
 # library this calls with that script - it owns the window, the
 # integrator and the controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "poplab.m";
-	poplab: Poplab;
+include "danbylab.m";
+	danbylab: Danbylab;
 
 Heliumburning: module
 {
@@ -18,6 +18,7 @@ Heliumburning: module
 };
 
 SPEC: con
+	"family population\n" +
 	"title Helium burning in a hot star\n" +
 	"param triple_alpha 0.04 0.0 0.2\n" +
 	"param carbon_capture 0.012 0.0 0.1\n" +
@@ -40,9 +41,9 @@ SPEC: con
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	poplab = load Poplab Poplab->PATH;
-	if(poplab == nil)
-		raise "fail:heliumburning: cannot load poplab";
-	if((e := poplab->run(ctxt, "heliumburning", SPEC)) != nil)
+	danbylab = load Danbylab Danbylab->PATH;
+	if(danbylab == nil)
+		raise "fail:heliumburning: cannot load danbylab";
+	if((e := danbylab->run(ctxt, "heliumburning", SPEC)) != nil)
 		raise "fail:heliumburning: "+e;
 }

@@ -24,11 +24,11 @@ period steps, r resets, and q exits.
 The independent model module is
 .B /appl/danby/foodchain.b.
 Its empty boundary, metadata, and finite initial derivative are tested by
-.IR poplabtest (1).
+.IR danbylabtest (1).
 .SH SOURCE
 .B /appl/danby/foodchain.b
 .br
-.B /appl/lib/poplab.b
+.B /appl/lib/danbylab.b
 .SH SEE ALSO
 .IR danby-manyspecies (1),
 .IR numerics (2)

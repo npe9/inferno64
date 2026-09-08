@@ -267,6 +267,7 @@ danby-sirs danby-sirs
 danby-strains danby-strains
 danby-tennis danby-tennis
 danby-vaccination danby-vaccination
+danbylabtest danbylabtest
 date wm-misc
 dd dd
 deb deb
@@ -311,7 +312,6 @@ filename filename
 fit math-misc
 flapbat flapbat
 flattops flattops
-flightlabtest flightlabtest
 fmt fmt
 fn sh-std
 fonted fonted
@@ -424,8 +424,6 @@ nsbuild nsbuild
 ntest sh-expr
 ohgreat ohgreat
 or sh-std
-ecolabtest ecolabtest
-orblabtest orblabtest
 os os
 p p
 palette palette
@@ -455,7 +453,6 @@ predatorprey predatorprey
 prefix sh-string
 primes math-misc
 prof prof
-profilelabtest profilelabtest
 ps ps
 psalmody psalmody
 puttar gettar
@@ -595,7 +592,6 @@ tothefront tothefront
 tonetest tonetest
 touch touch
 toupper sh-string
-trajlabtest trajlabtest
 tr tr
 transform transform
 treecheckers treecheckers
@@ -650,4 +646,3 @@ zing zing
 zipstream zipstream
 zoneout zoneout
 ~ sh-std
-poplabtest poplabtest

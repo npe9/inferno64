@@ -55,7 +55,7 @@ zero rather than clamping.
 .br
 .B /appl/danby/limitstogrowth.b
 .br
-.B /appl/lib/poplab.b
+.B /appl/lib/danbylab.b
 .SH SEE ALSO
 .IR danby-ecology (1),
 .IR numerics (2)

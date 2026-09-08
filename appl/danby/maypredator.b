@@ -4,14 +4,14 @@ implement Maypredator;
 #
 # The whole model is the script below: its parameters and their ranges,
 # the two populations and the equations that move them, and the fixed
-# point the phase plot marks.  ecolab(2) is a library this calls with
+# point the phase plot marks.  danbylab(2) is a library this calls with
 # that script - it owns the window, the integrator and the controls, and
 # knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "ecolab.m";
-	ecolab: Ecolab;
+include "danbylab.m";
+	danbylab: Danbylab;
 
 Maypredator: module
 {
@@ -19,6 +19,7 @@ Maypredator: module
 };
 
 SPEC: con
+	"family ecology\n" +
 	"title May's predator-prey model\n" +
 	"param prey_growth 1.0 0.0 3.0\n" +
 	"param prey_capacity 2.0 0.0 4.0\n" +
@@ -43,9 +44,9 @@ SPEC: con
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	ecolab = load Ecolab Ecolab->PATH;
-	if(ecolab == nil)
-		raise "fail:maypredator: cannot load ecolab";
-	if((e := ecolab->run(ctxt, "maypredator", SPEC)) != nil)
+	danbylab = load Danbylab Danbylab->PATH;
+	if(danbylab == nil)
+		raise "fail:maypredator: cannot load danbylab";
+	if((e := danbylab->run(ctxt, "maypredator", SPEC)) != nil)
 		raise "fail:maypredator: "+e;
 }
