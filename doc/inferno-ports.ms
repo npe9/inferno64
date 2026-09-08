@@ -19091,3 +19091,79 @@ pcs survive,
 recovers the offset, and reports honestly that one pc alone agrees with
 many offsets by chance \(em only a set of pcs from a single boot pins it
 down.
+.NH 2
+What the four resolved sites are in the source
+.PP
+With the offset applied the four pcs name specific lines of
+libinterp/heap.c, and two of them are not what the earlier reading
+supposed.
+.CW destroy+0x29d
+is the
+.CW "poolfree(heapmem, h)"
+that ends
+.CW destroy() ,
+and
+.CW destroy+0x2f2
+is the indirect
+.CW poolfault
+call inside
+.CW destroy() Ns 's
+own entry
+.CW D2BPC
+\(em 7c places that check's fault limb out of line, past the function's
+ordinary exit, which is why it sits at a higher offset than the
+.CW poolfree()
+it guards.  So those two are exactly the pair the hunt wanted: the
+first free, and the panic that later caught the second.
+.PP
+.CW freelist+0x1a3
+is the
+.CW "poolfree(heapmem, th)"
+in
+.CW freelist() Ns 's
+tail walk \(em another ordinary, successful free of a list node.
+.CW freelist+0x63
+is different in kind, and it is the one worth following.  It is the
+.CW free(t)
+in
+.CW freelist() Ns 's
+head-node limb:
+.P1
+	if(t != nil) {
+		if(!swept && t->np)
+			freeptrs(l->data, t);
+		if(ADEC(&t->ref) == 0) {
+			freejitcode(t->initialize);
+			free(t);
+		}
+	}
+.P2
+That block frees a
+.CW Type ,
+in mainmem, the moment its reference count reaches zero.  The freehist
+ring records mainmem and heapmem frees alike, because
+.CW notefree()
+sits in
+.CW poolfree()
+and is generic over pools, so a
+.CW Type
+freed here appears in the ring exactly like a heap object.
+.PP
+This lines up with the
+.CW framerefs
+result recorded earlier in this document: interpreter frames hold a
+.CW Type
+without counting it.  If a frame's uncounted reference outlives the
+last counted one, the
+.CW ADEC(&t->ref)
+above reaches zero while that frame still points at
+.CW t ,
+.CW free(t)
+hands the block back, and the second owner is left holding a dangling
+.CW Type
+\(em which is the "two independent owners each believing they hold the
+last reference" shape this hunt has been describing from the other
+end.  It is a lead, not a demonstration: nothing here yet shows the two
+happening to the same
+.CW Type
+in one boot.
