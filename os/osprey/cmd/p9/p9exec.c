@@ -40,6 +40,7 @@
 #include "libshprog.i"		/* uchar libshprog[]: the shell that runs on this personality */
 #include "libgenprog.i"		/* uchar libgenprog[]: the near end of a pipeline */
 #include "libdrawprog.i"		/* uchar libdrawprog[]: the program that draws */
+#include "libthreadprog.i"		/* uchar libthreadprog[]: the program with threads in it */
 
 extern int	p9open(char *name, int mode);
 extern int	p9create(char *name, int mode, ulong perm);
@@ -71,6 +72,7 @@ p9execfile(void)
 	addbootfile("libsh", libshprog, sizeof libshprog);
 	addbootfile("libgen", libgenprog, sizeof libgenprog);
 	addbootfile("libdraw", libdrawprog, sizeof libdrawprog);
+	addbootfile("libthread", libthreadprog, sizeof libthreadprog);
 }
 
 static uvlong

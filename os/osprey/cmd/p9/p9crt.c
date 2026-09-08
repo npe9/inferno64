@@ -452,9 +452,72 @@ exits(char *status)
 {
 	if(_onexit != nil)
 		(*_onexit)();
+	_exits(status);
+}
+
+/*
+ * And the primitive under it, which is what a flow of control that is
+ * not the last one uses: end without running the handlers, because the
+ * other flows of the program are still going and one of them will.
+ */
+void
+_exits(char *status)
+{
 	p9lib->exits(status);
 	for(;;)			/* the loader does not return here */
 		;
+}
+
+/*
+ * Two calls that are here so that a program which cannot reach them
+ * says so instead of trapping.  Both were libc's system-call stubs, and
+ * a stub on this personality is a trap into a microkernel that does not
+ * answer the Plan 9 table: a program that reached one faulted, with
+ * nothing to say why.
+ *
+ * noted(2) returns from a note handler.  The personality raises no
+ * notes on a program it loaded, so no handler ever runs and nothing
+ * returns from one.  It is linked because libthread's note.c also holds
+ * _procsplhi and _procsplx, which its scheduler does call, and a file
+ * is linked whole.
+ *
+ * rendezvous(2) has two callers and neither can run here.  libc's qlock
+ * names it as its default way to wait, and a libthread program replaces
+ * that before it starts a thread (_qlockinit, with libthread's own
+ * rendezvous, which is user-space and makes no system call) while a
+ * program that is not a libthread program has one flow of control and
+ * nothing to contend with.  libthread's own scheduler calls it as well,
+ * to put a proc with no ready thread to sleep and to wake it again
+ * (runthread and _threadready, sched.c) - and that is between procs of
+ * one program, which this personality does not have yet: proccreate
+ * refuses, so there is one proc and it never sleeps for work that only
+ * another proc could bring.
+ *
+ * Reaching either would mean something is true that this personality
+ * says is not, so each says which and ends the program.  Neither is a
+ * stub that answers: a wrong answer here would be a program going
+ * quietly on with a lock it does not hold.
+ */
+int
+noted(int v)
+{
+	char *m = "p9crt: noted: a note was delivered to a loaded program, which does not happen here\n";
+
+	USED(v);
+	p9conswrite(2, m, strlen(m), -1LL);
+	_exits("noted");
+	return -1;
+}
+
+void*
+rendezvous(void *tag, void *val)
+{
+	char *m = "p9crt: rendezvous: a loaded program waited for another flow of control, and it has only one\n";
+
+	USED(tag); USED(val);
+	p9conswrite(2, m, strlen(m), -1LL);
+	_exits("rendezvous");
+	return nil;
 }
 
 /*

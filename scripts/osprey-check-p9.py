@@ -277,6 +277,18 @@ def main():
                     and inside(tbox, (700, 150, 1099, 449))
                     and nwhite == 1280*800 - 400*300
                     and nfore2 == 0 and nback2 == 0))
+    #
+    # And a threaded program.  The link of /boot/libthread leaves out the
+    # prebuilt libc.a - the archive of generated system-call stubs -
+    # altogether and resolves, so every call it and its libc make is
+    # either the personality's through the table or code in its own
+    # image, and the one system call a threaded program makes here is
+    # the console.  That it ran at all is what says so.
+    results.append(("and a threaded program runs on it: /boot/libthread is an ordinary Plan 9 libthread program on the real libthread built from source in 9front/src, its port being threadmain9.c - the four functions 9front keeps in libthread/main.c because they are the system a port has to supply - and its link leaves the prebuilt archive of system-call stubs out altogether and still resolves",
+                    re.search(r'libthread: threadmain runs with 1 arguments, as thread \d+ of proc \d+', t) is not None))
+    results.append(("and its threads hand values to each other: five values cross an unbuffered channel between two threads of one proc and sum to 15, which is a hand-off rather than a buffer - the sender blocks until the receiver takes each one, so neither thread could get through this alone and libthread's own scheduler is what runs the other",
+                    'libthread: 5 values crossed an unbuffered channel between two threads of one proc, summing to 15' in t
+                    and 'that is not the' not in t))
     results.append(("and it exits through the microkernel's minimal syscall interface, no in-kernel personality",
                     'the program exited' in t and 'panic' not in t))
 

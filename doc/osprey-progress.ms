@@ -9285,17 +9285,6 @@ in the first case, which is how the Tos was found.  Before that the
 console FIFO dropped everything the personality had queued behind the
 panic and there was nothing to go on at all.
 .PP
-What is left of 3.2 is rio.  It wants
-.CW /dev/draw ,
-which this section gives it,
-.CW /dev/mouse
-and
-.CW /dev/kbd ,
-which the user-level drivers already built serve, and a name space that
-holds them.  It also wants libdraw and libthread linked against
-.CW p9crt.c .
-libdraw is 3.2d, below.
-.PP
 .B "3.2d: the real libdraw, unmodified, linked against the personality.  Done."
 .CW /boot/libdraw
 spoke the draw protocol by hand because that showed the path.  Now it
@@ -9514,16 +9503,156 @@ The check reads the offset before and after and both must be 0.  With
 the wind-back taken out the same boot prints 19, which is what makes the
 criterion worth having.
 .PP
-One thing is still a trap and is written down rather than worked
-around:
+One thing is not implemented, and 3.2e below says why more exactly than
+this section first did:
 .CW rendezvous .
-libc's
+It has two callers and neither can run here.  libc's
 .CW qlock
-calls it when a lock is contended, and it resolves to the prebuilt
-archive's stub.  Nothing here can reach it \- a loaded program is one
-flow of control and its locks are in its own image, so there is no
-second holder to wait for \- and it is not implemented on the strength
-of that.  A program that found a way to contend a qlock would fault.
+names it as its default way to wait, and a libthread program replaces
+that before it starts a thread, while a program that is not a libthread
+program has one flow of control and nothing to contend with.
+libthread's own scheduler calls it as well \- to put a proc with no
+ready thread to sleep and to wake it again \- and that is between procs
+of one program, which this personality does not have yet.  It used to
+resolve to the prebuilt archive's stub, which is a trap this
+microkernel does not answer, so a program that reached it faulted with
+nothing to say why.  It now resolves to
+.CW p9crt.c ,
+which says which impossible thing has happened and ends the program.
+The same is done for
+.CW noted (2),
+which is linked because libthread's
+.CW note.c
+also holds the two functions its scheduler calls, and a file is linked
+whole.
+.PP
+.B "3.2e: a threaded program, on the real libthread.  Done."
+.CW /boot/libthread
+is an ordinary Plan 9 libthread program \-
+.CW threadmain ,
+.CW threadcreate ,
+.CW chancreate ,
+.CW send ,
+.CW recv
+\- on the real libthread, built from the source in
+.CW 9front/src
+with no line changed.  It sends five values, 1 through 5, across an
+unbuffered channel from one thread to another and they sum to 15,
+which are numbers stated in the program and in the check before either
+was run.  An unbuffered send is a hand-off and not a buffer: the sender
+blocks until the receiver takes each value, so neither thread could get
+through the sequence alone, and what runs the other is libthread's own
+scheduler inside the one flow of control the personality gave it.
+.PP
+libthread is written to be ported, and 9front keeps the porting layer
+by itself:
+.CW main ,
+.CW _schedexec ,
+.CW _schedfork
+and
+.CW _schedexit
+are the system a port supplies, and they are the whole of
+.CW libthread/main.c .
+.CW threadmain9.c
+is that file for this personality.  Three things it leaves out, each
+for a reason:
+.CW rfork(RFREND) ,
+because libthread's own rendezvous is the one
+.CW _qlockinit
+installs and that one is entirely in user space and makes no system
+call, so there is no group to leave;
+.CW notify(_threadnote) ,
+because the personality raises no notes on a program it loaded, and
+leaving the call out is also what keeps
+.CW notify (2)
+unreferenced; and
+.CW setjmp(mainjmp) ,
+because on Plan 9 a new proc is
+.CW rfork(RFPROC|RFMEM) ,
+whose child gets a copy of the stack at the same addresses and can
+longjmp onto it, and two stacks cannot be at one address here.
+.PP
+The enumeration was run again before any of it was written \- link
+against the source-built libraries only and read the undefined symbols
+\- and it gave three:
+.CW rendezvous ,
+.CW noted
+and
+.CW _exits .
+The first two are the ones 3.2d ends on, linked because something names
+them rather than because anything calls them.
+.CW _exits
+is real and was missing: it is what
+.CW exits
+runs the
+.CW atexit
+handlers before, and a flow of control that is not the last one uses it
+directly.
+.PP
+Then the enumeration was run once more, with those three defined, and
+it came back empty.  That is the sentence this section is for: a
+threaded program on this personality links with the prebuilt
+.CW libc.a
+\- the archive of generated system-call stubs \- left out altogether.
+Every call it and its libc make is either the personality's, through
+the table, or code in its own image.  The one system call a threaded
+program makes here is the console write, and the console is the one
+thing the personality does not hold.
+.PP
+What it does not have yet is a second proc.
+.CW proccreate
+is
+.CW _schedfork ,
+and a second flow of control inside one program means giving the
+program per-process storage: libthread keeps the running Proc in a
+.CW privalloc (2)
+word, and
+.CW _threadgetproc
+is a dereference of one fixed pointer captured once in
+.CW main ,
+so the word cannot be indexed off the running process at the time of
+the call.  It has to be a fixed address whose contents the personality
+swaps at the switch, which is what a kernel does for a per-process
+register and is the next piece.
+.CW _schedfork
+refuses by name until then, rather than starting a proc that would find
+another proc's Proc in its own private.
+.PP
+.B "What rio still needs, and it is not libthread."
+3.2c named rio's wants as
+.CW /dev/draw ,
+.CW /dev/mouse ,
+.CW /dev/kbd
+and a name space holding them, with libdraw and libthread linked
+against
+.CW p9crt.c .
+All of that is now here or was already:
+.CW #i
+is bound and is this personality's own draw device,
+.CW #m
+is bound and is the user-space i8042 driver's keyboard and mouse,
+libdraw runs unmodified and so does libthread.  The blocker rio is
+actually behind is none of them.
+.PP
+It is relocation.  A loaded program is laid at the address it was
+linked for and nothing here relocates one, which is why
+.CW p9lib.h
+has seven fixed bases and why spawn refuses a second instance of an
+image already running.  rio makes a window and starts a shell in it,
+and then makes another window and starts another shell: two instances
+of one image, which here would be one image sharing its one data
+segment, descriptor table and heap.  No amount of libthread makes that
+work.
+.PP
+So the next item is named for what it is: relocation, or
+position-independent loading, of a program the personality loads.
+Either the loader relocates an image as it lays it down, which wants
+relocation records this compiler does not emit, or every mutable thing
+in a program's image is reached through a per-process pointer, which is
+the same problem
+.CW privalloc
+has and a much larger instance of it.  It is written down here rather
+than attempted, because the attempt is a phase and not a paragraph.
 .PP
 .B "Phase 3.2: a real program, then rio, linked with the library."
 A real program \- a command, then a shell, then rio \- is linked with
@@ -9602,7 +9731,7 @@ check clean, the two-machine check run three times:
 .CW p9linux
 12,
 .CW p964
-36, keyboard 8, rio 14, the window gestures 10, micro 7, user 10, net
+38, keyboard 8, rio 14, the window gestures 10, micro 7, user 10, net
 13, wire 14, two-machine 20 twice over, the
 six criteria of the userland the tree builds itself, and two portable
 builds.  A criterion is a sentence a booted kernel printed

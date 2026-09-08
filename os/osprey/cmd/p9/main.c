@@ -663,6 +663,35 @@ p9main(void)
 	}
 
 	/*
+	 * And a threaded program.  /boot/libthread is an ordinary Plan 9
+	 * libthread program - threadmain, threadcreate, chancreate, send
+	 * and recv - on the real libthread, built from source with no line
+	 * changed.  What is this personality's own is threadmain9.c, the
+	 * four functions 9front keeps in libthread/main.c because they are
+	 * the system a port has to supply.
+	 *
+	 * It is worth saying what this program does not need.  Its link
+	 * leaves out the prebuilt libc.a - the archive of generated
+	 * system-call stubs - altogether, and resolves: every call it and
+	 * its libc make is either the personality's, through the table, or
+	 * code in its own image.  A threaded program on this personality
+	 * makes one system call, and it is the console.
+	 *
+	 * Threads of one proc, for now: a second proc would be a second
+	 * flow of control inside the program, and libthread keeps the
+	 * running Proc in a privalloc(2) word, which one word cannot answer
+	 * differently to two flows unless the personality swaps it at the
+	 * switch.  proccreate refuses by name until it does.
+	 */
+	{
+		char *targv[2];
+
+		targv[0] = "/boot/libthread";
+		targv[1] = nil;
+		p9exec("/boot/libthread", targv);
+	}
+
+	/*
 	 * And a shell, with processes under it.  The personality now starts
 	 * a program on a flow of control of its own - a kproc with a
 	 * descriptor table of its own - so a program can start other

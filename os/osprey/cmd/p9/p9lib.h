@@ -92,4 +92,5 @@ enum {
 	P9progbase4	= 0x1c00000,	/* libsh, the shell */
 	P9progbase5	= 0x2000000,	/* libgen, the near end of a pipeline */
 	P9progbase6	= 0x2400000,	/* libdraw, the program that draws */
+	P9progbase7	= 0x2800000,	/* libthread, the program with threads in it */
 };

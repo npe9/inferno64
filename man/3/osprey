@@ -1470,12 +1470,66 @@ can define
 .I pwrite
 for the personality's own files.
 .I rendezvous
-is the one libc call still a stub, and so still a trap: libc's
+and
+.IR noted (2)
+are linked because something names them, not because anything calls
+them: libc's
 .I qlock
-calls it when a lock is contended, and a loaded program is one flow of
-control whose locks are in its own image, so nothing here can contend
-one.  It is not implemented on the strength of that, and a program that
-found a way to reach it would fault.
+names
+.I rendezvous
+as its default way to wait, libthread's own scheduler calls it to put a
+proc with no ready thread to sleep and to wake it again, and libthread's
+.I note.c
+holds the two functions its scheduler calls as well as its note handler.
+A libthread program replaces the qlock one before it starts a thread
+.RI ( _qlockinit ,
+with libthread's own rendezvous, which is user-space and makes no system
+call); a program that is not a libthread program has one flow of control
+and nothing to contend with; the scheduler's use is between procs of one
+program, which this personality does not have yet; and no note is ever
+raised on a loaded program, so no handler runs and nothing returns from
+one.  Both used to
+resolve to the prebuilt archive's stubs, which are traps this
+microkernel does not answer, so reaching one faulted with nothing to say
+why.  Both now resolve to
+.I p9crt.c ,
+which says which impossible thing has happened and ends the program.
+Neither answers: a wrong answer would be a program going on with a lock
+it does not hold.
+.PP
+The personality runs a threaded program.
+.B /boot/libthread
+is an ordinary Plan 9 libthread program on the real
+.I libthread
+built from
+.BR 9front/src ;
+what this tree supplies is
+.BR threadmain9.c ,
+the four functions 9front keeps in
+.B libthread/main.c
+because they are the system a port has to supply \-
+.IR main ,
+.IR _schedexec ,
+.I _schedfork
+and
+.IR _schedexit .
+Its link leaves out the prebuilt archive of system-call stubs
+altogether and resolves, so the one system call a threaded program makes
+here is the console write.
+.I procexec
+and
+.I proccreate
+each refuse by name:
+.I procexec
+because a library operating system has no exec, and
+.I proccreate
+because a second flow of control inside one program needs per-process
+storage that this personality does not swap yet \-
+.I _threadgetproc
+is a dereference of one pointer captured once in
+.IR main ,
+so the word behind it has to be a fixed address whose contents change
+at the switch.
 .PP
 The personality's cooperative scheduler has an idle.  An empty run
 queue is a deadlock only if every proc is asleep on a rendezvous; if
