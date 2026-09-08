@@ -7,6 +7,18 @@ extern	int	dec16(uchar*, int, char*, int);	/* libkern/u16.c, for ../port/wifi.c 
 extern	int	enc16(char*, int, uchar*, int);
 extern	int	tsmemcmp(void*, void*, ulong);	/* libkern/tsmemcmp.c, constant time */
 #define offsetof(s, m)	(u32)(&(((s*)0)->m))
+/*
+ * The macro's own header declares what the macro calls, so a library
+ * built against this header alone -- libaml, through
+ * Inferno/<arch>/include/libc.h -- sees a prototype rather than an
+ * undeclared function.  It goes here and not in one of those headers
+ * because the macro is what creates the requirement: here every
+ * kernel library on every architecture is covered by construction,
+ * whereas fixing the amd64 header would leave aarch64, riscv32 and
+ * riscv64 to break the same way, with the error still pointing at the
+ * library rather than at the header that is wrong.
+ */
+extern	void	_assert(char*);		/* ../port/devcons.c */
 #define assert(x)	if(x){}else _assert("x")
 
 #define	DBG	if(debug)print

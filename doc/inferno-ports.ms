@@ -19292,18 +19292,39 @@ would fail the same way, and
 .CW libaml
 uses it.
 .PP
-It had gone unnoticed because it only bites a clean tree: where an old
+The declaration goes in
+.CW os/inferno/port/lib.h ,
+next to the macro, because the macro is what creates the requirement.
+There, every kernel library on every architecture is covered by
+construction.  It went into
+.CW Inferno/amd64/include/libc.h
+first, which is wrong and was corrected: four architectures have such
+a header, all four include
+.CW port/lib.h ,
+and fixing one of them leaves aarch64, riscv32 and riscv64 to break
+the same way \(em with the error still pointing at the library rather
+than at the header that is wrong, and the amd64 fix visibly in place
+and apparently doing nothing.
+.PP
+Two things were guessed at here and both were wrong, which is worth
+recording because the guessing was the whole of the mistake.  The
+first was the placement above.  The second was the reason the
+.CW cloud-port
+branch builds and this one did not: it was put down to a stale
 .CW libaml.a
-was already sitting in
+sitting in that branch's
 .CW Inferno/amd64/lib ,
-mk had no reason to make it again and the kernel linked.  This
-worktree had no such archive \(em nor the directory, git not tracking
-empty ones \(em so it was the first to try.  The declaration goes in
-.CW Inferno/amd64/include/libc.h ,
-which exists to patch exactly these gaps and already carries
-.CW mallocz
-and
-.CW free .
+where mk would have no reason to remake it.  That was asserted from a
+diff of
+.CW aml.c
+and the include trees \(em which are byte identical \(em without
+diffing the file that actually differed.  The branch moved its archive
+out of the tree and rebuilt, and the kernel built and booted.  Its
+.CW port/lib.h
+already carries the declaration, put there by whoever hit this before;
+that five line block is the entire divergence between the two trees on
+this point, and no amount of comparing the files either side of it
+would have shown it.
 .NH 2
 pc64 faults on sustained uart traffic
 .PP
