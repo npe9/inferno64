@@ -53,7 +53,25 @@ Handle: adt {
 	buffer:	ref Draw->Image;
 	font:	ref Draw->Font;
 	graph:	ref Plotter;
+	chans:	list of (string, chan of string);
+	want:	Point;		# the size "plot new" was asked for
+	shown:	int;
 };
+
+# The window a handle owns is a real Tk toplevel, so a script can put
+# real widgets in it: "plot <id> tk <text...>" is the same generic
+# forward to tk->cmd() that sh-tk(1)'s own "tk <winid> <text...>" is,
+# aimed at this handle's window instead of one sh-tk(1) opened.  That
+# matters because a Shellbuiltin module cannot reach another one's
+# tables - sh-tk(1)'s window and channel tables are private to it - so a
+# plot cannot be drawn into a window sh-tk(1) opened, and the way to have
+# controls around a plot is to put them in the plot's own window.
+#
+# With "namechan" and "recv" alongside it, that is enough for the whole
+# shape: Tk owns the buttons, scales and layout, plot(2) owns the pixels
+# of the graph, and the script is the model.  See sh-plot(1)'s own
+# EXAMPLE, which is a working predator/prey lab in about eighty lines of
+# sh(1).
 
 handles: array of list of ref Handle;
 nexthandle := 0;
@@ -121,11 +139,49 @@ runbuiltin(ctxt: ref Context, nil: Sh,
 	rest := tl argv;
 	if(rest == nil)
 		ctxt.fail("usage", "usage: plot <id> (draw|graph-command...)");
-	if((hd rest).word == "draw"){
+	case (hd rest).word {
+	"draw" =>
+		show(ctxt, h);
 		h.graph.draw();
 		h.buffer.flush(Draw->Flushnow);
 		tkcmd(ctxt, h.top, ".f.p dirty");
 		tkcmd(ctxt, h.top, "update");
+		return nil;
+	"tk" =>
+		if(tl rest == nil)
+			ctxt.fail("usage", "usage: plot <id> tk command...");
+		# a raw forwarded tk command's own failure is a soft $status,
+		# the same as sh-tk(1)'s own builtin_tk
+		e := tk->cmd(h.top, concat(tl rest));
+		if(len e > 0 && e[0] == '!'){
+			remark(ctxt, e);
+			return e;
+		}
+		return nil;
+	"namechan" =>
+		if(len tl rest != 1 && len tl rest != 2)
+			ctxt.fail("usage", "usage: plot <id> namechan name [tkname]");
+		nm := (hd tl rest).word;
+		tkname := nm;
+		if(len tl rest == 2)
+			tkname = (hd tl tl rest).word;
+		c := getchan(h, nm);
+		if(c == nil){
+			# buffered: tk drops a message it cannot queue, and a
+			# scale reports every step of a drag
+			c = chan[64] of string;
+			h.chans = (nm, c) :: h.chans;
+		}
+		tk->namechan(h.top, c, tkname);
+		return nil;
+	"winctl" =>
+		if(tl rest == nil)
+			ctxt.fail("usage", "usage: plot <id> winctl message");
+		tkclient->wmctl(h.top, concat(tl rest));
+		return nil;
+	"fit" =>
+		show(ctxt, h);
+		fit(ctxt, h);
 		return nil;
 	}
 	# the generic case: whatever follows the handle id is plot(2)'s own
@@ -168,6 +224,47 @@ runsbuiltin(ctxt: ref Context, nil: Sh,
 	if(rest == nil)
 		ctxt.fail("usage", "usage: plot <id> (rows|value|invert|graph-command...)");
 	case (hd rest).word {
+	"recv" =>
+		# pump this window's own keyboard and pointer events while
+		# waiting, the way sh-tk(1)'s own ${recv $wid} does: nothing
+		# else is servicing them, so without this a binding never
+		# fires and a click never reaches a widget
+		a := tl rest;
+		if(len a > 2)
+			ctxt.fail("usage", "usage: plot <id> recv [name [ms]]");
+		c: chan of string;
+		if(a != nil){
+			c = getchan(h, (hd a).word);
+			if(c == nil)
+				ctxt.fail("bad chan", "plot: no channel "+(hd a).word+
+					" on handle "+w);
+		}
+		# with a timeout, an empty result means nothing happened - so a
+		# script can run its own clock in the same loop that reads its
+		# own events, which is otherwise the one thing this shape
+		# cannot do
+		show(ctxt, h);
+		tc: chan of int;
+		if(len a == 2){
+			tc = chan[1] of int;
+			spawn timeout(int (hd tl a).word, tc);
+		}
+		for(;;) alt {
+		key := <-h.top.ctxt.kbd =>
+			tk->keyboard(h.top, key);
+		pt := <-h.top.ctxt.ptr =>
+			tk->pointer(h.top, *pt);
+		<-tc =>
+			return nil;
+		v := <-h.top.ctxt.ctl or
+		v = <-h.top.wreq or
+		v = <-c =>
+			return ref Listnode(nil, v) :: nil;
+		}
+	"tk" =>
+		if(tl rest == nil)
+			ctxt.fail("usage", "usage: plot <id> tk command...");
+		return ref Listnode(nil, tk->cmd(h.top, concat(tl rest))) :: nil;
 	"rows" =>
 		a := tl rest;
 		if(len a != 1)
@@ -187,8 +284,15 @@ runsbuiltin(ctxt: ref Context, nil: Sh,
 			ctxt.fail("usage", "usage: plot <id> invert view x y");
 		(x, y, err) := h.graph.invert((hd a).word,
 			Point(int (hd tl a).word, int (hd tl tl a).word));
-		if(err != nil)
+		# a point outside the view is a normal answer to a click, not
+		# an error: a script binds one canvas and gets every click in
+		# it, including the ones that land in another view's margin.
+		# Only a view that does not exist is worth failing over.
+		if(err != nil){
+			if(len err >= 12 && err[0:12] == "outside view")
+				return nil;
 			ctxt.fail("plot", "plot: " + err);
+		}
 		return ref Listnode(nil, sys->sprint("%g", x)) ::
 			ref Listnode(nil, sys->sprint("%g", y)) :: nil;
 	}
@@ -234,21 +338,25 @@ newhandle(ctxt: ref Context, argv: list of ref Listnode): int
 	tkcmd(ctxt, top, sys->sprint("panel .f.p -bd 2 -relief flat -width %d -height %d", w.x, w.y));
 	tkcmd(ctxt, top, "pack .f.p -fill both -expand 1");
 	tkcmd(ctxt, top, "pack .f -fill both -expand 1");
-	tkcmd(ctxt, top, "update");
-	tkclient->startinput(top, "kbd" :: "ptr" :: nil);
-	tkclient->onscreen(top, nil);
-	if(top.image == nil)
-		ctxt.fail("plot", "plot: onscreen left nil image");
-
-	buffer := top.display.newimage(Rect((0, 0), (w.x, w.y)), top.image.chans, 0, Draw->White);
-	if(buffer == nil)
-		ctxt.fail("plot", "plot: cannot allocate drawing buffer");
-	err := tk->putimage(top, ".f.p", buffer, nil);
-	if(len err > 0 && err[0] == '!')
-		ctxt.fail("plot", "plot: putimage: " + err);
 	font := Font.open(top.display, "/fonts/lucida/unicode.8.font");
 
-	h := ref Handle(nexthandle++, top, buffer, font, plot->new(buffer, font));
+	# The buffer is allocated now, from the display rather than from the
+	# window's own image, because every "content"/"split"/"view" command
+	# measures the image it is drawing into and a script sets those up
+	# before it ever asks for anything to appear.
+	chans := top.display.image.chans;
+	buffer := top.display.newimage(Rect((0,0),(w.x,w.y)), chans, 0, Draw->White);
+	if(buffer == nil)
+		ctxt.fail("plot", "plot: cannot allocate drawing buffer");
+
+	# NOT onscreen yet.  A widget created after the window is on screen
+	# never receives a pointer event - measured: a scale added after
+	# tkclient->onscreen() reports nothing at all when clicked, while
+	# the panel created before it reports every click - so a script that
+	# wants controls around its plot has to be able to add them first.
+	# show() below does it, lazily, at the first thing that needs a
+	# window: a script that never adds a widget never notices.
+	h := ref Handle(nexthandle++, top, buffer, font, plot->new(buffer, font), nil, w, 0);
 	addhandle(h);
 	return h.id;
 }
@@ -308,6 +416,66 @@ delhandle(id: int)
 		if((hd hl).id != id)
 			nhl = hd hl :: nhl;
 	handles[slot] = nhl;
+}
+
+# buffered by one, so this always gets to send and exit even when the
+# alt it was made for took another branch first
+timeout(ms: int, c: chan of int)
+{
+	sys->sleep(ms);
+	c <-= 1;
+}
+
+# Put the window on screen, once, and give the panel an image of the
+# size Tk actually gave it.  Everything that needs a visible window calls
+# this first.
+show(ctxt: ref Context, h: ref Handle)
+{
+	if(h.shown)
+		return;
+	h.shown = 1;
+	tkcmd(ctxt, h.top, "update");
+	tkclient->startinput(h.top, "kbd" :: "ptr" :: nil);
+	tkclient->onscreen(h.top, nil);
+	if(h.top.image == nil)
+		ctxt.fail("plot", "plot: onscreen left nil image");
+	fit(ctxt, h);
+}
+
+getchan(h: ref Handle, name: string): chan of string
+{
+	for(cl := h.chans; cl != nil; cl = tl cl){
+		(n, c) := hd cl;
+		if(n == name)
+			return c;
+	}
+	return nil;
+}
+
+# The buffer was allocated at the size "plot new" was given.  Once a
+# script has packed its own widgets around the panel, or the user has
+# resized the window, that is no longer the panel's size - tk->rect()
+# says what is, and this reallocates to match.  A plot that is never
+# given widgets and never resized never needs it.
+fit(ctxt: ref Context, h: ref Handle)
+{
+	r := tk->rect(h.top, ".f.p", 0);
+	(w, hgt) := (r.dx(), r.dy());
+	if(w <= 0 || hgt <= 0)
+		(w, hgt) = (h.want.x, h.want.y);
+	if(h.top.image == nil)
+		return;
+	if(h.buffer != nil && h.buffer.r.dx() == w && h.buffer.r.dy() == hgt)
+		return;
+	b := h.top.display.newimage(Rect((0,0),(w,hgt)), h.top.image.chans,
+		0, Draw->White);
+	if(b == nil)
+		ctxt.fail("plot", "plot: cannot allocate drawing buffer");
+	h.buffer = b;
+	h.graph.image = b;
+	e := tk->putimage(h.top, ".f.p", b, nil);
+	if(len e > 0 && e[0] == '!')
+		ctxt.fail("plot", "plot: putimage: " + e);
 }
 
 tkcmd(ctxt: ref Context, top: ref Tk->Toplevel, s: string)

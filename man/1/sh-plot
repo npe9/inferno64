@@ -176,6 +176,94 @@ leaves the window orphaned on screen instead, the same trade-off
 own
 .B "tk del"
 already makes for exactly this reason.
+.SH WIDGETS
+The window a handle owns is a real Tk toplevel, so a script can put real
+widgets in it.
+.B Plot
+.I id
+.B tk
+.I command...
+is the same generic forward to
+.IR tk (2)'s
+own
+.B cmd()
+that
+.IR sh-tk (1)'s
+.B tk
+.I winid
+.I command...
+is, aimed at this handle's window; its failure is a soft
+.B $status
+in the command form, and its result the value in the substitution form.
+.PP
+That is here because a
+.B Shellbuiltin
+module cannot reach another one's tables \(em
+.IR sh-tk (1)'s
+window and channel tables are private to it \(em so a plot cannot be
+drawn into a window
+.IR sh-tk (1)
+opened, and the way to have controls around a plot is to put them in the
+plot's own window.
+.TP
+.B plot IidB namechan InameR [ItknameR]
+Make a channel this handle owns visible to Tk under
+.I tkname
+(default
+.IR name ),
+so a widget's
+.B -command
+or a
+.B bind
+script can
+.B send
+to it.  See
+.IR send (9).
+.TP
+.B ${plot IidB recvR [InameR [ImsR]]}
+Wait for the next message.  While waiting it services this window's own
+keyboard and pointer events \(em nothing else is doing so, and without
+that a binding never fires and a click never reaches a widget \(em the
+same thing
+.IR sh-tk (1)'s
+own
+.B ${recv
+.IB $ wid }
+does.  With
+.I name
+it returns that channel's messages as well as the window manager's; with
+.I ms
+as well, an empty result means the clock ran out and nothing happened,
+so a script can run its own animation in the same loop that reads its own
+events.
+.TP
+.B plot IidB winctl ImessageR
+Hand a window-manager message back to
+.IR tkclient (2).
+.TP
+.B plot IidB fit
+Reallocate the drawing buffer to the panel's current size.  The size
+given to
+.B plot new
+is only a request; once a script has packed its own widgets around the
+panel, or the user has resized the window, the panel is a different size
+and this is how the image follows it.
+.PP
+A window is not put on screen by
+.BR "plot new" .
+It goes up at the first
+.BR draw ,
+.B recv
+or
+.BR fit .
+That matters: a widget created after
+.IR tkclient (2)'s
+own
+.B onscreen()
+never receives a pointer event \(em measured, a scale added afterwards
+reports nothing at all when clicked while the panel created before it
+reports every click \(em so a script that wants controls has to be able
+to build them first.  A script that adds no widgets never notices.
 .SH EXAMPLE
 .EX
 	load plot
@@ -196,6 +284,18 @@ already makes for exactly this reason.
 	echo rows: ${plot $id rows history}
 	plot del $id
 .EE
+.PP
+.B /lib/demo/predatorprey.sh
+is a working lab in about a hundred lines of
+.IR sh (1):
+Tk owns the sliders, the buttons and the layout,
+.IR plot (2)
+owns the pixels of the graph,
+.IR dynsys (2)
+owns the equations and the integrator, and the script is the model and
+the wiring.  It does no floating-point arithmetic, because
+.IR sh (1)
+has none.
 .SH SOURCE
 .B /appl/cmd/sh/plot.b
 .SH SEE ALSO

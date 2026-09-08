@@ -169,6 +169,55 @@ not
 which
 .IR eqn2hoc (2)
 does not accept).
+.SH STEPPING
+.B ${dynsys
+.I id
+.B step
+.I t h v0 v1 ...
+.B }
+runs one fourth-order Runge-Kutta step of size
+.I h
+from time
+.I t
+and returns the new time followed by the new state.
+.IR Dynsys (2)
+itself has no integrator \(em it evaluates a right-hand side and stops
+there \(em but a shell cannot sensibly run one either: an RK4 step is
+four right-hand-side evaluations and a dozen real multiplications per
+state, and
+.IR sh (1)
+has no real arithmetic at all.  So the step lives on the Limbo side of
+the same boundary the rest of this module draws, and the script drives
+it.
+.PP
+Every real this module returns is printed to seventeen significant
+digits, not six, because a script that steps a model feeds the state
+straight back in as the next step's input.
+.SH PARAMETERS
+.IR Dynsys (2)'s
+own
+.B param
+line DECLARES a parameter.  A script with a slider needs to CHANGE one,
+and re-declaring it would add a second parameter of the same name, so
+.B dynsys
+.I id
+.B setparam
+.I name value
+does that instead \(em the one verb here that is not
+.IR dynsys (2)'s
+own, and here because a shell has no other way to reach
+.BR Model.parameter [].
+.B ${dynsys
+.I id
+.B getparam
+.I name
+.B }
+reads one back, and
+.B ${dynsys
+.I id
+.B paramnames}
+lists them, so a script can build one slider per parameter without
+naming any of them.
 .SH SOURCE
 .B /appl/cmd/sh/dynsys.b
 .SH SEE ALSO
