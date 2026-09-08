@@ -10,6 +10,22 @@
 # because of that, and the two hand-rolled readers that were tried
 # instead each produced confident, wrong names.
 #
+# The root cause underneath that silence was found by the cloud-port
+# session: utils/include/a.out.h declares struct Exec's eight fields
+# `long`, and they are 32-bit big-endian words in the file.  `long` is
+# 64 bits on the hosts these tools build on, so the struct is twice the
+# width of the record it describes and every field after magic reads
+# the wrong four bytes -- symsz in particular comes out 0 for any
+# kernel below 4GB, so libmach concludes there are no symbols.
+#
+# This file's own measurements corroborate that from the other side.
+# libmach's amd64 ExecTable row gives the header size as
+# sizeof(Exec)+8; with the broken 64-bit Exec that is 72, and with the
+# 32-bit one it is 40.  40 is exactly what this reader determined
+# empirically before the cause was known -- at 40 the symbol table is
+# consumed with zero bytes left, at 32 there are 3 -- which is why the
+# constant below is 40 and not computed.
+#
 # The two things a hand-written reader gets wrong, both taken from
 # libmach's own syminit()/decodename() (utils/libmach/sym.c):
 #
