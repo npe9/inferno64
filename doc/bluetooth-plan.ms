@@ -609,15 +609,21 @@ because its service class is looked for too.
 The bench, and what it cannot cover
 .PP
 .CW scripts/bthci.py
-models an LE controller and only that.  It answers an inquiry and a remote name
-request and nothing else of Classic \(em no BR/EDR connection, no link
-key, nothing above one \(em and it has no SCO, no Secure Connections,
-and it never rotates an address, so everything in the two sections
-above that is not LE-and-legacy needs the model extended before it can
-be tested at all.  And a model is not
-a radio: nothing here has met real controller timing, a vendor's
-firmware, or the air.  The first real device will find things this
-cannot.
+models a controller and the devices on the other side of it: LE and
+BR/EDR both, inquiry, connections, secure simple pairing, service
+discovery, RFCOMM, HID, BNEP, AVDTP and a hands free gateway.  What it
+does not model is what nothing here implements either: SCO and eSCO,
+so no call audio and no SCO-carried anything; Secure Connections; and
+an address that rotates on the Classic side.
+.PP
+And a model is not a radio.  Nothing here has met real controller
+timing, a vendor's firmware, or the air, and every phase in the bench
+is this stack talking to a program that was written from the same
+specifications by the same reader.  Where that could be narrowed it
+was \(em the AES vectors, the ah test vector, the RFCOMM frame check
+sequence against frames every description of the protocol quotes \(em
+and where it could not, the record says so.  The first real device
+will find things this cannot.
 .PP
 Key storage is now its own service, as the brief suggests, rather
 than a file

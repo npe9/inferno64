@@ -21512,20 +21512,37 @@ have it.
 .NH 2
 What is not there
 .PP
-Of Bluetooth Classic there is inquiry and a remote name request and
-nothing else: no connection, no link key, no secure simple pairing,
-and so no SDP, no RFCOMM, no Classic HID, no PAN and no audio, all of
-which are built on a connection.  L2CAP here is the fixed channels an
-LE link uses, the framing under them, and LE credit-based channels;
-the enhanced form that opens several at once and can reconfigure them
-is not here, and neither is the connection-oriented channel Classic
-uses.  Pairing is LE legacy Just Works, in both directions, which
-gives an encrypted link and a bond and no protection whatever against
-a man in the middle; LE Secure Connections needs P-256, which is not
-here, and a device that insists on it is told so.  Both roles exist
-now \(em this advertises, answers a link a peer opens, serves a GATT
-database on it and pairs as the responder \(em but a peripheral that
-needs passkey entry or numeric comparison is not something it can be.
+What is left out is now a short list, and every item on it is left
+out for a reason rather than for want of time.
+.PP
+There is no audio.  A call's sound and a music stream's carriage both
+need what this cannot do: SCO and eSCO for the first, which the
+controller has to carry and which over USB means isochronous
+endpoints, with iso plumbing in
+.CW devusb
+and
+.CW usbxhci
+that is not verified; and SBC for the second, which is a codec and was
+left out of a first stack deliberately.  So AVDTP configures and opens
+and starts a stream that carries whatever it is given, and HFP places
+and answers calls it cannot hear.  AVRCP is not implemented at all.
+.PP
+There is no Secure Connections, on either transport.  LE pairing is
+legacy Just Works and Classic pairing is secure simple pairing with no
+input and no output, which is also Just Works: both give an encrypted
+link and a bond and no protection whatever against a man in the
+middle.  P-256 is what the first needs and
+.CW libsec
+has no elliptic curve code at all; a device that insists on it is told
+so rather than being failed silently.  A peripheral that needs passkey
+entry or numeric comparison is not something this can be, because
+there is nothing here to show a number on.
+.PP
+L2CAP is the fixed channels an LE link uses, LE credit-based channels,
+and BR/EDR basic mode; the enhanced retransmission and streaming modes
+are not here, and neither is the enhanced credit-based form that opens
+several channels at once.  The old kind of Classic pairing, with a
+PIN, is refused and said out loud.
 .PP
 The USB transport is written and compiles and has never moved a
 packet.  There is no USB Bluetooth controller on the bench and no
@@ -21581,8 +21598,13 @@ so this record stays a record.  The short of it: no real controller
 has been talked to yet; LE Secure Connections needs P-256 and
 AES-CMAC and
 .CW libsec
-has no elliptic curve code at all; and the peripheral role, Classic
-and audio do not exist.
+has no elliptic curve code at all; and there is no audio, because a
+call needs a synchronous connection nothing here carries and a music
+stream needs a codec that was deliberately left out.  Everything else
+the plan listed is implemented and is exercised by the bench: both
+roles on both transports, service discovery both ways, serial ports
+both ways, keyboards over either, a network interface, and the
+signalling under an audio stream.
 .PP
 Osprey gets nothing here, and the reason is not neglect.  Osprey is a
 microkernel with library operating systems above it: its unit of
