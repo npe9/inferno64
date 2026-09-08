@@ -702,7 +702,13 @@ Only then does the clock move, and this is the ordering that matters
 on hardware.  Raising the clock before the card has agreed runs it
 outside its own timing, which is corruption rather than an error.  With
 high speed agreed the ceiling is 50MHz, so 52/2 is now legal and the
-divider is 1 rather than 2 \- 26MHz where the previous piece got 13.
+divider is 1 rather than 2, which the register field calls 26MHz where
+the previous piece called it 13.  That is arithmetic on a register,
+not observed throughput: as with
+.CW SDHCI-SPEED-ACCEPTED
+above, nothing in the model times a transfer against SDCLK, so the
+doubling is a number this driver computed and not a rate anything
+measured.
 .PP
 The fallback is the half worth testing, and it is testable.  Asking for
 a function this card does not offer gives

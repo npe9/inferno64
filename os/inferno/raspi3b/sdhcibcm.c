@@ -349,6 +349,22 @@ sdhcispeed(Ctlr *c, int maxmhz)
  * One command whose answer comes back over the data lines rather than
  * in a response register, read into b.  CMD6 and ACMD13 both work this
  * way and both return 64 bytes.
+ *
+ * Every failure exit resets the data circuit before returning, and
+ * that is not tidiness.  A command that was accepted and then did not
+ * finish leaves the card still driving the data lines; the caller here
+ * prints a marker and card init carries on, and the next command that
+ * sets Cmdisdata will sit on Datinhibit until its bounded poll expires.
+ * One abandoned status block would cost every later transfer a
+ * timeout.  Srstdata is the specification's answer -- write it, and the
+ * controller clears it when the data circuit is back -- and clearing
+ * the status afterwards leaves nothing stale for the next command to
+ * read as its own.
+ *
+ * None of this is reachable under QEMU, where a command completes
+ * inside the register write and no poll ever expires.  It is written
+ * from the specification rather than from a test for exactly that
+ * reason.
  */
 static int
 sdhcistatusblock(Ctlr *c, int cmd, u32 arg, uchar *b, int n)
@@ -360,9 +376,9 @@ sdhcistatusblock(Ctlr *c, int cmd, u32 arg, uchar *b, int n)
 	r[Blksizecnt] = (1<<16) | n;
 	if(sdhcicmd(c, cmd, arg,
 	    Resp48|Cmdcrcchk|Cmdixchk|Cmdisdata|Tmblkcnt|Tmdatdirread) < 0)
-		return -1;
+		goto reset;
 	if(awaitbit(&r[Interrupt], Readready, 1) < 0)
-		return -1;
+		goto reset;
 	r[Interrupt] = Readready;
 	for(i = 0; i < n; i += 4){
 		w = r[Data];
@@ -372,9 +388,15 @@ sdhcistatusblock(Ctlr *c, int cmd, u32 arg, uchar *b, int n)
 		b[i+3] = w>>24;
 	}
 	if(awaitbit(&r[Interrupt], Datadone, 1) < 0)
-		return -1;
+		goto reset;
 	r[Interrupt] = Datadone;
 	return 0;
+
+reset:
+	r[Control1] |= Srstdata;
+	awaitbit(&r[Control1], Srstdata, 0);
+	r[Interrupt] = r[Interrupt];
+	return -1;
 }
 
 static int
