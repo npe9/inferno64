@@ -247,7 +247,22 @@ export PATH
 # of them above emu.  Set EMU to override; the .dis files are identical
 # either way, so what the phases assert about the stack is unchanged.
 #
-EMU=${EMU:-emu-g -c0}
+# And emu rather than emu-g, which is not about the compiler -- both
+# are -c0 here -- but about which build.  emu-g is the console
+# configuration, without draw, tk and freetype; under a whole run of
+# this bench it faults intermittently inside rungc, the garbage
+# collector's own block walk, with a real frame-pointer backtrace
+# recorded in doc/inferno-ports.ms.  Run singly the phases that fail
+# do not fail, so it is something about a whole run, and it is not
+# diagnosed.  Over the session that found it, emu passed every full
+# run and emu-g passed about half.
+#
+# So the default is the one that does not fail, because a bench whose
+# default configuration fails at a random phase teaches whoever runs
+# it that failures here are weather.  EMU=emu-g still runs it, and
+# doing so is how the next capture of that fault will be got.
+#
+EMU=${EMU:-emu -c0}
 OUT=${OUT:-`mktemp -d`}
 
 #
