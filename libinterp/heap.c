@@ -623,6 +623,12 @@ reportunder(Type *t, int n, char *what)
 	dumpstack();
 }
 
+/*
+ * These are every statically initialised Type in the tree, and
+ * include/interp.h declares the same ten.  A new one has to be added
+ * here too, or it gets handed to free() the first time its count is
+ * over-decremented.
+ */
 static int
 statictype(Type *t)
 {
