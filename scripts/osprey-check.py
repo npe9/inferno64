@@ -414,7 +414,12 @@ CHECKS = [
    "echo attach 6 0 >/n/osprey/ctl; echo mode 6 strict >/n/osprey/ctl",
    "echo bindproc 6 $b >/n/osprey/ctl",
    "{ while(){} } &",
-   "u=$apid; sleep 8; ps | awk '$2=='^$b"],
+   # The throttle is the scheduler's to apply, so when it applies is not
+   # this script's to say.  Looking once after eight seconds read the
+   # process as still running about one run in ten; this waits for it,
+   # twenty seconds past the sleep it already does, and prints what it
+   # finds either way so a real failure still reads as one.
+   "u=$apid; sleep 8; for(i in `{seq 1 20}){ if(ps | awk '$2=='^$b | grep -s Stopped) break; sleep 1 }; ps | awk '$2=='^$b"],
   "Stopped"),
  ("and one that is not, still running beside it",
   ["ps | awk '$2=='^$u",

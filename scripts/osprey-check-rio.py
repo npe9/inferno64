@@ -205,9 +205,16 @@ def main():
     # driver, /dev/kbd, rio, the window's own /dev/cons and the shell,
     # which parses the line and asks for a program by that name.
     typed = ','.join('K:' + k for k in 'n o s u c h t h i n g'.split())
+    # and then a program that does exist, and a line for it to echo:
+    # /bin/cat with no argument reads its standard input and writes it
+    # out, and in a window both of those are the window.
+    runcat = ','.join('K:' + k for k in
+                      'slash b i n slash c a t'.split()) + ',K:ret,s:3.0,'
+    runcat += ','.join('K:' + k for k in 'h e l l o'.split()) + ',K:ret,s:3.0'
     swtext, swpix = boot(swshot, 'm:240:160,s:1.0,d:right,s:1.2,u:right,s:1.5,'
                                  'm:-400:-300,s:0.8,d:right,s:0.6,m:300:220,s:0.8,'
-                                 'u:right,s:8.0,' + typed + ',K:ret,s:4.0', swlog)
+                                 'u:right,s:8.0,' + typed + ',K:ret,s:4.0,'
+                                 + runcat, swlog)
     # Where it is, measured from the border rather than from the fill: a
     # stray white pixel in the frame buffer's top-left corner - two of
     # them, and they are there in the control shot too - would otherwise
@@ -287,6 +294,17 @@ def main():
          "on the machine's console, because the shell's print goes to descriptor 1 and that is "
          "the window",
          'sh: cannot exec' not in swtext),
+        ("and a program runs in the window: /bin/cat is typed at it and the buddy lays that "
+         "binary out for a container of the window's own - the shell forked, the fork was "
+         "given the window's descriptors, and the program the fork execs is a Plan 9 a.out "
+         "the buddy pages in",
+         re.search(r'buddy: exec /bin/cat for container \d+: a Plan 9 a\.out', swtext) is not None),
+        ("and its output is the window's: the cat started in the window says so with its own "
+         "argument vector, and that line does not appear on the machine's console - the boot "
+         "runs a /boot/cat of its own and that one does appear there, which is what makes the "
+         "distinction worth drawing rather than assuming",
+         'argv[0] = /bin/cat' not in swtext
+         and 'argv[0] = /boot/cat' in swtext),
         ("and the notes rio posts are addressed to something that exists: libthread keeps the "
          "number getpid() gave it and posts to that when it shuts down, and no boot here has "
          "the kernel refusing one because the number named no container",

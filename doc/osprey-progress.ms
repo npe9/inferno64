@@ -8576,11 +8576,75 @@ before the typing and 5763 after.  The complaint does not appear on the
 machine's console, which is the other half of saying that descriptor 1
 is the window.
 .PP
-Twelve criteria, three consecutive runs, the same numbers each time.
-What is not claimed: no program has been run to completion in a window,
-because the word typed was one that does not exist.  A window that runs
+.PP
+And a program runs in it.
+.CW /bin/cat
+is typed at the window and Enter after it, then a line for it to echo.
+The shell forks, the fork is given the window's descriptors, and the
+buddy lays that binary out for a container of the window's own:
+.CW "buddy: exec /bin/cat for container N: a Plan 9 a.out" .
+cat with no argument reads its standard input and writes it out, and in
+a window both of those are the window: it says how it started, echoes
+the line, and neither appears on the machine's console.
+.PP
+That last is a distinction worth drawing rather than assuming.  The boot
+runs a
 .CW /boot/cat
-and shows what it echoes is the next thing to ask for.
+of its own, on the console, as part of what the pair check exercises, so
+a criterion that looked for
+.CW "cat: started with"
+would have passed on that one and said nothing about the window's.  What
+it looks for is the argument vector:
+.CW "argv[0] = /bin/cat"
+must not be on the console, and
+.CW "argv[0] = /boot/cat"
+must be, so the criterion fails if the console falls silent for some
+other reason.
+.PP
+Fourteen criteria, three consecutive runs, the same numbers each time.
+The text inside the window goes 3745 pixels with nothing typed, 5763
+after the word, 6033 after cat has run and echoed; rendered as
+characters it is the shell's banner, its complaint about the word, cat's
+own line and the line cat echoed back.
+.PP
+What is not claimed: the window is not swept away, moved, resized or
+deleted, and no second window is made.  Those are the rest of what a
+window system does, and each is a gesture the check would have to drive.
+.B "2.3o: a throttled process that dies instead of stopping."
+The sweep that gated 2.3n failed one criterion of the full personality's
+check,
+.CW "a container held to its reservation" ,
+and the kept log says what happened rather than that it did not work.
+The process bound to the strict container is not
+.CW Stopped ,
+it is
+.CW Broken ,
+and above that line is
+.CW "rc 2792: suicide: sys: trap: fault read addr=0x0 pc=0x20d555" .
+The throttle did not fail to stop it.  It faulted, reading address zero,
+and killed itself first.
+.PP
+Two things about it are worth writing down now, because they are what a
+next look should start from.  The rate is two runs in eight, measured
+today.  And the discriminator is already in the check: the criterion
+after it,
+.CW "and one that is not, still running beside it" ,
+is about a second spinning process that is not bound to the strict
+container, and that one passed both times.  Two processes of the same
+shape, both forks of the same
+.CW rc ,
+and only the one that is stopped and started again by the throttle dies.
+That does not prove the stop is what breaks it \- this machine has a
+fault transient of its own, recorded earlier in this document - but it
+says where to look first.
+.PP
+The check waits for the throttle now rather than looking once eight
+seconds in, which is the same shape as 2.3k's fix and costs nothing when
+the throttle is merely late.  It does not help here: a process that has
+died will never become
+.CW Stopped ,
+so the criterion still fails, and it should.  Three runs of that check
+before the change and four after, one failure in each set of four.
 .NH 2
 Track three: the library-OS personality execs a program, then rio
 .PP

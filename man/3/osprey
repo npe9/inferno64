@@ -1363,7 +1363,11 @@ types at the window: the word
 one key at a time through the emulated keyboard, and the shell in the
 window asks the buddy for a program of that name.  The word is one the
 shell cannot run on purpose; what is being checked is the path from the
-i8042 to the shell and back out to the screen, not the program.
+i8042 to the shell and back out to the screen, not the program.  Then
+.B /bin/cat
+is typed, and a line for it to echo: the shell forks, the fork keeps the
+window's descriptors, and cat reads its standard input and writes it
+out, both of which are the window.
 .PP
 A process forked
 .B RFNOWAIT
