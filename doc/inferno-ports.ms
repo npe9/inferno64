@@ -19658,3 +19658,83 @@ consistency check rather than a coincidence: virtarm64 boots to an
 interactive shell with CHANTEST-OK and DIS-STRESS-OK while pc64 was
 panicking in about 85% of boots, on the same interpreter and the same
 collector.
+.NH 2
+The number: 82 panics in 96 boots became 2
+.PP
+Same command line, same 60-second timeout, same machine, 96 boots
+either side, each batch confirmed to be one build by
+.CW etext .
+Before the fix
+.CW ( "etext 0x32ceee" ):
+82 of 96 boots panicked.  After it
+.CW ( "etext 0x32cf3e" ):
+.TS
+box, tab(;);
+l l l.
+;before;after
+_
+no panic;14;94
+page fault;26;0
+general protection violation;20;2
+movp: bad sv/dv;13;0
+alloc:D2B:destroy;5;0
+invalid opcode;4;0
+incref/decref: bad r;4;0
+cclose / cclone;3;0
+smalloc: huge size;1;0
+assert failed: m;1;0
+freetype: static Type underflow;3;0
+.TE
+.PP
+Every signature this hunt chased is gone except two general protection
+violations.  The static-Type guard, which fired three times in the 96
+boots before, fired not once in the 96 after \(em which is the
+prediction made when it was written, that
+.CW Tptr
+and
+.CW Tlist
+underflows were downstream of something else rather than a refcounting
+bug of their own.  They were.  The guard stays: refusing to hand a
+kernel global to
+.CW free()
+is right whatever put the count there, and it now costs nothing.
+.PP
+The one panic examined resolves to
+.CW modstatus+0x18 ,
+faulting on
+.CW "MOVQ 0x68(AX), AX"
+with a non-canonical pointer whose upper half is
+.CW 0x00FF53F0
+\(em the real-mode BIOS stub address
+.CW F000:FF53 .
+That is a different bug and a much rarer one; two samples are not worth
+a theory.
+.NH 2
+-smp 2 boots, and cpu1 comes up
+.PP
+The blocker doc/inferno-platforms.ms recorded as "-smp 2 brings cpu1
+up, where it meets the heap fault" is gone, which follows: squidboy's
+APs come up through the same vector table and the same
+.CW _intrcommon ,
+so every processor was losing
+.CW AX
+on every interrupt, not just the first.  A
+.CW "-smp 2"
+boot now runs to the timeout with no panic and reports both:
+.P1
+cpu0: 998MHz AuthenticAMD AMD-K8 (AX 00060FB1 CX 80002001 DX 178BFBFD)
+cpu1: 998MHz AuthenticAMD AMD-K8 (AX 00060FB1 CX 80002001 DX 178BFBFD)
+.P2
+.PP
+What that does not yet mean is a parallel interpreter.  The same boot
+prints
+.CW "nvm: 1 hold the vm, cpu1 <nil>" ,
+which is os/inferno/port/dis.c's own instrumentation reporting the
+high-water mark of processes holding
+.CW vmlock ,
+the single global VM
+.CW QLock .
+One.  cpu1 is real, takes interrupts, and runs kernel work; Dis itself
+is still serialised behind one lock.  That is the boundary the rest of
+this branch's plan is about, and it is now reachable to work on rather
+than blocked behind a crash.
