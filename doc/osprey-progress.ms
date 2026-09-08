@@ -8610,41 +8610,74 @@ own line and the line cat echoed back.
 What is not claimed: the window is not swept away, moved, resized or
 deleted, and no second window is made.  Those are the rest of what a
 window system does, and each is a gesture the check would have to drive.
-.B "2.3o: a throttled process that dies instead of stopping."
+.B "2.3o: abort() is a read of address zero."
 The sweep that gated 2.3n failed one criterion of the full personality's
 check,
 .CW "a container held to its reservation" ,
-and the kept log says what happened rather than that it did not work.
-The process bound to the strict container is not
+and the kept log said the process bound to the strict container was
+.CW Broken
+rather than
 .CW Stopped ,
-it is
-.CW Broken ,
-and above that line is
-.CW "rc 2792: suicide: sys: trap: fault read addr=0x0 pc=0x20d555" .
-The throttle did not fail to stop it.  It faulted, reading address zero,
-and killed itself first.
+with
+.CW "rc 2792: suicide: sys: trap: fault read addr=0x0 pc=0x20d555"
+above it.  The throttle had not failed to stop it; it had faulted and
+killed itself first.
 .PP
-Two things about it are worth writing down now, because they are what a
-next look should start from.  The rate is two runs in eight, measured
-today.  And the discriminator is already in the check: the criterion
-after it,
-.CW "and one that is not, still running beside it" ,
-is about a second spinning process that is not bound to the strict
-container, and that one passed both times.  Two processes of the same
-shape, both forks of the same
-.CW rc ,
-and only the one that is stopped and started again by the throttle dies.
-That does not prove the stop is what breaks it \- this machine has a
-fault transient of its own, recorded earlier in this document - but it
-says where to look first.
+The obvious suspect was the throttle, because the criterion after it \-
+a second spinning process, not bound to the strict container \- passed
+every time, and the only difference between the two was being stopped
+and started again.  That was wrong, and the way it was shown wrong is
+the useful part: the same experiment with the container in best-effort
+mode, where nothing is ever stopped, killed the process twice in four
+runs at the same instruction.  What the two had in common was not the
+stop.  It was
+.CW bindproc :
+both put a running process into a container.
 .PP
-The check waits for the throttle now rather than looking once eight
-seconds in, which is the same shape as 2.3k's fix and costs nothing when
-the throttle is merely late.  It does not help here: a process that has
-died will never become
-.CW Stopped ,
-so the criterion still fails, and it should.  Three runs of that check
-before the change and four after, one failure in each set of four.
+The cause is 2.3j, four commits earlier in this same session.  That made
+.CW getpid (2)
+report the container's identity, which is right for a legacy program the
+buddy loaded and wrong for a native process of this kernel that is bound
+into a container while it runs.  Such a process was started by this
+kernel with this kernel's pid, and its library has already keyed state
+to that number.  One of those keys is libc's allocator:
+.CW plock
+stores
+.CW _tos->pid
+in the pool's private record and
+.CW punlock
+compares it and calls
+.CW abort ()
+if it has changed, and
+.CW abort ()
+on Plan 9 is
+.CW "while(*(int*)0)" .
+So
+.CW bindproc
+changed the number under a process in the middle of a
+.CW malloc ,
+and the next
+.CW punlock
+read address zero.  A fixed faulting pc across every occurrence is what
+said it was deliberate code and not corruption.
+.PP
+The rule is narrower now: the container's identity is the pid of a
+program the buddy loaded
+.CW ( up->buddyimage ),
+and a native process bound into a container keeps the kernel's.  Four
+runs with the old number and four with the new, on the same experiment:
+four faults against none.  The check waits for the throttle rather than
+looking once eight seconds in, which is the shape 2.3k argues for and
+costs nothing when the throttle is merely late; it was not what was
+wrong here.
+.PP
+Two lessons, and the second is the one worth keeping.  The first is that
+.CW abort ()
+looks exactly like a wild pointer.  The second is that the criterion
+that pointed at the throttle was a difference between two cases, and a
+difference is a hypothesis, not a cause; the cheap way to tell them
+apart was to remove the difference and see whether the failure went with
+it.  It did not.
 .NH 2
 Track three: the library-OS personality execs a program, then rio
 .PP

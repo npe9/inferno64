@@ -1369,6 +1369,19 @@ is typed, and a line for it to echo: the shell forks, the fork keeps the
 window's descriptors, and cat reads its standard input and writes it
 out, both of which are the window.
 .PP
+The identity a program reads for itself is the container's only for a
+program the buddy loaded.  A native process of this kernel that is bound
+into a container while it runs
+.RB ( bindproc )
+keeps the kernel's pid: it was started with that number and its library
+has already keyed state to it, including the allocator, whose
+.I punlock
+calls
+.IR abort ()
+when
+.B _tos->pid
+has changed under it.
+.PP
 A process forked
 .B RFNOWAIT
 keeps no wait record: the kernel's table of who started whom frees its
@@ -1398,8 +1411,9 @@ thing; a threaded program does exactly that when it exits, which is what
 rio does at the end.
 .B #c/ppid
 answers the parent container while the child table still holds it and 0
-after the parent has reaped, where Plan 9's persists.  A process that is
-not a container's reads the kernel's pid, as before.
+after the parent has reaped, where Plan 9's persists.  A process the
+buddy did not load reads the kernel's pid, whether it is a container's
+or not.
 The draw server's mount is
 reachable from another container:
 .I postmountsrv
