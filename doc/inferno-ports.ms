@@ -19167,3 +19167,130 @@ end.  It is a lead, not a demonstration: nothing here yet shows the two
 happening to the same
 .CW Type
 in one boot.
+.NH 1
+The block being freed is Tptr, a static Type
+.PP
+With the reader, the build check and a kernel built from the current
+tree, a capture finally reads end to end.  Thirty-two pc64 boots at
+.CW "-smp 1"
+produced 27 panics, and among them:
+.P1
+alloc:D2B:free: 34b5f8 not in pools
+_poolfault: running Dis pid 1 module Sh PC 0x79aae80
+panic: alloc:D2B:free 34b5f8 (from 28474a/2f1fb7)
+.P2
+.CW 0x28474a
+is
+.CW free+0x79 ,
+the indirect
+.CW poolfault
+call inside
+.CW free() ,
+and
+.CW 0x2f1fb7
+is
+.CW freelist+0x63 ,
+the
+.CW free(t)
+in
+.CW freelist() Ns 's
+head-node limb.  Both are verified return addresses against this exact
+binary.  That pair also confirms the
+.CW +0x74
+offset by observation rather than by search: the older captures'
+.CW 0x2f1f43
+is this same call site, and a second boot's
+.CW 0x2f2512
+and
+.CW 0x2f2567
+are the older
+.CW 0x2f249e
+and
+.CW 0x2f24f3
+\(em
+.CW destroy() Ns 's
+.CW poolfree()
+and
+.CW destroy() Ns 's
+own entry
+.CW D2BPC
+fault \(em at their current addresses.
+.PP
+The address being freed is the finding.
+.CW 0x34b5f8
+is not a heap pointer at all; it resolves to
+.CW Tptr+0x0
+exactly \(em the statically allocated
+.CW Type
+declared at libinterp/heap.c:16:
+.P1
+Type	Tptr = { 1, 0, markheap, sizeof(WORD*), 1, 0, 0, { 0x80 } };
+.P2
+So
+.CW freelist()
+handed a kernel global to
+.CW free() ,
+which is what "not in pools" is reporting.  Every one of those static
+Types starts with a reference count of 1 that nothing is ever supposed
+to consume; for
+.CW ADEC(&t->ref)
+to reach zero on
+.CW Tptr
+there must have been one decrement more than the matching increment.
+.CW OP(consp)
+does exactly one
+.CW AINC(&Tptr.ref)
+per cons cell it types, and each free of such a cell does exactly one
+.CW ADEC .
+A list cell freed twice produces the imbalance directly \(em which is
+the same double free this hunt has been chasing, seen from a third
+vantage point.  Freeing
+.CW Tptr
+is the symptom; the double free is still the disease.
+.PP
+.CW freetype()
+now refuses it.  The three inline copies of its body in
+.CW freearray()
+and
+.CW freelist()
+call it instead, so one place decides.  When the count reaches zero on
+a static it reports the running Dis module, dumps the stack and puts
+the reference back rather than handing kernel data to the pool.  The
+conversion also settled a disagreement the three copies had with
+.CW freetype() :
+the inline ones freed only on
+.CW "ADEC == 0"
+and did nothing on a negative result, while
+.CW freetype()
+freed on
+.CW "<= 0" ,
+i.e. freed a second time.  Neither is right, and a negative count is
+now reported and frees nothing.  The module name comes from
+.CW currun() Ns 's
+own
+.CW xp->reg.M ,
+not the global
+.CW R.M ,
+for the reason os/inferno/port/alloc.c's
+.CW notefree()
+records: the global was found dangling with a live
+.CW currun() ,
+and dereferencing it inside a diagnostic that only runs when things
+are already broken would manufacture a fresh crash.
+.PP
+This is containment and attribution, not a cure, and it is labelled
+that way in the source.  What is verified is that a ktrace is now
+readable \(em
+.CW "p9sym.py -c"
+takes the raw
+.CW addr=value
+words
+.CW dumpstack()
+prints and keeps the ones that really follow a call, which turns a
+page of hex into
+.CW dumpstack+0xe ,
+.CW callwithureg+0x3e ,
+.CW panic+0xf2 ,
+.CW markheap+0x14d ,
+.CW poolalloc+0x5b .
+What the guard's own report says when it fires has not been seen yet.

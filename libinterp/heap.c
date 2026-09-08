@@ -215,10 +215,7 @@ freearray(Heap *h, int swept)
 			}
 		}
 	}
-	if(ADEC(&t->ref) == 0) {
-		freejitcode(t->initialize);
-		free(t);
-	}
+	freetype(t);		/* was an inline copy; freetype guards statics */
 }
 
 void
@@ -234,10 +231,7 @@ freelist(Heap *h, int swept)
 	if(t != nil) {
 		if(!swept && t->np)
 			freeptrs(l->data, t);
-		if(ADEC(&t->ref) == 0) {
-			freejitcode(t->initialize);
-			free(t);
-		}
+		freetype(t);	/* was an inline copy; freetype guards statics */
 	}
 	if(swept)
 		return;
@@ -259,10 +253,7 @@ freelist(Heap *h, int swept)
 		if(t != nil) {
 			if (t->np)
 				freeptrs(l->data, t);
-			if(ADEC(&t->ref) == 0) {
-				freejitcode(t->initialize);
-				free(t);
-			}
+			freetype(t);	/* was an inline copy; freetype guards statics */
 		}
 		l = l->tail;
 		if(heapmonitor != nil)
@@ -587,12 +578,87 @@ checktype(void *v, Type *t, char *name, int newref)
 	return v;
 }
 
+/*
+ * The Types at the top of this file are kernel data, not pool blocks.
+ * Each starts with ref 1 and nothing may ever free one: handing a
+ * static to free() gives the pool allocator an address it never
+ * owned.  A pc64 boot did exactly that -- "alloc:D2B:free 34b5f8 not
+ * in pools", from freelist()'s head-node limb, and 0x34b5f8 resolves
+ * to Tptr exactly (utils/p9sym.py; doc/inferno-ports.ms, "The
+ * captured pcs were right").  For that to happen the initial
+ * reference must have been consumed, i.e. one ADEC more than the
+ * matching AINC -- OP(consp)'s single AINC(&Tptr.ref) per cons cell
+ * against one ADEC per free of that cell.  A list cell freed twice
+ * produces it directly, which is the same double free this hunt has
+ * been chasing from the other end.
+ *
+ * So this is containment and attribution, not a cure: the underlying
+ * imbalance is still there.  Refusing the free keeps kernel data out
+ * of the pool, and naming the running Dis module at the moment the
+ * count reaches zero attributes the underflow where it happens rather
+ * than leaving it to surface later as an unrelated pool panic.  The
+ * static reference is put back so a second underflow reports again
+ * instead of going quiet.
+ */
+/*
+ * Same source of truth for "which Dis module is running" that
+ * os/inferno/port/alloc.c's notefree() had to be corrected to use:
+ * the plain global R is the process-wide register file and its R.M was
+ * found dangling here even with a live currun(), which was the
+ * dominant crash of this hunt.  currun()'s own Prog carries its saved
+ * module pointer and is valid for a live xp whether or not R has been
+ * swapped in.  See doc/inferno-ports.ms.
+ */
+static void
+reportunder(Type *t, int n, char *what)
+{
+	Prog *xp;
+	extern void dumpstack(void);
+
+	xp = currun();
+	print("freetype: %s %#p ref underflow n %d, pid %d module %s\n",
+		what, t, n, xp != nil ? xp->pid : -1,
+		(xp != nil && xp->reg.M != nil && xp->reg.M != H
+			&& xp->reg.M->m != nil) ? xp->reg.M->m->name : "?");
+	dumpstack();
+}
+
+static int
+statictype(Type *t)
+{
+	return t == &Tarray || t == &Tstring || t == &Tlist
+		|| t == &Tmodlink || t == &Tchannel || t == &Tptr
+		|| t == &Tbyte || t == &Tword || t == &Tlong
+		|| t == &Treal;
+}
+
 void
 freetype(Type *t)
 {
-	if(t == nil || ADEC(&t->ref) > 0)
-		return;
+	int n;
 
+	if(t == nil)
+		return;
+	n = ADEC(&t->ref);
+	if(n > 0)
+		return;
+	if(statictype(t)) {
+		reportunder(t, n, "static type");
+		t->ref = 1;		/* kernel data: put the static reference back */
+		return;
+	}
+	if(n < 0) {
+		/*
+		 * Already at zero before this decrement, so a previous
+		 * caller has freed t and this block is gone.  The three
+		 * inline copies this function replaced only freed on
+		 * ADEC == 0 and silently did nothing here; freetype()'s
+		 * own callers used to free on <= 0, i.e. free it twice.
+		 * Neither is right -- report it and free nothing.
+		 */
+		reportunder(t, n, "type");
+		return;
+	}
 	freejitcode(t->initialize);
 	free(t);
 }
