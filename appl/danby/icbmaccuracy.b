@@ -1,87 +1,54 @@
-implement Flight3d;
+implement Icbmaccuracy;
 
 # danby/icbmaccuracy - The accuracy of an ICBM
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared flight3d viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# where the flight starts and how fast, and the accelerations that shape
+# it.  flightlab(2) is a library this calls with that script - it owns
+# the window, the integrator and the controls, and knows nothing about
+# this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/atmosphere.m";
-	atmosphere: Atmosphere;
-include "danby/flight3d.m";
+include "flightlab.m";
+	flightlab: Flightlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	atmosphere = load Atmosphere Atmosphere->PATH;
-	return ref Model(array[] of {2.2,0.78,0.0,0.002,0.003,9.81});
-}
-
-title(): string
-{
-	return "The accuracy of an ICBM";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"speed", "elevation", "aim error", "drag", "crosswind", "gravity"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.2,0.1,-0.12,0.0,-0.02,0.0};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {8.0,1.5,0.12,0.02,0.02,20.0};
-}
-
-initialstate(model: ref Model): array of real
-{
-	p := model.parameter;
-	horizontal := p[0]*math->cos(p[1]);
-	return array[] of {0.0,0.0,0.0,horizontal*math->cos(p[2]),
-		horizontal*math->sin(p[2]),p[0]*math->sin(p[1])};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 2000.0;
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	(ax, az) := atmosphere->drag2(state[3],state[5],state[2],1.0,p[3],1.0,1.0,8.0);
-	derivative[0] = state[3];
-	derivative[1] = state[4];
-	derivative[2] = state[5];
-	derivative[3] = ax;
-	derivative[4] = p[4]-0.01*state[4];
-	derivative[5] = az-p[5]*0.001;
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-Command: module
+Icbmaccuracy: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title The accuracy of an ICBM\n" +
+	"param speed 2.2 0.2 8.0\n" +
+	"param elevation 0.78 0.1 1.5\n" +
+	"param aim_error 0.0 -0.12 0.12\n" +
+	"param drag 0.002 0.0 0.02\n" +
+	"param crosswind 0.003 -0.02 0.02\n" +
+	"param gravity 9.81 0.0 20.0\n" +
+	"maxtime 2000.0\n" +
+	"state x 0.0\n" +
+	"state lateral 0.0\n" +
+	"state height 0.0\n" +
+	"state vx speed cos { elevation } cos { aim_error }\n" +
+	"state vy speed cos { elevation } sin { aim_error }\n" +
+	"state vz speed sin { elevation }\n" +
+	"eq alt height step { height }\n" +
+	"eq rho exp { - { alt over 8.0 } }\n" +
+	"eq sp sqrt { vx sup 2 + vz sup 2 }\n" +
+	"eq factor - { 0.5 rho drag sp }\n" +
+	"derivative x vx\n" +
+	"derivative lateral vy\n" +
+	"derivative height vz\n" +
+	"derivative vx factor vx\n" +
+	"derivative vy crosswind - 0.01 vy\n" +
+	"derivative vz factor vz - 0.001 gravity\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/flight3d.dis";
-	if(viewer == nil)
-		raise "fail:icbmaccuracy: cannot load the flight3d viewer";
-	viewer->init(ctxt, "icbmaccuracy" :: "/dis/danby/icbmaccuracy.dis" ::
-		"danby-icbmaccuracy" :: nil);
+	flightlab = load Flightlab Flightlab->PATH;
+	if(flightlab == nil)
+		raise "fail:icbmaccuracy: cannot load flightlab";
+	if((e := flightlab->run(ctxt, "icbmaccuracy", SPEC)) != nil)
+		raise "fail:icbmaccuracy: "+e;
 }

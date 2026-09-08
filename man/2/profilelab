@@ -1,0 +1,112 @@
+.TH PROFILELAB 2
+.SH NAME
+profilelab: run, parse, march \- Danby radial structure models as scripts
+.SH SYNOPSIS
+.EX
+include "sys.m";
+include "draw.m";
+include "profilelab.m";
+profilelab := load Profilelab Profilelab->PATH;
+
+err := profilelab->run(ctxt, name, spec);
+(m, start, span, samples, normalised, err) := profilelab->parse(spec);
+data := profilelab->march(m, start, span, samples, normalised);
+.EE
+.SH DESCRIPTION
+.I Profilelab
+is the last of the seven Danby viewer families as a library the model
+calls:
+.PP
+.EX
+profilelab->run(ctxt, "whitedwarf", SPEC);
+.EE
+.PP
+This family is not an evolution in time.  A model integrates OUTWARD from
+the centre of a star, and what is plotted is the profile the march leaves
+behind, so the independent variable is a radius and the graph's x axis is
+that radius rather than a clock.  The symbol
+.B r
+is bound to the current radius, the way
+.B t
+is bound to time in the other families.
+.PP
+The vocabulary is
+.IR dynsys (2)'s
+\(em
+.BR param ,
+.BR state ,
+.BR derivative ,
+.BR eq ,
+.B observable
+\(em plus
+.BR title ,
+.B manual
+and three of profilelab's own:
+.TP
+.BI radius " startexpr " , " spanexpr"
+Where the march begins and how far it goes.  Both are expressions over
+the parameters, because in this family they are usually parameters
+themselves.  The step is
+.IR span /( samples \-1),
+so the march ends a little beyond
+.IR start + span ;
+that is what these models have always done, and the outermost sample is
+the one the normalisation divides by.
+.TP
+.BI samples " n"
+How many points.  320 if not said.
+.TP
+.BI normalise " name"
+Divide that observable by its own value at the outermost sample, which is
+how an enclosed mass becomes a fraction of the total without knowing the
+total in advance.
+.PP
+Exactly two
+.B observable
+lines are required; they are the two curves.  There is no time here, so
+there is no
+.B maxtime
+line \(em
+.IR dynsys (2)
+wants one and
+.I profilelab
+supplies it.
+.PP
+The march is explicit Euler, not the Runge-Kutta the time-stepping
+families use, because that is what these models are: the profile IS the
+sequence of Euler steps, and integrating it more accurately would draw a
+different curve from the one the model describes.  Both states are
+clamped at zero after every step, as this family always has.
+.B March
+runs it and returns
+.IR samples *3
+reals \(em radius, then the two observables \(em with the normalisation
+applied;
+.IR profilelabtest (1)
+uses it without a display.
+.PP
+The window is Tk's.  The parameter sliders are Tk scales, the button is a
+Tk button, the legend is a Tk label, and the layout is a Tk geometry
+manager's; the graph is a
+.IR panel (9)
+widget holding an image the library draws into.  Nothing runs on a timer
+here: a profile is computed when a parameter changes and then sits there,
+so it is redrawn on an event rather than forty times a second.
+.SH SOURCE
+.B /appl/lib/profilelab.b
+.SH SEE ALSO
+.IR profilelabtest (1),
+.IR flightlab (2),
+.IR poplab (2),
+.IR dynsys (2)
+.SH BUGS
+Where a density reaches zero the original programs divided a pressure by
+it.  Limbo's own real division answered 0/0 with zero, so those models
+quietly kept a flat zero density outside the star;
+.IR hoc (2)
+raises on a zero denominator instead, so the specs guard the division
+with
+.B step
+and get the same zero deliberately.  The numbers agree exactly, but a
+spec written without that guard will raise where the C-shaped original
+would have limped on.

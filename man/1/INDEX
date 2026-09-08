@@ -311,6 +311,7 @@ filename filename
 fit math-misc
 flapbat flapbat
 flattops flattops
+flightlabtest flightlabtest
 fmt fmt
 fn sh-std
 fonted fonted
@@ -454,6 +455,7 @@ predatorprey predatorprey
 prefix sh-string
 primes math-misc
 prof prof
+profilelabtest profilelabtest
 ps ps
 psalmody psalmody
 puttar gettar
@@ -648,5 +650,4 @@ zing zing
 zipstream zipstream
 zoneout zoneout
 ~ sh-std
-
 poplabtest poplabtest

@@ -1,87 +1,51 @@
-implement Flight3d;
+implement Badfootball;
 
 # danby/badfootball - A badly kicked football
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared flight3d viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# where the flight starts and how fast, and the accelerations that shape
+# it.  flightlab(2) is a library this calls with that script - it owns
+# the window, the integrator and the controls, and knows nothing about
+# this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/ballistics.m";
-	ballistics: Ballistics;
-include "danby/flight3d.m";
+include "flightlab.m";
+	flightlab: Flightlab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	ballistics = load Ballistics Ballistics->PATH;
-	return ref Model(array[] of {24.0,0.55,0.0,0.008,1.5,9.81});
-}
-
-title(): string
-{
-	return "A badly kicked football";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"speed", "elevation", "aim", "drag", "wobble", "gravity"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.0,0.0,-0.5,0.0,-4.0,0.0};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {40.0,1.3,0.5,0.03,4.0,20.0};
-}
-
-initialstate(model: ref Model): array of real
-{
-	p := model.parameter;
-	horizontal := p[0]*math->cos(p[1]);
-	return array[] of {0.0,0.0,0.0,
-		horizontal*math->cos(p[2]),horizontal*math->sin(p[2]),
-		p[0]*math->sin(p[1])};
-}
-
-maxtime(nil: ref Model): real
-{
-	return 8.0;
-}
-
-Model.rhs(model: self ref Model, t: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	derivative[0] = state[3];
-	derivative[1] = state[4];
-	derivative[2] = state[5];
-	(derivative[3],derivative[4],derivative[5]) = ballistics->acceleration3(
-		state[3],state[4],state[5],p[3],0.0,0.0,0.0,0.0,p[5]);
-	derivative[4] += p[4]*math->sin(14.0*t);
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-Command: module
+Badfootball: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title A badly kicked football\n" +
+	"param speed 24.0 0.0 40.0\n" +
+	"param elevation 0.55 0.0 1.3\n" +
+	"param aim 0.0 -0.5 0.5\n" +
+	"param drag 0.008 0.0 0.03\n" +
+	"param wobble 1.5 -4.0 4.0\n" +
+	"param gravity 9.81 0.0 20.0\n" +
+	"maxtime 8.0\n" +
+	"state x 0.0\n" +
+	"state lateral 0.0\n" +
+	"state height 0.0\n" +
+	"state vx speed cos { elevation } cos { aim }\n" +
+	"state vy speed cos { elevation } sin { aim }\n" +
+	"state vz speed sin { elevation }\n" +
+	"eq v sqrt { vx sup 2 + vy sup 2 + vz sup 2 }\n" +
+	"derivative x vx\n" +
+	"derivative lateral vy\n" +
+	"derivative height vz\n" +
+	"derivative vx - { drag v vx }\n" +
+	"derivative vy - { drag v vy } + wobble sin { 14.0 t }\n" +
+	"derivative vz - gravity - drag v vz\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/flight3d.dis";
-	if(viewer == nil)
-		raise "fail:badfootball: cannot load the flight3d viewer";
-	viewer->init(ctxt, "badfootball" :: "/dis/danby/badfootball.dis" ::
-		"danby-badfootball" :: nil);
+	flightlab = load Flightlab Flightlab->PATH;
+	if(flightlab == nil)
+		raise "fail:badfootball: cannot load flightlab";
+	if((e := flightlab->run(ctxt, "badfootball", SPEC)) != nil)
+		raise "fail:badfootball: "+e;
 }

@@ -68,6 +68,8 @@ TARG=\
 	trajlabtest.dis\
 	orblabtest.dis\
 	ecolabtest.dis\
+	flightlabtest.dis\
+	profilelabtest.dis\
 	danbyeqntest.dis\
 	date.dis\
 	dbfs.dis\

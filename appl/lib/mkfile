@@ -53,6 +53,8 @@ TARG=\
 	trajlab.dis\
 	orblab.dis\
 	ecolab.dis\
+	flightlab.dis\
+	profilelab.dis\
 	env.dis\
 	eqn2hoc.dis\
 	ether.dis\
@@ -212,6 +214,8 @@ SYSMODULES= \
 	trajlab.m\
 	orblab.m\
 	ecolab.m\
+	flightlab.m\
+	profilelab.m\
 	cci.m\
 	daytime.m\
 	db.m\

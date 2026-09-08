@@ -1,87 +1,48 @@
-implement Profile;
+implement Whitedwarf;
 
 # danby/whitedwarf - The limiting mass of a white dwarf
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared profile viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# the two quantities that vary with radius and the equations that carry
+# them outward.  profilelab(2) is a library this calls with that script -
+# it owns the window, the march and the controls, and knows nothing about
+# this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/profile.m";
+include "profilelab.m";
+	profilelab: Profilelab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {1.0,1.0,1.3333333,1.0,0.002,8.0});
-}
-
-title(): string
-{
-	return "The limiting mass of a white dwarf";
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"central density", "degeneracy", "gamma", "gravity", "start radius", "radius limit"};
-}
-
-parameterminima(): array of real
-{
-	return array[] of {0.1,0.1,1.2,0.1,0.0001,2.0};
-}
-
-parametermaxima(): array of real
-{
-	return array[] of {10.0,5.0,1.6666667,3.0,0.02,25.0};
-}
-
-fieldlabels(): array of string
-{
-	return array[] of {"density", "enclosed mass"};
-}
-
-profile(model: ref Model, samples: int): array of real
-{
-	p := model.parameter;
-	result := array[3*samples] of real;
-	r := p[4];
-	dr := p[5]/real(samples-1);
-	density := p[0];
-	mass := 4.1887902*r*r*r*density;
-	for(i := 0; i < samples; i++){
-		result[3*i] = r;
-		result[3*i+1] = density/p[0];
-		result[3*i+2] = mass;
-		dpdrho := p[1]*p[2]*math->pow(density,p[2]-1.0);
-		densityderivative := -p[3]*mass*density/(r*r*dpdrho+1.0e-8);
-		massderivative := 4.0*Math->Pi*r*r*density;
-		density += dr*densityderivative;
-		mass += dr*massderivative;
-		if(density < 0.0)
-			density = 0.0;
-		r += dr;
-	}
-	maximum := result[3*(samples-1)+2];
-	if(maximum > 0.0)
-		for(i = 0; i < samples; i++)
-			result[3*i+2] /= maximum;
-	return result;
-}
-
-Command: module
+Whitedwarf: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title The limiting mass of a white dwarf\n" +
+	"param central_density 1.0 0.1 10.0\n" +
+	"param degeneracy 1.0 0.1 5.0\n" +
+	"param gamma 1.3333333 1.2 1.6666667\n" +
+	"param gravity 1.0 0.1 3.0\n" +
+	"param start_radius 0.002 0.0001 0.02\n" +
+	"param radius_limit 8.0 2.0 25.0\n" +
+	"radius start_radius , radius_limit\n" +
+	"samples 320\n" +
+	"state density central_density\n" +
+	"state mass 4.1887902 start_radius sup 3 central_density\n" +
+	"eq dpdrho { degeneracy gamma } density sup { gamma - 1.0 }\n" +
+	"eq denom { r r dpdrho } + 0.00000001\n" +
+	"derivative density 0.0 - { { gravity mass density } over denom }\n" +
+	"derivative mass 4.0 PI r r density\n" +
+	"observable density density over central_density\n" +
+	"observable enclosed_mass mass\n" +
+	"normalise enclosed_mass\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/profile.dis";
-	if(viewer == nil)
-		raise "fail:whitedwarf: cannot load the profile viewer";
-	viewer->init(ctxt, "whitedwarf" :: "/dis/danby/whitedwarf.dis" ::
-		"danby-whitedwarf" :: nil);
+	profilelab = load Profilelab Profilelab->PATH;
+	if(profilelab == nil)
+		raise "fail:whitedwarf: cannot load profilelab";
+	if((e := profilelab->run(ctxt, "whitedwarf", SPEC)) != nil)
+		raise "fail:whitedwarf: "+e;
 }

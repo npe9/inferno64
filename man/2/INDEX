@@ -159,6 +159,7 @@ filter-slip filter-slip
 find lists
 findattr factotum
 findattrval factotum
+flightlab flightlab
 font draw-font
 format format
 fprint sys-print
@@ -247,6 +248,7 @@ log1p math-elem
 login security-login
 makedrawcontext wmclient
 map lists
+march profilelab
 masses orblab
 match filepat
 math math-0intro
@@ -308,6 +310,7 @@ poplab poplab
 popup popup
 plot plot
 populationmodel populationmodel
+profilelab profilelab
 security security-0intro
 session session
 trajectory trajectory

@@ -234,13 +234,6 @@ checkatrest(name: string, m: ref Model, eqx, eqy: ref Expr)
 		d[1], 0.0, 1.0e-12);
 }
 
-rates(m: ref Model, state: array of real): array of real
-{
-	d := array[len state] of real;
-	dynsys->rhs(m, 0.0, state, d);
-	return d;
-}
-
 near(what: string, got, want, tol: real)
 {
 	d := got-want;
