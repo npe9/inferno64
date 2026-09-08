@@ -211,13 +211,15 @@ on such a device's own
 opens a BR/EDR link to it and
 .B disconnect
 takes it down, and a peer that pages this side is accepted the same
-way an LE peer that connects is.  Nothing runs over a BR/EDR link:
-L2CAP's signalling channel is a different CID there and none of
-Classic L2CAP is written, so the link is all there is, and
+way an LE peer that connects is.
 .B state
 says
 .B br/edr
-where an LE link would give its connection parameters.
+where an LE link would give its connection parameters, because it has
+none.  What runs over such a link is L2CAP and nothing above it: ATT
+is LE only, so there is no
+.B gatt
+tree on a Classic device.
 .B "connect \fIaddr\fP [public|random]",
 .BI "disconnect " addr
 and
@@ -447,6 +449,16 @@ away when the device says its database has moved: a channel is not an
 attribute and a Service Changed indication says nothing about it.  It
 does go away with the link, along with everything else the link was
 carrying.
+.PP
+The channel on a BR/EDR link is a basic mode one and the file is the
+same file: one write is one SDU, one read is the next SDU whole, and
+the difference is underneath.  A basic mode channel is opened with a
+connection request and then configured in both directions, and is not
+open until both have been answered; it has no credits, so a write
+that fits goes out at once, and the size it must fit in is the MTU the
+peer asked for in its configuration.  Nothing here serves a PSM, so a
+peer that asks for a channel on a link this side is on is answered
+.B "PSM not supported" .
 .PP
 One write is one SDU and one read is the next SDU whole.  A write may
 wait: credits are how the peer says it is ready, and a peer that has

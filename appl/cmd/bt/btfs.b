@@ -1482,12 +1482,12 @@ connect(d: ref Dev): string
 	}
 	d.conn = c;
 	#
-	# Nothing above L2CAP runs on a BR/EDR link yet: its signalling
-	# channel is a different CID and ATT is LE only, so a link is
-	# what there is.  It is watched like any other, so that it goes
-	# away properly when it goes away.
+	# L2CAP runs on a BR/EDR link -- basic mode channels, opened
+	# with the ctl file's l2cap verb -- and nothing above it does:
+	# ATT is LE only, so there is no GATT tree to discover here.
 	#
 	if(d.classic){
+		d.mux = l2cap->start(c);
 		spawn watcher(d);
 		d.lock <-= 1;
 		return nil;
@@ -2086,7 +2086,18 @@ cocopen(d: ref Dev, psm: int): string
 	}
 	d.lock <-= 1;
 
-	(c, e) := l2cap->connect(m, psm);
+	#
+	# The two kinds of L2CAP channel, told apart by the link they
+	# are on: credit-based on LE, basic mode on BR/EDR.  What comes
+	# back is the same adt and is read and written the same way,
+	# which is why the file below is the same file.
+	#
+	c: ref Chan;
+	e: string;
+	if(d.conn != nil && d.conn.classic)
+		(c, e) = l2cap->bconnect(m, psm);
+	else
+		(c, e) = l2cap->connect(m, psm);
 	if(e != nil)
 		return e;
 
@@ -2331,12 +2342,13 @@ inproc(r: ref Radio)
 		d.conn = conn;
 		if(conn.classic){
 			#
-			# A peer paged this side.  Nothing above L2CAP
-			# runs on a BR/EDR link yet, so the link is what
-			# there is; it is still watched, so that it goes
-			# away properly when it goes.
+			# A peer paged this side.  The L2CAP
+			# demultiplexer runs on the link, because a peer
+			# that opened it may want a channel on it; what
+			# does not run is ATT, which is LE only.
 			#
 			d.classic = 1;
+			d.mux = l2cap->start(conn);
 			d.state = "connected";
 			d.seen = daytime();
 			spawn watcher(d);

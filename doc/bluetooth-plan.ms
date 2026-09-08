@@ -367,10 +367,24 @@ the one being paged, and that is what the code checks.  Nothing runs
 over the link: L2CAP's signalling channel is a different CID on
 Classic and none of Classic L2CAP is written.
 .PP
-So what is left of Classic is what a connection is for: link keys and
-secure simple pairing, and L2CAP's connection-oriented channels,
-which LE never needed and which everything above Classic is built
-on.
+L2CAP runs over such a link, in basic mode: a connection request
+answered with a CID, a configuration request each way, and only then a
+channel.  There are no credits and no segmentation \(em one frame is
+one SDU, up to the MTU the other side asked for \(em so what a
+credit-based channel does with credits, this does by fitting.  It is
+the same
+.CW Chan ,
+read and written with the same
+.CW csend
+and
+.CW crecv ,
+and it appears in the name space as the same file: one pair of files,
+two protocols underneath.
+.PP
+So what is left of Classic is what those channels are for: SDP, and
+then RFCOMM, HIDP and the rest above it; and link keys and secure
+simple pairing, without which none of them will talk to a device that
+requires security.
 .IP 3.
 .B SDP .
 Both halves.  Nothing Classic can be found without it.

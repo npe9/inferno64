@@ -143,6 +143,15 @@
 #		fail and must not poison the next attempt; brincoming is
 #		the peer paging this side, which must be accepted and
 #		must read as the peer's link and not this side's
+#	brl2cap	a BR/EDR L2CAP channel in basic mode: a connection
+#		request, a configuration request each way, and then one
+#		frame is one SDU with no credits.  brnomtu is a peer
+#		whose configuration names no MTU, which is legal and
+#		means the default; brrefuse is one that will not have the
+#		PSM, whose own reason has to reach whoever asked; and
+#		brnoconf is the control -- a peer that answers the
+#		connection and never configures, where the channel must
+#		not open
 #	stalefid	a characteristic file kept open across a disconnect
 #		and a reconnect: the old name must be gone.  What the
 #		fix for it changes is not visible from inside the guest
@@ -559,6 +568,38 @@ if [ "$n" != 1 ]; then
 	exit 1
 fi
 echo "and a page from the peer was accepted, as the peripheral of that link"
+#
+# L2CAP over BR/EDR, which is what everything above Classic is built
+# on.  Basic mode: no credits, one frame one SDU, and the size settled
+# by a configuration handshake in both directions rather than by the
+# connection response.
+#
+run brl2cap "--classic --brconnect --brl2cap" brl2cap
+n=`grep -c 'echoing 31 bytes' "$OUT/bthci-brl2cap.log" || true`
+if [ "$n" != 1 ]; then
+	echo "=== phase brl2cap ==="
+	echo "BENCH FAIL (brl2cap): the peer echoed $n frames, wanted 1"
+	exit 1
+fi
+echo "a BR/EDR L2CAP channel carried an SDU each way"
+run brnomtu "--classic --brconnect --brl2cap --brnomtu" brl2cap
+run brrefuse "--classic --brconnect --brl2cap --brrefuse" brrefuse
+#
+# The control.  A channel is configured in both directions and is not
+# open until both are answered; a peer that answers the connection and
+# then never configures must not leave a channel behind, because a
+# stack that called that a channel would send on one the peer has not
+# agreed to.
+#
+if run brnoconf "--classic --brconnect --brl2cap --brnoconf" brl2cap; then
+	echo "BENCH FAIL (brnoconf): a channel the peer never configured opened anyway"
+	exit 1
+fi
+if ! grep -q 'never asked for its own configuration' "$OUT/bench-brnoconf.out"; then
+	echo "BENCH FAIL (brnoconf): the phase failed for some other reason"
+	exit 1
+fi
+echo "and a channel the peer never configured did not open"
 run paired "--peripheral --pairin --rebond" paired
 #
 # and what the model saw from the other side: the confirm this stack

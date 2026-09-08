@@ -28,6 +28,14 @@ Qdepth:	con 8;
 
 # LE signalling command codes
 Creject:	con 16r01;
+# BR/EDR signalling, which is a different set of codes on a different
+# CID from the LE ones below
+Cbconnreq:	con 16r02;
+Cbconnresp:	con 16r03;
+Cconfreq:	con 16r04;
+Cconfresp:	con 16r05;
+Cinforeq:	con 16r0a;
+Cinforesp:	con 16r0b;
 Cdiscreq:	con 16r06;
 Cdiscresp:	con 16r07;
 Cparamreq:	con 16r12;
@@ -69,7 +77,17 @@ start(c: ref Conn): ref Mux
 {
 	m := ref Mux;
 	m.c = c;
+	#
+	# Which signalling channel this link has, and what a channel on
+	# it may carry before anything is negotiated: 23 bytes on LE,
+	# 672 on BR/EDR, both of them the specification's own defaults.
+	#
+	m.sig = Cle;
 	m.mtu = 23;
+	if(c.classic){
+		m.sig = Cbredr;
+		m.mtu = 672;
+	}
 	m.chans = nil;
 	m.nextid = 1;
 	m.pend = nil;
@@ -94,6 +112,8 @@ open(m: ref Mux, cid: int): chan of array of byte
 		#
 		c.cid = cid;
 		c.state = Sfixed;
+		c.basic = 0;
+		c.confin = 0;
 		c.rq = chan[Qdepth] of array of byte;
 		c.dcid = 0;
 		c.psm = 0;
@@ -196,7 +216,7 @@ demux(m: ref Mux)
 			if(len f < 4 + dlen)
 				continue;
 			p := f[4:4+dlen];
-			if(cid == Cle){
+			if(cid == m.sig){
 				signal(m, p);
 				continue;
 			}
@@ -206,7 +226,7 @@ demux(m: ref Mux)
 				m.reply <-= 1;
 				continue;	# nobody opened that channel
 			}
-			if(c.state != Sfixed){
+			if(c.state != Sfixed && !c.basic){
 				#
 				# a credit-based channel: absorb the
 				# segment under the lock, because the
@@ -218,6 +238,25 @@ demux(m: ref Mux)
 				#
 				kframe(m, c, p);
 				m.reply <-= 1;
+				continue;
+			}
+			if(c.basic){
+				#
+				# a basic mode channel: one frame is one
+				# SDU whole, there is nothing to
+				# reassemble and no credit to account
+				# for.  It goes on the same queue a
+				# credit-based channel's SDUs go on, so
+				# that crecv reads both the same way; the
+				# PDU count is 0, which is what stops
+				# crecv giving back a credit for it.
+				#
+				alt {
+				c.sq <-= ref Sdu(p, 0) =>	;
+				* =>	;	# the reader is behind: drop
+				}
+				m.reply <-= 1;
+				poke(c);
 				continue;
 			}
 			m.reply <-= 1;
@@ -302,7 +341,7 @@ signal(m: ref Mux, p: array of byte)
 		r[1] = byte id;
 		bt->put16(r, 2, 2);
 		bt->put16(r, 4, result);
-		send(m, Cle, r);
+		send(m, m.sig, r);
 		#
 		# after the answer, not before: the peer is entitled to
 		# see the response before the link changes under it.
@@ -311,13 +350,65 @@ signal(m: ref Mux, p: array of byte)
 			spawn doupdate(m.c, min, max, latency, timeout);
 	Cparamresp =>
 		;
-	Cconnresp or Cdiscresp =>
+	Cconnresp or Cdiscresp or Cbconnresp or Cconfresp =>
 		#
 		# the answer to a request some other process is waiting
 		# for.  Handing it over rather than acting on it here is
 		# what lets connect and cclose read their own result.
 		#
 		answer(m, id, code, p[4:4+dlen]);
+	Cbconnreq =>
+		#
+		# a peer opening a BR/EDR channel to us.  Nothing here
+		# serves a PSM, so it is refused with the reason that is
+		# true -- the PSM is not supported -- rather than left
+		# to time out.
+		#
+		if(dlen < 4)
+			return;
+		scid := bt->get16(p, 6);
+		r := array[12] of byte;
+		r[0] = byte Cbconnresp;
+		r[1] = byte id;
+		bt->put16(r, 2, 8);
+		bt->put16(r, 4, 0);		# no CID on this side
+		bt->put16(r, 6, scid);
+		bt->put16(r, 8, 2);		# PSM not supported
+		bt->put16(r, 10, 0);
+		spawn later(m, r);
+	Cconfreq =>
+		config(m, id, p[4:4+dlen]);
+	Cinforeq =>
+		#
+		# What this side can do beyond basic mode: nothing, and
+		# a zero feature mask says exactly that.  Anything else
+		# it asks about is answered "not supported", which is a
+		# legal answer and the true one.
+		#
+		if(dlen < 2)
+			return;
+		ty := bt->get16(p, 4);
+		if(ty == 2){
+			r := array[12] of byte;
+			r[0] = byte Cinforesp;
+			r[1] = byte id;
+			bt->put16(r, 2, 8);
+			bt->put16(r, 4, ty);
+			bt->put16(r, 6, 0);	# success
+			bt->put16(r, 8, 0);	# no extended features
+			bt->put16(r, 10, 0);
+			spawn later(m, r);
+		} else {
+			r := array[8] of byte;
+			r[0] = byte Cinforesp;
+			r[1] = byte id;
+			bt->put16(r, 2, 4);
+			bt->put16(r, 4, ty);
+			bt->put16(r, 6, 1);	# not supported
+			spawn later(m, r);
+		}
+	Cinforesp =>
+		;
 	Ccredit =>
 		if(dlen < 4)
 			return;
@@ -360,15 +451,309 @@ signal(m: ref Mux, p: array of byte)
 		bt->put16(r, 2, 4);
 		bt->put16(r, 4, dcid);
 		bt->put16(r, 6, scid);
-		send(m, Cle, r);
+		send(m, m.sig, r);
 	* =>
 		r := array[6] of byte;
 		r[0] = byte Creject;
 		r[1] = byte id;
 		bt->put16(r, 2, 2);
 		bt->put16(r, 4, 0);	# command not understood
-		send(m, Cle, r);
+		send(m, m.sig, r);
 	}
+}
+
+#
+# BR/EDR L2CAP: basic mode.
+#
+# The shape is not the LE one.  A channel is asked for by PSM and
+# answered with a CID, as on LE, but the sizes are not in that answer:
+# both sides then send a Configuration Request and answer the other's,
+# and the channel is open only when both have been answered.  There
+# are no credits and no segmentation -- one frame is one SDU, up to
+# the MTU the other side asked for -- so the flow control is the
+# link's and not L2CAP's.
+#
+Bmtu:		con 672;	# what this side will take, the default
+Omtu:		con 16r01;	# the MTU configuration option
+
+#
+# What a peer's Configuration Request says, answered here rather than
+# in whoever asked for the channel: it may arrive before this side has
+# sent its own, and a request that goes unanswered is a channel that
+# never opens.
+#
+config(m: ref Mux, id: int, p: array of byte)
+{
+	if(len p < 4)
+		return;
+	dcid := bt->get16(p, 0);	# ours, from where the peer sits
+	flags := bt->get16(p, 2);
+	mtu := 0;
+	for(o := 4; o + 2 <= len p; ){
+		ty := int p[o] & 16r7f;
+		l := int p[o+1];
+		if(o + 2 + l > len p)
+			break;
+		if(ty == Omtu && l == 2)
+			mtu = bt->get16(p, o+2);
+		o += 2 + l;
+	}
+	<-m.reply;
+	c := lookup(m, dcid);
+	if(c != nil && c.basic){
+		#
+		# the largest frame this side may send.  A peer that
+		# names none is asking for the default, which is what it
+		# already has.
+		#
+		if(mtu >= 48)
+			c.dmtu = mtu;
+		#
+		# The continuation flag says more options are coming in
+		# another request, so the configuration is not done
+		# until one arrives without it.
+		#
+		if((flags & 1) == 0)
+			c.confin = 1;
+	} else
+		c = nil;
+	m.reply <-= 1;
+
+	r := array[10] of byte;
+	r[0] = byte Cconfresp;
+	r[1] = byte id;
+	bt->put16(r, 2, 6);
+	bt->put16(r, 4, dcid);
+	bt->put16(r, 6, flags & 1);
+	if(c == nil)
+		bt->put16(r, 8, 2);	# rejected: no such channel
+	else
+		bt->put16(r, 8, 0);	# success, and no options of our own
+	#
+	# From a process of its own, for the reason fail() gives:
+	# sending takes an ACL buffer, which may not be there, and this
+	# runs in the demultiplexer.  A demultiplexer waiting for a
+	# buffer is a demultiplexer not reading the answer that would
+	# free one, which is a link that stops -- and that is exactly
+	# what happened here the first time.
+	#
+	spawn later(m, r);
+	if(c != nil)
+		poke(c);
+}
+
+later(m: ref Mux, p: array of byte)
+{
+	send(m, m.sig, p);
+}
+
+#
+# Open a BR/EDR channel.  Connection request, then configuration in
+# both directions, and only then is it a channel.
+#
+bconnect(m: ref Mux, psm: int): (ref Chan, string)
+{
+	if(m.sig != Cbredr)
+		return (nil, "not a BR/EDR link");
+	<-m.reply;
+	cid := newcid(m);
+	if(cid == 0){
+		m.reply <-= 1;
+		return (nil, "no free channel identifier on this link");
+	}
+	c := ref Chan;
+	c.cid = cid;
+	c.state = Swait;
+	c.basic = 1;
+	c.confin = 0;
+	c.psm = psm;
+	c.dcid = 0;
+	c.mtu = Bmtu;
+	c.mps = 0;
+	c.dmtu = m.mtu;		# until the peer asks for something else
+	c.dmps = 0;
+	c.rxcred = 0;
+	c.txcred = 0;
+	c.have = 0;
+	c.pdus = 0;
+	c.sdu = nil;
+	c.err = nil;
+	c.sq = chan[Qdepth] of ref Sdu;
+	c.wake = chan[1] of int;
+	c.rwake = chan[1] of int;
+	c.rq = chan[1] of array of byte;
+	m.chans = c :: m.chans;
+	id := nextid(m);
+	rc := chan[1] of array of byte;
+	m.pend = (id, Cbconnresp, rc) :: m.pend;
+	m.reply <-= 1;
+
+	req := array[8] of byte;
+	req[0] = byte Cbconnreq;
+	req[1] = byte id;
+	bt->put16(req, 2, 4);
+	bt->put16(req, 4, psm);
+	bt->put16(req, 6, cid);
+	if((e := send(m, m.sig, req)) != nil){
+		abandon(m, c, id);
+		return (nil, e);
+	}
+	(r, we) := await(m, id, rc);
+	if(we != nil){
+		abandon(m, c, id);
+		return (nil, we);
+	}
+	if(len r < 8){
+		abandon(m, c, 0);
+		return (nil, "a connection response of only " + string len r + " bytes");
+	}
+	#
+	# Result 1 is "pending", which is a real answer and not a
+	# failure: the peer is asking somebody, and the answer that
+	# settles it comes as a second response with the same
+	# identifier.  Waiting again is what a pending means.
+	#
+	res := bt->get16(r, 4);
+	if(res == 1){
+		<-m.reply;
+		rc2 := chan[1] of array of byte;
+		m.pend = (id, Cbconnresp, rc2) :: m.pend;
+		m.reply <-= 1;
+		(r2, we2) := await(m, id, rc2);
+		if(we2 != nil){
+			abandon(m, c, id);
+			return (nil, we2);
+		}
+		if(len r2 < 8){
+			abandon(m, c, 0);
+			return (nil, "a connection response of only " + string len r2 + " bytes");
+		}
+		r = r2;
+		res = bt->get16(r, 4);
+	}
+	if(res != 0){
+		abandon(m, c, 0);
+		return (nil, bconnerr(res));
+	}
+	dcid := bt->get16(r, 0);
+	if(dcid < Cdynlo){
+		abandon(m, c, 0);
+		return (nil, sys->sprint("the peer answered with CID %#4.4ux, which is not a dynamic one", dcid));
+	}
+	<-m.reply;
+	c.dcid = dcid;
+	m.reply <-= 1;
+
+	if((ce := configure(m, c)) != nil){
+		abandon(m, c, 0);
+		return (nil, ce);
+	}
+	<-m.reply;
+	c.state = Sup;
+	m.reply <-= 1;
+	return (c, nil);
+}
+
+#
+# Both directions.  This side asks for what it will take and waits for
+# the answer; the peer's own request is answered by config() above, in
+# the demultiplexer, which may already have happened.
+#
+configure(m: ref Mux, c: ref Chan): string
+{
+	<-m.reply;
+	id := nextid(m);
+	rc := chan[1] of array of byte;
+	m.pend = (id, Cconfresp, rc) :: m.pend;
+	dcid := c.dcid;
+	m.reply <-= 1;
+
+	req := array[12] of byte;
+	req[0] = byte Cconfreq;
+	req[1] = byte id;
+	bt->put16(req, 2, 8);
+	bt->put16(req, 4, dcid);
+	bt->put16(req, 6, 0);		# no continuation
+	req[8] = byte Omtu;
+	req[9] = byte 2;
+	bt->put16(req, 10, Bmtu);
+	if((e := send(m, m.sig, req)) != nil){
+		unpend(m, id);
+		return e;
+	}
+	(r, we) := await(m, id, rc);
+	if(we != nil)
+		return we;
+	if(len r < 6)
+		return "a configuration response of only " + string len r + " bytes";
+	res := bt->get16(r, 4);
+	if(res != 0)
+		return conferr(res);
+
+	#
+	# and the peer's own request, which config() answers.  It may
+	# have arrived first, in which case there is nothing to wait
+	# for.
+	#
+	tick := chan[1] of int;
+	spawn timer(Rtx, tick);
+	for(;;){
+		<-m.reply;
+		done := c.confin;
+		st := c.state;
+		m.reply <-= 1;
+		if(done)
+			return nil;
+		if(st == Sdown)
+			return "the channel went away while it was being configured";
+		alt {
+		<-c.wake =>	;
+		<-tick =>
+			return "the peer never asked for its own configuration";
+		}
+	}
+}
+
+#
+# wait for one answer, with the retransmission timeout every L2CAP
+# request has.  It is one function because four requests want it.
+#
+await(m: ref Mux, id: int, rc: chan of array of byte): (array of byte, string)
+{
+	tick := chan[1] of int;
+	spawn timer(Rtx, tick);
+	r: array of byte;
+	alt {
+	r = <-rc =>	;
+	<-tick =>
+		unpend(m, id);
+		return (nil, "the peer never answered");
+	}
+	unpend(m, id);
+	if(r == nil)
+		return (nil, "the link went away");
+	return (r, nil);
+}
+
+bconnerr(res: int): string
+{
+	case res {
+	2 =>	return "PSM not supported";
+	3 =>	return "security block";
+	4 =>	return "no resources";
+	}
+	return sys->sprint("the peer refused the channel: reason %#4.4ux", res);
+}
+
+conferr(res: int): string
+{
+	case res {
+	1 =>	return "the peer will not take those configuration options";
+	2 =>	return "the peer rejected the configuration";
+	3 =>	return "the peer does not know one of those options";
+	4 =>	return "the configuration is still going";
+	}
+	return sys->sprint("the peer refused the configuration: reason %#4.4ux", res);
 }
 
 #
@@ -507,7 +892,7 @@ discon(m: ref Mux, cid, dcid: int)
 	bt->put16(req, 2, 4);
 	bt->put16(req, 4, dcid);
 	bt->put16(req, 6, cid);
-	send(m, Cle, req);
+	send(m, m.sig, req);
 }
 
 connect(m: ref Mux, psm: int): (ref Chan, string)
@@ -538,6 +923,8 @@ connect(m: ref Mux, psm: int): (ref Chan, string)
 	c := ref Chan;
 	c.cid = cid;
 	c.state = Swait;
+	c.basic = 0;
+	c.confin = 0;
 	c.dcid = 0;
 	c.dmtu = 0;
 	c.dmps = 0;
@@ -569,7 +956,7 @@ connect(m: ref Mux, psm: int): (ref Chan, string)
 	bt->put16(req, 8, c.mtu);
 	bt->put16(req, 10, c.mps);
 	bt->put16(req, 12, cred);
-	if((e := send(m, Cle, req)) != nil){
+	if((e := send(m, m.sig, req)) != nil){
 		abandon(m, c, id);
 		return (nil, e);
 	}
@@ -655,7 +1042,7 @@ cclose(m: ref Mux, c: ref Chan): string
 	bt->put16(req, 2, 4);
 	bt->put16(req, 4, dcid);
 	bt->put16(req, 6, cid);
-	if((se := send(m, Cle, req)) != nil){
+	if((se := send(m, m.sig, req)) != nil){
 		unpend(m, id);
 		return se;
 	}
@@ -692,6 +1079,15 @@ csend(m: ref Mux, c: ref Chan, p: array of byte): string
 	}
 	if(len p > dmtu)
 		return sys->sprint("an SDU of %d bytes: the peer will take %d", len p, dmtu);
+
+	#
+	# A basic mode channel has no credits and no segmentation: one
+	# frame is one SDU, and the check above is the whole of the flow
+	# control L2CAP does for it.  Everything below is the
+	# credit-based path.
+	#
+	if(c.basic)
+		return send(m, c.dcid, p);
 
 	first := 1;
 	off := 0;
@@ -794,7 +1190,7 @@ credit(m: ref Mux, c: ref Chan, n: int): string
 	bt->put16(p, 2, 4);
 	bt->put16(p, 4, cid);
 	bt->put16(p, 6, n);
-	return send(m, Cle, p);
+	return send(m, m.sig, p);
 }
 
 #

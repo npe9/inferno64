@@ -226,6 +226,34 @@ brconnect = '--brconnect' in sys.argv
 # event does not say which side opened the link.
 brincoming = '--brincoming' in sys.argv
 
+# --brl2cap: with --brconnect, the peer answers a BR/EDR L2CAP
+# connection request on PSM 0x1001 and echoes back whatever is written
+# to the channel.  That PSM is not assigned to anything; it is a test
+# PSM and is named as one, because echoing on a real one -- SDP's, say
+# -- would be a device claiming to speak a protocol it does not.
+#
+# Basic mode: a connection request answered with a CID, then a
+# configuration request each way, and only then a channel.  One frame
+# is one SDU and there are no credits.
+brl2cap = '--brl2cap' in sys.argv
+BRPSM = 0x1001
+
+# --brnomtu: with --brl2cap, the peer's configuration request names no
+# MTU at all, which is legal and means the default.  A stack that
+# needed one would open a channel it could not size.
+brnomtu = '--brnomtu' in sys.argv
+
+# --brnoconf: with --brl2cap, the peer answers the connection request
+# and then never sends a configuration request of its own.  A channel
+# is configured in both directions and is not open until both are
+# answered, so a stack that only waited for its own would call this a
+# channel and then send on one the peer has not agreed to.
+brnoconf = '--brnoconf' in sys.argv
+
+# --brrefuse: with --brl2cap, the peer refuses the channel with "PSM
+# not supported".  The reason has to reach whoever asked.
+brrefuse = '--brrefuse' in sys.argv
+
 # --brfail: with --brconnect, the page fails with a page timeout.  A
 # connection that fails has to fail, and the one after it has to work.
 brfail = '--brfail' in sys.argv
@@ -1030,7 +1058,7 @@ class Model:
         time.sleep(6)
         if orphan_live:
             log('sending the connection nobody is waiting for')
-            self.complete(atype, addr, 0x0041)
+            self.complete(atype, addr, 0x0041, current=False)
             return
         log('sending the completion nobody is waiting for')
         self.event(0x3e, bytes([0x01, 0x02]) + struct.pack('<H', 0)
@@ -1049,11 +1077,18 @@ class Model:
                       + bytes([len(body)]) + body)
         log('sent 3 SCO packets')
 
-    def complete(self, atype, addr, handle=0x0040):
-        # the orphan gets a handle of its own, so which link a
-        # Disconnect refers to is never in doubt
-        self.handle = handle
-        self.outhandle = handle
+    def complete(self, atype, addr, handle=0x0040, current=True):
+        # The orphan gets a handle of its own, so which link a
+        # Disconnect refers to is never in doubt -- and it is not this
+        # model's current link either.  It is a link nobody asked for,
+        # arriving long after the guest gave up and opened a real one;
+        # letting it become self.handle sent every ATT answer after it
+        # out on a handle the guest had just closed, and the phase
+        # then failed on a timeout that had nothing to do with what it
+        # was testing.
+        if current:
+            self.handle = handle
+            self.outhandle = handle
         self.peer = (atype, addr)
         # Role 0x00: the guest asked for this link, so the guest is the
         # central.  It said 0x01 for years because nothing above looked
@@ -1256,7 +1291,10 @@ class Model:
             self.acl_in = d
         elif pb == 0x1:
             self.acl_in += d
-        self.credits(1)
+        # on the link it came in on: a BR/EDR packet is not an LE
+        # packet, and a credit returned for the wrong handle is a
+        # credit the sender never gets back
+        self.credits(1, handle)
         if len(self.acl_in) < 4:
             return
         flen, cid = struct.unpack('<HH', self.acl_in[0:4])
@@ -1264,6 +1302,18 @@ class Model:
             return
         payload = self.acl_in[4:4+flen]
         self.acl_in = b''
+        #
+        # A frame on the BR/EDR link is not a frame on the LE one, and
+        # the CIDs mean different things there: 1 is signalling, and
+        # anything else is a channel this side handed out.
+        #
+        if brl2cap and handle == getattr(self, 'brhandle', None):
+            if cid == 1:
+                self.brsig(payload)
+            elif cid == getattr(self, 'brdcid', None):
+                print('bthci: echoing %d bytes' % len(payload), flush=True)
+                self.bracl(self.brscid, payload)
+            return
         if cid == 4:
             self.att(payload)
         elif cid == 6:
@@ -1844,6 +1894,69 @@ class Model:
             addr, cls, psrm, clk, name, eir = CLASSICDEVS[1]
             print('bthci: the peer pages', flush=True)
             self.event(0x04, addr + struct.pack('<I', cls)[:3] + bytes([1]))
+
+    #
+    # BR/EDR L2CAP.  A frame on the link this side paged or was paged
+    # on, addressed by CID: signalling is CID 1 there, not 5.
+    #
+    def bracl(self, cid, payload):
+        h = getattr(self, 'brhandle', None)
+        if h is None:
+            return
+        frame = struct.pack('<HH', len(payload), cid) + payload
+        pkt = struct.pack('<HH', h & 0x0fff | (0x2 << 12), len(frame)) + frame
+        self.send(bytes([2]) + pkt)
+
+    def brsig(self, p):
+        code = p[0]
+        ident = p[1]
+        dlen = struct.unpack('<H', p[2:4])[0]
+        d = p[4:4+dlen]
+        if code == 0x02:                     # Connection Request
+            psm, scid = struct.unpack('<HH', d[0:4])
+            if psm != BRPSM or brrefuse:
+                print('bthci: refusing psm %#06x' % psm, flush=True)
+                self.bracl(1, bytes([0x03, ident]) + struct.pack('<H', 8)
+                           + struct.pack('<HHHH', 0, scid, 0x0002, 0))
+                return
+            self.brscid = scid
+            self.brdcid = 0x0041
+            print('bthci: br/edr channel on psm %#06x' % psm, flush=True)
+            self.bracl(1, bytes([0x03, ident]) + struct.pack('<H', 8)
+                       + struct.pack('<HHHH', self.brdcid, scid, 0, 0))
+            # and this side's own configuration request, which the
+            # guest has to answer before the channel is open
+            if brnoconf:
+                print('bthci: and no configuration request of its own',
+                      flush=True)
+                return
+            opts = b'' if brnomtu else bytes([0x01, 0x02]) + struct.pack('<H', 672)
+            self.bracl(1, bytes([0x04, 0x40]) + struct.pack('<H', 4 + len(opts))
+                       + struct.pack('<HH', scid, 0) + opts)
+        elif code == 0x04:                   # Configuration Request
+            dcid, flags = struct.unpack('<HH', d[0:4])
+            mtu = None
+            o = 4
+            while o + 2 <= len(d):
+                ty = d[o] & 0x7f
+                ln = d[o+1]
+                if ty == 0x01 and ln == 2:
+                    mtu = struct.unpack('<H', d[o+2:o+4])[0]
+                o += 2 + ln
+            print('bthci: the host asked for mtu %s' % mtu, flush=True)
+            self.bracl(1, bytes([0x05, ident]) + struct.pack('<H', 6)
+                       + struct.pack('<HHH', self.brscid, 0, 0))
+        elif code == 0x05:                   # Configuration Response
+            pass
+        elif code == 0x06:                   # Disconnection Request
+            dcid, scid = struct.unpack('<HH', d[0:4])
+            print('bthci: the host closed the br/edr channel', flush=True)
+            self.bracl(1, bytes([0x07, ident]) + struct.pack('<H', 4)
+                       + struct.pack('<HH', dcid, scid))
+        elif code == 0x0a:                   # Information Request
+            ty = struct.unpack('<H', d[0:2])[0]
+            self.bracl(1, bytes([0x0b, ident]) + struct.pack('<H', 4)
+                       + struct.pack('<HH', ty, 1))
 
     # ------------------------------------------------ SMP
     def smp_in(self, p):

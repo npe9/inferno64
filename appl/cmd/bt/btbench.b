@@ -307,6 +307,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	"brconnect" or "brfail" or "brincoming" =>
 		brlink(mode);
 		return;
+	"brl2cap" or "brrefuse" =>
+		brchan(mode);
+		return;
 	"hid" =>
 		hid();
 		return;
@@ -1590,6 +1593,95 @@ brlink(mode: string)
 	}
 	if(ok)
 		sys->print("BT: a BR/EDR link, opened and taken down\n");
+	sys->print("BT: done\n");
+}
+
+#
+# A BR/EDR L2CAP channel: basic mode, no credits, one frame one SDU.
+# The peer echoes, so what goes down comes back, and the file it comes
+# back through is the same one an LE credit-based channel uses -- one
+# adt, one pair of files, two very different protocols underneath.
+#
+Brpsm:	con "1001";
+
+brchan(mode: string)
+{
+	if((e := writefile(mnt + "/0/ctl", "inquiry on")) != nil){
+		sys->print("BT: FAILED: inquiry on: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	for(i := 0; i < 40; i++){
+		sys->sleep(500);
+		if(hasstr(readfile(mnt + "/0/state"), "inquiry off"))
+			break;
+	}
+	dev := mnt + "/0/remote/" + Chead;
+	if((e = writefile(dev + "/ctl", "connect")) != nil){
+		sys->print("BT: FAILED: connect: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	e = writefile(dev + "/ctl", "l2cap " + Brpsm);
+	if(mode == "brrefuse"){
+		#
+		# the peer's own reason has to reach whoever asked, not
+		# be flattened into "cannot connect"
+		#
+		if(e == nil)
+			sys->print("BT: FAILED: a refused channel reported success\n");
+		else if(!hasstr(e, "PSM not supported"))
+			sys->print("BT: FAILED: the refusal reads %q\n", e);
+		else
+			sys->print("BT: the peer refused the channel: %s\n", e);
+		writefile(dev + "/ctl", "disconnect");
+		sys->print("BT: done\n");
+		return;
+	}
+	if(e != nil){
+		sys->print("BT: FAILED: l2cap %s: %s\n", Brpsm, e);
+		sys->print("BT: done\n");
+		return;
+	}
+	f := dev + "/l2cap/" + Brpsm;
+	ok := 1;
+	show(dev + "/state");
+	#
+	# One write is one SDU and one read is that SDU whole, which is
+	# what the file promises on either kind of link.
+	#
+	want := "a frame on a basic mode channel";
+	fd := sys->open(f, Sys->ORDWR);
+	if(fd == nil){
+		sys->print("BT: FAILED: opening the channel: %r\n");
+		ok = 0;
+	} else if(sys->write(fd, array of byte want, len want) != len want){
+		sys->print("BT: FAILED: writing the channel: %r\n");
+		ok = 0;
+	} else {
+		#
+		# One read is the next SDU whole and a read with nothing
+		# to read waits, so this is time-bounded: a channel that
+		# never answers must fail the phase rather than hang it.
+		#
+		(n, b, re) := sdu(fd, 10000);
+		if(re != nil || n <= 0){
+			sys->print("BT: FAILED: reading the channel: %s\n", re);
+			ok = 0;
+		} else if(string b != want){
+			sys->print("BT: FAILED: wrote %q and read back %q\n", want, string b);
+			ok = 0;
+		} else
+			sys->print("BT: wrote %d bytes and read them back whole\n", len want);
+	}
+	fd = nil;
+	if((e = writefile(dev + "/ctl", "unl2cap " + Brpsm)) != nil){
+		sys->print("BT: FAILED: unl2cap: %s\n", e);
+		ok = 0;
+	}
+	if(ok)
+		sys->print("BT: a BR/EDR L2CAP channel, opened and used and closed\n");
+	writefile(dev + "/ctl", "disconnect");
 	sys->print("BT: done\n");
 }
 

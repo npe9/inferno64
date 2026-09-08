@@ -20917,6 +20917,83 @@ the link went into the buffer, nothing owned it, and the name space
 never showed it at all.
 
 .NH 2
+L2CAP on the other kind of link, and a demultiplexer that stopped
+.PP
+BR/EDR L2CAP is basic mode, and it is not the LE shape with the
+credits taken out.  A channel is asked for by PSM and answered with a
+CID, as on LE; but the sizes are not in that answer.  Both sides then
+send a Configuration Request and answer the other's, and the channel
+is open only when both have been answered \(em so a peer that answers
+the connection and never configures has not given anything.  There are
+no credits and no segmentation: one frame is one SDU, up to the MTU
+the other side asked for.
+.PP
+Almost none of that reached the rest of the stack.  The signalling
+channel is CID 1 there and 5 on LE, so the multiplexer learned which
+one this link has and every signalling send goes to
+.CW m.sig ;
+the demultiplexer compares against it; and a basic mode channel puts
+its whole frame on the same queue a credit-based channel puts its
+reassembled SDUs on, with a PDU count of zero, which is what stops
+.CW crecv
+giving back a credit for something that never cost one.  So
+.CW csend
+and
+.CW crecv
+serve both, and
+.CW btfs
+shows both as the same file.
+.PP
+The first run of it hung, and what it caught is worth keeping.
+.CW config() ,
+which answers the peer's Configuration Request, ran in the
+demultiplexer and sent its response from there.  Sending takes an ACL
+buffer.  The guest had two, had spent both on its own connection and
+configuration requests, and the model \(em which had its own bug, of
+returning the credit for those on the LE link's handle rather than on
+the one the packets arrived on \(em never gave them back.  So the
+demultiplexer blocked inside
+.CW send() ,
+and the configuration response that would have freed a buffer was
+never read.  A demultiplexer waiting for a buffer is a demultiplexer
+not reading the answer that would free one.
+.PP
+.CW fail()
+already said this in a comment, about its own disconnection request,
+and had already been written to spawn.  The new code did not, because
+the comment was somewhere else.  Every signalling answer sent from
+inside the demultiplexer now goes out from a process of its own.
+.PP
+The controls: a peer that refuses the PSM, whose own reason reaches
+whoever asked rather than being flattened; a peer whose configuration
+names no MTU at all, which is legal and means the default, where the
+channel must still open; and a peer that answers the connection and
+then never configures, where the channel must not open and the phase
+must say so \(em it reads
+.CW "the peer never asked for its own configuration" .
+.PP
+The whole-bench run after all that failed a phase that had nothing to
+do with any of it, and the reason was in the model.
+.CW orphanlive
+is the phase where a connection turns up long after anyone was waiting
+for it and has to be closed rather than merely ignored.  The model's
+.CW complete()
+sets its current handle to whatever link it has just completed, and
+the orphan went through that same path \(em so from the moment the
+orphan arrived, six seconds late, every ATT answer went out on the
+handle the guest had just closed, and the phase failed on an ATT
+timeout.  Run on its own it passed 4 of 4; under a whole run the guest
+is slower and loses the race, which is what
+.I intermittent
+had meant here for a while.
+.PP
+An orphan is not the model's current link and does not become one now.
+That the fix works at all depends on the other model change in this
+piece: Disconnect used to forget the current handle whatever handle
+was disconnected, so closing the orphan would have taken the real link
+with it anyway.
+
+.NH 2
 A native backtrace from inside the collector
 .PP
 The bench passes under

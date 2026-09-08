@@ -371,6 +371,13 @@ L2cap: module
 {
 	PATH:	con "/dis/lib/bt/l2cap.dis";
 
+	#
+	# The signalling channel is CID 1 on a BR/EDR link and CID 5 on
+	# an LE one, and the commands that travel on them are different
+	# sets with different codes.  Everything else here is CID
+	# agnostic, which is why one demultiplexer serves both.
+	#
+	Cbredr:	con 1;
 	Cattr:	con 4;
 	Cle:	con 5;
 	Csmp:	con 6;
@@ -395,6 +402,15 @@ L2cap: module
 		rq:	chan of array of byte;	# frames up from the link
 		state:	int;
 
+		#
+		# A basic mode channel, which is what BR/EDR L2CAP opens:
+		# no credits, no segmentation, one frame is one SDU, and
+		# the size limit comes out of the configuration
+		# handshake rather than out of the connection response.
+		#
+		basic:	int;
+		confin:	int;			# the peer has configured us
+
 		# credit-based channels only
 		dcid:	int;			# the CID the peer receives on
 		psm:	int;
@@ -415,6 +431,7 @@ L2cap: module
 
 	Mux: adt {
 		c:	ref Hci->Conn;
+		sig:	int;			# the signalling CID for this link
 		mtu:	int;
 		chans:	list of ref Chan;
 		nextid:	int;			# signalling identifier
@@ -442,6 +459,12 @@ L2cap: module
 	# cost.  cclose tears the channel down from this end; the peer
 	# tearing it down from its end makes crecv and csend fail.
 	connect:	fn(m: ref Mux, psm: int): (ref Chan, string);
+
+	# the BR/EDR equivalent: a basic mode channel, opened with a
+	# connection request and then configured in both directions.
+	# What comes back is read and written with the same csend and
+	# crecv a credit-based channel is.
+	bconnect:	fn(m: ref Mux, psm: int): (ref Chan, string);
 	csend:		fn(m: ref Mux, c: ref Chan, p: array of byte): string;
 	crecv:		fn(m: ref Mux, c: ref Chan): (array of byte, string);
 	cclose:		fn(m: ref Mux, c: ref Chan): string;
