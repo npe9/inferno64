@@ -8607,9 +8607,8 @@ after the word, 6033 after cat has run and echoed; rendered as
 characters it is the shell's banner, its complaint about the word, cat's
 own line and the line cat echoed back.
 .PP
-What is not claimed: the window is not swept away, moved, resized or
-deleted, and no second window is made.  Those are the rest of what a
-window system does, and each is a gesture the check would have to drive.
+What was not claimed at 2.3n: the window was not swept away, moved,
+resized or deleted, and no second window was made.  2.3p is those.
 .B "2.3o: abort() is a read of address zero."
 The sweep that gated 2.3n failed one criterion of the full personality's
 check,
@@ -8678,6 +8677,125 @@ that pointed at the throttle was a difference between two cases, and a
 difference is a hypothesis, not a cause; the cheap way to tell them
 apart was to remove the difference and see whether the failure went with
 it.  It did not.
+.B "2.3p: the rest of the window system, and why only one window could ever be made."
+Making a second window did not work, and neither did moving, resizing or
+deleting the first.  What the screen showed was that after one window
+was made rio never drew anything again: the same 1280x800 pixels in
+every screendump, while the log went on saying the user-space i8042
+driver had read each mouse packet off port 0x60 and
+.CW /dev/mouse
+had them.  The keyboard still worked \- that is what 2.3n types with \-
+so it was not that rio had died.
+.PP
+Five presses in one boot said where the line was.  Open the menu and
+slide off it: the menu appears.  Choose New and then press and release
+without moving, which is a sweep of nothing, so
+.CW sweep ()
+returns nil and no window is made: open the menu again, and it appears.
+Choose New and sweep a real rectangle: the window is made, and from then
+on the menu never appears again.  So it was not the menu, not New and
+not the sweep.  It was a window existing.
+.PP
+rio's
+.CW new ()
+ends with
+.CW "pid = recvul(cpid)" ,
+and the pid comes from libthread's
+.CW procexec ,
+which gets it this way: it makes a pipe, opens the write end again
+through
+.CW /fd/<n>
+with
+.CW OCEXEC ,
+hands that to the proc that will exec, and reads the read end.  The read
+ends when every write end is closed, and the exec is what closes the
+child's \- that is the whole mechanism by which
+.CW procexec
+learns whether the exec worked.  This buddy recorded
+.CW OCEXEC
+in the descriptor's mode and did nothing with it, so the child kept the
+write end open, the read never ended, no pid was ever sent, and rio's
+mouse thread sat inside
+.CW new ()
+forever.  The window it had just made worked, and the machine looked
+alive, because the keyboard thread is a different thread.
+.PP
+So the buddy closes them now, at the point an exec commits, and only
+there: the same layout routine runs again when a migration record is
+replayed to rebuild an arrived container's image, and that is not an
+exec \- its descriptors come out of the record after the image line and
+closing any of them would throw away what the record is restoring.
+.CW dup
+clears the flag on the new descriptor, as
+.CW sysdup 's
+.CW "newfd(c, 0)"
+does, so
+.CW "dup(1, 2)"
+in rio's winshell does not hand the command a descriptor that closes
+itself.  And the descriptor table's own refusal is named: sixteen is few
+for a window system that holds a
+.CW notepg
+descriptor per window on top of draw, mouse, cursor, keyboard, console
+and its file server, and a silent \-1 there is the shape of bug that
+cost this document two sections already.
+.PP
+.CW scripts/osprey-check-riowin.py
+drives the rest of the gestures on one booted machine and photographs it
+after each.  The menu is aimed at by arithmetic rather than by guessing:
+.CW genmenuhit.c
+pops the menu with the last item hit centred under the pointer and lays
+the items out
+.CW font->height+Vspacing
+apart, so item
+.I k
+is
+.I "(k \- lasthit)"
+pitches below where the button went down, and
+.CW menuhit
+remembers the last, so the offsets are relative to the previous choice.
+The pitch is measured, not assumed: a first boot opens the menu and
+photographs it, the menu's border is
+.CW DMedgreen
+and nothing else on the screen is, and its height less the two margins
+divided by the six items is 18 \- the built-in font is 16 high and
+.CW Vspacing
+is 2.
+.PP
+Nine criteria: a window swept; a second one beside it, each counted
+inside its own rectangle because both are the same white, with the new
+one bordered in
+.CW titlecol
+and the first redrawn in
+.CW lighttitlecol
+now that it is not current; two
+.CW /bin/rc
+laid out for two different containers; Move, chosen two items below New,
+leaving the box it came from as background and the box it went to
+filled; Resize, chosen one above Move, making it a rectangle of a
+different size; Delete, chosen two below Resize, leaving background
+where the window was; the other window still there afterwards, bordered
+in
+.CW lighttitlecol
+because deleting the current window leaves rio with no current window
+rather than promoting the other; the measured pitch; and a release
+outside the menu choosing nothing.
+.PP
+Delete is asserted from both sides, the window there in the shot before
+and gone in this one.  It was not, at first, and the first run of this
+check printed
+.CW ok
+for it while nothing after the first window had happened at all \- a
+rectangle that never held a window is background too.  A criterion that
+only looks for absence passes hardest when the thing it is checking
+never ran.
+.PP
+The screendump op is new:
+.CW --input
+now takes
+.CW S:<file> ,
+which photographs the screen there and then over QMP rather than at the
+end of the boot, so one machine can be looked at after each gesture
+instead of one boot per gesture.
 .NH 2
 Track three: the library-OS personality execs a program, then rio
 .PP
@@ -8960,7 +9078,7 @@ longest of the phases, and honestly named as the last.
 .NH 1
 Checking, all of it
 .PP
-There are fourteen checks in
+There are fifteen checks in
 .CW scripts/ ,
 one for each thing that boots, one for each pair of machines, and one
 for the userland this tree builds from source, and for most of this
@@ -9009,7 +9127,7 @@ ends in
 The general shape is worth keeping: a calling convention was changed
 and tested against the callers that the same commit changed.
 .CW scripts/osprey-check-all.sh
-is the answer \- seven configuration builds, then all fourteen checks in
+is the answer \- seven configuration builds, then all fifteen checks in
 order, with
 .CW -w
 to repeat the two-machine check, which was the one that had been flaky
@@ -9025,8 +9143,8 @@ check clean, the two-machine check run three times:
 .CW p9linux
 12,
 .CW p964
-29, keyboard 8, rio 5, micro 7, user 10, net 13, wire 14, two-machine 20
-three times over, the
+29, keyboard 8, rio 14, the window gestures 9, micro 7, user 10, net 13,
+wire 14, two-machine 20 twice over, the
 six criteria of the userland the tree builds itself, and two portable
 builds.  A criterion is a sentence a booted kernel printed
 in answer to a command typed at its prompt, so a clean check is also

@@ -60,7 +60,9 @@ def main():
 		help='before the shot, run a sequence over QMP/serial; comma-'
 		     'separated ops m:DX:DY (relative move), d:BUTTON / u:BUTTON '
 		     '(button down/up), s:SECONDS (pause), k:TEXT (type TEXT then '
-		     'Enter on the serial line); needs --shot')
+		     'Enter on the serial line), K:QCODE (press a key on the '
+		     'emulated keyboard), S:FILE (screendump there and then, so '
+		     'one boot can be looked at after each gesture); needs --shot')
 	ap.add_argument('--shot-on', default=None,
 		help='take the shot when this pattern appears rather than when '
 		     'the commands run out; lets a foreground program (rio) own '
@@ -256,6 +258,12 @@ def main():
 							qmp("send-key", {"keys":[
 								{"type":"qcode","data":f[1]}]})
 							pause(0.08)
+						elif f[0] == 'S':
+							# a screendump part way through the sequence,
+							# so one boot can be looked at after each
+							# gesture rather than only at the end
+							qmp("screendump",
+								{"filename":':'.join(f[1:])})
 				qf.write(json.dumps({"execute":"screendump","arguments":{"filename":a.shot}})+chr(10)); qf.flush(); qf.readline()
 				qs.close()
 			except Exception as e:

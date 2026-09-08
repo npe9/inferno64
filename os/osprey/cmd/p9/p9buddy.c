@@ -111,6 +111,8 @@ struct Img {
 enum { Nimg = 32 };
 static Img imgs[Nimg];
 
+static void fdcloseexec(Img*);
+
 /* the image of a container, making one when told to */
 static Img*
 imgof(uvlong container, int make)
@@ -439,6 +441,36 @@ issrvchan(int bfd)
 	return is;
 }
 
+/*
+ * What open(2)'s OCEXEC means, at the moment it means anything: the
+ * descriptors so opened are closed by exec and the rest are kept.
+ *
+ * This is not a nicety.  libthread's procexec - which is how rio starts
+ * the command in a window - opens the write end of a pipe OCEXEC, hands
+ * it to the proc that execs, and then reads the read end: the read ends
+ * when the write end is closed everywhere, which is the exec telling it
+ * the exec worked.  With the flag ignored the child kept the write end
+ * open, the read never ended, procexec never sent the pid, rio's new()
+ * never returned from recvul(), and rio's mouse thread sat inside it -
+ * so the first window a machine made was the last, and the menu never
+ * opened again.  The keyboard thread went on working, which is what
+ * made it look like rio was alive.
+ */
+static void
+fdcloseexec(Img *img)
+{
+	int i;
+
+	for(i = 0; i < Nfd; i++){
+		if(img->fds[i] < 0 || (img->fdmode[i] & OCEXEC) == 0)
+			continue;
+		p9close(img->fds[i]);
+		img->fds[i] = -1;
+		img->fdname[i][0] = 0;
+		img->fdmode[i] = 0;
+	}
+}
+
 static long
 fdnew(Img *img, int bfd, char *name, int mode)
 {
@@ -465,6 +497,15 @@ fdnew(Img *img, int bfd, char *name, int mode)
 			img->fdmode[i] = mode;
 			return i;
 		}
+	/*
+	 * Say so.  A silent -1 here is a descriptor a program asked for and
+	 * did not get, with nothing anywhere saying why; rio holds one
+	 * notepg descriptor per window on top of draw, mouse, cursor,
+	 * keyboard, console and its own file server, so this table is a
+	 * thing a window system can actually run out of.
+	 */
+	print("buddy: container %llud has all %d of its descriptors; %s not opened\n",
+		img->container, Nfd, name != nil ? name : "a pipe");
 	p9close(bfd);
 	return -1;
 }
@@ -729,6 +770,16 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 	case EXEC:
 		/* lay out the binary named at cdata[Nameoff]; layout to cdata[Dataoff] */
 		r = p9buddy_exec(container, (char*)(cdata + Nameoff), cdata + Dataoff);
+		/*
+		 * and only here, where a running container has really exec'd:
+		 * p9buddy_exec is called again when a migration record is
+		 * replayed to rebuild an arrived container's image, and that
+		 * is not an exec - its descriptors come out of the record
+		 * after the image line, and closing any of them there would
+		 * throw away what the record is in the middle of restoring.
+		 */
+		if(r >= 0)
+			fdcloseexec(img);
 		break;
 
 	case PAGE:
@@ -814,8 +865,12 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 			break;
 		}
 		nd = old == Fdcons ? Fdcons : p9dup(old);
+		/* the new descriptor is not close-on-exec whatever the old one
+		 * was: sysdup gives it flag 0, and dup(1, 2) in rio's winshell
+		 * would otherwise hand the exec'd command a descriptor that
+		 * closed itself */
 		if((int)a1 == -1){
-			r = fdnew(img, nd, img->fdname[a0], img->fdmode[a0]);
+			r = fdnew(img, nd, img->fdname[a0], img->fdmode[a0] & ~OCEXEC);
 		} else {
 			nf = (int)a1;
 			if(nf < 0 || nf >= Nfd){
@@ -828,7 +883,7 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 				p9close(img->fds[nf]);
 			img->fds[nf] = nd;
 			kstrcpy(img->fdname[nf], img->fdname[a0], sizeof img->fdname[nf]);
-			img->fdmode[nf] = img->fdmode[a0];
+			img->fdmode[nf] = img->fdmode[a0] & ~OCEXEC;
 			r = nf;
 		}
 		break;

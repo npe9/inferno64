@@ -1346,6 +1346,26 @@ opens
 .B /fd/<n>
 before it execs anything, which is why a window's command needs it.
 .PP
+It opens it
+.BR OCEXEC ,
+and that means something: a descriptor opened close-on-exec is closed by
+the buddy when a container execs, and only there \- rebuilding an
+arrived container's image from a migration record runs the same layout
+and is not an exec.
+.IR dup (2)
+clears the flag on the new descriptor, as
+.I sysdup
+does.  This is what
+.I procexec
+uses to learn whether an exec worked: it holds the read end of a pipe
+whose write end is close-on-exec, and the read ends when the exec closes
+it.  With the flag ignored the read never ended, rio's
+.I new ()
+never returned, and one window was all a machine could ever make.
+.PP
+The table is sixteen descriptors a container, and running out of it
+says so on the console rather than returning \-1 with no reason.
+.PP
 .IR open (2)
 returns the lowest-numbered free descriptor, 0, 1 and 2 included, and a
 close of one of those frees it rather than putting the console back.
@@ -1356,6 +1376,15 @@ does to put a window's
 .B /dev/cons
 on 0 and 1.  A write to a standard descriptor that has been closed or
 dup'd onto goes to the file server rather than out of the console.
+.PP
+.B /scripts/osprey-check-riowin.py
+drives the rest of the window system on one booted machine: a second
+window beside the first, then Move, Resize and Delete on it, chosen out
+of the menu by arithmetic \- libdraw pops the menu with the last item
+hit under the pointer and spaces the items
+.B font->height+Vspacing
+apart, and the check measures that spacing off a photograph of the menu
+rather than assuming it.
 .PP
 .B /scripts/osprey-check-rio.py
 types at the window: the word
