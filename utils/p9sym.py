@@ -120,6 +120,61 @@ class Resolver:
 			prev = ins
 		return None
 
+	def rets(self):
+		"""Every call-return address in text -> (symbol, offset, callee).
+
+		A pc captured by getcallerpc() must be one of these.  Built
+		once and cached; it is also the denominator for judging a
+		coincidence -- on this kernel only 1.87% of text bytes are
+		call-return addresses.
+		"""
+		if self.md is None:
+			return None
+		if getattr(self, '_rets', None) is not None:
+			return self._rets
+		r = {}
+		for i, (a, n) in enumerate(self.fns):
+			e = self.addrs[i+1] if i+1 < len(self.addrs) else self.entry + self.text
+			if not (0 < e - a <= 0x4000):
+				continue
+			for ins in self.md.disasm(self.d[40 + (a - self.entry):][:e-a], a):
+				if ins.mnemonic.startswith('call'):
+					t = ins.op_str
+					try:
+						ti = int(t, 16)
+						k = bisect.bisect_right(self.addrs, ti) - 1
+						t = self.fns[k][1]
+					except ValueError:
+						t = '*' + t
+					r[ins.address + ins.size] = (n, ins.address + ins.size - a, t)
+		self._rets = r
+		return r
+
+	def scan(self, pcs, span=0x2000):
+		"""Find a build offset that makes these pcs valid return addresses.
+
+		A capture is only meaningful against the exact binary that
+		produced it.  This tree rebuilds constantly and its panics
+		carry no build stamp, so pcs written down during one boot get
+		resolved months later against a kernel whose functions have
+		moved -- yielding a name that is confidently wrong.  If every
+		pc in a capture becomes a call-return address under one common
+		delta, that delta is the shift between the two builds and the
+		names under it are the real ones.  Coincidence is easy to rule
+		out: hitting by chance runs at the call-return density, so k
+		pcs agreeing on one delta is ~0.019**k per delta tried.
+		"""
+		r = self.rets()
+		if r is None:
+			return []
+		out = []
+		for D in range(-span, span+1):
+			hit = [p for p in pcs if (p + D) in r]
+			if hit:
+				out.append((len(hit), D, hit))
+		out.sort(key=lambda x: (-x[0], abs(x[1])))
+		return out
+
 	def describe(self, pc):
 		nm, off, _ = self.name(pc)
 		if nm is None:
@@ -129,16 +184,18 @@ class Resolver:
 		if st == 'ret':
 			s += "\t[return address]"
 		elif st == 'boundary':
-			s += "\t[instruction boundary, but not after a call]"
+			s += "\t[boundary but not after a call; try -s]"
 		elif st == 'interior':
-			s += "\t[NOT an instruction boundary -- cannot be a pc]"
+			s += "\t[not an instruction boundary in this build; try -s]"
 		return s
 
 def main():
 	av = sys.argv[1:]
-	docheck = False
-	if av and av[0] == '-c':
-		docheck = True; av = av[1:]
+	docheck = doscan = False
+	while av and av[0] in ('-c', '-s'):
+		if av[0] == '-c': docheck = True
+		else: doscan = True
+		av = av[1:]
 	if not av:
 		sys.exit("usage: p9sym.py [-c] kernel [pc...]")
 	r = Resolver(av[0])
@@ -150,8 +207,29 @@ def main():
 	pcs = av[1:]
 	if not pcs:
 		pcs = re.findall(r'(?:pc=)?0x([0-9a-f]{5,16})', sys.stdin.read())
-	for s in pcs:
-		print(r.describe(int(s, 16)))
+	vals = [int(s, 16) for s in pcs]
+	for v in vals:
+		print(r.describe(v))
+	if doscan:
+		if r.md is None:
+			sys.exit("p9sym: -s needs capstone")
+		res = r.scan(vals)
+		if not res:
+			print("\n# no build offset makes any of these a call return")
+			return
+		n = res[0][0]
+		print("\n# %.2f%% of text bytes are call-return addresses; %d/%d pcs agree at best"
+			% (100.0 * len(r.rets()) / r.text, n, len(vals)))
+		for cnt, D, hit in res:
+			if cnt < n:
+				break
+			print("# build offset %+#x -- %d/%d pcs are call returns:" % (D, cnt, len(vals)))
+			for v in vals:
+				if v + D in r.rets():
+					sym, off, callee = r.rets()[v+D]
+					print("    %#x -> %s+%#x\t(call %s)" % (v, sym, off, callee))
+				else:
+					print("    %#x -> unplaced" % v)
 
 if __name__ == '__main__':
 	main()
