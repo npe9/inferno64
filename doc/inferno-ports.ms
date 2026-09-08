@@ -19738,3 +19738,91 @@ One.  cpu1 is real, takes interrupts, and runs kernel work; Dis itself
 is still serialised behind one lock.  That is the boundary the rest of
 this branch's plan is about, and it is now reachable to work on rather
 than blocked behind a crash.
+.NH 2
+-smp 2 measured, and the one bug that is left
+.PP
+Ninety-six boots at
+.CW "-smp 2" ,
+same kernel and command line as the
+.CW "-smp 1"
+batch:
+.TS
+box, tab(;);
+l l l.
+;-smp 1;-smp 2
+_
+boots;96;96
+no panic;94;91
+general protection violation;2;5
+cpu1 online;n/a;96
+max VM holders (nvm);1;1
+.TE
+.PP
+Two of 96 against five of 96 is not a difference at this sample size
+(Fisher, about p = 0.44), and it is not claimed as one.  cpu1 came up
+in all 96.
+.PP
+All seven of those panics \(em the two at
+.CW "-smp 1"
+and the five at
+.CW "-smp 2"
+\(em have the identical faulting pc,
+.CW "PC 0000000000230619" ,
+which is
+.CW modstatus+0x18 .
+One bug, seven samples, and not an SMP bug: it happens at
+.CW "-smp 1"
+too.  That is the whole of what is left after the interrupt fix.
+.PP
+.CW modstatus()
+(os/inferno/port/devprog.c) reads
+.CW r->M->m->name ,
+and the faulting instruction is the second of the pair that walks it:
+.P1
+	MOVQ	0x30(BP), AX	/* r->M */
+	MOVQ	8(AX), AX	/* r->M->m */
+	MOVQ	0x68(AX), AX	/* r->M->m->name -- faults */
+.P2
+.CW Modlink
+declares
+.CW "Module* m"
+second, at offset 8, so the disassembly and the structure agree.  The
+value in
+.CW AX
+at the fault was
+.CW 0x00FF53F000E2C3F0
+\(em non-canonical, hence a general protection violation rather than a
+page fault, and with
+.CW 0x00FF53F0
+in the upper half, the real-mode BIOS stub address
+.CW F000:FF53 .
+.PP
+The
+.CW Qstatus
+guard ahead of that call tested
+.CW "p->reg.M == H"
+and nothing else, so an
+.CW M
+that was neither
+.CW H
+nor nil but no longer a live
+.CW Modlink
+went straight through.  A
+.CW Modlink
+is a Dis heap object with its own type, so the fix asks that rather
+than guessing whether a pointer looks plausible: if
+.CW "D2H(M)->t"
+is not
+.CW &Tmodlink
+the block has been freed and reused.  The read then prints the
+placeholder line it already prints for an exiting program, and says so
+once.
+.PP
+Containment and attribution, not a cure, and labelled that way in the
+source.
+.CW newprog()
+takes a counted reference to the Prog's own
+.CW Modlink
+.CW ( "h = D2H(m); h->ref++" ),
+so for one to be freed while a live Prog still names it, something is
+dropping that reference.  That is the next thing to find.
