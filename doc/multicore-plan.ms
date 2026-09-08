@@ -2306,6 +2306,26 @@ Two pcs remain unplaced, so
 .CW free+56
 is withdrawn.
 .PP
+Read end to end, the captures name a static
+.CW Type
+being handed to
+.CW free() :
+.CW freelist()
+freeing
+.CW Tptr ,
+and, once
+.CW freetype()
+was made to refuse that,
+.CW Tarray Ns 's
+count reaching zero eighteen times in one boot under
+.CW OP(cvtac) .
+Creation of Arrays is 1:1 with destruction, so that count is one more
+than the number of live Arrays and reaching zero means Arrays were
+destroyed more often than created \(em the double free this branch has
+been chasing, confirmed by a mechanism independent of the pool's magic
+check.  It narrows the object kind; it does not yet locate the surplus
+release.
+.PP
 The build stamp needed for this already existed and was never used:
 every mkfile compiles
 .CW $CONF.c
