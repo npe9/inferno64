@@ -469,11 +469,11 @@ _exits(char *status)
 }
 
 /*
- * Two calls that are here so that a program which cannot reach them
- * says so instead of trapping.  Both were libc's system-call stubs, and
- * a stub on this personality is a trap into a microkernel that does not
- * answer the Plan 9 table: a program that reached one faulted, with
- * nothing to say why.
+ * A call that is here so that a program which cannot reach it says so
+ * instead of trapping.  It was libc's system-call stub, and a stub on
+ * this personality is a trap into a microkernel that does not answer the
+ * Plan 9 table: a program that reached one faulted, with nothing to say
+ * why.
  *
  * noted(2) returns from a note handler.  The personality raises no
  * notes on a program it loaded, so no handler ever runs and nothing
@@ -481,22 +481,10 @@ _exits(char *status)
  * _procsplhi and _procsplx, which its scheduler does call, and a file
  * is linked whole.
  *
- * rendezvous(2) has two callers and neither can run here.  libc's qlock
- * names it as its default way to wait, and a libthread program replaces
- * that before it starts a thread (_qlockinit, with libthread's own
- * rendezvous, which is user-space and makes no system call) while a
- * program that is not a libthread program has one flow of control and
- * nothing to contend with.  libthread's own scheduler calls it as well,
- * to put a proc with no ready thread to sleep and to wake it again
- * (runthread and _threadready, sched.c) - and that is between procs of
- * one program, which this personality does not have yet: proccreate
- * refuses, so there is one proc and it never sleeps for work that only
- * another proc could bring.
- *
- * Reaching either would mean something is true that this personality
- * says is not, so each says which and ends the program.  Neither is a
- * stub that answers: a wrong answer here would be a program going
- * quietly on with a lock it does not hold.
+ * Reaching it would mean something is true that this personality says is
+ * not, so it says which and ends the program rather than answering: a
+ * wrong answer here would be a program going quietly on as though it had
+ * been sent a note.
  */
 int
 noted(int v)
@@ -509,15 +497,56 @@ noted(int v)
 	return -1;
 }
 
+/*
+ * The calls a program with more than one flow of control needs.
+ *
+ * privalloc(2) is one word of storage that is this flow's own.  libc's
+ * own hands out a word of _privates, which is one array in the program's
+ * image and so is shared by every flow it has; the personality's is a
+ * word whose contents its scheduler swaps at the switch, which is what
+ * per-process means when every process is a kproc of one address space.
+ *
+ * getpid(2) is this flow's number, for the same reason: libc's reads
+ * _tos->pid, and the Tos is in the image and shared.
+ *
+ * rendezvous(2) is two flows meeting on a tag.  libc's qlock names it as
+ * its default way to wait - and a libthread program replaces that before
+ * it starts a thread - but libthread's own scheduler calls it to put a
+ * proc with no ready thread to sleep and to wake it again (runthread and
+ * _threadready, sched.c).  That is the caller that matters, and the
+ * reason this is a call to the personality and not a refusal: without it
+ * a program's second proc would be started and never woken.
+ */
+void**
+privalloc(void)
+{
+	return p9lib->privalloc();
+}
+
+int
+getpid(void)
+{
+	return p9lib->pid();
+}
+
 void*
 rendezvous(void *tag, void *val)
 {
-	char *m = "p9crt: rendezvous: a loaded program waited for another flow of control, and it has only one\n";
+	return p9lib->rendezvous(tag, val);
+}
 
-	USED(tag); USED(val);
-	p9conswrite(2, m, strlen(m), -1LL);
-	_exits("rendezvous");
-	return nil;
+/*
+ * A second flow of control inside this program, sharing its memory and
+ * its descriptors.  This is not in libc, because there is no Plan 9 call
+ * that means it: on Plan 9 it is rfork(RFPROC|RFMEM), which returns
+ * twice and so cannot be a function a library provides - a library
+ * cannot split its caller's C stack.  So it is named for what it does
+ * and takes the function to start.
+ */
+int
+p9proccreate(void (*f)(void*), void *arg)
+{
+	return p9lib->proccreate(f, arg);
 }
 
 /*

@@ -402,6 +402,19 @@ p9pwrite(int fd, void *buf, long n, vlong off)
 }
 
 /*
+ * getpid(2): the number of the flow of control this call is on, which is
+ * the personality's own kproc number.  libc's getpid reads _tos->pid,
+ * and a program's Tos is in its image and shared by every flow it has,
+ * so that number would be the same for all of them; libthread stamps it
+ * on each of its procs and would have stamped one number on all.
+ */
+int
+libpid(void)
+{
+	return up->pid;
+}
+
+/*
  * The offset a descriptor's channel stands at.
  *
  * Nothing in the name space needs this; the personality's own check

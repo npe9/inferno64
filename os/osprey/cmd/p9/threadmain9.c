@@ -112,20 +112,32 @@ _schedexecwait(void)
 
 /*
  * A new proc: a second flow of control inside this program, sharing its
- * memory.  The personality has exactly that in its cooperative kprocs,
- * and giving one to a program means giving the program per-process
- * storage as well - libthread keeps the running Proc in a privalloc(2)
- * word, and one word cannot answer differently to two flows of control
- * unless something swaps it at the switch.  That is the next piece; it
- * is not here yet, so this refuses by name rather than starting a proc
- * that would find another proc's Proc in its own private.
+ * memory.  On Plan 9 that is rfork(RFPROC|RFMEM), and the child, which
+ * has a copy of the stack at the same addresses, longjmps to a buffer
+ * the parent saved and lands in _schedinit on its own stack.  Two stacks
+ * cannot be at one address here, so the personality starts the new flow
+ * at a function instead - which is simpler, because nothing about
+ * _schedinit needs the caller's stack: it never returns.
+ *
+ * What makes this work at all is that the personality gives each flow
+ * its own privalloc(2) word.  _threadgetproc is a dereference of one
+ * fixed pointer captured in main, so the word behind it has to answer
+ * differently to each flow; the personality's scheduler swaps its
+ * contents at the switch.
  */
+extern int p9proccreate(void (*f)(void*), void *arg);
+
+static void
+procstart(void *a)
+{
+	_threadsetproc((Proc*)a);
+	_schedinit();
+}
+
 int
 _schedfork(Proc *p)
 {
-	USED(p);
-	werrstr("proccreate: this personality has threads in one proc, not procs");
-	return -1;
+	return p9proccreate(procstart, p);
 }
 
 /*

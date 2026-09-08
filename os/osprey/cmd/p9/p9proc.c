@@ -67,6 +67,9 @@ struct Proc9 {
 	Proc	*p;		/* the kproc it runs on, while it runs */
 	Fgrp	*fgrp;		/* its own descriptor table */
 	int	std[3];		/* its numbers for its standard descriptors */
+	int	inproc;		/* a second flow of control inside a program already running */
+	void	(*fn)(void*);	/* what it runs, when it is one of those */
+	void	*arg;
 	char	name[64];
 	char	status[ERRMAX];
 	char	*argv[Nargv];
@@ -303,6 +306,102 @@ p9spawn(char *name, char **argv, int *std)
 		name, t->pid, base, t->std[0], t->std[1], t->std[2]);
 	kproc(t->name, procstart, t);
 	return t->pid;
+}
+
+/*
+ * A second flow of control inside a program that is already running.
+ *
+ * This is what a library operating system has instead of
+ * rfork(RFPROC|RFMEM): the memory is shared because there is one address
+ * space and nothing to share or not share, and what is new is only the
+ * flow of control - a kproc of the cooperative scheduler, with a stack
+ * of its own and the private words of its own that the scheduler swaps.
+ * The descriptor table is the creating proc's, by pointer, which is what
+ * rfork without RFFDG means.
+ *
+ * It differs from spawn in what it does not do: nothing is loaded, no
+ * image is claimed, and no descriptor table is built.  The base stays 0
+ * so that p9procbusy, which is asking whether an image is in use, does
+ * not count these - the image is in use, and the program running in it
+ * is the one that asked for this.
+ *
+ * libthread's proccreate is the caller, through _schedfork.
+ */
+static void
+inprocstart(void *a)
+{
+	Proc9 *t;
+
+	t = a;
+	t->p = up;
+	strncpy(up->text, t->name, sizeof up->text - 1);
+	if(waserror()){
+		print("p9 proccreate: %s (%d) failed: %s\n", t->name, t->pid, up->errstr);
+		procdone(t, up->errstr);
+		return;			/* kproc's launch pexits from here */
+	}
+	t->fn(t->arg);
+	poperror();
+	procdone(t, "");
+	/* kproc's launch pexits from here */
+}
+
+int
+p9proccreate(void (*f)(void*), void *arg)
+{
+	Proc9 *t;
+	int i;
+
+	t = nil;
+	for(i = 0; i < Nproc9; i++)
+		if(!proc9[i].used){
+			t = &proc9[i];
+			break;
+		}
+	if(t == nil){
+		print("p9 proccreate: no free process slot\n");
+		return -1;
+	}
+	memset(t, 0, sizeof *t);
+	strncpy(t->name, up->text, sizeof t->name - 1);
+	t->inproc = 1;
+	t->fn = f;
+	t->arg = arg;
+	t->fgrp = nil;			/* shared with the creator: procdone must not close it */
+	t->base = 0;
+	t->pid = ++p9nextpid;
+	t->used = 1;
+	t->live = 1;
+	t->done = 0;
+	print("p9 proccreate: %s gets a second flow of control as %d, sharing its memory and its descriptors\n",
+		t->name, t->pid);
+	kproc(t->name, inprocstart, t);
+	return t->pid;
+}
+
+/*
+ * Wait for the flows of control a program made for itself.  p9exec calls
+ * this when the program it entered has returned: the program's own stack
+ * is done with, but a proc it made is still running in its image, and
+ * the personality must not go on to load something else over it.
+ */
+void
+p9procwaitinproc(void)
+{
+	int i, n;
+
+	for(;;){
+		n = 0;
+		for(i = 0; i < Nproc9; i++)
+			if(proc9[i].used && proc9[i].live && proc9[i].inproc)
+				n++;
+		if(n == 0)
+			break;
+		sched();		/* let them run; they end by ending their kprocs */
+	}
+	for(i = 0; i < Nproc9; i++)
+		if(proc9[i].used && proc9[i].inproc)
+			proc9[i].used = 0;	/* nothing waits for these by number */
 }
 
 static int

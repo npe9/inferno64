@@ -69,10 +69,32 @@ struct P9lib {
 	int	(*stat)(char *name, uchar *edir, int nedir);
 	int	(*fstat)(int fd, uchar *edir, int nedir);
 	int	(*sleep)(long ms);
+	/*
+	 * And what a program needs to have more than one flow of control
+	 * of its own.  This is what a library operating system has instead
+	 * of rfork(RFPROC|RFMEM): the memory is shared because there is one
+	 * address space, so what is new is only the flow of control - a
+	 * kproc of the personality's cooperative scheduler.
+	 *
+	 * privalloc is the hard half.  privalloc(2) is one word that is the
+	 * process's own, and a program takes the address of it once and
+	 * then reads and writes it from every flow it has - libthread's
+	 * _threadgetproc is a dereference of exactly one such pointer,
+	 * captured in main.  So the word is at a fixed address and the
+	 * scheduler swaps its contents at the switch.
+	 *
+	 * pid is the flow's own number, which is what getpid(2) is.  It is
+	 * not _tos->pid: a program's Tos is in its image and its flows
+	 * share it.
+	 */
+	void**	(*privalloc)(void);
+	int	(*proccreate)(void (*f)(void*), void *arg);
+	int	(*pid)(void);
+	void*	(*rendezvous)(void *tag, void *val);
 };
 
 enum {
-	P9libversion	= 5,
+	P9libversion	= 6,
 	/*
 	 * Where a loaded program is linked: well above the personality's own
 	 * image (its bss ends near 7MB) and well below the stack.  The

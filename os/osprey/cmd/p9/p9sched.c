@@ -69,6 +69,33 @@ ready(Proc *p)
 		enqueue(p);
 }
 
+/*
+ * The private words of whichever proc is running.
+ *
+ * privalloc(2) is "one word of storage that is this process's own", and
+ * a program gets the address of one once and then reads and writes it
+ * from every flow of control it has.  In a kernel that word is on the
+ * process's own page; here every flow of control is a kproc of one
+ * address space, so the word is at one address and its contents are
+ * swapped at the switch (sched, below).  A program that never calls
+ * privalloc costs two memmoves of an empty array per switch.
+ */
+void *privblock[Nprivwords];
+static int nprivalloc;
+
+/*
+ * Hand out the next one, or nil when they are gone - which is what
+ * privalloc(2) answers, and what libc's callers do not check, so the
+ * number has to be enough rather than nearly enough.
+ */
+void**
+p9privalloc(void)
+{
+	if(nprivalloc >= Nprivwords)
+		return nil;
+	return &privblock[nprivalloc++];
+}
+
 extern vlong p9nsec(void);	/* devtime.c: the microkernel's clock, by xcall */
 void sched_tick(void);		/* below: one 10ms tick of the cooperative clock */
 
@@ -146,10 +173,20 @@ sched(void)
 				allproc[i]->pid, allproc[i]->text, allproc[i]->state, allproc[i]->twhen);
 		panic("p9sched: no runnable proc (deadlock), tick %lud", p9ticks);
 	}
+	/*
+	 * The private words go with the proc.  Saved before the switch and
+	 * loaded by whoever does the switching, so that the proc being
+	 * resumed finds its own: doing it the other way round - restoring
+	 * after setlabel returns 1 - would leave a brand-new kproc, which
+	 * arrives through launch and not through a setlabel, running on
+	 * whatever the last proc left behind.
+	 */
+	memmove(me->priv, privblock, sizeof privblock);
 	if(setlabel(&me->sched))
-		return;			/* resumed later */
+		return;			/* resumed later, with my words already loaded */
 	up = p;
 	p->state = Running;
+	memmove(privblock, p->priv, sizeof privblock);
 	gotolabel(&p->sched);
 }
 
@@ -266,6 +303,79 @@ kfastticks(uvlong *hz)
 	if(hz != nil)
 		*hz = 100;
 	return p9ticks;
+}
+
+/*
+ * rendezvous(2).
+ *
+ * Two flows of control name the same tag and meet there: the first to
+ * arrive sleeps, the second wakes it, and each is handed the other's
+ * value.  It is symmetric on purpose - neither side is the waker by
+ * construction - and that is what makes it safe to use as libthread
+ * does, where a proc with no ready thread sets a flag, drops a lock and
+ * only then rendezvouses, so the waker can get there first.
+ *
+ * libthread is the caller.  runthread puts a proc with nothing to run to
+ * sleep on the address of its ready queue, and _threadready wakes it on
+ * the same address when it puts a thread there (sched.c).  Without this,
+ * a program's second proc would be started and never woken.
+ *
+ * No locks: this personality's scheduler is cooperative and switches
+ * only where it is asked to, so the scan and the claim below are one
+ * indivisible step already.
+ */
+enum { Nrend = 32 };		/* tags being waited on at once */
+
+typedef struct Rend Rend;
+struct Rend {
+	int	inuse;
+	void	*tag;
+	void	*val;		/* going in, the sleeper's; coming out, the waker's */
+	int	done;
+	Rendez	r;
+};
+static Rend rends[Nrend];
+
+static int
+rendone(void *a)
+{
+	return ((Rend*)a)->done;
+}
+
+void*
+p9rendezvous(void *tag, void *val)
+{
+	Rend *e;
+	void *other;
+	int i;
+
+	for(i = 0; i < Nrend; i++)
+		if(rends[i].inuse && !rends[i].done && rends[i].tag == tag){
+			/* the other side is already here: take its value, leave ours */
+			e = &rends[i];
+			other = e->val;
+			e->val = val;
+			e->done = 1;
+			wakeup(&e->r);
+			return other;
+		}
+	for(i = 0; i < Nrend; i++)
+		if(!rends[i].inuse)
+			break;
+	if(i == Nrend){
+		print("p9 rendezvous: %d tags are already being waited on; refusing %#p\n", Nrend, tag);
+		return (void*)~(uintptr)0;	/* what an interrupted rendezvous answers */
+	}
+	e = &rends[i];
+	e->inuse = 1;
+	e->tag = tag;
+	e->val = val;
+	e->done = 0;
+	ksleep(&e->r, rendone, e);
+	other = e->val;
+	e->inuse = 0;
+	e->done = 0;
+	return other;
 }
 
 /*

@@ -9506,25 +9506,22 @@ criterion worth having.
 One thing is not implemented, and 3.2e below says why more exactly than
 this section first did:
 .CW rendezvous .
-It has two callers and neither can run here.  libc's
-.CW qlock
-names it as its default way to wait, and a libthread program replaces
-that before it starts a thread, while a program that is not a libthread
-program has one flow of control and nothing to contend with.
-libthread's own scheduler calls it as well \- to put a proc with no
-ready thread to sleep and to wake it again \- and that is between procs
-of one program, which this personality does not have yet.  It used to
-resolve to the prebuilt archive's stub, which is a trap this
+It resolved to the prebuilt archive's stub, which is a trap this
 microkernel does not answer, so a program that reached it faulted with
-nothing to say why.  It now resolves to
-.CW p9crt.c ,
-which says which impossible thing has happened and ends the program.
-The same is done for
+nothing to say why \- and this section could not see who would reach it,
+because libc's
+.CW qlock
+names it as its default way to wait and nothing here contends a qlock.
+That reading was incomplete: libthread's own scheduler is its second
+caller, and 3.2f below implements it for real.  What stands from this
+section is
 .CW noted (2),
 which is linked because libthread's
 .CW note.c
-also holds the two functions its scheduler calls, and a file is linked
-whole.
+also holds the two functions its scheduler calls and a file is linked
+whole; no note is ever raised on a loaded program, so it resolves to
+.CW p9crt.c ,
+which says so and ends the program rather than answering.
 .PP
 .B "3.2e: a threaded program, on the real libthread.  Done."
 .CW /boot/libthread
@@ -9579,8 +9576,6 @@ against the source-built libraries only and read the undefined symbols
 .CW noted
 and
 .CW _exits .
-The first two are the ones 3.2d ends on, linked because something names
-them rather than because anything calls them.
 .CW _exits
 is real and was missing: it is what
 .CW exits
@@ -9588,6 +9583,12 @@ runs the
 .CW atexit
 handlers before, and a flow of control that is not the last one uses it
 directly.
+.CW noted
+is linked because a file is linked whole and nothing calls it.
+.CW rendezvous
+was defined the same way at first, and that was wrong \- it is called,
+by libthread's own scheduler, as soon as a program has two procs; 3.2f
+implements it.
 .PP
 Then the enumeration was run once more, with those three defined, and
 it came back empty.  That is the sentence this section is for: a
@@ -9599,24 +9600,82 @@ the table, or code in its own image.  The one system call a threaded
 program makes here is the console write, and the console is the one
 thing the personality does not hold.
 .PP
-What it does not have yet is a second proc.
+What that first commit did not have was a second proc; 3.2f is that.
+.PP
+.B "3.2f: a proc of a program's own, and the per-process word under it.  Done."
 .CW proccreate
-is
+is libthread's
 .CW _schedfork ,
-and a second flow of control inside one program means giving the
-program per-process storage: libthread keeps the running Proc in a
+and where Plan 9 answers it with
+.CW rfork(RFPROC|RFMEM)
+this personality starts a kproc of its cooperative scheduler at a
+function.  The program sends its five values a second time, from a proc
+of its own, and they sum to 15 again \- but by a different mechanism:
+between threads of one proc libthread simply runs the other thread,
+while between procs the receiving proc has no ready thread at all, goes
+to sleep, and is woken by the sending proc.
+.PP
+Two things had to exist first.
+.PP
+The per-process word.
 .CW privalloc (2)
-word, and
+is one word of storage that is this process's own, and libthread takes
+the address of one in
+.CW main
+and then reads and writes it from every proc it has \-
 .CW _threadgetproc
-is a dereference of one fixed pointer captured once in
-.CW main ,
-so the word cannot be indexed off the running process at the time of
-the call.  It has to be a fixed address whose contents the personality
-swaps at the switch, which is what a kernel does for a per-process
-register and is the next piece.
-.CW _schedfork
-refuses by name until then, rather than starting a proc that would find
-another proc's Proc in its own private.
+is a dereference of that one pointer.  In a kernel the word is on the
+process's own page.  Here every flow of control is a kproc of one
+address space, so there is one address and the scheduler swaps its
+contents at the switch: the outgoing proc's copy is saved into its Proc
+and the incoming proc's is loaded, both before the jump.  Before the
+jump on purpose \- restoring after
+.CW setlabel
+returns 1 would leave a brand-new kproc, which arrives through
+.CW launch
+and not through a
+.CW setlabel ,
+running on whatever the last proc left behind.
+.PP
+And
+.CW rendezvous (2),
+which 3.2d and the first half of 3.2e both said was unreachable.  It
+was, while a program had one proc.  libthread's scheduler is its second
+caller: 
+.CW runthread
+puts a proc with nothing to run to sleep on the address of its ready
+queue and
+.CW _threadready
+wakes it there
+.CW ( sched.c ),
+and without that a program's second proc would be started and never
+woken.  So the personality has a real one now \- a tag table over
+.CW ksleep
+and
+.CW wakeup ,
+symmetric the way Plan 9's is, because libthread's sleeper drops its
+lock before it rendezvouses and the waker can get there first.  It
+needs no locks of its own: this scheduler switches only where it is
+asked to, so the scan and the claim are one indivisible step already.
+.PP
+.CW getpid (2)
+is the personality's too now, and it had to be.  libc's reads
+.CW _tos->pid ,
+and a program's Tos is in its image and shared by every flow it has, so
+libthread would have stamped one number on all of its procs.  It is the
+kproc's own number instead, and the check requires the two the program
+prints to differ \- two flows reading one number would mean the
+per-process word was not per-process.
+.PP
+The swap is the load-bearing part, so it has a negative control: with
+the two memmoves taken out of
+.CW sched ,
+the same boot does not merely lose the second proc, it panics before it
+gets to the shell.  It is also the one piece of this that is compiled
+into four other configurations \-
+.CW p9sched.c
+is p9pair's and p9buddy's and p9linux's and the two-machine check's as
+well \- so the whole set was run, not just p964.
 .PP
 .B "What rio still needs, and it is not libthread."
 3.2c named rio's wants as
@@ -9731,7 +9790,7 @@ check clean, the two-machine check run three times:
 .CW p9linux
 12,
 .CW p964
-38, keyboard 8, rio 14, the window gestures 10, micro 7, user 10, net
+40, keyboard 8, rio 14, the window gestures 10, micro 7, user 10, net
 13, wire 14, two-machine 20 twice over, the
 six criteria of the userland the tree builds itself, and two portable
 builds.  A criterion is a sentence a booted kernel printed

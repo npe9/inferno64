@@ -146,6 +146,11 @@ extern long	libpwrite(int, void*, long, vlong);
 extern int	libstat(char*, uchar*, int);
 extern int	libfstat(int, uchar*, int);
 extern int	libsleep(long);
+extern int	libpid(void);
+extern void**	p9privalloc(void);
+extern int	p9proccreate(void (*f)(void*), void *arg);
+extern void*	p9rendezvous(void *tag, void *val);
+extern void	p9procwaitinproc(void);
 
 /*
  * The one table every loaded program is handed.  It is read-only and the
@@ -178,6 +183,10 @@ p9libtable(void)
 	p9thelib.stat = libstat;
 	p9thelib.fstat = libfstat;
 	p9thelib.sleep = libsleep;
+	p9thelib.privalloc = p9privalloc;
+	p9thelib.proccreate = p9proccreate;
+	p9thelib.pid = libpid;
+	p9thelib.rendezvous = p9rendezvous;
 	return &p9thelib;
 }
 
@@ -338,6 +347,12 @@ p9exec(char *name, char **argv)
 	else
 		print("p9 exec: %s exited with status \"%s\", into the personality that loaded it, not out of the task\n",
 			name, p9execstatus == nil ? "" : p9execstatus);
+	/*
+	 * A program may have made flows of control of its own, and one of
+	 * them may still be running in its image.  The personality must not
+	 * go on to load something else over it.
+	 */
+	p9procwaitinproc();
 	print("p9 exec: %s returned; the personality is still here, its name space never reloaded\n", name);
 	return 0;
 }

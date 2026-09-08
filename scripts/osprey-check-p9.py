@@ -289,6 +289,20 @@ def main():
     results.append(("and its threads hand values to each other: five values cross an unbuffered channel between two threads of one proc and sum to 15, which is a hand-off rather than a buffer - the sender blocks until the receiver takes each one, so neither thread could get through this alone and libthread's own scheduler is what runs the other",
                     'libthread: 5 values crossed an unbuffered channel between two threads of one proc, summing to 15' in t
                     and 'that is not the' not in t))
+    #
+    # And a proc of its own.  proccreate is a second flow of control
+    # inside one program, which is what rfork(RFPROC|RFMEM) is on Plan 9
+    # and what a kproc of the personality's cooperative scheduler is
+    # here.  The two pids must differ: getpid on this personality is the
+    # flow's own number, and two flows reading one number would mean the
+    # per-process word the whole mechanism rests on was not per-process.
+    m = re.search(r'libthread: the second proc runs as (\d+), and the first was (\d+)', t)
+    results.append(("and a program can have a second flow of control of its own: proccreate is libthread's _schedfork, and where Plan 9 answers it with rfork(RFPROC|RFMEM) - whose child gets a copy of the stack at the same addresses and longjmps onto it - this personality starts the new flow at a function, because two stacks cannot be at one address in one address space",
+                    'gets a second flow of control as' in t
+                    and m is not None and m.group(1) != m.group(2)))
+    results.append(("and values cross a channel between the two of them: five more, summing to 15, and this is not the same mechanism as between threads of one proc - the receiving proc has no ready thread and sleeps, and the sending proc wakes it, so this is the personality's own rendezvous and the per-process word that tells each flow which Proc it is running",
+                    'libthread: 5 values crossed the same channel from a proc of its own, summing to 15' in t
+                    and 'that is not the' not in t))
     results.append(("and it exits through the microkernel's minimal syscall interface, no in-kernel personality",
                     'the program exited' in t and 'panic' not in t))
 

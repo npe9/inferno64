@@ -1469,33 +1469,18 @@ under a name of its own so that
 can define
 .I pwrite
 for the personality's own files.
-.I rendezvous
-and
 .IR noted (2)
-are linked because something names them, not because anything calls
-them: libc's
-.I qlock
-names
-.I rendezvous
-as its default way to wait, libthread's own scheduler calls it to put a
-proc with no ready thread to sleep and to wake it again, and libthread's
+is linked because something names it, not because anything calls it:
+libthread's
 .I note.c
-holds the two functions its scheduler calls as well as its note handler.
-A libthread program replaces the qlock one before it starts a thread
-.RI ( _qlockinit ,
-with libthread's own rendezvous, which is user-space and makes no system
-call); a program that is not a libthread program has one flow of control
-and nothing to contend with; the scheduler's use is between procs of one
-program, which this personality does not have yet; and no note is ever
-raised on a loaded program, so no handler runs and nothing returns from
-one.  Both used to
-resolve to the prebuilt archive's stubs, which are traps this
-microkernel does not answer, so reaching one faulted with nothing to say
-why.  Both now resolve to
+holds the two functions its scheduler calls as well as its note handler,
+and a file is linked whole.  No note is ever raised on a program the
+personality loaded, so no handler runs and nothing returns from one.  It
+used to resolve to the prebuilt archive's stub, which is a trap this
+microkernel does not answer, so reaching it faulted with nothing to say
+why; it now resolves to
 .I p9crt.c ,
-which says which impossible thing has happened and ends the program.
-Neither answers: a wrong answer would be a program going on with a lock
-it does not hold.
+which says so and ends the program rather than answering.
 .PP
 The personality runs a threaded program.
 .B /boot/libthread
@@ -1517,19 +1502,48 @@ Its link leaves out the prebuilt archive of system-call stubs
 altogether and resolves, so the one system call a threaded program makes
 here is the console write.
 .I procexec
-and
+refuses by name, because a library operating system has no exec: a
+program is at the address it was linked for and there is nothing to
+replace an address space with.
 .I proccreate
-each refuse by name:
-.I procexec
-because a library operating system has no exec, and
-.I proccreate
-because a second flow of control inside one program needs per-process
-storage that this personality does not swap yet \-
+works.  It is a kproc of the personality's cooperative scheduler, and
+where Plan 9 answers
+.I _schedfork
+with
+.RI rfork( RFPROC | RFMEM ) \-
+whose child gets a copy of the stack at the same addresses and longjmps
+onto it \- this personality starts the new flow at a function, because
+two stacks cannot be at one address in one address space.
+.PP
+Three calls exist for that.
+.IR privalloc (2)
+is one word of storage that is a flow's own: libc's hands out a word of
+.BR _privates ,
+which is one array in the program's image and so is shared by every flow
+it has, while the personality's is a word at a fixed address whose
+contents its scheduler swaps at the switch \- which is what per-process
+means when every process is a kproc of one address space, and what
+libthread needs, since
 .I _threadgetproc
-is a dereference of one pointer captured once in
-.IR main ,
-so the word behind it has to be a fixed address whose contents change
-at the switch.
+is a dereference of one pointer captured in
+.IR main .
+.IR getpid (2)
+is the flow's own number for the same reason:
+.B _tos->pid
+is in the image and shared.  And
+.IR rendezvous (2)
+is two flows meeting on a tag \- a tag table over the personality's
+.I ksleep
+and
+.IR wakeup ,
+symmetric the way Plan 9's is, because libthread's sleeper drops its
+lock before it rendezvouses and the waker can arrive first.  libthread's
+scheduler is the caller:
+.I runthread
+puts a proc with no ready thread to sleep on the address of its ready
+queue and
+.I _threadready
+wakes it there.
 .PP
 The personality's cooperative scheduler has an idle.  An empty run
 queue is a deadlock only if every proc is asleep on a rendezvous; if
