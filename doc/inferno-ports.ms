@@ -20994,6 +20994,59 @@ was disconnected, so closing the orphan would have taken the real link
 with it anyway.
 
 .NH 2
+Service discovery, and the one protocol here that is big endian
+.PP
+A Classic device says what it can do by answering an SDP search, and
+.CW btfs
+asks as soon as the link is up: an L2CAP channel to PSM 1, one Service
+Search Attribute Request for the public browse group, and the answer
+becomes
+.CW /net/bt/N/remote/ADDR/sdp ,
+one file per record.  Each holds its service classes, its name, the
+protocol stack it is reached over \(em which is where an RFCOMM
+channel number lives, and the reason to read a record at all \(em and
+every other attribute the device gave, decoded but not interpreted.
+.PP
+It is not GATT with different spelling.  A GATT database is a table of
+handles a client walks and can walk again; an SDP server holds records
+whose values are trees of typed data elements, and a client asks for
+whole records and gets them in one answer, or in several.  So the two
+halves of the code are a recursive descent over a length-prefixed
+encoding, and one request asked until the server stops continuing.
+.PP
+Two things about it are unlike everything else here, and both were got
+wrong first.  SDP is big endian \(em header, lengths, and the
+parameters inside a data element \(em where HCI, L2CAP, ATT and SMP
+are all little endian, so
+.CW bt->get16
+and
+.CW bt->put16
+are the wrong way round in this file and are not used in it.  Its
+UUIDs are big endian too, which means
+.CW bt->uuid() ,
+whose whole job is to reverse the little-endian ones an ATT wire
+carries, produces a UUID backwards here; the bytes are already in the
+order they are written in.
+.PP
+And an answer that does not fit comes back in pieces with a
+continuation state between them.  The pieces are joined before
+anything is parsed, because a record can be cut in the middle of a
+data element \(em so the bench hands the same 125 byte answer back
+seventeen bytes at a time and asserts the same records come out.  With
+the joining removed and each piece parsed as it arrives, that phase
+fails with
+.CW "a data element of 97 bytes off the end" ,
+which is the control.
+.PP
+The model had the mirror of the same mistake.  It found the
+continuation state in a request by taking the last byte as its length,
+which reads the last byte of the state itself; every continued answer
+then restarted from the wrong offset.  Finding it means walking the
+request from the front, because a continuation state's length byte is
+identifiable only by what comes before it.  The model walks it now,
+with a data element skipper of its own.
+
+.NH 2
 A native backtrace from inside the collector
 .PP
 The bench passes under

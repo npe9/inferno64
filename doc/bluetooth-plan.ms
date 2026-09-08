@@ -387,7 +387,29 @@ simple pairing, without which none of them will talk to a device that
 requires security.
 .IP 3.
 .B SDP .
-Both halves.  Nothing Classic can be found without it.
+The client half is done.
+.CW btfs
+asks as soon as a BR/EDR link comes up, over an L2CAP channel to PSM
+1, and what the device answers becomes
+.CW /net/bt/N/remote/ADDR/sdp ,
+one file per service record.  A record holds its service classes, its
+name, the protocol stack it is reached over \(em where an RFCOMM
+channel number lives, and the reason to read a record at all \(em and
+every other attribute the device gave, whether or not anything here
+knows what it means.
+.PP
+Two things about SDP are not like anything else in this stack.  It is
+big endian throughout, where HCI, L2CAP, ATT and SMP are all little
+endian, and its UUIDs are big endian too, so
+.CW bt->uuid ,
+which reverses, is the wrong function to read one with.  And an answer
+that does not fit comes back in pieces joined by a continuation state,
+which may cut a record in the middle of a data element \(em so the
+bytes are joined before anything is parsed, and the bench hands the
+same answer back seventeen bytes at a time to prove it.
+.PP
+What is left is the server half: a device that wants to be found by a
+Classic host has to answer these, and nothing here does.
 .IP 4.
 .B "RFCOMM and the serial port profile."
 With SDP under it, this is what turns a Classic device into

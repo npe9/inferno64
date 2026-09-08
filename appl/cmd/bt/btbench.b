@@ -310,6 +310,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	"brl2cap" or "brrefuse" =>
 		brchan(mode);
 		return;
+	"sdp" or "sdpnone" =>
+		sdpphase(mode);
+		return;
 	"hid" =>
 		hid();
 		return;
@@ -1681,6 +1684,74 @@ brchan(mode: string)
 	}
 	if(ok)
 		sys->print("BT: a BR/EDR L2CAP channel, opened and used and closed\n");
+	writefile(dev + "/ctl", "disconnect");
+	sys->print("BT: done\n");
+}
+
+#
+# Service discovery.  A Classic device says what it can do by
+# answering an SDP search, and btfs asks as soon as the link is up, so
+# by the time connect returns the records are files.
+#
+sdpphase(mode: string)
+{
+	if((e := writefile(mnt + "/0/ctl", "inquiry on")) != nil){
+		sys->print("BT: FAILED: inquiry on: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	for(i := 0; i < 40; i++){
+		sys->sleep(500);
+		if(hasstr(readfile(mnt + "/0/state"), "inquiry off"))
+			break;
+	}
+	dev := mnt + "/0/remote/" + Chead;
+	if((e = writefile(dev + "/ctl", "connect")) != nil){
+		sys->print("BT: FAILED: connect: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	recs := lsdir(dev + "/sdp");
+	sys->print("BT: sdp holds %d records\n", len recs);
+	if(mode == "sdpnone"){
+		#
+		# a device with nothing in the browse group has no sdp
+		# directory at all, rather than an empty one that would
+		# read as a device that answered with nothing
+		#
+		if(len recs != 0)
+			sys->print("BT: FAILED: a device with no records has %d\n", len recs);
+		else
+			sys->print("BT: a device with no records has no sdp directory\n");
+		writefile(dev + "/ctl", "disconnect");
+		sys->print("BT: done\n");
+		return;
+	}
+	ok := 1;
+	if(len recs != 2){
+		sys->print("BT: FAILED: wanted two records\n");
+		ok = 0;
+	}
+	for(rl := recs; rl != nil; rl = tl rl)
+		sys->print("BT: record %s\n%s", hd rl, readfile(dev + "/sdp/" + hd rl));
+	#
+	# What a record is for: the channel number RFCOMM would be
+	# opened on, which is in the protocol descriptor list and
+	# nowhere else.
+	#
+	one := readfile(dev + "/sdp/00010000");
+	if(!hasstr(one, "class 1101\n") || !hasstr(one, "name Serial Port")
+	|| !hasstr(one, "proto rfcomm 1")){
+		sys->print("BT: FAILED: the serial port record reads %q\n", one);
+		ok = 0;
+	}
+	two := readfile(dev + "/sdp/00010001");
+	if(!hasstr(two, "proto rfcomm 2") || !hasstr(two, "class 1108\n")){
+		sys->print("BT: FAILED: the headset record reads %q\n", two);
+		ok = 0;
+	}
+	if(ok)
+		sys->print("BT: two service records, with the channel numbers out of them\n");
 	writefile(dev + "/ctl", "disconnect");
 	sys->print("BT: done\n");
 }

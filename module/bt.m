@@ -691,6 +691,101 @@ Gattsrv: module
 	changedh:	fn(d: ref Db): int;
 };
 
+#
+# The Service Discovery Protocol.  It is what makes Bluetooth Classic
+# findable at all: LE has GATT, whose database is a name space of
+# handles a client walks; Classic has this, which is a set of records
+# a client asks for by UUID and gets back as a tree of typed data
+# elements.  There is no walking and no handles to hold on to.
+#
+# One record is a set of (attribute id, value) pairs.  What matters to
+# anything above is a handful of them: 0x0001 the service classes,
+# 0x0004 the protocol stack the service is reached over -- which is
+# where an RFCOMM channel number lives -- and 0x0100 its name.
+#
+Sdp: module
+{
+	PATH:	con "/dis/lib/bt/sdp.dis";
+
+	# SDP is always on this PSM, and only on it
+	Psm:	con 16r0001;
+
+	# data element types, which are the top five bits of the
+	# descriptor byte
+	Enil:	con 0;
+	Euint:	con 1;
+	Esint:	con 2;
+	Euuid:	con 3;
+	Etext:	con 4;
+	Ebool:	con 5;
+	Eseq:	con 6;
+	Ealt:	con 7;
+	Eurl:	con 8;
+
+	# the attributes anything here looks at
+	Ahandle:	con 16r0000;
+	Aclasses:	con 16r0001;
+	Aprotos:	con 16r0004;
+	Abrowse:	con 16r0005;
+	Aprofiles:	con 16r0009;
+	Aname:		con 16r0100;
+
+	# the browse group every service that wants to be found is in
+	Upublic:	con "1002";
+
+	#
+	# One data element.  A leaf carries one of n, s or uuid
+	# depending on its type; a sequence or an alternative carries
+	# its children, in order.
+	#
+	Elem: adt {
+		ty:	int;
+		n:	big;			# an integer or a boolean
+		s:	string;			# text or a URL
+		uuid:	string;			# a UUID as hexadecimal
+		l:	list of ref Elem;	# a sequence or an alternative
+
+		# the nth child, or nil
+		at:	fn(e: self ref Elem, i: int): ref Elem;
+		text:	fn(e: self ref Elem): string;
+	};
+
+	#
+	# One service record: what the server answered with, in the
+	# order it answered.
+	#
+	Rec: adt {
+		handle:	int;
+		attrs:	list of (int, ref Elem);
+
+		attr:	fn(r: self ref Rec, id: int): ref Elem;
+	};
+
+	init:	fn(bt: Bt, l2: L2cap): string;
+
+	#
+	# Every record whose service class list holds that UUID, with
+	# every attribute the server will give.  ch is an open L2CAP
+	# channel to Psm.
+	#
+	search:	fn(m: ref L2cap->Mux, ch: ref L2cap->Chan, uuid: string): (list of ref Rec, string);
+
+	# One data element out of a buffer: the element, how many bytes
+	# it took, and an error.  It is exposed because it is the part
+	# worth testing on its own.
+	parse:	fn(a: array of byte, o: int): (ref Elem, int, string);
+
+	#
+	# What a protocol descriptor list says, one line per protocol,
+	# lowest first: "l2cap 0x0003", "rfcomm 1", and so on.  A
+	# protocol with no parameters is just its name.
+	#
+	protos:	fn(r: ref Rec): list of string;
+
+	# the well known name of a 16 bit UUID, or the UUID itself
+	uuidname:	fn(u: string): string;
+};
+
 Smp: module
 {
 	PATH:	con "/dis/lib/bt/smp.dis";

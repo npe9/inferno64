@@ -152,6 +152,13 @@
 #		brnoconf is the control -- a peer that answers the
 #		connection and never configures, where the channel must
 #		not open
+#	sdp	service discovery: two records off a Classic device, with
+#		the RFCOMM channel numbers out of their protocol
+#		descriptor lists.  sdpsplit hands the same answer back
+#		seventeen bytes at a time with a continuation state
+#		between the pieces, which cuts records in the middle of
+#		a data element; sdpnone is a device with nothing in the
+#		browse group
 #	stalefid	a characteristic file kept open across a disconnect
 #		and a reconnect: the old name must be gone.  What the
 #		fix for it changes is not visible from inside the guest
@@ -600,6 +607,34 @@ if ! grep -q 'never asked for its own configuration' "$OUT/bench-brnoconf.out"; 
 	exit 1
 fi
 echo "and a channel the peer never configured did not open"
+#
+# Service discovery, which is how anything Classic is found at all.
+# btfs asks as soon as the link is up, so by the time connect returns
+# the records are files.
+#
+run sdp "--classic --brconnect --sdp" sdp
+n=`grep -c 'sdp asked' "$OUT/bthci-sdp.log" || true`
+if [ "$n" != 1 ]; then
+	echo "=== phase sdp ==="
+	echo "BENCH FAIL (sdp): the server was asked $n times, wanted 1"
+	exit 1
+fi
+echo "two service records, and the channel numbers out of them"
+#
+# The same answer in seventeen byte pieces.  A record can be cut in
+# the middle of a data element, so a client that parsed each piece as
+# it arrived would fail on the first split; the assertions are the
+# same ones, which is the point.
+#
+run sdpsplit "--classic --brconnect --sdp --sdpsplit 17" sdp
+n=`grep -c 'sdp asked' "$OUT/bthci-sdpsplit.log" || true`
+if [ "$n" != 1 ]; then
+	echo "=== phase sdpsplit ==="
+	echo "BENCH FAIL (sdpsplit): the server was asked $n times, wanted 1"
+	exit 1
+fi
+echo "and the same records arrived seventeen bytes at a time"
+run sdpnone "--classic --brconnect --sdp --sdpnone" sdpnone
 run paired "--peripheral --pairin --rebond" paired
 #
 # and what the model saw from the other side: the confirm this stack

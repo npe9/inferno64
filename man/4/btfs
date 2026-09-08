@@ -347,8 +347,13 @@ device again; and every device while scanning is off, because then
 nothing is arriving and age says nothing about what is there.
 .TP
 .B /net/bt/\fIN\fP/remote/\fIADDR\fP/gatt/
-Appears when the device is connected: a directory per service, named
-by its UUID, holding a file per characteristic, named by its UUID.
+Appears when an LE device is connected: a directory per service,
+named by its UUID, holding a file per characteristic, named by its
+UUID.  A Classic device has no
+.B gatt
+tree \- ATT is LE only \- and has
+.B sdp
+instead, described below.
 A service may hold the same UUID twice \- HID over GATT gives every
 report the same one \- and then every characteristic with that UUID is
 named
@@ -441,6 +446,39 @@ encryption naming the key it was given, and that key is found in the
 bond and handed to the controller.  A key that is named and not held
 is answered with the negative reply, which is what tells the peer to
 pair afresh rather than leaving it waiting.
+.TP
+.B /net/bt/\fIN\fP/remote/\fIADDR\fP/sdp/
+Appears when a Classic device is connected and answered a service
+discovery search: one file per service record, named by the record's
+handle in eight hexadecimal digits.  It is what a Classic device has
+in place of a
+.B gatt
+tree, and it is not the same kind of thing: a GATT database is walked
+and can be walked again, while SDP is asked once and answers with
+whole records, so these files are what the device said at the moment
+the link came up.
+.PP
+Each file holds the record as lines.
+.BI class " uuid"
+for each service class it claims, with a name after the UUID when
+there is one to give;
+.BI name " text"
+if it named itself;
+.BI proto " name parameters"
+for each protocol it is reached over, lowest first \- which is where
+an RFCOMM channel number comes from and the reason to read a record at
+all; and then
+.BI attr " id value"
+for every attribute the device gave, whether or not anything here
+knows what it means, because a record holds whatever the device put in
+it.
+.PP
+The search is for the public browse group, which is where a service
+that wants to be found puts itself.  A device with services outside it
+has them and does not advertise them, and a device with nothing in it
+has no
+.B sdp
+directory rather than an empty one.
 .TP
 .B /net/bt/\fIN\fP/remote/\fIADDR\fP/l2cap/
 One file per open LE credit-based channel, named by its PSM in four

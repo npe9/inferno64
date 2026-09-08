@@ -54,6 +54,8 @@ include "bt.m";
 	gatt: Gatt;
 	gattsrv: Gattsrv;
 	smp: Smp;
+	sdp: Sdp;
+	Rec, Elem: import sdp;
 	Adv, Conn: import Hci;
 	Mux: import L2cap;
 	Chan: import L2cap;
@@ -68,7 +70,7 @@ Btfs: module
 
 Kroot, Kctlr, Kaddr, Kver, Kctl, Kstate, Kscan, Kremotes, Kbonds, Kdident, Kinc,
 	Kdev, Kdaddr, Kdtype, Kdrssi, Kdname, Kdadv, Kdstate, Kdctl,
-	Kdgatt, Ksvc, Kchar, Kcnotify, Kdesc, Kdl2cap, Kcoc,
+	Kdgatt, Ksvc, Kchar, Kcnotify, Kdesc, Kdl2cap, Kcoc, Kdsdp, Ksdp,
 	Klocal, Klsvc, Klchar: con iota;
 
 Qroot:	con big 0;
@@ -130,6 +132,7 @@ Dev: adt {
 	mux:	ref Mux;
 	sess:	ref Sess;
 	chars:	list of ref Cnode;
+	sq:	big;		# its sdp directory, or 0
 	lq:	big;		# its l2cap directory, or 0
 	cocs:	list of ref Coc;
 	lock:	chan of int;
@@ -301,8 +304,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	gatt = load Gatt Gatt->PATH;
 	gattsrv = load Gattsrv Gattsrv->PATH;
 	smp = load Smp Smp->PATH;
+	sdp = load Sdp Sdp->PATH;
 	if(hci == nil || l2cap == nil || att == nil || gatt == nil
-	|| gattsrv == nil || smp == nil)
+	|| gattsrv == nil || smp == nil || sdp == nil)
 		fail(sprint("cannot load the stack: %r"));
 
 	if((e := hci->init(bt)) != nil)
@@ -317,6 +321,8 @@ init(nil: ref Draw->Context, argv: list of string)
 		fail("gatt server: " + e);
 	if((e = smp->init(bt, hci, l2cap)) != nil)
 		fail("smp: " + e);
+	if((e = sdp->init(bt, l2cap)) != nil)
+		fail("sdp: " + e);
 
 	keylock = chan[1] of int;
 	keylock <-= 1;
@@ -850,6 +856,7 @@ newdev(r: ref Radio, name: string, addr: array of byte, atype: int): ref Dev
 	d.chars = nil;
 	d.cocs = nil;
 	d.lq = big 0;
+	d.sq = big 0;
 	d.gq = big 0;
 	d.lock = chan[1] of int;
 	d.lock <-= 1;
@@ -1023,7 +1030,7 @@ doread(m: ref Tmsg.Read)
 			srv.reply(styxservers->readstr(m, bt->atypestr(n.dev.atype) + "\n"));
 	Kdident =>
 		srv.reply(styxservers->readstr(m, identtext(n.dev)));
-	Kinc =>
+	Kinc or Ksdp =>
 		srv.reply(styxservers->readstr(m, n.text));
 	Kdrssi =>
 		srv.reply(styxservers->readstr(m, sprint("%d\n", n.dev.rssi)));
@@ -1489,6 +1496,16 @@ connect(d: ref Dev): string
 	if(d.classic){
 		d.mux = l2cap->start(c);
 		spawn watcher(d);
+		#
+		# and what it says it can do.  A device that will not
+		# answer a service discovery search is still a connected
+		# device: the link is up, and having nothing to say
+		# about itself is a fact about the device rather than a
+		# reason to refuse it.  So this is said and not
+		# returned, and the device has no sdp directory.
+		#
+		if((se := sdpdiscover(d)) != nil)
+			sys->fprint(sys->fildes(2), "btfs: %s: %s\n", d.dir, se);
 		d.lock <-= 1;
 		return nil;
 	}
@@ -1612,6 +1629,80 @@ discover(d: ref Dev): string
 		}
 	}
 	return nil;
+}
+
+#
+# What a Classic device says it can do.  There is no walking here and
+# nothing to hold on to: SDP is asked once, over an L2CAP channel of
+# its own, and what comes back is a set of records that are what they
+# were at that moment.  So the channel is opened, the question asked,
+# the channel closed, and the answer written down as files.
+#
+# The question is the public browse group, which is where a service
+# that wants to be found puts itself.  A device with services outside
+# it has them and does not advertise them, which is its own decision
+# and not something to work around.
+#
+# Called with the device lock held.
+#
+sdpdiscover(d: ref Dev): string
+{
+	(ch, e) := l2cap->bconnect(d.mux, Sdp->Psm);
+	if(e != nil)
+		return "sdp: " + e;
+	(recs, se) := sdp->search(d.mux, ch, Sdp->Upublic);
+	l2cap->cclose(d.mux, ch);
+	if(se != nil)
+		return "sdp: " + se;
+	if(recs == nil)
+		return nil;		# a device with nothing to say
+	d.sq = newnode(Kdsdp, d.r, d, nil, "sdp");
+	create(d.q, mkdir("sdp", d.sq));
+	for(rl := recs; rl != nil; rl = tl rl){
+		r := hd rl;
+		name := sprint("%8.8ux", r.handle);
+		q := mkfd(d.sq, name, Ksdp, 8r444, d, nil);
+		nodes[int q].text = rectext(r);
+	}
+	return nil;
+}
+
+#
+# One record, as text.  The three lines that matter are named -- what
+# the service is, what it is called, and how it is reached -- and then
+# every attribute is written out whole, because a record holds
+# whatever the device put in it and this cannot know in advance what
+# something above will want.
+#
+rectext(r: ref Rec): string
+{
+	s := "";
+	cl := r.attr(Sdp->Aclasses);
+	if(cl != nil)
+		for(l := cl.l; l != nil; l = tl l){
+			u := (hd l).uuid;
+			if(u == nil)
+				continue;
+			#
+			# and its name only when there is one to give: a
+			# UUID printed twice reads as two of something.
+			#
+			nm := sdp->uuidname(u);
+			if(nm != u)
+				s += sprint("class %s %s\n", u, nm);
+			else
+				s += sprint("class %s\n", u);
+		}
+	nm := r.attr(Sdp->Aname);
+	if(nm != nil && nm.s != nil)
+		s += sprint("name %s\n", nm.s);
+	for(pl := sdp->protos(r); pl != nil; pl = tl pl)
+		s += sprint("proto %s\n", hd pl);
+	for(al := r.attrs; al != nil; al = tl al){
+		(id, v) := hd al;
+		s += sprint("attr %#4.4ux %s\n", id, v.text());
+	}
+	return s;
 }
 
 #

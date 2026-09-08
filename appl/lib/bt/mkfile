@@ -11,6 +11,7 @@ TARG=\
 	gatt.dis\
 	gattsrv.dis\
 	smp.dis\
+	sdp.dis\
 
 #
 #	mkdis makes every .dis depend on the modules named here.  bt.m is

@@ -243,6 +243,31 @@ BRPSM = 0x1001
 # needed one would open a channel it could not size.
 brnomtu = '--brnomtu' in sys.argv
 
+# --sdp: with --brconnect, the peer runs a service discovery server on
+# PSM 1 with two records in it: a serial port on RFCOMM channel 1, and
+# a headset.  Both are in the public browse group, which is what a
+# client searches for when it wants everything a device advertises.
+#
+# The records are built here out of data elements rather than being
+# hard-coded byte strings, because a byte string copied from a capture
+# would be a second reading of the same specification with none of the
+# structure visible.
+sdp = '--sdp' in sys.argv
+
+# --sdpsplit N: hand the answer back N bytes at a time, with a
+# continuation state between the pieces.  A record can be cut in the
+# middle of a data element, so a client that parsed each piece as it
+# arrived would fail on the first split; one that joins the bytes
+# first will not notice.
+sdpsplit = 0
+if '--sdpsplit' in sys.argv:
+    sdpsplit = int(sys.argv[sys.argv.index('--sdpsplit') + 1])
+
+# --sdpnone: the server has no record matching the search, and says so
+# with an empty attribute list rather than an error, which is what a
+# server does when nothing matches.
+sdpnone = '--sdpnone' in sys.argv
+
 # --brnoconf: with --brl2cap, the peer answers the connection request
 # and then never sends a configuration request of its own.  A channel
 # is configured in both directions and is not open until both are
@@ -664,6 +689,66 @@ CLASSICDEVS = [
     (bytes.fromhex('665544332211')[::-1], 0x2c0104, 0x01, 0x1234, 'classic-keyboard', True),
     (bytes.fromhex('ccbbaa998877')[::-1], 0x200404, 0x02, 0x4321, 'classic-headset', False),
 ]
+
+
+#
+# SDP data elements, built rather than transcribed.  The descriptor
+# byte is five bits of type and three of size index; 5, 6 and 7 mean
+# the length follows in 1, 2 or 4 bytes, which is what anything of
+# variable length uses.
+#
+def de_uint(v, width=2):
+    si = {1: 0, 2: 1, 4: 2}[width]
+    return bytes([(1 << 3) | si]) + v.to_bytes(width, 'big')
+
+
+def de_uuid(u):
+    b = bytes.fromhex(u)
+    si = {2: 1, 4: 2, 16: 4}[len(b)]
+    return bytes([(3 << 3) | si]) + b
+
+
+def de_text(s):
+    b = s.encode()
+    return bytes([(4 << 3) | 5, len(b)]) + b
+
+
+def de_seq(*parts):
+    b = b''.join(parts)
+    return bytes([(6 << 3) | 5, len(b)]) + b
+
+
+#
+# Two records.  Attribute 0x0000 is the handle, 0x0001 the service
+# classes, 0x0004 the protocol stack it is reached over -- which is
+# where the RFCOMM channel number lives -- 0x0005 the browse groups it
+# is in, and 0x0100 its name.
+#
+def sdp_records():
+    serial = [
+        (0x0000, de_uint(0x00010000, 4)),
+        (0x0001, de_seq(de_uuid('1101'))),
+        (0x0004, de_seq(de_seq(de_uuid('0100'), de_uint(0x0003)),
+                        de_seq(de_uuid('0003'), de_uint(1, 1)))),
+        (0x0005, de_seq(de_uuid('1002'))),
+        (0x0100, de_text('Serial Port')),
+    ]
+    headset = [
+        (0x0000, de_uint(0x00010001, 4)),
+        (0x0001, de_seq(de_uuid('1108'), de_uuid('1203'))),
+        (0x0004, de_seq(de_seq(de_uuid('0100'), de_uint(0x0003)),
+                        de_seq(de_uuid('0003'), de_uint(2, 1)))),
+        (0x0005, de_seq(de_uuid('1002'))),
+        (0x0100, de_text('Headset')),
+    ]
+    out = []
+    for r in (serial, headset):
+        parts = []
+        for aid, val in r:
+            parts.append(de_uint(aid))
+            parts.append(val)
+        out.append(de_seq(*parts))
+    return de_seq(*out)
 
 
 class Model:
@@ -1307,12 +1392,15 @@ class Model:
         # the CIDs mean different things there: 1 is signalling, and
         # anything else is a channel this side handed out.
         #
-        if brl2cap and handle == getattr(self, 'brhandle', None):
+        if (brl2cap or sdp) and handle == getattr(self, 'brhandle', None):
             if cid == 1:
                 self.brsig(payload)
             elif cid == getattr(self, 'brdcid', None):
-                print('bthci: echoing %d bytes' % len(payload), flush=True)
-                self.bracl(self.brscid, payload)
+                if getattr(self, 'sdpchan', False):
+                    self.sdp_in(payload)
+                else:
+                    print('bthci: echoing %d bytes' % len(payload), flush=True)
+                    self.bracl(self.brscid, payload)
             return
         if cid == 4:
             self.att(payload)
@@ -1914,6 +2002,17 @@ class Model:
         d = p[4:4+dlen]
         if code == 0x02:                     # Connection Request
             psm, scid = struct.unpack('<HH', d[0:4])
+            if psm == 0x0001 and sdp:
+                self.brscid = scid
+                self.brdcid = 0x0042
+                self.sdpchan = True
+                print('bthci: sdp channel', flush=True)
+                self.bracl(1, bytes([0x03, ident]) + struct.pack('<H', 8)
+                           + struct.pack('<HHHH', self.brdcid, scid, 0, 0))
+                opts = bytes([0x01, 0x02]) + struct.pack('<H', 672)
+                self.bracl(1, bytes([0x04, 0x40]) + struct.pack('<H', 4 + len(opts))
+                           + struct.pack('<HH', scid, 0) + opts)
+                return
             if psm != BRPSM or brrefuse:
                 print('bthci: refusing psm %#06x' % psm, flush=True)
                 self.bracl(1, bytes([0x03, ident]) + struct.pack('<H', 8)
@@ -1957,6 +2056,78 @@ class Model:
             ty = struct.unpack('<H', d[0:2])[0]
             self.bracl(1, bytes([0x0b, ident]) + struct.pack('<H', 4)
                        + struct.pack('<HH', ty, 1))
+
+    #
+    # The service discovery server.  One request is answered here:
+    # Service Search Attribute, which is the one a client that wants
+    # whole records asks.  SDP is big endian throughout, unlike every
+    # other protocol in this model.
+    #
+    #
+    # How long one data element is, so the next one can be found.  The
+    # descriptor byte is five bits of type and three of size index:
+    # 0 to 4 are 1, 2, 4, 8 and 16 bytes, and 5, 6, 7 mean the length
+    # follows in 1, 2 or 4.  Type 0, nil, is the one with no data.
+    #
+    def sdp_skip(self, b, o):
+        if o >= len(b):
+            return o
+        d = b[o]
+        ty, si = d >> 3, d & 7
+        if ty == 0:
+            return o + 1
+        if si < 5:
+            return o + 1 + (1 << si)
+        w = 1 << (si - 5)
+        n = int.from_bytes(b[o+1:o+1+w], 'big')
+        return o + 1 + w + n
+
+    def sdp_in(self, p):
+        if len(p) < 5:
+            return
+        pdu = p[0]
+        tid = int.from_bytes(p[1:3], 'big')
+        plen = int.from_bytes(p[3:5], 'big')
+        body = p[5:5+plen]
+        if pdu != 0x06:
+            # not supported: the request syntax is what this refuses
+            self.bracl(self.brscid, bytes([0x01]) + tid.to_bytes(2, 'big')
+                       + (2).to_bytes(2, 'big') + (0x0003).to_bytes(2, 'big'))
+            return
+        #
+        # The continuation state is the last thing in the request, and
+        # finding it means walking the request from the front: its
+        # length byte is only identifiable by what comes before it.
+        # Taking the last byte as the length -- which is what this did
+        # first -- reads the last byte of the state itself, and every
+        # continued answer then restarts from the wrong offset.
+        #
+        o = self.sdp_skip(body, 0)     # the service search pattern
+        o += 2                         # maximum attribute byte count
+        o = self.sdp_skip(body, o)     # the attribute id list
+        off = 0
+        if o < len(body):
+            cl = body[o]
+            if cl:
+                off = int.from_bytes(body[o+1:o+1+cl], 'big')
+        whole = de_seq() if sdpnone else sdp_records()
+        if sdpsplit > 0:
+            take = min(sdpsplit, len(whole) - off)
+        else:
+            take = len(whole) - off
+        piece = whole[off:off+take]
+        more = off + take < len(whole)
+        cont = b''
+        if more:
+            n = off + take
+            cont = bytes([2]) + n.to_bytes(2, 'big')
+        else:
+            cont = bytes([0])
+        if off == 0:
+            print('bthci: sdp asked, %d bytes to give' % len(whole), flush=True)
+        params = len(piece).to_bytes(2, 'big') + piece + cont
+        self.bracl(self.brscid, bytes([0x07]) + tid.to_bytes(2, 'big')
+                   + len(params).to_bytes(2, 'big') + params)
 
     # ------------------------------------------------ SMP
     def smp_in(self, p):
