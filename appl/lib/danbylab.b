@@ -587,7 +587,8 @@ pane(w, req, pack: string): ref Pane
 }
 
 # The furniture, per family.  Everything a reader might go looking for
-# in seven different files is in this one function.
+# in seven different files is in this one function - and every field is
+# set here, none left to whatever the allocation happened to hold.
 lookof(family: int): ref Look
 {
 	l := ref Look;
@@ -600,8 +601,13 @@ lookof(family: int): ref Look
 	l.dt = 0.005;
 	l.perframe = 4;
 	l.endsontime = 1;
+	l.landing = 0;
+	l.floor = 0;
 	l.graphpane = 0;
 	l.diagpane = -1;
+	l.click = nil;
+	l.clickcmd = nil;
+	l.focus = nil;
 	left := "-side left -fill both -expand 1";
 	right := "-side right -fill both -expand 1";
 	whole := "-fill both -expand 1";
@@ -976,6 +982,13 @@ Sim.step(s: self ref Sim)
 Sim.land(s: self ref Sim, old: array of real, oldt: real)
 {
 	h := len s.state/2 - 1;
+	# a state vector too short to have a height has no crossing to find,
+	# and h would be negative.  Only the two flying families set
+	# look.landing, so this cannot happen - but "cannot happen" is what
+	# was said before a stray flag sent a one-state population in here
+	# and indexed state[-1].
+	if(h < 0)
+		return;
 	if(s.state[h] >= 0.0 || old[h] < 0.0 || oldt <= 0.0)
 		return;
 	fraction := old[h]/(old[h]-s.state[h]);
