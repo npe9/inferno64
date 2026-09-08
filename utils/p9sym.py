@@ -260,6 +260,12 @@ def main():
 	if not pcs:
 		txt = sys.stdin.read()
 		pcs = re.findall(r'(?:pc=)?0x([0-9a-f]{5,16})', txt)
+		# dumpstack()/ktrace prints raw stack words as "addr=value",
+		# every word that might be a return address.  Feeding them
+		# through -c is what turns that dump into a backtrace: the
+		# ones that really follow a call are the frames, the rest is
+		# stack litter.
+		pcs += re.findall(r'=([0-9a-f]{8,16})\b', txt)
 		# the boot banner names the build the capture came from, two
 		# ways; etext is the one that tracks the text layout itself.
 		bad = None
