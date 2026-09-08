@@ -406,6 +406,8 @@ os/pc64/pc64.root.s
 
 os/pc64/6.*
 os/pc64/*.i
+os/inferno/pc64/*.i
+os/inferno/pc64/apbootstrap.out
 os/pc64/primitives.s
 os/pc64/words.s
 os/pc64/forth.h

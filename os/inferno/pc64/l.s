@@ -1020,9 +1020,12 @@ _intrcommon:
 	 * still the interrupted code's and has not been saved yet -- so
 	 * the interrupted AX is stashed and put back before it is saved
 	 * below.  Reading ES and DS straight into AX, as this did,
-	 * overwrote the low 16 bits of the interrupted code's RAX with
-	 * the DS selector, at every interrupt and every exception: a
-	 * live pointer in AX came back with its low half replaced.
+	 * destroyed the interrupted code's RAX at every interrupt and
+	 * every exception.  All of it, and not just the low half: MOVW
+	 * from a segment register assembles to the 32 bit form, which
+	 * zero extends into the whole of RAX, so what came back was the
+	 * DS selector, which is 0 on this kernel.  A live pointer in AX
+	 * came back as nil, never as something half right.
 	 * That is the corruption behind the pc64 heap faults and
 	 * general protection violations; it fires oftener the more
 	 * interrupts there are.  9front's own l.s does not read these

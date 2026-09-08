@@ -279,6 +279,59 @@ machinit(void)
 }
 
 /*
+ * Does an interrupt on this machine give every register back?
+ *
+ * regtorture() spins with interrupts on and regtorturecli() with them
+ * off, and both are needed: without the control, "the registers
+ * survived" and "the loop never ran" print the same line.  The tick
+ * delta is printed for the same reason -- a machine with a dead clock
+ * passes the interrupts-on run hardest of all, because nothing ever
+ * interrupts it.
+ *
+ * The loop is bounded by iterations and the ticks are only reported,
+ * never waited for: spinning until the tick counter moves makes a boot
+ * several times longer under TCG, where the clock advances in bursts.
+ *
+ * No semicolon in what this prints.  The console prompt is "; ", so a
+ * line carrying one cannot be told from a prompt by anything grepping
+ * a boot log.
+ *
+ * It only covers the interrupt path: a kproc spinning with interrupts
+ * on is preempted through _strayintr and never reaches SYSCALL/SYSRET,
+ * forkret or touser.  Twelve integer registers, and nothing else --
+ * R13 is the counter, R14 and R15 are up and m, and the segment
+ * registers, the flags and all the FP and SSE state are untested.
+ *
+ * See doc/inferno-ports.ms.  From the cloud-port branch.
+ */
+extern int regtorture(int);
+extern int regtorturecli(int);
+extern uvlong regtorturebad;
+
+static void
+regtorturerun(void)
+{
+	int r;
+	ulong t0, t1;
+
+	r = regtorturecli(200000);
+	if(r != 0){
+		print("regtorture: interrupts off REGISTER %d became %#llux\n",
+			r, regtorturebad);
+		return;
+	}
+	t0 = m->ticks;
+	r = regtorture(20000000);
+	t1 = m->ticks;
+	if(r != 0)
+		print("regtorture: interrupts on REGISTER %d became %#llux\n",
+			r, regtorturebad);
+	else
+		print("regtorture: %lud ticks, control clean, registers kept\n",
+			t1 - t0);
+}
+
+/*
  * could move this to port/userinit.c as 9front does
  * there is nothing arch specific here
  */
@@ -327,6 +380,8 @@ init0(void)
 		poperror();
 	}
 	kproc("alarm", alarmkproc, 0, 0);
+
+	regtorturerun();
 
 	/*
 	 * This kernel came from 9ferno (github.com/gophone2015), whose

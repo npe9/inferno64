@@ -30,6 +30,7 @@ KERNELSHELL=$SHELLNAME
 
 OBJ=\
 	l.$O\
+	regtorture.$O\
 	forth.$O\
 	fpu.$O\
 	portclock.$O\

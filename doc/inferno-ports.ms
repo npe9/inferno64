@@ -1,3 +1,21 @@
+.\"
+.\" EX and EE are man(7) macros and mean nothing to ms, so every
+.\" display in this document was being filled and justified like
+.\" ordinary prose -- assembly listings run together mid-line.  They
+.\" are defined here rather than rewritten as .DS/.DE because the
+.\" markup was not wrong about intent, only about which package
+.\" defines it.
+.\"
+.de EX
+.br
+.in +4n
+.nf
+..
+.de EE
+.fi
+.in -4n
+.br
+..
 .TL
 Where Inferno Runs
 .AU
@@ -19116,10 +19134,20 @@ and
 are invalid in amd64, so the values have to go through a register, and
 AX is the only one available \(em every other register is still the
 interrupted code's and has not been saved yet.  AX is the interrupted
-code's too.  It is pushed fifteen instructions later, by which time its
-low sixteen bits are the DS selector.  So every interrupt and every
-exception on pc64 returned to the interrupted instruction with the low
-half of its RAX replaced.  A live pointer in AX came back mangled.
+code's too.  It is pushed fifteen instructions later, by which time it
+holds the DS selector.
+.PP
+All of it, and not just the low half, which is what this section said
+until it was measured.
+.CW MOVW
+from a segment register assembles to the 32 bit form, and that zero
+extends into the whole of the destination, so RAX came back as the DS
+selector \(em 0 on this kernel \(em and never as a pointer with a
+plausible high half and a mangled low one.  Every interrupt, every
+exception, every time.  Reasoning about the width of that instruction
+is what got it wrong here; the measurement is in the next paragraph,
+and the two predict different things to go looking for, which is the
+whole reason it is worth correcting rather than quietly rewording.
 .PP
 9front's own
 .CW l.s ,
@@ -19130,14 +19158,152 @@ and leaves them, precisely because there is nothing to read them with.
 The fix keeps the diagnostic and stops the corruption \(em stash AX
 below the two reserved slots, fill them, and put AX back before it is
 saved.  pc64 completes the whole Bluetooth bench over TCP with it in,
-so it is not a regression; but it did not fix the fault below, and it
-was found by reading rather than by a test that failed before and
-passes after, so what it is is a real defect removed, not a
-demonstrated cure.  It is the right shape for the heap corruption this
-document has been chasing on pc64 \(em non-deterministic, worse under
-load, pointers coming back with zeroed low bits \(em and that is a
-reason to look again at those captures, not a claim to have closed
-them.
+so it is not a regression.
+.PP
+It was found here by reading.  It has since been measured, here, both
+ways.
+.CW cloud-port
+wrote a
+.CW regtorture.s
+that loads twelve registers with distinct values and spins comparing
+them with interrupts on: AX held
+.CW 0x11111111
+came back
+.CW 0x0 ,
+and not
+.CW 0x11110000 ,
+which settles the width of that
+.CW MOVW
+in one run and settles that DS is 0 here in the same run.  It fixes
+the shape to look for in the old captures too: the corrupted word is
+always an exact zero, which is why they were
+.CW INEW
+storing 0x18, the
+.CW H2D
+of a nil
+.CW Heap* ,
+and
+.CW IADDC ,
+.CW ISLICEC
+and
+.CW IINSC
+each storing 0, and never anything in between.  That branch reports 30
+boots to a prompt with no panic after the fix; a multicore branch
+reports 82 of 96 boots panicking before it and 2 of 96 after.
+.PP
+That harness is now in this tree as
+.CW os/inferno/pc64/regtorture.s ,
+called from
+.CW init0
+after the alarm kproc, which is the first point with interrupts on.
+On this branch, under QEMU:
+.EX
+with the fix in:
+	regtorture: 198 ticks, control clean, registers kept
+with it backed out:
+	regtorture: interrupts on REGISTER 1 became 0x0
+.EE
+which is the test that failed before and passed after that this
+section said it did not have.  Three boots with the fix in, all clean.
+Register 1 is AX and it came back
+.CW 0x0
+and not
+.CW 0x11110000 ,
+so the width of that
+.CW MOVW
+is settled here too and not merely taken from elsewhere.
+.PP
+Both halves of the harness matter and so does the tick count.  Without
+the interrupts-off control, \*(lqthe registers survived\*(rq and
+\*(lqthe loop never ran\*(rq print the same line; without the ticks, a
+machine with a dead clock passes the interrupts-on run hardest of all,
+because nothing ever interrupts it.  The loop is bounded by iterations
+and the ticks are only reported, never waited for: spinning until the
+tick counter moves makes a boot several times longer under TCG, where
+the clock advances in bursts.  And the message carries no semicolon,
+because the console prompt is
+.CW "; "
+and a line with one in it cannot be told from a prompt by anything
+grepping a boot log.
+.PP
+What it does not cover is worth saying, since a passing line invites
+more confidence than it has earned.  It is the interrupt path only: a
+kproc spinning with interrupts on is preempted through
+.CW _strayintr
+and never reaches
+.CW SYSCALL/SYSRET ,
+.CW forkret
+or
+.CW touser .
+It is twelve integer registers and nothing else \(em R13 is the
+counter, R14 and R15 are
+.CW up
+and
+.CW m ,
+and the segment registers, the flags and all the FP and SSE state go
+untested.
+.PP
+The hunk here differs from
+.CW cloud-port 's
+\(em this one stashes AX and pops it back, that one reserves all four
+segment words with a
+.CW SUBQ
+and fills them after
+.CW PUSHQ\ AX \(em
+and both leave
+.CW ds ,
+.CW es ,
+.CW fs ,
+.CW gs
+ascending with the exit's
+.CW ADDQ\ $8
+balancing them, so there is no reason to converge them.  That branch
+reports 30 boots to a prompt with no panic after its fix, and a
+multicore branch 82 of 96 boots panicking before it against 2 of 96
+after; those runs were not made here.
+.NH 2
+pc64 could not be built from a clean tree
+.PP
+Getting that measurement needed a pc64 kernel, and building one from
+this worktree did not work.
+.CW libaml
+failed to compile with
+.CW "aml.c:288 function not declared: _assert" .
+.PP
+.CW os/inferno/port/lib.h
+defines
+.CW assert(x)
+in terms of
+.CW _assert() ,
+which the kernel declares in
+.CW portfns.h
+and defines in
+.CW devcons.c .
+A library built the host-native way gets
+.CW lib.h
+through
+.CW Inferno/amd64/include/libc.h
+and never sees
+.CW portfns.h ,
+so the macro expanded to an undeclared function.  Any kernel library
+using
+.CW assert()
+would fail the same way, and
+.CW libaml
+uses it.
+.PP
+It had gone unnoticed because it only bites a clean tree: where an old
+.CW libaml.a
+was already sitting in
+.CW Inferno/amd64/lib ,
+mk had no reason to make it again and the kernel linked.  This
+worktree had no such archive \(em nor the directory, git not tracking
+empty ones \(em so it was the first to try.  The declaration goes in
+.CW Inferno/amd64/include/libc.h ,
+which exists to patch exactly these gaps and already carries
+.CW mallocz
+and
+.CW free .
 .NH 2
 pc64 faults on sustained uart traffic
 .PP
