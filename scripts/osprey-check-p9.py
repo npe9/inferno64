@@ -149,6 +149,8 @@ def main():
     results.append(("and the name space carries a pipe - two ends of a channel a program talks through, written and read",
                     'wrote one end of a pipe, read the other: "sent through a pipe"' in t))
     m4 = re.search(r'looked up /srv/export, mounted it, read (\d+) entries', t)
+    results.append(("and a write that is refused leaves the descriptor's offset where it found it: the write path advances the channel's offset before it calls the device and winds it back by what the device did not take, so a write into a pipe with no reader - which takes none of it - must come back to the offset it started at, a drift there showing up only on some later write to the same channel",
+                    re.search(r"p9: a write of 19 bytes into a pipe with no reader was refused \([^)]+\); the write end's offset was 0 before and 0 after", t) is not None))
     results.append(("and it publishes a service in /srv by name, then looks it up and mounts it (how Plan 9 name spaces compose services)",
                     'posted the personality' in t and m4 is not None and int(m4.group(1)) >= 10))
     results.append(("and it duplicates a descriptor, the two sharing one channel and offset (what a shell redirects with)",

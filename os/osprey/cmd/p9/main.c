@@ -484,6 +484,51 @@ p9main(void)
 	}
 
 	/*
+	 * And a write that is refused leaves the descriptor's offset where it
+	 * found it.
+	 *
+	 * The write path advances the channel's offset before it calls the
+	 * device and winds it back by what the device did not take, which is
+	 * 9front's order and not the older one: a second writer on the same
+	 * channel must not be handed an offset the first is about to use.  A
+	 * write that fails outright takes none of it, so the offset has to
+	 * come back whole - and if it did not, nothing would go wrong until
+	 * some later write to the same channel landed in the wrong place,
+	 * which is the kind of drift that is never noticed.
+	 *
+	 * A pipe whose reader has gone is the write that fails.  Seek cannot
+	 * be used to look at the offset - a pipe is a stream and refuses one
+	 * - so the channel is asked directly.
+	 */
+	{
+		int pfd[2], refused;
+		vlong before, after;
+		char reason[ERRMAX];
+
+		if(waserror())
+			print("p9: the refused-write check could not run: %s\n", up->errstr);
+		else {
+			p9pipe(pfd);
+			p9close(pfd[0]);		/* the reader is gone */
+			before = p9fdoffset(pfd[1]);
+			refused = 0;
+			reason[0] = 0;
+			if(waserror()){
+				refused = 1;
+				kstrcpy(reason, up->errstr, sizeof reason);
+			} else {
+				p9write(pfd[1], "sent through a pipe", 19);
+				poperror();
+			}
+			after = p9fdoffset(pfd[1]);
+			print("p9: a write of 19 bytes into a pipe with no reader was %s (%s); the write end's offset was %lld before and %lld after\n",
+				refused ? "refused" : "taken", reason, before, after);
+			p9close(pfd[1]);
+			poperror();
+		}
+	}
+
+	/*
 	 * Service publication: post a channel to /srv by name, the way a
 	 * Plan 9 server announces itself, then look it up and mount it.  Post
 	 * the personality's own exportfs (#X) to /srv/export, reopen it by

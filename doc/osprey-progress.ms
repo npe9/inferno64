@@ -9381,18 +9381,37 @@ is exactly where the offset comes from, and two bodies is how they
 drift apart.
 .PP
 .CW pwrite
-needed one more thing.  Descriptors 0, 1 and 2 of a loaded program are
-the machine's console, which the personality does not hold, and
+is in that table too, and the linker did not ask for it.  It was
+already resolved \- by the prebuilt archive, whose stub is the console
+call, which is what
 .CW p9crt.c
-reached it by calling libc's own
-.CW pwrite
-stub \- which works only for as long as
+was using it for: descriptors 0, 1 and 2 of a loaded program are the
+machine's console, which the personality does not hold.  That works
+only for as long as
 .CW p9crt.c
 does not define
 .CW pwrite
-itself.  It has to, so the console call is given a name of its own:
+itself, and a
+.CW pwrite
+of a file the personality holds must go to the personality and not out
+of the console, so it has to.  The console call is therefore given a
+name of its own:
 .CW p9cons.s ,
-one stub, the one trap in a loaded program.
+one stub, the one trap in a loaded program.  Worth being exact about,
+because the enumeration is the transferable part of this section and it
+found four of these five: a call that is already wrong but resolved is
+not a call the linker will name.
+.PP
+All five loaded programs link the stub and four of them reach it:
+.CW libcat ,
+.CW libwc
+and
+.CW libsh
+each print to a standard descriptor the personality left as the console,
+and so does
+.CW libdraw .
+.CW libgen 's
+output is the near end of a pipe and never touches it.
 .PP
 Two more faults, and both were the same shape as the Tos of 3.2c: a
 thing libc's
@@ -9480,6 +9499,20 @@ says elapsed, which is libc reading
 through the personality's own
 .CW pread .
 It says 4000.
+.PP
+The write path is the one piece of this that changed under something
+already working, so it has a check of its own.  A write that is refused
+has to leave the descriptor's offset where it found it: the offset is
+advanced before the device is called and wound back by what the device
+did not take, and a wind-back that was wrong would go unnoticed until
+some later write to the same channel landed in the wrong place.  A pipe
+whose reader has gone is the write that fails, and seek cannot be used
+to look at the offset because a pipe is a stream and refuses one, so the
+channel is asked directly
+.CW ( p9fdoffset ).
+The check reads the offset before and after and both must be 0.  With
+the wind-back taken out the same boot prints 19, which is what makes the
+criterion worth having.
 .PP
 One thing is still a trap and is written down rather than worked
 around:
@@ -9569,7 +9602,7 @@ check clean, the two-machine check run three times:
 .CW p9linux
 12,
 .CW p964
-35, keyboard 8, rio 14, the window gestures 10, micro 7, user 10, net
+36, keyboard 8, rio 14, the window gestures 10, micro 7, user 10, net
 13, wire 14, two-machine 20 twice over, the
 six criteria of the userland the tree builds itself, and two portable
 builds.  A criterion is a sentence a booted kernel printed

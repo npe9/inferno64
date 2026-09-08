@@ -401,6 +401,30 @@ p9pwrite(int fd, void *buf, long n, vlong off)
 	return writefd(fd, buf, n, &off);
 }
 
+/*
+ * The offset a descriptor's channel stands at.
+ *
+ * Nothing in the name space needs this; the personality's own check
+ * does.  writefd advances the channel's offset before it calls the
+ * device and winds it back by what the device did not take, so a write
+ * that fails outright has to leave the offset where it found it - and a
+ * drift there would show up only on some later write to the same
+ * channel, which is the kind of thing nobody notices.  Seek cannot be
+ * used to look: a pipe is a stream and refuses one, and a pipe with no
+ * reader is the write that fails.
+ */
+vlong
+p9fdoffset(int fd)
+{
+	Chan *c;
+	vlong off;
+
+	c = fdtochan(fd, -1, 0, 1);
+	off = c->offset;
+	cclose(c);
+	return off;
+}
+
 /* seek: move the descriptor's offset (0 set, 1 current, 2 from end) */
 vlong
 p9seek(int fd, vlong off, int type)
