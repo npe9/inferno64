@@ -458,6 +458,20 @@ init(nil: ref Draw->Context, argv: list of string)
 	show(dev + "/state");
 
 	#
+	# Against BlueZ there is nothing after this.  btvirt's peer
+	# advertises from a public address and does not rotate, so the
+	# section below would assert something this peer has never
+	# claimed to do, and a phase that fails for that reason says
+	# nothing about either side.  Everything above it -- discovery,
+	# a read, notifications, a long write and its read back, and
+	# pairing -- has just been done against a controller, a link
+	# layer, a host and a GATT server that this tree did not write.
+	#
+	if(mode == "btvirt"){
+		sys->print("BT: done\n");
+		return;
+	}
+	#
 	# The device now rotates a resolvable private address.  Nothing
 	# above needed a bond; this is the part that does.  What is
 	# being asserted is that the rotation is invisible in the name

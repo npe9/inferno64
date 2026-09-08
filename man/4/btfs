@@ -921,6 +921,26 @@ the bench sends on purpose.  Without
 the captures are still written and nothing reads them, and the bench
 says so as it starts.
 .PP
+.B scripts/btvirt/run.sh
+runs one phase against BlueZ instead of against the model.  It builds
+a container holding
+.IR btvirt ,
+BlueZ's controller emulator, with a peer built out of BlueZ's own host
+stack and GATT server on a second controller, and points
+.I btbench
+at it over the same
+.B tcp!
+transport the model uses \(em so the controller, the link layer, the
+host, the SMP and the GATT server are all code this tree did not
+write.  The
+.B btvirt
+phase is the one written for that peer;
+.B full
+fails against it, because it ends by watching a device rotate a
+resolvable private address and this peer does not rotate one.  It
+needs Docker, which is why it is not part of
+.BR btbench.sh .
+.PP
 .B doc/bluetooth-plan.ms
 lists what is missing in the order the pieces block each other, and
 plans the 9front implementation.

@@ -866,16 +866,107 @@ and its unit tests come with it.  It is Linux only.
 Wireshark's dissectors, which are the one of the three available on
 this machine, and which are now wired into every phase of the bench.
 .PP
-The order that costs least for what it finds is: the dissector, which
-is done; then
-.B btvirt
-on a Linux box, reached over the
+The order that costs least for what it finds is: the dissector, then
+.BR btvirt ,
+then a UART module, then PTS, which is where a claim of conformance
+would have to come from and which nothing here is ready for.  The
+first two are done.
+.NH 2
+BlueZ, in a container
+.PP
+.CW scripts/btvirt
+builds an image with BlueZ 5.79 in it and
+.CW scripts/btvirt/run.sh
+runs a bench phase against it instead of against the model.
+.PP
+.CW "btvirt -s"
+is what makes this cheap.  It listens on a Unix socket and speaks
+plain H4 \(em a packet type byte and then the packet \(em which is
+exactly what
+.CW btfs 's
 .CW tcp!
-transport, which needs no new code in the guest and would be the first
-time this stack met an implementation it did not agree with by
-construction; then a UART module; then PTS, which is where a claim of
-conformance would have to come from and which nothing here is ready
-for.
+transport already speaks, so nothing in the guest changes.  It needs
+no kernel module, no
+.CW /dev/vhci
+and no privilege, which matters because Docker Desktop's LinuxKit
+kernel has no
+.CW hci_vhci
+in it at all: the route through the kernel's own Bluetooth stack,
+which would have been better still, is not available there.
+.PP
+The peer is
+.CW scripts/btvirt/btpeer.c ,
+and it is BlueZ from top to bottom.  Every controller btvirt makes
+goes in one list, so a second connection to that same socket is a
+second controller the first can hear; on it sits
+.CW emulator/bthost.c ,
+which is the host stack BlueZ drives its own implementation with in
+its tests, and on that sits
+.CW src/shared/gatt-server.c
+over
+.CW src/shared/gatt-db.c ,
+which is BlueZ's real GATT server.  The only glue is a socketpair,
+because
+.CW bt_gatt_server
+wants a file descriptor \(em on Linux an ATT channel is a socket \(em
+and here the channel is a CID inside bthost.  It is
+.CW SOCK_SEQPACKET
+and not
+.CW SOCK_STREAM ,
+because ATT is a datagram protocol and a PDU that arrived in two
+reads would be two malformed PDUs.
+.PP
+So what the Inferno side meets is a controller, a link layer, a host,
+an SMP and a GATT server that were all written by other people.  The
+.CW btvirt
+phase passes against it:
+.IP \(bu
+the scan finds the peer, and the advertising data \(em flags and a
+complete local name \(em is parsed into a name;
+.IP \(bu
+the connection comes up and the MTU exchange settles on 247;
+.IP \(bu
+discovery finds all four services with their characteristics and
+client characteristic configuration descriptors;
+.IP \(bu
+the device name and the battery level read back;
+.IP \(bu
+subscribing writes the descriptor and three notifications arrive;
+.IP \(bu
+a two hundred byte write goes out as Prepare Write and Execute Write
+and reads back whole, which is the path a bug was found in before;
+.IP \(bu
+legacy pairing completes and the link encrypts.
+.PP
+The bond it records has an all zero long term key, and that is not a
+fault on either side:
+.CW distribute_keys
+in
+.CW emulator/smp.c
+sends zeros for every key it distributes, and the capture shows the
+Encryption Information PDU carrying sixteen zero bytes.  This side
+stored what it was given.  It is worth writing down because a bond
+full of zeroes looks like a bug and is not one.
+.PP
+The traffic goes through
+.CW scripts/btvirt/relay.py
+rather than straight at the published port, because that is what
+captures it, in the same btsnoop the model writes.  So the tshark
+check runs over a conversation with BlueZ as well: 129 packets, no
+expert warnings or errors, with Wireshark reading the whole SMP
+exchange and the ATT traffic.  Three implementations that do not share
+a reader now agree about those bytes.
+.PP
+The control is the
+.CW full
+phase, which fails against this peer, and should: it ends by watching
+a device rotate a resolvable private address, and btvirt's peer
+advertises from a public address and does not rotate.
+.PP
+What this is still not is a radio, and one thing it is not either: the
+contents of the peer's GATT database were chosen here, even though the
+server answering out of it is BlueZ's.  What has been checked is the
+protocol, not the profile.
 .PP
 Key storage is now its own service, as the brief suggests, rather
 than a file

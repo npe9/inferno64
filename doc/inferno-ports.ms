@@ -21718,6 +21718,70 @@ failed its capture is never retried: those are answers, and running
 them again until they change is how a bench stops meaning anything.
 The retry line being printed at all is the thing to notice, and it is
 printed rather than swallowed for that reason.
+.NH 2
+BlueZ, in a container
+.PP
+The next thing the plan named has been done too.
+.CW scripts/btvirt
+builds an image with BlueZ 5.79 and
+.CW scripts/btvirt/run.sh
+runs a bench phase against it rather than against the model.
+.PP
+.CW "btvirt -s"
+listens on a Unix socket and speaks plain H4, which is what
+.CW btfs 's
+.CW tcp!
+transport already speaks, so no guest code changed.  It wants no
+kernel module, no
+.CW /dev/vhci
+and no privilege \(em which is as well, because Docker Desktop's
+LinuxKit kernel has no
+.CW hci_vhci
+at all, so the better route, through Linux's own Bluetooth stack, is
+not available there.  The peer,
+.CW scripts/btvirt/btpeer.c ,
+is BlueZ throughout: a second controller from the same btvirt (every
+controller it makes goes in one list, so the two hear each other),
+.CW emulator/bthost.c
+for the host, and
+.CW src/shared/gatt-server.c
+over
+.CW gatt-db.c
+for the GATT server.  The only glue is a socketpair, because
+.CW bt_gatt_server
+wants a file descriptor and here the ATT channel is a CID inside
+bthost \(em
+.CW SOCK_SEQPACKET ,
+since a PDU that arrived in two reads would be two malformed PDUs.
+.PP
+Against that: the scan finds the peer and parses its advertising data,
+the connection comes up, the MTU settles on 247, discovery finds all
+four services with their descriptors, the name and the battery level
+read back, subscribing brings three notifications, a two hundred byte
+write goes out as Prepare Write and Execute Write and reads back whole
+\(em the path a bug was found in before \(em and legacy pairing
+completes with the link encrypting.  All of that against a controller,
+a link layer, a host, an SMP and a GATT server written by other
+people.
+.PP
+The bond it records has an all zero long term key and that is nobody's
+fault:
+.CW distribute_keys
+in
+.CW emulator/smp.c
+sends zeros for every key, and the capture shows the Encryption
+Information PDU carrying sixteen zero bytes.  This side stored what it
+was given.  Worth writing down, because a bond full of zeroes looks
+like a bug.
+.PP
+The traffic goes through
+.CW scripts/btvirt/relay.py ,
+which captures it as btsnoop, so the tshark check runs over the BlueZ
+conversation as well: 129 packets, no expert warnings or errors.  The
+control is the
+.CW full
+phase, which fails against this peer and should, since it ends by
+watching an address rotate and this peer does not rotate one.
 .PP
 What none of this is, is a radio.  The routes to one are set out in
 .CW doc/bluetooth-plan.ms :
