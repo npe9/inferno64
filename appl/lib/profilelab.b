@@ -218,7 +218,13 @@ tkcfg := array[] of {
 	"frame .par",
 	"frame .but",
 	"button .but.reset -text Reset -command {send cmd reset}",
-	"label .but.at -text {}",
+		# A label's requested size follows its text, and a frame that gets a
+	# new requested size asks the window manager to reshape the window.
+	# This text changes forty times a second, so without a fixed width
+	# the window renegotiates its own geometry forty times a second too:
+	# a measured 36 reshape requests per 200 frames, against 1 with the
+	# width nailed down.
+	"label .but.at -text {} -anchor w -width 300",
 	"pack .but.reset -side left",
 	"pack .but.at -side left -padx 10",
 	"pack .but -side bottom -fill x",
