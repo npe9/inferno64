@@ -27,6 +27,11 @@
 P9lib *p9lib;
 
 /*
+ * The console, and the only trap in this file: see p9cons.s.
+ */
+extern long p9conswrite(int fd, void *buf, long n, vlong off);
+
+/*
  * The top of stack a loaded program does not have.
  *
  * libc's allocator keys its pool on _tos->pid: plock stores it and
@@ -46,6 +51,27 @@ P9lib *p9lib;
  */
 static Tos p9tos;
 
+/*
+ * And the privates, for the same reason and found the same way.
+ *
+ * privalloc(2) hands out one word of a per-process block and returns nil
+ * when there are none, and libc's callers do not check: nsec(2), which
+ * is a read of /dev/bintime and not a system call, keeps its descriptor
+ * in a private and stores through whatever it got.  _privates is set up
+ * by libc's own _main out of the top of stack a loaded program does not
+ * have, so it was nil and the store was to address 0 - the same fault
+ * the missing Tos gave, at a different offset.
+ *
+ * init9tos.c, which does this for the programs the buddy loads, puts the
+ * block on the caller's frame because rfork(RFPROC|RFMEM) shares the bss
+ * and a private has to be per process.  Here it is the same: the block
+ * is p9start's own, and p9start is the frame the whole program runs
+ * inside.
+ */
+extern void **_privates;
+extern int _nprivates;
+enum { Nprivates = 16 };
+
 extern void startboot(char *argv0, char **argv);
 
 /*
@@ -62,15 +88,21 @@ void
 p9start(P9lib *lib, char **argv, int *std)
 {
 	static char *noargv[] = { "prog", nil };
+	void *privates[Nprivates];
+	int i;
 
 	p9tos.pid = 1;			/* before anything mallocs: see p9tos above */
 	_tos = &p9tos;
+	for(i = 0; i < Nprivates; i++)
+		privates[i] = nil;
+	_privates = privates;
+	_nprivates = Nprivates;
 	fdinit(std);
 	p9lib = lib;
 	if(lib == nil || lib->version != P9libversion){
 		/* nothing to call: say so on the console, which is the kernel's */
 		char *m = "p9crt: the library handed me a table I do not know\n";
-		pwrite(2, m, strlen(m), -1LL);
+		p9conswrite(2, m, strlen(m), -1LL);
 		return;
 	}
 	if(argv == nil || argv[0] == nil)
@@ -181,10 +213,84 @@ write(int fd, void *buf, long n)
 
 	pfd = fdof(fd);
 	if(pfd == Fdcons)
-		return pwrite(fd, buf, n, -1LL);
+		return p9conswrite(fd, buf, n, -1LL);
 	if(pfd == Fdfree)
 		return -1;
 	return p9lib->write(pfd, buf, n);
+}
+
+/*
+ * pread and pwrite: the same two calls with the offset given rather than
+ * the descriptor's own.  They were libc's system-call stubs before, and
+ * a program that reached one of those did not get an error - it trapped
+ * into a microkernel that does not answer the Plan 9 table, and the
+ * fault was the end of it.  libdraw reaches pread: namedimage writes an
+ * 'n' message to the draw device's data file and then reads the answer
+ * out of its control file at offset 0, and there is no libdraw without
+ * that read.
+ *
+ * The console is a write and nothing else, so a pread of it is the end
+ * of file a read of it is, and a pwrite of it ignores the offset the way
+ * the console does.
+ */
+long
+pread(int fd, void *buf, long n, vlong off)
+{
+	int pfd;
+
+	pfd = fdof(fd);
+	if(pfd == Fdcons)
+		return 0;		/* end of file: nothing types here */
+	if(pfd == Fdfree)
+		return -1;
+	return p9lib->pread(pfd, buf, n, off);
+}
+
+long
+pwrite(int fd, void *buf, long n, vlong off)
+{
+	int pfd;
+
+	pfd = fdof(fd);
+	if(pfd == Fdcons)
+		return p9conswrite(fd, buf, n, -1LL);
+	if(pfd == Fdfree)
+		return -1;
+	return p9lib->pwrite(pfd, buf, n, off);
+}
+
+/*
+ * stat and fstat: the raw stat message, which is what libc's dirstat and
+ * dirfstat parse into a Dir.  A program that asks how long a file is
+ * asks this way.
+ */
+int
+stat(char *name, uchar *edir, int nedir)
+{
+	return p9lib->stat(name, edir, nedir);
+}
+
+int
+fstat(int fd, uchar *edir, int nedir)
+{
+	int pfd;
+
+	pfd = fdof(fd);
+	if(pfd < 0)
+		return -1;
+	return p9lib->fstat(pfd, edir, nedir);
+}
+
+/*
+ * sleep(2), which libc's own lock calls while it spins.  On a
+ * cooperative scheduler a spin that never yields is a machine that
+ * stops, so this one is not optional even though nothing in a
+ * single-threaded program contends.
+ */
+int
+sleep(long ms)
+{
+	return p9lib->sleep(ms);
 }
 
 int
@@ -325,9 +431,27 @@ errstr(char *buf, uint nbuf)
 	return p9lib->errstr(buf, nbuf);
 }
 
+/*
+ * exits, and the handlers registered against it.
+ *
+ * _onexit is libc's own hook: atexit(2) sets it to its own list-walker
+ * and libc's exits calls it.  It is defined here rather than taken from
+ * libc's exits.c because taking it from there would drag in that file's
+ * exits as well, and there would be two.  So this is libc's exits, with
+ * the last line being the personality rather than the _exits trap: a
+ * program that ends returns to the library that loaded it.
+ *
+ * initdraw registers a handler this way - it closes the display - so
+ * without the hook the drawing program would leave its client open on
+ * the way out.
+ */
+void (*_onexit)(void);
+
 void
 exits(char *status)
 {
+	if(_onexit != nil)
+		(*_onexit)();
 	p9lib->exits(status);
 	for(;;)			/* the loader does not return here */
 		;

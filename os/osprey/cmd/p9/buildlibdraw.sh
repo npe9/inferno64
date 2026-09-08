@@ -27,7 +27,8 @@ DRAWINC="-I $PWD/9front/src/include -I $PWD/9front/amd64/include"
 TEXT=0x2400028		# P9progbase6 in p9lib.h, plus the header
 6c $LIBINC -o /tmp/libdraw_crt.6 $P/p9crt.c
 6c $DRAWINC -o /tmp/libdraw_prog.6 $P/drawlibp9.c
-OBJ="/tmp/libdraw_crt.6 /tmp/libdraw_prog.6"
+6a -o /tmp/libdraw_cons.6 $P/p9cons.s
+OBJ="/tmp/libdraw_crt.6 /tmp/libdraw_prog.6 /tmp/libdraw_cons.6"
 6l -l -R4096 -T $TEXT -E p9start -o /tmp/libdrawp9 $OBJ \
 	9front/amd64/lib-src/libdraw.a 9front/amd64/lib-src/libc9.a \
 	Osprey/amd64/lib/libc.a

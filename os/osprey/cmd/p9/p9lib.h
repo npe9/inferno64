@@ -55,10 +55,24 @@ struct P9lib {
 	 * able to say what it refused, in the program's own words.
 	 */
 	int	(*errstr)(char *buf, uint nbuf);
+	/*
+	 * And the calls a real library wants that the first table did not
+	 * have.  Each of these was libc's system-call stub before, which on
+	 * this personality is a trap the microkernel does not answer: a
+	 * program that reached one did not get an error, it faulted.  They
+	 * are here because unmodified libdraw reaches them - namedimage
+	 * preads the draw device's control file, openfont fstats a font,
+	 * and libc's own lock sleeps while it spins.
+	 */
+	long	(*pread)(int fd, void *buf, long n, vlong off);
+	long	(*pwrite)(int fd, void *buf, long n, vlong off);
+	int	(*stat)(char *name, uchar *edir, int nedir);
+	int	(*fstat)(int fd, uchar *edir, int nedir);
+	int	(*sleep)(long ms);
 };
 
 enum {
-	P9libversion	= 4,
+	P9libversion	= 5,
 	/*
 	 * Where a loaded program is linked: well above the personality's own
 	 * image (its bss ends near 7MB) and well below the stack.  The

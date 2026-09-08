@@ -22,7 +22,8 @@ LIBINC="-I Osprey/amd64/include -I Osprey/include -I include -I $P"
 TEXT=0x1400028		# P9progbase2 in p9lib.h, plus the header
 6c $LIBINC -o /tmp/libcat_crt.6 $P/p9crt.c
 6c $LIBINC -o /tmp/libcat_cat.6 $P/catp9.c
-OBJ="/tmp/libcat_crt.6 /tmp/libcat_cat.6"
+6a -o /tmp/libcat_cons.6 $P/p9cons.s
+OBJ="/tmp/libcat_crt.6 /tmp/libcat_cat.6 /tmp/libcat_cons.6"
 SUP=""
 for m in utfnlen vsnprint dofmt vfprint; do
 	6c $LIBINC -o /tmp/libcat_$m.6 lib9/$m.c

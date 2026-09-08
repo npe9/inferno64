@@ -1411,7 +1411,80 @@ pool on
 and a program entered at
 .I p9start
 never ran libc's
-.IR _main .
+.IR _main ,
+and a
+.IR privalloc (2)
+block for the same reason:
+.IR nsec (2)
+keeps its descriptor in one and stores through whatever
+.I privalloc
+returned, which was nil.
+.PP
+The table is version 5 and holds
+.IR pread ,
+.IR pwrite ,
+.IR stat ,
+.I fstat
+and
+.I sleep
+as well.  Those five were libc's system-call stubs before, and a stub
+on this personality is a trap into a microkernel that does not answer
+the Plan 9 table \- so a program that reached one faulted rather than
+failing.  Unmodified
+.I libdraw
+reaches three of them:
+.I namedimage
+.IR pread s
+the draw device's control file,
+.I openfont
+.IR fstat s
+a font, and libc's own
+.I lock
+sleeps while it spins.  With them,
+.B /boot/libdraw
+runs the real
+.I libdraw
+\-
+.IR initdraw ,
+.IR allocimage ,
+.I draw
+and
+.I string
+\- built from the source in
+.B 9front/src
+and linked against
+.I p9crt.c
+without a line changed.
+.PP
+Descriptors 0, 1 and 2 of a loaded program are the machine's console,
+which the personality does not hold, and the one trap in such a program
+is the write that reaches it:
+.I p9conswrite
+in
+.BR p9cons.s ,
+the microkernel's
+.I pwrite
+under a name of its own so that
+.I p9crt.c
+can define
+.I pwrite
+for the personality's own files.
+.I rendezvous
+is the one libc call still a stub, and so still a trap: libc's
+.I qlock
+calls it when a lock is contended, and a loaded program is one flow of
+control whose locks are in its own image, so nothing here can contend
+one.  It is not implemented on the strength of that, and a program that
+found a way to reach it would fault.
+.PP
+The personality's cooperative scheduler has an idle.  An empty run
+queue is a deadlock only if every proc is asleep on a rendezvous; if
+one is asleep on a deadline it is an idle machine, and
+.I sched
+asks the microkernel for the time and turns the answer into the ticks
+the sleepers are counting rather than panicking.  It is a busy wait:
+blocking would mean downing the tick semaphore, whose reservation
+belongs to whichever event loop asked for it.
 .PP
 The kernel also publishes a page as the physical segment
 .BR pointerpos ,

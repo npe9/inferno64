@@ -9293,12 +9293,204 @@ and
 .CW /dev/kbd ,
 which the user-level drivers already built serve, and a name space that
 holds them.  It also wants libdraw and libthread linked against
-.CW p9crt.c ,
-which is a longer road than this one: libdraw's own
-.CW initdisplay
-gets as far as
+.CW p9crt.c .
+libdraw is 3.2d, below.
+.PP
+.B "3.2d: the real libdraw, unmodified, linked against the personality.  Done."
+.CW /boot/libdraw
+spoke the draw protocol by hand because that showed the path.  Now it
+does both: it paints as before, pauses, and then calls
+.CW initdraw
+\- the real
+.CW libdraw ,
+built from the source in
+.CW 9front/src
+by this tree's own
+.CW 6c ,
+linked without a line changed against
+.CW p9crt.c .
+.CW initdraw
+opens
+.CW /dev/draw ,
+reads the twelve fields, opens the client's data and refresh files,
+builds the default font out of libdraw's own compiled-in subfont, reads
+.CW /dev/winname
+and attaches to the image the draw device named there; then
+.CW allocimage ,
+.CW draw
+and
+.CW string
+paint (700,150)-(1100,450)
+.CW 0x33AA55
+with a line of text in it.  Every one of those calls is a call into the
+personality in the program's own address space.
+.PP
+Getting there meant finding what was still a trap, and the way to find
+it was to link the program against
+.I only
+the source-built libraries \- leaving out the prebuilt
+.CW libc.a ,
+whose members are the generated system-call stubs \- and read the
+linker's undefined symbols.  That is the whole list of what stands
+between a program and the personality, in one pass, rather than one
+fault per boot.  It was five:
+.CW pread ,
+which
 .CW namedimage
-here and stops, and that is written down rather than worked around.
+uses to read the draw device's control file at offset 0;
+.CW stat
+and
+.CW fstat ,
+which
+.CW dirstat
+and
+.CW dirfstat
+are;
+.CW sleep ,
+which libc's own
+.CW lock
+calls while it spins; and
+.CW _onexit ,
+the hook
+.CW atexit
+sets and
+.CW exits
+runs.  Each of those was libc's stub before, which on this personality
+is a trap into a microkernel that does not answer the Plan 9 table: a
+program that reached one did not get an error, it faulted.
+.PP
+So the table a loaded program is handed
+.CW ( P9lib ,
+version 5) has
+.CW pread ,
+.CW pwrite ,
+.CW stat ,
+.CW fstat
+and
+.CW sleep
+in it.
+.CW p9file.c
+grew the offset-carrying halves of read and write, written as 9front's
+.CW sysfile.c
+writes them \- one body taking an offset where nil means use and
+maintain the channel's own \- because the difference between
+.CW read
+and
+.CW pread
+is exactly where the offset comes from, and two bodies is how they
+drift apart.
+.PP
+.CW pwrite
+needed one more thing.  Descriptors 0, 1 and 2 of a loaded program are
+the machine's console, which the personality does not hold, and
+.CW p9crt.c
+reached it by calling libc's own
+.CW pwrite
+stub \- which works only for as long as
+.CW p9crt.c
+does not define
+.CW pwrite
+itself.  It has to, so the console call is given a name of its own:
+.CW p9cons.s ,
+one stub, the one trap in a loaded program.
+.PP
+Two more faults, and both were the same shape as the Tos of 3.2c: a
+thing libc's
+.CW _main
+sets up that a program entered at
+.CW p9start
+never had.
+.PP
+The first was
+.CW _privates .
+.CW nsec (2)
+is not a system call \- libc reads
+.CW /dev/bintime
+\- and it keeps its descriptor in a
+.CW privalloc (2)
+word.
+.CW privalloc
+returns nil when
+.CW _privates
+is unset and its callers do not check, so the store was to address 0.
+This tree already knew that trap:
+.CW init9tos.c
+does the same job for the programs the buddy loads, and says in its own
+comment why the block belongs on the caller's frame.
+.CW p9start
+now has one.
+.PP
+The second was the scheduler, and it is the defect this document had
+already written down as missing: the cooperative scheduler had no idle.
+.CW sleep (2)
+put the only proc there was to sleep, and
+.CW sched
+found an empty run queue and panicked
+.CW "no runnable proc (deadlock), tick 0" .
+The tick was 0 because the cooperative clock is advanced by the
+personality's event loops, and no event loop was running \-
+.CW main.c
+runs its programs one after another on the server's own flow of
+control.
+.PP
+Whether an empty run queue is a deadlock depends on why it is empty.
+If every proc is asleep on a rendezvous, nothing but another proc could
+ready one and there is no other proc: it is a deadlock.  If some proc
+is asleep on a deadline, it is an idle machine, and the way out is time
+passing.  So
+.CW sched
+asks the microkernel what time it is
+.CW ( p9nsec ,
+the same clock
+.CW /dev/bintime
+reads) and turns the answer into the ticks the sleepers are counting.
+It is a busy wait and the comment says so: blocking would mean downing
+the tick semaphore, and that reservation belongs to whichever event
+loop asked for it, not to the scheduler.
+.PP
+The check photographs the screen twice, because the screen is painted
+twice and the second painting takes the whole of it.  An ordinary Plan
+9 graphics program gets a window and gets it blank:
+.CW gengetwindow
+allocates one over the whole screen and clears it to white, so what the
+first half painted is gone the moment
+.CW initdraw
+returns.  Both paintings are real and only one can be on the screen at
+a time.  So
+.CW osprey-console.py
+gained
+.CW --shot-at ,
+which screendumps the moment a line appears and lets the boot carry on,
+and the program pauses four seconds between its two paintings for the
+shot to be taken in.  The first screendump holds 120000 pixels of
+.CW 0xCC7722
+in (200,150)-(600,450) and 904000 of
+.CW 0x112233 ;
+the second holds 120000 of
+.CW 0x33AA55
+and black glyphs together inside (700,150)-(1100,450), 904000 of white,
+and not one pixel of either colour the first half painted.
+.PP
+That pause is also the only evidence
+.CW sleep
+works, so the program times it: it asks for 4000 ms and prints what
+.CW nsec (2)
+says elapsed, which is libc reading
+.CW /dev/bintime
+through the personality's own
+.CW pread .
+It says 4000.
+.PP
+One thing is still a trap and is written down rather than worked
+around:
+.CW rendezvous .
+libc's
+.CW qlock
+calls it when a lock is contended, and it resolves to the prebuilt
+archive's stub.  Nothing here can reach it \- a loaded program is one
+flow of control and its locks are in its own image, so there is no
+second holder to wait for \- and it is not implemented on the strength
+of that.  A program that found a way to contend a qlock would fault.
 .PP
 .B "Phase 3.2: a real program, then rio, linked with the library."
 A real program \- a command, then a shell, then rio \- is linked with
@@ -9377,7 +9569,7 @@ check clean, the two-machine check run three times:
 .CW p9linux
 12,
 .CW p964
-31, keyboard 8, rio 14, the window gestures 10, micro 7, user 10, net
+35, keyboard 8, rio 14, the window gestures 10, micro 7, user 10, net
 13, wire 14, two-machine 20 twice over, the
 six criteria of the userland the tree builds itself, and two portable
 builds.  A criterion is a sentence a booted kernel printed

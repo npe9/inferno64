@@ -139,6 +139,11 @@ extern int	libpipe(int[2]);
 extern int	libspawn(char*, char**, int*);
 extern int	libwait(int, char*, int);
 extern int	liberrstr(char*, uint);
+extern long	libpread(int, void*, long, vlong);
+extern long	libpwrite(int, void*, long, vlong);
+extern int	libstat(char*, uchar*, int);
+extern int	libfstat(int, uchar*, int);
+extern int	libsleep(long);
 
 /*
  * The one table every loaded program is handed.  It is read-only and the
@@ -166,6 +171,11 @@ p9libtable(void)
 	p9thelib.spawn = libspawn;
 	p9thelib.wait = libwait;
 	p9thelib.errstr = liberrstr;
+	p9thelib.pread = libpread;
+	p9thelib.pwrite = libpwrite;
+	p9thelib.stat = libstat;
+	p9thelib.fstat = libfstat;
+	p9thelib.sleep = libsleep;
 	return &p9thelib;
 }
 

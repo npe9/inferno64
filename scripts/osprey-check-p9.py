@@ -97,9 +97,19 @@ def main():
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     log = tempfile.mktemp(prefix='osprey-p9-', suffix='.log')
     shot = tempfile.mktemp(prefix='osprey-p9-', suffix='.ppm')
+    # Two screendumps, because the screen is painted twice and the
+    # second painting takes the whole of it.  /boot/libdraw paints by
+    # hand first, pauses, and then runs the real libdraw, whose
+    # gengetwindow allocates a window over the whole screen and clears
+    # it - which is what any Plan 9 graphics program does.  The first
+    # shot fires the moment the hand-written paint reports itself, while
+    # the program is in that pause; the second at the end of the run.
+    rawshot = tempfile.mktemp(prefix='osprey-p9-raw-', suffix='.ppm')
     subprocess.run(['./scripts/osprey-console.py', '-q', '-p', '2', '-n', 'e1000',
                     '-l', log, '-S', '-d', ROOT + '/.qemu/9front-root.qcow2',
-                    '-t', '150', '-u', 'the microkernel idles', '--shot', shot],
+                    '-t', '150', '-u', 'the microkernel idles', '--shot', shot,
+                    '--shot-at',
+                    'libdraw: painted the screen 112233 and 200 150 600 450 cc7722=' + rawshot],
                    env=env, capture_output=True, text=True)
     try:
         t = plain(open(log, errors='replace').read())
@@ -189,30 +199,82 @@ def main():
                     and 'p9 exec: /boot/libsh returned; the personality is still here, its name space never reloaded' in t))
     #
     # The screen.  What the program paints is written in drawlibp9.c and
-    # here, and both were written before the machine was ever booted:
-    # the whole screen 0x112233 and the rectangle (200,150)-(600,450)
-    # 0xCC7722.  400 by 300 is 120000 pixels of the one and the rest of
-    # 1280 by 800 - 904000 - of the other, and the box the first lie in
-    # is that rectangle, its far edge exclusive as a Plan 9 rectangle's
-    # is.  Exact counts, because nothing dithers a frame buffer and
-    # nothing else is drawing on this configuration: there is no mouse
-    # driver on it, so the pointer page stays unreported and the draw
-    # server's arrow is never composited.
-    pix = readppm(shot)
-    pw = ph = 0
+    # here, and both were written before the machine was ever booted.
+    # The program paints twice.  First by hand, writing the draw
+    # protocol into /dev/draw itself: the whole screen 0x112233 and the
+    # rectangle (200,150)-(600,450) 0xCC7722.  Then through the real
+    # libdraw, built from source in 9front/src and linked unmodified:
+    # (700,150)-(1100,450) 0x33AA55 with a string written in black
+    # inside it.
+    #
+    # 400 by 300 is 120000 pixels of each rectangle, and 1280 by 800
+    # less the two of them - 784000 - is what is left of the
+    # background.  The libdraw rectangle is 120000 too, but split
+    # between its own colour and the glyphs of the string, so the two
+    # counts are added and the black is required to be some of it: a
+    # rectangle with no string in it would pass a test that only counted
+    # 0x33AA55, and it would mean the font never built.  Each box is the
+    # rectangle it was asked for, its far edge exclusive as a Plan 9
+    # rectangle's is.
+    #
+    # Exact counts, because nothing dithers a frame buffer and nothing
+    # else is drawing on this configuration: there is no mouse driver on
+    # it, so the pointer page stays unreported and the draw server's
+    # arrow is never composited.
+    raw = readppm(rawshot)
+    rw = rh = 0
     nfore = nback = 0
     fbox = (0, 0, 0, 0)
+    if raw is not None:
+        rw, rh, rd = raw
+        nfore, fbox = boxof(rd, (0xcc, 0x77, 0x22), rw)
+        nback, _ = boxof(rd, (0x11, 0x22, 0x33), rw)
+
+    pix = readppm(shot)
+    pw = ph = 0
+    nlib = ntext = nwhite = nfore2 = nback2 = 0
+    lbox = tbox = (0, 0, 0, 0)
     if pix is not None:
         pw, ph, pd = pix
-        nfore, fbox = boxof(pd, (0xcc, 0x77, 0x22), pw)
-        nback, _ = boxof(pd, (0x11, 0x22, 0x33), pw)
+        nlib, lbox = boxof(pd, (0x33, 0xaa, 0x55), pw)
+        ntext, tbox = boxof(pd, (0x00, 0x00, 0x00), pw)
+        nwhite, _ = boxof(pd, (0xff, 0xff, 0xff), pw)
+        nfore2, _ = boxof(pd, (0xcc, 0x77, 0x22), pw)
+        nback2, _ = boxof(pd, (0x11, 0x22, 0x33), pw)
+
+    def inside(box, r):
+        return box[0] >= r[0] and box[1] >= r[1] and box[2] <= r[2] and box[3] <= r[3]
     results.append(("and a program that draws runs on it: /boot/libdraw opens /dev/draw for a client of its own, reads the twelve fields that say what the screen is, and writes the draw protocol into it - and that /dev/draw is the kernel's own devdraw.c compiled into this personality, so the write is a call in the program's own address space and the protocol crosses no boundary at all",
                     re.search(r'libdraw: client \d+, the screen is 0 0 1280 800,\s*x8r8g8b8\s*, through /dev/draw of the personality that loaded me', t) is not None
                     and 'libdraw: painted the screen 112233 and 200 150 600 450 cc7722' in t))
-    results.append(("and the pixels are on the display: the screen QEMU scans out is 1280x800 and holds exactly 120000 pixels of 0xCC7722 in the rectangle (200,150)-(600,450) and 904000 of 0x112233 everywhere else - the counts and the box written down before the machine was booted, because a library operating system drawing on the firmware frame buffer either lands there or does not",
-                    pix is not None and (pw, ph) == (1280, 800)
+    results.append(("and the pixels are on the display: the screen QEMU scans out while that program pauses is 1280x800 and holds exactly 120000 pixels of 0xCC7722 in the rectangle (200,150)-(600,450) and 904000 of 0x112233 everywhere else - the counts and the box written down before the machine was booted, because a library operating system drawing on the firmware frame buffer either lands there or does not",
+                    raw is not None and (rw, rh) == (1280, 800)
                     and nfore == 400*300 and fbox == (200, 150, 599, 449)
                     and nback == 1280*800 - 400*300))
+    results.append(("and the pause it was photographed in is the personality's own sleep, which was a system call the microkernel does not answer until now: the program asks for 4000 ms and nsec(2) - libc reading /dev/bintime through the personality's pread, not a trap - says it slept about that long",
+                    re.search(r'libdraw: asked to sleep 4000 ms and slept (\d+), timed by nsec through /dev/bintime', t) is not None
+                    and 3500 <= int(re.search(r'and slept (\d+), timed by nsec', t).group(1)) <= 8000))
+    #
+    # And the same screen through the real library.  initdraw is not a
+    # call the personality was written for: it opens /dev/draw, reads the
+    # twelve fields, opens the client's data and refresh files, builds
+    # the default font out of libdraw's own compiled-in subfont, reads
+    # /dev/winname and attaches to the image named there.  Every one of
+    # those is a call into the personality in the program's own address
+    # space, and three of them - pread, fstat, sleep - were libc system
+    # calls that this microkernel does not answer until now.
+    results.append(("and then the real libdraw runs on it, unmodified: initdraw opens /dev/draw, reads /dev/winname, attaches to the image the draw device named there, and builds the default font out of libdraw's own compiled-in subfont - all of it calling the personality in the program's own address space",
+                    re.search(r'libdraw: initdraw: display image 0 0 1280 800, screen "noborder\.screen\.\d+" 0 0 1280 800, chan x8r8g8b8, font \*default\* 16 high', t) is not None))
+    results.append(("and it draws with it: allocimage, draw and string paint (700,150)-(1100,450) 0x33AA55 with a line of text in it",
+                    re.search(r'libdraw: real libdraw painted 700 150 1100 450 33aa55 and wrote "the library is the operating system" from 720 290 to \d+ 290', t) is not None))
+    results.append(("and those pixels are on the display too, on a screen that is now libdraw's: the second screendump has 120000 pixels of 0x33AA55 and black glyphs together, all of them inside (700,150)-(1100,450) with the black a real part of it, and 904000 of white around them - and not one pixel of either colour the first half painted, because gengetwindow took the whole screen for a window and cleared it, which is what an ordinary Plan 9 graphics program does",
+                    pix is not None and (pw, ph) == (1280, 800)
+                    and nlib + ntext == 400*300
+                    and ntext > 0
+                    and inside(lbox, (700, 150, 1099, 449))
+                    and inside(tbox, (700, 150, 1099, 449))
+                    and nwhite == 1280*800 - 400*300
+                    and nfore2 == 0 and nback2 == 0))
     results.append(("and it exits through the microkernel's minimal syscall interface, no in-kernel personality",
                     'the program exited' in t and 'panic' not in t))
 
@@ -221,13 +283,17 @@ def main():
         print('%-4s %s' % ('ok' if ok else 'FAIL', what))
         if not ok:
             bad += 1
-    print('the screen is %dx%d: %d of 0xCC7722 in %r, %d of 0x112233'
-          % (pw, ph, nfore, fbox, nback))
+    print('the first screen is %dx%d: %d of 0xCC7722 in %r, %d of 0x112233'
+          % (rw, rh, nfore, fbox, nback))
+    print('the second is %dx%d: %d of 0x33AA55 in %r, %d of black in %r, '
+          '%d white, %d of 0xCC7722, %d of 0x112233'
+          % (pw, ph, nlib, lbox, ntext, tbox, nwhite, nfore2, nback2))
     if keep or bad:
         print('log %s' % log)
         print('shot %s' % shot)
+        print('raw shot %s' % rawshot)
     else:
-        for f in (log, shot, shot + '.qmp'):
+        for f in (log, shot, rawshot, shot + '.qmp'):
             try: os.unlink(f)
             except OSError: pass
     return 1 if bad else 0

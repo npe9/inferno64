@@ -256,23 +256,23 @@ prog2.i:	$ROOT/os/osprey/cmd/p9/buildprog2.sh \
 	sh $ROOT/os/osprey/cmd/p9/buildprog2.sh
 
 libcatprog.i:	$ROOT/os/osprey/cmd/p9/buildlibcat.sh \
-		$ROOT/os/osprey/cmd/p9/p9crt.c $ROOT/os/osprey/cmd/p9/catp9.c $ROOT/os/osprey/cmd/p9/p9lib.h
+		$ROOT/os/osprey/cmd/p9/p9crt.c $ROOT/os/osprey/cmd/p9/p9cons.s $ROOT/os/osprey/cmd/p9/catp9.c $ROOT/os/osprey/cmd/p9/p9lib.h
 	sh $ROOT/os/osprey/cmd/p9/buildlibcat.sh
 
 libdrawprog.i:	$ROOT/os/osprey/cmd/p9/buildlibdraw.sh $ROOT/os/osprey/cmd/p9/drawlibp9.c \
-		$ROOT/os/osprey/cmd/p9/p9crt.c $ROOT/os/osprey/cmd/p9/p9lib.h
+		$ROOT/os/osprey/cmd/p9/p9crt.c $ROOT/os/osprey/cmd/p9/p9cons.s $ROOT/os/osprey/cmd/p9/p9lib.h
 	sh $ROOT/os/osprey/cmd/p9/buildlibdraw.sh
 
 libwcprog.i:	$ROOT/os/osprey/cmd/p9/buildlibwc.sh \
-		$ROOT/os/osprey/cmd/p9/p9crt.c $ROOT/os/osprey/cmd/p9/wcp9.c $ROOT/os/osprey/cmd/p9/p9lib.h
+		$ROOT/os/osprey/cmd/p9/p9crt.c $ROOT/os/osprey/cmd/p9/p9cons.s $ROOT/os/osprey/cmd/p9/wcp9.c $ROOT/os/osprey/cmd/p9/p9lib.h
 	sh $ROOT/os/osprey/cmd/p9/buildlibwc.sh
 
 libshprog.i:	$ROOT/os/osprey/cmd/p9/buildlibsh.sh \
-		$ROOT/os/osprey/cmd/p9/p9crt.c $ROOT/os/osprey/cmd/p9/shlib.c $ROOT/os/osprey/cmd/p9/p9lib.h
+		$ROOT/os/osprey/cmd/p9/p9crt.c $ROOT/os/osprey/cmd/p9/p9cons.s $ROOT/os/osprey/cmd/p9/shlib.c $ROOT/os/osprey/cmd/p9/p9lib.h
 	sh $ROOT/os/osprey/cmd/p9/buildlibsh.sh
 
 libgenprog.i:	$ROOT/os/osprey/cmd/p9/buildlibgen.sh \
-		$ROOT/os/osprey/cmd/p9/p9crt.c $ROOT/os/osprey/cmd/p9/genp9.c $ROOT/os/osprey/cmd/p9/p9lib.h
+		$ROOT/os/osprey/cmd/p9/p9crt.c $ROOT/os/osprey/cmd/p9/p9cons.s $ROOT/os/osprey/cmd/p9/genp9.c $ROOT/os/osprey/cmd/p9/p9lib.h
 	sh $ROOT/os/osprey/cmd/p9/buildlibgen.sh
 
 # The servers this tree builds itself, as boot files.  Their binaries

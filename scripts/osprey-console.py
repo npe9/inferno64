@@ -63,6 +63,14 @@ def main():
 		     'Enter on the serial line), K:QCODE (press a key on the '
 		     'emulated keyboard), S:FILE (screendump there and then, so '
 		     'one boot can be looked at after each gesture); needs --shot')
+	ap.add_argument('--shot-at', action='append', default=[],
+		help='PATTERN=FILE: screendump to FILE the moment PATTERN appears '
+		     'on the console, and carry on.  Repeatable.  For a run whose '
+		     'screen is painted more than once - a program that draws, and '
+		     'then a library that takes the whole screen for a window of '
+		     'its own and clears it, which is what an ordinary Plan 9 '
+		     'graphics program does - where one shot at the end can only '
+		     'show the last of them')
 	ap.add_argument('--shot-on', default=None,
 		help='take the shot when this pattern appears rather than when '
 		     'the commands run out; lets a foreground program (rio) own '
@@ -95,8 +103,8 @@ def main():
 		'-serial', 'stdio',
 	]
 	qmpsock = None
-	if a.shot:
-		qmpsock = a.shot + '.qmp'
+	if a.shot or a.shot_at:
+		qmpsock = (a.shot or a.shot_at[0].partition('=')[2]) + '.qmp'
 		try: os.unlink(qmpsock)
 		except OSError: pass
 		qemu += ['-qmp', 'unix:%s,server,nowait' % qmpsock]
@@ -126,6 +134,32 @@ def main():
 	untilall = [re.compile(u.encode(), re.M) for u in a.until] if a.until else None
 	until = list(untilall) if untilall is not None else None
 	shot_on = re.compile(a.shot_on.encode(), re.M) if a.shot_on else None
+	shot_at = []
+	for e in a.shot_at:
+		pat, sep, path = e.partition('=')
+		if not sep:
+			print('--shot-at wants PATTERN=FILE, not %r' % e, file=sys.stderr)
+			return 2
+		shot_at.append((re.compile(pat.encode(), re.M), path))
+
+	def snapshot(path):
+		"""One screendump, over a QMP connection of its own.
+
+		Its own, because the socket takes one client at a time and the
+		shot at the end of the run wants it afterwards.  A failure here
+		is left to the caller to notice by the file not being there:
+		this runs in the middle of a boot and must not end it."""
+		try:
+			qs = socket.socket(socket.AF_UNIX); qs.connect(qmpsock)
+			qf = qs.makefile('rw'); qf.readline()
+			qf.write(json.dumps({"execute":"qmp_capabilities"})+chr(10))
+			qf.flush(); qf.readline()
+			qf.write(json.dumps({"execute":"screendump",
+				"arguments":{"filename":os.path.abspath(path)}})+chr(10))
+			qf.flush(); qf.readline()
+			qf.close(); qs.close()
+		except OSError:
+			pass
 	cmds = list(a.command)
 
 	log = open(a.log, 'wb')
@@ -139,6 +173,7 @@ def main():
 
 	esc = re.compile(rb'\x1b\[[0-9;=?]*[a-zA-Z]')
 	seen = b''
+	seenall = b''
 	deadline = time.time() + a.timeout
 	status = 1
 	lastout = time.time()
@@ -162,6 +197,15 @@ def main():
 				sys.stdout.write(b.decode('utf-8', 'replace'))
 				sys.stdout.flush()
 			seen = esc.sub(b'', seen + b)[-65536:]
+			seenall = esc.sub(b'', seenall + b)[-65536:]
+
+			# a screendump the moment a line appears, the boot carrying
+			# on: matched against everything said so far, not against
+			# the window the expectation machinery keeps clearing.
+			for i in range(len(shot_at)-1, -1, -1):
+				if shot_at[i][0].search(seenall):
+					snapshot(shot_at[i][1])
+					del shot_at[i]
 
 			lastout = time.time()
 

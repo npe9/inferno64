@@ -255,12 +255,24 @@ unionread(Chan *c, void *va, long n)
 }
 
 /*
- * Read by descriptor.  For a plain file, read at the channel's offset.
- * For a directory, rewind at offset 0 and, if the channel is a union,
- * read across its members; otherwise read the one device's directory.
+ * Read by descriptor.  offp nil is read(2) - read at the channel's own
+ * offset and advance it; offp is pread(2) - read at the offset given
+ * and leave the channel's own alone.  The two are one function here for
+ * the reason they are one function in 9front's sysfile.c: the whole
+ * difference between them is where the offset comes from and whether it
+ * is written back, and splitting the body is how the two drift apart.
+ *
+ * A directory is the exception at both ends: its offset is passed
+ * through and maintained either way, because the rock and the union
+ * cursor are the channel's and a pread cannot be allowed to leave them
+ * disagreeing with it.
+ *
+ * For a plain file, read at the offset.  For a directory, rewind at
+ * offset 0 and, if the channel is a union, read across its members;
+ * otherwise read the one device's directory.
  */
-long
-p9read(int fd, void *buf, long n)
+static long
+readfd(int fd, void *buf, long n, vlong *offp)
 {
 	Chan *c;
 	long nn, nnn;
@@ -271,12 +283,17 @@ p9read(int fd, void *buf, long n)
 		cclose(c);
 		nexterror();
 	}
-	off = c->offset;
+	if(offp == nil)
+		off = c->offset;
+	else
+		off = *offp;
 	if(off < 0)
 		error(Enegoff);
 	if(off == 0){
-		c->offset = 0;
-		c->devoffset = 0;
+		if(offp == nil || (c->qid.type & QTDIR)){
+			c->offset = 0;
+			c->devoffset = 0;
+		}
 		mountrewind(c);
 		unionrewind(c);
 	}
@@ -294,33 +311,94 @@ p9read(int fd, void *buf, long n)
 	} else
 		nnn = nn = devtab[c->type]->read(c, buf, n, off);
 
-	lock(c);
-	c->devoffset += nn;
-	c->offset += nnn;
-	unlock(c);
+	if(offp == nil || (c->qid.type & QTDIR)){
+		lock(c);
+		c->devoffset += nn;
+		c->offset += nnn;
+		unlock(c);
+	}
 	poperror();
 	cclose(c);
 	return nnn;
 }
 
 long
-p9write(int fd, void *buf, long n)
+p9read(int fd, void *buf, long n)
+{
+	return readfd(fd, buf, n, nil);
+}
+
+/*
+ * pread(2).  A program that reads a file at an offset without moving
+ * the descriptor is not an unusual program: libdraw's namedimage reads
+ * the draw device's control file at 0 between two writes of the data
+ * file, and would get whatever the last read left the offset at if this
+ * did not exist.
+ */
+long
+p9pread(int fd, void *buf, long n, vlong off)
+{
+	return readfd(fd, buf, n, &off);
+}
+
+/*
+ * Write by descriptor, the same pair.  The channel's offset is advanced
+ * before the device is called and wound back by what the device did not
+ * take, which is 9front's order and not the older one: a second writer
+ * on the same channel must not be handed an offset the first is about
+ * to use.
+ */
+static long
+writefd(int fd, void *buf, long len, vlong *offp)
 {
 	Chan *c;
-	long nw;
+	long m, n;
+	vlong off;
 
+	n = 0;
 	c = fdtochan(fd, OWRITE, 1, 1);
 	if(waserror()){
+		if(offp == nil){
+			lock(c);
+			c->offset -= n;
+			unlock(c);
+		}
 		cclose(c);
 		nexterror();
 	}
-	nw = devtab[c->type]->write(c, buf, n, c->offset);
-	lock(c);
-	c->offset += nw;
-	unlock(c);
+	if(c->qid.type & QTDIR)
+		error(Eisdir);
+	n = len;
+	if(offp == nil){
+		lock(c);
+		off = c->offset;
+		c->offset += n;
+		unlock(c);
+	} else
+		off = *offp;
+	if(off < 0)
+		error(Enegoff);
+	m = devtab[c->type]->write(c, buf, n, off);
+	if(offp == nil && m < n){
+		lock(c);
+		c->offset -= n - m;
+		unlock(c);
+	}
 	poperror();
 	cclose(c);
-	return nw;
+	return m;
+}
+
+long
+p9write(int fd, void *buf, long n)
+{
+	return writefd(fd, buf, n, nil);
+}
+
+long
+p9pwrite(int fd, void *buf, long n, vlong off)
+{
+	return writefd(fd, buf, n, &off);
 }
 
 /* seek: move the descriptor's offset (0 set, 1 current, 2 from end) */
@@ -717,6 +795,78 @@ libwrite(int fd, void *buf, long n)
 	r = p9write(fd, buf, n);
 	poperror();
 	return r;
+}
+
+long
+libpread(int fd, void *buf, long n, vlong off)
+{
+	long r;
+
+	if(waserror())
+		return -1;
+	r = p9pread(fd, buf, n, off);
+	poperror();
+	return r;
+}
+
+long
+libpwrite(int fd, void *buf, long n, vlong off)
+{
+	long r;
+
+	if(waserror())
+		return -1;
+	r = p9pwrite(fd, buf, n, off);
+	poperror();
+	return r;
+}
+
+/*
+ * stat(2) and fstat(2): the raw stat message, which is what libc's
+ * dirstat and dirfstat parse.  A program that asks how long a file is -
+ * libdraw's openfont, reading a font file it has to allocate for - asks
+ * this way, and without it the call was libc's stub and a trap.
+ */
+int
+libstat(char *name, uchar *edir, int nedir)
+{
+	long r;
+
+	if(waserror())
+		return -1;
+	r = p9statraw(name, edir, nedir);
+	poperror();
+	return (int)r;
+}
+
+int
+libfstat(int fd, uchar *edir, int nedir)
+{
+	long r;
+
+	if(waserror())
+		return -1;
+	r = p9fstatraw(fd, edir, nedir);
+	poperror();
+	return (int)r;
+}
+
+/*
+ * sleep(2).  Milliseconds on the personality's own clock, which is the
+ * microkernel's tick arriving on the server loop; 0 is a yield, which is
+ * what libc's lock does while it spins.  A cooperative scheduler has to
+ * be given the chance or the spinning process is the only one that ever
+ * runs.
+ */
+int
+libsleep(long ms)
+{
+	if(ms <= 0){
+		sched();
+		return 0;
+	}
+	tsleep(&up->sleep, return0, nil, ms);
+	return 0;
 }
 
 void

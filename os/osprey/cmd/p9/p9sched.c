@@ -69,6 +69,61 @@ ready(Proc *p)
 		enqueue(p);
 }
 
+extern vlong p9nsec(void);	/* devtime.c: the microkernel's clock, by xcall */
+void sched_tick(void);		/* below: one 10ms tick of the cooperative clock */
+
+/*
+ * Nothing is runnable.  Whether that is a deadlock depends on why: if
+ * every proc is asleep on a rendezvous, nothing but another proc could
+ * ready it and there is no other proc, so it is one.  If some proc is
+ * asleep on a deadline, it is not - it is an idle machine, and the way
+ * out is time passing.
+ *
+ * The personality's event loops advance the cooperative clock from the
+ * microkernel's tick semaphore, and while one of them is running there
+ * is always something runnable.  But a program can sleep with no loop
+ * under it: main.c runs its programs one after another on the server's
+ * own flow of control, and a program that calls sleep(2) there put the
+ * only proc there was to sleep.  That was a panic until now, and it is
+ * the "no idle" this scheduler was written down as lacking.
+ *
+ * What it does about it is ask the kernel what time it is and turn the
+ * answer into the ticks the sleepers are counting.  It is a busy wait
+ * and it says so: blocking would mean downing a semaphore the kernel
+ * has granted this container, and the tick reservation belongs to
+ * whichever loop asked for it, not to the scheduler.  An idle machine
+ * spending its own time in a syscall is the honest cost of that.
+ *
+ * Returns 1 if it advanced the clock and something may now be ready, 0
+ * if there is nothing to wait for - which is the real deadlock.
+ */
+static int
+idle(void)
+{
+	static vlong last;
+	vlong now;
+	int i, waiting;
+
+	waiting = 0;
+	for(i = 0; i < nallproc; i++)
+		if(allproc[i]->state == Wakeme && allproc[i]->twhen != 0){
+			waiting = 1;
+			break;
+		}
+	if(!waiting)
+		return 0;
+	now = p9nsec();
+	if(now == 0)
+		return 0;		/* no clock to wait on: a deadlock after all */
+	if(last == 0 || now < last)
+		last = now;
+	while(now - last >= 10*1000000LL){	/* a 10ms tick, this clock's unit */
+		last += 10*1000000LL;
+		sched_tick();
+	}
+	return 1;
+}
+
 /*
  * Give up the processor.  A Running caller is put back on the run queue; a
  * caller that has set itself Wakeme (in ksleep) is not.  Returns here when
@@ -82,7 +137,8 @@ sched(void)
 	me = up;
 	if(me->state == Running)
 		enqueue(me);
-	p = dequeue();
+	while((p = dequeue()) == nil && idle())
+		;
 	if(p == nil){
 		int i;
 		for(i = 0; i < nallproc; i++)
