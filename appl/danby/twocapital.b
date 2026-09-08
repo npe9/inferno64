@@ -1,76 +1,46 @@
-implement Populationmodel;
+implement Twocapital;
 
-# danby/twocapital - One-sector economy with two capital stocks
+# danby/twocapital - a one-sector economy with two capital stocks
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared populations viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its populations and the equations that move them.  poplab(2) is a
+# library this calls with that script - it owns the window, the
+# integrator and the controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/populationmodel.m";
+include "poplab.m";
+	poplab: Poplab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {1.0,0.55,0.24,0.2,0.08,0.06},
-		array[] of {1.0,0.8});
-}
-
-title(): string
-{
-	return "One-sector economy with two capital stocks";
-}
-
-statelabels(): array of string
-{
-	return array[] of {"capital A", "capital B"};
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"productivity", "share A", "investment A", "investment B", "depreciation A", "depreciation B"};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {3.0,0.95,0.8,0.8,0.5,0.5};
-}
-
-Model.rhs(model: self ref Model, nil: real,
-		state, derivative: array of real)
-{
-	p := model.parameter;
-	capitala := state[0];
-	capitalb := state[1];
-	if(capitala < 0.0)
-		capitala = 0.0;
-	if(capitalb < 0.0)
-		capitalb = 0.0;
-	output := p[0]*math->pow(capitala,p[1])*
-		math->pow(capitalb,1.0-p[1]);
-	derivative[0] = p[2]*output-p[4]*capitala;
-	derivative[1] = p[3]*output-p[5]*capitalb;
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-Command: module
+Twocapital: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title One-sector economy with two capital stocks\n" +
+	"param productivity 1.0 0.0 3.0\n" +
+	"param share_A 0.55 0.0 0.95\n" +
+	"param investment_A 0.24 0.0 0.8\n" +
+	"param investment_B 0.2 0.0 0.8\n" +
+	"param depreciation_A 0.08 0.0 0.5\n" +
+	"param depreciation_B 0.06 0.0 0.5\n" +
+	"maxtime 100.0\n" +
+	"state capital_A 1.0\n" +
+	"state capital_B 0.8\n" +
+	# Cobb-Douglas, and a negative stock produces nothing rather than a
+	# fractional power of a negative number
+	"eq ka { capital_A + abs { capital_A } } over 2.0\n" +
+	"eq kb { capital_B + abs { capital_B } } over 2.0\n" +
+	"eq output productivity { ka sup share_A } { kb sup { 1.0 - share_A } }\n" +
+	"derivative capital_A investment_A output - depreciation_A ka\n" +
+	"derivative capital_B investment_B output - depreciation_B kb\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/populations.dis";
-	if(viewer == nil)
-		raise "fail:twocapital: cannot load the populations viewer";
-	viewer->init(ctxt, "twocapital" :: "/dis/danby/twocapital.dis" ::
-		"danby-twocapital" :: nil);
+	poplab = load Poplab Poplab->PATH;
+	if(poplab == nil)
+		raise "fail:twocapital: cannot load poplab";
+	if((e := poplab->run(ctxt, "twocapital", SPEC)) != nil)
+		raise "fail:twocapital: "+e;
 }

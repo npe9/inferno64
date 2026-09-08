@@ -1,74 +1,48 @@
-implement Populationmodel;
+implement Heliumburning;
 
-# danby/heliumburning - Helium burning in a hot star
+# danby/heliumburning - helium burning in a hot star
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared populations viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its populations and the equations that move them.  poplab(2) is a
+# library this calls with that script - it owns the window, the
+# integrator and the controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "danby/populationmodel.m";
+include "poplab.m";
+	poplab: Poplab;
 
-new(): ref Model
-{
-	return ref Model(
-		array[] of {0.04,0.012,0.004,0.003,1.0,0.2},
-		array[] of {1.0,0.0,0.0,0.0});
-}
-
-title(): string
-{
-	return "Helium burning in a hot star";
-}
-
-statelabels(): array of string
-{
-	return array[] of {"helium", "carbon", "oxygen", "energy"};
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"triple-alpha", "carbon capture", "oxygen capture", "cooling", "temperature", "density"};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {0.2,0.1,0.05,0.03,3.0,2.0};
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	helium := state[0];
-	carbon := state[1];
-	oxygen := state[2];
-	triplealpha := p[0]*p[4]*p[5]*helium*helium*helium;
-	carboncapture := p[1]*p[4]*helium*carbon;
-	oxygencapture := p[2]*p[4]*helium*oxygen;
-	derivative[0] = -3.0*triplealpha-carboncapture-oxygencapture;
-	derivative[1] = triplealpha-carboncapture;
-	derivative[2] = carboncapture-oxygencapture;
-	derivative[3] = 7.0*triplealpha+4.0*carboncapture+2.0*oxygencapture-
-		p[3]*state[3];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-Command: module
+Heliumburning: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Helium burning in a hot star\n" +
+	"param triple_alpha 0.04 0.0 0.2\n" +
+	"param carbon_capture 0.012 0.0 0.1\n" +
+	"param oxygen_capture 0.004 0.0 0.05\n" +
+	"param cooling 0.003 0.0 0.03\n" +
+	"param temperature 1.0 0.0 3.0\n" +
+	"param density 0.2 0.0 2.0\n" +
+	"maxtime 100.0\n" +
+	"state helium 1.0\n" +
+	"state carbon 0.0\n" +
+	"state oxygen 0.0\n" +
+	"state energy 0.0\n" +
+	"eq triplealpha triple_alpha temperature density helium helium helium\n" +
+	"eq carboncapture carbon_capture temperature helium carbon\n" +
+	"eq oxygencapture oxygen_capture temperature helium oxygen\n" +
+	"derivative helium - 3.0 triplealpha - carboncapture - oxygencapture\n" +
+	"derivative carbon triplealpha - carboncapture\n" +
+	"derivative oxygen carboncapture - oxygencapture\n" +
+	"derivative energy 7.0 triplealpha + 4.0 carboncapture + 2.0 oxygencapture - cooling energy\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/populations.dis";
-	if(viewer == nil)
-		raise "fail:heliumburning: cannot load the populations viewer";
-	viewer->init(ctxt, "heliumburning" :: "/dis/danby/heliumburning.dis" ::
-		"danby-heliumburning" :: nil);
+	poplab = load Poplab Poplab->PATH;
+	if(poplab == nil)
+		raise "fail:heliumburning: cannot load poplab";
+	if((e := poplab->run(ctxt, "heliumburning", SPEC)) != nil)
+		raise "fail:heliumburning: "+e;
 }

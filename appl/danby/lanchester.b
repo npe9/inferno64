@@ -1,64 +1,37 @@
-implement Populationmodel;
+implement Lanchester;
 
 # danby/lanchester - Lanchester square-law combat
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared populations viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its populations and the equations that move them.  poplab(2) is a
+# library this calls with that script - it owns the window, the
+# integrator and the controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "danby/populationmodel.m";
+include "poplab.m";
+	poplab: Poplab;
 
-new(): ref Model
-{
-	return ref Model(array[] of {0.35,0.5},array[] of {1.0,0.8});
-}
-
-title(): string
-{
-	return "Lanchester square-law combat";
-}
-
-statelabels(): array of string
-{
-	return array[] of {"force A", "force B"};
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"B effectiveness", "A effectiveness"};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {2.0,2.0};
-}
-
-Model.rhs(model: self ref Model, nil: real,
-		state, derivative: array of real)
-{
-	p := model.parameter;
-	derivative[0] = -p[0]*state[1];
-	derivative[1] = -p[1]*state[0];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-Command: module
+Lanchester: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Lanchester square-law combat\n" +
+	"param B_effectiveness 0.35 0.0 2.0\n" +
+	"param A_effectiveness 0.5 0.0 2.0\n" +
+	"maxtime 100.0\n" +
+	"state force_A 1.0\n" +
+	"state force_B 0.8\n" +
+	"derivative force_A - B_effectiveness force_B\n" +
+	"derivative force_B - A_effectiveness force_A\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/populations.dis";
-	if(viewer == nil)
-		raise "fail:lanchester: cannot load the populations viewer";
-	viewer->init(ctxt, "lanchester" :: "/dis/danby/lanchester.dis" ::
-		"danby-lanchester" :: nil);
+	poplab = load Poplab Poplab->PATH;
+	if(poplab == nil)
+		raise "fail:lanchester: cannot load poplab";
+	if((e := poplab->run(ctxt, "lanchester", SPEC)) != nil)
+		raise "fail:lanchester: "+e;
 }

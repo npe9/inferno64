@@ -192,6 +192,53 @@ checkspec(name, spec: string)
 			name, len m.parameter, len m.statenames);
 	checkstates(name, m);
 	case name {
+	"lanchester" =>
+		# the square law: b*A^2 - a*B^2 does not change
+		st := array[] of {0.9, 0.7};
+		d := rates(m, st);
+		p := m.parameter;
+		near(name+" square-law invariant",
+			2.0*p[1]*st[0]*d[0] - 2.0*p[0]*st[1]*d[1], 0.0, 1.0e-14);
+	"productionexchange" =>
+		# exchange only moves goods between the two, so the total
+		# changes only by what is produced less what is used
+		st := array[] of {0.8, 0.3};
+		d := rates(m, st);
+		p := m.parameter;
+		near(name+" conserves transferred goods", d[0]+d[1],
+			p[0]+p[2]-p[1]*st[0]-p[3]*st[1], 1.0e-14);
+	"gonorrhea" =>
+		st := array[] of {0.8, 0.2, 0.7, 0.3};
+		d := rates(m, st);
+		near(name+" women conservation", d[0]+d[1], 0.0, 1.0e-14);
+		near(name+" men conservation", d[2]+d[3], 0.0, 1.0e-14);
+	"malaria" =>
+		st := array[] of {0.8, 0.1, 0.7, 0.2};
+		d := rates(m, st);
+		near(name+" human conservation", d[0]+d[1], 0.0, 1.0e-14);
+		near(name+" mosquito conservation", d[2]+d[3], 0.0, 1.0e-14);
+	"incubation" =>
+		st := array[] of {0.8, 0.1, 0.7, 0.2};
+		d := rates(m, st);
+		near(name+" SEIR conservation", d[0]+d[1]+d[2]+d[3], 0.0, 1.0e-14);
+	"seasonaldisease" or "migration" =>
+		st := array[] of {0.8, 0.15, 0.05};
+		d := rates(m, st);
+		near(name+" head-count conservation", d[0]+d[1]+d[2], 0.0, 1.0e-14);
+	"weightchange" =>
+		# a body of no mass spends nothing, so its rate is the whole
+		# intake divided by the energy density
+		st := array[] of {0.0};
+		d := rates(m, st);
+		p := m.parameter;
+		near(name+" zero-mass energy balance", d[0], p[0]/p[3], 1.0e-14);
+	"lakepollution" =>
+		# at the steady state the inflow exactly balances what leaves
+		# by the outlet and what decays
+		p := m.parameter;
+		st := array[] of {(p[0]/p[1])/(p[2]/p[1]+p[3])};
+		d := rates(m, st);
+		near(name+" mass balance", d[0], 0.0, 1.0e-12);
 	"childcare" =>
 		checkempty(name, m);
 	"fishingone" =>
@@ -208,6 +255,22 @@ checkspec(name, spec: string)
 		p := m.parameter;
 		checksum(name, m, (p[2]-p[3])-p[4]*0.15);
 	}
+}
+
+rates(m: ref Model, state: array of real): array of real
+{
+	d := array[len state] of real;
+	dynsys->rhs(m, 0.0, state, d);
+	return d;
+}
+
+near(what: string, got, want, tol: real)
+{
+	d := got-want;
+	if(d < 0.0)
+		d = -d;
+	if(d > tol)
+		fail(sys->sprint("%s: got %.17g want %.17g", what, got, want));
 }
 
 # At the bionomic equilibrium - the stock at which the price of a catch
@@ -270,8 +333,28 @@ statecounts := array[] of {
 	"fishingone", "2",
 	"fishingtwo", "3",
 	"foodchain", "3",
+	"gonorrhea", "4",
+	"heliumburning", "4",
+	"hiv", "3",
+	"incubation", "4",
+	"lakepollution", "1",
+	"lanchester", "2",
+	"limitstogrowth", "4",
+	"malaria", "4",
+	"manyspecies", "3",
+	"migration", "3",
 	"moreenzyme", "4",
+	"oregonator", "3",
+	"parasite", "2",
+	"productionexchange", "2",
+	"reactorstability", "2",
+	"reservoir", "3",
+	"seasonaldisease", "3",
 	"stillmoreenzyme", "5",
+	"tankcontrol", "4",
+	"twocapital", "2",
+	"violetsantsrodents", "3",
+	"weightchange", "1",
 };
 
 checkstates(name: string, m: ref Model)

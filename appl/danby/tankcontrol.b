@@ -1,80 +1,55 @@
-implement Populationmodel;
+implement Tankcontrol;
 
-# danby/tankcontrol - Temperature and volume control in a tank
+# danby/tankcontrol - temperature and volume control in a tank
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared populations viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its populations and the equations that move them.  poplab(2) is a
+# library this calls with that script - it owns the window, the
+# integrator and the controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/populationmodel.m";
+include "poplab.m";
+	poplab: Poplab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {1.0,1.0,0.7,0.8,2.0,1.5,0.35},
-		array[] of {0.65,0.4,0.7,0.3});
-}
-
-title(): string
-{
-	return "Temperature and volume control in a tank";
-}
-
-statelabels(): array of string
-{
-	return array[] of {"liquid level", "temperature", "outlet valve", "heater"};
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"level target", "temperature target", "inflow", "feed temperature", "level gain", "temperature gain", "heat loss"};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {3.0,3.0,3.0,3.0,8.0,8.0,4.0};
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	level := state[0];
-	if(level < 0.001)
-		level = 0.001;
-	valvetarget := p[2]+p[4]*(level-p[0]);
-	if(valvetarget < 0.0)
-		valvetarget = 0.0;
-	heatertarget := p[5]*(p[1]-state[1]);
-	if(heatertarget < 0.0)
-		heatertarget = 0.0;
-	outflow := state[2]*math->sqrt(level);
-	derivative[0] = p[2]-outflow;
-	derivative[1] = (p[2]*(p[3]-state[1])+state[3])/level-
-		p[6]*(state[1]-0.25);
-	derivative[2] = 2.0*(valvetarget-state[2]);
-	derivative[3] = 2.0*(heatertarget-state[3]);
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-Command: module
+Tankcontrol: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Temperature and volume control in a tank\n" +
+	"param level_target 1.0 0.0 3.0\n" +
+	"param temperature_target 1.0 0.0 3.0\n" +
+	"param inflow 0.7 0.0 3.0\n" +
+	"param feed_temperature 0.8 0.0 3.0\n" +
+	"param level_gain 2.0 0.0 8.0\n" +
+	"param temperature_gain 1.5 0.0 8.0\n" +
+	"param heat_loss 0.35 0.0 4.0\n" +
+	"maxtime 100.0\n" +
+	"state liquid_level 0.65\n" +
+	"state temperature 0.4\n" +
+	"state outlet_valve 0.7\n" +
+	"state heater 0.3\n" +
+	# an empty tank has no head to divide by, and neither actuator can be
+	# driven backwards, so all three are held at their own floor
+	"eq raw_level liquid_level - 0.001\n" +
+	"eq level 0.001 + { raw_level + abs { raw_level } } over 2.0\n" +
+	"eq rawvalve inflow + level_gain { level - level_target }\n" +
+	"eq valvetarget { rawvalve + abs { rawvalve } } over 2.0\n" +
+	"eq rawheater temperature_gain { temperature_target - temperature }\n" +
+	"eq heatertarget { rawheater + abs { rawheater } } over 2.0\n" +
+	"eq outflow outlet_valve sqrt { level }\n" +
+	"derivative liquid_level inflow - outflow\n" +
+	"derivative temperature { inflow { feed_temperature - temperature } + heater } over level - heat_loss { temperature - 0.25 }\n" +
+	"derivative outlet_valve 2.0 { valvetarget - outlet_valve }\n" +
+	"derivative heater 2.0 { heatertarget - heater }\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/populations.dis";
-	if(viewer == nil)
-		raise "fail:tankcontrol: cannot load the populations viewer";
-	viewer->init(ctxt, "tankcontrol" :: "/dis/danby/tankcontrol.dis" ::
-		"danby-tankcontrol" :: nil);
+	poplab = load Poplab Poplab->PATH;
+	if(poplab == nil)
+		raise "fail:tankcontrol: cannot load poplab";
+	if((e := poplab->run(ctxt, "tankcontrol", SPEC)) != nil)
+		raise "fail:tankcontrol: "+e;
 }

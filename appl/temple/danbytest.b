@@ -25,29 +25,10 @@ include "danby/twospecies.m";
 	cooperation: Twospecies;
 	competition: Twospecies;
 include "danby/populationmodel.m";
-	manyspecies: Populationmodel;
-	violetsantsrodents: Populationmodel;
-	parasite: Populationmodel;
-	lakepollution: Populationmodel;
-	heliumburning: Populationmodel;
-	oregonator: Populationmodel;
-	reactorstability: Populationmodel;
-	tankcontrol: Populationmodel;
-	reservoir: Populationmodel;
 	epidemicmodel: Populationmodel;
 	vaccinationmodel: Populationmodel;
-	migrationmodel: Populationmodel;
-	incubation: Populationmodel;
-	seasonaldisease: Populationmodel;
-	malaria: Populationmodel;
-	gonorrhea: Populationmodel;
-	hiv: Populationmodel;
-	weightchange: Populationmodel;
 	heartbeat: Populationmodel;
-	lanchester: Populationmodel;
-	productionexchange: Populationmodel;
 	boommodel: Populationmodel;
-	twocapital: Populationmodel;
 include "danby/trajectory.m";
 	spinningball: Trajectory;
 	baseballpitch: Trajectory;
@@ -118,29 +99,10 @@ init(nil: ref Draw->Context, nil: list of string)
 	# links its loads of that interface against its own function set.  Its
 	# own Lotka-Volterra pair is written out in appl/danby/ecology.b and is
 	# not reachable as a module, so there is nothing to check here.
-	manyspecies = load Populationmodel "/dis/danby/manyspecies.dis";
-	violetsantsrodents = load Populationmodel "/dis/danby/violetsantsrodents.dis";
-	parasite = load Populationmodel "/dis/danby/parasite.dis";
-	lakepollution = load Populationmodel "/dis/danby/lakepollution.dis";
-	heliumburning = load Populationmodel "/dis/danby/heliumburning.dis";
-	oregonator = load Populationmodel "/dis/danby/oregonator.dis";
-	reactorstability = load Populationmodel "/dis/danby/reactorstability.dis";
-	tankcontrol = load Populationmodel "/dis/danby/tankcontrol.dis";
-	reservoir = load Populationmodel "/dis/danby/reservoir.dis";
 	epidemicmodel = load Populationmodel "/dis/danby/epidemic.dis";
 	vaccinationmodel = load Populationmodel "/dis/danby/vaccination.dis";
-	migrationmodel = load Populationmodel "/dis/danby/migration.dis";
-	incubation = load Populationmodel "/dis/danby/incubation.dis";
-	seasonaldisease = load Populationmodel "/dis/danby/seasonaldisease.dis";
-	malaria = load Populationmodel "/dis/danby/malaria.dis";
-	gonorrhea = load Populationmodel "/dis/danby/gonorrhea.dis";
-	hiv = load Populationmodel "/dis/danby/hiv.dis";
-	weightchange = load Populationmodel "/dis/danby/weightchange.dis";
 	heartbeat = load Populationmodel "/dis/danby/heartbeat.dis";
-	lanchester = load Populationmodel "/dis/danby/lanchester.dis";
-	productionexchange = load Populationmodel "/dis/danby/productionexchange.dis";
 	boommodel = load Populationmodel "/dis/danby/boom.dis";
-	twocapital = load Populationmodel "/dis/danby/twocapital.dis";
 	spinningball = load Trajectory "/dis/danby/spinningball.dis";
 	baseballpitch = load Trajectory "/dis/danby/baseballpitch.dis";
 	knuckleball = load Trajectory "/dis/danby/knuckleball.dis";
@@ -187,26 +149,20 @@ init(nil: ref Draw->Context, nil: list of string)
 			forcedpendulum == nil || lorenz == nil || periodicvolterra == nil ||
 			predatorfishing == nil || logisticprey == nil || logisticpredators == nil ||
 			alternativepredation == nil || maypredator == nil || internalcompetition == nil ||
-			cooperation == nil || competition == nil || manyspecies == nil ||
-			violetsantsrodents == nil || parasite == nil || lakepollution == nil ||
-			heliumburning == nil || oregonator == nil || reactorstability == nil ||
-			tankcontrol == nil || reservoir == nil || epidemicmodel == nil ||
-			vaccinationmodel == nil || migrationmodel == nil || incubation == nil ||
-			seasonaldisease == nil || malaria == nil || gonorrhea == nil ||
-			hiv == nil || weightchange == nil || heartbeat == nil ||
-			lanchester == nil || productionexchange == nil || boommodel == nil ||
-			twocapital == nil || spinningball == nil || baseballpitch == nil ||
-			knuckleball == nil || flyball == nil || softballpitch == nil ||
-			golfdrive == nil || soccerkick == nil || cricketbowl == nil ||
-			cricketswing == nil || badminton == nil || tabletennis == nil ||
-			basketball == nil || badfootball == nil || discus == nil ||
-			javelin == nil || skijump == nil || skylab == nil ||
-			icbmrange == nil || icbmaccuracy == nil || rocket2d == nil ||
-			reentry == nil || lowthrust == nil || threebody == nil ||
-			moontrip == nil || lagrange1 == nil || lagrange2 == nil ||
-			cometcatch == nil || jupiterboost == nil || grandtour == nil ||
-			perihelion == nil || poyntingrobertson == nil || galaxies == nil ||
-			starmodel == nil || whitedwarf == nil)
+			cooperation == nil || competition == nil || epidemicmodel == nil ||
+			vaccinationmodel == nil || heartbeat == nil || boommodel == nil ||
+			spinningball == nil || baseballpitch == nil || knuckleball == nil ||
+			flyball == nil || softballpitch == nil || golfdrive == nil ||
+			soccerkick == nil || cricketbowl == nil || cricketswing == nil ||
+			badminton == nil || tabletennis == nil || basketball == nil ||
+			badfootball == nil || discus == nil || javelin == nil ||
+			skijump == nil || skylab == nil || icbmrange == nil ||
+			icbmaccuracy == nil || rocket2d == nil || reentry == nil ||
+			lowthrust == nil || threebody == nil || moontrip == nil ||
+			lagrange1 == nil || lagrange2 == nil || cometcatch == nil ||
+			jupiterboost == nil || grandtour == nil || perihelion == nil ||
+			poyntingrobertson == nil || galaxies == nil || starmodel == nil ||
+			whitedwarf == nil)
 		raise "fail:danbytest: missing module";
 	testmap();
 	testpendulum();
@@ -220,15 +176,7 @@ testpopulations()
 {
 	# childcare's own metadata and empty-population checks moved to
 	# poplabtest(1) with the model.
-	checkpopulationmodule(manyspecies,"many species",3);
-	checkpopulationmodule(violetsantsrodents,"violets ants rodents",3);
-	checkpopulationmodule(parasite,"parasite",2);
-	checkpopulationmodule(heliumburning,"helium burning",4);
-	checkpopulationmodule(oregonator,"Oregonator",3);
-	checkpopulationmetadata(reactorstability,"reactor stability",2);
-	checkpopulationmetadata(tankcontrol,"tank control",4);
-	checkpopulationmetadata(reservoir,"reservoir system",3);
-	testlakepollution();
+	# lakepollution's steady state moved to poplabtest(1).
 	testepidemics();
 	testvitaldisease();
 	testextendedepidemics();
@@ -469,28 +417,14 @@ checkvacuumtrajectory(trajectory: Trajectory, name: string)
 
 testcompetitioneconomics()
 {
-	checkpopulationmetadata(lanchester,"Lanchester",2);
-	combat := lanchester->new();
+	# lanchester's invariant, fishingone's bionomic equilibrium and
+	# productionexchange's transfer balance moved to poplabtest(1) with
+	# the models.
+	checkpopulationmodule(boommodel,"Goodwin cycle",2);
 	state := array[] of {0.9,0.7};
 	derivative := array[] of {0.0,0.0};
-	lanchester->evaluate(combat,0.0,state,derivative);
-	invariantderivative := 2.0*combat.parameter[1]*state[0]*derivative[0]
-		-2.0*combat.parameter[0]*state[1]*derivative[1];
-	check("Lanchester square-law invariant",invariantderivative,0.0,1.0e-14);
-	# fishingone's bionomic equilibrium moved to poplabtest(1).
-	checkpopulationmetadata(productionexchange,"production exchange",2);
-	checkpopulationmodule(boommodel,"Goodwin cycle",2);
-	checkpopulationmodule(twocapital,"two-capital growth",2);
-	exchange := productionexchange->new();
-	state[0] = 0.8;
-	state[1] = 0.3;
-	productionexchange->evaluate(exchange,0.0,state,derivative);
-	p := exchange.parameter;
-	expectedtotal := p[0]+p[2]-p[1]*state[0]-p[3]*state[1];
-	check("exchange conserves transferred goods",derivative[0]+derivative[1],
-		expectedtotal,1.0e-14);
 	goodwin := boommodel->new();
-	p = goodwin.parameter;
+	p := goodwin.parameter;
 	state[0] = p[2]/p[3];
 	state[1] = p[0]/p[1];
 	boommodel->evaluate(goodwin,0.0,state,derivative);
@@ -500,24 +434,8 @@ testcompetitioneconomics()
 
 testhealthmodels()
 {
-	checkpopulationmodule(gonorrhea,"gonorrhea",4);
-	checkpopulationmodule(hiv,"HIV",3);
-	checkpopulationmetadata(weightchange,"weight change",1);
 	checkpopulationmetadata(heartbeat,"heartbeat",2);
-	state4 := array[] of {0.8,0.2,0.7,0.3};
-	derivative4 := array[] of {0.0,0.0,0.0,0.0};
-	gonorrheamodel := gonorrhea->new();
-	gonorrhea->evaluate(gonorrheamodel,0.0,state4,derivative4);
-	check("gonorrhea women conservation",derivative4[0]+derivative4[1],
-		0.0,1.0e-14);
-	check("gonorrhea men conservation",derivative4[2]+derivative4[3],
-		0.0,1.0e-14);
-	weight := weightchange->new();
-	state1 := array[] of {0.0};
-	derivative1 := array[] of {0.0};
-	weightchange->evaluate(weight,0.0,state1,derivative1);
-	check("weight zero-mass energy balance",derivative1[0],
-		weight.parameter[0]/weight.parameter[3],1.0e-14);
+	# gonorrhea's and weightchange's own checks moved to poplabtest(1).
 	beat := heartbeat->new();
 	x := beat.parameter[2];
 	state2 := array[] of {x,beat.parameter[1]*x-x*x*x};
@@ -529,39 +447,13 @@ testhealthmodels()
 
 testextendedepidemics()
 {
-	checkpopulationmodule(incubation,"incubation",4);
-	checkpopulationmodule(seasonaldisease,"seasonal disease",3);
-	checkpopulationmodule(malaria,"malaria",4);
-	state4 := array[] of {0.8,0.1,0.7,0.2};
-	derivative4 := array[] of {0.0,0.0,0.0,0.0};
-	seir := incubation->new();
-	incubation->evaluate(seir,0.0,state4,derivative4);
-	check("SEIR conservation",
-		derivative4[0]+derivative4[1]+derivative4[2]+derivative4[3],
-		0.0,1.0e-14);
-	vector := malaria->new();
-	malaria->evaluate(vector,0.0,state4,derivative4);
-	check("malaria human conservation",derivative4[0]+derivative4[1],
-		0.0,1.0e-14);
-	check("malaria mosquito conservation",derivative4[2]+derivative4[3],
-		0.0,1.0e-14);
-	seasonal := seasonaldisease->new();
-	state3 := array[] of {0.8,0.15,0.05};
-	derivative3 := array[] of {0.0,0.0,0.0};
-	seasonaldisease->evaluate(seasonal,0.0,state3,derivative3);
-	check("seasonal SIR conservation",
-		derivative3[0]+derivative3[1]+derivative3[2],0.0,1.0e-14);
+	# incubation's, malaria's and seasonaldisease's conservation laws
+	# moved to poplabtest(1) with the models.
 }
 
 testvitaldisease()
 {
-	checkpopulationmetadata(migrationmodel,"disease migration",3);
-	state := array[] of {0.8,0.15,0.05};
-	derivative := array[] of {0.0,0.0,0.0};
-	migration := migrationmodel->new();
-	migrationmodel->evaluate(migration,0.0,state,derivative);
-	check("migration fraction conservation",
-		derivative[0]+derivative[1]+derivative[2],0.0,1.0e-14);
+	# migration's conservation law moved to poplabtest(1).
 	# the two vital-dynamics balances moved to poplabtest(1).
 }
 
@@ -599,17 +491,6 @@ testepidemics()
 	check("vaccination population conservation",
 		derivativev[0]+derivativev[1]+derivativev[2]+derivativev[3],
 		0.0,1.0e-14);
-}
-
-testlakepollution()
-{
-	model := lakepollution->new();
-	p := model.parameter;
-	equilibrium := (p[0]/p[1])/(p[2]/p[1]+p[3]);
-	state := array[] of {equilibrium};
-	derivative := array[] of {0.0};
-	lakepollution->evaluate(model,0.0,state,derivative);
-	check("lake pollution mass balance",derivative[0],0.0,1.0e-12);
 }
 
 checkpopulationmodule(modelmodule: Populationmodel, name: string, nstate: int)

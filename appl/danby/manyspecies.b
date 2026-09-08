@@ -1,75 +1,47 @@
-implement Populationmodel;
+implement Manyspecies;
 
-# danby/manyspecies - One prey and two predator species
+# danby/manyspecies - one prey and two predator species
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared populations viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its populations and the equations that move them.  poplab(2) is a
+# library this calls with that script - it owns the window, the
+# integrator and the controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "danby/populationmodel.m";
+include "poplab.m";
+	poplab: Poplab;
 
-new(): ref Model
-{
-	parameters := array[] of {1.4, 1.8, 1.1, 0.8, 0.5, 0.8, 0.7, 0.4};
-	initial := array[] of {0.9, 0.12, 0.08};
-	return ref Model(parameters,initial);
-}
-
-title(): string
-{
-	return "One prey and two predator species";
-}
-
-statelabels(): array of string
-{
-	return array[] of {"prey", "predator A", "predator B"};
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {
-		"prey growth", "capacity", "attack A", "conversion A",
-		"death A", "attack B", "conversion B", "death B"
-	};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {3.0, 3.0, 3.0, 2.0, 2.0, 3.0, 2.0, 2.0};
-}
-
-Model.rhs(model: self ref Model, nil: real,
-		state, derivative: array of real)
-{
-	p := model.parameter;
-	x := state[0];
-	y := state[1];
-	z := state[2];
-	consumptiona := p[2]*x*y;
-	consumptionb := p[5]*x*z;
-	derivative[0] = p[0]*x*(1.0-x/p[1])-consumptiona-consumptionb;
-	derivative[1] = p[3]*consumptiona-p[4]*y;
-	derivative[2] = p[6]*consumptionb-p[7]*z;
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-Command: module
+Manyspecies: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title One prey and two predator species\n" +
+	"param prey_growth 1.4 0.0 3.0\n" +
+	"param capacity 1.8 0.0 3.0\n" +
+	"param attack_A 1.1 0.0 3.0\n" +
+	"param conversion_A 0.8 0.0 2.0\n" +
+	"param death_A 0.5 0.0 2.0\n" +
+	"param attack_B 0.8 0.0 3.0\n" +
+	"param conversion_B 0.7 0.0 2.0\n" +
+	"param death_B 0.4 0.0 2.0\n" +
+	"maxtime 100.0\n" +
+	"state prey 0.9\n" +
+	"state predator_A 0.12\n" +
+	"state predator_B 0.08\n" +
+	"eq consumptiona attack_A prey predator_A\n" +
+	"eq consumptionb attack_B prey predator_B\n" +
+	"derivative prey prey_growth prey { 1.0 - prey over capacity } - consumptiona - consumptionb\n" +
+	"derivative predator_A conversion_A consumptiona - death_A predator_A\n" +
+	"derivative predator_B conversion_B consumptionb - death_B predator_B\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/populations.dis";
-	if(viewer == nil)
-		raise "fail:manyspecies: cannot load the populations viewer";
-	viewer->init(ctxt, "manyspecies" :: "/dis/danby/manyspecies.dis" ::
-		"danby-manyspecies" :: nil);
+	poplab = load Poplab Poplab->PATH;
+	if(poplab == nil)
+		raise "fail:manyspecies: cannot load poplab";
+	if((e := poplab->run(ctxt, "manyspecies", SPEC)) != nil)
+		raise "fail:manyspecies: "+e;
 }

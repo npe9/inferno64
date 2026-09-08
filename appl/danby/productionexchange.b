@@ -1,66 +1,41 @@
-implement Populationmodel;
+implement Productionexchange;
 
-# danby/productionexchange - Production and exchange of two goods
+# danby/productionexchange - production and exchange of two goods
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared populations viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its populations and the equations that move them.  poplab(2) is a
+# library this calls with that script - it owns the window, the
+# integrator and the controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "danby/populationmodel.m";
+include "poplab.m";
+	poplab: Poplab;
 
-new(): ref Model
-{
-	return ref Model(array[] of {0.8,0.5,0.55,0.7,0.45},
-		array[] of {0.7,0.35});
-}
-
-title(): string
-{
-	return "Production and exchange of two goods";
-}
-
-statelabels(): array of string
-{
-	return array[] of {"good A inventory", "good B inventory"};
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"production A", "use A", "production B", "use B", "exchange"};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {2.0,2.0,2.0,2.0,2.0};
-}
-
-Model.rhs(model: self ref Model, nil: real,
-		state, derivative: array of real)
-{
-	p := model.parameter;
-	flow := p[4]*(state[0]-state[1]);
-	derivative[0] = p[0]-p[1]*state[0]-flow;
-	derivative[1] = p[2]-p[3]*state[1]+flow;
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-Command: module
+Productionexchange: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Production and exchange of two goods\n" +
+	"param production_A 0.8 0.0 2.0\n" +
+	"param use_A 0.5 0.0 2.0\n" +
+	"param production_B 0.55 0.0 2.0\n" +
+	"param use_B 0.7 0.0 2.0\n" +
+	"param exchange 0.45 0.0 2.0\n" +
+	"maxtime 100.0\n" +
+	"state good_A_inventory 0.7\n" +
+	"state good_B_inventory 0.35\n" +
+	"eq flow exchange { good_A_inventory - good_B_inventory }\n" +
+	"derivative good_A_inventory production_A - use_A good_A_inventory - flow\n" +
+	"derivative good_B_inventory production_B - use_B good_B_inventory + flow\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/populations.dis";
-	if(viewer == nil)
-		raise "fail:productionexchange: cannot load the populations viewer";
-	viewer->init(ctxt, "productionexchange" :: "/dis/danby/productionexchange.dis" ::
-		"danby-productionexchange" :: nil);
+	poplab = load Poplab Poplab->PATH;
+	if(poplab == nil)
+		raise "fail:productionexchange: cannot load poplab";
+	if((e := poplab->run(ctxt, "productionexchange", SPEC)) != nil)
+		raise "fail:productionexchange: "+e;
 }

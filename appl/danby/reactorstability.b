@@ -1,69 +1,44 @@
-implement Populationmodel;
+implement Reactorstability;
 
-# danby/reactorstability - Chemical tank reactor stability
+# danby/reactorstability - chemical tank reactor stability
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared populations viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its populations and the equations that move them.  poplab(2) is a
+# library this calls with that script - it owns the window, the
+# integrator and the controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/populationmodel.m";
+include "poplab.m";
+	poplab: Poplab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {1.0,1.0,2.8,4.0,1.2,0.35},array[] of {1.0,0.45});
-}
-
-title(): string
-{
-	return "Chemical tank reactor stability";
-}
-
-statelabels(): array of string
-{
-	return array[] of {"reactant", "temperature"};
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"residence time", "feed concentration", "reaction rate", "activation", "heat release", "cooling"};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {5.0,4.0,10.0,12.0,6.0,4.0};
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	temperature := state[1];
-	rate := p[2]*math->exp(-p[3]/(temperature+1.0))*state[0];
-	derivative[0] = (p[1]-state[0])/p[0]-rate;
-	derivative[1] = (0.35-temperature)/p[0]+p[4]*rate-
-		p[5]*(temperature-0.25);
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-Command: module
+Reactorstability: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Chemical tank reactor stability\n" +
+	"param residence_time 1.0 0.0 5.0\n" +
+	"param feed_concentration 1.0 0.0 4.0\n" +
+	"param reaction_rate 2.8 0.0 10.0\n" +
+	"param activation 4.0 0.0 12.0\n" +
+	"param heat_release 1.2 0.0 6.0\n" +
+	"param cooling 0.35 0.0 4.0\n" +
+	"maxtime 100.0\n" +
+	"state reactant 1.0\n" +
+	"state temperature 0.45\n" +
+	# Arrhenius, in the reduced form this family uses: the shifted
+	# temperature keeps the exponent finite at the bottom of the range
+	"eq rate reaction_rate exp { - activation over { temperature + 1.0 } } reactant\n" +
+	"derivative reactant { feed_concentration - reactant } over residence_time - rate\n" +
+	"derivative temperature { 0.35 - temperature } over residence_time + heat_release rate - cooling { temperature - 0.25 }\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/populations.dis";
-	if(viewer == nil)
-		raise "fail:reactorstability: cannot load the populations viewer";
-	viewer->init(ctxt, "reactorstability" :: "/dis/danby/reactorstability.dis" ::
-		"danby-reactorstability" :: nil);
+	poplab = load Poplab Poplab->PATH;
+	if(poplab == nil)
+		raise "fail:reactorstability: cannot load poplab";
+	if((e := poplab->run(ctxt, "reactorstability", SPEC)) != nil)
+		raise "fail:reactorstability: "+e;
 }

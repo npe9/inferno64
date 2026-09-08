@@ -1,73 +1,44 @@
-implement Populationmodel;
+implement Seasonaldisease;
 
-# danby/seasonaldisease - Seasonal changes in infectiousness
+# danby/seasonaldisease - seasonal changes in infectiousness
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared populations viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its populations and the equations that move them.  poplab(2) is a
+# library this calls with that script - it owns the window, the
+# integrator and the controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/populationmodel.m";
+include "poplab.m";
+	poplab: Poplab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	parameters := array[] of {2.0, 0.45, 1.0, 0.55};
-	initial := array[] of {0.99, 0.01, 0.0};
-	return ref Model(parameters,initial);
-}
-
-title(): string
-{
-	return "Seasonal changes in infectiousness";
-}
-
-statelabels(): array of string
-{
-	return array[] of {"susceptible", "infectious", "recovered"};
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"mean contact", "seasonality", "frequency", "recovery"};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {5.0, 0.95, 3.0, 2.0};
-}
-
-Model.rhs(model: self ref Model, t: real,
-		state, derivative: array of real)
-{
-	p := model.parameter;
-	contact := p[0]*(1.0+p[1]*math->cos(p[2]*t));
-	infections := contact*state[0]*state[1];
-	recoveries := p[3]*state[1];
-	derivative[0] = -infections;
-	derivative[1] = infections-recoveries;
-	derivative[2] = recoveries;
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-Command: module
+Seasonaldisease: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Seasonal changes in infectiousness\n" +
+	"param mean_contact 2.0 0.0 5.0\n" +
+	"param seasonality 0.45 0.0 0.95\n" +
+	"param frequency 1.0 0.0 3.0\n" +
+	"param recovery 0.55 0.0 2.0\n" +
+	"maxtime 100.0\n" +
+	"state susceptible 0.99\n" +
+	"state infectious 0.01\n" +
+	"state recovered 0.0\n" +
+	"eq contact mean_contact { 1.0 + seasonality cos { frequency t } }\n" +
+	"eq infections contact susceptible infectious\n" +
+	"eq recoveries recovery infectious\n" +
+	"derivative susceptible - infections\n" +
+	"derivative infectious infections - recoveries\n" +
+	"derivative recovered recoveries\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/populations.dis";
-	if(viewer == nil)
-		raise "fail:seasonaldisease: cannot load the populations viewer";
-	viewer->init(ctxt, "seasonaldisease" :: "/dis/danby/seasonaldisease.dis" ::
-		"danby-seasonaldisease" :: nil);
+	poplab = load Poplab Poplab->PATH;
+	if(poplab == nil)
+		raise "fail:seasonaldisease: cannot load poplab";
+	if((e := poplab->run(ctxt, "seasonaldisease", SPEC)) != nil)
+		raise "fail:seasonaldisease: "+e;
 }

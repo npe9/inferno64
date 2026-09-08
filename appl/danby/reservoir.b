@@ -1,77 +1,51 @@
-implement Populationmodel;
+implement Reservoir;
 
-# danby/reservoir - Dynamics of a reservoir system
+# danby/reservoir - the dynamics of a reservoir system
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared populations viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its populations and the equations that move them.  poplab(2) is a
+# library this calls with that script - it owns the window, the
+# integrator and the controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/populationmodel.m";
+include "poplab.m";
+	poplab: Poplab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	return ref Model(array[] of {0.8,0.55,0.4,0.25,0.3},array[] of {1.4,0.7,0.35});
-}
-
-title(): string
-{
-	return "Dynamics of a reservoir system";
-}
-
-statelabels(): array of string
-{
-	return array[] of {"upper reservoir", "lower reservoir", "service storage"};
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"inflow", "upper outlet", "lower outlet", "demand", "evaporation"};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {3.0,3.0,3.0,2.0,1.0};
-}
-
-root(value: real): real
-{
-	if(value <= 0.0)
-		return 0.0;
-	return math->sqrt(value);
-}
-
-Model.rhs(model: self ref Model, nil: real, state, derivative: array of real)
-{
-	p := model.parameter;
-	upperflow := p[1]*root(state[0]);
-	lowerflow := p[2]*root(state[1]);
-	delivery := p[3]*root(state[2]);
-	derivative[0] = p[0]-upperflow-p[4]*state[0];
-	derivative[1] = upperflow-lowerflow-p[4]*state[1];
-	derivative[2] = lowerflow-delivery-p[4]*state[2];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-Command: module
+Reservoir: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Dynamics of a reservoir system\n" +
+	"param inflow 0.8 0.0 3.0\n" +
+	"param upper_outlet 0.55 0.0 3.0\n" +
+	"param lower_outlet 0.4 0.0 3.0\n" +
+	"param demand 0.25 0.0 2.0\n" +
+	"param evaporation 0.3 0.0 1.0\n" +
+	"maxtime 100.0\n" +
+	"state upper_reservoir 1.4\n" +
+	"state lower_reservoir 0.7\n" +
+	"state service_storage 0.35\n" +
+	# Torricelli: an outlet flows as the root of its head, and an empty
+	# reservoir does not flow at all rather than taking the root of a
+	# negative number
+	"eq ru { upper_reservoir + abs { upper_reservoir } } over 2.0\n" +
+	"eq rl { lower_reservoir + abs { lower_reservoir } } over 2.0\n" +
+	"eq rs { service_storage + abs { service_storage } } over 2.0\n" +
+	"eq upperflow upper_outlet sqrt { ru }\n" +
+	"eq lowerflow lower_outlet sqrt { rl }\n" +
+	"eq delivery demand sqrt { rs }\n" +
+	"derivative upper_reservoir inflow - upperflow - evaporation upper_reservoir\n" +
+	"derivative lower_reservoir upperflow - lowerflow - evaporation lower_reservoir\n" +
+	"derivative service_storage lowerflow - delivery - evaporation service_storage\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/populations.dis";
-	if(viewer == nil)
-		raise "fail:reservoir: cannot load the populations viewer";
-	viewer->init(ctxt, "reservoir" :: "/dis/danby/reservoir.dis" ::
-		"danby-reservoir" :: nil);
+	poplab = load Poplab Poplab->PATH;
+	if(poplab == nil)
+		raise "fail:reservoir: cannot load poplab";
+	if((e := poplab->run(ctxt, "reservoir", SPEC)) != nil)
+		raise "fail:reservoir: "+e;
 }

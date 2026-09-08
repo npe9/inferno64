@@ -1,72 +1,41 @@
-implement Populationmodel;
+implement Parasite;
 
-# danby/parasite - Population growth of a parasite
+# danby/parasite - the population growth of a parasite
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared populations viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its populations and the equations that move them.  poplab(2) is a
+# library this calls with that script - it owns the window, the
+# integrator and the controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "danby/populationmodel.m";
+include "poplab.m";
+	poplab: Poplab;
 
-new(): ref Model
-{
-	parameters := array[] of {1.1, 1.5, 1.4, 0.75, 0.45};
-	initial := array[] of {0.8, 0.12};
-	return ref Model(parameters,initial);
-}
-
-title(): string
-{
-	return "Population growth of a parasite";
-}
-
-statelabels(): array of string
-{
-	return array[] of {"hosts", "parasites"};
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {
-		"host growth", "host capacity", "infection",
-		"conversion", "parasite death"
-	};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {3.0, 3.0, 3.0, 2.0, 2.0};
-}
-
-Model.rhs(model: self ref Model, nil: real,
-		state, derivative: array of real)
-{
-	p := model.parameter;
-	hosts := state[0];
-	parasites := state[1];
-	infections := p[2]*hosts*parasites;
-	derivative[0] = p[0]*hosts*(1.0-hosts/p[1])-infections;
-	derivative[1] = p[3]*infections-p[4]*parasites;
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-Command: module
+Parasite: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Population growth of a parasite\n" +
+	"param host_growth 1.1 0.0 3.0\n" +
+	"param host_capacity 1.5 0.0 3.0\n" +
+	"param infection 1.4 0.0 3.0\n" +
+	"param conversion 0.75 0.0 2.0\n" +
+	"param parasite_death 0.45 0.0 2.0\n" +
+	"maxtime 100.0\n" +
+	"state hosts 0.8\n" +
+	"state parasites 0.12\n" +
+	"eq infections infection hosts parasites\n" +
+	"derivative hosts host_growth hosts { 1.0 - hosts over host_capacity } - infections\n" +
+	"derivative parasites conversion infections - parasite_death parasites\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/populations.dis";
-	if(viewer == nil)
-		raise "fail:parasite: cannot load the populations viewer";
-	viewer->init(ctxt, "parasite" :: "/dis/danby/parasite.dis" ::
-		"danby-parasite" :: nil);
+	poplab = load Poplab Poplab->PATH;
+	if(poplab == nil)
+		raise "fail:parasite: cannot load poplab";
+	if((e := poplab->run(ctxt, "parasite", SPEC)) != nil)
+		raise "fail:parasite: "+e;
 }

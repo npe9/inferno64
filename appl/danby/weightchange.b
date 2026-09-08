@@ -1,72 +1,41 @@
-implement Populationmodel;
+implement Weightchange;
 
-# danby/weightchange - Body-weight energy balance
+# danby/weightchange - body-weight energy balance
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared populations viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its populations and the equations that move them.  poplab(2) is a
+# library this calls with that script - it owns the window, the
+# integrator and the controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "math.m";
-	math: Math;
-include "danby/populationmodel.m";
+include "poplab.m";
+	poplab: Poplab;
 
-new(): ref Model
-{
-	math = load Math Math->PATH;
-	parameters := array[] of {10.5, 0.72, 0.035, 32.2};
-	initial := array[] of {75.0};
-	return ref Model(parameters,initial);
-}
-
-title(): string
-{
-	return "Body-weight energy balance";
-}
-
-statelabels(): array of string
-{
-	return array[] of {"body mass"};
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"energy intake", "basal coefficient", "activity", "energy density"};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {20.0, 1.5, 0.15, 60.0};
-}
-
-Model.rhs(model: self ref Model, nil: real,
-		state, derivative: array of real)
-{
-	p := model.parameter;
-	mass := state[0];
-	if(mass < 0.0)
-		mass = 0.0;
-	expenditure := p[1]*math->pow(mass,0.75)+p[2]*mass;
-	derivative[0] = (p[0]-expenditure)/p[3];
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-Command: module
+Weightchange: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Body-weight energy balance\n" +
+	"param energy_intake 10.5 0.0 20.0\n" +
+	"param basal_coefficient 0.72 0.0 1.5\n" +
+	"param activity 0.035 0.0 0.15\n" +
+	"param energy_density 32.2 0.0 60.0\n" +
+	"maxtime 100.0\n" +
+	"state body_mass 75.0\n" +
+	# basal expenditure goes as the three-quarter power of mass, which is not
+	# defined below zero, so the mass entering it is clamped there
+	"eq mass { body_mass + abs { body_mass } } over 2.0\n" +
+	"eq expenditure basal_coefficient { mass sup 0.75 } + activity mass\n" +
+	"derivative body_mass { energy_intake - expenditure } over energy_density\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/populations.dis";
-	if(viewer == nil)
-		raise "fail:weightchange: cannot load the populations viewer";
-	viewer->init(ctxt, "weightchange" :: "/dis/danby/weightchange.dis" ::
-		"danby-weightchange" :: nil);
+	poplab = load Poplab Poplab->PATH;
+	if(poplab == nil)
+		raise "fail:weightchange: cannot load poplab";
+	if((e := poplab->run(ctxt, "weightchange", SPEC)) != nil)
+		raise "fail:weightchange: "+e;
 }

@@ -1,74 +1,46 @@
-implement Populationmodel;
+implement Migration;
 
-# danby/migration - Effects of migration on an epidemic
+# danby/migration - the effects of migration on an epidemic
 #
-# The equations, the parameters and everything else model-specific are
-# in this file.  The window, the integrator and the controls are the
-# shared populations viewer's; init() at the foot of the file starts it and
-# hands it this module back.
+# The whole model is the script below: its parameters and their ranges,
+# its populations and the equations that move them.  poplab(2) is a
+# library this calls with that script - it owns the window, the
+# integrator and the controls, and knows nothing about this model.
 
 include "sys.m";
 include "draw.m";
-include "danby/populationmodel.m";
+include "poplab.m";
+	poplab: Poplab;
 
-new(): ref Model
-{
-	parameters := array[] of {2.2, 0.55, 0.08, 0.02};
-	initial := array[] of {0.99, 0.01, 0.0};
-	return ref Model(parameters,initial);
-}
-
-title(): string
-{
-	return "Effects of migration on an epidemic";
-}
-
-statelabels(): array of string
-{
-	return array[] of {"susceptible", "infectious", "recovered"};
-}
-
-parameterlabels(): array of string
-{
-	return array[] of {"contact", "recovery", "migration", "migrant infection"};
-}
-
-parameterranges(): array of real
-{
-	return array[] of {5.0, 2.0, 1.0, 0.5};
-}
-
-Model.rhs(model: self ref Model, nil: real,
-		state, derivative: array of real)
-{
-	p := model.parameter;
-	susceptible := state[0];
-	infectious := state[1];
-	recovered := state[2];
-	infections := p[0]*susceptible*infectious;
-	recoveries := p[1]*infectious;
-	migrantinfectious := p[3];
-	migrantsusceptible := 1.0-migrantinfectious;
-	derivative[0] = -infections+p[2]*(migrantsusceptible-susceptible);
-	derivative[1] = infections-recoveries+p[2]*(migrantinfectious-infectious);
-	derivative[2] = recoveries-p[2]*recovered;
-}
-
-evaluate(model: ref Model, t: real, state, derivative: array of real)
-{
-	model.rhs(t,state,derivative);
-}
-
-Command: module
+Migration: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+SPEC: con
+	"title Effects of migration on an epidemic\n" +
+	"param contact 2.2 0.0 5.0\n" +
+	"param recovery 0.55 0.0 2.0\n" +
+	"param migration 0.08 0.0 1.0\n" +
+	"param migrant_infection 0.02 0.0 0.5\n" +
+	"maxtime 100.0\n" +
+	"state susceptible 0.99\n" +
+	"state infectious 0.01\n" +
+	"state recovered 0.0\n" +
+	"eq infections contact susceptible infectious\n" +
+	"eq recoveries recovery infectious\n" +
+	# arrivals carry the same mix whatever the local one is, so migration
+	# pulls each fraction towards the migrants' own
+	"eq migrantsusceptible 1.0 - migrant_infection\n" +
+	"derivative susceptible - infections + migration { migrantsusceptible - susceptible }\n" +
+	"derivative infectious infections - recoveries + migration { migrant_infection - infectious }\n" +
+	"derivative recovered recoveries - migration recovered\n";
+
 init(ctxt: ref Draw->Context, nil: list of string)
 {
-	viewer := load Command "/dis/temple/populations.dis";
-	if(viewer == nil)
-		raise "fail:migration: cannot load the populations viewer";
-	viewer->init(ctxt, "migration" :: "/dis/danby/migration.dis" ::
-		"danby-migration" :: nil);
+	poplab = load Poplab Poplab->PATH;
+	if(poplab == nil)
+		raise "fail:migration: cannot load poplab";
+	if((e := poplab->run(ctxt, "migration", SPEC)) != nil)
+		raise "fail:migration: "+e;
 }
