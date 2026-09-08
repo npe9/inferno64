@@ -1541,17 +1541,59 @@ if the image has no filesystem on it, and
 .CW DISK-DOS ,
 .CW DISK-READ ,
 .CW DISK-WRITE
-if it has.  All four pass.
+if it has.  All four pass \- but not against the same image, and the
+difference is the point.
 .PP
-Getting a real FAT filesystem into the image is the only awkward part,
-and it is awkward for a reason worth writing down: on macOS
+.B "Which filesystem, and why it decides the fourth marker."
+QEMU's vvfat
+.CW ( file=fat:rw:<directory> )
+presents a host directory as a FAT16 volume with no host tool at all.
+It is the convenient one, and it reads only: it gives
+.CW DISK-BLK-OK ,
+.CW DISK-DOS-OK
+and
+.CW DISK-READ-OK ,
+then
+.CW DISK-WRITE-FAIL .
+This chapter recorded that as expected and moved on, which was one
+step short.  The failure is worth reading: it is at the
+.I reopen ,
+"no such fid", with the create and the write both having returned
+success.  That is the shape of a write that went nowhere, not of one
+that was refused, and it says nothing about the guest.
+.PP
+Against a real FAT16 image the same check reports
+.CW DISK-WRITE-OK ,
+and the evidence is outside the emulator: detaching the image
+afterwards and mounting it on the host shows
+.CW PI.TXT ,
+29 bytes,
+.CW "written by inferno on the pi" .
+The guest's bytes on a filesystem something else reads back
+independently \- dossrv, SCSI WRITE(10), the bulk endpoints and the
+DWC2 driver, all of it.
+.PP
+This document also had the host tooling wrong.  It said macOS could
+not make such an image, because
 .CW newfs_msdos
-cannot format a plain file, giving "Cannot get partition offset".
-QEMU's own vvfat does it without any host tool \-
-.CW file=fat:rw:<directory>
-presents a directory as a FAT16 volume \- and
+on a plain file fails with "Cannot get partition offset".  It can: the
+file needs a device node first, which
+.CW "hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage"
+gives it, and then
+.CW newfs_msdos
+and
+.CW mount
+work normally.
 .CW tools/qemu-patches/README
-now carries the full invocation.
+carries the sequence.  The claim was not that the tool was missing but
+that the file could not be formatted, and that was simply untrue.
+.PP
+One wart is visible in that host listing:
+.CW PI.TXT
+is dated 2097.  The Pi has no RTC, the kernel's clock starts at the
+epoch, and FAT counts from 1980, so a 1970 timestamp has nowhere to
+go.  It is cosmetic, it is in shared dossrv rather than in this board,
+and it is left alone.
 .NH 1
 The kfs create failure was the console, and the create always worked
 .PP

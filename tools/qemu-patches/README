@@ -388,9 +388,13 @@ which is correct and is not a failure.  Everything at once:
 		-device usb-lan9514,netdev=n0 -netdev user,id=n0 \
 		-drive if=none,format=raw,id=mtd0,file=flash.img \
 		-device m25p16,bus=aux-spi1,cs=0,drive=mtd0 \
-		-drive if=none,id=stick,format=raw,file=fat:rw:/some/dir \
+		-drive if=none,id=stick,format=raw,file=fat.img \
 		-device usb-storage,drive=stick \
 		-serial mon:stdio -serial file:aux.log
+
+fat.img is a real FAT16 image, built as below; that invocation reports
+every marker OK apart from USB-MOUSE-NONE, which is correct because the
+mouse is not in the line.
 
 The mouse is not in that line, deliberately.  A boot-protocol mouse
 reports nothing until something moves it, so attaching -device usb-mouse
@@ -420,13 +424,44 @@ that.
 
 The USB stick is worth a note.  DISK-NONE means no mass storage was
 attached; DOS-FAIL means one was, with no filesystem on it.  A plain
-zeroed image gives the second, and on macOS newfs_msdos cannot format a
-file ("Cannot get partition offset"), so the way to get a real FAT
-filesystem is qemu's own vvfat: file=fat:rw:<directory> presents that
-directory as a FAT16 volume.  With it the board reports DISK-BLK-OK,
-DISK-DOS-OK and DISK-READ-OK.  DISK-WRITE-FAIL is expected: qemu'''s
-vvfat write support is experimental and does not carry these writes.
-Use a real FAT image if the write path matters.
+zeroed image gives the second.
+
+There are two ways to give it a filesystem, and they do not test the
+same thing.
+
+qemu's own vvfat -- file=fat:rw:<directory> -- presents a host
+directory as a FAT16 volume.  It is the convenient one and it is what
+the everything-at-once line above uses, but it reads only: the board
+reports DISK-BLK-OK, DISK-DOS-OK and DISK-READ-OK, and then
+DISK-WRITE-FAIL, because vvfat's write support is experimental and
+does not carry these writes.  The failure is at the reopen, "no such
+fid", with the create and the write both having reported success --
+which is the shape of a write that went nowhere, not of one that was
+refused.
+
+A real FAT image gets DISK-WRITE-OK.  This README used to say macOS
+could not make one, because newfs_msdos on a plain file fails with
+"Cannot get partition offset".  It can; the file needs a device node
+first:
+
+	dd if=/dev/zero of=fat.img bs=1m count=16
+	dev=$(hdiutil attach -nomount \
+		-imagekey diskimage-class=CRawDiskImage fat.img)
+	newfs_msdos -F 16 -v PIDISK $dev
+	mount -t msdos $dev /mnt && ... && umount /mnt
+	hdiutil detach $dev
+
+then boot with -drive if=none,id=stick,format=raw,file=fat.img and
+-device usb-storage,drive=stick.  The board reports DISK-WRITE-OK, and
+re-attaching the image afterwards shows PI.TXT on it, 29 bytes,
+"written by inferno on the pi" -- the guest's bytes on a filesystem
+the host reads back independently.  That is the whole write path:
+dossrv, SCSI WRITE(10), the bulk endpoints and the DWC2 driver.
+
+One wart shows up in that listing.  PI.TXT is dated 2097.  The Pi has
+no RTC, the kernel's clock starts at the epoch, and FAT counts from
+1980, so a 1970 timestamp has nowhere to go.  It is cosmetic, it is in
+shared dossrv rather than in this board, and it is left alone.
 
 SELF-TESTS
 
