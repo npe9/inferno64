@@ -827,6 +827,39 @@ modstatus(REG *r, char *ptr, int len)
 	Inst *PC;
 	Frame *f;
 
+	/*
+	 * Every panic left in this port's 96-boot batches, at -smp 1 and
+	 * -smp 2 alike, was a general protection violation here, on the
+	 * MOVQ 8(M), AX / MOVQ 0x68(AX), AX pair that walks M->m->name,
+	 * with a non-canonical M->m.  The guard was in the Qstatus read
+	 * below, and the faults were not coming through it: the resolved
+	 * stacks are disdump+0xe2 under hzclock, i.e. the other caller.
+	 * portclock.c calls disdump() unconditionally at 40*HZ, so every
+	 * boot that survives forty seconds walks every live Prog through
+	 * here -- which is why this became the dominant signature only
+	 * once boots stopped crashing before that.
+	 *
+	 * So the check belongs in the function that does the dereference,
+	 * where it covers both callers.  A Modlink is a Dis heap object
+	 * with its own type, so ask that rather than guessing whether a
+	 * pointer looks plausible.
+	 *
+	 * Containment and attribution.  newprog() takes a counted
+	 * reference to the Prog's own Modlink, so something dropping it
+	 * is a real bug and is not fixed here -- but a diagnostic dump
+	 * must not be the thing that panics the kernel.
+	 */
+	if(r->M == H || r->M == nil || D2H(r->M)->t != &Tmodlink
+	|| r->M->m == nil) {
+		static int said;
+
+		if(!said) {
+			said = 1;
+			print("modstatus: M %#p is not a live Modlink\n", r->M);
+		}
+		snprint(ptr, len, "[?]");
+		return 0;
+	}
 	if(r->M->m->name[0] == '$') {
 		f = (Frame*)r->FP;
 		snprint(ptr, len, "%s[%s]", f->mr->m->name, r->M->m->name);
@@ -844,48 +877,6 @@ modstatus(REG *r, char *ptr, int len)
 	return PC - r->M->prog;
 }
 
-/*
- * modstatus() above reads r->M->m->name, but the Qstatus guard that
- * calls it only checked r->M against H.  All seven panics left in this
- * port's 96-boot batches -- at -smp 1 and at -smp 2 alike -- were the
- * same general protection violation at modstatus+0x18, on the
- * MOVQ 8(M), AX / MOVQ 0x68(AX), AX pair that walks M->m->name, with
- * M->m holding a non-canonical value whose upper half was 0x00FF53F0.
- * So M was neither H nor nil; it was no longer a live Modlink.
- *
- * A Modlink is a Dis heap object with its own type, so ask that
- * directly instead of guessing whether a pointer looks plausible: if
- * D2H(M)->t is not &Tmodlink the block has been freed and reused, and
- * M is a stale pointer.  The status read then prints the placeholder
- * line it already prints for an exiting program rather than faulting,
- * and says so once so the bug underneath is not lost with it.
- *
- * Containment and attribution, not a cure.  newprog() takes a counted
- * reference to the Prog's own Modlink (h = D2H(m); h->ref++), so for
- * one to be freed while a live Prog still names it, something is
- * dropping that reference.  That is not fixed here.
- */
-static int
-livemodlink(Prog *p)
-{
-	Modlink *ml;
-
-	ml = p->reg.M;
-	if(ml == nil || ml == H)
-		return 0;
-	if(D2H(ml)->t != &Tmodlink) {
-		static int said;
-
-		if(!said) {
-			said = 1;
-			print("progstatus: pid %d state %d M %#p is not a live Modlink"
-				" (t %#p, m %#p)\n",
-				p->pid, p->state, ml, D2H(ml)->t, ml->m);
-		}
-		return 0;
-	}
-	return 1;
-}
 
 static void
 int2flag(int flag, char *s)
@@ -977,7 +968,7 @@ progread(Chan *c, void *va, s32 n, s64 offset)
 		}
 		p = progpid(PID(c->qid));
 		disracecheck(p, "progpid");
-		if(p == nil || p->state == Pexiting || !livemodlink(p)) {
+		if(p == nil || p->state == Pexiting || p->reg.M == H) {
 			poperror();
 			release();
 			progstatusline(up->genbuf, sizeof(up->genbuf),

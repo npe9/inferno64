@@ -19797,26 +19797,52 @@ page fault, and with
 in the upper half, the real-mode BIOS stub address
 .CW F000:FF53 .
 .PP
-The
+The first attempt at this put the check in the
 .CW Qstatus
-guard ahead of that call tested
+read in devprog.c, which tested
 .CW "p->reg.M == H"
-and nothing else, so an
-.CW M
-that was neither
-.CW H
-nor nil but no longer a live
+and nothing else.  That was the wrong place, and a 96-boot batch said
+so: the guard never printed and the same pc faulted again.  Resolving
+the frames under the fault rather than assuming shows why \(em
+.CW modstatus+0x69
+sits under
+.CW disdump+0xe2 ,
+under
+.CW hzclock+0x115 ,
+.CW timerintr ,
+.CW lapicclock .
+It is the other caller.  The two earlier captures resolve the same
+way; all seven were always
+.CW disdump() .
+.PP
+.CW disdump()
+is not stall-triggered, whatever its comment says.
+os/inferno/port/portclock.c calls it unconditionally at
+.CW "m->ticks == 40*HZ" ,
+so every boot that survives forty seconds walks every live
+.CW Prog
+through
+.CW modstatus() .
+That is why this became the dominant signature only after the
+interrupt fix: before it, almost no boot lasted forty seconds.  These
+last panics are the temporary MULTICORE INSTRUMENTATION crashing, not
+the kernel under it.
+.PP
+So the check belongs in
+.CW modstatus()
+itself, which is the function that does the dereference and has two
+callers.  A
 .CW Modlink
-went straight through.  A
-.CW Modlink
-is a Dis heap object with its own type, so the fix asks that rather
-than guessing whether a pointer looks plausible: if
+is a Dis heap object with its own type, so it asks that rather than
+guessing whether a pointer looks plausible: if
 .CW "D2H(M)->t"
 is not
-.CW &Tmodlink
-the block has been freed and reused.  The read then prints the
-placeholder line it already prints for an exiting program, and says so
-once.
+.CW &Tmodlink ,
+or
+.CW M->m
+is nil, it writes
+.CW [?]
+and returns 0, reporting once.
 .PP
 Containment and attribution, not a cure, and labelled that way in the
 source.
@@ -19824,5 +19850,6 @@ source.
 takes a counted reference to the Prog's own
 .CW Modlink
 .CW ( "h = D2H(m); h->ref++" ),
-so for one to be freed while a live Prog still names it, something is
-dropping that reference.  That is the next thing to find.
+so for one to be stale while a live Prog names it, something is
+dropping that reference.  That is the next thing to find \(em but a
+diagnostic dump must not be the thing that panics the kernel.
