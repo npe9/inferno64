@@ -812,7 +812,35 @@ plausible theories: Limbo's `load` allocates a fresh data segment per call
 (`libinterp/link.c:108`), so models never share module globals; and `alt` on
 a nil channel raises a nil dereference (`libinterp/alt.c:92`).
 
-Where to start next: instrument `emu` rather than the Limbo, since the Limbo
-cannot be instrumented without moving the bug - a print in the interpreter's
-bounds-check path naming the module and PC would answer in one run what a day
-of stubbing did not.
+### What instrumenting `emu` did establish
+
+Following that plan got two facts and one correction, and then ran out of road.
+
+**It is in `Danbylab`.** On arm64 `emu` JIT-compiles Dis, so the faulting
+bounds check is the one the compiler emits, and it branches to `bounds()` in
+`libinterp/comp-arm64.c`. Printing the running module there says
+`BOUNDS in Danbylab`. Not `Plot`, not `Tk`, not `Numerics` - ours.
+
+**It is an ordinary array index, not a slice.** This tree already carries a
+`print` in front of every `error(exBounds)` in the interpreter's own index ops
+(`indx`/`indw`/`indf`/`indl`/`indb` in `libinterp/xec.c`), and none of them
+ever fired. That is *not* evidence the faulting op is a slice, which is what I
+first concluded and then had to withdraw: those prints are silent because the
+interpreter is not executing the ops at all - the JIT is. Adding the same
+prints to the two slice sites confirmed it, they never fired either. So the
+faulting op is a plain index that the JIT compiled, and the interpreter's
+instrumentation cannot see any of it.
+
+**It is intermittent even for one binary.** The same JIT-instrumented build
+failed one run in three on the same two-model reproducer, so a single passing
+run proves nothing here and every result above was taken over repeats.
+
+Where it stopped: `progstack(&R, ...)` - the Dis-level stack dump
+`emu/port/dis.c`'s `disfault()` uses, which would give the function and line -
+hangs when called from the JIT's `bounds()` handler, presumably because `R` is
+not in the state it expects at that point. Getting a line number means either
+making that dump safe to call from compiled context, or recording the module
+and PC in `bounds()` and decoding them afterwards, or simply running the
+reproducer under `emu` with the JIT disabled so the interpreter's existing
+per-op prints - which already name the array's length and the offending index -
+do the work.
