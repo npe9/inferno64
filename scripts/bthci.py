@@ -263,6 +263,29 @@ sdpsplit = 0
 if '--sdpsplit' in sys.argv:
     sdpsplit = int(sys.argv[sys.argv.index('--sdpsplit') + 1])
 
+# --rfcomm: with --brconnect, the peer runs an RFCOMM server on PSM 3
+# with a serial port on channel 1 that echoes in upper case.  Upper
+# case rather than a plain echo so that what comes back cannot be the
+# write coming back by some other route.
+rfcomm = '--rfcomm' in sys.argv
+
+# --rfsmall: the peer's parameter negotiation comes back with a frame
+# size of 20 bytes, smaller than what was asked for and smaller than
+# what the phase writes.  A frame size may only come down, so the
+# write has to be cut into frames; a stack that kept its own size
+# would send one frame the peer has to drop.
+rfsmall = '--rfsmall' in sys.argv
+
+# --rfnocredit: the peer's parameter negotiation refuses the credit
+# based convergence layer.  There is nothing else this stack can do,
+# so it has to say so rather than carry on without flow control.
+rfnocredit = '--rfnocredit' in sys.argv
+
+# --rfrefuse: the peer answers the SABM on the data link connection
+# with DM, which is a device saying that channel is not open.  The
+# refusal has to reach whoever asked.
+rfrefuse = '--rfrefuse' in sys.argv
+
 # --sdpnone: the server has no record matching the search, and says so
 # with an empty attribute list rather than an error, which is what a
 # server does when nothing matches.
@@ -1392,11 +1415,13 @@ class Model:
         # the CIDs mean different things there: 1 is signalling, and
         # anything else is a channel this side handed out.
         #
-        if (brl2cap or sdp) and handle == getattr(self, 'brhandle', None):
+        if (brl2cap or sdp or rfcomm) and handle == getattr(self, 'brhandle', None):
             if cid == 1:
                 self.brsig(payload)
             elif cid == getattr(self, 'brdcid', None):
-                if getattr(self, 'sdpchan', False):
+                if getattr(self, 'rfchan', False):
+                    self.rf_in(payload)
+                elif getattr(self, 'sdpchan', False):
                     self.sdp_in(payload)
                 else:
                     print('bthci: echoing %d bytes' % len(payload), flush=True)
@@ -2002,6 +2027,17 @@ class Model:
         d = p[4:4+dlen]
         if code == 0x02:                     # Connection Request
             psm, scid = struct.unpack('<HH', d[0:4])
+            if psm == 0x0003 and rfcomm:
+                self.brscid = scid
+                self.brdcid = 0x0043
+                self.rfchan = True
+                print('bthci: rfcomm channel', flush=True)
+                self.bracl(1, bytes([0x03, ident]) + struct.pack('<H', 8)
+                           + struct.pack('<HHHH', self.brdcid, scid, 0, 0))
+                opts = bytes([0x01, 0x02]) + struct.pack('<H', 672)
+                self.bracl(1, bytes([0x04, 0x40]) + struct.pack('<H', 4 + len(opts))
+                           + struct.pack('<HH', scid, 0) + opts)
+                return
             if psm == 0x0001 and sdp:
                 self.brscid = scid
                 self.brdcid = 0x0042
@@ -2128,6 +2164,146 @@ class Model:
         params = len(piece).to_bytes(2, 'big') + piece + cont
         self.bracl(self.brscid, bytes([0x07]) + tid.to_bytes(2, 'big')
                    + len(params).to_bytes(2, 'big') + params)
+
+    #
+    # RFCOMM, the server half of it.  TS 07.10 framing: address,
+    # control, length, an optional credit byte, the information, and a
+    # frame check sequence over the first two header bytes for a UIH
+    # frame and the first three for everything else.
+    #
+    # The FCS table is generated from the polynomial rather than
+    # transcribed, and the SABM frame every description of RFCOMM
+    # quotes -- 03 3F 01 1C -- is what says the generation is right.
+    #
+    def rf_fcs(self, bs):
+        if not hasattr(self, 'rftab'):
+            t = []
+            for i in range(256):
+                c = i
+                for _ in range(8):
+                    c = (c >> 1) ^ 0xE0 if c & 1 else c >> 1
+                t.append(c)
+            self.rftab = t
+            assert self.rf_fcs(bytes([0x03, 0x3F, 0x01])) == 0x1C
+        f = 0xFF
+        for b in bs:
+            f = self.rftab[f ^ b]
+        return 0xFF - f
+
+    #
+    # The C/R bit in the address is not "is this a response": it is
+    # that crossed with which station sent it.  A response from the
+    # responder -- which is what this model is -- carries C/R 1, and
+    # the frame every description of RFCOMM quotes says so: the UA on
+    # DLCI 0 is 03 73 01 D7, address 03 and not 01.  A UIH frame from
+    # the responder carries C/R 0; its command and response bit is in
+    # the multiplexer message inside it, not out here.
+    #
+    def rf_send(self, dlci, ctrl, info=b'', cred=None):
+        uih = (ctrl & ~0x10) == 0xEF
+        addr = ((0x00 if uih else 0x02) | 0x01) | (dlci << 2)
+        if cred is not None:
+            ctrl |= 0x10
+        elif not uih:
+            ctrl |= 0x10                # the final bit, on every answer
+        hdr = bytes([addr, ctrl])
+        n = len(info)
+        if n > 127:
+            lf = bytes([(n << 1) & 0xFE, n >> 7])
+        else:
+            lf = bytes([(n << 1) | 1])
+        body = (bytes([cred]) if cred is not None else b'') + info
+        # two header bytes for a UIH frame, three for anything else
+        check = self.rf_fcs(hdr) if uih else self.rf_fcs(hdr + lf)
+        self.bracl(self.brscid, hdr + lf + body + bytes([check]))
+
+    def rf_in(self, p):
+        if len(p) < 4:
+            return
+        dlci = p[0] >> 2
+        ctrl = p[1] & ~0x10
+        pf = (p[1] & 0x10) != 0
+        o = 2
+        n = p[o] >> 1
+        if not (p[o] & 1):
+            n |= p[o+1] << 7
+            o += 2
+        else:
+            o += 1
+        cred = None
+        if ctrl == 0xEF and pf:
+            cred = p[o]
+            o += 1
+        body = p[o:o+n]
+        if ctrl == 0x2F:                       # SABM
+            if dlci == 0:
+                print('bthci: rfcomm session up', flush=True)
+                self.rf_send(0, 0x63)
+                return
+            if rfrefuse:
+                print('bthci: refusing the data link', flush=True)
+                self.rf_send(dlci, 0x0F)       # DM
+                return
+            print('bthci: rfcomm dlci %d up' % dlci, flush=True)
+            self.rfcred = 0
+            self.rf_send(dlci, 0x63)
+            return
+        if ctrl == 0x43:                       # DISC
+            print('bthci: rfcomm dlci %d down' % dlci, flush=True)
+            self.rf_send(dlci, 0x63)
+            return
+        if ctrl != 0xEF:
+            return
+        if cred:
+            self.rfcred = getattr(self, 'rfcred', 0) + cred
+        if dlci == 0:
+            self.rf_mcc(body)
+            return
+        if not n:
+            return                             # a grant and nothing else
+        print('bthci: rfcomm %d bytes in' % n, flush=True)
+        out = bytes(body).upper()
+        if getattr(self, 'rfcred', 0) <= 0:
+            print('bthci: no credit to answer with', flush=True)
+            return
+        self.rfcred -= 1
+        self.rf_send(dlci, 0xEF, out, cred=1)
+
+    #
+    # multiplexer control: parameter negotiation and modem status, the
+    # two a client has to get through before it may send anything
+    #
+    def rf_mcc(self, p):
+        if len(p) < 2:
+            return
+        ty = p[0] & 0xFC
+        cr = (p[0] & 2) != 0
+        o = 1
+        n = p[o] >> 1
+        if not (p[o] & 1):
+            n |= p[o+1] << 7
+            o += 2
+        else:
+            o += 1
+        v = bytearray(p[o:o+n])
+        if not cr:
+            return                             # an answer to nothing we asked
+        if ty == 0x80:                         # PN
+            asked = v[4] | (v[5] << 8)
+            print('bthci: rfcomm asked for %d byte frames' % asked, flush=True)
+            if rfnocredit:
+                v[1] = 0x00
+            if rfsmall:
+                v[4], v[5] = 20, 0
+            v[7] = 5                           # credits this side gives
+            self.rf_send(0, 0xEF, bytes([0x81, (len(v) << 1) | 1]) + bytes(v))
+            return
+        if ty == 0xE0:                         # MSC
+            print('bthci: rfcomm modem status', flush=True)
+            self.rf_send(0, 0xEF, bytes([0xE1, (len(v) << 1) | 1]) + bytes(v))
+            return
+        # anything else: not supported, which is a real answer
+        self.rf_send(0, 0xEF, bytes([0x11, 0x03, p[0]]))
 
     # ------------------------------------------------ SMP
     def smp_in(self, p):

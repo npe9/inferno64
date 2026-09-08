@@ -786,6 +786,83 @@ Sdp: module
 	uuidname:	fn(u: string): string;
 };
 
+#
+# RFCOMM: serial ports over L2CAP, which is TS 07.10 with a Bluetooth
+# adaptation layer.  It is a multiplexer inside a multiplexer: one
+# L2CAP channel to PSM 3 carries a session, and the session carries up
+# to thirty data link connections, each named by a server channel
+# number -- which is what an SDP record's protocol descriptor list
+# gives, so a device is found with SDP and reached with this.
+#
+Rfcomm: module
+{
+	PATH:	con "/dis/lib/bt/rfcomm.dis";
+
+	# RFCOMM is always on this PSM
+	Psm:	con 16r0003;
+
+	#
+	# One session: the multiplexer on one L2CAP channel, and every
+	# data link connection open on it.
+	#
+	Sess: adt {
+		m:	ref L2cap->Mux;
+		ch:	ref L2cap->Chan;
+		up:	int;
+		dead:	string;			# why it went, or nil
+		dlcs:	list of ref Dlc;
+		lock:	chan of int;
+		# answers the reader hands to whoever is waiting: the
+		# DLCI, the frame or control type, and the value
+		reply:	chan of (int, int, array of byte);
+	};
+
+	#
+	# One data link connection, which is a serial port.  credits is
+	# what the peer has given us to send with; given is what we
+	# have given the peer.  They go opposite ways and conflating
+	# them is the easy mistake here.
+	#
+	Dlc: adt {
+		s:	ref Sess;
+		dlci:	int;
+		state:	int;			# 0 opening, 1 up, 2 down
+		mtu:	int;			# the frame size agreed
+		credits: int;			# ours to spend
+		given:	int;			# the peer's to spend
+		err:	string;
+		rq:	chan of array of byte;
+		wake:	chan of int;
+
+		# the server channel behind the DLCI
+		chanof:	fn(d: self ref Dlc): int;
+	};
+
+	init:	fn(bt: Bt, l2: L2cap): string;
+
+	# start the multiplexer on an open L2CAP channel to Psm
+	start:	fn(m: ref L2cap->Mux, ch: ref L2cap->Chan): (ref Sess, string);
+	stop:	fn(s: ref Sess);
+
+	# one serial port, by the server channel number SDP gave
+	open:	fn(s: ref Sess, ch: int): (ref Dlc, string);
+	close:	fn(d: ref Dlc): string;
+
+	# a stream, not records: a write longer than the frame the peer
+	# agreed to is cut into frames, and a read is whatever arrived
+	write:	fn(d: ref Dlc, p: array of byte): string;
+	read:	fn(d: ref Dlc): (array of byte, string);
+
+	#
+	# The frame check sequence over as many header bytes as the
+	# frame type says.  It is here because it is the one part of
+	# this that can be checked against numbers written down
+	# elsewhere: SABM on DLCI 0 is 03 3F 01 1C and UA is
+	# 03 73 01 D7 in every description of RFCOMM there is.
+	#
+	fcs:	fn(p: array of byte): int;
+};
+
 Smp: module
 {
 	PATH:	con "/dis/lib/bt/smp.dis";

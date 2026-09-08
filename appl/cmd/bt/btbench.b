@@ -313,6 +313,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	"sdp" or "sdpnone" =>
 		sdpphase(mode);
 		return;
+	"rfcomm" or "rfrefuse" =>
+		rfphase(mode);
+		return;
 	"hid" =>
 		hid();
 		return;
@@ -1754,6 +1757,134 @@ sdpphase(mode: string)
 		sys->print("BT: two service records, with the channel numbers out of them\n");
 	writefile(dev + "/ctl", "disconnect");
 	sys->print("BT: done\n");
+}
+
+#
+# A serial port over RFCOMM, on the channel number an SDP record gave.
+#
+# Before any of that, the frame check sequence against numbers written
+# down outside this tree: SABM on DLCI 0 is 03 3F 01 1C and UA is
+# 03 73 01 D7 in every description of RFCOMM there is, and a stack
+# that computes those two right has the polynomial, the starting
+# value and the complement right.  Everything else in the framing
+# rests on it.
+#
+rfphase(mode: string)
+{
+	rf := load Rfcomm Rfcomm->PATH;
+	if(rf == nil){
+		sys->print("BT: FAILED: cannot load %s: %r\n", Rfcomm->PATH);
+		sys->print("BT: done\n");
+		return;
+	}
+	if((e := rf->init(bt, nil)) != nil){
+		sys->print("BT: FAILED: rfcomm init: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	sabm := array[] of {byte 16r03, byte 16r3f, byte 16r01};
+	ua := array[] of {byte 16r03, byte 16r73, byte 16r01};
+	if(rf->fcs(sabm) != 16r1c || rf->fcs(ua) != 16rd7){
+		sys->print("BT: FAILED: the frame check sequence gives %#2.2ux and %#2.2ux, wanted 1c and d7\n",
+			rf->fcs(sabm), rf->fcs(ua));
+		sys->print("BT: done\n");
+		return;
+	}
+	sys->print("BT: the frame check sequence matches the published frames\n");
+
+	if((e = writefile(mnt + "/0/ctl", "inquiry on")) != nil){
+		sys->print("BT: FAILED: inquiry on: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	for(i := 0; i < 40; i++){
+		sys->sleep(500);
+		if(hasstr(readfile(mnt + "/0/state"), "inquiry off"))
+			break;
+	}
+	dev := mnt + "/0/remote/" + Chead;
+	if((e = writefile(dev + "/ctl", "connect")) != nil){
+		sys->print("BT: FAILED: connect: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	e = writefile(dev + "/ctl", "rfcomm 1");
+	if(mode == "rfrefuse"){
+		if(e == nil)
+			sys->print("BT: FAILED: a refused data link reported success\n");
+		else
+			sys->print("BT: the peer refused the data link: %s\n", e);
+		writefile(dev + "/ctl", "disconnect");
+		sys->print("BT: done\n");
+		return;
+	}
+	if(e != nil){
+		sys->print("BT: FAILED: rfcomm 1: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	ok := 1;
+	f := dev + "/rfcomm/1/data";
+	fd := sys->open(f, Sys->ORDWR);
+	if(fd == nil){
+		sys->print("BT: FAILED: opening %s: %r\n", f);
+		sys->print("BT: done\n");
+		return;
+	}
+	#
+	# The peer echoes in upper case, so what comes back cannot be
+	# the write arriving by some other route.
+	#
+	want := "hello over a serial port";
+	if(sys->write(fd, array of byte want, len want) != len want){
+		sys->print("BT: FAILED: writing the port: %r\n");
+		ok = 0;
+	} else {
+		#
+		# A serial line is a stream: what comes back may arrive
+		# in as many pieces as the frame size the peer agreed to
+		# needs, so this reads until it has the whole of it
+		# rather than assuming one read is one write.
+		#
+		got := "";
+		for(i = 0; i < 20 && len got < len want; i++){
+			(n, b, re) := sdu(fd, 10000);
+			if(re != nil || n <= 0){
+				sys->print("BT: FAILED: reading the port: %s\n", re);
+				ok = 0;
+				break;
+			}
+			got += string b[0:n];
+		}
+		if(ok){
+			if(got != upper(want)){
+				sys->print("BT: FAILED: wrote %q and read %q\n", want, got);
+				ok = 0;
+			} else
+				sys->print("BT: %q came back as %q\n", want, got);
+		}
+	}
+	fd = nil;
+	if((e = writefile(dev + "/ctl", "unrfcomm 1")) != nil){
+		sys->print("BT: FAILED: unrfcomm: %s\n", e);
+		ok = 0;
+	}
+	if(ok)
+		sys->print("BT: a serial port over RFCOMM, opened and used and closed\n");
+	writefile(dev + "/ctl", "disconnect");
+	sys->print("BT: done\n");
+}
+
+upper(s: string): string
+{
+	r := "";
+	for(i := 0; i < len s; i++){
+		c := s[i];
+		if(c >= 'a' && c <= 'z')
+			c += 'A' - 'a';
+		r[len r] = c;
+	}
+	return r;
 }
 
 check(dir, want, name: string): int

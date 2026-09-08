@@ -411,10 +411,40 @@ same answer back seventeen bytes at a time to prove it.
 What is left is the server half: a device that wants to be found by a
 Classic host has to answer these, and nothing here does.
 .IP 4.
-.B "RFCOMM and the serial port profile."
-With SDP under it, this is what turns a Classic device into
+.B "RFCOMM."
+Done, and it is what the sentence above asked for:
+.CW "rfcomm 1"
+on a Classic device's own
+.CW ctl
+opens
 .CW /net/bt/0/remote/ADDR/rfcomm/1/data
-and lets a program open it like a serial line.
+and a program reads and writes it like a serial line.  The channel
+number comes out of an SDP record, which is what SDP is for.
+.PP
+It is TS 07.10 with a Bluetooth adaptation layer: a multiplexer inside
+a multiplexer, one L2CAP channel to PSM 3 carrying a session and the
+session carrying up to thirty data link connections.  Opening one is
+three handshakes \(em parameter negotiation on the control channel,
+SABM on the connection itself, and modem status both ways, which is
+not a courtesy since a device may hold its end shut until it sees one
+\(em and then the data is UIH frames with credits, negotiated in the
+first of those rather than granted as LE L2CAP grants them.
+.PP
+The frame check sequence is the part that can be checked against
+something outside this tree, and it is: SABM on DLCI 0 is
+.CW "03 3F 01 1C"
+and UA is
+.CW "03 73 01 D7"
+in every description of RFCOMM there is, and the bench asserts both
+before it does anything else.  A stack that computes those two right
+has the polynomial, the starting value and the complement right, and
+the rest of the framing rests on that.  The multiplexer control
+messages are from one reading of the specification and are pinned to
+nothing; that is said here rather than left to be assumed.
+.PP
+What is left of the serial port profile is the profile: an SDP record
+of this side's own, so a device can find the port rather than being
+told its number.
 .IP 5.
 .B "Classic HID."
 HIDP over L2CAP, for the older keyboards and mice.

@@ -56,6 +56,8 @@ include "bt.m";
 	smp: Smp;
 	sdp: Sdp;
 	Rec, Elem: import sdp;
+	rfcomm: Rfcomm;
+	Dlc: import rfcomm;
 	Adv, Conn: import Hci;
 	Mux: import L2cap;
 	Chan: import L2cap;
@@ -71,6 +73,7 @@ Btfs: module
 Kroot, Kctlr, Kaddr, Kver, Kctl, Kstate, Kscan, Kremotes, Kbonds, Kdident, Kinc,
 	Kdev, Kdaddr, Kdtype, Kdrssi, Kdname, Kdadv, Kdstate, Kdctl,
 	Kdgatt, Ksvc, Kchar, Kcnotify, Kdesc, Kdl2cap, Kcoc, Kdsdp, Ksdp,
+	Kdrfcomm, Krfdir, Krfdata,
 	Klocal, Klsvc, Klchar: con iota;
 
 Qroot:	con big 0;
@@ -85,6 +88,19 @@ Coc: adt {
 	psm:	int;
 	c:	ref L2cap->Chan;
 	q:	big;		# the file
+};
+
+#
+# One RFCOMM serial port and the file that is it.  Like a
+# credit-based channel it hangs off the device rather than off any
+# tree: it is not part of what SDP said, and rediscovering the device
+# says nothing about a port that is open.
+#
+Rf: adt {
+	ch:	int;		# the server channel
+	d:	ref Dlc;
+	dq:	big;		# its directory
+	q:	big;		# the data file
 };
 
 Cnode: adt {
@@ -135,6 +151,9 @@ Dev: adt {
 	sq:	big;		# its sdp directory, or 0
 	lq:	big;		# its l2cap directory, or 0
 	cocs:	list of ref Coc;
+	rfs:	list of ref Rf;
+	rsess:	ref Rfcomm->Sess;	# the multiplexer, once one is up
+	rq:	big;			# its rfcomm directory, or 0
 	lock:	chan of int;
 };
 
@@ -147,6 +166,7 @@ Node: adt {
 	name:	string;
 	text:	string;	# what a Kinc file reads as
 	coc:	ref Coc;
+	rf:	ref Rf;
 	lc:	ref Lchar;
 	dh:	int;	# the handle a Kdesc file reads
 };
@@ -305,8 +325,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	gattsrv = load Gattsrv Gattsrv->PATH;
 	smp = load Smp Smp->PATH;
 	sdp = load Sdp Sdp->PATH;
+	rfcomm = load Rfcomm Rfcomm->PATH;
 	if(hci == nil || l2cap == nil || att == nil || gatt == nil
-	|| gattsrv == nil || smp == nil || sdp == nil)
+	|| gattsrv == nil || smp == nil || sdp == nil || rfcomm == nil)
 		fail(sprint("cannot load the stack: %r"));
 
 	if((e := hci->init(bt)) != nil)
@@ -323,6 +344,8 @@ init(nil: ref Draw->Context, argv: list of string)
 		fail("smp: " + e);
 	if((e = sdp->init(bt, l2cap)) != nil)
 		fail("sdp: " + e);
+	if((e = rfcomm->init(bt, l2cap)) != nil)
+		fail("rfcomm: " + e);
 
 	keylock = chan[1] of int;
 	keylock <-= 1;
@@ -331,7 +354,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	nodes = array[64] of ref Node;
 	# node 0 is the root of the served tree, so the first name
 	# created below does not take its qid
-	nodes[0] = ref Node(Qroot, Kroot, nil, nil, nil, ".", nil, nil, nil, 0);
+	nodes[0] = ref Node(Qroot, Kroot, nil, nil, nil, ".", nil, nil, nil, nil, 0);
 	nextq = 1;
 
 	navops: chan of ref Navop;
@@ -465,7 +488,7 @@ newnode(kind: int, r: ref Radio, d: ref Dev, cn: ref Cnode, name: string): big
 		nodes = a;
 	}
 	q := big nextq;
-	nodes[nextq] = ref Node(q, kind, r, d, cn, name, nil, nil, nil, 0);
+	nodes[nextq] = ref Node(q, kind, r, d, cn, name, nil, nil, nil, nil, 0);
 	nextq++;
 	return q;
 }
@@ -855,6 +878,9 @@ newdev(r: ref Radio, name: string, addr: array of byte, atype: int): ref Dev
 	d.sess = nil;
 	d.chars = nil;
 	d.cocs = nil;
+	d.rfs = nil;
+	d.rsess = nil;
+	d.rq = big 0;
 	d.lq = big 0;
 	d.sq = big 0;
 	d.gq = big 0;
@@ -1048,6 +1074,8 @@ doread(m: ref Tmsg.Read)
 		spawn readnotify(m, n);
 	Kcoc =>
 		spawn readcoc(m, n);
+	Krfdata =>
+		spawn readrf(m, n);
 	Klchar =>
 		#
 		# what a peer would read: the value in the database,
@@ -1242,6 +1270,8 @@ dowrite(m: ref Tmsg.Write)
 		spawn writechar(m, n);
 	Kcoc =>
 		spawn writecoc(m, n);
+	Krfdata =>
+		spawn writerf(m, n);
 	Klchar =>
 		spawn writelocal(m, n);
 	* =>
@@ -1350,6 +1380,32 @@ ctlwrite(m: ref Tmsg.Write, r: ref Radio, d: ref Dev, s: string)
 			break;
 		}
 		e = cocopen(d, hexnum(hd f));
+	"rfcomm" =>
+		#
+		# open a serial port on a server channel, which is what
+		# an sdp record's protocol descriptor list gives.  The
+		# multiplexer under it is started on the first one and
+		# shared by the rest.
+		#
+		if(d == nil){
+			e = "write rfcomm to the device's own ctl";
+			break;
+		}
+		if(f == nil || !digits(hd f)){
+			e = "usage: rfcomm channel";
+			break;
+		}
+		e = rfopen(d, int hd f);
+	"unrfcomm" =>
+		if(d == nil){
+			e = "write unrfcomm to the device's own ctl";
+			break;
+		}
+		if(f == nil || !digits(hd f)){
+			e = "usage: unrfcomm channel";
+			break;
+		}
+		e = rfclose(d, int hd f);
 	"unl2cap" =>
 		if(d == nil){
 			e = "write unl2cap to the device's own ctl";
@@ -1788,6 +1844,7 @@ watcher(d: ref Dev)
 		d.state = "disconnected: " + why;
 		droptree(d);
 		dropcocs(d);	# the link took the channels with it
+		droprfs(d);	# and the serial ports on them
 		d.scv = 0;	# and the handles it was talking about
 		d.sccccd = 0;	# the link took the subscription with it
 	}
@@ -2338,6 +2395,174 @@ writecoc(m: ref Tmsg.Write, n: ref Node)
 	srv.reply(ref Rmsg.Write(m.tag, len m.data));
 }
 
+
+#
+# A serial port over RFCOMM.  The multiplexer under it -- an L2CAP
+# channel to PSM 3 and the session on it -- is started by the first
+# port and shared by the rest, because that is what a session is:
+# thirty ports on one channel, not thirty channels.
+#
+rfopen(d: ref Dev, ch: int): string
+{
+	if(ch < 1 || ch > 30)
+		return "a server channel is 1 to 30";
+	<-d.lock;
+	mux := d.mux;
+	if(mux == nil || d.conn == nil || !d.conn.classic){
+		d.lock <-= 1;
+		return "not connected to a Classic device";
+	}
+	if(findrf(d, ch) != nil){
+		d.lock <-= 1;
+		return sprint("channel %d is already open", ch);
+	}
+	s := d.rsess;
+	d.lock <-= 1;
+
+	if(s == nil){
+		(l2ch, le) := l2cap->bconnect(mux, Rfcomm->Psm);
+		if(le != nil)
+			return "rfcomm: " + le;
+		(ns, se) := rfcomm->start(mux, l2ch);
+		if(se != nil){
+			l2cap->cclose(mux, l2ch);
+			return "rfcomm: " + se;
+		}
+		<-d.lock;
+		if(d.mux != mux){
+			d.lock <-= 1;
+			rfcomm->stop(ns);
+			return "the link changed while the session was starting";
+		}
+		if(d.rsess != nil){
+			# somebody else got there first, which is fine:
+			# one session per device, and this one goes
+			s = d.rsess;
+			d.lock <-= 1;
+			rfcomm->stop(ns);
+		} else {
+			s = d.rsess = ns;
+			d.lock <-= 1;
+		}
+	}
+
+	(dlc, e) := rfcomm->open(s, ch);
+	if(e != nil)
+		return e;
+
+	<-d.lock;
+	if(d.mux != mux || findrf(d, ch) != nil){
+		d.lock <-= 1;
+		rfcomm->close(dlc);
+		return "the link changed while the channel was being opened";
+	}
+	rf := ref Rf(ch, dlc, big 0, big 0);
+	if(d.rq == big 0){
+		d.rq = newnode(Kdrfcomm, d.r, d, nil, "rfcomm");
+		create(d.q, mkdir("rfcomm", d.rq));
+	}
+	name := string ch;
+	rf.dq = newnode(Krfdir, d.r, d, nil, name);
+	create(d.rq, mkdir(name, rf.dq));
+	rf.q = mkfd(rf.dq, "data", Krfdata, 8r666, d, nil);
+	nodes[int rf.q].rf = rf;
+	d.rfs = rf :: d.rfs;
+	d.lock <-= 1;
+	return nil;
+}
+
+rfclose(d: ref Dev, ch: int): string
+{
+	<-d.lock;
+	rf := findrf(d, ch);
+	d.lock <-= 1;
+	if(rf == nil)
+		return sprint("channel %d is not open", ch);
+	rfcomm->close(rf.d);
+	dropone(d, rf);
+	return nil;
+}
+
+# with the device lock held
+findrf(d: ref Dev, ch: int): ref Rf
+{
+	for(l := d.rfs; l != nil; l = tl l)
+		if((hd l).ch == ch)
+			return hd l;
+	return nil;
+}
+
+dropone(d: ref Dev, rf: ref Rf)
+{
+	<-d.lock;
+	nl: list of ref Rf;
+	for(l := d.rfs; l != nil; l = tl l)
+		if(hd l != rf)
+			nl = hd l :: nl;
+	d.rfs = nl;
+	if(rf.q != big 0)
+		remove(rf.q);
+	if(rf.dq != big 0)
+		remove(rf.dq);
+	d.lock <-= 1;
+}
+
+#
+# every port on a device, when its link goes.  The session goes with
+# the link; the ports go with the session.
+#
+droprfs(d: ref Dev)
+{
+	for(l := d.rfs; l != nil; l = tl l){
+		rf := hd l;
+		if(rf.q != big 0)
+			remove(rf.q);
+		if(rf.dq != big 0)
+			remove(rf.dq);
+	}
+	d.rfs = nil;
+	if(d.rq != big 0){
+		remove(d.rq);
+		d.rq = big 0;
+	}
+	d.rsess = nil;
+}
+
+#
+# A serial line, so a read is whatever has arrived rather than a
+# record: what a program writes is bytes and what it reads is bytes,
+# and where the frame boundaries fell is this program's business.
+#
+readrf(m: ref Tmsg.Read, n: ref Node)
+{
+	rf := n.rf;
+	if(rf == nil){
+		srv.reply(ref Rmsg.Error(m.tag, "not connected"));
+		return;
+	}
+	(v, e) := rfcomm->read(rf.d);
+	if(e != nil){
+		srv.reply(ref Rmsg.Error(m.tag, e));
+		return;
+	}
+	if(len v > m.count)
+		v = v[0:m.count];
+	srv.reply(ref Rmsg.Read(m.tag, v));
+}
+
+writerf(m: ref Tmsg.Write, n: ref Node)
+{
+	rf := n.rf;
+	if(rf == nil){
+		srv.reply(ref Rmsg.Error(m.tag, "not connected"));
+		return;
+	}
+	if((e := rfcomm->write(rf.d, m.data)) != nil){
+		srv.reply(ref Rmsg.Error(m.tag, e));
+		return;
+	}
+	srv.reply(ref Rmsg.Write(m.tag, len m.data));
+}
 
 #
 # The advertisement: the flags every discoverable device sends, and

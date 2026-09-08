@@ -159,6 +159,14 @@
 #		between the pieces, which cuts records in the middle of
 #		a data element; sdpnone is a device with nothing in the
 #		browse group
+#	rfcomm	a serial port over RFCOMM on the channel number an SDP
+#		record gave, which the peer echoes back in upper case.
+#		First the frame check sequence against the frames every
+#		description of RFCOMM quotes.  rfsmall negotiates the
+#		frame size down below what the phase writes, so the write
+#		has to be cut into frames; rfnocredit refuses credit based
+#		flow control, which this stack cannot do without; and
+#		rfrefuse answers the data link with DM
 #	stalefid	a characteristic file kept open across a disconnect
 #		and a reconnect: the old name must be gone.  What the
 #		fix for it changes is not visible from inside the guest
@@ -635,6 +643,47 @@ if [ "$n" != 1 ]; then
 fi
 echo "and the same records arrived seventeen bytes at a time"
 run sdpnone "--classic --brconnect --sdp --sdpnone" sdpnone
+#
+# A serial port, which is what SDP is for: the record gives the
+# channel number and this opens it.
+#
+run rfcomm "--classic --brconnect --rfcomm" rfcomm
+n=`grep -c 'rfcomm 24 bytes in' "$OUT/bthci-rfcomm.log" || true`
+if [ "$n" != 1 ]; then
+	echo "=== phase rfcomm ==="
+	echo "BENCH FAIL (rfcomm): the peer saw $n whole writes, wanted 1"
+	exit 1
+fi
+echo "a serial port carried a line and echoed it back"
+#
+# The same write with the frame size negotiated down to twenty bytes.
+# A frame size may only come down, so the write has to be cut; a stack
+# that kept its own would send one frame the peer has to drop.
+#
+run rfsmall "--classic --brconnect --rfcomm --rfsmall" rfcomm
+n=`grep -c 'rfcomm 20 bytes in' "$OUT/bthci-rfsmall.log" || true`
+m=`grep -c 'rfcomm 4 bytes in' "$OUT/bthci-rfsmall.log" || true`
+if [ "$n" != 1 ] || [ "$m" != 1 ]; then
+	echo "=== phase rfsmall ==="
+	echo "BENCH FAIL (rfsmall): the write went as $n and $m frames, wanted one of each"
+	exit 1
+fi
+echo "and a smaller frame size cut the write into frames"
+run rfrefuse "--classic --brconnect --rfcomm --rfrefuse" rfrefuse
+#
+# The control: a peer that will not do credit based flow control.
+# There is nothing else this stack can do, so it has to say so rather
+# than open a port with no flow control on it at all.
+#
+if run rfnocredit "--classic --brconnect --rfcomm --rfnocredit" rfcomm; then
+	echo "BENCH FAIL (rfnocredit): a port opened without flow control"
+	exit 1
+fi
+if ! grep -q 'will not do credit based flow control' "$OUT/bench-rfnocredit.out"; then
+	echo "BENCH FAIL (rfnocredit): the phase failed for some other reason"
+	exit 1
+fi
+echo "and a peer that will not do credits was refused, not worked around"
 run paired "--peripheral --pairin --rebond" paired
 #
 # and what the model saw from the other side: the confirm this stack

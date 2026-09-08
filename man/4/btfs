@@ -480,6 +480,31 @@ has no
 .B sdp
 directory rather than an empty one.
 .TP
+.B /net/bt/\fIN\fP/remote/\fIADDR\fP/rfcomm/\fIN\fP/data
+A serial port on server channel
+.IR N ,
+opened by writing
+.BI "rfcomm " N
+to the device's own
+.B ctl
+and closed with
+.BI "unrfcomm " N .
+The channel number is what an
+.B sdp
+record's
+.B proto
+line gives, so a device is found with service discovery and reached
+with this.
+.PP
+It is a stream and not a record: what is written is bytes and what is
+read is bytes, and a write longer than the frame size the peer agreed
+to is cut into frames here, so a read may return less than the write
+that produced it.  A write may wait, because RFCOMM has its own
+credits underneath, negotiated rather than granted.  The multiplexer
+under all this \- an L2CAP channel to PSM 3 and a session on it \- is
+started by the first port and shared by the rest: thirty ports on one
+channel is what a session is.
+.TP
 .B /net/bt/\fIN\fP/remote/\fIADDR\fP/l2cap/
 One file per open LE credit-based channel, named by its PSM in four
 hexadecimal digits.  This is not part of the GATT tree and does not go

@@ -21047,6 +21047,71 @@ identifiable only by what comes before it.  The model walks it now,
 with a data element skipper of its own.
 
 .NH 2
+A serial port, and one number written down elsewhere
+.PP
+.CW "rfcomm 1"
+on a Classic device's own
+.CW ctl
+opens
+.CW /net/bt/0/remote/ADDR/rfcomm/1/data ,
+and the channel number in it is the one an SDP record gave.  That is
+the whole point of the two pieces together: a device is found with
+service discovery and reached with this.
+.PP
+RFCOMM is TS 07.10 with a Bluetooth adaptation layer, and it is a
+multiplexer inside a multiplexer \(em one L2CAP channel to PSM 3
+carries a session, the session carries up to thirty data link
+connections.  Opening one is three handshakes: parameter negotiation
+on the control channel, SABM on the connection itself, and modem
+status both ways.  The last is not a courtesy; a device is entitled to
+hold its end shut until it has seen one, so a stack that opened the
+connection and started sending would be sending into a port that is
+not ready.
+.PP
+Then the data, in UIH frames with credits \(em negotiated in the
+parameter negotiation rather than granted as LE L2CAP grants them, and
+with two counts going opposite ways: what the peer has given us to
+send with, and what we have given the peer.  Conflating those is the
+easy mistake and the adt says which is which.
+.PP
+The interesting thing about writing this was how little of it can be
+checked against anything.  The frame check sequence can: SABM on DLCI
+0 is
+.CW "03 3F 01 1C"
+and UA is
+.CW "03 73 01 D7"
+in every description of RFCOMM there is, and a stack that computes
+those two has the polynomial, the starting value and the complement
+right.  The table is generated from the polynomial rather than typed
+out \(em 256 chances to be wrong reduced to one \(em and the bench
+asserts both frames before it does anything else, so the rest of the
+framing rests on something written down elsewhere.
+.PP
+The multiplexer control messages do not have that.  The parameter
+negotiation's eight bytes, the modem status's two, and which way the
+command bit goes are from one reading of the specification, with a
+model written from the same reading, so a mistake in that reading
+would agree with itself.  That is a real limit of this bench and is
+said here rather than left to be assumed.  Two things narrow it: the
+published UA frame settles the address byte for a response \(em
+.CW 03 ,
+not
+.CW 01 ,
+so a responder's response carries the command bit set, which is the
+one place the naming misleads \(em and the phases assert on what
+reached the peer rather than only on what came back.
+.PP
+Three controls.  A peer that answers the data link with DM, whose
+refusal has to reach whoever asked.  A peer that negotiates the frame
+size down to twenty bytes, below what the phase writes, where the
+write has to leave as a twenty byte frame and a four byte one and come
+back whole \(em and the first version of this refused that outright,
+because it carried L2CAP's 23 byte minimum into a layer that has no
+such number.  And a peer that will not do credit based flow control,
+where there is nothing else this stack can do and it has to say so
+rather than open a port with no flow control on it at all.
+
+.NH 2
 A native backtrace from inside the collector
 .PP
 The bench passes under
