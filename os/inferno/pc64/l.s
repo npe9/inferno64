@@ -1011,12 +1011,39 @@ _intrcommon:
 						/* Stack is SS, RSP, RFLAGS, CS, RIP, Error Code or vectortable(SB) Return PC, trap type
 								AX = AX */
 
-	PUSHW	GS
-	PUSHW	FS
-	MOVW	ES, AX	/* PUSHW ES is invalid in amd64, but showing the value for debugging */
-	PUSHW	AX
-	MOVW	DS, AX	/* PUSHW DS is invalid in amd64, but showing the value as JMP uses it */
-	PUSHW	AX
+	/*
+	 * These four words used to be built here, with AX as the scratch,
+	 * BEFORE the PUSHQ AX below saved the interrupted code's AX:
+	 *
+	 *	MOVW	ES, AX
+	 *	PUSHW	AX
+	 *	MOVW	DS, AX
+	 *	PUSHW	AX
+	 *
+	 * MOVW from a segment register has no operand-size prefix and
+	 * assembles to 8C /r, MOV r/m32, Sreg -- "mov eax, ds" -- which
+	 * zero-extends into the whole of RAX.  So the value pushed as
+	 * Ureg.ax was the DS selector, 0 on this kernel, and _intrestore
+	 * faithfully popped that back.  Every interrupt handed the
+	 * interrupted code AX = 0, on every processor, since the port
+	 * began.
+	 *
+	 * It survived because compiled code holds a called function's
+	 * return value in AX for only the one or two instructions before
+	 * storing it, so almost every interrupt lands somewhere that does
+	 * not care.  When one lands in that window the caller reads 0.
+	 *
+	 * The frame layout is unchanged: eight bytes are reserved here
+	 * instead of pushed, and filled in after AX has been saved.  With
+	 * fifteen 8-byte pushes below, SP then points at Ureg.ax and the
+	 * four words sit at 120..126, in the order the pushes produced --
+	 * DS lowest.  _iretsegs still skips them with ADDQ $8, SP.
+	 *
+	 * Found by the cloud-port session; verified here by disassembling
+	 * this kernel (8c c0, 8c d8 at _strayintr+0x14/+0x18) and by
+	 * regtorture.  See doc/inferno-ports.ms.
+	 */
+	SUBQ	$8, SP		/* reserve Ureg.ds/es/fs/gs */
 
 	PUSHQ	R15		/* RMACH m-> */
 	PUSHQ	R14		/* RUSER up-> */
@@ -1033,6 +1060,19 @@ _intrcommon:
 	PUSHQ	CX
 	PUSHQ	BX
 	PUSHQ	AX
+
+	/*
+	 * AX is saved now, so it is free as a scratch.  SP points at
+	 * Ureg.ax; the reserved words are 120 bytes above it.
+	 */
+	MOVW	DS, AX
+	MOVW	AX, 120(SP)
+	MOVW	ES, AX
+	MOVW	AX, 122(SP)
+	MOVW	FS, AX
+	MOVW	AX, 124(SP)
+	MOVW	GS, AX
+	MOVW	AX, 126(SP)
 
 	MOVQ	SP, RARG /* Ureg* argument to trap */
 	PUSHQ	SP

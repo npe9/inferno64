@@ -242,14 +242,34 @@ freelist(Heap *h, int swept)
 		if(ADEC(&th->ref) != 0)
 			break;
 		/*
-		 * Unguarded on purpose, and checked: a temporary probe
-		 * asserting th->t == &Tlist and that this decrement never
-		 * reaches 0 ran over six boots of the virtarm64 reproducer,
-		 * four of which corrupted, and never fired.  The assumption
-		 * in the old comment here is sound, and this is not where
-		 * the premature Type free comes from.
+		 * This was the one decrement of a Type reference in the
+		 * whole tree that did not go through freetype(), and so the
+		 * only one the static-Type guard could not see.  It was left
+		 * raw on the strength of a probe that asserted th->t ==
+		 * &Tlist and that the count never reached zero here: six
+		 * boots of the virtarm64 reproducer, never fired.  Six boots
+		 * on another board is not much, and pc64 has since produced
+		 * a Tlist underflow among three captures in 96 boots, so the
+		 * assumption is no longer worth keeping unchecked.
+		 *
+		 * freetype() is exactly this decrement plus the guard.  th->t
+		 * is &Tlist by construction -- cons() sets it -- and Tlist is
+		 * static, so freetype() cannot free it here; the only change
+		 * is that a count reaching zero now reports instead of
+		 * passing silently.  The type is checked once rather than
+		 * asserted, because a tail cell whose type is not Tlist would
+		 * itself be the find.
 		 */
-		ADEC(&th->t->ref);	/* &Tlist; ref does not reach 0 here */
+		if(th->t != &Tlist) {
+			static int said;
+
+			if(!said) {
+				said = 1;
+				print("freelist: tail cell %#p type %#p not Tlist\n",
+					th, th->t);
+			}
+		}
+		freetype(th->t);
 		if(t != nil) {
 			if (t->np)
 				freeptrs(l->data, t);
