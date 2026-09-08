@@ -400,11 +400,21 @@ delprog(Prog *p, char *msg)
 		panic("lost pid");
 	*ph = p->pidlink;
 
-	if(p == curP->runhd) {
-		curP->runhd = p->link;
-		if(p->link == nil)
-			curP->runtl = nil;
-	}
+	/*
+	 * This removed p only when it was the head of the run queue, so a
+	 * Prog deleted from anywhere else stayed linked into a list whose
+	 * every other reader -- vmachine()'s own pick, and disdump()'s
+	 * walk -- then dereferences it after free().  delrunq() already
+	 * removes from anywhere in the list and returns harmlessly when p
+	 * is not on it, which is exactly this job.
+	 *
+	 * Found while looking for unguarded dereferences in disdump()
+	 * rather than from a capture: the faults this hunt has in hand
+	 * come through the isched.head walk, and that list is unlinked
+	 * correctly here.  So this is a real use-after-free with no
+	 * observed instance, fixed on inspection.
+	 */
+	delrunq(p);
 	p->state = 0xdeadbeef;
 	free(o->user);
 	free(p->killstr);
