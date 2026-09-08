@@ -130,6 +130,12 @@
 #		Reference descriptors are the only thing that says
 #		which is the keyboard.  The mouse has the lower id and
 #		comes first, so guessing gets it backwards
+#	classic	a Classic inquiry: two devices, one sending an extended
+#		inquiry response with its name in it and one sending the
+#		plain result with RSSI, whose name has to be paged for.
+#		No scan runs, so everything in remote/ answered an
+#		inquiry.  classicnoeir is the other half: neither sends
+#		an inquiry response, so both names are paged for
 #	stalefid	a characteristic file kept open across a disconnect
 #		and a reconnect: the old name must be gone.  What the
 #		fix for it changes is not visible from inside the guest
@@ -480,6 +486,45 @@ if ! grep -q '2a4d.0088 is pointer report 1' "$OUT/bench-hidswap.out"; then
 	exit 1
 fi
 echo "and the report references are what said which was which"
+#
+# A Classic inquiry.  Nothing else in the bench is Classic: there is no
+# BR/EDR connection and nothing above one, so this stands alone, which
+# is exactly why it can be tested at all.
+#
+run classic --classic classic
+n=`grep -c 'name asked for' "$OUT/bthci-classic.log" || true`
+if [ "$n" != 1 ]; then
+	echo "=== phase classic ==="
+	echo "BENCH FAIL (classic): the host asked for $n names, wanted 1"
+	exit 1
+fi
+echo "one name came out of an inquiry response and one was paged for"
+#
+# and that the cancel reached the controller.  An inquiry that is left
+# alone ends by itself, so a stack that never sent an Inquiry Cancel
+# would look identical from inside the guest a moment later.
+#
+n=`grep -c 'inquiry cancelled' "$OUT/bthci-classic.log" || true`
+if [ "$n" != 1 ]; then
+	echo "=== phase classic ==="
+	echo "BENCH FAIL (classic): the controller was told to cancel $n times, wanted 1"
+	exit 1
+fi
+echo "and an inquiry was cancelled before it ended"
+#
+# The other half: neither device sends an extended inquiry response, so
+# both names have to be paged for.  Both must still be found, and the
+# model must be asked twice rather than once -- a stack that only knew
+# how to read a name out of an inquiry response would find neither.
+#
+run classicnoeir "--classic --noeir" classic
+n=`grep -c 'name asked for' "$OUT/bthci-classicnoeir.log" || true`
+if [ "$n" != 2 ]; then
+	echo "=== phase classicnoeir ==="
+	echo "BENCH FAIL (classicnoeir): the host asked for $n names, wanted 2"
+	exit 1
+fi
+echo "and with no inquiry responses both names were paged for"
 run paired "--peripheral --pairin --rebond" paired
 #
 # and what the model saw from the other side: the confirm this stack

@@ -104,6 +104,19 @@ Dev: adt {
 				# using resolvable private addresses this is
 				# the current one, and it changes underneath
 	atype:	int;
+	#
+	# A Classic device.  It is in the same directory as the LE ones
+	# because it is the same question -- what is out there -- but
+	# almost nothing else about it is the same: its address is a
+	# BD_ADDR and never rotates, so there is no identity to resolve;
+	# it answered an inquiry rather than advertising; and paging it
+	# needs what it answered with.
+	#
+	classic: int;
+	class:	int;		# class of device
+	psrm:	int;		# page scan repetition mode
+	clock:	int;		# clock offset
+	named:	int;		# has its name been asked for
 	id:	array of byte;	# its identity address, from a bond, or nil
 	idtype:	int;
 	seen:	int;		# when its last advertisement arrived
@@ -385,6 +398,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	# whoever started btfs, not in a private one
 	for(al := radios; al != nil; al = tl al){
 		spawn advproc(hd al);
+		spawn inqproc(hd al);
 		spawn inproc(hd al);
 	}
 	spawn reaper();
@@ -669,6 +683,68 @@ advproc(r: ref Radio)
 	}
 }
 
+#
+# What an inquiry hears.  The shape is advproc's -- a channel of
+# results, one device per result, the device table under its lock --
+# and the differences are the Classic ones: an inquiry ends, which
+# arrives as a nil; an address never rotates, so there is nothing to
+# resolve; and a name is not in the result unless the device sent an
+# extended inquiry response, so one that did not has to be asked, over
+# a page, which cannot be done under the lock.
+#
+inqproc(r: ref Radio)
+{
+	c := hci->inqs(r.x);
+	for(;;){
+		q := <-c;
+		if(q == nil)
+			continue;	# the inquiry ended; the controller knows
+		<-r.devlock;
+		d := finddev(r, q.addr);
+		if(d == nil){
+			d = newdev(r, bt->addrstr(q.addr), q.addr, Bt->Apublic);
+			d.classic = 1;
+			r.devs = d :: r.devs;
+		}
+		d.classic = 1;
+		d.class = q.class;
+		d.psrm = q.psrm;
+		d.clock = q.clock;
+		d.rssi = q.rssi;
+		d.seen = daytime();
+		if(q.eir != nil){
+			d.adv = q.eir;
+			nm := advname(q.eir);
+			if(nm != nil){
+				d.name = nm;
+				d.named = 1;
+			}
+		}
+		ask := d.name == nil && !d.named;
+		if(ask)
+			d.named = 1;	# once, not once per result
+		r.devlock <-= 1;
+		if(ask)
+			spawn nameproc(r, d);
+	}
+}
+
+#
+# Ask a Classic device its name.  It is a page and it takes time, so
+# it is its own process and holds no lock while it waits; a device
+# that will not answer is left with no name rather than with a wrong
+# one, and named stops it being asked again on every inquiry result.
+#
+nameproc(r: ref Radio, d: ref Dev)
+{
+	(nm, e) := hci->remotename(r.x, d.addr, d.psrm, d.clock);
+	if(e != nil || nm == nil)
+		return;
+	<-r.devlock;
+	d.name = nm;
+	r.devlock <-= 1;
+}
+
 finddev(r: ref Radio, addr: array of byte): ref Dev
 {
 	s := bt->addrstr(addr);
@@ -756,6 +832,11 @@ newdev(r: ref Radio, name: string, addr: array of byte, atype: int): ref Dev
 	d.state = "seen";
 	d.seen = daytime();
 	# the rest of the scalars, for the reason above
+	d.classic = 0;
+	d.class = 0;
+	d.psrm = 0;
+	d.clock = 0;
+	d.named = 0;
 	d.scv = 0;
 	d.sccccd = 0;
 	d.idtype = 0;
@@ -929,7 +1010,17 @@ doread(m: ref Tmsg.Read)
 	Kdaddr =>
 		srv.reply(styxservers->readstr(m, bt->addrstr(n.dev.addr) + "\n"));
 	Kdtype =>
-		srv.reply(styxservers->readstr(m, bt->atypestr(n.dev.atype) + "\n"));
+		#
+		# A Classic device has no LE address type: its address is
+		# a BD_ADDR, which is what "classic" says.  The class of
+		# device goes on the same line because it is the only
+		# thing an inquiry says about what the device is.
+		#
+		if(n.dev.classic)
+			srv.reply(styxservers->readstr(m,
+				sprint("classic class %6.6ux\n", n.dev.class)));
+		else
+			srv.reply(styxservers->readstr(m, bt->atypestr(n.dev.atype) + "\n"));
 	Kdident =>
 		srv.reply(styxservers->readstr(m, identtext(n.dev)));
 	Kinc =>
@@ -973,9 +1064,12 @@ ctlrstate(r: ref Radio): string
 	ad := "off";
 	if(r.advertising)
 		ad = "on";
+	iq := "off";
+	if(hci->inquiring(r.x))
+		iq = "on";
 	(sz, nb) := hci->aclmtu(r.x);
-	s := sprint("addr %s scan %s advertise %s devices %d connections %d aclsize %d aclbufs %d",
-		bt->addrstr(hci->localaddr(r.x)), sc, ad, nd, len hci->conns(r.x), sz, nb);
+	s := sprint("addr %s scan %s inquiry %s advertise %s devices %d connections %d aclsize %d aclbufs %d",
+		bt->addrstr(hci->localaddr(r.x)), sc, iq, ad, nd, len hci->conns(r.x), sz, nb);
 	# only when there are any: a controller that has never sent one
 	# has nothing to report, and the line is what btfs(4) describes
 	if((n := hci->scodropped(r.x)) > 0)
@@ -1263,6 +1357,18 @@ ctlwrite(m: ref Tmsg.Write, r: ref Radio, d: ref Dev, s: string)
 		if(f != nil && hd f == "off")
 			on = 0;
 		e = advertise(r, on);
+	"inquiry" =>
+		#
+		# Not a scan.  The controller is told how long to
+		# inquire for and says when it is done, so this starts
+		# one and does not stay on; "inquiry off" cancels one
+		# that is still running.
+		#
+		if(f == nil || (hd f != "on" && hd f != "off")){
+			e = "usage: inquiry on|off";
+			break;
+		}
+		e = hci->inquiry(r.x, hd f == "on");
 	"advname" =>
 		if(f == nil){
 			e = "usage: advname name";

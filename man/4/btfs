@@ -129,9 +129,10 @@ link, a scan and a bond all belong to the radio they happened on.
 What the controller says it is.
 .TP
 .B /net/bt/\fIN\fP/state
-One line: the address, whether it is scanning, whether it is
-advertising, how many devices have been heard, how many connections
-are open, and the controller's ACL packet size and buffer count.  A
+One line: the address, whether it is scanning, whether an inquiry is
+running, whether it is advertising, how many devices have been heard,
+how many connections are open, and the controller's ACL packet size
+and buffer count.  A
 .B scodropped
 count is added when the controller has sent any SCO packets: there is
 no audio here, nothing above the transport has a use for them, and
@@ -184,7 +185,26 @@ Writing
 .B "scan on"
 or
 .B "scan off"
-starts and stops scanning.
+starts and stops scanning, which is the LE half of finding devices.
+.B "inquiry on"
+is the Classic half, and is not a switch: a scan runs until it is
+stopped and hears whatever advertises, while an inquiry runs for a
+length the controller is told \- about ten seconds \- and then says it
+is over, which is when
+.B state
+says
+.B "inquiry off"
+again.
+.B "inquiry off"
+cancels one early.  What answers appears under
+.B remote
+like anything else, with
+.B type
+saying
+.BR classic .
+A device that sent an extended inquiry response has its name already;
+one that did not is asked, over a page that does not become a
+connection, so its name turns up a moment after it does.
 .B "connect \fIaddr\fP [public|random]",
 .BI "disconnect " addr
 and
@@ -270,7 +290,13 @@ or
 .B none
 for a device that has not distributed an identity key),
 .B type
-(public or random),
+(public or random, or
+.B classic
+followed by
+.BI class " hhhhhh"
+for a device heard on an inquiry, whose address is a BD_ADDR and has
+no LE type, and whose class of device is the only thing an inquiry
+says about what it is),
 .B rssi
 and
 .B name

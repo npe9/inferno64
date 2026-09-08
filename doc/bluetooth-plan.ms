@@ -325,11 +325,38 @@ serves an empty report map and
 .CW bthid
 finds nothing to read, which is the other half of the same question.
 .IP 2.
-.B "Bluetooth Classic, at all."
-Nothing of it exists.  Inquiry, remote name requests, BR/EDR
-connections, link keys and secure simple pairing; and L2CAP's
+.B "Bluetooth Classic."
+Finding devices is done.
+.CW "inquiry on"
+runs an inquiry \(em which is not a scan: the controller is told how
+long to inquire for and says when it is over, so it ends by itself and
+.CW state
+says
+.CW "inquiry off"
+again.  What answers appears under
+.CW remote
+beside the LE devices, with
+.CW type
+reading
+.CW classic
+and the class of device it answered with; its address is a BD_ADDR and
+never rotates, so there is no identity to resolve behind it.  A device
+that sent an extended inquiry response has its name in it already; one
+that did not is asked, with a Remote Name Request \(em a page that does
+not become a connection \(em in a process of its own, because a page
+takes as long as it takes and no lock may be held across it.
+.PP
+Inquiry Result and Inquiry Result with RSSI are read separately rather
+than as one event with a field added: the plain one has two reserved
+bytes after the page scan repetition mode and the other has one, so
+the class, the clock offset and everything after them sit a byte
+apart.  Getting that wrong reads a class of device out of the middle
+of an address and is invisible until something depends on it.
+.PP
+What is left of Classic is everything a connection needs: BR/EDR
+connections, link keys and secure simple pairing, and L2CAP's
 connection-oriented channels, which LE never needed and which
-everything Classic is built on.
+everything above Classic is built on.
 .IP 3.
 .B SDP .
 Both halves.  Nothing Classic can be found without it.
@@ -366,10 +393,12 @@ and none of it is verified.
 The bench, and what it cannot cover
 .PP
 .CW scripts/bthci.py
-models an LE controller and only that.  It has no Classic side, no
-SCO, no Secure Connections, and it never rotates an address, so
-everything in the two sections above that is not LE-and-legacy needs
-the model extended before it can be tested at all.  And a model is not
+models an LE controller and only that.  It answers an inquiry and a remote name
+request and nothing else of Classic \(em no BR/EDR connection, no link
+key, nothing above one \(em and it has no SCO, no Secure Connections,
+and it never rotates an address, so everything in the two sections
+above that is not LE-and-legacy needs the model extended before it can
+be tested at all.  And a model is not
 a radio: nothing here has met real controller timing, a vendor's
 firmware, or the air.  The first real device will find things this
 cannot.

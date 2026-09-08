@@ -30,6 +30,15 @@ get24(a: array of byte, o: int): int
 	return int a[o] | (int a[o+1] << 8) | (int a[o+2] << 16);
 }
 
+put24(a: array of byte, o: int, v: int)
+{
+	if(o + 3 > len a)
+		return;
+	a[o] = byte v;
+	a[o+1] = byte (v >> 8);
+	a[o+2] = byte (v >> 16);
+}
+
 get32(a: array of byte, o: int): int
 {
 	if(o + 4 > len a)

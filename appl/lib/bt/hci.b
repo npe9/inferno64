@@ -35,7 +35,12 @@ Oginfo:		con 16r04;
 Ogle:		con 16r08;
 
 # events
+Einqcomplete:	con 16r01;
+Einqresult:	con 16r02;
 Edisconn:	con 16r05;
+Eremotename:	con 16r07;
+Einqresultrssi:	con 16r22;
+Eextinqresult:	con 16r2f;
 Eencchange:	con 16r08;
 Ecmdcomplete:	con 16r0e;
 Ecmdstatus:	con 16r0f;
@@ -102,6 +107,22 @@ start(tr: Bttransport): (ref Ctlr, string)
 	# a link nothing owns stays up on the controller for ever.
 	#
 	x.inc = chan[4] of ref Conn;
+	#
+	# Buffered like the advertisement channel and for the same
+	# reason: an inquiry answers in a burst, several devices in one
+	# event, and a reader that was busy for that moment should not
+	# lose them.
+	#
+	x.inqc = chan[16] of ref Inq;
+	#
+	# A remote name request answers with a Command Status and then,
+	# much later, an event -- the same shape as a connection, and
+	# handled the same way: its own lock so there is only ever one
+	# outstanding, and a channel buffered by one so the answer is
+	# not lost in the window between the status and the wait.
+	#
+	x.namec = chan[1] of (string, string);
+	x.namelock = chan[1] of int;
 	x.statelock = chan[1] of int;
 	x.statelock <-= 1;
 	x.aclsize = 27;
@@ -119,6 +140,7 @@ start(tr: Bttransport): (ref Ctlr, string)
 	#
 	x.scodrop = 0;
 	x.adv = 0;
+	x.inq = 0;
 	x.running = 1;
 	spawn reader(x);
 
@@ -448,6 +470,208 @@ lescan(x: ref Ctlr, on: int): string
 }
 
 #
+# Inquiry.  Unlike a scan this is not a switch: the controller is told
+# how long to inquire for and says when it is done, so "on" starts one
+# and Inquiry Complete ends it.  The length is in 1.28 second units
+# and 8 of them -- about ten seconds -- is what every stack uses,
+# because a device only answers an inquiry in the windows its own
+# inquiry scan opens and a shorter one misses devices rather than
+# finding them faster.
+#
+Inqlen:		con 8;
+Inqmax:		con 0;		# responses: 0 is "as many as arrive"
+
+inquiry(x: ref Ctlr, on: int): string
+{
+	if(!on){
+		if(!x.inq)
+			return nil;
+		(st, nil, e) := cmd(x, bt->opcode(Oglink, 16r0002), nil);
+		if(e != nil)
+			return e;
+		if(st != 0)
+			return bt->hcierr(st);
+		#
+		# Inquiry Cancel answers with a Command Complete and no
+		# Inquiry Complete follows it, so the end has to be said
+		# here or a reader waits for ever.
+		#
+		x.inq = 0;
+		alt {
+		x.inqc <-= nil =>	;
+		* =>	;
+		}
+		return nil;
+	}
+	if(x.inq)
+		return nil;
+	p := array[5] of byte;
+	bt->put24(p, 0, Giac);
+	p[3] = byte Inqlen;
+	p[4] = byte Inqmax;
+	x.inq = 1;
+	#
+	# Inquiry answers with a command status and not a command
+	# complete: the results and the completion are events.
+	#
+	(st, nil, e) := cmd(x, bt->opcode(Oglink, 16r0001), p);
+	if(e != nil || st != 0){
+		x.inq = 0;
+		if(e != nil)
+			return e;
+		return bt->hcierr(st);
+	}
+	return nil;
+}
+
+inquiring(x: ref Ctlr): int
+{
+	return x.inq;
+}
+
+inqs(x: ref Ctlr): chan of ref Inq
+{
+	return x.inqc;
+}
+
+#
+# Inquiry Result and Inquiry Result with RSSI are not the same event
+# with one field added: the plain one has two reserved bytes after the
+# page scan repetition mode and the other has one, so everything after
+# them sits a byte apart.  Both carry a count and then that many
+# fixed-size records, which is why the fields are strided rather than
+# read in order.
+#
+#	0x02	addr 0..5  psrm 6  rsvd 7  rsvd 8  class 9..11  clock 12..13
+#	0x22	addr 0..5  psrm 6  rsvd 7  class 8..10  clock 11..12  rssi 13
+#
+inqresult(x: ref Ctlr, b: array of byte, rssi: int)
+{
+	if(len b < 1)
+		return;
+	n := int b[0];
+	sz := 14;			# the same length either way
+	if(len b < 1 + n * sz)
+		return;
+	for(i := 0; i < n; i++){
+		o := 1 + i * sz;
+		q := ref Inq;
+		q.addr = array[Bt->Baddrlen] of byte;
+		q.addr[0:] = b[o:o+Bt->Baddrlen];
+		q.psrm = int b[o+6];
+		q.eir = nil;
+		if(rssi){
+			q.class = bt->get24(b, o+8);
+			q.clock = bt->get16(b, o+11);
+			q.rssi = sext8(int b[o+13]);
+		} else {
+			q.class = bt->get24(b, o+9);
+			q.clock = bt->get16(b, o+12);
+			q.rssi = 127;	# the controller did not say
+		}
+		offer(x, q);
+	}
+}
+
+# an RSSI is a signed byte in dBm
+sext8(v: int): int
+{
+	if(v & 16r80)
+		return v - 256;
+	return v;
+}
+
+#
+# The extended form is one device per event with 240 bytes of
+# advertising-shaped data after it, which is where a device that sends
+# one puts its name -- so an inquiry can find a name without a page.
+#
+extinqresult(x: ref Ctlr, b: array of byte)
+{
+	if(len b < 15)
+		return;
+	q := ref Inq;
+	q.addr = array[Bt->Baddrlen] of byte;
+	q.addr[0:] = b[1:1+Bt->Baddrlen];
+	q.psrm = int b[7];
+	q.class = bt->get24(b, 9);
+	q.clock = bt->get16(b, 12);
+	q.rssi = sext8(int b[14]);
+	q.eir = nil;
+	if(len b > 15)
+		q.eir = b[15:];
+	offer(x, q);
+}
+
+offer(x: ref Ctlr, q: ref Inq)
+{
+	alt {
+	x.inqc <-= q =>	;
+	* =>	;	# nobody is inquiring: the results are nobody's
+	}
+}
+
+#
+# The name of a Classic device.  It is not in what the device answered
+# an inquiry with unless the device sent an extended inquiry response,
+# so it is asked for: a page that does not become a connection.
+#
+# It answers with a Command Status and then an event, so it cannot go
+# through cmd() alone -- cmd() returns on the status, which says only
+# that the page has started.  It takes a lock of its own for the same
+# reason a connection does: nothing filters which answer a waiter
+# takes, and with the lock held there is only one to take.
+#
+Nametimeout:	con 10000;	# ms; a page that finds nothing takes about five
+
+remotename(x: ref Ctlr, addr: array of byte, psrm, clock: int): (string, string)
+{
+	if(len addr != Bt->Baddrlen)
+		return (nil, "not an address");
+	p := array[10] of byte;
+	p[0:] = addr;
+	p[6] = byte psrm;
+	p[7] = byte 0;			# reserved
+	bt->put16(p, 8, clock);
+
+	x.namelock <-= 1;
+	r := doname(x, p);
+	<-x.namelock;
+	return r;
+}
+
+doname(x: ref Ctlr, p: array of byte): (string, string)
+{
+	# an answer an attempt that gave up left behind is not this
+	# one's, for the same reason as doleconnect's
+	alt {
+	<-x.namec =>	;
+	* =>		;
+	}
+	(st, nil, e) := cmd(x, bt->opcode(Oglink, 16r0019), p);
+	if(e != nil)
+		return (nil, e);
+	if(st != 0)
+		return (nil, bt->hcierr(st));
+	tick := chan[1] of int;
+	spawn timer(Nametimeout, tick);
+	alt {
+	(nm, err) := <-x.namec =>
+		return (nm, err);
+	<-tick =>
+		return (nil, "no answer to a remote name request");
+	}
+}
+
+offername(x: ref Ctlr, nm, err: string)
+{
+	alt {
+	x.namec <-= (nm, err) =>	;
+	* =>	;	# nobody asked, or whoever did has given up
+	}
+}
+
+#
 # LE Create Connection answers with a command status; the connection
 # itself arrives later as an LE Connection Complete event
 #
@@ -744,6 +968,42 @@ event(x: ref Ctlr, p: array of byte)
 				* =>	;	# the controller gave back more than it took
 				}
 		}
+	Einqcomplete =>
+		#
+		# an inquiry ends by itself, at the length the
+		# controller was given.  A nil on the channel is what
+		# says so, and it is what stops a reader waiting for a
+		# result that is not coming.
+		#
+		x.inq = 0;
+		alt {
+		x.inqc <-= nil =>	;
+		* =>	;	# nobody is listening
+		}
+	Einqresult =>
+		inqresult(x, b, 0);
+	Einqresultrssi =>
+		inqresult(x, b, 1);
+	Eextinqresult =>
+		extinqresult(x, b);
+	Eremotename =>
+		if(len b < 7)
+			return;
+		if(int b[0] != 0){
+			offername(x, nil, bt->hcierr(int b[0]));
+			return;
+		}
+		#
+		# up to 248 bytes padded with zeroes, which is not a
+		# string until the padding comes off
+		#
+		nm := b[7:];
+		for(i := 0; i < len nm; i++)
+			if(nm[i] == byte 0){
+				nm = nm[0:i];
+				break;
+			}
+		offername(x, string nm, nil);
 	Edisconn =>
 		if(len b < 4)
 			return;

@@ -20686,17 +20686,279 @@ an uninitialised integer does, and why the earlier note here reaching
 for "the phases whose timing is marginal" was reaching for the wrong
 kind of explanation.
 .NH 2
+The bonds, taken out of btfs
+.PP
+A long term key was a file
+.CW btfs
+wrote.  That is the wrong shape for it, and the brief said so: the key
+outlives the
+.CW btfs
+that made it, it belongs to the pair of devices rather than to the
+radio the pairing went through, and it is the one thing in the stack
+that must not be readable by everything that can see a radio.  So it
+is
+.CW btkeyfs
+now, serving
+.CW bonds
+and
+.CW ctl ,
+both 0600 and owned by whoever started it, and
+.CW "btfs -K"
+is a client of it that keeps no key file at all.
+.PP
+The text is the same in all three places \(em the served file, the
+store on disk, and what
+.CW btfs
+shows in
+.CW /net/bt/N/bonds \(em
+because one piece of code writes it, which is also what lets a key
+file written by
+.CW "btfs -k"
+be a store
+.CW btkeyfs
+is started on.
+It mounts on
+.CW /net/btkeys
+and not
+.CW /net/bt/keys :
+.CW btfs
+mounts on
+.CW /net/bt
+with
+.CW MREPL
+and would take anything underneath it away when it did.  That was
+found by writing the obvious default down and then reading what
+.CW btfs
+does.
+.PP
+Two bugs came out of it, both the same class as the
+.CW scodrop
+one above.
+.CW smp 's
+.CW parse()
+built its
+.CW Bond
+with
+.CW "ref Bond"
+and left
+.CW ediv
+as heap garbage on any line that did not carry one \(em which is every
+line written before diversifiers were stored, and every line for a
+peer bonded without them.  And
+.CW writekeys()
+used
+.CW create()
+on every save, so a store written 0600 by one user could not be
+written a second time by another; under
+.CW emu
+that is every save after the first, because the tree belongs to
+whoever checked it out and
+.CW emu
+runs as
+.CW inferno .
+It truncates what is there now and creates only when there is nothing,
+which also leaves whatever mode an administrator gave the file alone.
+.PP
+The bench runs the whole pair and rejoin pair of phases over the
+service as well as over a key file, with the same assertions, and a
+third phase drives the store alone.  The controls all bite: an empty
+store leaves the rejoin with no bond; a store patched to append
+reports three bonds where two are wanted; a store patched to take a
+line with no key in it is caught by the phase.
+.NH 2
+The report protocol, and two files that shared a name
+.PP
+A HID device that will not do the boot protocol was found and then
+left alone, exactly as
+.CW usbd
+leaves one.  Now its layout is read off it.
+.CW appl/lib/hidreport.b
+walks a HID report descriptor into a report per report id per kind,
+each holding the fields the descriptor laid down \(em a usage, a bit
+offset, a width, a count \(em with a cursor that advances for constant
+padding too, because padding takes up room in a report whether or not
+anything reads it.  It is a library for the same reason
+.CW hidboot
+is: two transports carry the same reports, and a parser with two homes
+is a parser that will come to disagree with itself.
+.PP
+Two things in
+.CW btfs
+had to change before
+.CW bthid
+could use it, and neither is about HID.  A GATT service may hold the
+same UUID twice \(em HID over GATT gives every report the same one \(em
+and
+.CW btfs
+made two files of one name, which is one file a client can reach and
+one it cannot.  When a UUID occurs more than once, every
+characteristic with it is now named
+.CW uuid.hhhh
+after its value handle; one that occurs once keeps its bare name, so
+nothing that already worked moved.  And a characteristic's
+descriptors, other than the client configuration, are now files beside
+it: a Report Reference is a value a client has to read, and there was
+no way to read one.
+.PP
+The phase that tests it is the boot phase again with the same
+assertions \(em the same keystrokes, the same movement \(em against a
+device with no boot reports, no Protocol Mode, and two Report
+characteristics that give the mouse the lower report id and put it
+first.  Nothing but the map and the descriptors says which is which,
+so a host that guessed by order gets them exactly backwards, and the
+control
+.RN ( "--hidswap" ,
+which tells the two Report Reference descriptors the wrong way round
+while sending identical bytes) shows that: the keyboard's reports
+arrive as pointer motion.
+.PP
+Ahead of the phase, the parser is run against a descriptor that is not
+this bench's: the boot keyboard descriptor from appendix B of the HID
+specification, which must come out as the boot layout \(em eight
+modifier bits at bit 0, six key codes at bit 16, five LED bits in a
+separate output report.  That path has no report ids in it and an
+input and an output report both numbered 0, neither of which the
+model's device has.  Making the parser skip constant fields when
+advancing its cursor makes that check fail three ways, which is what
+says it is checking something.
+.PP
+One thing was fixed by reading the program back rather than by a
+failure:
+.CW bthid
+wrote 0 to Protocol Mode before knowing whether the device had any
+boot report at all.  Whether a device has a boot protocol is a
+question about its boot reports \(em HID over GATT makes Protocol Mode
+mandatory only for a device that supports boot \(em and writing 0 to
+one that has none puts it in a mode it cannot report in.  It looks for
+the reports first now.
+.NH 2
+Classic, as far as finding a device
+.PP
+.CW "inquiry on"
+runs a Classic inquiry.  It is not a scan, and the difference is the
+whole shape of the code: a scan runs until it is stopped and hears
+whatever advertises, while an inquiry runs for a length the controller
+is told and then says it is over, so it ends by itself and
+.CW state
+says
+.CW "inquiry off"
+again.  What answers appears under
+.CW remote
+beside the LE devices, with
+.CW type
+reading
+.CW classic
+and the class of device; its address is a BD_ADDR and never rotates,
+so there is no identity to resolve behind it.
+.PP
+A name is not in what a device answered with unless it sent an
+extended inquiry response, so one that did not is asked \(em a Remote
+Name Request, which is a page that does not become a connection.  That
+answers with a Command Status and then, much later, an event, so it
+cannot go through
+.CW cmd()
+alone:
+.CW cmd()
+returns on the status, which says only that the page has started.  It
+has the same shape as a connection and is built the same way, a lock
+of its own so there is only ever one outstanding and a channel
+buffered by one so the answer is not lost in the window between the
+status and the wait.  The page itself runs in a process of its own,
+holding no device lock, because it takes as long as it takes.
+.PP
+One error was caught in the writing, in the stack and in the model at
+once, which is exactly the sort a single reader introduces on both
+sides of a test.  Inquiry Result and Inquiry Result with RSSI are not
+one event with a field appended.  In the core specification, volume 4
+part E, 7.7.2 has two reserved bytes after the page scan repetition
+mode and 7.7.33 has one, so the class of device, the clock offset and
+the RSSI
+all sit a byte apart between them.  The first version read both at the
+plain event's offsets and had the model emitting the clock and the
+RSSI the wrong way round; a class of device would have come out of the
+middle of an address, and the two mistakes would have cancelled in the
+one place they were tested together.
+.NH 2
+A native backtrace from inside the collector
+.PP
+The bench passes under
+.CW emu
+and faults intermittently under
+.CW emu-g ,
+which is not the compiler \(em both are run with
+.CW -c0
+\(em but the console configuration, built without
+.CW draw ,
+.CW tk
+and
+.CW freetype .
+Run singly the phases that fail do not fail: the pair phase passed 8
+of 8 on each build, and the H5 duplicate-packet phase 5 of 5 on the
+console one.  It shows up only under a whole run of thirty-odd
+phases.
+.PP
+One capture is worth more than the rest of them, because it is a real
+frame-pointer backtrace rather than a conservative stack scan \(em
+which the heap hunt above says is what would actually settle the GC
+lead:
+.RS
+.nf
+.CW "0   emu-g                     trapmemref + 164"
+.CW "1   libsystem_platform.dylib  _sigtramp"
+.CW "2   emu-g                     rungc + 1088"
+.CW "3   emu-g                     vmachine + 596"
+.CW "SYS: process dis faults: dereference of nil"
+.fi
+.RE
+.PP
+.CW vmachine 's
+own
+.CW "rungc(isched.head)"
+call, and the fault inside
+.CW rungc
+itself rather than in
+.CW rootset()
+or
+.CW markheap() .
+That is a different place from the one this hunt already ruled out:
+.CW checkmarkptr()
+established that mark was not blindly trusting a garbage pointer word,
+and this is the block walk \(em
+.CW ptr->magic ,
+.CW h->t ,
+.CW t->mark ,
+.CW B2NB(ptr)
+\(em where a corrupted block header sends the walk somewhere that is
+not mapped.  No Limbo program can do that; only a broken heap can.
+.PP
+It is not diagnosed here and no claim is made about what causes it.
+Three whole runs of the bench under
+.CW emu-g
+passed earlier in the same session and one of three passed after it,
+which is not a rate anything can be concluded from either way; and the
+Bluetooth work in between gave two adts new fields and added a file
+per GATT descriptor, which moves the heap about and makes the
+collector run over more objects.  So it is neither offered as caused
+by that work nor as unrelated to it.  What is recorded is the
+backtrace, because the record above asked for exactly this and did not
+have it.
+.NH 2
 What is not there
 .PP
-Bluetooth Classic is not implemented at all: no inquiry, no SDP, no
-RFCOMM, no HID, no PAN, no audio.  L2CAP here is the fixed channels an
+Of Bluetooth Classic there is inquiry and a remote name request and
+nothing else: no connection, no link key, no secure simple pairing,
+and so no SDP, no RFCOMM, no Classic HID, no PAN and no audio, all of
+which are built on a connection.  L2CAP here is the fixed channels an
 LE link uses, the framing under them, and LE credit-based channels;
 the enhanced form that opens several at once and can reconfigure them
-is not here.  Pairing is LE legacy Just Works, which
+is not here, and neither is the connection-oriented channel Classic
+uses.  Pairing is LE legacy Just Works, in both directions, which
 gives an encrypted link and a bond and no protection whatever against
 a man in the middle; LE Secure Connections needs P-256, which is not
-here, and a device that insists on it is told so.  Only the initiating
-side exists \(em this cannot advertise and cannot be connected to.
+here, and a device that insists on it is told so.  Both roles exist
+now \(em this advertises, answers a link a peer opens, serves a GATT
+database on it and pairs as the responder \(em but a peripheral that
+needs passkey entry or numeric comparison is not something it can be.
 .PP
 The USB transport is written and compiles and has never moved a
 packet.  There is no USB Bluetooth controller on the bench and no

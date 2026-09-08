@@ -301,6 +301,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	# keyboard by which characteristic it is; a report protocol one
 	# says it only in its report map.
 	#
+	"classic" =>
+		classic();
+		return;
 	"hid" =>
 		hid();
 		return;
@@ -1398,6 +1401,123 @@ checkmap(): int
 		return 0;
 	}
 	sys->print("BT: the boot keyboard descriptor parses to the boot layout\n");
+	return 1;
+}
+
+#
+# A Classic inquiry.  Nothing LE runs in this phase: no scan is
+# started, so everything that turns up in remote/ got there by
+# answering an inquiry, which is what makes counting them an
+# assertion.
+#
+# The two devices are deliberately different.  One sends an extended
+# inquiry response with its name in it, so the name is there without
+# asking; the other sends the plain result with RSSI and has to be
+# paged for its name.  Both shapes are real and a stack that handles
+# only the first finds half a room.
+#
+Ckbd:	con "665544332211";
+Chead:	con "CCBBAA998877";
+
+classic()
+{
+	if((e := writefile(mnt + "/0/ctl", "inquiry on")) != nil){
+		sys->print("BT: FAILED: inquiry on: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	sys->print("BT: inquiry on\n");
+	#
+	# An inquiry ends by itself.  Wait for the controller to say so
+	# rather than for a fixed time: the state file is where that
+	# shows, and a phase that slept instead would pass on a stack
+	# that never noticed the end.
+	#
+	done := 0;
+	for(i := 0; i < 40 && !done; i++){
+		sys->sleep(500);
+		if(hasstr(readfile(mnt + "/0/state"), "inquiry off"))
+			done = 1;
+	}
+	if(!done){
+		sys->print("BT: FAILED: the inquiry never ended\n");
+		sys->print("BT: done\n");
+		return;
+	}
+	show(mnt + "/0/state");
+
+	#
+	# The LE devices the startup above found are in this directory
+	# too, so the count that means anything is how many of them read
+	# as Classic: two, and only the two that answered the inquiry.
+	#
+	ok := 1;
+	remotes := lsdir(mnt + "/0/remote");
+	nc := 0;
+	for(l := remotes; l != nil; l = tl l){
+		t := trim(readfile(mnt + "/0/remote/" + hd l + "/type"));
+		sys->print("BT: %s type %s\n", hd l, t);
+		if(len t >= 7 && t[0:7] == "classic")
+			nc++;
+	}
+	sys->print("BT: remote/ holds %d devices, %d of them Classic\n",
+		len remotes, nc);
+	if(nc != 2){
+		sys->print("BT: FAILED: an inquiry that heard two devices left %d\n", nc);
+		ok = 0;
+	}
+	ok = ok & check(Ckbd, "classic class 2c0104", "classic-keyboard");
+	ok = ok & check(Chead, "classic class 200404", "classic-headset");
+	if(ok)
+		sys->print("BT: an inquiry found two Classic devices and both names\n");
+
+	#
+	# And the cancel.  An inquiry that is left alone finishes by
+	# itself, so without starting one in order to stop it nothing
+	# here would ever send an Inquiry Cancel; the controller has to
+	# be told, and it is the only thing that ends an inquiry early.
+	#
+	if((e = writefile(mnt + "/0/ctl", "inquiry on")) != nil){
+		sys->print("BT: FAILED: a second inquiry: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	sys->sleep(300);
+	if((e = writefile(mnt + "/0/ctl", "inquiry off")) != nil){
+		sys->print("BT: FAILED: inquiry off: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	sys->sleep(500);
+	if(!hasstr(readfile(mnt + "/0/state"), "inquiry off"))
+		sys->print("BT: FAILED: state still says an inquiry is running\n");
+	else
+		sys->print("BT: an inquiry was cancelled before it ended\n");
+	sys->print("BT: done\n");
+}
+
+check(dir, want, name: string): int
+{
+	d := mnt + "/0/remote/" + dir;
+	t := trim(readfile(d + "/type"));
+	if(t != want){
+		sys->print("BT: FAILED: %s type reads %q, wanted %q\n", dir, t, want);
+		return 0;
+	}
+	#
+	# The name may still be on its way: one of these is paged for,
+	# and a page takes as long as it takes.
+	#
+	n := "";
+	for(i := 0; i < 20 && n != name; i++){
+		n = trim(readfile(d + "/name"));
+		if(n != name)
+			sys->sleep(500);
+	}
+	if(n != name){
+		sys->print("BT: FAILED: %s name reads %q, wanted %q\n", dir, n, name);
+		return 0;
+	}
 	return 1;
 }
 

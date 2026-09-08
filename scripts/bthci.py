@@ -200,6 +200,24 @@ hidswap = '--hidswap' in sys.argv
 # quietly assumed a layout would carry on regardless.
 hidnomap = '--hidnomap' in sys.argv
 
+# --classic: answer a Classic inquiry.  Two devices: one that sends an
+# extended inquiry response with its name in it, and one that sends the
+# plain Inquiry Result with RSSI and has to be asked its name over a
+# Remote Name Request.  Both shapes are real and a stack that only
+# handles the first finds half the room.
+#
+# This is the only Classic thing the model does.  There is no BR/EDR
+# connection, no link key and no L2CAP over one: inquiry and the name
+# behind it stand alone, which is why they can be modelled without any
+# of that.
+classic = '--classic' in sys.argv
+
+# --noeir: with --classic, neither device sends an extended inquiry
+# response, so both names have to be paged for.  It is the control for
+# the name request: a stack that read the name out of the inquiry
+# result and never asked would find one name here and should find two.
+noeir = '--noeir' in sys.argv
+
 # --h5: frame everything in H5, the three-wire transport, instead of
 # H4.  SLIP delimiters and escapes, a four byte header with sequence
 # and acknowledgement numbers, and the sync/configure handshake before
@@ -590,6 +608,18 @@ if hidreport:
     CCCD[0x0085] = 0
     CCCD[0x0089] = 0
 
+#
+# The two Classic devices an inquiry finds: BD_ADDR, class of device,
+# page scan repetition mode, clock offset, and the name each answers
+# with.  A BD_ADDR goes on the wire least significant byte first, the
+# same way an LE address does.
+#
+CLASSICDEVS = [
+    (bytes.fromhex('665544332211')[::-1], 0x2c0104, 0x01, 0x1234, 'classic-keyboard', True),
+    (bytes.fromhex('ccbbaa998877')[::-1], 0x200404, 0x02, 0x4321, 'classic-headset', False),
+]
+
+
 class Model:
     def __init__(self, conn):
         self.c = conn
@@ -876,6 +906,33 @@ class Model:
             self.negative = True
             print('bthci: the peripheral has no key for that request', flush=True)
             self.cmd_complete(op, bytes([0]) + struct.pack('<H', handle))
+        elif op == 0x0401 and classic:            # Inquiry
+            lap = params[0] | (params[1] << 8) | (params[2] << 16)
+            if lap != 0x9e8b33:
+                print('bthci: inquiry on LAP %#08x, not the GIAC' % lap, flush=True)
+            print('bthci: inquiry, %d units' % params[3], flush=True)
+            # a command status, not a complete: the answers are events
+            self.cmd_status(op)
+            self.inquiring = True
+            threading.Thread(target=self.inquire, daemon=True).start()
+        elif op == 0x0402 and classic:            # Inquiry Cancel
+            print('bthci: inquiry cancelled', flush=True)
+            self.inquiring = False
+            self.cmd_complete(op, bytes([0]))
+        elif op == 0x0419 and classic:            # Remote Name Request
+            addr = params[0:6]
+            self.cmd_status(op)
+            name = None
+            for a, cls, psrm, clk, nm, eir in CLASSICDEVS:
+                if a == addr:
+                    name = nm
+            if name is None:
+                # page timeout: a device that is not there
+                self.event(0x07, bytes([0x04]) + addr + bytes(248))
+                return
+            print('bthci: name asked for %s' % addr[::-1].hex(), flush=True)
+            n = name.encode()[:248]
+            self.event(0x07, bytes([0]) + addr + n + bytes(248 - len(n)))
         else:
             log('unknown command %#06x' % op)
             self.cmd_complete(op, bytes([0x01]))     # unknown HCI command
@@ -1701,6 +1758,42 @@ class Model:
                      + bytes([b, dx & 0xff, dy & 0xff, 0]))
             time.sleep(0.2)
         print('bthci: the keyboard and the mouse have reported', flush=True)
+
+    #
+    # An inquiry runs for a while and then says it is over.  The
+    # results come first and spread out, because a device answers only
+    # in the windows its own inquiry scan opens and they do not all
+    # answer at once; the completion is what ends it.
+    #
+    def inquire(self):
+        for addr, cls, psrm, clk, name, eir in CLASSICDEVS:
+            time.sleep(0.4)
+            if not self.inquiring:
+                return
+            if eir and not noeir:
+                # Extended Inquiry Result: one device, and 240 bytes
+                # of advertising-shaped data with the name in it
+                n = name.encode()
+                data = bytes([len(n) + 1, 0x09]) + n
+                data += bytes(240 - len(data))
+                self.event(0x2f, bytes([1]) + addr + bytes([psrm, 0])
+                           + struct.pack('<I', cls)[:3]
+                           + struct.pack('<H', clk) + bytes([0xc0]) + data)
+            else:
+                # Inquiry Result with RSSI: no name, so the host has
+                # to ask for it.  One reserved byte after the page
+                # scan repetition mode here and two in the plain
+                # Inquiry Result, so the class, the clock and the
+                # RSSI do not sit where they do there -- but a record
+                # is fourteen bytes either way.
+                self.event(0x22, bytes([1]) + addr + bytes([psrm, 0])
+                           + struct.pack('<I', cls)[:3]
+                           + struct.pack('<H', clk) + bytes([0xc0]))
+        time.sleep(0.6)
+        if self.inquiring:
+            self.inquiring = False
+            self.event(0x01, bytes([0]))
+            print('bthci: inquiry complete', flush=True)
 
     # ------------------------------------------------ SMP
     def smp_in(self, p):

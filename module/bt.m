@@ -45,6 +45,7 @@ Bt: module
 	get24:	fn(a: array of byte, o: int): int;
 	get32:	fn(a: array of byte, o: int): int;
 	put16:	fn(a: array of byte, o: int, v: int);
+	put24:	fn(a: array of byte, o: int, v: int);
 	put32:	fn(a: array of byte, o: int, v: int);
 
 	# a Bluetooth address is six bytes, least significant first on
@@ -123,6 +124,30 @@ Hci: module
 		data:	array of byte;
 	};
 
+	#
+	# What an inquiry heard.  This is the Classic side of Adv, and
+	# the differences are the whole difference between the two
+	# radios: a BD_ADDR is always public, so there is no address
+	# type; a device answers an inquiry rather than advertising
+	# unasked, so there is no advertisement to carry a name and the
+	# name has to be asked for; and paging it afterwards needs the
+	# page scan repetition mode and the clock offset it answered
+	# with, which is why they are kept rather than being a detail of
+	# the event.
+	#
+	Inq: adt {
+		addr:	array of byte;
+		class:	int;		# class of device
+		psrm:	int;		# page scan repetition mode
+		clock:	int;		# clock offset
+		rssi:	int;		# 127 when the controller did not say
+		eir:	array of byte;	# extended inquiry response, or nil
+	};
+
+	# the General Inquiry Access Code, the lower address part every
+	# discoverable device answers an inquiry on
+	Giac:	con 16r9e8b33;
+
 	# An L2CAP frame being reassembled on one link, and a command's
 	# answer.  Both are the reader process's business and nobody
 	# else's; they are here rather than private to hci.b only
@@ -172,6 +197,10 @@ Hci: module
 		aclbufs:	int;
 		adv:		int;		# is it advertising
 		inc:		chan of ref Conn;	# links a peer opened
+		inqc:		chan of ref Inq;	# what an inquiry hears
+		inq:		int;		# is an inquiry running
+		namec:		chan of (string, string);
+		namelock:	chan of int;
 	};
 
 	Conn: adt {
@@ -244,6 +273,27 @@ Hci: module
 
 	lescan:	fn(x: ref Ctlr, on: int): string;
 	advs:	fn(x: ref Ctlr): chan of ref Adv;
+
+	#
+	# Classic inquiry.  It is not a scan: a scan runs until it is
+	# stopped and hears whatever advertises, an inquiry runs for a
+	# length the controller is told and then says it is over.  So
+	# inquiry(x, 1) starts one and the controller ends it; the
+	# results arrive on inqs() meanwhile, and a nil on that channel
+	# is the Inquiry Complete.  inquiry(x, 0) cancels one early.
+	#
+	inquiry:	fn(x: ref Ctlr, on: int): string;
+	inquiring:	fn(x: ref Ctlr): int;
+	inqs:		fn(x: ref Ctlr): chan of ref Inq;
+
+	#
+	# A Classic device's name is not in what it answered an inquiry
+	# with unless it sent an extended inquiry response; it is asked
+	# for, over a page that does not become a connection.  psrm and
+	# clock are what the inquiry said, and are what make the page
+	# short rather than a blind search.
+	#
+	remotename:	fn(x: ref Ctlr, addr: array of byte, psrm, clock: int): (string, string);
 
 	# Advertising, which is how this side is found at all.  The
 	# parameters are set once and the data can be changed while it
