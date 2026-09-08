@@ -218,6 +218,15 @@ Radio: adt {
 	devlock:	chan of int;
 	bonds:	list of ref Bond;
 	bondlock:	chan of int;
+	#
+	# What the controller says came of authenticating a BR/EDR
+	# link, and the lock that makes there be one at a time.  The
+	# event names a handle this side may already have given up on,
+	# so what identifies the answer is that there is only one
+	# question outstanding.
+	#
+	authc:	chan of string;
+	authlock:	chan of int;
 };
 
 radios:	list of ref Radio;
@@ -261,6 +270,10 @@ keysrv:		string;
 # behaviour.
 #
 ageout:	int	= 300;
+
+# how long the controller has to finish authenticating a BR/EDR link,
+# which includes however long the peer takes to agree
+Authwait:	con 30000;
 Reapevery:	con 5;	# seconds between sweeps
 mtpt:	con "/net/bt";
 
@@ -404,6 +417,9 @@ init(nil: ref Draw->Context, argv: list of string)
 		r.devlock <-= 1;
 		r.bondlock = chan[1] of int;
 		r.bondlock <-= 1;
+		r.authc = chan[1] of string;
+		r.authlock = chan[1] of int;
+		r.authlock <-= 1;
 		r.db = gattsrv->newdb();
 		r.t = load Bttransport tpath;
 		if(r.t == nil)
@@ -428,6 +444,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	for(al := radios; al != nil; al = tl al){
 		spawn advproc(hd al);
 		spawn inqproc(hd al);
+		spawn secproc(hd al);
 		spawn inproc(hd al);
 	}
 	spawn reaper();
@@ -1991,6 +2008,17 @@ pair(d: ref Dev): string
 		d.lock <-= 1;
 		return "not connected";
 	}
+	#
+	# Two pairings with nothing in common but the word.  On LE it is
+	# SMP, on the link, in this process; on BR/EDR the controller
+	# does it and asks questions on the way, which secproc answers,
+	# so all this does is ask for it and wait for the answer.
+	#
+	if(d.conn.classic){
+		c := d.conn;
+		d.lock <-= 1;
+		return classicpair(d, c);
+	}
 	(b, e) := smp->pair(d.conn, d.mux, Smp->Ionoio);
 	d.lock <-= 1;
 	if(e != nil)
@@ -2012,6 +2040,149 @@ pair(d: ref Dev): string
 		d.r.devlock <-= 1;
 	}
 	return nil;
+}
+
+#
+# Pair a BR/EDR link.  The controller runs it: this asks, secproc
+# answers what the controller asks on the way, and the answer arrives
+# as an Authentication Complete.  Then the link is encrypted, because
+# a link that is authenticated and not encrypted is one where the key
+# was agreed and never used.
+#
+classicpair(d: ref Dev, c: ref Hci->Conn): string
+{
+	r := d.r;
+	<-r.authlock;
+	#
+	# a stale answer belongs to whoever gave up on it, not to this
+	# one, for the same reason a connection's does
+	#
+	alt {
+	<-r.authc =>	;
+	* =>		;
+	}
+	if((e := hci->authenticate(c)) != nil){
+		r.authlock <-= 1;
+		return e;
+	}
+	tick := chan[1] of int;
+	spawn timeout(Authwait, tick);
+	err: string;
+	alt {
+	err = <-r.authc =>	;
+	<-tick =>
+		err = "the controller never finished authenticating";
+	}
+	r.authlock <-= 1;
+	if(err != nil)
+		return err;
+	return hci->encrypt(c, 1);
+}
+
+timeout(ms: int, c: chan of int)
+{
+	sys->sleep(ms);
+	c <-= 1;
+}
+
+#
+# What the controller asks while a BR/EDR link is being secured.  It
+# is here and not in hci because every answer is policy: which key
+# this device has, what this side can do about a passkey, and whether
+# to accept.  The keys are here, so the answers are.
+#
+secproc(r: ref Radio)
+{
+	c := hci->secs(r.x);
+	for(;;){
+		s := <-c;
+		if(s == nil)
+			return;
+		case s.kind {
+		Hci->Slinkkey =>
+			#
+			# the whole point of writing a link key down: a
+			# device that has one does not pair again.
+			#
+			b := findlk(r, s.addr);
+			if(b != nil)
+				hci->linkkeyreply(r.x, s.addr, b.lk);
+			else
+				hci->linkkeynegreply(r.x, s.addr);
+		Hci->Siocap =>
+			hci->iocapreply(r.x, s.addr, Hci->Hnoio, Hci->Hbonding);
+		Hci->Sconfirm =>
+			#
+			# Just Works: there is nothing here that can show
+			# a number and nothing that can read one, so the
+			# only honest answer is yes, and what that gives
+			# is an encrypted link with no protection against
+			# a man in the middle.
+			#
+			hci->confirmreply(r.x, s.addr, 1);
+		Hci->Skeynote =>
+			addlk(r, s.addr, s.key, s.ktype);
+		Hci->Spin =>
+			#
+			# the old kind of pairing, which needs a PIN from
+			# somebody and a key derivation this does not
+			# have.  Refusing it is the honest answer and
+			# leaves the device able to say so.
+			#
+			sys->fprint(sys->fildes(2),
+				"btfs: %s wants the old kind of pairing, which is not implemented\n",
+				bt->addrstr(s.addr));
+			hci->pinnegreply(r.x, s.addr);
+		Hci->Sdone =>
+			alt {
+			r.authc <-= s.err =>	;
+			* =>	;	# nobody is waiting
+			}
+		}
+	}
+}
+
+#
+# the bond holding a link key for that device, or nil
+#
+findlk(r: ref Radio, addr: array of byte): ref Bond
+{
+	a := bt->addrstr(addr);
+	<-r.bondlock;
+	b: ref Bond;
+	for(l := r.bonds; l != nil; l = tl l)
+		if((hd l).addr == a && len (hd l).lk == 16)
+			b = hd l;
+	r.bondlock <-= 1;
+	return b;
+}
+
+#
+# The key the controller just agreed.  It goes into the bond for that
+# device if there is one -- a device may be bonded on both radios and
+# that is one bond with two keys -- and into a new one if there is
+# not.
+#
+addlk(r: ref Radio, addr, key: array of byte, ktype: int)
+{
+	a := bt->addrstr(addr);
+	<-r.bondlock;
+	b: ref Bond;
+	for(l := r.bonds; l != nil; l = tl l)
+		if((hd l).addr == a)
+			b = hd l;
+	r.bondlock <-= 1;
+	if(b == nil){
+		b = ref Bond;
+		b.addr = a;
+		b.atype = Bt->Apublic;	# a BD_ADDR has no type
+		b.ediv = 0;
+		b.ltk = b.rand = b.irk = b.csrk = nil;
+		b.local = bt->addrstr(hci->localaddr(r.x));
+	}
+	b.lk = key;
+	b.lktype = ktype;
+	addbond(r, b);
 }
 
 addbond(r: ref Radio, b: ref Bond)

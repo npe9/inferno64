@@ -167,6 +167,13 @@
 #		has to be cut into frames; rfnocredit refuses credit based
 #		flow control, which this stack cannot do without; and
 #		rfrefuse answers the data link with DM
+#	ssp	secure simple pairing on a BR/EDR link, which the
+#		controller runs and the host answers questions for: a
+#		link key it has not got, what it can display and type, and
+#		a number to confirm.  The link must come up encrypted and
+#		the key must be written down.  sspbonded starts with the
+#		key already in the store, where the host gives it and
+#		nothing pairs; sspfail is an authentication that fails
 #	stalefid	a characteristic file kept open across a disconnect
 #		and a reconnect: the old name must be gone.  What the
 #		fix for it changes is not visible from inside the guest
@@ -684,6 +691,41 @@ if ! grep -q 'will not do credit based flow control' "$OUT/bench-rfnocredit.out"
 	exit 1
 fi
 echo "and a peer that will not do credits was refused, not worked around"
+#
+# Pairing a BR/EDR link.  Unlike SMP the controller runs it and asks
+# the host questions on the way, so most of what there is to assert is
+# what the controller was told.
+#
+rm -f "$ROOT/mnt/keys/ssp"
+run ssp "--classic --brconnect --ssp" ssp "" /mnt/keys/ssp
+n=`grep -c 'the host has no link key' "$OUT/bthci-ssp.log" || true`
+m=`grep -c 'the host can do io 3 auth 1' "$OUT/bthci-ssp.log" || true`
+c=`grep -c 'the host confirmed' "$OUT/bthci-ssp.log" || true`
+if [ "$n" != 1 ] || [ "$m" != 1 ] || [ "$c" != 1 ]; then
+	echo "=== phase ssp ==="
+	echo "BENCH FAIL (ssp): the controller was told no key $n times, io $m, confirm $c; wanted one of each"
+	exit 1
+fi
+echo "the controller asked and the host answered, and the link came up encrypted"
+#
+# The same device with the key already written down.  This is the
+# whole reason to write one down: the controller asks, the host gives
+# it, and nothing pairs.
+#
+cat > "$ROOT/mnt/keys/sspbonded" <<'KEYS'
+CCBBAA998877 public lk 101112131415161718191A1B1C1D1E1F lktype 4 on 001122334455
+KEYS
+chmod 666 "$ROOT/mnt/keys/sspbonded"
+run sspbonded "--classic --brconnect --ssp --sspbonded" sspbonded "" /mnt/keys/sspbonded
+n=`grep -c 'the host gave a link key 101112131415161718191a1b1c1d1e1f' "$OUT/bthci-sspbonded.log" || true`
+c=`grep -c 'the host confirmed' "$OUT/bthci-sspbonded.log" || true`
+if [ "$n" != 1 ] || [ "$c" != 0 ]; then
+	echo "=== phase sspbonded ==="
+	echo "BENCH FAIL (sspbonded): the key was given $n times and $c pairings happened; wanted 1 and 0"
+	exit 1
+fi
+echo "and a device with a key came back on it without pairing again"
+run sspfail "--classic --brconnect --ssp --sspfail" sspfail
 run paired "--peripheral --pairin --rebond" paired
 #
 # and what the model saw from the other side: the confirm this stack

@@ -338,10 +338,16 @@ readbytes(path: string): (array of byte, string)
 	buf := array[512] of byte;
 	for(;;){
 		#
-		# a file, not a stream: read from where the last one
+		# A file, not a stream: read from where the last one
 		# stopped, because btfs answers a characteristic read
 		# with the whole value and the offset is what says how
-		# much of it has been taken
+		# much of it has been taken.
+		#
+		# A read shorter than the buffer is the end of it, and
+		# stopping there matters: btfs has no cached value, so
+		# every read of one of these files is another round trip
+		# to the device, and reading again only to be told there
+		# is nothing left doubles the cost of every value.
 		#
 		n := sys->pread(fd, buf, len buf, big len v);
 		if(n <= 0)
@@ -350,6 +356,8 @@ readbytes(path: string): (array of byte, string)
 		nv[0:] = v;
 		nv[len v:] = buf[0:n];
 		v = nv;
+		if(n < len buf)
+			break;
 	}
 	if(len v == 0)
 		return (nil, "empty");

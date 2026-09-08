@@ -303,7 +303,14 @@ ctl(s: string): string
 		if(n < 3)
 			return "usage: bond addr type [key value ...]";
 		b := smp->parse(join(tl f));
-		if(b == nil || len b.ltk == 0)
+		#
+		# Either kind of key: a long term key for an LE link, a
+		# link key for a BR/EDR one, and a device may have both.
+		# A line with neither is not a bond -- a peer that looked
+		# paired and could not encrypt would be worse than one
+		# that has to pair again.
+		#
+		if(b == nil || (len b.ltk == 0 && len b.lk == 0))
 			return "bond: no key in that line";
 		add(b);
 	"forget" =>

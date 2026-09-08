@@ -148,6 +148,41 @@ Hci: module
 	# discoverable device answers an inquiry on
 	Giac:	con 16r9e8b33;
 
+	#
+	# What a controller asks while a BR/EDR link is being secured,
+	# and what it says came of it.  All of it is per address and
+	# none of it is per connection, because a link key belongs to a
+	# pair of devices rather than to the link that happens to be up.
+	#
+	Slinkkey:	con 0;	# have you a key for this device
+	Siocap:		con 1;	# what can this side display and type
+	Sconfirm:	con 2;	# a number both sides can see, if anyone looks
+	Skeynote:	con 3;	# here is the key that came of it
+	Spin:		con 4;	# the old kind of pairing, which this refuses
+	Sdone:		con 5;	# authentication finished, well or badly
+
+	Sec: adt {
+		kind:	int;
+		addr:	array of byte;
+		key:	array of byte;	# on Skeynote
+		ktype:	int;		# what kind of key it is
+		value:	int;		# the number on Sconfirm
+		err:	string;		# on Sdone
+	};
+
+	#
+	# What this side can do about a passkey: nothing, which is what
+	# makes its pairing Just Works and no protection against a man
+	# in the middle.  This is the HCI IO capability and not smp's,
+	# which is a different field that happens to be numbered the
+	# same way; giving it a name of its own is what stops the two
+	# being taken for one.
+	#
+	Hnoio:	con 3;
+	# and what it wants of the pairing: no man in the middle
+	# protection, and a bond that lasts
+	Hbonding:	con 1;
+
 	# An L2CAP frame being reassembled on one link, and a command's
 	# answer.  Both are the reader process's business and nobody
 	# else's; they are here rather than private to hci.b only
@@ -220,6 +255,14 @@ Hci: module
 		bconnaddr:	array of byte;
 		namec:		chan of (string, string);
 		namelock:	chan of int;
+		#
+		# What the controller wants answered while a link is
+		# being secured.  It is a channel and not a callback
+		# because the answer is policy -- which key, whether to
+		# confirm -- and policy lives above this, with the
+		# bonds.
+		#
+		secc:		chan of ref Sec;
 	};
 
 	Conn: adt {
@@ -346,6 +389,25 @@ Hci: module
 	# search, and 0 for both is legal and slow.
 	#
 	connect:	fn(x: ref Ctlr, addr: array of byte, psrm, clock: int): (ref Conn, string);
+
+	#
+	# Secure simple pairing, and the security a BR/EDR link needs
+	# before most profiles will do anything.  secs() is where the
+	# controller's questions arrive; the replies answer them.
+	#
+	secs:		fn(x: ref Ctlr): chan of ref Sec;
+	linkkeyreply:	fn(x: ref Ctlr, addr, key: array of byte): string;
+	linkkeynegreply: fn(x: ref Ctlr, addr: array of byte): string;
+	iocapreply:	fn(x: ref Ctlr, addr: array of byte, iocap, auth: int): string;
+	confirmreply:	fn(x: ref Ctlr, addr: array of byte, yes: int): string;
+	pinnegreply:	fn(x: ref Ctlr, addr: array of byte): string;
+
+	# ask the controller to authenticate the link, and then to
+	# encrypt it.  Authentication is what produces a link key; a
+	# link that is authenticated and not encrypted is one where the
+	# key was agreed and never used.
+	authenticate:	fn(c: ref Conn): string;
+	encrypt:	fn(c: ref Conn, on: int): string;
 	disconnect:	fn(c: ref Conn): string;
 	conns:		fn(x: ref Ctlr): list of ref Conn;
 
@@ -886,6 +948,15 @@ Smp: module
 		rand:	array of byte;
 		irk:	array of byte;
 		csrk:	array of byte;
+		#
+		# The BR/EDR link key, which is the Classic half of the
+		# same idea: sixteen bytes agreed once and used to
+		# authenticate every link afterwards.  A device may have
+		# both -- one bond, two radios' worth of keys -- so this
+		# is another field rather than another kind of bond.
+		#
+		lk:	array of byte;
+		lktype:	int;
 
 		text:	fn(b: self ref Bond): string;
 	};

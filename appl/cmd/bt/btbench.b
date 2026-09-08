@@ -316,6 +316,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	"rfcomm" or "rfrefuse" =>
 		rfphase(mode);
 		return;
+	"ssp" or "sspbonded" or "sspfail" =>
+		sspphase(mode);
+		return;
 	"hid" =>
 		hid();
 		return;
@@ -1887,6 +1890,81 @@ upper(s: string): string
 	return r;
 }
 
+#
+# Pairing a BR/EDR link.  It is not SMP with different bytes: the
+# controller runs it and asks the host questions on the way, so what
+# there is to assert from inside the guest is that the link came up
+# encrypted and that a key was written down.  What the controller was
+# asked and told is asserted on the model's side.
+#
+sspphase(mode: string)
+{
+	if((e := writefile(mnt + "/0/ctl", "inquiry on")) != nil){
+		sys->print("BT: FAILED: inquiry on: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	for(i := 0; i < 40; i++){
+		sys->sleep(500);
+		if(hasstr(readfile(mnt + "/0/state"), "inquiry off"))
+			break;
+	}
+	dev := mnt + "/0/remote/" + Chead;
+	#
+	# sspbonded is the same phase with the key already in the store
+	# btfs was started on, so the controller asks for one and is
+	# given it.  Nothing here has to arrange that: the key file is
+	# what carries it, which is the whole reason to write one down.
+	#
+	if((e = writefile(dev + "/ctl", "connect")) != nil){
+		sys->print("BT: FAILED: connect: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	e = writefile(dev + "/ctl", "pair");
+	if(mode == "sspfail"){
+		if(e == nil)
+			sys->print("BT: FAILED: a failed pairing reported success\n");
+		else
+			sys->print("BT: the pairing failed: %s\n", e);
+		writefile(dev + "/ctl", "disconnect");
+		sys->print("BT: done\n");
+		return;
+	}
+	if(e != nil){
+		sys->print("BT: FAILED: pair: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	ok := 1;
+	st := "";
+	for(i = 0; i < 20; i++){
+		st = trim(readfile(dev + "/state"));
+		if(hasstr(st, "encrypted"))
+			break;
+		sys->sleep(250);
+	}
+	if(!hasstr(st, "encrypted")){
+		sys->print("BT: FAILED: after pairing the link reads %q\n", st);
+		ok = 0;
+	} else
+		sys->print("BT: %s\n", st);
+	#
+	# and the key: a pairing that agreed one and did not write it
+	# down is a device that pairs again every time.
+	#
+	bonds := readfile(mnt + "/0/bonds");
+	if(!hasstr(bonds, "lk 101112131415161718191A1B1C1D1E1F")){
+		sys->print("BT: FAILED: the bonds read %q\n", bonds);
+		ok = 0;
+	} else
+		sys->print("BT: the link key was written down\n");
+	if(ok)
+		sys->print("BT: a BR/EDR link paired and encrypted\n");
+	writefile(dev + "/ctl", "disconnect");
+	sys->print("BT: done\n");
+}
+
 check(dir, want, name: string): int
 {
 	d := mnt + "/0/remote/" + dir;
@@ -3152,8 +3230,15 @@ hid()
 	# for the keys rather than for a fixed time: the device sends
 	# when it is ready and the reader has to have got there first.
 	#
+	#
+	# Longer than it looks like it needs: the report protocol has
+	# the map and the report references to read before anything is
+	# subscribed to, and every one of those is a round trip.  A
+	# phase that fails because a loaded machine was slow says
+	# nothing about the stack.
+	#
 	keys := "";
-	for(i := 0; i < 40 && keys != "bthA"; i++){
+	for(i := 0; i < 100 && keys != "bthA"; i++){
 		sys->sleep(500);
 		keys = readfile(kf);
 	}

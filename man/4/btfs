@@ -225,6 +225,25 @@ tree on a Classic device.
 and
 .BI "pair " addr
 act on one device.
+.B pair
+means two different things on the two kinds of link.  On LE it is SMP,
+run here, over the link.  On BR/EDR the controller runs it and asks
+this side questions on the way \- have you a key for this device, what
+can you display and type, do you agree to this number \- and the
+answers come from the bonds, from
+.B -k
+or
+.BR -K .
+Either way it is Just Works: there is nothing here that can show a
+number or read one, so the only honest answer to the confirmation is
+yes, and what that gives is an encrypted link with no protection
+against a man in the middle.  A BR/EDR link is encrypted after it is
+authenticated, because a link where the key was agreed and never used
+is not what any profile means by a secure link.
+.IP
+The old kind of Classic pairing, where a controller asks for a PIN, is
+refused and said out loud.  A device that will do nothing else cannot
+be paired with here.
 .BI "params " "min max latency timeout"
 on a device's own
 .B ctl

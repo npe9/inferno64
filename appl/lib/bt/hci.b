@@ -39,6 +39,13 @@ Einqcomplete:	con 16r01;
 Einqresult:	con 16r02;
 Econncomplete:	con 16r03;
 Econnrequest:	con 16r04;
+Eauthcomplete:	con 16r06;
+Epincode:	con 16r16;
+Elinkkeyreq:	con 16r17;
+Elinkkeynote:	con 16r18;
+Eiocapreq:	con 16r31;
+Euserconf:	con 16r33;
+Esspdone:	con 16r36;
 Edisconn:	con 16r05;
 Eremotename:	con 16r07;
 Einqresultrssi:	con 16r22;
@@ -128,6 +135,12 @@ start(tr: Bttransport): (ref Ctlr, string)
 	x.bconnc = chan[1] of (ref Conn, string);
 	x.bconnlock = chan[1] of int;
 	x.bconnaddr = nil;
+	#
+	# Buffered: the controller asks these while a link is being
+	# secured and will wait for an answer, but whoever answers is
+	# above here and may be busy.  Four is one round of pairing.
+	#
+	x.secc = chan[4] of ref Sec;
 	x.statelock = chan[1] of int;
 	x.statelock <-= 1;
 	x.aclsize = 27;
@@ -182,6 +195,16 @@ start(tr: Bttransport): (ref Ctlr, string)
 		lemask[i] = byte 0;
 	lemask[0] = byte 16r1f;		# connection complete .. long term key request
 	cmd(x, bt->opcode(Ogle, 16r0001), lemask);		# LE Set Event Mask
+
+	#
+	# Write Simple Pairing Mode.  A controller powers up with it off
+	# and refuses every secure simple pairing command until it is
+	# on; a controller too old to have it says so and nothing is
+	# lost, because such a controller has no simple pairing to do.
+	#
+	ssp := array[1] of byte;
+	ssp[0] = byte 1;
+	cmd(x, bt->opcode(Ogctl, 16r0056), ssp);
 
 	(st, p, e) = cmd(x, bt->opcode(Ogle, 16r0002), nil);	# LE Read Buffer Size
 	if(e == nil && st == 0 && len p >= 3){
@@ -831,6 +854,135 @@ sameaddr(a, b: array of byte): int
 }
 
 #
+# Secure simple pairing.  Everything here is one command with one
+# answer, so none of it needs the machinery a connection needs: what
+# is hard about pairing on Classic is not the commands but that the
+# controller asks the questions and will wait for an answer.
+#
+secs(x: ref Ctlr): chan of ref Sec
+{
+	return x.secc;
+}
+
+offersec(x: ref Ctlr, s: ref Sec)
+{
+	alt {
+	x.secc <-= s =>	;
+	* =>
+		#
+		# Nobody is answering.  Saying so is the least that can
+		# be done: the controller is waiting, the link will fail
+		# on a timeout, and the reason would otherwise be
+		# nowhere.
+		#
+		sys->fprint(sys->fildes(2),
+			"hci: nothing is answering the controller's security questions\n");
+	}
+}
+
+addrof(b: array of byte, o: int): array of byte
+{
+	a := array[Bt->Baddrlen] of byte;
+	a[0:] = b[o:o+Bt->Baddrlen];
+	return a;
+}
+
+linkkeyreply(x: ref Ctlr, addr, key: array of byte): string
+{
+	if(len addr != Bt->Baddrlen || len key != 16)
+		return "a link key is sixteen bytes";
+	p := array[Bt->Baddrlen + 16] of byte;
+	p[0:] = addr;
+	p[Bt->Baddrlen:] = key;
+	return simple(x, bt->opcode(Oglink, 16r000b), p);
+}
+
+linkkeynegreply(x: ref Ctlr, addr: array of byte): string
+{
+	return simple(x, bt->opcode(Oglink, 16r000c), addr);
+}
+
+#
+# What this side can do about a passkey, and what it wants of the
+# pairing.  No display and no keyboard means Just Works, which gives
+# an encrypted link and no protection against a man in the middle --
+# the same bargain as LE legacy pairing here, and said as plainly.
+#
+iocapreply(x: ref Ctlr, addr: array of byte, iocap, auth: int): string
+{
+	p := array[Bt->Baddrlen + 3] of byte;
+	p[0:] = addr;
+	p[Bt->Baddrlen] = byte iocap;
+	p[Bt->Baddrlen+1] = byte 0;		# no out of band data
+	p[Bt->Baddrlen+2] = byte auth;
+	return simple(x, bt->opcode(Oglink, 16r002b), p);
+}
+
+confirmreply(x: ref Ctlr, addr: array of byte, yes: int): string
+{
+	op := 16r002c;				# User Confirmation Request Reply
+	if(!yes)
+		op = 16r002d;			# and the negative one
+	return simple(x, bt->opcode(Oglink, op), addr);
+}
+
+pinnegreply(x: ref Ctlr, addr: array of byte): string
+{
+	return simple(x, bt->opcode(Oglink, 16r000e), addr);
+}
+
+#
+# a command whose whole answer is a status and the address it was
+# about, which is every reply above
+#
+simple(x: ref Ctlr, op: int, p: array of byte): string
+{
+	(st, nil, e) := cmd(x, op, p);
+	if(e != nil)
+		return e;
+	if(st != 0)
+		return bt->hcierr(st);
+	return nil;
+}
+
+#
+# Ask the controller to authenticate the link.  It answers with a
+# command status and then, after however many questions it has to ask,
+# an Authentication Complete -- so this waits on the security channel
+# for that rather than on the command.
+#
+authenticate(c: ref Conn): string
+{
+	x := c.x;
+	p := array[2] of byte;
+	bt->put16(p, 0, c.handle);
+	(st, nil, e) := cmd(x, bt->opcode(Oglink, 16r0011), p);
+	if(e != nil)
+		return e;
+	if(st != 0)
+		return bt->hcierr(st);
+	return nil;
+}
+
+#
+# and then to encrypt it.  A link that is authenticated and not
+# encrypted is one where the key was agreed and never used, which is
+# not what any profile means by a secure link.
+#
+encrypt(c: ref Conn, on: int): string
+{
+	p := array[3] of byte;
+	bt->put16(p, 0, c.handle);
+	p[2] = byte on;
+	(st, nil, e) := cmd(c.x, bt->opcode(Oglink, 16r0013), p);
+	if(e != nil)
+		return e;
+	if(st != 0)
+		return bt->hcierr(st);
+	return nil;
+}
+
+#
 # LE Create Connection answers with a command status; the connection
 # itself arrives later as an LE Connection Complete event
 #
@@ -1141,6 +1293,54 @@ event(x: ref Ctlr, p: array of byte)
 		}
 	Econncomplete =>
 		bconncomplete(x, b);
+	Elinkkeyreq =>
+		if(len b < Bt->Baddrlen)
+			return;
+		offersec(x, ref Sec(Slinkkey, addrof(b, 0), nil, 0, 0, nil));
+	Elinkkeynote =>
+		#
+		# the key the pairing produced, and the only time the
+		# controller will ever say it: a key not written down
+		# here is a device that has to pair again.
+		#
+		if(len b < Bt->Baddrlen + 17)
+			return;
+		k := array[16] of byte;
+		k[0:] = b[Bt->Baddrlen:Bt->Baddrlen+16];
+		offersec(x, ref Sec(Skeynote, addrof(b, 0), k,
+			int b[Bt->Baddrlen+16], 0, nil));
+	Eiocapreq =>
+		if(len b < Bt->Baddrlen)
+			return;
+		offersec(x, ref Sec(Siocap, addrof(b, 0), nil, 0, 0, nil));
+	Euserconf =>
+		if(len b < Bt->Baddrlen + 4)
+			return;
+		offersec(x, ref Sec(Sconfirm, addrof(b, 0), nil, 0,
+			bt->get32(b, Bt->Baddrlen), nil));
+	Epincode =>
+		if(len b < Bt->Baddrlen)
+			return;
+		offersec(x, ref Sec(Spin, addrof(b, 0), nil, 0, 0, nil));
+	Esspdone =>
+		#
+		# said for its own sake: the authentication complete
+		# below is what anything waits on, and this only says
+		# whether the pairing part of it worked
+		#
+		;
+	Eauthcomplete =>
+		if(len b < 3)
+			return;
+		st := int b[0];
+		e := "";
+		if(st != 0)
+			e = bt->hcierr(st);
+		s := findstate(x, bt->get16(b, 1));
+		a: array of byte;
+		if(s != nil)
+			a = s.c.addr;
+		offersec(x, ref Sec(Sdone, a, nil, 0, 0, e));
 	Econnrequest =>
 		#
 		# A peer paging this side.  Answering takes a command

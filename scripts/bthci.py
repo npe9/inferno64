@@ -263,6 +263,28 @@ sdpsplit = 0
 if '--sdpsplit' in sys.argv:
     sdpsplit = int(sys.argv[sys.argv.index('--sdpsplit') + 1])
 
+# --ssp: with --brconnect, the controller runs secure simple pairing
+# when the host asks it to authenticate the link: it asks for a link
+# key, is told there is none, asks what the host can display and type,
+# asks it to confirm a number, and then hands over the key it agreed.
+#
+# The controller is the one doing the pairing here, which is the whole
+# difference from LE: on LE the host computes the confirm and the
+# short term key itself and the model can check its arithmetic, and on
+# Classic there is nothing to check because the host does no
+# arithmetic at all.  What is asserted is the conversation.
+ssp = '--ssp' in sys.argv
+
+# --sspbonded: the controller already has a link key for the host, so
+# it asks for one and expects to be given it -- no pairing at all.  A
+# stack that paired again every time would be a stack that never
+# wrote the key down or never looked it up.
+sspbonded = '--sspbonded' in sys.argv
+
+# --sspfail: the authentication fails.  The reason has to reach
+# whoever asked rather than the link being reported secure.
+sspfail = '--sspfail' in sys.argv
+
 # --rfcomm: with --brconnect, the peer runs an RFCOMM server on PSM 3
 # with a serial port on channel 1 that echoes in upper case.  Upper
 # case rather than a plain echo so that what comes back cannot be the
@@ -1099,6 +1121,50 @@ class Model:
             self.brhandle = 0x0081
             self.event(0x03, bytes([0]) + struct.pack('<H', self.brhandle)
                        + addr + bytes([1, 0]))
+        elif op == 0x0c56:                        # Write Simple Pairing Mode
+            self.cmd_complete(op, bytes([0]))
+        elif op == 0x0411 and ssp:                # Authentication Requested
+            self.cmd_status(op)
+            threading.Thread(target=self.authenticate, daemon=True).start()
+        elif op == 0x040b and ssp:                # Link Key Request Reply
+            print('bthci: the host gave a link key %s' % params[6:22].hex(),
+                  flush=True)
+            self.gavekey = True
+            self.cmd_complete(op, bytes([0]) + params[0:6])
+            # a key given is a link authenticated, with no pairing
+            threading.Thread(target=self.authdone, daemon=True).start()
+        elif op == 0x040c and ssp:                # Link Key Request Negative Reply
+            print('bthci: the host has no link key', flush=True)
+            self.gavekey = False
+            self.cmd_complete(op, bytes([0]) + params[0:6])
+            if sspbonded:
+                # the controller was told there is a key and the host
+                # has not got one: that is a failure and not a reason
+                # to pair, because the phase is asserting that the
+                # host had written one down
+                print('bthci: but it should have had one', flush=True)
+                self.event(0x06, bytes([0x06]) + struct.pack('<H', self.brhandle))
+                return
+            threading.Thread(target=self.sspair, daemon=True).start()
+        elif op == 0x042b and ssp:                # IO Capability Request Reply
+            print('bthci: the host can do io %d auth %d'
+                  % (params[6], params[8]), flush=True)
+            self.cmd_complete(op, bytes([0]) + params[0:6])
+        elif op == 0x042c and ssp:                # User Confirmation Reply
+            print('bthci: the host confirmed', flush=True)
+            self.cmd_complete(op, bytes([0]) + params[0:6])
+            threading.Thread(target=self.sspdone, daemon=True).start()
+        elif op == 0x042d and ssp:                # ... and the negative one
+            print('bthci: the host would not confirm', flush=True)
+            self.cmd_complete(op, bytes([0]) + params[0:6])
+        elif op == 0x040e and ssp:                # PIN Code Negative Reply
+            print('bthci: the host refused the old kind of pairing', flush=True)
+            self.cmd_complete(op, bytes([0]) + params[0:6])
+        elif op == 0x0413 and ssp:                # Set Connection Encryption
+            self.cmd_status(op)
+            h = struct.unpack('<H', params[0:2])[0]
+            print('bthci: the link is encrypted', flush=True)
+            self.event(0x08, bytes([0]) + struct.pack('<H', h) + bytes([params[2]]))
         elif op == 0x0419 and classic:            # Remote Name Request
             addr = params[0:6]
             self.cmd_status(op)
@@ -2304,6 +2370,53 @@ class Model:
             return
         # anything else: not supported, which is a real answer
         self.rf_send(0, 0xEF, bytes([0x11, 0x03, p[0]]))
+
+    #
+    # Secure simple pairing, from the controller's side.  The host
+    # asks for the link to be authenticated and the controller asks it
+    # questions: have you a key, what can you display and type, and do
+    # you agree to this number.  On LE the host does the arithmetic
+    # and this model can check it; here it does none, so what is
+    # modelled and asserted is the conversation.
+    #
+    def authenticate(self):
+        addr = CLASSICDEVS[1][0]
+        time.sleep(0.1)
+        print('bthci: asking the host for a link key', flush=True)
+        self.event(0x17, addr)
+
+    def sspair(self):
+        addr = CLASSICDEVS[1][0]
+        time.sleep(0.1)
+        # what can you display and type
+        self.event(0x31, addr)
+        time.sleep(0.1)
+        # what the peer said it can: no input and no output either,
+        # which is what makes this Just Works
+        self.event(0x32, addr + bytes([0x03, 0x00, 0x00]))
+        time.sleep(0.1)
+        # a number both sides could compare, if either could show one
+        self.event(0x33, addr + (123456).to_bytes(4, 'little'))
+
+    def authdone(self):
+        time.sleep(0.1)
+        self.event(0x06, bytes([0]) + struct.pack('<H', self.brhandle))
+
+    def sspdone(self):
+        addr = CLASSICDEVS[1][0]
+        time.sleep(0.1)
+        if sspfail:
+            print('bthci: pairing failed', flush=True)
+            self.event(0x36, bytes([0x05]) + addr)   # authentication failure
+            self.event(0x06, bytes([0x05]) + struct.pack('<H', self.brhandle))
+            return
+        self.event(0x36, bytes([0]) + addr)
+        # the key it agreed, and the only time it is ever said
+        key = bytes(range(0x10, 0x20))
+        print('bthci: the link key is %s' % key.hex(), flush=True)
+        self.event(0x18, addr + key + bytes([0x04]))   # unauthenticated, P-192
+        time.sleep(0.1)
+        self.event(0x06, bytes([0]) + struct.pack('<H', self.brhandle))
 
     # ------------------------------------------------ SMP
     def smp_in(self, p):

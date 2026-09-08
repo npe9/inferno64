@@ -381,10 +381,26 @@ and
 and it appears in the name space as the same file: one pair of files,
 two protocols underneath.
 .PP
-So what is left of Classic is what those channels are for: SDP, and
-then RFCOMM, HIDP and the rest above it; and link keys and secure
-simple pairing, without which none of them will talk to a device that
-requires security.
+Link keys and secure simple pairing are done as well, and they are
+not SMP with different bytes: the controller runs the pairing and asks
+this side questions on the way, so
+.CW btfs
+answers them out of the bonds rather than computing anything.  What
+comes of it is a sixteen byte link key in the same
+.CW Bond
+an LE pairing fills in \(em a device may have both, one bond and two
+radios' worth of keys \(em kept in the same store and served by the
+same
+.CW btkeyfs .
+A link is encrypted after it is authenticated, because a link where
+the key was agreed and never used is not a secure link.  It is Just
+Works, like the LE side and for the same reason: there is nothing here
+that can show a number or read one.  The old kind of Classic pairing,
+with a PIN, is refused and said out loud.
+.PP
+So what is left of Classic is what those channels are for: HIDP, PAN,
+and the audio profiles; and an SDP server, so that a device can find
+what this side offers rather than being told.
 .IP 3.
 .B SDP .
 The client half is done.

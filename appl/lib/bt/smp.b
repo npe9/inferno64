@@ -83,9 +83,28 @@ init(b: Bt, h: Hci, l: L2cap): string
 
 Bond.text(b: self ref Bond): string
 {
-	s := sys->sprint("%s %s ltk %s ediv %d rand %s irk %s csrk %s",
-		b.addr, bt->atypestr(b.atype), bt->hex(b.ltk), b.ediv,
-		bt->hex(b.rand), bt->hex(b.irk), bt->hex(b.csrk));
+	#
+	# Only what there is.  An empty value written as "ltk  ediv 0"
+	# is two spaces, and tokenize collapses a run of them -- so the
+	# reader takes "ediv" as the long term key and everything after
+	# it shifts by one.  A bond made on a BR/EDR link has no long
+	# term key at all, which is how that was found.
+	#
+	s := sys->sprint("%s %s", b.addr, bt->atypestr(b.atype));
+	if(len b.ltk > 0)
+		s += sys->sprint(" ltk %s ediv %d rand %s",
+			bt->hex(b.ltk), b.ediv, bt->hex(b.rand));
+	if(len b.irk > 0)
+		s += sys->sprint(" irk %s", bt->hex(b.irk));
+	if(len b.csrk > 0)
+		s += sys->sprint(" csrk %s", bt->hex(b.csrk));
+	#
+	# and the BR/EDR link key, when there is one.  It is left out
+	# rather than written empty so that a bond made on an LE link
+	# reads as what it is; a device may have both.
+	#
+	if(len b.lk > 0)
+		s += sys->sprint(" lk %s lktype %d", bt->hex(b.lk), b.lktype);
 	#
 	# which controller the bond was made on.  A long term key is
 	# agreed between one peripheral and one radio, and the
@@ -110,8 +129,9 @@ parse(s: string): ref Bond
 	b := ref Bond;
 	b.atype = Bt->Apublic;
 	b.ediv = 0;
+	b.lktype = 0;
 	b.local = nil;
-	b.ltk = b.rand = b.irk = b.csrk = nil;
+	b.ltk = b.rand = b.irk = b.csrk = b.lk = nil;
 	b.addr = hd f;
 	f = tl f;
 	case hd f {
@@ -133,6 +153,8 @@ parse(s: string): ref Bond
 		"rand" =>	b.rand = bt->unhex(v);
 		"irk" =>	b.irk = bt->unhex(v);
 		"csrk" =>	b.csrk = bt->unhex(v);
+		"lk" =>		b.lk = bt->unhex(v);
+		"lktype" =>	b.lktype = int v;
 		"on" =>		b.local = v;
 		}
 	}

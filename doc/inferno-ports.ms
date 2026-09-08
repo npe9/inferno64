@@ -21112,6 +21112,57 @@ where there is nothing else this stack can do and it has to say so
 rather than open a port with no flow control on it at all.
 
 .NH 2
+Pairing where the controller does the pairing
+.PP
+Secure simple pairing on a BR/EDR link is not SMP with different
+bytes, and the difference is not in the cryptography.  On LE the host
+computes the confirm and the short term key itself, which is why the
+bench can check its arithmetic against a model that computed the same
+things independently.  On Classic the controller does all of it: the
+host asks for the link to be authenticated and then answers questions
+\(em have you a key for this device, what can you display and type, do
+you agree to this number \(em and gets a link key handed to it at the
+end.  There is no arithmetic here to get wrong and none to check.
+.PP
+So the questions arrive on a channel and
+.CW btfs
+answers them, because every answer is policy and the policy is where
+the bonds are.  What comes of it is a sixteen byte link key in the
+same
+.CW Bond
+an LE pairing fills in: a device may have both, which is one bond with
+two radios' worth of keys, kept in the same store and served by the
+same
+.CW btkeyfs .
+The link is encrypted after it is authenticated, because a link where
+the key was agreed and never used is not a secure link.
+.PP
+Writing it found a bug in something older.
+.CW Bond.text
+printed every field whether or not it had one, so a bond with no long
+term key came out as
+.CW "ltk  ediv 0" \(em
+two spaces, which
+.CW tokenize
+collapses, so the reader took
+.CW ediv
+as the long term key and everything after it shifted by one.  Nothing
+had noticed because until now every bond had every field.  A bond made
+on a BR/EDR link has no long term key at all, and it round-tripped
+through the key file as nonsense.  The text now carries only what
+there is.
+.PP
+The controls are the two halves of what a key is for.  A device with
+no key pairs: the controller is told there is none, asks the io
+capability, asks for a confirmation, and hands over a key that has to
+appear in the bonds afterwards.  A device with the key already in the
+store does not: the controller asks, the host gives it, and the phase
+asserts that no confirmation happened at all \(em a stack that paired
+every time would pass the first phase and fail this one.  And an
+authentication that fails has to reach whoever asked rather than the
+link being reported secure.
+
+.NH 2
 A native backtrace from inside the collector
 .PP
 The bench passes under
