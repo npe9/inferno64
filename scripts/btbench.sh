@@ -195,6 +195,14 @@
 #		answering a service search out of this side's own records,
 #		and answering a SABM on a channel it offered.  servedwrong
 #		asks for a channel it did not offer, which must be refused
+#	a2dp	an audio stream to a sink: find it, ask what SBC it will
+#		take, choose out of that, configure, open the second
+#		channel to the same PSM, start, and send.  There is no SBC
+#		on either side, so what goes down the media channel is
+#		bytes and what is asserted is the signalling.  a2dpnarrow
+#		is a sink offering the least of everything, where the
+#		source must configure what was offered and not what it
+#		would rather have; a2dprefuse is a sink that says no
 #	stalefid	a characteristic file kept open across a disconnect
 #		and a reconnect: the old name must be gone.  What the
 #		fix for it changes is not visible from inside the guest
@@ -823,6 +831,44 @@ echo "a peer found what this side offers, opened it, and was answered"
 # ports rather than the one it published.
 #
 run servedwrong "--classic --brconnect --served --servedwrong" served
+#
+# An audio stream.  What is asserted is the signalling and what was
+# agreed by it: there is no SBC on either side of this bench, so the
+# media channel carries bytes and the sink counts them.
+#
+run a2dp "--classic --brconnect --a2dp" a2dp
+if ! grep -q 'sbc 48000 joint blocks 16 subbands 8 loudness' "$OUT/bench-a2dp.out"; then
+	echo "=== phase a2dp ==="
+	echo "BENCH FAIL (a2dp): the source did not choose the best of what was offered"
+	exit 1
+fi
+n=`grep -c 'media arriving' "$OUT/bthci-a2dp.log" || true`
+if [ "$n" != 1 ]; then
+	echo "=== phase a2dp ==="
+	echo "BENCH FAIL (a2dp): media arrived on $n channels, wanted 1"
+	exit 1
+fi
+echo "an audio stream was configured, opened and started, and media went down it"
+#
+# A sink offering the least of everything.  The source has to
+# configure what was offered rather than what it would rather have --
+# and getting the bit order backwards picks exactly this and still
+# opens a stream, which is why the phase above asserts the choice.
+#
+run a2dpnarrow "--classic --brconnect --a2dp --a2dpnarrow" a2dp
+if ! grep -q 'sbc 16000 mono blocks 4 subbands 4 snr' "$OUT/bench-a2dpnarrow.out"; then
+	echo "=== phase a2dpnarrow ==="
+	echo "BENCH FAIL (a2dpnarrow): the source did not configure what was offered"
+	exit 1
+fi
+echo "and a sink that offers one thing gets configured for that thing"
+run a2dprefuse "--classic --brconnect --a2dp --a2dprefuse" a2dp
+if ! grep -q 'refused the codec' "$OUT/bench-a2dprefuse.out"; then
+	echo "=== phase a2dprefuse ==="
+	echo "BENCH FAIL (a2dprefuse): the refusal did not reach whoever asked"
+	exit 1
+fi
+echo "and a sink that refuses says which category and why"
 n=`grep -c 'the guest refused the port' "$OUT/bthci-servedwrong.log" || true`
 if [ "$n" != 1 ]; then
 	echo "=== phase servedwrong ==="

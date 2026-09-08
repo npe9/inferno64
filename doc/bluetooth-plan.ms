@@ -542,12 +542,36 @@ the way the IP stack would \(em a conversation, an ethertype, a frame
 out and a frame in \(em but nothing in this bench runs an IP stack
 over it.
 .IP 7.
-.B "A2DP and AVRCP."
-AVDTP signalling, media transport, codec negotiation, SBC at minimum,
-buffering and timing, and
+.B "A2DP,"
+as far as it goes without a codec.
+.CW appl/lib/bt/avdtp.b
+is the signalling: discover a sink's stream endpoints, ask what one
+can do, choose an SBC configuration out of what it says it will take,
+configure it, open, start, close.
+.CW bta2dp
+does that and then sends a file down the media channel, which is a
+second L2CAP channel to the same PSM.
+.PP
+What is not here is SBC, and that is the difference between this and
+A2DP.  Nothing turns sound into SBC frames or back, so the file has to
+hold them already and
+.CW bta2dp
+says so rather than leaving it to be found out by listening.  The
+brief said to leave audio out of a first stack; the signalling is not
+audio, and it is what a codec would have been plugged into.
+.PP
+The choosing is worth its own line.  An SBC capability is three fields
+of bits and a configuration is one bit out of each, so this is not
+meeting in the middle: it is picking one of the things the sink
+already said it would do.  In every field the best value is the lowest
+bit \(em the frequencies run downward from the top bit, and joint
+stereo and loudness are the bottom bit of theirs \(em and picking the
+highest set bit instead gives 16000 mono four blocks, the worst of
+everything on offer, with a stream that opens and starts and plays.
+So the bench asserts what was chosen and not only that something was.
+AVRCP is not implemented, and neither is
 .I devaudio
-underneath.  The brief says to leave audio out of a first stack and it
-was right.
+underneath any of it.
 .IP 8.
 .B "HFP and HSP,"
 last, because they need synchronous transport: SCO and eSCO through

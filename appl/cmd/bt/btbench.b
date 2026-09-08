@@ -313,6 +313,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	"served" =>
 		servedphase();
 		return;
+	"a2dp" or "a2dpnarrow" or "a2dprefuse" =>
+		a2dpphase(mode);
+		return;
 	"brconnect" or "brfail" or "brincoming" =>
 		brlink(mode);
 		return;
@@ -2239,6 +2242,66 @@ servedphase()
 	sys->print("BT: %s\n", st);
 	sys->sleep(6000);
 	sys->print("BT: a peer found what this side offers and opened it\n");
+	sys->print("BT: done\n");
+}
+
+#
+# An audio stream to a sink.  What is tested is the signalling and the
+# media channel: find the sink, ask what it will take, pick a
+# configuration out of that, configure it, open the second channel to
+# the same PSM, start the stream, and send something down it.
+#
+# What is not tested is the audio, because there is none: A2DP is
+# AVDTP plus SBC and there is no SBC on either side of this bench.
+# What goes down the media channel is bytes and what the sink does is
+# count them.
+#
+a2dpphase(nil: string)
+{
+	if((e := writefile(mnt + "/0/ctl", "inquiry on")) != nil){
+		sys->print("BT: FAILED: inquiry on: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	for(i := 0; i < 40; i++){
+		sys->sleep(500);
+		if(hasstr(readfile(mnt + "/0/state"), "inquiry off"))
+			break;
+	}
+	dev := mnt + "/0/remote/" + Chead;
+	if((e = writefile(dev + "/ctl", "connect")) != nil){
+		sys->print("BT: FAILED: connect: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	#
+	# something to send.  It is not SBC and nothing here pretends
+	# it is: what the phase asserts is that it arrived.
+	#
+	f := "/tmp/bta2dp.media";
+	fd := sys->create(f, Sys->OWRITE, 8r666);
+	if(fd != nil){
+		b := array[600] of byte;
+		for(i = 0; i < len b; i++)
+			b[i] = byte i;
+		sys->write(fd, b, len b);
+		fd = nil;
+	}
+	a2 := load Command "/dis/bt/bta2dp.dis";
+	if(a2 == nil){
+		sys->print("BT: FAILED: cannot load /dis/bt/bta2dp.dis: %r\n");
+		sys->print("BT: done\n");
+		return;
+	}
+	#
+	# bta2dp says what it agreed and what it sent, and those lines
+	# are what the run asserts on: the phase cannot read another
+	# program's output, and what matters here is what was chosen
+	# rather than that something was.
+	#
+	a2->init(nil, "bta2dp" :: "-b" :: mnt :: "-d" :: dev :: f :: nil);
+	sys->sleep(1000);
+	writefile(dev + "/ctl", "disconnect");
 	sys->print("BT: done\n");
 }
 

@@ -21323,6 +21323,63 @@ SABM on any channel would be offering thirty ports rather than the one
 it published.
 
 .NH 2
+An audio stream with no audio in it
+.PP
+AVDTP is the signalling under A2DP: discover a sink's stream
+endpoints, ask what one can do, configure it, open, start.
+.CW bta2dp
+does that and then sends a file down the media channel \(em which is a
+second L2CAP channel to the same PSM, and which
+.CW btfs
+could not have served until now, because it named a channel by its
+PSM and refused a second to the same one.  A channel is named
+.CW PSM.n
+after the first now, for the same reason a repeated characteristic
+UUID is: one file per PSM was one channel a client could reach and one
+it could not.
+.PP
+What is not here is SBC, and that is the whole difference between this
+and A2DP.  Nothing turns sound into SBC frames or back, so the file
+has to hold them already, and
+.CW bta2dp
+says so on the way past rather than leaving it to be discovered by
+listening.  The brief said to leave audio out of a first stack; the
+signalling is not audio, and it is what a codec would be plugged into.
+.PP
+The choosing is the part worth writing down.  An SBC capability is
+three fields of bits \(em frequencies, channel modes, then block
+lengths, subbands and allocation \(em and a configuration is one bit
+out of each, so this is not negotiation in the sense of meeting in the
+middle: it is picking one of the things the sink already said it would
+do.  In every one of those fields the best value is the
+.I lowest
+bit: the frequencies run 16000, 32000, 44100, 48000 downward from the
+top bit, and joint stereo and loudness are the bottom bit of theirs.
+.PP
+The first version picked the highest set bit, which is what it looks
+like it should do, and got 16000 mono four blocks four subbands SNR
+\(em the worst of everything the sink offered.  Nothing failed.  The
+stream configured, opened, started and carried media; a real headset
+would have played it, badly.  That is why the phase asserts which
+configuration was agreed and not that one was, and it is a good
+example of a bug that a test written to check that something happened
+would have passed.
+.PP
+Two more, both in the model and both worth keeping.  Its configuration
+response named the channel by a single remembered CID, which was
+enough while every service had one channel per link and wrong the
+moment AVDTP had two.  And its narrow capability \(em the control that
+offers the least of everything \(em had an empty allocation field, so
+it was offering a configuration with no allocation method at all,
+which the guest correctly refused; the control was testing the wrong
+thing until that was fixed.
+.PP
+The controls: a sink offering the least of everything, where the
+source must configure what was offered rather than what it would
+rather have; and a sink that refuses, where the category it refused
+and the reason both have to reach whoever asked.
+
+.NH 2
 A native backtrace from inside the collector
 .PP
 The bench passes under

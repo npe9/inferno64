@@ -263,6 +263,25 @@ sdpsplit = 0
 if '--sdpsplit' in sys.argv:
     sdpsplit = int(sys.argv[sys.argv.index('--sdpsplit') + 1])
 
+# --a2dp: with --brconnect, the peer is an audio sink.  Its service
+# record says so, it answers AVDTP on PSM 25 with one audio sink
+# endpoint, it says what SBC it will take, and it accepts a
+# configuration, an open and a start.  The second channel to the same
+# PSM is the media one and what arrives on it is counted, not decoded:
+# there is no SBC on either side of this bench.
+a2dp = '--a2dp' in sys.argv
+
+# --a2dpnarrow: the sink will take only 16kHz mono, four blocks, four
+# subbands and SNR allocation -- the least of everything.  A source
+# that asked for its own preference rather than reading what was
+# offered would be configuring the sink for something it refused.
+a2dpnarrow = '--a2dpnarrow' in sys.argv
+
+# --a2dprefuse: the sink refuses the configuration, naming the codec
+# as the category it will not have.  The reason has to reach whoever
+# asked.
+a2dprefuse = '--a2dprefuse' in sys.argv
+
 # --served: the peer pages this side and then asks it what it offers,
 # which is the other way round from every other Classic phase here.
 # It searches for the public browse group, reads the record it gets
@@ -872,6 +891,20 @@ def nap_record():
     ]
 
 
+#
+# An audio sink: the service class, and the PSM AVDTP is on.
+#
+def sink_record():
+    return [
+        (0x0000, de_uint(0x00010004, 4)),
+        (0x0001, de_seq(de_uuid('110b'))),
+        (0x0004, de_seq(de_seq(de_uuid('0100'), de_uint(0x0019)),
+                        de_seq(de_uuid('0019'), de_uint(0x0103)))),
+        (0x0005, de_seq(de_uuid('1002'))),
+        (0x0100, de_text('Audio Sink')),
+    ]
+
+
 def sdp_records():
     serial = [
         (0x0000, de_uint(0x00010000, 4)),
@@ -894,6 +927,8 @@ def sdp_records():
         rs = [hid_record()]
     if pan:
         rs = [nap_record()]
+    if a2dp:
+        rs = [sink_record()]
     out = []
     for r in rs:
         parts = []
@@ -914,6 +949,7 @@ class Model:
         self.peer = None
         self.mtu = 100
         self.acl_in = b''
+        self.peercid = {}
         self.pending_acl = 0
         self.smp = {}
         self.notified = 0
@@ -1589,7 +1625,7 @@ class Model:
         # the CIDs mean different things there: 1 is signalling, and
         # anything else is a channel this side handed out.
         #
-        if (brl2cap or sdp or rfcomm or chid or pan or served) \
+        if (brl2cap or sdp or rfcomm or chid or pan or served or a2dp) \
            and handle == getattr(self, 'brhandle', None):
             if served:
                 #
@@ -1607,7 +1643,26 @@ class Model:
                 return
             if cid == 1:
                 self.brsig(payload)
-            elif cid == getattr(self, 'brdcid', None):
+                return
+            #
+            # AVDTP has two channels on one link and neither is the
+            # single one every other service here has, so it is looked
+            # up by CID rather than compared against the last channel
+            # opened.
+            #
+            if a2dp and getattr(self, 'avcid', None):
+                sig = self.avcid.get(0x0019)
+                med = self.avcid.get(0x0119)
+                if sig and cid == sig[1]:
+                    self.avdtp_in(payload)
+                    return
+                if med and cid == med[1]:
+                    self.avmedia = getattr(self, 'avmedia', 0) + 1
+                    if self.avmedia == 1:
+                        print('bthci: media arriving, %d bytes'
+                              % len(payload), flush=True)
+                    return
+            if cid == getattr(self, 'brdcid', None):
                 if getattr(self, 'panchan', False):
                     self.bnep_in(payload)
                 elif getattr(self, 'rfchan', False):
@@ -2228,6 +2283,7 @@ class Model:
             if psm == 0x0003 and rfcomm:
                 self.brscid = scid
                 self.brdcid = 0x0043
+                self.peercid[0x0043] = scid
                 self.rfchan = True
                 print('bthci: rfcomm channel', flush=True)
                 self.bracl(1, bytes([0x03, ident]) + struct.pack('<H', 8)
@@ -2236,9 +2292,31 @@ class Model:
                 self.bracl(1, bytes([0x04, 0x40]) + struct.pack('<H', 4 + len(opts))
                            + struct.pack('<HH', scid, 0) + opts)
                 return
+            if psm == 0x0019 and a2dp:
+                #
+                # Two channels to one PSM: the first is signalling
+                # and the second is the media.  Which is which is
+                # which came first, and a sink that got them the
+                # wrong way round would be parsing audio as
+                # signalling.
+                #
+                self.avcid = getattr(self, 'avcid', {})
+                first = 0x0019 not in self.avcid
+                dcid = 0x0080 if first else 0x0081
+                self.avcid[0x0019 if first else 0x0119] = (scid, dcid)
+                self.peercid[dcid] = scid
+                print('bthci: avdtp %s channel'
+                      % ('signalling' if first else 'media'), flush=True)
+                self.bracl(1, bytes([0x03, ident]) + struct.pack('<H', 8)
+                           + struct.pack('<HHHH', dcid, scid, 0, 0))
+                opts = bytes([0x01, 0x02]) + struct.pack('<H', 672)
+                self.bracl(1, bytes([0x04, 0x40]) + struct.pack('<H', 4 + len(opts))
+                           + struct.pack('<HH', scid, 0) + opts)
+                return
             if psm == 0x000f and pan:
                 self.brscid = scid
                 self.brdcid = 0x0060
+                self.peercid[0x0060] = scid
                 self.panchan = True
                 print('bthci: bnep channel', flush=True)
                 self.bracl(1, bytes([0x03, ident]) + struct.pack('<H', 8)
@@ -2258,6 +2336,7 @@ class Model:
                 self.hidcid = getattr(self, 'hidcid', {})
                 dcid = 0x0050 if psm == 0x0011 else 0x0051
                 self.hidcid[psm] = (scid, dcid)
+                self.peercid[dcid] = scid
                 print('bthci: hid channel psm %#06x' % psm, flush=True)
                 self.bracl(1, bytes([0x03, ident]) + struct.pack('<H', 8)
                            + struct.pack('<HHHH', dcid, scid, 0, 0))
@@ -2267,9 +2346,10 @@ class Model:
                 if 0x0011 in self.hidcid and 0x0013 in self.hidcid:
                     threading.Thread(target=self.hid_classic, daemon=True).start()
                 return
-            if psm == 0x0001 and (sdp or chid or pan):
+            if psm == 0x0001 and (sdp or chid or pan or a2dp):
                 self.brscid = scid
                 self.brdcid = 0x0042
+                self.peercid[0x0042] = scid
                 self.sdpchan = True
                 print('bthci: sdp channel', flush=True)
                 self.bracl(1, bytes([0x03, ident]) + struct.pack('<H', 8)
@@ -2285,6 +2365,7 @@ class Model:
                 return
             self.brscid = scid
             self.brdcid = 0x0041
+            self.peercid[0x0041] = scid
             print('bthci: br/edr channel on psm %#06x' % psm, flush=True)
             self.bracl(1, bytes([0x03, ident]) + struct.pack('<H', 8)
                        + struct.pack('<HHHH', self.brdcid, scid, 0, 0))
@@ -2298,6 +2379,13 @@ class Model:
             self.bracl(1, bytes([0x04, 0x40]) + struct.pack('<H', 4 + len(opts))
                        + struct.pack('<HH', scid, 0) + opts)
         elif code == 0x04:                   # Configuration Request
+            #
+            # The answer names the channel by the CID the sender of
+            # the request knows it as, which is not this side's.  One
+            # channel per link was enough to get away with a single
+            # remembered value; AVDTP has two on one link, so which
+            # one this is has to be looked up.
+            #
             dcid, flags = struct.unpack('<HH', d[0:4])
             mtu = None
             o = 4
@@ -2308,8 +2396,9 @@ class Model:
                     mtu = struct.unpack('<H', d[o+2:o+4])[0]
                 o += 2 + ln
             print('bthci: the host asked for mtu %s' % mtu, flush=True)
+            theirs = self.peercid.get(dcid, getattr(self, 'brscid', 0))
             self.bracl(1, bytes([0x05, ident]) + struct.pack('<H', 6)
-                       + struct.pack('<HHH', self.brscid, 0, 0))
+                       + struct.pack('<HHH', theirs, 0, 0))
         elif code == 0x05:                   # Configuration Response
             pass
         elif code == 0x06:                   # Disconnection Request
@@ -2826,6 +2915,111 @@ class Model:
         line = b'down a port the guest offered'
         self.srvcred = getattr(self, 'srvcred', 0)
         self.rf_send_srv(self.srvdlci, 0xEF, line, cred=5)
+
+    #
+    # AVDTP, from the sink's side.  One endpoint, which is an audio
+    # sink, and one codec capability saying what SBC it will take.
+    #
+    # What it will take is deliberately not everything: a source that
+    # asked for its own preference rather than reading the answer
+    # would configure it for something it refused, and --a2dpnarrow
+    # narrows it to the least of everything to catch exactly that.
+    #
+    def av_caps(self):
+        if a2dpnarrow:
+            #
+            # 16000 only, mono only, four blocks, four subbands, SNR.
+            # The second byte is block length in its top nibble, then
+            # two bits of subbands and two of allocation -- 0x8A and
+            # not 0x88, which leaves the allocation field empty and is
+            # a capability offering nothing.
+            #
+            return bytes([0x00, 0x00, 0x80 | 0x08, 0x80 | 0x08 | 0x02, 2, 35])
+        # every frequency and mode, every block length and subband
+        # count, both allocations
+        return bytes([0x00, 0x00, 0xFF, 0xFF, 2, 53])
+
+    def avdtp_in(self, p):
+        if len(p) < 2:
+            return
+        lab = p[0] >> 4
+        sig = p[1]
+        d = p[2:]
+        #
+        # An answer goes to the CID the guest gave us, not to the one
+        # we gave it: bracl's argument is the destination, which from
+        # here is the far end's.
+        #
+        scid, dcid = self.avcid[0x0019]
+
+        def accept(body=b''):
+            self.bracl(scid, bytes([(lab << 4) | 0x02, sig]) + body)
+
+        def reject(body):
+            self.bracl(scid, bytes([(lab << 4) | 0x03, sig]) + body)
+
+        if sig == 0x01:                        # discover
+            # one endpoint, seid 2, audio, sink
+            print('bthci: avdtp discover', flush=True)
+            accept(bytes([2 << 2, (0 << 4) | 0x08]))
+        elif sig == 0x02:                      # get capabilities
+            print('bthci: avdtp capabilities of %d' % (d[0] >> 2), flush=True)
+            caps = bytes([0x01, 0x00])         # media transport
+            info = self.av_caps()
+            caps += bytes([0x07, len(info)]) + info
+            accept(caps)
+        elif sig == 0x03:                      # set configuration
+            got = self.av_config(d[2:])
+            if a2dprefuse or got is None:
+                print('bthci: avdtp refusing the configuration', flush=True)
+                reject(bytes([0x07, 0x1a]))    # codec, unsupported
+                return
+            print('bthci: avdtp configured %s' % got, flush=True)
+            accept()
+        elif sig == 0x06:                      # open
+            print('bthci: avdtp open', flush=True)
+            accept()
+        elif sig == 0x07:                      # start
+            print('bthci: avdtp start', flush=True)
+            accept()
+        elif sig == 0x08:                      # close
+            print('bthci: avdtp close', flush=True)
+            accept()
+        else:
+            # a signal this sink does not know, said as such
+            self.bracl(scid, bytes([(lab << 4) | 0x01, sig]))
+
+    #
+    # What the source asked for, checked against what was offered: a
+    # configuration naming a bit this sink did not offer is refused,
+    # which is the whole point of offering a set rather than a value.
+    #
+    def av_config(self, caps):
+        offered = self.av_caps()
+        i = 0
+        while i + 2 <= len(caps):
+            cat, n = caps[i], caps[i+1]
+            v = caps[i+2:i+2+n]
+            i += 2 + n
+            if cat != 0x07:
+                continue
+            if len(v) < 6:
+                return None
+            for j in (2, 3):
+                # every bit asked for must be one that was offered,
+                # and exactly one bit of each field
+                if v[j] & ~offered[j]:
+                    return None
+            f = {0x80: '16000', 0x40: '32000', 0x20: '44100', 0x10: '48000'}
+            m = {0x08: 'mono', 0x04: 'dual', 0x02: 'stereo', 0x01: 'joint'}
+            b = {0x80: '4', 0x40: '8', 0x20: '12', 0x10: '16'}
+            sb = {0x08: '4', 0x04: '8'}
+            al = {0x02: 'snr', 0x01: 'loudness'}
+            return '%s %s blocks %s subbands %s %s' % (
+                f.get(v[2] & 0xF0, '?'), m.get(v[2] & 0x0F, '?'),
+                b.get(v[3] & 0xF0, '?'), sb.get(v[3] & 0x0C, '?'),
+                al.get(v[3] & 0x03, '?'))
+        return None
 
     # ------------------------------------------------ SMP
     def smp_in(self, p):

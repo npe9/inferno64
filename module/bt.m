@@ -1068,6 +1068,114 @@ Bnep: module
 	recv:	fn(l: ref Link): (array of byte, string);
 };
 
+#
+# AVDTP: the signalling under A2DP.  A small request-response protocol
+# on an L2CAP channel to PSM 25, and a second channel to the same PSM
+# that is the media itself.
+#
+# What is not here is a codec.  A2DP is AVDTP plus SBC, and SBC is not
+# implemented: this finds a sink, asks what it can do, configures it,
+# and opens and starts a stream, and what goes down the media channel
+# is whatever the caller hands it.  Nothing here turns sound into SBC
+# or back.
+#
+Avdtp: module
+{
+	PATH:	con "/dis/lib/bt/avdtp.dis";
+
+	# AVDTP is always on this PSM, signalling and media both
+	Psm:	con 16r0019;
+
+	# signal identifiers
+	Sdiscover:	con 16r01;
+	Sgetcaps:	con 16r02;
+	Ssetconfig:	con 16r03;
+	Sgetconfig:	con 16r04;
+	Sreconfigure:	con 16r05;
+	Sopen:		con 16r06;
+	Sstart:		con 16r07;
+	Sclose:		con 16r08;
+	Ssuspend:	con 16r09;
+	Sabort:		con 16r0a;
+	Sgetallcaps:	con 16r0c;
+
+	# service capability categories
+	Cmediatransport:	con 16r01;
+	Creporting:		con 16r02;
+	Crecovery:		con 16r03;
+	Ccontent:		con 16r04;
+	Cheader:		con 16r05;
+	Cmultiplexing:		con 16r06;
+	Cmediacodec:		con 16r07;
+	Cdelayreport:		con 16r08;
+
+	# media types, and which end of a stream an endpoint is
+	Maudio:		con 0;
+	Mvideo:		con 1;
+
+	#
+	# One stream endpoint the far side has.  sink says which end of
+	# a stream it is: a headset's endpoint is a sink, and something
+	# that plays into this side would be a source.
+	#
+	Sep: adt {
+		seid:	int;
+		inuse:	int;
+		media:	int;
+		sink:	int;
+		caps:	list of ref Cap;
+	};
+
+	#
+	# One service capability.  The codec one's bytes are the
+	# codec's own business and are handed back rather than
+	# interpreted, because there is no codec here to interpret
+	# them with.
+	#
+	Cap: adt {
+		cat:	int;
+		info:	array of byte;
+	};
+
+	#
+	# The signalling channel.  What is under it is a file, for the
+	# same reason bnep's is: the program above is an ordinary file
+	# client and btfs owns the link.
+	#
+	Sess: adt {
+		fd:	ref Sys->FD;
+		label:	int;		# the next transaction label
+	};
+
+	init:	fn(bt: Bt): string;
+	start:	fn(fd: ref Sys->FD): ref Sess;
+
+	discover:	fn(s: ref Sess): (list of ref Sep, string);
+	capabilities:	fn(s: ref Sess, seid: int): (list of ref Cap, string);
+	setconfig:	fn(s: ref Sess, acp, int0: int, caps: list of ref Cap): string;
+	open:		fn(s: ref Sess, seid: int): string;
+	startstream:	fn(s: ref Sess, seid: int): string;
+	suspend:	fn(s: ref Sess, seid: int): string;
+	close:		fn(s: ref Sess, seid: int): string;
+
+	# an RTP header and whatever the caller is carrying under it
+	media:	fn(seq, stamp, ssrc, pt: int, payload: array of byte): array of byte;
+
+	#
+	# Choosing an SBC configuration out of what a sink says it can
+	# do.  This is A2DP's and not AVDTP's -- AVDTP does not know
+	# what a codec is -- but it is here rather than in a module of
+	# its own because it is one function and it belongs with the
+	# capability it reads.
+	#
+	# What comes back is the codec capability to configure with,
+	# and a line saying what was chosen, so that what was agreed
+	# can be read rather than guessed at.
+	#
+	Vsbc:	con 16r00;	# the codec identifier for SBC
+	sbcchoose:	fn(c: ref Cap): (ref Cap, string, string);
+};
+
 Smp: module
 {
 	PATH:	con "/dis/lib/bt/smp.dis";

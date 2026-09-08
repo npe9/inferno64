@@ -5,6 +5,7 @@ TARG=\
 	btfs.dis\
 	btkeyfs.dis\
 	btpan.dis\
+	bta2dp.dis\
 	btbench.dis\
 
 #

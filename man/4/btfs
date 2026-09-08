@@ -1,6 +1,6 @@
 .TH BTFS 4
 .SH NAME
-btfs, btbench, bthid, btpan \- Bluetooth as a file system
+btfs, btbench, bthid, btpan, bta2dp \- Bluetooth as a file system
 .SH SYNOPSIS
 .B bt/btfs
 [
@@ -545,8 +545,9 @@ started by the first port and shared by the rest: thirty ports on one
 channel is what a session is.
 .TP
 .B /net/bt/\fIN\fP/remote/\fIADDR\fP/l2cap/
-One file per open LE credit-based channel, named by its PSM in four
-hexadecimal digits.  This is not part of the GATT tree and does not go
+One file per open L2CAP channel, named by its PSM in four hexadecimal
+digits, and by the PSM and a number for a second channel to the same
+PSM \- which AVDTP needs, signalling and media both being there.  This is not part of the GATT tree and does not go
 away when the device says its database has moved: a channel is not an
 attribute and a Service Changed indication says nothing about it.  It
 does go away with the link, along with everything else the link was
@@ -713,6 +714,30 @@ There is no Bluetooth in it beyond the name of a directory: it opens
 the L2CAP channel file
 .I btfs
 made and speaks BNEP over that.
+.SS Bta2dp
+.I Bta2dp
+sends an audio stream to a Bluetooth sink.  It finds a device offering
+the
+.B 110b
+service, opens the AVDTP signalling channel, asks what its stream
+endpoints can do, picks an SBC configuration out of what the sink says
+it will take, configures it, opens the media channel and starts the
+stream; then it reads the file named on its command line and sends it
+down the media channel a packet at a time.
+.PP
+It does not encode.  A2DP is AVDTP plus SBC and there is no SBC here,
+so the file must already hold SBC frames in the configuration that was
+agreed; anything else is sent faithfully and is noise.  That is said
+on the way past rather than left to be discovered by listening.
+.PP
+.B -d
+names the device,
+.B -b
+where
+.I btfs
+is mounted, and
+.B -v
+says what each packet was.
 .SS Btbench
 .I Btbench
 starts

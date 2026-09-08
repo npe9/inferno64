@@ -86,6 +86,14 @@ Qroot:	con big 0;
 #
 Coc: adt {
 	psm:	int;
+	#
+	# What the file is called.  It is the PSM for the first channel
+	# to it and the PSM and a number for any after that: AVDTP
+	# needs two channels to one PSM -- signalling and media -- so a
+	# PSM is not a name, and one file per PSM was one channel a
+	# client could reach and one it could not.
+	#
+	name:	string;
 	c:	ref L2cap->Chan;
 	q:	big;		# the file
 };
@@ -1442,7 +1450,7 @@ ctlwrite(m: ref Tmsg.Write, r: ref Radio, d: ref Dev, s: string)
 			e = "usage: unl2cap psm";
 			break;
 		}
-		e = cocclose(d, hexnum(hd f));
+		e = cocclose(d, hd f);
 	"advertise" =>
 		#
 		# Be findable.  A peer that scans sees this side and can
@@ -2554,6 +2562,18 @@ hexnum(s: string): int
 	return v;
 }
 
+#
+# by the name the file has, which is what a client that opened two
+# channels to one PSM has to say to close the right one
+#
+findcocname(d: ref Dev, name: string): ref Coc
+{
+	for(l := d.cocs; l != nil; l = tl l)
+		if((hd l).name == name)
+			return hd l;
+	return nil;
+}
+
 findcoc(d: ref Dev, psm: int): ref Coc
 {
 	for(l := d.cocs; l != nil; l = tl l)
@@ -2580,10 +2600,6 @@ cocopen(d: ref Dev, psm: int): string
 		d.lock <-= 1;
 		return "not connected";
 	}
-	if(findcoc(d, psm) != nil){
-		d.lock <-= 1;
-		return sprint("psm %#4.4ux is already open", psm);
-	}
 	d.lock <-= 1;
 
 	#
@@ -2602,32 +2618,39 @@ cocopen(d: ref Dev, psm: int): string
 		return e;
 
 	<-d.lock;
-	if(d.mux != m || findcoc(d, psm) != nil){
+	if(d.mux != m){
 		d.lock <-= 1;
 		l2cap->cclose(m, c);
 		return "the link changed while the channel was being opened";
 	}
-	co := ref Coc(psm, c, big 0);
+	name := sprint("%4.4ux", psm);
+	for(n := 1; findcocname(d, name) != nil; n++)
+		name = sprint("%4.4ux.%d", psm, n);
+	co := ref Coc(psm, name, c, big 0);
 	if(d.lq == big 0){
 		d.lq = newnode(Kdl2cap, d.r, d, nil, "l2cap");
 		create(d.q, mkdir("l2cap", d.lq));
 	}
-	co.q = mkfd(d.lq, sprint("%4.4ux", psm), Kcoc, 8r666, d, nil);
+	co.q = mkfd(d.lq, name, Kcoc, 8r666, d, nil);
 	nodes[int co.q].coc = co;
 	d.cocs = co :: d.cocs;
 	d.lock <-= 1;
 	return nil;
 }
 
-cocclose(d: ref Dev, psm: int): string
+#
+# By the name the file has, which for the first channel to a PSM is
+# the PSM: so "unl2cap 0019" still closes the one "l2cap 0019" opened,
+# and "unl2cap 0019.1" closes the second one.  Closing by PSM when
+# there are two would be closing whichever happened to be first.
+#
+cocclose(d: ref Dev, name: string): string
 {
-	if(psm < 0)
-		return "a PSM is four hexadecimal digits";
 	<-d.lock;
-	co := findcoc(d, psm);
+	co := findcocname(d, name);
 	if(co == nil){
 		d.lock <-= 1;
-		return sprint("psm %#4.4ux is not open", psm);
+		return sprint("%s is not open", name);
 	}
 	m := d.mux;
 	dropcoc(d, co);
