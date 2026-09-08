@@ -19550,3 +19550,111 @@ The rate caution from the previous section was justified.  The
 signature that appeared five times in 32 boots appeared once in these
 96 \(em 5/32 against 1/96.  Nothing had changed between them that could
 affect it, and the apparent jump was noise, as recorded.
+.NH 1
+Every interrupt handed the interrupted code AX = 0
+.PP
+Found by the cloud-port session and confirmed here independently.
+pc64's
+.CW _intrcommon
+built the four segment words of the
+.CW Ureg
+with
+.CW AX
+as its scratch,
+.I before
+the
+.CW "PUSHQ AX"
+that saves the interrupted code's own
+.CW AX :
+.P1
+	MOVW	ES, AX
+	PUSHW	AX
+	MOVW	DS, AX
+	PUSHW	AX
+.P2
+.CW MOVW
+from a segment register carries no operand-size prefix, so it
+assembles to
+.CW "8C /r" ,
+.CW "MOV r/m32, Sreg" ,
+which zero-extends into the whole of
+.CW RAX .
+The value pushed as
+.CW Ureg.ax
+was therefore the
+.CW DS
+selector \(em 0 on this kernel \(em and
+.CW _intrestore
+faithfully popped it back.  Every interrupt, on every processor, since
+the port began.
+.PP
+Verified in this tree rather than accepted on report.  Disassembling
+the built kernel with
+.CW utils/p9sym.py
+and a decoder shows, at
+.CW _strayintr+0x14
+and
+.CW +0x18 :
+.P1
+0x200695  mov eax, es    8c c0
+0x200699  mov eax, ds    8c d8
+.P2
+no
+.CW 66
+prefix, both ahead of the
+.CW "push rax"
+at
+.CW +0x28 .
+.PP
+It hid for years because compiled code holds a call's return value in
+.CW AX
+for only the one or two instructions before storing it, so almost
+every interrupt lands somewhere that does not care.  When one lands in
+that window, the caller reads 0.  That is the shape of nearly every
+signature in this document:
+.CW "movp: bad sv 0x0" ,
+.CW "smalloc: size 18446744073441179738"
+(a negative
+.CW int
+sign-extended, from a
+.CW p->len
+read as 0 and then decremented),
+.CW alloc:D2B:destroy-entry ,
+and the general protection violations.
+.PP
+The fix reserves the eight bytes with
+.CW "SUBQ $8, SP"
+instead of pushing them, and fills them in after
+.CW AX
+is safe.  The frame layout is unchanged: fifteen 8-byte pushes follow,
+so
+.CW SP
+then points at
+.CW Ureg.ax
+and the words sit at 120..126 in push order with
+.CW DS
+lowest.  The built code confirms stores at
+.CW +0x78 ,
+.CW +0x7a ,
+.CW +0x7c ,
+.CW +0x7e .
+.CW _iretsegs
+already skipped them with
+.CW "ADDQ $8, SP"
+and is untouched.
+.NH 2
+The arm64 boards do not have it, and that is consistent
+.PP
+Checked rather than assumed.  virtarm64's
+.CW vectrap
+saves the tag register first and then every interrupted register
+before anything else runs, and its own comment explains why AArch64
+needs no scratch held in advance:
+.CW "SUB SP, SP, #UR_SIZE"
+alone makes the frame safe to write into, so there is never a window
+where a live register is used as scratch.  The same is true of
+riscv64/virt, which it was modelled on.  This is a satisfying
+consistency check rather than a coincidence: virtarm64 boots to an
+interactive shell with CHANTEST-OK and DIS-STRESS-OK while pc64 was
+panicking in about 85% of boots, on the same interpreter and the same
+collector.
