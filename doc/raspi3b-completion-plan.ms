@@ -2057,6 +2057,44 @@ and that silencing the instrumentation would have thrown the report
 away rather than answered it.  Whoever owns the pc64 tracker should
 see this; it is why the recommendation here is to leave it running and
 not to gate it.
+.PP
+.B "One hypothesis, eliminated."
+The obvious benign explanation is that the object is a module's data
+segment.
+.CW load.c
+allocates
+.CW origmp
+with
+.CW dtype() ,
+which sets its pointer words to
+.CW H
+and so registers exactly these watches, and then the DEFF/DEFS/DEFA
+writes fill it from the module file's data section \- which encodes
+literal zeroes for pointer fields that the module's own
+.CW init
+assigns later.  That would make a watched pointer word going to 0
+correct by construction, and it would explain the checkpoint too,
+since the fill happens inside
+.CW parsemod() .
+.PP
+It is not that.  Printing
+.CW m->origmp
+and its size at every allocation gives, in order and both before the
+hits, 0x3acc270 of 112 bytes and 0x3adbcf0 of 408.  The flagged object
+is at 0x3b675b0 and is 144 bytes: no data segment allocated up to that
+point is either.
+.PP
+So the explanation is still open, and one plausible one is now closed.
+The remaining clue not chased here is the registration itself \-
+.CW typetagp
+is
+.CW obj+0x18 ,
+inside the object rather than in a heap header before it, which is not
+the shape a
+.CW heap() /
+.CW heapz()
+registration leaves and points at an array-element or frame watch
+instead.
 .NH 1
 When this is done
 .PP
