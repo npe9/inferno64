@@ -81,6 +81,8 @@ def symbols(path):
 
 class Resolver:
 	def __init__(self, path):
+		self.path = path
+		self._kd = 0
 		fns, self.d, self.entry, self.text = readsyms(path)
 		self.fns = [(a, n) for a, n in fns if self.entry <= a < self.entry + self.text]
 		self.addrs = [a for a, _ in self.fns]
@@ -118,6 +120,31 @@ class Resolver:
 			if ins.address > pc:
 				return 'interior'
 			prev = ins
+		return None
+
+	def kerndate(self):
+		"""The kernel's own build stamp, read out of its data segment.
+
+		os/inferno/*/mkfile compiles $CONF.c with -DKERNDATE=`{$NDATE}
+		and main.c prints "Inferno release built at %ud" in the boot
+		banner, so every console log already names the build that
+		produced it.  Reading the same u32 back out of the binary
+		turns that into a check: if the numbers differ, the pcs in
+		that log belong to a different kernel and any name this tool
+		prints for them is fiction.  Data addresses map to the file
+		at the page-rounded end of text (4096 on amd64).
+		"""
+		if getattr(self, '_kd', 0) is not None and getattr(self, '_kd', 0) != 0:
+			return self._kd
+		syms, _, _, _ = readsyms(self.path, 'DdBb')
+		dbase = (self.entry + self.text + 4095) & ~4095
+		for v, n in syms:
+			if n == 'kerndate':
+				off = 40 + self.text + (v - dbase)
+				if 0 <= off <= len(self.d) - 4:
+					self._kd = struct.unpack('<I', self.d[off:off+4])[0]
+					return self._kd
+		self._kd = None
 		return None
 
 	def rets(self):
@@ -167,13 +194,18 @@ class Resolver:
 		r = self.rets()
 		if r is None:
 			return []
+		# a shifted pc is still a text address; anything else scraped
+		# off a log (heap pointers, block addresses) can never be
+		# placed and would only dilute the agreement count.
+		lo, hi = self.entry - span, self.entry + self.text + span
+		pcs = [p for p in pcs if lo <= p <= hi]
 		out = []
 		for D in range(-span, span+1):
 			hit = [p for p in pcs if (p + D) in r]
 			if hit:
 				out.append((len(hit), D, hit))
 		out.sort(key=lambda x: (-x[0], abs(x[1])))
-		return out
+		return out, len(pcs)
 
 	def describe(self, pc):
 		nm, off, _ = self.name(pc)
@@ -201,34 +233,53 @@ def main():
 	r = Resolver(av[0])
 	if not r.fns:
 		sys.exit("p9sym: no text symbols -- is %s stripped?" % av[0])
-	print("# %d text symbols, %#x..%#x" % (len(r.fns), r.fns[0][0], r.fns[-1][0]), file=sys.stderr)
+	kd = r.kerndate()
+	print("# %d text symbols, %#x..%#x, built at %s"
+		% (len(r.fns), r.fns[0][0], r.fns[-1][0], kd if kd else "?"), file=sys.stderr)
 	if docheck and r.md is None:
 		print("# -c given but capstone is not installed; names only", file=sys.stderr)
 	pcs = av[1:]
 	if not pcs:
-		pcs = re.findall(r'(?:pc=)?0x([0-9a-f]{5,16})', sys.stdin.read())
+		txt = sys.stdin.read()
+		pcs = re.findall(r'(?:pc=)?0x([0-9a-f]{5,16})', txt)
+		# the boot banner names the build the capture came from
+		for b in set(re.findall(r'built at (\d+)', txt)):
+			if kd and int(b) != kd:
+				print("# WARNING: capture is from a kernel built at %s, this one at %d."
+					"\n#          Names below are meaningless as printed; use -s."
+					% (b, kd), file=sys.stderr)
 	vals = [int(s, 16) for s in pcs]
 	for v in vals:
 		print(r.describe(v))
 	if doscan:
 		if r.md is None:
 			sys.exit("p9sym: -s needs capstone")
-		res = r.scan(vals)
+		res, ntext = r.scan(vals)
 		if not res:
 			print("\n# no build offset makes any of these a call return")
 			return
 		n = res[0][0]
-		print("\n# %.2f%% of text bytes are call-return addresses; %d/%d pcs agree at best"
-			% (100.0 * len(r.rets()) / r.text, n, len(vals)))
+		dens = 100.0 * len(r.rets()) / r.text
+		print("\n# %.2f%% of text bytes are call-return addresses; %d of %d text pcs agree at best"
+			% (dens, n, ntext))
+		if n < 2:
+			print("# one pc alone agrees with many offsets by chance -- not conclusive."
+				"\n# Give every pc from a single boot; they share one offset.")
+		shown = 0
 		for cnt, D, hit in res:
 			if cnt < n:
 				break
-			print("# build offset %+#x -- %d/%d pcs are call returns:" % (D, cnt, len(vals)))
+			shown += 1
+			if shown > 8:
+				print("# ... and %d more offsets with the same count"
+					% (sum(1 for c, _, _ in res if c == n) - 8))
+				break
+			print("# build offset %+#x -- %d/%d pcs are call returns:" % (D, cnt, ntext))
 			for v in vals:
 				if v + D in r.rets():
 					sym, off, callee = r.rets()[v+D]
 					print("    %#x -> %s+%#x\t(call %s)" % (v, sym, off, callee))
-				else:
+				elif r.name(v)[0] is not None:
 					print("    %#x -> unplaced" % v)
 
 if __name__ == '__main__':

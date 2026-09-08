@@ -2304,7 +2304,22 @@ was a boundary crossing, and the pc is
 .CW freelist+0x63 .
 Two pcs remain unplaced, so
 .CW free+56
-is withdrawn.  See doc/inferno-ports.ms, "The captured pcs were right".
+is withdrawn.
+.PP
+The build stamp needed for this already existed and was never used:
+every mkfile compiles
+.CW $CONF.c
+with
+.CW "-DKERNDATE=`{$NDATE}"
+and the boot banner prints it.
+.CW p9sym.py
+reads the same word out of the binary and compares, so a capture from
+the wrong kernel is now refused rather than resolved \(em this tree's
+.CW ipc64
+is built at 1788855526 and the logs these pcs came from say 1788170900,
+1788655402 and 1788656011, confirming the offset result by an
+independent route.  See doc/inferno-ports.ms, "The captured pcs were
+right".
 .NH 1
 Ground rules
 .PP

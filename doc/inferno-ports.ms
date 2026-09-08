@@ -19062,10 +19062,32 @@ or as anything else on this evidence, and that reading is withdrawn.
 Captures taken across a long hunt come from many different kernels;
 only pcs from one boot can be expected to share an offset.
 .PP
-The lesson is a build stamp.  Nothing in a panic says which binary
-produced it, which is why a correct reader still gave confident wrong
-answers, and why
+The build stamp turned out to exist already, unused.  Every board's
+mkfile compiles
+.CW $CONF.c
+with
+.CW "-DKERNDATE=`{$NDATE}" ,
+and pc64's main.c prints
+.CW "Inferno release built at %ud"
+in the boot banner, so every console log in this hunt has always named
+the kernel that produced it.
+.CW p9sym.py
+now reads the same
+.CW kerndate
+word back out of the binary's data segment and compares the two, which
+settles the question without any offset search at all: this tree's
+current
+.CW ipc64
+is built at 1788855526, while the boot logs these pcs came from say
+1788170900, 1788655402 and 1788656011 \(em three different kernels, all
+days older.  That is independent confirmation of the offset result,
+arrived at by a completely different route.
+.PP
+So the tool now refuses to mislead: given a capture on standard input
+it scrapes the banner, and if the build does not match the binary it
+says so before printing a single name.  Where the log is gone and only
+pcs survive,
 .CW -s
-has to exist at all.  With a build id in the kernel and in the panic
-banner, a capture names its own binary and the offset search becomes a
-fallback rather than the only path.
+recovers the offset, and reports honestly that one pc alone agrees with
+many offsets by chance \(em only a set of pcs from a single boot pins it
+down.
