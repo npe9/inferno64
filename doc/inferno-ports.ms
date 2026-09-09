@@ -20384,3 +20384,115 @@ A negative result and a bug fix, from an assertion that was itself
 wrong twice.  The assertion stays: it costs a compare and a store per
 sync point, it is silent today, and it fires the moment Phase 1b opens
 the window it describes.
+.NH 2
+The last failure, characterised: an IRET on a newborn kproc's stack
+.PP
+Seven captures across five batches, at
+.CW "-smp 1"
+and
+.CW "-smp 2"
+alike, all with the same faulting pc,
+.CW _intrr+0x28 ,
+which is the
+.CW IRETQ
+itself.  They are far more alike than "general protection violation"
+suggests:
+.TS
+box, tab(;);
+l l l l.
+batch;ERROR;SP;estackx
+_
+cap-smp2d/b37;AFC8;0xa670a8;0xa670e0
+cap-smp2d/b42;6978;0xa670a8;0xa670e0
+cap-h/b12;8658;0xa670a8;0xa670e0
+cap-h/b31;8E70;0xa671a8;0xa671e0
+cap-toc/b34;1940;0xa670a8;0xa670e0
+cap-toc/b90;7918;0xa670a8;0xa670e0
+cap-smp1/b67;6978;0xa66ea8;0xa66ee0
+.TE
+.PP
+.CW SP
+is
+.CW "estackx - 0x38"
+in every one, and
+.CW estackx
+is
+.CW "up->kstack + KSTACK"
+\(em _dumpstack computes it that way.  So the interrupt frame sits at a
+fixed depth on a kernel stack that is essentially empty.
+.PP
+The frame's return pc says whose.  At
+.CW SP
+the word is
+.CW 0x208bcb ,
+which resolves to
+.CW linkproc+0x9 :
+.P1
+linkproc(void)
+{
+	spllo();
+	up->kpfun(up->kparg);
+	pexit("kproc dying", 0);
+}
+.P2
+.CW +0x9
+is immediately after the call to
+.CW spllo() ,
+so this is the first interrupt a newly created kproc takes after it
+enables them.  The geometry agrees:
+.CW kprocchild()
+sets
+.CW "p->sched.sp = p->kstack+KSTACK-BY2WD" ,
+and an interrupt taken with
+.CW SP
+one further word down puts the CPU's five-word frame exactly where
+these captures show it.
+.PP
+And the error code is not incidental.  For each capture it equals the
+low half of the word at
+.CW SP+32 ,
+which in an
+.CW IRETQ
+frame is
+.CW SS .
+.CW AFC8
+against
+.CW 0000afc8 ,
+.CW 1940
+against
+.CW 00011940 .
+So
+.CW IRETQ
+is rejecting the stack selector, not the code selector \(em and this
+kernel runs with
+.CW "SS 0000"
+everywhere else, as every register dump in this document shows.
+.PP
+What is not established is how a non-zero value gets into that slot.
+Two readings fit: the CPU pushed a non-zero
+.CW SS ,
+or the slot was written after the frame was built.  The values differ
+per boot
+.CW ( AFC8 ,
+.CW 6978 ,
+.CW 8658 ,
+.CW 8E70 ,
+.CW 1940 ,
+.CW 7918 ),
+which suits the second better than the first, but that is a preference
+and not evidence.
+.PP
+One thing was checked rather than assumed on the way, because it would
+have been an easy mistake.  The words either side of the
+.CW SS
+slot are absent from the dumps, and the tempting reading is that
+.CW CS ,
+.CW RFLAGS
+and
+.CW RSP
+are all zero \(em which would mean the frame was never CPU-pushed at
+all.  They are not zero;
+.CW _dumpstack()
+prints a word only when it looks like a text address or lies within
+the last 32 bytes of the stack, so those three are simply filtered.
+The frame is consistent with having been pushed normally.
