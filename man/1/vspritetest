@@ -64,6 +64,24 @@ and fails.
 Pixels that fall off the page are counted separately: the editor cannot
 show that part of the sprite, which is not the rasteriser's doing.
 .PP
+It then checks the transform, which has no
+.B .bit
+to be checked against, by three properties that hold whatever the right
+answer is \(em turning by nothing and scaling by one changes nothing,
+four quarter turns come back, and scaling by four and then by a quarter
+is the original \(em compared as pixels rather than as arithmetic.
+All three are satisfied by a transform that does nothing, so a fourth
+requires that scaling by four produces at least twice the ink.
+The measure is ink and not the bounding box: the box carries the pen's
+half-width as a margin and the pen does not scale unless the sprite sets
+a thickness, so a 7-pixel-wide sprite of two lines 4 apart comes out 19
+wide and not 28.
+Sprites containing a
+.B rect
+are skipped, for the reason in
+.IR vsprite (2)'s
+BUGS.
+.PP
 .B -v
 names each sprite that matches exactly.
 .B -d
@@ -78,6 +96,7 @@ one digit changing everywhere.
 vspritetest: 166 sprites skipped (text, bitmap or mesh)
 near elephant_5: 8 of 3675 pixels differ (allowed 16), first at 2,36
   (three more)
+vspritetest: transform 46/46, 11 skipped for a rect
 vspritetest: page 57/57 identical inside the box, 0 flooded outside it, 3 cut off by the page
 vspritetest: 57/57
 .EE

@@ -23,7 +23,9 @@ implement Spriteedit;
 #	no polygon/fence/prism tools.
 # GAP: Transform Selected offers rotate/scale (exact for every 2D element,
 #	with TempleOS's rect->rotated-rect and promotion rules) rather than the
-#	full 4x4 matrix popup; bitmap elements are moved, not resampled.
+#	full 4x4 matrix popup; bitmap elements are moved, not resampled.  The
+#	transform itself is vsprite(2)'s now, so it is the same one the ports
+#	get; only the selection logic is here.
 # GAP: screen capture captures the editor's own canvas (the analog of the
 #	document under the sprite), not the host screen; Insert Clip is
 #	"Insert Sprite File" (no system clipboard of sprites exists here).
@@ -513,74 +515,6 @@ capture(x1, y1, x2, y2, transp: int): ref Elem
 # ---------- polypt encode ----------
 
 # code for a unit step (dx,dy) in {-1,0,1}, -1 = no move
-enccode := array[] of {5, 6, 7, 4, -1, 0, 3, 2, 1};
-
-walkappend(e: ref Elem, x2, y2: int, lx, ly: int): (int, int)
-{
-	# extend polypt e (absolute last position lx,ly) toward x2,y2
-	adx := x2-lx; if(adx < 0) adx = -adx;
-	ady := y2-ly; if(ady < 0) ady = -ady;
-	steps := adx;
-	if(ady > steps)
-		steps = ady;
-	if(steps == 0)
-		return (lx, ly);
-	for(i := 1; i <= steps; i++){
-		nx := lx + (x2-lx)*i/steps;
-		ny := ly + (y2-ly)*i/steps;
-		dx := nx-lx;
-		dy := ny-ly;
-		if(dx < -1) dx = -1;
-		if(dx > 1) dx = 1;
-		if(dy < -1) dy = -1;
-		if(dy > 1) dy = 1;
-		code := enccode[(dy+1)*3+(dx+1)];
-		if(code < 0)
-			continue;
-		num := e.a[0];
-		need := (num*3+3+7)>>3;
-		if(e.data == nil || need > len e.data){
-			nd := array[need+64] of {* => byte 0};
-			if(e.data != nil)
-				nd[0:] = e.data;
-			e.data = nd;
-		}
-		bit := num*3;
-		for(b := 0; b < 3; b++)
-			if(code & (1<<b))
-				e.data[(bit+b)>>3] |= byte (1<<((bit+b)&7));
-		e.a[0] = num+1;
-		lx += dx;
-		ly += dy;
-	}
-	return (lx, ly);
-}
-
-polyptabs(e: ref Elem): array of int
-{
-	# absolute point list of a polypt element (including start)
-	out := array[2*(e.a[0]+1)] of int;
-	x := e.a[1];
-	y := e.a[2];
-	out[0] = x;
-	out[1] = y;
-	for(i := 0; i < e.a[0]; i++){
-		bit := i*3;
-		v := 0;
-		for(b := 0; b < 3; b++){
-			bi := bit+b;
-			if(bi>>3 < len e.data)
-				v |= ((int e.data[bi>>3] >> (bi&7)) & 1) << b;
-		}
-		(sdx, sdy) := vspr->polystep(v);
-		x += sdx;
-		y += sdy;
-		out[2*(i+1)] = x;
-		out[2*(i+1)+1] = y;
-	}
-	return out;
-}
-
 # ---------- transforms (Sprite Edit Menu / SpriteTransformQue) ----------
 
 applyxform(deg, scale: real)
@@ -590,79 +524,15 @@ applyxform(deg, scale: real)
 		selall(1);
 		auto = 1;
 	}
-	th := deg*Math->Pi/180.0;
-	c := scale*math->cos(th);
-	s := scale*math->sin(th);
 	for(i := 0; i < ne; i++){
 		e := elems[i];
 		if(!e.tag)
 			continue;
-		elems[i] = xelem(e, c, s, th, scale);
+		elems[i] = vspr->transformelem(e, deg, scale);
 	}
 	if(auto)
 		selall(0);
 	status = "transformed";
-}
-
-xpt(x, y: int, c, s: real): (int, int)
-{
-	return (int (real x*c - real y*s), int (real x*s + real y*c));
-}
-
-xelem(e: ref Elem, c, s, th, k: real): ref Elem
-{
-	case e.kind {
-	STHICK =>
-		e.a[0] = int (real e.a[0]*k);
-		if(e.a[0] < 1)
-			e.a[0] = 1;
-	SLINE or SARROW or SPLANARSYM =>
-		(e.a[0], e.a[1]) = xpt(e.a[0], e.a[1], c, s);
-		(e.a[2], e.a[3]) = xpt(e.a[2], e.a[3], c, s);
-	SRECT or SROTRECT =>
-		# TempleOS promotes rect to rotated rect under transform
-		w := int (real(e.a[2]-e.a[0])*k);
-		h := int (real(e.a[3]-e.a[1])*k);
-		(nx, ny) := xpt(e.a[0], e.a[1], c, s);
-		r := vspr->mkelem(SROTRECT, 4);
-		r.a[0] = nx;
-		r.a[1] = ny;
-		r.a[2] = nx+w;
-		r.a[3] = ny+h;
-		r.ang = e.ang + th;
-		r.tag = e.tag;
-		return r;
-	SCIRCLE =>
-		(e.a[0], e.a[1]) = xpt(e.a[0], e.a[1], c, s);
-		e.a[2] = int (real e.a[2]*k);
-	SELLIPSE or SPOLYGON =>
-		(e.a[0], e.a[1]) = xpt(e.a[0], e.a[1], c, s);
-		e.a[2] = int (real e.a[2]*k);
-		e.a[3] = int (real e.a[3]*k);
-		e.ang = e.ang + th;
-	SPT or SFLOOD or SFLOODNOT or STEXT or STEXTBOX or STEXTDIAMOND or SBITMAP =>
-		(e.a[0], e.a[1]) = xpt(e.a[0], e.a[1], c, s);
-	SPOLYLINE =>
-		for(i := 0; i < len e.pts; i += 2)
-			(e.pts[i], e.pts[i+1]) = xpt(e.pts[i], e.pts[i+1], c, s);
-	SBSPLINE2 or SBSPLINE2C or SBSPLINE3 or SBSPLINE3C =>
-		for(i := 0; i < len e.pts; i += 3)
-			(e.pts[i], e.pts[i+1]) = xpt(e.pts[i], e.pts[i+1], c, s);
-	SPOLYPT =>
-		# re-walk the transformed step path, as SpriteTransformQue does
-		p := polyptabs(e);
-		r := vspr->mkelem(SPOLYPT, 3);
-		r.tag = e.tag;
-		(r.a[1], r.a[2]) = xpt(p[0], p[1], c, s);
-		lx := r.a[1];
-		ly := r.a[2];
-		for(i := 2; i < len p; i += 2){
-			(nx, ny) := xpt(p[i], p[i+1], c, s);
-			(lx, ly) = walkappend(r, nx, ny, lx, ly);
-		}
-		return r;
-	}
-	return e;
 }
 
 # SpriteSetOrigin: add a delta to every (non-shift) element's coordinates
@@ -2128,7 +1998,7 @@ toolptr(incan, cx, cy, ldown, lup, rup: int, b: int)
 			phase = 1;
 			redraw();
 		}else if(phase == 1 && (b&1)){
-			(lastcx, lastcy) = walkappend(pv, ex, ey, lastcx, lastcy);
+			(lastcx, lastcy) = vspr->walkappend(pv, ex, ey, lastcx, lastcy);
 			redraw();
 		}else if(lup && phase == 1){
 			phase = 0;

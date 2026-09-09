@@ -483,10 +483,47 @@ flood fill that escapes the sprite runs to the canvas edge, and a
 dither's checkerboard is in canvas coordinates. Both are in the man
 page's BUGS.
 
-**What is not done.** Nothing scales or rotates yet: the point of a
-display list is that it can be drawn at any size, and this draws it at
-its own. That is the next step and it is what the seven ports that read a
-`.spr` would actually gain.
+**It scales and turns now, and the oracle was already in the tree.** The
+point of a display list is that it can be drawn at any size, and there is
+no `.bit` of a scaled sprite to check one against — but `spriteedit`'s
+Transform Selected has done exactly this since the sprites were
+extracted, exact for every 2D element including TempleOS's
+rect-to-rotated-rect promotion. So `transform`, `transformelem`,
+`Sprite.transformed`, `polyptabs` and `walkappend` are that code moved
+into `vsprite(2)` (verbatim, diffed) and the editor calls them; a
+transform now means one thing in the tree rather than two.
+
+*The gate, since there is no asset to compare against.* Three properties
+that hold whatever the right answer is, checked as **pixels**, not as
+arithmetic: turning by nothing and scaling by one changes nothing; four
+quarter turns come back; scaling by four and then by a quarter is the
+original, which is exact because every coordinate is an integer. **46 of
+46 pass.** Eleven sprites are skipped and the reason is TempleOS's: a
+transform promotes a `rect` to a rotated `rect`, and a `rect` is filled
+where a rotated one is an outline, so a transformed rect is deliberately
+a different picture — `scripts/tos_extract_sprites.py` draws the two the
+same way, so that is the reference, not a defect here.
+
+Three properties that are all satisfied by doing nothing, so there is a
+fourth: scaling by four must produce at least twice the ink. **The
+measure is ink and not the box**, because the box carries the pen's
+half-width as a margin and the pen does not scale unless the sprite sets
+a thickness — `psalmodydraw_12`, two vertical lines 4 apart, is 7 wide
+and comes out 19 wide rather than 28, which is right and looks wrong. It
+cost a run to see that the first version of this check was measuring the
+margin.
+
+*Negative control:* make `transformelem` return its input unchanged and
+the transform score goes from 46/46 to 1/46. The one that still passes
+has too little ink for the growth check to bite.
+
+**What is not done.** None of the seven ports is on `vsprite(2)`. That is
+now the whole remaining job, and it is a *visual* change rather than a
+no-op: `zing`, for one, walks the element list itself and draws each line
+through `draw(2)` with its own rotation, so converting it moves the port
+toward the `.bit` rather than leaving it where it is. Worth knowing
+before picking one, because it decides whether the gate means "prove
+nothing changed" or "prove it now matches the reference".
 
 **A correction to the count.** This section said "twelve ports" in three
 places. Counted rather than remembered — `grep -l lib/temple/sprites/

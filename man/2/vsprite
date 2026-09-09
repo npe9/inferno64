@@ -25,8 +25,11 @@ line := vsprite->elemline(e);
 (e, err) = vsprite->parseline(line);
 (elems, n, err) = vsprite->parselist(body);
 
+pts := vsprite->polyptabs(e);
+elems = vsprite->transform(elems, deg, scale);
+t := s.transformed(deg, scale);
+
 c := vsprite->nearest(rgba);
-(dx, dy) := vsprite->polystep(code);
 name := vsprite->kindname(kind);
 kind := vsprite->kindof(name);
 .EE
@@ -112,11 +115,35 @@ and
 are the element type and the text grammar, exported for the same reason:
 an editor that carried its own copy could drift from this one.
 .B nearest
-says which of the sixteen a rendered colour is, and
-.B polystep
-decodes one of a
-.BR polypt 's
-three-bit compass steps.
+says which of the sixteen a rendered colour is.
+.PP
+.B transform
+turns an element list by
+.I deg
+degrees about the sprite's origin and scales it by
+.IR scale ,
+and
+.B transformed
+is the same thing on a whole
+.BR Sprite ;
+.B transformelem
+does one element, which is what an editor transforming a selection wants.
+The source list is not touched.
+This is TempleOS's
+.B SpriteTransformQue
+and it is exact for every 2D element: a circle keeps its radius scaled, an
+ellipse and a regular polygon keep their rotation, a
+.B polypt
+is re-walked as a fresh path of compass steps, and a
+.B rect
+is promoted to a rotated
+.B rect
+turned by the same angle.
+.B polyptabs
+is that re-walk's other half, the absolute points of a
+.BR polypt ;
+.B walkappend
+extends one toward a point.
 .PP
 The
 .B tag
@@ -142,9 +169,32 @@ They carry the 3D meshes, which the ports load separately from
 and drawing one here would need a projection this type has no business
 owning.
 .PP
-Nothing scales or rotates yet.
-The point of a display list is that it can be drawn at any size, and this
-draws it at one \(em its own.
+A
+.B rect
+does not survive a transform as a
+.BR rect .
+TempleOS promotes it to a rotated
+.BR rect ,
+and a
+.B rect
+is filled where a rotated one is an outline, so a transformed rect is a
+different picture.
+That is the reference behaviour \(em
+.B scripts/tos_extract_sprites.py
+draws the two the same way \(em not this type's invention, but it means
+.IR vspritetest (1)
+cannot check a transform on the eleven sprites that contain one.
+.PP
+A
+.B bitmap
+element is moved by a transform, not resampled, and a transform rounds
+half away from zero where the rasteriser rounds half to even.
+The rasteriser's rule is set by the
+.B .bit
+files it has to match; nothing constrains the transform's, so it is the
+one
+.IR temple / spriteedit (1)
+has always used.
 .PP
 An element list drawn on a canvas other than the sprite's own box is not
 guaranteed to give the same pixels.

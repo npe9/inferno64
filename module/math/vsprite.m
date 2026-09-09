@@ -52,6 +52,10 @@ Vsprite: module
 
 		raster:	fn(s: self ref Sprite, d: ref Draw->Display):
 				(ref Draw->Image, ref Draw->Image, Draw->Rect);
+
+		# The same sprite turned and scaled, as a new Sprite.
+		transformed: fn(s: self ref Sprite, deg, scale: real):
+				ref Sprite;
 		# Palette indices, TRANSP where nothing drew, row-major over
 		# the returned rect.  This is what a caller comparing against
 		# an m8 .bit wants, and what raster() is built on.
@@ -83,13 +87,24 @@ Vsprite: module
 	parseline:	fn(line: string): (ref Elem, string);
 	parselist:	fn(body: string): (array of ref Elem, int, string);
 
+	# The element list turned by deg degrees about the sprite's origin
+	# and scaled by k, as TempleOS's SpriteTransformQue does it: exact
+	# for every 2D element, with the rect-to-rotated-rect promotion, and
+	# a polypt re-walked as a fresh step path.  The source list is not
+	# touched.  A bitmap element is MOVED, not resampled.
+	transform:	fn(elems: array of ref Elem, deg, scale: real):
+				array of ref Elem;
+	transformelem:	fn(e: ref Elem, deg, scale: real): ref Elem;
+
+	# A polypt's points in the sprite's coordinates, and the other way:
+	# extend one toward (x2, y2) from the absolute position (lx, ly),
+	# returning where it now ends.
+	polyptabs:	fn(e: ref Elem): array of int;
+	walkappend:	fn(e: ref Elem, x2, y2, lx, ly: int): (int, int);
+
 	# Which of the sixteen a rendered colour is.
 	nearest:	fn(v: int): int;
 
-	# The compass step a polypt's 3-bit code means.  An editor walks
-	# the same eight as the rasteriser, and two copies of a table this
-	# small are exactly how a sprite ends up drawn two ways.
-	polystep:	fn(code: int): (int, int);
 
 	kindname:	fn(k: int): string;
 	kindof:		fn(name: string): int;

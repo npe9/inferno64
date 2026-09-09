@@ -54,6 +54,9 @@ pageok := 0;
 pageout := 0;
 pageclip := 0;
 pagerun := 0;
+xfok := 0;
+xfrun := 0;
+xfskip := 0;
 display: ref Display;
 
 init(ctxt: ref Draw->Context, argv: list of string)
@@ -94,8 +97,12 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		names = candidates();
 	for(l := names; l != nil; l = tl l)
 		one(hd l);
+	for(l = names; l != nil; l = tl l)
+		page(hd l);
 	for(; names != nil; names = tl names)
-		page(hd names);
+		xform(hd names);
+	sys->print("vspritetest: transform %d/%d, %d skipped for a rect\n",
+		xfok, xfrun, xfskip);
 	sys->print("vspritetest: page %d/%d identical inside the box, %d flooded outside it, %d cut off by the page\n",
 		pageok, pagerun, pageout, pageclip);
 	sys->print("vspritetest: %d/%d\n", pass, pass+fail);
@@ -307,6 +314,100 @@ clipnote(clip, n: int): string
 	if(clip == 0)
 		return "";
 	return sys->sprint(" (%d of %d off the page)", clip, n);
+}
+
+# What a transform must do, checked as pixels rather than as arithmetic.
+# There is no .bit of a scaled sprite to compare against, so the checks
+# are the ones that hold whatever the right answer is:
+#
+#	turning by nothing and scaling by one changes nothing;
+#	four quarter turns come back to where they started;
+#	scaling by four and then by a quarter is the original, because
+#	every coordinate is an integer and 4x is exact.
+#
+# A sprite containing a rect is skipped, and the reason is TempleOS's,
+# not a defect: a transform promotes a rect to a rotated rect, a rect is
+# filled and a rotated rect is an outline, so a transformed rect is a
+# different picture on purpose.  scripts/tos_extract_sprites.py draws the
+# two the same way, so this is the reference behaviour and not this
+# type's invention.
+xform(base: string)
+{
+	(spr, nil) := vsprite->read(SPRDIR + "/" + base + ".spr");
+	if(spr == nil)
+		return;
+	for(i := 0; i < len spr.elems; i++)
+		if(spr.elems[i] != nil && spr.elems[i].kind == Vsprite->SRECT){
+			xfskip++;
+			return;
+		}
+	(px, r) := spr.pixels(display);
+	if(px == nil)
+		return;
+	xfrun++;
+	ok := 1;
+	ok = samepixels(base, "identity", px, r,
+		spr.transformed(0.0, 1.0)) && ok;
+	q := spr.transformed(90.0, 1.0).transformed(90.0, 1.0).
+		transformed(90.0, 1.0).transformed(90.0, 1.0);
+	ok = samepixels(base, "four quarter turns", px, r, q) && ok;
+	ok = samepixels(base, "scale 4 then 1/4", px, r,
+		spr.transformed(0.0, 4.0).transformed(0.0, 0.25)) && ok;
+	# And one that must NOT be the same, or the three above would all
+	# pass on a transform that did nothing at all.  The measure is ink,
+	# not the box: the box carries the pen's half-width as a margin and
+	# the pen does not scale unless the sprite sets a thickness, so a
+	# 7-pixel-wide sprite of two lines 4 apart comes out 19 wide and not
+	# 28, which is right and looks wrong.  A line scaled by four draws
+	# about four times the pixels.
+	n := inked(px);
+	if(n >= 6){
+		(sp, nil) := spr.transformed(0.0, 4.0).pixels(display);
+		sn := inked(sp);
+		if(sn < 2*n){
+			bad(base, sys->sprint("scale 4 took %d inked pixels to %d, expected about %d",
+				n, sn, 4*n));
+			ok = 0;
+		}
+	}
+	if(ok)
+		xfok++;
+}
+
+inked(px: array of byte): int
+{
+	n := 0;
+	for(i := 0; i < len px; i++)
+		if(px[i] != byte Vsprite->TRANSP)
+			n++;
+	return n;
+}
+
+samepixels(base, what: string, px: array of byte, r: Rect,
+	t: ref Sprite): int
+{
+	(tp, tr) := t.pixels(display);
+	if(tp == nil){
+		bad(base, what + ": nothing drew");
+		return 0;
+	}
+	if(tr.min.x != r.min.x || tr.min.y != r.min.y
+	   || tr.max.x != r.max.x || tr.max.y != r.max.y){
+		bad(base, sys->sprint("%s: rect %d,%d..%d,%d against %d,%d..%d,%d",
+			what, tr.min.x, tr.min.y, tr.max.x, tr.max.y,
+			r.min.x, r.min.y, r.max.x, r.max.y));
+		return 0;
+	}
+	diff := 0;
+	for(i := 0; i < len px && i < len tp; i++)
+		if(px[i] != tp[i])
+			diff++;
+	if(diff){
+		bad(base, sys->sprint("%s: %d of %d pixels differ",
+			what, diff, len px));
+		return 0;
+	}
+	return 1;
 }
 
 # got over want, a few rows either side of the first difference, as

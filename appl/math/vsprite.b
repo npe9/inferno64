@@ -472,12 +472,6 @@ bsample(pts: array of int, order, closed: int): array of real
 stepdx := array[] of {1, 1, 0, -1, -1, -1, 0, 1};
 stepdy := array[] of {0, 1, 1, 1, 0, -1, -1, -1};
 
-polystep(code: int): (int, int)
-{
-	c := code & 7;
-	return (stepdx[c], stepdy[c]);
-}
-
 polyptdraw(x, y: int, e: ref Elem)
 {
 	dot(real x, real y);
@@ -943,6 +937,167 @@ parselist(body: string): (array of ref Elem, int, string)
 }
 
 
+
+
+# ---------- transform (SpriteTransformQue) ----------
+
+# The three-bit step codes, indexed (dy+1)*3+(dx+1); -1 is "no move".
+enccode := array[] of {5, 6, 7, 4, -1, 0, 3, 2, 1};
+
+polyptabs(e: ref Elem): array of int
+{
+	out := array[2*(e.a[0]+1)] of int;
+	x := e.a[1];
+	y := e.a[2];
+	out[0] = x;
+	out[1] = y;
+	for(i := 0; i < e.a[0]; i++){
+		bit := i*3;
+		v := 0;
+		for(b := 0; b < 3; b++){
+			bi := bit+b;
+			if(bi>>3 < len e.data)
+				v |= ((int e.data[bi>>3] >> (bi&7)) & 1) << b;
+		}
+		x += stepdx[v];
+		y += stepdy[v];
+		out[2*(i+1)] = x;
+		out[2*(i+1)+1] = y;
+	}
+	return out;
+}
+
+walkappend(e: ref Elem, x2, y2, lx, ly: int): (int, int)
+{
+	adx := x2-lx; if(adx < 0) adx = -adx;
+	ady := y2-ly; if(ady < 0) ady = -ady;
+	steps := adx;
+	if(ady > steps)
+		steps = ady;
+	if(steps == 0)
+		return (lx, ly);
+	for(i := 1; i <= steps; i++){
+		nx := lx + (x2-lx)*i/steps;
+		ny := ly + (y2-ly)*i/steps;
+		dx := nx-lx;
+		dy := ny-ly;
+		if(dx < -1) dx = -1;
+		if(dx > 1) dx = 1;
+		if(dy < -1) dy = -1;
+		if(dy > 1) dy = 1;
+		code := enccode[(dy+1)*3+(dx+1)];
+		if(code < 0)
+			continue;
+		num := e.a[0];
+		need := (num*3+3+7)>>3;
+		if(e.data == nil || need > len e.data){
+			nd := array[need+64] of {* => byte 0};
+			if(e.data != nil)
+				nd[0:] = e.data;
+			e.data = nd;
+		}
+		bit := num*3;
+		for(b := 0; b < 3; b++)
+			if(code & (1<<b))
+				e.data[(bit+b)>>3] |= byte (1<<((bit+b)&7));
+		e.a[0] = num+1;
+		lx += dx;
+		ly += dy;
+	}
+	return (lx, ly);
+}
+
+# Rounding here is Limbo's int, half away from zero, and NOT the
+# half-to-even the rasteriser uses.  The rasteriser's rule is set by the
+# .bit files it has to match; nothing constrains this one, and this is
+# the rule temple/spriteedit(1)'s Transform Selected has always used, so
+# a transform means the same thing in the editor and here.
+xpt(x, y: int, c, s: real): (int, int)
+{
+	return (int (real x*c - real y*s), int (real x*s + real y*c));
+}
+
+transform(elems: array of ref Elem, deg, scale: real): array of ref Elem
+{
+	if(elems == nil)
+		return nil;
+	out := array[len elems] of ref Elem;
+	for(i := 0; i < len elems; i++)
+		out[i] = transformelem(elems[i], deg, scale);
+	return out;
+}
+
+transformelem(e: ref Elem, deg, scale: real): ref Elem
+{
+	if(e == nil)
+		return nil;
+	init();
+	th := deg*Math->Pi/180.0;
+	c := scale*math->cos(th);
+	s := scale*math->sin(th);
+	k := scale;
+	n := copyelem(e);
+	case n.kind {
+	STHICK =>
+		n.a[0] = int (real n.a[0]*k);
+		if(n.a[0] < 1)
+			n.a[0] = 1;
+	SLINE or SARROW or SPLANARSYM =>
+		(n.a[0], n.a[1]) = xpt(n.a[0], n.a[1], c, s);
+		(n.a[2], n.a[3]) = xpt(n.a[2], n.a[3], c, s);
+	SRECT or SROTRECT =>
+		# TempleOS promotes a rect to a rotated rect under transform
+		w := int (real(n.a[2]-n.a[0])*k);
+		h := int (real(n.a[3]-n.a[1])*k);
+		(nx, ny) := xpt(n.a[0], n.a[1], c, s);
+		r := mkelem(SROTRECT, 4);
+		r.a[0] = nx;
+		r.a[1] = ny;
+		r.a[2] = nx+w;
+		r.a[3] = ny+h;
+		r.ang = n.ang + th;
+		r.tag = n.tag;
+		return r;
+	SCIRCLE =>
+		(n.a[0], n.a[1]) = xpt(n.a[0], n.a[1], c, s);
+		n.a[2] = int (real n.a[2]*k);
+	SELLIPSE or SPOLYGON =>
+		(n.a[0], n.a[1]) = xpt(n.a[0], n.a[1], c, s);
+		n.a[2] = int (real n.a[2]*k);
+		n.a[3] = int (real n.a[3]*k);
+		n.ang = n.ang + th;
+	SPT or SFLOOD or SFLOODNOT or STEXT or STEXTBOX or
+	STEXTDIAMOND or SBITMAP =>
+		(n.a[0], n.a[1]) = xpt(n.a[0], n.a[1], c, s);
+	SPOLYLINE =>
+		for(i := 0; i < len n.pts; i += 2)
+			(n.pts[i], n.pts[i+1]) = xpt(n.pts[i], n.pts[i+1], c, s);
+	SBSPLINE2 or SBSPLINE2C or SBSPLINE3 or SBSPLINE3C =>
+		for(i := 0; i < len n.pts; i += 3)
+			(n.pts[i], n.pts[i+1]) = xpt(n.pts[i], n.pts[i+1], c, s);
+	SPOLYPT =>
+		# re-walk the transformed path, as SpriteTransformQue does
+		p := polyptabs(n);
+		r := mkelem(SPOLYPT, 3);
+		r.tag = n.tag;
+		(r.a[1], r.a[2]) = xpt(p[0], p[1], c, s);
+		lx := r.a[1];
+		ly := r.a[2];
+		for(i := 2; i < len p; i += 2){
+			(nx, ny) := xpt(p[i], p[i+1], c, s);
+			(lx, ly) = walkappend(r, nx, ny, lx, ly);
+		}
+		return r;
+	}
+	return n;
+}
+
+Sprite.transformed(s: self ref Sprite, deg, scale: real): ref Sprite
+{
+	t := ref Sprite;
+	t.elems = transform(s.elems, deg, scale);
+	return t;
+}
 
 # ---------- the public face ----------
 
