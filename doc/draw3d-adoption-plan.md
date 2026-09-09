@@ -478,10 +478,19 @@ sign-extended, and the whole-page fill returns; restore it and it goes.
 The first control tried — restoring the old `inkv` expression — changed
 nothing, because it was the other side of the comparison that had moved.
 
-Two things a different canvas *could* still change and does not here: a
-flood fill that escapes the sprite runs to the canvas edge, and a
-dither's checkerboard is in canvas coordinates. Both are in the man
-page's BUGS.
+Two things a different canvas changes. A flood fill that escapes the
+sprite runs to the canvas edge — which happens for none of the 248. And a
+dither's checkerboard is in canvas coordinates, which is *not*
+hypothetical: `spriteplot_1` differs by 684 pixels between the editor's
+page and its own box, and moving the page origin one pixel in x makes it
+identical, so the difference is entirely checkerboard phase. It is not
+among the 57 because it has text in it. So a dithered sprite in the
+editor has its two dither colours swapped relative to what a port draws
+and what the `.bit` holds. Nothing moves; it is still not the same
+picture. Fixing it would mean either shifting the editor's page by a
+pixel, which moves everything else, or making the phase
+element-relative, which would stop matching the shipped assets. Both are
+in the man pages' BUGS instead.
 
 **It scales and turns now, and the oracle was already in the tree.** The
 point of a display list is that it can be drawn at any size, and there is

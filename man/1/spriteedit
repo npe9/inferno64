@@ -200,10 +200,19 @@ A flood fill that escapes the sprite runs to the page's edge here, where
 .IR vsprite (2)
 stops it at the sprite's box, and a dither's checkerboard is in canvas
 coordinates.
-Neither shows on any sprite in the tree \(em
+The flood one shows on no sprite in the tree, and
 .IR vspritetest (1)
-renders all 57 it compares both ways and gets identical pixels \(em but a
-new sprite could hit either.
+renders all 57 it compares both ways to prove it.
+The dither one is real: a dithered sprite drawn here has its checkerboard
+in a different phase from the same sprite drawn by
+.IR vsprite (2)
+at its own size, which is what a port gets and what the
+.B .bit
+holds.
+.B spriteplot_1
+differs by 684 pixels that way.
+Nothing is misplaced by it \(em the two colours of the dither swap \(em
+but it is not the same picture.
 .PP
 The sprite is edited over a plain white page rather than a live
 document, control-point handles do not blink, and transforms move

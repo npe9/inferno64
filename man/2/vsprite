@@ -207,7 +207,13 @@ canvas magnitudes, so a point landing within an ulp of a half can round
 either way.
 Neither happens for any of the 57 sprites
 .IR vspritetest (1)
-compares both ways, but neither is ruled out.
+compares both ways, but the dither one is not hypothetical:
+.B spriteplot_1
+is 684 pixels different between its box and
+.IR temple / spriteedit (1)'s
+page, entirely checkerboard phase, and moving the page's origin one pixel
+makes it identical.
+It is not among the 57 because it contains text.
 .PP
 An inverted flood fill
 .RB ( floodfillnot )
