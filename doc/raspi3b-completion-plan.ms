@@ -889,14 +889,52 @@ different capacities for one card says that one of them is wrong \-
 which is precisely the failure a single printed number cannot show.
 They agree.
 .PP
-And the numbers track the card rather than being incidental: with an
-8MB image in place of the 16MB one, both report
-.CW "geometry 16384 512"
-and both boundaries move with it.  Ordinary
+And the numbers track the card rather than being incidental.  Three
+sizes were run, chosen to cover both decodes rather than to vary the
+number:
+.IP \(bu
+8MB \-
+.CW "csd v1, 16384 sectors" ,
+geometry 16384, boundary at 16383/16384.
+.IP \(bu
+16MB \-
+.CW "csd v1, 32768 sectors" ,
+geometry 32768, boundary at 32767/32768.
+.IP \(bu
+4GB \-
+.CW "csd v2, 8388608 sectors" ,
+geometry 8388608, boundary at 8388607/8388608.
+.PP
+The third one is there because the first two were not enough, and it
+took printing the CSD version to see that.  There are two decodes in
+.CW sdhcicardinit() :
+the SDSC form,
+.CW "(cap+1) << (cmult+2+rbl-9)" ,
+which reads three separate fields and shifts by their sum, and the SDHC
+form,
+.CW "(cap+1) << 10" ,
+which reads one.  Both small images take the first \- QEMU emits CSD v1
+for a card under 2GB \- so a suite of 8MB and 16MB exercises the harder
+decode twice and the easy one never, while looking like coverage.  A
+4GB card, sparse and therefore free, crosses into v2.  The driver now
+prints which version it decoded on every boot, because a log that does
+not say cannot be read as evidence for either branch.
+.PP
+The enclosing marker was also masking this.
+.CW SDHCI-OK
+was printed unconditionally two lines after the capacity check, so a
+.CW -CAP-NONE
+\- which is what a ctl file that cannot be read or parsed produces \-
+sat inside a pass.  The check now gates the marker: an unconfirmed
+capacity means no
+.CW SDHCI-OK ,
+the same way every other failure in that function returns before it.
+.PP
+Ordinary
 .B qemu
-evidence, no patched model needed \- the card's self-description turns
-out to be one of the few things this model gets exactly right, and now
-there is a boot that would notice if it stopped.
+evidence throughout, no patched model needed.  The card's
+self-description is one of the few things this model gets exactly
+right, and there is now a boot that would notice if it stopped.
 .PP
 .B "High speed, which is what lifts the ceiling."
 CMD6 is two commands wearing one number: bit 31 of the argument clear

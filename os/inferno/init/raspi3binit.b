@@ -86,14 +86,19 @@ sdhcicheck()
 	# the geometry devsd derived from the CSD -- if the 136-bit
 	# response were unpacked wrongly this is where it shows
 	cfd := sys->open("/dev/sdH0/ctl", Sys->OREAD);
-	if(cfd != nil){
-		cbuf := array[512] of byte;
-		cn := sys->read(cfd, cbuf, len cbuf);
-		if(cn > 0){
-			sys->print("SDHCI ctl: %s", string cbuf[0:cn]);
-			capcheck("SDHCI", fd, string cbuf[0:cn]);
-		}
+	cbuf := array[512] of byte;
+	cn := 0;
+	if(cfd != nil)
+		cn = sys->read(cfd, cbuf, len cbuf);
+	if(cn <= 0){
+		sys->print("SDHCI-CAP-NONE cannot read /dev/sdH0/ctl: %r\n");
+		return;
 	}
+	sys->print("SDHCI ctl: %s", string cbuf[0:cn]);
+	# not reaching SDHCI-OK is the point: an unconfirmed capacity
+	# must not be hidden inside a pass two lines later
+	if(capcheck("SDHCI", fd, string cbuf[0:cn]) == 0)
+		return;
 	sys->print("SDHCI-OK\n");
 }
 
@@ -114,7 +119,7 @@ sdhcicheck()
 # sdhostbcm.c and sdhcibcm.c unpack the same card's 136-bit CSD
 # independently, so if the two report different capacities for one
 # card, one of them is unpacking it wrongly and the boot says so.
-capcheck(tag: string, fd: ref Sys->FD, ctl: string)
+capcheck(tag: string, fd: ref Sys->FD, ctl: string): int
 {
 	nsec := big 0;
 	(nil, lines) := sys->tokenize(ctl, "\n");
@@ -125,18 +130,19 @@ capcheck(tag: string, fd: ref Sys->FD, ctl: string)
 	}
 	if(nsec <= big 0){
 		sys->print("%s-CAP-NONE the ctl file reports no geometry\n", tag);
-		return;
+		return 0;
 	}
 	b := array[512] of byte;
 	if(sys->pread(fd, b, len b, (nsec-big 1)*big 512) != len b){
 		sys->print("%s-CAP-FAIL sector %bd, the last the card claims, does not read: %r\n", tag, nsec-big 1);
-		return;
+		return 0;
 	}
 	if(sys->pread(fd, b, len b, nsec*big 512) == len b){
 		sys->print("%s-CAP-FAIL a read at sector %bd, one past the claimed end, succeeded\n", tag, nsec);
-		return;
+		return 0;
 	}
 	sys->print("%s-CAP-OK sector %bd reads and %bd does not; the claimed capacity is the real one\n", tag, nsec-big 1, nsec);
+	return 1;
 }
 
 # Phase 7: /dev/random, now fed by the BCM2835 hardware RNG rather
@@ -224,14 +230,17 @@ sdcheck()
 	# the geometry this controller derived from the same card's CSD;
 	# it has to agree with the one SDHCI reported above
 	cfd := sys->open("/dev/sdM0/ctl", Sys->OREAD);
-	if(cfd != nil){
-		cbuf := array[512] of byte;
-		cn := sys->read(cfd, cbuf, len cbuf);
-		if(cn > 0){
-			sys->print("SD ctl: %s", string cbuf[0:cn]);
-			capcheck("SD", fd, string cbuf[0:cn]);
-		}
+	cbuf := array[512] of byte;
+	cn := 0;
+	if(cfd != nil)
+		cn = sys->read(cfd, cbuf, len cbuf);
+	if(cn <= 0){
+		sys->print("SD-CAP-NONE cannot read /dev/sdM0/ctl: %r\n");
+		return;
 	}
+	sys->print("SD ctl: %s", string cbuf[0:cn]);
+	if(capcheck("SD", fd, string cbuf[0:cn]) == 0)
+		return;
 	sys->print("SD-OK\n");
 }
 

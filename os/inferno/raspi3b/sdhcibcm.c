@@ -654,6 +654,12 @@ sdhcicardinit(Ctlr *c)
 		cap = ((uvlong)(b[7]&0x3f)<<16) | (b[8]<<8) | b[9];
 		c->sectors = (cap+1) << 10;
 	}
+	/*
+	 * Which branch ran, and what it produced.  There are two decodes
+	 * here and a boot exercises exactly one of them; a log that does
+	 * not say which cannot be read as evidence for either.
+	 */
+	print("sdhci: csd v%d, %llud sectors\n", ((b[0]>>6)&3)+1, c->sectors);
 
 	if(sdhcicmd(c, 7, c->rca<<16, Resp48busy|Cmdcrcchk|Cmdixchk) < 0)	/* SELECT */
 		return 0;
