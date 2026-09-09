@@ -152,7 +152,7 @@ and
 Then a synchronous external abort in the banner, which is the next
 thing to chase.
 .NH 1
-Nine peripherals QEMU does not map here, and six of them are ours
+Nine peripherals QEMU did not map here, and six of them were ours
 .PP
 This is the finding worth the most, and it is a codesign one.
 .CW hw/arm/bcm2835_peripherals.c
@@ -188,13 +188,57 @@ None of these fail quietly, which is worth saying because it is what
 made them cheap to find: an unmapped offset in this window is a
 synchronous external abort with the address in FAR, so each one names
 itself in a trap dump on the next boot.
+.PP
+.B "Closed by patch 0021, for five of them plus MPHI."
+The five a BCM2711 carries at the same offsets with the same
+programming model \- PWM, I2S, SMI, the BSC slave and the ARM timer \-
+moved to the base peripheral state and to the common realize, after the
+I2C controllers because the BSC slave sits on BSC0's bus.  The Pi 4
+suite goes from 30 markers to 35 with
+.CW ARMTIMER-OK ,
+.CW PWM-OK ,
+.CW I2S-OK ,
+.CW SMI-OK
+and
+.CW BSCSL-OK ,
+each of which previously aborted; the Pi 3B is unchanged and
+qtest-aarch64 stays 28 Ok, 0 Fail.
+.PP
+Two did not move, and the reasons are different from each other and
+worth keeping apart.  The RNG is a Broadcom RNG200 on this part, a
+different block with different registers that QEMU models for no
+machine at all, so it needs a model and a driver rather than a mapping.
+The thermal sensor is likewise a different block at a different address
+on a BCM2711 \- moving
+.CW bcm2835_thermal
+would have asserted something untrue about the hardware in exchange for
+a marker, which is the trade this document exists to refuse.
+.PP
+And the ARM timer is driven but its interrupt is not tested.  Its line
+goes to the legacy controller, which QEMU maps on this machine and does
+not wire to the GIC:
+.CW bcm2838.c
+defines
+.CW GIC400_LEGACY_IRQ
+and never uses it.  So
+.CW ARMTIMER-OK
+passes by polling and
+.CW ARMTIMER-INTR-OK
+is absent rather than failing.  Whether a real BCM2711 chains that
+controller into the GIC, and on which line, is not something this
+session established, so nothing was wired on a guess.
 .NH 1
 What is left
 .IP \(bu
-Map the eight peripherals above for bcm2838 in QEMU, which is the
-codesign half, and re-enable their drivers and markers one at a time.
-.IP \(bu
 An RNG200 driver, and a QEMU model for it, since none exists.
+.IP \(bu
+A thermal sensor: the BCM2711's is the AVS monitor, a different block
+at a different address, and QEMU models it for no machine.
+.IP \(bu
+Settle whether the legacy interrupt controller chains into the GIC on
+a real BCM2711, and on which line.  That is what
+.CW ARMTIMER-INTR-OK
+needs, and it is a hardware question rather than a modelling one.
 .IP \(bu
 emmc2, which is genuinely new on this board: a second SDHCI at
 EMMC2_OFFSET sharing INTID 158 with the Arasan through an or-gate.

@@ -172,39 +172,49 @@ main(void)
 		pminit();
 		{
 			/*
-			 * Nine of the Pi 3B's peripherals are not mapped on
-			 * this machine, and the boundary is a QEMU one rather
-			 * than a Broadcom one.  hw/arm/bcm2835_peripherals.c
-			 * has two realize functions: a common one every BCM
-			 * SoC runs, and bcm2835_peripherals_realize(), which
-			 * only the Pi 2/3 machines run.  The Pi 4's
-			 * bcm2838_peripherals_realize() calls the common one
-			 * and adds emmc2 and its own GPIO, so everything the
-			 * Pi-3-specific realize maps is simply absent here:
-			 * the ARM timer, the BSC slave, I2S, MPHI, PWM, the
-			 * RNG, SMI and the thermal sensor.
+			 * Nine of the Pi 3B's peripherals were not mapped on
+			 * this machine, and the boundary was a QEMU one
+			 * rather than a Broadcom one.
+			 * hw/arm/bcm2835_peripherals.c has two realize
+			 * functions: a common one every BCM SoC runs, and
+			 * bcm2835_peripherals_realize(), which only the Pi
+			 * 2/3 machines run.  The Pi 4's realize calls the
+			 * common one, so everything the Pi-3-specific realize
+			 * mapped was simply absent: the ARM timer, the BSC
+			 * slave, I2S, MPHI, PWM, the RNG, SMI and the thermal
+			 * sensor.  A BCM2711 has all of them in silicon; the
+			 * model was less than the part.
 			 *
-			 * A BCM2711 has all of those in silicon.  This is
-			 * the model being less than the part, not the part
-			 * being less than the Pi 3.  Six of the eight are
-			 * models written for this port (tools/qemu-patches
-			 * 0007, 0009, 0011, 0014, 0015 and the thermal
-			 * sensor), and the work to do is to map them for the
-			 * Pi 4 as well rather than to delete their drivers.
-			 * They are left out here so the board boots and the
-			 * rest can be brought up; nothing about them is
-			 * wrong.
+			 * Patch 0021 moves the five that a BCM2711 carries at
+			 * the same offsets with the same programming model --
+			 * PWM, I2S, SMI, the BSC slave and the ARM timer,
+			 * plus the MPHI mapping -- into the common realize,
+			 * so they are here now and driven below.
 			 *
-			 * The failure is not quiet if one is driven anyway:
-			 * a read of an unmapped offset in this window is a
-			 * synchronous external abort, esr 0x96000010, which
-			 * is how each was found.
+			 * Two are still out, and for different reasons.  The
+			 * RNG is a Broadcom RNG200 on this part, a different
+			 * block QEMU models for no machine, so it needs a
+			 * driver rather than a mapping.  The thermal sensor
+			 * is likewise a different block at a different
+			 * address on a BCM2711, so moving bcm2835_thermal
+			 * would have been asserting something untrue about
+			 * the hardware to gain a marker.
 			 *
-			 * Still mapped and still driven: the system timer,
-			 * OTP, DMA, AUX and its SPI masters, all of which
-			 * the common realize carries.
+			 * The ARM timer is driven but not tested for
+			 * interrupt delivery: its interrupt goes to the
+			 * legacy controller, which QEMU maps here and does
+			 * not wire to the GIC, so armtmrintrcheck() would
+			 * measure nothing.  Polling is what the rest of the
+			 * check does and that works.
+			 *
+			 * None of this failed quietly, which is what made it
+			 * cheap: an unmapped offset in this window is a
+			 * synchronous external abort with the address in FAR,
+			 * so each named itself in a trap dump.
 			 */
+			extern void pwminit(void);
 			extern void systmrinit(void);
+			pwminit();
 			systmrinit();
 			{
 				extern void otpinit(void);
@@ -213,9 +223,17 @@ main(void)
 				dmainit();
 				{
 					extern void auxinit(void);
+					extern void armtmrinit(void);
+					extern void i2sinit(void);
 					extern void auxspiinit(void);
+					extern void smiinit(void);
+					extern void bscslinit(void);
 					auxinit();
+					armtmrinit();
+					i2sinit();
 					auxspiinit();
+					smiinit();
+					bscslinit();
 				}
 			}
 		}

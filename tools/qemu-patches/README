@@ -90,6 +90,22 @@ worth keeping when adding to this series:
 	survived.  The fields now go through a HWCFG() macro that fails
 	the build if a value does not fit the field it names.
 
+0021 hw/arm/bcm2835_peripherals: give every BCM SoC the blocks a
+	BCM2711 has.  PWM, I2S, SMI, the BSC slave, the ARM timer and
+	the MPHI mapping were realized only by the Pi 2/3 realize, so
+	raspi4b had holes in its peripheral window where a BCM2711 has
+	silicon -- and a guest driving one took a synchronous external
+	abort rather than reading zeroes, which is how the set was
+	enumerated.  The five device fields move to the base state and
+	their realize to the common function, after the I2C controllers
+	since the BSC slave sits on BSC0's bus.  Their interrupts still
+	go to the legacy controller, which on a Pi 4 is not wired to the
+	GIC, so they are reachable by polling and not by interrupt; that
+	gap is recorded and not guessed at.  The RNG and the thermal
+	sensor deliberately do not move: both are different blocks on a
+	BCM2711, so moving them would assert something untrue about the
+	hardware in exchange for a marker.
+
 WHAT COULD GO UPSTREAM.  Two of these are plain qemu bugs, independent
 of Inferno and of this port, and could be sent to qemu-devel on their
 own:
@@ -114,7 +130,7 @@ because the reasoning is worth reading.  Everything else adds a device
 model qemu does not have, and only matters to someone emulating a Pi in
 this much detail \- which is most of the series, and increasingly so as
 it grows.  Do not read the section above as a to-do list for upstream:
-four patches of twenty are general-purpose fixes and the rest are not.
+four patches of twenty-one are general-purpose fixes and the rest are not.
 
 WHAT HAS BEEN CROSS-CHECKED.  Several of these models were written
 from the datasheet and from recollection of a Linux driver, which is
@@ -221,7 +237,7 @@ Four answers came back, and they are not all the same kind.
 	  the FIFO it has no compensation on either side and is simply
 	  a limit: no model in this series claims a service time.
 
-	- the twenty models in this series: audited for accepting
+	- the twenty-one models in this series: audited for accepting
 	  writes the datasheet forbids.  Each already carries
 	  LOG_GUEST_ERROR coverage on its own error paths -- the I2S
 	  FIFO reports TXERR on overflow and RXERR on reading empty,

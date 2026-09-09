@@ -1,0 +1,301 @@
+From e2a3eb0d902080fb70d8053542e6f2c134169213 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Wed, 9 Sep 2026 04:17:28 -0400
+Subject: [PATCH] hw/arm/bcm2835_peripherals: give every BCM SoC the blocks a
+ BCM2711 has
+
+PWM, I2S/PCM, SMI, the SPI/BSC slave, the ARM timer and the MPHI
+mapping were realized by bcm2835_peripherals_realize(), which only the
+Pi 2 and Pi 3 machines run.  bcm2838_peripherals_realize() calls the
+common realize instead, so raspi4b had none of them: holes in its
+peripheral window where a BCM2711 has silicon.
+
+That is the model being less than the part, not the part differing.  A
+BCM2711 carries all of these at the same offsets with the same
+programming model, and its datasheet documents them in the same words
+as the BCM2835's.  A guest that drives one on raspi4b does not read
+zeroes, it takes a synchronous external abort -- which is how the set
+was enumerated, one boot at a time, each fault naming its own address
+in FAR.
+
+Move the five device fields to BCMSocPeripheralBaseState and their
+realize to bcm_soc_peripherals_common_realize(), after the I2C
+controllers since the BSC slave sits on BSC0's bus.
+
+Their interrupts still go to the legacy controller, which the common
+realize already maps on every SoC.  On a Pi 4 that controller is not
+itself wired to the GIC -- bcm2838.c defines GIC400_LEGACY_IRQ and
+never uses it -- so these are reachable by polling and not by
+interrupt.  That is a separate gap and is left alone here rather than
+guessed at.
+
+Two of the Pi-3-only blocks deliberately do not move.  The RNG is a
+Broadcom RNG200 on a BCM2711, a different block with different
+registers that QEMU models for no machine, so it needs a model rather
+than a mapping.  bcm2835_thermal is likewise a different block at a
+different address on that part; moving it would assert something untrue
+about the hardware in exchange for a marker.
+
+Verified from both ends.  raspi4b, booting Inferno: ARMTIMER-OK, PWM-OK,
+I2S-OK, SMI-OK and BSCSL-OK now pass where each previously aborted, for
+35 markers with no failure and no guest error.  raspi3b is unchanged at
+39.  qtest-aarch64: 28 Ok, 0 Fail.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ hw/arm/bcm2835_peripherals.c         | 178 +++++++++++++++------------
+ include/hw/arm/bcm2835_peripherals.h |  14 ++-
+ 2 files changed, 108 insertions(+), 84 deletions(-)
+
+diff --git a/hw/arm/bcm2835_peripherals.c b/hw/arm/bcm2835_peripherals.c
+index e0c43c0..39e00cd 100644
+--- a/hw/arm/bcm2835_peripherals.c
++++ b/hw/arm/bcm2835_peripherals.c
+@@ -55,18 +55,6 @@ static void bcm2835_peripherals_init(Object *obj)
+ 
+     /* Thermal */
+     object_initialize_child(obj, "thermal", &s->thermal, TYPE_BCM2835_THERMAL);
+-    object_initialize_child(obj, "pwm", &s->pwm, TYPE_BCM2835_PWM);
+-
+-    /* I2S/PCM */
+-    object_initialize_child(obj, "i2s", &s->i2s, TYPE_BCM2835_I2S);
+-
+-    /* SMI */
+-    object_initialize_child(obj, "smi", &s->smi, TYPE_BCM2835_SMI);
+-
+-    /* SPI/BSC slave */
+-    object_initialize_child(obj, "bscsl", &s->bscsl, TYPE_BCM2835_BSCSL);
+-    object_initialize_child(obj, "armtimer", &s->armtimer,
+-                            TYPE_BCM2835_ARMTIMER);
+ 
+     /* GPIO */
+     object_initialize_child(obj, "gpio", &s->gpio, TYPE_BCM2835_GPIO);
+@@ -162,6 +150,16 @@ static void raspi_peripherals_base_init(Object *obj)
+     /* Mphi */
+     object_initialize_child(obj, "mphi", &s->mphi, TYPE_BCM2835_MPHI);
+ 
++    /* PWM, I2S/PCM, SMI, the BSC slave and the ARM timer.  A BCM2711
++     * has all five at the same offsets, so they are initialised for
++     * every SoC here rather than for the Pi 2/3 alone. */
++    object_initialize_child(obj, "pwm", &s->pwm, TYPE_BCM2835_PWM);
++    object_initialize_child(obj, "i2s", &s->i2s, TYPE_BCM2835_I2S);
++    object_initialize_child(obj, "smi", &s->smi, TYPE_BCM2835_SMI);
++    object_initialize_child(obj, "bscsl", &s->bscsl, TYPE_BCM2835_BSCSL);
++    object_initialize_child(obj, "armtimer", &s->armtimer,
++                            TYPE_BCM2835_ARMTIMER);
++
+     /* DWC2 */
+     object_initialize_child(obj, "dwc2", &s->dwc2, TYPE_DWC2_USB);
+ 
+@@ -195,7 +193,6 @@ static void raspi_peripherals_base_init(Object *obj)
+ 
+ static void bcm2835_peripherals_realize(DeviceState *dev, Error **errp)
+ {
+-    MemoryRegion *mphi_mr;
+     BCM2835PeripheralState *s = BCM2835_PERIPHERALS(dev);
+     BCMSocPeripheralBaseState *s_base = BCM_SOC_PERIPHERALS_BASE(dev);
+     int n;
+@@ -243,72 +240,6 @@ static void bcm2835_peripherals_realize(DeviceState *dev, Error **errp)
+     memory_region_add_subregion(&s_base->peri_mr, THERMAL_OFFSET,
+                 sysbus_mmio_get_region(SYS_BUS_DEVICE(&s->thermal), 0));
+ 
+-    /* PWM */
+-    qdev_connect_clock_in(DEVICE(&s->pwm), "clk",
+-                          qdev_get_clock_out(DEVICE(&s_base->cprman), "pwm-out"));
+-    if (!sysbus_realize(SYS_BUS_DEVICE(&s->pwm), errp)) {
+-        return;
+-    }
+-    memory_region_add_subregion(&s_base->peri_mr, PWM_OFFSET,
+-                sysbus_mmio_get_region(SYS_BUS_DEVICE(&s->pwm), 0));
+-
+-    /* I2S/PCM */
+-    qdev_connect_clock_in(DEVICE(&s->i2s), "clk",
+-                          qdev_get_clock_out(DEVICE(&s_base->cprman), "pcm-out"));
+-    if (!sysbus_realize(SYS_BUS_DEVICE(&s->i2s), errp)) {
+-        return;
+-    }
+-    memory_region_add_subregion(&s_base->peri_mr, I2S_OFFSET,
+-                sysbus_mmio_get_region(SYS_BUS_DEVICE(&s->i2s), 0));
+-    sysbus_connect_irq(SYS_BUS_DEVICE(&s->i2s), 0,
+-                       qdev_get_gpio_in_named(DEVICE(&s_base->ic),
+-                                              BCM2835_IC_GPU_IRQ,
+-                                              INTERRUPT_I2SPCM));
+-
+-    /*
+-     * SPI/BSC slave.  It is an I2C target, so it goes on a bus rather
+-     * than on the sysbus, and BSC0's is the one the ARM can reach --
+-     * which puts the Pi's own master on the other end of it, the way
+-     * strapping the two sets of pins together does on a board.
+-     */
+-    if (!qdev_realize(DEVICE(&s->bscsl), BUS(s_base->i2c[0].bus), errp)) {
+-        return;
+-    }
+-    memory_region_add_subregion(&s_base->peri_mr, BSC_SL_OFFSET,
+-                                &s->bscsl.iomem);
+-    qdev_connect_gpio_out(DEVICE(&s->bscsl), 0,
+-                          qdev_get_gpio_in_named(DEVICE(&s_base->ic),
+-                                                 BCM2835_IC_GPU_IRQ,
+-                                                 INTERRUPT_I2CSPISLV));
+-
+-    /* SMI */
+-    qdev_connect_clock_in(DEVICE(&s->smi), "clk",
+-                          qdev_get_clock_out(DEVICE(&s_base->cprman), "smi-out"));
+-    if (!sysbus_realize(SYS_BUS_DEVICE(&s->smi), errp)) {
+-        return;
+-    }
+-    memory_region_add_subregion(&s_base->peri_mr, SMI_OFFSET,
+-                sysbus_mmio_get_region(SYS_BUS_DEVICE(&s->smi), 0));
+-    sysbus_connect_irq(SYS_BUS_DEVICE(&s->smi), 0,
+-                       qdev_get_gpio_in_named(DEVICE(&s_base->ic),
+-                                              BCM2835_IC_GPU_IRQ,
+-                                              INTERRUPT_SMI));
+-
+-    /* ARM timer */
+-    if (!sysbus_realize(SYS_BUS_DEVICE(&s->armtimer), errp)) {
+-        return;
+-    }
+-    memory_region_add_subregion(&s_base->peri_mr, ARMCTRL_TIMER0_1_OFFSET,
+-                sysbus_mmio_get_region(SYS_BUS_DEVICE(&s->armtimer), 0));
+-    sysbus_connect_irq(SYS_BUS_DEVICE(&s->armtimer), 0,
+-                       qdev_get_gpio_in_named(DEVICE(&s_base->ic),
+-                                              BCM2835_IC_ARM_IRQ,
+-                                              INTERRUPT_ARM_TIMER));
+-
+-    /* Map MPHI to the peripherals memory map */
+-    mphi_mr = sysbus_mmio_get_region(SYS_BUS_DEVICE(&s_base->mphi), 0);
+-    memory_region_add_subregion(&s_base->peri_mr, MPHI_OFFSET, mphi_mr);
+-
+     /* GPIO */
+     if (!sysbus_realize(SYS_BUS_DEVICE(&s->gpio), errp)) {
+         return;
+@@ -606,6 +537,95 @@ void bcm_soc_peripherals_common_realize(DeviceState *dev, Error **errp)
+                                                  BCM2835_IC_GPU_IRQ,
+                                                  INTERRUPT_I2C));
+ 
++    /*
++     * PWM, I2S/PCM, SMI, the SPI/BSC slave, the ARM timer, and the MPHI
++     * mapping.
++     *
++     * These were realized by bcm2835_peripherals_realize(), which only
++     * the Pi 2 and Pi 3 machines run, so raspi4b had none of them --
++     * holes in its peripheral window where a BCM2711 has silicon.  That
++     * is the model being less than the part rather than the part
++     * differing: a BCM2711 carries all of them at the same offsets with
++     * the same programming model.  A guest driving any one of them on
++     * raspi4b got a synchronous external abort, which is how the set
++     * was enumerated.
++     *
++     * Their interrupts still go to the legacy controller, which the
++     * common realize already maps on every SoC.  On a Pi 4 that
++     * controller is not itself wired to the GIC, so these are reachable
++     * by polling and not by interrupt.  That is a separate gap and is
++     * left alone rather than guessed at.
++     *
++     * The BSC slave sits on BSC0's I2C bus, so this has to come after
++     * the I2C controllers above.
++     */
++    /* PWM */
++    qdev_connect_clock_in(DEVICE(&s->pwm), "clk",
++                          qdev_get_clock_out(DEVICE(&s->cprman), "pwm-out"));
++    if (!sysbus_realize(SYS_BUS_DEVICE(&s->pwm), errp)) {
++        return;
++    }
++    memory_region_add_subregion(&s->peri_mr, PWM_OFFSET,
++                sysbus_mmio_get_region(SYS_BUS_DEVICE(&s->pwm), 0));
++
++    /* I2S/PCM */
++    qdev_connect_clock_in(DEVICE(&s->i2s), "clk",
++                          qdev_get_clock_out(DEVICE(&s->cprman), "pcm-out"));
++    if (!sysbus_realize(SYS_BUS_DEVICE(&s->i2s), errp)) {
++        return;
++    }
++    memory_region_add_subregion(&s->peri_mr, I2S_OFFSET,
++                sysbus_mmio_get_region(SYS_BUS_DEVICE(&s->i2s), 0));
++    sysbus_connect_irq(SYS_BUS_DEVICE(&s->i2s), 0,
++                       qdev_get_gpio_in_named(DEVICE(&s->ic),
++                                              BCM2835_IC_GPU_IRQ,
++                                              INTERRUPT_I2SPCM));
++
++    /*
++     * SPI/BSC slave.  It is an I2C target, so it goes on a bus rather
++     * than on the sysbus, and BSC0's is the one the ARM can reach --
++     * which puts the Pi's own master on the other end of it, the way
++     * strapping the two sets of pins together does on a board.
++     */
++    if (!qdev_realize(DEVICE(&s->bscsl), BUS(s->i2c[0].bus), errp)) {
++        return;
++    }
++    memory_region_add_subregion(&s->peri_mr, BSC_SL_OFFSET,
++                                &s->bscsl.iomem);
++    qdev_connect_gpio_out(DEVICE(&s->bscsl), 0,
++                          qdev_get_gpio_in_named(DEVICE(&s->ic),
++                                                 BCM2835_IC_GPU_IRQ,
++                                                 INTERRUPT_I2CSPISLV));
++
++    /* SMI */
++    qdev_connect_clock_in(DEVICE(&s->smi), "clk",
++                          qdev_get_clock_out(DEVICE(&s->cprman), "smi-out"));
++    if (!sysbus_realize(SYS_BUS_DEVICE(&s->smi), errp)) {
++        return;
++    }
++    memory_region_add_subregion(&s->peri_mr, SMI_OFFSET,
++                sysbus_mmio_get_region(SYS_BUS_DEVICE(&s->smi), 0));
++    sysbus_connect_irq(SYS_BUS_DEVICE(&s->smi), 0,
++                       qdev_get_gpio_in_named(DEVICE(&s->ic),
++                                              BCM2835_IC_GPU_IRQ,
++                                              INTERRUPT_SMI));
++
++    /* ARM timer */
++    if (!sysbus_realize(SYS_BUS_DEVICE(&s->armtimer), errp)) {
++        return;
++    }
++    memory_region_add_subregion(&s->peri_mr, ARMCTRL_TIMER0_1_OFFSET,
++                sysbus_mmio_get_region(SYS_BUS_DEVICE(&s->armtimer), 0));
++    sysbus_connect_irq(SYS_BUS_DEVICE(&s->armtimer), 0,
++                       qdev_get_gpio_in_named(DEVICE(&s->ic),
++                                              BCM2835_IC_ARM_IRQ,
++                                              INTERRUPT_ARM_TIMER));
++
++    /* Map MPHI to the peripherals memory map */
++    memory_region_add_subregion(&s->peri_mr, MPHI_OFFSET,
++                sysbus_mmio_get_region(SYS_BUS_DEVICE(&s->mphi), 0));
++
++
+     create_unimp(s, &s->txp, "bcm2835-txp", TXP_OFFSET, 0x1000);
+     create_unimp(s, &s->dbus, "bcm2835-dbus", DBUS_OFFSET, 0x8000);
+     create_unimp(s, &s->ave0, "bcm2835-ave0", AVE0_OFFSET, 0x8000);
+diff --git a/include/hw/arm/bcm2835_peripherals.h b/include/hw/arm/bcm2835_peripherals.h
+index c6a530e..c8bb8ec 100644
+--- a/include/hw/arm/bcm2835_peripherals.h
++++ b/include/hw/arm/bcm2835_peripherals.h
+@@ -81,6 +81,15 @@ struct BCMSocPeripheralBaseState {
+     UnimplementedDeviceState v3d;
+     DWC2State dwc2;
+     UnimplementedDeviceState sdramc;
++    /*
++     * Blocks a BCM2711 has at the same offsets as a BCM2835, so they
++     * belong to every SoC rather than to the Pi 2/3 machines alone.
++     */
++    BCM2835PwmState pwm;
++    BCM2835ArmTimerState armtimer;
++    BCM2835I2SState i2s;
++    BCM2835SmiState smi;
++    BCM2835BscSlState bscsl;
+ };
+ 
+ struct BCMSocPeripheralBaseClass {
+@@ -96,11 +105,6 @@ struct BCM2835PeripheralState {
+     /*< public >*/
+     BCM2835RngState rng;
+     Bcm2835ThermalState thermal;
+-    BCM2835PwmState pwm;
+-    BCM2835ArmTimerState armtimer;
+-    BCM2835I2SState i2s;
+-    BCM2835SmiState smi;
+-    BCM2835BscSlState bscsl;
+     BCM2835GpioState gpio;
+ };
+ 
+-- 
+2.51.0
+
