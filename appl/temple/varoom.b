@@ -48,9 +48,6 @@ include "draw.m";
 include "math.m";
 	math: Math;
 
-include "bufio.m";
-	bufio: Bufio;
-	Iobuf: import bufio;
 
 include "tk.m";
 
@@ -119,12 +116,6 @@ Car: adt {
 	ti: int;		# nearest track slice
 };
 
-El: adt {
-	kind: int;		# 0 line, 1 circle
-	col, thk: int;
-	x1, y1, x2, y2: int;	# circle: x1,y1 center, x2 radius
-};
-
 win: ref Window;
 display: ref Display;
 disp: ref Display;
@@ -144,10 +135,9 @@ mw, mh: int;
 Bush: adt {
 	x, y, z: real;
 	sym: int;
-	img: int;	# index into sprelems
+	img: int;	# index into bushspr
 };
 bushes: array of Bush;
-sprelems: array of array of El;		# vector elements of bush sprites 1-4
 bushimg := array[] of {0, 0, 1, 1, 2, 3, 3, 3};	# original imgs[8] pattern
 
 cars: array of Car;
@@ -238,7 +228,6 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	if(vspr != nil)
 		vspr->init();
 	math = load Math Math->PATH;
-	bufio = load Bufio Bufio->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
 	tone = load Tone Tone->PATH;
@@ -524,157 +513,32 @@ trackfind(start: int, x, z: real): int
 
 # --- bushes --------------------------------------------------------------
 
-# The bushes are vsprite(2) sprites, drawn as a raster at the perspective
-# scale rather than walked element by element every frame.  Measured
-# before it was written: 42,000 bush draws over a run land on 61 distinct
-# (sprite, mirror, scale) keys at two per cent quantisation, so the cache
-# is tiny and hits nearly always - and each hit replaces up to 38 line and
-# ellipse calls with one blit.
+# The bushes are vsprite(2) sprites: the port has no .spr parser of its
+# own any more, it walks the element list the type hands back.
 #
-# Both mirrors are built once, because the sprite type has no mirror and
-# should not grow a half-defined one: negating x has no answer for a
-# rotated rect, a regular polygon, text or a bitmap.  These four sprites
-# are lines, circles and a pen width, so the mirror is exact for them and
-# a sprite holding anything else is refused, leaving the port to draw it
-# the way it always did.
+# Rasterising each bush at its perspective scale and blitting the raster
+# was tried first and is three times slower, measured in situ by timing
+# the real redraw() over 840 frames of a driven car: 7501 and 7473us a
+# frame through the blit against 2445 and 2478us through this walk.  A
+# bush is sixteen thin lines that ink a few hundred pixels, and
+# compositing a masked raster over the whole box it sits in costs more
+# than drawing them.  The cache was not the problem - it hit 97% of the
+# time even with the car moving - the blit was.
+#
+# The mirror is a sign on x, as it always was: these four sprites hold
+# only lines, a circle, a colour and a pen width, for which negating x
+# is exact.
 NBUSHSPR: con 4;
 
-bushspr: array of ref Sprite;		# [sprite*2 + mirrored]
-
-Bras: adt {
-	key:	int;
-	im:	ref Image;
-	mask:	ref Image;
-	r:	Rect;
-};
-brasters: list of ref Bras;
-nbrasters := 0;
+bushspr: array of ref Sprite;		# the four bush sprites
 
 loadsprites()
 {
-	sprelems = array[4] of array of El;
-	for(i := 0; i < 4; i++)
-		sprelems[i] = loadspr(sys->sprint("/lib/temple/sprites/varoom_%d.spr", i+1));
 	if(vspr == nil)
 		return;
-	bushspr = array[NBUSHSPR*2] of ref Sprite;
-	for(i = 0; i < NBUSHSPR; i++){
-		(sp, nil) := vspr->read(sys->sprint("/lib/temple/sprites/varoom_%d.spr", i+1));
-		bushspr[i*2] = sp;
-		bushspr[i*2+1] = mirrored(sp);
-	}
-}
-
-# x negated, for the kinds these sprites use.  nil for anything else, so
-# the caller falls back rather than drawing a distorted bush.
-mirrored(sp: ref Sprite): ref Sprite
-{
-	if(sp == nil)
-		return nil;
-	els := array[len sp.elems] of ref Elem;
-	for(i := 0; i < len sp.elems; i++){
-		e := vspr->copyelem(sp.elems[i]);
-		case e.kind {
-		Vsprite->SCOLOR or Vsprite->SDITHER or Vsprite->STHICK =>
-			;
-		Vsprite->SLINE =>
-			e.a[0] = -e.a[0];
-			e.a[2] = -e.a[2];
-		Vsprite->SCIRCLE =>
-			e.a[0] = -e.a[0];
-		Vsprite->SPT or Vsprite->SFLOOD or Vsprite->SFLOODNOT =>
-			e.a[0] = -e.a[0];
-		* =>
-			return nil;
-		}
-		els[i] = e;
-	}
-	t := ref Sprite;
-	t.elems = els;
-	return t;
-}
-
-# One raster per (sprite, mirror, scale quantised to two per cent).  The
-# key is never clamped: a scale outside what the cache holds is drawn
-# without a cached raster rather than drawn at the wrong size.
-bushras(bi, mir: int, k: real): ref Bras
-{
-	if(bushspr == nil)
-		return nil;
-	sp := bushspr[bi*2 + mir];
-	if(sp == nil || display == nil)
-		return nil;
-	q := int(k*50.0 + 0.5);
-	if(q < 1)
-		return nil;
-	key := (bi*2 + mir)*4096 + q;
-	cached := q < 4096;
-	if(cached)
-		for(l := brasters; l != nil; l = tl l)
-			if((hd l).key == key)
-				return hd l;
-	(im, mask, r) := sp.transformed(0.0, real q/50.0).raster(display);
-	if(im == nil)
-		return nil;
-	br := ref Bras(key, im, mask, r);
-	if(cached){
-		if(nbrasters > 512){
-			brasters = nil;
-			nbrasters = 0;
-		}
-		brasters = br :: brasters;
-		nbrasters++;
-	}
-	return br;
-}
-
-loadspr(path: string): array of El
-{
-	b := bufio->open(path, Bufio->OREAD);
-	if(b == nil)
-		return array[0] of El;
-	l: list of El;
-	n := 0;
-	col := WHITE;
-	thk := 1;
-	for(;;){
-		ln := b.gets('\n');
-		if(ln == nil)
-			break;
-		(nt, toks) := sys->tokenize(ln, " \t\n");
-		if(nt < 1)
-			continue;
-		case hd toks {
-		"color" =>
-			if(nt >= 2)
-				col = int hd tl toks;
-		"thick" =>
-			if(nt >= 2)
-				thk = int hd tl toks;
-		"line" =>
-			if(nt >= 5){
-				t := tl toks;
-				e := El(0, col, thk, int hd t, int hd tl t,
-					int hd tl tl t, int hd tl tl tl t);
-				l = e :: l;
-				n++;
-			}
-		"circle" =>
-			if(nt >= 4){
-				t := tl toks;
-				e := El(1, col, thk, int hd t, int hd tl t,
-					int hd tl tl t, 0);
-				l = e :: l;
-				n++;
-			}
-		}
-	}
-	a := array[n] of El;
-	for(i := n - 1; i >= 0; i--){
-		a[i] = hd l;
-		l = tl l;
-	}
-	return a;
+	bushspr = array[NBUSHSPR] of ref Sprite;
+	for(i := 0; i < NBUSHSPR; i++)
+		(bushspr[i], nil) = vspr->read(sys->sprint("/lib/temple/sprites/varoom_%d.spr", i+1));
 }
 
 frnd(): real
@@ -1133,37 +997,43 @@ redraw()
 	img.flush(Draw->Flushnow);
 }
 
+# The pen is not scaled with k.  TempleOS's transform scales it, but this
+# port has drawn its bushes with the sprite's own pen at every distance
+# since it was written, and scaling it quadruples the ink on the nearest
+# ones; that is a change to how the game looks, not a rasteriser detail,
+# so it is not made here.
 drawbush(img: ref Image, sx, sy: int, k: real, bi: int)
 {
-	m := 0;
-	if(bushes[bi].sym)
-		m = 1;
-	br := bushras(bushes[bi].img, m, k);
-	if(br != nil){
-		img.draw(Rect((sx+br.r.min.x, sy+br.r.min.y),
-			(sx+br.r.max.x, sy+br.r.max.y)),
-			br.im, br.mask, br.im.r.min);
+	if(bushspr == nil)
 		return;
-	}
-	els := sprelems[bushes[bi].img];
+	sp := bushspr[bushes[bi].img];
+	if(sp == nil)
+		return;
 	mir := 1.0;
 	if(bushes[bi].sym)
 		mir = -1.0;
-	for(i := 0; i < len els; i++){
-		e := els[i];
-		r := (e.thk - 1) / 2;
+	col := WHITE;
+	thk := 1;
+	for(i := 0; i < len sp.elems; i++){
+		e := sp.elems[i];
+		r := (thk - 1) / 2;
 		if(r < 0)
 			r = 0;
-		if(e.kind == 0){
-			img.line(Point(sx + int(k*mir*real e.x1), sy + int(k*real e.y1)),
-				Point(sx + int(k*mir*real e.x2), sy + int(k*real e.y2)),
-				Draw->Endsquare, Draw->Endsquare, r, ink[e.col], Point(0, 0));
-		}else{
-			cr := int(k*real e.x2);
+		case e.kind {
+		Vsprite->SCOLOR =>
+			col = e.a[0] & 15;
+		Vsprite->STHICK =>
+			thk = e.a[0];
+		Vsprite->SLINE =>
+			img.line(Point(sx + int(k*mir*real e.a[0]), sy + int(k*real e.a[1])),
+				Point(sx + int(k*mir*real e.a[2]), sy + int(k*real e.a[3])),
+				Draw->Endsquare, Draw->Endsquare, r, ink[col], Point(0, 0));
+		Vsprite->SCIRCLE =>
+			cr := int(k*real e.a[2]);
 			if(cr < 0)
 				cr = 0;
-			img.ellipse(Point(sx + int(k*mir*real e.x1), sy + int(k*real e.y1)),
-				cr, cr, r, ink[e.col], Point(0, 0));
+			img.ellipse(Point(sx + int(k*mir*real e.a[0]), sy + int(k*real e.a[1])),
+				cr, cr, r, ink[col], Point(0, 0));
 		}
 	}
 }

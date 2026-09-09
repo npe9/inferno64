@@ -594,17 +594,31 @@ matches the reference" looks like, as against "prove nothing changed".
   `rivermake()`, which runs *before* the fence posts are stamped, and so
   reported the maps identical no matter what.
 - **`varoom`** scales its bushes with perspective and mirrors half of
-  them. Measured before writing anything: 42,000 bush draws land on **61
-  distinct (sprite, mirror, scale) keys** at two per cent quantisation, so
-  a cache is tiny and hits nearly always, and each hit replaces up to 43
-  line and ellipse calls with one blit. The mirror is built once per
-  sprite *in the port*, not added to the type, for the same reason the
-  danby stretch was not: negating x has no answer for a rotated rect, a
-  regular polygon, text or a bitmap. It is a visible change and the
-  reference is known: the port drew a **one pixel** line where the sprite
-  says `thick 2`, so `vsprite` inks about 2.9x as much, and all four
-  `varoom_*` pass `vspritetest` against their `.bit`. The bushes match the
-  art now.
+  them. It now reads its four `.spr` through `vsprite(2)` and walks the
+  element list the type hands back, drawing each line and circle with
+  `Image.line` and `Image.ellipse` as the port always did. Rasterising
+  each bush at its scale and blitting the raster was tried first and is
+  **three times slower**, and the way that was missed is worth keeping:
+  the cache census that justified it — 42,000 draws on 61 distinct
+  (sprite, mirror, scale) keys — was taken with the car **stationary**,
+  because `varoom` only accelerates on a keypress and nothing was
+  pressing one. The bushes never moved, so every scale was a repeat. With
+  the throttle held the same census gives over 4,096 distinct keys, and
+  the cache still hits 97% of the time — the cache was never the problem.
+  The blit was: a bush is sixteen thin lines that ink a few hundred
+  pixels, and compositing a masked raster over the whole box it sits in
+  costs more than drawing them. Measured in situ, timing the real
+  `redraw()` over 840 frames of a driven car, twice each: **7501 and 7473
+  us a frame** through the blit against **2445 and 2478 us** through the
+  walk. The walk is pixel-identical to the parser it replaces — 4
+  sprites x 2 mirrors x 40 scales from 0.1 to 4.0, 249,797 inked pixels,
+  **0 differ**, and adding one to the pen in the new path makes 456,979
+  differ, so the comparison can see a change. The pen is still the port's
+  own: the sprite says `thick 2` and `varoom` draws one pixel at every
+  distance. Scaling the pen with the perspective, which is what
+  TempleOS's transform does, quadruples the ink on the nearest bushes —
+  a change to how the game looks rather than a rasteriser detail, and not
+  one made here.
 - **`battlelines`** is the one that is not a raster and was never going to
   be: five element lists tweened between, mirrored, and drawn in one
   colour. `vsprite(2)` does the reading, because a second copy of the
