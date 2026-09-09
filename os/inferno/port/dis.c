@@ -56,6 +56,8 @@ int maxnvm;
  */
 enum { Runqcap = 64 };
 int maxnrunq;
+uvlong vmpasses;	/* MULTICORE INSTRUMENTATION - temporary */
+uvlong vmblocked;
 
 /*
  * Dis executes one program at a time, system-wide.
@@ -1330,6 +1332,21 @@ vmachine(void*)
 			vmacquire();
 		}
 
+		/*
+		 * MULTICORE INSTRUMENTATION - temporary.  maxnrunq says how
+		 * many Dis programs are ready at once; this says how much
+		 * that costs.  vmlock.head is the queue of kernel processes
+		 * blocked in vmacquire(), so a pass that sees it non-nil is
+		 * a pass where a runnable interpreter was waiting on the one
+		 * global VM lock.  The ratio is the answer to "what would a
+		 * per-executor register file buy on this workload", in the
+		 * only units that matter: passes spent with someone blocked
+		 * over passes total.
+		 */
+		vmpasses++;
+		if(vmlock.head != nil)
+			vmblocked++;
+
 		if(vmlock.head != nil && (curP->runhd == nil || ++cycles > 2)){
 			iyield();
 			cycles = 0;
@@ -1504,6 +1521,10 @@ disdump(void)
 	print("\ndis: vmlocked %d nidle %d creating %d runhd %#p runtl %#p\n",
 		vmlock.locked, isched.nidle, isched.creating,
 		curP->runhd, curP->runtl);
+	/* MULTICORE INSTRUMENTATION - temporary */
+	print("dis: maxrunq %d, %llud of %llud scheduler passes had an "
+		"interpreter blocked on the vm lock\n",
+		maxnrunq, vmblocked, vmpasses);
 
 	for(p = curP->runhd; p != nil; p = p->link)
 		print("dis: runq prog %d %s\n", p->pid,
