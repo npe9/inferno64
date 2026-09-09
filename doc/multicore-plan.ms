@@ -2605,3 +2605,79 @@ and that word is advanced only by cpu1's own clock interrupt handler,
 so a non-zero delta cannot be produced without the timer firing.  The
 measurement contains its own control.  Where a probe does not have that
 property, the falsified-constant arm is not optional.
+.NH 2
+Every probe left in this branch, and why it can be believed
+.PP
+Applying the rule the cloud-port session put into words: a probe that
+cannot produce a spurious reading needs no falsification arm, one that
+can does \(em and if the reason it cannot be written down, it needs a
+control.  Writing the reasons down is the exercise; the two that had no
+reason got controls.
+.IP "\f(CWmaxnrunq\fP (dis.c)" 
+Could read plausibly whether or not the run-queue links mean what they
+are taken to mean.
+.B Control:
+the same quantity counted over
+.CW isched.head
+by
+.CW "state == Pready" ,
+a different list maintained by different code, with both printed.  Also
+a detector: linked exceeding Pready is a Prog queued in another state,
+which is the shape of the
+.CW delprog()
+bug fixed in this branch.
+.IP "\f(CWvmblocked\fP (dis.c)"
+Was a boolean resting on
+.CW vmlock.head
+meaning "blocked in
+.CW qlock(&vmlock) ".
+.B Control:
+the chain is walked and every entry checked for
+.CW Queueing ,
+which
+.CW qlock()
+guarantees by appending through
+.CW up->qnext
+and sleeping the process.  Silent.  The walk also yields the depth,
+which the boolean did not.
+.IP "\f(CWrungc\fP assertion (gc.c)"
+Cannot be spuriously silent.  It fires when
+.CW regsyncpc
+differs from
+.CW R.PC ,
+and
+.CW regsyncpc
+is written at all five places
+.CW R
+is loaded from a Prog and all six where a Prog's
+.CW reg
+is synced back.  A missing update leaves it stale, which makes the
+check fire, not stay quiet \(em it errs toward reporting.
+.IP "\f(CWmodlinkmod()\fP (heap.c)"
+A containment check, not a measurement, and it fails safe: it can
+return nil for a live Modlink (costing a
+.CW [?]
+in a status line) but returns non-nil only for a pointer that is
+canonical, carries
+.CW &Tmodlink
+in its heap header, and has a canonical
+.CW m .
+.IP "\f(CWfreetype\fP static-Type guard (heap.c)"
+Cannot fire spuriously: the count reaching zero on a static is a real
+event, and the guard reports the first per type rather than one per
+destroy, so the repeats it used to produce were an artefact of the
+repair and not of the detection.
+.IP "the \f(CWss\fP probes (trap.c)"
+Check the starting state as well as the end \(em the entry arm reports
+a frame that is
+.I already
+bad, which is what distinguishes "the CPU pushed it" from "something
+wrote it".  Without that arm the exit comparison alone could have
+reported a change off a frame that was never good.
+.PP
+The last of those is the one worth generalising, and the cloud-port
+session found the same hole in a self-test of their own an hour after
+writing the rule: a before-and-after check that never reads the before
+can report success off a dirty starting state.  "Nothing plausibly sets
+this" is the reasoning that makes the read feel unnecessary, and is
+exactly the reasoning the rule rejects.
