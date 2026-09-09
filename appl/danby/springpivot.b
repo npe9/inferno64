@@ -44,7 +44,7 @@ SPEC: con
 	"point bob { x + length s } , { - length c }\n" +
 	"point rail_left - 2.0 , 0.0\n" +
 	"point rail_right x , 0.0\n" +
-	"link pivot bob\n" +
+	"link pivot bob spring\n" +
 	"link rail_left rail_right\n" +
 	"observable pivot_position x\n" +
 	"observable angle theta\n";

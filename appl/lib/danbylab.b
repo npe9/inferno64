@@ -42,7 +42,7 @@ include "math.m";
 	math: Math;
 include "math/vsprite.m";
 	vspr: Vsprite;
-	Sprite: import vspr;
+	Elem, Sprite: import vspr;
 include "danbylab.m";
 	dynsys: Dynsys;
 	Model: import dynsys;
@@ -125,7 +125,7 @@ SPRITEDIR: con "/lib/danby/sprites";
 Ras: adt {
 	name:	string;
 	deg:	int;		# tenths of a degree, so the key is exact
-	scale:	int;		# hundredths
+	sx, sy:	int;		# hundredths, separately: a link is stretched
 	im:	ref Image;
 	mask:	ref Image;
 	r:	Rect;
@@ -136,6 +136,9 @@ fixedpt: array of int;			# Mechanism: which points never move
 homept: array of real;			# and where they started
 sprites: list of (string, ref Sprite);	# the element lists, read once
 rasters: list of ref Ras;		# and what they were drawn to
+rashit := 0;				# what the cache is worth, which the
+rasmiss := 0;				# census reports: a link that misses
+rasflush := 0;				# every frame is milliseconds a frame
 nrasters := 0;
 
 Sim: adt {
@@ -282,6 +285,9 @@ parse(spec: string): (ref Model, ref Config, string)
 	c.family = -1;
 	c.normalised = -1;
 	c.samples = 320;
+	# explicit, because a ref adt field that is never assigned has bitten
+	# this library before - see Look.landing in doc/danby-models.md
+	c.linkspr = array[0] of string;
 	normname := "";
 
 	(nil, lines) := sys->tokenize(spec, "\n");
@@ -395,11 +401,18 @@ parse(spec: string): (ref Model, ref Config, string)
 # "link NAME NAME": a rod between two of the mechanism's points.
 link(m: ref Model, c: ref Config, w: array of string, nwords: int): string
 {
-	if(nwords != 3)
-		return "link: usage: link NAME NAME";
+	if(nwords != 3 && nwords != 4)
+		return "link: usage: link NAME NAME [COMPONENT]";
 	for(i := 1; i <= 2; i++)
 		if(nameindex(m.pointnames, w[i]) < 0)
 			return "link: no point named "+w[i];
+	comp := "";
+	if(nwords == 4){
+		comp = w[3];
+		if(!islinkcomp(comp))
+			return "link: no component named "+comp;
+	}else
+		comp = componentfor(w[1], w[2]);
 	n := len c.links;
 	l := array[n+2] of int;
 	for(i = 0; i < n; i++)
@@ -407,7 +420,55 @@ link(m: ref Model, c: ref Config, w: array of string, nwords: int): string
 	l[n] = nameindex(m.pointnames, w[1]);
 	l[n+1] = nameindex(m.pointnames, w[2]);
 	c.links = l;
+	sp := array[n/2+1] of string;
+	for(i = 0; i < n/2; i++)
+		sp[i] = c.linkspr[i];
+	sp[n/2] = comp;
+	c.linkspr = sp;
 	return nil;
+}
+
+# The components a link may be drawn as.  Adding one is adding a .spr in
+# /lib/danby/sprites drawn along +x from the origin to (100, 0), and its
+# name here.
+LINKCOMPS: con "rod beam string spring";
+
+islinkcomp(s: string): int
+{
+	(nil, l) := sys->tokenize(LINKCOMPS, " ");
+	for(; l != nil; l = tl l)
+		if(hd l == s)
+			return 1;
+	return 0;
+}
+
+# Which component a link is, when the spec does not say.  Decided by
+# watching the names, in the same spirit as which points are fixed: a
+# spec that calls its endpoints rail_left and rail_right has said the
+# thing is a rail, and making 214 links each name a component to say
+# what their names already say would be worse than reading them.  A spec
+# that disagrees writes the component as the third word.
+componentfor(a, b: string): string
+{
+	n := a + " " + b;
+	if(hasword(n, "spring"))
+		return "spring";
+	if(hasword(n, "string") || hasword(n, "cord") || hasword(n, "rope")
+	|| hasword(n, "cable") || hasword(n, "wire"))
+		return "string";
+	if(hasword(n, "rail") || hasword(n, "bench") || hasword(n, "beam")
+	|| hasword(n, "track") || hasword(n, "ground") || hasword(n, "floor")
+	|| hasword(n, "wall"))
+		return "beam";
+	return "rod";
+}
+
+hasword(s, w: string): int
+{
+	for(i := 0; i + len w <= len s; i++)
+		if(s[i:i+len w] == w)
+			return 1;
+	return 0;
 }
 
 # "body NAME EXPR": a mass, which is an expression because in this
@@ -1383,8 +1444,12 @@ drawmechanism(im: ref Image)
 			continue;
 		pa := onview(view, points[2*a], points[2*a+1], xmin, xmax, ymin, ymax);
 		pb := onview(view, points[2*b], points[2*b+1], xmin, xmax, ymin, ymax);
-		im.line(pa, pb, Draw->Endsquare, Draw->Endsquare, 3,
-			palette[1], Point(0,0));
+		comp := "rod";
+		if(i < len cfg.linkspr)
+			comp = cfg.linkspr[i];
+		if(!drawlink(im, pa, pb, comp, viewscale(view)))
+			im.line(pa, pb, Draw->Endsquare, Draw->Endsquare, 3,
+				palette[1], Point(0,0));
 	}
 	# A point that has never left where it started is what the mechanism
 	# is bolted to, and is drawn as one; everything else is a mass.
@@ -1401,13 +1466,7 @@ drawmechanism(im: ref Image)
 		   || absreal(points[2*i+1]-homept[2*i+1]) > 1e-9)
 			fixedpt[i] = 0;
 
-	# The sprite is drawn at the size the view is: a mechanism squeezed
-	# into a small pane gets small parts rather than parts that swamp it.
-	scale := real(view.dx())/460.0;
-	if(scale > 1.6)
-		scale = 1.6;
-	if(scale < 0.5)
-		scale = 0.5;
+	scale := viewscale(view);
 	for(i = 0; i < len points/2; i++){
 		at := onview(view, points[2*i], points[2*i+1],
 			xmin, xmax, ymin, ymax);
@@ -1442,44 +1501,161 @@ spritefor(name: string): ref Sprite
 # is not there gets it drawn rather than the nearest one that is.  A
 # cache that answers with the nearest is how temple/stadium nearly drew
 # a knocked-over fan standing up.
-rasterof(name: string, deg, scale: real): ref Ras
+rasterof(name: string, deg, sx, sy: real): ref Ras
 {
-	if(scale < 0.15)
-		scale = 0.15;
+	if(sx < 0.15)
+		sx = 0.15;
+	if(sy < 0.15)
+		sy = 0.15;
 	dk := int (deg*10.0);
-	sk := int (scale*100.0);
-	if(sk < 15)
-		sk = 15;
+	xk := int (sx*100.0);
+	yk := int (sy*100.0);
+	if(xk < 15)
+		xk = 15;
+	if(yk < 15)
+		yk = 15;
 	for(l := rasters; l != nil; l = tl l){
 		ras := hd l;
-		if(ras.name == name && ras.deg == dk && ras.scale == sk)
+		if(ras.name == name && ras.deg == dk
+		&& ras.sx == xk && ras.sy == yk){
+			rashit++;
 			return ras;
+		}
 	}
+	rasmiss++;
 	sp := spritefor(name);
 	if(sp == nil || display == nil)
 		return nil;
-	if(dk != 0 || sk != 100)
-		sp = sp.transformed(real dk/10.0, real sk/100.0);
+	# A part that is twice as long is not twice as thick, so the two
+	# axes are stretched in the sprite's own frame first and only the
+	# turn is left to the sprite type.  Nothing but a link asks for
+	# that, and a link asks for it every frame.
+	if(xk != yk){
+		sp = stretch(sp, real xk/100.0, real yk/100.0);
+		if(sp == nil)
+			return nil;
+		if(dk != 0)
+			sp = sp.transformed(real dk/10.0, 1.0);
+	}else if(dk != 0 || xk != 100)
+		sp = sp.transformed(real dk/10.0, real xk/100.0);
 	(im, mask, r) := sp.raster(display);
 	if(im == nil)
 		return nil;
-	ras := ref Ras(name, dk, sk, im, mask, r);
+	ras := ref Ras(name, dk, xk, yk, im, mask, r);
 	# The angles a model asks for are continuous, so this would grow
 	# without bound; past a few hundred the oldest go.
-	if(nrasters > 240){
+	if(nrasters > 480){
 		rasters = nil;
 		nrasters = 0;
+		rasflush++;
 	}
 	rasters = ras :: rasters;
 	nrasters++;
 	return ras;
 }
 
+# The four link components are lines, points, flood fills and a pen
+# width, and those are the only kinds a stretch has an answer for: a
+# circle would have to become an ellipse, a regular polygon is regular by
+# construction, text and a bitmap do not stretch at all.  So a component
+# holding anything else is refused rather than quietly distorted, and the
+# caller falls back to the line it used to draw.  The pen follows y,
+# which is the axis a link's thickness is in.
+stretch(sp: ref Sprite, sx, sy: real): ref Sprite
+{
+	els := array[len sp.elems] of ref Elem;
+	for(i := 0; i < len sp.elems; i++){
+		e := vspr->copyelem(sp.elems[i]);
+		case e.kind {
+		Vsprite->SCOLOR or Vsprite->SDITHER =>
+			;
+		Vsprite->STHICK =>
+			e.a[0] = int (real e.a[0]*sy);
+			if(e.a[0] < 1)
+				e.a[0] = 1;
+		Vsprite->SLINE =>
+			e.a[0] = int (real e.a[0]*sx);
+			e.a[1] = int (real e.a[1]*sy);
+			e.a[2] = int (real e.a[2]*sx);
+			e.a[3] = int (real e.a[3]*sy);
+		Vsprite->SPT or Vsprite->SFLOOD or Vsprite->SFLOODNOT =>
+			e.a[0] = int (real e.a[0]*sx);
+			e.a[1] = int (real e.a[1]*sy);
+		* =>
+			return nil;
+		}
+		els[i] = e;
+	}
+	t := ref Sprite;
+	t.elems = els;
+	return t;
+}
+
+# A link is a component drawn along +x from its own origin to (100, 0),
+# turned to lie along the segment and scaled so that its 100 becomes the
+# segment's length.  The scale is uniform because that is what the sprite
+# type does and what TempleOS's SpriteTransformQue did, so a longer rod
+# is also a thicker one; a rod is not a line with a width parameter, it
+# is a part, and a part drawn twice the size is twice the size.
+#
+# The angle and the scale both move every frame - the view rescales to
+# whatever the mechanism currently spans - so both are quantised before
+# the cache is asked: a whole degree, and two per cent of the nominal
+# length, which is two pixels in a hundred.  Quantising is not clamping.
+# An angle or a scale outside what the cache holds is still drawn, just
+# without a cached raster.
+LINKNOMINAL: con 100.0;
+
+# The size the parts are drawn at: a mechanism squeezed into a small pane
+# gets small parts rather than parts that swamp it.  A link's thickness
+# is this and its length is the segment, which is the whole reason the
+# two axes are stretched separately.
+viewscale(view: Rect): real
+{
+	s := real(view.dx())/460.0;
+	if(s > 1.6)
+		s = 1.6;
+	if(s < 0.5)
+		s = 0.5;
+	return s;
+}
+
+drawlink(im: ref Image, pa, pb: Point, comp: string, thick: real): int
+{
+	if(comp == nil)
+		return 0;
+	dx := real(pb.x - pa.x);
+	dy := real(pb.y - pa.y);
+	dist := math->sqrt(dx*dx + dy*dy);
+	if(dist < 1.0)
+		return 0;
+	deg := math->atan2(dy, dx)*180.0/Math->Pi;
+	deg = real int(deg + 0.5*sgnreal(deg));
+	sx := dist/LINKNOMINAL;
+	sx = real int(sx*50.0 + 0.5)/50.0;
+	if(sx < 0.02)
+		return 0;
+	ras := rasterof(comp, deg, sx, thick);
+	if(ras == nil)
+		return 0;
+	im.draw(Rect((pa.x+ras.r.min.x, pa.y+ras.r.min.y),
+		(pa.x+ras.r.max.x, pa.y+ras.r.max.y)),
+		ras.im, ras.mask, ras.im.r.min);
+	return 1;
+}
+
+sgnreal(v: real): real
+{
+	if(v < 0.0)
+		return -1.0;
+	return 1.0;
+}
+
 # Draw one, centred on the sprite's own origin at p.  Returns 0 if there
 # was no sprite, so a caller can fall back to the circle it used to draw.
 drawsprite(im: ref Image, p: Point, name: string, deg, scale: real): int
 {
-	ras := rasterof(name, deg, scale);
+	ras := rasterof(name, deg, scale, scale);
 	if(ras == nil)
 		return 0;
 	im.draw(Rect((p.x+ras.r.min.x, p.y+ras.r.min.y),
@@ -1936,6 +2112,12 @@ takecensus()
 		}
 	}
 	sys->print("danby census %s: %d colours\n", cfg.title, n);
+	# The picture is only half of it: a link's raster costs the best
+	# part of a millisecond, so a cache that misses every frame is a
+	# regression the colours cannot see.
+	if(rashit+rasmiss > 0)
+		sys->print("\trasters %d hit %d miss %d flush over %d frames\n",
+			rashit, rasmiss, rasflush, censusn);
 	for(k := 0; k < n; k++)
 		sys->print("\t%.6x %d\n", cols[k], cnts[k]);
 }

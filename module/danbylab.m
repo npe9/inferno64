@@ -47,6 +47,7 @@ Danbylab: module
 		sprite:		string;
 
 		links:		array of int;		# Mechanism: pairs of point indices
+		linkspr:	array of string;	# and the component each is drawn as
 		bodies:		array of string;	# Orbit: what each body is called
 		massexprs:	array of ref Hoc->Expr;	# Orbit: and what it weighs
 		equilx, equily:	ref Hoc->Expr;		# Ecology: the fixed point

@@ -36,7 +36,7 @@ SPEC: con
 	"point mass_point x , 0.0\n" +
 	"point mass_top x , - 0.3\n" +
 	"point mass_bottom x , 0.3\n" +
-	"link wall mass_point\n" +
+	"link wall mass_point spring\n" +
 	"link mass_top mass_bottom\n" +
 	"observable displacement x\n" +
 	"observable velocity v\n";

@@ -41,7 +41,7 @@ SPEC: con
 	"point bob { radius sin { theta } } , { - radius cos { theta } }\n" +
 	"point rail_left - 0.7 , 0.0\n" +
 	"point rail_right 0.7 , 0.0\n" +
-	"link pivot bob\n" +
+	"link pivot bob spring\n" +
 	"link rail_left rail_right\n" +
 	"observable length radius\n" +
 	"observable angle theta\n";

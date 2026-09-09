@@ -45,9 +45,9 @@ SPEC: con
 	"point weight 0.5 , countery\n" +
 	"point beam_left - 0.25 , 0.0\n" +
 	"point beam_right 0.75 , 0.0\n" +
-	"link pulley_a bob\n" +
+	"link pulley_a bob string\n" +
 	"link pulley_a pulley_b\n" +
-	"link pulley_b weight\n" +
+	"link pulley_b weight string\n" +
 	"link beam_left beam_right\n" +
 	"observable swing_radius radius\n" +
 	"observable angle theta\n";

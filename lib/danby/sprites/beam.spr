@@ -1,0 +1,17 @@
+color 7
+thick 1
+line 0 -3 100 -3
+line 0 3 100 3
+line 0 -3 0 3
+line 100 -3 100 3
+floodfill 50 0
+color 8
+line 0 -3 25 3
+line 25 3 50 -3
+line 50 -3 75 3
+line 75 3 100 -3
+color 0
+line 0 -3 100 -3
+line 0 3 100 3
+line 0 -3 0 3
+line 100 -3 100 3

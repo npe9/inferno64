@@ -1,0 +1,16 @@
+color 11
+thick 1
+line 0 0 10 0
+line 10 0 15 -5
+line 15 -5 25 5
+line 25 5 35 -5
+line 35 -5 45 5
+line 45 5 55 -5
+line 55 -5 65 5
+line 65 5 75 -5
+line 75 -5 85 5
+line 85 5 90 0
+line 90 0 100 0
+color 0
+pt 0 0
+pt 100 0

@@ -230,6 +230,66 @@ and it does not depend on where either bob happens to be. And `rocket2d`'s
 flight-path angles, is the rotation working — a sprite that were merely
 being blitted would give the same number twice.
 
+### The linkages are parts too
+
+A first cut made the joints sprites and left what joins them a line, which
+is half a picture: a pendulum's rod, a spring's coil and a rail are three
+different things and were three identical three-pixel strokes. `link A B
+[COMPONENT]` now draws a component along the segment — `rod`, `beam`,
+`string`, `spring` — each an element list in `lib/danby/sprites` drawn
+along +x from its origin to `(100, 0)`.
+
+**Stretching the two axes separately is the whole of it, and the first
+attempt proved why.** `vsprite(2)` scales one number, as TempleOS's
+`SpriteTransformQue` does, so a component stretched to the segment's
+length that way is also that much thicker. Measured, not guessed: a rail
+across a 460-pixel pane came out 32 pixels thick, and `simplependulum`
+spent about 16,000 pixels of a 350,000-pixel pane on its linkage. A part
+twice as long is not twice as thick. So the component is stretched in its
+own frame first — x by the segment's length, y by the size the pane calls
+for, which is the size the weights are already drawn at — and only the
+turn is left to the sprite type.
+
+That stretch was deliberately *not* put into `vsprite(2)`. `transformelem`
+is a rotation composed with a single `k`, and a second scale factor has no
+answer for the kinds that carry one number: `thick`, a circle (which would
+have to become an ellipse and change kind), a regular polygon, a bitmap
+that is documented as moved rather than resampled, and the whole text
+family. Widening it would also widen the one function whose verbatim
+equality with `spriteedit`'s Transform Selected is what `vspritetest`'s
+46/46 transform gate rests on. The stretch lives in `danbylab` instead,
+answers only for lines, points, flood fills and a pen width — which is
+what the four components are made of — and **refuses** anything else, so a
+future component with a circle in it degrades to a line visibly rather
+than distorting silently.
+
+**The component is chosen by reading the endpoint names**, in the same
+spirit as which points are fixed: a link between `rail_left` and
+`rail_right` is a rail whether or not anybody says so, and making all 214
+links spell out what their names already say would be worse than reading
+them. Where the physics and the names disagree — a spring pendulum whose
+points are called `pivot` and `bob` — the spec names the component: eight
+models now say `spring` or `string` on ten links.
+
+**Measured, and attributed component by component.** At frame 60,
+`simplependulum` goes from 6 colours to 8: `a55a1e` 560 and `ffd84a` 89
+are the rod's shaft and highlight, which no other part draws.
+
+*Negative control, per component:* move `rod.spr` away and exactly those
+two colours vanish, 1828 pixels of the old palette-1 line come back, and
+`b0b4ba` 1941 and `585e67` 502 — the beam and the anchor — are unchanged
+to the pixel. So the brown is the rod and nothing else is.
+
+**The cost is measured too, because the colours cannot see it.** A link's
+raster costs 170–860 µs depending on length, and its angle and length both
+move every frame, so the design lives or dies on the cache. Both are
+quantised before the cache is asked — a whole degree, and two per cent of
+the nominal length — and quantising is not clamping, per the fan frozen at
+−π/2 in `doc/draw3d-adoption-plan.md`: an angle or a length outside what
+the cache holds is still drawn, just uncached. Over the first sixty
+frames `simplependulum` takes 309 hits to 51 misses and never flushes,
+which is about a quarter of a millisecond a frame.
+
 *Negative control:* move `lib/danby/sprites` away and every model falls
 back to the circles it drew before — 3 colours for `simplependulum` and 5
 for `threebody`, exactly the "before" numbers — and keeps running. The

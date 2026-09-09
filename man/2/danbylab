@@ -192,10 +192,71 @@ by anything in the spec: a point that has never left where it started is
 what the thing is bolted to.
 No spec says which point is a pivot, and a hoop's centre and a pendulum's
 pivot are both simply points that do not move.
-.PP
-A model whose sprite file is missing draws the circles it always drew, so
+.SS "The linkages are parts too"
+What joins two points is a part and not a line.
+.BI "link " "A B" \fR[\fP "\fICOMPONENT\fP" \fR]\fP
+draws the component of that name along the segment, turned to lie on it
+and stretched to its length:
+.B rod
+a rigid bar,
+.B beam
+a braced girder,
+.B string
+a cord and
+.B spring
+a coil.
+Each is an element list in
 .B /lib/danby/sprites
-is not a dependency.
+drawn along +x from its own origin to
+.RB ( 100 ,
+.BR 0 ),
+so adding a component is adding a file and its name to
+.B LINKCOMPS
+in the source.
+.PP
+The two axes are stretched separately, and that is the whole point.
+.IR vsprite (2)
+scales one number, as TempleOS's
+.I SpriteTransformQue
+does, so a link stretched to its length that way is also that much
+thicker: measured, a rail across a 460 pixel pane came out 32 pixels
+thick and a simple pendulum spent 16,000 pixels on its linkage.
+A part twice as long is not twice as thick, so the component is stretched
+in its own frame first \(em x by the segment's length, y by the size the
+pane calls for, the same size the weights are drawn at \(em and only the
+turn is left to the sprite type.
+That stretch has an answer only for lines, points, flood fills and a pen
+width, which is what the four components are made of; a component holding
+anything else is refused rather than quietly distorted, and the link
+falls back to the line it used to draw.
+.PP
+A spec that does not name a component gets one from the endpoint names,
+in the same spirit as which points are fixed: a link between
+.B rail_left
+and
+.B rail_right
+is a rail whether or not anybody says so, and making all 214 links spell
+out what their names already say would be worse than reading them.
+.BR spring ,
+then
+.BR string / cord / rope / cable / wire ,
+then
+.BR rail / bench / beam / track / ground / floor / wall ,
+else a rod.
+Where the physics and the names disagree \(em a spring pendulum whose
+points are called
+.B pivot
+and
+.B bob
+\(em the spec says the component itself.
+.PP
+A model whose sprite file is missing draws the circles and lines it
+always drew, so
+.B /lib/danby/sprites
+is not a dependency, file by file: take
+.B rod.spr
+away and the rods become lines again while the beams and anchors are
+unchanged to the pixel.
 .SS "Seeing that a sprite reached the pixels"
 Create
 .B /env/DANBY_PIXELS
@@ -235,6 +296,18 @@ away and the same census falls back to three colours, which is the
 control.
 Give the file a number to census a different frame; an empty file means
 the sixtieth.
+.PP
+The census also reports the raster cache, because the picture is only
+half of the question: a link's raster costs the best part of a
+millisecond and its angle and length both move every frame, so a cache
+that missed every frame would be a regression no colour count could see.
+Both are quantised before the cache is asked \(em a whole degree, and two
+per cent of the nominal length \(em and quantising is not clamping: an
+angle or a length outside what the cache holds is still drawn, just
+without a cached raster.
+Measured over the first sixty frames,
+.I simplependulum
+takes 309 hits to 51 misses and never flushes.
 .SH SOURCE
 .B /appl/lib/danbylab.b
 .SH SEE ALSO

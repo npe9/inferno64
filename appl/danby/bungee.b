@@ -41,7 +41,7 @@ SPEC: con
 	"point jumper 0.0 , { - distance }\n" +
 	"point rail_left - 0.6 , 0.0\n" +
 	"point rail_right 0.6 , 0.0\n" +
-	"link platform jumper\n" +
+	"link platform jumper spring\n" +
 	"link rail_left rail_right\n" +
 	"observable fall_distance distance\n" +
 	"observable speed speed\n";

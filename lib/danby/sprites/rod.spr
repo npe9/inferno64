@@ -1,0 +1,14 @@
+color 6
+thick 1
+line 0 -2 100 -2
+line 0 2 100 2
+line 0 -2 0 2
+line 100 -2 100 2
+floodfill 50 0
+color 14
+line 1 -1 99 -1
+color 0
+line 0 -2 100 -2
+line 0 2 100 2
+line 0 -2 0 2
+line 100 -2 100 2

@@ -47,8 +47,8 @@ SPEC: con
 	"point tip_b { - radius c } , { - radius s }\n" +
 	"point body_a { - 0.4 s } , { 0.4 c }\n" +
 	"point body_b { 0.4 s } , { - 0.4 c }\n" +
-	"link hub tip_a\n" +
-	"link hub tip_b\n" +
+	"link hub tip_a string\n" +
+	"link hub tip_b string\n" +
 	"link body_a body_b\n" +
 	"observable spin spin\n" +
 	"observable deployment radius\n";

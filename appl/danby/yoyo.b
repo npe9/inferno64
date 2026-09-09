@@ -46,7 +46,7 @@ SPEC: con
 	"point axle 0.0 , { - depth }\n" +
 	"point rim_a { 0.25 sin { spin } } , { - depth }\n" +
 	"point rim_b { - 0.25 sin { spin } } , { - depth }\n" +
-	"link hand axle\n" +
+	"link hand axle string\n" +
 	"link rim_a rim_b\n" +
 	"observable depth depth\n" +
 	"observable angular_speed speed over axle_radius\n";
