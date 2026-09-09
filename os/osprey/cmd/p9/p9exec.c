@@ -59,8 +59,10 @@ extern int	p9waitpid(int pid, char *status, int nstatus);
 extern void	p9anyexits(char *status);
 extern int	p9procbusy(uvlong base);
 extern int	p9relocalloc(void);		/* p9proc.c: the slots a module is laid in */
+extern int	p9relocclaim(int slot);
 extern void	p9relocfree(int slot);
 extern uvlong	p9relocaddr(int slot);
+extern int	p9relocslotof(uvlong progbase);
 
 /*
  * The second program is a file in this personality's own file system,
@@ -672,10 +674,22 @@ int
 p9execreloc(char *name, char **argv, uvlong progbase)
 {
 	uvlong entry, gotbase;
-	int std[3];
+	int std[3], slot;
 
-	if(p9loadreloc(name, progbase, &entry, &gotbase) < 0)
+	/*
+	 * The caller names the slot, so the allocator is told rather than
+	 * asked: a slot laid in without being claimed is a slot the
+	 * allocator would still hand to somebody else.
+	 */
+	slot = p9relocslotof(progbase);
+	if(slot < 0 || p9relocclaim(slot) < 0){
+		print("p9 exec: %s: %#llux is not a free relocation slot\n", name, progbase);
 		return -1;
+	}
+	if(p9loadreloc(name, progbase, &entry, &gotbase) < 0){
+		p9relocfree(slot);
+		return -1;
+	}
 	USED(gotbase);
 	std[0] = std[1] = std[2] = -1;
 	print("p9 exec: entering %s at %#llux, where it was put rather than where it was linked\n",
@@ -687,6 +701,7 @@ p9execreloc(char *name, char **argv, uvlong progbase)
 		print("p9 exec: %s exited with status \"%s\", into the personality that loaded it\n",
 			name, p9execstatus == nil ? "" : p9execstatus);
 	p9procwaitinproc();
+	p9relocfree(slot);
 	print("p9 exec: %s returned; the personality is still here\n", name);
 	return 0;
 }

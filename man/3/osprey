@@ -1552,6 +1552,17 @@ takes its slot and not
 .IR p9spawn .
 It holds that slot for as long as its script runs, so a five-stage
 pipeline beside it is six modules at once, which is every slot there is.
+A module loaded through
+.I p9exec
+after the shell has ended gets the slot the shell held, which is what
+shows that path frees as well as takes.
+.I p9execreloc
+is told which slot to use rather than asking, and claims it from the
+allocator all the same
+.RI ( p9relocclaim ,
+.IR p9relocslotof ):
+a slot laid in without being claimed is one the allocator would hand out
+again.
 There are six because five stages plus the shell reaches six; a count
 nothing reaches would say nothing.
 .B /boot/libgen

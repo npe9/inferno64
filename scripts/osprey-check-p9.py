@@ -468,6 +468,33 @@ def main():
                     and len(spawned) == 2 and spawned[0][1] != spawned[1][1]))
     results.append(("and a slot is given back when its program ends and taken again by the next: the address the first copy ran at is used again by a later load, so the range is allocated rather than assigned",
                     len(laid) >= 4 and laid[0][0] in [a for a, _ in laid[2:]]))
+    #
+    # p9execreloc is told which slot to use rather than asking for one,
+    # and it now claims that slot from the allocator and frees it after.
+    # The witness is that the shell, which asks, is given a slot one of
+    # those named runs used and gave back.
+    execreloc = re.findall(r'p9 exec: entering /boot/reloc at (0x[0-9a-f]+), where it was '
+                           r'put rather than where it was linked', t)
+    results.append(("and a module laid in a slot the caller names is claimed from the allocator all the same, and given back: /boot/reloc is run twice at two slots named outright, and the slot the shell is later given - the shell asks rather than names - is one of them, which it could only be if the named runs had returned it",
+                    len(execreloc) >= 2 and len(set(execreloc)) >= 2
+                    and shslot is not None and shslot.group(1) in execreloc))
+    #
+    # And the exec path gives a slot back.  p9exec takes one for a
+    # module and frees it when the program returns, and while the shell
+    # was the last module to run there was nothing to see that in: the
+    # free ran with no witness.  So a module is loaded through p9exec
+    # once more after the shell has ended, and the slot it is given must
+    # be the one the shell held - which is free only because p9exec
+    # freed it.
+    after = t[t.index('p9: the shell has ended;'):] if 'p9: the shell has ended;' in t else ''
+    afterslot = re.search(r'p9 exec: entering /boot/reloc at (0x[0-9a-f]+) with the '
+                          r"personality's own name space under it", after)
+    results.append(("and p9exec gives a slot back as well as taking one: a module is loaded through it again once the shell has ended, and the slot it is given is the one the shell was holding - which is free only because the exec that ran the shell freed it, a line that had nothing to witness it while the shell was the last module to run",
+                    afterslot is not None
+                    and shslot is not None
+                    and afterslot.group(1) == shslot.group(1)
+                    and 'reloc: 5 function pointers summing to 15' in after
+                    and 'reloc: that is not the' not in after))
     results.append(("and it exits through the microkernel's minimal syscall interface, no in-kernel personality",
                     'the program exited' in t and 'panic' not in t))
 

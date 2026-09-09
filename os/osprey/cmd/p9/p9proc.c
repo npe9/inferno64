@@ -124,6 +124,25 @@ p9relocalloc(void)
 	return -1;
 }
 
+/*
+ * Take one slot by number rather than the first free one.  p9execreloc
+ * is told which slot to lay a module in - it is the demonstration that
+ * one image runs at two addresses - and naming a slot without telling
+ * the allocator would leave it free to be handed to something else.
+ * Nothing does that today, because those runs are sequential and
+ * nothing else is loading; it is closed because the allocator is the
+ * mechanism being claimed, and a mechanism with a way round it is not
+ * the mechanism.
+ */
+int
+p9relocclaim(int slot)
+{
+	if(slot < 0 || slot >= Nrelocslot || relocslot[slot])
+		return -1;
+	relocslot[slot] = 1;
+	return slot;
+}
+
 void
 p9relocfree(int slot)
 {
@@ -135,6 +154,20 @@ uvlong
 p9relocaddr(int slot)
 {
 	return (uvlong)P9relocbase + (uvlong)slot * P9relocslot;
+}
+
+/* the slot an address is, or -1 if it is not one */
+int
+p9relocslotof(uvlong progbase)
+{
+	uvlong off;
+
+	if(progbase < (uvlong)P9relocbase)
+		return -1;
+	off = progbase - (uvlong)P9relocbase;
+	if(off % P9relocslot != 0 || off / P9relocslot >= Nrelocslot)
+		return -1;
+	return (int)(off / P9relocslot);
 }
 
 static Proc9*

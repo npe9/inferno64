@@ -820,6 +820,24 @@ p9main(void)
 		}
 	}
 
+	/*
+	 * And once more, after the shell has ended: p9exec takes a slot for
+	 * a module and gives it back, and the giving back had nothing to
+	 * show it while the shell was the last module to run.  /boot/reloc
+	 * goes down through p9exec this time rather than p9execreloc, with
+	 * no address named, and the slot it is given is the one the shell
+	 * held - which is only free because p9exec freed it.
+	 */
+	{
+		char *rargv[2];
+
+		rargv[0] = "/boot/reloc";
+		rargv[1] = nil;
+		print("p9: the shell has ended; loading a module through exec again, "
+			"to see the slot it held given back\n");
+		p9exec("/boot/reloc", rargv);
+	}
+
 	poperror();
 	exits(nil);
 }

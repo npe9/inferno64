@@ -10141,11 +10141,29 @@ and not in
 Until the shell was a module, nothing had ever gone that way \- the code
 was written when cat became one and never ran.  The slot it is given,
 0x2c00000, is one an earlier module gave back, so the allocator is being
-used rather than a list of names.  What is not shown is
-.CW p9exec 's
-own free: nothing loads a module after the shell returns, so the line
-that frees its slot has no witness in this boot, and that is said here
-rather than implied.
+used rather than a list of names.  Its free had no witness while the shell was the last module to run, so
+one more module goes down through
+.CW p9exec
+after the shell has ended, and the slot it is given is the one the shell
+held.  Disabling that free moves it to another slot and costs the check
+two criteria, not one: the two earlier runs of
+.CW /boot/reloc
+leak their slots as well, and the five-stage pipeline runs out.
+.PP
+Closing that led to a hole worth naming.
+.CW p9execreloc
+is told which slot to lay a module in \- it is the demonstration that one
+image runs at two addresses \- and it named the address without telling
+the allocator, so the allocator would have handed the same slot to
+somebody else.  Nothing did, because those runs are sequential and
+nothing else is loading, but a mechanism with a way round it is not the
+mechanism.  It claims the slot now and frees it, by
+.CW p9relocclaim
+and
+.CW p9relocslotof ,
+and what shows it is the shell: the shell asks for a slot rather than
+naming one, and the slot it is given is one of the two those named runs
+used, which it can only be if they gave them back.
 .PP
 The shell holding a slot is what makes the count reachable.  A count of
 slots nothing ever reaches says nothing about them, so the shell's stage
