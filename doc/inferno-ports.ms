@@ -20496,3 +20496,56 @@ all.  They are not zero;
 prints a word only when it looks like a text address or lies within
 the last 32 bytes of the stack, so those three are simply filtered.
 The frame is consistent with having been pushed normally.
+.NH 2
+Where the SS corruption is, and where it is not
+.PP
+Two probes, two answers, and the second batch went quiet.
+.PP
+The first asked whether the frame was already bad when the trap was
+taken, which would mean the CPU pushed a bad
+.CW SS .
+Fifty-two boots, two of them faulting this way, and it never fired.  So
+the CPU pushed a good frame and the word is overwritten before the
+.CW IRETQ
+reads it \(em the corruption happens during the handler.
+.PP
+That narrows it usefully, because
+.CW trap()
+is short and, on the path a newborn kproc takes, writes nothing to
+.CW ss .
+.CW kenter()
+touches only
+.CW up->dbgreg ,
+and only for a user trap; the two
+.CW "ureg->ss = KDSEL"
+writes are on the debug-register and user-entry paths, which a kernel
+trap does not reach; the
+.CW "ureg->sp = (uintptr)&ureg->sp"
+in the panic path writes
+.CW sp ,
+not
+.CW ss ,
+and runs only once the trap has already failed.  What is left is
+.CW irqhandled()
+and the device handler it dispatches to, each of which is handed the
+.CW Ureg*
+directly.
+.PP
+The second probe compares
+.CW ss
+across that call and names the vector.  It has not fired, because in 96
+boots the fault did not recur at all \(em the first entirely clean
+96-boot batch this port has produced.  At the observed rate of about 2%
+that has roughly a 13% chance, so it is not evidence that anything
+changed; the probe is simply untested.  A larger batch is the only way
+to give it the chance.
+.PP
+Worth stating for what it is: 96 of 96 boots at
+.CW "-smp 2"
+with no panic, no
+.CW freetype
+report, no
+.CW modstatus
+report and no collector-invariant firing.  That is the state of the
+port after the interrupt fix and the four lifetime fixes, and it is a
+different machine from the one this document opens on.
