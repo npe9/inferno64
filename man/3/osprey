@@ -1475,6 +1475,42 @@ keeps its descriptor in one and stores through whatever
 .I privalloc
 returned, which was nil.
 .PP
+A program can also be loaded at an address it was not linked for.
+.B /boot/reloc
+is built with
+.B "6l -u"
+\- Plan 9's dynamically-loadable-module link, which places the image at 0
+and appends a table of every absolute address in it \- and
+.I p9loadreloc
+lays it at a base the caller names, contiguously (text, data and bss with
+no page between, because one base is added to every address in it and
+they must keep the distance the linker gave them), then adds that base
+to a
+.B uintptr
+at each recorded offset, which is what
+.B libdynld/dynld-amd64.c
+does.  Its entry is offset 0, which is
+.IR p9start ;
+the header's entry is not a code entry at all, since
+.B -u
+points it at the export table.
+.PP
+This is the one thing the fixed bases cannot do: the same module is laid
+down twice, at two addresses, and both copies run.  It is not yet an
+allocator \- the caller still names the base, and
+.B p9lib.h
+still lists them \- so it does not yet give rio what rio wants.
+.PP
+Finding it out cost a bug in
+.BR 6l .
+.I asmins
+records a relocation while assembling an instruction and then inserts
+the rex prefix in front of it afterwards, moving every later byte up by
+one and leaving the recorded offset behind, so every rex-prefixed
+instruction with an absolute operand named the byte before its field.
+Of one module's 287 relocations, 45 were wrong that way and every one of
+them was rex-prefixed.
+.PP
 The table is version 5 and holds
 .IR pread ,
 .IR pwrite ,

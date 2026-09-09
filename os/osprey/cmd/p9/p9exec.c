@@ -41,6 +41,7 @@
 #include "libgenprog.i"		/* uchar libgenprog[]: the near end of a pipeline */
 #include "libdrawprog.i"		/* uchar libdrawprog[]: the program that draws */
 #include "libthreadprog.i"		/* uchar libthreadprog[]: the program with threads in it */
+#include "relocprog.i"		/* uchar relocprog[]: the relocatable module */
 
 extern int	p9open(char *name, int mode);
 extern int	p9create(char *name, int mode, ulong perm);
@@ -73,6 +74,7 @@ p9execfile(void)
 	addbootfile("libgen", libgenprog, sizeof libgenprog);
 	addbootfile("libdraw", libdrawprog, sizeof libdrawprog);
 	addbootfile("libthread", libthreadprog, sizeof libthreadprog);
+	addbootfile("reloc", relocprog, sizeof relocprog);
 }
 
 static uvlong
@@ -324,6 +326,212 @@ p9load(char *name, uvlong *entryp, uvlong *basep)
 }
 
 /*
+ * Load a relocatable module and lay it at a base of the caller's
+ * choosing.
+ *
+ * p9load above lays a program at the address it was linked for, which is
+ * why p9lib.h has a fixed base per program and why two instances of one
+ * image cannot run at once.  A module built with 6l -u has no address of
+ * its own - the linker sets INITTEXT and INITDAT to 0 - and carries a
+ * table of every absolute address in it, so it can be laid anywhere and
+ * corrected.
+ *
+ * The layout is not the a.out one.  A module is loaded contiguously,
+ * text then data then bss with no page between them, because that is
+ * what its relocations were computed against: each one adds a single
+ * base, so text and data must keep the distance the linker gave them.
+ * libdynld/dynld.c is where that is written down for the rest of the
+ * tree, and this follows it.
+ *
+ * The table sits after the symbol table: a four-byte length, an import
+ * count, then a relocation count, then one entry each - a byte whose top
+ * two bits say how wide the offset delta is and whose low four are the
+ * mode, then the delta.  Mode 0 is an absolute reference to a defined
+ * symbol, and applying it is what libdynld/dynld-amd64.c does: read a
+ * uintptr at the offset, add the base, write it back.  The other modes
+ * take their value from the import table, which a self-contained
+ * program does not have, so a module with imports is refused by name
+ * rather than half-loaded.
+ *
+ * The entry is offset 0, which is p9start: the same invariant the
+ * ordinary loader relies on - p9crt.c linked first, p9start first in its
+ * text - and with the text linked at 0 it is simply 0.  The module's
+ * header entry is NOT that; with -u the linker points it at the export
+ * table, which is why nothing here reads it.  buildreloc.sh checks the
+ * offset against the module's own symbol table.
+ */
+static int
+readat(int fd, vlong off, void *buf, long n)
+{
+	p9seek(fd, off, 0);
+	return readall(fd, buf, n) == n;
+}
+
+int
+p9loadreloc(char *name, uvlong progbase, uvlong *entryp, uvlong *basep)
+{
+	uchar hdr[40], rh[12];
+	uvlong magic, textsz, datasz, bsssz, hdrsz, symsz, spsz, pcsz;
+	uvlong imgsz, relsize, off, a;
+	uchar *base, *rel, *rp, *ep;
+	int fd, i, have, nimport, nrel, m, w;
+	long n;
+
+	if((fd = p9open(name, OREAD)) < 0){
+		print("p9 reloc: cannot open %s through my own name space\n", name);
+		return -1;
+	}
+	if(readall(fd, hdr, sizeof hdr) != sizeof hdr){
+		print("p9 reloc: %s: no header\n", name);
+		p9close(fd);
+		return -1;
+	}
+	magic = be(hdr, 4);
+	if((magic & 0x80000000) == 0 || (magic & 0xffff) != 0x8a97){
+		print("p9 reloc: %s: not an amd64 loadable module (magic %#llux)\n", name, magic);
+		p9close(fd);
+		return -1;
+	}
+	textsz = be(hdr+4, 4);
+	datasz = be(hdr+8, 4);
+	bsssz = be(hdr+12, 4);
+	symsz = be(hdr+16, 4);
+	spsz = be(hdr+24, 4);
+	pcsz = be(hdr+28, 4);
+	hdrsz = 40;
+
+	if((progbase & 4095) != 0 || progbase < (uvlong)(uintptr)end){
+		print("p9 reloc: %s: %#llux is not a page boundary above my own image (%#llux)\n",
+			name, progbase, (uvlong)(uintptr)end);
+		p9close(fd);
+		return -1;
+	}
+	if(p9procbusy(progbase)){
+		print("p9 reloc: %s: something is already running at %#llux\n", name, progbase);
+		p9close(fd);
+		return -1;
+	}
+
+	imgsz = (textsz + datasz + bsssz + 4095) & ~(uvlong)4095;
+	have = 0;
+	for(i = 0; i < nattached; i++)
+		if(attached[i] == progbase)
+			have = 1;
+	if(have)
+		base = (uchar*)(uintptr)progbase;
+	else {
+		base = (uchar*)segattach(0, "code", (void*)(uintptr)progbase, (ulong)imgsz);
+		if(base == (uchar*)-1 || (uvlong)(uintptr)base != progbase){
+			print("p9 reloc: the kernel would not give me %llud bytes at %#llux\n",
+				imgsz, progbase);
+			p9close(fd);
+			return -1;
+		}
+		if(nattached < Nattach)
+			attached[nattached++] = progbase;
+	}
+
+	/* text and data, adjacent, then the bss zeroed after them */
+	memset(base, 0, (long)imgsz);
+	if(!readat(fd, (vlong)hdrsz, base, (long)(textsz + datasz))){
+		print("p9 reloc: %s: short read of text and data\n", name);
+		p9close(fd);
+		return -1;
+	}
+
+	/* the table, after the symbol table */
+	off = hdrsz + textsz + datasz + symsz + spsz + pcsz;
+	if(!readat(fd, (vlong)off, rh, 4)){
+		print("p9 reloc: %s: no relocation table\n", name);
+		p9close(fd);
+		return -1;
+	}
+	relsize = be(rh, 4);
+	if(relsize < 8 || relsize > 1024*1024){
+		print("p9 reloc: %s: relocation table is %llud bytes, which is not a size it can be\n",
+			name, relsize);
+		p9close(fd);
+		return -1;
+	}
+	rel = malloc((long)relsize);
+	if(rel == nil){
+		print("p9 reloc: %s: no room for %llud bytes of relocation table\n", name, relsize);
+		p9close(fd);
+		return -1;
+	}
+	if(!readat(fd, (vlong)(off + 4), rel, (long)relsize)){
+		print("p9 reloc: %s: short read of the relocation table\n", name);
+		free(rel);
+		p9close(fd);
+		return -1;
+	}
+	p9close(fd);
+
+	rp = rel;
+	ep = rel + relsize;
+	nimport = (int)be(rp, 4);
+	rp += 4;
+	if(nimport != 0){
+		print("p9 reloc: %s wants %d imported symbols; this loader resolves none\n",
+			name, nimport);
+		free(rel);
+		return -1;
+	}
+	nrel = (int)be(rp, 4);
+	rp += 4;
+	a = 0;
+	for(i = 0; i < nrel; i++){
+		if(rp >= ep){
+			print("p9 reloc: %s: the relocation table ends after %d of %d entries\n",
+				name, i, nrel);
+			free(rel);
+			return -1;
+		}
+		m = *rp++;
+		w = m >> 6;
+		if(rp + (1 << w) > ep){
+			print("p9 reloc: %s: relocation %d runs off the end of the table\n", name, i);
+			free(rel);
+			return -1;
+		}
+		switch(w){
+		case 0:
+			a += *rp++;
+			break;
+		case 1:
+			a += be(rp, 2);
+			rp += 2;
+			break;
+		default:
+			a += be(rp, 4);
+			rp += 4;
+			break;
+		}
+		if((m & 0xf) != 0){
+			print("p9 reloc: %s: relocation %d is mode %d, and only 0 has no import behind it\n",
+				name, i, m & 0xf);
+			free(rel);
+			return -1;
+		}
+		if(a + sizeof(uintptr) > textsz + datasz){
+			print("p9 reloc: %s: relocation %d is at %#llux, past the %llud bytes of text and data\n",
+				name, i, a, textsz + datasz);
+			free(rel);
+			return -1;
+		}
+		*(uintptr*)(base + a) += (uintptr)base;
+	}
+	free(rel);
+
+	print("p9 reloc: %s laid at %#llux, %llud bytes, %d absolute addresses corrected; it was linked at 0\n",
+		name, progbase, imgsz, nrel);
+	*entryp = progbase;		/* p9start is offset 0: see above */
+	*basep = progbase;
+	return 0;
+}
+
+
+/*
  * Load and run the program named in this task's name space, with the
  * argument vector given, to completion on this flow of control.
  * Returns 0 when it ran, -1 when it could not be loaded.
@@ -354,5 +562,34 @@ p9exec(char *name, char **argv)
 	 */
 	p9procwaitinproc();
 	print("p9 exec: %s returned; the personality is still here, its name space never reloaded\n", name);
+	return 0;
+}
+
+/*
+ * The same, for a relocatable module, at a base the caller names.  What
+ * this is for is the thing the fixed bases cannot do: the module has no
+ * address of its own, so the caller chooses, and the same module can be
+ * laid at a second address while the first is still there.
+ */
+int
+p9execreloc(char *name, char **argv, uvlong progbase)
+{
+	uvlong entry, gotbase;
+	int std[3];
+
+	if(p9loadreloc(name, progbase, &entry, &gotbase) < 0)
+		return -1;
+	USED(gotbase);
+	std[0] = std[1] = std[2] = -1;
+	print("p9 exec: entering %s at %#llux, where it was put rather than where it was linked\n",
+		name, entry);
+	p9execstatus = nil;
+	if(setjmp(p9execjmp) == 0)
+		((void(*)(P9lib*, char**, int*))(uintptr)entry)(p9libtable(), argv, std);
+	else
+		print("p9 exec: %s exited with status \"%s\", into the personality that loaded it\n",
+			name, p9execstatus == nil ? "" : p9execstatus);
+	p9procwaitinproc();
+	print("p9 exec: %s returned; the personality is still here\n", name);
 	return 0;
 }

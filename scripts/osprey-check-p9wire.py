@@ -67,10 +67,21 @@ def main():
     # that opens it, and says so when it has finished with it.
     served = "p9 ip: pi-p wire: connection \\d+ from the cable closed"
     asked = "p9 ip: pi-p across the cable: the connection is closed; this machine is done with the cable's pi-p"
+    # And the arrived process having finished, which is a third
+    # independent thing: the exchange being complete says the pages and
+    # the registers crossed, not that the program that came over has
+    # said what it found.  Most of the criteria below are about what it
+    # found, and a machine stopped at the exchange can be stopped before
+    # it speaks.  This was seen: a personality image about forty
+    # kilobytes larger shifted the order enough that machine 2 was cut
+    # off in the middle of supplying pages, and six criteria failed for
+    # want of lines that had not been printed yet - the same shape as the
+    # cable phase above, and the same answer.
+    arrived = "osprey exec: container \\d+ \\(arrived over the wire\\) exited with status"
     t1 = threading.Thread(target=boot, args=('socket,id=n0,listen=:%d' % port, '52:54:00:00:d1:01',
-                                             [exchange, served], logs[0], imgs[0]))
+                                             [exchange, served, arrived], logs[0], imgs[0]))
     t2 = threading.Thread(target=boot, args=('socket,id=n0,connect=:%d' % port, '52:54:00:00:d1:02',
-                                             [exchange, asked], logs[1], imgs[1], 4))
+                                             [exchange, asked, arrived], logs[1], imgs[1], 4))
     t1.start(); t2.start(); t1.join(); t2.join()
     for img in imgs:
         try: os.unlink(img)

@@ -1587,6 +1587,8 @@ mfound:
 	}
 }
 
+static void	rexreloc(ulong);
+
 void
 asmins(Prog *p)
 {
@@ -1612,11 +1614,29 @@ asmins(Prog *p)
 			if(c != 0xf2 && c != 0xf3 && (c < 0x64 || c > 0x67) && c != 0x2e && c != 0x3e && c != 0x26)
 				break;
 		}
+		/*
+		 * The relocations put4 and put8 recorded while this
+		 * instruction was being assembled name byte positions in
+		 * it, and the memmove below moves every byte at or after
+		 * np up by one.  Those offsets have to move with them.
+		 *
+		 * Without this, a module built with -u carries, for every
+		 * rex-prefixed instruction with an absolute operand, a
+		 * relocation naming the byte before the field - the SIB or
+		 * ModRM byte.  Applying it adds the load base at the wrong
+		 * alignment, and the instruction ends up addressing
+		 * somewhere nobody meant: an amd64 module with 287
+		 * relocations had 45 of them wrong this way, every one of
+		 * them rex-prefixed, and the program faulted on the first.
+		 */
+		if(dlm && curp != P)
+			rexreloc(curp->pc + np);
 		memmove(and+np+1, and+np, n-np);
 		and[np] = 0x40 | rexflag;
 		andptr++;
 	}
 }
+
 
 enum{
 	ABSD = 0,
@@ -1638,6 +1658,22 @@ struct Reloc
 };
 
 Reloc rels;
+
+/*
+ * Move every relocation offset at or after this address up by one.  Only
+ * the instruction being assembled can have recorded one that high, and
+ * dynreloc keeps them in order, so the ones to move are at the end.
+ */
+static void
+rexreloc(ulong from)
+{
+	Reloc *r;
+	int i;
+
+	r = &rels;
+	for(i = r->n - 1; i >= 0 && r->a[i] >= from; i--)
+		r->a[i]++;
+}
 
 static void
 grow(Reloc *r)

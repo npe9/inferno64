@@ -5,6 +5,7 @@
 #include "fns.h"
 #include "ring9p.h"
 #include "p9file.h"
+#include "p9lib.h"		/* the bases a relocatable module can be laid at */
 
 extern void p9init(void);
 extern void exits(char*);
@@ -689,6 +690,33 @@ p9main(void)
 		targv[0] = "/boot/libthread";
 		targv[1] = nil;
 		p9exec("/boot/libthread", targv);
+	}
+
+	/*
+	 * And the same module twice, at two addresses.
+	 *
+	 * Every other program here is laid at the address it was linked
+	 * for, which is why p9lib.h has one base per program and why the
+	 * shell is told it cannot run two of an image at once.
+	 * /boot/reloc has no address of its own: 6l -u linked it at 0 and
+	 * gave it a table of every absolute address in it, and the loader
+	 * corrects them as it lays it down (p9execreloc).  So it goes down
+	 * twice, at two bases, and both copies run.
+	 *
+	 * The program is built to notice a correction that did not happen:
+	 * it is a table of pointers to functions and a table of pointers to
+	 * strings, both in its data, and it prints arithmetic over both.  A
+	 * pointer nobody fixed is a wrong number or a fault, not a subtly
+	 * different string.
+	 */
+	{
+		char *rargv[2];
+		extern int p9execreloc(char*, char**, uvlong);
+
+		rargv[0] = "/boot/reloc";
+		rargv[1] = nil;
+		p9execreloc("/boot/reloc", rargv, P9relocbase);
+		p9execreloc("/boot/reloc", rargv, P9relocbase2);
 	}
 
 	/*

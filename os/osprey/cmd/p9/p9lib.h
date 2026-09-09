@@ -115,4 +115,11 @@ enum {
 	P9progbase5	= 0x2000000,	/* libgen, the near end of a pipeline */
 	P9progbase6	= 0x2400000,	/* libdraw, the program that draws */
 	P9progbase7	= 0x2800000,	/* libthread, the program with threads in it */
+	/*
+	 * And two for the relocatable module, which has no address of its
+	 * own: it is laid at whichever of these the caller names, and at
+	 * both at once, which is the thing the fixed bases cannot do.
+	 */
+	P9relocbase	= 0x2c00000,
+	P9relocbase2	= 0x3000000,
 };

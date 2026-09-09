@@ -288,7 +288,7 @@ def main():
                     re.search(r'libthread: threadmain runs with 1 arguments, as thread \d+ of proc \d+', t) is not None))
     results.append(("and its threads hand values to each other: five values cross an unbuffered channel between two threads of one proc and sum to 15, which is a hand-off rather than a buffer - the sender blocks until the receiver takes each one, so neither thread could get through this alone and libthread's own scheduler is what runs the other",
                     'libthread: 5 values crossed an unbuffered channel between two threads of one proc, summing to 15' in t
-                    and 'that is not the' not in t))
+                    and 'libthread: that is not the' not in t))
     #
     # And a proc of its own.  proccreate is a second flow of control
     # inside one program, which is what rfork(RFPROC|RFMEM) is on Plan 9
@@ -302,10 +302,31 @@ def main():
                     and m is not None and m.group(1) != m.group(2)))
     results.append(("and values cross a channel between the two of them: five more, summing to 15, and this is not the same mechanism as between threads of one proc - the receiving proc has no ready thread and sleeps, and the sending proc wakes it, so this is the personality's own rendezvous and the per-process word that tells each flow which Proc it is running",
                     'libthread: 5 values crossed the same channel from a proc of its own, summing to 15' in t
-                    and 'that is not the' not in t))
+                    and 'libthread: that is not the' not in t))
     results.append(("and the personality waits for a flow of control a program made for itself, in a way that lets the clock keep moving: the second proc sleeps 300 ms past the end of the first, and the wait is a timed sleep rather than a yield - a yield would sit on the run queue, the queue would never be empty, the cooperative clock would never advance and the sleeping proc would never wake, so the two would wait for each other for good",
                     'libthread: the second proc slept 300 ms past the end of the first, and the personality waited for it' in t
                     and '/boot/libthread returned; the personality is still here' in t))
+    #
+    # Relocation.  Every other program here is laid at the address it was
+    # linked for, which is why p9lib.h has one base per program and why
+    # the shell is told it cannot run two of an image at once.
+    # /boot/reloc has no address of its own - 6l -u linked it at 0 and
+    # gave it a table of every absolute address in it - so it is laid
+    # twice, at two bases, and the same module runs at both.  The
+    # arithmetic it prints is over a table of function pointers and a
+    # table of string pointers, both in its data: a pointer that was not
+    # corrected is a wrong number or a fault, not a subtly different
+    # string.
+    laid = re.findall(r'p9 reloc: /boot/reloc laid at (0x[0-9a-f]+), \d+ bytes, '
+                      r'(\d+) absolute addresses corrected; it was linked at 0', t)
+    ran = re.findall(r'reloc: 5 function pointers summing to 15, '
+                     r'5 string pointers of total length 21: '
+                     r'"relocation is the way out"', t)
+    results.append(("and a program with no address of its own is laid at one the loader chooses: /boot/reloc is a relocatable module, linked at 0 with a table of every absolute address in it, and the loader corrects each as it lays it down",
+                    len(laid) == 2 and laid[0][0] != laid[1][0]
+                    and laid[0][1] == laid[1][1] and int(laid[0][1]) > 0))
+    results.append(("and the same module runs at two addresses at once, which is the thing the fixed bases cannot do: both copies read their own function and string pointers correctly, so every absolute address in each was corrected to the base it was put at",
+                    len(ran) == 2 and 'reloc: that is not the' not in t))
     results.append(("and it exits through the microkernel's minimal syscall interface, no in-kernel personality",
                     'the program exited' in t and 'panic' not in t))
 

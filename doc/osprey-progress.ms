@@ -9802,8 +9802,126 @@ table.  That is not a difficulty, but it is the kind of thing that would
 have been discovered by a program that ran and then jumped into its own
 data.
 .PP
-So the road is open and the question is no longer whether the records
-exist but whether they are complete: whether
+.PP
+.B "The answer, and a bug in the linker."
+The question was whether the set is complete, and it was settled the way
+it had to be: by relocating a program to a base it was not linked for
+and running it.
+.CW /boot/reloc
+is that program, built to notice a correction that did not happen \- a
+table of pointers to functions and a table of pointers to strings, both
+in its data, and arithmetic over both, so a pointer nobody fixed is a
+wrong number or a fault rather than a subtly different string.  The
+loader for it is
+.CW p9loadreloc ,
+which lays the module contiguously (text, data, bss with no page
+between, because a single base is added to every one of its addresses
+and they must keep the distance the linker gave them) and applies the
+table the way
+.CW libdynld/dynld-amd64.c
+does.
+.PP
+It faulted at once, storing through
+.CW 0x308c8 ,
+an address in nobody's image.  The instruction was
+.CW "MOVQ AX, [0x48c8]" ,
+whose
+.CW disp32
+is at offset 0x23 of the module, and the relocation table named 0x22.
+Applying an eight-byte add at 0x22 reads the SIB byte as the low byte of
+the value, and the address comes out shifted.
+.PP
+Counting made it exact rather than anecdotal.  Of the module's 287
+relocations, 242 name an offset holding a plausible in-image address and
+45 do not \- and all 45 become plausible one byte later, and all 45 have
+a rex prefix in the four bytes before them, and all 45 are in text.
+.PP
+.CW utils/6l/span.c
+says why.
+.CW asmins ()
+assembles the instruction into a buffer, and
+.CW put4
+and
+.CW put8
+record a relocation as it goes, at
+.CW "curp->pc + andptr - &and[0]" ,
+which is right at the time.  Then, if the instruction needs a rex
+prefix, the prefix is
+.I inserted
+at the front afterwards \-
+.CW "memmove(and+np+1, and+np, n-np)"
+\- which moves every byte at or after np up by one and leaves the
+recorded offsets behind.  Every rex-prefixed instruction with an
+absolute operand gets a relocation naming the byte before its field.
+.PP
+The fix is four lines: move the offsets with the bytes.  With it the
+same module has 287 relocations and none of them names a value outside
+the image, and the program runs \- at
+.CW 0x2c00000
+and at
+.CW 0x3000000 ,
+the same module laid down twice, both copies reading their own pointers
+correctly.  That is the thing the seven fixed bases cannot do.
+.PP
+The bug is in the
+.CW -u
+path, which nothing in this tree used: it is Plan 9's loadable-module
+link, and the amd64 half of the loader that consumes it has never been
+exercised either \-
+.CW dynld-amd64.c 's
+.CW dynmagic ()
+returns
+.CW I_MAGIC ,
+which is the 386's.
+.PP
+One more thing the doing of it taught, and it cost a sweep.  After
+proving the fix by putting the bug back and watching the boot die, I
+restored the linker and reinstalled it \- and did not rebuild the
+module.  mk had no reason to: its prerequisites are the shell script and
+the sources, and none of them had changed.  So the next full sweep ran
+the module that had been built by the broken linker and p964 came back
+32 of 43, minutes after the same code had been 43 of 43 by hand.
+.PP
+The general form is that a generated artifact depends on the tool that
+generated it, and a make file that lists only sources cannot see that.
+The narrow answer is a check in
+.CW buildreloc.sh :
+every recorded offset must name a value that is an address inside the
+module, because a self-contained module's absolute addresses all point
+into itself.  With the bug present it says
+.CW "45 of 287 relocations name a value outside the module (first at 0x22)"
+and refuses to write the image, instead of writing one that looks fine
+and faults on the first instruction that uses it.
+.PP
+And one more, which was not a bug in anything I wrote.  With the module
+in place the two-machine check failed six of its twenty criteria, three
+runs running, and passed at the commit before.  The linker was not the
+cause \- an ordinary link is byte-identical across the fix, which was
+checked by building the same objects both ways and comparing \- and
+neither was the demonstration, which does not run in that configuration
+at all.  What differed was the personality image, about forty kilobytes
+larger for carrying the module.
+.PP
+.CW osprey-check-p9wire.py
+says why in a comment it already had.  A machine there does several
+independent things that finish in either order, and it is stopped when
+its markers have all been seen; the comment records an earlier round of
+exactly this, where the cable phase was caught one run in four and the
+answer was to wait for more than one marker.  The markers were the
+exchange completing and the cable closing \- and most of the criteria
+are about what the process that came over the wire says afterwards,
+which the exchange completing does not imply.  Forty kilobytes was
+enough to reorder them, and machine 2 was stopped in the middle of
+supplying pages.
+.PP
+So the check waits for a third thing now: the arrived process having
+exited.  That is the event the criteria are about, rather than a proxy
+that can precede it.  A check that stops before the thing it measures
+has happened is not measuring it, and it fails for a reason that has
+nothing to do with the change in front of it.
+.PP
+So the road is open, the records are complete now that the offsets are
+right, and what remains of the original question is narrower: whether
 .CW 6l
 calls
 .CW dynreloc
@@ -9819,10 +9937,22 @@ base it was not linked for and seeing whether it still paints the same
 pixels, not by reading the compiler.  Which is the phase, and it is a
 phase and not a paragraph.
 .PP
-The other road stands as it was: every mutable thing in a program's
-image reached through a per-process pointer, which is the same problem
+The other road is not needed for this: every mutable thing in a
+program's image reached through a per-process pointer, which is the same
+problem
 .CW privalloc
 has and a much larger instance of it.
+.PP
+What this does not yet do is give rio what it wants.  A relocatable
+module can be laid twice, which is the mechanism the fixed bases lacked,
+but the loader still asks the caller for a base and
+.CW p9lib.h
+still names them; nothing chooses one, and nothing frees one when a
+program ends.  Turning that into an allocator, and building the shell's
+programs as modules so a pipeline stops being a table of addresses, is
+the next piece of it.  What is settled is the part that was in doubt:
+the records exist, they are complete once the linker's offsets are
+right, and a real program runs at an address it was not linked for.
 .PP
 .B "Phase 3.2: a real program, then rio, linked with the library."
 A real program \- a command, then a shell, then rio \- is linked with
@@ -10165,20 +10295,24 @@ onward failing together, and the second run in the same sweep on the
 same binaries came back 20 of 20.  Three more runs afterwards were 20 of
 20 each, so four consecutive clean runs stand against one failure.
 .PP
-The shape of the failure is worth recording even without a diagnosis,
-because it is not the shape of a real regression: the twelve criteria
-that pass are the setup half and the eight that fail are the whole
-migration half, all at once, which is what a stall looks like rather
-than what a broken mechanism looks like \- a broken mechanism takes out
-one criterion and leaves its neighbours.  No log survived that run, so
-this is where the account stops.  The
-.CW -w
-option exists for exactly this, and the honest reading of a sweep is
-that one two-machine run failing and the next passing is a check to
-repeat, not a result.
+The shape of that failure was worth recording even before it was
+understood, because it was not the shape of a real regression: the
+twelve criteria that passed were the setup half and the eight that
+failed were the whole migration half, all at once, which is what a stall
+looks like rather than what a broken mechanism looks like \- a broken
+mechanism takes out one criterion and leaves its neighbours.
+.PP
+It is probably understood now.  The relocation work later made the same
+check fail reproducibly, in the same shape but truncated at a different
+point, and that one was chased down: the check stopped its machines when
+the exchange had completed and the cable had closed, and most of its
+criteria are about what the arrived process says afterwards.  It now
+waits for the arrival to have exited as well.  No log survived the first
+failure, so this is a probable cause rather than a demonstrated one \-
+but it is the same check, the same shape, and a race the file's own
+comment had already recorded one earlier instance of.
 The tally as this is written, every configuration building and every
-other check clean, the two-machine check run five times over the sweep
-and afterwards with one failure among them:
+check clean, the two-machine check run twice in the sweep:
 .CW pc64
 62,
 .CW p9pair
@@ -10188,7 +10322,7 @@ and afterwards with one failure among them:
 .CW p9linux
 13,
 .CW p964
-41, keyboard 8, rio 14, the window gestures 10, micro 7, user 11, net
+43, keyboard 8, rio 14, the window gestures 10, micro 7, user 11, net
 13, wire 14, two-machine 20 twice over, the
 six criteria of the userland the tree builds itself, and two portable
 builds.  A criterion is a sentence a booted kernel printed
