@@ -1600,7 +1600,39 @@ instruction with an absolute operand named the byte before its field.
 Of one module's 287 relocations, 45 were wrong that way and every one of
 them was rex-prefixed.
 .PP
-The table is version 7.  Version 7 added the name space itself \-
+The table is version 8.  Version 8 added
+.I forkns
+\- the name-space half of
+.IR rfork (2).
+.B RFNAMEG
+is a new
+.B Pgrp
+with
+.I pgrpcpy
+of the current one and
+.B RFCNAMEG
+an empty one; the
+.B Pgrp
+it had is not closed, since that one is the personality's and every flow
+of control holds it by pointer.  Every other bit is refused by name:
+.B RFPROC
+would split the caller's own C stack, which
+.I spawn
+and
+.I proccreate
+are what there is for,
+.B RFMEM
+and
+.B RFNOMNT
+ask about an address space that is one address space, and
+.B RFFDG
+is what
+.I spawn
+gives a program it starts.  A program's own
+.B Pgrp
+is closed when it ends.
+.PP
+Version 7 added the name space itself \-
 .IR bind ,
 .IR mount ,
 .I unmount
@@ -1633,8 +1665,19 @@ symbols were
 .I exec
 and
 .IR await .
-The last four are the flow of control rather than the name space and are
-not answered yet.
+Four are still undefined when it is linked that way:
+.IR exec ,
+.IR await ,
+.I notify
+and
+.I rfork
+\- rfork among them although it is answered, because rio asks for
+.B RFNAMEG|RFFDG|RFENVG
+and
+.BR RFENVG|RFFDG|RFNOTEG|RFNAMEG ,
+and an environment group, a descriptor group and a note group are not
+real here yet.  Granting them as bits that do nothing is the one thing
+this must not do.
 .PP
 Version 5 added
 .IR pread ,

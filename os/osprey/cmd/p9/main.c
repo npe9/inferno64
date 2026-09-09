@@ -794,7 +794,12 @@ p9main(void)
 		 * through it: bind, chdir and unmount were the personality's
 		 * own until now, and a library operating system whose caller
 		 * cannot bind is offering a list of names and not a name
-		 * space.
+		 * space.  It ends by taking a name space of its own with
+		 * rfork(RFNAMEG) and binding /boot onto /n in it, and the
+		 * eighth line is how that is checked: cat is asked for
+		 * /n/libcat afterwards, in the shell's name space, and must
+		 * not find it.  A private bind that was not private would
+		 * leave that file there.
 		 *
 		 * gen still is its address, so "gen | gen" is refused, and
 		 * refused by name; and the first gen, writing into a pipe
@@ -810,6 +815,7 @@ p9main(void)
 			"/boot/libcat /hello | /boot/libcat | /boot/libwc\n"
 			"/boot/libcat /hello | /boot/libcat | /boot/libcat | /boot/libcat | /boot/libwc\n"
 			"/boot/libns\n"
+			"/boot/libcat /n/libcat\n"
 			"/boot/libgen 100 | /boot/libgen 100\n";
 		int fd;
 
@@ -819,7 +825,7 @@ p9main(void)
 		else {
 			p9write(fd, script, strlen(script));
 			p9close(fd);
-			print("p9: wrote a script of eight lines, five of them pipelines\n");
+			print("p9: wrote a script of nine lines, five of them pipelines\n");
 			shargv[0] = "/boot/libsh";
 			shargv[1] = "#e/script";
 			shargv[2] = nil;

@@ -157,6 +157,7 @@ extern int	libbind(char*, char*, int);
 extern int	libmount(int, char*, int, char*);
 extern int	libunmount(char*, char*);
 extern int	libchdir(char*);
+extern int	p9forkns(int);
 extern int	libfstat(int, uchar*, int);
 extern int	libsleep(long);
 extern int	libpid(void);
@@ -204,6 +205,7 @@ p9libtable(void)
 	p9thelib.mount = libmount;
 	p9thelib.unmount = libunmount;
 	p9thelib.chdir = libchdir;
+	p9thelib.forkns = p9forkns;
 	return &p9thelib;
 }
 

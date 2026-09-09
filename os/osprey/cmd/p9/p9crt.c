@@ -328,6 +328,20 @@ chdir(char *name)
 }
 
 /*
+ * rfork(2).  The name-space bits are answered and the rest are refused
+ * by name: a program that asks for RFPROC here has asked the library to
+ * split its caller's flow of control, which spawn and proccreate are
+ * what there is for.  Refusing loudly is the point - a success that did
+ * nothing would show up much later as a program sharing what it asked
+ * not to share.
+ */
+int
+rfork(int flags)
+{
+	return p9lib->forkns(flags);
+}
+
+/*
  * sleep(2), which libc's own lock calls while it spins.  On a
  * cooperative scheduler a spin that never yields is a machine that
  * stops, so this one is not optional even though nothing in a

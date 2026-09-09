@@ -67,6 +67,7 @@ struct Proc9 {
 	uvlong	base;		/* the image it is running in */
 	uvlong	entry;
 	Proc	*p;		/* the kproc it runs on, while it runs */
+	Pgrp	*pgrp;		/* a name space of its own, if it asked for one */
 	Fgrp	*fgrp;		/* its own descriptor table */
 	int	std[3];		/* its numbers for its standard descriptors */
 	int	inproc;		/* a second flow of control inside a program already running */
@@ -182,6 +183,75 @@ procof(Proc *p)
 }
 
 /*
+ * rfork(2), the name-space half of it.
+ *
+ * Every flow of control here shares the personality's Pgrp by pointer -
+ * kproc hands its child up->pgrp and nothing increments a count - so a
+ * program that binds binds the library's own name space.  That is what
+ * a library operating system is, and it is what Plan 9 gives a process
+ * a way out of: RFNAMEG is a copy of the name space to change on its
+ * own, RFCNAMEG an empty one.
+ *
+ * Only those two bits are answered.  The rest of rfork is about things
+ * this arrangement does not have or does not share:
+ * .  RFPROC would split a flow of control, which a library cannot do to
+ *    its caller's C stack - spawn and proccreate are what there is.
+ * .  RFMEM and RFNOMNT ask about an address space that is one address
+ *    space.
+ * .  RFFDG is what spawn already gives every program it starts.
+ * A caller that asks for one of them is told no, by name, rather than
+ * being handed a success that did nothing - which is exactly the shape
+ * of error that would show up later as a program quietly sharing what
+ * it asked not to share.
+ */
+int
+p9forkns(int flags)
+{
+	Proc9 *t;
+	Pgrp *ng, *old;
+	int other;
+
+	other = flags & ~(RFNAMEG|RFCNAMEG);
+	if(other != 0){
+		snprint(up->genbuf, sizeof up->genbuf,
+			"rfork %#x: this personality answers RFNAMEG and RFCNAMEG only", flags);
+		kstrcpy(up->errstr, up->genbuf, ERRMAX);
+		return -1;
+	}
+	if((flags & (RFNAMEG|RFCNAMEG)) == 0)
+		return 0;			/* nothing asked for is nothing to do */
+	if((flags & RFNAMEG) != 0 && (flags & RFCNAMEG) != 0){
+		kstrcpy(up->errstr, "rfork: RFNAMEG and RFCNAMEG are not both", ERRMAX);
+		return -1;
+	}
+	ng = newpgrp();
+	if(ng == nil){
+		kstrcpy(up->errstr, "rfork: no name space to give", ERRMAX);
+		return -1;
+	}
+	if((flags & RFNAMEG) != 0)
+		pgrpcpy(ng, up->pgrp);
+	/*
+	 * The old one is not closed.  It is the personality's, held by every
+	 * flow of control by pointer with no count between them, so closing
+	 * it here would take the library's name space away from the library.
+	 * A Pgrp this program made for itself is a different matter, and
+	 * procdone closes that one.
+	 */
+	old = up->pgrp;
+	USED(old);
+	up->pgrp = ng;
+	t = procof(up);
+	if(t != nil){
+		if(t->pgrp != nil)
+			closepgrp(t->pgrp);	/* a second rfork replaces the first */
+		t->pgrp = ng;
+	}
+	return 0;
+}
+
+
+/*
  * Copy the argument vector into the slot's own storage: the caller's is
  * on a stack the program is about to stop using.
  */
@@ -282,6 +352,14 @@ procdone(Proc9 *t, char *status)
 	if(t->slot >= 0){
 		p9relocfree(t->slot);
 		t->slot = -1;
+	}
+	/*
+	 * And a name space it made for itself, which nothing else holds: the
+	 * one it was given is the personality's and stays.
+	 */
+	if(t->pgrp != nil){
+		closepgrp(t->pgrp);
+		t->pgrp = nil;
 	}
 	wakeup(&t->r);
 }

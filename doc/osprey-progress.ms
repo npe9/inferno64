@@ -10275,36 +10275,113 @@ answer yes and do nothing \- the shape of an error that a test of
 against 4096 for the other two, one criterion fails and no other, 52 ok
 1 fail.
 .PP
-The honest part.  The name space a program changes is the
-personality's, because there is one of them: they share an address space
-and a
-.CW Pgrp
-both, so a program that binds over
+The name space a program changes is the personality's, because there is
+one of them: every flow of control here is handed
+.CW up->pgrp
+by pointer with no count between them, so a program that binds over
 .CW /dev
-has bound over the library's own
-.CW /dev .
-Plan 9 separates them with
-.CW rfork(RFNAMEG) ,
-which this personality does not have.
+has bound over the library's own.
 .CW /boot/libns
 puts
 .CW #K
 back on
 .CW /n
-before it ends for exactly that reason, and that is a program being
-polite rather than a system enforcing anything.
+before it ends for exactly that reason, which is a program being polite
+and not a system enforcing anything.
+.PP
+.B "3.2h: a name space of the program's own."
+Plan 9's way out of that is
+.CW rfork(RFNAMEG) ,
+and it is now what this personality means by rfork.
+.CW p9forkns
+answers the two name-space bits and refuses every other one by name:
+.CW RFNAMEG
+is a new
+.CW Pgrp
+with
+.CW pgrpcpy
+of the current one,
+.CW RFCNAMEG
+an empty one, and the old
+.CW Pgrp
+is not closed because it is the library's and is held by pointer.  A
+.CW Pgrp
+a program made for itself is closed when the program ends.
+.PP
+The rest of rfork is refused rather than granted, and the refusal names
+the flags:
+.CW "rfork 0x10: this personality answers RFNAMEG and RFCNAMEG only" .
+.CW RFPROC
+would split the caller's own C stack, which spawn and proccreate are
+what there is for;
+.CW RFMEM
+and
+.CW RFNOMNT
+ask about an address space that is one address space;
+.CW RFFDG
+is what spawn gives every program it starts.  A success that did nothing
+would leave a program believing it was two.
+.PP
+The check for this had to be in two halves, and finding out why is the
+part worth writing down.  A program cannot see whether its name space is
+private \- it has only its own name space to look through - so
+.CW /boot/libns
+rforks, binds
+.CW /boot
+onto
+.CW /n
+in its copy, and says so; and the script's next line asks
+.CW /boot/libcat
+for
+.CW /n/libcat
+in the shell's name space, where it must not be found.
+.PP
+Falsified by making
+.CW p9forkns
+answer yes and share anyway.  Every line
+.CW /boot/libns
+prints still reads correctly \- including
+.CW "rfork(RFNAMEG) gave me a name space of my own"
+and
+.CW "the personality should not see it"
+\- and the only thing that changes in the whole boot is that cat then
+opens
+.CW /n/libcat
+and reads it.  One criterion fails, 54 ok 1 fail.  A check that had
+asked only the program would have passed.
+.PP
 .CW mount
 is in the table and no program here calls it \- exercising it wants a
-9P server a loaded program can speak to, which is the next thing rather
-than this one.
+9P server a loaded program can speak to, which is a later thing.
 .PP
-What rio still wants is the four that are about the flow of control
-rather than the name space:
-.CW rfork ,
+What rio still wants, exactly.  Four symbols are still undefined when it
+is linked this way:
 .CW exec ,
-.CW await
+.CW await ,
+.CW notify
 and
-.CW notify .
+.CW rfork
+\- and rfork is on the list even though it is answered, because rio does
+not ask for
+.CW RFNAMEG
+alone.
+.CW winshell
+asks
+.CW RFNAMEG|RFFDG|RFENVG
+and
+.CW main
+asks
+.CW RFENVG|RFFDG|RFNOTEG|RFNAMEG ,
+so two more groups have to be real before rio's own calls are answered
+rather than refused: an environment group and a descriptor group, and a
+note group after them.  Granting those as bits that do nothing is the
+one thing this must not do, and is exactly what the falsification above
+was written to catch.  The pieces are there \-
+.CW dupfgrp
+is what spawn already uses to give a program its own descriptors, and
+the personality has an
+.CW Egrp
+\- so this is the next step and not a new problem.
 The pieces exist \-
 .CW p9spawn
 starts a program on a flow of its own,

@@ -109,10 +109,19 @@ struct P9lib {
 	int	(*mount)(int fd, char *old, int flag, char *spec);
 	int	(*unmount)(char *name, char *old);
 	int	(*chdir)(char *name);
+	/*
+	 * And a name space of the program's own.  Only the name-space bits
+	 * of rfork(2) are answered - RFNAMEG for a copy, RFCNAMEG for an
+	 * empty one - and any other bit is refused by name.  RFPROC is a
+	 * flow of control, which spawn and proccreate are; RFMEM and RFNOMNT
+	 * ask about an address space that is one address space; RFFDG is
+	 * what spawn gives every program it starts.
+	 */
+	int	(*forkns)(int flags);
 };
 
 enum {
-	P9libversion	= 7,
+	P9libversion	= 8,
 	/*
 	 * Where a loaded program is linked: well above the personality's own
 	 * image (its bss ends near 7MB) and well below the stack.  The

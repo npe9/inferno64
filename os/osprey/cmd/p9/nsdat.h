@@ -359,6 +359,18 @@ enum
 	NExit,				/* deliver note quietly */
 	NDebug,				/* print debug message */
 };
+/*
+ * The two bits of rfork(2) that are about the name space, which is what
+ * this file is the model of.  The rest of rfork - a process, its memory,
+ * its notes, its descriptors - belongs to the kernel portdat.h this was
+ * extracted from, and is not here because nothing here can answer it.
+ */
+enum
+{
+	RFNAMEG		= (1<<0),	/* a copy of the name space */
+	RFCNAMEG	= (1<<10),	/* an empty one */
+};
+
 struct Pgrp
 {
 	Ref;

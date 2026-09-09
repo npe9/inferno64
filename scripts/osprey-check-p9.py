@@ -350,6 +350,32 @@ def main():
                     and 'libns: that is not the name space I asked for' not in ns
                     and re.search(r'libns: after unmount /n, /n/libcat reads -1', ns) is not None
                     and 'libns: #K is back on /n, which is where the personality had it' in ns))
+    #
+    # And a name space of the program's own.  Every flow of control here
+    # shares the personality's Pgrp by pointer, so a bind is the
+    # library's bind; rfork(RFNAMEG) is the way out of that, and Plan 9's
+    # answer to the same question.
+    #
+    # The program cannot check this itself - it has only its own name
+    # space to look through - so the check is in two halves and the
+    # second is the shell's.  libns binds /boot onto /n after taking a
+    # name space of its own; the next script line asks cat for
+    # /n/libcat, in the shell's name space, and cat must not find it.  A
+    # private name space that was not private would leave that file
+    # there, and every line libns prints would still read correctly.
+    privcat = scriptline(t, '/boot/libcat /n/libcat')
+    results.append(("and a program can take a name space of its own, which is what a shared one has to have a way out of: rfork(RFNAMEG) hands it a copy - everything that resolved still resolves - and a bind it makes in that copy is its own, which the shell's next command proves by being unable to open the file the bind made",
+                    'libns: rfork(RFNAMEG) gave me a name space of my own' in ns
+                    and re.search(r'libns: in it, /boot/libcat still reads (\d+), so it is a copy '
+                                  r'and not an empty one', ns) is not None
+                    and re.search(r'libns: in my own name space /n/libcat reads (\d+), and the '
+                                  r'personality should not see it', ns) is not None
+                    and 'libsh: /boot/libcat /n/libcat' in privcat
+                    and 'cat: cannot open /n/libcat' in privcat))
+    results.append(("and what this personality cannot mean by rfork is refused by name rather than granted: RFPROC would split the caller's own flow of control, which spawn and proccreate are what there is for, and a success that did nothing would leave a program believing it was two",
+                    re.search(r'libns: rfork\(RFPROC\) refused: rfork 0x10: this personality '
+                              r'answers RFNAMEG and RFCNAMEG only', ns) is not None
+                    and 'rfork(RFPROC) was granted' not in ns))
     results.append(("and the limit still holds for a program that is its address: the script's last line asks for two of /boot/libgen, which is linked at one, and the second is refused by name - the two would be the one image sharing its one data segment, descriptor table and heap - and the shell carries on",
                     'p9 exec: /boot/libgen is already running at 0x2000000; it is one image and cannot be two programs' in t
                     and 'libsh: /boot/libgen: cannot start it' in t))

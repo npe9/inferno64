@@ -91,6 +91,37 @@ startboot(char *argv0, char **argv)
 	else
 		print("libns: #K is back on /n, which is where the personality had it\n");
 
+	/*
+	 * Then take a name space of this program's own and do it again, to
+	 * show the difference.  rfork(RFNAMEG) is a copy: everything that
+	 * resolved a moment ago still resolves, and what is bound now is
+	 * bound here and nowhere else.  The program cannot see the other
+	 * side of that itself - it has only its own name space to look
+	 * through - so it says what it did and the personality says what it
+	 * still sees afterwards, and the two together are the claim.
+	 */
+	if(rfork(RFNAMEG) < 0)
+		print("libns: rfork(RFNAMEG) failed: %r\n");
+	else
+		print("libns: rfork(RFNAMEG) gave me a name space of my own\n");
+	print("libns: in it, /boot/libcat still reads %d, so it is a copy and not an empty one\n",
+		sizeof9("/boot/libcat"));
+	if(bind("/boot", "/n", MREPL) < 0)
+		print("libns: private bind of /boot onto /n failed: %r\n");
+	print("libns: in my own name space /n/libcat reads %d, and the personality should not see it\n",
+		sizeof9("/n/libcat"));
+
+	/*
+	 * And the bits that are not the name space are refused rather than
+	 * quietly granted.  RFPROC is the one that matters: a success that
+	 * did nothing would leave a caller believing it had a second flow of
+	 * control and running as one.
+	 */
+	if(rfork(RFPROC) < 0)
+		print("libns: rfork(RFPROC) refused: %r\n");
+	else
+		print("libns: rfork(RFPROC) was granted, which this personality cannot mean\n");
+
 	if(whole > 0 && bydot == whole && bybind == whole && after < 0)
 		print("libns: the name space is the program's to change: "
 			"three ways to one file, %d bytes off each, and the fourth refused\n", whole);

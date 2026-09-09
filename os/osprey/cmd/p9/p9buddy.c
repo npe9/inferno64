@@ -49,10 +49,13 @@ enum {
 	FD2PATH	= 23,
 	CHDIR	= 3,
 	UNMOUNT	= 35,
-	/* rfork flags (portdat.h), which the shim headers here do not carry */
-	RFNAMEG	 = (1<<0),
+	/*
+	 * RFPROC, which the shim headers here do not carry.  RFNAMEG and
+	 * RFCNAMEG were beside it until the library-OS personality needed
+	 * them too and they went into nsdat.h, where the name-space model
+	 * is; a second definition here is a redeclaration, not a copy.
+	 */
 	RFPROC	 = (1<<4),
-	RFCNAMEG = (1<<10),
 
 	/*
 	 * Not system calls: the kernel's requests for the legacy process's
