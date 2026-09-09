@@ -249,34 +249,29 @@ void
 trap(Ureg *ureg)
 {
 	int vno, user;
+	u64int ss0;
 
 	/*
 	 * MULTICORE INSTRUMENTATION - temporary.  The one failure left in
 	 * this port's batches is a general protection violation on the
-	 * IRETQ in _intrr, and the error code equals the low half of the
-	 * frame's SS word in all seven captures -- so IRETQ is rejecting
-	 * the stack selector.  This kernel runs with SS 0 everywhere, and
-	 * the only deliberate writes to a frame's ss set KDSEL, on the
-	 * debug-register paths.
+	 * IRETQ in _intrr, and in every capture the error code equals the
+	 * low half of the frame's SS word -- so IRETQ is rejecting the
+	 * stack selector.  This kernel runs with SS 0 everywhere, and the
+	 * only deliberate writes to a frame's ss set KDSEL, on the
+	 * debug-register paths, which a kernel trap does not take.
 	 *
-	 * Two readings fit and they differ here.  Either the frame was
-	 * pushed with a bad SS, in which case it is already bad on entry
-	 * to trap() and this fires; or it was written after the frame was
-	 * built, in which case entry is clean and the corruption happens
-	 * during the handler.  One line settles which, and the captures
-	 * all have the same return pc -- linkproc+0x9, a newly created
-	 * kproc's first interrupt -- so the pc is printed to confirm the
-	 * frame being seen is that one.
+	 * The first version of this probe asked whether the frame was
+	 * already bad on entry, which would have meant the CPU pushed it.
+	 * 52 boots, two of them faulting this way, and it never fired:
+	 * SS is clean when the trap is taken and is corrupted before the
+	 * IRET.  So the write happens during the handler, and trap()
+	 * itself writes nothing to ss on the kernel path -- which leaves
+	 * irqhandled() and whatever device handler it dispatches to.
+	 *
+	 * This version compares across that call and names the vector, so
+	 * the next capture says which handler.
 	 */
-	if(ureg->ss != 0 && ureg->ss != KDSEL) {
-		static int said;
-
-		if(!said) {
-			said = 1;
-			iprint("trap: frame ss %#llux on entry (pc %#p sp %#p type %llud)\n",
-				ureg->ss, ureg->pc, ureg->sp, ureg->type);
-		}
-	}
+	ss0 = ureg->ss;
 
 	user = kenter(ureg);
 	vno = ureg->type;
@@ -301,6 +296,15 @@ trap(Ureg *ureg)
 		if(vno < nelem(excname))
 			panic("%s", excname[vno]);
 		panic("unknown trap/intr: %d", vno);
+	}
+	if(ureg->ss != ss0) {
+		static int said;
+
+		if(!said) {
+			said = 1;
+			iprint("trap: vector %d changed frame ss %#llux -> %#llux "
+				"(pc %#p)\n", vno, ss0, ureg->ss, ureg->pc);
+		}
 	}
 	splhi();
 
