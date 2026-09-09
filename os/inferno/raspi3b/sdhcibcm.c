@@ -287,21 +287,26 @@ sdhciroutetest(Ctlr *c)
  *
  * Where the base clock comes from is the interesting part, and it is
  * not one place.  The capabilities register carries it in bits 8-15,
- * in MHz, and QEMU puts 52 there (capareg 0x52134b4 in
- * bcm2835_peripherals.c).  A real BCM2835 does not: its capabilities
- * register does not report a usable base clock at all, which is why
- * Linux marks brcm,bcm2835-sdhci with missing_caps in
+ * in MHz, and a real BCM2835's Arasan does not report a usable one
+ * there at all: Linux marks brcm,bcm2835-sdhci with missing_caps in
  * drivers/mmc/host/sdhci-iproc.c and substitutes a table of its own,
  * and that table sets no base-clock field either.  On the board the
  * number has to come from the firmware, the same way UARTCLK does.
  *
- * So ask capabilities first and the firmware second.  Under QEMU only
- * the first path runs; on hardware only the second will.  The marker
- * names which answered, because the answers differ and a log that did
- * not say would be unreadable later: the firmware reports the EMMC
- * clock at 50MHz, capabilities say 52, and with a 25MHz ceiling those
- * pick different dividers -- 50/2 is 25 and is accepted, 52/2 is 26
- * and is not, so 52 falls through to 52/4 and runs at 13.
+ * QEMU used to answer 52 there (capareg 0x52134b4), so this driver
+ * took a path the board never will and passed.  Patch 0026 clears the
+ * field for the Arasan and leaves the Pi 4's emmc2 alone, because
+ * sdhci-iproc does not mark that one missing_caps -- so the firmware
+ * path below is what runs here now, and the capabilities path above it
+ * is what runs on raspi4.  Both are exercised, each on the controller
+ * that takes it.
+ *
+ * So ask capabilities first and the firmware second.  The marker names
+ * which answered, because the answers differ and a log that did not
+ * say would be unreadable later: the firmware reports the EMMC clock
+ * at 50MHz and capabilities said 52, and those pick different
+ * dividers -- against a 50MHz ceiling 50 runs undivided, and 52 falls
+ * to 52/4 and runs at 13.
  *
  * The sequence is mandatory and is the reason this is not one write.
  * SDCLK must be stopped before the divider changes and restarted after

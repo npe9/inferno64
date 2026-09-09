@@ -173,6 +173,22 @@ worth keeping when adding to this series:
 	delivering an interrupt to a controller nothing dispatches is a
 	claim about the hardware too, and a worse one.
 
+0026 hw/arm: the Arasan does not tell a guest its base clock, so stop
+	doing it.  bcm2835_peripherals.c gave the Arasan a capabilities
+	register with 52 in the base-clock field, from a constant whose
+	comment says "default clocks etc." -- an invented number.  A real
+	BCM2835 reports no usable base clock there: Linux marks
+	brcm,bcm2835-sdhci missing_caps in sdhci-iproc.c and substitutes
+	a table with no base clock either, taking the frequency from the
+	firmware.  So a guest could configure its divisors from a number
+	the hardware refuses to give, and pass.  Clearing bits 15:8
+	sends it where the hardware sends it.  emmc2 keeps its value and
+	gets its own constant, because sdhci-iproc does not mark the
+	BCM2711's emmc2 missing_caps -- that one is expected to describe
+	itself.  The two controllers now differ in the model because they
+	differ on the part, and each of the guest driver's two clock
+	branches is exercised by the board that takes it.
+
 WHAT COULD GO UPSTREAM.  Some of these are plain qemu bugs, independent
 of Inferno and of this port, and could be sent to qemu-devel on their
 own:
@@ -191,6 +207,11 @@ own:
 		overflowed into them.  Affects any guest that reads
 		the core's own description of itself, which is how a
 		DWC2 driver is supposed to configure.
+	0026	the Arasan reported a base clock the part does not
+		report, so a guest could take its SD divisors from an
+		invented number and pass.  Affects any Pi guest that
+		believes the capabilities register, which on this
+		controller it must not.
 	0025	the ARM timer's interrupt went to a controller nothing
 		dispatches on raspi4b, so the block counted and no CPU
 		ever saw it.  Affects any Pi 4 guest that uses this
@@ -204,7 +225,7 @@ because the reasoning is worth reading.  Everything else adds a device
 model qemu does not have, and only matters to someone emulating a Pi in
 this much detail \- which is most of the series, and increasingly so as
 it grows.  Do not read the section above as a to-do list for upstream:
-five patches of twenty-five are general-purpose fixes and the rest are not.
+six patches of twenty-six are general-purpose fixes and the rest are not.
 
 WHAT HAS BEEN CROSS-CHECKED.  Several of these models were written
 from the datasheet and from recollection of a Linux driver, which is

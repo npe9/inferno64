@@ -1,0 +1,252 @@
+#!/bin/sh
+# boardsuite - boot each board configuration and check what came back.
+#
+# The suite each kernel runs at boot prints markers.  Reading them off
+# a terminal by hand is how two mistakes got into this tree's own
+# documentation: a harness that killed QEMU three seconds after the
+# last marker missed USB-MOUSE-NONE and reported 38 of 38, and a marker
+# regex anchored with a trailing \b missed SD-FS-CREATE-OK when another
+# process printed on the same line.  Both looked like board regressions
+# and neither was.  This script exists so that class of mistake is made
+# once, in one place, where it can be fixed.
+#
+# It also runs the configurations the default boot does not reach.  Two
+# branches of sdhcibcm.c only run under a particular card or a
+# particular controller, and until now each was covered by a boot
+# someone did by hand and remembered to do.
+#
+# usage:  tools/boardsuite/run [-v] [config ...]
+#         tools/boardsuite/run -l        list the configurations
+#         tools/boardsuite/run -b        record baselines instead of checking
+#
+# QEMU must be the patched build; see tools/qemu-patches/README.  Set
+# QEMU= to point at it.
+
+set -e
+
+here=`dirname "$0"`
+root=`cd "$here/../.." && pwd`
+QEMU=${QEMU:-/Users/npe/src/qemu-v10.1.3/build/qemu-system-aarch64}
+work=${BOARDSUITE_WORK:-${TMPDIR:-/tmp}/boardsuite}
+timeout=${BOARDSUITE_TIMEOUT:-240}
+settle=${BOARDSUITE_SETTLE:-6}		# after the last marker; 3 is too few
+verbose=false
+record=false
+
+configs='raspi3b raspi3b-4g raspi4 raspi4-hot'
+
+# Each configuration: the kernel, the QEMU arguments, the line that
+# says the board is done printing, and the evidence lines that make
+# this configuration worth running as well as the marker set.
+config_kernel() {
+	case $1 in
+	raspi3b|raspi3b-4g)	echo "$root/os/inferno/raspi3b/iraspi3b";;
+	raspi4|raspi4-hot)	echo "$root/os/inferno/raspi4/iraspi4";;
+	esac
+}
+
+config_args() {
+	case $1 in
+	raspi3b)
+		echo "-M raspi3b -m 1G -drive file=$work/sd16.img,if=sd,format=raw";;
+	raspi3b-4g)
+		echo "-M raspi3b -m 1G -drive file=$work/sd4g.img,if=sd,format=raw";;
+	raspi4)
+		echo "-M raspi4b -m 2G -drive file=$work/sd16b.img,if=sd,format=raw";;
+	raspi4-hot)
+		echo "-M raspi4b -m 2G -drive file=$work/sd16c.img,if=sd,format=raw -global bcm2838-thermal.temperature=85000";;
+	esac
+}
+
+config_last() {
+	case $1 in
+	raspi3b|raspi3b-4g)	echo 'RASPI3B-SH-OK';;
+	raspi4|raspi4-hot)	echo 'RASPI4-SH-OK';;
+	esac
+}
+
+# Lines that must appear.  These are the point of the configuration:
+# the marker set alone cannot tell these runs apart, because the marker
+# is the same and only what it says differs.
+config_evidence() {
+	case $1 in
+	raspi3b)
+		echo 'from firmware clock 1'
+		echo 'csd v1';;
+	raspi3b-4g)
+		echo 'from firmware clock 1'
+		echo 'csd v2';;
+	raspi4)
+		echo 'from capabilities'
+		echo 'die 24\.';;
+	raspi4-hot)
+		echo 'die 85\.';;
+	esac
+}
+
+# The card each configuration wants.  Blank is fine: the kfs check
+# reams what it is given, and the capacity checks read the card's own
+# CSD rather than anything written here.  Separate files per
+# configuration so two runs cannot race on one image.
+config_card() {
+	case $1 in
+	raspi3b)	echo "sd16.img 16m";;
+	raspi3b-4g)	echo "sd4g.img 4g";;
+	raspi4)		echo "sd16b.img 16m";;
+	raspi4-hot)	echo "sd16c.img 16m";;
+	esac
+}
+
+usage() {
+	echo "usage: $0 [-v] [-l] [-b] [config ...]" >&2
+	exit 1
+}
+
+while [ $# -gt 0 ]; do
+	case $1 in
+	-v)	verbose=true; shift;;
+	-b)	record=true; shift;;
+	-l)	for c in $configs; do echo "$c"; done; exit 0;;
+	-*)	usage;;
+	*)	break;;
+	esac
+done
+
+[ $# -gt 0 ] && configs="$*"
+
+if [ ! -x "$QEMU" ]; then
+	echo "boardsuite: no QEMU at $QEMU (set QEMU=)" >&2
+	exit 2
+fi
+
+mkdir -p "$work"
+
+# A blank card of the given size.  Sparse: the 4G one costs nothing
+# until something writes to it, and nothing here writes 4G.
+makecard() {
+	f="$work/$1"
+	case $2 in
+	16m)	bytes=16777216;;
+	4g)	bytes=4294967296;;
+	*)	echo "boardsuite: unknown card size $2" >&2; exit 2;;
+	esac
+	if [ -f "$f" ] && [ `wc -c < "$f"` -eq $bytes ]; then
+		return
+	fi
+	rm -f "$f"
+	dd if=/dev/zero of="$f" bs=1 count=0 seek=$bytes 2>/dev/null
+}
+
+# Markers, as a sorted set.  No trailing word boundary: a marker can be
+# followed immediately by another process's output on the same line,
+# which is exactly what hid SD-FS-CREATE-OK once.
+markers() {
+	grep -oE '\b[A-Z][A-Z0-9]+(-[A-Z0-9]+)*-(OK|NONE|FAIL|ACCEPTED)' "$1" |
+		sort -u
+}
+
+status=0
+
+for c in $configs; do
+	kernel=`config_kernel $c`
+	if [ -z "$kernel" ]; then
+		echo "boardsuite: no such configuration: $c" >&2
+		status=2
+		continue
+	fi
+	if [ ! -f "$kernel" ]; then
+		echo "$c: FAIL no kernel at $kernel (mk it first)"
+		status=1
+		continue
+	fi
+
+	makecard `config_card $c`
+
+	log="$work/$c.log"
+	rm -f "$log"
+	last=`config_last $c`
+
+	# shellcheck disable=SC2046
+	"$QEMU" `config_args $c` -display none -serial file:"$log" \
+		-kernel "$kernel" >/dev/null 2>&1 &
+	pid=$!
+
+	waited=0
+	while [ $waited -lt $timeout ]; do
+		if [ -f "$log" ] && grep -q "$last" "$log"; then
+			break
+		fi
+		if ! kill -0 $pid 2>/dev/null; then
+			break
+		fi
+		sleep 2
+		waited=`expr $waited + 2`
+	done
+
+	# The last marker is not the last line: checks that time out report
+	# after it.  Three seconds is too few and five is enough; six is
+	# what this uses, and if that ever changes the count changes with
+	# it rather than silently.
+	sleep $settle
+	kill $pid 2>/dev/null || true
+	wait $pid 2>/dev/null || true
+
+	if ! grep -q "$last" "$log" 2>/dev/null; then
+		echo "$c: FAIL never reached $last in ${timeout}s ($log)"
+		status=1
+		continue
+	fi
+
+	got="$work/$c.markers"
+	markers "$log" > "$got"
+	base="$here/$c.markers"
+
+	if $record; then
+		cp "$got" "$base"
+		echo "$c: recorded `wc -l < "$got" | tr -d ' '` markers in $base"
+		continue
+	fi
+
+	fail=''
+
+	if [ ! -f "$base" ]; then
+		echo "$c: FAIL no baseline at $base (run with -b once, after reading the log)"
+		status=1
+		continue
+	fi
+
+	if ! diff -u "$base" "$got" > "$work/$c.diff"; then
+		fail="$fail markers"
+	fi
+
+	# Any -FAIL at all, even one the baseline happens to contain.
+	if grep -q -- '-FAIL' "$got"; then
+		fail="$fail -FAIL"
+	fi
+
+	config_evidence $c | while read -r e; do
+		[ -z "$e" ] && continue
+		grep -qE "$e" "$log" || echo "$e"
+	done > "$work/$c.missing"
+	if [ -s "$work/$c.missing" ]; then
+		fail="$fail evidence"
+	fi
+
+	n=`wc -l < "$got" | tr -d ' '`
+	if [ -z "$fail" ]; then
+		echo "$c: ok $n markers"
+	else
+		echo "$c: FAIL$fail ($n markers, log $log)"
+		[ -s "$work/$c.diff" ] && sed -n '3,$p' "$work/$c.diff" | sed 's/^/    /'
+		while read -r m; do
+			echo "    missing evidence: $m"
+		done < "$work/$c.missing"
+		status=1
+	fi
+
+	if $verbose; then
+		sed 's/^/    /' "$got"
+	fi
+done
+
+exit $status

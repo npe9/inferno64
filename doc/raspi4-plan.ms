@@ -462,6 +462,21 @@ because a Pi 4 has nothing on SDHOST, and
 .CW USB-MOUSE-NONE ,
 because no mouse was attached.
 .PP
+Two of those runs are in
+.CW tools/boardsuite/run
+now rather than in someone's shell history: this board on a 16MB card,
+and the same board with
+.CW -global
+.CW bcm2838-thermal.temperature=85000 ,
+which is the run that tells a driver decoding the sensor from one
+returning a constant.  The script diffs each marker set against a
+checked-in baseline and also requires the evidence lines, because
+.CW THERM-OK
+is the same marker at either temperature.  Its baselines are the
+SD-only sets, 32 markers here, since it attaches no USB disk and no
+ethernet; the 36 above is the richer configuration, which needs an
+image with a filesystem on it.
+.PP
 The Pi 3B suite no longer has a marker this one does not, though the
 last of them does not rest on the same footing:
 .CW RNG-OK

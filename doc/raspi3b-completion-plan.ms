@@ -2776,20 +2776,58 @@ where either turned into
 .CW -OK
 without hardware underneath it would be a lie.
 .PP
-What that baseline does not cover, since 38 of 38 reads like more than
-it is.  It is one configuration, and two checks in it have a second
-branch that configuration never reaches:
+That baseline is one configuration, and it used to leave two branches
+of
+.CW sdhcibcm.c
+to boots someone did by hand and remembered to do.  Both are covered
+now, and neither by a hand-edit.
+.PP
 .CW SDHCI-SPEED
-says
+said
 .CW "base 52MHz from capabilities" ,
-so the firmware-clock branch \- the only one hardware will take \- is
-not in these runs; it is verified by the one-off zeroed-capareg boot
-described in the SDHCI chapter, which is not part of the suite.  And
-the 16MB card gives
-.CW "csd v1" ,
-so the v2 decode is covered only by the separate 4GB boot.  Both
-branches are tested and neither is tested here, which is a different
-statement from either "tested" or "untested" and the one that is true.
+so the firmware-clock branch \- the only one hardware takes \- was not
+in these runs at all; it was reachable only by editing a constant in a
+local QEMU.  That turned out to be the model's fault rather than the
+suite's.  A real Arasan does not report a base clock: Linux marks
+.CW brcm,bcm2835-sdhci
+.CW "missing_caps = true"
+and substitutes a table carrying no base clock either.  So
+qemu-patches 0026 clears the field, this board now takes the firmware
+branch by default \- it reads
+.CW "base 50MHz from firmware clock 1 undivided"
+\- and the capabilities branch is exercised where it belongs, on the Pi
+4's emmc2, which
+.CW sdhci-iproc
+does
+.I not
+mark
+.CW missing_caps .
+Each branch runs on the controller that takes it.
+.PP
+The
+.CW "csd v2"
+decode still needs a card bigger than 2GB, which no default run has.
+That one is now a configuration rather than a memory:
+.CW tools/boardsuite/run
+boots four of them \- this board on a 16MB card and on a 4GB card, and
+the Pi 4 at both ends of its temperature sensor \- diffs each marker
+set against a checked-in baseline, and fails a run whose markers are
+right and whose evidence lines are wrong, because
+.CW SDHCI-SPEED-ACCEPTED
+is the same marker whichever branch produced it.
+.PP
+That script also carries the two harness bugs this document had to
+correct, fixed once where they cannot recur: it waits six seconds after
+the last marker rather than three, because
+.CW USB-MOUSE-NONE
+arrives after it, and its marker pattern has no trailing word boundary,
+because
+.CW SD-FS-CREATE-OK
+came out as
+.CW SD-FS-CREATE-OKtrack:
+in a run where another process printed on the same line, and a
+harness that missed it reported a regression in the SD path that had
+not happened.
 .NH 1
 When this is done
 .PP

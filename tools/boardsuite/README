@@ -1,0 +1,81 @@
+boardsuite - the board configurations, and what each one is for
+===============================================================
+
+	tools/boardsuite/run		check every configuration
+	tools/boardsuite/run raspi4	check one
+	tools/boardsuite/run -l		list them
+	tools/boardsuite/run -b		record baselines instead of checking
+	tools/boardsuite/run -v		print the marker set as well
+
+QEMU must be the patched build described in tools/qemu-patches/README.
+Set QEMU= to point at it; the default is the path this tree was
+developed against.  Cards are made in $TMPDIR/boardsuite (override with
+BOARDSUITE_WORK), blank and sparse, and reused between runs.
+
+WHY THIS EXISTS.  Two of the mistakes in this tree's own documentation
+were made by reading markers off a terminal:
+
+	A harness that stopped QEMU three seconds after the last
+	marker reported "38 markers and no -NONE", which read like a
+	perfect run.  USB-MOUSE-NONE arrives on the line after the
+	last marker, because the mouse check waits out its own
+	timeout.  The count was 39 and one of them was a -NONE.
+
+	A marker regex ending in \b missed SD-FS-CREATE-OK, because
+	another process printed on the same line and the marker came
+	out as "SD-FS-CREATE-OKtrack:".  That looked exactly like a
+	regression in the SD path, and was not.
+
+Both are fixed here, once: the settle after the last marker is six
+seconds, and the marker pattern has no trailing boundary.
+
+WHAT EACH CONFIGURATION COVERS.  The four are not four copies of one
+run.  Two of them exist because a branch of sdhcibcm.c is only reached
+under a particular card or on a particular controller, and until this
+script those branches were covered by boots someone did by hand and
+remembered to do:
+
+	raspi3b		The Pi 3B on a 16MB card.  Takes the firmware
+			clock branch, because a real Arasan reports no
+			base clock and qemu-patches 0026 stopped
+			pretending otherwise.  csd v1, because a card
+			under 2GB has a v1 CSD.
+
+	raspi3b-4g	The same board on a 4GB card, for the csd v2
+			decode.  The capacity field means something
+			different in the two versions and the wrong
+			decode gives a plausible wrong answer rather
+			than an error.
+
+	raspi4		The Pi 4 on a 16MB card.  Takes the
+			capabilities branch, because emmc2 does report
+			its base clock and a guest is right to believe
+			it there.  Reads the die temperature at the
+			model's default, about 25C.
+
+	raspi4-hot	The same board with the sensor set to 85C.
+			One reading cannot tell a driver that decodes
+			the sensor from one that returns a constant;
+			two can.
+
+The marker set alone cannot tell these apart -- SDHCI-SPEED-ACCEPTED is
+the same marker either way, and THERM-OK is the same marker at any
+temperature.  So each configuration also names evidence lines that must
+appear in its log, and a run that produces the right markers with the
+wrong evidence fails.
+
+WHAT IT DOES NOT COVER.  No USB disk and no USB ethernet, so
+DISK-NONE and ETHER-NONE are the right answers here and are in the
+baselines.  The richer run -- a FAT16 USB disk and a usb-net -- adds
+DISK-BLK-OK, DISK-DOS-OK, DISK-READ-OK, DISK-WRITE-OK, ETHERBIND-OK and
+ETHER-DHCP-OK and drops those two -NONEs; it needs an image with a
+filesystem on it rather than a blank card, so it is documented in
+doc/raspi3b-completion-plan.ms rather than made here.  Nothing on real
+hardware is covered by any of this: every marker below is qemu-tier
+evidence, and the two ACCEPTED ones stay ACCEPTED because nothing in
+the model times a transfer against SDCLK.
+
+BASELINES.  One file per configuration, holding the marker set that
+run produces.  They are checked in so that a change to them is a change
+someone had to make and explain, which is the point.  Record with -b,
+but read the log first: -b will happily record a regression.
