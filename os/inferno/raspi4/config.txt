@@ -1,0 +1,17 @@
+# config.txt - Raspberry Pi 3 Model B, bare-metal Inferno kernel.
+# The VideoCore firmware reads this, loads the ARM kernel image into RAM
+# at 0x80000, and releases core 0 into it (at EL2 on a 64-bit kernel).
+
+arm_64bit=1
+kernel=kernel8.img
+
+# Console: this kernel drives the PL011 (UART0) at 0x3f201000.  On a Pi 3
+# the PL011 is wired to Bluetooth by default and the GPIO header gets the
+# mini-UART; disable-bt frees the PL011 back onto GPIO 14/15 (pins 8/10)
+# so the kernel's console reaches the serial header.  115200 8N1.
+enable_uart=1
+dtoverlay=disable-bt
+
+# Pin the core clock so the UART baud is stable (and don't let the firmware
+# downclock when idle, which would move the baud divisor under us).
+core_freq=250
