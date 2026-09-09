@@ -20151,3 +20151,53 @@ doing its work.  After the interrupt fix, what remains of this port's
 failures is largely the measuring apparatus, which is a much better
 position than it sounds \(em but it does mean the panic counts in these
 batches are counting the instruments as much as the machine.
+.NH 1
+What the global VM lock actually costs
+.PP
+.CW maxnrunq
+established that two Dis programs are ready at once on the ordinary
+boot workload, on both boards.  That says parallelism exists; it does
+not say the serialisation costs anything, because a program can be
+ready and still get the processor promptly.  The second measurement
+answers that directly.
+.CW vmlock.head
+is the queue of kernel processes blocked in
+.CW vmacquire() ,
+so a scheduler pass that finds it non-nil is a pass taken while a
+runnable interpreter was waiting on the one global lock.  Counted in
+.CW vmachine() Ns 's
+own loop and reported from
+.CW disdump() ,
+which portclock.c already runs at
+.CW 40*HZ
+in every boot, so it costs nothing to collect.
+.PP
+Across 47 boots at
+.CW "-smp 2"
+that reached the report:
+.TS
+box, tab(;);
+l l.
+passes with an interpreter blocked;
+_
+minimum;59.4%
+median;76.9%
+maximum;96.2%
+.TE
+.PP
+Three quarters of scheduler passes, at the median, are taken with a
+runnable interpreter blocked on
+.CW vmlock .
+That is the answer to whether Phase 1b and Phase 5 are worth their
+risk, and it is not close.  It is also a much stronger statement than
+.CW "maxrunq 2" :
+two ready programs could have meant two programs that briefly
+overlapped, and this says instead that the second one spends most of
+the boot waiting for the first.
+.PP
+The measurement is of this workload, which is a boot script and a
+shell, on a two processor guest.  It is not a claim about a general
+Dis workload, and the number would be different on four processors or
+under a program that blocks on I/O more.  What it does establish is
+that the serialisation is not academic on the one workload this branch
+can run today.
