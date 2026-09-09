@@ -371,7 +371,63 @@ small triangles must fall. Measure with the GPU out of the picture too
 (offscreen destination), so the Limbo-side saving is separable from the
 Metal one, and re-run the `-n` sweep to see whether the stall is gone.
 
-### Phase 6 — the display-list sprite type
+### Phase 6 — the display-list sprite type — **the gate passes, 2026-09-09**
+
+`vsprite(2)` (`appl/math/vsprite.b`, `module/math/vsprite.m`) is the type,
+hoisted out of `temple/spriteedit`'s interpreter rather than written
+again, and `vspritetest(1)` is the gate this document set: render a
+sprite from its element list and compare the pixels with the `.bit` the
+extractor rasterised from the same list. Two independent rasterisers, one
+in Python and one in Limbo, reading one source of truth.
+
+**57 of 57 compared sprites pass, 52 of them pixel-exact.** The other
+five are allowed sixteen pixels each and print their count. 166 of the
+248 are not compared at all, for reasons that are in the man page and are
+about the *extractor*, not the type.
+
+Five things had to be got right, and each of them was found by the
+comparison rather than by reading:
+
+- **The `.mask` is not optional.** The extractor leaves a transparent
+  pixel as byte 0 and CMAP8 0 is also `BLACK`, so the image alone cannot
+  tell "nothing drew" from "drew in black". Comparing without it reported
+  457 of 527 pixels differing on a sprite that was exact.
+- **The box comes from the elements, not from the pixels.** The extractor
+  computes it from the elements' nominal extents with the pen's
+  half-width as a margin. Taking it from the pixels that came out made
+  every sprite one row and one column smaller than its `.bit`.
+- **Rounding is half-to-even, and it is not shift-invariant.** Python's
+  `round()` is banker's rounding and Limbo's `int` rounds half away from
+  zero, which is twelve pixels of a 527-pixel sprite. And the rounding
+  has to happen on the *element* coordinate: `round(6.5)` is 6 and
+  `round(6.5+3)` is 10, not 9, so rounding in canvas coordinates and
+  rounding before offsetting are different pictures.
+- **The canvas is the box.** Not a large scratch cropped afterwards: the
+  extractor's raster is exactly the rectangle, so a flood fill that
+  reaches an edge stops where the extractor's stops. A 2048x2048 scratch
+  per sprite also exhausted the heap.
+- **CMAP8 here is `(c-v+r)&15`.** `libdraw/rgb.c`'s `cmap2rgb` is not the
+  `(c-v+r)/4` other Plan 9 lineages carry. Getting that wrong says 36 is
+  green when it is blue, and it is what made half the pixels of every
+  coloured sprite differ. It is also what made this session claim, wrongly,
+  that `temple/keepaway`'s CMAP8 table was buggy; see `doc/temple-plan.md`.
+
+And one real bug, in code that has been in the tree since the sprites
+were extracted: `spriteedit`'s flood fill marks a pixel seen when it is
+*popped*, so a pixel can be pushed once per neighbour and the stack needs
+four times the canvas where it is allocated at exactly the canvas. It
+never showed because the editor's canvas is a fixed 680x530 and its fills
+are small; a canvas cropped to the sprite's own box reaches its edges
+immediately, and the first sprite whose fill touched one overran the
+stack. Fixed in both places by marking at push, which fills the same
+region and bounds the stack by construction.
+
+**What is not done.** Nothing scales or rotates yet: the point of a
+display list is that it can be drawn at any size, and this draws it at
+its own. That is the next step and it is what the twelve ports would
+actually gain. `spriteedit` still carries its own copy of the
+interpreter; hoisting was done by extraction, not yet by replacement, so
+there are two copies of the element vocabulary until it is converted.
 
 
 This is the audit's headline gap and the place a plan can burn the most

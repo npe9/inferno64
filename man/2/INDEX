@@ -236,6 +236,8 @@ keyring-ipint keyring-ipint
 keyring-rc4 keyring-rc4
 keyring-sha1 keyring-sha1
 keyset keyset
+kindname vsprite
+kindof vsprite
 last lists
 lease dhcpclient
 lgamma math-elem
@@ -531,6 +533,7 @@ verify spki-verifier
 virgil virgil
 voice voice
 volume volume
+vsprite vsprite
 w3c w3c-xpointers
 w3c-css w3c-css
 w3c-uris w3c-uris

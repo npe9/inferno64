@@ -83,12 +83,26 @@ simply produce it: the sprite is now an `RGB24` image filled with
 `grpal->mix(...)` at the illumination term, and the dither is gone. Same
 lighting, no noise, and as many shades as the light has angles.
 
-Doing that turned up a second thing. `keepaway` also carried a hand-typed
-table of "the same 16 colors as exact Plan 9 CMAP8 pixel values", and it
-was wrong: `cmap2rgb(36)` is `00aa00`, green, where the table has it
-standing for `BLUE`; `160` is `8eca00`, nothing like the `RED` it was
-listed as. The lit sprite had been drawing in the wrong colours. Nothing
-now types that table — the port writes true colour instead.
+**A correction: `keepaway`'s CMAP8 table was right.** This document said,
+and commit `d463137a` said, that `keepaway`'s hand-typed "the same 16
+colors as exact Plan 9 CMAP8 pixel values" was wrong — that
+`cmap2rgb(36)` is green where the table has it standing for `BLUE`. That
+claim was wrong, and it was wrong because it was checked against a
+`cmap2rgb` written from memory rather than against the one in this tree.
+`libdraw/rgb.c` computes `j = (c-v+r)&15`; the formula other Plan 9
+lineages carry, and the one that was tested against, is `j = (c-v+r)/4`.
+With the tree's own formula, 36 is `0000AA`, blue, and every entry of
+that table is exactly what `scripts/tos_extract_sprites.py` independently
+derives for the same sixteen colours. Nothing was broken and nothing
+needed fixing.
+
+The `keepaway` change itself stands on its own: dithering two palette
+entries to fake a shade is a workaround for a palette, and RGB24 with the
+real colour is better whether or not the CMAP8 table beside it was
+correct. The measurement — 7 distinct colours in the lit sprite before,
+30 after — is unaffected. Only the claim of a bug found in passing was
+false, and the lesson is the one this file already states elsewhere:
+check the tree, not your memory of the tree.
 
 **Two more ports had the same shape, and are converted.** `shading` is
 the demo *of* `DCLighting`, and its own GAP note already conceded the

@@ -1,0 +1,107 @@
+.TH VSPRITE 2
+.SH NAME
+vsprite: parse, read, bounds, pixels, raster \- TempleOS vector sprites
+.SH SYNOPSIS
+.EX
+include "draw.m";
+include "math/vsprite.m";
+vsprite := load Vsprite Vsprite->PATH;
+Sprite, Elem: import vsprite;
+
+vsprite->init();
+
+(s, err) := vsprite->read(path);
+(s, err) = vsprite->parse(text);
+
+(r, ok) := s.bounds();
+(px, r) = s.pixels(display);
+(img, mask, r) = s.raster(display);
+
+name := vsprite->kindname(kind);
+kind := vsprite->kindof(name);
+.EE
+.SH DESCRIPTION
+A TempleOS sprite is an ordered queue of drawing elements \(em a display
+list \(em not a raster.
+.I Vsprite
+is that list as a type: it reads one, says what rectangle it occupies,
+and draws it.
+.PP
+The element vocabulary and its numbering are TempleOS's
+.BR SPT_* ,
+and the text form is what
+.B scripts/tos_extract_sprites.py
+writes into
+.BR /lib/temple/sprites/*.spr :
+a line per element, its name and then its arguments.
+.B kindname
+and
+.B kindof
+convert between the name and the number.
+.PP
+.B read
+parses a
+.B .spr
+file and
+.B parse
+a string; both return a
+.B Sprite
+or an error.
+.PP
+.B bounds
+returns the rectangle the sprite occupies, in the sprite's own
+coordinates, and 0 if the list draws nothing.
+It is computed from the elements' nominal extents with the pen's
+half-width as a margin \(em the rule the extractor used to set the rect
+of every
+.B .bit
+in
+.BR /icons/temple ,
+so a sprite rendered here and the
+.B .bit
+beside it are the same rectangle.
+.PP
+.B pixels
+returns one palette index a pixel over that rectangle, row-major, with
+.B TRANSP
+where nothing drew.
+It touches
+.IR draw (2)
+only for the text elements, which need a font, so a sprite of geometry
+can be measured and rasterised with no display at all.
+.PP
+.B raster
+is the same thing as an
+.B RGB24
+image and a
+.B GREY1
+mask, ready to
+.IR draw (2).
+.SH SOURCE
+.B /appl/math/vsprite.b
+.SH SEE ALSO
+.IR grpalette (2),
+.IR vspritetest (1),
+.IR temple (1)
+.SH BUGS
+The
+.B mesh
+and
+.B shiftmesh
+elements are inert.
+They carry the 3D meshes, which the ports load separately from
+.BR /icons/temple/*.mesh ,
+and drawing one here would need a projection this type has no business
+owning.
+.PP
+Nothing scales or rotates yet.
+The point of a display list is that it can be drawn at any size, and this
+draws it at one \(em its own.
+.PP
+The text elements go through
+.IR draw (2)'s
+font rather than TempleOS's 8x8 table, so they will not agree with a
+.B .bit
+the extractor rasterised through the table.
+No sprite containing one is compared by
+.IR vspritetest (1).

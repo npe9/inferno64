@@ -556,14 +556,17 @@ flood(x, y, notcolor: int)
 	seen := fseen;
 	stack := fstack;
 	sp := 0;
+	# Mark a pixel seen when it is PUSHED, not when it is popped.  Both
+	# fill the same region - nothing writes a pixel but its own pop -
+	# but marking at pop lets one pixel be pushed once per neighbour,
+	# so the stack needs four times the canvas and it is exactly the
+	# canvas.  A fill large enough to reach the canvas edge overruns it.
+	seen[y*Cw+x] = byte 1;
 	stack[sp++] = y*Cw+x;
 	while(sp > 0){
 		pos := stack[--sp];
 		px := pos%Cw;
 		py := pos/Cw;
-		if(seen[pos] != byte 0)
-			continue;
-		seen[pos] = byte 1;
 		v := getpix(px, py);
 		if(notcolor){
 			if(v == inkv)
@@ -571,10 +574,22 @@ flood(x, y, notcolor: int)
 		}else if(v != target)
 			continue;
 		setpix(px, py, pickc(px, py));
-		if(px+1 < Cw) stack[sp++] = pos+1;
-		if(px > 0) stack[sp++] = pos-1;
-		if(py+1 < Ch) stack[sp++] = pos+Cw;
-		if(py > 0) stack[sp++] = pos-Cw;
+		if(px+1 < Cw && seen[pos+1] == byte 0){
+			seen[pos+1] = byte 1;
+			stack[sp++] = pos+1;
+		}
+		if(px > 0 && seen[pos-1] == byte 0){
+			seen[pos-1] = byte 1;
+			stack[sp++] = pos-1;
+		}
+		if(py+1 < Ch && seen[pos+Cw] == byte 0){
+			seen[pos+Cw] = byte 1;
+			stack[sp++] = pos+Cw;
+		}
+		if(py > 0 && seen[pos-Cw] == byte 0){
+			seen[pos-Cw] = byte 1;
+			stack[sp++] = pos-Cw;
+		}
 	}
 }
 

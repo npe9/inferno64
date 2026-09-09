@@ -26,6 +26,7 @@ TARG=\
 	sieve.dis\
 	draw3d.dis\
 	draw3ddev.dis\
+	vsprite.dis\
 
 MODULES=
 

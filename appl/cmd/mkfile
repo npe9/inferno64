@@ -129,6 +129,7 @@ TARG=\
 	vstreamtest.dis\
 	grep.dis\
 	grpalettetest.dis\
+	vspritetest.dis\
 	gunzip.dis\
 	gzip.dis\
 	hd.dis\

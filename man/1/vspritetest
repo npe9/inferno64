@@ -1,0 +1,108 @@
+.TH VSPRITETEST 1
+.SH NAME
+vspritetest \- check vector sprites against the rasters extracted from them
+.SH SYNOPSIS
+.B vspritetest
+[
+.B -v
+] [
+.B -d
+] [
+.I name ...
+]
+.SH DESCRIPTION
+.I Vspritetest
+renders each sprite in
+.B /lib/temple/sprites
+through
+.IR vsprite (2)
+and compares the pixels with the
+.B .bit
+that
+.B scripts/tos_extract_sprites.py
+rasterised from the same element list.
+Two independent rasterisers, one in Python and one in Limbo, reading one
+source of truth.
+.PP
+The comparison is per pixel, on palette indices, over the rectangle each
+side says it occupies, so a sprite that came out the right shape in the
+wrong place fails on the rectangle before a pixel is looked at.
+.PP
+The
+.B .mask
+is read as well as the
+.BR .bit ,
+and it is not optional: the extractor leaves a transparent pixel as byte
+0 and CMAP8 0 is also
+.BR BLACK ,
+so the image alone cannot tell "nothing drew" from "drew in black".
+Comparing without it reported 457 of 527 pixels differing on a sprite
+that was in fact exact.
+.PP
+With no names it runs every sprite that has a
+.B .bit
+beside it and contains no element it cannot compare.
+Those are named in BUGS, and the number skipped is printed, so the
+coverage claim is the number of files actually compared.
+.PP
+.B -v
+names each sprite that matches exactly.
+.B -d
+prints a window of got over want around the first difference, as palette
+indices in hex with
+.B .
+for transparent \(em a shift shows as a row sliding, a colour error as
+one digit changing everywhere.
+.SH EXAMPLE
+.EX
+; emu-g -r. /dis/vspritetest.dis
+vspritetest: 166 sprites skipped (text, bitmap or mesh)
+near elephant_5: 8 of 3675 pixels differ (allowed 16), first at 2,36
+  (three more)
+vspritetest: 57/57
+.EE
+.SH SOURCE
+.B /appl/cmd/vspritetest.b
+.SH SEE ALSO
+.IR vsprite (2),
+.IR temple (1)
+.SH BUGS
+Exact is the bar and 52 of the 57 meet it.
+The other five are allowed sixteen pixels, or a ten-thousandth of the
+sprite if that is more, and the count is printed whenever it is not zero
+so that it cannot grow unnoticed.
+Those five are sprites whose shape comes out of
+.I cos
+and
+.IR sin :
+the extractor is Python against its libm and this is Limbo against
+.IR math (2),
+the two disagree in the last bits, and a point that lands either side of
+a half moves one pixel.
+Neither side can be argued into the other.
+.PP
+Sprites containing
+.BR text ,
+.BR textbox ,
+.BR textdiamond ,
+.BR bitmap ,
+.B mesh
+or
+.B shiftmesh
+are skipped: the first three go through a different font on each side,
+and the rest are not drawn by
+.IR vsprite (2)
+at all.
+.PP
+.B floodfillnot
+is skipped for a different reason, and the reason is in the extractor.
+Its
+.I flood
+takes an invert flag and never uses it, so the
+.B .bit
+for such a sprite records a plain fill.
+Matching it would mean copying the omission rather than drawing the
+element.
+.PP
+That leaves 166 of the 248 sprites uncompared.
+Nothing here says the ones with text or bitmaps in them render correctly.
