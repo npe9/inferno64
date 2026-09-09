@@ -489,6 +489,7 @@ extern	Type Treal;
  */
 extern	Pctx*	curP;
 REG*	progreg(Prog*);	/* where a program's live roots are; see xec.c */
+Module*	modlinkmod(Modlink*);	/* the Module of a Modlink worth trusting; see heap.c */
 extern	REG*	curR;		/* == &curP->reg */
 extern	int	inxec;		/* a quantum is running; see xec.c */
 /*

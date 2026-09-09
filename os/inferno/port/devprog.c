@@ -826,7 +826,6 @@ modstatus(REG *r, char *ptr, int len)
 {
 	Inst *PC;
 	Frame *f;
-	extern Module* modlinkmod(Modlink*);
 	Modlink *ml;
 	Module *mod;
 

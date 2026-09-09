@@ -633,14 +633,75 @@ static void
 reportunder(Type *t, int n, char *what)
 {
 	Prog *xp;
+	Module *mod;
 	extern void dumpstack(void);
 
 	xp = currun();
+	mod = (xp != nil) ? modlinkmod(xp->reg.M) : nil;
 	print("freetype: %s %#p ref underflow n %d, pid %d module %s\n",
 		what, t, n, xp != nil ? xp->pid : -1,
-		(xp != nil && xp->reg.M != nil && xp->reg.M != H
-			&& xp->reg.M->m != nil) ? xp->reg.M->m->name : "?");
+		mod != nil ? mod->name : "?");
 	dumpstack();
+}
+
+/*
+ * Shared by every probe that walks another Prog's saved registers to
+ * name its module: devprog.c's modstatus() reached from disdump(),
+ * alloc.c's notefree() (the freehist ring), and this file's own
+ * reportunder().  It lives here rather than in os/inferno/port/dis.c
+ * so the hosted build can use it too; it needs only D2H, Tmodlink and
+ * H, all of which interp.h already provides.  Both have
+ * now faulted on this port, at modstatus+0x18 and notefree+0xb8, and
+ * both had the same incomplete guard -- M tested against nil and H,
+ * then M->m dereferenced.
+ *
+ * That guard cannot catch what actually happens.  The captured value
+ * is 0x00FF53F000E2C3F0: not nil, not H, and sitting on a Modlink
+ * whose heap type is intact, so every condition either probe tested
+ * passes.  What is wrong with it is that it is not a canonical
+ * address -- bits 63:48 are 0x00FF, so the sign bits disagree -- which
+ * is why the fault is a general protection violation with CR2 0
+ * rather than a page fault.  Testing for exactly that is both the
+ * cheapest check and the one that matches the evidence.
+ *
+ * This is why the earlier modstatus guard never reported: it asked
+ * whether the Modlink was live and whether m was nil, and in the
+ * observed failure the answer to both is "fine".
+ */
+static int
+canonical(void *v)
+{
+	uintptr a;
+
+	a = (uintptr)v;
+	return (a >> 47) == 0 || (a >> 47) == 0x1FFFF;
+}
+
+/*
+ * Returns the Module, not a yes/no, and that matters.  The first
+ * version answered int and the callers then wrote M->m->name -- so the
+ * pointer that was checked and the pointer that was used were two
+ * separate loads of the same memory.  notefree+0xb2 faulted between
+ * them, on this exact port: modlinkok() had already returned true, and
+ * the reload produced a non-canonical value, TYPE 0D with CR2 0, after
+ * the call.  Time of check is not time of use.
+ *
+ * Handing the caller the pointer this function actually validated
+ * removes the second load, and with it the window.
+ */
+Module*
+modlinkmod(Modlink *ml)
+{
+	Module *mod;
+
+	if(ml == nil || ml == H || !canonical(ml))
+		return nil;
+	if(D2H(ml)->t != &Tmodlink)
+		return nil;
+	mod = ml->m;
+	if(mod == nil || !canonical(mod))
+		return nil;
+	return mod;
 }
 
 /*

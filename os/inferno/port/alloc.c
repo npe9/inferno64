@@ -235,8 +235,7 @@ notefree(void *v, uintptr pc)
 		 * same.
 		 */
 		{
-			extern Module* modlinkmod(Modlink*);
-			Module *mod;
+					Module *mod;
 
 			mod = (xp != nil) ? modlinkmod(xp->reg.M) : nil;
 			freehist[i].mname = (mod != nil) ? mod->name : nil;
