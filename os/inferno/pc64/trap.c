@@ -250,6 +250,34 @@ trap(Ureg *ureg)
 {
 	int vno, user;
 
+	/*
+	 * MULTICORE INSTRUMENTATION - temporary.  The one failure left in
+	 * this port's batches is a general protection violation on the
+	 * IRETQ in _intrr, and the error code equals the low half of the
+	 * frame's SS word in all seven captures -- so IRETQ is rejecting
+	 * the stack selector.  This kernel runs with SS 0 everywhere, and
+	 * the only deliberate writes to a frame's ss set KDSEL, on the
+	 * debug-register paths.
+	 *
+	 * Two readings fit and they differ here.  Either the frame was
+	 * pushed with a bad SS, in which case it is already bad on entry
+	 * to trap() and this fires; or it was written after the frame was
+	 * built, in which case entry is clean and the corruption happens
+	 * during the handler.  One line settles which, and the captures
+	 * all have the same return pc -- linkproc+0x9, a newly created
+	 * kproc's first interrupt -- so the pc is printed to confirm the
+	 * frame being seen is that one.
+	 */
+	if(ureg->ss != 0 && ureg->ss != KDSEL) {
+		static int said;
+
+		if(!said) {
+			said = 1;
+			iprint("trap: frame ss %#llux on entry (pc %#p sp %#p type %llud)\n",
+				ureg->ss, ureg->pc, ureg->sp, ureg->type);
+		}
+	}
+
 	user = kenter(ureg);
 	vno = ureg->type;
 	if(irqhandled(ureg, vno) == 0 /* TODO && (!user || !usertrap(vno)) */){
