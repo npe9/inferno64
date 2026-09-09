@@ -161,6 +161,37 @@ fpinit(void)
 }
 
 /*
+ * Whose floating-point state is this?
+ *
+ * NOT the same question as userureg(), which asks whether a trap frame
+ * came from user mode, and this used to call it.  When userureg() was
+ * corrected -- it returned kp where its comment says !kp, see
+ * os/inferno/port/proc.c -- the answer here flipped with it, and a
+ * "math emu" panic appeared in a batch that had not shown one in 880
+ * boots before.
+ *
+ * The flags say why the two questions differ.  dat.h: FPnouser is
+ * "fpslot[0] is kernel regs", FPkernel is "fp use in kernel", and the
+ * whole scheme "is biased so that FPinit, FPactive and FPinactive
+ * without any flags refer to user fp state in fpslot[0]".  So slot 0
+ * belongs to the user's floating point.  On this port the user is a
+ * Dis program, and a Dis program runs in a kernel process -- there is
+ * no other userland.  Its fp state is the user's fp state, whatever
+ * privilege the frame was taken at.
+ *
+ * So this returns what userureg() used to return by accident, and says
+ * why it is the right answer here rather than leaving it to look like
+ * the bug that was just fixed.
+ */
+static int
+disfp(Ureg *ur)
+{
+	if(ur == nil || ur->r14 == 0)
+		return 0;
+	return ((Proc*)(ur->r14))->kp != 0;
+}
+
+/*
  *  math coprocessor emulation fault
  */
 static void
@@ -186,7 +217,7 @@ mathemu(Ureg *ureg, void*)
 		index = up->fpstate >> FPindexs;
 		if(index < 0 || index > (FPindexm>>FPindexs))
 			panic("fpslot index overflow: %d", index);
-		if(userureg(ureg)){
+		if(disfp(ureg)){
 			if(index != 0)
 				panic("fpslot index %d != 0 for user", index);
 		} else {
