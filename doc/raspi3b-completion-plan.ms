@@ -791,6 +791,27 @@ capabilities path is tested by every boot and the firmware path is
 tested only by a model deliberately made to lie in the direction the
 silicon lies.
 .PP
+That path also carries an ordering requirement, and it is worth saying
+that the requirement holds by construction rather than by luck.  Unlike
+the console, which asks for UARTCLK early enough that
+.CW virtarm64_enable()
+needs a fallback for a mailbox that is not up yet, this has no fallback:
+if the mailbox could not answer, the driver would take
+.CW SDHCI-SPEED-NONE
+and leave the card at the 400kHz identification clock for the whole
+boot.  It cannot happen here.
+.CW mailboxinit()
+is called from
+.CW main()
+at line 149 and
+.CW chandevreset()
+at line 207, and the Arasan controller is an
+.CW sdifc
+entry brought up by
+.CW devsd
+at or after that.  Fifty-eight lines and one subsystem apart, in one
+function, in the fixed order the file is written in.
+.PP
 The 50-against-52 disagreement is itself a divergence, recorded in
 .CW tools/qemu-patches/README
 and deliberately not patched.  Nothing in the model is paced by either
