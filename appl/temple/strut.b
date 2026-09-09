@@ -640,17 +640,19 @@ drawhelp(img: ref Image)
 	w := img.r.dx();
 
 	banner := "Build a ship.";
-	tx := (w - (len banner)*8) / 2;
-	txtat(img, tx/8, 1, 5, banner);	# PURPLE, $TX+CX$ centered
+	tx := (w - len banner*FW) / 2;
+	if(font != nil)
+		tx = (w - font.width(banner)) / 2;
+	txtat(img, tx, 1, 5, banner);	# PURPLE, $TX+CX$ centered
 
 	c := txtat(img, 0, 3, 0, "Sel mass mode.");
-	txtat(img, 16, 3, 0, "Left-click to place masses.");
+	txtat(img, 16*FW, 3, 0, "Left-click to place masses.");
 	c = txtat(img, 0, 4, 0, "Sel spring mode.");
-	txtat(img, 24, 4, 0, "Left-drag to make members.");
+	txtat(img, 24*FW, 4, 0, "Left-drag to make members.");
 	c = txtat(img, 0, 5, 0, "Sel thruster mode.");
-	txtat(img, 24, 5, 0, "Press a digit, 0-9.Drag to make thruster.");
+	txtat(img, 24*FW, 5, 0, "Press a digit, 0-9.Drag to make thruster.");
 	c = txtat(img, 0, 6, 0, "Sel connector mode.");
-	txtat(img, 24, 6, 0, "Press a digit, 0-9.Drag to make breakable connector.");
+	txtat(img, 24*FW, 6, 0, "Press a digit, 0-9.Drag to make breakable connector.");
 
 	c = txtat(img, 0, 8, 0, "Press ");
 	c = txtat(img, c, 8, 2, "<SPACE>");
@@ -665,14 +667,19 @@ drawhelp(img: ref Image)
 	img.flush(Draw->Flushnow);
 }
 
-# draw s at text cell (col,row) in palette color ci; returns next col.
-# The original's cell was the 8x8 font's; here it is whatever the font
-# actually measures, so a column is a digit's advance and a row a line.
-txtat(img: ref Image, col, row, ci: int, s: string): int
+# draw s at pixel x on text row `row`, in palette colour ci, and return
+# the x the next run starts at.  The original took a column and returned
+# `col + len s`, which is only where the text ends if every character is
+# one cell wide; in a proportional font each run in a sentence built from
+# several started a little further off than the last.  x is measured now,
+# and a caller wanting the old grid asks for `col*FW` itself.
+txtat(img: ref Image, x, row, ci: int, s: string): int
 {
 	o := img.r.min;
-	img.text(Point(o.x + col*FW, o.y + row*FH), ink[ci], Point(0, 0), font, s);
-	return col + len s;
+	img.text(Point(o.x + x, o.y + row*FH), ink[ci], Point(0, 0), font, s);
+	if(font == nil)
+		return x + len s*FW;
+	return x + font.width(s);
 }
 
 frand(): real

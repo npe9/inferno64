@@ -559,10 +559,22 @@ assets did not move.
 **What this evidence is and is not.** The panel table above is a
 measurement of the strings in the source against both fonts, not a run:
 the smoketest starts and steps all 297 ports and never opens a help panel.
-And not every position is measured even now — `strut`'s `txtat` keeps the
-character-cell idiom, positioning at `col*FW` and returning `col + len s`,
-so its digits line up and mixed-case text drifts. That is inherent to a
-cell on a proportional font, and it is left rather than hidden.
+**`strut`'s `txtat` was the one position still not measured, and it was
+worse than "drifts".** It positioned at `col*FW` and returned `col + len
+s` — a column count, which is only where a run ends if every character is
+one cell wide. `strut`'s help screen builds two sentences out of several
+coloured runs each, chaining that return value, so on a proportional font
+they did not merely drift: recording every run's measured box shows
+**three overlaps**, `"<SPACE>"` ending at 122 with the next run starting
+at 117, `"<z>"` at 86 against 81, `"<SHIFT-Z>"` at 200 against 198. It now
+takes and returns a pixel x and asks `font.width`, and the same recording
+reports every chained run butting exactly, gap 0. The four gaps it still
+reports are the deliberate second column at `16*FW` and `24*FW`, which is
+a grid position a caller asks for and gets.
+
+That is a *shipped* defect this pass introduced and this pass found: the
+font swap made `txtat`'s arithmetic wrong, and nothing looked at the help
+screen until something measured it.
 
 
 ## State
