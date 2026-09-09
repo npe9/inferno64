@@ -213,6 +213,7 @@ found:
 	else
 		R.PC = m->prog+newpc;
 	memmove(&p->reg, &R, sizeof(R));
+	REGSYNCED();
 	p->kill = nil;
 	destroy(p->exval);
 	p->exval = H;

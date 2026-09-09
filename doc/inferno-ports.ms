@@ -20300,3 +20300,87 @@ That is the thread to pull, and it is recorded as an open question
 rather than resolved.  The tripwire stays: it costs a compare, and
 whatever it is reporting is worth knowing before Phase 1b makes the
 same window a real one.
+.NH 2
+The invariant holds; the coarse checks were false positives
+.PP
+The assertion, made precise, does not fire.  On virtarm64 and on pc64
+at
+.CW "-smp 2" ,
+the collector never runs with a program's
+.CW p->reg
+actually stale.  The documented invariant is sound and Phase 1b's
+foundation is where it was said to be.
+.PP
+Getting there took three versions, and the first two were wrong in
+instructive ways.
+.IP 1.
+.CW "curP->curprog != nil" .
+Fired at once.  Wrong test: xec.c records that
+.CW curprog
+is deliberately not cleared by exception.c's snapshot sync, so it can
+be set with
+.CW p->reg
+perfectly current.
+.IP 2.
+Compare
+.CW curprog Ns 's
+saved registers against the live ones.  Fired too \(em and this one was
+not merely imprecise but unsafe.
+.CW vmachine()
+says, where it clears
+.CW curprog ,
+that the name is allowed to dangle and that "progreg() only compares
+the pointer, never follows it".  Version 2 followed it, and so read
+freed memory.
+.IP 3.
+.CW regsyncpc
+against
+.CW R.PC .
+.CW regsyncpc
+holds the PC that
+.CW p->reg
+carries, updated at all five places R is loaded from a Prog and all six
+where a Prog's
+.CW reg
+is synced back.  It names no Prog, so it cannot dangle, and it is the
+hazard itself rather than a proxy for it.  Silent.
+.PP
+So what the earlier versions saw was the coarseness, not a violation.
+.CW inxec
+is set for as long as a quantum is open, which includes a program
+blocked inside
+.CW xec()
+whose
+.CW reg
+has been synced \(em open, but not stale.
+.PP
+The second version paid for itself on the way out.  It printed
+.CW "prog 5 state 0xdeadbeef" ,
+which is what
+.CW delprog()
+writes into a Prog it is about to free, so
+.CW curprog
+can name freed memory.
+.CW vmachine() Ns 's
+clear covers non-local exits from the interpreter, not a Prog reaching
+.CW delprog()
+while
+.CW curprog
+still names it.  The damage is the one that comment already describes:
+.CW progreg()
+compares
+.CW curprog
+by pointer, so once the allocator reuses the address,
+.CW progreg()
+hands out
+.CW curR
+for a program whose live registers are elsewhere \(em and
+.CW progreg()
+is what Phase 1b is built on.
+.CW delprog()
+now clears it.
+.PP
+A negative result and a bug fix, from an assertion that was itself
+wrong twice.  The assertion stays: it costs a compare and a store per
+sync point, it is silent today, and it fires the moment Phase 1b opens
+the window it describes.

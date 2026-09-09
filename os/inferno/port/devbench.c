@@ -585,6 +585,7 @@ bxec(Prog *p)
 	Module *om;
 
 	R = p->reg;
+	REGSYNCED();
 	curP->curprog = p;	/* R now holds p's live roots; see progreg() */
 	R.MP = R.M->MP;
 	R.IC = p->quanta;
@@ -633,6 +634,7 @@ bxec(Prog *p)
 	}
 
 	p->reg = R;
+	REGSYNCED();
 	curP->curprog = nil;
 }
 

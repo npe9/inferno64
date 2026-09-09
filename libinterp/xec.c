@@ -2311,6 +2311,7 @@ isave(void)
 
 	p = delrun(Prelease);
 	p->reg = R;
+	REGSYNCED();
 	curP->curprog = nil;
 	return p;
 }
@@ -2319,6 +2320,7 @@ void
 irestore(Prog *p)
 {
 	R = p->reg;
+	REGSYNCED();
 	curP->curprog = p;
 	R.IC = 1;
 }
@@ -2402,6 +2404,7 @@ showprog(Prog *p)
  * the rungc() assertion did exactly that before this existed.
  */
 int inxec;
+Inst *regsyncpc;
 
 void
 xec(Prog *p)
@@ -2409,6 +2412,7 @@ xec(Prog *p)
 	int op;
 
 	R = p->reg;
+	REGSYNCED();
 	curP->curprog = p;
 	inxec = 1;
 	R.MP = R.M->MP;
@@ -2484,6 +2488,7 @@ xec(Prog *p)
 	} while(--R.IC != 0);
 
 	p->reg = R;
+	REGSYNCED();
 	curP->curprog = nil;
 	inxec = 0;
 }

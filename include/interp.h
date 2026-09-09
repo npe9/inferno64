@@ -491,6 +491,16 @@ extern	Pctx*	curP;
 REG*	progreg(Prog*);	/* where a program's live roots are; see xec.c */
 extern	REG*	curR;		/* == &curP->reg */
 extern	int	inxec;		/* a quantum is running; see xec.c */
+/*
+ * The PC that p->reg currently carries, for whichever program R holds.
+ * Updated wherever R is loaded from a Prog and wherever a Prog's reg is
+ * synced back from R, so "p->reg is stale" is regsyncpc != R.PC without
+ * naming the Prog at all.  That matters: curprog is allowed to dangle
+ * (vmachine() says so where it clears it), so any check that reaches
+ * through it to compare registers reads freed memory.  This does not.
+ */
+extern	Inst*	regsyncpc;
+#define	REGSYNCED()	(regsyncpc = R.PC)
 #define	R	(*curR)
 extern	String	snil;
 extern	void	(*optab[256])(void);
