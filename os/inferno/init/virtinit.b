@@ -970,10 +970,22 @@ iptimer(t: chan of int, ms: int)
 	t0: int;
 
 	# sleep(ms) can sit in acquire forever while Bounce holds the
-	# Dis VM through Tk_cmd; sleep(0) release/acquire each spin.
+	# Dis VM through Tk_cmd, so the deadline is computed from
+	# millisec() and re-checked, rather than slept out in one go.
+	#
+	# The step used to be sleep(0), which yields and comes straight
+	# back: a watchdog that spins.  Every check here is guarded by
+	# one of these, so each timed check ran against a proc burning
+	# the VM beside it -- and ipcheck() was the one that lost.  Its
+	# ping needed six seconds to get its first packet onto the wire
+	# with the spinner running (qemu's own capture, three echoes and
+	# three replies, all delivered), against a ten second deadline
+	# it then missed.  The same ping from the shell, with nothing
+	# spinning, answers in milliseconds.  50ms keeps the re-checked
+	# deadline and gives the thing being timed the cpu.
 	t0 = sys->millisec();
 	while(sys->millisec() - t0 < ms)
-		sys->sleep(0);
+		sys->sleep(50);
 	t <-= 1;
 }
 

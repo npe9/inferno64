@@ -79,11 +79,26 @@ config_args() {
 	raspi4-hot)
 		echo "-M raspi4b -m 2G -drive file=$work/sd16c.img,if=sd,format=raw -global bcm2838-thermal.temperature=85000";;
 	virtarm64)
-		echo "-M virt -cpu cortex-a57 -m 1G -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-device,drive=blk0 -netdev user,id=n0 -device virtio-net-device,netdev=n0";;
+		# virtio-blk-pci,disable-legacy=on, not virtio-blk-device:
+		# os/inferno/virtarm64/virtarm64 links sdvirtio10 (the PCI
+		# transport) and no mmio block driver at all, so the mmio
+		# form this line used to carry was a disk the kernel had no
+		# way to see.  disable-legacy is the other half: sdvirtio10
+		# matches pcimatch(0x1AF4, 0x1040+type), the modern device
+		# id, and a transitional virtio-blk-pci enumerates as
+		# 1af4/1001, which that loop walks straight past.  Both
+		# halves were BLK-FAIL, recorded as a known failure of the
+		# board rather than of the invocation.
+		echo "-M virt -cpu cortex-a57 -m 1G -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-pci,disable-legacy=on,drive=blk0 -netdev user,id=n0 -device virtio-net-device,netdev=n0";;
 	sifiveu)
 		echo "-M sifive_u -bios none";;
 	virt)
-		echo "-M virt -bios none -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-device,drive=blk0";;
+		# This kernel is the other way round: it links sdvirtiommio
+		# and ethervirtiommio, so both devices are the mmio form.
+		# The netdev is new -- NET-FAIL and IP-FAIL were recorded
+		# here as known failures while the invocation had no
+		# network device at all.
+		echo "-M virt -bios none -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-device,drive=blk0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-device,netdev=n0";;
 	virt32)
 		echo "-M virt -bios none";;
 	esac
@@ -185,11 +200,16 @@ makecard() {
 	dd if=/dev/zero of="$f" bs=1 count=0 seek=$bytes 2>/dev/null
 }
 
-# A FAT16 image, for the one check that wants a filesystem rather than a
-# blank card: os/inferno/init/virtinit.b's blkcheck() reads sector 0 of
-# /dev/sdF0/data and requires the 0x55AA boot signature.  Writing those
-# two bytes into a blank file would satisfy the letter of that and none
-# of the point, so this makes a real filesystem.
+# A FAT16 image, for the two checks that want a filesystem rather than a
+# blank card.  blkcheck() reads sector 0 of /dev/sdF0/data and requires
+# the 0x55AA boot signature; writing those two bytes into a blank file
+# would satisfy the letter of that and none of the point, so this makes
+# a real filesystem.  fsmount() then mounts the same disk with dossrv
+# and reads marker.txt out of it -- "smoke.sh plants marker.txt", says
+# the comment in virtinit.b, and nothing here ever did, which is what
+# FS-FAIL meant on virt.  So the file is planted at creation, and a
+# host that can make the filesystem but not write into it fails rather
+# than handing back an image half the check cannot use.
 makefat() {
 	f="$work/$1"
 	[ -f "$f" ] && return 0
@@ -197,12 +217,34 @@ makefat() {
 		hdiutil create -size 16m -fs MS-DOS -volname BOARDSUITE \
 			-layout NONE -ov "$work/fatmk" >/dev/null 2>&1 || return 1
 		mv "$work/fatmk.dmg" "$f" || return 1
+		mnt=`hdiutil attach -nobrowse "$f" 2>/dev/null |
+			sed -n 's;.*\(/Volumes/[^ 	]*\).*;\1;p' | head -1`
+		if [ -z "$mnt" ]; then
+			rm -f "$f"
+			return 1
+		fi
+		printf 'FS-OK boardsuite\n' > "$mnt/marker.txt" || {
+			hdiutil detach "$mnt" >/dev/null 2>&1
+			rm -f "$f"
+			return 1
+		}
+		hdiutil detach "$mnt" >/dev/null 2>&1 || return 1
 		return 0
 	fi
 	for mk in mkfs.vfat mkfs.fat; do
 		if command -v $mk >/dev/null 2>&1; then
 			dd if=/dev/zero of="$f" bs=1 count=0 seek=16777216 2>/dev/null
-			$mk -F 16 "$f" >/dev/null 2>&1 && return 0
+			if $mk -F 16 "$f" >/dev/null 2>&1; then
+				if command -v mcopy >/dev/null 2>&1; then
+					printf 'FS-OK boardsuite\n' > "$work/marker.txt"
+					mcopy -i "$f" "$work/marker.txt" ::marker.txt \
+						>/dev/null 2>&1 || { rm -f "$f"; return 1; }
+					return 0
+				fi
+				echo "boardsuite: no mcopy; the FAT image would carry no marker.txt" >&2
+				rm -f "$f"
+				return 1
+			fi
 			rm -f "$f"
 			return 1
 		fi
@@ -218,6 +260,157 @@ markers() {
 		sort -u
 }
 
+# Whether a configuration wants the host end of its network checks.
+# virtinit.b's network chain does not stop at the wire: it dials
+# tcp!10.0.2.2!54322 and udp!10.0.2.2!54325 and wants "pong" back, and
+# it announces tcp!*!54323 and udp!*!54326 and waits for someone to
+# call in.  Nothing in this tree ever answered, so TCP-NET-FAIL
+# "connection refused" and TCP-IN-FAIL "timeout" were the checks
+# reporting, correctly, that the other end did not exist.  That is the
+# same shape as BLK-FAIL and FS-FAIL: a check failing because nothing
+# gave it what it tests.  os/inferno/virt/smoke.sh has answered these
+# since the board was written; this is that rig, as a service the suite
+# starts and stops around one boot.
+config_hostnet() {
+	case $1 in
+	virt)	echo yes;;
+	esac
+}
+
+# The host end: two echo servers, a web server for Charon, and two
+# clients that keep knocking until the guest has announced.  One
+# process with threads rather than five, so there is one pid to stop.
+hostnetpid=
+hostnet_start() {
+	[ -z "`config_hostnet $1`" ] && return 0
+	if ! command -v python3 >/dev/null 2>&1; then
+		echo "boardsuite: no python3; $1 has no host end for its network checks" >&2
+		return 1
+	fi
+	mkdir -p "$work/http"
+	printf '%s\n' '<html><body>boardsuite-http</body></html>' \
+		> "$work/http/smoke.html"
+	cat > "$work/hostnet.py" <<'HOSTNET'
+import http.server as httpserver
+import socket, socketserver, sys, threading, time
+
+root = sys.argv[1]
+
+# Every socket is bound here, in the main thread, before anything is
+# served.  A port already in use then kills this process outright and
+# the suite says so, rather than raising inside a daemon thread and
+# leaving a live pid with nothing behind it -- which is what happened
+# the first time, when a shadowed name took the web server out and the
+# only sign was a traceback nobody read.
+tcp_echo_s = socket.socket()
+tcp_echo_s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+tcp_echo_s.bind(('127.0.0.1', 54322))
+tcp_echo_s.listen(8)
+
+udp_echo_s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+udp_echo_s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+udp_echo_s.bind(('127.0.0.1', 54325))
+
+class Handler(httpserver.SimpleHTTPRequestHandler):
+    def __init__(self, *a, **k):
+        super().__init__(*a, directory=root, **k)
+    def log_message(self, *a):
+        pass
+
+socketserver.TCPServer.allow_reuse_address = True
+httpd = socketserver.TCPServer(('127.0.0.1', 8765), Handler)
+
+def tcp_echo():
+    while True:
+        c, _ = tcp_echo_s.accept()
+        threading.Thread(target=tcp_echo_one, args=(c,), daemon=True).start()
+
+def tcp_echo_one(c):
+    try:
+        c.settimeout(10)
+        c.recv(64)
+        c.sendall(b'pong')
+    except OSError:
+        pass
+    finally:
+        c.close()
+
+def udp_echo():
+    while True:
+        try:
+            data, addr = udp_echo_s.recvfrom(64)
+        except OSError:
+            continue
+        if data[:5] == b'hello':
+            udp_echo_s.sendto(b'pong', addr)
+
+# The guest announces late, and the hostfwd accepts the connection
+# whether or not anything inside is listening yet, so a single knock
+# proves nothing.  Keep knocking until one comes back "pong".
+def tcp_knock():
+    while True:
+        s = socket.socket()
+        s.settimeout(2)
+        try:
+            s.connect(('127.0.0.1', 54323))
+            s.sendall(b'hello')
+            if s.recv(64)[:4] == b'pong':
+                return
+        except OSError:
+            pass
+        finally:
+            s.close()
+        time.sleep(0.5)
+
+def udp_knock():
+    while True:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(2)
+        try:
+            s.sendto(b'hello', ('127.0.0.1', 54326))
+            if s.recvfrom(64)[0][:4] == b'pong':
+                return
+        except OSError:
+            pass
+        finally:
+            s.close()
+        time.sleep(0.5)
+
+for fn in (tcp_echo, udp_echo, httpd.serve_forever, tcp_knock, udp_knock):
+    threading.Thread(target=fn, daemon=True).start()
+
+while True:
+    time.sleep(3600)
+HOSTNET
+	python3 "$work/hostnet.py" "$work/http" >"$work/hostnet.log" 2>&1 &
+	hostnetpid=$!
+	# A port already in use is a sentence worth printing: without it
+	# the guest reports the failure and the reason looks like the
+	# guest's.
+	i=0
+	while [ $i -lt 20 ]; do
+		if ! kill -0 $hostnetpid 2>/dev/null; then
+			echo "boardsuite: host end died at once; see $work/hostnet.log" >&2
+			hostnetpid=
+			return 1
+		fi
+		if grep -q Traceback "$work/hostnet.log" 2>/dev/null; then
+			echo "boardsuite: host end raised; see $work/hostnet.log" >&2
+			hostnet_stop
+			return 1
+		fi
+		i=`expr $i + 1`
+		sleep 0.1
+	done
+	return 0
+}
+
+hostnet_stop() {
+	[ -n "$hostnetpid" ] && kill $hostnetpid 2>/dev/null
+	wait $hostnetpid 2>/dev/null || true
+	hostnetpid=
+}
+
 status=0
 
 # One boot of one configuration.  Leaves the log, the marker set, the
@@ -230,6 +423,10 @@ attempt() {
 	base="$here/$c.markers"
 	rm -f "$log"
 	last=`config_last $c`
+	if ! hostnet_start "$c"; then
+		echo "no host end for its network checks"
+		return
+	fi
 
 	# shellcheck disable=SC2046
 	"$qemu" `config_args $c` -display none -serial file:"$log" \
@@ -255,6 +452,7 @@ attempt() {
 	sleep $settle
 	kill $pid 2>/dev/null || true
 	wait $pid 2>/dev/null || true
+	hostnet_stop
 
 	if ! grep -q "$last" "$log" 2>/dev/null; then
 		echo "never reached $last in ${timeout}s"

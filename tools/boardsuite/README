@@ -77,15 +77,28 @@ has besides the Pis, each with the qemu its architecture needs -- the
 Pi ones need the patched build, the rest are ordinary machines and use
 the system qemu:
 
-	virtarm64	QEMU -M virt, cortex-a57, with a virtio-blk disk
-			and a virtio-net.  Reaches a shell and runs a
-			long suite.  The net device is worth the line:
+	virtarm64	QEMU -M virt, cortex-a57, with a virtio-blk-pci
+			disk and a virtio-net.  Reaches a shell and runs
+			a long suite.  The net device is worth the line:
 			without it NET-FAIL, with it NET-OK, and that
 			was a known failure until the day something
 			attached one.
 	sifiveu		QEMU -M sifive_u, no bios.
-	virt		QEMU -M virt riscv64, with a virtio-blk disk.
+	virt		QEMU -M virt riscv64, with a virtio-blk disk
+			and a virtio-net, both the mmio transport.
 	virt32		QEMU -M virt riscv32.
+
+The transport is not a detail, and getting it wrong looks exactly like a
+broken driver.  virtarm64 links sdvirtio10 and no mmio block driver at
+all; virt links sdvirtiommio and no PCI one.  Handing virtarm64 a
+virtio-blk-device -- the mmio form -- gave it a disk it had no code to
+find, and the resulting BLK-FAIL sat in its known-failure list.  The
+PCI form alone was not enough either: sdvirtio10 matches on 0x1AF4,
+0x1040+type, the modern device id, and a plain virtio-blk-pci
+enumerates transitional as 1af4/1001, which that loop walks past
+without a word.  It takes disable-legacy=on to make the same disk
+visible, and then the driver that was recorded as failing prints
+BLK-OK.
 
 The virtio-blk disk is why there is a FAT16 image in the work
 directory.  virtinit.b's blkcheck() reads sector 0 of /dev/sdF0/data and
@@ -97,17 +110,82 @@ signature bytes into a blank file would have satisfied the check and
 none of its point, so the script makes a real filesystem or says it
 cannot.
 
-KNOWN FAILURES.  virtarm64 reaches a shell and then fails every check
-that wants a module its root does not carry -- Tk, Draw/Tk, math,
-memfs, and the rest, each reporting "file does not exist".  That is a
-real state of that board, so it is recorded as one: a configuration may
-have a <config>.expected file listing the markers known to fail, and
-the run checks that set as strictly as it checks the marker set.  A new
--FAIL fails the run.  So does one that went away, because a debt that
-got paid should be written down rather than silently forgotten.
+The image carries a marker.txt as well, because the disk is asked for
+twice.  fsmount() mounts it with dossrv and reads FS-OK out of that
+file -- "smoke.sh plants marker.txt", says the comment above it, and
+this script did not, so virt's FS-FAIL was the same shape as its
+BLK-FAIL one layer up: a check failing because nothing gave it what it
+tests.  The file is planted at creation, with hdiutil attach or mcopy;
+a host that can make the filesystem but not write into it fails rather
+than handing back an image half the check cannot use.
+
+THE HOST END.  virt's network checks do not stop at the wire.
+virtinit.b dials tcp!10.0.2.2!54322 and udp!10.0.2.2!54325 -- the slirp
+gateway, which is this machine -- writes "hello" and wants "pong" back;
+then it announces tcp!*!54323 and udp!*!54326 and waits for someone to
+call in.  Nothing here ever answered, so TCP-NET-FAIL "connection
+refused" and TCP-IN-FAIL "timeout" were the checks reporting, quite
+correctly, that the other end did not exist.  os/inferno/virt/smoke.sh
+has answered them since the board was written.  So the suite starts
+that rig around the boot: two echo servers, a web server for Charon,
+and two clients that keep knocking until the guest has announced, in
+one process with one pid to stop, plus the two hostfwd rules the
+inbound half needs.  With it the chain runs to the end -- TCP-OK,
+TCP-NET-OK, TCP-IN-OK, UDP-OK, UDP-NET-OK, UDP-IN-OK, STYX-OK.
+
+Every socket is bound in that process's main thread before anything is
+served, so a port already in use kills it outright and the suite says
+which.  The first version bound inside the threads: a shadowed name
+took the web server out, the traceback went into a log nobody read,
+and the pid stayed alive -- so the guest would have reported the
+failure and the reason would have looked like the guest's.  The wait
+loop now reads that log too.
+
+The web server on 8765 is the one part of the rig nothing here
+exercises.  virtinit.b asks Charon for http://10.0.2.2:8765/smoke.html,
+but that is behind the Tk path, which on this board is WM-FAIL, so the
+server is started and never asked for anything.  It answers when asked
+by hand.  It stays because the check it serves exists and the day the
+Tk modules land in that root it will be wanted; it is listed here as
+unexercised rather than counted as covered.
+
+Three of these were found in one afternoon: BLK-FAIL wanted a disk,
+FS-FAIL wanted a file on it, and the network ones wanted someone to
+talk to.  It is worth saying plainly, because all three had been
+written down as failures of the board.
+
+KNOWN FAILURES.  A configuration may have a <config>.expected file
+listing the markers known to fail, and the run checks that set as
+strictly as it checks the marker set.  A new -FAIL fails the run.  So
+does one that went away, because a debt that got paid should be written
+down rather than silently forgotten.  What is in them, and why:
+
+	Both boards	TK, WM, WMSRV, WM-STRESS, FT, TB, SSL, AUTH,
+			HEAVY, CMD-STRESS -- each wants a module the
+			root file list does not carry, and says "file
+			does not exist" or "unknown device".  Adding
+			them is a change to those kernels' roots, not
+			to this script.
+
+	virt		DNS-FAIL: missing /dis/ndb/dns.dis, the same
+			kind.  It is newly visible rather than new --
+			nothing reached dnscheck() until IP-OK started
+			passing.
+
+	virtarm64	DHCP-FAIL, and with it everything downstream:
+			the dhcpclient module is not in that root
+			either, so the whole ip chain after NET-OK is
+			unreached rather than broken.  TMP-FAIL and
+			FS-MKDIR-FAIL are one failure twice: memfs is
+			missing, so /tmp is not writable, so the
+			directory fsmount() makes there cannot be made.
+
+Nothing in that list is a guess.  Each was read off the board's own
+error line, and the two that turned out not to belong -- BLK-FAIL and
+FS-FAIL -- were taken out by fixing them.
 
 A passing run says how many known failures it carried -- "ok 31 markers
-and 16 known -FAIL" -- because a suite that reports a board with
+and 15 known -FAIL" -- because a suite that reports a board with
 fifteen broken checks as simply "ok" is lying by omission.  These lists
 are debt, not a baseline to be comfortable with.
 
@@ -132,6 +210,14 @@ stopped early produces a subset, and recording a subset is a regression
 written down as the new truth, which is the failure this script exists
 to prevent.  -b -f records it anyway, for when the markers really did
 go away and you mean it.
+
+That guard compares counts, not sets, so a run that swapped one marker
+for another of the same name-count walks through it.  That is not
+hypothetical either: virtarm64's BLK-FAIL became BLK-OK at no change in
+count.  What caught it was the check the guard does not do -- the diff
+against the recorded set, which every ordinary run makes -- so the hole
+is covered in practice by the thing that runs far more often.  Worth
+knowing rather than worth more code.
 
 RETRIES.  Several of these checks time themselves against the system
 timer and compare a count to what the elapsed time predicts.  Host load

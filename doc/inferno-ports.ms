@@ -18904,3 +18904,144 @@ at offset 0; the read succeeds and the interrupt is delivered so the
 GICv3 conclusion is unaffected, and it is identical on v2, so it
 predates this work \(em the init reads a block other than 0, or the
 print is wrong.
+.NH 1
+Four failures on virt and virtarm64 that were nobody's driver
+.PP
+Adding every board to
+.CW tools/boardsuite
+left thirty checks recorded as known failures, most of them modules a
+root file list does not carry.  Four of them were not that, and this
+section is what they were, because the shape repeats.
+.PP
+.B "virtarm64 BLK-FAIL: the wrong transport, twice."
+The invocation attached
+.CW -device\ virtio-blk-device ,
+the mmio form.
+.CW os/inferno/virtarm64/virtarm64
+links
+.CW sdvirtio10
+and no mmio block driver at all, so that was a disk the kernel had no
+code to find.  Switching to
+.CW virtio-blk-pci
+was not enough either:
+.CW sdvirtio10.c:219
+matches
+.CW "pcimatch(p, 0x1AF4, 0x1040+typ)" ,
+the modern device id, and a plain
+.CW virtio-blk-pci
+enumerates transitional as
+.CW 1af4/1001
+\(em which the board's own boot log printed, and which that loop walks
+past without a word.
+.CW disable-legacy=on
+makes it
+.CW 1af4/1042
+and the driver that had been recorded as failing prints
+.CW BLK-OK .
+Note which way round the two boards are:
+.CW virt
+links
+.CW sdvirtiommio
+and no PCI driver, so the same mistake there would be the mirror image.
+.PP
+.B "virt FS-FAIL: the file the check reads was never planted."
+.CW fsmount()
+mounts the FAT disk with
+.CW dossrv
+and reads
+.CW FS-OK
+out of
+.CW marker.txt .
+The comment above it says
+.CW "smoke.sh plants marker.txt" ,
+and
+.CW os/inferno/virt/smoke.sh
+does; the boardsuite made a blank filesystem and did not.  The image now
+carries the file, planted with
+.CW "hdiutil attach"
+or
+.CW mcopy
+at creation.
+.PP
+.B "virt IP-FAIL: a watchdog that starved what it was timing."
+This one was a real bug, and the only one of the four in the guest.
+.CW ipcheck()
+spawns
+.CW ping
+and guards it with
+.CW iptimer() ,
+whose loop was
+.CW "while(sys->millisec() - t0 < ms) sys->sleep(0)"
+\(em a yield that comes straight back, a watchdog that spins.  Every
+timed check in
+.CW virtinit.b
+is guarded by one of these.
+.PP
+The evidence that it was starvation and not the network:
+.CW qemu 's
+own
+.CW filter-dump
+of the same boot shows three echo requests and three echo replies, all
+delivered, at 11.58s, 11.79s \(em against a ten second deadline that
+started when
+.CW ping
+was spawned around 5.4s.  The packets took six seconds to reach the
+wire.  The same
+.CW "ip/ping -n 3 10.0.2.2"
+typed at that board's shell, with nothing spinning beside it, answers
+three of three at
+.CW "rtt 0 \(*ms" .
+The step is now
+.CW sleep(50) ,
+which keeps the re-checked deadline the comment asks for \(em the
+reason it was not one long
+.CW sleep(ms)
+\(em and gives the thing being timed the cpu.
+.PP
+With that,
+.CW IP-OK ,
+and behind it a chain nothing in this tree had ever reached:
+.CW dnscheck ,
+.CW tcpcheck ,
+.CW udpcheck ,
+.CW styxcheck .
+.PP
+.B "virt TCP-NET-FAIL and TCP-IN-FAIL: nobody on the other end."
+The chain dials
+.CW tcp!10.0.2.2!54322
+and
+.CW udp!10.0.2.2!54325
+and wants
+.CW pong
+back, then announces
+.CW tcp!*!54323
+and
+.CW udp!*!54326
+and waits to be called.
+.CW smoke.sh
+has answered all four since the board was written; the suite now starts
+the same rig around one boot, with the two
+.CW hostfwd
+rules the inbound half needs.
+.CW STYX-FAIL\ mount
+was the last link and a third variant of the same thing: the mount point
+.CW /n/styx
+did not exist, and
+.CW devroot 's
+static namespace refuses a runtime create \(em the same
+.CW "permission denied"
+that sent
+.CW fsmount()
+to
+.CW /tmp .
+It is in the root file list now, empty.
+.PP
+.CW virt
+goes from 32 markers with 14 known failures to 41 with 12; virtarm64
+keeps 31 markers and drops one.  Three of the four were a check failing
+because nothing gave it the thing it tests \(em a disk, a file, a
+correspondent \(em and all three had been written down as failures of
+the board.  That is the same error as
+.CW missing_caps
+on the Pi, one layer out: the question was asked properly and answered
+by nothing.
