@@ -20673,3 +20673,105 @@ error code.  The fix removes that path for kernel processes, and the
 probe that caught it is silent across 192 boots.  A clean batch after a
 blind change would prove little; a clean batch after removing a
 mechanism that was watched doing the damage is a different thing.
+.NH 1
+The IRETQ corruption was the Tos, and the fix was in the wrong place
+.PP
+The frame was being overwritten by
+.CW kexit() ,
+because the frame was inside the
+.CW Tos .
+.PP
+pc64 is the only board in the tree that defines
+.CW USTKTOP
+as
+.CW "(up->kstack+KSTACK)" .
+Every other points it at real memory \(em
+.CW TOPOFMEM
+on the Cortex-M boards,
+.CW PHYSDRAM+DRAMSIZE
+on armv7, raspi3b, shakti, sifiveu and mangopi,
+.CW KZERO-BY2PG
+on pc.  So on this board the "kernel/user shared data" lives in the top
+.CW sizeof(Tos)
+bytes of a kernel stack.
+.PP
+main.c's
+.CW userinit()
+knows that and reserves it:
+.P1
+p->sched.sp = kstack+KSTACK - sizeof(uintptr) - sizeof(Tos) - sizeof(uintptr);
+.P2
+.CW kprocchild()
+reserved one word.  So every kproc's stack began inside the
+.CW Tos ,
+and its first interrupt put a frame on top of the accounting.
+.PP
+The arithmetic is exact.
+.CW Tos
+is 72 bytes here \(em
+.CW prof
+40,
+.CW cyclefreq
+at 40,
+.CW kcycles
+at 48,
+.CW pcycles
+at 56,
+.CW pid
+at 64 \(em so relative to the stack top
+.CW kcycles
+lands at \-24,
+.CW pcycles
+at \-16 and
+.CW pid
+at \-8.  An interrupt on a fresh kproc stack puts
+.CW SP
+at \-56, which puts its frame's
+.CW SS
+at \-24.
+.TS
+box, tab(;);
+l l l.
+stack word;Tos field;what the captures held
+_
+estackx\-24;kcycles;afc8, 6978, b798, 3068 ... (varying)
+estackx\-16;pcycles;3d0130, 401e10, 84530 (larger, cumulative)
+estackx\-8;pid;0x2, 0xd
+.TE
+.PP
+The top word is what settles it.
+.CW 0x2
+and
+.CW 0xd
+are process ids, sitting exactly where
+.CW Tos.pid
+is written.  Nine captures had been read as "a garbage stack selector"
+for want of knowing what wrote it.
+.PP
+Two readings are corrected by this, one of them mine.  It is not
+.CW notify() :
+its writes land
+.I below
+the frame, at
+.CW "ureg->sp - 256 - sizeof(Ureg)" ,
+and its
+.CW "ureg->ss = UDSEL"
+is the constant
+.CW 0x23 ,
+while every captured value differed \(em which is what made the
+suggestion worth checking rather than taking.  And correcting
+.CW userureg()
+stopped the faults, 192 boots clean, but treated the symptom: it
+stopped
+.CW kexit()
+running for kprocs while leaving the stacks overlapping, and
+portclock.c's
+.CW hzclock()
+still writes
+.CW tos->clock
+at \-4 for any running process, with no user check at all.
+.PP
+.CW kprocchild()
+now reserves the region where the stack is made, as
+.CW userinit()
+already did.
