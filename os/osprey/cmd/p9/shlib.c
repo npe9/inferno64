@@ -28,7 +28,13 @@ extern int spawn(char *name, char **argv, int in, int out);
 extern int awaitpid(int pid, char *status, int nstatus);
 
 enum {
-	Nstage	= 4,		/* stages in a pipeline */
+	/*
+	 * Five, so that a pipeline can hold every relocation slot the
+	 * personality has at once: the shell is a module too and keeps one
+	 * for as long as its script runs, so five stages beside it is six.
+	 * A number that is never reached proves nothing about the slots.
+	 */
+	Nstage	= 5,		/* stages in a pipeline */
 	Narg	= 8,		/* words in a stage */
 	Nline	= 512,
 	Nscript	= 8192,

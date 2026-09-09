@@ -111,7 +111,7 @@ enum {
 	P9progbase	= 0x1000000,	/* prog2, the first loaded program */
 	P9progbase2	= 0x1400000,	/* free: libcat is a module now, and has no base */
 	P9progbase3	= 0x1800000,	/* free: libwc is a module now, and has no base */
-	P9progbase4	= 0x1c00000,	/* libsh, the shell */
+	P9progbase4	= 0x1c00000,	/* free: libsh is a module now, and has no base */
 	P9progbase5	= 0x2000000,	/* libgen, the near end of a pipeline */
 	P9progbase6	= 0x2400000,	/* libdraw, the program that draws */
 	P9progbase7	= 0x2800000,	/* libthread, the program with threads in it */
@@ -119,8 +119,14 @@ enum {
 	 * And the ground a relocatable module is laid on, which is not a
 	 * base per program but a range with slots in it.  A module has no
 	 * address of its own, so nothing here has to name one: the loader
-	 * takes a free slot, and gives it back when the program ends.  Four
+	 * takes a free slot, and gives it back when the program ends.  Six
 	 * of them, at the same spacing as the fixed bases above.
+	 *
+	 * Six rather than four because the shell is a module as well now
+	 * and holds a slot for as long as its script runs, with its
+	 * pipeline in the slots beside it: a three-stage pipeline under the
+	 * shell is four at once, which four slots met exactly and with
+	 * nothing to spare.
 	 *
 	 * This is the difference the whole thing is for.  Above, a program
 	 * is its address, and two of one image cannot run at once because
@@ -129,5 +135,5 @@ enum {
 	 */
 	P9relocbase	= 0x2c00000,
 	P9relocslot	= 0x400000,
-	Nrelocslot	= 4,
+	Nrelocslot	= 6,
 };

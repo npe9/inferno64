@@ -10128,12 +10128,56 @@ With wc still holding its old base the check would have gone on passing
 a criterion that named 0x1800000, so that criterion now asks for a slot
 rather than for a number.
 .PP
-What is left of it is the shell itself, which is still linked at
-.CW P9progbase4 ,
-and
+.PP
+.B "The shell itself, and every slot at once."
+.CW /boot/libsh
+is a module as well now, and that is a different path through the
+loader: the shell is the program the personality
+.I execs
+rather than one the shell spawns, so the slot is taken in
+.CW p9exec
+and not in
+.CW p9spawn .
+Until the shell was a module, nothing had ever gone that way \- the code
+was written when cat became one and never ran.  The slot it is given,
+0x2c00000, is one an earlier module gave back, so the allocator is being
+used rather than a list of names.  What is not shown is
+.CW p9exec 's
+own free: nothing loads a module after the shell returns, so the line
+that frees its slot has no witness in this boot, and that is said here
+rather than implied.
+.PP
+The shell holding a slot is what makes the count reachable.  A count of
+slots nothing ever reaches says nothing about them, so the shell's stage
+limit went to five and the script has a five-stage line:
+.CW "/boot/libcat /hello | /boot/libcat | /boot/libcat | /boot/libcat | /boot/libwc" .
+Five modules beside the shell is six, which is every slot there is
+\- 0x2c00000 for the shell and 0x3000000 through 0x4000000 for the
+pipeline \- and none is left over.  With
+.CW Nrelocslot
+cut to five the last stage is refused,
+.CW "/boot/libwc: all 5 relocation slots are taken" ,
+the shell says it cannot start it and carries on, and exactly one
+criterion fails: the one that says every slot is held.
+.PP
+Two criteria had to be rewritten and the reason is the same as twice
+before.  Several script lines spawn the same programs, so a criterion
+that searched the whole log for
+.CW "cat runs as"
+took one line's spawns for another's the moment a five-stage line was
+added below it.  They are scoped to their own script line now, by a
+helper that slices the log between one line the shell echoes and the
+next \- and the boundary has to know that the shell says three things
+beginning
+.CW "libsh: /boot/" :
+the line it is about to run, a line that ended, and a line it could not
+start.  Only the first is a boundary, which the first version of the
+helper got wrong and the check caught.
+.PP
+What is left is
 .CW /boot/libgen ,
-which stays at one on purpose: it is what shows that a program which is
-its address cannot be two.
+which stays at an address on purpose: it is what shows that a program
+which is its address cannot be two.
 .PP
 .B "Phase 3.2: a real program, then rio, linked with the library."
 A real program \- a command, then a shell, then rio \- is linked with

@@ -180,6 +180,36 @@ def main():
                     re.search(r'libsh: \d+ bytes of script, read by calling the personality beside me', t) is not None
                     and re.search(r'p9 spawn: /boot/libcat runs as \d+ at 0x[0-9a-f]+, with its own descriptor table \(-1 -1 -1\)', t) is not None
                     and 'libsh: /boot/libcat ended, status ""' in t))
+    def scriptline(t, cmd):
+        """What the log says while one line of the shell's script runs.
+
+        The shell echoes each line as "libsh: <line>", and one of those
+        lines is a prefix of another, so the match is on the whole line
+        and the slice ends at the next line the shell echoes.  Scoping
+        by line is the point: several script lines spawn the same
+        programs, and a criterion that searched the whole log would take
+        one line's spawns for another's - which is how the "cat | cat"
+        criterion broke when a five-stage line was added below it.
+        """
+        def echo(l):
+            # The shell says three things that begin this way: the line
+            # it is about to run, "<program> ended, status ..." and
+            # "<program>: cannot start it".  Only the first is a
+            # boundary.
+            return (l.startswith('libsh: /boot/')
+                    and ' ended, status ' not in l
+                    and not l.endswith(': cannot start it'))
+
+        lines = [l.strip() for l in t.split('\n')]
+        want = 'libsh: ' + cmd
+        for i, l in enumerate(lines):
+            if l == want:
+                for j in range(i + 1, len(lines)):
+                    if echo(lines[j]):
+                        return '\n'.join(lines[i:j])
+                return '\n'.join(lines[i:])
+        return ''
+
     def wcslot(t):
         """The address the loader gave a wc, if it gave it a slot."""
         for a in re.findall(r'p9 spawn: /boot/libwc runs as \d+ at (0x[0-9a-f]+), '
@@ -214,12 +244,13 @@ def main():
     # is a relocatable module, so two of it run in one pipeline, each in
     # a slot the loader took.  gen still is its address, so two of it
     # cannot, and the refusal is by name.
+    twocats = scriptline(t, '/boot/libcat /hello | /boot/libcat')
     catpipe = re.findall(r'p9 spawn: /boot/libcat runs as \d+ at (0x[0-9a-f]+), '
-                         r'with its own descriptor table \((?:-1 0 -1|0 -1 -1)\)', t)
+                         r'with its own descriptor table \((?:-1 0 -1|0 -1 -1)\)', twocats)
     results.append(("and two of one image run in one pipeline, because that image is a module: cat is linked relocatable, so the shell's \"cat | cat\" gets two copies at two slots the loader chose, reading and writing the two ends of one pipe",
-                    'libsh: /boot/libcat /hello | /boot/libcat' in t
-                    and len(catpipe) >= 2 and catpipe[-1] != catpipe[-2]
-                    and t.count('libsh: /boot/libcat ended, status ""') >= 2))
+                    twocats != ''
+                    and len(catpipe) == 2 and catpipe[0] != catpipe[1]
+                    and twocats.count('libsh: /boot/libcat ended, status ""') >= 2))
     #
     # A slot is ground for whatever module goes in it next, so it is
     # asked for at the size a slot is - not at the size of the module
@@ -258,13 +289,40 @@ def main():
     # file, which is what the two-stage line above counts; the other 191
     # is the middle cat, whose descriptor 1 is the second pipe rather
     # than the console.
-    trio = re.findall(r'p9 (?:reloc|spawn): /boot/lib(?:cat|wc) (?:laid at|runs as \d+ at) '
-                      r'(0x[0-9a-f]+)', t[t.index('libsh: /boot/libcat /hello | /boot/libcat | /boot/libwc'):]
-                      if 'libsh: /boot/libcat /hello | /boot/libcat | /boot/libwc' in t else '')
+    three = scriptline(t, '/boot/libcat /hello | /boot/libcat | /boot/libwc')
+    trio = re.findall(r'p9 spawn: /boot/lib(?:cat|wc) runs as \d+ at (0x[0-9a-f]+)', three)
     results.append(("and three modules run in one pipeline, in three slots: \"cat | cat | wc\" is two copies of one image and a third of another, none of them at an address of its own, and what the far end counts is the file and everything both cats said on the way - 454 bytes of it the first cat and the file, the other 191 the middle cat, whose descriptor 1 is the second pipe and not the console",
-                    'libsh: /boot/libcat /hello | /boot/libcat | /boot/libwc' in t
-                    and len(set(a for a in trio if int(a, 16) >= 0x2c00000)) >= 3
-                    and 'libwc: 11 lines 114 words 645 bytes off the pipe' in t))
+                    len(trio) == 3 and len(set(trio)) == 3
+                    and all(int(a, 16) >= 0x2c00000 for a in trio)
+                    and 'libwc: 11 lines 114 words 645 bytes off the pipe' in three))
+    #
+    # And every slot at once.  The shell is a module as well now, so it
+    # holds one for as long as its script runs and a five-stage pipeline
+    # under it is six modules in six slots - which is all of them.  A
+    # count of slots nothing ever reaches would say nothing about them,
+    # and the shell's own stage limit was raised to five for this.
+    five = scriptline(t, '/boot/libcat /hello | /boot/libcat | /boot/libcat | '
+                         '/boot/libcat | /boot/libwc')
+    quints = re.findall(r'p9 spawn: /boot/lib(?:cat|wc) runs as \d+ at (0x[0-9a-f]+)', five)
+    shslot = re.search(r'p9 reloc: /boot/libsh laid at (0x[0-9a-f]+),', t)
+    results.append(("and every relocation slot the personality has is held at once, by the shell and the pipeline under it: the shell is a module too, so it keeps a slot for as long as its script runs, and a five-stage pipeline beside it is six modules in six slots with no slot left over - the count is reached rather than written down",
+                    len(quints) == 5 and len(set(quints)) == 5
+                    and all(int(a, 16) >= 0x2c00000 for a in quints)
+                    and shslot is not None
+                    and shslot.group(1) not in quints
+                    and 'slots are taken' not in t
+                    and five.count('libsh: /boot/libcat ended, status ""') >= 4
+                    and 'libsh: /boot/libwc ended, status ""' in five))
+    #
+    # The shell itself is one, which is the exec path rather than the
+    # spawn path: p9exec takes a slot for a module and gives it back,
+    # and until the shell was a module nothing had ever gone that way.
+    results.append(("and the shell itself has no address of its own: it is the program the personality execs rather than one the shell spawns, so it is p9exec that takes a slot for it and frees it - a path that had never run while every program the personality execs was linked at a base",
+                    shslot is not None and int(shslot.group(1), 16) >= 0x2c00000
+                    and re.search(r'p9 exec: entering /boot/libsh at 0x[0-9a-f]+ with the '
+                                  r"personality's own name space under it", t) is not None
+                    and 'p9 exec: /boot/libsh returned; the personality is still here, '
+                        'its name space never reloaded' in t))
     results.append(("and the limit still holds for a program that is its address: the script's last line asks for two of /boot/libgen, which is linked at one, and the second is refused by name - the two would be the one image sharing its one data segment, descriptor table and heap - and the shell carries on",
                     'p9 exec: /boot/libgen is already running at 0x2000000; it is one image and cannot be two programs' in t
                     and 'libsh: /boot/libgen: cannot start it' in t))

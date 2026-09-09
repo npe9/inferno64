@@ -1542,6 +1542,23 @@ here writes descriptor 1: a stage whose descriptor 1 is a pipe says what
 it says into that pipe, and the count at the end of two of them holds
 the file and both cats' words.
 .PP
+.B /boot/libsh
+is a module too, which is the other path into the loader: the shell is
+what the personality
+.I execs
+rather than what the shell spawns, so
+.I p9exec
+takes its slot and not
+.IR p9spawn .
+It holds that slot for as long as its script runs, so a five-stage
+pipeline beside it is six modules at once, which is every slot there is.
+There are six because five stages plus the shell reaches six; a count
+nothing reaches would say nothing.
+.B /boot/libgen
+keeps an address of its own on purpose \- it is what shows that a program
+which is its address cannot be two \- and it is the only one of the
+shell's programs that does.
+.PP
 A region of address space is asked of the kernel once and used again
 afterwards, and the loader remembers its size as well as its address.
 The size matters only for a slot: a base holds one program for the life
