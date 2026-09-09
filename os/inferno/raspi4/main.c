@@ -187,14 +187,14 @@ main(void)
 			 * plus the MPHI mapping -- into the common realize,
 			 * so they are here now and driven below.
 			 *
-			 * Two are still out, and for different reasons.  The
-			 * RNG is a Broadcom RNG200 on this part, a different
-			 * block QEMU models for no machine, so it needs a
-			 * driver rather than a mapping.  The thermal sensor
-			 * is likewise a different block at a different
-			 * address on a BCM2711, so moving bcm2835_thermal
-			 * would have been asserting something untrue about
-			 * the hardware to gain a marker.
+			 * Two needed a driver and a model rather than a
+			 * mapping, because on this part they are different
+			 * blocks: the RNG is a Broadcom RNG200 (rng200bcm.c,
+			 * patch 0023) and the temperature sensor is in the
+			 * AVS monitor, at an address outside this window
+			 * entirely (thermavs.c, patch 0024).  Moving
+			 * bcm2835_thermal here would have asserted something
+			 * untrue about the hardware to gain a marker.
 			 *
 			 * The ARM timer is driven but not tested for
 			 * interrupt delivery: its interrupt goes to the
@@ -210,8 +210,10 @@ main(void)
 			 */
 			extern void pwminit(void);
 			extern void systmrinit(void);
+			extern void thermavsinit(void);
 			pwminit();
 			systmrinit();
+			thermavsinit();
 			{
 				extern void otpinit(void);
 				extern void dmainit(void);

@@ -21,6 +21,11 @@
  *	0x20 Data	one random word per read
  *	0x24 Count	bits 7:0, words available to read
  *
+ * The block's window is 0x28 bytes, which is exactly those registers:
+ * bcm2711.dtsi has rng@7e104000 with reg = <0x7e104000 0x28>, and the
+ * model in tools/qemu-patches 0023 claims the same, so a read past the
+ * count register is an abort here and on the part rather than a zero.
+ *
  * The difference that matters to a driver, against the BCM2835 block:
  * there is a FIFO with a count, and a word must not be read unless the
  * count says one is there.  rngbcm.c polls a "words ready" field in the

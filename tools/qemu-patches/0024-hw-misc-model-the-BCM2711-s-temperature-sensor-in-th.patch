@@ -1,0 +1,364 @@
+From 7efef9ef571a448828d6adf45a8399a1066dd45c Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Wed, 9 Sep 2026 06:28:50 -0400
+Subject: [PATCH] hw/misc: model the BCM2711's temperature sensor, in the AVS
+ monitor
+
+A BCM2711's die sensor is not the BCM2835 one at a different address.
+It is a different block with one register instead of two, a different
+calibration, and it is not in the peripheral window at all: it sits in
+the AVS monitor down at 0x7d5d2000 on the VC bus, which the ARM sees at
+0xfd5d2000, inside the lower peripheral range this SoC maps and nothing
+had yet been placed in.  QEMU modelled it for no machine, so on raspi4b
+that whole window was a hole and hw/arm/raspi4b.c nops the
+"brcm,bcm2711-thermal" node out of the device tree it is handed.
+
+Both halves of what this models are cited rather than recalled:
+
+  arch/arm/boot/dts/broadcom/bcm2711.dtsi has avs-monitor@7d5d2000 with
+  reg = <0x7d5d2000 0xf00>, and gives the calibration for the sensor as
+  coefficients = <(-487) 410040>.
+
+  drivers/thermal/broadcom/bcm2711_thermal.c reads one register in that
+  block, AVS_RO_TEMP_STATUS at offset 0x200, requires bits 16 and 10
+  both set for the reading to be valid, takes the data from bits 9:0,
+  and converts with temp = slope * data + offset.
+
+So the model claims the whole 0xf00 window -- a guest probing for the
+block should find it, not a hole -- and implements only the register
+that driver names; the rest logs LOG_UNIMP.
+
+Unlike bcm2835_thermal, which hardcodes 25C, the temperature is a
+property.  That is the only way to tell a driver that decodes the
+reading from one that returns a constant, and it costs one qdev line.
+The default stays 25C so the two models agree where they can.  The
+field is ten bits with a 487 millidegree step, so a requested
+temperature is rounded to the nearest step on the way in and a guest
+gets that step back: 25C encodes to 791 and decodes to 24.823C.  That
+is the part's resolution, not the model's, and realize rejects a
+temperature the field cannot express at all.
+
+Verified with an Inferno kernel on raspi4b, which reads the register
+and does the conversion itself: 25C default reads back die 24.823 C
+(adc 791, status 0x00010717), and -global
+bcm2838-thermal.temperature=85000 reads back die 85.211 C (adc 667,
+status 0x0001069b).  Two points, because one point cannot distinguish
+a decode from a constant.  The board's marker set gains THERM-OK and is
+otherwise unchanged at 35.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ hw/arm/bcm2838_peripherals.c         |  16 +++
+ hw/misc/bcm2838_thermal.c            | 185 +++++++++++++++++++++++++++
+ hw/misc/meson.build                  |   1 +
+ include/hw/arm/bcm2838_peripherals.h |  11 ++
+ include/hw/misc/bcm2838_thermal.h    |  23 ++++
+ 5 files changed, 236 insertions(+)
+ create mode 100644 hw/misc/bcm2838_thermal.c
+ create mode 100644 include/hw/misc/bcm2838_thermal.h
+
+diff --git a/hw/arm/bcm2838_peripherals.c b/hw/arm/bcm2838_peripherals.c
+index 64eba5c..605645a 100644
+--- a/hw/arm/bcm2838_peripherals.c
++++ b/hw/arm/bcm2838_peripherals.c
+@@ -38,6 +38,9 @@ static void bcm2838_peripherals_init(Object *obj)
+     /* Random Number Generator */
+     object_initialize_child(obj, "rng200", &s->rng200, TYPE_BCM2838_RNG200);
+ 
++    /* Temperature sensor, in the AVS monitor */
++    object_initialize_child(obj, "thermal", &s->thermal, TYPE_BCM2838_THERMAL);
++
+     /* GPIO */
+     object_initialize_child(obj, "gpio", &s->gpio, TYPE_BCM2838_GPIO);
+ 
+@@ -199,6 +202,19 @@ static void bcm2838_peripherals_realize(DeviceState *dev, Error **errp)
+         &s_base->peri_mr, RNG_OFFSET,
+         sysbus_mmio_get_region(SYS_BUS_DEVICE(&s->rng200), 0));
+ 
++    /*
++     * Temperature sensor.  A BCM2711's is in the AVS monitor, which is
++     * a different block at a different address from the BCM2835 sensor
++     * the Pi 2/3 realize maps -- and it is in the lower peripheral
++     * window, not the main one.
++     */
++    if (!sysbus_realize(SYS_BUS_DEVICE(&s->thermal), errp)) {
++        return;
++    }
++    memory_region_add_subregion(
++        &s->peri_low_mr, BCM2838_AVS_MONITOR_OFFSET,
++        sysbus_mmio_get_region(SYS_BUS_DEVICE(&s->thermal), 0));
++
+     /* GPIO */
+     if (!sysbus_realize(SYS_BUS_DEVICE(&s->gpio), errp)) {
+         return;
+diff --git a/hw/misc/bcm2838_thermal.c b/hw/misc/bcm2838_thermal.c
+new file mode 100644
+index 0000000..bb861ba
+--- /dev/null
++++ b/hw/misc/bcm2838_thermal.c
+@@ -0,0 +1,185 @@
++/*
++ * BCM2711 AVS monitor temperature sensor ("brcm,bcm2711-thermal").
++ *
++ * This is not the block bcm2835_thermal.c models.  A BCM2711's sensor
++ * lives in the AVS monitor, a different block at a different address
++ * with a different register, and QEMU modelled it for no machine: on
++ * raspi4b the whole AVS window was unmapped, so a guest reading it took
++ * a synchronous external abort.  hw/arm/raspi4b.c nops the
++ * "brcm,bcm2711-thermal" node out of the device tree it is handed for
++ * that reason.
++ *
++ * What is modelled comes from two published sources rather than from
++ * recollection:
++ *
++ *  - arch/arm/boot/dts/broadcom/bcm2711.dtsi places the block at
++ *    avs-monitor@7d5d2000 with reg = <0x7d5d2000 0xf00>, and gives the
++ *    sensor's calibration as coefficients = <(-487) 410040>.
++ *  - drivers/thermal/broadcom/bcm2711_thermal.c reads one register in
++ *    it, AVS_RO_TEMP_STATUS at offset 0x200, requires bits 16 and 10
++ *    to be set for the reading to be valid, takes the data from bits
++ *    9:0, and converts with temp = slope * data + offset, which for
++ *    this part is the pair above.
++ *
++ * So the whole 0xf00 window is claimed -- a guest that probes it
++ * should find the block, not a hole -- but only the one register the
++ * driver names is implemented.  The rest logs LOG_UNIMP rather than
++ * inventing a value.
++ *
++ * The sensor is 10 bits wide with a 487 millidegree step, so it cannot
++ * report an arbitrary temperature exactly: the value here is rounded to
++ * the nearest step on the way in, and a guest decoding it gets that
++ * step back.  That is the part's resolution, not the model's
++ * sloppiness, and a driver that expects better is wrong about the
++ * hardware.
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#include "qemu/osdep.h"
++#include "qemu/log.h"
++#include "qemu/module.h"
++#include "hw/misc/bcm2838_thermal.h"
++#include "hw/qdev-properties.h"
++#include "hw/registerfields.h"
++#include "migration/vmstate.h"
++#include "qapi/error.h"
++
++REG32(AVS_RO_TEMP_STATUS, 0x200)
++    FIELD(AVS_RO_TEMP_STATUS, DATA,     0, 10)
++    FIELD(AVS_RO_TEMP_STATUS, VALID_LO, 10, 1)
++    FIELD(AVS_RO_TEMP_STATUS, VALID_HI, 16, 1)
++
++/* coefficients = <(-487) 410040> from bcm2711.dtsi */
++#define TEMP_SLOPE      (-487)
++#define TEMP_OFFSET     410040
++
++#define TEMP_DATA_MAX   0x3ff
++
++/* The coldest and hottest the ten-bit field can express, in millidegrees. */
++#define TEMP_MIN_MC     (TEMP_SLOPE * TEMP_DATA_MAX + TEMP_OFFSET)
++#define TEMP_MAX_MC     (TEMP_OFFSET)
++
++static uint32_t bcm2838_thermal_temp2adc(int32_t temp_mC)
++{
++    int32_t num = TEMP_OFFSET - temp_mC;
++
++    /* Round to the nearest step rather than truncating towards zero. */
++    return (num + (-TEMP_SLOPE) / 2) / (-TEMP_SLOPE);
++}
++
++static uint64_t bcm2838_thermal_read(void *opaque, hwaddr addr, unsigned size)
++{
++    BCM2838ThermalState *s = BCM2838_THERMAL(opaque);
++    uint32_t val;
++
++    switch (addr) {
++    case A_AVS_RO_TEMP_STATUS:
++        val = FIELD_DP32(0, AVS_RO_TEMP_STATUS, DATA,
++                         bcm2838_thermal_temp2adc(s->temperature));
++        val = FIELD_DP32(val, AVS_RO_TEMP_STATUS, VALID_LO, 1);
++        val = FIELD_DP32(val, AVS_RO_TEMP_STATUS, VALID_HI, 1);
++        return val;
++
++    default:
++        qemu_log_mask(LOG_UNIMP,
++                      "bcm2838_thermal: read of unmodelled AVS monitor"
++                      " register 0x%" HWADDR_PRIx "\n", addr);
++        return 0;
++    }
++}
++
++static void bcm2838_thermal_write(void *opaque, hwaddr addr, uint64_t value,
++                                  unsigned size)
++{
++    switch (addr) {
++    case A_AVS_RO_TEMP_STATUS:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "bcm2838_thermal: write to the read-only temperature"
++                      " status register\n");
++        break;
++
++    default:
++        qemu_log_mask(LOG_UNIMP,
++                      "bcm2838_thermal: write of unmodelled AVS monitor"
++                      " register 0x%" HWADDR_PRIx "\n", addr);
++        break;
++    }
++}
++
++static const MemoryRegionOps bcm2838_thermal_ops = {
++    .read = bcm2838_thermal_read,
++    .write = bcm2838_thermal_write,
++    .endianness = DEVICE_NATIVE_ENDIAN,
++    .impl.min_access_size = 4,
++    .impl.max_access_size = 4,
++    .valid.min_access_size = 4,
++    .valid.max_access_size = 4,
++};
++
++static const VMStateDescription vmstate_bcm2838_thermal = {
++    .name = TYPE_BCM2838_THERMAL,
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .fields = (const VMStateField[]) {
++        VMSTATE_INT32(temperature, BCM2838ThermalState),
++        VMSTATE_END_OF_LIST()
++    }
++};
++
++static void bcm2838_thermal_init(Object *obj)
++{
++    BCM2838ThermalState *s = BCM2838_THERMAL(obj);
++
++    /* The AVS monitor window, reg = <0x7d5d2000 0xf00>. */
++    memory_region_init_io(&s->iomem, obj, &bcm2838_thermal_ops, s,
++                          TYPE_BCM2838_THERMAL, 0xf00);
++    sysbus_init_mmio(SYS_BUS_DEVICE(s), &s->iomem);
++}
++
++static void bcm2838_thermal_realize(DeviceState *dev, Error **errp)
++{
++    BCM2838ThermalState *s = BCM2838_THERMAL(dev);
++
++    if (s->temperature < TEMP_MIN_MC || s->temperature > TEMP_MAX_MC) {
++        error_setg(errp, "temperature must be between %d and %d millidegrees"
++                   " Celsius, which is all a ten-bit sensor with a %d"
++                   " millidegree step can express",
++                   TEMP_MIN_MC, TEMP_MAX_MC, -TEMP_SLOPE);
++        return;
++    }
++}
++
++static const Property bcm2838_thermal_props[] = {
++    /*
++     * What the sensor reports, in millidegrees Celsius.  bcm2835_thermal
++     * hardcodes 25C; this keeps that as the default but lets a test
++     * drive the decode at more than one point, which is the only way to
++     * tell a driver that decodes from one that returns a constant.
++     */
++    DEFINE_PROP_INT32("temperature", BCM2838ThermalState, temperature, 25000),
++};
++
++static void bcm2838_thermal_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++
++    dc->realize = bcm2838_thermal_realize;
++    dc->vmsd = &vmstate_bcm2838_thermal;
++    device_class_set_props(dc, bcm2838_thermal_props);
++}
++
++static const TypeInfo bcm2838_thermal_info = {
++    .name          = TYPE_BCM2838_THERMAL,
++    .parent        = TYPE_SYS_BUS_DEVICE,
++    .instance_size = sizeof(BCM2838ThermalState),
++    .class_init    = bcm2838_thermal_class_init,
++    .instance_init = bcm2838_thermal_init,
++};
++
++static void bcm2838_thermal_register_types(void)
++{
++    type_register_static(&bcm2838_thermal_info);
++}
++
++type_init(bcm2838_thermal_register_types)
+diff --git a/hw/misc/meson.build b/hw/misc/meson.build
+index 8809859..fe98492 100644
+--- a/hw/misc/meson.build
++++ b/hw/misc/meson.build
+@@ -95,6 +95,7 @@ system_ss.add(when: 'CONFIG_RASPI', if_true: files(
+   'bcm2835_cprman.c',
+   'bcm2835_powermgt.c',
+   'bcm2838_rng200.c',
++  'bcm2838_thermal.c',
+ ))
+ system_ss.add(when: 'CONFIG_SLAVIO', if_true: files('slavio_misc.c'))
+ system_ss.add(when: 'CONFIG_ZYNQ', if_true: files('zynq_slcr.c'))
+diff --git a/include/hw/arm/bcm2838_peripherals.h b/include/hw/arm/bcm2838_peripherals.h
+index 646dbb3..0efa197 100644
+--- a/include/hw/arm/bcm2838_peripherals.h
++++ b/include/hw/arm/bcm2838_peripherals.h
+@@ -13,6 +13,7 @@
+ #include "hw/sd/sdhci.h"
+ #include "hw/gpio/bcm2838_gpio.h"
+ #include "hw/misc/bcm2838_rng200.h"
++#include "hw/misc/bcm2838_thermal.h"
+ 
+ /* SPI */
+ #define GIC_SPI_INTERRUPT_MBOX         33
+@@ -48,6 +49,15 @@
+ #define GPU_INTERRUPT_DMA14     28
+ #define GPU_INTERRUPT_DMA15     31
+ 
++/*
++ * The AVS monitor, which carries the temperature sensor, sits in the
++ * lower peripheral window rather than the main one: bcm2711.dtsi has
++ * avs-monitor@7d5d2000 with reg = <0x7d5d2000 0xf00>, and that window
++ * starts at 0x7c000000.
++ */
++#define BCM2838_AVS_MONITOR_OFFSET  0x15d2000
++#define BCM2838_AVS_MONITOR_SIZE    0xf00
++
+ #define BCM2838_MPHI_OFFSET     0xb200
+ #define BCM2838_MPHI_SIZE       0x200
+ 
+@@ -67,6 +77,7 @@ struct BCM2838PeripheralState {
+     SDHCIState emmc2;
+     BCM2838GpioState gpio;
+     BCM2838Rng200State rng200;
++    BCM2838ThermalState thermal;
+ 
+     OrIRQState mmc_irq_orgate;
+     OrIRQState dma_7_8_irq_orgate;
+diff --git a/include/hw/misc/bcm2838_thermal.h b/include/hw/misc/bcm2838_thermal.h
+new file mode 100644
+index 0000000..4eda1bd
+--- /dev/null
++++ b/include/hw/misc/bcm2838_thermal.h
+@@ -0,0 +1,23 @@
++/*
++ * BCM2711 AVS monitor temperature sensor
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#ifndef BCM2838_THERMAL_H
++#define BCM2838_THERMAL_H
++
++#include "hw/sysbus.h"
++#include "qom/object.h"
++
++#define TYPE_BCM2838_THERMAL "bcm2838-thermal"
++OBJECT_DECLARE_SIMPLE_TYPE(BCM2838ThermalState, BCM2838_THERMAL)
++
++struct BCM2838ThermalState {
++    SysBusDevice busdev;
++    MemoryRegion iomem;
++
++    int32_t temperature;        /* qdev property, millidegrees Celsius */
++};
++
++#endif
+-- 
+2.51.0
+

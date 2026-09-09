@@ -853,13 +853,13 @@ sdhcipnp(void)
 		return nil;
 	/*
 	 * EMMC2, not the Arasan.  This is the controller a Pi 4's microSD
-	 * slot is actually on -- it is what the board boots from.  The
-	 * offset agrees with QEMU's own EMMC2_OFFSET in bcm2838, and with
-	 * Linux carrying the Pi 4's card on mmc@7e340000 rather than on
-	 * the Arasan; the Linux tree is not in this repo to cite, so take
-	 * the QEMU half as the checkable one.  The Arasan is still here
-	 * at 0xfe300000 and is the wireless part's SDIO, which is what
-	 * sdioinit() below uses it for.
+	 * slot is actually on -- it is what the board boots from.  Two
+	 * things say so and they agree: QEMU's own EMMC2_OFFSET in
+	 * bcm2838, and arch/arm/boot/dts/broadcom/bcm2711.dtsi, which
+	 * carries the card on emmc2: mmc@7e340000 with compatible
+	 * "brcm,bcm2711-emmc2".  The Arasan is still here at 0xfe300000
+	 * and is the wireless part's SDIO, which is what sdioinit() below
+	 * uses it for.
 	 *
 	 * QEMU had to be corrected to agree: bcm2838 mapped emmc2 and
 	 * wired its interrupt but parented the card to the Arasan, so

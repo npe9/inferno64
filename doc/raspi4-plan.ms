@@ -383,9 +383,73 @@ tick-seeded LCG, which its own comment calls smoke/dev only.  What that
 proves under emulation is the plumbing, not the entropy: QEMU's
 randomness is its host's.  That judgement still belongs to the silicon.
 .NH 1
+The sensor is not where the sensor was
+.PP
+The thermal sensor is the second of the two that needed a model as well
+as a driver, and it is further from its Pi 3 counterpart than the RNG
+was.  The BCM2835 block has two registers, an enable and a status, at
+.CW BCMPERIPH+0x212000 .
+A BCM2711's has one register, no enable at all, a different
+calibration, and it is not in the peripheral window this port's every
+other driver talks to: it is in the AVS monitor at 0x7d5d2000 on the VC
+bus, which the ARM sees at 0xfd5d2000, in the lower peripheral range
+the SoC maps and nothing had been placed in.
+.PP
+Both halves of that are citations, not recollection.
+.CW arch/arm/boot/dts/broadcom/bcm2711.dtsi
+has
+.CW avs-monitor@7d5d2000
+with
+.CW "reg = <0x7d5d2000 0xf00>"
+and gives the sensor's calibration as
+.CW "coefficients = <(-487) 410040>" ;
+.CW drivers/thermal/broadcom/bcm2711_thermal.c
+reads one register in that block, at offset 0x200, requires bits 16 and
+10 both set before it will believe the value, and takes the reading
+from bits 9:0.  So, in millidegrees and integers as
+.CW thermbcm.c
+does for its part,
+.CW "410040 - 487*adc" .
+A negative slope again \- a larger reading is a colder die \- and
+constants different enough from the BCM2835's
+.CW "412000 - 538*adc"
+that using the wrong pair reads about eight degrees hot at room
+temperature and drifts further as the part warms.  That is an error
+which looks entirely plausible right up until something throttles.
+.PP
+.B "One reading cannot tell a decode from a constant."
+.CW bcm2835_thermal
+hardcodes 25C, and a driver that returned a constant 25 would pass
+against it forever.  So patch 0024 makes the temperature a qdev
+property \- one line \- and the check was run twice: at the default the
+kernel prints
+.CW "die 24.823 C (adc 791)" ,
+and with
+.CW -global
+.CW bcm2838-thermal.temperature=85000
+it prints
+.CW "die 85.211 C (adc 667)" .
+The kernel does that arithmetic itself, from the register, so the two
+points prove it is decoding.
+.PP
+Neither number is round, and that is the part rather than the model.
+The field is ten bits with a 487 millidegree step, so a temperature is
+only ever reported to within half a step; 25C encodes to 791 and comes
+back as 24.823C.  A driver that wants tenths of a degree from this
+block is wrong about the hardware, so
+.CW thermavs.c
+says so where a reader of it will be standing.
+.PP
+.CW thermbcm.c
+left this board with
+.CW rngbcm.c ,
+for the same reason: it drives a block a BCM2711 does not have, and
+leaving it in the directory invites someone to wire it back up.  Both
+stay on raspi3b, which is their board.
+.NH 1
 Where the suite stands
 .PP
-34 markers with a 16MB SD image, a FAT16 USB disk and USB ethernet, no
+35 markers with a 16MB SD image, a FAT16 USB disk and USB ethernet, no
 .CW -FAIL ,
 and one guest-error log line, which is the deliberate out-of-spec read
 of the RNG's data register before the generator is enabled.  21 seconds
@@ -400,27 +464,22 @@ because a Pi 4 has nothing on SDHOST, and
 .CW USB-MOUSE-NONE ,
 because no mouse was attached.
 .PP
-The Pi 3B suite has two markers this one does not, and each has its
-own reason recorded above:
-.CW THERM-OK
-and
+The Pi 3B suite has one marker this one does not, and its reason is
+recorded above:
 .CW ARMTIMER-INTR-OK .
 .CW RNG-OK
-was the third until the RNG200 was modelled and driven.
+and
+.CW THERM-OK
+were the other two until the RNG200 and the AVS monitor were modelled
+and driven; both are here now, on this board's own blocks rather than
+on the Pi 3's.
 .NH 1
 What is left
-.IP \(bu
-A thermal sensor: the BCM2711's is the AVS monitor, a different block
-at a different address, and QEMU models it for no machine.
 .IP \(bu
 Settle whether the legacy interrupt controller chains into the GIC on
 a real BCM2711, and on which line.  That is what
 .CW ARMTIMER-INTR-OK
 needs, and it is a hardware question rather than a modelling one.
-.IP \(bu
-The USB and SD paths, which should carry over unchanged \- the DWC2 and
-both SD controllers are in the common realize \- once the boot reaches
-them.
 .IP \(bu
 The Arasan, which on this board is the wireless part's SDIO rather
 than a card controller \- the same Phase 6 that raspi3b is waiting on

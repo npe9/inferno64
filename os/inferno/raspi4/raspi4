@@ -95,7 +95,7 @@ misc
 	pmbcm
 	pwmbcm
 	systmrbcm
-	thermbcm
+	thermavs
 	dmabcm
 	auxbcm
 	armtmrbcm

@@ -136,6 +136,25 @@ worth keeping when adding to this series:
 	behaviours are inference rather than citation and say so in the
 	source; the interrupt (GIC SPI 125) is deliberately not driven,
 	because the published interface has status bits and no enable.
+	The 0x28 window the model claims is the one bcm2711.dtsi gives
+	the block: rng@7e104000, reg = <0x7e104000 0x28>.
+
+0024 hw/misc: model the BCM2711's temperature sensor, in the AVS
+	monitor.  A BCM2711's die sensor is not the BCM2835 one at
+	another address: it is a different block with one register
+	instead of two, a different calibration, and it is not in the
+	peripheral window at all -- it is in the AVS monitor at VC
+	0x7d5d2000, which the ARM sees at 0xfd5d2000, in the lower
+	peripheral range this SoC maps and nothing had been placed in.
+	Both halves are cited: bcm2711.dtsi has avs-monitor@7d5d2000
+	with reg = <0x7d5d2000 0xf00> and coefficients = <(-487)
+	410040>, and drivers/thermal/broadcom/bcm2711_thermal.c reads
+	AVS_RO_TEMP_STATUS at 0x200, requires bits 16 and 10, and takes
+	the data from bits 9:0.  The whole window is claimed and only
+	that register implemented.  Unlike bcm2835_thermal, which
+	hardcodes 25C, the temperature is a property -- one qdev line,
+	and the only way to tell a driver that decodes the reading from
+	one that returns a constant.
 
 WHAT COULD GO UPSTREAM.  Two of these are plain qemu bugs, independent
 of Inferno and of this port, and could be sent to qemu-devel on their
@@ -161,7 +180,7 @@ because the reasoning is worth reading.  Everything else adds a device
 model qemu does not have, and only matters to someone emulating a Pi in
 this much detail \- which is most of the series, and increasingly so as
 it grows.  Do not read the section above as a to-do list for upstream:
-four patches of twenty-three are general-purpose fixes and the rest are not.
+four patches of twenty-four are general-purpose fixes and the rest are not.
 
 WHAT HAS BEEN CROSS-CHECKED.  Several of these models were written
 from the datasheet and from recollection of a Linux driver, which is

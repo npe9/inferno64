@@ -71,7 +71,14 @@
 #define	CPRMAN		(BCMPERIPH + 0x101000)	/* BCM2835 clock manager */
 #define	PWM0		(BCMPERIPH + 0x20c000)	/* BCM2835 PWM */
 #define	SYSTMR		(BCMPERIPH + 0x003000)	/* BCM2835 system timer, 1MHz */
-#define	THERMAL		(BCMPERIPH + 0x212000)	/* BCM2835 temperature sensor */
+/*
+ * The AVS monitor, which carries this part's temperature sensor.  It
+ * is not in the peripheral window the rest of these are in: bcm2711.dtsi
+ * has avs-monitor@7d5d2000, which the ARM sees at 0xfd5d2000, and the
+ * sensor's register is 0x200 into it.  The BCM2835 sensor at
+ * BCMPERIPH+0x212000 is a different block and is not on this part.
+ */
+#define	AVSMON		((uintptr)0xfd5d2000)	/* BCM2711 AVS monitor */
 #define	DMA0		(BCMPERIPH + 0x007000)	/* BCM2835 DMA, channels 0-14 */
 #define	AUX0		(BCMPERIPH + 0x215000)	/* BCM2835 AUX: mini UART, SPI1/2 */
 #define	ARMTIMER	(BCMPERIPH + 0x00b400)	/* BCM2835 ARM timer (SP804-like) */
