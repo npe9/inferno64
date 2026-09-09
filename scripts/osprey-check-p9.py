@@ -263,10 +263,14 @@ def main():
         r'attachment (\d+) of (\d+)', t)
     slotsized = [a for a in attachments if int(a[0]) == 0x400000]
     ownsized = [a for a in attachments if int(a[0]) < 0x400000]
+    # One of each is the claim - that the two kinds are asked for
+    # differently and both are in this boot.  Counting the fixed-base
+    # ones would make this fail the day one more of them becomes a
+    # module, which is a change to celebrate rather than to trip over.
     results.append(("and a relocation slot is ground the size of a slot, not the size of the module first laid in it: a slot holds one module and then another, and the second may be the larger, so the region asked of the kernel is the whole slot - while a program at a base of its own is asked for at its own size, which is smaller, and the same boot shows both",
                     len(slotsized) >= 2
                     and all(int(a[1], 16) >= 0x2c00000 for a in slotsized)
-                    and len(ownsized) >= 4
+                    and len(ownsized) >= 1
                     and all(int(a[1], 16) < 0x2c00000 for a in ownsized)))
     #
     # And the record of it has a size in it.  The base alone would let a
@@ -312,7 +316,14 @@ def main():
                     and shslot.group(1) not in quints
                     and 'slots are taken' not in t
                     and five.count('libsh: /boot/libcat ended, status ""') >= 4
-                    and 'libsh: /boot/libwc ended, status ""' in five))
+                    and 'libsh: /boot/libwc ended, status ""' in five
+                    # And the bytes went the length of it.  Five stages
+                    # that exited clean while relaying nothing would
+                    # pass everything above.  1027 is the arithmetic the
+                    # three-stage line establishes: 454 for the file and
+                    # the first cat, and 191 more for each cat that
+                    # relays it, of which there are three.
+                    and 'libwc: 17 lines 184 words 1027 bytes off the pipe' in five))
     #
     # The shell itself is one, which is the exec path rather than the
     # spawn path: p9exec takes a slot for a module and gives it back,

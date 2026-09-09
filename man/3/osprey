@@ -1579,7 +1579,13 @@ the larger.  A slot is therefore asked for at
 rather than at the size of the module first laid in it, a module larger
 than a slot is refused before it is laid anywhere, and a program that
 does not fit the region already attached at its address is refused by
-name rather than writing past it.  There are sixteen attachment records;
+name rather than writing past it.  That last refusal cannot fire against
+the programs this tree has \- every slot is attached at the full size, a
+module too large for one is refused before the region is reached, and a
+fixed base holds one program of one size for a whole boot \- so it is a
+guard against what a slot may hold in principle rather than a hazard
+being averted now.  It was made to fire on purpose once, to see that it
+would.  There are sixteen attachment records;
 a boot takes eight, which is what the previous eight would have held
 exactly, and running out is refused out loud.  Each attachment is
 reported as it is taken.

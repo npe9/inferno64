@@ -10018,11 +10018,13 @@ at the same two addresses the spawned pair had, which the check requires
 - an address used, released and used again is what makes this an
 allocator rather than a longer list of names.
 .PP
-What it is not yet is rio.  There are four slots, and nothing sizes a
-slot to its module.  But the thing that was in doubt is settled, and it
-was the whole of the doubt: the records exist, they are complete once
-the linker's offsets are right, a real program runs where it was not
-linked, and two of it run at once.
+What it is not yet is rio.  Both of the things this paragraph named as
+open \- four slots, and nothing sizing a slot to its module \- are
+settled below, and so is the shape of the whole shell: every one of its
+programs but the one kept as a control is a module now.  What was in
+doubt is settled too, and it was the whole of the doubt: the records
+exist, they are complete once the linker's offsets are right, a real
+program runs where it was not linked, and two of it run at once.
 .PP
 .B "The shell runs one of them."
 .CW /boot/reloc
@@ -10074,6 +10076,12 @@ somewhere else entirely.
 So the record has a size in it now, a slot is asked for at the size a
 slot is rather than at the size of whatever went in it first, and a
 module larger than a slot is refused by name before it is laid anywhere.
+The first of those \- the refusal to lay a program in a region attached
+for something smaller \- cannot fire against the programs in this tree,
+since every slot is attached at the full size and anything too large for
+one never reaches it.  It is a guard against what a slot may hold in
+principle, and the way to know a guard like that works is to make it
+fire.
 Both are checked against a boot, and both were made to fail on purpose
 to see that the check would notice: with the fit bound shrunk to a page
 the boot reports
@@ -10171,7 +10179,12 @@ limit went to five and the script has a five-stage line:
 .CW "/boot/libcat /hello | /boot/libcat | /boot/libcat | /boot/libcat | /boot/libwc" .
 Five modules beside the shell is six, which is every slot there is
 \- 0x2c00000 for the shell and 0x3000000 through 0x4000000 for the
-pipeline \- and none is left over.  With
+pipeline \- and none is left over.  1027 bytes come out of the far end,
+which is the arithmetic the three-stage line establishes carried on: 454
+for the file and the first cat, and 191 more for each cat that relays
+it, of which there are three.  It is checked, because five stages that
+exited cleanly while relaying nothing would satisfy every other part of
+this.  With
 .CW Nrelocslot
 cut to five the last stage is refused,
 .CW "/boot/libwc: all 5 relocation slots are taken" ,
