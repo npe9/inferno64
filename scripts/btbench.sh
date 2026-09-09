@@ -376,7 +376,7 @@ dissect() {	# $1 phase, $2 capture
 	#
 	dn=`"$TSHARK" -r "$2" 2>/dev/null | grep -c . || true`
 	case "$1" in
-	keysvc)
+	keysvc|crypto)
 		if [ "$dn" != 0 ]; then
 			echo "BENCH FAIL ($1): $dn packets, and this phase has no controller"
 			return 1
@@ -551,6 +551,12 @@ run() {		# the same arguments; retries a hang once, and says so
 	return $r
 }
 
+#
+# The cryptography first: it needs no controller and nothing else
+# depends on it working, but everything Secure Connections will be
+# built on does.
+#
+run crypto "" crypto
 run pair "" full
 #
 # btfs creates the key file 0600, which is right for a file of keys and

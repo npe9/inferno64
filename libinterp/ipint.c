@@ -594,7 +594,6 @@ IPint_and(void *fp)
 	F_IPint_and *f;
 	mpint *ret, *i1, *i2;
 	void *v;
-print("IPint_and fp 0x%p\n", fp);
 
 	f = fp;
 	v = *f->ret;

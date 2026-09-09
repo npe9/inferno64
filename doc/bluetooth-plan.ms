@@ -101,12 +101,51 @@ says so.
 .B "LE Secure Connections."
 Pairing here is LE legacy, and a device that requires Secure
 Connections is told plainly that this cannot do it \(em which is
-honest and is also a refusal.  Secure Connections needs P-256
-elliptic-curve Diffie-Hellman and AES-CMAC, and
+honest and is also a refusal.  It needs P-256 elliptic-curve
+Diffie-Hellman and AES-CMAC, and
 .CW libsec
-in this tree has neither: there is no elliptic curve code in it at
-all.  So this is not a Bluetooth job, it is a cryptography job first,
-and it is the largest single item in this list.
+in this tree has neither.  So this is not a Bluetooth job, it is a
+cryptography job first, and it was the largest single item in this
+list.
+.PP
+The cryptography is now done, and the Bluetooth is not.
+.CW appl/lib/cmac.b
+is AES-CMAC, RFC 4493, over the AES that
+.CW Crypt
+already has; it agrees with all four of that document's vectors, and
+those four cover both halves of the construction, since two of the
+messages divide into whole blocks and two have to be padded, which is
+the distinction the two subkeys exist to make.
+.CW appl/lib/p256.b
+is the NIST P-256 curve over
+.CW IPint ,
+the multi-precision integers the interpreter already gives Limbo.
+Points are affine and every addition inverts, which is the slow way
+and the one that can be read against the formulas line by line; a
+scalar multiplication takes about 150 ms, and a pairing needs two.
+.PP
+Neither carries a memorised vector for the curve, because a vector
+copied wrongly agrees with itself.  What the selftest checks are
+properties the curve must have \(em the base point is on it, n times
+the base point is the point at infinity, (n\-1) times it is its own
+negation \(em and a Diffie-Hellman that has to agree from both sides.
+One digit changed in
+.CW b
+fails the first of those, which is what a constant typed wrongly would
+be.
+.PP
+Agreement with someone else's arithmetic is checked against
+.CW openssl :
+five freshly generated P-256 keypairs, and for each one this code's
+public key from the private scalar and this code's shared secret from
+the peer's point, both compared with what openssl says.  All five
+agree exactly.  That is done by hand rather than from the bench,
+because the bench does not get to depend on openssl being installed.
+.PP
+What is left is the Bluetooth half: f4, f5, f6 and g2 built on the
+CMAC, the public key exchange and DHKey in SMP, and the numeric
+comparison or passkey the user is asked about \(em which needs the
+next item as well.
 .PP
 .B "A way to ask the user."
 Just Works is what the stack does because it is what needs no

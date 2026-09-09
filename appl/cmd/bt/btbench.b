@@ -29,6 +29,10 @@ include "hidreport.m";
 	hidreport: Hidreport;
 	Report: import hidreport;
 include "bt.m";
+include "cmac.m";
+	cmac: Cmac;
+include "p256.m";
+	p256: P256;
 	bt: Bt;
 	smp: Smp;
 
@@ -278,6 +282,9 @@ init(nil: ref Draw->Context, argv: list of string)
 		return;
 	"included" =>
 		included();
+		return;
+	"crypto" =>
+		cryptophase();
 		return;
 	"coc" or "cocstingy" =>
 		cocphase(mode);
@@ -4008,4 +4015,60 @@ btvirtcoc(dev: string)
 	while(len what < 150)
 		what[len what] = 'a' + (len what % 26);
 	bvsay(dev + "/l2cap/" + Bvcoc, what, "credit channel");
+}
+
+#
+# The two pieces of cryptography LE Secure Connections needs, checked
+# against what can check them.
+#
+# AES-CMAC is RFC 4493 and has four published vectors, and they cover
+# both halves of the construction: two of the four messages divide
+# into whole blocks and two have to be padded, which is the
+# distinction the two subkeys exist to make.
+#
+# P-256 has no vector here on purpose.  What is checked instead are
+# properties the curve must have -- the base point is on it, n times
+# the base point is the point at infinity, (n-1) times it is its own
+# negation -- and a Diffie-Hellman that has to agree from both sides.
+# A constant with a digit wrong fails those.  Agreement with another
+# implementation is checked against openssl, by hand, and is written
+# up in doc/bluetooth-plan.ms rather than run from here, because the
+# bench does not get to depend on openssl being installed.
+#
+cryptophase()
+{
+	cmac = load Cmac Cmac->PATH;
+	if(cmac == nil){
+		sys->print("BT: FAILED: cannot load %s: %r\n", Cmac->PATH);
+		sys->print("BT: done\n");
+		return;
+	}
+	if((e := cmac->init()) != nil){
+		sys->print("BT: FAILED: cmac init: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	if((e = cmac->selftest()) != nil)
+		sys->print("BT: FAILED: aes-cmac: %s\n", e);
+	else
+		sys->print("BT: aes-cmac agrees with all four RFC 4493 vectors\n");
+
+	p256 = load P256 P256->PATH;
+	if(p256 == nil){
+		sys->print("BT: FAILED: cannot load %s: %r\n", P256->PATH);
+		sys->print("BT: done\n");
+		return;
+	}
+	if((e = p256->init()) != nil){
+		sys->print("BT: FAILED: p256 init: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	t0 := sys->millisec();
+	if((e = p256->selftest()) != nil)
+		sys->print("BT: FAILED: p-256: %s\n", e);
+	else
+		sys->print("BT: p-256: on the curve, nG infinite, (n-1)G negated, agreement matches (%d ms)\n",
+			sys->millisec() - t0);
+	sys->print("BT: done\n");
 }

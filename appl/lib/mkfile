@@ -25,6 +25,8 @@ TARG=\
 	bloomfilter.dis\
 	bufio.dis\
 	cfg.dis\
+	cmac.dis\
+	p256.dis\
 	cfgfile.dis\
 	chanfill.dis\
 	complete.dis\
