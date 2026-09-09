@@ -548,6 +548,40 @@ rungc(Prog *p)
 	Heap *h;
 	Bhdr *b;
 
+	/*
+	 * The invariant Phase 1b of doc/dis-parallel-plan.ms depends on,
+	 * asserted rather than argued.  The collector takes Prog->reg as
+	 * its root set, and for a program that is executing, p->reg is
+	 * stale for every instruction of the quantum -- the live values
+	 * are in the context's register file.  Today that never matters,
+	 * because the collector only runs between quanta, from
+	 * vmachine()'s BusyGC block or from execatidle(), and isave() has
+	 * written p->reg back at both.  curP->curprog names the program
+	 * whose live registers the context holds, and is nil exactly when
+	 * no program is mid-quantum.
+	 *
+	 * A probe of this shape ran before and never fired, and was then
+	 * removed; xec.c's own comment records that it was removed before
+	 * the arm64 JIT was fixed, so the compiled path rests on the
+	 * argument and not on the measurement.  Restored as a permanent
+	 * tripwire rather than a temporary probe: it costs one compare
+	 * per collection, it cannot fire while there is one context, and
+	 * it fires the moment Phase 1b makes curR per-executor without
+	 * Phase 5 having taught the collector not to trust p->reg.  A
+	 * missing root is not a data race and no sanitizer will catch it;
+	 * this will.
+	 */
+	if(curP->curprog != nil) {
+		static int said;
+
+		if(!said) {
+			said = 1;
+			print("rungc: collecting with prog %d mid-quantum -- "
+				"its p->reg is stale and its live roots are not "
+				"in the root set\n", curP->curprog->pid);
+		}
+	}
+
 	gcnruns++;
 	if(gchalt) {
 		gchalted++;
