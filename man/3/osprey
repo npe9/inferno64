@@ -1495,11 +1495,20 @@ the header's entry is not a code entry at all, since
 .B -u
 points it at the export table.
 .PP
-This is the one thing the fixed bases cannot do: the same module is laid
-down twice, at two addresses, and both copies run.  It is not yet an
-allocator \- the caller still names the base, and
+This is the one thing the fixed bases cannot do, and it is allocated
+rather than assigned:
 .B p9lib.h
-still lists them \- so it does not yet give rio what rio wants.
+names a range and a slot size instead of an address per program,
+.I p9spawn
+tells a module from an ordinary program by its magic and takes a free
+slot for it, and
+.I procdone
+gives the slot back when the program ends.  So two copies of one module
+run at the same time, in two slots, and a slot is used again by the next
+program after its own has finished.  A program with a fixed base still
+cannot be run twice, and the same boot shows both: the shell is refused
+a second copy of one image, and two copies of a module run side by
+side.
 .PP
 Finding it out cost a bug in
 .BR 6l .

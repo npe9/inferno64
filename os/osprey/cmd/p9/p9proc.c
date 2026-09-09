@@ -47,6 +47,8 @@
 #include	"p9file.h"
 
 extern int	p9load(char *name, uvlong *entryp, uvlong *basep);
+extern int	p9loadreloc(char *name, uvlong progbase, uvlong *entryp, uvlong *basep);
+extern int	p9isreloc(char *name);
 extern P9lib*	p9libtable(void);
 extern void	p9execexits(char *status);
 
@@ -68,6 +70,7 @@ struct Proc9 {
 	Fgrp	*fgrp;		/* its own descriptor table */
 	int	std[3];		/* its numbers for its standard descriptors */
 	int	inproc;		/* a second flow of control inside a program already running */
+	int	slot;		/* the relocation slot it was laid in, or -1 */
 	void	(*fn)(void*);	/* what it runs, when it is one of those */
 	void	*arg;
 	char	name[64];
@@ -94,6 +97,44 @@ p9procbusy(uvlong base)
 		if(proc9[i].used && proc9[i].live && proc9[i].base == base)
 			return 1;
 	return 0;
+}
+
+/*
+ * Where a relocatable module is laid.
+ *
+ * A program with a fixed base is its address: p9load refuses a second
+ * instance because the two would be one image sharing one data segment.
+ * A module has no address, so what it needs is not a name but a free
+ * slot, and giving the slot back when the program ends is what lets the
+ * next one have it.  That is the whole of the difference, and it is why
+ * two of one module can run at once.
+ */
+static int relocslot[Nrelocslot];
+
+static int
+relocalloc(void)
+{
+	int i;
+
+	for(i = 0; i < Nrelocslot; i++)
+		if(!relocslot[i]){
+			relocslot[i] = 1;
+			return i;
+		}
+	return -1;
+}
+
+static void
+relocfree(int slot)
+{
+	if(slot >= 0 && slot < Nrelocslot)
+		relocslot[slot] = 0;
+}
+
+uvlong
+p9relocaddr(int slot)
+{
+	return (uvlong)P9relocbase + (uvlong)slot * P9relocslot;
 }
 
 static Proc9*
@@ -205,6 +246,10 @@ procdone(Proc9 *t, char *status)
 	}
 	t->live = 0;
 	t->done = 1;
+	if(t->slot >= 0){
+		relocfree(t->slot);
+		t->slot = -1;
+	}
 	wakeup(&t->r);
 }
 
@@ -290,7 +335,24 @@ p9spawn(char *name, char **argv, int *std)
 		print("p9 spawn: %s: argument vector too long\n", name);
 		return -1;
 	}
-	if(p9load(name, &entry, &base) < 0)	/* it refuses an image already running */
+	/*
+	 * A module is laid in a slot of its own, which is what lets this
+	 * be the second copy of a program that is already running.  An
+	 * ordinary program is laid at its own address, and p9load refuses
+	 * a second instance of it.
+	 */
+	t->slot = -1;
+	if(p9isreloc(name)){
+		t->slot = relocalloc();
+		if(t->slot < 0){
+			print("p9 spawn: %s: all %d relocation slots are taken\n", name, Nrelocslot);
+			return -1;
+		}
+		if(p9loadreloc(name, p9relocaddr(t->slot), &entry, &base) < 0){
+			relocfree(t->slot);
+			return -1;
+		}
+	} else if(p9load(name, &entry, &base) < 0)	/* it refuses an image already running */
 		return -1;
 	t->entry = entry;
 	t->base = base;
@@ -369,6 +431,7 @@ p9proccreate(void (*f)(void*), void *arg)
 	t->arg = arg;
 	t->fgrp = nil;			/* shared with the creator: procdone must not close it */
 	t->base = 0;
+	t->slot = -1;
 	t->pid = ++p9nextpid;
 	t->used = 1;
 	t->live = 1;

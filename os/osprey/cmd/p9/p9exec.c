@@ -326,6 +326,29 @@ p9load(char *name, uvlong *entryp, uvlong *basep)
 }
 
 /*
+ * Is this file a relocatable module rather than an ordinary program?
+ * The magic says so: 6l -u sets the top bit of it.  Asked before
+ * loading, so that spawn knows whether it needs a slot.
+ */
+int
+p9isreloc(char *name)
+{
+	uchar hdr[4];
+	uvlong magic;
+	int fd;
+
+	if((fd = p9open(name, OREAD)) < 0)
+		return 0;
+	if(readall(fd, hdr, sizeof hdr) != sizeof hdr){
+		p9close(fd);
+		return 0;
+	}
+	p9close(fd);
+	magic = be(hdr, 4);
+	return (magic & 0x80000000) != 0 && (magic & 0xffff) == 0x8a97;
+}
+
+/*
  * Load a relocatable module and lay it at a base of the caller's
  * choosing.
  *

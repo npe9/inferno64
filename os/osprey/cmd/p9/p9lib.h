@@ -116,10 +116,18 @@ enum {
 	P9progbase6	= 0x2400000,	/* libdraw, the program that draws */
 	P9progbase7	= 0x2800000,	/* libthread, the program with threads in it */
 	/*
-	 * And two for the relocatable module, which has no address of its
-	 * own: it is laid at whichever of these the caller names, and at
-	 * both at once, which is the thing the fixed bases cannot do.
+	 * And the ground a relocatable module is laid on, which is not a
+	 * base per program but a range with slots in it.  A module has no
+	 * address of its own, so nothing here has to name one: the loader
+	 * takes a free slot, and gives it back when the program ends.  Four
+	 * of them, at the same spacing as the fixed bases above.
+	 *
+	 * This is the difference the whole thing is for.  Above, a program
+	 * is its address, and two of one image cannot run at once because
+	 * there is only the one address to run it at.  Below, an image is
+	 * not anywhere in particular, and two of it can run at two slots.
 	 */
 	P9relocbase	= 0x2c00000,
-	P9relocbase2	= 0x3000000,
+	P9relocslot	= 0x400000,
+	Nrelocslot	= 4,
 };

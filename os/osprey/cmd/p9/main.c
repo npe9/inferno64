@@ -693,6 +693,45 @@ p9main(void)
 	}
 
 	/*
+	 * And two of the same program running at once, which is what all
+	 * of this was for.
+	 *
+	 * The shell is told, a few lines above, that it cannot run two of
+	 * an image at the same time, and the check confirms the refusal:
+	 * a program with a fixed base IS its address, and the two would be
+	 * one image sharing one data segment, one descriptor table and one
+	 * heap.  /boot/reloc has no address, so spawn takes a free slot for
+	 * each copy and gives it back when the copy ends (p9proc.c).  Two
+	 * spawns, two slots, both alive at once, and each reads its own
+	 * pointers - which are different addresses in the two copies.
+	 *
+	 * That is the shape rio needs.  It is not rio: nothing here has
+	 * built the shell's programs as modules, and the slots are four.
+	 */
+	{
+		char *rargv[2];
+		int a, b;
+		char sa[64], sb[64];
+		extern int p9spawn(char*, char**, int*);
+		extern int p9waitpid(int, char*, int);
+		int std[3];
+
+		rargv[0] = "/boot/reloc";
+		rargv[1] = nil;
+		std[0] = std[1] = std[2] = -1;
+		a = p9spawn("/boot/reloc", rargv, std);
+		b = p9spawn("/boot/reloc", rargv, std);
+		if(a < 0 || b < 0)
+			print("p9: could not start two of /boot/reloc at once (%d, %d)\n", a, b);
+		else {
+			p9waitpid(a, sa, sizeof sa);
+			p9waitpid(b, sb, sizeof sb);
+			print("p9: two of /boot/reloc ran at once, as %d and %d, each in a slot of its own\n",
+				a, b);
+		}
+	}
+
+	/*
 	 * And the same module twice, at two addresses.
 	 *
 	 * Every other program here is laid at the address it was linked
@@ -712,11 +751,12 @@ p9main(void)
 	{
 		char *rargv[2];
 		extern int p9execreloc(char*, char**, uvlong);
+		extern uvlong p9relocaddr(int);
 
 		rargv[0] = "/boot/reloc";
 		rargv[1] = nil;
-		p9execreloc("/boot/reloc", rargv, P9relocbase);
-		p9execreloc("/boot/reloc", rargv, P9relocbase2);
+		p9execreloc("/boot/reloc", rargv, p9relocaddr(0));
+		p9execreloc("/boot/reloc", rargv, p9relocaddr(1));
 	}
 
 	/*

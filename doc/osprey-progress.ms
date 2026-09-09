@@ -9865,14 +9865,51 @@ correctly.  That is the thing the seven fixed bases cannot do.
 .PP
 The bug is in the
 .CW -u
-path, which nothing in this tree used: it is Plan 9's loadable-module
-link, and the amd64 half of the loader that consumes it has never been
-exercised either \-
+path, which nothing in this tree used until now: before this work there
+was no
+.CW -u
+link anywhere under
+.CW os/ ,
+.CW mkfiles/
+or
+.CW utils/*/mkfile ,
+and all twenty board configurations say
+.CW nodynld .
+.CW buildreloc.sh
+is the tree's first.  The amd64 half of the loader that consumes it had
+plainly never been exercised either \-
 .CW dynld-amd64.c 's
 .CW dynmagic ()
 returns
 .CW I_MAGIC ,
-which is the 386's.
+which is the 386's.  A constant that is wrong for the architecture and
+has never drawn a complaint is itself evidence about what the absence of
+complaints is worth.
+.PP
+The blast radius, since
+.CW utils/
+is shared and the fix lands in it: the other session on this machine
+audited the four other linkers and I checked the two claims that are
+checkable.
+.CW 8l
+cannot have this bug \- its whole
+.CW asmins
+is
+.CW "andptr = and; doasm(p);" ,
+with no prefix insertion and nothing that shifts after emission \- which
+matters because
+.CW os/inferno/boot/pc
+is the one place this tree uses it.
+.CW 5l ,
+.CW 7l
+and
+.CW jl
+cannot either: fixed-width instruction sets, and none of the four has a
+.CW memmove
+into the instruction buffer at all.  So the fix is
+.CW 6l 's
+alone, and it changes nothing that anything else in the tree links
+today.
 .PP
 One more thing the doing of it taught, and it cost a sweep.  After
 proving the fix by putting the bug back and watching the boot die, I
@@ -9943,16 +9980,44 @@ problem
 .CW privalloc
 has and a much larger instance of it.
 .PP
-What this does not yet do is give rio what it wants.  A relocatable
-module can be laid twice, which is the mechanism the fixed bases lacked,
-but the loader still asks the caller for a base and
+.B "And then two of one program at once."
+The mechanism above still asked the caller for a base, which is only
+half of what a fixed base was.  It is an allocator now:
 .CW p9lib.h
-still names them; nothing chooses one, and nothing frees one when a
-program ends.  Turning that into an allocator, and building the shell's
-programs as modules so a pipeline stops being a table of addresses, is
-the next piece of it.  What is settled is the part that was in doubt:
-the records exist, they are complete once the linker's offsets are
-right, and a real program runs at an address it was not linked for.
+names a range and a slot size rather than an address per program, spawn
+takes a free slot for a module and
+.CW procdone
+gives it back, and
+.CW p9spawn
+tells a module from an ordinary program by its magic
+.CW ( p9isreloc )
+and loads it accordingly.
+.PP
+So the personality spawns
+.CW /boot/reloc
+twice and waits for both.  They run at
+.CW 0x2c00000
+and
+.CW 0x3000000 ,
+at the same time, each reading its own pointers - which are different
+addresses in the two copies.  A few lines earlier in the same boot the
+shell is refused a second copy of
+.CW /boot/libcat
+and the check confirms the refusal, so the two claims stand side by
+side: a program that is its address cannot be run twice, and a program
+that is not can.
+.PP
+The slots are given back.  The two sequential runs that follow are laid
+at the same two addresses the spawned pair had, which the check requires
+- an address used, released and used again is what makes this an
+allocator rather than a longer list of names.
+.PP
+What it is not yet is rio.  The shell's programs are not built as
+modules, so a pipeline is still a table of addresses; there are four
+slots; and nothing sizes a slot to its module.  But the thing that was
+in doubt is settled, and it was the whole of the doubt: the records
+exist, they are complete once the linker's offsets are right, a real
+program runs where it was not linked, and two of it run at once.
 .PP
 .B "Phase 3.2: a real program, then rio, linked with the library."
 A real program \- a command, then a shell, then rio \- is linked with
@@ -10322,7 +10387,7 @@ check clean, the two-machine check run twice in the sweep:
 .CW p9linux
 13,
 .CW p964
-43, keyboard 8, rio 14, the window gestures 10, micro 7, user 11, net
+44, keyboard 8, rio 14, the window gestures 10, micro 7, user 11, net
 13, wire 14, two-machine 20 twice over, the
 six criteria of the userland the tree builds itself, and two portable
 builds.  A criterion is a sentence a booted kernel printed

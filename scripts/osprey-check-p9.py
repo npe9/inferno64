@@ -311,22 +311,29 @@ def main():
     # linked for, which is why p9lib.h has one base per program and why
     # the shell is told it cannot run two of an image at once.
     # /boot/reloc has no address of its own - 6l -u linked it at 0 and
-    # gave it a table of every absolute address in it - so it is laid
-    # twice, at two bases, and the same module runs at both.  The
-    # arithmetic it prints is over a table of function pointers and a
-    # table of string pointers, both in its data: a pointer that was not
-    # corrected is a wrong number or a fault, not a subtly different
-    # string.
+    # gave it a table of every absolute address in it - so the loader
+    # takes a free slot for each copy and gives it back when the copy
+    # ends.  The arithmetic each copy prints is over a table of function
+    # pointers and a table of string pointers, both in its data: a
+    # pointer that was not corrected is a wrong number or a fault, not a
+    # subtly different string.
     laid = re.findall(r'p9 reloc: /boot/reloc laid at (0x[0-9a-f]+), \d+ bytes, '
                       r'(\d+) absolute addresses corrected; it was linked at 0', t)
     ran = re.findall(r'reloc: 5 function pointers summing to 15, '
                      r'5 string pointers of total length 21: '
                      r'"relocation is the way out"', t)
-    results.append(("and a program with no address of its own is laid at one the loader chooses: /boot/reloc is a relocatable module, linked at 0 with a table of every absolute address in it, and the loader corrects each as it lays it down",
-                    len(laid) == 2 and laid[0][0] != laid[1][0]
-                    and laid[0][1] == laid[1][1] and int(laid[0][1]) > 0))
-    results.append(("and the same module runs at two addresses at once, which is the thing the fixed bases cannot do: both copies read their own function and string pointers correctly, so every absolute address in each was corrected to the base it was put at",
-                    len(ran) == 2 and 'reloc: that is not the' not in t))
+    spawned = re.findall(r'p9 spawn: /boot/reloc runs as (\d+) at (0x[0-9a-f]+)', t)
+    both = re.search(r'p9: two of /boot/reloc ran at once, as (\d+) and (\d+), '
+                     r'each in a slot of its own', t)
+    results.append(("and a program with no address of its own is laid wherever the loader puts it: /boot/reloc is a relocatable module, linked at 0 with a table of every absolute address in it, and each time it is loaded the loader corrects every one of them to the slot it chose",
+                    len(laid) >= 4 and len({n for _, n in laid}) == 1
+                    and int(laid[0][1]) > 0
+                    and len(ran) == len(laid) and 'reloc: that is not the' not in t))
+    results.append(("and two of it run at the same time, each in a slot of its own - which is the thing a fixed base cannot do, and the thing the shell is refused a few lines above: a program with an address is that address, and two of it would be one image sharing one data segment, one descriptor table and one heap",
+                    both is not None and both.group(1) != both.group(2)
+                    and len(spawned) == 2 and spawned[0][1] != spawned[1][1]))
+    results.append(("and a slot is given back when its program ends and taken again by the next: the address the first copy ran at is used again by a later load, so the range is allocated rather than assigned",
+                    len(laid) >= 4 and laid[0][0] in [a for a, _ in laid[2:]]))
     results.append(("and it exits through the microkernel's minimal syscall interface, no in-kernel personality",
                     'the program exited' in t and 'panic' not in t))
 
