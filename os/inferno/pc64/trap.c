@@ -736,9 +736,27 @@ if(0) print("%s %ud: notify %#p %#p %#p %s\n",
 	memmove(&up->note[0], &up->note[1], up->nnote*sizeof(Note));
 	qunlock(&up->debug);
 	splhi();
-	if(up->fpstate == FPactive){
+	/*
+	 * Masked, like every other test of fpstate.  This one was bare
+	 * ==, and fpu.c's are all "& ~(FPnouser|FPkernel|FPindexm)" --
+	 * lines 208, 345 and the assignments that preserve those bits.
+	 * So for any process carrying FPnouser, FPkernel or a non-zero
+	 * FPindex, this compared false: fpsave() was skipped, the FPU was
+	 * left live, and FPillegal was OR'd in anyway.  mathemu() then
+	 * sees FPillegal first and returns without repairing anything,
+	 * and the state stays out of step.
+	 *
+	 * Found by the cloud-port session, by reading rather than by
+	 * catching it.  Reachable here only for a process with those bits
+	 * set, which after the userureg() correction is not the common
+	 * case on this board -- but it is wrong either way and the
+	 * assignment must preserve the bits it masked, or the next test
+	 * sees a different state than the one that was saved.
+	 */
+	if((up->fpstate & ~(FPnouser|FPkernel|FPindexm)) == FPactive){
 		fpsave(up->fpsave);
-		up->fpstate = FPinactive;
+		up->fpstate = FPinactive |
+			(up->fpstate & (FPnouser|FPkernel|FPindexm));
 	}
 	up->fpstate |= FPillegal;
 	return 1;
