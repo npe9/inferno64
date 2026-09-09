@@ -234,12 +234,31 @@ answers come from the bonds, from
 .B -k
 or
 .BR -K .
-Either way it is Just Works: there is nothing here that can show a
-number or read one, so the only honest answer to the confirmation is
-yes, and what that gives is an encrypted link with no protection
-against a man in the middle.  A BR/EDR link is encrypted after it is
-authenticated, because a link where the key was agreed and never used
-is not what any profile means by a secure link.
+On BR/EDR it is Just Works: nothing here answers the controller's
+confirmation but yes, and what that gives is an encrypted link with no
+protection against a man in the middle.  A BR/EDR link is encrypted
+after it is authenticated, because a link where the key was agreed and
+never used is not what any profile means by a secure link.
+.IP
+.B "pair confirm"
+on LE asks for numeric comparison instead.  The device's
+.B confirm
+file then holds the question \-
+.B "numeric 504437"
+\- and the pairing waits until
+.B yes
+or
+.B no
+is written back to it.  Writing
+.B no
+ends the pairing and makes no bond, which is the point of asking.
+.IP
+The six digits are never sent: both sides compute them from the two
+public keys and the two nonces, and a person compares them.  That is
+the whole of the protection, and it is why plain
+.B pair
+does not claim it \- the bit that says protection against a man in the
+middle is set only when there is somewhere to ask.
 .IP
 The old kind of Classic pairing, where a controller asks for a PIN, is
 refused and said out loud.  A device that will do nothing else cannot

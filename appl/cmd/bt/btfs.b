@@ -71,7 +71,7 @@ Btfs: module
 };
 
 Kroot, Kctlr, Kaddr, Kver, Kctl, Kstate, Kscan, Kremotes, Kbonds, Kdident, Kinc,
-	Kdev, Kdaddr, Kdtype, Kdrssi, Kdname, Kdadv, Kdstate, Kdctl,
+	Kdev, Kdaddr, Kdtype, Kdrssi, Kdname, Kdadv, Kdstate, Kdctl, Kdconfirm,
 	Kdgatt, Ksvc, Kchar, Kcnotify, Kdesc, Kdl2cap, Kcoc, Kdsdp, Ksdp,
 	Kdrfcomm, Krfdir, Krfdata,
 	Klocal, Klsvc, Klchar: con iota;
@@ -120,6 +120,14 @@ Cnode: adt {
 };
 
 Dev: adt {
+	#
+	# A pairing that needs a person: ask is how smp asks, and
+	# question is the last thing it asked, which the confirm file
+	# shows.  Both are nil when nothing is pending.
+	#
+	ask:	ref Smp->Ask;
+	question: string;
+
 	r:	ref Radio;	# the controller it was heard on
 	q:	big;		# its directory
 	gq:	big;		# its gatt directory
@@ -931,6 +939,7 @@ newdev(r: ref Radio, name: string, addr: array of byte, atype: int): ref Dev
 	mkfd(d.q, "adv", Kdadv, 8r444, d, nil);
 	mkfd(d.q, "state", Kdstate, 8r444, d, nil);
 	mkfd(d.q, "ctl", Kdctl, 8r666, d, nil);
+	mkfd(d.q, "confirm", Kdconfirm, 8r666, d, nil);
 	return d;
 }
 
@@ -1101,6 +1110,14 @@ doread(m: ref Tmsg.Read)
 		srv.reply(styxservers->readstr(m, bt->hex(n.dev.adv) + "\n"));
 	Kdstate =>
 		srv.reply(styxservers->readstr(m, devstate(n.dev)));
+	Kdconfirm =>
+		#
+		# What the pairing is waiting to be told, or nothing.
+		# A reader polls it; there is no blocking read here
+		# because a pairing that nobody answers has to time out
+		# rather than hold a Styx request open forever.
+		#
+		srv.reply(styxservers->readstr(m, confirmtext(n.dev)));
 	Kchar =>
 		spawn readchar(m, n);
 	Kdesc =>
@@ -1301,6 +1318,8 @@ dowrite(m: ref Tmsg.Write)
 		spawn ctlwrite(m, n.rad, nil, string m.data);
 	Kdctl =>
 		spawn ctlwrite(m, n.dev.r, n.dev, string m.data);
+	Kdconfirm =>
+		spawn confirmwrite(m, n.dev, string m.data);
 	Kchar =>
 		spawn writechar(m, n);
 	Kcoc =>
@@ -1380,9 +1399,18 @@ ctlwrite(m: ref Tmsg.Write, r: ref Radio, d: ref Dev, s: string)
 		else
 			e = disconnect(dd);
 	"pair" =>
+		#
+		# "pair" on its own is Just Works and claims no
+		# protection against a man in the middle.  "pair
+		# confirm" asks for numeric comparison instead: the
+		# device's confirm file then shows six digits, and the
+		# pairing waits until yes or no is written back to it.
+		#
 		(dd, ee) := target(r, d, f);
 		if(ee != nil)
 			e = ee;
+		else if(hasword(f, "confirm"))
+			e = pairconfirm(dd);
 		else
 			e = pair(dd);
 	"params" =>
@@ -2205,6 +2233,30 @@ disconnect(d: ref Dev): string
 
 pair(d: ref Dev): string
 {
+	return pairing(d, Smp->Ionoio, nil);
+}
+
+#
+# The same pairing, with somewhere to ask a person.  The channels are
+# made here and handed to smp; asker() leaves whatever it asks where
+# the confirm file can see it, and the answer comes back the same way.
+#
+pairconfirm(d: ref Dev): string
+{
+	a := ref Smp->Ask;
+	a.q = chan of string;
+	a.a = chan of int;
+	done := chan of int;
+	d.ask = a;
+	spawn asker(d, a, done);
+	e := pairing(d, Smp->Iodisplayyesno, a);
+	done <-= 1;
+	d.ask = nil;
+	return e;
+}
+
+pairing(d: ref Dev, iocap: int, ask: ref Smp->Ask): string
+{
 	<-d.lock;
 	if(d.conn == nil){
 		d.lock <-= 1;
@@ -2221,7 +2273,7 @@ pair(d: ref Dev): string
 		d.lock <-= 1;
 		return classicpair(d, c);
 	}
-	(b, e) := smp->pair(d.conn, d.mux, Smp->Ionoio);
+	(b, e) := smp->pair(d.conn, d.mux, iocap, ask);
 	d.lock <-= 1;
 	if(e != nil)
 		return e;
@@ -3230,4 +3282,71 @@ responder(d: ref Dev)
 	# on this same link, and the key it names is now one we have.
 	#
 	spawn responder(d);
+}
+
+#
+# The confirm file: what a pairing is waiting to be told, and the
+# telling.
+#
+# Numeric comparison shows six digits on both devices and a person
+# says whether they are the same.  That answer cannot be worked out
+# here -- if it could, it would not be protection against anything --
+# so it comes in from outside, and this is the outside.
+#
+confirmtext(d: ref Dev): string
+{
+	if(d == nil || d.question == nil)
+		return "";
+	return d.question + "\n";
+}
+
+confirmwrite(m: ref Tmsg.Write, d: ref Dev, s: string)
+{
+	(nil, f) := sys->tokenize(s, " \t\r\n");
+	if(f == nil || d == nil || d.ask == nil){
+		srv.reply(ref Rmsg.Error(m.tag, "nothing is waiting to be confirmed"));
+		return;
+	}
+	yes := -1;
+	case hd f {
+	"yes" or "y" or "ok" =>	yes = 1;
+	"no" or "n" =>		yes = 0;
+	}
+	if(yes < 0){
+		srv.reply(ref Rmsg.Error(m.tag, "write yes or no"));
+		return;
+	}
+	d.question = nil;
+	d.ask.a <-= yes;
+	srv.reply(ref Rmsg.Write(m.tag, len m.data));
+}
+
+#
+# Take the questions smp asks and leave them where the file can see
+# them.  One process per pairing, and it ends when the pairing does.
+#
+asker(d: ref Dev, a: ref Smp->Ask, done: chan of int)
+{
+	for(;;)
+		alt {
+		q := <-a.q =>
+			d.question = q;
+		<-done =>
+			d.question = nil;
+			return;
+		}
+}
+
+#
+# Whether a word is among a ctl command's arguments.  Written to the
+# controller's ctl the address comes first and the word after it;
+# written to the device's own there is no address, so the word is
+# looked for rather than counted to.
+#
+hasword(f: list of string, w: string): int
+{
+	for(; f != nil; f = tl f)
+		if(hd f == w)
+			return 1;
+	return 0;
 }

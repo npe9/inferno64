@@ -541,9 +541,26 @@ static void ready_cb(void)
 	 * against it.
 	 */
 	bthost_set_sc_support(host, true);
+	/*
+	 * DisplayYesNo on both sides with protection against a man in
+	 * the middle asked for makes Secure Connections choose numeric
+	 * comparison.  bthost picks the method from the same table the
+	 * specification has and then simply proceeds -- it has no g2
+	 * and no person to ask -- so what this exercises on the other
+	 * side is the negotiation and the six digits, not an agreement
+	 * about them.
+	 */
+	/*
+	 * One io capability and one auth req for both radios, because
+	 * bthost keeps one of each: setting them twice, once for SSP
+	 * and once for Secure Connections, means the second call wins
+	 * and the first is a comment.  That is how the LE pairing kept
+	 * coming out as Just Works while this file plainly asked for
+	 * numeric comparison.
+	 */
+	bthost_set_io_capability(host, 0x01);	/* DisplayYesNo */
+	bthost_set_auth_req(host, 0x0d);	/* bonding, MITM, SC */
 	bthost_write_ssp_mode(host, 0x01);
-	bthost_set_io_capability(host, 0x03);
-	bthost_set_auth_req(host, 0x01);
 	bthost_add_l2cap_server(host, TESTPSM, l2cap_conn, l2cap_disconn, NULL);
 	bthost_add_l2cap_server_custom(host, COCPSM, COCMTU, COCMPS,
 					COCCREDITS, coc_conn, coc_disconn, NULL);

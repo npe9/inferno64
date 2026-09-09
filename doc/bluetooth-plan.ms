@@ -204,11 +204,62 @@ against a man in the middle without asking a person would be a lie.
 That needs the next item.
 .PP
 .B "A way to ask the user."
-Just Works is what the stack does because it is what needs no
-interface.  Passkey entry and numeric comparison need somewhere to put
-the question and read the answer \(em a file, in keeping with the rest
-\(em and without them the stack cannot pair with anything that insists
-on protection against a man in the middle.
+Just Works is what the stack did because it is what needs no
+interface.  Numeric comparison now has one.
+.PP
+A device's directory has a
+.CW confirm
+file.  When a pairing needs a person it holds the question \(em
+.CW "numeric 504437" \(em
+and the pairing waits until
+.CW yes
+or
+.CW no
+is written back to it.
+.CW "pair confirm"
+on the device's
+.CW ctl
+asks for that; plain
+.CW pair
+is still Just Works, and the difference is not decoration: the bit
+claiming protection against a man in the middle is set only when there
+is somewhere to ask, because setting it otherwise is a claim the stack
+cannot keep.
+.PP
+The wire is the same as Just Works.  Numeric comparison sends nothing
+extra: both sides compute
+.CW g2
+over the two public keys and the two nonces, and a person compares six
+digits that never travel.  That is what makes it worth having and also
+what makes it dangerous to get wrong \(em a bad
+.CW g2
+fails silently, with two devices showing different numbers and nothing
+in the protocol to notice.
+.PP
+BlueZ cannot check it: bthost picks the method out of the same table
+the specification has and then proceeds, having no
+.CW g2
+and nobody to ask.  So it is checked against
+.CW openssl :
+the two public keys and the two nonces taken out of a capture, the
+message built from them, the CMAC computed by openssl, its low four
+bytes taken modulo a million.  For the run that showed
+.CW "numeric 504437" ,
+openssl gives 1191504437, and 1191504437 modulo a million is 504437.
+.PP
+Both answers are tested.  Writing
+.CW yes
+completes the pairing and the bond is made; writing
+.CW no
+ends it with
+.CW "the numbers were not the same: refused here"
+and no bond, which is the half that matters, since a numeric
+comparison that cannot refuse is Just Works with a number printed
+over it.
+.PP
+What is still missing is passkey entry, which needs six digits to be
+read in rather than shown, and the peripheral role, which pairs the
+legacy way whatever the central asks for.
 .NH 2
 The shape of what is built
 .PP

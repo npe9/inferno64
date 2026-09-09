@@ -456,6 +456,24 @@ init(nil: ref Draw->Context, argv: list of string)
 	# Secure Connections against BlueZ was answering the DHKey
 	# check with reason 0x0b and the run still said BTVIRT PASS.
 	#
+	#
+	# Against BlueZ this asks for numeric comparison, so the six
+	# digits appear in the device's confirm file and the pairing
+	# waits.  A person is what that file is for; the bench answers
+	# it from a process, which is the one thing a person would not
+	# do and is the only way to test it without one.
+	#
+	if(mode == "btvirt"){
+		spawn confirmer(dev);
+		sys->print("BT: pair\n");
+		if((e = writefile(dev + "/ctl", "pair confirm")) != nil)
+			sys->print("BT: FAILED: pair: %s\n", e);
+		else {
+			show(dev + "/state");
+			for(bl0 := lines(readfile(mnt + "/0/bonds")); bl0 != nil; bl0 = tl bl0)
+				say("BT: bond " + hd bl0);
+		}
+	} else {
 	sys->print("BT: pair\n");
 	if((e = writefile(dev + "/ctl", "pair")) != nil)
 		sys->print("BT: FAILED: pair: %s\n", e);
@@ -463,6 +481,7 @@ init(nil: ref Draw->Context, argv: list of string)
 		show(dev + "/state");
 		for(bl := lines(readfile(mnt + "/0/bonds")); bl != nil; bl = tl bl)
 			say("BT: bond " + hd bl);
+	}
 	}
 
 	#
@@ -4078,4 +4097,27 @@ cryptophase()
 		sys->print("BT: p-256: on the curve, nG infinite, (n-1)G negated, agreement matches (%d ms)\n",
 			sys->millisec() - t0);
 	sys->print("BT: done\n");
+}
+
+#
+# Watch the confirm file and answer it.
+#
+# What it prints is the number, because the number is the thing worth
+# seeing: two devices showing different digits is what a person is
+# there to catch, and a bench that answered without reporting what it
+# answered would be testing that yes can be written to a file.
+#
+confirmer(dev: string)
+{
+	for(i := 0; i < 100; i++){
+		q := trim(readfile(dev + "/confirm"));
+		if(q != nil){
+			sys->print("BT: the pairing asks: %s\n", q);
+			if((e := writefile(dev + "/confirm", "yes")) != nil)
+				sys->print("BT: FAILED: answering the confirm: %s\n", e);
+			return;
+		}
+		sys->sleep(100);
+	}
+	sys->print("BT: FAILED: the pairing never asked anything\n");
 }

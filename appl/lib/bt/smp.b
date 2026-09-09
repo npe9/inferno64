@@ -187,7 +187,7 @@ parse(s: string): ref Bond
 #
 # pair over a connection this side made
 #
-pair(c: ref Conn, m: ref Mux, iocap: int): (ref Bond, string)
+pair(c: ref Conn, m: ref Mux, iocap: int, ask: ref Ask): (ref Bond, string)
 {
 	ch := l2cap->open(m, L2cap->Csmp);
 
@@ -203,9 +203,17 @@ pair(c: ref Conn, m: ref Mux, iocap: int): (ref Bond, string)
 	# either way: Just Works gives none, and numeric comparison
 	# needs somewhere to ask a person.
 	#
+	#
+	# Protection against a man in the middle is claimed only when
+	# there is somewhere to ask a person and the caller says this
+	# device can show a number and take an answer.  Setting the bit
+	# without that would be a claim the stack cannot keep.
+	#
 	auth := Abonding;
 	if(cmac != nil && p256 != nil)
 		auth |= Asc;
+	if(ask != nil && iocap == Iodisplayyesno && (auth & Asc))
+		auth |= Amitm;
 	preq[3] = byte auth;
 	preq[4] = byte 16;			# maximum key size
 	preq[5] = byte 0;			# we distribute nothing
@@ -225,7 +233,7 @@ pair(c: ref Conn, m: ref Mux, iocap: int): (ref Bond, string)
 	# is derived rather than distributed.
 	#
 	if((auth & Asc) && (int pres[3] & Asc)){
-		(ltk, sce) := scpair(c, m, ch, preq, pres);
+		(ltk, sce) := scpair(c, m, ch, preq, pres, ask);
 		if(sce != nil)
 			return (nil, sce);
 		return scfinish(c, m, ch, ltk, respkeys);
@@ -702,6 +710,30 @@ f6(w, n1, n2, r, iocap, a1, a2: array of byte): array of byte
 }
 
 #
+# g2(U, V, X, Y): the six digits both sides show for a person to
+# compare.  The specification takes the CMAC modulo 2^32, which is its
+# low four bytes, and the number shown is that modulo a million.
+#
+# Nothing on the wire carries it, so getting it wrong is silent: two
+# devices would show different numbers and a person would refuse a
+# pairing that was fine, or -- worse -- the check would be worthless
+# without anything saying so.  BlueZ cannot check this one, because
+# bthost has no g2 at all; it is checked against openssl's CMAC over
+# the values taken out of a capture, which is written up in
+# doc/bluetooth-plan.ms.
+#
+g2(u, v, x, y: array of byte): int
+{
+	m := cat(be(u) :: be(v) :: be(y) :: nil);
+	t := cmac->aescmac(be(x), m);		# big endian, most significant first
+	n := 0;
+	for(i := 12; i < 16; i++)		# the low four bytes of the value
+		n = (n << 8) | int t[i];
+	n &= 16r7fffffff;			# Limbo ints are signed
+	return n % 1000000;
+}
+
+#
 # The private key, from the controller's own randomness rather than
 # anything in here.  Two sixteen byte draws make thirty two bytes;
 # p256 refuses one that is not in 1..n-1, and a fresh draw is taken
@@ -735,7 +767,7 @@ genkey(x: ref Hci->Ctlr): (array of byte, array of byte, array of byte, string)
 # it is why Amitm is not set.
 #
 scpair(c: ref Conn, m: ref Mux, ch: chan of array of byte,
-	preq, pres: array of byte): (array of byte, string)
+	preq, pres: array of byte, ask: ref Ask): (array of byte, string)
 {
 	(sk, pkx, pky, ge) := genkey(c.x);
 	if(ge != nil)
@@ -803,6 +835,24 @@ scpair(c: ref Conn, m: ref Mux, ch: chan of array of byte,
 
 	if(!same(f4(rpkx, pkx, nb, byte 0), cb[1:17]))
 		return (nil, "the confirm does not match: the peer is not who it said");
+
+	#
+	# Numeric comparison, when both sides asked for protection
+	# against a man in the middle and both can show a number and
+	# take an answer.  The wire is the same as Just Works from here
+	# on -- the number is never sent -- so what makes this
+	# different from Just Works is only that a person looked.
+	#
+	# Anything else is Just Works, and says so by not setting the
+	# bit rather than by claiming protection it has not got.
+	#
+	if(ask != nil && (int preq[3] & Amitm) && (int pres[3] & Amitm)
+	&& int pres[1] == Iodisplayyesno){
+		v := g2(pkx, rpkx, na, nb);
+		ask.q <-= sys->sprint("numeric %6.6d", v);
+		if(<-ask.a != 1)
+			return (nil, "the numbers were not the same: refused here");
+	}
 
 	#
 	# A1 and A2 are the address type and the address as one seven

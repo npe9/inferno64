@@ -1272,6 +1272,23 @@ Hfp: module
 
 Smp: module
 {
+	#
+	# How a pairing asks a person a question and waits for the answer.
+	#
+	# Numeric comparison shows the same six digits on both devices and a
+	# person says whether they match; that is the whole of the protection
+	# against a man in the middle, and it cannot be done by a program
+	# deciding for itself.  So the stack asks, over a channel, and btfs
+	# turns the channel into a file.
+	#
+	# ask is nil when there is nobody to ask, and then the pairing is Just
+	# Works and claims no such protection.
+	#
+	Ask: adt {
+		q:	chan of string;		# the question, "numeric 123456"
+		a:	chan of int;		# 1 to accept it, 0 to refuse
+	};
+
 	PATH:	con "/dis/lib/bt/smp.dis";
 
 	# IO capabilities
@@ -1331,7 +1348,7 @@ Smp: module
 	resolve:	fn(b: ref Bond, atype: int, addr: array of byte): int;
 
 	# pair as the initiator over an already open connection
-	pair:	fn(c: ref Hci->Conn, m: ref L2cap->Mux, iocap: int): (ref Bond, string);
+	pair:	fn(c: ref Hci->Conn, m: ref L2cap->Mux, iocap: int, ask: ref Ask): (ref Bond, string);
 
 	# and as the responder: wait for a peer to ask, answer it,
 	# hand the controller the key it then asks for, and distribute
