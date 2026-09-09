@@ -19211,3 +19211,80 @@ have.  Both are regenerated and committed here.
 The two Pi kernels are not in the repository at all, so a checkout
 cannot run those two configurations however good its qemu.  That, and
 not the patches, is the reason the container runs five.
+.NH 1
+The same wire on three pairs, one of them mixed
+.PP
+.CW virt-peer
+proved two Inferno kernels could talk to each other with no slirp
+between them.  Two things follow from it cheaply, and both are done.
+.PP
+.B "virtarm64-peer."
+The arm64 board carries the same
+.CW virtinit.b ,
+so the peer check was already in it and printing
+.CW PEER-NONE .
+Giving that board the second network device is the whole change, and it
+exercises an ethernet driver \(em
+.CW ethervirtiommio
+on aarch64 \(em that until now only ever talked to qemu's user-mode
+stack.  It is not a copy of the riscv64 configuration: the arm64 board's
+.CW VIRTIO_SIZE
+is 0x200 against virt's 0x1000, so
+.CW bus.1
+and
+.CW bus.2
+are
+.CW 0xA000200
+and
+.CW 0xA000400
+rather than
+.CW 0x10002000
+and
+.CW 0x10003000 ,
+and its disk stays on PCI while both its networks are mmio \(em a
+combination nothing else in the suite boots.  34 markers, and the same
+15 known
+.CW -FAIL
+the board already had.
+.PP
+.B "peer-mixed, which is the one worth arguing for."
+Both ends of the other two pairs are the same kernel.  A bug in how this
+tree writes an ARP packet, or lays out an IP header, is a bug both ends
+share: they would agree with each other perfectly while agreeing with
+nothing else in the world.  The mixed pair puts a riscv64 kernel and an
+aarch64 one on the same wire \(em different compilers, different word
+sizes in the toolchain's history, different emulators \(em and they
+complete the exchange and each end up with the other in their own
+.CW /net/arp .
+.PP
+It is otherwise
+.CW virt-peer
+exactly: same board, same host rig, same
+.CW hostfwd .
+So its marker set has to come out identical, and it does, 44 markers
+and the same 12 known
+.CW -FAIL .
+The only thing changed is who is on the other end of the wire, which is
+the comparison the configuration exists to make.
+.CW config_peer_kernel
+and
+.CW config_peer_qemu
+exist for it, since the second guest there is a different binary run by
+a different emulator.
+.PP
+Each pair has its own socket port \(em 14444, 14445, 14446 \(em because
+they run one after another in a full pass, and a port still in
+.CW TIME_WAIT
+from the previous one is the race this suite has already paid for once.
+.PP
+One harness fix came out of building them.  The emulator's own standard
+error had been going to
+.CW /dev/null ,
+so a qemu that refused to start reported as
+.I "never reached ROOT-CMDS-OK in 240s"
+\(em true, and useless.  It cost a boot to work out that the real
+message was
+.CW "Failed to get \(dqwrite\(dq lock" ,
+a stray qemu from an earlier experiment still holding the disk image.
+Both guests' stderr now goes to a file, and a board that never printed
+its last marker quotes the first line of it if there is one.

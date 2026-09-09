@@ -17,9 +17,10 @@ packaged qemu-system-aarch64.  Cards are made in $TMPDIR/boardsuite
 runs.
 
 IN A CONTAINER.  docker/boardsuite.sh builds a Debian image with the
-packaged qemus, mkfs.vfat, mtools and python3, and runs the five
+packaged qemus, mkfs.vfat, mtools and python3, and runs the seven
 configurations that do not want the patched build -- virtarm64,
-sifiveu, virt, virt32 and virt-peer.  The other four are the Pi ones.
+virtarm64-peer, sifiveu, virt, virt32, virt-peer and peer-mixed.  The
+other four are the Pi ones.
 The tree is bind-mounted read-only rather than copied -- these five
 kernels are committed binaries -- so the image never goes stale when
 one is relinked, and mkconfig's absolute ROOT never has to agree with
@@ -129,6 +130,11 @@ the system qemu:
 	virt32		QEMU -M virt riscv32.
 	virt-peer	The same board again, and a second copy of it
 			on the other end of a wire.  See TWO GUESTS.
+	virtarm64-peer	The same, on the arm64 board: two mmio networks
+			and the disk still on PCI, which no other
+			configuration exercises together.
+	peer-mixed	virt again, with the arm64 board on the other
+			end of the wire instead of another riscv64 one.
 
 The transport is not a detail, and getting it wrong looks exactly like a
 broken driver.  virtarm64 links sdvirtio10 and no mmio block driver at
@@ -210,13 +216,40 @@ straight to the other guest.  What replies is another copy of this
 kernel.  A packet arrives because both ends agreed about ARP, about
 addresses and about TCP, not because slirp was obliging.
 
-The two run the same code and tell themselves apart by the MAC the
-harness gives the peer link: 52:54:00:aa:aa:01 announces and answers
+Both boards that carry virtinit.b have such a configuration, and the
+arm64 one is not a copy: its mmio window is 0x200 wide against virt's
+0x1000, so bus.1 and bus.2 are 0xA000200 and 0xA000400 there rather
+than 0x10002000 and 0x10003000, and its disk stays on PCI while both
+its networks are mmio -- a combination nothing else here boots.
+
+The two guests run the same code and tell themselves apart by the MAC
+the harness gives the peer link: 52:54:00:aa:aa:01 announces and answers
 on 192.168.77.1, :02 dials and asks from .2, and the address comes off
 the same byte so nothing has to be passed in.  Both then read their own
 /net/arp and check the other's address is in it, which is the part
 slirp could never have taught them.  A boot with no such device --
 every other one here -- prints PEER-NONE and moves on.
+
+peer-mixed is the one worth arguing for.  Both ends of the other two
+pairs are the same kernel, so a bug in how this tree writes an ARP
+packet or lays out an IP header is a bug both ends share, and they
+would agree with each other perfectly while agreeing with nothing else.
+Its two ends are a riscv64 kernel and an aarch64 one, built by
+different compilers for different word orders and run by different
+emulators, and they still complete the exchange and each finish with
+the other in their own /net/arp.
+
+It is otherwise virt-peer exactly -- same board, same host rig, same
+hostfwd -- so its marker set has to come out identical, and it does:
+44 markers and the same 12 known -FAIL.  The only thing changed is who
+is on the other end.  config_peer_kernel and config_peer_qemu exist for
+it, since the second guest there is a different binary run by a
+different emulator.
+
+Each pair has its own socket port -- 14444, 14445 and 14446 -- because
+they run one after the other in a full pass and a port still in
+TIME_WAIT from the last one is a race this suite has already paid for
+once.
 
 The second guest is rig, not a board: no baseline, no marker set, no
 disk, and its own slirp checks fail because the hostfwd rules belong to

@@ -12,7 +12,8 @@
 # time, so this image does not go stale when a kernel is relinked, and
 # mkconfig's absolute ROOT never has to agree with anything in here.
 #
-# Six of the eight configurations run in it.  The two Pi ones do not:
+# Seven of the eleven configurations run in it.  The four Pi ones do
+# not:
 # they need the patched qemu of tools/qemu-patches, which is a source
 # build, and nothing about the Pi boards is what this image is for.
 #
@@ -52,4 +53,4 @@ ENV BOARDSUITE_TIMEOUT=480
 
 WORKDIR /src
 ENTRYPOINT ["/bin/sh"]
-CMD ["tools/boardsuite/run", "virtarm64", "sifiveu", "virt", "virt32", "virt-peer"]
+CMD ["tools/boardsuite/run", "virtarm64", "virtarm64-peer", "sifiveu", "virt", "virt32", "virt-peer", "peer-mixed"]

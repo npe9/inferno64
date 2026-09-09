@@ -40,7 +40,7 @@ verbose=false
 record=false
 force=false
 
-configs='raspi3b raspi3b-4g raspi4 raspi4-hot virtarm64 sifiveu virt virt32 virt-peer'
+configs='raspi3b raspi3b-4g raspi4 raspi4-hot virtarm64 virtarm64-peer sifiveu virt virt32 virt-peer peer-mixed'
 
 # Each configuration: the kernel, the QEMU arguments, the line that
 # says the board is done printing, and the evidence lines that make
@@ -49,9 +49,11 @@ config_kernel() {
 	case $1 in
 	raspi3b|raspi3b-4g)	echo "$root/os/inferno/raspi3b/iraspi3b";;
 	raspi4|raspi4-hot)	echo "$root/os/inferno/raspi4/iraspi4";;
-	virtarm64)		echo "$root/os/inferno/virtarm64/ivirtarm64";;
+	virtarm64|virtarm64-peer)
+				echo "$root/os/inferno/virtarm64/ivirtarm64";;
 	sifiveu)		echo "$root/os/inferno/sifiveu/isifiveu";;
-	virt|virt-peer)		echo "$root/os/inferno/virt/ivirt";;
+	virt|virt-peer|peer-mixed)
+				echo "$root/os/inferno/virt/ivirt";;
 	virt32)			echo "$root/os/inferno/virt32/ivirt32";;
 	esac
 }
@@ -68,8 +70,10 @@ config_kernel() {
 config_qemu() {
 	case $1 in
 	raspi*)			echo "$QEMU";;
-	virtarm64)		echo "${QEMU_AARCH64:-`command -v qemu-system-aarch64`}";;
-	sifiveu|virt|virt-peer)	echo "${QEMU_RISCV64:-`command -v qemu-system-riscv64`}";;
+	virtarm64|virtarm64-peer)
+				echo "${QEMU_AARCH64:-`command -v qemu-system-aarch64`}";;
+	sifiveu|virt|virt-peer|peer-mixed)
+				echo "${QEMU_RISCV64:-`command -v qemu-system-riscv64`}";;
 	virt32)			echo "${QEMU_RISCV32:-`command -v qemu-system-riscv32`}";;
 	esac
 }
@@ -107,6 +111,29 @@ config_args() {
 		echo "-M virt -bios none -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-device,drive=blk0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-device,netdev=n0";;
 	virt32)
 		echo "-M virt -bios none";;
+	peer-mixed)
+		# The riscv64 board listening for the arm64 one.  The two
+		# ends of this wire are different architectures running
+		# different kernels, which is the only thing here that
+		# puts a big-picture agreement -- byte order, header
+		# layout, the ARP and IP encodings -- to a test that a
+		# shared bug could not pass.  Otherwise it is virt-peer
+		# exactly, host rig and hostfwd and all, so that its
+		# marker set has to come out the same: the same board on
+		# the same run, and the only thing changed is who is on
+		# the other end of the wire.
+		echo "-M virt -bios none -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-device,drive=blk0,bus=virtio-mmio-bus.0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-device,netdev=n0,bus=virtio-mmio-bus.1 -netdev socket,id=p0,listen=:14446 -device virtio-net-device,netdev=p0,mac=52:54:00:aa:aa:01,bus=virtio-mmio-bus.2";;
+	virtarm64-peer)
+		# virtarm64 with a peer link, the same shape as virt-peer
+		# and on its own socket port: the two peer configurations
+		# run one after the other in a full pass, and a port still
+		# in TIME_WAIT from the last one is the race this suite
+		# has already paid for once.  The disk stays on PCI and
+		# the two networks are mmio, which is untested together
+		# anywhere else -- bus.1 is 0xA000200 and bus.2
+		# 0xA000400 on this machine, VIRTIO_SIZE being 0x200
+		# here rather than virt's 0x1000.
+		echo "-M virt -cpu cortex-a57 -m 1G -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-pci,disable-legacy=on,drive=blk0 -netdev user,id=n0 -device virtio-net-device,netdev=n0,bus=virtio-mmio-bus.1 -netdev socket,id=p0,listen=:14445 -device virtio-net-device,netdev=p0,mac=52:54:00:aa:aa:01,bus=virtio-mmio-bus.2";;
 	virt-peer)
 		# The same board as virt, plus a second network device
 		# joined to another guest, and every virtio device on a
@@ -136,14 +163,36 @@ config_args() {
 # and config_peer_evidence says which.
 config_peer() {
 	case $1 in
+	peer-mixed)
+		echo "-M virt -cpu cortex-a57 -m 1G -netdev user,id=n0 -device virtio-net-device,netdev=n0,bus=virtio-mmio-bus.1 -netdev socket,id=p0,connect=127.0.0.1:14446 -device virtio-net-device,netdev=p0,mac=52:54:00:aa:aa:02,bus=virtio-mmio-bus.2";;
+	virtarm64-peer)
+		echo "-M virt -cpu cortex-a57 -m 1G -netdev user,id=n0 -device virtio-net-device,netdev=n0,bus=virtio-mmio-bus.1 -netdev socket,id=p0,connect=127.0.0.1:14445 -device virtio-net-device,netdev=p0,mac=52:54:00:aa:aa:02,bus=virtio-mmio-bus.2";;
 	virt-peer)
 		echo "-M virt -bios none -netdev user,id=n0 -device virtio-net-device,netdev=n0,bus=virtio-mmio-bus.1 -netdev socket,id=p0,connect=127.0.0.1:14444 -device virtio-net-device,netdev=p0,mac=52:54:00:aa:aa:02,bus=virtio-mmio-bus.2";;
 	esac
 }
 
+# The other guest's kernel and qemu, when they are not this
+# configuration's own.  peer-mixed is the reason these exist: its two
+# ends are different architectures, so the second guest is a different
+# binary run by a different emulator.
+config_peer_kernel() {
+	case $1 in
+	peer-mixed)	echo "$root/os/inferno/virtarm64/ivirtarm64";;
+	*)		config_kernel $1;;
+	esac
+}
+
+config_peer_qemu() {
+	case $1 in
+	peer-mixed)	echo "${QEMU_AARCH64:-`command -v qemu-system-aarch64`}";;
+	*)		config_qemu $1;;
+	esac
+}
+
 config_peer_evidence() {
 	case $1 in
-	virt-peer)
+	virt-peer|virtarm64-peer|peer-mixed)
 		echo 'peer: 525400aaaa02 is 192\.168\.77\.2'
 		echo 'PEER-DIAL-OK'
 		echo 'PEER-ARP-OK 192\.168\.77\.1';;
@@ -162,7 +211,8 @@ config_last() {
 	case $1 in
 	raspi3b|raspi3b-4g)	echo 'USB-MOUSE';;
 	raspi4|raspi4-hot)	echo 'USB-MOUSE';;
-	virtarm64|virt|virt-peer)	echo 'ROOT-CMDS-OK';;
+	virtarm64|virtarm64-peer)	echo 'ROOT-CMDS-OK';;
+	virt|virt-peer|peer-mixed)	echo 'ROOT-CMDS-OK';;
 	sifiveu)		echo 'SIFIVEU-SH-OK';;
 	virt32)			echo 'VIRT32-INIT-OK';;
 	esac
@@ -184,7 +234,7 @@ config_evidence() {
 		echo 'die 24\.';;
 	raspi4-hot)
 		echo 'die 85\.';;
-	virt-peer)
+	virt-peer|virtarm64-peer|peer-mixed)
 		echo 'peer: 525400aaaa01 is 192\.168\.77\.1'
 		echo 'PEER-ARP-OK 192\.168\.77\.2';;
 	virtarm64|sifiveu|virt|virt32)
@@ -337,7 +387,7 @@ markers() {
 # starts and stops around one boot.
 config_hostnet() {
 	case $1 in
-	virt|virt-peer)	echo yes;;
+	virt|virt-peer|peer-mixed)	echo yes;;
 	esac
 }
 
@@ -492,9 +542,15 @@ attempt() {
 		return
 	fi
 
+	# qemu's own complaints go to a file rather than to nowhere.  An
+	# emulator that refuses to start -- a disk image another process
+	# still holds is the one that happens -- otherwise reports as
+	# "never reached ROOT-CMDS-OK", which is true and useless.
+	err="$work/$c.qemu.err"
+	rm -f "$err"
 	# shellcheck disable=SC2046
 	"$qemu" `config_args $c` -display none -serial file:"$log" \
-		-kernel "$kernel" >/dev/null 2>&1 &
+		-kernel "$kernel" >/dev/null 2>"$err" &
 	pid=$!
 
 	# The other guest, if this configuration has one.  It goes second
@@ -511,13 +567,22 @@ attempt() {
 	peerpid=
 	peerargs=`config_peer $c`
 	if [ -n "$peerargs" ]; then
+		peerkernel=`config_peer_kernel $c`
+		peerqemu=`config_peer_qemu $c`
+		if [ -z "$peerqemu" ] || [ ! -x "$peerqemu" ]; then
+			echo "the other guest wants a qemu that is not here: ${peerqemu:-none found}"
+			hostnet_stop
+			kill $pid 2>/dev/null || true
+			wait $pid 2>/dev/null || true
+			return
+		fi
 		rm -f "$peerlog"
 		try=0
 		while [ $try -lt 10 ]; do
 			sleep 2
 			# shellcheck disable=SC2086
-			"$qemu" $peerargs -display none -serial file:"$peerlog" \
-				-kernel "$kernel" >/dev/null 2>&1 &
+			"$peerqemu" $peerargs -display none -serial file:"$peerlog" \
+				-kernel "$peerkernel" >/dev/null 2>"$work/$c.peer.err" &
 			peerpid=$!
 			sleep 1
 			if kill -0 $peerpid 2>/dev/null; then
@@ -528,7 +593,11 @@ attempt() {
 			try=`expr $try + 1`
 		done
 		if [ -z "$peerpid" ]; then
-			echo "the other guest would not stay up"
+			if [ -s "$work/$c.peer.err" ]; then
+				echo "the other guest: `head -1 "$work/$c.peer.err"`"
+			else
+				echo "the other guest would not stay up"
+			fi
 			hostnet_stop
 			kill $pid 2>/dev/null || true
 			wait $pid 2>/dev/null || true
@@ -562,7 +631,11 @@ attempt() {
 	hostnet_stop
 
 	if ! grep -q "$last" "$log" 2>/dev/null; then
-		echo "never reached $last in ${timeout}s"
+		if [ -s "$err" ]; then
+			echo "qemu: `head -1 "$err"`"
+		else
+			echo "never reached $last in ${timeout}s"
+		fi
 		return
 	fi
 
@@ -634,7 +707,7 @@ for c in $configs; do
 	fi
 
 	makecard `config_card $c`
-	case $c in virt|virtarm64|virt-peer) needfat=true;; *) needfat=false;; esac
+	case $c in virt|virtarm64|virt-peer|virtarm64-peer|peer-mixed) needfat=true;; *) needfat=false;; esac
 	if $needfat && ! makefat fat16.img; then
 		echo "$c: FAIL no way to make a FAT16 image here (hdiutil or mkfs.vfat)"
 		echo "    BLK-OK needs a filesystem, not a blank card; see the README"
