@@ -9,7 +9,8 @@ set -e
 cd "$(dirname "$0")/../../../.."			# repo root
 P=os/osprey/cmd/p9
 LIBINC="-I Osprey/amd64/include -I Osprey/include -I include -I $P"
-OBJ="os/osprey/pc64/init9.6"
+6a -o /tmp/srv_userregtorture.6 os/osprey/pc64/userregtorture.s
+OBJ="os/osprey/pc64/init9.6 /tmp/srv_userregtorture.6"
 for f in os/osprey/port/userprog.c $P/srv9p.c; do
 	o=/tmp/srv_$(basename $f .c).6
 	6c $LIBINC -o $o $f

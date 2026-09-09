@@ -1154,6 +1154,47 @@ dd -if /n/osprey/arena -bs 1 -iseek 2304 -count 4
 .B /os/osprey/cmd/draw/kbd.c
 .SH CHECKING
 .PP
+Two of the things checked are about the kernel's own entries rather
+than about the Osprey device, and both print a line at boot that a
+reader of the console will meet before anything else.
+.PP
+.B osprey regcheck:
+comes from
+.B os/osprey/pc64/regtorture.s
+by way of
+.I init0
+and says whether an interrupt gives back every register it interrupted.
+Twelve registers are loaded with distinct values and compared in a spin
+with interrupts on; the same loop under
+.B CLI
+runs in the same boot as the control, and the number of clock ticks the
+spin covered is printed and required to be non-zero, because "the
+registers survived" and "nothing was tested" would otherwise be the same
+line.  It runs on
+.B pc64
+only, since
+.I init0
+is the full personality's, but the entry it measures is
+.BR l.$O ,
+one object linked into all seven configurations.
+.PP
+.B "osprey user: eleven registers survived"
+is the same question asked of the other entry, from
+.B os/osprey/pc64/userregtorture.s
+in the xup64 task.  It matters more, because the interrupt path is
+9front's unchanged while
+.I syscallentry
+and
+.I forkret
+are this kernel's own and save every register to carry two ABIs.  A
+hundred real system calls, since a call goes through the same save and
+restore every time and a register lost there is lost on the first one.
+Four registers are excluded and named: AX is the result, CX and R11 are
+what SYSRET consumes, BP carries the call number.  The count printed is
+the count the loop made, and the check requires it to equal the count
+asked for \- a loop that misread its argument still finishes with every
+register intact.
+.PP
 .B /scripts/osprey-check.py
 boots one kernel on four cores and asks it for everything a single
 machine can be made to show: a request submitted and collected through

@@ -222,6 +222,7 @@ userinit.$O:	initcode.i userprog.i p9prog.i
 # takes, which also gives libc its Tos and its private words.
 userprog.i:	init9.$O $ROOT/os/osprey/cmd/p9/buildserver.sh \
 		$ROOT/os/osprey/cmd/p9/srv9p.c $ROOT/os/osprey/cmd/p9/srv9p.h \
+		$ROOT/os/osprey/pc64/userregtorture.s \
 		$ROOT/os/osprey/port/userprog.c
 	sh $ROOT/os/osprey/cmd/p9/buildserver.sh
 

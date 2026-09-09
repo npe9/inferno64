@@ -9870,20 +9870,119 @@ or
 .CW touser
 \- which is to say the one part of this kernel's entry that is its own
 code rather than 9front's is the part this test does not reach.
-Covering it wants the same loop in a user program making a system call
-each time round, one for each of the two ABIs the entry serves, and
-that is written down here as the next thing rather than attempted
-badly: a hand-rolled test that gets the calling convention subtly wrong
-returns a clean answer for the wrong reason, which is worse than no
-test.  Nor does it cover R13, R14 and R15, which the loop itself uses;
-nor the segment registers, the flags, or any of the x87 and SSE state.
+That half is
+.CW os/osprey/pc64/userregtorture.s ,
+below.  What is still not covered is R13, R14 and R15, which the kernel
+loop itself uses; nor the segment registers, the flags, or any of the
+x87 and SSE state.
 .PP
 The file is copied from
 .CW os/inferno/pc64/regtorture.s
 rather than shared, because kernels in this tree are self-contained: no
 file under one flavour names another's source directory.
+.PP
+.B "And the other entry."
+The syscall path is the half that matters more here, because it is the
+half this kernel wrote: 9front's
+.CW _strayintr
+is shared byte for byte, while
+.CW syscallentry
+and
+.CW forkret
+carry both the Plan 9 and the Linux ABI and so save and restore every
+register rather than the few upstream needs.  A kproc spinning with
+interrupts on never reaches them.
+.PP
+.CW userregtorture.s
+asks the question from where a system call can be asked from, which is
+user mode.  It runs in the xup64 task
+.CW ( userprog.c ),
+sets eleven registers, makes a real system call and compares them, a
+hundred times over.  The call is
+.CW "pwrite(2, sp, 0, -1)" ,
+a write of no bytes to the console: answered by even the cut
+microkernel, without effect, and repeatable.  Its arguments go on the
+stack because that is where
+.CW syscall ()
+reads them,
+.CW ureg->sp+BY2WD ,
+skipping the word a return address would occupy; they are written once
+before the loop so the body is the call and the comparisons and nothing
+else.
+.PP
+Four registers are excluded and each is named rather than quietly
+skipped.  AX is the call's result.  CX and R11 are where SYSCALL puts
+the user's ip and flags and what SYSRET consumes, so no program can
+expect them back.  BP is RARG, which carries the call number.  The
+eleven that remain include R14 and R15, which are the ones most worth
+having: syscallentry loads
+.CW m
+and
+.CW up
+into them, so if a register in this kernel were going to be lost across
+a call it would be one of those.
+.PP
+A hundred calls, against the interrupt half's four million, and the
+difference is not a compromise.  Whether an interrupt lands in the
+window that matters is chance, so that test buys confidence by
+repeating; a system call goes through the same save and restore every
+time, so a register lost there is lost on the first call and on all of
+them.  A hundred is also what it costs: a console write is about four
+milliseconds on this guest, and a thousand of them made the boot sit
+for four seconds.
+.PP
+Then the part worth writing down, because I did the thing I had said in
+this document I would avoid.  The first version read its iteration
+count from the stack.  On this compiler the first argument arrives in
+RARG and only has a
+.I home
+on the stack, which the caller fills if it needs to spill \-
+.CW ospreyxcall
+in
+.CW xcall.s
+begins by storing RARG into that home for exactly this reason.  So the
+loop ran a number nobody had chosen.  It still finished, and it still
+found every register intact, and it printed the count the caller had
+asked for because that count was a constant in the C.  It passed.  The
+only reason it did not stay passed is that a larger count made the boot
+hang long enough to look wrong.
+.PP
+So the number printed is now the number the loop counted, returned
+through the caller's pointer, and the check requires the two to agree.
+That is the negative control as well: putting the stack read back gives
+a count that does not match and the criterion fails, in the same boot
+where the registers are still all intact.  A test of a calling
+convention that does not check it used the convention correctly is a
+test of nothing, and "the registers survived" was true either way.
 .NH 1
 Checking, all of it
+.PP
+One thing to get out of the way first, because it is the kind of
+mistake that reads as a clean result.  Two of the check scripts \-
+.CW osprey-check-user.py
+and
+.CW osprey-check-rio.py
+\- were committed without their executable bit.  The sweep runs every
+check as
+.CW "python3 <script>" ,
+so it never noticed and never could; but running one by hand as
+.CW ./scripts/osprey-check-user.py
+fails with
+.CW "permission denied" ,
+and a hand-written
+.CW "./check | grep FAIL || echo clean"
+then prints
+.I clean
+\- because there is no FAIL line in a permission error either.  I did
+that three times in a row and reported the result as evidence that a
+failure had been a transient.  The conclusion was right, and two full
+sweeps at 10 of 10 say so, but the evidence I gave for it was worth
+nothing.
+.PP
+The general form is worth more than the incident: a check that cannot
+run must not be able to look like a check that passed.  Grepping for
+what failure looks like has that hole in it, and grepping for what
+success looks like does not.  The bits are set now.
 .PP
 There are fifteen checks in
 .CW scripts/ ,
@@ -9937,10 +10036,32 @@ and tested against the callers that the same commit changed.
 is the answer \- seven configuration builds, then all fifteen checks in
 order, with
 .CW -w
-to repeat the two-machine check, which was the one that had been flaky
-and, since 2.3k, is not.
+to repeat the two-machine check, which is the one that has shown
+transients.
+.PP
+This document said until now that it had been flaky and, since 2.3k, is
+not.  That is no longer true and the sweep that added the syscall
+register measurement is what falsified it: the first two-machine run
+came back 12 of 20, with every criterion from
+.I migration:
+onward failing together, and the second run in the same sweep on the
+same binaries came back 20 of 20.  Three more runs afterwards were 20 of
+20 each, so four consecutive clean runs stand against one failure.
+.PP
+The shape of the failure is worth recording even without a diagnosis,
+because it is not the shape of a real regression: the twelve criteria
+that pass are the setup half and the eight that fail are the whole
+migration half, all at once, which is what a stall looks like rather
+than what a broken mechanism looks like \- a broken mechanism takes out
+one criterion and leaves its neighbours.  No log survived that run, so
+this is where the account stops.  The
+.CW -w
+option exists for exactly this, and the honest reading of a sweep is
+that one two-machine run failing and the next passing is a check to
+repeat, not a result.
 The tally as this is written, every configuration building and every
-check clean, the two-machine check run three times:
+other check clean, the two-machine check run five times over the sweep
+and afterwards with one failure among them:
 .CW pc64
 62,
 .CW p9pair
@@ -9950,7 +10071,7 @@ check clean, the two-machine check run three times:
 .CW p9linux
 12,
 .CW p964
-41, keyboard 8, rio 14, the window gestures 10, micro 7, user 10, net
+41, keyboard 8, rio 14, the window gestures 10, micro 7, user 11, net
 13, wire 14, two-machine 20 twice over, the
 six criteria of the userland the tree builds itself, and two portable
 builds.  A criterion is a sentence a booted kernel printed
