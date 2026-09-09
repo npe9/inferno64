@@ -45,45 +45,26 @@ include "wmclient.m";
 	Window: import wmclient;
 include "grpalette.m";
 	grpal: Grpalette;
+include "math/vsprite.m";
+	vspr: Vsprite;
 
 Spriteedit: module
 {
 	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
-# element kinds, numerically matching TempleOS SPT_* / tos_extract_sprites.py
+# The element vocabulary, the element type and the rasteriser all come
+# from vsprite(2) now.  They were written here first - an editor has to
+# draw what it is editing - and were hoisted out when the ports needed
+# them too; keeping a second copy here meant the editor and the module
+# could disagree about where a pixel goes, and for a while they did.
 SEND, SCOLOR, SDITHER, STHICK, SPLANARSYM,
 STRANSON, STRANSOFF, SSHIFT, SPT, SPOLYPT,
 SLINE, SPOLYLINE, SRECT, SROTRECT, SCIRCLE,
 SELLIPSE, SPOLYGON, SBSPLINE2, SBSPLINE2C,
 SBSPLINE3, SBSPLINE3C, SFLOOD, SFLOODNOT,
 SBITMAP, SMESH, SSHIFTMESH, SARROW, STEXT,
-STEXTBOX, STEXTDIAMOND: con iota;
-NKIND: con STEXTDIAMOND+1;
-
-TRANSP: con 255;
-
-names := array[] of {
-	"end", "color", "dither", "thick", "planarsym",
-	"transform_on", "transform_off", "shift", "pt", "polypt",
-	"line", "polyline", "rect", "rotrect", "circle",
-	"ellipse", "polygon", "bspline2", "bspline2closed",
-	"bspline3", "bspline3closed", "floodfill", "floodfillnot",
-	"bitmap", "mesh", "shiftmesh", "arrow", "text",
-	"textbox", "textdiamond",
-};
-
-Elem: adt {
-	kind: int;
-	a: array of int;		# fixed args (positions, sizes, colors)
-	ang: real;			# rotrect/ellipse/polygon
-	pts: array of int;		# polyline (2/pt) and bsplines (3/pt)
-	data: array of byte;		# bitmap pixels / polypt step codes
-	txt: string;			# text family
-	sel: int;
-	tw, th: int;			# cached text raster
-	tras: array of byte;
-};
+STEXTBOX, STEXTDIAMOND, NKIND, TRANSP, Elem: import Vsprite;
 
 # editor modes
 Mmain, Medit, Mtool, Mtext, Mnum, Mfile, Mxform,
@@ -168,14 +149,6 @@ bare := 0;
 origtext := "";			# file content at load (for Abort)
 hadfile := 0;
 
-# replay state
-fseen, fzero: array of byte;	# flood-fill scratch
-fstack: array of int;
-rcol := 0; rd0 := -1; rd1 := 0; rthk := 1;
-rsx := 0; rsy := 0;
-symon := 0;
-sax, say, sbx, sby: real;
-rbuf: array of byte;
 
 # points mode
 cpe, cpw: array of int;		# element index, point selector
@@ -231,6 +204,13 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	grpal = load Grpalette Grpalette->PATH;
 	pal = grpal->values();
 	math = load Math Math->PATH;
+	vspr = load Vsprite Vsprite->PATH;
+	if(vspr == nil){
+		sys->fprint(sys->fildes(2), "spriteedit: cannot load %s: %r\n",
+			Vsprite->PATH);
+		raise "fail:load";
+	}
+	vspr->init();
 	wmclient = load Wmclient Wmclient->PATH;
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
@@ -329,20 +309,6 @@ settool(s: string)
 
 # ---------- element bookkeeping ----------
 
-mkelem(kind, na: int): ref Elem
-{
-	return ref Elem(kind, array[na] of {* => 0}, 0.0, nil, nil, nil, 0, 0, 0, nil);
-}
-
-copyelem(e: ref Elem): ref Elem
-{
-	c := ref Elem(e.kind, nil, e.ang, nil, nil, e.txt, e.sel, 0, 0, nil);
-	if(e.a != nil){ c.a = array[len e.a] of int; c.a[0:] = e.a; }
-	if(e.pts != nil){ c.pts = array[len e.pts] of int; c.pts[0:] = e.pts; }
-	if(e.data != nil){ c.data = array[len e.data] of byte; c.data[0:] = e.data; }
-	return c;
-}
-
 ins(e: ref Elem)
 {
 	if(ne == len elems){
@@ -355,7 +321,7 @@ ins(e: ref Elem)
 	elems[cur] = e;
 	ne++;
 	cur++;
-	status = "inserted "+names[e.kind];
+	status = "inserted "+vspr->kindname(e.kind);
 }
 
 del(i: int)
@@ -373,7 +339,7 @@ delsel()
 {
 	n := 0;
 	for(i := 0; i < ne;){
-		if(elems[i].sel){
+		if(elems[i].tag){
 			del(i);
 			n++;
 		}else
@@ -386,7 +352,7 @@ selcnt(): int
 {
 	n := 0;
 	for(i := 0; i < ne; i++)
-		if(elems[i].sel)
+		if(elems[i].tag)
 			n++;
 	return n;
 }
@@ -394,14 +360,14 @@ selcnt(): int
 selall(v: int)
 {
 	for(i := 0; i < ne; i++)
-		elems[i].sel = v;
+		elems[i].tag = v;
 }
 
 snapshot()
 {
 	snap = array[ne] of ref Elem;
 	for(i := 0; i < ne; i++)
-		snap[i] = copyelem(elems[i]);
+		snap[i] = vspr->copyelem(elems[i]);
 	nsnap = ne;
 }
 
@@ -428,478 +394,88 @@ ecoord(cx, cy: int): (int, int)
 	return (cx - Cw/2 - sx, cy - Ch/2 - sy);
 }
 
-# ---------- software raster (TempleOS DC semantics) ----------
+# ---------- raster (vsprite(2) does the drawing) ----------
 
-setpix(x, y, c: int)
+# The editor's page is a fixed Cw x Ch with the sprite's origin at its
+# centre; vsprite(2)'s own canvas is the sprite's bounding box.  Beyond
+# that the two renders are now the same code, so an element cannot mean
+# one thing in the editor and another in a port.  The one thing the page
+# size still changes is a flood fill that escapes the sprite: on the page
+# it runs to the page's edge, in the module it stops at the box.  That is
+# the editor drawing on a document, which is what TempleOS does, and it
+# is deliberate.
+
+# The element list as it should render right now: the saved elements,
+# with the preview element spliced in at the insertion point.
+vlist(): array of ref Elem
 {
-	if(x < 0 || x >= Cw || y < 0 || y >= Ch)
-		return;
-	i := (y*Cw+x)*4;
-	if(c == TRANSP){
-		rbuf[i] = byte 255; rbuf[i+1] = byte 255;
-		rbuf[i+2] = byte 255; rbuf[i+3] = byte 255;
-		return;
+	el := array[ne+1] of ref Elem;
+	n := 0;
+	for(i := 0; i <= ne; i++){
+		if(pvon && i == cur)
+			el[n++] = pv;
+		if(i < ne)
+			el[n++] = elems[i];
 	}
-	v := pal[c&15];
-	rbuf[i] = byte (v>>24);
-	rbuf[i+1] = byte (v>>16);
-	rbuf[i+2] = byte (v>>8);
-	rbuf[i+3] = byte 255;
+	return el[0:n];
 }
 
+replay(buf: array of byte)
+{
+	px := vspr->canvas(vlist(), Cw, Ch, Cw/2, Ch/2, display);
+	if(px == nil)
+		return;
+	for(i := 0; i < Cw*Ch; i++){
+		c := int px[i];
+		if(c == TRANSP)
+			continue;
+		v := pal[c&15];
+		buf[i*4] = byte (v>>24);
+		buf[i*4+1] = byte (v>>16);
+		buf[i*4+2] = byte (v>>8);
+		buf[i*4+3] = byte 255;
+	}
+}
+
+# SpriteScrnInit marks the active symmetry plane on the page.  The
+# rasteriser used to leave that state behind in a global for redraw to
+# read, so redraw was only right just after a render; the plane is a
+# property of the element list, so it is computed from the list.
+symplane(): (int, real, real, real, real)
+{
+	sx := 0;
+	sy := 0;
+	on := 0;
+	x0 := 0.0; y0 := 0.0; x1 := 0.0; y1 := 0.0;
+	el := vlist();
+	for(i := 0; i < len el; i++){
+		e := el[i];
+		case e.kind {
+		SSHIFT =>
+			sx += e.a[0];
+			sy += e.a[1];
+		SPLANARSYM =>
+			if(e.a[0] == e.a[2] && e.a[1] == e.a[3])
+				on = 0;
+			else{
+				x0 = real(Cw/2+sx+e.a[0]);
+				y0 = real(Ch/2+sy+e.a[1]);
+				x1 = real(Cw/2+sx+e.a[2]);
+				y1 = real(Ch/2+sy+e.a[3]);
+				on = 1;
+			}
+		}
+	}
+	return (on, x0, y0, x1, y1);
+}
+
+# A pixel of the rendered page, as RGBA packed into an int.
 getpix(x, y: int): int
 {
 	if(x < 0 || x >= Cw || y < 0 || y >= Ch)
 		return -1;
 	i := (y*Cw+x)*4;
-	return (int rbuf[i]<<24) | (int rbuf[i+1]<<16) | (int rbuf[i+2]<<8) | int rbuf[i+3];
-}
-
-pickc(x, y: int): int
-{
-	if(rd0 >= 0){
-		if((x+y)&1)
-			return rd1;
-		return rd0;
-	}
-	return rcol;
-}
-
-reflectpt(x, y: real): (real, real)
-{
-	dx := sbx-sax;
-	dy := sby-say;
-	d2 := dx*dx+dy*dy;
-	if(d2 == 0.0)
-		return (2.0*sax-x, 2.0*say-y);
-	t := ((x-sax)*dx + (y-say)*dy)/d2;
-	px := sax + t*dx;
-	py := say + t*dy;
-	return (2.0*px-x, 2.0*py-y);
-}
-
-putf(x, y: real)
-{
-	xi := int x;
-	yi := int y;
-	setpix(xi, yi, pickc(xi, yi));
-	if(symon){
-		(rx, ry) := reflectpt(x, y);
-		ri := int rx;
-		rj := int ry;
-		setpix(ri, rj, pickc(ri, rj));
-	}
-}
-
-dot(x, y: real)
-{
-	r := real rthk/2.0;
-	if(r <= 0.5){
-		putf(x, y);
-		return;
-	}
-	ir := int (r+0.99);
-	for(dy := -ir; dy <= ir; dy++)
-		for(dx := -ir; dx <= ir; dx++)
-			if(real(dx*dx+dy*dy) <= r*r)
-				putf(x+real dx, y+real dy);
-}
-
-rline(x1, y1, x2, y2: real)
-{
-	adx := x2-x1; if(adx < 0.0) adx = -adx;
-	ady := y2-y1; if(ady < 0.0) ady = -ady;
-	steps := int adx;
-	if(int ady > steps)
-		steps = int ady;
-	steps++;
-	for(i := 0; i <= steps; i++){
-		t := real i/real steps;
-		dot(x1+(x2-x1)*t, y1+(y2-y1)*t);
-	}
-}
-
-pathr(p: array of real, closed: int)
-{
-	n := len p/2;
-	for(i := 0; i < n-1; i++)
-		rline(p[2*i], p[2*i+1], p[2*i+2], p[2*i+3]);
-	if(closed && n > 1)
-		rline(p[2*(n-1)], p[2*n-1], p[0], p[1]);
-}
-
-frect(x1, y1, x2, y2: int)
-{
-	if(x2 < x1){ t := x1; x1 = x2; x2 = t; }
-	if(y2 < y1){ t := y1; y1 = y2; y2 = t; }
-	for(y := y1; y < y2; y++)
-		for(x := x1; x < x2; x++)
-			putf(real x, real y);
-}
-
-flood(x, y, notcolor: int)
-{
-	if(x < 0 || x >= Cw || y < 0 || y >= Ch)
-		return;
-	target := getpix(x, y);
-	inkv := pal[rcol&15];
-	if(rcol == TRANSP)
-		inkv = int 16rFFFFFFFF;
-	if(!notcolor && target == inkv && rd0 < 0)
-		return;
-	if(fseen == nil){
-		fseen = array[Cw*Ch] of byte;
-		fzero = array[Cw*Ch] of byte;
-		fstack = array[Cw*Ch] of int;
-	}
-	fseen[0:] = fzero;
-	seen := fseen;
-	stack := fstack;
-	sp := 0;
-	# Mark a pixel seen when it is PUSHED, not when it is popped.  Both
-	# fill the same region - nothing writes a pixel but its own pop -
-	# but marking at pop lets one pixel be pushed once per neighbour,
-	# so the stack needs four times the canvas and it is exactly the
-	# canvas.  A fill large enough to reach the canvas edge overruns it.
-	seen[y*Cw+x] = byte 1;
-	stack[sp++] = y*Cw+x;
-	while(sp > 0){
-		pos := stack[--sp];
-		px := pos%Cw;
-		py := pos/Cw;
-		v := getpix(px, py);
-		if(notcolor){
-			if(v == inkv)
-				continue;
-		}else if(v != target)
-			continue;
-		setpix(px, py, pickc(px, py));
-		if(px+1 < Cw && seen[pos+1] == byte 0){
-			seen[pos+1] = byte 1;
-			stack[sp++] = pos+1;
-		}
-		if(px > 0 && seen[pos-1] == byte 0){
-			seen[pos-1] = byte 1;
-			stack[sp++] = pos-1;
-		}
-		if(py+1 < Ch && seen[pos+Cw] == byte 0){
-			seen[pos+Cw] = byte 1;
-			stack[sp++] = pos+Cw;
-		}
-		if(py > 0 && seen[pos-Cw] == byte 0){
-			seen[pos-Cw] = byte 1;
-			stack[sp++] = pos-Cw;
-		}
-	}
-}
-
-blot(x, y: int, e: ref Elem)
-{
-	w := e.a[2];
-	h := e.a[3];
-	stride := (w+7)&~7;
-	for(yy := 0; yy < h; yy++)
-		for(xx := 0; xx < w; xx++){
-			i := yy*stride+xx;
-			if(i >= len e.data)
-				continue;
-			c := int e.data[i];
-			if(c == TRANSP)
-				continue;
-			setpix(x+xx, y+yy, c&15);
-		}
-}
-
-# rasterize a string through the temple font (GrPrint cells are 8x8)
-textcache(e: ref Elem)
-{
-	if(e.tras != nil || font == nil || e.txt == "")
-		return;
-	w := font.width(e.txt);
-	if(w < 1)
-		w = 1;
-	h := font.height;
-	timg := display.newimage(Rect((0,0),(w,h)), Draw->GREY8, 0, Draw->Black);
-	if(timg == nil)
-		return;
-	timg.text(Point(0,0), palimg[WHITE], Point(0,0), font, e.txt);
-	d := array[w*h] of byte;
-	if(timg.readpixels(timg.r, d) < 0)
-		return;
-	e.tw = w;
-	e.th = h;
-	e.tras = d;
-}
-
-textelem(x, y: int, e: ref Elem)
-{
-	textcache(e);
-	if(e.tras == nil)
-		return;
-	for(row := 0; row < e.th; row++)
-		for(c := 0; c < e.tw; c++)
-			if(int e.tras[row*e.tw+c] > 127)
-				putf(real(x+c), real(y+row));
-	if(e.kind == STEXTBOX){
-		p := array[] of {
-			real(x-2), real(y-2), real(x+e.tw+1), real(y-2),
-			real(x+e.tw+1), real(y+e.th+1), real(x-2), real(y+e.th+1),
-		};
-		pathr(p, 1);
-	}else if(e.kind == STEXTDIAMOND){
-		cx := real x + real e.tw/2.0;
-		cy := real y + real e.th/2.0;
-		hw := real e.tw/2.0 + 8.0;
-		hh := real e.th/2.0 + 8.0;
-		p := array[] of {
-			cx-hw, cy, cx, cy-hh, cx+hw, cy, cx, cy+hh,
-		};
-		pathr(p, 1);
-	}
-}
-
-# uniform B-spline sampling (matches the extractor)
-bsample(pts: array of int, order, closed: int): array of real
-{
-	n0 := len pts/3;
-	n := n0;
-	if(closed)
-		n += order;
-	cx := array[n] of real;
-	cy := array[n] of real;
-	for(i := 0; i < n; i++){
-		cx[i] = real pts[3*(i%n0)];
-		cy[i] = real pts[3*(i%n0)+1];
-	}
-	if(n < order+1){
-		out := array[2*n] of real;
-		for(i = 0; i < n; i++){
-			out[2*i] = cx[i];
-			out[2*i+1] = cy[i];
-		}
-		return out;
-	}
-	steps := 16;
-	nseg := n-order;
-	out := array[2*nseg*(steps+1)] of real;
-	k := 0;
-	for(seg := 0; seg < nseg; seg++)
-		for(s := 0; s <= steps; s++){
-			t := real s/real steps;
-			b: array of real;
-			if(order == 2)
-				b = array[] of {
-					(1.0-t)*(1.0-t)/2.0,
-					(-2.0*t*t+2.0*t+1.0)/2.0,
-					t*t/2.0,
-				};
-			else
-				b = array[] of {
-					(1.0-t)*(1.0-t)*(1.0-t)/6.0,
-					(3.0*t*t*t-6.0*t*t+4.0)/6.0,
-					(-3.0*t*t*t+3.0*t*t+3.0*t+1.0)/6.0,
-					t*t*t/6.0,
-				};
-			x := 0.0;
-			y := 0.0;
-			for(j := 0; j <= order; j++){
-				x += b[j]*cx[seg+j];
-				y += b[j]*cy[seg+j];
-			}
-			out[k++] = x;
-			out[k++] = y;
-		}
-	return out[0:k];
-}
-
-# polypt 3-bit step decode table: code -> (dx, dy)
-stepdx := array[] of {1, 1, 0, -1, -1, -1, 0, 1};
-stepdy := array[] of {0, 1, 1, 1, 0, -1, -1, -1};
-
-polyptdraw(x, y: int, e: ref Elem)
-{
-	dot(real x, real y);
-	num := e.a[0];
-	for(i := 0; i < num; i++){
-		bit := i*3;
-		v := 0;
-		for(b := 0; b < 3; b++){
-			bi := bit+b;
-			if(bi>>3 < len e.data)
-				v |= ((int e.data[bi>>3] >> (bi&7)) & 1) << b;
-		}
-		x += stepdx[v];
-		y += stepdy[v];
-		dot(real x, real y);
-	}
-}
-
-drawelem(e: ref Elem)
-{
-	x := Cw/2 + rsx;
-	y := Ch/2 + rsy;
-	case e.kind {
-	SCOLOR =>
-		rcol = e.a[0];
-		rd0 = -1;
-	SDITHER =>
-		rd0 = e.a[0];
-		rd1 = e.a[1];
-	STHICK =>
-		rthk = e.a[0];
-		if(rthk < 1)
-			rthk = 1;
-	SSHIFT =>
-		rsx += e.a[0];
-		rsy += e.a[1];
-	SPLANARSYM =>
-		if(e.a[0] == e.a[2] && e.a[1] == e.a[3])
-			symon = 0;
-		else{
-			sax = real(x+e.a[0]);
-			say = real(y+e.a[1]);
-			sbx = real(x+e.a[2]);
-			sby = real(y+e.a[3]);
-			symon = 1;
-		}
-	SPT =>
-		dot(real(x+e.a[0]), real(y+e.a[1]));
-	SLINE =>
-		rline(real(x+e.a[0]), real(y+e.a[1]), real(x+e.a[2]), real(y+e.a[3]));
-	SARROW =>
-		x1 := real(x+e.a[0]); y1 := real(y+e.a[1]);
-		x2 := real(x+e.a[2]); y2 := real(y+e.a[3]);
-		rline(x1, y1, x2, y2);
-		ang := math->atan2(y2-y1, x2-x1);
-		rline(x2, y2, x2+6.0*math->cos(ang+2.6), y2+6.0*math->sin(ang+2.6));
-		rline(x2, y2, x2+6.0*math->cos(ang-2.6), y2+6.0*math->sin(ang-2.6));
-	SRECT =>
-		frect(x+e.a[0], y+e.a[1], x+e.a[2], y+e.a[3]);
-	SROTRECT =>
-		cx := real(x+e.a[0]); cy := real(y+e.a[1]);
-		x2 := real(x+e.a[2]); y2 := real(y+e.a[3]);
-		c := math->cos(e.ang);
-		s := math->sin(e.ang);
-		p := array[8] of real;
-		px := array[] of {cx, x2, x2, cx};
-		py := array[] of {cy, cy, y2, y2};
-		for(i := 0; i < 4; i++){
-			dx := px[i]-cx;
-			dy := py[i]-cy;
-			p[2*i] = cx + dx*c - dy*s;
-			p[2*i+1] = cy + dx*s + dy*c;
-		}
-		pathr(p, 1);
-	SCIRCLE =>
-		cx := real(x+e.a[0]); cy := real(y+e.a[1]);
-		r := real e.a[2];
-		ar := r; if(ar < 0.0) ar = -ar;
-		n := int (2.0*Math->Pi*ar);
-		if(n < 12)
-			n = 12;
-		p := array[2*n] of real;
-		for(i := 0; i < n; i++){
-			t := 2.0*Math->Pi*real i/real n;
-			p[2*i] = cx + r*math->cos(t);
-			p[2*i+1] = cy + r*math->sin(t);
-		}
-		pathr(p, 1);
-	SELLIPSE =>
-		cx := real(x+e.a[0]); cy := real(y+e.a[1]);
-		w := real e.a[2]; h := real e.a[3];
-		c := math->cos(e.ang);
-		s := math->sin(e.ang);
-		aw := w; if(aw < 0.0) aw = -aw;
-		ah := h; if(ah < 0.0) ah = -ah;
-		n := 2*(int aw + int ah);
-		if(n < 12)
-			n = 12;
-		p := array[2*n] of real;
-		for(i := 0; i < n; i++){
-			t := 2.0*Math->Pi*real i/real n;
-			ex := w*math->cos(t);
-			ey := h*math->sin(t);
-			p[2*i] = cx + ex*c - ey*s;
-			p[2*i+1] = cy + ex*s + ey*c;
-		}
-		pathr(p, 1);
-	SPOLYGON =>
-		cx := real(x+e.a[0]); cy := real(y+e.a[1]);
-		w := real e.a[2]; h := real e.a[3];
-		nside := e.a[4];
-		if(nside < 2)
-			nside = 2;
-		p := array[2*nside] of real;
-		for(i := 0; i < nside; i++){
-			t := e.ang + 2.0*Math->Pi*real i/real nside;
-			p[2*i] = cx + w*math->cos(t);
-			p[2*i+1] = cy + h*math->sin(t);
-		}
-		pathr(p, 1);
-	SPOLYLINE =>
-		n := len e.pts/2;
-		p := array[2*n] of real;
-		for(i := 0; i < n; i++){
-			p[2*i] = real(x+e.pts[2*i]);
-			p[2*i+1] = real(y+e.pts[2*i+1]);
-		}
-		pathr(p, 0);
-	SPOLYPT =>
-		polyptdraw(x+e.a[1], y+e.a[2], e);
-	SBSPLINE2 or SBSPLINE2C or SBSPLINE3 or SBSPLINE3C =>
-		order := 2;
-		if(e.kind == SBSPLINE3 || e.kind == SBSPLINE3C)
-			order = 3;
-		closed := e.kind == SBSPLINE2C || e.kind == SBSPLINE3C;
-		p := bsample(e.pts, order, closed);
-		for(i := 0; i < len p; i += 2){
-			p[i] += real x;
-			p[i+1] += real y;
-		}
-		pathr(p, 0);
-	SFLOOD =>
-		flood(x+e.a[0], y+e.a[1], 0);
-	SFLOODNOT =>
-		flood(x+e.a[0], y+e.a[1], 1);
-	SBITMAP =>
-		blot(x+e.a[0], y+e.a[1], e);
-	STEXT or STEXTBOX or STEXTDIAMOND =>
-		textelem(x+e.a[0], y+e.a[1], e);
-	}
-}
-
-replay(buf: array of byte)
-{
-	rbuf = buf;
-	rcol = 0; rd0 = -1; rd1 = 0; rthk = 1;
-	rsx = 0; rsy = 0;
-	symon = 0;
-	for(i := 0; i <= ne; i++){
-		if(pvon && i == cur)
-			drawelem(pv);
-		if(i < ne)
-			drawelem(elems[i]);
-	}
-}
-
-nearestpal(v: int): int
-{
-	r := (v>>24)&255;
-	g := (v>>16)&255;
-	b := (v>>8)&255;
-	best := 0;
-	bd := 1<<30;
-	for(i := 0; i < 16; i++){
-		pr := (pal[i]>>24)&255;
-		pg := (pal[i]>>16)&255;
-		pb := (pal[i]>>8)&255;
-		d := (r-pr)*(r-pr) + (g-pg)*(g-pg) + (b-pb)*(b-pb);
-		if(d < bd){
-			bd = d;
-			best = i;
-		}
-	}
-	return best;
+	return (int work[i]<<24) | (int work[i+1]<<16) | (int work[i+2]<<8) | int work[i+3];
 }
 
 # capture the replayed canvas in [x1,x2)x[y1,y2) as a bitmap element
@@ -914,20 +490,19 @@ capture(x1, y1, x2, y2, transp: int): ref Elem
 	if(w < 1 || h < 1)
 		return nil;
 	stride := (w+7)&~7;
-	e := mkelem(SBITMAP, 4);
+	e := vspr->mkelem(SBITMAP, 4);
 	(ex, ey) := ecoord(x1, y1);
 	e.a[0] = ex;
 	e.a[1] = ey;
 	e.a[2] = w;
 	e.a[3] = h;
 	e.data = array[stride*h] of {* => byte TRANSP};
-	rbuf = work;
 	for(yy := 0; yy < h; yy++)
 		for(xx := 0; xx < w; xx++){
 			v := getpix(x1+xx, y1+yy);
 			if(v < 0)
 				continue;
-			c := nearestpal(v);
+			c := vspr->nearest(v);
 			if(transp >= 0 && c == transp)
 				continue;
 			e.data[yy*stride+xx] = byte c;
@@ -997,8 +572,9 @@ polyptabs(e: ref Elem): array of int
 			if(bi>>3 < len e.data)
 				v |= ((int e.data[bi>>3] >> (bi&7)) & 1) << b;
 		}
-		x += stepdx[v];
-		y += stepdy[v];
+		(sdx, sdy) := vspr->polystep(v);
+		x += sdx;
+		y += sdy;
 		out[2*(i+1)] = x;
 		out[2*(i+1)+1] = y;
 	}
@@ -1019,7 +595,7 @@ applyxform(deg, scale: real)
 	s := scale*math->sin(th);
 	for(i := 0; i < ne; i++){
 		e := elems[i];
-		if(!e.sel)
+		if(!e.tag)
 			continue;
 		elems[i] = xelem(e, c, s, th, scale);
 	}
@@ -1048,13 +624,13 @@ xelem(e: ref Elem, c, s, th, k: real): ref Elem
 		w := int (real(e.a[2]-e.a[0])*k);
 		h := int (real(e.a[3]-e.a[1])*k);
 		(nx, ny) := xpt(e.a[0], e.a[1], c, s);
-		r := mkelem(SROTRECT, 4);
+		r := vspr->mkelem(SROTRECT, 4);
 		r.a[0] = nx;
 		r.a[1] = ny;
 		r.a[2] = nx+w;
 		r.a[3] = ny+h;
 		r.ang = e.ang + th;
-		r.sel = e.sel;
+		r.tag = e.tag;
 		return r;
 	SCIRCLE =>
 		(e.a[0], e.a[1]) = xpt(e.a[0], e.a[1], c, s);
@@ -1075,8 +651,8 @@ xelem(e: ref Elem, c, s, th, k: real): ref Elem
 	SPOLYPT =>
 		# re-walk the transformed step path, as SpriteTransformQue does
 		p := polyptabs(e);
-		r := mkelem(SPOLYPT, 3);
-		r.sel = e.sel;
+		r := vspr->mkelem(SPOLYPT, 3);
+		r.tag = e.tag;
 		(r.a[1], r.a[2]) = xpt(p[0], p[1], c, s);
 		lx := r.a[1];
 		ly := r.a[2];
@@ -1252,318 +828,7 @@ cpnearest(cx, cy: int): int
 	return best;
 }
 
-# ---------- file format ----------
-
-kindof(s: string): int
-{
-	for(i := 1; i < NKIND; i++)
-		if(names[i] == s)
-			return i;
-	return -1;
-}
-
-hexenc(d: array of byte): string
-{
-	s := "";
-	for(i := 0; i < len d; i++)
-		s += sys->sprint("%2.2x", int d[i]);
-	return s;
-}
-
-hexdec(s: string): array of byte
-{
-	d := array[len s/2] of byte;
-	for(i := 0; i < len d; i++){
-		v := 0;
-		for(j := 0; j < 2; j++){
-			c := s[2*i+j];
-			if(c >= '0' && c <= '9')
-				v = v*16 + c-'0';
-			else if(c >= 'a' && c <= 'f')
-				v = v*16 + 10+c-'a';
-			else if(c >= 'A' && c <= 'F')
-				v = v*16 + 10+c-'A';
-			else
-				return nil;
-		}
-		d[i] = byte v;
-	}
-	return d;
-}
-
-qstr(s: string): string
-{
-	o := "'";
-	for(i := 0; i < len s; i++){
-		c := s[i];
-		case c {
-		'\\' =>	o += "\\\\";
-		'\'' =>	o += "\\'";
-		'\n' =>	o += "\\n";
-		'\t' =>	o += "\\t";
-		* =>	o[len o] = c;
-		}
-	}
-	return o+"'";
-}
-
-unq(s: string): string
-{
-	while(len s > 0 && (s[0] == ' ' || s[0] == '\t'))
-		s = s[1:];
-	if(len s >= 2 && (s[0] == '\'' || s[0] == '"') && s[len s-1] == s[0])
-		s = s[1:len s-1];
-	o := "";
-	for(i := 0; i < len s; i++){
-		c := s[i];
-		if(c == '\\' && i+1 < len s){
-			i++;
-			case s[i] {
-			'n' =>	o[len o] = '\n';
-			't' =>	o[len o] = '\t';
-			'x' =>
-				v := 0;
-				for(j := 0; j < 2 && i+1 < len s; j++){
-					h := s[i+1];
-					hv := -1;
-					if(h >= '0' && h <= '9')
-						hv = h-'0';
-					else if(h >= 'a' && h <= 'f')
-						hv = 10+h-'a';
-					else if(h >= 'A' && h <= 'F')
-						hv = 10+h-'A';
-					if(hv < 0)
-						break;
-					v = v*16+hv;
-					i++;
-				}
-				o[len o] = v;
-			* =>	o[len o] = s[i];
-			}
-		}else
-			o[len o] = c;
-	}
-	return o;
-}
-
-elemline(e: ref Elem): string
-{
-	nm := names[e.kind];
-	case e.kind {
-	SCOLOR or STHICK =>
-		return sys->sprint("%s %d", nm, e.a[0]);
-	SDITHER =>
-		return sys->sprint("%s %d %d", nm, e.a[0], e.a[1]);
-	SPLANARSYM or SLINE or SARROW or SRECT =>
-		return sys->sprint("%s %d %d %d %d", nm, e.a[0], e.a[1], e.a[2], e.a[3]);
-	SROTRECT =>
-		return sys->sprint("%s %d %d %d %d %g", nm, e.a[0], e.a[1], e.a[2], e.a[3], e.ang);
-	SSHIFT or SPT or SFLOOD or SFLOODNOT =>
-		return sys->sprint("%s %d %d", nm, e.a[0], e.a[1]);
-	SCIRCLE =>
-		return sys->sprint("%s %d %d %d", nm, e.a[0], e.a[1], e.a[2]);
-	SELLIPSE =>
-		return sys->sprint("%s %d %d %d %d %g", nm, e.a[0], e.a[1], e.a[2], e.a[3], e.ang);
-	SPOLYGON =>
-		return sys->sprint("%s %d %d %d %d %g %d", nm, e.a[0], e.a[1], e.a[2], e.a[3], e.ang, e.a[4]);
-	SPOLYLINE =>
-		s := sys->sprint("%s %d", nm, len e.pts/2);
-		for(i := 0; i < len e.pts; i++)
-			s += sys->sprint(" %d", e.pts[i]);
-		return s;
-	SBSPLINE2 or SBSPLINE2C or SBSPLINE3 or SBSPLINE3C =>
-		s := sys->sprint("%s %d", nm, len e.pts/3);
-		for(i := 0; i < len e.pts; i++)
-			s += sys->sprint(" %d", e.pts[i]);
-		return s;
-	SPOLYPT =>
-		n := (e.a[0]*3+7)>>3;
-		d := e.data;
-		if(d == nil)
-			d = array[0] of byte;
-		if(n < len d)
-			d = d[0:n];
-		return sys->sprint("%s %d %d %d %s", nm, e.a[0], e.a[1], e.a[2], hexenc(d));
-	SBITMAP =>
-		return sys->sprint("%s %d %d %d %d %s", nm, e.a[0], e.a[1], e.a[2], e.a[3], hexenc(e.data));
-	SMESH or SSHIFTMESH =>
-		return sys->sprint("%s %d %d", nm, e.a[0], e.a[1]);
-	STRANSON or STRANSOFF =>
-		return nm;
-	STEXT or STEXTBOX or STEXTDIAMOND =>
-		return sys->sprint("%s %d %d %s", nm, e.a[0], e.a[1], qstr(e.txt));
-	}
-	return nm;
-}
-
-parseline(line: string): (ref Elem, string)
-{
-	(n, toks) := sys->tokenize(line, " \t\r");
-	if(n == 0)
-		return (nil, "");
-	k := kindof(hd toks);
-	if(k < 0)
-		return (nil, "unknown element "+hd toks);
-	toks = tl toks;
-	args := array[n-1] of string;
-	i := 0;
-	for(; toks != nil; toks = tl toks)
-		args[i++] = hd toks;
-	case k {
-	SCOLOR or STHICK =>
-		if(len args < 1)
-			return (nil, "short "+names[k]);
-		e := mkelem(k, 1);
-		e.a[0] = int args[0];
-		return (e, "");
-	SDITHER =>
-		if(len args < 2)
-			return (nil, "short dither");
-		e := mkelem(k, 2);
-		e.a[0] = int args[0];
-		e.a[1] = int args[1];
-		return (e, "");
-	SPLANARSYM or SLINE or SARROW or SRECT =>
-		if(len args < 4)
-			return (nil, "short "+names[k]);
-		e := mkelem(k, 4);
-		for(j := 0; j < 4; j++)
-			e.a[j] = int args[j];
-		return (e, "");
-	SROTRECT =>
-		if(len args < 5)
-			return (nil, "short rotrect");
-		e := mkelem(k, 4);
-		for(j := 0; j < 4; j++)
-			e.a[j] = int args[j];
-		e.ang = real args[4];
-		return (e, "");
-	SSHIFT or SPT or SFLOOD or SFLOODNOT =>
-		if(len args < 2)
-			return (nil, "short "+names[k]);
-		e := mkelem(k, 2);
-		e.a[0] = int args[0];
-		e.a[1] = int args[1];
-		return (e, "");
-	SCIRCLE =>
-		if(len args < 3)
-			return (nil, "short circle");
-		e := mkelem(k, 3);
-		for(j := 0; j < 3; j++)
-			e.a[j] = int args[j];
-		return (e, "");
-	SELLIPSE =>
-		if(len args < 5)
-			return (nil, "short ellipse");
-		e := mkelem(k, 4);
-		for(j := 0; j < 4; j++)
-			e.a[j] = int args[j];
-		e.ang = real args[4];
-		return (e, "");
-	SPOLYGON =>
-		if(len args < 6)
-			return (nil, "short polygon");
-		e := mkelem(k, 5);
-		for(j := 0; j < 4; j++)
-			e.a[j] = int args[j];
-		e.ang = real args[4];
-		e.a[4] = int args[5];
-		return (e, "");
-	SPOLYLINE =>
-		if(len args < 1)
-			return (nil, "short polyline");
-		np := int args[0];
-		if(np < 0 || len args < 1+2*np)
-			return (nil, "short polyline");
-		e := mkelem(k, 0);
-		e.pts = array[2*np] of int;
-		for(j := 0; j < 2*np; j++)
-			e.pts[j] = int args[1+j];
-		return (e, "");
-	SBSPLINE2 or SBSPLINE2C or SBSPLINE3 or SBSPLINE3C =>
-		if(len args < 1)
-			return (nil, "short bspline");
-		np := int args[0];
-		if(np < 0 || len args < 1+3*np)
-			return (nil, "short bspline");
-		e := mkelem(k, 0);
-		e.pts = array[3*np] of int;
-		for(j := 0; j < 3*np; j++)
-			e.pts[j] = int args[1+j];
-		return (e, "");
-	SPOLYPT =>
-		if(len args < 3)
-			return (nil, "short polypt");
-		e := mkelem(k, 3);
-		e.a[0] = int args[0];
-		e.a[1] = int args[1];
-		e.a[2] = int args[2];
-		if(len args >= 4)
-			e.data = hexdec(args[3]);
-		if(e.data == nil)
-			e.data = array[(e.a[0]*3+7)>>3] of {* => byte 0};
-		return (e, "");
-	SBITMAP =>
-		if(len args < 5)
-			return (nil, "short bitmap");
-		e := mkelem(k, 4);
-		for(j := 0; j < 4; j++)
-			e.a[j] = int args[j];
-		e.data = hexdec(args[4]);
-		if(e.data == nil)
-			return (nil, "bad bitmap hex");
-		return (e, "");
-	SMESH or SSHIFTMESH =>
-		e := mkelem(k, 2);
-		if(len args >= 2){
-			e.a[0] = int args[0];
-			e.a[1] = int args[1];
-		}
-		return (e, "");
-	STRANSON or STRANSOFF =>
-		return (mkelem(k, 0), "");
-	STEXT or STEXTBOX or STEXTDIAMOND =>
-		if(len args < 2)
-			return (nil, "short text");
-		e := mkelem(k, 2);
-		e.a[0] = int args[0];
-		e.a[1] = int args[1];
-		# the string is the rest of the raw line after the third field
-		p := 0;
-		fields := 0;
-		while(p < len line && fields < 3){
-			while(p < len line && (line[p] == ' ' || line[p] == '\t'))
-				p++;
-			while(p < len line && line[p] != ' ' && line[p] != '\t')
-				p++;
-			fields++;
-		}
-		e.txt = unq(line[p:]);
-		return (e, "");
-	}
-	return (nil, "unhandled "+names[k]);
-}
-
-parselist(body: string): (array of ref Elem, int, string)
-{
-	(nil, lines) := sys->tokenize(body, "\n");
-	out := array[64] of ref Elem;
-	n := 0;
-	for(; lines != nil; lines = tl lines){
-		(e, err) := parseline(hd lines);
-		if(err != "")
-			return (nil, 0, err);
-		if(e == nil)
-			continue;
-		if(n == len out){
-			na := array[2*len out] of ref Elem;
-			na[0:] = out[0:n];
-			out = na;
-		}
-		out[n++] = e;
-	}
-	return (out, n, "");
-}
+# ---------- file format (the grammar lives in vsprite(2)) ----------
 
 readall(fd: ref Sys->FD): string
 {
@@ -1629,7 +894,7 @@ loadfile()
 			return;
 		}
 		# whole file as a bare element list?
-		(el, n, err) := parselist(s);
+		(el, n, err) := vspr->parselist(s);
 		if(err == "" && n > 0){
 			elems = el;
 			ne = n;
@@ -1664,7 +929,7 @@ loadfile()
 		legacyraster(hdr, body);
 		return;
 	}
-	(el, n, err) := parselist(body);
+	(el, n, err) := vspr->parselist(body);
 	if(err != ""){
 		status = "load: "+err;
 		return;
@@ -1686,7 +951,7 @@ legacyraster(hdr: list of string, body: string)
 		return;
 	}
 	stride := (w+7)&~7;
-	e := mkelem(SBITMAP, 4);
+	e := vspr->mkelem(SBITMAP, 4);
 	e.a[0] = -w/2;
 	e.a[1] = -h/2;
 	e.a[2] = w;
@@ -1702,7 +967,7 @@ legacyraster(hdr: list of string, body: string)
 			if(v != "."){
 				iv := int v;
 				if((iv&255) != 0)
-					e.data[y*stride+x] = byte nearestpal(iv);
+					e.data[y*stride+x] = byte vspr->nearest(iv);
 			}
 			x++;
 		}
@@ -1722,7 +987,7 @@ savefile()
 	}
 	body := "";
 	for(i := 0; i < ne; i++)
-		body += elemline(elems[i])+"\n";
+		body += vspr->elemline(elems[i])+"\n";
 	s: string;
 	if(bare)
 		s = body;
@@ -1749,7 +1014,7 @@ insertfile(p2: string)
 		status = sys->sprint("open %s: %r", p2);
 		return;
 	}
-	(el, n, err) := parselist(readall(fd));
+	(el, n, err) := vspr->parselist(readall(fd));
 	if(err != ""){
 		status = "parse "+p2+": "+err;
 		return;
@@ -1855,9 +1120,9 @@ sumline(e: ref Elem): string
 		t := e.txt;
 		if(len t > 10)
 			t = t[0:10];
-		return names[e.kind]+" '"+t+"'";
+		return vspr->kindname(e.kind)+" '"+t+"'";
 	}
-	return names[e.kind];
+	return vspr->kindname(e.kind);
 }
 
 # ---------- rendering ----------
@@ -1922,7 +1187,7 @@ toolname(): string
 		TCAPTURE =>	return "Insert Scrn BitMap";
 		TCAPTURET =>	return "Insert Transparent Scrn BitMap";
 		TBITMAPED =>	return "BitMap Extents";
-		* =>		return names[tool];
+		* =>		return vspr->kindname(tool);
 		}
 	}
 	return "";
@@ -2007,6 +1272,7 @@ redraw()
 			img.line(Point(oc.x, oc.y-4), Point(oc.x, oc.y+4), 0, 0, 0, palimg[LTGRAY], Point(0,0));
 		}
 		# SpriteScrnInit: mark the active symmetry plane with a red line
+		(symon, sax, say, sbx, sby) := symplane();
 		if(symon){
 			dx := sbx-sax;
 			dy := sby-say;
@@ -2109,7 +1375,7 @@ drawlist(img: ref Image, o: Point)
 			s = "END";
 		else{
 			s = sumline(elems[idx]);
-			if(elems[idx].sel){
+			if(elems[idx].tag){
 				s = "*"+s;
 				c = PURPLE;
 			}
@@ -2300,18 +1566,17 @@ kbd(k: int)
 			pvon = 0;
 			replay(work);
 			pvon = pvon2;
-			rbuf = work;
 			v := getpix(mcx, mcy);
 			if(v >= 0){
-				e := mkelem(SCOLOR, 1);
-				e.a[0] = nearestpal(v);
+				e := vspr->mkelem(SCOLOR, 1);
+				e.a[0] = vspr->nearest(v);
 				ins(e);
 				redraw();
 			}
 		}
 	't' =>
 		if(mode == Mtool || mode == Mmain){
-			e := mkelem(SCOLOR, 1);
+			e := vspr->mkelem(SCOLOR, 1);
 			e.a[0] = TRANSP;
 			ins(e);
 			redraw();
@@ -2339,7 +1604,7 @@ promptdone()
 			mode = Mmain;
 			break;
 		}
-		pv = mkelem(texttool, 2);
+		pv = vspr->mkelem(texttool, 2);
 		pv.txt = pbuf;
 		(pv.a[0], pv.a[1]) = ecoord(mcx, mcy);
 		pvon = 1;
@@ -2362,7 +1627,7 @@ promptdone()
 			if(v < 1 || v > 16)
 				status = "thick must be 1-16";
 			else{
-				e := mkelem(STHICK, 1);
+				e := vspr->mkelem(STHICK, 1);
 				e.a[0] = v;
 				ins(e);
 			}
@@ -2451,7 +1716,7 @@ pointer(p: ref Draw->Pointer)
 			redraw();
 		}
 		if(rup && row >= 0 && row < ne){
-			elems[row].sel = !elems[row].sel;
+			elems[row].tag = !elems[row].tag;
 			redraw();
 		}
 		return;
@@ -2481,7 +1746,7 @@ pointer(p: ref Draw->Pointer)
 			lastcy = cy;
 		}else if(dragging && (b&1)){
 			for(i := 0; i < ne; i++)
-				if(elems[i].sel)
+				if(elems[i].tag)
 					shiftelem(elems[i], cx-lastcx, cy-lastcy);
 			lastcx = cx;
 			lastcy = cy;
@@ -2545,7 +1810,7 @@ palpick(c: int)
 		status = "second dither color?";
 		return;
 	Pdither1 =>
-		e := mkelem(SDITHER, 2);
+		e := vspr->mkelem(SDITHER, 2);
 		e.a[0] = pendbg&15;
 		e.a[1] = c&15;
 		ins(e);
@@ -2562,7 +1827,7 @@ palpick(c: int)
 		settool(toolname());
 		return;
 	}
-	e := mkelem(SCOLOR, 1);
+	e := vspr->mkelem(SCOLOR, 1);
 	e.a[0] = c;
 	ins(e);
 	if(pickfor == Pcolor){
@@ -2626,8 +1891,8 @@ domain(i: int)
 			mode = Mbitmap;
 		}else
 			armtool(TBITMAPED);
-	26 =>	ins(mkelem(STRANSON, 0));
-	27 =>	ins(mkelem(STRANSOFF, 0));
+	26 =>	ins(vspr->mkelem(STRANSON, 0));
+	27 =>	ins(vspr->mkelem(STRANSOFF, 0));
 	28 =>	mode = Medit;
 	29 =>	exitsave();
 	30 =>	abort();
@@ -2650,7 +1915,7 @@ doedit(i: int)
 		buildcps();
 		# preload selection flags from the elements
 		for(j := 0; j < ncp; j++)
-			cpsel[j] = elems[cpe[j]].sel;
+			cpsel[j] = elems[cpe[j]].tag;
 		dragging = 0;
 		phase = 0;
 	7 =>	# Shift Selected Elems
@@ -2663,7 +1928,7 @@ doedit(i: int)
 		pbuf = "";
 	9 =>	mode = Msetorigin;
 	10 =>	# Insert Shift SubOrigin
-		e := mkelem(SSHIFT, 2);
+		e := vspr->mkelem(SSHIFT, 2);
 		ins(e);
 		mode = Msuborigin;
 		dragging = 0;
@@ -2701,7 +1966,7 @@ toolptr(incan, cx, cy, ldown, lup, rup: int, b: int)
 			phase = 1;
 			ax = ex;
 			ay = ey;
-			pv = mkelem(tool, 4);
+			pv = vspr->mkelem(tool, 4);
 			pv.a[0] = ax; pv.a[1] = ay;
 			pv.a[2] = ex; pv.a[3] = ey;
 			pvon = 1;
@@ -2725,7 +1990,7 @@ toolptr(incan, cx, cy, ldown, lup, rup: int, b: int)
 		}else if(rup){
 			if(tool == SPLANARSYM){
 				# right-click turns symmetry off (empty elem)
-				ins(mkelem(SPLANARSYM, 4));
+				ins(vspr->mkelem(SPLANARSYM, 4));
 			}
 			backtomenu();
 			redraw();
@@ -2735,7 +2000,7 @@ toolptr(incan, cx, cy, ldown, lup, rup: int, b: int)
 			phase = 1;
 			ax = ex;
 			ay = ey;
-			pv = mkelem(SCIRCLE, 3);
+			pv = vspr->mkelem(SCIRCLE, 3);
 			pv.a[0] = ax;
 			pv.a[1] = ay;
 			pvon = 1;
@@ -2762,7 +2027,7 @@ toolptr(incan, cx, cy, ldown, lup, rup: int, b: int)
 			na := 4;
 			if(tool == SPOLYGON)
 				na = 5;
-			pv = mkelem(tool, na);
+			pv = vspr->mkelem(tool, na);
 			pv.a[0] = ax;
 			pv.a[1] = ay;
 			if(tool == SPOLYGON)
@@ -2800,7 +2065,7 @@ toolptr(incan, cx, cy, ldown, lup, rup: int, b: int)
 		}
 	SPT or SFLOOD or SFLOODNOT =>
 		if(ldown && incan){
-			e := mkelem(tool, 2);
+			e := vspr->mkelem(tool, 2);
 			e.a[0] = ex;
 			e.a[1] = ey;
 			ins(e);
@@ -2817,7 +2082,7 @@ toolptr(incan, cx, cy, ldown, lup, rup: int, b: int)
 			per = 3;
 		if(lup && incan){
 			if(!pvon){
-				pv = mkelem(tool, 0);
+				pv = vspr->mkelem(tool, 0);
 				pv.pts = array[per] of {* => 0};
 				pv.pts[0] = ex;
 				pv.pts[1] = ey;
@@ -2852,7 +2117,7 @@ toolptr(incan, cx, cy, ldown, lup, rup: int, b: int)
 		}
 	SPOLYPT =>
 		if(ldown && incan){
-			pv = mkelem(SPOLYPT, 3);
+			pv = vspr->mkelem(SPOLYPT, 3);
 			pv.a[1] = ex;
 			pv.a[2] = ey;
 			pv.data = array[64] of {* => byte 0};
@@ -2943,7 +2208,7 @@ pointsptr(incan, cx, cy, ldown, lup, rup: int, b: int)
 		# leaving points mode: write selection back to the elements
 		for(i := 0; i < ncp; i++)
 			if(cpsel[i])
-				elems[cpe[i]].sel = 1;
+				elems[cpe[i]].tag = 1;
 		mode = Medit;
 		dragging = 0;
 		settool(toolname());
@@ -2957,7 +2222,7 @@ pointsptr(incan, cx, cy, ldown, lup, rup: int, b: int)
 			if(i >= 0){
 				v := pmode == PMsel;
 				cpsel[i] = v;
-				elems[cpe[i]].sel = v;
+				elems[cpe[i]].tag = v;
 				cur = cpe[i];
 				redraw();
 			}
@@ -2983,7 +2248,7 @@ pointsptr(incan, cx, cy, ldown, lup, rup: int, b: int)
 				(x, y) := cppos(i);
 				if(x >= x0 && x <= x1 && y >= y0 && y <= y1){
 					cpsel[i] = v;
-					elems[cpe[i]].sel = v;
+					elems[cpe[i]].tag = v;
 				}
 			}
 			redraw();
@@ -2993,7 +2258,7 @@ pointsptr(incan, cx, cy, ldown, lup, rup: int, b: int)
 			i := cpnearest(cx, cy);
 			if(i >= 0){
 				cpsel[i] = 1;
-				elems[cpe[i]].sel = 1;
+				elems[cpe[i]].tag = 1;
 				dragging = 1;
 				lastcx = cx;
 				lastcy = cy;
@@ -3008,7 +2273,7 @@ pointsptr(incan, cx, cy, ldown, lup, rup: int, b: int)
 			dragging = 0;
 			for(i := 0; i < ncp; i++){
 				cpsel[i] = 0;
-				elems[cpe[i]].sel = 0;
+				elems[cpe[i]].tag = 0;
 			}
 			redraw();
 		}

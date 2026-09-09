@@ -25,6 +25,12 @@ Vsprite: module
 		txt:	string;			# the text family
 		tw, th:	int;			# cached text raster
 		tras:	array of byte;
+
+		# Not used by this module.  An editor needs somewhere to
+		# mark an element selected, and giving it a field here is
+		# cheaper than keeping a parallel array in step with every
+		# insertion and deletion.
+		tag:	int;
 	};
 
 	Sprite: adt
@@ -57,6 +63,33 @@ Vsprite: module
 
 	parse:	fn(text: string): (ref Sprite, string);
 	read:	fn(path: string): (ref Sprite, string);
+
+	# Rasterise an element list onto a canvas of w x h palette indices,
+	# TRANSP where nothing drew, with the sprite's origin at (ox, oy)
+	# and row-major order.  Sprite.pixels is this over the sprite's own
+	# box; an editor draws the same list onto a fixed page instead, and
+	# that difference in canvas is the only thing that should make the
+	# two disagree.
+	canvas:	fn(elems: array of ref Elem, w, h, ox, oy: int,
+			d: ref Draw->Display): array of byte;
+
+	# The element list as text, and back: the form
+	# scripts/tos_extract_sprites.py writes and temple/spriteedit(1)
+	# saves.  Exported so an editor does not carry a second copy of the
+	# grammar that would drift from this one.
+	mkelem:		fn(kind, na: int): ref Elem;
+	copyelem:	fn(e: ref Elem): ref Elem;
+	elemline:	fn(e: ref Elem): string;
+	parseline:	fn(line: string): (ref Elem, string);
+	parselist:	fn(body: string): (array of ref Elem, int, string);
+
+	# Which of the sixteen a rendered colour is.
+	nearest:	fn(v: int): int;
+
+	# The compass step a polypt's 3-bit code means.  An editor walks
+	# the same eight as the rasteriser, and two copies of a table this
+	# small are exactly how a sprite ends up drawn two ways.
+	polystep:	fn(code: int): (int, int);
 
 	kindname:	fn(k: int): string;
 	kindof:		fn(name: string): int;

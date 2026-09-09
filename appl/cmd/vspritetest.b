@@ -40,10 +40,20 @@ Vspritetest: module
 SPRDIR: con "/lib/temple/sprites";
 BITDIR: con "/icons/temple";
 
+# temple/spriteedit(1)'s page: the same rasteriser draws onto this
+# instead of onto the sprite's box, and these are the numbers that say
+# what that difference is worth.
+PAGEW: con 680;
+PAGEH: con 530;
+
 verbose := 0;
 dump := 0;
 pass := 0;
 fail := 0;
+pageok := 0;
+pageout := 0;
+pageclip := 0;
+pagerun := 0;
 display: ref Display;
 
 init(ctxt: ref Draw->Context, argv: list of string)
@@ -82,8 +92,12 @@ init(ctxt: ref Draw->Context, argv: list of string)
 
 	if(names == nil)
 		names = candidates();
+	for(l := names; l != nil; l = tl l)
+		one(hd l);
 	for(; names != nil; names = tl names)
-		one(hd names);
+		page(hd names);
+	sys->print("vspritetest: page %d/%d identical inside the box, %d flooded outside it, %d cut off by the page\n",
+		pageok, pagerun, pageout, pageclip);
 	sys->print("vspritetest: %d/%d\n", pass, pass+fail);
 	if(fail)
 		raise "fail:test";
@@ -211,6 +225,88 @@ one(base: string)
 	else if(verbose)
 		sys->print("ok   %s: %d pixels, %d,%d..%d,%d\n", base, n,
 			r.min.x, r.min.y, r.max.x, r.max.y);
+}
+
+# The editor draws the same element list onto a fixed page with the
+# sprite's origin at its centre, where vsprite(2) draws it onto the
+# sprite's own box.  Since temple/spriteedit(1) was put on this
+# rasteriser that is the ONLY thing left that can make the two disagree,
+# so this measures it rather than asserting it: crop the page render to
+# the box and compare.
+#
+# A difference is only allowed where the page render put ink outside the
+# box, which means a flood fill escaped the sprite and ran to the page's
+# edge - on the page it can come back in from somewhere the box would
+# have stopped it.  A sprite that differs inside the box while drawing
+# nothing outside it is the two rasterisers disagreeing, and fails.
+page(base: string)
+{
+	(spr, nil) := vsprite->read(SPRDIR + "/" + base + ".spr");
+	if(spr == nil)
+		return;
+	(px, r) := spr.pixels(display);
+	if(px == nil)
+		return;
+	pg := vsprite->canvas(spr.elems, PAGEW, PAGEH, PAGEW/2, PAGEH/2,
+		display);
+	if(pg == nil)
+		return;
+	pagerun++;
+	w := r.max.x - r.min.x;
+	h := r.max.y - r.min.y;
+	diff := 0;
+	clip := 0;
+	for(y := 0; y < h; y++)
+		for(x := 0; x < w; x++){
+			cx := PAGEW/2 + r.min.x + x;
+			cy := PAGEH/2 + r.min.y + y;
+			# A sprite whose coordinates run off the editor's
+			# page is cut off there; those pixels are not the
+			# two rasterisers disagreeing, they are the editor
+			# not being able to show that part of the sprite.
+			if(cx < 0 || cx >= PAGEW || cy < 0 || cy >= PAGEH){
+				clip++;
+				continue;
+			}
+			if(pg[cy*PAGEW+cx] != px[y*w+x])
+				diff++;
+		}
+	out := 0;
+	for(cy := 0; cy < PAGEH; cy++)
+		for(cx := 0; cx < PAGEW; cx++){
+			if(pg[cy*PAGEW+cx] == byte Vsprite->TRANSP)
+				continue;
+			ex := cx - PAGEW/2;
+			ey := cy - PAGEH/2;
+			if(ex < r.min.x || ex >= r.max.x
+			   || ey < r.min.y || ey >= r.max.y)
+				out++;
+		}
+	if(out)
+		pageout++;
+	if(clip)
+		pageclip++;
+	if(diff == 0){
+		pageok++;
+		if(verbose)
+			sys->print("page %s: identical%s\n", base,
+				clipnote(clip, w*h));
+		return;
+	}
+	if(out){
+		sys->print("page %s: %d of %d differ, %d pixels drawn outside the box\n",
+			base, diff, w*h, out);
+		return;
+	}
+	bad(base, sys->sprint("page differs by %d of %d pixels with nothing drawn outside the box",
+		diff, w*h));
+}
+
+clipnote(clip, n: int): string
+{
+	if(clip == 0)
+		return "";
+	return sys->sprint(" (%d of %d off the page)", clip, n);
 }
 
 # got over want, a few rows either side of the first difference, as

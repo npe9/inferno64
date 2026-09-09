@@ -2,7 +2,7 @@ implement Vsprite;
 
 # TempleOS's Sprite3 as a first-class type: a display list of drawing
 # elements, rasterised here instead of walked element by element by each
-# of the twelve ports that read one.
+# of the seven ports that read one.
 #
 # The interpreter is not new.  temple/spriteedit(1) has had one since the
 # sprites were extracted, because an editor has to draw what it is
@@ -115,7 +115,19 @@ mkelem(kind, na: int): ref Elem
 	e.txt = "";
 	e.tw = e.th = 0;
 	e.tras = nil;
+	e.tag = 0;
 	return e;
+}
+
+copyelem(e: ref Elem): ref Elem
+{
+	c := ref *e;
+	if(e.a != nil){ c.a = array[len e.a] of int; c.a[0:] = e.a; }
+	if(e.pts != nil){ c.pts = array[len e.pts] of int; c.pts[0:] = e.pts; }
+	if(e.data != nil){ c.data = array[len e.data] of byte; c.data[0:] = e.data; }
+	c.tw = c.th = 0;
+	c.tras = nil;
+	return c;
 }
 
 setpix(x, y, c: int)
@@ -445,6 +457,12 @@ bsample(pts: array of int, order, closed: int): array of real
 # polypt 3-bit step decode table: code -> (dx, dy)
 stepdx := array[] of {1, 1, 0, -1, -1, -1, 0, 1};
 stepdy := array[] of {0, 1, 1, 1, 0, -1, -1, -1};
+
+polystep(code: int): (int, int)
+{
+	c := code & 7;
+	return (stepdx[c], stepdy[c]);
+}
 
 polyptdraw(x, y: int, e: ref Elem)
 {
@@ -1113,10 +1131,19 @@ spritepixels(elems: array of ref Elem, d: ref Display): (array of byte, Rect)
 	h := r.max.y - r.min.y;
 	if(!okb || w < 1 || h < 1)
 		return (nil, Rect((0,0),(0,0)));
+	return (canvas(elems, w, h, -r.min.x, -r.min.y, d), r);
+}
+
+canvas(elems: array of ref Elem, w, h, cx, cy: int, d: ref Display): array of byte
+{
+	init();
+	setdisplay(d);
+	if(w < 1 || h < 1)
+		return nil;
 	rw = w;
 	rh = h;
-	ox = -r.min.x;
-	oy = -r.min.y;
+	ox = cx;
+	oy = cy;
 	rbuf = array[rw*rh*4] of { * => byte 0 };
 	fseen = nil;
 	fzero = nil;
@@ -1125,7 +1152,8 @@ spritepixels(elems: array of ref Elem, d: ref Display): (array of byte, Rect)
 	rsx = 0; rsy = 0;
 	symon = 0;
 	for(i := 0; i < len elems; i++)
-		drawelem(elems[i]);
+		if(elems[i] != nil)
+			drawelem(elems[i]);
 	out := array[w*h] of { * => byte TRANSP };
 	for(i = 0; i < w*h; i++){
 		k := i*4;
@@ -1140,7 +1168,7 @@ spritepixels(elems: array of ref Elem, d: ref Display): (array of byte, Rect)
 	fseen = nil;
 	fzero = nil;
 	fstack = nil;
-	return (out, r);
+	return out;
 }
 
 # Which palette index a rendered pixel is.  Dither and flood produce only

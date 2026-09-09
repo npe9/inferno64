@@ -1,6 +1,6 @@
 .TH VSPRITE 2
 .SH NAME
-vsprite: parse, read, bounds, pixels, raster \- TempleOS vector sprites
+vsprite: parse, read, bounds, pixels, raster, canvas \- TempleOS vector sprites
 .SH SYNOPSIS
 .EX
 include "draw.m";
@@ -17,6 +17,16 @@ vsprite->init();
 (px, r) = s.pixels(display);
 (img, mask, r) = s.raster(display);
 
+px = vsprite->canvas(elems, w, h, ox, oy, display);
+
+e := vsprite->mkelem(kind, nargs);
+e = vsprite->copyelem(e);
+line := vsprite->elemline(e);
+(e, err) = vsprite->parseline(line);
+(elems, n, err) = vsprite->parselist(body);
+
+c := vsprite->nearest(rgba);
+(dx, dy) := vsprite->polystep(code);
 name := vsprite->kindname(kind);
 kind := vsprite->kindof(name);
 .EE
@@ -77,6 +87,44 @@ image and a
 .B GREY1
 mask, ready to
 .IR draw (2).
+.PP
+.B canvas
+is what
+.B pixels
+is built on, and takes the canvas rather than deriving it: an element
+list, a width and height, and where the sprite's origin sits in it.
+It exists because an editor draws the list onto a fixed page instead of
+onto the sprite's box, and that difference in canvas should be the only
+thing that makes an editor's render and a port's differ.
+.IR temple / spriteedit (1)
+uses it, and
+.IR vspritetest (1)
+measures the difference: the same list on a 680x530 page, cropped back to
+the box, is identical for all 57 sprites it compares, three of which run
+off the page's edge.
+.PP
+.BR mkelem ,
+.BR copyelem ,
+.BR elemline ,
+.B parseline
+and
+.B parselist
+are the element type and the text grammar, exported for the same reason:
+an editor that carried its own copy could drift from this one.
+.B nearest
+says which of the sixteen a rendered colour is, and
+.B polystep
+decodes one of a
+.BR polypt 's
+three-bit compass steps.
+.PP
+The
+.B tag
+field of an
+.B Elem
+is not used here.
+An editor needs somewhere to mark an element selected, and a field costs
+less than keeping a parallel array in step with every insertion.
 .SH SOURCE
 .B /appl/math/vsprite.b
 .SH SEE ALSO
@@ -97,6 +145,19 @@ owning.
 Nothing scales or rotates yet.
 The point of a display list is that it can be drawn at any size, and this
 draws it at one \(em its own.
+.PP
+An element list drawn on a canvas other than the sprite's own box is not
+guaranteed to give the same pixels.
+A flood fill that escapes the sprite runs to the canvas's edge, so a
+bigger canvas can let it come back in somewhere the box would have
+stopped it; a dither's checkerboard is in canvas coordinates; and the
+rounding, though it is done on the element coordinate, recovers that
+coordinate by subtracting an offset from a number a line interpolated at
+canvas magnitudes, so a point landing within an ulp of a half can round
+either way.
+Neither happens for any of the 57 sprites
+.IR vspritetest (1)
+compares both ways, but neither is ruled out.
 .PP
 The text elements go through
 .IR draw (2)'s

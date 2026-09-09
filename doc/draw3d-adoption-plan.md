@@ -422,12 +422,64 @@ immediately, and the first sprite whose fill touched one overran the
 stack. Fixed in both places by marking at push, which fills the same
 region and bounds the stack by construction.
 
+**The editor is now a caller, not a second copy.** Hoisting by extraction
+left `spriteedit` running its own interpreter, and the two had already
+stopped agreeing: every correction the `.bit` comparison forced — half-to-
+even rounding, rounding on the element coordinate, the box rule — went
+into the module only, so the editor placed a pixel by one rule and the
+module, which is what matches the shipped `.bit` files, by another. That
+is worse than the duplication it replaced. So
+`spriteedit` was converted: the element type, the vocabulary, the text
+grammar and the rasteriser all come from `vsprite(2)`, `Elem` gained a
+`tag` field for the editor's selection flag, and `canvas()` was factored
+out of `pixels()` so the editor can draw the same list onto its page.
+The editor lost 735 lines.
+
+*What that was worth, measured.* Rendering all 248 `.spr` through the
+editor's own headless mode before and after: **21 of the 248 came out a
+different number of inked pixels**, so the two rasterisers really did
+disagree on a twelfth of the corpus, and the 227 unchanged say the
+conversion did not disturb anything wholesale.
+
+*The residual difference, measured too.* The editor's canvas is a fixed
+680x530 page with the origin at its centre; the module's is the sprite's
+box. `vspritetest(1)` now renders each sprite both ways and compares the
+page render cropped back to the box: **57 of 57 identical**, none with
+ink outside the box, three cut off by the page's edge — `elephant_1`,
+`elephant_2` and `spritetext_1` run past the page and the editor simply
+cannot show that part. A one-pixel change to the page origin makes all 57 fail,
+which is the negative control that the check can see what it claims to.
+
+*What it costs.* The editor's redraw now goes through a rasteriser that
+allocates the page as RGBA, and then converts all 360,400 pixels back to
+palette indices through a sixteen-way nearest-colour search; the old path
+wrote `pal[c&15]` straight into the canvas and touched only the pixels it
+drew. Timed as whole `-t` runs, five each, against the pre-change build:
+`battlelines_1` (527 pixels) 14.6ms to 18.2ms, `elephant_1` (44,091)
+17.8ms to 23.8ms, `spritetext_1` (991,935) 15.8ms to 26.2ms. About 13ms
+of each is `emu` starting up, so the replay itself costs 4ms to 10ms more
+than it did, on every frame of a rubber-band drag. That is worth fixing
+and it is a separate change: `canvas()` only ever paints one of the
+sixteen, so the intermediate RGBA and the nearest-colour search are both
+avoidable.
+
+Two things a different canvas *could* still change and does not here: a
+flood fill that escapes the sprite runs to the canvas edge, and a
+dither's checkerboard is in canvas coordinates. Both are in the man
+page's BUGS.
+
 **What is not done.** Nothing scales or rotates yet: the point of a
 display list is that it can be drawn at any size, and this draws it at
-its own. That is the next step and it is what the twelve ports would
-actually gain. `spriteedit` still carries its own copy of the
-interpreter; hoisting was done by extraction, not yet by replacement, so
-there are two copies of the element vocabulary until it is converted.
+its own. That is the next step and it is what the seven ports that read a
+`.spr` would actually gain.
+
+**A correction to the count.** This section said "twelve ports" in three
+places. Counted rather than remembered — `grep -l lib/temple/sprites/
+appl/temple/*.b` — it is **seven**: `battlelines`, `rawhide`,
+`spriteplot`, `spritetext`, `stadium`, `varoom` and `zing`, plus
+`spriteedit` itself. Each still walks the element list with a loader of
+its own; converting them is what the type was built for and none of it
+is done.
 
 
 This is the audit's headline gap and the place a plan can burn the most
@@ -438,12 +490,12 @@ this tree has 248 `.spr` files holding exactly such lists, and
 `spriteedit.b` already interprets every kind in Limbo. That interpreter is
 the reference implementation to hoist into `draw3d` as a first-class
 type, so a `.spr` can be handed over whole instead of being walked
-element by element by each of the twelve ports that read one.
+element by element by each of the seven ports that read one.
 
-*Evidence:* pick a single one of those twelve that currently
+*Evidence:* pick a single one of those seven that currently
 pre-rasterises its sprite, render it from the `.spr` through the new
 type, and compare pixels against the port's `.bit`. Do not schedule the
-other eleven until that comparison passes.
+other six until that comparison passes.
 
 ### The Sprite3 family was broken, and is not any more — **done, 2026-09-08**
 

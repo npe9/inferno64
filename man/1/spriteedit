@@ -27,6 +27,15 @@ regular polygons, polylines, freehand poly-points, quadratic and cubic
 B-splines (open and closed), flood fills, bitmaps, and text in the 8\(mu8
 system font \- replayed in order through the drawing context.
 The editor inserts, selects, and transforms those elements.
+The list itself, its text form and the rasteriser that draws it are
+.IR vsprite (2),
+which was hoisted out of this program and which this program now calls,
+so that what an element means is written once.
+The seven ports that read a
+.B .spr
+still walk it with code of their own and are not on
+.IR vsprite (2)
+yet.
 .PP
 On disk each element is one text line, the same vocabulary that
 .B scripts/tos_extract_sprites.py
@@ -174,8 +183,28 @@ a demo host document with embedded sprites and a mesh
 .SH SOURCE
 .B /appl/temple/spriteedit.b
 .SH SEE ALSO
+.IR vsprite (2),
+.IR vspritetest (1),
 .IR wm (1)
 .SH BUGS
+The page is a fixed 680x530 with the origin at its centre, and a sprite
+whose coordinates run past it is cut off there: of the 248 sprites in
+.BR /lib/temple/sprites ,
+.BR elephant_1 ,
+.B elephant_2
+and
+.B spritetext_1
+cannot be seen whole.
+.PP
+A flood fill that escapes the sprite runs to the page's edge here, where
+.IR vsprite (2)
+stops it at the sprite's box, and a dither's checkerboard is in canvas
+coordinates.
+Neither shows on any sprite in the tree \(em
+.IR vspritetest (1)
+renders all 57 it compares both ways and gets identical pixels \(em but a
+new sprite could hit either.
+.PP
 The sprite is edited over a plain white page rather than a live
 document, control-point handles do not blink, and transforms move
 bitmap elements without resampling them.

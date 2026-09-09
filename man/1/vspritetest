@@ -45,6 +45,25 @@ beside it and contains no element it cannot compare.
 Those are named in BUGS, and the number skipped is printed, so the
 coverage claim is the number of files actually compared.
 .PP
+It then renders each of the same sprites a second time on a 680x530 page
+with the origin at its centre \(em
+.IR temple / spriteedit (1)'s
+canvas \(em crops that back to the sprite's box and compares.
+Nothing here runs the editor.
+What ties the editor to it is that
+.IR temple / spriteedit (1)'s
+.B replay
+is a single call to
+.B canvas
+with exactly these arguments, which is structural rather than measured;
+what is measured is that the canvas makes no difference.
+A difference is reported only if the page render also put ink outside the
+box, which means a flood fill escaped the sprite; a sprite that differs
+inside the box while drawing nothing outside it is the two disagreeing,
+and fails.
+Pixels that fall off the page are counted separately: the editor cannot
+show that part of the sprite, which is not the rasteriser's doing.
+.PP
 .B -v
 names each sprite that matches exactly.
 .B -d
@@ -59,6 +78,7 @@ one digit changing everywhere.
 vspritetest: 166 sprites skipped (text, bitmap or mesh)
 near elephant_5: 8 of 3675 pixels differ (allowed 16), first at 2,36
   (three more)
+vspritetest: page 57/57 identical inside the box, 0 flooded outside it, 3 cut off by the page
 vspritetest: 57/57
 .EE
 .SH SOURCE
