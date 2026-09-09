@@ -254,11 +254,38 @@ kfsproc(pfd: ref Sys->FD)
 		sys->print("SD-FS load kfs: %r\n");
 		return;
 	}
-	kfs->init(nil, "kfs" :: "-r" :: "/dev/sdM0/data" :: nil);
+	kfs->init(nil, "kfs" :: "-r" :: "/dev/sdM0/fs" :: nil);
 }
+
+# Where the kfs test filesystem goes.  Sector 256 is clear of every
+# block the controller checks above touch (0, 5, 8-11, 12-15), and
+# 8192 sectors is 4MB, which is plenty to ream and create a file in.
+Fsstart: con 256;
+Fssecs: con 8192;
 
 sdfs()
 {
+	# Ream a bounded partition rather than the whole card.
+	#
+	# "kfs -r" writes every block of whatever it is given, and it was
+	# given /dev/sdM0/data -- the whole card.  So the cost of this
+	# check was proportional to the card: a second on the 16MB test
+	# image, seven minutes on the 4GB one used to reach CSD v2, and
+	# on a real Pi with a real card, longer than anyone would wait.
+	# It also destroyed the entire card at every boot rather than a
+	# corner of it, which is a great deal to ask of a machine whose
+	# card might have something on it.
+	#
+	# A fixed 4MB partition costs the same whatever card is fitted.
+	cfd := sys->open("/dev/sdM0/ctl", Sys->ORDWR);
+	if(cfd == nil){
+		sys->print("SD-FS ctl: %r\n");
+		return;
+	}
+	if(sys->fprint(cfd, "part fs %d %d", Fsstart, Fsstart+Fssecs) < 0){
+		sys->print("SD-FS part: %r\n");
+		return;
+	}
 	p := array[2] of ref Sys->FD;
 	if(sys->pipe(p) < 0){
 		sys->print("SD-FS pipe: %r\n");

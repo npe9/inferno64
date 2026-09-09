@@ -2001,6 +2001,39 @@ are internal to the SoC.  They are either undocumented, driven only by
 the VideoCore firmware, or \- in V3D's case \- a GPU, which is out of
 scope for this port by the same decision that leaves out OpenGL below.
 .NH 1
+The kfs check reamed the whole card, and boot time said so
+.PP
+.CW sdfs()
+gives
+.CW "kfs -r"
+a device and kfs writes every block of it.  It was given
+.CW /dev/sdM0/data ,
+which is the whole card, so the cost of this one check was proportional
+to whatever card was fitted.  On the 16MB test image that is about a
+second and invisible.  It stopped being invisible when a 4GB image was
+brought in to reach the CSD v2 decode: boot went from 44 seconds to 418.
+.PP
+The 4GB card only made it measurable.  The problem was already there,
+and it is worse on the board than in the emulator, because a real Pi's
+card is larger than either test image and this ran at every boot.  It
+also destroyed the entire card each time rather than a corner of it,
+which is a great deal to ask of a machine whose card might have
+something on it.
+.PP
+So the check now makes its own partition \-
+.CW "part fs 256 8448"
+through the ctl file, 4MB from sector 256, clear of every block the
+controller checks use \- and reams that.  Boot to the last marker is
+31.5 seconds with the 16MB card and 31.5 seconds with the 4GB one: the
+same, which is the property that was missing, and faster than the 44
+seconds the small card used to take.
+.PP
+This is worth writing down as more than a fix.  The 4GB card was added
+to cover a decode branch and it exposed something else entirely, in a
+part of the boot nobody was looking at, because it changed a quantity
+the check had silently made itself proportional to.  Varying an input
+that ought not to matter is how you find out whether it does.
+.NH 1
 What DISK-NONE means, since it has been misread
 .PP
 .CW DISK-NONE
