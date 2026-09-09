@@ -19045,3 +19045,149 @@ the board.  That is the same error as
 .CW missing_caps
 on the Pi, one layer out: the question was asked properly and answered
 by nothing.
+.NH 1
+Two guests on one wire, and a Linux container to run them in
+.PP
+Everything the network checks in
+.CW virtinit.b
+did talked to
+.CW 10.0.2.2
+or to
+.CW 127.0.0.1 .
+Both are qemu's user-mode stack, which answers ARP, DHCP, ICMP and TCP
+out of one host process, and answers for every address on its network
+at once.  A guest whose own ARP were broken would pass every one of
+them.  So the chain that went green in the last round \(em
+.CW IP-OK
+through
+.CW STYX-OK
+\(em is one guest talking to a program written to be agreeable, and
+that is worth saying out loud before adding anything to it.
+.PP
+.B "The peer configuration."
+.CW virt-peer
+boots the board twice.  Two qemus joined by
+.CW -netdev\ socket ,
+one listening on a host port and the other connecting to it, each with
+a second virtio-net whose frames go straight to the other guest and
+through nothing else.  What replies is another copy of this kernel; a
+packet arrives because both ends agreed.
+.PP
+The two run the same code and tell themselves apart by the MAC the
+harness gives the peer link.
+.CW 52:54:00:aa:aa:01
+announces on
+.CW 192.168.77.1
+and answers;
+.CW :02
+dials from
+.CW .2
+and asks.  The address is derived from the same byte, so nothing has to
+be passed in and there is no second init program.  Both then read their
+own
+.CW /net/arp
+and require the other's address to be in it \(em the part slirp could
+never have taught them.  A boot with no such device prints
+.CW PEER-NONE
+and moves on, which every other configuration here does.
+.PP
+Three things had to be got right, and each cost a boot.
+.IP \(bu
+.CW /net/ether1
+does not exist however many interfaces the kernel printed at boot.
+.CW devether 's
+attach spec names the controller, so
+.CW "#l"
+with no spec is
+.CW ether0
+and shows nothing else; the second interface appears only when
+.CW "#l1"
+is bound after it, and never with
+.CW MREPL ,
+which would throw
+.CW "#l0"
+and the ip stack back out of the namespace.
+.IP \(bu
+Every virtio device in that configuration names its bus.  With two
+networks, ether0 has to be the slirp one and ether1 the peer, and qemu
+hands out unnamed mmio slots from the top down \(em the first
+.B -device
+on the command line got the higher address and became
+.CW #l1 ,
+which is the opposite of what reading the line suggests.
+.CW bus=virtio-mmio-bus.1
+is
+.CW 0x10002000
+and
+.CW .2
+is
+.CW 0x10003000 ,
+and
+.CW ethervirtiommio
+scans ascending, so the numbering follows from something written down.
+.IP \(bu
+.CW peercheck()
+runs before
+.CW ipcheck() ,
+not after.  The whole slirp chain runs inside
+.CW ipcheck() ,
+so a peer check behind it announces about a hundred lines later on the
+guest that has the host rig than on the guest that does not, and the
+dialler gives up before the listener is up.  That is what the first
+attempt did, and it read as
+.CW "PEER-FAIL nobody called" .
+Nothing in the peer check wants DHCP.
+.PP
+The second guest is rig rather than a board under test: no baseline, no
+marker set, no disk, and its own slirp checks fail because the hostfwd
+rules belong to the guest being checked.  What it must say is three
+lines and the harness checks them, so a run where only one side of the
+conversation happened fails rather than passing on the listener's word.
+.PP
+.B "The container."
+.CW docker/Boardsuite.Dockerfile
+is a Debian image with the packaged qemus,
+.CW mkfs.vfat ,
+.CW mtools
+and
+.CW python3 ;
+.CW docker/boardsuite.sh
+builds it and runs the suite inside.  The tree is bind-mounted
+read-only rather than copied, because the kernels are committed
+binaries: the image does not go stale when one is relinked, and
+.CW mkconfig 's
+absolute
+.CW ROOT
+never has to agree with anything in it.
+.PP
+Seven of the nine configurations run in there.  Only the two Pi ones
+need the patched qemu, which is a source build: every patch in
+.CW tools/qemu-patches
+is BCM-specific, and
+.CW virtarm64
+had been pointed at the patched binary because that binary was to hand
+\(em it gives the same 31 markers and 15 known
+.CW -FAIL
+on a packaged
+.CW qemu-system-aarch64 ,
+checked before the container was written.  The unconditional
+.I "no patched QEMU"
+gate in the suite is now per-configuration, or a machine with no source
+build could not run the seven that do not want one.
+.PP
+It is not the same run twice.  It takes
+.CW makefat() 's
+.CW mkfs.vfat
+and
+.CW mcopy
+path, which macOS never takes and which had never been executed at all;
+it runs Debian's qemu 7.2 against the 10.1.3 built here; and its host
+rig, work directory and ports are its own, so a container run and a
+host run can happen at the same time, which they cannot on one machine.
+The marker sets come back identical to the recorded ones \(em 32, 5,
+42, 2 and 44 across the five that were checked both ways.
+.PP
+Baselines are not recorded from inside it.  A baseline is what this tree
+says the boards do, and a container's run written over one would be the
+same subset-as-new-truth failure the suite exists to prevent, arriving
+from a new direction.

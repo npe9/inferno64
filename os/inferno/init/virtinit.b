@@ -252,6 +252,19 @@ startfs(c: chan of string, file: string, args: list of string)
 # DHCP on QEMU user-net (SLIRP), then ICMP echo to gateway.
 # Release the lease renewer immediately: its tenancy sleep has been seen to
 # drop the address before ping (likely big/msec mishandling under KenC).
+# #I on /net, once.  Both ipcheck() and peercheck() need the ip stack
+# and either may run first, and binding the same device twice with
+# MAFTER puts two of it in the namespace.
+ipbound := 0;
+
+ipsetup()
+{
+	if(ipbound)
+		return;
+	sys->bind("#I", "/net", Sys->MAFTER);
+	ipbound = 1;
+}
+
 ipcheck()
 {
 	cfd: ref Sys->FD;
@@ -260,7 +273,7 @@ ipcheck()
 	c := chan of string;
 	s, e: string;
 
-	sys->bind("#I", "/net", Sys->MAFTER);
+	ipsetup();
 
 	dhcpclient = load Dhcpclient Dhcpclient->PATH;
 	if(dhcpclient == nil){
@@ -797,6 +810,277 @@ udpinsrv(ready: chan of string, done: chan of string)
 }
 
 # Kernel exportfs over a pipe; FORKNS so the mount is not in the exporter's ns.
+# Two guests on one wire, and no slirp in the middle.
+#
+# Everything else this file does over the network talks to 10.0.2.2 or
+# to 127.0.0.1: the qemu user-mode stack, which answers ARP, DHCP, ICMP
+# and TCP itself out of one process, and would go on answering if the
+# guest's own ARP were broken.  A second network device joined to
+# another qemu with -netdev socket has nothing in the middle at all --
+# the peer is another copy of this kernel, and a packet is delivered
+# because both ends agreed, not because slirp was obliging.
+#
+# The two guests run the same code and tell themselves apart by the MAC
+# the harness gave the peer link: 52:54:00:aa:aa:01 announces and
+# answers, :02 dials and asks.  The address is derived from the same
+# byte, so nothing has to be passed in.  A boot with no such device --
+# every ordinary one -- prints PEER-NONE and returns, which is the
+# honest answer rather than a failure.
+Peermac: con "525400aaaa";	# the peer link, less its last byte
+Peernet: con "192.168.77.";
+Peerport: con "54327";
+
+peercheck()
+{
+	fd: ref Sys->FD;
+	cfd: ref Sys->FD;
+	buf: array of byte;
+	n, i, num: int;
+	mac, ifc: string;
+
+	ipsetup();
+	# devether's attach spec names the controller: "#l" with no spec
+	# is ether0 and shows nothing else, which is why /net/ether1
+	# does not exist however many the kernel printed at boot.  The
+	# rest have to be bound one at a time, after -- never MREPL,
+	# which would throw #l0 and the ip stack out of the namespace
+	# netcheck() and ipcheck() built.
+	for(i = 1; i < 4; i++)
+		sys->bind("#l" + string i, "/net", Sys->MAFTER);
+	buf = array[32] of byte;
+	ifc = nil;
+	num = 0;
+	seen := "";
+	for(i = 0; i < 4; i++){
+		p := "/net/ether" + string i;
+		fd = sys->open(p + "/addr", Sys->OREAD);
+		if(fd == nil){
+			seen += sys->sprint(" %s:%r", p);
+			continue;
+		}
+		n = sys->read(fd, buf, len buf);
+		fd = nil;
+		if(n < 12){
+			seen += sys->sprint(" %s:short %d", p, n);
+			continue;
+		}
+		mac = string buf[0:12];
+		seen += " " + mac;
+		if(mac[0:10] != Peermac)
+			continue;
+		ifc = p;
+		num = hexval(mac[10]) * 16 + hexval(mac[11]);
+		break;
+	}
+	# The list is the point of the message: a boot with no peer link
+	# and a boot whose peer link did not come up look identical
+	# without it.
+	if(ifc == nil){
+		sys->print("PEER-NONE want %s.., saw%s\n", Peermac, seen);
+		return;
+	}
+	if(num != 1 && num != 2){
+		sys->print("PEER-FAIL role %d\n", num);
+		return;
+	}
+
+	me := Peernet + string num;
+	cfd = sys->open("/net/ipifc/clone", Sys->ORDWR);
+	if(cfd == nil){
+		sys->print("PEER-FAIL clone: %r\n");
+		return;
+	}
+	if(sys->fprint(cfd, "bind ether %s", ifc) < 0){
+		sys->print("PEER-FAIL bind %s: %r\n", ifc);
+		return;
+	}
+	# Static, not DHCP: there is no server on this wire, which is
+	# the point -- the only thing on it is the other guest.
+	if(sys->fprint(cfd, "add %s 255.255.255.0", me) < 0){
+		sys->print("PEER-FAIL add %s: %r\n", me);
+		return;
+	}
+	cfd = nil;
+	sys->print("peer: %s is %s on %s\n", mac, me, ifc);
+
+	if(num == 1)
+		peerlisten();
+	else
+		peerdial();
+}
+
+hexval(c: int): int
+{
+	if(c >= '0' && c <= '9')
+		return c - '0';
+	if(c >= 'a' && c <= 'f')
+		return c - 'a' + 10;
+	if(c >= 'A' && c <= 'F')
+		return c - 'A' + 10;
+	return -1;
+}
+
+peerlisten()
+{
+	ready := chan of string;
+	done := chan of string;
+	t: chan of int;
+	s: string;
+
+	spawn peersrv(ready, done);
+	s = <-ready;
+	if(s != nil){
+		sys->print("PEER-FAIL %s\n", s);
+		return;
+	}
+	sys->print("PEER-LISTEN-OK\n");
+
+	# The other guest has a whole boot of its own to get through
+	# before it dials, and under TCG that is not quick.
+	t = chan of int;
+	spawn iptimer(t, 120000);
+	alt {
+	s = <-done =>
+		if(s != nil){
+			sys->print("PEER-FAIL %s\n", s);
+			return;
+		}
+	<-t =>
+		sys->print("PEER-FAIL nobody called\n");
+		return;
+	}
+	peerarp(Peernet + "2");
+	sys->print("PEER-OK\n");
+}
+
+peersrv(ready: chan of string, done: chan of string)
+{
+	(ok, ac) := sys->announce("tcp!*!" + Peerport);
+	if(ok < 0){
+		ready <-= sys->sprint("announce: %r");
+		return;
+	}
+	spawn peeraccept(ac, done);
+	ready <-= nil;
+}
+
+peeraccept(ac: Sys->Connection, done: chan of string)
+{
+	buf: array of byte;
+	n: int;
+	dfd: ref Sys->FD;
+
+	(ok, nc) := sys->listen(ac);
+	if(ok < 0){
+		done <-= sys->sprint("listen: %r");
+		return;
+	}
+	dfd = sys->open(nc.dir + "/data", Sys->ORDWR);
+	if(dfd == nil){
+		done <-= sys->sprint("accept: %r");
+		return;
+	}
+	buf = array[64] of byte;
+	n = sys->read(dfd, buf, len buf);
+	if(n < 5 || string buf[0:5] != "hello"){
+		done <-= "bad request";
+		return;
+	}
+	buf = array of byte "pong";
+	if(sys->write(dfd, buf, len buf) != len buf){
+		done <-= sys->sprint("write: %r");
+		return;
+	}
+	done <-= nil;
+}
+
+peerdial()
+{
+	result := chan of string;
+	t: chan of int;
+	s: string;
+
+	spawn peerdialer(result);
+	t = chan of int;
+	spawn iptimer(t, 120000);
+	alt {
+	s = <-result =>
+		if(s != nil){
+			sys->print("PEER-FAIL %s\n", s);
+			return;
+		}
+	<-t =>
+		sys->print("PEER-FAIL dial timeout\n");
+		return;
+	}
+	sys->print("PEER-DIAL-OK\n");
+	peerarp(Peernet + "1");
+	sys->print("PEER-OK\n");
+}
+
+peerdialer(result: chan of string)
+{
+	buf: array of byte;
+	msg: array of byte;
+	n, i: int;
+	last: string;
+
+	last = "never dialled";
+	# The peer boots at its own pace, so a refused connection early
+	# is not an answer.  Keep asking until it is up or the caller's
+	# timer gives up on us.
+	for(i = 0; i < 200; i++){
+		(ok, c) := sys->dial("tcp!" + Peernet + "1!" + Peerport, nil);
+		if(ok < 0){
+			last = sys->sprint("dial: %r");
+			sys->sleep(500);
+			continue;
+		}
+		msg = array of byte "hello";
+		if(sys->write(c.dfd, msg, len msg) != len msg){
+			result <-= sys->sprint("write: %r");
+			return;
+		}
+		buf = array[64] of byte;
+		n = sys->read(c.dfd, buf, len buf);
+		if(n < 4 || string buf[0:4] != "pong"){
+			result <-= "reply";
+			return;
+		}
+		result <-= nil;
+		return;
+	}
+	result <-= last;
+}
+
+# The exchange above proves a packet crossed.  This proves how: the
+# peer's hardware address is in the guest's own ARP table, which slirp
+# would never have made it learn, because slirp answers for every
+# address on its network at once.
+peerarp(ip: string)
+{
+	fd: ref Sys->FD;
+	buf: array of byte;
+	n: int;
+
+	fd = sys->open("/net/arp", Sys->OREAD);
+	if(fd == nil){
+		sys->print("PEER-ARP-NONE open: %r\n");
+		return;
+	}
+	buf = array[8192] of byte;
+	n = sys->read(fd, buf, len buf);
+	fd = nil;
+	if(n <= 0){
+		sys->print("PEER-ARP-NONE empty\n");
+		return;
+	}
+	if(contains(string buf[0:n], ip))
+		sys->print("PEER-ARP-OK %s\n", ip);
+	else
+		sys->print("PEER-ARP-NONE %s not in arp\n", ip);
+}
+
 styxcheck()
 {
 	p := array[2] of ref Sys->FD;
@@ -1859,6 +2143,14 @@ init()
 	authcheck();
 	dynldcheck();
 	netcheck();
+	# Before ipcheck(), not after: the two guests have to find each
+	# other, and the whole slirp chain runs inside ipcheck() -- so a
+	# peercheck() behind it announces a hundred lines later on the
+	# guest that has the host rig than on the guest that does not,
+	# and the dialler gives up before the listener is up.  Nothing
+	# in it needs DHCP.  A boot with no peer link prints PEER-NONE
+	# and returns.
+	peercheck();
 	ipcheck();
 	# Kernel PC sampling across CLI + GUI stress (#K /dev/kpctl).
 	kprofstart();

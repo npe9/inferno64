@@ -40,7 +40,7 @@ verbose=false
 record=false
 force=false
 
-configs='raspi3b raspi3b-4g raspi4 raspi4-hot virtarm64 sifiveu virt virt32'
+configs='raspi3b raspi3b-4g raspi4 raspi4-hot virtarm64 sifiveu virt virt32 virt-peer'
 
 # Each configuration: the kernel, the QEMU arguments, the line that
 # says the board is done printing, and the evidence lines that make
@@ -51,19 +51,25 @@ config_kernel() {
 	raspi4|raspi4-hot)	echo "$root/os/inferno/raspi4/iraspi4";;
 	virtarm64)		echo "$root/os/inferno/virtarm64/ivirtarm64";;
 	sifiveu)		echo "$root/os/inferno/sifiveu/isifiveu";;
-	virt)			echo "$root/os/inferno/virt/ivirt";;
+	virt|virt-peer)		echo "$root/os/inferno/virt/ivirt";;
 	virt32)			echo "$root/os/inferno/virt32/ivirt32";;
 	esac
 }
 
 # The Pi boards need the patched build -- most of what their suites
 # drive is not in a stock qemu at all.  The others are ordinary machines
-# and want the system qemu for their architecture; nothing in
-# tools/qemu-patches touches them.
+# and want the system qemu for their architecture; every patch in
+# tools/qemu-patches is BCM-specific and none of them touches -M virt.
+# virtarm64 was pointed at the patched binary because that binary was
+# to hand, not because it needed one: the same 31 markers and 15 known
+# -FAIL come back from a stock qemu-system-aarch64, checked.  That
+# matters beyond tidiness -- it is what lets six of the eight run in a
+# container that installs qemu from a package rather than building one.
 config_qemu() {
 	case $1 in
-	raspi*|virtarm64)	echo "$QEMU";;
-	sifiveu|virt)		echo "${QEMU_RISCV64:-`command -v qemu-system-riscv64`}";;
+	raspi*)			echo "$QEMU";;
+	virtarm64)		echo "${QEMU_AARCH64:-`command -v qemu-system-aarch64`}";;
+	sifiveu|virt|virt-peer)	echo "${QEMU_RISCV64:-`command -v qemu-system-riscv64`}";;
 	virt32)			echo "${QEMU_RISCV32:-`command -v qemu-system-riscv32`}";;
 	esac
 }
@@ -101,6 +107,46 @@ config_args() {
 		echo "-M virt -bios none -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-device,drive=blk0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-device,netdev=n0";;
 	virt32)
 		echo "-M virt -bios none";;
+	virt-peer)
+		# The same board as virt, plus a second network device
+		# joined to another guest, and every virtio device on a
+		# bus named rather than left to the daemon: with two nets
+		# the guest's ether0 has to be the slirp one and ether1
+		# the peer, and qemu hands out unnamed mmio slots from
+		# the top down, so leaving it to order works until it
+		# does not.  bus.1 is 0x10002000 and bus.2 0x10003000;
+		# ethervirtiommio scans ascending, so the numbering
+		# follows.
+		echo "-M virt -bios none -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-device,drive=blk0,bus=virtio-mmio-bus.0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-device,netdev=n0,bus=virtio-mmio-bus.1 -netdev socket,id=p0,listen=:14444 -device virtio-net-device,netdev=p0,mac=52:54:00:aa:aa:01,bus=virtio-mmio-bus.2";;
+	esac
+}
+
+# The other guest, for a configuration that has one.
+#
+# This is the second half of "test the networking": everything else
+# here talks to 10.0.2.2, and slirp answers ARP, DHCP, ICMP and TCP
+# out of one host process -- it would go on answering if the guest's
+# own ARP were broken.  -netdev socket puts two qemus on a wire with
+# nothing in between, so the thing that replies is another copy of
+# this kernel and a packet arrives because both ends agreed.
+#
+# The peer is rig, not a board under test: no baseline, no marker set,
+# no disk, and its own slirp checks fail because the hostfwd rules
+# belong to the guest being checked.  What it has to say is one line,
+# and config_peer_evidence says which.
+config_peer() {
+	case $1 in
+	virt-peer)
+		echo "-M virt -bios none -netdev user,id=n0 -device virtio-net-device,netdev=n0,bus=virtio-mmio-bus.1 -netdev socket,id=p0,connect=127.0.0.1:14444 -device virtio-net-device,netdev=p0,mac=52:54:00:aa:aa:02,bus=virtio-mmio-bus.2";;
+	esac
+}
+
+config_peer_evidence() {
+	case $1 in
+	virt-peer)
+		echo 'peer: 525400aaaa02 is 192\.168\.77\.2'
+		echo 'PEER-DIAL-OK'
+		echo 'PEER-ARP-OK 192\.168\.77\.1';;
 	esac
 }
 
@@ -116,7 +162,7 @@ config_last() {
 	case $1 in
 	raspi3b|raspi3b-4g)	echo 'USB-MOUSE';;
 	raspi4|raspi4-hot)	echo 'USB-MOUSE';;
-	virtarm64|virt)		echo 'ROOT-CMDS-OK';;
+	virtarm64|virt|virt-peer)	echo 'ROOT-CMDS-OK';;
 	sifiveu)		echo 'SIFIVEU-SH-OK';;
 	virt32)			echo 'VIRT32-INIT-OK';;
 	esac
@@ -138,6 +184,9 @@ config_evidence() {
 		echo 'die 24\.';;
 	raspi4-hot)
 		echo 'die 85\.';;
+	virt-peer)
+		echo 'peer: 525400aaaa01 is 192\.168\.77\.1'
+		echo 'PEER-ARP-OK 192\.168\.77\.2';;
 	virtarm64|sifiveu|virt|virt32)
 		;;
 	esac
@@ -175,11 +224,26 @@ done
 
 [ $# -gt 0 ] && configs="$*"
 
-if [ ! -x "$QEMU" ]; then
+# Only the configurations that were asked for have to have a qemu.  The
+# gate used to be unconditional, which meant a machine with no patched
+# build -- a container, say -- could not run the six configurations that
+# do not want one.
+needpatched=false
+for c in $configs; do
+	case $c in raspi*) needpatched=true;; esac
+done
+if $needpatched && [ ! -x "$QEMU" ]; then
 	echo "boardsuite: no patched QEMU at $QEMU (set QEMU=)" >&2
 	echo "boardsuite: the Pi configurations need it; see tools/qemu-patches/README" >&2
 	exit 2
 fi
+for c in $configs; do
+	q=`config_qemu $c`
+	if [ -z "$q" ] || [ ! -x "$q" ]; then
+		echo "boardsuite: $c wants a qemu that is not here: ${q:-none found}" >&2
+		exit 2
+	fi
+done
 
 mkdir -p "$work"
 
@@ -273,7 +337,7 @@ markers() {
 # starts and stops around one boot.
 config_hostnet() {
 	case $1 in
-	virt)	echo yes;;
+	virt|virt-peer)	echo yes;;
 	esac
 }
 
@@ -433,6 +497,21 @@ attempt() {
 		-kernel "$kernel" >/dev/null 2>&1 &
 	pid=$!
 
+	# The other guest, if this configuration has one.  It goes second
+	# because the first one is what holds the listening end of the
+	# socket the two of them share; its own dialler retries, so a
+	# second or two either way does not matter.
+	peerlog="$work/$c.peer.log"
+	peerpid=
+	peerargs=`config_peer $c`
+	if [ -n "$peerargs" ]; then
+		rm -f "$peerlog"
+		# shellcheck disable=SC2086
+		"$qemu" $peerargs -display none -serial file:"$peerlog" \
+			-kernel "$kernel" >/dev/null 2>&1 &
+		peerpid=$!
+	fi
+
 	waited=0
 	while [ $waited -lt $timeout ]; do
 		if [ -f "$log" ] && grep -q "$last" "$log"; then
@@ -452,6 +531,10 @@ attempt() {
 	sleep $settle
 	kill $pid 2>/dev/null || true
 	wait $pid 2>/dev/null || true
+	if [ -n "$peerpid" ]; then
+		kill $peerpid 2>/dev/null || true
+		wait $peerpid 2>/dev/null || true
+	fi
 	hostnet_stop
 
 	if ! grep -q "$last" "$log" 2>/dev/null; then
@@ -492,6 +575,15 @@ attempt() {
 		[ -z "$e" ] && continue
 		grep -qE "$e" "$log" || echo "$e"
 	done > "$work/$c.missing"
+
+	# The other guest is rig rather than a board, so it has no
+	# baseline and no marker set -- but the one thing it exists to
+	# say still has to be there, or the configuration passed on the
+	# strength of a conversation that only one side had.
+	config_peer_evidence $c | while read -r e; do
+		[ -z "$e" ] && continue
+		grep -qE "$e" "$peerlog" 2>/dev/null || echo "peer: $e"
+	done >> "$work/$c.missing"
 	[ -s "$work/$c.missing" ] && fail="$fail evidence"
 
 	echo $fail
@@ -518,7 +610,7 @@ for c in $configs; do
 	fi
 
 	makecard `config_card $c`
-	case $c in virt|virtarm64) needfat=true;; *) needfat=false;; esac
+	case $c in virt|virtarm64|virt-peer) needfat=true;; *) needfat=false;; esac
 	if $needfat && ! makefat fat16.img; then
 		echo "$c: FAIL no way to make a FAT16 image here (hdiutil or mkfs.vfat)"
 		echo "    BLK-OK needs a filesystem, not a blank card; see the README"

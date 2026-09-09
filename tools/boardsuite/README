@@ -7,10 +7,34 @@ boardsuite - the board configurations, and what each one is for
 	tools/boardsuite/run -b		record baselines instead of checking
 	tools/boardsuite/run -v		print the marker set as well
 
-QEMU must be the patched build described in tools/qemu-patches/README.
-Set QEMU= to point at it; the default is the path this tree was
-developed against.  Cards are made in $TMPDIR/boardsuite (override with
-BOARDSUITE_WORK), blank and sparse, and reused between runs.
+Only the two Pi configurations need the patched build described in
+tools/qemu-patches/README; set QEMU= to point at it.  Every patch there
+is BCM-specific, and the other seven run on a stock qemu of the right
+architecture -- virtarm64 was pointed at the patched binary because it
+was to hand, and gives the same 31 markers and 15 known -FAIL on a
+packaged qemu-system-aarch64.  Cards are made in $TMPDIR/boardsuite
+(override with BOARDSUITE_WORK), blank and sparse, and reused between
+runs.
+
+IN A CONTAINER.  docker/boardsuite.sh builds a Debian image with the
+packaged qemus, mkfs.vfat, mtools and python3, and runs the seven
+configurations that do not want the patched build.  The tree is
+bind-mounted read-only rather than copied -- the kernels are committed
+binaries -- so the image never goes stale when one is relinked, and
+mkconfig's absolute ROOT never has to agree with anything inside it.
+
+It is not the same run twice.  It takes makefat()'s mkfs.vfat and mcopy
+path, which the Mac never takes; it runs a qemu Debian built rather
+than one built here (7.2 against 10.1.3, which is a difference worth
+having); and its host rig, its work directory and its ports are the
+container's own, so a container run and a host run can happen at once,
+which they cannot today.  The marker sets come back identical to the
+recorded ones, which is the point.
+
+Do not record baselines from inside it.  A baseline is what this tree
+says the boards do; recording a container's run over it would be the
+same "subset written down as the new truth" this file exists to
+prevent, arriving from a new direction.
 
 WHY THIS EXISTS.  Two of the mistakes in this tree's own documentation
 were made by reading markers off a terminal:
@@ -87,6 +111,8 @@ the system qemu:
 	virt		QEMU -M virt riscv64, with a virtio-blk disk
 			and a virtio-net, both the mmio transport.
 	virt32		QEMU -M virt riscv32.
+	virt-peer	The same board again, and a second copy of it
+			on the other end of a wire.  See TWO GUESTS.
 
 The transport is not a detail, and getting it wrong looks exactly like a
 broken driver.  virtarm64 links sdvirtio10 and no mmio block driver at
@@ -153,6 +179,49 @@ Three of these were found in one afternoon: BLK-FAIL wanted a disk,
 FS-FAIL wanted a file on it, and the network ones wanted someone to
 talk to.  It is worth saying plainly, because all three had been
 written down as failures of the board.
+
+TWO GUESTS.  Everything above talks to 10.0.2.2 or 127.0.0.1.  Both are
+qemu's user-mode stack, which answers ARP, DHCP, ICMP and TCP out of
+one host process -- and would go on answering if the guest's own ARP
+were broken, because slirp replies for every address on its network at
+once.  So the whole network chain, green as it now is, is one guest
+talking to a program written to be agreeable.
+
+virt-peer is the other thing.  Two qemus, joined by -netdev socket
+with nothing in between: one listens on a host port, the other
+connects to it, and each has a second virtio-net whose frames go
+straight to the other guest.  What replies is another copy of this
+kernel.  A packet arrives because both ends agreed about ARP, about
+addresses and about TCP, not because slirp was obliging.
+
+The two run the same code and tell themselves apart by the MAC the
+harness gives the peer link: 52:54:00:aa:aa:01 announces and answers
+on 192.168.77.1, :02 dials and asks from .2, and the address comes off
+the same byte so nothing has to be passed in.  Both then read their own
+/net/arp and check the other's address is in it, which is the part
+slirp could never have taught them.  A boot with no such device --
+every other one here -- prints PEER-NONE and moves on.
+
+The second guest is rig, not a board: no baseline, no marker set, no
+disk, and its own slirp checks fail because the hostfwd rules belong to
+the guest being checked.  What it has to say is three lines, and
+config_peer_evidence names them; a run where only one side of the
+conversation happened fails.
+
+Two details that took a boot each to find.  The peer check runs before
+ipcheck() rather than after: the whole slirp chain runs inside
+ipcheck(), so a peercheck() behind it announces a hundred lines later
+on the guest that has the host rig than on the guest that does not, and
+the dialler gives up before the listener is up.  And every virtio
+device in that configuration names its bus, because with two networks
+ether0 has to be the slirp one and ether1 the peer, and qemu hands out
+unnamed mmio slots from the top down -- leaving it to command-line
+order works until it does not.
+
+Finding the second interface at all needs one more thing: devether's
+attach spec names the controller, so "#l" with no spec is ether0 and
+shows nothing else.  /net/ether1 does not exist however many the kernel
+printed at boot until "#l1" is bound after it.
 
 KNOWN FAILURES.  A configuration may have a <config>.expected file
 listing the markers known to fail, and the run checks that set as
