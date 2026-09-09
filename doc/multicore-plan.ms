@@ -2341,6 +2341,50 @@ is built at 1788855526 and the logs these pcs came from say 1788170900,
 independent route.  See doc/inferno-ports.ms, "The captured pcs were
 right".
 .NH 1
+The serialisation, measured
+.PP
+This branch's premise is that Dis runs one program at a time behind a
+single global lock and that removing that is worth doing.  Until now
+the premise was reasoning, not measurement.  Two counters make it a
+measurement, both temporary and both in os/inferno/port/dis.c.
+.PP
+.CW maxnrunq
+walks
+.CW curP->runhd
+at the scheduler's own pick and records the high-water mark of Dis
+programs ready at once.  It is 2 on the ordinary boot workload, on
+pc64 and on virtarm64 alike, in every boot.  So there is concurrency
+available.
+.PP
+That alone proves little \(em two programs can be ready and still each
+get the processor promptly.
+.CW vmblocked
+over
+.CW vmpasses
+is the cost:
+.CW vmlock.head
+is the queue of kernel processes blocked in
+.CW vmacquire() ,
+so a scheduler pass finding it non-nil is a pass taken while a
+runnable interpreter waited on the lock.  Across 47 boots at
+.CW "-smp 2" :
+minimum 59.4%, median 76.9%, maximum 96.2%.
+.PP
+At the median, three quarters of scheduler passes are taken with a
+runnable interpreter blocked.  That is the justification for Phase 1b
+and Phase 5, in numbers, on the workload this branch can run today \(em
+a boot script and a shell on a two processor guest, which is not a
+general Dis workload and is stated as such.
+.PP
+The blocker that stood in front of all of this is gone: pc64 boots at
+.CW "-smp 1" ,
+.CW "-smp 2"
+and
+.CW "-smp 4" ,
+with every processor online, after the interrupt-entry fix recorded in
+doc/inferno-ports.ms.  cpu1 takes interrupts and runs kernel work; the
+interpreter is what is still serial.
+.NH 1
 Ground rules
 .PP
 Every claim in this document about what the kernel does is either a
