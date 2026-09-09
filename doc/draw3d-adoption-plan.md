@@ -567,11 +567,55 @@ against its `.bit`, so at that angle the new render is the reference and
 the old walk was the one that was wrong. That is what "prove it now
 matches the reference" looks like, as against "prove nothing changed".
 
-**What is not done.** Six ports to go: `battlelines`, `rawhide`,
-`spriteplot`, `spritetext`, `varoom`, `zing`. None is a no-op either, and
-one needs something the type does not have: `battlelines` tweens between
-two element lists and mirrors them, and `vsprite(2)` has no notion of
-either.
+**The rest are converted, and each in the shape its port actually wanted.**
+
+- **`spritetext`** read the element list with a tokeniser of its own that
+  knew fifteen of the thirty kinds — a `polypt` "summarised" itself as
+  five hundred bytes of hex. It reads through the type and prints
+  `elemline()`, which makes the listing what `Sprite2Code` emits. Checked
+  first that this is safe: all 248 shipped `.spr` round-trip through
+  `parseline`/`elemline` with no change of meaning, one re-quoted. `-t`
+  prints what the window shows; of 39 lines the code listing is identical
+  and exactly two summaries differ, both kinds the old walk had no case
+  for.
+- **`zing`** rotates its arrow, so it is `transformed(deg, 1.0).raster()`
+  with a raster kept per whole degree. A whole degree is enough, measured:
+  at 180 angles against the same angle rounded to a degree, **0 of 180
+  move a pixel**; at two degrees 150 of 180 do. Counting pixels that
+  *differ* cannot tell those apart, which is why the measure is
+  displacement. Against the port's own walk: 11 of 79 inked pixels differ,
+  none moves, and `vspritetest` says `zing_1` is pixel-exact, so the new
+  render is the reference.
+- **`rawhide`** rasterised the `.spr` into its walkability shadow map with
+  a three-kind loader, so a `circle` would have been visible in the `.bit`
+  and invisible to `GrPeek`. `Sprite.pixels()` is exactly that map's shape.
+  289 of 1,000,000 cells change, 19 more are walkable, and the control is
+  in the commit — the first version of the measurement dumped from inside
+  `rivermake()`, which runs *before* the fence posts are stamped, and so
+  reported the maps identical no matter what.
+- **`varoom`** scales its bushes with perspective and mirrors half of
+  them. Measured before writing anything: 42,000 bush draws land on **61
+  distinct (sprite, mirror, scale) keys** at two per cent quantisation, so
+  a cache is tiny and hits nearly always, and each hit replaces up to 43
+  line and ellipse calls with one blit. The mirror is built once per
+  sprite *in the port*, not added to the type, for the same reason the
+  danby stretch was not: negating x has no answer for a rotated rect, a
+  regular polygon, text or a bitmap. It is a visible change and the
+  reference is known: the port drew a **one pixel** line where the sprite
+  says `thick 2`, so `vsprite` inks about 2.9x as much, and all four
+  `varoom_*` pass `vspritetest` against their `.bit`. The bushes match the
+  art now.
+- **`battlelines`** is the one that is not a raster and was never going to
+  be: five element lists tweened between, mirrored, and drawn in one
+  colour. `vsprite(2)` does the reading, because a second copy of the
+  grammar is a second thing to drift; the drawing stays in the port,
+  because no raster can be tweened.
+- **`spriteplot` was never a walker** and is not converted. It opens the
+  pre-rasterised `.bit` and touches `lib/temple/sprites/` only to `stat`
+  the element list for `$IS`. Replacing a correct blit with a runtime
+  raster that is 20 pixels different would be a regression dressed as
+  consistency. The "seven ports, each still walks the element list with a
+  loader of its own" above is wrong about this one.
 
 **A retraction, caught by an instrument that was lying.** The first
 version of this paragraph said `spriteplot`'s banner would change font if

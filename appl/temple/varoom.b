@@ -70,6 +70,9 @@ include "scorestore.m";
 	scorestore: Scorestore;
 include "grpalette.m";
 	grpal: Grpalette;
+include "math/vsprite.m";
+	vspr: Vsprite;
+	Elem, Sprite: import vspr;
 include "frameclock.m";
 	fclock: Frameclock;
 
@@ -123,6 +126,7 @@ El: adt {
 };
 
 win: ref Window;
+display: ref Display;
 disp: ref Display;
 ink: array of ref Image;
 tfont: ref Font;
@@ -230,6 +234,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
 	grpal = load Grpalette Grpalette->PATH;
+	vspr = load Vsprite Vsprite->PATH;
+	if(vspr != nil)
+		vspr->init();
 	math = load Math Math->PATH;
 	bufio = load Bufio Bufio->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
@@ -249,6 +256,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	win = wmclient->window(ctxt, "TempleOS Varoom", Wmclient->Appl);
 	disp = win.display;
+	display = disp;
 	d := disp;
 	ink = array[16] of ref Image;
 	cols := grpal->values();
@@ -516,11 +524,108 @@ trackfind(start: int, x, z: real): int
 
 # --- bushes --------------------------------------------------------------
 
+# The bushes are vsprite(2) sprites, drawn as a raster at the perspective
+# scale rather than walked element by element every frame.  Measured
+# before it was written: 42,000 bush draws over a run land on 61 distinct
+# (sprite, mirror, scale) keys at two per cent quantisation, so the cache
+# is tiny and hits nearly always - and each hit replaces up to 38 line and
+# ellipse calls with one blit.
+#
+# Both mirrors are built once, because the sprite type has no mirror and
+# should not grow a half-defined one: negating x has no answer for a
+# rotated rect, a regular polygon, text or a bitmap.  These four sprites
+# are lines, circles and a pen width, so the mirror is exact for them and
+# a sprite holding anything else is refused, leaving the port to draw it
+# the way it always did.
+NBUSHSPR: con 4;
+
+bushspr: array of ref Sprite;		# [sprite*2 + mirrored]
+
+Bras: adt {
+	key:	int;
+	im:	ref Image;
+	mask:	ref Image;
+	r:	Rect;
+};
+brasters: list of ref Bras;
+nbrasters := 0;
+
 loadsprites()
 {
 	sprelems = array[4] of array of El;
 	for(i := 0; i < 4; i++)
 		sprelems[i] = loadspr(sys->sprint("/lib/temple/sprites/varoom_%d.spr", i+1));
+	if(vspr == nil)
+		return;
+	bushspr = array[NBUSHSPR*2] of ref Sprite;
+	for(i = 0; i < NBUSHSPR; i++){
+		(sp, nil) := vspr->read(sys->sprint("/lib/temple/sprites/varoom_%d.spr", i+1));
+		bushspr[i*2] = sp;
+		bushspr[i*2+1] = mirrored(sp);
+	}
+}
+
+# x negated, for the kinds these sprites use.  nil for anything else, so
+# the caller falls back rather than drawing a distorted bush.
+mirrored(sp: ref Sprite): ref Sprite
+{
+	if(sp == nil)
+		return nil;
+	els := array[len sp.elems] of ref Elem;
+	for(i := 0; i < len sp.elems; i++){
+		e := vspr->copyelem(sp.elems[i]);
+		case e.kind {
+		Vsprite->SCOLOR or Vsprite->SDITHER or Vsprite->STHICK =>
+			;
+		Vsprite->SLINE =>
+			e.a[0] = -e.a[0];
+			e.a[2] = -e.a[2];
+		Vsprite->SCIRCLE =>
+			e.a[0] = -e.a[0];
+		Vsprite->SPT or Vsprite->SFLOOD or Vsprite->SFLOODNOT =>
+			e.a[0] = -e.a[0];
+		* =>
+			return nil;
+		}
+		els[i] = e;
+	}
+	t := ref Sprite;
+	t.elems = els;
+	return t;
+}
+
+# One raster per (sprite, mirror, scale quantised to two per cent).  The
+# key is never clamped: a scale outside what the cache holds is drawn
+# without a cached raster rather than drawn at the wrong size.
+bushras(bi, mir: int, k: real): ref Bras
+{
+	if(bushspr == nil)
+		return nil;
+	sp := bushspr[bi*2 + mir];
+	if(sp == nil || display == nil)
+		return nil;
+	q := int(k*50.0 + 0.5);
+	if(q < 1)
+		return nil;
+	key := (bi*2 + mir)*4096 + q;
+	cached := q < 4096;
+	if(cached)
+		for(l := brasters; l != nil; l = tl l)
+			if((hd l).key == key)
+				return hd l;
+	(im, mask, r) := sp.transformed(0.0, real q/50.0).raster(display);
+	if(im == nil)
+		return nil;
+	br := ref Bras(key, im, mask, r);
+	if(cached){
+		if(nbrasters > 512){
+			brasters = nil;
+			nbrasters = 0;
+		}
+		brasters = br :: brasters;
+		nbrasters++;
+	}
+	return br;
 }
 
 loadspr(path: string): array of El
@@ -1030,6 +1135,16 @@ redraw()
 
 drawbush(img: ref Image, sx, sy: int, k: real, bi: int)
 {
+	m := 0;
+	if(bushes[bi].sym)
+		m = 1;
+	br := bushras(bushes[bi].img, m, k);
+	if(br != nil){
+		img.draw(Rect((sx+br.r.min.x, sy+br.r.min.y),
+			(sx+br.r.max.x, sy+br.r.max.y)),
+			br.im, br.mask, br.im.r.min);
+		return;
+	}
 	els := sprelems[bushes[bi].img];
 	mir := 1.0;
 	if(bushes[bi].sym)

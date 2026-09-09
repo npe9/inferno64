@@ -19,10 +19,6 @@ include "draw.m";
 	draw: Draw;
 	Display, Image, Point, Rect, Font: import draw;
 
-include "bufio.m";
-	bufio: Bufio;
-	Iobuf: import bufio;
-
 include "math.m";
 	math: Math;
 
@@ -41,6 +37,9 @@ include "tone.m";
 	tone: Tone;
 include "grpalette.m";
 	grpal: Grpalette;
+include "math/vsprite.m";
+	vspr: Vsprite;
+	Elem, Sprite: import vspr;
 include "frameclock.m";
 	fclock: Frameclock;
 
@@ -75,6 +74,11 @@ Trooper: adt {
 	target_side, target_idx: int;
 };
 
+# A trooper is five element lists tweened between and mirrored, all drawn
+# in one colour - so this is the one sprite reader in the tree that wants
+# the elements as DATA and not as a picture.  vsprite(2) does the reading,
+# because a second copy of the grammar is a second thing to drift; the
+# drawing stays here, because no raster can be tweened.
 El: adt {
 	x1, y1, x2, y2: int;
 };
@@ -103,7 +107,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
 	grpal = load Grpalette Grpalette->PATH;
-	bufio = load Bufio Bufio->PATH;
+	vspr = load Vsprite Vsprite->PATH;
+	if(vspr != nil)
+		vspr->init();
 	math = load Math Math->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
@@ -195,31 +201,27 @@ loadsprites()
 	}
 }
 
+# The line endpoints, in order, from whatever vsprite(2) read.  A
+# trooper's five frames are line-only and have to stay in step with each
+# other, so anything that is not a line is skipped rather than refused.
 loadspr(path: string): array of El
 {
-	if(bufio == nil)
+	if(vspr == nil)
 		return array[0] of El;
-	b := bufio->open(path, Bufio->OREAD);
-	if(b == nil)
+	(spr, nil) := vspr->read(path);
+	if(spr == nil)
 		return array[0] of El;
-	l: list of El;
 	n := 0;
-	for(;;){
-		ln := b.gets('\n');
-		if(ln == nil)
-			break;
-		(nt, toks) := sys->tokenize(ln, " \t\n");
-		if(nt >= 5 && hd toks == "line"){
-			t := tl toks;
-			e := El(int hd t, int hd tl t, int hd tl tl t, int hd tl tl tl t);
-			l = e :: l;
+	for(i := 0; i < len spr.elems; i++)
+		if(spr.elems[i].kind == Vsprite->SLINE)
 			n++;
-		}
-	}
 	a := array[n] of El;
-	for(i := n - 1; i >= 0; i--){
-		a[i] = hd l;
-		l = tl l;
+	j := 0;
+	for(i = 0; i < len spr.elems; i++){
+		e := spr.elems[i];
+		if(e.kind != Vsprite->SLINE)
+			continue;
+		a[j++] = El(e.a[0], e.a[1], e.a[2], e.a[3]);
 	}
 	return a;
 }
