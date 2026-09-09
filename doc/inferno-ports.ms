@@ -19363,3 +19363,18 @@ and the regex that swallowed
 .CW SD-FS-CREATE-OK .
 All three were found by a suite rather than by reading a terminal,
 which is the argument for having one.
+.PP
+.CW raspi4-usb
+is the same configuration on the Pi 4, and it earns a separate run for
+one reason: that board's USB is xHCI where the Pi 3's is dwc2, so the
+same six markers are reached over a different host controller \(em the
+one thing about them the Pi 3 configuration cannot say.  36 markers
+against the plain Pi 4's 32.
+.CW raspi4init.b
+already carried the checks, so this is a suite entry and not guest
+code, which is worth saying because it was not obvious in advance:
+qemu's
+.CW raspi4b
+takes
+.CW -device\ usb-storage
+at all only because the machine models a controller for it.

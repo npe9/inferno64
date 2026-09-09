@@ -20,7 +20,7 @@ IN A CONTAINER.  docker/boardsuite.sh builds a Debian image with the
 packaged qemus, mkfs.vfat, mtools and python3, and runs the seven
 configurations that do not want the patched build -- virtarm64,
 virtarm64-peer, sifiveu, virt, virt32, virt-peer and peer-mixed.  The
-other five are the Pi ones.
+other six are the Pi ones.
 The tree is bind-mounted read-only rather than copied -- these five
 kernels are committed binaries -- so the image never goes stale when
 one is relinked, and mkconfig's absolute ROOT never has to agree with
@@ -109,6 +109,9 @@ remembered to do:
 			One reading cannot tell a driver that decodes
 			the sensor from one that returns a constant;
 			two can.
+
+	raspi4-usb	The richer run on the Pi 4, whose USB is xHCI
+			rather than dwc2.  See THE RICHER RUN.
 
 The marker set alone cannot tell these apart -- SDHCI-SPEED-ACCEPTED is
 the same marker either way, and THERM-OK is the same marker at any
@@ -333,6 +336,13 @@ CDC ECM, and the SMSC half of appl/cmd/usb/etherusb.b, about a thousand
 lines of vendor requests and command words and receive status, has no
 other way to execute.  ETHER-DHCP-OK there is a DHCP exchange that
 crossed the USB link in both directions.
+
+raspi4-usb is the same again on the Pi 4, and worth its own run for one
+reason: that board's USB is xHCI where the Pi 3's is dwc2, so the same
+six markers are reached over a different host controller.  It gives 36
+where the plain Pi 4 gives 32 -- four fewer than the Pi 3 pair because
+the Pi 4 baseline is four markers shorter to begin with, not because
+anything is missing here.
 
 Its stick is made fresh every run, unlike every other image here,
 because the check that reads it also writes to it: diskcheck() creates

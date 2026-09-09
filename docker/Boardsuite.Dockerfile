@@ -12,7 +12,7 @@
 # time, so this image does not go stale when a kernel is relinked, and
 # mkconfig's absolute ROOT never has to agree with anything in here.
 #
-# Seven of the twelve configurations run in it.  The five Pi ones do
+# Seven of the thirteen configurations run in it.  The six Pi ones do
 # not:
 # they need the patched qemu of tools/qemu-patches, which is a source
 # build, and nothing about the Pi boards is what this image is for.

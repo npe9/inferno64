@@ -40,7 +40,7 @@ verbose=false
 record=false
 force=false
 
-configs='raspi3b raspi3b-4g raspi3b-usb raspi4 raspi4-hot virtarm64 virtarm64-peer sifiveu virt virt32 virt-peer peer-mixed'
+configs='raspi3b raspi3b-4g raspi3b-usb raspi4 raspi4-hot raspi4-usb virtarm64 virtarm64-peer sifiveu virt virt32 virt-peer peer-mixed'
 
 # Each configuration: the kernel, the QEMU arguments, the line that
 # says the board is done printing, and the evidence lines that make
@@ -49,7 +49,8 @@ config_kernel() {
 	case $1 in
 	raspi3b|raspi3b-4g|raspi3b-usb)
 				echo "$root/os/inferno/raspi3b/iraspi3b";;
-	raspi4|raspi4-hot)	echo "$root/os/inferno/raspi4/iraspi4";;
+	raspi4|raspi4-hot|raspi4-usb)
+				echo "$root/os/inferno/raspi4/iraspi4";;
 	virtarm64|virtarm64-peer)
 				echo "$root/os/inferno/virtarm64/ivirtarm64";;
 	sifiveu)		echo "$root/os/inferno/sifiveu/isifiveu";;
@@ -137,6 +138,13 @@ config_args() {
 		# the same run, and the only thing changed is who is on
 		# the other end of the wire.
 		echo "-M virt -bios none -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-device,drive=blk0,bus=virtio-mmio-bus.0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-device,netdev=n0,bus=virtio-mmio-bus.1 -netdev socket,id=p0,listen=:14446 -device virtio-net-device,netdev=p0,mac=52:54:00:aa:aa:01,bus=virtio-mmio-bus.2";;
+	raspi4-usb)
+		# The richer run again, on the board whose USB is xHCI
+		# rather than dwc2.  raspi4init.b carries the same disk
+		# and ethernet checks, so this is the same six markers
+		# reached over a different host controller -- the one
+		# thing about them the Pi 3 configuration cannot say.
+		echo "-M raspi4b -m 2G -drive file=$work/sd16e.img,if=sd,format=raw -drive if=none,id=d0,file=$work/usb16b.img,format=raw -device usb-storage,drive=d0 -netdev user,id=n0 -device usb-lan9514,netdev=n0";;
 	virtarm64-peer)
 		# virtarm64 with a peer link, the same shape as virt-peer
 		# and on its own socket port: the two peer configurations
@@ -225,7 +233,8 @@ config_last() {
 	case $1 in
 	raspi3b|raspi3b-4g|raspi3b-usb)
 				echo 'USB-MOUSE';;
-	raspi4|raspi4-hot)	echo 'USB-MOUSE';;
+	raspi4|raspi4-hot|raspi4-usb)
+				echo 'USB-MOUSE';;
 	virtarm64|virtarm64-peer)	echo 'ROOT-CMDS-OK';;
 	virt|virt-peer|peer-mixed)	echo 'ROOT-CMDS-OK';;
 	sifiveu)		echo 'SIFIVEU-SH-OK';;
@@ -268,6 +277,12 @@ config_evidence() {
 		echo 'die 24\.';;
 	raspi4-hot)
 		echo 'die 85\.';;
+	raspi4-usb)
+		echo 'from capabilities'
+		echo 'ETHER-DHCP-OK ip=10\.0\.2\.15 gw=10\.0\.2\.2'
+		echo 'DISK-WRITE-OK pi\.txt [0-9]+ bytes read back'
+		echo 'DISK-DOS-OK /n/dos: usb\.txt[^ ]*$'
+		echo 'DISK-READ-OK usb\.txt';;
 	virt-peer|virtarm64-peer|peer-mixed)
 		echo 'peer: 525400aaaa01 is 192\.168\.77\.1'
 		echo 'PEER-ARP-OK 192\.168\.77\.2';;
@@ -287,6 +302,7 @@ config_card() {
 	raspi3b-usb)	echo "sd16d.img 16m";;
 	raspi4)		echo "sd16b.img 16m";;
 	raspi4-hot)	echo "sd16c.img 16m";;
+	raspi4-usb)	echo "sd16e.img 16m";;
 	*)		;;		# no card
 	esac
 }
@@ -759,6 +775,14 @@ for c in $configs; do
 	# A marker that means a different thing on the second run is worse
 	# than no marker.
 	case $c in
+	raspi4-usb)
+		rm -f "$work/usb16b.img"
+		if ! makefat usb16b.img usb.txt 'a file on the usb stick'; then
+			echo "$c: FAIL no way to make a FAT16 image here (hdiutil or mkfs.vfat)"
+			echo "    the USB stick needs a filesystem with a file on it"
+			status=1
+			continue
+		fi;;
 	raspi3b-usb)
 		rm -f "$work/usb16.img"
 		# Lower case on purpose.  The first thing diskcheck()
