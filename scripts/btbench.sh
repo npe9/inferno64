@@ -374,9 +374,17 @@ dissect() {	# $1 phase, $2 capture
 	# some -- so the declaration cannot quietly cover a phase that
 	# stopped talking to its controller.
 	#
+	# That bit the crypto phase, which was declared here on the
+	# assumption that arithmetic needs no radio.  It does not, but
+	# btbench brings the controller up before it dispatches to any
+	# phase, so there are thirty four packets of HCI start-up
+	# whatever the phase then does.  The declaration was wrong and
+	# the check said so, which is the whole reason it asserts both
+	# directions rather than merely skipping.
+	#
 	dn=`"$TSHARK" -r "$2" 2>/dev/null | grep -c . || true`
 	case "$1" in
-	keysvc|crypto)
+	keysvc)
 		if [ "$dn" != 0 ]; then
 			echo "BENCH FAIL ($1): $dn packets, and this phase has no controller"
 			return 1
