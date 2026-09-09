@@ -161,9 +161,10 @@ redraw()
 		pos := leftpos;
 		if(i == 2)
 			pos = rightpos;
-		img.text(Point(o.x+tx-FW/2, o.y+ctop+SLIDER_SPACING+SLIDER_RANGE+3),
-			ltred, Point(0, 0), font,
-			sys->sprint("%d", pos*10/SLIDER_RANGE));
+		lbl := sys->sprint("%d", pos*10/SLIDER_RANGE);
+		img.text(Point(o.x+tx-font.width(lbl)/2,
+			o.y+ctop+SLIDER_SPACING+SLIDER_RANGE+3),
+			ltred, Point(0, 0), font, lbl);
 		hy := ctop + SLIDER_SPACING + SLIDER_RANGE - 1 - pos;
 		rect(img, o, tx-3, hy-2, 7, 5, ltred);
 		rect(img, o, tx-2, hy-1, 5, 3, yellow);

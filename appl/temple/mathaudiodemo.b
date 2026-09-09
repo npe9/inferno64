@@ -245,9 +245,12 @@ redraw()
 		x := w/2 + int(scale*real i);
 		img.line(Point(o.x+x, o.y+h/2-3), Point(o.x+x, o.y+h/2+3),
 			Draw->Endsquare, Draw->Endsquare, 0, black, Point(0, 0));
-		if(i != 0)
-			img.text(Point(o.x+x-7*FW/2, o.y+h/2+5+FH), dkgray,
-				Point(0, 0), font, sys->sprint("%5.1f*T", real i));
+		if(i != 0){
+			# centred on what the label measures, not on seven cells
+			lbl := sys->sprint("%5.1f*T", real i);
+			img.text(Point(o.x+x-font.width(lbl)/2, o.y+h/2+5+FH),
+				dkgray, Point(0, 0), font, lbl);
+		}
 	}
 
 	# the curves drawn so far on this page

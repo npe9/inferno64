@@ -576,6 +576,18 @@ That is a *shipped* defect this pass introduced and this pass found: the
 font swap made `txtat`'s arithmetic wrong, and nothing looked at the help
 screen until something measured it.
 
+**Sweeping for the same shape found four more, smaller.** A label centred
+on a character count is off centre by half the difference between the
+count and the measurement. `mathaudiodemo`'s axis labels were centred at
+`7*FW/2`: at lucida the seven characters count 63 pixels and measure 49 to
+53, so every one of the eight sat **5 to 7 pixels** left of its tick.
+`slider`, `wallpaperctrl` and `transform` centre a tick label at `FW/2`,
+which is exact while the label is one digit — and the top tick is `10`,
+**4 pixels** off. All five ask `font.width` now. `morsecode`'s four
+columns advance by a constant `11*FW` rather than by anything derived from
+a drawn string, so it cannot drift; its widest field is seven morse
+characters in nine columns of room.
+
 
 ## State
 

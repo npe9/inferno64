@@ -387,11 +387,12 @@ ctrl(img: ref Image, o: Point)
 		img.line(Point(o.x+tx1, o.y+ctop+SLIDER_SPACING),
 			Point(o.x+tx1, o.y+ctop+SLIDER_SPACING+SLIDER_RANGE-1),
 			Draw->Endsquare, Draw->Endsquare, 0, black, Point(0, 0));
-		if(font != nil)
-			img.text(Point(o.x+tx1-FW/2,
+		if(font != nil){
+			lbl := sys->sprint("%d", vals[i]*10/SLIDER_RANGE);
+			img.text(Point(o.x+tx1-font.width(lbl)/2,
 				o.y+ctop+SLIDER_SPACING+SLIDER_RANGE+3), ltgreen,
-				Point(0, 0), font,
-				sys->sprint("%d", vals[i]*10/SLIDER_RANGE));
+				Point(0, 0), font, lbl);
+		}
 		hy := ctop + SLIDER_SPACING + SLIDER_RANGE - 1 - vals[i];
 		rect(img, o, tx1-3, hy-2, 7, 5, ltgreen);
 		rect(img, o, tx1-2, hy-1, 5, 3, green);
