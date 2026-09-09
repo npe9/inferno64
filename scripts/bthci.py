@@ -3291,10 +3291,21 @@ class Model:
         log('smp %#04x %s' % (code, p.hex()))
         if code == 0x01:                                  # Pairing Request
             self.smp['preq'] = p
-            if p[3] & 0x08:
-                # the initiator asked for Secure Connections; this
-                # model only does legacy, and says so properly
-                return self.smp_send(bytes([0x05, 0x03]))
+            #
+            # The initiator may ask for Secure Connections, and this
+            # model does legacy only.  The answer is to leave the bit
+            # out of the response, which is what the specification
+            # says a device that does not support it does, and both
+            # sides then use legacy.
+            #
+            # This used to refuse the whole pairing with
+            # "authentication requirements cannot be met".  That is
+            # for a requirement that cannot be met, not for an
+            # optional thing the initiator offered, and a device
+            # behaving that way would fail to pair with anything
+            # modern -- every one of which offers Secure Connections.
+            # Nothing noticed until this stack started asking.
+            #
             pres = bytes([0x02, 0x03, 0x00, 0x01, 16, 0x00, 0x07])
             self.smp['pres'] = pres
             self.smp_send(pres)

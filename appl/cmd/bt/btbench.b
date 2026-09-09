@@ -449,9 +449,16 @@ init(nil: ref Draw->Context, argv: list of string)
 			sys->print("BT: long write read back whole, %d bytes\n", len got);
 	}
 
+	#
+	# A pairing that failed used to print its reason and let the
+	# phase carry on to a pass.  This phase is named for pairing;
+	# it asserts it now.  That gap hid a real failure for a while:
+	# Secure Connections against BlueZ was answering the DHKey
+	# check with reason 0x0b and the run still said BTVIRT PASS.
+	#
 	sys->print("BT: pair\n");
 	if((e = writefile(dev + "/ctl", "pair")) != nil)
-		sys->print("BT: pair: %s\n", e);
+		sys->print("BT: FAILED: pair: %s\n", e);
 	else {
 		show(dev + "/state");
 		for(bl := lines(readfile(mnt + "/0/bonds")); bl != nil; bl = tl bl)

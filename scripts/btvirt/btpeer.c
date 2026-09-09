@@ -533,6 +533,14 @@ static void ready_cb(void)
 	 * distributed rather than the pairing being for this session
 	 * only.
 	 */
+	/*
+	 * And LE Secure Connections, so the LE pairing on this peer is
+	 * the elliptic curve one rather than legacy.  bthost has its
+	 * own P-256 and its own f4/f5/f6, from the same specification
+	 * and not from this tree, which is the point of pairing
+	 * against it.
+	 */
+	bthost_set_sc_support(host, true);
 	bthost_write_ssp_mode(host, 0x01);
 	bthost_set_io_capability(host, 0x03);
 	bthost_set_auth_req(host, 0x01);

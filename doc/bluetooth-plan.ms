@@ -142,10 +142,66 @@ the peer's point, both compared with what openssl says.  All five
 agree exactly.  That is done by hand rather than from the bench,
 because the bench does not get to depend on openssl being installed.
 .PP
-What is left is the Bluetooth half: f4, f5, f6 and g2 built on the
-CMAC, the public key exchange and DHKey in SMP, and the numeric
-comparison or passkey the user is asked about \(em which needs the
-next item as well.
+The Bluetooth half is done too, for the central role.
+.CW smp.b
+has f4, f5 and f6 on top of the CMAC, asks for Secure Connections when
+both modules loaded, and takes the elliptic-curve path when the peer
+agrees to it: public keys exchanged, the shared secret from
+.CW p256->mult ,
+the responder's confirm checked with f4, the MacKey and the long term
+key from f5, and a DHKey check each way with f6.  The long term key is
+derived on both sides and never sent, so the bond it makes has no EDIV
+and no Rand and says so.
+.PP
+There are no sample vectors here on purpose.  The specification has
+them, and copying them from memory is how a wrong constant gets
+written down beside a matching wrong answer.  What checks these is
+pairing against BlueZ, which has its own P-256 and its own f4, f5 and
+f6 written from the same document, and which refuses the DHKey check
+if anything at all differs.  It refused twice.
+.IP \(bu
+A1 and A2 were built with the address type first, which is how they
+read on paper.  Everything in
+.CW smp.b
+is held least significant byte first, so putting the type first made
+the reversal bury it after the address.
+.IP \(bu
+.CW genkey
+made the public key from the private scalar as it stood, and
+.CW scpair
+then reversed the same scalar before the Diffie-Hellman.  Two
+different private keys, one public key, and a shared secret that could
+not agree.
+.PP
+Neither of those shows up until the very end, because f4 uses only the
+public keys and the nonces: the confirm matched every time while the
+DHKey check failed, which says the fault is below f4 and not in it.
+That is worth writing down as a way of reading a Secure Connections
+failure.
+.PP
+A peer that does not set the bit in its response gets legacy, which is
+the fallback the specification describes and is also a downgrade
+nothing here refuses.  With Just Works on both paths there is no
+security to lose between them that a man in the middle could not
+already take, so this is honest for what the stack does today; the
+moment there is a way to ask a person, and so a pairing worth
+protecting, refusing the downgrade becomes a thing that has to be
+decided rather than inherited.
+.PP
+That fallback found a fault in the model, which had been refusing a
+request that asked for Secure Connections with
+.CW "authentication requirements cannot be met" .
+That answer is for a requirement that cannot be met, not for an
+optional thing the initiator offered; a device behaving that way would
+fail to pair with anything modern, since everything modern offers it.
+Nothing noticed until this stack started asking.  It now leaves the
+bit out of its response, which is what a legacy-only device does.
+.PP
+What is left is the peripheral role, which still pairs the legacy way,
+and the numeric comparison g2 computes \(em which is not shown to
+anyone, because there is nowhere to show it, and claiming protection
+against a man in the middle without asking a person would be a lie.
+That needs the next item.
 .PP
 .B "A way to ask the user."
 Just Works is what the stack does because it is what needs no

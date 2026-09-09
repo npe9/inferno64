@@ -1303,8 +1303,17 @@ Smp: module
 		lk:	array of byte;
 		lktype:	int;
 
+		#
+		# Whether the LE keys came from Secure Connections
+		# rather than legacy pairing.  The long term key of a
+		# Secure Connections bond was derived on both sides and
+		# never sent, so it has no EDIV and no Rand: those are
+		# zero here and mean it, rather than meaning unknown.
+		#
+		sc:	int;
+
 		text:	fn(b: self ref Bond): string;
-	};
+};
 
 	init:	fn(bt: Bt, hci: Hci, l2: L2cap): string;
 	parse:	fn(s: string): ref Bond;

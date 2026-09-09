@@ -43,6 +43,10 @@ include "ipints.m";
 include "keyring.m";
 include "crypt.m";
 	crypt: Crypt;
+include "cmac.m";
+	cmac: Cmac;
+include "p256.m";
+	p256: P256;
 
 Timeout:	con 30000;	# ms, the specification's SMP timeout
 Encwait:	con 10000;	# ms to wait for encryption to come up
@@ -58,6 +62,8 @@ Pmasterid:	con 16r07;
 Pidkey:		con 16r08;
 Pidaddr:	con 16r09;
 Psignkey:	con 16r0a;
+Ppubkey:	con 16r0c;
+Pdhcheck:	con 16r0d;
 
 # key distribution bits
 Kenc:		con 16r01;
@@ -78,6 +84,23 @@ init(b: Bt, h: Hci, l: L2cap): string
 	crypt = load Crypt Crypt->PATH;
 	if(crypt == nil)
 		return sys->sprint("cannot load %s: %r", Crypt->PATH);
+	#
+	# Secure Connections needs AES-CMAC and P-256, and this stack
+	# offers it only if both loaded.  They are separate modules and
+	# not part of Crypt because libsec has neither; if either is
+	# missing the pairing falls back to legacy, which is what
+	# happened before they existed.
+	#
+	cmac = load Cmac Cmac->PATH;
+	if(cmac != nil && cmac->init() != nil)
+		cmac = nil;
+	p256 = load P256 P256->PATH;
+	if(p256 != nil && p256->init() != nil)
+		p256 = nil;
+	if(cmac == nil || p256 == nil){
+		cmac = nil;
+		p256 = nil;
+	}
 	return nil;
 }
 
@@ -174,7 +197,16 @@ pair(c: ref Conn, m: ref Mux, iocap: int): (ref Bond, string)
 	preq[0] = byte Preq;
 	preq[1] = byte iocap;
 	preq[2] = byte 0;			# no out of band data
-	preq[3] = byte Abonding;		# bond, legacy, no MITM
+	#
+	# Secure Connections is asked for when the modules that can do
+	# it are here.  No man in the middle protection is claimed
+	# either way: Just Works gives none, and numeric comparison
+	# needs somewhere to ask a person.
+	#
+	auth := Abonding;
+	if(cmac != nil && p256 != nil)
+		auth |= Asc;
+	preq[3] = byte auth;
 	preq[4] = byte 16;			# maximum key size
 	preq[5] = byte 0;			# we distribute nothing
 	preq[6] = byte (Kenc|Kid|Ksign);	# we want its keys
@@ -186,9 +218,20 @@ pair(c: ref Conn, m: ref Mux, iocap: int): (ref Bond, string)
 		return (nil, e2);
 	if(len pres < 7)
 		return (nil, "short pairing response");
+	respkeys := int pres[6];
+	#
+	# Both sides asked for it, so it is Secure Connections: a
+	# different phase 2 and a different key, and the long term key
+	# is derived rather than distributed.
+	#
+	if((auth & Asc) && (int pres[3] & Asc)){
+		(ltk, sce) := scpair(c, m, ch, preq, pres);
+		if(sce != nil)
+			return (nil, sce);
+		return scfinish(c, m, ch, ltk, respkeys);
+	}
 	if(int pres[3] & Asc)
 		return (nil, "the device wants LE Secure Connections, which this stack does not do");
-	respkeys := int pres[6];
 
 	# the temporary key of Just Works is zero
 	tk := array[16] of byte;
@@ -306,6 +349,66 @@ pair(c: ref Conn, m: ref Mux, iocap: int): (ref Bond, string)
 		b.ltk = stk;
 		b.ediv = 0;
 		b.rand = zero;
+	}
+	return (b, nil);
+}
+
+#
+# After a Secure Connections pairing: the link is encrypted with the
+# long term key both sides derived, and there is no key to be sent for
+# it -- which is the point of it.  The identity and signing keys are
+# still distributed if they were asked for.
+#
+scfinish(c: ref Conn, nil: ref Mux, ch: chan of array of byte,
+	ltk: array of byte, respkeys: int): (ref Bond, string)
+{
+	zero := array[8] of {* => byte 0};
+	if((e := hci->lestartencrypt(c, zero, 0, ltk)) != nil)
+		return (nil, "start encryption: " + e);
+	for(i := 0; i < Encwait/100 && !c.encrypted; i++)
+		sys->sleep(100);
+	if(!c.encrypted)
+		return (nil, "the link did not become encrypted");
+
+	b := ref Bond;
+	b.addr = bt->addrstr(c.addr);
+	b.local = bt->addrstr(hci->localaddr(c.x));
+	b.atype = c.atype;
+	b.ltk = ltk;
+	b.ediv = 0;
+	b.rand = zero;
+	b.sc = 1;
+
+	nwant := 0;
+	if(respkeys & Kid)
+		nwant += 2;
+	if(respkeys & Ksign)
+		nwant += 1;
+	for(i = 0; i < nwant; i++){
+		(pdu, ke) := awaitany(ch);
+		if(ke != nil)
+			break;
+		if(len pdu < 1)
+			continue;
+		case int pdu[0] {
+		Pidkey =>
+			if(len pdu >= 17){
+				b.irk = array[16] of byte;
+				b.irk[0:] = pdu[1:17];
+			}
+		Pidaddr =>
+			if(len pdu >= 8){
+				b.atype = int pdu[1];
+				b.addr = bt->addrstr(pdu[2:8]);
+			}
+		Psignkey =>
+			if(len pdu >= 17){
+				b.csrk = array[16] of byte;
+				b.csrk[0:] = pdu[1:17];
+			}
+		Pfailed =>
+			return (nil, failstr(pdu));
+		}
 	}
 	return (b, nil);
 }
@@ -507,6 +610,237 @@ s1(k, r1, r2: array of byte): array of byte
 	r[0:] = r2[0:8];
 	r[8:] = r1[0:8];
 	return e(k, r);
+}
+
+#
+# LE Secure Connections.
+#
+# The four functions the specification names f4, f5, f6 and g2, all
+# AES-CMAC underneath.  The one thing to keep hold of is which way
+# round the bytes go: everything in this file is held in wire order,
+# least significant byte first, and the crypto functions are defined
+# over the values, most significant first.  So each argument is
+# reversed on the way into the CMAC and the result is reversed on the
+# way out, exactly as e() does for AES.
+#
+# There are no vectors here.  The specification has sample data for
+# these, and copying it from memory is how a wrong constant gets
+# written down next to a matching wrong answer; what checks them is
+# pairing against BlueZ, which implements the same four functions from
+# the same document and will not agree unless both are right.  A wrong
+# byte anywhere makes the confirm or the DHKey check fail.
+#
+
+# the salt f5 starts from, and the "btle" that names the key it makes
+F5salt:	con "6C888391AAF5A53860370BDB5A6083BE";
+F5keyid:	con "62746C65";
+
+be(a: array of byte): array of byte
+{
+	return reverse(a);
+}
+
+cat(l: list of array of byte): array of byte
+{
+	n := 0;
+	for(x := l; x != nil; x = tl x)
+		n += len hd x;
+	r := array[n] of byte;
+	o := 0;
+	for(x = l; x != nil; x = tl x){
+		r[o:] = hd x;
+		o += len hd x;
+	}
+	return r;
+}
+
+#
+# f4(U, V, X, Z): the confirm value.  U and V are the two public keys'
+# x coordinates, X is the nonce that is the key, Z is a byte which is
+# zero for Just Works and numeric comparison.
+#
+f4(u, v, x: array of byte, z: byte): array of byte
+{
+	zz := array[1] of byte;
+	zz[0] = z;
+	m := cat(be(u) :: be(v) :: zz :: nil);
+	return reverse(cmac->aescmac(be(x), m));
+}
+
+#
+# f5(W, N1, N2, A1, A2): the MacKey and the long term key, out of the
+# Diffie-Hellman secret.  A1 and A2 are seven bytes each, the address
+# type and then the address.
+#
+f5(w, n1, n2, a1, a2: array of byte): (array of byte, array of byte)
+{
+	t := cmac->aescmac(bt->unhex(F5salt), be(w));	# t is already big endian
+	kid := bt->unhex(F5keyid);
+	length := array[2] of byte;
+	length[0] = byte 16r01;				# 256, most significant first
+	length[1] = byte 16r00;
+	ctr := array[1] of byte;
+
+	ctr[0] = byte 0;
+	m0 := cat(ctr :: kid :: be(n1) :: be(n2) :: be(a1) :: be(a2) :: length :: nil);
+	mackey := reverse(cmac->aescmac(t, m0));
+
+	ctr[0] = byte 1;
+	m1 := cat(ctr :: kid :: be(n1) :: be(n2) :: be(a1) :: be(a2) :: length :: nil);
+	ltk := reverse(cmac->aescmac(t, m1));
+	return (mackey, ltk);
+}
+
+#
+# f6(W, N1, N2, R, IOcap, A1, A2): the check each side sends so the
+# other knows it reached the same key.
+#
+f6(w, n1, n2, r, iocap, a1, a2: array of byte): array of byte
+{
+	m := cat(be(n1) :: be(n2) :: be(r) :: be(iocap) :: be(a1) :: be(a2) :: nil);
+	return reverse(cmac->aescmac(be(w), m));
+}
+
+#
+# The private key, from the controller's own randomness rather than
+# anything in here.  Two sixteen byte draws make thirty two bytes;
+# p256 refuses one that is not in 1..n-1, and a fresh draw is taken
+# if so, which happens with probability far too small to wait for.
+#
+genkey(x: ref Hci->Ctlr): (array of byte, array of byte, array of byte, string)
+{
+	for(try := 0; try < 4; try++){
+		(r1, e1) := random16(x);
+		if(e1 != nil)
+			return (nil, nil, nil, e1);
+		(r2, e2) := random16(x);
+		if(e2 != nil)
+			return (nil, nil, nil, e2);
+		sk := array[32] of byte;
+		sk[0:] = r1;
+		sk[16:] = r2;
+		(px, py, e3) := p256->base(sk);
+		if(e3 == nil)
+			return (sk, reverse(px), reverse(py), nil);
+	}
+	return (nil, nil, nil, "could not make a usable private key");
+}
+
+#
+# The Secure Connections half of pair(), from just after the pairing
+# response.  Just Works only: the numeric comparison value g2 computes
+# is not shown to anyone, because there is nowhere to show it, and
+# claiming protection against a man in the middle without asking a
+# person would be a lie.  That is the same refusal legacy makes, and
+# it is why Amitm is not set.
+#
+scpair(c: ref Conn, m: ref Mux, ch: chan of array of byte,
+	preq, pres: array of byte): (array of byte, string)
+{
+	(sk, pkx, pky, ge) := genkey(c.x);
+	if(ge != nil)
+		return (nil, ge);
+
+	pk := array[65] of byte;
+	pk[0] = byte Ppubkey;
+	pk[1:] = pkx;
+	pk[33:] = pky;
+	if((e := l2cap->send(m, L2cap->Csmp, pk)) != nil)
+		return (nil, e);
+
+	(pp, e1) := await(ch, Ppubkey);
+	if(e1 != nil)
+		return (nil, e1);
+	if(len pp < 65)
+		return (nil, "short pairing public key");
+	rpkx := pp[1:33];
+	rpky := pp[33:65];
+
+	#
+	# The shared secret.  p256 refuses a point that is not on the
+	# curve, which is the check that stops a peer choosing the
+	# secret for both sides.
+	#
+	#
+	# sk is the private key the way p256 wants it, most significant
+	# byte first, and genkey made the public key out of it that
+	# way; reversing it here as if it were wire order would be a
+	# different private key, and the only symptom would be a DHKey
+	# check the peer refuses at the very end.  The public keys are
+	# wire order and do have to be turned round.
+	#
+	(dhbe, nil, e2) := p256->mult(sk, be(rpkx), be(rpky));
+	if(e2 != nil)
+		return (nil, "diffie-hellman: " + e2);
+	dhkey := reverse(dhbe);
+
+	(na, e3) := random16(c.x);
+	if(e3 != nil)
+		return (nil, e3);
+
+	#
+	# The responder commits first here, unlike legacy: its confirm
+	# arrives before either nonce is sent.
+	#
+	(cb, e4) := await(ch, Pconfirm);
+	if(e4 != nil)
+		return (nil, e4);
+	if(len cb < 17)
+		return (nil, "short pairing confirm");
+
+	rf := array[17] of byte;
+	rf[0] = byte Prandom;
+	rf[1:] = na;
+	if((e5 := l2cap->send(m, L2cap->Csmp, rf)) != nil)
+		return (nil, e5);
+
+	(rb, e6) := await(ch, Prandom);
+	if(e6 != nil)
+		return (nil, e6);
+	if(len rb < 17)
+		return (nil, "short pairing random");
+	nb := rb[1:17];
+
+	if(!same(f4(rpkx, pkx, nb, byte 0), cb[1:17]))
+		return (nil, "the confirm does not match: the peer is not who it said");
+
+	#
+	# A1 and A2 are the address type and the address as one seven
+	# byte value, the type most significant.  Everything in this
+	# file is held least significant byte first, and an address out
+	# of HCI is already in that order, so the type goes on the end
+	# and be() then puts it back at the front.  Putting the type
+	# first here instead -- which is how it reads on paper -- makes
+	# be() bury it after the address, and the pairing gets all the
+	# way to the DHKey check before anything notices.
+	#
+	ia := hci->localaddr(c.x);
+	a1 := array[7] of byte;
+	a1[0:] = ia;
+	a1[6] = byte Bt->Apublic;
+	a2 := array[7] of byte;
+	a2[0:] = c.addr;
+	a2[6] = byte c.atype;
+
+	(mackey, ltk) := f5(dhkey, na, nb, a1, a2);
+
+	zero16 := array[16] of {* => byte 0};
+	ea := f6(mackey, na, nb, zero16, preq[1:4], a1, a2);
+	df := array[17] of byte;
+	df[0] = byte Pdhcheck;
+	df[1:] = ea;
+	if((e7 := l2cap->send(m, L2cap->Csmp, df)) != nil)
+		return (nil, e7);
+
+	(eb, e8) := await(ch, Pdhcheck);
+	if(e8 != nil)
+		return (nil, e8);
+	if(len eb < 17)
+		return (nil, "short dhkey check");
+	if(!same(f6(mackey, nb, na, zero16, pres[1:4], a2, a1), eb[1:17]))
+		return (nil, "the peer's dhkey check does not match");
+
+	return (ltk, nil);
 }
 
 #
