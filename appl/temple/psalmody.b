@@ -53,8 +53,10 @@ Psalmody: module
 
 GRW: con 640;
 GRH: con 480;
-FONTH: con 8;
-FONTW: con 8;
+# The font is Inferno's, not TempleOS's, and these are measured from it
+# rather than assumed: see the note above KBD_Y.
+FONTH := 8;
+FONTW := 8;
 
 # TempleOS 16-color palette (index = TempleOS color)
 BLACK, BLUE, GREEN, CYAN, RED, PURPLE, BROWN, LTGRAY,
@@ -81,12 +83,18 @@ MNORM, MMENU, MWORD, MJUKE, MREWARD, MHELP: con iota;
 DNONE, DPITCH, DBOX, DNOTE, DMETER, DTEMPO: con iota;
 
 # layout (all from the original)
+# The original wrote every one of these as a multiple of its 8x8 cell,
+# which made them look like text rows.  They are not: the staff, the
+# keyboard, the tool box and the meter are a picture, and 104 is where the
+# picture changes, whatever the font is.  Only text steps by FONTH.
+PANEL_Y: con 104;
+
 NOTE_BOX_X: con 220;
-NOTE_BOX_Y: con 13*FONTH+14;	# 118
+NOTE_BOX_Y: con PANEL_Y+14;	# 118
 TOOLS_X: con 450;
-TOOLS_Y: con 13*FONTH;		# 104
+TOOLS_Y: con PANEL_Y;
 METER_X: con 485;
-METER_Y: con 13*FONTH;
+METER_Y: con PANEL_Y;
 METER_W: con 12;
 METERSN: con 7;
 TEMPO_SPACING: con 15;
@@ -94,12 +102,15 @@ TEMPO_RANGE: con 80;
 TEMPO_BORDER: con 2;
 TEMPO_LEFT: con 396;
 TEMPO_TOP: con 96;
-KBD_Y: con 13*FONTH;		# 104
+KBD_Y: con PANEL_Y;
 HINT_Y: con 144;
-BTN_Y: con 176;
-ECHO_Y: con 208;
-ECHOLINES: con 32;
-ECHOW: con 78;
+# Four hint lines sit between HINT_Y and the buttons, so the buttons are
+# where the hints end, and the echo pane clears the 21-pixel button strip.
+# At the 6x10 font this is 184 and 208, which is where they always were.
+BTN_Y := 176;
+ECHO_Y := 208;
+ECHOLINES: con 32;	# the ring the echo pane keeps; what fits is measured
+echow := 78;		# and so is the column the input wraps at
 
 SHIFTSP: con 16r1F;		# TempleOS CH_SHIFT_SPACE word placeholder
 
@@ -245,9 +256,25 @@ init(ctxt: ref Draw->Context, argv: list of string)
 
 	win = wmclient->window(ctxt, "TempleOS Psalmody", Wmclient->Appl);
 	disp = win.display;
-	font = Font.open(disp, "/fonts/temple/temple.font");
+	# 6x10 is Inferno's own and fixed pitch, which this layout needs: the
+	# echo pane is a column of text and "Stacatto" is printed a letter at
+	# a time down the tempo dial.  The 20-high lucida the other ports took
+	# does not fit - four hint lines alone would need 80 pixels of the 32
+	# between the hints and the buttons.
+	font = Font.open(disp, "/fonts/misc/ascii.6x10.font");
+	if(font == nil)
+		font = Font.open(disp, "/fonts/temple/temple.font");
 	if(font == nil)
 		font = Font.open(disp, "*default*");
+	if(font != nil){
+		FONTH = font.height;
+		FONTW = font.width("0");
+		if(FONTW < 1)
+			FONTW = 1;
+	}
+	BTN_Y = HINT_Y + 4*FONTH;
+	ECHO_Y = BTN_Y + 24;
+	echow = (GRW - 8)/FONTW - 1;
 	pal := grpal->values();
 	ink = array[16] of ref Image;
 	for(i := 0; i < 16; i++)
@@ -1036,7 +1063,7 @@ leftdown(x, y: int)
 				return;
 			}
 	}
-	if(y < 13*FONTH){
+	if(y < PANEL_Y){
 		# staff region (PsmLeftClick)
 		if(tool == TPTR){
 			i := findnote(x);
@@ -1157,10 +1184,10 @@ leftup(x, y: int)
 		}
 		marksel(x1, x2);
 	DNOTE =>
-		if(y < 13*FONTH)
+		if(y < PANEL_Y)
 			dropnote(x, y);
 	DMETER =>
-		if(y < 13*FONTH)
+		if(y < PANEL_Y)
 			dropmeter(x, y);
 	}
 	dragmode = DNONE;
@@ -1296,7 +1323,7 @@ echo(s: string)
 		if(c < ' ')
 			c = ' ';
 		ecur[len ecur] = c;
-		if(len ecur >= ECHOW)
+		if(len ecur >= echow)
 			pushline();
 	}
 }
@@ -1580,18 +1607,35 @@ drawtempoctl(img: ref Image, o: Point)
 	gvprint(img, o, l+TEMPO_SPACING*3-TEMPO_BORDER-FONTW, t+TEMPO_SPACING+2, GREEN, "Stacatto");
 }
 
+# The original put the second column at sixteen cells, which is a
+# character count wearing a pixel's clothes.  Measure the widest key
+# instead, so a proportional font cannot run one label into the next.
+hintcol(): int
+{
+	if(font == nil)
+		return 16*FONTW;
+	w := 0;
+	keys := array[] of {"<SPACE>", "<BACKSPACE>", "Left Mouse", "Right Mouse"};
+	for(i := 0; i < len keys; i++){
+		kw := font.width(keys[i]);
+		if(kw > w)
+			w = kw;
+	}
+	return w + FONTW;
+}
+
 hintline(img: ref Image, o: Point, y: int, key, txt: string)
 {
 	gprint(img, o, 0, y, LTGREEN, key);
-	gprint(img, o, 16*FONTW, y, GREEN, txt);
+	gprint(img, o, hintcol(), y, GREEN, txt);
 }
 
 drawhints(img: ref Image, o: Point)
 {
 	hintline(img, o, HINT_Y, "<SPACE>", "Rest");
-	hintline(img, o, HINT_Y+8, "<BACKSPACE>", "Deletes Last Note");
-	hintline(img, o, HINT_Y+16, "Left Mouse", "Drag note or shift word");
-	hintline(img, o, HINT_Y+24, "Right Mouse", "Change duration or set word");
+	hintline(img, o, HINT_Y+FONTH, "<BACKSPACE>", "Deletes Last Note");
+	hintline(img, o, HINT_Y+2*FONTH, "Left Mouse", "Drag note or shift word");
+	hintline(img, o, HINT_Y+3*FONTH, "Right Mouse", "Change duration or set word");
 }
 
 drawbuttons(img: ref Image, o: Point)
@@ -1667,13 +1711,14 @@ drawmenu(img: ref Image, o: Point)
 {
 	mx := GRW/2 - 76;
 	my := 120;
-	h := len menuitems*10 + 8;
+	mrow := FONTH + 2;
+	h := len menuitems*mrow + 8;
 	frect(img, o, mx-2, my-2, 156, h+4, WHITE);
 	border(img, o, mx-2, my-2, mx+153, my+h+1, BLACK);
 	for(i := 0; i < len menuitems; i++){
-		y := my + 4 + i*10;
+		y := my + 4 + i*mrow;
 		if(i == menusel){
-			frect(img, o, mx, y-1, 152, 10, GREEN);
+			frect(img, o, mx, y-1, 152, mrow, GREEN);
 			gprint(img, o, mx+4, y, WHITE, menuitems[i]);
 		}else
 			gprint(img, o, mx+4, y, GREEN, menuitems[i]);
@@ -1706,7 +1751,7 @@ drawhelp(img: ref Image, o: Point)
 	y := 32;
 	for(i := 0; i < len lines; i++){
 		gprint(img, o, 32, y, GREEN, lines[i]);
-		y += 12;
+		y += FONTH+2;
 	}
 }
 
@@ -2522,33 +2567,46 @@ reward(e: ref JEntry)
 	mode = MREWARD;
 }
 
+# One legend item, returning where the next one starts.
+legend(img: ref Image, o: Point, x, y, col: int, s: string): int
+{
+	gprint(img, o, x, y, col, s);
+	if(font == nil)
+		return x + (len s + 2)*FONTW;
+	return x + font.width(s) + 2*FONTW;
+}
+
 drawjuke(img: ref Image, o: Point)
 {
-	gprint(img, o, 16, 8, BLACK, "Key:");
-	gprint(img, o, 56, 8, GREEN, "Graphics");
-	gprint(img, o, 132, 8, BLUE, "Words");
-	gprint(img, o, 184, 8, RED, "No Nothing");
-	gprint(img, o, 272, 8, BLACK, "Incomplete");
-	gprint(img, o, 360, 8, CYAN, "Special");
-	gprint(img, o, 16, 24, GREEN, "<DEL> delete   0-9 rate   r reward from God");
-	gprint(img, o, 16, 32, GREEN, "arrows move   <SPACE> preview   <ESC> load into Psalmody   Q cancel");
+	# The legend was six x positions on the 8-pixel cell.  Lay it out by
+	# what each label measures, so it cannot overlap in another font.
+	lx := 16;
+	lx = legend(img, o, lx, 8, BLACK, "Key:");
+	lx = legend(img, o, lx, 8, GREEN, "Graphics");
+	lx = legend(img, o, lx, 8, BLUE, "Words");
+	lx = legend(img, o, lx, 8, RED, "No Nothing");
+	lx = legend(img, o, lx, 8, BLACK, "Incomplete");
+	legend(img, o, lx, 8, CYAN, "Special");
+	gprint(img, o, 16, 8+2*FONTH, GREEN, "<DEL> delete   0-9 rate   r reward from God");
+	gprint(img, o, 16, 8+3*FONTH, GREEN, "arrows move   <SPACE> preview   <ESC> load into Psalmody   Q cancel");
+	jrow := FONTH + 6;
 	for(i := 0; i < len jents; i++){
 		e := jents[i];
 		x := 16 + (i%5)*100;
-		y := 64 + (i/5)*16;
+		y := 64 + (i/5)*jrow;
 		nm := e.name;
 		if(len nm > 8)
 			nm = nm[0:8];
 		r := "";
 		r[0] = e.rating;
 		if(i == jsel)
-			frect(img, o, x-2, y-2, 92, 12, LTGRAY);
+			frect(img, o, x-2, y-2, 92, FONTH+2, LTGRAY);
 		gprint(img, o, x, y, e.color, r + nm);
 	}
-	dy := 64 + ((len jents)/5)*16;
+	dy := 64 + ((len jents)/5)*jrow;
 	if(len jents == jsel)
-		frect(img, o, 14, dy+14, 44, 12, LTGRAY);
-	gprint(img, o, 16, dy+16, CYAN, "DONE");
+		frect(img, o, 14, dy+jrow-2, 44, FONTH+2, LTGRAY);
+	gprint(img, o, 16, dy+jrow, CYAN, "DONE");
 }
 
 drawreward(img: ref Image, o: Point)
@@ -2557,9 +2615,9 @@ drawreward(img: ref Image, o: Point)
 	gprint(img, o, 48, 96, RED, "Your reward from God:");
 	for(l := rewardlines; l != nil; l = tl l){
 		gprint(img, o, 48, y, RED, hd l);
-		y += 12;
+		y += FONTH+2;
 	}
-	gprint(img, o, 48, y+12, GREEN, "any key continues");
+	gprint(img, o, 48, y+FONTH+2, GREEN, "any key continues");
 }
 
 # --- misc --------------------------------------------------------------

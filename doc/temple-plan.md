@@ -472,8 +472,10 @@ frame — `life`'s generations, `maze`'s search, `hanoi`'s moves.
 The ports drew every label, HUD and help panel in `/fonts/temple/temple.font`
 — the TempleOS 8x8 system font. 76 of them now open
 `/fonts/lucida/unicode.8.font`, the font `wm(1)` and every other program in
-this tree uses, and keep the 8x8 as the fallback. That is one step of
-making these Inferno programs rather than a TempleOS emulation.
+this tree uses, and keep the 8x8 as the fallback; `psalmody` takes
+`/fonts/misc/ascii.6x10.font` instead, for a reason given below. That is
+one step of making these Inferno programs rather than a TempleOS
+emulation.
 
 **A font swap on its own would have been a regression, and here is the
 number.** Lucida is 20 pixels tall where temple is 8, and proportional
@@ -497,13 +499,11 @@ by counting its characters (`(w - 14*8)/2` for "Game Completed") asks
 
 **Where a port kept a font metric as a constant, the constant became a
 variable set when the font opens.** `FW`/`FH`/`FONT_WIDTH`/`FONTH` and the
-rest were `con 8` in 22 ports; they are now assigned `font.width("0")` and
-`font.height`, so every expression already written in terms of them —
+rest were `con 8` in 23 ports (`psalmody` included, below); they are now
+assigned `font.width("0")` and `font.height`, so every expression already written in terms of them —
 including the ones that are geometry rather than text, like `varoom`'s
 horizon at `4.5*FONT_HEIGHT` — follows the real font without being
-rewritten. `psalmody` needed more: its layout constants were *derived*
-(`NOTE_BOX_Y: con 13*FONTH+14`), so those became variables recomputed
-after the font opens.
+rewritten. `psalmody` needed more, and gets its own section below.
 
 **One place this could have gone wrong silently, and did not.** `span`'s
 open-file popup draws its rows at one pitch and hit-tests a click at
@@ -512,16 +512,44 @@ drawing would have made a click select a different row than the one under
 the pointer — the same shape as `ecology` taking a click from the wrong
 axis. Both go through one `fh()` now.
 
-**Four demos keep the 8x8 font, because the cell is their subject**:
-`fonted` is an editor for those bitmaps, `charanimation` animates one,
-`pantext` exists to slide a text layer inside an 8-pixel cell, and
-`psalmody` is a fixed 640x480 character-cell instrument whose *layout*
-constants are derived from the metric — `NOTE_BOX_Y: con 13*FONTH+14`,
-and four siblings at 96, 144, 176 and 208 that are not. Converting the
-metric alone moved `KBD_Y` from 104 to 260, below three bands that had not
-moved, which is the keyboard drawn on top of the echo line. It is
-reverted and named here rather than half converted: the whole stack has to
-go together, and that is a separate job.
+**Three demos keep the 8x8 font, because the cell is their subject**:
+`fonted` is an editor for those bitmaps, `charanimation` animates one, and
+`pantext` exists to slide a text layer inside an 8-pixel cell.
+
+**`psalmody` was the fourth, and is converted now.** It is a fixed
+640x480 instrument whose layout constants were derived from the metric —
+`NOTE_BOX_Y: con 13*FONTH+14`, and four siblings at 96, 144, 176 and 208
+that were not. Converting the metric alone moved `KBD_Y` from 104 to 260,
+below three bands that had not moved, which is the keyboard drawn on top
+of the echo line; that attempt was reverted rather than half landed.
+
+What was wrong was the reading, not the arithmetic. `13*FONTH` is not
+thirteen rows of text — the staff, the keyboard, the tool box and the
+meter are a *picture*, and 104 is where the picture changes whatever the
+font is. So the constant is `PANEL_Y: con 104` now and only text steps by
+`FONTH`. Two things below it do follow the text, because they sit under
+four hint lines: the buttons are `HINT_Y + 4*FONTH` and the echo pane
+clears the 21-pixel button strip at `BTN_Y + 24`.
+
+The font is **`/fonts/misc/ascii.6x10.font`**, not the lucida the other 76
+ports took, and the reason is arithmetic: at 20 high, four hint lines need
+80 pixels of the 32 between the hints and the buttons. 6x10 is Inferno's
+own and fixed pitch, which this port wants anyway — the echo pane is a
+column of text and "Stacatto" is printed a letter at a time down the
+tempo dial. At 6x10 the buttons land at 184 and the echo at 208, which is
+where it always was.
+
+*How it was checked, and the control that mattered.* Every text box each
+screen draws is recorded and tested for overlap and for leaving the
+window: main 35 boxes, menu 20, help 19, jukebox 24, reward 10, **0
+problems**. The first version of that check ran `drawhints`, `drawbuttons`
+and `drawecho` as three separate screens — so putting `BTN_Y` back to the
+old `HINT_Y+32` changed nothing it could see, because the three things
+that collide were never on the same screen. Merged into one screen, the
+same control reports the fourth hint line running into the button label:
+`"Change duration or set word" at 72,174 and "Octave 4  " at 144,182`.
+That is the second blind instrument this work has produced, after
+`rawhide`'s shadow-map dump.
 
 `vsprite(2)` keeps the 8x8 too: a sprite's `text` element is part of the
 asset and is compared against the `.bit` the extractor rasterised with
