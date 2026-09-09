@@ -20867,3 +20867,112 @@ fix and before this one showed no
 .CW "math emu" ,
 but at 1 in 304 that has probability about 0.53 and says nothing
 either way.
+.NH 2
+The FP capture again: it was matherror(), and my second answer was wrong too
+.PP
+Retracting a retraction, so the record is not left with the wrong
+mechanism twice over.
+.PP
+I said
+.CW fpurestore() Ns 's
+bare
+.CW "astate == FPinit"
+explained the
+.CW "math emu ... pc _fxsave+0x0"
+capture.  It does not.  The cloud-port session asked one question \(em
+does this copy have the demotion in the else branch \(em and it does:
+.P1
+	if(ostate & FPactive)
+		ostate = FPinactive | (ostate & ~FPactive);
+.P2
+Falling through therefore cannot leave
+.CW fpstate
+saying active, so the mechanism never completes.  The mask stays, since
+every other test in the file masks and that one did not, but it is
+hygiene and claims nothing now.
+.PP
+The capture is
+.CW matherror()
+and
+.CW simderror() ,
+which called
+.CW fpsave()
+with no
+.CW _clts() .
+.CW fpsave
+is
+.CW fpssesave
+(or
+.CW fpxsaves ,
+.CW fpxsaveopt ),
+each of which
+.I begins
+with the save instruction and ends with
+.CW _stts() .
+Called with TS already set it faults on its own first instruction,
+reported at
+.CW _fxsave+0x0
+\(em the captured pc exactly, with no intermediate step.  The window is
+the ordinary one:
+.CW fpusave()
+sets TS, and port/dis.c holds every Dis program between
+.CW fpusave()
+and
+.CW fpurestore()
+around
+.CW r->xec(r) ,
+so a
+.CW #MF
+or
+.CW #XM
+delivered there lands in these handlers.
+.PP
+The pc was saying this all along.  A pc at a function's first
+instruction means the call itself faulted, not something it led to, and
+I read past that twice.
+.PP
+Audited the rest rather than stopping at the fix.  Every other
+.CW fpsave()
+call site holds TS clear:
+.CW mathemu() Ns 's
+has
+.CW _clts()
+immediately before it, and
+.CW fpuprocsave() Ns 's
+and
+.CW notify() Ns 's
+run only when
+.CW fpstate
+is
+.CW FPactive ,
+which is TS clear by definition.  One switch does not mask the
+bookkeeping bits \(em
+.CW fpuprocfork() Ns 's,
+.CW "switch(up->fpstate & ~FPillegal)" ,
+which enumerates combinations, has no default, and would fall through
+for any
+.CW FPnouser
+variant \(em but that function is never called on this port, which is
+the same reason those flags are write-only here.
+.PP
+A caution for anything else in this tree.  os/9front/pc64/fpu.c is
+present and is
+.I not
+the upstream of the Inferno file: it has no
+.CW fpusave ,
+.CW fpurestore ,
+.CW FPpush ,
+.CW FPnouser ,
+.CW FPkernel
+or
+.CW fpslot
+at all, and uses
+.CW m->fpsave
+and
+.CW up->kfpsave
+instead.  Two of its three differences in
+.CW matherror
+were safe to take \(em a nil guard and the
+.CW _clts()
+\(em and the third, an early return for a trap from kernel mode, was
+left alone because there is nothing here to copy it from.
