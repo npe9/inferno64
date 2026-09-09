@@ -2833,6 +2833,45 @@ is booted a second time and a run that passes then says it needed to.
 A real regression fails twice; a retry nobody is told about is a suite
 that hides a flake, which is worse than a suite that fails.
 .PP
+It covers the other boards too, and doing that turned up the same shape
+of finding the model work kept producing: a check that fails because
+nothing ever gave it the device it tests.  The riscv64
+.CW virt
+board's
+.CW blkcheck()
+reads sector 0 of
+.CW /dev/sdF0/data
+and wants the 0x55AA boot signature, and every log of that board in
+this tree says
+.CW BLK-FAIL .
+Attaching a virtio-blk disk with a real FAT filesystem on it turns that
+into
+.CW BLK-OK ,
+and the boot then runs its whole suite rather than stopping short: 4
+markers became 32.
+.CW virtarm64 's
+.CW NET-FAIL
+became
+.CW NET-OK
+the moment a virtio-net was attached.  Neither was a bug in a driver.
+Both were a question nobody had asked since the board was written.
+.PP
+Those boards also fail a good many checks for a reason that is not a
+bug either: they reach a shell and then fail everything wanting a
+module their root does not carry \- Tk, Draw/Tk, wm, freetype, math,
+memfs \- each saying
+.CW "file does not exist" .
+That is a real state of a board, so the script records it as one: a
+configuration may carry a list of markers known to fail, checked as
+strictly as the marker set, and a passing run says what it carried \-
+.CW "ok 31 markers and 16 known -FAIL" .
+A new failure fails the run, and so does one that went away, because a
+debt that got paid should be written down.  Reporting a board with
+sixteen broken checks as simply
+.CW ok
+would be a lie of omission, and those lists are debt rather than a
+baseline to be comfortable with.
+.PP
 That script also carries the two harness bugs this document had to
 correct, fixed once where they cannot recur: it waits six seconds after
 the last marker rather than three, because

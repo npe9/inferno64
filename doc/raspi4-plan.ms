@@ -477,6 +477,17 @@ SD-only sets, 32 markers here, since it attaches no USB disk and no
 ethernet; the 36 above is the richer configuration, which needs an
 image with a filesystem on it.
 .PP
+It waits for
+.CW USB-MOUSE-NONE
+rather than for
+.CW RASPI4-SH-OK ,
+which matters more than it looks.  The mouse check reports after the
+board marker, so waiting for the board marker and then sleeping is a
+race \- and on a loaded machine this script lost it, came back one
+marker short, and reported a regression in a USB path that was fine.
+Waiting for the line that really comes last turns that race into a
+timeout with a name in it.
+.PP
 The Pi 3B suite no longer has a marker this one does not, though the
 last of them does not rest on the same footing:
 .CW RNG-OK

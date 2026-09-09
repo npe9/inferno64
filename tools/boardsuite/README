@@ -26,8 +26,16 @@ were made by reading markers off a terminal:
 	out as "SD-FS-CREATE-OKtrack:".  That looked exactly like a
 	regression in the SD path, and was not.
 
-Both are fixed here, once: the settle after the last marker is six
-seconds, and the marker pattern has no trailing boundary.
+Both are fixed here, once, and the first of them twice.  The obvious fix
+-- wait for the board's own marker and then sleep a while -- is still a
+race, and this script lost it on its first day out: on a loaded machine
+the mouse check reported later than the six seconds allowed, the run
+came back one marker short, and it looked exactly like a regression in
+the USB path.  So the wait is for the marker that really comes last, on
+every board, and the sleep after it is only a flush window.  A board
+that never prints it now times out with the name of the line it never
+saw, which is a sentence a reader can act on rather than a count that
+is quietly wrong.  The marker pattern has no trailing boundary.
 
 WHAT EACH CONFIGURATION COVERS.  The four are not four copies of one
 run.  Two of them exist because a branch of sdhcibcm.c is only reached
@@ -63,6 +71,45 @@ the same marker either way, and THERM-OK is the same marker at any
 temperature.  So each configuration also names evidence lines that must
 appear in its log, and a run that produces the right markers with the
 wrong evidence fails.
+
+THE OTHER BOARDS.  Four more configurations boot the boards this tree
+has besides the Pis, each with the qemu its architecture needs -- the
+Pi ones need the patched build, the rest are ordinary machines and use
+the system qemu:
+
+	virtarm64	QEMU -M virt, cortex-a57, with a virtio-blk disk
+			and a virtio-net.  Reaches a shell and runs a
+			long suite.  The net device is worth the line:
+			without it NET-FAIL, with it NET-OK, and that
+			was a known failure until the day something
+			attached one.
+	sifiveu		QEMU -M sifive_u, no bios.
+	virt		QEMU -M virt riscv64, with a virtio-blk disk.
+	virt32		QEMU -M virt riscv32.
+
+The virtio-blk disk is why there is a FAT16 image in the work
+directory.  virtinit.b's blkcheck() reads sector 0 of /dev/sdF0/data and
+requires the 0x55AA boot signature, and every log of that board in this
+tree shows BLK-FAIL -- not because the driver is broken but because
+nothing ever gave it a disk.  With one attached it prints BLK-OK.  The
+image is made with hdiutil on macOS or mkfs.vfat elsewhere; writing two
+signature bytes into a blank file would have satisfied the check and
+none of its point, so the script makes a real filesystem or says it
+cannot.
+
+KNOWN FAILURES.  virtarm64 reaches a shell and then fails every check
+that wants a module its root does not carry -- Tk, Draw/Tk, math,
+memfs, and the rest, each reporting "file does not exist".  That is a
+real state of that board, so it is recorded as one: a configuration may
+have a <config>.expected file listing the markers known to fail, and
+the run checks that set as strictly as it checks the marker set.  A new
+-FAIL fails the run.  So does one that went away, because a debt that
+got paid should be written down rather than silently forgotten.
+
+A passing run says how many known failures it carried -- "ok 31 markers
+and 16 known -FAIL" -- because a suite that reports a board with
+fifteen broken checks as simply "ok" is lying by omission.  These lists
+are debt, not a baseline to be comfortable with.
 
 WHAT IT DOES NOT COVER.  No USB disk and no USB ethernet, so
 DISK-NONE and ETHER-NONE are the right answers here and are in the

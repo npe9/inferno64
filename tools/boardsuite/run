@@ -40,7 +40,7 @@ verbose=false
 record=false
 force=false
 
-configs='raspi3b raspi3b-4g raspi4 raspi4-hot'
+configs='raspi3b raspi3b-4g raspi4 raspi4-hot virtarm64 sifiveu virt virt32'
 
 # Each configuration: the kernel, the QEMU arguments, the line that
 # says the board is done printing, and the evidence lines that make
@@ -49,6 +49,22 @@ config_kernel() {
 	case $1 in
 	raspi3b|raspi3b-4g)	echo "$root/os/inferno/raspi3b/iraspi3b";;
 	raspi4|raspi4-hot)	echo "$root/os/inferno/raspi4/iraspi4";;
+	virtarm64)		echo "$root/os/inferno/virtarm64/ivirtarm64";;
+	sifiveu)		echo "$root/os/inferno/sifiveu/isifiveu";;
+	virt)			echo "$root/os/inferno/virt/ivirt";;
+	virt32)			echo "$root/os/inferno/virt32/ivirt32";;
+	esac
+}
+
+# The Pi boards need the patched build -- most of what their suites
+# drive is not in a stock qemu at all.  The others are ordinary machines
+# and want the system qemu for their architecture; nothing in
+# tools/qemu-patches touches them.
+config_qemu() {
+	case $1 in
+	raspi*|virtarm64)	echo "$QEMU";;
+	sifiveu|virt)		echo "${QEMU_RISCV64:-`command -v qemu-system-riscv64`}";;
+	virt32)			echo "${QEMU_RISCV32:-`command -v qemu-system-riscv32`}";;
 	esac
 }
 
@@ -62,13 +78,32 @@ config_args() {
 		echo "-M raspi4b -m 2G -drive file=$work/sd16b.img,if=sd,format=raw";;
 	raspi4-hot)
 		echo "-M raspi4b -m 2G -drive file=$work/sd16c.img,if=sd,format=raw -global bcm2838-thermal.temperature=85000";;
+	virtarm64)
+		echo "-M virt -cpu cortex-a57 -m 1G -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-device,drive=blk0 -netdev user,id=n0 -device virtio-net-device,netdev=n0";;
+	sifiveu)
+		echo "-M sifive_u -bios none";;
+	virt)
+		echo "-M virt -bios none -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-device,drive=blk0";;
+	virt32)
+		echo "-M virt -bios none";;
 	esac
 }
 
+# The line that says a board has finished printing.  This has to be the
+# LAST marker, not the last interesting one: on the Pi boards the mouse
+# check waits out its own timeout and reports after RASPI*-SH-OK, so
+# waiting for the board marker and sleeping a few seconds is a race the
+# machine wins whenever it is busy -- it cost this tree a "38 of 38"
+# that was really 39, and cost this script a false regression on its
+# first day out.  Waiting for the marker that really comes last turns
+# that race into a timeout with a name in it.
 config_last() {
 	case $1 in
-	raspi3b|raspi3b-4g)	echo 'RASPI3B-SH-OK';;
-	raspi4|raspi4-hot)	echo 'RASPI4-SH-OK';;
+	raspi3b|raspi3b-4g)	echo 'USB-MOUSE';;
+	raspi4|raspi4-hot)	echo 'USB-MOUSE';;
+	virtarm64|virt)		echo 'ROOT-CMDS-OK';;
+	sifiveu)		echo 'SIFIVEU-SH-OK';;
+	virt32)			echo 'VIRT32-INIT-OK';;
 	esac
 }
 
@@ -88,6 +123,8 @@ config_evidence() {
 		echo 'die 24\.';;
 	raspi4-hot)
 		echo 'die 85\.';;
+	virtarm64|sifiveu|virt|virt32)
+		;;
 	esac
 }
 
@@ -101,6 +138,7 @@ config_card() {
 	raspi3b-4g)	echo "sd4g.img 4g";;
 	raspi4)		echo "sd16b.img 16m";;
 	raspi4-hot)	echo "sd16c.img 16m";;
+	*)		;;		# no card
 	esac
 }
 
@@ -123,7 +161,8 @@ done
 [ $# -gt 0 ] && configs="$*"
 
 if [ ! -x "$QEMU" ]; then
-	echo "boardsuite: no QEMU at $QEMU (set QEMU=)" >&2
+	echo "boardsuite: no patched QEMU at $QEMU (set QEMU=)" >&2
+	echo "boardsuite: the Pi configurations need it; see tools/qemu-patches/README" >&2
 	exit 2
 fi
 
@@ -132,6 +171,7 @@ mkdir -p "$work"
 # A blank card of the given size.  Sparse: the 4G one costs nothing
 # until something writes to it, and nothing here writes 4G.
 makecard() {
+	[ -z "$1" ] && return
 	f="$work/$1"
 	case $2 in
 	16m)	bytes=16777216;;
@@ -143,6 +183,31 @@ makecard() {
 	fi
 	rm -f "$f"
 	dd if=/dev/zero of="$f" bs=1 count=0 seek=$bytes 2>/dev/null
+}
+
+# A FAT16 image, for the one check that wants a filesystem rather than a
+# blank card: os/inferno/init/virtinit.b's blkcheck() reads sector 0 of
+# /dev/sdF0/data and requires the 0x55AA boot signature.  Writing those
+# two bytes into a blank file would satisfy the letter of that and none
+# of the point, so this makes a real filesystem.
+makefat() {
+	f="$work/$1"
+	[ -f "$f" ] && return 0
+	if command -v hdiutil >/dev/null 2>&1; then
+		hdiutil create -size 16m -fs MS-DOS -volname BOARDSUITE \
+			-layout NONE -ov "$work/fatmk" >/dev/null 2>&1 || return 1
+		mv "$work/fatmk.dmg" "$f" || return 1
+		return 0
+	fi
+	for mk in mkfs.vfat mkfs.fat; do
+		if command -v $mk >/dev/null 2>&1; then
+			dd if=/dev/zero of="$f" bs=1 count=0 seek=16777216 2>/dev/null
+			$mk -F 16 "$f" >/dev/null 2>&1 && return 0
+			rm -f "$f"
+			return 1
+		fi
+	done
+	return 1
 }
 
 # Markers, as a sorted set.  No trailing word boundary: a marker can be
@@ -167,7 +232,7 @@ attempt() {
 	last=`config_last $c`
 
 	# shellcheck disable=SC2046
-	"$QEMU" `config_args $c` -display none -serial file:"$log" \
+	"$qemu" `config_args $c` -display none -serial file:"$log" \
 		-kernel "$kernel" >/dev/null 2>&1 &
 	pid=$!
 
@@ -183,10 +248,10 @@ attempt() {
 		waited=`expr $waited + 2`
 	done
 
-	# The last marker is not the last line: checks that time out report
-	# after it.  Three seconds is too few and five is enough; six is
-	# what this uses, and if that ever changes the count changes with
-	# it rather than silently.
+	# Output after the last marker still has to land.  This is a flush
+	# window, not a race against a check that has not reported yet --
+	# config_last names the marker that really comes last, so that
+	# race is gone.
 	sleep $settle
 	kill $pid 2>/dev/null || true
 	wait $pid 2>/dev/null || true
@@ -198,7 +263,8 @@ attempt() {
 
 	markers "$log" > "$got"
 	: > "$work/$c.missing"
-	rm -f "$work/$c.diff"
+	rm -f "$work/$c.diff" "$work/$c.faildiff"
+	grep -- '-FAIL' "$got" | sort > "$work/$c.failed" || true
 
 	$record && return
 
@@ -210,8 +276,19 @@ attempt() {
 	fail=''
 	diff -u "$base" "$got" > "$work/$c.diff" || fail="$fail markers"
 
-	# Any -FAIL at all, even one a baseline happened to contain.
-	grep -q -- '-FAIL' "$got" && fail="$fail -FAIL"
+	# Failures a board is known to have.  Some boards reach a shell and
+	# then fail every check that wants a module their root does not
+	# carry; that is worth recording exactly rather than either hiding
+	# it or refusing to watch the board at all.  The set has to match:
+	# a new -FAIL fails the run, and so does one that went away, since
+	# a debt that got paid should be written down.
+	grep -- '-FAIL' "$got" | sort > "$work/$c.failed"
+	if [ -f "$here/$c.expected" ]; then
+		diff -u "$here/$c.expected" "$work/$c.failed" \
+			> "$work/$c.faildiff" || fail="$fail known-FAIL-set"
+	elif [ -s "$work/$c.failed" ]; then
+		fail="$fail -FAIL"
+	fi
 
 	config_evidence $c | while read -r e; do
 		[ -z "$e" ] && continue
@@ -235,7 +312,21 @@ for c in $configs; do
 		continue
 	fi
 
+	qemu=`config_qemu $c`
+	if [ -z "$qemu" ] || [ ! -x "$qemu" ]; then
+		echo "$c: FAIL no qemu for this board (looked for `config_qemu $c`)"
+		status=1
+		continue
+	fi
+
 	makecard `config_card $c`
+	case $c in virt|virtarm64) needfat=true;; *) needfat=false;; esac
+	if $needfat && ! makefat fat16.img; then
+		echo "$c: FAIL no way to make a FAT16 image here (hdiutil or mkfs.vfat)"
+		echo "    BLK-OK needs a filesystem, not a blank card; see the README"
+		status=1
+		continue
+	fi
 
 	fail=`attempt $c`
 	retried=false
@@ -285,20 +376,31 @@ for c in $configs; do
 			fi
 		fi
 		cp "$got" "$base"
-		echo "$c: recorded $n markers in $base"
+		if [ -s "$work/$c.failed" ]; then
+			cp "$work/$c.failed" "$here/$c.expected"
+			echo "$c: recorded $n markers in $base, and `wc -l < "$work/$c.failed" | tr -d ' '` known -FAIL"
+		else
+			rm -f "$here/$c.expected"
+			echo "$c: recorded $n markers in $base"
+		fi
 		continue
 	fi
 
 	n=`wc -l < "$got" 2>/dev/null | tr -d ' '`
+	known=''
+	if [ -s "$work/$c.failed" ]; then
+		known=" and `wc -l < "$work/$c.failed" | tr -d ' '` known -FAIL"
+	fi
 	if [ -z "$fail" ]; then
 		if $retried; then
-			echo "$c: ok $n markers (on the second boot; the first was starved)"
+			echo "$c: ok $n markers$known (on the second boot; the first was starved)"
 		else
-			echo "$c: ok $n markers"
+			echo "$c: ok $n markers$known"
 		fi
 	else
 		echo "$c: FAIL $fail ($n markers, log $log)"
 		[ -s "$work/$c.diff" ] && sed -n '3,$p' "$work/$c.diff" | sed 's/^/    /'
+		[ -s "$work/$c.faildiff" ] && sed -n '3,$p' "$work/$c.faildiff" | sed 's/^/    /'
 		if [ -s "$work/$c.missing" ]; then
 			while read -r m; do
 				echo "    missing evidence: $m"
