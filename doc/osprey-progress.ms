@@ -10097,7 +10097,43 @@ running out is refused out loud, and the boot prints which attachment it
 is taking so the count is a thing the check reads rather than a thing
 assumed.
 .PP
-What is left of it is the rest of the shell's programs.
+.PP
+.B "wc too, and three modules in one pipeline."
+.CW /boot/libwc
+is a module now as well, so the two programs a pipeline was made of are
+both without addresses, and the script has a line with three stages in
+it:
+.CW "/boot/libcat /hello | /boot/libcat | /boot/libwc" .
+Three modules are alive at once, in three slots the loader chose \-
+0x2c00000, 0x3000000 and 0x3400000 in the boot the check reads \- and
+the far end counts 645 bytes.
+.PP
+That number is worth explaining, because it is larger than the 454 the
+two-stage line counts and the file did not grow.
+.CW print
+on this personality writes descriptor 1, so what a stage says about
+itself goes into its own pipe rather than to the console whenever its
+descriptor 1 is a pipe.  454 is the first cat and the file; the other
+191 is the middle cat, whose descriptor 1 is the second pipe.  Nothing
+of either is lost, which is the point: the bytes are counted at the far
+end of two pipes and both stages' words are among them.
+.PP
+Two more falsifications.  With
+.CW Nrelocslot
+cut to two the third stage is refused \-
+.CW "/boot/libwc: all 2 relocation slots are taken"
+\- the shell says it cannot start it and carries on, and exactly the two
+criteria that name three slots fail; that path had never run before.
+With wc still holding its old base the check would have gone on passing
+a criterion that named 0x1800000, so that criterion now asks for a slot
+rather than for a number.
+.PP
+What is left of it is the shell itself, which is still linked at
+.CW P9progbase4 ,
+and
+.CW /boot/libgen ,
+which stays at one on purpose: it is what shows that a program which is
+its address cannot be two.
 .PP
 .B "Phase 3.2: a real program, then rio, linked with the library."
 A real program \- a command, then a shell, then rio \- is linked with

@@ -180,9 +180,21 @@ def main():
                     re.search(r'libsh: \d+ bytes of script, read by calling the personality beside me', t) is not None
                     and re.search(r'p9 spawn: /boot/libcat runs as \d+ at 0x[0-9a-f]+, with its own descriptor table \(-1 -1 -1\)', t) is not None
                     and 'libsh: /boot/libcat ended, status ""' in t))
+    def wcslot(t):
+        """The address the loader gave a wc, if it gave it a slot."""
+        for a in re.findall(r'p9 spawn: /boot/libwc runs as \d+ at (0x[0-9a-f]+), '
+                            r'with its own descriptor table \(0 -1 -1\)', t):
+            if int(a, 16) >= 0x2c00000:
+                return a
+        return None
+
     results.append(("and it runs a pipeline: two spawned programs at two addresses, each with its own descriptor table, the first's standard output and the second's standard input the two ends of one pipe of the personality's - and the shell closes its own copies, which is the only reason the far end ever sees end of file",
                     re.search(r'p9 spawn: /boot/libcat runs as \d+ at 0x[0-9a-f]+, with its own descriptor table \(-1 0 -1\)', t) is not None
-                    and re.search(r'p9 spawn: /boot/libwc runs as \d+ at 0x1800000, with its own descriptor table \(0 -1 -1\)', t) is not None
+                    # wc has no fixed address any more: it is a module,
+                    # so the far end of the pipeline is wherever the
+                    # loader put it, and what is required is that it be
+                    # a slot rather than a particular number.
+                    and wcslot(t) is not None
                     and 'libwc: 8 lines 79 words 454 bytes off the pipe, read as a call into the personality' in t))
     results.append(("and the two stages are alive at once, not one after the other: 200000 bytes cross a pipe that holds 32768, so the writer blocks and the reader must run to drain it - six times over - and every byte arrives, counted at the far end",
                     'p9: a pipe holds 32768 bytes before its writer waits for its reader' in t
@@ -237,6 +249,22 @@ def main():
                     and 'attachment records are taken' not in t
                     and all(int(a[3]) == i + 1 for i, a in enumerate(attachments))
                     and int(attachments[-1][4]) > len(attachments)))
+    #
+    # Three modules alive at once, in three slots.  The number at the
+    # far end is the whole of what both cats said as well as the file:
+    # print on this personality writes descriptor 1, so a stage's own
+    # narration goes into its pipe rather than to the console, and the
+    # last stage counts all of it.  454 of that is the first cat and the
+    # file, which is what the two-stage line above counts; the other 191
+    # is the middle cat, whose descriptor 1 is the second pipe rather
+    # than the console.
+    trio = re.findall(r'p9 (?:reloc|spawn): /boot/lib(?:cat|wc) (?:laid at|runs as \d+ at) '
+                      r'(0x[0-9a-f]+)', t[t.index('libsh: /boot/libcat /hello | /boot/libcat | /boot/libwc'):]
+                      if 'libsh: /boot/libcat /hello | /boot/libcat | /boot/libwc' in t else '')
+    results.append(("and three modules run in one pipeline, in three slots: \"cat | cat | wc\" is two copies of one image and a third of another, none of them at an address of its own, and what the far end counts is the file and everything both cats said on the way - 454 bytes of it the first cat and the file, the other 191 the middle cat, whose descriptor 1 is the second pipe and not the console",
+                    'libsh: /boot/libcat /hello | /boot/libcat | /boot/libwc' in t
+                    and len(set(a for a in trio if int(a, 16) >= 0x2c00000)) >= 3
+                    and 'libwc: 11 lines 114 words 645 bytes off the pipe' in t))
     results.append(("and the limit still holds for a program that is its address: the script's last line asks for two of /boot/libgen, which is linked at one, and the second is refused by name - the two would be the one image sharing its one data segment, descriptor table and heap - and the shell carries on",
                     'p9 exec: /boot/libgen is already running at 0x2000000; it is one image and cannot be two programs' in t
                     and 'libsh: /boot/libgen: cannot start it' in t))

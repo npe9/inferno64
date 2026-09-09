@@ -110,7 +110,7 @@ enum {
 	 */
 	P9progbase	= 0x1000000,	/* prog2, the first loaded program */
 	P9progbase2	= 0x1400000,	/* free: libcat is a module now, and has no base */
-	P9progbase3	= 0x1800000,	/* libwc, the far end of a pipeline */
+	P9progbase3	= 0x1800000,	/* free: libwc is a module now, and has no base */
 	P9progbase4	= 0x1c00000,	/* libsh, the shell */
 	P9progbase5	= 0x2000000,	/* libgen, the near end of a pipeline */
 	P9progbase6	= 0x2400000,	/* libdraw, the program that draws */

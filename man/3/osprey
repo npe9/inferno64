@@ -1531,6 +1531,16 @@ at offset 0 as the symbol table gives it, no imports, mode 0 on every
 relocation, and a value inside the image at every offset named.  A build
 failing any of those emits nothing, which is how a stale linker was
 caught.
+.B /boot/libwc
+is one as well, so both programs a pipeline is made of are without
+addresses, and
+.B "/boot/libcat /hello | /boot/libcat | /boot/libwc"
+is three modules alive at once in three slots.  What the far end counts
+is 645 bytes rather than the 454 of the two-stage line, because
+.I print
+here writes descriptor 1: a stage whose descriptor 1 is a pipe says what
+it says into that pipe, and the count at the end of two of them holds
+the file and both cats' words.
 .PP
 A region of address space is asked of the kernel once and used again
 afterwards, and the loader remembers its size as well as its address.

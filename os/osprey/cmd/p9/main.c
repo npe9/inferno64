@@ -776,12 +776,15 @@ p9main(void)
 	{
 		char *shargv[3];
 		/*
-		 * The last two lines are the two halves of the same claim.
+		 * The last three lines are the halves of the same claim.
 		 *
 		 * cat is a relocatable module now, so "cat | cat" is two of
 		 * one image running at once, each in a slot the loader took
 		 * for it - which is what the fourth line was written to be
-		 * refused for, back when cat was its address.
+		 * refused for, back when cat was its address.  wc is a module
+		 * too, so the fifth line is three of them alive at once in
+		 * three slots, with the twelve bytes of /hello going the
+		 * length of it and being counted at the far end.
 		 *
 		 * gen still is its address, so "gen | gen" is refused, and
 		 * refused by name; and the first gen, writing into a pipe
@@ -794,6 +797,7 @@ p9main(void)
 			"/boot/libcat /hello | /boot/libwc\n"
 			"/boot/libgen 200000 | /boot/libwc\n"
 			"/boot/libcat /hello | /boot/libcat\n"
+			"/boot/libcat /hello | /boot/libcat | /boot/libwc\n"
 			"/boot/libgen 100 | /boot/libgen 100\n";
 		int fd;
 
@@ -803,7 +807,7 @@ p9main(void)
 		else {
 			p9write(fd, script, strlen(script));
 			p9close(fd);
-			print("p9: wrote a script of five lines, the last four pipelines\n");
+			print("p9: wrote a script of six lines, the last five pipelines\n");
 			shargv[0] = "/boot/libsh";
 			shargv[1] = "#e/script";
 			shargv[2] = nil;
