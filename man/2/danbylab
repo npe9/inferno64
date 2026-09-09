@@ -308,6 +308,9 @@ without a cached raster.
 Measured over the first sixty frames,
 .I simplependulum
 takes 309 hits to 51 misses and never flushes.
+That is the cache working, not the cost of the links: timed against the
+plain lines they replaced, the whole link loop takes 98 microseconds a
+frame for two links and 108 for eight, against 22 and 34 for lines.
 .SH SOURCE
 .B /appl/lib/danbylab.b
 .SH SEE ALSO
