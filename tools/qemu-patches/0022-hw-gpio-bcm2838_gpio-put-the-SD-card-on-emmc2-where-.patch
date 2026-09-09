@@ -1,0 +1,123 @@
+From 8d8cb2806cbc6e572f04d8a317b666b3842cd287 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Wed, 9 Sep 2026 04:41:52 -0400
+Subject: [PATCH] hw/gpio/bcm2838_gpio: put the SD card on emmc2, where a Pi 4
+ has it
+
+bcm2838 maps emmc2 at EMMC2_OFFSET, gives it sd-spec-version 3 and a
+capabilities register, and or-gates its interrupt with the Arasan's.
+Then it parents the card to the Arasan and never to emmc2, so emmc2 is
+a controller fully present in the model and permanently empty.
+
+A BCM2711 wires its microSD slot to emmc2 on dedicated pins.  It is
+what a Pi 4 boots from and what Linux's bcm2711.dtsi carries the card
+on, mmc@7e340000.  GPIO 48-53, which the mux in this file drives, go to
+the header pins and to the SDIO the wireless part sits on; they do not
+move the microSD.
+
+So the model put the card on a controller the board does not use it
+for, which is worse than leaving emmc2 empty would have been: a driver
+written against the model finds a card on the Arasan, passes every
+check, and finds nothing at all on real hardware.  An Inferno raspi4
+kernel did exactly that until this was corrected.
+
+Parent the card to emmc2 at reset, and give the GPIO the link to reach
+it.  The 48-53 mux stays -- the pins and both controllers are real --
+and now moves nothing, since sdbus_reparent_card() returns at once for
+a bus with no card in it.  That is the right outcome rather than an
+accident.
+
+Verified from both ends.  raspi4b booting Inferno with its SD driver
+moved to 0xfe340000: SDHCI-4BIT-OK, SDHCI-CAP-OK, SDHCI-HISPEED-ACCEPTED,
+SDHCI-MULTIBLOCK-OK, SDHCI-SPEED-ACCEPTED, SDHCI-WRITE-OK and
+SD-FS-CREATE-OK all pass against emmc2, and SDHOST correctly reports no
+card.  raspi3b is untouched -- it uses bcm2835_gpio -- and its marker
+set is identical.  qtest-aarch64: 28 Ok, 0 Fail.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ hw/arm/bcm2838_peripherals.c   |  2 ++
+ hw/gpio/bcm2838_gpio.c         | 27 +++++++++++++++++++++++++--
+ include/hw/gpio/bcm2838_gpio.h |  1 +
+ 3 files changed, 28 insertions(+), 2 deletions(-)
+
+diff --git a/hw/arm/bcm2838_peripherals.c b/hw/arm/bcm2838_peripherals.c
+index 812b5b8..a3b0348 100644
+--- a/hw/arm/bcm2838_peripherals.c
++++ b/hw/arm/bcm2838_peripherals.c
+@@ -42,6 +42,8 @@ static void bcm2838_peripherals_init(Object *obj)
+                                    OBJECT(&s_base->sdhci.sdbus));
+     object_property_add_const_link(OBJECT(&s->gpio), "sdbus-sdhost",
+                                    OBJECT(&s_base->sdhost.sdbus));
++    object_property_add_const_link(OBJECT(&s->gpio), "sdbus-emmc2",
++                                   OBJECT(&s->emmc2.sdbus));
+ 
+     object_initialize_child(obj, "mmc_irq_orgate", &s->mmc_irq_orgate,
+                             TYPE_OR_IRQ);
+diff --git a/hw/gpio/bcm2838_gpio.c b/hw/gpio/bcm2838_gpio.c
+index 1069e78..31e20f5 100644
+--- a/hw/gpio/bcm2838_gpio.c
++++ b/hw/gpio/bcm2838_gpio.c
+@@ -98,7 +98,14 @@ static void gpfsel_set(BCM2838GpioState *s, uint8_t reg, uint32_t value)
+         }
+     }
+ 
+-    /* SD controller selection (48-53) */
++    /*
++     * SD controller selection (48-53).  With the card on emmc2 these
++     * move nothing -- sdbus_reparent_card() returns at once for a bus
++     * with no card in it -- and that is the right outcome rather than
++     * an accident: on a BCM2711 these pins select which controller
++     * reaches the header, and the microSD slot is not on them.  The
++     * mux stays because the pins and the two controllers do.
++     */
+     if (s->sd_fsel != BCM2838_FSEL_GPIO_IN
+         && (s->fsel[48] == BCM2838_FSEL_GPIO_IN)
+         && (s->fsel[49] == BCM2838_FSEL_GPIO_IN)
+@@ -304,7 +311,20 @@ static void bcm2838_gpio_reset(DeviceState *dev)
+     s->sd_fsel = 0;
+ 
+     /* SDHCI is selected by default */
+-    sdbus_reparent_card(&s->sdbus, s->sdbus_sdhci);
++    /*
++     * The microSD slot is on EMMC2, not on the Arasan.  A BCM2711 wires
++     * emmc2 to the card with dedicated pins -- it is what a Pi 4 boots
++     * from, and Linux's bcm2711.dtsi carries the card on mmc@7e340000
++     * -- while GPIO 48-53, which the mux below drives, go to the header
++     * pins and the SDIO the wireless part sits on.
++     *
++     * This parented the card to the Arasan, so emmc2 was mapped, had
++     * its interrupt wired, and never had a card in it: a controller
++     * present in the model and dead.  A driver written against the
++     * model would talk to the Arasan and find a card, then find nothing
++     * on a real Pi 4.
++     */
++    sdbus_reparent_card(&s->sdbus, s->sdbus_emmc2);
+ 
+     s->lev0 = 0;
+     s->lev1 = 0;
+@@ -362,6 +382,9 @@ static void bcm2838_gpio_realize(DeviceState *dev, Error **errp)
+ 
+     obj = object_property_get_link(OBJECT(dev), "sdbus-sdhost", &error_abort);
+     s->sdbus_sdhost = SD_BUS(obj);
++
++    obj = object_property_get_link(OBJECT(dev), "sdbus-emmc2", &error_abort);
++    s->sdbus_emmc2 = SD_BUS(obj);
+ }
+ 
+ static void bcm2838_gpio_class_init(ObjectClass *klass, const void *data)
+diff --git a/include/hw/gpio/bcm2838_gpio.h b/include/hw/gpio/bcm2838_gpio.h
+index f2a57a6..8a9620c 100644
+--- a/include/hw/gpio/bcm2838_gpio.h
++++ b/include/hw/gpio/bcm2838_gpio.h
+@@ -34,6 +34,7 @@ struct BCM2838GpioState {
+     SDBus sdbus;
+     SDBus *sdbus_sdhci;
+     SDBus *sdbus_sdhost;
++    SDBus *sdbus_emmc2;
+ 
+     uint8_t fsel[BCM2838_GPIO_NUM];
+     uint32_t lev0, lev1;
+-- 
+2.51.0
+

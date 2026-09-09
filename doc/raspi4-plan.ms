@@ -228,6 +228,77 @@ is absent rather than failing.  Whether a real BCM2711 chains that
 controller into the GIC, and on which line, is not something this
 session established, so nothing was wired on a guess.
 .NH 1
+The card was on the wrong controller, in the model and in this port
+.PP
+.CW bcm2838
+maps emmc2 at 0x340000, gives it
+.CW sd-spec-version
+3 and a capabilities register, and or-gates its interrupt with the
+Arasan's.  Then it parents the card to the Arasan and never to emmc2,
+so emmc2 was a controller fully present in the model and permanently
+empty \- and this port, which inherited raspi3b's driver, talked to the
+Arasan at 0xfe300000 and found a card there.
+.PP
+A BCM2711 does not put the microSD there.  It wires the slot to emmc2
+on dedicated pins: that is what a Pi 4 boots from, and what Linux's
+.CW bcm2711.dtsi
+carries the card on,
+.CW mmc@7e340000 .
+GPIO 48-53, which raspi3b's driver muxes to move the card between
+SDHOST and the Arasan, go to the header pins and to the SDIO the
+wireless part sits on; they do not move the microSD at all.
+.PP
+So every SD marker this port was passing was passing against a
+controller that has no card on the board.  Not a near-miss and not a
+timing difference \- the driver would have found an empty slot on real
+hardware and reported
+.CW SDHCI-NONE .
+That is the most expensive kind of divergence this document collects,
+because nothing about it looks wrong until the board is on the desk.
+.PP
+Both ends are corrected.  Patch 0022 parents the card to emmc2 at
+reset; the mux stays, because the pins and both controllers are real,
+and now moves nothing.  The driver's base becomes EMMC2 and it stops
+taking GPIO 48-53, which on this board would only steal pins from
+whatever else is using them.  The whole SDHCI sequence then passes
+against emmc2 \- bus width, high speed, multi-block, the capacity
+boundary \- and SDHOST correctly reports
+.CW SD-NONE ,
+which is the right answer for a Pi 4 and not a failure.
+.PP
+.B "And that is why this board has its own init module."
+.CW raspi4init.b
+exists because of a real difference rather than for tidiness: the kfs
+filesystem test reams a partition on the controller that has the card,
+which is
+.CW sdH0
+here and
+.CW sdM0
+on a Pi 3B.  The board markers are
+.CW RASPI4-OK
+and
+.CW RASPI4-SH-OK
+so the two boards' logs cannot be confused for each other.
+.NH 1
+Where the suite stands
+.PP
+33 markers with a 16MB SD image, a FAT16 USB disk and USB ethernet, no
+.CW -FAIL ,
+no guest error, 37.6 seconds to the last marker.  Two
+.CW -NONE ,
+both of them correct answers rather than gaps:
+.CW SD-NONE ,
+because a Pi 4 has nothing on SDHOST, and
+.CW USB-MOUSE-NONE ,
+because no mouse was attached.
+.PP
+The Pi 3B suite has three markers this one does not, and each has its
+own reason recorded above:
+.CW THERM-OK ,
+.CW RNG-OK
+and
+.CW ARMTIMER-INTR-OK .
+.NH 1
 What is left
 .IP \(bu
 An RNG200 driver, and a QEMU model for it, since none exists.
@@ -240,12 +311,10 @@ a real BCM2711, and on which line.  That is what
 .CW ARMTIMER-INTR-OK
 needs, and it is a hardware question rather than a modelling one.
 .IP \(bu
-emmc2, which is genuinely new on this board: a second SDHCI at
-EMMC2_OFFSET sharing INTID 158 with the Arasan through an or-gate.
-.IP \(bu
 The USB and SD paths, which should carry over unchanged \- the DWC2 and
 both SD controllers are in the common realize \- once the boot reaches
 them.
 .IP \(bu
-A root file list and init module of its own; it currently borrows
-raspi3binit, which is right while the marker suite is the same one.
+The Arasan, which on this board is the wireless part's SDIO rather
+than a card controller \- the same Phase 6 that raspi3b is waiting on
+hardware for.

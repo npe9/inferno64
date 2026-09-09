@@ -573,10 +573,13 @@ sdhcicardinit(Ctlr *c)
 	uvlong cap;
 	uchar b[16];
 
-	/* take the card pins for this controller (see the file comment) */
-	for(i = 48; i <= 53; i++)
-		gpiofsel(i, Alt3);
-
+	/*
+	 * No GPIO muxing here, unlike the Pi 3B.  A BCM2711 wires the
+	 * microSD slot to EMMC2 with dedicated pins; GPIO 48-53 select
+	 * which of SDHOST and the Arasan reaches the header, and moving
+	 * them does not move this card.  Taking them would only steal
+	 * pins from whatever else is using them.
+	 */
 	if(sdhcictlrinit(c) < 0)
 		return 0;
 	if((r[Status] & Cardinserted) == 0)
@@ -840,7 +843,21 @@ sdhcipnp(void)
 
 	if((uintptr)SDHCI == 0)
 		return nil;
-	sdhcictlr.r = (u32*)SDHCI;
+	/*
+	 * EMMC2, not the Arasan.  This is the controller a Pi 4's microSD
+	 * slot is actually on -- it is what the board boots from, and
+	 * Linux's bcm2711.dtsi carries the card on mmc@7e340000.  The
+	 * Arasan is still here at 0xfe300000 and is the wireless part's
+	 * SDIO, which is what sdioinit() below uses it for.
+	 *
+	 * QEMU had to be corrected to agree: bcm2838 mapped emmc2 and
+	 * wired its interrupt but parented the card to the Arasan, so
+	 * emmc2 was a controller present in the model and dead, and a
+	 * driver written against the model would have found a card on
+	 * the wrong controller and none at all on a real Pi 4.  See
+	 * tools/qemu-patches 0022.
+	 */
+	sdhcictlr.r = (u32*)EMMC2;
 	if((s = malloc(sizeof(*s))) == nil)
 		return nil;
 	s->ctlr = &sdhcictlr;

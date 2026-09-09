@@ -106,6 +106,19 @@ worth keeping when adding to this series:
 	BCM2711, so moving them would assert something untrue about the
 	hardware in exchange for a marker.
 
+0022 hw/gpio/bcm2838_gpio: put the SD card on emmc2, where a Pi 4 has
+	it.  bcm2838 mapped emmc2, gave it a capabilities register and
+	or-gated its interrupt, then parented the card to the Arasan and
+	never to emmc2 -- a controller fully present in the model and
+	permanently empty.  A BCM2711 wires its microSD slot to emmc2 on
+	dedicated pins; it is what the board boots from and what Linux's
+	bcm2711.dtsi carries the card on.  Putting it on the Arasan is
+	worse than leaving emmc2 empty, because a driver written against
+	the model passes every check and then finds nothing at all on
+	hardware, which is what this port's did.  The GPIO 48-53 mux
+	stays and now moves nothing, since sdbus_reparent_card() returns
+	at once for a bus with no card.
+
 WHAT COULD GO UPSTREAM.  Two of these are plain qemu bugs, independent
 of Inferno and of this port, and could be sent to qemu-devel on their
 own:
@@ -130,7 +143,7 @@ because the reasoning is worth reading.  Everything else adds a device
 model qemu does not have, and only matters to someone emulating a Pi in
 this much detail \- which is most of the series, and increasingly so as
 it grows.  Do not read the section above as a to-do list for upstream:
-four patches of twenty-one are general-purpose fixes and the rest are not.
+four patches of twenty-two are general-purpose fixes and the rest are not.
 
 WHAT HAS BEEN CROSS-CHECKED.  Several of these models were written
 from the datasheet and from recollection of a Linux driver, which is
@@ -237,7 +250,7 @@ Four answers came back, and they are not all the same kind.
 	  the FIFO it has no compensation on either side and is simply
 	  a limit: no model in this series claims a service time.
 
-	- the twenty-one models in this series: audited for accepting
+	- the twenty-two models in this series: audited for accepting
 	  writes the datasheet forbids.  Each already carries
 	  LOG_GUEST_ERROR coverage on its own error paths -- the I2S
 	  FIFO reports TXERR on overflow and RXERR on reading empty,

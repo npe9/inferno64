@@ -111,7 +111,7 @@ mod
 	draw
 
 init
-	raspi3binit
+	raspi4init
 
 code
 	int main_pool_pcnt = 20;
