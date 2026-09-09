@@ -900,9 +900,34 @@ kprocchild(Proc* p, void (*func)(void*), void* arg)
 	 * gotolabel() needs a word on the stack in
 	 * which to place the return PC used to jump
 	 * to linkproc().
+	 *
+	 * It also needs to stay out of the Tos.  On this board USTKTOP is
+	 * (up->kstack+KSTACK) -- pc64 is the only board in the tree that
+	 * points it at a kernel stack rather than at real memory -- so the
+	 * "kernel/user shared data" lives in the top sizeof(Tos) bytes of
+	 * this very stack.  main.c's userinit() reserves it, setting
+	 * sched.sp to KSTACK - sizeof(uintptr) - sizeof(Tos) -
+	 * sizeof(uintptr); this did not, and every kproc's stack therefore
+	 * began inside it.
+	 *
+	 * The overlap is exact, and it is what nine captures were showing.
+	 * Tos is 72 bytes here, so kcycles lands at KSTACK-24, pcycles at
+	 * KSTACK-16 and pid at KSTACK-8.  An interrupt taken on a fresh
+	 * kproc stack puts its frame's SS at KSTACK-24 and the two words
+	 * above it at -16 and -8.  Every capture read exactly that: a
+	 * varying cycle delta in the SS slot, a larger cumulative count
+	 * above it, and 0x2 or 0xd -- pids -- in the top word.  kexit()
+	 * writes those three, and portclock.c's hzclock() writes
+	 * tos->clock at KSTACK-4 for any running process, with no user
+	 * check at all.
+	 *
+	 * Correcting userureg() stopped kexit() running for kprocs and so
+	 * stopped the IRETQ faults, but it treated the symptom: the
+	 * stacks still overlapped, and hzclock() still wrote into them.
+	 * Reserve the region here, as userinit() does.
 	 */
 	p->sched.pc = (uintptr)linkproc;
-	p->sched.sp = (uintptr)p->kstack+KSTACK-BY2WD;
+	p->sched.sp = (uintptr)p->kstack+KSTACK-sizeof(Tos)-BY2WD;
 
 	p->kpfun = func;
 	p->kparg = arg;
