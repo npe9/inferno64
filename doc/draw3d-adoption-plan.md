@@ -373,6 +373,7 @@ Metal one, and re-run the `-n` sweep to see whether the stall is gone.
 
 ### Phase 6 — the display-list sprite type
 
+
 This is the audit's headline gap and the place a plan can burn the most
 work, so it is gated on one port.
 
@@ -387,6 +388,93 @@ element by element by each of the twelve ports that read one.
 pre-rasterises its sprite, render it from the `.spr` through the new
 type, and compare pixels against the port's `.bit`. Do not schedule the
 other eleven until that comparison passes.
+
+### The Sprite3 family was broken, and is not any more — **done, 2026-09-08**
+
+The audit's line that "there is not one call to `sprite3`, `sprite3zb`,
+`sprite3yb`, `sprite3mat`" across all eighteen ports was recorded as a
+fact about the ports. The only caller in the tree is
+`appl/wm/draw3ddemo.b`, which draws two sprites beside its cube and looks
+plausible doing it — so nothing had ever *checked* the family, which is a
+different thing from nothing calling it. `draw3dbench(1)` now checks it,
+and two of the four checks failed on the software provider the first time
+they ran.
+
+What the one caller was actually getting is worth stating, because it is
+what "looks plausible" hides. It asks for `scale` 1.0 at an eye distance
+of about 6, so `sc` is about 1/6 — and the software path answered that by
+*cropping* the sprite to a sixth of its width and height rather than
+resampling it. The demo has been showing the top-left corner of its
+sprite, at full size, for as long as it has existed. It also runs with
+`setz(1)`, so its sprites have been ignoring a depth buffer that was
+switched on; nothing in the scene passes in front of them, so nothing
+showed.
+
+The four checks, and why each is shaped the way it is:
+
+| check | metric |
+| --- | --- |
+| place | sprite centre against `project()` of its own world point |
+| scale | on-screen width at z = −4, −2 and −8: 16, 32, 8 |
+| rotate | bounding box of a 48x12 sprite at 0° and at 90° |
+| occlude | sprite pixels behind a nearer face, **and in front of one** |
+
+Two of those were rewritten after they passed for the wrong reason, which
+is the part worth keeping:
+
+- **Shrinking cannot test a resample.** The first scale check compared
+  z = −8 against z = −4 and passed on both providers. It shouldn't have:
+  `draw()` does not resample, it clips, and a 16-wide sprite *cropped* to
+  8 is 8 wide exactly as a resampled one is. Only enlargement
+  discriminates — no crop makes 16 pixels cover 32 — and with that added,
+  the software provider reported 16 where 32 was wanted.
+- **Zero occluded pixels is also what "never drew" looks like.** The
+  first occlusion check counted sprite pixels behind a nearer triangle
+  and called zero a pass. A provider that silently dropped every sprite
+  would have passed it. The positive control — the same sprite in *front*
+  of the triangle, which must appear — is what makes the zero mean
+  something.
+
+What they found, both in the software provider:
+
+- **The perspective scale did nothing but crop.** `spriteat` shortcut a
+  near-zero rotation to a bare `dst.draw()` into an `sw` by `sh`
+  rectangle. `draw` replicates or clips a source; it does not resample
+  one. So a sprite could get smaller by losing its right and bottom edges
+  and could not get larger at all — which is to say the one thing that
+  makes it a *3D* sprite was absent. `transformsprite` already had the
+  resample, and already reduced to the same native blit when the resample
+  turned out to be the identity, so the shortcut was buying nothing it
+  did not already have.
+- **Sprites ignored the z-buffer.** `Context.zenable` is documented as
+  "use z-buffer for fillpoly3 / sprites" and no sprite path consulted it,
+  in either provider's software code. A sprite has one depth — TempleOS's
+  `Sprite3B` gives the whole thing the z of its anchor — so the test is
+  `polyfill`'s `filllinez` with the epsilon at zero: nearer wins, and
+  winning claims the pixel. It goes in the general per-pixel loop, and a
+  z-tested sprite therefore forgoes the separable and native-blit
+  shortcuts, which write whole runs and cannot consult a depth per pixel.
+  Only a caller that asks for the test pays for it.
+
+The protocol provider passed all four from the start: the GPU sprite path
+was already right, and the positive control proves its zeros are real
+occlusion rather than dropped sprites.
+
+Attribution was checked one fix at a time. With only the depth
+*comparison* disabled — `zwin` made to always win — `occlude` reports 16
+pixels through a nearer face again while `scale` still reads 16,32,8.
+
+**What this unblocks.** Phase 9's ordering rested on draw3d not offering
+what the hand-rolled ports needed. `varoom`'s own comment names the
+defect its painter sort leaves: "a bush standing on the road, whose base
+should be cut by nearer tarmac and whose top should not". That is exactly
+a single-depth sprite against an interpolated surface, and it is now
+expressible. What has *not* been re-measured is the thing that made the
+sort necessary — a z-buffered fill cost 7.18 ms a frame in interpreted
+Limbo against 0.07 ms for a plain one — so before any port moves, measure
+the GPU fill **in that port's own destination**, because an offscreen
+frame buffer gets no GPU at all and is slower through the protocol
+provider than through the software one.
 
 ### Phase 7 — DC state
 

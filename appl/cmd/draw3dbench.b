@@ -108,10 +108,218 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	bench("  protocol window", "/dis/math/draw3ddev.dis", win.image, col, large);
 	bench("  protocol buffer", "/dis/math/draw3ddev.dis", buf, col, large);
 	sprites(d, buf);
+	sprite3s(d);
 	readback(d, col, large);
 	agree(d);
 	gradient(d);
 	fringe(d);
+}
+
+# The Sprite3 family, which until now had no caller anywhere in the tree
+# and therefore no evidence.  Four things are checked, each with a metric
+# that can tell the failure from the success rather than merely notice
+# that something was drawn:
+#
+#  place	the sprite lands where project() says its world point does;
+#  scale	halving the distance doubles the on-screen width, which is
+#		the whole of what makes it a 3D sprite rather than a blit;
+#  rotate	sprite3zb at 90 degrees turns a wide sprite into a tall one
+#		- a lit-pixel count cannot tell that, a bounding box can;
+#  occlude	with the z-buffer on, a sprite behind a filled triangle does
+#		not appear in front of it.
+#
+# Both providers, because the protocol one is where a path gets silently
+# dropped, and it is the one a port would want.
+sprite3s(d: ref Display)
+{
+	sys->print("draw3dbench: Sprite3 family\n");
+	for(pass := 0; pass < 2; pass++){
+		path := Draw3d->PATH;
+		what := "software";
+		if(pass == 1){
+			path = "/dis/math/draw3ddev.dis";
+			what = "protocol";
+		}
+		d3 := load Draw3d path;
+		if(d3 == nil){
+			sys->print("draw3dbench:   %s: cannot load\n", what);
+			continue;
+		}
+		d3->init();
+		s3place(d, d3, what);
+		s3scale(d, d3, what);
+		s3rotate(d, d3, what);
+		s3occlude(d, d3, what);
+	}
+}
+
+# A fresh black frame with a context looking down -Z through a symmetric
+# frustum, the same camera the triangle cases use.
+s3frame(d3: Draw3d, zon: int): ref Draw3d->Context
+{
+	img := win.image;
+	img.draw(img.r, img.display.black, nil, img.r.min);
+	c := d3->context(img);
+	d3->setzarea(c, img.r);
+	d3->setz(c, zon);
+	d3->viewport(c, img.r.min.x, img.r.min.y, img.r.max.x, img.r.max.y);
+	d3->mode(Draw3d->PROJ); d3->identity(); d3->frustum(0.1, 0.1, 100.0);
+	d3->mode(Draw3d->MODEL); d3->identity();
+	d3->clearz(c);
+	return c;
+}
+
+# A w by h sprite, opaque, in a colour nothing else in the frame uses.
+s3sprite(d: ref Display, w, h: int): (ref Image, ref Image)
+{
+	img := d.newimage(Rect((0,0),(w,h)), win.image.chans, 0, Draw->Green);
+	mask := d.newimage(Rect((0,0),(w,h)), Draw->GREY1, 0, int 16rFFFFFFFF);
+	return (img, mask);
+}
+
+# Bounding box and count of the pixels whose green dominates - the sprite
+# colour - read straight off the screen image.
+s3box(d: ref Display): (int, int, int, int, int)
+{
+	dst := d.image;
+	r := win.image.r;
+	(r, nil) = r.clip(dst.r);
+	bpl := (r.dx() * dst.depth + 7) / 8;
+	pxb := dst.depth / 8;
+	if(pxb < 3 || r.dx() < 1 || r.dy() < 1)
+		return (0, 0, 0, 0, 0);
+	buf := array[bpl] of byte;
+	n := 0;
+	x0 := 1000000; x1 := -1; y0 := 1000000; y1 := -1;
+	for(y := r.min.y; y < r.max.y; y++){
+		if(dst.readpixels(Rect((r.min.x, y), (r.max.x, y+1)), buf) != bpl)
+			return (0, 0, 0, 0, 0);
+		for(x := 0; x*pxb + 2 < bpl; x++){
+			rr := int buf[x*pxb]; gg := int buf[x*pxb+1]; bb := int buf[x*pxb+2];
+			if(gg > 120 && gg - rr > 60 && gg - bb > 60){
+				n++;
+				px := r.min.x + x;
+				if(px < x0) x0 = px;
+				if(px > x1) x1 = px;
+				if(y < y0) y0 = y;
+				if(y > y1) y1 = y;
+			}
+		}
+	}
+	if(n == 0)
+		return (0, 0, 0, 0, 0);
+	return (n, x0, x1, y0, y1);
+}
+
+# Does the sprite land where its world point projects to?
+s3place(d: ref Display, d3: Draw3d, what: string)
+{
+	(img, mask) := s3sprite(d, 16, 16);
+	c := s3frame(d3, 0);
+	p := Draw3d->Vector(0.8, 0.0, -4.0);
+	(sp, nil, ok) := d3->project(c, p);
+	d3->sprite3(c, p, img, mask, 0.0);
+	(n, x0, x1, y0, y1) := s3box(d);
+	cx := (x0+x1)/2;
+	cy := (y0+y1)/2;
+	dx := cx - sp.x; if(dx < 0) dx = -dx;
+	dy := cy - sp.y; if(dy < 0) dy = -dy;
+	v := "ok";
+	if(!ok || n == 0 || dx > 2 || dy > 2)
+		v = "WRONG";
+	sys->print("draw3dbench:   %s place: n=%d centre=%d,%d project=%d,%d  %s\n",
+		what, n, cx, cy, sp.x, sp.y, v);
+}
+
+# Distance must set the on-screen size.  Shrinking is NOT the check to
+# make: a plain draw() into a smaller rectangle crops the source, and a
+# crop of a 16-wide sprite to 8 is 8 wide, exactly like a resample of it.
+# Enlarging is the check that discriminates, because no amount of
+# cropping makes a 16-pixel image cover 32 pixels.  The three depths are
+# a 1x, a 2x and a half, and the widths must be 16, 32 and 8.
+s3scale(d: ref Display, d3: Draw3d, what: string)
+{
+	(img, mask) := s3sprite(d, 16, 16);
+	w := array[3] of int;
+	z := array[] of {-4.0, -2.0, -8.0};
+	for(i := 0; i < 3; i++){
+		c := s3frame(d3, 0);
+		d3->sprite3(c, Draw3d->Vector(0.0, 0.0, z[i]), img, mask, 4.0);
+		(n, a0, a1, nil, nil) := s3box(d);
+		w[i] = a1 - a0 + 1;
+		if(n == 0)
+			w[i] = 0;
+	}
+	v := "ok";
+	if(near(w[0], 16, 1) == 0)
+		v = "WRONG AT 1:1";
+	else if(near(w[1], 32, 2) == 0)
+		v = "NOT ENLARGED";
+	else if(near(w[2], 8, 1) == 0)
+		v = "NOT REDUCED";
+	sys->print("draw3dbench:   %s scale: widths at z=-4,-2,-8 are %d,%d,%d (want 16,32,8)  %s\n",
+		what, w[0], w[1], w[2], v);
+}
+
+near(got, want, slop: int): int
+{
+	d := got - want;
+	if(d < 0)
+		d = -d;
+	return d <= slop;
+}
+
+# sprite3zb at 90 degrees turns a wide sprite into a tall one.  Counting
+# lit pixels cannot see that; the bounding box can.
+s3rotate(d: ref Display, d3: Draw3d, what: string)
+{
+	(img, mask) := s3sprite(d, 48, 12);
+	c := s3frame(d3, 0);
+	d3->sprite3zb(c, Draw3d->Vector(0.0, 0.0, -4.0), img, mask, 0.0, 0.0);
+	(n0, a0, a1, c0, c1) := s3box(d);
+	w0 := a1-a0+1; h0 := c1-c0+1;
+	c = s3frame(d3, 0);
+	d3->sprite3zb(c, Draw3d->Vector(0.0, 0.0, -4.0), img, mask, 0.0, 90.0);
+	(n1, b0, b1, e0, e1) := s3box(d);
+	w1 := b1-b0+1; h1 := e1-e0+1;
+	v := "ok";
+	if(n0 == 0 || n1 == 0 || w0 <= h0 || h1 <= w1)
+		v = "NOT ROTATED";
+	sys->print("draw3dbench:   %s rotate: 0deg %dx%d, 90deg %dx%d  %s\n",
+		what, w0, h0, w1, h1, v);
+}
+
+# With the z-buffer on, a sprite behind a filled triangle must not paint
+# over it - and a sprite in front of one must.  The second half is not
+# decoration: zero green pixels is also what "the sprite was never drawn
+# at all" looks like, and a provider that silently drops sprites would
+# otherwise pass the occlusion check for the wrong reason.
+s3occlude(d: ref Display, d3: Draw3d, what: string)
+{
+	behind := s3occlude1(d, d3, -6.0);
+	front := s3occlude1(d, d3, -2.0);
+	v := "ok";
+	if(front == 0)
+		v = "NO SPRITE AT ALL";
+	else if(behind != 0)
+		v = "NOT OCCLUDED";
+	sys->print("draw3dbench:   %s occlude: %d sprite pixels behind a face, %d in front  %s\n",
+		what, behind, front, v);
+}
+
+s3occlude1(d: ref Display, d3: Draw3d, z: real): int
+{
+	(img, mask) := s3sprite(d, 24, 24);
+	c := s3frame(d3, 1);
+	d3->setcolour(c, d.color(Draw->Red));
+	tri := array[3] of Draw3d->Vector;
+	tri[0] = Draw3d->Vector(-1.0, -1.0, -3.0);
+	tri[1] = Draw3d->Vector( 1.0, -1.0, -3.0);
+	tri[2] = Draw3d->Vector( 0.0,  1.2, -3.0);
+	d3->fillpoly3(c, tri, Draw3d->Vector(0.0, 0.0, 1.0), 1.0);
+	d3->sprite3(c, Draw3d->Vector(0.0, 0.0, z), img, mask, 0.0);
+	(n, nil, nil, nil, nil) := s3box(d);
+	return n;
 }
 
 # How many distinct colours does ONE face come out in?

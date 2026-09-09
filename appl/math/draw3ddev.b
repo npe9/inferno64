@@ -1076,12 +1076,44 @@ spriteat(c: ref Context, p: Vector, img, mask: ref Image, scale: real, degz: rea
 	if(sw < 1) sw = 1;
 	if(sh < 1) sh = 1;
 	needrot := (flags & 2) != 0 && !(adz < 0.5 || adz > 359.5);
-	if(!needrot){
-		r := Rect((sp.x - sw/2, sp.y - sh/2), (sp.x - sw/2 + sw, sp.y - sh/2 + sh));
-		c.dst.draw(r, img, mask, img.r.min);
-		return;
+	if(!needrot)
+		adz = 0.0;
+	# No bare dst.draw() shortcut here either: draw() replicates or
+	# clips, it does not resample, so the perspective scale did nothing
+	# but crop.  transformsprite reduces to the native blit by itself
+	# when the resample is the identity.  See draw3d.b.
+	zs: ref Polyfill->Zstate;
+	zv := 0;
+	if(c.zenable && c.zstate != nil){
+		zs = c.zstate;
+		zv = zdepth(-ez);
 	}
-	transformsprite(c.dst, sp, sw, sh, img, mask, adz, 0);
+	transformsprite(c.dst, sp, sw, sh, img, mask, adz, 0, zs, zv);
+}
+
+# A sprite has one depth, as TempleOS's Sprite3B does.  Same fixed point
+# and same sense as fillpoly3's plane constant: smaller is nearer.
+zdepth(z: real): int
+{
+	if(z > LIMIT)
+		z = LIMIT;
+	if(z < -LIMIT)
+		z = -LIMIT;
+	return int (z * ZSCALE);
+}
+
+# polyfill's filllinez with the epsilon at zero, which is what a flat
+# sprite has: nearer wins, and winning claims the pixel.
+zwin(zs: ref Polyfill->Zstate, zv, x, y: int): int
+{
+	if(x < zs.r.min.x || x >= zs.r.max.x || y < zs.r.min.y || y >= zs.r.max.y)
+		return 0;
+	k := (y - zs.r.min.y)*zs.xlen + (x - zs.r.min.x);
+	if(zv >= zs.zbuf0[k])
+		return 0;
+	zs.zbuf0[k] = zv;
+	zs.zbuf1[k] = zv;
+	return 1;
 }
 
 # Software Z-rotate blit (nearest-neighbour) for Sprite3ZB.
@@ -1159,7 +1191,8 @@ blitsep(dst: ref Image, sp: Point, bw, bh: int, img, mask: ref Image,
 	}
 }
 transformsprite(dst: ref Image, sp: Point, sw, sh: int,
-	img, mask: ref Image, degz: real, flipx: int)
+	img, mask: ref Image, degz: real, flipx: int,
+	zs: ref Polyfill->Zstate, zv: int)
 {
 	iw := img.r.dx();
 	ih := img.r.dy();
@@ -1191,7 +1224,10 @@ transformsprite(dst: ref Image, sp: Point, sw, sh: int,
 	# The tables are built from the same expressions the general loop
 	# uses, so the pixels chosen are identical by construction rather
 	# than by an argument about rounding.
-	if(degz == 0.0){
+	# A z-tested sprite takes the general loop even unrotated: the
+	# separable and native-blit shortcuts write runs and cannot consult
+	# a depth per pixel.
+	if(degz == 0.0 && zs == nil){
 		cx0 := real bw / 2.0;
 		cy0 := real bh / 2.0;
 		ucol := array[bw] of int;
@@ -1298,6 +1334,8 @@ transformsprite(dst: ref Image, sp: Point, sw, sh: int,
 			}
 			if(!opaque)
 				continue;
+			if(zs != nil && !zwin(zs, zv, sp.x - bw/2 + x, sp.y - bh/2 + y))
+				continue;
 			if(img.depth == 8)
 				dstb[y * dbpl + x] = src[v * sbpl + u];
 			else if(img.depth == 32){
@@ -1364,7 +1402,7 @@ sprite2d(dst: ref Image, center: Point, img, mask: ref Image,
 		writemsg(dst.display, msg);
 		return;
 	}
-	transformsprite(dst, center, width, height, img, mask, degz, flipx);
+	transformsprite(dst, center, width, height, img, mask, degz, flipx, nil, 0);
 }
 
 sprite3(c: ref Context, p: Vector, img, mask: ref Image, scale: real)

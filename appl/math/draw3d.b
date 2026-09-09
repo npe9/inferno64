@@ -633,32 +633,64 @@ litcolour(c: ref Context, lit: real): ref Image
 
 spriteat(c: ref Context, p: Vector, img, mask: ref Image, scale: real, degz: real)
 {
+	spriteatv(c, p, img, mask, scale, degz, 1.0);
+}
+
+# ysquash is sprite3yb's vertical foreshortening; 1.0 for everything else.
+spriteatv(c: ref Context, p: Vector, img, mask: ref Image,
+	scale, degz, ysquash: real)
+{
 	(sp, ez, ok) := project(c, p);
 	if(!ok || c.dst == nil || img == nil)
 		return;
 	iw := img.r.dx();
 	ih := img.r.dy();
-	# Perspective scale: closer (more negative z) → larger
+	# Perspective scale: closer (more negative z) -> larger
 	sc := 1.0;
 	if(scale > 0.0 && ez < 0.0)
 		sc = scale / (-ez);
 	else if(ez < 0.0)
 		sc = 1.0 / (-ez);
 	sw := int (real iw * sc);
-	sh := int (real ih * sc);
+	sh := int (real ih * sc * ysquash);
 	if(sw < 1) sw = 1;
 	if(sh < 1) sh = 1;
-	# Normalize angle; near 0 → fast axis-aligned blit
+	# Normalize angle
 	while(degz >= 360.0)
 		degz -= 360.0;
 	while(degz < 0.0)
 		degz += 360.0;
-	if(degz < 0.5 || degz > 359.5){
-		r := Rect((sp.x - sw/2, sp.y - sh/2), (sp.x - sw/2 + sw, sp.y - sh/2 + sh));
-		c.dst.draw(r, img, mask, img.r.min);
-		return;
+	if(degz > 359.5)
+		degz = 0.0;
+	# This used to shortcut a near-zero rotation to a bare
+	# dst.draw() into an sw by sh rectangle.  Draw does not resample:
+	# it replicates or clips the source, so a sprite could get SMALLER
+	# by being cropped and could not get bigger at all - a 16-pixel
+	# sprite asked to cover 32 came out 16 wide, which is to say the
+	# perspective scale that makes it a 3D sprite did nothing.
+	# transformsprite has its own identity test and reduces to exactly
+	# that native blit when the resample turns out to be one, so
+	# passing everything through it costs nothing and is correct.
+	zs: ref Polyfill->Zstate;
+	zv := 0;
+	if(c.zenable && c.zstate != nil){
+		zs = c.zstate;
+		zv = zdepth(-ez);
 	}
-	transformsprite(c.dst, sp, sw, sh, img, mask, degz, 0);
+	transformsprite(c.dst, sp, sw, sh, img, mask, degz, 0, zs, zv);
+}
+
+# A sprite has one depth, the way TempleOS's Sprite3B does: the whole
+# thing is at the z of its anchor point rather than at a per-pixel depth
+# interpolated across a plane.  Same fixed point and same sense as
+# fillpoly3's plane constant - smaller is nearer.
+zdepth(z: real): int
+{
+	if(z > LIMIT)
+		z = LIMIT;
+	if(z < -LIMIT)
+		z = -LIMIT;
+	return int (z * ZSCALE);
 }
 
 # Software Z-rotate blit (nearest-neighbour) for Sprite3ZB.
@@ -736,7 +768,8 @@ blitsep(dst: ref Image, sp: Point, bw, bh: int, img, mask: ref Image,
 	}
 }
 transformsprite(dst: ref Image, sp: Point, sw, sh: int,
-	img, mask: ref Image, degz: real, flipx: int)
+	img, mask: ref Image, degz: real, flipx: int,
+	zs: ref Polyfill->Zstate, zv: int)
 {
 	iw := img.r.dx();
 	ih := img.r.dy();
@@ -768,7 +801,11 @@ transformsprite(dst: ref Image, sp: Point, sw, sh: int,
 	# The tables are built from the same expressions the general loop
 	# uses, so the pixels chosen are identical by construction rather
 	# than by an argument about rounding.
-	if(degz == 0.0){
+	# The separable and native-blit shortcuts write whole runs at a
+	# time and cannot consult a depth per pixel, so a z-tested sprite
+	# takes the general loop even when it is not rotated.  That is the
+	# cost of asking for the test, and only callers that ask pay it.
+	if(degz == 0.0 && zs == nil){
 		cx0 := real bw / 2.0;
 		cy0 := real bh / 2.0;
 		ucol := array[bw] of int;
@@ -875,6 +912,8 @@ transformsprite(dst: ref Image, sp: Point, sw, sh: int,
 			}
 			if(!opaque)
 				continue;
+			if(zs != nil && !zwin(zs, zv, sp.x - bw/2 + x, sp.y - bh/2 + y))
+				continue;
 			if(img.depth == 8)
 				dstb[y * dbpl + x] = src[v * sbpl + u];
 			else if(img.depth == 32){
@@ -902,7 +941,22 @@ sprite2d(dst: ref Image, center: Point, img, mask: ref Image,
 		return;
 	if(width <= 0) width = img.r.dx();
 	if(height <= 0) height = img.r.dy();
-	transformsprite(dst, center, width, height, img, mask, degz, flipx);
+	transformsprite(dst, center, width, height, img, mask, degz, flipx, nil, 0);
+}
+
+# The depth test, and the write that goes with it, for one destination
+# pixel.  This is polyfill's filllinez with the epsilon at zero, which is
+# what a flat sprite has: nearer wins, and winning claims the pixel.
+zwin(zs: ref Polyfill->Zstate, zv, x, y: int): int
+{
+	if(x < zs.r.min.x || x >= zs.r.max.x || y < zs.r.min.y || y >= zs.r.max.y)
+		return 0;
+	k := (y - zs.r.min.y)*zs.xlen + (x - zs.r.min.x);
+	if(zv >= zs.zbuf0[k])
+		return 0;
+	zs.zbuf0[k] = zv;
+	zs.zbuf1[k] = zv;
+	return 1;
 }
 
 sprite3(c: ref Context, p: Vector, img, mask: ref Image, scale: real)
@@ -917,23 +971,8 @@ sprite3zb(c: ref Context, p: Vector, img, mask: ref Image, scale, degz: real)
 
 sprite3yb(c: ref Context, p: Vector, img, mask: ref Image, scale: real)
 {
-	# Billboard yaw stand-in: draw with vertical squash via scale on Y.
-	(sp, ez, ok) := project(c, p);
-	if(!ok || c.dst == nil || img == nil)
-		return;
-	iw := img.r.dx();
-	ih := img.r.dy();
-	sc := 1.0;
-	if(scale > 0.0 && ez < 0.0)
-		sc = scale / (-ez);
-	else if(ez < 0.0)
-		sc = 1.0 / (-ez);
-	sw := int (real iw * sc);
-	sh := int (real ih * sc * 0.85);
-	if(sw < 1) sw = 1;
-	if(sh < 1) sh = 1;
-	r := Rect((sp.x - sw/2, sp.y - sh/2), (sp.x - sw/2 + sw, sp.y - sh/2 + sh));
-	c.dst.draw(r, img, mask, img.r.min);
+	# Billboard yaw stand-in: a vertical squash, not a real yaw.
+	spriteatv(c, p, img, mask, scale, 0.0, 0.85);
 }
 
 sprite3mat(c: ref Context, p: Vector, m: Matrix, img, mask: ref Image, scale: real)

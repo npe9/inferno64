@@ -146,6 +146,38 @@ red exceeds green is 0 when the hidden colour is not being mixed in.
 The software provider is the control for both: it blits through a binary
 mask with no filter, and reads 255 and 0.
 .PP
+The
+.B Sprite3
+family \-
+.IR sprite3 ,
+.I sprite3zb
+and
+.I sprite3yb
+\- is checked rather than timed.
+Its only caller is
+.IR draw3ddemo (1),
+which draws two sprites beside a cube and looks plausible doing it, so
+until this check existed nothing had established that the family was
+right \- which is not the same as nothing calling it.
+Four properties are reported per provider: that a sprite lands where
+.I project
+says its world point does; that its on-screen width is 16, 32 and 8
+pixels at z of \-4, \-2 and \-8; that
+.I sprite3zb
+at 90 degrees turns a 48\(mu12 sprite into a 12\(mu48 one; and that with
+the z-buffer on, a sprite behind a nearer face contributes no pixels
+while the same sprite in front of it does.
+.PP
+Two of those are shaped the way they are because the obvious shape passes
+for the wrong reason.
+Shrinking a sprite cannot test a resample, since
+.I draw
+clips rather than resamples and a 16-wide sprite cropped to 8 is 8 wide
+exactly as a resampled one is; only enlarging discriminates.
+And zero occluded pixels is also what a provider that drew no sprite at
+all would report, so the sprite in front is not decoration, it is what
+makes the zero mean occlusion.
+.PP
 The options are:
 .TF "-n frames"
 .TP
@@ -216,6 +248,13 @@ That is fixed \- every image free now drops the cache entries naming it
 \- but the key is still content-blind, and two same-sized sprites alive
 at once and swapped in place would still collide.
 .PP
+.I Sprite3mat
+is not checked.
+Neither provider applies the matrix it is handed: both take its
+translation by transforming the origin through it and discard the
+rotation and scale entirely, so there is nothing yet for a check to
+distinguish.
+.PP
 At exactly
 .B -n 60
 the 512-triangle protocol case reports 8.4ms a frame instead of 1.5,
@@ -235,14 +274,18 @@ before quoting any per-frame figure.
 .PP
 Only
 .I fillpoly3
-is measured, and only it is checked for agreement.
+is measured for speed, and only it is checked for agreement between the
+providers.
 .IR line3 ,
-.IR plot3 ,
-the
-.I sprite3
-family and
+.I plot3
+and
 .I fillpoly3g
-have their own paths in both providers and are not covered.
+have their own paths in both providers and are not covered at all.
+The
+.I sprite3
+family is checked but not timed, and its checks are per provider: they
+say each provider is self-consistent, not that the two draw the same
+pixels.
 .PP
 The agreement check is occasionally flaky in the other direction: a
 present that lands between the drawing and the read drains the GPU's
