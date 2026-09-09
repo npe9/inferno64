@@ -498,18 +498,42 @@ attempt() {
 	pid=$!
 
 	# The other guest, if this configuration has one.  It goes second
-	# because the first one is what holds the listening end of the
-	# socket the two of them share; its own dialler retries, so a
-	# second or two either way does not matter.
+	# because the first one holds the listening end of the socket the
+	# two of them share -- and qemu's socket netdev is not patient
+	# about that: a connect= that is refused makes qemu exit at once,
+	# so starting the second one in the same breath as the first is a
+	# race, and it is the race that made this configuration fail one
+	# run in three.  The port cannot be probed either, because the
+	# listening end accepts exactly one peer and a probe would be it.
+	# So: give the first one a moment, start the second, and if it
+	# died in the first second start it again.
 	peerlog="$work/$c.peer.log"
 	peerpid=
 	peerargs=`config_peer $c`
 	if [ -n "$peerargs" ]; then
 		rm -f "$peerlog"
-		# shellcheck disable=SC2086
-		"$qemu" $peerargs -display none -serial file:"$peerlog" \
-			-kernel "$kernel" >/dev/null 2>&1 &
-		peerpid=$!
+		try=0
+		while [ $try -lt 10 ]; do
+			sleep 2
+			# shellcheck disable=SC2086
+			"$qemu" $peerargs -display none -serial file:"$peerlog" \
+				-kernel "$kernel" >/dev/null 2>&1 &
+			peerpid=$!
+			sleep 1
+			if kill -0 $peerpid 2>/dev/null; then
+				break
+			fi
+			wait $peerpid 2>/dev/null || true
+			peerpid=
+			try=`expr $try + 1`
+		done
+		if [ -z "$peerpid" ]; then
+			echo "the other guest would not stay up"
+			hostnet_stop
+			kill $pid 2>/dev/null || true
+			wait $pid 2>/dev/null || true
+			return
+		fi
 	fi
 
 	waited=0

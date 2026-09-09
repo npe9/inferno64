@@ -224,6 +224,16 @@ the guest being checked.  What it has to say is three lines, and
 config_peer_evidence names them; a run where only one side of the
 conversation happened fails.
 
+Starting it is not a matter of putting it second.  qemu's socket netdev
+is not patient: a connect= that is refused makes qemu exit at once, so
+launching the second guest in the same breath as the first is a race
+against the first one's bind, and it lost about one run in three.  The
+port cannot be probed to find out, either -- the listening end accepts
+exactly one peer, and the probe would be it.  So the second guest is
+given a moment, started, and started again if it did not survive its
+first second; a configuration whose other guest will not stay up says
+so rather than reporting the silence as the board's.
+
 Two details that took a boot each to find.  The peer check runs before
 ipcheck() rather than after: the whole slirp chain runs inside
 ipcheck(), so a peercheck() behind it announces a hundred lines later
