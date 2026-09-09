@@ -268,8 +268,10 @@ Four answers came back, and they are not all the same kind.
 	  the FIFO it has no compensation on either side and is simply
 	  a limit: no model in this series claims a service time.
 
-	- the twenty-three models in this series: audited for accepting
-	  writes the datasheet forbids.  Each already carries
+	- the twenty-two models in the series at the time of that
+	  audit: checked for accepting writes the datasheet forbids.
+	  0023 came after it and was written to the same standard
+	  rather than swept by it.  Each already carries
 	  LOG_GUEST_ERROR coverage on its own error paths -- the I2S
 	  FIFO reports TXERR on overflow and RXERR on reading empty,
 	  the SMI reports its address and timing errors, the AUX SPI

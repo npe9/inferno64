@@ -388,7 +388,11 @@ Where the suite stands
 34 markers with a 16MB SD image, a FAT16 USB disk and USB ethernet, no
 .CW -FAIL ,
 and one guest-error log line, which is the deliberate out-of-spec read
-of the RNG's data register before the generator is enabled.  Two
+of the RNG's data register before the generator is enabled.  21 seconds
+from the QEMU command to
+.CW RASPI4-SH-OK ,
+the last marker the kernel prints; the console runs at a genuine
+115200, so a boot that looks slow is not a boot that has hung.  Two
 .CW -NONE ,
 both of them correct answers rather than gaps:
 .CW SD-NONE ,
