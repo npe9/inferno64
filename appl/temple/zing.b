@@ -15,10 +15,6 @@ include "draw.m";
 	draw: Draw;
 	Display, Image, Point, Rect: import draw;
 
-include "bufio.m";
-	bufio: Bufio;
-	Iobuf: import bufio;
-
 include "math.m";
 	math: Math;
 
@@ -35,6 +31,9 @@ include "tone.m";
 	tone: Tone;
 include "grpalette.m";
 	grpal: Grpalette;
+include "math/vsprite.m";
+	vspr: Vsprite;
+	Sprite: import vspr;
 include "frameclock.m";
 	fclock: Frameclock;
 
@@ -54,18 +53,28 @@ FCSTEP: con 10;
 FCMAX: con 2 + 20/FCSTEP;
 fcacc := 0;
 
-# vector sprite element (lib/temple/sprites/zing_1.spr): the original's
-# $SP "<1>" arrow, drawn rotated like Sprite3ZB
-Sprel: adt {
-	kind:	int;	# 0 line, 1 pt
-	col:	int;
-	x1, y1, x2, y2:	int;
-};
+# The original's $SP "<1>" arrow, drawn rotated like Sprite3ZB.  The
+# element list is vsprite(2)'s, not a private reading of it: the port used
+# to know two of the thirty element kinds and silently drew nothing for
+# the rest, which happens to cover this sprite and would not cover an
+# edited one.
+#
+# A rasterised arrow is kept per whole degree, and a whole degree is
+# enough: rendered at 180 angles against the same angle rounded to a
+# degree, no inked pixel of either is more than one pixel from ink in the
+# other - 0 of 180 - where two degrees moves 150 of them.  The cache is
+# indexed and never clamped, so an angle outside it is drawn uncached
+# rather than drawn wrong.
+NANG: con 361;			# -180..180 inclusive
+
+arrowspr: ref Sprite;
+arrimg: array of ref Image;
+arrmsk: array of ref Image;
+arrrect: array of Rect;
 
 win: ref Window;
 pal: array of ref Image;	# the 16 TempleOS colors
 black, brown, red, white: ref Image;
-arrowspr: array of Sprel;
 ptrfd: ref Sys->FD;
 box_x0, box_y0, box_x1, box_y1: int;
 bow_x, bow_y: real;
@@ -87,8 +96,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
 	grpal = load Grpalette Grpalette->PATH;
+	vspr = load Vsprite Vsprite->PATH;
 	palette = grpal->values();
-	bufio = load Bufio Bufio->PATH;
 	math = load Math Math->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
@@ -113,7 +122,13 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	red = pal[4];
 	brown = pal[6];
 	white = pal[15];
-	arrowspr = loadspr("/lib/temple/sprites/zing_1.spr");
+	if(vspr != nil){
+		vspr->init();
+		(arrowspr, nil) = vspr->read("/lib/temple/sprites/zing_1.spr");
+	}
+	arrimg = array[NANG] of ref Image;
+	arrmsk = array[NANG] of ref Image;
+	arrrect = array[NANG] of Rect;
 	ptrfd = sys->open("/dev/pointer", Sys->OWRITE);
 	last_tick = sys->millisec();
 	reset();
@@ -405,73 +420,47 @@ drawarrow(img: ref Image, o: Point, x, y, ang: real)
 {
 	cs := math->cos(ang);
 	sn := math->sin(ang);
-	if(len arrowspr > 0){
-		for(i := 0; i < len arrowspr; i++){
-			e := arrowspr[i];
-			c := pal[e.col & 15];
-			p1 := pt(o, x + real e.x1 * cs - real e.y1 * sn,
-				y + real e.x1 * sn + real e.y1 * cs);
-			case e.kind {
-			0 =>
-				p2 := pt(o, x + real e.x2 * cs - real e.y2 * sn,
-					y + real e.x2 * sn + real e.y2 * cs);
-				img.line(p1, p2, Draw->Endsquare, Draw->Endsquare, 0, c, Point(0, 0));
-			1 =>
-				img.draw(Rect(p1, Point(p1.x + 1, p1.y + 1)), c, nil, Point(0, 0));
-			}
-		}
+	if(arrowspr != nil && drawspr(img, pt(o, x, y), ang))
 		return;
-	}
 	# fallback if the sprite file is missing: plain shaft and head
 	tip := pt(o, x + 53.0 * cs, y + 53.0 * sn);
 	tail := pt(o, x, y);
 	img.line(tail, tip, Draw->Endsquare, Draw->Endsquare, 0, brown, Point(0, 0));
 }
 
-loadspr(path: string): array of Sprel
+# One raster a degree, made once and kept.
+drawspr(img: ref Image, at: Point, ang: real): int
 {
-	if(bufio == nil)
-		return array[0] of Sprel;
-	b := bufio->open(path, Bufio->OREAD);
-	if(b == nil)
-		return array[0] of Sprel;
-	l: list of Sprel;
-	n := 0;
-	col := 0;
-	for(;;){
-		ln := b.gets('\n');
-		if(ln == nil)
-			break;
-		(nt, toks) := sys->tokenize(ln, " \t\n");
-		if(nt < 1)
-			continue;
-		case hd toks {
-		"color" =>
-			if(nt >= 2)
-				col = int hd tl toks;
-		"line" =>
-			if(nt >= 5){
-				t := tl toks;
-				e := Sprel(0, col, int hd t, int hd tl t,
-					int hd tl tl t, int hd tl tl tl t);
-				l = e :: l;
-				n++;
-			}
-		"pt" =>
-			if(nt >= 3){
-				t := tl toks;
-				e := Sprel(1, col, int hd t, int hd tl t, 0, 0);
-				l = e :: l;
-				n++;
-			}
+	deg := ang*180.0/Math->Pi;
+	k := int(deg + 0.5*sgn(deg)) + 180;
+	im: ref Image;
+	mk: ref Image;
+	r: Rect;
+	if(k >= 0 && k < NANG && arrimg[k] != nil)
+		(im, mk, r) = (arrimg[k], arrmsk[k], arrrect[k]);
+	else{
+		d := real(k - 180);
+		if(k < 0 || k >= NANG)
+			d = deg;		# outside the cache: draw it anyway
+		(im, mk, r) = arrowspr.transformed(d, 1.0).raster(win.display);
+		if(im == nil)
+			return 0;
+		if(k >= 0 && k < NANG){
+			arrimg[k] = im;
+			arrmsk[k] = mk;
+			arrrect[k] = r;
 		}
 	}
-	a := array[n] of Sprel;
-	for(i := n - 1; i >= 0; i--){
-		a[i] = hd l;
-		l = tl l;
-	}
-	return a;
+	img.draw(Rect((at.x+r.min.x, at.y+r.min.y), (at.x+r.max.x, at.y+r.max.y)),
+		im, mk, im.r.min);
+	return 1;
+}
+
+sgn(v: real): real
+{
+	if(v < 0.0)
+		return -1.0;
+	return 1.0;
 }
 
 pt(o: Point, x, y: real): Point
