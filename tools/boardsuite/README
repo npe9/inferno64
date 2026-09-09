@@ -96,6 +96,9 @@ remembered to do:
 			decode gives a plausible wrong answer rather
 			than an error.
 
+	raspi3b-usb	The same board with a USB stick and the Pi's
+			own network adapter.  See THE RICHER RUN.
+
 	raspi4		The Pi 4 on a 16MB card.  Takes the
 			capabilities branch, because emmc2 does report
 			its base clock and a guest is right to believe
@@ -317,16 +320,34 @@ and 15 known -FAIL" -- because a suite that reports a board with
 fifteen broken checks as simply "ok" is lying by omission.  These lists
 are debt, not a baseline to be comfortable with.
 
-WHAT IT DOES NOT COVER.  No USB disk and no USB ethernet, so
-DISK-NONE and ETHER-NONE are the right answers here and are in the
-baselines.  The richer run -- a FAT16 USB disk and a usb-net -- adds
-DISK-BLK-OK, DISK-DOS-OK, DISK-READ-OK, DISK-WRITE-OK, ETHERBIND-OK and
-ETHER-DHCP-OK and drops those two -NONEs; it needs an image with a
-filesystem on it rather than a blank card, so it is documented in
-doc/raspi3b-completion-plan.ms rather than made here.  Nothing on real
-hardware is covered by any of this: every marker below is qemu-tier
-evidence, and the two ACCEPTED ones stay ACCEPTED because nothing in
-the model times a transfer against SDCLK.
+THE RICHER RUN.  raspi3b and raspi3b-4g have no USB disk and no USB
+ethernet, so DISK-NONE and ETHER-NONE are the right answers there and
+are in their baselines.  raspi3b-usb is the same board with both
+attached: a FAT16 stick behind usb-storage, and usb-lan9514 -- this
+tree's own model, qemu-patches 0003 -- with a user network behind it.
+It gives 39 markers where the plain board gives 35, the six the plan
+document predicted in place of the two -NONEs.
+
+usb-lan9514 rather than qemu's usb-net is the point of it: usb-net is
+CDC ECM, and the SMSC half of appl/cmd/usb/etherusb.b, about a thousand
+lines of vendor requests and command words and receive status, has no
+other way to execute.  ETHER-DHCP-OK there is a DHCP exchange that
+crossed the USB link in both directions.
+
+Its stick is made fresh every run, unlike every other image here,
+because the check that reads it also writes to it: diskcheck() creates
+pi.txt, so a second run would find two files and DISK-READ-OK would
+report whichever the directory read returned first.
+
+And nothing on a disk in this suite may be shaped like a marker.  The
+first version of this configuration reported FS-OK -- a marker no check
+on that board prints -- because the stick carried the virt image's
+marker.txt and DISK-READ-OK prints the contents of the file it read.
+The extractor reads the log, not the board's intentions.
+
+Nothing on real hardware is covered by any of this: every marker below
+is qemu-tier evidence, and the two ACCEPTED ones stay ACCEPTED because
+nothing in the model times a transfer against SDCLK.
 
 BASELINES.  One file per configuration, holding the marker set that
 run produces.  They are checked in so that a change to them is a change

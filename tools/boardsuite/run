@@ -40,14 +40,15 @@ verbose=false
 record=false
 force=false
 
-configs='raspi3b raspi3b-4g raspi4 raspi4-hot virtarm64 virtarm64-peer sifiveu virt virt32 virt-peer peer-mixed'
+configs='raspi3b raspi3b-4g raspi3b-usb raspi4 raspi4-hot virtarm64 virtarm64-peer sifiveu virt virt32 virt-peer peer-mixed'
 
 # Each configuration: the kernel, the QEMU arguments, the line that
 # says the board is done printing, and the evidence lines that make
 # this configuration worth running as well as the marker set.
 config_kernel() {
 	case $1 in
-	raspi3b|raspi3b-4g)	echo "$root/os/inferno/raspi3b/iraspi3b";;
+	raspi3b|raspi3b-4g|raspi3b-usb)
+				echo "$root/os/inferno/raspi3b/iraspi3b";;
 	raspi4|raspi4-hot)	echo "$root/os/inferno/raspi4/iraspi4";;
 	virtarm64|virtarm64-peer)
 				echo "$root/os/inferno/virtarm64/ivirtarm64";;
@@ -84,6 +85,19 @@ config_args() {
 		echo "-M raspi3b -m 1G -drive file=$work/sd16.img,if=sd,format=raw";;
 	raspi3b-4g)
 		echo "-M raspi3b -m 1G -drive file=$work/sd4g.img,if=sd,format=raw";;
+	raspi3b-usb)
+		# The richer run: a USB stick and the Pi's own network
+		# adapter.  doc/raspi3b-completion-plan.ms has described
+		# this configuration since the drivers were written and
+		# nothing ever ran it twice the same way -- it was a
+		# command someone typed and remembered.
+		#
+		# usb-lan9514 is this tree's own model (qemu-patches
+		# 0003), not qemu's usb-net: usb-net is CDC ECM, and the
+		# SMSC half of appl/cmd/usb/etherusb.b -- a thousand
+		# lines of vendor requests, command words and receive
+		# status -- has no other way to execute.
+		echo "-M raspi3b -m 1G -drive file=$work/sd16d.img,if=sd,format=raw -drive if=none,id=d0,file=$work/usb16.img,format=raw -device usb-storage,drive=d0 -netdev user,id=n0 -device usb-lan9514,netdev=n0";;
 	raspi4)
 		echo "-M raspi4b -m 2G -drive file=$work/sd16b.img,if=sd,format=raw";;
 	raspi4-hot)
@@ -209,7 +223,8 @@ config_peer_evidence() {
 # that race into a timeout with a name in it.
 config_last() {
 	case $1 in
-	raspi3b|raspi3b-4g)	echo 'USB-MOUSE';;
+	raspi3b|raspi3b-4g|raspi3b-usb)
+				echo 'USB-MOUSE';;
 	raspi4|raspi4-hot)	echo 'USB-MOUSE';;
 	virtarm64|virtarm64-peer)	echo 'ROOT-CMDS-OK';;
 	virt|virt-peer|peer-mixed)	echo 'ROOT-CMDS-OK';;
@@ -229,6 +244,18 @@ config_evidence() {
 	raspi3b-4g)
 		echo 'from firmware clock 1'
 		echo 'csd v2';;
+	raspi3b-usb)
+		echo 'from firmware clock 1'
+		# The markers alone cannot tell this configuration apart
+		# from a board that decided it had no disk and no
+		# network: DISK-READ-OK and ETHER-DHCP-OK are the same
+		# words whichever code printed them.  These are the lines
+		# only the real path can print -- an address that came
+		# from a DHCP exchange over the LAN9514, and a file
+		# written through SCSI WRITE(10) and read back.
+		echo 'ETHER-DHCP-OK ip=10\.0\.2\.15 gw=10\.0\.2\.2'
+		echo 'DISK-WRITE-OK pi\.txt [0-9]+ bytes read back'
+		echo 'DISK-DOS-OK /n/dos:';;
 	raspi4)
 		echo 'from capabilities'
 		echo 'die 24\.';;
@@ -250,6 +277,7 @@ config_card() {
 	case $1 in
 	raspi3b)	echo "sd16.img 16m";;
 	raspi3b-4g)	echo "sd4g.img 4g";;
+	raspi3b-usb)	echo "sd16d.img 16m";;
 	raspi4)		echo "sd16b.img 16m";;
 	raspi4-hot)	echo "sd16c.img 16m";;
 	*)		;;		# no card
@@ -326,6 +354,8 @@ makecard() {
 # than handing back an image half the check cannot use.
 makefat() {
 	f="$work/$1"
+	name=$2
+	body=$3
 	[ -f "$f" ] && return 0
 	if command -v hdiutil >/dev/null 2>&1; then
 		hdiutil create -size 16m -fs MS-DOS -volname BOARDSUITE \
@@ -337,7 +367,7 @@ makefat() {
 			rm -f "$f"
 			return 1
 		fi
-		printf 'FS-OK boardsuite\n' > "$mnt/marker.txt" || {
+		printf '%s\n' "$body" > "$mnt/$name" || {
 			hdiutil detach "$mnt" >/dev/null 2>&1
 			rm -f "$f"
 			return 1
@@ -350,12 +380,12 @@ makefat() {
 			dd if=/dev/zero of="$f" bs=1 count=0 seek=16777216 2>/dev/null
 			if $mk -F 16 "$f" >/dev/null 2>&1; then
 				if command -v mcopy >/dev/null 2>&1; then
-					printf 'FS-OK boardsuite\n' > "$work/marker.txt"
-					mcopy -i "$f" "$work/marker.txt" ::marker.txt \
+					printf '%s\n' "$body" > "$work/$name"
+					mcopy -i "$f" "$work/$name" "::$name" \
 						>/dev/null 2>&1 || { rm -f "$f"; return 1; }
 					return 0
 				fi
-				echo "boardsuite: no mcopy; the FAT image would carry no marker.txt" >&2
+				echo "boardsuite: no mcopy; the FAT image would carry no file" >&2
 				rm -f "$f"
 				return 1
 			fi
@@ -708,12 +738,36 @@ for c in $configs; do
 
 	makecard `config_card $c`
 	case $c in virt|virtarm64|virt-peer|virtarm64-peer|peer-mixed) needfat=true;; *) needfat=false;; esac
-	if $needfat && ! makefat fat16.img; then
+	if $needfat && ! makefat fat16.img marker.txt 'FS-OK boardsuite'; then
 		echo "$c: FAIL no way to make a FAT16 image here (hdiutil or mkfs.vfat)"
 		echo "    BLK-OK needs a filesystem, not a blank card; see the README"
 		status=1
 		continue
 	fi
+
+	# The USB stick is made fresh every run, unlike every other image
+	# here, because the check that reads it also writes to it:
+	# diskcheck() creates pi.txt, so a second run finds two files and
+	# DISK-READ-OK reports whichever the directory read returns first.
+	# A marker that means a different thing on the second run is worse
+	# than no marker.
+	case $c in
+	raspi3b-usb)
+		rm -f "$work/usb16.img"
+		# Lower case on purpose.  The first thing diskcheck()
+		# does with the file it finds is print its contents, and
+		# the marker extractor reads the log, not the board's
+		# intentions: a stick carrying the virt image's "FS-OK
+		# boardsuite" made this configuration report FS-OK, a
+		# marker no check on this board ever prints.  Nothing on
+		# a disk here may be shaped like a marker.
+		if ! makefat usb16.img usb.txt 'a file on the usb stick'; then
+			echo "$c: FAIL no way to make a FAT16 image here (hdiutil or mkfs.vfat)"
+			echo "    the USB stick needs a filesystem with a file on it"
+			status=1
+			continue
+		fi;;
+	esac
 
 	fail=`attempt $c`
 	retried=false

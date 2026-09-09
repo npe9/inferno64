@@ -19288,3 +19288,78 @@ message was
 a stray qemu from an earlier experiment still holding the disk image.
 Both guests' stderr now goes to a file, and a board that never printed
 its last marker quotes the first line of it if there is one.
+.NH 1
+The richer Pi run, and a file whose contents were read as a marker
+.PP
+.CW doc/raspi3b-completion-plan.ms
+has described a richer configuration of the Pi 3B since the drivers
+were written: the board with a FAT16 stick behind
+.CW usb-storage
+and its own network adapter behind
+.CW usb-lan9514 ,
+worth six markers the plain board answers
+.CW DISK-NONE
+and
+.CW ETHER-NONE
+to.  Nothing ever ran it twice the same way; it was a command someone
+typed and remembered.  It is
+.CW raspi3b-usb
+now, and it gives 39 markers where the plain board gives 35 \(em the
+same 39 the plan document counted on its own invocation, which is a
+check that passed rather than a number copied.
+.PP
+.CW usb-lan9514
+rather than qemu's
+.CW usb-net
+is the whole point.
+.CW usb-net
+is CDC ECM; the SMSC half of
+.CW appl/cmd/usb/etherusb.b ,
+about a thousand lines of vendor requests, transmit command words and
+receive status, has no other way to execute.  So
+.CW ETHER-DHCP-OK
+there is a DHCP exchange that crossed the USB link in both directions
+through that code, and the log says
+.CW "ETHERUSB serving /net.alt/ether mac 525400123456 (SMSC LAN95xx ep4.0)"
+above it.
+.PP
+Two things this configuration needed that the others did not.
+.IP \(bu
+Its stick is made fresh every run.  Every other image here is made once
+and reused, but the check that reads this one also writes to it \(em
+.CW diskcheck()
+creates
+.CW pi.txt
+\(em so a second run finds two files and
+.CW DISK-READ-OK
+reports whichever the directory read returns first.  A marker that
+means a different thing on its second run is worse than no marker.
+.IP \(bu
+Nothing on a disk in this suite may be shaped like a marker.  The first
+run of this configuration reported
+.CW FS-OK ,
+which no check on that board prints.  The stick had been made by the
+same
+.CW makefat()
+as
+.CW virt 's
+disk, carrying the
+.CW marker.txt
+whose contents are the words
+.CW "FS-OK boardsuite"
+\(em and the first thing
+.CW diskcheck()
+does with the file it finds is print it.  The extractor reads the log,
+not the board's intentions.
+.CW makefat()
+now takes the name and the contents, and the stick carries a lower-case
+sentence.
+.PP
+That is the third time this tree has been caught by the difference
+between what a board printed and what a log contains \(em after the
+harness that stopped before
+.CW USB-MOUSE-NONE
+and the regex that swallowed
+.CW SD-FS-CREATE-OK .
+All three were found by a suite rather than by reading a terminal,
+which is the argument for having one.
