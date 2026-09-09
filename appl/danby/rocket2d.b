@@ -21,6 +21,7 @@ Rocket2d: module
 SPEC: con
 	"family trajectory\n" +
 	"title The motion of a rocket: two-dimensional motion\n" +
+	"sprite rocket\n" +
 	"param thrust 3800.0 0.0 10000.0\n" +
 	"param pitch 1.35 0.0 1.57\n" +
 	"param dry_mass 80.0 0.0 300.0\n" +

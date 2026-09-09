@@ -176,6 +176,78 @@ once per frame.  Dense fields should use `writepixels`; geometry should be
 redrawn only inside its dirty rectangle.  Simulation time must advance on a
 timer independently of pointer traffic.
 
+### The world layer is sprites now
+
+The "world layer" above was drawn with `im.ellipse`: a pendulum bob was a
+circle of radius 4, a planet a circle of radius 7, and a trajectory was a
+line with nothing on the end of it. It is drawn with `vsprite(2)` sprites
+instead — element lists in `lib/danby/sprites`, so each one comes out at
+whatever size the pane calls for and at whatever angle the thing is
+pointing, rather than at one size somebody rasterised it to. Turning a
+rocket to face along its velocity is what the sprite type's `transformed`
+is for, and this is its first real caller outside the TempleOS ports.
+
+Seven sprites cover the four families that draw a world: `bob` and
+`anchor` for a mechanism, `sun`, `planet` and `moon` for an orbit, and
+`ball` and `rocket` for the two families that fly. A spec chooses one
+with `sprite NAME`; saying nothing gets the family's default, which is
+why none of the 151 existing specs needed editing. Five of them do say
+so, because a `rocket2d` is not a ball.
+
+Which points of a mechanism are fixed is decided by *watching* rather
+than by anything in the spec — a point that has never left where it
+started is what the thing is bolted to. No spec says which point is a
+pivot, and a hoop's centre and a pendulum's pivot are both simply points
+that do not move.
+
+**Measured, in the pane, not by looking at it.** Reading the diagram pane
+back with `readpixels` and counting the colours only the sprites paint.
+The census is not a scaffold that was thrown away: create
+`/env/DANBY_PIXELS` and any model prints it at the sixtieth frame, so the
+numbers below can be taken again by anyone, at any time, without a
+screenshot and without editing the library.
+
+| model | family | before | after, at frame 60 |
+| --- | --- | --- | --- |
+| `simplependulum` | Mechanism | 3 colours, no sprite pixels | 7 colours; bob 138+39, anchor 366 |
+| `doublependulum` | Mechanism | 3 colours | bob **276+78** — exactly twice one bob |
+| `jupiterboost` | Orbit | 5 colours | 8; sun 490 |
+| `threebody` | Orbit | 5 colours | 10; sun 497 |
+| `badfootball` | Flight | 4 colours | 7; ball, 56 white + 5 outline |
+| `rocket2d` | Trajectory | 4 colours | 7; rocket, 153 body + 40 fins + 21 window |
+| `icbmrange` | Trajectory | 4 colours | 7; rocket, 156 body + **46** fins + 21 window |
+
+An absolute count is the pose at frame 60 and nothing more: a body a few
+degrees further round rasterises to a few more or fewer pixels, so a
+single number moving by one or two says nothing. The colour count is
+robust — three or four means circles, seven or more means a sprite — and
+two of these comparisons are robust for a better reason than that.
+
+The doubling from one bob to two is the check that means something: a
+count that scales with the number of masses cannot be a few stray pixels,
+and it does not depend on where either bob happens to be. And `rocket2d`'s
+40 fin pixels against `icbmrange`'s 46, the same sprite at two
+flight-path angles, is the rotation working — a sprite that were merely
+being blitted would give the same number twice.
+
+*Negative control:* move `lib/danby/sprites` away and every model falls
+back to the circles it drew before — 3 colours for `simplependulum` and 5
+for `threebody`, exactly the "before" numbers — and keeps running. The
+sprite directory is not a dependency.
+
+The census also caught something worth saying: read back from a 32-bit
+pane, `readpixels` hands the channel bytes red first, and composing them
+the other way round prints every colour reversed — `2824c0` where the
+palette says `c02428`. The pixel counts are unaffected, because reversal
+is a bijection, but a reader comparing the census to `grpalette(2)` would
+have found nothing matching. The counts in the table were taken before
+that was noticed and are unchanged by fixing it.
+
+Two things this does not do. A sprite is turned but never flipped, so a
+trajectory that comes back the way it went shows the flying thing
+nose-first both ways. And a mechanism's parts are sized by the pane's
+width rather than by the mechanism's own scale.
+
 ## Implementation order
 
 1. Add universal pause, single-step, view cycling, parameter handles, and ghost

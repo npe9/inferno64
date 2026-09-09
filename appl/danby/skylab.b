@@ -21,6 +21,7 @@ Skylab: module
 SPEC: con
 	"family trajectory\n" +
 	"title The descent of Skylab\n" +
+	"sprite rocket\n" +
 	"param altitude 120.0 0.0 250.0\n" +
 	"param density 0.015 0.0 0.08\n" +
 	"param area 74.0 0.0 150.0\n" +

@@ -1,0 +1,11 @@
+color 1
+circle 0 0 8
+floodfill 0 0
+color 9
+circle -3 -3 4
+floodfill -3 -3
+color 2
+line -6 3 -2 3
+line -7 5 0 5
+color 0
+circle 0 0 8

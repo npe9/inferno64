@@ -21,6 +21,7 @@ Icbmaccuracy: module
 SPEC: con
 	"family flight\n" +
 	"title The accuracy of an ICBM\n" +
+	"sprite rocket\n" +
 	"param speed 2.2 0.2 8.0\n" +
 	"param elevation 0.78 0.1 1.5\n" +
 	"param aim_error 0.0 -0.12 0.12\n" +

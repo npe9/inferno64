@@ -21,6 +21,7 @@ Icbmrange: module
 SPEC: con
 	"family trajectory\n" +
 	"title The range of an ICBM\n" +
+	"sprite rocket\n" +
 	"param speed 2.2 0.0 8.0\n" +
 	"param angle 0.78 0.0 1.5\n" +
 	"param drag 0.002 0.0 0.02\n" +

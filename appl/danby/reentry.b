@@ -21,6 +21,7 @@ Reentry: module
 SPEC: con
 	"family trajectory\n" +
 	"title Reentering the Earth's atmosphere\n" +
+	"sprite rocket\n" +
 	"param speed 7.8 0.0 12.0\n" +
 	"param entry_angle -0.1 -0.5 0.5\n" +
 	"param ballistic_coefficient 0.018 0.0 0.08\n" +

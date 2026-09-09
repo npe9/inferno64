@@ -1,0 +1,12 @@
+color 14
+circle 0 0 9
+floodfill 0 0
+color 4
+line -14 0 -10 0
+line 14 0 10 0
+line 0 -14 0 -10
+line 0 14 0 10
+line -10 -10 -7 -7
+line 10 -10 7 -7
+line -10 10 -7 7
+line 10 10 7 7

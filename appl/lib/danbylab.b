@@ -40,6 +40,9 @@ include "env.m";
 	env: Env;
 include "math.m";
 	math: Math;
+include "math/vsprite.m";
+	vspr: Vsprite;
+	Sprite: import vspr;
 include "danbylab.m";
 	dynsys: Dynsys;
 	Model: import dynsys;
@@ -104,6 +107,37 @@ Look: adt {
 # needs and leaves the rest alone: obsmax belongs to Mechanism and Orbit,
 # dispmax to Population, xmax/ymax/latmax/vmax to Trajectory and Flight,
 # mass and the trail to Orbit, data and home to Profile.
+# ---------- the pictures ----------
+#
+# A model used to draw its moving parts as circles: a pendulum bob was
+# an ellipse of radius 4, a planet an ellipse of radius 7.  They are
+# sprites now, and vsprite(2) sprites rather than pictures, so the same
+# file is drawn at whatever size the pane calls for and at whatever angle
+# the thing is pointing - a rocket that flies nose-first does so because
+# the sprite is turned, not because there are eight of it on disk.
+#
+# The files are element lists in /lib/danby/sprites, the same text form
+# scripts/tos_extract_sprites.py writes and temple/spriteedit(1) edits,
+# so a model's parts can be redrawn without touching this file.
+SPRITEDIR: con "/lib/danby/sprites";
+
+# One raster of one sprite, at one size and one angle.
+Ras: adt {
+	name:	string;
+	deg:	int;		# tenths of a degree, so the key is exact
+	scale:	int;		# hundredths
+	im:	ref Image;
+	mask:	ref Image;
+	r:	Rect;
+};
+
+display: ref Display;
+fixedpt: array of int;			# Mechanism: which points never move
+homept: array of real;			# and where they started
+sprites: list of (string, ref Sprite);	# the element lists, read once
+rasters: list of ref Ras;		# and what they were drawn to
+nrasters := 0;
+
 Sim: adt {
 	state:		array of real;
 	work:		ref Numerics->Workspace;
@@ -194,6 +228,14 @@ loadui(): string
 		tkclient = load Tkclient Tkclient->PATH;
 	if(math == nil)
 		math = load Math Math->PATH;
+	# The sprites are not required: a model without them draws the
+	# circles it always drew, which is why this is not in the check
+	# below.
+	if(vspr == nil){
+		vspr = load Vsprite Vsprite->PATH;
+		if(vspr != nil)
+			vspr->init();
+	}
 	if(draw == nil || numerics == nil || plot == nil ||
 			tk == nil || tkclient == nil || math == nil)
 		return "danbylab: a drawing module is missing";
@@ -282,6 +324,12 @@ parse(spec: string): (ref Model, ref Config, string)
 				err = "manual: usage: manual PAGE";
 			else
 				c.manual = w[1];
+		"sprite" =>
+			claimed = 1;
+			if(nwords != 2)
+				err = "sprite: usage: sprite NAME";
+			else
+				c.sprite = w[1];
 		"link" =>
 			claimed = 1;
 			err = link(m, c, w, nwords);
@@ -411,6 +459,15 @@ pair(m: ref Model, w: array of string, nwords: int, usage: string):
 # What each family needs that dynsys->check() cannot know.
 checkspec(m: ref Model, c: ref Config): string
 {
+	# A spec that says nothing about its picture gets its family's, so
+	# the 151 that were written before there were any need no editing.
+	# Most things that fly in this book are balls, and the four Flight
+	# models that are not a ball say so.
+	if(c.sprite == nil)
+		case c.family {
+		Trajectory or Flight =>
+			c.sprite = "ball";
+		}
 	case c.family {
 	Mechanism =>
 		if((e := wantobservables(m, 2)) != nil)
@@ -783,6 +840,10 @@ initwindow(ctxt: ref Draw->Context): chan of string
 	tkclient->startinput(top, "kbd"::"ptr"::nil);
 	tkclient->onscreen(top, nil);
 
+	display = top.display;
+	census = envint("#e/DANBY_PIXELS");
+	if(census == 0)
+		census = envint("/env/DANBY_PIXELS");
 	font = Font.open(top.display, "/fonts/lucida/unicode.8.font");
 	bg = top.display.color(themebg[look.theme]);
 	fg = top.display.color(themefg[look.theme]);
@@ -1130,10 +1191,21 @@ redraw()
 	graph.cmd("clear");
 	drawgraph();
 	graph.draw();
+	# after the plot, because it goes on top of it
+	case cfg.family {
+	Trajectory =>
+		drawflier("flight", sim.state[0], sim.state[1],
+			sim.state[2], sim.state[3]);
+	Flight =>
+		drawflier("side", sim.state[0], sim.state[2],
+			sim.state[3], sim.state[5]);
+	}
 	dirty := "";
 	for(i = 0; i < len look.panes; i++)
 		dirty += look.panes[i].w + " dirty; ";
 	cmd(dirty + "update");
+	if(census > 0)
+		takecensus();
 	# the status line is a widget, so only touch it when it would change
 	now := status();
 	if(now != readout && now != nil){
@@ -1314,9 +1386,191 @@ drawmechanism(im: ref Image)
 		im.line(pa, pb, Draw->Endsquare, Draw->Endsquare, 3,
 			palette[1], Point(0,0));
 	}
+	# A point that has never left where it started is what the mechanism
+	# is bolted to, and is drawn as one; everything else is a mass.
+	# Which is which is decided by watching rather than by a rule in the
+	# spec, because no spec says: a hoop's centre and a pendulum's pivot
+	# are both simply points that do not move.
+	if(len fixedpt != len points/2){
+		fixedpt = array[len points/2] of { * => 1 };
+		homept = array[len points] of real;
+		homept[0:] = points;
+	}
 	for(i = 0; i < len points/2; i++)
-		im.ellipse(onview(view, points[2*i], points[2*i+1],
-			xmin, xmax, ymin, ymax), 4, 4, 0, fg, Point(0,0));
+		if(absreal(points[2*i]-homept[2*i]) > 1e-9
+		   || absreal(points[2*i+1]-homept[2*i+1]) > 1e-9)
+			fixedpt[i] = 0;
+
+	# The sprite is drawn at the size the view is: a mechanism squeezed
+	# into a small pane gets small parts rather than parts that swamp it.
+	scale := real(view.dx())/460.0;
+	if(scale > 1.6)
+		scale = 1.6;
+	if(scale < 0.5)
+		scale = 0.5;
+	for(i = 0; i < len points/2; i++){
+		at := onview(view, points[2*i], points[2*i+1],
+			xmin, xmax, ymin, ymax);
+		name := "bob";
+		if(fixedpt[i])
+			name = "anchor";
+		if(!drawsprite(im, at, name, 0.0, scale))
+			im.ellipse(at, 4, 4, 0, fg, Point(0,0));
+	}
+}
+
+# The element list, read the first time it is asked for.  A model that
+# has no sprite for something falls back to what it drew before, so a
+# missing file costs a circle rather than a picture.
+spritefor(name: string): ref Sprite
+{
+	for(l := sprites; l != nil; l = tl l){
+		(nm, sp) := hd l;
+		if(nm == name)
+			return sp;
+	}
+	sp: ref Sprite;
+	if(vspr != nil)
+		(sp, nil) = vspr->read(SPRITEDIR + "/" + name + ".spr");
+	sprites = (name, sp) :: sprites;
+	return sp;
+}
+
+# The raster, kept.  The key is the angle in tenths of a degree and the
+# scale in hundredths, both exact integers: two callers asking for the
+# same picture get the same one, and a caller asking for a picture that
+# is not there gets it drawn rather than the nearest one that is.  A
+# cache that answers with the nearest is how temple/stadium nearly drew
+# a knocked-over fan standing up.
+rasterof(name: string, deg, scale: real): ref Ras
+{
+	if(scale < 0.15)
+		scale = 0.15;
+	dk := int (deg*10.0);
+	sk := int (scale*100.0);
+	if(sk < 15)
+		sk = 15;
+	for(l := rasters; l != nil; l = tl l){
+		ras := hd l;
+		if(ras.name == name && ras.deg == dk && ras.scale == sk)
+			return ras;
+	}
+	sp := spritefor(name);
+	if(sp == nil || display == nil)
+		return nil;
+	if(dk != 0 || sk != 100)
+		sp = sp.transformed(real dk/10.0, real sk/100.0);
+	(im, mask, r) := sp.raster(display);
+	if(im == nil)
+		return nil;
+	ras := ref Ras(name, dk, sk, im, mask, r);
+	# The angles a model asks for are continuous, so this would grow
+	# without bound; past a few hundred the oldest go.
+	if(nrasters > 240){
+		rasters = nil;
+		nrasters = 0;
+	}
+	rasters = ras :: rasters;
+	nrasters++;
+	return ras;
+}
+
+# Draw one, centred on the sprite's own origin at p.  Returns 0 if there
+# was no sprite, so a caller can fall back to the circle it used to draw.
+drawsprite(im: ref Image, p: Point, name: string, deg, scale: real): int
+{
+	ras := rasterof(name, deg, scale);
+	if(ras == nil)
+		return 0;
+	im.draw(Rect((p.x+ras.r.min.x, p.y+ras.r.min.y),
+		(p.x+ras.r.max.x, p.y+ras.r.max.y)),
+		ras.im, ras.mask, ras.im.r.min);
+	return 1;
+}
+
+# plot(2) will say what data a pixel means but not what pixel a datum is,
+# so the map is derived from two inversions.  It is affine, so two are
+# enough, and taking it from the plotter rather than from the margins
+# means a change to the layout cannot put the sprite in the wrong place.
+viewpoint(view: string, x, y: real): (Point, int)
+{
+	im := look.panes[look.graphpane].im;
+	if(im == nil)
+		return (Point(0,0), 0);
+	# A view is not the whole pane - a trajectory's pane is split with
+	# its telemetry - and there is no way to ask where it is, so the
+	# two points the map is derived from are found by asking: a pixel
+	# the plotter will invert is a pixel inside the view.
+	(p0, p1, found) := viewcorners(im, view);
+	if(!found)
+		return (Point(0,0), 0);
+	(ax, ay, e0) := graph.invert(view, p0);
+	(bx, by, e1) := graph.invert(view, p1);
+	if(e0 != nil || e1 != nil || ax == bx || ay == by)
+		return (Point(0,0), 0);
+	px := p0.x + int((x-ax)*real(p1.x-p0.x)/(bx-ax));
+	py := p0.y + int((y-ay)*real(p1.y-p0.y)/(by-ay));
+	return (Point(px, py), 1);
+}
+
+# Two pixels inside the named view, as far apart as a coarse scan finds.
+# The scan is 8x8 and its result depends only on the pane's size, so it
+# is worked out once per pane rather than once per frame.
+cornerview: string;
+cornerrect: Rect;
+corner0, corner1: Point;
+cornerok := 0;
+
+viewcorners(im: ref Image, view: string): (Point, Point, int)
+{
+	if(cornerok && cornerview == view && cornerrect.eq(im.r))
+		return (corner0, corner1, 1);
+	cornerview = view;
+	cornerrect = im.r;
+	cornerok = 0;
+	lo := Point(0,0);
+	hi := Point(0,0);
+	n := 0;
+	for(i := 0; i < 8; i++)
+		for(j := 0; j < 8; j++){
+			p := Point(im.r.min.x + (im.r.dx()*(2*i+1))/16,
+				im.r.min.y + (im.r.dy()*(2*j+1))/16);
+			(nil, nil, e) := graph.invert(view, p);
+			if(e != nil)
+				continue;
+			if(n == 0){
+				lo = p;
+				hi = p;
+			}else{
+				if(p.x < lo.x) lo.x = p.x;
+				if(p.y < lo.y) lo.y = p.y;
+				if(p.x > hi.x) hi.x = p.x;
+				if(p.y > hi.y) hi.y = p.y;
+			}
+			n++;
+		}
+	if(n < 4 || hi.x <= lo.x || hi.y <= lo.y)
+		return (Point(0,0), Point(0,0), 0);
+	corner0 = lo;
+	corner1 = hi;
+	cornerok = 1;
+	return (lo, hi, 1);
+}
+
+# The thing that is flying, drawn where it is and pointing where it is
+# going.  A trajectory used to be a line with nothing on the end of it.
+drawflier(view: string, x, y, vx, vy: real)
+{
+	im := look.panes[look.graphpane].im;
+	if(im == nil)
+		return;
+	(at, ok) := viewpoint(view, x, y);
+	if(!ok || !at.in(im.r.inset(2)))
+		return;
+	deg := 0.0;
+	if(vx != 0.0 || vy != 0.0)
+		deg = -math->atan2(vy, vx)*180.0/Math->Pi;
+	drawsprite(im, at, cfg.sprite, deg, 1.0);
 }
 
 onview(view: Rect, x, y, xmin, xmax, ymin, ymax: real): Point
@@ -1403,7 +1657,28 @@ draworbits(im: ref Image)
 		radius := 4;
 		if(s.mass[i] > 0.1)
 			radius = 7;
-		im.ellipse(point, radius, radius, 0, colour, Point(0,0));
+		# What a body looks like is what it weighs: the heaviest is
+		# the one everything else goes round, and the lightest is a
+		# moon.  The spec never says which is which and does not have
+		# to - it says the masses, and they are the same fact.
+		name := "planet";
+		if(i == focus)
+			name = "sun";
+		else if(s.mass[i] < s.mass[focus]*0.02)
+			name = "moon";
+		size := 1.0;
+		if(s.mass[focus] > 0.0){
+			ratio := s.mass[i]/s.mass[focus];
+			size = 0.55 + 0.75*math->pow(ratio, 0.25);
+			if(size > 1.5)
+				size = 1.5;
+			if(size < 0.55)
+				size = 0.55;
+		}
+		if(drawsprite(im, point, name, 0.0, size))
+			radius = 7;
+		else
+			im.ellipse(point, radius, radius, 0, colour, Point(0,0));
 		im.text(point.add((radius+3,-3)), fg, Point(0,0), font,
 			label(cfg.bodies[i]));
 	}
@@ -1587,4 +1862,80 @@ timer(ticks: chan of int)
 		sys->sleep(25);
 		ticks <-= 1;
 	}
+}
+
+# In-process evidence that the sprites reached the pixels, which a
+# screenshot cannot give and a reading of the code cannot either.  With
+# /env/DANBY_PIXELS set to a frame number the library reads back the
+# diagram pane at that frame and prints how many distinct colours are in
+# it and how many pixels each holds.  A model drawing circles has three
+# or four colours; one drawing a sprite has seven or more, and the counts
+# say which sprite.  Nothing is read and nothing is printed when the
+# variable is not set.
+CENSUSFRAME: con 60;	# a second and a half in, with the model moving
+census := 0;
+censusn := 0;
+
+# Zero when the file is not there at all.  When it is there but empty -
+# which is what `echo -n 90 > /env/DANBY_PIXELS` leaves behind, the env
+# device taking the create and not the write - the frame is the default
+# rather than nothing, so that merely creating the file turns the census
+# on.
+envint(f: string): int
+{
+	fd := sys->open(f, Sys->OREAD);
+	if(fd == nil)
+		return 0;
+	b := array[32] of byte;
+	n := sys->read(fd, b, len b);
+	if(n <= 0)
+		return CENSUSFRAME;
+	v := int string b[0:n];
+	if(v <= 0)
+		return CENSUSFRAME;
+	return v;
+}
+
+takecensus()
+{
+	if(++censusn < census)
+		return;
+	census = -1;
+	i := look.diagpane;
+	if(i < 0)
+		i = look.graphpane;
+	im := look.panes[i].im;
+	if(im == nil)
+		return;
+	r := im.r;
+	bpp := (im.depth+7)/8;
+	buf := array[r.dx()*bpp] of byte;
+	cols := array[64] of int;
+	cnts := array[64] of int;
+	n := 0;
+	for(y := r.min.y; y < r.max.y; y++){
+		if(im.readpixels(Rect((r.min.x, y), (r.max.x, y+1)), buf) < 0)
+			return;
+		for(x := 0; x < r.dx(); x++){
+			b := buf[x*bpp:];
+			# the pane is 32 bits deep and readpixels hands back
+			# the channel bytes in red-first order, so this is the
+			# RGB that grpalette(2) names and not its reverse.
+			v := (int b[0]<<16)|(int b[1]<<8)|int b[2];
+			for(k := 0; k < n; k++)
+				if(cols[k] == v)
+					break;
+			if(k == n){
+				if(n >= len cols)
+					continue;
+				cols[n] = v;
+				cnts[n] = 0;
+				n++;
+			}
+			cnts[k]++;
+		}
+	}
+	sys->print("danby census %s: %d colours\n", cfg.title, n);
+	for(k := 0; k < n; k++)
+		sys->print("\t%.6x %d\n", cols[k], cnts[k]);
 }

@@ -1,0 +1,7 @@
+color 15
+circle 0 0 5
+floodfill 0 0
+color 8
+circle 0 0 5
+color 7
+line -2 2 2 2

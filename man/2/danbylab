@@ -159,11 +159,88 @@ parameters already bound, which
 and
 .B dynsys->rhs()
 both do, so call one of those first.
+.SS The pictures
+The moving parts are sprites, not circles.
+A mechanism's masses are drawn as a weight and the points it is bolted to
+as an anchor; an orbit's bodies as a sun, a planet or a moon by what they
+weigh; and a trajectory or a flight has the thing that is flying drawn at
+the end of its path, turned to face the way it is going.
+.PP
+They are
+.IR vsprite (2)
+sprites, which is to say element lists in
+.BR /lib/danby/sprites ,
+so each is drawn at whatever size the pane calls for and at whatever
+angle the model is pointing rather than at one size somebody rasterised
+it to.
+They are the same text form
+.IR temple / spriteedit (1)
+edits, so the picture a model draws can be changed without touching any
+Limbo.
+.PP
+A spec says
+.BI "sprite " name
+to choose one.
+Saying nothing gets the family's default, which is why the 151 models
+written before there were any needed no editing;
+.B ball
+is the default for the two families that fly, and the five that launch a
+rocket rather than hit a ball say so.
+.PP
+Which points of a mechanism are fixed is decided by watching rather than
+by anything in the spec: a point that has never left where it started is
+what the thing is bolted to.
+No spec says which point is a pivot, and a hoop's centre and a pendulum's
+pivot are both simply points that do not move.
+.PP
+A model whose sprite file is missing draws the circles it always drew, so
+.B /lib/danby/sprites
+is not a dependency.
+.SS "Seeing that a sprite reached the pixels"
+Create
+.B /env/DANBY_PIXELS
+and the library reads its own diagram pane back at the sixtieth frame and
+prints how many distinct colours are in it and how many pixels each
+holds.
+This is in-process evidence and depends on nothing outside
+.IR emu :
+a screenshot cannot say whether the ellipse under a sprite was drawn, and
+reading the code cannot either.
+.EX
+; bind -a '#e' /env
+; echo -n > /env/DANBY_PIXELS
+; danby/simplependulum
+danby census The simple pendulum: 7 colours
+	f4f0e7 350654
+	b0b4ba 366
+	...
+	c02428 138
+	ff6b60 39
+.EE
+The colours are the RGB that
+.IR grpalette (2)
+names.
+A model drawing circles has three or four; one drawing a sprite has seven
+or more, and the counts say which sprite: 138 pixels of palette 4 with 39
+of palette 12 on top is the bob, and
+.I doublependulum
+shows exactly twice that.
+An absolute count is the pose at that frame and no more \(em a body a few
+degrees further round rasterises to a pixel or two either way \(em so the
+comparisons worth making are the ones that do not depend on the pose, of
+which the doubling is one.
+Move
+.B /lib/danby/sprites
+away and the same census falls back to three colours, which is the
+control.
+Give the file a number to census a different frame; an empty file means
+the sixtieth.
 .SH SOURCE
 .B /appl/lib/danbylab.b
 .SH SEE ALSO
 .IR danbylabtest (1),
 .IR dynsys (2),
+.IR vsprite (2),
 .IR plot (2),
 .IR panel (9)
 .SH BUGS
@@ -176,3 +253,10 @@ and
 and only
 .B parse
 and the three evaluators run without them.
+.PP
+A sprite is turned but never flipped, so a trajectory that comes back the
+way it went shows the flying thing nose-first in both directions.
+.PP
+The size a mechanism's parts are drawn at follows the pane's width and
+not the mechanism's own scale, so a model whose parts are very far apart
+gets parts that look large for it.

@@ -38,6 +38,14 @@ Danbylab: module
 		title:		string;
 		manual:		string;	# the man page the wm menu opens
 
+		# What the moving thing looks like: the name of an element
+		# list in /lib/danby/sprites, drawn through vsprite(2) at
+		# whatever size the pane wants and turned to face the way it
+		# is going.  A spec that says nothing gets its family's
+		# default, which is why 151 of them did not have to be
+		# edited to gain a picture.
+		sprite:		string;
+
 		links:		array of int;		# Mechanism: pairs of point indices
 		bodies:		array of string;	# Orbit: what each body is called
 		massexprs:	array of ref Hoc->Expr;	# Orbit: and what it weighs
