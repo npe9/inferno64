@@ -2728,6 +2728,43 @@ Kernels here link stripped, so a
 listing regenerated after each build remains the only way to turn a PC
 into a symbol on this board.
 .NH 1
+Where the suite stands
+.PP
+Three consecutive boots with a 16MB SD image, a FAT16 USB disk and USB
+ethernet attached, against QEMU v10.1.3 plus the twenty patches in
+.CW tools/qemu-patches :
+38 markers, every one OK or ACCEPTED, no
+.CW -NONE
+and no
+.CW -FAIL ,
+and QEMU logging no guest error.  26.1, 28.3 and 29.3 seconds to the
+last marker.
+.PP
+.CW "ARMTIMER-INTR-OK ARMTIMER-OK AUX-OK AUXSPI-OK BSCSL-OK DISK-BLK-OK"
+.br
+.CW "DISK-DOS-OK DISK-READ-OK DISK-WRITE-OK DMA-OK DRAW-OK ETHER-DHCP-OK"
+.br
+.CW "ETHERBIND-OK I2S-OK MBOX-OK OTP-OK PWM-OK RANDOM-OK RASPI3B-OK"
+.br
+.CW "RASPI3B-SH-OK RNG-OK SD-CAP-OK SD-FS-CREATE-OK SD-MULTIBLOCK-OK"
+.br
+.CW "SD-OK SD-WRITE-OK SDHCI-4BIT-OK SDHCI-CAP-OK SDHCI-HISPEED-ACCEPTED"
+.br
+.CW "SDHCI-MULTIBLOCK-OK SDHCI-OK SDHCI-SPEED-ACCEPTED SDHCI-WRITE-OK"
+.br
+.CW "SMI-OK SYSTMR-OK THERM-OK UART-PUTC-OK USB-OK"
+.PP
+The two
+.CW ACCEPTED
+markers are the ones that must stay
+.CW ACCEPTED :
+both are SD clock rates, and nothing in the model times a transfer
+against SDCLK, so the sequence is verified and the physical change is
+not.  That distinction is the whole reason the word exists, and a boot
+where either turned into
+.CW -OK
+without hardware underneath it would be a lie.
+.NH 1
 When this is done
 .PP
 With Phases 0-4 the Pi 3B is an interactive networked Inferno
