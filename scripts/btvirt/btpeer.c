@@ -361,8 +361,21 @@ static void make_db(void)
  */
 #define TESTPSM		0x1001		/* not assigned; a test PSM */
 #define RFCHAN		1
+#define COCPSM		0x0080		/* the LE credit-based channel */
+
+/*
+ * A small MPS and one credit at a time.  An SDU longer than the MPS
+ * has to be cut into PDUs and each one waits for a credit, which is
+ * the part of credit-based flow control worth pointing at another
+ * implementation: the segmentation, the two byte SDU length on the
+ * first PDU only, and not sending before the credit arrives.
+ */
+#define COCMTU		512
+#define COCMPS		48
+#define COCCREDITS	1
 
 static uint16_t l2cid;
+static uint16_t coccid;
 
 static void upper(uint8_t *d, const void *src, uint16_t len)
 {
@@ -397,6 +410,35 @@ static void l2cap_conn(uint16_t handle, uint16_t cid, void *user_data)
 static void l2cap_disconn(void *user_data)
 {
 	printf("btpeer: l2cap closed\n");
+	fflush(stdout);
+}
+
+static void coc_data(const void *data, uint16_t len, void *user_data)
+{
+	uint8_t buf[1024];
+
+	if (len > sizeof(buf))
+		len = sizeof(buf);
+	upper(buf, data, len);
+	printf("btpeer: credit channel %u byte sdu, answering in upper case\n",
+			len);
+	fflush(stdout);
+	bthost_send_cid(host, conn_handle, coccid, buf, len);
+}
+
+static void coc_conn(uint16_t handle, uint16_t cid, void *user_data)
+{
+	printf("btpeer: credit channel open, cid %u, mps %d, %d credit\n",
+			cid, COCMPS, COCCREDITS);
+	fflush(stdout);
+	conn_handle = handle;
+	coccid = cid;
+	bthost_add_cid_hook(host, handle, cid, coc_data, NULL);
+}
+
+static void coc_disconn(void *user_data)
+{
+	printf("btpeer: credit channel closed\n");
 	fflush(stdout);
 }
 
@@ -485,6 +527,8 @@ static void ready_cb(void)
 	bthost_set_adv_enable(host, 0x01);
 	bthost_write_scan_enable(host, 0x03);	/* discoverable for BR/EDR too */
 	bthost_add_l2cap_server(host, TESTPSM, l2cap_conn, l2cap_disconn, NULL);
+	bthost_add_l2cap_server_custom(host, COCPSM, COCMTU, COCMPS,
+					COCCREDITS, coc_conn, coc_disconn, NULL);
 	/*
 	 * RFCOMM needs both: an L2CAP server on PSM 3 to accept the
 	 * channel the multiplexer runs over, and the RFCOMM server

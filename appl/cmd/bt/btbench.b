@@ -451,6 +451,17 @@ init(nil: ref Draw->Context, argv: list of string)
 			say("BT: bond " + hd bl);
 	}
 
+	#
+	# The credit-based channel goes on the link that is already up.
+	# Reconnecting for it does not work against this peer: bthost
+	# stops advertising when it is connected and does not start
+	# again, so the second connection attempt finds nothing to
+	# connect to.  That is the peer's business and not something to
+	# work around in the stack.
+	#
+	if(mode == "btvirt")
+		btvirtcoc(dev);
+
 	sys->print("BT: disconnect\n");
 	if((e = writefile(dev + "/ctl", "disconnect")) != nil)
 		sys->print("BT: disconnect: %s\n", e);
@@ -3928,4 +3939,40 @@ bvsay(f, what, name: string)
 		return;
 	}
 	sys->print("BT: %s: %q came back %q\n", name, what, got);
+}
+
+#
+# An LE credit-based channel to BlueZ.
+#
+# The peer serves it with an MPS of 48 and grants one credit at a
+# time, so an SDU of 150 bytes is four PDUs and three waits going out:
+# what is asserted is the segmentation, the two byte SDU length that
+# goes on the first PDU and not on the rest, and that this side does
+# not send before the credit arrives.  The peer reassembles it and
+# answers in upper case, so it was read and not echoed.
+#
+# 150 and not 200, and the reason is the peer's.  bthost_send_cid
+# prepends the SDU header and sends the whole thing as one L2CAP PDU:
+# it does not segment to the MPS the other side asked for, and it
+# keeps no account of the credits it has been given.  This side
+# offered an MPS of 188 in the connection request, BlueZ answered
+# acknowledging it, and then sent 202 bytes in one PDU, which this
+# side refused -- rightly.  At 150 the answer is 152 bytes and fits,
+# so the direction that is worth testing, this stack segmenting
+# against a peer that grants one credit at a time, is still tested,
+# and the peer is not asked to do the thing it cannot.
+#
+Bvcoc:	con "0080";
+
+btvirtcoc(dev: string)
+{
+	if((e := writefile(dev + "/ctl", "l2cap " + Bvcoc)) != nil){
+		sys->print("BT: FAILED: l2cap %s: %s\n", Bvcoc, e);
+		writefile(dev + "/ctl", "disconnect");
+		return;
+	}
+	what := "";
+	while(len what < 150)
+		what[len what] = 'a' + (len what % 26);
+	bvsay(dev + "/l2cap/" + Bvcoc, what, "credit channel");
 }

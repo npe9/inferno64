@@ -943,7 +943,10 @@ an inquiry finds the same peer on BR/EDR and pages it;
 an L2CAP channel in basic mode carries a frame and the answer comes
 back in upper case;
 .IP \(bu
-a serial port over RFCOMM does the same.
+a serial port over RFCOMM does the same;
+.IP \(bu
+and an LE credit-based channel carries an SDU segmented to the peer's
+MPS, one PDU per credit.
 .PP
 The bond it records has an all zero long term key, and that is not a
 fault on either side:
@@ -1010,6 +1013,41 @@ is
 .CW emulator/bthost.c ,
 the host stack BlueZ tests with, and not the RFCOMM in the Linux
 kernel.
+.NH 3
+Credits, against a peer that gives them one at a time
+.PP
+The LE credit-based channel goes on the link before it is dropped.
+The peer serves it with an MTU of 512, an MPS of 48 and one initial
+credit, and grants one credit at a time thereafter, which is the
+stingiest a peer may legally be and the case a sender is most likely
+to get wrong.
+.PP
+A 150 byte SDU goes out as 152 bytes with the two byte SDU length on
+the first PDU, and the capture shows it cut to 48, 48, 48 and 8 \(em
+exactly the MPS the peer asked for \(em with one of BlueZ's credit
+grants between each.  The peer reassembles it and answers in upper
+case.  So the segmentation, the SDU header going on the first PDU and
+not on the rest, and waiting for a credit before sending are all now
+checked against another implementation.
+.PP
+150 and not 200, and the reason is the peer's.
+.CW bthost_send_cid
+prepends the SDU header and hands the whole thing to
+.CW send_acl
+as one L2CAP PDU: it does not segment to the MPS the other side asked
+for, and it keeps no account of the credits it has been given.  This
+side offered an MPS of 188 in the connection request and BlueZ's
+response acknowledged it \(em both are in the capture \(em and BlueZ
+then sent 202 bytes in one PDU, which this side refused.  Refusing it
+is right.
+.PP
+That one is not patched.  The RFCOMM length was two lines and could
+not be anything but wrong; segmenting properly means tracking credits
+on the send side as well, which is a change worth more care than a
+test fixture deserves, and getting it half right would put a defect
+into the thing being used as the independent reading.  So the SDU is
+sized to what the peer can answer, the direction worth testing is
+still tested, and the limitation is written here instead.
 .PP
 One thing found in the writing was this side's and not BlueZ's: the
 .CW status

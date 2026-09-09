@@ -935,9 +935,9 @@ host, the SMP and the GATT server are all code this tree did not
 write.  The
 .B btvirt
 phase is the one written for that peer, and it covers both halves:
-scanning, connecting, discovery, a read, notifications, a long write
-and pairing on LE, then an inquiry, a page, an L2CAP channel and a
-serial port over RFCOMM on BR/EDR.  Each of the last two answers in
+scanning, connecting, discovery, a read, notifications, a long write,
+pairing and a credit-based channel on LE, then an inquiry, a page, an
+L2CAP channel and a serial port over RFCOMM on BR/EDR.  Each of the last two answers in
 upper case rather than echoing, so the reply has to have been read by
 the far end.
 .B full
