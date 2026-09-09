@@ -2001,6 +2001,53 @@ are internal to the SoC.  They are either undocumented, driven only by
 the VideoCore firmware, or \- in V3D's case \- a GPU, which is out of
 scope for this port by the same decision that leaves out OpenGL below.
 .NH 1
+Timed checks must not assume a bound on their own scheduling
+.PP
+Three checks in this suite time a piece of hardware against the system
+timer, and a real 115200 console broke two of them within a day of
+each other.  The fault is the same in both and it is worth stating once
+rather than three times.
+.PP
+What such a check wants to measure is how long the block took.  What it
+can observe is how long the kernel took to get back \- and everything
+that can come between those two, an interrupt, a preemption, a console
+drain, only ever makes the second larger.  The error is one-sided.  A
+check that compares a single observation against an expected value with
+a symmetric tolerance is therefore not measuring the hardware; it is
+measuring the hardware plus whatever the kernel happened to be doing,
+and it fails in one direction only, intermittently, blaming the
+hardware.
+.PP
+Two answers, depending on the shape of the measurement:
+.IP \(bu
+.B "Count events over a window."
+The ARM timer's wrap check counts reloads over 400ms and the interrupt
+check counts interrupts over 200ms.  A delay inside the window costs
+nothing as long as the window is long compared to it, and no assumption
+about scheduling is needed at all.  This is the stronger answer where
+the thing being tested happens repeatedly.
+.IP \(bu
+.B "Take the best of several."
+The SMI programmed read and both I2S FIFO timings are single events
+that cannot be counted, so each is run five times and the minimum is
+used.  Since delay is one-sided, the minimum is the closest estimate of
+the hardware's own time available from here.
+.PP
+The second is not merely more stable, it is more accurate, and the
+numbers say so.  The I2S TX drain read 1363us against 1333 expected as
+a single attempt \- 2.3% over, which is scheduling and not the block.
+Best of five reads 1335 to 1337 across six boots, 0.15 to 0.30% over.
+The measurement got better, not just quieter.
+.PP
+The ARM timer's rate check adds one more thing worth copying: it
+asserts the precondition its arithmetic needs, and when the
+precondition fails it reports
+.CW ARMTIMER-NONE ,
+"nothing was measured", rather than a verdict.  A measurement that
+could not be made and a device that failed are different claims, and a
+suite that cannot say the first will eventually say the second about
+working hardware.
+.NH 1
 The kfs check reamed the whole card, and boot time said so
 .PP
 .CW sdfs()

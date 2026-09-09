@@ -137,6 +137,12 @@ enum {
 
 	Maxfifo	= 256,		/* an upper bound for the depth probe */
 	Timeout	= 1000000,
+
+	/*
+	 * Timed attempts for the programmed-read check; the best of
+	 * them is used, since delay is one-sided.  See smicheck().
+	 */
+	Ntimed	= 5,
 };
 
 static u32*
@@ -376,25 +382,49 @@ smiinit(void)
 	/*
 	 * Time a programmed read.  This is the check that gives the
 	 * device settings registers an observable consequence.
+	 *
+	 * Best of Ntimed, not one attempt.  What is being measured is
+	 * how long the block takes; what is observed is how long the
+	 * kernel took to get back, and everything that can come between
+	 * those two -- an interrupt, a preemption, a console drain --
+	 * only ever makes the second larger.  The error is therefore
+	 * one-sided, and the minimum of several runs is the closest
+	 * estimate of the first available from here.
+	 *
+	 * A single attempt was flaky for that reason: with the console
+	 * at a real 115200 one boot in several read 10598us where 6400
+	 * was expected, a 65% overshoot from a block that had done
+	 * nothing wrong.  This is the same disease as the ARM timer
+	 * check had -- a timing measurement assuming a bound on its own
+	 * scheduling -- and the same answer, which is to measure in a
+	 * way that does not need the assumption.
 	 */
 	n = depth;
-	csack(Clear);
-	csack(Aferr | Seterr | Done);
-	t1 = systmrread();
-	if(smiread(buf, n) < 0){
-		print("SMI-FAIL programmed read of %d words did not finish "
-			"(cs %#ux)\n", n, r[Cs]);
-		return;
+	elapsed = 0;
+	for(i = 0; i < Ntimed; i++){
+		ulong once;
+
+		csack(Clear);
+		csack(Aferr | Seterr | Done);
+		t1 = systmrread();
+		if(smiread(buf, n) < 0){
+			print("SMI-FAIL programmed read of %d words did not "
+				"finish (cs %#ux)\n", n, r[Cs]);
+			return;
+		}
+		t2 = systmrread();
+		once = (ulong)(t2 - t1);
+		if(elapsed == 0 || once < elapsed)
+			elapsed = once;
 	}
-	t2 = systmrread();
-	elapsed = (ulong)(t2 - t1);
 	expect = (ulong)(((uvlong)n * 1000000) / wordhz);
 	err = (long)elapsed - (long)expect;
 	if(err < 0)
 		err = -err;
 	if(expect == 0 || err > (long)(expect/4)){
-		print("SMI-FAIL reading %d words took %lud us, expected %lud "
-			"at %lud words/s\n", n, elapsed, expect, wordhz);
+		print("SMI-FAIL reading %d words took %lud us at best of %d, "
+			"expected %lud at %lud words/s\n",
+			n, elapsed, Ntimed, expect, wordhz);
 		return;
 	}
 

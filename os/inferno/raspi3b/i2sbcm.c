@@ -126,6 +126,12 @@ enum {
 	Alt0	= 4,		/* GPIO 18-21 carry PCM in alt0 */
 
 	Timeout	= 100000,
+
+	/*
+	 * Timed attempts for the drain and fill checks; the best of
+	 * them is used, since scheduling delay is one-sided.
+	 */
+	Ntimed	= 5,
 };
 
 static u32*
@@ -309,7 +315,7 @@ i2sinit(void)
 	ulong rate, elapsed, expect;
 	uvlong t1, t2;
 	long err;
-	int i;
+	int i, k;
 
 	/*
 	 * Is the block there?  MODE_A is plain read/write storage, so a
@@ -434,31 +440,55 @@ i2sinit(void)
 	 * serialiser and time how long it takes to empty.  At 48kHz that
 	 * is 64 frames, so 1333us, and the system timer is the judge.
 	 */
-	t1 = systmrread();
-	cswrite(csshadow | Txon);
-	for(i = 0; i < Timeout; i++)
-		if(r[Cs] & Txe)
-			break;
-	t2 = systmrread();
 	/*
-	 * The drain loop breaks the instant TXE sets, which is one frame
-	 * before the serialiser actually underflows.  Give it that frame,
-	 * so stopping has a real error to preserve.
+	 * Best of Ntimed, and the loop refills the FIFO each time.  What
+	 * is being measured is how long the serialiser takes; what is
+	 * observed is how long the kernel took to notice, and everything
+	 * between them -- an interrupt, a preemption, a console drain --
+	 * only ever makes the second larger.  The error is one-sided, so
+	 * the minimum of several runs is the best estimate available
+	 * from here.  1333us with a quarter's tolerance leaves 333us,
+	 * and a single scheduling hiccup is bigger than that; the SMI
+	 * check, which is the same measurement over a longer window,
+	 * failed exactly that way before it was given this treatment.
 	 */
-	delay(1);
-	i2sstop();
-	if(i == Timeout){
-		print("I2S-FAIL TX FIFO never drained (cs %#ux)\n", r[Cs]);
-		return;
-	}
-	elapsed = (ulong)(t2 - t1);
 	expect = (ulong)(((uvlong)Fifodepth * 1000000) / rate);
+	elapsed = 0;
+	for(k = 0; k < Ntimed; k++){
+		ulong once;
+
+		csack(Txclr);
+		csack(Txerr);
+		for(i = 0; i < Fifodepth; i++)
+			r[Fifo] = 0x11111111 * (i & 0xf);
+		t1 = systmrread();
+		cswrite(csshadow | Txon);
+		for(i = 0; i < Timeout; i++)
+			if(r[Cs] & Txe)
+				break;
+		t2 = systmrread();
+		/*
+		 * The drain loop breaks the instant TXE sets, which is one
+		 * frame before the serialiser actually underflows.  Give it
+		 * that frame, so stopping has a real error to preserve.
+		 */
+		delay(1);
+		i2sstop();
+		if(i == Timeout){
+			print("I2S-FAIL TX FIFO never drained (cs %#ux)\n", r[Cs]);
+			return;
+		}
+		once = (ulong)(t2 - t1);
+		if(elapsed == 0 || once < elapsed)
+			elapsed = once;
+	}
 	err = (long)elapsed - (long)expect;
 	if(err < 0)
 		err = -err;
 	if(expect == 0 || err > (long)(expect/4)){
-		print("I2S-FAIL draining %d frames took %lud us, expected %lud "
-			"at %lud Hz\n", Fifodepth, elapsed, expect, rate);
+		print("I2S-FAIL draining %d frames took %lud us at best of %d, "
+			"expected %lud at %lud Hz\n",
+			Fifodepth, elapsed, Ntimed, expect, rate);
 		return;
 	}
 
@@ -476,27 +506,34 @@ i2sinit(void)
 		"(%lud expected)\n", (void*)I2S0, rate, Fifodepth, elapsed,
 		expect);
 
-	/* And the same for reception: time the RX FIFO filling. */
-	csack(Txclr | Rxclr);
-	csack(Txerr | Rxerr);
-	t1 = systmrread();
-	cswrite(csshadow | Rxon);
-	for(i = 0; i < Timeout; i++)
-		if(r[Cs] & Rxf)
-			break;
-	t2 = systmrread();
-	i2sstop();
-	if(i == Timeout){
-		print("I2S-FAIL RX FIFO never filled (cs %#ux)\n", r[Cs]);
-		return;
+	/* And the same for reception, best of Ntimed for the same reason. */
+	elapsed = 0;
+	for(k = 0; k < Ntimed; k++){
+		ulong once;
+
+		csack(Txclr | Rxclr);
+		csack(Txerr | Rxerr);
+		t1 = systmrread();
+		cswrite(csshadow | Rxon);
+		for(i = 0; i < Timeout; i++)
+			if(r[Cs] & Rxf)
+				break;
+		t2 = systmrread();
+		i2sstop();
+		if(i == Timeout){
+			print("I2S-FAIL RX FIFO never filled (cs %#ux)\n", r[Cs]);
+			return;
+		}
+		once = (ulong)(t2 - t1);
+		if(elapsed == 0 || once < elapsed)
+			elapsed = once;
 	}
-	elapsed = (ulong)(t2 - t1);
 	err = (long)elapsed - (long)expect;
 	if(err < 0)
 		err = -err;
 	if(err > (long)(expect/4)){
-		print("I2S-FAIL filling %d frames took %lud us, expected %lud\n",
-			Fifodepth, elapsed, expect);
+		print("I2S-FAIL filling %d frames took %lud us at best of %d, "
+			"expected %lud\n", Fifodepth, elapsed, Ntimed, expect);
 		return;
 	}
 	print("i2s: RX filled %d in %lud us\n", Fifodepth, elapsed);
