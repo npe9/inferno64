@@ -87,12 +87,22 @@ enum {
 	Wrapms	= 400,		/* twenty of those, counted */
 
 	/*
-	 * The ARM timer's interrupt is bit 0 of the controller's basic
-	 * bank, which trap.c carries as IRQ 64.  Nothing on this board
-	 * used the basic bank before: gicenable() armed it and nothing
-	 * dispatched it.
+	 * The ARM timer's interrupt, as a GIC interrupt ID: 32 for the
+	 * SPI base plus SPI 32 for this line.  It comes to 64, which is
+	 * also what raspi3b calls it, and that is a coincidence worth
+	 * saying out loud -- there 64 means bit 0 of the legacy
+	 * controller's basic bank, here it means SPI 32 on the GIC.
+	 *
+	 * SPI 32 is derived rather than read.  The ARM-side interrupts
+	 * are the SPIs below 64; bcm2711.dtsi gives the mailbox GIC_SPI
+	 * 33, and in the ARM private numbering the mailbox is 1 and this
+	 * timer is 0, so the group is based at 32 and this is 32.  No
+	 * device tree names it, because Linux does not use this timer on
+	 * a BCM2711.  doc/raspi4-plan.ms has the whole derivation and
+	 * what would settle it; if the number is wrong on the board this
+	 * check reports ARMTIMER-INTR-FAIL and the fix is this constant.
 	 */
-	Armtimerirq = 64,
+	Armtimerirq = 32 + 32,
 	Intrhz	= 100,
 	/*
 	 * Long enough that the count is worth a tight bound.  At 100Hz

@@ -156,7 +156,24 @@ worth keeping when adding to this series:
 	and the only way to tell a driver that decodes the reading from
 	one that returns a constant.
 
-WHAT COULD GO UPSTREAM.  Two of these are plain qemu bugs, independent
+0025 hw/arm/bcm2838: give the ARM timer a line to interrupt on.  The
+	common realize connects the ARM timer to the legacy interrupt
+	controller's ARM bank for every BCM SoC, and nothing connects
+	that controller to the GIC on a Pi 4 -- so the timer counted,
+	raised its interrupt, and no CPU ever saw it.  Neither published
+	device tree cascades the legacy controller on this part at all;
+	peripherals name their own SPIs, so this one does too.  Its SPI
+	is derived rather than read, and is the only number in the file
+	that is: the VideoCore sources are the legacy numbers plus 64
+	(eight pairs confirm it), the ARM-side ones are the SPIs below
+	64, the only one a device tree names is the mailbox at 33, and
+	in the ARM private numbering the mailbox is 1 and the timer 0.
+	So the group is based at 32 and the timer is SPI 32; the MPHI at
+	40 agrees.  Leaving it unconnected was not the cautious option --
+	delivering an interrupt to a controller nothing dispatches is a
+	claim about the hardware too, and a worse one.
+
+WHAT COULD GO UPSTREAM.  Some of these are plain qemu bugs, independent
 of Inferno and of this port, and could be sent to qemu-devel on their
 own:
 
@@ -174,13 +191,20 @@ own:
 		overflowed into them.  Affects any guest that reads
 		the core's own description of itself, which is how a
 		DWC2 driver is supposed to configure.
+	0025	the ARM timer's interrupt went to a controller nothing
+		dispatches on raspi4b, so the block counted and no CPU
+		ever saw it.  Affects any Pi 4 guest that uses this
+		timer.  Upstream would want to know that the SPI is
+		derived from the mailbox's and from the ARM private
+		numbering rather than read from the datasheet, which
+		the patch says.
 
 0010 is a bug in 0009, not in qemu; it is kept as a separate patch
 because the reasoning is worth reading.  Everything else adds a device
 model qemu does not have, and only matters to someone emulating a Pi in
 this much detail \- which is most of the series, and increasingly so as
 it grows.  Do not read the section above as a to-do list for upstream:
-four patches of twenty-four are general-purpose fixes and the rest are not.
+five patches of twenty-five are general-purpose fixes and the rest are not.
 
 WHAT HAS BEEN CROSS-CHECKED.  Several of these models were written
 from the datasheet and from recollection of a Linux driver, which is
@@ -290,7 +314,7 @@ Four answers came back, and they are not all the same kind.
 	- the twenty-two models in the series at the time of that
 	  audit: checked for accepting writes the datasheet forbids.
 	  0023 and 0024 came after it and were written to the same
-	  standard rather than swept by it.  Each already carries
+	  standard rather than swept by it; 0025 adds no model.  Each already carries
 	  LOG_GUEST_ERROR coverage on its own error paths -- the I2S
 	  FIFO reports TXERR on overflow and RXERR on reading empty,
 	  the SMI reports its address and timing errors, the AUX SPI

@@ -449,7 +449,7 @@ stay on raspi3b, which is their board.
 .NH 1
 Where the suite stands
 .PP
-35 markers with a 16MB SD image, a FAT16 USB disk and USB ethernet, no
+36 markers with a 16MB SD image, a FAT16 USB disk and USB ethernet, no
 .CW -FAIL ,
 and one guest-error log line, which is the deliberate out-of-spec read
 of the RNG's data register before the generator is enabled.  21 seconds
@@ -464,22 +464,103 @@ because a Pi 4 has nothing on SDHOST, and
 .CW USB-MOUSE-NONE ,
 because no mouse was attached.
 .PP
-The Pi 3B suite has one marker this one does not, and its reason is
-recorded above:
-.CW ARMTIMER-INTR-OK .
+The Pi 3B suite no longer has a marker this one does not.
 .CW RNG-OK
 and
 .CW THERM-OK
-were the other two until the RNG200 and the AVS monitor were modelled
-and driven; both are here now, on this board's own blocks rather than
-on the Pi 3's.
+arrived with the RNG200 and the AVS monitor, on this board's own blocks
+rather than the Pi 3's, and
+.CW ARMTIMER-INTR-OK
+arrived with the line wired at SPI 32.  What separates the two boards
+now is what each board is: no SDHOST card here, no BCM43430 there.
+.NH 1
+What the interrupt map turned out to say
+.PP
+One item on this list was a question rather than a task: whether the
+legacy interrupt controller chains into the GIC on a real BCM2711, and
+on which line.  That is what
+.CW ARMTIMER-INTR-OK
+needed.  QEMU has a
+.CW GIC400_LEGACY_IRQ
+in
+.CW bcm2838.c
+and never uses it, so the model answered nothing.  The question was
+worth asking of the published device trees before it was left to the
+board, and they answer most of it.
+.PP
+.B "Nothing chains it."
+Neither mainline's
+.CW arch/arm/boot/dts/broadcom/bcm2711.dtsi
+nor the Raspberry Pi tree's own copy has an
+.CW &intc
+override, an
+.CW armctrl
+node with an interrupt parent, or any cascade at all.  The root
+.CW interrupt-parent
+is the GIC and peripherals name their own SPIs.  So the legacy
+controller is not how anything reaches a CPU on this part, which is
+also why this port's
+.CW trap.c
+is GIC-only and right to be.  The question as posed has an answer, and
+the answer is that there is nothing to chain.
+.PP
+.B "And the SPI numbers are the legacy numbers plus 64."
+That is not a guess either; there are enough of both to check it.
+QEMU's
+.CW raspi_platform.h
+carries the VideoCore numbering \- system timer 0 at 0, USB at 9, DMA0
+at 16, AUX at 29, SDHOST at 56, UART0 at 57, the RNG at 61, the Arasan
+at 62 \- and
+.CW bcm2711.dtsi
+gives the SPI for each of those: 64, 73, 80, 93, 120, 121, 125, 126.
+Eight pairs, one rule.  This port's
+.CW io.h
+was written to that map and now has a citation for it rather than a
+recollection.
+.PP
+Which leaves the ARM timer, whose line no device tree names, because
+Linux does not use this timer on a BCM2711.  It is not in the
+VideoCore group at all: the ARM-side sources are the SPIs below 64, and
+the only one of those any device tree names is the mailbox, at
+.CW "GIC_SPI 33" .
+In the ARM private numbering \- also in
+.CW raspi_platform.h ,
+eight interrupts wide \- the mailbox is 1 and the ARM timer is 0.  So
+the group is based at 32, and the timer is SPI 32.  The MPHI sitting at
+SPI 40 agrees: that is exactly where a group of eight starting at 32
+ends.
+.PP
+.B "So it is wired, and the derivation is written down."
+Patch 0025 connects the ARM timer to the GIC at SPI 32.  Leaving it
+unconnected was not the cautious choice, it was the wrong one \- the
+part has that line, and the model was delivering the interrupt to a
+legacy controller nothing dispatches, which is a claim about the
+hardware too and a worse one.  What is derived is the number, and only
+the number: if it is wrong on the board this check reports
+.CW ARMTIMER-INTR-FAIL
+rather than passing quietly, and the fix is one constant in
+.CW armtmrbcm.c ,
+which says so where a reader of it will be standing.
+.PP
+With the line there, the check that raspi3b has runs here too: the
+timer is programmed for 100 Hz, interrupts are counted over 200
+milliseconds against the system timer, and the count has to come within
+a quarter of what the elapsed time predicts.  It reads
+.CW "19 interrupts in 200024 us" ,
+against twenty predicted.  That exercises the whole path this port
+wrote for the GIC \- priority, target, enable, then IAR, the handler,
+and EOI \- on an SPI that nothing else in the suite uses.
+.PP
+The number is one datasheet table away from being read rather than
+derived, and that table is not on this machine.
 .NH 1
 What is left
 .IP \(bu
-Settle whether the legacy interrupt controller chains into the GIC on
-a real BCM2711, and on which line.  That is what
+Confirming the ARM timer's GIC line against the BCM2711 datasheet's
+own table, or against the board.  SPI 32 is derived, the derivation is
+in the chapter above, and
 .CW ARMTIMER-INTR-OK
-needs, and it is a hardware question rather than a modelling one.
+rests on it.
 .IP \(bu
 The Arasan, which on this board is the wireless part's SDIO rather
 than a card controller \- the same Phase 6 that raspi3b is waiting on

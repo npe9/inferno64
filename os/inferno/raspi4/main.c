@@ -196,12 +196,14 @@ main(void)
 			 * bcm2835_thermal here would have asserted something
 			 * untrue about the hardware to gain a marker.
 			 *
-			 * The ARM timer is driven but not tested for
-			 * interrupt delivery: its interrupt goes to the
-			 * legacy controller, which QEMU maps here and does
-			 * not wire to the GIC, so armtmrintrcheck() would
-			 * measure nothing.  Polling is what the rest of the
-			 * check does and that works.
+			 * The ARM timer's interrupt is tested too, now that
+			 * there is a line for it to arrive on: QEMU wired
+			 * the timer to the legacy controller for every SoC
+			 * and never wired that controller to the GIC, so on
+			 * this machine the interrupt died in the model.
+			 * Patch 0025 connects it to the GIC at SPI 32, a
+			 * number derived rather than read -- armtmrbcm.c and
+			 * doc/raspi4-plan.ms both say from what.
 			 *
 			 * None of this failed quietly, which is what made it
 			 * cheap: an unmapped offset in this window is a
@@ -310,13 +312,17 @@ init0(void)
 		poperror();
 	}
 	/*
-	 * No ARM timer check here.  ARMCTRL_TIMER0_1 is one of the nine
-	 * offsets bcm2838 does not map (see the note beside the device
-	 * init above), so armtmrstart()'s first read of Predivider at
-	 * 0xfe00b41c is an external abort rather than a zero -- which is
-	 * how this one was found, in a trap dump that named the address.
-	 * The check comes back with the model, not before it.
+	 * Interrupts are live from here (spllo() at the top of init0),
+	 * which is the earliest the ARM timer's delivery can be tested
+	 * at all -- see armtmrintrcheck().  The block itself was one of
+	 * the nine offsets bcm2838 did not map, and its line was wired
+	 * to a legacy controller nothing dispatched; patch 0021 mapped
+	 * the block and 0025 wired the line, so this check is back.
 	 */
+	{
+		extern void armtmrintrcheck(void);
+		armtmrintrcheck();
+	}
 	/*
 	 * The polled console path, which panic() and iprint() use and
 	 * which no other check reaches.

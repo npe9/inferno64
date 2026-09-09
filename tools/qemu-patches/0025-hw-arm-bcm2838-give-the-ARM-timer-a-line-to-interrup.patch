@@ -1,0 +1,96 @@
+From eaf42e6bec9cdd7ed98afe2e35938252b8574bcd Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Wed, 9 Sep 2026 06:40:22 -0400
+Subject: [PATCH] hw/arm/bcm2838: give the ARM timer a line to interrupt on
+
+bcm_soc_peripherals_common_realize() connects the ARM timer to the
+legacy interrupt controller's ARM bank, for every BCM SoC including
+this one, and nothing connects that controller to the GIC on a Pi 4.
+So on raspi4b the timer's interrupt was delivered to a controller
+nothing dispatches: the block is mapped, it counts, it raises its
+interrupt, and no CPU ever sees it.
+
+The two published device trees say the legacy controller is not
+cascaded on this part at all -- neither mainline's bcm2711.dtsi nor the
+Raspberry Pi tree's has an &intc override, an armctrl node with an
+interrupt parent, or any cascade; the root interrupt-parent is the GIC
+and peripherals name their own SPIs.  So the fix is to name this one
+too.
+
+Its SPI is derived rather than read, and it is the only one in this
+file that is.  The VideoCore sources are the legacy numbers plus 64,
+which eight pairs confirm: raspi_platform.h has the system timer at 0,
+USB at 9, DMA0 at 16, AUX at 29, SDHOST at 56, UART0 at 57, the RNG at
+61 and the Arasan at 62, and bcm2711.dtsi gives them GIC_SPI 64, 73,
+80, 93, 120, 121, 125 and 126.  The ARM-side sources are the SPIs below
+64, and the only one a device tree names is the mailbox at GIC_SPI 33.
+In the ARM private numbering, also in raspi_platform.h and eight
+interrupts wide, the mailbox is 1 and the ARM timer is 0 -- so the
+group is based at 32 and the timer is SPI 32.  The MPHI at SPI 40
+agrees, being exactly where a group of eight starting at 32 ends.  No
+device tree names the timer because Linux does not use it on a BCM2711.
+
+Leaving it unconnected was not the cautious option: the part has the
+line, and delivering the interrupt to a controller nothing dispatches
+is a claim about the hardware too, and a worse one.  What is derived is
+the number and only the number, and it is written down here and in the
+guest driver that depends on it.
+
+Verified with an Inferno kernel on raspi4b, which programs the timer
+for 100Hz and counts interrupts against the system timer over 200ms:
+19 interrupts in 200024 us, against twenty predicted.  That exercises
+the guest's whole GIC path -- priority, target, enable, IAR, handler,
+EOI -- on an SPI nothing else in its suite uses.  The board's marker
+set gains ARMTIMER-INTR-OK and is otherwise unchanged at 36.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ hw/arm/bcm2838.c                     |  4 ++++
+ include/hw/arm/bcm2838_peripherals.h | 16 ++++++++++++++++
+ 2 files changed, 20 insertions(+)
+
+diff --git a/hw/arm/bcm2838.c b/hw/arm/bcm2838.c
+index 22aa754..5db6115 100644
+--- a/hw/arm/bcm2838.c
++++ b/hw/arm/bcm2838.c
+@@ -184,6 +184,10 @@ static void bcm2838_realize(DeviceState *dev, Error **errp)
+     sysbus_connect_irq(SYS_BUS_DEVICE(&ps_base->aux), 0,
+                        qdev_get_gpio_in(gicdev, GIC_SPI_INTERRUPT_AUX_UART1));
+ 
++    /* Connect the ARM timer to the interrupt controller */
++    sysbus_connect_irq(SYS_BUS_DEVICE(&ps_base->armtimer), 0,
++                       qdev_get_gpio_in(gicdev, GIC_SPI_INTERRUPT_ARM_TIMER));
++
+     /* Connect VC mailbox to the interrupt controller */
+     sysbus_connect_irq(SYS_BUS_DEVICE(&ps_base->mboxes), 0,
+                        qdev_get_gpio_in(gicdev, GIC_SPI_INTERRUPT_MBOX));
+diff --git a/include/hw/arm/bcm2838_peripherals.h b/include/hw/arm/bcm2838_peripherals.h
+index 0efa197..3a601a6 100644
+--- a/include/hw/arm/bcm2838_peripherals.h
++++ b/include/hw/arm/bcm2838_peripherals.h
+@@ -16,6 +16,22 @@
+ #include "hw/misc/bcm2838_thermal.h"
+ 
+ /* SPI */
++/*
++ * The ARM-side interrupts occupy the SPIs below 64 and the VideoCore
++ * ones start at 64, one for one with the legacy numbering in
++ * raspi_platform.h: system timer 0 is legacy 0 and GIC_SPI 64,
++ * UART0 is legacy 57 and 121, the DWC2 is 9 and 73, the Arasan is 62
++ * and 126.  bcm2711.dtsi states the SPI side of every one of those.
++ *
++ * The ARM timer's line is the exception and is derived rather than
++ * read: bcm2711.dtsi gives the mailbox GIC_SPI 33, the ARM private
++ * number space in raspi_platform.h has the mailbox at 1 and the ARM
++ * timer at 0, so the group is based at 32 and the timer is 32.  No
++ * device tree names it, because Linux does not use this timer on a
++ * BCM2711.  Leaving it unconnected is certainly wrong -- the part has
++ * the line -- so it is wired here, with the derivation written down.
++ */
++#define GIC_SPI_INTERRUPT_ARM_TIMER    32
+ #define GIC_SPI_INTERRUPT_MBOX         33
+ #define GIC_SPI_INTERRUPT_MPHI         40
+ #define GIC_SPI_INTERRUPT_DWC2         73
+-- 
+2.51.0
+
