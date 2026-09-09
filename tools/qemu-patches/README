@@ -119,6 +119,24 @@ worth keeping when adding to this series:
 	stays and now moves nothing, since sdbus_reparent_card() returns
 	at once for a bus with no card.
 
+0023 hw/misc: model the Broadcom RNG200, and give the Pi 4 the one it
+	has.  A BCM2711's RNG is an RNG200, not the BCM2835 block; qemu
+	modelled the RNG200 for no machine at all, mapped the BCM2835
+	one only from the Pi 2/3 realize, and raspi4b.c nops the
+	brcm,bcm2711-rng200 node out of the device tree "until
+	implemented".  The register map and the bring-up sequence come
+	from drivers/char/hw_random/iproc-rng200.c, the driver Linux
+	uses for the block; registers it does not name are not
+	modelled.  The FIFO is the point: unlike bcm2835_rng, which
+	hands out a word on any read of its data register whatever the
+	guest did to RNG_CTRL, this gives nothing until the generator
+	is enabled and complains to the guest-error log if the data
+	register is read empty -- so a driver that skips the documented
+	sequence hears about it here rather than on the board.  Two
+	behaviours are inference rather than citation and say so in the
+	source; the interrupt (GIC SPI 125) is deliberately not driven,
+	because the published interface has status bits and no enable.
+
 WHAT COULD GO UPSTREAM.  Two of these are plain qemu bugs, independent
 of Inferno and of this port, and could be sent to qemu-devel on their
 own:
@@ -143,7 +161,7 @@ because the reasoning is worth reading.  Everything else adds a device
 model qemu does not have, and only matters to someone emulating a Pi in
 this much detail \- which is most of the series, and increasingly so as
 it grows.  Do not read the section above as a to-do list for upstream:
-four patches of twenty-two are general-purpose fixes and the rest are not.
+four patches of twenty-three are general-purpose fixes and the rest are not.
 
 WHAT HAS BEEN CROSS-CHECKED.  Several of these models were written
 from the datasheet and from recollection of a Linux driver, which is
@@ -250,7 +268,7 @@ Four answers came back, and they are not all the same kind.
 	  the FIFO it has no compensation on either side and is simply
 	  a limit: no model in this series claims a service time.
 
-	- the twenty-two models in this series: audited for accepting
+	- the twenty-three models in this series: audited for accepting
 	  writes the datasheet forbids.  Each already carries
 	  LOG_GUEST_ERROR coverage on its own error paths -- the I2S
 	  FIFO reports TXERR on overflow and RXERR on reading empty,

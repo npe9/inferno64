@@ -1,0 +1,518 @@
+From 1c7a1334afa75a14978bfaa67bf478e0cdf923ca Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Wed, 9 Sep 2026 04:59:44 -0400
+Subject: [PATCH] hw/misc: model the Broadcom RNG200, and give the Pi 4 the one
+ it has
+
+A BCM2711 has a Broadcom RNG200 at 0x7e104000, not the BCM2835 RNG.
+QEMU modelled the RNG200 for no machine at all, and mapped the BCM2835
+block only from bcm2835_peripherals_realize(), which the Pi 2/3
+machines run and the Pi 4's realize does not call.  So on raspi4b that
+window answered nothing: a guest reading it took a synchronous external
+abort, and raspi4b.c nops the "brcm,bcm2711-rng200" node out of the
+device tree "until implemented".
+
+This implements it.  The register map and the bring-up sequence are
+taken from the driver Linux uses for this block,
+drivers/char/hw_random/iproc-rng200.c, which is the published
+programming interface for it: RNG_CTRL at 0x00 with RBGEN in bit 0,
+RNG_SOFT_RESET at 0x04, RBG_SOFT_RESET at 0x08, RNG_INT_STATUS at 0x18
+(write ones to clear), RNG_FIFO_DATA at 0x20 and RNG_FIFO_COUNT at
+0x24.  Registers that driver does not name are not modelled; reads of
+them log LOG_UNIMP rather than inventing a value.
+
+The block has a FIFO with a count, which is the difference that matters
+to a driver: unlike bcm2835_rng, which hands out a word on any read of
+its data register whatever the guest did to RNG_CTRL, this model gives
+nothing until the generator is enabled, and complains to the guest-error
+log if the data register is read with an empty FIFO.  A driver that
+skips the documented enable sequence therefore hears about it here
+rather than on the board.
+
+Two things are inference rather than citation, and are marked as such in
+the source: that clearing RBGEN stops the FIFO refilling without
+discarding what is queued, and that a soft reset holds the generator and
+empties it.  The driver depends on neither, so neither can be checked
+against it; the second is the reading that leaves the reset sequence
+observable at all.
+
+The interrupt (GIC SPI 125) is deliberately not driven.  The published
+interface has status bits but no enable or mask register, so there is
+nothing to say when the line should assert, and the driver polls.  For
+the same reason "brcm,bcm2711-rng200" is left in raspi4b.c's
+nodes_to_remove: that node declares an interrupt this model does not
+drive, and there is no Linux guest here to test its return with.
+
+Verified with an Inferno kernel on raspi4b: the FIFO reads empty before
+the bring-up sequence and a data read there logs the guest error and
+returns zero; after the sequence the count is 16, eight words come back
+distinct, RNG_INT_STATUS stays clean, and asserting RNG_SOFT_RESET
+takes the count back to 0.  The board's marker set gains RNG-OK and is
+otherwise unchanged at 34.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ hw/arm/bcm2838_peripherals.c         |  15 ++
+ hw/misc/bcm2838_rng200.c             | 343 +++++++++++++++++++++++++++
+ hw/misc/meson.build                  |   1 +
+ include/hw/arm/bcm2838_peripherals.h |   2 +
+ include/hw/misc/bcm2838_rng200.h     |  32 +++
+ 5 files changed, 393 insertions(+)
+ create mode 100644 hw/misc/bcm2838_rng200.c
+ create mode 100644 include/hw/misc/bcm2838_rng200.h
+
+diff --git a/hw/arm/bcm2838_peripherals.c b/hw/arm/bcm2838_peripherals.c
+index a3b0348..64eba5c 100644
+--- a/hw/arm/bcm2838_peripherals.c
++++ b/hw/arm/bcm2838_peripherals.c
+@@ -35,6 +35,9 @@ static void bcm2838_peripherals_init(Object *obj)
+     /* Extended Mass Media Controller 2 */
+     object_initialize_child(obj, "emmc2", &s->emmc2, TYPE_SYSBUS_SDHCI);
+ 
++    /* Random Number Generator */
++    object_initialize_child(obj, "rng200", &s->rng200, TYPE_BCM2838_RNG200);
++
+     /* GPIO */
+     object_initialize_child(obj, "gpio", &s->gpio, TYPE_BCM2838_GPIO);
+ 
+@@ -184,6 +187,18 @@ static void bcm2838_peripherals_realize(DeviceState *dev, Error **errp)
+     create_unimp(s_base, &s->clkisp, "bcm2835-clkisp", CLOCK_ISP_OFFSET,
+                  CLOCK_ISP_SIZE);
+ 
++    /*
++     * Random Number Generator.  A BCM2711 has a Broadcom RNG200 here,
++     * not the BCM2835 RNG the Pi 2/3 realize maps at the same offset;
++     * its interrupt (GIC SPI 125) is not driven, see hw/misc.
++     */
++    if (!sysbus_realize(SYS_BUS_DEVICE(&s->rng200), errp)) {
++        return;
++    }
++    memory_region_add_subregion(
++        &s_base->peri_mr, RNG_OFFSET,
++        sysbus_mmio_get_region(SYS_BUS_DEVICE(&s->rng200), 0));
++
+     /* GPIO */
+     if (!sysbus_realize(SYS_BUS_DEVICE(&s->gpio), errp)) {
+         return;
+diff --git a/hw/misc/bcm2838_rng200.c b/hw/misc/bcm2838_rng200.c
+new file mode 100644
+index 0000000..84262ad
+--- /dev/null
++++ b/hw/misc/bcm2838_rng200.c
+@@ -0,0 +1,343 @@
++/*
++ * Broadcom RNG200 emulation, as found on a BCM2711 at 0x7e104000
++ * ("brcm,bcm2711-rng200").
++ *
++ * This is not the BCM2835 RNG.  It is a different block with a
++ * different register map, and until now QEMU modelled it for no
++ * machine at all: hw/arm/bcm2835_peripherals.c maps TYPE_BCM2835_RNG
++ * from the Pi-2/3-specific realize, and the Pi 4's realize calls only
++ * the common one, so a Pi 4 guest reading 0xfe104000 took a
++ * synchronous external abort rather than reading a register.
++ *
++ * The register map and the bring-up sequence here are taken from the
++ * driver Linux actually uses for this block,
++ * drivers/char/hw_random/iproc-rng200.c, which is the published
++ * programming interface for it:
++ *
++ *      0x00  RNG_CTRL          bit 0 RBGEN enables the generator
++ *                              (the field is 13 bits wide, but only
++ *                              bit 0 has a documented meaning)
++ *      0x04  RNG_SOFT_RESET    bit 0, asserted then deasserted
++ *      0x08  RBG_SOFT_RESET    bit 0, asserted then deasserted
++ *      0x18  RNG_INT_STATUS    write 1s to clear; bit 31 master fail
++ *                              lockout, bit 17 startup transitions met,
++ *                              bit 5 NIST failure, bit 0 total bits
++ *                              count
++ *      0x20  RNG_FIFO_DATA     one random word per read
++ *      0x24  RNG_FIFO_COUNT    bits 7:0, words available
++ *
++ * Registers outside that set are not modelled, because that driver is
++ * the only description of the block this model was written against and
++ * it does not name them.  Reads of them abort rather than quietly
++ * returning zero, which is the behaviour that made the missing block
++ * findable in the first place.
++ *
++ * What is cited and what is inferred, since the difference matters to
++ * anyone writing a driver against this:
++ *
++ *  - cited: bit 0 of RNG_CTRL gates the generator; the restart
++ *    sequence disables it, clears interrupt status, pulses both soft
++ *    resets, and re-enables; a reader polls RNG_FIFO_COUNT and reads
++ *    RNG_FIFO_DATA only when the count is non-zero.
++ *  - inferred: that clearing RBGEN stops the FIFO refilling but does
++ *    not discard words already queued, and that a soft reset empties
++ *    it.  The driver never depends on either, so nothing here can be
++ *    checked against it; a guest that needs the FIFO empty should
++ *    reset rather than disable.
++ *
++ * The interrupt (GIC SPI 125) is deliberately not driven.  The
++ * documented interface has status bits but no enable or mask register,
++ * so there is nothing here to say when the line should assert, and
++ * guessing would put a claim about the hardware into the model in
++ * exchange for nothing -- the driver polls.
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#include "qemu/osdep.h"
++#include "qemu/log.h"
++#include "qemu/module.h"
++#include "qemu/guest-random.h"
++#include "hw/registerfields.h"
++#include "hw/misc/bcm2838_rng200.h"
++#include "hw/qdev-properties.h"
++#include "migration/vmstate.h"
++#include "qapi/error.h"
++
++REG32(RNG_CTRL,         0x00)
++    FIELD(RNG_CTRL, RBGEN,          0, 13)
++REG32(RNG_SOFT_RESET,   0x04)
++REG32(RBG_SOFT_RESET,   0x08)
++REG32(RNG_INT_STATUS,   0x18)
++REG32(RNG_FIFO_DATA,    0x20)
++REG32(RNG_FIFO_COUNT,   0x24)
++
++#define RNG_CTRL_RBGEN_ENABLE   0x1
++#define RNG_SOFT_RESET_BIT      0x1
++#define RBG_SOFT_RESET_BIT      0x1
++#define RNG_FIFO_COUNT_MASK     0xff
++
++/*
++ * The generator produces only while it is enabled and neither soft
++ * reset is asserted.  That a reset holds it is inference -- the
++ * published interface says only that the driver pulses both -- but a
++ * block that kept filling its FIFO through its own reset would make
++ * the reset unobservable, so this is the reading that leaves the
++ * sequence meaning something.
++ */
++static bool rng200_producing(BCM2838Rng200State *s)
++{
++    return (s->rng_ctrl & RNG_CTRL_RBGEN_ENABLE) != 0 &&
++           !(s->rng_soft_reset & RNG_SOFT_RESET_BIT) &&
++           !(s->rbg_soft_reset & RBG_SOFT_RESET_BIT);
++}
++
++/*
++ * Top the FIFO up while the generator is producing.  A real RNG200
++ * fills it at the rate its ring oscillators manage; there is no clock
++ * here to model that against, so a producing generator always has a
++ * full FIFO and a stopped one never gains a word.  A guest that wants
++ * to see the FIFO run dry has to read it dry.
++ */
++static void rng200_refill(BCM2838Rng200State *s)
++{
++    if (!rng200_producing(s)) {
++        return;
++    }
++    while (s->fifo_count < s->fifo_depth) {
++        uint32_t word;
++
++        /*
++         * As in bcm2835_rng: a guest asking for randomness must not be
++         * handed a non-random value, so a failure here is fatal rather
++         * than silently degraded.
++         */
++        qemu_guest_getrandom_nofail(&word, sizeof(word));
++        s->fifo[s->fifo_count++] = word;
++    }
++}
++
++static void rng200_fifo_reset(BCM2838Rng200State *s)
++{
++    s->fifo_count = 0;
++}
++
++static uint32_t rng200_fifo_pop(BCM2838Rng200State *s)
++{
++    uint32_t word;
++
++    if (s->fifo_count == 0) {
++        return 0;
++    }
++    word = s->fifo[0];
++    memmove(&s->fifo[0], &s->fifo[1], (s->fifo_count - 1) * sizeof(uint32_t));
++    s->fifo_count--;
++    rng200_refill(s);
++    return word;
++}
++
++static uint64_t bcm2838_rng200_read(void *opaque, hwaddr offset, unsigned size)
++{
++    BCM2838Rng200State *s = BCM2838_RNG200(opaque);
++
++    switch (offset) {
++    case A_RNG_CTRL:
++        return s->rng_ctrl;
++
++    case A_RNG_SOFT_RESET:
++        return s->rng_soft_reset;
++
++    case A_RBG_SOFT_RESET:
++        return s->rbg_soft_reset;
++
++    case A_RNG_INT_STATUS:
++        return s->int_status;
++
++    case A_RNG_FIFO_DATA:
++        if (s->fifo_count == 0) {
++            /*
++             * The driver is documented to read this only when the count
++             * says a word is there.  One that does not is reading a
++             * value that is not random, so say so instead of handing it
++             * a zero it might use.
++             */
++            qemu_log_mask(LOG_GUEST_ERROR,
++                          "bcm2838_rng200: FIFO_DATA read with an empty FIFO"
++                          " (generator %s)\n",
++                          rng200_producing(s) ? "set" : "clear");
++            return 0;
++        }
++        return rng200_fifo_pop(s);
++
++    case A_RNG_FIFO_COUNT:
++        rng200_refill(s);
++        return s->fifo_count & RNG_FIFO_COUNT_MASK;
++
++    default:
++        qemu_log_mask(LOG_UNIMP,
++                      "bcm2838_rng200: read of unmodelled register 0x%"
++                      HWADDR_PRIx "\n", offset);
++        return 0;
++    }
++}
++
++static void bcm2838_rng200_write(void *opaque, hwaddr offset, uint64_t value,
++                                 unsigned size)
++{
++    BCM2838Rng200State *s = BCM2838_RNG200(opaque);
++    uint32_t val = value;
++
++    switch (offset) {
++    case A_RNG_CTRL:
++        if (FIELD_EX32(val, RNG_CTRL, RBGEN) & ~RNG_CTRL_RBGEN_ENABLE) {
++            /*
++             * RBGEN is a 13-bit field and only bit 0 has a published
++             * meaning.  A guest setting the rest is asking for
++             * something this model cannot honour, and should hear
++             * about it rather than get bit 0's behaviour by accident.
++             */
++            qemu_log_mask(LOG_UNIMP,
++                          "bcm2838_rng200: RNG_CTRL RBGEN 0x%x: only bit 0"
++                          " (enable) is modelled\n",
++                          FIELD_EX32(val, RNG_CTRL, RBGEN));
++        }
++        s->rng_ctrl = val;
++        rng200_refill(s);
++        break;
++
++    case A_RNG_SOFT_RESET:
++        /*
++         * Asserting the reset empties the FIFO and clears the status;
++         * deasserting it lets an enabled generator refill.
++         */
++        if ((val & RNG_SOFT_RESET_BIT) &&
++            !(s->rng_soft_reset & RNG_SOFT_RESET_BIT)) {
++            rng200_fifo_reset(s);
++            s->int_status = 0;
++        }
++        s->rng_soft_reset = val;
++        if (!(val & RNG_SOFT_RESET_BIT)) {
++            rng200_refill(s);
++        }
++        break;
++
++    case A_RBG_SOFT_RESET:
++        if ((val & RBG_SOFT_RESET_BIT) &&
++            !(s->rbg_soft_reset & RBG_SOFT_RESET_BIT)) {
++            rng200_fifo_reset(s);
++        }
++        s->rbg_soft_reset = val;
++        if (!(val & RBG_SOFT_RESET_BIT)) {
++            rng200_refill(s);
++        }
++        break;
++
++    case A_RNG_INT_STATUS:
++        /* Write one to clear; the driver clears the lot with 0xffffffff. */
++        s->int_status &= ~val;
++        break;
++
++    case A_RNG_FIFO_DATA:
++    case A_RNG_FIFO_COUNT:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "bcm2838_rng200: write to read-only register 0x%"
++                      HWADDR_PRIx "\n", offset);
++        break;
++
++    default:
++        qemu_log_mask(LOG_UNIMP,
++                      "bcm2838_rng200: write of unmodelled register 0x%"
++                      HWADDR_PRIx "\n", offset);
++        break;
++    }
++}
++
++static const MemoryRegionOps bcm2838_rng200_ops = {
++    .read = bcm2838_rng200_read,
++    .write = bcm2838_rng200_write,
++    .endianness = DEVICE_NATIVE_ENDIAN,
++    .valid.min_access_size = 4,
++    .valid.max_access_size = 4,
++};
++
++static const VMStateDescription vmstate_bcm2838_rng200 = {
++    .name = TYPE_BCM2838_RNG200,
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .fields = (const VMStateField[]) {
++        VMSTATE_UINT32(rng_ctrl, BCM2838Rng200State),
++        VMSTATE_UINT32(rng_soft_reset, BCM2838Rng200State),
++        VMSTATE_UINT32(rbg_soft_reset, BCM2838Rng200State),
++        VMSTATE_UINT32(int_status, BCM2838Rng200State),
++        VMSTATE_UINT32(fifo_count, BCM2838Rng200State),
++        VMSTATE_UINT32_ARRAY(fifo, BCM2838Rng200State,
++                             BCM2838_RNG200_FIFO_MAX),
++        VMSTATE_END_OF_LIST()
++    }
++};
++
++static void bcm2838_rng200_init(Object *obj)
++{
++    BCM2838Rng200State *s = BCM2838_RNG200(obj);
++
++    memory_region_init_io(&s->iomem, obj, &bcm2838_rng200_ops, s,
++                          TYPE_BCM2838_RNG200, 0x28);
++    sysbus_init_mmio(SYS_BUS_DEVICE(s), &s->iomem);
++}
++
++static void bcm2838_rng200_realize(DeviceState *dev, Error **errp)
++{
++    BCM2838Rng200State *s = BCM2838_RNG200(dev);
++
++    if (s->fifo_depth == 0 || s->fifo_depth > BCM2838_RNG200_FIFO_MAX) {
++        error_setg(errp, "fifo-depth must be between 1 and %d",
++                   BCM2838_RNG200_FIFO_MAX);
++        return;
++    }
++}
++
++static void bcm2838_rng200_reset(DeviceState *dev)
++{
++    BCM2838Rng200State *s = BCM2838_RNG200(dev);
++
++    s->rng_ctrl = 0;
++    s->rng_soft_reset = 0;
++    s->rbg_soft_reset = 0;
++    s->int_status = 0;
++    s->fifo_count = 0;
++}
++
++static const Property bcm2838_rng200_props[] = {
++    /*
++     * How many words the FIFO holds.  The count field is eight bits
++     * wide, so the depth cannot exceed 255; the published interface
++     * does not say what a BCM2711's is, and a driver written against
++     * it must not care -- it polls the count.
++     */
++    DEFINE_PROP_UINT32("fifo-depth", BCM2838Rng200State, fifo_depth, 16),
++};
++
++static void bcm2838_rng200_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++
++    dc->realize = bcm2838_rng200_realize;
++    device_class_set_legacy_reset(dc, bcm2838_rng200_reset);
++    dc->vmsd = &vmstate_bcm2838_rng200;
++    device_class_set_props(dc, bcm2838_rng200_props);
++}
++
++static const TypeInfo bcm2838_rng200_info = {
++    .name          = TYPE_BCM2838_RNG200,
++    .parent        = TYPE_SYS_BUS_DEVICE,
++    .instance_size = sizeof(BCM2838Rng200State),
++    .class_init    = bcm2838_rng200_class_init,
++    .instance_init = bcm2838_rng200_init,
++};
++
++static void bcm2838_rng200_register_types(void)
++{
++    type_register_static(&bcm2838_rng200_info);
++}
++
++type_init(bcm2838_rng200_register_types)
+diff --git a/hw/misc/meson.build b/hw/misc/meson.build
+index 5279f26..8809859 100644
+--- a/hw/misc/meson.build
++++ b/hw/misc/meson.build
+@@ -94,6 +94,7 @@ system_ss.add(when: 'CONFIG_RASPI', if_true: files(
+   'bcm2835_smi.c',
+   'bcm2835_cprman.c',
+   'bcm2835_powermgt.c',
++  'bcm2838_rng200.c',
+ ))
+ system_ss.add(when: 'CONFIG_SLAVIO', if_true: files('slavio_misc.c'))
+ system_ss.add(when: 'CONFIG_ZYNQ', if_true: files('zynq_slcr.c'))
+diff --git a/include/hw/arm/bcm2838_peripherals.h b/include/hw/arm/bcm2838_peripherals.h
+index 7ee1bd0..646dbb3 100644
+--- a/include/hw/arm/bcm2838_peripherals.h
++++ b/include/hw/arm/bcm2838_peripherals.h
+@@ -12,6 +12,7 @@
+ #include "hw/arm/bcm2835_peripherals.h"
+ #include "hw/sd/sdhci.h"
+ #include "hw/gpio/bcm2838_gpio.h"
++#include "hw/misc/bcm2838_rng200.h"
+ 
+ /* SPI */
+ #define GIC_SPI_INTERRUPT_MBOX         33
+@@ -65,6 +66,7 @@ struct BCM2838PeripheralState {
+ 
+     SDHCIState emmc2;
+     BCM2838GpioState gpio;
++    BCM2838Rng200State rng200;
+ 
+     OrIRQState mmc_irq_orgate;
+     OrIRQState dma_7_8_irq_orgate;
+diff --git a/include/hw/misc/bcm2838_rng200.h b/include/hw/misc/bcm2838_rng200.h
+new file mode 100644
+index 0000000..1a2598d
+--- /dev/null
++++ b/include/hw/misc/bcm2838_rng200.h
+@@ -0,0 +1,32 @@
++/*
++ * Broadcom RNG200 (BCM2711 "brcm,bcm2711-rng200") emulation
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#ifndef BCM2838_RNG200_H
++#define BCM2838_RNG200_H
++
++#include "hw/sysbus.h"
++#include "qom/object.h"
++
++#define TYPE_BCM2838_RNG200 "bcm2838-rng200"
++OBJECT_DECLARE_SIMPLE_TYPE(BCM2838Rng200State, BCM2838_RNG200)
++
++#define BCM2838_RNG200_FIFO_MAX 255
++
++struct BCM2838Rng200State {
++    SysBusDevice busdev;
++    MemoryRegion iomem;
++
++    uint32_t rng_ctrl;
++    uint32_t rng_soft_reset;
++    uint32_t rbg_soft_reset;
++    uint32_t int_status;
++
++    uint32_t fifo_depth;                        /* qdev property */
++    uint32_t fifo[BCM2838_RNG200_FIFO_MAX];
++    uint32_t fifo_count;
++};
++
++#endif
+-- 
+2.51.0
+

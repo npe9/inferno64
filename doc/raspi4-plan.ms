@@ -305,11 +305,90 @@ and
 .CW RASPI4-SH-OK
 so the two boards' logs cannot be confused for each other.
 .NH 1
+The RNG needed a model before it could need a driver
+.PP
+Of the nine peripherals the Pi 4's realize left unmapped, the RNG was
+the one that could not be fixed by moving a mapping.  A BCM2711 does
+not have the BCM2835 RNG.  It has a Broadcom RNG200 at the same offset,
+a different block with a different register map, and QEMU modelled that
+block for no machine at all \- so far from it that
+.CW raspi4b.c
+nops the
+.CW brcm,bcm2711-rng200
+node out of the device tree it is handed, with the comment
+.CW "until they are implemented" .
+.PP
+So this one is a model as well as a driver.  Patch 0023 adds
+.CW hw/misc/bcm2838_rng200.c
+and maps it for bcm2838.  The register map and the bring-up sequence
+are not recalled: they are taken from the driver Linux uses for this
+block,
+.CW drivers/char/hw_random/iproc-rng200.c ,
+which is the published programming interface for it \-
+.CW RNG_CTRL
+at 0x00 with the enable in bit 0, both soft resets at 0x04 and 0x08,
+.CW RNG_INT_STATUS
+at 0x18, and a FIFO at 0x20 with its count at 0x24.  That mattered:
+what was checked against the source contradicted what was remembered of
+it, and three registers that had been about to be modelled from memory
+are not in it at all.  Registers that driver does not name are not
+modelled, and reads of them log rather than inventing a value.
+.PP
+.B "The FIFO is the part a driver has to get right."
+This block will not give a word until the generator is enabled and the
+count says one is there, and the model enforces both: an empty FIFO
+reads back zero and says so in the guest-error log.  The BCM2835 model
+is more forgiving than its own hardware here \- it hands out a word on
+any read of the data register whatever the guest did to
+.CW RNG_CTRL
+\- so a driver that skipped the sequence would have passed on a Pi 3
+and failed on the board.  That is the fifth audit category again: the
+model was not asking the guest to be right about the hardware.
+.PP
+Which is why
+.CW rng200check
+starts with the negative half.  Before anything is written it reads the
+count, and a non-zero count there is
+.CW RNG-PREENABLE-FAIL
+rather than a pass \- because reading distinct words after enabling
+proves nothing on its own, a block that ignored
+.CW RNG_CTRL
+entirely would pass that too.  Only then does it run the documented
+restart sequence, check the status is clean, read eight words and
+require them distinct, and assert the reset to watch the count go back
+to zero.
+.PP
+Two things in the model are inference rather than citation and are
+labelled so in both the model and the driver: that clearing the enable
+stops the FIFO refilling without discarding what is queued, and that a
+soft reset holds the generator and empties it.  The driver depends on
+neither, so neither can be checked against it.  The second earned its
+place by failing first: with the reset modelled as emptying the FIFO
+but not holding the generator, the count read back 16 immediately, and
+the reset was unobservable.  A reset that a guest cannot see the effect
+of is not a reset that has been modelled.
+.PP
+The interrupt, GIC SPI 125, is not driven.  The published interface has
+status bits and no enable or mask register, so there is nothing to say
+when the line should assert; the driver polls, as Linux's does.  For
+the same reason the device-tree node stays on
+.CW raspi4b.c 's
+removal list: it declares an interrupt this model does not drive, and
+there is no Linux guest here to test its return against.
+.PP
+.CW /dev/random
+on this board now draws from the hardware rather than from
+.CW randomvirtarm64.c 's
+tick-seeded LCG, which its own comment calls smoke/dev only.  What that
+proves under emulation is the plumbing, not the entropy: QEMU's
+randomness is its host's.  That judgement still belongs to the silicon.
+.NH 1
 Where the suite stands
 .PP
-33 markers with a 16MB SD image, a FAT16 USB disk and USB ethernet, no
+34 markers with a 16MB SD image, a FAT16 USB disk and USB ethernet, no
 .CW -FAIL ,
-no guest error, 37.6 seconds to the last marker.  Two
+and one guest-error log line, which is the deliberate out-of-spec read
+of the RNG's data register before the generator is enabled.  Two
 .CW -NONE ,
 both of them correct answers rather than gaps:
 .CW SD-NONE ,
@@ -317,16 +396,15 @@ because a Pi 4 has nothing on SDHOST, and
 .CW USB-MOUSE-NONE ,
 because no mouse was attached.
 .PP
-The Pi 3B suite has three markers this one does not, and each has its
+The Pi 3B suite has two markers this one does not, and each has its
 own reason recorded above:
-.CW THERM-OK ,
-.CW RNG-OK
+.CW THERM-OK
 and
 .CW ARMTIMER-INTR-OK .
+.CW RNG-OK
+was the third until the RNG200 was modelled and driven.
 .NH 1
 What is left
-.IP \(bu
-An RNG200 driver, and a QEMU model for it, since none exists.
 .IP \(bu
 A thermal sensor: the BCM2711's is the AVS monitor, a different block
 at a different address, and QEMU models it for no machine.

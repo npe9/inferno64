@@ -65,7 +65,7 @@
 #define	SDHCI		(BCMPERIPH + 0x300000)	/* Arasan ("EMMC1"), SDIO for wifi */
 #define	EMMC2		(BCMPERIPH + 0x340000)	/* EMMC2: the microSD slot */
 #define	PMBASE		(BCMPERIPH + 0x100000)	/* BCM2835 power management + watchdog */
-#define	RNG0		(BCMPERIPH + 0x104000)	/* BCM2835 hardware RNG */
+#define	RNG0		(BCMPERIPH + 0x104000)	/* Broadcom RNG200 */
 #define	I2C0		(BCMPERIPH + 0x205000)	/* BCM2835 BSC0 (i2c-bus.0) */
 #define	SPI0		(BCMPERIPH + 0x204000)	/* BCM2835 SPI0 */
 #define	CPRMAN		(BCMPERIPH + 0x101000)	/* BCM2835 clock manager */

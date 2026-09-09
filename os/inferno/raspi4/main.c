@@ -149,23 +149,19 @@ main(void)
 		mailboxinit();
 	}
 
-	/*
-	 * No hardware RNG on this board, and this is not an omission.
-	 *
-	 * A BCM2711 does not have the BCM2835 RNG.  It has a Broadcom
-	 * RNG200 at the same offset, which is a different block with
-	 * different registers, and QEMU models neither for this machine:
-	 * hw/arm/bcm2835_peripherals.c maps TYPE_BCM2835_RNG from
-	 * bcm2835_peripherals_realize(), the Pi-3-specific realize, and
-	 * bcm2838_peripherals_realize() calls only the common one.  So
-	 * 0xfe104000 answers nothing.
-	 *
-	 * Driving the raspi3b driver here is not a near-miss that reads
-	 * zeroes; it is a synchronous external abort, esr 0x96000050 at
-	 * the first status read, which is where this port stopped after
-	 * the page tables were fixed.  /dev/random falls back to the
-	 * software generator until an RNG200 driver exists.
-	 */
+	{	/*
+		 * The hardware RNG, which on this board is a Broadcom
+		 * RNG200 and not the BCM2835 block raspi3b drives.  It
+		 * needed a driver rather than a mapping -- different
+		 * registers, and pointing rngbcm.c at it was an external
+		 * abort, esr 0x96000050 at the first status read, which
+		 * is where this port stopped once the page tables were
+		 * fixed.  QEMU modelled the block for no machine at all,
+		 * so it needed a model too: tools/qemu-patches 0023.
+		 */
+		extern void rng200init(void);
+		rng200init();
+	}
 
 	{	/* power management: the watchdog, and the reset it drives */
 		extern void pminit(void);

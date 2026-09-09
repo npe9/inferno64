@@ -91,7 +91,7 @@ misc
 	randomvirtarm64
 	sdhostbcm
 	sdhcibcm
-	rngbcm
+	rng200bcm
 	pmbcm
 	pwmbcm
 	systmrbcm
