@@ -272,6 +272,15 @@ trap(Ureg *ureg)
 	 * the next capture says which handler.
 	 */
 	ss0 = ureg->ss;
+	if(ss0 != 0 && ss0 != KDSEL) {
+		static int saident;
+
+		if(!saident) {
+			saident = 1;
+			iprint("trap: ss %#llux ALREADY BAD on entry, vector %llud pc %#p\n",
+				ss0, ureg->type, ureg->pc);
+		}
+	}
 
 	user = kenter(ureg);
 	vno = ureg->type;
@@ -297,21 +306,34 @@ trap(Ureg *ureg)
 			panic("%s", excname[vno]);
 		panic("unknown trap/intr: %d", vno);
 	}
-	if(ureg->ss != ss0) {
-		static int said;
-
-		if(!said) {
-			said = 1;
-			iprint("trap: vector %d changed frame ss %#llux -> %#llux "
-				"(pc %#p)\n", vno, ss0, ureg->ss, ureg->pc);
-		}
-	}
 	splhi();
 
 	if(user){
 		if(up->procctl || up->nnote)
 			notify(ureg);
 		kexit(ureg);
+	}
+
+	/*
+	 * Checked at the very end, after everything trap() does.  The
+	 * previous placement was before splhi() and covered only
+	 * irqhandled(); 192 boots, one of them faulting on the IRETQ with
+	 * a bad SS, and it never fired -- so no device handler writes the
+	 * word.  With entry and exit both checked, one faulting boot now
+	 * says which of the three regions is responsible: bad on entry
+	 * means the CPU pushed it, changed by here means trap()'s own
+	 * body, and neither means it happens after trap() returns, in
+	 * _intrestore's pops with interrupts already off.
+	 */
+	if(ureg->ss != ss0) {
+		static int said;
+
+		if(!said) {
+			said = 1;
+			iprint("trap: vector %d changed frame ss %#llux -> %#llux "
+				"(pc %#p user %d)\n", vno, ss0, ureg->ss,
+				ureg->pc, user);
+		}
 	}
 }
 
