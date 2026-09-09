@@ -20,7 +20,7 @@ IN A CONTAINER.  docker/boardsuite.sh builds a Debian image with the
 packaged qemus, mkfs.vfat, mtools and python3, and runs the seven
 configurations that do not want the patched build -- virtarm64,
 virtarm64-peer, sifiveu, virt, virt32, virt-peer and peer-mixed.  The
-other four are the Pi ones.
+other five are the Pi ones.
 The tree is bind-mounted read-only rather than copied -- these five
 kernels are committed binaries -- so the image never goes stale when
 one is relinked, and mkconfig's absolute ROOT never has to agree with
@@ -37,8 +37,8 @@ than the tree is what found it, which is the argument for doing it that
 way.
 
 The two Pi kernels are not in the repository at all, so a fresh
-checkout cannot run those two configurations even with the patched
-qemu.  That is why the container runs the five it does.
+checkout cannot run the configurations built on them even with the
+patched qemu.  That is why the container runs the seven it does.
 
 It is not the same run twice.  It takes makefat()'s mkfs.vfat and mcopy
 path, which the Mac never takes; it runs a qemu Debian built rather
@@ -337,7 +337,16 @@ crossed the USB link in both directions.
 Its stick is made fresh every run, unlike every other image here,
 because the check that reads it also writes to it: diskcheck() creates
 pi.txt, so a second run would find two files and DISK-READ-OK would
-report whichever the directory read returned first.
+report whichever the directory read returned first.  That discipline is
+checked rather than trusted -- one of the evidence lines requires the
+listing to name usb.txt and nothing else, and a run with the remake
+taken out fails on it with the same 39 markers, which is what a rule
+worth writing down looks like.
+
+The tail of that line is [^ ]*$ rather than a bare $, because the
+board's console ends its lines with CR LF: an anchor placed straight
+after the name matches nothing at all.  It cost a run to find, and it
+applies to every evidence line anyone adds here.
 
 And nothing on a disk in this suite may be shaped like a marker.  The
 first version of this configuration reported FS-OK -- a marker no check

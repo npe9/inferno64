@@ -255,7 +255,14 @@ config_evidence() {
 		# written through SCSI WRITE(10) and read back.
 		echo 'ETHER-DHCP-OK ip=10\.0\.2\.15 gw=10\.0\.2\.2'
 		echo 'DISK-WRITE-OK pi\.txt [0-9]+ bytes read back'
-		echo 'DISK-DOS-OK /n/dos:';;
+		# Named and alone: a stale stick lists pi.txt beside it,
+		# so this is what proves the image was made fresh.  The
+		# tail is [^ ]*$ and not a bare $ because the board's
+		# console ends its lines with CR LF -- a $ anchored
+		# straight after the name matches nothing, which cost a
+		# run to work out.
+		echo 'DISK-DOS-OK /n/dos: usb\.txt[^ ]*$'
+		echo 'DISK-READ-OK usb\.txt';;
 	raspi4)
 		echo 'from capabilities'
 		echo 'die 24\.';;
