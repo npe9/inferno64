@@ -2366,9 +2366,10 @@ is the cost:
 is the queue of kernel processes blocked in
 .CW vmacquire() ,
 so a scheduler pass finding it non-nil is a pass taken while a
-runnable interpreter waited on the lock.  Across 47 boots at
-.CW "-smp 2" :
-minimum 59.4%, median 76.9%, maximum 96.2%.
+runnable interpreter waited on the lock.  Across the 94 boots of a
+96-boot batch at
+.CW "-smp 2"
+that reached the report: minimum 57.2%, median 76.9%, maximum 96.2%.
 .PP
 At the median, three quarters of scheduler passes are taken with a
 runnable interpreter blocked.  That is the justification for Phase 1b

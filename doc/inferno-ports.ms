@@ -20172,7 +20172,7 @@ which portclock.c already runs at
 .CW 40*HZ
 in every boot, so it costs nothing to collect.
 .PP
-Across 47 boots at
+Across the 94 boots of a 96-boot batch at
 .CW "-smp 2"
 that reached the report:
 .TS
@@ -20180,7 +20180,7 @@ box, tab(;);
 l l.
 passes with an interpreter blocked;
 _
-minimum;59.4%
+minimum;57.2%
 median;76.9%
 maximum;96.2%
 .TE
