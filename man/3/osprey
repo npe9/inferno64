@@ -1600,7 +1600,43 @@ instruction with an absolute operand named the byte before its field.
 Of one module's 287 relocations, 45 were wrong that way and every one of
 them was rex-prefixed.
 .PP
-The table is version 6.  Version 5 added
+The table is version 7.  Version 7 added the name space itself \-
+.IR bind ,
+.IR mount ,
+.I unmount
+and
+.I chdir
+\- which were the personality's own calls that a program it loaded could
+not reach.  A program that binds binds the personality's own name space,
+since the two share an address space and a
+.B Pgrp
+both; Plan 9 separates them with
+.BR rfork(RFNAMEG) ,
+which this personality does not have.
+.B /boot/libns
+reaches one file three ways \- by its whole name, by
+.I chdir
+and no slash, and through a bind of its own \- and is refused the fourth
+time, after unmounting the binding.
+.I mount
+is in the table and nothing here calls it.
+.PP
+What named those four was rio: linked against this library with the
+prebuilt archive of system-call stubs left off the line, its undefined
+symbols were
+.IR bind ,
+.IR mount ,
+.IR unmount ,
+.IR chdir ,
+.IR rfork ,
+.IR notify ,
+.I exec
+and
+.IR await .
+The last four are the flow of control rather than the name space and are
+not answered yet.
+.PP
+Version 5 added
 .IR pread ,
 .IR pwrite ,
 .IR stat ,

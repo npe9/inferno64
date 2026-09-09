@@ -10210,6 +10210,111 @@ What is left is
 which stays at an address on purpose: it is what shows that a program
 which is its address cannot be two.
 .PP
+.B "3.2g: the name space is the program's to change, and what rio still wants."
+Everything up to here reads through the personality's name space.  A
+program could open a name and could not change what a name meant, and a
+library operating system whose caller cannot bind is offering a fixed
+list of names rather than a name space.
+.PP
+What said so was rio.  The technique from 3.2e works on it unchanged:
+link rio's own objects against the source-built libraries and
+.CW p9crt.c
+with the prebuilt archive of generated system-call stubs left off the
+line entirely, and read the undefined symbols.  Eight, in one pass:
+.CW bind ,
+.CW mount ,
+.CW unmount ,
+.CW chdir ,
+.CW rfork ,
+.CW notify ,
+.CW exec
+and
+.CW await .
+The first four were the personality's own calls with nothing but a table
+entry between them and the program \-
+.CW p9bind ,
+.CW p9mount ,
+.CW p9unmount
+and
+.CW p9chdirchan
+were all already written and all already used by the personality itself.
+The table is version 7 and holds them, and the same link now names four
+undefined symbols instead of eight.
+.PP
+.CW /boot/libns
+is what shows they work, and it is written so that it cannot pass by
+accident.  It reads
+.CW /boot/libcat
+by its whole name, then
+.CW chdir s
+to
+.CW /boot
+and reads
+.CW libcat
+with no slash in it, which can only resolve through the working
+directory the chdir set; then binds
+.CW /boot
+onto
+.CW /n
+and reads
+.CW /n/libcat ,
+which can only resolve through the binding.  Then it unmounts
+.CW /n
+and reads
+.CW /n/libcat
+again, which has to fail: an unmount that did nothing would leave a test
+of bind alone passing, so the refusal is as much of the claim as the
+three that work.  Three ways to one file, 4096 bytes off each, and the
+fourth refused.
+.PP
+Falsified by making
+.CW libchdir
+answer yes and do nothing \- the shape of an error that a test of
+"chdir returned 0" would miss entirely.  The program says
+.CW "by chdir -1"
+against 4096 for the other two, one criterion fails and no other, 52 ok
+1 fail.
+.PP
+The honest part.  The name space a program changes is the
+personality's, because there is one of them: they share an address space
+and a
+.CW Pgrp
+both, so a program that binds over
+.CW /dev
+has bound over the library's own
+.CW /dev .
+Plan 9 separates them with
+.CW rfork(RFNAMEG) ,
+which this personality does not have.
+.CW /boot/libns
+puts
+.CW #K
+back on
+.CW /n
+before it ends for exactly that reason, and that is a program being
+polite rather than a system enforcing anything.
+.CW mount
+is in the table and no program here calls it \- exercising it wants a
+9P server a loaded program can speak to, which is the next thing rather
+than this one.
+.PP
+What rio still wants is the four that are about the flow of control
+rather than the name space:
+.CW rfork ,
+.CW exec ,
+.CW await
+and
+.CW notify .
+The pieces exist \-
+.CW p9spawn
+starts a program on a flow of its own,
+.CW p9waitpid
+waits for it, the loader lays a module in a free slot \- so these are a
+matter of shape rather than of mechanism, and the shape is the question
+of what
+.CW rfork
+can mean where there is one address space.
+.PP
 .B "Phase 3.2: a real program, then rio, linked with the library."
 A real program \- a command, then a shell, then rio \- is linked with
 the personality library into one microkernel task and run by the exec of

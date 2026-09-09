@@ -231,7 +231,7 @@ p9prog.i:	init9.$O $ROOT/os/osprey/cmd/p9/build.sh \
 		$ROOT/os/osprey/cmd/p9/dev9ploop.c $ROOT/os/osprey/cmd/p9/ring9p.c $ROOT/os/osprey/cmd/p9/p9pairsrv.c \
 		$ROOT/os/osprey/cmd/p9/p9file.c $ROOT/os/osprey/cmd/p9/p9srv.c $ROOT/os/osprey/cmd/p9/p9buddy.c \
 		$ROOT/os/osprey/port/devpipe.c $ROOT/os/osprey/port/devsrv.c $ROOT/os/osprey/cmd/p9/nsdat.h $ROOT/os/osprey/cmd/p9/dat.h \
-		$ROOT/os/osprey/cmd/p9/p9linuxfile.c linuxprog.i legacyprog.i catprog.i execprog.i shprog.i kbdsrvprog.i drawsrvprog.i rioprog.i prog2.i libcatprog.i libwcprog.i libshprog.i libgenprog.i libdrawprog.i libthreadprog.i relocprog.i $ROOT/os/osprey/cmd/p9/p9exec.c $ROOT/os/osprey/cmd/p9/devtime.c $ROOT/os/osprey/cmd/p9/devnote.c $ROOT/os/osprey/cmd/p9/devinput.c $ROOT/os/osprey/cmd/p9/devdup.c $ROOT/os/osprey/cmd/p9/p9proc.c $ROOT/os/osprey/cmd/p9/p9lib.h $ROOT/os/osprey/cmd/p9/blkvirtio.c $ROOT/os/osprey/cmd/p9/devlfs.c $ROOT/os/osprey/cmd/p9/xcall.s $ROOT/os/osprey/cmd/p9/pipfsrv.c $ROOT/os/osprey/cmd/p9/p9ip.c $ROOT/os/osprey/cmd/p9/p9sched.c $ROOT/os/osprey/cmd/p9/p9kbd.c $ROOT/os/osprey/ip/loopbackmedium.c $ROOT/os/osprey/ip/ospreymedium.c
+		$ROOT/os/osprey/cmd/p9/p9linuxfile.c linuxprog.i legacyprog.i catprog.i execprog.i shprog.i kbdsrvprog.i drawsrvprog.i rioprog.i prog2.i libcatprog.i libwcprog.i libnsprog.i libshprog.i libgenprog.i libdrawprog.i libthreadprog.i relocprog.i $ROOT/os/osprey/cmd/p9/p9exec.c $ROOT/os/osprey/cmd/p9/devtime.c $ROOT/os/osprey/cmd/p9/devnote.c $ROOT/os/osprey/cmd/p9/devinput.c $ROOT/os/osprey/cmd/p9/devdup.c $ROOT/os/osprey/cmd/p9/p9proc.c $ROOT/os/osprey/cmd/p9/p9lib.h $ROOT/os/osprey/cmd/p9/blkvirtio.c $ROOT/os/osprey/cmd/p9/devlfs.c $ROOT/os/osprey/cmd/p9/xcall.s $ROOT/os/osprey/cmd/p9/pipfsrv.c $ROOT/os/osprey/cmd/p9/p9ip.c $ROOT/os/osprey/cmd/p9/p9sched.c $ROOT/os/osprey/cmd/p9/p9kbd.c $ROOT/os/osprey/ip/loopbackmedium.c $ROOT/os/osprey/ip/ospreymedium.c
 	sh $ROOT/os/osprey/cmd/p9/build.sh
 
 # The four legacy programs link libc9.a - the C library this tree builds
@@ -277,6 +277,10 @@ libthreadprog.i:	$ROOT/os/osprey/cmd/p9/buildlibthread.sh $ROOT/os/osprey/cmd/p9
 libwcprog.i:	$ROOT/os/osprey/cmd/p9/buildlibwc.sh \
 		$ROOT/os/osprey/cmd/p9/p9crt.c $ROOT/os/osprey/cmd/p9/p9cons.s $ROOT/os/osprey/cmd/p9/wcp9.c $ROOT/os/osprey/cmd/p9/p9lib.h
 	sh $ROOT/os/osprey/cmd/p9/buildlibwc.sh
+
+libnsprog.i:	$ROOT/os/osprey/cmd/p9/buildlibns.sh \
+		$ROOT/os/osprey/cmd/p9/p9crt.c $ROOT/os/osprey/cmd/p9/p9cons.s $ROOT/os/osprey/cmd/p9/nsp9.c $ROOT/os/osprey/cmd/p9/p9lib.h
+	sh $ROOT/os/osprey/cmd/p9/buildlibns.sh
 
 libshprog.i:	$ROOT/os/osprey/cmd/p9/buildlibsh.sh \
 		$ROOT/os/osprey/cmd/p9/p9crt.c $ROOT/os/osprey/cmd/p9/p9cons.s $ROOT/os/osprey/cmd/p9/shlib.c $ROOT/os/osprey/cmd/p9/p9lib.h

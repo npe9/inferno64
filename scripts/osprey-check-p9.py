@@ -334,6 +334,22 @@ def main():
                                   r"personality's own name space under it", t) is not None
                     and 'p9 exec: /boot/libsh returned; the personality is still here, '
                         'its name space never reloaded' in t))
+    #
+    # The name space, from a program the personality loaded.  bind,
+    # chdir and unmount were the library's own and its caller could not
+    # reach them, which is a fixed list of names rather than a name
+    # space.  The program reaches one file three ways and requires the
+    # fourth to fail: an unmount that did nothing would leave a test of
+    # bind alone passing, so the failure is as much of the claim as the
+    # three successes.
+    ns = scriptline(t, '/boot/libns')
+    nsn = re.search(r'libns: the name space is the program\'s to change: three ways to '
+                    r'one file, (\d+) bytes off each, and the fourth refused', ns)
+    results.append(("and a program the personality loaded can change the name space, not only read through it: /boot/libns reaches one file by its whole name, by chdir and no slash, and through a bind of its own - the same bytes each way - and then unmounts the binding and is refused, which is what says the unmount did something",
+                    nsn is not None and int(nsn.group(1)) > 0
+                    and 'libns: that is not the name space I asked for' not in ns
+                    and re.search(r'libns: after unmount /n, /n/libcat reads -1', ns) is not None
+                    and 'libns: #K is back on /n, which is where the personality had it' in ns))
     results.append(("and the limit still holds for a program that is its address: the script's last line asks for two of /boot/libgen, which is linked at one, and the second is refused by name - the two would be the one image sharing its one data segment, descriptor table and heap - and the shell carries on",
                     'p9 exec: /boot/libgen is already running at 0x2000000; it is one image and cannot be two programs' in t
                     and 'libsh: /boot/libgen: cannot start it' in t))

@@ -37,6 +37,7 @@
 #include "prog2.i"		/* uchar prog2[]: the second program, as a file */
 #include "libcatprog.i"		/* uchar libcatprog[]: cat, linked against this personality */
 #include "libwcprog.i"		/* uchar libwcprog[]: wc, the far end of a pipeline */
+#include "libnsprog.i"		/* uchar libnsprog[]: the program that changes the name space */
 #include "libshprog.i"		/* uchar libshprog[]: the shell that runs on this personality */
 #include "libgenprog.i"		/* uchar libgenprog[]: the near end of a pipeline */
 #include "libdrawprog.i"		/* uchar libdrawprog[]: the program that draws */
@@ -75,6 +76,7 @@ p9execfile(void)
 	addbootfile("prog2", prog2, sizeof prog2);
 	addbootfile("libcat", libcatprog, sizeof libcatprog);
 	addbootfile("libwc", libwcprog, sizeof libwcprog);
+	addbootfile("libns", libnsprog, sizeof libnsprog);
 	addbootfile("libsh", libshprog, sizeof libshprog);
 	addbootfile("libgen", libgenprog, sizeof libgenprog);
 	addbootfile("libdraw", libdrawprog, sizeof libdrawprog);
@@ -151,6 +153,10 @@ extern int	liberrstr(char*, uint);
 extern long	libpread(int, void*, long, vlong);
 extern long	libpwrite(int, void*, long, vlong);
 extern int	libstat(char*, uchar*, int);
+extern int	libbind(char*, char*, int);
+extern int	libmount(int, char*, int, char*);
+extern int	libunmount(char*, char*);
+extern int	libchdir(char*);
 extern int	libfstat(int, uchar*, int);
 extern int	libsleep(long);
 extern int	libpid(void);
@@ -194,6 +200,10 @@ p9libtable(void)
 	p9thelib.proccreate = p9proccreate;
 	p9thelib.pid = libpid;
 	p9thelib.rendezvous = p9rendezvous;
+	p9thelib.bind = libbind;
+	p9thelib.mount = libmount;
+	p9thelib.unmount = libunmount;
+	p9thelib.chdir = libchdir;
 	return &p9thelib;
 }
 

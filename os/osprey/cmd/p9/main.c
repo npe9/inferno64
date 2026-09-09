@@ -790,6 +790,12 @@ p9main(void)
 		 * is.  A number of slots nothing ever reaches would say
 		 * nothing about them.
 		 *
+		 * The seventh changes the name space rather than reading
+		 * through it: bind, chdir and unmount were the personality's
+		 * own until now, and a library operating system whose caller
+		 * cannot bind is offering a list of names and not a name
+		 * space.
+		 *
 		 * gen still is its address, so "gen | gen" is refused, and
 		 * refused by name; and the first gen, writing into a pipe
 		 * whose reader never arrived, ends with the reason as its
@@ -803,6 +809,7 @@ p9main(void)
 			"/boot/libcat /hello | /boot/libcat\n"
 			"/boot/libcat /hello | /boot/libcat | /boot/libwc\n"
 			"/boot/libcat /hello | /boot/libcat | /boot/libcat | /boot/libcat | /boot/libwc\n"
+			"/boot/libns\n"
 			"/boot/libgen 100 | /boot/libgen 100\n";
 		int fd;
 
@@ -812,7 +819,7 @@ p9main(void)
 		else {
 			p9write(fd, script, strlen(script));
 			p9close(fd);
-			print("p9: wrote a script of seven lines, the last six pipelines\n");
+			print("p9: wrote a script of eight lines, five of them pipelines\n");
 			shargv[0] = "/boot/libsh";
 			shargv[1] = "#e/script";
 			shargv[2] = nil;

@@ -91,10 +91,28 @@ struct P9lib {
 	int	(*proccreate)(void (*f)(void*), void *arg);
 	int	(*pid)(void);
 	void*	(*rendezvous)(void *tag, void *val);
+	/*
+	 * And the name space itself, which the personality had for its own
+	 * use and a program it loaded could not reach.  rio is what named
+	 * these: linked against this library with the archive of system-call
+	 * stubs left off, its undefined symbols are bind, mount, unmount and
+	 * chdir - and rfork, exec, await and notify, which are the flow of
+	 * control rather than the name space and are not here yet.
+	 *
+	 * A program that binds binds the personality's own name space,
+	 * because there is one of it: the program and the library share an
+	 * address space and a Pgrp both.  That is what a library operating
+	 * system is.  Plan 9 separates them with rfork(RFNAMEG) and this
+	 * personality has no such thing yet.
+	 */
+	int	(*bind)(char *name, char *old, int flag);
+	int	(*mount)(int fd, char *old, int flag, char *spec);
+	int	(*unmount)(char *name, char *old);
+	int	(*chdir)(char *name);
 };
 
 enum {
-	P9libversion	= 6,
+	P9libversion	= 7,
 	/*
 	 * Where a loaded program is linked: well above the personality's own
 	 * image (its bss ends near 7MB) and well below the stack.  The

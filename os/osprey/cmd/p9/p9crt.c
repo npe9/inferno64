@@ -282,6 +282,52 @@ fstat(int fd, uchar *edir, int nedir)
 }
 
 /*
+ * The name space, bind(2), mount(2), unmount(2) and chdir(2).  A
+ * program on this personality shares the library's name space rather
+ * than having one of its own, so what it binds the library sees; that
+ * is written down in p9lib.h and is not hidden from the caller.
+ *
+ * mount takes one of the program's own descriptors and hands the
+ * personality the descriptor it stands for, the way every other call
+ * that takes an fd here does.
+ */
+int
+bind(char *name, char *old, int flag)
+{
+	return p9lib->bind(name, old, flag);
+}
+
+int
+mount(int fd, int afd, char *old, int flag, char *spec)
+{
+	int pfd;
+
+	/*
+	 * afd is authentication, which this personality has nothing behind:
+	 * a caller that asks for it is told no rather than quietly mounted
+	 * without it.
+	 */
+	if(afd >= 0)
+		return -1;
+	pfd = fdof(fd);
+	if(pfd < 0)
+		return -1;
+	return p9lib->mount(pfd, old, flag, spec);
+}
+
+int
+unmount(char *name, char *old)
+{
+	return p9lib->unmount(name, old);
+}
+
+int
+chdir(char *name)
+{
+	return p9lib->chdir(name);
+}
+
+/*
  * sleep(2), which libc's own lock calls while it spins.  On a
  * cooperative scheduler a spin that never yields is a machine that
  * stops, so this one is not optional even though nothing in a

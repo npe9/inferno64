@@ -889,6 +889,81 @@ libfstat(int fd, uchar *edir, int nedir)
 }
 
 /*
+ * The four name-space calls, which the personality had for its own use
+ * and a loaded program could not reach.  A library operating system
+ * whose caller cannot bind is not offering a name space, it is offering
+ * a fixed set of names, and rio is the program that showed it: linking
+ * rio against this library and reading the undefined symbols named
+ * bind, mount, unmount and chdir among the eight things it wants.
+ *
+ * They change the name space the personality itself is using, because
+ * there is one of it - the program and the library share an address
+ * space and a Pgrp both.  That is what a library operating system is
+ * and it is not hidden here: a program that binds over /dev has bound
+ * over the personality's /dev.  Plan 9's answer is rfork(RFNAMEG),
+ * which is a thing this personality does not have yet and is written
+ * down as owed rather than pretended.
+ */
+int
+libbind(char *name, char *old, int flag)
+{
+	int r;
+
+	if(waserror())
+		return -1;
+	r = p9bind(name, old, flag);
+	poperror();
+	return r;
+}
+
+int
+libmount(int fd, char *old, int flag, char *spec)
+{
+	int r;
+
+	if(waserror())
+		return -1;
+	r = p9mount(fd, old, flag, spec);
+	poperror();
+	return r;
+}
+
+int
+libunmount(char *name, char *old)
+{
+	int r;
+
+	if(waserror())
+		return -1;
+	r = p9unmount(name, old);
+	poperror();
+	return r;
+}
+
+/*
+ * chdir(2).  p9chdirchan yields the channel rather than setting
+ * up->dot, because its other caller is a buddy worker serving somebody
+ * else's call.  Here the caller is the program itself, running on this
+ * task, so the plain effect is what is wanted: the new channel becomes
+ * up->dot and the old one is closed.
+ */
+int
+libchdir(char *name)
+{
+	Chan *c, *old;
+
+	if(waserror())
+		return -1;
+	c = p9chdirchan(name);
+	poperror();
+	old = up->dot;
+	up->dot = c;
+	if(old != nil)
+		cclose(old);
+	return 0;
+}
+
+/*
  * sleep(2).  Milliseconds on the personality's own clock, which is the
  * microkernel's tick arriving on the server loop; 0 is a yield, which is
  * what libc's lock does while it spins.  A cooperative scheduler has to
