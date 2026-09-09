@@ -66,6 +66,47 @@ on Pktcnt alone re-enabled the channel against a device whose address
 had moved.  DMA is made coherent with cachebcm.c (Phase 0b) through
 cache-line-aligned bounce buffers.
 .PP
+.B "What the core says about itself, and what was done with it."
+A DWC2 driver is meant to configure from the core's own description:
+the GHWCFG registers give the channel count, the FIFO RAM size, the
+queue depths and the PHY types, because the same core is built with
+different parameters in different SoCs.  This driver reads two of them.
+It takes the host channel count from GHWCFG2 and gets 8, which is
+right.  It read the FIFO depth out of GHWCFG3 and then threw it away
+\- the line was
+.CW "USED(n, ptx)" ,
+which is the compiler being told to stop complaining about a variable
+nothing looks at \- while carving three FIFOs out of that RAM to a
+fixed plan of 774, 256 and 512 words.
+.PP
+Asking a device how big it is and then not reading the answer is worse
+than not asking, because the code reads as though the layout had been
+checked.  It is checked now, and refuses rather than laying the
+periodic FIFO partly outside the block, which on hardware is corrupted
+transfers and not an error.  The check was verified the way the others
+here were, by building a QEMU that reports 1024 words instead of 4096:
+.CW "panic: usbdwc: fifo layout 774+256+512 words needs 1542, the core reports 1024" .
+The model was restored afterwards and no patch ships for it.
+.PP
+The numbers are printed on every boot rather than under
+.CW dprint ,
+because they are what every sizing decision rests on and a log without
+them cannot be used to check any of those decisions later:
+.CW "usbdwc: 8 chan, fifo 4096 words, layout 774+256+512, hport0 0x21001" .
+.PP
+Reading GHWCFG2 properly also turned up a QEMU bug, patch 0020.  Its
+two transmit queue depths are two-bit fields and both were written as a
+raw 4, which needs three bits, so each set a bit in the field above it:
+a guest read back a non-periodic depth of 0, a periodic depth of 1 and
+9 device tokens where the source says 4, 4 and 8.  Three fields wrong,
+two of them wrong because of a neighbour.  Nothing in the model reads
+these registers back \- they are written once at reset and exist only
+to be read by a guest \- so no behaviour depended on them and no test
+could have caught it.  It is the fifth category once more, and this
+time the wrong self-description was an arithmetic accident rather than
+a stale constant.  The fields now go through a macro that fails the
+build when a value does not fit the field it names.
+.PP
 The split-transaction path is exercised and works: QEMU's raspi3b puts
 an 8-port hub on the DWC2 root, so -device usb-kbd is a full-speed
 device behind a high-speed hub.  usbd walks the hub, enumerates the

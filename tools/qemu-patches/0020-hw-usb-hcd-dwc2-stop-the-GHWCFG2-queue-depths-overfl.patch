@@ -1,0 +1,104 @@
+From 033e04232a39c339cab378d8c71f777cd8d2a38e Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Tue, 8 Sep 2026 20:18:18 -0400
+Subject: [PATCH] hw/usb/hcd-dwc2: stop the GHWCFG2 queue depths overflowing
+ their fields
+
+The two transmit queue depths are 2-bit fields -- the header says so,
+GHWCFG2_HOST_PERIO_TX_Q_DEPTH_MASK and GHWCFG2_NONPERIO_TX_Q_DEPTH_MASK
+are both (0x3 << n) -- and both were written as a raw 4, which needs
+three.  Each therefore set a bit in the field above it.  The register a
+guest reads back is 0x250dc016, which decodes to a non-periodic depth
+of 0, a periodic depth of 1, and 9 device tokens, where the source says
+4, 4 and 8.  All three fields are wrong, and two of them are wrong
+because of a neighbour.
+
+The databook encodes those 2-bit fields as 2^(n+1), so a depth of four
+is 1.
+
+Nothing in this model reads ghwcfg2 or ghwcfg3 back; they are written
+once at reset and exist solely for the guest to read.  That is why this
+survived: a wrong value here has no effect on anything QEMU does, and
+becomes visible only when a driver sizes something from it.
+
+So the fields now go through a HWCFG() macro that fails the build if a
+value does not fit the field it names, rather than silently landing in
+the next one.  Reintroducing the original 4 gives
+"anonymous bit-field has negative width (-1)" at that line.
+
+GHWCFG3's fields were all within their masks and are unchanged in
+value; they use the macro too so the register cannot drift into the
+same fault.
+
+hcd-dwc2 is instantiated only by bcm2835_peripherals, so the blast
+radius is the Pi machines.  qtest-aarch64: 28 Ok, 0 Fail.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ hw/usb/hcd-dwc2.c | 41 ++++++++++++++++++++++++++++++++---------
+ 1 file changed, 32 insertions(+), 9 deletions(-)
+
+diff --git a/hw/usb/hcd-dwc2.c b/hw/usb/hcd-dwc2.c
+index 8386450..3d95ed5 100644
+--- a/hw/usb/hcd-dwc2.c
++++ b/hw/usb/hcd-dwc2.c
+@@ -1226,6 +1226,23 @@ static void dwc2_work_timer(void *opaque)
+     qemu_bh_schedule(s->async_bh);
+ }
+ 
++/*
++ * Place a value in a GHWCFGn field, and refuse to build if it does not
++ * fit the field it names.
++ *
++ * These registers are how the core describes itself, and nothing in
++ * this model reads them back -- they exist solely to be read by the
++ * guest, so a wrong value here is invisible until a driver believes it.
++ * The transmit queue depths were written as raw 4s into two-bit fields,
++ * so each landed a bit in its neighbour: a guest read back a
++ * non-periodic depth of 0, a periodic depth of 1 and 9 device tokens
++ * where the source says 4, 4 and 8.
++ */
++#define HWCFG(reg, field, val) \
++    (QEMU_BUILD_BUG_ON_ZERO((((uint32_t)(val)) << reg##_##field##_SHIFT) & \
++                            ~(uint32_t)reg##_##field##_MASK) + \
++     (((uint32_t)(val)) << reg##_##field##_SHIFT))
++
+ static void dwc2_reset_enter(Object *obj, ResetType type)
+ {
+     DWC2Class *c = DWC2_USB_GET_CLASS(obj);
+@@ -1266,17 +1283,23 @@ static void dwc2_reset_enter(Object *obj, ResetType type)
+     s->guid = 0;
+     s->gsnpsid = 0x4f54294a;
+     s->ghwcfg1 = 0;
+-    s->ghwcfg2 = (8 << GHWCFG2_DEV_TOKEN_Q_DEPTH_SHIFT) |
+-                 (4 << GHWCFG2_HOST_PERIO_TX_Q_DEPTH_SHIFT) |
+-                 (4 << GHWCFG2_NONPERIO_TX_Q_DEPTH_SHIFT) |
++    s->ghwcfg2 = HWCFG(GHWCFG2, DEV_TOKEN_Q_DEPTH, 8) |
++                 /*
++                  * The two transmit queue depths are 2-bit encoded
++                  * fields, not raw counts: the databook gives them as
++                  * 2^(n+1), so a depth of four is 1 here.  They were
++                  * written as raw 4s, which does not fit two bits.
++                  */
++                 HWCFG(GHWCFG2, HOST_PERIO_TX_Q_DEPTH, 1) |
++                 HWCFG(GHWCFG2, NONPERIO_TX_Q_DEPTH, 1) |
+                  GHWCFG2_DYNAMIC_FIFO |
+                  GHWCFG2_PERIO_EP_SUPPORTED |
+-                 ((DWC2_NB_CHAN - 1) << GHWCFG2_NUM_HOST_CHAN_SHIFT) |
+-                 (GHWCFG2_INT_DMA_ARCH << GHWCFG2_ARCHITECTURE_SHIFT) |
+-                 (GHWCFG2_OP_MODE_NO_SRP_CAPABLE_HOST << GHWCFG2_OP_MODE_SHIFT);
+-    s->ghwcfg3 = (4096 << GHWCFG3_DFIFO_DEPTH_SHIFT) |
+-                 (4 << GHWCFG3_PACKET_SIZE_CNTR_WIDTH_SHIFT) |
+-                 (4 << GHWCFG3_XFER_SIZE_CNTR_WIDTH_SHIFT);
++                 HWCFG(GHWCFG2, NUM_HOST_CHAN, DWC2_NB_CHAN - 1) |
++                 HWCFG(GHWCFG2, ARCHITECTURE, GHWCFG2_INT_DMA_ARCH) |
++                 HWCFG(GHWCFG2, OP_MODE, GHWCFG2_OP_MODE_NO_SRP_CAPABLE_HOST);
++    s->ghwcfg3 = HWCFG(GHWCFG3, DFIFO_DEPTH, 4096) |
++                 HWCFG(GHWCFG3, PACKET_SIZE_CNTR_WIDTH, 4) |
++                 HWCFG(GHWCFG3, XFER_SIZE_CNTR_WIDTH, 4);
+     s->ghwcfg4 = 0;
+     s->glpmcfg = 0;
+     s->gpwrdn = GPWRDN_PWRDNRSTN;
+-- 
+2.51.0
+

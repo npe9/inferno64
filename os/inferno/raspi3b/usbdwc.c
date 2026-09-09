@@ -758,10 +758,22 @@ init(Hci *hp)
 	tsleep(&up->sleep, return0, 0, 25);
 	r->gahbcfg |= Dmaenable;
 
+	/*
+	 * The three FIFOs are carved out of one block of RAM whose size
+	 * the core reports in GHWCFG3, and the layout below is fixed.
+	 * Reading that size and then not checking it -- which is what
+	 * this did, ending in USED(n, ptx) -- means a core with less RAM
+	 * than the layout assumes puts the periodic FIFO partly outside
+	 * the block.  The result is corrupted transfers, not an error;
+	 * nothing anywhere reports it.  So check, and refuse.
+	 */
 	n = (r->ghwcfg3 & Dfifo_depth) >> ODfifo_depth;
 	rx = 0x306;
 	tx = 0x100;
 	ptx = 0x200;
+	if(rx + tx + ptx > n)
+		panic("usbdwc: fifo layout %ud+%ud+%ud words needs %ud, "
+			"the core reports %ud", rx, tx, ptx, rx+tx+ptx, n);
 	r->grxfsiz = rx;
 	r->gnptxfsiz = rx | tx<<ODepth;
 	tsleep(&up->sleep, return0, 0, 1);
@@ -769,7 +781,6 @@ init(Hci *hp)
 	greset(r, Rxfflsh);
 	r->grstctl = TXF_ALL;
 	greset(r, Txfflsh);
-	USED(n, ptx);
 
 	r->hport0 = Prtpwr|Prtconndet|Prtenchng|Prtovrcurrchng;
 	r->gintsts = ~0;
@@ -778,8 +789,14 @@ init(Hci *hp)
 	intrenable(hp->irq, hp->interrupt, hp, hp->tbdf, hp->type);
 	r->gahbcfg |= Glblintrmsk;
 
-	dprint("usbdwc: %d chan, fifo depth %d, hport0 %#ux\n",
-		ctlr->nchan, n, r->hport0);
+	/*
+	 * Not dprint: these are the numbers the core reports about
+	 * itself, and they are what every sizing decision above rests
+	 * on.  A boot log that does not carry them cannot be used to
+	 * check any of those decisions later.
+	 */
+	print("usbdwc: %d chan, fifo %ud words, layout %ud+%ud+%ud, hport0 %#ux\n",
+		ctlr->nchan, n, rx, tx, ptx, r->hport0);
 }
 
 static void

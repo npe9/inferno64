@@ -80,6 +80,16 @@ worth keeping when adding to this series:
 	nothing in the guest able to detect it.  The clock input is
 	optional, so an unwired board keeps the constant.
 
+0020 hw/usb/hcd-dwc2: stop the GHWCFG2 queue depths overflowing their
+	fields.  The two transmit queue depths are 2-bit fields and both
+	were written as a raw 4, which needs three bits, so each set a
+	bit in the field above it.  A guest read back 0x250dc016 --
+	non-periodic depth 0, periodic depth 1, 9 device tokens -- where
+	the source says 4, 4 and 8.  Nothing in the model reads these
+	registers back; they exist solely for the guest, which is why it
+	survived.  The fields now go through a HWCFG() macro that fails
+	the build if a value does not fit the field it names.
+
 WHAT COULD GO UPSTREAM.  Two of these are plain qemu bugs, independent
 of Inferno and of this port, and could be sent to qemu-devel on their
 own:
@@ -93,13 +103,18 @@ own:
 		any guest that programs its baud divisors from what
 		the firmware tells it, which is the only correct way
 		to get UARTCLK.
+	0020	three GHWCFG2 fields in the DWC2 host controller were
+		wrong, two of them because a neighbouring field
+		overflowed into them.  Affects any guest that reads
+		the core's own description of itself, which is how a
+		DWC2 driver is supposed to configure.
 
 0010 is a bug in 0009, not in qemu; it is kept as a separate patch
 because the reasoning is worth reading.  Everything else adds a device
 model qemu does not have, and only matters to someone emulating a Pi in
 this much detail \- which is most of the series, and increasingly so as
 it grows.  Do not read the section above as a to-do list for upstream:
-three patches of nineteen are general-purpose fixes and the rest are not.
+four patches of twenty are general-purpose fixes and the rest are not.
 
 WHAT HAS BEEN CROSS-CHECKED.  Several of these models were written
 from the datasheet and from recollection of a Linux driver, which is
@@ -206,7 +221,7 @@ Four answers came back, and they are not all the same kind.
 	  the FIFO it has no compensation on either side and is simply
 	  a limit: no model in this series claims a service time.
 
-	- the nineteen models in this series: audited for accepting
+	- the twenty models in this series: audited for accepting
 	  writes the datasheet forbids.  Each already carries
 	  LOG_GUEST_ERROR coverage on its own error paths -- the I2S
 	  FIFO reports TXERR on overflow and RXERR on reading empty,
@@ -410,6 +425,32 @@ The entries below give each in full.
 			behaviour depends on either answer: there is
 			nothing a guest could do differently that the
 			machine would notice.
+
+	dwc2		FIXED by 0020, and it is the fifth category again
+			-- the model describing itself wrongly -- with a
+			twist: here the wrong description was not a
+			stale constant but an arithmetic accident.  The
+			GHWCFG registers exist for no other purpose than
+			to be read by a guest; hcd-dwc2.c writes them at
+			reset and never reads them back.  So a wrong
+			value changes nothing the model does, and there
+			is no test anywhere that could have caught it.
+			It is found by reading, or not at all.
+
+			The guest side had the matching fault, and it is
+			the more instructive one.  usbdwc.c read the
+			core's FIFO depth out of GHWCFG3 and then threw
+			it away -- literally, the line was USED(n, ptx)
+			-- while laying out three FIFOs to a fixed plan.
+			Asking a device how big it is and then not
+			looking at the answer is worse than not asking:
+			it reads as though the layout were checked.  It
+			is checked now, and the check was verified by
+			building a QEMU that reports 1024 words instead
+			of 4096, which panics with
+			"fifo layout 774+256+512 words needs 1542, the
+			core reports 1024".  The model was restored
+			afterwards; no patch ships for it.
 
 	sdhci		NOT a divergence, and this entry used to say it
 			was.  The claim here was that the model is more
