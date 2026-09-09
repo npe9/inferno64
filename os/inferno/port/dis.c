@@ -57,6 +57,8 @@ int maxnvm;
 enum { Runqcap = 64 };
 int maxnrunq;
 int nrunqmismatch;	/* MULTICORE INSTRUMENTATION - temporary */
+int maxvmq;
+int vmqbad;
 uvlong vmpasses;	/* MULTICORE INSTRUMENTATION - temporary */
 uvlong vmblocked;
 
@@ -1324,8 +1326,40 @@ vmachine(void*)
 		 * over passes total.
 		 */
 		vmpasses++;
-		if(vmlock.head != nil)
+		if(vmlock.head != nil) {
+			Proc *w;
+			int d = 0;
+
 			vmblocked++;
+			/*
+			 * The control this counter lacked.  vmblocked rests on
+			 * vmlock.head meaning "processes blocked in
+			 * qlock(&vmlock)", and would report a plausible
+			 * fraction whether or not that is what the field
+			 * holds.  qlock() appends up to the head/tail chain
+			 * through up->qnext and sleeps it, so every process on
+			 * that chain must be in Queueing; one that is not
+			 * would mean the field is stale or means something
+			 * else, and the fraction above would be measuring
+			 * nothing.
+			 *
+			 * The depth is worth having for its own sake too: the
+			 * boolean says a runnable interpreter was waiting, the
+			 * depth says how many, which is what a per-executor
+			 * register file would actually release.
+			 */
+			for(w = vmlock.head; w != nil && d < 64; w = w->qnext) {
+				d++;
+				if(w->state != Queueing && vmqbad++ == 0)
+					print("vmq: waiter %d %s state %d, not Queueing"
+						" -- vmlock.head is not the wait queue\n",
+						w->pid, w->text, w->state);
+			}
+			if(d > maxvmq) {
+				maxvmq = d;
+				print("vmq: %d interpreters blocked on the vm lock at once\n", d);
+			}
+		}
 
 		if(vmlock.head != nil && (curP->runhd == nil || ++cycles > 2)){
 			iyield();
