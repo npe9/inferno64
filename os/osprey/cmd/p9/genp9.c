@@ -32,8 +32,25 @@ startboot(char *argv0, char **argv)
 		if(n > sizeof buf)
 			n = sizeof buf;
 		if(write(1, buf, n) != n){
-			print("libgen: the write failed after %ld bytes\n", sent);
-			exits("write");
+			/*
+			 * The reason, not a label of my own: the personality
+			 * answers a failed write with -1 and an errstr the way
+			 * a libc does, and a program that ends on one should
+			 * end with what it was told rather than with a word it
+			 * chose.  The message goes to descriptor 2, because
+			 * descriptor 1 is the pipe that just refused.
+			 */
+			char err[ERRMAX], msg[ERRMAX+64];
+			int k;
+
+			err[0] = 0;
+			errstr(err, sizeof err);
+			if(err[0] == 0)
+				strcpy(err, "write failed");
+			k = snprint(msg, sizeof msg,
+				"libgen: the write failed after %ld bytes: %s\n", sent, err);
+			write(2, msg, k);
+			exits(err);
 		}
 	}
 	exits(nil);

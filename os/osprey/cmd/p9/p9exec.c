@@ -58,6 +58,9 @@ extern int	p9spawn(char *name, char **argv, int *std);
 extern int	p9waitpid(int pid, char *status, int nstatus);
 extern void	p9anyexits(char *status);
 extern int	p9procbusy(uvlong base);
+extern int	p9relocalloc(void);		/* p9proc.c: the slots a module is laid in */
+extern void	p9relocfree(int slot);
+extern uvlong	p9relocaddr(int slot);
 
 /*
  * The second program is a file in this personality's own file system,
@@ -563,9 +566,24 @@ int
 p9exec(char *name, char **argv)
 {
 	uvlong entry, progbase;
-	int std[3];
+	int std[3], slot;
 
-	if(p9load(name, &entry, &progbase) < 0)	/* it refuses an image already running */
+	/*
+	 * A module has no address, so this takes a slot for it and gives it
+	 * back when the program returns; an ordinary program is laid at its
+	 * own address as before.
+	 */
+	slot = -1;
+	if(p9isreloc(name)){
+		if((slot = p9relocalloc()) < 0){
+			print("p9 exec: %s: no free relocation slot\n", name);
+			return -1;
+		}
+		if(p9loadreloc(name, p9relocaddr(slot), &entry, &progbase) < 0){
+			p9relocfree(slot);
+			return -1;
+		}
+	} else if(p9load(name, &entry, &progbase) < 0)	/* it refuses an image already running */
 		return -1;
 	USED(progbase);
 	/* its standard descriptors are the machine's console, which the
@@ -584,6 +602,8 @@ p9exec(char *name, char **argv)
 	 * go on to load something else over it.
 	 */
 	p9procwaitinproc();
+	if(slot >= 0)
+		p9relocfree(slot);
 	print("p9 exec: %s returned; the personality is still here, its name space never reloaded\n", name);
 	return 0;
 }

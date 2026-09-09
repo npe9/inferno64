@@ -1510,6 +1510,28 @@ cannot be run twice, and the same boot shows both: the shell is refused
 a second copy of one image, and two copies of a module run side by
 side.
 .PP
+.B /boot/libcat
+is a module too, and it is one the shell already ran.  It is linked with
+.B "6l -u"
+by
+.BR buildlibcat.sh ,
+.I p9exec
+takes a slot for it and frees it, and the script's
+.B "/boot/libcat /hello | /boot/libcat"
+is two copies of that one image at two addresses the loader chose,
+reading and writing the two ends of one pipe.  The line after it asks
+for two of
+.BR /boot/libgen ,
+which is linked at one address, and that is the copy refused by name.
+Both builds share
+.BR scripts/checkmodule.py ,
+which requires a module's magic,
+.I p9start
+at offset 0 as the symbol table gives it, no imports, mode 0 on every
+relocation, and a value inside the image at every offset named.  A build
+failing any of those emits nothing, which is how a stale linker was
+caught.
+.PP
 Finding it out cost a bug in
 .BR 6l .
 .I asmins
@@ -1520,14 +1542,15 @@ instruction with an absolute operand named the byte before its field.
 Of one module's 287 relocations, 45 were wrong that way and every one of
 them was rex-prefixed.
 .PP
-The table is version 5 and holds
+The table is version 6.  Version 5 added
 .IR pread ,
 .IR pwrite ,
 .IR stat ,
 .I fstat
 and
-.I sleep
-as well.  Those five were libc's system-call stubs before, and a stub
+.I sleep ;
+version 6 added what libthread needs, below.  Those five were libc's
+system-call stubs before, and a stub
 on this personality is a trap into a microkernel that does not answer
 the Plan 9 table \- so a program that reached one faulted rather than
 failing.  Unmodified

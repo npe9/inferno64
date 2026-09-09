@@ -9097,7 +9097,11 @@ alive at once, in one address space, with no process boundary and no
 trap but the console.  The fourth,
 .CW "/boot/libcat /hello | /boot/libcat" ,
 asks for two of one image at once, and is there so that the limit below
-is a thing that happens rather than a thing written down.
+is a thing that happens rather than a thing written down.  It was
+refused when it was written.  It is not refused now: cat became a
+relocatable module later in this document, and the line the personality
+refuses is the fifth, which asks for two of
+.CW /boot/libgen .
 .PP
 The honest limit is the link map.  A program is at the address it was
 linked for and nothing here relocates it, so two of the same program
@@ -9105,11 +9109,13 @@ cannot run at once: they would be the one image, sharing its one data
 segment, and each program's descriptor table and heap live in that
 segment.
 .CW p9spawn
-refuses that by name \- the fourth script line asks for it and is told
-no, and the shell carries on \- rather than letting two instances
+refuses that by name \- a script line asks for it and is told no, and
+the shell carries on \- rather than letting two instances
 quietly corrupt each other, and each program that may run beside another
-is linked at a base of its own \- prog2 at 16M, libcat at 20M, libwc at 24M, libsh at 28M,
-libgen at 32M.  A program run twice in succession is fine: the loader
+is linked at a base of its own \- prog2 at 16M, libcat at 20M, libwc at
+24M, libsh at 28M, libgen at 32M.  (cat gave its base back when it
+became a module; the rest still hold theirs.)  A program run twice in
+succession is fine: the loader
 zeroes the region before laying the file in it again, so its bss starts
 empty the second time as it did the first.  Lifting the limit wants
 either relocation or every mutable thing in a program's image reached
@@ -10002,7 +10008,7 @@ and
 at the same time, each reading its own pointers - which are different
 addresses in the two copies.  A few lines earlier in the same boot the
 shell is refused a second copy of
-.CW /boot/libcat
+.CW /boot/libgen
 and the check confirms the refusal, so the two claims stand side by
 side: a program that is its address cannot be run twice, and a program
 that is not can.
@@ -10012,12 +10018,48 @@ at the same two addresses the spawned pair had, which the check requires
 - an address used, released and used again is what makes this an
 allocator rather than a longer list of names.
 .PP
-What it is not yet is rio.  The shell's programs are not built as
-modules, so a pipeline is still a table of addresses; there are four
-slots; and nothing sizes a slot to its module.  But the thing that was
-in doubt is settled, and it was the whole of the doubt: the records
-exist, they are complete once the linker's offsets are right, a real
-program runs where it was not linked, and two of it run at once.
+What it is not yet is rio.  There are four slots, and nothing sizes a
+slot to its module.  But the thing that was in doubt is settled, and it
+was the whole of the doubt: the records exist, they are complete once
+the linker's offsets are right, a real program runs where it was not
+linked, and two of it run at once.
+.PP
+.B "The shell runs one of them."
+.CW /boot/reloc
+is a probe: it exists to be relocated, and nothing else asks for it.  So
+the next step was to make a program the shell already runs into a
+module and change nothing else.
+.CW /boot/libcat
+is linked with
+.CW "6l -u"
+now, by
+.CW buildlibcat.sh ,
+and the module check that
+.CW buildreloc.sh
+grew is shared between them as
+.CW scripts/checkmodule.py :
+the magic is a module's,
+.CW p9start
+is at offset 0 (read out of the symbol table, not assumed), there are no
+imports, every relocation is mode 0, and every offset it names holds a
+value inside the image.  A build that fails any of those does not emit
+an image, which is what caught a stale linker twice.
+.PP
+.CW p9exec
+takes a slot for a module and gives it back, so the shell's own
+.CW cat
+is no longer a fixed address.  The script's fourth line is
+.CW "/boot/libcat /hello | /boot/libcat" ,
+and the check requires two spawns of that one image at two different
+addresses and two clean exits: the pipeline the personality could not
+have run a boot earlier.  The fifth line asks for
+.CW "/boot/libgen | /boot/libgen"
+and gets the refusal, by name, with the first generator ending on the
+write that had no reader - so the same boot shows both a module run
+twice and a fixed-address program that cannot be.
+.PP
+What is left of it is the rest of the shell's programs, the four slots,
+and sizing a slot to the module that goes in it.
 .PP
 .B "Phase 3.2: a real program, then rio, linked with the library."
 A real program \- a command, then a shell, then rio \- is linked with

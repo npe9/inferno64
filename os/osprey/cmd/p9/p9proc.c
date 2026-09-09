@@ -111,8 +111,8 @@ p9procbusy(uvlong base)
  */
 static int relocslot[Nrelocslot];
 
-static int
-relocalloc(void)
+int
+p9relocalloc(void)
 {
 	int i;
 
@@ -124,8 +124,8 @@ relocalloc(void)
 	return -1;
 }
 
-static void
-relocfree(int slot)
+void
+p9relocfree(int slot)
 {
 	if(slot >= 0 && slot < Nrelocslot)
 		relocslot[slot] = 0;
@@ -247,7 +247,7 @@ procdone(Proc9 *t, char *status)
 	t->live = 0;
 	t->done = 1;
 	if(t->slot >= 0){
-		relocfree(t->slot);
+		p9relocfree(t->slot);
 		t->slot = -1;
 	}
 	wakeup(&t->r);
@@ -343,13 +343,13 @@ p9spawn(char *name, char **argv, int *std)
 	 */
 	t->slot = -1;
 	if(p9isreloc(name)){
-		t->slot = relocalloc();
+		t->slot = p9relocalloc();
 		if(t->slot < 0){
 			print("p9 spawn: %s: all %d relocation slots are taken\n", name, Nrelocslot);
 			return -1;
 		}
 		if(p9loadreloc(name, p9relocaddr(t->slot), &entry, &base) < 0){
-			relocfree(t->slot);
+			p9relocfree(t->slot);
 			return -1;
 		}
 	} else if(p9load(name, &entry, &base) < 0)	/* it refuses an image already running */

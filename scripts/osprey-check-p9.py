@@ -178,23 +178,42 @@ def main():
                     and 'p9 exec: /boot/libcat returned; the personality is still here, its name space never reloaded' in t))
     results.append(("and a shell runs on it, with processes under it: the personality starts a program on a flow of control of its own - a kproc with a descriptor table of its own, built empty and holding only what it was handed - and the shell waits for it and reads its status, which is what a library operating system has instead of fork and exec (a library cannot split its caller's C stack, so spawn is the two fused)",
                     re.search(r'libsh: \d+ bytes of script, read by calling the personality beside me', t) is not None
-                    and re.search(r'p9 spawn: /boot/libcat runs as \d+ at 0x1400000, with its own descriptor table \(-1 -1 -1\)', t) is not None
+                    and re.search(r'p9 spawn: /boot/libcat runs as \d+ at 0x[0-9a-f]+, with its own descriptor table \(-1 -1 -1\)', t) is not None
                     and 'libsh: /boot/libcat ended, status ""' in t))
     results.append(("and it runs a pipeline: two spawned programs at two addresses, each with its own descriptor table, the first's standard output and the second's standard input the two ends of one pipe of the personality's - and the shell closes its own copies, which is the only reason the far end ever sees end of file",
-                    re.search(r'p9 spawn: /boot/libcat runs as \d+ at 0x1400000, with its own descriptor table \(-1 0 -1\)', t) is not None
+                    re.search(r'p9 spawn: /boot/libcat runs as \d+ at 0x[0-9a-f]+, with its own descriptor table \(-1 0 -1\)', t) is not None
                     and re.search(r'p9 spawn: /boot/libwc runs as \d+ at 0x1800000, with its own descriptor table \(0 -1 -1\)', t) is not None
                     and 'libwc: 8 lines 79 words 454 bytes off the pipe, read as a call into the personality' in t))
     results.append(("and the two stages are alive at once, not one after the other: 200000 bytes cross a pipe that holds 32768, so the writer blocks and the reader must run to drain it - six times over - and every byte arrives, counted at the far end",
                     'p9: a pipe holds 32768 bytes before its writer waits for its reader' in t
                     and re.search(r'p9 spawn: /boot/libgen runs as \d+ at 0x2000000', t) is not None
                     and 'libwc: 3125 lines 3125 words 200000 bytes off the pipe' in t
-                    and 'libgen: the write failed' not in t))
-    results.append(("and the limit it documents is enforced, not merely written down: the last line of the script asks for two of one image at once and the second is refused by name, because a program is at the address it was linked for and nothing here relocates it - the two would be the one image sharing its one data segment, descriptor table and heap - and the shell carries on",
-                    'p9 exec: /boot/libcat is already running at 0x1400000; it is one image and cannot be two programs' in t
-                    and 'libsh: /boot/libcat: cannot start it' in t))
+                    # No failed write in THIS pipeline.  The guard is
+                    # scoped by position, not by the message being absent
+                    # from the log: a later line of the same script makes
+                    # a generator's write fail on purpose, and the bare
+                    # "the message is absent" form this replaces was
+                    # broken the moment that line was added.  Everything
+                    # up to the count above belongs to this pipeline.
+                    and 'libgen: the write failed'
+                        not in t[:t.index('libwc: 3125 lines 3125 words 200000 bytes off the pipe')]))
+    #
+    # The two halves of one claim, in two lines of the same script.  cat
+    # is a relocatable module, so two of it run in one pipeline, each in
+    # a slot the loader took.  gen still is its address, so two of it
+    # cannot, and the refusal is by name.
+    catpipe = re.findall(r'p9 spawn: /boot/libcat runs as \d+ at (0x[0-9a-f]+), '
+                         r'with its own descriptor table \((?:-1 0 -1|0 -1 -1)\)', t)
+    results.append(("and two of one image run in one pipeline, because that image is a module: cat is linked relocatable, so the shell's \"cat | cat\" gets two copies at two slots the loader chose, reading and writing the two ends of one pipe",
+                    'libsh: /boot/libcat /hello | /boot/libcat' in t
+                    and len(catpipe) >= 2 and catpipe[-1] != catpipe[-2]
+                    and t.count('libsh: /boot/libcat ended, status ""') >= 2))
+    results.append(("and the limit still holds for a program that is its address: the script's last line asks for two of /boot/libgen, which is linked at one, and the second is refused by name - the two would be the one image sharing its one data segment, descriptor table and heap - and the shell carries on",
+                    'p9 exec: /boot/libgen is already running at 0x2000000; it is one image and cannot be two programs' in t
+                    and 'libsh: /boot/libgen: cannot start it' in t))
     results.append(("and a spawned program that fails ends with the failure as its status: the stage that was started writes into a pipe whose reader never arrived, the personality answers -1 and a reason the way a libc does, and the program makes that reason its exit status, which the shell reads out of the wait",
-                    'cat: write failed: Ehungup' in t
-                    and 'libsh: /boot/libcat ended, status "Ehungup"' in t
+                    re.search(r'libgen: the write failed after \d+ bytes: Ehungup', t) is not None
+                    and 'libsh: /boot/libgen ended, status "Ehungup"' in t
                     and 'libsh: the script is done, and the personality that started me is still here' in t))
     results.append(("and the shell ends into the personality that loaded it, having run its script, with the name space it and its programs shared still the one the personality built",
                     'libsh: the script is done, and the personality that started me is still here' in t

@@ -11,15 +11,17 @@
 # program, two arrangements: a process boundary on the server
 # personality, none here.
 #
-# p9crt.c comes first so that p9start is the first thing in the text -
-# the loader recovers the link address from the entry that way - and the
-# link address is above the personality's image, below the stack, and
-# clear of the other loaded program.
+# It is linked with -u, as a relocatable module, so it has no address of
+# its own: the loader takes a free slot for it and corrects every
+# absolute address in it as it lays it down.  That is what lets the shell
+# run two cats in one pipeline, which it could not while cat was its
+# address.  p9crt.c comes first so that p9start is at offset 0, which is
+# where the loader enters a module; scripts/checkmodule.py checks that
+# against the module's own symbol table rather than taking it on trust.
 set -e
 cd "$(dirname "$0")/../../../.."
 P=os/osprey/cmd/p9
 LIBINC="-I Osprey/amd64/include -I Osprey/include -I include -I $P"
-TEXT=0x1400028		# P9progbase2 in p9lib.h, plus the header
 6c $LIBINC -o /tmp/libcat_crt.6 $P/p9crt.c
 6c $LIBINC -o /tmp/libcat_cat.6 $P/catp9.c
 6a -o /tmp/libcat_cons.6 $P/p9cons.s
@@ -29,22 +31,5 @@ for m in utfnlen vsnprint dofmt vfprint; do
 	6c $LIBINC -o /tmp/libcat_$m.6 lib9/$m.c
 	SUP="$SUP /tmp/libcat_$m.6"
 done
-6l -l -R4096 -T $TEXT -E p9start -o /tmp/libcatp9 $OBJ $SUP Osprey/amd64/lib/libc.a
-python3 - "$PWD/os/osprey/pc64/libcatprog.i" "$TEXT" <<'PY'
-import sys
-data=open('/tmp/libcatp9','rb').read()
-be=lambda o:int.from_bytes(data[o:o+4],'big')
-magic,text,dat,bss=be(0),be(4),be(8),be(12)
-hdr=40 if (magic & 0x8000) else 32
-entry=int.from_bytes(data[32:40],'big') if hdr==40 else be(20)
-textaddr=int(sys.argv[2],0)
-if entry != textaddr:
-    raise SystemExit('entry %#x is not the start of the text %#x: p9start must be linked first' % (entry, textaddr))
-img=data[:hdr+text+dat]
-out=['uchar libcatprog[]={']
-for i in range(0,len(img),16):
-    out.append(','.join('0x%02x'%b for b in img[i:i+16])+',')
-out.append('};')
-open(sys.argv[1],'w').write('\n'.join(out)+'\n')
-print('wrote %s (%d bytes: hdr %d text %d data %d bss %d entry %#x)'%(sys.argv[1],len(img),hdr,text,dat,bss,entry))
-PY
+6l -u -l -R4096 -o /tmp/libcatp9 $OBJ $SUP Osprey/amd64/lib/libc.a
+python3 scripts/checkmodule.py /tmp/libcatp9 "$PWD/os/osprey/pc64/libcatprog.i" libcatprog
