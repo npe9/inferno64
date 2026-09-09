@@ -79,17 +79,38 @@ def readelf(path, want='Tt'):
 	The width is not guessed and not assumed from the ELF class.
 	Symbol width is a property of the LOADER, not the file format: 6l
 	and 7l write eight-byte values for the Plan 9 a.out header type and
-	four for ELF, while jl writes eight either way (thanks to the
-	cloud-port session, whose libmach work carries this as a symwidth
-	field rather than a magic-number test).  Rather than encode which
-	linker made which board, both widths are decoded and the one that
-	consumes the table exactly is taken -- the same zero-bytes-left-over
-	check that validates the a.out path.  A wrong width desyncs within
-	a few entries and leaves a remainder, so the test is decisive.
+	four for ELF, while jl writes eight either way.  Rather than encode
+	which linker made which board, both widths are decoded and the one
+	that decodes cleanly is taken.
+
+	"Cleanly" is the type byte, not the byte count.  An earlier version
+	of this took whichever width consumed the table with zero bytes
+	left over, and that test is NOT decisive -- the cloud-port session
+	controlled it in both directions and found that too-small overshoots
+	and is caught, while too-large can land on the size exactly and
+	return a table of rubbish.  On this tree's aarch64 kernel the wrong
+	width happens to leave 4 bytes, so this reader would have caught it
+	here; that is the binary's luck and not the test working.
+
+	Every symbol record these loaders write has 0x80 set in the type
+	byte -- the length-prefixed name -- and a type from TtLlDdBbapmzZf.
+	Measured, not assumed: across ipc64 and ivirtarm64 that is 53828
+	records with no exception, matching the same survey done over ten
+	boards on the cloud-port branch.  A wrong width lands on a type
+	byte that fails one of those within the first records, which is
+	decisive where the arithmetic is not.
 	"""
 	d = open(path, 'rb').read()
-	if d[:4] != b'\x7fELF' or d[4] != 2:
-		return None
+	if d[:4] != b'\x7fELF':
+		return None			# not ELF; the a.out reader gets it
+	if d[4] != 2:
+		# ELF32: the riscv virt32/virt32s boards.  Refusing is fine;
+		# refusing WITHOUT saying why is not -- libmach's elfdotout
+		# returned 0 here without setting errstr, so ksize said
+		# "Undefined error: 0" and no reader could tell a corrupt file
+		# from a format nobody had taught it.  Say which it is.
+		raise ValueError("%s is ELF32; this reader handles ELF64 and "
+			"Plan 9 a.out only" % path)
 	e = '<' if d[5] == 1 else '>'
 	shoff, = struct.unpack_from(e+'Q', d, 0x28)
 	shentsize, shnum, shstrndx = struct.unpack_from(e+'HHH', d, 0x3a)
@@ -97,31 +118,39 @@ def readelf(path, want='Tt'):
 		for i in range(shnum)]
 	prog = [x for x in secs if x[1] == 1]		# SHT_PROGBITS
 	if len(prog) < 2:
-		return None
+		raise ValueError("%s has %d PROGBITS sections, expected text "
+			"and data" % (path, len(prog)))
 	text, data = prog[0], prog[1]
 	tbase, tsize = text[3], text[5]
 	st = d[data[4] + data[5]:shoff]
-	best = None
+	out = None
 	for width in (4, 8):
-		syms, left = _decode(st, width, want)
-		if best is None or left < best[1]:
-			best = (syms, left, width)
-		if left == 0:
+		syms, left, ok = _decode(st, width, want)
+		if ok and left == 0:
+			out = syms
 			break
-	out = best[0]
+	if out is None:
+		raise ValueError("%s: no symbol-value width decodes the table "
+			"cleanly at either 4 or 8 bytes -- stripped, or a "
+			"loader this reader does not know" % path)
 	out.sort()
 	return out, d, tbase, tsize
+
+TYPES = 'TtLlDdBbapmzZf'
 
 def _decode(st, width, want):
 	"""Decode a Plan 9 symbol table at a given value width.
 
-	Returns the symbols and how many bytes were left unconsumed; the
-	caller picks the width that leaves none.
+	Returns (symbols, bytes left unconsumed, ok).  ok is false as soon
+	as a type byte is not one this tree's loaders write -- 0x80 set and
+	a letter from TYPES -- which is what actually rules a width out.
 	"""
 	out, i = [], 0
 	while i + width + 1 <= len(st):
 		val = int.from_bytes(st[i:i+width], 'big'); i += width
 		t = st[i]; i += 1
+		if (t & 0x80) == 0 or chr(t & ~0x80) not in TYPES:
+			return out, len(st) - i, False
 		if (t & 0x80) == 0:
 			name = st[i:i+NNAME].split(b'\0')[0].decode('latin1', 'replace')
 			i += NNAME + 3
@@ -140,7 +169,7 @@ def _decode(st, width, want):
 			name = st[i:j].decode('latin1', 'replace'); i = j + 1
 		if typ in want:
 			out.append((val, name))
-	return out, len(st) - i
+	return out, len(st) - i, True
 
 def readsyms(path, want='Tt'):
 	"""Decode the symbol table.  want is the set of type letters kept."""
@@ -352,9 +381,12 @@ def main():
 		av = av[1:]
 	if not av:
 		sys.exit("usage: p9sym.py [-c] kernel [pc...]")
-	r = Resolver(av[0])
+	try:
+		r = Resolver(av[0])
+	except ValueError as e:
+		sys.exit("p9sym: %s" % e)
 	if not r.fns:
-		sys.exit("p9sym: no text symbols -- is %s stripped?" % av[0])
+		sys.exit("p9sym: %s decoded, but it has no text symbols" % av[0])
 	kd, et = r.kerndate(), r.etext()
 	print("# %d text symbols, %#x..%#x, built at %s, etext %s"
 		% (len(r.fns), r.fns[0][0], r.fns[-1][0], kd if kd else "?",
