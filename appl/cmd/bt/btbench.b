@@ -3901,6 +3901,39 @@ btvirtclassic()
 		bvsay(dev + "/rfcomm/" + Bvchan + "/data",
 			"a serial port to bluez", "rfcomm");
 
+	#
+	# And secure simple pairing, against BlueZ's.  bthost answers
+	# the IO capability request with No Input No Output, so this is
+	# Just Works, and it replies to the link key request negatively,
+	# so it pairs afresh rather than remembering.  What is asserted
+	# is that the link encrypts and that a link key was written
+	# down: a pairing that agreed one and did not keep it is a
+	# device that pairs again every time.  The key itself is
+	# whatever BlueZ generated and is not this bench's to predict,
+	# unlike the model's, which is fixed.
+	#
+	if((e = writefile(dev + "/ctl", "pair")) != nil){
+		sys->print("BT: FAILED: pair: %s\n", e);
+		writefile(dev + "/ctl", "disconnect");
+		return;
+	}
+	st := "";
+	for(i = 0; i < 20; i++){
+		st = trim(readfile(dev + "/state"));
+		if(hasstr(st, "encrypted"))
+			break;
+		sys->sleep(250);
+	}
+	if(!hasstr(st, "encrypted"))
+		sys->print("BT: FAILED: after pairing the link reads %q\n", st);
+	else
+		sys->print("BT: ssp: %s\n", st);
+	bonds := readfile(mnt + "/0/bonds");
+	if(!hasstr(bonds, "lk "))
+		sys->print("BT: FAILED: no link key was written down: %q\n", bonds);
+	else
+		sys->print("BT: ssp: a link key was kept\n");
+
 	writefile(dev + "/ctl", "disconnect");
 }
 

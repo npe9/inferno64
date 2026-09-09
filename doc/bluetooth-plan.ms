@@ -945,8 +945,11 @@ back in upper case;
 .IP \(bu
 a serial port over RFCOMM does the same;
 .IP \(bu
-and an LE credit-based channel carries an SDU segmented to the peer's
-MPS, one PDU per credit.
+an LE credit-based channel carries an SDU segmented to the peer's MPS,
+one PDU per credit;
+.IP \(bu
+and secure simple pairing runs on the BR/EDR link, which encrypts, and
+the link key is kept.
 .PP
 The bond it records has an all zero long term key, and that is not a
 fault on either side:
@@ -1048,6 +1051,27 @@ test fixture deserves, and getting it half right would put a defect
 into the thing being used as the independent reading.  So the SDU is
 sized to what the peer can answer, the direction worth testing is
 still tested, and the limitation is written here instead.
+.NH 3
+Secure simple pairing
+.PP
+The last of it is SSP on the Classic link.  bthost answers the IO
+capability request with No Input No Output, so this is Just Works, and
+it replies to the link key request negatively, so it pairs afresh
+rather than remembering.  The capture has the whole sequence:
+Authentication Requested, a Link Key Request answered negatively, the
+IO capability request and this side's reply, the peer's IO Capability
+Response, a User Confirmation Request and its reply, Simple Pairing
+Complete, the Link Key Notification, Authentication Complete, Set
+Connection Encryption and the Encryption Change.
+.PP
+What the phase asserts is that the link reads encrypted afterwards and
+that a link key was written down \(em a pairing that agreed one and
+did not keep it is a device that pairs again every time.  The key
+itself is not asserted, because it is whatever BlueZ generated and is
+not this bench's to predict, which is the difference from the
+.CW ssp
+phase against the model, where the key is fixed and is checked
+exactly.
 .PP
 One thing found in the writing was this side's and not BlueZ's: the
 .CW status

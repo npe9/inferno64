@@ -526,6 +526,16 @@ static void ready_cb(void)
 	bthost_set_adv_data(host, ad, n);
 	bthost_set_adv_enable(host, 0x01);
 	bthost_write_scan_enable(host, 0x03);	/* discoverable for BR/EDR too */
+	/*
+	 * Secure simple pairing on the BR/EDR side.  No Input No
+	 * Output is what bthost defaults to and it makes this Just
+	 * Works; bonding is asked for so a link key is generated and
+	 * distributed rather than the pairing being for this session
+	 * only.
+	 */
+	bthost_write_ssp_mode(host, 0x01);
+	bthost_set_io_capability(host, 0x03);
+	bthost_set_auth_req(host, 0x01);
 	bthost_add_l2cap_server(host, TESTPSM, l2cap_conn, l2cap_disconn, NULL);
 	bthost_add_l2cap_server_custom(host, COCPSM, COCMTU, COCMPS,
 					COCCREDITS, coc_conn, coc_disconn, NULL);
