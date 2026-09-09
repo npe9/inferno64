@@ -164,11 +164,22 @@ fpinit(void)
  * Whose floating-point state is this?
  *
  * NOT the same question as userureg(), which asks whether a trap frame
- * came from user mode, and this used to call it.  When userureg() was
- * corrected -- it returned kp where its comment says !kp, see
- * os/inferno/port/proc.c -- the answer here flipped with it, and a
- * "math emu" panic appeared in a batch that had not shown one in 880
- * boots before.
+ * came from user mode, and this used to call it.
+ *
+ * Honesty about why this is here.  It was written when correcting
+ * userureg() was followed by a "math emu" panic that 880 earlier boots
+ * had not shown, and the panic looked like the flip reaching this
+ * file.  That reading is superseded: the real fault was kprocchild()
+ * starting every kproc's stack inside the Tos, so kexit()'s accounting
+ * landed on the interrupt frame (see the comment in trap.c), and the
+ * cloud-port session separately established that FPnouser and FPkernel
+ * are write-only on this board -- every other test of them masks, and
+ * fpuprocfork(), the one unmasked reader, is never called here.
+ *
+ * So this changes nothing reachable today, and the evidence that
+ * prompted it is gone.  It stays because the reasoning below stands on
+ * its own and the alternative is a call to userureg() that is right
+ * only by coincidence.
  *
  * The flags say why the two questions differ.  dat.h: FPnouser is
  * "fpslot[0] is kernel regs", FPkernel is "fp use in kernel", and the
