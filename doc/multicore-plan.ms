@@ -2386,6 +2386,92 @@ with every processor online, after the interrupt-entry fix recorded in
 doc/inferno-ports.ms.  cpu1 takes interrupts and runs kernel work; the
 interpreter is what is still serial.
 .NH 1
+Where this stands
+.PP
+The blocker is gone.  pc64 boots at
+.CW "-smp 1" ,
+.CW "-smp 2"
+and
+.CW "-smp 4"
+with every processor online, after the interrupt-entry fix found by
+the cloud-port session and confirmed here by disassembly: 82 of 96
+boots panicked before it, 2 of 96 after, on the same command line with
+each batch pinned to its build by
+.CW etext .
+.PP
+The serialisation is measured, not assumed.  Two Dis programs are ready
+at once on the ordinary workload, and a runnable interpreter is blocked
+on
+.CW vmlock
+in 77% of scheduler passes at
+.CW "-smp 2"
+against 34.6% at
+.CW "-smp 1"
+\(em so about a third is inherent to the workload and the rest is a
+processor with nothing to do.  That is the case for Phase 1b and Phase
+5, in numbers.
+.PP
+Four bugs were fixed along the way, none of them the interpreter's
+parallelism and all of them lifetime bugs the hunt had been circling:
+.CW freetype()
+handing a static
+.CW Type
+to
+.CW free() ;
+.CW modstatus()
+and
+.CW notefree()
+dereferencing a
+.CW Modlink
+they had checked with the wrong question, and then re-reading the
+pointer they had checked;
+.CW delprog()
+leaving a freed
+.CW Prog
+linked in the run queue; and
+.CW delprog()
+leaving
+.CW curP->curprog
+naming a freed
+.CW Prog ,
+which
+.CW progreg()
+compares by pointer and which Phase 1b is built on.
+.PP
+The collector invariant Phase 1b depends on was asserted rather than
+argued, and holds:
+.CW regsyncpc
+against
+.CW R.PC
+is silent on both boards.  It stays as a permanent tripwire, because it
+fires the moment Phase 1b opens that window without Phase 5.
+.PP
+What is left before Phase 1b is Phase 5's half of the disjunction \(em
+the collector must stop trusting
+.CW p->reg
+for a running program, or
+.CW xec()
+must write it back more often than once a quantum.  The JIT
+prerequisite (loading
+.CW curR
+at run time rather than baking its address into generated code) is
+real but untestable on pc64 today, where
+.CW cflag
+is never set and the JIT is off; it should land with a board that runs
+compiled code.
+.PP
+One failure remains, at about 1 in 50 boots and not SMP-specific: a
+general protection violation on the
+.CW IRETQ
+in
+.CW _intrr ,
+rejecting a garbage stack selector in a frame whose return pc is
+always
+.CW linkproc+0x9 ,
+a newborn kproc's first interrupt.  Characterised in
+doc/inferno-ports.ms; a probe at trap entry is what separates "pushed
+that way" from "overwritten afterwards".
+.NH 1
 Ground rules
 .PP
 Every claim in this document about what the kernel does is either a
