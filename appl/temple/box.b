@@ -7,6 +7,28 @@ implement Box;
 # dc->x,y = (200,200), drawn RED with thick=2 over the white DocClear page,
 # tumbling with three independent ZXZ Euler angles and a breathing scale
 # pulse, exiting on any key (while (!ScanChar)).
+#
+# DCF_TRANSFORMATION and GrLine3 are draw3d(2)'s matrix stack and line3,
+# so that is what this draws through rather than transforming the eight
+# vertices by hand.  The correspondence is exact and worth writing down,
+# because it is the same one every other hand-rolled port will need:
+#
+#	Mat4x4RotZ/RotX/Scale  ->  rotatez/rotatex/scale on MODEL
+#	orthographic, drop z   ->  ortho(200.0, ...) on PROJ, which is
+#				   x/200 and y/200 and no divide by w
+#	dc->x,y = (200,200)    ->  viewport() over the 400x400 box whose
+#				   centre is that point, so NDC ±1 lands
+#				   at ±200 pixels and a ±100 vertex at
+#				   ±100 pixels, as before
+#	GrLine3(...,thick)     ->  line3(c, a, b, thick)
+#
+# The matrix stack post-multiplies, as OpenGL's does, so the calls read
+# left to right in the order the original applies them: the scale is
+# outermost and Rz(θ1) innermost.
+#
+# The depth buffer stays OFF.  The original draws all twelve edges with
+# no hidden-line removal, and switching depth on here would start hiding
+# the back of the cube - a different picture, not a better one.
 
 include "sys.m";
 	sys: Sys;
@@ -17,6 +39,12 @@ include "draw.m";
 
 include "math.m";
 	math: Math;
+
+include "math/polyfill.m";
+
+include "math/draw3d.m";
+	draw3d: Draw3d;
+	Vector: import Draw3d;
 
 include "tk.m";
 
@@ -35,6 +63,7 @@ Box: module
 
 win: ref Window;
 red, white: ref Image;
+d3c: ref Draw3d->Context;
 
 # original: F64 θ1=0,θ2=0,θ3=0, s=1, s1=1.05, advanced once per Sleep(20) frame
 th1 := 0.0;
@@ -49,6 +78,14 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	draw = load Draw Draw->PATH;
 	grpal = load Grpalette Grpalette->PATH;
 	math = load Math Math->PATH;
+	# The protocol provider puts the transform and the lines on the GPU;
+	# the software one is the same interface in Limbo, so a host without
+	# a device loses nothing but speed.
+	draw3d = load Draw3d "/dis/math/draw3ddev.dis";
+	if(draw3d == nil)
+		draw3d = load Draw3d Draw3d->PATH;
+	if(draw3d != nil)
+		draw3d->init();
 	wmclient = load Wmclient Wmclient->PATH;
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
@@ -92,39 +129,39 @@ init(ctxt: ref Draw->Context, nil: list of string)
 drawbox()
 {
 	img := win.image;
-	if(img == nil)
+	if(img == nil || draw3d == nil)
 		return;
 	# DocClear: white page background
 	img.draw(img.r, white, nil, Point(0, 0));
-	# dc->x,y = (200,200): fixed anchor, not window-centred
-	cx := img.r.min.x + 200;
-	cy := img.r.min.y + 200;
+	o := img.r.min;
 
-	c1 := math->cos(th1);	sn1 := math->sin(th1);
-	c2 := math->cos(th2);	sn2 := math->sin(th2);
-	c3 := math->cos(th3);	sn3 := math->sin(th3);
+	if(d3c == nil)
+		d3c = draw3d->context(img);
+	else
+		draw3d->resize(d3c, img);
+	draw3d->setz(d3c, 0);
+	draw3d->setzclip(d3c, 0);		# orthographic: nothing is "behind"
+	draw3d->setcolour(d3c, red);
+	# dc->x,y = (200,200): a fixed anchor, not the window centre
+	draw3d->viewport(d3c, o.x, o.y, o.x + 400, o.y + 400);
+	draw3d->mode(Draw3d->PROJ);
+	draw3d->identity();
+	draw3d->ortho(200.0, 0.0, 0.0);
+	draw3d->mode(Draw3d->MODEL);
+	draw3d->identity();
+	# Mat4x4Scale(s); Mat4x4RotZ(θ3); Mat4x4RotX(θ2); Mat4x4RotZ(θ1)
+	draw3d->scale(s, s, s);
+	draw3d->rotatez(th3*180.0/Math->Pi);
+	draw3d->rotatex(th2*180.0/Math->Pi);
+	draw3d->rotatez(th1*180.0/Math->Pi);
 
-	# Mat4x4RotZ(θ1); Mat4x4RotX(θ2); Mat4x4RotZ(θ3); Mat4x4Scale(s):
-	# orthographic — transform each ±100 vertex, keep x,y, no divide
-	pts := array[8] of Point;
+	v := array[8] of Vector;
 	i := 0;
 	for(zz := -1; zz <= 1; zz += 2)
 		for(yy := -1; yy <= 1; yy += 2)
-			for(xx := -1; xx <= 1; xx += 2){
-				x := 100.0 * real xx;
-				y := 100.0 * real yy;
-				z := 100.0 * real zz;
-				# Rz(θ1)
-				x1 := x*c1 - y*sn1;
-				y1 := x*sn1 + y*c1;
-				# Rx(θ2) — z' unused: orthographic drops z
-				y2 := y1*c2 - z*sn2;
-				# Rz(θ3)
-				x3 := x1*c3 - y2*sn3;
-				y3 := x1*sn3 + y2*c3;
-				pts[i] = Point(cx+int(x3*s), cy+int(y3*s));
-				i++;
-			}
+			for(xx := -1; xx <= 1; xx += 2)
+				v[i++] = Vector(100.0*real xx, 100.0*real yy,
+					100.0*real zz);
 	edges := array[] of {
 		(0,1),(1,3),(3,2),(2,0),
 		(4,5),(5,7),(7,6),(6,4),
@@ -134,7 +171,7 @@ drawbox()
 	# is the nearest that keeps the original's fat pen
 	for(j := 0; j < len edges; j++){
 		(a, b) := edges[j];
-		img.line(pts[a], pts[b], Draw->Enddisc, Draw->Enddisc, 1, red, Point(0, 0));
+		draw3d->line3(d3c, v[a], v[b], 1);
 	}
 	img.flush(Draw->Flushnow);
 }

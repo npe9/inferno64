@@ -183,6 +183,18 @@ And zero occluded pixels is also what a provider that drew no sprite at
 all would report, so the sprite in front is not decoration, it is what
 makes the zero mean occlusion.
 .PP
+.PP
+.I Line3
+is checked the same way and for the same reason \- nothing in
+.B appl/temple
+called it either \- with three properties per provider: that a line's
+lit pixels span the projection of its two endpoints; that a thick-3 pen
+lights about seven times the pixels of a thick-0 one, which is what Plan
+9's 2r+1 widths predict; and that with the z-buffer on a line behind a
+nearer face contributes nothing while the same line in front of it does.
+The thickness ratio matters more than the count: a pen that ignored its
+thickness argument would still draw a line, and only the ratio says so.
+.PP
 The same-depth case is there because every sprite has one depth apiece
 and
 .BR GR_Z_ALL ,
@@ -315,11 +327,12 @@ Only
 .I fillpoly3
 is measured for speed, and only it is checked for agreement between the
 providers.
-.IR line3 ,
-.I plot3
+.I Plot3
 and
 .I fillpoly3g
 have their own paths in both providers and are not covered at all.
+.I Line3
+is checked but not timed.
 The
 .I sprite3
 family is checked and its per-sprite cost is measured, but its checks are

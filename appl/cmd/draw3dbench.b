@@ -313,6 +313,84 @@ s3cost1(d: ref Display, path: string, n, zon: int): int
 }
 
 
+# line3, the other entry point the temple ports never call and the one
+# the wireframe ports would need.  Same three questions as the sprite:
+# does it land where the projection says, does the thickness argument do
+# anything, and does it respect the depth buffer.
+l3place(d: ref Display, d3: Draw3d, what: string)
+{
+	c := s3frame(d3, 0);
+	d3->setcolour(c, d.color(Draw->Green));
+	a := Draw3d->Vector(-1.0, -0.5, -4.0);
+	b := Draw3d->Vector( 1.0,  0.5, -4.0);
+	(pa, nil, oka) := d3->project(c, a);
+	(pb, nil, okb) := d3->project(c, b);
+	d3->line3(c, a, b, 0);
+	(n, x0, x1, y0, y1) := s3box(d);
+	lo := pa; hi := pb;
+	if(hi.x < lo.x){ t := lo; lo = hi; hi = t; }
+	v := "ok";
+	if(!oka || !okb || n == 0 || !near(x0, lo.x, 2) || !near(x1, hi.x, 2)
+	   || !near(y0, lo.y, 2) || !near(y1, hi.y, 2))
+		v = "WRONG";
+	sys->print("draw3dbench:   %s line place: box %d,%d..%d,%d project %d,%d..%d,%d  %s\n",
+		what, x0, y0, x1, y1, lo.x, lo.y, hi.x, hi.y, v);
+}
+
+# Plan 9 line widths are 2r+1, so thick 3 is a seven-pixel pen against a
+# one-pixel one: about seven times the lit pixels.  A count alone would
+# not catch a thickness that was ignored, since the line is there either
+# way - the RATIO is what carries the answer.
+l3thick(d: ref Display, d3: Draw3d, what: string)
+{
+	a := Draw3d->Vector(-1.0, -0.5, -4.0);
+	b := Draw3d->Vector( 1.0,  0.5, -4.0);
+	c := s3frame(d3, 0);
+	d3->setcolour(c, d.color(Draw->Green));
+	d3->line3(c, a, b, 0);
+	(n0, nil, nil, nil, nil) := s3box(d);
+	c = s3frame(d3, 0);
+	d3->setcolour(c, d.color(Draw->Green));
+	d3->line3(c, a, b, 3);
+	(n1, nil, nil, nil, nil) := s3box(d);
+	v := "ok";
+	r := 0;
+	if(n0 > 0)
+		r = (n1*10)/n0;
+	if(n0 == 0 || r < 50 || r > 90)
+		v = "THICKNESS IGNORED";
+	sys->print("draw3dbench:   %s line thick: %d px at 0, %d at 3, ratio %d.%d (want ~7)  %s\n",
+		what, n0, n1, r/10, r%10, v);
+}
+
+l3occlude(d: ref Display, d3: Draw3d, what: string)
+{
+	behind := l3occlude1(d, d3, -6.0);
+	front := l3occlude1(d, d3, -2.0);
+	v := "ok";
+	if(front == 0)
+		v = "NO LINE AT ALL";
+	else if(behind != 0)
+		v = "NOT OCCLUDED";
+	sys->print("draw3dbench:   %s line occlude: %d px behind a face, %d in front  %s\n",
+		what, behind, front, v);
+}
+
+l3occlude1(d: ref Display, d3: Draw3d, z: real): int
+{
+	c := s3frame(d3, 1);
+	d3->setcolour(c, d.color(Draw->Red));
+	tri := array[3] of Draw3d->Vector;
+	tri[0] = Draw3d->Vector(-1.0, -1.0, -3.0);
+	tri[1] = Draw3d->Vector( 1.0, -1.0, -3.0);
+	tri[2] = Draw3d->Vector( 0.0,  1.2, -3.0);
+	d3->fillpoly3(c, tri, Draw3d->Vector(0.0, 0.0, 1.0), 1.0);
+	d3->setcolour(c, d.color(Draw->Green));
+	d3->line3(c, Draw3d->Vector(-0.4, -0.4, z), Draw3d->Vector(0.4, 0.4, z), 2);
+	(n, nil, nil, nil, nil) := s3box(d);
+	return n;
+}
+
 # Two sprites at the SAME depth must resolve in draw order, not by
 # whichever got there first.  Every sprite here has one depth apiece and
 # TempleOS's GR_Z_ALL puts whole groups of them at one, so this is the
@@ -396,6 +474,9 @@ sprite3s(d: ref Display)
 		s3occlude(d, d3, what);
 		s3samez(d, d3, what);
 		s3yb(d, d3, what);
+		l3place(d, d3, what);
+		l3thick(d, d3, what);
+		l3occlude(d, d3, what);
 	}
 }
 

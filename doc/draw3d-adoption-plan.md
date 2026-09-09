@@ -560,6 +560,66 @@ draw all its geometry and all its sprites through the *same* provider.
 Choose it by the sprite sizes — under about 45x45 the software blit is as
 cheap, above it the GPU is twenty times cheaper and flat.
 
+### Phase 9 begins: `box`, and `line3` had the same hole as the sprites
+
+`box` is the smallest of the eight hand-rolled ports — 148 lines, an
+orthographic +/-100 wireframe cube tumbling on three Euler angles — and
+it was migrated first for that reason, following this document's own
+rule: prove the path on one, then schedule the rest.
+
+**`line3` was checked first, and failed the same way `sprite3` did.**
+Placement and thickness were right in both providers (a thick-3 pen
+lights 7.0x the pixels of a thick-0 one, which is what Plan 9's 2r+1
+widths predict, and a lit-pixel count alone could not have told a pen
+that ignored its thickness argument from one that did). But the software
+provider's `line3` went straight to `Image.line` and never consulted the
+depth buffer: 427 pixels of a line behind a nearer face, where the
+protocol provider drew 0 with 1267 in front. Fixed by transcribing
+`emu/port/devdraw.c`'s `d3linez` into Limbo — walk the bounding box,
+project each pixel onto the segment, reject outside the pen radius,
+interpolate eye z along the segment and take the pixel only if it is
+nearer — so the two providers now agree by construction rather than by
+argument. The result goes out as one masked draw rather than a draw per
+pixel; twelve edges of a thousand pixels each, through the interpreter,
+would otherwise cost more than the test is worth.
+
+Lines keep the *strict* nearer test, unlike sprites. That is the device's
+rule, and a line does not have the sprite's problem of whole groups
+arriving at one depth.
+
+**The migration itself.** The correspondence is exact and is the one
+every remaining hand-rolled port will need:
+
+| the original | draw3d |
+| --- | --- |
+| `Mat4x4RotZ` / `RotX` / `Scale` | `rotatez` / `rotatex` / `scale` on MODEL |
+| orthographic, drop z | `ortho(200.0, ...)` on PROJ |
+| `dc->x,y = (200,200)` | `viewport()` over the 400x400 box centred there |
+| `GrLine3(..., thick)` | `line3(c, a, b, thick)` |
+
+The matrix stack post-multiplies as OpenGL's does, so the calls read left
+to right in the order the original applies them — scale outermost, Rz(θ1)
+innermost. The depth buffer stays *off*: the original draws all twelve
+edges with no hidden-line removal, and switching depth on would hide the
+back of the cube, which is a different picture and not a better one.
+
+*Evidence.* Lit red pixels, centroid and horizontal span, read with
+`readpixels` at the fortieth tick, which is the same attitude and scale
+in every build because the angle steps are fixed:
+
+| build | pixels | centroid | span |
+| --- | --- | --- | --- |
+| hand-rolled, `Image.line` | 1478 | 200,223 | 159..243 |
+| draw3d, software provider | **1478** | **200,223** | **159..243** |
+| draw3d, protocol provider | 1438 | 200,222 | 158..242 |
+
+The software row is identical to the original in every figure, so the
+transform migration is exact: the matrix stack, `ortho`, `viewport` and
+`line3` reproduce the hand-rolled Euler arithmetic pixel for pixel. The
+2.7% and the one pixel in the protocol row are therefore attributable to
+the GPU line rasteriser alone, not to the port — which is what running
+both providers through the same measurement was for.
+
 ### Phase 7 — DC state
 
 The audit's §3: a symmetry plane (`DCF_SYMMETRY`), a light source and a

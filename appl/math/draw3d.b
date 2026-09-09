@@ -482,14 +482,96 @@ end(c: ref Context)
 
 line3(c: ref Context, a, b: Vector, thick: int)
 {
-	(pa, nil, oka) := project(c, a);
-	(pb, nil, okb) := project(c, b);
+	(pa, eza, oka) := project(c, a);
+	(pb, ezb, okb) := project(c, b);
 	if(!oka || !okb || c.dst == nil || c.colour == nil)
 		return;
 	if(thick < 0)
 		thick = 0;
+	if(c.zenable && c.zstate != nil){
+		linez(c, pa, pb, thick, eza, ezb);
+		return;
+	}
 	c.dst.line(pa, pb, Draw->Endsquare, Draw->Endsquare, thick, c.colour, Point(0, 0));
 }
+
+# The depth-tested line, transcribed from emu/port/devdraw.c's d3linez so
+# the two providers agree pixel for pixel: walk the line's bounding box,
+# project each pixel onto the segment to get t, reject it if it is
+# further than the pen's radius, interpolate the eye z along t, and take
+# the pixel only if it is nearer than what the buffer holds.
+#
+# Strictly nearer, unlike the sprite: the device's rule, and lines do not
+# have the sprite's problem of whole groups arriving at one depth.
+#
+# The result goes out as ONE masked draw rather than a draw per pixel.
+# A 400-pixel edge is a thousand pixels, and this port draws twelve of
+# them a frame; a thousand one-pixel draws through the interpreter would
+# cost more than the depth test is worth.
+linez(c: ref Context, pa, pb: Point, thick: int, eza, ezb: real)
+{
+	zs := c.zstate;
+	disp := c.dst.display;
+	if(zs == nil || disp == nil)
+		return;
+	x0 := pa.x; x1 := pb.x;
+	if(x1 < x0){ t := x0; x0 = x1; x1 = t; }
+	y0 := pa.y; y1 := pb.y;
+	if(y1 < y0){ t := y0; y0 = y1; y1 = t; }
+	r := Rect((x0-thick-1, y0-thick-1), (x1+thick+2, y1+thick+2));
+	ok: int;
+	(r, ok) = r.clip(c.dst.r);
+	if(!ok)
+		return;
+	(r, ok) = r.clip(zs.r);
+	if(!ok)
+		return;
+	w := r.dx();
+	h := r.dy();
+	if(w < 1 || h < 1)
+		return;
+	vx := real (pb.x - pa.x);
+	vy := real (pb.y - pa.y);
+	len2 := vx*vx + vy*vy;
+	rad := real thick + 0.5;
+	rad2 := rad*rad;
+	mpl := (w+7)/8;
+	msk := array[mpl*h] of { * => byte 0 };
+	any := 0;
+	for(y := r.min.y; y < r.max.y; y++){
+		row := (y - r.min.y)*mpl;
+		for(x := r.min.x; x < r.max.x; x++){
+			tt := 0.0;
+			if(len2 > 1.0e-6){
+				tt = (real (x - pa.x)*vx + real (y - pa.y)*vy)/len2;
+				if(tt < 0.0) tt = 0.0;
+				if(tt > 1.0) tt = 1.0;
+			}
+			qx := real pa.x + tt*vx;
+			qy := real pa.y + tt*vy;
+			dx := real x - qx;
+			dy := real y - qy;
+			if(dx*dx + dy*dy > rad2)
+				continue;
+			zv := zdepth(-(eza + tt*(ezb-eza)));
+			k := (y - zs.r.min.y)*zs.xlen + (x - zs.r.min.x);
+			if(zv >= zs.zbuf0[k])
+				continue;
+			zs.zbuf0[k] = zv;
+			zs.zbuf1[k] = zv;
+			msk[row + ((x - r.min.x)>>3)] |= byte (16r80 >> ((x - r.min.x)&7));
+			any = 1;
+		}
+	}
+	if(!any)
+		return;
+	m := disp.newimage(Rect((0,0),(w,h)), Draw->GREY1, 0, 0);
+	if(m == nil)
+		return;
+	m.writepixels(m.r, msk);
+	c.dst.draw(r, c.colour, m, Point(0,0));
+}
+
 
 plot3(c: ref Context, v: Vector)
 {
