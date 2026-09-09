@@ -221,6 +221,31 @@ arithmetic()
 	okv("dither is the midpoint", grpal->dither(a, b), grpal->mix(a, b, 0.5));
 	ok("dither of a colour with itself is that colour",
 		grpal->dither(v, v) == v);
+	# The property the ports' shade ramps rest on: a run of mixes
+	# between two registers must actually be that many different
+	# colours.  A 4x4 ordered dither of two entries can only express
+	# seventeen mixes and only as a stipple; this is the same ramp as
+	# one colour a step.
+	rmp := array[65] of int;
+	for(ri := 0; ri < len rmp; ri++)
+		rmp[ri] = grpal->mix(grpal->value(Grpalette->BLACK),
+			grpal->value(Grpalette->LTBLUE), real ri/64.0);
+	nd := 0;
+	for(ri = 0; ri < len rmp; ri++){
+		seen := 0;
+		for(rj := 0; rj < ri; rj++)
+			if(rmp[rj] == rmp[ri])
+				seen = 1;
+		if(!seen)
+			nd++;
+	}
+	ok("a 65-step ramp is 65 distinct colours", nd == 65);
+	rmono := 1;
+	for(ri = 1; ri < len rmp; ri++)
+		if(lum(rmp[ri]) < lum(rmp[ri-1]))
+			rmono = 0;
+	ok("a ramp rises without a step back", rmono);
+
 	# The trap rgba() exists for: a computed white must equal a written
 	# one.  int is 64 bits wide at run time here, so an unextended
 	# 16rFFFFFFFF is 4294967295 and compares unequal to the literal -1

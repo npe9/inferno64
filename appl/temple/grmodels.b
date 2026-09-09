@@ -125,9 +125,9 @@ prevb := 0;
 # menu button rects
 manr, ballr: Rect;
 
-# dither tiles: 4x4 Bayer ordered dither between two palette colors
+# Shade cache: one image per (from, to, step) triple.  See shade().
+SHADES: con 32;
 tiles: array of ref Image;
-bayer4 := array[] of { 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
@@ -147,7 +147,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	ink = array[16] of ref Image;
 	for(i := 0; i < 16; i++)
 		ink[i] = disp.color(palette[i]);
-	tiles = array[16*16*17] of ref Image;
+	tiles = array[16*16*(SHADES+1)] of ref Image;
 
 	tosfont = Font.open(disp, "/fonts/temple/temple.font");
 	if(tosfont == nil)
@@ -971,39 +971,40 @@ trishade(c: int, x0, y0, z0, x1, y1, z1, x2, y2, z2: real): ref Image
 		}
 	}
 	if(t < 1.0)
-		return tile(0, col, int (t*16.0));
-	return tile(col, col ^ 8, int ((t-1.0)*16.0));
+		return shade(0, col, t);
+	return shade(col, col ^ 8, t - 1.0);
 }
 
-# 4x4 Bayer ordered-dither tile mixing palette colors a and b;
-# lvl 0..16 = number of b pixels per 16 (TempleOS dithers per-pixel randomly;
-# an ordered tile gives the same mix, stable across frames)
-tile(a, b, lvl: int): ref Image
+# The shade f of the way from palette colour a to palette colour b.
+#
+# This used to return a 4x4 Bayer tile: sixteen pixels, some a and some b,
+# which at arm's length reads as a colour between the two.  That is what
+# DCLighting does in TempleOS and it is the only thing it can do, because
+# the colour in between does not exist there - the palette has sixteen
+# entries and no seventeenth.  Here it does exist, so the shade is simply
+# made, and a face comes out one flat colour instead of a stipple that
+# averages to it.
+#
+# f is quantised to SHADES steps only to bound the image cache; at 32
+# steps between each pair the banding is below what the tile could
+# express anyway, since sixteen pixels can only mix in seventeenths.
+shade(a, b: int, f: real): ref Image
 {
+	lvl := int (f * real SHADES);
 	if(lvl < 0)
 		lvl = 0;
-	if(lvl > 16)
-		lvl = 16;
+	if(lvl > SHADES)
+		lvl = SHADES;
 	if(lvl == 0 || a == b)
 		return ink[a];
-	if(lvl == 16)
+	if(lvl == SHADES)
 		return ink[b];
-	key := (a*16 + b)*17 + lvl;
+	key := (a*16 + b)*(SHADES+1) + lvl;
 	if(tiles[key] != nil)
 		return tiles[key];
-	t := disp.newimage(Rect((0,0), (4,4)), Draw->RGB24, 1, Draw->Black);
+	t := disp.color(grpal->mix(palette[a], palette[b], real lvl/real SHADES));
 	if(t == nil)
 		return ink[a];
-	data := array[4*4*3] of byte;
-	for(i := 0; i < 16; i++){
-		v := palette[a];
-		if(bayer4[i] < lvl)
-			v = palette[b];
-		data[i*3] = byte (v>>8);	# blue
-		data[i*3+1] = byte (v>>16);	# green
-		data[i*3+2] = byte (v>>24);	# red
-	}
-	t.writepixels(Rect((0,0), (4,4)), data);
 	tiles[key] = t;
 	return t;
 }

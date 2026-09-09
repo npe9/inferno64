@@ -29,11 +29,15 @@ implement Shading;
 # without this."  Each quad is grown very slightly past its neighbour so
 # the seams do not show.
 #
-# GAP: TempleOS dithers by generating a random U16 per pixel and comparing
-#      it with dither_probability_u16.  This port uses an ordered 4x4
-#      pattern quantised to seventeen levels, which gives the same ramp
-#      without the noise, because draw3d(2) fills a polygon with one
-#      image rather than a per-pixel rule.
+# TempleOS dithers by generating a random U16 per pixel and comparing it
+# with dither_probability_u16.  It has to: the ramp it wants runs between
+# two palette entries and the palette has nothing between them, so the
+# colour is assembled out of pixels of the two.  This port used to stand
+# in for that with an ordered 4x4 tile quantised to seventeen levels -
+# the same trick with the noise taken out - and now does not stand in for
+# anything, because grpalette(2) can produce the colour the dither was
+# aiming at.  A face is filled with its shade.  The ramp is 65 steps
+# rather than 17 because nothing forces it to sixteenths any more.
 # GAP: the view angles come from a CTRLT_VIEWING_ANGLES control, one of
 #      TempleOS's standard widgets.  Here the arrow keys turn the sphere
 #      and it starts at that control's own default snap positions.
@@ -73,7 +77,7 @@ RINGS: con 8;
 FACES: con 32;
 SLOP: con 0.03;
 GR_WIDTH: con 640;
-LEVELS: con 17;			# 0..16 pixels of sixteen set
+LEVELS: con 65;			# steps of the ramp between two palette entries
 
 BLUE: con 1;
 RED: con 4;
@@ -160,39 +164,23 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	}
 }
 
-# One replicated tile per colour per level: an ordered 4x4 pattern of the
-# dark colour against the bright one, standing in for the original's
-# per-pixel probability dither.
+# One image per colour per level: the ramp the original's probability
+# dither approximates, made directly.  Level 0 is the far end (black, or
+# the colour itself) and level LEVELS-1 the near end (the colour, or its
+# bright twin colour^8), exactly as the dither's probability runs.
 buildshades(d: ref Display, cols: array of int)
 {
-	bayer := array[] of {
-		 0,  8,  2, 10,
-		12,  4, 14,  6,
-		 3, 11,  1,  9,
-		15,  7, 13,  5
-	};
 	shade = array[16] of array of ref Image;
 	for(c := 0; c < 16; c++){
 		shade[c] = array[2*LEVELS] of ref Image;
 		for(lvl := 0; lvl < LEVELS; lvl++){
-			# facing away: black against the colour
-			shade[c][lvl] = tile(d, bayer, lvl, cols[0], cols[c]);
-			# facing the light: the colour against colour^8
-			shade[c][LEVELS+lvl] = tile(d, bayer, lvl, cols[c], cols[c^8]);
+			f := real lvl / real (LEVELS-1);
+			# facing away: black towards the colour
+			shade[c][lvl] = d.color(grpal->mix(cols[0], cols[c], f));
+			# facing the light: the colour towards colour^8
+			shade[c][LEVELS+lvl] = d.color(grpal->mix(cols[c], cols[c^8], f));
 		}
 	}
-}
-
-tile(d: ref Display, bayer: array of int, lvl, c1, c2: int): ref Image
-{
-	im := d.newimage(Rect((0,0),(4,4)), Draw->RGB24, 1, c2);
-	if(im == nil)
-		return d.color(c2);
-	a := d.color(c1);
-	for(i := 0; i < 16; i++)
-		if(bayer[i] < lvl)
-			im.draw(Rect((i%4, i/4), (i%4+1, i/4+1)), a, nil, Point(0,0));
-	return im;
 }
 
 now(): real

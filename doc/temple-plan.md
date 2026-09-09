@@ -90,6 +90,23 @@ standing for `BLUE`; `160` is `8eca00`, nothing like the `RED` it was
 listed as. The lit sprite had been drawing in the wrong colours. Nothing
 now types that table — the port writes true colour instead.
 
+**Two more ports had the same shape, and are converted.** `shading` is
+the demo *of* `DCLighting`, and its own GAP note already conceded the
+divergence: TempleOS generates a random U16 per pixel and compares it
+with `dither_probability_u16`, and the port stood in for that with a 4x4
+ordered tile quantised to seventeen levels. Both are ways of assembling a
+colour out of pixels of two other colours, because the palette has
+nothing between them. It now fills a face with the shade, on a 65-step
+ramp — nothing forces it to sixteenths any more. `grmodels`'s `trishade`
+was the same 4x4 Bayer tile and is now `mix` at 32 steps between each
+pair, cached the way the tiles were.
+
+What is *not* converted, deliberately: `ROPF_DITHER` used as a fill
+style. `titanium`'s tan desert, `bombergolf`'s background, `talons`'s
+tiles and `sunmoon` are checkerboards that read as texture, and TempleOS
+meant them to. A dither standing in for a shade is a workaround for a
+palette and goes; a dither used as a pattern is the picture and stays.
+
 **The trap this work sat on.** A colour is a 32-bit RGBA word, but this
 tree's `int` is 64 bits wide *at run time* (`1<<40` is a perfectly good
 `int` here) while the compiler types a literal of `16r80000000` or more
