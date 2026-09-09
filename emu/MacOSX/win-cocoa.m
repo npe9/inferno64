@@ -169,7 +169,15 @@ static Memimage	*mtl_solidsrc;	/* 1×1 for emergency soft fill of GPU tris */
 enum {
 	MaxGPULines = 16384,
 	MaxGPUTriVerts = 49152,	/* 16384 triangles × 3 packed verts */
-	MaxGPUSprites = 512,
+	/*
+	 * A per-frame ceiling, not a soft limit: past it metal_queue_sprite
+	 * spins on osyield() until a present drains the queue, so a port
+	 * that draws more sprites in a frame than this holds does not
+	 * degrade, it stalls.  draw3dbench(1) measured the cliff at the old
+	 * 512 - 256 sprites cost 3ms a frame and 512 cost 14 - and varoom
+	 * alone projects 512 bushes plus seven cars, landing exactly on it.
+	 */
+	MaxGPUSprites = 8192,
 	MaxSpriteTexCache = 64,	/* reuse uploads across 'j' draws */
 	MaxG3Batches = 64,	/* distinct model/proj xforms per frame, GPU-T&L path */
 	EllipseSegs = 48,
@@ -3598,10 +3606,11 @@ static void
 metal_present_sprites(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	id<MTLTexture> depthtex, int pw, int ph)
 {
-	int i, voff;
+	int i, voff, curnearest;
 	float wh[2];
 	id<MTLBuffer> vbuf;
 	id<MTLRenderCommandEncoder> enc;
+	id<MTLTexture> curtex;
 	MTLRenderPassDescriptor *rp;
 	MTLLoadAction zload;
 	MTLSamplerDescriptor *sd;
@@ -3649,34 +3658,58 @@ metal_present_sprites(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	 * must stay pending rather than being dropped on the floor. */
 	zload = mtl_zclear ? MTLLoadActionClear : MTLLoadActionLoad;
 
+	/*
+	 * One render pass per RUN of sprites sharing a texture and sampler,
+	 * not one per sprite.  A render command encoder is a whole pass -
+	 * the attachments are loaded and stored around it - so a field of
+	 * five hundred identical bushes used to be five hundred passes over
+	 * the drawable, which is what made a GPU sprite cost many times a
+	 * GPU triangle even though both arrive as one draw(3) message.
+	 * Order is preserved: the sprites are drawn in the order queued,
+	 * and within a pass fragments rasterise in draw order, so depth and
+	 * SoverD blending behave exactly as they did.
+	 */
+	enc = nil;
+	curtex = nil;
+	curnearest = -1;
 	for(i = 0; i < ngsprites; i++){
 		if(gsprites[i].tex == nil || metal_vertex_data(cmd, gsprites[i].v,
 		    sizeof(GPUTexVert) * 6, &vbuf, &voff) < 0)
 			continue;
-		rp = [MTLRenderPassDescriptor renderPassDescriptor];
-		rp.colorAttachments[0].texture = drawabletex;
-		rp.colorAttachments[0].loadAction = MTLLoadActionLoad;
-		rp.colorAttachments[0].storeAction = MTLStoreActionStore;
-		rp.depthAttachment.texture = depthtex;
-		rp.depthAttachment.loadAction = zload;
-		rp.depthAttachment.storeAction = MTLStoreActionStore;
-		rp.depthAttachment.clearDepth = 1.0;
-		enc = [cmd renderCommandEncoderWithDescriptor:rp];
-		if(enc == nil)
-			continue;	/* clear still pending for the next sprite */
-		zload = MTLLoadActionLoad;
-		mtl_zclear = 0;		/* this pass will run and carries the clear */
-		[enc setRenderPipelineState:mtl_sprite_pipe];
-		[enc setDepthStencilState:mtl_zenable ? mtl_depth_on : mtl_depth_off];
+		if(enc != nil && (gsprites[i].tex != curtex
+		    || gsprites[i].nearest != curnearest)){
+			[enc endEncoding];
+			enc = nil;
+		}
+		if(enc == nil){
+			rp = [MTLRenderPassDescriptor renderPassDescriptor];
+			rp.colorAttachments[0].texture = drawabletex;
+			rp.colorAttachments[0].loadAction = MTLLoadActionLoad;
+			rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+			rp.depthAttachment.texture = depthtex;
+			rp.depthAttachment.loadAction = zload;
+			rp.depthAttachment.storeAction = MTLStoreActionStore;
+			rp.depthAttachment.clearDepth = 1.0;
+			enc = [cmd renderCommandEncoderWithDescriptor:rp];
+			if(enc == nil)
+				continue;	/* clear still pending for the next sprite */
+			zload = MTLLoadActionLoad;
+			mtl_zclear = 0;	/* this pass will run and carries the clear */
+			curtex = gsprites[i].tex;
+			curnearest = gsprites[i].nearest;
+			[enc setRenderPipelineState:mtl_sprite_pipe];
+			[enc setDepthStencilState:mtl_zenable ? mtl_depth_on : mtl_depth_off];
+			[enc setVertexBytes:wh length:sizeof(wh) atIndex:1];
+			[enc setFragmentTexture:curtex atIndex:0];
+			[enc setFragmentSamplerState:curnearest ? sprsampn : sprsamp
+				atIndex:0];
+		}
 		[enc setVertexBuffer:vbuf offset:voff atIndex:0];
-		[enc setVertexBytes:wh length:sizeof(wh) atIndex:1];
-		[enc setFragmentTexture:gsprites[i].tex atIndex:0];
-		[enc setFragmentSamplerState:gsprites[i].nearest ? sprsampn : sprsamp
-			atIndex:0];
 		[enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:6];
-		[enc endEncoding];
 		gsprites[i].tex = nil;
 	}
+	if(enc != nil)
+		[enc endEncoding];
 	ngsprites = 0;
 	unlock(&mtl_geom_lock);
 }

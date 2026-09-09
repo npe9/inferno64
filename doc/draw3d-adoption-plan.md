@@ -492,6 +492,74 @@ provider drawing into a window layer; it is not affordable in interpreted
 Limbo at `varoom`'s 512 bushes a frame. What is unblocked is that the
 behaviour now exists to migrate *to* — not that migrating is free.
 
+### Phase 9's real gate, measured — **the answer was not the fill**
+
+Phase 9 was ordered last on the belief that the hand-rolled ports were
+waiting for a fast z-buffered *fill*. `draw3dbench(1)` now measures the
+thing they actually spend their frame on, and the fill was never the
+problem.
+
+All four candidates — `varoom`, `talons`, `rawhide`, `stadium` — already
+draw straight into `win.image`, the window layer, so the destination gate
+of Phase 2 is passed for every one of them.
+
+Marginal cost per primitive, 640x480, window layer, depth on, measured as
+the slope between an empty frame and a loaded one so the fixed cost of
+clear-and-present is out of it:
+
+| primitive | software | protocol |
+| --- | --- | --- |
+| triangle | 2 µs | 2 µs |
+| 16x16 sprite, z off | 5 µs | 0 µs |
+| 16x16 sprite, z on | 10 µs | 0 µs |
+| 220x220 sprite | 1562 µs | 0 µs |
+
+A triangle costs the same either way. A *sprite* did not, and finding out
+why took two wrong measurements first, both worth recording because both
+looked plausible:
+
+- **2048 sprites a frame measured the present rate.** `MaxGPUSprites` was
+  512, and past it `metal_queue_sprite` spins on `osyield()` until a
+  present drains the queue. The first run reported 64 µs for a GPU sprite
+  against 1 µs for a GPU triangle and the difference was entirely stall.
+  The load has to sit under the ceiling, or the ceiling has to move.
+- **A cheap sprite loop measured presentation, not sprites.** Timing 512
+  sprites and dividing gave 22 ms a frame for the protocol provider and 4
+  for the software one — the protocol column floored by the present rate.
+  Only the slope between two loads separates them.
+
+With the load under the ceiling the real cause showed:
+`metal_present_sprites` opened **one Metal render command encoder per
+sprite**. An encoder is a whole render pass, with the attachments loaded
+and stored around it, so a field of five hundred identical bushes was
+five hundred passes over the drawable. Batching each run of sprites that
+share a texture and sampler into one pass — order preserved, since
+fragments rasterise in draw order within a pass — and raising the ceiling
+to 8192:
+
+| sprites in a frame | before | ceiling raised only | batched |
+| --- | --- | --- | --- |
+| 256 | 3 ms | 2 ms | 2 ms |
+| 512 | 14 ms | 14 ms | **2 ms** |
+| 1024 | 28 ms | 14 ms | **2 ms** |
+
+Each change is attributable on its own: raising the ceiling alone takes
+1024 sprites from 28 ms to 14 by removing the stall and leaves the
+per-pass cost; batching alone is what takes 512 and 1024 to 2 ms. All
+twelve `sprite3` checks and both mask-edge checks still pass in both
+providers afterwards, so the batching did not disturb ordering, depth or
+compositing.
+
+**What this changes for Phase 9.** `varoom` projects 512 bushes and seven
+cars a frame — it was sitting exactly on the old ceiling, and would have
+stalled the moment it moved to GPU sprites. It no longer would: a
+thousand depth-tested GPU sprites now cost 2 ms a frame. The remaining
+constraint is coherence, not speed: depth lives on the GPU for the
+protocol provider and in `c.zstate` for the software one, so a frame must
+draw all its geometry and all its sprites through the *same* provider.
+Choose it by the sprite sizes — under about 45x45 the software blit is as
+cheap, above it the GPU is twenty times cheaper and flat.
+
 ### Phase 7 — DC state
 
 The audit's §3: a symmetry plane (`DCF_SYMMETRY`), a light source and a

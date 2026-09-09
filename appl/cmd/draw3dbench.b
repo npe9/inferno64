@@ -109,11 +109,209 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	bench("  protocol buffer", "/dis/math/draw3ddev.dis", buf, col, large);
 	sprites(d, buf);
 	sprite3s(d);
+	s3cost(d);
 	readback(d, col, large);
 	agree(d);
 	gradient(d);
 	fringe(d);
 }
+
+# What a scene's worth of depth-tested sprites costs, into the window
+# layer, which is the destination every candidate port already draws to.
+#
+# This is the number Phase 9 of doc/draw3d-adoption-plan.md is gated on.
+# varoom projects 512 bush sprites and seven opponent cars a frame and
+# keeps a painter sort instead of a depth buffer, because a z-buffered
+# FILL cost 7.18 ms a frame in interpreted Limbo.  Its sprites would now
+# have to pay a depth test too, and with zenable on the software path is
+# the general per-pixel loop for every one of them - so the question is
+# not whether the fill is affordable but whether the sprites are.
+#
+# 16x16 is a bush at middle distance.  The frame is timed whole, ending
+# in a flush, because a queued GPU sprite costs nothing until presented.
+s3cost(d: ref Display)
+{
+	sys->print("draw3dbench: depth-tested sprites into the window layer\n");
+	for(pass := 0; pass < 2; pass++){
+		path := Draw3d->PATH;
+		what := "software";
+		if(pass == 1){
+			path = "/dis/math/draw3ddev.dis";
+			what = "protocol";
+		}
+		for(zon := 0; zon <= 1; zon++){
+			# The fixed cost of a frame - clear, flush, present -
+			# is what n=0 measures, and it has to come out of the
+			# total: a flush drains the GPU and a tight loop of
+			# cheap sprites otherwise reports the present rate
+			# rather than the sprites.  The marginal cost is the
+			# slope between the two loads.
+			# 384 is deliberately under emu's MaxGPUSprites of 512.
+			# Past that the queue is full and metal_queue_sprite
+			# spins on osyield() until a present drains it, so a
+			# bigger load measures the present rate and calls it
+			# the cost of a sprite - which is how this bench first
+			# reported 64 us for a GPU sprite against 1 us for a
+			# GPU triangle.
+			t0 := s3cost1(d, path, 0, zon);
+			tn := s3cost1(d, path, 384, zon);
+			zs := "z off";
+			if(zon)
+				zs = "z on ";
+			us := ((tn - t0)*1000)/384;
+			sys->print("draw3dbench:   %s %s: empty frame %d ms, 384 sprites %d ms, %d us/sprite\n",
+				what, zs, t0, tn, us);
+		}
+	}
+	# A triangle through the same harness, for scale.  Both primitives
+	# are one writemsg per call on the protocol provider, so if a sprite
+	# costs many times a triangle the difference is not the wire.
+	for(tp := 0; tp < 2; tp++){
+		path := Draw3d->PATH;
+		what := "software";
+		if(tp == 1){
+			path = "/dis/math/draw3ddev.dis";
+			what = "protocol";
+		}
+		t0 := s3tri(d, path, 0);
+		tn := s3tri(d, path, 384);
+		sys->print("draw3dbench:   %s tris z on : empty frame %d ms, 384 tris %d ms, %d us/tri\n",
+			what, t0, tn, ((tn-t0)*1000)/384);
+	}
+	# The queue ceiling, shown rather than asserted: cost per sprite
+	# either side of MaxGPUSprites.  A port that draws more sprites in a
+	# frame than the queue holds does not degrade, it stalls.
+	sys->print("draw3dbench:   the 512-sprite ceiling, protocol, z on:\n");
+	for(nn := 0; nn < 4; nn++){
+		cnt := 128 << nn;		# 128 256 512 1024
+		t := s3cost1(d, "/dis/math/draw3ddev.dis", cnt, 1);
+		sys->print("draw3dbench:     %d sprites: %d ms/frame, %d us/sprite\n",
+			cnt, t, (t*1000)/cnt);
+	}
+	# The same again with a big sprite.  This is where switching the
+	# depth test on is expensive rather than merely dearer: it takes
+	# every sprite off the native blit and onto the general per-pixel
+	# loop, whose cost is the sprite's AREA, and a sprite close to the
+	# camera is large.  A port with near-camera sprites has to see this
+	# number before it moves.
+	for(bp := 0; bp < 2; bp++){
+		path := Draw3d->PATH;
+		what := "software";
+		if(bp == 1){
+			path = "/dis/math/draw3ddev.dis";
+			what = "protocol";
+		}
+		for(bz := 0; bz <= 1; bz++){
+			t0 := s3big(d, path, 0, bz);
+			tn := s3big(d, path, 16, bz);
+			zs := "z off";
+			if(bz)
+				zs = "z on ";
+			sys->print("draw3dbench:   %s %s: 16 sprites of 220x220 %d ms, %d us/sprite\n",
+				what, zs, tn, ((tn-t0)*1000)/16);
+		}
+	}
+}
+
+# The same loop as s3cost1, with a small triangle where the sprite was.
+s3tri(d: ref Display, path: string, n: int): int
+{
+	d3 := load Draw3d path;
+	if(d3 == nil)
+		return 0;
+	d3->init();
+	dst := win.image;
+	c := d3->context(dst);
+	d3->setzarea(c, dst.r);
+	d3->setz(c, 1);
+	d3->setcolour(c, d.color(Draw->Green));
+	d3->viewport(c, dst.r.min.x, dst.r.min.y, dst.r.max.x, dst.r.max.y);
+	tri := array[3] of Draw3d->Vector;
+	nf := 8;
+	t0 := sys->millisec();
+	for(f := 0; f < nf; f++){
+		d3->mode(Draw3d->PROJ); d3->identity(); d3->frustum(0.1, 0.1, 100.0);
+		d3->mode(Draw3d->MODEL); d3->identity();
+		d3->clearz(c);
+		dst.draw(dst.r, d.black, nil, dst.r.min);
+		for(i := 0; i < n; i++){
+			x := real ((i*37)%64 - 32)/8.0;
+			y := real ((i*17)%32 - 16)/8.0;
+			z := -2.0 - real (i%48)/4.0;
+			tri[0] = Draw3d->Vector(x-0.05, y-0.05, z);
+			tri[1] = Draw3d->Vector(x+0.05, y-0.05, z);
+			tri[2] = Draw3d->Vector(x,      y+0.05, z);
+			d3->fillpoly3(c, tri, Draw3d->Vector(0.0, 0.0, 1.0), 1.0);
+		}
+		dst.flush(Draw->Flushnow);
+	}
+	t1 := sys->millisec();
+	return (t1-t0)/nf;
+}
+
+s3big(d: ref Display, path: string, n, zon: int): int
+{
+	d3 := load Draw3d path;
+	if(d3 == nil)
+		return 0;
+	d3->init();
+	(img, mask) := s3sprite(d, 220, 220);
+	dst := win.image;
+	c := d3->context(dst);
+	d3->setzarea(c, dst.r);
+	d3->setz(c, zon);
+	d3->viewport(c, dst.r.min.x, dst.r.min.y, dst.r.max.x, dst.r.max.y);
+	nf := 4;
+	t0 := sys->millisec();
+	for(f := 0; f < nf; f++){
+		d3->mode(Draw3d->PROJ); d3->identity(); d3->frustum(0.1, 0.1, 100.0);
+		d3->mode(Draw3d->MODEL); d3->identity();
+		d3->clearz(c);
+		dst.draw(dst.r, d.black, nil, dst.r.min);
+		for(i := 0; i < n; i++)
+			d3->sprite3(c, Draw3d->Vector(0.0, 0.0, -4.0 - real (i%4)),
+				img, mask, 4.0);
+		dst.flush(Draw->Flushnow);
+	}
+	t1 := sys->millisec();
+	return (t1-t0)/nf;
+}
+
+# Milliseconds per frame for n depth-tested sprites, averaged over eight
+# frames.  Returns the total so the caller can difference two loads.
+s3cost1(d: ref Display, path: string, n, zon: int): int
+{
+	d3 := load Draw3d path;
+	if(d3 == nil)
+		return 0;
+	d3->init();
+	(img, mask) := s3sprite(d, 16, 16);
+	dst := win.image;
+	c := d3->context(dst);
+	d3->setzarea(c, dst.r);
+	d3->setz(c, zon);
+	d3->viewport(c, dst.r.min.x, dst.r.min.y, dst.r.max.x, dst.r.max.y);
+	nf := 8;
+	t0 := sys->millisec();
+	for(f := 0; f < nf; f++){
+		d3->mode(Draw3d->PROJ); d3->identity(); d3->frustum(0.1, 0.1, 100.0);
+		d3->mode(Draw3d->MODEL); d3->identity();
+		d3->clearz(c);
+		dst.draw(dst.r, d.black, nil, dst.r.min);
+		for(i := 0; i < n; i++){
+			# spread over the frustum at a spread of depths, the
+			# way a field of bushes is
+			x := real ((i*37)%64 - 32)/8.0;
+			y := real ((i*17)%32 - 16)/8.0;
+			z := -2.0 - real (i%48)/4.0;
+			d3->sprite3(c, Draw3d->Vector(x, y, z), img, mask, 2.0);
+		}
+		dst.flush(Draw->Flushnow);
+	}
+	t1 := sys->millisec();
+	return (t1-t0)/nf;
+}
+
 
 # Two sprites at the SAME depth must resolve in draw order, not by
 # whichever got there first.  Every sprite here has one depth apiece and

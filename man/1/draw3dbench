@@ -192,6 +192,31 @@ pair invisible, which is the ordinary case in a scene and not a corner of
 it; equal-wins resolves them in draw order.
 Made strict again, the check reports 0 of 256 pixels surviving.
 .PP
+.PP
+The last measurement is what a scene's worth of depth-tested sprites
+costs, which is what
+.IR temple (1)'s
+hand-rolled 3D ports spend their frame on.
+It is reported as a
+.I slope
+\- the difference between an empty frame and a loaded one, divided by the
+load \- because the fixed cost of a clear and a present is otherwise
+mistaken for the cost of the primitives.
+Two measurements that did not do that reported a GPU sprite at 64 us
+against a GPU triangle at 1 us, and both figures were presentation.
+.PP
+The load is kept at 384, under
+.IR emu 's
+.BR MaxGPUSprites .
+Past that ceiling
+.I metal_queue_sprite
+spins until a present drains the queue, so a bigger load does not measure
+sprites at all.
+The ceiling is then shown rather than asserted, by sweeping 128, 256, 512
+and 1024 sprites a frame: with one Metal render pass per sprite that read
+2, 3, 14 and 28 ms a frame, and with runs of one texture batched into a
+pass it reads 2 ms throughout.
+.PP
 The options are:
 .TF "-n frames"
 .TP
@@ -297,9 +322,9 @@ and
 have their own paths in both providers and are not covered at all.
 The
 .I sprite3
-family is checked but not timed, and its checks are per provider: they
-say each provider is self-consistent, not that the two draw the same
-pixels.
+family is checked and its per-sprite cost is measured, but its checks are
+per provider: they say each provider is self-consistent, not that the two
+draw the same pixels.
 .PP
 The agreement check is occasionally flaky in the other direction: a
 present that lands between the drawing and the read drains the GPU's
