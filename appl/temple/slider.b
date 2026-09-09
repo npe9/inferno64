@@ -31,6 +31,8 @@ include "wmclient.m";
 	Window: import wmclient;
 
 include "keyboard.m";
+include "grpalette.m";
+	grpal: Grpalette;
 
 Slider: module
 {
@@ -54,6 +56,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	grpal = load Grpalette Grpalette->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
@@ -64,11 +67,11 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	font = Font.open(d, "/fonts/temple/temple.font");
 	if(font == nil)
 		font = Font.open(d, "/fonts/lucida/unicode.8.font");
-	white = d.color(int 16rFFFFFFFF);
-	black = d.color(int 16r000000FF);
-	blue = d.color(int 16r0000AAFF);
-	ltred = d.color(int 16rFF5555FF);
-	yellow = d.color(int 16rFFFF55FF);
+	white = d.color(grpal->value(Grpalette->WHITE));
+	black = d.color(grpal->value(Grpalette->BLACK));
+	blue = d.color(grpal->value(Grpalette->BLUE));
+	ltred = d.color(grpal->value(Grpalette->LTRED));
+	yellow = d.color(grpal->value(Grpalette->YELLOW));
 
 	win.reshape(Rect((0, 0), (640, 480)));
 	win.onscreen("place");

@@ -27,6 +27,8 @@ include "rand.m";
 
 include "tone.m";
 	tone: Tone;
+include "grpalette.m";
+	grpal: Grpalette;
 
 Halogen: module
 {
@@ -58,6 +60,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	grpal = load Grpalette Grpalette->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
 	tone = load Tone Tone->PATH;
@@ -73,11 +76,11 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	win = wmclient->window(ctxt, "TempleOS Halogen", Wmclient->Appl);
 	d := win.display;
 	# the exact TempleOS palette entries this program touches
-	black = d.color(int 16r000000FF);	# BLACK task background
-	dkgray = d.color(int 16r555555FF);	# DKGRAY sky
-	ltgray = d.color(int 16rAAAAAAFF);	# LTGRAY road dots
-	white = d.color(int 16rFFFFFFFF);	# WHITE headlight cones
-	yellow = d.color(int 16rFFFF55FF);	# YELLOW "Game Over"
+	black = d.color(grpal->value(Grpalette->BLACK));	# BLACK task background
+	dkgray = d.color(grpal->value(Grpalette->DKGRAY));	# DKGRAY sky
+	ltgray = d.color(grpal->value(Grpalette->LTGRAY));	# LTGRAY road dots
+	white = d.color(grpal->value(Grpalette->WHITE));	# WHITE headlight cones
+	yellow = d.color(grpal->value(Grpalette->YELLOW));	# YELLOW "Game Over"
 	font = Font.open(d, "/fonts/temple/temple.font");
 	reset();
 	win.reshape(Rect((0, 0), (640, 400)));

@@ -36,6 +36,8 @@ include "tone.m";
 
 include "scorestore.m";
 	scorestore: Scorestore;
+include "grpalette.m";
+	grpal: Grpalette;
 
 Castlefrankenstein: module
 {
@@ -133,6 +135,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	grpal = load Grpalette Grpalette->PATH;
 	math = load Math Math->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
@@ -169,18 +172,10 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	green = d.color(Draw->Green);
 	cyan = d.color(Draw->Cyan);
 	yellow = d.color(Draw->Yellow);
-	# Exact TempleOS gr_palette_std.  Draw's named colours use Inferno's
-	# brighter display palette and are not interchangeable with these indices.
-	palette = array[] of {
-		d.color(int 16r000000FF), d.color(int 16r0000AAFF),
-		d.color(int 16r00AA00FF), d.color(int 16r00AAAAFF),
-		d.color(int 16rAA0000FF), d.color(int 16rAA00AAFF),
-		d.color(int 16rAA5500FF), d.color(int 16rAAAAAAFF),
-		d.color(int 16r555555FF), d.color(int 16r5555FFFF),
-		d.color(int 16r55FF55FF), d.color(int 16r55FFFFFF),
-		d.color(int 16rFF5555FF), d.color(int 16rFF55FFFF),
-		d.color(int 16rFFFF55FF), d.color(int 16rFFFFFFFF)
-	};
+	# gr_palette_std, from grpalette(2).  Draw's named colours use
+	# Inferno's own display palette and are not interchangeable with
+	# these indices.
+	palette = grpal->images(d);
 	meshes = array[7] of ref Mesh;
 	for(mi := 2; mi <= 6; mi++)
 		meshes[mi] = loadmesh(sys->sprint("/icons/temple/castle_%d.mesh", mi));

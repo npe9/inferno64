@@ -27,6 +27,8 @@ include "wmclient.m";
 	Window: import wmclient;
 
 include "keyboard.m";
+include "grpalette.m";
+	grpal: Grpalette;
 
 Spriteput: module
 {
@@ -44,6 +46,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	grpal = load Grpalette Grpalette->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
@@ -54,8 +57,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	font = Font.open(d, "/fonts/temple/temple.font");
 	if(font == nil)
 		font = Font.open(d, "/fonts/lucida/unicode.8.font");
-	white = d.color(int 16rFFFFFFFF);
-	blue = d.color(int 16r0000AAFF);
+	white = d.color(grpal->value(Grpalette->WHITE));
+	blue = d.color(grpal->value(Grpalette->BLUE));
 	flag = d.open("/icons/temple/spriteput_1.bit");
 	flagmask = d.open("/icons/temple/spriteput_1.mask");
 	map = d.open("/icons/temple/spriteput_2.bit");

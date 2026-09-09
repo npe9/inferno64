@@ -39,6 +39,70 @@ provider's 5.57, but only when the destination is the window layer — an
 offscreen frame buffer gets no GPU at all and is *slower* through the
 protocol. `draw3dbench(1)` is the harness.
 
+## The sixteen colours are a register file, not a constant
+
+`grpalette(2)` (`appl/lib/grpalette.b`, `grpalettetest(1)`) holds the
+TempleOS palette. Before it, fifty-one ports each carried their own copy
+of
+
+```
+	cols := array[] of {
+		int 16r000000FF, int 16r0000AAFF, ...
+	};
+	for(i := 0; i < 16; i++)
+		ink[i] = d.color(cols[i]);
+```
+
+which is the *contents* of `gr.palette` written out as if it were a
+constant. In TempleOS it is not one: `GrPaletteColorSet` rewrites the
+registers underneath a drawing that has already been made, and the
+`palette` port is the demo built entirely around that fact — it now
+drives the real register file instead of a private copy of it, which is
+what it was always describing.
+
+Three palettes are loadable. `EGA` is the sixteen TempleOS boots with,
+byte for byte, so "this port renders what the HolyC rendered" stays a
+checkable claim: `$grpalette=ega` and the pixels are the ones that were
+there before the module existed. `RICH` is the same sixteen *meanings*
+spent on a display that is not an EGA DAC — same hue, same dim/bright
+pairing at `i` and `i+8`, `BLACK` and `WHITE` byte-identical because
+ports mix palette black with `Draw->Black` in one frame and a near-black
+would show as a seam. `GREY` is the ramp `Palette.HC` writes. `RICH` is
+the default; nothing about what an index *means* changed, so no port
+draws anything different, it just draws it in better colours.
+
+`shade`, `mix`, `dither` and `ramp` are the other half: colours that are
+not in the sixteen at all. That is what the original could not do, and
+what it faked.
+
+**`keepaway` is the worked example.** Its `DCLighting` probability-dither
+tossed a coin per pixel between a face's colour and its dark or bright
+partner, because sixteen registers have nothing in between. The colour it
+was aiming at is the *expected value* of that coin, and this display can
+simply produce it: the sprite is now an `RGB24` image filled with
+`grpal->mix(...)` at the illumination term, and the dither is gone. Same
+lighting, no noise, and as many shades as the light has angles.
+
+Doing that turned up a second thing. `keepaway` also carried a hand-typed
+table of "the same 16 colors as exact Plan 9 CMAP8 pixel values", and it
+was wrong: `cmap2rgb(36)` is `00aa00`, green, where the table has it
+standing for `BLUE`; `160` is `8eca00`, nothing like the `RED` it was
+listed as. The lit sprite had been drawing in the wrong colours. Nothing
+now types that table — the port writes true colour instead.
+
+**The trap this work sat on.** A colour is a 32-bit RGBA word, but this
+tree's `int` is 64 bits wide *at run time* (`1<<40` is a perfectly good
+`int` here) while the compiler types a literal of `16r80000000` or more
+as `big`. So a *literal* white is `int 16rFFFFFFFF` = −1, sign-extended
+by the compiler, and a *computed* white is 4294967295, sign-extended by
+nothing. They draw identically, because only the low 32 bits reach the
+display, and they compare unequal while printing the same eight hex
+digits under `%ux`. Every value `grpalette` returns goes through one
+`rgba()` that sign-extends; any other code doing colour arithmetic has to
+do the same. This is the same shape of defect as "Plan 9 `long` is 32
+bits", inverted: here the arithmetic is *wider* than the type it is
+notionally in.
+
 ## Sprite3 places by the ORIGIN, sprite2d places the middle
 
 The single most repeated porting mistake in this tree, found 2026-09-06

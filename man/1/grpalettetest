@@ -1,0 +1,72 @@
+.TH GRPALETTETEST 1
+.SH NAME
+grpalettetest \- check the TempleOS colour registers
+.SH SYNOPSIS
+.B grpalettetest
+[
+.B -v
+]
+.SH DESCRIPTION
+.I Grpalettetest
+checks
+.IR grpalette (2):
+that
+.B EGA
+is still the sixteen colours the
+.IR temple (1)
+ports had written into them one file at a time, that
+.B RICH
+did not quietly change what an index means, that a register behaves like a
+register, and that the true-colour arithmetic is right at its endpoints.
+It needs no display and runs under
+.BR emu-g .
+.PP
+The EGA table it compares against is an independent copy of the literal
+that stood in the ports.
+It is deliberately not read from the module: a test that asks the module
+for the answer and then compares it with the module's answer checks
+nothing.
+.PP
+.B RICH
+is not checked against a table \(em it is allowed to look different \(em
+but against the properties that make it the same palette.
+.B BLACK
+and
+.B WHITE
+must be exact, every entry must be opaque, no channel ordering that
+.B EGA
+states may be reversed, index
+.I i
+must stay darker than index
+.IB i +8,
+and the palette must differ from
+.B EGA
+somewhere, so that a
+.B RICH
+that had silently become a copy of
+.B EGA
+would be caught.
+.PP
+.B -v
+names each check as it passes.
+The exit status is an error if any check fails.
+.SH SOURCE
+.B /appl/cmd/grpalettetest.b
+.SH SEE ALSO
+.IR grpalette (2),
+.IR temple (1)
+.SH BUGS
+Nothing here draws.
+.B images
+and
+.B ramp
+allocate against a
+.BR Draw->Display ,
+so they are not exercised at all, and neither is the
+.B $grpalette
+knob in any setting but the one the test happens to run under \(em it
+checks that the loaded palette agrees with the environment, which is
+vacuous when the variable is unset unless the test is run again with it
+set.
+No check compares a rendered frame: that a port looks right with a palette
+loaded is not established here.

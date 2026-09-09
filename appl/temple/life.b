@@ -43,6 +43,8 @@ include "tk.m";
 include "wmclient.m";
 	wmclient: Wmclient;
 	Window: import wmclient;
+include "grpalette.m";
+	grpal: Grpalette;
 
 Life: module
 {
@@ -73,6 +75,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	grpal = load Grpalette Grpalette->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
@@ -81,8 +84,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	win = wmclient->window(ctxt, "TempleOS Life", Wmclient->Appl);
 	d := win.display;
-	green = d.color(int 16r00AA00FF);	# TempleOS GREEN
-	black = d.color(int 16r000000FF);
+	green = d.color(grpal->value(Grpalette->GREEN));	# TempleOS GREEN
+	black = d.color(grpal->value(Grpalette->BLACK));
 	mask = d.newimage(Rect((0, 0), (W, H)), Draw->GREY1, 0, Draw->Black);
 
 	# original starts from an EMPTY board — you draw the seed

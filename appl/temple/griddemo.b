@@ -25,6 +25,8 @@ include "tk.m";
 include "wmclient.m";
 	wmclient: Wmclient;
 	Window: import wmclient;
+include "grpalette.m";
+	grpal: Grpalette;
 
 Griddemo: module
 {
@@ -43,6 +45,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	grpal = load Grpalette Grpalette->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
@@ -54,9 +57,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	font = Font.open(d, "/fonts/temple/temple.font");
 	if(font == nil)
 		font = Font.open(d, "/fonts/lucida/unicode.8.font");
-	black = d.color(int 16r000000FF);
-	white = d.color(int 16rFFFFFFFF);
-	blue = d.color(int 16r0000AAFF);
+	black = d.color(grpal->value(Grpalette->BLACK));
+	white = d.color(grpal->value(Grpalette->WHITE));
+	blue = d.color(grpal->value(Grpalette->BLUE));
 
 	win.reshape(Rect((0, 0), (640, 480)));
 	win.onscreen("place");

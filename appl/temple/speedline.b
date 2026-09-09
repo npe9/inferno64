@@ -40,6 +40,8 @@ include "wmclient.m";
 	Window: import wmclient;
 
 include "keyboard.m";
+include "grpalette.m";
+	grpal: Grpalette;
 
 Speedline: module
 {
@@ -62,6 +64,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	grpal = load Grpalette Grpalette->PATH;
 	math = load Math Math->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	sys->pctl(Sys->NEWPGRP, nil);
@@ -77,12 +80,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	# the exact TempleOS 16-color palette, index = TempleOS color
 	ink = array[16] of ref Image;
-	cols := array[] of {
-		int 16r000000FF, int 16r0000AAFF, int 16r00AA00FF, int 16r00AAAAFF,
-		int 16rAA0000FF, int 16rAA00AAFF, int 16rAA5500FF, int 16rAAAAAAFF,
-		int 16r555555FF, int 16r5555FFFF, int 16r55FF55FF, int 16r55FFFFFF,
-		int 16rFF5555FF, int 16rFF55FFFF, int 16rFFFF55FF, int 16rFFFFFFFF
-	};
+	cols := grpal->values();
 	for(i := 0; i < 16; i++)
 		ink[i] = d.color(cols[i]);
 

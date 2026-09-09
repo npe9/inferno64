@@ -1,0 +1,182 @@
+.TH GRPALETTE 2
+.SH NAME
+grpalette: set, setcolour, value, values, table, images, shade, mix, dither, ramp \- the TempleOS colour registers
+.SH SYNOPSIS
+.EX
+include "draw.m";
+include "grpalette.m";
+grpal := load Grpalette Grpalette->PATH;
+
+grpal->init();
+
+grpal->set(Grpalette->EGA);
+grpal->setcolour(i, rgba);
+which := grpal->loaded();
+rgba := grpal->value(i);
+cols := grpal->values();
+cols = grpal->table(Grpalette->RICH);
+s := grpal->name(i);
+
+ink := grpal->images(display);
+
+rgba = grpal->shade(rgba, lit);
+rgba = grpal->mix(a, b, t);
+rgba = grpal->dither(a, b);
+shades := grpal->ramp(display, rgba, n);
+.EE
+.SH DESCRIPTION
+TempleOS draws in sixteen colours, and a colour is an
+.I index
+into
+.BR gr.palette ,
+not a colour in itself:
+.B GrPaletteColorSet
+rewrites a register underneath a drawing that has already been made, which
+is what
+.IR temple (1)'s
+.B palette
+demo is about.
+.I Grpalette
+is that register file.
+.PP
+The sixteen indices are named
+.BR BLACK ,
+.BR BLUE ,
+.BR GREEN ,
+.BR CYAN ,
+.BR RED ,
+.BR PURPLE ,
+.BR BROWN ,
+.BR LTGRAY ,
+.BR DKGRAY ,
+.BR LTBLUE ,
+.BR LTGREEN ,
+.BR LTCYAN ,
+.BR LTRED ,
+.BR LTPURPLE ,
+.B YELLOW
+and
+.BR WHITE ,
+in that order, and
+.B COLORS
+is 16.
+Index
+.I i
+and index
+.IB i +8
+are the same colour dim and bright, which is the pairing TempleOS's
+lighting code relies on.
+.SS Palettes
+.B set
+loads all sixteen registers from one of three named palettes.
+.TP
+.B EGA
+The sixteen TempleOS boots with, byte for byte.
+This is the palette that was written out as a literal in each port before
+this module existed, so a claim that a port renders what its HolyC
+rendered is still checkable: set
+.B EGA
+and the pixels are the ones that were there.
+.TP
+.B RICH
+The same sixteen meanings, spent on a display that is not an EGA DAC.
+Every entry keeps its hue and its place in the dim/bright pair, so a port
+draws exactly what it drew and only looks better doing it.
+.B BLACK
+and
+.B WHITE
+are identical to
+.BR EGA 's,
+deliberately: ports mix palette black with
+.B Draw->Black
+in the same frame and a near-black would show as a seam.
+.TP
+.B GREY
+0xFFFF*\fIi\fP/15 in every channel \(em the ramp
+.B Palette.HC
+writes over the registers.
+.PP
+The palette a program starts in comes from
+.BR $grpalette :
+.BR ega ,
+.B grey
+or, unset,
+.BR RICH .
+Each
+.B load
+of the module gets its own register file, so one program cannot disturb
+another's.
+.PP
+.B setcolour
+writes a single register, as
+.B GrPaletteColorSet
+does; after it,
+.B loaded
+returns \-1, because no named palette is in any more.
+.B value
+returns one register as a
+.B Draw
+RGBA word and wraps its index to four bits;
+.B values
+returns a copy of all sixteen;
+.B table
+returns a named palette without loading it; and
+.B name
+returns the index's TempleOS name.
+.B images
+allocates one
+.B Draw->Image
+per register against
+.IR display .
+.SS Colours the registers do not hold
+The remaining functions produce colours that are not in the sixteen, which
+is what the original could not do and faked with dither.
+.PP
+.B shade
+scales a colour by
+.IR lit :
+0 is black, 1 is the colour, 2 is white, and past full brightness the
+excess goes towards white rather than clipping to it.
+This is the term
+.IR draw3d (2)'s
+.B fillpoly3
+already takes.
+.B mix
+interpolates between two colours,
+.I a
+at
+.I t
+= 0 and
+.I b
+at
+.I t
+= 1;
+.B dither
+is the midpoint, which is what a
+.B ROPF_DITHER
+checkerboard of two registers averages to.
+.B ramp
+returns
+.I n
+images running dark to light through a colour, the middle one being the
+colour itself.
+.SH SOURCE
+.B /appl/lib/grpalette.b
+.SH SEE ALSO
+.IR draw-image (2),
+.IR draw3d (2),
+.IR grpalettetest (1),
+.IR temple (1)
+.SH BUGS
+A colour is a 32-bit RGBA word, but this tree's
+.B int
+is 64 bits wide at run time while the compiler types a literal of
+16r80000000 or more as
+.BR big .
+A computed white is therefore 4294967295 and a written one is
+.B int
+16rFFFFFFFF, which is \-1: they draw the same, because only the low 32
+bits reach the display, and they compare unequal.
+Every value this module returns is sign-extended so that it compares equal
+to the literal it stands for, but a caller doing its own colour arithmetic
+must do the same.

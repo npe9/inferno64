@@ -537,6 +537,23 @@ See
 A Tk quiz: choose which of four words matches the prompt.
 See
 .IR vocabulary (1).
+.SH ENVIRONMENT
+.TP
+.B grpalette
+Which of TempleOS's palettes the ports draw in \(em
+.BR ega ,
+the sixteen colours the original booted with, byte for byte;
+.BR grey ,
+the ramp
+.B Palette.HC
+writes; or, unset,
+.BR RICH ,
+the same sixteen meanings spent on a display that is not an EGA DAC.
+Set
+.B ega
+to see what the HolyC saw.
+See
+.IR grpalette (2).
 .SH FILES
 .TP
 .B /dis/temple/
@@ -548,6 +565,7 @@ Wm menu entries.
 .B /appl/temple
 .SH SEE ALSO
 .IR draw3d (2),
+.IR grpalette (2),
 .IR ode (2),
 .IR tone (2),
 .IR draw3ddemo (1),

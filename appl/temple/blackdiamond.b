@@ -38,6 +38,8 @@ include "tone.m";
 
 include "scorestore.m";
 	scorestore: Scorestore;
+include "grpalette.m";
+	grpal: Grpalette;
 
 Blackdiamond: module
 {
@@ -113,6 +115,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	grpal = load Grpalette Grpalette->PATH;
 	math = load Math Math->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
@@ -134,7 +137,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		font = Font.open(disp, "/fonts/lucida/unicode.8.font");
 	black = disp.color(Draw->Black);
 	white = disp.color(Draw->White);
-	red = disp.color(int 16rAA0000FF);	# TempleOS RED
+	red = disp.color(grpal->value(Grpalette->RED));	# TempleOS RED
 	for(n := 1; n <= 9; n++){
 		sprites[n] = disp.open(sys->sprint("/icons/temple/blackdiamond_%d.bit", n));
 		masks[n] = disp.open(sys->sprint("/icons/temple/blackdiamond_%d.mask", n));

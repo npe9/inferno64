@@ -42,38 +42,29 @@ include "wmclient.m";
 	Window: import wmclient;
 
 include "keyboard.m";
+include "grpalette.m";
+	grpal: Grpalette;
 
 Palette: module
 {
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
-COLORS_NUM: con 16;
-
-# ST_COLORS
-names := array[] of {
-	"BLACK", "BLUE", "GREEN", "CYAN", "RED", "PURPLE", "BROWN", "LTGRAY",
-	"DKGRAY", "LTBLUE", "LTGREEN", "LTCYAN", "LTRED", "LTPURPLE",
-	"YELLOW", "WHITE"
-};
-# the palette as it starts
-dflt := array[] of {
-	int 16r000000FF, int 16r0000AAFF, int 16r00AA00FF, int 16r00AAAAFF,
-	int 16rAA0000FF, int 16rAA00AAFF, int 16rAA5500FF, int 16rAAAAAAFF,
-	int 16r555555FF, int 16r5555FFFF, int 16r55FF55FF, int 16r55FFFFFF,
-	int 16rFF5555FF, int 16rFF55FFFF, int 16rFFFF55FF, int 16rFFFFFFFF
-};
+COLORS_NUM: con Grpalette->COLORS;
 
 win: ref Window;
 font: ref Font;
 d: ref Display;
 pal: array of ref Image;
 stage := 0;			# 0 = as shipped, 1 = grey ramp, 2 = WHITE restored
+startpal := Grpalette->RICH;	# whichever palette the session started in
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	grpal = load Grpalette Grpalette->PATH;
+	startpal = grpal->loaded();
 	wmclient = load Wmclient Wmclient->PATH;
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
@@ -110,21 +101,19 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	}
 }
 
+# GrPaletteColorSet, for real.  This port used to keep its own copy of the
+# sixteen registers and paint from that; now it writes grpalette(2)'s, which
+# is what the demo is actually about - the drawing does not change, the
+# registers underneath it do.
 setpalette(st: int)
 {
-	pal = array[COLORS_NUM] of ref Image;
-	for(i := 0; i < COLORS_NUM; i++){
-		c := dflt[i];
-		if(st >= 1){
-			# j=0xFFFF*i/(COLORS_NUM-1), as a grey
-			j := 16rFFFF * i / (COLORS_NUM - 1);
-			g := j >> 8;
-			c = (g << 24) | (g << 16) | (g << 8) | 16rFF;
-		}
-		if(st == 2 && i == 15)
-			c = int 16rFFFFFFFF;	# GrPaletteColorSet(WHITE,...)
-		pal[i] = d.color(c);
+	case st {
+	0 =>	grpal->set(startpal);
+	1 =>	grpal->set(Grpalette->GREY);	# j=0xFFFF*i/15 in every channel
+	2 =>	grpal->set(Grpalette->GREY);
+		grpal->setcolour(Grpalette->WHITE, int 16rFFFFFFFF);
 	}
+	pal = grpal->images(d);
 }
 
 redraw()
@@ -141,7 +130,7 @@ redraw()
 		# background, in black, padded either side by two underscores
 		img.draw(Rect((o.x, y), (o.x + 20*8, y + rowh)), pal[i], nil, Point(0,0));
 		img.text(Point(o.x + 8, y + 2), pal[0], Point(0, 0), font,
-			sys->sprint("__%-8s__", names[i]));
+			sys->sprint("__%-8s__", grpal->name(i)));
 	}
 	msg := "the palette as shipped.  A key greys it.";
 	if(stage == 1)

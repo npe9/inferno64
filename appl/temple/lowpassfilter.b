@@ -42,6 +42,8 @@ include "keyboard.m";
 
 include "rand.m";
 	rand: Rand;
+include "grpalette.m";
+	grpal: Grpalette;
 
 Lowpassfilter: module
 {
@@ -59,6 +61,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	grpal = load Grpalette Grpalette->PATH;
 	math = load Math Math->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
@@ -73,12 +76,12 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	font = Font.open(d, "/fonts/temple/temple.font");
 	if(font == nil)
 		font = Font.open(d, "/fonts/lucida/unicode.8.font");
-	white = d.color(int 16rFFFFFFFF);
-	black = d.color(int 16r000000FF);
-	blue = d.color(int 16r0000AAFF);
-	cyan = d.color(int 16r00AAAAFF);
-	red = d.color(int 16rAA0000FF);
-	green = d.color(int 16r00AA00FF);
+	white = d.color(grpal->value(Grpalette->WHITE));
+	black = d.color(grpal->value(Grpalette->BLACK));
+	blue = d.color(grpal->value(Grpalette->BLUE));
+	cyan = d.color(grpal->value(Grpalette->CYAN));
+	red = d.color(grpal->value(Grpalette->RED));
+	green = d.color(grpal->value(Grpalette->GREEN));
 
 	win.reshape(Rect((0, 0), (640, 480)));
 	win.onscreen("place");

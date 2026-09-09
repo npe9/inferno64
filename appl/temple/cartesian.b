@@ -40,6 +40,8 @@ include "wmclient.m";
 
 include "hoc.m";
 	hoc: Hoc;
+include "grpalette.m";
+	grpal: Grpalette;
 
 Cartesian: module
 {
@@ -47,9 +49,6 @@ Cartesian: module
 };
 
 # TempleOS palette entries used here
-BLACK:	con int 16r000000FF;
-RED:	con int 16rAA0000FF;
-WHITE:	con int 16rFFFFFFFF;
 
 win: ref Window;
 red, white, black: ref Image;
@@ -66,6 +65,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	grpal = load Grpalette Grpalette->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	hoc = load Hoc Hoc->PATH;
 	sys->pctl(Sys->NEWPGRP, nil);
@@ -75,9 +75,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	win = wmclient->window(ctxt, "TempleOS Cartesian", Wmclient->Appl);
 	d := win.display;
-	red = d.color(RED);
-	white = d.color(WHITE);
-	black = d.color(BLACK);
+	red = d.color(grpal->value(Grpalette->RED));
+	white = d.color(grpal->value(Grpalette->WHITE));
+	black = d.color(grpal->value(Grpalette->BLACK));
 	font = Font.open(d, "/fonts/temple/temple.font");
 	if(font == nil)
 		font = Font.open(d, "*default*");

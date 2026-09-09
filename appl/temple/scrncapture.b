@@ -35,6 +35,8 @@ include "keyboard.m";
 
 include "env.m";
 	env: Env;
+include "grpalette.m";
+	grpal: Grpalette;
 
 Scrncapture: module
 {
@@ -54,6 +56,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	grpal = load Grpalette Grpalette->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	env = load Env Env->PATH;
 	sys->pctl(Sys->NEWPGRP, nil);
@@ -65,12 +68,12 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	font = Font.open(d, "/fonts/temple/temple.font");
 	if(font == nil)
 		font = Font.open(d, "/fonts/lucida/unicode.8.font");
-	white = d.color(int 16rFFFFFFFF);
-	black = d.color(int 16r000000FF);
-	blue = d.color(int 16r0000AAFF);
-	red = d.color(int 16rAA0000FF);
-	green = d.color(int 16r00AA00FF);
-	yellow = d.color(int 16rFFFF55FF);
+	white = d.color(grpal->value(Grpalette->WHITE));
+	black = d.color(grpal->value(Grpalette->BLACK));
+	blue = d.color(grpal->value(Grpalette->BLUE));
+	red = d.color(grpal->value(Grpalette->RED));
+	green = d.color(grpal->value(Grpalette->GREEN));
+	yellow = d.color(grpal->value(Grpalette->YELLOW));
 
 	user := "inferno";
 	if(env != nil){

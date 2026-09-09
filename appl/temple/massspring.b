@@ -39,6 +39,8 @@ include "rand.m";
 include "ode.m";
 	ode: Ode;
 	ODE, Mass, Spring: import ode;
+include "grpalette.m";
+	grpal: Grpalette;
 
 Massspring: module
 {
@@ -58,6 +60,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	grpal = load Grpalette Grpalette->PATH;
 	math = load Math Math->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
@@ -82,7 +85,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	red = d.color(Draw->Red);
 	black = d.color(Draw->Black);
 	white = d.color(Draw->White);
-	blue = d.color(int 16r0000AAFF);
+	blue = d.color(grpal->value(Grpalette->BLUE));
 
 	reset();
 	win.reshape(Rect((0, 0), (640, 480)));

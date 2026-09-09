@@ -69,6 +69,8 @@ include "tone.m";
 
 include "scorestore.m";
 	scorestore: Scorestore;
+include "grpalette.m";
+	grpal: Grpalette;
 
 Talons: module
 {
@@ -176,6 +178,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	grpal = load Grpalette Grpalette->PATH;
 	math = load Math Math->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
@@ -196,17 +199,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	font = Font.open(d, "/fonts/temple/temple.font");
 	if(font == nil)
 		font = Font.open(d, "/fonts/lucida/unicode.8.font");
-	# exact TempleOS gr_palette_std
-	palette = array[] of {
-		d.color(int 16r000000FF), d.color(int 16r0000AAFF),
-		d.color(int 16r00AA00FF), d.color(int 16r00AAAAFF),
-		d.color(int 16rAA0000FF), d.color(int 16rAA00AAFF),
-		d.color(int 16rAA5500FF), d.color(int 16rAAAAAAFF),
-		d.color(int 16r555555FF), d.color(int 16r5555FFFF),
-		d.color(int 16r55FF55FF), d.color(int 16r55FFFFFF),
-		d.color(int 16rFF5555FF), d.color(int 16rFF55FFFF),
-		d.color(int 16rFFFF55FF), d.color(int 16rFFFFFFFF)
-	};
+	# gr_palette_std, from grpalette(2)
+	palette = grpal->images(d);
 	# ROPF_DITHER checkerboards, screen-anchored 2x2 replicated tiles
 	dith = array[3] of ref Image;
 	dith[0] = mkdither(d, 2, 10);	# GREEN+LTGREEN

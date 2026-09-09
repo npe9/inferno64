@@ -45,6 +45,8 @@ include "tone.m";
 
 include "scorestore.m";
 	scorestore: Scorestore;
+include "grpalette.m";
+	grpal: Grpalette;
 
 Keepaway: module
 {
@@ -113,15 +115,7 @@ Mesh: adt {
 # The TempleOS 16-color palette.
 TBLACK, TBLUE, TGREEN, TCYAN, TRED, TPURPLE, TBROWN, TLTGRAY,
 TDKGRAY, TLTBLUE, TLTGREEN, TLTCYAN, TLTRED, TLTPURPLE, TYELLOW, TWHITE: con iota;
-palrgba := array[] of {
-	int 16r000000FF, int 16r0000AAFF, int 16r00AA00FF, int 16r00AAAAFF,
-	int 16rAA0000FF, int 16rAA00AAFF, int 16rAA5500FF, int 16rAAAAAAFF,
-	int 16r555555FF, int 16r5555FFFF, int 16r55FF55FF, int 16r55FFFFFF,
-	int 16rFF5555FF, int 16rFF55FFFF, int 16rFFFF55FF, int 16rFFFFFFFF
-};
-# The same 16 colors as exact Plan 9 CMAP8 pixel values.
-palcmap := array[] of {0, 36, 42, 44, 160, 162, 164, 170,
-	85, 121, 127, 113, 245, 247, 253, 255};
+palrgba: array of int;
 
 # Sprite raster buffer: covers every mesh (max |xz| radius 40, y -98..10),
 # origin (mesh 0,0 = feet) at (SPROX, SPROY).
@@ -135,10 +129,9 @@ font: ref Font;
 ink: array of ref Image;
 meshes: array of ref Mesh;
 sprimg, sprmask: ref Image;
-sprbuf, maskbuf, zerobuf: array of byte;
+sprbuf, maskbuf, zerobuf, zerobuf3: array of byte;
 zbuf, zclear: array of real;
 rvx, rvy, rvz: array of real;
-lcg := 12345;
 lx, ly, lz: real;			# normalized light source (10000,60000,10000)
 
 objs: array of ref Obj;
@@ -160,6 +153,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	grpal = load Grpalette Grpalette->PATH;
 	math = load Math Math->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
@@ -182,19 +176,19 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	font = Font.open(d, "/fonts/temple/temple.font");
 	if(font == nil)
 		font = Font.open(d, "*default*");
-	ink = array[16] of ref Image;
-	for(i := 0; i < 16; i++)
-		ink[i] = d.color(palrgba[i]);
+	palrgba = grpal->values();
+	ink = grpal->images(d);
 
 	meshes = array[24] of ref Mesh;
-	for(i = 1; i <= 23; i++)
+	for(i := 1; i <= 23; i++)
 		meshes[i] = loadmesh(sys->sprint("/icons/temple/keepaway_%d.mesh", i));
 
-	sprimg = d.newimage(Rect((0, 0), (SPRW, SPRH)), Draw->CMAP8, 0, Draw->Black);
+	sprimg = d.newimage(Rect((0, 0), (SPRW, SPRH)), Draw->RGB24, 0, Draw->Black);
 	sprmask = d.newimage(Rect((0, 0), (SPRW, SPRH)), Draw->GREY8, 0, Draw->Black);
-	sprbuf = array[SPRW*SPRH] of byte;
+	sprbuf = array[SPRW*SPRH*3] of byte;
 	maskbuf = array[SPRW*SPRH] of byte;
 	zerobuf = array[SPRW*SPRH] of {* => byte 0};
+	zerobuf3 = array[SPRW*SPRH*3] of {* => byte 0};
 	zbuf = array[SPRW*SPRH] of real;
 	zclear = array[SPRW*SPRH] of {* => 1e30};
 	rvx = array[128] of real;
@@ -795,7 +789,7 @@ rendersprite(img: ref Image, dstx, dsty: int, m0, m1: ref Mesh, t, ang: real)
 		return;
 	if(m1 == nil || len m1.vx != len m0.vx)
 		m1 = m0;
-	sprbuf[0:] = zerobuf;
+	sprbuf[0:] = zerobuf3;
 	maskbuf[0:] = zerobuf;
 	zbuf[0:] = zclear;
 	c := math->cos(ang);
@@ -829,20 +823,24 @@ rendersprite(img: ref Image, dstx, dsty: int, m0, m1: ref Mesh, t, ang: real)
 			continue;
 		ill := (nx*lx + ny*ly + nz*lz)/nn + 1.0;
 		col := m0.tcol[i] & 15;
-		c0, c1: int;
-		p: real;
-		if(ill < 1.0){
-			c0 = col;
-			c1 = TBLACK;
-			p = ill;
-		}else{
-			c0 = col ^ 8;
-			c1 = col;
-			p = ill - 1.0;
-		}
-		pthresh := int (p * 65536.0);
-		b0 := byte palcmap[c0];
-		b1 := byte palcmap[c1];
+		# The original had sixteen colours and no seventeenth, so
+		# DCLighting faked the shades in between by tossing a coin per
+		# pixel: probability-dither the face colour against black
+		# below full light, and against its bright partner above.  The
+		# colour it was aiming at is the expected value of that coin,
+		# and this display can simply produce it - so the face is
+		# filled with the shade instead of with noise that averages to
+		# it.  The lighting is the same lighting; the dither is gone
+		# because it was a workaround for a palette, not a look.
+		cv: int;
+		if(ill < 1.0)
+			cv = grpal->mix(palrgba[TBLACK], palrgba[col], ill);
+		else
+			cv = grpal->mix(palrgba[col], palrgba[col^8], ill - 1.0);
+		# RGB24 rows are b, g, r.
+		cb := byte ((cv>>8)&16rFF);
+		cg := byte ((cv>>16)&16rFF);
+		cr := byte ((cv>>24)&16rFF);
 
 		det := (x2-x1)*(y3-y1) - (x3-x1)*(y2-y1);
 		if(det == 0.0)
@@ -870,11 +868,10 @@ rendersprite(img: ref Image, dstx, dsty: int, m0, m1: ref Mesh, t, ang: real)
 				if(z >= zbuf[idx])
 					continue;
 				zbuf[idx] = z;
-				lcg = lcg*1664525 + 1013904223;
-				if(((lcg>>8) & 16rFFFF) < pthresh)
-					sprbuf[idx] = b0;
-				else
-					sprbuf[idx] = b1;
+				o := idx*3;
+				sprbuf[o] = cb;
+				sprbuf[o+1] = cg;
+				sprbuf[o+2] = cr;
 				maskbuf[idx] = byte 255;
 			}
 		}

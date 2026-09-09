@@ -62,6 +62,8 @@ include "rand.m";
 include "math/polyfill.m";
 include "math/draw3d.m";
 	draw3d: Draw3d;
+include "grpalette.m";
+	grpal: Grpalette;
 
 Transform: module
 {
@@ -96,6 +98,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	grpal = load Grpalette Grpalette->PATH;
 	math = load Math Math->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
@@ -113,13 +116,13 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	font = Font.open(d, "/fonts/temple/temple.font");
 	if(font == nil)
 		font = Font.open(d, "/fonts/lucida/unicode.8.font");
-	white = d.color(int 16rFFFFFFFF);
-	black = d.color(int 16r000000FF);
-	brown = d.color(int 16rAA5500FF);
-	green = d.color(int 16r00AA00FF);
-	ltgreen = d.color(int 16r55FF55FF);
-	ltgray = d.color(int 16rAAAAAAFF);
-	dkgray = d.color(int 16r555555FF);
+	white = d.color(grpal->value(Grpalette->WHITE));
+	black = d.color(grpal->value(Grpalette->BLACK));
+	brown = d.color(grpal->value(Grpalette->BROWN));
+	green = d.color(grpal->value(Grpalette->GREEN));
+	ltgreen = d.color(grpal->value(Grpalette->LTGREEN));
+	ltgray = d.color(grpal->value(Grpalette->LTGRAY));
+	dkgray = d.color(grpal->value(Grpalette->DKGRAY));
 	tree = d.open("/icons/temple/transform_1.bit");
 	treemask = d.open("/icons/temple/transform_1.mask");
 

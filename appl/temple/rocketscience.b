@@ -39,6 +39,8 @@ include "tone.m";
 
 include "rand.m";
 	rand: Rand;
+include "grpalette.m";
+	grpal: Grpalette;
 
 Rocketscience: module
 {
@@ -52,12 +54,7 @@ PI: con 3.141592653589793;
 # The TempleOS 16-color palette.
 TBLACK, TBLUE, TGREEN, TCYAN, TRED, TPURPLE, TBROWN, TLTGRAY,
 TDKGRAY, TLTBLUE, TLTGREEN, TLTCYAN, TLTRED, TLTPURPLE, TYELLOW, TWHITE: con iota;
-palrgba := array[] of {
-	int 16r000000FF, int 16r0000AAFF, int 16r00AA00FF, int 16r00AAAAFF,
-	int 16rAA0000FF, int 16rAA00AAFF, int 16rAA5500FF, int 16rAAAAAAFF,
-	int 16r555555FF, int 16r5555FFFF, int 16r55FF55FF, int 16r55FFFFFF,
-	int 16rFF5555FF, int 16rFF55FFFF, int 16rFFFF55FF, int 16rFFFFFFFF
-};
+palrgba: array of int;
 
 Mprompt, Marmed, Mfly: con iota;
 
@@ -94,6 +91,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	grpal = load Grpalette Grpalette->PATH;
+	palrgba = grpal->values();
 	math = load Math Math->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	# The device provider, for sprite2d: it sends the rotation or the

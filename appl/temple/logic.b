@@ -32,6 +32,8 @@ include "tk.m";
 
 include "tkclient.m";
 	tkclient: Tkclient;
+include "grpalette.m";
+	grpal: Grpalette;
 
 Logic: module
 {
@@ -65,10 +67,6 @@ SCRW: con 640;
 SCRH: con 480;
 
 # exact TempleOS palette entries used by DrawDesign
-RED: con int 16rAA0000FF;
-GREEN: con int 16r00AA00FF;
-BLACK: con int 16r000000FF;
-WHITE: con int 16rFFFFFFFF;
 
 gatenames := array[] of {
 	"", "", "",
@@ -130,6 +128,7 @@ init(ctxt: ref Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	grpal = load Grpalette Grpalette->PATH;
 	tk = load Tk Tk->PATH;
 	tkclient = load Tkclient Tkclient->PATH;
 	sys->pctl(Sys->NEWPGRP, nil);
@@ -151,10 +150,10 @@ init(ctxt: ref Context, nil: list of string)
 	font = Font.open(display, "/fonts/temple/temple.font");
 	if(font == nil)
 		font = Font.open(display, "*default*");
-	inkred = display.color(RED);
-	inkgreen = display.color(GREEN);
-	inkblack = display.color(BLACK);
-	inkwhite = display.color(WHITE);
+	inkred = display.color(grpal->value(Grpalette->RED));
+	inkgreen = display.color(grpal->value(Grpalette->GREEN));
+	inkblack = display.color(grpal->value(Grpalette->BLACK));
+	inkwhite = display.color(grpal->value(Grpalette->WHITE));
 	for(t := GT_NOT; t <= GT_NOR3; t++){
 		# $SP bins BI=1..10 in Logic.HC, imgs[GT_NOT..GT_NOR3]
 		sprimg[t] = display.open(sys->sprint("/icons/temple/logic_%d.bit", t-2));

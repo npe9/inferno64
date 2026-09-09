@@ -23,6 +23,8 @@ include "tk.m";
 include "wmclient.m";
 	wmclient: Wmclient;
 	Window: import wmclient;
+include "grpalette.m";
+	grpal: Grpalette;
 
 Box: module
 {
@@ -30,8 +32,6 @@ Box: module
 };
 
 # exact TempleOS palette entries used by the original
-RED:	con int 16rAA0000FF;
-WHITE:	con int 16rFFFFFFFF;
 
 win: ref Window;
 red, white: ref Image;
@@ -47,6 +47,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	grpal = load Grpalette Grpalette->PATH;
 	math = load Math Math->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	sys->pctl(Sys->NEWPGRP, nil);
@@ -56,8 +57,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	win = wmclient->window(ctxt, "TempleOS Box", Wmclient->Appl);
 	d := win.display;
-	red = d.color(RED);
-	white = d.color(WHITE);
+	red = d.color(grpal->value(Grpalette->RED));
+	white = d.color(grpal->value(Grpalette->WHITE));
 	win.reshape(Rect((0, 0), (400, 400)));
 	win.onscreen("place");
 	win.startinput("kbd" :: "ptr" :: nil);

@@ -43,6 +43,8 @@ include "tk.m";
 include "wmclient.m";
 	wmclient: Wmclient;
 	Window: import wmclient;
+include "grpalette.m";
+	grpal: Grpalette;
 
 Spriteedit: module
 {
@@ -114,12 +116,7 @@ font: ref Font;
 fonth := 10;
 
 # the exact TempleOS 16-color palette (index = TempleOS color)
-pal := array[] of {
-	int 16r000000FF, int 16r0000AAFF, int 16r00AA00FF, int 16r00AAAAFF,
-	int 16rAA0000FF, int 16rAA00AAFF, int 16rAA5500FF, int 16rAAAAAAFF,
-	int 16r555555FF, int 16r5555FFFF, int 16r55FF55FF, int 16r55FFFFFF,
-	int 16rFF5555FF, int 16rFF55FFFF, int 16rFFFF55FF, int 16rFFFFFFFF,
-};
+pal: array of int;
 BLACK: con 0; PURPLE: con 5; LTGRAY: con 7; DKGRAY: con 8;
 LTBLUE: con 9; LTRED: con 12; YELLOW: con 14; WHITE: con 15;
 
@@ -231,6 +228,8 @@ init(ctxt: ref Draw->Context, argv: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	grpal = load Grpalette Grpalette->PATH;
+	pal = grpal->values();
 	math = load Math Math->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	sys->pctl(Sys->NEWPGRP, nil);

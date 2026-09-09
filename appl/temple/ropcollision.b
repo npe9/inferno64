@@ -47,6 +47,8 @@ include "wmclient.m";
 	Window: import wmclient;
 
 include "keyboard.m";
+include "grpalette.m";
+	grpal: Grpalette;
 
 Ropcollision: module
 {
@@ -69,6 +71,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	grpal = load Grpalette Grpalette->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
@@ -80,9 +83,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	font = Font.open(d, "/fonts/temple/temple.font");
 	if(font == nil)
 		font = Font.open(d, "/fonts/lucida/unicode.8.font");
-	white = d.color(int 16rFFFFFFFF);
-	black = d.color(int 16r000000FF);
-	blue = d.color(int 16r0000AAFF);
+	white = d.color(grpal->value(Grpalette->WHITE));
+	black = d.color(grpal->value(Grpalette->BLACK));
+	blue = d.color(grpal->value(Grpalette->BLUE));
 	spr1 = d.open("/icons/temple/collision_1.bit");
 	msk1 = d.open("/icons/temple/collision_1.mask");
 	spr2 = d.open("/icons/temple/collision_2.bit");

@@ -33,6 +33,8 @@ include "wmclient.m";
 
 include "rand.m";
 	rand: Rand;
+include "grpalette.m";
+	grpal: Grpalette;
 
 Stadium: module
 {
@@ -43,12 +45,7 @@ FANS: con 10;
 BALL_MS: con 200;	# BALL_TIME 0.2s
 
 # the exact TempleOS 16-color palette, index = TempleOS color number
-palette := array[] of {
-	int 16r000000FF, int 16r0000AAFF, int 16r00AA00FF, int 16r00AAAAFF,
-	int 16rAA0000FF, int 16rAA00AAFF, int 16rAA5500FF, int 16rAAAAAAFF,
-	int 16r555555FF, int 16r5555FFFF, int 16r55FF55FF, int 16r55FFFFFF,
-	int 16rFF5555FF, int 16rFF55FFFF, int 16rFFFF55FF, int 16rFFFFFFFF,
-};
+palette: array of int;
 BLACK: con 0;
 RED: con 4;
 
@@ -83,6 +80,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	grpal = load Grpalette Grpalette->PATH;
+	palette = grpal->values();
 	math = load Math Math->PATH;
 	bufio = load Bufio Bufio->PATH;
 	wmclient = load Wmclient Wmclient->PATH;

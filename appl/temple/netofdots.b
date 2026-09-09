@@ -14,6 +14,8 @@ include "tk.m";
 include "wmclient.m";
 	wmclient: Wmclient;
 	Window: import wmclient;
+include "grpalette.m";
+	grpal: Grpalette;
 
 Netofdots: module
 {
@@ -27,6 +29,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	grpal = load Grpalette Grpalette->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
@@ -34,8 +37,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		ctxt = wmclient->makedrawcontext();
 	win = wmclient->window(ctxt, "TempleOS NetOfDots", Wmclient->Appl);
 	d := win.display;
-	red = d.color(int 16rAA0000FF);	# TempleOS RED
-	white = d.color(int 16rFFFFFFFF);	# TempleOS WHITE
+	red = d.color(grpal->value(Grpalette->RED));	# TempleOS RED
+	white = d.color(grpal->value(Grpalette->WHITE));	# TempleOS WHITE
 	win.reshape(Rect((0, 0), (480, 480)));
 	win.onscreen("place");
 	win.startinput("kbd" :: "ptr" :: nil);

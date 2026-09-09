@@ -37,6 +37,8 @@ include "wmclient.m";
 
 include "rand.m";
 	rand: Rand;
+include "grpalette.m";
+	grpal: Grpalette;
 
 Raindrops: module
 {
@@ -74,6 +76,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	grpal = load Grpalette Grpalette->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
 	sys->pctl(Sys->NEWPGRP, nil);
@@ -86,11 +89,11 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	win = wmclient->window(ctxt, "TempleOS RainDrops", Wmclient->Appl);
 	d := win.display;
 	# exact TempleOS palette entries
-	cwhite = d.color(int 16rFFFFFFFF);	# WHITE
-	cltred = d.color(int 16rFF5555FF);	# LTRED
-	cblue = d.color(int 16r0000AAFF);	# BLUE
-	cblack = d.color(int 16r000000FF);	# BLACK
-	cgrey = d.color(int 16rAAAAAAFF);	# mid grey for offscreen classify
+	cwhite = d.color(grpal->value(Grpalette->WHITE));	# WHITE
+	cltred = d.color(grpal->value(Grpalette->LTRED));	# LTRED
+	cblue = d.color(grpal->value(Grpalette->BLUE));	# BLUE
+	cblack = d.color(grpal->value(Grpalette->BLACK));	# BLACK
+	cgrey = d.color(grpal->value(Grpalette->LTGRAY));	# mid grey for offscreen classify
 	font = Font.open(d, "/fonts/temple/temple.font");
 	win.reshape(Rect((0, 0), (640, 480)));	# TempleOS screen size
 	win.onscreen("place");

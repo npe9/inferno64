@@ -28,6 +28,8 @@ include "tk.m";
 include "wmclient.m";
 	wmclient: Wmclient;
 	Window: import wmclient;
+include "grpalette.m";
+	grpal: Grpalette;
 
 Fonted: module
 {
@@ -126,6 +128,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	grpal = load Grpalette Grpalette->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
@@ -135,9 +138,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	d := win.display;
 	display = d;
 	# exact TempleOS palette: YELLOW, BLUE, WHITE
-	yellow = d.color(int 16rFFFF55FF);
-	blue = d.color(int 16r0000AAFF);
-	white = d.color(int 16rFFFFFFFF);
+	yellow = d.color(grpal->value(Grpalette->YELLOW));
+	blue = d.color(grpal->value(Grpalette->BLUE));
+	white = d.color(grpal->value(Grpalette->WHITE));
 	font = Font.open(d, "/fonts/temple/temple.font");
 	glyphs = array[256] of big;
 	glyphs[0:] = sysfont;

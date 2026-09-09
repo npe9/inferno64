@@ -53,6 +53,8 @@ include "keyboard.m";
 
 include "rand.m";
 	rand: Rand;
+include "grpalette.m";
+	grpal: Grpalette;
 
 Wallpaperfish: module
 {
@@ -92,6 +94,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
+	grpal = load Grpalette Grpalette->PATH;
 	math = load Math Math->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
@@ -106,9 +109,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	font = Font.open(d, "/fonts/temple/temple.font");
 	if(font == nil)
 		font = Font.open(d, "/fonts/lucida/unicode.8.font");
-	white = d.color(int 16rFFFFFFFF);
-	cyan = d.color(int 16r00AAAAFF);	# text_attr CYAN<<4+WHITE
-	brown = d.color(int 16rAA5500FF);
+	white = d.color(grpal->value(Grpalette->WHITE));
+	cyan = d.color(grpal->value(Grpalette->CYAN));	# text_attr CYAN<<4+WHITE
+	brown = d.color(grpal->value(Grpalette->BROWN));
 
 	spr = array[TYPES_OF_CRITTERS] of array of ref Image;
 	mask = array[TYPES_OF_CRITTERS] of array of ref Image;
