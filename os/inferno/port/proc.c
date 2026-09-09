@@ -161,9 +161,37 @@ schedinit(void)		/* never returns */
 int
 userureg(Ureg *ur)
 {
-	if(ur == nil || ur->r14 == 0 || ((Proc*)(ur->r14))->kp == 0)
+	/*
+	 * This returned kp, not !kp -- the opposite of what the comment
+	 * above it says and of what the name means.  Every kernel
+	 * process's trap was classified as a trap from user mode, and the
+	 * one process created by plain newproc() was classified as a
+	 * kernel trap.
+	 *
+	 * That is not cosmetic.  kenter() publishes the frame as
+	 * up->dbgreg when it believes a trap came from user mode, and
+	 * trap() then runs the user tail -- notify() and kexit() -- over
+	 * a Ureg sitting on a kernel stack.  Caught in the act on pc64:
+	 *
+	 *   trap: vector 50 changed frame ss 0x0 -> 0xb798
+	 *         (pc 0x208ca6 user 1)
+	 *
+	 * pc 0x208ca6 is linkproc+0x9, a newly created kproc's first
+	 * interrupt after spllo(), and "user 1" is this function saying
+	 * so.  The same boot then died with a general protection
+	 * violation on the IRETQ in _intrr, error code B798 -- the value
+	 * the probe had already reported being written into the frame's
+	 * SS.  Nine earlier captures have the same shape.
+	 *
+	 * A caveat worth leaving here: on a port where kernel and user
+	 * share a code segment, whether any frame should be called a user
+	 * frame is a real question, and "always 0" may be the right
+	 * answer.  This does not settle that.  It makes the function do
+	 * what it says.
+	 */
+	if(ur == nil || ur->r14 == 0)
 		return 0;
-	return 1;
+	return ((Proc*)(ur->r14))->kp == 0;
 }
 
 int
