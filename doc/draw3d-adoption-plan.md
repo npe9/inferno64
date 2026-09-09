@@ -585,7 +585,15 @@ matches the reference" looks like, as against "prove nothing changed".
   *differ* cannot tell those apart, which is why the measure is
   displacement. Against the port's own walk: 11 of 79 inked pixels differ,
   none moves, and `vspritetest` says `zing_1` is pixel-exact, so the new
-  render is the reference.
+  render is the reference. The cost was re-checked after `varoom` (below)
+  showed a raster cache losing to an element walk: at a deliberately heavy
+  **40 arrows a frame**, `redraw()` takes **291us** through the raster
+  cache, **246us** walking the turned element list instead, and **216us**
+  through the private rotate the conversion removed. The same ordering,
+  three ways — but 45us a frame at forty arrows, where `varoom` was
+  5,000us a frame at four hundred bushes. `zing` is left as it is: the
+  difference is below the frame clock's own resolution and the raster is
+  the render `vspritetest` checks.
 - **`rawhide`** rasterised the `.spr` into its walkability shadow map with
   a three-kind loader, so a `circle` would have been visible in the `.bit`
   and invisible to `GrPeek`. `Sprite.pixels()` is exactly that map's shape.
