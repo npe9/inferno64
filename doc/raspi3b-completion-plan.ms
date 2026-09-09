@@ -2764,6 +2764,21 @@ not.  That distinction is the whole reason the word exists, and a boot
 where either turned into
 .CW -OK
 without hardware underneath it would be a lie.
+.PP
+What that baseline does not cover, since 38 of 38 reads like more than
+it is.  It is one configuration, and two checks in it have a second
+branch that configuration never reaches:
+.CW SDHCI-SPEED
+says
+.CW "base 52MHz from capabilities" ,
+so the firmware-clock branch \- the only one hardware will take \- is
+not in these runs; it is verified by the one-off zeroed-capareg boot
+described in the SDHCI chapter, which is not part of the suite.  And
+the 16MB card gives
+.CW "csd v1" ,
+so the v2 decode is covered only by the separate 4GB boot.  Both
+branches are tested and neither is tested here, which is a different
+statement from either "tested" or "untested" and the one that is true.
 .NH 1
 When this is done
 .PP
