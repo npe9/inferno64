@@ -56,6 +56,7 @@ int maxnvm;
  */
 enum { Runqcap = 64 };
 int maxnrunq;
+int nrunqmismatch;	/* MULTICORE INSTRUMENTATION - temporary */
 uvlong vmpasses;	/* MULTICORE INSTRUMENTATION - temporary */
 uvlong vmblocked;
 
@@ -1335,15 +1336,41 @@ vmachine(void*)
 		if(r != nil) {
 			{	/* MULTICORE INSTRUMENTATION - temporary */
 				Prog *q;
-				int n = 0;
+				int n = 0, ready = 0;
 
 				for(q = r; q != nil && n < Runqcap; q = q->link)
 					n++;
+				/*
+				 * The same quantity by an independent path, as
+				 * a control on the walk above.  maxnrunq counts
+				 * the run-queue links; this counts Progs in
+				 * state Pready over isched.head, which is the
+				 * list of every Prog and is maintained by
+				 * different code.  Two counts that agree are a
+				 * measurement; one count is an assertion about
+				 * a data structure.
+				 *
+				 * They should agree, because addrun() sets
+				 * Pready exactly when it links, and delrun()
+				 * and delrunq() unlink.  A persistent
+				 * disagreement would mean one of those paths
+				 * leaves a Prog on the queue in another state
+				 * or in a state without being queued -- which
+				 * is the shape of the delprog() bug fixed
+				 * above, where a freed Prog stayed linked.
+				 */
+				for(q = isched.head; q != nil; q = q->next)
+					if(q->state == Pready)
+						ready++;
 				if(n > maxnrunq){
 					maxnrunq = n;
-					print("runq: %d dis programs ready at once, cpu%d\n",
-						n, m->machno);
+					print("runq: %d dis programs ready at once "
+						"(%d by state), cpu%d\n",
+						n, ready, m->machno);
 				}
+				if(ready != n && nrunqmismatch++ == 0)
+					print("runq: %d linked but %d in Pready -- "
+						"the two counts disagree\n", n, ready);
 			}
 			o = r->osenv;
 			up->env = o;
