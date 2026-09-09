@@ -945,14 +945,22 @@ sprite2d(dst: ref Image, center: Point, img, mask: ref Image,
 }
 
 # The depth test, and the write that goes with it, for one destination
-# pixel.  This is polyfill's filllinez with the epsilon at zero, which is
-# what a flat sprite has: nearer wins, and winning claims the pixel.
+# pixel: nearer OR EQUAL wins, and winning claims the pixel.
+#
+# Equal has to win, and that is not polyfill's filllinez rule.  Sprites
+# here sit at one depth apiece, and TempleOS's GR_Z_ALL puts whole groups
+# of them at the same one, so a strict test would give every overlapping
+# pixel to whichever sprite drew first and make the second invisible -
+# the ordinary case in a scene, not a corner of it.  Equal-wins resolves
+# two sprites at one depth in draw order, the painter convention the
+# callers already have, while a sprite genuinely behind a face still
+# loses.
 zwin(zs: ref Polyfill->Zstate, zv, x, y: int): int
 {
 	if(x < zs.r.min.x || x >= zs.r.max.x || y < zs.r.min.y || y >= zs.r.max.y)
 		return 0;
 	k := (y - zs.r.min.y)*zs.xlen + (x - zs.r.min.x);
-	if(zv >= zs.zbuf0[k])
+	if(zv > zs.zbuf0[k])
 		return 0;
 	zs.zbuf0[k] = zv;
 	zs.zbuf1[k] = zv;

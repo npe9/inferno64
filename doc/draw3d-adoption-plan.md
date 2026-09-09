@@ -456,6 +456,13 @@ What they found, both in the software provider:
   shortcuts, which write whole runs and cannot consult a depth per pixel.
   Only a caller that asks for the test pays for it.
 
+  Equal depth wins, which is *not* `filllinez`'s rule. Every sprite has
+  one depth apiece and `GR_Z_ALL` puts whole groups of them at the same
+  one, so a strict test gives every overlapping pixel to whichever sprite
+  drew first and makes the second invisible — the ordinary case in a
+  scene, not a corner of it. Made strict again, the check reports 0 of
+  256 pixels of the second sprite surviving.
+
 The protocol provider passed all four from the start: the GPU sprite path
 was already right, and the positive control proves its zeros are real
 occlusion rather than dropped sprites.
@@ -475,6 +482,15 @@ Limbo against 0.07 ms for a plain one — so before any port moves, measure
 the GPU fill **in that port's own destination**, because an offscreen
 frame buffer gets no GPU at all and is slower through the protocol
 provider than through the software one.
+
+And the sprites themselves have to go the same way. With `zenable` on,
+the *software* sprite path is now the general per-pixel Limbo loop for
+every sprite, rotated or not, because the run-based shortcuts cannot
+consult a depth. That is the same cost class as the z-buffered fill the
+sort was avoiding. A z-tested sprite is affordable on the protocol
+provider drawing into a window layer; it is not affordable in interpreted
+Limbo at `varoom`'s 512 bushes a frame. What is unblocked is that the
+behaviour now exists to migrate *to* — not that migrating is free.
 
 ### Phase 7 — DC state
 

@@ -107,6 +107,24 @@ tiles and `sunmoon` are checkerboards that read as texture, and TempleOS
 meant them to. A dither standing in for a shade is a workaround for a
 palette and goes; a dither used as a pattern is the picture and stays.
 
+**What the change is worth, measured.** Distinct colours in one rendered
+frame, counted with `readpixels` off the running port at frame 40 — the
+same code path in both cases, one build against the other:
+
+| port | before | after |
+| --- | --- | --- |
+| `shading`, whole window | 40 | 139 |
+| `keepaway`, the lit sprite raster | 7 | 30 |
+
+Two things about how that was taken, both of which cost a run. The count
+has to happen *before* `img.flush(Draw->Flushnow)`: these ports draw
+through the protocol provider, and a present drains the GPU's queue and
+leaves the readback nothing to replay — counting after the flush reported
+2 colours for a frame that plainly had a shaded sphere in it. And
+`temple/smoketest run` does not establish any of this: it spawns `init`
+for 300ms, and every one of these changes lives in the *redraw* path, so
+297/297 says the ports load and initialise and nothing more.
+
 **The trap this work sat on.** A colour is a 32-bit RGBA word, but this
 tree's `int` is 64 bits wide *at run time* (`1<<40` is a perfectly good
 `int` here) while the compiler types a literal of `16r80000000` or more

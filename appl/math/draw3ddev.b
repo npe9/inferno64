@@ -1102,14 +1102,23 @@ zdepth(z: real): int
 	return int (z * ZSCALE);
 }
 
-# polyfill's filllinez with the epsilon at zero, which is what a flat
-# sprite has: nearer wins, and winning claims the pixel.
+# The depth test for a flat sprite: nearer OR EQUAL wins, and winning
+# claims the pixel.
+#
+# Equal has to win, and this is not polyfill's filllinez rule.  Sprites
+# here all sit at one depth apiece, and TempleOS's GR_Z_ALL puts whole
+# groups of them at the same one, so a strict test would give every
+# overlapping pixel to whichever sprite was drawn first and make the
+# second invisible - which is the ordinary case in a game, not a corner.
+# Equal-wins makes two sprites at one depth resolve in draw order, the
+# painter convention the callers already have, while a sprite genuinely
+# behind a face still loses.
 zwin(zs: ref Polyfill->Zstate, zv, x, y: int): int
 {
 	if(x < zs.r.min.x || x >= zs.r.max.x || y < zs.r.min.y || y >= zs.r.max.y)
 		return 0;
 	k := (y - zs.r.min.y)*zs.xlen + (x - zs.r.min.x);
-	if(zv >= zs.zbuf0[k])
+	if(zv > zs.zbuf0[k])
 		return 0;
 	zs.zbuf0[k] = zv;
 	zs.zbuf1[k] = zv;

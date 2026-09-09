@@ -115,6 +115,52 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	fringe(d);
 }
 
+# Two sprites at the SAME depth must resolve in draw order, not by
+# whichever got there first.  Every sprite here has one depth apiece and
+# TempleOS's GR_Z_ALL puts whole groups of them at one, so this is the
+# ordinary case in a scene, not a corner: a strict depth test makes the
+# second sprite of an overlapping pair invisible.  The red one is drawn
+# first and the green one on top of it, in the same place at the same z;
+# all of the green must survive.
+s3samez(d: ref Display, d3: Draw3d, what: string)
+{
+	(green, gmask) := s3sprite(d, 16, 16);
+	red := d.newimage(Rect((0,0),(16,16)), win.image.chans, 0, Draw->Red);
+	p := Draw3d->Vector(0.0, 0.0, -4.0);
+	c := s3frame(d3, 1);
+	d3->sprite3(c, p, red, gmask, 4.0);
+	d3->sprite3(c, p, green, gmask, 4.0);
+	(n, nil, nil, nil, nil) := s3box(d);
+	v := "ok";
+	if(n < 250)
+		v = "SECOND SPRITE LOST";
+	sys->print("draw3dbench:   %s same depth: %d of 256 green pixels survive the red beneath  %s\n",
+		what, n, v);
+}
+
+# sprite3yb is a billboard stand-in: the same sprite as sprite3 with the
+# height taken down to 0.85.  Checked because it is the one member of the
+# family nothing else here calls, and its path changed with the rest.
+s3yb(d: ref Display, d3: Draw3d, what: string)
+{
+	(img, mask) := s3sprite(d, 32, 32);
+	c := s3frame(d3, 0);
+	d3->sprite3(c, Draw3d->Vector(0.0, 0.0, -4.0), img, mask, 8.0);
+	(n0, nil, nil, a0, a1) := s3box(d);
+	h0 := a1-a0+1;
+	c = s3frame(d3, 0);
+	d3->sprite3yb(c, Draw3d->Vector(0.0, 0.0, -4.0), img, mask, 8.0);
+	(n1, nil, nil, b0, b1) := s3box(d);
+	h1 := b1-b0+1;
+	v := "ok";
+	# 0.85 of the plain height, a pixel either way.
+	want := (h0*85)/100;
+	if(n0 == 0 || n1 == 0 || !near(h1, want, 1))
+		v = "NOT SQUASHED";
+	sys->print("draw3dbench:   %s yb: height %d against sprite3's %d (want %d)  %s\n",
+		what, h1, h0, want, v);
+}
+
 # The Sprite3 family, which until now had no caller anywhere in the tree
 # and therefore no evidence.  Four things are checked, each with a metric
 # that can tell the failure from the success rather than merely notice
@@ -150,6 +196,8 @@ sprite3s(d: ref Display)
 		s3scale(d, d3, what);
 		s3rotate(d, d3, what);
 		s3occlude(d, d3, what);
+		s3samez(d, d3, what);
+		s3yb(d, d3, what);
 	}
 }
 

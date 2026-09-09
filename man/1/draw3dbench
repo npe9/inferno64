@@ -159,14 +159,19 @@ Its only caller is
 which draws two sprites beside a cube and looks plausible doing it, so
 until this check existed nothing had established that the family was
 right \- which is not the same as nothing calling it.
-Four properties are reported per provider: that a sprite lands where
+Six properties are reported per provider: that a sprite lands where
 .I project
 says its world point does; that its on-screen width is 16, 32 and 8
 pixels at z of \-4, \-2 and \-8; that
 .I sprite3zb
-at 90 degrees turns a 48\(mu12 sprite into a 12\(mu48 one; and that with
-the z-buffer on, a sprite behind a nearer face contributes no pixels
-while the same sprite in front of it does.
+at 90 degrees turns a 48\(mu12 sprite into a 12\(mu48 one; that
+.I sprite3yb
+comes out 0.85 of the height
+.I sprite3
+gives the same sprite; that with the z-buffer on, a sprite behind a
+nearer face contributes no pixels while the same sprite in front of it
+does; and that of two sprites drawn at the same depth in the same place,
+all of the second survives.
 .PP
 Two of those are shaped the way they are because the obvious shape passes
 for the wrong reason.
@@ -177,6 +182,15 @@ exactly as a resampled one is; only enlarging discriminates.
 And zero occluded pixels is also what a provider that drew no sprite at
 all would report, so the sprite in front is not decoration, it is what
 makes the zero mean occlusion.
+.PP
+The same-depth case is there because every sprite has one depth apiece
+and
+.BR GR_Z_ALL ,
+in the original, puts whole groups of them at the same one.
+A strict depth test therefore makes the second sprite of an overlapping
+pair invisible, which is the ordinary case in a scene and not a corner of
+it; equal-wins resolves them in draw order.
+Made strict again, the check reports 0 of 256 pixels surviving.
 .PP
 The options are:
 .TF "-n frames"
