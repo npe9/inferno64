@@ -20,10 +20,6 @@ include "draw.m";
 	draw: Draw;
 	Display, Font, Image, Point, Rect: import draw;
 
-include "bufio.m";
-	bufio: Bufio;
-	Iobuf: import bufio;
-
 include "math.m";
 	math: Math;
 
@@ -45,6 +41,9 @@ include "scorestore.m";
 	scorestore: Scorestore;
 include "grpalette.m";
 	grpal: Grpalette;
+include "math/vsprite.m";
+	vspr: Vsprite;
+	Sprite: import vspr;
 include "frameclock.m";
 	fclock: Frameclock;
 
@@ -96,15 +95,16 @@ Rdrop: adt {
 	y, dx, dy: int;
 };
 
-# vector/bitmap sprite element (from lib/temple/sprites/*.spr), used to
-# rasterize stamped sprites into the walkability shadow map
-Sel: adt {
-	kind: int;	# 0 line, 1 bitmap
-	col, thk: int;
-	x1, y1, x2, y2: int;
-	w, h: int;
-	data: array of byte;
-};
+# The stamped sprites are read by vsprite(2), which owns the element
+# vocabulary.  This port used to read them with three kinds of its own -
+# color, thick, line and bitmap - and rasterise those into the walkability
+# shadow map by hand, so anything else in the file would have been visible
+# in the .bit and invisible to GrPeek: the cattle would walk through a
+# fence they can see.  The two shipped sprites happen to stay inside that
+# vocabulary, so this is fragility rather than a live bug, but the map now
+# comes from Sprite.pixels(), which is palette indices with TRANSP where
+# nothing drew - exactly the shape the shadow map is - and is the same
+# rasteriser that made the .bit.
 
 win: ref Window;
 tfont: ref Font;
@@ -112,7 +112,8 @@ ink: array of ref Image;
 mapbuf: ref Image;
 pix: array of byte;		# shadow map of palette indices (GrPeek)
 bit, msk, mbit, mmsk: array of ref Image;	# sprites 1..10 + mirrors 1..8
-postelems, cliffelems: array of Sel;
+postelems, cliffelems: ref Sprite;
+display: ref Display;
 cowbins, bullbins, horsebins: array of int;
 anim: array of Animal;
 rx, rw: array of int;
@@ -143,7 +144,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
 	grpal = load Grpalette Grpalette->PATH;
-	bufio = load Bufio Bufio->PATH;
+	vspr = load Vsprite Vsprite->PATH;
 	math = load Math Math->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
@@ -162,6 +163,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	win = wmclient->window(ctxt, "TempleOS RawHide", Wmclient->Appl);
 	d := win.display;
+	display = d;
 	tfont = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(tfont == nil)
 		tfont = Font.open(d, "*default*");
@@ -188,8 +190,11 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	cowbins = array[] of {1, 2, 3, 2};
 	bullbins = array[] of {4, 5, 6, 5};
 	horsebins = array[] of {7, 8, 7, 8};
-	postelems = loadsel("/lib/temple/sprites/rawhide_9.spr");
-	cliffelems = loadsel("/lib/temple/sprites/rawhide_10.spr");
+	if(vspr != nil){
+		vspr->init();
+		(postelems, nil) = vspr->read("/lib/temple/sprites/rawhide_9.spr");
+		(cliffelems, nil) = vspr->read("/lib/temple/sprites/rawhide_10.spr");
+	}
 
 	rx = array[MAPH] of int;
 	rw = array[MAPH] of int;
@@ -767,84 +772,26 @@ mline(x1, y1, x2, y2, thick, ci: int)
 
 # stamp sprite <bin> into the map at (px,py): blit the raster into mapbuf,
 # rasterize the .spr elements into the shadow map for GrPeek
-stamp(bin: int, els: array of Sel, px, py: int)
+stamp(bin: int, spr: ref Sprite, px, py: int)
 {
 	s := bit[bin];
 	if(s != nil)
 		mapbuf.draw(s.r.addpt(Point(px, py)), s, msk[bin], s.r.min);
-	for(k := 0; k < len els; k++){
-		e := els[k];
-		if(e.kind == 0)
-			sline(px+e.x1, py+e.y1, px+e.x2, py+e.y2, e.thk/2, e.col);
-		else for(j := 0; j < e.h; j++)
-			for(i := 0; i < e.w; i++){
-				b := int e.data[j*e.w + i];
-				if(b != 16rFF)
-					splot(px+e.x1+i, py+e.y1+j, b);
-			}
-	}
+	if(spr == nil || display == nil)
+		return;
+	(p, r) := spr.pixels(display);
+	if(p == nil)
+		return;
+	w := r.dx();
+	for(y := 0; y < r.dy(); y++)
+		for(x := 0; x < w; x++){
+			b := int p[y*w + x];
+			if(b != Vsprite->TRANSP)
+				splot(px + r.min.x + x, py + r.min.y + y, b);
+		}
 }
 
 # ---------- sprite element files ----------
-
-loadsel(path: string): array of Sel
-{
-	b := bufio->open(path, Bufio->OREAD);
-	if(b == nil)
-		return array[0] of Sel;
-	l: list of Sel;
-	n := 0;
-	col := WHITE;
-	thk := 1;
-	for(;;){
-		ln := b.gets('\n');
-		if(ln == nil)
-			break;
-		(nt, toks) := sys->tokenize(ln, " \t\n");
-		if(nt < 1)
-			continue;
-		case hd toks {
-		"color" =>
-			if(nt >= 2)
-				col = int hd tl toks;
-		"thick" =>
-			if(nt >= 2)
-				thk = int hd tl toks;
-		"line" =>
-			if(nt >= 5){
-				t := tl toks;
-				e := Sel(0, col, thk, int hd t, int hd tl t,
-					int hd tl tl t, int hd tl tl tl t, 0, 0, nil);
-				l = e :: l;
-				n++;
-			}
-		"bitmap" =>
-			if(nt >= 6){
-				t := tl toks;
-				bx := int hd t;
-				by := int hd tl t;
-				bw := int hd tl tl t;
-				bh := int hd tl tl tl t;
-				hex := hd tl tl tl tl t;
-				data := array[bw*bh] of byte;
-				for(i := 0; i < bw*bh; i++){
-					if(2*i+1 >= len hex)
-						break;
-					data[i] = byte ((hexv(hex[2*i]) << 4) | hexv(hex[2*i+1]));
-				}
-				e := Sel(1, col, thk, bx, by, 0, 0, bw, bh, data);
-				l = e :: l;
-				n++;
-			}
-		}
-	}
-	a := array[n] of Sel;
-	for(i := n - 1; i >= 0; i--){
-		a[i] = hd l;
-		l = tl l;
-	}
-	return a;
-}
 
 hexv(c: int): int
 {
