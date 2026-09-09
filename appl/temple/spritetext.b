@@ -18,6 +18,18 @@ implement Spritetext;
 # so the walk reads lib/temple/sprites/spritetext_1.spr.  The summaries
 # are this port's rendering of SpriteElem2Summary; the code listing is
 # the element list itself, which is the form Sprite2Code would rebuild.
+#
+# The walk goes through vsprite(2), which owns that vocabulary, rather
+# than through a tokeniser of this port's own.  A demo whose whole subject
+# is what a sprite element IS has no business holding a second, smaller
+# opinion of it: the private version knew fifteen of the thirty kinds by
+# name and printed the rest as their raw line, and it could not have said
+# that a line was malformed because it never parsed one.  Reading the
+# element and printing vsprite(2)'s own elemline() for the code listing
+# also makes the listing what Sprite2Code emits — the source that would
+# rebuild this sprite — rather than an echo of the file.  Verified: all
+# 248 shipped .spr round-trip through parseline/elemline with no change
+# of meaning, one of them re-quoted ("'" comes back as '\'').
 
 include "sys.m";
 	sys: Sys;
@@ -34,12 +46,17 @@ include "wmclient.m";
 
 include "keyboard.m";
 
+include "math/vsprite.m";
+	vspr: Vsprite;
+	Elem, Sprite: import vspr;
+
 Spritetext: module
 {
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
 ELEMS: con "/lib/temple/sprites/spritetext_1.spr";
+elems := ELEMS;			# -t may name another
 
 win: ref Window;
 font: ref Font;
@@ -47,11 +64,27 @@ white, black, purple: ref Image;
 lines: list of (int, string);		# (colour index, text)
 top := 0;
 
-init(ctxt: ref Draw->Context, nil: list of string)
+init(ctxt: ref Draw->Context, argv: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
+	vspr = load Vsprite Vsprite->PATH;
+	if(vspr != nil)
+		vspr->init();
+	# -t prints what the window would show and exits.  A demo whose
+	# whole output is text can be diffed, and that is how the move to
+	# vsprite(2) was checked line by line against the walk it replaced.
+	if(tl argv != nil && hd tl argv == "-t"){
+		if(tl tl argv != nil)
+			elems = hd tl tl argv;
+		build();
+		for(l := lines; l != nil; l = tl l){
+			(nil, t) := hd l;
+			sys->print("%s\n", t);
+		}
+		return;
+	}
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
 	if(ctxt == nil)
@@ -94,94 +127,77 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 build()
 {
-	elems := readelems();
 	l: list of (int, string);
+	if(vspr == nil){
+		lines = (0, "cannot load "+Vsprite->PATH) :: nil;
+		return;
+	}
+	(spr, err) := vspr->read(elems);
+	if(spr == nil){
+		lines = (0, "cannot read "+elems+": "+err) :: nil;
+		return;
+	}
 	l = (1, "**** LINE SUMMARIES ****") :: l;
-	for(e := elems; e != nil; e = tl e)
-		l = (0, summary(hd e)) :: l;
+	for(i := 0; i < len spr.elems; i++)
+		l = (0, summary(spr.elems[i])) :: l;
 	l = (0, "") :: l;
 	l = (1, "**** ENTIRE SPRITE CODE ****") :: l;
-	for(e = elems; e != nil; e = tl e)
-		l = (0, hd e) :: l;
+	for(i = 0; i < len spr.elems; i++)
+		l = (0, vspr->elemline(spr.elems[i])) :: l;
 	lines = rev(l);
 }
 
-readelems(): list of string
+# SpriteElem2Summary: the element kind and its salient numbers.  Every
+# kind vsprite(2) knows has a case here, so a sprite using one this demo
+# has not seen still gets a summary and not its raw line.
+summary(e: ref Elem): string
 {
-	fd := sys->open(ELEMS, Sys->OREAD);
-	if(fd == nil)
-		return ("cannot open " + ELEMS) :: nil;
-	buf := array[65536] of byte;
-	n := 0;
-	for(;;){
-		r := sys->read(fd, buf[n:], len buf - n);
-		if(r <= 0)
-			break;
-		n += r;
-		if(n == len buf)
-			break;
+	nm := vspr->kindname(e.kind);
+	case e.kind {
+	Vsprite->SEND =>	return "End";
+	Vsprite->SCOLOR =>	return "Color " + string e.a[0];
+	Vsprite->SDITHER =>	return "Dither Color " + string e.a[0] + "," +
+					string e.a[1];
+	Vsprite->STHICK =>	return "Thick " + string e.a[0];
+	Vsprite->SPLANARSYM =>	return "Planar Symmetry " + pair(e, 0) + "-" + pair(e, 2);
+	Vsprite->STRANSON =>	return "Transformation On";
+	Vsprite->STRANSOFF =>	return "Transformation Off";
+	Vsprite->SSHIFT =>	return "Shift " + pair(e, 0);
+	Vsprite->SPT =>		return "Point " + pair(e, 0);
+	Vsprite->SPOLYPT =>	return "PolyPoint " + string e.a[0] + " steps from " +
+					pair(e, 1);
+	Vsprite->SLINE =>	return "Line " + pair(e, 0) + "-" + pair(e, 2);
+	Vsprite->SARROW =>	return "Arrow " + pair(e, 0) + "-" + pair(e, 2);
+	Vsprite->SPOLYLINE =>	return "PolyLine " + string (len e.pts/2) + " points";
+	Vsprite->SRECT =>	return "Rect " + pair(e, 0) + "-" + pair(e, 2);
+	Vsprite->SROTRECT =>	return "Rotated Rect " + pair(e, 0) + "-" + pair(e, 2) +
+					" at " + sys->sprint("%g", e.ang);
+	Vsprite->SCIRCLE =>	return "Circle " + pair(e, 0) + " radius " + string e.a[2];
+	Vsprite->SELLIPSE =>	return "Ellipse " + pair(e, 0) + " radii " + pair(e, 2) +
+					" at " + sys->sprint("%g", e.ang);
+	Vsprite->SPOLYGON =>	return "Polygon " + string e.a[4] + " sides at " +
+					pair(e, 0);
+	Vsprite->SBSPLINE2 or Vsprite->SBSPLINE2C or
+	Vsprite->SBSPLINE3 or Vsprite->SBSPLINE3C =>
+				return nm + " " + string (len e.pts/3) + " control points";
+	Vsprite->SFLOOD =>	return "Flood Fill " + pair(e, 0);
+	Vsprite->SFLOODNOT =>	return "Flood Fill Not " + pair(e, 0);
+	Vsprite->SBITMAP =>	return "BitMap " + pair(e, 0) + " " + string e.a[2] +
+					"x" + string e.a[3];
+	Vsprite->SMESH or Vsprite->SSHIFTMESH =>
+				return nm + " " + string e.a[0] + " vertices, " +
+					string e.a[1] + " triangles";
+	Vsprite->STEXT or Vsprite->STEXTBOX or Vsprite->STEXTDIAMOND =>
+				return nm + " " + pair(e, 0) + " " + e.txt;
 	}
-	(nil, ls) := sys->tokenize(string buf[0:n], "\n");
-	out: list of string;
-	for(; ls != nil; ls = tl ls)
-		if(hd ls != "")
-			out = hd ls :: out;
-	return revs(out);
+	return nm;
 }
 
-# SpriteElem2Summary: the element kind and its salient numbers
-summary(e: string): string
+pair(e: ref Elem, i: int): string
 {
-	(n, t) := sys->tokenize(e, " \t");
-	if(n == 0)
-		return "";
-	kind := hd t;
-	t = tl t;
-	case kind {
-	"color" =>	return "Color " + arg(t, 0);
-	"dither" =>	return "Dither Color " + arg(t, 0) + "," + arg(t, 1);
-	"thick" =>	return "Thick " + arg(t, 0);
-	"planarsym" =>	return "Planar Symmetry " + join(t);
-	"pt" =>		return "Point (" + arg(t,0) + "," + arg(t,1) + ")";
-	"line" =>	return "Line (" + arg(t,0) + "," + arg(t,1) + ")-(" +
-				arg(t,2) + "," + arg(t,3) + ")";
-	"arrow" =>	return "Arrow (" + arg(t,0) + "," + arg(t,1) + ")-(" +
-				arg(t,2) + "," + arg(t,3) + ")";
-	"rect" =>	return "Rect (" + arg(t,0) + "," + arg(t,1) + ")-(" +
-				arg(t,2) + "," + arg(t,3) + ")";
-	"circle" =>	return "Circle (" + arg(t,0) + "," + arg(t,1) +
-				") radius " + arg(t,2);
-	"ellipse" =>	return "Ellipse (" + arg(t,0) + "," + arg(t,1) + ")";
-	"floodfill" =>	return "Flood Fill (" + arg(t,0) + "," + arg(t,1) + ")";
-	"floodfillnot" => return "Flood Fill Not (" + arg(t,0) + "," + arg(t,1) + ")";
-	"text" =>	return "Text (" + arg(t,0) + "," + arg(t,1) + ") " +
-				join(tl tl t);
-	"bitmap" =>	return "BitMap (" + arg(t,0) + "," + arg(t,1) + ") " +
-				arg(t,2) + "x" + arg(t,3);
-	"mesh" =>	return "Mesh " + arg(t,0) + " vertices, " + arg(t,1) +
-				" triangles";
-	}
-	return kind + " " + join(t);
-}
-
-arg(t: list of string, i: int): string
-{
-	for(; i > 0 && t != nil; i--)
-		t = tl t;
-	if(t == nil)
-		return "?";
-	return hd t;
-}
-
-join(t: list of string): string
-{
-	s := "";
-	for(; t != nil; t = tl t){
-		if(s != "")
-			s += " ";
-		s += hd t;
-	}
-	return s;
+	if(i+1 >= len e.a)
+		return "(?,?)";
+	return "(" + string e.a[i] + "," + string e.a[i+1] + ")";
 }
 
 redraw()
@@ -218,10 +234,3 @@ rev(l: list of (int, string)): list of (int, string)
 	return r;
 }
 
-revs(l: list of string): list of string
-{
-	r: list of string;
-	for(; l != nil; l = tl l)
-		r = hd l :: r;
-	return r;
-}

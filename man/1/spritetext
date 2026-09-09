@@ -3,6 +3,12 @@
 spritetext \- read a sprite as text
 .SH SYNOPSIS
 .B temple/spritetext
+[
+.B -t
+[
+.I file
+]
+]
 .SH DESCRIPTION
 .I SpriteText
 is a port of the TempleOS
@@ -14,6 +20,33 @@ It runs under
 A sprite is a queue of drawing elements, and this walks one twice: first
 printing a one-line summary of every element, then listing the whole
 thing as the code that would rebuild it.
+.PP
+The walk is
+.IR vsprite (2)'s,
+not one of this program's own.
+A demo whose subject is what a sprite element is should not hold a second
+opinion of the vocabulary, and the one it used to hold was smaller: it
+knew fifteen of the thirty kinds and printed the rest as their raw line,
+so a
+.B polypt
+summarised itself as five hundred bytes of hex.
+It also could not tell a malformed element from a well formed one,
+having never parsed either.
+The code listing is
+.IR vsprite (2)'s
+.B elemline
+of each element, which makes it what
+.I Sprite2Code
+emits \(em the source that would rebuild this sprite \(em rather than an
+echo of the file.
+.PP
+.B -t
+prints what the window would show and exits, on a
+.I file
+of your choosing or on the demo's own sprite.
+That is how the change above was checked: of the 39 lines, the code
+listing is identical and two summaries differ, both of them the kinds
+the old walk had no case for.
 .PP
 The controls are:
 .TF "any key"
@@ -29,4 +62,9 @@ Exit
 .SH SEE ALSO
 .IR temple (1),
 .IR spriteedit (1),
+.IR vsprite (2),
 .IR wm (1)
+.SH BUGS
+.B -t
+prints the summaries and the code listing and nothing else, so it says
+nothing about the window, the scrolling or the colours the window uses.
