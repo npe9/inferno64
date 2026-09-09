@@ -2371,6 +2371,24 @@ runnable interpreter waited on the lock.  Across the 94 boots of a
 .CW "-smp 2"
 that reached the report: minimum 57.2%, median 76.9%, maximum 96.2%.
 .PP
+And the depth says more than the fraction.  The counter began as a
+boolean \(em was anyone waiting \(em which rested on
+.CW vmlock.head
+meaning "processes blocked in
+.CW qlock(&vmlock) "
+and would have read plausibly whether or not it did.  Walking the chain
+checks that (
+.CW qlock()
+appends through
+.CW up->qnext
+and sleeps the process, so every entry must be in
+.CW Queueing ;
+the check is silent) and counts the waiters.  On virtarm64 it reaches
+3.  So at the moment the scheduler looks, as many as three interpreters
+are queued behind the one global lock \(em which is what a per-executor
+register file would release, and a stronger claim than "one was
+waiting".
+.PP
 At the median, three quarters of scheduler passes are taken with a
 runnable interpreter blocked.  That is the justification for Phase 1b
 and Phase 5, in numbers, on the workload this branch can run today \(em
