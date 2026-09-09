@@ -228,15 +228,18 @@ notefree(void *v, uintptr pc)
 		 * This tested M against nil and H and then dereferenced
 		 * M->m, which faulted here at notefree+0xb8: the bad value
 		 * is a non-canonical pointer on an otherwise intact Modlink,
-		 * so nil and H both say "fine".  modlinkok() (dis.c) is the
-		 * check that matches the evidence, and modstatus() uses the
-		 * same one.
+		 * so nil and H both say "fine".  modlinkmod() (dis.c) is the
+		 * check that matches the evidence; it returns the Module it
+		 * validated rather than a yes/no, so the pointer checked and
+		 * the pointer used are the same load.  modstatus() does the
+		 * same.
 		 */
 		{
-			extern int modlinkok(Modlink*);
+			extern Module* modlinkmod(Modlink*);
+			Module *mod;
 
-			freehist[i].mname = (xp != nil && modlinkok(xp->reg.M))
-				? xp->reg.M->m->name : nil;
+			mod = (xp != nil) ? modlinkmod(xp->reg.M) : nil;
+			freehist[i].mname = (mod != nil) ? mod->name : nil;
 		}
 	}
 	freehistn++;

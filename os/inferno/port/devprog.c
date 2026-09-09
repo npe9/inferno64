@@ -826,7 +826,9 @@ modstatus(REG *r, char *ptr, int len)
 {
 	Inst *PC;
 	Frame *f;
-	extern int modlinkok(Modlink*);
+	extern Module* modlinkmod(Modlink*);
+	Modlink *ml;
+	Module *mod;
 
 	/*
 	 * Every panic left in this port's 96-boot batches, at -smp 1 and
@@ -882,20 +884,28 @@ modstatus(REG *r, char *ptr, int len)
 		snprint(ptr, len, "[H]");
 		return 0;
 	}
-	if(!modlinkok(r->M)) {
+	/*
+	 * M and its Module are read once, here, and every use below is of
+	 * these locals.  Checking r->M and then dereferencing r->M again
+	 * is two loads of the same memory with a window between them, and
+	 * that window is not theoretical: notefree() faulted in it, after
+	 * its check had passed.
+	 */
+	ml = r->M;
+	mod = modlinkmod(ml);
+	if(mod == nil) {
 		static int said;
 
 		if(!said) {
 			said = 1;
-			print("modstatus: M %#p stale: t %#p m %#p\n",
-				r->M, D2H(r->M)->t, r->M->m);
+			print("modstatus: M %#p stale\n", ml);
 		}
 		snprint(ptr, len, "[?]");
 		return 0;
 	}
-	if(r->M->m->name[0] == '$') {
+	if(mod->name[0] == '$') {
 		f = (Frame*)r->FP;
-		snprint(ptr, len, "%s[%s]", f->mr->m->name, r->M->m->name);
+		snprint(ptr, len, "%s[%s]", f->mr->m->name, mod->name);
 		if(f->mr->compiled)
 			return (WORD)f->lr;
 		return f->lr - f->mr->prog;
@@ -910,14 +920,14 @@ modstatus(REG *r, char *ptr, int len)
 	 * observed -- the buffers are 64 bytes and len is sizeof of
 	 * them, so nothing overflowed -- but it is wrong as written.
 	 */
-	snprint(ptr, len, "%s", r->M->m->name);
-	if(r->M->compiled)
+	snprint(ptr, len, "%s", mod->name);
+	if(ml->compiled)
 		return (WORD)r->PC;
 	PC = r->PC;
 	/* should really check for blocked states */
-	if(PC > r->M->prog)
+	if(PC > ml->prog)
 		PC--;
-	return PC - r->M->prog;
+	return PC - ml->prog;
 }
 
 

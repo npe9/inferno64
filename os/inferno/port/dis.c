@@ -923,14 +923,31 @@ canonical(void *v)
 	return (a >> 47) == 0 || (a >> 47) == 0x1FFFF;
 }
 
-int
-modlinkok(Modlink *ml)
+/*
+ * Returns the Module, not a yes/no, and that matters.  The first
+ * version answered int and the callers then wrote M->m->name -- so the
+ * pointer that was checked and the pointer that was used were two
+ * separate loads of the same memory.  notefree+0xb2 faulted between
+ * them, on this exact port: modlinkok() had already returned true, and
+ * the reload produced a non-canonical value, TYPE 0D with CR2 0, after
+ * the call.  Time of check is not time of use.
+ *
+ * Handing the caller the pointer this function actually validated
+ * removes the second load, and with it the window.
+ */
+Module*
+modlinkmod(Modlink *ml)
 {
+	Module *mod;
+
 	if(ml == nil || ml == H || !canonical(ml))
-		return 0;
+		return nil;
 	if(D2H(ml)->t != &Tmodlink)
-		return 0;
-	return ml->m != nil && canonical(ml->m);
+		return nil;
+	mod = ml->m;
+	if(mod == nil || !canonical(mod))
+		return nil;
+	return mod;
 }
 
 void
