@@ -274,7 +274,6 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	}
 	BTN_Y = HINT_Y + 4*FONTH;
 	ECHO_Y = BTN_Y + 24;
-	echow = (GRW - 8)/FONTW - 1;
 	pal := grpal->values();
 	ink = array[16] of ref Image;
 	for(i := 0; i < 16; i++)
@@ -291,6 +290,10 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	win.reshape(Rect((0, 0), (GRW, GRH)));
 	win.onscreen("place");
 	win.startinput("kbd" :: "keyup" :: "ptr" :: nil);
+	# after the window exists, because the pane is narrower than what
+	# reshape asked for by whatever the border and title take
+	if(win.image != nil)
+		echow = (win.image.r.dx() - 8)/FONTW - 1;
 
 	ticks := chan of int;
 	spawn fclock->ticker(ticks, 60);	# 60fps: winmgr.fps is ~30 in TempleOS

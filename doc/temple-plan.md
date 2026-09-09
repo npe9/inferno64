@@ -571,6 +571,17 @@ shadow-map dump. The rule that would have caught all three: **drive the
 check through the same entry point production uses, with the same bounds
 production has.**
 
+The echo pane's wrap column comes from the pane too, computed after the
+window exists rather than from `GRW` before it does; at 638 wide it is the
+same 104 columns either way, and at a 798-wide pane it follows to 130 with
+every screen still clean, which is the positive control on the
+derivation. The other `GRW`/`GRH` uses left in the port were checked and
+are right: the staff lines are drawn `0` to `GRW` and *clip*, so they span
+whatever the pane is rather than stopping short, and the scroll trigger at
+`GRW-64` is a margin in the same direction. A constant that is never
+smaller than the pane is safe for a span and unsafe for a position — which
+is exactly the difference between those and the two that were wrong.
+
 `vsprite(2)` keeps the 8x8 too: a sprite's `text` element is part of the
 asset and is compared against the `.bit` the extractor rasterised with
 that font — `vspritetest` is still 57/57, which is the check that the
