@@ -20084,3 +20084,70 @@ with the nested path summing to the same 40 bytes from the
 .CW R14
 slot.  So this is corrupted frame contents, not the arithmetic changed
 by the interrupt fix.  Two samples; no theory offered.
+.NH 2
+The contradiction resolves against the guard
+.PP
+A second probe faulted the same way, and that settled it.
+.CW notefree+0xb8
+\(em os/inferno/port/alloc.c's freehist ring, reading
+.CW xp->reg.M->m->name
+\(em with the same guard shape
+.CW modstatus()
+had:
+.CW M
+tested against nil and
+.CW H ,
+then
+.CW M->m
+dereferenced.
+.PP
+Neither guard can catch what happens.  The captured value is
+.CW 0x00FF53F000E2C3F0 :
+not nil, not
+.CW H ,
+and sitting on a
+.CW Modlink
+whose heap type is intact, so every condition either probe tested
+passes.  What is wrong with it is that it is not a
+.I canonical
+address \(em bits 63:48 are
+.CW 0x00FF ,
+so the sign bits disagree \(em which is exactly why the fault is a
+general protection violation with
+.CW "CR2 0"
+and not a page fault.
+.PP
+That answers the open question of the previous section, and answers it
+against the guard.  It never reported across 192 boots because it asked
+whether the
+.CW Modlink
+was live and whether
+.CW m
+was nil, and in the observed failure both answers are "fine".  So it
+cannot have been what stopped the
+.CW modstatus
+faults, and the zero-in-192 is unexplained rather than explained.  The
+small probability quoted for it argues that something changed; it does
+not argue that this guard was the thing.  Recorded as an open result,
+not as a success.
+.PP
+.CW modlinkok()
+in dis.c is now the shared check for both probes \(em nil,
+.CW H ,
+canonical, live
+.CW Modlink ,
+and a non-nil canonical
+.CW m
+\(em and it is the first version of this check that would catch the
+capture in hand.
+.PP
+One thing the two faults have in common is worth stating on its own.
+Both are in temporary MULTICORE INSTRUMENTATION:
+.CW disdump() Ns 's
+walk, reached from the unconditional
+.CW 40*HZ
+call in portclock.c, and the freehist ring.  Neither is the kernel
+doing its work.  After the interrupt fix, what remains of this port's
+failures is largely the measuring apparatus, which is a much better
+position than it sounds \(em but it does mean the panic counts in these
+batches are counting the instruments as much as the machine.
