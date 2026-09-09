@@ -20621,3 +20621,55 @@ process needs the user tail; pc64 was the outlier in running it.
 virtarm64 was rebuilt with the corrected
 .CW userureg()
 and is unchanged.
+.NH 2
+192 of 192, and how strong that is
+.PP
+With
+.CW userureg()
+corrected, 192 boots at
+.CW "-smp 2"
+.CW ( "etext 0x32d305" ):
+.TS
+box, tab(;);
+l l.
+boots;192
+no panic;192
+cpu1 online;192
+IRETQ faults;0
+ss probes, entry and exit;0
+freetype static-Type reports;0
+collector-invariant firings;0
+modstatus reports;4, all "M is H"
+.TE
+.PP
+The four
+.CW modstatus
+lines are the benign sentinel, which is why the
+.CW H
+case was split from the stale case rather than left sharing a message;
+those boots finished without a panic.
+.PP
+How much weight the zero carries, stated plainly rather than implied.
+Across the batches that ran long enough to reach it, this fault
+occurred 12 times in about 864 boots, a rate near 1.4%.  Zero in 192 at
+that rate has a probability of roughly 0.067 \(em unlikely, not
+impossible.  So the batch on its own is suggestive and not conclusive.
+.PP
+What makes the case is not the batch.  It is that the mechanism was
+observed directly: the probe watched
+.CW ss
+change from 0 to
+.CW 0xb798
+inside
+.CW trap() ,
+named
+.CW "user 1"
+as the reason it was in that code path at all, and the same boot then
+died with
+.CW B798
+as the
+.CW IRETQ
+error code.  The fix removes that path for kernel processes, and the
+probe that caught it is silent across 192 boots.  A clean batch after a
+blind change would prove little; a clean batch after removing a
+mechanism that was watched doing the damage is a different thing.
