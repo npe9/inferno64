@@ -494,8 +494,23 @@ run1() {	# $1 phase, $2 model flag, $3 bench mode, $4 second model flag, $5 key 
 }
 
 run() {		# the same arguments; retries a hang once, and says so
-	run1 "$@"
-	r=$?
+	#
+	# set -e is on, and a bare command that fails ends the script
+	# there and then.  run1 returning 2 is not a failure to be
+	# propagated, it is the thing this function exists to handle.
+	# Without this the retry never ran: the shell exited with 2 in
+	# the middle of a phase printing nothing at all, which is how
+	# it was found -- a whole bench run stopped after the included
+	# phase with no BENCH FAIL line and no explanation.
+	#
+	# The and-or list is what makes the call exempt: a command that
+	# is not the last in one is not subject to errexit.  Bracketing
+	# it with set +e and set -e also works and is worse, because
+	# the set -e at the end turns errexit on whether or not the
+	# caller had it on -- which broke the test written to check
+	# this very function.
+	#
+	run1 "$@" && r=0 || r=$?
 	if [ $r != 2 ]; then
 		return $r
 	fi
@@ -504,8 +519,7 @@ run() {		# the same arguments; retries a hang once, and says so
 	echo "bench: that varies and that passes on its own.  Not diagnosed;"
 	echo "bench: doc/inferno-ports.ms has what is known.  This line being"
 	echo "bench: here at all is the thing to notice."
-	run1 "$@"
-	r=$?
+	run1 "$@" && r=0 || r=$?
 	if [ $r = 2 ]; then
 		echo "BENCH FAIL ($1): the run did not reach the end, twice"
 		return 1

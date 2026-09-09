@@ -21899,12 +21899,108 @@ fault recorded above for
 .CW emu-g
 and it is no better understood.
 .PP
+It has a second face, and the second one is sharper about what is
+wrong.  In one run the
+.CW orphan
+phase failed an assertion rather than hanging: the connection after
+the orphaned one reported
+.CW "ATT transaction timed out" .
+The controller model's log shows that connection working \(em the MTU
+exchange asked and answered, a Read By Group Type asked and answered,
+then a clean disconnect \(em so the answer this side gave up waiting
+for had already arrived.
+.PP
+That timeout is
+.CW Timeout
+in
+.CW appl/lib/bt/att.b ,
+and it is 30000 ms, which is the specification's ATT transaction
+timeout and not a value chosen here to be generous.  So the guest
+stopped for more than thirty seconds while a reply sat waiting.  That
+is not scheduling: the phase passes five times out of five on its own,
+and three out of three with ten spinners loading a sixteen core
+machine, so ordinary starvation does not produce it.  Something inside
+.CW emu
+stops dead for half a minute, and sometimes instead exits without a
+message.  Whether those are one fault or two is not known.
+.PP
+The exit is not a crash: macOS writes no diagnostic report for it, so
+the process leaves by
+.CW exit
+or by a signal nobody reports, not by a fault.  The rate is low and
+uneven \(em the
+.CW included
+phase died once in eight runs on its own and then not once in twelve
+\(em which is enough to make a run of sixty six phases fail somewhere
+more often than not, and not enough to catch it in the act.  Two full
+runs before this work passed with no retry at all, which does not fit
+a rate that high, so either the rate moved or those two were lucky.
+Rebuilding a Dis module changes its layout, and a fault that depends
+on layout would move with it; that is a guess and is written down as
+one rather than tested, because testing it means many long runs to
+tell two low rates apart.
+.PP
+This form is not retried and should not be.  An assertion that failed
+is an answer, and a bench that runs answers again until they change
+means nothing; the retry covers a guest that never reached the end,
+which is a different statement.  The cost is that a run can fail for
+this and the reader has to know it is possible, which is why it is
+written here.
+.PP
 So the bench tries such a phase once more, says loudly that it did,
 and names this as the reason.  A phase that failed an assertion or
 failed its capture is never retried: those are answers, and running
 them again until they change is how a bench stops meaning anything.
 The retry line being printed at all is the thing to notice, and it is
 printed rather than swallowed for that reason.
+.PP
+That retry was written and then did not work, in a way worth
+recording.
+.CW btbench.sh
+runs under
+.CW "set -e" ,
+and the wrapper called
+.CW run1
+as a bare command before reading
+.CW $? .
+A bare command that fails under
+.CW -e
+ends the script there, so the one case the wrapper existed for \(em
+.CW run1
+returning 2 \(em killed the whole run instead of retrying it, in the
+middle of a phase, with no
+.CW "BENCH FAIL"
+line and no explanation at all.  It went unnoticed because the retry
+path had never been reached in a full run until it was: the run that
+found it stopped after
+.CW included
+and exited 2, having printed nothing about why.
+.PP
+A check that reports nothing is the failure this document already
+complains about in the dissector, arrived at from the other side, and
+it was in the machinery added to make the intermittency visible.
+.PP
+The fix is an and-or list \(em
+.CW "run1 \*(lq$@\*(rq && r=0 || r=$?" \(em
+because a command that is not the last in one is not subject to
+errexit.  Bracketing the call with
+.CW "set +e"
+and
+.CW "set -e"
+also works and is worse: the
+.CW "set -e"
+at the end turns errexit on whether or not the caller had it on, which
+is a side effect a function should not have, and which broke the test
+written to check this very function \(em the first case passed and
+the harness then died on the second, because
+.CW run
+had silently re-enabled what the harness had turned off.  Five cases
+are checked against a stubbed
+.CW run1 :
+pass, assertion failure, hang then pass, hang then failure, hang
+twice; that a genuine failure still ends the run under
+.CW -e ;
+and that a hang then pass carries on to the next line.
 .NH 2
 BlueZ, in a container
 .PP
