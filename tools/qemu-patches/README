@@ -374,6 +374,43 @@ The entries below give each in full.
 			and the driver visibly moves from channel 0 to
 			channel 2 on an ordinary boot.
 
+	bcm2835-property, the rest of it
+			SWEPT, and this is the whole result, so that
+			nobody repeats it.  Every remaining tag that
+			tells a guest something about the machine was
+			compared against the model behind it.
+
+			Consistent, checked, nothing to do: GET_ARM_MEMORY
+			and GET_VC_MEMORY both come from the framebuffer
+			device's own vcram_base/vcram_size, so the split
+			a guest is told is the split that exists.
+			GET_BOARD_REVISION cannot disagree with the RAM
+			size either -- raspi.c refuses to start with
+			"Invalid RAM size" when -m does not match what
+			the revision code encodes.  GET_TEMPERATURE says
+			25000 millidegrees and bcm2835_thermal.c reports
+			the ADC reading for 25C, the same number twice.
+			GET_THROTTLED says nothing is throttled, and
+			nothing is.
+
+			Untrue but unobservable, recorded and not
+			patched: GET_CLOCK_STATE answers 0x1 for every
+			clock, so a guest is told every clock is on
+			whatever it has done, and SET_CLOCK_STATE is
+			LOG_UNIMP, so it cannot turn one off to find
+			out.  GET_MAX_CLOCK_RATE and GET_MIN_CLOCK_RATE
+			share the GET_CLOCK_RATE case, so maximum,
+			minimum and current are one number and a guest
+			choosing a rate between the bounds has exactly
+			one choice.  Patch 0019 left that collapse alone
+			-- it changed which number all three report for
+			the UART, not that all three are the same -- and
+			it should not be read as having fixed max/min
+			semantics.  Neither is patched because no model
+			behaviour depends on either answer: there is
+			nothing a guest could do differently that the
+			machine would notice.
+
 	sdhci		NOT a divergence, and this entry used to say it
 			was.  The claim here was that the model is more
 			capable than the part, because hw/sd/sdhci.c
