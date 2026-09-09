@@ -2816,6 +2816,23 @@ right and whose evidence lines are wrong, because
 .CW SDHCI-SPEED-ACCEPTED
 is the same marker whichever branch produced it.
 .PP
+One thing that script found on its first day is worth recording here,
+because it is the chapter above wearing different clothes.  Run
+alongside a QEMU test suite, on a machine with nothing left to give,
+.CW ARMTIMER ,
+.CW ARMTIMER-INTR
+and
+.CW SYSTMR
+all reported
+.CW -FAIL
+for a board that was fine, and the same configuration passed alone a
+minute later.  Host load only ever costs a timed check events, never
+gains it any \- the one-sided error again, arriving one level up, at
+the harness rather than inside the check.  So a failing configuration
+is booted a second time and a run that passes then says it needed to.
+A real regression fails twice; a retry nobody is told about is a suite
+that hides a flake, which is worse than a suite that fails.
+.PP
 That script also carries the two harness bugs this document had to
 correct, fixed once where they cannot recur: it waits six seconds after
 the last marker rather than three, because

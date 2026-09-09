@@ -77,5 +77,32 @@ the model times a transfer against SDCLK.
 
 BASELINES.  One file per configuration, holding the marker set that
 run produces.  They are checked in so that a change to them is a change
-someone had to make and explain, which is the point.  Record with -b,
-but read the log first: -b will happily record a regression.
+someone had to make and explain, which is the point.
+
+Record with -b.  It refuses to write a baseline smaller than the one
+already there, and prints which markers went missing -- a run that
+stopped early produces a subset, and recording a subset is a regression
+written down as the new truth, which is the failure this script exists
+to prevent.  -b -f records it anyway, for when the markers really did
+go away and you mean it.
+
+RETRIES.  Several of these checks time themselves against the system
+timer and compare a count to what the elapsed time predicts.  Host load
+only ever costs them events, never gains them, so a machine that is
+busy elsewhere makes ARMTIMER, ARMTIMER-INTR and SYSTMR report -FAIL
+for a board that is fine.  That is not hypothetical: running this suite
+alongside a qemu test suite produced exactly those three, and the same
+configuration passed on its own a minute later.  It is the one-sided
+error the checks themselves handle by taking a best of several, arriving
+one level up.
+
+So a configuration that fails is booted once more, and a run that passes
+the second time says so -- "on the second boot; the first was starved".
+A real regression fails twice.  A retry that is not reported is a suite
+that hides a flake, which is worse than a suite that fails.
+
+A run fails on three things: a marker set that differs from the
+baseline, a -FAIL marker in it, or a missing evidence line.  It is the
+marker form that is checked, not prose: a check that printed the word
+failure without printing a -FAIL marker would not be caught here, and
+that is the same definition the rest of the tree uses.
