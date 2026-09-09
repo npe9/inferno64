@@ -59,6 +59,65 @@ import sys, struct, bisect, re
 
 NNAME = 8
 
+def readelf(path, want='Tt'):
+	"""Plan 9 symbols out of an ELF-wrapped kernel (7l -H7, riscv likewise).
+
+	These boards are not Plan 9 a.out: the file starts \x7fELF and the
+	reader below sees no magic it knows.  But the ELF is only a loader
+	wrapper -- there is no SHT_SYMTAB, just two PROGBITS and a tiny
+	string table -- and the Plan 9 symbol table sits immediately after
+	the data section, in the ordinary format.  libmach cannot read
+	these at all (no Elf64 support), so without this the arm64 and
+	riscv64 boards have no way to resolve a pc.
+
+	Two things differ from the amd64 case.  The table starts at the end
+	of the data section rather than at a header-derived offset, and
+	values are 4 bytes, not 8 -- there is no Exec header here to carry
+	HDR_MAGIC, and the observed encoding is 4-byte big-endian.  Both
+	were read off the bytes: the first entry decodes as
+	"40 0e 84 c8 | d4 | etext\\0", value 0x400e84c8, which is exactly
+	the text section's addr plus its size.  Confirmed the same way as
+	the a.out path -- the table is consumed with zero bytes left over.
+	"""
+	d = open(path, 'rb').read()
+	if d[:4] != b'\x7fELF' or d[4] != 2:
+		return None
+	e = '<' if d[5] == 1 else '>'
+	shoff, = struct.unpack_from(e+'Q', d, 0x28)
+	shentsize, shnum, shstrndx = struct.unpack_from(e+'HHH', d, 0x3a)
+	secs = [struct.unpack_from(e+'IIQQQQIIQQ', d, shoff + i*shentsize)
+		for i in range(shnum)]
+	prog = [x for x in secs if x[1] == 1]		# SHT_PROGBITS
+	if len(prog) < 2:
+		return None
+	text, data = prog[0], prog[1]
+	tbase, tsize = text[3], text[5]
+	st = d[data[4] + data[5]:shoff]
+	out, i = [], 0
+	while i + 5 <= len(st):
+		val = int.from_bytes(st[i:i+4], 'big'); i += 4
+		t = st[i]; i += 1
+		if (t & 0x80) == 0:
+			name = st[i:i+NNAME].split(b'\0')[0].decode('latin1', 'replace')
+			i += NNAME + 3
+			typ = chr(t)
+		else:
+			typ = chr(t & ~0x80)
+			if typ in 'zZ':
+				i += 1
+				while i + 2 <= len(st) and st[i:i+2] != b'\0\0':
+					i += 2
+				i += 2
+				continue
+			j = st.find(b'\0', i)
+			if j < 0:
+				break
+			name = st[i:j].decode('latin1', 'replace'); i = j + 1
+		if typ in want:
+			out.append((val, name))
+	out.sort()
+	return out, d, tbase, tsize
+
 def readsyms(path, want='Tt'):
 	"""Decode the symbol table.  want is the set of type letters kept."""
 	d = open(path, 'rb').read()
@@ -99,7 +158,13 @@ class Resolver:
 	def __init__(self, path):
 		self.path = path
 		self._kd = 0
-		fns, self.d, self.entry, self.text = readsyms(path)
+		self.elf = False
+		r = readelf(path)
+		if r is not None:
+			fns, self.d, self.entry, self.text = r
+			self.elf = True
+		else:
+			fns, self.d, self.entry, self.text = readsyms(path)
 		self.fns = [(a, n) for a, n in fns if self.entry <= a < self.entry + self.text]
 		self.addrs = [a for a, _ in self.fns]
 		self.md = None
