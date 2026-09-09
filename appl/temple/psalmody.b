@@ -2,7 +2,7 @@ implement Psalmody;
 
 # TempleOS Apps/Psalmody — staff-notation music editor with JukeBox
 #   (Psalmody.HC, PsalmodyMain.HC, PsalmodyDraw.HC, PsalmodyCtrls.HC,
-#    PsalmodyFile.HC, JukeBox.HC) — Wmclient+Draw, temple font, tone(2).
+#    PsalmodyFile.HC, JukeBox.HC) — Wmclient+Draw, 6x10 font, tone(2).
 # Sprites: /icons/temple/psalmodydraw_1..17 (durations 1-5, buttons 6-11,
 #   clef/cursor 12, sharp 13, flat 14, dot 15, triplet 16, piano kbd 17).
 # GAP: Shift-ESC abort is 'Q' (shift state not visible in the kbd stream);
@@ -1456,7 +1456,7 @@ redraw()
 		if(mode == MMENU)
 			drawmenu(img, o);
 		if(mode == MWORD)
-			gprint(img, o, 8, GRH-12, BLACK,
+			gprint(img, o, 8, img.r.dy()-FONTH-2, BLACK,
 				sys->sprint("Word(\"%s\"):%s_", wordword(), wordbuf));
 	}
 	img.flush(Draw->Flushnow);
@@ -1670,7 +1670,13 @@ drawecho(img: ref Image, o: Point)
 	n := 0;
 	for(l := elines; l != nil; l = tl l)
 		n++;
-	avail := (GRH - 8 - ECHO_Y)/FONTH - 1;
+	# The pane is not GRH: a window manager's border and title take some,
+	# and this counted 25 lines into 456 pixels of a 640x480 request.  The
+	# bottom line is reserved for the MWORD prompt, which is drawn last
+	# and over everything.
+	avail := (img.r.dy() - FONTH - 2 - ECHO_Y)/FONTH - 1;
+	if(avail < 1)
+		avail = 1;
 	while(n > avail){
 		# drop oldest lines from display
 		nl: list of string;

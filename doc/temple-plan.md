@@ -539,17 +539,37 @@ column of text and "Stacatto" is printed a letter at a time down the
 tempo dial. At 6x10 the buttons land at 184 and the echo at 208, which is
 where it always was.
 
-*How it was checked, and the control that mattered.* Every text box each
-screen draws is recorded and tested for overlap and for leaving the
-window: main 35 boxes, menu 20, help 19, jukebox 24, reward 10, **0
-problems**. The first version of that check ran `drawhints`, `drawbuttons`
-and `drawecho` as three separate screens — so putting `BTN_Y` back to the
-old `HINT_Y+32` changed nothing it could see, because the three things
-that collide were never on the same screen. Merged into one screen, the
-same control reports the fourth hint line running into the button label:
-`"Change duration or set word" at 72,174 and "Octave 4  " at 144,182`.
-That is the second blind instrument this work has produced, after
-`rawhide`'s shadow-map dump.
+*How it was checked, and the two blind instruments on the way there.*
+Every text box each screen draws is recorded and tested for overlap and
+for leaving the pane: main 61 boxes, word 62, menu 59, help 19, jukebox
+24, reward 10, **0 problems**. The menu additionally reports 23 overlaps
+when it is opened over a full echo pane, which is the design — it is a
+popup, it fills a white rect and paints over what is beneath; with the
+pane empty its own geometry is clean.
+
+Getting there took two corrections to the *instrument*, both the same
+mistake: it was pointed at a subset of what had changed.
+
+1. It called `drawhints`, `drawbuttons` and `drawecho` as three separate
+   screens. Putting `BTN_Y` back to the old `HINT_Y+32` then changed
+   nothing it could see, because the three things that collide were never
+   on one screen. Merged, the same control reports the fourth hint line
+   running into the button label: `"Change duration or set word" at
+   72,174 and "Octave 4  " at 144,182`.
+2. It called those sub-functions at all, and bounded against the
+   constants `GRW`/`GRH`. The pane a `640x480` request actually gets is
+   **638x456** — the window's own border and title take the rest — and
+   `redraw()` draws the staff, the note box, the tools, the meter and the
+   tempo dial too. Driving `redraw()` per mode against `img.r.dy()` found
+   two real overflows, both older than this font work: the echo pane sized
+   itself `(GRH - 8 - ECHO_Y)/FONTH - 1`, which is 25 lines reaching y=458
+   in 456 pixels, and the `MWORD` prompt sat at `GRH-12` = 468. Both come
+   from the pane now, with the bottom line reserved for the prompt.
+
+That is three blind instruments in one sitting, counting `rawhide`'s
+shadow-map dump. The rule that would have caught all three: **drive the
+check through the same entry point production uses, with the same bounds
+production has.**
 
 `vsprite(2)` keeps the 8x8 too: a sprite's `text` element is part of the
 asset and is compared against the `.bit` the extractor rasterised with
