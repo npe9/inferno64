@@ -21938,7 +21938,22 @@ a rate that high, so either the rate moved or those two were lucky.
 Rebuilding a Dis module changes its layout, and a fault that depends
 on layout would move with it; that is a guess and is written down as
 one rather than tested, because testing it means many long runs to
-tell two low rates apart.
+tell two low rates apart.  Docker running on the machine was the other
+guess and it is refuted: a run with the daemon stopped failed the same
+way, and the run that finally passed had it stopped too, so that is
+coincidence and not cause.
+.PP
+With the retry working the bench completes again.  The run that
+proved it went to 67 phases \(em 66 and the one done twice \(em with
+.CW "BENCH RETRY (hfpnoslc)"
+in the middle of it, 62 captures read by
+.CW tshark
+without a fault, 9979 packets, and
+.CW "BENCH PASS"
+at the end.  That is the first whole run in which the retry did the
+thing it was added for, which is also the first evidence that it
+works: the stub tests say the control flow is right, and only a real
+run says the case ever arises.
 .PP
 This form is not retried and should not be.  An assertion that failed
 is an answer, and a bench that runs answers again until they change
