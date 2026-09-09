@@ -233,6 +233,35 @@ Four answers came back, and they are not all the same kind.
 	  rejected it would be stricter than the part rather than
 	  truer to it.
 
+THE SHAPE THIS KEPT TAKING.  Four of the findings above are the same
+bug wearing different hardware, and naming it is worth more than the
+four fixes, because it is a question anybody can ask of any driver:
+
+	the device is asked to describe itself, and the answer is
+	discarded.
+
+	- usbdwc.c read the DWC2 FIFO RAM size out of GHWCFG3 and
+	  ended the sequence with USED(n, ptx) -- the compiler being
+	  told to stop complaining about a variable nothing looks at
+	  -- while laying out three FIFOs to a fixed plan.
+	- dmabcm.c did not ask which DMA channels were the ARM's and
+	  took channel 0, which is the VideoCore's.
+	- sdhcibcm.c took its SD base clock from a capabilities field
+	  that reads zero on the real part, and had a guard for that
+	  which would have silently left the card at 400kHz.
+	- uartvirtarm64.c never programmed the baud divisors at all,
+	  so uart->baud reported a rate nothing had set.
+
+Every one of them worked perfectly under emulation, because a model
+that does not enforce a constraint cannot punish a driver for ignoring
+it.  Every one is a fault on hardware, and three of the four fail
+silently there -- corrupted data or a wrong rate, not an error.
+
+The tell is syntactic and easy to grep for: a value read from a device
+and then not used in a comparison.  USED() and a discarded return are
+the loudest forms.  A driver that asks and does not look is worse than
+one that never asked, because the code reads as though it checked.
+
 The entries below give each in full.
 
 	pl011		FIXED by 0018.  QEMU's PL011 modelled no transmit
