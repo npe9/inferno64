@@ -2485,6 +2485,56 @@ observed 1.4% rate zero in 192 has probability about 0.067, so the
 weight is on the mechanism having been watched rather than on the
 batch.  See doc/inferno-ports.ms.
 .PP
+Two more failures surfaced and were fixed after that, both found with
+the cloud-port session and each of us wrong first.  The
+.CW IRETQ
+corruption was not
+.CW notify()
+but
+.CW kprocchild()
+starting every kproc's stack inside the
+.CW Tos :
+pc64 alone points
+.CW USTKTOP
+at a kernel stack,
+.CW userinit()
+reserves that region and
+.CW kprocchild()
+did not, so
+.CW kexit() Ns 's
+accounting landed on the interrupt frame \(em the captures held
+.CW kcycles ,
+.CW pcycles
+and, in the top word,
+.CW pid .
+And the FP regression that followed correcting
+.CW userureg()
+was not fpu.c's own branch, whose flags are write-only here, but a bare
+.CW "astate == FPinit"
+in
+.CW fpurestore() ,
+the second of a pair of unmasked comparisons in a file that masks
+everywhere else.
+.PP
+192 boots at
+.CW "-smp 2"
+with all four fixes: no panic, no
+.CW "math emu" ,
+no
+.CW IRETQ ,
+cpu1 online in all 192, and every probe silent but for seven benign
+.CW "M is H"
+sentinels.
+.CW "-smp 4"
+brings up four processors.  virtarm64 reaches an interactive shell with
+DIS-STRESS-OK, VIRT-OK, ROOT-CMDS-OK and CHANTEST-OK.
+.PP
+The contention figure on that batch is min 62.9%, median 82.9%, max
+96.1% over 192 boots, against a median of 76.9% measured earlier over
+94.  The kernel is not the same one, so the two are not a controlled
+comparison and the difference is not interpreted here; both say the
+same thing about where the work is.
+.PP
 So pc64 has no known remaining failure.  The next work is Phase 5, and
 it is no longer being done around a crash.
 .NH 1
