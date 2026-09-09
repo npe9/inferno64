@@ -376,6 +376,33 @@ l3occlude(d: ref Display, d3: Draw3d, what: string)
 		what, behind, front, v);
 }
 
+# Two lines at one depth crossing each other: all of the second must
+# survive where they overlap.  temple/lattice draws a stroke as a ribbon
+# of overlapping micro-steps all on one layer, so a strict depth test
+# keeps the first of every overlap and throws the rest away - the line
+# equivalent of the same-depth sprite case, and the reason both use
+# nearer-or-equal, which is what the Metal depth state does anyway.
+l3samez(d: ref Display, d3: Draw3d, what: string)
+{
+	a := Draw3d->Vector(-1.0, 0.0, -4.0);
+	b := Draw3d->Vector( 1.0, 0.0, -4.0);
+	c := s3frame(d3, 1);
+	d3->setcolour(c, d.color(Draw->Green));
+	d3->line3(c, a, b, 2);
+	(alone, nil, nil, nil, nil) := s3box(d);
+	c = s3frame(d3, 1);
+	d3->setcolour(c, d.color(Draw->Red));
+	d3->line3(c, Draw3d->Vector(0.0, -1.0, -4.0), Draw3d->Vector(0.0, 1.0, -4.0), 6);
+	d3->setcolour(c, d.color(Draw->Green));
+	d3->line3(c, a, b, 2);
+	(over, nil, nil, nil, nil) := s3box(d);
+	v := "ok";
+	if(alone == 0 || over < alone)
+		v = "SECOND LINE CLIPPED";
+	sys->print("draw3dbench:   %s line same depth: %d px alone, %d over a red one at the same z  %s\n",
+		what, alone, over, v);
+}
+
 l3occlude1(d: ref Display, d3: Draw3d, z: real): int
 {
 	c := s3frame(d3, 1);
@@ -477,6 +504,7 @@ sprite3s(d: ref Display)
 		l3place(d, d3, what);
 		l3thick(d, d3, what);
 		l3occlude(d, d3, what);
+		l3samez(d, d3, what);
 	}
 }
 

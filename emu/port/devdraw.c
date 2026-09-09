@@ -2226,7 +2226,15 @@ d3linez(Client *cl, Memimage *dst, Point a, Point b, int thick,
 			eyez = eza + t*(ezb-eza);
 			z = (int)(-eyez*(float)D3ZSCALE);
 			k = (y-cl->d3zr.min.y)*cl->d3zw + x-cl->d3zr.min.x;
-			if(k < 0 || k >= cl->d3zw*cl->d3zh || z >= cl->d3zbuf[k])
+			/*
+			 * Nearer OR EQUAL.  The Metal depth state this stands
+			 * in for is MTLCompareFunctionLessEqual, so a strict
+			 * test here made the CPU fallback disagree with the
+			 * GPU it replaces - and threw away every overlapping
+			 * step of a stroke drawn at one depth, which is how
+			 * temple/lattice draws a ribbon.
+			 */
+			if(k < 0 || k >= cl->d3zw*cl->d3zh || z > cl->d3zbuf[k])
 				continue;
 			cl->d3zbuf[k] = z;
 			p = Pt(x, y);

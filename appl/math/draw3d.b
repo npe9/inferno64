@@ -501,8 +501,13 @@ line3(c: ref Context, a, b: Vector, thick: int)
 # further than the pen's radius, interpolate the eye z along t, and take
 # the pixel only if it is nearer than what the buffer holds.
 #
-# Strictly nearer, unlike the sprite: the device's rule, and lines do not
-# have the sprite's problem of whole groups arriving at one depth.
+# Nearer OR EQUAL, as everywhere else here.  The Metal depth state is
+# MTLCompareFunctionLessEqual and always has been, so equal-wins is what
+# a GPU line, triangle and sprite have always done; only the CPU
+# fallbacks were strict, which made them disagree with the GPU they stand
+# in for.  It matters to a real port: temple/lattice draws a stroke as a
+# ribbon of overlapping micro-steps all on one layer, and a strict test
+# would keep the first of each overlap and throw the rest away.
 #
 # The result goes out as ONE masked draw rather than a draw per pixel.
 # A 400-pixel edge is a thousand pixels, and this port draws twelve of
@@ -555,7 +560,7 @@ linez(c: ref Context, pa, pb: Point, thick: int, eza, ezb: real)
 				continue;
 			zv := zdepth(-(eza + tt*(ezb-eza)));
 			k := (y - zs.r.min.y)*zs.xlen + (x - zs.r.min.x);
-			if(zv >= zs.zbuf0[k])
+			if(zv > zs.zbuf0[k])
 				continue;
 			zs.zbuf0[k] = zv;
 			zs.zbuf1[k] = zv;

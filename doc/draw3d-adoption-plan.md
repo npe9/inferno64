@@ -583,9 +583,28 @@ argument. The result goes out as one masked draw rather than a draw per
 pixel; twelve edges of a thousand pixels each, through the interpreter,
 would otherwise cost more than the test is worth.
 
-Lines keep the *strict* nearer test, unlike sprites. That is the device's
-rule, and a line does not have the sprite's problem of whole groups
-arriving at one depth.
+Lines take nearer-**or-equal**, as sprites do, and that correction is
+worth its own paragraph because the reasoning that first made them strict
+was wrong. The rule was taken from `d3linez`, "the device's rule" — but
+`d3linez` is the device's *CPU fallback*. The device's actual depth state
+is `MTLCompareFunctionLessEqual` and always has been, so a GPU line,
+triangle and sprite have equal-wins semantics, and only the CPU
+fallbacks were strict. They disagreed with the GPU they stand in for.
+
+It matters to a real port rather than to a corner case: `temple/lattice`
+draws a stroke as a ribbon of overlapping micro-steps all on one layer,
+so a strict test keeps the first of every overlap and discards the rest.
+`draw3dbench` grew the check — two lines crossing at one depth, where all
+of the second must survive — and it reads 1301 of 1301 pixels; made
+strict again it reads 1236. `emu/port/devdraw.c`'s `d3linez` was changed
+to match, so the GPU, the device's fallback and both Limbo providers now
+state the same rule.
+
+`polyfill`'s `filllinez`, which is what a z-buffered *fill* goes through,
+is still strict. It is left alone deliberately: it is used well beyond
+draw3d (`wm/polyhedra` among others) and its span-edge tolerance clause
+makes it not quite a plain comparison, so changing it is its own piece of
+work with its own evidence.
 
 **The migration itself.** The correspondence is exact and is the one
 every remaining hand-rolled port will need:
