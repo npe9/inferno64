@@ -549,51 +549,35 @@ rungc(Prog *p)
 	Bhdr *b;
 
 	/*
-	 * The invariant Phase 1b of doc/dis-parallel-plan.ms depends on,
-	 * asserted rather than argued.  The collector takes Prog->reg as
-	 * its root set, and for a program that is executing, p->reg is
-	 * stale for every instruction of the quantum -- the live values
-	 * are in the context's register file.  A root the mark phase
-	 * cannot see is an object the sweeper takes, and a missing root
-	 * is not a data race, so no sanitizer will find it.
+	 * The invariant Phase 1b of doc/dis-parallel-plan.ms depends on.
+	 * The collector takes Prog->reg as its root set, and while a
+	 * quantum runs p->reg is the entry snapshot -- the live values are
+	 * in R.  A root the mark phase cannot see is an object the sweeper
+	 * takes, and a missing root is not a data race, so no sanitizer
+	 * will find it.
 	 *
-	 * Test the hazard, not a proxy for it.  A first version of this
-	 * checked curP->curprog != nil and fired at once, from
-	 * execatidle+0xb0 on virtarm64 -- but xec.c's own comment says
-	 * curprog is deliberately NOT cleared by exception.c's
-	 * memmove(&p->reg, &R, ...), which syncs the snapshot while the
-	 * program carries on rather than handing it over.  So curprog can
-	 * be set with p->reg perfectly current, and that first version
-	 * reported a state that is not the hazard.
+	 * inxec (xec.c) is set for exactly that window and cleared both at
+	 * the end of the quantum and in vmachine()'s waserror() loop,
+	 * where every non-local exit from the interpreter lands.
 	 *
-	 * What matters is whether the saved copy differs from the live
-	 * one.  If it does, the roots reachable only through the live
-	 * registers are not in the root set and this collection can free
-	 * them; if it does not, curprog says nothing either way.
+	 * Two earlier versions of this check tested curP->curprog instead,
+	 * first for nil and then by comparing its saved registers against
+	 * the live ones.  Both were unsound, and the second proved it: it
+	 * reported prog 5 with state 0xdeadbeef, which is what delprog()
+	 * writes into a Prog it is about to free.  curprog is allowed to
+	 * dangle -- vmachine() says so where it clears it, "progreg() only
+	 * compares the pointer, never follows it" -- so a check that
+	 * follows it reads freed memory.  A flag cannot dangle.
 	 */
-	if(curP->curprog != nil
-	&& (curP->curprog->reg.PC != R.PC || curP->curprog->reg.SP != R.SP
-	    || curP->curprog->reg.FP != R.FP || curP->curprog->reg.EX != R.EX)) {
+	if(inxec) {
 		static int said;
 
 		if(!said) {
 			said = 1;
-			/*
-			 * The caller pc matters: rungc() has five call sites,
-			 * two in dis.c and three in devbench.c, and only the
-			 * dis.c pair are the between-quanta ones the
-			 * invariant is stated for.  rungc(Prog*) takes p
-			 * first, so getcallerpc(&p) is anchored on the
-			 * enclosing function's own first parameter, which is
-			 * what the a+0(FP) trick reads -- see
-			 * os/inferno/port/alloc.c on the four sites where
-			 * that anchoring was wrong.
-			 */
-			print("rungc: prog %d mid-quantum and p->reg is stale "
-				"(saved PC %#p live %#p), called from %#p -- "
-				"its live roots are not in the root set\n",
-				curP->curprog->pid, curP->curprog->reg.PC,
-				R.PC, getcallerpc(&p));
+			print("rungc: collecting inside a quantum, called from "
+				"%#p -- p->reg is the entry snapshot and the "
+				"live roots are not in the root set\n",
+				getcallerpc(&p));
 		}
 	}
 

@@ -417,6 +417,24 @@ delprog(Prog *p, char *msg)
 	 * observed instance, fixed on inspection.
 	 */
 	delrunq(p);
+	/*
+	 * vmachine()'s waserror() loop clears curprog because a Dis
+	 * exception leaves xec() by longjmp and "a later Prog allocated at
+	 * the same address would be handed the wrong register file" -- its
+	 * own words.  That covers non-local exits from the interpreter and
+	 * not this: a Prog can reach delprog() while curprog still names
+	 * it, and then the name outlives the object with nothing to clear
+	 * it.  Observed, not deduced: an assertion in rungc() that
+	 * dereferenced curprog printed state 0xdeadbeef, which is the
+	 * value written two lines below.
+	 *
+	 * progreg() compares curprog by pointer, so the damage is exactly
+	 * what that comment describes -- once the allocator hands this
+	 * address to a new Prog, progreg() gives out curR for a program
+	 * whose live registers are somewhere else.
+	 */
+	if(p == curP->curprog)
+		curP->curprog = nil;
 	p->state = 0xdeadbeef;
 	free(o->user);
 	free(p->killstr);
@@ -1280,6 +1298,7 @@ vmachine(void*)
 		 * path that carries on executing.
 		 */
 		curP->curprog = nil;
+		inxec = 0;	/* the quantum did not finish; see xec.c */
 		DBG("vmachine waserror() loop up->env->errstr %s\n",  up->env->errstr);
 		if(up->type != Interp)
 			panic("vmachine: non-interp kproc");

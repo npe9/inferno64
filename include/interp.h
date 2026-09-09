@@ -490,6 +490,7 @@ extern	Type Treal;
 extern	Pctx*	curP;
 REG*	progreg(Prog*);	/* where a program's live roots are; see xec.c */
 extern	REG*	curR;		/* == &curP->reg */
+extern	int	inxec;		/* a quantum is running; see xec.c */
 #define	R	(*curR)
 extern	String	snil;
 extern	void	(*optab[256])(void);

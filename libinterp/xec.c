@@ -2392,6 +2392,17 @@ showprog(Prog *p)
 	}
 }
 
+/*
+ * Set while a quantum is running, i.e. exactly while p->reg is the
+ * stale entry snapshot and the live values are in R.  A plain int and
+ * not a pointer on purpose: curprog is allowed to dangle -- vmachine()
+ * says so where it clears it, "progreg() only compares the pointer,
+ * never follows it" -- so a check that dereferences curprog to see
+ * whether a quantum is running reads freed memory.  Two versions of
+ * the rungc() assertion did exactly that before this existed.
+ */
+int inxec;
+
 void
 xec(Prog *p)
 {
@@ -2399,6 +2410,7 @@ xec(Prog *p)
 
 	R = p->reg;
 	curP->curprog = p;
+	inxec = 1;
 	R.MP = R.M->MP;
 	R.IC = p->quanta;
 
@@ -2473,6 +2485,7 @@ xec(Prog *p)
 
 	p->reg = R;
 	curP->curprog = nil;
+	inxec = 0;
 }
 
 /*
