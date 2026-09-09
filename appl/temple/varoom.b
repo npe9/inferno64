@@ -997,11 +997,12 @@ redraw()
 	img.flush(Draw->Flushnow);
 }
 
-# The pen is not scaled with k.  TempleOS's transform scales it, but this
-# port has drawn its bushes with the sprite's own pen at every distance
-# since it was written, and scaling it quadruples the ink on the nearest
-# ones; that is a change to how the game looks, not a rasteriser detail,
-# so it is not made here.
+# The pen is the port's own, and diverges from the art twice over: this
+# draws a one pixel line where the sprite says thick 2 (which is why
+# vsprite's own render of the same file inks about 2.9x as much), and it
+# does not scale the pen with k, which TempleOS's transform does.  Both
+# are changes to how the game looks rather than rasteriser details, so
+# neither is made here.
 drawbush(img: ref Image, sx, sy: int, k: real, bi: int)
 {
 	if(bushspr == nil)

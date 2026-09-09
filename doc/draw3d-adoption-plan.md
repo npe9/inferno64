@@ -591,7 +591,7 @@ matches the reference" looks like, as against "prove nothing changed".
   cache, **246us** walking the turned element list instead, and **216us**
   through the private rotate the conversion removed. The same ordering,
   three ways — but 45us a frame at forty arrows, where `varoom` was
-  5,000us a frame at four hundred bushes. `zing` is left as it is: the
+  5,000us a frame at the 290 bushes its driven run averaged. `zing` is left as it is: the
   difference is below the frame clock's own resolution and the raster is
   the render `vspritetest` checks.
 - **`rawhide`** rasterised the `.spr` into its walkability shadow map with
@@ -621,12 +621,18 @@ matches the reference" looks like, as against "prove nothing changed".
   walk. The walk is pixel-identical to the parser it replaces — 4
   sprites x 2 mirrors x 40 scales from 0.1 to 4.0, 249,797 inked pixels,
   **0 differ**, and adding one to the pen in the new path makes 456,979
-  differ, so the comparison can see a change. The pen is still the port's
-  own: the sprite says `thick 2` and `varoom` draws one pixel at every
-  distance. Scaling the pen with the perspective, which is what
-  TempleOS's transform does, quadruples the ink on the nearest bushes —
-  a change to how the game looks rather than a rasteriser detail, and not
-  one made here.
+  differ, so the comparison can see a change.
+
+  The pen stays the port's, and that is two divergences from the art, not
+  one. `varoom` draws a **one pixel** line where the sprite says `thick
+  2`, at every distance — which is why `vsprite`'s render of the same
+  file inks about **2.9x** as much, measured. And it does not scale the
+  pen with the perspective, which TempleOS's transform does —
+  `transformelem` multiplies `thick` by the scale, so a bush drawn at
+  twice the size would carry twice the pen. Both are changes to how the
+  game looks rather than rasteriser details, so neither is made here — and neither is certified
+  by `vspritetest`, which checks `varoom_*` against their `.bit` at scale
+  1 and says nothing about how this port draws them.
 - **`battlelines`** is the one that is not a raster and was never going to
   be: five element lists tweened between, mirrored, and drawn in one
   colour. `vsprite(2)` does the reading, because a second copy of the
