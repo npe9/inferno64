@@ -20549,3 +20549,75 @@ report, no
 report and no collector-invariant firing.  That is the state of the
 port after the interrupt fix and the four lifetime fixes, and it is a
 different machine from the one this document opens on.
+.NH 2
+Caught in the act: userureg() returned kp instead of !kp
+.PP
+Three probes, each eliminating one region, found it.
+.IP \(bu
+At trap entry: silent over 52 boots including two faults.  The CPU
+pushed a good frame.
+.IP \(bu
+Across
+.CW irqhandled() :
+silent over 192 boots including one fault.  No device handler wrote the
+word.
+.IP \(bu
+At both ends of
+.CW trap() :
+fired.
+.P1
+trap: vector 50 changed frame ss 0x0 -> 0xb798 (pc 0x208ca6 user 1)
+.P2
+.PP
+.CW 0x208ca6
+is
+.CW linkproc+0x9 ,
+the same site as every capture, and the same boot then died on the
+.CW IRETQ
+with error code
+.CW B798
+\(em the value the probe had already watched being written into the
+frame's
+.CW SS .
+.PP
+.CW "user 1"
+is the finding.  os/inferno/port/proc.c's
+.CW userureg()
+carries a comment saying "return !Proc.kp.  Proc.kp is true for a
+kernel process", and returned
+.CW kp :
+.P1
+	if(ur == nil || ur->r14 == 0 || ((Proc*)(ur->r14))->kp == 0)
+		return 0;
+	return 1;
+.P2
+So every kernel process's trap was called a trap from user mode, and
+the one process made by plain
+.CW newproc()
+was called a kernel trap.
+.CW kenter()
+then publishes the frame as
+.CW up->dbgreg ,
+and
+.CW trap()
+runs the user tail \(em
+.CW notify()
+and
+.CW kexit()
+\(em over a
+.CW Ureg
+on a kernel stack.
+.PP
+That the other board agrees is worth stating, because it is the check
+that the fix is safe rather than merely quiet: virtarm64's trap.c calls
+.CW notify() ,
+.CW kexit() ,
+.CW kenter()
+and
+.CW userureg()
+not at all, and that board reaches an interactive shell with
+DIS-STRESS-OK, VIRT-OK, ROOT-CMDS-OK and CHANTEST-OK.  No kernel
+process needs the user tail; pc64 was the outlier in running it.
+virtarm64 was rebuilt with the corrected
+.CW userureg()
+and is unchanged.
