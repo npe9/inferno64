@@ -214,19 +214,17 @@ on a BCM2711 \- moving
 would have asserted something untrue about the hardware in exchange for
 a marker, which is the trade this document exists to refuse.
 .PP
-And the ARM timer is driven but its interrupt is not tested.  Its line
-goes to the legacy controller, which QEMU maps on this machine and does
-not wire to the GIC:
-.CW bcm2838.c
-defines
-.CW GIC400_LEGACY_IRQ
-and never uses it.  So
+And the ARM timer was driven with its interrupt untested for a while
+after that, because the block being mapped was not the whole of it: its
+line went to the legacy controller, which QEMU maps on this machine and
+does not wire to the GIC, so the interrupt was raised and dispatched to
+nobody.
 .CW ARMTIMER-OK
-passes by polling and
+passed by polling and
 .CW ARMTIMER-INTR-OK
-is absent rather than failing.  Whether a real BCM2711 chains that
-controller into the GIC, and on which line, is not something this
-session established, so nothing was wired on a guess.
+was absent rather than failing.  That question turned out to be
+answerable from the published device trees rather than only from the
+board, and it has its own chapter below.
 .NH 1
 The card was on the wrong controller, in the model and in this port
 .PP
@@ -464,14 +462,17 @@ because a Pi 4 has nothing on SDHOST, and
 .CW USB-MOUSE-NONE ,
 because no mouse was attached.
 .PP
-The Pi 3B suite no longer has a marker this one does not.
+The Pi 3B suite no longer has a marker this one does not, though the
+last of them does not rest on the same footing:
 .CW RNG-OK
 and
 .CW THERM-OK
 arrived with the RNG200 and the AVS monitor, on this board's own blocks
 rather than the Pi 3's, and
 .CW ARMTIMER-INTR-OK
-arrived with the line wired at SPI 32.  What separates the two boards
+arrived with the line wired at SPI 32, which is a derived number rather
+than a cited one \- the chapter above says derived from what, and the
+delivery it proves is real either way.  What separates the two boards
 now is what each board is: no SDHOST card here, no BCM43430 there.
 .NH 1
 What the interrupt map turned out to say
@@ -480,13 +481,24 @@ One item on this list was a question rather than a task: whether the
 legacy interrupt controller chains into the GIC on a real BCM2711, and
 on which line.  That is what
 .CW ARMTIMER-INTR-OK
-needed.  QEMU has a
-.CW GIC400_LEGACY_IRQ
-in
+needed, and the model answered nothing: on this machine the ARM timer's
+interrupt went to a controller nothing dispatched.
+.PP
 .CW bcm2838.c
-and never uses it, so the model answered nothing.  The question was
-worth asking of the published device trees before it was left to the
-board, and they answer most of it.
+has an unused
+.CW GIC400_LEGACY_IRQ
+which looks at first like the missing piece and is not.  It sits among
+.CW GIC400_TIMER_NS_EL1_IRQ
+and
+.CW GIC400_LEGACY_FIQ ,
+and they are all GIC-400 PPI numbers: 15 and 12 are the CPU's own
+legacy IRQ and FIQ bypass signals, which have nothing to do with the
+BCM's legacy interrupt controller and are unused because QEMU does not
+model the bypass.  Reading it the other way is an easy mistake and this
+document nearly made it, which is why it is written down here.
+.PP
+So the question went to the published device trees before it was left
+to the board, and they answer most of it.
 .PP
 .B "Nothing chains it."
 Neither mainline's
