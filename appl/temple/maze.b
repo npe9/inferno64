@@ -75,9 +75,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		d.color(Draw->Grey),
 		* => d.color(Draw->Blue)
 	};
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
-		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+		font = Font.open(d, "/fonts/temple/temple.font");
 	math = load Math Math->PATH;
 	tone = load Tone Tone->PATH;
 	if(tone != nil && tone->init() == nil)

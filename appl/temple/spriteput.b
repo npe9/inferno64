@@ -35,7 +35,7 @@ Spriteput: module
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
-FH: con 8;			# TempleOS FONT_HEIGHT
+FH := 8;			# the font's line height, set when the font opens
 
 win: ref Window;
 font: ref Font;
@@ -54,9 +54,12 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		ctxt = wmclient->makedrawcontext();
 	win = wmclient->window(ctxt, "TempleOS SpritePut", Wmclient->Appl);
 	d := win.display;
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
-		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+		font = Font.open(d, "/fonts/temple/temple.font");
+	if(font != nil){
+		FH = font.height;
+	}
 	white = d.color(grpal->value(Grpalette->WHITE));
 	blue = d.color(grpal->value(Grpalette->BLUE));
 	flag = d.open("/icons/temple/spriteput_1.bit");

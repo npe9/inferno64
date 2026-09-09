@@ -61,7 +61,7 @@ MAXPASS: con 64;		# safety cap over the original's run-to-quiescence
 
 CONNECT_WIDTH: con 16;
 GATE_WIDTH: con 37;
-FONT_WIDTH: con 8;
+FONT_WIDTH := 8;			# the font's digit advance, set when the font opens
 
 SCRW: con 640;
 SCRH: con 480;
@@ -147,9 +147,12 @@ init(ctxt: ref Context, nil: list of string)
 	cmd(top, ".f.in.e insert 0 {F0 CC AA}");
 	cmd(top, ".f.g.e insert 0 {NOT AND OR NAND NOR XOR AND3 OR3 NAND3 NOR3}");
 
-	font = Font.open(display, "/fonts/temple/temple.font");
+	font = Font.open(display, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
 		font = Font.open(display, "*default*");
+	if(font != nil){
+		FONT_WIDTH = font.width("0");
+	}
 	inkred = display.color(grpal->value(Grpalette->RED));
 	inkgreen = display.color(grpal->value(Grpalette->GREEN));
 	inkblack = display.color(grpal->value(Grpalette->BLACK));
@@ -500,7 +503,7 @@ drawdesign(y, out, depth: int): (int, int, int)
 	x2 := 0; y2 := 0;
 	x3 := 0; y3 := 0;
 	if(displayed[out] && t != GT_INPUT){
-		grprint(inkgreen, xx-FONT_WIDTH*3, y-4, "Dup");
+		grprint(inkgreen, xx-font.width("Dup"), y-4, "Dup");
 		y += 10;
 	}else case t {
 	GT_INPUT =>

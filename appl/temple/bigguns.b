@@ -129,9 +129,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	win = wmclient->window(ctxt, "TempleOS BigGuns", Wmclient->Appl);
 	d := win.display;
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
-		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+		font = Font.open(d, "/fonts/temple/temple.font");
 	# the exact TempleOS 16-colour palette, index = TempleOS colour: the
 	# sky is LTCYAN, the ground BROWN, the dust LTGRAY
 	ink = array[16] of ref Image;

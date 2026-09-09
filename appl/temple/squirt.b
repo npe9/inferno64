@@ -320,7 +320,8 @@ redraw()
 		img.draw(Rect((o.x, o.y+groundy), (o.x+img.r.dx(), o.y+img.r.dy())), ink[1], nil, Point(0, 0));
 
 	if(sys->millisec() < settle_until){
-		img.text(Point(o.x+(img.r.dx()-6*8)/2, o.y+img.r.dy()/2), ink[4], Point(0, 0), font, "Squirt");
+		img.text(Point(o.x+(img.r.dx()-font.width("Squirt"))/2, o.y+img.r.dy()/2),
+			ink[4], Point(0, 0), font, "Squirt");
 		img.flush(Draw->Flushnow);
 		return;
 	}

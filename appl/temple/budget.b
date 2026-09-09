@@ -128,7 +128,7 @@ pickfor := PICKVIEW;
 pickrows: array of ref Acct;
 picksel := 0;
 
-FN: con "/fonts/temple/temple.font";
+FN: con "/fonts/lucida/unicode.8.font";
 
 cfg := array[] of {
 	"frame .f -bg #FFFFFF",

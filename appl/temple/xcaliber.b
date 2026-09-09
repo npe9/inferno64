@@ -274,7 +274,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	pal = array[16] of ref Image;
 	for(i = 0; i < 16; i++)
 		pal[i] = display.color(cols[i]);
-	tfont = Font.open(display, "/fonts/temple/temple.font");
+	tfont = Font.open(display, "/fonts/lucida/unicode.8.font");
 	sprites = array[9] of ref Image;
 	smasks = array[9] of ref Image;
 	for(i = 1; i <= 8; i++){

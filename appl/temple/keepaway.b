@@ -177,7 +177,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	win = wmclient->window(ctxt, "TempleOS KeepAway", Wmclient->Appl);
 	d := win.display;
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
 		font = Font.open(d, "*default*");
 	palrgba = grpal->values();
@@ -916,8 +916,8 @@ drawrules(img: ref Image, w, h: int)
 		"",
 		"                 Ok(ESC)"
 	};
-	bw := 48*8 + 16;
-	bh := len lines * 8 + 16;
+	bw := widest(font, lines) + 16;
+	bh := len lines * font.height + 16;
 	org := img.r.min;
 	x0 := org.x + (w - bw)/2;
 	y0 := org.y + (h - bh)/2;
@@ -927,7 +927,8 @@ drawrules(img: ref Image, w, h: int)
 		col := TBLACK;
 		if(i == len lines - 1)
 			col = TGREEN;
-		img.text(Point(x0+8, y0+8+i*8), ink[col], Point(0,0), font, lines[i]);
+		img.text(Point(x0+8, y0+8+i*font.height), ink[col], Point(0,0),
+			font, lines[i]);
 	}
 }
 
@@ -982,3 +983,16 @@ loadmesh(path: string): ref Mesh
 	return m;
 }
 
+# How wide a block of text is, which is the font's business and not a
+# count of characters: these panels used to size themselves in 8-pixel
+# cells, which is exactly what stops being true with a real font.
+widest(f: ref Font, lines: array of string): int
+{
+	w := 0;
+	for(i := 0; i < len lines; i++){
+		lw := f.width(lines[i]);
+		if(lw > w)
+			w = lw;
+	}
+	return w;
+}

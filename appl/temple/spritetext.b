@@ -91,9 +91,9 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		ctxt = wmclient->makedrawcontext();
 	win = wmclient->window(ctxt, "TempleOS SpriteText", Wmclient->Appl);
 	d := win.display;
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
-		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+		font = Font.open(d, "/fonts/temple/temple.font");
 	white = d.color(int 16rFFFFFFFF);
 	black = d.color(int 16r000000FF);
 	purple = d.color(int 16rAA00AAFF);

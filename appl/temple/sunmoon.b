@@ -100,9 +100,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		ctxt = wmclient->makedrawcontext();
 	win = wmclient->window(ctxt, "TempleOS SunMoon", Wmclient->Appl);
 	d := win.display;
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
-		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+		font = Font.open(d, "/fonts/temple/temple.font");
 	ink = array[16] of ref Image;
 	cols := grpal->values();
 	for(ci := 0; ci < 16; ci++)

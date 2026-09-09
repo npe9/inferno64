@@ -92,7 +92,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	ink = array[16] of ref Image;
 	for(i := 0; i < 16; i++)
 		ink[i] = d.color(cols[i]);
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
 		font = Font.open(d, "*default*");
 

@@ -78,7 +78,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	red = d.color(grpal->value(Grpalette->RED));
 	white = d.color(grpal->value(Grpalette->WHITE));
 	black = d.color(grpal->value(Grpalette->BLACK));
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
 		font = Font.open(d, "*default*");
 	win.reshape(Rect((0, 0), (640, 400)));

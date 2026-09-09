@@ -45,7 +45,7 @@ God: module
 
 VOCAB: con "/lib/temple/vocab.txt";
 BIBLE: con "/lib/temple/Bible.TXT";
-FN: con "/fonts/temple/temple.font";
+FN: con "/fonts/lucida/unicode.8.font";
 
 GODBADBITS: con 4;		# GOD_BAD_BITS
 GODGOODBITS: con 24;		# GOD_GOOD_BITS

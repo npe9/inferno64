@@ -187,7 +187,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	cols := grpal->values();
 	for(i := 0; i < 16; i++)
 		ink[i] = d.color(cols[i]);
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
 		font = Font.open(d, "*default*");
 
@@ -988,9 +988,9 @@ popupclick(nil: int, y: int)
 		nl := len openents;
 		if(nl == 0)
 			nl = 1;
-		bh := (nl+4)*8 + 16;
-		y0 := (480 - bh)/2 + 8 + 2*8;
-		row := (y - y0) / 8;
+		bh := (nl+4)*fh() + 16;
+		y0 := popuptop(bh) + 8 + 2*fh();
+		row := (y - y0) / fh();
 		if(row >= 0 && row < len openents){
 			opensel = row;
 			openpick(row);
@@ -1144,10 +1144,28 @@ commafmt(r: real): string
 	return neg + out + rest;
 }
 
+# Centred in the window that is there, not in the 640x480 the original
+# had: a panel sized by a real font can be most of the window's height,
+# and centring it against a constant puts its top off the top edge.
+# popuptop is shared with the click handler, which has to place the rows
+# exactly where the drawing put them.
+popuptop(bh: int): int
+{
+	h := 480;
+	if(win != nil && win.image != nil)
+		h = win.image.r.dy();
+	y0 := (h - bh)/2;
+	if(y0 < 0)
+		y0 = 0;
+	return y0;
+}
+
 popupbox(img: ref Image, o: Point, bw, bh: int): Point
 {
-	x0 := o.x + (640 - bw)/2;
-	y0 := o.y + (480 - bh)/2;
+	x0 := o.x + (img.r.dx() - bw)/2;
+	y0 := o.y + popuptop(bh);
+	if(x0 < o.x)
+		x0 = o.x;
 	img.draw(Rect((x0-2, y0-2), (x0+bw+2, y0+bh+2)), ink[BLACK], nil, Point(0, 0));
 	img.draw(Rect((x0, y0), (x0+bw, y0+bh)), ink[WHITE], nil, Point(0, 0));
 	return Point(x0, y0);
@@ -1179,17 +1197,19 @@ drawinstr(img: ref Image, o: Point)
 		"",
 		"            Ok(ESC)"
 	};
-	bw := 30*8 + 16;
-	bh := len lines * 8 + 16;
+	bw := widest(font, lines) + 16;
+	bh := len lines * font.height + 16;
 	p := popupbox(img, o, bw, bh);
 	for(i := 0; i < len lines; i++){
 		col := BLACK;
 		if(i == len lines - 1)
 			col = GREEN;
-		img.text(Point(p.x+8, p.y+8+i*8), ink[col], Point(0, 0), font, lines[i]);
+		img.text(Point(p.x+8, p.y+8+i*font.height), ink[col], Point(0, 0),
+			font, lines[i]);
 		# the material letters are $$GREEN$$ in the original
 		if(len lines[i] > 10 && lines[i][8] == '\'')
-			img.text(Point(p.x+8+8*8, p.y+8+i*8), ink[GREEN], Point(0, 0),
+			img.text(Point(p.x+8+font.width(lines[i][0:8]),
+				p.y+8+i*font.height), ink[GREEN], Point(0, 0),
 				font, lines[i][8:11]);
 	}
 }
@@ -1198,14 +1218,15 @@ drawsave(img: ref Image, o: Point)
 {
 	if(font == nil)
 		return;
-	bw := 44*8 + 16;
-	bh := 5*8 + 16;
+	bw := font.width("SaveAs (in " + spandir() + "):") + 16;
+	bh := 5*font.height + 16;
 	p := popupbox(img, o, bw, bh);
 	img.text(Point(p.x+8, p.y+8), ink[BLACK], Point(0, 0), font,
 		"SaveAs (in " + spandir() + "):");
-	img.text(Point(p.x+8, p.y+8+2*8), ink[BLUE], Point(0, 0), font, savename + "_");
-	img.text(Point(p.x+8, p.y+8+4*8), ink[GREEN], Point(0, 0), font,
-		"Enter=save  ESC=cancel");
+	img.text(Point(p.x+8, p.y+8+2*font.height), ink[BLUE], Point(0, 0),
+		font, savename + "_");
+	img.text(Point(p.x+8, p.y+8+4*font.height), ink[GREEN], Point(0, 0),
+		font, "Enter=save  ESC=cancel");
 }
 
 drawopen(img: ref Image, o: Point)
@@ -1215,24 +1236,26 @@ drawopen(img: ref Image, o: Point)
 	nl := len openents;
 	if(nl == 0)
 		nl = 1;
-	bw := 44*8 + 16;
-	bh := (nl+4)*8 + 16;
+	bw := font.width("Enter/click=open  j/k=move  ESC=cancel") + 16;
+	bh := (nl+4)*fh() + 16;
 	p := popupbox(img, o, bw, bh);
 	img.text(Point(p.x+8, p.y+8), ink[BLACK], Point(0, 0), font,
 		"Open (from " + spandir() + "):");
 	if(len openents == 0)
-		img.text(Point(p.x+8, p.y+8+2*8), ink[DKGRAY], Point(0, 0), font,
+		img.text(Point(p.x+8, p.y+8+2*fh()), ink[DKGRAY], Point(0, 0), font,
 			"(no saved games)");
 	for(i := 0; i < len openents; i++){
 		col := BLACK;
 		if(i == opensel){
-			img.draw(Rect((p.x+4, p.y+8+(2+i)*8), (p.x+bw-4, p.y+8+(3+i)*8)),
+			img.draw(Rect((p.x+4, p.y+8+(2+i)*fh()),
+				(p.x+bw-4, p.y+8+(3+i)*fh())),
 				ink[LTGRAY], nil, Point(0, 0));
 			col = BLUE;
 		}
-		img.text(Point(p.x+8, p.y+8+(2+i)*8), ink[col], Point(0, 0), font, openents[i]);
+		img.text(Point(p.x+8, p.y+8+(2+i)*fh()), ink[col], Point(0, 0),
+			font, openents[i]);
 	}
-	img.text(Point(p.x+8, p.y+8+(2+nl+1)*8), ink[GREEN], Point(0, 0), font,
+	img.text(Point(p.x+8, p.y+8+(2+nl+1)*fh()), ink[GREEN], Point(0, 0), font,
 		"Enter/click=open  j/k=move  ESC=cancel");
 }
 
@@ -1323,3 +1346,26 @@ playscore(score: string)
 	}
 }
 
+# How wide a block of text is, which is the font's business and not a
+# count of characters: these panels used to size themselves in 8-pixel
+# cells, which is exactly what stops being true with a real font.
+widest(f: ref Font, lines: array of string): int
+{
+	w := 0;
+	for(i := 0; i < len lines; i++){
+		lw := f.width(lines[i]);
+		if(lw > w)
+			w = lw;
+	}
+	return w;
+}
+
+# One line pitch, used by both the drawing and the click handler: a popup
+# whose rows are drawn at one pitch and hit-tested at another selects a
+# different row than the one under the pointer.
+fh(): int
+{
+	if(font == nil)
+		return 8;
+	return font.height;
+}

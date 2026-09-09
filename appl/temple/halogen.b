@@ -51,8 +51,8 @@ fcacc := 0;
 ROAD_NUM: con 512;
 ROAD_W2: con 200;	# ROAD_WIDTH_BY_2
 CAR_W2: con 100;	# CAR_WIDTH_BY_2
-FONT_W: con 8;
-FONT_H: con 8;
+FONT_W := 8;			# the font's digit advance, set when the font opens
+FONT_H := 8;			# the font's line height, set when the font opens
 
 win: ref Window;
 road: array of int;
@@ -96,7 +96,11 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	ltgray = d.color(grpal->value(Grpalette->LTGRAY));	# LTGRAY road dots
 	white = d.color(grpal->value(Grpalette->WHITE));	# WHITE headlight cones
 	yellow = d.color(grpal->value(Grpalette->YELLOW));	# YELLOW "Game Over"
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
+	if(font != nil){
+		FONT_W = font.width("0");
+		FONT_H = font.height;
+	}
 	reset();
 	win.reshape(Rect((0, 0), (640, 400)));
 	win.onscreen("place");
@@ -265,7 +269,8 @@ redraw()
 	cone(img, o, cl, h);
 	cone(img, o, cr, h);
 	if(crash != 0 && font != nil)
-		img.text(Point(o.x + w/2 - FONT_W*4, o.y + (h-FONT_H)/2),
+		img.text(Point(o.x + w/2 - font.width("Game Over")/2,
+			o.y + (h-FONT_H)/2),
 			yellow, Point(0, 0), font, "Game Over");
 	img.flush(Draw->Flushnow);
 }

@@ -109,7 +109,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	cblue = d.color(grpal->value(Grpalette->BLUE));	# BLUE
 	cblack = d.color(grpal->value(Grpalette->BLACK));	# BLACK
 	cgrey = d.color(grpal->value(Grpalette->LTGRAY));	# mid grey for offscreen classify
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	win.reshape(Rect((0, 0), (640, 480)));	# TempleOS screen size
 	win.onscreen("place");
 	win.startinput("kbd" :: "keyup" :: "ptr" :: nil);

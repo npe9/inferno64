@@ -43,7 +43,7 @@ A4ONA: con 60;		# TempleOS Ona2Freq: ona 60 = A4 = 440Hz, ona 0 = off
 top: ref Toplevel;
 have_tone := 0;
 
-FN: con "/fonts/temple/temple.font";
+FN: con "/fonts/lucida/unicode.8.font";
 
 cfg := array[] of {
 	"image create bitmap organ -file /icons/temple/asciiorgan_1.bit -maskfile /icons/temple/asciiorgan_1.mask",

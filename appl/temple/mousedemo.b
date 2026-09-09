@@ -69,9 +69,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	win = wmclient->window(ctxt, "TempleOS MouseDemo", Wmclient->Appl);
 	d := win.display;
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
-		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+		font = Font.open(d, "/fonts/temple/temple.font");
 	black = d.color(grpal->value(Grpalette->BLACK));
 	white = d.color(grpal->value(Grpalette->WHITE));
 	blue = d.color(grpal->value(Grpalette->BLUE));

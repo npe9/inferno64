@@ -94,8 +94,8 @@ CARS_NUM: con 8;
 BUSHES_NUM: con 512;
 MAP_BITS: con 9;
 HORIZON_DIP: con 200.0;
-FONT_WIDTH: con 8;
-FONT_HEIGHT: con 8;
+FONT_WIDTH := 8;			# the font's digit advance, set when the font opens
+FONT_HEIGHT := 8;			# the font's line height, set when the font opens
 
 MAXSLICES: con 1400;
 
@@ -254,7 +254,11 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	cols := grpal->values();
 	for(i := 0; i < 16; i++)
 		ink[i] = d.color(cols[i]);
-	tfont = Font.open(d, "/fonts/temple/temple.font");
+	tfont = Font.open(d, "/fonts/lucida/unicode.8.font");
+	if(tfont != nil){
+		FONT_WIDTH = tfont.width("0");
+		FONT_HEIGHT = tfont.height;
+	}
 	if(scorestore != nil)
 		best_score = scorestore->loadreal("varoom", best_score);
 
@@ -1007,10 +1011,12 @@ redraw()
 			s = 99.9;
 		if((sys->millisec()/250) % 2 == 0 && tfont != nil){
 			if(won)
-				img.text(Point(o.x + (w - FONT_WIDTH*14)/2, o.y + (h - FONT_HEIGHT)/2),
+				img.text(Point(o.x + (w - tfont.width("Game Completed"))/2,
+					o.y + (h - FONT_HEIGHT)/2),
 					ink[LTRED], Point(0, 0), tfont, "Game Completed");
 			else
-				img.text(Point(o.x + (w - FONT_WIDTH*9)/2, o.y + (h - FONT_HEIGHT)/2),
+				img.text(Point(o.x + (w - tfont.width("Game Over"))/2,
+					o.y + (h - FONT_HEIGHT)/2),
 					ink[LTRED], Point(0, 0), tfont, "Game Over");
 		}
 	}else

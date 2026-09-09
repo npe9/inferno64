@@ -48,8 +48,8 @@ Waterfowl: module
 
 POEM_COLS: con 53;
 POEM_TIME: con 65.0;
-FW: con 8;
-FH: con 8;
+FW := 8;			# the font's digit advance, set when the font opens
+FH := 8;			# the font's line height, set when the font opens
 
 win: ref Window;
 font: ref Font;
@@ -119,9 +119,13 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		ctxt = wmclient->makedrawcontext();
 	win = wmclient->window(ctxt, "TempleOS WaterFowl", Wmclient->Appl);
 	d := win.display;
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
-		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+		font = Font.open(d, "/fonts/temple/temple.font");
+	if(font != nil){
+		FW = font.width("0");
+		FH = font.height;
+	}
 	white = d.color(int 16rFFFFFFFF);
 	black = d.color(int 16r000000FF);
 	cyan = d.color(int 16r00AAAAFF);
@@ -208,7 +212,15 @@ redraw()
 
 	# the poem, scrolling on a cawtooth of period POEM_TIME
 	py := int(caw(tS, POEM_TIME) * real(h - 3*FH));
-	px := w/2 - (POEM_COLS*FW)/2;
+	# the poem is centred on its own widest line, which is the font's
+	# business: POEM_COLS*FW is only the width of POEM_COLS digits
+	pw := 0;
+	for(j := 0; j < len poem; j++){
+		lw := font.width(poem[j]);
+		if(lw > pw)
+			pw = lw;
+	}
+	px := w/2 - pw/2;
 	for(i := 0; i < len poem; i++){
 		y := o.y + py + i*FH;
 		if(y > o.y - FH && y < img.r.max.y)

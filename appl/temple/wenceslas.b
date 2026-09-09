@@ -94,8 +94,8 @@ MAX_STEPS: con 1024;
 MAX_KSTEPS: con 256;
 PI: con 3.141592653589793;
 
-FW: con 8;			# TempleOS FONT_WIDTH
-FH: con 8;			# TempleOS FONT_HEIGHT
+FW := 8;			# the font's digit advance, set when the font opens
+FH := 8;			# the font's line height, set when the font opens
 
 BLACK, BLUE, GREEN, CYAN, RED, PURPLE, BROWN, LTGRAY: con iota;
 DKGRAY, LTBLUE, LTGREEN, LTCYAN, LTRED, LTPURPLE, YELLOW, WHITE: con iota + 8;
@@ -197,9 +197,13 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	win = wmclient->window(ctxt, "TempleOS Wenceslas", Wmclient->Appl);
 	d := win.display;
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
-		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+		font = Font.open(d, "/fonts/temple/temple.font");
+	if(font != nil){
+		FW = font.width("0");
+		FH = font.height;
+	}
 
 	# the exact TempleOS 16-color palette, index = TempleOS color
 	ink = array[16] of ref Image;
@@ -627,8 +631,8 @@ redraw()
 	tt := ts;
 	if(tf != 0.0){
 		if(blink())
-			img.text(Point(o.x+w/2-(FW*14)/2, o.y+h/2+FH), ink[LTRED],
-				Point(0, 0), font, "Game Completed");
+			img.text(Point(o.x+w/2-font.width("Game Completed")/2, o.y+h/2+FH),
+				ink[LTRED], Point(0, 0), font, "Game Completed");
 		tt = tf;
 	}
 	if(font != nil)

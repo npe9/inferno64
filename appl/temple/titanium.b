@@ -191,7 +191,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	win = wmclient->window(ctxt, "TempleOS Titanium", Wmclient->Appl);
 	disp = win.display;
 	loadpalette();
-	tfont = Font.open(disp, "/fonts/temple/temple.font");
+	tfont = Font.open(disp, "/fonts/lucida/unicode.8.font");
 	loadart();
 
 	bullets = array[BNUM] of Bullet;

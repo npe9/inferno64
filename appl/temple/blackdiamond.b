@@ -147,9 +147,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	win = wmclient->window(ctxt, "TempleOS BlackDiamond", Wmclient->Appl);
 	disp = win.display;
-	font = Font.open(disp, "/fonts/temple/temple.font");
+	font = Font.open(disp, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
-		font = Font.open(disp, "/fonts/lucida/unicode.8.font");
+		font = Font.open(disp, "/fonts/temple/temple.font");
 	black = disp.color(Draw->Black);
 	white = disp.color(Draw->White);
 	red = disp.color(grpal->value(Grpalette->RED));	# TempleOS RED
@@ -643,7 +643,8 @@ redraw()
 		msg := sys->sprint("Penalty:%d Best:%d", penalty, best_score);
 		img.text(Point(o.x, o.y), black, Point(0, 0), font, msg);
 		if(game_over && (ms/200) % 2 == 0)
-			img.text(Point(o.x+(W-9*8)/2, o.y+(H-8)/2), red, Point(0, 0), font, "Game Over");
+			img.text(Point(o.x+(W-font.width("Game Over"))/2, o.y+(H-font.height)/2),
+				red, Point(0, 0), font, "Game Over");
 	}
 	img.flush(Draw->Flushnow);
 }

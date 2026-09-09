@@ -57,8 +57,8 @@ HITR: con 20;
 MDF_TANK: con 0;
 MDF_BUNKER: con 1;
 
-FONTW: con 8;
-FONTH: con 8;
+FONTW := 8;			# the font's digit advance, set when the font opens
+FONTH := 8;			# the font's line height, set when the font opens
 
 win: ref Window;
 font: ref Font;
@@ -128,9 +128,13 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	win = wmclient->window(ctxt, "TempleOS BomberGolf", Wmclient->Appl);
 	d := win.display;
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
-		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+		font = Font.open(d, "/fonts/temple/temple.font");
+	if(font != nil){
+		FONTW = font.width("0");
+		FONTH = font.height;
+	}
 	loadpalette(d);
 	loadart(d);
 	best_score = 99999;
@@ -488,7 +492,8 @@ redraw()
 			target_cnt, key_cnt, best_score);
 		img.text(Point(o.x, o.y), pal[4], Point(0, 0), font, msg);
 		if(!target_cnt && blink(4.0))
-			img.text(Point(o.x + (w - 14*FONTW)/2, o.y + (h - FONTH)/2 - 32),
+			img.text(Point(o.x + (w - font.width("Game Completed"))/2,
+				o.y + (h - FONTH)/2 - 32),
 				pal[4], Point(0, 0), font, "Game Completed");
 	}
 	img.flush(Draw->Flushnow);

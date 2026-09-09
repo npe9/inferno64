@@ -200,9 +200,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	win = wmclient->window(ctxt, "TempleOS Talons", Wmclient->Appl);
 	d := win.display;
 	# authentic 8x8 TempleOS system font
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
-		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+		font = Font.open(d, "/fonts/temple/temple.font");
 	# gr_palette_std, from grpalette(2)
 	palette = grpal->images(d);
 	# ROPF_DITHER checkerboards, screen-anchored 2x2 replicated tiles
@@ -1234,10 +1234,12 @@ redraw()
 	if(font != nil){
 		if(game_tf > 0.0){
 			if(blink_on)
-				img.text(Point(o.x+(w-9*8)/2, o.y+(h-8)/2),
+				img.text(Point(o.x+(w-font.width("Game Over"))/2,
+					o.y+(h-font.height)/2),
 					palette[4], Point(0, 0), font, "Game Over");
 		}else if(tt < 5.0 && blink_on)
-			img.text(Point(o.x+(w-13*8)/2, o.y+(h-8)/2-4*8),
+			img.text(Point(o.x+(w-font.width("Catch 10 Fish"))/2,
+				o.y+(h-font.height)/2-4*font.height),
 				palette[15], Point(0, 0), font, "Catch 10 Fish");
 	}
 

@@ -126,7 +126,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	cols := grpal->values();
 	for(i := 0; i < 16; i++)
 		ink[i] = d.color(cols[i]);
-	tfont = Font.open(d, "/fonts/temple/temple.font");
+	tfont = Font.open(d, "/fonts/lucida/unicode.8.font");
 	loadsprites();
 
 	tr0 = array[TROOPERS_NUM] of Trooper;
@@ -496,10 +496,11 @@ redraw()
 	}
 	# GrPrint "%03d" troop counts at the top right, in character cells
 	if(tfont != nil){
-		ncols := w / 8;
-		img.text(Point(o.x + (ncols-8)*8, o.y), ink[11], Point(0, 0), tfont,
+		cw := tfont.width("0");
+		ncols := w / cw;
+		img.text(Point(o.x + (ncols-8)*cw, o.y), ink[11], Point(0, 0), tfont,
 			sys->sprint("%03d", cnt0));
-		img.text(Point(o.x + (ncols-4)*8, o.y), ink[13], Point(0, 0), tfont,
+		img.text(Point(o.x + (ncols-4)*cw, o.y), ink[13], Point(0, 0), tfont,
 			sys->sprint("%03d", cnt1));
 	}
 	if(help_up)
@@ -518,15 +519,16 @@ draw_help(img: ref Image, o: Point, w, h: int)
 		"",
 		"        ( OK )"
 	};
-	bw := 24*8 + 16;
-	bh := len lines * 8 + 16;
+	bw := widest(tfont, lines) + 16;
+	bh := len lines * tfont.height + 16;
 	x0 := o.x + (w - bw)/2;
 	y0 := o.y + (h - bh)/2;
 	img.draw(Rect((x0-1, y0-1), (x0+bw+1, y0+bh+1)), ink[0], nil, Point(0, 0));
 	img.draw(Rect((x0, y0), (x0+bw, y0+bh)), ink[15], nil, Point(0, 0));
 	if(tfont != nil)
 		for(i := 0; i < len lines; i++)
-			img.text(Point(x0+8, y0+8+i*8), ink[0], Point(0, 0), tfont, lines[i]);
+			img.text(Point(x0+8, y0+8+i*tfont.height), ink[0],
+				Point(0, 0), tfont, lines[i]);
 }
 
 draw_trooper(img: ref Image, o: Point, t: Trooper, side: int)
@@ -638,3 +640,16 @@ frnd(): real
 	return real rand->rand(1073741824) / 1073741824.0;
 }
 
+# How wide a block of text is, which is the font's business and not a
+# count of characters: these panels used to size themselves in 8-pixel
+# cells, which is exactly what stops being true with a real font.
+widest(f: ref Font, lines: array of string): int
+{
+	w := 0;
+	for(i := 0; i < len lines; i++){
+		lw := f.width(lines[i]);
+		if(lw > w)
+			w = lw;
+	}
+	return w;
+}

@@ -267,9 +267,9 @@ init(ctxt: ref Draw->Context, argv: list of string)
 
 	win = wmclient->window(ctxt, "TempleOS Sprite Editor", Wmclient->Appl);
 	display = win.display;
-	font = Font.open(display, "/fonts/temple/temple.font");
+	font = Font.open(display, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
-		font = Font.open(display, "/fonts/lucida/unicode.8.font");
+		font = Font.open(display, "/fonts/temple/temple.font");
 	if(font != nil)
 		fonth = font.height+2;
 	palimg = array[16] of ref Image;

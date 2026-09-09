@@ -71,6 +71,8 @@ SSpring: adt {
 	key:	int;	# '0'..'9'
 };
 
+FW := 8;			# the font's digit advance, set when the font opens
+FH := 8;			# the font's line height, set when the font opens
 win: ref Window;
 sim: ref ODE;
 ink: array of ref Image;
@@ -136,9 +138,13 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	cols := grpal->values();
 	for(i := 0; i < 16; i++)
 		ink[i] = d.color(cols[i]);
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
 		font = Font.open(d, "*default*");
+	if(font != nil){
+		FW = font.width("0");
+		FH = font.height;
+	}
 	sprites = array[4] of ref Image;
 	masks = array[4] of ref Image;
 	for(i = 1; i <= 3; i++){
@@ -659,11 +665,13 @@ drawhelp(img: ref Image)
 	img.flush(Draw->Flushnow);
 }
 
-# draw s at 8x8 text cell (col,row) in palette color ci; returns next col
+# draw s at text cell (col,row) in palette color ci; returns next col.
+# The original's cell was the 8x8 font's; here it is whatever the font
+# actually measures, so a column is a digit's advance and a row a line.
 txtat(img: ref Image, col, row, ci: int, s: string): int
 {
 	o := img.r.min;
-	img.text(Point(o.x + col*8, o.y + row*8), ink[ci], Point(0, 0), font, s);
+	img.text(Point(o.x + col*FW, o.y + row*FH), ink[ci], Point(0, 0), font, s);
 	return col + len s;
 }
 

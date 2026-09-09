@@ -48,7 +48,7 @@ DISKS: con 6;
 PED: con 20;			# PEDESTAL_HEIGHT
 DH: con 7;			# DISK_HEIGHT
 DW: con 5;			# DISK_UNIT_WIDTH
-FH: con 8;			# FONT_HEIGHT
+FH := 8;			# the font's line height, set when the font opens
 A4ONA: con 60;			# Ona2Freq: ona 60 is 440Hz
 
 # gr_rainbow_10, in TempleOS colour indices
@@ -77,9 +77,12 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	win = wmclient->window(ctxt, "TempleOS Hanoi", Wmclient->Appl);
 	d := win.display;
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
-		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+		font = Font.open(d, "/fonts/temple/temple.font");
+	if(font != nil){
+		FH = font.height;
+	}
 	math = load Math Math->PATH;
 	tone = load Tone Tone->PATH;
 	if(tone != nil && tone->init() == nil)

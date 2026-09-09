@@ -143,7 +143,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	for(i := 0; i < 16; i++)
 		pal[i] = d.color(palette[i]);
 	black = pal[BLACK];
-	tfont = Font.open(d, "/fonts/temple/temple.font");
+	tfont = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(tfont == nil)
 		tfont = Font.open(d, "*default*");
 	bg = d.open("/icons/temple/stadium_bg.bit");

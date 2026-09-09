@@ -61,8 +61,8 @@ Rotatetank: module
 };
 
 PI: con 3.141592653589793;
-FW: con 8;
-FH: con 8;
+FW := 8;			# the font's digit advance, set when the font opens
+FH := 8;			# the font's line height, set when the font opens
 CELLS: con 24;			# WinHorz/WinVert: 24 cells square
 
 Tri: adt { col, a, b, c: int; };
@@ -103,9 +103,13 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		ctxt = wmclient->makedrawcontext();
 	win = wmclient->window(ctxt, "TempleOS RotateTank", Wmclient->Appl);
 	d := win.display;
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
-		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+		font = Font.open(d, "/fonts/temple/temple.font");
+	if(font != nil){
+		FW = font.width("0");
+		FH = font.height;
+	}
 	ink = array[16] of ref Image;
 	cols := grpal->values();
 	for(i := 0; i < 16; i++)

@@ -44,7 +44,7 @@ Vocabulary: module
 DICT: con "/lib/temple/vocab.dict";
 NDX: con "/lib/temple/vocab.ndx";
 MAXENT: con 32768;	# largest dictionary entry is 23749 bytes
-TFONT: con "/fonts/temple/temple.font";
+TFONT: con "/fonts/lucida/unicode.8.font";
 
 # record markers (TempleOS ACD_WORD_CHAR etc.)
 Kword: con 1;

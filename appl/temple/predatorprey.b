@@ -69,7 +69,7 @@ FCMAX: con 2 + 20/FCSTEP;
 fcacc := 0;
 
 OX: con 10;
-FH: con 8;
+FH := 8;			# the font's line height, set when the font opens
 MICRO_STEP: con 0.000001;
 
 win: ref Window;
@@ -97,9 +97,12 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		ctxt = wmclient->makedrawcontext();
 	win = wmclient->window(ctxt, "TempleOS PredatorPrey", Wmclient->Appl);
 	d := win.display;
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
-		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+		font = Font.open(d, "/fonts/temple/temple.font");
+	if(font != nil){
+		FH = font.height;
+	}
 	white = d.color(grpal->value(Grpalette->WHITE));
 	black = d.color(grpal->value(Grpalette->BLACK));
 	blue = d.color(grpal->value(Grpalette->BLUE));

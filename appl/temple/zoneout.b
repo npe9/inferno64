@@ -91,8 +91,8 @@ TANK_HEIGHT: con 32;
 PI: con 3.141592653589793;
 
 # TempleOS FONT_WIDTH / FONT_HEIGHT
-FW: con 8;
-FH: con 8;
+FW := 8;			# the font's digit advance, set when the font opens
+FH := 8;			# the font's line height, set when the font opens
 
 # the window the sky arithmetic assumes: Wrap() spans (-pi,pi], so
 # 640*Wrap(2*angle)/pi spans (-640,640], one sprite width per wrap.
@@ -169,9 +169,13 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	win = wmclient->window(ctxt, "TempleOS ZoneOut", Wmclient->Appl);
 	d := win.display;
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
-		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+		font = Font.open(d, "/fonts/temple/temple.font");
+	if(font != nil){
+		FW = font.width("0");
+		FH = font.height;
+	}
 
 	# the exact TempleOS 16-color palette, index = TempleOS color
 	ink = array[16] of ref Image;
@@ -484,8 +488,8 @@ redraw()
 	tt := now();
 	if(game_tf != 0.0){
 		if(blink())
-			img.text(Point(o.x+cx-(FW*14)/2, o.y+cy-FH/2), ink[RED],
-				Point(0, 0), font, "Game Completed");
+			img.text(Point(o.x+cx-font.width("Game Completed")/2, o.y+cy-FH/2),
+				ink[RED], Point(0, 0), font, "Game Completed");
 		tt = game_tf;
 	}else
 		cross(img, o.x+cx, o.y+cy, ink[BLACK]);

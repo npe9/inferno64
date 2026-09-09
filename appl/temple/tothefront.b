@@ -56,8 +56,8 @@ Tothefront: module
 UNITSNUM: con 32;
 HEXSIDE: con 11.0;
 DCOS: con HEXSIDE*0.5;		# HEX_SIDE*Cos(60 deg)
-FONTW: con 8;
-FONTH: con 8;
+FONTW := 8;			# the font's digit advance, set when the font opens
+FONTH := 8;			# the font's line height, set when the font opens
 
 # TempleOS 16-color palette indices
 BLACK, BLUE, GREEN, CYAN, RED, PURPLE, BROWN, LTGRAY,
@@ -247,9 +247,13 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	ink = array[16] of ref Image;
 	for(i := 0; i < 16; i++)
 		ink[i] = display.color(palette[i]);
-	tfont = Font.open(display, "/fonts/temple/temple.font");
+	tfont = Font.open(display, "/fonts/lucida/unicode.8.font");
 	if(tfont == nil)
 		tfont = Font.open(display, "*default*");
+	if(tfont != nil){
+		FONTW = tfont.width("0");
+		FONTH = tfont.height;
+	}
 
 	spr = array[4] of ref Image;
 	sprmask = array[4] of ref Image;

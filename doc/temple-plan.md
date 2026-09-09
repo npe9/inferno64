@@ -467,6 +467,76 @@ blocking and stops when a popup closes, neither of which the shared clock
 does; and the handful of ports whose `sleep` paces a game rather than a
 frame — `life`'s generations, `maze`'s search, `hanoi`'s moves.
 
+## The text is Inferno's now, and the layout had to follow it
+
+The ports drew every label, HUD and help panel in `/fonts/temple/temple.font`
+— the TempleOS 8x8 system font. 76 of them now open
+`/fonts/lucida/unicode.8.font`, the font `wm(1)` and every other program in
+this tree uses, and keep the 8x8 as the fallback. That is one step of
+making these Inferno programs rather than a TempleOS emulation.
+
+**A font swap on its own would have been a regression, and here is the
+number.** Lucida is 20 pixels tall where temple is 8, and proportional
+where temple is a fixed 8-wide cell. The help panels sized themselves in
+cells — `48*8 + 16` wide, `len lines * 8 + 16` tall — and drew their rows
+at an 8-pixel pitch. Measured against the real strings in the real
+source:
+
+| panel | box asked for | text needs, 8x8 | text needs, lucida |
+| --- | --- | --- | --- |
+| `keepaway` | 400x104 | 384x104 | 347x**236** |
+| `span` | 256x168 | 248x168 | 227x**396** |
+| `rawhide` | 320x64 | 320x64 | 273x**136** |
+| `battlelines` | 208x64 | 208x64 | 204x**136** |
+
+So more than half of every help panel would have been drawn outside its
+own box, on top of itself. The panels are measured now — `widest(font,
+lines)` and `len lines * font.height` — and every string that was centred
+by counting its characters (`(w - 14*8)/2` for "Game Completed") asks
+`font.width` instead.
+
+**Where a port kept a font metric as a constant, the constant became a
+variable set when the font opens.** `FW`/`FH`/`FONT_WIDTH`/`FONTH` and the
+rest were `con 8` in 22 ports; they are now assigned `font.width("0")` and
+`font.height`, so every expression already written in terms of them —
+including the ones that are geometry rather than text, like `varoom`'s
+horizon at `4.5*FONT_HEIGHT` — follows the real font without being
+rewritten. `psalmody` needed more: its layout constants were *derived*
+(`NOTE_BOX_Y: con 13*FONTH+14`), so those became variables recomputed
+after the font opens.
+
+**One place this could have gone wrong silently, and did not.** `span`'s
+open-file popup draws its rows at one pitch and hit-tests a click at
+another, in two separate functions that both said `8`. Changing only the
+drawing would have made a click select a different row than the one under
+the pointer — the same shape as `ecology` taking a click from the wrong
+axis. Both go through one `fh()` now.
+
+**Four demos keep the 8x8 font, because the cell is their subject**:
+`fonted` is an editor for those bitmaps, `charanimation` animates one,
+`pantext` exists to slide a text layer inside an 8-pixel cell, and
+`psalmody` is a fixed 640x480 character-cell instrument whose *layout*
+constants are derived from the metric — `NOTE_BOX_Y: con 13*FONTH+14`,
+and four siblings at 96, 144, 176 and 208 that are not. Converting the
+metric alone moved `KBD_Y` from 104 to 260, below three bands that had not
+moved, which is the keyboard drawn on top of the echo line. It is
+reverted and named here rather than half converted: the whole stack has to
+go together, and that is a separate job.
+
+`vsprite(2)` keeps the 8x8 too: a sprite's `text` element is part of the
+asset and is compared against the `.bit` the extractor rasterised with
+that font — `vspritetest` is still 57/57, which is the check that the
+assets did not move.
+
+**What this evidence is and is not.** The panel table above is a
+measurement of the strings in the source against both fonts, not a run:
+the smoketest starts and steps all 297 ports and never opens a help panel.
+And not every position is measured even now — `strut`'s `txtat` keeps the
+character-cell idiom, positioning at `col*FW` and returning `col + len s`,
+so its digits line up and mixed-case text drifts. That is inherent to a
+cell on a proportional font, and it is left rather than hidden.
+
+
 ## State
 
 **`Demo/Games` is complete.** All 30 are ported, and as of this note all of

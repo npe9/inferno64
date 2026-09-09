@@ -164,7 +164,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		ink[i] = disp.color(palette[i]);
 	tiles = array[16*16*(SHADES+1)] of ref Image;
 
-	tosfont = Font.open(disp, "/fonts/temple/temple.font");
+	tosfont = Font.open(disp, "/fonts/lucida/unicode.8.font");
 	if(tosfont == nil)
 		tosfont = Font.open(disp, "*default*");
 

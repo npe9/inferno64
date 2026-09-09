@@ -88,9 +88,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	cols := grpal->values();
 	for(i := 0; i < 16; i++)
 		ink[i] = d.color(cols[i]);
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
-		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+		font = Font.open(d, "/fonts/temple/temple.font");
 
 	mx = 100; my = 100;
 	win.reshape(Rect((0, 0), (640, 480)));

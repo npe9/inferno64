@@ -48,8 +48,8 @@ Pick: module
 };
 
 APPLES_NUM: con 128;
-FW: con 8;
-FH: con 8;
+FW := 8;			# the font's digit advance, set when the font opens
+FH := 8;			# the font's line height, set when the font opens
 GR_WIDTH: con 640;
 GR_HEIGHT: con 480;
 
@@ -78,9 +78,13 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		ctxt = wmclient->makedrawcontext();
 	win = wmclient->window(ctxt, "TempleOS Pick", Wmclient->Appl);
 	d := win.display;
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
-		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+		font = Font.open(d, "/fonts/temple/temple.font");
+	if(font != nil){
+		FW = font.width("0");
+		FH = font.height;
+	}
 	white = d.color(int 16rFFFFFFFF);
 	black = d.color(int 16r000000FF);
 	apple = d.open("/icons/temple/pick_1.bit");

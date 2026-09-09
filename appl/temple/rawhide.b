@@ -162,7 +162,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	win = wmclient->window(ctxt, "TempleOS RawHide", Wmclient->Appl);
 	d := win.display;
-	tfont = Font.open(d, "/fonts/temple/temple.font");
+	tfont = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(tfont == nil)
 		tfont = Font.open(d, "*default*");
 	ink = array[16] of ref Image;
@@ -634,7 +634,8 @@ redraw()
 		t = tf - t0;
 		ci = RED;
 		if((sys->millisec()/250) % 2 == 0 && tfont != nil)
-			img.text(Point(o.x + (w - 14*8)/2, o.y + (h - 8)/2),
+			img.text(Point(o.x + (w - tfont.width("Game Completed"))/2,
+				o.y + (h - tfont.height)/2),
 				ink[RED], Point(0, 0), tfont, "Game Completed");
 	}
 	if(help_up)
@@ -675,15 +676,15 @@ draw_help(img: ref Image, o: Point, w, h: int)
 		"",
 		"               ( OK )"
 	};
-	bw := 38*8 + 16;
-	bh := len lines * 8 + 16;
+	bw := widest(tfont, lines) + 16;
+	bh := len lines * tfont.height + 16;
 	x0 := o.x + (w - bw)/2;
 	y0 := o.y + (h - bh)/2;
 	img.draw(Rect((x0-1, y0-1), (x0+bw+1, y0+bh+1)), ink[BLACK], nil, Point(0, 0));
 	img.draw(Rect((x0, y0), (x0+bw, y0+bh)), ink[WHITE], nil, Point(0, 0));
 	if(tfont != nil)
 		for(i := 0; i < len lines; i++)
-			img.text(Point(x0+8, y0+8+i*8), ink[BLACK], Point(0, 0),
+			img.text(Point(x0+8, y0+8+i*tfont.height), ink[BLACK], Point(0, 0),
 				tfont, lines[i]);
 }
 
@@ -1020,3 +1021,16 @@ rnreal(): real
 	return real rn(1000000) / 1000000.0;
 }
 
+# How wide a block of text is, which is the font's business and not a
+# count of characters: these panels used to size themselves in 8-pixel
+# cells, which is exactly what stops being true with a real font.
+widest(f: ref Font, lines: array of string): int
+{
+	w := 0;
+	for(i := 0; i < len lines; i++){
+		lw := f.width(lines[i]);
+		if(lw > w)
+			w = lw;
+	}
+	return w;
+}

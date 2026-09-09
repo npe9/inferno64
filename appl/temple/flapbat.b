@@ -318,8 +318,8 @@ redraw()
 
 	if(game_done){
 		if(font != nil)
-			img.text(Point(o.x+w/2-56, o.y+h/2), ink[4], Point(0, 0), font,
-				"Game Completed");
+			img.text(Point(o.x+w/2-font.width("Game Completed")/2, o.y+h/2),
+				ink[4], Point(0, 0), font, "Game Completed");
 	}
 	img.flush(Draw->Flushnow);
 }

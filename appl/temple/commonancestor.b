@@ -72,7 +72,7 @@ N: con 32;
 X_SPACING: con 16;
 Y_SPACING: con 45;
 ARROW_SPACING: con 3;
-FH: con 8;
+FH := 8;			# the font's line height, set when the font opens
 
 Node: adt {
 	left, right: cyclic ref Node;
@@ -105,9 +105,12 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		ctxt = wmclient->makedrawcontext();
 	win = wmclient->window(ctxt, "TempleOS CommonAncestor", Wmclient->Appl);
 	d := win.display;
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
-		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+		font = Font.open(d, "/fonts/temple/temple.font");
+	if(font != nil){
+		FH = font.height;
+	}
 	white = d.color(grpal->value(Grpalette->WHITE));
 	black = d.color(grpal->value(Grpalette->BLACK));
 	blue = d.color(grpal->value(Grpalette->BLUE));

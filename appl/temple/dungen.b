@@ -103,9 +103,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	win = wmclient->window(ctxt, "TempleOS DunGen", Wmclient->Appl);
 	d := win.display;
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
-		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+		font = Font.open(d, "/fonts/temple/temple.font");
 	pal := grpal->values();
 	ink = array[16] of ref Image;
 	for(i := 0; i < 16; i++)
@@ -519,7 +519,8 @@ redraw()
 			col = ink[12];
 			tt = tf;
 			if(blnkb)
-				img.text(Point(cx - 8*14/2, cy - 8/2), col,
+				img.text(Point(cx - font.width("Game Completed")/2,
+					cy - font.height/2), col,
 					Point(0, 0), font, "Game Completed");
 		}
 		msg := sys->sprint("Enemy:%d Time:%3.2f Best:%3.2f",

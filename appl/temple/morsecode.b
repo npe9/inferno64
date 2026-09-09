@@ -60,8 +60,8 @@ Morsecode: module
 
 M_DASH_THRESHOLD: con 0.140;
 M_SPACE_THRESHOLD: con 0.300;
-FW: con 8;
-FH: con 8;
+FW := 8;			# the font's digit advance, set when the font opens
+FH := 8;			# the font's line height, set when the font opens
 
 # morse_lst, verbatim: the character then its code
 morse := array[] of {
@@ -105,9 +105,13 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		ctxt = wmclient->makedrawcontext();
 	win = wmclient->window(ctxt, "TempleOS MorseCode", Wmclient->Appl);
 	d := win.display;
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
-		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+		font = Font.open(d, "/fonts/temple/temple.font");
+	if(font != nil){
+		FW = font.width("0");
+		FH = font.height;
+	}
 	white = d.color(grpal->value(Grpalette->WHITE));
 	black = d.color(grpal->value(Grpalette->BLACK));
 	red = d.color(grpal->value(Grpalette->RED));

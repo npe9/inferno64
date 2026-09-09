@@ -85,7 +85,7 @@ Event: adt {
 
 events: array of ref Event;
 
-FN: con "/fonts/temple/temple.font";
+FN: con "/fonts/lucida/unicode.8.font";
 
 cfg := array[] of {
 	"frame .f",

@@ -192,9 +192,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	win = wmclient->window(ctxt, "TempleOS FlatTops", Wmclient->Appl);
 	d := win.display;
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(font == nil){
-		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+		font = Font.open(d, "/fonts/temple/temple.font");
 		if(font != nil)
 			fonth = font.height;
 	}
@@ -1147,10 +1147,12 @@ redraw()
 			sys->sprint("Player 2: %d", num_alive[1]));
 		if((num_alive[0] == 0 || num_alive[1] == 0) && bl){
 			if(num_alive[1] == 0)
-				img.text(Point(o.x + w/2 - 14*8/2, o.y + h/2 - fonth/2),
+				img.text(Point(o.x + w/2 - font.width("Game Completed")/2,
+					o.y + h/2 - fonth/2),
 					ink[10], Point(0, 0), font, "Game Completed");
 			else
-				img.text(Point(o.x + w/2 - 9*8/2, o.y + h/2 - fonth/2),
+				img.text(Point(o.x + w/2 - font.width("Game Over")/2,
+					o.y + h/2 - fonth/2),
 					ink[12], Point(0, 0), font, "Game Over");
 		}
 	}

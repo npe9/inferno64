@@ -78,7 +78,7 @@ SLIDER_SPACING: con 20;
 SLIDER_RANGE: con 30;
 SLIDER_BORDER: con 2;
 BAR: con 12;
-FW: con 8;
+FW := 8;			# the font's digit advance, set when the font opens
 
 win: ref Window;
 font: ref Font;
@@ -113,9 +113,12 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		ctxt = wmclient->makedrawcontext();
 	win = wmclient->window(ctxt, "TempleOS Transform", Wmclient->Appl);
 	d = win.display;
-	font = Font.open(d, "/fonts/temple/temple.font");
+	font = Font.open(d, "/fonts/lucida/unicode.8.font");
 	if(font == nil)
-		font = Font.open(d, "/fonts/lucida/unicode.8.font");
+		font = Font.open(d, "/fonts/temple/temple.font");
+	if(font != nil){
+		FW = font.width("0");
+	}
 	white = d.color(grpal->value(Grpalette->WHITE));
 	black = d.color(grpal->value(Grpalette->BLACK));
 	brown = d.color(grpal->value(Grpalette->BROWN));
