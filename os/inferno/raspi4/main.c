@@ -294,14 +294,13 @@ init0(void)
 		poperror();
 	}
 	/*
-	 * Interrupts are live from here (spllo() at the top of init0),
-	 * which is the earliest the ARM timer's delivery can be tested
-	 * at all -- see armtmrintrcheck().
+	 * No ARM timer check here.  ARMCTRL_TIMER0_1 is one of the nine
+	 * offsets bcm2838 does not map (see the note beside the device
+	 * init above), so armtmrstart()'s first read of Predivider at
+	 * 0xfe00b41c is an external abort rather than a zero -- which is
+	 * how this one was found, in a trap dump that named the address.
+	 * The check comes back with the model, not before it.
 	 */
-	{
-		extern void armtmrintrcheck(void);
-		armtmrintrcheck();
-	}
 	/*
 	 * The polled console path, which panic() and iprint() use and
 	 * which no other check reaches.

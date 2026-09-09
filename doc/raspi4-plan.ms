@@ -81,6 +81,56 @@ together.
 .NH 1
 What boots
 .PP
+All of it, to a shell, with thirty markers and no
+.CW -NONE
+or
+.CW -FAIL :
+.PP
+.CW "AUX-OK AUXSPI-OK DISK-BLK-OK DISK-DOS-OK DISK-READ-OK DISK-WRITE-OK"
+.br
+.CW "DMA-OK DRAW-OK ETHER-DHCP-OK ETHERBIND-OK MBOX-OK OTP-OK RANDOM-OK"
+.br
+.CW "RASPI3B-OK RASPI3B-SH-OK SD-CAP-OK SD-FS-CREATE-OK SD-MULTIBLOCK-OK"
+.br
+.CW "SD-OK SD-WRITE-OK SDHCI-4BIT-OK SDHCI-CAP-OK SDHCI-HISPEED-ACCEPTED"
+.br
+.CW "SDHCI-MULTIBLOCK-OK SDHCI-OK SDHCI-SPEED-ACCEPTED SDHCI-WRITE-OK"
+.br
+.CW "SYSTMR-OK UART-PUTC-OK USB-OK"
+.PP
+23.9 seconds to the last marker, and QEMU logs no guest error.  USB
+ethernet gets a DHCP lease, USB mass storage reads and writes a FAT16
+image, both SD controllers pass the whole sequence including bus width,
+high speed, multi-block and the capacity boundary, and the framebuffer
+comes up at 640x480.  The eight markers this suite has that the Pi 3B's
+has are exactly the eight peripherals QEMU does not map here.
+.PP
+.B "The last thing that was wrong was an interrupt number, and it did not fail."
+.CW usbdwc.c
+carried
+.CW "USBIRQ = 9" ,
+GPU IRQ 9, which is the Pi 3B's number for the same core.  Registering
+it on a GIC-400 does not fail \- 9 is a perfectly legal INTID, an SGI
+nobody raises \- so
+.CW intrenable()
+accepted the handler and the root port's connect-detect interrupt went
+nowhere.  The port read back
+.CW "hport0 0x1000" ,
+power on and no device, and nothing enumerated, while
+.CW "info usb"
+in the QEMU monitor showed the hub and the network interface plainly
+attached.  With
+.CW "USBIRQ = IrqDwc2"
+it reads
+.CW 0x21001 ,
+the same as the Pi 3B, and everything behind the hub appears.
+.PP
+That is the shape to expect from the rest of this port: a number that
+means something different on the two machines, accepted silently by
+both.
+.NH 1
+The boot, step by step
+.PP
 Console, MMU, GIC, and then, in order, on real BCM2711 addresses:
 .CW "i2c: bsc0 at 0xfe205000" ,
 .CW "spi: spi0 at 0xfe204000" ,
@@ -140,8 +190,6 @@ synchronous external abort with the address in FAR, so each one names
 itself in a trap dump on the next boot.
 .NH 1
 What is left
-.IP \(bu
-The abort in the banner, after AUXSPI-OK.
 .IP \(bu
 Map the eight peripherals above for bcm2838 in QEMU, which is the
 codesign half, and re-enable their drivers and markers one at a time.

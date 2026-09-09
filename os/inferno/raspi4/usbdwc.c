@@ -44,7 +44,16 @@
 enum
 {
 	USBREGS		= BCMPERIPH + 0x980000,	/* DWC2 at 0x3f980000 */
-	USBIRQ		= 9,			/* GPU IRQ 9, in IrqPending1 */
+	/*
+	 * INTID 105, which is SPI 73.  GPU IRQ 9 is the Pi 3B's number
+	 * for the same core and means nothing on a GIC-400.  Registering
+	 * the Pi 3B number here does not fail: 9 is a perfectly legal
+	 * INTID, it is simply an SGI nobody raises, so the controller
+	 * accepted the handler and the port's connect-detect interrupt
+	 * went nowhere -- the root port read back power-on with no
+	 * device, and nothing enumerated.
+	 */
+	USBIRQ		= IrqDwc2,
 	Busalias	= 0xC0000000,		/* bus-master view of ARM RAM */
 	Cachelinesz	= 64,			/* Cortex-A53 D-cache line */
 	PowerUsb	= 3,			/* mailbox power-domain id */
