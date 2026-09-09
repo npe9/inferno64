@@ -2547,3 +2547,43 @@ on current source, or on another document's investigation rather than
 this one's, it says so.  A fix is not reported as done on the strength
 of one clean boot: the failures here are races, a single pass is not
 evidence, and the repetition is the test.
+.NH 2
+Audit: what is claimed from a boot, and what from a measurement
+.PP
+Prompted by the cloud-port session's arm64 timer control, whose general
+form is worth keeping: falsify the constant the code would otherwise
+trust, then measure something that has to move.  A boot reaching a
+prompt is almost never that something \(em they showed a kernel with no
+clock at all reaching a shell indistinguishably from a correct one,
+because nothing between main() and the shell needs the timer interrupt.
+.PP
+This branch's one claim of that kind is that cpu1 takes its own timer
+interrupt on virtarm64.  It survives the audit, for two reasons.
+.IP 1.
+It rests on a measurement, not on the boot.
+.CW secmain()
+stores
+.CW mm->ticks
+into
+.CW seccount
+in its idle loop, cpu0 reads that word, delays 50ms and reads it again,
+and the print is the delta: four ticks in fifty milliseconds.
+.IP 2.
+The measurement is taken where interrupts are live.
+.CW spllo()
+runs on cpu1 before the loop.  This is exactly the placement that
+caught them out \(em their first probe read
+.CW "ticks 0 -> 0"
+on a perfectly correct kernel, because interrupts are masked for the
+whole of main() and are not enabled until init0 calls
+.CW spllo() .
+.PP
+And it needs no separate falsification arm, which is the part worth
+noticing.
+.CW seccount
+tracks
+.CW mm->ticks ,
+and that word is advanced only by cpu1's own clock interrupt handler,
+so a non-zero delta cannot be produced without the timer firing.  The
+measurement contains its own control.  Where a probe does not have that
+property, the falsified-constant arm is not optional.
