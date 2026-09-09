@@ -86,12 +86,21 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		names = hd a :: names;
 	}
 
-	# No display: every sprite compared here is free of text elements,
-	# which are the only ones that need a font, and vsprite(2) rasterises
-	# to palette indices without touching Draw.  So this runs under
-	# emu-g, where there is no Draw module at all.
+	# Every sprite compared by default is free of text elements, which
+	# are the only ones that need a font, and vsprite(2) rasterises to
+	# palette indices without touching Draw.  So this runs under emu-g,
+	# where there is no Draw module at all.
+	#
+	# A display is still worth having when there is one: a sprite named
+	# on the command line may have text in it, and without a font
+	# vsprite(2) draws none - which looks exactly like a font that
+	# disagrees, and for a while was mistaken for one.  A bare command
+	# gets no draw context under emu-cocoa, so ask the display for
+	# itself rather than going without.
 	if(ctxt != nil)
 		display = ctxt.display;
+	else if(draw != nil)
+		display = Display.allocate(nil);
 
 	if(names == nil)
 		names = candidates();
@@ -360,8 +369,25 @@ xform(base: string)
 	# 7-pixel-wide sprite of two lines 4 apart comes out 19 wide and not
 	# 28, which is right and looks wrong.  A line scaled by four draws
 	# about four times the pixels.
+	#
+	# And only where the ink is geometry: a transform moves a text or a
+	# bitmap element without scaling it, so a sprite made mostly of
+	# those draws about the same number of pixels however big it is
+	# asked to be.  lighttable_1 goes from 1553 inked to 2016 under a
+	# scale of four for exactly that reason, and that is the transform
+	# behaving as documented rather than failing.
+	scales := 1;
+	for(i = 0; i < len spr.elems; i++){
+		e := spr.elems[i];
+		if(e == nil)
+			continue;
+		if(e.kind == Vsprite->SBITMAP || e.kind == Vsprite->STEXT
+		   || e.kind == Vsprite->STEXTBOX
+		   || e.kind == Vsprite->STEXTDIAMOND)
+			scales = 0;
+	}
 	n := inked(px);
-	if(n >= 6){
+	if(scales && n >= 6){
 		(sp, nil) := spr.transformed(0.0, 4.0).pixels(display);
 		sn := inked(sp);
 		if(sn < 2*n){

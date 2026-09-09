@@ -120,6 +120,14 @@ the two disagree in the last bits, and a point that lands either side of
 a half moves one pixel.
 Neither side can be argued into the other.
 .PP
+A display is asked for when there is no draw context, because
+.I vsprite
+draws no text at all without a font and that reads as a font that
+disagrees rather than as one that is missing.
+It is what made
+.B spriteplot_1
+look 387 pixels wrong when it is 20.
+.PP
 Sprites containing
 .BR text ,
 .BR textbox ,
@@ -145,3 +153,9 @@ element.
 .PP
 That leaves 166 of the 248 sprites uncompared.
 Nothing here says the ones with text or bitmaps in them render correctly.
+Naming one on the command line compares it anyway, and under a display
+that is worth doing:
+.B spriteplot_1
+differs by 20 of 19,125 pixels, which is over the allowance but is the
+same shape-from-cos-and-sin disagreement as the five that are inside it,
+not the font.

@@ -35,6 +35,9 @@ include "rand.m";
 	rand: Rand;
 include "grpalette.m";
 	grpal: Grpalette;
+include "math/vsprite.m";
+	vspr: Vsprite;
+	Sprite: import vspr;
 
 Stadium: module
 {
@@ -49,19 +52,38 @@ palette: array of int;
 BLACK: con 0;
 RED: con 4;
 
-# one vector-sprite line element (fan sprite has only lines, all
-# in the default color BLACK, default thickness 1)
-Lel: adt {
-	col, thk: int;
-	x1, y1, x2, y2: int;
-};
-
 win: ref Window;
 pal: array of ref Image;	# the 16 palette colors
 black: ref Image;
 tfont: ref Font;
 bg: ref Image;			# StadiumBG capture, 640x472 at (0,0)
-fanels: array of Lel;		# fan sprite line elements
+# The fan is a vector sprite, and vsprite(2) draws it: the element list
+# read once, turned by the fan's wander angle, and rasterised.  The port
+# used to walk the list itself and draw each line through draw(2), which
+# was a third rasteriser for a format that already has one, and did not
+# give the same pixels as the .bit beside the .spr.
+#
+# A wandering fan's angle only ever moves by 1/25 radian and is put back
+# to 0 outside [-0.75, 0.75), so there are 39 of them and each raster is
+# made once and kept - fewer lines drawn per frame than the walk it
+# replaces.  A fan the ball knocks over is the exception: it is frozen at
+# -Pi/2 and never passes that test again, so the cache is indexed over a
+# range that reaches THAT too, and an angle outside the range is drawn
+# without the cache rather than snapped to the nearest slot - snapping
+# would have drawn a knocked-over fan nearly upright.
+#
+# Keying on the quantised angle alone is safe because no two angles this
+# port can produce share a slot: the wander lands on multiples of 1/25
+# inside +-0.75, and -Pi/2 quantises to -39.  Two fans nominally at the
+# same wander angle can differ in the last bits, 1/25 not being exact in
+# binary, and it would be wrong to treat that as a different pose.
+fanspr: ref Sprite;
+ASTEP: con 25.0;		# a wander step is 1/25 radian
+KMIN: con -40;			# int(-Pi/2*ASTEP) is -39
+KMAX: con 20;
+NANG: con KMAX-KMIN;
+fanimg, fanmsk: array of ref Image;
+fanrect: array of Rect;
 
 # ball bitmap sprite: palette indices, 16rFF transparent
 ballpix: array of byte;
@@ -83,6 +105,13 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	grpal = load Grpalette Grpalette->PATH;
 	palette = grpal->values();
 	math = load Math Math->PATH;
+	vspr = load Vsprite Vsprite->PATH;
+	if(vspr == nil){
+		sys->fprint(sys->fildes(2), "stadium: cannot load %s: %r\n",
+			Vsprite->PATH);
+		raise "fail:load";
+	}
+	vspr->init();
 	bufio = load Bufio Bufio->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
@@ -103,7 +132,10 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	if(tfont == nil)
 		tfont = Font.open(d, "*default*");
 	bg = d.open("/icons/temple/stadium_bg.bit");
-	fanels = loadspr("/lib/temple/sprites/stadium_1.spr");
+	(fanspr, nil) = vspr->read("/lib/temple/sprites/stadium_1.spr");
+	fanimg = array[NANG] of ref Image;
+	fanmsk = array[NANG] of ref Image;
+	fanrect = array[NANG] of Rect;
 	loadball("/lib/temple/sprites/stadium_2.spr");
 	n := 2*BALLR + 1;
 	ballimg = d.newimage(Rect((0, 0), (n, n)), Draw->RGBA32, 0, Draw->Transparent);
@@ -246,22 +278,33 @@ redraw()
 }
 
 # Sprite3ZB: rotate the element list by ang about the sprite origin
-# (Mat4x4RotZ: x' = x cos - y sin, y' = x sin + y cos), plot at (x,y)
+# (Mat4x4RotZ: x' = x cos - y sin, y' = x sin + y cos), plot at (x,y).
+# vsprite(2) does the turning and the drawing; this picks the raster.
 drawfan(img: ref Image, o: Point, x, y: int, ang: real)
 {
-	c := math->cos(ang);
-	s := math->sin(ang);
-	for(i := 0; i < len fanels; i++){
-		e := fanels[i];
-		x1 := int(real e.x1 * c - real e.y1 * s);
-		y1 := int(real e.x1 * s + real e.y1 * c);
-		x2 := int(real e.x2 * c - real e.y2 * s);
-		y2 := int(real e.x2 * s + real e.y2 * c);
-		r := e.thk / 2;
-		img.line(Point(o.x + x + x1, o.y + y + y1),
-			Point(o.x + x + x2, o.y + y + y2),
-			Draw->Endsquare, Draw->Endsquare, r, pal[e.col & 15], (0, 0));
+	if(fanspr == nil)
+		return;
+	k := int(ang*ASTEP) - KMIN;
+	if(k >= 0 && k < NANG && fanimg[k] != nil){
+		blitfan(img, o, x, y, fanimg[k], fanmsk[k], fanrect[k]);
+		return;
 	}
+	(im, mk, r) := fanspr.transformed(ang*180.0/Math->Pi, 1.0).
+		raster(win.display);
+	if(im == nil)
+		return;
+	if(k >= 0 && k < NANG){
+		fanimg[k] = im;
+		fanmsk[k] = mk;
+		fanrect[k] = r;
+	}
+	blitfan(img, o, x, y, im, mk, r);
+}
+
+blitfan(img: ref Image, o: Point, x, y: int, im, mk: ref Image, r: Rect)
+{
+	img.draw(Rect((o.x+x+r.min.x, o.y+y+r.min.y),
+		(o.x+x+r.max.x, o.y+y+r.max.y)), im, mk, im.r.min);
 }
 
 # Sprite3ZB(...,"<ball>",t0) under Mat4x4Scale(1.5-t0): the bitmap spins
@@ -304,49 +347,6 @@ drawball(img: ref Image, o: Point, x, y: int, t0: real)
 	img.draw(Rect((o.x + x - BALLR, o.y + y - BALLR),
 		(o.x + x + BALLR + 1, o.y + y + BALLR + 1)),
 		ballimg, nil, ballimg.r.min);
-}
-
-loadspr(path: string): array of Lel
-{
-	if(bufio == nil)
-		return array[0] of Lel;
-	b := bufio->open(path, Bufio->OREAD);
-	if(b == nil)
-		return array[0] of Lel;
-	l: list of Lel;
-	nl := 0;
-	col := BLACK;	# sprite plots in dc->color; DrawIt's dc starts BLACK
-	thk := 1;
-	for(;;){
-		ln := b.gets('\n');
-		if(ln == nil)
-			break;
-		(nt, toks) := sys->tokenize(ln, " \t\n");
-		if(nt < 1)
-			continue;
-		case hd toks {
-		"color" =>
-			if(nt >= 2)
-				col = int hd tl toks;
-		"thick" =>
-			if(nt >= 2)
-				thk = int hd tl toks;
-		"line" =>
-			if(nt >= 5){
-				t := tl toks;
-				e := Lel(col, thk, int hd t, int hd tl t,
-					int hd tl tl t, int hd tl tl tl t);
-				l = e :: l;
-				nl++;
-			}
-		}
-	}
-	a := array[nl] of Lel;
-	for(i := nl - 1; i >= 0; i--){
-		a[i] = hd l;
-		l = tl l;
-	}
-	return a;
 }
 
 loadball(path: string)

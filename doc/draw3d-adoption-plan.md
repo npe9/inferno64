@@ -526,13 +526,71 @@ margin.
 the transform score goes from 46/46 to 1/46. The one that still passes
 has too little ink for the growth check to bite.
 
-**What is not done.** None of the seven ports is on `vsprite(2)`. That is
-now the whole remaining job, and it is a *visual* change rather than a
-no-op: `zing`, for one, walks the element list itself and draws each line
-through `draw(2)` with its own rotation, so converting it moves the port
-toward the `.bit` rather than leaving it where it is. Worth knowing
-before picking one, because it decides whether the gate means "prove
-nothing changed" or "prove it now matches the reference".
+**The first port is converted, and it is a visual change.** `stadium`'s
+wandering fans are one vector sprite drawn at each fan's angle. The port
+had its own three-line parser (`color`, `thick`, `line` and nothing else)
+and drew each line through `draw(2)` — a third rasteriser for a format
+that already has one. It now reads the sprite with `vsprite(2)` and draws
+`transformed(ang).raster()`; because a wandering fan's angle only ever
+moves by 1/25 radian and is put back to zero outside ±0.75, there are 39
+of them and each raster is made once and kept, which is less work per
+frame than the walk it replaces.
+
+*The cache nearly cost a bug, and the shape of it is worth keeping.* A
+fan the ball knocks over is frozen at −π/2 and never passes that clamp
+again, so it is outside the wander's range. Sized to the wander and
+indexed by a **clamped** key, the cache drew it at −0.76 radians: a fan
+flattened by the ball standing almost upright, **202 pixels different
+where every other angle differs by about 14**. Nothing in the tree could
+have caught it — `vspritetest` never asks for that angle and the smoke
+test never throws the ball. The fix is not a wider clamp but no clamp:
+the cache reaches far enough to hold −π/2, and an angle outside even that
+is drawn *without* the cache. Clamping a cache key silently returns the
+wrong answer; missing costs a raster.
+
+A first version of the fix also compared the exact angle against the one
+the slot was rasterised at, and would have thrown the cache away: 1/25 is
+not exact in binary, so two fans nominally at the same wander angle
+differ in the last bits and every frame would have re-rasterised. The
+comparison bought nothing — the wander lands on multiples of 1/25 inside
+±0.75 and −π/2 quantises to −39, so no two angles this port can produce
+share a slot — and the key is the quantised angle alone.
+
+*Measured, because it is not a no-op.* A throwaway program rendered the
+sprite both ways — the old walk and `transformed().raster()` — into two
+offscreen `RGB24` images at every one of the 39 wander angles, counting
+pixels that are not white and pixels where the two differ: **about 14 of
+108 inked pixels differ, mean over the 39 angles, worst 23**.
+At angle zero the old walk inked 115 pixels and the new render 105, 22 of
+them different — and `vspritetest` says `stadium_1` is **pixel-exact**
+against its `.bit`, so at that angle the new render is the reference and
+the old walk was the one that was wrong. That is what "prove it now
+matches the reference" looks like, as against "prove nothing changed".
+
+**What is not done.** Six ports to go: `battlelines`, `rawhide`,
+`spriteplot`, `spritetext`, `varoom`, `zing`. None is a no-op either, and
+one needs something the type does not have: `battlelines` tweens between
+two element lists and mirrors them, and `vsprite(2)` has no notion of
+either.
+
+**A retraction, caught by an instrument that was lying.** The first
+version of this paragraph said `spriteplot`'s banner would change font if
+it were rendered from the vectors, and put the cost at 387 of 19,125
+pixels against its own `.bit`. That number was measured with no font at
+all: `vspritetest` took its display from the draw context, a bare command
+gets none under `emu-cocoa`, and `vsprite(2)` with no display draws no
+text — so the 387 pixels were the text *missing*, not a different font.
+The test now asks the display for itself when it has no context, and the
+real figure is **20 of 19,125**, which is not the font at all: the dump
+shows a dithered run starting one column earlier for about ten rows, the
+same shape-from-cos-and-sin disagreement the five allowed sprites have.
+So this tree's `temple.8x8` and the extractor's `FontStd.HC` agree, and
+`spriteplot` is convertible after all — it is still 4 pixels over the
+allowance, so it is not in the compared set, and that is a number to
+bring down rather than a slack to widen.
+
+The lesson is the file's own: an instrument that silently does less than
+you think reads as a difference in the thing measured.
 
 **A correction to the count.** This section said "twelve ports" in three
 places. Counted rather than remembered — `grep -l lib/temple/sprites/

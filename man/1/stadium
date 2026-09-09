@@ -11,6 +11,21 @@ It runs under
 .PP
 Button 1 throws a ball among wandering fans. Enter reseeds the crowd.
 .PP
+The fans are one vector sprite,
+.BR /lib/temple/sprites/stadium_1.spr ,
+drawn through
+.IR vsprite (2)
+at each fan's wander angle.
+A wandering fan's angle only ever moves by a twenty-fifth of a radian and
+is put back to zero outside
+.BR \(+-0.75 ,
+so there are thirty-nine of them and each raster is made once and kept.
+A fan the ball knocks over is the exception: it is frozen at
+.BR -\(*p/2 ,
+outside that range and never tested against it again, so the cache
+reaches further than the wander does, and an angle outside even that is
+drawn without the cache rather than snapped to the nearest slot.
+.PP
 The controls are:
 .TF space
 .TP
@@ -27,5 +42,31 @@ Quit
 .B /appl/temple/stadium.b
 .SH SEE ALSO
 .IR temple (1),
+.IR vsprite (2),
 .IR draw3d (2),
 .IR wm (1)
+.SH BUGS
+The fan changed when it moved onto
+.IR vsprite (2).
+The port used to walk the element list itself and draw each line through
+.IR draw (2),
+which is a different rasteriser from the one
+.B scripts/tos_extract_sprites.py
+used, and about fourteen of a hundred and eight inked pixels came out
+elsewhere \(em twenty-two of them at angle zero, where the sprite's own
+.B .bit
+says the new render is the right one and the old was not.
+So this is not the same picture it was, on purpose.
+.PP
+The cache nearly made it a worse one.
+Sized to the wander alone and indexed by a clamped key, it drew the
+knocked-over fan at
+.B -0.76
+radians instead of
+.BR -\(*p/2 ,
+so a fan flattened by the ball stood almost upright: 202 pixels different
+where every other angle differs by about 14.
+Neither the sprite comparison nor
+.IR temple (1)'s
+smoke test could have seen it \(em one never asks for that angle and the
+other never throws the ball.
