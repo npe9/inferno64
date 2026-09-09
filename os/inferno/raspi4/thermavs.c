@@ -52,6 +52,17 @@ enum {
 
 	Offsetmc	= 410040,	/* millidegrees at adc == 0 */
 	Coeffmc		= 487,		/* millidegrees lost per adc count */
+
+	/*
+	 * What avstemp() returns when the block says its reading is not
+	 * valid.  It cannot be -1, the way thermbcm.c's thermread()
+	 * signals the same thing: a die really can be below zero, and a
+	 * caller testing < 0 would call a cold board a broken sensor.
+	 * If anything outside this file ever wants the reading, this has
+	 * to move somewhere it can see -- an extern accessor with an
+	 * invisible sentinel is worse than no accessor.
+	 */
+	Nosensor	= -1000000,
 };
 
 static u32*
@@ -65,9 +76,7 @@ avs(void)
  * is not valid.  Callers must check: a sensor that is not ready is not
  * a sensor reading zero.
  */
-enum { Nosensor = -1000000 };
-
-long
+static long
 avstemp(void)
 {
 	u32 *r = avs();
