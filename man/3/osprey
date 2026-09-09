@@ -1532,6 +1532,20 @@ relocation, and a value inside the image at every offset named.  A build
 failing any of those emits nothing, which is how a stale linker was
 caught.
 .PP
+A region of address space is asked of the kernel once and used again
+afterwards, and the loader remembers its size as well as its address.
+The size matters only for a slot: a base holds one program for the life
+of the boot, but a slot holds one module and then another, which may be
+the larger.  A slot is therefore asked for at
+.B P9relocslot
+rather than at the size of the module first laid in it, a module larger
+than a slot is refused before it is laid anywhere, and a program that
+does not fit the region already attached at its address is refused by
+name rather than writing past it.  There are sixteen attachment records;
+a boot takes eight, which is what the previous eight would have held
+exactly, and running out is refused out loud.  Each attachment is
+reported as it is taken.
+.PP
 Finding it out cost a bug in
 .BR 6l .
 .I asmins

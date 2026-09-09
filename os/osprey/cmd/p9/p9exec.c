@@ -209,9 +209,69 @@ p9libtable(void)
  * what a pipeline is.  p9spawn refuses the first rather than letting two
  * instances quietly corrupt each other.
  */
-enum { Nattach = 8 };
-static uvlong attached[Nattach];
+/*
+ * A region asked of the kernel once and used again afterwards.  The
+ * size is here because the base alone is not enough: a slot holds one
+ * module and then another, and the second may be the larger of the two.
+ * Attached for the first and reused for the second, it would be a
+ * region a program writes past - reported, if at all, as a fault a long
+ * way from its cause.  So what was attached is remembered, and a
+ * program that does not fit what is there is refused by name.
+ *
+ * Sixteen of them because the count is not obvious: six programs at
+ * bases of their own and four relocation slots is ten, and the old
+ * eight would have been reached by converting one more program to a
+ * module.  Running out is said out loud now rather than passed over,
+ * which is what the old code did - it attached the region and then
+ * silently failed to record it, so the next load of the same program
+ * asked the kernel for ground it already held.
+ */
+enum { Nattach = 16 };
+static uvlong attachbase[Nattach];
+static uvlong attachsize[Nattach];
 static int nattached;
+
+/*
+ * Ground for a program at progbase: need bytes of it, and want bytes
+ * asked of the kernel if it is not there yet (a slot asks for the whole
+ * slot, so that any module small enough to fit one can be laid in it
+ * afterwards).  Answers the base, or nil with the reason printed.
+ */
+static uchar*
+attachfor(char *name, uvlong progbase, uvlong need, uvlong want)
+{
+	uchar *base;
+	int i;
+
+	if(want < need)
+		want = need;
+	for(i = 0; i < nattached; i++)
+		if(attachbase[i] == progbase){
+			if(need > attachsize[i]){
+				print("p9 load: %s needs %llud bytes at %#llux and only %llud are attached there\n",
+					name, need, progbase, attachsize[i]);
+				return nil;
+			}
+			return (uchar*)(uintptr)progbase;
+		}
+	if(nattached >= Nattach){
+		print("p9 load: %s: all %d attachment records are taken; %#llux cannot be asked for\n",
+			name, Nattach, progbase);
+		return nil;
+	}
+	base = (uchar*)segattach(0, "code", (void*)(uintptr)progbase, (ulong)want);
+	if(base == (uchar*)-1 || (uvlong)(uintptr)base != progbase){
+		print("p9 load: the kernel would not give me %llud bytes of address space at %#llux for %s\n",
+			want, progbase, name);
+		return nil;
+	}
+	attachbase[nattached] = progbase;
+	attachsize[nattached] = want;
+	nattached++;
+	print("p9 load: %llud bytes of address space at %#llux for %s, attachment %d of %d\n",
+		want, progbase, name, nattached, Nattach);
+	return base;
+}
 
 /*
  * Read the program named in this task's name space and lay it in this
@@ -224,7 +284,7 @@ p9load(char *name, uvlong *entryp, uvlong *basep)
 	uchar hdr[40];
 	uvlong magic, textsz, datasz, bsssz, hdrsz, entry, tseg, adata, imgsz, progbase;
 	uchar *base;
-	int fd, i, have;
+	int fd;
 	long n;
 
 	if((fd = p9open(name, OREAD)) < 0){
@@ -284,22 +344,11 @@ p9load(char *name, uvlong *entryp, uvlong *basep)
 	 * a program into and then run.  Everything after this is the
 	 * library's own work.
 	 */
-	have = 0;
-	for(i = 0; i < nattached; i++)
-		if(attached[i] == progbase)
-			have = 1;
-	if(have)
-		base = (uchar*)(uintptr)progbase;
-	else {
-		base = (uchar*)segattach(0, "code", (void*)(uintptr)progbase, (ulong)imgsz);
-		if(base == (uchar*)-1 || (uvlong)(uintptr)base != progbase){
-			print("p9 exec: the kernel would not give me %llud bytes of address space at %#llux for the program\n",
-				imgsz, progbase);
-			p9close(fd);
-			return -1;
-		}
-		if(nattached < Nattach)
-			attached[nattached++] = progbase;
+	/* a program at a base of its own needs exactly its own image */
+	base = attachfor(name, progbase, imgsz, imgsz);
+	if(base == nil){
+		p9close(fd);
+		return -1;
 	}
 	print("p9 exec: %s: text %llud, data %llud, bss %llud; %llud bytes of address space at %#llux, entry %#llux\n",
 		name, textsz, datasz, bsssz, imgsz, progbase, entry);
@@ -400,7 +449,7 @@ p9loadreloc(char *name, uvlong progbase, uvlong *entryp, uvlong *basep)
 	uvlong magic, textsz, datasz, bsssz, hdrsz, symsz, spsz, pcsz;
 	uvlong imgsz, relsize, off, a;
 	uchar *base, *rel, *rp, *ep;
-	int fd, i, have, nimport, nrel, m, w;
+	int fd, i, nimport, nrel, m, w;
 	long n;
 
 	if((fd = p9open(name, OREAD)) < 0){
@@ -439,22 +488,27 @@ p9loadreloc(char *name, uvlong progbase, uvlong *entryp, uvlong *basep)
 	}
 
 	imgsz = (textsz + datasz + bsssz + 4095) & ~(uvlong)4095;
-	have = 0;
-	for(i = 0; i < nattached; i++)
-		if(attached[i] == progbase)
-			have = 1;
-	if(have)
-		base = (uchar*)(uintptr)progbase;
-	else {
-		base = (uchar*)segattach(0, "code", (void*)(uintptr)progbase, (ulong)imgsz);
-		if(base == (uchar*)-1 || (uvlong)(uintptr)base != progbase){
-			print("p9 reloc: the kernel would not give me %llud bytes at %#llux\n",
-				imgsz, progbase);
-			p9close(fd);
-			return -1;
-		}
-		if(nattached < Nattach)
-			attached[nattached++] = progbase;
+	/*
+	 * A module goes in a slot, and the slot is the size a module may
+	 * be.  This is the check that was missing: nothing sized a slot to
+	 * its module, so a module larger than the spacing would have been
+	 * laid over the next slot's ground and two of them would have been
+	 * the same memory.
+	 */
+	if(imgsz > (uvlong)P9relocslot){
+		print("p9 reloc: %s is %llud bytes and a slot is %d; it does not fit one\n",
+			name, imgsz, P9relocslot);
+		p9close(fd);
+		return -1;
+	}
+	/*
+	 * The whole slot is asked for, not this module's size: the slot is
+	 * used again by the next module laid in it, which may be larger.
+	 */
+	base = attachfor(name, progbase, imgsz, (uvlong)P9relocslot);
+	if(base == nil){
+		p9close(fd);
+		return -1;
 	}
 
 	/* text and data, adjacent, then the bss zeroed after them */

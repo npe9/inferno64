@@ -10058,8 +10058,46 @@ and gets the refusal, by name, with the first generator ending on the
 write that had no reader - so the same boot shows both a module run
 twice and a fixed-address program that cannot be.
 .PP
-What is left of it is the rest of the shell's programs, the four slots,
-and sizing a slot to the module that goes in it.
+.PP
+.B "A slot is sized to a module, not to the first module in it."
+Nothing did that, and the shape of the mistake is worth writing down
+because it would not have looked like this mistake.  The loader asks the
+kernel for a region once and uses it again afterwards, and it remembered
+only the address it asked at.  A fixed base holds one program for the
+life of the boot, so the size it was asked for is the size it needs, and
+that was true for as long as every program had a base.  A slot is not
+that: it holds one module and then another, and the second may be the
+larger of the two.  Attached for the first and reused for the second, it
+is a region a program writes past, reported - if at all - as a fault
+somewhere else entirely.
+.PP
+So the record has a size in it now, a slot is asked for at the size a
+slot is rather than at the size of whatever went in it first, and a
+module larger than a slot is refused by name before it is laid anywhere.
+Both are checked against a boot, and both were made to fail on purpose
+to see that the check would notice: with the fit bound shrunk to a page
+the boot reports
+.CW "/boot/libcat is 1077248 bytes and a slot is 4194304; it does not fit one"
+and the check falls from 47 to 36; with the remembered size forced to a
+page it reports
+.CW "/boot/reloc needs 1077248 bytes at 0x2c00000 and only 4096 are attached there"
+and falls to 39.  The message in the first is built from
+.CW P9relocslot ,
+which is why it still says 4194304 while the shrunk bound is what
+refused it.
+.PP
+The count found something.  The table held eight records, and a boot
+takes eight: prog2, libdraw, libthread, libsh, libwc and libgen at bases
+of their own, and two slots.  It was exactly full.  One more of the
+shell's programs made into a module would have overflowed it, and the
+old code did not say so - it attached the region and then quietly failed
+to record it, so the next load of that program would have asked the
+kernel for ground it already held.  There are sixteen records now and
+running out is refused out loud, and the boot prints which attachment it
+is taking so the count is a thing the check reads rather than a thing
+assumed.
+.PP
+What is left of it is the rest of the shell's programs.
 .PP
 .B "Phase 3.2: a real program, then rio, linked with the library."
 A real program \- a command, then a shell, then rio \- is linked with

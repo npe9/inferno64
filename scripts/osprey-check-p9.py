@@ -208,6 +208,35 @@ def main():
                     'libsh: /boot/libcat /hello | /boot/libcat' in t
                     and len(catpipe) >= 2 and catpipe[-1] != catpipe[-2]
                     and t.count('libsh: /boot/libcat ended, status ""') >= 2))
+    #
+    # A slot is ground for whatever module goes in it next, so it is
+    # asked for at the size a slot is - not at the size of the module
+    # that happened to be laid in it first.  A program at a base of its
+    # own is asked for at its own size, because nothing else is ever
+    # laid there.  Both are in the same boot, and the two numbers are
+    # different by more than a rounding.
+    attachments = re.findall(
+        r'p9 load: (\d+) bytes of address space at (0x[0-9a-f]+) for (\S+), '
+        r'attachment (\d+) of (\d+)', t)
+    slotsized = [a for a in attachments if int(a[0]) == 0x400000]
+    ownsized = [a for a in attachments if int(a[0]) < 0x400000]
+    results.append(("and a relocation slot is ground the size of a slot, not the size of the module first laid in it: a slot holds one module and then another, and the second may be the larger, so the region asked of the kernel is the whole slot - while a program at a base of its own is asked for at its own size, which is smaller, and the same boot shows both",
+                    len(slotsized) >= 2
+                    and all(int(a[1], 16) >= 0x2c00000 for a in slotsized)
+                    and len(ownsized) >= 4
+                    and all(int(a[1], 16) < 0x2c00000 for a in ownsized)))
+    #
+    # And the record of it has a size in it.  The base alone would let a
+    # module be laid in a region attached for a smaller one, which is a
+    # program writing past its ground and a fault a long way from the
+    # cause.  The count is checked because the old table held eight and
+    # this boot takes eight: it was exactly full, and one more program
+    # made into a module would have overflowed it in silence.
+    results.append(("and the loader has not quietly run out of the ground it remembers: every attachment this boot takes is recorded with the size it was given, none is refused for want of a record, and the count is reported rather than left to be guessed",
+                    len(attachments) >= 8
+                    and 'attachment records are taken' not in t
+                    and all(int(a[3]) == i + 1 for i, a in enumerate(attachments))
+                    and int(attachments[-1][4]) > len(attachments)))
     results.append(("and the limit still holds for a program that is its address: the script's last line asks for two of /boot/libgen, which is linked at one, and the second is refused by name - the two would be the one image sharing its one data segment, descriptor table and heap - and the shell carries on",
                     'p9 exec: /boot/libgen is already running at 0x2000000; it is one image and cannot be two programs' in t
                     and 'libsh: /boot/libgen: cannot start it' in t))
