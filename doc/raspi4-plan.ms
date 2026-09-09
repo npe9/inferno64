@@ -266,6 +266,31 @@ boundary \- and SDHOST correctly reports
 .CW SD-NONE ,
 which is the right answer for a Pi 4 and not a failure.
 .PP
+Splitting the card off the Arasan splits the driver state with it.
+.CW sdhcibcm.c
+carried one static
+.CW Ctlr
+for both roles, which was right on a Pi 3B where both roles were the
+same controller.  Here it is not:
+.CW sdhcipnp()
+sets that struct's base to EMMC2 at boot, so
+.CW sdioinit() 's
+own
+.CW "if(c->r == nil)"
+guard could no longer fire and the SDIO bring-up would have driven
+emmc2 \- muxing GPIO 34-39 under a live card, and stepping on the
+memory card's relative address on the way past.  Nothing caught it
+because
+.CW sdiocheck()
+is behind
+.CW -DSDIOTEST
+and no build defines it, so this was a latent bug rather than an
+observed one.  The SDIO role now has its own
+.CW Ctlr ,
+which is what two controllers on one board require; both compile
+clean, with and without
+.CW SDIOTEST .
+.PP
 .B "And that is why this board has its own init module."
 .CW raspi4init.b
 exists because of a real difference rather than for tidiness: the kfs

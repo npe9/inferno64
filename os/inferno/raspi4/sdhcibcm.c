@@ -125,6 +125,14 @@ struct Ctlr {
 };
 
 static Ctlr sdhcictlr;
+/*
+ * The SDIO role has its own controller state.  On a Pi 3B both roles
+ * were the same Arasan and one Ctlr covered both; on a Pi 4 the card
+ * is on emmc2 and only the SDIO is on the Arasan, so a shared Ctlr
+ * would have sdioinit() find sdhcipnp()'s emmc2 base already set and
+ * drive the wrong controller -- with GPIO 34-39 muxed under it.
+ */
+static Ctlr sdioctlr;
 extern SDifc sdhcibcmifc;
 
 /*
@@ -697,7 +705,7 @@ sdhcicardinit(Ctlr *c)
 int
 sdioinit(void)
 {
-	Ctlr *c = &sdhcictlr;
+	Ctlr *c = &sdioctlr;
 	u32 *r;
 	u32 ocr;
 	int i;
@@ -757,7 +765,7 @@ sdioinit(void)
 int
 sdiocmd52(int fn, int addr, int write, int val)
 {
-	Ctlr *c = &sdhcictlr;
+	Ctlr *c = &sdioctlr;
 	u32 arg;
 
 	arg = (write & 1) << 31 | (fn & 7) << 28 | (write & 1) << 27 |
@@ -770,7 +778,7 @@ sdiocmd52(int fn, int addr, int write, int val)
 int
 sdiocmd53(int fn, int addr, int write, int blockmode, int incr, void *a, int n)
 {
-	Ctlr *c = &sdhcictlr;
+	Ctlr *c = &sdioctlr;
 	uchar *p = a;
 	u32 arg, flags;
 	int i, j, nblk, blksize;
@@ -845,10 +853,13 @@ sdhcipnp(void)
 		return nil;
 	/*
 	 * EMMC2, not the Arasan.  This is the controller a Pi 4's microSD
-	 * slot is actually on -- it is what the board boots from, and
-	 * Linux's bcm2711.dtsi carries the card on mmc@7e340000.  The
-	 * Arasan is still here at 0xfe300000 and is the wireless part's
-	 * SDIO, which is what sdioinit() below uses it for.
+	 * slot is actually on -- it is what the board boots from.  The
+	 * offset agrees with QEMU's own EMMC2_OFFSET in bcm2838, and with
+	 * Linux carrying the Pi 4's card on mmc@7e340000 rather than on
+	 * the Arasan; the Linux tree is not in this repo to cite, so take
+	 * the QEMU half as the checkable one.  The Arasan is still here
+	 * at 0xfe300000 and is the wireless part's SDIO, which is what
+	 * sdioinit() below uses it for.
 	 *
 	 * QEMU had to be corrected to agree: bcm2838 mapped emmc2 and
 	 * wired its interrupt but parented the card to the Arasan, so
@@ -1067,7 +1078,7 @@ sdiocheck(void)
 			"CMD0/CMD5 (no I/O function answered)");
 		return;
 	}
-	print("sdio: %d I/O function(s), rca %#ux\n", nfn, sdhcictlr.rca);
+	print("sdio: %d I/O function(s), rca %#ux\n", nfn, sdioctlr.rca);
 
 	rev = sdiocmd52(0, 0x00, 0, 0);		/* CCCR revision */
 	if(rev < 0){
