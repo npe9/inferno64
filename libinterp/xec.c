@@ -11,6 +11,8 @@ static int debug = 0;
 static	Pctx	_pctx;		/* the one execution context (interp.h) */
 Pctx*	curP = &_pctx;
 REG*	curR = &_pctx.reg;		/* interp.h: #define R (*curR) */
+Pctx*	pctxs[MAXPCTX] = { &_pctx };	/* every context; see progreg() */
+int	npctx = 1;
 String	snil;			/* String known to be zero length */
 
 /*
@@ -2536,7 +2538,27 @@ xec(Prog *p)
 REG*
 progreg(Prog *p)
 {
+	int i;
+
 	if(p == curP->curprog)
-		return curR;
+		return curR;		/* the common case: this context */
+	/*
+	 * A program can be mid-quantum on a context other than the one
+	 * asking.  The collector is the caller that matters -- it walks
+	 * every Prog in the system from whichever context happens to be
+	 * collecting -- and for such a program p->reg is the entry
+	 * snapshot, so returning it hands back a root set that is a
+	 * quantum out of date.  That is the failure Phase 1b of
+	 * doc/dis-parallel-plan.ms is warned about, and the one a
+	 * sanitizer cannot see: a missing root is not a data race.
+	 *
+	 * With one context this loop finds nothing the test above did not
+	 * and the behaviour is exactly the old function's.  It is here so
+	 * that the answer stays right when there is a second one, rather
+	 * than the assumption being rediscovered later by its symptom.
+	 */
+	for(i = 0; i < npctx; i++)
+		if(pctxs[i]->curprog == p)
+			return &pctxs[i]->reg;
 	return &p->reg;
 }

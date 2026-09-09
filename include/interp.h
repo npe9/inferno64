@@ -487,6 +487,14 @@ extern	Type Treal;
  * therefore lands with Phase 5, not before.  A sanitizer cannot catch
  * this: a missing root is not a data race.
  */
+/*
+ * Every execution context, so progreg() can answer for a program
+ * running on one other than this one.  There is exactly one today and
+ * the array is the shape Phase 1b needs, not a claim that more exist.
+ */
+enum { MAXPCTX = 8 };
+extern	Pctx*	pctxs[MAXPCTX];
+extern	int	npctx;
 extern	Pctx*	curP;
 REG*	progreg(Prog*);	/* where a program's live roots are; see xec.c */
 Module*	modlinkmod(Modlink*);	/* the Module of a Modlink worth trusting; see heap.c */
