@@ -553,32 +553,47 @@ rungc(Prog *p)
 	 * asserted rather than argued.  The collector takes Prog->reg as
 	 * its root set, and for a program that is executing, p->reg is
 	 * stale for every instruction of the quantum -- the live values
-	 * are in the context's register file.  Today that never matters,
-	 * because the collector only runs between quanta, from
-	 * vmachine()'s BusyGC block or from execatidle(), and isave() has
-	 * written p->reg back at both.  curP->curprog names the program
-	 * whose live registers the context holds, and is nil exactly when
-	 * no program is mid-quantum.
+	 * are in the context's register file.  A root the mark phase
+	 * cannot see is an object the sweeper takes, and a missing root
+	 * is not a data race, so no sanitizer will find it.
 	 *
-	 * A probe of this shape ran before and never fired, and was then
-	 * removed; xec.c's own comment records that it was removed before
-	 * the arm64 JIT was fixed, so the compiled path rests on the
-	 * argument and not on the measurement.  Restored as a permanent
-	 * tripwire rather than a temporary probe: it costs one compare
-	 * per collection, it cannot fire while there is one context, and
-	 * it fires the moment Phase 1b makes curR per-executor without
-	 * Phase 5 having taught the collector not to trust p->reg.  A
-	 * missing root is not a data race and no sanitizer will catch it;
-	 * this will.
+	 * Test the hazard, not a proxy for it.  A first version of this
+	 * checked curP->curprog != nil and fired at once, from
+	 * execatidle+0xb0 on virtarm64 -- but xec.c's own comment says
+	 * curprog is deliberately NOT cleared by exception.c's
+	 * memmove(&p->reg, &R, ...), which syncs the snapshot while the
+	 * program carries on rather than handing it over.  So curprog can
+	 * be set with p->reg perfectly current, and that first version
+	 * reported a state that is not the hazard.
+	 *
+	 * What matters is whether the saved copy differs from the live
+	 * one.  If it does, the roots reachable only through the live
+	 * registers are not in the root set and this collection can free
+	 * them; if it does not, curprog says nothing either way.
 	 */
-	if(curP->curprog != nil) {
+	if(curP->curprog != nil
+	&& (curP->curprog->reg.PC != R.PC || curP->curprog->reg.SP != R.SP
+	    || curP->curprog->reg.FP != R.FP || curP->curprog->reg.EX != R.EX)) {
 		static int said;
 
 		if(!said) {
 			said = 1;
-			print("rungc: collecting with prog %d mid-quantum -- "
-				"its p->reg is stale and its live roots are not "
-				"in the root set\n", curP->curprog->pid);
+			/*
+			 * The caller pc matters: rungc() has five call sites,
+			 * two in dis.c and three in devbench.c, and only the
+			 * dis.c pair are the between-quanta ones the
+			 * invariant is stated for.  rungc(Prog*) takes p
+			 * first, so getcallerpc(&p) is anchored on the
+			 * enclosing function's own first parameter, which is
+			 * what the a+0(FP) trick reads -- see
+			 * os/inferno/port/alloc.c on the four sites where
+			 * that anchoring was wrong.
+			 */
+			print("rungc: prog %d mid-quantum and p->reg is stale "
+				"(saved PC %#p live %#p), called from %#p -- "
+				"its live roots are not in the root set\n",
+				curP->curprog->pid, curP->curprog->reg.PC,
+				R.PC, getcallerpc(&p));
 		}
 	}
 

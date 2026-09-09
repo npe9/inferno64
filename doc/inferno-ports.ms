@@ -20201,3 +20201,102 @@ Dis workload, and the number would be different on four processors or
 under a program that blocks on I/O more.  What it does establish is
 that the serialisation is not academic on the one workload this branch
 can run today.
+.NH 2
+The -smp 1 control: two questions answered, one against me
+.PP
+96 boots at
+.CW "-smp 1"
+on the identical kernel, as a control for the two open readings.
+.TS
+box, tab(;);
+l l l.
+;-smp 1;-smp 2
+_
+boots;96;96
+no panic;95;94
+general protection violation;1;2
+of which _intrr (IRETQ);1;2
+contention, median;34.6%;76.9%
+contention, min;27.7%;57.2%
+contention, max;92.8%;96.2%
+.TE
+.PP
+First: the
+.CW IRETQ
+fault is
+.B not
+SMP-specific.  It had appeared only in
+.CW "-smp 2"
+batches, and the tempting reading was that
+.CW _iretnested ,
+whose whole purpose is more than one processor, was implicated.  It is
+1 of 96 at
+.CW "-smp 1"
+too.  That reading is withdrawn; the earlier absence was the
+confounding this document has now seen three times \(em boots that died
+at
+.CW modstatus
+never ran long enough to reach it.
+.PP
+Second, and this one holds: the contention figure is not an artefact of
+SMP.  On one processor a blocked interpreter is ordinary
+multiprogramming rather than an idle core, and the median is 34.6%.
+The second processor takes it to 76.9%.  The metric behaves the way a
+real measure of lost parallelism should \(em roughly a third of passes
+inherent to the workload, and the rest appearing only when there is a
+second processor to be wasted.
+.NH 2
+The collector tripwire fires, and the reason is not yet known
+.PP
+The assertion added to
+.CW rungc()
+fires on virtarm64, on the first boot, every boot.  Getting the caller
+required teaching
+.CW p9sym.py
+the ELF-wrapped kernels, which had no pc resolution at all before;
+it is
+.CW execatidle+0xb0 ,
+one of the two call sites the invariant is documented for.
+.P1
+rungc: prog 5 mid-quantum and p->reg is stale
+	(saved PC 0x0 live 0x43782428), called from 0x4004da58
+.P2
+.PP
+The first version of the check tested
+.CW "curP->curprog != nil"
+alone, and that was the wrong test: xec.c records that
+.CW curprog
+is deliberately not cleared by exception.c's
+.CW "memmove(&p->reg, &R, ...)" ,
+so it can be set with
+.CW p->reg
+current.  The version above compares the saved and live
+.CW PC ,
+.CW SP ,
+.CW FP
+and
+.CW EX ,
+which is the hazard itself rather than a proxy, and it still fires.
+.PP
+What is not established is why.
+.CW xec()
+sets
+.CW curprog
+after
+.CW "R = p->reg"
+and clears it after
+.CW "p->reg = R" ,
+so inside a quantum the two differ by construction and that is the
+documented stale window \(em the question is how
+.CW rungc()
+comes to run inside one.  The
+.CW "saved PC 0x0"
+is the part that does not fit either story: a program that has run has
+a real
+.CW Inst*
+there, and one that has not should not be
+.CW curprog .
+That is the thread to pull, and it is recorded as an open question
+rather than resolved.  The tripwire stays: it costs a compare, and
+whatever it is reporting is worth knowing before Phase 1b makes the
+same window a real one.
