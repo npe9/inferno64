@@ -19262,6 +19262,47 @@ reports 30 boots to a prompt with no panic after its fix, and a
 multicore branch 82 of 96 boots panicking before it against 2 of 96
 after; those runs were not made here.
 .NH 2
+emu builds under one configuration name and not the other
+.PP
+Getting that change into
+.CW emu
+needed
+.CW emu
+rebuilt, and
+.CW "mk CONF=emu"
+does not work here: the
+.CW emu
+configuration lists
+.CW win ,
+which is Carbon code \(em
+.CW InstallApplicationEventHandler ,
+.CW QDBeginCGContext \(em
+and it fails on this SDK with an int passed where an
+.CW EventTargetRef
+is wanted and an
+.CW attachscreen
+whose return type stopped matching
+.CW memdraw.h .
+.PP
+That is not the configuration Apple Silicon uses.
+.CW mkfile-arm64
+overrides
+.CW CONF
+to
+.CW emu-cocoa ,
+which builds from
+.CW main-cocoa.m
+and compiles clean.
+.CW MacOSX/arm64/bin/emu
+is a copy of it and is not tracked;
+.CW emu-cocoa
+and
+.CW o.emu-cocoa
+are.  So the default name in the mkfile is not the one that works on
+the machine the tree is being built on, and reaching for it is how
+half an hour goes on two Carbon errors that have nothing to do with
+anything.
+.NH 2
 pc64 could not be built from a clean tree
 .PP
 Getting that measurement needed a pc64 kernel, and building one from
@@ -21924,10 +21965,61 @@ machine, so ordinary starvation does not produce it.  Something inside
 stops dead for half a minute, and sometimes instead exits without a
 message.  Whether those are one fault or two is not known.
 .PP
-The exit is not a crash: macOS writes no diagnostic report for it, so
-the process leaves by
-.CW exit
-or by a signal nobody reports, not by a fault.  The rate is low and
+It is not a memory fault, and the reasoning that first said so was
+worthless.  \*(lqmacOS writes no crash report, therefore not a
+crash\*(rq assumes a fault would reach the crash reporter, and in
+.CW emu
+it does not:
+.CW emu/MacOSX/os.c
+installs
+.CW trapmemref
+on SIGSEGV and SIGBUS, and a fault at a low address becomes
+.CW printbacktrace()
+and a Dis nil-reference exception.  Sending
+.CW emu
+a SIGSEGV by hand proves it: a native backtrace, seventeen frames of
+it,
+.CW "EMU: faults: dereference of nil" ,
+and then exit status 0.  So a real fault is loud and leaves status 0,
+and the silent deaths, which print nothing at all, are something else
+entirely.
+.PP
+Where the quiet ones come from is
+.CW progexit
+in
+.CW emu/port/dis.c .
+A program that broke prints
+.CW "[name] Broken: pid n \*(lqreason\*(rq" ,
+but one that was killed, or that raised a
+.CW fail:
+string, or that simply returned, reaches the bottom of that function
+with nothing said; and if it was the last one,
+.CW "isched.head == nil"
+and
+.CW cleanexit(0)
+leaves by
+.CW _exit
+without a word.  A killed last program and a finished one are the same
+thing from outside.
+.PP
+They are not any more.
+.CW progexit
+now names it \(em
+.CW "emu: the last program left: 1 \*(lqProbe\*(rq:fail:the probe" \(em
+when the reason is not empty, and stays quiet when a program merely
+ran out, which is emu exiting for the ordinary reason.  Both halves
+are checked: a Limbo program that raises
+.CW fail:
+prints the line, one that returns does not.  The bench records the
+exit status too when
+.CW emu
+goes away by itself rather than being killed, which was worth doing
+even though the SIGSEGV test shows the status alone settles nothing.
+.PP
+None of that has caught the intermittency yet \(em the run after the
+change passed, 66 phases, 62 captures, 10011 packets, no retry \(em
+but the next one to happen will say which program left and why, and
+that is the question this has been stuck on.  The rate is low and
 uneven \(em the
 .CW included
 phase died once in eight runs on its own and then not once in twelve

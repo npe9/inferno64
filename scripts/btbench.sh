@@ -447,17 +447,41 @@ run1() {	# $1 phase, $2 model flag, $3 bench mode, $4 second model flag, $5 key 
 	$EMU -r "$ROOT" /dis/bt/btbench.dis "tcp!127.0.0.1!$PORT" \
 		/mnt/bt "$keys" $3 $spec2 > "$OUT/bench-$1.out" 2>&1 &
 	emupid=$!
+	#
+	# gone=1 means emu went away by itself rather than being killed
+	# here, and that is the case worth knowing about: it is the
+	# undiagnosed fault written up in doc/inferno-ports.ms.  The
+	# status is taken here because the kill below would otherwise
+	# overwrite it, and until it was recorded nobody could say
+	# whether emu was exiting or being signalled.
+	#
+	gone=0
+	gonestatus=
 	i=0
 	while [ $i -lt 240 ]; do
 		if grep -q '^BT: done$' "$OUT/bench-$1.out"; then
 			break
 		fi
 		if ! kill -0 $emupid 2>/dev/null; then
+			gone=1
+			wait $emupid 2>/dev/null
+			gonestatus=$?
 			break
 		fi
 		sleep 1
 		i=`expr $i + 1`
 	done
+	if [ $gone = 1 ]; then
+		#
+		# A status over 128 is 128 plus the signal, so 139 is a
+		# segmentation fault and 134 an abort; 0 or 1 is emu
+		# deciding to leave, which is a different bug entirely.
+		#
+		echo "bench: emu went away by itself in $1, exit status $gonestatus"
+		if [ "$gonestatus" -gt 128 ] 2>/dev/null; then
+			echo "bench: that is signal `expr $gonestatus - 128`"
+		fi
+	fi
 	#
 	# emu does not go away on a TERM: it installs handlers, and the
 	# shell's kill leaves it running.  Twenty nine phases each

@@ -1254,8 +1254,27 @@ progexit(void)
 	delprog(r, msg);
 	gcunlock();
 
-	if(isched.head == nil)
+	if(isched.head == nil){
+		/*
+		 * The last program has gone and emu is about to leave.
+		 * Say why if there is a why: a broken program printed
+		 * its reason above, but one that was killed, or that
+		 * raised a fail: string, or that simply returned, gets
+		 * here with nothing said, and _exit(0) says nothing
+		 * either.  That is what an intermittent silent death
+		 * under a long bench run looks like from the outside --
+		 * no message, no crash report, status 0 -- and it is
+		 * indistinguishable from finishing normally.  A real
+		 * memory fault is loud (trapmemref prints a backtrace),
+		 * so the quiet ones come through here.
+		 *
+		 * Nothing is printed when a program simply ran out,
+		 * because that is emu exiting for the ordinary reason.
+		 */
+		if(estr != nil && *estr != '\0')
+			print("emu: the last program left: %s\n", msg);
 		cleanexit(0);
+	}
 }
 
 void
