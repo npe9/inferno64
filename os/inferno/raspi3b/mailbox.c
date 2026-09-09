@@ -330,6 +330,47 @@ mboxgetclock(int clkid, u32 *rate)
 }
 
 /*
+ * Ask which DMA channels the ARM side may use (tag 0x00060001).  The
+ * answer is a bitmap, one bit per channel.
+ *
+ * This matters on hardware and cannot be guessed.  The BCM2835 has
+ * sixteen DMA channels and the VideoCore firmware keeps some of them
+ * for itself; which ones is a firmware decision, not a property of the
+ * SoC.  A driver that picks a channel without asking is sharing an
+ * engine with the firmware, and the failure is a corrupted transfer on
+ * whichever side loses, not an error anybody reports.  Linux asks the
+ * same question through the brcm,dma-channel-mask the firmware writes
+ * into the device tree.
+ *
+ * Returns 0 and the mask, or -1.  An empty mask is a failure: it means
+ * no channel is ours, and picking one anyway is the bug this exists to
+ * prevent.
+ */
+int
+mboxgetdmachans(u32 *mask)
+{
+	static u32 raw[8+4];
+	u32 *buf;
+
+	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
+	buf[0] = 7 * 4;
+	buf[1] = 0;
+	buf[2] = 0x00060001;		/* tag: get DMA channels */
+	buf[3] = 4;			/* value buffer: the mask */
+	buf[4] = 0;			/* request length */
+	buf[5] = 0;
+	buf[6] = 0;			/* end tag */
+	if(mboxprop(buf) < 0)
+		return -1;
+	if((buf[4] & 0x80000000) == 0)
+		return -1;
+	if(buf[5] == 0)
+		return -1;
+	*mask = buf[5];
+	return 0;
+}
+
+/*
  * Switch a firmware-managed power domain (USB HCD, SD, etc.) on or off
  * through SET_POWER_STATE (tag 0x00028001).  The value is the device id
  * plus a state word: bit0 = on, bit1 = wait for the domain to settle.

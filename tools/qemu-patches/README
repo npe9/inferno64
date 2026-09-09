@@ -353,6 +353,27 @@ The entries below give each in full.
 			booting.  See the SDHCI chapter of
 			doc/raspi3b-completion-plan.ms.
 
+	bcm2835-dma	RECORDED, not patched, and the guest was the one
+			at fault.  The model runs any of the sixteen DMA
+			channels for anybody who asks.  The firmware's
+			GET_DMA_CHANNELS says 0x3c -- channels 2 to 5 --
+			because the VideoCore keeps the rest, and on the
+			board a transfer on a channel the firmware also
+			uses corrupts whichever side loses, with nothing
+			reporting an error.
+
+			Nothing to patch: a model refusing channels the
+			firmware has not granted would be inventing an
+			enforcement the silicon does not have either.
+			The part does not stop you; the firmware simply
+			owns the channel.  So the fix is entirely on the
+			driver side -- dmabcm.c asks and takes the
+			lowest granted channel below 7 -- and unlike the
+			SD base clock it needs no patched model to
+			verify, since the firmware already answers 0x3c
+			and the driver visibly moves from channel 0 to
+			channel 2 on an ordinary boot.
+
 	sdhci		NOT a divergence, and this entry used to say it
 			was.  The claim here was that the model is more
 			capable than the part, because hw/sd/sdhci.c

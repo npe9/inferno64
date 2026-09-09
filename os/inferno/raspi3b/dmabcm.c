@@ -36,8 +36,11 @@
 #include "dat.h"
 #include "fns.h"
 
+extern int mboxgetdmachans(u32*);	/* mailbox.c: channels the ARM may use */
+
 enum {
 	Chansize	= 0x100,	/* per-channel register block */
+	Nlite		= 7,		/* channels 7 and up are cut-down */
 
 	/* per-channel registers, word offsets */
 	Cs		= 0x00/4,
@@ -167,14 +170,49 @@ dmacopy(int c, Cb *cb, void *dst, void *src, ulong len)
 }
 
 /*
+ * Choose a channel the firmware says is ours.
+ *
+ * This used to be channel 0, on the reasoning that it always exists.
+ * It does exist, and it is not ours.  The sixteen channels are shared
+ * with the VideoCore, which keeps some for itself, and which ones is a
+ * firmware decision rather than a property of the SoC -- so the only
+ * way to know is to ask, tag 0x00060001.  On this machine the answer
+ * is 0x003c: channels 2 to 5, and channel 0 is not among them.  QEMU
+ * lets every channel run regardless, so driving channel 0 works
+ * perfectly here and shares an engine with the firmware on the board,
+ * where the loser gets a corrupted transfer and nobody reports an
+ * error.  Linux asks the same question, through the
+ * brcm,dma-channel-mask the firmware writes into the device tree.
+ *
+ * Of the channels that are ours, take the lowest below Nlite: 7 and up
+ * are cut-down engines on this SoC and cannot do everything a general
+ * copy may want.  If the firmware will not answer, or answers with
+ * nothing usable, decline rather than fall back -- falling back means
+ * picking a channel that belongs to somebody else, which is the whole
+ * bug.
+ */
+static int
+dmachanpick(u32 *maskp)
+{
+	u32 mask;
+	int c;
+
+	if(mboxgetdmachans(&mask) < 0)
+		return -1;
+	*maskp = mask;
+	for(c = 0; c < Nlite; c++)
+		if(mask & (1 << c))
+			return c;
+	return -1;
+}
+
+/*
  * Prove the engine runs a control block, and prove it moved the data
  * rather than merely reporting that it had.
  *
- * Channel 0 is used because it always exists; the higher channels are
- * "lite" on this SoC and cannot do everything.  The buffers are
- * deliberately given a recognisable pattern with a distinct
- * destination fill, so a transfer that silently does nothing shows up
- * as the fill rather than as a plausible-looking zero.
+ * The buffers are deliberately given a recognisable pattern with a
+ * distinct destination fill, so a transfer that silently does nothing
+ * shows up as the fill rather than as a plausible-looking zero.
  */
 void
 dmainit(void)
@@ -182,18 +220,30 @@ dmainit(void)
 	static uchar raw[sizeof(Cb) + 32];
 	static uchar src[256], dst[256];
 	Cb *cb;
-	int i;
+	u32 mask;
+	int i, c;
 
 	cb = (Cb*)(((uintptr)raw + 31) & ~(uintptr)31);
+
+	mask = 0;
+	if((c = dmachanpick(&mask)) < 0){
+		if(mask == 0)
+			print("DMA-NONE the firmware would not say which channels "
+				"are ours; declining to guess\n");
+		else
+			print("DMA-NONE the firmware offers channels %#ux, none of "
+				"them a full engine below %d\n", mask, Nlite);
+		return;
+	}
 
 	for(i = 0; i < sizeof src; i++){
 		src[i] = 0x40 + (i & 0x3f);
 		dst[i] = 0xa5;			/* not zero, and not the source */
 	}
 
-	if(dmacopy(0, cb, dst, src, sizeof src) < 0){
-		print("DMA-NONE channel 0 at %#p did not run a control block\n",
-			(void*)DMA0);
+	if(dmacopy(c, cb, dst, src, sizeof src) < 0){
+		print("DMA-NONE channel %d at %#p did not run a control block\n",
+			c, dmachan(c));
 		return;
 	}
 	for(i = 0; i < sizeof src; i++)
@@ -202,7 +252,8 @@ dmainit(void)
 				i, dst[i], src[i]);
 			return;
 		}
-	print("dma: channel 0 at %#p copied %d bytes by control block\n",
-		(void*)DMA0, (int)sizeof src);
-	print("DMA-OK control block fetched, transfer completed and verified\n");
+	print("dma: channel %d at %#p copied %d bytes by control block "
+		"(firmware offers %#ux)\n", c, dmachan(c), (int)sizeof src, mask);
+	print("DMA-OK control block fetched on a channel the firmware gave us, "
+		"transfer completed and verified\n");
 }

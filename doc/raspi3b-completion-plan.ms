@@ -1345,6 +1345,35 @@ pre-filled with a value that is neither zero nor the source, so a
 transfer that silently does nothing shows as the fill rather than as a
 plausible result.
 .PP
+.B "Which channel, and why it is not channel 0."
+This drove channel 0, on the reasoning that channel 0 always exists.
+It does exist and it is not ours.  The sixteen channels are shared with
+the VideoCore, which keeps some of them, and which ones is a firmware
+decision rather than a property of the SoC; the only way to know is to
+ask, tag 0x00060001.  The firmware's answer on this machine is
+.CW 0x3c
+\- channels 2 to 5 \- and channel 0 is not in it.
+.PP
+QEMU runs every channel regardless, so channel 0 worked here and would
+have shared an engine with the firmware on the board, where the loser
+gets a corrupted transfer and nothing reports an error.  This is the
+same shape as the SDHCI base clock and the UART clock before it: the
+model is more permissive than the part, the firmware is telling the
+truth, and the driver was not listening.  It listens now, taking the
+lowest offered channel below 7 \- 7 and up are cut-down engines on this
+SoC \- and declining outright if the firmware will not say, because
+falling back means picking somebody else's channel, which is the bug.
+.PP
+Unlike the SD base clock this one needed no patched model to test.  The
+firmware already answers 0x3c, so the change is visible on an ordinary
+boot:
+.CW "dma: channel 2 at 0x3f007200 copied 256 bytes by control block (firmware offers 0x3c)" .
+.B qemu
+evidence, not
+.B qemu+patch ,
+and the marker now says what it means \-
+.CW "DMA-OK control block fetched on a channel the firmware gave us" .
+.PP
 .B "The AUX mini UART"
 .CW ( auxbcm.c ,
 0x3f215000) is the Pi's second serial port, and on a Pi 3B usually the
