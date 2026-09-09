@@ -287,8 +287,25 @@ quantised before the cache is asked — a whole degree, and two per cent of
 the nominal length — and quantising is not clamping, per the fan frozen at
 −π/2 in `doc/draw3d-adoption-plan.md`: an angle or a length outside what
 the cache holds is still drawn, just uncached. Over the first sixty
-frames `simplependulum` takes 309 hits to 51 misses and never flushes,
-which is about a quarter of a millisecond a frame.
+frames `simplependulum` takes 309 hits to 51 misses and never flushes.
+
+That last figure was first reported as "about a quarter of a millisecond a
+frame", which was arithmetic on the hit and miss counts rather than a
+measurement. Timed directly — 2,000 repetitions of the whole link loop at
+frame 120, against 2,000 of the plain `Image.line` it replaced — it is
+**98 µs a frame against 22** for `springpendulum`'s two links, and **108
+against 34** for `running`'s eight, the most any model declares. So the
+components cost about 75 µs a frame more than lines however many there
+are: the marginal cost of a link is small and what is being paid for is
+the cache lookups. That is half a percent of a 60 Hz frame.
+
+The question was worth asking because the same design lost badly in
+`temple/varoom`, where a raster cache made `redraw()` three times slower
+than walking the elements (see `doc/draw3d-adoption-plan.md`). Two things
+make a link different: there are eight of them at most against the 290
+bushes a `varoom` frame averages, and `rod.spr` and `beam.spr` contain a `floodfill`, which
+`draw(2)` has no operation for — those two components *cannot* be drawn by
+walking their elements, so the choice is a raster or a different picture.
 
 *Negative control:* move `lib/danby/sprites` away and every model falls
 back to the circles it drew before — 3 colours for `simplependulum` and 5
