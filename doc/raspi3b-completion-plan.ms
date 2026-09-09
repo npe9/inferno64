@@ -744,7 +744,59 @@ The rate itself is still unobservable -- nothing in the model times a
 transfer against SDCLK, so a card given four clocks where it needs
 forty reads identically -- which is why this marker is
 .CW SDHCI-SPEED-ACCEPTED
-too.  .PP
+too.
+.PP
+.B "Where the base clock comes from, which is not one place."
+The divider is relative to a base clock, and the driver used to take
+that from the capabilities register, bits 8-15, in MHz.  QEMU puts 52
+there \-
+.CW capareg
+0x52134b4 in
+.CW bcm2835_peripherals.c
+\- and a real BCM2835 puts nothing usable there at all.  Linux marks
+.CW brcm,bcm2835-sdhci
+with
+.CW missing_caps
+in
+.CW drivers/mmc/host/sdhci-iproc.c
+and substitutes a table of its own, and that table sets no base-clock
+field either.  On the board the number has to come from the firmware,
+exactly as UARTCLK does.
+.PP
+So the driver asks capabilities first and the firmware second, through
+the same
+.CW mboxgetclock()
+the console uses, clock id 1.  The marker names which answered, and it
+has to: the two disagree, and with a 50MHz ceiling that is the whole
+result.  From capabilities,
+.CW "base 52MHz from capabilities / 2 = about 26MHz" ,
+because 52 undivided exceeds the ceiling.  From the firmware,
+.CW "base 50MHz from firmware clock 1 undivided" .
+Same driver, same ceiling, roughly double the clock depending on which
+source answered.  A log that did not name the source would be
+unreadable a month later.
+.PP
+Both paths are exercised, and only one of them is the board's.  Under
+stock QEMU capabilities answer and the firmware path never runs; on
+hardware it is the reverse.  The fallback was verified by zeroing bits
+8-15 of
+.CW capareg
+in a local QEMU \- 0x52134b4 becomes 0x52100b4, which is what the part
+reports \- booting, and reading the marker back.  That is
+.B qemu+patch
+evidence for a path that
+.B hardware
+will be the only real user of, and the honest statement is that the
+capabilities path is tested by every boot and the firmware path is
+tested only by a model deliberately made to lie in the direction the
+silicon lies.
+.PP
+The 50-against-52 disagreement is itself a divergence, recorded in
+.CW tools/qemu-patches/README
+and deliberately not patched.  Nothing in the model is paced by either
+number \- QEMU's SDHCI times no transfer \- so there is no behaviour to
+falsify and a patch would be moving a constant to please a reader.
+.PP
 .B "High speed, which is what lifts the ceiling."
 CMD6 is two commands wearing one number: bit 31 of the argument clear
 means "check", which reports what the card can do and changes nothing,

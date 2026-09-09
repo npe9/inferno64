@@ -42,6 +42,8 @@
 
 extern void gpiofsel(int, int);		/* gpiobcm.c */
 
+extern int mboxgetclock(int, u32*);	/* mailbox.c: firmware clock rate */
+
 enum {
 	/* register offsets, in 32-bit words */
 	Arg2		= 0x00/4,
@@ -106,6 +108,7 @@ enum {
 	Alt3		= 7,	/* GPIO fsel: this controller owns them */
 
 	Maxspeedmhz	= 25,	/* SD default speed */
+	Emmcclkid	= 1,	/* firmware clock id for the EMMC/SD controller */
 	Hispeedmhz	= 50,	/* what CMD6's high-speed function allows */
 	Fnhispeed	= 1,	/* group 1 function number for high speed */
 	Timeout		= 1000000,	/* bounded register polls */
@@ -280,8 +283,25 @@ sdhciroutetest(Ctlr *c)
  * the card has been in transfer state since SELECT, so there is no
  * reason to stay slow.  The divider field is the 8-bit "divided clock"
  * form in Control1 bits 8-15: SDCLK is the base clock over 2*N, with
- * N of 0 meaning the base clock undivided.  The base is in the
- * capabilities register, bits 8-15, in MHz.
+ * N of 0 meaning the base clock undivided.
+ *
+ * Where the base clock comes from is the interesting part, and it is
+ * not one place.  The capabilities register carries it in bits 8-15,
+ * in MHz, and QEMU puts 52 there (capareg 0x52134b4 in
+ * bcm2835_peripherals.c).  A real BCM2835 does not: its capabilities
+ * register does not report a usable base clock at all, which is why
+ * Linux marks brcm,bcm2835-sdhci with missing_caps in
+ * drivers/mmc/host/sdhci-iproc.c and substitutes a table of its own,
+ * and that table sets no base-clock field either.  On the board the
+ * number has to come from the firmware, the same way UARTCLK does.
+ *
+ * So ask capabilities first and the firmware second.  Under QEMU only
+ * the first path runs; on hardware only the second will.  The marker
+ * names which answered, because the answers differ and a log that did
+ * not say would be unreadable later: the firmware reports the EMMC
+ * clock at 50MHz, capabilities say 52, and with a 25MHz ceiling those
+ * pick different dividers -- 50/2 is 25 and is accepted, 52/2 is 26
+ * and is not, so 52 falls through to 52/4 and runs at 13.
  *
  * The sequence is mandatory and is the reason this is not one write.
  * SDCLK must be stopped before the divider changes and restarted after
@@ -301,14 +321,32 @@ static void
 sdhcispeed(Ctlr *c, int maxmhz)
 {
 	u32 *r = c->r;
-	u32 ctl;
+	u32 ctl, hz;
 	int basemhz, n;
+	char *src;
 
+	src = "capabilities";
 	basemhz = (r[Capabilities] >> 8) & 0xff;
 	if(basemhz == 0){
-		print("SDHCI-SPEED-NONE capabilities report no base clock; "
-			"staying at the identification divider\n");
-		return;
+		/*
+		 * What a real BCM2835 does.  Ask the firmware for the
+		 * EMMC clock instead; staying at the identification
+		 * divider would leave the card running at 400kHz for
+		 * the life of the boot.
+		 */
+		src = "firmware clock 1";
+		if(mboxgetclock(Emmcclkid, &hz) < 0){
+			print("SDHCI-SPEED-NONE no base clock from capabilities "
+				"and none from the firmware; staying at the "
+				"identification divider\n");
+			return;
+		}
+		basemhz = hz / 1000000;
+		if(basemhz == 0){
+			print("SDHCI-SPEED-NONE firmware reports an EMMC clock "
+				"below 1MHz (%ud Hz)\n", hz);
+			return;
+		}
 	}
 	/*
 	 * Smallest N with base/(2N) <= maxmhz, and N of 0 (undivided)
@@ -332,12 +370,12 @@ sdhcispeed(Ctlr *c, int maxmhz)
 	r[Control1] |= Clken;				/* and start it again */
 
 	if(n == 0)
-		print("SDHCI-SPEED-ACCEPTED base %dMHz undivided, ceiling %dMHz\n",
-			basemhz, maxmhz);
+		print("SDHCI-SPEED-ACCEPTED base %dMHz from %s undivided, "
+			"ceiling %dMHz\n", basemhz, src, maxmhz);
 	else
-		print("SDHCI-SPEED-ACCEPTED base %dMHz / %d = about %dMHz, "
-			"ceiling %dMHz (was the identification divider 0x80)\n",
-			basemhz, 2*n, basemhz/(2*n), maxmhz);
+		print("SDHCI-SPEED-ACCEPTED base %dMHz from %s / %d = about "
+			"%dMHz, ceiling %dMHz (was the identification divider "
+			"0x80)\n", basemhz, src, 2*n, basemhz/(2*n), maxmhz);
 }
 
 /*

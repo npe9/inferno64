@@ -192,6 +192,16 @@ Four answers came back, and they are not all the same kind.
 	  question to ask a model is not only "what will it accept"
 	  but "does it tell the guest the truth about itself".
 
+	  Asking it of the rest of the firmware clock table turned up
+	  one more, recorded below and deliberately NOT patched: the
+	  EMMC clock.  The difference between recording it and fixing
+	  it is whether anything in the model is paced by the number.
+	  The UART's was -- the console had a measurable drain rate
+	  after 0018, the boot time moved, and a trace named the
+	  cause.  The EMMC's is not: QEMU's SDHCI times no transfer,
+	  so 50 against 52 changes nothing the model does and a patch
+	  would be moving a constant to please a reader.
+
 	- command timing generally: a real gap, not patched.  Unlike
 	  the FIFO it has no compensation on either side and is simply
 	  a limit: no model in this series claims a service time.
@@ -296,6 +306,52 @@ The entries below give each in full.
 			IBRD/FBRD, and Uart.freq no longer carries the
 			24 MHz -M virt apb-pclk that had been copied in
 			with the driver.
+
+	bcm2835-property, EMMC
+			RECORDED, not patched.  GET_CLOCK_RATE for
+			clock id 1 answers RPI_FIRMWARE_EMMC_CLK_RATE,
+			50000000.  The SDHCI capabilities register on
+			the same machine reports its base clock as 52
+			MHz -- capareg 0x52134b4, bits 8-15 -- so the
+			two sources a driver can ask disagree by 4%.
+			That is small and it is not harmless: with a 50
+			MHz ceiling, 50 undivided is legal and 52 is
+			not, so the same driver lands on 50 MHz or 26
+			MHz depending purely on which it asked.
+
+			Not patched because nothing in the model is
+			paced by either number.  hw/sd/sdhci.c times no
+			transfer against SDCLK, so no value here is
+			falsifiable by anything a guest can observe,
+			and the fix would be moving a constant for the
+			benefit of a human reader.  Recorded so the
+			next person to see 26 MHz in a log knows why.
+
+			There is a real leniency underneath it, and it
+			belongs to the capabilities register rather
+			than to the firmware.  A BCM2835 does not report
+			a usable base clock in capabilities at all --
+			Linux marks brcm,bcm2835-sdhci missing_caps in
+			drivers/mmc/host/sdhci-iproc.c and substitutes
+			a table that sets no base-clock field either --
+			so on the board that source does not exist and
+			the firmware is the only one.  QEMU offering 52
+			there lets a driver that reads only capabilities
+			work under emulation and stall at the 400 kHz
+			identification clock on hardware.
+
+			Not patched either, and this one is a judgement
+			rather than an absence of payoff: a base-clock
+			field is 0 or it is not, so unlike
+			tx-fifo-depth there is no default that leaves
+			other guests alone, and every guest booting
+			raspi3b would get it.  The driver side handles
+			it instead -- sdhcibcm.c asks capabilities, then
+			the firmware, and names the source in its marker
+			-- and the fallback was verified by zeroing
+			capareg bits 8-15 locally (0x52100b4) and
+			booting.  See the SDHCI chapter of
+			doc/raspi3b-completion-plan.ms.
 
 	sdhci		NOT a divergence, and this entry used to say it
 			was.  The claim here was that the model is more
