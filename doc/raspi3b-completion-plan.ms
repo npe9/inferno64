@@ -1584,6 +1584,43 @@ sees 24047 microseconds, and 24047 * 250 is 6011750 \- agreeing to
 within a part in eight thousand.  Two counters agreeing that closely is
 worth more than either reading alone.
 .PP
+.B "And then the check broke a third time, on its own assumptions."
+Once the console ran at a real 115200 the sampling loop stopped being
+prompt: an interval meant to be 3ms stretched to 14.8ms, crossed the
+10ms countdown period, and
+.CW "(v[i-1] + period - v[i]) % period"
+folded the whole extra period away.  A healthy timer was reported as
+having fallen 9580 where 29418 was expected \- a third of its rate \-
+and only sometimes, which is worse than always.
+.PP
+The fault was one sampling scheme being asked two questions.  Covering
+more than one period is what exercises a wrap; keeping every interval
+under a period is what makes the subtraction mean anything; and those
+two pull against each other with only a few milliseconds between them.
+The balance held exactly as long as nothing delayed the loop.
+.PP
+They are separate measurements now, each at a rate that makes its own
+answer unambiguous.  The rate check runs the countdown at 4Hz, a 250ms
+period, so the entire 25ms sampling window fits inside one period and
+no interval can span a wrap at all \- and it asserts that rather than
+assuming it, reporting
+.CW ARMTIMER-NONE ,
+"nothing was measured", for an interval that reaches a period.  A
+measurement that could not be made and a timer that failed are
+different claims, and only one of them is about the hardware.
+.PP
+The wrap check runs at 50Hz and counts reloads over 400ms.  The first
+attempt at it read the counter just after the value rose and required
+the reading to be near LOAD, which was flaky for exactly the same
+reason as the bug it was added beside: an interrupt landed between the
+reload and the read in one run of three, and the counter had already
+fallen to 11478 of 19841.  A count over a window assumes nothing about
+its own scheduling, and tests more than the single reading did \- a
+parked counter gives zero and a wrong rate gives the wrong number, so
+one measurement answers both.  Five consecutive boots:
+.CW "reloaded 20 times in 400000 us, 20 expected" ,
+every time.
+.PP
 The first version of both halves passed, and both were wrong.  The
 guest read the countdown twice twenty milliseconds apart and passed if
 the readings differed, which is far too weak: it passes for a counter

@@ -61,14 +61,30 @@ enum {
 	Timeout	= 1000000,
 
 	/*
-	 * Sampling for the self-test below.  Nsample intervals of
-	 * Samplems each must cover more than one period of the 100Hz
-	 * countdown, so that a wrap is actually exercised, while each
-	 * single interval stays well short of a period so the
-	 * subtraction across it is unambiguous.
+	 * Sampling for the self-test below.
+	 *
+	 * This used to ask one sampling scheme two questions -- does the
+	 * countdown run at its rate, and does it wrap rather than park
+	 * at zero -- by covering more than one period with intervals
+	 * each shorter than a period.  That balance held only while
+	 * nothing delayed the loop.  A console at a real 115200 delays
+	 * it: an interval stretched from 3ms to 14.8ms, crossed the
+	 * 10ms period, and the modulo below folded the whole period
+	 * away, so a healthy timer was reported as having fallen 9580
+	 * where 29418 was expected.  The timer was fine; the check was
+	 * wrong, and wrong intermittently, which is worse.
+	 *
+	 * The two questions are asked separately now, each at a rate
+	 * that makes its own measurement unambiguous.  Ratehz is slow
+	 * enough that the whole sampling window fits inside one period,
+	 * so no interval can span a wrap at all.  Wraphz is fast enough
+	 * that a reload is certain to happen while we watch for it.
 	 */
 	Nsample	= 8,
 	Samplems = 3,
+	Ratehz	= 4,		/* 250ms a period; window is about 25ms */
+	Wraphz	= 50,		/* 20ms a period, for the reload check */
+	Wrapms	= 400,		/* twenty of those, counted */
 
 	/*
 	 * The ARM timer's interrupt is bit 0 of the controller's basic
@@ -174,7 +190,7 @@ armtmrinit(void)
 			predivider);
 	rate = Apbhz / (predivider + 1);
 
-	armtmrstart(100);			/* 100Hz, i.e. 10ms a period */
+	armtmrstart(Ratehz);
 	load = r[Load];
 	period = load + 1;			/* it sits at zero for one tick */
 
@@ -190,17 +206,30 @@ armtmrinit(void)
 
 	/*
 	 * Check every interval, not just the endpoints.  A counter that
-	 * has stopped, or that parks at zero instead of wrapping, passes a
-	 * simple "did it move" test whenever the first and last reads
-	 * happen to differ; it cannot pass this one.  The samples are
-	 * spaced well under one period so the subtraction below is
-	 * unambiguous across a wrap.
+	 * has stopped passes a simple "did it move" test whenever the
+	 * first and last reads happen to differ; it cannot pass this.
+	 *
+	 * The subtraction is only meaningful while an interval is shorter
+	 * than a period, so that is asserted rather than assumed: an
+	 * interval that reached a whole period is reported as a
+	 * measurement that could not be made, not as a timer that failed.
+	 * Those are different claims and only one of them is about the
+	 * hardware.
 	 */
 	for(i = 1; i < Nsample; i++){
 		ulong fell, want;
 
 		fell = ((ulong)v[i-1] + period - v[i]) % period;
 		want = (ulong)(((t[i] - t[i-1]) * rate) / 1000000);
+		if(want >= period){
+			print("ARMTIMER-NONE sample %d spans %lud us, at or past "
+				"the %lud us period; the fall across it is "
+				"ambiguous and nothing was measured\n",
+				i, (ulong)(t[i] - t[i-1]),
+				(ulong)(((uvlong)period * 1000000) / rate));
+			armtmrstop();
+			return;
+		}
 		err = (long)fell - (long)want;
 		if(err < 0)
 			err = -err;
@@ -212,6 +241,66 @@ armtmrinit(void)
 			armtmrstop();
 			return;
 		}
+	}
+
+	/*
+	 * The other question, which the rate check above deliberately
+	 * cannot answer because it never lets the counter reach zero: a
+	 * countdown that parks at zero instead of reloading passes every
+	 * rate check that stops short of the end.  So run it fast and
+	 * watch for the value to rise, which only a reload can do, then
+	 * check it reloaded to Load and not to something else.
+	 */
+	{
+		u32 prev, cur;
+		int wraps, expectw;
+		uvlong w0, wus;
+
+		/*
+		 * Count reloads over a window rather than inspecting the
+		 * value at one.  The first attempt read the counter just
+		 * after it rose and required the reading to be near Load;
+		 * that is only true if nothing happens between the reload
+		 * and the read, and something does -- an interrupt landed
+		 * in one run of three and the counter had already fallen
+		 * to 11478 of 19841 by the time it was read.  The check
+		 * was flaky for the same reason the rate check above was:
+		 * it assumed a bound on its own scheduling.
+		 *
+		 * A count over 400ms assumes nothing of the sort.  It
+		 * also tests more: a parked counter gives zero, and a
+		 * counter reloading at the wrong rate gives the wrong
+		 * number, so one measurement answers both.
+		 */
+		armtmrstart(Wraphz);
+		prev = r[Value];
+		wraps = 0;
+		w0 = systmrread();
+		while((wus = systmrread() - w0) < Wrapms*1000){
+			cur = r[Value];
+			if(cur > prev)
+				wraps++;
+			prev = cur;
+		}
+		expectw = (int)((wus * Wraphz) / 1000000);
+		if(wraps == 0){
+			print("ARMTIMER-FAIL countdown never reloaded in %lud us; "
+				"it parks rather than wraps\n", (ulong)wus);
+			armtmrstop();
+			return;
+		}
+		err = (long)wraps - (long)expectw;
+		if(err < 0)
+			err = -err;
+		if(expectw == 0 || err > (long)(expectw/4)){
+			print("ARMTIMER-FAIL countdown reloaded %d times in "
+				"%lud us, expected %d\n",
+				wraps, (ulong)wus, expectw);
+			armtmrstop();
+			return;
+		}
+		print("armtimer: countdown reloaded %d times in %lud us, "
+			"%d expected\n", wraps, (ulong)wus, expectw);
 	}
 
 	if(f2 == f1){
@@ -232,8 +321,8 @@ armtmrinit(void)
 	if(err < 0)
 		err = -err;
 
-	print("armtimer: countdown load %ud at %ud Hz, %d samples wrapped cleanly\n",
-		load, rate, Nsample);
+	print("armtimer: countdown load %ud, %d intervals each within one period\n",
+		load, Nsample-1);
 	print("armtimer: free-running +%lud in %lud us\n", frticks, elapsedus);
 	armtmrstop();
 
