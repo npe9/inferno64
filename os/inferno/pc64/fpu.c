@@ -403,8 +403,25 @@ fpurestore(int ostate)
 		if((ostate & ~(FPnouser|FPkernel|FPindexm)) == FPactive)
 			_clts();
 	} else {
-		if(astate == FPinit)	/* don't restore on procexec()/procsetup() */
-			return;
+		/*
+		 * Masked, like the tests around it.  This was a bare ==
+		 * against FPinit, which is the state value 0, so a process
+		 * carrying FPnouser, FPkernel or a non-zero FPindex never
+		 * matched and fell through instead of returning.  It then
+		 * reaches "up->fpstate = ostate" below with ostate FPactive,
+		 * while _clts() is only done on the fast path above -- so
+		 * fpstate says active with the FPU still disabled, and the
+		 * next fxsave takes a device-not-available trap that
+		 * mathemu() meets in case FPactive and panics on.
+		 *
+		 * That is the "math emu pid 1 pc _fxsave+0x0" capture
+		 * exactly, and it became reachable when correcting
+		 * userureg() started setting FPkernel on kernel processes.
+		 * Same class as the bare == the cloud-port session found in
+		 * notify(); this is the other one in the pair.
+		 */
+		if((astate & ~(FPnouser|FPkernel|FPindexm)) == FPinit)
+			return;		/* procexec()/procsetup() */
 		if((astate & ~(FPnouser|FPkernel|FPindexm)) == FPactive)
 			_stts();
 		up->fpsave = up->fpslot[ostate>>FPindexs];
