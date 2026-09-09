@@ -159,6 +159,18 @@ Neither happens for any of the 57 sprites
 .IR vspritetest (1)
 compares both ways, but neither is ruled out.
 .PP
+An inverted flood fill
+.RB ( floodfillnot )
+stops where a plain one would not, and no
+.B .bit
+can check it: the extractor takes the invert flag and never uses it, so
+.IR vspritetest (1)
+skips the one sprite in the tree that has one.
+Until recently it did not stop at all \(em the fill compared the pixel
+under it, packed positive, with the ink taken from the sign-extended
+palette, so for any colour with red at or above 128 the two were never
+equal and the fill ran to the canvas's edge.
+.PP
 The text elements go through
 .IR draw (2)'s
 font rather than TempleOS's 8x8 table, so they will not agree with a

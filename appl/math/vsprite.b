@@ -51,11 +51,17 @@ names := array[] of {
 
 WHITE: con 15;
 
+# The canvas holds one palette index a pixel, not a colour: everything
+# that draws goes through setpix with an index, so the RGBA the canvas
+# used to hold was built only to be searched back into an index a pixel
+# at a time.  UNDRAWN is a value no element can paint.
+UNDRAWN: con 254;
+
 # The raster and the pen state it carries, which is exactly TempleOS's
 # DC: a colour, an optional dither pair, a thickness, an accumulated
 # shift, and a symmetry plane.
 rw, rh: int;
-rbuf: array of byte;			# rw*rh*4, RGBA
+rbuf: array of byte;			# rw*rh, one palette index a pixel
 fseen, fzero: array of byte;		# flood-fill scratch
 fstack: array of int;
 rcol := 0; rd0 := -1; rd1 := 0; rthk := 1;
@@ -134,25 +140,35 @@ setpix(x, y, c: int)
 {
 	if(x < 0 || x >= rw || y < 0 || y >= rh)
 		return;
-	i := (y*rw+x)*4;
-	if(c == TRANSP){
-		rbuf[i] = byte 255; rbuf[i+1] = byte 255;
-		rbuf[i+2] = byte 255; rbuf[i+3] = byte 255;
-		return;
-	}
-	v := pal[c&15];
-	rbuf[i] = byte (v>>24);
-	rbuf[i+1] = byte (v>>16);
-	rbuf[i+2] = byte (v>>8);
-	rbuf[i+3] = byte 255;
+	if(c != TRANSP)
+		c &= 15;
+	rbuf[y*rw+x] = byte c;
 }
 
 getpix(x, y: int): int
 {
 	if(x < 0 || x >= rw || y < 0 || y >= rh)
 		return -1;
-	i := (y*rw+x)*4;
-	return (int rbuf[i]<<24) | (int rbuf[i+1]<<16) | (int rbuf[i+2]<<8) | int rbuf[i+3];
+	return int rbuf[y*rw+x];
+}
+
+# The colour an index stands for, as the canvas used to hold it.  A flood
+# fill compares what is under it with what it is about to paint, and it
+# has to keep comparing colours rather than indices: TRANSP paints opaque
+# white and so does WHITE, so the two are the same pixel to a fill, and
+# were before this held indices.
+colval(v: int): int
+{
+	if(v == UNDRAWN || v < 0)
+		return 0;
+	# Masked, not just shifted: the palette entries are sign-extended
+	# 32-bit values and int is 64 bits here, so pal[WHITE] is -1 while
+	# the canvas used to hold 16rFFFFFFFF positive.  Comparing the two
+	# forms would tell TRANSP from WHITE, which the RGBA canvas could
+	# not, and a fill would stop where it used to run on.
+	if(v == TRANSP)
+		return int 16rFFFFFFFF;
+	return (pal[v&15] & int 16rFFFFFF00) | 16rFF;
 }
 
 # Where the sprite's origin sits in the canvas.  The canvas IS the
@@ -280,10 +296,8 @@ flood(x, y, notcolor: int)
 {
 	if(x < 0 || x >= rw || y < 0 || y >= rh)
 		return;
-	target := getpix(x, y);
-	inkv := pal[rcol&15];
-	if(rcol == TRANSP)
-		inkv = int 16rFFFFFFFF;
+	target := colval(getpix(x, y));
+	inkv := colval(rcol);
 	if(!notcolor && target == inkv && rd0 < 0)
 		return;
 	if(fseen == nil){
@@ -309,7 +323,7 @@ flood(x, y, notcolor: int)
 		pos := stack[--sp];
 		px := pos%rw;
 		py := pos/rw;
-		v := getpix(px, py);
+		v := colval(getpix(px, py));
 		if(notcolor){
 			if(v == inkv)
 				continue;
@@ -1144,7 +1158,7 @@ canvas(elems: array of ref Elem, w, h, cx, cy: int, d: ref Display): array of by
 	rh = h;
 	ox = cx;
 	oy = cy;
-	rbuf = array[rw*rh*4] of { * => byte 0 };
+	rbuf = array[rw*rh] of { * => byte UNDRAWN };
 	fseen = nil;
 	fzero = nil;
 	fstack = nil;
@@ -1154,13 +1168,19 @@ canvas(elems: array of ref Elem, w, h, cx, cy: int, d: ref Display): array of by
 	for(i := 0; i < len elems; i++)
 		if(elems[i] != nil)
 			drawelem(elems[i]);
+	# What the canvas holds is already the answer, bar one index: a
+	# pixel painted TRANSP is opaque white on the canvas, so it comes
+	# out as whatever WHITE quantises to, the way the RGBA canvas made
+	# it come out.
 	out := array[w*h] of { * => byte TRANSP };
+	tw := byte nearest(int 16rFFFFFF00);
 	for(i = 0; i < w*h; i++){
-		k := i*4;
-		if(rbuf[k+3] == byte 0)
+		v := rbuf[i];
+		if(v == byte UNDRAWN)
 			continue;
-		out[i] = byte nearest((int rbuf[k]<<24)
-			| (int rbuf[k+1]<<16) | (int rbuf[k+2]<<8));
+		if(v == byte TRANSP)
+			v = tw;
+		out[i] = v;
 	}
 	# Let the canvas go: some of these are large and a caller may hold
 	# the result for a long time.

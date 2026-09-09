@@ -450,18 +450,33 @@ ink outside the box, three cut off by the page's edge — `elephant_1`,
 cannot show that part. A one-pixel change to the page origin makes all 57 fail,
 which is the negative control that the check can see what it claims to.
 
-*What it costs.* The editor's redraw now goes through a rasteriser that
-allocates the page as RGBA, and then converts all 360,400 pixels back to
-palette indices through a sixteen-way nearest-colour search; the old path
-wrote `pal[c&15]` straight into the canvas and touched only the pixels it
-drew. Timed as whole `-t` runs, five each, against the pre-change build:
-`battlelines_1` (527 pixels) 14.6ms to 18.2ms, `elephant_1` (44,091)
-17.8ms to 23.8ms, `spritetext_1` (991,935) 15.8ms to 26.2ms. About 13ms
-of each is `emu` starting up, so the replay itself costs 4ms to 10ms more
-than it did, on every frame of a rubber-band drag. That is worth fixing
-and it is a separate change: `canvas()` only ever paints one of the
-sixteen, so the intermediate RGBA and the nearest-colour search are both
-avoidable.
+*What it costs, and what fixing that turned up.* The rasteriser held its
+canvas as RGBA and converted every one of the page's 360,400 pixels back
+to a palette index through a sixteen-way nearest-colour search, where the
+editor's old path wrote `pal[c&15]` straight into the canvas and touched
+only the pixels it drew: 4ms to 10ms a frame, on every frame of a
+rubber-band drag. Nothing draws anything but one of the sixteen, so the
+canvas now holds indices — one byte a pixel, no search, and a quarter of
+the memory. Timed as whole `-t` runs, ten each, `emu`'s own 7.2ms
+start-up included: `battlelines_1` (527 pixels) 12.2ms before the port
+and 15.5ms now, `elephant_1` (44,091) 15.2ms and 15.6ms, `spritetext_1`
+(991,935) 14.0ms and 17.7ms. What is left is the page-sized array the
+editor's canvas needs whatever the sprite's size.
+
+That change found a real bug it was not looking for. A flood fill asks
+"is this pixel already the colour I am about to paint?", and it was
+asking it of two different representations: the pixel came back from the
+canvas as a positive packed RGBA, and the ink came from `pal[]`, whose
+entries are sign-extended, so for any colour with red ≥ 128 the two could
+never be equal. Only the inverted fill uses that test, and there is
+exactly one `floodfillnot` in the 248 sprites — `psalmodydraw_11`, whose
+fill therefore never stopped and inked the entire 680x530 page instead of
+the 37 pixels inside its circle. Both sides now go through one function,
+so they cannot be in different forms. *Attributed with a control*: put
+the pixel back into the positive form while leaving the ink
+sign-extended, and the whole-page fill returns; restore it and it goes.
+The first control tried — restoring the old `inkv` expression — changed
+nothing, because it was the other side of the comparison that had moved.
 
 Two things a different canvas *could* still change and does not here: a
 flood fill that escapes the sprite runs to the canvas edge, and a
