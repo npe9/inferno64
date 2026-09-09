@@ -125,7 +125,34 @@ matherror(Ureg *, void*)
 {
 	/*
 	 * Save FPU state to check out the error.
+	 *
+	 * _clts() first.  fpsave is fpssesave (or fpxsaves/fpxsaveopt),
+	 * every one of which begins with the save instruction itself and
+	 * ends with _stts().  Called with TS already set, it faults on
+	 * its own first instruction -- reported at _fxsave+0x0, which is
+	 * exactly the pc the "math emu pid 1" capture printed, with no
+	 * intermediate step needed.
+	 *
+	 * The window where TS is set while a process is still live is the
+	 * ordinary one: fpusave() sets TS and stores FPpush|..., and
+	 * os/inferno/port/dis.c holds every Dis program between
+	 * fpusave() and fpurestore() around r->xec(r).  A #MF or #XM
+	 * delivered in that window lands here.
+	 *
+	 * Found by the cloud-port session.  os/9front/pc64/fpu.c's
+	 * matherror does three things this copy does not: return early
+	 * for a trap from kernel mode, guard on fpstate != FPinactive,
+	 * and _clts() before fpsave().  The two that cannot change the
+	 * state machine are taken here; the kernel-mode early return is
+	 * left alone, because this file's design is not 9front's -- that
+	 * copy has no fpusave, fpurestore, FPpush, FPnouser, FPkernel or
+	 * fpslot at all, and uses m->fpsave and up->kfpsave instead.  So
+	 * it is not the upstream of this file and cannot settle what the
+	 * third change should be.
 	 */
+	if(up->fpsave == nil)
+		return;
+	_clts();
 	fpsave(up->fpsave);
 	up->fpstate = FPinactive | (up->fpstate & (FPnouser|FPkernel|FPindexm));
 	mathnote(up->fpsave->fsw, up->fpsave->rip);
@@ -137,6 +164,10 @@ matherror(Ureg *, void*)
 static void
 simderror(Ureg *ureg, void*)
 {
+	/* same as matherror(); see its comment */
+	if(up->fpsave == nil)
+		return;
+	_clts();
 	fpsave(up->fpsave);
 	up->fpstate = FPinactive | (up->fpstate & (FPnouser|FPkernel|FPindexm));
 	mathnote(up->fpsave->mxcsr & 0x3f, ureg->pc);
@@ -404,21 +435,20 @@ fpurestore(int ostate)
 			_clts();
 	} else {
 		/*
-		 * Masked, like the tests around it.  This was a bare ==
-		 * against FPinit, which is the state value 0, so a process
-		 * carrying FPnouser, FPkernel or a non-zero FPindex never
-		 * matched and fell through instead of returning.  It then
-		 * reaches "up->fpstate = ostate" below with ostate FPactive,
-		 * while _clts() is only done on the fast path above -- so
-		 * fpstate says active with the FPU still disabled, and the
-		 * next fxsave takes a device-not-available trap that
-		 * mathemu() meets in case FPactive and panics on.
+		 * Masked, like every other test of fpstate in this file.
+		 * This was a bare == against FPinit, the state value 0, so a
+		 * process carrying FPnouser, FPkernel or a non-zero FPindex
+		 * never matched and fell through instead of returning.
 		 *
-		 * That is the "math emu pid 1 pc _fxsave+0x0" capture
-		 * exactly, and it became reachable when correcting
-		 * userureg() started setting FPkernel on kernel processes.
-		 * Same class as the bare == the cloud-port session found in
-		 * notify(); this is the other one in the pair.
+		 * Hygiene, and no more than that.  I first claimed this
+		 * explained the "math emu ... pc _fxsave+0x0" capture, and
+		 * it does not: falling through reaches the demotion three
+		 * lines down, "if(ostate & FPactive) ostate = FPinactive |
+		 * ...", so the store below cannot leave fpstate saying
+		 * active.  The cloud-port session asked whether this copy
+		 * had that line.  It does, and that kills the mechanism.
+		 * The capture is matherror()/simderror() calling fpsave()
+		 * with TS set -- see the comment there.
 		 */
 		if((astate & ~(FPnouser|FPkernel|FPindexm)) == FPinit)
 			return;		/* procexec()/procsetup() */
