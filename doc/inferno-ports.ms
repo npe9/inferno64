@@ -20775,3 +20775,95 @@ at \-4 for any running process, with no user check at all.
 now reserves the region where the stack is made, as
 .CW userinit()
 already did.
+.NH 2
+The FP regression: two bare == in a file that masks everywhere else
+.PP
+Correcting
+.CW userureg()
+was followed by a
+.CW "math emu"
+panic that 880 earlier boots had not shown \(em 1 in 304.  The counts
+did not carry it (Fisher about p = 0.26); what did was that the panic
+sat in one of
+.CW userureg() Ns 's
+three call sites and involved the one process whose answer changed.
+.PP
+My first explanation was wrong.  I supposed the flip reached
+.CW fpu.c Ns 's
+own branch, and the cloud-port session showed it could not:
+.CW FPnouser
+and
+.CW FPkernel
+are write-only on this board, because every other test of them masks
+and
+.CW fpuprocfork() ,
+the one unmasked reader, is never called.  They also checked whether
+the panicking process had taken a note \(em it had not, so
+.CW notify()
+never ran either.  Both eliminations were right, and both were reached
+by reading rather than by boots.
+.PP
+The mechanism is downstream of the flag, in
+.CW fpurestore() :
+.P1
+	if(astate == FPinit)	/* don't restore on procexec()/procsetup() */
+		return;
+.P2
+.CW FPinit
+is the state value 0, so a process carrying
+.CW FPnouser ,
+.CW FPkernel
+or a non-zero
+.CW FPindex
+never matched.  It fell through instead of returning, reached
+.CW "up->fpstate = ostate"
+with
+.CW ostate
+.CW FPactive ,
+and
+.CW _clts()
+is done only on the fast path above \(em so
+.CW fpstate
+says active with the FPU still disabled.  The next
+.CW fxsave
+takes a device-not-available trap,
+.CW mathemu()
+meets it in
+.CW "case FPactive" ,
+and panics.
+.PP
+The capture says exactly that.  The panic printed
+.CW "pc 0x2003fa" ,
+and that resolves to
+.CW _fxsave+0x0 :
+the trap is at the
+.CW fxsave
+instruction itself, not somewhere that led to it.  And it became
+reachable when correcting
+.CW userureg()
+started setting
+.CW FPkernel
+on kernel processes, which is why it appeared in the batch after that
+change and in none of the 880 boots before.
+.PP
+This is the second of a pair.  The cloud-port session found the first
+by reading \(em
+.CW notify() Ns 's
+bare
+.CW "up->fpstate == FPactive"
+\(em and both are the same mistake in a file where every other test
+masks the bookkeeping bits.  The rest was audited: the only remaining
+exact comparison,
+.CW "astate == (FPpush | (ostate & ~FPillegal))" ,
+is deliberately exact, matching what
+.CW fpusave()
+stored.
+.PP
+Weight, stated: the fix rests on the mechanism and the
+.CW _fxsave
+pc, not on a rate.  192 boots after the
+.CW Tos
+fix and before this one showed no
+.CW "math emu" ,
+but at 1 in 304 that has probability about 0.53 and says nothing
+either way.
