@@ -56,6 +56,8 @@ include "math/draw3d.m";
 	Vector: import Draw3d;
 include "grpalette.m";
 	grpal: Grpalette;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Pick3d: module
 {
@@ -101,6 +103,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	math = load Math Math->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	# Prefer the protocol-backed provider: it hands geometry to the
 	# device, and thence to Metal where the host has it, instead of
 	# projecting and rasterizing in Limbo.  It falls back to its own
@@ -139,7 +143,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	build();
 
 	ticks := chan of int;
-	spawn timer(ticks, 33);
+	spawn fclock->ticker(ticks, 60);
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -425,10 +429,3 @@ rnreal(): real
 	return real(rand->rand(1000000)) / 1000000.0;
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}

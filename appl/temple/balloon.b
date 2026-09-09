@@ -44,11 +44,20 @@ include "wmclient.m";
 include "keyboard.m";
 include "grpalette.m";
 	grpal: Grpalette;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Balloon: module
 {
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
+
+# The port's own simulation step, in milliseconds.  The frame clock
+# runs at 60fps and this many milliseconds of simulation are run for
+# each frame's worth of real time, so the picture is smooth and the
+# simulation keeps the speed it was written for.
+FCSTEP: con 40;
+fcacc := 0;
 
 # the sixty bytes, verbatim
 a := array[] of {
@@ -70,6 +79,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	draw = load Draw Draw->PATH;
 	grpal = load Grpalette Grpalette->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
 	if(ctxt == nil)
@@ -88,7 +99,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	win.startinput("kbd" :: "ptr" :: nil);
 
 	ticks := chan of int;
-	spawn timer(ticks, 40);		# Busy(40000), near enough
+	spawn fclock->ticker(ticks, 60);	# 60fps: Busy(40000), near enough
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -101,9 +112,13 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	kk := <-win.ctxt.kbd =>
 		if((kk & Keyboard->Keyup) != Keyboard->Keyup)
 			exit;
-	<-ticks =>
-		if(++k >= 150)
-			k = 100;
+	dtms := <-ticks =>
+		fcacc += dtms;
+		for(fcn := 0; fcacc >= FCSTEP && fcn < 4; fcn++){
+			if(++k >= 150)
+				k = 100;
+			fcacc -= FCSTEP;
+		}
 		redraw();
 	}
 }
@@ -133,10 +148,3 @@ redraw()
 	img.flush(Draw->Flushnow);
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}

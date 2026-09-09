@@ -41,6 +41,8 @@ include "ode.m";
 	ODE, Mass, Spring: import ode;
 include "grpalette.m";
 	grpal: Grpalette;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Massspring: module
 {
@@ -65,6 +67,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
 	ode = load Ode Ode->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	if(ode == nil){
 		sys->fprint(sys->fildes(2), "massspring: cannot load %s: %r\n", Ode->PATH);
 		raise "fail:load";
@@ -93,7 +97,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	win.startinput("kbd" :: "ptr" :: nil);
 
 	ticks := chan of int;
-	spawn timer(ticks, 16);
+	spawn fclock->ticker(ticks, 60);
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -251,13 +255,6 @@ rnreal(): real
 	return real(rand->rand(1000)) / 1000.0;
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}
 
 # The original's opening PopUpOk, verbatim — "mas" is Terry's.
 popup(img: ref Image, o: Point, w, h: int)

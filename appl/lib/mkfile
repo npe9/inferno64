@@ -61,6 +61,7 @@ TARG=\
 	fsfilter.dis\
 	fslib.dis\
 	fsproto.dis\
+	frameclock.dis\
 	gpu.dis\
 	grpalette.dis\
 	hash.dis\

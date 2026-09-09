@@ -39,11 +39,20 @@ include "tone.m";
 	tone: Tone;
 include "grpalette.m";
 	grpal: Grpalette;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Flattops: module
 {
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
+
+# The port's own simulation step, in milliseconds.  The frame clock
+# runs at 60fps and this many milliseconds of simulation are run for
+# each frame's worth of real time, so the picture is smooth and the
+# simulation keeps the speed it was written for.
+FCSTEP: con 50;
+fcacc := 0;
 
 OT_CARRIER, OT_CRUISER, OT_FIGHTER: con iota;
 OF_SHIP: con 1;
@@ -166,6 +175,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
 	tone = load Tone Tone->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
 	if(tone != nil && tone->init() == nil)
@@ -201,7 +212,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	game_init();
 
 	ticks := chan of int;
-	spawn timer(ticks, 1000/ANIMFREQ);
+	spawn fclock->ticker(ticks, 60);
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -226,9 +237,13 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		'-' or '_' =>
 			game_speed /= 1.5;
 		}
-	<-ticks =>
-		if(!help_on)
-			sim_step();
+	dtms := <-ticks =>
+		fcacc += dtms;
+		for(fcn := 0; fcacc >= FCSTEP && fcn < 4; fcn++){
+			if(!help_on)
+				sim_step();
+			fcacc -= FCSTEP;
+		}
 		redraw();
 	}
 }
@@ -1330,10 +1345,3 @@ rnreal(): real
 	return real(rand->rand(1000)) / 1000.0;
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}

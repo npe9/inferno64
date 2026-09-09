@@ -70,6 +70,8 @@ include "scorestore.m";
 	scorestore: Scorestore;
 include "grpalette.m";
 	grpal: Grpalette;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Varoom: module
 {
@@ -234,6 +236,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	rand = load Rand Rand->PATH;
 	tone = load Tone Tone->PATH;
 	scorestore = load Scorestore Scorestore->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
 	if(tone != nil && tone->init() == nil)
@@ -273,7 +277,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	# original: AnimateTask loops Sleep(10) (100Hz, 0.01-per-tick
 	# constants) while winmgr redraws at ~30fps.  We tick at 32ms,
 	# run the sim in exact 10ms steps by elapsed time, redraw per tick.
-	spawn timer(ticks, 32);
+	spawn fclock->ticker(ticks, 60);
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -783,13 +787,6 @@ now(): real
 	return real sys->millisec() / 1000.0;
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}
 
 # --- rendering -----------------------------------------------------------
 

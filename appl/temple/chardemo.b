@@ -22,6 +22,8 @@ include "keyboard.m";
 
 include "rand.m";
 	rand: Rand;
+include "frameclock.m";
+	fclock: Frameclock;
 
 CharDemo: module
 {
@@ -52,6 +54,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	draw = load Draw Draw->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
 	if(rand != nil)
@@ -75,9 +79,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	win.startinput("kbd" :: "ptr" :: nil);
 
 	ticks := chan of int;
-	spawn timer(ticks, 16);
+	spawn fclock->ticker(ticks, 60);
 	wave_ticks := chan of int;
-	spawn timer(wave_ticks, 200);
+	spawn fclock->ticker(wave_ticks, 60);
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -245,10 +249,3 @@ rn(n: int): int
 	return rand->rand(n);
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}

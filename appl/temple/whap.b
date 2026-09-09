@@ -32,6 +32,8 @@ include "tone.m";
 	tone: Tone;
 include "grpalette.m";
 	grpal: Grpalette;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Whap: module
 {
@@ -63,6 +65,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	rand = load Rand Rand->PATH;
 	ode = load Ode Ode->PATH;
 	tone = load Tone Tone->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	if(ode == nil){
 		sys->fprint(sys->fildes(2), "whap: no ode: %r\n");
 		raise "fail:load";
@@ -95,7 +99,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	reset();
 
 	ticks := chan of int;
-	spawn timer(ticks, 16);
+	spawn fclock->ticker(ticks, 60);
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -307,10 +311,3 @@ noise(ms, o1, o2: int)	# TempleOS Noise(ms,o1,o2): random pitch in ona range
 	tone->beep(f, ms);
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}

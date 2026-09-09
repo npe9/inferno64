@@ -55,6 +55,8 @@ include "rand.m";
 	rand: Rand;
 include "grpalette.m";
 	grpal: Grpalette;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Wallpaperfish: module
 {
@@ -98,6 +100,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	math = load Math Math->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
 	if(rand != nil)
@@ -150,7 +154,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	win.startinput("kbd" :: "ptr" :: nil);
 
 	ticks := chan of int;
-	spawn timer(ticks, 33);
+	spawn fclock->ticker(ticks, 60);
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -272,10 +276,3 @@ rnreal(): real
 	return real(rand->rand(1000000)) / 1000000.0;
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}

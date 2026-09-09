@@ -84,6 +84,8 @@ include "rand.m";
 	rand: Rand;
 include "grpalette.m";
 	grpal: Grpalette;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Xcaliber: module
 {
@@ -244,6 +246,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	if(draw3d == nil)
 		draw3d = load Draw3d Draw3d->PATH;
 	scorestore = load Scorestore Scorestore->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	if(ode == nil){
 		sys->fprint(sys->fildes(2), "xcaliber: no ode\n");
 		raise "fail:load";
@@ -284,7 +288,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	win.startinput("kbd" :: "keyup" :: "ptr" :: nil);
 
 	ticks := chan of int;
-	spawn timer(ticks, 16);
+	spawn fclock->ticker(ticks, 60);
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -1911,13 +1915,6 @@ frand(): real
 	return real rn(1000000) / 1000000.0;
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}
 
 # LaserPlot: walk the beam a pixel at a time and stop at the first pixel
 # that is neither BLACK nor WHITE.  The frame is already composed in buf,

@@ -165,6 +165,7 @@ format format
 fprint sys-print
 frag ida
 fragment ida
+frameclock frameclock
 fsproto fsproto
 fstat sys-stat
 fversion sys-fversion
@@ -500,6 +501,8 @@ tanh math-elem
 tempfile diskblocks
 text daytime
 tftp tftp
+ticker frameclock
+tickms frameclock
 time daytime
 timers timers
 tk tk

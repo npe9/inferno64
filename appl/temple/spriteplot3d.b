@@ -46,6 +46,8 @@ include "math/draw3d.m";
 	Vector: import Draw3d;
 include "grpalette.m";
 	grpal: Grpalette;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Spriteplot3d: module
 {
@@ -72,6 +74,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	grpal = load Grpalette Grpalette->PATH;
 	math = load Math Math->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	# Prefer the protocol-backed provider: it hands geometry to the
 	# device, and thence to Metal where the host has it, instead of
 	# projecting and rasterizing in Limbo.  It falls back to its own
@@ -105,7 +109,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	win.startinput("kbd" :: "ptr" :: nil);
 
 	ticks := chan of int;
-	spawn timer(ticks, 40);		# the original's Sleep(40)
+	spawn fclock->ticker(ticks, 60);	# 60fps: the original's Sleep(40)
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -235,10 +239,3 @@ loadmesh(path: string): ref Mesh
 	return m;
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}

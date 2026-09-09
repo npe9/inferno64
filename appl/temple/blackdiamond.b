@@ -40,11 +40,20 @@ include "scorestore.m";
 	scorestore: Scorestore;
 include "grpalette.m";
 	grpal: Grpalette;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Blackdiamond: module
 {
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
+
+# The port's own simulation step, in milliseconds.  The frame clock
+# runs at 60fps and this many milliseconds of simulation are run for
+# each frame's worth of real time, so the picture is smooth and the
+# simulation keeps the speed it was written for.
+FCSTEP: con 10;
+fcacc := 0;
 
 MAPHT: con 3000;	# MAP_HEIGHT
 OBJN: con 128;		# OBJS_NUM
@@ -121,6 +130,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	rand = load Rand Rand->PATH;
 	tone = load Tone Tone->PATH;
 	scorestore = load Scorestore Scorestore->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
 	if(rand != nil)
@@ -166,7 +177,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	redraw();
 
 	ticks := chan of int;
-	spawn timer(ticks, 10);
+	spawn fclock->ticker(ticks, 60);
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -201,12 +212,17 @@ init(ctxt: ref Draw->Context, nil: list of string)
 			if(!game_over)
 				py += 10;
 		}
-	<-ticks =>
-		if(!game_over)
-			step();
-		frame++;
-		if(frame % 3 == 0)
-			redraw();
+	dtms := <-ticks =>
+		fcacc += dtms;
+		for(fcn := 0; fcacc >= FCSTEP && fcn < 4; fcn++){
+			if(!game_over)
+				step();
+			frame++;
+			fcacc -= FCSTEP;
+		}
+		# It used to draw every third 10ms tick, which is the 30fps the
+		# original's winmgr managed; now every frame.
+		redraw();
 	}
 }
 
@@ -646,10 +662,3 @@ rn(n: int): int
 	return rand->rand(n);
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}

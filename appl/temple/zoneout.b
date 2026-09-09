@@ -66,11 +66,20 @@ include "math/draw3d.m";
 	Vector: import Draw3d;
 include "grpalette.m";
 	grpal: Grpalette;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Zoneout: module
 {
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
+
+# The port's own simulation step, in milliseconds.  The frame clock
+# runs at 60fps and this many milliseconds of simulation are run for
+# each frame's worth of real time, so the picture is smooth and the
+# simulation keeps the speed it was written for.
+FCSTEP: con 20;
+fcacc := 0;
 
 THEM_NUM: con 10;
 SCRN_SCALE: con 512;
@@ -130,6 +139,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	rand = load Rand Rand->PATH;
 	tone = load Tone Tone->PATH;
 	scorestore = load Scorestore Scorestore->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	# Prefer the protocol-backed provider: it hands geometry to the
 	# device, and thence to Metal where the host has it, instead of
 	# projecting and rasterizing in Limbo.  It falls back to its own
@@ -185,7 +196,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	# AnimateTask's Sleep(20); the winmgr's own ~30fps redraw is a
 	# separate count of those ticks.
 	ticks := chan of int;
-	spawn timer(ticks, 20);
+	spawn fclock->ticker(ticks, 60);
 	nt := 0;
 	for(;;) alt{
 	ctl := <-win.ctl or
@@ -198,13 +209,17 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		win.pointer(*pointerev);
 	k := <-win.ctxt.kbd =>
 		key(k);
-	<-ticks =>
-		if(!help)
-			animate();
-		if(++nt >= 2){		# 20ms ticks -> ~33ms frames
-			nt = 0;
-			redraw();
+	dtms := <-ticks =>
+		fcacc += dtms;
+		for(fcn := 0; fcacc >= FCSTEP && fcn < 4; fcn++){
+			if(!help)
+				animate();
+			fcacc -= FCSTEP;
 		}
+		# It used to draw every second 20ms tick, which is 33fps; the
+		# frame clock draws every frame and the animation still steps
+		# every 20ms of real time.
+		redraw();
 	}
 }
 
@@ -585,10 +600,3 @@ rnreal(): real
 	return real(rand->rand(1000000)) / 1000000.0;
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}

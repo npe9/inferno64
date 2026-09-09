@@ -20,8 +20,17 @@ include "mesh.m";
 include "meshview.m";
 	meshview: Meshview;
 	View: import meshview;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Pdelab: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
+
+# The port's own simulation step, in milliseconds.  The frame clock
+# runs at 60fps and this many milliseconds of simulation are run for
+# each frame's worth of real time, so the picture is smooth and the
+# simulation keeps the speed it was written for.
+FCSTEP: con 25;
+fcacc := 0;
 
 NX: con 96;
 NY: con 72;
@@ -43,6 +52,8 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	pde = load Pde Pde->PATH;
 	mesh = load Mesh Mesh->PATH;
 	meshview = load Meshview Meshview->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	if(pde == nil){ sys->fprint(sys->fildes(2), "pdelab: cannot load %s: %r\n", Pde->PATH); raise "fail:load"; }
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init(); pde->init();
@@ -61,7 +72,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	reset();
 	win.reshape(Rect((0,0),(768,576)));
 	win.onscreen("place"); win.startinput("kbd"::"ptr"::nil);
-	ticks := chan of int; spawn timer(ticks);
+	ticks := chan of int; spawn fclock->ticker(ticks, 60);
 	for(;;) alt {
 	ctl := <-win.ctl or ctl = <-win.ctxt.ctl => win.wmctl(ctl); if(ctl != nil && ctl[0] == '!') redraw();
 	p := <-win.ctxt.ptr => win.pointer(*p); pointer(p);
@@ -72,7 +83,14 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		'r' or 'R' => reset();
 		' ' => paused = !paused;
 		}
-	<-ticks => if(!paused) step(); redraw();
+	dtms := <-ticks =>
+		fcacc += dtms;
+		for(fcn := 0; fcacc >= FCSTEP && fcn < 4; fcn++){
+			if(!paused)
+				step();
+			fcacc -= FCSTEP;
+		}
+		redraw();
 	}
 }
 
@@ -125,7 +143,3 @@ redraw()
 	img.flush(Draw->Flushnow);
 }
 
-timer(c: chan of int)
-{
-	for(;;){ sys->sleep(25); c <-= 1; }
-}

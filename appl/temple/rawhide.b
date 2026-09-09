@@ -45,11 +45,20 @@ include "scorestore.m";
 	scorestore: Scorestore;
 include "grpalette.m";
 	grpal: Grpalette;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Rawhide: module
 {
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
+
+# The port's own simulation step, in milliseconds.  The frame clock
+# runs at 60fps and this many milliseconds of simulation are run for
+# each frame's worth of real time, so the picture is smooth and the
+# simulation keeps the speed it was written for.
+FCSTEP: con 10;
+fcacc := 0;
 
 MAPW: con 1000;
 MAPH: con 1000;
@@ -136,6 +145,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	rand = load Rand Rand->PATH;
 	tone = load Tone Tone->PATH;
 	scorestore = load Scorestore Scorestore->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
 	if(tone != nil && tone->init() == nil)
@@ -201,7 +212,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		spawn songloop();
 
 	ticks := chan of int;
-	spawn timer(ticks, 30);
+	spawn fclock->ticker(ticks, 60);
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -240,13 +251,20 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		Keyboard->Down or 's' or 'S' =>
 			scrollby(0, 24);
 		}
-	<-ticks =>
-		if(!help_up){
-			n := 3;
-			if(stressmode)
-				n = 10;
-			for(si := 0; si < n; si++)
-				substep();
+	dtms := <-ticks =>
+		# The substep is the original's 10ms; a frame runs as many as
+		# the time that actually passed calls for, and stress mode
+		# still runs its extra ones on top.
+		fcacc += dtms;
+		for(fcn := 0; fcacc >= FCSTEP && fcn < 4; fcn++){
+			if(!help_up){
+				n := 1;
+				if(stressmode)
+					n = 3;
+				for(si := 0; si < n; si++)
+					substep();
+			}
+			fcacc -= FCSTEP;
 		}
 		redraw();
 	}
@@ -996,10 +1014,3 @@ rnreal(): real
 	return real rn(1000000) / 1000000.0;
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}

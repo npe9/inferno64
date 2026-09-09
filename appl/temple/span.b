@@ -52,6 +52,8 @@ include "readdir.m";
 	readdir: Readdir;
 include "grpalette.m";
 	grpal: Grpalette;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Span: module
 {
@@ -168,6 +170,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	env = load Env Env->PATH;
 	readdir = load Readdir Readdir->PATH;
 	tone = load Tone Tone->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
 	ode->init();
@@ -199,7 +203,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	lastms = sys->millisec();
 	ticks := chan of int;
-	spawn timer(ticks, 16);
+	spawn fclock->ticker(ticks, 60);
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -1319,10 +1323,3 @@ playscore(score: string)
 	}
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}

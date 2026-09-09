@@ -45,6 +45,8 @@ include "math/draw3d.m";
 	draw3d: Draw3d;
 include "grpalette.m";
 	grpal: Grpalette;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Tothefront: module
 {
@@ -209,6 +211,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
 	tone = load Tone Tone->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	# The device provider, for sprite2d: it sends the rotation or the
 	# scale to the GPU as a textured quad instead of resampling it in
 	# interpreted Limbo, and falls back to the same C resampler in
@@ -276,7 +280,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	win.onscreen("place");
 	win.startinput("kbd" :: "ptr" :: nil);
 
-	spawn timer(tickch, 33);
+	spawn fclock->ticker(tickch, 60);
 	spawn engine();
 
 	for(;;) alt{
@@ -304,13 +308,6 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	}
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}
 
 dopointer(p: ref Draw->Pointer)
 {

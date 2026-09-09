@@ -38,11 +38,20 @@ include "wmclient.m";
 include "keyboard.m";
 include "grpalette.m";
 	grpal: Grpalette;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Charanimation: module
 {
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
+
+# The port's own simulation step, in milliseconds.  The frame clock
+# runs at 60fps and this many milliseconds of simulation are run for
+# each frame's worth of real time, so the picture is smooth and the
+# simulation keeps the speed it was written for.
+FCSTEP: con 100;
+fcacc := 0;
 
 FW: con 8;
 FH: con 8;
@@ -77,6 +86,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	draw = load Draw Draw->PATH;
 	grpal = load Grpalette Grpalette->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
 	if(ctxt == nil)
@@ -95,7 +106,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	win.startinput("kbd" :: "ptr" :: nil);
 
 	ticks := chan of int;
-	spawn timer(ticks, 100);	# the original's Sleep(100)
+	spawn fclock->ticker(ticks, 60);	# 60fps: the original's Sleep(100)
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -108,8 +119,12 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	k := <-win.ctxt.kbd =>
 		if((k & Keyboard->Keyup) != Keyboard->Keyup)
 			exit;
-	<-ticks =>
-		phase = (phase + 1) & 3;
+	dtms := <-ticks =>
+		fcacc += dtms;
+		for(fcn := 0; fcacc >= FCSTEP && fcn < 4; fcn++){
+			phase = (phase + 1) & 3;
+			fcacc -= FCSTEP;
+		}
 		redraw();
 	}
 }
@@ -154,10 +169,3 @@ glyph(img: ref Image, at: Point, g: array of int)
 					black, nil, Point(0, 0));
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}

@@ -37,6 +37,8 @@ include "math/draw3d.m";
 	draw3d: Draw3d;
 include "grpalette.m";
 	grpal: Grpalette;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Bombergolf: module
 {
@@ -100,6 +102,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	rand = load Rand Rand->PATH;
 	tone = load Tone Tone->PATH;
 	scorestore = load Scorestore Scorestore->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	# The device provider, for sprite2d: it sends the rotation or the
 	# scale to the GPU as a textured quad instead of resampling it in
 	# interpreted Limbo, and falls back to the same C resampler in
@@ -142,7 +146,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	# elapsed time as dt, so all rates stay real-time.
 	last_ms = sys->millisec();
 	ticks := chan of int;
-	spawn timer(ticks, 16);
+	spawn fclock->ticker(ticks, 60);
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -625,10 +629,3 @@ rn(n: int): int
 	return rand->rand(n);
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}

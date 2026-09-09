@@ -43,6 +43,8 @@ include "tone.m";
 	tone: Tone;
 include "grpalette.m";
 	grpal: Grpalette;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Psalmody: module
 {
@@ -223,6 +225,8 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	rand = load Rand Rand->PATH;
 	readdir = load Readdir Readdir->PATH;
 	tone = load Tone Tone->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
 	if(tone != nil && tone->init() == nil)
@@ -262,7 +266,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	win.startinput("kbd" :: "keyup" :: "ptr" :: nil);
 
 	ticks := chan of int;
-	spawn timer(ticks, 33);		# winmgr.fps is ~30 in TempleOS
+	spawn fclock->ticker(ticks, 60);	# 60fps: winmgr.fps is ~30 in TempleOS
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -2560,10 +2564,3 @@ drawreward(img: ref Image, o: Point)
 
 # --- misc --------------------------------------------------------------
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}

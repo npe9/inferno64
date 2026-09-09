@@ -46,11 +46,20 @@ include "scorestore.m";
 	scorestore: Scorestore;
 include "grpalette.m";
 	grpal: Grpalette;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Titanium: module
 {
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
+
+# The port's own simulation step, in milliseconds.  The frame clock
+# runs at 60fps and this many milliseconds of simulation are run for
+# each frame's worth of real time, so the picture is smooth and the
+# simulation keeps the speed it was written for.
+FCSTEP: con 10;
+fcacc := 0;
 
 MAPH: con 4096;
 BLEN: con 10;
@@ -164,6 +173,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	rand = load Rand Rand->PATH;
 	tone = load Tone Tone->PATH;
 	scorestore = load Scorestore Scorestore->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
 	if(tone != nil && tone->init() == nil)
@@ -191,7 +202,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	gphase = PHINTRO;
 
 	ticks := chan of int;
-	spawn timer(ticks, 10);
+	spawn fclock->ticker(ticks, 60);
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -203,8 +214,12 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		win.pointer(*pointerev);
 	k := <-win.ctxt.kbd =>
 		keydown(k);
-	<-ticks =>
-		tick();
+	dtms := <-ticks =>
+		fcacc += dtms;
+		for(fcn := 0; fcacc >= FCSTEP && fcn < 4; fcn++){
+			tick();
+			fcacc -= FCSTEP;
+		}
 	}
 }
 
@@ -1382,10 +1397,3 @@ drawintro(img: ref Image, o: Point, w, h: int)
 		gr(img, o, x, y+144, BLACK, "Press a key to begin.");
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}

@@ -38,6 +38,8 @@ include "keyboard.m";
 
 include "tone.m";
 	tone: Tone;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Waterfowl: module
 {
@@ -107,6 +109,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	math = load Math Math->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	tone = load Tone Tone->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
 	if(tone != nil && tone->init() == nil)
@@ -132,7 +136,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		spawn songtask();
 
 	ticks := chan of int;
-	spawn timer(ticks, 33);
+	spawn fclock->ticker(ticks, 60);
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -242,10 +246,3 @@ songtask()
 	}
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}

@@ -66,11 +66,20 @@ include "math/draw3d.m";
 	Vector: import Draw3d;
 include "grpalette.m";
 	grpal: Grpalette;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Wenceslas: module
 {
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
+
+# The port's own simulation step, in milliseconds.  The frame clock
+# runs at 60fps and this many milliseconds of simulation are run for
+# each frame's worth of real time, so the picture is smooth and the
+# simulation keeps the speed it was written for.
+FCSTEP: con 30;
+fcacc := 0;
 
 BORDER: con 5;
 KING_STEP: con 6;
@@ -158,6 +167,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	rand = load Rand Rand->PATH;
 	tone = load Tone Tone->PATH;
 	scorestore = load Scorestore Scorestore->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	# Prefer the protocol-backed provider: it hands geometry to the
 	# device, and thence to Metal where the host has it, instead of
 	# projecting and rasterizing in Limbo.  It falls back to its own
@@ -241,7 +252,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	# AnimateTask's Sleep(1), thirty steps to a 30ms tick, one redraw
 	ticks := chan of int;
-	spawn timer(ticks, 30);
+	spawn fclock->ticker(ticks, 60);
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -253,10 +264,14 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		win.pointer(*pointerev);
 	k := <-win.ctxt.kbd =>
 		key(k);
-	<-ticks =>
-		if(page >= 3)
-			for(st := 0; st < 30; st++)
-				animate();
+	dtms := <-ticks =>
+		fcacc += dtms;
+		for(fcn := 0; fcacc >= FCSTEP && fcn < 4; fcn++){
+			if(page >= 3)
+				for(st := 0; st < 30; st++)
+					animate();
+			fcacc -= FCSTEP;
+		}
 		redraw();
 	}
 }
@@ -914,10 +929,3 @@ rnreal(): real
 	return real(rand->rand(1000000)) / 1000000.0;
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}

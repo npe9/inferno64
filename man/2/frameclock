@@ -1,0 +1,98 @@
+.TH FRAMECLOCK 2
+.SH NAME
+frameclock: ticker, tickms, rate, report \- a clock that keeps a frame rate
+.SH SYNOPSIS
+.EX
+include "frameclock.m";
+fclock := load Frameclock Frameclock->PATH;
+
+fclock->init();
+
+ticks := chan of int;
+spawn fclock->ticker(ticks, 60);
+spawn fclock->tickms(ticks, 250);
+
+(frames, us) := fclock->rate();
+fclock->report("mygame");
+.EE
+.SH DESCRIPTION
+.I Frameclock
+sends a tick on
+.I c
+at
+.I hz
+frames a second, or every
+.I ms
+milliseconds, and keeps to that rate.
+The value sent is the number of milliseconds since the previous tick, so
+a caller whose simulation has a timestep of its own can run the right
+number of substeps for the time that actually passed; a caller that
+ignores it sees the
+.B "chan of int"
+it always had.
+.PP
+Keeping to a rate is not the same as sleeping for a length of time, and
+this is the whole reason the module exists.
+Sleeping adds the time a frame's work takes to the sleep instead of
+taking it out, so the period is always longer than asked and grows with
+the work.
+And on this host the sleep overshoots on its own account: measured,
+.I nanosleep
+of 16ms takes 18.7ms, a fifth over, and it is a fifth over at every
+length from 1ms to 33ms.
+A port that did nothing at all therefore got 53 frames a second when it
+asked for 60.
+.PP
+The fix is not a better sleep but an absolute deadline: ask for the time
+between now and when the next frame is due, and the overshoot comes off
+the following ask rather than adding to the period.
+With the very same
+.I nanosleep
+that gives 18.70ms a frame when asked for 16, this gives 16.699ms.
+.PP
+If a frame's work runs past the next deadline the frames that were missed
+are dropped and the clock starts again from now, so a port that stalls
+for a second does not then get a second's worth of ticks in a burst.
+.PP
+.B rate
+returns the frames delivered and the mean period in microseconds.
+A tick is not delivered until the consumer takes it, so this is the rate
+the caller actually drew at and not the rate it asked for.
+.B report
+prints that.
+Neither needs anything of the caller: when
+.B /env/INFERNO_FPS
+is set the ticker reports itself every two seconds, and when it is not it
+says nothing at all.
+.SH EXAMPLE
+Every animated
+.IR temple (1)
+port is on this clock.
+To see what one of them achieves:
+.EX
+; bind -a '#e' /env
+; echo -n 1 > /env/INFERNO_FPS
+; temple/psalmody
+frameclock: 59.99 fps over 360 frames, 16.669 ms a frame (asked 16.666)
+.EE
+.SH SOURCE
+.B /appl/lib/frameclock.b
+.SH SEE ALSO
+.IR temple (1),
+.IR sys-sleep (2)
+.SH BUGS
+The mean period is honest and the jitter is not reported.
+A frame that arrives 4ms late and one 4ms early average to the right
+answer and do not look the same.
+.PP
+A consumer slower than the frame rate simply gets fewer frames \(em the
+tick is not delivered until it is taken \(em so
+.B rate
+falls rather than the clock running ahead.
+That is the intent, but it means a low number does not say whether the
+clock or the caller is the slow one.
+.PP
+.I temple/god
+is not on this clock.
+Its ticker sends without blocking and stops when a popup closes, and this
+module does neither.

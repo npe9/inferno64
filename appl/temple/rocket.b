@@ -35,6 +35,8 @@ include "tone.m";
 
 include "rand.m";
 	rand: Rand;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Rocket: module
 {
@@ -87,6 +89,8 @@ init(ctxt: ref Context, nil: list of string)
 	ode = load Ode Ode->PATH;
 	tone = load Tone Tone->PATH;
 	rand = load Rand Rand->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	if(ode == nil){
 		sys->fprint(sys->fildes(2), "rocket: no ode\n");
 		raise "fail:load";
@@ -134,7 +138,7 @@ init(ctxt: ref Context, nil: list of string)
 	reset();
 
 	ticks := chan of int;
-	spawn timer(ticks, 16);
+	spawn fclock->ticker(ticks, 60);
 	for(;;) alt{
 	s := <-top.ctxt.kbd =>
 		tk->keyboard(top, s);
@@ -253,10 +257,3 @@ cmd(win: ref Toplevel, s: string): string
 	return e;
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}

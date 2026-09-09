@@ -20,6 +20,8 @@ include "wmclient.m";
 
 include "rand.m";
 	rand: Rand;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Collision: module
 {
@@ -40,6 +42,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	math = load Math Math->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
 	if(rand != nil)
@@ -68,7 +72,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	win.startinput("kbd" :: "ptr" :: nil);
 
 	ticks := chan of int;
-	spawn timer(ticks, 16);
+	spawn fclock->ticker(ticks, 60);
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -149,10 +153,3 @@ rn(n: int): int
 	return rand->rand(n);
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}

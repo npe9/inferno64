@@ -30,6 +30,8 @@ include "scorestore.m";
 	scorestore: Scorestore;
 include "grpalette.m";
 	grpal: Grpalette;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Circletrace: module
 {
@@ -78,6 +80,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	if(tone != nil && tone->init() == nil)
 		have_tone = 1;
 	scorestore = load Scorestore Scorestore->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	if(scorestore != nil)
 		best = scorestore->loadreal("circletrace", best);
 
@@ -100,7 +104,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	if(have_tone)
 		spawn songloop();
 	ticks := chan of int;
-	spawn timer(ticks, 33);	# original HUD refreshes each winmgr frame (~30fps)
+	spawn fclock->ticker(ticks, 60);	# 60fps: original HUD refreshes each winmgr frame (~30fps)
 
 	for(;;) alt{
 	ctl := <-win.ctl or
@@ -145,13 +149,6 @@ songloop()
 	}
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}
 
 resetguide()
 {

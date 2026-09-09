@@ -47,6 +47,8 @@ include "math/draw3d.m";
 	Vector: import Draw3d;
 include "grpalette.m";
 	grpal: Grpalette;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Poly3d: module
 {
@@ -83,6 +85,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	grpal = load Grpalette Grpalette->PATH;
 	math = load Math Math->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	# Prefer the protocol-backed provider: it hands geometry to the
 	# device, and thence to Metal where the host has it, instead of
 	# projecting and rasterizing in Limbo.  It falls back to its own
@@ -119,7 +123,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	win.startinput("kbd" :: "ptr" :: nil);
 
 	ticks := chan of int;
-	spawn timer(ticks, 33);
+	spawn fclock->ticker(ticks, 60);
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -267,10 +271,3 @@ mul(a1, b1: Draw3d->Matrix): Draw3d->Matrix
 	return r;
 }
 
-timer(ch: chan of int, ms1: int)
-{
-	for(;;){
-		sys->sleep(ms1);
-		ch <-= 1;
-	}
-}

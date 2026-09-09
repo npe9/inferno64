@@ -39,11 +39,20 @@ include "rand.m";
 	rand: Rand;
 include "grpalette.m";
 	grpal: Grpalette;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Raindrops: module
 {
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
+
+# The port's own simulation step, in milliseconds.  The frame clock
+# runs at 60fps and this many milliseconds of simulation are run for
+# each frame's worth of real time, so the picture is smooth and the
+# simulation keeps the speed it was written for.
+FCSTEP: con 10;
+fcacc := 0;
 
 DROPSNUM: con 8192;		# original DROPS_NUM 0x2000
 
@@ -79,6 +88,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	grpal = load Grpalette Grpalette->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
 	if(rand != nil)
@@ -100,7 +111,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	win.startinput("kbd" :: "keyup" :: "ptr" :: nil);
 
 	ticks := chan of int;
-	spawn timer(ticks, 30);
+	spawn fclock->ticker(ticks, 60);
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -134,7 +145,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 				closehole(hole2());
 			}
 		}
-	<-ticks =>
+	dtms := <-ticks =>
 		img := win.image;
 		if(img == nil)
 			break;
@@ -142,8 +153,14 @@ init(ctxt: ref Draw->Context, nil: list of string)
 			buildgeom();
 		if(grid == nil)
 			break;
-		for(s := 0; s < 3; s++)		# 3 x 10ms substeps
+		# The substep was always 10ms; what has changed is that the
+		# number of them a frame needs is measured rather than assumed
+		# to be three.
+		fcacc += dtms;
+		for(fcn := 0; fcacc >= FCSTEP && fcn < 4; fcn++){
 			substep();
+			fcacc -= FCSTEP;
+		}
 		redraw();
 	}
 }
@@ -372,10 +389,3 @@ rn(n: int): int
 	return rand->rand(n);
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}

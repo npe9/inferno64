@@ -35,11 +35,20 @@ include "tone.m";
 	tone: Tone;
 include "grpalette.m";
 	grpal: Grpalette;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Zing: module
 {
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
+
+# The port's own simulation step, in milliseconds.  The frame clock
+# runs at 60fps and this many milliseconds of simulation are run for
+# each frame's worth of real time, so the picture is smooth and the
+# simulation keeps the speed it was written for.
+FCSTEP: con 10;
+fcacc := 0;
 
 # vector sprite element (lib/temple/sprites/zing_1.spr): the original's
 # $SP "<1>" arrow, drawn rotated like Sprite3ZB
@@ -80,6 +89,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
 	tone = load Tone Tone->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
 	if(tone != nil && tone->init() == nil)
@@ -107,7 +118,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	win.startinput("kbd" :: "ptr" :: nil);
 
 	ticks := chan of int;
-	spawn timer(ticks, 10);
+	spawn fclock->ticker(ticks, 60);
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -123,9 +134,13 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		'\n' =>
 			reset();
 		}
-	<-ticks =>
-		animate();
-		clampcursor();
+	dtms := <-ticks =>
+		fcacc += dtms;
+		for(fcn := 0; fcacc >= FCSTEP && fcn < 4; fcn++){
+			animate();
+			clampcursor();
+			fcacc -= FCSTEP;
+		}
 		redraw();
 	}
 }
@@ -465,10 +480,3 @@ clampi(v, lo, hi: int): int
 	return v;
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}

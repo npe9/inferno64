@@ -49,6 +49,8 @@ include "wmclient.m";
 include "keyboard.m";
 include "grpalette.m";
 	grpal: Grpalette;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Ropcollision: module
 {
@@ -73,6 +75,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	draw = load Draw Draw->PATH;
 	grpal = load Grpalette Grpalette->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
 	if(ctxt == nil)
@@ -98,7 +102,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	win.startinput("kbd" :: "ptr" :: nil);
 
 	ticks := chan of int;
-	spawn timer(ticks, 20);
+	spawn fclock->ticker(ticks, 60);
 	redraw();
 	for(;;) alt{
 	ctl := <-win.ctl or
@@ -214,10 +218,3 @@ blit(dst, src, mask: ref Image, x, y: int)
 	dst.draw(src.r.addpt(Point(x, y)), src, mask, src.r.min);
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}

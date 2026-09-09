@@ -66,6 +66,8 @@ include "math/draw3d.m";
 	Vector: import Draw3d;
 include "grpalette.m";
 	grpal: Grpalette;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Shading: module
 {
@@ -99,6 +101,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	grpal = load Grpalette Grpalette->PATH;
 	math = load Math Math->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	# Prefer the protocol-backed provider: it hands geometry to the
 	# device, and thence to Metal where the host has it, instead of
 	# projecting and rasterizing in Limbo.  It falls back to its own
@@ -137,7 +141,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	win.startinput("kbd" :: "ptr" :: nil);
 
 	ticks := chan of int;
-	spawn timer(ticks, 50);
+	spawn fclock->ticker(ticks, 60);
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -317,10 +321,3 @@ shadefill(m: Draw3d->Matrix, poly: array of Vector, colour: int, lx, ly, lz: rea
 	draw3d->fillpoly3(d3c, poly, Vector(0.0,0.0,0.0), 1.0);
 }
 
-timer(c: chan of int, ms1: int)
-{
-	for(;;){
-		sys->sleep(ms1);
-		c <-= 1;
-	}
-}

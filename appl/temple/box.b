@@ -53,11 +53,20 @@ include "wmclient.m";
 	Window: import wmclient;
 include "grpalette.m";
 	grpal: Grpalette;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Box: module
 {
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
+
+# The port's own simulation step, in milliseconds.  The frame clock
+# runs at 60fps and this many milliseconds of simulation are run for
+# each frame's worth of real time, so the picture is smooth and the
+# simulation keeps the speed it was written for.
+FCSTEP: con 20;
+fcacc := 0;
 
 # exact TempleOS palette entries used by the original
 
@@ -87,6 +96,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	if(draw3d != nil)
 		draw3d->init();
 	wmclient = load Wmclient Wmclient->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
 	if(ctxt == nil)
@@ -103,7 +114,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	# original loops Sleep(20) ≈ 50 fps with per-frame angle/scale steps;
 	# we tick at the same 20 ms so the per-frame constants carry over 1:1
 	ticks := chan of int;
-	spawn timer(ticks, 20);
+	spawn fclock->ticker(ticks, 60);
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -114,14 +125,18 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		win.pointer(*p);
 	<-win.ctxt.kbd =>
 		exit;		# original exits on ANY key
-	<-ticks =>
-		Pi: con Math->Pi;
-		th1 += 2.0*Pi/70.0;
-		th2 += 2.0*Pi/90.0;
-		th3 += 2.0*Pi/110.0;
-		s *= s1;
-		if(!(s > 0.2 && s < 1.4))
-			s1 = 1.0/s1;
+	dtms := <-ticks =>
+		fcacc += dtms;
+		for(fcn := 0; fcacc >= FCSTEP && fcn < 4; fcn++){
+			Pi: con Math->Pi;
+			th1 += 2.0*Pi/70.0;
+			th2 += 2.0*Pi/90.0;
+			th3 += 2.0*Pi/110.0;
+			s *= s1;
+			if(!(s > 0.2 && s < 1.4))
+				s1 = 1.0/s1;
+			fcacc -= FCSTEP;
+		}
 		drawbox();
 	}
 }
@@ -176,10 +191,3 @@ drawbox()
 	img.flush(Draw->Flushnow);
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}

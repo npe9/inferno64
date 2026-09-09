@@ -369,6 +369,76 @@ quote the original's text, so a printed string that appears nowhere is a
 feature that was not ported. That pass is what found the four demos below
 that draw no text at all.
 
+## Every port ran slow, and none of them ran at 60fps
+
+Seventy of the 138 ports drove their animation from a copy of the same
+five lines:
+
+```
+timer(c: chan of int, ms: int)
+{
+	for(;;){
+		sys->sleep(ms);
+		c <-= 1;
+	}
+}
+```
+
+Fifty-seven of the copies were byte-identical and the rest differed only
+in whether the period was an argument. It is wrong twice over.
+
+**Sleeping for a length of time is not keeping to a rate.** The time a
+frame's work takes is added to the sleep rather than taken out of it, so
+the period is always longer than asked and grows with the work.
+
+**And this host's sleep overshoots on its own account.** Measured, with
+`nanosleep` directly in C and again through `sys->sleep` in Limbo: 16ms
+takes 18.70ms, and it is about a fifth over at every length from 1ms to
+33ms. A port that does nothing at all therefore gets 53 frames a second
+when it asks for 60. That is not `emu`'s doing — `emu`'s clock agrees
+with the host's wall clock to within the startup time — it is macOS's
+scheduling quantum.
+
+The fix is not a better sleep. It is to sleep to an **absolute
+deadline**: ask for the time between now and when the next frame is due,
+so the overshoot comes off the following ask instead of adding to the
+period. With the very same `nanosleep` that gives 18.70ms when asked for
+16, deadline pacing gives **16.699ms**. That is `frameclock(2)`
+(`appl/lib/frameclock.b`), and all seventy copies are gone.
+
+**Measured, per port, not by arithmetic.** `psalmody` asked for 33ms:
+
+| | before | after |
+| --- | --- | --- |
+| `psalmody`, measured in the port | 26.94 fps | 59.99 fps |
+
+The "before" is the port exactly as it was with nothing added but a frame
+counter inside its own timer loop. Six of the heaviest ports measured
+after the change: `titanium` 59.98, `stadium` 60.01, `talons` 59.97,
+`rawhide` 59.99, `keepaway` 58.89, `varoom` 58.38 — the last two are the
+two whose redraw sometimes costs more than a frame, which is the clock
+reporting the port rather than itself.
+
+**Speed had to be preserved, and that is the risky half.** A port that
+steps a fixed amount per tick would run 19% fast once the clock stopped
+overshooting, and one that ticked at 10ms would run 40% slow if it were
+simply moved to 60Hz. So a fixed-step port keeps its own step as a
+*substep*: the clock reports the milliseconds that actually passed, and
+the port runs as many of its own steps as that time calls for, then draws
+once. `blot` runs exactly 64 steps of 10ms and stops, so it can be timed:
+**797ms before, 652ms after, against the 640ms its code asks for.** The
+port was running 19% slow and now runs at the rate it was written for.
+
+Twenty ports needed nothing but the clock, because their state was
+already a function of `sys->millisec()` rather than of tick count. Eleven
+more were written for a 16ms step, which is what 60fps is. The rest
+substep.
+
+What is *not* on the clock: `temple/god`, whose ticker sends without
+blocking and stops when a popup closes, neither of which the shared clock
+does; and the handful of ports whose `sleep` paces a game rather than a
+frame — `life`'s generations, `maze`'s search, `hanoi`'s moves.
+
 ## State
 
 **`Demo/Games` is complete.** All 30 are ported, and as of this note all of

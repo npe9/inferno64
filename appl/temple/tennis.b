@@ -13,9 +13,18 @@ include "numerics.m";
 include "env.m";
  env: Env;
 include "math.m";
+include "frameclock.m";
+	fclock: Frameclock;
  math: Math;
 Tennis: module { init: fn(ctxt: ref Draw->Context, argv: list of string);
  };
+
+# The port's own simulation step, in milliseconds.  The frame clock
+# runs at 60fps and this many milliseconds of simulation are run for
+# each frame's worth of real time, so the picture is smooth and the
+# simulation keeps the speed it was written for.
+FCSTEP: con 25;
+fcacc := 0;
 win: ref Window;
 font: ref Font;
 bg, fg, grid, live, accent: ref Image;
@@ -35,6 +44,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	numerics = load Numerics Numerics->PATH;
 	math = load Math Math->PATH;
 	env = load Env Env->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	if(sys == nil || draw == nil || wmclient == nil || numerics == nil || math == nil)
 		raise "fail:tennis: missing module";
 	if(env != nil){ env->clone();
@@ -57,7 +68,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	 win.onscreen("place");
 	 win.startinput("kbd"::"ptr"::nil);
 	ticks:=chan of int;
-	 spawn timer(ticks);
+	 spawn fclock->ticker(ticks, 60);
 	 redraw();
 	for(;;) alt {
 	ctl:=<-win.ctl or ctl=<-win.ctxt.ctl => win.wmctl(ctl);
@@ -71,8 +82,15 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		'r' or 'R' => reset();
 		'.' => if(paused) step();
 	}
-	<-ticks => if(!paused){for(i:=0;i<4;i++)step();
-	} redraw();
+	dtms := <-ticks =>
+		fcacc += dtms;
+		for(fcn := 0; fcacc >= FCSTEP && fcn < 4; fcn++){
+			if(!paused)
+				for(i := 0; i < 4; i++)
+					step();
+			fcacc -= FCSTEP;
+		}
+		redraw();
 	}
 }
 rhs(nil: real, q, d: array of real)
@@ -162,6 +180,3 @@ drawpar(im: ref Image,j:int,name:string,v,max:real)
 map(v,lo,hi:real,a,b:int):int {if(hi==lo)return a;
 return a+int((v-lo)*real(b-a)/(hi-lo));
 }
-timer(c:chan of int){for(;;){sys->sleep(25);
-c<-=1;
-}}

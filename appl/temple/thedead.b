@@ -23,11 +23,20 @@ include "rand.m";
 
 include "tone.m";
 	tone: Tone;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Thedead: module
 {
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
+
+# The port's own simulation step, in milliseconds.  The frame clock
+# runs at 60fps and this many milliseconds of simulation are run for
+# each frame's worth of real time, so the picture is smooth and the
+# simulation keeps the speed it was written for.
+FCSTEP: con 10;
+fcacc := 0;
 
 BNUM: con 32;
 DNUM: con 32;
@@ -53,6 +62,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
 	tone = load Tone Tone->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
 	if(tone != nil && tone->init() == nil)
@@ -97,8 +108,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 
 	steps := chan of int;
 	frames := chan of int;
-	spawn timer(steps, 10);
-	spawn timer(frames, 33);
+	spawn fclock->ticker(steps, 60);
+	spawn fclock->ticker(frames, 60);
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -107,8 +118,12 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		win.pointer(*p);
 	k := <-win.ctxt.kbd =>
 		key(k);
-	<-steps =>
-		step();
+	dtms := <-steps =>
+		fcacc += dtms;
+		for(fcn := 0; fcacc >= FCSTEP && fcn < 4; fcn++){
+			step();
+			fcacc -= FCSTEP;
+		}
 	<-frames =>
 		redraw();
 	}
@@ -266,10 +281,3 @@ rn(n: int): int
 	return rand->rand(n);
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}

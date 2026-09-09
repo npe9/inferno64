@@ -38,11 +38,20 @@ include "grpalette.m";
 include "math/vsprite.m";
 	vspr: Vsprite;
 	Sprite: import vspr;
+include "frameclock.m";
+	fclock: Frameclock;
 
 Stadium: module
 {
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
+
+# The port's own simulation step, in milliseconds.  The frame clock
+# runs at 60fps and this many milliseconds of simulation are run for
+# each frame's worth of real time, so the picture is smooth and the
+# simulation keeps the speed it was written for.
+FCSTEP: con 10;
+fcacc := 0;
 
 FANS: con 10;
 BALL_MS: con 200;	# BALL_TIME 0.2s
@@ -115,6 +124,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	bufio = load Bufio Bufio->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	rand = load Rand Rand->PATH;
+	fclock = load Frameclock Frameclock->PATH;
+	fclock->init();
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
 	if(rand != nil)
@@ -150,7 +161,7 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	win.startinput("kbd" :: "ptr" :: nil);
 
 	ticks := chan of int;
-	spawn timer(ticks, 10);	# original AnimateTask: Sleep(10) — 10ms tick
+	spawn fclock->ticker(ticks, 60);	# 60fps: original AnimateTask: Sleep(10) — 10ms tick
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -165,8 +176,12 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		'\n' =>
 			reset();
 		}
-	<-ticks =>
-		animate();
+	dtms := <-ticks =>
+		fcacc += dtms;
+		for(fcn := 0; fcacc >= FCSTEP && fcn < 4; fcn++){
+			animate();
+			fcacc -= FCSTEP;
+		}
 		redraw();
 	}
 }
@@ -403,10 +418,3 @@ rn(n: int): int
 	return rand->rand(n);
 }
 
-timer(c: chan of int, ms: int)
-{
-	for(;;){
-		sys->sleep(ms);
-		c <-= 1;
-	}
-}
