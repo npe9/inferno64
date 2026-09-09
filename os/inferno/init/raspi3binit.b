@@ -89,10 +89,54 @@ sdhcicheck()
 	if(cfd != nil){
 		cbuf := array[512] of byte;
 		cn := sys->read(cfd, cbuf, len cbuf);
-		if(cn > 0)
+		if(cn > 0){
 			sys->print("SDHCI ctl: %s", string cbuf[0:cn]);
+			capcheck("SDHCI", fd, string cbuf[0:cn]);
+		}
 	}
 	sys->print("SDHCI-OK\n");
+}
+
+# The geometry above is a number the card reported about itself, and
+# printing it is not the same as testing it.  A CSD unpacked wrongly,
+# or a model whose CSD disagrees with the image behind it, gives a
+# capacity that looks entirely plausible until something writes near
+# the end of the card and the data goes nowhere -- which is silent.
+#
+# So make the claim falsifiable at its only observable edge: the last
+# sector the card says it has must read, and the sector after it must
+# not.  Both halves matter.  A capacity that is too large passes the
+# first only if the backing store is really that big; a capacity that
+# is too small, or a devsd that does not range-check at all, fails the
+# second.
+#
+# Both controllers get this, and that is the other half of its value.
+# sdhostbcm.c and sdhcibcm.c unpack the same card's 136-bit CSD
+# independently, so if the two report different capacities for one
+# card, one of them is unpacking it wrongly and the boot says so.
+capcheck(tag: string, fd: ref Sys->FD, ctl: string)
+{
+	nsec := big 0;
+	(nil, lines) := sys->tokenize(ctl, "\n");
+	for(; lines != nil; lines = tl lines){
+		(nt, toks) := sys->tokenize(hd lines, " \t");
+		if(nt >= 2 && hd toks == "geometry")
+			nsec = big (hd tl toks);
+	}
+	if(nsec <= big 0){
+		sys->print("%s-CAP-NONE the ctl file reports no geometry\n", tag);
+		return;
+	}
+	b := array[512] of byte;
+	if(sys->pread(fd, b, len b, (nsec-big 1)*big 512) != len b){
+		sys->print("%s-CAP-FAIL sector %bd, the last the card claims, does not read: %r\n", tag, nsec-big 1);
+		return;
+	}
+	if(sys->pread(fd, b, len b, nsec*big 512) == len b){
+		sys->print("%s-CAP-FAIL a read at sector %bd, one past the claimed end, succeeded\n", tag, nsec);
+		return;
+	}
+	sys->print("%s-CAP-OK sector %bd reads and %bd does not; the claimed capacity is the real one\n", tag, nsec-big 1, nsec);
 }
 
 # Phase 7: /dev/random, now fed by the BCM2835 hardware RNG rather
@@ -177,6 +221,17 @@ sdcheck()
 		if(int mbr[k*512] != 16rE0 || int mbr[k*512+1] != k)
 			mbtag = "(SD-MB-MISALIGN)";
 	sys->print("SD 4-block RW %s\n", mbtag);
+	# the geometry this controller derived from the same card's CSD;
+	# it has to agree with the one SDHCI reported above
+	cfd := sys->open("/dev/sdM0/ctl", Sys->OREAD);
+	if(cfd != nil){
+		cbuf := array[512] of byte;
+		cn := sys->read(cfd, cbuf, len cbuf);
+		if(cn > 0){
+			sys->print("SD ctl: %s", string cbuf[0:cn]);
+			capcheck("SD", fd, string cbuf[0:cn]);
+		}
+	}
 	sys->print("SD-OK\n");
 }
 

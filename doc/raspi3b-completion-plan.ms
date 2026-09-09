@@ -859,6 +859,45 @@ and deliberately not patched.  Nothing in the model is paced by either
 number \- QEMU's SDHCI times no transfer \- so there is no behaviour to
 falsify and a patch would be moving a constant to please a reader.
 .PP
+.B "The capacity, which was printed and not tested."
+The card reports its size in the CSD, a 136-bit response both
+controllers unpack for themselves, and the boot already printed what
+.CW devsd
+made of it \-
+.CW "geometry 32768 512" .
+Printing a number is not testing it.  A CSD unpacked wrongly, or a
+model whose CSD disagrees with the image behind it, gives a capacity
+that looks entirely plausible until something writes near the end of
+the card and the data goes nowhere, which is silent.
+.PP
+So the claim is now checked at its only observable edge: the last
+sector the card says it has must read, and the sector after it must
+not.  Both halves are needed.  A capacity too large passes the first
+only if the backing store really is that big; a capacity too small, or
+a
+.CW devsd
+that does not range-check at all, fails the second.
+.CW "SDHCI-CAP-OK sector 32767 reads and 32768 does not" .
+.PP
+Both controllers get the check, and that is the other half of its
+value.
+.CW sdhostbcm.c
+and
+.CW sdhcibcm.c
+unpack the same card's CSD independently, so a boot where they report
+different capacities for one card says that one of them is wrong \-
+which is precisely the failure a single printed number cannot show.
+They agree.
+.PP
+And the numbers track the card rather than being incidental: with an
+8MB image in place of the 16MB one, both report
+.CW "geometry 16384 512"
+and both boundaries move with it.  Ordinary
+.B qemu
+evidence, no patched model needed \- the card's self-description turns
+out to be one of the few things this model gets exactly right, and now
+there is a boot that would notice if it stopped.
+.PP
 .B "High speed, which is what lifts the ceiling."
 CMD6 is two commands wearing one number: bit 31 of the argument clear
 means "check", which reports what the card can do and changes nothing,
