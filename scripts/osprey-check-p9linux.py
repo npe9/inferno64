@@ -48,9 +48,22 @@ def main():
     m = re.search(r'linux: read\(fd, buf, \d+\) returned (\d+) bytes, served by the buddy', t)
     pages = re.findall(r'osprey buddy: page 0x[0-9a-f]+ of the legacy image supplied by the buddy', t)
     results = [
-        ("the buddy lays the Linux binary out from its own file system (exec), the kernel carrying no copy",
-         re.search(r'buddy: exec /boot/linux for container \d+: entry 0x4010[0-9a-f]{2}', t) is not None
-         and re.search(r'laid out by the buddy: entry 0x4010[0-9a-f]{2}', t) is not None and 'no page mapped yet' in t),
+        # The entry is read out of both messages and required to agree
+        # rather than matched against a fixed address.  It used to be
+        # pinned to 0x4010xx, which is not an invariant of anything - it
+        # is where clang happened to put _start, and adding a function to
+        # linuxlegacy.c moved it to 0x4011f5 and failed a criterion that
+        # had nothing to do with the change.  What is actually being
+        # claimed is that the buddy laid the binary out at the entry its
+        # own ELF header names, and that the two halves of the buddy say
+        # the same address; a window of 256 bytes tested neither.
+        ("the buddy lays the Linux binary out from its own file system (exec), the kernel carrying no copy, at the entry the ELF header names",
+         (lambda a, b: a is not None and b is not None
+                       and a.group(1) == b.group(1)
+                       and int(a.group(1), 16) >= 0x400000)(
+             re.search(r'buddy: exec /boot/linux for container \d+: entry 0x([0-9a-f]+)', t),
+             re.search(r'laid out by the buddy: entry 0x([0-9a-f]+)', t))
+         and 'no page mapped yet' in t),
         ("its page faults are taken to the buddy, which supplies each page from the file (text, rodata, bss)",
          len(pages) >= 3 and 'page 0x401000 of the legacy image supplied from its file' in t
          and 'kernel fault' not in t),
@@ -74,6 +87,20 @@ def main():
          'osprey linux: SIGSEGV at 0x20000000000 delivered to the handler' in t
          and 'linux: SIGSEGV 11 at 0x20000000000 delivered; the handler mapped the page' in t
          and 'linux: the faulting store went through after the handler returned: 42, one SIGSEGV' in t),
+        # The Linux branch of the syscall entry, which no other check on
+        # this branch reaches.  syscallentry and forkret are this
+        # kernel's own rather than 9front's, and syscall() in trap.c does
+        # more still for a Linux process: it takes the number from rax
+        # and copies rdi, rsi, rdx, r10, r8 and r9 into the argument
+        # block.  rax, rcx and r11 are excluded because the ABI says so -
+        # rax carries the number and the result, rcx and r11 are what
+        # SYSRET consumes.  The count printed is the one the loop
+        # counted, and it is required to be the count asked for: a loop
+        # that misread its argument still finishes with every register
+        # intact.
+        ("and twelve registers survive a hundred system calls, which is the whole set the Linux ABI promises back",
+         re.search(r"linux: twelve registers survived (\d+) of \1 system calls, "
+                   r"the Linux ABI's own set less rax, rcx and r11", t) is not None),
         ("close() returns 0 and a callee-saved register (rbx) survives every syscall, as the Linux ABI requires",
          'linux: close returned 0' in t and 'rbx preserved across every syscall' in t
          and 'CLOBBERED' not in t),

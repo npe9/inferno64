@@ -110,6 +110,129 @@ extern void restore_rt(void);
  * left by a call), so a C _start faults on its first aligned SSE store,
  * on Linux as much as here.  Align and call the C body.
  */
+/*
+ * Does a system call give back every register the Linux ABI says it
+ * will?  rbx alone is checked below, across every call this program
+ * makes; this checks twelve, across a hundred calls of one kind.
+ *
+ * It is worth having on this kernel in particular.  syscallentry and
+ * forkret in os/osprey/pc64/l.s are not 9front's - they were written to
+ * carry the Plan 9 and the Linux ABI at once, so they store every
+ * register into the Ureg and restore every one, and the Linux branch of
+ * syscall() in trap.c does more still: it takes the number from rax and
+ * copies rdi, rsi, rdx, r10, r8 and r9 into the argument block itself.
+ * That branch is reached by no other test.
+ *
+ * Three registers cannot be checked and the ABI says why: rax carries
+ * the number in and the result out, and rcx and r11 are where SYSCALL
+ * puts the return ip and flags and what SYSRET consumes.  Everything
+ * else is preserved, argument registers included - so rdi, rsi and rdx
+ * are checked against the argument values they were given rather than
+ * against invented ones, which is the same question asked of the same
+ * three registers.
+ *
+ * The call is write(2, rsp, 0): no bytes, no effect, and answered, since
+ * say() below is the same call with a length.  The loop is written out
+ * rather than built from the sys3 wrapper because a wrapper is a call,
+ * and the compiler is free to use any of these registers across a call -
+ * the sentinels would be destroyed by the calling convention rather than
+ * by anything this is looking for.
+ *
+ *	long linuxregtorture(long n, unsigned long *badp)
+ *
+ * Answers 0 with the number of calls made stored through badp, or the
+ * register's index 1..12 with the value it came back as.
+ */
+__asm__(
+".globl linuxregtorture\n"
+"linuxregtorture:\n"
+"	pushq	%rbx\n"
+"	pushq	%rbp\n"
+"	pushq	%r12\n"
+"	pushq	%r13\n"
+"	pushq	%r14\n"
+"	pushq	%r15\n"
+"	subq	$32, %rsp\n"
+"	movq	%rdi, 0(%rsp)\n"	/* n, as System V passed it */
+"	movq	%rsi, 8(%rsp)\n"	/* badp */
+"	movq	$0, 16(%rsp)\n"		/* how many calls have been made */
+"	movq	%rsp, 24(%rsp)\n"	/* an address the zero-length write can name */
+"	movq	$0x31111111, %rbx\n"
+"	movq	$0x32222222, %rbp\n"
+"	movq	$0x33333333, %r12\n"
+"	movq	$0x34444444, %r13\n"
+"	movq	$0x35555555, %r14\n"
+"	movq	$0x36666666, %r15\n"
+"	movq	$0x37777777, %r10\n"
+"	movq	$0x38888888, %r8\n"
+"	movq	$0x39999999, %r9\n"
+"	movq	$2, %rdi\n"		/* fd */
+"	movq	24(%rsp), %rsi\n"	/* buf */
+"	movq	$0, %rdx\n"		/* no bytes */
+"1:\n"
+"	movq	$1, %rax\n"		/* SYS_write */
+"	syscall\n"
+"	cmpq	$0x31111111, %rbx\n"
+"	jne	11f\n"
+"	cmpq	$0x32222222, %rbp\n"
+"	jne	12f\n"
+"	cmpq	$0x33333333, %r12\n"
+"	jne	13f\n"
+"	cmpq	$0x34444444, %r13\n"
+"	jne	14f\n"
+"	cmpq	$0x35555555, %r14\n"
+"	jne	15f\n"
+"	cmpq	$0x36666666, %r15\n"
+"	jne	16f\n"
+"	cmpq	$0x37777777, %r10\n"
+"	jne	17f\n"
+"	cmpq	$0x38888888, %r8\n"
+"	jne	18f\n"
+"	cmpq	$0x39999999, %r9\n"
+"	jne	19f\n"
+"	cmpq	$2, %rdi\n"
+"	jne	20f\n"
+"	cmpq	24(%rsp), %rsi\n"
+"	jne	21f\n"
+"	cmpq	$0, %rdx\n"
+"	jne	22f\n"
+"	movq	16(%rsp), %rcx\n"
+"	addq	$1, %rcx\n"
+"	movq	%rcx, 16(%rsp)\n"
+"	cmpq	0(%rsp), %rcx\n"
+"	jne	1b\n"
+	/* every one survived: tell the caller how many calls were made */
+"	movq	16(%rsp), %rcx\n"
+"	movq	8(%rsp), %rdx\n"
+"	movq	%rcx, (%rdx)\n"
+"	movq	$0, %rax\n"
+"	jmp	98f\n"
+"11:\n	movq %rbx, %rcx\n	movq $1, %rax\n	jmp 99f\n"
+"12:\n	movq %rbp, %rcx\n	movq $2, %rax\n	jmp 99f\n"
+"13:\n	movq %r12, %rcx\n	movq $3, %rax\n	jmp 99f\n"
+"14:\n	movq %r13, %rcx\n	movq $4, %rax\n	jmp 99f\n"
+"15:\n	movq %r14, %rcx\n	movq $5, %rax\n	jmp 99f\n"
+"16:\n	movq %r15, %rcx\n	movq $6, %rax\n	jmp 99f\n"
+"17:\n	movq %r10, %rcx\n	movq $7, %rax\n	jmp 99f\n"
+"18:\n	movq %r8, %rcx\n	movq $8, %rax\n	jmp 99f\n"
+"19:\n	movq %r9, %rcx\n	movq $9, %rax\n	jmp 99f\n"
+"20:\n	movq %rdi, %rcx\n	movq $10, %rax\n	jmp 99f\n"
+"21:\n	movq %rsi, %rcx\n	movq $11, %rax\n	jmp 99f\n"
+"22:\n	movq %rdx, %rcx\n	movq $12, %rax\n"
+"99:\n"
+"	movq	8(%rsp), %rdx\n"
+"	movq	%rcx, (%rdx)\n"
+"98:\n"
+"	addq	$32, %rsp\n"
+"	popq	%r15\n"
+"	popq	%r14\n"
+"	popq	%r13\n"
+"	popq	%r12\n"
+"	popq	%rbp\n"
+"	popq	%rbx\n"
+"	ret\n");
+extern long linuxregtorture(long n, unsigned long *badp);
+
 __asm__(".globl _start\n_start:\n\txorl %ebp,%ebp\n\tmovq %rsp,%rdi\n\tandq $-16,%rsp\n\tcall lmain\n\thlt\n");
 
 void
@@ -224,6 +347,35 @@ lmain(void)
 		p = cat(line, "linux: the faulting store went through after the handler returned: ");
 		p = num(p, *bad);
 		p = cat(p, segvs == 1 ? ", one SIGSEGV\n" : ", WRONG count\n");
+		say(line);
+	}
+
+	{
+		/*
+		 * Twelve registers across a hundred calls.  The count
+		 * printed is the one the loop counted, not the one it was
+		 * asked for, and the check requires them to agree: a loop
+		 * that misread its argument still finishes with every
+		 * register intact, so the registers alone say nothing
+		 * about how many calls were made.
+		 */
+		enum { Ncall = 100 };
+		unsigned long bad = 0;
+		long r = linuxregtorture(Ncall, &bad);
+
+		if(r == 0){
+			p = cat(line, "linux: twelve registers survived ");
+			p = num(p, (long)bad);
+			p = cat(p, " of 100 system calls, the Linux ABI's own set less rax, rcx and r11\n");
+			*p = 0;
+		} else {
+			p = cat(line, "linux: register ");
+			p = num(p, r);
+			p = cat(p, " came back as ");
+			p = hex(p, bad);
+			p = cat(p, " across a system call\n");
+			*p = 0;
+		}
 		say(line);
 	}
 

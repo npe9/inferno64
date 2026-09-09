@@ -1195,6 +1195,20 @@ the count the loop made, and the check requires it to equal the count
 asked for \- a loop that misread its argument still finishes with every
 register intact.
 .PP
+.B "linux: twelve registers survived"
+is the same again for the other ABI, from the unmodified Linux binary
+the
+.B p9linux
+configuration runs.  Twelve rather than eleven, because Linux promises
+back everything but rax, rcx and r11 \- argument registers included, so
+rdi, rsi and rdx are checked against the values they were given.  It is
+the only test that reaches the Linux branch of
+.IR syscall (),
+which takes the number from rax and copies rdi, rsi, rdx, r10, r8 and r9
+into the argument block.  The same program separately keeps rbx across
+every call it makes, of every kind, which is a wider scope and a
+narrower question.
+.PP
 .B /scripts/osprey-check.py
 boots one kernel on four cores and asks it for everything a single
 machine can be made to show: a request submitted and collected through

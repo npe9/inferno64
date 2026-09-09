@@ -9741,14 +9741,88 @@ segment, descriptor table and heap.  No amount of libthread makes that
 work.
 .PP
 So the next item is named for what it is: relocation, or
-position-independent loading, of a program the personality loads.
-Either the loader relocates an image as it lays it down, which wants
-relocation records this compiler does not emit, or every mutable thing
-in a program's image is reached through a per-process pointer, which is
-the same problem
+position-independent loading, of a program the personality loads.  Two
+roads were named here, and one of them was named wrongly, so the
+correction is worth more than the original sentence.
+.PP
+This said the loader could not relocate an image because that wants
+relocation records this compiler does not emit.  It emits them.
+.CW 6l -u
+is Plan 9's dynamically-loadable-module link, and it appends a table
+after the symbol table:
+.CW asmdyn ()
+in
+.CW utils/6l/span.c
+writes a length, an import table, a count, and then the relocations
+delta-encoded with a mode byte each.  Linking
+.CW /boot/libthread
+that way gives 516 relocations and no imports, and every one of them is
+mode 0.
+.PP
+Mode 0 is
+.CW ABSD ,
+an absolute reference to a defined symbol, and the set is right for the
+job rather than merely non-empty:
+.CW modemap
+maps the relative kinds to \-1, so a relative reference inside the image
+is deliberately not recorded \- moving a whole image does not disturb
+one.  What the table holds is exactly the addresses that would be wrong
+at a different base.  The link also puts the image at 0 rather than at
+.CW -T ,
+which is what a thing meant to be placed anywhere should do.
+.PP
+Two more things the tree already knows, found by looking for the code
+that consumes this table rather than by reasoning about the format.
+.PP
+.CW libdynld/dynld-amd64.c
+is that code, and it settles what a relocation means here without
+guessing: mode 0 reads a
+.CW uintptr
+at the offset \- eight bytes on amd64 \- adds the load base to it and
+writes it back.  Modes 1 and 2 are for imported symbols and take their
+value from the import table, which a self-contained program has none of.
+So applying the table is one addition per entry at a known width, and
+the width was the one thing a reader would have had to guess.
+.PP
+And the
+.I entry
+in a module's header is not a code entry.
+.CW dynld.c
+reads it as the address of the export table
+.CW ( l->export
+.CW "= (Dynsym*)(base+entry)" ),
+which is why it points past the end of the text and into the data.  A
+loader that relocates one of these cannot recover
+.CW p9start
+the way
+.CW p9load
+recovers it now, from the entry less the header; it has to look the name
+up, in the export table the module was linked with or in its symbol
+table.  That is not a difficulty, but it is the kind of thing that would
+have been discovered by a program that ran and then jumped into its own
+data.
+.PP
+So the road is open and the question is no longer whether the records
+exist but whether they are complete: whether
+.CW 6l
+calls
+.CW dynreloc
+at every site that produces an absolute address, in data as well as in
+text.  It is called from the data path
+.CW ( asm.c )
+as well as the instruction path
+.CW ( span.c ),
+which is the right shape, but a set that is nearly complete is worse
+than none \- it would lay down an image that runs until it reaches the
+one pointer nobody fixed.  That is settled by relocating a program to a
+base it was not linked for and seeing whether it still paints the same
+pixels, not by reading the compiler.  Which is the phase, and it is a
+phase and not a paragraph.
+.PP
+The other road stands as it was: every mutable thing in a program's
+image reached through a per-process pointer, which is the same problem
 .CW privalloc
-has and a much larger instance of it.  It is written down here rather
-than attempted, because the attempt is a phase and not a paragraph.
+has and a much larger instance of it.
 .PP
 .B "Phase 3.2: a real program, then rio, linked with the library."
 A real program \- a command, then a shell, then rio \- is linked with
@@ -9922,6 +9996,49 @@ and
 into them, so if a register in this kernel were going to be lost across
 a call it would be one of those.
 .PP
+The Linux ABI is the other half of that entry and has its own loop, in
+.CW linuxlegacy.c
+\- the unmodified Linux binary the p9linux configuration runs, which is
+built here from source, so the loop goes in it as a file-scope
+.CW __asm__
+block beside the one that already defines its
+.CW _start .
+Twelve registers there, not eleven, and the difference is the ABI's:
+Linux promises back everything but rax, rcx and r11, argument registers
+included, so rdi, rsi and rdx are checked against the argument values
+they were given rather than against invented ones \- the same question
+asked of the same three registers.  It reaches code nothing else does:
+.CW syscall ()
+in
+.CW trap.c
+takes a Linux process's number from rax and copies rdi, rsi, rdx, r10,
+r8 and r9 into the argument block, a branch the Plan 9 loop never
+enters.
+.PP
+Adding it broke a criterion that had nothing to do with it, and the
+criterion was wrong rather than the change.  The p9linux check pinned
+the Linux binary's entry to
+.CW 0x4010xx ,
+a 256-byte window, and adding a function to
+.CW linuxlegacy.c
+moved
+.CW _start
+to
+.CW 0x4011f5 .
+That address is not an invariant of anything \- it is where clang
+happened to put the entry.  What the criterion means to claim is that
+the buddy laid the binary out at the entry its own ELF header names, and
+that the two halves of the buddy report the same address; a fixed window
+tested neither, and would have gone on passing if they had disagreed
+inside it.  It now reads the entry out of both messages and requires
+them to agree.
+.PP
+That program already kept one register, rbx, across every call it made,
+and that check stays: its scope is wider than the loop's \- every
+syscall the program makes, of every kind, rather than a hundred of one
+\- and the two answer different questions.  Twelve registers over one
+call, and one register over every call.
+.PP
 A hundred calls, against the interrupt half's four million, and the
 difference is not a compromise.  Whether an interrupt lands in the
 window that matters is chance, so that test buys confidence by
@@ -10069,7 +10186,7 @@ and afterwards with one failure among them:
 .CW p9buddy
 5,
 .CW p9linux
-12,
+13,
 .CW p964
 41, keyboard 8, rio 14, the window gestures 10, micro 7, user 11, net
 13, wire 14, two-machine 20 twice over, the
