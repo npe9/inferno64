@@ -2460,17 +2460,33 @@ real but untestable on pc64 today, where
 is never set and the JIT is off; it should land with a board that runs
 compiled code.
 .PP
-One failure remains, at about 1 in 50 boots and not SMP-specific: a
-general protection violation on the
+That last failure is fixed.  It was
+.CW userureg()
+in os/inferno/port/proc.c returning
+.CW kp
+where its own comment says
+.CW !kp ,
+so every kernel process's trap ran the user tail \(em
+.CW notify()
+and
+.CW kexit()
+over a
+.CW Ureg
+on a kernel stack \(em and one of those writes put a garbage stack
+selector in the frame that
 .CW IRETQ
-in
-.CW _intrr ,
-rejecting a garbage stack selector in a frame whose return pc is
-always
-.CW linkproc+0x9 ,
-a newborn kproc's first interrupt.  Characterised in
-doc/inferno-ports.ms; a probe at trap entry is what separates "pushed
-that way" from "overwritten afterwards".
+then rejected.  Caught by a probe at both ends of
+.CW trap() ,
+after two earlier probes eliminated the CPU push and the device
+handlers.  192 boots at
+.CW "-smp 2"
+since: 192 clean, cpu1 online in all, every probe silent.  At the
+observed 1.4% rate zero in 192 has probability about 0.067, so the
+weight is on the mechanism having been watched rather than on the
+batch.  See doc/inferno-ports.ms.
+.PP
+So pc64 has no known remaining failure.  The next work is Phase 5, and
+it is no longer being done around a crash.
 .NH 1
 Ground rules
 .PP
