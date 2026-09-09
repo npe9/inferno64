@@ -267,6 +267,17 @@ four fixes, because it is a question anybody can ask of any driver:
 	  which would have silently left the card at 400kHz.
 	- uartvirtarm64.c never programmed the baud divisors at all,
 	  so uart->baud reported a rate nothing had set.
+	- usbdwc.c on the Pi 4 registered its handler on GPU IRQ 9,
+	  the Pi 3B's number for the same core.  9 is a legal INTID
+	  on a GIC-400 too -- an SGI nobody raises -- so intrenable()
+	  took it, and the root port's connect-detect interrupt went
+	  nowhere while the QEMU monitor showed the hub and the
+	  network interface plainly attached.
+
+The last of those is from a second board, which is what makes this a
+pattern rather than one board's habit: the same shape appears wherever
+a number is legal in two contexts and means something different in
+each.
 
 Every one of them worked perfectly under emulation, because a model
 that does not enforce a constraint cannot punish a driver for ignoring

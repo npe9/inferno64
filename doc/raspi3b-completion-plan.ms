@@ -2731,14 +2731,25 @@ into a symbol on this board.
 Where the suite stands
 .PP
 Three consecutive boots with a 16MB SD image, a FAT16 USB disk and USB
-ethernet attached, against QEMU v10.1.3 plus the twenty patches in
+ethernet attached, against QEMU v10.1.3 plus the patches in
 .CW tools/qemu-patches :
-38 markers, every one OK or ACCEPTED, no
-.CW -NONE
-and no
+39 markers, no
 .CW -FAIL ,
 and QEMU logging no guest error.  26.1, 28.3 and 29.3 seconds to the
 last marker.
+.PP
+This said 38 and no
+.CW -NONE
+at all, and that was an artifact of the harness rather than a fact
+about the board.
+.CW USB-MOUSE-NONE
+is the correct answer for a machine with no mouse attached, and it
+arrives on the line after
+.CW RASPI3B-SH-OK
+\- line 132 of 132 \- because the mouse check waits out its own timeout
+before reporting.  A harness that stops three seconds after the last
+marker misses it and one that waits five catches it, which is the whole
+difference between the two numbers.  The count is 39.
 .PP
 .CW "ARMTIMER-INTR-OK ARMTIMER-OK AUX-OK AUXSPI-OK BSCSL-OK DISK-BLK-OK"
 .br
