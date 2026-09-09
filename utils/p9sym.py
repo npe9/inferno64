@@ -71,13 +71,21 @@ def readelf(path, want='Tt'):
 	riscv64 boards have no way to resolve a pc.
 
 	Two things differ from the amd64 case.  The table starts at the end
-	of the data section rather than at a header-derived offset, and
-	values are 4 bytes, not 8 -- there is no Exec header here to carry
-	HDR_MAGIC, and the observed encoding is 4-byte big-endian.  Both
-	were read off the bytes: the first entry decodes as
-	"40 0e 84 c8 | d4 | etext\\0", value 0x400e84c8, which is exactly
-	the text section's addr plus its size.  Confirmed the same way as
-	the a.out path -- the table is consumed with zero bytes left over.
+	of the data section rather than at a header-derived offset, and the
+	values are narrower.  The first was read off the bytes: the first
+	entry decodes as "40 0e 84 c8 | d4 | etext\\0", value 0x400e84c8,
+	which is exactly the text section's addr plus its size.
+
+	The width is not guessed and not assumed from the ELF class.
+	Symbol width is a property of the LOADER, not the file format: 6l
+	and 7l write eight-byte values for the Plan 9 a.out header type and
+	four for ELF, while jl writes eight either way (thanks to the
+	cloud-port session, whose libmach work carries this as a symwidth
+	field rather than a magic-number test).  Rather than encode which
+	linker made which board, both widths are decoded and the one that
+	consumes the table exactly is taken -- the same zero-bytes-left-over
+	check that validates the a.out path.  A wrong width desyncs within
+	a few entries and leaves a remainder, so the test is decisive.
 	"""
 	d = open(path, 'rb').read()
 	if d[:4] != b'\x7fELF' or d[4] != 2:
@@ -93,9 +101,26 @@ def readelf(path, want='Tt'):
 	text, data = prog[0], prog[1]
 	tbase, tsize = text[3], text[5]
 	st = d[data[4] + data[5]:shoff]
+	best = None
+	for width in (4, 8):
+		syms, left = _decode(st, width, want)
+		if best is None or left < best[1]:
+			best = (syms, left, width)
+		if left == 0:
+			break
+	out = best[0]
+	out.sort()
+	return out, d, tbase, tsize
+
+def _decode(st, width, want):
+	"""Decode a Plan 9 symbol table at a given value width.
+
+	Returns the symbols and how many bytes were left unconsumed; the
+	caller picks the width that leaves none.
+	"""
 	out, i = [], 0
-	while i + 5 <= len(st):
-		val = int.from_bytes(st[i:i+4], 'big'); i += 4
+	while i + width + 1 <= len(st):
+		val = int.from_bytes(st[i:i+width], 'big'); i += width
 		t = st[i]; i += 1
 		if (t & 0x80) == 0:
 			name = st[i:i+NNAME].split(b'\0')[0].decode('latin1', 'replace')
@@ -115,8 +140,7 @@ def readelf(path, want='Tt'):
 			name = st[i:j].decode('latin1', 'replace'); i = j + 1
 		if typ in want:
 			out.append((val, name))
-	out.sort()
-	return out, d, tbase, tsize
+	return out, len(st) - i
 
 def readsyms(path, want='Tt'):
 	"""Decode the symbol table.  want is the set of type letters kept."""
