@@ -17,11 +17,27 @@ packaged qemu-system-aarch64.  Cards are made in $TMPDIR/boardsuite
 runs.
 
 IN A CONTAINER.  docker/boardsuite.sh builds a Debian image with the
-packaged qemus, mkfs.vfat, mtools and python3, and runs the seven
-configurations that do not want the patched build.  The tree is
-bind-mounted read-only rather than copied -- the kernels are committed
-binaries -- so the image never goes stale when one is relinked, and
-mkconfig's absolute ROOT never has to agree with anything inside it.
+packaged qemus, mkfs.vfat, mtools and python3, and runs the five
+configurations that do not want the patched build -- virtarm64,
+sifiveu, virt, virt32 and virt-peer.  The other four are the Pi ones.
+The tree is bind-mounted read-only rather than copied -- these five
+kernels are committed binaries -- so the image never goes stale when
+one is relinked, and mkconfig's absolute ROOT never has to agree with
+anything inside it.
+
+That only works while the committed binary is the one the baseline was
+recorded against, and it was not: a container run of a clean checkout
+gave sifiveu three markers where the baseline says five.  The committed
+isifiveu had been linked before the sd device went into its config, and
+so had virtarm64's virtarm64.c -- 22 devices where the config names 26.
+Neither was noticed because every run until this one used a working
+tree where both had since been rebuilt.  Running the checkout rather
+than the tree is what found it, which is the argument for doing it that
+way.
+
+The two Pi kernels are not in the repository at all, so a fresh
+checkout cannot run those two configurations even with the patched
+qemu.  That is why the container runs the five it does.
 
 It is not the same run twice.  It takes makefat()'s mkfs.vfat and mcopy
 path, which the Mac never takes; it runs a qemu Debian built rather

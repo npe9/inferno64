@@ -19160,8 +19160,9 @@ absolute
 .CW ROOT
 never has to agree with anything in it.
 .PP
-Seven of the nine configurations run in there.  Only the two Pi ones
-need the patched qemu, which is a source build: every patch in
+Five of the nine configurations run in there \(em virtarm64, sifiveu,
+virt, virt32 and virt-peer.  The other four are the Pi ones, which
+need the patched qemu, and that is a source build: every patch in
 .CW tools/qemu-patches
 is BCM-specific, and
 .CW virtarm64
@@ -19191,3 +19192,22 @@ Baselines are not recorded from inside it.  A baseline is what this tree
 says the boards do, and a container's run written over one would be the
 same subset-as-new-truth failure the suite exists to prevent, arriving
 from a new direction.
+.PP
+Running a clean checkout in it rather than the working tree found the
+thing that argument is for.
+.CW sifiveu
+came back with three markers where its baseline says five: the
+committed
+.CW isifiveu
+had been linked before the
+.CW sd
+device went into its own configuration, and
+.CW virtarm64.c
+was committed naming 22 devices where its configuration names 26.  Both
+had been rebuilt in the working tree at some point and never committed,
+so every run before this one used a binary the repository does not
+have.  Both are regenerated and committed here.
+.PP
+The two Pi kernels are not in the repository at all, so a checkout
+cannot run those two configurations however good its qemu.  That, and
+not the patches, is the reason the container runs five.
