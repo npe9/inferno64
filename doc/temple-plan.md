@@ -434,6 +434,34 @@ already a function of `sys->millisec()` rather than of tick count. Eleven
 more were written for a 16ms step, which is what 60fps is. The rest
 substep.
 
+**The substep cap was a fixed four, and that was wrong.** A cap exists so
+that a port which cannot keep up runs as fast as it can rather than
+building a backlog it never pays off. Four covers 40ms of simulation at a
+10ms step, which is two and a half frames of headroom; it covers 4ms at a
+1ms step, which is a quarter of one frame. So `bounce` (1ms) and
+`spriteplot` (3ms) hit the cap every single frame, their accumulator grew
+without bound, and both ran far slower than before the change --- the
+opposite of what the commit that introduced them claimed. Measured, three
+runs each:
+
+| | asked for | before the clock | fixed cap of 4 | cap from the step |
+| --- | --- | --- | --- | --- |
+| `bounce`, steps in 3s | 3000 | 2106 | 721 | 3017 |
+| `spriteplot`, ms for its 160-step sweep | 480 | 609 | 667 | 486 |
+
+The cap has to come from the step, so it is now `FCMAX: con 2 +
+20/FCSTEP` --- 22 substeps at a 1ms step, 8 at 3ms, 4 at 10ms, 2 at 25ms
+--- and the accumulator is clamped to `FCSTEP*FCMAX` before the loop so
+the backlog is bounded whichever way the port is slow. Both ports now run
+at the rate their source asks for, which is *faster* than they ever ran
+under `sleep`: `bounce` was written for 1000 steps a second and got 702.
+
+Two ports also drew inside the substep loop, which was invisible at four
+substeps and wasteful at eight or twenty-two. `spriteplot` now draws once
+a frame rather than once a sweep step, and `bounce`'s `Flushnow` --- the
+dots themselves are its simulation and all seventeen must be drawn ---
+moved out of the loop into a `flushnow()` called once a frame.
+
 What is *not* on the clock: `temple/god`, whose ticker sends without
 blocking and stops when a popup closes, neither of which the shared clock
 does; and the handful of ports whose `sleep` paces a game rather than a

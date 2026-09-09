@@ -24,6 +24,10 @@ Tennis: module { init: fn(ctxt: ref Draw->Context, argv: list of string);
 # each frame's worth of real time, so the picture is smooth and the
 # simulation keeps the speed it was written for.
 FCSTEP: con 25;
+# The most substeps one frame may run: enough to cover a frame of
+# real time at this step, with headroom.  A fixed cap is wrong -
+# four substeps covers 40ms at FCSTEP 10 and only 4ms at FCSTEP 1.
+FCMAX: con 2 + 20/FCSTEP;
 fcacc := 0;
 win: ref Window;
 font: ref Font;
@@ -84,7 +88,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	}
 	dtms := <-ticks =>
 		fcacc += dtms;
-		for(fcn := 0; fcacc >= FCSTEP && fcn < 4; fcn++){
+		if(fcacc > FCSTEP*FCMAX)
+			fcacc = FCSTEP*FCMAX;
+		for(fcn := 0; fcacc >= FCSTEP && fcn < FCMAX; fcn++){
 			if(!paused)
 				for(i := 0; i < 4; i++)
 					step();

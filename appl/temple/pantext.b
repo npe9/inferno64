@@ -48,6 +48,10 @@ Pantext: module
 # each frame's worth of real time, so the picture is smooth and the
 # simulation keeps the speed it was written for.
 FCSTEP: con 30;
+# The most substeps one frame may run: enough to cover a frame of
+# real time at this step, with headroom.  A fixed cap is wrong -
+# four substeps covers 40ms at FCSTEP 10 and only 4ms at FCSTEP 1.
+FCMAX: con 2 + 20/FCSTEP;
 fcacc := 0;
 
 FW: con 8;
@@ -111,7 +115,9 @@ init(ctxt: ref Draw->Context, nil: list of string)
 			exit;
 	dtms := <-ticks =>
 		fcacc += dtms;
-		for(fcn := 0; fcacc >= FCSTEP && fcn < 4; fcn++){
+		if(fcacc > FCSTEP*FCMAX)
+			fcacc = FCSTEP*FCMAX;
+		for(fcn := 0; fcacc >= FCSTEP && fcn < FCMAX; fcn++){
 			advance();
 			fcacc -= FCSTEP;
 		}

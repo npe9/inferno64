@@ -31,6 +31,23 @@ ignores it sees the
 .B "chan of int"
 it always had.
 .PP
+A caller that substeps needs a cap on the substeps one frame may run, so
+that a port which cannot keep up runs as fast as it can rather than
+building a backlog it never pays off.
+The cap must come from the caller's own step and not be a constant:
+four substeps is two and a half frames of headroom at a ten millisecond
+step and a quarter of one frame at a one millisecond step, so a constant
+that suits one caller starves another.
+The
+.IR temple (1)
+ports write it as
+.EX
+FCMAX: con 2 + 20/FCSTEP;
+.EE
+and clamp the accumulator to
+.B FCSTEP*FCMAX
+before the loop.
+.PP
 Keeping to a rate is not the same as sleeping for a length of time, and
 this is the whole reason the module exists.
 Sleeping adds the time a frame's work takes to the sleep instead of

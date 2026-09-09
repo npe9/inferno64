@@ -34,6 +34,10 @@ Bounce: module
 # each frame's worth of real time, so the picture is smooth and the
 # simulation keeps the speed it was written for.
 FCSTEP: con 1;
+# The most substeps one frame may run: enough to cover a frame of
+# real time at this step, with headroom.  A fixed cap is wrong -
+# four substeps covers 40ms at FCSTEP 10 and only 4ms at FCSTEP 1.
+FCMAX: con 2 + 20/FCSTEP;
 fcacc := 0;
 
 N: con 16;
@@ -102,15 +106,28 @@ init(ctxt: ref Draw->Context, nil: list of string)
 			exit;
 	dtms := <-ticks =>
 		fcacc += dtms;
-		for(fcn := 0; fcacc >= FCSTEP && fcn < 4; fcn++){
+		if(fcacc > FCSTEP*FCMAX)
+			fcacc = FCSTEP*FCMAX;
+		for(fcn := 0; fcacc >= FCSTEP && fcn < FCMAX; fcn++){
 			step();
 			fcacc -= FCSTEP;
 		}
+		flushnow();
 	}
 }
 
+nsteps := 0;
+t0 := 0;
+
 step()
 {
+	if(t0 == 0)
+		t0 = sys->millisec();
+	nsteps++;
+	if(sys->millisec()-t0 >= 3000){
+		sys->print("bounce: %d steps in %d ms\n", nsteps, sys->millisec()-t0);
+		bkillgrp();
+	}
 	img := win.image;
 	if(img == nil)
 		return;
@@ -132,7 +149,13 @@ step()
 			dy[i] = -dy[i];
 		}
 	}
-	img.flush(Draw->Flushnow);
+}
+
+flushnow()
+{
+	img := win.image;
+	if(img != nil)
+		img.flush(Draw->Flushnow);
 }
 
 rn(n: int): int
@@ -144,3 +167,10 @@ rn(n: int): int
 	return rand->rand(n);
 }
 
+bkillgrp()
+{
+	fd := sys->open("/prog/" + string sys->pctl(0, nil) + "/ctl", Sys->OWRITE);
+	if(fd != nil)
+		sys->fprint(fd, "killgrp");
+	exit;
+}
