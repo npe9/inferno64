@@ -454,3 +454,6 @@ os/inferno/shakti/shakti.c
 
 # generated config C for the raspi3b board
 os/inferno/raspi3b/raspi3b.c
+
+# p9sym.py is imported by ad-hoc analysis scripts
+utils/__pycache__/
