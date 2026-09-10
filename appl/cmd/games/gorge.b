@@ -184,23 +184,28 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		provider = Draw3d->PATH;
 	# Which provider, and it is not a preference.
 	#
-	# The /dev/draw one is the only one that reaches the GPU, and it is
-	# 35 times faster on this scene - see DIAGNOSTICS in gorge(1).  But
-	# it reaches the GPU only when nothing is between this program and
-	# the screen, because emu's Metal backend takes the screen image or
-	# a FULLY CLEAR layer and a window manager's window is neither; and
-	# worse, driving it under wm(1) panics emu outright ("pushrun
-	# addrun", reproducible, see BUGS).
+	# The /dev/draw one reaches the GPU and is thirty times faster on
+	# this scene.  It also DRAWS THE WRONG PICTURE.  Photographed off
+	# the screen from outside emu - which is the only way to see it,
+	# since a readback of a GPU pass returns nothing - a GPU frame is
+	# missing the ship, the pylons and the whole head-up display, and
+	# the canyon itself is mis-composed: the geometry queue is drained
+	# at present time, after everything the CPU drew, so it paints over
+	# the text rather than under it.  Two captures out of two.
 	#
-	# A window manager hands its clients a Draw->Context.  Nothing else
-	# does.  So a non-nil ctxt is exactly the condition under which the
-	# device provider must not be used, and it is known before anything
-	# is drawn.
-	if(mode == 0 || mode == 2){
+	# g3_calls being high and soft_fallbacks zero says the geometry
+	# reached the hardware and that devdraw did not draw it on the CPU
+	# (a successful gpudrawfillpoly3d does `goto gdone`).  It does not
+	# say the result is right, and here it is not.  So the software
+	# provider is the default and -D is how to ask for the other one.
+	#
+	# Under wm(1) the device provider is not merely wrong, it panics
+	# emu ("pushrun addrun", reproducible).  A window manager is the
+	# only thing that hands a client a Draw->Context, so that condition
+	# is known before anything is drawn.
+	provider = Draw3d->PATH;
+	if(mode == 0 || mode == 2)
 		underwm = ctxt != nil;
-		if(underwm)
-			provider = Draw3d->PATH;
-	}
 	if(forced != nil)
 		provider = forced;
 	d3 = load Draw3d provider;
@@ -870,17 +875,79 @@ hud()
 	target.text(Point(r.min.x+10, r.min.y+8+font.height), cwhite, (0,0),
 		font, sys->sprint("SHIPS %d    SPEED %3d    %5d M",
 			lives, int (speed*300.0), int dist));
-	why := "gpu";
-	if(provider == Draw3d->PATH){
+	why := "gpu (mis-composed, see gorge(1) BUGS)";
+	if(provider == Draw3d->PATH)
 		why = "software";
-		if(underwm)
-			why = "software (no gpu under a window manager)";
-	}
 	target.text(Point(r.min.x+10, r.min.y+8+2*font.height), cwhite, (0,0),
 		font, why);
 	if(dead > 0 && lives <= 0)
 		target.text(Point(r.min.x + r.dx()/2 - 40, r.min.y + r.dy()/2),
 			cred, (0,0), font, "GAME OVER");
+}
+
+# -g: does what is on the SCREEN come from the GPU?
+#
+# g3_calls counts submissions to the geometry queue, and this tree has a
+# case on record where submissions were counted, the colours were valid,
+# and nothing rasterized (draw3ddemo(1), frustum()).  So the counter is
+# not the answer.
+#
+# devdraw.c settles the other half: a successful gpudrawfillpoly3d does
+# `goto gdone`, so the CPU never fills a polygon the GPU accepted.  A
+# face is therefore drawn by one or the other and never both.  If the
+# picture is on the screen while g3_calls is high and soft_fallbacks is
+# zero, the GPU drew it; if the queue were being filled and dropped, the
+# canyon would be missing and the sky and the text would remain.
+#
+# So: draw into the window, read the window back, and count what is not
+# sky.  draw3dbench(1) shows the readback is broken for a LAYER and not
+# for the screen itself, which is what this gets with no window manager.
+gpushot()
+{
+	if(nes != nil)
+		nes->sound(0);
+	win.reshape(Rect((0,0),(WIDE,HIGH)));
+	win.onscreen("place");
+	win.startinput("kbd" :: "ptr" :: nil);
+	target = win.image;
+	ctx = d3->context(target);
+	newgame();
+	for(i := 0; i < 90; i++){
+		pad = Nes->PRIGHT;
+		if((i % 34) < 12)
+			pad |= Nes->PA;
+		step();
+		target = win.image;
+		frame();
+		target.flush(Draw->Flushnow);
+	}
+	w := target.r.dx();
+	h := target.r.dy();
+	bpp := target.depth / 8;
+	b := array[w*h*bpp] of byte;
+	fd := sys->fildes(2);
+	sys->fprint(fd, "gorge -g: %d frames drawn, reading back %dx%d depth %d\n",
+		90, w, h, target.depth);
+	n := target.readpixels(target.r, b);
+	if(n < 0){
+		sys->fprint(fd, "gorge -g: readpixels failed: %r\n");
+		return;
+	}
+	# the sky it was cleared to
+	sk0 := b[0];
+	sk1 := b[1];
+	sk2 := b[2];
+	lit := 0;
+	for(i = 0; i < w*h; i++)
+		if(b[i*bpp] != sk0 || b[i*bpp+1] != sk1 || b[i*bpp+2] != sk2)
+			lit++;
+	sys->fprint(fd, "gorge -g: provider %s, non-sky pixels %d of %d\n",
+		provider, lit, w*h);
+	rd := sys->create("gorge.gpu.raw", Sys->OWRITE, 8r666);
+	if(rd == nil)
+		sys->fprint(fd, "gorge -g: create: %r\n");
+	else
+		sys->write(rd, b, len b);
 }
 
 # ---------------------------------------------------------------- bench

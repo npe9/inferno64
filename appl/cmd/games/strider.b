@@ -181,13 +181,14 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	}
 	if(mode == 1 || mode == 3)
 		provider = Draw3d->PATH;
-	# See gorge(1) BUGS: the device provider reaches the GPU only with
-	# no window manager, and driving it under one panics emu.  A window
-	# manager is the only thing that hands a client a Draw->Context.
-	if((mode == 0 || mode == 2) && ctxt != nil){
+	# See gorge(1) BUGS.  The device provider reaches the GPU and is
+	# far faster, and it composes the frame wrongly - the geometry
+	# queue is drained after everything the CPU drew, so it paints over
+	# the head-up display.  A cockpit sim is the worst possible case
+	# for that.  Software by default; -D asks for the other one.
+	provider = Draw3d->PATH;
+	if((mode == 0 || mode == 2) && ctxt != nil)
 		underwm = 1;
-		provider = Draw3d->PATH;
-	}
 	if(forced != nil)
 		provider = forced;
 	d3 = load Draw3d provider;
@@ -1066,12 +1067,9 @@ hud()
 	radar(x0 + w - 60, y0 + h - 60, 48);
 	target.text(Point(x0+12, y0+h-70), cwhite, (0,0), font,
 		sys->sprint("SCORE %d", score));
-	why := "gpu";
-	if(provider == Draw3d->PATH){
+	why := "gpu (mis-composed, see gorge(1) BUGS)";
+	if(provider == Draw3d->PATH)
 		why = "software";
-		if(underwm)
-			why = "software (no gpu under a window manager)";
-	}
 	target.text(Point(x0+12, y0+h-14), cmech2, (0,0), font, why);
 	if(over > 0){
 		msg := "DESTROYED";

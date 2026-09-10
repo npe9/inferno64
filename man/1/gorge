@@ -131,8 +131,47 @@ by
 .I h
 of the display's own pixels, the size of one in the last line it prints.
 .SH BUGS
-.B The GPU is only reached with no window manager, and driving it under
-.B one panics emu.
+.B The GPU path draws the wrong picture, so it is not the default.
+Photographed off the screen from outside
+.I emu
+\- which is the only way to see it, because a readback of a GPU pass
+returns nothing \- a frame drawn through
+.B /dis/math/draw3ddev.dis
+is missing the ship, the pylons and the whole head-up display, and the
+canyon itself is mis-composed.
+The geometry queue is drained at present time,
+.I after
+everything the CPU drew, so it paints over the text rather than under
+it.
+Two captures out of two, against a software frame that has all of it.
+.PP
+.B g3_calls
+being high and
+.B soft_fallbacks
+zero says the geometry reached the hardware, and that
+.I devdraw
+did not draw it on the CPU \- a successful
+.I gpudrawfillpoly3d
+does
+.B "goto gdone"
+at
+.BR devdraw.c:3326 .
+It does not say the result is right.
+That is the same trap
+.IR draw3ddemo (1)
+records for
+.IR frustum :
+submissions counted, colours valid, nothing correct on the screen.
+Counting the submissions and timing the frame are what this originally
+did, and both said the GPU was working.
+.PP
+So the software provider is the default and
+.B -D
+is how to ask for the other one.
+The window says which is in use.
+.PP
+.B And the GPU is only reached with no window manager, and driving it
+.B under one panics emu.
 .IR Emu 's
 Metal backend takes the screen image or a
 .I fully clear
@@ -154,18 +193,13 @@ outright with
 .BR "pushrun addrun" ,
 reproducibly.
 .PP
-So this program chooses its provider from whether a window manager is
-present, which it can tell because a window manager is the only thing
-that hands its clients a
-.BR Draw->Context .
-Under
-.IR wm (1)
-it uses the software provider and says
-.B software
-on screen; started directly it uses the device one and says
-.BR gpu .
+A window manager is the only thing that hands its clients a
+.BR Draw->Context ,
+so that condition is known before anything is drawn.
 .B -D
-overrides that, and panics.
+under
+.IR wm (1)
+panics.
 .PP
 The panic has not been reduced below this program.
 A loop of two hundred frames of a hundred and thirty Gouraud quads plus
@@ -173,21 +207,14 @@ a
 .I sprite3zb
 into a memory image, through the same provider, survives.
 .PP
-.B -s
-and
-.B -t
-render through the software provider, so nothing automated here has ever
-looked at what the GPU path actually puts on the screen \- and it cannot:
-a
+Nothing automated looks at what the GPU path puts on the screen, and
+nothing can: a
 .I readpixels
 after a GPU pass returns black, which is Phase 3 of
 .BR doc/draw3d-adoption-plan.md .
-.B g3_calls
-says the geometry reached the hardware, not that it rasterized correctly;
-.IR draw3ddemo (1)
-records exactly that failure mode for
-.IR frustum .
-Those are two separate claims and only the first is evidenced here.
+A photograph of the screen taken from outside
+.I emu
+is the only check there is, and it is a manual one.
 .PP
 The canyon is generated from two sines, so it never repeats, and it is
 also never interesting in a way a designer chose.

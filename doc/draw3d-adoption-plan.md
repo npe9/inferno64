@@ -353,6 +353,41 @@ survives. `gorge` works round it by choosing its provider from whether a
 `Draw->Context` was handed to it, which is exactly the condition, but
 the panic is real and is somebody's bug.
 
+### Phase 2b — the GPU path draws the wrong picture
+
+Found 2026-09-10 by photographing the screen from outside `emu`, which
+is the only way to see it: a `readpixels` of a GPU pass returns nothing
+(Phase 3), so every check inside the process is blind to this.
+
+`gorge(1)` through `draw3ddev` with no window manager: `g3_calls` 5915
+and 6257 in two runs, `soft_fallbacks` 0, 2408 us a frame. And the frame
+on the screen is **missing the ship, the pylons and the entire head-up
+display**, with the canyon itself mis-composed. The same scene through
+the software provider has all of it. Two captures out of two.
+
+The visible mechanism is ordering: the geometry queue is drained at
+present time, *after* everything the CPU drew into the same window, so
+GPU output paints over the 2-D rather than under it. Anything a port
+draws after its 3-D — text, a HUD, a reticle — is lost.
+
+**This is the trap this document already warns about, walked into
+anyway.** `g3_calls` being high and `soft_fallbacks` zero establishes
+two real things: the geometry reached the hardware, and `devdraw` did
+*not* draw it on the CPU (a successful `gpudrawfillpoly3d` does `goto
+gdone`, `devdraw.c:3326`). Neither says the result is correct.
+`draw3ddemo`'s own comment records the same shape of failure for
+`frustum` — submissions counted, colours valid, nothing rasterized. A
+submission counter and a frame timer both said the GPU was working.
+
+Phase 1's per-port evidence is `g3_calls` plus an unchanged lit-pixel
+count. The lit-pixel count is the part that would have caught this, and
+it cannot be taken through a GPU pass — so for the nine Phase 1 ports it
+was taken on the software path. **Their pictures have not been checked
+either.** That wants doing before any more ports move.
+
+`gorge(1)` and `strider(1)` therefore default to the software provider
+and offer `-D` for the other one, and say on screen which is in use.
+
 ### Phase 2a — `litcolour` allocated a colour image per fill
 
 Fixed 2026-09-10, and it is the reason a Gouraud scene could not be run

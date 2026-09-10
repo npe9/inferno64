@@ -91,9 +91,12 @@ A head-up display that the terrain could occlude would be no use at all.
 emu\-cocoa \-r. /dis/games/strider.dis
 .EE
 .PP
-Not under
-.IR wm (1)
-if the frame rate matters; see BUGS in
+It renders through the software provider by default, like
+.IR gorge (1)
+and for the same reason: the GPU path composes the frame wrongly, and a
+cockpit sim whose head-up display gets painted over is the worst case
+for that.
+See BUGS in
 .IR gorge (1),
 which this shares.
 .SH SOURCE
@@ -107,13 +110,16 @@ which this shares.
 draws as fast as it will go and reports what a frame costs.
 On this host, the full grid at 640 by 480 through
 .B /dis/math/draw3ddev.dis
-with no window manager is about 2225 microseconds a frame.
+with no window manager is about 2225 microseconds a frame \- but see
+BUGS in
+.IR gorge (1)
+before believing that number means anything about the picture.
 .B -n
 sets the frames timed,
 .B -S
-forces the software provider and
+forces the software provider (the default) and
 .B -D
-the device one.
+the device one, which is faster and wrong.
 .PP
 .B -t
 runs the self test, which needs no window; it draws a fifth of the grid
