@@ -66,6 +66,10 @@ graphical := array[] of {
 		"window creation in bulk"),
 	Test("wmtest", "-k",
 		"that what was drawn into a window is still there"),
+	Test("masktest", nil,
+		"the icons/temple sprite masks, and the code that reads them"),
+	Test("nestest", nil,
+		"nes(2): its palette, tile sheets, drawing, scrolling and pad"),
 };
 
 # Still not run by anything here, and why.
@@ -78,6 +82,19 @@ notrun := array[] of {
 		"gpu(3) against the software path; slow, and wants a GPU"),
 	Test("fdstresstest", nil,
 		"the scheduler; hangs on failure, so it needs a timeout around it"),
+	# The four games each carry a -t that drives their own step() with a
+	# scripted pad and asserts on game state.  They cannot be loaded
+	# here: run() does `load Command`, and a game in appl/cmd/games
+	# implements a module of its own name, as the programs in appl/temple
+	# do.  Naming them anyway is the point of this list.
+	Test("games/rivet -t", nil,
+		"the climber's rules; not a Command module, so not loadable here"),
+	Test("games/sprocket -t", nil,
+		"the platformer's rules; likewise"),
+	Test("games/starling -t", nil,
+		"the shooter's rules; likewise, and -b for what its sprites cost"),
+	Test("games/orchard -t", nil,
+		"the maze chase's rules; likewise"),
 };
 
 Capture: con "/runtests.out";
