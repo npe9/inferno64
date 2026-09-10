@@ -78,9 +78,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=build /qemu/build/qemu-system-aarch64 /usr/local/bin/qemu-system-aarch64
 COPY --from=build /qemu/build-riscv/qemu-system-riscv64 /usr/local/bin/qemu-system-riscv64
 COPY --from=build /qemu/build-riscv/qemu-system-riscv32 /usr/local/bin/qemu-system-riscv32
-# One blob set for all three: pc-bios is the whole firmware directory
-# and both builds produce the same one, so this carries the riscv32
-# OpenSBI the packaged qemu has never had.
+# Two sources, merged, and the second is the source tree rather than a
+# build directory.  A build directory's pc-bios holds what its
+# configured targets generate -- the decompressed edk2 images and the
+# keymaps -- and neither build directory holds OpenSBI, because OpenSBI
+# is shipped prebuilt in the source tree and never regenerated.  Copying
+# only a build directory leaves the riscv binaries with no firmware to
+# load, which is exactly what the packaged qemu could not do for
+# riscv32.
 COPY --from=build /qemu/build/pc-bios /usr/local/share/qemu
+COPY --from=build /qemu/pc-bios /usr/local/share/qemu
 ENV QEMU=/usr/local/bin/qemu-system-aarch64
 CMD ["/usr/local/bin/qemu-system-aarch64", "--version"]
