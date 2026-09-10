@@ -138,6 +138,63 @@ identically to "the file is not there". It now opens the file to decide
 whether to skip and uses the contents only as the assertion, so a broken
 history fails with `0 lines` instead of going quiet.
 
+## 1a. The rest of the accessibility surface — **done**
+
+Not in this plan when it was written, because the plan listed what was
+left and this looked finished. It was not: `libtk` announced *where* the
+keyboard was and almost nothing about *what* it had arrived at.
+
+| | said before | says now |
+| --- | --- | --- |
+| checkbutton, radiobutton | `Wrap lines check button` | `... not checked`, and `checked` when it changes |
+| scale | `scale` | `scale 40`, and `50` when a key moves it |
+| listbox | `list` | `list Inbox`, and `Drafts` when a key walks it |
+| entry | `entry` | `entry notes.txt`, unless masked with `-show` |
+| menu item | *silence* | `Save as menu item` |
+| text cursor | *silence* | the line, or the character when the line did not change |
+| window entry | `window` | `Mail Reader window` |
+
+Every one landed with a control demonstrating the previous silence, and
+each has a check in `tkofftest(1)`, which went from 13 to 37.
+
+Three things learned that outlast the changes:
+
+- **Ask whether an existing widget's *state* means the right thing before
+  reaching for one that merely looks right.** `tknotebook(2)`'s tabs are
+  radiobuttons, so they announce themselves for free.
+- **A test that reads what the system says out loud is a good test of
+  what it displays.** The notebook's first version labelled every tab
+  with its own source, because `'` quotes to end of line in this Tk. What
+  said so was the speech check.
+- **Reading a field aloud is not the same question as reading a password
+  aloud.** Refusing every entry to protect three made every field in the
+  system unreadable by ear. `-show` marks the three.
+
+### Three layers each said which window it was
+
+`wmclient.b` wrote the title itself, `tkclient.b` wrote the title itself,
+and `libtk` was taught to. In `wmclient` the two came out in different
+words and a window said its name twice, audibly. In `tkclient` the order
+put them the other way round and the words happened to match, so
+`voice(3)`'s dedup threw the second away and nothing looked wrong.
+
+**The audible case was the lucky one.** Both are now `libtk`'s, which is
+the only layer that knows a window has just been entered and the only one
+that also covers a toplevel with no client library under it.
+
+That bug could not have been caught by anything here: `tkofftest(1)`
+builds toplevels with `tk->toplevel` and hands them an image of its own,
+which is what lets it read pixels back, and that path never goes through
+`wmclient`. `voicewmtest(1)` closes it — a real window under a real `wm`,
+reading `/dev/voice/history` back. It catches two layers announcing in
+*different* words; it cannot catch two announcing the *same* words,
+because the dedup already makes that harmless.
+
+**What is left here:** a way to review the screen rather than the
+announcements — reading a window's contents without moving the keyboard
+— which is a different mechanism again. And nothing announces a
+scrollbar's position or a selection changing.
+
 ## 2. Text input
 
 **What is wrong.** `emu/MacOSX/win-cocoa.m` at two sites:
@@ -369,7 +426,9 @@ glyphs, and of colour fonts, which need more than the 8-bit coverage
 
 1. ~~Check the `voiceannounce` link~~ — **done.** It was broken; `libtk`
    carries its own default now.
-2. ~~Review buffer~~ — **done.** `/dev/voice/history`.
+2. ~~Review buffer~~ — **done.** `/dev/voice/history`, and with it the
+   rest of the announcement surface: control state, menus, the text
+   cursor, and one window announcement instead of three.
 3. **Text input** — half done (characters arrive whole, and there is a
    hook that proves it). The rest is `NSTextInputClient`, which needs a
    person at a keyboard to verify.
