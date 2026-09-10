@@ -4556,8 +4556,23 @@ typical box from either provider needs no driver written, which is what
 makes this the cheapest genuine hardware boot on the list.  This is independent of the cloud items and can be
 bought at any time.
 .IP "\f(CWOracle\ Cloud\fP" 12
-Item 8.  What is needed: an account, and a bare-metal shape, which is
-not in the free tier \(en the always-free Ampere shapes are virtual
+Item 8, and the one item with a second blocker that is not an account.
+.CW os/inferno/boot/efi/pxe.c
+is still built and untested, and it cannot be tested here: the OVMF
+that ships with this machine's QEMU has no UEFI network stack, so the
+firmware never enumerates a network boot option.  Three attempts \(em
+plain
+.CW "-boot n" ,
+the iPXE UEFI option ROM
+.CW ( efi-e1000.rom )
+attached explicitly, and a pristine NVRAM instead of the saved one \(em
+produced byte-identical logs, each dropping to the EFI shell with a
+mapping table listing only the SATA disk.  Testing it wants an OVMF
+built with NETWORK_ENABLE, or an
+.CW ipxe.efi
+to chain from the shell; neither is a purchase, and neither is on this
+machine.  What is needed besides that: an account, and a bare-metal
+shape, which is not in the free tier \(en the always-free Ampere shapes are virtual
 machines and do not take a custom iPXE script.  The custom-iPXE-at-launch
 option is what makes this the shortest path from a build here to a
 kernel on someone else's hardware, and with the root compiled in the
