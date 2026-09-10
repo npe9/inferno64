@@ -2640,6 +2640,7 @@ uintptr
 #define ReqTicket 35	/* xcall op: a ticket for the name at arg[0] in the caller's data area, for the caller's container, good arg[1] seconds */
 #define ReqNsec 36	/* xcall op: the kernel's clock in nanoseconds, which the personality serves as /dev/bintime */
 #define ReqPostnote 37	/* xcall op: post a note to a container the caller serves, on behalf of one it also serves */
+#define ReqWhoami 38	/* xcall op: which slot the caller's own slice is, so it can map it */
 ospreyxcall(va_list list)
 {
 	uvlong op, *ubuf, arg[Ospreynarg];
@@ -2863,6 +2864,27 @@ ospreyxcall(va_list list)
 		print("osprey: container %llud set the kernel's time of day by request: %llud seconds since the epoch; it holds the console, the capability granted at boot\n",
 			ospreyid(up->osprey), (uvlong)seconds());
 		ubuf[0] = 0;
+		return 0;
+	}
+	if(op == ReqWhoami){
+		/*
+		 * Which slot this container's slice is.
+		 *
+		 * A container that wants to select has to write its arms into
+		 * its own data area, and to write there it has to map the
+		 * slice - by the name the slot gives it.  The server knows its
+		 * own slot because it was told at startup, in the argument the
+		 * kernel exec'd it with; a container that was not told has no
+		 * way to find out, and mapping every slot it is allowed and
+		 * guessing which is its own is not finding out.
+		 *
+		 * The kernel knows: it is the container of the calling
+		 * process.  Answering costs nothing and tells the caller only
+		 * about itself.
+		 */
+		if(up->osprey == nil)
+			return -1;
+		ubuf[0] = (uvlong)ospreyindex(up->osprey);
 		return 0;
 	}
 	if(op == ReqMousenotify){

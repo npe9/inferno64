@@ -1836,22 +1836,35 @@ and
 so no event arrives: the background appears because rio flushes once
 itself after painting it, and the window appears because the program in
 it writes more than libdraw's buffer holds and the buffer flushes
-itself.  rio cannot be clicked here.  There is a driver \-
+itself.  rio hears the mouse.
+.B p9input.c
+is a loop that services this container's interrupt notifications: it
+selects over the keyboard's and the mouse's semaphores, hands each to
 .I p9kbd.c
-takes the i8042's ports at CPL3, registers IRQ1 and IRQ12 as
-notifications and reads port 0x60 with its own
+- the user-space i8042 driver, which takes the controller's ports at
+CPL3 and reads port 0x60 with its own
 .I inb
-\- but it is not started on this configuration, and starting it during
-setup breaks the ones where it works, because it must be blocked in the
-select before the kernel unmasks the line.  Nor would starting it be
-enough:
-the semaphores it waits on are armed by the select loop in
-.IR p9pairsrv.c ,
-which is the personality's loop when it serves a peer over a ring, and
-this boot is a script rather than a loop.  The same driver reads keys
-and mouse packets under
-.BR 9p9pair ,
-where that loop runs.  rio is spawned rather than run to completion, and the
+- and lets the cooperative scheduler run.  The driver is started at the
+top of it, because it must be blocked waiting before the kernel unmasks
+the line; starting it during setup breaks the configurations where it
+already works.
+.PP
+The arms go in this container's own data area, so the slice must be
+mapped, so the container must know which slot is its own.  The server is
+told its slot at startup and a container that was not told cannot find
+out, so
+.B ReqWhoami
+was added: one xcall that answers the caller's own slot and nothing
+else.
+.PP
+Keys pressed over QMP come back as scancodes read in user space and
+runes queued on
+.BR /dev/kbd ,
+a mouse move as a decoded packet and a position on
+.BR /dev/mouse ,
+and a button held down in rio's screen opens rio's menu - libdraw's
+.B DPalegreen
+in the shot with the button and none of it in the shot without.  rio is spawned rather than run to completion, and the
 personality gives it three seconds and says so, which is both how the
 boot ends and where the screendump is taken.  The personality
 asks the name space what rio is about to ask it and logs the answers

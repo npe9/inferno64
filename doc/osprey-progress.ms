@@ -11052,13 +11052,69 @@ boots
 where that loop is running, and watches four keys and six mouse packets
 arrive.
 .PP
-So the next thing is not a driver.  It is that a personality which wants
-input has to have a loop, and this one's main flow is a sequence of
-demonstrations that ends.  Giving it one means the select arms, which
-live in the slice
-.CW p9pairsrv.c
-maps, and that is container plumbing rather than anything about programs
-or name spaces.
+So the next thing was not a driver.  It was that a personality which
+wants input has to have a loop.
+.PP
+.B "3.2u: a loop, and rio hears the mouse."
+.CW p9input.c
+is the smallest thing that is one: for as long as it is asked for,
+select over the keyboard's and the mouse's semaphores, hand each
+notification to the driver, and let the cooperative scheduler run.  It
+is not a server \- it answers no ring and forwards no call \- and it is
+not the clock; a personality that wants both will want
+.CW serve1 's
+shape rather than this one's.  The driver is started at the top of it,
+which is the ordering the failed attempt got wrong: there is a loop, and
+it is about to run.
+.PP
+The arms go in this container's own data area, and to write there the
+slice has to be mapped, and to map it the container has to know which
+slot is its own.  It could not: the server is
+.I told
+its slot, in the argument the kernel exec'd it with, and a container
+that was not told has no way to find out.  Mapping every slot the kernel
+allows and taking the one that looks right is not finding out \- the
+probe that established this mapped four, with container ids 1, 3, 6 and
+5, and nothing in them says which is the asker.
+.PP
+The kernel knows, because it is the container of the calling process.
+.CW ReqWhoami
+answers it, and that is the whole of the addition: one request, which
+tells the caller only about itself, and which costs the kernel a lookup
+it already does on every call.
+.PP
+With that, input works.  Two keys pressed over QMP come back as
+.CW "scancode 0x1e read from port 0x60 in user space"
+and
+.CW "/dev/kbd queued the rune 0x61, 'a'" ;
+a mouse move comes back as
+.CW "dx=60 dy=-40"
+and
+.CW "/dev/mouse is at 700 440" .
+The chain is QEMU's PS/2 controller, the microkernel's interrupt
+notification, this container's semaphore, this loop's select, the
+user-space driver's own
+.CW inb ,
+and the two files
+.CW devinput.c
+serves.
+.PP
+And rio hears it.  With the pointer moved into its screen and a button
+held down, rio opens its menu: 4063 pixels of
+.CW DPalegreen ,
+which is the colour libdraw's
+.CW genmenuhit
+paints a menu item's body with, and which the shot taken a moment
+earlier in the same boot \- same rio, no button \- has none of at all.
+The press crossed all of the above and then rio and
+.CW /dev/draw ,
+and came back as pixels.
+.PP
+The check drives it.  It stops reading at rio's start, photographs rio's
+screen, moves the pointer and holds a button, photographs that, and lets
+the input path go on draining the serial line so the rest of the boot is
+still there to be read.  The control is in the same boot as the claim,
+which is the shape every screendump here has.
 .PP
 The second was the probe itself, and it is the plainest lesson here.
 .CW p9open

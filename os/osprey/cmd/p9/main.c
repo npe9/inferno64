@@ -996,6 +996,7 @@ p9main(void)
 		extern int libsleep(long ms);
 		int riopid;
 		int std[3];
+		extern int p9inputloop(long ms);
 
 		std[0] = std[1] = std[2] = -1;
 		print("p9: starting /boot/rio, the real 9front rio, linked against this personality\n");
@@ -1003,8 +1004,17 @@ p9main(void)
 		if(riopid < 0)
 			print("p9: /boot/rio: cannot start it\n");
 		else {
-			libsleep(6000);
-			print("p9: /boot/rio has had 6 seconds, a screen of its own "
+			/*
+			 * Six seconds of the clock, spent servicing this
+			 * container's interrupt notifications rather than
+			 * sleeping through them: that is what turns the i8042
+			 * driver's IRQ1 and IRQ12 into bytes on /dev/kbd and
+			 * /dev/mouse, and what lets rio be typed at and
+			 * clicked.  A sleep would leave the driver blocked on
+			 * a semaphore nobody downs.
+			 */
+			p9inputloop(15000);
+			print("p9: /boot/rio has had its time, a screen of its own "
 				"and a window with a program's output in it\n");
 		}
 	}

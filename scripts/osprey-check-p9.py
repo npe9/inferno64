@@ -126,15 +126,27 @@ def main():
     # the whole sweep running two at a time.  A screendump wants a marker
     # that does not move.
     rioshot = tempfile.mktemp(prefix='osprey-p9-rio-', suffix='.ppm')
+    # and one more, taken with rio's button held down
+    menushot = tempfile.mktemp(prefix='osprey-p9-menu-', suffix='.ppm')
     subprocess.run(['./scripts/osprey-console.py', '-q', '-p', '2', '-n', 'e1000',
                     '-l', log, '-S', '-d', ROOT + '/.qemu/9front-root.qcow2',
-                    '-t', '150', '-u', 'the microkernel idles',
+                    '-t', '150', '-u', 'p9: starting /boot/rio',
                     '--shot-at',
                     'libdraw: painted the screen 112233 and 200 150 600 450 cc7722=' + rawshot,
                     '--shot-at',
                     r'libdraw: real libdraw painted 700 150 1100 450 33aa55=' + shot,
-                    '--shot-at',
-                    r'/boot/rio has had 6 seconds, a screen of its own=' + rioshot],
+                    '--shot', tempfile.mktemp(prefix='osprey-p9-end-', suffix='.ppm'),
+                    # rio is running by now and this personality is
+                    # servicing its own interrupt notifications, so the
+                    # machine can be driven: photograph rio's screen,
+                    # then move the pointer into it and hold a button
+                    # down, and photograph that.  The read loop stops at
+                    # rio's start and the input path keeps draining the
+                    # serial line into the log, so the rest of the boot
+                    # is still there to be read.
+                    '--input', 's:8,S:%s,m:-500:-300,s:1,m:300:200,s:1,'
+                               'd:right,s:2,S:%s,u:right,s:3'
+                               % (rioshot, menushot)],
                    env=env, capture_output=True, text=True)
     try:
         t = plain(open(log, errors='replace').read())
@@ -504,9 +516,19 @@ def main():
         nfore, fbox = boxof(rd, (0xcc, 0x77, 0x22), rw)
         nback, _ = boxof(rd, (0x11, 0x22, 0x33), rw)
 
+    menupix = readppm(menushot)
+    nmenubody = nmenuglyph = 0
+    menubox = (0, 0, 0, 0)
+    if menupix is not None:
+        mw, mh, md = menupix
+        # DPalegreen, the colour libdraw's genmenuhit paints a menu item's
+        # body with; nothing else on this screen is it
+        nmenubody, menubox = boxof(md, (0xea, 0xff, 0xea), mw)
+        nmenuglyph, _ = boxof(md, (0x00, 0x00, 0x00), mw)
+
     riopix = readppm(rioshot)
     rw2 = rh2 = 0
-    nriobg = nriolib = nriotext = nrioglyph = nrioframe = 0
+    nriobg = nriolib = nriotext = nrioglyph = nrioframe = nriomenu = 0
     riobox = textbox = (0, 0, 0, 0)
     if riopix is not None:
         rw2, rh2, rd2 = riopix
@@ -517,6 +539,8 @@ def main():
         nriotext, textbox = boxof(rd2, (0xff, 0xff, 0xff), rw2)
         nrioglyph, _ = boxof(rd2, (0x00, 0x00, 0x00), rw2)
         nrioframe, _ = boxof(rd2, (0x55, 0xaa, 0xaa), rw2)
+        # the control for the menu below: no menu is open in this one
+        nriomenu, _ = boxof(rd2, (0xea, 0xff, 0xea), rw2)
 
     pix = readppm(shot)
     pw = ph = 0
@@ -758,7 +782,7 @@ def main():
                     and nriobg > 600000
                     and nriolib == 0
                     and nlib > 0
-                    and 'p9: /boot/rio has had 6 seconds, a screen of its own' in t))
+                    and 'p9: /boot/rio has had its time, a screen of its own' in t))
     #
     # And the window is on it, with the program's output drawn in it.
     # The bottom third of the display is a rio window: a white text area
@@ -806,6 +830,25 @@ def main():
                     and len(rioprocs) >= 4
                     and 'panic' not in t
                     and 'osprey user: the program exited; the microkernel idles' in t))
+    #
+    # And rio hears the mouse.  This personality services its own
+    # interrupt notifications now (p9input.c), so the machine can be
+    # driven: the pointer is moved into rio's screen and a button held
+    # down, and rio opens its menu.
+    #
+    # DPalegreen is what says so.  It is the colour libdraw's
+    # genmenuhit paints a menu item's body with, nothing else on this
+    # screen is it, and the shot taken a moment earlier - same boot,
+    # same rio, no button - has none of it at all.  So the press
+    # crossed QEMU's PS/2 controller, the microkernel's IRQ12
+    # notification, this personality's select loop, the user-space
+    # i8042 driver's own inb, /dev/mouse, rio, and /dev/draw, and came
+    # back as pixels.
+    results.append(("and rio hears the mouse: with the pointer moved into its screen and a button held down it opens its menu, and the menu's body is libdraw's DPalegreen - which the shot taken a moment earlier in the same boot has none of - so the press crossed the i8042, the microkernel's notification, this personality's own select loop, the driver's inb, /dev/mouse, rio and /dev/draw, and came back as pixels",
+                    menupix is not None
+                    and nmenubody > 1000
+                    and nriomenu == 0
+                    and nmenuglyph > nrioglyph))
     results.append(("and it exits through the microkernel's minimal syscall interface, no in-kernel personality",
                     'the program exited' in t and 'panic' not in t))
 
@@ -827,7 +870,7 @@ def main():
         print('raw shot %s' % rawshot)
         print('rio shot %s' % rioshot)
     else:
-        for f in (log, shot, rawshot, rioshot, shot + '.qmp'):
+        for f in (log, shot, rawshot, rioshot, menushot, shot + '.qmp'):
             try: os.unlink(f)
             except OSError: pass
     return 1 if bad else 0
