@@ -120,7 +120,7 @@ patches, and a run where one binary answers for every board cannot say
 that.
 
 All fifteen then come back with the marker sets recorded on the Mac --
-37, 37, 41, 34, 34, 38, 32, 34, 9, 42, 42, 5, 5, 44, 44 -- from kernels
+37, 37, 41, 34, 34, 38, 41, 43, 9, 42, 42, 5, 5, 44, 44 -- from kernels
 built by Debian gcc and qemus built from source in the container.  Two
 independently built qemus agreeing on twenty-six patches' worth of
 device models is the part of that worth having; a green run on its own
@@ -221,11 +221,16 @@ Pi ones need the patched build, the rest are ordinary machines and use
 the system qemu:
 
 	virtarm64	QEMU -M virt, cortex-a57, with a virtio-blk-pci
-			disk and a virtio-net.  Reaches a shell and runs
-			a long suite.  The net device is worth the line:
-			without it NET-FAIL, with it NET-OK, and that
-			was a known failure until the day something
-			attached one.
+			disk and a virtio-net carrying the same two
+			hostfwd rules virt's does.  Reaches a shell and
+			runs a long suite.  The net device is worth the
+			line: without it NET-FAIL, with it NET-OK, and
+			that was a known failure until the day something
+			attached one.  The hostfwd rules and the host
+			rig are the same story one level up: TCP-NET
+			said "connection refused" because nothing was
+			listening, and config_hostnet had never named
+			this board.
 	sifiveu		QEMU -M sifive_u, no bios, with an SD card.
 			The card is worth the line for the same reason
 			virtarm64's netdev is: the board printed
@@ -435,13 +440,18 @@ down rather than silently forgotten.  What is in them, and why:
 			nothing reached dnscheck() until IP-OK started
 			passing.
 
-	virtarm64	DHCP-FAIL, and with it everything downstream:
-			the dhcpclient module is not in that root
-			either, so the whole ip chain after NET-OK is
-			unreached rather than broken.  TMP-FAIL and
-			FS-MKDIR-FAIL are one failure twice: memfs is
-			missing, so /tmp is not writable, so the
-			directory fsmount() makes there cannot be made.
+	virtarm64	Nothing of its own any more.  It used to carry
+			DHCP-FAIL, TMP-FAIL, FS-MKDIR-FAIL and
+			MATH-FAIL on top of virt's twelve, and all
+			four were the same kind of thing: modules and
+			files its root did not have, or -- MATH-FAIL --
+			a toolchain that could not build an arm64
+			kernel with $Math in it at all.  With memfs
+			and styxlib, dhcpclient, dossrv, ip/ping and an
+			empty /n/styx in the root, math and ipints in
+			the mod section, and the five toolchain fixes
+			the same commit describes, it reaches virt's
+			marker set and carries virt's twelve.
 
 Nothing in that list is a guess.  Each was read off the board's own
 error line, and the two that turned out not to belong -- BLK-FAIL and

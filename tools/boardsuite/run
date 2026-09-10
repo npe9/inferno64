@@ -116,7 +116,7 @@ config_args() {
 		# 1af4/1001, which that loop walks straight past.  Both
 		# halves were BLK-FAIL, recorded as a known failure of the
 		# board rather than of the invocation.
-		echo "-M virt -cpu cortex-a57 -m 1G -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-pci,disable-legacy=on,drive=blk0 -netdev user,id=n0 -device virtio-net-device,netdev=n0";;
+		echo "-M virt -cpu cortex-a57 -m 1G -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-pci,disable-legacy=on,drive=blk0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-device,netdev=n0";;
 	sifiveu)
 		# if=sd, and the FU540 has no SD host controller: QEMU's
 		# sifive_u puts an ssi-sd on the second SPI controller,
@@ -184,7 +184,7 @@ config_args() {
 		# anywhere else -- bus.1 is 0xA000200 and bus.2
 		# 0xA000400 on this machine, VIRTIO_SIZE being 0x200
 		# here rather than virt's 0x1000.
-		echo "-M virt -cpu cortex-a57 -m 1G -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-pci,disable-legacy=on,drive=blk0 -netdev user,id=n0 -device virtio-net-device,netdev=n0,bus=virtio-mmio-bus.1 -netdev socket,id=p0,listen=:14445 -device virtio-net-device,netdev=p0,mac=52:54:00:aa:aa:01,bus=virtio-mmio-bus.2";;
+		echo "-M virt -cpu cortex-a57 -m 1G -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-pci,disable-legacy=on,drive=blk0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-device,netdev=n0,bus=virtio-mmio-bus.1 -netdev socket,id=p0,listen=:14445 -device virtio-net-device,netdev=p0,mac=52:54:00:aa:aa:01,bus=virtio-mmio-bus.2";;
 	virt-peer)
 		# The same board as virt, plus a second network device
 		# joined to another guest, and every virtio device on a
@@ -591,6 +591,12 @@ markers() {
 config_hostnet() {
 	case $1 in
 	virt|virts|virt-peer|peer-mixed)	echo yes;;
+	# virtarm64 and its peer reach the same checks now that their
+	# root carries dossrv and ping: TCP-NET, UDP-NET and the two
+	# inbound halves all dial the host rig, and without it the
+	# board reported TCP-NET-FAIL "connection refused" -- the host
+	# end that was never started, not the board.
+	virtarm64|virtarm64-peer)	echo yes;;
 	esac
 }
 

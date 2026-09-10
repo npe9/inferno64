@@ -101,6 +101,12 @@ mod
 	sys
 	keyring
 	crypt
+# $Math and $IPints, which virt has had and this board never did.  Their
+# absence is what MATH-FAIL was: "load Math Math->PATH" answering "file
+# does not exist" for a module that is built into the kernel, not one
+# missing from the root.
+	math
+	ipints
 	draw
 
 init
@@ -121,6 +127,11 @@ root
 	/env	/
 	/fd	/
 	/n	/
+# styxcheck() mounts its exported /dis on /n/styx, and the static
+# namespace devroot serves refuses a runtime create -- the same
+# permission denied that sent fsmount() to /tmp.  So the mount point
+# is in the root file list, empty, rather than made when it is wanted.
+	/n/styx	/
 	/net	/
 	/net.alt	/
 	/nvfs	/
@@ -141,6 +152,22 @@ root
 	/dis/grep.dis
 	/dis/ls.dis
 	/dis/mntgen.dis
+# memfs, for /tmp: TMP-FAIL was "load memfs: file does not exist".
+# It needs styxlib as well as the styx.dis already below: with memfs.dis
+# present and styxlib.dis absent, memfs's checkload calls error() from
+# inside init(), init() never returns to tmpmount(), and the boot wedges
+# there -- so every later marker vanished rather than merely failing.
+	/dis/memfs.dis
+	/dis/lib/styxlib.dis
+# dossrv, for the FAT card the suite hands this board on virtio-blk:
+# FS-MKDIR-FAIL used to stop fsmount() before it got here, and with
+# /tmp real the next thing it wanted was the server.  Its own imports
+# (daytime, styx, arg) were already in this root.
+	/dis/dossrv.dis
+# ping, for IP-FAIL: the DHCP lease above is only half of a working
+# stack, and ip/ping.dis is what the check sends over it.  Its imports
+# (ip, timers, rand, dial, arg) were already in this root too.
+	/dis/ip/ping.dis
 	/dis/mount.dis
 	/dis/ns.dis
 	/dis/ps.dis
@@ -152,6 +179,15 @@ root
 	/dis/lib/arg.dis
 	/dis/lib/bufio.dis
 	/dis/lib/daytime.dis
+# The DHCP client and what it loads: Dial, IP, Timers and the two
+# random modules.  DHCP-FAIL on this board was "load: file does not
+# exist" and nothing to do with the network.
+	/dis/lib/dhcpclient.dis
+	/dis/lib/dial.dis
+	/dis/lib/ip.dis
+	/dis/lib/rand.dis
+	/dis/lib/random.dis
+	/dis/lib/timers.dis
 	/dis/lib/env.dis
 	/dis/lib/filepat.dis
 	/dis/lib/names.dis

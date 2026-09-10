@@ -20561,3 +20561,319 @@ build of every board is a warning nobody reads.  Every board in the
 tree now compiles without one of these, and
 .CW pc64
 links again.
+.NH 1
+The board that wanted $Math, and the five things in the way
+.PP
+No aarch64 board's configuration had ever named
+.CW math
+in its
+.CW mod
+section.
+.CW virtarm64
+carried
+.CW MATH-FAIL
+as a known failure and the reason recorded for it was the honest one at
+the time: the module was not in the kernel.  Adding it took five
+separate fixes, each hidden behind the one before, and the last of them
+had been quietly wrong for every arm64 board in the tree.
+.PP
+The first was the shallowest.
+.CW libmath 's
+.CW FPinit()
+calls
+.CW setfcr ,
+and
+.CW libkern
+has a
+.CW getfcr- \c
+.I arch \c
+.CW .s
+for 386, amd64, arm, mips, power, riscv64, sparc and thumb \(em and not
+for arm64.  The link said
+.CW "FPinit: undefined: setfcr"
+and stopped.
+.CW libkern/getfcr-arm64.s
+reads and writes FPCR's rounding mode and FPSR's accrued flags and
+nothing else, which is what this hardware will honour: trapped
+floating-point exceptions are optional in AArch64 and QEMU does not
+implement them, and AArch64 has no precision control at all, each
+instruction naming its own width.  It is exercised only through
+.CW FPcontrol(0, ...) ,
+which comes down to
+.CW setfcr(0) ;
+rounding-mode control itself is still untested.
+.PP
+With that written the link stopped again, on
+.CW "atan: illegal combination FMOVD SEXT16 NONE FREG" .
+.CW 7l 's
+optab had all eight large-offset rows for
+.CW AFMOVS
+and none for
+.CW AFMOVD ,
+so a double loaded from a static at a large SB offset had no encoding.
+.CW movesize()
+already returns 3 for
+.CW AFMOVD
+and
+.CW opldr12 / opstr12
+already encode it; only the rows were missing.  Eleven of them appear
+in
+.CW atan ,
+and the pair for
+.CW aT<>+0
+assembles to
+.CW "ADD $0x8000,REGSB,REGTMP"
+then
+.CW "LDR D1,[REGTMP,#0x48b0]" ,
+which is the address the linker's own listing gives that symbol.
+.PP
+Then
+.CW 7l
+exited 1, removed its output, and printed nothing at all.
+.CW diag()
+built its message and never flushed
+.CW bso ,
+so a link that stopped on ten errors or fewer said why into a buffer
+nobody drained.  One
+.CW Bflush .
+It is how a throwaway test's undefined
+.CW atan2
+announced itself a few minutes later.
+.PP
+Under that were three memory bugs in the linker sources every
+architecture shares, found with AddressSanitizer and fixed in all
+eleven linkers.
+.CW lookup()
+compared with
+.CW "memcmp(s->name, symb, strlen(symb)+1)" ,
+reading past the end of any shorter stored name.
+.CW addhist()
+malloc'd
+.CW s->name
+and never wrote it, so
+.CW putsymb 's
+walk-until-two-NULs ran off the allocation.  And
+.CW literal[32]
+held
+.CW "sprint(\(dq$%lux.%lux\(dq, ieee->l, ieee->h)" :
+the object reader sign-extends each half into
+.CW long ,
+so on a 64-bit host that is sixteen hex digits apiece, 35 bytes into
+32, three of them landing in
+.CW nerrors ,
+which sits immediately after
+.CW literal
+in
+.CW l.h .
+That is the 25399 errors with zero
+.CW diag
+calls.
+.PP
+And then the board booted, and
+.CW atan
+returned NaN.
+.NH 2
+sqrt was right and atan was not, and that is what named the suspect
+.PP
+The probe that mattered was cheap and should have come first:
+.KS
+.CW
+.nf
+	probe fabs 2500 exp 0 log 0 sqrt 1414
+	probe atan .1 0 .5 0 1.0 0 2.0 0 100.0 0
+.fi
+.R
+.KE
+.LP
+.CW sqrt
+and
+.CW fabs
+were right.
+.CW atan ,
+.CW exp
+and
+.CW log
+returned NaN for every argument.  The split is the whole diagnosis:
+those three read static constant tables and the other two do not.  It
+also ruled out the new
+.CW AFMOVD
+rows, because
+.CW exp
+and
+.CW log
+contain no large-offset
+.CW FMOVD
+at all and fail identically.
+.PP
+There were two faults, and the first was not the one that mattered.
+.CW 7c
+hoisted
+.CW "FMOVD x+0(FP),F0"
+above the
+.CW "MOVWU R1,x+4(FP)"
+that fdlibm's
+.CW __HI(x)
+writes, so
+.CW fabs
+returned its argument unchanged \(em unchanged including its sign.
+.CW reg.c
+keys a
+.CW Var
+on
+.CW (sym, name, offset) ,
+so the double at
+.CW x+0
+and the int at
+.CW x+4
+look like unrelated variables and one goes stale while the other is
+written.
+.CW jc ,
+.CW tc
+and
+.CW 6c
+already carry an overlap check for exactly this; it is ported here to
+the seven that did not have it.  The same three compilers put the load
+after the store, which is why riscv64 and amd64 never showed the bug.
+.PP
+The second was in the linker, and it was the one.
+.CW 7l
+wrote every eight-byte float
+.CW DATA
+as
+.CW "cast = (char*)p->to.ieee" ,
+and
+.CW Ieee 's
+two halves are
+.CW long s,
+which are eight bytes on a 64-bit host.  So the eight bytes taken were
+the low half, sign-extended.  Every static double in
+.CW libmath
+\(em fdlibm's constant tables \(em landed with a correct low word and a
+high word of 0 or 0xffffffff.  Read out of the linked image,
+.CW one<>
+was
+.CW 0.0 ,
+.CW aT[0]
+was
+.CW 000000005555550d
+where it should be
+.CW 3fd555555555550d ,
+and
+.CW Huge<>
+was
+.CW ffffffff8800759c
+for
+.CW 7e37e43c8800759c .
+Nine of the eleven linkers already had the fix.
+.CW 7l
+and
+.CW zl
+\(em arm64 and riscv32, the two architectures where no board had ever
+carried
+.CW math
+\(em did not.
+.PP
+It is the same defect as the
+.CW literal[32]
+overflow two paragraphs up: the object reader stores a 32-bit file
+field in a
+.CW long ,
+and every later use has to remember that.  One overflowed a buffer and
+was loud; the other silently truncated every floating-point constant
+arm64 has ever linked.  That includes
+.CW libkern 's
+own tables, which are in every Pi kernel too:
+.CW 7c
+emits six eight-byte float
+.CW DATA
+directives for
+.CW dofmt.c
+and a hundred and sixty for
+.CW pow10.c ,
+and every one of them was truncated.
+.CW charstod.c
+and
+.CW floor.c
+emit none, so not everything that handles a double was affected \(em
+only what reads a constant out of memory.
+.PP
+With both fixed:
+.KS
+.CW
+.nf
+	probe fabs 2500 exp 2718 log 1000 sqrt 1414
+	probe atan .1 100 .5 464 1.0 785 2.0 1107 100.0 1561
+	MATH-OK
+.fi
+.R
+.KE
+.LP
+Those five
+.CW atan
+arguments walk four different branches of
+.CW s_atan.c ,
+which is a good deal more than the marker asks for.
+.PP
+One dead end worth recording so the next person does not spend the
+boot: building
+.CW libmath
+with
+.CW "7c -N"
+to bisect the optimiser does not work, because the unoptimised kernel
+does not boot at all.
+.NH 1
+What virtarm64 had left, and what it has now
+.PP
+With
+.CW $Math
+in the kernel the board's remaining known failures turned out to be
+one kind of thing:
+.CW TMP-FAIL ,
+.CW FS-MKDIR-FAIL
+and
+.CW DHCP-FAIL
+were all files its root did not have.  Adding
+.CW memfs.dis
+alone made things worse in an instructive way: with
+.CW memfs.dis
+present and
+.CW /dis/lib/styxlib.dis
+absent, memfs's
+.CW checkload
+calls
+.CW error()
+from inside
+.CW init() ,
+.CW init()
+never returns to
+.CW tmpmount() ,
+and the boot wedges there \(em so every later marker vanished rather
+than merely failing, and the marker count stayed flat while the tail
+went silent.
+.PP
+With
+.CW memfs.dis
+and
+.CW styxlib.dis ,
+the dhcpclient chain,
+.CW dossrv.dis ,
+.CW ip/ping.dis
+and an empty
+.CW /n/styx
+in the root, and
+.CW math
+and
+.CW ipints
+in the mod section, the board goes from 32 markers and 15 known
+failures to 41 and 12 \(em and those twelve are exactly
+.CW virt 's
+twelve.  Its peer goes from 34 and 15 to 43 and 12.  The last piece was
+not the board's at all:
+.CW TCP-NET-FAIL
+said
+.I "connection refused"
+because
+.CW config_hostnet
+had never named this configuration, so the host echo rig it dials was
+never started, and its netdev had neither hostfwd rule.  Both are the
+suite's, not the kernel's.
