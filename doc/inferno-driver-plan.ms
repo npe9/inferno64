@@ -534,6 +534,37 @@ Out of reach here
 .IP \(bu
 MSI/MSI-X: PCI runs on legacy INTx, which QEMU delivers correctly, so
 MSI buys nothing on these machines.  Left for real hardware that needs
+.PP
+A note on how to know an interrupt path works, since this is the
+section where it will matter.  A boot reaching a prompt is not
+evidence: a kernel with no clock at all reaches a shell
+indistinguishably from a correct one, because nothing between
+.CW main()
+and the shell needs the timer interrupt.  Nor is a completed transfer:
+os/inferno/port/sdnvme.c's completion wait polls the queue on a
+.CW tsleep
+timer, so a read succeeds whether or not any interrupt arrives \(em MSI
+vectors can be allocated, programmed, reported by the driver and
+entirely dead while the disk reads fine.  Both were found on the
+cloud-port branch, the second after the driver had reported "msix, 2 of
+65 vectors" and read correctly.
+.PP
+What does work is one of two shapes.  Falsify the constant the code
+would otherwise trust and measure something that has to move \(em a
+wrong UART base, then a tick delta; a wrong timer irq, then
+.CW m->ticks
+across a delay \(em taking care that the measurement sits where
+interrupts are live, since a probe placed in
+.CW main()
+reads zero on a correct kernel because interrupts are masked until
+init0 calls
+.CW spllo() .
+Or count the same quantity by a second mechanism and print both, which
+is the better shape where it is available because it detects as well as
+validates.  If a probe cannot produce a spurious reading it needs
+neither, but the reason must be one that can be written down; where it
+cannot, the control is not optional.
+
 more vectors.
 .IP \(bu
 The arm64 PL061 GPIO drives only a poweroff key under QEMU - cosmetic.
