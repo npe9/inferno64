@@ -215,6 +215,32 @@ addpool(Prog *p, Adr *a)
 	switch(c) {
 	default:
 		t.to = *a;
+		/*
+		 * How wide the pool entry is has to follow the constant,
+		 * not the mnemonic.  This was decided by "p->as == AMOV"
+		 * alone, so every other instruction taking a literal --
+		 * CMP, ADD, SUB, AND, the whole of asmout's case 13 -- got
+		 * a four-byte pool word and a 32-bit LDR to read it back,
+		 * and a constant wider than 32 bits lost its top half with
+		 * no diagnostic.  "if(x >= 0x100000000ULL)" in C compiled
+		 * to CMP $4294967296,R2 and assembled to a comparison
+		 * against zero, which is true for every x.  That is how it
+		 * was found: in os/inferno/port/pciecam.c, where the test
+		 * was meant to name a PCI bar above 4 GiB and named every
+		 * bar on the machine.
+		 *
+		 * A value whose top word is 0 or -1 still fits in four
+		 * bytes, because omovlit() zero-extends the load, or
+		 * sign-extends it when the pooled offset is negative.  It
+		 * is only the rest that need eight, and taking eight when
+		 * four will do would move every literal in the pool for
+		 * nothing.
+		 */
+		if(t.as == AWORD && t.to.type == D_CONST
+		&& (t.to.offset>>32) != 0 && (t.to.offset>>32) != -1) {
+			t.as = ADWORD;
+			sz = 8;
+		}
 		break;
 
 	/*
