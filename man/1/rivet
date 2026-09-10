@@ -1,0 +1,96 @@
+.TH RIVET 1
+.SH NAME
+rivet \- a girder climber
+.SH SYNOPSIS
+.B games/rivet
+[
+.B -t
+|
+.B -s
+] [
+.B -q
+]
+.SH DESCRIPTION
+.I Rivet
+is a climbing game in the shape the arcade settled on in 1981:
+a stack of girders joined by ladders,
+hazards that roll along them and fall from one to the next in a zigzag,
+a mallet that turns those hazards into points for a few seconds,
+and one thing at the top to reach.
+Reaching it scores, advances the level and makes the next set of
+hazards faster.
+Being touched by one costs a life; three lives and the game is over.
+Jumping clean over a hazard scores 100.
+.PP
+The controls are the pad
+.IR nes (2)
+defines: the arrow keys or
+.B wasd
+to walk and to climb a ladder,
+.BR x ,
+.B .
+or the space bar to jump,
+.B q
+or Escape to quit.
+Up and down work a ladder when standing on one.
+.PP
+The level is written as thirty strings of thirty-two characters at the
+top of the source, and the direction a hazard rolls along each platform
+is a property of the map rather than of the hazard, which is what makes
+the zigzag come out.
+.PP
+.B -q
+starts silent.
+.B -t
+runs the self test described below instead of playing, and needs no
+window.
+.B -s
+plays a scripted opening headless and writes the composed frame to
+.B rivet.raw
+in the current directory as
+.IR w " by " h
+of blue, green, red bytes, which is how the screenshot in
+.B doc/
+was made.
+.SH EXAMPLE
+.EX
+games/rivet
+emu\-cocoa \-r. /dis/games/rivet.dis \-t
+.EE
+.SH SOURCE
+.B /appl/games/rivet.b
+.SH SEE ALSO
+.IR nes (2),
+.IR nestest (1)
+.SH DIAGNOSTICS
+.B -t
+drives the same
+.I step
+the game loop drives, with the same pad, and asserts on game state
+rather than on pixels \- a count of lit pixels cannot tell a climber
+walking from one stuck against a wall.
+It checks the map's shape, that walking moves one pixel a frame and
+stops at the wall, that a jump returns to the row it left, that a ladder
+is climbed and descended, that a hazard rolls the way its platform says
+and turns round on the one it lands on, that contact costs a life and
+that contact with the mallet up scores instead, and that reaching the
+top advances the level and speeds the hazards up.
+It draws every frame too, so a fault in the drawing is still a crash
+here.
+The last line is
+.B PASSED
+or
+.BR FAILED .
+.SH BUGS
+There is one level layout.
+Later levels differ only in how fast and how often the hazards come.
+.PP
+The self test asserts on state, so a change that broke the drawing
+without crashing \- a sprite in the wrong palette, a background never
+blitted \- would pass it.
+.B -s
+and a look at the result is the check for that, and it is a manual one.
+.PP
+A hazard that lands exactly on the climber counts as a hit even if the
+climber is climbing, where the arcade would have let a ladder be a
+refuge.

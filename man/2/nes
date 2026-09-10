@@ -1,0 +1,235 @@
+.TH NES 2
+.SH NAME
+nes: init, rgb, colour, entry, pal, chr, meta, font, surface, padkey, edge, sound, sfx, sfxtick, quiet \- an 8-bit console look-alike
+.SH SYNOPSIS
+.EX
+include "draw.m";
+include "nes.m";
+nes := load Nes Nes->PATH;
+Chr, Pal, Surface: import nes;
+
+W, H: con 256, 240;
+TW, TH: con 8, 8;
+NTW, NTH: con 32, 30;
+MASTER: con 64;
+
+PA, PB, PSEL, PSTART, PUP, PDOWN, PLEFT, PRIGHT: con 1 << iota;
+FLIPX, FLIPY: con 1 << iota;
+
+GREY, RED, ORANGE, YELLOW, LIME, GREEN, SPRING,
+	CYAN, AZURE, BLUE, VIOLET, MAGENTA, ROSE: con iota;
+BLACK: con 13;
+DARK, MID, LIGHT, PALE: con iota;
+
+init:    fn(): string;
+rgb:     fn(i: int): int;
+colour:  fn(d: ref Draw->Display, i: int): ref Draw->Image;
+entry:   fn(row, col: int): int;
+pal:     fn(a, b, c, d: int): ref Pal;
+chr:     fn(d: ref Draw->Display, chans: Draw->Chans, scale: int,
+              art: array of string): ref Chr;
+meta:    fn(art: array of string): array of string;
+font:    fn(d: ref Draw->Display, chans: Draw->Chans, scale: int): ref Chr;
+surface: fn(d: ref Draw->Display, chr, fnt: ref Chr,
+              w, h, bg: int): ref Surface;
+padkey:  fn(pad, k: int): int;
+edge:    fn(pad, prev: int): int;
+sound:   fn(on: int): int;
+sfx:     fn(pri, freq, ms: int);
+sfxtick: fn();
+quiet:   fn();
+.EE
+.SH DESCRIPTION
+.I Nes
+is the graphics of the 8-bit console era, in Limbo:
+a fixed 256 by 240 logical screen built from 8 by 8 tiles,
+four colours to a tile out of a 64-entry master palette,
+drawn through an integer scale so a logical pixel is a square block of
+real ones.
+It is not emulation.
+There is no processor and no picture unit here, and the palette is
+computed rather than transcribed from any machine's tables.
+What it reproduces is the
+.I shape
+of that hardware, which is what makes a game written against it look
+right, and \- because a frame is a few dozen blits rather than a few
+hundred thousand pixels \- what makes one cheap enough to run at 60
+frames a second in interpreted Limbo.
+.PP
+The rule the whole library is built around is that
+.I draw
+does not resample.
+So everything is composited once, up front, at the destination's scale,
+and every draw after that is 1:1.
+Nothing is scaled per frame.
+.SS The palette
+.I Init
+computes 64 colours as four rows of sixteen.
+Column
+.B GREY
+is a grey, columns
+.B RED
+through
+.B ROSE
+are twelve hues, and 13 to 15 are black.
+Row
+.B DARK
+is the shade a sprite is outlined in and row
+.B PALE
+the near-white a highlight uses.
+.I Entry
+turns a row and a column into an index,
+.I rgb
+gives that index as
+.BR 0xRRGGBBFF ,
+and
+.I colour
+gives it as a one-pixel replicated
+.I Image
+suitable for
+.IR draw .
+.SS Tiles
+.I Chr
+builds a tile sheet from art written as eight strings of eight
+characters a tile, drawn from
+.BR ".123" ,
+where
+.B .
+is colour 0.
+A sheet therefore reads as itself in the source and needs no asset file.
+.PP
+.I Meta
+takes sixteen strings of sixteen characters \- which is how a 16 by 16
+character actually wants to be written \- and cuts each such block into
+the four tiles
+.I chr
+wants, in the order top left, top right, bottom left, bottom right.
+Concatenate its result onto an array of hand-written 8 by 8 tiles to get
+a sheet with both.
+.PP
+.I Font
+returns a 256-tile sheet of the 8 by 8 text font, read from
+.BR /fonts/temple/temple.8x8 ,
+which is already in the tree and already the right shape.
+Glyph
+.I i
+is tile
+.IR i ,
+so a string indexes it directly.
+.PP
+A
+.I Pal
+is four master-palette indices.
+.B c[0]
+is the background colour for
+.I Surface.tile
+and transparent for
+.IR Surface.put .
+Composites are built lazily, one per tile, palette and flip, and only
+for the combinations a game actually draws:
+a 96-tile sheet at four palettes is 1536 of them and a game touches a
+few dozen.
+.SS Surfaces
+.I Surface
+wraps an image whose size is
+.I scale
+times the logical
+.I w
+by
+.IR h .
+.I Tile
+draws an opaque tile at tile coordinates and
+.I put
+a masked one at pixel coordinates;
+.I put16
+draws a 16 by 16 metasprite, and its
+.B FLIPX
+swaps the halves as well as mirroring them.
+.I Fill
+paints a logical rectangle in a master colour and
+.I text
+writes a string in the font.
+.PP
+A game keeps two: one the size of the screen to compose each frame
+into, and one the size of the level, built once.
+.I View
+copies a screen-sized window of the second into the first \- that is the
+scroll \- and
+.I blit
+copies the whole of one into the other.
+.I View
+clamps its origin so the window stays inside the source, because
+.I draw
+replicates a source smaller than its destination rather than stopping at
+the edge, and a level that tiled itself at the end would look like a
+feature.
+.SS Input
+.I Padkey
+takes one key event and the current pad and returns the new pad, so a
+game keeps no key state of its own.
+It handles the release as well as the press, which means the window must
+have asked for
+.B keyup
+as well as
+.B kbd
+\- see
+.IR wmclient (2)
+\-
+or nothing is ever released and every key sticks down.
+Both arrow keys and
+.B wasd
+work the pad;
+.BR z ,
+.B ,
+are
+.BR PB ;
+.BR x ,
+.B .
+and space are
+.BR PA .
+.PP
+.I Edge
+returns the buttons in
+.I pad
+that were not in
+.IR prev :
+what was pressed since the last frame.
+Games use it for jump and fire and the raw pad for walking.
+.SS Sound
+.IR Tone (2)
+plays one thing at a time, so
+.I sfx
+is an arbiter rather than a mixer: an effect states a priority and how
+long it lasts, and a quieter one asked for while a louder one is still
+sounding is dropped rather than cutting it off.
+.I Sfxtick
+must be called once a frame for that to expire.
+.I Sound
+turns audio on or off and returns whether it is on;
+.I quiet
+silences whatever is playing.
+.SH SOURCE
+.B /appl/lib/nes.b
+.SH SEE ALSO
+.IR rivet (1),
+.IR nestest (1),
+.IR vsprite (2),
+.IR draw3d (2),
+.IR tone (2),
+.IR frameclock (2)
+.SH BUGS
+There is no sprite limit, no scanline, and no attribute grid.
+Real hardware of this kind could show eight sprites on a line and gave
+one palette to each 16 by 16 block of background; nothing here enforces
+either, so a game can look right and still be one no such machine could
+have run.
+.PP
+One palette per draw call, not per tile in a batch: a background of many
+palettes costs a palette lookup a tile.
+The lookup is a scan over the sheet's registered palettes, with the last
+hit remembered, so it is cheap while a game uses a handful and linear if
+it uses hundreds.
+.PP
+.I Sound
+is one voice.
+Two effects at once is the louder one; there is no music track under it.

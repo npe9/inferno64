@@ -97,6 +97,7 @@ TARG=\
 	meshview.dis\
 	mpeg.dis\
 	msgio.dis\
+	nes.dis\
 	numerics.dis\
 	nametree.dis\
 	names.dis\

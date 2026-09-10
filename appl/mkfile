@@ -10,6 +10,7 @@ DIRS=\
 	demo\
 	dreammachines\
 	ebook\
+	games\
 	grid\
 	lib\
 	math\

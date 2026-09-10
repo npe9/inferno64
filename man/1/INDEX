@@ -483,6 +483,7 @@ rescue sh-std
 rev rev
 reversi wm-misc
 rget sh-file2chan
+rivet rivet
 rm tiny
 rocket rocket
 rocketscience rocketscience

@@ -1,0 +1,21 @@
+<../../mkconfig
+
+TARG=\
+	rivet.dis\
+
+MODULES=\
+
+SYSMODULES=\
+	sys.m\
+	draw.m\
+	tk.m\
+	wmclient.m\
+	keyboard.m\
+	rand.m\
+	nes.m\
+	frameclock.m\
+	scorestore.m\
+
+DISBIN=$ROOT/dis/games
+
+<$ROOT/mkfiles/mkdis
