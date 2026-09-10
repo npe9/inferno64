@@ -422,14 +422,29 @@ procdone(Proc9 *t, char *status)
 	/*
 	 * And a name space it made for itself, which nothing else holds: the
 	 * one it was given is the personality's and stays.
+	 *
+	 * up-> is cleared as each one goes, the way it is for the descriptor
+	 * table above.  This proc is about to end and will not use them
+	 * again, but leaving up->pgrp pointing at a Pgrp that has just been
+	 * freed is a dangling pointer in a live Proc, and the next thing to
+	 * walk the proc list finds it.  Nil is a pointer nothing follows by
+	 * accident.
 	 */
 	if(t->pgrp != nil){
-		closepgrp(t->pgrp);
+		Pgrp *g = t->pgrp;
+
 		t->pgrp = nil;
+		if(up->pgrp == g)
+			up->pgrp = nil;
+		closepgrp(g);
 	}
 	if(t->egrp != nil){
-		closeegrp(t->egrp);
+		Egrp *g = t->egrp;
+
 		t->egrp = nil;
+		if(up->egrp == g)
+			up->egrp = nil;
+		closeegrp(g);
 	}
 	wakeup(&t->r);
 	wakeup(&anydone);

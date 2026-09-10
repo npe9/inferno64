@@ -1781,7 +1781,33 @@ with
 .BR MREPL ,
 which hid them; a name space a library operating system rearranges is
 the one every program it loads is given.  It does not draw a window and
-where it goes after its file system is not established.  Two things were found by adding it: the boot
+where it goes after its file system is not established.  The personality
+asks the name space what rio is about to ask it and logs the answers
+first:
+.BR /dev/draw ,
+.BR /dev/mouse ,
+.BR /dev/kbd ,
+.B /dev/cons
+and
+.B /dev/winname
+open, and
+.B /dev/snarf
+does not exist, which rio opens with
+.B OCEXEC
+and carries on without.  Two things that probe found:
+.I procdone
+freed a program's
+.B Pgrp
+and
+.B Egrp
+while
+.B up->
+still pointed at them, and
+.I p9open
+raises rather than answering \-1, so a caller asking about names that may
+not be there needs a
+.I waserror
+of its own.  Two things were found by adding it: the boot
 files are byte arrays in the personality's data, so rio's size pushed
 the personality's bss past
 .B P9progbase

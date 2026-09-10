@@ -910,6 +910,46 @@ p9main(void)
 
 		rioargv[0] = "/boot/rio";
 		rioargv[1] = nil;
+		/*
+		 * What a window system finds here, said before it runs.  rio
+		 * opens these in this order and each is a different part of
+		 * the personality: /dev/draw is the kernel's devdraw compiled
+		 * in, /dev/mouse and /dev/kbd are the i8042 driver's if this
+		 * configuration has one, /dev/cons is the machine's console
+		 * and /dev/snarf is nobody's.  A program that blocks on one of
+		 * them blocks with nothing to say, so the name space is asked
+		 * first and the answer is in the log whatever happens after.
+		 */
+		{
+			static char *want[] = {
+				"/dev/draw", "/dev/mouse", "/dev/kbd",
+				"/dev/cons", "/dev/snarf", "/dev/winname", nil
+			};
+			int i, f;
+
+			for(i = 0; want[i] != nil; i++){
+				/*
+				 * p9open is the personality's own open and it
+				 * raises rather than answering -1, which is what
+				 * every other caller here already knew and this
+				 * one did not: without a handler of its own the
+				 * raise unwound out of p9main, and what came back
+				 * was a wild jump with the half-built message
+				 * ("'/dev/snarf'") still on the stack.  A probe
+				 * whose whole purpose is to ask about names that
+				 * may not be there has to catch.
+				 */
+				if(waserror()){
+					print("p9: rio will want %s: not there (%s)\n",
+						want[i], up->errstr);
+					continue;
+				}
+				f = p9open(want[i], OREAD);
+				poperror();
+				print("p9: rio will want %s: it opens\n", want[i]);
+				p9close(f);
+			}
+		}
 		print("p9: starting /boot/rio, the real 9front rio, linked against this personality\n");
 		p9exec("/boot/rio", rioargv);
 		print("p9: /boot/rio returned\n");

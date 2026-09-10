@@ -636,6 +636,22 @@ def main():
                     r'(\d+) absolute addresses corrected; it was linked at 0', t)
     rioprocs = re.findall(r'p9 proccreate: p9server gets a second flow of control as (\d+), '
                           r'sharing its memory and its descriptors', t)
+    #
+    # What a window system finds here, asked before one runs.  Five of
+    # the six open and the sixth is honestly absent: rio opens /dev/snarf
+    # with OCEXEC and carries on without it, so its absence is a fact
+    # about this name space and not a failure.
+    #
+    # The probe had to be given an error handler of its own.  p9open is
+    # the personality's own open and raises rather than answering -1 -
+    # which every other caller in main.c already knew - so a probe whose
+    # whole purpose is to ask about names that may not be there unwound
+    # out of p9main and came back as a wild jump.
+    devs = dict(re.findall(r'p9: rio will want (/dev/\w+): (it opens|not there)', t))
+    results.append(("and what a window system needs is in the name space before one runs: /dev/draw, /dev/mouse, /dev/kbd, /dev/cons and /dev/winname all open, and /dev/snarf does not exist - which rio opens with OCEXEC and carries on without, so it is a fact about this name space rather than a failure of it",
+                    all(devs.get(d) == 'it opens' for d in
+                        ('/dev/draw', '/dev/mouse', '/dev/kbd', '/dev/cons', '/dev/winname'))
+                    and devs.get('/dev/snarf') == 'not there'))
     results.append(("and rio itself runs on it, as far as its own file system: the real 9front rio, linked against this personality with the archive of system-call stubs left off, is laid in a slot with two thousand absolute addresses corrected, is entered, and takes flows of control of its own through the personality's proccreate - which is libthread's procrfork underneath",
                     rio is not None
                     and int(rio.group(1), 16) >= 0x2c00000

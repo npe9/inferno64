@@ -10655,6 +10655,70 @@ and where it goes after its file system is not established here.  What
 is established is that the last thing between this personality and rio
 was a name space rather than a mechanism, twice over.
 .PP
+.B "3.2m: what a window system finds, and two more of the same family."
+Guessing at where rio blocks is no good, so the personality asks the
+name space the questions rio is about to ask and puts the answers in the
+log before it starts:
+.CW /dev/draw ,
+.CW /dev/mouse ,
+.CW /dev/kbd ,
+.CW /dev/cons
+and
+.CW /dev/winname
+all open, and
+.CW /dev/snarf
+does not exist \- which rio opens with
+.CW OCEXEC
+and carries on without, so that is a fact about this name space rather
+than a failure of it.  A mouse and a keyboard are there, which was the
+thing most likely not to be.
+.PP
+Writing that probe found two more bugs of the family this whole section
+keeps turning up.
+.PP
+The first was the personality's.
+.CW procdone
+frees the
+.CW Pgrp
+and the
+.CW Egrp
+a program made for itself, and left
+.CW up->
+pointing at both \- it does the careful "put it in up->, close it, set
+up-> to nil" dance for the descriptor table and not for the other two.
+The proc is ending and will not use them again, but a live
+.CW Proc
+with a freed
+.CW Pgrp
+in it is a pointer the next thing to walk the proc list follows.  It
+showed up the way these do: adding six lines to
+.CW main.c
+moved the text, and the boot died at the end of
+.CW /boot/libns
+with a jump to
+.CW 0xffffffff .
+Clearing them cured it.
+.PP
+The second was the probe itself, and it is the plainest lesson here.
+.CW p9open
+is the personality's own open and it
+.I raises
+rather than answering \-1 \- which every other caller in
+.CW main.c
+already knew, and which I did not.  A probe whose entire purpose is to
+ask about names that may not be there had no
+.CW waserror
+of its own, so the first missing name unwound out of
+.CW p9main
+and came back as a wild jump with the half-built message still on the
+stack:
+.CW "0x7665642f27203a74"
+is
+.CW "t: '/dev" ,
+and the next word is
+.CW "/snarf'" .
+Reading the stack dump as text is what named it.
+.PP
 .B "Two bugs that only rio was big enough to find."
 The first was not rio running.  Adding rio to the boot files at all
 killed the machine at
