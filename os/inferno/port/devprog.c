@@ -874,6 +874,23 @@ modstatus(REG *r, char *ptr, int len)
 		 * faults and the improvement has another cause.  Either way
 		 * the question is settled by a measurement rather than by
 		 * whichever story is more comfortable.
+		 *
+		 * Answered, on the branch that made more than one Dis
+		 * context exist: it appears.  Two boots out of ninety-six at
+		 * -smp 4 print it, both from disdump(), both for a Prog in
+		 * Prelease whose module reads [H], and both boots go on to
+		 * run seventy-odd shell loop iterations without a panic.  So
+		 * the silent exit IS taken, M == H does reach here, and this
+		 * guard is doing something rather than nothing.
+		 *
+		 * It is still not what stopped the faults, and the
+		 * instruction-level reading holds: M == H would fault on the
+		 * second dereference at -1+8 = 7, CR2 7, and every capture
+		 * shows a general protection violation with CR2 0.  Two
+		 * different things, and this is the harmless one -- H is the
+		 * ordinary "no module" sentinel and a Prog is entitled to
+		 * carry it.  A boot batch should not score this line as a
+		 * failure; it is a report, not a fault.
 		 */
 		if(!saidh) {
 			saidh = 1;
