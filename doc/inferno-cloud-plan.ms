@@ -4485,7 +4485,8 @@ print, a panic with a register dump \(en are invisible on a VGA
 console that the kernel may never reach.  Check for it before paying
 for anything else.
 .IP "\f(CWGoogle\ Cloud\fP" 12
-Item 3, and the cheapest first boot on somebody else's hardware.  What
+Item 3, and the cheapest first boot on somebody else's hardware \(em
+now taken, and it earned its keep on the first try: see section 18.  What
 is needed: an account with billing enabled, a Cloud Storage bucket, and
 the Compute Engine custom-image path \(en
 .CW "gcloud compute images create --source-uri"
@@ -4616,3 +4617,59 @@ What is worth buying first, if only one thing is: the Google Cloud
 account.  It costs almost nothing, it needs no driver written, and it
 turns "every piece exists" into a boot log \(en which is the only kind
 of evidence this document accepts.
+.NH 1
+The first boot on hardware nobody here owns
+.PP
+An e2-micro in
+.CW us-central1-a ,
+booted from a 1 GiB raw GPT image imported as a Compute Engine custom
+image with
+.CW --guest-os-features=UEFI_COMPATIBLE .
+It reached the loader, read its own memory map, printed the
+configuration and the page tables, and then panicked:
+.DS
+.CW
+  CS 0008   SS 0000    PC 0000000000200322
+TYPE 0D  ERROR 0000 FLAGS 00010046
+panic: general protection violation
+.DE
+0x200322 is
+.CW _wrmsrinst ,
+reached from
+.CW cpuidentify+0x4d0
+from
+.CW main+0x65 .
+A WRMSR to a register the hypervisor does not implement raises #GP,
+which is expected \(em
+.CW rdmsr()
+and
+.CW wrmsr()
+in
+.CW l.s
+zero BP for exactly that reason and say so in a comment.  Nothing ever
+set BP: the recovery
+.CW os/9front/pc/trap.c
+performs at
+.CW _rdmsrinst ,
+.CW _wrmsrinst
+and
+.CW _peekinst
+had never been carried across to pc64, so the contract every
+.CW "if(rdmsr(...) != -1)"
+in
+.CW os/inferno/pc/devarch.c
+is written against did not exist, and
+.CW peek() ,
+the fault-proof memcpy, was not fault-proof.
+.PP
+What makes this worth a section rather than a line: twelve local boots
+through OVMF never touched the path, because on this laptop the
+instruction simply succeeds.  QEMU implements whatever MSR this kernel
+asked for and Google's does not.  AGENTS.md says to expect exactly this
+and to note where the emulator is more forgiving than hardware; this is
+the first time the port has been shown one rather than argued about it,
+and it cost about a cent.
+.PP
+The lesson for the rest of the list is not about MSRs.  It is that the
+cheapest account bought a real bug within minutes of the first boot,
+which is the argument for buying the next one.
