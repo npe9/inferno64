@@ -55,24 +55,15 @@ halt(void)
 		idle();
 }
 
+/*
+ * All of it is archconfinit()'s now: a UEFI machine's memory is not
+ * one run from the end of the kernel to a constant, and building
+ * conf.mem[] from the firmware's map is where that has to be decided.
+ */
 void
 confinit(void)
 {
-	ulong base;
-
 	archconfinit();
-
-	base = PGROUND((uintptr)end);
-	conf.base0 = base;
-	conf.base1 = 0;
-	conf.npage1 = 0;
-	conf.npage0 = (conf.topofmem - base)/BY2PG;
-	conf.npage = conf.npage0 + conf.npage1;
-	conf.mem[0].base = base;
-	conf.mem[0].npage = conf.npage0;
-	conf.ialloc = (ulong)(((((uvlong)conf.npage*main_pool_pcnt)/100)/2)*BY2PG);
-	conf.nproc = 200;
-	conf.nmach = 1;
 }
 
 void
@@ -120,6 +111,8 @@ main(void)
 
 	uartconsole();
 	archconsole();
+	showconf();
+	archmemreport();
 
 	xinit();
 	poolinit();

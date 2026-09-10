@@ -328,6 +328,17 @@ TEXT	seticceoir(SB), 1, $-4
  *
  * All four take a word (32-bit) rather than a doubleword: Lock.key,
  * Ref.ref and Heap.ref are all int.
+ *
+ * Where the emulator is more forgiving than hardware, and it is here:
+ * this board runs with SCTLR_EL1.M clear (see mmu.c), so every data
+ * access is Device-nGnRnE, and LDXR/STXR on Device memory is
+ * CONSTRAINED UNPREDICTABLE -- the architecture does not promise the
+ * exclusive monitor works at all.  QEMU's TCG implements a global
+ * monitor regardless of memory type, so these loops behave correctly
+ * under it and would not necessarily behave correctly on a core.  The
+ * guarantee arrives when the MMU does, with RAM mapped Normal
+ * write-back inner-shareable the way os/inferno/raspi3b/mmu.c maps it;
+ * until then this code is right and its verification is emulator-only.
  */
 TEXT	_tas(SB), 1, $-4
 	MOV	R0, R3

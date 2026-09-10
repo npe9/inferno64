@@ -113,6 +113,7 @@ pciinit(void)
 	Pcidev *p;
 	uvlong mema;
 	ulong ioa;
+	int i;
 
 	fmtinstall('T', tbdffmt);
 	pcimaxdno = 31;
@@ -143,5 +144,21 @@ pciinit(void)
 		p->intl = pciintx(p);
 		print("pci %T: %.4ux/%.4ux class %.6lux irq %d\n",
 			p->tbdf, p->vid, p->did, p->ccrb<<16|p->ccru<<8|p->ccrp, p->intl);
+		/*
+		 * The bar addresses, not just the device.  On a board that
+		 * is about to map its address space rather than run flat,
+		 * where the firmware put the windows decides how wide the
+		 * virtual addresses have to be: QEMU's arm64 virt has a
+		 * high PCIe MMIO window at 0x8000000000, which a 39-bit VA
+		 * cannot reach at all.  Printed for every bar that is set,
+		 * so the answer comes from the machine rather than from a
+		 * reading of its documentation.
+		 */
+		for(i = 0; i < nelem(p->mem); i++)
+			if(p->mem[i].size != 0)
+				print("\tbar%d %#llux size %#llux%s\n", i,
+					(uvlong)p->mem[i].bar & ~0xFULL,
+					(uvlong)p->mem[i].size,
+					(p->mem[i].bar & 1) ? " io" : "");
 	}
 }
