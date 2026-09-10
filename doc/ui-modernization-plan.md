@@ -146,14 +146,23 @@ a channel narrower than a byte, and a destination with alpha, all of which
 still go the old way. The arithmetic is `alphacalcS`'s, `MUL(a, src) +
 MUL(255-a, dst)`, so the result is the same to the byte.
 
-How that is known, and what would catch it breaking: `aadrawtest(1)`
-paints through a mask whose coverage runs 0 to 255 and compares every byte
-against the blend computed independently in Limbo, for `RGB24`, `XRGB32`
-and `GREY8`. It passes identically with the fast path in and disabled —
-which is the point, the two paths agree — so a *second* check asserts the
-ratio between `RGB24`, which takes the fast path, and `RGBA32`, which by
-design does not. With the dispatch disabled that check fails and every
-timing returns to the "before" column. `vspritetest` (57/57 against the
+How that is known, and what would catch it breaking: `aadrawtest(1)`,
+seven checks. It paints through a mask whose coverage runs 0 to 255 and
+compares every byte against the blend computed independently in Limbo, for
+`RGB24`, `XRGB32` and `GREY8`. That passes identically with the fast path
+in and disabled — which is the point, the two paths agree — so a second
+check asserts that `RGB24` beats `RGBA32`, which by design does not take
+the fast path: with three bytes a pixel against four, `RGB24` is the
+*slower* of the two through the general path, so beating it at all says the
+fast path is being taken. With the dispatch disabled that check fails and
+every timing returns to the "before" column.
+
+Arithmetic is one thing and addressing another, so it also draws **real
+text** into both formats and compares: 0 of 19,845 pixels differ at 32
+pixels, 2,725 of them inked. Shifting the coverage path's mask origin by
+one byte makes that fail — and exposed something worth knowing about the
+check itself: with a *bitmap* font it passes vacuously, because a one-bit
+mask never reaches the new path. `vspritetest` (57/57 against the
 `.bit` files) and the temple smoketest (297 ok) cover the one-bit path,
 which is untouched.
 

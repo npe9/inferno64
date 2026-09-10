@@ -151,6 +151,76 @@ timeit(d: ref Display, ch: Chans, chname: string): int
 	return (ms*1000)/REPS;
 }
 
+# Which byte of a pixel in this format carries red?  Asked rather than
+# assumed, so the comparison below does not depend on knowing the
+# channel order of two different formats.
+redbyte(d: ref Display, ch: Chans, nb: int): int
+{
+	# every channel a different value: probing with FF0000FF finds the
+	# alpha byte instead, which RGBA32 keeps at byte 0
+	im := d.newimage(Rect((0,0),(1,1)), ch, 0, int 16r112233FF);
+	b := array[nb] of byte;
+	im.readpixels(im.r, b);
+	for(i := 0; i < nb; i++)
+		if(b[i] == byte 16r11)
+			return i;
+	return -1;
+}
+
+# The oracle above paints a rectangle, so it exercises the arithmetic and
+# not the addressing: a glyph's mask rect starts at an offset inside a
+# subfont strip, and byteaddr(mask, mr.min) with a per-pixel stride is
+# where an origin or stride error would live.  So draw real text twice,
+# into a format the fast path takes and one it refuses by design, and
+# compare.  The general path is the reference; the glyphs are real.
+sametext(d: ref Display, path: string): int
+{
+	f := Font.open(d, path);
+	if(f == nil){
+		sys->print("     %s: not available; addressing not checked\n", path);
+		return -1;
+	}
+	# A bitmap font's mask is one bit, which goes down chardraw's older
+	# path and never reaches the coverage one, so this says nothing
+	# about the new code unless the font is scalable.
+	str := "Handgloves 123 iiillmmm";	# narrow and wide glyphs
+	w := f.width(str) + 4;
+	h := f.height + 4;
+	fast := d.newimage(Rect((0,0),(w,h)), Draw->RGB24, 0, Draw->White);
+	slow := d.newimage(Rect((0,0),(w,h)), Draw->RGBA32, 0, Draw->White);
+	black := d.color(Draw->Black);
+	fast.text(Point(2,2), black, Point(0,0), f, str);
+	slow.text(Point(2,2), black, Point(0,0), f, str);
+	fb := array[w*h*3] of byte;
+	sb := array[w*h*4] of byte;
+	fast.readpixels(fast.r, fb);
+	slow.readpixels(slow.r, sb);
+	fr := redbyte(d, Draw->RGB24, 3);
+	sr := redbyte(d, Draw->RGBA32, 4);
+	if(fr < 0 || sr < 0){
+		sys->print("     could not find the red byte (%d, %d)\n", fr, sr);
+		return 0;
+	}
+	bad := 0;
+	ink := 0;
+	for(i := 0; i < w*h; i++){
+		a := int fb[i*3 + fr];
+		b := int sb[i*4 + sr];
+		if(a != 255)
+			ink++;
+		if(a != b){
+			if(bad == 0)
+				sys->print("     first difference at pixel %d (%d,%d): fast %d slow %d\n",
+					i, i%w, i/w, a, b);
+			bad++;
+		}
+	}
+	report(bad == 0 && ink > 0, sys->sprint(
+		"real glyphs land identically both ways (%s: %d of %d pixels differ, %d inked)",
+		path, bad, w*h, ink));
+	return bad == 0;
+}
+
 # and the case that matters: text
 timetext(d: ref Display, path: string)
 {
@@ -241,14 +311,26 @@ init(nil: ref Draw->Context, argv: list of string)
 	fast := timeit(d, Draw->RGB24, "RGB24");
 	timeit(d, Draw->XRGB32, "XRGB32");
 	slow := timeit(d, Draw->RGBA32, "RGBA32");
-	report(fast*3 < slow*2, sys->sprint(
-		"the coverage fast path is taken (RGB24 %d us against RGBA32's %d, wanted a third off)",
+	# RGB24 has three bytes a pixel against RGBA32's four, so through
+	# the same general path it is the slower of the two - as it was
+	# before this fast path existed.  Beating RGBA32 at all therefore
+	# says the fast path is being taken, with a wide margin either way
+	# rather than a tuned threshold.
+	report(fast < slow, sys->sprint(
+		"the coverage fast path is taken (RGB24 %d us, RGBA32 %d us through the general path)",
 		fast, slow));
-	for(argv = tl argv; argv != nil; argv = tl argv)
+	for(argv = tl argv; argv != nil; argv = tl argv){
+		sametext(d, hd argv);
 		timetext(d, hd argv);
-	if((tn := ttfname()) != "")
-		for(sz := 16; sz <= 32; sz += 16)
+	}
+	if((tn := ttfname()) == "")
+		sys->print("     nothing served under /mnt/ft: the coverage path was\n"
+			+ "     timed and compared on rectangles only, not on glyphs\n");
+	else
+		for(sz := 16; sz <= 32; sz += 16){
+			sametext(d, sys->sprint("/mnt/ft/%s.r.%d.font", tn, sz));
 			timetext(d, sys->sprint("/mnt/ft/%s.r.%d.font", tn, sz));
+		}
 	sys->print("aadrawtest: %d ok, %d fail\n", ok, fail);
 	if(fail > 0)
 		raise "fail:aadrawtest";
