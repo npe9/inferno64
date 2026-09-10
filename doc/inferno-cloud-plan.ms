@@ -4887,9 +4887,49 @@ here with no panic.  So this one does not come home the way that one
 did, and finding it wants instrumentation on the machine itself:
 .CW m->ilockdepth
 printed where it changes, which is a boot's worth of cloud round-trip
-per iteration.  Open.  The shipped configuration,
-.CW ipc64 ,
-is unaffected and reaches a shell there.
+per iteration.  Open, and NOT confined to that configuration \(em see below.
+.PP
+.B "And it is the shipped kernel too."
+Recorded here as a correction, because this document said twice that
+.CW ipc64
+was unaffected.  It is not.  A stock e2-micro running the shipped
+configuration panicked on the boot after
+.CW "bound #e" :
+.DS
+.CW
+panic: cpu0: ilockdepth 1, last lock 0x0 at 0x0,
+       sched called from 0x2965bc
+.DE
+and on the next reset, with
+.CW "ilockdepth 2"
+and
+.CW "qlock: 0x29a7fb: ilockdepth 2" .
+Those two addresses sit a few bytes from
+.CW kproc+0x42
+and
+.CW irqhandled+0x113
+in the other configuration's kernel, so the signature is the same in
+both:
+.CW qlock()
+called from
+.CW kproc()
+with an ilock held, and
+.CW sched()
+entered from the interrupt path.
+.PP
+It matters more than a dev-configuration bug would, and it also
+explains an hour spent on the wrong thing.  A panicked kernel and a
+console that ignores a keypress look identical from the far end of a
+serial line: the console-input work below was begun because typing at
+an instance produced nothing, and the instance was dead.  The next
+thing to instrument is which handler leaves an ilock held \(em
+.CW ethervirtio.c 's
+.CW attach()
+uses
+.CW lock/unlock
+and releases before
+.CW kproc() ,
+so it is not that one.
 .PP
 .B "What the exercise cost and what it bought."
 Four images, four instances, under an hour, and small change.  It
