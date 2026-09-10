@@ -221,6 +221,36 @@ checkbl(Block *b, char *msg, intptr pc)
 
 }
 void
+/*
+ * Everything known about a malformed Block, said before the panic and
+ * said with iprint().
+ *
+ * Two reasons.  print() takes kmesg.lk, and a fault in code already
+ * holding it turns this report into garbage or a deadlock -- pc64's
+ * trap.c uses iprint() for the same reason and says so; a capture from
+ * a Compute Engine instance showed checkb's own format strings being
+ * emitted verbatim out of the string table, one after another, which
+ * is what that failure looks like.  And the panic alone names the
+ * invariant that broke but not who built the block: getmalloctag()
+ * carries the allocating pc, which is the one field that points at
+ * code rather than at the wreckage.
+ *
+ * base and lim are set once, in _allocb(), and nothing in qio.c
+ * touches them afterwards; _allocb() panics on the spot if they are
+ * wrong at construction.  So a block that reaches here with base > lim
+ * was overwritten by something else after it was made, and the
+ * allocating pc is where to start looking.
+ */
+static void
+badb(Block *b, char *msg, int which)
+{
+	iprint("checkb %d %s: b %#p base %#p lim %#p rp %#p wp %#p\n",
+		which, msg, b, b->base, b->lim, b->rp, b->wp);
+	iprint("checkb %d %s: next %#p flag %#ux malloctag %#p\n",
+		which, msg, b->next, b->flag, (void*)getmalloctag(b));
+}
+
+void
 checkb(Block *b, char *msg)
 {
 	void *dead = (void*)Bdead;
@@ -229,23 +259,30 @@ checkb(Block *b, char *msg)
 		panic("checkb b %s %#p", msg, b);
 	if(b->base == dead || b->lim == dead || b->next == dead
 	  || b->rp == dead || b->wp == dead){
-		print("checkb: base %#p lim %#p next %#p\n",
-			b->base, b->lim, b->next);
-		print("checkb: rp %#p wp %#p\n", b->rp, b->wp);
-		panic("checkb dead: %s\n", msg);
+		badb(b, msg, 9);
+		panic("checkb dead: %s", msg);
 	}
 
-	if(b->base > b->lim)
+	if(b->base > b->lim){
+		badb(b, msg, 0);
 		panic("checkb 0 %s %#p %#p", msg, b->base, b->lim);
-	if(b->rp < b->base)
+	}
+	if(b->rp < b->base){
+		badb(b, msg, 1);
 		panic("checkb 1 %s %#p %#p", msg, b->base, b->rp);
-	if(b->wp < b->base)
+	}
+	if(b->wp < b->base){
+		badb(b, msg, 2);
 		panic("checkb 2 %s %#p %#p", msg, b->base, b->wp);
-	if(b->rp > b->lim)
+	}
+	if(b->rp > b->lim){
+		badb(b, msg, 3);
 		panic("checkb 3 %s %#p %#p", msg, b->rp, b->lim);
-	if(b->wp > b->lim)
+	}
+	if(b->wp > b->lim){
+		badb(b, msg, 4);
 		panic("checkb 4 %s %#p %#p", msg, b->wp, b->lim);
-
+	}
 }
 
 void
