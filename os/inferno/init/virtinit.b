@@ -205,15 +205,60 @@ gcstress()
 	sys->print("GC-STRESS-OK\n");
 }
 
-# Prove virtio-blk is online (FAT BPB ends with 0x55AA).
+# Which disk devsd offers is a property of the board's configuration
+# and not of this program: the letter is the driver's own, fixed in its
+# SDifc, so virtio10 is sdF and nvme is sdN, and a board that links both
+# shows whichever ones QEMU was actually given.  Naming one here meant
+# that handing the board a different controller -- the same disk, on
+# nvme instead of virtio -- read as a broken board rather than as the
+# other driver being exercised.  So find a disk rather than name one.
+# The answer is remembered because fscheck() below wants the same one.
+blkdevpath := "";
+
+blkdev(): string
+{
+	fd: ref Sys->FD;
+	d: array of Sys->Dir;
+	n, i: int;
+
+	if(blkdevpath != "")
+		return blkdevpath;
+	sys->bind("#S", "/dev", Sys->MAFTER);
+	if((fd = sys->open("/dev", Sys->OREAD)) == nil)
+		return "";
+	for(;;){
+		(n, d) = sys->dirread(fd);
+		if(n <= 0)
+			break;
+		for(i = 0; i < n; i++){
+			if(len d[i].name < 3 || d[i].name[0:2] != "sd")
+				continue;
+			# sdctl is in here too, and has no data file;
+			# so does a controller with no medium, which is
+			# the case this open is really testing for.
+			p := "/dev/" + d[i].name + "/data";
+			if(sys->open(p, Sys->OREAD) == nil)
+				continue;
+			blkdevpath = p;
+			return p;
+		}
+	}
+	return "";
+}
+
+# Prove the disk is online (FAT BPB ends with 0x55AA).
 blkcheck()
 {
 	fd: ref Sys->FD;
 	buf: array of byte;
 	n: int;
+	dev: string;
 
-	sys->bind("#S", "/dev", Sys->MAFTER);
-	fd = sys->open("/dev/sdF0/data", Sys->OREAD);
+	if((dev = blkdev()) == ""){
+		sys->print("BLK-FAIL no disk under #S\n");
+		return;
+	}
+	fd = sys->open(dev, Sys->OREAD);
 	if(fd == nil){
 		sys->print("BLK-FAIL open: %r\n");
 		return;
@@ -226,7 +271,7 @@ blkcheck()
 		return;
 	}
 	if(int buf[510] == 16r55 && int buf[511] == 16rAA)
-		sys->print("BLK-OK\n");
+		sys->print("BLK-OK %s\n", dev);
 	else
 		sys->print("BLK-FAIL signature\n");
 }
@@ -1386,6 +1431,11 @@ fsmount()
 	# confirmed live.  "/tmp" is real, writable memfs (tmpmount(), which
 	# must run first) and the same sys->create(DMDIR) idiom that already
 	# works there for /tmp/virtdir works here too.  See doc/inferno-ports.ms.
+	dev := blkdev();
+	if(dev == ""){
+		sys->print("FS-FAIL no disk under #S\n");
+		return;
+	}
 	fd = sys->create("/tmp/dos", Sys->OREAD, Sys->DMDIR|8r755);
 	if(fd == nil){
 		sys->print("FS-MKDIR-FAIL: %r\n");
@@ -1393,7 +1443,7 @@ fsmount()
 	}
 	fd = nil;
 	spawn startfs(c, "/dis/dossrv.dis",
-		"dossrv" :: "-f" :: "/dev/sdF0/data" :: "-m" :: "/tmp/dos" :: nil);
+		"dossrv" :: "-f" :: dev :: "-m" :: "/tmp/dos" :: nil);
 	if(<-c != nil){
 		sys->print("FS-FAIL dossrv\n");
 		return;

@@ -21678,3 +21678,113 @@ and
 .CW shakti
 \(em are given virtio-mmio devices by the suite, set no router, and are
 unchanged.
+.NH 2
+A driver that was linked into five kernels and had never run
+.PP
+.CW os/inferno/virtarm64/virtarm64
+has listed
+.CW sdnvme
+for as long as the board has existed, and so do
+.CW virt ,
+.CW virts ,
+.CW pc64
+and
+.CW pc64dev .
+No configuration in the suite had ever handed any of them an NVMe
+controller, so the driver was compiled into five kernels and had never
+executed an instruction.  Nothing needed writing to change that: QEMU
+models the device fully, and
+.CW "-device nvme"
+was the whole of it.
+.CW virtarm64-nvme
+is that arm \(em the same FAT image the virtio arms carry, on an NVMe
+namespace instead of a virtio-blk function, with the network left on
+virtio-mmio so that exactly one PCI device matters.
+.PP
+It worked on the first boot: the controller enumerated at 1b36/0010,
+devsd offered
+.CW sdN0 ,
+the FAT signature read back, and dossrv mounted the filesystem over it.
+Every marker the plain
+.CW virtarm64
+arm prints came back, forty-two of them, over a different controller.
+.PP
+Which is exactly the problem.  Forty-two markers over NVMe are the same
+forty-two words as forty-two markers over virtio, and
+.CW virtinit 's
+.CW blkcheck()
+opened
+.CW /dev/sdF0/data
+by name \(em so the arm could not have been written at all without
+changing that, and changing it makes the check weaker everywhere else.
+The init now looks for the first unit under
+.CW #S
+that has a
+.CW data
+file rather than naming one, which is what lets an arm swap the
+controller and still be the same test; the cost is that a board linking
+both drivers would satisfy it from either.  The name is put back where
+it belongs, as evidence, per arm: the six virtio arms check
+.CW "BLK-OK /dev/sdF0/data"
+and this one checks
+.CW "BLK-OK /dev/sdN0/data" .
+Without that line the new arm proves nothing whatever, and the change
+that made it possible would have quietly cost six existing arms a
+distinction they used to draw.
+.PP
+The vector is 80, the frame's base SPI, because
+.CW sdnvme
+is the only caller of the router on this arm \(em so this also checks
+that the allocator starts where
+.CW MSI_TYPER
+says it does, which the two-device arm cannot say about itself.  NVMe
+wanted nothing told to it beyond the capability: the admin completion
+queue is vector 0 by definition, and
+.CW setupqueues()
+already leaves CDW11's interrupt-vector field at 0 when it creates the
+shared io queue, so one vector covers both.  The
+.CW INTMS
+and
+.CW INTMC
+masking inside the handler becomes a no-op under MSI-X \(em the spec
+says those registers are not to be touched then, and QEMU's
+.CW nvme_write_bar()
+drops the write with a guest-error trace rather than acting on it \(em
+which costs nothing, since MSI-X has its own per-vector mask and the
+handler does not depend on the mask having taken.
+.PP
+Proving delivery needed the same care as the virtio disk and a little
+more.
+.CW sdvirtio10
+polls the used ring after a timed sleep;
+.CW sdnvme 's
+.CW wcmd()
+goes further and calls
+.CW nvmeintr()
+itself, in a loop, while it waits.  A controller whose vector never
+arrives therefore completes every command, mounts its filesystem and
+prints every line above.  The two cases are told apart by an argument
+the handler had always been passed and had never used: the polled call
+is
+.CW "nvmeintr(nil, ctlr)"
+and a real interrupt arrives with the trap frame, so counting only the
+calls with a non-nil
+.CW Ureg
+gives a first-interrupt line that the polling cannot forge.  That is a
+sharper discriminator than the virtio disk's, which has no equivalent
+and has to be believed on the strength of the network beside it.
+.PP
+.CW nvmeintr()
+reads two fields that
+.CW nvmepnpctlrs()
+had never set.  The
+.CW Ctlr
+there comes from
+.CW malloc() ,
+not from the
+.CW xalloc()
+that makes a
+.CW Pcidev
+zero \(em so the vector number and the interrupt count are initialised
+beside the mask that was already being cleared there, rather than
+trusting the allocator for something read in interrupt context.

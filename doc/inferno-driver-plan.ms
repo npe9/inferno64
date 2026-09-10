@@ -1353,23 +1353,94 @@ they have unblocked.
 .IP 1.
 .B "MSI and MSI-X."
 .B DONE
-for
+for all three of
 .CW virtarm64 's
-two virtio drivers,
-.CW sdvirtio10
+PCI drivers:
+.CW sdvirtio10 ,
+.CW ethervirtio10
 and
-.CW ethervirtio10 ;
-the board also links
-.CW sdnvme
-and
+.CW sdnvme .
+The board also links
 .CW usbxhcipci ,
-which still take
-.CW p->intl .
-No arm gives either of those a device, so nothing here is contradicted,
-but QEMU's
+which still takes
+.CW p->intl ;
+no arm gives it a device, so nothing here is contradicted, but QEMU's
 .CW qemu-xhci
 does implement MSI-X and a PCI-xHCI arm added later would quietly run
 on INTx until it is given the same treatment.
+.PP
+.CW sdnvme
+came second and for a different reason.  It was linked into five board
+configurations and had never executed an instruction, because no arm
+had ever handed one of them an NVMe controller \(em QEMU models the
+device fully, so what was missing was not a model but the asking.  The
+.CW virtarm64-nvme
+arm passes
+.CW "-device nvme"
+carrying the same FAT image the virtio arms use, and the driver reads
+it, dossrv mounts it, and every marker the plain
+.CW virtarm64
+arm prints comes back over a different controller.
+.PP
+That last sentence is the trap, and it is why one more thing had to
+change first.
+.CW virtinit 's
+.CW blkcheck()
+opened
+.CW /dev/sdF0/data
+by name; on a board that links both drivers the letter is the only
+difference between the two arms, and a run that quietly fell back to
+the virtio disk would print the same forty-two markers.  So the init
+looks for the first unit under
+.CW #S
+with a data file rather than naming one \(em which makes the arm
+possible and the check weaker in the same stroke, since now either
+controller satisfies it.  The name is put back as evidence, per arm:
+six arms check
+.CW "BLK-OK /dev/sdF0/data"
+and this one checks
+.CW "BLK-OK /dev/sdN0/data" .
+Without that line the NVMe arm proves nothing at all.
+.PP
+The vector is the base SPI, 80, because this arm leaves the network on
+virtio-mmio and
+.CW sdnvme
+is the only caller of the router \(em so it also checks the allocator
+starts where
+.CW MSI_TYPER
+says, which the two-device arm cannot say.  NVMe needs nothing told to
+the device beyond the capability: the admin completion queue is vector
+0 by definition and
+.CW setupqueues()
+leaves CDW11's interrupt-vector field at 0 for the shared io queue, so
+one vector covers both.  The
+.CW INTMS
+and
+.CW INTMC
+masking in the handler becomes a no-op \(em the spec says those
+registers are not to be touched under MSI-X, and QEMU's
+.CW nvme_write_bar()
+drops the write with a guest-error trace \(em which is harmless, since
+MSI-X has its own per-vector mask and nothing depends on the mask
+having taken.
+.PP
+Delivery needed its own proof here for a sharper version of the reason
+it did on the virtio disk.
+.CW sdvirtio10
+polls the used ring after a timed sleep;
+.CW sdnvme 's
+.CW wcmd()
+goes further and calls
+.CW nvmeintr()
+itself in a loop while it waits, so a controller whose vector never
+arrives completes every command and looks perfectly well.  The two
+cases are told apart by the argument the handler already had and never
+used: the polled call passes a nil
+.CW Ureg
+and a real interrupt arrives with the trap frame, so the first-interrupt
+line counts only the latter.  It is a cleaner discriminator than
+.CW sdvirtio10 's,
+which has no equivalent.
 And \(em like item 2 \(em the reason this was deferred was wrong rather
 than merely optimistic.  What this entry used to say was that PCI runs
 on legacy INTx, which QEMU delivers correctly, so MSI buys nothing
@@ -1710,7 +1781,7 @@ that are blocked off this machine \(em the ARM timer's GIC line against
 the BCM2711 datasheet, and the Arasan as the wireless part's SDIO \(em
 are the same kind of thing.
 .PP
-Eighteen configurations run on this host, and the fifteen that predate
+Nineteen configurations run on this host, and the fifteen that predate
 this round run from a bare checkout inside a container, built there
 from source.  What that buys is not the marker
 count: it is that every one of these six statements can be checked

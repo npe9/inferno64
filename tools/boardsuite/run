@@ -40,7 +40,7 @@ verbose=false
 record=false
 force=false
 
-configs='raspi3b raspi3b-4g raspi3b-usb raspi3b-2eth raspi4 raspi4-hot raspi4-usb raspi4-2eth virtarm64 virtarm64-msi virtarm64-peer sifiveu virt virts virt32 virt32s virt-peer peer-mixed'
+configs='raspi3b raspi3b-4g raspi3b-usb raspi3b-2eth raspi4 raspi4-hot raspi4-usb raspi4-2eth virtarm64 virtarm64-msi virtarm64-nvme virtarm64-peer sifiveu virt virts virt32 virt32s virt-peer peer-mixed'
 
 # Each configuration: the kernel, the QEMU arguments, the line that
 # says the board is done printing, and the evidence lines that make
@@ -51,7 +51,7 @@ config_kernel() {
 				echo "$root/os/inferno/raspi3b/iraspi3b";;
 	raspi4|raspi4-hot|raspi4-usb|raspi4-2eth)
 				echo "$root/os/inferno/raspi4/iraspi4";;
-	virtarm64|virtarm64-msi|virtarm64-peer)
+	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-peer)
 				echo "$root/os/inferno/virtarm64/ivirtarm64";;
 	sifiveu)		echo "$root/os/inferno/sifiveu/isifiveu";;
 	virt|virt-peer|peer-mixed)
@@ -74,7 +74,7 @@ config_kernel() {
 config_qemu() {
 	case $1 in
 	raspi*)			echo "$QEMU";;
-	virtarm64|virtarm64-msi|virtarm64-peer)
+	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-peer)
 				echo "${QEMU_AARCH64:-`command -v qemu-system-aarch64`}";;
 	sifiveu|virt|virts|virt-peer|peer-mixed)
 				echo "${QEMU_RISCV64:-`command -v qemu-system-riscv64`}";;
@@ -160,6 +160,27 @@ config_args() {
 		# the arms run one at a time, and the host rig below dials
 		# 54323/54326 by name in one place.
 		echo "-M virt -cpu cortex-a57 -m 1G -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-pci,disable-legacy=on,drive=blk0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-pci,disable-legacy=on,netdev=n0";;
+	virtarm64-nvme)
+		# The same FAT image on an NVMe controller instead of a
+		# virtio-blk function, which is the whole point of the
+		# arm: os/inferno/virtarm64/virtarm64 has always listed
+		# sdnvme, and no configuration had ever given the board
+		# an NVMe device, so the driver was linked into eight
+		# kernels and had never executed an instruction.  QEMU
+		# models the controller fully, so nothing needed writing
+		# for this -- it needed asking for.
+		#
+		# The network stays on virtio-mmio, as it is on the plain
+		# virtarm64 arm.  That is deliberate: it leaves exactly
+		# one PCI function that matters, so the interrupt story
+		# here is about that one device and not about which of
+		# two took which vector.
+		#
+		# serial= is named rather than left to QEMU because
+		# sdnvme's rctl reads it back out of the identify page;
+		# a run where the controller answered from stale memory
+		# rather than from the device would not print it.
+		echo "-M virt -cpu cortex-a57 -m 1G -drive file=$work/fat16.img,if=none,id=nvm0,format=raw -device nvme,drive=nvm0,serial=bs0001 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-device,netdev=n0";;
 	# The riscv arms below name -m explicitly.  They used to pass none
 	# at all, which meant QEMU's 128MB default while virt, virts,
 	# virt32 and virt32s each compiled DRAMSIZE as 256MB and took it
@@ -339,7 +360,7 @@ config_last() {
 	raspi4-2eth)		echo 'USB-MOUSE';;
 	raspi4|raspi4-hot)	echo 'USB-MOUSE';;
 	raspi4-usb)		echo 'RASPI4-SH-OK';;
-	virtarm64|virtarm64-msi|virtarm64-peer)	echo 'ROOT-CMDS-OK';;
+	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-peer)	echo 'ROOT-CMDS-OK';;
 	virt|virts|virt-peer|peer-mixed)	echo 'ROOT-CMDS-OK';;
 	sifiveu)		echo 'SIFIVEU-SH-OK';;
 	virt32|virt32s)		echo 'VIRT32-INIT-OK';;
@@ -429,6 +450,16 @@ config_evidence() {
 		echo 'HID report pointer on [^ ]*: 48-bit report, x absolute at 8\+16'
 		echo 'USB-TABLET-OK absolute 479 119 on 640x480';;
 	virtarm64-peer)
+		# Which disk answered, and not merely that one did.
+		# virtinit's blkcheck() used to open /dev/sdF0/data by
+		# name; it now looks for the first unit under #S with a
+		# data file, so that an arm can hand the board a different
+		# controller and still be the same test.  The cost of
+		# looking is that BLK-OK stopped naming what it found -- a
+		# board with two disks would pass on either.  So the name
+		# is checked here instead, per arm, and on this one it is
+		# the virtio-blk function.
+		echo 'BLK-OK /dev/sdF0/data'
 		# Both halves: the peer lines this arm shares with the
 		# riscv peer configurations, and the device-tree lines
 		# only an arm64 kernel prints.  It needs its own arm and
@@ -441,9 +472,11 @@ config_evidence() {
 		echo 'fdt: pl011 @ 0x9000000 size 0x1000'
 		echo '^[0-9a-f]+ 80000000 [0-9]+';;
 	virt-peer|peer-mixed)
+		echo 'BLK-OK /dev/sdF0/data'	# see virtarm64-peer
 		echo 'peer: 525400aaaa01 is 192\.168\.77\.1'
 		echo 'PEER-ARP-OK 192\.168\.77\.2';;
 	virts)
+		echo 'BLK-OK /dev/sdF0/data'	# see virtarm64-peer
 		# virt and virts share an init and a root, so they print
 		# the same marker set and only these tell them apart:
 		# the kernel's own banner, and OpenSBI's, which is
@@ -478,6 +511,7 @@ config_evidence() {
 		# blob, so at -m 256M it is 0x8fe00000.
 		echo '^[0-9a-f]+ 8fe00000 [0-9]+';;
 	virt)
+		echo 'BLK-OK /dev/sdF0/data'	# see virtarm64-peer
 		# conf virt, for the same reason virts has its own.
 		echo 'conf virt \('
 		# The memory top.  xalloc prints its extent as
@@ -539,6 +573,7 @@ config_evidence() {
 		# was inside the pool.
 		echo '^[0-9a-f]+ 87e00000 [0-9]+';;
 	virtarm64)
+		echo 'BLK-OK /dev/sdF0/data'	# see virtarm64-peer
 		# This board reads QEMU's own device tree, and nothing in
 		# the marker set says so: the markers are the same words
 		# whether the bases came from the tree or from mem.h.
@@ -563,7 +598,39 @@ config_evidence() {
 		# the image size.
 		echo '^[0-9a-f]+ 80000000 [0-9]+'
 		;;
+	virtarm64-nvme)
+		# The arm exists for this line.  sdN is sdnvme's own
+		# letter, fixed in its SDifc, so a board that fell back to
+		# the virtio disk would say sdF here and pass every marker
+		# regardless -- BLK-OK and FS-OK are the same words
+		# whichever controller answered.  This is what says the
+		# NVMe namespace is the one that was read.
+		echo 'BLK-OK /dev/sdN0/data'
+		# And that the controller came up far enough to say how
+		# many queues it got, which is the last thing nvmeenable()
+		# prints before devsd will open a unit at all.
+		# ... and which interrupt it took.  80 is the GICv2m
+		# frame's first SPI, and this arm's network is on
+		# virtio-mmio, so sdnvme is the only caller of the router
+		# and has to get the base vector -- which checks the
+		# allocator starts where MSI_TYPER says it does, something
+		# the two-device msi arm cannot say on its own.
+		echo 'sdN \(nvme\): using [0-9]+ submit queues, irq 80 msi-x'
+		# And delivery, which nothing above proves.  wcmd() calls
+		# nvmeintr() itself while it waits, so a controller whose
+		# vector never arrives still completes every command and
+		# prints all of the above -- the polled-disk trap that
+		# BLK-OK fell into on the virtio arm before gicedge().  The
+		# handler counts only the calls that came with a trap
+		# frame, so this line cannot be printed by the polling.
+		echo 'nvme: first interrupt, irq 80 msi-x'
+		# The frame itself, as on the msi arm: the doorbell
+		# self-test has to have passed or pcimsirouter is nil and
+		# the two lines above would read intx.
+		echo 'MSI-DOORBELL-OK'
+		;;
 	virtarm64-msi)
+		echo 'BLK-OK /dev/sdF0/data'	# see virtarm64-peer
 		# Message-signalled interrupts, end to end, in four lines.
 		#
 		# The first says the board found the GICv2m frame in the
@@ -771,7 +838,7 @@ config_hostnet() {
 	# inbound halves all dial the host rig, and without it the
 	# board reported TCP-NET-FAIL "connection refused" -- the host
 	# end that was never started, not the board.
-	virtarm64|virtarm64-msi|virtarm64-peer)	echo yes;;
+	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-peer)	echo yes;;
 	esac
 }
 
@@ -1243,7 +1310,7 @@ for c in $configs; do
 	# same fat16.img in its qemu line.  It ran only because virt comes
 	# before it in $configs and had already made the image; asked for
 	# on its own with an empty work directory, qemu had no such file.
-	case $c in virt|virts|virtarm64|virtarm64-msi|virt-peer|virtarm64-peer|peer-mixed) needfat=true;; *) needfat=false;; esac
+	case $c in virt|virts|virtarm64|virtarm64-msi|virtarm64-nvme|virt-peer|virtarm64-peer|peer-mixed) needfat=true;; *) needfat=false;; esac
 	if $needfat && ! makefat fat16.img marker.txt 'FS-OK boardsuite'; then
 		echo "$c: FAIL no way to make a FAT16 image here (hdiutil or mkfs.vfat)"
 		echo "    BLK-OK needs a filesystem, not a blank card; see the README"

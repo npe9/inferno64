@@ -52,6 +52,10 @@ struct Ctlr
 	u32int	ints;
 	u32int	irqc[2];
 
+	int	irq;		/* what intrenable was given */
+	int	msivec;		/* the MSI-X vector, or -1 for INTx */
+	ulong	nintr;		/* interrupts that arrived on their own */
+
 	Pcidev	*pci;
 	u32int	*reg;
 
@@ -151,7 +155,7 @@ qcmd(WS *ws, Ctlr *ctlr, int adm, u32int opc, u32int nsid, void *data, ulong len
 }
 
 static void
-nvmeintr(Ureg *, void *arg)
+nvmeintr(Ureg *ureg, void *arg)
 {
 	u32int phaseshift, *e;
 	WS *ws, **wp;
@@ -162,6 +166,19 @@ nvmeintr(Ureg *, void *arg)
 	ctlr = arg;
 	if(ctlr->ints == 0)
 		return;
+
+	/*
+	 * wcmd() below calls this function itself, in a loop, while it
+	 * waits -- so a controller whose interrupts never arrive still
+	 * answers every command and the disk looks perfectly well.  That
+	 * makes BLK-OK worth nothing as evidence about the vector, the
+	 * same way sdvirtio10's polled used ring does.  The two cases are
+	 * told apart here: the polled call passes a nil Ureg and a real
+	 * one arrives with the trap frame.
+	 */
+	if(ureg != nil && ctlr->nintr++ == 0)
+		iprint("nvme: first interrupt, irq %d %s\n", ctlr->irq,
+			ctlr->msivec >= 0 ? "msi-x" : "intx");
 
 	ilock(&ctlr->intr);
 	ctlr->reg[IntMs] = ctlr->ints;
@@ -604,7 +621,7 @@ nvmedisable(SDev *sd)
 	}
 
 	snprint(name, sizeof(name), "%s (%s)", sd->name, sd->ifc->name);
-	intrdisable(ctlr->pci->intl, nvmeintr, ctlr, ctlr->pci->tbdf, name);
+	intrdisable(ctlr->irq, nvmeintr, ctlr, ctlr->pci->tbdf, name);
 
 	pciclrbme(ctlr->pci);	/* dma disable */
 
@@ -638,7 +655,25 @@ nvmeenable(SDev *sd)
 	ctlr = sd->ctlr;
 
 	snprint(name, sizeof(name), "%s (%s)", sd->name, sd->ifc->name);
-	intrenable(ctlr->pci->intl, nvmeintr, ctlr, ctlr->pci->tbdf, name);
+
+	/*
+	 * An MSI-X vector if the board has a router for one, and the pin
+	 * otherwise.  NVMe needs nothing said to the device beyond the
+	 * capability itself: the admin completion queue is vector 0 by
+	 * definition, and setupqueues() creates the shared io queue with
+	 * CDW11's interrupt-vector field left at 0 as well, so one vector
+	 * covers both queues and it is the one pcimsixenable() programs.
+	 *
+	 * The INTMS/INTMC masking in nvmeintr() becomes a no-op under
+	 * MSI-X -- the spec says those registers are not to be used then,
+	 * and QEMU's nvme_write_bar() drops the write with a guest-error
+	 * trace rather than acting on it.  That is harmless here: MSI-X
+	 * has its own per-vector mask, and the handler does not depend on
+	 * the mask having taken effect.
+	 */
+	ctlr->msivec = pcimsixintr(ctlr->pci);
+	ctlr->irq = ctlr->msivec >= 0 ? ctlr->msivec : ctlr->pci->intl;
+	intrenable(ctlr->irq, nvmeintr, ctlr, ctlr->pci->tbdf, name);
 
 	if(waserror()){
 		print("%s: %s\n", name, up->errstr);
@@ -682,7 +717,8 @@ nvmeenable(SDev *sd)
 Ready:
 	identify(ctlr);
 	setupqueues(ctlr);
-	print("%s: using %d submit queues\n", name, ctlr->nsq);
+	print("%s: using %d submit queues, irq %d %s\n", name, ctlr->nsq,
+		ctlr->irq, ctlr->msivec >= 0 ? "msi-x" : "intx");
 	poperror();
 
 	return 1;
@@ -723,6 +759,17 @@ nvmepnpctlrs(void)
 		/* mask interrupts */
 		ctlr->ints = 0;
 		ctlr->reg[IntMs] = ~ctlr->ints;
+
+		/*
+		 * This Ctlr came from malloc() and not from xalloc(), so
+		 * it is not zeroed the way a Pcidev is.  nvmeintr() reads
+		 * msivec and nintr, and nvmeenable() is not the only path
+		 * that can reach the handler, so set them here rather
+		 * than trusting the allocator.
+		 */
+		ctlr->irq = 0;
+		ctlr->msivec = -1;
+		ctlr->nintr = 0;
 
 		/* disable controller */
 		ctlr->reg[CCfg] = 0;

@@ -215,7 +215,7 @@ temperature.  So each configuration also names evidence lines that must
 appear in its log, and a run that produces the right markers with the
 wrong evidence fails.
 
-THE OTHER BOARDS.  Nine more configurations boot the boards this tree
+THE OTHER BOARDS.  Eleven more configurations boot the boards this tree
 has besides the Pis, each with the qemu its architecture needs -- the
 Pi ones need the patched build, the rest are ordinary machines and use
 the system qemu:
@@ -231,6 +231,31 @@ the system qemu:
 			said "connection refused" because nothing was
 			listening, and config_hostnet had never named
 			this board.
+	virtarm64-msi	The same board with the disk AND the network on
+			PCI rather than one on PCI and one on mmio,
+			which is what makes it the MSI arm: -M virt's
+			default GIC is a v2, QEMU puts an SBSA GICv2m
+			frame beside it, and each function takes its own
+			vector -- 80 for the net, 81 for the disk --
+			from that frame instead of sharing an INTx line.
+			The net is the half that proves delivery: the
+			disk polls its used ring and would print BLK-OK
+			with no interrupts at all, which is exactly what
+			it did before the SPIs were made edge-triggered.
+	virtarm64-nvme	The same board again with the FAT image on an
+			NVMe controller instead of a virtio-blk one, and
+			the net back on mmio so exactly one PCI device
+			matters.  sdnvme was linked into five of this
+			tree's kernels and had never executed an
+			instruction, because nothing had ever handed one
+			of them the device QEMU has always modelled.  It
+			takes vector 80 -- the frame's base SPI, since
+			it is the only caller of the router here, which
+			checks the allocator starts where MSI_TYPER says
+			-- and it is the only arm whose disk proves its
+			own interrupts: wcmd() calls the handler itself
+			while it waits, so the handler counts only the
+			calls that arrived with a trap frame.
 	sifiveu		QEMU -M sifive_u, no bios, with an SD card.
 			The card is worth the line for the same reason
 			virtarm64's netdev is: the board printed
@@ -289,10 +314,22 @@ visible, and then the driver that was recorded as failing prints
 BLK-OK.
 
 The virtio-blk disk is why there is a FAT16 image in the work
-directory.  virtinit.b's blkcheck() reads sector 0 of /dev/sdF0/data and
+directory.  virtinit.b's blkcheck() reads sector 0 of the disk and
 requires the 0x55AA boot signature, and every log of that board in this
 tree shows BLK-FAIL -- not because the driver is broken but because
-nothing ever gave it a disk.  With one attached it prints BLK-OK.  The
+nothing ever gave it a disk.  With one attached it prints BLK-OK.
+
+It used to read /dev/sdF0/data by name.  It cannot: the letter is the
+driver's, fixed in its SDifc, so virtio-blk is sdF and an NVMe
+namespace is sdN, and naming one meant a board handed a different
+controller read as broken rather than as the other driver working.  It
+now takes the first unit under #S that has a data file.  That is what
+makes virtarm64-nvme possible and it is also strictly weaker, since a
+board linking both drivers is satisfied by either -- so the name is
+checked in config_evidence instead, per arm: BLK-OK /dev/sdF0/data on
+the six virtio arms and BLK-OK /dev/sdN0/data on the NVMe one.  Without
+that line the NVMe arm's forty-two markers are the same forty-two words
+the virtio arm prints and prove nothing about which disk answered.  The
 image is made with hdiutil on macOS or mkfs.vfat elsewhere; writing two
 signature bytes into a blank file would have satisfied the check and
 none of its point, so the script makes a real filesystem or says it
