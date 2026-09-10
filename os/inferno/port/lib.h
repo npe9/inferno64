@@ -7,6 +7,15 @@ extern	int	dec16(uchar*, int, char*, int);	/* libkern/u16.c, for ../port/wifi.c 
 extern	int	enc16(char*, int, uchar*, int);
 extern	int	tsmemcmp(void*, void*, ulong);	/* libkern/tsmemcmp.c, constant time */
 #define offsetof(s, m)	(u32)(&(((s*)0)->m))
+/*
+ * The declaration belongs beside the macro that calls it, not only in
+ * portfns.h.  libaml is built through Inferno/<objtype>/include/libc.h,
+ * a compatibility header that includes this file and not portfns.h, so
+ * every assert() in libaml/aml.c was an undeclared call -- which 6c,
+ * unlike some of the other kenc front ends, refuses.  That is the whole
+ * of what stopped pc64 building.
+ */
+extern	void	_assert(char*);		/* ../port/devcons.c */
 #define assert(x)	if(x){}else _assert("x")
 
 #define	DBG	if(debug)print

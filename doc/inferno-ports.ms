@@ -20478,3 +20478,86 @@ needed its second boot, and said so \(em the container builds a tree and
 boots six Pi kernels on the same machine, and a pointer check that
 times itself against a twenty-five second window is the first thing to
 notice.
+.NH 1
+Three undeclared calls, and the board that would not build
+.PP
+.CW pc64
+had not built for some time, and the message named a function nobody
+had written:
+.P1
+aml.c:288 function not declared: _assert
+.P2
+.CW libaml/aml.c
+calls
+.CW assert() ,
+which
+.CW os/inferno/port/lib.h
+defines as
+.CW "if(x){}else _assert(\(dqx\(dq)" .
+The macro is there; the declaration of what it calls is not \(em that
+lives in
+.CW portfns.h ,
+and libaml is compiled through
+.CW Inferno/<objtype>/include/libc.h ,
+a four-line compatibility header that includes
+.CW lib.h
+and not
+.CW portfns.h .
+So every
+.CW assert()
+in libaml was an undeclared call, and
+.CW 6c
+refuses one.  The declaration now sits beside the macro that needs it,
+which is where it belonged: a macro and the function it expands into
+should not be able to drift apart across two headers.
+.PP
+Two more of the same kind were warnings rather than errors, and had
+been printed on every build of every board for as long as the tree has
+had a screen:
+.P1
+../port/devdraw.c:2214 function not declared: blankscreen
+../port/devether.c:389 function not declared: isaconfig
+.P2
+.CW blankscreen(int)
+is defined by every board that links
+.CW devdraw
+\(em pc, pc64, raspi3b, raspi4, virt, virts and virtarm64, seven of
+them, in eight files because the PC has two screen drivers \(em with the
+same signature in each, and was declared only in
+.CW os/inferno/pc/screen.h
+\(em so the portable
+.CW devdraw.c
+called it undeclared everywhere but the PC.  It is in
+.CW portfns.h
+now.
+.CW isaconfig
+cannot go there, because the PC boards take an
+.CW ISAConf*
+where the others take a
+.CW void* ,
+so it stays in each board's own
+.CW fns.h
+\(em and
+.CW virt ,
+.CW virts
+and
+.CW sifiveu
+were the three that had never had it.
+.PP
+The reason these went unnoticed for so long is worth naming.
+.CW 7c ,
+.CW jc
+and
+.CW 6c
+warn about an undeclared call and carry on;
+.CW zc ,
+Richard Miller's riscv32 front end, refuses.  That is why the riscv32
+boards each got an
+.CW isaconfig
+line the moment they linked
+.CW devether ,
+and why the other boards did not.  A warning that is printed on every
+build of every board is a warning nobody reads.  Every board in the
+tree now compiles without one of these, and
+.CW pc64
+links again.

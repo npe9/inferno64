@@ -1,5 +1,7 @@
 #include "../port/portfns.h"
 
+int	isaconfig(char*, int, void*);	/* stubs.c; ../port/devether.c and devusb.c call it */
+
 void	archconfinit(void);
 void	archconsole(void);
 void	archreboot(void);

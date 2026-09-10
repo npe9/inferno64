@@ -9,6 +9,13 @@ Block*		allocb(int);
 int	anyhigher(void);
 int	anyready(void);
 void	_assert(char*);
+/*
+ * Every board that links devdraw defines this in its own screen.c, and
+ * only os/inferno/pc/screen.h declared it, so ../port/devdraw.c called
+ * it undeclared on every other board.  The signature is the same in all
+ * six definitions.
+ */
+void	blankscreen(int);
 int		blocklen(Block*);
 int	breakhit(Ureg *ur, Proc*);
 void		callwithureg(void(*)(Ureg*));
