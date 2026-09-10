@@ -1310,6 +1310,123 @@ exercise it at all: their kernels are ELF, and
 has no Elf64, so
 .CW srclist
 still has nothing to say about them.
+.NH 2
+Taking the instruments back out
+.PP
+The hunt's instruments came out once the fix had thirty boots behind
+it, together, and with thirty boots of their own \(em because removal
+is code motion, and this section's own warning is that code motion
+looks like a fix on a small sample and can look like a regression the
+same way.
+.PP
+The reason to hurry was not the slowdown.
+.CW libinterp
+is shared with the hosted
+.CW emu ,
+and the instruments had put kernel-only symbols into it:
+.CW gc.c
+and
+.CW heap.c
+called
+.CW dumpstack() ,
+which only
+.CW os/inferno
+defines, and
+.CW xec.c 's
+.CW OP(movp)
+called
+.CW printfreehist() ,
+which lives in
+.CW os/inferno/port/alloc.c .
+So the hosted
+.CW emu
+did not link at all from this tree.  The
+.CW emu-cocoa
+and
+.CW emu-g
+binaries committed under
+.CW MacOSX/arm64/bin
+predate the hunt, so nothing that ran them noticed; anyone building
+.CW emu
+from source on this branch could not.  That is the lesson worth
+keeping: an instrument in shared code is not paid for only by the
+board being debugged.
+.PP
+Sorted by what each cost when nothing was wrong.  Per Dis instruction:
+.CW checktracked()
+scanned a 1024-entry table after every one, and the per-proc
+.CW wmtrace
+ring did five stores into a 256-entry array in every
+.CW Prog .
+Per allocation and per free:
+.CW initmem() 's
+registration walk,
+.CW freeptrs() 's
+.CW checkfreeptr()
+per pointer word,
+.CW alloc.c 's
+4096-entry free-history ring with a
+.CW currun()
+and a module-name lookup on every
+.CW poolfree() ,
+.CW gc.c 's
+.CW checkmarkptr()
+per marked word, and
+.CW scanframe()
+on every frame teardown.  And the prints on an ordinary boot:
+.CW "new:" ,
+.CW "newa:" ,
+the
+.CW progpid()
+counter, the
+.CW delprog
+window report and the print before each
+.CW error(exHeap) .
+.PP
+Two of those prints had been reporting something, which is the case
+where deleting the reporter needs an argument rather than a shrug.
+.CW delprog 's
+instrument fired in two boots of thirty \(em an overlap, and the GC
+running inside the window.  Both are the window being entered, which
+is what it was built to watch, and both are benign on inspection:
+.CW disracepid
+was a single global, so an overlap means only that two
+.CW delprog s
+interleaved, and
+.CW release()
+inside that window is exactly what lets the GC run.  Neither ever
+coincided with a failure.
+.PP
+What stays is everything that costs nothing when nothing is wrong and
+can only fire on a defect:
+.CW chan.c 's
+.CW chanok() ,
+.CW destroy() 's
+.CW h->ref
+underflow guard,
+.CW markheap() 's
+bad-Type* guard (both now
+.CW panic()
+with their own message rather than a
+.CW dumpstack
+and an
+.CW abort ),
+the
+.CW alloc:D2B
+consistency checks, and
+.CW os/inferno/pc64/regtorture.s ,
+which is a real regression test for the bug with a working control.
+.PP
+Measured after: the hosted
+.CW emu
+links, and a 2M-iteration Dis array loop runs in 45 ms against the
+committed pre-hunt binary's 51 ms.  Thirty boots of the ISO, six at a
+time, thirty shells and no panic.  virtarm64 through AAVMF with ACPI,
+the v2m frame and both NVMe vectors; the seventeen-processor run;
+virtarm64ndb end to end; ipc64dev with NVMe over UEFI;
+.CW pc64fp .
+Every board relinked from a nuked
+.CW libinterp .
 .NH 1
 A function that did the opposite of its comment
 .PP
