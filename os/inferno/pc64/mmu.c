@@ -177,13 +177,60 @@ return 0;
  *  allowing to pass the protection flags too
  * < cinap_lenrek> vmap() and kmap() are all built ontop of it
  */
+/*
+ * The largest physical address vmap() will map.  This kernel's mapping
+ * is the identity, so a physical address is also the virtual address it
+ * is reached at, and two things bound it: what the processor can
+ * address physically -- CPUID 80000008H, EAX bits 7..0 -- and what the
+ * four-level page table this kernel builds can name, which is the low
+ * canonical half, 2**47.
+ *
+ * It used to be the constant VMAPSIZE, 512 GiB, and that is below where
+ * OVMF puts a 64-bit BAR on q35: an NVMe controller's BAR0 landed at
+ * 0xc000000000, vmap() refused it, and the driver printed "nvme: can't
+ * vmap bar0" and did not attach.  Every cloud machine boots UEFI and
+ * every one of them can put a BAR up there, so the ceiling has to come
+ * from the machine rather than from a number in mem.h.
+ *
+ * Computed once, on the first vmap(), because cpuidentify() runs before
+ * any of them and a machine's physical address width does not change.
+ */
+static uvlong vmaplimit;
+
+static void
+vmaplimitinit(void)
+{
+        u32 regs[4];
+        int bits;
+
+        /*
+         * 36 is the architectural minimum for a processor with PAE, and
+         * is what to assume if the extended leaf is not there at all.
+         */
+        bits = 36;
+        cpuid(0x80000000, 0, regs);
+        if(regs[0] >= 0x80000008){
+                cpuid(0x80000008, 0, regs);
+                if((regs[0] & 0xff) != 0)
+                        bits = regs[0] & 0xff;
+        }
+        if(bits > 47)
+                bits = 47;
+        vmaplimit = 1ull << bits;
+        if(vmaplimit < VMAPSIZE)
+                vmaplimit = VMAPSIZE;
+}
+
 void*
 vmap(uintptr pa, s32 size)
 {
         int o;
 
-        if(pa < BY2PG || size <= 0 || -pa < size || pa+size > VMAPSIZE){
-                print("vmap pa=%llux size=%d pc=%#p\n", pa, size, getcallerpc(&pa));
+        if(vmaplimit == 0)
+                vmaplimitinit();
+        if(pa < BY2PG || size <= 0 || -pa < size || pa+size > vmaplimit){
+                print("vmap pa=%llux size=%d limit=%llux pc=%#p\n",
+                        pa, size, vmaplimit, getcallerpc(&pa));
                 return nil;
         }
 
