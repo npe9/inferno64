@@ -4728,6 +4728,62 @@ on a Broadwell vCPU whose frequency the kernel now measures correctly,
 with its virtio NIC bound.  Item 3 is no longer "every piece exists";
 it is a boot log.
 .PP
+.B "And a third, still open, in the dev configuration."
+.CW ipc64dev
+\(em the configuration that links every driver and whose init runs a
+DHCP client \(em was put on the same machine to find out whether the
+virtio NIC passes packets on real hardware.  It does not get that far:
+.DS
+.CW
+#l0: virtio: 1000Mbps port 0xC000 irq 11 ea 42010a800006
+Initial Dis: "/osinit.dis"
+panic: cpu0: ilockdepth -1, last lock 0x0 at 0x0,
+       sched called from 0x28dd6e
+.DE
+0x28dd6e is
+.CW acquire+0xff ,
+and the stack is
+.CW init0
+\(->
+.CW disinit
+\(->
+.CW vmachine
+\(->
+.CW startup
+\(->
+.CW xec
+\(->
+.CW mcall
+\(->
+.CW Sys_bind
+\(->
+.CW acquire :
+the first Dis module's first blocking system call releases the VM lock,
+reaches
+.CW sched() ,
+and
+.CW sched()
+finds
+.CW m->ilockdepth
+at \-1 \(em an
+.CW iunlock()
+with no matching
+.CW ilock() .
+.PP
+It is the machine and not the configuration.  The same
+.CW ipc64dev
+booted here under QEMU runs the whole test to
+.CW "DEVTEST: done" ,
+with
+.CW "DEVTEST: /net/ether0 DHCP-OK ip=10.0.2.15 gw=10.0.2.2"
+and no panic at all.  So the virtio driver's transmit and receive paths
+are known good against an emulator and remain untested against a
+hypervisor, and what differs is some interrupt path that machine takes
+and this one does not.  Open, and the next thing to instrument: the
+shipped configuration,
+.CW ipc64 ,
+is unaffected and reaches a shell there.
+.PP
 .B "What the exercise cost and what it bought."
 Four images, four instances, under an hour, and small change.  It
 bought two bugs that twelve local boots could not have found, and the
