@@ -182,11 +182,71 @@ othersrunning(void)
 	return n;
 }
 
+/*
+ * MULTICORE INSTRUMENTATION - temporary.
+ *
+ * The hypothesis (doc/multicore-plan.ms): isave() makes a released Dis
+ * program a safepoint, but its system call goes on allocating and
+ * destroying heap objects in kernel context, so the collector marks and
+ * sweeps against a live mutator it has been told is stopped.
+ *
+ * Counted through heapmonitor, the hook libinterp already calls on
+ * every birth (op 0) and on every sweep (op 2), so libinterp needs no
+ * change and emu is untouched.
+ *
+ * parallelvm=0 is NOT a control for this: stoptheworld() returns above
+ * before gcstw is ever set, so a zero there is a zero for a reason that
+ * has nothing to do with the question.  The control is the second
+ * bucket.  gcstwown counts the collector's own heap operations while it
+ * holds the world stopped; if that is non-zero and gcstwforeign is
+ * zero, the counter demonstrably works and the hypothesis is dead.  Two
+ * zeroes mean the counter is broken and neither number means anything.
+ */
+int gcstwown, gcstwforeign, gcstwbirth;
+static Proc *gcstwproc;
+
+static void
+gcstwmonitor(int op, void *a, ulong n)
+{
+	USED(a); USED(n);
+	if(gcstw == 0)
+		return;
+	if(up == gcstwproc)
+		gcstwown++;
+	else {
+		if(gcstwforeign++ == 0)
+			print("gcstw: heap op %d from %s pid %d,"
+				" not the collector (%s pid %d)\n",
+				op, up != nil ? up->text : "nil",
+				up != nil ? up->pid : -1,
+				gcstwproc != nil ? gcstwproc->text : "nil",
+				gcstwproc != nil ? gcstwproc->pid : -1);
+	}
+	if(op == 0)
+		gcstwbirth++;
+}
+
+/*
+ * libinterp/heap.c's hook: a collection is running and this process is
+ * not the one running it, so destroy() must hand the object over
+ * rather than free it underneath the collector.
+ */
+static int
+gcstwothers(void)
+{
+	return gcstw != 0 && up != gcstwproc;
+}
+
 void
 stoptheworld(void)
 {
 	if(parallelvm == 0)
 		return;		/* the VM lock already is one */
+	if(heapmonitor == nil){
+		heapmonitor = gcstwmonitor;	/* INSTRUMENTATION - temporary */
+		gcstopped = gcstwothers;
+	}
+	gcstwproc = up;
 	gcstw = 1;
 	coherence();
 	while(othersrunning() > 0){
@@ -1974,6 +2034,22 @@ vmachine(void*)
 						n, isched.ngq, ready);
 			}
 			o = r->osenv;
+			/*
+			 * A placeholder belongs to the Proc that made it, and
+			 * addprog() gave it that Proc's own env -- not a Dis
+			 * program's.  idlexec() made it safe to call; this
+			 * makes it safe to pick.  Adopting o here would take
+			 * another process's pgrp, fgrp and egrp, write
+			 * fpuostate into that Osenv below, and leave up->fgrp
+			 * pointing there afterwards, since only up->env is put
+			 * back.  "incref: bad r 0x300000003" from
+			 * fdtochan+0x63 is what a borrowed Fgrp looks like.
+			 *
+			 * Its own owner still adopts it, which is the case
+			 * that existed before any of this and is unchanged.
+			 */
+			if(r->xec == idlexec && r != (Prog*)up->prog)
+				o = up->env;
 			up->env = o;
 			/* Keep Proc.*grp in sync for #e/#p and namec (pctl updates Osenv). */
 			up->pgrp = o->pgrp;
@@ -2165,6 +2241,9 @@ disdump(void)
 		gqput, gqget, isched.ngq, Runqmax);
 	print("dis: %d contexts claimed of %d, curP %#p, parallelvm %d, stw waits %d\n",
 		npctx, MAXPCTX, curP, parallelvm, stwwaits);
+	print("dis: heap ops under stop-the-world: %d by the collector,"
+		" %d by anyone else (%d births)\n",
+		gcstwown, gcstwforeign, gcstwbirth);
 
 	for(p = curP->runhd; p != nil; p = p->link)
 		print("dis: runq prog %d %s\n", p->pid,
