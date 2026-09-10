@@ -17,6 +17,7 @@ uintptr maxilockpc;
  * The caller of each held ilock, innermost last.  See ilock().
  */
 uintptr ilockpc[8];
+void *ilockm[8];
 
 void
 ilockheldpcs(void)
@@ -25,7 +26,8 @@ ilockheldpcs(void)
 
 	for(i = 0; i < nelem(ilockpc); i++)
 		if(ilockpc[i] != 0)
-			iprint("  ilock %d held from %#p\n", i, (void*)ilockpc[i]);
+			iprint("  ilock %d held from %#p, m was %#p, m now %#p\n",
+				i, (void*)ilockpc[i], ilockm[i], m);
 }
 
 struct
@@ -174,8 +176,10 @@ acquire:
 	 * the case that leaks one -- so the depth is all there was to go
 	 * on.  ilockpc[] is that missing half; ilockheldpcs() prints it.
 	 */
-	if((uint)m->ilockdepth <= nelem(ilockpc))
+	if((uint)m->ilockdepth <= nelem(ilockpc)){
 		ilockpc[m->ilockdepth-1] = pc;
+		ilockm[m->ilockdepth-1] = m;
+	}
 	if(up)
 		up->lastilock = l;
 	l->sr = x;

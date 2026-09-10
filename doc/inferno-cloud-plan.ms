@@ -4981,6 +4981,66 @@ own
 pairs are balanced on every path including the early return, so the
 answer is not a missing unlock in its source.
 .PP
+.B "And the third catch joins it to a hunt already running."
+Recording the
+.CW Mach
+alongside the caller killed the best hypothesis and produced a better
+finding:
+.DS
+.CW
+ checkb 0 %s %#p %#p checkb 1 %s %#p %#p checkb 2 %s ...
+  ilock 0 held from 0x29c35e, m was 0x102000, m now 0x102000
+panic: cpu0: ilockdepth 1 (now 1), ... sched called from 0x2965b7
+.DE
+.CW "m was"
+equals
+.CW "m now" ,
+so the counter is not being split between two
+.CW Mach
+structures \(em which also matches
+.CW os/inferno/pc64/l.s ,
+where interrupt entry pushes R15 and R14 and
+.CW _intrr
+pops them in mirrored order.  And
+.CW "1 (now 1)"
+says the depth is genuinely stuck, with no race in the message this
+time.  So it is a real leak.
+.PP
+0x29c35e is
+.CW qconsume+0x21 ,
+a third holder after
+.CW iallocb
+and
+.CW timerintr ,
+and the lines above it are the giveaway: those are
+.CW checkb 's
+own format strings from
+.CW os/inferno/port/qio.c
+being emitted verbatim, one after another out of the string table.
+That is not a message, it is the block checker firing on a malformed
+Block and printing through a bad pointer.
+.PP
+Which means this is not a new bug.
+.CW os/inferno/port/allocb.c
+already carries a comment on exactly this signature \(em "every
+.CW "checkb 0 qaddlist 1"
+capture this hunt has caught downstream showed base > lim by EXACTLY
+Hdrspc (64) bytes" \(em and
+.CW doc/inferno-ports.ms
+has tracked it for a long time.  The Compute Engine panic is that
+corruption reaching a queue lock: a malformed Block sends
+.CW qconsume
+down an error path that never reaches its
+.CW iunlock ,
+the depth stays at 1, and the next clock interrupt through
+.CW irqhandled
+turns it into a panic.  What the rented machine adds is that the
+corruption is still live after the
+.CW _intrcommon
+fix, on hardware, where this laptop does not show it \(em and a second
+symptom, the leaked lock, that is easier to catch than the corruption
+itself.
+.PP
 .B "And it is the shipped kernel too."
 Recorded here as a correction, because this document said twice that
 .CW ipc64
