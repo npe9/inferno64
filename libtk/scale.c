@@ -6,6 +6,9 @@
 
 extern void tkannouncechange(Tk*);	/* ebind.c, for voice(3) */
 
+/* declared here because the drawing code above its definition uses it */
+static void tkflatslider(Image*, TkEnv*, Point, Rectangle, int, int);
+
 #define	O(t, e)		((long)(&((t*)0)->e))
 
 typedef struct TkScale TkScale;
@@ -312,7 +315,8 @@ tkscalehoriz(Tk *tk, Image *i)
 
 	l = tkgc(e, TkCbackgndlght);
 	d = tkgc(e, TkCbackgnddark);
-	tkbevel(i, r.min, w, h, ScaleBW, d, l);
+	if(!tkstyleflat(tk))
+		tkbevel(i, r.min, w, h, ScaleBW, d, l);
 
 	tks->pixmin = sr.min.x;
 	tks->pixmax = sr.max.x;
@@ -359,6 +363,21 @@ tkscalehoriz(Tk *tk, Image *i)
 		r2.max.y = sr.max.y;
 		draw(i, r2, tkgc(e, TkCactivebgnd), nil, ZP);
 	}
+	if(tkstyleflat(tk)){
+		int th, cy, rad;
+
+		th = sh/4;
+		if(th < 4)
+			th = 4;
+		cy = sr.min.y + sh/2;
+		rad = sh/2;
+		if(rad > 9)
+			rad = 9;
+		if(rad < 4)
+			rad = 4;
+		tkflatslider(i, e, Pt(p.x + tks->sl/2, cy),
+			Rect(sr.min.x, cy - th/2, sr.max.x, cy - th/2 + th), 1, rad);
+	}else
 	switch(tks->relief) {
 	case TKsunken:
 		tkbevel(i, p, tks->sl, sh, ScaleBW, d, l);
@@ -433,7 +452,8 @@ tkscalevert(Tk *tk, Image *i)
 
 	l = tkgc(e, TkCbackgndlght);
 	d = tkgc(e, TkCbackgnddark);
-	tkbevel(i, r.min, w, h, ScaleBW, d, l);
+	if(!tkstyleflat(tk))
+		tkbevel(i, r.min, w, h, ScaleBW, d, l);
 
 	tks->pixmin = sr.min.y;
 	tks->pixmax = sr.max.y;
@@ -481,6 +501,21 @@ tkscalevert(Tk *tk, Image *i)
 		r2.max.y = p.y+sl;
 		draw(i, r2, tkgc(e, TkCactivebgnd), nil, ZP);
 	}
+	if(tkstyleflat(tk)){
+		int tw, cx, rad;
+
+		tw = sw/4;
+		if(tw < 4)
+			tw = 4;
+		cx = sr.min.x + sw/2;
+		rad = sw/2;
+		if(rad > 9)
+			rad = 9;
+		if(rad < 4)
+			rad = 4;
+		tkflatslider(i, e, Pt(cx, p.y + tks->sl/2),
+			Rect(cx - tw/2, sr.min.y, cx - tw/2 + tw, sr.max.y), 1, rad);
+	}else
 	switch(tks->relief) {
 	case TKsunken:
 		tkbevel(i, p, sw, tks->sl, ScaleBW, d, l);
@@ -510,6 +545,46 @@ tkscalevert(Tk *tk, Image *i)
 		p.y = tks->pixmax - fh;
 	string(i, p, tkgc(e, fgnd), ZP, e->font, sv);
 }
+
+/*
+ * A slider drawn the way one is drawn now: a thin track, the part
+ * BEHIND the knob filled in the accent so the value is readable at a
+ * glance without finding the knob, and a round knob sitting above it.
+ *
+ * The old drawing is a sunken bevel the full height of the control with
+ * a raised rectangle sliding in it - which is a picture of a physical
+ * fader from 1995, and is why this widget still looked old after the
+ * borders elsewhere had stopped being chisels.  The scale never went
+ * through tkdrawrelief(), so nothing the style did could reach it.
+ *
+ * The knob is drawn twice: a disc of the page colour, then a smaller
+ * disc of the accent inside it.  That halo is what makes it read as
+ * sitting ON the track rather than being a bulge in it, and it costs one
+ * more fillellipse.
+ */
+static void
+tkflatslider(Image *i, TkEnv *e, Point c, Rectangle track, int filled, int rad)
+{
+	Rectangle t;
+
+	draw(i, track, tkgc(e, TkCbackgnddark), nil, ZP);
+	t = track;
+	if(filled){
+		/* horizontal: fill to the knob; vertical: fill from the knob down */
+		if(Dx(track) > Dy(track)){
+			t.max.x = c.x;
+			if(t.max.x > t.min.x)
+				draw(i, t, tkgc(e, TkChighlightfgnd), nil, ZP);
+		}else{
+			t.min.y = c.y;
+			if(t.max.y > t.min.y)
+				draw(i, t, tkgc(e, TkChighlightfgnd), nil, ZP);
+		}
+	}
+	fillellipse(i, c, rad, rad, tkgc(e, TkCbackgnd), ZP);
+	fillellipse(i, c, rad-2, rad-2, tkgc(e, TkChighlightfgnd), ZP);
+}
+
 
 char*
 tkdrawscale(Tk *tk, Point orig)

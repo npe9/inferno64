@@ -165,6 +165,17 @@ tkfreescrlb(Tk *tk)
 		free(tks->cmd);
 }
 
+/*
+ * Both painters here are handed a TkEnv rather than a Tk, and a TkEnv
+ * carries its toplevel, so the style is reachable without changing two
+ * signatures and their callers.
+ */
+static int
+flatenv(TkEnv *e)
+{
+	return e != nil && e->top != nil && e->top->style == TkSflat;
+}
+
 static void
 drawarrow(TkScroll *tks, Image *i, Point p[3], TkEnv *e, int activef, int buttonf)
 {
@@ -175,6 +186,18 @@ drawarrow(TkScroll *tks, Image *i, Point p[3], TkEnv *e, int activef, int button
 	if(tks->flag & (activef|buttonf)) {
 		bgnd = TkCactivebgnd;
 		fillpoly(i, p, 3, ~0, tkgc(e, bgnd), p[0]);
+	}
+
+	/*
+	 * A solid glyph rather than a two-tone outlined one.  The geometry
+	 * is untouched - the arrow occupies the same triangle and so the
+	 * region a click lands in is the same; only the paint changes.
+	 */
+	if(flatenv(e)) {
+		fillpoly(i, p, 3, ~0,
+			tkgc(e, (tks->flag & buttonf) ? TkChighlightfgnd : TkCdisablefgnd),
+			p[0]);
+		return;
 	}
 
 	l = tkgc(e, bgnd+TkLightshade);
@@ -203,6 +226,45 @@ drawslider(TkScroll *tks, Image *i, Point o, int w, int h, TkEnv *e)
 		r.max.y = o.y + h + Elembw*2;
 		bgnd = TkCactivebgnd;
 		draw(i, r, tkgc(e, bgnd), nil, ZP);
+	}
+
+	/*
+	 * A capsule, inset from the trough so the trough is visible round
+	 * it - which is what makes a modern scrollbar read as a position
+	 * indicator rather than as a sliding panel.  Built from a rectangle
+	 * and two discs because that is what libdraw has; the rounded-box
+	 * routine in utils.c strokes an outline and this wants a fill.
+	 */
+	if(flatenv(e)) {
+		Rectangle b;
+		Image *th;
+		int fw, fh, rad;
+
+		th = tkgc(e, (tks->flag & (ActiveB1|ButtonB1))
+			? TkChighlightfgnd : TkCbackgnddark);
+		fw = w + 2*Scrollbw;
+		fh = h + 2*Scrollbw;
+		b = Rect(o.x+2, o.y+2, o.x+fw-2, o.y+fh-2);
+		if(Dx(b) <= 0 || Dy(b) <= 0)
+			return;
+		if(Dx(b) < Dy(b)) {
+			rad = Dx(b)/2;
+			if(rad < 1)
+				rad = 1;
+			draw(i, Rect(b.min.x, b.min.y+rad, b.max.x, b.max.y-rad),
+				th, nil, ZP);
+			fillellipse(i, Pt(b.min.x+rad, b.min.y+rad), rad, rad, th, ZP);
+			fillellipse(i, Pt(b.min.x+rad, b.max.y-rad), rad, rad, th, ZP);
+		} else {
+			rad = Dy(b)/2;
+			if(rad < 1)
+				rad = 1;
+			draw(i, Rect(b.min.x+rad, b.min.y, b.max.x-rad, b.max.y),
+				th, nil, ZP);
+			fillellipse(i, Pt(b.min.x+rad, b.min.y+rad), rad, rad, th, ZP);
+			fillellipse(i, Pt(b.max.x-rad, b.min.y+rad), rad, rad, th, ZP);
+		}
+		return;
 	}
 
 	l = tkgc(e, bgnd+TkLightshade);

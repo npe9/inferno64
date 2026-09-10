@@ -122,19 +122,25 @@ They already have a register of their own in
 .IR wmtheme (2),
 which nothing yet connects to this.
 .PP
-.IR Scale (9)
-and
+.IR Scale (9),
 .IR scrollbar (9)
-do not follow the style.
-They call
-.I tkbevel
-directly \- ten times and twice respectively \- rather than going through
-.IR tkdrawrelief ,
-so their troughs, thumbs and arrows keep the two-tone chisel whatever
-the style says, and so does the little box a
+and the indicators of
 .IR checkbutton (9)
-draws for its indicator.
-Every other widget's border goes through the one function and follows.
+and
+.IR radiobutton (9)
+draw their own chrome rather than going through
+.IR tkdrawrelief ,
+so each asks the style for itself with
+.IR tkstyleflat .
+Under
+.B flat
+a scale is a thin track filled to the knob in the accent with a round
+knob above it; a scrollbar is a capsule in the trough with solid arrow
+glyphs; a checkbutton is an empty box when off and a filled one with a
+light tick when on; a radiobutton is a ring, filled when chosen.
+Their GEOMETRY is unchanged in every case \- an arrow occupies the same
+triangle, a thumb the same rectangle \- so the regions a click lands in
+are exactly what they were, and only the paint differs.
 .PP
 A
 .I frame

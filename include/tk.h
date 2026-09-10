@@ -664,6 +664,7 @@ extern	char*	tkscrollbar(TkTop*, char*, char**);
 extern	char*	tkstylecmd(TkTop*, char*, char**);
 extern	TkSpace	tkspaces[];
 extern	int	tkborderwidth(Tk*, int);
+extern	int	tkstyleflat(Tk*);
 extern	TkSpace*	tkspace(Tk*);
 extern	char*	tksend(TkTop*, char*, char**);
 extern	char*	tktext(TkTop*, char*, char**);

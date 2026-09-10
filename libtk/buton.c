@@ -297,7 +297,23 @@ tkdrawbutton(Tk *tk, Point orig)
 
 		cl = tkgc(e, bgnd+TkLightshade);
 		cd = tkgc(e, bgnd+TkDarkshade);
-		tkbevel(i, u, CheckButton, CheckButton, CheckButtonBW, cd, cl);
+		/*
+		 * A box that is EMPTY when off and FILLED in the accent when
+		 * on, rather than a sunken well with a mark in it.  The tick
+		 * below is drawn either way; on the filled box it lands in the
+		 * foreground colour against the accent, which is the contrast
+		 * a filled checkbox relies on.
+		 */
+		if(tkstyleflat(tk)) {
+			Rectangle cb;
+
+			cb = Rect(u.x, u.y, u.x+CheckButton, u.y+CheckButton);
+			if(tkl->check)
+				draw(i, cb, tkgc(e, TkChighlightfgnd), nil, ZP);
+			else
+				tkbox(i, cb, CheckButtonBW, tkgc(e, TkCdisablefgnd));
+		} else
+			tkbevel(i, u, CheckButton, CheckButton, CheckButtonBW, cd, cl);
 		if(tkl->check) {
 			u.x += CheckButtonBW+1;
 			u.y += CheckButtonBW+1;
@@ -312,7 +328,14 @@ tkdrawbutton(Tk *tk, Point orig)
 			pp[3] = u;
 			pp[3].x += CheckButton-2;
 			pp[3].y++;
-			bezspline(i, pp, 4, Enddisc, Enddisc, 1, tkgc(e, TkCforegnd), ZP);
+			/*
+			 * On the filled box the tick has to be the LIGHT
+			 * colour: drawn in the foreground it is near-black on
+			 * the accent, which is the one combination a filled
+			 * checkbox must not use.
+			 */
+			bezspline(i, pp, 4, Enddisc, Enddisc, 1,
+				tkgc(e, tkstyleflat(tk) ? TkCbackgnd : TkCforegnd), ZP);
 		}
 		break;
 	case TKradiobutton:
@@ -323,9 +346,17 @@ tkdrawbutton(Tk *tk, Point orig)
 		u.x = p.x + ButtonBorder;
 		u.y = p.y + ButtonBorder + (h - CheckSpace) / 2;
 		v = Pt(u.x+CheckButton/2,u.y+CheckButton/2);
-		ellipse(i, v, CheckButton/2, CheckButton/2, CheckButtonBW-1, tkgc(e, bgnd+TkDarkshade), ZP);
-		if(tkl->check)
-			fillellipse(i, v, CheckButton/2-2, CheckButton/2-2, tkgc(e, TkCforegnd), ZP);	/* could be TkCselect */
+		if(tkstyleflat(tk)) {
+			ellipse(i, v, CheckButton/2, CheckButton/2, CheckButtonBW,
+				tkgc(e, tkl->check ? TkChighlightfgnd : TkCdisablefgnd), ZP);
+			if(tkl->check)
+				fillellipse(i, v, CheckButton/2-3, CheckButton/2-3,
+					tkgc(e, TkChighlightfgnd), ZP);
+		} else {
+			ellipse(i, v, CheckButton/2, CheckButton/2, CheckButtonBW-1, tkgc(e, bgnd+TkDarkshade), ZP);
+			if(tkl->check)
+				fillellipse(i, v, CheckButton/2-2, CheckButton/2-2, tkgc(e, TkCforegnd), ZP);	/* could be TkCselect */
+		}
 		break;
 	case TKbutton:
 		if ((tk->flag & (Tkactivated|Tkactive)) == (Tkactivated|Tkactive))

@@ -88,6 +88,18 @@ TkSpace	tkspaces[] =
  * in gets a line that grows.  16 is the height the unscaled numbers were
  * chosen against, so a font that size still gets exactly them.
  */
+/*
+ * Is this widget's toplevel in the flat style?  Shared because scale(9)
+ * and scrollbar(9) draw their own chrome instead of going through
+ * tkdrawrelief(), so they each have to ask.
+ */
+int
+tkstyleflat(Tk *tk)
+{
+	return tk != nil && tk->env != nil && tk->env->top != nil
+		&& tk->env->top->style == TkSflat;
+}
+
 int
 tkborderwidth(Tk *tk, int bd)
 {
