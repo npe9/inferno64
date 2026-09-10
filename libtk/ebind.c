@@ -617,6 +617,9 @@ tkannouncetext(Tk *tk)
  * to, and there was no way to find out by listening, because nothing was
  * announced when it changed either.
  */
+static void tkannouncefocus(Tk*);
+static void announce(Tk*);
+
 static char*
 tkannouncestate(Tk *tk, char *buf, int nbuf)
 {
@@ -646,6 +649,21 @@ tkannouncestate(Tk *tk, char *buf, int nbuf)
  * just been told when they moved to it, and a screen reader that reads
  * the whole thing back on every keypress is tiring to use.
  */
+/*
+ * Say what a widget is, the way arriving at it by keyboard would.
+ * For places that make something current without the keyboard focus
+ * moving - a menu highlights an item and the focus stays on the menu.
+ *
+ * No name is required, and that is the point: a menu item has no widget
+ * path at all, being reachable by index rather than by name, so the guard
+ * in tkannouncefocus() would refuse every one of them.
+ */
+void
+tkannouncewidget(Tk *tk)
+{
+	announce(tk);
+}
+
 void
 tkannouncechange(Tk *tk)
 {
@@ -660,22 +678,29 @@ tkannouncechange(Tk *tk)
 }
 
 static void
-tkannouncefocus(Tk *tk)
+announce(Tk *tk)
 {
 	char buf[128], sbuf[64];
-	char *text, *state;
+	char *text, *state, *class;
 
-	if(tk == nil || tk->name == nil)
+	if(tk == nil)
 		return;
 	text = tkannouncetext(tk);
 	state = tkannouncestate(tk, sbuf, sizeof sbuf);
+	/*
+	 * An item in a menu is made as a label or a cascade, so its type
+	 * says "label", which is true and useless: what a person needs to
+	 * hear is that they are in a menu.  Where it sits says so.
+	 */
+	class = tkclassname(tk->type);
+	if(tk->parent != nil && tk->parent->type == TKmenu && tk->type != TKcascade)
+		class = "menu item";
 	if(text != nil && *text != '\0' && state != nil)
-		snprint(buf, sizeof buf, "%s %s %s", text,
-			tkclassname(tk->type), state);
+		snprint(buf, sizeof buf, "%s %s %s", text, class, state);
 	else if(text != nil && *text != '\0')
-		snprint(buf, sizeof buf, "%s %s", text, tkclassname(tk->type));
+		snprint(buf, sizeof buf, "%s %s", text, class);
 	else if(state != nil)
-		snprint(buf, sizeof buf, "%s %s", tkclassname(tk->type), state);
+		snprint(buf, sizeof buf, "%s %s", class, state);
 	else
 		/*
 		 * No label to fall back on. tk->name->name is a Tcl/Tk widget
@@ -686,8 +711,16 @@ tkannouncefocus(Tk *tk)
 		 * identifier as if it were prose; the class alone is what a
 		 * person actually needs.
 		 */
-		snprint(buf, sizeof buf, "%s", tkclassname(tk->type));
+		snprint(buf, sizeof buf, "%s", class);
 	voiceannounce(buf);
+}
+
+static void
+tkannouncefocus(Tk *tk)
+{
+	if(tk == nil || tk->name == nil)
+		return;
+	announce(tk);
 }
 
 void

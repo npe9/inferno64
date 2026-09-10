@@ -935,6 +935,33 @@ checkvoice()
 	said = next(sfd);
 	report(said == "e", sys->sprint(
 		"and moving along one reads the character (%#q)", said));
+
+	# A menu highlights an item without the keyboard focus moving, so
+	# nothing else in libtk says which item a person is on: walking a
+	# menu was silent from the moment it opened.
+	blank();
+	t8 := offscreen();
+	if(t8 == nil)
+		return;
+	tk->cmd(t8, "menu .m");
+	tk->cmd(t8, ".m add command -label {Open}");
+	tk->cmd(t8, ".m add command -label {Save as}");
+	tk->cmd(t8, "menubutton .mb -text {File} -menu .m");
+	tk->cmd(t8, "pack .mb");
+	map(t8);
+	drain(sfd);
+	e := tk->cmd(t8, ".m activate 1");
+	if(len e > 0 && e[0] == '!'){
+		sys->print("     cannot activate a menu item (%s); not checked\n", e);
+		return;
+	}
+	tk->cmd(t8, "update");
+	said = next(sfd);
+	# "menu item" and not "label": a command item is made as a label, so
+	# its type is true and useless - what a person needs to hear is that
+	# they are in a menu.
+	report(has(said, "Save as") && has(said, "menu item"), sys->sprint(
+		"moving through a menu says which item (%#q)", said));
 }
 
 slurpfile(p: string): string

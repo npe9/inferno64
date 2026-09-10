@@ -2,6 +2,7 @@
 #include "draw.h"
 #include "keyboard.h"
 #include "tk.h"
+extern void tkannouncewidget(Tk*);	/* ebind.c, for voice(3) */
 #include "frame.h"
 #include "label.h"
 
@@ -1231,6 +1232,15 @@ activateitem(Tk *item)
 	if (!(item->flag & Tkdisabled)) {
 		item->flag |= Tkactive;
 		menuitemdirty(item);
+		/*
+		 * voice(3).  A menu highlights an item without the keyboard
+		 * focus moving - the focus stays on the menu - so nothing
+		 * else in libtk says which item a person is on, and walking a
+		 * menu was silent from the moment it opened.  This is the one
+		 * place an item becomes the current one, whether that came
+		 * from a key or from the mouse passing over it.
+		 */
+		tkannouncewidget(item);
 	}
 }
 

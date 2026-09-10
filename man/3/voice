@@ -144,6 +144,24 @@ When the ring is full the
 announcement is dropped.
 A screen reader is saying where you are now, and a backlog of where you used to
 be is worse than useless because you have to sit through it.
+.SS Menus
+Moving through a menu says which item, whether the highlight moved by a
+key or by the mouse passing over it.
+.PP
+A menu is the one place where something becomes current without the
+keyboard focus moving \(em the focus stays on the menu \(em so nothing
+else in
+.B libtk
+had reason to say anything, and walking a menu was silent from the moment
+it opened.
+.PP
+An item is announced as a
+.B "menu item"
+rather than by its type.
+A
+.B command
+item is made as a label, so its type is true and useless; where it sits
+is what a person needs to hear.
 .SS Moving about in text
 Moving the cursor in a
 .B text
