@@ -212,6 +212,46 @@ through the entry point production uses, and confirm with a negative
 control.** Three checks in that session reported "no problems" while
 looking at a subset of what had changed.
 
+**The switch already exists, and it works.** `emu -f <path>` sets the
+default font for every Tk widget in every program — one global,
+`tkfont` in `libtk/utils.c`, which every widget's environment inherits.
+Pointed at a `ttffs` face, a plain `label` with no `-font` option comes out
+antialiased: `tkofftest`'s "a widget's own pixels read back" check goes
+from 3 grey levels to **190** under `emu -f /mnt/ft/andale-mono.r.16.font`,
+and every widget sizes itself to the face. So adopting a scalable font
+tree-wide is a *runtime* choice, not an edit to ~60 programs — which also
+means it can be tried, measured and reverted without touching source.
+
+Two things had to change to make that usable, and both are done:
+
+- **`ttffs` demanded a draw context.** It wanted one only to rasterise
+  glyphs into images, never to put anything on a screen, but insisting on
+  it meant `ttffs` could only be started from a program that already had a
+  window — the wrong way round, since the fonts have to be served *before*
+  the first window opens. It allocates its own display when there is no
+  context now, so it starts from a plain shell, and the whole chain works:
+  serve fonts, then run a Tk program whose default font is a TrueType face.
+- **`man/1/emu` named the wrong default.** It said
+  `/fonts/lucm/unicode.9.font`; `libtk` falls back to
+  `/fonts/pelm/unicode.8.font`. That font does exist, it is just not the
+  one used.
+
+**The first real bug the sweep found is in the chrome every window has.**
+`titlebar->minsize` — the smallest a window may be resized to — combined
+only the *button* rects. The buttons are fixed-size bitmaps; the title is
+text. So the minimum was short by however much the title is taller than a
+button: one pixel at the tree's own 8-pixel font, and **twelve** at a
+32-pixel one, which is a window that can be dragged shorter than its own
+titlebar. That is a pre-existing bug a bigger font merely makes visible,
+and `wmclient.b` already carries a guard clamping a negative content
+height, which is the symptom being patched. `minsize` takes the bar's own
+height now, and `tkofftest` asserts it at two fonts — the check fails at
+both without the fix.
+
+That is one bug in the first piece of shared UI examined, which is the
+shape of the risk section 3 is about. The rest of `appl/wm` has not been
+swept.
+
 Shipping a face is a fork worth naming rather than deciding quietly: the
 tree would vendor one permissively-licensed TrueType file, the way
 `lib/tls/` vendors a frozen Mozilla CA bundle. **DejaVu Sans Mono and

@@ -112,11 +112,19 @@ available display size are ignored.
 Specify the default font for the
 .B tk
 module.
-The path is interpreted in the Inferno name space.
-If unspecified, the
-.B font
-variable has value
-.BR /fonts/lucm/unicode.9.font .
+The path is interpreted in the Inferno name space, and is opened when the
+first Tk toplevel is made rather than at startup, so a font served by
+.IR ttffs (4)
+can be named here as long as that is running by then.
+If unspecified the default is
+.BR /fonts/pelm/unicode.8.font ,
+which is the value
+.B libtk
+falls back to in
+.BR /libtk/utils.c .
+This page named
+.B /fonts/lucm/unicode.9.font
+until 2026; that font exists but is not the one used.
 .TP
 .BI \-r rootpath
 Specify the host system directory that

@@ -89,9 +89,18 @@ sizes: ref Table[ref Size];	# qid.path
 init(ctxt: ref Draw->Context, args: list of string)
 {
 	sys = load Sys Sys->PATH;
-	if(ctxt == nil || (disp = ctxt.display) == nil)
-		fail("no display");
 	draw = load Draw Draw->PATH;
+	# The display is wanted only to rasterise glyphs into images, never
+	# to put anything on a screen, so allocate one rather than insisting
+	# on a context.  Without this ttffs can only be started from a
+	# program that already has a window, which is the wrong way round:
+	# the fonts have to be being served before the first window opens.
+	if(ctxt != nil)
+		disp = ctxt.display;
+	if(disp == nil)
+		disp = Display.allocate(nil);
+	if(disp == nil)
+		fail(sys->sprint("no display: %r"));
 	arg := load Arg Arg->PATH;
 	bufio = load Bufio Bufio->PATH;
 	str = load String String->PATH;

@@ -29,7 +29,7 @@ The image must be handed over
 .I after
 the widgets exist: Tk paints what it has when the image arrives.
 .PP
-Four things are checked.
+Six things are checked.
 .TP
 .B "a blank pane reads back blank"
 An untouched pane must read back as one value and no ink.
@@ -59,6 +59,25 @@ and
 .B -height
 \(em are deliberately not in that list, because their size is meant not to
 follow the font.
+.TP
+.B "the titlebar holds together"
+The real
+.IR titlebar (2)
+is built on the offscreen toplevel at both fonts and measured: the title
+must not run into the buttons and the bar must stay inside the pane.
+No font size makes this fail, because Tk's packer clips the title \(em at
+the taller font it ends at 631 pixels against buttons at 820, and forcing
+its width to 2000 only takes it to 799.
+It guards against the titlebar being given fixed geometry, not against a
+font change.
+.TP
+.B "a window cannot be shorter than its titlebar"
+.B titlebar->minsize
+is the smallest a window may be resized to.
+It combined only the button rects, which are fixed-size bitmaps, so it
+came up short by however much the title's text is taller: one pixel at the
+tree's own font and twelve at a 32-pixel one.
+This check fails at both fonts without that fix.
 .TP
 .B "Tk antialiases a TrueType face"
 Only when a

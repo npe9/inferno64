@@ -31,6 +31,14 @@ If a ttf file does not yet have a ranges file, it is created by ttffs automatica
 mounts itself on
 .I /mnt/ft
 by default.
+It needs a display only to rasterise glyphs into images, never to put
+anything on a screen, so it allocates one for itself when it is started
+without a draw context.
+That matters for the order of things: the fonts have to be being served
+before the first window opens, so
+.I ttffs
+has to be startable from a plain shell rather than only from a program
+that already has a window.
 With
 .BR -M ,
 9P2000 is served on file descriptor 0 instead.

@@ -22,6 +22,8 @@ include "draw.m";
 	Display, Image, Point, Rect, Screen: import draw;
 include "tk.m";
 	tk: Tk;
+include "titlebar.m";
+	titlebar: Titlebar;
 
 # ttffs(4) serves TrueType files from /fonts/ttf as Inferno subfonts at
 # any size.  It wants a draw context, but only for its display, so this
@@ -46,6 +48,9 @@ disp: ref Display;
 
 ok := 0;
 fail := 0;
+
+small := "";		# two fonts, 15 pixels high and 30
+large := "";
 
 report(good: int, what: string)
 {
@@ -161,6 +166,9 @@ init(nil: ref Draw->Context, nil: list of string)
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
 	tk = load Tk Tk->PATH;
+	titlebar = load Titlebar Titlebar->PATH;
+	if(titlebar != nil)
+		titlebar->init();
 	if(tk == nil){
 		sys->print("FAIL no tk: %r\n");
 		raise "fail:no tk";
@@ -208,8 +216,8 @@ init(nil: ref Draw->Context, nil: list of string)
 
 	# Does the toolkit measure its font, or assume a cell?  Two fonts
 	# from this tree, 15 and 30 pixels high, no TrueType needed.
-	small := "/fonts/lucidasans/unicode.8.font";
-	large := "/fonts/pelm/ascii.16.font";
+	small = "/fonts/lucidasans/unicode.8.font";
+	large = "/fonts/pelm/ascii.16.font";
 	blank();
 	t1 := offscreen();
 	s1 := dialog(t1, small);
@@ -232,6 +240,13 @@ init(nil: ref Draw->Context, nil: list of string)
 			sys->sprint("every widget grows with the font (%d of %d)",
 				grew, WIDGETS));
 	}
+
+	# The titlebar is drawn on every window there is, so it is the one
+	# layout worth checking by name.  Its buttons are fixed-size bitmaps
+	# and its title is text: a taller font must not push the title into
+	# the buttons, and nothing may leave the pane.
+	checktitlebar(small, "the tree's own font");
+	checktitlebar(large, "a font twice as tall");
 
 	# If a TrueType face is being served, say whether Tk antialiases.
 	# A bitmap font can only ever put two values on the page.
@@ -279,6 +294,54 @@ startttf()
 			return;
 		sys->sleep(100);
 	}
+}
+
+# the real titlebar, built by the real code, measured
+checktitlebar(font, what: string)
+{
+	if(titlebar == nil){
+		sys->print("     no titlebar module; chrome not checked\n");
+		return;
+	}
+	blank();
+	top := offscreen();
+	if(top == nil)
+		return;
+	tk->cmd(top, ". configure -font " + font);
+	titlebar->new(top, Titlebar->Appl);
+	titlebar->settitle(top, "A Window With Quite A Long Title Indeed");
+	map(top);
+	title := tk->rect(top, ".Wm_t.title", 0);
+	bar := tk->rect(top, ".Wm_t", 0);
+	# the leftmost button, whichever buttons this configuration has
+	buts := array[] of {".Wm_t.e", ".Wm_t.m", ".Wm_t.h", ".Wm_t.ok", ".Wm_t.top"};
+	leftmost := 1000000;
+	nb := 0;
+	for(i := 0; i < len buts; i++){
+		r := tk->rect(top, buts[i], 0);
+		if(r.dx() == 0 && r.dy() == 0)
+			continue;
+		nb++;
+		if(r.min.x < leftmost)
+			leftmost = r.min.x;
+		if(r.max.x > W || r.max.y > H)
+			leftmost = -1;		# off the pane
+	}
+	good := nb > 0 && title.max.x <= leftmost && bar.max.x <= W && bar.max.y <= H;
+	report(good, sys->sprint(
+		"the titlebar holds together in %s (title ends %d, %d buttons from %d, bar %dx%d)",
+		what, title.max.x, nb, leftmost, bar.dx(), bar.dy()));
+
+	# The minimum size a window may be resized to must be at least its
+	# own titlebar.  Measured from the buttons alone - fixed-size
+	# bitmaps - it is short by however much the title's text is taller,
+	# which is one pixel at the 8-pixel font and twelve at a 32-pixel
+	# one.  This is the check that catches that.
+	ms := titlebar->minsize(top);
+	bb := tk->rect(top, ".Wm_t", Tk->Border);
+	report(ms.y >= bb.dy(), sys->sprint(
+		"a window cannot be shorter than its titlebar in %s (minsize %d, bar %d)",
+		what, ms.y, bb.dy()));
 }
 
 # first face ttffs is serving, if any, at a middling size

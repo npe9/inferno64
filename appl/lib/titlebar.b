@@ -111,7 +111,16 @@ minsize(top: ref Tk->Toplevel): Point
 			r = r.combine(br);
 	}
 	r.max.x += tk->rect(top, ".Wm_t." + buts[0], Tk->Border).dx();
-	return r.size();
+	sz := r.size();
+	# The buttons are fixed-size bitmaps and the title is text, so the
+	# bar is as tall as whichever is taller.  Measured from the buttons
+	# alone this came out one pixel short of the bar at the 8-pixel font
+	# and twelve short at a 32-pixel one, which is a window that may be
+	# resized shorter than its own titlebar.
+	bar := tk->rect(top, ".Wm_t", Tk->Border);
+	if(bar.dy() > sz.y)
+		sz.y = bar.dy();
+	return sz;
 }
 
 exists(path: string): int
