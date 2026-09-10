@@ -56,6 +56,9 @@ fi
 # so a changed patch rebuilds it and an unchanged one does not.
 if [ "$1" = all ]; then
 	shift
+	# The trap covers a build that fails; it does not cover the exec
+	# at the end of the branch, which replaces the shell, so that
+	# path removes the directory itself.
 	ctx=`mktemp -d`
 	trap 'rm -rf "$ctx"' EXIT
 	mkdir -p "$ctx/patches"
@@ -68,6 +71,7 @@ if [ "$1" = all ]; then
 		--build-arg QEMU_IMAGE="$image-qemu" \
 		-f "$root/docker/Boardsuite-pi.Dockerfile" \
 		-t "$image-pi" "$root/docker" >&2
+	rm -rf "$ctx"
 	exec $run --entrypoint /src/docker/build-and-run "$image-pi" "$@"
 fi
 if [ "$1" = sh ]; then
