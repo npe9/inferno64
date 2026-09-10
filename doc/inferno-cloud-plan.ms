@@ -4033,20 +4033,157 @@ rather than a step forward.  It belongs with
 .CW conf.nmach ,
 in the increment that makes these processors schedule.
 .PP
-What is left of item 9 on arm64: secondaries that reach
-.CW schedinit()
-rather than parking in WFE, per-processor GIC redistributor and
-generic-timer setup, and
-.CW conf.nmach
-from the MADT with
-.CW active.machs[]
-alongside it.  The evidence to insist on then is not a shell prompt: a
-per-\c
+.B "Its own redistributor, its own timer."
+A GICv3 gives every processor a redistributor frame of its own, and
+which frame is which is not an index: the order they appear in is the
+implementation's, so each carries its own affinity in GICR_TYPER and a
+processor looks for the one that matches its MPIDR.  The MADT can name
+them and on this machine the firmware leaves the field zero, so the
+walk is what there is; it ends on GICR_TYPER.Last rather than on a
+count from elsewhere, and the frame stride comes from
+GICR_TYPER.VLPIS.
+.CW gicinit()
+is split into the distributor, which is the machine's, and
+.CW giccpuinit() ,
+which is one processor's: the cpu interface, its own redistributor,
+and the interrupts private to it.
+.CW m->gicr
+is where the answer lives, so
+.CW gicenable()
+of a PPI reaches this processor's SGI frame and not processor 0's.
+.PP
+A started processor now installs VBAR_EL1, calls
+.CW giccpuinit()
+and
+.CW clockinit() ,
+drops
+.CW spl
+and idles.  Its timer interrupt goes to
+.CW clocksecondary() ,
+which re-arms and counts and nothing else \(em
+.CW clockintr() 's
+.CW checkalarms()
+and
+.CW timercheck()
+belong to a scheduler this processor is not in yet, and the increment
+is not entitled to run them.  What the count proves is exactly this
+much: the processor is taking its own interrupts, through its own
+redistributor, into its own
+.CW Mach .
+Under
+.CW "-smp 4" ,
+measured from
+.CW init0()
+because that is the first point at which processor 0 is itself taking
+interrupts: ticks in 300ms, cpu0 25, cpu1 25, cpu2 25, cpu3 25.
+.PP
+And the control, which is the half that makes it a measurement.  The
+same kernel with
+.CW gicrfind()
+replaced by the constant \(em every processor using processor 0's
+frame, which is what the code did before this \(em reports cpu0 26,
+cpu1 0, cpu2 0, cpu3 0.  The count is per-\c
 .CW Mach
-count of scheduler passes, printed, and different under
+and not a total for the same reason: a total cannot tell three idle
+processors from one fast one.
+.PP
+Two things this uncovered and one it leaves behind.
+.CW splhi()
+and
+.CW splx()
+recorded
+.CW m->splpc
+through
+.CW $mach0(SB) ,
+which was the same address as
+.CW m
+while there was one
+.CW Mach
+and is processor 0's the moment there is more than one: a secondary
+taking a trap would have written the first word of a structure another
+processor was using.  They go through R27 now, which is what
+.CW m
+is.  And the secondaries run with
+.CW up
+nil and interrupts on, for good:
+.CW clocksecondary()
+never touches
+.CW up ,
+but anything added to that path that does will fault on a processor
+with no
+.CW Proc
+and no
+.CW dumpstack()
+context to explain it.  That is a constraint the next increment
+inherits.
+.PP
+.B "And where this work should have started."
+The
+.CW multicore
+branch had already done most of the above, and this was written without
+looking.  It has, on this same board: a second processor under PSCI, a
+per-processor
+.CW Mach
+through TPIDR_EL1,
+.CW m
+and
+.CW up
+in registers, the secondary's exception vectors,
+.CW MACHP
+as an array with
+.CW MAXMACH
+4, the secondary on its own timer, and cpu1 inside
+.CW schedinit()
+running processes \(em turned off, because one boot in ten shows Dis
+heap corruption with it on and ten in ten are clean with it off.  It
+also has aarch64 atomics in
+.CW libkern ,
+6c and 7c reserving four external registers rather than two, and the
+parallel Dis VM work behind
+.CW doc/multicore-plan.ms .
+Two of the three increments above are therefore re-derivations, and
+the
+.CW splpc
+fix is a third; that is recorded here rather than quietly dropped
+because the cost of not looking is the point.
+.PP
+Three things this branch has that
+.CW multicore
+does not, and two of them it needs.  7l's constant-pool width bug is
+unfixed there.  The GICv3 per-processor redistributor is the gap that
+branch's own commit names \(em its
+.CW gicsecondary()
+returns \-1 on a GICv3 \(em and
+.CW gicrfind()
+above is that piece.  And its
+.CW virtarm64/mmu.c
+is a stub whose comment says the MMU stays off, so its
+.CW _tas
+and
+.CW cmpswap
+run on Device-nGnRnE memory, where the architecture promises nothing
+about the exclusive monitor.  That is not an explanation for the
+corruption it is chasing \(em TCG implements a global monitor whatever
+the memory type, so the emulator cannot show the difference \(em but it
+is a prerequisite before any of that is sound on a core.
+.PP
+So what is left of item 9 on arm64 is not this branch's to build twice.
+Secondaries that reach
+.CW schedinit() ,
+.CW conf.nmach
+from the MADT and
+.CW active.machs[]
+alongside it belong on
+.CW multicore ,
+where they are already further along; the evidence standard recorded
+here \(em a per-\c
+.CW Mach
+count of scheduler passes, different under
 .CW "-smp 1"
 and
-.CW "-smp 4" .
+.CW "-smp 4"
+\(em is the one that branch has already met and then switched off for
+cause.  What this branch owes that one is the three pieces above.
 .NH 1
 The order
 .IP 1.
@@ -4263,11 +4400,13 @@ at 8 and each started processor reporting the
 .CW machno
 it read out of its own
 .CW m .
-What is left there is secondaries that reach
+What is left there \(em secondaries that reach
 .CW schedinit()
-rather than parking, per-processor redistributor and timer setup, and
+rather than idling on their own timers, and
 .CW conf.nmach
-from the MADT.  A metal box is where the x86 half arrives.
+from the MADT \(em belongs on the
+.CW multicore
+branch, which is past this point already; see the end of section 14.  A metal box is where the x86 half arrives.
 .IP 10.
 .B "Xen PVH's devices."
 xenbus and XenStore, grant tables, event channels,
