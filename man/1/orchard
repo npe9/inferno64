@@ -54,6 +54,51 @@ runs the self test.
 .B -s
 plays a scripted opening headless and writes the frame to
 .BR orchard.raw .
+.SS The game as three files
+While it is playing,
+.I orchard
+serves itself in the namespace:
+.IP
+.EX
+/chan/orchard.status   read: what the game thinks is true
+/chan/orchard.map      read: the maze, with everything on it
+/chan/orchard.ctl      write: left, right, up, down, reset, quit
+.EE
+.PP
+So it can be watched with
+.IR cat (1),
+driven from
+.IR sh (1),
+scripted, logged, or \- because a namespace is a namespace \- exported
+and played from another machine, with nothing in the program knowing the
+difference:
+.IP
+.EX
+games/orchard &
+cat /chan/orchard.map
+echo left > /chan/orchard.ctl
+.EE
+.PP
+None of that needed a protocol.
+.I Sys->file2chan
+turns a file into two channels, and channels are what the main loop is
+already made of, so the reads and the writes arrive as two more arms of
+the same
+.B alt
+the keyboard and the frame clock arrive on.
+That is also why there is no lock anywhere in this program: the state is
+touched by exactly one process, and a reader in another window waits its
+turn between two frames.
+.PP
+.I File2chan
+wants a directory served by the srv device, and
+.B /chan
+in a bare namespace is an ordinary empty directory \-
+.BR "directory not a srv device" .
+The game binds
+.B #s
+over it if it has to.
+If that fails it says so and plays on without the files.
 .SH EXAMPLE
 .EX
 games/orchard
@@ -83,7 +128,22 @@ that the four want four different squares and the first wants the
 player's own;
 that a chaser released from the pen gets out of it;
 that the tunnel wraps both ways;
-and that an empty maze advances the level and refills.
+that an empty maze advances the level and refills;
+and that the map text is one line a row and one character a column, with
+the player on it once and every chaser on it when they are apart, that it
+follows the state rather than being made once, that the status names the
+score, the berries and every chaser, and that a command steers while an
+unknown one is refused.
+.PP
+That is the content of the file interface and not its plumbing, which
+needs the main loop and a second process:
+.B tests/orchardfs.sh
+is that half.
+It starts the game, lists
+.BR /chan ,
+reads the status and the map, writes
+.B left
+to the ctl file, reads the map again and checks the player moved.
 .SH BUGS
 There is one maze.
 Levels differ only in how long a big berry lasts.

@@ -302,6 +302,11 @@ pad := 0;
 prevpad := 0;
 audio := 0;
 testmode := 0;
+served := 0;
+
+# The game as three files in the namespace.  See "the file interface"
+# below.
+ctlio, statio, mapio: ref Sys->FileIO;
 
 PSPD:	con 1;			# pixels a frame
 FSPD:	con 1;
@@ -370,6 +375,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	win.reshape(Rect((0,0),(W*SCALE, H*SCALE)));
 	win.onscreen("place");
 	win.startinput("kbd" :: "keyup" :: "ptr" :: nil);
+	servefiles();
 	ticks := chan of int;
 	spawn fclock->ticker(ticks, 60);
 	for(;;) alt{
@@ -392,7 +398,199 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		draw1();
 		win.image.draw(win.image.r, scr.img, nil, scr.img.r.min);
 		win.image.flush(Draw->Flushnow);
+
+	# The file interface, served from this same alt.  That is the whole
+	# trick and it is why there is no lock anywhere in this program:
+	# the game's state is touched by exactly one process, and a read
+	# arriving from somewhere else is just another arm of the select
+	# the keyboard and the frame clock already arrive on.  A reader in
+	# another window - or on another machine, once this namespace is
+	# exported - waits its turn between two frames.
+	(off, nb, nil, rc) := <-statio.read =>
+		reply(rc, off, nb, statustext());
+	(off2, nb2, nil, rc2) := <-mapio.read =>
+		reply(rc2, off2, nb2, maptext());
+	(nil, nil, nil, rc3) := <-ctlio.read =>
+		if(rc3 != nil)
+			rc3 <-= (nil, nil);		# ctl reads empty
+	(nil, data, nil, wc) := <-ctlio.write =>
+		err := docmd(string data);
+		if(wc != nil){
+			if(err != nil)
+				wc <-= (0, err);
+			else
+				wc <-= (len data, nil);
+		}
+	(nil, nil, nil, wc2) := <-statio.write =>
+		if(wc2 != nil)
+			wc2 <-= (0, "read only");
+	(nil, nil, nil, wc3) := <-mapio.write =>
+		if(wc3 != nil)
+			wc3 <-= (0, "read only");
 	}
+}
+
+# ------------------------------------------------- the file interface
+#
+# The most Inferno thing a program can do is be a file, and this one is
+# three of them:
+#
+#	/chan/orchard.status	read: what the game thinks is true
+#	/chan/orchard.map	read: the maze, with everything on it
+#	/chan/orchard.ctl	write: left, right, up, down, reset, quit
+#
+# So the game can be watched with cat(1), driven from sh(1), scripted,
+# logged, or - because a namespace is a namespace - mounted from another
+# machine and watched or played from there, with nothing in this program
+# knowing the difference.  None of that needed a protocol: sys->file2chan
+# turns a file into two channels, and channels are what the main loop is
+# already made of.
+
+servefiles()
+{
+	# file2chan needs a directory served by the srv device, and /chan
+	# in a bare namespace is an ordinary empty directory - "directory
+	# not a srv device".  Bind #s over it, which is what /lib/namespace
+	# does for a full session and what nothing does for an emu started
+	# with a program on the command line.
+	if(!trychan())
+		if(sys->bind("#s", "/chan", Sys->MREPL) < 0){
+			warn();
+			return;
+		}
+	if(!trychan()){
+		warn();
+		return;
+	}
+	served = 1;
+}
+
+trychan(): int
+{
+	ctlio = sys->file2chan("/chan", "orchard.ctl");
+	statio = sys->file2chan("/chan", "orchard.status");
+	mapio = sys->file2chan("/chan", "orchard.map");
+	return ctlio != nil && statio != nil && mapio != nil;
+}
+
+# Without the files the game is still a game.  The alt arms below are
+# not optional though - they name ctlio.read and the rest - so what is
+# needed is a FileIO whose channels are nil: a receive on a nil channel
+# in an alt simply never fires, which is exactly right for an arm that
+# can never happen.  A nil FileIO is NOT that, it is a nil dereference,
+# which is what the first version of this did.
+warn()
+{
+	sys->fprint(sys->fildes(2), "orchard: no file interface: %r\n");
+	if(ctlio == nil)
+		ctlio = ref Sys->FileIO;
+	if(statio == nil)
+		statio = ref Sys->FileIO;
+	if(mapio == nil)
+		mapio = ref Sys->FileIO;
+}
+
+# One read, with the offset and count the caller asked for.  A read at or
+# past the end is end of file, which is what makes cat(1) stop.
+reply(rc: Sys->Rread, off: big, nb: int, s: string)
+{
+	if(rc == nil)
+		return;
+	b := array of byte s;
+	if(off >= big len b){
+		rc <-= (nil, nil);
+		return;
+	}
+	e := int off + nb;
+	if(e > len b)
+		e = len b;
+	rc <-= (b[int off:e], nil);
+}
+
+statustext(): string
+{
+	(ptx, pty) := tileof(px, py);
+	s := sys->sprint("score %d\nbest %d\nlives %d\nlevel %d\n",
+		score, best, lives, level);
+	s += sys->sprint("berries %d\nplayer %d %d\n", pips, ptx, pty);
+	m := "scatter";
+	if(mode == CHASE)
+		m = "chase";
+	s += sys->sprint("mode %s\nscared %d\n", m, scared);
+	for(i := 0; i < NFOE; i++){
+		f := foes[i];
+		(fx, fy) := tileof(f.x, f.y);
+		st := "chase";
+		if(f.pen > 0)
+			st = "penned";
+		else if(f.eyes)
+			st = "eyes";
+		else if(f.scared)
+			st = "frightened";
+		s += sys->sprint("chaser %d %d %d %s\n", i, fx, fy, st);
+	}
+	if(dead > 0)
+		s += "state dead\n";
+	else if(clear > 0)
+		s += "state cleared\n";
+	else
+		s += "state playing\n";
+	return s;
+}
+
+# The maze as it stands, with everything on it.  Legible to a person and
+# to a program, which is the point of a text interface.
+maptext(): string
+{
+	(ptx, pty) := tileof(px, py);
+	fx := array[NFOE] of int;
+	fy := array[NFOE] of int;
+	for(i := 0; i < NFOE; i++)
+		(fx[i], fy[i]) = tileof(foes[i].x, foes[i].y);
+	s := "";
+	for(ty := 0; ty < MH; ty++){
+		for(tx := 0; tx < MW; tx++){
+			c := ' ';
+			case cells[ty*MW + tx] {
+			WALL =>		c = '#';
+			PIP =>		c = '.';
+			BERRY =>	c = 'o';
+			GATE =>		c = '-';
+			}
+			for(j := 0; j < NFOE; j++)
+				if(fx[j] == tx && fy[j] == ty)
+					c = '1' + j;
+			if(tx == ptx && ty == pty)
+				c = '@';
+			s[len s] = c;
+		}
+		s[len s] = '\n';
+	}
+	return s;
+}
+
+# One command.  Directions are remembered the way a held key is, so
+# writing "left" is exactly as strong as leaning on the left arrow.
+docmd(cmd: string): string
+{
+	(nil, words) := sys->tokenize(cmd, " \t\r\n");
+	if(words == nil)
+		return nil;
+	case hd words {
+	"left" =>	pnext = LEFT;
+	"right" =>	pnext = RIGHT;
+	"up" =>		pnext = UP;
+	"down" =>	pnext = DOWN;
+	"reset" =>	newgame();
+	"quit" =>
+		tone->stop();
+		if(score > best && scorestore != nil)
+			scorestore->saveint("orchard", score);
+		exit;
+	* =>
+		return "unknown command";
+	}
+	return nil;
 }
 
 setup(d: ref Display)
@@ -1132,12 +1330,113 @@ selftest()
 	ck("the level advances", level, lv+1);
 	cktrue("and the maze is refilled", pips > 200);
 
+	# The file interface.  What can be checked here is the CONTENT -
+	# that the text says what the game says - because the plumbing
+	# needs the main loop and a second process; tests/orchardfs.sh is
+	# that half.
+	fresh();
+	holdfoes();
+	m := maptext();
+	(nl, lines) := sys->tokenize(m, "\n");
+	ck("the map is one line a row", nl, MH);
+	wide := 1;
+	for(l := lines; l != nil; l = tl l)
+		if(len hd l != MW)
+			wide = 0;
+	cktrue("and one character a column", wide);
+	nat := 0;
+	ndig := 0;
+	for(i = 0; i < len m; i++){
+		if(m[i] == '@')
+			nat++;
+		if(m[i] >= '1' && m[i] <= '4')
+			ndig++;
+	}
+	ck("the player appears once", nat, 1);
+	# Two of them start on the same tile in the pen, so the map can
+	# honestly show fewer marks than there are chasers.  Put them on
+	# four tiles of their own before counting, rather than weakening
+	# the check to whatever the start happens to give.
+	spread();
+	ndig = 0;
+	m = maptext();
+	for(i = 0; i < len m; i++)
+		if(m[i] >= '1' && m[i] <= '4')
+			ndig++;
+	ck("and all four chasers appear when they are apart", ndig, NFOE);
+
+	# The text tracks the state rather than being generated once.
+	(bx2, by2) := findcell(BERRY);
+	cktrue("a berry to eat", bx2 >= 0);
+	if(bx2 >= 0){
+		cktrue("the map shows it", maptext()[by2*(MW+1) + bx2] == 'o');
+		cells[by2*MW + bx2] = OPEN;
+		paint(bx2, by2);
+		cktrue("and shows it gone once it is",
+			maptext()[by2*(MW+1) + bx2] == ' ');
+	}
+	st := statustext();
+	cktrue("status names the score", instr(st, "score ") >= 0);
+	cktrue("and the berries left", instr(st, "berries ") >= 0);
+	cktrue("and every chaser", nsub(st, "chaser ") == NFOE);
+
+	# Commands.
+	fresh();
+	holdfoes();
+	cktrue("a direction command is taken", docmd("left") == nil);
+	ck("and steers", pnext, LEFT);
+	docmd("up");
+	ck("as does another", pnext, UP);
+	cktrue("an unknown command is refused", docmd("wibble") != nil);
+	cktrue("and does not steer", pnext == UP);
+	sc2 := score;
+	score = 4242;
+	docmd("reset");
+	ck("reset starts again", score, 0);
+	if(sc2 < 0)
+		nfail++;
+
 	if(nfail == 0)
 		sys->print("orchard: PASSED\n");
 	else{
 		sys->print("orchard: FAILED (%d)\n", nfail);
 		raise "fail:test";
 	}
+}
+
+# The four chasers on four distinct open tiles, for a check that wants
+# to see four of them.
+spread()
+{
+	n := 0;
+	for(ty := 1; ty < MH-1 && n < NFOE; ty++)
+		for(tx := 1; tx < MW-1 && n < NFOE; tx++){
+			if(cell(tx, ty) == WALL || cell(tx, ty) == GATE)
+				continue;
+			f := foes[n];
+			f.pen = 0;
+			f.x = tx*8 + OX*8 - 4;
+			f.y = ty*8 + OY*8 - 4;
+			n++;
+			tx += 3;
+		}
+}
+
+instr(s, sub: string): int
+{
+	for(i := 0; i + len sub <= len s; i++)
+		if(s[i:i+len sub] == sub)
+			return i;
+	return -1;
+}
+
+nsub(s, sub: string): int
+{
+	n := 0;
+	for(i := 0; i + len sub <= len s; i++)
+		if(s[i:i+len sub] == sub)
+			n++;
+	return n;
 }
 
 findcell(v: int): (int, int)
