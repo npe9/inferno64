@@ -17,6 +17,8 @@ include "sh.m";
 include "winplace.m";
 	winplace: Winplace;
 include "keyboard.m";
+include "wmtheme.m";
+	wmtheme: Wmtheme;
 
 Ttffs: module {
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
@@ -30,7 +32,7 @@ Ptrstarted, Kbdstarted, Keyupstarted, Controlstarted, Controller, Fixedorigin, S
 Bdwidth: con 3;
 Sminx, Sminy, Smaxx, Smaxy: con iota;
 Minx, Miny, Maxx, Maxy: con 1<<iota;
-Background: con int 16rC4C0B4FF;	# Soft Plan9 Paper desktop
+Background := int 16rC4C0B4FF;	# Soft Plan9 Paper desktop, from wmtheme(2)
 
 # Snapshot of a client window taken before the root Screen is rebuilt.
 Snap: adt {
@@ -96,6 +98,14 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	if(winplace == nil)
 		badmodule(Winplace->PATH);
 	winplace->init();
+
+	# The desktop's colour, which used to be written here and in
+	# wmclient.b independently.  See wmtheme(2).
+	wmtheme = load Wmtheme Wmtheme->PATH;
+	if(wmtheme != nil){
+		wmtheme->init();
+		Background = wmtheme->rgba(Wmtheme->Desktop);
+	}
 
 	sys->pctl(Sys->NEWPGRP|Sys->FORKNS, nil);
 	if (ctxt == nil)

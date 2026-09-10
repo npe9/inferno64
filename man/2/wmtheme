@@ -1,0 +1,89 @@
+.TH WMTHEME 2
+.SH NAME
+wmtheme \- the window system's own colours
+.SH SYNOPSIS
+.EX
+include "wmtheme.m";
+wmtheme := load Wmtheme Wmtheme->PATH;
+
+Inactive, Focused, Chrome, Glyph, Label, Desktop: con iota;
+Ncolour: con Desktop+1;
+
+init: fn();
+rgba: fn(i: int): int;
+hex:  fn(i: int): string;
+set:  fn(i, rgba: int);
+name: fn(i: int): string;
+.EE
+.SH DESCRIPTION
+.I Wmtheme
+holds the colours the window system draws its own furniture with.
+.PP
+It is not a palette a program picks from.
+These are the specific things the chrome is made of \(em the titlebar of
+a window that has the keyboard and of one that does not, its buttons, the
+artwork on them, the title's text, and what is behind every window \(em
+and a theme is a different set of values for exactly these names.
+.TP
+.B rgba
+The colour packed for
+.IR draw (2).
+.TP
+.B hex
+The same colour as
+.BR #rrggbb ,
+which is what
+.IR tk (2)
+takes.
+The alpha is dropped; every colour here is opaque.
+.TP
+.B set
+Change one.
+Widgets already made keep the colour they were made with, so this is for
+setting a theme before windows exist rather than for changing one under
+a running system.
+.SS Why not grpalette(2)
+.IR Grpalette (2)
+is TempleOS's sixteen-colour register, where a colour
+.I is
+an index into a table that a program rewrites underneath a finished
+drawing.
+These are specific values, and routing them through sixteen slots would
+either change them or bolt custom entries onto a fixed table.
+The right shape, the wrong table.
+.SS What it replaced
+Four colours in
+.B /appl/lib/titlebar.b
+written out fourteen times, three more in
+.B /appl/lib/wmclient.b
+as constants, and the desktop background written twice \(em in
+.B wmclient.b
+and in
+.B /appl/wm/wm.b
+\(em which a comment in the first of them described as unavoidable
+because there was no shared home for it.
+.PP
+The defaults are exactly the values that were there, so adopting this
+changed no pixel.
+.IR Tkofftest (1)
+holds that to both ends: that the register still holds what was written
+down before, and that the titlebar on the page is the colour the register
+says.
+.SH SOURCE
+.B /appl/lib/wmtheme.b
+.SH SEE ALSO
+.IR wm (1),
+.IR tkclient (2),
+.IR grpalette (2),
+.B /doc/ui-next-plan.md
+.SH BUGS
+Programs that draw their own furniture \(em
+.B /appl/wm/sweeper.b
+and
+.B /appl/wm/vt.b
+have their own colours \(em are not covered.
+.PP
+There is no way to load a theme from a file, so a different set of values
+means a program calling
+.B set
+before it makes any window.

@@ -193,7 +193,7 @@ where the OS already has the machinery.
 Cmd chord reaches the application instead of vanishing. Neither can be
 shown from a script; both want a person at a keyboard.
 
-## 3. A theme register
+## 3. A theme register — **done**
 
 **What is wrong,** counted rather than estimated: `appl/lib/titlebar.b`
 has four colours (`#8A9098` inactive, `#3D6A9A` focused, `#D4D0C4`
@@ -208,17 +208,30 @@ indexed* file, where a colour is an index into a table a program rewrites
 underneath a finished drawing. These are specific RGBA values. Right
 shape, wrong table.
 
-**The work.** A small named register for the window system —
-`inactive`, `focused`, `chrome`, `glyph`, `desktop` — read by
-`titlebar.b` and `wmclient.b`, with the current values as the default.
+**`wmtheme(2)`** holds them: `inactive`, `focused`, `chrome`, `glyph`,
+`label`, `desktop`, offering each as a packed RGBA for `draw(2)` and as
+`#rrggbb` for `tk(2)`. `titlebar.b`, `wmclient.b` and `wm.b` read it, and
+the defaults are exactly the values that were written down before, so
+adopting it changed no pixel. The desktop background is now written once
+instead of twice.
 
-**Done when:** the chrome is **pixel-identical** before and after, which
-`tkofftest(1)` can assert directly by comparing a rendered titlebar
-against the one it renders today. That is the whole test: a refactor that
-changes no pixel.
+One thing had to move to make it possible: `title_cfg` was an array
+initialiser, and Limbo evaluates those at load time — before `init()` has
+run — so the colours could not have come from anywhere but a literal. It
+is a function now.
 
-**Then, and only then,** a second table becomes a one-line change, which
-is the point of doing it.
+`tkofftest(1)` holds it to both ends: that the register still holds what
+was written down before, and that the titlebar *on the page* is the
+colour the register says.
+
+**Both checks earned themselves immediately.** Writing the register I
+typed `#D4C0C4` for `#D4D0C4` — one digit — and the first check is what
+that kind of mistake is for. And the second only proved itself after a
+false negative: the control that was meant to break it used `/* */`,
+which is not a Limbo comment, so `titlebar.dis` never rebuilt and the
+check "passed" against unchanged code. **Filtering the build output is
+what hid it** — `mk` had printed the syntax error all along. With a `#`
+comment the control fails as it should, naming both colours.
 
 **Native:** carries. Pure Dis.
 
@@ -314,8 +327,7 @@ does not ask.
 3. **Text input** — half done (characters arrive whole, and there is a
    hook that proves it). The rest is `NSTextInputClient`, which needs a
    person at a keyboard to verify.
-4. **Theme register** — small, mechanical, verifiable by pixel identity,
-   and unblocks any future decision about how the system looks.
+4. ~~Theme register~~ — **done.** `wmtheme(2)`.
 5. **HiDPI** — the most visible, the largest, now able to reuse the
    sweep.
 6. **Widgets and text quality** — open-ended, start whenever, no

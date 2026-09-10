@@ -11,6 +11,8 @@ include "draw.m";
 	Display, Image, Screen, Rect, Point, Pointer, Wmcontext, Context: import draw;
 include "tk.m";
 	tk: Tk;
+include "wmtheme.m";
+	wmtheme: Wmtheme;
 	Toplevel: import tk;
 include "wmlib.m";
 	wmlib: Wmlib;
@@ -28,10 +30,11 @@ Focusnone, Focusimage, Focustitle: con iota;
 # Resolved Dis path of the application (set by sh as $dis).
 dispath: string;
 
-# Soft Plan9 Paper desktop; matches appl/wm/wm.b and appl/lib/tkclient.b's
-# own Background constants (same color, defined independently in each -
-# there's no shared module home for it). See putimage()'s Screen.allocate().
-Background: con int 16rC4C0B4FF;
+# Soft Plan9 Paper desktop.  It used to say here that wm.b defined the
+# same colour independently because there was no shared home for it;
+# there is one now - wmtheme(2) - and this is the value it holds, kept as
+# the default for a configuration where the register will not load.
+Background := int 16rC4C0B4FF;
 
 Bdup: con int 16rffffffff;
 Bddown: con int 16radadadff;
@@ -42,6 +45,11 @@ init()
 	draw = load Draw Draw->PATH;
 	tk = load Tk Tk->PATH;
 	wmlib = load Wmlib Wmlib->PATH;
+	wmtheme = load Wmtheme Wmtheme->PATH;
+	if(wmtheme != nil){
+		wmtheme->init();
+		Background = wmtheme->rgba(Wmtheme->Desktop);
+	}
 	if(wmlib == nil){
 		sys->fprint(sys->fildes(2), "wmclient: cannot load %s: %r\n", Wmlib->PATH);
 		raise "fail:bad module";

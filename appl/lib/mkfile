@@ -176,6 +176,7 @@ TARG=\
 	tcl_calc.dis\
 	tkclient.dis\
 	tklayout.dis\
+	wmtheme.dis\
 	titlebar.dis\
 	tone.dis\
 	translate.dis\

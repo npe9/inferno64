@@ -27,6 +27,8 @@ include "titlebar.m";
 include "tklayout.m";
 	tklayout: Tklayout;
 	Problem: import tklayout;
+include "wmtheme.m";
+	wmtheme: Wmtheme;
 include "wmclient.m";
 include "tkclient.m";
 	tkclient: Tkclient;
@@ -187,6 +189,9 @@ init(nil: ref Draw->Context, nil: list of string)
 	tklayout = load Tklayout Tklayout->PATH;
 	if(tklayout != nil)
 		tklayout->init();
+	wmtheme = load Wmtheme Wmtheme->PATH;
+	if(wmtheme != nil)
+		wmtheme->init();
 	if(tk == nil){
 		sys->print("FAIL no tk: %r\n");
 		raise "fail:no tk";
@@ -272,6 +277,7 @@ init(nil: ref Draw->Context, nil: list of string)
 
 	checkdefault();
 	checklayout();
+	checktheme();
 	checkvoice();
 
 	# The chrome's artwork is 16-pixel bitmaps in /icons/tk, and libtk
@@ -545,6 +551,80 @@ checktitlebar(font, what: string)
 	report(ms.y >= bb.dy(), sys->sprint(
 		"a window cannot be shorter than its titlebar in %s (minsize %d, bar %d)",
 		what, ms.y, bb.dy()));
+}
+
+# The window system's colours moved out of titlebar.b into wmtheme(2).
+# A refactor of a look must change no pixel, so this checks both ends:
+# that the register still holds what was written down before, and that
+# what reaches the page is what the register says.
+checktheme()
+{
+	if(wmtheme == nil || titlebar == nil){
+		sys->print("     no wmtheme module; colours not checked\n");
+		return;
+	}
+	# The values that were literals in titlebar.b and wmclient.b.
+	was := array[] of {
+		(Wmtheme->Inactive, "#8A9098"),
+		(Wmtheme->Focused, "#3D6A9A"),
+		(Wmtheme->Chrome, "#D4D0C4"),
+		(Wmtheme->Glyph, "#2A2A22"),
+		(Wmtheme->Desktop, "#C4C0B4"),
+	};
+	bad := "";
+	for(i := 0; i < len was; i++){
+		(w, want) := was[i];
+		got := wmtheme->hex(w);
+		if(got != want)
+			bad += sys->sprint(" %s=%s(was %s)", wmtheme->name(w), got, want);
+	}
+	report(bad == "", sys->sprint(
+		"the theme register holds the colours that were literals%s", bad));
+
+	# and the titlebar on the page is actually that colour
+	blank();
+	top := offscreen();
+	if(top == nil)
+		return;
+	titlebar->new(top, Titlebar->Appl);
+	titlebar->settitle(top, "Colour");
+	map(top);
+	bar := tk->rect(top, ".Wm_t", Tk->Border);
+	seen := dominant(bar);
+	report(seen == wmtheme->hex(Wmtheme->Inactive), sys->sprint(
+		"and the titlebar is drawn in it (%s, register says %s)",
+		seen, wmtheme->hex(Wmtheme->Inactive)));
+}
+
+# the most common colour in a rectangle, as "#RRGGBB"
+dominant(r: Rect): string
+{
+	if(r.dx() <= 0 || r.dy() <= 0)
+		return "";
+	n := r.dx()*r.dy();
+	b := array[n*3] of byte;
+	off.readpixels(r, b);
+	# RGB24 is stored little-endian, so byte 0 of a pixel is blue.
+	cnt := array[1<<12] of {* => 0};	# 4 bits a channel is plenty here
+	for(i := 0; i < n*3; i += 3){
+		k := ((int b[i+2] >> 4) << 8) | ((int b[i+1] >> 4) << 4) | (int b[i] >> 4);
+		cnt[k]++;
+	}
+	best := 0;
+	bk := 0;
+	for(i = 0; i < len cnt; i++)
+		if(cnt[i] > best){
+			best = cnt[i];
+			bk = i;
+		}
+	# find an exact pixel matching that coarse bucket, and report it
+	for(i = 0; i < n*3; i += 3){
+		k := ((int b[i+2] >> 4) << 8) | ((int b[i+1] >> 4) << 4) | (int b[i] >> 4);
+		if(k == bk)
+			return sys->sprint("#%.2X%.2X%.2X",
+				int b[i+2], int b[i+1], int b[i]);
+	}
+	return "";
 }
 
 #

@@ -549,6 +549,7 @@ wmclient wmclient
 wmctl tkclient
 wmlib wmlib
 wmsrv wmsrv
+wmtheme wmtheme
 workdir workdir
 write sys-read
 writeauthinfo security-oldauth
