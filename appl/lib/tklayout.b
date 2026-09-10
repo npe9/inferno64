@@ -94,7 +94,7 @@ walk(top: ref Tk->Toplevel, path: string): list of string
 	return rev(r);
 }
 
-# Whether a geometry manager has this widget.  One that was created and
+# Whether this widget is somewhere that can show it.  One created and
 # never packed still reports a rectangle - its own border - so without
 # this every measuring dummy and unposted menu looks like a widget
 # squeezed to nothing.  wm/toolbar has one of each: a
@@ -114,7 +114,27 @@ laidout(top: ref Tk->Toplevel, path: string): int
 	s := tk->cmd(top, "winfo manager " + path);
 	if(len s > 0 && s[0] == '!')
 		return 1;	# an older libtk: assume it counts
-	return s != "";
+	if(s == "")
+		return 0;
+
+	# Having a manager is not enough.  A widget packed inside a container
+	# that is not itself showing anything - wm/unibrowse packs the
+	# contents of three drop-down panels that are only posted on demand -
+	# reports a manager, and a rectangle the size of its own border.  It
+	# is not being clipped; there is simply nowhere it is being drawn.
+	#
+	# So walk up the masters and require every one of them to have a
+	# content area.  Deliberately not applied to the widget itself: a
+	# widget squeezed until its own content is nothing is exactly the
+	# failure this module exists to report - wm/task's .b.kill got 2x41
+	# where it needed 50x39 - and testing it here would throw away the
+	# most legible case.
+	for(m := master(top, path); m != "" && m != "."; m = master(top, m)){
+		r := tk->rect(top, m, 0);
+		if(r.dx() <= 0 || r.dy() <= 0)
+			return 0;
+	}
+	return 1;
 }
 
 check(top: ref Tk->Toplevel, root: string): list of ref Problem
@@ -147,10 +167,14 @@ check(top: ref Tk->Toplevel, root: string): list of ref Problem
 			if(master(top, hd kl) == m)
 				kids = hd kl :: kids;
 		for(a := kids; a != nil; a = tl a){
+			if(!laidout(top, hd a))
+				continue;
 			ra := tk->rect(top, hd a, Tk->Border);
 			if(ra.dx() <= 0 || ra.dy() <= 0)
 				continue;
 			for(b := tl a; b != nil; b = tl b){
+				if(!laidout(top, hd b))
+					continue;
 				rb := tk->rect(top, hd b, Tk->Border);
 				if(rb.dx() <= 0 || rb.dy() <= 0)
 					continue;
