@@ -633,6 +633,7 @@ extern	int		handler(char*);
 extern	Heap*	heap(Type*);
 extern	Heap*	heaparray(Type*, int);
 extern	void		(*heapmonitor)(int, void*, ulong);
+extern	int		(*gcstopped)(void);	/* see libinterp/heap.c */
 extern	int		heapref(void*);
 extern	Heap*		heapz(Type*);
 extern	int		hmsize(void*);

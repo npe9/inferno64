@@ -53,6 +53,14 @@ extern	int	mutator;
 				}
 
 void	(*heapmonitor)(int, void*, ulong);
+/*
+ * "Is a collection running that this process is not part of?"
+ *
+ * nil, and so false, unless a kernel sets it: emu and every board
+ * without a stop-the-world collector behave exactly as before.  See
+ * destroy() below for what it is for.
+ */
+int	(*gcstopped)(void);
 
 #define	BIT(bt, nb)	(bt & (1<<nb))
 
@@ -531,6 +539,30 @@ destroy(void *v)
 			 * really happens: three times in a plain shell spawn
 			 * storm, with the depth reaching 65.  Counted so that
 			 * stays visible.
+			 */
+			gcdeferred++;
+			return;
+		}
+		if(gcstopped != nil && gcstopped()){
+			/*
+			 * The same handover, for the same reason, in the case
+			 * the VM lock used to make impossible.
+			 *
+			 * A collection is running and this process is not it.
+			 * Freeing now hands the collector's own mark and sweep
+			 * a block that has gone back to the pool underneath it,
+			 * which is what the three faults left at parallelvm=1
+			 * look like: frame+0x1a, movp+0xf7 and string2c+0x17,
+			 * all dereferencing bad heap pointers.  Measured, not
+			 * assumed -- a counter on libinterp's own heapmonitor
+			 * hook caught "heap op 1 from dis pid 8, not the
+			 * collector (dis pid 9)", op 1 being this exact point.
+			 *
+			 * The object's count is already zero, so nothing else
+			 * refers to it and the collector will find it
+			 * unreachable and sweep it.  Waiting here instead would
+			 * mean sleeping in destroy(), which is reached from
+			 * callers that hold locks.
 			 */
 			gcdeferred++;
 			return;
