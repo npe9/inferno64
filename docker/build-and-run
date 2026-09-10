@@ -13,9 +13,18 @@
 #
 # So this path builds instead.  It copies the read-only tree, points
 # mkconfig at the copy, and builds mk, the libraries, the kenc
-# compilers, limbo and the kernels, then runs the suite on them.  It
-# takes minutes rather than seconds, and it needs nothing in the
-# repository that the repository says should not be there.
+# compilers, limbo, the Limbo userland in both Dis word sizes and the
+# kernels, then runs the suite on them.  It takes minutes rather than
+# seconds, and it needs nothing in the repository that the repository
+# says should not be there.
+#
+# What it needs is a checkout and docker.  That claim was made before
+# it was true: every run until now bind-mounted a working tree, where
+# dis/, dis32/ and Inferno/<objtype>/lib were already full of build
+# products that are not in the repository, and the copy inherited
+# them.  Run against a fresh git checkout it stopped at mkroot, which
+# could not find /dis/basename.dis.  The three steps below that make
+# those directories and fill them are what a checkout actually needs.
 set -e
 
 cp -a /src /build
@@ -43,6 +52,17 @@ PATH=/build/Linux/arm64/bin:$PATH
 export PATH
 mk mkdirs >> $log 2>&1 || true
 
+# mkdirs makes the empty directories lib/emptydirs names, which is the
+# runtime root and not the build's own output tree.  Only the include
+# directory of each Inferno/<objtype> is in the repository; bin and lib
+# are build products, so a clean checkout has neither, and the first
+# thing that wants one is iar, whose "cannot create
+# Inferno/riscv64/lib/libinterp.a: No such file or directory" says
+# nothing about a missing directory being the cause.
+for d in /build/Inferno/*/; do
+	mkdir -p "$d/bin" "$d/lib"
+done
+
 # The order is the dependency order, and each name here is one the
 # build stopped on when it was missing.
 for d in lib9 libbio utils/libregexp libmath libmp libsec; do
@@ -55,6 +75,35 @@ say "utils (the compilers)"
 
 say "limbo"
 (cd /build/limbo && mk install) >> $log 2>&1 || { tail -20 $log >&2; exit 1; }
+
+# The Limbo userland.  A board's root file list embeds /dis/sh.dis and
+# the rest of appl/cmd and appl/lib into the kernel image, and none of
+# those .dis files are in the repository either -- so on a clean
+# checkout mkroot stops with "don't know how to make
+# /build/dis/basename.dis".  appl's own mkfile walks every subdirectory
+# including danby, which does not build ("don't know how to make
+# SYSMODULES") and is in no board's root; cmd and lib are what the
+# roots ask for.
+say "appl (the Limbo userland)"
+for d in lib cmd; do
+	(cd /build/appl/$d && mk install) >> $log 2>&1 ||
+		{ tail -20 $log >&2; exit 1; }
+done
+
+# And again for a four-byte Dis word: virt32 is a 32-bit board and its
+# root file list takes every module from /dis32, because a module
+# compiled for an eight-byte word has Type descriptors a four-byte GC
+# walks wrong.  mkdis stamps each source directory with .disword-N and
+# removes the other, so this pass really recompiles rather than
+# reinstalling what is already there.  lib/emptydirs names only the
+# /dis directories, so /dis32's are made from those names.
+say "appl (again, for a four-byte Dis word)"
+mkdir -p /build/dis32
+sed -n 's|^dis/|/build/dis32/|p' /build/lib/emptydirs | xargs mkdir -p
+for d in lib cmd; do
+	(cd /build/appl/$d && mk DISROOT=dis32 DISWORD=4 install) >> $log 2>&1 ||
+		{ tail -20 $log >&2; exit 1; }
+done
 
 # The boards this image can run.  The Pi ones need the patched qemu of
 # tools/qemu-patches; the image built from Boardsuite-pi.Dockerfile has
