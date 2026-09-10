@@ -1,0 +1,86 @@
+.TH WINFO 9
+.SH NAME
+winfo \- Ask about a widget
+.SH SYNOPSIS
+\f5winfo class \fIwindow\fR
+.br
+\f5winfo children \fIwindow\fR
+.br
+\f5winfo manager \fIwindow\fR
+.br
+\f5winfo master \fIwindow\fR
+
+.SH DESCRIPTION
+Each form returns one fact about
+.IR window ,
+which must exist.
+.TP
+.B class
+The widget's type, as
+.B frame
+or
+.B label
+or
+.BR button .
+.TP
+.B children
+The paths one level below
+.IR window ,
+separated by spaces, in the order the widgets were created, and empty if
+there are none.
+A child is a widget whose path is
+.I window
+followed by a dot and one further name;
+.B .f
+has the child
+.B .f.b
+but not
+.BR .f.b.c .
+This is by name, so a widget that exists but has never been laid out is
+still a child.
+.TP
+.B manager
+The geometry manager that has this widget \(em
+.B pack
+or
+.B grid
+\(em or empty if none has it.
+A widget can be created and never laid out;
+.B appl/wm/toolbar.b
+makes a button solely to ask how tall a button would be, and never packs
+it.
+Such a widget still reports a rectangle, its own border, so this is what
+separates one that is on the page from one that is not.
+.TP
+.B master
+The path of the widget this one is laid out inside, or empty if none.
+This is not always the parent by name:
+.B "pack .b -in .f"
+leaves
+.B .b
+named under the root and lays it out inside
+.BR .f ,
+so anything reasoning about which widgets share space wants this rather
+than the path.
+.SH EXAMPLE
+Walk a whole window, printing what each widget is and where it sits:
+.PP
+.EX
+	winfo children .
+	winfo class .f.ok
+	winfo master .f.ok
+.EE
+.SH SEE ALSO
+.IR tklayout (2),
+.IR pack (9),
+.IR grid (9)
+.SH BUGS
+Real Tk's
+.B winfo
+answers some forty questions; this one answers four.
+.PP
+There is no
+.BR ismapped .
+.B Manager
+is the nearest thing, and differs: a widget inside an unmapped parent
+still reports its manager.

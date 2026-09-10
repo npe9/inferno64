@@ -1024,11 +1024,13 @@ tkupdatecmd(TkTop *t, char *arg, char **ret)
 	return tkupdate(t);
 }
 
+static char* tkchildren(TkTop*, char*, char**);
+
 char*
 tkwinfo(TkTop *t, char *arg, char **ret)
 {
 	Tk *tk;
-	char *cmd, *arg1;
+	char *cmd, *arg1, *e;
 
 	cmd = mallocz(Tkmaxitem, 0);
 	if(cmd == nil)
@@ -1053,8 +1055,116 @@ tkwinfo(TkTop *t, char *arg, char **ret)
 		free(cmd);
 		return tkvalue(ret, "%s", tkmethod[tk->type]->name);
 	}
+	if(strcmp(cmd, "manager") == 0) {
+		arg1 = mallocz(Tkmaxitem, 0);
+		if(arg1 == nil) {
+			free(cmd);
+			return TkNomem;
+		}
+		tkword(t, arg, arg1, arg1+Tkmaxitem, nil);
+		tk = tklook(t, arg1, 0);
+		if(tk == nil){
+			tkerr(t, arg1);
+			free(arg1);
+			free(cmd);
+			return TkBadwp;
+		}
+		free(arg1);
+		free(cmd);
+		/*
+		 * Which geometry manager has this widget, or nothing at all.
+		 * Both pack and grid set master and clear it on unpack, so
+		 * this is what separates a widget that is laid out from one
+		 * that was merely created - and programs here create widgets
+		 * they never lay out, to ask them how big they would be.
+		 */
+		if(tk->master == nil)
+			return tkvalue(ret, "");
+		if(tk->master->grid != nil)
+			return tkvalue(ret, "grid");
+		return tkvalue(ret, "pack");
+	}
+	if(strcmp(cmd, "master") == 0) {
+		arg1 = mallocz(Tkmaxitem, 0);
+		if(arg1 == nil) {
+			free(cmd);
+			return TkNomem;
+		}
+		tkword(t, arg, arg1, arg1+Tkmaxitem, nil);
+		tk = tklook(t, arg1, 0);
+		if(tk == nil){
+			tkerr(t, arg1);
+			free(arg1);
+			free(cmd);
+			return TkBadwp;
+		}
+		free(arg1);
+		free(cmd);
+		/*
+		 * The widget this one is packed inside, which is not always
+		 * its parent by path: `pack .b -in .f` leaves .b named under
+		 * the root and lays it out inside .f.  Anything reasoning
+		 * about who shares space with whom wants this, not the name.
+		 */
+		if(tk->master == nil || tk->master->name == nil)
+			return tkvalue(ret, "");
+		return tkvalue(ret, "%s", tk->master->name->name);
+	}
+	if(strcmp(cmd, "children") == 0) {
+		arg1 = mallocz(Tkmaxitem, 0);
+		if(arg1 == nil) {
+			free(cmd);
+			return TkNomem;
+		}
+		tkword(t, arg, arg1, arg1+Tkmaxitem, nil);
+		e = tkchildren(t, arg1, ret);
+		free(arg1);
+		free(cmd);
+		return e;
+	}
 	free(cmd);
 	return TkBadvl;
+}
+
+/*
+ * The paths one level below wp, in the order the widgets were created.
+ *
+ * Every widget hangs off t->root on the siblings list under its whole
+ * path, so a child of wp is a name that begins with wp and has no
+ * further dot after it - ".f" has child ".f.b" but not ".f.b.c".  That
+ * is the packer-independent answer, and the one Tcl gives: a widget that
+ * exists but has never been packed is still a child.
+ */
+static char*
+tkchildren(TkTop *t, char *wp, char **ret)
+{
+	Tk *f;
+	char *e, *sep;
+	int n;
+
+	if(tklook(t, wp, 0) == nil) {
+		tkerr(t, wp);
+		return TkBadwp;
+	}
+	n = strlen(wp);
+	if(n > 0 && wp[n-1] == '.')	/* the root, "." */
+		n--;
+	sep = "";
+	for(f = t->root; f != nil; f = f->siblings) {
+		if(f->name == nil)
+			continue;
+		if(strncmp(f->name->name, wp, n) != 0)
+			continue;
+		if(f->name->name[n] != '.' || f->name->name[n+1] == '\0')
+			continue;
+		if(strchr(f->name->name+n+1, '.') != nil)
+			continue;
+		e = tkvalue(ret, "%s%s", sep, f->name->name);
+		if(e != nil)
+			return e;
+		sep = " ";
+	}
+	return nil;
 }
 
 char*
