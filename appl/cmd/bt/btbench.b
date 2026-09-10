@@ -4146,6 +4146,17 @@ btvirtperiph()
 		sys->print("BT: done\n");
 		return;
 	}
+	#
+	# and say that a pairing this side answers should ask.  BlueZ
+	# asks for protection against a man in the middle, so with
+	# somewhere to ask, the responder offers numeric comparison
+	# rather than Just Works.
+	#
+	if((e = writefile(mnt + "/0/ctl", "confirm on")) != nil){
+		sys->print("BT: FAILED: confirm on: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
 	sys->print("BT: advertising, waiting to be paired with\n");
 
 	dev := "";
@@ -4163,6 +4174,7 @@ btvirtperiph()
 		return;
 	}
 	sys->print("BT: %s connected to us\n", dev);
+	spawn confirmer(dev);
 
 	#
 	# The pairing is the peer's to start and this side's to answer,

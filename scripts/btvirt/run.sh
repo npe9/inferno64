@@ -19,6 +19,18 @@
 set -e
 ROOT=`cd \`dirname "$0"\`/../.. && pwd`
 PHASE=${1:-btvirt}
+#
+# The peripheral phase needs the peer to be the central, which it is
+# only if it is told an address to connect to.  Working that out is
+# not the caller's job: btvirt hands out controllers in the order they
+# connect, the peer takes the first and the guest the second, so the
+# guest is always the second address.  GUESTADDR overrides it.
+#
+case "$PHASE" in
+btvirtperiph)
+	PEERARGS=${PEERARGS:--c ${GUESTADDR:-00AA01010042}}
+	;;
+esac
 PORT=${PORT:-5599}
 UPPORT=${UPPORT:-5598}
 EMU=${EMU:-$ROOT/MacOSX/arm64/bin/emu -c0}

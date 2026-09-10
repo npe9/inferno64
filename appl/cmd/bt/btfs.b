@@ -251,6 +251,14 @@ Radio: adt {
 	#
 	sdpdb:	list of ref Rec;
 	serials:	list of int;
+	#
+	# Whether an incoming pairing should ask a person.  Off by
+	# default: a peripheral that blocks every pairing on a question
+	# nobody is there to answer is worse than one that pairs Just
+	# Works and says so.  "confirm on" arms it.
+	#
+	asking:	int;
+
 };
 
 radios:	list of ref Radio;
@@ -1398,6 +1406,16 @@ ctlwrite(m: ref Tmsg.Write, r: ref Radio, d: ref Dev, s: string)
 			e = ee;
 		else
 			e = disconnect(dd);
+	"confirm" =>
+		#
+		# Whether pairings this side answers ask a person.  The
+		# outgoing form is "pair confirm" on the device; this is
+		# the incoming one, and it is on the controller because
+		# it is about anything that connects, not one device.
+		#
+		r.asking = 1;
+		if(f != nil && hd f == "off")
+			r.asking = 0;
 	"pair" =>
 		#
 		# "pair" on its own is Just Works and claims no
@@ -3263,7 +3281,26 @@ responder(d: ref Dev)
 			known = hd bl;
 	d.r.bondlock <-= 1;
 
-	(b, e) := smp->respond(c, m, known, nil);
+	#
+	# A question only if this controller was told to ask.  The
+	# responder decides from that and from what the peer requested
+	# whether the pairing is numeric comparison or Just Works.
+	#
+	ask: ref Smp->Ask;
+	done: chan of int;
+	if(d.r.asking){
+		ask = ref Smp->Ask;
+		ask.q = chan of string;
+		ask.a = chan of int;
+		done = chan of int;
+		d.ask = ask;
+		spawn asker(d, ask, done);
+	}
+	(b, e) := smp->respond(c, m, known, ask);
+	if(ask != nil){
+		done <-= 1;
+		d.ask = nil;
+	}
 	if(e != nil){
 		#
 		# Only worth a line when the peer actually started.  A

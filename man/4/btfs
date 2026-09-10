@@ -253,6 +253,17 @@ is written back to it.  Writing
 .B no
 ends the pairing and makes no bond, which is the point of asking.
 .IP
+.BI "confirm " on
+on the controller's own
+.B ctl
+does the same for pairings this side answers rather than starts: a
+peer that asks for protection against a man in the middle then gets
+numeric comparison, and its
+.B confirm
+file holds the question.  It is off by default, because a peripheral
+that blocks every pairing on a question nobody is there to answer is
+worse than one that pairs Just Works and says so.
+.IP
 The six digits are never sent: both sides compute them from the two
 public keys and the two nonces, and a person compares them.  That is
 the whole of the protection, and it is why plain

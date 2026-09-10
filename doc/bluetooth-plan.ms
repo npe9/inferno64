@@ -252,11 +252,39 @@ The channel is made in the demultiplexer now, for the two fixed CIDs
 that have one, so the frame waits on the queue for whoever opens it
 next.  A pause in the fixture before asking to pair made the fault
 disappear, which is exactly why the pause was taken out again.
+.NH 3
+Asking on the way in as well
 .PP
-What is left is the numeric comparison g2 computes \(em which is not shown to
-anyone, because there is nowhere to show it, and claiming protection
-against a man in the middle without asking a person would be a lie.
-That needs the next item.
+The responder asks too, when the controller has been told to.
+.CW "confirm on"
+on the controller's
+.CW ctl
+arms it; the outgoing form is
+.CW "pair confirm"
+on a device, and this is the incoming one, on the controller because
+it is about anything that connects rather than one device.  It is off
+by default, and that is the honest default: a peripheral that blocks
+every pairing on a question nobody is there to answer is worse than
+one that pairs Just Works and says so.
+.PP
+The responder's
+.CW g2
+takes its arguments the other way round \(em the initiator's public
+key first, whichever side is computing \(em so it is a different
+calculation from the initiator's and is checked separately, the same
+way, against openssl: for the run that showed
+.CW "numeric 624464" ,
+openssl agrees.
+.PP
+.CW scripts/btvirt/run.sh
+works out the peer's part for the peripheral phase rather than leaving
+it to whoever runs it: btvirt hands out controllers in the order they
+connect, the peer takes the first and the guest the second, so the
+guest is always the second address.
+.PP
+What is left is passkey entry, which needs six digits read in rather
+than shown.  Numeric comparison is done, both roles, and is described
+under the next item, which is where the asking lives.
 .PP
 .B "A way to ask the user."
 Just Works is what the stack did because it is what needs no
