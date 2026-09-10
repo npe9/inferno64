@@ -252,7 +252,7 @@ identical rows. They did not: a plain `label` with no `-font` measures
 `tk: font not found`. So 19 programs and 433 widgets were laid out in a
 face whose text is nearly twice as tall, and not one widget lost room.
 
-### One program does break, and it is the one you would guess
+### One program reports, and it turns out not to be broken
 
 A second sweep took the programs the first deliberately left out — the
 ones with hand-built geometry: `sam samtk brutus pinboard unibrowse vt
@@ -266,9 +266,23 @@ screen:**
 ```
 
 It is clean at the tree's bitmap font on the same screen, so this is the
-font and not the screen — `sam`'s text pane is sized in characters, and
-at a face nearly twice as tall it asks for a window wider than the
-display it is on.
+font and not the screen: `sam`'s text pane is `text .w.t -width 80w`,
+sized in characters, and at a face nearly twice as tall eighty columns no
+longer fit across a 900-pixel display.
+
+**But that is `sam` behaving correctly, not breaking.** `samtk.b` reads
+`.w.t cget actwidth` and `actheight` *after* `tkclient->onscreen`, so it
+computes from the size it was given rather than the size it asked for.
+It shows about seventy-two columns instead of eighty, which is what a
+text editor on a screen that narrow ought to do. Nothing was changed.
+
+This is the limitation that `tklayout(2)`'s own BUGS section names — a
+window clamped by the screen rather than by its own geometry reports the
+same way as one whose layout is wrong — and it is worth having hit it
+once, because the report is real, the reading of it was not. The checker
+answers "did this widget get what it asked for", which is a strictly
+weaker question than "is this laid out correctly", and the gap between
+the two has to be closed by reading the program.
 
 That finding took three attempts to state honestly. The first run of the
 whole sweep was believed, then contradicted by a rerun showing zero — and
@@ -284,10 +298,15 @@ that is its own note below.
 
 **So the answer to the question section 3 opened with:** layout was the
 remaining objection to adopting a scalable font, and for the Tk programs
-it very nearly does not materialise — `libtk` sizes each widget from its
-font and `pack` gives each the room it asks for. One program in 41 wants
-a wider window than a 900-pixel screen can give it. What is untouched is
-the programs that draw their own text, which is a different exercise.
+it does not materialise. Across 41 programs swept at two fonts, not one
+has a layout that breaks; the single report is a text editor asking for
+eighty columns on a screen too narrow for them at that size, and
+adapting. `libtk` sizes each widget from its font and `pack` gives each
+the room it asks for, which between them do the work.
+
+What is untouched is the programs that draw their own text, which is a
+different exercise, and the network-facing ones that will not come up
+unattended.
 
 ### The font server could lose a race, and does not now
 
