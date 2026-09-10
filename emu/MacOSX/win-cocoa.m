@@ -4317,6 +4317,65 @@ convert_key(unsigned short key, unichar ch)
 	}
 }
 
+/*
+ * Hand a key event's characters to Inferno.
+ *
+ * NSString is UTF-16, so anything above the basic multilingual plane -
+ * an emoji, or most of what an input method produces - arrives as a
+ * surrogate PAIR.  Taking [chars characterAtIndex:0] and calling that
+ * the key, which is what this did, delivers half a rune: the value is a
+ * lone high surrogate, which is not a character at all.  And an event
+ * carrying more than one character lost everything after the first.
+ *
+ * The first character still goes through convert_key(), because that is
+ * what turns a keyCode into Return, an arrow, or a function key.  The
+ * rest are text and are delivered as themselves - a composed string is
+ * not a key press, and there is no keyCode that means anything for it.
+ *
+ * This is one half of what an input method needs.  The other half is
+ * NSTextInputClient, so that composition is shown while it happens
+ * rather than arriving all at once; that is not done here.
+ */
+static void
+deliverchars(NSString *chars, unsigned short keyCode)
+{
+	NSUInteger i, n;
+	unichar c, lo;
+	long r;
+	int key, first;
+
+	n = chars == nil ? 0 : [chars length];
+	if(n == 0){
+		key = convert_key(keyCode, 0);
+		if(key != -1)
+			gkbdputc(gkbdq, key);
+		return;
+	}
+	first = 1;
+	for(i = 0; i < n; i++){
+		c = [chars characterAtIndex:i];
+		r = c;
+		if(c >= 0xD800 && c <= 0xDBFF && i+1 < n){
+			lo = [chars characterAtIndex:i+1];
+			if(lo >= 0xDC00 && lo <= 0xDFFF){
+				r = 0x10000 + (((long)c - 0xD800) << 10)
+					+ ((long)lo - 0xDC00);
+				i++;
+			}
+		}
+		if(first && r < 0x10000){
+			key = convert_key(keyCode, (unichar)r);
+			if(key == -1){
+				first = 0;
+				continue;
+			}
+		}else
+			key = (int)r;
+		first = 0;
+		gkbdputc(gkbdq, key);
+	}
+}
+
 @interface InfernoView : NSView
 @end
 
@@ -4443,11 +4502,7 @@ convert_key(unsigned short key, unichar ch)
 	if(mods & NSEventModifierFlagCommand)
 		return;
 
-	chars = [e characters];
-	ch = [chars length] > 0 ? [chars characterAtIndex:0] : 0;
-	key = convert_key([e keyCode], ch);
-	if(key != -1)
-		gkbdputc(gkbdq, key);
+	deliverchars([e characters], [e keyCode]);
 }
 
 - (void)keyUp:(NSEvent *)e
@@ -4838,6 +4893,38 @@ resizetest_start(void)
 	resizetest_tick();
 }
 
+/*
+ * Feed a string through the same path a key event takes, so that the
+ * decoding above can be tested at all.
+ *
+ *	INFERNO_KEY_TEST='h\u00e9llo \U0001f600'  emu ...
+ *
+ * Nothing else in this system can produce a surrogate pair on demand: a
+ * person has to type one, and writing to /dev/keyboard goes in below the
+ * platform and tests nothing. Same shape and same rationale as
+ * INFERNO_RESIZE_TEST above - guarded by an environment variable, doing
+ * nothing without one, and for provoking a path rather than for use.
+ */
+static void
+keytest_start(void)
+{
+	char *p;
+	NSString *s;
+
+	p = getenv("INFERNO_KEY_TEST");
+	if(p == nil || *p == '\0')
+		return;
+	s = [NSString stringWithUTF8String:p];
+	if(s == nil)
+		return;
+	/* Plan 9 print(2), not C printf: %lu is not a verb here. */
+	print("keytest: delivering %d UTF-16 units\n", (int)[s length]);
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)500 * NSEC_PER_MSEC),
+		dispatch_get_main_queue(), ^{
+			deliverchars(s, 0);
+		});
+}
+
 static void
 createwindow(void)
 {
@@ -4906,6 +4993,7 @@ createwindow(void)
 	present_softscreen();
 
 	resizetest_start();
+	keytest_start();
 }
 
 void

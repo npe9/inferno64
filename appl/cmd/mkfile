@@ -157,6 +157,7 @@ TARG=\
 	iostats.dis\
 	itest.dis\
 	itreplay.dis\
+	keychartest.dis\
 	keyuptest.dis\
 	kill.dis\
 	line3test.dis\

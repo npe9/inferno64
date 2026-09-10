@@ -1,0 +1,79 @@
+.TH KEYCHARTEST 1
+.SH NAME
+keychartest \- check that a key event's characters arrive whole
+.SH SYNOPSIS
+.B keychartest
+.I string
+.SH DESCRIPTION
+.I Keychartest
+reads
+.B /dev/keyboard
+and compares what arrives against
+.IR string ,
+rune for rune.
+.PP
+It is meant to be run with
+.BR INFERNO_KEY_TEST ,
+which makes
+.IR emu (1)
+push a string through the same path a key event takes:
+.IP
+.EX
+s='h\e[u00e9]llo'
+INFERNO_KEY_TEST=$s emu-cocoa /dis/keychartest.dis $s
+.EE
+.PP
+The interesting characters are the ones above the basic multilingual
+plane.
+.B NSString
+is UTF-16, so an emoji is a surrogate
+.IR pair ,
+and code that takes one unit of it delivers half a rune \(em a lone high
+surrogate, which is not a character.
+Reported as a count of both, so the difference is visible:
+.B "héllo 😀 世界"
+is 11 UTF-16 units and 10 runes.
+.SS Why the hook exists
+Nothing else in the system can produce a surrogate pair on demand.
+A person has to type one, and writing to
+.B /dev/keyboard
+goes in
+.I below
+the platform, so it exercises none of the decoding.
+That leaves a fault in the one path a person's keyboard actually takes
+untestable, which is what
+.B INFERNO_KEY_TEST
+is for \(em the same shape and the same reason as
+.B INFERNO_RESIZE_TEST
+in
+.IR emu (1).
+.SS The watchdog
+A read of
+.B /dev/keyboard
+blocks, so a run that delivers fewer runes than were asked for would wait
+for ever, and a test that hangs reports nothing at all \(em which is
+exactly what an earlier version of this did when the delivery was broken.
+A second process writes one
+.B EOT
+after four seconds to end the wait.
+It writes into the same queue the platform feeds, below the code being
+tested, so it says nothing about that code: it is a timer, not a probe.
+.SH SOURCE
+.B /appl/cmd/keychartest.b
+.SH SEE ALSO
+.IR emu (1),
+.IR keyuptest (1),
+.IR cons (3)
+.SH BUGS
+It checks that characters arrive, not that composition works.
+There is no
+.B NSTextInputClient
+on the view, so an input method still has nowhere to show a composition
+while it is being made; what this proves is only that a finished string
+survives the crossing.
+.PP
+The hook delivers with a keyCode of zero, so it exercises the text path
+and never the one that turns a keyCode into Return or an arrow.
+.PP
+Cocoa only. Every other backend has its own keyboard path and none of
+them is checked here.

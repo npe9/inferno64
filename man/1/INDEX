@@ -356,6 +356,7 @@ itreplay itest
 join spree-join
 keepaway keepaway
 keyboard keyboard
+keychartest keychartest
 kill tiny
 lattice lattice
 lc ls

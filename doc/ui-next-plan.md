@@ -156,20 +156,42 @@ alphabets — it is the difference between the system being usable in a
 language and not. Everything else in this plan is about how the interface
 looks or reads; this is about whether text can be entered at all.
 
-**The work.** Adopt `NSTextInputClient` on the view, so marked text and
-composition go through the OS rather than around it, and deliver the
-composed string rather than one character. The Inferno side already takes
-runes — `libtk` and `/dev/keyboard` are rune paths — so the change is
-contained to the backend.
+**Half of it is done.** `deliverchars()` now walks the whole string and
+decodes surrogate pairs, so a character above the basic plane arrives as
+one rune instead of a lone high surrogate, and an event carrying more
+than one character no longer loses everything after the first. The first
+character still goes through `convert_key()`, because that is what turns
+a keyCode into Return or an arrow; the rest are text and are delivered as
+themselves.
+
+**And it is testable now, which it was not.** Nothing in the system can
+produce a surrogate pair on demand — a person has to type one, and
+writing to `/dev/keyboard` goes in *below* the platform and exercises
+none of the decoding. `INFERNO_KEY_TEST` pushes a string through the same
+path a key event takes, the same shape as `INFERNO_RESIZE_TEST`, and
+`keychartest(1)` reads `/dev/keyboard` and compares rune for rune:
+`héllo 😀 世界` is 11 UTF-16 units and 10 runes, and all ten arrive.
+With the old one-unit behaviour restored it reports one.
+
+That seam is worth more than the fix, because the rest of this item needs
+it.
+
+**What is left.** `NSTextInputClient` on the view, so that a composition
+is *shown while it is being made* rather than arriving finished. That is
+the half a person actually notices, and it cannot be checked by pushing a
+string through a hook: it needs a real input method and a person looking
+at a window. Also still there: `keyDown` returns early on any
+`NSEventModifierFlagCommand`, so every Cmd chord is swallowed — changing
+that risks the menu, and the menu is not testable here either.
 
 **Native:** does not carry. Native keyboards come through the kernel's
 own driver, and composition there is a different piece of work with the
 same shape. Worth doing hosted first anyway, because the hosted side is
 where the OS already has the machinery.
 
-**Done when:** a composed character — an accented vowel by dead key, or
-anything from a CJK input method — arrives in an `entry` intact, and a
-Cmd chord reaches the application instead of vanishing.
+**Done when:** a composition is visible while it is being typed, and a
+Cmd chord reaches the application instead of vanishing. Neither can be
+shown from a script; both want a person at a keyboard.
 
 ## 3. A theme register
 
@@ -289,8 +311,9 @@ does not ask.
 1. ~~Check the `voiceannounce` link~~ — **done.** It was broken; `libtk`
    carries its own default now.
 2. ~~Review buffer~~ — **done.** `/dev/voice/history`.
-3. **Text input** — the only item that gates whether the system can be
-   used in a language.
+3. **Text input** — half done (characters arrive whole, and there is a
+   hook that proves it). The rest is `NSTextInputClient`, which needs a
+   person at a keyboard to verify.
 4. **Theme register** — small, mechanical, verifiable by pixel identity,
    and unblocks any future decision about how the system looks.
 5. **HiDPI** — the most visible, the largest, now able to reuse the

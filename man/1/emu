@@ -344,6 +344,27 @@ treats two clicks less than 500ms apart as a double click.
 See
 .IR inputtest (1)
 for what was measured.
+.SS "Delivering characters, for a test"
+.TP
+.BI INFERNO_KEY_TEST= string
+Push
+.I string
+through the same path a key event takes, once, shortly after the window
+appears.
+.PP
+The platform hands over UTF-16, so anything above the basic multilingual
+plane arrives as a surrogate
+.IR pair ,
+and code that takes one unit of it delivers half a rune.
+Nothing else in the system can produce that on demand \(em a person has
+to type it, and writing to
+.B /dev/keyboard
+goes in below the platform and exercises none of the decoding \(em which
+left the one path a person's keyboard actually takes untestable.
+.PP
+For provoking a path, not a feature.
+See
+.IR keychartest (1).
 .SS "Resizing the window, for a test"
 .TP
 .B INFERNO_RESIZE_TEST=\fIms\fP
