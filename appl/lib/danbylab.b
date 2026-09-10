@@ -345,6 +345,19 @@ parse(spec: string): (ref Model, ref Config, string)
 		"plain" =>
 			claimed = 1;
 			err = plain(m, c, w, nwords);
+		"shade" =>
+			claimed = 1;
+			if(nwords != 2)
+				err = "shade: usage: shade OBSERVABLE";
+			else if((si := nameindex(m.observablelabels, w[1])) < 0)
+				err = "shade: no observable named "+w[1];
+			else {
+				n := len c.shaded;
+				sa := array[n+1] of int;
+				sa[0:] = c.shaded;
+				sa[n] = si;
+				c.shaded = sa;
+			}
 		"link" =>
 			claimed = 1;
 			err = link(m, c, w, nwords);
@@ -1016,6 +1029,12 @@ initgraph()
 	Mechanism =>
 		graph.cmd("table history time first second -capacity 20000");
 		colours += "\ncolour first 16r178f86ff\ncolour second 16r7b5aa6ff";
+		# The same two hues, mixed a quarter of the way into the paper
+		# and stored OPAQUE.  A translucent fill would be the obvious
+		# thing and is wrong here: the fill is laid down column by
+		# column, so any column painted twice composites twice and
+		# shows as a seam.  Pre-mixing makes painting idempotent.
+		colours += "\ncolour firstfill 16rbcd7ceff\ncolour secondfill 16rd5cad6ff";
 	Population =>
 		table := "table history time";
 		for(i := 0; i < len model.statenames; i++)
@@ -1352,6 +1371,16 @@ drawgraph()
 		graph.cmd(sys->sprint("scale %s y %.8g %.8g reverse", name, -ymax, ymax));
 		graph.cmd("axis "+name+" x time");
 		graph.cmd("axis "+name+" y value");
+		# areas first: plot(2) paints layers in the order the commands
+		# arrive, so a fill issued after its own line would bury it
+		cols := array[] of {"first", "second"};
+		for(k := 0; k < len cfg.shaded; k++){
+			o := cfg.shaded[k];
+			if(o < 0 || o >= len cols)
+				continue;
+			graph.cmd("area "+name+" history x time y "+cols[o]+
+				" colour "+cols[o]+"fill base 0");
+		}
 		graph.cmd("line "+name+" history x time y first colour first width 2");
 		graph.cmd("line "+name+" history x time y second colour second width 2");
 	Population =>

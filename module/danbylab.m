@@ -56,6 +56,10 @@ Danbylab: module
 		# get their links drawn but no sprite of their own.
 		plainpts:	array of int;
 
+		# Observables whose trace is filled down to zero, so the area
+		# under the curve - the integral - is the picture.
+		shaded:		array of int;
+
 		links:		array of int;		# Mechanism: pairs of point indices
 		linkspr:	array of string;	# and the component each is drawn as
 		bodies:		array of string;	# Orbit: what each body is called

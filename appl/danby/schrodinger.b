@@ -170,7 +170,9 @@ SPEC: con
 	"link levelleft levelright accent\n" +
 	"plain wc wl8 wl7 wl6 wl5 wl4 wl3 wl2 wl1 wr1 wr2 wr3 wr4 wr5 wr6 wr7 wr8 levelleft levelright\n" +
 	"observable amplitude psi\n" +
-	"observable probability psi psi\n";
+	"observable probability psi psi\n" +
+	# the area under psi^2 IS the probability, so draw it as an area
+	"shade probability\n";
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {

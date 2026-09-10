@@ -11,7 +11,7 @@ include "string.m";
 	str: String;
 include "plot.m";
 
-Line, Pointmark, Vector: con iota;
+Line, Pointmark, Vector, Area: con iota;
 
 new(image: ref Image, font: ref Font): ref Plotter
 {
@@ -426,13 +426,15 @@ Plotter.cmd(p: self ref Plotter, command: string): string
 		else if(a[2] == "y") (v.ylabel,v.ygrid) = (a[3],grid);
 		else return "axis: axis must be x or y";
 		return nil;
-	"line" or "point" or "vector" =>
+	"line" or "point" or "vector" or "area" =>
 		if(len a < 8)
-			return "usage: line|point|vector view table x column y column options";
+			return "usage: line|point|vector|area view table x column y column options";
 		g := Line;
 		if(a[0] == "point") g = Pointmark;
 		if(a[0] == "vector") g = Vector;
-		l := ref Layer(string g,a[1],a[2],nil,nil,nil,nil,"foreground",1,4);
+		if(a[0] == "area") g = Area;
+		l := ref Layer(string g,a[1],a[2],nil,nil,nil,nil,"foreground",1,4,
+			0.0,0.0,0.0,0);
 		for(i := 3; i+1 < len a; i += 2)
 			case a[i] {
 			"x" => l.x = a[i+1];
@@ -442,6 +444,13 @@ Plotter.cmd(p: self ref Plotter, command: string): string
 			"colour" => l.colour = a[i+1];
 			"width" => l.width = int a[i+1];
 			"radius" => l.radius = int a[i+1];
+			# an area fills from the curve down to base, over the whole
+			# curve or just the span from..to - which is what makes it
+			# a picture of an integral between two limits rather than a
+			# shaded background
+			"base" => l.base = real a[i+1];
+			"from" => (l.xlo, l.bounded) = (real a[i+1], 1);
+			"to" => (l.xhi, l.bounded) = (real a[i+1], 1);
 			* => return a[0] + ": unknown option " + a[i];
 			}
 		p.layers = l :: p.layers;
@@ -522,6 +531,45 @@ Plotter.draw(p: self ref Plotter)
 			for(i := 0; i < t.n; i++)
 				p.image.ellipse((v.x.map(tableget(t,i,xc)),v.y.map(tableget(t,i,yc))),
 					l.radius,l.radius,0,colour,(0,0));
+		Area =>
+			# Filled by columns rather than by fillpoly.  A polygon
+			# traced along a data curve has as many points as the
+			# table has rows - hundreds - and memfillpoly quietly
+			# fills nothing at all when handed one of those, whether
+			# or not it is explicitly closed.  A vertical line per
+			# pixel column, interpolated between the two samples that
+			# straddle it, is exact, cannot degenerate, and costs the
+			# same order of work.
+			yb := v.y.map(l.base);
+			for(i := 1; i < t.n; i++){
+				x0 := tableget(t,i-1,xc);
+				x1 := tableget(t,i,xc);
+				if(l.bounded && (x1 < l.xlo || x0 > l.xhi))
+					continue;
+				y0 := tableget(t,i-1,yc);
+				y1 := tableget(t,i,yc);
+				if(l.bounded){
+					if(x0 < l.xlo) (x0, y0) = (l.xlo, y0+(y1-y0)*(l.xlo-x0)/(x1-x0));
+					if(x1 > l.xhi) (x1, y1) = (l.xhi, y0+(y1-y0)*(l.xhi-x0)/(x1-x0));
+				}
+				(px0, px1) := (v.x.map(x0), v.x.map(x1));
+				if(px1 < px0)
+					(px0, px1) = (px1, px0);
+				# half-open, except for the very last segment: a shared
+				# end column painted twice by two segments shows as a
+				# darker seam the moment the fill colour is not opaque
+				last := px1;
+				if(i < t.n-1)
+					last = px1-1;
+				for(px := px0; px <= last; px++){
+					yv := y0;
+					if(px1 > px0)
+						yv = y0 + (y1-y0)*real(px-px0)/real(px1-px0);
+					py := v.y.map(yv);
+					p.image.line((px,py), (px,yb), Draw->Endsquare,
+						Draw->Endsquare, 0, colour, (0,0));
+				}
+			}
 		Vector =>
 			if(dxc >= 0 && dyc >= 0)
 				for(i := 0; i < t.n; i++){

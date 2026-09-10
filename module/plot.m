@@ -43,6 +43,11 @@ Plot: module
 		x, y, dx, dy: string;
 		colour: string;
 		width, radius: int;
+		# area only: the value the fill drops to, and the span of x it
+		# covers.  bounded is 0 when no from/to was given, which means
+		# the whole curve.
+		base, xlo, xhi: real;
+		bounded: int;
 	};
 
 	Plotmsg: adt {

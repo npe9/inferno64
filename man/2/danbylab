@@ -100,6 +100,18 @@ never moved \(em which is right for a mechanism and wrong for a line
 with seventeen points on it, where seventeen blobs bury the shape they
 are meant to describe.  A plain point contributes its links and nothing
 else.  Repeatable, and the points must already have been declared.
+.TP
+.BI "shade " observable
+Fill the named observable's trace down to zero, so the area under it is
+drawn and not just its outline.  Repeatable.  Where the observable is a
+density, the area is what it integrates to \(em
+.IR danby-schrodinger (1)
+shades psi squared, and the shaded region is the probability of finding
+the particle there.  Implemented with
+.IR plot (2)'s
+own
+.B area
+layer, issued before the lines so it lies under them.
 .PP
 .B Population
 draws a stack of bars beside a graph with one trace per state; a click in

@@ -118,6 +118,47 @@ name, from either
 .B split
 or
 .BR rect .
+.TP
+.BI "area " view " " table " x " column " y " column " [" options ]
+A fourth layer geometry beside
+.BR line ,
+.B point
+and
+.BR vector :
+the region between the curve and a baseline, filled.  This is how a plot
+draws an integral rather than only its integrand \(em the area under a
+probability density is the probability, and a picture of it says so
+where a curve does not.  Options are those of
+.B line
+plus:
+.B base
+.IR num ,
+the value the fill drops to (0 by default), and
+.B from
+.I num
+/
+.B to
+.IR num ,
+which bound it to one span of
+.I x
+so the picture is the integral between two limits.
+.PP
+Layers are painted in the order their commands arrive, so an
+.B area
+must be issued BEFORE the
+.B line
+that draws the same curve, or it buries it.
+.PP
+The fill is laid down as one vertical run per pixel column, interpolated
+between the two samples that straddle it, and not as a polygon.
+.B Fillpoly
+is the obvious implementation and does not work here: handed a polygon
+traced along a data curve \(em hundreds of points, which is what a table
+has \(em it quietly fills nothing at all, closed or not.  A consequence
+of filling by column is that the fill colour should be OPAQUE: two
+segments that share an end column would otherwise composite it twice and
+leave a visible seam.  Mix the tint into the background yourself rather
+than reaching for an alpha.
 .SH SOURCE
 .B /module/plot.m
 .br
