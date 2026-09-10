@@ -919,8 +919,35 @@ TEXT	vectrap(SB), 1, $-4
 	MOV	UR_R23(RSP), R23
 	MOV	UR_R24(RSP), R24
 	MOV	UR_R25(RSP), R25
-	MOV	UR_R26(RSP), R26
-	MOV	UR_R27(RSP), R27
+	/*
+	 * R26 (up) and R27 (m) are NOT restored from the frame.
+	 *
+	 * They belong to the processor and to the scheduler, not to the
+	 * interrupted code.  What was here restored both, which is
+	 * harmless on one processor -- the frame was built by this
+	 * processor, so the m it holds is this processor's -- and is the
+	 * whole of the SMP fault as soon as there is a second.  A
+	 * process interrupted on cpu0 carries a frame on its kernel
+	 * stack naming cpu0's Mach; when the scheduler resumes that
+	 * process on cpu1 and it returns through here, cpu1's m becomes
+	 * cpu0's Mach, and cpu1's own entirely correct ilock()/iunlock()
+	 * then count cpu0's m->ilockdepth.  up comes back wrong by the
+	 * same instruction.
+	 *
+	 * That is not a guess about this board: it is what the identical
+	 * "POPQ R14; POPQ R15" did in os/inferno/pc64/l.s, measured
+	 * there -- 4 of 4 two-processor runs faulting before, 20 of 20
+	 * clean after -- and os/9front/pc64/l.s guards it with a test on
+	 * the saved CS for exactly this reason.  This board needs no
+	 * such test: os/inferno/virtarm64/trap.c records that the kernel
+	 * "never itself enters EL0", so every exception here is EL1 to
+	 * EL1 and the reload was always the nested case.  If EL0 is ever
+	 * introduced, the reload comes back guarded on the saved SPSR's
+	 * mode field at UR_STATUS, the way pc64 guards on CS.
+	 *
+	 * The entry stub still saves both, so a register dump is
+	 * unchanged.
+	 */
 	MOV	UR_R28(RSP), R28
 	MOV	UR_R29(RSP), R29
 	MOV	UR_R30(RSP), R30
