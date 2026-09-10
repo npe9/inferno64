@@ -367,8 +367,19 @@ tkdrawbutton(Tk *tk, Point orig)
 		tkdrawstring(tk, i, addpt(u, p), tkl->text, tkl->ul, ct, tkl->justify);
 	}
 
-//	if(tkhaskeyfocus(tk))
-//		tkbox(i, focusr, tk->highlightwidth, tkgc(e, TkChighlightfgnd));
+	/*
+	 * Which control has the keyboard, shown.
+	 *
+	 * These two lines were commented out here and are live and identical
+	 * in label.c, and entry.c does the same thing a line further down.
+	 * So a label and a text field showed their focus and a button did
+	 * not - and a button is what a person tabs between. Nothing was
+	 * saved by leaving it out: tk->highlightwidth is already 1 for these
+	 * widgets and mainr is already inset by it, so the ring has had its
+	 * pixel reserved all along and the space was simply left blank.
+	 */
+	if(tkhaskeyfocus(tk))
+		tkbox(i, focusr, tk->highlightwidth, tkgc(e, TkChighlightfgnd));
 	tkdrawrelief(i, tk, ZP, bgnd, relief);
 
 	p.x = tk->act.x + orig.x;

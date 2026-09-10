@@ -458,10 +458,15 @@ than a constraint.
   — `wmtheme(2)` — but nothing yet *uses* it to do anything more than
   reproduce the old palette. A second table is now a small change, and
   the register is the place a lighter, quieter look would come from.
-- **No focus ring.** `tkhaskeyfocus` exists and the drawing for it is
-  commented out in `libtk/buton.c`. Which control has the keyboard is
-  invisible, which matters for anyone driving by keyboard and is a
-  three-line change to un-comment and colour properly.
+- ~~**No focus ring.**~~ **Done.** The two lines that draw it were
+  commented out in `libtk/buton.c` and live, identical, in `label.c` —
+  and `entry.c` does the same a line further down. So a label and a text
+  field showed their focus and a *button* did not, which is the widget a
+  person tabs between. Nothing was saved by leaving it out:
+  `tk->highlightwidth` is already 1 for these widgets and `mainr` is
+  already inset by it, so the pixel had been reserved and left blank all
+  along. A focused button now reads 330 inked pixels against an
+  unfocused one's 222.
 - **`tknotebook(2)`'s tabs are radiobuttons in a row**, because that is
   what composition gets you. Making them look like tabs wants a canvas or
   the themed layer below.

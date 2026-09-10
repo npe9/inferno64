@@ -283,6 +283,7 @@ init(nil: ref Draw->Context, nil: list of string)
 
 	checkdefault();
 	checklayout();
+	checkfocusring();
 	checkcanvastag();
 	checkplaintitle();
 	checktheme();
@@ -618,6 +619,63 @@ shown(top: ref Tk->Toplevel, nb: ref Notebook): string
 		if(tk->cmd(top, "winfo manager " + nb.page(i)) != "")
 			o += string i;
 	return o;
+}
+
+# Which control has the keyboard, shown on the page.
+#
+# libtk draws a ring for it, and the two lines that do so were live in
+# label.c and commented out in buton.c - so a label showed its focus and
+# a button, which is what a person tabs between, did not.  The reader
+# says where you are; the screen should agree.
+checkfocusring()
+{
+	blank();
+	top := offscreen();
+	if(top == nil)
+		return;
+	tk->cmd(top, "button .b -text {Save}");
+	tk->cmd(top, "button .other -text {Save}");
+	tk->cmd(top, "pack .b");
+	tk->cmd(top, "pack .other");
+	map(top);
+	# tkhaskeyfocus() is false unless the toplevel itself has the
+	# keyboard - top->focused - which an offscreen window never gets by
+	# itself.  Without this the ring is correctly never drawn and the
+	# check fails for a reason that has nothing to do with what it is
+	# testing, which is what it did first time out.
+	tk->cmd(top, "focus -global 1");
+
+	r := tk->rect(top, ".b", Tk->Border);
+	tk->cmd(top, "focus .other");
+	tk->cmd(top, "update");
+	away := ink(r);
+	tk->cmd(top, "focus .b");
+	tk->cmd(top, "update");
+	held := ink(r);
+
+	# Two identical buttons, so the only difference between the two
+	# readings is which one has the keyboard.
+	report(held != away, sys->sprint(
+		"a focused button looks different from an unfocused one (%d inked against %d)",
+		held, away));
+}
+
+# how many pixels in a rectangle are not the background
+ink(r: Rect): int
+{
+	if(r.dx() <= 0 || r.dy() <= 0)
+		return 0;
+	n := r.dx()*r.dy();
+	b := array[n*3] of byte;
+	off.readpixels(r, b);
+	seen := array[256] of {* => 0};
+	for(i := 0; i < n*3; i += 3)
+		seen[int b[i]]++;
+	most := 0;
+	for(i = 0; i < 256; i++)
+		if(seen[i] > most)
+			most = seen[i];
+	return n - most;
 }
 
 # "dtag X Y" takes tag Y off the items tagged X, and X and Y may be the
