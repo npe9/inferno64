@@ -79,6 +79,12 @@ p9execfile(void)
 	addbootfile("libwc", libwcprog, sizeof libwcprog);
 	addbootfile("libns", libnsprog, sizeof libnsprog);
 	addbootfile("rio", rioprogp9, sizeof rioprogp9);
+	/*
+	 * And the same shell again under the name rio's windows ask for.
+	 * /boot is bound onto /bin, so rio's "/bin/rc" is this - one image,
+	 * two names, which is what a bind is for.
+	 */
+	addbootfile("rc", libshprog, sizeof libshprog);
 	addbootfile("libsh", libshprog, sizeof libshprog);
 	addbootfile("libgen", libgenprog, sizeof libgenprog);
 	addbootfile("libdraw", libdrawprog, sizeof libdrawprog);

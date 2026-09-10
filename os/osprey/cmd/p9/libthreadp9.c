@@ -62,6 +62,24 @@ sender(void *a)
  * personality is the flow of control's own - two procs of one program
  * reading the same number would mean the per-process word was not.
  */
+/*
+ * procexec must be the only thread in its proc, so it runs on one of
+ * its own.  The arguments are handed over in these two words rather
+ * than through the channel, because the channel is what procexec itself
+ * answers on.
+ */
+static char **execargv;
+static Channel *execpidc;
+
+static void
+execproc(void *a)
+{
+	USED(a);
+	procexec(execpidc, execargv[0], execargv);
+	/* only reached if it failed; procexec has already said so */
+	threadexits(nil);
+}
+
 static void
 procsender(void *a)
 {
@@ -136,6 +154,58 @@ threadmain(int argc, char **argv)
 		print("libthread: that is not the %d values summing to %d this program was written to send\n",
 			Nsend, Sum);
 	USED(pid);
+
+	/*
+	 * And procexec, which is fork and exec on Plan 9 and spawn here.
+	 *
+	 * libthread does not ask for exec on its own account: _schedexec
+	 * rforks and execs in the child and answers the parent with the
+	 * child's pid, which is fork and exec fused, which is what the
+	 * personality's spawn is.  So threadmain9.c answers it with spawn
+	 * and procexec cannot tell the difference - it gets a pid on the
+	 * channel, the program runs, and the wait after it finds it.
+	 *
+	 * The program run is cat, on a file with a known size, so what
+	 * comes back says the descriptors were carried across as well as
+	 * the pid.
+	 *
+	 * It does not get there yet, and where it stops is worth having in
+	 * the log rather than in a guess.  procexec makes a pipe and then
+	 * opens
+	 *	/fd/<the write end>
+	 * to get a close-on-exec copy of it, which is how it tells an exec
+	 * that worked from one that failed.  A loaded program's descriptor
+	 * numbers are its own - p9crt.c keeps a table and hands the
+	 * personality the number behind each one - and #d names the
+	 * personality's.  So the number procexec writes into that path is
+	 * not the number that path means, and the open fails before
+	 * _schedexec is ever called.
+	 */
+	{
+		Channel *pidc;
+		char *av[3];
+		ulong got;
+
+		pidc = chancreate(sizeof(ulong), 0);
+		av[0] = "/boot/libcat";
+		av[1] = "/hello";
+		av[2] = nil;
+		/*
+		 * Set before the proc is made, not after: the new flow can
+		 * run the moment proccreate returns, and it reads both.
+		 */
+		execargv = av;
+		execpidc = pidc;
+		if((pid = proccreate(execproc, pidc, Stack)) < 0)
+			sysfatal("proccreate for procexec: %r");
+		got = recvul(pidc);
+		if(got == 0 || got == ~0UL)
+			print("libthread: procexec did not reach the personality's spawn: %r\n");
+		else
+			print("libthread: procexec started /boot/libcat as %lud, "
+				"which is the personality's spawn answering libthread's exec\n", got);
+	}
+
 	/*
 	 * threadexits and not threadexitsall, and the difference is the
 	 * point of the last paragraph above.  threadexitsall sets a status

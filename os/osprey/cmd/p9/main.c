@@ -924,9 +924,13 @@ p9main(void)
 		 * window down again and aborts its file server.  The window
 		 * exists for as long as the exec takes to fail.
 		 *
-		 * So a window needs exec, and exec here means spawn: that is
-		 * written down in this document as the shape of the answer
-		 * and it is still the next thing rather than a done thing.
+		 * exec is answered now - _schedexec spawns, and
+		 * /boot/libthread's procexec starts cat through it - and rio
+		 * still has no window: with -k its winshell gets further and
+		 * the window's own 9P channel is closed under it before
+		 * procexec is reached, which is the next thing to find.  rio
+		 * runs plain here, because a window that is taken down again
+		 * is not a window and the boot should not claim one.
 		 */
 		rioargv[0] = "/boot/rio";
 		rioargv[1] = nil;

@@ -1852,7 +1852,26 @@ ends by execing
 which
 .IR threadmain9.c 's
 .I _schedexec
-refuses.  A window costs an exec, and exec here would mean spawn.
+refuses.  A window costs an exec, and exec here is spawn:
+.IR _schedexec ,
+which on Plan 9 rforks and execs in the child and answers the parent
+with the child's pid, spawns instead, and procexec cannot tell.
+.B /boot/libthread
+runs
+.I procexec
+on
+.B /boot/libcat
+and gets a pid back.  Two things had to be fixed for that and neither
+was about exec: procexec opens
+.B /fd/<n>
+for a close-on-exec copy of its pipe and a loaded program's descriptor
+numbers are its own, so
+.I p9crt.c
+translates the number in the path; and
+.B #d
+answered only for the buddy's containers, so it answers
+.B up->fgrp
+when no container is asking.
 .PP
 Version 5 added
 .IR pread ,

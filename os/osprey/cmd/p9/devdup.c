@@ -159,9 +159,22 @@ dupopen(Chan *c, int omode)
 		c->offset = 0;
 		return c;
 	}
+	/*
+	 * Whose descriptor n is this?
+	 *
+	 * If the buddy is answering a container's call, it is that
+	 * container's, and the buddy holds the table.  Otherwise the
+	 * caller is a flow of control of this personality - a program the
+	 * library-OS side loaded, or the personality itself - and "the
+	 * calling process's descriptors" means up->fgrp, which is where
+	 * fdtochan looks anyway.  That case used to be Eperm, and what it
+	 * cost was libthread's procexec: it makes a pipe, opens
+	 *	/fd/<the write end>
+	 * to get a close-on-exec copy of it, and could not.
+	 */
 	if((container = p9servingcontainer()) == 0)
-		error(Eperm);		/* nobody's: not this device's to answer */
-	if((bfd = p9containerfd(container, QFD(c->qid.path))) < 0)
+		bfd = QFD(c->qid.path);
+	else if((bfd = p9containerfd(container, QFD(c->qid.path))) < 0)
 		error(Ebadfd);
 	f = fdtochan(bfd, openmode(omode), 0, 1);
 	cclose(c);

@@ -77,37 +77,86 @@ startboot(char *argv0, char **argv)
 }
 
 /*
- * procexec.  A library operating system does not have exec: a program
- * is at the address it was linked for and nothing here relocates one,
- * so there is nothing to replace an address space with.  The
- * personality's spawn starts another program at another address, which
- * is a different thing and not what procexec means - procexec's caller
- * expects the proc it is running on to become that program.
+ * procexec, which is fork and exec, and here is spawn.
  *
- * So this refuses, by name, and says so down the pipe libthread made
- * for exactly this: efork writes the reason there when exec fails and
- * the waiting side reads it.  procexec then reports the failure the way
- * it reports any other.
+ * A library operating system has no exec of its own: a program is at
+ * the address the loader put it at, and there is nothing to replace an
+ * address space with when the library lives in the same one.  But
+ * libthread does not ask for exec on its own account.  It asks in
+ * _schedexec, which on Plan 9 rforks and execs in the child and answers
+ * the parent with the child's pid - fork and exec, fused, which is
+ * exactly what the personality's spawn is.
+ *
+ * So this is not a stub standing in for exec.  It is the same operation
+ * libthread was asking for, done by the primitive this system has, and
+ * the difference is invisible to the caller: procexec gets a pid back,
+ * the program runs, and procexec's own wait finds it.
+ *
+ * The descriptors are 0, 1 and 2 of the proc that called, which is what
+ * exec would have carried across.  A program started in a rio window
+ * reads and writes and complains to that window.
+ *
+ * The pipe is libthread's own way of telling an exec that failed from
+ * one that worked: procexec holds the read end and the write end is
+ * close-on-exec, so a successful exec closes it and the read gets end
+ * of file.  Nothing execs here, and the spawned program is given only
+ * the three descriptors above, so it does not hold the write end either
+ * - which comes to the same thing.  procexec closes its own copy after
+ * this returns and reads end of file, exactly as it would have.
  */
 int
 _schedexec(Execargs *e)
 {
-	char *m = "procexec: the library operating system has no exec; use the personality's spawn";
+	extern int spawn3(char*, char**, int, int, int);
+	char err[ERRMAX], msg[ERRMAX+64];
+	int pid, k;
 
-	write(e->fd[1], m, strlen(m));
-	close(e->fd[1]);
-	close(e->fd[0]);
-	return -1;
+	pid = spawn3(e->prog, e->args, 0, 1, 2);
+	if(pid < 0){
+		err[0] = 0;
+		errstr(err, sizeof err);
+		if(err[0] == 0)
+			strcpy(err, "cannot start it");
+		k = snprint(msg, sizeof msg, "%s: %s", e->prog, err);
+		write(e->fd[1], msg, k);
+		return -1;
+	}
+	return pid;
 }
 
+/*
+ * And the wait that follows it.  libthread's own reads Waitmsgs until
+ * the pid matches; this reads await(2) lines directly and parses them
+ * with tokenize, which is what libc's wait does to the same line, so
+ * that nothing here needs an allocator.
+ *
+ * It does not send to _threadwaitchan.  Nothing that reaches this uses
+ * one - procexec is called with a pid channel instead - and inventing a
+ * Waitmsg to send would mean allocating one to describe a program this
+ * already knows the fate of.
+ */
 void
 _schedexecwait(void)
 {
-	/*
-	 * Only reached after _schedexec answered with a pid, which it
-	 * never does.
-	 */
-	sysfatal("_schedexecwait: no proc was ever exec'd");
+	Proc *p;
+	Thread *t;
+	char buf[256], *fld[5];
+	int pid, n;
+
+	p = _threadgetproc();
+	t = p->thread;
+	pid = t->ret;
+	for(;;){
+		n = await(buf, sizeof buf - 1);
+		if(n < 0)
+			break;
+		buf[n] = 0;
+		if(tokenize(buf, fld, 5) != 5)
+			break;
+		if(atoi(fld[0]) == pid)
+			break;
+	}
+	threadexits("procexec");
 }
 
 /*

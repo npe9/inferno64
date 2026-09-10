@@ -176,10 +176,56 @@ fdnew(int pfd)
 /*
  * The file calls, into the personality.  Nothing here traps.
  */
+/*
+ * A descriptor named in a path.
+ *
+ * /fd/<n> is the calling process's descriptor n, and n here is this
+ * program's number rather than the personality's: p9crt.c keeps the
+ * table, so it owns what that path means for this program just as it
+ * owns what the number means in a call.  Without this, a path built
+ * from a number the program holds names some other descriptor of the
+ * personality's, or none - which is how libthread's procexec failed.
+ * It makes a pipe, opens
+ *	/fd/<the write end>
+ * to get a close-on-exec copy, and that open answered Enonexist.
+ *
+ * Only the plain forms are translated, and only when the number really
+ * is one of this program's: anything else is passed through untouched,
+ * because /fd is a directory with other things in it and this is a
+ * translation, not a takeover.
+ */
+static char*
+fdpath(char *name, char *buf, int nbuf)
+{
+	char *p, *e;
+	int n, pfd;
+
+	if(strncmp(name, "/fd/", 4) == 0)
+		p = name + 4;
+	else if(strncmp(name, "#d/", 3) == 0)
+		p = name + 3;
+	else
+		return name;
+	if(*p < '0' || *p > '9')
+		return name;
+	n = 0;
+	for(e = p; *e >= '0' && *e <= '9'; e++)
+		n = n*10 + (*e - '0');
+	if(*e != 0)
+		return name;			/* something below it, not a descriptor */
+	pfd = fdof(n);
+	if(pfd < 0)
+		return name;			/* the console, or not open: let it fail as it would */
+	snprint(buf, nbuf, "%.*s%d", (int)(p - name), name, pfd);
+	return buf;
+}
+
 int
 open(char *name, int mode)
 {
-	return fdnew(p9lib->open(name, mode));
+	char buf[64];
+
+	return fdnew(p9lib->open(fdpath(name, buf, sizeof buf), mode));
 }
 
 int
@@ -549,17 +595,31 @@ pipe(int fd[2])
 	return 0;
 }
 
+/*
+ * Start a program with three descriptors of this program's naming.  A
+ * number that is the console, or is not open, is Fdcons or Fdfree: both
+ * negative, and both mean the machine's console to the child.
+ *
+ * spawn is the two-descriptor form a shell wants for a pipeline, and is
+ * this with the error descriptor left as the console.  spawn3 is what
+ * libthread's procexec needs, because a program started in a window
+ * reads and writes and complains to that window.
+ */
 int
-spawn(char *name, char **argv, int in, int out)
+spawn3(char *name, char **argv, int in, int out, int err)
 {
 	int std[3];
 
-	/* a number that is the console, or is not open, is Fdcons or
-	 * Fdfree: both negative, and both mean the console to the child */
 	std[0] = in < 0 || fdof(in) < 0 ? -1 : fdof(in);
 	std[1] = out < 0 || fdof(out) < 0 ? -1 : fdof(out);
-	std[2] = -1;
+	std[2] = err < 0 || fdof(err) < 0 ? -1 : fdof(err);
 	return p9lib->spawn(name, argv, std);
+}
+
+int
+spawn(char *name, char **argv, int in, int out)
+{
+	return spawn3(name, argv, in, out, -1);
 }
 
 int

@@ -10795,12 +10795,66 @@ gets the failure back on its pid channel, and rio takes the window down
 again and aborts its file server.  The window exists for exactly as long
 as the exec takes to fail.
 .PP
-So a window costs exec, and exec here means spawn \- which is what this
-document already worked out and still has not built.  rio is run plain
-in the boot, without
-.CW -k ,
-because a window that is taken down again is not a window and the boot
-should not claim one.
+So a window costs exec.
+.PP
+.B "3.2p: exec is spawn, and the two things that were not about exec."
+libthread does not ask for exec on its own account.
+.CW _schedexec
+rforks and execs in the child and answers the parent with the child's
+pid \- fork and exec, fused, which is exactly what the personality's
+spawn is.  So
+.CW threadmain9.c
+answers it with spawn, and procexec cannot tell the difference: it gets
+a pid back, the program runs, and the wait after it finds it.  This is
+not a stub standing in for exec; it is the same operation libthread was
+asking for, done by the primitive this system has.
+.PP
+.CW /boot/libthread
+proves it rather than rio does, which is the right way round: it is the
+program written to exercise libthread, and it now runs
+.CW procexec
+on
+.CW /boot/libcat
+and reports the pid.  cat runs on that pid and reads the file it was
+given, so the descriptors went across with it.
+.PP
+Two things had to be fixed to get there and neither was about exec.
+.PP
+procexec makes a pipe and then opens
+.CW /fd/<the\ write\ end>
+to get a close-on-exec copy of it, which is how it tells an exec that
+worked from one that failed.  A loaded program's descriptor numbers are
+its own \-
+.CW p9crt.c
+keeps a table and hands the personality the number behind each one \-
+so the number procexec writes into that path was not the number that
+path meant.
+.CW p9crt.c
+translates the number in the path now, the same job it already does for
+a number in a call, and only for the plain forms of it: /fd is a
+directory with other things in it and this is a translation, not a
+takeover.
+.PP
+And
+.CW #d
+answered only for the buddy's containers.  A container's fd n is a
+number in the buddy's own table, so the device asks which container it
+is answering for and refuses when there is none \- which is every call
+made by a flow of this personality.  It answers
+.CW up->fgrp
+now when no container is asking, which is what "the calling process's
+descriptors" means when the caller is not a container: exactly where
+.CW fdtochan
+was going to look anyway.
+.PP
+rio still has no window.  With
+.CW -k
+its
+.CW winshell
+now gets further and the window's own 9P channel is closed under it
+before procexec is reached, which is the next thing to find.  rio runs
+plain in the boot, because a window that is taken down again is not a
+window and the boot should not claim one.
 .PP
 The second was the probe itself, and it is the plainest lesson here.
 .CW p9open

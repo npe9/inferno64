@@ -588,6 +588,26 @@ def main():
                     'libthread: the second proc slept 300 ms past the end of the first, and the personality waited for it' in t
                     and '/boot/libthread returned; the personality is still here' in t))
     #
+    # procexec, which is fork and exec on Plan 9 and spawn here.
+    # libthread does not ask for exec on its own account: _schedexec
+    # rforks and execs in the child and answers the parent with the
+    # child's pid, which is fork and exec fused, which is what spawn is.
+    # So threadmain9.c answers it with spawn and procexec cannot tell.
+    #
+    # Getting there wanted two things that were nothing to do with exec.
+    # procexec opens /fd/<the write end of its pipe> to get a
+    # close-on-exec copy, and a loaded program's descriptor numbers are
+    # its own, so p9crt.c translates the number in that path the way it
+    # translates one in a call.  And #d answered only for the buddy's
+    # containers, so a flow of this personality asking for its own
+    # descriptor got Eperm; it answers up->fgrp now, which is what "the
+    # calling process's descriptors" means when the caller is not a
+    # container.
+    results.append(("and libthread's procexec runs a program: procexec is fork and exec, and fork-and-exec fused is what this personality's spawn is, so _schedexec spawns and the caller cannot tell the difference - it gets a pid back, cat runs on it and reads the file it was given, and the wait after it finds it",
+                    re.search(r"libthread: procexec started /boot/libcat as (\d+), which is the "
+                              r"personality's spawn answering libthread's exec", t) is not None
+                    and 'libthread: procexec did not reach' not in t))
+    #
     # Relocation.  Every other program here is laid at the address it was
     # linked for, which is why p9lib.h has one base per program and why
     # the shell is told it cannot run two of an image at once.
