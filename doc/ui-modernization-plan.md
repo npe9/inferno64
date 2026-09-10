@@ -9,39 +9,46 @@ scalable, arbitrary-size text — already works end to end and nothing uses
 it.** The work is adoption, and adoption is the same job the 76 temple
 ports just went through, one layer up.
 
-## 0. First: UI work in this tree is currently unverifiable
+Item zero was that none of this could be checked, because the screen does
+not read back. That is fixed: `tkofftest(1)` renders Tk into memory and
+measures it, and every Tk number below comes from it.
+
+## 0. First: UI work in this tree could not be checked. Now it can
 
 `Image.readpixels` returns **`00 00 00`** for the on-screen framebuffer.
 Checked both ways in one program: a window allocated on a `Screen` over
 `display.image`, painted red and flushed, reads back `00 00 00`; so does
 `display.image` itself at the same spot. An ordinary offscreen image in the
-same program reads back real values — that is how every measurement below
-was taken.
+same program reads back real values.
 
-This matters more than anything else in this document. `AGENTS.md` requires
-in-process evidence rather than screenshots, and the accessibility API
-reports 0 windows for this backend whether or not it works. So today a UI
-change can be *described* but not *shown*, and every number in a commit
-message about the window system would be reasoning rather than measurement.
-That is exactly the failure this tree spent a whole session correcting in
-`temple/varoom` and `strut`.
+That mattered more than anything else in this document. `AGENTS.md` asks
+for in-process evidence rather than screenshots, and the accessibility API
+reports 0 windows for this backend whether or not it works. So a UI change
+could be *described* but not *shown*, and every number in a commit message
+about the window system would have been reasoning — the failure this tree
+spent a session correcting in `temple/varoom` and `strut`.
 
-The mechanism for a fix exists and is half-proven. A `Screen` can be
-allocated over an **offscreen** image, a window made in it, and a Tk
-toplevel bound to that window with `Tk->putimage(top, ".", win, nil)`.
-Doing so, `top.image` is the offscreen window and Tk's own background paint
-*does* reach the offscreen pixels — they come back `d8 f0 f5` rather than
-the white the image was created with. But packed widget content did not
-appear with that minimal sequence (`toplevel`, `putimage`, `label`, `pack`,
-`update`), although the label reports `-actwidth 119 -actheight 15`, so it
-was laid out. Something between layout and paint still wants what
-`tkclient` does on a real window.
+**This is now fixed, and the fix is `tkofftest(1)`.** A Tk toplevel does
+not have to be given the display's screen: allocate a `Screen` over an
+ordinary image, make a window in it, and hand the toplevel that window
+under the request id `tkclient` uses when there is no window manager —
+`tk->putimage(top, ". -1", win, nil)`. Tk then draws into memory, where
+`readpixels` works. Two details cost an hour each and are worth writing
+down: the id is `-1` and `putimage` without it is silently half-ignored,
+and **the image must be handed over after the widgets exist**, because Tk
+paints what it has when the image arrives.
 
-**Step one is therefore: finish that harness**, so that a Tk widget's
-actual pixels can be read in-process. Then the psalmody method — record
-every text box, test overlap and off-pane, drive through the production
-entry point, confirm with a negative control — applies to the whole window
-system rather than to one port at a time.
+`tkofftest` checks four things, and its first check is the control the
+others need — an untouched pane must read back as one value and no ink,
+or "the widget drew" cannot be told from "the readback returns rubbish
+that happens to vary". Current run: **4 ok, 0 fail** with a TrueType face
+present, 3 with none.
+
+What it does *not* do is in its BUGS: it checks that widgets are sized by
+the font, not that they are placed correctly. The recording check that
+would — every text box, tested for overlap and for leaving the pane —
+exists only inside the temple ports and has not been made general. Making
+it general, on top of this harness, is the next piece of work.
 
 ## 1. Antialiased scalable text already works
 
@@ -65,11 +72,18 @@ A bitmap font can only ever produce two. 190 and 244 are antialiasing, at
 sizes chosen at open time rather than at whatever size somebody rasterised
 a `.font` to. Opening cost 0 ms at 16 px and 2 ms at 32 px, once.
 
-**Tk takes such a font too.** `label .l -font /mnt/ft/andale-mono.r.16.font`
-is accepted and metricked: the same string measures `146x21` against
-`119x15` in `/fonts/lucidasans/unicode.8.font`. What was *not* seen is Tk's
-antialiased pixels, for the reason in section 0 — the label was on screen
-and the screen does not read back.
+**Tk renders such a font, antialiased.** Measured through the harness in
+section 0, a `label` drawn into an offscreen pane puts **190** distinct
+values on the page through `/mnt/ft/andale-mono.r.16.font` and **213**
+at 24 pixels, against **3** for `/fonts/lucidasans/unicode.8.font` (the
+pane's background, the label's white, and black). The same string measures
+`146x21` against `119x15`, so the metrics are the face's too. This is a
+check in `tkofftest`, so it stays true or fails.
+
+These numbers were taken with a host font copied into `fonts/ttf/` for the
+experiment and then removed; nothing in a clean checkout reproduces them
+without putting a `.ttf` there first. **DejaVu Sans Mono** is what would
+ship — see section 3.
 
 **And nothing in the tree uses any of it.** There is no `fonts/ttf`
 directory in the repository, no startup script runs `ttffs`, and no font
@@ -123,12 +137,27 @@ Inferno's own broke, in ways that only measurement found:
   was never thirteen rows of text, it was where the picture changed.
 - four more labels were centred on `n*FW/2` and sat 4 to 7 pixels off.
 
-`libtk`'s widgets measure their font, so the toolkit itself is probably
-safe — but that is an inference from the widget code, not a measurement,
-and it is the first thing the harness from section 0 should check. What is
-certainly not safe is the ~60 programs in `appl/wm/` and
-`appl/lib/titlebar.b`, which pack by computed pixel geometry and draw
-directly.
+**`libtk`'s widgets do measure their font** — that was an inference and is
+now a measurement, from `tkofftest`. Packed at 15 pixels and at 30, every
+font-sized widget grows in both axes:
+
+| widget | at 15px | at 30px |
+| --- | --- | --- |
+| label | 119x15 | 230x30 |
+| button | 55x17 | 104x32 |
+| checkbutton | 100x20 | 188x32 |
+| radiobutton | 103x20 | 204x32 |
+| menubutton | 30x15 | 70x30 |
+| scale | 85x41 | 85x56 |
+
+(The control: run it with the same font twice and the check reports 0 of
+6.) Widgets configured in character units — an `entry`'s `-width`, a
+`text`'s `-width` and `-height` — deliberately do not grow, which is Tk's
+own semantics.
+
+So the toolkit is safe and the applications are the risk: the ~60 programs
+in `appl/wm/` and `appl/lib/titlebar.b`, which pack by computed pixel
+geometry and draw directly.
 
 The method that worked, carried forward: **record every text box a screen
 draws, test it for overlap and for leaving the pane, drive the check
@@ -186,8 +215,9 @@ touching them twice.
 ## What this survey did not check
 
 The Linux and Plan 9 backends — every backend claim here is about
-`emu/MacOSX/win-cocoa.m`. Whether `libtk`'s widgets really measure their
-font rather than assuming a cell, which is inference from reading them.
-Whether `acme`'s and `sam`'s own drawing (they do not use Tk) share any of
-these assumptions. And the on-screen appearance of anything at all, for the
-reason in section 0.
+`emu/MacOSX/win-cocoa.m`. Whether `acme`'s and `sam`'s own drawing (they do
+not use Tk) share any of these assumptions. Whether any of the ~60
+`appl/wm/` programs survive a font change, which is the actual adoption
+risk and wants the general recording check from section 0 first. And the
+on-screen appearance of anything at all: the harness proves what Tk
+*drew*, not what the display *shows*.

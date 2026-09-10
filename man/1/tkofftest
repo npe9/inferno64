@@ -1,0 +1,107 @@
+.TH TKOFFTEST 1
+.SH NAME
+tkofftest \- render Tk widgets offscreen and check what they drew
+.SH SYNOPSIS
+.B tkofftest
+.SH DESCRIPTION
+.I Tkofftest
+draws Tk widgets into an image of its own and reads the pixels back,
+which cannot be done on the screen: under the Metal present path
+.IR draw (2)'s
+.B readpixels
+returns
+.B "00 00 00"
+both for a window on the display's screen and for the display image
+itself, so what a widget put on the page is invisible to the program that
+drew it.
+.PP
+A Tk toplevel need not be given the display's screen.
+.I Tkofftest
+allocates a
+.B Screen
+over an ordinary image, makes a window in it, and hands the toplevel that
+window under the request id
+.IR tkclient (2)
+uses when there is no window manager,
+.BR "-1" .
+Tk then draws into memory.
+The image must be handed over
+.I after
+the widgets exist: Tk paints what it has when the image arrives.
+.PP
+Four things are checked.
+.TP
+.B "a blank pane reads back blank"
+An untouched pane must read back as one value and no ink.
+Without this the other checks cannot tell "the widget drew" from "the
+readback returns rubbish that happens to vary".
+.TP
+.B "a widget's own pixels read back"
+A label on the same pane must produce more than one value.
+.TP
+.B "every widget grows with the font"
+A label, button, checkbutton, radiobutton, menubutton and scale are
+packed at
+.B /fonts/lucidasans/unicode.8.font
+(15 pixels high) and at
+.B /fonts/pelm/ascii.16.font
+(30), and every one must grow.
+This is the question of whether the toolkit measures its font or assumes a
+character cell, which is what decides how much of the window system a font
+change would break.
+Widgets whose size is configured in character units instead \(em an
+.BR entry 's
+.BR -width ,
+a
+.BR text 's
+.B -width
+and
+.B -height
+\(em are deliberately not in that list, because their size is meant not to
+follow the font.
+.TP
+.B "Tk antialiases a TrueType face"
+Only when a
+.B .ttf
+is present in
+.BR /fonts/ttf ,
+which this tree does not ship.
+.I Tkofftest
+then starts
+.IR ttffs (4)
+itself and draws through the first face it serves at 16 pixels.
+A bitmap font can put only two values on the page; a TrueType face
+through
+.IR ttffs (4)
+puts about 190.
+.SH EXAMPLE
+To check the antialiased path, put any TrueType file in
+.B /fonts/ttf
+first:
+.EX
+	cp DejaVuSansMono.ttf /fonts/ttf/
+	tkofftest
+.EE
+.SH SOURCE
+.B /appl/cmd/tkofftest.b
+.SH SEE ALSO
+.IR tk (2),
+.IR tkclient (2),
+.IR draw (2),
+.IR ttffs (4),
+.B /doc/ui-modernization-plan.md
+.SH BUGS
+It checks that widgets are sized by the font, not that they are
+.I placed
+correctly: nothing here would catch two widgets drawn on top of each
+other, which is the failure a font change actually causes.
+The recording check that would \(em every text box, tested for overlap and
+for leaving the pane \(em exists only inside the temple ports and has not
+been made general.
+.PP
+Only the packing of one flat dialog is exercised; no menu, canvas or text
+widget is drawn at all.
+.PP
+The antialiasing check is skipped silently rather than failing when no
+TrueType file is present, so a green run does not mean that path was
+tested.
