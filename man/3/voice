@@ -10,6 +10,8 @@ voice \- speech synthesis
 .br
 .B /dev/voice/pcm
 .br
+.B /dev/voice/history
+.br
 .B /dev/voice/screen
 .SH DESCRIPTION
 The
@@ -142,6 +144,32 @@ When the ring is full the
 announcement is dropped.
 A screen reader is saying where you are now, and a backlog of where you used to
 be is worse than useless because you have to sit through it.
+.SS history
+Everything that has been announced, newest first, one to a line.
+.PP
+Reading does not consume it and a focus change does not clear it, which is
+what makes it the file for asking what was just said \(em something a
+person may need to do more than once, and cannot do with
+.B screen
+at all: reading that takes the announcement away, and
+.I dropoutput
+throws the queued ones out when the focus moves.
+.PP
+It holds
+.B 64
+announcements.
+.B Screen
+holds sixteen because a backlog is worse than useless when it is being
+.I spoken
+\(em a person has to sit through it to reach the present.
+History is never spoken unless it is asked for, so it can afford to be
+longer.
+.PP
+It is written by the same code that fills
+.BR screen ,
+so it holds exactly what was announced and nothing that was not, and it
+inherits the same rule that an announcement identical to the one before
+it is dropped.
 .SS ctl
 Reading gives the rate, the pitch, the speed, how many samples are waiting, how
 many announcements are queued

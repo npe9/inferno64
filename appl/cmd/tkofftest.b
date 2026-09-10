@@ -678,6 +678,75 @@ checkvoice()
 	# check written the loose way while telling us nothing.
 	report(said == "entry", sys->sprint(
 		"but a masked field is not read aloud (%#q)", said));
+
+	# Everything above was consumed by reading it.  The point of the
+	# history file is that a person who missed something can ask again,
+	# so it must still hold all of it, newest first, and still hold it
+	# after being read once.
+	# Distinguish "the file is not there" from "the file is empty".  In
+	# Limbo an empty string is nil, so testing the contents alone would
+	# turn a broken history into a skipped check, which is how a test
+	# goes quietly blind.  Ask whether it opens; if it does, its contents
+	# are the test.
+	hfd := sys->open("/dev/voice/history", Sys->OREAD);
+	if(hfd == nil){
+		sys->print("     no /dev/voice/history; review not checked\n");
+		return;
+	}
+	hfd = nil;
+	h1 := slurpfile("/dev/voice/history");
+	want := array[] of {"entry", "entry notes.txt", "Drafts", "list Inbox",
+		"50", "scale 40", "checked", "Wrap lines check button not checked"};
+	inorder := 1;
+	at := 0;
+	for(i := 0; i < len want; i++){
+		j := find(h1, want[i], at);
+		if(j < 0){
+			inorder = 0;
+			break;
+		}
+		at = j + 1;
+	}
+	report(inorder, sys->sprint(
+		"the history holds everything that was said, newest first (%d lines)",
+		lines(h1)));
+
+	h2 := slurpfile("/dev/voice/history");
+	report(h2 == h1, "and reading it does not consume it");
+}
+
+slurpfile(p: string): string
+{
+	fd := sys->open(p, Sys->OREAD);
+	if(fd == nil)
+		return nil;
+	s := "";
+	b := array[4096] of byte;
+	for(;;){
+		n := sys->read(fd, b, len b);
+		if(n <= 0)
+			break;
+		s += string b[0:n];
+	}
+	return s;
+}
+
+# index of sub in s at or after from, or -1
+find(s, sub: string, from: int): int
+{
+	for(i := from; i + len sub <= len s; i++)
+		if(s[i:i+len sub] == sub)
+			return i;
+	return -1;
+}
+
+lines(s: string): int
+{
+	n := 0;
+	for(i := 0; i < len s; i++)
+		if(s[i] == '\n')
+			n++;
+	return n;
 }
 
 waiting(): int

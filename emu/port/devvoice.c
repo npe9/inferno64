@@ -50,6 +50,7 @@ enum {
 	Qphonemes,
 	Qpcm,
 	Qscreen,
+	Qhistory,
 
 	Rate		= 16000,	/* samples per second */
 	Maxsamples	= Rate * 30,	/* half a minute is plenty for one write */
@@ -206,6 +207,15 @@ enum {
 	Nannounce	= 16,
 	Announcemax	= 256,
 
+	/*
+	 * The screen ring is small on purpose: a backlog of announcements is
+	 * worse than useless when it is being spoken, because a person has to
+	 * sit through it to reach the present.  History is never spoken
+	 * unless it is asked for, so it can afford to be longer, and 64 of
+	 * them is 16K.
+	 */
+	Nhistory	= 64,
+
 	Anoff,			/* say nothing */
 	Anfocus,		/* where the keyboard is - the default */
 	Anall,			/* and what appears on the screen */
@@ -214,6 +224,27 @@ enum {
 static int anlevel = Anfocus;
 
 static char lastqueued[Announcemax];
+
+/*
+ * What was said, for reading back.
+ *
+ * Everything that makes "screen" right for saying things makes it useless
+ * for asking what was said: reading it consumes, dropoutput() discards
+ * queued output when the focus moves, and an identical announcement is
+ * dropped.  So a person who missed something has no way to hear it again.
+ *
+ * This is written by the same queue(), so it holds exactly what was
+ * announced and inherits the same dedup, and it is never consumed by
+ * reading and never cleared by a focus change.  Newest first, because the
+ * question is almost always "what did that just say?" and the answer
+ * should not be at the bottom.
+ */
+static struct {
+	Lock	lk;
+	char	msg[Nhistory][Announcemax];
+	int	n;
+	int	wr;
+} hist;
 
 static struct {
 	Lock	lk;
@@ -255,6 +286,14 @@ queue(int kind, char *what)
 	screen.msg[screen.wr][Announcemax-1] = '\0';
 	screen.kind[screen.wr] = kind;
 	screen.wr = (screen.wr + 1) % Nannounce;
+
+	lock(&hist.lk);
+	strncpy(hist.msg[hist.wr], what, Announcemax-1);
+	hist.msg[hist.wr][Announcemax-1] = '\0';
+	hist.wr = (hist.wr + 1) % Nhistory;
+	if(hist.n < Nhistory)
+		hist.n++;
+	unlock(&hist.lk);
 	screen.n++;
 }
 
@@ -559,9 +598,9 @@ static int
 voicegen(Chan *c, char *name, Dirtab *tab, int ntab, int s, Dir *dp)
 {
 	Qid q;
-	static char *files[] = { "ctl", "phonemes", "pcm", "screen" };
-	static int ftype[] = { Qctl, Qphonemes, Qpcm, Qscreen };
-	static int fperm[] = { 0666, 0222, 0444, 0666 };
+	static char *files[] = { "ctl", "phonemes", "pcm", "screen", "history" };
+	static int ftype[] = { Qctl, Qphonemes, Qpcm, Qscreen, Qhistory };
+	static int fperm[] = { 0666, 0222, 0444, 0666, 0444 };
 
 	USED(name); USED(tab); USED(ntab);
 	q.vers = 0;
@@ -695,6 +734,38 @@ voiceread(Chan *c, void *va, long n, vlong off)
 		screen.n--;
 		unlock(&screen.lk);
 		return rv;
+
+	case Qhistory:
+		/*
+		 * Everything that was announced, newest first, one per line.
+		 * Reading does not consume: this is the file for asking what
+		 * was said, which a person may need to do more than once.
+		 */
+		{
+			char *b, *p, *e;
+			int i, k;
+
+			b = malloc(Nhistory * (Announcemax + 1) + 1);
+			if(b == nil)
+				error(Enomem);
+			p = b;
+			e = b + Nhistory * (Announcemax + 1);
+			lock(&hist.lk);
+			for(i = 0; i < hist.n && p < e; i++){
+				k = (hist.wr - 1 - i + Nhistory) % Nhistory;
+				p = seprint(p, e, "%s\n", hist.msg[k]);
+			}
+			unlock(&hist.lk);
+			*p = '\0';
+			if(waserror()){
+				free(b);
+				nexterror();
+			}
+			rv = readstr(off, va, n, b);
+			poperror();
+			free(b);
+			return rv;
+		}
 	}
 	error(Ebadarg);
 	return 0;

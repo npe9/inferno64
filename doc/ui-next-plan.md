@@ -102,42 +102,41 @@ with a sound driver could serve the same `/dev/voice`, and
 at which point every announcement already written lights up on the
 machine instead of only under emulation.
 
-## 1. Reviewing what was said
+## 1. Reviewing what was said — **done**
 
-**Why first:** it is small, it is the last piece of the accessibility
-surface, and accessibility is where this system is unusually far ahead —
-`libtk` announces at the toolkit level, which most systems bolt on
-afterwards and never get right.
+`/dev/voice/history`: everything that has been announced, newest first,
+one to a line. Reading does not consume it and a focus change does not
+clear it, which is what makes it the file for asking what was just said —
+something a person may need to do more than once and cannot do with
+`screen` at all, since reading that takes the announcement away and
+`dropoutput()` throws the queued ones out when the focus moves.
 
-**What is wrong.** `/dev/voice/screen` is a ring of `Nannounce = 16`
-messages. Reading it consumes, `dropoutput()` discards queued output when
-the focus moves, and `queue()` drops an announcement identical to the
-last one queued. All three are right for *saying* things and all three
-make it impossible to ask "what did that say?" a second time.
+The three decisions the plan left open, and the answers:
 
-**The work.** A second buffer that is written by `queue()`, never
-consumed by reading, and not cleared on focus change; exposed as a new
-file under `#V`. Then a key binding or a command reads it.
+- **64 announcements.** `screen` holds sixteen because a backlog is worse
+  than useless when it is being *spoken*. History is never spoken unless
+  asked for, so it can afford to be longer; 64 is 16 KB.
+- **Newest first**, because the question is almost always "what did that
+  just say?" and the answer should not be at the bottom.
+- **Everything that was announced**, at whatever level is in force. The
+  buffer is capped, so a chatty shell pushes older entries out — the same
+  bargain the ring already makes.
 
-**The decisions someone has to make** — this is why it was not just
-done:
+Written by the same `queue()` that fills `screen`, so it holds exactly
+what was announced and inherits the same rule that an announcement
+identical to the one before is dropped.
 
-- How many. The ring is 16 because a backlog of announcements is worse
-  than useless when it is being *spoken*. A review buffer is not spoken
-  unless asked for, so it can be longer; 64 costs 16 KB.
-- What order. Newest first reads naturally as "what just happened";
-  oldest first reads as a transcript.
-- Whether output announcements (`announce all`) belong in it, or only
-  focus. A shell window would swamp the buffer with output.
+`tkofftest(1)` asserts the property that motivated it: after the eight
+announcements above have all been consumed by reading `screen`, the
+history still holds all eight, in newest-first order, and reading it
+twice gives the same thing.
 
-**Done when:** `tkofftest(1)` can focus three controls in turn and read
-all three back afterwards, in order, without any of them having been
-consumed by the reader.
-
-**Trap:** the dedup in `queue()`. Two identical announcements collapse,
-so a review buffer built on `queue()` inherits that — which is probably
-right, but it means a test that focuses two widgets that would say the
-same thing sees one entry, not two.
+**The control caught a flaw in the check itself**, which is worth
+recording. With the history writes disabled the test first *skipped* —
+in Limbo an empty string is `nil`, so "the feature is broken" read
+identically to "the file is not there". It now opens the file to decide
+whether to skip and uses the contents only as the assertion, so a broken
+history fails with `0 lines` instead of going quiet.
 
 ## 2. Text input
 
@@ -289,7 +288,7 @@ does not ask.
 
 1. ~~Check the `voiceannounce` link~~ — **done.** It was broken; `libtk`
    carries its own default now.
-2. **Review buffer** — small, finishes a surface that is already good.
+2. ~~Review buffer~~ — **done.** `/dev/voice/history`.
 3. **Text input** — the only item that gates whether the system can be
    used in a language.
 4. **Theme register** — small, mechanical, verifiable by pixel identity,
