@@ -640,8 +640,18 @@ first time.
 .CW sifiveu
 goes from five markers to nine.
 .PP
-Remaining: MSI (item 4), item 6 (USB ethernet, HID report
-descriptors, virtio-gpu 3-D), and item 7 (per-SoC drivers).
+Item 6 is done as far as this machine allows.  Report-descriptor
+parsing works and is in the suite; the USB-Ethernet driver works, on
+both its ECM and its SMSC paths, and what is blocked is only a second
+.CW devip
+ethernet beside an existing one; virtio-gpu 3-D has no QEMU here built
+against virglrenderer.  All three are written up above.
+.PP
+Remaining: MSI (item 4), the ASIX and Realtek USB dongles named in the
+USB list's item 3 (neither is modelled by any QEMU machine this tree
+boots, so they would need a model written first, as
+.CW usb-lan9514
+was), and item 7 (per-SoC drivers), which needs silicon.
 .CW virtarm64
 stays blocked for a different reason than the rest: QEMU's
 .CW -kernel
@@ -698,6 +708,63 @@ arm64 device-tree discovery is blocked: QEMU's
 .CW -kernel
 path enters the arm64 ELF with x0 == 0, handing it no DTB pointer, so
 the reader that works on riscv has nothing to read.
+.IP \(bu
+virtio-gpu 3-D needs a QEMU built against virglrenderer, and neither
+QEMU on this machine has one:
+.CW "-device virtio-gpu-gl-pci"
+is \(lqDevice not found\(rq on the packaged 10.1.3, and this tree's own
+patched build
+.CW ( tools/qemu-patches )
+is aarch64 only and configured without it.  The 2-D path is done and in
+the suite; the 3-D backing for draw3d has nothing here to run against.
+.IP \(bu
+A second devip ethernet over USB faults the Dis interpreter.  The
+controller and the enumeration are real:
+.CW virt
+links
+.CW devusb ,
+.CW usbxhci
+and
+.CW usbxhcipci ,
+and with
+.CW "-device qemu-xhci -netdev user,id=n1 -device usb-net,netdev=n1"
+the board finds the controller
+.CW ( "usbxhci: 0x1b36 0xd: port 40000000 size 16384 irq 33" ),
+.CW usbd
+enumerates the CDC ECM device
+.CW ( "vid 0525 did a4a2 class 2" ),
+.CW etherusb
+serves
+.CW /net.alt/ether
+over its two bulk endpoints, and
+.CW devip
+binds it.  The next step faults:
+.P1
+exception cause 0x5 epc 0x800641ee tval 0x6f
+.P2
+which resolves against the kernel's own symbols to
+.CW movp+0xe
+called from
+.CW xec+0x2a4
+\(em a Dis
+.CW MOVP
+loading through a pointer 0x6f bytes off nil, inside the interpreter
+rather than in any driver.  It is timing-dependent: the same kernel
+booted by hand without the disk and the host rig did not get as far as
+serving
+.CW /net.alt/ether
+at all.  Chasing it means either bisecting Limbo across
+.CW dhcpclient ,
+.CW etherusb
+and
+.CW styxservers ,
+or fixing the larger thing underneath \(em that a nil dereference in
+Limbo faults a native kernel where it ought to raise an exception.  The
+driver itself is not what is blocked here: the ECM path works, and the
+SMSC path takes a DHCP lease on two Pi configurations every run.  What
+is blocked is a second
+.CW devip
+ethernet on a board that already has one.
 .IP \(bu
 SPI is now real on the one SoC board the tree boots with a modelled
 bus: QEMU's

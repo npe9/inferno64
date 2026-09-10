@@ -26,8 +26,13 @@ implement Etherusb;
 #  - SMSC LAN95xx (the Pi 3B's onboard LAN9514, vid 0424 did ec00):
 #    vendor register access over ep0, 4-byte rx status words and 8-byte
 #    tx command words around each frame, register init after 9front's
-#    smsc.c.  QEMU does not model the chip, so this path is written for
-#    the real board and is NOT emulator-verified.
+#    smsc.c.  This said "QEMU does not model the chip ... NOT
+#    emulator-verified", and that stopped being true: tools/qemu-patches
+#    0003 is this tree's own usb-lan9514 model, and the board suite's
+#    raspi3b-usb and raspi4-usb configurations take a DHCP lease through
+#    this path on every run (ETHER-DHCP-OK, 10.0.2.15).  It is the path
+#    the suite exercises; the ECM path above is the one QEMU's own
+#    usb-net offers.
 #
 # usbd starts this program with the device's ep0 name (epN.0) once it
 # has enumerated and configured the device; usbd closes its own ep0
