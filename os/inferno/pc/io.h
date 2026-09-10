@@ -44,18 +44,35 @@ enum {
 	MaxVectorAPIC	= 255,
 };
 
+/*
+ * Same shape as os/inferno/pc64/io.h's.  This board's irq.c is already
+ * the one that assigns v->vno, v->cpu and v->local and calls v->enable,
+ * and i8259.c sets v->enable and v->disable; only this declaration was
+ * left at the older layout, so the board did not compile.
+ */
 typedef struct Vctl {
-	Vctl*	next;			/* handlers on this vector */
+	Vctl	*next;			/* handlers on this vector */
 
-	char	name[KNAMELEN];		/* of driver */
-	int	isintr;			/* interrupt or fault/trap */
-	int	irq;
-	int	tbdf;
+	void	(*f)(Ureg*, void*);	/* handler to call */
+	void	*a;			/* argument to call it with */
+
 	int	(*isr)(int);		/* get isr bit for this irq */
 	int	(*eoi)(int);		/* eoi */
 
-	void	(*f)(Ureg*, void*);	/* handler to call */
-	void*	a;			/* argument to call it with */
+	int	(*enable)(Vctl*, int);
+	int	(*disable)(Vctl*, int);
+	void	*aux;
+
+	int	irq;
+	int	tbdf;
+	int	msixvec;		/* MSI-X table index, -1 if not MSI-X */
+	int	vno;
+	int	cpu;
+	int	local;
+
+	char	name[KNAMELEN];		/* of driver */
+	/* inferno specific */
+	int	isintr;			/* interrupt or fault/trap */
 } Vctl;
 
 enum {

@@ -263,6 +263,9 @@ extern int pcimsidisable(Pcidev *p);
 extern int pcimsixcount(Pcidev *p);
 extern int pcimsixenable(Pcidev *p, int vec, uvlong addr, ulong data);
 extern int pcimsixdisable(Pcidev *p);
+extern int pcimsixmask(Pcidev *p, int vec, int mask);
+extern void (*pcimsixintrenable)(Pcidev*, int, void (*)(Ureg*, void*), void*, char*);
+extern void (*pcimsixintrdisable)(Pcidev*, int, void (*)(Ureg*, void*), void*, char*);
 
 extern int pcigetpms(Pcidev* p);
 extern int pcisetpms(Pcidev* p, int state);

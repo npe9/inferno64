@@ -20,6 +20,43 @@ Init: module
 	init:	fn();
 };
 
+msixcycle()
+{
+	# "config switch off spec N" runs the controller's disable(),
+	# which for sdnvme releases both of its MSI-X vectors -- masking
+	# each and turning the capability off behind the last -- and then
+	# frees the SDev.  sdnvme has no probe() function, so devsd cannot
+	# put it back afterwards; what this checks is that the release
+	# happens and that the device really goes away.
+	cfd := sys->open("#S/sdctl", Sys->OWRITE);
+	if(cfd == nil){
+		sys->print("DEVTEST: MSIX-DETACH: no #S/sdctl: %r\n");
+		return;
+	}
+	off := array of byte "config switch off spec N";
+	if(sys->write(cfd, off, len off) < 0){
+		sys->print("DEVTEST: MSIX-DETACH-FAIL switch off: %r\n");
+		return;
+	}
+	cfd = nil;
+	if(sys->open("/dev/sdN0/data", Sys->OREAD) != nil){
+		sys->print("DEVTEST: MSIX-DETACH-FAIL /dev/sdN0/data still opens\n");
+		return;
+	}
+	sys->print("DEVTEST: MSIX-DETACH-OK sdN gone after switch off\n");
+
+	# recorded rather than checked: devsd's "switch on" needs an
+	# SDifc probe(), and sdnvme's is nil, so this always fails.
+	cfd = sys->open("#S/sdctl", Sys->OWRITE);
+	if(cfd != nil){
+		on := array of byte "config switch on spec N type nvme";
+		if(sys->write(cfd, on, len on) < 0)
+			sys->print("DEVTEST: MSIX-REATTACH not available: %r\n");
+		else
+			sys->print("DEVTEST: MSIX-REATTACH accepted\n");
+	}
+}
+
 readfile(path: string): string
 {
 	fd := sys->open(path, Sys->OREAD);
@@ -81,6 +118,13 @@ init()
 			e++;
 		sys->print("DEVTEST: %s sector 0 (%d bytes): %s\n", hd l, n, string sec[0:e]);
 	}
+
+	# MSI-X detach and re-attach: "config switch off spec N" runs the
+	# controller's disable(), which for sdnvme releases both of its
+	# MSI-X vectors and turns the capability off behind the last one;
+	# switching it back on re-enables them.  Reading the sector again
+	# is what says the second enable actually programmed the table.
+	msixcycle();
 
 	# audio: the codec's status, then a second of silence written to it
 	sys->bind("#A", "/dev", Sys->MAFTER);

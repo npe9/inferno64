@@ -562,22 +562,34 @@ static int
 msixirqenable(Vctl *v, int)
 {
 	Pcidev *pci = v->aux;
-	int r;
+	int r, vec;
 
-	r = pcimsixenable(pci, 0, 0xFEE00000ULL | (v->cpu << 12), v->vno | (1<<14));
+	/* a caller that named no vector gets entry 0, the way it always did */
+	vec = v->msixvec < 0 ? 0 : v->msixvec;
+	r = pcimsixenable(pci, vec, 0xFEE00000ULL | (v->cpu << 12),
+		v->vno | (1<<14));
 	/* said out loud because *msix is an opt-in: without it there is no
 	 * way to tell from a boot log whether a device took MSI-X or fell
 	 * back to MSI, and the two look identical from the driver.
 	 */
-	print("msix: %s tbdf %uX vector %d cpu %d: %s\n",
-		v->name, pci->tbdf, v->vno, v->cpu, r < 0 ? "failed" : "enabled");
+	print("msix: %s tbdf %uX msixvec %d vector %d cpu %d: %s\n",
+		v->name, pci->tbdf, vec, v->vno, v->cpu,
+		r < 0 ? "failed" : "enabled");
 	return r;
 }
 
+/*
+ * One vector of a device that may have several in use: mask this
+ * entry and leave the capability alone.  Only a handler registered
+ * the old way, which owns the whole device, turns MSI-X off.
+ */
 static int
 msixirqdisable(Vctl *v, int)
 {
 	Pcidev *pci = v->aux;
+
+	if(v->msixvec >= 0)
+		return pcimsixmask(pci, v->msixvec, 1);
 	return pcimsixdisable(pci);
 }
 
@@ -616,7 +628,13 @@ msiintrenable(Vctl *v)
 	 * queue.  This flag is how the plumbing gets exercised until such
 	 * a driver exists.
 	 */
-	usemsix = getconf("*msix") != nil && pcimsixcount(pci) > 0;
+	/*
+	 * A caller that named a vector -- msixintrenable() in ../pc/irq.c
+	 * -- has asked for MSI-X and knows the device's table; the flag
+	 * is only for the drivers that did not ask.
+	 */
+	usemsix = v->msixvec >= 0
+		|| (getconf("*msix") != nil && pcimsixcount(pci) > 0);
 	if(usemsix)
 		pcimsidisable(pci);
 	else if(pcimsidisable(pci) < 0)

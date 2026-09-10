@@ -5,6 +5,7 @@
 #include	"dat.h"
 #include	"fns.h"
 #include	"io.h"
+#include	"../port/pci.h"
 #include	"ureg.h"
 #include	"../port/error.h"
 
@@ -153,33 +154,19 @@ delayfree(Vctl *v)
 	return r;
 }
 
-void
-intrenable(int irq, void (*f)(Ureg*, void*), void* a, int tbdf, char *name)
+/*
+ * The list work, shared by intrenable() and the MSI-X entry point
+ * below: the caller has filled in f, a, tbdf, irq, name and msixvec,
+ * and this assigns the vector and chains the handler on it.
+ */
+static void
+intrenablev(Vctl *v)
 {
-	Vctl **pv, *v;
+	Vctl **pv;
+	int irq, tbdf;
 
-	if(f == nil){
-		print("intrenable: nil handler for %d, tbdf 0x%uX for %s\n",
-			irq, tbdf, name);
-		return;
-	}
-
-	if(arch->intrirqno != nil)
-		irq = (*arch->intrirqno)(irq, tbdf);
-
-	if((v = xalloc(sizeof(Vctl))) == nil)
-		panic("intrenable: out of memory");
-
-	v->f = f;
-	v->a = a;
-
-	v->tbdf = tbdf;
-	v->irq = irq;
-	v->vno = -1;
-	v->cpu = -1;
-
-	strncpy(v->name, name, KNAMELEN-1);
-	v->name[KNAMELEN-1] = 0;
+	irq = v->irq;
+	tbdf = v->tbdf;
 
 	ilock(&vctllock);
 	v->vno = (*arch->intrassign)(v);
@@ -205,7 +192,7 @@ Unlockandfree:
 			pv = &vclock->next;
 		v->next = *pv;
 	}
-	if(strcmp(name, "clock") == 0)
+	if(strcmp(v->name, "clock") == 0)
 		vclock = v;
 	*pv = v;
 	if(v->enable != nil){
@@ -222,6 +209,129 @@ Unlockandfree:
 		}
 	}
 	iunlock(&vctllock);
+}
+
+void
+intrenable(int irq, void (*f)(Ureg*, void*), void* a, int tbdf, char *name)
+{
+	Vctl *v;
+
+	if(f == nil){
+		print("intrenable: nil handler for %d, tbdf 0x%uX for %s\n",
+			irq, tbdf, name);
+		return;
+	}
+
+	if(arch->intrirqno != nil)
+		irq = (*arch->intrirqno)(irq, tbdf);
+
+	if((v = xalloc(sizeof(Vctl))) == nil)
+		panic("intrenable: out of memory");
+
+	v->f = f;
+	v->a = a;
+
+	v->tbdf = tbdf;
+	v->irq = irq;
+	v->vno = -1;
+	v->cpu = -1;
+	v->msixvec = -1;
+
+	strncpy(v->name, name, KNAMELEN-1);
+	v->name[KNAMELEN-1] = 0;
+
+	intrenablev(v);
+}
+
+/*
+ * One MSI-X vector of one device, with its own handler.  A part that
+ * carries a queue per vector -- Amazon's ENA, the current Intel and
+ * Mellanox ones, and NVMe with more than the admin queue -- calls this
+ * once per queue, and each call takes its own idt vector, so no two of
+ * them share a handler list.  Reached through pcimsixintrenable rather
+ * than named directly, because ../port's drivers are built for boards
+ * that have no MSI-X at all.
+ */
+static void
+msixintrenable(Pcidev *p, int msixvec, void (*f)(Ureg*, void*), void *a, char *name)
+{
+	Vctl *v;
+	int n;
+
+	if(f == nil || p == nil){
+		print("msixintrenable: nil handler or device for %s\n", name);
+		return;
+	}
+	n = pcimsixcount(p);
+	if(msixvec < 0 || msixvec >= n){
+		print("msixintrenable: %s: vector %d of %d\n", name, msixvec, n);
+		return;
+	}
+
+	if((v = xalloc(sizeof(Vctl))) == nil)
+		panic("msixintrenable: out of memory");
+
+	v->f = f;
+	v->a = a;
+
+	v->tbdf = p->tbdf;
+	v->irq = -1;
+	v->vno = -1;
+	v->cpu = -1;
+	v->msixvec = msixvec;
+
+	strncpy(v->name, name, KNAMELEN-1);
+	v->name[KNAMELEN-1] = 0;
+
+	intrenablev(v);
+}
+
+static void
+msixintrdisable(Pcidev *p, int msixvec, void (*f)(Ureg*, void*), void *a, char *name)
+{
+	Vctl **pv, *v, *w;
+	int vno;
+
+	ilock(&vctllock);
+	for(vno = VectorPIC; vno < nelem(vctl); vno++){
+		for(pv = &vctl[vno]; (v = *pv) != nil; pv = &v->next){
+			if(v->msixvec == msixvec && v->tbdf == p->tbdf
+			&& v->f == f && v->a == a
+			&& strcmp(v->name, name) == 0)
+				goto Found;
+		}
+	}
+	iunlock(&vctllock);
+	return;
+Found:
+	if(v->disable != nil){
+		if((*v->disable)(v, pv != &vctl[vno] || v->next != nil) < 0)
+			print("msixintrdisable: couldn't disable vector %d, tbdf 0x%uX for %s\n",
+				msixvec, p->tbdf, name);
+	}
+	coherence();
+	*pv = v->next;
+	if(v == vclock)
+		vclock = nil;
+	if(conf.nmach > 1)
+		v = delayfree(v);
+
+	/*
+	 * Masking the entry leaves the capability enabled, which is right
+	 * while the device's other queues are still running and wrong once
+	 * the last of them has gone: a later pcimsixenable() would then be
+	 * programming a table that was never re-enabled.  So when nothing
+	 * on this device is left, turn it off.
+	 */
+	for(vno = VectorPIC; vno < nelem(vctl); vno++)
+		for(w = vctl[vno]; w != nil; w = w->next)
+			if(w->msixvec >= 0 && w->tbdf == p->tbdf)
+				goto Stillused;
+	pcimsixdisable(p);
+Stillused:
+	iunlock(&vctllock);
+	if(v != nil)
+		xfree(v);
 }
 
 void
@@ -304,4 +414,10 @@ void
 irqinit(void)
 {
 	addarchfile("irqalloc", 0444, irqallocread, nil);
+	/*
+	 * publish the MSI-X entry points to ../port/pci.c, whose drivers
+	 * cannot name anything in this directory
+	 */
+	pcimsixintrenable = msixintrenable;
+	pcimsixintrdisable = msixintrdisable;
 }

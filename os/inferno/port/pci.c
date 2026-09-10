@@ -1033,6 +1033,17 @@ enum {
 	MSIXEntMask	= 1,	/* bit 0 of a vector's control word */
 };
 
+/*
+ * A driver that wants a vector per queue calls these rather than
+ * intrenable(), because intrenable()'s irq argument cannot say which
+ * of a device's MSI-X vectors is meant.  They stay nil on a board
+ * whose interrupt controller cannot deliver MSI-X; a driver must test
+ * before using them and fall back to intrenable().  os/inferno/pc's
+ * irqinit() sets them.
+ */
+void (*pcimsixintrenable)(Pcidev*, int, void (*)(Ureg*, void*), void*, char*);
+void (*pcimsixintrdisable)(Pcidev*, int, void (*)(Ureg*, void*), void*, char*);
+
 static int
 pcigetmsix(Pcidev *p)
 {
@@ -1103,6 +1114,28 @@ pcimsixenable(Pcidev *p, int vec, uvlong addr, ulong data)
 
 	pcicfgw16(p, off + MSIXCtrl,
 		(pcicfgr16(p, off + MSIXCtrl) & ~MSIXFuncMask) | MSIXEnable);
+	return 0;
+}
+
+/*
+ * Mask or unmask one vector, leaving the rest of the table and the
+ * capability alone.  Disabling a single queue's interrupt on a device
+ * whose other queues are still running is this, not pcimsixdisable().
+ */
+int
+pcimsixmask(Pcidev *p, int vec, int mask)
+{
+	int off, nvec;
+	uchar *e;
+
+	if((off = pcigetmsix(p)) < 0 || p->msixtbl == nil)
+		return -1;
+	nvec = (pcicfgr16(p, off + MSIXCtrl) & MSIXSizeMask) + 1;
+	if(vec < 0 || vec >= nvec)
+		return -1;
+	e = (uchar*)p->msixtbl + vec*MSIXEntSize;
+	*(u32int*)(e+12) = mask ? MSIXEntMask : 0;
+	coherence();
 	return 0;
 }
 
