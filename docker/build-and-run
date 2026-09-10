@@ -56,11 +56,17 @@ say "utils (the compilers)"
 say "limbo"
 (cd /build/limbo && mk install) >> $log 2>&1 || { tail -20 $log >&2; exit 1; }
 
-# Only the boards the suite can run in here.  The Pi ones build fine --
-# that is the point of building rather than shipping binaries -- but
-# they need the patched qemu of tools/qemu-patches, which this image
-# does not carry.
-for b in virt virtarm64 virt32 sifiveu; do
+# The boards this image can run.  The Pi ones need the patched qemu of
+# tools/qemu-patches; the image built from Boardsuite-pi.Dockerfile has
+# it and says so by setting QEMU, and the plain one does not.  Their
+# kernels build either way -- that is the point of building rather than
+# shipping binaries -- but building one nothing here can boot is time
+# spent for nothing.
+boards="virt virtarm64 virt32 sifiveu"
+if [ -n "$QEMU" ] && [ -x "$QEMU" ]; then
+	boards="$boards raspi3b raspi4"
+fi
+for b in $boards; do
 	say "os/inferno/$b"
 	(cd /build/os/inferno/$b && mk) >> $log 2>&1 || { tail -20 $log >&2; exit 1; }
 done
@@ -71,6 +77,12 @@ say "built; running the suite"
 # Pi configurations want the patched qemu, and the suite refuses before
 # it starts rather than part way through, which is right but makes a
 # bare "build" look like a failure of the build.
-[ $# -eq 0 ] && set -- virtarm64 virtarm64-peer sifiveu virt virt32 virt-peer peer-mixed
+if [ $# -eq 0 ]; then
+	set -- virtarm64 virtarm64-peer sifiveu virt virt32 virt-peer peer-mixed
+	if [ -n "$QEMU" ] && [ -x "$QEMU" ]; then
+		set -- raspi3b raspi3b-4g raspi3b-usb raspi4 raspi4-hot \
+			raspi4-usb "$@"
+	fi
+fi
 
 exec /build/tools/boardsuite/run "$@"

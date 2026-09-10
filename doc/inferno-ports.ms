@@ -19678,3 +19678,69 @@ and not one this session should take on its own: they include
 .CW ipc64 ,
 which another session is working on, and boards this one was never
 asked to touch.
+.NH 2
+And the patched qemu, so all thirteen run from source
+.PP
+The Pi configurations were the last thing the container could not do,
+and the reason was the patched qemu:
+.CW tools/qemu-patches
+is twenty-six patches against v10.1.3 and nothing packages the result.
+.CW docker/Qemu.Dockerfile
+builds it.
+.PP
+It is a separate image on purpose.
+.CW Boardsuite.Dockerfile
+is apt only and builds in seconds; folding a qemu source build into it
+would make every run of the other seven wait on a layer that goes stale
+whenever a patch changes.  The patch series is this image's entire build
+context, so a changed patch rebuilds it and an unchanged one does not,
+and the suite image copies the binary out with
+.CW COPY\ --from .
+The build takes under two minutes on an arm64 host, which is the number
+that decided it belonged in
+.CW "docker build"
+rather than in the run.
+.PP
+The patches go on one at a time, and the loop stops on the first that
+does not apply.
+.CW "git am"
+over the series would leave a half-applied tree on a rejection, and a
+half-patched qemu boots and lies rather than failing.  The binary
+reports
+.CW v10.1.3-26-g176d7af ,
+and the 26 is the count.
+.PP
+Two things that image had to learn, both of them found by running it.
+.IP \(bu
+libslirp's development package.  It is not in the recipe in
+.CW tools/qemu-patches/README ,
+because on the machine that recipe was written on it was already
+installed.  Without it, qemu 10 configures and builds happily and then
+answers
+.CW "network backend 'user' is not compiled into this binary"
+the first time a board asks for a network.  Six of the thirteen
+configurations booted perfectly on that binary, which is what makes it
+easy to miss; the recipe says so now.
+.IP \(bu
+.CW virtarm64
+keeps the packaged qemu, named through
+.CW QEMU_AARCH64
+rather than found on
+.CW PATH ,
+where the patched binary now comes first.  It would pass either way.
+But virtarm64 passing on a
+.I stock
+qemu is exactly what says the Pi patches are Pi patches, and a run in
+which one binary answers for every board cannot say that.
+.PP
+All thirteen then come back with the marker sets recorded on the Mac:
+36, 36, 40, 33, 33, 37, 32, 34, 5, 42, 2, 44, 44.  Kernels built by
+Debian gcc from the same source Apple clang builds here, and a qemu
+built from source in the container agreeing with one built by hand on
+this machine, about twenty-six patches' worth of device models.  That
+agreement is the result; the green run on its own would not be.
+.PP
+It also means the whole suite is now reproducible from a checkout on a
+machine with docker and nothing else \(em no prebuilt kernels, no
+prebuilt qemu, and nothing in the repository that the repository says
+should not be there.

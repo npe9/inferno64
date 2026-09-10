@@ -8,6 +8,9 @@
 #	docker/boardsuite.sh build		build the tree in the
 #						container first, and run
 #						what was built
+#	docker/boardsuite.sh all		the same, with the patched
+#						qemu built too, so the Pi
+#						configurations run as well
 #
 # The tree is bind-mounted read-only.  By default the suite boots the
 # kernel binaries that happen to be in it; "build" instead builds them
@@ -44,6 +47,28 @@ fi
 if [ "$1" = build ]; then
 	shift
 	exec $run --entrypoint /src/docker/build-and-run "$image" "$@"
+fi
+
+# The Pi configurations need the patched qemu of tools/qemu-patches,
+# which nothing packages: it is a source build against v10.1.3, and it
+# lives in an image of its own so that the seven that do not want it
+# are not made to wait on it.  The patch series is the build context,
+# so a changed patch rebuilds it and an unchanged one does not.
+if [ "$1" = all ]; then
+	shift
+	ctx=`mktemp -d`
+	trap 'rm -rf "$ctx"' EXIT
+	mkdir -p "$ctx/patches"
+	cp "$root"/tools/qemu-patches/*.patch "$ctx/patches/"
+	cp "$root/docker/Qemu.Dockerfile" "$ctx/"
+	docker build --platform "$platform" -f "$ctx/Qemu.Dockerfile" \
+		-t "$image-qemu" "$ctx" >&2
+	docker build --platform "$platform" \
+		--build-arg SUITE_IMAGE="$image" \
+		--build-arg QEMU_IMAGE="$image-qemu" \
+		-f "$root/docker/Boardsuite-pi.Dockerfile" \
+		-t "$image-pi" "$root/docker" >&2
+	exec $run --entrypoint /src/docker/build-and-run "$image-pi" "$@"
 fi
 if [ "$1" = sh ]; then
 	shift

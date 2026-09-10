@@ -16,6 +16,14 @@ To apply and build:
 		--disable-fuse --disable-jack
 	ninja
 
+The build needs libslirp's development package, which this recipe does
+not name because on the machine it was written on it was already
+there.  qemu 10 takes -netdev user from the system libslirp, and
+without it configure builds a binary that says "network backend 'user'
+is not compiled into this binary" the first time a board asks for a
+network -- easy to miss, because every board that does not use one
+boots on it perfectly.  On Debian that is libslirp-dev.
+
 Run the result by explicit path; do not install over a packaged qemu.
 On macOS the binary is qemu-system-aarch64-unsigned, which runs fine
 under TCG.
