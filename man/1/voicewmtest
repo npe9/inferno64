@@ -1,0 +1,69 @@
+.TH VOICEWMTEST 1
+.SH NAME
+voicewmtest \- what a real window announces when it takes the keyboard
+.SH SYNOPSIS
+.B voicewmtest
+.SH DESCRIPTION
+.I Voicewmtest
+runs under
+.IR wm (1),
+makes a real client window with a titlebar, and reads
+.B /dev/voice/history
+to see what the whole stack said when the window manager handed that
+window the keyboard.
+It is in
+.IR runtests (1)'s
+graphical list, and needs
+.B -g
+and a window context.
+.PP
+It checks one thing: that a window entry names the window
+.IR once .
+.SS Why it is separate from tkofftest
+.IR Tkofftest (1)
+builds its toplevels with
+.B tk->toplevel
+and hands them an image of its own, which is what lets it read pixels
+back at all.
+That path never goes through
+.IR wmclient (2),
+and two layers meeting is exactly where an announcement can go wrong.
+.PP
+For a while a window entry said its name twice, once from
+.I wmclient
+writing the title itself and once from
+.BR libtk ;
+nothing offscreen could have seen it.
+.SS What it catches, and what it does not
+Checked by putting the bug back: two layers announcing the same thing in
+.I different
+words is caught \(em it reports
+.B "named 2 times"
+and prints both.
+.PP
+Two layers announcing the same words
+.I exactly
+is not caught, because
+.IR voice (3)
+drops an announcement identical to the one before it, so that case is
+already harmless.
+That is a property of the device rather than a hole here, but it is worth
+knowing before trusting this to settle a layering question.
+.SH SOURCE
+.B /appl/cmd/voicewmtest.b
+.SH SEE ALSO
+.IR runtests (1),
+.IR tkofftest (1),
+.IR voice (3),
+.IR wmclient (2)
+.SH BUGS
+One window, one event.
+It says nothing about what is announced while a window is used \(em
+moving between controls, walking a menu, moving about in text \(em all of
+which
+.IR tkofftest (1)
+checks offscreen and nothing checks here.
+.PP
+The history is not clearable, so this counts the lines before and after
+rather than starting from nothing. A session that announced a great deal
+before it ran would still work, but the counting is the fragile part.

@@ -60,6 +60,8 @@ graphical := array[] of {
 		"the draw3d GPU line provider against the software one"),
 	Test("keyuptest", nil,
 		"that key releases are not inserted as text"),
+	Test("voicewmtest", nil,
+		"that a real window names itself once to voice(3), not twice"),
 	Test("wmtest", "-n 40",
 		"window creation in bulk"),
 	Test("wmtest", "-k",

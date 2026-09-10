@@ -107,6 +107,7 @@ TARG=\
 	mltest.dis\
 	phontest.dis\
 	voicetest.dis\
+	voicewmtest.dis\
 	speakertest.dis\
 	speak.dis\
 	pdetest.dis\
