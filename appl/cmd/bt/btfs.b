@@ -1427,8 +1427,10 @@ ctlwrite(m: ref Tmsg.Write, r: ref Radio, d: ref Dev, s: string)
 		(dd, ee) := target(r, d, f);
 		if(ee != nil)
 			e = ee;
+		else if(hasword(f, "passkey"))
+			e = pairask(dd, Smp->Iokeyboardonly);
 		else if(hasword(f, "confirm"))
-			e = pairconfirm(dd);
+			e = pairask(dd, Smp->Iodisplayyesno);
 		else
 			e = pair(dd);
 	"params" =>
@@ -2259,7 +2261,7 @@ pair(d: ref Dev): string
 # made here and handed to smp; asker() leaves whatever it asks where
 # the confirm file can see it, and the answer comes back the same way.
 #
-pairconfirm(d: ref Dev): string
+pairask(d: ref Dev, iocap: int): string
 {
 	a := ref Smp->Ask;
 	a.q = chan of string;
@@ -2267,7 +2269,7 @@ pairconfirm(d: ref Dev): string
 	done := chan of int;
 	d.ask = a;
 	spawn asker(d, a, done);
-	e := pairing(d, Smp->Iodisplayyesno, a);
+	e := pairing(d, iocap, a);
 	done <-= 1;
 	d.ask = nil;
 	return e;
@@ -3348,9 +3350,13 @@ confirmwrite(m: ref Tmsg.Write, d: ref Dev, s: string)
 	case hd f {
 	"yes" or "y" or "ok" =>	yes = 1;
 	"no" or "n" =>		yes = 0;
+	* =>
+		if(digits(hd f))
+			yes = int hd f;
 	}
 	if(yes < 0){
-		srv.reply(ref Rmsg.Error(m.tag, "write yes or no"));
+		srv.reply(ref Rmsg.Error(m.tag,
+			"write yes or no, or a passkey"));
 		return;
 	}
 	d.question = nil;

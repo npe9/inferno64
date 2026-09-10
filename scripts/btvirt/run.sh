@@ -27,6 +27,9 @@ PHASE=${1:-btvirt}
 # guest is always the second address.  GUESTADDR overrides it.
 #
 case "$PHASE" in
+btvirtpasskey)
+	PEERARGS=${PEERARGS:--i 0}
+	;;
 btvirtperiph)
 	PEERARGS=${PEERARGS:--c ${GUESTADDR:-00AA01010042}}
 	;;

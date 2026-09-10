@@ -1284,9 +1284,17 @@ Smp: module
 	# ask is nil when there is nobody to ask, and then the pairing is Just
 	# Works and claims no such protection.
 	#
+	# The question names its own kind:
+	#
+	#	"numeric 123456"  compare these digits with the other
+	#			  device's; the answer is 1 or 0
+	#	"passkey"	  type in the digits the other device is
+	#			  showing; the answer is the number, or
+	#			  anything negative to refuse
+	#
 	Ask: adt {
-		q:	chan of string;		# the question, "numeric 123456"
-		a:	chan of int;		# 1 to accept it, 0 to refuse
+		q:	chan of string;
+		a:	chan of int;
 	};
 
 	PATH:	con "/dis/lib/bt/smp.dis";

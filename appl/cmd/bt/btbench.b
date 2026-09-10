@@ -289,6 +289,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	"btvirtperiph" =>
 		btvirtperiph();
 		return;
+	"btvirtpasskey" =>
+		btvirtpasskey();
+		return;
 	"coc" or "cocstingy" =>
 		cocphase(mode);
 		return;
@@ -4209,4 +4212,52 @@ btvirtperiph()
 	for(bl := bonds; bl != nil; bl = tl bl)
 		say("BT: bond " + hd bl);
 	sys->print("BT: done\n");
+}
+
+Bvpasskey:	con "703710";		# 0x0abcde, what the peer is patched to show
+
+btvirtpasskey()
+{
+	dev := "";
+	for(i := 0; i < 40 && dev == ""; i++){
+		sys->sleep(500);
+		for(l := lsdir(mnt + "/0/remote"); l != nil; l = tl l)
+			if(trim(readfile(mnt + "/0/remote/" + hd l + "/name")) == "bluez-peer")
+				dev = mnt + "/0/remote/" + hd l;
+	}
+	if(dev == ""){
+		sys->print("BT: FAILED: the scan found no peer\n");
+		sys->print("BT: done\n");
+		return;
+	}
+	if((e := writefile(dev + "/ctl", "connect")) != nil){
+		sys->print("BT: FAILED: connect: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	spawn typist(dev, Bvpasskey);
+	if((e = writefile(dev + "/ctl", "pair passkey")) != nil)
+		sys->print("BT: FAILED: pair passkey: %s\n", e);
+	else {
+		show(dev + "/state");
+		for(bl := lines(readfile(mnt + "/0/bonds")); bl != nil; bl = tl bl)
+			say("BT: bond " + hd bl);
+	}
+	writefile(dev + "/ctl", "disconnect");
+	sys->print("BT: done\n");
+}
+
+typist(dev, key: string)
+{
+	for(i := 0; i < 100; i++){
+		q := trim(readfile(dev + "/confirm"));
+		if(q != nil){
+			sys->print("BT: the pairing asks: %s\n", q);
+			if((e := writefile(dev + "/confirm", key)) != nil)
+				sys->print("BT: FAILED: typing the passkey: %s\n", e);
+			return;
+		}
+		sys->sleep(100);
+	}
+	sys->print("BT: FAILED: the pairing never asked for a passkey\n");
 }

@@ -282,50 +282,62 @@ it to whoever runs it: btvirt hands out controllers in the order they
 connect, the peer takes the first and the guest the second, so the
 guest is always the second address.
 .NH 3
-Passkey entry, attempted and not shipped
+Passkey entry
 .PP
-Passkey entry was written and is not here.  It is twenty rounds, one
-per bit of a twenty bit secret that never goes on the wire: each round
-commits to one bit \(em f4 with 0x80 or 0x81 as its last argument
-according to that bit \(em so a side with the wrong passkey is caught
-in the round of the first differing bit rather than at the end.
-.PP
-It does not work against BlueZ, and what could be established is worth
-more than the code was.
-.IP \(bu
-bthost's passkey is always zero and nothing can set it: the field
-exists and is read for the rounds, but no interface writes it.  A
-fixture whose secret is zero cannot tell a right implementation from
-one that ignores the secret, so a patch gave it 0x0abcde.
-.IP \(bu
-With that, round 0 agrees and round 1 fails with Confirm Value Failed.
-.IP \(bu
-Both sides used the same last argument in round 1.  That is not
-inferred: bthost's own round 1 confirm, recomputed from the capture
-with openssl, matches 0x81 and not 0x80, and 0x81 is what bit 1 of
-0x0abcde calls for.
-.IP \(bu
-This side's round 1 confirm, recomputed the same way, is exactly
-.CW f4
-over its own public key, the peer's, its own round 1 nonce and 0x81.
-.PP
-So both sides computed the same function over what looks like the same
-input and one of them refused it, which is not a thing that should be
-possible and was not resolved.  Reusing one nonce for all twenty
-rounds, which is what bthost does and which the specification does not
-say to do, was tried on this side too and changed nothing.
-.PP
-The code is not kept.  A pairing method that fails is worse than one
-that is not offered \(em
+Passkey entry is twenty rounds, one per bit of a twenty bit secret
+that never goes on the wire.  Each round commits to one bit \(em f4
+with 0x80 or 0x81 as its last argument according to that bit \(em so a
+side with the wrong passkey is caught in the round of the first
+differing bit rather than at the end.  That is the whole reason for
+doing it a bit at a time, and it is what the phase asserts:
+.EX
+passkey 703711 (bit 0 wrong):    1 round, then refused
+passkey 703708 (bit 1 wrong):    2 rounds, then refused
+passkey 703710 (right):         20 rounds, and a bond
+.EE
 .CW "pair passkey"
-would have been a verb that never worked \(em and an unverified path
-that agrees a key is not something to ship on the grounds that it
-looks right.  What is kept is this, and the observation that bthost's
-passkey path reuses a single nonce across all twenty rounds, which
-suggests it is not a path BlueZ's own tests exercise hard.
+on a device's ctl asks for it; the
+.CW confirm
+file then holds
+.CW passkey
+rather than a number, and what is written back is the digits.
 .PP
-Numeric comparison, which is the other half of the same item, is done
-in both roles and is described above.  Numeric comparison is done, both roles, and is described
+This was written, wrongly given up on, and reinstated, and the giving
+up is the part worth recording.  It failed against BlueZ at round 1
+with Confirm Value Failed, and everything that could be measured said
+both sides were computing the same function over the same input:
+bthost's own round 1 confirm recomputed from the capture with openssl
+matched 0x81, this side's matched 0x81, and 0x81 is what bit 1 of the
+passkey calls for.  On that basis the code was taken out, on the
+principle that an unverified pairing method should not ship.
+.PP
+The principle was right and the diagnosis was wrong.  The fault was in
+the fixture: a context patch meant to give bthost a passkey with bits
+in it applied one of its two hunks and silently dropped the other, so
+bthost sent its confirms with the real passkey and checked this side's
+against zero.  Every round whose bit is 0 then agrees by accident, and
+round 1 is the first whose bit is 1.  The evidence gathered was all
+correct and all consistent with a fault on this side, because the one
+thing not measured was whether the fixture was what it claimed to be.
+.PP
+What settled it was making bthost say what it was comparing, which
+should have been the first move rather than the last: the prints never
+appeared, and that they never appeared is what showed the patch had
+half applied.
+.PP
+The edits to bthost are in
+.CW scripts/btvirt/bthost-passkey.sh
+now, as sed with every substitution counted afterwards, because a
+substitution that finds nothing can be caught and a context patch that
+half applies cannot.  There are two, and the second is a fault in
+BlueZ rather than a missing feature:
+.CW sc_dhkey_check
+builds the check it sends with a bare
+.CW "memset(r, 0, sizeof(r))"
+and no test of the method, while its verifying half has the
+conditional that puts the passkey in r.  So bthost sends a DHKey check
+computed with the wrong r for every passkey pairing, which is why one
+that got all twenty rounds right still failed at the last message.
 under the next item, which is where the asking lives.
 .PP
 .B "A way to ask the user."

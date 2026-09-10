@@ -50,6 +50,7 @@ static const char advname[] = "bluez-peer";
  * it, it advertises and waits, which is everything else here.
  */
 static const uint8_t *connect_to;
+static int iocap = 0x01;
 static uint8_t connect_addr[6];
 
 /* H4 out: whatever bthost built, straight down the socket */
@@ -617,7 +618,7 @@ static void ready_cb(void)
 	 * coming out as Just Works while this file plainly asked for
 	 * numeric comparison.
 	 */
-	bthost_set_io_capability(host, 0x01);	/* DisplayYesNo */
+	bthost_set_io_capability(host, iocap);
 	bthost_set_auth_req(host, 0x0d);	/* bonding, MITM, SC */
 	bthost_write_ssp_mode(host, 0x01);
 	bthost_add_l2cap_server(host, TESTPSM, l2cap_conn, l2cap_disconn, NULL);
@@ -678,6 +679,8 @@ int main(int argc, char *argv[])
 				return 1;
 			}
 			connect_to = connect_addr;
+		} else if (!strcmp(argv[i], "-i") && i + 1 < argc) {
+			iocap = atoi(argv[++i]);
 		} else
 			path = argv[i];
 	}

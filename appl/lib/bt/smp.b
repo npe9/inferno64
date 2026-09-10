@@ -212,7 +212,8 @@ pair(c: ref Conn, m: ref Mux, iocap: int, ask: ref Ask): (ref Bond, string)
 	auth := Abonding;
 	if(cmac != nil && p256 != nil)
 		auth |= Asc;
-	if(ask != nil && iocap == Iodisplayyesno && (auth & Asc))
+	if(ask != nil && (auth & Asc)
+	&& (iocap == Iodisplayyesno || iocap == Iokeyboardonly))
 		auth |= Amitm;
 	preq[3] = byte auth;
 	preq[4] = byte 16;			# maximum key size
@@ -910,6 +911,82 @@ genkey(x: ref Hci->Ctlr): (array of byte, array of byte, array of byte, string)
 }
 
 #
+# Secure Connections passkey entry: twenty rounds, one per bit.
+#
+# The passkey is twenty bits and never goes on the wire.  Each round
+# commits to one bit of it -- f4 with 0x80 or 0x81 as its last
+# argument, according to that bit -- and a side that has the wrong
+# passkey gets the wrong confirm and is caught in the round where the
+# first differing bit is, rather than at the end.  That is the whole
+# point of doing it a bit at a time instead of once.
+#
+# Both sides use the same twenty bits.  The nonces change every round
+# and it is the last pair that f5 and f6 use afterwards.
+#
+# What is checked here is the shape of the rounds; f4 itself was
+# settled by pairing with BlueZ.  The rounds were read out of BlueZ's
+# emulator/smp.c while working out why an earlier attempt hung, so
+# unlike f4, f5 and f6 this is not an independent reading of the
+# specification, and doc/bluetooth-plan.ms says so.
+#
+scpasskey(m: ref Mux, ch: chan of array of byte, c: ref Conn,
+	pkx, rpkx: array of byte, key: int): (array of byte, array of byte, string)
+{
+	na, nb: array of byte;
+
+	for(i := 0; i < 20; i++){
+		z := byte (16r80 | ((key >> i) & 1));
+		(n, e) := random16(c.x);
+		if(e != nil)
+			return (nil, nil, e);
+		na = n;
+
+		cf := array[17] of byte;
+		cf[0] = byte Pconfirm;
+		cf[1:] = f4(pkx, rpkx, na, z);
+		if((e = l2cap->send(m, L2cap->Csmp, cf)) != nil)
+			return (nil, nil, e);
+
+		(cb, e1) := await(ch, Pconfirm);
+		if(e1 != nil)
+			return (nil, nil, e1);
+		if(len cb < 17)
+			return (nil, nil, "short pairing confirm");
+
+		rf := array[17] of byte;
+		rf[0] = byte Prandom;
+		rf[1:] = na;
+		if((e2 := l2cap->send(m, L2cap->Csmp, rf)) != nil)
+			return (nil, nil, e2);
+
+		(rb, e3) := await(ch, Prandom);
+		if(e3 != nil)
+			return (nil, nil, e3);
+		if(len rb < 17)
+			return (nil, nil, "short pairing random");
+		nb = rb[1:17];
+
+		if(!same(f4(rpkx, pkx, nb, z), cb[1:17]))
+			return (nil, nil, sys->sprint(
+				"the confirm does not match at round %d: the passkey is wrong", i));
+	}
+	return (na, nb, nil);
+}
+
+#
+# The passkey as the sixteen byte value f6 takes, least significant
+# byte first like everything else here.
+#
+keybytes(key: int): array of byte
+{
+	r := array[16] of {* => byte 0};
+	r[0] = byte (key & 16rff);
+	r[1] = byte ((key >> 8) & 16rff);
+	r[2] = byte ((key >> 16) & 16rff);
+	return r;
+}
+
+#
 # The Secure Connections half of pair(), from just after the pairing
 # response.  Just Works only: the numeric comparison value g2 computes
 # is not shown to anyone, because there is nowhere to show it, and
@@ -956,6 +1033,27 @@ scpair(c: ref Conn, m: ref Mux, ch: chan of array of byte,
 	if(e2 != nil)
 		return (nil, "diffie-hellman: " + e2);
 	dhkey := reverse(dhbe);
+
+	#
+	# Which of the three this is.  Passkey entry when this side can
+	# be typed into and the peer can display; numeric comparison
+	# when both can show a number and answer; Just Works otherwise,
+	# and it says so by not claiming protection it has not got.
+	#
+	mitm := ask != nil && (int preq[3] & Amitm) && (int pres[3] & Amitm);
+	rkey := 0;
+	if(mitm && int preq[1] == Iokeyboardonly){
+		ask.q <-= "passkey";
+		rkey = <-ask.a;
+		if(rkey < 0)
+			return (nil, "no passkey was given: refused here");
+		sys->fprint(sys->fildes(2), "smp: DEBUG passkey %d (%#x)\n", rkey, rkey);
+		(na0, nb0, pe) := scpasskey(m, ch, c, pkx, rpkx, rkey);
+		if(pe != nil)
+			return (nil, pe);
+		return scdone(c, m, ch, preq, pres, dhkey, na0, nb0,
+			keybytes(rkey), nil);
+	}
 
 	(na, e3) := random16(c.x);
 	if(e3 != nil)
@@ -1015,6 +1113,24 @@ scpair(c: ref Conn, m: ref Mux, ch: chan of array of byte,
 	# be() bury it after the address, and the pairing gets all the
 	# way to the DHKey check before anything notices.
 	#
+	return scdone(c, m, ch, preq, pres, dhkey, na, nb,
+		array[16] of {* => byte 0}, ask);
+}
+
+#
+# The last of a Secure Connections pairing, whichever way phase two
+# went: the keys out of f5 and a check each way with f6.
+#
+# r is what phase two agreed to put in those checks -- zero for Just
+# Works and numeric comparison, the passkey for passkey entry -- and
+# it is the only thing that differs between them here.  Getting it
+# wrong makes a pairing that got every round right fail at the last
+# message, which is a confusing place to look for it.
+#
+scdone(c: ref Conn, m: ref Mux, ch: chan of array of byte,
+	preq, pres, dhkey, na, nb, r: array of byte,
+	nil: ref Ask): (array of byte, string)
+{
 	ia := hci->localaddr(c.x);
 	a1 := array[7] of byte;
 	a1[0:] = ia;
@@ -1025,8 +1141,7 @@ scpair(c: ref Conn, m: ref Mux, ch: chan of array of byte,
 
 	(mackey, ltk) := f5(dhkey, na, nb, a1, a2);
 
-	zero16 := array[16] of {* => byte 0};
-	ea := f6(mackey, na, nb, zero16, preq[1:4], a1, a2);
+	ea := f6(mackey, na, nb, r, preq[1:4], a1, a2);
 	df := array[17] of byte;
 	df[0] = byte Pdhcheck;
 	df[1:] = ea;
@@ -1038,7 +1153,7 @@ scpair(c: ref Conn, m: ref Mux, ch: chan of array of byte,
 		return (nil, e8);
 	if(len eb < 17)
 		return (nil, "short dhkey check");
-	if(!same(f6(mackey, nb, na, zero16, pres[1:4], a2, a1), eb[1:17]))
+	if(!same(f6(mackey, nb, na, r, pres[1:4], a2, a1), eb[1:17]))
 		return (nil, "the peer's dhkey check does not match");
 
 	return (ltk, nil);

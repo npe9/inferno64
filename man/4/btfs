@@ -253,6 +253,16 @@ is written back to it.  Writing
 .B no
 ends the pairing and makes no bond, which is the point of asking.
 .IP
+.B "pair passkey"
+asks for passkey entry instead: the
+.B confirm
+file then holds
+.B passkey
+rather than a number, and what is written back is the six digits the
+other device is showing.  It is twenty rounds, one per bit, so a wrong
+passkey is refused in the round of the first bit that differs rather
+than at the end.
+.IP
 .BI "confirm " on
 on the controller's own
 .B ctl
