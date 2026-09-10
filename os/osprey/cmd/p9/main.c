@@ -950,9 +950,37 @@ p9main(void)
 				p9close(f);
 			}
 		}
+		/*
+		 * rio is started on a flow of its own rather than run to
+		 * completion, because rio does not complete: it paints its
+		 * screen and waits for a mouse click, and nothing here
+		 * clicks.  p9exec would block for ever and the boot would end
+		 * by the harness giving up, which is a poor way to end and a
+		 * worse thing to photograph - the screendump was taken at the
+		 * watchdog noticing the spin, and that is a timing artifact
+		 * rather than something the machine says, so it failed under
+		 * load.
+		 *
+		 * So: spawn it, give it a fixed few seconds of the clock, say
+		 * so, and let the task end.  The screendump is taken at that
+		 * sentence, which the personality prints and which does not
+		 * move.
+		 */
+		extern int p9spawn(char*, char**, int*);
+		extern int libsleep(long ms);
+		int riopid;
+		int std[3];
+
+		std[0] = std[1] = std[2] = -1;
 		print("p9: starting /boot/rio, the real 9front rio, linked against this personality\n");
-		p9exec("/boot/rio", rioargv);
-		print("p9: /boot/rio returned\n");
+		riopid = p9spawn("/boot/rio", rioargv, std);
+		if(riopid < 0)
+			print("p9: /boot/rio: cannot start it\n");
+		else {
+			libsleep(3000);
+			print("p9: /boot/rio has had 3 seconds and a screen of its own; "
+				"it waits for a mouse click, and nothing here clicks\n");
+		}
 	}
 
 	poperror();

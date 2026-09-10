@@ -114,13 +114,27 @@ def main():
     # shot is taken where the claim is, which is where the painting
     # ends.
     rawshot = tempfile.mktemp(prefix='osprey-p9-raw-', suffix='.ppm')
+    # And a third, of rio's own screen.  rio is spawned rather than run
+    # to completion - it paints and then waits for a mouse click, and
+    # nothing here clicks - so the personality gives it three seconds of
+    # the clock and says so, and the shot is taken at that sentence.
+    #
+    # It used to be taken at the watchdog noticing the personality's
+    # server loop spinning, which is what an idle window system looks
+    # like from outside.  That is a timing artifact rather than something
+    # the machine says: it passed on its own and failed under the load of
+    # the whole sweep running two at a time.  A screendump wants a marker
+    # that does not move.
+    rioshot = tempfile.mktemp(prefix='osprey-p9-rio-', suffix='.ppm')
     subprocess.run(['./scripts/osprey-console.py', '-q', '-p', '2', '-n', 'e1000',
                     '-l', log, '-S', '-d', ROOT + '/.qemu/9front-root.qcow2',
                     '-t', '150', '-u', 'the microkernel idles',
                     '--shot-at',
                     'libdraw: painted the screen 112233 and 200 150 600 450 cc7722=' + rawshot,
                     '--shot-at',
-                    r'libdraw: real libdraw painted 700 150 1100 450 33aa55=' + shot],
+                    r'libdraw: real libdraw painted 700 150 1100 450 33aa55=' + shot,
+                    '--shot-at',
+                    r'/boot/rio has had 3 seconds and a screen of its own=' + rioshot],
                    env=env, capture_output=True, text=True)
     try:
         t = plain(open(log, errors='replace').read())
@@ -490,6 +504,15 @@ def main():
         nfore, fbox = boxof(rd, (0xcc, 0x77, 0x22), rw)
         nback, _ = boxof(rd, (0x11, 0x22, 0x33), rw)
 
+    riopix = readppm(rioshot)
+    rw2 = rh2 = 0
+    nriobg = nriolib = 0
+    riobox = (0, 0, 0, 0)
+    if riopix is not None:
+        rw2, rh2, rd2 = riopix
+        nriobg, riobox = boxof(rd2, (0x77, 0x77, 0x77), rw2)
+        nriolib, _ = boxof(rd2, (0x33, 0xaa, 0x55), rw2)
+
     pix = readppm(shot)
     pw = ph = 0
     nlib = ntext = nwhite = nfore2 = nback2 = 0
@@ -634,7 +657,10 @@ def main():
     # It does not draw a window and nothing here says it does.
     rio = re.search(r'p9 reloc: /boot/rio laid at (0x[0-9a-f]+), (\d+) bytes, '
                     r'(\d+) absolute addresses corrected; it was linked at 0', t)
-    rioprocs = re.findall(r'p9 proccreate: p9server gets a second flow of control as (\d+), '
+    # The flows rio makes are named for rio now, because rio is spawned:
+    # a spawned program's kproc carries its own name, so proccreate says
+    # whose second flow of control it is.
+    rioprocs = re.findall(r'p9 proccreate: /boot/rio gets a second flow of control as (\d+), '
                           r'sharing its memory and its descriptors', t)
     #
     # What a window system finds here, asked before one runs.  Five of
@@ -652,12 +678,33 @@ def main():
                     all(devs.get(d) == 'it opens' for d in
                         ('/dev/draw', '/dev/mouse', '/dev/kbd', '/dev/cons', '/dev/winname'))
                     and devs.get('/dev/snarf') == 'not there'))
+    #
+    # And rio's own screen.  rio announces no painting, so this shot is
+    # taken at the first thing the machine says after rio has settled,
+    # which is the watchdog noticing the personality's server loop
+    # spinning - what an idle window system with no input to read looks
+    # like from outside.
+    #
+    # 0x777777 is rio's, and only rio's: it is the constant in
+    # 9front/src/cmd/rio/data.c line 190, where rio allocates its
+    # background image, in source this tree did not write and has not
+    # changed.  The shot taken just before rio ran has none of it - it is
+    # libdraw's white screen with libdraw's green rectangle - so a screen
+    # that is entirely 0x777777 is rio's and could be nobody else's.
+    results.append(("and rio draws: the screen QEMU scans out while rio idles is 1280x800 and every one of its 1024000 pixels is 0x777777, which is the colour rio allocates its background image with in data.c - source this tree did not write - and the shot taken before rio ran has none of that colour and all of libdraw's, so this screen is rio's and can be nobody else's",
+                    riopix is not None and (rw2, rh2) == (1280, 800)
+                    and nriobg == 1280*800
+                    and riobox == (0, 0, 1279, 799)
+                    and nriolib == 0
+                    and nlib > 0
+                    and 'p9: /boot/rio has had 3 seconds and a screen of its own' in t))
     results.append(("and rio itself runs on it, as far as its own file system: the real 9front rio, linked against this personality with the archive of system-call stubs left off, is laid in a slot with two thousand absolute addresses corrected, is entered, and takes flows of control of its own through the personality's proccreate - which is libthread's procrfork underneath",
                     rio is not None
                     and int(rio.group(1), 16) >= 0x2c00000
                     and int(rio.group(3)) > 1000
                     and len(rioprocs) >= 3
-                    and "p9 exec: entering /boot/rio at " in t))
+                    and re.search(r'p9 spawn: /boot/rio runs as \d+ at 0x[0-9a-f]+, '
+                                  r'with its own descriptor table', t) is not None))
     #
     # And it gets past the thing that stopped it first.  rio's cexecpipe
     # binds the pipe device onto /mnt/temp and opens both ends through
@@ -690,12 +737,15 @@ def main():
     print('the second is %dx%d: %d of 0x33AA55 in %r, %d of black in %r, '
           '%d white, %d of 0xCC7722, %d of 0x112233'
           % (pw, ph, nlib, lbox, ntext, tbox, nwhite, nfore2, nback2))
+    print("rio's is %dx%d: %d of 0x777777 in %r, %d of libdraw's 0x33AA55"
+          % (rw2, rh2, nriobg, riobox, nriolib))
     if keep or bad:
         print('log %s' % log)
         print('shot %s' % shot)
         print('raw shot %s' % rawshot)
+        print('rio shot %s' % rioshot)
     else:
-        for f in (log, shot, rawshot, shot + '.qmp'):
+        for f in (log, shot, rawshot, rioshot, shot + '.qmp'):
             try: os.unlink(f)
             except OSError: pass
     return 1 if bad else 0

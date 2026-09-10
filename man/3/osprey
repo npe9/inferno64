@@ -1780,8 +1780,16 @@ environment device over
 with
 .BR MREPL ,
 which hid them; a name space a library operating system rearranges is
-the one every program it loads is given.  It does not draw a window and
-where it goes after its file system is not established.  The personality
+the one every program it loads is given.  It paints the screen: the display QEMU scans out while rio idles is
+1280x800 and every pixel is
+.BR 0x777777 ,
+which is the colour rio allocates its background with on line 190 of
+.BR 9front/src/cmd/rio/data.c ,
+and the screendump taken before rio ran has none of that colour and all
+of libdraw's.  There is no window in it, because rio waits for a mouse
+click and nothing clicks; rio is spawned rather than run to completion
+for that reason, and the personality gives it three seconds and says so,
+which is both how the boot ends and where the screendump is taken.  The personality
 asks the name space what rio is about to ask it and logs the answers
 first:
 .BR /dev/draw ,

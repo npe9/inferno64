@@ -10699,6 +10699,44 @@ with a jump to
 .CW 0xffffffff .
 Clearing them cured it.
 .PP
+.B "3.2n: rio draws."
+With the devices there, rio is not blocked on anything: it makes its
+file server, opens the draw device, allocates its screen, paints it, and
+waits for a mouse click.  Nothing clicks, so nothing more happens \- an
+idle window system with no input to read looks, from outside, like the
+personality's server loop spinning, which is what the watchdog notices.
+.PP
+rio is therefore spawned rather than run to completion.  The personality
+gives it three seconds of the clock, says so, and lets the task end \-
+which also ends the boot on a sentence rather than on the harness giving
+up.  A third screendump is taken at that sentence, and the screen QEMU
+scans out is 1280 by 800 with every one of its 1024000 pixels 0x777777.
+.PP
+The first version of that shot fired at the watchdog noticing the
+personality's server loop spinning, which is what an idle window system
+looks like from outside.  It passed on its own and failed the moment the
+whole sweep ran two configurations at a time: a timing artifact is not a
+marker.  A screendump wants something the machine says, and the machine
+now says it.
+.PP
+Spawning it improved the log as well.  A spawned program's kproc carries
+its own name, so the four flows rio makes are reported as rio's rather
+than the server's:
+.CW "p9 proccreate: /boot/rio gets a second flow of control as 126" .
+.PP
+That number is rio's and can be nobody else's.  It is the constant on
+line 190 of
+.CW 9front/src/cmd/rio/data.c ,
+where rio allocates its background image, in source this tree did not
+write and has not changed \- and the screendump taken a moment earlier,
+before rio ran, has none of that colour and all of libdraw's: 119130
+pixels of 0x33AA55, 870 of black glyphs and 904000 of white.  The
+control is in the same boot as the claim.
+.PP
+The real 9front rio, linked against a library operating system and
+loaded into a slot the loader chose, paints a microkernel's frame buffer
+its own grey.  It has no window in it, because nothing has clicked.
+.PP
 The second was the probe itself, and it is the plainest lesson here.
 .CW p9open
 is the personality's own open and it
