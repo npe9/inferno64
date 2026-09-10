@@ -33,6 +33,7 @@ include "sys.m";
 include "draw.m";
 include "tk.m";
 	tk: Tk;
+include "keyboard.m";
 include "tkspinbox.m";
 
 init()
@@ -68,6 +69,15 @@ new(top: ref Tk->Toplevel, path: string, lo, hi, step, start: int): (ref Spinbox
 		path, tk->quote("+"), name));
 	tk->cmd(top, sys->sprint("button %s.down -text %s -command {send %s down}",
 		path, tk->quote("-"), name));
+	# The arrow keys, on the entry, so the widget can be used by someone
+	# who is not holding a mouse.  Without these a person on the keyboard
+	# could type a number in but not step it, which is the one thing a
+	# spinbox is for - and it is the same person the announcements above
+	# are for.
+	tk->cmd(top, sys->sprint("bind %s.e <Key-%c> {send %s up}",
+		path, Keyboard->Up, name));
+	tk->cmd(top, sys->sprint("bind %s.e <Key-%c> {send %s down}",
+		path, Keyboard->Down, name));
 	tk->cmd(top, "pack " + path + ".e -side left");
 	tk->cmd(top, "pack " + path + ".up -side left");
 	tk->cmd(top, "pack " + path + ".down -side left");

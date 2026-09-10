@@ -88,8 +88,14 @@ when the keyboard arrives at it, and a person who tabs onto a spinbox
 hears the number without this module knowing that speech exists.
 A number drawn on a canvas would have been silent.
 .PP
+The up and down arrow keys are bound on the entry, so the widget can be
+spun by someone who is not holding a mouse \(em the same person the
+announcement below is for.
+They report on the same channel as the buttons.
+.PP
 What an entry does not do is say the value changed when a
 .I button
+or a key
 moved it, because nothing was typed into it.
 .B Event
 writes the new number to
@@ -107,11 +113,6 @@ button is worse than silence.
 .IR entry (9),
 .IR style (9)
 .SH BUGS
-The buttons are the only way to spin it.
-The arrow keys are not bound, so a person on the keyboard can type a
-number into the entry but cannot step it, which is the thing a spinbox
-is for.
-.PP
 Integers only.
 .PP
 It does not repeat while a button is held.

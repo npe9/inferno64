@@ -32,6 +32,7 @@ include "wmtheme.m";
 include "tknotebook.m";
 	tknotebook: Tknotebook;
 	Notebook: import tknotebook;
+include "keyboard.m";
 include "tkspinbox.m";
 	tkspinbox: Tkspinbox;
 	Spinbox: import tkspinbox;
@@ -589,6 +590,19 @@ checktitlebar(font, what: string)
 # That is the exact shape of the choicebutton bug found earlier in this
 # session - right on arrival, silent on change - so it is checked here
 # rather than assumed to have been learned.
+# An application's event loop, in miniature: the spinbox's buttons and
+# arrow keys report on a channel and something has to act on what
+# arrives.  The ack is so the test can tell when the value has moved
+# without sleeping and hoping.
+pump(sb: ref Spinbox, c: chan of string, acked: chan of int)
+{
+	for(;;){
+		s := <-c;
+		sb.event(s);
+		acked <-= 1;
+	}
+}
+
 checkspinbox()
 {
 	if(tkspinbox == nil){
@@ -604,7 +618,7 @@ checkspinbox()
 	top := offscreen();
 	if(top == nil)
 		return;
-	(sb, nil) := tkspinbox->new(top, ".s", 0, 10, 2, 4);
+	(sb, sc) := tkspinbox->new(top, ".s", 0, 10, 2, 4);
 	if(sb == nil){
 		report(0, "a spinbox builds");
 		return;
@@ -630,24 +644,69 @@ checkspinbox()
 
 	report(sb.event("sideways") == 0, "and ignores a string it does not know");
 
+	# The arrow keys, driven for real rather than inspected.  tk->keyboard()
+	# hands a key straight to the toplevel, so this is the same path a
+	# person's keypress takes, binding and all.  It needs a pump: the
+	# binding does `send' on the channel and nothing would be receiving,
+	# so the send - and with it tk->keyboard() - would block forever.
+	# That is what an application's event loop is, so the test grows one.
+	acked := chan of int;
+	spawn pump(sb, sc, acked);
+	sb.set(4);
+	tk->cmd(top, "focus .s.e");
+	tk->cmd(top, "update");
+	tk->keyboard(top, Keyboard->Up);
+	<-acked;
+	bykey := sb.value();
+	tk->keyboard(top, Keyboard->Down);
+	<-acked;
+	tk->keyboard(top, Keyboard->Down);
+	<-acked;
+	bykey2 := sb.value();
+	report(bykey == 6 && bykey2 == 2, sys->sprint(
+		"and the arrow keys spin it too (%d up, then %d after two down)",
+		bykey, bykey2));
+
 	# what it says when it moves
 	sfd := sys->open("/dev/voice/screen", Sys->OREAD);
 	if(sfd == nil){
 		sys->print("     no /dev/voice; the spinbox announcement not checked\n");
 		return;
 	}
+	# A fresh spinbox in a fresh toplevel.  Run against the one above it
+	# reported nothing at all: that one has the keyboard, having just been
+	# driven by it, and voice(3) throws queued announcements away when the
+	# focus moves - so what this measured depended on which checks ran
+	# before it.  A check whose result depends on its neighbours is not
+	# measuring what it says it is.
+	blank();
+	t2 := offscreen();
+	if(t2 == nil)
+		return;
+	# Numbers no earlier check in this function has said.  voice(3)
+	# deliberately drops an announcement identical to the last one it
+	# queued - a screen reader that repeats itself is tiring - and the
+	# checks above end by saying "2", so a spinbox that also stepped to 2
+	# was correctly silent and this read as a failure of the spinbox.
+	# Draining the queue does not help: what is remembered is the last
+	# thing QUEUED, not the last thing still waiting.
+	(sb2, nil) := tkspinbox->new(t2, ".s", 100, 200, 7, 100);
+	if(sb2 == nil)
+		return;
+	tk->cmd(t2, "pack .s");
+	map(t2);
 	drain(sfd);
-	sb.event("up");
+	sb2.event("up");
 	said := next(sfd);
-	report(said == "2", sys->sprint(
+	report(said == "107", sys->sprint(
 		"and says the number it moved to (%#q)", said));
 
 	# at the end of the range nothing moves, so nothing should be said -
 	# a person leaning on the button should not hear the same number over
 	# and over
-	sb.set(10);
+	sb2.set(200);
 	drain(sfd);
-	sb.event("up");
+	sb2.event("up");
 	quiet := waiting();
 	report(quiet == 0, sys->sprint(
 		"and says nothing when it did not move (%d waiting)", quiet));
