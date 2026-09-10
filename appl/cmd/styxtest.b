@@ -25,6 +25,8 @@ include "styx.m";
 	Tmsg, Rmsg: import styx;
 include "sh.m";
 	sh: Sh;
+include "workdir.m";
+	workdir: Workdir;
 
 # Command is declared by sh.m, which is included above.
 
@@ -280,11 +282,27 @@ replaycheck()
 	sys->write(fd, b, len b);
 	fd = nil;
 
+	# Record and replay from the same, fixed, directory.  Both runs walk
+	# their own working directory, so a shell started with -l - which is
+	# how emu starts one, and which leaves the cwd at the bound /n/local -
+	# puts a walk of that name into the recording that the replay has no
+	# reason to repeat, and the comparison diverges at it.  The trace is
+	# meant to be about the program, not about where it was started.
+	cwd := "";
+	if(workdir == nil)
+		workdir = load Workdir Workdir->PATH;
+	if(workdir != nil)
+		cwd = workdir->init();
+	sys->chdir("/");
+
 	# iostats prints its own report on standard output, so the recorded
 	# run's output is not compared; what is recorded is the trace.
 	sh->system(nil, "iostats -t " + strace + " cat " + data + " > /styxtest.a");
 	sys->remove(data);		# the control
 	sh->system(nil, "styxreplay " + strace + " cat " + data + " > " + outb);
+
+	if(cwd != nil)
+		sys->chdir(cwd);
 
 	(got, err) := slurp(outb);
 	if(err != nil)
