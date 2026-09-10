@@ -2005,3 +2005,66 @@ Stated plainly so it is not mistaken for more than it is: none of this
 makes Dis run on two processors.  It is the order the pieces have to be
 built in for the last step to be a small one, and the first piece is
 chosen because it is the only one that can be tested before the last.
+.NH 2
+What the VM lock still protects, once each M holds a P
+.PP
+With a context per interpreter the original reason for
+.CW vmlock
+is gone.  dis.c states it plainly \(em "Dis executes one program at a
+time, system-wide ... two processors interpreting at once share one
+register file" \(em and that register file is now per context.  So the
+question becomes what else the lock is standing in for, and the answer
+is short enough to be worth writing down.
+.IP "The allocator: already safe."
+.CW poolalloc()
+and
+.CW poolfree()
+take the pool's own
+.CW ilock(&p->l) .
+Nothing has to be built here to remove the VM lock; per-P caches on
+.CW "mcache / mcentral / mheap"
+lines remain worth doing for contention, but they are an optimisation
+and not a correctness gate.
+.IP "Reference counts: already safe."
+.CW Heap.ref
+and
+.CW Type.ref
+move under
+.CW AINC / ADEC ,
+which are real atomics on every board this branch builds \(em
+libkern/ainc-aarch64.s among them.
+.IP "The collector: not safe, and it is the whole of what is left."
+libinterp/gc.c keeps its mark state in file-scope statics \(em
+.CW base ,
+.CW limit ,
+.CW ptr ,
+.CW visit ,
+.CW marker ,
+.CW sweeper ,
+.CW ptrtab ,
+.CW ptrfree
+\(em and the colours in
+.CW gccolor
+and
+.CW mutator .
+One sweep position, one hash table of pointers, one epoch, shared by
+whoever calls
+.CW rungc() .
+Two contexts collecting at once would interleave on all of it.
+.PP
+That is the whole gate.  Not the register file, which is done; not the
+allocator, which was never the problem; not the refcounts, which are
+atomic already.  The collector's mark state has to get a home per
+collection rather than per file, which is what Phase 5 says, and until
+it does the lock is what keeps two interpreters from being inside
+.CW rungc()
+together.
+.PP
+It is also why the assertion in
+.CW rungc()
+is the right thing to have kept: it fires when a collection is taken
+with some context's registers stale, which is precisely the failure the
+per-collection mark state has to avoid.  It has already earned that
+once, catching
+.CW regsyncpc
+still being a global on the first boot where a second context existed.
