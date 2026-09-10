@@ -507,6 +507,7 @@ time daytime
 timers timers
 tk tk
 tkclient tkclient
+tklayout tklayout
 tm2epoch daytime
 tmsg styx
 tobig string

@@ -17,6 +17,9 @@ include "wmlib.m";
 	qword, splitqword, s2r: import wmlib;
 include "titlebar.m";
 	titlebar: Titlebar;
+include "tklayout.m";
+	tklayout: Tklayout;
+	Problem: import tklayout;
 include "env.m";
 include "plumbmsg.m";
 	plumbmsg: Plumbmsg;
@@ -40,6 +43,10 @@ iconlock: chan of int;
 
 # Resolved Dis path of the application (set by sh as $dis).
 dispath: string;
+
+# Layout diagnosis, off unless $tklayout is set in the environment.
+# -1 not yet looked at, 0 off, 1 on.
+layoutwanted := -1;
 
 init()
 {
@@ -142,6 +149,44 @@ onscreen(top: ref Tk->Toplevel, how: string)
 		how = "place";
 	wmctl(top, sys->sprint("!reshape . -1 %s %q",
 			r2s(tk->rect(top, ".", Tk->Border|Tk->Required)), how));
+	layoutcheck(top);
+}
+
+#
+# Report any widget that did not get the room it asked for.
+#
+# Here, and not in a test harness, because this is the point every real
+# program passes through: the widgets exist, and the window has just been
+# reshaped to the size it said it needed, so anything still short of room
+# is a layout that cannot hold its own contents at the font in force.
+# Driving the check anywhere else means checking a reconstruction of the
+# program rather than the program.
+#
+# Off unless $tklayout is set, and it loads nothing until then, so the
+# ordinary path is one comparison against -1.  See tklayout(2).
+#
+layoutcheck(top: ref Tk->Toplevel)
+{
+	if(layoutwanted == -1){
+		layoutwanted = 0;
+		e := load Env Env->PATH;
+		if(e != nil && e->getenv("tklayout") != "")
+			layoutwanted = 1;
+	}
+	if(layoutwanted != 1)
+		return;
+	if(tklayout == nil){
+		tklayout = load Tklayout Tklayout->PATH;
+		if(tklayout == nil)
+			return;
+		tklayout->init();
+	}
+	who := dispath;
+	if(who == nil)
+		who = "?";
+	for(l := tklayout->check(top, "."); l != nil; l = tl l)
+		sys->fprint(sys->fildes(2), "tklayout: %s: %s\n",
+			who, (hd l).text());
 }
 
 startinput(top: ref Tk->Toplevel, devs: list of string)

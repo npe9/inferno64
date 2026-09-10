@@ -1,0 +1,153 @@
+.TH TKLAYOUT 2
+.SH NAME
+tklayout \- find Tk widgets that did not get the room they asked for
+.SH SYNOPSIS
+.EX
+include "draw.m";
+include "tk.m";
+include "tklayout.m";
+tklayout := load Tklayout Tklayout->PATH;
+
+Clipped, Overlap: con iota;
+
+Problem: adt {
+    kind:  int;
+    a:     string;
+    b:     string;
+    ra:    Draw->Rect;
+    rb:    Draw->Rect;
+
+    text:  fn(p: self ref Problem): string;
+};
+
+init:      fn();
+children:  fn(top: ref Tk->Toplevel, path: string): list of string;
+walk:      fn(top: ref Tk->Toplevel, path: string): list of string;
+check:     fn(top: ref Tk->Toplevel, root: string): list of ref Problem;
+.EE
+.SH DESCRIPTION
+.I Tklayout
+reports widgets whose layout does not fit what they hold.
+It exists for one failure in particular: a window whose pixel geometry was
+counted out around one font, shown in another.
+.I Libtk
+sizes each widget from its own font \(em see
+.IR tkofftest (1)
+\(em so the widgets are right and the window around them is not.
+.PP
+.B Init
+must be called before anything else.
+.TP
+.BI children: "top path"
+The paths one level below
+.IR path ,
+in the order the widgets were created, or nil.
+.TP
+.BI walk: "top path"
+Every descendant of
+.IR path ,
+parents before children.
+.TP
+.BI check: "top root"
+Everything wrong under
+.IR root ,
+as a list of
+.BR Problem s.
+.B Problem.text
+renders one for a person.
+Two kinds are reported:
+.RS
+.TP
+.B Clipped
+The widget asked for more room than it was given, so what it holds is cut
+off.
+.B Ra
+is what it got and
+.B rb
+what it needed.
+.TP
+.B Overlap
+Two widgets laid out inside the same master occupy some of the same
+pixels.
+.RE
+.SS Why it measures what it does
+Three ways to see a broken layout were tried here and only the third
+works.
+.PP
+Overlapping siblings is the obvious one and very nearly cannot happen:
+this
+.B Tk
+has only
+.B pack
+and
+.BR grid ,
+no
+.BR place ,
+and both hand out disjoint space.
+The check is kept, because a canvas window could still do it, but it has
+not been seen to fire.
+.PP
+A widget outside the pane cannot happen at all.
+.B Tk
+clips a widget to the room there is, so a label needing 502 pixels in a
+200-pixel window reports itself as 200 wide.
+A checker built on that would have passed everything, always, which is
+worth knowing before writing one.
+.PP
+What does work is the room asked for against the room given.
+.B Tk->Required
+is not clipped \(em the same label reports 502 \(em so the difference
+between the two is exactly the text that was cut off, per widget, by
+name.
+.SS What counts as a widget
+Only widgets a geometry manager has.
+One that was created and never packed still reports a rectangle, its own
+border, and programs here create such widgets deliberately:
+.B appl/wm/toolbar.b
+makes a
+.B "button .b -text {XXX}"
+solely to ask how tall a button would be, and never packs it.
+.PP
+Widgets are grouped by the master they are laid out inside, which is not
+always their parent by path.
+.B appl/wm/about.b
+does
+.BR "pack .b .l1 -in .f" ,
+leaving both named under the root and laying them out inside
+.BR .f ;
+grouped by name, the frame appears to overlap its own contents.
+.PP
+This uses three
+.B winfo
+queries added for it \(em
+.BR children ,
+.B manager
+and
+.B master
+\(em and degrades to reporting nothing against a
+.B libtk
+without them.
+.SH SOURCE
+.B /appl/lib/tklayout.b
+.SH SEE ALSO
+.IR tk (2),
+.IR tkclient (2),
+.IR tkofftest (1),
+.B /doc/ui-modernization-plan.md
+.SH BUGS
+It sees widgets, not drawing.
+A program that renders its own text into an image \(em which the games and
+the
+.I temple
+ports do \(em is invisible to it.
+.PP
+A window clamped by the screen rather than by its own geometry reports the
+same way, so on a small display a report may mean only that the window
+would not fit.
+.PP
+Nothing is checked about text inside a
+.B text
+or
+.B entry
+widget, whose size is given in characters and rows and so does not follow
+the font by design.
