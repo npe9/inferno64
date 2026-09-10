@@ -256,7 +256,40 @@ enterquantum(void)
 	}
 }
 
+/*
+ * One collection at a time.
+ *
+ * stoptheworld() waits for contexts that have a quantum open.  A second
+ * collector has none -- it withdrew its own claim before calling -- so
+ * it walks straight through, and two collectors mark and sweep the same
+ * heap at once.  That is a double free: "alloc:D2B:poolfree 78faf58
+ * (from poolfree+0x1dd/rungc+0x322)", a block swept twice.
+ *
+ * gclock() does not prevent it and is not meant to.  It is a counter
+ * that says "do not collect now", which rungc() honours by returning;
+ * two collectors both read gchalt as 0 and both proceed.
+ *
+ * A QLock, not a Lock: this is held for a whole collection, and the
+ * holder can sleep in the allocator.  A process waiting here is
+ * Queueing with no quantum open, so it does not hold up the collection
+ * it is waiting for.  Go has one collector at a time for the same
+ * reason and gates it the same way.
+ */
+static QLock gcsema;
+
+static void	starttheworld(void);
+
 void
+collect(Prog *head)
+{
+	qlock(&gcsema);
+	stoptheworld();
+	rungc(head);
+	starttheworld();
+	qunlock(&gcsema);
+}
+
+static void
 starttheworld(void)
 {
 	if(parallelvm == 0)
@@ -567,9 +600,7 @@ execatidle(void)
 			gcpartial++;
 			break;
 		}
-		stoptheworld();
-		rungc(isched.head);
-		starttheworld();
+		collect(isched.head);
 		gcidlepass++;
 		if(((ulong)gcidlepass&0xFF) == 0)
 			sched();
@@ -1890,9 +1921,7 @@ vmachine(void*)
 				gcbusy++;
 				up->type = BusyGC;
 				pushrun(r);
-				stoptheworld();
-				rungc(isched.head);
-				starttheworld();
+				collect(isched.head);
 				up->type = Interp;
 				delrunq(r);
 			}
