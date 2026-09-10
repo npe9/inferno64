@@ -3117,3 +3117,40 @@ eliminating something else.  The one that lived arrived the same way
 too, and the difference is not how it was thought of but that it was
 put to a counter before it was written down as a cause.  Four out of
 five is the honest prior for the next one.
+.NH 2
+A third probe, rejected by its control
+.PP
+The question was direct: is the collector freeing an object that is
+still referred to?  A stateless check in
+.CW gc.c Ns 's
+sweeper, immediately before the block goes back to the pool, reporting
+any object arriving there with a non-zero count.  That is what
+.CW movp+0xf7
+and
+.CW destroy+0x2ca
+dereferencing bad heap pointers would look like from the other side.
+.PP
+It fired at
+.CW parallelvm=1 ,
+three to six objects a boot.  It also fired at
+.CW parallelvm=0 ,
+six in one boot \(em a configuration that is 192 of 192 clean, and one
+where the VM lock makes a collector and a mutator overlapping
+impossible.  So a non-zero count at the sweeper is an ordinary event in
+this collector, not damage, and the probe cannot tell the two apart.
+Removed.
+.PP
+Why it is ordinary is not established here.  The obvious reading is
+that the tracing half of the collector exists precisely to reclaim what
+the counts cannot \(em objects that refer to each other and so never
+reach zero \(em which would make a non-zero count at the sweeper the
+normal case rather than the exception.  That is a hypothesis about the
+design and it has not been checked against the design; it is written
+down as the thing to check, not as the answer.
+.PP
+Three probes now, and two of the three were wrong: the channel nesting
+count, which leaked, and this one, which measures a normal condition.
+Both were caught the same way, by an arm that had to be silent and was
+not.  The one that held \(em the heapmonitor counter \(em was the one
+whose control was built into it as a second bucket rather than bolted
+on as a second configuration.
