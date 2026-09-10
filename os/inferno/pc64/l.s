@@ -947,7 +947,17 @@ TEXT vmrestore(SB), 1, $-4
 	MOVQ	R15, 0x70(BP)
 	
 	BYTE	$0x65; MOVQ 0, RMACH /* MOVQ GS:(0), RMACH */
-	MOVQ	16(RMACH), RUSER
+	/*
+	 * m->externup, which is at 40 in this kernel's Mach and at 16
+	 * in 9front's, where this routine came from: Inferno embeds
+	 * PMach ahead of it.  Nothing calls vmrestore here (main.c's
+	 * vmxprocrestore is commented out), so the stale 16 has never
+	 * run -- it loaded m->pml4 into the up register.  Found by
+	 * checking every literal Mach offset in this file against what
+	 * 6c actually lays out; splhi/splx's 8(RMACH) for m->splpc is
+	 * correct.
+	 */
+	MOVQ	40(RMACH), RUSER
 	XORL	AX, AX
 	RET
 

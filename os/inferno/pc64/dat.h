@@ -202,7 +202,31 @@ struct Mach
 	u32	inclockintr;
 
 	u32	nrdy;
-	u32	ilockdepth;
+	/*
+	 * ilockdepth is NOT declared here.  PMach, embedded above,
+	 * already supplies "int ilockdepth", and a second member of the
+	 * same name in the enclosing struct is silently accepted by 6c:
+	 * every m->ilockdepth in the port then resolved to this one, an
+	 * unsigned 32-bit field, while PMach's stayed dead storage.
+	 *
+	 * The type is what mattered.  ilock()/iunlock() count up and
+	 * down the same way either way, but a depth that has gone
+	 * negative is 0xffffffff to an unsigned field, so
+	 * taslock.c's "if(m->ilockdepth < 0)" report could never fire --
+	 * and it never did fire, in any capture, while sched() went on
+	 * panicking with "ilockdepth -1" and "ilockdepth -3" (which
+	 * print as negative only because %d re-reads the same bits as
+	 * int).  The build said so on every compile of the whole hunt:
+	 * "warning: ../port/taslock.c:301 useless or misleading
+	 * comparison: UINT < 0".  CFLAGS carries -w; I was grepping the
+	 * build for the target rather than reading its diagnostics.
+	 *
+	 * ticks, intr, perf and cyclefreq below are shadowed the same
+	 * way and are deliberately left alone: PMach's ticks is ulong,
+	 * which is 32 bits in this tree, so deleting the u64 here would
+	 * quietly narrow timekeeping.  Only ilockdepth changes meaning
+	 * when shadowed, so only ilockdepth is removed.
+	 */
 	Perf	perf;		/* performance counters */
 
 	u32	loopconst;

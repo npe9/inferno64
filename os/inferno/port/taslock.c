@@ -24,6 +24,14 @@ ilockheldpcs(void)
 {
 	int i;
 
+	/*
+	 * Unconditional, and first.  A silent return from here reads
+	 * exactly like a print that was lost on the way out of a
+	 * Compute Engine serial console, and I drew a conclusion from
+	 * that silence once already ("the array is all zeros while the
+	 * depth is 1") without being able to tell the two apart.
+	 */
+	iprint("ilockheld: depth %d\n", m->ilockdepth);
 	for(i = 0; i < nelem(ilockpc); i++)
 		if(ilockpc[i] != 0)
 			iprint("  ilock %d held from %#p, m was %#p, m now %#p\n",
@@ -176,7 +184,16 @@ acquire:
 	 * the case that leaks one -- so the depth is all there was to go
 	 * on.  ilockpc[] is that missing half; ilockheldpcs() prints it.
 	 */
-	if((uint)m->ilockdepth <= nelem(ilockpc)){
+	/*
+	 * m->ilockdepth > 0 first.  Written as an unsigned compare
+	 * against nelem() alone this indexes ilockpc[-1] whenever the
+	 * depth arrives at 0 -- which is to say every time an
+	 * already-negative depth is incremented back through zero,
+	 * which is the very state this instrument was added to catch.
+	 * A tool that corrupts memory in the case it exists to observe
+	 * is worse than no tool.
+	 */
+	if(m->ilockdepth > 0 && m->ilockdepth <= nelem(ilockpc)){
 		ilockpc[m->ilockdepth-1] = pc;
 		ilockm[m->ilockdepth-1] = m;
 	}
@@ -285,7 +302,7 @@ iunlock(Lock *l)
 	coherence();
 	l->key = 0;
 	m->ilockdepth--;
-	if((uint)m->ilockdepth < nelem(ilockpc))
+	if(m->ilockdepth >= 0 && m->ilockdepth < nelem(ilockpc))
 		ilockpc[m->ilockdepth] = 0;
 	/*
 	 * Caught here rather than at the next sched(), which is where

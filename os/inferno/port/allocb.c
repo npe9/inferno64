@@ -220,7 +220,6 @@ checkbl(Block *b, char *msg, intptr pc)
 		panic("checkb 4 %s %#p %#p", msg, b->wp, b->lim);
 
 }
-void
 /*
  * Everything known about a malformed Block, said before the panic and
  * said with iprint().
