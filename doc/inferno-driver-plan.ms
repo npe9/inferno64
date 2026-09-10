@@ -1446,11 +1446,16 @@ PCI on arm64, S-mode and SBI and the device tree on riscv \(em and item
 6 is finished as far as anything on this machine can take it.  Six
 things were listed here as remaining; three do \(em items 1, 2 and 4
 have since been done, and the count in this sentence had already not
-been kept up with item 2 before this round added two more to it.  None
-of the three is
+been kept up with item 2 before this round added two more to it.
+Item 1 is now done as well, on both an interrupt controller that
+routes MSI through a memory-mapped frame and one that routes it
+through the local APIC, so what is written below under it is a record
+rather than a plan.  None of the rest is
 waiting on a decision or on more of the same work.  Each is here with the reason it stops, so that a reader
 who has hardware, or a QEMU built differently, knows exactly which one
-they have unblocked.
+they have unblocked.  Every reason below is a fact about this host or
+about silicon that is not here, and each one names the command that
+re-checks it.
 .IP 1.
 .B "MSI and MSI-X."
 .B DONE
@@ -2041,6 +2046,35 @@ has no
 .CW virtio-gpu-gl-pci
 at all, and this tree's own patched build is aarch64 only and
 configured without it.  The 2-D path is done and in the suite.
+.PP
+A second blocker was checked and is independent of the first, so a
+reader who installs virglrenderer and rebuilds will still hit it.  This
+QEMU has no OpenGL at all:
+.CW "-display help"
+lists
+.CW none ,
+.CW curses ,
+.CW cocoa
+and
+.CW dbus ,
+and every one of them answers
+.CW "-display <backend>,gl=on"
+with
+.DS
+.CW
+qemu-system-aarch64: OpenGL support was not enabled in this build of QEMU
+.R
+.DE
+.CW dbus
+adds
+.CW "dbus: GL rendering is not supported"
+ahead of it.  So even with the device present there would be nothing
+to hand it a context.  Both facts are one command each to re-check.
+There is a third, which is this suite's own shape: it drives QEMU with
+a serial console and greps markers, and a 3-D result is not something
+a marker can carry.  Unblocking item 3 is a QEMU rebuilt on the host
+with OpenGL and virglrenderer, and a way for the harness to assert on
+a frame.
 .IP 4.
 .B "A second devip ethernet over USB."
 .B DONE ,
