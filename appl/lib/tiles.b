@@ -484,3 +484,480 @@ Surface.blit(s: self ref Surface, dst: ref Surface, x, y: int)
 	r := Rect((x*sc, y*sc), (x*sc + s.img.r.dx(), y*sc + s.img.r.dy()));
 	dst.img.draw(r, s.img, nil, s.img.r.min);
 }
+
+# ---------------------------------------------------- a command language
+#
+# See tiles(2).  The shape is tk(2)'s: named things, made and drawn by
+# text, errors coming back with a "!" on the front.  What it buys is
+# that a level, a palette and a sheet of art stop being source and
+# become data - a file a program reads, an artist edits, and a shell
+# script can write.
+
+Named: adt {
+	name:	string;
+	pal:	ref Pal;
+	chr:	ref Chr;
+	surf:	ref Surface;
+};
+
+screen(d: ref Display, chans: Chans, scale: int): ref Screen
+{
+	if(d == nil || scale < 1)
+		return nil;
+	s := ref Screen;
+	s.disp = d;
+	s.chans = chans;
+	s.scale = scale;
+	names = array[0] of ref Named;
+	return s;
+}
+
+names: array of ref Named;
+
+find(n: string): ref Named
+{
+	for(i := 0; i < len names; i++)
+		if(names[i].name == n)
+			return names[i];
+	return nil;
+}
+
+bind(n: string): ref Named
+{
+	e := find(n);
+	if(e != nil)
+		return e;
+	e = ref Named(n, nil, nil, nil);
+	a := array[len names + 1] of ref Named;
+	a[0:] = names;
+	a[len names] = e;
+	names = a;
+	return e;
+}
+
+Screen.image(s: self ref Screen, name: string): ref Image
+{
+	e := find(name);
+	if(e == nil || e.surf == nil)
+		return nil;
+	return e.surf.img;
+}
+
+Screen.named(s: self ref Screen, name: string): ref Surface
+{
+	e := find(name);
+	if(e == nil)
+		return nil;
+	return e.surf;
+}
+
+Screen.sheet(s: self ref Screen, name: string): ref Chr
+{
+	e := find(name);
+	if(e == nil)
+		return nil;
+	return e.chr;
+}
+
+Screen.pal(s: self ref Screen, name: string): ref Pal
+{
+	e := find(name);
+	if(e == nil)
+		return nil;
+	return e.pal;
+}
+
+# A colour, as ROW.COLUMN or as a bare master index.  Named is what an
+# artist writes; the index is what a program that has already worked one
+# out passes back in.
+rowname := array[] of {"dark", "mid", "light", "pale"};
+colname := array[] of {"grey", "red", "orange", "yellow", "lime", "green",
+	"spring", "cyan", "azure", "blue", "violet", "magenta", "rose",
+	"black", "black", "black"};
+
+parsecolour(w: string): (int, string)
+{
+	dot := -1;
+	for(i := 0; i < len w; i++)
+		if(w[i] == '.')
+			dot = i;
+	if(dot < 0){
+		if(len w == 0 || w[0] < '0' || w[0] > '9')
+			return (0, "not a colour: " + w);
+		v := int w;
+		if(v < 0 || v >= MASTER)
+			return (0, "colour out of range: " + w);
+		return (v, nil);
+	}
+	r := -1;
+	for(i = 0; i < len rowname; i++)
+		if(rowname[i] == w[0:dot])
+			r = i;
+	c := -1;
+	for(i = 0; i < len colname; i++)
+		if(colname[i] == w[dot+1:])
+			c = i;
+	if(r < 0)
+		return (0, "no such row: " + w[0:dot]);
+	if(c < 0)
+		return (0, "no such colour: " + w[dot+1:]);
+	return (entry(r, c), nil);
+}
+
+# Lines of a file.  Comments begin with ";" and NOT with "#", which was
+# the first choice and is a trap: "#" is the obvious character for a
+# wall in a map, so the legend line
+#
+#	# 1 brick
+#
+# was thrown away as a comment and every brick in the demo map silently
+# failed to draw.  A format whose comment marker collides with its own
+# data is a bad format; ";" collides with nothing anyone draws with.
+#
+# strip says whether blank lines go too.  For art they are meaningless -
+# a tile is exactly eight lines - and they let a sheet be laid out to be
+# read.  For the grid of a map a blank line is a blank ROW, and dropping
+# it moves everything below it up.
+readlines(path: string, strip: int): (array of string, string)
+{
+	fd := sys->open(path, Sys->OREAD);
+	if(fd == nil)
+		return (nil, sys->sprint("cannot open %s: %r", path));
+	(ok, d) := sys->fstat(fd);
+	if(ok < 0)
+		return (nil, sys->sprint("cannot stat %s: %r", path));
+	n := int d.length;
+	if(n <= 0 || n > 1024*1024)
+		return (nil, "unreasonable file: " + path);
+	b := array[n] of byte;
+	if(sys->readn(fd, b, n) != n)
+		return (nil, sys->sprint("cannot read %s: %r", path));
+	(nl, l) := sys->tokenize(string b, "\n");
+	out := array[nl] of string;
+	k := 0;
+	for(; l != nil; l = tl l){
+		w := hd l;
+		if(len w > 0 && w[0] == ';')
+			continue;
+		if(strip && len w == 0)
+			continue;
+		out[k++] = w;
+	}
+	return (out[0:k], nil);
+}
+
+Screen.cmd(s: self ref Screen, command: string): string
+{
+	# Several commands, newline separated, like tk(2) and plot(2).  The
+	# first that fails stops the rest, and its error is the answer.
+	nlat := -1;
+	for(i := 0; i < len command; i++)
+		if(command[i] == '\n')
+			nlat = i;
+	if(nlat >= 0){
+		(nil, lines) := sys->tokenize(command, "\n");
+		r := "";
+		for(; lines != nil; lines = tl lines){
+			w := hd lines;
+			if(len w == 0 || w[0] == '#')
+				continue;
+			r = s.cmd(w);
+			if(len r > 0 && r[0] == '!')
+				return r;
+		}
+		return r;
+	}
+	(na, a) := sys->tokenize(command, " \t\r");
+	if(na == 0)
+		return "";
+	v := array[na] of string;
+	for(i = 0; i < na; i++){
+		v[i] = hd a;
+		a = tl a;
+	}
+	return docmd(s, v);
+}
+
+usage(u: string): string
+{
+	return "!usage: " + u;
+}
+
+docmd(s: ref Screen, a: array of string): string
+{
+	case a[0] {
+	"palette" =>
+		if(len a != 6)
+			return usage("palette NAME c0 c1 c2 c3");
+		c := array[4] of int;
+		for(i := 0; i < 4; i++){
+			(v, e) := parsecolour(a[2+i]);
+			if(e != nil)
+				return "!" + e;
+			c[i] = v;
+		}
+		bind(a[1]).pal = pal(c[0], c[1], c[2], c[3]);
+		return "";
+	"sheet" or "sheet16" =>
+		if(len a != 3)
+			return usage(a[0] + " NAME FILE");
+		(lines, e) := readlines(a[2], 1);
+		if(e != nil)
+			return "!" + e;
+		art := lines;
+		if(a[0] == "sheet16"){
+			if(len lines % 16 != 0)
+				return "!" + a[2] + ": not a multiple of 16 lines";
+			art = meta(lines);
+		}else if(len lines % 8 != 0)
+			return "!" + a[2] + ": not a multiple of 8 lines";
+		bind(a[1]).chr = chr(s.disp, s.chans, s.scale, art);
+		return "";
+	"font" =>
+		if(len a != 2)
+			return usage("font NAME");
+		f := font(s.disp, s.chans, s.scale);
+		if(f == nil)
+			return "!cannot open the 8x8 font";
+		bind(a[1]).chr = f;
+		return "";
+	"surface" =>
+		if(len a != 5)
+			return usage("surface NAME W H COLOUR");
+		(bg, e) := parsecolour(a[4]);
+		if(e != nil)
+			return "!" + e;
+		w := int a[2];
+		h := int a[3];
+		if(w < 1 || h < 1)
+			return "!surface: silly size";
+		# A surface needs a sheet to take its scale and channels from,
+		# and it does not care which: any sheet this screen made has
+		# the screen's own.  One is made here if there is none yet.
+		if(anychr(s) == nil)
+			return "!surface: declare a sheet or a font first";
+		su := surface(s.disp, anychr(s), fontof(s), w, h, bg);
+		if(su == nil)
+			return "!surface: cannot allocate";
+		bind(a[1]).surf = su;
+		return "";
+	"tile" or "put" or "put16" =>
+		if(len a < 7)
+			return usage(a[0] + " SURF X Y SHEET N PAL [flipx] [flipy]");
+		(su, sh, pl, e) := three(a[1], a[4], a[6]);
+		if(e != nil)
+			return "!" + e;
+		n := int a[5];
+		if(n < 0 || n >= sh.n)
+			return "!" + a[4] + ": no tile " + a[5];
+		fl := 0;
+		for(i := 7; i < len a; i++){
+			case a[i] {
+			"flipx" =>	fl |= FLIPX;
+			"flipy" =>	fl |= FLIPY;
+			*  =>		return "!unknown flag " + a[i];
+			}
+		}
+		x := int a[2];
+		y := int a[3];
+		old := su.chr;
+		su.chr = sh;
+		case a[0] {
+		"tile" =>	su.tile(x, y, n, pl);
+		"put" =>	su.put(x, y, n, pl, fl);
+		*  =>		su.put16(x, y, n, pl, fl);
+		}
+		su.chr = old;
+		return "";
+	"text" =>
+		if(len a < 6)
+			return usage("text SURF X Y PAL WORDS...");
+		su := surfof(a[1]);
+		if(su == nil)
+			return "!no surface " + a[1];
+		pl := palof(a[4]);
+		if(pl == nil)
+			return "!no palette " + a[4];
+		t := a[5];
+		for(i := 6; i < len a; i++)
+			t += " " + a[i];
+		su.text(int a[2], int a[3], t, pl);
+		return "";
+	"fill" =>
+		if(len a != 7)
+			return usage("fill SURF X Y W H COLOUR");
+		su := surfof(a[1]);
+		if(su == nil)
+			return "!no surface " + a[1];
+		(c, e) := parsecolour(a[6]);
+		if(e != nil)
+			return "!" + e;
+		x := int a[2];
+		y := int a[3];
+		su.fill(Rect((x, y), (x + int a[4], y + int a[5])), c);
+		return "";
+	"view" or "blit" =>
+		if(len a != 5)
+			return usage(a[0] + " SRC DST X Y");
+		src := surfof(a[1]);
+		dst := surfof(a[2]);
+		if(src == nil)
+			return "!no surface " + a[1];
+		if(dst == nil)
+			return "!no surface " + a[2];
+		if(a[0] == "view")
+			src.view(dst, int a[3], int a[4]);
+		else
+			src.blit(dst, int a[3], int a[4]);
+		return "";
+	"map" =>
+		if(len a != 4)
+			return usage("map SURF SHEET FILE");
+		return domap(a[1], a[2], a[3]);
+	"size" =>
+		if(len a != 2)
+			return usage("size SURF");
+		su := surfof(a[1]);
+		if(su == nil)
+			return "!no surface " + a[1];
+		return sys->sprint("%d %d", su.w, su.h);
+	"colour" =>
+		if(len a != 2)
+			return usage("colour NAME");
+		(c, e) := parsecolour(a[1]);
+		if(e != nil)
+			return "!" + e;
+		v := rgb(c);
+		return sys->sprint("#%02x%02x%02x", (v>>24) & 16rFF,
+			(v>>16) & 16rFF, (v>>8) & 16rFF);
+	"count" =>
+		if(len a != 2)
+			return usage("count SHEET");
+		ch := chrof(a[1]);
+		if(ch == nil)
+			return "!no sheet " + a[1];
+		return string ch.n;
+	}
+	return "!no such command: " + a[0];
+}
+
+three(sn, cn, pn: string): (ref Surface, ref Chr, ref Pal, string)
+{
+	su := surfof(sn);
+	if(su == nil)
+		return (nil, nil, nil, "no surface " + sn);
+	ch := chrof(cn);
+	if(ch == nil)
+		return (nil, nil, nil, "no sheet " + cn);
+	pl := palof(pn);
+	if(pl == nil)
+		return (nil, nil, nil, "no palette " + pn);
+	return (su, ch, pl, nil);
+}
+
+surfof(n: string): ref Surface
+{
+	e := find(n);
+	if(e == nil)
+		return nil;
+	return e.surf;
+}
+
+chrof(n: string): ref Chr
+{
+	e := find(n);
+	if(e == nil)
+		return nil;
+	return e.chr;
+}
+
+palof(n: string): ref Pal
+{
+	e := find(n);
+	if(e == nil)
+		return nil;
+	return e.pal;
+}
+
+anychr(s: ref Screen): ref Chr
+{
+	for(i := 0; i < len names; i++)
+		if(names[i].chr != nil)
+			return names[i].chr;
+	return nil;
+}
+
+fontof(s: ref Screen): ref Chr
+{
+	e := find("font");
+	if(e != nil && e.chr != nil)
+		return e.chr;
+	return anychr(s);
+}
+
+# A map file carries its own legend, so a level is one file and not a
+# file plus an argument list nobody can read:
+#
+#	G 1 steel
+#	H 2 wood
+#	%
+#	....GGGG....
+#
+# A character with no legend entry paints nothing, which is how a map
+# says "sky" without naming it.
+domap(sn, cn, path: string): string
+{
+	su := surfof(sn);
+	if(su == nil)
+		return "!no surface " + sn;
+	ch := chrof(cn);
+	if(ch == nil)
+		return "!no sheet " + cn;
+	# The legend is read with blank lines dropped, the grid without: a
+	# blank line in a map is a blank row.
+	(lines, e) := readlines(path, 0);
+	if(e != nil)
+		return "!" + e;
+	legch := array[256] of int;
+	legpal := array[256] of ref Pal;
+	for(i := 0; i < 256; i++)
+		legch[i] = -1;
+	i = 0;
+	for(; i < len lines; i++){
+		if(lines[i] == "%"){
+			i++;
+			break;
+		}
+		if(lines[i] == "")
+			continue;
+		(nw, w) := sys->tokenize(lines[i], " \t");
+		if(nw != 3)
+			return "!" + path + ": legend wants CHAR TILE PALETTE";
+		c := (hd w)[0];
+		w = tl w;
+		t := int hd w;
+		w = tl w;
+		pl := palof(hd w);
+		if(pl == nil)
+			return "!no palette " + hd w;
+		if(t < 0 || t >= ch.n)
+			return "!" + cn + ": no tile " + string t;
+		legch[c] = t;
+		legpal[c] = pl;
+	}
+	old := su.chr;
+	su.chr = ch;
+	ty := 0;
+	for(; i < len lines; i++){
+		row := lines[i];
+		for(tx := 0; tx < len row; tx++){
+			c := row[tx];
+			if(c > 255 || legch[c] < 0)
+				continue;
+			su.tile(tx, ty, legch[c], legpal[c]);
+		}
+		ty++;
+	}
+	su.chr = old;
+	return "";
+}

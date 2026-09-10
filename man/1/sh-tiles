@@ -1,0 +1,132 @@
+.TH SH-TILES 1
+.SH NAME
+sh-tiles \- build a screen of tiles from a shell script
+.SH SYNOPSIS
+.B load tiles
+.PP
+.B tiles new
+.I WxH
+[
+.I scale
+] [
+.I title
+]
+.br
+.B tiles
+.I id
+.IR command ...
+.br
+.B tiles
+.I id
+.B draw
+.I surface
+.br
+.B tiles
+.I id
+.B write
+.I surface file
+.br
+.B tiles del
+.I id
+.SH DESCRIPTION
+.I Sh-tiles
+gives shell scripts
+.IR tiles (2)'s
+own command language, the way
+.IR sh-plot (1)
+gives them
+.IR plot (2)'s
+and
+.IR sh-tk (1)
+gives them
+.IR tk (2)'s.
+.PP
+What that is for:
+.IR tiles (2)
+draws from named palettes, named sheets of art and named surfaces, all
+of them made by text, and its art and its levels are ordinary files.
+Put those two together and a screenful of 8-bit graphics is something a
+shell script can build \- which is the same trick that makes a Tk window
+something a shell script can build, and for the same reason.
+.PP
+Nothing in this module knows what any of the commands mean.
+Everything after the handle is forwarded verbatim to
+.IR tiles (2)'s
+.IR cmd ,
+and only
+.BR new ,
+.BR del ,
+.B draw
+and
+.B write
+\- the window and the file, which
+.IR tiles (2)
+has no opinion about \- are special-cased first words.
+A forwarded command's own failure is reported as a soft
+.BR $status ,
+which is
+.IR sh-tk (1)'s
+convention for a bad raw tk command; only handle and usage errors raise.
+.PP
+In
+.B ${}
+the answer is the value, so a script can ask a question:
+.B ${tiles $id size level}
+is
+.BR "256 96" ,
+and a command that fails hands back its
+.B !
+message rather than aborting the script.
+.PP
+.B Draw
+puts a named surface in the window;
+.B write
+puts it in a file, as a line of
+.B "W H BYTESPERPIXEL"
+followed by the pixels, so a script can build a screen and keep it with
+nobody looking at a window.
+.SH EXAMPLE
+A whole screen, with the art and the level in files and not one line of
+Limbo:
+.IP
+.EX
+load std
+load tiles
+id = ${tiles new 256x96 2 \(aqtiles from sh\(aq}
+tiles $id palette turf  dark.black dark.green  mid.lime   light.lime
+tiles $id palette brick dark.black dark.orange mid.orange light.orange
+tiles $id palette hud   dark.black pale.grey   pale.grey  pale.grey
+tiles $id sheet art /lib/tiles/demo.chr
+tiles $id font font
+tiles $id surface level 256 96 dark.black
+tiles $id map level art /lib/tiles/demo.map
+tiles $id text level 8 4 hud BUILT BY SH
+tiles $id draw level
+.EE
+.SH SOURCE
+.B /appl/cmd/sh/tiles.b
+.SH SEE ALSO
+.IR sh (1),
+.IR sh-plot (1),
+.IR sh-tk (1),
+.IR tiles (2),
+.IR tilestest (1)
+.SH BUGS
+.B del
+forgets the handle and leaves the window on screen, because
+.I tkclient->wmctl
+with
+.B exit
+would exit the whole process group and this module is a guest in
+whatever process runs the script.
+.IR Sh-plot (1)
+and
+.IR sh-tk (1)
+make the same trade for the same reason.
+.PP
+There is no way to hand a surface back to a Limbo program from here, so
+a script can build a screen and draw it or write it, and cannot pass it
+to something else.
+.PP
+Nothing here reads the keyboard.
+A script can build a screen; it cannot yet play one.

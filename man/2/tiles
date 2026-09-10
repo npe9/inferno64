@@ -1,6 +1,6 @@
 .TH TILES 2
 .SH NAME
-tiles: init, rgb, colour, entry, pal, chr, meta, font, surface, padkey, edge, sound, sfx, sfxtick, quiet \- an 8-bit console look-alike
+tiles: init, rgb, colour, entry, pal, chr, meta, font, surface, screen, cmd, padkey, edge, sound, sfx, sfxtick, quiet \- an 8-bit console look-alike
 .SH SYNOPSIS
 .EX
 include "draw.m";
@@ -208,6 +208,99 @@ must be called once a frame for that to expire.
 turns audio on or off and returns whether it is on;
 .I quiet
 silences whatever is playing.
+.SS The same thing as a command language
+Everything above is Limbo: a game compiles its art in as arrays of
+strings and its palettes as calls.
+That is fine, and it is the only way to do it, which is the complaint.
+.PP
+A
+.I Screen
+is the other way, and it is shaped like
+.IR tk (2):
+named palettes, named sheets and named surfaces, made and drawn by text,
+so a level, a palette and a sheet of art are
+.I data
+a program reads rather than source a program is built from.
+.I Cmd
+takes one command or several separated by newlines and returns a result;
+an error comes back beginning with
+.BR ! ,
+which is
+.IR tk (2)'s
+convention rather than
+.IR plot (2)'s
+nil-or-error, because a command that answers a question has to be able
+to answer
+.BR 0 .
+.PP
+.EX
+palette NAME c0 c1 c2 c3     colours as ROW.COLUMN or a master index
+sheet NAME FILE              8x8 art, eight lines a tile
+sheet16 NAME FILE            16x16 art, sixteen lines each
+font NAME                    the built-in 8x8 text font
+surface NAME W H COLOUR      W and H in logical pixels
+tile SURF TX TY SHEET N PAL
+put SURF X Y SHEET N PAL [flipx] [flipy]
+put16 SURF X Y SHEET N PAL [flipx] [flipy]
+text SURF X Y PAL WORDS...
+fill SURF X Y W H COLOUR
+view SRC DST SX SY
+blit SRC DST X Y
+map SURF SHEET FILE
+size SURF                    \-> "W H"
+colour NAME                  \-> "#rrggbb"
+count SHEET                  \-> how many tiles
+.EE
+.PP
+.I Named ,
+.I sheet
+and
+.I pal
+reach a thing made by text from Limbo, so a program can build its screen
+from files and then go on calling the functions above on it.
+.SS The file formats
+An art file is lines of
+.BR ".123" ,
+eight to a tile for
+.BR sheet ,
+sixteen for
+.BR sheet16 .
+A map file carries its own legend, so a level is one file:
+.IP
+.EX
+; a comment
+= 2 turf
+# 1 brick
+%
+\&....####....
+\&============
+.EE
+.PP
+Lines of
+.B "CHAR TILE PALETTE"
+until a line of
+.BR % ,
+then the map, one character a tile.
+A character with no legend entry paints nothing, which is how a map says
+sky without naming it.
+.PP
+A comment begins with
+.BR ; ,
+not with
+.BR # .
+That is not a style choice:
+.B #
+is the obvious character for a wall, and when it was the comment marker
+the legend line
+.B "# 1 brick"
+was thrown away as a comment and every brick in a map silently failed to
+draw.
+A format whose comment marker collides with its own data is a bad
+format.
+.PP
+Blank lines are dropped from an art file, where they are meaningless and
+let a sheet be laid out to be read, and kept in the grid of a map, where
+a blank line is a blank row.
 .SH SOURCE
 .B /appl/lib/tiles.b
 .SH SEE ALSO
@@ -215,6 +308,9 @@ silences whatever is playing.
 .IR tilestest (1),
 .IR vsprite (2),
 .IR draw3d (2),
+.IR sh-tiles (1),
+.IR tk (2),
+.IR plot (2),
 .IR tone (2),
 .IR frameclock (2)
 .SH BUGS

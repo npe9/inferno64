@@ -527,6 +527,7 @@ sh-sexprs sh-sexprs
 sh-std sh-std
 sh-string sh-string
 sh-test sh-test
+sh-tiles sh-tiles
 sh-tk sh-tk
 sha1sum sum
 shading shading

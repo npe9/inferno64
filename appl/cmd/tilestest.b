@@ -17,7 +17,7 @@ include "draw.m";
 
 include "tiles.m";
 	tiles: Tiles;
-	Chr, Pal, Surface: import tiles;
+	Chr, Pal, Surface, Screen: import tiles;
 
 Command: module
 {
@@ -124,7 +124,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	draw = load Draw Draw->PATH;
 	tiles = load Tiles Tiles->PATH;
 	if(tiles == nil){
-		sys->print("tilestest: cannot load nes: %r\n");
+		sys->print("tilestest: cannot load tiles: %r\n");
 		raise "fail:load";
 	}
 	e := tiles->init();
@@ -141,6 +141,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	sheets();
 	drawing();
 	scrolling();
+	language();
 	if(nfail == 0)
 		sys->print("tilestest: PASSED\n");
 	else{
@@ -334,6 +335,152 @@ drawing()
 	ck("and nothing where the space is", nb, 0);
 	cktrue("and the second letter one glyph further on", ncc > 0);
 	ck("both letters the same", na, ncc);
+}
+
+# The command language.  What is being checked is that text does the
+# same thing the calls do - the point of having it is that a level and a
+# sheet of art stop being source, so a level that draws differently
+# through cmd() than through the functions would be worse than no level
+# language at all.
+language()
+{
+	sys->print("tilestest: the command language\n");
+	SC: con 2;
+	sc := tiles->screen(d, Draw->RGB24, SC);
+	cktrue("a screen is made", sc != nil);
+	if(sc == nil)
+		return;
+
+	ck2("an unknown command is refused", iserr(sc.cmd("wibble")), 1);
+	ck2("and a bad colour", iserr(sc.cmd("palette p mid.plaid a b c")), 1);
+	ck2("and a bad row", iserr(sc.cmd("palette p wrong.red a b c")), 1);
+
+	e := sc.cmd("palette steel dark.black dark.azure mid.cyan light.cyan");
+	ck2("a palette is made", iserr(e), 0);
+	e = sc.cmd("sheet art /lib/tiles/demo.chr");
+	ck2("a sheet loads from a file", iserr(e), 0);
+	cks("and has the tiles the file holds", sc.cmd("count art"), "6");
+	ck2("a missing file is an error",
+		iserr(sc.cmd("sheet gone /lib/tiles/nosuch.chr")), 1);
+
+	e = sc.cmd("font font");
+	ck2("the font loads", iserr(e), 0);
+	e = sc.cmd("surface scr 64 64 dark.black");
+	ck2("a surface is made", iserr(e), 0);
+	cks("and knows its size", sc.cmd("size scr"), "64 64");
+	cks("a colour reads back as a colour",
+		sc.cmd("colour pale.grey"), "#ffffff");
+
+	# The real comparison: a map painted from a file against the same
+	# cells painted through the Surface calls, with the sheet and the
+	# palette the file named.  Anything less says only that cmd() drew
+	# SOMETHING.
+	sc.cmd("palette turf dark.black dark.green mid.lime light.lime");
+	sc.cmd("palette soil dark.black dark.orange dark.red mid.orange");
+	sc.cmd("palette brick dark.black dark.orange mid.orange light.orange");
+	sc.cmd("palette ladder dark.black mid.orange light.orange pale.yellow");
+	sc.cmd("palette coin dark.black dark.yellow pale.yellow mid.yellow");
+	sc.cmd("surface lvl 256 96 dark.black");
+	e = sc.cmd("map lvl art /lib/tiles/demo.map");
+	ck2("a map paints from a file", iserr(e), 0);
+	cktrue("and puts something on the surface", litpix(sc.image("lvl")) > 3000);
+
+	art := sc.sheet("art");
+	tp := sc.pal("turf");
+	cktrue("the sheet and palette it named are reachable",
+		art != nil && tp != nil);
+	if(art == nil || tp == nil)
+		return;
+	hand := tiles->surface(d, art, nil, 256, 96,
+		tiles->entry(Tiles->DARK, Tiles->BLACK));
+	if(hand == nil){
+		sys->print("FAIL no scratch surface\n");
+		nfail++;
+		return;
+	}
+	# row 10 of the map file is all "=", which the legend gives as tile
+	# 2 in palette turf
+	for(x := 0; x < 32; x++)
+		hand.tile(x, 10, 2, tp);
+	same := 1;
+	for(x = 0; x < 32; x++)
+		for(dy := 0; dy < 8*SC; dy += 3)
+			if(pixat(sc.image("lvl"), x*8*SC + 3, 10*8*SC + dy)
+			!= pixat(hand.img, x*8*SC + 3, 10*8*SC + dy))
+				same = 0;
+	cktrue("and the pixels are the ones the calls make", same);
+
+	# The legend's own trap.  "#" is the obvious character for a wall
+	# and was also the comment marker, so the legend line "# 1 brick"
+	# was thrown away and every brick in the map silently failed to
+	# draw - visible only by looking at the picture.  The demo map has
+	# bricks at row 5, columns 17 to 19.
+	cktrue("a # in a legend is data and not a comment",
+		pixat(sc.image("lvl"), 17*8*SC + 3, 5*8*SC + 3) != 0);
+
+	# A cell the legend does not mention is left alone, which is how a
+	# map says sky without naming it.
+	ck2("an unnamed character paints nothing",
+		pixat(sc.image("lvl"), 2, 2),
+		pixat(sc.image("lvl"), 6, 6));
+
+	# A whole screen from one string, the way a Tk program builds a
+	# window: several commands, newline separated, first error wins.
+	r := sc.cmd("surface two 32 32 mid.blue\n" +
+		"fill two 0 0 8 8 pale.grey\n" +
+		"text two 0 16 steel HI\n");
+	ck2("a script of commands runs", iserr(r), 0);
+	r = sc.cmd("surface three 32 32 mid.blue\nwibble\nfill three 0 0 8 8 pale.grey\n");
+	ck2("and stops at the first error", iserr(r), 1);
+}
+
+ck2(what: string, got, want: int)
+{
+	if(got == want){
+		sys->print("ok   %s\n", what);
+		return;
+	}
+	sys->print("FAIL %s = %d, want %d\n", what, got, want);
+	nfail++;
+}
+
+cks(what, got, want: string)
+{
+	if(got == want){
+		sys->print("ok   %s = %s\n", what, got);
+		return;
+	}
+	sys->print("FAIL %s = %s, want %s\n", what, got, want);
+	nfail++;
+}
+
+iserr(r: string): int
+{
+	return len r > 0 && r[0] == '!';
+}
+
+pixat(im: ref Image, x, y: int): int
+{
+	b := array[3] of byte;
+	if(im.readpixels(Rect((x,y),(x+1,y+1)), b) < 0)
+		return -1;
+	return (int b[2] << 16) | (int b[1] << 8) | int b[0];
+}
+
+litpix(im: ref Image): int
+{
+	if(im == nil)
+		return -1;
+	w := im.r.dx();
+	h := im.r.dy();
+	b := array[w*h*3] of byte;
+	if(im.readpixels(im.r, b) < 0)
+		return -1;
+	n := 0;
+	for(i := 0; i < w*h; i++)
+		if(b[i*3] != byte 0 || b[i*3+1] != byte 0 || b[i*3+2] != byte 0)
+			n++;
+	return n;
 }
 
 # Logical pixels in a box that are not the ground colour it was filled

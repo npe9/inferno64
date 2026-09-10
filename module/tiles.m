@@ -122,4 +122,60 @@ Tiles: module
 	};
 	surface:	fn(d: ref Draw->Display, chr, fnt: ref Chr, w, h, bg: int): ref Surface;
 
+	# --- the same thing as a command language ---
+	#
+	# Everything above is Limbo: a game compiles its art in as arrays
+	# of strings and its palettes as calls.  That is fine and it is also
+	# the only way to do it, which is the complaint.  A Screen is the
+	# other way, and it is shaped like tk(2): named things, made and
+	# drawn by text, so a level, a palette and a sheet of art are DATA
+	# a program reads rather than source a program is built from.
+	#
+	# cmd() takes one command or several separated by newlines, and
+	# returns a result - empty for a command that has none.  An error
+	# comes back beginning with "!", which is tk(2)'s convention and
+	# not plot(2)'s nil-or-error, because a command that answers a
+	# question has to be able to answer "0".
+	#
+	#	palette NAME c0 c1 c2 c3
+	#		colours as ROW.COLUMN - dark.red, pale.grey - or as
+	#		a bare master index.  c0 is the background for tile
+	#		and transparent for put.
+	#	sheet NAME FILE          8x8 art, eight lines a tile
+	#	sheet16 NAME FILE        16x16 art, sixteen lines each
+	#	font NAME                the built-in 8x8 text font
+	#	surface NAME W H COLOUR  W and H in logical pixels
+	#	tile SURF TX TY SHEET N PAL
+	#	put SURF X Y SHEET N PAL [flipx] [flipy]
+	#	put16 SURF X Y SHEET N PAL [flipx] [flipy]
+	#	text SURF X Y PAL WORDS...
+	#	fill SURF X Y W H COLOUR
+	#	view SRC DST SX SY       a screen-sized window of SRC
+	#	blit SRC DST X Y
+	#	map SURF SHEET FILE      a whole tile map, legend and all
+	#	size SURF                -> "W H"
+	#	colour NAME              -> "#rrggbb"
+	#	count SHEET              -> how many tiles it holds
+	#
+	# An art file is lines of ".123", eight (or sixteen) to a tile;
+	# blank lines and lines beginning with # are ignored.  A map file
+	# carries its own legend: lines of "CHAR TILE PALETTE" until a line
+	# of "%", then the map itself, one character a tile.
+	Screen: adt {
+		disp:	ref Draw->Display;
+		chans:	Draw->Chans;
+		scale:	int;
+
+		cmd:	fn(s: self ref Screen, command: string): string;
+		# The image behind a named surface, to blit onto a window.
+		image:	fn(s: self ref Screen, name: string): ref Draw->Image;
+		# The surface itself, for a program that wants to go on
+		# calling the functions above on it.
+		named:	fn(s: self ref Screen, name: string): ref Surface;
+		# And the sheet, likewise: a name made by text is a thing the
+		# rest of the program can still reach.
+		sheet:	fn(s: self ref Screen, name: string): ref Chr;
+		pal:	fn(s: self ref Screen, name: string): ref Pal;
+	};
+	screen:	fn(d: ref Draw->Display, chans: Draw->Chans, scale: int): ref Screen;
 };

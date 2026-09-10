@@ -11,6 +11,7 @@ TARG=sh.dis\
 	sexprs.dis\
 	std.dis\
 	string.dis\
+	tiles.dis\
 	tk.dis\
 	echo.dis\
 	csv.dis\
