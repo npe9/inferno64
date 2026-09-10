@@ -510,6 +510,7 @@ tk tk
 tkclient tkclient
 tklayout tklayout
 tknotebook tknotebook
+tkspinbox tkspinbox
 tm2epoch daytime
 tmsg styx
 tobig string

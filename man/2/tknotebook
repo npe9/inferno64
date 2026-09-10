@@ -39,12 +39,19 @@ says which is showing.
 This
 .B Tk
 is 8.0-era.
-There is no notebook, treeview, combobox, progressbar or spinbox, and no
-themed-widget layer.
+There is no treeview, progressbar or spinbox, and no themed-widget
+layer.
 The expensive half of that gap wants C; the cheap half is compositions
 like this one \(em a frame of tabs, a frame per page, and
 .B "pack forget"
 for the pages that are not showing.
+.PP
+This page used to say there was no combobox either, and that was wrong:
+.IR choicebutton (9)
+is one, showing a value from a
+.B -values
+list and posting a menu of them when clicked.
+It was overlooked because it is not called a combobox.
 .SS Why the tabs are radiobuttons
 Not a detail of appearance.
 A radiobutton is a control with a state, so

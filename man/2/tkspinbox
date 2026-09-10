@@ -1,0 +1,125 @@
+.TH TKSPINBOX 2
+.SH NAME
+tkspinbox \- a number with an up and a down, out of the widgets there are
+.SH SYNOPSIS
+.EX
+include "tk.m";
+include "tkspinbox.m";
+tkspinbox := load Tkspinbox Tkspinbox->PATH;
+
+Spinbox: adt {
+    top:   ref Tk->Toplevel;
+    path:  string;
+    lo:    int;
+    hi:    int;
+    step:  int;
+
+    value: fn(sb: self ref Spinbox): int;
+    set:   fn(sb: self ref Spinbox, v: int);
+    event: fn(sb: self ref Spinbox, s: string): int;
+};
+
+init: fn();
+new:  fn(top: ref Tk->Toplevel, path: string,
+         lo, hi, step, start: int): (ref Spinbox, chan of string);
+.EE
+.SH DESCRIPTION
+.B New
+makes a spinbox at
+.I path
+inside an existing toplevel: an entry holding a number, with a
+.B +
+and a
+.B \-
+beside it.
+The caller packs
+.I path
+itself.
+The value starts at
+.I start
+and is kept within
+.I lo
+and
+.IR hi ,
+inclusive; one press moves it by
+.IR step .
+If
+.I hi
+is below
+.I lo
+the two are exchanged, and a
+.I step
+of zero or less is taken as one.
+.PP
+.B Value
+returns the number showing, and
+.B set
+puts one in, clamped.
+Both read and write the entry itself rather than a copy, so a number the
+person typed is the number
+.B value
+reports \(em and anything they typed that is not a number reads as
+.IR lo .
+.PP
+.B New
+also returns a channel.
+The two buttons report on it, and an application must select on it and
+give what arrives to
+.BR event ,
+which does the arithmetic and returns the value afterwards.
+.B Event
+ignores a string it does not recognise and returns the value unchanged,
+so an application can hand it everything it receives without sorting
+first.
+.SS Why an application has to pump it
+A Tk command is a string, and this Tk cannot add one to a number, so the
+arithmetic has to happen in Limbo.
+That leaves two arrangements: a process inside the module reading its own
+channel, or the application's existing event loop.
+The first would put a second writer on the same toplevel as the
+application, and this is not the place to find out what that does.
+.SS Why the value lives in an entry
+Not a detail of appearance.
+An entry is a control with a state, so
+.B libtk
+already announces it to
+.IR voice (3)
+when the keyboard arrives at it, and a person who tabs onto a spinbox
+hears the number without this module knowing that speech exists.
+A number drawn on a canvas would have been silent.
+.PP
+What an entry does not do is say the value changed when a
+.I button
+moved it, because nothing was typed into it.
+.B Event
+writes the new number to
+.B /dev/voice/screen
+itself \(em the only place in the module that mentions speech \(em and
+only when the value actually moved, since at either end of the range a
+press does nothing and repeating the same number at someone leaning on a
+button is worse than silence.
+.SH SOURCE
+.B /appl/lib/tkspinbox.b
+.SH SEE ALSO
+.IR tk (2),
+.IR tknotebook (2),
+.IR voice (3),
+.IR entry (9),
+.IR style (9)
+.SH BUGS
+The buttons are the only way to spin it.
+The arrow keys are not bound, so a person on the keyboard can type a
+number into the entry but cannot step it, which is the thing a spinbox
+is for.
+.PP
+Integers only.
+.PP
+It does not repeat while a button is held.
+.PP
+Nothing stops the person typing a number outside the range, or letters.
+.B Value
+clamps and falls back to
+.I lo
+so a caller is never handed nonsense, but the entry goes on showing what
+they typed until something calls
+.BR set .

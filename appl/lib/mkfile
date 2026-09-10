@@ -178,6 +178,7 @@ TARG=\
 	tkclient.dis\
 	tklayout.dis\
 	tknotebook.dis\
+	tkspinbox.dis\
 	wmtheme.dis\
 	titlebar.dis\
 	tone.dis\

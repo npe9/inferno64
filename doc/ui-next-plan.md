@@ -389,8 +389,9 @@ the font work did — not a scale factor.
 ## 5. The widget set — begun
 
 `libtk` has button, canvas, entry, frame, grid, image, label, listbox,
-menu, pack, panel, scale, scrollbar and text. Verified absent: notebook,
-treeview, progressbar, spinbox.
+menu, pack, panel, scale, scrollbar and text. Still absent: treeview and
+progressbar. Notebook is `tknotebook(2)` and **spinbox is now
+`tkspinbox(2)`**, both Limbo compositions.
 
 **Correction: combobox was on that list and should not have been.**
 `choicebutton(9)` is one — it shows one of a `-values` list, opens a menu
@@ -419,7 +420,30 @@ the widgets that exist — a notebook is a frame, a row of buttons and
 really wants C. So this is not one task but a series, and it can start
 whenever without blocking anything.
 
-**`tknotebook(2)` is the first**, and it makes the case: a frame of tabs,
+**`tkspinbox(2)` is the second**, and it took the notebook's lesson
+literally: the value lives in an `entry`, so `libtk` announces it on
+arrival for free — `tkannouncestate()` already has a case for `TKentry` —
+where a number drawn on a canvas would have been silent. What an entry
+does *not* do is say the value changed when a **button** moved it, since
+nothing was typed into it, so `event()` writes the new number to
+`/dev/voice/screen` itself. That is precisely the shape of the
+`choicebutton` bug found the same afternoon — right on arrival, silent on
+change — which is why the two are checked separately rather than
+together.
+
+**An application has to pump it**, because a Tk command is a string and
+this Tk cannot add one to a number. The buttons report on a channel and
+the application's own event loop hands what arrives to `event()`. A
+process inside the module reading its own channel would put a second
+writer on the same toplevel as the application, which is not a thing to
+find out by trying.
+
+**Progressbar is deliberately not next.** It has no state a person acts
+on, so it announces nothing and inherits nothing; it is a canvas
+rectangle and the least valuable line of code in this section. Treeview
+still wants C.
+
+**`tknotebook(2)` was the first**, and it makes the case: a frame of tabs,
 a frame per page, `pack forget` for the ones not showing. `tkofftest(1)`
 checks what makes it a notebook rather than three frames — that exactly
 one page has a geometry manager, that selecting swaps which, and that its

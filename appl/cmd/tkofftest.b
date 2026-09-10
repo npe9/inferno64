@@ -32,6 +32,9 @@ include "wmtheme.m";
 include "tknotebook.m";
 	tknotebook: Tknotebook;
 	Notebook: import tknotebook;
+include "tkspinbox.m";
+	tkspinbox: Tkspinbox;
+	Spinbox: import tkspinbox;
 include "wmclient.m";
 include "tkclient.m";
 	tkclient: Tkclient;
@@ -197,6 +200,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	if(wmtheme != nil)
 		wmtheme->init();
 	tknotebook = load Tknotebook Tknotebook->PATH;
+	tkspinbox = load Tkspinbox Tkspinbox->PATH;
 	if(tknotebook != nil)
 		tknotebook->init();
 	if(tk == nil){
@@ -291,6 +295,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	checkplaintitle();
 	checktheme();
 	checknotebook();
+	checkspinbox();
 	checkvoice();
 
 	# The chrome's artwork is 16-pixel bitmaps in /icons/tk, and libtk
@@ -571,6 +576,83 @@ checktitlebar(font, what: string)
 # What makes it a notebook rather than three frames is that exactly one
 # page is laid out at a time, so that is what this checks, through the
 # same winfo the layout checker uses.
+# tkspinbox(2): an entry with an up and a down beside it.  Two things are
+# worth checking and they fail separately.
+#
+# That it spins, and stops at the ends of its range - a spinbox that runs
+# past its limits is worse than none, because a caller has no reason to
+# check.
+#
+# And that it SAYS the new number.  The entry announces itself on arrival
+# for free, since libtk knows an entry is a control with a state; nothing
+# announces a value a button changed, because nothing typed into it.
+# That is the exact shape of the choicebutton bug found earlier in this
+# session - right on arrival, silent on change - so it is checked here
+# rather than assumed to have been learned.
+checkspinbox()
+{
+	if(tkspinbox == nil){
+		sys->print("     no tkspinbox module; not checked\n");
+		return;
+	}
+	tkspinbox->init();
+	# Before anything spins: the module opens the voice device when it
+	# first has something to say, so a bind that arrives later is a
+	# different test than the one meant here.
+	sys->bind("#V", "/dev", Sys->MAFTER);
+	blank();
+	top := offscreen();
+	if(top == nil)
+		return;
+	(sb, nil) := tkspinbox->new(top, ".s", 0, 10, 2, 4);
+	if(sb == nil){
+		report(0, "a spinbox builds");
+		return;
+	}
+	tk->cmd(top, "pack .s");
+	map(top);
+
+	start := sb.value();
+	up := sb.event("up");
+	down := sb.event("down");
+	report(start == 4 && up == 6 && down == 4, sys->sprint(
+		"a spinbox starts where it was put and steps by its step (%d, %d, %d)",
+		start, up, down));
+
+	for(i := 0; i < 20; i++)
+		sb.event("up");
+	hi := sb.value();
+	for(i = 0; i < 20; i++)
+		sb.event("down");
+	lo := sb.value();
+	report(hi == 10 && lo == 0, sys->sprint(
+		"and stops at both ends of its range (%d and %d)", hi, lo));
+
+	report(sb.event("sideways") == 0, "and ignores a string it does not know");
+
+	# what it says when it moves
+	sfd := sys->open("/dev/voice/screen", Sys->OREAD);
+	if(sfd == nil){
+		sys->print("     no /dev/voice; the spinbox announcement not checked\n");
+		return;
+	}
+	drain(sfd);
+	sb.event("up");
+	said := next(sfd);
+	report(said == "2", sys->sprint(
+		"and says the number it moved to (%#q)", said));
+
+	# at the end of the range nothing moves, so nothing should be said -
+	# a person leaning on the button should not hear the same number over
+	# and over
+	sb.set(10);
+	drain(sfd);
+	sb.event("up");
+	quiet := waiting();
+	report(quiet == 0, sys->sprint(
+		"and says nothing when it did not move (%d waiting)", quiet));
+}
+
 checknotebook()
 {
 	if(tknotebook == nil){
