@@ -3732,6 +3732,49 @@ swapped.  The encodings 7l emits were checked against an independent
 disassembler (assembled as data by clang, read back by objdump) rather
 than against a second reading of the manual.
 .PP
+.B "And a second 7l bug, found by a line of C that lied."
+A literal too wide for an instruction goes in 7l's constant pool, and
+.CW addpool()
+chose the pool entry's width from the mnemonic: eight bytes for
+.CW MOV ,
+four for everything else.  So
+.CW CMP ,
+.CW ADD ,
+.CW SUB ,
+.CW AND
+\(em the whole of
+.CW asmout.c 's
+case 13 \(em got a four-byte word and a 32-bit LDR to read it back, and
+a constant wider than 32 bits lost its top half with no diagnostic.
+.CW "if(x >= 0x100000000ULL)"
+in C became
+.CW "CMP $4294967296,R2"
+in the listing and
+.CW "ldr w17" ,
+.CW "cmp x2,x17"
+in the machine, which is a comparison against zero and true for every
+.CW x .
+It was found by writing that line: a test in
+.CW os/inferno/port/pciecam.c
+meant to name a PCI bar above 4 GiB named every bar on the machine.
+The width now follows the value \(em a top word of 0 or \-1 still fits
+in four bytes, because
+.CW omovlit()
+zero-extends or sign-extends the load.  How much this had already
+corrupted is worth saying exactly, because it is less than it sounds:
+linking both arm64 kernels with the old linker and the new one and
+diffing the listings, one instruction changes in each, and it is the
+threshold of a debug print in
+.CW os/inferno/port/tod.c .
+Every other wide literal in either kernel had been pooled as a
+.CW DWORD
+by some
+.CW MOV
+of the same value first, and
+.CW addpool()
+shares entries.  The bug was latent, not active, and the next wide
+constant written anywhere would have woken it.
+.PP
 .CW atomiccheck()
 runs once, before any other processor exists, and checks the value
 stored, the value returned, and that a failed
@@ -3821,11 +3864,53 @@ Four levels and a 48-bit virtual address, where
 .CW os/inferno/raspi3b/mmu.c
 has three and 39 bits: this machine's ECAM is at 0x4010000000 and its
 high PCIe MMIO window at 0x8000000000, which 39 bits cannot reach.  The
-map comes from
-.CW conf.mem[] ,
-so it describes the machine rather than a constant, and the page
-tables get a 2 MiB block of their own mapped read-only \(em the
+map comes from the firmware's own memory map, entry by entry, and the
+page tables get a 2 MiB block of their own mapped read-only \(em the
 tripwire raspi3b keeps, so a wild store into them faults at the store.
+.PP
+.B "Entry by entry, and not a span."
+The first version of this mapped
+.CW conf.mem[]
+and then mapped everything from
+.CW PHYSDRAM
+to
+.CW conf.topofmem
+Normal on top of it, to cover the ACPI tables
+.CW acpiinit()
+reads, which are not in a usable run.  The span subsumed the loop, so
+the map was decided entirely by two numbers, and it is right here for
+one reason: QEMU's virt has a single contiguous bank.  Give a machine
+two banks with an MMIO hole between them and the hole is mapped
+Normal, Normal permits speculative reads, and a speculative read into
+a hole is an imprecise external abort \(em a fault that arrives with
+no address and nothing to blame.  The emulator cannot produce it, so
+it would have been found on the rented board.  What is there now maps
+each firmware entry by its type: 1 usable, 3 ACPI reclaim and 4 ACPI
+NVS are memory and are mapped; 2 is not, because
+.CW os/inferno/boot/efi/efi.c 's
+.CW memtype[]
+gives 2 to EfiMemoryMappedIO and EfiRuntimeServicesData alike, and
+this kernel calls no runtime service.  The machine's own map says why
+that matters: two of its type-2 runs are 0x4000000\-0x8000000 and
+0x9010000\-0x9011000, which are the flash and the PL031, not memory.
+100 MB is now left unmapped at
+.CW "-m 4096" ,
+the RSDP at 0x13cb43018 is inside the one type-3 run, and the tables
+went from 8 to 7.
+.PP
+.B "IPS was a constant, and is now a derivation."
+.CW TCR_EL1.IPS
+said 4 \(em 44 bits \(em because that covered the map.  Writing an IPS
+larger than
+.CW ID_AA64MMFR0_EL1.PARange
+is CONSTRAINED UNPREDICTABLE, so a constant is the wrong kind of
+answer whatever its value: it was within PARange on the cores this has
+run on and that was the whole of the evidence for it.
+.CW mmuinit()
+now takes the highest address it actually mapped, picks the narrowest
+IPS that covers it, clamps that to PARange and says so if the clamp
+bites.  The answer on this machine is 2, which is 40 bits, for a map
+that tops out at exactly 0x10000000000.
 .PP
 Three bugs, each found a different way.
 .CW mmuenable()
