@@ -4917,6 +4917,15 @@ with an ilock held, and
 .CW sched()
 entered from the interrupt path.
 .PP
+The console fix is not the cause, which was worth establishing rather
+than assuming: every panic seen on the shipped kernel was on a build
+carrying it, and the one instance without it had been up for hours.  So
+the instance running the pre-fix image was reset three times, and it
+panicked too \(em three
+.CW ilockdepth
+panics in its log against one clean boot.  The bug is older than the
+fix and independent of it.
+.PP
 It matters more than a dev-configuration bug would, and it also
 explains an hour spent on the wrong thing.  A panicked kernel and a
 console that ignores a keypress look identical from the far end of a
