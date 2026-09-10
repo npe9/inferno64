@@ -206,49 +206,7 @@ othersrunning(void)
 	return n;
 }
 
-/*
- * MULTICORE INSTRUMENTATION - temporary.
- *
- * The hypothesis (doc/multicore-plan.ms): isave() makes a released Dis
- * program a safepoint, but its system call goes on allocating and
- * destroying heap objects in kernel context, so the collector marks and
- * sweeps against a live mutator it has been told is stopped.
- *
- * Counted through heapmonitor, the hook libinterp already calls on
- * every birth (op 0) and on every sweep (op 2), so libinterp needs no
- * change and emu is untouched.
- *
- * parallelvm=0 is NOT a control for this: stoptheworld() returns above
- * before gcstw is ever set, so a zero there is a zero for a reason that
- * has nothing to do with the question.  The control is the second
- * bucket.  gcstwown counts the collector's own heap operations while it
- * holds the world stopped; if that is non-zero and gcstwforeign is
- * zero, the counter demonstrably works and the hypothesis is dead.  Two
- * zeroes mean the counter is broken and neither number means anything.
- */
-int gcstwown, gcstwforeign, gcstwbirth;
 static Proc *gcstwproc;
-
-static void
-gcstwmonitor(int op, void *a, ulong n)
-{
-	USED(a); USED(n);
-	if(gcstw == 0)
-		return;
-	if(up == gcstwproc)
-		gcstwown++;
-	else {
-		if(gcstwforeign++ == 0)
-			print("gcstw: heap op %d from %s pid %d,"
-				" not the collector (%s pid %d)\n",
-				op, up != nil ? up->text : "nil",
-				up != nil ? up->pid : -1,
-				gcstwproc != nil ? gcstwproc->text : "nil",
-				gcstwproc != nil ? gcstwproc->pid : -1);
-	}
-	if(op == 0)
-		gcstwbirth++;
-}
 
 /*
  * libinterp/heap.c's hook: a collection is running and this process is
@@ -261,14 +219,8 @@ gcstwothers(void)
 	return gcstw != 0 && up != gcstwproc;
 }
 
-/* libinterp/heap.c's execid hook: Proc is opaque there. */
-static int
-disexecid(void)
-{
-	return up != nil ? up->pid : -1;
-}
-
 int stwgaveup;		/* MULTICORE INSTRUMENTATION - temporary */
+int gcidlegaveup;	/* idle collections abandoned; see execatidle() */
 
 /*
  * Stop every other context, or give up trying.
@@ -287,57 +239,43 @@ int stwgaveup;		/* MULTICORE INSTRUMENTATION - temporary */
  * the next one, and there is always a next one, while a collection
  * that cannot start costs the boot.  Parking rather than spinning, as
  * Go does with an M, is the better answer and a larger change.
+ *
+ * Bounded by time, not by a count of tries, and the difference is not
+ * cosmetic.  A count measures how fast this loop goes round, which is
+ * whatever the compiler and the console happen to make it: with an
+ * unrelated print in the loop, two thousand tries spanned long enough
+ * for other contexts to finish their quanta and the world stopped;
+ * with the print removed the same two thousand tries elapsed too
+ * quickly to ever succeed, the collector gave up every time, and shell
+ * loop iterations fell from 22 to 4 across nine boots.  What the
+ * waiting is for is wall-clock time for somebody else's quantum to
+ * end, so that is what to bound.
  */
 int
 stoptheworld(void)
 {
+	ulong start;
 	int tries;
 
 	if(parallelvm == 0)
 		return 1;	/* the VM lock already is one */
-	if(heapmonitor == nil){
-		heapmonitor = gcstwmonitor;	/* INSTRUMENTATION - temporary */
-		gcstopped = gcstwothers;
-		execid = disexecid;
-	}
+	if(gcstopped == nil)
+		gcstopped = gcstwothers;	/* the handover; see heap.c */
 	gcstwproc = up;
 	gcstw = 1;
 	coherence();
+	start = m->ticks;
 	for(tries = 0; othersrunning() > 0; tries++){
 		stwwaits++;
-		if(tries >= 2000){
+		if((ulong)(m->ticks - start) > HZ/4){
 			gcstw = 0;	/* let them run; collect next time */
 			coherence();
 			if(stwgaveup++ == 0)
-				print("stw: gave up after %d tries, cpu%d %s\n",
-					tries, m->machno, up->text);
+				print("stw: gave up after %d tries, %lud ticks,"
+					" cpu%d %s\n", tries,
+					(ulong)(m->ticks - start),
+					m->machno, up->text);
 			return 0;
-		}
-		{	/* MULTICORE INSTRUMENTATION - temporary */
-			static int told;
-			Proc *q;
-			int i;
-
-			if((stwwaits % 50000) == 0 && told++ < 4){
-				print("stw: %d waits, cpu%d %s pid %d waiting for:\n",
-					stwwaits, m->machno, up->text, up->pid);
-				for(i = 0; i < npctx; i++){
-					if(pctxs[i] == curP || !pctxs[i]->inxec)
-						continue;
-					q = (Proc*)pctxs[i]->owner;
-					print("  ctx %d curprog %#p", i,
-						pctxs[i]->curprog);
-					if(q == nil)
-						print(" owner nil\n");
-					else
-						print(" owner pid %d %s state %d"
-							" mach %#p vmheld %d"
-							" iprog %#p wired %#p\n",
-							q->pid, q->text, q->state,
-							q->mach, q->vmheld,
-							q->iprog, q->wired);
-				}
-			}
 		}
 		sched();
 	}
@@ -403,14 +341,32 @@ static QLock gcsema;
 static void	starttheworld(void);
 int		stoptheworld(void);
 
-void
+/*
+ * Returns whether it actually collected.  A caller that loops until the
+ * collector has made progress has to know, or it spins: execatidle()
+ * waits for gccolor to advance, gccolor only advances when rungc()
+ * runs, and rungc() does not run when the world will not stop.  That
+ * turned the bounded give-up below into a tighter loop than the
+ * unbounded wait it replaced -- collect(), two thousand sched() calls,
+ * give up, collect() again, yielding only every 256th pass.
+ *
+ * Measured by its absence: removing an unrelated print from the wait
+ * loop made each pass cheaper, sped the spin up, and cut shell loop
+ * iterations from 18 to 2 across eight boots.  The print had been
+ * throttling it.
+ */
+int
 collect(Prog *head)
 {
+	int stopped;
+
 	qlock(&gcsema);
-	if(stoptheworld())
+	stopped = stoptheworld();
+	if(stopped)
 		rungc(head);
 	starttheworld();
 	qunlock(&gcsema);
+	return stopped;
 }
 
 static void
@@ -724,7 +680,18 @@ execatidle(void)
 			gcpartial++;
 			break;
 		}
-		collect(isched.head);
+		if(!collect(isched.head)){
+			/*
+			 * The world would not stop, so gccolor has not moved
+			 * and this loop's condition is exactly as true as it
+			 * was.  Retrying now is a spin; there is nothing to
+			 * collect until whoever holds a quantum open finishes
+			 * it, and the way to let that happen is to stop
+			 * asking.
+			 */
+			gcidlegaveup++;
+			break;
+		}
 		gcidlepass++;
 		if(((ulong)gcidlepass&0xFF) == 0)
 			sched();
@@ -2305,9 +2272,6 @@ disdump(void)
 		gqput, gqget, isched.ngq, Runqmax);
 	print("dis: %d contexts claimed of %d, curP %#p, parallelvm %d, stw waits %d\n",
 		npctx, MAXPCTX, curP, parallelvm, stwwaits);
-	print("dis: heap ops under stop-the-world: %d by the collector,"
-		" %d by anyone else (%d births)\n",
-		gcstwown, gcstwforeign, gcstwbirth);
 
 	for(p = curP->runhd; p != nil; p = p->link)
 		print("dis: runq prog %d %s\n", p->pid,
