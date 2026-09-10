@@ -9,7 +9,22 @@
 static int debug = 0;
 
 static	Pctx	_pctx;		/* the one execution context (interp.h) */
-Pctx*	curP = &_pctx;
+#ifndef DISCTXREG
+Pctx*	curP = &_pctx;		/* a register where DISCTXREG; see disreg.h */
+#endif
+Pctx*	defpctx = &_pctx;	/* what a Proc starts with */
+
+#ifdef DISCTXREG
+/*
+ * curP is a register, so it has no initialiser and every executor has
+ * to be given one.  See include/disreg.h.
+ */
+void
+disctxinit(void)
+{
+	curP = defpctx;
+}
+#endif
 REG*	curR = &_pctx.reg;		/* interp.h: #define R (*curR) */
 Pctx*	pctxs[MAXPCTX] = { &_pctx };	/* every context; see progreg() */
 int	npctx = 1;

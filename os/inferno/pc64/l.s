@@ -1094,11 +1094,10 @@ _intrestore:
 	POPQ	R10
 	POPQ	R11
 	POPQ	R12
-	POPQ	R13
 
 	/*
-	 * A kernel-mode return must NOT reload RMACH and RUSER from this
-	 * frame.  trap() can reach sched(), and a process that gives up
+	 * A kernel-mode return must NOT reload R13, RMACH and RUSER from
+	 * this frame.  trap() can reach sched(), and a process that gives up
 	 * the processor here may be resumed on a different one; the
 	 * scheduler that resumes it leaves the *new* processor's Mach in
 	 * RMACH and the process in RUSER, which are the correct values.
@@ -1114,16 +1113,28 @@ _intrestore:
 	 * more than one processor.  9front's l.s keeps it for this reason
 	 * (its _iretnested).  A return to user mode still restores both,
 	 * since there the words are the interrupted program's registers.
+	 *
+	 * R13 is curP, the Dis context (include/disreg.h), and it belongs
+	 * to the executor exactly as m and up do: sched() sets it beside
+	 * up, so a process resumed on another processor must keep the
+	 * value that scheduler left, not the one saved on entry here.  It
+	 * is safe to leave unrestored on a nested return because 6c
+	 * reserves R12 and R13 in every file it compiles, so no C code
+	 * holds anything in them (utils/6c/txt.c, commit b39043c8).
+	 *
+	 * SP points at Ureg.r13 here, three words below where it pointed
+	 * before, so the saved CS is at 56 rather than 48.
 	 */
-	CMPQ	48(SP), $KESEL
+	CMPQ	56(SP), $KESEL
 	JEQ	_iretnested
 
+	POPQ	R13		/* curP */
 	POPQ	R14		/* RUSER up-> */
 	POPQ	R15		/* RMACH m-> */
 	JMP	_iretsegs
 
 _iretnested:
-	ADDQ	$16, SP	/* leave RUSER and RMACH as this processor set them */
+	ADDQ	$24, SP	/* leave curP, RUSER and RMACH as this processor set them */
 
 _iretsegs:
 	ADDQ $8, SP		/* to ignore the [DEFG]S registers as they should not be changing */

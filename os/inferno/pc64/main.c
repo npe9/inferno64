@@ -276,6 +276,18 @@ machinit(void)
 	 * calculate the real value later.
 	 */
 	m->loopconst = 100000;
+
+#ifdef DISCTXREG
+	/*
+	 * curP is a register (include/disreg.h), so libinterp's
+	 * "Pctx* curP = &_pctx" initialiser does not exist and nothing
+	 * else gives R13 a value.  Every processor starts on the default
+	 * context; sched() moves it to the running Proc's.  This runs on
+	 * cpu0 through mach0init() and on each AP through squidboy(),
+	 * which is every executor there is.
+	 */
+	disctxinit();
+#endif
 }
 
 /*

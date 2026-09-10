@@ -66,7 +66,7 @@ HFILES=\
 # exist, but naming it shifted where the two real ones sat on the search
 # list enough that allocb.c and libinterp/string.c stopped seeing the
 # same declaration of msize, and 6l refused to link them.
-CFLAGS=-wFVT -I. -I../port -I../ip -I../pc -I$ROOT/Inferno/$OBJTYPE/include -I$ROOT/include -I$ROOT/libinterp/w$DISWORD -I$ROOT/libinterp
+CFLAGS=-wFVT -DDISCTXREG -I. -I../port -I../ip -I../pc -I$ROOT/Inferno/$OBJTYPE/include -I$ROOT/include -I$ROOT/libinterp/w$DISWORD -I$ROOT/libinterp
 KERNDATE=`{$NDATE}
 
 default:V: i$CONF i$CONF.acid

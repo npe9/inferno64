@@ -498,7 +498,20 @@ extern	Type Treal;
 enum { MAXPCTX = 8 };
 extern	Pctx*	pctxs[MAXPCTX];
 extern	int	npctx;
+/*
+ * Phase 1b: the Dis context is per executor.
+ *
+ * On an architecture that opts in (DISCTXREG), curP is an external
+ * register declared with m and up in include/disreg.h -- see there for
+ * why they must be declared together.  Elsewhere, and in emu, it stays
+ * the global it has always been and the behaviour is unchanged.
+ */
+#ifdef DISCTXREG
+#include	"disreg.h"	/* curP, and disctxinit() for files without it */
+#else
 extern	Pctx*	curP;
+#endif
+extern	Pctx*	defpctx;	/* the context a Proc starts with */
 REG*	progreg(Prog*);	/* where a program's live roots are; see xec.c */
 Module*	modlinkmod(Modlink*);	/* the Module of a Modlink worth trusting; see heap.c */
 extern	REG*	curR;		/* == &curP->reg */

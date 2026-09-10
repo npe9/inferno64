@@ -148,6 +148,7 @@ schedinit(void)		/* never returns */
 		 */
 		up->mach = nil;
 		up = nil;
+		curP = defpctx;
 	}
 	sched();
 }
@@ -374,6 +375,13 @@ sched(void)
 		m->schedticks = m->ticks + HZ/10;
 	m->readied = nil;
 	up = p;
+	/*
+	 * curP follows up.  Where it is a register the trap paths save and
+	 * restore it with every other general register, so no assembly
+	 * changes; what it needs is setting wherever the scheduler changes
+	 * which process runs, which is here.
+	 */
+	curP = (Pctx*)p->pctx;
 	up->state = Running;
 	up->mach = MACHP(m->machno);
 	m->proc = up;
@@ -819,6 +827,7 @@ newproc(void)
 	 * a user process. kproc() can change it as it needs.
 	 */
 	p->kp = 0;
+	p->pctx = defpctx;	/* every Proc carries a Dis context */
 	p->noswap = 0;
 	p->privatemem = 0;
 	/* sched params */
