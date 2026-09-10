@@ -97,9 +97,11 @@ SPEC: con
 	# these cannot be aligned into columns - punctuate instead.
 	"caption psi'' = 2 m (V - E) psi, with V(x) = k x^2 / 2 + lambda x^4\n" +
 	"caption sliders: E = energy, k = stiffness, lambda = quartic, m = mass\n" +
-	"caption the curve is the well V(x); the straight line across it is E\n" +
-	"caption nothing here moves: the marker is how far the shoot has got\n" +
-	"caption parity: below 0.5 even (psi 1, slope 0), above odd (psi 0, 1)\n" +
+	"caption left: the well V(x), with E drawn across it. right: psi, psi^2\n" +
+	"caption a bound particle has no path and does not move. it stands as a\n" +
+	"caption wave, and psi^2 is where you would find it if you looked.\n" +
+	"caption only some E keep psi finite out here: those are the levels.\n" +
+	"caption the marker is the solver. parity: below 0.5 even, above odd.\n" +
 	"eq potential 0.5 stiffness t t + quartic t sup 4\n" +
 	"eq curvature 2.0 mass { potential - energy }\n" +
 	"state psi 1.0 - step { parity - 0.5 }\n" +
@@ -149,23 +151,23 @@ SPEC: con
 	"point levelleft - 5.0 , energy\n" +
 	"point levelright 5.0 , energy\n" +
 	"point shot t , energy\n" +
-	"link wl8 wl7 string\n" +
-	"link wl7 wl6 string\n" +
-	"link wl6 wl5 string\n" +
-	"link wl5 wl4 string\n" +
-	"link wl4 wl3 string\n" +
-	"link wl3 wl2 string\n" +
-	"link wl2 wl1 string\n" +
-	"link wl1 wc string\n" +
-	"link wc wr1 string\n" +
-	"link wr1 wr2 string\n" +
-	"link wr2 wr3 string\n" +
-	"link wr3 wr4 string\n" +
-	"link wr4 wr5 string\n" +
-	"link wr5 wr6 string\n" +
-	"link wr6 wr7 string\n" +
-	"link wr7 wr8 string\n" +
-	"link levelleft levelright rod\n" +
+	"link wl8 wl7 line\n" +
+	"link wl7 wl6 line\n" +
+	"link wl6 wl5 line\n" +
+	"link wl5 wl4 line\n" +
+	"link wl4 wl3 line\n" +
+	"link wl3 wl2 line\n" +
+	"link wl2 wl1 line\n" +
+	"link wl1 wc line\n" +
+	"link wc wr1 line\n" +
+	"link wr1 wr2 line\n" +
+	"link wr2 wr3 line\n" +
+	"link wr3 wr4 line\n" +
+	"link wr4 wr5 line\n" +
+	"link wr5 wr6 line\n" +
+	"link wr6 wr7 line\n" +
+	"link wr7 wr8 line\n" +
+	"link levelleft levelright accent\n" +
 	"plain wc wl8 wl7 wl6 wl5 wl4 wl3 wl2 wl1 wr1 wr2 wr3 wr4 wr5 wr6 wr7 wr8 levelleft levelright\n" +
 	"observable amplitude psi\n" +
 	"observable probability psi psi\n";

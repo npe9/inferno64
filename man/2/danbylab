@@ -238,6 +238,21 @@ so adding a component is adding a file and its name to
 .B LINKCOMPS
 in the source.
 .PP
+Two components are not parts at all and have no sprite:
+.B line
+draws a plain hairline in the foreground colour and
+.B accent
+a heavier one in the accent colour.
+They exist because a link is not always a thing that was bolted
+together \(em in
+.IR danby-schrodinger (1)
+the links are the curve of a potential well and the level of an energy,
+and drawing an energy as a picture of a wooden rod, which is what
+.B rod
+literally is, is absurd.  Use them with
+.B plain
+points, and the links become a drawn figure rather than a machine.
+.PP
 The two axes are stretched separately, and that is the whole point.
 .IR vsprite (2)
 scales one number, as TempleOS's

@@ -443,7 +443,7 @@ link(m: ref Model, c: ref Config, w: array of string, nwords: int): string
 # The components a link may be drawn as.  Adding one is adding a .spr in
 # /lib/danby/sprites drawn along +x from the origin to (100, 0), and its
 # name here.
-LINKCOMPS: con "rod beam string spring";
+LINKCOMPS: con "rod beam string spring line accent";
 
 islinkcomp(s: string): int
 {
@@ -1534,6 +1534,21 @@ drawmechanism(im: ref Image)
 		comp := "rod";
 		if(i < len cfg.linkspr)
 			comp = cfg.linkspr[i];
+		# line and accent are not parts and have no sprite: they are
+		# plain lines, for a model whose links are a drawn curve or a
+		# level rather than something bolted together.  A rod really
+		# is a picture of a wooden rod, which is right in a linkage
+		# and absurd anywhere else.
+		if(comp == "line"){
+			im.line(pa, pb, Draw->Endsquare, Draw->Endsquare, 1,
+				fg, Point(0,0));
+			continue;
+		}
+		if(comp == "accent"){
+			im.line(pa, pb, Draw->Endsquare, Draw->Endsquare, 2,
+				palette[1], Point(0,0));
+			continue;
+		}
 		if(!drawlink(im, pa, pb, comp, viewscale(view)))
 			im.line(pa, pb, Draw->Endsquare, Draw->Endsquare, 3,
 				palette[1], Point(0,0));
