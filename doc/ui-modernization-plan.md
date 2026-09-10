@@ -252,11 +252,54 @@ identical rows. They did not: a plain `label` with no `-font` measures
 `tk: font not found`. So 19 programs and 433 widgets were laid out in a
 face whose text is nearly twice as tall, and not one widget lost room.
 
-**This is the answer to the question section 3 opened with.** Layout was
-the remaining objection to adopting a scalable font; for the Tk programs
-it does not materialise, because `libtk` sizes each widget from its font
-and `pack` gives each the room it asks for. What is left is the programs
-that draw their own text, which is a different exercise.
+### One program does break, and it is the one you would guess
+
+A second sweep took the programs the first deliberately left out — the
+ones with hand-built geometry: `sam samtk brutus pinboard unibrowse vt
+wish deb develop ftree filename mand polyhedra prof dmview rt c4 bounce
+coffee pen`. **`wm/sam` is short of room at `go.r.20` on a 900x700
+screen:**
+
+```
+.w.t got 884x218 but needs 960x216
+.w   got 898x218 but needs 976x218
+```
+
+It is clean at the tree's bitmap font on the same screen, so this is the
+font and not the screen — `sam`'s text pane is sized in characters, and
+at a face nearly twice as tall it asks for a window wider than the
+display it is on.
+
+That finding took three attempts to state honestly. The first run of the
+whole sweep was believed, then contradicted by a rerun showing zero — and
+the difference was not the layout but a line further up the output:
+`tk: font not found: /mnt/ft/go.r.20.font`. The run that reported nothing
+had fallen back to a bitmap face and measured the wrong thing entirely.
+**A layout result is only about the font that was actually in force, and
+the only way to know which that was is to read the whole output, not the
+`tklayout` lines.**
+
+`wm/unibrowse` reported thirteen problems that were all false, and fixing
+that is its own note below.
+
+**So the answer to the question section 3 opened with:** layout was the
+remaining objection to adopting a scalable font, and for the Tk programs
+it very nearly does not materialise — `libtk` sizes each widget from its
+font and `pack` gives each the room it asks for. One program in 41 wants
+a wider window than a 900-pixel screen can give it. What is untouched is
+the programs that draw their own text, which is a different exercise.
+
+### The font server could lose a race, and does not now
+
+`wm`'s `startfonts()` waited for `/mnt/ft/index` to be *openable*. That
+succeeds the moment the server is mounted, but the faces are only parsed
+and indexed on the first *read*, so there was a window in which `-f`
+named a font that could not yet be opened and `libtk` quietly fell back —
+which is exactly the `tk: font not found` above. Seen once in about
+thirty runs, under heavy load. It now waits for a readable index, which
+is what the wait was always supposed to mean. Cold, that costs 3.1 s
+before the first window appears, against the 5 s the wait allows; warm,
+nothing.
 
 **The positive control is the important half.** Zero reports is also what
 a checker that has gone blind produces. The same sweep on a 260x200
