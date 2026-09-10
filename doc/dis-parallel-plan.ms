@@ -2236,3 +2236,72 @@ is read outside the VM lock.
 .PP
 Recorded as an attempt with a result, not as a plan.  The reverted
 change is in the history; the tree builds and boots as before.
+.NH 2
+A register for the context: why it cannot be shared, proven
+.PP
+Go reaches the current goroutine through a dedicated register, and the
+same shape is the only one that fits here \(em libinterp is built with
+.CW $ROOT/include
+alone, so it cannot see the kernel's
+.CW Proc
+and cannot reach a per-process field, but a register it can name.
+kencc supports
+.CW "extern register" ,
+so this looked like the answer.
+.PP
+It is not, and the reason is in the compiler.  kencc allocates external
+registers
+.I "per file, by declaration order" .
+Measured rather than argued, with two files and the same compiler:
+.TS
+box, tab(;);
+l l.
+what the file declares;what curP gets
+_
+curP only, as libinterp sees it;R15
+m, up, curP, as the kernel sees it;R13
+.TE
+.PP
+So libinterp's
+.CW curP
+is the kernel's
+.CW m .
+Building it that way and booting gives
+.CW "cpu3318001: registers for kernel" ,
+which is
+.CW m->machno
+read through a pointer that is really the context.
+.PP
+The repairs do not survive contact either.  Padding libinterp's
+declarations to match the order needs
+.CW m
+and
+.CW up
+declared there too, which needs their types, which is the problem that
+sent us to a register in the first place; and a kernel file including
+both headers would then declare five external registers where four
+exist, with
+.CW curP
+twice in different positions.
+.PP
+Two things came out of the attempt and both are kept.  7c honoured only
+two external registers and silently degraded the third to a memory
+global with no diagnostic \(em a real defect, fixed, and 6c's limit of
+four is what it now matches.  And os/inferno/port/lib.h defined
+.CW assert()
+without declaring the
+.CW _assert()
+it expands to, so any file reaching it through
+.CW Inferno/$OBJTYPE/include/libc.h
+failed to compile; libaml is such a file, which only surfaced when a
+full rebuild deleted a library archive that predated the breakage.
+.PP
+What remains open is unchanged in shape but now has a proof attached:
+Phase 1b needs a route from libinterp to per-executor storage costing a
+load rather than a call, and neither a per-process field nor a
+dedicated register can be that route without libinterp seeing the
+kernel's types.  The next thing to measure, rather than build, is
+whether every read of
+.CW curR
+is already under a lock that also excludes the collector \(em if it is,
+per-executor storage is not needed at all.

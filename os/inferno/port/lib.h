@@ -7,6 +7,16 @@ extern	int	dec16(uchar*, int, char*, int);	/* libkern/u16.c, for ../port/wifi.c 
 extern	int	enc16(char*, int, uchar*, int);
 extern	int	tsmemcmp(void*, void*, ulong);	/* libkern/tsmemcmp.c, constant time */
 #define offsetof(s, m)	(u32)(&(((s*)0)->m))
+/*
+ * assert() expands to _assert(), so this header has to declare it.  It
+ * did not: _assert is declared in include/kern.h, which a file reaching
+ * this header through Inferno/$OBJTYPE/include/libc.h does not include.
+ * Any such file using assert() failed with "function not declared:
+ * _assert" -- libaml/aml.c does, which only showed once every object
+ * was deleted for an unrelated rebuild, because libaml.a predated it.
+ * A macro that names a function is responsible for declaring it.
+ */
+extern	void	_assert(char*);
 #define assert(x)	if(x){}else _assert("x")
 
 #define	DBG	if(debug)print

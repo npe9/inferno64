@@ -70,6 +70,13 @@ clockintr(Ureg *u)
 		kproftick((ulong)u->pc);
 
 	m->ticks++;
+	if(m->ticks % 200 == 0) iprint("[tick %lud]", m->ticks);	/* XXX */
+	if(m->ticks == 3000){					/* XXX stall dump */
+		extern void disdump(void);
+		extern void timerdump(void);
+		timerdump();
+		disdump();
+	}
 	checkalarms();
 	timercheck(u);
 

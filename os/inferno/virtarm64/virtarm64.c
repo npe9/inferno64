@@ -9,7 +9,7 @@
 
 #include "virtarm64.root.h"
 
-ulong ndevs = 22;
+ulong ndevs = 26;
 extern Dev rootdevtab;
 extern Dev consdevtab;
 extern Dev progdevtab;
@@ -20,11 +20,15 @@ extern Dev srvdevtab;
 extern Dev uartdevtab;
 extern Dev envdevtab;
 extern Dev etherdevtab;
+extern Dev usbdevtab;
+extern Dev sddevtab;
 extern Dev ipdevtab;
 extern Dev ssldevtab;
 extern Dev capdevtab;
 extern Dev kprofdevtab;
-Dev* devtab[22]={
+extern Dev drawdevtab;
+extern Dev pointerdevtab;
+Dev* devtab[26]={
 	&rootdevtab,
 	&consdevtab,
 	&progdevtab,
@@ -35,18 +39,26 @@ Dev* devtab[22]={
 	&uartdevtab,
 	&envdevtab,
 	&etherdevtab,
+	&usbdevtab,
+	&sddevtab,
 	&ipdevtab,
 	&ssldevtab,
 	&capdevtab,
 	&kprofdevtab,
+	&drawdevtab,
+	&pointerdevtab,
 	nil,
 };
 
 extern void ethervirtiommiolink(void);
+extern void ethervirtio10link(void);
+extern void usbxhcipcilink(void);
 extern void ethermediumlink(void);
 extern void loopbackmediumlink(void);
 void links(void){
 	ethervirtiommiolink();
+	ethervirtio10link();
+	usbxhcipcilink();
 	ethermediumlink();
 	loopbackmediumlink();
 }
@@ -54,11 +66,22 @@ void links(void){
 extern void sysmodinit(void);
 extern void keyringmodinit(void);
 extern void cryptmodinit(void);
+extern void drawmodinit(void);
 void modinit(void){
 	sysmodinit();
 	keyringmodinit();
 	cryptmodinit();
+	drawmodinit();
 }
+
+#include "../port/sd.h"
+extern SDifc sdvirtio10ifc;
+extern SDifc sdnvmeifc;
+SDifc* sdifc[] = {
+	&sdvirtio10ifc,
+	&sdnvmeifc,
+	nil,
+};
 
 extern PhysUart virtarm64physuart;
 PhysUart* physuart[] = {

@@ -9,7 +9,7 @@
 
 #include "sifiveu.root.h"
 
-ulong ndevs = 22;
+ulong ndevs = 23;
 extern Dev rootdevtab;
 extern Dev consdevtab;
 extern Dev progdevtab;
@@ -22,9 +22,10 @@ extern Dev envdevtab;
 extern Dev ssldevtab;
 extern Dev capdevtab;
 extern Dev kprofdevtab;
+extern Dev sddevtab;
 extern Dev etherdevtab;
 extern Dev ipdevtab;
-Dev* devtab[22]={
+Dev* devtab[23]={
 	&rootdevtab,
 	&consdevtab,
 	&progdevtab,
@@ -37,6 +38,7 @@ Dev* devtab[22]={
 	&ssldevtab,
 	&capdevtab,
 	&kprofdevtab,
+	&sddevtab,
 	&etherdevtab,
 	&ipdevtab,
 	nil,
@@ -63,6 +65,13 @@ void modinit(void){
 	mathmodinit();
 	ipintsmodinit();
 }
+
+#include "../port/sd.h"
+extern SDifc sdspisifiveifc;
+SDifc* sdifc[] = {
+	&sdspisifiveifc,
+	nil,
+};
 
 extern PhysUart sifivephysuart;
 PhysUart* physuart[] = {
