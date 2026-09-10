@@ -1066,7 +1066,14 @@ liberrstr(char *buf, uint nbuf)
 		return -1;
 	kstrcpy(tmp, buf, sizeof tmp);
 	kstrcpy(buf, up->errstr, nbuf);
-	kstrcpy(up->errstr, tmp, sizeof up->errstr);
+	/*
+	 * ERRMAX, not sizeof up->errstr: that field is a char* and the
+	 * sizeof was 8, so a message a program installed came back seven
+	 * characters long.  Nothing wrote an errstr from a program until
+	 * notify's refusal did, which is why a truncation this severe went
+	 * unseen - the read half of the exchange was always right.
+	 */
+	kstrcpy(up->errstr, tmp, ERRMAX);
 	return 0;
 }
 

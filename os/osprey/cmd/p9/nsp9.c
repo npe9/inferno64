@@ -101,6 +101,15 @@ sizeof9(char *name)
 	return (int)tot;
 }
 
+/* a handler to offer notify, which it must refuse */
+static void
+anote(void *ur, char *msg)
+{
+	USED(ur);
+	USED(msg);
+	print("libns: a note handler ran, which nothing here can make happen\n");
+}
+
 void
 startboot(char *argv0, char **argv)
 {
@@ -253,6 +262,21 @@ startboot(char *argv0, char **argv)
 		print("libns: rfork(RFCFDG) failed: %r\n");
 	print("libns: after rfork(RFCFDG) it reads %ld, because that is an empty table\n",
 		read(held, one, sizeof one));
+
+	/*
+	 * notify(2).  nil is what rio's winshell asks for and it is
+	 * answered truthfully - it asks for no note handler and there is
+	 * none.  A handler is refused, because nothing here posts a note to
+	 * a loaded program and one that was recorded would never be called.
+	 */
+	if(notify(nil) == 0)
+		print("libns: notify(nil) answered: there is no note handler, which is the truth here\n");
+	else
+		print("libns: notify(nil) refused, which it should not be: %r\n");
+	if(notify(anote) < 0)
+		print("libns: notify with a handler refused: %r\n");
+	else
+		print("libns: notify with a handler was accepted, and nothing would ever call it\n");
 
 	/*
 	 * And the bits that are not a group this personality has are refused

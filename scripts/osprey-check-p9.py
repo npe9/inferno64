@@ -413,6 +413,24 @@ def main():
                     and 'libns: a third await, with none of mine left, refused: no living processes' in ns
                     and 'libns: await gave' not in ns
                     and 'libns: a third await answered' not in ns))
+    #
+    # notify(2).  nil is what rio's winshell asks for and it is
+    # answered truthfully: it asks for no note handler and there is
+    # none.  A handler is refused, because nothing here posts a note to
+    # a loaded program and one that was recorded would never be called.
+    #
+    # The refusal is also the first thing that ever wrote an errstr from
+    # a program rather than reading one, and it found that half of the
+    # exchange truncating to seven characters - kstrcpy with sizeof of a
+    # char*.  So the whole message is required here, not the first word
+    # of it: a check that asked only for "refused" would have passed
+    # over the bug that found.
+    results.append(("and notify(2) answers nil and refuses a handler, with the reason a program can read: nil asks for no note handler and there is none here, and a handler recorded is a handler nothing would ever call - which is the shape of pretending this table has refused throughout",
+                    'libns: notify(nil) answered: there is no note handler, which is the truth here' in ns
+                    and 'libns: notify with a handler refused: notify: this personality posts no '
+                        'notes to a loaded program, so a handler would never be called' in ns
+                    and 'libns: notify with a handler was accepted' not in ns
+                    and 'libns: a note handler ran' not in ns))
     results.append(("and what this personality cannot mean by rfork is refused by name rather than granted, with the bits it cannot mean named in the message: RFPROC would split the caller's own flow of control, which spawn and proccreate are what there is for, and a success that did nothing would leave a program believing it was two",
                     re.search(r'libns: rfork\(RFPROC\) refused: rfork 0x10: this personality '
                               r'cannot mean 0x10 of it \(RFPROC, RFMEM, RFNOWAIT, RFREND, '

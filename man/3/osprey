@@ -1615,6 +1615,10 @@ one another flow was waiting for.  One
 .B Rendez
 serves every waiter, so the sleep condition does the looking rather than
 merely saying something happened.
+.I errstr (2)
+here is an exchange, as on Plan 9: it hands back what was there and
+installs what it was given, so a program writes a reason with the entry
+it reads one with.
 .I p9crt.c
 formats the line
 .IR await (2)
@@ -1725,13 +1729,12 @@ symbols were
 .I exec
 and
 .IR await .
-Two are still undefined when it is linked that way:
-.I exec
-and
-.IR notify .
-.I rfork
-and
+One is still undefined when it is linked that way:
+.IR exec .
+.IR rfork ,
 .I await
+and
+.I notify
 resolve, and rio's
 .I winshell
 asks
@@ -1743,6 +1746,22 @@ asks
 which is not, because of
 .BR RFNOTEG .
 Granting a bit that does nothing is the one thing this must not do.
+.I notify
+answers
+.B nil
+\- which is what
+.I winshell
+asks, and is true here, since nothing posts a note to a loaded program \-
+and refuses a handler, because a handler recorded would never be called.
+.I exec
+is not a missing table entry but a question: on Plan 9 it replaces the
+calling process's image, and in one address space shared with the
+library there is nothing to replace and nowhere for the caller's stack
+to go.  rio reaches it through
+.IR efork ,
+which forks and then execs, and fork-then-exec fused is what
+.I spawn
+already is.
 .PP
 Version 5 added
 .IR pread ,

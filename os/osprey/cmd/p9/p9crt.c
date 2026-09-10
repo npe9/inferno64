@@ -328,6 +328,44 @@ chdir(char *name)
 }
 
 /*
+ * notify(2), for the one thing it can honestly mean here.
+ *
+ * notify(nil) says "no note handler", and there is none: nothing on
+ * this personality posts a note to a loaded program.  A loaded program
+ * is a kproc of a cooperative scheduler that the microkernel does not
+ * know about, the note tree in devnote.c is the buddy's and is about
+ * the kernel's own containers, and a program's flow of control is never
+ * interrupted between one instruction and the next.  So nil is answered
+ * truthfully and is not a bit that does nothing: it asks for no handler
+ * and gets none.
+ *
+ * A handler is refused, by name.  Recording one that nothing would ever
+ * call is exactly the failure this table has been refusing all along -
+ * a caller would write a handler, be told it was installed, and find
+ * out otherwise only when a note it was counting on went nowhere.  rio
+ * calls notify(nil) in winshell and that is what it gets; a rio that
+ * wanted a handler would be told no rather than misled.
+ */
+int
+notify(void (*f)(void*, char*))
+{
+	char e[ERRMAX];
+
+	if(f == nil)
+		return 0;
+	/*
+	 * The reason goes where %r reads it.  errstr(2) here is an
+	 * exchange, as it is on Plan 9 - it hands back what was there and
+	 * installs what it was given - so writing the reason is a call to
+	 * the same entry a program reads one with.
+	 */
+	snprint(e, sizeof e, "notify: this personality posts no notes to a "
+		"loaded program, so a handler would never be called");
+	errstr(e, sizeof e);
+	return -1;
+}
+
+/*
  * await(2), which is what libc's wait() is written on and rio's wait is
  * written on that.  The kernel's await hands back one line that
  * tokenize splits into five fields - the pid, three times and the exit

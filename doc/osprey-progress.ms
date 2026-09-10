@@ -10524,24 +10524,77 @@ so both children ended with
 as their status.  The await was working perfectly.  A test's argument
 can be the thing that is wrong.
 .PP
-Where that leaves rio: linked this way, two symbols are undefined rather
+.PP
+.B "3.2k: notify, and a truncation it found."
+.CW notify (2)
+has one thing it can honestly mean here and it is the thing rio asks
+for.
+.CW winshell
+calls
+.CW notify(nil) ,
+which says "no note handler", and there is none: nothing on this
+personality posts a note to a loaded program.  A loaded program is a
+kproc of a cooperative scheduler the microkernel does not know about,
+the note tree in
+.CW devnote.c
+is the buddy's and is about the kernel's own containers, and a program's
+flow of control is never interrupted between one instruction and the
+next.  So nil is answered truthfully, and it is not a bit that does
+nothing: it asks for no handler and gets none.
+.PP
+A handler is refused, by name.  Recording one that nothing would ever
+call is the failure this table has been refusing throughout - a caller
+would write a handler, be told it was installed, and find out otherwise
+only when a note it was counting on went nowhere.
+.PP
+That refusal is the first code in this tree that ever wrote an errstr
+from a program rather than reading one, and it found a bug at once.
+.CW liberrstr
+is an exchange, as errstr(2) is on Plan 9, and the half that installs
+the program's string did
+.CW "kstrcpy(up->errstr, tmp, sizeof up->errstr)" .
+.CW up->errstr
+is a
+.CW char* ,
+so that sizeof is 8, and the message came back seven characters long:
+.CW "notify:" .
+The read half was always right, which is why nothing had seen it - every
+message a program had ever read was one the personality had written.
+It is ERRMAX now, and the check asks for the whole sentence rather than
+for the word "refused", because a check that asked for less would have
+passed over the bug that found.
+.PP
+Where that leaves rio: linked this way, one symbol is undefined rather
 than four.
-.CW rfork
-and
+.CW rfork ,
 .CW await
-both resolve, and
-.CW winshell 's
-rfork is answered \- but
-.CW main 's
-is not, because it asks for
-.CW RFNOTEG ,
-which is the one of the three refusals that rio actually needs.  So the
-note group is owed, and it is owed for a reason that is written down
-above rather than discovered later.
-.CW exec
 and
 .CW notify
-are the rest.
+all resolve, and
+.CW winshell 's
+rfork and its
+.CW notify(nil)
+are both answered \- but
+.CW main 's
+rfork is not, because it asks for
+.CW RFNOTEG ,
+which is the one of the three refusals rio actually needs.  So the note
+group is owed, and it is owed for a reason written down above rather
+than discovered later.
+.PP
+.CW exec
+is the last one, and it is the real question rather than a missing
+entry.  On Plan 9 exec replaces the calling process's image; in one
+address space shared with the library there is nothing to replace it
+with and nowhere for the caller's stack to go.  What rio does with it is
+.CW efork :
+fork, then exec in the child \- and fork-then-exec fused is exactly what
+.CW spawn
+already is.  So the shape of the answer is probably that
+.CW procexec
+becomes a spawn and the flow that called it ends, rather than that exec
+becomes a thing this personality has.  That is a design decision and is
+named as one here rather than guessed at in code.
 The pieces exist \-
 .CW p9spawn
 starts a program on a flow of its own,
