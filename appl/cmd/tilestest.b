@@ -444,6 +444,16 @@ language()
 	sc.cmd("set lvl 0 10 =");
 	cks("and back again", sc.cmd("at lvl 0 10"), "=");
 
+	# A command is a line of words, so a space cannot be an argument:
+	# `set lvl 0 10 " "` arrives as four words and silently does
+	# nothing.  That is how a game's coins stopped being collectable,
+	# with no error anywhere.  "blank" is the word for it.
+	ck2("a space argument is refused rather than ignored",
+		iserr(sc.cmd("set lvl 0 10  ")), 1);
+	e = sc.cmd("set lvl 0 10 blank");
+	ck2("blank empties a cell", iserr(e), 0);
+	cks("and at says so", sc.cmd("at lvl 0 10"), " ");
+
 	# A whole screen from one string, the way a Tk program builds a
 	# window: several commands, newline separated, first error wins.
 	r := sc.cmd("surface two 32 32 mid.blue\n" +

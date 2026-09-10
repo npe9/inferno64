@@ -156,6 +156,8 @@ Tiles: module
 	#	map SURF SHEET FILE      a whole tile map, legend and all
 	#	at SURF X Y              -> the map character at that cell
 	#	set SURF X Y CHAR        repaint one cell from the legend
+	#	set SURF X Y blank       empty it - a space cannot be an
+	#	                         argument, since a command is words
 	#	size SURF                -> "W H"
 	#	colour NAME              -> "#rrggbb"
 	#	count SHEET              -> how many tiles it holds

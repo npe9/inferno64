@@ -835,13 +835,23 @@ docmd(s: ref Screen, a: array of string): string
 		return row[x:x+1];
 	"set" =>
 		if(len a != 5)
-			return usage("set SURF X Y CHAR");
+			return usage("set SURF X Y CHAR|blank");
 		e := find(a[1]);
 		if(e == nil || e.grid == nil)
 			return "!no map on " + a[1];
-		if(len a[4] != 1)
-			return "!set: want one character";
-		return setcell(e, int a[2], int a[3], a[4][0]);
+		# "blank" and not " ".  A command is a line of words split on
+		# spaces, so a space cannot be an argument: `set lvl 3 4 " "`
+		# arrives as four words and does nothing at all, silently,
+		# which is how leap(1)'s coins stopped being collectable.  A
+		# language whose alphabet cannot express one of its own values
+		# needs a word for it.
+		c := ' ';
+		if(a[4] != "blank"){
+			if(len a[4] != 1)
+				return "!set: want one character or blank";
+			c = a[4][0];
+		}
+		return setcell(e, int a[2], int a[3], c);
 	"size" =>
 		if(len a != 2)
 			return usage("size SURF");

@@ -1,0 +1,19 @@
+; A level for leap(1): 64 tiles across, twelve down, scrolled in a
+; window 32 wide.  Legend, then the grid.
+# 1 brick
+= 2 turf
+- 1 soil
+o 5 coin
+%
+                                                                
+                                                                
+                                                                
+                                                        oo      
+                          oo                           ####     
+            o            ####            oo                     
+           ###                          ####                    
+      ooo           ooo            ooo            ooo           
+     #####         #####          #####          #####          
+                                                                
+==============   =============   =============  ================
+--------------   -------------   -------------  ----------------

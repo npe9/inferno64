@@ -255,6 +255,18 @@ a draw to the window          150 us
 a complete game frame         220 us
 .EE
 .PP
+That frame is
+.IR warren (1)'s,
+which has nothing moving but the player.
+.IR Leap (1)
+scrolls a level twice the width of the window and walks walkers, and
+costs 2500 microseconds a frame with none of them and about a
+millisecond more for each one \- so four is comfortable at 60Hz, twelve
+is the edge of it, and forty is twenty-three frames a second.
+The cost is round trips and not drawing: a walker is eight or nine
+substitutions at about 26 microseconds each and one
+.BR put .
+.PP
 A frame there is reading the keys, asking the level what is in the way,
 blitting the level, drawing the player, drawing the score and putting it
 on the screen.

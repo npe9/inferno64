@@ -1,0 +1,123 @@
+.TH LEAP 1
+.SH NAME
+leap \- a side-scrolling platformer written entirely in the shell
+.SH SYNOPSIS
+.B sh /lib/tiles/leap.sh
+.SH DESCRIPTION
+.I Leap
+is a platformer: run, jump, take the coins, do not fall in a pit or walk
+into a walker.
+Arrow keys or
+.BR wasd ;
+Space,
+.B w
+or Up to jump;
+.B Esc
+or
+.B q
+stops.
+.PP
+.IR Warren (1)
+showed that a game could be written in the shell.
+This one is the parts
+.I warren
+did not need:
+.TP
+gravity and a jump
+A velocity in pixels, a constant added to it each frame, a landing that
+snaps to the top of whatever was hit, and a jump allowed only from the
+ground \- which is what stops it being a flap.
+.TP
+a level wider than the window
+The level surface is 512 logical pixels across and the screen is 256;
+.B view
+copies the window of it the camera is over, and the camera keeps the
+player a third in and stops at both ends.
+.TP
+things that move on their own
+A walker is the string
+.BR "x,y,direction" ,
+a swarm is a list of them, and the list is rebuilt each frame rather
+than mutated \- because the shell has no way to assign to one element of
+a list.
+.PP
+That last one turns on what the shell already has:
+.BR ${index} ,
+.B ${split}
+and
+.B ${join}
+from
+.IR sh-std (1),
+and
+.IR expr (1)'s
+reverse-Polish arithmetic.
+The shell has no subscript syntax \-
+.B $l(2)
+is the list followed by a
+.B 2
+\- and
+.B $#l
+counts but does not index, so those three are the whole of how a shell
+program holds a table.
+.SH FILES
+.TP
+.B /lib/tiles/leap.sh
+the game
+.TP
+.B /lib/tiles/leap.map
+the level, legend and all
+.TP
+.B /lib/tiles/demo.chr
+the tile art
+.SH SOURCE
+.B /lib/tiles/leap.sh
+.SH SEE ALSO
+.IR warren (1),
+.IR sh-tiles (1),
+.IR tiles (2),
+.IR sh-std (1)
+.SH DIAGNOSTICS
+What a frame costs, measured with
+.BR ms ,
+scrolling a 512-wide level into a 256-wide window and walking N walkers:
+.IP
+.EX
+0 walkers      2500 us a frame
+4 walkers      6100
+12 walkers    14800
+24 walkers    26200
+40 walkers    43100
+.EE
+.PP
+About a millisecond a walker, and a 60Hz budget is 16666 microseconds.
+So a platformer or a maze runs at full rate with room to spare, and a
+formation of forty attackers \- which is what
+.IR starling (1)
+puts on the screen \- would run at about twenty-three frames a second.
+That is the honest answer to whether every game can be written in the
+shell: the ones with a handful of things moving, yes; the ones with
+dozens, not at speed.
+.PP
+The cost is round trips and not drawing.
+A walker is eight or nine
+.B ${expr}
+and
+.B ${tiles}
+substitutions, at about 26 microseconds each, and the drawing it does is
+one
+.BR put .
+.SH BUGS
+There is one level and it does not end; running off the right just
+stops.
+.PP
+The player is one tile and does not animate.
+.PP
+A walker turns at a ledge and at a wall and does nothing else \- it does
+not fall, and two of them will walk through each other.
+.PP
+Movement is three pixels a frame with no acceleration.
+.IR Sprocket (1)
+has momentum and a jump whose height follows the button; both are
+possible here and both are more
+.B ${expr}
+per frame, which is the budget above.

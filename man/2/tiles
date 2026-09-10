@@ -249,6 +249,7 @@ blit SRC DST X Y
 map SURF SHEET FILE
 at SURF X Y                  \-> the map character in that cell
 set SURF X Y CHAR            repaint one cell from the legend
+set SURF X Y blank           empty it
 size SURF                    \-> "W H"
 colour NAME                  \-> "#rrggbb"
 count SHEET                  \-> how many tiles
@@ -325,6 +326,7 @@ a blank line is a blank row.
 .IR draw3d (2),
 .IR sh-tiles (1),
 .IR warren (1),
+.IR leap (1),
 .IR tk (2),
 .IR plot (2),
 .IR tone (2),
