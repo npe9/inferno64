@@ -26,6 +26,22 @@ sh-tiles \- build a screen of tiles from a shell script
 .B write
 .I surface file
 .br
+.B tiles
+.I id
+.B bind
+.I action key ...
+.br
+.BI ${tiles " id " keys}
+|
+.BI ${tiles " id " pressed}
+|
+.BI ${tiles " id " ms}
+.br
+.B tiles
+.I id
+.B pace
+.I ms
+.br
 .B tiles del
 .I id
 .SH DESCRIPTION
@@ -77,6 +93,54 @@ is
 and a command that fails hands back its
 .B !
 message rather than aborting the script.
+.SS Reading, and keeping time
+A script that can draw and cannot read has made a picture.
+.B Bind
+names an action and the keys that work it \-
+.B "tiles $id bind fire Space x"
+\- and nothing here knows what
+.B fire
+means, which is the same trade
+.IR tiles (2)'s
+own commands make.
+Keys are single characters, or
+.BR Left ,
+.BR Right ,
+.BR Up ,
+.BR Down ,
+.BR Home ,
+.BR End ,
+.BR Pgup ,
+.BR Pgdown ,
+.BR Space ,
+.BR Tab ,
+.BR Enter ,
+.BR Esc .
+.PP
+.B Keys
+answers the actions held right now and
+.B pressed
+those newly pressed since the last ask;
+both drain what the window has delivered and return at once, so a loop
+asks once a frame and carries on.
+.B Ms
+is the clock and
+.B pace
+sleeps until a given number of milliseconds since the last
+.BR pace ,
+against an absolute deadline rather than for a fixed time \- which is
+why
+.IR frameclock (2)
+exists for Limbo and is needed here for the same reason.
+.PP
+Ask for these with
+.B ${}
+and not with
+.BR `{} .
+A backquote runs its block in a subprocess, and a subprocess reaching
+into the parent's Tk window deadlocks; the
+.B ${}
+form answers in this process.
 .PP
 .B Draw
 puts a named surface in the window;
@@ -111,6 +175,24 @@ tiles $id draw level
 .IR sh-tk (1),
 .IR tiles (2),
 .IR tilestest (1)
+.SH DIAGNOSTICS
+What this costs, measured with
+.B ms
+from a script, on this host at 256 by 96 and scale 3:
+.IP
+.EX
+an empty shell loop            18 us an iteration
+a put command                  26 us
+a whole-surface blit           14 us
+a draw to the window          150 us
+a complete game frame         220 us
+.EE
+.PP
+A frame there is reading the keys, asking the level what is in the way,
+blitting the level, drawing the player, drawing the score and putting it
+on the screen.
+At 220 microseconds that is 1.3 per cent of a 60Hz budget, so the answer
+to whether a game can be written in the shell is not "nearly".
 .SH BUGS
 .B del
 forgets the handle and leaves the window on screen, because
@@ -128,5 +210,8 @@ There is no way to hand a surface back to a Limbo program from here, so
 a script can build a screen and draw it or write it, and cannot pass it
 to something else.
 .PP
-Nothing here reads the keyboard.
-A script can build a screen; it cannot yet play one.
+The keyboard is polled and not selected on, so a script cannot wait for
+a key without spinning; it has to have a frame to hang the poll on.
+For a game that is what
+.B pace
+is for, and for anything else it is wrong.

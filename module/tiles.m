@@ -105,6 +105,7 @@ Tiles: module
 		fnt:	ref Chr;
 		scale:	int;
 		w, h:	int;
+		bg:	int;		# what it was made with, for set
 
 		tile:	fn(s: self ref Surface, tx, ty, t: int, p: ref Pal);
 		put:	fn(s: self ref Surface, x, y, t: int, p: ref Pal, flags: int);
@@ -153,6 +154,8 @@ Tiles: module
 	#	view SRC DST SX SY       a screen-sized window of SRC
 	#	blit SRC DST X Y
 	#	map SURF SHEET FILE      a whole tile map, legend and all
+	#	at SURF X Y              -> the map character at that cell
+	#	set SURF X Y CHAR        repaint one cell from the legend
 	#	size SURF                -> "W H"
 	#	colour NAME              -> "#rrggbb"
 	#	count SHEET              -> how many tiles it holds

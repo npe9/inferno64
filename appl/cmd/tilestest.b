@@ -359,7 +359,10 @@ language()
 	ck2("a palette is made", iserr(e), 0);
 	e = sc.cmd("sheet art /lib/tiles/demo.chr");
 	ck2("a sheet loads from a file", iserr(e), 0);
-	cks("and has the tiles the file holds", sc.cmd("count art"), "6");
+	# Tracks /lib/tiles/demo.chr: add a tile there and this number
+	# changes, which is the point - it is what catches a sheet that was
+	# mis-parsed into the wrong number of tiles.
+	cks("and has the tiles the file holds", sc.cmd("count art"), "7");
 	ck2("a missing file is an error",
 		iserr(sc.cmd("sheet gone /lib/tiles/nosuch.chr")), 1);
 
@@ -423,6 +426,23 @@ language()
 	ck2("an unnamed character paints nothing",
 		pixat(sc.image("lvl"), 2, 2),
 		pixat(sc.image("lvl"), 6, 6));
+
+	# A map is remembered as well as painted, or a script on the far
+	# side of this language can draw a maze and not ask whether the
+	# thing it is about to walk into is a wall.
+	cks("at reads a cell", sc.cmd("at lvl 0 10"), "=");
+	cks("and an empty one", sc.cmd("at lvl 0 0"), ".");
+	cks("off the map reads empty", sc.cmd("at lvl 999 999"), "");
+	ck2("at on a surface with no map is an error",
+		iserr(sc.cmd("at scr 0 0")), 1);
+	e = sc.cmd("set lvl 0 10 o");
+	ck2("set changes a cell", iserr(e), 0);
+	cks("and at agrees", sc.cmd("at lvl 0 10"), "o");
+	cktrue("and the cell was repainted",
+		pixat(sc.image("lvl"), 3, 10*8*SC + 3)
+		!= pixat(hand.img, 3, 10*8*SC + 3));
+	sc.cmd("set lvl 0 10 =");
+	cks("and back again", sc.cmd("at lvl 0 10"), "=");
 
 	# A whole screen from one string, the way a Tk program builds a
 	# window: several commands, newline separated, first error wins.

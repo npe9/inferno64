@@ -387,6 +387,7 @@ surface(d: ref Display, ch, fnt: ref Chr, w, h, bg: int): ref Surface
 	s.scale = ch.scale;
 	s.w = w;
 	s.h = h;
+	s.bg = bg;
 	s.img = d.newimage(Rect((0,0),(w*s.scale, h*s.scale)), ch.chans, 0, rgb(bg));
 	if(s.img == nil)
 		return nil;
@@ -498,6 +499,11 @@ Named: adt {
 	pal:	ref Pal;
 	chr:	ref Chr;
 	surf:	ref Surface;
+	# what "map" painted here, so it can be asked about and changed
+	grid:	array of string;
+	legch:	array of int;
+	legpal:	array of ref Pal;
+	gsheet:	ref Chr;
 };
 
 screen(d: ref Display, chans: Chans, scale: int): ref Screen
@@ -527,7 +533,7 @@ bind(n: string): ref Named
 	e := find(n);
 	if(e != nil)
 		return e;
-	e = ref Named(n, nil, nil, nil);
+	e = ref Named(n, nil, nil, nil, nil, nil, nil, nil);
 	a := array[len names + 1] of ref Named;
 	a[0:] = names;
 	a[len names] = e;
@@ -814,6 +820,28 @@ docmd(s: ref Screen, a: array of string): string
 		if(len a != 4)
 			return usage("map SURF SHEET FILE");
 		return domap(a[1], a[2], a[3]);
+	"at" =>
+		if(len a != 4)
+			return usage("at SURF X Y");
+		e := find(a[1]);
+		if(e == nil || e.grid == nil)
+			return "!no map on " + a[1];
+		(x, y) := (int a[2], int a[3]);
+		if(y < 0 || y >= len e.grid)
+			return "";
+		row := e.grid[y];
+		if(x < 0 || x >= len row)
+			return "";
+		return row[x:x+1];
+	"set" =>
+		if(len a != 5)
+			return usage("set SURF X Y CHAR");
+		e := find(a[1]);
+		if(e == nil || e.grid == nil)
+			return "!no map on " + a[1];
+		if(len a[4] != 1)
+			return "!set: want one character";
+		return setcell(e, int a[2], int a[3], a[4][0]);
 	"size" =>
 		if(len a != 2)
 			return usage("size SURF");
@@ -947,9 +975,11 @@ domap(sn, cn, path: string): string
 	}
 	old := su.chr;
 	su.chr = ch;
+	grid := array[len lines - i] of string;
 	ty := 0;
 	for(; i < len lines; i++){
 		row := lines[i];
+		grid[ty] = row;
 		for(tx := 0; tx < len row; tx++){
 			c := row[tx];
 			if(c > 255 || legch[c] < 0)
@@ -959,5 +989,45 @@ domap(sn, cn, path: string): string
 		ty++;
 	}
 	su.chr = old;
+	en := bind(sn);
+	en.grid = grid[0:ty];
+	en.legch = legch;
+	en.legpal = legpal;
+	en.gsheet = ch;
 	return "";
+}
+
+# One cell, changed and repainted.  A character the legend does not
+# mention clears the cell to the surface's background, which is how a
+# script says "the coin is gone".
+setcell(e: ref Named, x, y: int, c: int): string
+{
+	if(y < 0 || y >= len e.grid)
+		return "!set: no such row";
+	row := e.grid[y];
+	if(x < 0 || x >= len row)
+		return "!set: no such column";
+	# NOT `string c`: c is a character code and string of an int is its
+	# digits, so setting a cell to '.' spliced "46" into the row and
+	# the next "at" answered "4".  A one-character string is made by
+	# assigning to the end of one.
+	one := "";
+	one[0] = c;
+	e.grid[y] = row[0:x] + one + row[x+1:];
+	su := e.surf;
+	old := su.chr;
+	su.chr = e.gsheet;
+	if(c <= 255 && e.legch[c] >= 0)
+		su.tile(x, y, e.legch[c], e.legpal[c]);
+	else
+		su.fill(Rect((x*TW, y*TH), (x*TW+TW, y*TH+TH)), bgof(su));
+	su.chr = old;
+	return "";
+}
+
+# The colour a surface was made with, remembered so "set" can clear a
+# cell back to it.
+bgof(su: ref Surface): int
+{
+	return su.bg;
 }

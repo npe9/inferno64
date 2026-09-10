@@ -247,6 +247,8 @@ fill SURF X Y W H COLOUR
 view SRC DST SX SY
 blit SRC DST X Y
 map SURF SHEET FILE
+at SURF X Y                  \-> the map character in that cell
+set SURF X Y CHAR            repaint one cell from the legend
 size SURF                    \-> "W H"
 colour NAME                  \-> "#rrggbb"
 count SHEET                  \-> how many tiles
@@ -284,6 +286,19 @@ then the map, one character a tile.
 A character with no legend entry paints nothing, which is how a map says
 sky without naming it.
 .PP
+A map is
+.I remembered
+as well as painted, which is what lets a program on the far side of this
+language play rather than only draw:
+.B at
+asks what is in a cell and
+.B set
+changes one and repaints it.
+Without those a script can put a maze on the screen and has no way to
+ask whether the thing it is about to walk into is a wall.
+.IR Warren (1)
+is a game that is nothing but those two questions and a few draws.
+.PP
 A comment begins with
 .BR ; ,
 not with
@@ -309,6 +324,7 @@ a blank line is a blank row.
 .IR vsprite (2),
 .IR draw3d (2),
 .IR sh-tiles (1),
+.IR warren (1),
 .IR tk (2),
 .IR plot (2),
 .IR tone (2),

@@ -16,6 +16,10 @@ include "sh.m";
 include "tiles.m";
 	tiles: Tiles;
 	Screen: import tiles;
+include "keyhold.m";
+	keyhold: Keyhold;
+	Binding: import keyhold;
+include "keyboard.m";
 
 # A loadable sh(1) module giving shell scripts tiles(2)'s own command
 # language, the same way sh-plot(1) gives them plot(2)'s and sh-tk(1)
@@ -43,6 +47,14 @@ Handle: adt {
 	scr:	ref Screen;
 	want:	Point;
 	shown:	int;
+	# input: the actions a script has named, the table keyhold(2) reads
+	# them with, and what is held now
+	acts:	array of string;
+	binds:	array of (int, int);
+	kb:	ref Binding;
+	held:	int;
+	prev:	int;
+	last:	int;		# millisec, for pace
 };
 
 handles: array of list of ref Handle;
@@ -67,6 +79,9 @@ initbuiltin(ctxt: ref Context, shmod: Sh): string
 	if(tiles == nil)
 		ctxt.fail("bad module", sys->sprint("tiles: cannot load %s: %r", Tiles->PATH));
 	tiles->init();
+	keyhold = load Keyhold Keyhold->PATH;
+	if(keyhold == nil)
+		ctxt.fail("bad module", sys->sprint("tiles: cannot load %s: %r", Keyhold->PATH));
 	handles = array[16] of list of ref Handle;
 	ctxt.addbuiltin("tiles", myself);
 	ctxt.addsbuiltin("tiles", myself);
@@ -123,6 +138,24 @@ runbuiltin(ctxt: ref Context, nil: Sh,
 			ctxt.fail("usage", "usage: tiles <id> write surface file");
 		return writesurf(ctxt, h, (hd tl rest).word, (hd tl tl rest).word);
 	}
+	if((hd rest).word == "bind"){
+		e := dobind(h, tl rest);
+		if(e != nil){
+			remark(ctxt, e);
+			return e;
+		}
+		return nil;
+	}
+	if((hd rest).word == "pace"){
+		if(tl rest == nil)
+			ctxt.fail("usage", "usage: tiles <id> pace ms");
+		pace(h, int (hd tl rest).word);
+		return nil;
+	}
+	if((hd rest).word == "keys" || (hd rest).word == "pressed"){
+		remark(ctxt, readkeys(ctxt, h, (hd rest).word == "pressed"));
+		return nil;
+	}
 	# Everything else is tiles(2)'s own language, unrecognized here.
 	r := h.scr.cmd(concat(rest));
 	if(len r > 0 && r[0] == '!'){
@@ -153,6 +186,18 @@ runsbuiltin(ctxt: ref Context, nil: Sh,
 	rest := tl argv;
 	if(rest == nil)
 		ctxt.fail("usage", "usage: ${tiles <id> command...}");
+	# The input verbs answer here too, and this is where a game loop
+	# actually uses them: ks := ${tiles $id keys}.
+	case (hd rest).word {
+	"keys" =>
+		return words(readkeys(ctxt, h, 0));
+	"pressed" =>
+		return words(readkeys(ctxt, h, 1));
+	"ms" =>
+		# The clock, so a script can time itself - a frame rate on
+		# the screen, or an answer to "how fast is this".
+		return ref Listnode(nil, string sys->millisec()) :: nil;
+	}
 	# The answer IS the value here, error and all: a script asking
 	# "size level" wants "256 96" back, and one asking something wrong
 	# wants to see the "!" rather than have the script abort.
@@ -200,7 +245,8 @@ newhandle(ctxt: ref Context, argv: list of ref Listnode): int
 	scr := tiles->screen(top.display, chans, scale);
 	if(scr == nil)
 		ctxt.fail("tiles", "tiles: cannot make a screen");
-	h := ref Handle(nexthandle++, top, buffer, scr, Point(pw, ph), 0);
+	h := ref Handle(nexthandle++, top, buffer, scr, Point(pw, ph), 0,
+		array[0] of string, array[0] of (int, int), nil, 0, 0, 0);
 	addhandle(h);
 	return h.id;
 }
@@ -252,7 +298,9 @@ show(ctxt: ref Context, h: ref Handle)
 		return;
 	h.shown = 1;
 	tkcmd(ctxt, h.top, "update");
-	tkclient->startinput(h.top, "kbd" :: "ptr" :: nil);
+	# keyup as well as kbd, or keyhold(2) never sees a release and
+	# every key a script binds sticks down.
+	tkclient->startinput(h.top, "kbd" :: "keyup" :: "ptr" :: nil);
 	tkclient->onscreen(h.top, nil);
 }
 
@@ -336,4 +384,140 @@ tkcmd(ctxt: ref Context, top: ref Tk->Toplevel, s: string)
 	e := tk->cmd(top, s);
 	if(len e > 0 && e[0] == '!')
 		ctxt.fail("tiles", "tiles: " + s + ": " + e);
+}
+
+# ------------------------------------------------------------- input
+#
+# The other half of a game: a script that can draw and cannot read is a
+# picture.  This is keyhold(2) with a little language in front of it -
+#
+#	tiles $id bind left Left a A
+#	tiles $id bind fire Space x
+#	ks := ${tiles $id keys}
+#
+# - which is the same trade tiles(2)'s own commands make.  A script
+# names its own actions, because what a key means is the script's
+# business; nothing here knows what "fire" is.
+
+# The keys a script can name that are not single characters.  Everything
+# else is taken as itself, so "a" is a, and "Left" is the arrow.
+keyname(s: string): int
+{
+	if(len s == 1)
+		return s[0];
+	case s {
+	"Left" =>	return Keyboard->Left;
+	"Right" =>	return Keyboard->Right;
+	"Up" =>		return Keyboard->Up;
+	"Down" =>	return Keyboard->Down;
+	"Home" =>	return Keyboard->Home;
+	"End" =>	return Keyboard->End;
+	"Pgup" =>	return Keyboard->Pgup;
+	"Pgdown" =>	return Keyboard->Pgdown;
+	"Space" =>	return ' ';
+	"Tab" =>	return '\t';
+	"Enter" or "Return" =>	return '\n';
+	"Esc" =>	return 16r1b;
+	}
+	return -1;
+}
+
+dobind(h: ref Handle, l: list of ref Listnode): string
+{
+	if(l == nil || tl l == nil)
+		return "!usage: tiles <id> bind ACTION KEY...";
+	act := (hd l).word;
+	# the action's bit: an existing name keeps its bit, a new one takes
+	# the next
+	bit := -1;
+	for(i := 0; i < len h.acts; i++)
+		if(h.acts[i] == act)
+			bit = i;
+	if(bit < 0){
+		if(len h.acts >= 30)
+			return "!too many actions";
+		a := array[len h.acts + 1] of string;
+		a[0:] = h.acts;
+		a[len h.acts] = act;
+		h.acts = a;
+		bit = len a - 1;
+	}
+	nb := h.binds;
+	for(l = tl l; l != nil; l = tl l){
+		k := keyname((hd l).word);
+		if(k < 0)
+			return "!no such key: " + (hd l).word;
+		a := array[len nb + 1] of (int, int);
+		a[0:] = nb;
+		a[len nb] = (k, 1 << bit);
+		nb = a;
+	}
+	h.binds = nb;
+	h.kb = keyhold->mk(nb);
+	return nil;
+}
+
+# Drain whatever the window has delivered since last time, fold it into
+# the held set, and answer.  Non-blocking: a game loop asks once a frame
+# and carries on, which is what a held-key set is for.
+readkeys(ctxt: ref Context, h: ref Handle, edge: int): string
+{
+	if(h.kb == nil)
+		return "";
+	show(ctxt, h);
+	# NOT `for(;;) alt{ ... * => break; }`.  A break in an alt arm
+	# leaves the ALT, not the loop, so that spins for ever - which is
+	# a trap this tree has written down (session(2)'s own notes) and
+	# one I walked into anyway.  A flag is what ends the loop.
+	drained := 0;
+	while(!drained) alt{
+	k := <-h.top.ctxt.kbd =>
+		h.held = h.kb.key(h.held, k);
+	* =>
+		drained = 1;
+	}
+	set := h.held;
+	if(edge){
+		set = keyhold->edge(h.held, h.prev);
+		h.prev = h.held;
+	}
+	s := "";
+	for(i := 0; i < len h.acts; i++)
+		if(set & (1 << i)){
+			if(s != "")
+				s += " ";
+			s += h.acts[i];
+		}
+	return s;
+}
+
+# Frame pacing, against an absolute deadline rather than a fixed sleep -
+# the same reason frameclock(2) exists for Limbo.  A shell loop that
+# sleeps a fixed time runs at whatever rate the loop itself costs plus
+# that, which is not a rate at all.
+pace(h: ref Handle, ms: int)
+{
+	if(ms <= 0)
+		return;
+	now := sys->millisec();
+	if(h.last == 0){
+		h.last = now;
+		return;
+	}
+	due := h.last + ms;
+	if(due > now)
+		sys->sleep(due - now);
+	h.last = sys->millisec();
+}
+
+words(s: string): list of ref Listnode
+{
+	l: list of ref Listnode;
+	(nil, w) := sys->tokenize(s, " ");
+	for(; w != nil; w = tl w)
+		l = ref Listnode(nil, hd w) :: l;
+	rl: list of ref Listnode;
+	for(; l != nil; l = tl l)
+		rl = hd l :: rl;
+	return rl;
 }
