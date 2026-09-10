@@ -1086,17 +1086,16 @@ startfonts()
 	sys->create("/mnt", Sys->OREAD, Sys->DMDIR|8r777);
 	sys->create("/mnt/ft", Sys->OREAD, Sys->DMDIR|8r777);
 	spawn tf->init(ref Draw->Context(display, nil, nil), "ttffs" :: nil);
-	# Read the index rather than merely open it.  Opening succeeds as
-	# soon as the server is mounted, but the faces are only parsed and
-	# indexed on the first read, so returning on the open leaves a window
-	# in which a font named on emu's -f flag cannot be opened yet and
-	# libtk falls back to a bitmap face with one line on standard error.
-	# Seen once, under heavy load.  The read is what makes the wait mean
-	# what it says.
-	b := array[8192] of byte;
+	# Waiting for the index to be openable is enough: opening a face
+	# afterwards makes ttffs parse it on demand, cold caches and all.
+	# A version of this read the index too, on the theory that the faces
+	# are only indexed on the first read of it and a font could be named
+	# before that finished.  The evidence for it was a "tk: font not
+	# found" that turned out to be a leading space in the font path,
+	# from a test harness, not a race - and reading here costs 3.1s
+	# before the first window on a cold tree for no measured benefit.
 	for(i := 0; i < 50; i++){
-		ix := sys->open("/mnt/ft/index", Sys->OREAD);
-		if(ix != nil && sys->read(ix, b, len b) > 0)
+		if(sys->open("/mnt/ft/index", Sys->OREAD) != nil)
 			return;
 		sys->sleep(100);
 	}

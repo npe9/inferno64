@@ -354,17 +354,31 @@ section 5's theme register, and `grpalette(2)` is the mechanism this tree
 already has for exactly this shape of problem — a colour table used in
 many places and written down in none.
 
-### The font server could lose a race, and does not now
+### A race that was not there
 
-`wm`'s `startfonts()` waited for `/mnt/ft/index` to be *openable*. That
-succeeds the moment the server is mounted, but the faces are only parsed
-and indexed on the first *read*, so there was a window in which `-f`
-named a font that could not yet be opened and `libtk` quietly fell back —
-which is exactly the `tk: font not found` above. Seen once in about
-thirty runs, under heavy load. It now waits for a readable index, which
-is what the wait was always supposed to mean. Cold, that costs 3.1 s
-before the first window appears, against the 5 s the wait allows; warm,
-nothing.
+An earlier version of this section reported that `wm`'s `startfonts()`
+could return before the faces were servable, so a font named on `-f` was
+sometimes missed and `libtk` fell back with `tk: font not found` — "seen
+once in about thirty runs, under heavy load" — and recorded a fix that
+waited for a *readable* index rather than an openable one.
+
+There was no race. The message came from a harness of mine that passed
+`-f /mnt/ft/go.r.20.font` as a single `zsh` scalar, which does not
+word-split, so `emu` got `-f` with the path attached and `EARGF` handed
+`libtk` a font path beginning with a space. The fingerprint was in the
+message all along and went unread: `tk: font not found:` followed by
+**two** spaces.
+
+That is the third time the same `zsh` scalar-splitting mistake has
+produced a confident wrong conclusion here — the sweep that never ran,
+the sweep that tested one program, and this. The shape is worth naming,
+because it recurs: **a harness bug looks exactly like a finding, and what
+distinguishes them is reading the raw output rather than the summary.**
+
+The wait is back to what it was. Opening a face after the mount makes
+`ttffs` parse it on demand — three cold starts with the caches deleted,
+zero failures — so reading the index first bought nothing and cost 3.1 s
+before the first window on a cold tree.
 
 **The positive control is the important half.** Zero reports is also what
 a checker that has gone blind produces. The same sweep on a 260x200
