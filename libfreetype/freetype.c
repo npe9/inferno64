@@ -3,13 +3,11 @@
 #include "freetype.h"
 
 static char* fterrstr(int);
+static char* facefrommem(void*, vlong, int, FTface*, FTfaceinfo*);
 
 char*
 ftnewface(char *path, int index, FTface *f, FTfaceinfo *finfo)
 {
-	FT_Library ft_lib;
-	FT_Face ft_face;
-	char *err;
 	Dir *d;
 	uchar *data;
 	int fd;
@@ -57,6 +55,21 @@ ftnewface(char *path, int index, FTface *f, FTfaceinfo *finfo)
 		return "short read of font file";
 	}
 
+	return facefrommem(data, len, index, f, finfo);
+}
+
+/*
+ * Build a face over data, which becomes the face's own: FT_New_Memory_Face
+ * keeps the pointer rather than copying, so it must stay live until
+ * ftdoneface(), which frees it.  On failure it is freed here.
+ */
+static char*
+facefrommem(void *data, vlong len, int index, FTface *f, FTfaceinfo *finfo)
+{
+	FT_Library ft_lib;
+	FT_Face ft_face;
+	char *err;
+
 	err = fterrstr(FT_Init_FreeType(&ft_lib));
 	if (err != nil) {
 		free(data);
@@ -83,13 +96,22 @@ ftnewface(char *path, int index, FTface *f, FTfaceinfo *finfo)
 	return nil;
 }
 
+/*
+ * The caller keeps buf, so take a copy: the face outlives this call and
+ * FT_New_Memory_Face does not copy for us.
+ */
 char*
 ftloadmemface(void *buf, int nbytes, int index, FTface *f, FTfaceinfo *finfo)
 {
-	USED(buf);
-	USED(f);
-	USED(finfo);
-	return "not implemented";
+	void *data;
+
+	if (buf == nil || nbytes <= 0)
+		return "empty font image";
+	data = malloc(nbytes);
+	if (data == nil)
+		return "out of memory copying font image";
+	memmove(data, buf, nbytes);
+	return facefrommem(data, nbytes, index, f, finfo);
 }
 
 char*
