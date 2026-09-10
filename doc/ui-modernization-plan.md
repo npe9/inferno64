@@ -578,11 +578,22 @@ touching them twice.
 
 ## 5. Everything else, in the order it matters
 
-- **A theme register.** Colours are literals: `appl/lib/titlebar.b` carries
-  a hand-picked "Soft Plan9 Paper" palette inline, `appl/wm/sweeper.b` and
-  `appl/wm/vt.b` have their own. The temple ports solved exactly this with
-  `grpalette(2)`, one register file replacing a literal duplicated in 51
-  places. The window system wants the same and does not have it.
+- **A theme register.** Counted, not estimated: `appl/lib/titlebar.b` has
+  four distinct colours (`#8A9098` inactive, `#3D6A9A` focused, `#D4D0C4`
+  button, `#2A2A22` glyph) written out fourteen times; `appl/lib/wmclient.b`
+  has three more as Limbo constants; `appl/wm/sweeper.b` and `appl/wm/vt.b`
+  have their own. And the desktop background `16rC4C0B4FF` is written
+  twice — `wmclient.b:34` and `wm.b:33` — which is the duplication a
+  register exists to remove, already happening.
+  **`grpalette(2)` is not that register**, despite an earlier note here
+  saying so. It is TempleOS's *sixteen-colour indexed* file, where a colour
+  *is* an index into a table that a program rewrites underneath a finished
+  drawing. These are specific RGBA values; routing them through sixteen
+  slots would either change them or bolt custom entries onto a fixed
+  table. The right shape, the wrong table. A window-system theme wants its
+  own small named register, and that is a design decision about how the
+  system should look, not a refactor — which is why it has not been made
+  here.
 - **The widget set is Tk 8.0.** `libtk` has button, canvas, entry, frame,
   grid, image, label, listbox, menu, pack, panel, scale, scrollbar and
   text. There is no notebook, treeview, combobox, progressbar or spinbox,
@@ -602,8 +613,13 @@ touching them twice.
 
 The Linux and Plan 9 backends — every backend claim here is about
 `emu/MacOSX/win-cocoa.m`. Whether `acme`'s and `sam`'s own drawing (they do
-not use Tk) share any of these assumptions. Whether any of the ~60
-`appl/wm/` programs survive a font change, which is the actual adoption
-risk and wants the general recording check from section 0 first. And the
-on-screen appearance of anything at all: the harness proves what Tk
-*drew*, not what the display *shows*.
+not use Tk) share any of these assumptions. And the on-screen appearance
+of anything at all: the harness proves what Tk *drew*, not what the
+display *shows*.
+
+Whether the `appl/wm/` programs survive a font change **was** the open
+question here, and is now answered for 41 of the 65 — see section 3. The
+remainder are the ones that will not come up unattended: the
+network-facing programs (`mail`, `readmail`, `telnet`, `remotelogon`,
+`sendmail`, `fedi`), and the programs that draw their own text instead of
+packing widgets, which `tklayout(2)` cannot see at all.
