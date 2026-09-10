@@ -8,8 +8,14 @@
 #	verbatim.  Everything else is the portable, correct-and-slow C,
 #	same choice riscv64/virt's own mkfile-riscv64 makes.
 #
+#	getfcr-arm64.$O is the exception, and it has to be assembly:
+#	FPCR and FPSR are system registers and the compiler has no word
+#	for one.  Without it libmath's FPinit() has no setfcr to call
+#	and no aarch64 board can carry the built-in $Math module.
+#
 TARGFILES=\
 	frexp-386.$O\
+	getfcr-arm64.$O\
 	memmove.$O\
 	memset.$O\
 	nan-386.$O\

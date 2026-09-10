@@ -537,14 +537,35 @@ addmove(Reg *r, int bn, int rn, int f)
 		print("%P\t.a%P\n", p, p1);
 }
 
+/*
+ * How many bytes a reference of this type touches.  The type comes out
+ * of an object file, so it is not to be trusted as an index; anything
+ * that is not one of the ones with a width counts as a byte, which
+ * cannot make an overlap look smaller than it is.
+ */
+static int
+varwidth(int et)
+{
+	int w;
+
+	if(et < 0 || et >= NTYPE)
+		return 1;
+	w = ewidth[et];
+	if(w <= 0)
+		return 1;
+	return w;
+}
+
 Bits
 mkvar(Adr *a, int docon)
 {
 	Var *v;
-	int i, t, n, et, z;
+	int i, t, n, et, z, j, w, ovl;
 	long o;
 	Bits bit;
 	Sym *s;
+
+	ovl = 0;
 
 	t = a->type;
 	if(t == D_REG && a->reg != NREG)
@@ -588,10 +609,35 @@ mkvar(Adr *a, int docon)
 	v->offset = o;
 	v->etype = et;
 	v->name = n;
+	/*
+	 * A reference to part of a variable -- the high word of a double
+	 * reached through a pointer, which is how fdlibm scales a result
+	 * -- lands here as a second entry, because the offset differs.
+	 * Neither entry may then live in a register: one of them would go
+	 * stale while the other was written.  Mark every entry this one
+	 * overlaps, and itself.
+	 */
+	w = varwidth(et);
+	for(j = 0; j < nvar-1; j++) {
+		int w1;
+
+		if(var[j].sym != s || var[j].name != n)
+			continue;
+		w1 = varwidth(var[j].etype);
+		if(o + w <= var[j].offset || var[j].offset + w1 <= o)
+			continue;
+		bit = blsh(j);
+		for(z=0; z<BITS; z++)
+			addrs.b[z] |= bit.b[z];
+		ovl = 1;
+	}
 	if(debug['R'])
 		print("bit=%2d et=%2d %D\n", i, et, a);
 out:
 	bit = blsh(i);
+	if(ovl)
+		for(z=0; z<BITS; z++)
+			addrs.b[z] |= bit.b[z];
 	if(n == D_EXTERN || n == D_STATIC)
 		for(z=0; z<BITS; z++)
 			externs.b[z] |= bit.b[z];

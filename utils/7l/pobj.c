@@ -304,6 +304,18 @@ addhist(long line, int type)
 	u = malloc(sizeof(Auto));
 	s = malloc(sizeof(Sym));
 	s->name = malloc(2*(histfrogp+1) + 1);
+	/*
+	 * Zeroed, and that is not tidiness.  putsymb() writes a 'z'
+	 * symbol by reading s[0] and then pairs of bytes until it sees
+	 * two zeroes in a row; the loop below fills s[1] onward and
+	 * never writes either s[0] or a terminator, so putsymb walked
+	 * off the end of this malloc through whatever the allocator
+	 * happened to leave there.  AddressSanitizer reports it as a
+	 * heap-buffer-overflow in putsymb on any real link.  The
+	 * allocation is exactly 1 + 2*histfrogp + 2, so the memset both
+	 * sets the leading byte and leaves the double NUL in place.
+	 */
+	memset(s->name, 0, 2*(histfrogp+1) + 1);
 
 	u->asym = s;
 	u->type = type;
@@ -387,6 +399,14 @@ readsome(int f, uchar *buf, uchar *good, uchar *stop, int max)
 	return stop + n;
 }
 
+/*
+ * The comparison is strcmp and not memcmp(s->name, symb, l).  l is
+ * strlen(symb)+1, and a symbol already in the bucket can be shorter
+ * than symb -- memcmp then reads past the end of that symbol's own
+ * malloc, which AddressSanitizer catches as a heap-buffer-overflow in
+ * the first few objects of any real link.  strcmp stops at whichever
+ * terminator comes first and cannot.
+ */
 Sym*
 lookup(char *symb, int v)
 {
@@ -404,7 +424,7 @@ lookup(char *symb, int v)
 	h %= NHASH;
 	for(s = hash[h]; s != S; s = s->link)
 		if(s->version == v)
-		if(memcmp(s->name, symb, l) == 0)
+		if(strcmp(s->name, symb) == 0)		/* not memcmp: see below */
 			return s;
 
 	s = halloc(sizeof(Sym));

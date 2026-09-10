@@ -344,6 +344,30 @@ Optab	optab[] =
 	{ AFMOVS,	C_FREG,	C_NONE,	C_ADDR,		64, 8, 0,	LTO },
 	{ AFMOVS,	C_ADDR,	C_NONE,	C_FREG,		65, 8, 0,	LFROM },
 
+	/*
+	 * The same eight for AFMOVD, which had none of them: a double
+	 * could be loaded or stored only through the 12-bit scaled
+	 * offset of types 20 and 21, so any static, auto or register
+	 * offset past 32760 had no encoding at all.  fdlibm's atan is
+	 * where that first bit -- its constant table sits far enough
+	 * into a kernel's static data that the offset classified
+	 * C_SEXT16, no row matched, and 7l said "atan: illegal
+	 * combination FMOVD SEXT16 NONE FREG".  AFMOVS had the rows all
+	 * along.  Nothing else was missing: movesize() already returns 3
+	 * for AFMOVD, opldr12/opstr12 already encode it, and types 30,
+	 * 31, 64 and 65 are width-driven through those.
+	 */
+	{ AFMOVD,	C_FREG,	C_NONE,	C_LEXT,		30, 8, REGSB,	LTO },
+	{ AFMOVD,	C_FREG,	C_NONE,	C_LAUTO,	30, 8, REGSP,	LTO },
+	{ AFMOVD,	C_FREG,	C_NONE,	C_LOREG,	30, 8, 0,	LTO },
+
+	{ AFMOVD,	C_LEXT,	C_NONE,	C_FREG,		31, 8, REGSB,	LFROM },
+	{ AFMOVD,	C_LAUTO,C_NONE,	C_FREG,		31, 8, REGSP,	LFROM },
+	{ AFMOVD,	C_LOREG,C_NONE,	C_FREG,		31, 8, 0,	LFROM },
+
+	{ AFMOVD,	C_FREG,	C_NONE,	C_ADDR,		64, 8, 0,	LTO },
+	{ AFMOVD,	C_ADDR,	C_NONE,	C_FREG,		65, 8, 0,	LFROM },
+
 	{ AFADDS,		C_FREG,	C_NONE,	C_FREG,		54, 4, 0 },
 	{ AFADDS,		C_FREG,	C_REG,	C_FREG,		54, 4, 0 },
 	{ AFADDS,		C_FCON,	C_NONE,	C_FREG,		54, 4, 0 },

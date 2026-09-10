@@ -17,6 +17,15 @@ diag(char *fmt, ...)
 	vseprint(buf, buf+sizeof(buf), fmt, arg);
 	va_end(arg);
 	print("%s: %s\n", tn, buf);
+	/*
+	 * Flush it.  print() goes through a buffer that errorexit()'s
+	 * exits() does not drain, so a link that stopped on ten errors
+	 * or fewer failed with exit status 1 and printed nothing at all
+	 * -- which is how a missing FMOVD optab row looked from the
+	 * outside for as long as it took to find it by hand.  A tool
+	 * that fails silently costs more than the bug it is hiding.
+	 */
+	Bflush(&bso);
 
 	nerrors++;
 	if(nerrors > 10) {

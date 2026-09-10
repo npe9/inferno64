@@ -268,7 +268,18 @@ EXTERN	Prog*	datap;
 EXTERN	Prog*	edatap;
 EXTERN	vlong	datsize;
 EXTERN	char	debug[128];
-EXTERN	char	literal[32];
+/*
+ * The name of a literal-pool entry, "$<lo>.<hi>" in hex.  32 bytes was
+ * right when a long was four: both halves of a double print as at most
+ * eight digits each and "$" + 8 + "." + 8 + NUL is 19.  On a 64-bit
+ * host the object reader sign-extends those halves into a long, so a
+ * double with its sign bit set prints sixteen digits a side and the
+ * name is 35 -- three bytes past this buffer and straight into
+ * whatever the linker put next to it.  The callers mask to 32 bits
+ * now, which is the real fix; the extra room is so a future one
+ * cannot do it again.
+ */
+EXTERN	char	literal[64];
 EXTERN	Prog*	etextp;
 EXTERN	Prog*	firstp;
 EXTERN	uchar	fnuxi8[8];
