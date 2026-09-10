@@ -547,10 +547,24 @@ other Tk command, so nothing had to be plumbed between the two.
 are all that remain of this section, and they need a primitive that is
 not there.
 
-**Still open in this section:** nothing yet *uses* the flat style —
-`tkclient(2)` does not offer it, so a program has to ask by name. Whether
-it should become the default, or be reachable from a session-wide
-setting, is a taste question and so is the user's, not this document's.
+**The session-wide setting is done: `$tkstyle=flat`.** `tkclient(2)`
+reads it in `toplevel()`, before the titlebar's own widgets exist — which
+it has to, since spacings and border widths are read when a widget is
+configured. So the whole look can be tried, or put back, across a session
+without editing one program. Unset means classic.
+
+That is deliberately where this stops. **Whether flat should be the
+default is a taste question, and the taste that matters is not the
+code's** — the switch is now in the user's hand, which is what the
+caution at the end of this section asked for.
+
+**Still open in this section:** square corners, which want a
+rounded-rectangle primitive `libtk` does not have; and a second colour
+row. Note the colour item is not the same shape as the others: widget
+colours are established in `tksetenvcolours()` when a `TkEnv` is made,
+and unlike sizes they could safely be re-applied at runtime, since colour
+does not feed back into layout. But choosing the second palette *is* the
+taste decision, so it is left.
 
 **How to know it worked.** `tkofftest(1)` renders offscreen and reads
 pixels, so a look can be pinned the way the chrome's artwork is: the

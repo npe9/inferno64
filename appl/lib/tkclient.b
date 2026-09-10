@@ -104,6 +104,11 @@ toplevel(ctxt: ref Draw->Context, topconfig: string, title: string, buts: int): 
 		raise "fail:window creation failed";
 	}
 	top.ctxt = wm;
+	# Before any widget exists, including the titlebar's own: style(9)'s
+	# spacings and border widths are read when a widget is configured,
+	# so a style set after the fact would reach the borders and not the
+	# sizes.
+	stylefromenv(top);
 	readscreenrect(top);
 	c := titlebar->new(top, buts);
 	titlebar->settitle(top, title);
@@ -115,6 +120,28 @@ toplevel(ctxt: ref Draw->Context, topconfig: string, title: string, buts: int): 
 			seticon(top, ip);
 	}
 	return (top, c);
+}
+
+stylewanted := -1;
+
+# $tkstyle picks the widget look for every program that goes through
+# tkclient(2), so the flat style of style(9) can be tried across a whole
+# session - or put back - without editing a single one of them.
+#
+# Unset means classic, and that is the point rather than caution: the
+# existing look is coherent, somebody chose it, and which of the two is
+# better is a matter of taste belonging to whoever is looking at the
+# screen.  This hands them the switch instead of deciding for them.
+stylefromenv(top: ref Tk->Toplevel)
+{
+	if(stylewanted == -1){
+		stylewanted = 0;
+		e := load Env Env->PATH;
+		if(e != nil && e->getenv("tkstyle") == "flat")
+			stylewanted = 1;
+	}
+	if(stylewanted == 1)
+		tk->cmd(top, "style flat");
 }
 
 readscreenrect(top: ref Tk->Toplevel)

@@ -35,6 +35,7 @@ include "tknotebook.m";
 include "wmclient.m";
 include "tkclient.m";
 	tkclient: Tkclient;
+include "env.m";
 
 # ttffs(4) serves TrueType files from /fonts/ttf as Inferno subfonts at
 # any size.  It wants a draw context, but only for its display, so this
@@ -285,6 +286,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	checklayout();
 	checkfocusring();
 	checkstyle();
+	checkstyleenv();
 	checkcanvastag();
 	checkplaintitle();
 	checktheme();
@@ -661,6 +663,50 @@ checkfocusring()
 		held, away));
 }
 
+
+
+# Nothing in the tree asks for the flat style by name, so the way anyone
+# will actually meet it is $tkstyle: tkclient(2) reads it and every
+# program that builds its window that way follows, with no program
+# edited.  This checks the wire rather than the look - that the variable
+# reaches a real tkclient toplevel, and that unset still means classic,
+# which is the half that matters if the taste question is ever settled
+# the other way.
+checkstyleenv()
+{
+	if(tkclient == nil)
+		return;
+	e := load Env Env->PATH;
+	if(e == nil){
+		sys->print("     no env module; $tkstyle not checked\n");
+		return;
+	}
+	# tkclient caches the answer on first use, so this has to run in a
+	# fresh instance of it or it would only ever see the first setting.
+	got := array[2] of string;
+	want := array[2] of {"flat", "classic"};
+	for(i := 0; i < 2; i++){
+		e->setenv("tkstyle", want[i]);
+		tc := load Tkclient Tkclient->PATH;
+		if(tc == nil)
+			return;
+		tc->init();
+		blank();
+		(top, nil) := tc->toplevel(ref Draw->Context(disp, nil, nil),
+			"", "Style", Tkclient->Appl);
+		if(top == nil){
+			report(0, "a tkclient toplevel builds offscreen");
+			return;
+		}
+		top.screenr = off.r;
+		got[i] = tk->cmd(top, "style");
+	}
+	e->setenv("tkstyle", "");
+	report(got[0] == "flat", sys->sprint(
+		"$tkstyle=flat reaches a real tkclient window (%s)", got[0]));
+	report(got[1] == "classic", sys->sprint(
+		"and anything else leaves it classic (%s)", got[1]));
+}
 
 # The widget style: whether a relief is a two-tone chisel or one
 # restrained outline.  What makes this measurable rather than a matter of
