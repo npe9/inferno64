@@ -3,6 +3,7 @@
 TARG=\
 	rivet.dis\
 	sprocket.dis\
+	starling.dis\
 
 MODULES=\
 
@@ -12,6 +13,7 @@ SYSMODULES=\
 	tk.m\
 	wmclient.m\
 	keyboard.m\
+	math.m\
 	rand.m\
 	nes.m\
 	frameclock.m\

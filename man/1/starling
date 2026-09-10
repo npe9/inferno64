@@ -1,0 +1,113 @@
+.TH STARLING 1
+.SH NAME
+starling \- a fixed shooter
+.SH SYNOPSIS
+.B games/starling
+[
+.B -t
+|
+.B -s
+|
+.B -b
+] [
+.B -q
+]
+.SH DESCRIPTION
+.I Starling
+is a shooter in the shape that genre took:
+a ship at the bottom of the screen that only moves sideways,
+attackers that fly in along a curve, settle into a swaying formation of
+eight columns by five rows, and peel off it one at a time to dive at you
+and drop something on the way past.
+A diver shot is worth double.
+Clearing the formation ends the wave and the next one dives sooner.
+.PP
+Of the three games on
+.IR nes (2)
+this is the one that tests how many sprites the library will put on a
+screen: a full formation is forty 16 by 16 characters, which is a
+hundred and sixty tile blits a frame before the shots and the
+forty-eight stars.
+.B -b
+measures exactly that; see DIAGNOSTICS.
+.PP
+Arrow keys or
+.B wasd
+to move,
+.BR x ,
+.B .
+or space to fire, two shots in the air at a time.
+.B q
+or Escape quits.
+Run it with
+.B /env/INFERNO_FPS
+set and
+.IR frameclock (2)
+reports the rate it really managed on the way out.
+.PP
+.B -q
+starts silent.
+.B -t
+runs the self test.
+.B -s
+plays a scripted opening headless and writes the frame to
+.BR starling.raw .
+.SH EXAMPLE
+.EX
+games/starling
+emu\-cocoa \-r. /dis/games/starling.dis \-b
+.EE
+.SH SOURCE
+.B /appl/games/starling.b
+.SH SEE ALSO
+.IR nes (2),
+.IR rivet (1),
+.IR sprocket (1)
+.SH DIAGNOSTICS
+.B -b
+settles a full formation with the dives held off and times 300 frames of
+step and draw into memory, with no window and no frame pacing, so the
+number is the work and not the wait.
+On this host that is about 210 microseconds a frame with the JIT and 283
+without \- forty attackers, ninety-six shots' worth of slots and
+forty-eight stars, against a 60Hz budget of 16666.
+It says
+.B SLOWER THAN 60Hz
+if it ever stops being true.
+.PP
+.B -t
+drives the same
+.I step
+the game loop drives and asserts on game state.
+It checks that a full formation enters and that every attacker reaches
+its slot, that the slots are one column and one row apart and sway
+together without leaving the screen, that the ship moves and is stopped
+by both walls, that firing is limited to two shots at once, that a hit
+starts an explosion and removes an attacker and scores, that a dive
+leaves the formation and comes back round the top, that a bomb and a
+collision each cost a ship, and that an empty formation clears the wave
+and speeds the next one up.
+.PP
+The wave generator is a small linear congruential one seeded from a
+constant under
+.BR -t ,
+because a test that plays a different game every run is not a test of
+anything in particular.
+Playing seeds it from the clock.
+.SH BUGS
+The dives are held off while the test sets a formation up.
+Without that the test sits still under attack for six hundred frames,
+loses every ship, and then measures a ship that cannot move because
+.I step
+is in its dead branch \- which reads as eight unrelated failures rather
+than as one.
+It uses the game's own
+.I divecool
+to do it; nothing test-only was added to the game.
+.PP
+There is one formation shape.
+Later waves differ only in how often an attacker dives.
+.PP
+A diver steers towards the ship weakly and by a fixed acceleration, so
+it is a threat rather than a pattern; nothing here reproduces a flight
+path laid down as data, which is how the arcade did it.

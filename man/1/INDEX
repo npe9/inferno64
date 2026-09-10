@@ -554,6 +554,7 @@ squirt squirt
 stack stack
 stackv stack
 stadium stadium
+starling starling
 status sh-std
 std sh-std
 stopwatch wm-misc
