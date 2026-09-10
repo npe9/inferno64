@@ -4469,6 +4469,38 @@ and
 conditionals, which is what AGENTS.md says and which cloud work is
 exactly where one is tempted to break.
 .NH 1
+What cannot be tested here, and why that matters
+.PP
+Console input.  Every board in this tree has a serial console and
+nothing in the repository can type at one.  The scripts drive QEMU with
+.CW "-serial file:" ,
+which is output-only; piping into
+.CW "-serial mon:stdio"
+does not deliver characters to the guest at all \(em established by
+control, not assumed: the same pipe against
+.CW virtarm64 ,
+whose console input works, is ignored exactly as pc64 ignores it.  Two
+attempts at a socket-backed harness
+.CW ( -chardev
+.CW socket
+plus a client that waits for the prompt and writes to it) connected and
+then failed to deliver, and are not in the tree.
+.PP
+That is not a small gap.  It is why
+.CW os/inferno/pc/uarti8250.c
+went without a
+.CW consuart->putc
+for the life of the board while the other eight boards had one: no test
+ever pressed a key.  The bug was found by connecting to a Compute
+Engine instance's serial console by hand, and the fix (e383ca73) is
+verified the same way, because there is no other way to verify it.
+.PP
+Anyone building that harness should validate it against a board whose
+console input is known to work before trusting a negative result from
+it.  Skipping that step is how a claim that "serial input has never
+worked on pc64" got made here on the strength of a test that could not
+have shown it either way.
+.NH 1
 What this needs that is not code
 .PP
 Every item left on the list above is blocked on something that cannot
