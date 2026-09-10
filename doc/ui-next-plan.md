@@ -431,6 +431,61 @@ now, and `tkofftest(1)` packs it at two fonts and finds it grows.
 **Native:** carries if written in Limbo; needs the kernel rebuilt if
 written in C, which is an argument for the Limbo half first.
 
+## 5a. The widgets are gross
+
+Separate from *which* widgets exist, which is section 5: the ones that do
+exist look like 1997, and that is a decision nobody has revisited rather
+than a constraint.
+
+**What actually makes them look that way**, in the order it shows:
+
+- **Hard 3D bevels everywhere.** `tkdrawrelief` in `libtk/utils.c` paints
+  a one-pixel light edge and a one-pixel dark edge, and `raised` and
+  `sunken` are the only shapes a widget has. Every button, entry, frame
+  and scrollbar is a rectangle with a chisel round it. Flat surfaces with
+  a restrained border, and a *pressed* state that is a fill change rather
+  than a bevel inversion, is most of the distance to something modern.
+- **No spacing discipline.** Padding is per-widget and ad hoc —
+  `Textpadx`, `Bitpadx`, a `-padx` here and a `-borderwidth 2` there —
+  so nothing lines up between programs. A named set of spacings, used by
+  default, is what makes a set of widgets look like one set.
+- **Square corners and one-pixel lines at every size.** The chrome now
+  scales its artwork with the font (§ *The chrome scales too*), but the
+  borders do not: a 1-pixel bevel at a 32-pixel font is a hairline. A
+  border width derived from the font, the way the button artwork now is,
+  is the same fix one layer down.
+- **The colours are flat because they were literals.** That part is done
+  — `wmtheme(2)` — but nothing yet *uses* it to do anything more than
+  reproduce the old palette. A second table is now a small change, and
+  the register is the place a lighter, quieter look would come from.
+- **No focus ring.** `tkhaskeyfocus` exists and the drawing for it is
+  commented out in `libtk/buton.c`. Which control has the keyboard is
+  invisible, which matters for anyone driving by keyboard and is a
+  three-line change to un-comment and colour properly.
+- **`tknotebook(2)`'s tabs are radiobuttons in a row**, because that is
+  what composition gets you. Making them look like tabs wants a canvas or
+  the themed layer below.
+
+**The order to do it in.** The bevel and the focus ring are `libtk` and
+affect every widget at once, so they are both the most visible and the
+easiest to get wrong; do them behind `wmtheme(2)` so the old look stays
+reachable. Spacing is next and is mostly a table. Corners and scaled
+borders are last and are cosmetic.
+
+**How to know it worked.** `tkofftest(1)` renders offscreen and reads
+pixels, so a look can be pinned the way the chrome's artwork is: the
+count of distinct values in a button, whether the focused control differs
+from an unfocused one at all, whether two widgets in a row share an edge.
+None of that says a thing about taste, but it does catch a change that
+was meant to be cosmetic and was not.
+
+**A caution worth writing down.** This is the one item in this document
+where "better" is a matter of taste rather than measurement, and where
+the person whose taste matters is not the one writing the code. The
+existing look is coherent — someone chose "Soft Plan9 Paper" — so the
+work is to make it *adjustable* first and prettier second, which is why
+the theme register came before this and not after.
+
 ## 6. Text quality beyond antialiasing
 
 `man/4/ttffs` BUGS, still true: *"No kerning or subpixel rendering is
@@ -496,7 +551,9 @@ glyphs, and of colour fonts, which need more than the 8-bit coverage
 5. **HiDPI** — the most visible, the largest, now able to reuse the
    sweep.
 6. **Widgets and text quality** — open-ended, start whenever, no
-   dependencies.
+   dependencies. Making the existing ones less ugly (§ 5a) is the part a
+   person notices first, and the theme register is already the place to
+   put it.
 
 The first four are each a few days at most. The fifth is the one that
 would change what the system looks like to someone who has never used it.

@@ -1217,7 +1217,7 @@ tkcvsdtag(Tk *tk, char *arg, char **val)
 {
 	TkName *f, *dt;
 	char buf[Tkmaxitem];
-	TkCtag **l, *t, *it, *tf;
+	TkCtag **l, *t, *tnext, *it, *tf;
 
 	USED(val);
 
@@ -1259,7 +1259,28 @@ tkcvsdtag(Tk *tk, char *arg, char **val)
 			return TkBadtg;
 	}
 
-	for(t = f->obj; t; t = t->taglist) {
+	/*
+	 * Step to the next tag before the body runs, because the body can
+	 * free the one we are standing on.
+	 *
+	 * "dtag X Y" deletes tag Y from the items tagged X, and nothing
+	 * stops X and Y being the same tag - appl/wm/ftree/items.b writes
+	 * ".c dtag " + name + " " + name, which is the natural way to take a
+	 * tag off everything that has it. Then dt is f, the inner loop walks
+	 * the very list the outer one is iterating, and the free() below
+	 * releases the node t points at. Reading t->taglist afterwards read
+	 * a block that had already been handed out again, so wm/ftree died
+	 * on startup with a faulting address that was plainly text -
+	 * 0x3c636972656e6557 - which is what a freed list node reused for a
+	 * string looks like when it is followed as a pointer.
+	 *
+	 * The inner loop breaks at the FIRST item with a matching item, and
+	 * t is in that same list when dt is f, so it can never free a node
+	 * the outer loop has yet to reach beyond this one. Saving the single
+	 * successor is enough.
+	 */
+	for(t = f->obj; t; t = tnext) {
+		tnext = t->taglist;
 		l = (TkCtag **)&dt->obj;
 		for(it = dt->obj; it; it = it->taglist) {
 			if(t->item == it->item) {

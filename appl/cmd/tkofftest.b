@@ -283,6 +283,7 @@ init(nil: ref Draw->Context, nil: list of string)
 
 	checkdefault();
 	checklayout();
+	checkcanvastag();
 	checkplaintitle();
 	checktheme();
 	checknotebook();
@@ -617,6 +618,52 @@ shown(top: ref Tk->Toplevel, nb: ref Notebook): string
 		if(tk->cmd(top, "winfo manager " + nb.page(i)) != "")
 			o += string i;
 	return o;
+}
+
+# "dtag X Y" takes tag Y off the items tagged X, and X and Y may be the
+# same tag - which is the natural way to take a tag off everything that
+# has it, and what appl/wm/ftree/items.b does.  That made the deletion
+# walk the list it was freeing from, and wm/ftree died on startup taking
+# emu with it.  A canvas is not something this test otherwise touches;
+# this is here because the crash was.
+#
+# How it behaves with the bug back is worth knowing before relying on it:
+# not cleanly.  The corrupted list becomes circular and libtk spins inside
+# a single tk->cmd(), so this hangs rather than reporting - no Limbo
+# timeout can interrupt C.  A suite runner notices; a reader of the output
+# does not.  Worth having anyway, since the bug it guards took emu down
+# entirely, but it is not a check that says what went wrong.
+checkcanvastag()
+{
+	blank();
+	top := offscreen();
+	if(top == nil)
+		return;
+	tk->cmd(top, "canvas .c -width 200 -height 100");
+	tk->cmd(top, "pack .c");
+	for(i := 0; i < 4; i++){
+		e := tk->cmd(top, sys->sprint(
+			".c create rectangle %d 10 %d 40 -tags mark", i*20, i*20+10));
+		if(len e > 0 && e[0] == '!'){
+			sys->print("     no canvas rectangles (%s); tags not checked\n", e);
+			return;
+		}
+	}
+	map(top);
+	before := tk->cmd(top, ".c find withtag mark");
+
+	# the aliasing case: both names the same tag
+	tk->cmd(top, ".c dtag mark mark");
+	after := tk->cmd(top, ".c find withtag mark");
+
+	report(before != "" && after == "", sys->sprint(
+		"a tag can be deleted from the items that have it (%#q then %#q)",
+		before, after));
+
+	# and the canvas is still usable, which is the half the crash took
+	still := tk->cmd(top, ".c create rectangle 0 50 10 60 -tags later");
+	report(len still > 0 && still[0] != '!', sys->sprint(
+		"and the canvas still works afterwards (%#q)", still));
 }
 
 # A window without a titlebar has no .Wm_t.title, and asking a widget
