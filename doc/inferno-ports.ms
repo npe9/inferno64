@@ -19525,3 +19525,156 @@ That is the point.  A check that cannot fail is not evidence, and for
 as long as this one only printed, the whole HID keyboard path \(em split
 interrupt transfers, usbd's decode, the console queue \(em was carried
 on the assumption that somebody had once read the lines.
+.NH 1
+The container was leaning on binaries the tree says do not belong in it
+.PP
+The board suite's container bind-mounts the tree read-only and boots
+the kernel binaries in it, and the argument for that was written down
+here as
+.I "the kernels are committed binaries, so the image never goes stale."
+That is an accident described as a design.
+.PP
+.CW .gitignore
+line 392 is
+.CW os/inferno/*/i[a-z]*[0-9a-z] ,
+and the comment above it says what it is for:
+.I "kernel binaries: os/inferno/<board>/i<board>."
+Every one of the eleven tracked kernels matches that rule.  They are
+tracked because they were added on 2026-08-23 and the rule arrived on
+2026-09-03, and git does not apply an ignore rule to a file it is
+already tracking.  The two Pi kernels were never added, which is the
+same accident the other way round: it is the real reason the container
+cannot run those boards, and this document said it was the patched
+qemu.
+.PP
+The stale
+.CW isifiveu
+found last round is what leaning on that looks like.  So the fix is not
+to commit them more carefully; it is to build.
+.NH 2
+Linux/arm64, so the tree can build itself
+.PP
+The tree has
+.CW Linux/386 ,
+.CW amd64 ,
+.CW arm ,
+.CW power
+and
+.CW spim ,
+and no
+.CW arm64 .
+On an ARM Linux machine, or in a container on an Apple Silicon Mac,
+.CW makemk.sh
+reaches for the MacOSX headers and stops.  The platform is five small
+files and two one-line conditionals, and every one of them was found by
+the build stopping on it:
+.IP \(bu
+.CW mkfiles/mkfile-Linux-arm64 ,
+from the amd64 one with the include path and the platform define
+changed, plus
+.CW -fcommon .
+That last is not cosmetic.  gcc 10 stopped merging tentative
+definitions, and
+.CW utils/zc 's
+.CW gc.h
+declares
+.CW hintabsize
+in a header several files include, so the link fails with
+.I "multiple definition."
+The same flag is missing from
+.CW mkfile-Linux-amd64 ,
+which suggests that platform has not been built with a current gcc
+either; it is left alone because nothing here tested it.
+.IP \(bu
+.CW Linux/arm64/include :
+.CW lib9.h
+and
+.CW fpuctl.h
+verbatim from amd64, since what differs between those two is the
+operating system.
+.CW emu.h
+takes the architecture's half from
+.CW MacOSX/arm64
+\(em an FPU env of 16 bytes rather than 28, a 64K kernel stack, and
+.CW "mov x0, sp"
+for the current-process pointer.
+.IP \(bu
+.CW lib9/getcallerpc-Linux-arm64.c ,
+which asks the compiler, as the amd64 and Mac arm64 ones do.
+.IP \(bu
+.CW lib9/setfcr-Linux-arm64.c ,
+the same file as
+.CW setfcr-MacOSX-arm64.c ,
+because FPCR and FPSR are the architecture's registers and not the
+operating system's.  They are two files because
+.CW lib9/mkfile-Posix
+names this one
+.CW setfcr-$SYSTARG-$OBJTYPE.c
+and there is nowhere to put a shared one without changing that rule for
+every platform; each now says to change the other.  The one real
+difference is the signatures: this header declares the four as
+.CW u32
+where the Mac's says
+.CW ulong ,
+and on LP64 those are not the same type.
+.IP \(bu
+.CW lib9/pow10.c
+and
+.CW emu/port/kproc-pthreads.c ,
+whose conditionals name
+.CW LINUX_AMD64
+and
+.CW LINUX_ARM
+for two things that are about Linux and glibc rather than about an
+instruction set \(em the
+.CW _MATH_H
+guard, and
+.CW pthread_yield
+being
+.CW sched_yield .
+.NH 2
+What it buys
+.PP
+.CW "docker/boardsuite.sh build"
+copies the read-only tree, points
+.CW mkconfig
+at the copy, and builds mk, the libraries, the kenc compilers, limbo
+and the kernels, then runs the suite on what it built.
+.PP
+Two things about the copy cost a run each.
+.CW mkconfig 's
+.CW ROOT
+is an absolute path and its
+.CW SYSHOST
+is
+.CW MacOSX ;
+both are rewritten.  And the tree carries the host's object files \(em
+mk is a timestamp build, so it sees
+.CW lib9/argv0.o
+newer than
+.CW argv0.c ,
+does not rebuild it, and
+.CW ar
+puts a Mach-O object into a Linux archive, after which the link fails
+with
+.CW "undefined reference to argv0"
+and says nothing about why.  Every
+.CW .o
+is deleted from the copy first; the board objects are
+.CW .5 ,
+.CW .7 ,
+.CW .j
+and so on, and are not touched.
+.PP
+The seven configurations the container runs come back with the same
+marker sets built either way \(em 32, 34, 5, 42, 2, 44, 44.  That is
+the result worth having: the same source, built by Apple clang and by
+Debian gcc, run under two different qemus, says the same thing about
+the boards.  The Pi kernels build in there too; what they still lack is
+the patched qemu, which is a source build this image does not carry.
+.PP
+Removing the eleven binaries from the repository is a separate decision
+and not one this session should take on its own: they include
+.CW ipc64 ,
+which another session is working on, and boards this one was never
+asked to touch.

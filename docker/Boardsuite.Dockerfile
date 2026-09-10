@@ -7,10 +7,22 @@
 # it exercises the paths the Mac never takes: mkfs.vfat and mcopy
 # instead of hdiutil, and a qemu built by Debian rather than by hand.
 #
-# It carries no Inferno source and builds nothing from this tree.  The
-# kernels are committed binaries and the tree is bind-mounted at run
-# time, so this image does not go stale when a kernel is relinked, and
-# mkconfig's absolute ROOT never has to agree with anything in here.
+# It carries no Inferno source.  The tree is bind-mounted read-only at
+# run time, and there are two ways to get a kernel to boot.
+#
+# The quick one boots the kernel binaries that are in the tree.  Those
+# should not be in the tree: .gitignore says "kernel binaries:
+# os/inferno/<board>/i<board>" and means it, and the eleven that are
+# tracked are tracked only because they were added before that rule
+# arrived, after which git stopped applying it to them.  The two Pi
+# kernels were never added, which is exactly why the quick path cannot
+# run those boards.
+#
+# The other builds the tree -- mk, the libraries, the kenc compilers,
+# limbo and the kernels -- from source in here, with docker/build-and-run,
+# and needs nothing in the repository that the repository says should
+# not be there.  It wants build-essential, which is why that is
+# installed below, and it takes minutes rather than seconds.
 #
 # Seven of the thirteen configurations run in it.  The six Pi ones do
 # not:
@@ -33,6 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	mtools \
 	python3 \
 	procps \
+	build-essential \
 	&& rm -rf /var/lib/apt/lists/*
 
 # mtools refuses a raw image with no partition table unless told the

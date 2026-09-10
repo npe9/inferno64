@@ -32,13 +32,39 @@ gave sifiveu three markers where the baseline says five.  The committed
 isifiveu had been linked before the sd device went into its config, and
 so had virtarm64's virtarm64.c -- 22 devices where the config names 26.
 Neither was noticed because every run until this one used a working
-tree where both had since been rebuilt.  Running the checkout rather
-than the tree is what found it, which is the argument for doing it that
-way.
+tree where both had since been rebuilt.
 
-The two Pi kernels are not in the repository at all, so a fresh
-checkout cannot run the configurations built on them even with the
-patched qemu.  That is why the container runs the seven it does.
+It is worth being plain about why those binaries are there at all: they
+should not be.  The tree's own .gitignore says so, in its own words --
+"kernel binaries: os/inferno/<board>/i<board>" -- and every one of the
+eleven tracked kernels matches that rule.  They are tracked because
+they were added on 2026-08-23 and the rule arrived on 2026-09-03, and
+git does not apply an ignore rule to a file it is already tracking.  So
+the quick path rests on an accident, and the stale sifiveu is what an
+accident like that looks like when it is leaned on.  The two Pi kernels
+were never added, which is the same accident going the other way: it is
+why the quick path cannot run those boards.
+
+BUILDING INSTEAD.  docker/boardsuite.sh build builds the tree from
+source in the container and runs the suite on what it built: mk, the
+libraries, the kenc compilers, limbo and the kernels.  It needs nothing
+in the repository that the repository says should not be there.  It
+takes minutes rather than seconds, and it needs Linux/arm64 to exist as
+a host platform, which it now does.
+
+Two things about the copy it builds in are worth knowing, because both
+cost a run.  mkconfig carries an absolute ROOT and a SYSHOST, and both
+are the Mac's -- they are rewritten.  And the tree carries the host's
+object files: mk is a timestamp build, so it sees lib9/argv0.o newer
+than argv0.c, does not rebuild it, and ar puts a Mach-O object into a
+Linux archive, after which the link fails with "undefined reference to
+argv0" and says nothing about why.  Every .o is deleted from the copy
+first.
+
+The seven come back with the same marker sets either way, which is the
+result worth having: the same source built by Apple clang and by Debian
+gcc, run under two different qemus, says the same thing about the
+boards.
 
 It is not the same run twice.  It takes makefat()'s mkfs.vfat and mcopy
 path, which the Mac never takes; it runs a qemu Debian built rather

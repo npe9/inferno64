@@ -1,0 +1,76 @@
+#!/bin/sh
+# build-and-run - build the tree from source in the container, then run
+# the suite against what was built.
+#
+# The ordinary path bind-mounts the tree read-only and boots the kernel
+# binaries that are in it.  Those binaries should not be in it: the
+# tree's own .gitignore says so -- "kernel binaries:
+# os/inferno/<board>/i<board>" -- and the eleven that are tracked are
+# tracked only because they were added on 2026-08-23 and the rule
+# arrived on 2026-09-03, after which git stopped applying it to them.
+# The two Pi kernels were never added, which is why the ordinary path
+# cannot run those boards at all.
+#
+# So this path builds instead.  It copies the read-only tree, points
+# mkconfig at the copy, and builds mk, the libraries, the kenc
+# compilers, limbo and the kernels, then runs the suite on them.  It
+# takes minutes rather than seconds, and it needs nothing in the
+# repository that the repository says should not be there.
+set -e
+
+cp -a /src /build
+cd /build
+
+# mkconfig carries an absolute ROOT and the host it was configured for.
+# Both are the Mac's; neither is true in here.
+sed -i -e 's|^ROOT=.*|ROOT=/build|' -e 's|^SYSHOST=MacOSX|SYSHOST=Linux|' mkconfig
+
+# And the copy carries the host's object files.  mk is a timestamp
+# build: it sees lib9/argv0.o newer than argv0.c, does not rebuild it,
+# and ar puts a Mach-O object into a Linux archive -- after which the
+# link fails with "undefined reference to argv0" and says nothing about
+# why.  Every .o in this tree belongs to whatever host last built it;
+# none of them belong to this one.  The board objects are safe, being
+# .5 .7 .j and so on rather than .o.
+find /build -name '*.o' -delete
+
+log=/build/build.log
+say() { echo "build: $*" >&2; }
+
+say "mk"
+sh makemk.sh > $log 2>&1 || { tail -20 $log >&2; exit 1; }
+PATH=/build/Linux/arm64/bin:$PATH
+export PATH
+mk mkdirs >> $log 2>&1 || true
+
+# The order is the dependency order, and each name here is one the
+# build stopped on when it was missing.
+for d in lib9 libbio utils/libregexp libmath libmp libsec; do
+	say "$d"
+	(cd /build/$d && mk install) >> $log 2>&1 || { tail -20 $log >&2; exit 1; }
+done
+
+say "utils (the compilers)"
+(cd /build/utils && mk install) >> $log 2>&1 || { tail -20 $log >&2; exit 1; }
+
+say "limbo"
+(cd /build/limbo && mk install) >> $log 2>&1 || { tail -20 $log >&2; exit 1; }
+
+# Only the boards the suite can run in here.  The Pi ones build fine --
+# that is the point of building rather than shipping binaries -- but
+# they need the patched qemu of tools/qemu-patches, which this image
+# does not carry.
+for b in virt virtarm64 virt32 sifiveu; do
+	say "os/inferno/$b"
+	(cd /build/os/inferno/$b && mk) >> $log 2>&1 || { tail -20 $log >&2; exit 1; }
+done
+
+say "built; running the suite"
+
+# The same seven the image's CMD names.  Not the whole list: the four
+# Pi configurations want the patched qemu, and the suite refuses before
+# it starts rather than part way through, which is right but makes a
+# bare "build" look like a failure of the build.
+[ $# -eq 0 ] && set -- virtarm64 virtarm64-peer sifiveu virt virt32 virt-peer peer-mixed
+
+exec /build/tools/boardsuite/run "$@"

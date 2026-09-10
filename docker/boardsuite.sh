@@ -5,10 +5,15 @@
 #	docker/boardsuite.sh virt		one of them
 #	docker/boardsuite.sh -v virt		the suite's own flags pass through
 #	docker/boardsuite.sh sh			a shell in the image
+#	docker/boardsuite.sh build		build the tree in the
+#						container first, and run
+#						what was built
 #
-# The tree is bind-mounted, not copied: these kernels are committed
-# binaries, so the image never goes stale when one is relinked, and the
-# absolute ROOT in mkconfig never has to agree with anything inside it.
+# The tree is bind-mounted read-only.  By default the suite boots the
+# kernel binaries that happen to be in it; "build" instead builds them
+# from source inside the container, which is the honest way round --
+# the tree's own .gitignore says kernel binaries do not belong in it.
+# See docker/build-and-run.
 set -e
 
 here=`dirname "$0"`
@@ -35,6 +40,10 @@ run='docker run --rm --platform '"$platform"' -v '"$root"':/src:ro -e BOARDSUITE
 
 if [ $# -eq 0 ]; then
 	exec $run "$image"
+fi
+if [ "$1" = build ]; then
+	shift
+	exec $run --entrypoint /src/docker/build-and-run "$image" "$@"
 fi
 if [ "$1" = sh ]; then
 	shift
