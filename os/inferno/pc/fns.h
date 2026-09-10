@@ -160,7 +160,7 @@ ulong	kzeromap(ulong, ulong, int);
 void	nmiscreen(void);
 int	kbdinready(void);
 
-#define	waserror()	(up->nerrlab++, setlabel(&up->errlab[up->nerrlab-1]))
+/* waserror() is os/inferno/port/portfns.h's now; this had its own copy */
 #define getcallerpc(x)	(((uintptr*)(x))[-1])
 #define KADDR(a)	((void*)((uintptr)(a)|KZERO))
 #define PADDR(a)	((uintptr)(a)&~KZERO)

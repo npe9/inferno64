@@ -141,7 +141,7 @@ mach0init(void)
 
 	machinit();
 
-	active.machs = 1;
+	active.machs[0] = 1;
 	active.exiting = 0;
 }
 
@@ -187,8 +187,8 @@ init0(void)
 	 */
 	o = up->env;
 	o->pgrp->slash = namec("#/", Atodir, 0, 0);
-	cnameclose(o->pgrp->slash->name);
-	o->pgrp->slash->name = newcname("/");
+	pathclose(o->pgrp->slash->path);
+	o->pgrp->slash->path = newpath("/");
 	o->pgrp->dot = cclone(o->pgrp->slash);
 
 	chandevinit();

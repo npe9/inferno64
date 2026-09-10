@@ -4,6 +4,13 @@ typedef struct Conf	Conf;
 typedef union FPsave	FPsave;
 typedef struct FPx87state FPx87state;
 typedef struct FPssestate FPssestate;
+/*
+ * Inferno names a machine's floating point save area FPU, and
+ * os/inferno/port/portdat.h puts one in every Osenv.  This machine
+ * directory came from 9front, where the same thing is FPsave --
+ * see the same typedef in os/inferno/pc64/dat.h.
+ */
+typedef union FPsave	FPU;
 typedef struct PFPU	PFPU;
 typedef ulong Instr;
 typedef struct ISAConf	ISAConf;
@@ -229,7 +236,7 @@ struct Mach
 struct
 {
 	Lock;
-	int	machs;			/* bitmap of active CPUs */
+	char	machs[MAXMACH];		/* one byte per active CPU */
 	int	exiting;		/* shutdown */
 	int	ispanic;		/* shutdown in response to a panic */
 	int	thunderbirdsarego;	/* lets the added processors continue to schedinit */
