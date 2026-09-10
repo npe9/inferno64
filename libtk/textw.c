@@ -21,11 +21,7 @@ extern void voiceannouncetext(char*);   /* voice(3); see man 3 voice */
 
 #define	O(t, e)		((long)(&((t*)0)->e))
 
-/* Layout constants */
-enum {
-	Textpadx	= 2,
-	Textpady	= 0,
-};
+/* Layout constants moved into tkspaces[] in tk.h. */
 
 typedef struct Interval {
 	int	lo;
@@ -176,8 +172,8 @@ tktext(TkTop *t, char* arg, char **ret)
 
 	tk->relief = TKsunken;
 	tk->borderwidth = 1;
-	tk->ipad.x = Textpadx * 2;
-	tk->ipad.y = Textpady * 2;
+	tk->ipad.x = tkspace(tk)->textpadx * 2;
+	tk->ipad.y = tkspace(tk)->textpady * 2;
 	tk->flag |= Tktakefocus;
 	tkt->sborderwidth = 0;
 	tkt->inswidth = 2;

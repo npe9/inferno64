@@ -25,8 +25,6 @@
 
 /* Layout constants */
 enum {
-	Entrypady	= 0,
-	Entrypadx	= 0,
 	Inswidth = 2,
 
 	Ecursoron = 1<<0,
@@ -118,13 +116,13 @@ TkOption opts[] =
 static int
 xinset(Tk *tk)
 {
-	return Entrypadx + tk->highlightwidth;
+	return tkspace(tk)->entrypadx + tk->highlightwidth;
 }
 
 static int
 yinset(Tk *tk)
 {
-	return Entrypady + tk->highlightwidth;
+	return tkspace(tk)->entrypady + tk->highlightwidth;
 }
 
 static void

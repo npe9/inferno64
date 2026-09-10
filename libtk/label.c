@@ -121,15 +121,15 @@ tksizelabel(Tk *tk)
 	h = 0;
 	tkl->textheight = 0;
 	if(tkl->img != nil) {
-		w = tkl->img->w + 2*Bitpadx;
-		h = tkl->img->h + 2*Bitpady;
+		w = tkl->img->w + 2*tkspace(tk)->bitpadx;
+		h = tkl->img->h + 2*tkspace(tk)->bitpady;
 	} else if(tkl->bitmap != nil) {
-		w = Dx(tkl->bitmap->r) + 2*Bitpadx;
-		h = Dy(tkl->bitmap->r) + 2*Bitpady;
+		w = Dx(tkl->bitmap->r) + 2*tkspace(tk)->bitpadx;
+		h = Dy(tkl->bitmap->r) + 2*tkspace(tk)->bitpady;
 	} else if(tkl->text != nil) {
 		p = tkstringsize(tk, tkl->text);
-		w = p.x + 2*Textpadx;
-		h = p.y + 2*Textpady;
+		w = p.x + 2*tkspace(tk)->labelpadx;
+		h = p.y + 2*tkspace(tk)->labelpady;
 		if(tkl->ul != -1 && tkl->ul > strlen(tkl->text))
 			tkl->ul = strlen(tkl->text);	/* underline all */
 		tkl->textheight = p.y;
@@ -169,8 +169,8 @@ tklabelmargin(Tk *tk)
 		else if (tkl->bitmap != nil)
 			img = tkl->bitmap;
 		if (img != nil)
-			return Bitpadx;
-		return Textpadx;
+			return tkspace(tk)->bitpadx;
+		return tkspace(tk)->labelpadx;
 
 	default:
 		fprint(2, "label margin: type %d\n", tk->type);
@@ -305,8 +305,8 @@ tkdrawlabel(Tk *tk, Point orig)
 	else if (tkl->bitmap != nil)
 		img = tkl->bitmap;
 	if(img != nil) {
-		s.min.x = p.x + Bitpadx;
-		s.min.y = p.y + Bitpady;
+		s.min.x = p.x + tkspace(tk)->bitpadx;
+		s.min.y = p.y + tkspace(tk)->bitpady;
 		s.max.x = s.min.x + Dx(img->r);
 		s.max.y = s.min.y + Dy(img->r);
 		s = rectaddpt(s, u);
@@ -315,8 +315,8 @@ tkdrawlabel(Tk *tk, Point orig)
 		else
 			draw(i, s, img, nil, ZP);
 	} else if(tkl->text != nil) {
-		u.x += Textpadx;
-		u.y += Textpady;
+		u.x += tkspace(tk)->labelpadx;
+		u.y += tkspace(tk)->labelpady;
 		ct = tkgc(e, fgnd);
 		
 		p.y += (h - tkl->textheight) / 2;

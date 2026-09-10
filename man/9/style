@@ -53,8 +53,25 @@ false is drawn in
 when it is chosen.
 The relief was reinforcing those, not carrying them.
 .PP
+A style also picks the spacings a widget insets its contents by \- the
+padding around a label's or button's text, around an image in a label,
+inside an
+.IR entry (9),
+and inside a
+.IR text (9).
+The
+.B flat
+row is roomier than
+.BR classic ,
+and makes the label and text insets agree, which they did not: they were
+separate constants in separate files that happened to differ by a pixel.
+.PP
 Changing the style repaints every widget in the toplevel, since every
 border is drawn from this.
+The spacings, though, are read when a widget is
+.IR configured ,
+so they apply to widgets built after the command and not to ones already
+on the screen \- set the style before building the interface.
 .SH EXAMPLE
 .EX
 style flat
@@ -65,10 +82,27 @@ style flat
 .IR button (9),
 .IR wmtheme (2)
 .SH BUGS
-It changes borders only.
-The colours, the padding and the corner shape are what else would have
-to move for the two styles to look like two designs rather than one
-design with its edges redrawn, and none of those is here.
+A
+.B style
+command does not resize the widgets already on the screen, only
+restyles their borders, so a program that changes style late gets flat
+borders with classic spacings.
+This is deliberate rather than unfinished.
+Re-measuring them works, and was tried: the new size request travels up
+to the master and on to the toplevel, which re-fits itself to its
+contents, so a single
+.B style
+command resized the whole window and moved every widget in it.
+A window that jumps size because its borders were restyled is a worse
+thing than a style that applies its spacings to what is built after it.
+.PP
+It changes borders and spacings.
+The colours and the corner shape are what else would have to move for
+the two styles to look like two designs rather than one design with its
+edges redrawn, and neither of those is here.
+The colours already have a register of their own in
+.IR wmtheme (2),
+which nothing yet connects to this.
 .PP
 A
 .I frame

@@ -40,10 +40,9 @@ struct TkLabel
 
 /* Layout constants */
 enum {
-	Textpadx	= 3,
-	Textpady	= 0,
-	Bitpadx	= 0,	/* Bitmap padding in labels */
-	Bitpady	= 0,
+	/* Textpadx/Textpady/Bitpadx/Bitpady moved into tkspaces[] in tk.h,
+	 * so that a style can change them and so that the name means one
+	 * thing across the toolkit. */
 	CheckButton	= 10,
 	CheckButtonBW	= 1,
 	ButtonBorder	= 4,

@@ -55,6 +55,37 @@ static struct Cmd cmdmain[] =
 	"winfo",	tkwinfo,
 };
 
+/*
+ * The two spacing rows.  Classic is what was compiled in before the
+ * register existed - label.h's Textpadx 3 / Textpady 0, Bitpad 0,
+ * entry.c's Entrypad 0, textw.c's own Textpadx 2 / Textpady 0 - so a
+ * classic toplevel measures every widget exactly as it always did, and
+ * that is worth keeping true: these numbers reach every size computation
+ * in the toolkit, and a change of one pixel here moves every layout in
+ * every program.
+ *
+ * The flat row is roomier, and deliberately makes the two that used to
+ * disagree agree.  A label and a text widget packed together now inset
+ * their contents by the same amount, which is the thing the scattered
+ * constants made impossible to arrange.
+ */
+TkSpace	tkspaces[] =
+{
+	/* labelpadx, labelpady, bitpadx, bitpady, entrypadx, entrypady, textpadx, textpady */
+	{ 3, 0, 0, 0, 0, 0, 2, 0 },	/* TkSclassic */
+	{ 8, 4, 2, 2, 4, 3, 4, 3 },	/* TkSflat */
+};
+
+TkSpace*
+tkspace(Tk *tk)
+{
+	if(tk == nil || tk->env == nil || tk->env->top == nil)
+		return &tkspaces[TkSclassic];
+	if((uint)tk->env->top->style >= nelem(tkspaces))
+		return &tkspaces[TkSclassic];
+	return &tkspaces[tk->env->top->style];
+}
+
 char*	tkfont;
 
 /*
@@ -937,6 +968,17 @@ tkstylecmd(TkTop *t, char *arg, char **ret)
 		return TkBadvl;
 
 	/*
+	 * Only the BORDER of an existing widget changes here.  The spacings
+	 * in tkspaces[] are read when a widget is configured, and a widget
+	 * that changed size would push a new size request up to its master
+	 * and on to the toplevel, which re-fits itself to its contents: one
+	 * `style' command resized the whole window and moved every widget
+	 * in it.  A window that jumps size because its borders were restyled
+	 * is worse than one whose spacings only apply to what it builds
+	 * afterwards, so a program sets the style before it builds its
+	 * widgets - which is what the man page says and what style(9)'s
+	 * BUGS records.
+	 *
 	 * Every widget's border is drawn from this, so every widget has to
 	 * be told, not just the one the command was aimed at.  tkdirty()
 	 * only PROPAGATES dirtiness to masters and to views under a

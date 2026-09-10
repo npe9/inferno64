@@ -349,8 +349,8 @@ tkdrawbutton(Tk *tk, Point orig)
 	else if (tkl->bitmap != nil)
 		img = tkl->bitmap;
 	if (img != nil) {
-		s.min.x = p.x + Bitpadx;
-		s.min.y = p.y + Bitpady;
+		s.min.x = p.x + tkspace(tk)->bitpadx;
+		s.min.y = p.y + tkspace(tk)->bitpady;
 		s.max.x = s.min.x + Dx(img->r);
 		s.max.y = s.min.y + Dy(img->r);
 		s = rectaddpt(s, u);
@@ -359,8 +359,8 @@ tkdrawbutton(Tk *tk, Point orig)
 		else
 			draw(i, s, img, nil, ZP);
 	} else if(tkl->text != nil) {
-		u.x += Textpadx;
-		u.y += Textpady;
+		u.x += tkspace(tk)->labelpadx;
+		u.y += tkspace(tk)->labelpady;
 		ct = tkgc(e, fgnd);
 		
 		p.y += (h - tkl->textheight) / 2;
@@ -427,7 +427,7 @@ tkbuttonmargin(Tk *tk)
 	case TKbutton:
 		if (tkl->img != nil || tkl->bitmap != nil)
 			return 0;
-		return Textpadx+tk->highlightwidth;
+		return tkspace(tk)->labelpadx+tk->highlightwidth;
 	case TKcheckbutton:
 	case TKradiobutton:
 		return CheckButton + 2*CheckButtonBW + 2*ButtonBorder;

@@ -687,20 +687,23 @@ checkstyle()
 	# version of this check did, and it reported no difference where
 	# there plainly is one.
 	tk->cmd(top, "frame .f -width 80 -height 40 -borderwidth 2 -relief raised");
-	tk->cmd(top, "checkbutton .c -text {Wrap} -indicatoron 0 -borderwidth 2 -variable cbv");
 	tk->cmd(top, "pack .f");
-	tk->cmd(top, "pack .c");
+	mkcheck(top);
 	map(top);
 
 	was := tk->cmd(top, "style");
-	r := tk->rect(top, ".f", Tk->Border);
 
+	# The rectangle has to be fetched AFTER each change, not once at the
+	# start: a style sets the spacings too, so the widget is a different
+	# size and in a different place afterwards.  Measured through the old
+	# rectangle both styles read 3 values - not because they look alike
+	# but because the reading was of the wrong pixels.
 	tk->cmd(top, "style classic");
 	tk->cmd(top, "update");
-	classic := levels(r);
+	classic := levels(tk->rect(top, ".f", Tk->Border));
 	tk->cmd(top, "style flat");
 	tk->cmd(top, "update");
-	flat := levels(r);
+	flat := levels(tk->rect(top, ".f", Tk->Border));
 
 	report(was == "classic",
 		sys->sprint("the default style is classic (%s)", was));
@@ -718,17 +721,16 @@ checkstyle()
 	# work, so it is checked in BOTH styles - a flat look that quietly
 	# stopped saying which option is chosen would be a regression no
 	# count of grey levels would notice.
-	cr := tk->rect(top, ".c", Tk->Border);
 	bad := "";
 	for(sl := list of {"classic", "flat"}; sl != nil; sl = tl sl){
 		st := hd sl;
 		tk->cmd(top, "style " + st);
 		tk->cmd(top, ".c deselect");
 		tk->cmd(top, "update");
-		off0 := dominant(cr);
+		off0 := dominant(tk->rect(top, ".c", Tk->Border));
 		tk->cmd(top, ".c select");
 		tk->cmd(top, "update");
-		on := dominant(cr);
+		on := dominant(tk->rect(top, ".c", Tk->Border));
 		# Not ink(): that counts pixels which are not the commonest
 		# value, and a fill which merely CHANGES COLOUR leaves that
 		# count exactly where it was.  It read 366 either way in both
@@ -741,7 +743,50 @@ checkstyle()
 		"an indicator-less checkbutton still shows its state%s",
 		badly(bad)));
 
+	# The spacings moved out of four scattered per-file constants into
+	# one register, and the flat row is roomier.  Without this the
+	# register's interesting row would never be read by any test: the
+	# classic row is exercised by every other check in this file, which
+	# is precisely why it proves nothing about the table working.
+	#
+	# A spacing is read when a widget is CONFIGURED, so the widget is
+	# destroyed and built again rather than merely restyled - which is
+	# how a program uses this and what style(9) says to do.  Restyling
+	# in place and expecting the size to follow was tried: the new size
+	# request travels up to the toplevel, which re-fits itself to its
+	# contents, and one command resized the window and moved every
+	# widget in it.
 	tk->cmd(top, "style classic");
+	tk->cmd(top, "destroy .c");
+	mkcheck(top);
+	tk->cmd(top, "update");
+	(cw, ch) := size(top, ".c");
+	tk->cmd(top, "style flat");
+	tk->cmd(top, "destroy .c");
+	mkcheck(top);
+	tk->cmd(top, "update");
+	(fw, fh) := size(top, ".c");
+	sys->print("     checkbutton classic %dx%d, flat %dx%d\n", cw, ch, fw, fh);
+	report(fw > cw && fh > ch, sys->sprint(
+		"the flat style insets a widget's contents further (%dx%d against %dx%d)",
+		fw, fh, cw, ch));
+
+	tk->cmd(top, "style classic");
+}
+
+# the one widget whose relief WAS its state, built the same way every time
+mkcheck(top: ref Tk->Toplevel)
+{
+	tk->cmd(top, "checkbutton .c -text {Wrap} -indicatoron 0 " +
+		"-borderwidth 2 -variable cbv");
+	tk->cmd(top, "pack .c");
+}
+
+# a widget's own width and height, as the toolkit sized it
+size(top: ref Tk->Toplevel, w: string): (int, int)
+{
+	r := tk->rect(top, w, Tk->Border);
+	return (r.dx(), r.dy());
 }
 
 badly(bad: string): string

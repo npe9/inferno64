@@ -478,10 +478,29 @@ than a constraint.
   give — so the negative control was run deliberately afterwards
   (`if(0 &&` on the branch): 3 against 3 with it disabled, 2 against 3
   with it back.
-- **No spacing discipline.** Padding is per-widget and ad hoc —
-  `Textpadx`, `Bitpadx`, a `-padx` here and a `-borderwidth 2` there —
-  so nothing lines up between programs. A named set of spacings, used by
-  default, is what makes a set of widgets look like one set.
+- ~~**No spacing discipline.**~~ **Done — `tkspaces[]` in `tk.h`.** The
+  padding was per-widget and ad hoc, and worse than "ad hoc": `label.h`
+  called 3 pixels `Textpadx` and `textw.c` called 2 pixels the *same
+  name*, in the same toolkit, in different files. A label and a text
+  widget packed side by side could not line up, and nothing said why.
+  They are now one named register with a row per style, named apart
+  (`labelpadx`, `textpadx`) so the discrepancy is visible rather than
+  accidental, and the flat row makes them agree.
+
+  **The classic row is the old numbers exactly**, and that is checked,
+  not asserted: every size `tkofftest(1)` reports — `checkbutton 100x20
+  -> 188x32`, `title ends 292, 4 buttons from 820, bar 898x20` — is
+  unchanged to the pixel, and `temple/smoketest` still loads 297 of 297.
+
+  **Spacings apply at configure time, not on restyle, and that is a
+  decision.** Re-measuring existing widgets works and was implemented:
+  the new size request travels up to the master and on to the toplevel,
+  which re-fits itself to its contents — one `style` command resized the
+  whole window and moved every widget in it (a packed frame went from
+  x=408 to x=0). A window that jumps size because its borders were
+  restyled is worse than a style whose spacings apply to what is built
+  after it, so the re-measure was taken back out and `style(9)` says to
+  set the style before building the interface.
 - **Square corners and one-pixel lines at every size.** The chrome now
   scales its artwork with the font (§ *The chrome scales too*), but the
   borders do not: a 1-pixel bevel at a 32-pixel font is a hairline. A
@@ -509,8 +528,8 @@ the switch is `style(9)` rather than `wmtheme(2)`, because the choice has
 to be made where the border is drawn, in C, and `wmtheme(2)` is Limbo and
 holds colours. A Limbo caller says `tk->cmd(top, "style flat")` like any
 other Tk command, so nothing had to be plumbed between the two.
-**Spacing is next** and is mostly a table. Corners and scaled borders are
-last and are cosmetic.
+~~**Spacing is next**~~ — done, and it *was* mostly a table. Corners and
+scaled borders are last and are cosmetic.
 
 **Still open in this section:** nothing yet *uses* the flat style —
 `tkclient(2)` does not offer it, so a program has to ask by name. Whether

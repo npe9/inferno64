@@ -172,6 +172,7 @@ typedef struct TkEbind TkEbind;
 typedef struct TkImg TkImg;
 typedef struct TkPanelimage TkPanelimage;
 typedef struct TkWinfo TkWinfo;
+typedef struct TkSpace TkSpace;
 typedef struct TkCursor TkCursor;
 typedef struct TkGrid TkGrid;
 typedef struct TkGridbeam TkGridbeam;
@@ -423,6 +424,31 @@ struct TkEnv
 	int		wzero;			/* Width of "0" in pixel */
 };
 
+/*
+ * The spacings a widget insets its content by, as one named register
+ * rather than a constant per file.  They were scattered - and did not
+ * agree: label.h called 3 pixels `Textpadx' and textw.c called 2 pixels
+ * the same name, in the same toolkit, so a label and a text widget
+ * packed side by side did not line up and nothing said why.  Naming them
+ * apart is most of the repair; having them in one table is what lets a
+ * style change all of them together.
+ *
+ * Indexed by TkSclassic/TkSflat.  The classic row is exactly the numbers
+ * that were compiled in before this existed, so the default look is
+ * unchanged to the pixel.
+ */
+struct TkSpace
+{
+	int	labelpadx;	/* label and button text, was Textpadx */
+	int	labelpady;
+	int	bitpadx;	/* image or bitmap in a label */
+	int	bitpady;
+	int	entrypadx;	/* entry contents */
+	int	entrypady;
+	int	textpadx;	/* text widget contents */
+	int	textpady;
+};
+
 struct TkGeom
 {
 	int		x;
@@ -634,6 +660,8 @@ extern	char*	tkraise(TkTop*, char*, char**);
 extern	char*	tkscale(TkTop*, char*, char**);
 extern	char*	tkscrollbar(TkTop*, char*, char**);
 extern	char*	tkstylecmd(TkTop*, char*, char**);
+extern	TkSpace	tkspaces[];
+extern	TkSpace*	tkspace(Tk*);
 extern	char*	tksend(TkTop*, char*, char**);
 extern	char*	tktext(TkTop*, char*, char**);
 extern	char*	tkupdatecmd(TkTop*, char*, char**);
