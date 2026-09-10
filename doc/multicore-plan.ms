@@ -3243,3 +3243,76 @@ Worth noticing as a class: a fix that changes an invariant has to go
 looking for the assertions that rest on it.  Nothing pointed at this
 one \(em it was found because the new message had not been seen before
 and was chased rather than assumed to be the bug being hunted.
+.NH 2
+What is left: a double destroy, and the barrier it points at
+.PP
+Measured.
+.CW "destroy: h->ref underflow"
+fires at
+.CW parallelvm=1
+and in no boot at
+.CW parallelvm=0 ,
+and it fires both before and after this branch's
+.CW destroy()
+handover, so it is not something the handover created.  One capture
+reaches
+.CW "n -2"
+on the same header, so it is repeated drops of one object rather than a
+single mistake.
+.PP
+The two captured paths are both pointer teardown:
+.IP
+.nf
+xec -> ret+0x91 -> destroy            a Dis function returning
+xec -> scanframe -> freeptrs -> freemodlink -> destroy
+.fi
+.PP
+Increments are not the gap.
+.CW movp()
+and
+.CW incmem() ,
+which are how a reference is taken on assignment, both use
+.CW AINC .
+.PP
+.CW Setmark()
+is the gap, or is the best remaining candidate for it:
+.IP
+.nf
+#define Setmark(h) if((h)->color!=mutator) { (h)->color = propagator; nprop=1; }
+.fi
+.PP
+That is the write barrier, and it is a non-atomic read-modify-write on
+.CW h->color
+plus a write to a global.  A mutator outside a quantum \(em a released
+Dis system call, running in kernel context, which
+.CW stoptheworld()
+does not stop and by this branch's own design cannot stop \(em can mark
+an object the collector has already scanned white.  The collector
+sweeps it while it is live, and every later
+.CW destroy()
+through a stale pointer to it underflows, which is the shape the
+captures have.
+.PP
+Labelled a hypothesis, and it is the sixth.  What supports it: the
+underflow is real and configuration-specific, the increments are ruled
+out by reading, and the counter this branch already has shows foreign
+heap operations happening under a stopped world.  What does not
+support it: nothing has yet shown a lost mark, which is the step the
+argument needs and the one a probe should target.
+.PP
+The deferral idiom does not extend to it.  A free can be handed to the
+collector because the object is already unreachable; a mark cannot be
+deferred, because the whole point is that it must happen before the
+sweeper looks.  The shapes worth considering, none of them small:
+.IP \(bu
+Abandon a collection in which any foreign heap operation occurred, the
+way this branch's
+.CW stoptheworld()
+now abandons one it cannot start.  Conservative, and it reuses a
+counter that already exists.
+.IP \(bu
+Make the barrier atomic and give the collector a re-scan phase, which
+is the incremental-update barrier every concurrent collector has.
+.IP \(bu
+Stop treating a released Dis system call as a safepoint, which is where
+this started and which cost an unbounded stall the first time.
