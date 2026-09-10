@@ -103,9 +103,33 @@ ginit(void)
 	reg[REGSB] = 1;
 	reg[REGSP] = 1;
 	reg[REGZERO] = 1;
-	/* keep two external registers */
+	/*
+	 * Keep four external registers, as 6c does.
+	 *
+	 * This was two, which is why "extern register" silently stopped
+	 * working after the second declaration: exreg() below returned 0
+	 * and the variable became an ordinary memory global, with no
+	 * diagnostic.  A third declaration compiled and ran; it was just
+	 * not in a register.
+	 *
+	 * Two is not enough for a per-executor Dis context.  The kernel
+	 * already spends both on m and up (R27, R26), and the interpreter
+	 * needs its own -- Go reaches the current goroutine through a
+	 * dedicated register for exactly this reason, and libinterp cannot
+	 * reach the kernel's Proc to get there any other way.
+	 *
+	 * They must be reserved here, not only where exreg() hands one
+	 * out: an external register has to be untouchable in every
+	 * translation unit, including those that never declare it, or
+	 * ordinary code uses it as a scratch.  Checked before changing
+	 * this: the only R24/R25 references in aarch64 assembly are
+	 * vectrap's, which saves and restores them in the Ureg like every
+	 * other general register.
+	 */
 	reg[REGEXT] = 1;
 	reg[REGEXT-1] = 1;
+	reg[REGEXT-2] = 1;
+	reg[REGEXT-3] = 1;
 	memmove(resvreg, reg, sizeof(reg));
 }
 
@@ -1341,7 +1365,7 @@ exreg(Type *t)
 	long o;
 
 	if(typechlpv[t->etype]) {
-		if(exregoffset <= REGEXT-2)
+		if(exregoffset <= REGEXT-4)	/* four, as 6c allows */
 			return 0;
 		o = exregoffset;
 		if(reg[o] && !resvreg[o])
