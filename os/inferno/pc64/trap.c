@@ -252,6 +252,48 @@ trap(Ureg *ureg)
 
 	user = kenter(ureg);
 	vno = ureg->type;
+
+	/*
+	 * Instructions this kernel executes knowing they may fault, and
+	 * whose callers are written to be told so rather than to die.
+	 *
+	 * rdmsr() and wrmsr() in l.s zero BP and carry the comment "BP
+	 * set to -1 if traped"; peek() is the fault-proof memcpy.  On
+	 * this board nothing ever set BP, because this recovery -- which
+	 * os/9front/pc/trap.c has and pc64's did not -- was never
+	 * carried across.  So the contract every "if(rdmsr(...) != -1)"
+	 * in os/inferno/pc/devarch.c is written against did not exist,
+	 * and a model-specific register the machine does not implement
+	 * was a panic rather than a -1.
+	 *
+	 * Found on the first boot on real hardware: a Compute Engine
+	 * e2-micro faulted in cpuidentify(), at _wrmsrinst, with
+	 * "general protection violation".  QEMU implements whatever
+	 * MSR this kernel asked for and Google's hypervisor does not,
+	 * which is the whole difference -- and it is the kind of
+	 * difference an emulator cannot show.
+	 *
+	 * RDMSR, WRMSR and REP MOVSB are two bytes each, so stepping
+	 * over one is pc += 2.
+	 */
+	if(vno == VectorGPF){
+		extern void _rdmsrinst(void);
+		extern void _wrmsrinst(void);
+		extern void _peekinst(void);
+		void (*pc)(void);
+
+		pc = (void(*)(void))ureg->pc;
+		if(pc == _rdmsrinst || pc == _wrmsrinst){
+			ureg->bp = -1;
+			ureg->pc += 2;
+			return;
+		}
+		if(pc == _peekinst){
+			ureg->pc += 2;
+			return;
+		}
+	}
+
 	if(irqhandled(ureg, vno) == 0 /* TODO && (!user || !usertrap(vno)) */){
 		dumpregs(ureg);
 		/*
