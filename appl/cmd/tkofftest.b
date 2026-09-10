@@ -641,6 +641,43 @@ checkvoice()
 	said = next(sfd);
 	report(has(said, "Drafts"), sys->sprint(
 		"and walking it with a key says the new line (%#q)", said));
+
+	# An ordinary field is read; a masked one is not.  The order matters:
+	# voice(3) drops an announcement identical to the last one queued, so
+	# the masked field is only heard at all because the field before it
+	# said something different.  With the reading broken both would say
+	# "entry" and the second would vanish - which is what the control
+	# shows, and is a true report rather than a flaw in the test.
+	#
+	# Both halves matter:
+	# a field that says only "entry" cannot be read by ear at all, and a
+	# password read aloud is the failure that policy exists to prevent.
+	blank();
+	t4 := offscreen();
+	if(t4 == nil)
+		return;
+	tk->cmd(t4, "entry .n");
+	tk->cmd(t4, ".n insert 0 {notes.txt}");
+	tk->cmd(t4, "entry .p -show *");
+	tk->cmd(t4, ".p insert 0 {hunter2}");
+	tk->cmd(t4, "pack .n");
+	tk->cmd(t4, "pack .p");
+	map(t4);
+	drain(sfd);
+	tk->cmd(t4, "focus .n");
+	tk->cmd(t4, "update");
+	said = next(sfd);
+	report(has(said, "notes.txt"), sys->sprint(
+		"focusing a field says what is in it (%#q)", said));
+
+	tk->cmd(t4, "focus .p");
+	tk->cmd(t4, "update");
+	said = next(sfd);
+	# said == "entry", not merely "hunter2 is absent": an announcement
+	# that failed altogether would also lack the secret, and would pass a
+	# check written the loose way while telling us nothing.
+	report(said == "entry", sys->sprint(
+		"but a masked field is not read aloud (%#q)", said));
 }
 
 waiting(): int

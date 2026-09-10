@@ -1366,3 +1366,34 @@ TkMethod entrymethod = {
 	tkdrawentry,
 	tkentrygeom
 };
+
+/*
+ * What an entry holds, for voice(3), unless it is a secret.
+ *
+ * Entry and text used to be refused outright here, on the grounds that
+ * announcing a field's contents on arrival is how a screen reader reads
+ * a password aloud.  That is true of a password and of nothing else: a
+ * filename field that says only "entry" cannot be read at all by a
+ * person using their ears, which is a worse failure than the one being
+ * avoided.
+ *
+ * -show is the marker.  It is what masks the characters on screen, and
+ * in this tree it is set on exactly the three fields that hold a secret
+ * - getauthinfo's Password, readmail's Secret, remotelogon's - because
+ * that is what it is for.  A field with it stays silent; a field without
+ * it is not a secret in the first place, since it is already displayed
+ * in clear.
+ *
+ * A text widget is still refused: it can hold a whole shell session, and
+ * reading that on every focus is not a thing anyone wants.
+ */
+char*
+tkentrystate(Tk *tk, char *buf, int nbuf)
+{
+	TkEntry *tke = TKobj(TkEntry, tk);
+
+	if(tke->show != nil || tke->text == nil || tke->textlen <= 0)
+		return nil;
+	snprint(buf, nbuf, "%.*S", tke->textlen, tke->text);
+	return buf;
+}

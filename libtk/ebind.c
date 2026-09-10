@@ -8,6 +8,7 @@
 extern void voiceannounce(char*);   /* voice(3) */
 extern char* tkscalestate(Tk*, char*, int);	/* scale.c */
 extern char* tklistbstate(Tk*, char*, int);	/* listb.c */
+extern char* tkentrystate(Tk*, char*, int);	/* entry.c */
 
 enum
 {
@@ -589,9 +590,9 @@ tkclassname(int t)
 
 /*
  * The label family all keep their text in the same place, which is most of
- * what a person needs to hear. Widgets that hold text the person typed - entry
- * and text - are deliberately not read out here: announcing the contents of a
- * field on arrival is how a screen reader reads a password aloud.
+ * what a person needs to hear. A text widget is deliberately not read out:
+ * it can hold a whole shell session. An entry is read by tkentrystate()
+ * below unless it is masked with -show, which is what marks a secret.
  */
 static char*
 tkannouncetext(Tk *tk)
@@ -632,6 +633,8 @@ tkannouncestate(Tk *tk, char *buf, int nbuf)
 		return tkscalestate(tk, buf, nbuf);
 	case TKlistbox:
 		return tklistbstate(tk, buf, nbuf);
+	case TKentry:
+		return tkentrystate(tk, buf, nbuf);
 	}
 	USED(buf); USED(nbuf);
 	return nil;

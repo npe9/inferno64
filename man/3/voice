@@ -86,6 +86,21 @@ A list is read as the line its cursor is on \(em
 .B "list Inbox"
 \(em since which line you are on is the whole content of a listbox.
 .PP
+An entry is read too \(em
+.B "entry notes.txt"
+\(em unless it is masked with
+.BR -show ,
+which is what marks a secret and is set on exactly the fields that hold
+one.
+A field that said only
+.B entry
+could not be read by ear at all, which is a worse failure than the one
+that refusing them all was avoiding; a masked field is still silent, and
+a field that is not masked is already on the screen in clear.
+A
+.B text
+widget is still never read: it can hold a whole shell session.
+.PP
 When the person changes one, what it became is announced on its own \(em
 just
 .B checked
