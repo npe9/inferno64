@@ -190,10 +190,24 @@ frame()
 		draw3d->line3(d3c, a, b, 0);
 	}
 
-	# Billboard + Z-rotated sprite (Sprite3ZB) beside the cube
+	# Billboard + Z-rotated sprite (Sprite3ZB) beside the cube.
+	#
+	# The scale argument is not a multiplier on the sprite's own size:
+	# spriteat() divides it by the eye depth, so the drawn size is
+	# img.r.dx() * scale/(-ez), and 1.0 at the six units this scene sits
+	# back shrank the 47x19 rocket to eight pixels by three - 13 lit
+	# pixels, which is to say invisible, and at some angles the rotated
+	# one lost every pixel to the resample and drew nothing at all. The
+	# rest of the tree already knew this: draw3dbench(1) passes 2.0 to
+	# 16.0 at four units. 6.0 here is sc = 1.0 at the near side of the
+	# orbit, so the rocket appears at about its own size.
+	#
+	# 2.2 out from the axis put the sprite at 0.98 of the way to the
+	# right clip plane, half off the window before it had a chance to be
+	# too small; 1.8 keeps the whole of it on screen all the way round.
 	if(sprite != nil){
-		draw3d->sprite3(d3c, Vector(2.2, 0.8, 0.0), sprite, sprmask, 1.0);
-		draw3d->sprite3zb(d3c, Vector(2.2, -0.8, 0.0), sprite, sprmask, 1.0, ang * 3.0);
+		draw3d->sprite3(d3c, Vector(1.8, 0.8, 0.0), sprite, sprmask, 6.0);
+		draw3d->sprite3zb(d3c, Vector(1.8, -0.8, 0.0), sprite, sprmask, 6.0, ang * 3.0);
 	}
 
 	# HUD (no depth)
