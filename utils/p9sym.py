@@ -237,7 +237,19 @@ class Resolver:
 		return self.fns[k][1], pc - self.fns[k][0], (self.fns[k][0], nxt)
 
 	def check(self, pc):
-		"""'ret', 'boundary', 'interior', or None if unavailable."""
+		"""'ret', 'boundary', 'interior', or None if unavailable.
+
+		On a fixed-width instruction set the check is arithmetic and
+		needs no disassembler: arm64 and riscv64 instructions are 4
+		bytes and 4-byte aligned, so an odd or 2-mod-4 value cannot
+		be a pc at all.  Worth having because it is the same mistake
+		the x86 boundary check exists to stop -- a ktrace word that
+		resolves to a tidy name+offset and is simply stack litter.
+		0x4005000a resolved to vmachine+0x56 and had two of us
+		reading it as a frame.
+		"""
+		if self.elf and (pc & 3):
+			return 'interior'
 		if self.md is None:
 			return None
 		nm, off, rng = self.name(pc)
