@@ -34,7 +34,7 @@ Eight configs list `tk`: `fads`, `ipaq1110`, `js`, `pc`, `pc4e`,
 | `tklayout(2)`, `tkofftest(1)`, the sweeps | **carries.** Dis |
 | the Go fonts and `ttffs(4)` | **no.** No config links `freetype` |
 | `emu -f` — the whole font lever | **no.** `emu/port/main.c` |
-| widget announcements to `voice(3)` | **no,** and worse than no — see below |
+| widget announcements to `voice(3)` | links now; silent until a native voice device — see below |
 | HiDPI | not applicable; a native framebuffer *is* the physical resolution |
 | keyboard and IME | **no.** `emu/MacOSX/win-cocoa.m` is one backend of several |
 
@@ -58,25 +58,49 @@ libtk/textw.c:7    extern void voiceannouncetext(char*);  /* voice(3) */
 `devvoice` outside `emu/`. `ebind.$O` is in `libtk/mkfile`'s object list,
 and eight kernel configs link `tk`.
 
-Whether that actually breaks a native link depends on whether `ebind.o`
-gets pulled out of the archive, which it will if anything references
-`tkbind` — and Tk needs binding. **This was not tested here**, because
-`os/` belongs to someone else and building it is not this work's business.
-But it is the first thing to establish, because every other native
-question about speech depends on the answer.
+**Established, and it was broken.** Compiling the current `ebind.c` with
+`kencc` for native amd64 and asking `inm -u` what it needs:
 
-Two ways out, and the second is better:
+```
+U voiceannounce
+```
 
-- A stub in `libtk` — a weak default that does nothing — which makes the
-  link work and leaves native Inferno silent.
-- **A native `voice` device.** `emu/port/devvoice.c` is 400 lines whose
-  hard part is the ring and the announce policy, not the host: the
-  formant synthesiser is `voice(3)`'s own and portable, and only the PCM
-  sink is host-specific. A native kernel with a sound driver could serve
-  the same `/dev/voice` and the same `speak /dev/voice/screen &` would be
-  the screen reader on real hardware. That is a much better end state
-  than a stub, and the accessibility work already done would light up on
-  the machine rather than only under emulation.
+and `textw.c` the same for `voiceannouncetext`. It has been that way
+since the announcements went in on 2026-08-24 — three days *after*
+`Inferno/amd64/lib/libtk.a` was last built, which is why nothing had
+noticed. The stale archive was also why a first look at it found no such
+symbol and looked reassuring.
+
+**Fixed** by `libtk/voicedefault.c`: the library carries the default for
+its own dependency. It is a file of its own on purpose — a linker takes a
+member out of an archive only to resolve a symbol that is still
+undefined, so a configuration with a real voice device (emu lists
+`voice`; a native kernel one day might) defines these first and never
+pulls it, and a configuration without one links and is silent.
+
+That makes it the portable default rather than a workaround: the same
+mechanism that makes it work now steps out of the way when a native voice
+device arrives.
+
+Verified both directions. Natively, `voicedefault.o` compiled with kencc
+defines both symbols (`T voiceannounce`) in the same archive that
+references them. Hosted, `tkofftest(1)`'s eight announcement checks still
+pass — which is the control that matters, because if the silent default
+were being pulled instead of `devvoice.o` they would all report silence.
+
+**Not claimed:** a native kernel has not been linked here. `os/` belongs
+to someone else and building it is not this work's business. What is
+shown is that the symbols are now supplied within `libtk` rather than
+missing from it.
+
+**The better end state is still a native `voice` device.**
+`emu/port/devvoice.c` is 400 lines whose hard part is the ring and the
+announce policy, not the host: the formant synthesiser is `voice(3)`'s
+own and portable, and only the PCM sink is host-specific. A native kernel
+with a sound driver could serve the same `/dev/voice`, and
+`speak /dev/voice/screen &` would be the screen reader on real hardware —
+at which point every announcement already written lights up on the
+machine instead of only under emulation.
 
 ## 1. Reviewing what was said
 
@@ -263,9 +287,8 @@ does not ask.
 
 ## The order, and why
 
-1. **Check the `voiceannounce` link on a native kernel** — it is a
-   question, not a task, and it may be a build break in someone else's
-   tree.
+1. ~~Check the `voiceannounce` link~~ — **done.** It was broken; `libtk`
+   carries its own default now.
 2. **Review buffer** — small, finishes a surface that is already good.
 3. **Text input** — the only item that gates whether the system can be
    used in a language.

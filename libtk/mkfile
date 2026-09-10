@@ -4,6 +4,7 @@ LIB=libtk.a
 
 OFILES=\
 	ebind.$O\
+	voicedefault.$O\
 	grids.$O\
 	image.$O\
 	packr.$O\
