@@ -2268,9 +2268,25 @@ d3maskset(Memimage *mask, Point p)
 
 	if(mask == nil)
 		return 1;
-	q = byteaddr(mask, p);
-	if(q == nil)
+	/*
+	 * byteaddr() forms an address from p by arithmetic alone: it never
+	 * consults the rectangle and never returns nil, so the `q == nil'
+	 * test that used to stand here could not fire, and a p outside the
+	 * mask was simply read at whatever address the arithmetic produced.
+	 * The caller samples the source with the same shape of expression a
+	 * few lines above and range-checks the result; the mask coordinate
+	 * beside it was the one that went unchecked.
+	 *
+	 * Hardening, not a repair: instrumented to report, this guard never
+	 * fires on any case in sprite2dtest(1) or draw3dsafetest(1), and the
+	 * box is clipped to the destination before the loop, which looks
+	 * like the structural reason a caller cannot steer the index out to
+	 * the edge.  Forced out by hand, though, the read segfaults emu -
+	 * so the cost of two compares buys away a whole class of question.
+	 */
+	if(!ptinrect(p, mask->r))
 		return 0;
+	q = byteaddr(mask, p);
 	if(mask->depth == 1)
 		/*
 		 * byteaddr() gives the byte holding pixel p.x; WHICH bit is

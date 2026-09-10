@@ -284,6 +284,7 @@ dmview dmview
 dmwm dmview
 doodle doodle
 draw3dbench draw3dbench
+draw3dsafetest draw3dsafetest
 draw3ddemo draw3ddemo
 drawbind drawbind
 drop sh-string

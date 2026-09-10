@@ -1,0 +1,131 @@
+.TH DRAW3DSAFETEST 1
+.SH NAME
+draw3dsafetest \- check that no draw3d argument can fault emu
+.SH SYNOPSIS
+.B draw3dsafetest
+[
+.I provider
+]
+.SH DESCRIPTION
+A Limbo program must not be able to bring down the virtual machine it
+runs on, whatever arguments it passes.
+.I Draw3dsafetest
+is about that property and no other: it checks not one pixel, and a case
+here passing says nothing whatever about what was drawn.
+It says the VM was still standing afterwards.
+.PP
+The reason
+.IR draw3d (2)
+is worth singling out is that one of its two providers is not Limbo.
+.B /dis/math/draw3ddev.dis
+encodes each call as a message and writes it to
+.IR draw (3),
+where it is parsed by C in
+.B emu/port/devdraw.c
+that indexes pixel memory directly; an index that goes out of range
+there reads whatever address the arithmetic produced, rather than
+raising the bounds error the Limbo provider would.
+That is why
+.I provider
+defaults to
+.B /dis/math/draw3ddev.dis
+rather than to the software
+.BR /dis/math/draw3d.dis .
+Running it against the software provider as well is still worth doing \-
+a fault there would be a bug in the VM itself \- and is what the
+argument is for.
+.PP
+The arguments are chosen for their arithmetic and not for their meaning:
+widths and heights of 0,
+.BR \-1 ,
+and up to
+.BR 16r7FFFFFFF ,
+which travel to the
+.B J
+message as a raw 32\-bit integer with no upper bound;
+angles of
+.if n 1e30
+.if t 10\u\s-230\s+2\d
+and its negative;
+centres far outside the destination;
+masks that are not the same size as the source, which is the case where
+the two index computations in the C sprite loop disagree;
+line thicknesses up to the same limit;
+polygons at 1023, 1024 and 1025 vertices, either side of the device's
+own cap, including ones whose vertices are all identical;
+a per-vertex lighting array
+.I shorter
+than the vertex array;
+and matrices that scale by zero or by
+.if n 1e30
+.if t 10\u\s-230\s+2\d
+before geometry is pushed through them.
+.PP
+After each family the test draws a known colour into a small image and
+reads it back with
+.IR readpixels .
+That answers the only question being asked \- is the draw device still
+serving this process \- and it depends on nothing outside the process,
+so it needs neither a screenshot nor a window manager to be believed.
+A fault does not reach the report at all: the last line simply never
+arrives.
+.PP
+The run has a deadline, and passing it prints which family was in
+progress before killing the process group, because a hang reports
+nothing at all and the harness that ran it can only say the run stopped.
+This is not decoration.
+Against the device provider the whole battery takes about five seconds;
+against the Limbo
+.B /dis/math/draw3d.dis
+it does not finish, because that resampler walks the sprite's own box
+and only then asks whether each pixel lands in the destination, where
+the C path clips the box to the destination first and so does bounded
+work however large the width.
+A width of 100000 is already enough to stop it.
+.PP
+The last line is
+.B PASS
+or
+.BR FAIL .
+.SH EXAMPLE
+.EX
+emu\-cocoa \-r. /dis/draw3dsafetest.dis
+emu\-cocoa \-r. /dis/draw3dsafetest.dis /dis/math/draw3d.dis
+.EE
+.SH SOURCE
+.B /appl/cmd/draw3dsafetest.b
+.SH SEE ALSO
+.IR draw3d (2),
+.IR draw (3),
+.IR sprite2dtest (1),
+.IR draw3dbench (1)
+.SH BUGS
+It needs a window, so it runs under
+.I emu\-cocoa
+and not
+.IR emu\-g .
+.PP
+It reaches the protocol only through the
+.IR draw3d (2)
+module, so a message the Limbo encoder cannot produce is not covered:
+a truncated one, a bad matrix selector, or a vertex count that disagrees
+with the bytes that follow it.
+Those are exactly the cases the C parser's own length checks exist for,
+and nothing here tests those checks.
+.PP
+No case in this file has ever been observed to fault a released
+.IR emu .
+It was written against a deliberately broken one \- a mask coordinate
+pushed off the end of its image by hand, which segfaults the parser \-
+and it catches that.
+Whether any argument reachable from Limbo can do the same on its own is
+not known, and the evidence so far says not: with the bounds check in
+.I d3maskset
+instrumented to report, neither this test nor
+.IR sprite2dtest (1)
+ever reached it.
+.PP
+A test whose subject is that nothing happens grows stale quietly.
+The value here is in the negative control, so anyone changing the C
+sprite or polygon loops should break one on purpose and confirm this
+still notices.
