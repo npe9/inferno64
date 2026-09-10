@@ -4930,6 +4930,57 @@ is inside that two-line region, are the two readings; distinguishing
 them is the next step, and it is a smaller question than the one this
 started as.
 .PP
+.B "And on the second catch, the holder is timerintr."
+A sharper instrument \(em recording the depth that tripped the test,
+because the message races with itself \(em and a second failing boot:
+.DS
+.CW
+qlock: 0x29a807: ilockdepth 1
+qlock: 0x29a807: ilockdepth 1
+  ilock 0 held from 0x202d80
+panic: cpu0: ilockdepth 1 (now 0), last lock 0x0 at 0x0,
+       sched called from 0x2965b7
+.DE
+0x202d80 is
+.CW timerintr+0x10c ,
+0x29a807 is
+.CW kproc+0x42 ,
+0x2965b7 is
+.CW irqhandled+0x113 .
+So the held lock is
+.CW timers[m->machno] ,
+taken by the soft-timer handler in
+.CW os/inferno/port/portclock.c ,
+and
+.CW "1 (now 0)"
+settles the earlier puzzle: the depth really was 1 when tested and fell
+to 0 while the panic was printing, so both the leak and the race in the
+message are real.
+.PP
+The order matters.  Both
+.CW qlock
+warnings come from
+.CW kproc ,
+which ether attach calls twice, and they print a depth of 1 \(em so the
+lock was already leaked before
+.CW "bound #l0" .
+.CW kproc
+survived both, and it was the next clock interrupt, through
+.CW irqhandled 's
+.CW "ctl == vclock"
+arm, that turned a warning into a panic.  The first catch named
+.CW iallocb
+and this one names
+.CW timerintr ;
+both are interrupt-context lock holders, and which of them leaks
+\(em or whether the two are the same event seen at different moments
+\(em is what remains.
+.CW timerintr 's
+own
+.CW ilock/iunlock
+pairs are balanced on every path including the early return, so the
+answer is not a missing unlock in its source.
+.PP
 .B "And it is the shipped kernel too."
 Recorded here as a correction, because this document said twice that
 .CW ipc64

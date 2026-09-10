@@ -249,13 +249,23 @@ void
 sched(void)
 {
 	Proc *p;
+	int d;
 
-	if(m->ilockdepth != 0){
+	/*
+	 * d, not m->ilockdepth, in the message.  The test and the print
+	 * are not one operation: ilockheldpcs() and panic()'s own
+	 * formatting run between them, and an interrupt landing in that
+	 * window can change the counter -- which is how this panic came
+	 * to report "ilockdepth 0" when sched() only panics for a depth
+	 * that is not zero.  d is the value that actually tripped it.
+	 */
+	d = m->ilockdepth;
+	if(d != 0){
 		extern void ilockheldpcs(void);
 		ilockheldpcs();
-		panic("cpu%d: ilockdepth %d, last lock %#p at %#p, sched called from %#p",
+		panic("cpu%d: ilockdepth %d (now %d), last lock %#p at %#p, sched called from %#p",
 			m->machno,
-			m->ilockdepth,
+			d, m->ilockdepth,
 			up != nil ? up->lastilock: nil,
 			(up != nil && up->lastilock != nil) ? up->lastilock->pc: 0,
 			getcallerpc(&p+2));
