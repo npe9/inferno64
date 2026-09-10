@@ -228,8 +228,9 @@ sqrt(x: real): real
 
 #
 # The announce levels are accepted and reported back. What each one actually
-# lets through is checked under wm by hand, not here: it needs a window system
-# and a focus to move.
+# lets through needs a window system and a focus to move, so it is checked in
+# tkofftest(1), which has one: that focusing a control says what it is and how
+# it is set, and that changing it says what it became.
 #
 announce()
 {

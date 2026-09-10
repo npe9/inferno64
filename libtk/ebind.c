@@ -606,17 +606,65 @@ tkannouncetext(Tk *tk)
 	return nil;
 }
 
+/*
+ * A control's state, or nil for a control that has none.
+ *
+ * Naming a control without it answers the wrong question: "Wrap lines
+ * checkbutton" tells a person what the thing is and not what it is set
+ * to, and there was no way to find out by listening, because nothing was
+ * announced when it changed either.
+ */
+static char*
+tkannouncestate(Tk *tk)
+{
+	TkLabel *tkl;
+
+	switch(tk->type){
+	case TKcheckbutton:
+		tkl = TKobj(TkLabel, tk);
+		return tkl->check ? "checked" : "not checked";
+	case TKradiobutton:
+		tkl = TKobj(TkLabel, tk);
+		return tkl->check ? "selected" : "not selected";
+	}
+	return nil;
+}
+
+/*
+ * Say what a control has just become, after the person acted on it.
+ * The label is not repeated: they know which control they are on, having
+ * just been told when they moved to it, and a screen reader that reads
+ * the whole thing back on every keypress is tiring to use.
+ */
+void
+tkannouncechange(Tk *tk)
+{
+	char *state;
+
+	if(tk == nil)
+		return;
+	state = tkannouncestate(tk);
+	if(state != nil)
+		voiceannounce(state);
+}
+
 static void
 tkannouncefocus(Tk *tk)
 {
 	char buf[128];
-	char *text;
+	char *text, *state;
 
 	if(tk == nil || tk->name == nil)
 		return;
 	text = tkannouncetext(tk);
-	if(text != nil && *text != '\0')
+	state = tkannouncestate(tk);
+	if(text != nil && *text != '\0' && state != nil)
+		snprint(buf, sizeof buf, "%s %s %s", text,
+			tkclassname(tk->type), state);
+	else if(text != nil && *text != '\0')
 		snprint(buf, sizeof buf, "%s %s", text, tkclassname(tk->type));
+	else if(state != nil)
+		snprint(buf, sizeof buf, "%s %s", tkclassname(tk->type), state);
 	else
 		/*
 		 * No label to fall back on. tk->name->name is a Tcl/Tk widget

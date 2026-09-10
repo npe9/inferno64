@@ -272,6 +272,7 @@ init(nil: ref Draw->Context, nil: list of string)
 
 	checkdefault();
 	checklayout();
+	checkvoice();
 
 	# The chrome's artwork is 16-pixel bitmaps in /icons/tk, and libtk
 	# resolves a bare -bitmap name straight there, so without help the
@@ -544,6 +545,100 @@ checktitlebar(font, what: string)
 	report(ms.y >= bb.dy(), sys->sprint(
 		"a window cannot be shorter than its titlebar in %s (minsize %d, bar %d)",
 		what, ms.y, bb.dy()));
+}
+
+#
+# What libtk tells voice(3) when the keyboard moves and when a control
+# changes.  voicetest(1) checks that the announce levels are accepted and
+# that an announcement written by hand comes back out, and says of the
+# rest: "checked under wm by hand, not here: it needs a window system and
+# a focus to move."  This has one.
+#
+checkvoice()
+{
+	if(sys->bind("#V", "/dev", Sys->MAFTER) < 0){
+		sys->print("     no voice device; announcements not checked\n");
+		return;
+	}
+	cfd := sys->open("/dev/voice/ctl", Sys->OWRITE);
+	sfd := sys->open("/dev/voice/screen", Sys->OREAD);
+	if(cfd == nil || sfd == nil){
+		sys->print("     no /dev/voice; announcements not checked\n");
+		return;
+	}
+	if(sys->fprint(cfd, "announce focus") < 0){
+		sys->print("     cannot set the announce level; not checked\n");
+		return;
+	}
+
+	blank();
+	top := offscreen();
+	if(top == nil)
+		return;
+	tk->cmd(top, "checkbutton .c -text {Wrap lines} -variable w");
+	tk->cmd(top, "pack .c");
+	map(top);
+	drain(sfd);
+
+	tk->cmd(top, "focus .c");
+	tk->cmd(top, "update");
+	said := next(sfd);
+	report(has(said, "Wrap lines") && has(said, "not checked"), sys->sprint(
+		"focusing a control says what it is and how it is set (%#q)", said));
+
+	tk->cmd(top, ".c invoke");
+	tk->cmd(top, "update");
+	said = next(sfd);
+	# The label is deliberately not repeated: the person just acted on a
+	# control they were told about when they arrived at it.
+	report(said == "checked", sys->sprint(
+		"and changing it says what it became (%#q)", said));
+}
+
+waiting(): int
+{
+	fd := sys->open("/dev/voice/ctl", Sys->OREAD);
+	if(fd == nil)
+		return 0;
+	b := array[512] of byte;
+	n := sys->read(fd, b, len b);
+	if(n <= 0)
+		return 0;
+	for(l := sys->tokenize(string b[0:n], "\n").t1; l != nil; l = tl l){
+		f := sys->tokenize(hd l, " ").t1;
+		if(f != nil && hd f == "waiting" && tl f != nil)
+			return int hd tl f;
+	}
+	return 0;
+}
+
+drain(fd: ref Sys->FD)
+{
+	b := array[512] of byte;
+	for(i := 0; i < 64 && waiting() > 0; i++)
+		sys->read(fd, b, len b);
+}
+
+next(fd: ref Sys->FD): string
+{
+	if(waiting() <= 0)
+		return "";
+	b := array[512] of byte;
+	n := sys->read(fd, b, len b);
+	if(n <= 0)
+		return "";
+	s := string b[0:n];
+	while(len s > 0 && s[len s - 1] == '\n')
+		s = s[0:len s - 1];
+	return s;
+}
+
+has(s, sub: string): int
+{
+	for(i := 0; i + len sub <= len s; i++)
+		if(s[i:i+len sub] == sub)
+			return 1;
+	return 0;
 }
 
 # what fraction of a rectangle is not the background it sits on

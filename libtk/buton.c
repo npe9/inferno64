@@ -3,6 +3,8 @@
 #include "tk.h"
 #include "label.h"
 
+extern void tkannouncechange(Tk*);	/* ebind.c, for voice(3) */
+
 #define	O(t, e)		((long)(&((t*)0)->e))
 
 /* Widget Commands (+ means implemented)
@@ -625,6 +627,8 @@ buttoninvoke(Tk *tk, char **val)
 		e = tksetvar(top, tkl->variable, tkl->value);
 	if(e != nil)
 		return e;
+	if(tk->type == TKcheckbutton || tk->type == TKradiobutton)
+		tkannouncechange(tk);	/* voice(3); see man 3 voice */
 	if(tkl->command != nil)
 		return tkexec(tk->env->top, tkl->command, val);
 	return nil;
