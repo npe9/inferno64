@@ -259,6 +259,7 @@ struct Pctx
 	Prog*	runtl;
 	int	nlocal;		/* its length, for the Runqmax bound */
 	Inst*	syncpc;		/* the PC p->reg carries; see REGSYNCED() */
+	int	inxec;		/* a quantum is open on this context */
 };
 
 struct Progs
@@ -501,7 +502,15 @@ extern	Pctx*	curP;
 REG*	progreg(Prog*);	/* where a program's live roots are; see xec.c */
 Module*	modlinkmod(Modlink*);	/* the Module of a Modlink worth trusting; see heap.c */
 extern	REG*	curR;		/* == &curP->reg */
-extern	int	inxec;		/* a quantum is running; see xec.c */
+/*
+ * Per context, for the same reason syncpc is: it answers "is a quantum
+ * open on THIS context", and a single global answers it for whichever
+ * context last ran.  The collector needs the per-context answer -- it
+ * has to know which contexts are inside xec() and must be stopped, and
+ * which are blocked in a system call and are already at a safepoint
+ * because isave() has written their registers back.
+ */
+/* use curP->inxec directly; a macro of the same name recurses in kencc */
 /*
  * The PC that p->reg currently carries, for whichever program R holds.
  * Updated wherever R is loaded from a Prog and wherever a Prog's reg is

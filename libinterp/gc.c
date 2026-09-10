@@ -569,7 +569,7 @@ rungc(Prog *p)
 	 * compares the pointer, never follows it" -- so a check that
 	 * follows it reads freed memory.  A flag cannot dangle.
 	 */
-	if(inxec && curP->syncpc != R.PC) {
+	if(curP->inxec && curP->syncpc != R.PC) {
 		static int said;
 
 		if(!said) {

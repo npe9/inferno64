@@ -2405,7 +2405,6 @@ showprog(Prog *p)
  * whether a quantum is running reads freed memory.  Two versions of
  * the rungc() assertion did exactly that before this existed.
  */
-int inxec;
 
 void
 xec(Prog *p)
@@ -2415,7 +2414,7 @@ xec(Prog *p)
 	R = p->reg;
 	REGSYNCED();
 	curP->curprog = p;
-	inxec = 1;
+	curP->inxec = 1;
 	R.MP = R.M->MP;
 	R.IC = p->quanta;
 
@@ -2491,7 +2490,7 @@ xec(Prog *p)
 	p->reg = R;
 	REGSYNCED();
 	curP->curprog = nil;
-	inxec = 0;
+	curP->inxec = 0;
 }
 
 /*

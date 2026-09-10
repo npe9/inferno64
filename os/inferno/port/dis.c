@@ -116,6 +116,71 @@ flushlocal(void)
 	}
 }
 
+/*
+ * Stop-the-world, the shape Phase 5 of doc/dis-parallel-plan.ms chose
+ * and the shape Go uses for the phases that need it.
+ *
+ * It exists because of what the VM lock still protects.  With a context
+ * per interpreter the allocator is already safe (poolalloc takes the
+ * pool's own ilock) and the refcounts are already atomic; what is left
+ * is libinterp/gc.c's mark state, which lives in file-scope statics --
+ * one sweep position, one pointer table, one epoch.  Two contexts
+ * inside rungc() would interleave on all of it.  Stopping the others
+ * for the duration makes a serial marker correct without giving that
+ * state a per-collection home first, and parallel marking can follow.
+ *
+ * A context is at a safepoint when no quantum is open on it: curP->inxec
+ * is 0, which means isave() has written its registers back and the
+ * collector can trust p->reg.  A context blocked in a system call is
+ * therefore already at a safepoint and does not have to be waited for,
+ * which is the same reasoning Go uses to avoid waiting on an M in a
+ * syscall.
+ *
+ * parallelvm is the switch.  At 0 the VM lock is taken as before and
+ * this is inert -- nothing else can be running, so stopping the world
+ * stops nothing.  At 1 the lock is not taken and this is what keeps the
+ * collector correct.  It defaults to 0 because that is the tested
+ * configuration, and the other one is turned on to test it.
+ */
+int parallelvm = 0;	/* MULTICORE: 1 = no VM lock, stop-the-world GC */
+int gcstw;		/* a collection wants every other context stopped */
+int stwwaits;		/* MULTICORE INSTRUMENTATION - temporary */
+
+/* how many contexts other than this one have a quantum open */
+static int
+othersrunning(void)
+{
+	int i, n;
+
+	n = 0;
+	for(i = 0; i < npctx; i++)
+		if(pctxs[i] != curP && pctxs[i]->inxec)
+			n++;
+	return n;
+}
+
+void
+stoptheworld(void)
+{
+	if(parallelvm == 0)
+		return;		/* the VM lock already is one */
+	gcstw = 1;
+	coherence();
+	while(othersrunning() > 0){
+		stwwaits++;
+		sched();
+	}
+}
+
+void
+starttheworld(void)
+{
+	if(parallelvm == 0)
+		return;
+	gcstw = 0;
+	coherence();
+}
+
 enum { Gqevery = 61 };	/* Go's schedule() uses 61 for the same reason */
 int gqtick;
 int gqput, gqget;	/* MULTICORE INSTRUMENTATION - temporary */
@@ -254,7 +319,11 @@ static void
 vmacquire(void)
 {
 	if(up->vmheld == 0){
-		qlock(&vmlock);
+		if(parallelvm == 0)
+			qlock(&vmlock);
+		else
+			while(gcstw)	/* do not start while a collection runs */
+				sched();
 		up->vmheld = 1;
 		if(up->pctx != nil){
 			curP = (Pctx*)up->pctx;
@@ -307,7 +376,8 @@ vmrelease(void)
 		adec(&nvm);	/* MULTICORE INSTRUMENTATION - temporary */
 		flushlocal();	/* do not strand work on a context that stops */
 		up->vmheld = 0;
-		qunlock(&vmlock);
+		if(parallelvm == 0)
+			qunlock(&vmlock);
 	}
 }
 static Prog*	proghash[64];
@@ -411,7 +481,9 @@ execatidle(void)
 			gcpartial++;
 			break;
 		}
+		stoptheworld();
 		rungc(isched.head);
+		starttheworld();
 		gcidlepass++;
 		if(((ulong)gcidlepass&0xFF) == 0)
 			sched();
@@ -1428,7 +1500,7 @@ vmachine(void*)
 		 * path that carries on executing.
 		 */
 		curP->curprog = nil;
-		inxec = 0;	/* the quantum did not finish; see xec.c */
+		curP->inxec = 0;	/* the quantum did not finish; see xec.c */
 		DBG("vmachine waserror() loop up->env->errstr %s\n",  up->env->errstr);
 		if(up->type != Interp)
 			panic("vmachine: non-interp kproc");
@@ -1580,11 +1652,19 @@ vmachine(void*)
 			}
 		}
 
+		/*
+		 * Safepoint.  Checked before a quantum is opened, which is
+		 * the point at which this context's p->reg is current and
+		 * the collector may walk it.
+		 */
+		while(gcstw)
+			sched();
+
 		r = curP->runhd;
 		if(r != nil) {
 			{	/* MULTICORE INSTRUMENTATION - temporary */
 				Prog *q;
-				int n = 0, ready = 0;
+				int i, n = 0, ready = 0;
 
 				for(q = r; q != nil && n < Runqcap; q = q->link)
 					n++;
@@ -1610,6 +1690,20 @@ vmachine(void*)
 				for(q = isched.head; q != nil; q = q->next)
 					if(q->state == Pready)
 						ready++;
+				/*
+				 * Every context's local queue, not just this
+				 * one.  A Prog on another context's queue is
+				 * Pready and invisible to the walk above, so
+				 * comparing against this context alone made
+				 * the control fire the moment a second
+				 * context could hold work -- which is the
+				 * control noticing, correctly, that the
+				 * structures changed meaning again.  It did
+				 * the same when the global queue arrived.
+				 */
+				for(i = 0; i < npctx; i++)
+					if(pctxs[i] != curP)
+						n += pctxs[i]->nlocal;
 				if(n > maxnrunq){
 					maxnrunq = n;
 					print("runq: %d dis programs ready at once "
@@ -1663,7 +1757,9 @@ vmachine(void*)
 				gcbusy++;
 				up->type = BusyGC;
 				pushrun(r);
+				stoptheworld();
 				rungc(isched.head);
+				starttheworld();
 				up->type = Interp;
 				delrunq(r);
 			}
@@ -1792,8 +1888,8 @@ disdump(void)
 	/* MULTICORE INSTRUMENTATION - temporary */
 	print("dis: global runq: %d put, %d got, %d now, bound %d\n",
 		gqput, gqget, isched.ngq, Runqmax);
-	print("dis: %d contexts claimed of %d, curP %#p\n",
-		npctx, MAXPCTX, curP);
+	print("dis: %d contexts claimed of %d, curP %#p, parallelvm %d, stw waits %d\n",
+		npctx, MAXPCTX, curP, parallelvm, stwwaits);
 
 	for(p = curP->runhd; p != nil; p = p->link)
 		print("dis: runq prog %d %s\n", p->pid,
