@@ -360,15 +360,20 @@ enum
 	NDebug,				/* print debug message */
 };
 /*
- * The two bits of rfork(2) that are about the name space, which is what
- * this file is the model of.  The rest of rfork - a process, its memory,
- * its notes, its descriptors - belongs to the kernel portdat.h this was
- * extracted from, and is not here because nothing here can answer it.
+ * The bits of rfork(2) that are about the groups a name space is made
+ * of, which is what this file is the model of.  The rest of rfork - a
+ * process, its memory, its notes - belongs to the kernel portdat.h this
+ * was extracted from, and is not here because nothing here can answer
+ * it.
  */
 enum
 {
 	RFNAMEG		= (1<<0),	/* a copy of the name space */
-	RFCNAMEG	= (1<<10),	/* an empty one */
+	RFENVG		= (1<<1),	/* a copy of the environment */
+	RFFDG		= (1<<2),	/* a copy of the descriptor table */
+	RFCNAMEG	= (1<<10),	/* an empty name space */
+	RFCENVG		= (1<<11),	/* an empty environment */
+	RFCFDG		= (1<<12),	/* an empty descriptor table */
 };
 
 struct Pgrp

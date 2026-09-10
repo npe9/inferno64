@@ -68,6 +68,7 @@ struct Proc9 {
 	uvlong	entry;
 	Proc	*p;		/* the kproc it runs on, while it runs */
 	Pgrp	*pgrp;		/* a name space of its own, if it asked for one */
+	Egrp	*egrp;		/* and an environment of its own */
 	Fgrp	*fgrp;		/* its own descriptor table */
 	int	std[3];		/* its numbers for its standard descriptors */
 	int	inproc;		/* a second flow of control inside a program already running */
@@ -183,69 +184,127 @@ procof(Proc *p)
 }
 
 /*
- * rfork(2), the name-space half of it.
+ * rfork(2), for the groups this personality can actually give a program.
  *
- * Every flow of control here shares the personality's Pgrp by pointer -
- * kproc hands its child up->pgrp and nothing increments a count - so a
- * program that binds binds the library's own name space.  That is what
- * a library operating system is, and it is what Plan 9 gives a process
- * a way out of: RFNAMEG is a copy of the name space to change on its
- * own, RFCNAMEG an empty one.
+ * Every flow of control here shares the personality's Pgrp, Egrp and
+ * Fgrp by pointer - kproc hands its child up->pgrp and the others and
+ * nothing increments a count - so a program that binds binds the
+ * library's name space, and a program that puts a variable in the
+ * environment puts it in the library's.  That is what a library
+ * operating system is, and rfork is what Plan 9 gives a process to get
+ * out of it.
  *
- * Only those two bits are answered.  The rest of rfork is about things
- * this arrangement does not have or does not share:
- * .  RFPROC would split a flow of control, which a library cannot do to
- *    its caller's C stack - spawn and proccreate are what there is.
- * .  RFMEM and RFNOMNT ask about an address space that is one address
- *    space.
- * .  RFFDG is what spawn already gives every program it starts.
- * A caller that asks for one of them is told no, by name, rather than
- * being handed a success that did nothing - which is exactly the shape
- * of error that would show up later as a program quietly sharing what
- * it asked not to share.
+ * Three groups are made here: a name space (RFNAMEG, RFCNAMEG), an
+ * environment (RFENVG, RFCENVG) and a descriptor table (RFFDG, RFCFDG).
+ * The C-prefixed ones are empty and the others are copies.
+ *
+ * The old group is never closed.  The kernel's own sysrfork closes it,
+ * and is right to: there, every proc holds a reference.  Here the group
+ * being replaced is the library's, held by every flow of control with no
+ * count between them, so closing it would take the name space away from
+ * the personality.  What this program made for itself is a different
+ * matter and procdone closes that.
+ *
+ * What is refused, and why each:
+ * .  RFPROC would split the caller's own C stack, which a library cannot
+ *    do to its caller - spawn and proccreate are what there is.
+ * .  RFMEM and RFNOWAIT are about that same split.
+ * .  RFNOTEG rests on setnoteid, which looks the process up in the
+ *    port's pid table; the kprocs this scheduler makes are numbered by
+ *    p9sched.c and never entered in it, so the lookup would answer nil
+ *    and be dereferenced.  It is refused rather than made to crash, and
+ *    rio asks for it, so it is owed.
+ * .  RFREND wants an Rgrp on the Proc, and the Proc this configuration
+ *    carries has no such member: rendezvous here is the personality's
+ *    own tag table (p9sched.c) and not the kernel's rendezvous group.
+ * .  RFNOMNT wants devmask and the nomntdevs list, which this
+ *    configuration does not carry.
+ * A caller that asks for one of them is told so by name.  A success that
+ * did nothing is the failure this whole mechanism is guarding against:
+ * it would leave a program sharing exactly what it asked not to share.
  */
 int
 p9forkns(int flags)
 {
 	Proc9 *t;
-	Pgrp *ng, *old;
+	Pgrp *npg, *opg;
+	Egrp *neg;
+	Fgrp *nfg;
+	Rgrp *nrg;
 	int other;
 
-	other = flags & ~(RFNAMEG|RFCNAMEG);
+	other = flags & ~(RFNAMEG|RFCNAMEG|RFENVG|RFCENVG|RFFDG|RFCFDG);
 	if(other != 0){
 		snprint(up->genbuf, sizeof up->genbuf,
-			"rfork %#x: this personality answers RFNAMEG and RFCNAMEG only", flags);
+			"rfork %#x: this personality cannot mean %#x of it "
+			"(RFPROC, RFMEM, RFNOWAIT, RFREND, RFNOTEG and RFNOMNT are not here)",
+			flags, other);
 		kstrcpy(up->errstr, up->genbuf, ERRMAX);
 		return -1;
 	}
-	if((flags & (RFNAMEG|RFCNAMEG)) == 0)
-		return 0;			/* nothing asked for is nothing to do */
-	if((flags & RFNAMEG) != 0 && (flags & RFCNAMEG) != 0){
-		kstrcpy(up->errstr, "rfork: RFNAMEG and RFCNAMEG are not both", ERRMAX);
+	if((flags & (RFNAMEG|RFCNAMEG)) == (RFNAMEG|RFCNAMEG)
+	|| (flags & (RFENVG|RFCENVG)) == (RFENVG|RFCENVG)
+	|| (flags & (RFFDG|RFCFDG)) == (RFFDG|RFCFDG)){
+		kstrcpy(up->errstr, "rfork: a group cannot be both copied and emptied", ERRMAX);
 		return -1;
 	}
-	ng = newpgrp();
-	if(ng == nil){
-		kstrcpy(up->errstr, "rfork: no name space to give", ERRMAX);
-		return -1;
-	}
-	if((flags & RFNAMEG) != 0)
-		pgrpcpy(ng, up->pgrp);
-	/*
-	 * The old one is not closed.  It is the personality's, held by every
-	 * flow of control by pointer with no count between them, so closing
-	 * it here would take the library's name space away from the library.
-	 * A Pgrp this program made for itself is a different matter, and
-	 * procdone closes that one.
-	 */
-	old = up->pgrp;
-	USED(old);
-	up->pgrp = ng;
 	t = procof(up);
-	if(t != nil){
-		if(t->pgrp != nil)
-			closepgrp(t->pgrp);	/* a second rfork replaces the first */
-		t->pgrp = ng;
+
+	if((flags & (RFNAMEG|RFCNAMEG)) != 0){
+		opg = up->pgrp;
+		npg = newpgrp();
+		if(npg == nil){
+			kstrcpy(up->errstr, "rfork: no name space to give", ERRMAX);
+			return -1;
+		}
+		if((flags & RFNAMEG) != 0)
+			pgrpcpy(npg, opg);
+		/*
+		 * The devices this name space is not allowed, which the
+		 * kernel's own rfork carries across and this did not: a
+		 * program that rforked was quietly given back devices its
+		 * parent had been refused.
+		 */
+		memmove(npg->notallowed, opg->notallowed, sizeof npg->notallowed);
+		up->pgrp = npg;
+		if(t != nil){
+			if(t->pgrp != nil)
+				closepgrp(t->pgrp);
+			t->pgrp = npg;
+		}
+	}
+	if((flags & (RFENVG|RFCENVG)) != 0){
+		neg = newegrp();
+		if(neg == nil){
+			kstrcpy(up->errstr, "rfork: no environment to give", ERRMAX);
+			return -1;
+		}
+		if((flags & RFENVG) != 0)
+			envcpy(neg, up->egrp);
+		up->egrp = neg;
+		if(t != nil){
+			if(t->egrp != nil)
+				closeegrp(t->egrp);
+			t->egrp = neg;
+		}
+	}
+	if((flags & (RFFDG|RFCFDG)) != 0){
+		nfg = dupfgrp((flags & RFFDG) != 0 ? up->fgrp : nil);
+		if(nfg == nil){
+			kstrcpy(up->errstr, "rfork: no descriptor table to give", ERRMAX);
+			return -1;
+		}
+		/*
+		 * A spawned program's table is already its own - spawn built
+		 * it - so this replaces that one, and the one it replaces is
+		 * the program's and does get closed.  t->fgrp is what
+		 * procdone closes, so it has to be the new one.
+		 */
+		if(t != nil && t->fgrp == up->fgrp)
+			closefgrp(t->fgrp);
+		up->fgrp = nfg;
+		if(t != nil)
+			t->fgrp = nfg;
 	}
 	return 0;
 }
@@ -360,6 +419,10 @@ procdone(Proc9 *t, char *status)
 	if(t->pgrp != nil){
 		closepgrp(t->pgrp);
 		t->pgrp = nil;
+	}
+	if(t->egrp != nil){
+		closeegrp(t->egrp);
+		t->egrp = nil;
 	}
 	wakeup(&t->r);
 }

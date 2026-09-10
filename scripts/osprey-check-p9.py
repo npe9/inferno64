@@ -372,9 +372,31 @@ def main():
                                   r'personality should not see it', ns) is not None
                     and 'libsh: /boot/libcat /n/libcat' in privcat
                     and 'cat: cannot open /n/libcat' in privcat))
-    results.append(("and what this personality cannot mean by rfork is refused by name rather than granted: RFPROC would split the caller's own flow of control, which spawn and proccreate are what there is for, and a success that did nothing would leave a program believing it was two",
+    #
+    # And the same question of the environment, which is a different
+    # group and needs the same two halves: a variable set before the
+    # rfork must be readable by the shell afterwards and one set after
+    # must not be.
+    envcat = scriptline(t, '/boot/libcat /env/libnsshared /env/libnsprivate')
+    results.append(("and an environment of its own as well as a name space: a variable the program set before rfork(RFENVG) is still there in the copy and still there for the shell, and one it set afterwards is in its own group only - which the shell's next command shows by reading the first file and being unable to open the second",
+                    'libns: rfork(RFENVG) gave me an environment of my own' in ns
+                    and 'libns: in it, libnsshared is "before", so it is a copy and not an empty one' in ns
+                    and 'libns: and libnsprivate is "after" here' in ns
+                    and 'cat: descriptor 4 is /env/libnsshared' in envcat
+                    and 'cat: cannot open /env/libnsprivate' in envcat))
+    #
+    # The descriptor table.  A spawned program's is already its own, so
+    # what RFFDG separates cannot be seen from outside; what can be seen
+    # from inside is that the two bits differ, which is the whole of the
+    # claim being made for them.
+    results.append(("and the two descriptor-table bits do different things: a descriptor the program opened before rfork(RFFDG) still reads, because that is a copy of the table, and does not read after rfork(RFCFDG), because that is an empty one - the difference being the claim, since a spawned program's table is already its own and nothing outside it can see the separation",
+                    re.search(r'libns: after rfork\(RFFDG\) the descriptor I held reads (\d+), '
+                              r'because that is a copy', ns) is not None
+                    and 'libns: after rfork(RFCFDG) it reads -1, because that is an empty table' in ns))
+    results.append(("and what this personality cannot mean by rfork is refused by name rather than granted, with the bits it cannot mean named in the message: RFPROC would split the caller's own flow of control, which spawn and proccreate are what there is for, and a success that did nothing would leave a program believing it was two",
                     re.search(r'libns: rfork\(RFPROC\) refused: rfork 0x10: this personality '
-                              r'answers RFNAMEG and RFCNAMEG only', ns) is not None
+                              r'cannot mean 0x10 of it \(RFPROC, RFMEM, RFNOWAIT, RFREND, '
+                              r'RFNOTEG and RFNOMNT are not here\)', ns) is not None
                     and 'rfork(RFPROC) was granted' not in ns))
     results.append(("and the limit still holds for a program that is its address: the script's last line asks for two of /boot/libgen, which is linked at one, and the second is refused by name - the two would be the one image sharing its one data segment, descriptor table and heap - and the shell carries on",
                     'p9 exec: /boot/libgen is already running at 0x2000000; it is one image and cannot be two programs' in t

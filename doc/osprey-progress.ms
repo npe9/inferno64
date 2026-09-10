@@ -10354,15 +10354,9 @@ asked only the program would have passed.
 is in the table and no program here calls it \- exercising it wants a
 9P server a loaded program can speak to, which is a later thing.
 .PP
-What rio still wants, exactly.  Four symbols are still undefined when it
-is linked this way:
-.CW exec ,
-.CW await ,
-.CW notify
-and
-.CW rfork
-\- and rfork is on the list even though it is answered, because rio does
-not ask for
+.PP
+.B "3.2i: the other two groups, and the ones that are refused."
+rio does not ask for
 .CW RFNAMEG
 alone.
 .CW winshell
@@ -10372,16 +10366,105 @@ and
 .CW main
 asks
 .CW RFENVG|RFFDG|RFNOTEG|RFNAMEG ,
-so two more groups have to be real before rio's own calls are answered
-rather than refused: an environment group and a descriptor group, and a
-note group after them.  Granting those as bits that do nothing is the
-one thing this must not do, and is exactly what the falsification above
-was written to catch.  The pieces are there \-
+so an environment group and a descriptor group had to be real too.  They
+are:
+.CW RFENVG
+is
+.CW newegrp
+and
+.CW envcpy ,
+.CW RFCENVG
+an empty one,
+.CW RFFDG
+is
 .CW dupfgrp
-is what spawn already uses to give a program its own descriptors, and
-the personality has an
-.CW Egrp
-\- so this is the next step and not a new problem.
+of the current table and
+.CW RFCFDG
+of nil \- the same call spawn already uses to give a program its own
+descriptors.  The old group is never closed, for the same reason the old
+.CW Pgrp
+is not: it is the library's and every flow of control holds it by
+pointer with no count between them.
+.PP
+The environment is checked the same way the name space was, in two
+halves, because a program cannot see out of its own groups either.
+.CW /boot/libns
+sets
+.CW libnsshared
+before it rforks and
+.CW libnsprivate
+after, and the script's next line asks cat for both: the first opens and
+the second cannot.  Falsified by making
+.CW RFENVG
+answer yes and share anyway \- one criterion fails, 56 ok 1 fail.
+.PP
+The descriptor table is different, and the difference is worth being
+exact about.  A spawned program's table is already its own, so what
+.CW RFFDG
+separates is the program from itself after the call, and nothing outside
+it can see that.  What can be seen is that the two bits do different
+things: a descriptor opened beforehand still reads after
+.CW RFFDG ,
+which is a copy, and reads \-1 after
+.CW RFCFDG ,
+which is an empty table.  That is the whole of the claim made for them,
+and it is what the check asks.
+.PP
+Three groups more are refused, each for a reason that is a fact about
+this configuration rather than a shrug.
+.CW RFREND
+wants an
+.CW Rgrp
+on the
+.CW Proc ,
+and the Proc this configuration carries has no such member \- rendezvous
+here is the personality's own tag table in
+.CW p9sched.c
+and not the kernel's rendezvous group.
+.CW RFNOTEG
+wants
+.CW setnoteid ,
+which looks the process up in the port's pid table with
+.CW pidlookup
+and dereferences what it gets; the kprocs this scheduler makes are
+numbered by
+.CW p9sched.c
+and never entered in that table, so the lookup would answer nil and be
+dereferenced.
+.CW RFNOMNT
+wants
+.CW devmask
+and the
+.CW nomntdevs
+list, which this configuration does not carry.  The message names the
+bits it cannot mean rather than saying no in general.
+.PP
+And one thing the first version of this got wrong, which the kernel's
+own
+.CW sysrfork
+does not:
+.CW notallowed ,
+the devices a name space is refused, was not carried across to the copy.
+A program that rforked was quietly given back devices its parent had
+been refused.  It is copied now.
+.PP
+Where that leaves rio: linked this way, three symbols are undefined
+rather than four.
+.CW rfork
+resolves, and
+.CW winshell 's
+call is answered \- but
+.CW main 's
+is not, because it asks for
+.CW RFNOTEG ,
+which is the one of the three refusals that rio actually needs.  So the
+note group is owed, and it is owed for a reason that is written down
+above rather than discovered later.
+.CW exec ,
+.CW await
+and
+.CW notify
+are the rest.
 The pieces exist \-
 .CW p9spawn
 starts a program on a flow of its own,

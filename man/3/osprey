@@ -1604,6 +1604,15 @@ The table is version 8.  Version 8 added
 .I forkns
 \- the name-space half of
 .IR rfork (2).
+Three groups: a name space
+.RB ( RFNAMEG ,
+.BR RFCNAMEG ),
+an environment
+.RB ( RFENVG ,
+.BR RFCENVG )
+and a descriptor table
+.RB ( RFFDG ,
+.BR RFCFDG ).
 .B RFNAMEG
 is a new
 .B Pgrp
@@ -1611,7 +1620,20 @@ with
 .I pgrpcpy
 of the current one and
 .B RFCNAMEG
-an empty one; the
+an empty one, and the copy carries
+.B notallowed
+across;
+.B RFENVG
+is
+.I newegrp
+and
+.IR envcpy ;
+.B RFFDG
+is
+.I dupfgrp
+of the current table and
+.B RFCFDG
+of nil.  The
 .B Pgrp
 it had is not closed, since that one is the personality's and every flow
 of control holds it by pointer.  Every other bit is refused by name:
@@ -1623,14 +1645,26 @@ and
 are what there is for,
 .B RFMEM
 and
+.B RFNOWAIT
+are about that same split;
+.B RFREND
+wants an
+.B Rgrp
+on the
+.BR Proc ,
+which the Proc this configuration carries has not got;
+.B RFNOTEG
+wants
+.IR setnoteid ,
+which looks the process up in the port's pid table that this scheduler's
+kprocs are never entered in; and
 .B RFNOMNT
-ask about an address space that is one address space, and
-.B RFFDG
-is what
-.I spawn
-gives a program it starts.  A program's own
-.B Pgrp
-is closed when it ends.
+wants
+.I devmask
+and
+.BR nomntdevs ,
+which this configuration does not carry.  The message names the bits it
+cannot mean.  A group a program made for itself is closed when it ends.
 .PP
 Version 7 added the name space itself \-
 .IR bind ,
@@ -1665,19 +1699,23 @@ symbols were
 .I exec
 and
 .IR await .
-Four are still undefined when it is linked that way:
+Three are still undefined when it is linked that way:
 .IR exec ,
-.IR await ,
-.I notify
+.I await
 and
+.IR notify .
 .I rfork
-\- rfork among them although it is answered, because rio asks for
+resolves, and rio's
+.I winshell
+asks
 .B RFNAMEG|RFFDG|RFENVG
-and
-.BR RFENVG|RFFDG|RFNOTEG|RFNAMEG ,
-and an environment group, a descriptor group and a note group are not
-real here yet.  Granting them as bits that do nothing is the one thing
-this must not do.
+which is answered; its
+.I main
+asks
+.B RFENVG|RFFDG|RFNOTEG|RFNAMEG
+which is not, because of
+.BR RFNOTEG .
+Granting a bit that does nothing is the one thing this must not do.
 .PP
 Version 5 added
 .IR pread ,

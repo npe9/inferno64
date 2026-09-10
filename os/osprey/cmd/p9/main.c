@@ -799,7 +799,10 @@ p9main(void)
 		 * eighth line is how that is checked: cat is asked for
 		 * /n/libcat afterwards, in the shell's name space, and must
 		 * not find it.  A private bind that was not private would
-		 * leave that file there.
+		 * leave that file there.  The ninth asks the same of the
+		 * environment: /env/libnsshared was set before libns took an
+		 * Egrp of its own and must be readable, /env/libnsprivate was
+		 * set after and must not be.
 		 *
 		 * gen still is its address, so "gen | gen" is refused, and
 		 * refused by name; and the first gen, writing into a pipe
@@ -816,6 +819,7 @@ p9main(void)
 			"/boot/libcat /hello | /boot/libcat | /boot/libcat | /boot/libcat | /boot/libwc\n"
 			"/boot/libns\n"
 			"/boot/libcat /n/libcat\n"
+			"/boot/libcat /env/libnsshared /env/libnsprivate\n"
 			"/boot/libgen 100 | /boot/libgen 100\n";
 		int fd;
 
@@ -825,7 +829,7 @@ p9main(void)
 		else {
 			p9write(fd, script, strlen(script));
 			p9close(fd);
-			print("p9: wrote a script of nine lines, five of them pipelines\n");
+			print("p9: wrote a script of ten lines, five of them pipelines\n");
 			shargv[0] = "/boot/libsh";
 			shargv[1] = "#e/script";
 			shargv[2] = nil;
