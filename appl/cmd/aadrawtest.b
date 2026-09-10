@@ -31,6 +31,7 @@ Aadrawtest: module
 
 ok := 0;
 fail := 0;
+servedttf := 0;		# this test started ttffs, so this test stops it
 
 report(good: int, what: string)
 {
@@ -243,8 +244,37 @@ timetext(d: ref Display, path: string)
 	}
 	im.readpixels(Rect(im.r.min, im.r.min.add((1,1))), one);
 	ms := sys->millisec() - t0;
-	sys->print("     %-38s height %2d, %3d px: %d us a string\n",
-		path, f.height, f.width(s), (ms*1000)/REPS);
+
+	# How many distinct values the string put on the page.  A bitmap face
+	# can only ever manage two - the ink and the ground - so this is the
+	# number that tells antialiased text from the other kind, and it is
+	# measured here rather than asserted anywhere, because what counts as
+	# enough depends on the face and the size.
+	#
+	# From a clean draw, not from what the timing loop left behind: that
+	# blends the same string over itself two thousand times, and every
+	# partly-covered pixel converges on the ink until the grey levels the
+	# face actually produced are gone.  Counted that way this reported 23
+	# for a face that puts 185 on the page.
+	im.draw(im.r, d.color(Draw->White), nil, im.r.min);
+	im.text(im.r.min, black, Point(0,0), f, s);
+	im.flush(Draw->Flushnow);
+
+	w := f.width(s);
+	if(w > im.r.dx())
+		w = im.r.dx();
+	b := array[w*f.height*3] of byte;
+	im.readpixels(Rect(im.r.min, im.r.min.add((w, f.height))), b);
+	seen := array[256] of {* => 0};
+	for(i := 0; i < len b; i += 3)
+		seen[int b[i]] = 1;
+	lv := 0;
+	for(i = 0; i < 256; i++)
+		if(seen[i])
+			lv++;
+
+	sys->print("     %-38s height %2d, %3d px, %3d levels: %d us a string\n",
+		path, f.height, f.width(s), lv, (ms*1000)/REPS);
 }
 
 # serve whatever is in /fonts/ttf, if anything
@@ -264,8 +294,10 @@ startttf(d: ref Display)
 	sys->create("/mnt/ft", Sys->OREAD, Sys->DMDIR|8r777);
 	spawn tf->init(ref Draw->Context(d, nil, nil), "ttffs" :: nil);
 	for(i := 0; i < 40; i++){
-		if(sys->open("/mnt/ft/index", Sys->OREAD) != nil)
+		if(sys->open("/mnt/ft/index", Sys->OREAD) != nil){
+			servedttf = 1;
 			return;
+		}
 		sys->sleep(100);
 	}
 }
@@ -331,6 +363,11 @@ init(nil: ref Draw->Context, argv: list of string)
 			sametext(d, sys->sprint("/mnt/ft/%s.r.%d.font", tn, sz));
 			timetext(d, sys->sprint("/mnt/ft/%s.r.%d.font", tn, sz));
 		}
+	# If this test started the font server, take it down again: its Styx
+	# loop never returns, and emu does not exit while it is running.
+	if(servedttf)
+		sys->unmount(nil, "/mnt/ft");
+
 	sys->print("aadrawtest: %d ok, %d fail\n", ok, fail);
 	if(fail > 0)
 		raise "fail:aadrawtest";

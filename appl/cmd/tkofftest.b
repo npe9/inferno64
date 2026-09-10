@@ -24,6 +24,9 @@ include "tk.m";
 	tk: Tk;
 include "titlebar.m";
 	titlebar: Titlebar;
+include "wmclient.m";
+include "tkclient.m";
+	tkclient: Tkclient;
 
 # ttffs(4) serves TrueType files from /fonts/ttf as Inferno subfonts at
 # any size.  It wants a draw context, but only for its display, so this
@@ -51,6 +54,8 @@ fail := 0;
 
 small := "";		# two fonts, 15 pixels high and 30
 large := "";
+
+servedttf := 0;		# this test started ttffs, so this test stops it
 
 report(good: int, what: string)
 {
@@ -166,6 +171,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
 	tk = load Tk Tk->PATH;
+	tkclient = load Tkclient Tkclient->PATH;
 	titlebar = load Titlebar Titlebar->PATH;
 	if(titlebar != nil)
 		titlebar->init();
@@ -248,6 +254,8 @@ init(nil: ref Draw->Context, nil: list of string)
 	checktitlebar(small, "the tree's own font");
 	checktitlebar(large, "a font twice as tall");
 
+	checkdefault();
+
 	# If a TrueType face is being served, say whether Tk antialiases.
 	# A bitmap font can only ever put two values on the page.
 	ttf := "/mnt/ft/" + ttfname();
@@ -266,6 +274,11 @@ init(nil: ref Draw->Context, nil: list of string)
 		}
 	}else
 		sys->print("     nothing served under /mnt/ft; antialiasing not checked\n");
+
+	# If this test started the font server, take it down again: its Styx
+	# loop never returns, and emu does not exit while it is running.
+	if(servedttf)
+		sys->unmount(nil, "/mnt/ft");
 
 	sys->print("tkofftest: %d ok, %d fail\n", ok, fail);
 	if(fail > 0)
@@ -290,10 +303,59 @@ startttf()
 	sys->create("/mnt/ft", Sys->OREAD, Sys->DMDIR|8r777);
 	spawn tf->init(ref Draw->Context(disp, nil, nil), "ttffs" :: nil);
 	for(i := 0; i < 40; i++){
-		if(sys->open("/mnt/ft/index", Sys->OREAD) != nil)
+		if(sys->open("/mnt/ft/index", Sys->OREAD) != nil){
+			servedttf = 1;
 			return;
+		}
 		sys->sleep(100);
 	}
+}
+
+# Every real program builds its window with tkclient->toplevel, not with
+# tk->toplevel, so "emu -f sets the font for every widget" is a claim about
+# that path and not about this test's own.  tkclient connects to a window
+# manager and builds a titlebar before it gets to a widget; if it named a
+# font of its own anywhere along the way, the -f default would reach a bare
+# toplevel and miss every actual window.  Ask both, and require the same
+# answer.
+checkdefault()
+{
+	if(tkclient == nil){
+		sys->print("     no tkclient module; the real toplevel path not checked\n");
+		return;
+	}
+	tkclient->init();
+	blank();
+	bare := offscreen();
+	if(bare == nil)
+		return;
+	tk->cmd(bare, "label .l -text {Handgloves 123} -bg white -fg black");
+	barefont := tk->cmd(bare, ".l cget -font");
+
+	blank();
+	(top, nil) := tkclient->toplevel(ref Draw->Context(disp, nil, nil), "", "Default", Tkclient->Appl);
+	if(top == nil){
+		report(0, "a tkclient toplevel builds offscreen");
+		return;
+	}
+	top.screenr = off.r;
+	tk->cmd(top, "label .l -text {Handgloves 123} -bg white -fg black");
+	tk->cmd(top, "pack .l");
+	realfont := tk->cmd(top, ".l cget -font");
+	report(realfont == barefont && len realfont > 0 && realfont[0] != '!', sys->sprint(
+		"a real (tkclient) window inherits the same default font (%s)", realfont));
+
+	# and, when that default is a served TrueType face, it is really
+	# antialiased on the page and not merely named
+	map(top);
+	(lv, ink) := scan();
+	if(len realfont > len "/mnt/ft/" && realfont[0:len "/mnt/ft/"] == "/mnt/ft/")
+		report(lv > 2, sys->sprint(
+			"the default TrueType face is antialiased in a real window (%d levels, %d inked)",
+			lv, ink));
+	else
+		sys->print("     default font is %s: bitmap, so %d levels is right\n",
+			realfont, lv);
 }
 
 # the real titlebar, built by the real code, measured

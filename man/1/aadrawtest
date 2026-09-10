@@ -81,12 +81,33 @@ With the dispatch disabled that check fails, which is the control.
 Any
 .I font
 arguments are opened and a string timed through each.
-If a TrueType file is present in
-.BR /fonts/ttf ,
-.I aadrawtest
-starts
+.I Aadrawtest
+also starts
 .IR ttffs (4)
-itself and times the first face it serves at 16 and 32 pixels.
+itself, if nothing is already serving the faces in
+.BR /fonts/ttf ,
+and times the first family it serves at 16 and 32 pixels; it stops the
+server again before returning, since a Styx server's loop does not end
+and
+.I emu
+waits for every process.
+.PP
+For each font it reports the height, the width of the string, how many
+distinct values the string put on the page, and the time.
+The level count is what distinguishes an antialiased face from a bitmap
+one, which can only ever manage two:
+.IP
+.EX
+/fonts/lucidasans/unicode.8.font  height 15, 113 px,   2 levels: 1 us
+/mnt/ft/go-mono.r.13.font         height 17, 112 px, 167 levels: 2 us
+/mnt/ft/go.r.16.font              height 21, 118 px, 185 levels: 2 us
+/mnt/ft/go.r.32.font              height 43, 230 px, 242 levels: 7 us
+.EE
+.PP
+It is counted from a clean draw, not from the image the timing loop
+leaves behind: two thousand draws of the same string over itself blend
+every partly-covered pixel toward the ink until the face's own greys are
+gone, which reports 23 where a single draw reports 185.
 .SH EXAMPLE
 .EX
 	aadrawtest /fonts/lucidasans/unicode.8.font
@@ -104,13 +125,15 @@ A bitmap font's mask is one bit deep, so it goes down
 older path and never reaches the coverage one.
 The glyph comparison therefore says nothing about the new code unless a
 .B .ttf
-is present in
+is being served.
+This tree ships the Go fonts in
 .BR /fonts/ttf ,
-which this tree does not ship: with none, that line passes without having
-tested anything, and only the ramp check and the timings have run.
+so it normally is; but were they removed, that line would pass without
+having tested anything and only the ramp check and the timings would have
+run.
 .I Aadrawtest
-says so when it happens, but a green run still does not mean the glyph
-path was exercised.
+says so when it happens, but a green run still does not by itself mean
+the glyph path was exercised \(em read the reported font names.
 .PP
 Nothing checks that the formats named above are still refused: were the
 fast path to start accepting

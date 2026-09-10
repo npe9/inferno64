@@ -79,27 +79,61 @@ came up short by however much the title's text is taller: one pixel at the
 tree's own font and twelve at a 32-pixel one.
 This check fails at both fonts without that fix.
 .TP
+.B "a real (tkclient) window inherits the same default font"
+This test builds its toplevels with
+.BR tk->toplevel ;
+every actual program builds one with
+.BR tkclient->toplevel ,
+which connects to a window manager and puts a titlebar on before it
+reaches a widget.
+If anything on that path named a font of its own, the default set by
+.IR emu (1)'s
+.B -f
+would reach a bare toplevel and miss every real window.
+The check asks both and requires the same answer.
+.TP
+.B "the default TrueType face is antialiased in a real window"
+Only when the default
+.I is
+a face under
+.BR /mnt/ft ,
+that is, under
+.BR "emu -f" .
+Named alone proves nothing; this reads the window's pixels back.
+The bitmap default gives 3 distinct values,
+.B /mnt/ft/go-mono.r.13.font
+gives 199.
+When the default is a bitmap face the count is printed rather than
+asserted, since 3 is then the right answer.
+.TP
 .B "Tk antialiases a TrueType face"
-Only when a
-.B .ttf
-is present in
-.BR /fonts/ttf ,
-which this tree does not ship.
-.I Tkofftest
-then starts
+Draws through the first face
 .IR ttffs (4)
-itself and draws through the first face it serves at 16 pixels.
-A bitmap font can put only two values on the page; a TrueType face
-through
-.IR ttffs (4)
-puts about 190.
+is serving, at 16 pixels.
+A bitmap font can put only two values on the page;
+.B /mnt/ft/go.r.16.font
+puts 185 \(em the same number
+.IR aadrawtest (1)
+arrives at by scanning a tight box around one string rather than a whole
+pane.
+Skipped when nothing is served.
 .SH EXAMPLE
-To check the antialiased path, put any TrueType file in
-.B /fonts/ttf
-first:
 .EX
-	cp DejaVuSansMono.ttf /fonts/ttf/
 	tkofftest
+.EE
+.PP
+The faces this tree ships are in
+.BR /fonts/ttf ;
+.I tkofftest
+starts
+.IR ttffs (4)
+itself if nothing is serving them, and stops it again before it returns,
+since a Styx server's loop does not end and
+.I emu
+waits for every process.
+To see the whole chain instead, name a face as the default:
+.EX
+	emu -f /mnt/ft/go-mono.r.13.font /dis/tkofftest.dis
 .EE
 .SH SOURCE
 .B /appl/cmd/tkofftest.b
@@ -121,6 +155,15 @@ been made general.
 Only the packing of one flat dialog is exercised; no menu, canvas or text
 widget is drawn at all.
 .PP
-The antialiasing check is skipped silently rather than failing when no
-TrueType file is present, so a green run does not mean that path was
-tested.
+The antialiasing checks are skipped silently rather than failing when no
+face is being served, so a green run does not by itself mean that path was
+tested \(em read the reported font name.
+.PP
+The real-window check builds a
+.IR tkclient (2)
+toplevel with no window manager behind it.
+That is the configuration
+.B ". -1"
+exists for, but it is not the configuration a program runs in under
+.IR wm (1),
+and no check here covers the difference.

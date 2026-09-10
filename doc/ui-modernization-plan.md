@@ -70,40 +70,45 @@ counting distinct values:
 | --- | --- | --- | --- | --- |
 | `/fonts/lucidasans/unicode.8.font` | 15 | 113 | **2** | 1 us |
 | `/fonts/lucida/unicode.8.font` | 20 | 115 | **2** | 1 us |
-| `/mnt/ft/andale-mono.r.16.font` | 21 | 140 | **190** | 2 us |
-| `/mnt/ft/andale-mono.r.32.font` | 41 | 266 | **244** | 6 us |
+| `/mnt/ft/go-mono.r.13.font` | 17 | 112 | **167** | 2 us |
+| `/mnt/ft/go.r.16.font` | 21 | 118 | **185** | 2 us |
+| `/mnt/ft/go.r.24.font` | 32 | 177 | **215** | 4 us |
+| `/mnt/ft/go.r.32.font` | 43 | 230 | **242** | 7 us |
 
-A bitmap font can only ever produce two. 190 and 244 are antialiasing, at
-sizes chosen at open time rather than at whatever size somebody rasterised
-a `.font` to. Opening cost 0 ms at 16 px and 2 ms at 32 px, once. (Those
-draw times were 17 and 50 us when this survey was written; section 2 is
-why they are not any more.)
+A bitmap font can only ever produce two, and does: exactly 2, not "about
+2". The rest is antialiasing, at sizes chosen at open time rather than at
+whatever size somebody once rasterised a `.font` to. Opening cost 0 ms at
+16 px and 2 ms at 32 px, once. (Those draw times were 17 and 50 us when
+this survey was written; section 2 is why they are not any more.)
+
+`aadrawtest` prints that table, so it is re-measured rather than
+remembered. Counting the levels needed one care: taken from the image the
+timing loop leaves behind, the count is wrong — 2000 draws of the same
+string over itself blend every partly-covered pixel toward the ink until
+the face's own greys are gone, which reported **23** where a single clean
+draw reports **185**. It counts a clean draw.
 
 **Tk renders such a font, antialiased.** Measured through the harness in
-section 0, a `label` drawn into an offscreen pane puts **190** distinct
-values on the page through `/mnt/ft/andale-mono.r.16.font` and **213**
-at 24 pixels, against **3** for `/fonts/lucidasans/unicode.8.font` (the
-pane's background, the label's white, and black). The same string measures
-`146x21` against `119x15`, so the metrics are the face's too. This is a
-check in `tkofftest`, so it stays true or fails.
+section 0, a `label` drawn into an offscreen pane puts **185** distinct
+values on the page through `/mnt/ft/go.r.16.font`, against **3** for
+`/fonts/lucidasans/unicode.8.font` (the pane's background, the label's
+white, and black). That 185 is `tkofftest` scanning a whole 900x700 pane
+and `aadrawtest` scanning a tight box around one string, by different
+code, arriving at the same number. The string's metrics are the face's
+too. Both are checks, so they stay true or fail.
 
-These numbers were taken with a host font copied into `fonts/ttf/` for the
-experiment and then removed; nothing in a clean checkout reproduces them
-without putting a `.ttf` there first. **DejaVu Sans Mono** is what would
-ship — see section 3.
+**Nothing in the tree used any of it, and that is what changed.** When
+this survey was written there was no `fonts/ttf` directory, no startup
+path ran `ttffs`, and no font path in `appl/wm/`, `appl/lib/tkclient.b` or
+`appl/lib/titlebar.b` pointed at `/mnt/ft`; the numbers above were taken
+with a host font copied in for the experiment and then deleted. The tree
+now ships the faces and starts the server — see section 3 — so a clean
+checkout reproduces this table by running `aadrawtest`.
 
-**And nothing in the tree uses any of it.** There is no `fonts/ttf`
-directory in the repository, no startup script runs `ttffs`, and no font
-path in `appl/wm/`, `appl/lib/tkclient.b` or `appl/lib/titlebar.b` points at
-`/mnt/ft`. The defaults are 6-to-8 pixel bitmap faces:
-`/fonts/lucidasans/unicode.8.font` and its siblings, five uses, plus
-`/fonts/pelm/*`. There is no `fontsrv` in this tree — `ttffs` is the only
-mechanism, and it is already the whole pipeline.
-
-To reproduce all of the above: put a `.ttf` in `fonts/ttf/`, run `ttffs`
-from something that has a draw context (it needs `ctxt.display`, so not a
-bare `sh`), make `/mnt/ft` exist first, and open
-`/mnt/ft/<name>.r.<size>.font`.
+The defaults are still 6-to-8 pixel bitmap faces where a program names one
+explicitly: `/fonts/lucidasans/unicode.8.font` and its siblings, five
+uses, plus `/fonts/pelm/*`. There is no `fontsrv` in this tree — `ttffs`
+is the only mechanism, and it is already the whole pipeline.
 
 ## 2. What antialiasing cost, and what it costs now — **done**
 
@@ -217,7 +222,7 @@ default font for every Tk widget in every program — one global,
 `tkfont` in `libtk/utils.c`, which every widget's environment inherits.
 Pointed at a `ttffs` face, a plain `label` with no `-font` option comes out
 antialiased: `tkofftest`'s "a widget's own pixels read back" check goes
-from 3 grey levels to **190** under `emu -f /mnt/ft/andale-mono.r.16.font`,
+from 3 grey levels to **168** under `emu -f /mnt/ft/go-mono.r.13.font`,
 and every widget sizes itself to the face. So adopting a scalable font
 tree-wide is a *runtime* choice, not an edit to ~60 programs — which also
 means it can be tried, measured and reverted without touching source.
@@ -242,22 +247,109 @@ only the *button* rects. The buttons are fixed-size bitmaps; the title is
 text. So the minimum was short by however much the title is taller than a
 button: one pixel at the tree's own 8-pixel font, and **twelve** at a
 32-pixel one, which is a window that can be dragged shorter than its own
-titlebar. That is a pre-existing bug a bigger font merely makes visible,
-and `wmclient.b` already carries a guard clamping a negative content
-height, which is the symptom being patched. `minsize` takes the bar's own
-height now, and `tkofftest` asserts it at two fonts — the check fails at
-both without the fix.
+titlebar. That is a pre-existing bug a bigger font merely makes
+visible. `minsize` takes the bar's own height now, and `tkofftest` asserts
+it at two fonts — the check fails at both without the fix.
+
+**Correcting an earlier note in this document:** it said `wmclient.b`'s
+guards clamping a negative content height were "the symptom being patched"
+by the same bug. They are not. Those guards take the titlebar height from
+`tk->rect(w.titlebar, ".", Border|Required)` — Tk's own required size —
+not from `minsize`, and they fire for any caller that reshapes a window to
+a rect smaller than border plus titlebar, which is reachable however
+`minsize` behaves. They guard programmatic reshapes; `minsize` bounds user
+drags. Fixing one did not make the other dead code.
 
 That is one bug in the first piece of shared UI examined, which is the
 shape of the risk section 3 is about. The rest of `appl/wm` has not been
 swept.
 
-Shipping a face is a fork worth naming rather than deciding quietly: the
-tree would vendor one permissively-licensed TrueType file, the way
-`lib/tls/` vendors a frozen Mozilla CA bundle. **DejaVu Sans Mono and
-DejaVu Sans** are the obvious pick — the licence is permissive, they carry
-the Unicode coverage the existing `unicode.*` faces imply, and `ttffs`'s
-own man page uses DejaVu in its example.
+**The default reaches real windows, not just this test's own — checked.**
+`tkofftest` builds its toplevels with `tk->toplevel`; every actual program
+builds one with `tkclient->toplevel`, which connects to a window manager
+and puts a titlebar on before it gets to a widget. If anything along that
+path named a font of its own, `-f` would set the default for a bare
+toplevel and miss every real window. Nothing does — there is no `-font` in
+`tkclient.b`, `wmlib.b`, `titlebar.b` or `wm.b` — and `tkofftest` now
+asserts it dynamically: a label built through `tkclient->toplevel` reports
+the same `cget -font` as one built bare, and when that default is a served
+face the window reads back **199 grey levels** where the bitmap default
+gives 3. `wm/wm wm/logon` itself comes up under `-f` with nothing on
+stderr; the control is a deliberately wrong `-f`, which prints
+`tk: font not found:` from `libtk/utils.c`.
+
+### The face this tree ships: the Go fonts
+
+The tree now vendors a face, the way `lib/tls/` vendors a frozen Mozilla CA
+bundle. **The Go fonts** — `fonts/ttf/go*.ttf`, two families (`go`
+proportional and `go-mono`) in all four styles.
+
+The reason to prefer them here over DejaVu, which this document previously
+proposed, is not licensing alone. They were drawn by **Bigelow & Holmes**,
+who drew the Lucida faces Inferno has shipped in `fonts/lucida`,
+`fonts/lucidasans` and `fonts/lucm` since the beginning — so adopting them
+is a continuation of the tree's own typography rather than a substitution
+of someone else's. Unlike those, they are under a three-clause BSD licence
+instead of the restrictions in `fonts/LICENCE`, which forbids adaptation
+and constrains redistribution. A default font has to be one nobody
+downstream has to think about.
+
+### Getting them served, without asking anyone to remember anything
+
+The chain is: `ttffs` must be serving before the first Tk toplevel exists,
+because `-f` names a path under its mount. Nothing arranges that by
+itself, so:
+
+- **`wm/wm` starts it**, in `startfonts()`, immediately before it builds
+  its own first toplevel — guarded on there being faces to serve, `ttffs`
+  being built, and nobody already serving `/mnt/ft`, and quiet about each.
+  The window system is the right owner: every graphical session goes
+  through it, its lifetime is the session's, and it gets there before any
+  widget exists.
+- `lib/sh/fonts` does the same by hand, for a session with no window
+  system.
+
+Which reduces the whole adoption to one flag:
+
+```
+emu -f /mnt/ft/go-mono.r.13.font
+; wm/wm wm/logon
+```
+
+**The obvious place was `/lib/sh/profile`, and it was wrong.** `emuinit`
+runs `sh -l`, so the profile is on the path of every ordinary session and
+a shell makes no windows — the ordering looks right by construction. But a
+Styx server's loop never returns and emu does not exit while a process is
+running, so putting the server there stopped emu from ever exiting: a
+batch `emu -l script` that used to finish in **0.079 s** ran until it was
+killed. That is every scripted and CI invocation in the tree. The same
+trap bit `tkofftest` and `aadrawtest`, which start a server themselves
+when they find faces to serve; both unmount what they started. Shipping
+actual `.ttf` files is what exposed all three — with an empty `fonts/ttf`
+none of that code ever ran.
+
+Verified end to end, with no `-l` at all so that only `wm/wm` could have
+mounted anything: `emu -f /mnt/ft/go-mono.r.13.font /dis/sh.dis` running
+`wm/wm wm/sh` comes up with nothing on stderr, where a deliberately wrong
+`-f` prints `tk: font not found:`. And `tkofftest`'s real-window check
+reports `/mnt/ft/go-mono.r.13.font` as the inherited default with **199**
+grey levels on the page.
+
+Two smaller things fell out of shipping actual `.ttf` files, both fixed:
+
+- `ttffs` warned once per face on every cold start, because a missing
+  glyph-range cache went through the same `xwarn` path as a corrupt one.
+  A cold cache is the normal first run. It is silent now; a stale or
+  malformed cache still warns. The caches themselves are gitignored —
+  they are derived, and `readranges` rejects one no newer than its `.ttf`,
+  which a checkout's mtimes cannot be relied on to satisfy. Generating
+  all eight costs **2.8 s**, once per checkout, on the first read of
+  `/mnt/ft/index` — not at mount, which is why `startfonts()`'s wait for
+  the mount returns long before it and the cost lands on the first font
+  open instead, where it blocks rather than fails.
+- `tkofftest` started `ttffs` when it found faces to serve and then never
+  exited, because a Styx server's loop does not return and emu waits for
+  it. It unmounts what it started.
 
 ## 4. HiDPI is the same sweep, so do it in the same pass
 
