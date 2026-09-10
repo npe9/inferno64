@@ -255,13 +255,15 @@ gextern(Sym *s, Node *a, long o, long w)
 {
 
 	if(a->op == OCONST && typev[a->type->etype]) {
-		/* same hi-first fix as cgen.c's OCONST vlong case, for
-		 * initialized global/static vlong data instead of a
-		 * stack temp -- see the comment there. */
-		gpseudo(ADATA, s, nod32const(a->vconst>>32));
+		/* Low word first, the same order as cgen.c's OCONST
+		 * vlong case, for initialized global/static vlong data
+		 * instead of a stack temp -- see the comment there for
+		 * why little-endian is the right order and what reading
+		 * it the other way did to virtio and to the clock. */
+		gpseudo(ADATA, s, nod32const(a->vconst));
 		p->from.offset += o;
 		p->reg = 4;
-		gpseudo(ADATA, s, nod32const(a->vconst));
+		gpseudo(ADATA, s, nod32const(a->vconst>>32));
 		p->from.offset += o + 4;
 		p->reg = 4;
 		return;

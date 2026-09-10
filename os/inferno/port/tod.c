@@ -192,7 +192,6 @@ todfix(void)
 	
 		// convert to epoch
 		mul64fract(&x, diff, tod.multiplier);
-if(x > 30000000000ULL) print("todfix %llud\n", x);
 		x += tod.off;
 	
 		// protect against overflows

@@ -13,8 +13,8 @@ struct	Vlong
 	{
 		struct
 		{
-			ulong	hi;
 			ulong	lo;
+			ulong	hi;
 		};
 	};
 };

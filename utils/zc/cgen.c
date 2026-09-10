@@ -916,29 +916,39 @@ sugen(Node *n, Node *nn, long w)
 			/*
 			 * This materializes a compile-time vlong CONSTANT
 			 * (e.g. a bare literal in vlong-typed arithmetic)
-			 * into memory as two 32-bit stores.  It used to
-			 * store the low half at offset 0 and the high half
-			 * at offset+SZ_LONG -- correct only if every
-			 * consumer treats an 8-byte vlong slot as low-word-
-			 * first.  libkern/vlrt-riscv32.c's own Vlong struct
-			 * (hi first, lo second -- the same order vlrt-
-			 * mips.c and vlrt-arm.c use) is hi-word-first, and
-			 * every REAL function that builds one (_ul2v,
-			 * _si2v, _addv, ...) writes/reads it that way
-			 * consistently.  Only this literal fast path
-			 * disagreed -- confirmed live via QEMU/lldb: a
-			 * plain "+ 0x0BADC0DE" in vlong arithmetic landed
-			 * 0x0BADC0DE in the struct's hi slot and 0 in lo,
-			 * and the boot-time "100" divisor in
-			 * poolsizeinit()'s nb*pcnt/100 the same way --
-			 * dividing by 100<<32 instead of 100, which is
-			 * exactly why every poolsize() at boot read "max
-			 * 0".  Swapped to store high first, matching every
-			 * other vlong producer in this compiler.
+			 * into memory as two 32-bit stores: low half at
+			 * offset 0, high half at offset+SZ_LONG.
+			 *
+			 * It was briefly the other way round.  That change
+			 * was made to agree with libkern/vlrt-riscv32.c's
+			 * Vlong, which had hi first, and its reason was
+			 * written down as "the same order vlrt-mips.c and
+			 * vlrt-arm.c use".  Half of that is wrong:
+			 * vlrt-arm.c is lo first, and so is vlrt-386.c.
+			 * Only the big-endian ports put hi first, and
+			 * RISC-V is little-endian.  vlrt-riscv32.c had been
+			 * copied from one of them, and the compiler was
+			 * then bent to match the copy.
+			 *
+			 * The two are consistent either way as long as
+			 * nothing outside the compiler reads the eight
+			 * bytes -- which is why the board still booted --
+			 * but hardware does.  A virtio descriptor's 64-bit
+			 * address field written hi-first sends the device
+			 * pa<<32, so QEMU read the ethernet frames out of
+			 * unmapped memory and put 618 zero bytes on the
+			 * wire; and clock.c's plain
+			 * *(volatile uvlong*)(CLINT+ClintMtime) read the
+			 * mtime counter word-swapped, which is what made
+			 * tod.c's todfix guard fire on every tick of this
+			 * board and no other.  vlrt-riscv32.c is lo first
+			 * now, matching every other little-endian port, and
+			 * a uvlong in memory is a real little-endian 64-bit
+			 * integer.
 			 */
-			gopcode(OAS, nod32const(n->vconst>>32), Z, &nod1);
-			nod1.xoffset += SZ_LONG;
 			gopcode(OAS, nod32const(n->vconst), Z, &nod1);
+			nod1.xoffset += SZ_LONG;
+			gopcode(OAS, nod32const(n->vconst>>32), Z, &nod1);
 
 			regfree(&nod1);
 			break;
