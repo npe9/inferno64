@@ -31,6 +31,15 @@ include "tkspinbox.m";
 	tkspinbox: Tkspinbox;
 include "arg.m";
 
+# ttffs(4) serves /fonts/ttf as Inferno subfonts at any size.  It wants a
+# draw context, but only for its display, so this can start one without a
+# window manager - and without it the proportional face is unreachable
+# and the third picture would be monospace like the other two.
+Ttffs: module
+{
+	init:	fn(ctxt: ref Draw->Context, argv: list of string);
+};
+
 Tkgallery: module
 {
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
@@ -87,7 +96,9 @@ init(nil: ref Draw->Context, argv: list of string)
 		raise "fail:no screen";
 	}
 
-	for(l := list of {"classic", "flat"}; l != nil; l = tl l){
+	startttf();
+
+	for(l := list of {"classic", "flat", "proposed"}; l != nil; l = tl l){
 		st := hd l;
 		one(st);
 		f := out + "-" + st + ".ppm";
@@ -97,6 +108,39 @@ init(nil: ref Draw->Context, argv: list of string)
 			sys->print("tkgallery: cannot write %s: %r\n", f);
 	}
 }
+
+startttf()
+{
+	if(sys->open("/mnt/ft/index", Sys->OREAD) != nil)
+		return;			# somebody is already serving
+	if(sys->open("/fonts/ttf", Sys->OREAD) == nil)
+		return;
+	tf := load Ttffs "/dis/ttffs.dis";
+	if(tf == nil)
+		return;
+	sys->create("/mnt", Sys->OREAD, Sys->DMDIR|8r777);
+	sys->create("/mnt/ft", Sys->OREAD, Sys->DMDIR|8r777);
+	spawn tf->init(ref Draw->Context(disp, nil, nil), "ttffs" :: nil);
+	for(i := 0; i < 40; i++){
+		if(sys->open("/mnt/ft/index", Sys->OREAD) != nil)
+			return;
+		sys->sleep(100);
+	}
+}
+
+# A neutral palette with one accent, which is what a GUI drawn now looks
+# like and what none of this toolkit's own colours are arranged as.  The
+# point of the third picture is that the widgets do not have to change to
+# get it: every one of these is an ordinary -background/-foreground on a
+# widget that already exists.
+Page:	con "#F7F7F5";		# the window behind everything
+Surface: con "#FFFFFF";		# a field or list: a level ABOVE the page
+Control: con "#EBEBE7";		# a secondary button
+Accent:	con "#3D6A9A";		# one accent, used sparingly
+Onaccent: con "#FFFFFF";
+Ink:	con "#1F2328";
+Muted:	con "#6B7280";
+Line:	con "#DCDCD6";		# a border, where one is still wanted
 
 # Sizes here are DISTANCES, not character cells.  Real Tk's -width on an
 # entry or a listbox counts characters; this one counts pixels (see the
@@ -108,7 +152,7 @@ init(nil: ref Draw->Context, argv: list of string)
 one(style: string)
 {
 	off.draw(off.r, disp.color(Draw->White), nil, off.r.min);
-	top := tk->toplevel(disp, opts());
+	top := tk->toplevel(disp, opts(style));
 	if(top == nil)
 		return;
 	top.screenr = off.r;
@@ -116,7 +160,10 @@ one(style: string)
 	# Before any widget: style(9)'s spacings and border widths are read
 	# when a widget is configured, so a style set afterwards would reach
 	# the borders and not the sizes.
-	cmd(top, "style " + style);
+	if(style == "proposed")
+		cmd(top, "style flat");
+	else
+		cmd(top, "style " + style);
 
 	# The window manager's toolbar, built the way wm/toolbar.b builds it:
 	# a frame, a menubutton for the start menu, and one button per task
@@ -162,9 +209,9 @@ one(style: string)
 	cmd(top, ".r.s set 40");
 	cmd(top, "scrollbar .r.sb -orient horizontal -width 190");
 	cmd(top, ".r.sb set 0.2 0.6");
-	cmd(top, "listbox .r.lb -width 190 -height 58");
+	cmd(top, "listbox .r.lb -width 190 -height 72");
 	cmd(top, ".r.lb insert end {first} {second} {third}");
-	cmd(top, "text .r.t -width 190 -height 46");
+	cmd(top, "text .r.t -width 190 -height 56");
 	cmd(top, ".r.t insert end {a text widget\nwith two lines}");
 	if(tkspinbox != nil){
 		(nil, nil) = tkspinbox->new(top, ".r.sp", 0, 100, 5, 25);
@@ -191,9 +238,60 @@ one(style: string)
 	cmd(top, "pack .l -side left -anchor n -padx 12 -pady 10");
 	cmd(top, "pack .r -side left -anchor n -padx 12 -pady 10");
 
+	if(style == "proposed")
+		repaint(top);
+
 	if((e := tk->putimage(top, ". -1", win, nil)) != nil && len e > 0)
 		sys->print("tkgallery: putimage: %s\n", e);
 	cmd(top, "update");
+}
+
+# The same widgets, told to use the palette.  Nothing here is a new
+# widget or a new option - it is what every one of them already accepts,
+# never used as a system.
+repaint(top: ref Tk->Toplevel)
+{
+	page := " -bg " + Page + " -fg " + Ink;
+	# the page and its frames
+	for(f := list of {".", ".l", ".r", ".tb", ".nb", ".nb.tabs", ".nb.body",
+			".r.rel"}; f != nil; f = tl f)
+		cmd(top, hd f + " configure -bg " + Page);
+	for(l := list of {".l.h", ".l.lab", ".l.chk", ".l.chk2", ".l.r1", ".l.r2",
+			".r.h"}; l != nil; l = tl l)
+		cmd(top, hd l + " configure" + page);
+	# headings in the muted colour, so there is a hierarchy at all
+	cmd(top, ".l.h configure -fg " + Muted);
+	cmd(top, ".r.h configure -fg " + Muted);
+
+	# one primary action, filled in the accent, and that is the whole
+	# use of colour: a person can find the button they came for.
+	cmd(top, ".l.but configure -bg " + Accent + " -fg " + Onaccent +
+		" -activebackground " + Accent + " -activeforeground " + Onaccent);
+	# secondary controls are filled, not outlined
+	for(c := list of {".l.mb", ".l.cb", ".l.ind"}; c != nil; c = tl c)
+		cmd(top, hd c + " configure -bg " + Control + " -fg " + Ink);
+	cmd(top, ".l.ind configure -selectcolor " + Accent);
+	# fields and lists sit on a surface ABOVE the page
+	for(w := list of {".r.e", ".r.lb", ".r.t", ".r.sp.e"}; w != nil; w = tl w)
+		cmd(top, hd w + " configure -bg " + Surface + " -fg " + Ink);
+	for(g := list of {".r.s", ".r.sb", ".r.sp", ".r.sp.up", ".r.sp.down"};
+			g != nil; g = tl g)
+		cmd(top, hd g + " configure -bg " + Control);
+	# toolbar: a strip of the page colour with borderless buttons
+	cmd(top, ".tb configure -bg " + Page + " -borderwidth 0");
+	cmd(top, ".tb.start configure -bg " + Page + " -fg " + Ink);
+	for(i := 0; i < 4; i++)
+		cmd(top, sys->sprint(".tb.t%d configure -bg %s -fg %s -borderwidth 0",
+			i, Page, Ink));
+	for(t := 0; t < 3; t++)
+		cmd(top, sys->sprint(".nb.tabs.t%d configure -bg %s -fg %s",
+			t, Page, Ink));
+	# the relief row and the notebook's page, which are frames like any
+	# other and were the two patches of the old colour left showing
+	for(i = 0; i < 5; i++)
+		cmd(top, sys->sprint(".r.rel.f%d configure -bg %s", i, Surface));
+	cmd(top, ".nb.body.p0 configure -bg " + Page);
+	cmd(top, ".nb.body.p0.x configure -bg " + Page + " -fg " + Ink);
 }
 
 # a row of frames, one per relief, so the border itself is the subject
@@ -221,11 +319,19 @@ packcol(top: ref Tk->Toplevel, nil: string, ws: list of string)
 		cmd(top, "pack " + hd ws + " -anchor w -pady 3");
 }
 
-opts(): string
+opts(style: string): string
 {
-	if(font == "")
-		return "";
-	return "-font " + font;
+	if(font != "")
+		return "-font " + font;
+	# The third picture is proportional.  Every widget in this toolkit is
+	# laid out from measured text, so nothing has to change for a
+	# proportional face to work - it is simply never asked for, because
+	# the default font is a bitmap monospace and always has been.  That
+	# one substitution does more for how a window LOOKS than any amount
+	# of border geometry.
+	if(style == "proposed" && sys->open("/mnt/ft/go.r.14.font", Sys->OREAD) != nil)
+		return "-font /mnt/ft/go.r.14.font";
+	return "";
 }
 
 # tk->cmd reports an error by returning a string that starts '!', which
