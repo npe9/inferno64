@@ -104,9 +104,18 @@ ginit(void)
 		if(i >= D_X0 && i <= D_X7)
 			reg[i] = 0;
 	}
-	/* keep two external registers */
+	/*
+	 * Keep four external registers.  exreg() below hands out four
+	 * (REGEXT down to REGEXT-3), so four must be reserved here, in
+	 * every file, whether or not that file declares them: a file
+	 * that does not see the declaration would otherwise use the
+	 * register as scratch and clobber another file's variable
+	 * across the call.
+	 */
 	reg[REGEXT] = 1;
 	reg[REGEXT-1] = 1;
+	reg[REGEXT-2] = 1;
+	reg[REGEXT-3] = 1;
 	memmove(resvreg, reg, sizeof(resvreg));
 }
 

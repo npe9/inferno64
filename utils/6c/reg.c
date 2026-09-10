@@ -51,7 +51,8 @@ regopt(Prog *p)
 	nvar = 0;
 	regbits = RtoB(D_SP) | RtoB(D_AX) | RtoB(D_X0);
 	if(REGEXT)
-		regbits |= RtoB(REGEXT) | RtoB(REGEXT-1);
+		regbits |= RtoB(REGEXT) | RtoB(REGEXT-1) |
+			RtoB(REGEXT-2) | RtoB(REGEXT-3);
 	for(z=0; z<BITS; z++) {
 		externs.b[z] = 0;
 		params.b[z] = 0;
