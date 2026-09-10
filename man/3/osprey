@@ -1836,8 +1836,22 @@ and
 so no event arrives: the background appears because rio flushes once
 itself after painting it, and the window appears because the program in
 it writes more than libdraw's buffer holds and the buffer flushes
-itself.  rio cannot be clicked here, which is a driver rather than
-anything about the personality.  rio is spawned rather than run to completion, and the
+itself.  rio cannot be clicked here.  There is a driver \-
+.I p9kbd.c
+takes the i8042's ports at CPL3, registers IRQ1 and IRQ12 as
+notifications and reads port 0x60 with its own
+.I inb
+\- but it is not started on this configuration, and starting it during
+setup breaks the ones where it works, because it must be blocked in the
+select before the kernel unmasks the line.  Nor would starting it be
+enough:
+the semaphores it waits on are armed by the select loop in
+.IR p9pairsrv.c ,
+which is the personality's loop when it serves a peer over a ring, and
+this boot is a script rather than a loop.  The same driver reads keys
+and mouse packets under
+.BR 9p9pair ,
+where that loop runs.  rio is spawned rather than run to completion, and the
 personality gives it three seconds and says so, which is both how the
 boot ends and where the screendump is taken.  The personality
 asks the name space what rio is about to ask it and logs the answers

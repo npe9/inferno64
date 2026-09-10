@@ -10990,11 +10990,75 @@ puts a window.
 .PP
 So the real 9front rio, linked against a library operating system and
 loaded into a slot the loader chose, draws a window on a microkernel's
-frame buffer with a program's output in it.  What is missing is input:
-this configuration has no driver behind the keyboard and mouse files,
-so rio cannot be clicked, and a window it is not asked for is the only
-window there is.  That is the next thing, and it is a driver rather than
-anything about the personality.
+frame buffer with a program's output in it.  What is missing is input, and chasing that down changed what "missing"
+means.
+.PP
+.B "3.2t: the driver is there; nothing wakes it."
+There is a driver.
+.CW p9kbd.c
+is this personality's own user-space i8042 driver \- it takes the
+controller's ports at CPL3, registers IRQ1 and IRQ12 as notifications on
+two semaphores, does the handshake itself and reads every byte off port
+0x60 with its own
+.CW inb .
+It is only ever started by the network demonstration in
+.CW p9ip.c ,
+which this boot does not run, so
+.CW #m
+is bound onto
+.CW /dev
+with nothing behind it at all.
+.PP
+Starting it from
+.CW p9setup
+is the obvious repair and it is wrong, which is worth having written
+down.  It was tried: three checks broke \- kbd, rio and riowin, in
+detail, no PS/2 packet decoded, no menu when the button is pressed, no
+window swept.  Making the start idempotent did not fix them, which is
+what said the trouble was not two drivers but
+.I when .
+.CW p9ip.c
+starts it late, after the personality's loop is up, and the driver's own
+comment says why that matters: the kernel side enables each device's
+interrupt and unmasks the line last, so nothing fires until the kproc is
+blocked in select.  Started during setup, before there is a loop to be
+blocked in, it breaks the ordering on the configurations where it
+already worked.  So it is not started here, and the change came out
+again rather than being left in with three checks red.
+.PP
+And even started, that would not be input, for a reason worth being
+exact about.  The driver blocks waiting to be told an interrupt fired,
+and what tells it is the select loop in
+.CW p9pairsrv.c
+\- the personality's loop when it serves a peer over a ring, which arms
+.CW Kbdsem
+and
+.CW Mousesem
+beside the clock and the ring and calls
+.CW p9kbdnotify
+when either fires.  This boot is a script rather than a loop: it has no
+select, so nothing turns a notification into a wakeup and no byte ever
+reaches
+.CW /dev/kbd
+or
+.CW /dev/mouse .
+.PP
+Driving QEMU's keyboard and mouse over QMP produces nothing in the log
+\- not a scancode, not a packet \- which is what says the notifications
+are not being serviced rather than that the driver is failing to read
+them.  The same driver in the same tree does read them: the kbd check
+boots
+.CW 9p9pair ,
+where that loop is running, and watches four keys and six mouse packets
+arrive.
+.PP
+So the next thing is not a driver.  It is that a personality which wants
+input has to have a loop, and this one's main flow is a sequence of
+demonstrations that ends.  Giving it one means the select arms, which
+live in the slice
+.CW p9pairsrv.c
+maps, and that is container plumbing rather than anything about programs
+or name spaces.
 .PP
 The second was the probe itself, and it is the plainest lesson here.
 .CW p9open
