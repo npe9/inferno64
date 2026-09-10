@@ -193,6 +193,41 @@ stoptheworld(void)
 	}
 }
 
+/*
+ * Claim a quantum on this context, and do not return while a collection
+ * is running.  The other half of stoptheworld().
+ *
+ * Publish first, then re-check.  Testing gcstw and only afterwards
+ * setting inxec leaves a window: a context can pass the test, the
+ * collector can then set gcstw and find othersrunning() == 0 because
+ * inxec is not set yet, and marking begins while this context enters a
+ * quantum.  The panic that showed up with parallelvm forced to 1 was in
+ * poolalloc and poolfree, which is what a collector running against a
+ * live mutator looks like.
+ *
+ * So claim the quantum first, make the claim visible, and only then
+ * look at gcstw; if a collection has started, withdraw the claim and
+ * wait.  The collector sets gcstw and then reads inxec, so the two
+ * orderings cannot both miss.
+ *
+ * Two callers: vmachine() before each quantum, and acquire(), where an
+ * interpreter coming back from a blocking Dis system call is entering a
+ * quantum just as much -- isave() gave the claim up on the way in.
+ */
+static void
+enterquantum(void)
+{
+	for(;;){
+		curP->inxec = 1;
+		coherence();
+		if(gcstw == 0)
+			return;
+		curP->inxec = 0;
+		coherence();
+		sched();
+	}
+}
+
 void
 starttheworld(void)
 {
@@ -1312,6 +1347,15 @@ acquire(void)
 	if(up->type == Interp) {
 		p = up->iprog;
 		up->iprog = nil;
+		/*
+		 * isave() cleared inxec on the way into the blocking call,
+		 * so this context has been at a safepoint for as long as it
+		 * slept.  Take the quantum back before touching R, and wait
+		 * here if a collection started while it slept: vmacquire()
+		 * above waits too, but between that wait and the claim there
+		 * is a window, which is what enterquantum() closes.
+		 */
+		enterquantum();
 		irestore(p);
 	}
 	else
@@ -1675,32 +1719,7 @@ vmachine(void*)
 			}
 		}
 
-		/*
-		 * Safepoint.  Publish first, then re-check.
-		 *
-		 * Testing gcstw and only afterwards letting xec() set
-		 * inxec leaves a window: a context can pass the test, the
-		 * collector can then set gcstw and find othersrunning() == 0
-		 * because inxec is not set yet, and marking begins while
-		 * this context enters a quantum.  The panic that showed up
-		 * with parallelvm forced to 1 was in poolalloc and poolfree,
-		 * which is what a collector running against a live mutator
-		 * looks like.
-		 *
-		 * So claim the quantum first, make the claim visible, and
-		 * only then look at gcstw; if a collection has started,
-		 * withdraw the claim and wait.  The collector sets gcstw and
-		 * then reads inxec, so the two orderings cannot both miss.
-		 */
-		for(;;){
-			curP->inxec = 1;
-			coherence();
-			if(gcstw == 0)
-				break;
-			curP->inxec = 0;
-			coherence();
-			sched();
-		}
+		enterquantum();
 
 		r = curP->runhd;
 		if(r != nil) {

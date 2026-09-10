@@ -2332,6 +2332,16 @@ isave(void)
 	p->reg = R;
 	REGSYNCED();
 	curP->curprog = nil;
+	/*
+	 * The quantum is over as far as the collector is concerned: the
+	 * registers are written back, so p->reg is the truth and this
+	 * context is at a safepoint.  Leaving it set held the collector
+	 * off for the whole of a blocking Dis system call, which is
+	 * unbounded -- stoptheworld() spun 5569345 times and the boot
+	 * never reached a shell.  This is Go's entersyscall handing the
+	 * P back, and irestore() below is exitsyscall taking it again.
+	 */
+	curP->inxec = 0;
 	return p;
 }
 
@@ -2341,6 +2351,7 @@ irestore(Prog *p)
 	R = p->reg;
 	REGSYNCED();
 	curP->curprog = p;
+	curP->inxec = 1;	/* a quantum is open again; see isave() */
 	R.IC = 1;
 }
 
