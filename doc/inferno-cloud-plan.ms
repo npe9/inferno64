@@ -4468,3 +4468,95 @@ and
 \(en the tree's own mechanism \(en and not in preprocessor
 conditionals, which is what AGENTS.md says and which cloud work is
 exactly where one is tempted to break.
+.NH 1
+What this needs that is not code
+.PP
+Every item left on the list above is blocked on something that cannot
+be built: an account, a machine, or a console.  This section says
+which, so the blocking is a purchase decision rather than a vague
+"needs hardware".  Nothing here is large; the largest single line is a
+few hundred dollars, and most of the list is under ten.
+.PP
+.B "A serial console is the requirement underneath all of them."
+This port is verified by reading a boot log.  A provider that offers a
+graphical console and no serial one is not usable for this work at any
+price, because the failures being chased \(en a hang before the first
+print, a panic with a register dump \(en are invisible on a VGA
+console that the kernel may never reach.  Check for it before paying
+for anything else.
+.IP "\f(CWGoogle\ Cloud\fP" 12
+Item 3, and the cheapest first boot on somebody else's hardware.  What
+is needed: an account with billing enabled, a Cloud Storage bucket, and
+the Compute Engine custom-image path \(en
+.CW "gcloud compute images create --source-uri"
+against the tar.gz that
+.CW scripts/mkinferno-efi-disk.sh
+already writes when
+.CW INFERNO_GCE_TAR
+is set.  Serial console access is on by default and is read with
+.CW "gcloud compute instances get-serial-port-output" .
+An e2-micro or e2-small is pennies an hour and the image import is
+free.  This is the one to buy first: it is UEFI with virtio-net and
+virtio-blk, every piece of which this tree already drives, so what it
+buys is a boot log rather than a driver.
+.IP "\f(CWAWS\fP" 12
+Item 6, in two stages.  What is needed: an account, an S3 bucket, and
+the
+.CW vmimport
+IAM role that
+.CW ImportSnapshot
+requires \(en the snapshot route, not VM Import proper, which rejects a
+guest it cannot identify.  EC2 Serial Console must be enabled at the
+account level and granted in IAM; it is off until someone turns it on.
+Stage one is a cheap Nitro virtual instance (a
+.CW t3.micro
+or
+.CW m5.large )
+to write the ENA driver against, for cents an hour.  Stage two is
+.CW *.metal ,
+which needs a quota increase for the instance family and runs to a few
+dollars an hour, so it is rented for an afternoon and released.
+.IP "\f(CWRented\ metal\fP" 12
+Item 7, and the first genuine bare-metal boot.  Hetzner or Vultr.
+Hetzner is a monthly dedicated server with a KVM console on request;
+Vultr is bare metal by the hour with custom-ISO upload, and wants the
+ISO to be a hybrid image, which is a change to
+.CW scripts/mkinferno-efi-iso.sh
+rather than a purchase.  What to specify when ordering: an Intel 1G NIC
+and AHCI or NVMe, which are the drivers already linked, and IPMI or
+serial-over-LAN.  This is independent of the cloud items and can be
+bought at any time.
+.IP "\f(CWOracle\ Cloud\fP" 12
+Item 8.  What is needed: an account, and a bare-metal shape, which is
+not in the free tier \(en the always-free Ampere shapes are virtual
+machines and do not take a custom iPXE script.  The custom-iPXE-at-launch
+option is what makes this the shortest path from a build here to a
+kernel on someone else's hardware, and with the root compiled in the
+iSCSI boot volume is not needed.
+.IP "\f(CWA\ Xen\ host\fP" 12
+Item 10, and no account at all: Xen installs on any spare x86 machine,
+so this is hardware that may already be on the desk rather than
+something to rent.  Item 4 has already measured what HVM costs under
+QEMU; what a real host adds is a dom0 to test xenbus, XenStore, grant
+tables and event channels against.  Worth doing only after item 4 says
+Xen is a platform this port wants to be on.
+.IP "\f(CWA\ Hyper-V\ host\fP" 12
+Item 11, and likewise no account: Windows Pro or Server on a spare
+machine runs Generation 2 guests, which is the same VMBus,
+.CW storvsc
+and
+.CW netvsc
+an Azure guest talks to.  Writing those three against a local Hyper-V
+is far cheaper than writing them against an Azure bill, and an Azure
+account is then only needed to confirm the result.
+.IP "\f(CWA\ big\ machine\fP" 12
+Item 9's x86 half: x2APIC, more than 255 logical processors, memory
+above 4 GiB and a MADT with hundreds of entries.  The AWS
+.CW *.metal
+rental above is the same purchase; nothing separate is needed, only a
+large enough instance and an hour on it.
+.PP
+What is worth buying first, if only one thing is: the Google Cloud
+account.  It costs almost nothing, it needs no driver written, and it
+turns "every piece exists" into a boot log \(en which is the only kind
+of evidence this document accepts.
