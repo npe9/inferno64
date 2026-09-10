@@ -159,6 +159,8 @@ showglobalconfig(void)
 	print("\n");
 }
 
+static int pcmsixrouter(uvlong *addr, ulong *data);
+
 void
 mpinit(void)
 {
@@ -169,6 +171,16 @@ mpinit(void)
 	/* showglobalconfig(); */
 	i8259init();
 	syncclock();
+
+	/*
+	 * Installed here rather than at pcicfginit() time because the
+	 * vectors it hands out are LAPIC vectors: a machine that came
+	 * up on archgeneric has no allocvector() pool to draw them
+	 * from, and leaving the pointer nil there is exactly right --
+	 * pcimsixintr() then returns -1 and every driver falls back to
+	 * the pin, which is what those machines did before this.
+	 */
+	pcimsirouter = pcmsixrouter;
 	DP("mpinit after syncclock getconf(*apicdebug) %s\n", getconf("*apicdebug"));
 
 	if(getconf("*apicdebug")){
@@ -558,6 +570,70 @@ msiirqdisable(Vctl *v, int)
 	return pcimsidisable(pci);
 }
 
+/*
+ * The board's MSI-X router, in the sense port/pci.c means it: hand
+ * back the address and data a device must write to raise an
+ * interrupt, and the number that write will arrive as.
+ *
+ * On a GIC board (os/inferno/virtarm64/gicv2m.c, the only other one)
+ * the number is an SPI, which is already something intrenable()
+ * understands.  Here it is a LAPIC vector out of allocvector(), which
+ * is not an IOAPIC pin and which mpintrassign() below has to be
+ * taught to recognise; that is the whole of the x86 difference.  The
+ * message itself is the one msiintrenable() sends -- the 0xFEE00000
+ * window with the destination CPU in bits 19:12, the vector in the
+ * low byte of the data word and the assert bit above it.  Only where
+ * the device keeps that address and data differs: MSI puts them in
+ * config space, MSI-X in a table inside one of its BARs, which is why
+ * pcimsixenable() lives in the portable file and this does not.
+ *
+ * Why a router and not a hook inside intrenable(), which is where MSI
+ * sits four functions down.  Enabling MSI-X on a function changes how
+ * that function delivers interrupts, and for several device classes
+ * the driver has to say where: a virtio 1.0 device leaves every queue
+ * at VIRTIO_MSI_NO_VECTOR until the driver writes queue_msix_vector,
+ * and an e1000e leaves its IVAR registers unmapped.  Turning the
+ * capability on behind such a driver's back does not upgrade it, it
+ * silences it.  That was measured, not reasoned: an earlier version
+ * of this change did enable MSI-X for every PCI function inside
+ * mpintrassign(), and on the same pc64dev boot the virtio disk
+ * stopped reporting interrupts entirely (it polls its used ring, so
+ * it still read sector 0 and said nothing) and DHCP over the i82574
+ * failed outright.
+ *
+ * pcimsixintr() is the driver's own request, so a router is opt-in by
+ * construction: only sdnvme, sdvirtio10 and usbxhcipci call it, and
+ * those three are exactly the drivers written to program whatever
+ * their device needs beyond the table entry.  Nothing else on the
+ * board changes, and the i82574 and the ICH keep the plain MSI they
+ * already had.
+ */
+static int
+pcmsixrouter(uvlong *addr, ulong *data)
+{
+	int vno, cpu;
+
+	/*
+	 * *nomsi turns off message-signalled interrupts, and MSI-X is
+	 * one however separately the two capabilities are named;
+	 * *nomsix turns off this half alone.  Returning -1 here rather
+	 * than refusing later is what makes the fallback clean:
+	 * pcimsixintr() reports -1 to the driver, the driver uses
+	 * p->intl, and the board is on the pin it would have used if
+	 * this function did not exist.
+	 */
+	if(getconf("*nomsi") != nil || getconf("*nomsix") != nil)
+		return -1;
+
+	vno = allocvector();
+	cpu = mpintrcpu();
+	if(vno < VectorPIC || cpu < 0)
+		return -1;
+	*addr = 0xFEE00000ULL | (cpu << 12);
+	*data = vno | (1<<14);
+	return vno;
+}
+
 static int
 msiintrenable(Vctl *v)
 {
@@ -596,6 +672,31 @@ int
 mpintrassign(Vctl* v)
 {
 	int irq, tbdf, vno;
+	Pcidev *pcidev;
+
+	/*
+	 * A vector pcmsixrouter() already allocated and pcimsixintr()
+	 * already wrote into this function's MSI-X table.  It arrives
+	 * here as v->irq because that is what the driver was told to
+	 * hand intrenable(), and it is not a pin: no bus lookup can
+	 * find it and MaxIrqPIC is far below it.  pcimsixintr() records
+	 * it on the Pcidev, so this needs no table of its own -- and
+	 * the same record is what makes a driver that disables and
+	 * re-enables its unit get the same vector back rather than
+	 * spend a new one each cycle.
+	 *
+	 * No v->enable: the table entry is written already, and
+	 * irq.c's intrenable() skips a nil one.  isr and eoi are the
+	 * LAPIC's, the same two msiintrenable() installs, because an
+	 * MSI-X message is acknowledged at the local APIC like any
+	 * other message-signalled interrupt.
+	 */
+	if(BUSTYPE(v->tbdf) == BusPCI && (pcidev = pcimatchtbdf(v->tbdf)) != nil
+	&& pcidev->msixirq > 0 && pcidev->msixirq == v->irq){
+		v->isr = lapicisr;
+		v->eoi = lapiceoi;
+		return v->irq;
+	}
 
 	vno = msiintrenable(v);
 	if(vno != -1)

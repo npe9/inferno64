@@ -1808,14 +1808,90 @@ A commit message cannot be rewritten, so the record is set straight
 here.
 .PP
 Two things are true instead.  The first is that nothing on pc64
-installs a
+installed a
 .CW pcimsirouter :
 .CW os/inferno/virtarm64/gicv2m.c
-is the only file in the tree that assigns one, so
+was the only file in the tree that assigned one, so
 .CW pcimsixintr()
-returns \-1 on pc64 and all four drivers fall back to INTx there.  That
-is a gap in written code, not a build failure, and it is the item.  The
-second is that a pc64 suite arm is blocked behind something else
+returned \-1 on pc64 and all four drivers fell back to INTx there.  That
+was a gap in written code, not a build failure, and it was the item.
+.B DONE :
+.CW os/inferno/pc/mp.c
+now has
+.CW pcmsixrouter() ,
+installed by
+.CW mpinit() ,
+and pc64 hands out LAPIC vectors:
+.DS
+.CW
+usbxhci: 0x1b36 0xd: irq 65 msi-x
+sdF (virtio10): irq 105 msi-x
+sdN (nvme): using 1 submit queues, irq 113 msi-x
+sdF: first interrupt, irq 105 msi-x
+nvme: first interrupt, irq 113 msi-x
+usbxhci: first interrupt, irq 65 msi-x
+.R
+.DE
+Three functions, three vectors, each delivering, where before all
+three shared two IOAPIC pins.  Both QEMU x86 machines this board
+boots \(em
+.CW "-M q35"
+and
+.CW "-M pc"
+\(em and the fallback with
+.CW *nomsix=1
+puts all three back on the pins with everything still working.
+.PP
+The x86 half is smaller than the GIC half and interesting for the same
+reason the arm64 one was.  The message is the one
+.CW msiintrenable()
+in the same file already sends \(em the
+.CW 0xFEE00000
+window, the destination CPU in bits 19:12, the vector in the low byte
+and the assert bit above it \(em so
+.CW pcmsixrouter()
+is six lines.  What it costs is that a LAPIC vector is not an IOAPIC
+pin, and
+.CW intrenable()
+on this board is written around pins, so
+.CW mpintrassign()
+needs one branch that recognises a vector the router already allocated.
+It recognises it off
+.CW "Pcidev.msixirq" ,
+which
+.CW pcimsixintr()
+records for its own reuse, so no second table is needed.
+.PP
+The thing that had to be learned by running it is why this is a router
+at all rather than a hook inside
+.CW intrenable() ,
+which is where MSI sits four functions away.  The first version did
+put it there: every PCI function with an MSI-X capability got a vector,
+no driver asked for anything, and it looked like a strictly better
+default.  On the same
+.CW pc64dev
+boot the virtio disk stopped reporting interrupts entirely and DHCP
+over the i82574 failed.  Enabling MSI-X on a function changes how that
+function delivers, and for several classes the driver has to say
+where: a virtio 1.0 device leaves every queue at
+.CW VIRTIO_MSI_NO_VECTOR
+until the driver writes
+.CW queue_msix_vector ,
+and an e1000e leaves its
+.CW IVAR
+registers unmapped.  Turning the capability on behind such a driver
+does not upgrade it, it silences it \(em and the disk said nothing
+because it polls its used ring, so it still read sector 0.
+.CW pcimsixintr()
+is the driver's own request, so a router is opt-in by construction:
+.CW sdnvme ,
+.CW sdvirtio10
+and
+.CW usbxhcipci
+call it and are written to program whatever else their device needs;
+the i82574 and the ICH do not, and keep the plain MSI they already had.
+.PP
+The second is that a pc64 suite arm is blocked behind something else
 entirely: the heap corruption
 .CW doc/inferno-ports.ms
 has a hunt of its own for, at

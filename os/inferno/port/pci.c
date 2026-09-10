@@ -1039,7 +1039,7 @@ enum {
 	MSIXEntSize	= 16,
 };
 
-static int
+int
 pcimsixdisable(Pcidev *p)
 {
 	int off;

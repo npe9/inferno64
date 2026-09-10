@@ -22204,3 +22204,164 @@ appeared once, and
 four times from the AHCI unit with no medium.  Both are pc64's, not
 this work's, and the first belongs to the heap-corruption hunt earlier
 in this file rather than to a driver.
+.NH 1
+MSI-X on x86, and the version of it that had to be thrown away
+.PP
+The previous section ends by saying pc64 has no MSI-X path, so the
+xHCI and the virtio disk share INTx line 10.  That was true when it
+was written.  It is not any more, and this section is what changed.
+.PP
+.CW os/inferno/pc/mp.c
+already had MSI \(em
+.CW msiintrenable() ,
+tried by
+.CW mpintrassign()
+before the IOAPIC path, allocating a LAPIC vector and writing
+.CW "0xFEE00000 | (cpu<<12)"
+and
+.CW "vno | (1<<14)"
+into the function's config space.  Neither 9front's copy of this file
+nor the Inferno it came from has MSI-X.  So the question was only ever
+where to put it, and the first answer was wrong in a way worth
+recording.
+.PP
+The first version added
+.CW msixintrenable()
+beside
+.CW msiintrenable() ,
+tried first, enabling MSI-X for every PCI function that had the
+capability.  It needed no driver changes and looked like a strictly
+better default: MSI-X has more vectors, per-vector masking, and a
+table in a BAR rather than four config registers.  Booted, on
+.CW pc64dev
+with an
+.CW nvme ,
+a
+.CW virtio-blk-pci ,
+a
+.CW qemu-xhci
+and the i82574 the machine already has:
+.DS
+.CW
+msi-x: PCI.0.2.0: vector 65 cpu 0
+msi-x: PCI.0.4.0: vector 89 cpu 0
+msi-x: PCI.0.5.0: vector 105 cpu 0
+msi-x: PCI.0.3.0: vector 113 cpu 0
+.R
+.DE
+Four functions, four vectors, and two things quietly broken.
+.CW "sdF: first interrupt"
+never printed \(em the virtio disk received nothing at all, and said
+nothing about it, because
+.CW sdvirtio10
+polls its used ring and so still read sector 0 and reported success.
+And DHCP failed outright.
+.PP
+Enabling MSI-X on a function changes how that function delivers
+interrupts, and for several device classes the driver has to say
+where.  A virtio 1.0 device leaves every queue at
+.CW VIRTIO_MSI_NO_VECTOR
+until the driver writes
+.CW queue_msix_vector ;
+an e1000e leaves its
+.CW IVAR
+registers unmapped.  Turning the capability on behind such a driver
+does not upgrade it, it silences it.  The disk was the instructive
+one: a driver that polls does not fail when its interrupt disappears,
+it just stops being interrupt-driven, and nothing in the log says so.
+.PP
+The second version is a
+.CW pcimsirouter ,
+the interface
+.CW os/inferno/port/pci.c
+already defines and
+.CW os/inferno/virtarm64/gicv2m.c
+already implements.  That makes it opt-in by construction, because
+.CW pcimsixintr()
+is called by the driver:
+.CW sdnvme ,
+.CW sdvirtio10
+and
+.CW usbxhcipci
+call it and are written to program whatever else their device needs
+beyond the table entry; the i82574 and the ICH do not, and keep the
+plain MSI they already had.  The router itself is six lines \(em
+.CW allocvector() ,
+.CW mpintrcpu() ,
+and the same address and data
+.CW msiintrenable()
+builds.
+.PP
+The x86 cost is one branch.  On a GIC board the router returns an SPI,
+which is already a number
+.CW intrenable()
+understands.  Here it returns a LAPIC vector, which is not an IOAPIC
+pin: no bus lookup finds it and
+.CW MaxIrqPIC
+is far below it.  So
+.CW mpintrassign()
+gained a branch that recognises a vector the router already allocated,
+off
+.CW "Pcidev.msixirq" ,
+which
+.CW pcimsixintr()
+records for its own reuse \(em no second table, and no state this file
+has to keep.  It installs the LAPIC
+.CW isr
+and
+.CW eoi
+and no
+.CW enable ,
+because
+.CW pcimsixintr()
+has already written the table entry and
+.CW irq.c
+skips a nil one.
+.PP
+Result, on
+.CW "-M q35" :
+.DS
+.CW
+usbxhci: 0x1b36 0xd: irq 65 msi-x
+sdF (virtio10): irq 105 msi-x
+sdN (nvme): using 1 submit queues, irq 113 msi-x
+nvme: first interrupt, irq 113 msi-x
+sdF: first interrupt, irq 105 msi-x
+usbxhci: first interrupt, irq 65 msi-x
+DEVTEST: /dev/sdN0/data sector 0 (512 bytes): ...BSD  4.4
+DEVTEST: /dev/sdF0/data sector 0 (512 bytes): ...BSD  4.4
+DEVTEST: /net/ether0 DHCP-OK ip=10.0.2.15 gw=10.0.2.2
+usbd: ep2.0: port 1: super ep3.0 vid 46f4 did 0001 class 0
+DEVTEST: done
+.R
+.DE
+Three functions, three vectors, each reporting its own first
+interrupt, where the same boot before this change had two of them
+sharing pin 10 and the third on pin 11.
+.CW "-M pc"
+gives the same with different numbers (65, 97, 105).  And
+.CW *nomsix=1
+on the multiboot command line puts all three back on the pins with
+everything still working, which is the branch that protects any
+machine where this is the wrong idea.
+.PP
+Two qualifications.  The
+.CW "p->msixirq > 0"
+reuse branch in
+.CW pcimsixintr()
+is still unreached \(em it wants a devsd unit taken offline and
+brought back \(em so it now has an x86 instance and still no run, the
+same qualifier three commits before this one carry.  And these boots
+are pc64's, which means the heap corruption this file hunts elsewhere
+fires in some of them: one panic in four on
+.CW q35 ,
+at
+.CW "Initial Dis"
+and in
+.CW destroy() ,
+neither in anything this change touches.
+.CW pc64dev
+panics less often than
+.CW pc64
+only because it never starts the shell.  The clean runs are the
+evidence; the panics are the other hunt's.
