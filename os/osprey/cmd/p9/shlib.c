@@ -96,10 +96,23 @@ runline(char *line)
 		av[i][na] = nil;
 	}
 
-	in = -1;
+	/*
+	 * The ends of the pipeline are the shell's own 0 and 1, not the
+	 * machine's console.  That distinction did not exist while the only
+	 * shell was the one the personality starts, whose 0 and 1 are the
+	 * console anyway - but a shell rio starts in a window has the
+	 * window there, and a command it runs should write to the window.
+	 * Handing -1 wrote to the console instead, which is the machine's
+	 * and not the window's.
+	 *
+	 * mine says which of these numbers the shell must not close: its
+	 * own two, as against a pipe end it made and has to close for the
+	 * far end ever to see end of file.
+	 */
+	in = 0;
 	npid = 0;
 	for(i = 0; i < ns; i++){
-		out = -1;
+		out = i < ns-1 ? -1 : 1;
 		p[0] = p[1] = -1;
 		if(i < ns-1){
 			if(pipe(p) < 0){
@@ -113,20 +126,21 @@ runline(char *line)
 		 * The shell's own ends go now.  The child was given its own
 		 * copies when it was started, so closing here does not take
 		 * them away - and not closing here is what would stop the far
-		 * end of the pipe from ever seeing end of file.
+		 * end of the pipe from ever seeing end of file.  The shell's
+		 * own 0 and 1 are not ends it made and stay open.
 		 */
-		if(in >= 0)
+		if(in > 1)
 			close(in);
-		if(out >= 0)
+		if(out > 1)
 			close(out);
-		in = p[0];
+		in = i < ns-1 ? p[0] : 0;
 		if(pid[i] < 0){
 			print("libsh: %s: cannot start it\n", av[i][0]);
 			break;
 		}
 		npid++;
 	}
-	if(in >= 0)
+	if(in > 1)
 		close(in);
 	for(i = 0; i < npid; i++){
 		status[0] = 0;
@@ -148,8 +162,29 @@ startboot(char *argv0, char **argv)
 
 	USED(argv0);
 	if(argv == nil || argv[1] == nil){
-		print("libsh: usage: libsh script\n");
+		print("libsh: usage: libsh [-c command] script\n");
 		exits("usage");
+	}
+	/*
+	 * -c command, which is how rio starts a shell in a window: it runs
+	 * /bin/rc with "-c" and one line to run.  The line is run and the
+	 * shell ends, which is what -c means.
+	 *
+	 * The script path below is this shell's other way in, and the two
+	 * do not overlap: a script is a file of lines and this is one line
+	 * given outright.
+	 */
+	if(strcmp(argv[1], "-c") == 0){
+		if(argv[2] == nil){
+			print("libsh: -c wants a command\n");
+			exits("usage");
+		}
+		strncpy(line, argv[2], sizeof line - 1);
+		line[sizeof line - 1] = 0;
+		print("libsh: -c %s\n", line);
+		runline(line);
+		print("libsh: the command is done\n");
+		exits(nil);
 	}
 	if((fd = open(argv[1], OREAD)) < 0){
 		print("libsh: cannot open %s\n", argv[1]);

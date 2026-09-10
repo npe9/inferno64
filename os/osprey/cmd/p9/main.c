@@ -934,7 +934,7 @@ p9main(void)
 		 */
 		rioargv[0] = "/boot/rio";
 		rioargv[1] = "-k";
-		rioargv[2] = "-i";
+		rioargv[2] = "/boot/libcat /hello";
 		rioargv[3] = nil;
 		/*
 		 * What a window system finds here, said before it runs.  rio

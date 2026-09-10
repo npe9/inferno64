@@ -719,9 +719,23 @@ def main():
     # drawn in it at the moment of the photograph.
     riorc = re.search(r'p9 spawn: /bin/rc runs as (\d+) at 0x[0-9a-f]+, '
                       r'with its own descriptor table \(0 1 -1\)', t)
+    # And what the shell runs is given the window too.  The shell's own
+    # 0 and 1 are the window, and a command with no redirection
+    # inherits them, so cat's 454 bytes of /hello go into the window -
+    # which is why they are not in the console log.  That absence is
+    # the check: the same cat writing to the console appears there
+    # every other time it runs in this boot.
+    riowincat = re.search(r'p9 spawn: /boot/libcat runs as (\d+) at 0x[0-9a-f]+, '
+                          r'with its own descriptor table \(0 1 -1\)',
+                          t[t.index('p9: starting /boot/rio'):]
+                          if 'p9: starting /boot/rio' in t else '')
     results.append(("and rio makes a window and runs a shell in it: winshell rforks a name space, an environment and a descriptor table of its own, mounts its own wsys, opens the window's /dev/cons for input and again for output, renames itself through /proc/<n>/args and execs /bin/rc - which this personality spawns - and the shell is given the window's own descriptors rather than the machine's console",
                     riorc is not None
                     and 'libsh: cannot open -c' not in t))
+    results.append(("and a command the window's shell runs writes into the window: the shell's own 0 and 1 are the window, a command with no redirection of its own is given them, and the bytes cat reads out of /hello go there - which is why they are not in this log, where every other cat in this boot puts them",
+                    riowincat is not None
+                    and t.count('hello from the 9P server, a container across the ring') >= 1
+                    and 'p9 spawn: /bin/rc runs as' in t))
     #
     # And rio's own screen.  rio announces no painting, so this shot is
     # taken at the first thing the machine says after rio has settled,

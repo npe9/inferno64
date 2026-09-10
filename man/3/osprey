@@ -1820,15 +1820,15 @@ It paints the screen: the display QEMU scans out while rio idles is
 which is the colour rio allocates its background with on line 190 of
 .BR 9front/src/cmd/rio/data.c ,
 and the screendump taken before rio ran has none of that colour and all
-of libdraw's.  Nothing is drawn in the window: a
+of libdraw's.  A command the window's shell runs writes into the window: the shell's
+own 0 and 1 are the window and a command with no redirection of its own
+is given them, so cat's bytes go there rather than to the console.
+Nothing is drawn on the screen for it: rio allocates a
 .B -k
-window is allocated
-.B DNofill
-and the shell rio starts in it - this tree's own shell under the name
-.B /bin/rc
-- does not understand the
-.B -c
-rio passes it.  rio is spawned rather than run to completion, and the
+window
+.BR Refbackup ,
+so its pixels live in a backup image the draw device composites, and
+that composite has not been shown to happen.  rio is spawned rather than run to completion, and the
 personality gives it three seconds and says so, which is both how the
 boot ends and where the screendump is taken.  The personality
 asks the name space what rio is about to ask it and logs the answers

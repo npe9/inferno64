@@ -10924,19 +10924,49 @@ Those two numbers are the window.  The shell's own complaint about the
 arguments rio gave it goes into the window rather than to the console,
 which is how the log shows it arrived.
 .PP
-The screen is still the background alone, and that is the state rather
-than a fault: a
-.CW -k
-window is allocated
-.CW DNofill
-and nothing has drawn in it at the moment the screendump is taken.  What
-would draw in it is the shell, and the shell rio starts is
+.PP
+.B "3.2r: the shell in the window, and what it writes."
+The shell rio starts is
 .CW /boot/libsh
 under the name
 .CW /bin/rc ,
-which does not understand the
+and rio runs it as
+.CW "rc -c <command>" ,
+which it did not understand.  It does now: one line given outright,
+run, and the shell ends, which is what
 .CW -c
-that rio passes it.  That is the next thing.
+means.  The script path it already had is its other way in and the two
+do not overlap.
+.PP
+That was not enough, and the thing it uncovered had been true since the
+shell was written.  Its pipeline gave the ends of a pipeline as \-1,
+which means the machine's console, and closed anything it was handed
+that was not negative.  That was invisible while the only shell was the
+one the personality starts, whose own 0 and 1 are the console anyway.  A
+shell rio starts in a window has the window there, and a command it runs
+with no redirection of its own should get the window.  The ends are the
+shell's own 0 and 1 now, and what it closes is a pipe end it made rather
+than either of those.
+.PP
+So the window's shell runs
+.CW "/boot/libcat /hello"
+and cat is started
+.CW "with its own descriptor table (0 1 -1)"
+\- those two numbers are the window \- and the 454 bytes it reads go
+there.  They are not in the console log, which is where every other cat
+in this boot puts them, and that absence is what the check asks for.
+.PP
+The screen is still the background alone.  Everything up to the
+window's contents works and the contents do not reach the frame buffer:
+rio allocates a
+.CW -k
+window
+.CW Refbackup ,
+so its pixels live in a backup image the draw device composites onto
+the screen, and that composite is what has not been shown to happen.
+The next thing is the draw device's layered screens rather than
+anything about programs, name spaces or descriptors, all of which are
+now carrying a window system's worth of traffic.
 .PP
 The second was the probe itself, and it is the plainest lesson here.
 .CW p9open
