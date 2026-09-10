@@ -3031,3 +3031,89 @@ system call does not, and that
 .CW stoptheworld()
 does not wait on it.  Both halves are needed and neither is written
 here.
+.NH 2
+The hypothesis, tested
+.PP
+It was true, and a counter said so rather than an argument.
+.PP
+The probe went through
+.CW heapmonitor ,
+the hook
+.CW libinterp/heap.c
+already calls on every birth and every sweep, so libinterp needed no
+change and emu was untouched.  It counted heap operations performed
+while
+.CW gcstw
+was set by a process that was not the one collecting, and it caught, in
+three runs out of three:
+.IP
+.nf
+gcstw: heap op 0 from <nil> pid 1, not the collector (dis pid 12)
+gcstw: heap op 0 from dis pid 8, not the collector (dis pid 9)
+gcstw: heap op 1 from dis pid 8, not the collector (dis pid 9)
+.fi
+.PP
+.CW "op 1"
+is heap.c's "about to free".  A mutator was returning a block to the
+pool underneath the collector's own mark and sweep.
+.PP
+The fix is the handover
+.CW destroy()
+already performs when
+.CW gcdepth
+exceeds 64: the count is already zero, so nothing refers to the object
+and the collector will find it unreachable.  Waiting instead would mean
+sleeping in
+.CW destroy() ,
+which is reached from callers holding locks.  Gated on a
+.CW gcstopped
+hook that is nil unless a kernel sets it.
+.PP
+Confirmed by the same counter: across four runs afterwards
+.CW "op 1"
+is gone and only
+.CW "op 0"
+births remain, which the tri-colour scheme makes safe.  It is not the
+whole of what is wrong \(em the boot still fails, at
+.CW movp+0xf7
+and
+.CW destroy+0x2ca ,
+still in the heap \(em but it is the first thing at
+.CW parallelvm=1
+whose fix the same measurement that found it can show stopped
+happening.
+.NH 2
+Five hypotheses, one survivor
+.PP
+Worth writing down as a method, because the ratio is the point.
+.IP "\f(CWclaimctx()\fP sharing" 
+Contexts shared once the pool of eight is used up.  Dead:
+.CW MAXPCTX
+raised to 32 left five contexts claimed and changed nothing.
+.IP "\f(CWfpuostate\fP"
+Two Progs sharing an Osenv clobbering each other's FPU save area.
+Dead by reading:
+.CW "n->osenv = (Osenv*)((uchar*)n + sizeof(Prog))" ,
+so every Prog owns its Osenv inline and nothing is shared.  No boot
+spent.
+.IP "channel queues"
+.CW isend()
+and
+.CW irecv()
+edit them unlocked.  Dead by measurement: a stateless queue-integrity
+check was silent across three boots that all crashed.  Still a hazard,
+still not this one.
+.IP "the first channel probe"
+Not a hypothesis about the kernel but about the measurement, and it
+was wrong: a nesting count that leaks when a Dis exception longjmps
+out.  Killed by its own
+.CW parallelvm=0
+arm.
+.IP "the safepoint"
+Alive.  Above.
+.PP
+The four that died all arrived the same way \(em by reading, after
+eliminating something else.  The one that lived arrived the same way
+too, and the difference is not how it was thought of but that it was
+put to a counter before it was written down as a cause.  Four out of
+five is the honest prior for the next one.
