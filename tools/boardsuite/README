@@ -9,7 +9,7 @@ boardsuite - the board configurations, and what each one is for
 
 Only the two Pi configurations need the patched build described in
 tools/qemu-patches/README; set QEMU= to point at it.  Every patch there
-is BCM-specific, and the other seven run on a stock qemu of the right
+is BCM-specific, and the other eight run on a stock qemu of the right
 architecture -- virtarm64 was pointed at the patched binary because it
 was to hand, and gives the same 31 markers and 15 known -FAIL on a
 packaged qemu-system-aarch64.  Cards are made in $TMPDIR/boardsuite
@@ -17,9 +17,10 @@ packaged qemu-system-aarch64.  Cards are made in $TMPDIR/boardsuite
 runs.
 
 IN A CONTAINER.  docker/boardsuite.sh builds a Debian image with the
-packaged qemus, mkfs.vfat, mtools and python3, and runs the seven
+packaged qemus, mkfs.vfat, mtools and python3, and runs the eight
 configurations that do not want the patched build -- virtarm64,
-virtarm64-peer, sifiveu, virt, virt32, virt-peer and peer-mixed.  The
+virtarm64-peer, sifiveu, virt, virt32, virt32s, virt-peer and
+peer-mixed.  The
 other six are the Pi ones.
 The tree is bind-mounted read-only rather than copied -- these five
 kernels are committed binaries -- so the image never goes stale when
@@ -47,29 +48,46 @@ why the quick path cannot run those boards.
 
 BUILDING INSTEAD.  docker/boardsuite.sh build builds the tree from
 source in the container and runs the suite on what it built: mk, the
-libraries, the kenc compilers, limbo and the kernels.  It needs nothing
-in the repository that the repository says should not be there.  It
-takes minutes rather than seconds, and it needs Linux/arm64 to exist as
-a host platform, which it now does.
+libraries, the kenc compilers, limbo, the Limbo userland in both Dis
+word sizes, and the kernels.  It needs nothing in the repository that
+the repository says should not be there.  It takes minutes rather than
+seconds, and it needs Linux/arm64 to exist as a host platform, which it
+now does.
 
-Two things about the copy it builds in are worth knowing, because both
+Four things about the copy it builds in are worth knowing, because each
 cost a run.  mkconfig carries an absolute ROOT and a SYSHOST, and both
-are the Mac's -- they are rewritten.  And the tree carries the host's
+are the Mac's -- they are rewritten.  The tree carries the host's
 object files: mk is a timestamp build, so it sees lib9/argv0.o newer
 than argv0.c, does not rebuild it, and ar puts a Mach-O object into a
 Linux archive, after which the link fails with "undefined reference to
 argv0" and says nothing about why.  Every .o is deleted from the copy
 first.
 
-The seven come back with the same marker sets either way, which is the
+The other two only appear against a real checkout, which is the case
+this path is for and the case it had never been run in: every run
+before then bind-mounted a working tree, where the build products were
+already on disk and the copy inherited them.  Only the include
+directory of each Inferno/<objtype> is tracked, so there is nowhere to
+put libinterp.a -- iar's "cannot create .../lib/libinterp.a: No such
+file or directory" does not say that a missing directory is why.  And
+no .dis file is in the repository, while a board's root file list
+embeds /dis/sh.dis and the rest of appl/cmd and appl/lib into the
+kernel image, so mkroot stops with "don't know how to make
+/build/dis/basename.dis".  Both directories are made and both trees are
+built -- appl/lib and appl/cmd once for the eight-byte Dis word and
+again with DISROOT=dis32 DISWORD=4, which is what virt32 takes.  Not
+appl's own mkfile: it walks danby, which does not build and which no
+board's root asks for.
+
+The eight come back with the same marker sets either way, which is the
 result worth having: the same source built by Apple clang and by Debian
 gcc, run under two different qemus, says the same thing about the
 boards.
 
-ALL THIRTEEN.  docker/boardsuite.sh all adds the Pi boards, which need
+ALL FOURTEEN.  docker/boardsuite.sh all adds the Pi boards, which need
 the patched qemu of tools/qemu-patches -- a source build against
 v10.1.3 that nothing packages.  It lives in an image of its own so the
-seven that do not want it are not made to wait on it, and the patch
+eight that do not want it are not made to wait on it, and the patch
 series is that image's whole build context, so a changed patch rebuilds
 it and an unchanged one does not.  It applies the twenty-six one at a
 time and stops on the first rejection: git am over the series would
@@ -88,9 +106,9 @@ virtarm64 passing on a stock qemu is what says the Pi patches are Pi
 patches, and a run where one binary answers for every board cannot say
 that.
 
-All thirteen then come back with the marker sets recorded on the Mac --
-36, 36, 40, 33, 33, 37, 32, 34, 5, 42, 2, 44, 44 -- from kernels built
-by Debian gcc and a qemu built from source in the container.  Two
+All fourteen then come back with the marker sets recorded on the Mac --
+36, 36, 40, 33, 33, 37, 32, 34, 5, 42, 5, 5, 44, 44 -- from kernels
+built by Debian gcc and a qemu built from source in the container.  Two
 independently built qemus agreeing on twenty-six patches' worth of
 device models is the part of that worth having; a green run on its own
 is not.
@@ -198,7 +216,18 @@ the system qemu:
 	sifiveu		QEMU -M sifive_u, no bios.
 	virt		QEMU -M virt riscv64, with a virtio-blk disk
 			and a virtio-net, both the mmio transport.
-	virt32		QEMU -M virt riscv32.
+	virt32		QEMU -M virt riscv32, with a virtio-net on the
+			mmio transport.  The board had no network at
+			all until the round that found zc's vlong word
+			order; the netdev and the driver arrived
+			together.
+	virt32s		The same board in supervisor mode: no -bios
+			none, so QEMU's default OpenSBI runs first and
+			enters the kernel at S-mode.  It shares
+			virt32's init and prints the same five markers,
+			so the evidence line -- OpenSBI's own "Domain0
+			Next Mode : S-mode" -- is the only thing that
+			says which of the two actually ran.
 	virt-peer	The same board again, and a second copy of it
 			on the other end of a wire.  See TWO GUESTS.
 	virtarm64-peer	The same, on the arm64 board: two mmio networks

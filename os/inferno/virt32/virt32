@@ -8,13 +8,12 @@
 # jc/ja/jl.  za has no CSR read/write operand form and no F-register
 # file at all; see virt32/l.s for what that required.
 #
-# Serial-console-only first boot, the same scope armv7's own config
-# started from: no ether/ip (ethervirtiommio pulls in the netif/ip
-# stack this pass doesn't need), no screen (memlayer/memdraw/draw),
-# no SD, no virtio input, no PCI, no entropy device (virt's own board
-# comment: randomvirt wants a libsec newer than the one this tree
-# shares). Widening this to match virt's full device list can follow
-# once the console path itself is proven on real QEMU.
+# The console path is proven, so this is the first widening past it:
+# ether and ip, over the same virtio-mmio NIC riscv64/virt uses.  Still
+# no screen (memlayer/memdraw/draw), no SD, no virtio input, no PCI --
+# QEMU's riscv32 virt has an ECAM host but nothing this board needs
+# behind it yet -- and no entropy device (virt's own board comment:
+# randomvirt wants a libsec newer than the one this tree shares).
 
 dev
 	root
@@ -26,8 +25,17 @@ dev
 	srv
 	uart
 	env
+	ether		netif
+	ip	ip ipv6 ipaux ptclbsum parseip eipfmt classmask equivip parseether iproute arp chandial netlog ethermedium plan9 nullmedium pktmedium nat
 	cap
 	kprof
+
+ip
+	tcp
+	udp
+	ipifc
+	icmp
+	icmp6
 
 lib
 	interp
@@ -63,6 +71,15 @@ port
 	xalloc
 
 	archvirt
+
+# The same driver os/inferno/virt links on riscv64, copied unchanged
+# but for its header comment: it is MMIO registers and ring structures
+# with no arch-specific asm, and the ring fields are fixed widths, not
+# machine words.
+link
+	ethervirtiommio
+	ethermedium
+	loopbackmedium
 
 misc
 	uartvirt
@@ -139,3 +156,14 @@ root
 	/dis/lib/styxconv/ostyx.dis	/dis32/lib/styxconv/ostyx.dis
 	/dis/lib/styxservers.dis	/dis32/lib/styxservers.dis
 	/dis/lib/workdir.dis	/dis32/lib/workdir.dis
+# The ip userland, for netcheck(): DHCP over the virtio-mmio NIC and a
+# ping to the gateway it hands back.  Same set os/inferno/virt takes,
+# from /dis32 like everything else here.
+	/dis/lib/dial.dis	/dis32/lib/dial.dis
+	/dis/lib/dhcpclient.dis	/dis32/lib/dhcpclient.dis
+	/dis/lib/ip.dis	/dis32/lib/ip.dis
+	/dis/lib/rand.dis	/dis32/lib/rand.dis
+	/dis/lib/random.dis	/dis32/lib/random.dis
+	/dis/lib/timers.dis	/dis32/lib/timers.dis
+	/dis/ip/dhcp.dis	/dis32/ip/dhcp.dis
+	/dis/ip/ping.dis	/dis32/ip/ping.dis

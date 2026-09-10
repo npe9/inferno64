@@ -490,6 +490,44 @@ the board reaches its shell (so the timer PPI fires through the
 redistributor) and an NVMe read completes (so PCI SPI 37 is delivered
 through IROUTER); GICv2 still boots clean, unchanged.
 .PP
+virt32, the riscv32 board, and a compiler bug under it:
+.CW ethervirtiommio.c
+and the ip stack now link on riscv32 as well, and the board's
+.CW virtiobase
+is seeded from the DTB the way riscv64/virt's is.  The driver needed no
+change \(em it is MMIO registers and fixed-width ring fields \(em but it
+did not work, because zc stored every 64-bit integer high word first on
+a little-endian machine, so a virtio descriptor's
+.CW addr
+field sent the device
+.CW pa<<32
+and QEMU put 618 zero bytes on the wire.  Four places had to be
+corrected together:
+.CW libkern/vlrt-riscv32.c 's
+.CW Vlong ,
+zc's constant path in
+.CW cgen.c ,
+its initialised-data path in
+.CW swt.c ,
+and the hand-written
+.CW _mulv
+in
+.CW libkern/vlop-riscv32.s .
+The same widening goes on
+.CW virt32s ,
+the supervisor-mode riscv32 board, unchanged but for its PLIC context,
+which proves the virtio window is reachable from S-mode under OpenSBI;
+it joins the suite as a fourteenth configuration.
+Verified: DHCP over the virtio-mmio NIC and three pings answered on
+both boards, virt32 from two markers to five, and
+.CW tod.c 's
+.CW todfix
+guard \(em which had been printing on every tick of this board and no
+other, because
+.CW clock.c
+read the CLINT's 64-bit mtime word-swapped \(em silent.  Full account in
+.CW doc/inferno-ports.ms .
+.PP
 Remaining: MSI (item 4), the rest of item 5 (riscv supervisor mode,
 SBI, wiring boards to the discovered DTB addresses), item 6 (USB
 ethernet, HID report descriptors, virtio-gpu 3-D), and item 7 (per-SoC

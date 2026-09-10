@@ -40,7 +40,7 @@ verbose=false
 record=false
 force=false
 
-configs='raspi3b raspi3b-4g raspi3b-usb raspi4 raspi4-hot raspi4-usb virtarm64 virtarm64-peer sifiveu virt virt32 virt-peer peer-mixed'
+configs='raspi3b raspi3b-4g raspi3b-usb raspi4 raspi4-hot raspi4-usb virtarm64 virtarm64-peer sifiveu virt virt32 virt32s virt-peer peer-mixed'
 
 # Each configuration: the kernel, the QEMU arguments, the line that
 # says the board is done printing, and the evidence lines that make
@@ -57,6 +57,7 @@ config_kernel() {
 	virt|virt-peer|peer-mixed)
 				echo "$root/os/inferno/virt/ivirt";;
 	virt32)			echo "$root/os/inferno/virt32/ivirt32";;
+	virt32s)		echo "$root/os/inferno/virt32s/ivirt32s";;
 	esac
 }
 
@@ -76,7 +77,7 @@ config_qemu() {
 				echo "${QEMU_AARCH64:-`command -v qemu-system-aarch64`}";;
 	sifiveu|virt|virt-peer|peer-mixed)
 				echo "${QEMU_RISCV64:-`command -v qemu-system-riscv64`}";;
-	virt32)			echo "${QEMU_RISCV32:-`command -v qemu-system-riscv32`}";;
+	virt32|virt32s)		echo "${QEMU_RISCV32:-`command -v qemu-system-riscv32`}";;
 	esac
 }
 
@@ -125,7 +126,17 @@ config_args() {
 		# network device at all.
 		echo "-M virt -bios none -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-device,drive=blk0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-device,netdev=n0";;
 	virt32)
-		echo "-M virt -bios none";;
+		# The netdev is new: the board links ethervirtiommio as
+		# of the round that fixed zc's vlong word order, and
+		# without a device behind it the DHCP check has nothing
+		# to answer it.  mmio, like riscv64/virt's -- this board
+		# has no PCI.
+		echo "-M virt -bios none -netdev user,id=n0 -device virtio-net-device,netdev=n0";;
+	virt32s)
+		# The same board in supervisor mode: no -bios none, so
+		# QEMU's default OpenSBI runs first and drops the kernel
+		# into S-mode.  Everything else is virt32's line.
+		echo "-M virt -netdev user,id=n0 -device virtio-net-device,netdev=n0";;
 	peer-mixed)
 		# The riscv64 board listening for the arm64 one.  The two
 		# ends of this wire are different architectures running
@@ -259,7 +270,7 @@ config_last() {
 	virtarm64|virtarm64-peer)	echo 'ROOT-CMDS-OK';;
 	virt|virt-peer|peer-mixed)	echo 'ROOT-CMDS-OK';;
 	sifiveu)		echo 'SIFIVEU-SH-OK';;
-	virt32)			echo 'VIRT32-INIT-OK';;
+	virt32|virt32s)		echo 'VIRT32-INIT-OK';;
 	esac
 }
 
@@ -314,7 +325,43 @@ config_evidence() {
 	virt-peer|virtarm64-peer|peer-mixed)
 		echo 'peer: 525400aaaa01 is 192\.168\.77\.1'
 		echo 'PEER-ARP-OK 192\.168\.77\.2';;
-	virtarm64|sifiveu|virt|virt32)
+	virt32s)
+		# These two boards share an init, so they print the same
+		# five markers and the marker set cannot tell them
+		# apart.  Two different lines are needed and they say
+		# different things.  "conf virt32s" is printed by the
+		# kernel out of its own conffile, so it is the one that
+		# says which payload booted -- point config_kernel at
+		# ivirt32 and this is what fails.  OpenSBI's banner is
+		# firmware, not payload: it appears whenever -bios none
+		# is absent, so it says the machine was started at
+		# supervisor mode, which is this configuration's whole
+		# point, but on its own it would not notice the wrong
+		# kernel.
+		echo 'conf virt32s \('
+		echo 'Domain0 Next Mode *: S-mode'
+		echo 'ip=10\.0\.2\.15 ipmask=255\.255\.255\.0 ipgw=10\.0\.2\.2'
+		echo 'IP32-OK';;
+	virt32)
+		# conf virt32, for the same reason virt32s has its own:
+		# the two share an init and print the same markers, so
+		# the kernel's own banner is what says which one ran.
+		# The trailing \( matters: the banner reads
+		# "conf virt32 (1789037284) jit 0", and a bare
+		# "conf virt32" is a prefix of "conf virt32s" and would
+		# match the other board's log as happily as this one's.
+		echo 'conf virt32 \('
+		# ETHER32-OK says only that #l0 appeared.  These two say
+		# the wire worked: an address that came out of a real
+		# DISCOVER/OFFER/REQUEST/ACK over the virtio-mmio NIC,
+		# which needs transmit, receive and the PLIC interrupt,
+		# and a ping the gateway answered.  Both are 64-bit
+		# quantities away from the ring descriptors that the
+		# compiler's word order used to write backwards, so a
+		# regression there shows up here first.
+		echo 'ip=10\.0\.2\.15 ipmask=255\.255\.255\.0 ipgw=10\.0\.2\.2'
+		echo 'IP32-OK';;
+	virtarm64|sifiveu|virt)
 		;;
 	esac
 }

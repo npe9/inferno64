@@ -111,7 +111,7 @@ done
 # kernels build either way -- that is the point of building rather than
 # shipping binaries -- but building one nothing here can boot is time
 # spent for nothing.
-boards="virt virtarm64 virt32 sifiveu"
+boards="virt virtarm64 virt32 virt32s sifiveu"
 if [ -n "$QEMU" ] && [ -x "$QEMU" ]; then
 	boards="$boards raspi3b raspi4"
 fi
@@ -122,12 +122,13 @@ done
 
 say "built; running the suite"
 
-# The same seven the image's CMD names.  Not the whole list: the four
+# The same eight the image's CMD names.  Not the whole list: the six
 # Pi configurations want the patched qemu, and the suite refuses before
 # it starts rather than part way through, which is right but makes a
 # bare "build" look like a failure of the build.
 if [ $# -eq 0 ]; then
-	set -- virtarm64 virtarm64-peer sifiveu virt virt32 virt-peer peer-mixed
+	set -- virtarm64 virtarm64-peer sifiveu virt virt32 virt32s \
+		virt-peer peer-mixed
 	if [ -n "$QEMU" ] && [ -x "$QEMU" ]; then
 		set -- raspi3b raspi3b-4g raspi3b-usb raspi4 raspi4-hot \
 			raspi4-usb "$@"

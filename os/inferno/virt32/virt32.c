@@ -9,7 +9,7 @@
 
 #include "virt32.root.h"
 
-ulong ndevs = 19;
+ulong ndevs = 21;
 extern Dev rootdevtab;
 extern Dev consdevtab;
 extern Dev progdevtab;
@@ -19,9 +19,11 @@ extern Dev mntdevtab;
 extern Dev srvdevtab;
 extern Dev uartdevtab;
 extern Dev envdevtab;
+extern Dev etherdevtab;
+extern Dev ipdevtab;
 extern Dev capdevtab;
 extern Dev kprofdevtab;
-Dev* devtab[19]={
+Dev* devtab[21]={
 	&rootdevtab,
 	&consdevtab,
 	&progdevtab,
@@ -31,12 +33,20 @@ Dev* devtab[19]={
 	&srvdevtab,
 	&uartdevtab,
 	&envdevtab,
+	&etherdevtab,
+	&ipdevtab,
 	&capdevtab,
 	&kprofdevtab,
 	nil,
 };
 
+extern void ethervirtiommiolink(void);
+extern void ethermediumlink(void);
+extern void loopbackmediumlink(void);
 void links(void){
+	ethervirtiommiolink();
+	ethermediumlink();
+	loopbackmediumlink();
 }
 
 extern void sysmodinit(void);
@@ -51,6 +61,21 @@ void modinit(void){
 extern PhysUart virtphysuart;
 PhysUart* physuart[] = {
 	&virtphysuart,
+	nil,
+};
+
+#include "ip.h"
+extern void tcpinit(Fs*);
+extern void udpinit(Fs*);
+extern void ipifcinit(Fs*);
+extern void icmpinit(Fs*);
+extern void icmp6init(Fs*);
+void (*ipprotoinit[])(Fs*) = {
+	tcpinit,
+	udpinit,
+	ipifcinit,
+	icmpinit,
+	icmp6init,
 	nil,
 };
 

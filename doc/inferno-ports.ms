@@ -19744,3 +19744,239 @@ It also means the whole suite is now reproducible from a checkout on a
 machine with docker and nothing else \(em no prebuilt kernels, no
 prebuilt qemu, and nothing in the repository that the repository says
 should not be there.
+.NH 1
+The checkout that had never been tried
+.PP
+That last claim was written before it was true.  The container path had
+been run many times, and every one of those runs bind-mounted this
+working tree \(em where
+.CW dis/ ,
+.CW dis32/
+and
+.CW Inferno/<objtype>/lib
+are full of build products the repository does not carry.
+.CW build-and-run
+copies the tree it is given, so the copy inherited them, and the build
+inside the container never had to make any of them.
+.PP
+Run against a real
+.CW "git worktree add --detach"
+of the commit, it stops twice.
+.IP \(bu
+At
+.CW iar :
+only the
+.CW include
+directory of each
+.CW Inferno/<objtype>
+is tracked, so there is nowhere to put
+.CW libinterp.a ,
+and the message \(em
+.CW "cannot create .../lib/libinterp.a: No such file or directory"
+\(em does not say that a missing directory is the reason.
+.IP \(bu
+At
+.CW mkroot :
+a board's root file list embeds
+.CW /dis/sh.dis
+and the rest of
+.CW appl/cmd
+and
+.CW appl/lib
+into the kernel image, and no
+.CW .dis
+file is in the repository, so mk answers
+.CW "don't know how to make /build/dis/basename.dis" .
+.PP
+So the container builds those too:
+.CW bin
+and
+.CW lib
+under every
+.CW Inferno/<objtype> ,
+then
+.CW appl/lib
+and
+.CW appl/cmd
+once for the eight-byte Dis word and again with
+.CW "DISROOT=dis32 DISWORD=4" ,
+because
+.CW virt32
+is a 32-bit board and takes every module from
+.CW /dis32 .
+Not appl's own mkfile, which walks
+.CW danby
+\(em a directory of demo programs that does not build, and that no
+board's root asks for.
+.CW lib/emptydirs
+names only the
+.CW /dis
+directories, so
+.CW /dis32 's
+are made from those names.
+.PP
+With that, thirteen from a fresh checkout, matching the thirteen on
+this machine.  The claim is the same one as before; the difference is
+that it has now been made to fail and then made to pass.
+.NH 1
+zc wrote 64-bit integers backwards
+.PP
+.CW virt32
+had two markers, a console and a shell, and the config said so: no
+ether, no ip, no storage, and a note that widening it could follow once
+the console path was proven.  Widening it found a toolchain bug that had
+been sitting under the board the whole time.
+.PP
+The ethernet itself is not new code.
+.CW ethervirtiommio.c
+is MMIO registers and ring structures with no arch-specific assembler,
+and every ring field is a fixed width rather than a machine word, so
+riscv64/virt's driver is riscv32's driver with a different header
+comment.  It probed on the first boot:
+.CW "#l0: virtio: 1000Mbps port 0x10008000 irq 8" .
+Then DHCP got no answer.
+.PP
+QEMU's own
+.CW filter-dump
+said why, and said it precisely: five frames on the wire, 618 bytes each
+\(em the exact length of a DHCP DISCOVER \(em and every byte of all five
+zero.  A length that right with content that wrong is not a driver that
+failed to build a packet.  It is a device reading the packet from the
+wrong address.
+.PP
+A descriptor dump named the address:
+.CW "desc[1] pa 0x83695eca words 0x0 0x83695eca len 0x26a" .
+The physical address was correct and the length was correct, but the
+descriptor's 64-bit
+.CW addr
+field held it in the
+.I high
+word.  QEMU read the little-endian u64 as
+.CW 0x83695eca00000000 ,
+found nothing mapped there, and put 618 zeroes on the wire.
+.PP
+That is not a driver bug, so the next question is what the compiler does
+with an eight-byte integer.  Two prints answered it:
+.CW "uvlong const words 0x11223344 0x55667788"
+for a literal
+.CW 0x1122334455667788 .
+High word at the lower address.  zc stored every 64-bit integer
+big-endian by word on a little-endian machine.
+.PP
+It was deliberate, and it is written down in
+.CW utils/zc/cgen.c :
+the constant path had been swapped to hi-first so that it would agree
+with
+.CW libkern/vlrt-riscv32.c 's
+.CW Vlong ,
+"the same order vlrt-mips.c and vlrt-arm.c use".  Half of that is wrong.
+.CW vlrt-arm.c
+is lo first, and so is
+.CW vlrt-386.c ;
+only the big-endian ports put hi first.
+.CW vlrt-riscv32.c
+had been copied from one of them, and the compiler was then bent to
+match the copy.  The two agree either way as long as nothing outside the
+compiler reads the eight bytes \(em which is why the board booted, and
+why this survived so long.
+.PP
+Hardware reads the eight bytes.  So does
+.CW clock.c ,
+whose
+.CW "*(volatile uvlong*)(CLINT + ClintMtime)"
+read the machine's time counter word-swapped: that is what made
+.CW tod.c 's
+.CW todfix
+guard print on every tick of this board and no other, a symptom that had
+been in every virt32 boot log in the tree and had been read as noise.
+.PP
+The correction is four places, and it has to be all four at once.
+.CW vlrt-riscv32.c 's
+.CW Vlong
+to lo first; zc's constant path in
+.CW cgen.c
+and its initialised-data path in
+.CW swt.c
+to store low word first; and
+.CW libkern/vlop-riscv32.s ,
+whose hand-written
+.CW _mulv
+loads
+.CW a.lo
+from
+.CW 4(FP)
+and writes the result's hi at
+.CW 0(R1) .
+That last one is the interesting one.  With the three C-side changes made
+and the assembler left alone, the board booted worse than before: every
+64-bit multiply returned zero, so
+.CW poolsizeinit 's
+.CW nb*pcnt/100
+was zero, the memory pools were empty,
+.CW "etherprobe: no memory for Ether"
+twenty times over, and
+.CW "panic: userinit: no procs" .
+A partial flip is worse than either whole.
+.PP
+Rebuilding needs care for a reason that has nothing to do with the bug:
+mk is a timestamp build, and a changed compiler binary does not make any
+.CW .c
+file newer than its
+.CW .z .
+Every riscv32 object and archive has to be deleted by hand or the link
+mixes hi-first objects with lo-first ones.
+.PP
+After it: 64-bit arithmetic correct, the
+.CW todfix
+noise gone from the boot log, the descriptor's low word holding the
+address, and the wire carrying a full DHCP exchange, an ARP
+announcement, and three ICMP echoes with three replies.
+.CW virt32
+goes from two markers to five \(em ETHER32-OK, DHCP32-OK, IP32-OK and
+the two it had.  The suite gives it a netdev and two evidence lines, the
+address DHCP handed back and the ping, because both are 64-bit
+quantities away from the ring descriptors and a regression in the word
+order shows up there first.
+.PP
+The stray
+.CW print
+in
+.CW os/inferno/port/tod.c
+came out in the same change.  It was in portable code, at column 0, with
+no guard; it fired only on virt32 because only virt32's clock was wrong.
+.PP
+.CW virt32s ,
+the same board entered in supervisor mode by QEMU's own OpenSBI, takes
+the identical widening: the driver is the same file again, and the only
+board-level difference is that its PLIC context is hart0's S-mode one
+rather than hart0's M-mode one, which its trap.c already knew.  DHCP and
+the ping work there too, so the virtio-mmio NIC is reachable from S-mode
+\(em OpenSBI does not PMP-hide the virtio window the way it hides the
+CLINT.  It joins the suite as a fourteenth configuration.  It prints the
+same five markers as
+.CW virt32 ,
+because the two boards share an init, so its evidence line is OpenSBI's
+own
+.CW "Domain0 Next Mode : S-mode" :
+without that, a
+.CW virt32s
+run that had quietly booted the machine-mode kernel would pass.
+.PP
+One measured thing before it went in.  Both riscv32 boards failed at
+the ping about one boot in ten \(em
+.CW virt32
+with
+.CW "IP32-FAIL ping timeout"
+and
+.CW virt32s
+with a
+.CW "panic: exception"
+at the same point \(em against the ten second deadline copied from
+riscv64/virt.  That deadline is not portable: this board has no 64-bit
+registers, so every
+.CW vlong
+the ip stack touches is a call into libkern's vlrt, and the same work
+takes longer.  At twenty seconds both boards are ten of ten.  The rate
+is worth writing down rather than hiding behind the suite's own retry,
+because it is the number to compare against if either board starts
+missing again.

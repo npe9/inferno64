@@ -18,6 +18,12 @@ enum {
  * main() before trapinit().  A DTB miss leaves the constant in place.
  */
 uintptr	plicbase = PLIC;
+
+/*
+ * First virtio-mmio slot, likewise: the constant is the default and the
+ * DTB overrides it.  ethervirtiommio.c scans up from here.
+ */
+uintptr	virtiobase = VIRTIO0;
 static void	(*irqhandler[96])(Ureg*, void*);
 static void	*irqarg[96];
 

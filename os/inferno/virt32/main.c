@@ -130,12 +130,21 @@ main(void)
 		extern void *dtbptr;
 		extern void fdtinit(void*);
 		extern int fdtreg(char*, uvlong*, uvlong*);
-		extern uintptr plicbase;
+		extern int fdtregmin(char*, uvlong*, uvlong*);
+		extern uintptr plicbase, virtiobase;
 		uvlong base, size;
 		fdtinit(dtbptr);
 		if(fdtreg("riscv,plic0", &base, &size) && base != 0)
 			plicbase = (uintptr)base;
+		/*
+		 * The lowest virtio-mmio slot: QEMU emits one node per slot
+		 * and fills them from the top down, so the lowest address is
+		 * the one the driver's scan must start from.
+		 */
+		if(fdtregmin("virtio,mmio", &base, &size) && base != 0)
+			virtiobase = (uintptr)base;
 		print("fdt: plic base %#p (mem.h PLIC %#p)\n", plicbase, (uintptr)PLIC);
+		print("fdt: virtio base %#p (mem.h VIRTIO0 %#p)\n", virtiobase, (uintptr)VIRTIO0);
 		if(fdtreg("ns16550a", &base, &size))
 			print("fdt: uart @ %#llux (mem.h UART0 %#p)\n", base, (uintptr)UART0);
 	}

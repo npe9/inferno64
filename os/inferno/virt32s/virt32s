@@ -26,8 +26,17 @@ dev
 	srv
 	uart
 	env
+	ether		netif
+	ip	ip ipv6 ipaux ptclbsum parseip eipfmt classmask equivip parseether iproute arp chandial netlog ethermedium plan9 nullmedium pktmedium nat
 	cap
 	kprof
+
+ip
+	tcp
+	udp
+	ipifc
+	icmp
+	icmp6
 
 lib
 	interp
@@ -63,6 +72,14 @@ port
 	xalloc
 
 	archvirt
+
+# The same driver os/inferno/virt32 links, which is the same one
+# riscv64/virt links: MMIO registers and fixed-width ring fields, with
+# nothing in it that knows the privilege level.
+link
+	ethervirtiommio
+	ethermedium
+	loopbackmedium
 
 misc
 	uartvirt
@@ -139,3 +156,13 @@ root
 	/dis/lib/styxconv/ostyx.dis	/dis32/lib/styxconv/ostyx.dis
 	/dis/lib/styxservers.dis	/dis32/lib/styxservers.dis
 	/dis/lib/workdir.dis	/dis32/lib/workdir.dis
+# The ip userland, for the shared virt32init.b's netcheck(): DHCP over
+# the virtio-mmio NIC and a ping to the gateway it hands back.
+	/dis/lib/dial.dis	/dis32/lib/dial.dis
+	/dis/lib/dhcpclient.dis	/dis32/lib/dhcpclient.dis
+	/dis/lib/ip.dis	/dis32/lib/ip.dis
+	/dis/lib/rand.dis	/dis32/lib/rand.dis
+	/dis/lib/random.dis	/dis32/lib/random.dis
+	/dis/lib/timers.dis	/dis32/lib/timers.dis
+	/dis/ip/dhcp.dis	/dis32/ip/dhcp.dis
+	/dis/ip/ping.dis	/dis32/ip/ping.dis

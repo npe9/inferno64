@@ -24,7 +24,7 @@
 # not be there.  It wants build-essential, which is why that is
 # installed below, and it takes minutes rather than seconds.
 #
-# Seven of the thirteen configurations run in it.  The six Pi ones do
+# Eight of the fourteen configurations run in it.  The six Pi ones do
 # not:
 # they need the patched qemu of tools/qemu-patches, which is a source
 # build, and nothing about the Pi boards is what this image is for.
@@ -66,4 +66,4 @@ ENV BOARDSUITE_TIMEOUT=480
 
 WORKDIR /src
 ENTRYPOINT ["/bin/sh"]
-CMD ["tools/boardsuite/run", "virtarm64", "virtarm64-peer", "sifiveu", "virt", "virt32", "virt-peer", "peer-mixed"]
+CMD ["tools/boardsuite/run", "virtarm64", "virtarm64-peer", "sifiveu", "virt", "virt32", "virt32s", "virt-peer", "peer-mixed"]

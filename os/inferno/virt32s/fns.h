@@ -27,6 +27,7 @@ void	idlehands(void);
 void	init0entry(void);
 void	intrdisable(int, void (*)(Ureg*, void*), void*, int, char*);
 void	intrenable(int, void (*)(Ureg*, void*), void*, int, char*);	/* (irq, handler, arg, tbdf, name): the portable order */
+int	isaconfig(char*, int, void*);	/* stubs.c; devether.c calls it and zc, unlike jc, will not take an undeclared call */
 int	islo(void);
 void	kbdinit(void);
 void	screeninit(void);

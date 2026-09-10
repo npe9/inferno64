@@ -66,8 +66,24 @@ extern unsigned char root50code[];
 extern int root50len;
 extern unsigned char root51code[];
 extern int root51len;
-int rootmaxq = 52;
-Dirtab roottab[52] = {
+extern unsigned char root52code[];
+extern int root52len;
+extern unsigned char root53code[];
+extern int root53len;
+extern unsigned char root54code[];
+extern int root54len;
+extern unsigned char root55code[];
+extern int root55len;
+extern unsigned char root56code[];
+extern int root56len;
+extern unsigned char root57code[];
+extern int root57len;
+extern unsigned char root59code[];
+extern int root59len;
+extern unsigned char root60code[];
+extern int root60len;
+int rootmaxq = 61;
+Dirtab roottab[61] = {
 	"",	{0, 0, QTDIR},	 0,	0555,
 	"chan",	{1, 0, QTDIR},	 0,	0555,
 	"dev",	{2, 0, QTDIR},	 0,	0555,
@@ -103,29 +119,38 @@ Dirtab roottab[52] = {
 	"sh.dis",	{32, 0, QTFILE},	 0,	0444,
 	"sh",	{33, 0, QTDIR},	 0,	0555,
 	"unmount.dis",	{34, 0, QTFILE},	 0,	0444,
-	"arg.dis",	{35, 0, QTFILE},	 0,	0444,
-	"bufio.dis",	{36, 0, QTFILE},	 0,	0444,
-	"daytime.dis",	{37, 0, QTFILE},	 0,	0444,
-	"env.dis",	{38, 0, QTFILE},	 0,	0444,
-	"filepat.dis",	{39, 0, QTFILE},	 0,	0444,
-	"names.dis",	{40, 0, QTFILE},	 0,	0444,
-	"nametree.dis",	{41, 0, QTFILE},	 0,	0444,
-	"readdir.dis",	{42, 0, QTFILE},	 0,	0444,
-	"regex.dis",	{43, 0, QTFILE},	 0,	0444,
-	"string.dis",	{44, 0, QTFILE},	 0,	0444,
-	"styx.dis",	{45, 0, QTFILE},	 0,	0444,
-	"styxconv",	{46, 0, QTDIR},	 0,	0555,
-	"styxservers.dis",	{47, 0, QTFILE},	 0,	0444,
-	"workdir.dis",	{48, 0, QTFILE},	 0,	0444,
-	"std.dis",	{49, 0, QTFILE},	 0,	0444,
-	"new2old.dis",	{50, 0, QTFILE},	 0,	0444,
-	"ostyx.dis",	{51, 0, QTFILE},	 0,	0444,
+	"ip",	{35, 0, QTDIR},	 0,	0555,
+	"arg.dis",	{36, 0, QTFILE},	 0,	0444,
+	"bufio.dis",	{37, 0, QTFILE},	 0,	0444,
+	"daytime.dis",	{38, 0, QTFILE},	 0,	0444,
+	"env.dis",	{39, 0, QTFILE},	 0,	0444,
+	"filepat.dis",	{40, 0, QTFILE},	 0,	0444,
+	"names.dis",	{41, 0, QTFILE},	 0,	0444,
+	"nametree.dis",	{42, 0, QTFILE},	 0,	0444,
+	"readdir.dis",	{43, 0, QTFILE},	 0,	0444,
+	"regex.dis",	{44, 0, QTFILE},	 0,	0444,
+	"string.dis",	{45, 0, QTFILE},	 0,	0444,
+	"styx.dis",	{46, 0, QTFILE},	 0,	0444,
+	"styxconv",	{47, 0, QTDIR},	 0,	0555,
+	"styxservers.dis",	{48, 0, QTFILE},	 0,	0444,
+	"workdir.dis",	{49, 0, QTFILE},	 0,	0444,
+	"dial.dis",	{50, 0, QTFILE},	 0,	0444,
+	"dhcpclient.dis",	{51, 0, QTFILE},	 0,	0444,
+	"ip.dis",	{52, 0, QTFILE},	 0,	0444,
+	"rand.dis",	{53, 0, QTFILE},	 0,	0444,
+	"random.dis",	{54, 0, QTFILE},	 0,	0444,
+	"timers.dis",	{55, 0, QTFILE},	 0,	0444,
+	"std.dis",	{56, 0, QTFILE},	 0,	0444,
+	"new2old.dis",	{57, 0, QTFILE},	 0,	0444,
+	"ostyx.dis",	{58, 0, QTFILE},	 0,	0444,
+	"dhcp.dis",	{59, 0, QTFILE},	 0,	0444,
+	"ping.dis",	{60, 0, QTFILE},	 0,	0444,
 };
-Rootdata rootdata[52] = {
+Rootdata rootdata[61] = {
 	0,	 &roottab[1],	 13,	nil,
 	0,	 nil,	 0,	 nil,
 	0,	 nil,	 0,	 nil,
-	0,	 &roottab[14],	 21,	nil,
+	0,	 &roottab[14],	 22,	nil,
 	0,	 nil,	 0,	 nil,
 	0,	 nil,	 0,	 nil,
 	0,	 nil,	 0,	 nil,
@@ -136,7 +161,7 @@ Rootdata rootdata[52] = {
 	0,	 nil,	 0,	 nil,
 	0,	 nil,	 0,	 nil,
 	0,	 root16code,	 0,	 &root16len,
-	3,	 &roottab[35],	 14,	nil,
+	3,	 &roottab[36],	 20,	nil,
 	3,	 nil,	 0,	 nil,
 	3,	 nil,	 0,	 nil,
 	3,	 root17code,	 0,	 &root17len,
@@ -155,8 +180,9 @@ Rootdata rootdata[52] = {
 	3,	 root30code,	 0,	 &root30len,
 	3,	 root31code,	 0,	 &root31len,
 	3,	 root32code,	 0,	 &root32len,
-	3,	 &roottab[49],	 1,	nil,
+	3,	 &roottab[56],	 1,	nil,
 	3,	 root35code,	 0,	 &root35len,
+	3,	 &roottab[59],	 2,	nil,
 	14,	 root36code,	 0,	 &root36len,
 	14,	 root37code,	 0,	 &root37len,
 	14,	 root38code,	 0,	 &root38len,
@@ -168,10 +194,18 @@ Rootdata rootdata[52] = {
 	14,	 root44code,	 0,	 &root44len,
 	14,	 root45code,	 0,	 &root45len,
 	14,	 root46code,	 0,	 &root46len,
-	14,	 &roottab[50],	 2,	nil,
+	14,	 &roottab[57],	 2,	nil,
 	14,	 root50code,	 0,	 &root50len,
 	14,	 root51code,	 0,	 &root51len,
+	14,	 root52code,	 0,	 &root52len,
+	14,	 root53code,	 0,	 &root53len,
+	14,	 root54code,	 0,	 &root54len,
+	14,	 root55code,	 0,	 &root55len,
+	14,	 root56code,	 0,	 &root56len,
+	14,	 root57code,	 0,	 &root57len,
 	33,	 root34code,	 0,	 &root34len,
-	46,	 root48code,	 0,	 &root48len,
-	46,	 root49code,	 0,	 &root49len,
+	47,	 root48code,	 0,	 &root48len,
+	47,	 root49code,	 0,	 &root49len,
+	35,	 root59code,	 0,	 &root59len,
+	35,	 root60code,	 0,	 &root60len,
 };
