@@ -1205,6 +1205,27 @@ cblock(Prog *p)
 	acquire();
 }
 
+/*
+ * Does this executor own the context curP names?
+ *
+ * curP follows up (proc.c's sched()), and a process that has never
+ * interpreted has no context of its own: sched() leaves it on defpctx,
+ * which is also pctxs[0], the context the first interpreter claimed.
+ * So a kernel process waking a Dis program -- #p writes (devprog.c),
+ * devprof, devbench -- reaches addrun() with curP naming somebody
+ * else's local run queue, and links into it.  Under the VM lock that
+ * was serialised with the owner and harmless.  Without it, two
+ * executors write runhd, runtl and nlocal at once.
+ *
+ * Go has the same case and the same answer: a wakeup from an M with no
+ * P goes on the global queue (globrunqput), not on a P's local one.
+ */
+static int
+ownctx(void)
+{
+	return up != nil && up->pctx != nil && (Pctx*)up->pctx == curP;
+}
+
 void
 addrun(Prog *p)
 {
@@ -1216,6 +1237,10 @@ addrun(Prog *p)
 		panic("addrun of ready prog %8.8p by %8.8zux\n", p, getcallerpc(&p));
 	p->state = Pready;
 	p->link = nil;
+	if(!ownctx()){
+		gput(p);		/* not our queue to touch; see ownctx() */
+		return;
+	}
 	if(curP->nlocal >= Runqmax){
 		gput(p);		/* local queue full; see gput() */
 		return;
@@ -1907,6 +1932,11 @@ pushrun(Prog *p)
 		return;
 	}
 	p->state = Pready;
+	if(!ownctx()){
+		p->link = nil;
+		gput(p);		/* not our queue to touch; see ownctx() */
+		return;
+	}
 	p->link = curP->runhd;
 	curP->runhd = p;
 	if(p->link == nil)

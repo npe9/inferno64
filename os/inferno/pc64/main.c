@@ -222,6 +222,21 @@ main(void)
 		doc("clockinit");
 		arch->clockenable();
 	}
+	/*
+	 * *parallelvm=1 on the boot line runs the Dis interpreter without
+	 * the VM lock.  A boot option rather than a compile-time constant
+	 * because both modes then come from one kernel: measuring the
+	 * other one used to mean an edit, a rebuild of dis.c and a relink,
+	 * which is a slow way to ask a question that a boot can answer.
+	 * It defaults to 0, which is the tested configuration.
+	 */
+	{
+		extern int parallelvm;		/* os/inferno/port/dis.c */
+		char *p;
+
+		if((p = getconf("*parallelvm")) != nil)
+			parallelvm = strtol(p, nil, 0);
+	}
 	doc("procinit");
 	procinit();
 	doc("links");
