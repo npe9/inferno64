@@ -130,6 +130,7 @@ main(void)
 	printinit();
 
 	atomiccheck();
+	memspeed();
 
 	/* prints what acpitables() found, and acts on the rest of it */
 	acpiinit();

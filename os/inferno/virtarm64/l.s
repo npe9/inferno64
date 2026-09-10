@@ -25,6 +25,13 @@
 #define	D_ID_AA64PFR0_EL1	SYSARG5(3,0,0,4,0)
 #define	D_CNTP_CVAL_EL0	SYSARG5(3,3,14,2,2)
 #define	D_MPIDR_EL1	SYSARG5(3,0,0,0,5)
+#define	D_MAIR_EL1	SYSARG5(3,0,10,2,0)
+#define	D_TCR_EL1	SYSARG5(3,0,2,0,2)
+#define	D_TTBR0_EL1	SYSARG5(3,0,2,0,0)
+#define	D_SCTLR_EL1	SYSARG5(3,0,1,0,0)
+#define	D_CLIDR_EL1	SYSARG5(3,1,0,0,1)
+#define	D_CCSIDR_EL1	SYSARG5(3,1,0,0,0)
+#define	D_CSSELR_EL1	SYSARG5(3,2,0,0,0)
 
 /*
  * QEMU -M virt, AArch64 (cortex-a72), single privilege level (EL1),
@@ -398,6 +405,129 @@ adec1:
 	STLXRW	R2, R1, (R3)
 	CBNZW	R2, adec1
 	MOVW	R1, R0
+	RET	R30
+
+/*
+ * dcinvalidate(): invalidate every level of data/unified cache by
+ * set/way, which is what the architecture requires before turning the
+ * D-cache on: at reset the cache contents are UNKNOWN, and enabling C
+ * with stale lines present lets the core hit them instead of the
+ * memory the kernel has been writing with caches off.
+ *
+ * CLIDR_EL1 names the levels; for each one that has data or unified
+ * cache, CSSELR_EL1 selects it and CCSIDR_EL1 gives the geometry --
+ * LineSize (log2 words minus 2) in bits 2:0, Associativity-1 in 12:3,
+ * NumSets-1 in 27:13.  DC ISW takes SetWay = way<<(32-log2(assoc)) |
+ * set<<linesize+4 | level<<1.
+ *
+ * Where the emulator is more forgiving than hardware: QEMU models no
+ * cache, so DC ISW is a no-op there and this loop's effect cannot be
+ * observed under it.  What running it here does establish is that the
+ * loop terminates, that the geometry registers read back something
+ * self-consistent, and that the shift arithmetic does not run away --
+ * cacheinfo() prints what the walk found, so a machine's own numbers
+ * are in its boot log rather than assumed.  os/inferno/raspi3b/l.s
+ * leaves this out and says not to enable the D-cache on real hardware
+ * without it; this is that walk.
+ */
+TEXT	dcinvalidate(SB), 1, $-4
+	DSB	$15
+	MRS	SPR(D_CLIDR_EL1), R0
+	AND	$0x7000000, R0, R3	/* LoC << 24 */
+	LSR	$23, R3, R3		/* LoC * 2 */
+	CBZ	R3, dcidone
+	MOV	$0, R10			/* R10 = level * 2 */
+dcilevel:
+	ADD	R10, R10, R2
+	LSR	R2, R0, R12
+	AND	$7, R12, R12		/* cache type at this level */
+	CMP	$2, R12
+	BLT	dcinext			/* no data or unified cache here */
+
+	MSR	R10, SPR(D_CSSELR_EL1)	/* select level, data cache */
+	ISB	$15
+	MRS	SPR(D_CCSIDR_EL1), R1
+
+	AND	$7, R1, R2
+	ADD	$4, R2, R2		/* R2 = log2(line bytes) */
+	LSR	$3, R1, R4
+	AND	$0x3FF, R4, R4		/* R4 = assoc - 1 */
+	LSR	$13, R1, R5
+	AND	$0x7FFF, R5, R5		/* R5 = sets - 1 */
+
+	/* R6 = 32 - log2(assoc rounded up), the way shift */
+	CLZW	R4, R6
+
+dciset:
+	MOV	R4, R7			/* way counter */
+dciway:
+	LSL	R6, R7, R8
+	LSL	R2, R5, R9
+	ORR	R9, R8, R8
+	ORR	R10, R8, R8
+	SYS	R8, $SYSARG5(0,0,7,6,2)	/* DC ISW, R8 */
+	SUB	$1, R7, R7
+	CMP	$0, R7
+	BGE	dciway
+	SUB	$1, R5, R5
+	CMP	$0, R5
+	BGE	dciset
+
+dcinext:
+	ADD	$2, R10, R10
+	CMP	R3, R10
+	BLT	dcilevel
+dcidone:
+	MOV	$0, R0
+	MSR	R0, SPR(D_CSSELR_EL1)
+	DSB	$15
+	ISB	$15
+	RET	R30
+
+/*
+ * mmuenable(l0): 48-bit virtual addresses, four levels, 4 KiB granule,
+ * TTBR0 only.  T0SZ = 16 gives the full 48 bits, which is what reaches
+ * this machine's high PCIe window at 0x8000000000; raspi3b's T0SZ = 25
+ * would stop at 512 GiB.  EPD1 disables the TTBR1 half, which this
+ * kernel does not use -- there is one address space and Dis is the
+ * isolation boundary.
+ *
+ * TCR_EL1 = IPS(44bit)<<32 | TG0(4KB) | SH0(inner) | ORGN0(WB) |
+ * IRGN0(WB) | EPD1 | T0SZ(16).
+ */
+TEXT	mmuenable(SB), 1, $-4
+	/*
+	 * R0 is the table pointer and R30 the return address, and
+	 * dcinvalidate() destroys both -- it reads CLIDR_EL1 into R0 and
+	 * is reached by BL.  Losing R0 here is not a fault at the call:
+	 * it is a TTBR0_EL1 loaded with whatever CLIDR left behind, and
+	 * the machine dies silently at the SCTLR write two instructions
+	 * later, with a correct set of page tables sitting in memory
+	 * that nothing is pointing at.
+	 */
+	MOV	R0, R19
+	MOV	R30, R20
+	BL	dcinvalidate(SB)
+	MOV	R20, R30
+	MOV	R19, R0
+
+	MOV	$0xff00, R1		/* MAIR: attr1=Normal(ff), attr0=Device(00) */
+	MSR	R1, SPR(D_MAIR_EL1)
+	MOV	$0x400803510, R1	/* IPS=4 TG0=0 SH0=3 ORGN0=1 IRGN0=1 EPD1 T0SZ=16 */
+	MSR	R1, SPR(D_TCR_EL1)
+	MSR	R0, SPR(D_TTBR0_EL1)	/* R0 = &l0 table (REGARG) */
+	ISB	$15
+	SYS	$SYSARG5(0,0,8,7,0)	/* TLBI VMALLE1 */
+	DSB	$15
+	ISB	$15
+	SYS	$SYSARG5(0,0,7,5,0)	/* IC IALLU: invalidate I-cache */
+	DSB	$15
+	ISB	$15
+	MRS	SPR(D_SCTLR_EL1), R1
+	MOV	$0x1005, R2		/* M(0) | C(2) | I(12) */
+	ORR	R2, R1, R1
+	MSR	R1, SPR(D_SCTLR_EL1)
+	ISB	$15
 	RET	R30
 
 TEXT	setlabel(SB), 1, $-4

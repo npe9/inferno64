@@ -277,6 +277,40 @@ archkprofenable(int on)
  * The negative case is the point; a cmpswap that always succeeds
  * passes every positive check there is.
  */
+/*
+ * What the MMU bought, as a number rather than "it still boots".
+ * Uncached RAM and write-back cacheable RAM are not a few per cent
+ * apart, and a boot that succeeds either way says nothing about which
+ * one it got.  A fixed number of passes over a buffer several times
+ * the size of any plausible L1, timed against the generic timer, so
+ * the figure is comparable between a kernel with mmuinit() enabled
+ * and one without.
+ */
+void
+memspeed(void)
+{
+	enum { Bufsz = 1024*1024, Npass = 16 };
+	static uchar buf[Bufsz];
+	uvlong t0, t1, hz;
+	ulong sum;
+	int i, j;
+
+	cntfrq(&hz);
+	cycles(&t0);
+	sum = 0;
+	for(j = 0; j < Npass; j++)
+		for(i = 0; i < Bufsz; i += 64)
+			sum += buf[i];
+	cycles(&t1);
+	USED(sum);
+	if(t1 == t0)
+		t1++;
+	print("memspeed: %d MB read in %llud us, %llud MB/s\n",
+		(Bufsz/(1024*1024))*Npass,
+		(t1-t0)*1000000/hz,
+		((uvlong)Bufsz*Npass*hz)/((t1-t0)*1024*1024));
+}
+
 void
 atomiccheck(void)
 {
