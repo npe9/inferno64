@@ -327,6 +327,7 @@ getlines sh-std
 gettar gettar
 getzip getzip
 god god
+gorge gorge
 grep grep
 grid grid-session
 grid-monitor grid-monitor

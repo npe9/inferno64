@@ -315,6 +315,70 @@ them:
 *Evidence:* the port's own lit-pixel count is unchanged (the frame must
 look the same), and `g3_calls` becomes nonzero.
 
+### Phase 2 answered, for the destination question at least
+
+Measured 2026-09-10 with `gorge(1)`, which draws about two hundred
+Gouraud faces straight into the window image, and with `draw3dbench`
+under `INFERNO_METAL_STATS=1`:
+
+| how it is run | `g3_calls` | us a frame |
+| --- | --- | --- |
+| started directly, device provider | 40708 per 30 frames | 2408 |
+| started directly, software provider | 0 | 73366 |
+| under `wm(1)`, device provider | **0** | panics, see below |
+| under `wm(1)`, software provider | 0 | 53250 |
+
+So **the GPU is reached only when there is no window manager between the
+program and the screen.** `metal_queue_fillpoly3d()` takes `gscreen` or
+`screenimage`, or a layer whose `l->clear` is set — and a `wm(1)`
+client's window is a layer that is not clear. Under `wm` every face
+falls back to the CPU path in devdraw, and the device provider is then
+*slower* than the software one because it pays the wire cost on top:
+`draw3dbench`'s 64-large-triangle row goes 5941 us software against 7916
+us protocol under `wm`, and 13025 against 1958 without it.
+
+That is the answer to "draw where the GPU can see it": it is not enough
+to avoid an offscreen buffer. The nine Phase 1 ports draw into their
+`wmclient` window, so on this host they get no GPU either unless they
+are started outside `wm`. Phase 1's numbers were taken without one.
+
+**And driving the device provider under `wm` panics emu**, reproducibly,
+with `panic: pushrun addrun` from `pushrun()` in `emu/port/dis.c` — a
+`Prog` pushed onto the run queue while it already has a pending
+`addrun`. `gorge -D` reproduces it three times out of three, headless or
+under `wm`, with the JIT on or off and with audio disabled. It has not
+been reduced below that program: a loop of 200 frames of 130 Gouraud
+quads plus a `sprite3zb` into a memory image through the same provider
+survives. `gorge` works round it by choosing its provider from whether a
+`Draw->Context` was handed to it, which is exactly the condition, but
+the panic is real and is somebody's bug.
+
+### Phase 2a — `litcolour` allocated a colour image per fill
+
+Fixed 2026-09-10, and it is the reason a Gouraud scene could not be run
+long enough to measure at first. `litcolour()` in both providers cached
+exactly **one** `(pen, brightness)` pair. Flat shading asks for a
+handful of brightnesses and that was enough; the software Gouraud path
+subdivides every face four ways and asks for the average brightness of
+each leaf, so essentially every fill missed the cache and allocated a
+fresh `Display.rgb` image. Draw images are a limited resource in emu:
+`gorge`'s canyon exhausted them in a few hundred frames, silently — the
+program simply stopped, with no error and no clue.
+
+It is a table now, indexed by brightness quantised to 1/64 of full scale
+(under two levels out of 255, below what the eye resolves in a gradient)
+and keyed by the pen as well. Keying it by brightness alone is not a
+fix and looks like one: a frame cycles through eight or nine pens, so
+each `setcolour()` threw the previous pen's table away.
+
+**`Display.rgb` colours are never shaded at all**, separately from that.
+`rgb()` returns a depth-24 `r8g8b8` image and `litcolour()` tints only a
+depth-32 one, returning anything else unchanged — so a scene lit with
+`rgb()` pens comes out completely flat, with no error. A replicated
+one-pixel image in the display's own channels is depth 32 and does get
+shaded; `gorge`'s `rgb32()` is that, and says so. Whether `litcolour`
+should handle depth 24 is open.
+
 ### Phase 3 — make the GPU readback produce pixels
 
 Point 4 is a bug with a two-line reproducer in `draw3dbench(1)`, and it

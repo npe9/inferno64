@@ -684,9 +684,24 @@ gsubdiv(c: ref Context, a, b, cc: Vector, la, lb, lc: real, depth: int)
 }
 
 # Tint solid 32-bit colour by lit (Metal / d3applylit parity). Non-solid pens unchanged.
-lit_src: ref Image;
-lit_out: ref Image;
-lit_factor: real;
+# One shade was cached, not a table of them.  A flat-shaded scene asks
+# for a handful of brightnesses and that was enough; a Gouraud one does
+# not - the software provider subdivides each face and asks for the
+# average brightness of every leaf, so essentially every fill missed the
+# cache and allocated a fresh Display.rgb image.  Draw images are a
+# limited resource in emu and a canyon of two hundred lit faces exhausts
+# them in a few hundred frames, with no error: the program simply stops.
+#
+# The fix is a table, indexed by brightness quantised to LITSTEPS steps.
+# 1/64 of full scale is under two levels out of 255, which is below what
+# the eye resolves in a gradient, and it caps this at 65 images per
+# colour instead of one per fill.
+LITSTEPS:	con 64;
+LITCOLS:	con 12;		# distinct pens kept at once
+
+lit_src: array of ref Image;
+lit_tab: array of array of ref Image;
+lit_next := 0;
 
 litcolour(c: ref Context, lit: real): ref Image
 {
@@ -697,24 +712,50 @@ litcolour(c: ref Context, lit: real): ref Image
 		return col;
 	if(lit < 0.0)
 		lit = 0.0;
-	if(lit_src == col && lit_out != nil && lit_factor == lit)
-		return lit_out;
+	k := int (lit * real LITSTEPS);
+	if(k < 0)
+		k = 0;
+	if(k > LITSTEPS)
+		k = LITSTEPS;
+	# Keyed by the pen as well as the brightness.  A one-pen table looks
+	# like a fix and is not: a frame here cycles through eight or nine
+	# pens, so each setcolour() threw the previous pen's whole table
+	# away and built the next one from scratch, which is the same
+	# allocation storm with more steps.
+	if(lit_src == nil){
+		lit_src = array[LITCOLS] of ref Image;
+		lit_tab = array[LITCOLS] of array of ref Image;
+	}
+	slot := -1;
+	for(i := 0; i < LITCOLS; i++)
+		if(lit_src[i] == col){
+			slot = i;
+			break;
+		}
+	if(slot < 0){
+		slot = lit_next;
+		lit_next = (lit_next + 1) % LITCOLS;
+		lit_src[slot] = col;
+		lit_tab[slot] = array[LITSTEPS+1] of ref Image;
+	}
+	tab := lit_tab[slot];
+	if(tab[k] != nil)
+		return tab[k];
 	buf := array[4] of byte;
 	r1 := Rect(col.r.min, col.r.min.add(Point(1, 1)));
 	if(col.readpixels(r1, buf) < 0)
 		return col;
-	r := int (real buf[0] * lit);
-	g := int (real buf[1] * lit);
-	b := int (real buf[2] * lit);
+	f := real k / real LITSTEPS;
+	r := int (real buf[0] * f);
+	g := int (real buf[1] * f);
+	b := int (real buf[2] * f);
 	if(r > 255) r = 255;
 	if(g > 255) g = 255;
 	if(b > 255) b = 255;
 	out := col.display.rgb(r, g, b);
 	if(out == nil)
 		return col;
-	lit_src = col;
-	lit_out = out;
-	lit_factor = lit;
+	tab[k] = out;
 	return out;
 }
 

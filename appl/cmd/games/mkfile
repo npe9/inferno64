@@ -2,6 +2,7 @@
 
 TARG=\
 	bf.dis\
+	gorge.dis\
 	orchard.dis\
 	rivet.dis\
 	sprocket.dis\
@@ -11,6 +12,8 @@ SYSMODULES=\
 	arg.m\
 	sys.m\
 	draw.m\
+	math/polyfill.m\
+	math/draw3d.m\
 	tk.m\
 	wmclient.m\
 	keyboard.m\
