@@ -258,6 +258,7 @@ struct Pctx
 	Prog*	runhd;		/* this context's run queue */
 	Prog*	runtl;
 	int	nlocal;		/* its length, for the Runqmax bound */
+	Inst*	syncpc;		/* the PC p->reg carries; see REGSYNCED() */
 };
 
 struct Progs
@@ -509,8 +510,16 @@ extern	int	inxec;		/* a quantum is running; see xec.c */
  * (vmachine() says so where it clears it), so any check that reaches
  * through it to compare registers reads freed memory.  This does not.
  */
-extern	Inst*	regsyncpc;
-#define	REGSYNCED()	(regsyncpc = R.PC)
+/*
+ * Per context, not global.  It tracks "the PC this context's saved
+ * register file carries", and with more than one context a single
+ * global tracks whichever synced last -- comparing it against another
+ * context's R.PC compares unrelated things.  The rungc() assertion
+ * reported exactly that the moment a second context existed: "snapshot
+ * PC 0x79fbee8 live 0x0", the live half being a freshly claimed
+ * context whose registers had never been loaded.
+ */
+#define	REGSYNCED()	(curP->syncpc = R.PC)
 #define	R	(*curR)
 extern	String	snil;
 extern	void	(*optab[256])(void);

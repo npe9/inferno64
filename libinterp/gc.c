@@ -569,7 +569,7 @@ rungc(Prog *p)
 	 * compares the pointer, never follows it" -- so a check that
 	 * follows it reads freed memory.  A flag cannot dangle.
 	 */
-	if(inxec && regsyncpc != R.PC) {
+	if(inxec && curP->syncpc != R.PC) {
 		static int said;
 
 		if(!said) {
@@ -577,7 +577,7 @@ rungc(Prog *p)
 			print("rungc: collecting inside a quantum with p->reg "
 				"stale (snapshot PC %#p live %#p), called from "
 				"%#p -- the live roots are not in the root set\n",
-				regsyncpc, R.PC, getcallerpc(&p));
+				curP->syncpc, R.PC, getcallerpc(&p));
 		}
 	}
 

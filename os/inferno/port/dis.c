@@ -50,6 +50,72 @@ struct
  * constant to falsify.
  */
 int Runqmax = 256;	/* MULTICORE - local run queue bound, Go's is 256 */
+/*
+ * A context per interpreter -- Go's P, one held by each M that runs.
+ *
+ * There is still exactly one vmlock, so only one interpreter executes
+ * at a time and only one of these is live at a time.  That is what
+ * makes this safe to land before the collector: a second P exists, is
+ * claimed, and is used, but never concurrently with the first.
+ *
+ * The local run queue has to be flushed back to the global queue when
+ * an interpreter gives up the lock.  A Prog left on the local queue of
+ * an M that does not run again is stranded -- invisible to every other
+ * M, exactly the hazard that made the global queue a prerequisite.
+ * Go's answer at this point is stealing; under a global lock, handing
+ * the work back is simpler and is correct for the same reason.
+ */
+static void gput(Prog*);	/* defined below */
+
+static Pctx pctxpool[MAXPCTX];
+static int npctxused;
+
+static Pctx*
+claimctx(void)
+{
+	Pctx *c;
+
+	lock(&isched.l);
+	/*
+	 * The first interpreter takes the context that already exists.
+	 * xec.c's _pctx is what curP has pointed at since boot, and the
+	 * programs queued before any interpreter ran are on its local
+	 * queue.  Handing the first claimer a fresh context orphans them:
+	 * the run queue is abandoned, nothing is ever picked, and the boot
+	 * dies with zero scheduler passes.  Measured, not reasoned -- that
+	 * is exactly what the first version of this did.
+	 */
+	if(npctxused == 0){
+		npctxused = 1;
+		unlock(&isched.l);
+		return pctxs[0];	/* == &_pctx, already in pctxs[] */
+	}
+	if(npctxused >= MAXPCTX){
+		unlock(&isched.l);
+		return pctxs[0];	/* share; correct, just not parallel */
+	}
+	c = &pctxpool[npctxused - 1];
+	pctxs[npctx++] = c;
+	npctxused++;
+	unlock(&isched.l);
+	return c;
+}
+
+static void
+flushlocal(void)
+{
+	Prog *p;
+
+	while(curP->runhd != nil){
+		p = curP->runhd;
+		curP->runhd = p->link;
+		if(curP->runhd == nil)
+			curP->runtl = nil;
+		curP->nlocal--;
+		gput(p);
+	}
+}
+
 enum { Gqevery = 61 };	/* Go's schedule() uses 61 for the same reason */
 int gqtick;
 int gqput, gqget;	/* MULTICORE INSTRUMENTATION - temporary */
@@ -190,6 +256,10 @@ vmacquire(void)
 	if(up->vmheld == 0){
 		qlock(&vmlock);
 		up->vmheld = 1;
+		if(up->pctx != nil){
+			curP = (Pctx*)up->pctx;
+			curR = &curP->reg;
+		}
 		{	/* MULTICORE INSTRUMENTATION - temporary */
 			int n = ainc(&nvm);
 			if(n > maxnvm){
@@ -235,6 +305,7 @@ vmrelease(void)
 {
 	if(up->vmheld){
 		adec(&nvm);	/* MULTICORE INSTRUMENTATION - temporary */
+		flushlocal();	/* do not strand work on a context that stops */
 		up->vmheld = 0;
 		qunlock(&vmlock);
 	}
@@ -1338,6 +1409,8 @@ vmachine(void*)
 	int cycles;
 	static int gccounter;
 
+	if(up->pctx == nil)
+		up->pctx = claimctx();
 	startup();
 
 	/* cleans out the exception stack (error labels) */
@@ -1719,6 +1792,8 @@ disdump(void)
 	/* MULTICORE INSTRUMENTATION - temporary */
 	print("dis: global runq: %d put, %d got, %d now, bound %d\n",
 		gqput, gqget, isched.ngq, Runqmax);
+	print("dis: %d contexts claimed of %d, curP %#p\n",
+		npctx, MAXPCTX, curP);
 
 	for(p = curP->runhd; p != nil; p = p->link)
 		print("dis: runq prog %d %s\n", p->pid,

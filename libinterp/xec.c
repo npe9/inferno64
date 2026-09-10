@@ -2406,7 +2406,6 @@ showprog(Prog *p)
  * the rungc() assertion did exactly that before this existed.
  */
 int inxec;
-Inst *regsyncpc;
 
 void
 xec(Prog *p)
