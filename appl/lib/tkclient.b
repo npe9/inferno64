@@ -77,35 +77,19 @@ makedrawcontext(): ref Draw->Context
 }
 
 #
-# Say which window the keyboard has moved to, for anyone who cannot see it.
+# Saying which window the keyboard moved to used to be done here, by
+# writing the title to /dev/voice/screen after handing Tk the focus.
+# libtk does it now, from the one place that knows a window has just been
+# entered: titlebar(2) puts the title in the Tk variable "windowname" and
+# the "focus -global" above is what reaches it.
 #
-# Tk itself announces the widget that takes the keyboard, which says where you
-# are inside the window and not which window it is - two shell windows announce
-# exactly the same widget. The title is the missing half, and this layer is
-# where the title lives.
+# Keeping both was not visibly wrong - libtk says the same words, and
+# voice(3) drops an announcement identical to the one before it, so the
+# second was already being thrown away. It was a duplicate waiting for
+# either wording to change, which is exactly what happened in wmclient.b,
+# where the order put the two announcements the other way round and a
+# window said its name twice. See voice(3).
 #
-# Best effort: where there is no voice(3) the open fails and nothing happens.
-# A window must not fail to take the keyboard because nobody is listening.
-#
-announce(top: ref Tk->Toplevel)
-{
-	# the same place the "task" handler reads it from
-	title := cmd(top, ".Wm_t.title cget -text");
-	if(title == nil || title == "" || title[0] == '!')
-		return;
-	fd := sys->open("/dev/voice/screen", Sys->OWRITE);
-	if(fd == nil){
-		# the device may not be in this program's namespace yet
-		if(sys->bind("#V", "/dev", Sys->MAFTER) < 0)
-			return;
-		fd = sys->open("/dev/voice/screen", Sys->OWRITE);
-		if(fd == nil)
-			return;
-	}
-	b := array of byte (title + " window");
-	sys->write(fd, b, len b);
-}
-
 toplevel(ctxt: ref Draw->Context, topconfig: string, title: string, buts: int): (ref Tk->Toplevel, chan of string)
 {
 	if(dispath == nil)
@@ -247,8 +231,6 @@ wmctl(top: ref Tk->Toplevel, req: string): string
 		in := int qword(req, next).t0 != 0;
 		cmd(top, "focus -global " + string in);
 		cmd(top, "update");
-		if(in)
-			announce(top);
 	"task" =>
 		(r, nil) := splitqword(req, next);
 		if(r.t0 == r.t1) {

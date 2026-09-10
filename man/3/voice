@@ -201,15 +201,28 @@ Without one, a window that has nothing focused inside it says only
 which is what this always used to say.
 .PP
 .IR Wmclient (2)
-used to say this itself, by writing the title to
+and
+.IR tkclient (2)
+each used to say this themselves, by writing the title to
 .B screen
 when the window manager handed a window the keyboard.
-Doing both said it twice \(em
+.PP
+In
+.I wmclient
+that said it twice \(em
 .B "Colors window"
 and then
 .B Colors
-\(em so it says it in one place now, and that place also covers a
-toplevel with no window manager under it.
+\(em because it wrote its own before handing Tk the focus, so the two
+came out in different words.
+In
+.I tkclient
+the order was the other way round and the words happened to match, so
+the second was dropped as a repeat and nothing looked wrong: a duplicate
+waiting for either wording to change.
+.PP
+It is said in one place now, which also covers a toplevel with no window
+manager under it \(em something neither of those layers could do.
 .SS history
 Everything that has been announced, newest first, one to a line.
 .PP
