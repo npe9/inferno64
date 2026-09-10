@@ -376,12 +376,20 @@ sched(void)
 	m->readied = nil;
 	up = p;
 	/*
-	 * curP follows up.  Where it is a register the trap paths save and
-	 * restore it with every other general register, so no assembly
-	 * changes; what it needs is setting wherever the scheduler changes
-	 * which process runs, which is here.
+	 * curP follows up.  It is per executor, so it has to be set
+	 * wherever the scheduler changes which process runs, which is
+	 * here; without this a process that already held the VM lock and
+	 * moved to another processor kept that processor's context and
+	 * walked someone else's run queue.
+	 *
+	 * nil until vmachine() calls claimctx(), and every kernel process
+	 * that never interprets stays nil forever.  It must stay nil:
+	 * claimctx() is reached through "if(up->pctx == nil)", so filling
+	 * the field in newproc() to avoid this test stops any context
+	 * after the first from ever being claimed -- measured, one
+	 * context per boot instead of seven.
 	 */
-	curP = (Pctx*)p->pctx;
+	curP = p->pctx != nil ? (Pctx*)p->pctx : defpctx;
 	up->state = Running;
 	up->mach = MACHP(m->machno);
 	m->proc = up;
@@ -827,7 +835,6 @@ newproc(void)
 	 * a user process. kproc() can change it as it needs.
 	 */
 	p->kp = 0;
-	p->pctx = defpctx;	/* every Proc carries a Dis context */
 	p->noswap = 0;
 	p->privatemem = 0;
 	/* sched params */

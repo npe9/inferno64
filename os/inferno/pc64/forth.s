@@ -28,7 +28,9 @@ plan9 amd64 assembler puts the first argument in BP (RARG), return value in AX.
  W:   R10 current word pointer (holds CFA). F83 uses SI (lodsl in NEXT). As C uses AX, not bothering with lodsl.
  UP:  R11 register holding the start of the memory for this process
  UPE: R12 register holding the end of the memory for this process
-	CX, SI, DI, R13 temporary registers
+	CX, SI, DI temporary registers
+	R13 is curP, the Dis context (include/disreg.h), and is not
+	available here; it was listed as a temporary but never used as one.
 
 coding standard
 : <name> (S input-stack --- output-stack) (R --- )
