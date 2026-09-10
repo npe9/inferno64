@@ -1345,28 +1345,65 @@ delrun(int state)
 	return p;
 }
 
-void
-delrunq(Prog *p)
+/* unlink p from c's local queue; 1 if it was there */
+static int
+unlinkctx(Pctx *c, Prog *p)
 {
 	Prog *prev, *f;
 
 	prev = nil;
-	for(f = curP->runhd; f; f = f->link) {
+	for(f = c->runhd; f != nil; f = f->link) {
 		if(f == p)
 			break;
 		prev = f;
 	}
-	if(f == nil){
-		gdel(p);	/* it may be on the global queue instead */
-		return;
-	}
+	if(f == nil)
+		return 0;
 	if(prev == nil)
-		curP->runhd = p->link;
+		c->runhd = p->link;
 	else
 		prev->link = p->link;
-	if(p == curP->runtl)
-		curP->runtl = prev;
-	curP->nlocal--;
+	if(p == c->runtl)
+		c->runtl = prev;
+	c->nlocal--;
+	return 1;
+}
+
+int delrunqother;	/* MULTICORE INSTRUMENTATION - temporary */
+
+/*
+ * Take p off whatever queue it is on.
+ *
+ * It searched this context's queue and then the global one, and gave
+ * up.  With one context that was every queue there was.  With more, a
+ * Prog killed while it sits on another context's local queue -- a #p
+ * write, a group exiting -- was found nowhere, and delprog() freed it
+ * while it was still linked.  The context that owned that queue then
+ * picked it and called through r->xec: "panic: invalid opcode", PC
+ * 0xb, from vmachine+0x47d.  That is the same fault, with the same
+ * signature, that three separate hunts this session ran into.
+ *
+ * Searching the other contexts reads their queues without their
+ * owner's cooperation, which is a race of its own under parallelvm=1;
+ * it is a smaller one than freeing a linked Prog, and the right answer
+ * -- a Prog naming the context it is queued on, so this asks one queue
+ * -- is a change to Prog, not to this function.
+ */
+void
+delrunq(Prog *p)
+{
+	int i;
+
+	if(unlinkctx(curP, p))
+		return;
+	for(i = 0; i < npctx; i++)
+		if(pctxs[i] != curP && unlinkctx(pctxs[i], p)){
+			if(delrunqother++ == 0)
+				print("delrunq: prog %d was on another "
+					"context's queue\n", p->pid);
+			return;
+		}
+	gdel(p);	/* it may be on the global queue instead */
 }
 
 Prog*
