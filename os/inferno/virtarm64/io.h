@@ -87,7 +87,15 @@ enum {
 	GicdCTLR_ARE	= 1<<4,		/* affinity routing enable */
 	GicdCTLR_EN1	= 1<<1,		/* enable group 1 (with ARE set) */
 
-	GicIRQMax	= 96,		/* 32 virtio slots start at 48; plenty of room */
+	/*
+	 * 32 virtio-mmio slots start at 48 and end at 79; the GICv2m
+	 * frame's MSI SPIs start at 80 and QEMU gives it sixty-four of
+	 * them (NUM_GICV2M_SPIS in hw/arm/virt.h), so the last vector
+	 * this board can be handed is 143.  96 was enough until MSI
+	 * existed here and would have made gicv2minit() reject the
+	 * frame it had just found.
+	 */
+	GicIRQMax	= 160,
 	GicSpiBase	= 32,
 	GicPPITimer	= 30,		/* non-secure physical timer, from the DTB */
 };

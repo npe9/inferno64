@@ -21500,3 +21500,181 @@ different host controllers \(em DWC2 on the Pi 3B, xHCI on the Pi 4 \(em
 so the pair is exercised on both of the controllers this tree has.
 The four single-adapter Pi configurations were re-run against the same
 binaries and report their recorded counts unchanged: 37, 41, 34 and 38.
+.NH 1
+Message-signalled interrupts, and a line that was never held up
+.PP
+The driver plan had said that PCI on the virt machines runs on legacy
+INTx, that QEMU delivers it correctly, and that MSI is therefore for
+real hardware needing more vectors than INTx has.  Every clause of that
+was wrong.  QEMU models the whole mechanism: with the default
+.CW "-M virt"
+GIC, which is a v2, it builds an SBSA GICv2m frame beside the
+distributor, and every virtio-pci function it creates implements an
+MSI-X capability.  Nothing in this tree had ever written to either.
+.NH 2
+A GICv2 with no ITS, and why that is the easy case
+.PP
+MSI on arm is usually described as needing a GICv3 and its ITS, which
+would have made this a large job on a board that boots a v2.  A GICv2m
+frame is the reason it was not.  A device cannot write the distributor
+\(em its pending registers are not a doorbell \(em so the frame sits
+beside it and translates one memory write into one SPI: the device
+writes the SPI number to
+.CW MSI_SETSPI_NS
+and the frame raises it.  No command queue, no device table, no
+interrupt-translation memory to allocate, nothing to program per
+device.  Once it arrives it is an ordinary SPI, and
+.CW intrenable()
+and
+.CW trap()
+handle it exactly as they handle the uart's 33.
+.PP
+The frame is found in the device tree by its
+.CW arm,gic-v2m-frame
+node.  That node carries
+.CW compatible ,
+.CW msi-controller
+and
+.CW reg
+and no
+.CW arm,msi-base-spi ,
+so the tree gives the address and the frame's own
+.CW MSI_TYPER
+register gives the range \(em sixty-four SPIs from 80 on this machine.
+.NH 2
+The half in portable code
+.PP
+.CW pcimsixenable()
+in
+.CW os/inferno/port/pci.c
+is where MSI-X differs from the MSI already there.  An MSI message
+lives in config space; an MSI-X message lives in a table inside one of
+the function's memory BARs, named by the low three bits of the
+capability's table register, so pointing a vector somewhere means
+mapping that BAR.  The board's router is a function pointer,
+.CW pcimsirouter ,
+nil by default \(em pc64 and the riscv boards link the same file
+unchanged and every driver keeps
+.CW p->intl .
+.NH 2
+Two ways to have MSI-X enabled and no interrupts
+.PP
+The first is in the device.  A virtio 1.0 device with MSI-X enabled
+stops driving its INTx pin and is not required to set the ISR byte at
+all \(em section 4.1.4.5, and QEMU's
+.CW virtio_pci_isr_read()
+returns 0 there.  So enabling the capability without also writing
+.CW msix_config
+and each queue's
+.CW queue_msix_vector
+leaves the device with no way to signal anything, which is strictly
+worse than not enabling it; and a handler that still asks the ISR byte
+whether the interrupt was its own will throw away every vector that
+does arrive.  Both
+.CW sdvirtio10.c
+and
+.CW ethervirtio10.c
+now write both sets of registers and gate the ISR test on the INTx
+case only.
+.PP
+The second is in the GIC, and it is what the first working
+configuration actually did: it configured everything correctly, the
+table entry read back with the right address and data, the device
+accepted vector 0, and no interrupt ever arrived.  A GICv2m frame does
+not hold a line up.
+.CW gicv2m_set_irq()
+is a
+.CW qemu_irq_pulse() ,
+up and immediately down.
+.CW GICD_ICFGR
+resets to level-sensitive, and on a level-configured input the
+distributor tracks the level, so the down erased the up before anything
+could observe it \(em the interrupt was not delayed or misrouted, it
+never became pending.  Every MSI SPI is now made edge-triggered by
+.CW gicedge()
+before it is handed out.  Linux's own
+.CW gicv2m
+driver allocates these as
+.CW IRQ_TYPE_EDGE_RISING
+for the same reason.  Nothing else on this board needed it: a uart or a
+virtio-mmio device holds its line until the handler quiets it, which is
+why
+.CW GICD_ICFGR
+had never been written here at all.
+.NH 2
+Proving the frame before trusting it
+.PP
+That failure is why
+.CW gicv2minit()
+does not simply believe the node it found.  It allocates a vector,
+rings the doorbell with a cpu store \(em which QEMU's
+.CW gicv2m_write()
+cannot tell from a device's \(em and reads the SPI back out of
+.CW GICD_ISPENDR ,
+clearing it again afterwards.  Only then does it set
+.CW pcimsirouter ;
+a frame that fails leaves the pointer nil and every driver on INTx.
+.CW MSI-DOORBELL-OK
+is that self-test and nothing more.  The pending bit is read rather
+than the interrupt taken because this runs in
+.CW main() ,
+before
+.CW procinit() ,
+where
+.CW spllo()
+would also admit the clock; the distributor-to-cpu half needs no proof
+here anyway, since the virtio-mmio net device's SPI 79 is one number
+below these and arrives through the same code.
+.NH 2
+What runs
+.PP
+.CW virtarm64-msi ,
+the eighteenth configuration, is the same board with both the disk and
+the network on PCI rather than one on PCI and one on virtio-mmio.  Each
+function takes its own vector \(em 80 for the ethernet, 81 for the disk
+\(em which also checks that the allocator hands out one per device
+rather than the same one twice.
+.PP
+The network is the half that proves delivery, and the disk could not
+have.
+.CW sdvirtio10 's
+.CW vqio()
+polls the used ring after a one-second
+.CW tsleep ,
+so a disk whose interrupts never arrive still completes every request
+and prints
+.CW BLK-OK
+\(em which is exactly what it did through three builds before
+.CW gicedge() ,
+reporting nothing wrong while every request took a second.
+.CW ethervirtio10 's
+.CW rxproc
+and
+.CW txproc
+sleep on the queue with no timeout at all, so
+.CW DHCP-OK
+and
+.CW IP-OK
+over
+.CW virtio-net-pci
+cannot happen unless a vector really arrived.  The disk says so
+directly as well: it prints, once, the first time an interrupt reaches
+its handler, and names which kind it was.
+.PP
+The plain
+.CW virtarm64
+and
+.CW virtarm64-peer
+arms gained a marker rather than changing behaviour: their block device
+was already
+.CW virtio-blk-pci ,
+so it takes a vector now too, and
+.CW MSI-DOORBELL-OK
+joins their marker sets at 42 and 44.  The three riscv boards that link
+the same two drivers \(em
+.CW virt ,
+.CW virts
+and
+.CW shakti
+\(em are given virtio-mmio devices by the suite, set no router, and are
+unchanged.

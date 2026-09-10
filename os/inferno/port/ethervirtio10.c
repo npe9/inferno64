@@ -135,6 +135,7 @@ struct Ctlr {
 	int	active;
 	ulong	feat[2];
 	int	nqueue;
+	int	msivec;		/* >= 0 when the irq came from MSI-X */
 
 	Bpool	pool;
 
@@ -384,13 +385,20 @@ interrupt(Ureg*, void* arg)
 
 	edev = arg;
 	ctlr = edev->ctlr;
-	if(vin8(&ctlr->isr, 0) & 1){
-		for(i = 0; i < ctlr->nqueue; i++){
-			q = &ctlr->queue[i];
-			if(vhasroom(q)){
-				q->nintr++;
-				wakeup(q);
-			}
+	/*
+	 * The ISR byte belongs to the INTx path, where a shared pin has
+	 * to be claimed and acknowledged.  With MSI-X enabled the device
+	 * need not set it at all (virtio 1.0 section 4.1.4.5, and QEMU's
+	 * virtio_pci_isr_read returns 0), and testing it there would
+	 * discard every interrupt the vector delivered.
+	 */
+	if(ctlr->msivec < 0 && (vin8(&ctlr->isr, 0) & 1) == 0)
+		return;
+	for(i = 0; i < ctlr->nqueue; i++){
+		q = &ctlr->queue[i];
+		if(vhasroom(q)){
+			q->nintr++;
+			wakeup(q);
 		}
 	}
 }
@@ -684,6 +692,7 @@ reset(Ether* edev)
 	edev->ctlr = ctlr;
 	edev->port = ctlr->port;
 	edev->irq = ctlr->pcidev->intl;
+	ctlr->msivec = -1;
 	edev->tbdf = ctlr->pcidev->tbdf;
 	edev->mbps = 1000;
 	edev->link = 1;
@@ -705,7 +714,41 @@ reset(Ether* edev)
 	edev->promiscuous = promiscuous;
 
 	pcisetbme(ctlr->pcidev);
+
+	/*
+	 * MSI-X where the board routes it.  Same two halves as
+	 * sdvirtio10: a vector pointed at the device's first table
+	 * entry, and the device told to use that entry for the config
+	 * change and for all three queues.  Getting one half without the
+	 * other is worse than plain INTx, because a virtio 1.0 device
+	 * with MSI-X enabled stops driving its INTx pin.
+	 *
+	 * There is no polling fallback anywhere on this path -- rxproc
+	 * and txproc sleep on the queue with no timeout -- so if this is
+	 * wrong the interface simply never receives a packet.  That makes
+	 * it a stricter test of the MSI route than the disk, which would
+	 * merely have gone slow.
+	 */
+	if((i = pcimsixintr(ctlr->pcidev)) >= 0){
+		int q;
+
+		vout16(&ctlr->cfg, Vconf_msixcfg, 0);
+		for(q = 0; q < ctlr->nqueue; q++){
+			vout16(&ctlr->cfg, Vconf_queuesel, q);
+			vout16(&ctlr->cfg, Vconf_queuemsixvect, 0);
+			if(vin16(&ctlr->cfg, Vconf_queuemsixvect) != 0)
+				break;
+		}
+		if(q < ctlr->nqueue || vin16(&ctlr->cfg, Vconf_msixcfg) != 0)
+			print("#l%d: virtio refused msi-x vector 0; using intx\n", edev->ctlrno);
+		else {
+			ctlr->msivec = i;
+			edev->irq = i;
+		}
+	}
 	intrenable(edev->irq, interrupt, edev, edev->tbdf, edev->name);
+	print("#l%d: irq %d %s\n", edev->ctlrno, edev->irq,
+		ctlr->msivec >= 0 ? "msi-x" : "intx");
 
 	return 0;
 }

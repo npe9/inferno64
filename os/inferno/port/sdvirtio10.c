@@ -120,6 +120,11 @@ struct Vdev
 	int	nqueue;
 	Vqueue	*queue[16];
 
+	int	irq;		/* what intrenable() was given */
+	int	msivec;		/* >= 0 when that irq came from MSI-X */
+	ulong	nintr;		/* interrupts taken; 0 means none ever arrived */
+	char	name[32];	/* for the report from interrupt context */
+
 	Vio	dev;	/* device specific config (for scsi) */
 
 	/* registers */
@@ -342,8 +347,44 @@ viointerrupt(Ureg *, void *arg)
 {
 	Vdev *vd = arg;
 
-	if(vin8(&vd->isr, 0) & 1)
-		vqinterrupt(vd->queue[vd->typ == TypSCSI ? 2 : 0]);
+	/*
+	 * The ISR byte is the INTx story: a pin is shared, so the handler
+	 * has to ask the device whether the interrupt was its own, and
+	 * reading the byte also acknowledges and clears it.
+	 *
+	 * An MSI-X vector is not shared and there is nothing to
+	 * acknowledge -- the device's write to the doorbell already
+	 * happened.  Worse, section 4.1.4.5 of the virtio 1.0 spec has
+	 * the ISR byte defined only for the INTx case, and a device with
+	 * MSI-X enabled is not required to set it at all; QEMU's
+	 * virtio_pci_isr_read() returns 0 there.  So keeping this test on
+	 * the MSI path would deliver the vector and then decide nothing
+	 * had happened, and every request would fall through to vqio()'s
+	 * one-second poll -- a disk that works and is a thousand times
+	 * slower than it should be, which is the kind of thing that goes
+	 * unnoticed because nothing fails.
+	 */
+	if(vd->msivec < 0 && (vin8(&vd->isr, 0) & 1) == 0)
+		return;
+	/*
+	 * Say so once, whichever way the interrupt came.  vqio() falls
+	 * back to polling the used ring after a one-second tsleep, so a
+	 * device whose interrupts never arrive still completes every
+	 * request and reports nothing wrong -- this line is the only
+	 * thing that distinguishes a working interrupt from that.
+	 */
+	/*
+	 * iprint(), not print(): this is interrupt context, and print()
+	 * takes kmesg.lk.  Interrupting a process that already holds it
+	 * would deadlock here -- once per boot, at whatever moment the
+	 * first request completes, which is the kind of fault that
+	 * passes a hundred runs and hangs the hundred-and-first.  The
+	 * same reason trap.c reports through iprint().
+	 */
+	if(vd->nintr++ == 0)
+		iprint("%s: first interrupt, irq %d %s\n", vd->name, vd->irq,
+			vd->msivec >= 0 ? "msi-x" : "intx");
+	vqinterrupt(vd->queue[vd->typ == TypSCSI ? 2 : 0]);
 }
 
 static int
@@ -624,12 +665,55 @@ vioenable(SDev *sd)
 {
 	char name[32];
 	Vdev *vd;
-	int i;
+	int i, irq;
 
 	vd = sd->ctlr;
 	pcisetbme(vd->pci);
 	snprint(name, sizeof(name), "%s (%s)", sd->name, sd->ifc->name);
-	intrenable(vd->pci->intl, viointerrupt, vd, vd->pci->tbdf, name);
+
+	/*
+	 * MSI-X if the board routes it, INTx otherwise.  Two halves have
+	 * to agree or no interrupt arrives at all: pcimsixintr() points
+	 * the function's first table entry at a vector, and the writes
+	 * below tell the virtio device to use that entry.
+	 *
+	 * A virtio 1.0 device with MSI-X enabled starts every vector
+	 * field at VIRTIO_MSI_NO_VECTOR (0xFFFF) and, per section 4.1.5.1
+	 * of the spec, stops using the ISR byte and the INTx pin the
+	 * moment MSI-X is enabled.  So enabling MSI-X and leaving the
+	 * vectors unset is strictly worse than not enabling it: the
+	 * device goes silent.  One vector serves the config-change
+	 * notification and every virtqueue, which is what viointerrupt()
+	 * has always assumed -- it services all queues on any interrupt
+	 * and never reads a per-queue cause.
+	 *
+	 * queue_msix_vector is read back, not written and trusted: the
+	 * spec has the device return NO_VECTOR when it could not allocate
+	 * the mapping, and that is the one failure that would otherwise
+	 * leave a disk with no interrupt source and no complaint.
+	 */
+	snprint(vd->name, sizeof(vd->name), "%s", sd->name);
+	vd->msivec = -1;
+	if((irq = pcimsixintr(vd->pci)) >= 0){
+		vout16(&vd->cfg, Vconf_msixcfg, 0);
+		for(i = 0; i < vd->nqueue; i++){
+			vout16(&vd->cfg, Vconf_queuesel, i);
+			vout16(&vd->cfg, Vconf_queuemsixvect, 0);
+			if(vin16(&vd->cfg, Vconf_queuemsixvect) != 0)
+				break;
+		}
+		if(i < vd->nqueue || vin16(&vd->cfg, Vconf_msixcfg) != 0){
+			print("%s: virtio refused msi-x vector 0; using intx\n", name);
+			irq = -1;
+		}
+	}
+	if(irq < 0)
+		irq = vd->pci->intl;
+	else
+		vd->msivec = irq;
+	vd->irq = irq;
+	intrenable(irq, viointerrupt, vd, vd->pci->tbdf, name);
+	print("%s: irq %d %s\n", name, irq, vd->msivec >= 0 ? "msi-x" : "intx");
 	coherence();
 
 	for(i = 0; i < vd->nqueue; i++){
@@ -649,7 +733,9 @@ viodisable(SDev *sd)
 
 	vd = sd->ctlr;
 	snprint(name, sizeof(name), "%s (%s)", sd->name, sd->ifc->name);
-	intrdisable(vd->pci->intl, viointerrupt, vd, vd->pci->tbdf, name);
+	/* the irq vioenable() actually took, which is not p->intl when
+	 * the board routed this device an MSI-X vector */
+	intrdisable(vd->irq, viointerrupt, vd, vd->pci->tbdf, name);
 	pciclrbme(vd->pci);
 	return 1;
 }

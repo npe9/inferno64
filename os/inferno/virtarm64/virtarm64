@@ -92,6 +92,10 @@ port
 misc
 	uartvirtarm64
 	pci	pciecam
+# gicv2m: message-signalled interrupts for the PCI devices below.  A
+# GICv2 has no ITS, so QEMU's -M virt puts an SBSA v2m frame beside
+# the distributor and one memory write there becomes one SPI.
+	gicv2m
 	sdvirtio10	pci sdscsi virtio10mem
 	sdnvme	pci
 	screenarm

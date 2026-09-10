@@ -225,6 +225,13 @@ main(void)
 	links();
 	screeninit();
 	fdtreport();
+	/*
+	 * Before pciarchinit(), because the PCI scan is what reaches the
+	 * drivers that ask for a vector, and a router set afterwards
+	 * would be found nil by every one of them.
+	 */
+	gicv2minit();
+	gicv2mreport();
 	pciarchinit();
 	chandevreset();
 	uartconsolesetup();

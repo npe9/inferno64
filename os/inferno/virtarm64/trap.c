@@ -235,6 +235,38 @@ gicinit(void)
 	gicenable(GicPPITimer);
 }
 
+/*
+ * Configure an SPI as edge-triggered.  Everything else on this board is
+ * level-triggered -- a uart or a virtio-mmio device holds its line up
+ * until the handler quiets it -- and GICD_ICFGR resets to level, which
+ * is why nothing needed this until MSI.
+ *
+ * A GICv2m frame does not hold a line at all: gicv2m_set_irq() is a
+ * qemu_irq_pulse(), up then straight back down, and on a level-
+ * configured input the GIC tracks the level, so the "down" erases the
+ * "up" before anything can see it.  The interrupt is not late or
+ * lost in the cpu -- it never becomes pending in the distributor.
+ * Linux's own gicv2m driver allocates these SPIs as IRQ_TYPE_EDGE_RISING
+ * for the same reason.
+ *
+ * Two bits per interrupt, sixteen to a register; the high bit of the
+ * pair is 1 for edge.  SPIs only: the field is read-only for SGIs and
+ * usually for PPIs.
+ */
+void
+gicedge(int irq)
+{
+	u32 *gicd;
+	int reg, shift;
+
+	if(irq < GicSpiBase || irq >= GicIRQMax)
+		return;
+	gicd = (u32*)GICD;
+	reg = GicdICFGR + irq/16;
+	shift = (irq%16) * 2;
+	gicd[reg] = (gicd[reg] & ~(3<<shift)) | (2<<shift);
+}
+
 void
 trapinit(void)
 {

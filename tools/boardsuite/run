@@ -40,7 +40,7 @@ verbose=false
 record=false
 force=false
 
-configs='raspi3b raspi3b-4g raspi3b-usb raspi3b-2eth raspi4 raspi4-hot raspi4-usb raspi4-2eth virtarm64 virtarm64-peer sifiveu virt virts virt32 virt32s virt-peer peer-mixed'
+configs='raspi3b raspi3b-4g raspi3b-usb raspi3b-2eth raspi4 raspi4-hot raspi4-usb raspi4-2eth virtarm64 virtarm64-msi virtarm64-peer sifiveu virt virts virt32 virt32s virt-peer peer-mixed'
 
 # Each configuration: the kernel, the QEMU arguments, the line that
 # says the board is done printing, and the evidence lines that make
@@ -51,7 +51,7 @@ config_kernel() {
 				echo "$root/os/inferno/raspi3b/iraspi3b";;
 	raspi4|raspi4-hot|raspi4-usb|raspi4-2eth)
 				echo "$root/os/inferno/raspi4/iraspi4";;
-	virtarm64|virtarm64-peer)
+	virtarm64|virtarm64-msi|virtarm64-peer)
 				echo "$root/os/inferno/virtarm64/ivirtarm64";;
 	sifiveu)		echo "$root/os/inferno/sifiveu/isifiveu";;
 	virt|virt-peer|peer-mixed)
@@ -74,7 +74,7 @@ config_kernel() {
 config_qemu() {
 	case $1 in
 	raspi*)			echo "$QEMU";;
-	virtarm64|virtarm64-peer)
+	virtarm64|virtarm64-msi|virtarm64-peer)
 				echo "${QEMU_AARCH64:-`command -v qemu-system-aarch64`}";;
 	sifiveu|virt|virts|virt-peer|peer-mixed)
 				echo "${QEMU_RISCV64:-`command -v qemu-system-riscv64`}";;
@@ -140,6 +140,26 @@ config_args() {
 		# halves were BLK-FAIL, recorded as a known failure of the
 		# board rather than of the invocation.
 		echo "-M virt -cpu cortex-a57 -m 1G -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-pci,disable-legacy=on,drive=blk0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-device,netdev=n0";;
+	virtarm64-msi)
+		# The same board with both devices on PCI rather than one
+		# on PCI and one on virtio-mmio, which is what makes this
+		# the MSI arm: -M virt's default GIC is a v2, QEMU puts an
+		# SBSA GICv2m frame beside it, and each of the two PCI
+		# functions takes a vector from that frame instead of the
+		# INTx line it used to share.
+		#
+		# The network is the half that proves delivery.  The disk
+		# would not: sdvirtio10's vqio() polls the used ring after
+		# a one-second tsleep, so a disk whose interrupts never
+		# arrive still answers every request and prints BLK-OK.
+		# ethervirtio10's rxproc and txproc sleep on the queue
+		# with no timeout at all, so DHCP-OK over virtio-net-pci
+		# cannot happen unless a vector really arrived.
+		#
+		# The same FAT image and the same host ports as virtarm64:
+		# the arms run one at a time, and the host rig below dials
+		# 54323/54326 by name in one place.
+		echo "-M virt -cpu cortex-a57 -m 1G -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-pci,disable-legacy=on,drive=blk0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-pci,disable-legacy=on,netdev=n0";;
 	# The riscv arms below name -m explicitly.  They used to pass none
 	# at all, which meant QEMU's 128MB default while virt, virts,
 	# virt32 and virt32s each compiled DRAMSIZE as 256MB and took it
@@ -319,7 +339,7 @@ config_last() {
 	raspi4-2eth)		echo 'USB-MOUSE';;
 	raspi4|raspi4-hot)	echo 'USB-MOUSE';;
 	raspi4-usb)		echo 'RASPI4-SH-OK';;
-	virtarm64|virtarm64-peer)	echo 'ROOT-CMDS-OK';;
+	virtarm64|virtarm64-msi|virtarm64-peer)	echo 'ROOT-CMDS-OK';;
 	virt|virts|virt-peer|peer-mixed)	echo 'ROOT-CMDS-OK';;
 	sifiveu)		echo 'SIFIVEU-SH-OK';;
 	virt32|virt32s)		echo 'VIRT32-INIT-OK';;
@@ -543,6 +563,42 @@ config_evidence() {
 		# the image size.
 		echo '^[0-9a-f]+ 80000000 [0-9]+'
 		;;
+	virtarm64-msi)
+		# Message-signalled interrupts, end to end, in four lines.
+		#
+		# The first says the board found the GICv2m frame in the
+		# device tree and proved it before trusting it: gicv2minit()
+		# rings the doorbell with a cpu store and reads the SPI
+		# back out of GICD_ISPENDR, and MSI-DOORBELL-OK is only
+		# printed when that arrived.  It is worth checking on its
+		# own because it is the half that was wrong first -- the
+		# frame pulses the line, and a level-configured SPI drops
+		# it again before it can latch.
+		#
+		# The next two say both PCI functions took a vector, and
+		# that they took DIFFERENT ones: 80 is the frame's first
+		# SPI and 81 the second, so this also checks the allocator
+		# hands out one vector per device rather than the same one
+		# twice.  The ether line comes first because reset() runs
+		# before the sd driver's enable.
+		#
+		# The last is delivery rather than configuration.  A
+		# device can be configured for MSI-X, print all three
+		# lines above, and never raise anything -- which is
+		# exactly what happened before gicedge().  sdvirtio10
+		# says so the first time an interrupt actually reaches
+		# its handler, and names which kind it was.
+		echo 'MSI-DOORBELL-OK'
+		echo '#l0: irq 80 msi-x'
+		echo 'sdF \(virtio10\): irq 81 msi-x'
+		echo 'sdF: first interrupt, irq 81 msi-x'
+		# DHCP-OK is in the marker set and would be there over
+		# INTx too, so it is not evidence by itself.  This is:
+		# with the net on PCI, the only path to it is a vector.
+		# ethervirtio10's rxproc and txproc sleep on the queue
+		# with no timeout, so nothing polls it back to life.
+		echo '#l0: virtio10: 1000Mbps port 0x10008000 irq 80'
+		;;
 	esac
 }
 
@@ -715,7 +771,7 @@ config_hostnet() {
 	# inbound halves all dial the host rig, and without it the
 	# board reported TCP-NET-FAIL "connection refused" -- the host
 	# end that was never started, not the board.
-	virtarm64|virtarm64-peer)	echo yes;;
+	virtarm64|virtarm64-msi|virtarm64-peer)	echo yes;;
 	esac
 }
 
@@ -1187,7 +1243,7 @@ for c in $configs; do
 	# same fat16.img in its qemu line.  It ran only because virt comes
 	# before it in $configs and had already made the image; asked for
 	# on its own with an empty work directory, qemu had no such file.
-	case $c in virt|virts|virtarm64|virt-peer|virtarm64-peer|peer-mixed) needfat=true;; *) needfat=false;; esac
+	case $c in virt|virts|virtarm64|virtarm64-msi|virt-peer|virtarm64-peer|peer-mixed) needfat=true;; *) needfat=false;; esac
 	if $needfat && ! makefat fat16.img marker.txt 'FS-OK boardsuite'; then
 		echo "$c: FAIL no way to make a FAT16 image here (hdiutil or mkfs.vfat)"
 		echo "    BLK-OK needs a filesystem, not a blank card; see the README"

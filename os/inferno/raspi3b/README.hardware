@@ -26,11 +26,22 @@ FAT boot partition
 ------------------
 Format the first SD partition FAT32 and copy onto it:
 
-    bootcode.bin        }
-    start.elf           }  Pi firmware (from raspberrypi/firmware, boot/)
-    fixup.dat           }
+    bootcode.bin            }
+    start.elf               }  Pi firmware (raspberrypi/firmware, boot/)
+    fixup.dat               }
+    bcm2710-rpi-3-b.dtb     }
+    overlays/disable-bt.dtbo}
     config.txt          (this directory)
     kernel8.img         (mk kernel8.img)
+
+The base .dtb and the overlays directory are not optional even though
+this kernel reads no device tree on this board.  dtoverlay= is applied
+by start.elf to the board's own .dtb, and a firmware that finds no .dtb
+matching the board revision boots in the old ATAG mode and applies no
+overlays at all -- silently.  Leave those two files out and everything
+still boots, with the PL011 still wired to Bluetooth and the serial
+console dead, which looks exactly like a kernel that hung before its
+first print.
 
 config.txt sets arm_64bit=1, kernel=kernel8.img, and routes the PL011
 UART (which this kernel's console drives, at 0x3f201000) to the GPIO

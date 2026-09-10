@@ -203,6 +203,9 @@ struct Pcidev
 
 	int	pmrb;			/* power management register block */
 	int	msi;			/* MSI capability register block */
+	int	msixirq;		/* MSI-X vector taken, or 0 for none yet */
+	uvlong	msixaddr;		/* .. and the message that reaches it */
+	ulong	msixdata;
 };
 
 enum {
@@ -258,6 +261,13 @@ extern int pcienumcaps(Pcidev *p, int (*fmatch)(Pcidev*, int, int, int), int arg
 
 extern int pcimsienable(Pcidev *p, uvlong addr, ulong data);
 extern int pcimsidisable(Pcidev *p);
+
+extern int pcimsixcount(Pcidev *p);
+extern int pcimsixenable(Pcidev *p, int vec, uvlong addr, ulong data);
+extern int pcimsixintr(Pcidev *p);
+/* set by a board that routes MSI; nil elsewhere, and then pcimsixintr()
+ * answers -1 and the driver uses p->intl as it always did */
+extern int (*pcimsirouter)(uvlong *addr, ulong *data);
 
 extern int pcigetpms(Pcidev* p);
 extern int pcisetpms(Pcidev* p, int state);

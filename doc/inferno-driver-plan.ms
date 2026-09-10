@@ -1343,15 +1343,168 @@ The QEMU-tractable part of this plan is done.  Items 1 through 5 are
 finished and in the board suite \(em USB mass storage, virtio-gpu 2-D,
 PCI on arm64, S-mode and SBI and the device tree on riscv \(em and item
 6 is finished as far as anything on this machine can take it.  Six
-things remain \(em five now, with item 4 done \(em and none of them is
+things were listed here as remaining; three do \(em items 1, 2 and 4
+have since been done, and the count in this sentence had already not
+been kept up with item 2 before this round added two more to it.  None
+of the three is
 waiting on a decision or on more of the same work.  Each is here with the reason it stops, so that a reader
 who has hardware, or a QEMU built differently, knows exactly which one
 they have unblocked.
 .IP 1.
 .B "MSI and MSI-X."
-PCI on both virt machines runs on legacy INTx, which QEMU delivers
-correctly, so MSI buys nothing here.  It is for real hardware that
-needs more vectors than INTx has.
+.B DONE
+for
+.CW virtarm64 's
+two virtio drivers,
+.CW sdvirtio10
+and
+.CW ethervirtio10 ;
+the board also links
+.CW sdnvme
+and
+.CW usbxhcipci ,
+which still take
+.CW p->intl .
+No arm gives either of those a device, so nothing here is contradicted,
+but QEMU's
+.CW qemu-xhci
+does implement MSI-X and a PCI-xHCI arm added later would quietly run
+on INTx until it is given the same treatment.
+And \(em like item 2 \(em the reason this was deferred was wrong rather
+than merely optimistic.  What this entry used to say was that PCI runs
+on legacy INTx, which QEMU delivers correctly, so MSI buys nothing
+here and is for real hardware needing more vectors than INTx has.
+Both halves were false.  QEMU models the hardware fully: with the
+default
+.CW "-M virt"
+GIC, which is a v2,
+.CW hw/arm/virt.c 's
+.CW create_gic()
+instantiates an SBSA GICv2m frame at
+.CW 0x08020000
+with sixty-four SPIs starting at 80, and every virtio-pci function it
+builds implements an MSI-X capability.  Nothing in this tree had ever
+written to either.  And a GICv2 has no ITS, so the usual answer \(em
+that MSI on arm means moving to GICv3 first \(em did not apply: a v2m
+frame turns one memory write into one SPI, with no command queue, no
+device table and no translation-table memory to allocate.
+.PP
+The portable half is in
+.CW os/inferno/port/pci.c :
+.CW pcimsixcount() ,
+.CW pcimsixenable()
+and
+.CW pcimsixintr() .
+MSI-X differs from MSI in where the message lives \(em not in config
+space but in a table inside one of the function's memory BARs, named
+by the low three bits of the capability's table register \(em so
+enabling a vector means mapping that BAR, which is why the code takes
+the same
+.CW "bar & ~0xF"
+route
+.CW virtiomapregs()
+does.  The board's router is a function pointer,
+.CW pcimsirouter ,
+nil by default: pc64 and the riscv boards link the same file unchanged
+and every driver falls back to
+.CW p->intl .
+.PP
+The board half is
+.CW os/inferno/virtarm64/gicv2m.c ,
+which finds the frame by its
+.CW arm,gic-v2m-frame
+node.  The node carries no
+.CW arm,msi-base-spi ,
+so the SPI range comes from the frame's own
+.CW MSI_TYPER
+register: the tree gives the address and the register gives the range.
+.PP
+Two things had to be right that were not obvious, and the second cost
+the most.  A virtio 1.0 device with MSI-X enabled stops driving its
+INTx pin and is not required to set the ISR byte at all (section
+4.1.4.5; QEMU's
+.CW virtio_pci_isr_read()
+returns 0), so enabling MSI-X without also writing
+.CW msix_config
+and each queue's
+.CW queue_msix_vector
+is strictly worse than leaving it alone \(em and a handler that still
+gates on the ISR byte discards every vector that does arrive.  Both
+.CW sdvirtio10.c
+and
+.CW ethervirtio10.c
+now do both halves.
+.PP
+The other was the trigger mode, and it is the reason the first working
+configuration delivered nothing.  A GICv2m frame does not hold an
+interrupt line up:
+.CW gicv2m_set_irq()
+is a
+.CW qemu_irq_pulse() ,
+up and straight back down.
+.CW GICD_ICFGR
+resets to level-sensitive, and on a level-configured input the
+distributor tracks the level, so the "down" erased the "up" before
+anything could observe it \(em the vector never became pending, let
+alone late.  Every MSI SPI is now set edge-triggered by
+.CW gicedge()
+before it is handed out, which is what Linux's own
+.CW gicv2m
+driver does when it allocates these as
+.CW IRQ_TYPE_EDGE_RISING .
+Nothing else on this board needed it: a uart or a virtio-mmio device
+holds its line.
+.PP
+That failure is also why
+.CW gicv2minit()
+proves the frame before trusting it.  It rings the doorbell with a cpu
+store \(em which QEMU's
+.CW gicv2m_write()
+cannot distinguish from a device's \(em and reads the SPI back out of
+.CW GICD_ISPENDR ,
+and only then sets
+.CW pcimsirouter .
+.CW MSI-DOORBELL-OK
+is that check, not a claim about any device.
+.PP
+The new
+.CW virtarm64-msi
+arm puts both the disk and the network on PCI, so each takes its own
+vector, 80 and 81.  The network is the half that proves delivery:
+.CW sdvirtio10 's
+.CW vqio()
+polls the used ring after a one-second
+.CW tsleep ,
+so a disk whose interrupts never arrive still answers every request and
+prints
+.CW BLK-OK
+\(em which is exactly what it did before
+.CW gicedge() .
+.CW ethervirtio10 's
+.CW rxproc
+and
+.CW txproc
+sleep on the queue with no timeout at all, so
+.CW DHCP-OK
+over
+.CW virtio-net-pci
+cannot happen unless a vector really arrived.  The disk says so
+directly as well, the first time an interrupt reaches its handler.
+.PP
+What is left is real hardware and pc64.  A GICv3 board would want the
+ITS instead of a v2m frame, and
+.CW virtarm64
+already detects v3 at boot \(em it just has no ITS driver, because
+.CW "-M virt"
+gives it a v2 by default and an untested ITS path is worth less than a
+tested v2m one.  pc64's MSI address is the x86
+.CW 0xFEE00000
+form and needs no frame at all, but pc64 does not build in this tree
+today:
+.CW mkfiles/mkfile-os-amd64
+does not exist.  The three changed portable files were compiled with
+.CW 6c
+against pc64's own headers to check that much.
 .IP 2.
 .B "arm64 device-tree discovery."
 .B DONE
@@ -1557,8 +1710,9 @@ that are blocked off this machine \(em the ARM timer's GIC line against
 the BCM2711 datasheet, and the Arasan as the wireless part's SDIO \(em
 are the same kind of thing.
 .PP
-Fifteen configurations run on this host, and all fifteen run from a
-bare checkout inside a container, built there from source.  What that buys is not the marker
+Eighteen configurations run on this host, and the fifteen that predate
+this round run from a bare checkout inside a container, built there
+from source.  What that buys is not the marker
 count: it is that every one of these six statements can be checked
 against a booted kernel by anyone who runs the suite, and that a change
 which breaks one of the finished items says so in the same run.

@@ -27,6 +27,9 @@ void	idlehands(void);
 void	init0entry(void);
 void	intrdisable(int, void (*)(Ureg*, void*), void*, int, char*);
 void	intrenable(int, void (*)(Ureg*, void*), void*, int, char*);	/* (irq, handler, arg, tbdf, name): the portable order */
+void	gicedge(int);			/* trap.c: make one SPI edge-triggered */
+void	gicv2minit(void);		/* gicv2m.c: find the MSI frame, if any */
+void	gicv2mreport(void);
 int	islo(void);
 void	kbdinit(void);
 void	screeninit(void);

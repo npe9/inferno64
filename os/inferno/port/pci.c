@@ -1022,7 +1022,21 @@ pcimsidisable(Pcidev *p)
 }
 
 enum {
-	MSIXCtrl = 0x02,
+	MSIXCtrl = 0x02,	/* message control (16 bit) */
+	MSIXTbl  = 0x04,	/* table offset (31:3) and BIR (2:0) */
+	MSIXPba  = 0x08,	/* pending-bit-array offset and BIR */
+
+	MSIXCtrlEnable	= 1<<15,
+	MSIXCtrlMask	= 1<<14,	/* function mask: all vectors masked */
+	MSIXCtrlSizeMask = 0x7FF,	/* table size minus one */
+
+	/* one table entry, sixteen bytes, PCIe 3.0 section 6.8.2.9 */
+	MSIXEntAddr	= 0,
+	MSIXEntAddrHi	= 4,
+	MSIXEntData	= 8,
+	MSIXEntVctl	= 12,
+	MSIXEntVctlMask	= 1<<0,
+	MSIXEntSize	= 16,
 };
 
 static int
@@ -1034,6 +1048,139 @@ pcimsixdisable(Pcidev *p)
 		return -1;
 	pcicfgw16(p, off + MSIXCtrl, 0);
 	return 0;
+}
+
+/*
+ * How many vectors this function's MSI-X table holds, or -1 if it has
+ * no MSI-X capability at all.  The field is the table size MINUS ONE,
+ * because a function that implements MSI-X implements at least one
+ * vector and the encoding spends no value on zero.
+ */
+int
+pcimsixcount(Pcidev *p)
+{
+	int off;
+
+	if((off = pcicap(p, PciCapMSIX)) < 0)
+		return -1;
+	return (pcicfgr16(p, off + MSIXCtrl) & MSIXCtrlSizeMask) + 1;
+}
+
+/*
+ * Point one MSI-X table entry at (addr, data) and unmask it.
+ *
+ * Unlike MSI, whose address and data live in config space, the MSI-X
+ * table lives in one of the function's memory BARs: the capability
+ * names the BAR in the low three bits of the table register and the
+ * byte offset within it in the rest.  So this has to map the BAR to
+ * touch the vector at all, which is why it takes the same
+ * bar & ~0xF route virtiomapregs() does rather than pcicfgw32().
+ *
+ * The enable bit is set here and never cleared per-vector: masking is
+ * the vector-control word's job, and a device whose driver has asked
+ * for a vector wants that vector delivered.  The function mask is
+ * cleared for the same reason -- some devices come out of reset with
+ * it set, and a table entry written under it is silently inert.
+ */
+int
+pcimsixenable(Pcidev *p, int vec, uvlong addr, ulong data)
+{
+	int off, bar, n;
+	u32int tbl;
+	uvlong base;
+	uchar *e;
+
+	if((off = pcicap(p, PciCapMSIX)) < 0)
+		return -1;
+	n = (pcicfgr16(p, off + MSIXCtrl) & MSIXCtrlSizeMask) + 1;
+	if(vec < 0 || vec >= n)
+		return -1;
+	tbl = pcicfgr32(p, off + MSIXTbl);
+	bar = tbl & 7;
+	if(bar >= nelem(p->mem))
+		return -1;
+	if(p->mem[bar].bar & 1)			/* an i/o BAR cannot hold it */
+		return -1;
+	if((tbl & ~7) + (vec+1)*MSIXEntSize > p->mem[bar].size)
+		return -1;
+	base = (p->mem[bar].bar & ~0xFULL) + (tbl & ~7) + vec*MSIXEntSize;
+	if((e = vmap(base, MSIXEntSize)) == nil)
+		return -1;
+
+	/* masked while the three words are in flux, then unmasked */
+	*(u32int*)(e + MSIXEntVctl) = MSIXEntVctlMask;
+	coherence();
+	*(u32int*)(e + MSIXEntAddr) = addr;
+	*(u32int*)(e + MSIXEntAddrHi) = addr >> 32;
+	*(u32int*)(e + MSIXEntData) = data;
+	coherence();
+	*(u32int*)(e + MSIXEntVctl) = 0;
+	coherence();
+	vunmap(e, MSIXEntSize);
+
+	pcicfgw16(p, off + MSIXCtrl,
+		(pcicfgr16(p, off + MSIXCtrl) & ~MSIXCtrlMask) | MSIXCtrlEnable);
+	return 0;
+}
+
+/*
+ * The board's MSI router, or nil on a board that has none.  It hands
+ * back the address and data a device must write to raise an interrupt,
+ * and returns the number that write will show up as at intrenable().
+ *
+ * This is a function pointer rather than a linked-in symbol because
+ * pci.c is shared by pc64, the riscv virt boards and virtarm64, and
+ * only one of them routes MSI today.  A board that does not set it
+ * links unchanged and every driver below falls back to INTx.
+ */
+int (*pcimsirouter)(uvlong *addr, ulong *data);
+
+/*
+ * The whole of what a driver needs: ask the board for a vector, point
+ * the device's first MSI-X entry at it, and return the interrupt
+ * number to hand intrenable().  -1 means "use p->intl", which is not
+ * a failure -- it is every board and every device that has no MSI-X.
+ */
+int
+pcimsixintr(Pcidev *p)
+{
+	uvlong addr;
+	ulong data;
+	int irq;
+
+	if(pcimsirouter == nil)
+		return -1;
+	if(pcimsixcount(p) < 1)
+		return -1;
+	/*
+	 * A function that has already been given a vector gets the same
+	 * one back, with its table entry written again.  A driver may
+	 * disable and re-enable its device -- devsd does, on a unit that
+	 * goes offline and comes back -- and allocating afresh each time
+	 * would spend a vector per cycle out of a pool that is never
+	 * returned to, while leaving the old irqhandler[] slot bound to
+	 * a vector nothing will ever raise.  Rewriting the entry is not
+	 * redundant: the device may have been reset in between, which
+	 * clears its MSI-X table.
+	 *
+	 * Zero is the "none yet" sentinel, which works because Pcidev
+	 * comes from xalloc() (zeroed -- xalloc is xallocz(size, 1)) and
+	 * because no router can hand out vector 0: on this board they are
+	 * GIC SPIs, which start at 32, and 0 is an SGI.  A router that
+	 * numbered its vectors from zero would need a separate flag.
+	 */
+	if(p->msixirq > 0){
+		addr = p->msixaddr;
+		data = p->msixdata;
+		irq = p->msixirq;
+	} else if((irq = (*pcimsirouter)(&addr, &data)) < 0)
+		return -1;
+	if(pcimsixenable(p, 0, addr, data) < 0)
+		return -1;
+	p->msixirq = irq;
+	p->msixaddr = addr;
+	p->msixdata = data;
+	return irq;
 }
 
 static int
