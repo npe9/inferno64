@@ -92,10 +92,21 @@ hue(h, s, l: real): int
 		h -= 1.0;
 	while(h < 0.0)
 		h += 1.0;
-	seg := int (h * 6.0);
+	# FLOOR, not int.  Limbo's int on a real rounds to nearest and rounds
+	# a half away from zero, so the twelve hues - which land on exact
+	# half sixths - took the wrong sextant every other one, and the
+	# fraction within it came out negative.  Two pairs of hues then
+	# clamped to the same colour, which is not visible in any single
+	# colour and is exactly what nestest(1) counts.
+	h6 := h * 6.0;
+	seg := int h6;
+	if(real seg > h6)
+		seg--;
 	if(seg > 5)
 		seg = 5;
-	f := h * 6.0 - real seg;
+	if(seg < 0)
+		seg = 0;
+	f := h6 - real seg;
 	p := 1.0 - s;
 	q := 1.0 - s*f;
 	t := 1.0 - s*(1.0 - f);

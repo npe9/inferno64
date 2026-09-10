@@ -1,4 +1,4 @@
-implement Masktest;
+implement Command;
 
 # Checks the icons/temple sprite corpus against the two things that have
 # gone wrong with it, on the files and in the code that reads them.
@@ -41,7 +41,7 @@ include "math/polyfill.m";
 include "math/draw3d.m";
 	draw3d: Draw3d;
 
-Masktest: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
+Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
 
 DIR: con "/icons/temple";
 

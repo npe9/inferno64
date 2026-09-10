@@ -186,6 +186,7 @@ TARG=\
 	mouse.dis\
 	mprof.dis\
 	mv.dis\
+	nestest.dis\
 	netkey.dis\
 	netstat.dis\
 	newer.dis\

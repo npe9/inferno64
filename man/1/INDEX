@@ -418,6 +418,7 @@ munload sh-mload
 mux mux
 mv mv
 nedmail nedmail
+nestest nestest
 netkey netkey
 netofdots netofdots
 netstat netstat

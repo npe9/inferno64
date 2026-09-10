@@ -1,0 +1,111 @@
+.TH NESTEST 1
+.SH NAME
+nestest \- check nes(2)
+.SH SYNOPSIS
+.B nestest
+.SH DESCRIPTION
+.I Nestest
+checks
+.IR nes (2)
+itself, which the games built on it only exercise indirectly:
+each of those asserts on its own game state and would pass with every
+tile drawn in the wrong palette.
+This one draws into memory and reads the pixels back, comparing them
+against the palette entries they are supposed to be, so it can see what
+a game's test cannot.
+Nothing here needs a window.
+.SS What it checks
+.TP
+the master palette
+That the greys are grey and climb from dark to white, that column 13 is
+black, that no two of the twelve hues on a row come out the same colour,
+that a hue brightens down the rows, and that
+.I entry
+clamps rather than faulting on a row or column out of range.
+.TP
+tile sheets
+That art written as strings decodes to the colour indices it reads as,
+that
+.I meta
+puts the four quadrants of a 16 by 16 in the order top left, top right,
+bottom left, bottom right \- getting that wrong scrambles every
+character in every game \- and that the font loads with 256 glyphs, a
+non-blank
+.B A
+and a blank space.
+.TP
+drawing
+That a surface's image is the scale times its logical size and starts in
+its background colour;
+that
+.I tile
+paints the palette's colours at tile coordinates and that a logical
+pixel really is a block of real ones;
+that the composite cache is keyed by palette as well as by tile, so the
+same tile drawn in a second palette comes out in the second palette and
+then back again in the first;
+that
+.I put
+leaves colour 0 alone while
+.I tile
+paints it as the background;
+that
+.B FLIPX
+and
+.B FLIPY
+move what they should;
+that
+.I put16
+lands its quadrants where
+.I meta
+put them and that
+.B FLIPX
+swaps the halves as well as mirroring each;
+and that
+.I text
+puts one glyph every eight logical pixels and draws nothing for a space.
+.TP
+view and blit
+That
+.I view
+shows the window of a level it is asked for, and that it clamps at both
+ends \- past the end it must show the last screen, not a repeat of the
+level, which is what
+.I draw
+would do on its own with a source shorter than its destination.
+.TP
+the pad
+That a press sets its bit and a release clears it, for the arrows and
+the letters alike, that
+.I edge
+reports only what is new, and that a key the pad does not use changes
+nothing rather than clearing it.
+.PP
+The last line is
+.B PASSED
+or
+.BR FAILED .
+.SH EXAMPLE
+.EX
+emu\-cocoa \-r. /dis/nestest.dis
+.EE
+.SH SOURCE
+.B /appl/cmd/nestest.b
+.SH SEE ALSO
+.IR nes (2),
+.IR rivet (1),
+.IR sprocket (1),
+.IR starling (1),
+.IR orchard (1)
+.SH BUGS
+It checks that the palette's entries differ from each other, not that
+any of them is the right colour: there is no reference to be right
+against, the ramp being computed.
+A change to the constants at the top of
+.B nes.b
+that made every colour uglier would pass.
+.PP
+It says nothing about how a game looks.
+Each game's
+.B -s
+writes a frame out to be looked at, and that check is a manual one.
