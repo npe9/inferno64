@@ -273,10 +273,14 @@ the system qemu:
 			the heap held, and a hub with a non-zero one is
 			never scanned and never says so; and usbxhci.c
 			read the Supported Protocol name string with
-			memmove(), a byte at a time, which on a device
-			register returns the first byte and zeroes, so
-			hp->superspeed stayed empty and every port
-			looked like USB 2.  The evidence line that
+			memmove(), which on the architectures that link
+			the portable libkern/memmove.c -- aarch64,
+			riscv64, riscv32 -- is a byte loop, and a byte
+			read of a device register returns the first
+			byte and zeroes, so hp->superspeed stayed empty
+			and every port looked like USB 2.  amd64 has an
+			assembly memmove that moves an aligned four
+			bytes as one MOVSL and never had that one.  The evidence line that
 			separates the fixed driver from the broken one
 			is the word "super" -- with the mask empty the
 			same device enumerates as "full" and prints

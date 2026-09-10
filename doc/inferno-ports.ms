@@ -22053,3 +22053,154 @@ different reason:
 holds \-1 for INTx and a vector number otherwise, so zero is a value it
 can legitimately take and cannot also be its default.  The source now
 says that instead.
+.NH 1
+The same driver on a second architecture, and a bug only one of them had
+.PP
+.CW 2d307d69
+gave
+.CW usbxhci
+its MSI-X vector and fixed two bugs that had kept a QEMU
+.CW qemu-xhci
+silent on
+.CW virtarm64 .
+Its message says pc64 and pc64dev link
+.CW usbxhcipci
+and got the change but cannot be linked in this tree, so both were
+compile-checked only.  That was wrong twice over, and both halves are
+worth writing down.
+.PP
+pc64 builds.
+.CW os/inferno/pc64/mkfile
+sets
+.CW SYSTARG=Inferno
+itself, so it never asks for the
+.CW mkfiles/mkfile-os-amd64
+whose absence the commit blamed;
+.CW mkfiles/mkfile-Inferno-amd64
+is what it reads and has been there all along.
+.CW SYSTARG=os
+is the arm64 and riscv convention, passed on the command line because
+those board mkfiles do not set it, and carrying it to pc64 asks for a
+file nothing in pc64 names.  Plain
+.CW mk
+links
+.CW ipc64 ;
+.CW "mk CONF=pc64dev"
+links
+.CW ipc64dev ,
+the console-only configuration described earlier in this file, which
+binds
+.CW #S ,
+.CW #u
+and
+.CW #l
+and reads their control files without going near a shell.
+.PP
+Under
+.CW "qemu-system-x86_64 -M q35 -m 512 -kernel ipc64dev -nographic -append 'console=0'"
+with an
+.CW nvme ,
+a
+.CW virtio-blk-pci ,
+a
+.CW qemu-xhci
+and a
+.CW usb-storage
+attached, all four of
+.CW virtarm64 's
+PCI drivers run on amd64:
+.DS
+.CW
+usbxhci: 0x1b36 0xd: irq 10 intx
+sdF (virtio10): irq 10 intx
+nvme: first interrupt, irq 11 intx
+sdN (nvme): using 1 submit queues, irq 11 intx
+sdF: first interrupt, irq 10 intx
+usbxhci: first interrupt, irq 10 intx
+DEVTEST: /dev/sdN0/data sector 0 (512 bytes): ...BSD  4.4
+DEVTEST: /dev/sdF0/data sector 0 (512 bytes): ...BSD  4.4
+DEVTEST: /net/ether0 DHCP-OK ip=10.0.2.15 gw=10.0.2.2
+.R
+.DE
+Three of the four say an interrupt arrived, both disks read sector 0,
+and the xHCI and the virtio disk share INTx line 10 \(em two functions
+on one pin, both handlers running, which is the thing MSI exists to
+avoid and which this board has no MSI-X path to avoid it with.
+.CW "compile-checked only"
+is retired: the code runs on amd64.
+.PP
+The same boot carries both of
+.CW 2d307d69 's
+bug fixes independently:
+.DS
+.CW
+usbd: hub ep1.0: 4 ports (root)
+usbd: hub ep2.0: 4 ports (root)
+usbd: 2 root hub(s)
+usbd: ep2.0: port 1: super ep3.0 vid 46f4 did 0001 class 0
+usbd: ep3.0: disk "QEMU    QEMU HARDDISK   2.5+" 32768 blocks x 512 bytes
+usbd: ep3.0: DISK-BLK-OK (FAT/MBR signature)
+.R
+.DE
+.PP
+And then the part that disagrees.  Rebuilding
+.CW ipc64dev
+with
+.CW usbxhci.c
+reverted to
+.CW 2d307d69 's
+parent \(em the
+.CW "memmove(pp->spec, &x[1], 4)"
+version \(em and booting it gives
+.I "the same two root hubs and the same"
+.CW super .
+amd64 never had that bug.
+.PP
+The reason is in
+.CW libkern .
+There is no one
+.CW memmove :
+.CW memmove.c
+is a portable
+.CW "*s1++ = *s2++"
+byte loop, and it is what an architecture links when it has no
+assembly version of its own \(em aarch64, riscv64 and riscv32 are
+exactly those, and they are exactly the boards where the Supported
+Protocol string read back
+.CW "U\e0\e0\e0" .
+.CW memmove-amd64.s
+ORs the two pointers, tests the low two bits, and when both are
+aligned \(em
+.CW &x[1]
+is a
+.CW u32int*
+and
+.CW pp->spec
+sits on a four-byte boundary \(em runs
+.CW "REP MOVSL"
+with a count of one: a single 32-bit read, which is what the register
+wanted all along.  Whether a device register is read a byte at a time
+is not a property of the source line.  It is a property of which
+.CW libkern
+the board links.
+.PP
+That also settles an apparent conflict this section would otherwise
+leave.  The
+.CW pc64dev
+table earlier in this file, written when the 9front drivers were first
+taken, records \(lqtwo root hubs, 4 ports, USB 2 and 3\(rq for
+.CW usbxhci
+\(em a result the aarch64 hunt later showed the code could not produce.
+Both are true.  The table was a real amd64 boot of a driver that works
+on amd64; the hunt was a real aarch64 boot of the same source, which
+does not.  A second architecture running the same file is worth as
+much as a second configuration running the same driver, and for the
+same reason: it is the one that disagrees.
+.PP
+Two other things this boot printed, recorded rather than chased.
+.CW "qunlock called with qlock not held, from 0x2bea8b"
+appeared once, and
+.CW "sdE2: i/o error 2041"
+four times from the AHCI unit with no medium.  Both are pc64's, not
+this work's, and the first belongs to the heap-corruption hunt earlier
+in this file rather than to a driver.

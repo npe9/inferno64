@@ -835,16 +835,45 @@ and it is a device register read by
 The xHCI Supported Protocol capability names its protocol in one
 32-bit register \(em \(lqUSB \(rq \(em and the driver copied it with
 .CW "memmove(pp->spec, &x[1], 4)" ,
-which reads it a byte at a time.  A byte read of a device register is
-not the same bus transaction as a word read of the word containing it:
-on QEMU only offset 0 answers and the other three come back zero, so
-the spec read
+which on this architecture reads it a byte at a time.  A byte read of a
+device register is not the same bus transaction as a word read of the
+word containing it: on QEMU only offset 0 answers and the other three
+come back zero, so the spec read
 .CW "U\e0\e0\e0" ,
 the
 .CW memcmp
 against \(lqUSB \(rq never matched, and
 .CW hp->superspeed
 stayed empty however many USB 3 ports the controller reported.
+.PP
+\(lqOn this architecture\(rq is load-bearing, and the commit that fixed
+this,
+.CW 2d307d69 ,
+does not say it.  There is no portable
+.CW memmove
+that reads four bytes one way.
+.CW libkern/memmove.c
+is a
+.CW "*s1++ = *s2++"
+byte loop and is what aarch64, riscv64 and riscv32 link, because those
+are the architectures with no assembly version.
+.CW libkern/memmove-amd64.s
+ORs source and destination, tests the low two bits, and when both are
+aligned \(em which
+.CW &x[1]
+and
+.CW pp->spec
+are \(em issues one
+.CW "REP MOVSL" ,
+a single 32-bit read.  So amd64 never had this bug, and a
+.CW pc64dev
+boot of the driver as it stood before the fix proves it: two root hubs
+at four ports each, and the stick enumerated
+.CW super .
+The bug is the portable byte loop meeting a device register, not
+.CW memmove
+in general, and the boards that had it are the ones with no assembly
+.CW memmove .
 .CW devusb
 makes one root hub per speed out of that mask, so the board saw a
 single flat eight-port high-speed hub, and a SuperSpeed device on it
@@ -1539,11 +1568,17 @@ is non-zero is never scanned and never says so; and
 .CW usbxhci.c
 read the Supported Protocol name string with
 .CW memmove() ,
-a byte at a time, which on a device register returns the first byte
-and three zeroes, so
+which on the architectures that link the portable
+.CW libkern/memmove.c
+\(em aarch64, riscv64, riscv32 \(em is a byte loop, and a byte read of a
+device register returns the first byte and three zeroes, so
 .CW hp->superspeed
 stayed empty and every port looked like USB 2.  Both were in code
-shared with configurations that were passing.
+shared with configurations that were passing.  amd64 links an assembly
+.CW memmove
+that moves an aligned four bytes as one
+.CW MOVSL
+and never had the second bug at all.
 .PP
 The vector itself was the easy half.  xHCI ties interrupter
 .I n
