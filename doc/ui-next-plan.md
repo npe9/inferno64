@@ -217,8 +217,26 @@ Cmd chords. There is no modifier bit riding on the arrow to bind against.
 
 So this is platform work first: carry the modifier through the key path,
 which is the same file and the same function as the `NSTextInputClient`
-item in section 2, and a good argument for doing them together. Only then
-is `{TkKey|Shift|Left}` a thing that could exist.
+item in section 2, and a good argument for doing them together.
+
+**And there is room to carry it.** The encoding already has one modifier
+bit riding on a key — `APP = Spec|0x200`, which is how the Alt keys
+arrive, and the text widget binds `{TkKey|APP|'\t'}` against it. The
+payload is eleven bits (`Keyup | (key & 0x7ff)`), named keys stop at
+`0x6f`, and **`0x400` is unused** in both `include/keyboard.h` and
+`module/keyboard.m`. So a `Shifted` bit is an additive change to a shared
+header rather than a redesign, and `{TkKey|Shifted|Left}` becomes a thing
+that can be bound.
+
+The widget half is the larger half, and its hard part is not the
+binding. `tkttagchange(tk, TkTselid, &first, &last, 1)` already sets a
+selection between two indices — that is what the mouse path does. What
+keyboard selection needs and the mouse does not is an **anchor that
+survives editing**: a `TkTindex` holds pointers to items and lines, and
+an edit can free them, so remembering one in a field of `TkText` would
+leave a stale pointer to crash on. It wants a mark, which this widget
+already moves with the text, the way `insert` is moved. That is the piece
+to design first.
 
 ## 2. Text input
 
