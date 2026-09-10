@@ -136,6 +136,12 @@ root
 # permission denied that sent fsmount() to /tmp.  So the mount point
 # is in the root file list, empty, rather than made when it is wanted.
 	/n/styx	/
+# /n/usb, for the xhci arm's mass storage: the same reason /n/styx is
+# here rather than made at boot -- devroot's static namespace refuses a
+# runtime create, so a mount point that is wanted has to be in this
+# list.  /tmp/dos is already taken by fscheck()'s virtio disk, and the
+# two are mounted in the same namespace.
+	/n/usb	/
 	/net	/
 	/net.alt	/
 	/nvfs	/
@@ -167,6 +173,13 @@ root
 # FS-MKDIR-FAIL used to stop fsmount() before it got here, and with
 # /tmp real the next thing it wanted was the server.  Its own imports
 # (daytime, styx, arg) were already in this root.
+# usbd, for the PCI xHCI controller this board has always linked and
+# no arm ever gave a device.  Mass storage is usbd's own Bulk-Only
+# Transport code -- there is no kernel disk driver behind it, so the
+# stick never appears under #S -- and it serves the medium as a flat
+# file at /chan/usbdiskN that dossrv mounts like any other.  usbd
+# loads nothing but Sys, so this line is the whole addition.
+	/dis/usb/usbd.dis
 	/dis/dossrv.dis
 # ping, for IP-FAIL: the DHCP lease above is only half of a working
 # stack, and ip/ping.dis is what the check sends over it.  Its imports

@@ -40,7 +40,7 @@ verbose=false
 record=false
 force=false
 
-configs='raspi3b raspi3b-4g raspi3b-usb raspi3b-2eth raspi4 raspi4-hot raspi4-usb raspi4-2eth virtarm64 virtarm64-msi virtarm64-nvme virtarm64-peer sifiveu virt virts virt32 virt32s virt-peer peer-mixed'
+configs='raspi3b raspi3b-4g raspi3b-usb raspi3b-2eth raspi4 raspi4-hot raspi4-usb raspi4-2eth virtarm64 virtarm64-msi virtarm64-nvme virtarm64-xhci virtarm64-peer sifiveu virt virts virt32 virt32s virt-peer peer-mixed'
 
 # Each configuration: the kernel, the QEMU arguments, the line that
 # says the board is done printing, and the evidence lines that make
@@ -51,7 +51,7 @@ config_kernel() {
 				echo "$root/os/inferno/raspi3b/iraspi3b";;
 	raspi4|raspi4-hot|raspi4-usb|raspi4-2eth)
 				echo "$root/os/inferno/raspi4/iraspi4";;
-	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-peer)
+	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-peer)
 				echo "$root/os/inferno/virtarm64/ivirtarm64";;
 	sifiveu)		echo "$root/os/inferno/sifiveu/isifiveu";;
 	virt|virt-peer|peer-mixed)
@@ -74,7 +74,7 @@ config_kernel() {
 config_qemu() {
 	case $1 in
 	raspi*)			echo "$QEMU";;
-	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-peer)
+	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-peer)
 				echo "${QEMU_AARCH64:-`command -v qemu-system-aarch64`}";;
 	sifiveu|virt|virts|virt-peer|peer-mixed)
 				echo "${QEMU_RISCV64:-`command -v qemu-system-riscv64`}";;
@@ -181,6 +181,25 @@ config_args() {
 		# a run where the controller answered from stale memory
 		# rather than from the device would not print it.
 		echo "-M virt -cpu cortex-a57 -m 1G -drive file=$work/fat16.img,if=none,id=nvm0,format=raw -device nvme,drive=nvm0,serial=bs0001 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-device,netdev=n0";;
+	virtarm64-xhci)
+		# The board's third PCI driver pair, usbxhcipci and
+		# usbxhci, which os/inferno/virtarm64/virtarm64 has linked
+		# since it was written and no arm ever gave a device.  The
+		# disk stays on virtio-blk-pci, exactly as on the plain
+		# virtarm64 arm: the stick here is not a devsd unit at all
+		# but a flat file usbd serves at /chan/usbdisk0, so the two
+		# do not compete for a letter and BLK-OK still names sdF.
+		#
+		# usb-storage rather than usb-net: a second ethernet would
+		# want /net.alt/ether on a devip stack that already holds
+		# one, which is the collision raspi3b-2eth's comment
+		# describes, and nothing about the controller needs it.
+		#
+		# QEMU puts a usb-storage device on the first free
+		# SuperSpeed port of a qemu-xhci, which is port 1, and that
+		# is the half of this arm the Pi's usbdwc cannot reach:
+		# a SuperSpeed device on a SuperSpeed root hub.
+		echo "-M virt -cpu cortex-a57 -m 1G -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-pci,disable-legacy=on,drive=blk0 -drive if=none,id=d0,file=$work/usbvx.img,format=raw -device qemu-xhci -device usb-storage,drive=d0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-device,netdev=n0";;
 	# The riscv arms below name -m explicitly.  They used to pass none
 	# at all, which meant QEMU's 128MB default while virt, virts,
 	# virt32 and virt32s each compiled DRAMSIZE as 256MB and took it
@@ -360,7 +379,7 @@ config_last() {
 	raspi4-2eth)		echo 'USB-MOUSE';;
 	raspi4|raspi4-hot)	echo 'USB-MOUSE';;
 	raspi4-usb)		echo 'RASPI4-SH-OK';;
-	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-peer)	echo 'ROOT-CMDS-OK';;
+	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-peer)	echo 'ROOT-CMDS-OK';;
 	virt|virts|virt-peer|peer-mixed)	echo 'ROOT-CMDS-OK';;
 	sifiveu)		echo 'SIFIVEU-SH-OK';;
 	virt32|virt32s)		echo 'VIRT32-INIT-OK';;
@@ -629,6 +648,60 @@ config_evidence() {
 		# the two lines above would read intx.
 		echo 'MSI-DOORBELL-OK'
 		;;
+	virtarm64-xhci)
+		# The virtio disk is still the one devsd offers, and the
+		# USB stick is not a devsd unit at all -- so this line
+		# says the two disks on this arm did not get confused
+		# with each other.
+		echo 'BLK-OK /dev/sdF0/data'	# see virtarm64-peer
+		# The word that decides the arm.  "super" is usbd's own
+		# report of which of portattach()'s two paths it took,
+		# and it can only say it if hp->superspeed named this
+		# port -- which is the mask usbxhci.c built by reading
+		# the Supported Protocol name string a byte at a time,
+		# getting "U" and three zeroes, and matching nothing.
+		# With that mask empty devusb makes one flat high-speed
+		# root hub, the same device enumerates as "full", and
+		# every USB marker below is printed anyway.  So the four
+		# of them together do not distinguish the fixed driver
+		# from the broken one; this line does.
+		echo 'usbd: ep2\.0: port 1: super ep3\.0 vid 46f4 did 0001'
+		# Two root hubs, which is the other half of the same
+		# mask: four high-speed ports and four SuperSpeed, out
+		# of the eight qemu-xhci provides.
+		echo 'usbd: 2 root hub\(s\)'
+		# And the medium, read through usbd's Bulk-Only
+		# Transport code -- SCSI over the device's two bulk
+		# endpoints, every transfer of it waiting on the event
+		# ring.  Nothing in usbxhci.c polls that ring: waitrun()
+		# sleeps until interrupt() wakes it, so a controller
+		# whose vector never arrived would time out here rather
+		# than quietly complete.  These markers are delivery
+		# evidence in a way the nvme arm's BLK-OK is not.
+		echo 'USB-DISK-OK /chan/usbdisk0'
+		echo 'USB-READ-OK usb\.txt'
+		echo 'USB-WRITE-OK xhci\.txt [0-9]+ bytes read back'
+		# And the vector.  This is the third of the board's four
+		# PCI drivers to take one, and the only one whose whole
+		# marker set is already delivery evidence: waitrun() in
+		# usbxhci.c sleeps until interrupt() wakes it and nothing
+		# polls the event ring, so a controller whose vector never
+		# arrived times out rather than quietly completing -- the
+		# opposite of sdvirtio10's used ring and sdnvme's wcmd().
+		echo 'usbxhci: 0x1b36 0xd: irq 80 msi-x'
+		echo 'usbxhci: first interrupt, irq 80 msi-x'
+		# 80 and 81, from one frame, to two functions.  A disk at
+		# 81 is not itself new -- virtarm64-msi has the network at
+		# 80 and the disk at 81.  What is new is which kind of
+		# device has the bottom of the frame: usbinit() runs the
+		# host controllers before devsd probes its units, so here
+		# it is the xHCI, where on virtarm64 it is the disk (the
+		# only caller) and on virtarm64-msi the network.  A board
+		# that handed out one vector twice would print the same
+		# two lines above and fail here.
+		echo 'sdF \(virtio10\): irq 81 msi-x'
+		echo 'MSI-DOORBELL-OK'
+		;;
 	virtarm64-msi)
 		echo 'BLK-OK /dev/sdF0/data'	# see virtarm64-peer
 		# Message-signalled interrupts, end to end, in four lines.
@@ -838,7 +911,7 @@ config_hostnet() {
 	# inbound halves all dial the host rig, and without it the
 	# board reported TCP-NET-FAIL "connection refused" -- the host
 	# end that was never started, not the board.
-	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-peer)	echo yes;;
+	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-peer)	echo yes;;
 	esac
 }
 
@@ -1086,6 +1159,7 @@ freshstick() {
 	case $1 in
 	raspi3b-usb)	img=usb16.img;;
 	raspi4-usb)	img=usb16b.img;;
+	virtarm64-xhci)	img=usbvx.img;;
 	*)		return 0;;
 	esac
 	rm -f "$work/$img"
@@ -1310,7 +1384,7 @@ for c in $configs; do
 	# same fat16.img in its qemu line.  It ran only because virt comes
 	# before it in $configs and had already made the image; asked for
 	# on its own with an empty work directory, qemu had no such file.
-	case $c in virt|virts|virtarm64|virtarm64-msi|virtarm64-nvme|virt-peer|virtarm64-peer|peer-mixed) needfat=true;; *) needfat=false;; esac
+	case $c in virt|virts|virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virt-peer|virtarm64-peer|peer-mixed) needfat=true;; *) needfat=false;; esac
 	if $needfat && ! makefat fat16.img marker.txt 'FS-OK boardsuite'; then
 		echo "$c: FAIL no way to make a FAT16 image here (hdiutil or mkfs.vfat)"
 		echo "    BLK-OK needs a filesystem, not a blank card; see the README"

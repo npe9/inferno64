@@ -276,6 +276,170 @@ blkcheck()
 		sys->print("BLK-FAIL signature\n");
 }
 
+# Read a whole synthetic file.  #u/usb/ctl is one, and its length is
+# zero however much it has to say, so a single read of a fixed buffer
+# would be a guess.
+readall(path: string): string
+{
+	fd := sys->open(path, Sys->OREAD);
+	if(fd == nil)
+		return "";
+	s := "";
+	buf := array[4096] of byte;
+	for(;;){
+		n := sys->read(fd, buf, len buf);
+		if(n <= 0)
+			break;
+		s += string buf[0:n];
+	}
+	return s;
+}
+
+# The USB host controller, and a stick behind it.  This board has
+# listed usbxhcipci and usbxhci since it was written and no
+# configuration ever handed it a PCI xHCI function, so the pair was
+# linked and unexercised in the same way sdnvme was -- QEMU's
+# qemu-xhci models the controller, so what was missing was the asking.
+#
+# Silent when there is nothing there.  Seven other arms boot this same
+# init with no controller at all, and a check that announced its
+# absence would put a new marker in seven baselines to say nothing.
+# #u/usb/ctl is the gate: devusb's ctl lists one line per endpoint,
+# and with no host controller registered there are none, so the read
+# comes back empty.  A board that has a controller has at least its
+# root hub's ep0 before usbd is started.
+#
+# Mass storage here is not a kernel driver: usbd's own Bulk-Only
+# Transport code serves the medium as a flat file at /chan/usbdiskN,
+# turning reads and writes into SCSI READ(10)/WRITE(10) on the bulk
+# endpoints, and dossrv mounts the FAT on that file.  So the stick
+# never appears under #S and blkdev() above cannot see it -- the two
+# disks on this arm do not collide.
+usbcheck()
+{
+	usbd: Command;
+	disk, names, first: string;
+	i, j, n: int;
+	dirs: array of Sys->Dir;
+
+	if(sys->bind("#u", "/dev", Sys->MAFTER) < 0)
+		return;
+	if(readall("/dev/usb/ctl") == "")
+		return;
+	sys->print("USB root hub:\n%s", readall("/dev/usb/ctl"));
+
+	usbd = load Command "/dis/usb/usbd.dis";
+	if(usbd == nil){
+		sys->print("USB-FAIL load usbd: %r\n");
+		return;
+	}
+	spawn usbd->init(nil, "usbd" :: nil);
+
+	# usbd numbers the disks it serves in the order it finds them,
+	# so scan rather than name usbdisk0.
+	for(i = 0; i < 100 && disk == ""; i++){
+		cfd := sys->open("/chan", Sys->OREAD);
+		if(cfd != nil)
+			for(;;){
+				(n, dirs) = sys->dirread(cfd);
+				if(n <= 0)
+					break;
+				for(j = 0; j < n; j++)
+					if(len dirs[j].name >= 7 && dirs[j].name[0:7] == "usbdisk"){
+						disk = "/chan/" + dirs[j].name;
+						break;
+					}
+			}
+		if(disk == "")
+			sys->sleep(100);
+	}
+	if(disk == ""){
+		# The controller's own account of what it found, which is
+		# the difference between "no stick attached" and "the hub
+		# was never scanned" -- the second of those is what this
+		# check spent a day on.
+		sys->print("USB after usbd:\n%s", readall("/dev/usb/ctl"));
+		sys->print("USB-DISK-FAIL nothing under /chan after usbd\n");
+		return;
+	}
+	sys->print("USB-DISK-OK %s\n", disk);
+
+	c := chan of string;
+	spawn startfs(c, "/dis/dossrv.dis",
+		"dossrv" :: "-f" :: disk :: "-m" :: "/n/usb" :: nil);
+	if((e := <-c) != nil){
+		sys->print("USB-DOS-FAIL dossrv: %s\n", e);
+		return;
+	}
+
+	# /n/usb is in the root file list, so opening it proves nothing.
+	# Wait for the mount by waiting for the directory to have entries.
+	for(i = 0; i < 100; i++){
+		names = "";
+		first = "";
+		dfd := sys->open("/n/usb", Sys->OREAD);
+		if(dfd != nil)
+			for(;;){
+				(n, dirs) = sys->dirread(dfd);
+				if(n <= 0)
+					break;
+				for(j = 0; j < n; j++){
+					names += " " + dirs[j].name;
+					if(first == "" && (dirs[j].mode & Sys->DMDIR) == 0)
+						first = dirs[j].name;
+				}
+			}
+		if(names != "")
+			break;
+		sys->sleep(100);
+	}
+	if(names == ""){
+		sys->print("USB-DOS-FAIL nothing under /n/usb: %r\n");
+		return;
+	}
+	sys->print("USB-DOS-OK /n/usb:%s\n", names);
+
+	if(first != ""){
+		fd := sys->open("/n/usb/" + first, Sys->OREAD);
+		buf := array[512] of byte;
+		rn := -1;
+		if(fd != nil)
+			rn = sys->read(fd, buf, len buf);
+		if(rn <= 0)
+			sys->print("USB-READ-FAIL %s: %r\n", first);
+		else
+			sys->print("USB-READ-OK %s %d bytes %q\n", first, rn, string buf[0:rn]);
+	}
+
+	# The write path is the half the read cannot stand in for: a
+	# read-modify-write of a 512-byte block through SCSI WRITE(10),
+	# then a reopen, so the bytes come back off the medium and not
+	# out of a cache this program still holds.
+	msg := array of byte "written over xhci\n";
+	wfd := sys->create("/n/usb/xhci.txt", Sys->OWRITE, 8r666);
+	if(wfd == nil){
+		sys->print("USB-WRITE-FAIL create: %r\n");
+		return;
+	}
+	if(sys->write(wfd, msg, len msg) != len msg){
+		sys->print("USB-WRITE-FAIL write: %r\n");
+		return;
+	}
+	wfd = nil;
+	rfd := sys->open("/n/usb/xhci.txt", Sys->OREAD);
+	if(rfd == nil){
+		sys->print("USB-WRITE-FAIL reopen: %r\n");
+		return;
+	}
+	rbuf := array[512] of byte;
+	rn := sys->read(rfd, rbuf, len rbuf);
+	if(rn != len msg || string rbuf[0:rn] != string msg){
+		sys->print("USB-WRITE-FAIL readback got %d %q\n", rn, string rbuf[0:rn]);
+		return;
+	}
+	sys->print("USB-WRITE-OK xhci.txt %d bytes read back\n", rn);
+}
+
 startfs(c: chan of string, file: string, args: list of string)
 {
 	fs := load Command file;
@@ -2172,6 +2336,7 @@ init()
 
 	gcstress();
 	blkcheck();
+	usbcheck();
 	tmpmount();
 	fsmount();
 	memorycheck();

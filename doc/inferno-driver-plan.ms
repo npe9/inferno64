@@ -790,6 +790,78 @@ raise \(em that part stands, and is still worth fixing \(em but it was
 never what made this configuration fail.  Item 4 below, and
 .CW doc/inferno-ports.ms ,
 have the whole of it.
+.PP
+One more correction belongs to that run, made when the same
+controller was put in the board suite on
+.CW virtarm64 .
+\(lqThe controller and the enumeration are real\(rq is true, but the
+enumeration was working on luck on two separate counts, and both were
+found by running it a second time on a different board.
+.PP
+The first is in
+.CW usbd
+and not in any driver.
+.CW newhub()
+built its hub with a bare
+.CW "ref Hub" ,
+which leaves every word of the adt that holds no pointer
+uninitialised, and
+.CW failed
+is the one field nothing in the program ever assigns.  It is read at
+the top of
+.CW enumhub() ,
+and a hub whose
+.CW failed
+came up non-zero is never scanned at all: the hub is in the list, it
+prints with its right port count, and no port is ever asked whether
+anything is attached.  There is no message, because the only code that
+sets
+.CW failed
+is the one place that reports it.  On
+.CW virtarm64
+that word was
+.CW 758331446
+on every boot, and the symptom was a controller that found its root
+hub, said \(lq8 ports (root)\(rq, and then did nothing whatever.  Every
+board this had run on before happened to give it zero.  The hub is now
+built with all six fields named, the way the
+.CW "ref Port(0, nil, nil)"
+two lines below it always was.
+.PP
+The second is in
+.CW usbxhci.c ,
+and it is a device register read by
+.CW memmove() .
+The xHCI Supported Protocol capability names its protocol in one
+32-bit register \(em \(lqUSB \(rq \(em and the driver copied it with
+.CW "memmove(pp->spec, &x[1], 4)" ,
+which reads it a byte at a time.  A byte read of a device register is
+not the same bus transaction as a word read of the word containing it:
+on QEMU only offset 0 answers and the other three come back zero, so
+the spec read
+.CW "U\e0\e0\e0" ,
+the
+.CW memcmp
+against \(lqUSB \(rq never matched, and
+.CW hp->superspeed
+stayed empty however many USB 3 ports the controller reported.
+.CW devusb
+makes one root hub per speed out of that mask, so the board saw a
+single flat eight-port high-speed hub, and a SuperSpeed device on it
+was reset and addressed as a full-speed one.  It worked, which is why
+nothing caught it.  The register is now read as a word and unpacked,
+and the board makes the two root hubs it should \(em four high-speed
+ports and four SuperSpeed \(em with a mass-storage device coming up
+.CW super
+on the second, through
+.CW portattach() 's
+.CW isusb3
+branch, which had never run.
+.PP
+So the riscv
+.CW virt
+run stands as a description of what was seen, and this is what it was
+really doing.
 .IP \(bu
 SPI is now real on the one SoC board the tree boots with a modelled
 bus: QEMU's
@@ -1353,21 +1425,17 @@ they have unblocked.
 .IP 1.
 .B "MSI and MSI-X."
 .B DONE
-for all three of
+for every one of
 .CW virtarm64 's
 PCI drivers:
 .CW sdvirtio10 ,
-.CW ethervirtio10
+.CW ethervirtio10 ,
+.CW sdnvme
 and
-.CW sdnvme .
-The board also links
-.CW usbxhcipci ,
-which still takes
-.CW p->intl ;
-no arm gives it a device, so nothing here is contradicted, but QEMU's
-.CW qemu-xhci
-does implement MSI-X and a PCI-xHCI arm added later would quietly run
-on INTx until it is given the same treatment.
+.CW usbxhcipci .
+Nothing on this board takes
+.CW p->intl
+any more when a router is present.
 .PP
 .CW sdnvme
 came second and for a different reason.  It was linked into five board
@@ -1441,6 +1509,99 @@ and a real interrupt arrives with the trap frame, so the first-interrupt
 line counts only the latter.  It is a cleaner discriminator than
 .CW sdvirtio10 's,
 which has no equivalent.
+.PP
+.CW usbxhcipci
+came third, and its arm found two bugs rather than needing one.  The
+board has listed
+.CW usbxhcipci
+and
+.CW usbxhci
+since it was written and no configuration had ever given it a device,
+which is the
+.CW sdnvme
+gap again \(em except that
+.CW usbxhci
+was not a driver that had never run, since the riscv
+.CW virt
+board had enumerated a CDC ECM device over it.  So the
+.CW virtarm64-xhci
+arm was expected to cost a root-file-list line and a check.  What it
+cost is written up in
+.CW doc/inferno-ports.ms :
+.CW usbd
+built its hub with a bare
+.CW "ref Hub" ,
+leaving the
+.CW failed
+field whatever the heap held, and a hub whose
+.CW failed
+is non-zero is never scanned and never says so; and
+.CW usbxhci.c
+read the Supported Protocol name string with
+.CW memmove() ,
+a byte at a time, which on a device register returns the first byte
+and three zeroes, so
+.CW hp->superspeed
+stayed empty and every port looked like USB 2.  Both were in code
+shared with configurations that were passing.
+.PP
+The vector itself was the easy half.  xHCI ties interrupter
+.I n
+to MSI-X vector
+.I n ,
+this driver uses interrupter 0 only, and so \(em as with NVMe \(em
+nothing has to be told to the device beyond enabling the capability.
+What is new is which kind of device takes the frame's base SPI:
+.P1
+usbxhci: 0x1b36 0xd: irq 80 msi-x
+usbxhci: first interrupt, irq 80 msi-x
+sdF (virtio10): irq 81 msi-x
+.P2
+.CW usbinit()
+runs the host controllers before devsd probes its units, so on this
+arm the vector at the bottom of the frame goes to a host controller.
+On
+.CW virtarm64
+the disk has 80 because it is the only caller of the router; on
+.CW virtarm64-msi
+the network has 80 and the disk 81; here the xHCI has 80 and the disk
+81.  Both lines are checked, which is what says one frame handed out
+two distinct vectors.
+.PP
+Delivery needs no separate argument on this arm, which is the one
+place in this item where that is true.  Nothing in
+.CW usbxhci.c
+polls the event ring:
+.CW waitrun()
+sleeps until
+.CW interrupt()
+wakes it, and a transfer whose completion never arrives raises
+\(lqtimed out\(rq rather than quietly finishing.  So every USB marker
+the arm prints is already evidence that the vector arrived, and the
+first-interrupt line only says which number it arrived on \(em the
+opposite position from
+.CW sdvirtio10 's
+polled used ring and
+.CW sdnvme 's
+.CW wcmd() .
+.PP
+One correction to the
+.CW sdnvme
+entry above, found while doing this.  The comment added there said the
+.CW Ctlr
+needed explicit zeroing because it came from
+.CW malloc()
+rather than
+.CW xalloc() .
+That is false:
+.CW malloc()
+in
+.CW os/inferno/port/alloc.c
+memsets what it returns.  The initialisation is still right, because
+.CW msivec
+is \-1 for INTx and zero is a vector a device can be given, so it
+cannot have zero as its default \(em but the reason given for it was
+wrong and is now stated correctly in the source.
 And \(em like item 2 \(em the reason this was deferred was wrong rather
 than merely optimistic.  What this entry used to say was that PCI runs
 on legacy INTx, which QEMU delivers correctly, so MSI buys nothing
@@ -1781,7 +1942,7 @@ that are blocked off this machine \(em the ARM timer's GIC line against
 the BCM2711 datasheet, and the Arasan as the wireless part's SDIO \(em
 are the same kind of thing.
 .PP
-Nineteen configurations run on this host, and the fifteen that predate
+Twenty configurations run on this host, and the fifteen that predate
 this round run from a bare checkout inside a container, built there
 from source.  What that buys is not the marker
 count: it is that every one of these six statements can be checked

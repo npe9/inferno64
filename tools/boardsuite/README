@@ -215,7 +215,7 @@ temperature.  So each configuration also names evidence lines that must
 appear in its log, and a run that produces the right markers with the
 wrong evidence fails.
 
-THE OTHER BOARDS.  Eleven more configurations boot the boards this tree
+THE OTHER BOARDS.  Twelve more configurations boot the boards this tree
 has besides the Pis, each with the qemu its architecture needs -- the
 Pi ones need the patched build, the rest are ordinary machines and use
 the system qemu:
@@ -256,6 +256,31 @@ the system qemu:
 			own interrupts: wcmd() calls the handler itself
 			while it waits, so the handler counts only the
 			calls that arrived with a trap frame.
+	virtarm64-xhci	The same board once more with a PCI xHCI
+			controller and a USB stick behind it, the disk
+			left on virtio-blk.  usbxhcipci and usbxhci
+			were linked into this board from the day it was
+			written and no arm ever gave them a device.
+			The stick is not a devsd unit -- usbd's own
+			Bulk-Only Transport code serves it as a flat
+			file at /chan/usbdisk0 and dossrv mounts the
+			FAT on that -- so it does not compete with the
+			virtio disk for a letter, and BLK-OK on this
+			arm still names sdF.  Two bugs came out of it,
+			both in code shared with configurations that
+			were passing: usbd built its Hub with a bare
+			"ref Hub", leaving the failed field whatever
+			the heap held, and a hub with a non-zero one is
+			never scanned and never says so; and usbxhci.c
+			read the Supported Protocol name string with
+			memmove(), a byte at a time, which on a device
+			register returns the first byte and zeroes, so
+			hp->superspeed stayed empty and every port
+			looked like USB 2.  The evidence line that
+			separates the fixed driver from the broken one
+			is the word "super" -- with the mask empty the
+			same device enumerates as "full" and prints
+			every USB marker anyway.
 	sifiveu		QEMU -M sifive_u, no bios, with an SD card.
 			The card is worth the line for the same reason
 			virtarm64's netdev is: the board printed

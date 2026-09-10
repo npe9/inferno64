@@ -1221,7 +1221,17 @@ diskwrite(b: ref Bstate, off: big, data: array of byte): (int, string)
 #
 newhub(name: string, d: ref Dev): ref Hub
 {
-	h := ref Hub;
+	# Every field named, rather than "ref Hub" and four assignments:
+	# a bare ref to an adt leaves the words that hold no pointer
+	# uninitialised, and failed is the one nothing here ever writes.
+	# It decides at the top of enumhub() whether this hub is polled
+	# at all, so a boot where that word happened to hold something
+	# other than zero left the hub in the list, printed with its
+	# right port count, and never scanned -- no device found, and no
+	# message, because the only thing that sets failed is the one
+	# thing that reports it.  Every board this had ever run on gave
+	# it zero; the arm64 board's heap did not.
+	h := ref Hub(nil, 0, nil, 0, 0, 0);
 	h.isroot = d == nil;
 	if(h.isroot){
 		h.dev = opendev(name);

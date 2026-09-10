@@ -13,6 +13,9 @@ struct Xhci
 	void	(*dmaenable)(Xhci*);
 	u64int	(*dmaaddr)(void*);
 
+	int	msivec;		/* the MSI-X vector, or -1 for INTx */
+	ulong	nintr;		/* interrupts that have arrived */
+
 	Hci	*active;
 };
 

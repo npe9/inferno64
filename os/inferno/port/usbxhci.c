@@ -464,7 +464,7 @@ xhciinit(Hci *hp)
 {
 	Ctlr *ctlr;
 	Port *pp;
-	u32int *x;
+	u32int *x, w;
 	uchar *p;
 	int i, j;
 
@@ -524,7 +524,26 @@ xhciinit(Hci *hp)
 				break;
 			pp = &ctlr->port[i-1];
 			pp->proto = x[0]>>16;
-			memmove(pp->spec, &x[1], 4);
+			/*
+			 * The name string is one 32-bit register and has
+			 * to be read as one.  memmove() copies it a byte
+			 * at a time, and a byte read of a device register
+			 * is not the same transaction as a word read of
+			 * the word containing it: on QEMU only offset 0
+			 * of the dword answers and the other three come
+			 * back zero, so the spec read "U\0\0\0", the
+			 * memcmp below never matched, and hp->superspeed
+			 * stayed empty however many USB 3 ports the
+			 * controller reported.  devusb makes one root hub
+			 * per speed from that mask, so every port looked
+			 * like a USB 2 port and a SuperSpeed device was
+			 * reset and addressed as a full-speed one.
+			 */
+			w = x[1];
+			pp->spec[0] = w;
+			pp->spec[1] = w>>8;
+			pp->spec[2] = w>>16;
+			pp->spec[3] = w>>24;
 			if(memcmp(pp->spec, "USB ", 4) == 0 && pp->proto >= 0x0300)
 				hp->superspeed |= 1<<(i-1);
 			i++;

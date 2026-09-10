@@ -761,11 +761,18 @@ nvmepnpctlrs(void)
 		ctlr->reg[IntMs] = ~ctlr->ints;
 
 		/*
-		 * This Ctlr came from malloc() and not from xalloc(), so
-		 * it is not zeroed the way a Pcidev is.  nvmeintr() reads
-		 * msivec and nintr, and nvmeenable() is not the only path
-		 * that can reach the handler, so set them here rather
-		 * than trusting the allocator.
+		 * msivec is -1 for INTx and a vector number otherwise, so
+		 * zero is a value it can take and cannot be its default.
+		 * The other two are set beside it because nvmeintr()
+		 * reads all three and nvmeenable() is not the only path
+		 * that can reach the handler.
+		 *
+		 * An earlier version of this comment said the Ctlr needed
+		 * zeroing because it came from malloc() rather than
+		 * xalloc().  That is wrong: malloc() in os/inferno/port/
+		 * alloc.c memsets what it returns, the same as xalloc()
+		 * does through xallocz().  The line about msivec above is
+		 * the real reason this block is here.
 		 */
 		ctlr->irq = 0;
 		ctlr->msivec = -1;

@@ -12,6 +12,13 @@
 
 static Xhci *ctlrs[Nhcis];
 
+/*
+ * usbxhci.c's own handler, which this one wraps.  One static is
+ * enough for any number of controllers: xhcilinkage() installs the
+ * same function in every Hci.
+ */
+static void (*xhciintr)(Ureg*, void*);
+
 static void
 pcidmaenable(Xhci *ctlr)
 {
@@ -69,6 +76,12 @@ scanpci(void)
 		ctlr->aux = p;
 		ctlr->dmaenable = pcidmaenable;
 		ctlr->dmaaddr = pciwaddr;
+		/*
+		 * -1 and not 0: zero is a vector a controller can be
+		 * given, so it cannot double as "no vector asked for".
+		 */
+		ctlr->msivec = -1;
+		ctlr->nintr = 0;
 
 		for(i = 0; i < nelem(ctlrs); i++)
 			if(ctlrs[i] == nil){
@@ -104,6 +117,18 @@ shutdown(Hci *hp)
 	pcidisable(pcidev);
 }
 
+static void
+pciinterrupt(Ureg *ureg, void *arg)
+{
+	Hci *hp = arg;
+	Xhci *ctlr = hp->aux;
+
+	if(ctlr->nintr++ == 0)
+		iprint("usbxhci: first interrupt, irq %d %s\n", (int)hp->irq,
+			ctlr->msivec >= 0 ? "msi-x" : "intx");
+	(*xhciintr)(ureg, arg);
+}
+
 static int
 reset(Hci *hp)
 {
@@ -132,12 +157,38 @@ reset(Hci *hp)
 
 Found:
 	pcidev = ctlr->aux;
-	hp->irq = pcidev->intl;
+
+	/*
+	 * xHCI has as many interrupters as HCSPARAMS1 says, and each one
+	 * is tied to the MSI-X vector of the same index; this driver uses
+	 * interrupter 0 only, so one vector covers the controller and
+	 * nothing has to be told to the device beyond enabling the
+	 * capability.  intrenable() below is given whichever number came
+	 * back, so a board with no router falls back to the INTx line the
+	 * probe printed.
+	 */
+	ctlr->msivec = pcimsixintr(pcidev);
+	hp->irq = ctlr->msivec >= 0 ? ctlr->msivec : pcidev->intl;
 	hp->tbdf = pcidev->tbdf;
 
 	xhcilinkage(hp, ctlr);
 	hp->init = init;
 	hp->shutdown = shutdown;
+
+	/*
+	 * Wrap the handler rather than change it: usbxhci.c is shared
+	 * with any non-PCI xHCI and has no business knowing about
+	 * vectors.  Nothing in it polls the event ring -- waitrun()
+	 * sleeps until interrupt() wakes it -- so every marker this
+	 * controller's arm prints is already delivery evidence, and this
+	 * line only says which number the delivery came on.
+	 */
+	if(xhciintr == nil)
+		xhciintr = hp->interrupt;
+	hp->interrupt = pciinterrupt;
+
+	print("usbxhci: %#x %#x: irq %d %s\n", pcidev->vid, pcidev->did,
+		(int)hp->irq, ctlr->msivec >= 0 ? "msi-x" : "intx");
 
 	return 0;
 }

@@ -21788,3 +21788,268 @@ that makes a
 zero \(em so the vector number and the interrupt count are initialised
 beside the mask that was already being cleared there, rather than
 trusting the allocator for something read in interrupt context.
+.NH 2 "Two bugs behind one silent USB controller"
+.PP
+.CW virtarm64
+has listed
+.CW usbxhcipci
+and
+.CW usbxhci
+in its
+.CW link
+section since the board was written, and no configuration in the
+suite had ever handed it a PCI xHCI function.  That is the same gap
+.CW sdnvme
+had: QEMU models
+.CW qemu-xhci
+completely, so what was missing was not a model but the asking.  The
+difference is that
+.CW usbxhci
+was not a driver that had never run.  The riscv
+.CW virt
+board had found the controller and enumerated a CDC ECM device over
+it, written up in
+.CW doc/inferno-driver-plan.ms
+as the controller and the enumeration being real.  So this was
+expected to be an afternoon: add
+.CW /dis/usb/usbd.dis
+to the board's root file list, write a check that mounts the stick,
+record the arm.
+.PP
+The board found the controller on the first boot:
+.P1
+usbxhci: 0x1b36 0xd: port 10008000 size 16384 irq 37
+USB root hub:
+ep1.0 enabled control rw speed high maxpkt 64 ... idle
+roothub ports 8 xhci
+usbd: hub ep1.0: 8 ports (root)
+usbd: 1 root hub(s)
+USB-DISK-FAIL nothing under /chan after usbd
+.P2
+and then said nothing at all for the rest of the boot.  Not a failure
+message, not a port that reported nothing attached \(em silence.  The
+controller was there, its root hub was there with the right number of
+ports, and no device was ever looked for.
+.PP
+The first thing worth checking was the ports themselves, since a
+controller that reports a device on no port is a different problem
+from one that is never asked.  A print of every
+.CW PORTSC
+at the end of
+.CW xhciinit()
+said the hardware was fine:
+.P1
+XDBG port 1 portsc 0x21203 proto 0x300 ss 0
+XDBG port 2 portsc 0x202a0 proto 0x300 ss 0
+...
+XDBG port 5 portsc 0x202a0 proto 0x200 ss 0
+.P2
+Port 1 has
+.CW CCS
+and
+.CW PED
+set and a speed field of 4: a SuperSpeed device, attached and enabled,
+sitting there waiting to be enumerated.  Ports 1 to 4 are USB 3 and 5
+to 8 are USB 2, which is what
+.CW qemu-xhci
+provides.
+.PP
+So the driver could see it and nobody asked.  A counter in
+.CW portstatus()
+proved nobody asked \(em it never fired.  A counter at the top of
+.CW rhubwrite()
+in
+.CW devusb.c ,
+which is where a control transfer to a root hub lands, never fired
+either.  The kernel side was not being driven at all, which put the
+problem in
+.CW usbd .
+.PP
+.CW usbd
+was running.  A print in its
+.CW work()
+loop showed it going round every 500ms as it should.  A print inside
+.CW enumhub() ,
+just after the port status is read, never appeared.  The only thing
+between the two is the first line of
+.CW enumhub() :
+.P1
+if(h.failed)
+        return 0;
+.P2
+and printing the field said
+.CW "failed 758331446" .
+.PP
+.CW newhub()
+builds its hub with a bare
+.CW "ref Hub" .
+In Limbo that allocates the adt and initialises the words that hold
+pointers; the words that do not are whatever was there.
+.CW nport
+and
+.CW isroot
+are assigned immediately afterwards, and
+.CW pwrms
+is assigned by
+.CW confighub()
+for the external hubs that read it \(em but
+.CW failed
+is assigned nowhere in the program except
+.CW hubfail() ,
+which reports it in the same breath.  So a hub whose garbage word came
+up non-zero is silently never scanned, and the only code that could
+have said so is the code that was never reached.  Every board this had
+run on until now happened to hand it a zero.  The
+.CW virtarm64
+heap did not, and it did not vary between boots either: the same
+number, every time, which is why it read as a deterministic driver
+fault rather than as uninitialised memory.
+.PP
+The fix is one line, and the precedent for it is two lines below in
+the same function, where the port array is filled with
+.CW "ref Port(0, nil, nil)" :
+name every field.
+.PP
+With that, the stick enumerated, dossrv mounted the FAT, a file was
+read and another written and read back.  But the device came up
+.CW full :
+.P1
+usbd: ep1.0: port 1: full ep2.0 vid 46f4 did 0001 class 0
+.P2
+on a port whose
+.CW PORTSC
+said SuperSpeed.  That is the second bug, and the
+.CW ss
+column in the register dump above had already shown it: zero on every
+port, including the four the controller had just described as USB 3.
+.PP
+.CW hp->superspeed
+is a mask built in
+.CW xhciinit()
+by walking the xHCI Supported Protocol capabilities.  Each one names
+its protocol in a 32-bit register holding the four characters
+\(lqUSB \(rq, and the driver read it with
+.P1
+memmove(pp->spec, &x[1], 4);
+.P2
+which copies a byte at a time.  A byte read of a device register is
+not the same bus transaction as a word read of the word containing it.
+The protocol version came out right, because that is read as a word
+.CW ( "x[0]>>16" ,
+and 0x300 and 0x200 in the dump are correct), but the name string read
+back as
+.CW U ,
+zero, zero, zero: on QEMU only offset 0 of that register answers and
+the rest return zero.  The
+.CW memcmp
+against \(lqUSB \(rq therefore never matched and the mask stayed empty.
+.PP
+That mask is not a detail.
+.CW devusb 's
+.CW usbinit()
+makes one root hub per speed from it \(em a low/full/high-speed hub
+with the ports outside the mask and a SuperSpeed hub with the ports
+inside it \(em and
+.CW rootport()
+maps each hub's port numbers back to real ports through the same mask.
+With the mask empty the board presented one flat eight-port high-speed
+hub, and a SuperSpeed device on it was reset and addressed by
+.CW portattach() 's
+non-USB-3 path.  It worked.  That is the whole reason it survived: the
+wrong path completes against QEMU, so the only sign was the word
+\(lqfull\(rq in a line nobody was reading closely.
+.PP
+Reading the register as a word and unpacking it gives the board what
+it should have had all along:
+.P1
+roothub ports 4 xhci
+ep2.0 ... speed super ...
+roothub ports 4 xhci
+usbd: hub ep1.0: 4 ports (root)
+usbd: hub ep2.0: 4 ports (root)
+usbd: 2 root hub(s)
+usbd: ep2.0: port 1: super ep3.0 vid 46f4 did 0001 class 0
+usbd: ep3.0: disk "QEMU    QEMU HARDDISK   2.5+" 32768 blocks x 512 bytes
+usbd: ep3.0: /chan/usbdisk0 (32768 blocks)
+.P2
+two root hubs, the device on the SuperSpeed one, and
+.CW portattach() 's
+.CW isusb3
+branch \(em which asks the port whether it is already enabled instead
+of resetting it \(em running for the first time on this tree.
+.PP
+Neither bug is in the board that found them.  One is in a user program
+shared by every USB configuration in the suite and the other is in a
+driver shared by three boards, and both had been sitting under working
+configurations.  What the new board did was allocate its heap
+differently and attach a SuperSpeed device \(em two conditions the
+existing arms never produced together.  That is the argument for
+adding arms to hardware that is already \(lqdone\(rq: the second
+configuration is not a duplicate of the first, it is the one that
+disagrees with it.
+.PP
+The vector came after, as a separate change, the way it did for the
+NVMe controller: an arm that works on INTx first, so that a silent
+device cannot be ambiguous between a driver that never ran and a
+vector that never arrived.  xHCI ties interrupter
+.I n
+to MSI-X vector
+.I n
+and this driver uses interrupter 0 only, so one vector covers the
+controller and nothing is told to the device beyond enabling the
+capability.
+.CW usbxhcipci.c
+asks
+.CW pcimsixintr()
+for it and falls back to
+.CW p->intl
+on a board with no router, and it wraps
+.CW usbxhci.c 's
+handler rather than changing it \(em a controller on some other bus
+has no business knowing about PCI vectors.
+.P1
+usbxhci: 0x1b36 0xd: irq 80 msi-x
+usbxhci: first interrupt, irq 80 msi-x
+sdF (virtio10): irq 81 msi-x
+.P2
+80 and 81 are the frame's first two SPIs.  What is new here is not
+that a disk sits at 81 \(em on
+.CW virtarm64-msi
+the network has 80 and the disk 81 already \(em but that the vector at
+the bottom of the frame goes to a host controller:
+.CW usbinit()
+runs those before devsd probes its units, so on this arm the xHCI asks
+first.  Both lines are checked, which is what says one GICv2m frame
+handed out two distinct vectors to two functions.
+.PP
+This arm needs no separate argument that the vector arrived, and it is
+the only one on the board that does not.  Nothing in
+.CW usbxhci.c
+polls the event ring \(em
+.CW waitrun()
+sleeps until
+.CW interrupt()
+wakes it, and a transfer whose completion never comes raises \(lqtimed
+out\(rq rather than quietly finishing.  So the four USB markers are
+themselves delivery evidence, where the virtio disk's
+.CW BLK-OK
+and the NVMe disk's are not, and the first-interrupt line only says
+which number it came on.
+.PP
+A correction belongs here too, to the NVMe section above.  The comment
+this tree gained there said the
+.CW Ctlr
+had to be zeroed explicitly because it came from
+.CW malloc()
+and not from
+.CW xalloc() .
+That is not true \(em
+.CW malloc()
+in
+.CW os/inferno/port/alloc.c
+memsets what it returns.  The initialisation is still correct, for a
+different reason:
+.CW msivec
+holds \-1 for INTx and a vector number otherwise, so zero is a value it
+can legitimately take and cannot also be its default.  The source now
+says that instead.
