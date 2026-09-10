@@ -53,10 +53,12 @@
  * Stack is SB-relative so RV64 lui sign-extension is avoided.
  */
 TEXT	_main(SB), 1, $-8
+	MOV	R11, R12		/* a1 = DTB pointer at boot; R11 is about to be reused */
 	MOV	CSR(MHARTID), R10
 	MOV	$BOOT_HART_ID, R11
 	BNE	R10, R11, park
 	MOV	$setSB(SB), R3
+	MOV	R12, dtbptr(SB)		/* only the boot hart stores it; SB is set */
 	MOV	$stack+(64*1024)(SB), SP
 	MOV	CSR(MSTATUS), R10
 	OR	$FSBITS, R10
@@ -80,6 +82,7 @@ park:
 	WORD	$(0x10500073)		/* WFI */
 	JMP	park
 
+GLOBL	dtbptr(SB), $8
 GLOBL	fbits(SB), $8
 GLOBL	stack(SB), $(64*1024)
 GLOBL	mach0(SB), $(4*1024)

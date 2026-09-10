@@ -11,6 +11,15 @@ enum {
 	IrqExternal	= 11,	/* machine external (PLIC) */
 };
 
+/*
+ * The PLIC's base address.  The compiled-in constant is the FU540's and
+ * is what QEMU -M sifive_u presents; main() overrides it from the device
+ * tree before trapinit() runs, so the same kernel finds the PLIC on a
+ * board whose map differs.  A DTB lookup miss leaves the constant in
+ * place, so the wiring can never hang a board that boots today.
+ */
+uintptr	plicbase = PLIC;
+
 static void	(*irqhandler[NPLICIRQ])(Ureg*, void*);
 static void	*irqarg[NPLICIRQ];
 
@@ -19,7 +28,7 @@ extern char	etext[];
 static u32*
 plicctx(void)
 {
-	return (u32*)(PLIC + PlicContext + PlicBootCtx*0x1000);
+	return (u32*)(plicbase + PlicContext + PlicBootCtx*0x1000);
 }
 
 static void
@@ -29,8 +38,8 @@ plicenable(int irq)
 
 	if(irq <= 0)
 		return;
-	*(u32*)(PLIC + PlicPriority + 4*irq) = 1;
-	en = (u32*)(PLIC + PlicEnable + PlicBootCtx*0x80);
+	*(u32*)(plicbase + PlicPriority + 4*irq) = 1;
+	en = (u32*)(plicbase + PlicEnable + PlicBootCtx*0x80);
 	en[irq/32] |= 1 << (irq%32);
 }
 

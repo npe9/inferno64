@@ -20028,3 +20028,133 @@ banner.  OpenSBI's
 .CW "Domain0 Next Mode : S-mode"
 is firmware rather than payload, so it says the machine was started at
 supervisor mode, which is the other half of what this run asserts.
+.NH 1
+The SiFive Unleashed reads its device tree
+.PP
+.CW sifiveu
+was the last riscv board in the tree that read no device tree at all.
+.CW virt ,
+.CW virts ,
+.CW virt32 ,
+.CW virt32s
+and
+.CW shakti
+all seed their PLIC and virtio bases from the DTB; this one took every
+address out of
+.CW mem.h .
+The reason was two instructions into
+.CW l.s .
+RISC-V hands the kernel the DTB pointer in
+.CW a1 ,
+which is
+.CW R11 ,
+and this board's entry read
+.P1
+TEXT	_main(SB), 1, $-8
+	MOV	CSR(MHARTID), R10
+	MOV	$BOOT_HART_ID, R11
+	BNE	R10, R11, park
+.P2
+\(em the hart-id compare overwrote the pointer before anything could
+look at it.  The board parks the E51 and boots the first U54, so the
+compare has to happen; the pointer is now copied to
+.CW R12
+on the first instruction, and stored to a
+.CW dtbptr
+global after
+.CW SB
+is set and only on the hart that goes on to run
+.CW main() .
+The parked hart never touches it.
+.PP
+What
+.CW main()
+then does with the tree is deliberately uneven.
+.CW plicbase
+is seeded from
+.CW riscv,plic0
+before
+.CW trapinit() ,
+and the GEM driver's
+.CW gembase
+from
+.CW sifive,fu540-c000-gem
+before
+.CW chandevreset() ,
+because those two are read by code that has not run yet.  The UART and
+the CLINT are reported against
+.CW mem.h
+and not seeded.  That is not laziness: the console is up long before
+any of this runs, and it is the only thing that could tell you a
+discovered address was wrong.  A board that discovers its own console
+has no way to say so when it discovers the wrong one.  The CLINT is the
+same argument one step later \(em
+.CW clockinit()
+has already used it by the time a DTB parse could speak.
+.PP
+On QEMU
+.CW "-M sifive_u"
+the tree agrees with the header on every count:
+.P1
+fdt: dtb 0x87e00000
+fdt: uart @ 0x10010000 size 0x1000 (mem.h UART0 0x10010000)
+fdt: clint @ 0x2000000 size 0x10000 (mem.h CLINT 0x2000000)
+fdt: plic base 0xc000000 (mem.h PLIC 0xc000000)
+fdt: gem base 0x10090000 (mem.h GEM0 0x10090000)
+SIFIVEU-FDT-OK
+.P2
+The marker is printed only when all four nodes were found
+.I and
+the two seeded values equal the constants.  Agreement is the assertion,
+not discovery: a tree naming an address the board cannot use would
+satisfy a bare \(lqfound it\(rq just as happily.
+.PP
+Agreement, though, is also what makes the wiring impossible to trust
+from a passing run \(em when the discovered number and the constant are
+equal, a kernel that ignored the tree entirely prints exactly the same
+line.  Two throwaway builds separate them.  Setting
+.CW mem.h 's
+.CW PLIC
+to
+.CW 0x0d000000
+and
+.CW GEM0
+to
+.CW 0x10091000
+\(em both wrong \(em the board still reached
+.CW DHCP-OK
+and a shell, and printed
+.P1
+fdt: plic base 0xc000000 (mem.h PLIC 0xd000000)
+fdt: gem base 0x10090000 (mem.h GEM0 0x10091000)
+SIFIVEU-FDT-FAIL plic 0xc000000 gem 0x10090000
+ethersifivegem: 0x10090000 irq 53 ea 525400123456
+.P2
+The tree's addresses are the ones the interrupt controller and the
+driver actually used; had either fallen back to its constant, the
+external interrupt would have been enabled in the wrong PLIC and the
+GEM's registers written 4K past the controller.
+.PP
+The other direction matters more, because it is the claim the source
+comments make in two places: that a lookup miss leaves the constant and
+cannot hang a board that boots today.  Changing every
+.CW fdtreg
+compatible string to one no node carries, the uart and clint lines
+vanished, both bases stayed at their constants, and the board reached
+.CW DHCP-OK
+and a shell exactly as before.  That claim is now demonstrated rather
+than asserted.
+.PP
+The suite carries the marker and two evidence lines.
+.CW SIFIVEU-FDT-OK
+says the tree agreed;
+.CW "fdt: gem base 0x10090000 (mem.h GEM0 0x10090000)"
+and
+.CW "ethersifivegem: 0x10090000"
+say the discovered number is the one the driver was handed, since that
+line prints
+.CW gembase
+and not the constant.
+.CW sifiveu
+goes from five markers to six, and remains the thinnest 64-bit board in
+the suite.

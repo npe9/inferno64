@@ -16,6 +16,15 @@
 #define GEM0	0
 #endif
 
+/*
+ * The controller's base address.  GEM0 from the board's mem.h is the
+ * default; main() overrides it from the device tree before
+ * chandevreset() reaches reset() below, so a board whose GEM sits
+ * elsewhere needs no recompile.  A DTB miss leaves the constant, and
+ * zero still means "this board has no GEM" as it always did.
+ */
+uintptr	gembase = GEM0;
+
 enum {
 	Nrdre	= 64,
 	Ntdre	= 16,
@@ -357,14 +366,14 @@ reset(Ether *edev)
 	static uchar zeros[Eaddrlen];
 	Ctlr *c;
 
-	if(GEM0 == 0)
+	if(gembase == 0)
 		return -1;
 
 	c = &gemctlr;
 	if(c->active)
 		return -1;
 
-	c->r = (u32*)GEM0;
+	c->r = (u32*)gembase;
 	if(memcmp(edev->ea, zeros, Eaddrlen) == 0)
 		memmove(edev->ea, defea, Eaddrlen);
 
@@ -373,7 +382,7 @@ reset(Ether *edev)
 
 	c->active = 1;
 	edev->ctlr = c;
-	edev->port = (ulong)GEM0;
+	edev->port = (ulong)gembase;
 	edev->irq = Gem0IRQ;
 	edev->tbdf = BUSUNKNOWN;
 	edev->mbps = 1000;
@@ -385,7 +394,7 @@ reset(Ether *edev)
 	edev->ifstat = ifstat;
 
 	intrenable(edev->irq, interrupt, edev, edev->tbdf, edev->name);
-	print("ethersifivegem: %#p irq %d ea %E\n", GEM0, Gem0IRQ, edev->ea);
+	print("ethersifivegem: %#p irq %d ea %E\n", gembase, Gem0IRQ, edev->ea);
 	return 0;
 }
 

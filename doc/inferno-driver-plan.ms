@@ -544,9 +544,75 @@ mode as from machine mode.  Its one missing piece was
 .CW /n/styx
 in the root file list.
 .PP
-Remaining: MSI (item 4), wiring the remaining boards to their
-discovered DTB addresses, item 6 (USB ethernet, HID report
+.CW sifiveu
+reads its device tree, the last riscv board that did not.  Its
+.CW l.s
+destroyed the pointer on the second instruction \(em
+.CW a1
+held the DTB address at entry and
+.CW "MOV $BOOT_HART_ID, R11"
+overwrote it before anything looked \(em so the register is now copied
+aside first and stored by the boot hart alone, once
+.CW SB
+is set.
+.CW main()
+seeds
+.CW plicbase
+from
+.CW riscv,plic0
+and the GEM driver's
+.CW gembase
+from
+.CW sifive,fu540-c000-gem
+before
+.CW trapinit()
+and
+.CW chandevreset()
+respectively, and reports the UART and CLINT against
+.CW mem.h
+without seeding them: the console is up long before any of this runs
+and is the only way a wrong address would be seen at all, so a board
+that discovers its own console cannot tell you when it discovers the
+wrong one.
+.PP
+The marker asserts agreement rather than discovery.
+.CW SIFIVEU-FDT-OK
+is printed only when all four nodes were found and the two seeded
+values equal the constants; a tree naming an address the board cannot
+use would have satisfied a bare \(lqfound it\(rq.  Two negative builds
+say the wiring is live rather than decorative.  With
+.CW mem.h 's
+.CW PLIC
+and
+.CW GEM0
+deliberately wrong \(em
+.CW 0x0d000000
+and
+.CW 0x10091000
+\(em the board still reached
+.CW DHCP-OK
+and a shell, printing
+.CW "SIFIVEU-FDT-FAIL plic 0xc000000 gem 0x10090000" :
+the tree's numbers were the ones the PLIC and the driver actually used.
+With every
+.CW fdtreg
+compatible string changed to one no node carries, the constants stood,
+and the board reached
+.CW DHCP-OK
+and a shell just the same \(em which is the claim the source comments
+make in two places, that a lookup miss cannot hang a board that boots
+today, demonstrated rather than asserted.
+.PP
+Remaining: MSI (item 4), item 6 (USB ethernet, HID report
 descriptors, virtio-gpu 3-D), and item 7 (per-SoC drivers).
+.CW virtarm64
+stays blocked for a different reason than the rest: QEMU's
+.CW -kernel
+path hands an arm64 kernel
+.CW "x0 == 0" ,
+so there is no pointer to read, and
+.CW spike
+has no device tree to read at all.
 .NH 1
 Remaining QEMU-tractable work, and what is out of reach
 .PP

@@ -382,7 +382,17 @@ config_evidence() {
 		# regression there shows up here first.
 		echo 'ip=10\.0\.2\.15 ipmask=255\.255\.255\.0 ipgw=10\.0\.2\.2'
 		echo 'IP32-OK';;
-	virtarm64|sifiveu)
+	sifiveu)
+		# SIFIVEU-FDT-OK says the tree agreed with mem.h.  These
+		# two say the discovered numbers were the ones the board
+		# then used: the driver prints the base it was handed
+		# (gembase, seeded from the DTB), not the constant, and
+		# it is the same address the tree reported.  Point the
+		# seed at the wrong node and the driver line changes
+		# with it.
+		echo 'fdt: gem base 0x10090000 \(mem\.h GEM0 0x10090000\)'
+		echo 'ethersifivegem: 0x10090000';;
+	virtarm64)
 		;;
 	esac
 }
