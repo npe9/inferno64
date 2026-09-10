@@ -101,17 +101,38 @@ claimctx(void)
 	return c;
 }
 
+/*
+ * Flush THIS process's context, not the global curP.
+ *
+ * curP is a global.  While the VM lock is held that is safe, because
+ * only one interpreter runs and the global names its context.  With
+ * parallelvm forced to 1 it is not: every interpreter assigns the
+ * global when it acquires, so vmrelease() flushed whichever context
+ * ran last rather than its own, walked a run queue belonging to
+ * someone else, and took an alignment fault on a link field that held
+ * string bytes.  The pc was flushlocal+0x18 under vmrelease+0x1c.
+ *
+ * up->pctx is the right answer here and is correct in both modes.  It
+ * does not fix the general case: every other use of curP in the
+ * interpreter has the same problem the moment contexts run at once,
+ * which is why the plan's Phase 1b is "curR becomes per-executor" and
+ * why that is what has to land next.
+ */
 static void
 flushlocal(void)
 {
+	Pctx *c;
 	Prog *p;
 
-	while(curP->runhd != nil){
-		p = curP->runhd;
-		curP->runhd = p->link;
-		if(curP->runhd == nil)
-			curP->runtl = nil;
-		curP->nlocal--;
+	c = (Pctx*)up->pctx;
+	if(c == nil)
+		return;
+	while(c->runhd != nil){
+		p = c->runhd;
+		c->runhd = p->link;
+		if(c->runhd == nil)
+			c->runtl = nil;
+		c->nlocal--;
 		gput(p);
 	}
 }

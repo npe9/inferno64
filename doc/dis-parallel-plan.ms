@@ -2116,3 +2116,59 @@ Recorded as an experiment, not a state.  The default is 0, which is the
 configuration 192 boots verify.  What has been shown is that the lock
 can be removed, that seven interpreters then run at once, and that two
 specific things break when they do.
+.NH 2
+The blocker, named exactly: curP is a global
+.PP
+The fault under
+.CW parallelvm
+resolved to
+.CW flushlocal+0x18
+under
+.CW vmrelease+0x1c ,
+which is code added by this branch, and the cause generalises past it.
+.PP
+.CW curP
+is a global pointer.  While the VM lock is held that is correct, and it
+is why a context per interpreter could be landed under the lock at all:
+only one interpreter runs, so the global names its context and nothing
+else is looking.  Remove the lock and every interpreter assigns that
+same global on acquire, so
+.CW curP
+names whichever context most recently ran.
+.CW vmrelease()
+then flushed another context's run queue and took an alignment fault on
+a link field holding string bytes.
+.PP
+So the earlier reading, that
+.CW delprog() Ns 's
+overlapping window was the first thing to fix, was drawn from adjacency
+in the log and is withdrawn.  The two overlapping windows close
+different
+.CW Osenv Ns s
+whose group refcounts are internally locked, and nothing shows they
+caused anything.  The instrumentation firing says only that concurrency
+reached a place that had been suspected.
+.PP
+What the fault does say is exact, and it is the plan's Phase 1b rather
+than Phase 5:
+.CW curR
+and
+.CW curP
+must be per executor.  Every use of
+.CW curP
+in the interpreter has the same defect the moment two contexts run \(em
+76 of them for the run queue alone.  The route on this kernel is
+.CW up ,
+which is already a register variable on both boards (R14 on amd64, R26
+on arm64), so
+.CW "(Pctx*)up->pctx"
+costs one load and no thread-local storage, which kencc does not have.
+That is what
+.CW flushlocal()
+now does, and it is correct in both modes.
+.PP
+The order the plan gives \(em Phase 1b lands with Phase 5 \(em is
+confirmed by this rather than changed.  What has moved is which half is
+outstanding: the collector's half is built and its assertion stayed
+silent through every parallel boot, while the register file's half is
+the one that faults.
