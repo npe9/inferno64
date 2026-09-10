@@ -21,6 +21,30 @@ void (*stop)(void);
  */
 extern void *rebase(void *addr);
 
+/*
+ * Ask the firmware for the pages the image is about to be copied into,
+ * as EfiLoaderCode.  ArmVirtQemu marks free conventional memory
+ * non-executable, so an image copied into memory the firmware still
+ * believes is free cannot be entered: the instruction fetch at the
+ * copy's first instruction takes a permission fault (ESR 0x8600000E,
+ * EC 0x21).  Asking for the range by address and by type is what tells
+ * the firmware otherwise.
+ *
+ * Called from os/inferno/boot/efi/aa64.s before the copy, with the
+ * static base pointing at the *loaded* image rather than the linked
+ * one, so this must touch nothing that needs relocating: the service
+ * pointer is loaded through st, the constants are small immediates,
+ * and addr lives in this frame.  eficall is reached by a PC-relative
+ * BL.  The amd64 loader does not need it -- OVMF leaves the low memory
+ * it copies into executable -- and does not call it.
+ */
+uintptr
+efiallocpages(EFI_SYSTEM_TABLE *st, void *addr, uintptr pages)
+{
+	return eficall(st->BootServices->AllocatePages,
+		2 /* AllocateAddress */, EfiLoaderCode, pages, &addr);
+}
+
 void
 putc(int c)
 {
@@ -74,7 +98,15 @@ memconf(char **cfg)
 	};
 	UINTN mapsize, entsize;
 	EFI_MEMORY_DESCRIPTOR *t;
-	uchar mapbuf[96*1024], *p, m, pm;
+	/*
+	 * static, not automatic: 96 KiB is more stack than a UEFI
+	 * application can count on -- the firmware gives a loaded image
+	 * a fixed stack and this is called three deep, from efimain
+	 * through bootkern -- and it costs nothing to put it in bss,
+	 * which the loader allocates and zeroes for itself.
+	 */
+	static uchar mapbuf[96*1024];
+	uchar *p, m, pm;
 	UINT32 entvers;
 	uvlong base, end, pbase, pend;
 	char *s;
