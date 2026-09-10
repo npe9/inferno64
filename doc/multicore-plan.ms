@@ -3316,3 +3316,53 @@ is the incremental-update barrier every concurrent collector has.
 .IP \(bu
 Stop treating a released Dis system call as a safepoint, which is where
 this started and which cost an unbounded stall the first time.
+.NH 2
+The sixth hypothesis, refuted
+.PP
+.CW Setmark()
+is not it.
+.PP
+The probe that settles it is not the one the previous section asked
+for.  That one watched for the colour of a block changing between the
+sweeper's test and the free, and it was silent across ten
+.CW parallelvm=1
+boots \(em which establishes nothing, because its only control is
+.CW parallelvm=0 ,
+where it cannot fire by construction.  A working probe and a broken one
+look identical under that arrangement, and two of this branch's three
+earlier probes died exactly there.  It was removed rather than
+reported.
+.PP
+What settles it is asking a question at an event that is known to
+happen.  The count underflow in
+.CW destroy()
+fires three times in about fifty
+.CW parallelvm=1
+boots and in none at
+.CW parallelvm=0 ,
+so printing the object's colour and type at that point needs no
+positive control: the event arrives on its own.  It took twenty-two
+boots to catch one, which is the rate the earlier captures predicted.
+.IP
+.nf
+destroy: h->ref underflow, h 0x7936bd8 n -1 colour 0 (mutator 0) t 0x345700
+.fi
+.PP
+Mutator-coloured, with a type pointer that is still a type.  The block
+had not been swept.  So the corruption is not the collector reclaiming
+a live object, and every version of "the write barrier lost a mark"
+predicts a swept block.  Refuted, and the print stays in the tree so
+the next reader does not spend a session arriving at it again.
+.PP
+What is left is narrower and harder: a genuine unbalanced drop.  The
+counts are atomic in both directions, so this is not a lost update but
+a reference released twice by two executors that each believed they
+held it.  The two captured paths are
+.CW "xec -> ret -> destroy" ,
+a Dis function returning and tearing down its frame, and
+.CW "xec -> scanframe -> freeptrs -> freemodlink -> destroy" .
+Both are teardown of a structure that Progs of the same module share,
+which is the direction to look and is not yet a hypothesis.
+.PP
+Six raised, five refuted, one confirmed and fixed.  The confirmed one
+was the only one put to a counter before it was believed.
