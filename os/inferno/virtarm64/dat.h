@@ -146,6 +146,7 @@ struct Mach
 
 	Lock	alarmlock;
 	void	*alarm;
+	uintptr	gicr;			/* this cpu's GICv3 redistributor RD_base */
 	ulong	cpuhz;
 	ulong	delayloop;
 

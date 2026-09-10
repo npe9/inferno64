@@ -44,6 +44,9 @@ enum {
 
 	Waitms		= 200,		/* bounded: a processor that never
 					 * answers must not stop the boot */
+
+	Tickms		= 300,		/* long enough at HZ=100 for a count
+					 * that is clearly not noise */
 };
 
 /*
@@ -102,6 +105,27 @@ secondary(Secboot *s)
 	s->machno = m->machno;
 	s->mpidr = getmpidr();
 	coherence();
+
+	/*
+	 * Its own everything from here: its own VBAR_EL1 pointing at the
+	 * table the first processor built, its own GIC cpu interface and
+	 * redistributor, and its own generic timer.  All three are
+	 * per-processor state that no amount of work on processor 0 can
+	 * set up on this one's behalf, which is the point of doing it
+	 * here and the reason m->ticks below means anything.
+	 *
+	 * Then interrupts on, and idle.  It is not in the scheduler: the
+	 * timer interrupt goes to clocksecondary(), which re-arms and
+	 * counts.  What that count proves is narrow and real -- this
+	 * processor is taking its own interrupts through its own
+	 * redistributor into its own Mach.
+	 */
+	vectorinstall();
+	giccpuinit();
+	clockinit();
+	spllo();
+	for(;;)
+		idle();
 }
 
 /*
@@ -260,7 +284,7 @@ startcpus(void)
 			print("cpu: machno %d reported %lld\n", slot[i], (vlong)sb->machno);
 	}
 
-	print("cpu: %d started, %d answered in %dms, %d mpidrs match, %d own machnos; parked, conf.nmach %lud\n",
+	print("cpu: %d started, %d answered in %dms, %d mpidrs match, %d own machnos; idle, conf.nmach %lud\n",
 		nstart, nanswer, ms, nmatch, nmachno, conf.nmach);
 	if(nmachno > 0){
 		print("cpu: machnos");
@@ -269,4 +293,41 @@ startcpus(void)
 				print(" %lld", (vlong)secboot[slot[i]].machno);
 		print("\n");
 	}
+}
+
+/*
+ * The interrupts, reported from where processor 0 is also taking
+ * them.  Not from startcpus(): that runs before the scheduler, with
+ * interrupts still masked on this processor, so processor 0's own
+ * count there is zero for a reason that has nothing to do with the
+ * others and would read as the exact failure this is looking for.
+ *
+ * Each processor counts its own timer ticks in its own Mach.  A zero
+ * is a processor whose redistributor, PPI or generic timer is not set
+ * up, which is why the count is per-Mach: a total would be
+ * indistinguishable from processor 0 counting fast.
+ */
+void
+cpuintrreport(void)
+{
+	ulong t0[MAXMACH];
+	int i, n;
+
+	n = 0;
+	for(i = 0; i < MAXMACH; i++){
+		t0[i] = 0;
+		if(machp[i] != nil){
+			t0[i] = machp[i]->ticks;
+			if(i > 0)
+				n++;
+		}
+	}
+	if(n == 0)
+		return;
+	delay(Tickms);
+	print("cpu: ticks in %dms:", Tickms);
+	for(i = 0; i < MAXMACH; i++)
+		if(machp[i] != nil)
+			print(" cpu%d %lud", i, machp[i]->ticks - t0[i]);
+	print("\n");
 }

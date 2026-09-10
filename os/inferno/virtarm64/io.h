@@ -77,6 +77,9 @@ enum {
 	 * priority and group registers - the v2 GicdISENABLER/IGROUPR
 	 * for interrupts 0..31 move here on a v3.
 	 */
+	GicrTYPER	= 0x0008,	/* RD_base, 64-bit, byte offset */
+	GicrTYPER_VLPIS	= 1<<1,
+	GicrTYPER_Last	= 1<<4,
 	GicrWAKER	= 0x0014/4,	/* RD_base: bit1 sleep, bit2 childrenasleep */
 	GicrSGIoff	= 0x10000,	/* SGI_base = RD_base + this */
 	GicrIGROUPR0	= 0x0080/4,	/* SGI_base-relative */

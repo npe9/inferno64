@@ -88,6 +88,24 @@ clockintr(Ureg *u)
 	}
 }
 
+/*
+ * A processor that is not in the scheduler, on its own timer.  It
+ * re-arms and counts and does nothing else: clockintr()'s
+ * checkalarms() and timercheck() belong to the scheduler, and the
+ * clock0link list is one list for the machine.  m->ticks is per-Mach,
+ * so this is the counter that says whether this processor's own
+ * redistributor, its own PPI and its own generic timer are alive.
+ */
+void
+clocksecondary(void)
+{
+	uvlong when;
+
+	when = now() + m->cpuhz/HZ;
+	hwtimerset(&when);
+	m->ticks++;
+}
+
 void
 clockinit(void)
 {

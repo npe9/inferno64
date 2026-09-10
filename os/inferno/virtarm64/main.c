@@ -173,6 +173,14 @@ init0(void)
 	if(waserror())
 		panic("init0 %r");
 
+	/*
+	 * Here and not in main(): this is the first point at which
+	 * processor 0 is itself taking interrupts, and a report that
+	 * compared the others against a processor 0 still at splhi would
+	 * read as the failure it is looking for.
+	 */
+	cpuintrreport();
+
 	o = up->env;
 	o->pgrp->slash = namec("#/", Atodir, 0, 0);
 	pathclose(o->pgrp->slash->path);

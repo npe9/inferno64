@@ -116,6 +116,20 @@ buildslot(u32 *slot, int class)
 	slot[3] = insn_b(&slot[3], (void*)vectrap);
 }
 
+static u32 *vectab;
+
+/*
+ * Install the table this kernel already built.  Every processor needs
+ * its own VBAR_EL1 -- it is a per-processor system register -- but
+ * they can all point at the same table, since the table is read-only
+ * code and the frame it builds is on whichever stack was interrupted.
+ */
+void
+vectorinstall(void)
+{
+	vectorinit(vectab);
+}
+
 static void
 vectorbuild(void)
 {
@@ -123,6 +137,7 @@ vectorbuild(void)
 	int i;
 
 	v = (u32*)(((uintptr)rawvectab + VBAR_ALIGN-1) & ~(uintptr)(VBAR_ALIGN-1));
+	vectab = v;
 
 	for(i = 0; i < NSlot; i++){
 		u32 *slot = v + i*(SlotSize/4);
@@ -152,6 +167,10 @@ vectorbuild(void)
  * other board runs -M virt's default GICv2 and never touches v3.
  */
 static int gicv3;
+
+enum {
+	Ngicrframe	= 512,		/* see gicrfind() */
+};
 
 extern void	seticcsre(ulong);
 extern void	seticcpmr(ulong);
@@ -218,8 +237,15 @@ gicenable(int irq)
 		return;
 	}
 	if(irq < GicSpiBase){
-		/* SGI/PPI: this cpu's redistributor SGI frame, not GICD */
-		sgi = (u32*)(GICR + GicrSGIoff);
+		/*
+		 * SGI/PPI: this cpu's redistributor SGI frame, not GICD --
+		 * and this cpu's, which is why it comes from m->gicr and
+		 * not from the constant.  Enabling the timer PPI in
+		 * processor 0's frame would leave every other processor's
+		 * timer masked, which is the failure this looked like
+		 * before giccpuinit() existed.
+		 */
+		sgi = (u32*)(m->gicr + GicrSGIoff);
 		*((uchar*)sgi + 0x400 + irq) = 0xa0;	/* GICR_IPRIORITYR */
 		sgi[GicrISENABLER0] = 1 << (irq%32);
 		return;
@@ -230,53 +256,128 @@ gicenable(int irq)
 	gicd[GicdISENABLER + irq/32] = 1 << (irq%32);
 }
 
-void
-gicinit(void)
+/*
+ * This processor's redistributor.  A GICv3 gives every processor a
+ * frame of its own, and which frame is which is not an index: the
+ * order the frames appear in is the implementation's, so each one
+ * carries its own affinity in GICR_TYPER and the processor looks for
+ * the one that matches its MPIDR.  The MADT can name them -- the GICC
+ * structure has a field for it -- but on this machine the firmware
+ * leaves it zero (acpi.c prints "gicr 0x0"), so the region base from
+ * mem.h and this walk are what there is.
+ *
+ * The frames are contiguous, two 64 KiB pages each (RD_base and
+ * SGI_base), or four if the implementation has virtual LPIs, which
+ * GICR_TYPER.VLPIS says.  The last frame sets GICR_TYPER.Last, which
+ * is what ends the walk rather than a count from somewhere else.
+ */
+static uintptr
+gicrfind(void)
 {
-	u32 *gicd, *gicc, *rd, *sgi;
+	uvlong mpidr, want, typer;
+	uintptr rd;
 	int i;
 
-	timerirq = GicPPITimer;
-	gicd = (u32*)GICD;
-	gicv3 = ((getpfr0() >> 24) & 0xf) != 0;
+	mpidr = getmpidr();
+	/* GICR_TYPER's affinity is Aff3.Aff2.Aff1.Aff0 packed into 32 bits */
+	want = (mpidr & 0xFFFFFF) | (((mpidr>>32) & 0xFF) << 24);
+	rd = GICR;
+	/*
+	 * GICR_TYPER.Last is what ends this; the count is only a guard
+	 * against a table that never sets it, and it is large enough not
+	 * to be the thing that fails on a machine with many processors
+	 * -- MAXMACH bounds how many this kernel runs, not how many
+	 * frames it may have to walk past to find its own.
+	 */
+	for(i = 0; i < Ngicrframe; i++){
+		typer = *(uvlong*)(rd + GicrTYPER);
+		if(((typer>>32) & 0xFFFFFFFF) == want)
+			return rd;
+		if(typer & GicrTYPER_Last)
+			break;
+		rd += (typer & GicrTYPER_VLPIS) ? 4*64*1024 : 2*64*1024;
+	}
+	return 0;
+}
+
+/*
+ * The half of GIC bring-up that belongs to one processor: the cpu
+ * interface, its own redistributor, and the interrupts that are
+ * private to it.  Everything the distributor owns is global and stays
+ * in gicinit().
+ *
+ * Order matters: enable system-register access to the cpu interface
+ * first, then wake this cpu's redistributor and wait for it, then
+ * unmask priority and enable group-1 delivery.  Everything is placed
+ * in group 1 so it arrives as an IRQ (group 0 would be an FIQ this
+ * kernel never enables).
+ */
+void
+giccpuinit(void)
+{
+	u32 *gicc, *rd, *sgi;
+
 	if(!gicv3){
 		gicc = (u32*)GICC;
-		gicd[GicdCTLR] = 1;
 		gicc[GiccPMR] = 0xff;
 		gicc[GiccCTLR] = 1;
+		m->gicr = 0;
 		gicenable(timerirq);
 		return;
 	}
 
-	/*
-	 * GICv3 bring-up.  Order matters: enable system-register access
-	 * to the cpu interface first, then wake this cpu's redistributor
-	 * and wait for it, then turn on affinity routing at the
-	 * distributor before enabling group 1 (with ARE set, an SPI's
-	 * target comes from GICD_IROUTER, ignored until ARE is on), then
-	 * unmask priority and enable group-1 delivery at the cpu
-	 * interface.  Everything is placed in group 1 so it arrives as an
-	 * IRQ (group 0 would be an FIQ this kernel never enables).
-	 */
 	seticcsre(1);				/* ICC_SRE_EL1.SRE = 1 */
 
-	rd = (u32*)GICR;
+	m->gicr = gicrfind();
+	if(m->gicr == 0){
+		/*
+		 * iprint, not print: this can run on a processor that is
+		 * not in the scheduler, and print() takes kmesg.lk.
+		 */
+		iprint("gic: cpu%d mpidr %#llux has no redistributor; falling back to %#p\n",
+			m->machno, getmpidr(), (void*)GICR);
+		m->gicr = GICR;
+	}
+	rd = (u32*)m->gicr;
 	rd[GicrWAKER] &= ~2;			/* clear ProcessorSleep */
 	while(rd[GicrWAKER] & 4)			/* wait ChildrenAsleep == 0 */
 		;
-	sgi = (u32*)(GICR + GicrSGIoff);
+	sgi = (u32*)(m->gicr + GicrSGIoff);
 	sgi[GicrIGROUPR0] = ~0;			/* all SGI/PPI in group 1 */
-
-	for(i = GicSpiBase/32; i < GicIRQMax/32 + 1; i++)
-		gicd[GicdIGROUPR + i] = ~0;	/* all SPIs in group 1 */
-	gicd[GicdCTLR] = GicdCTLR_ARE;
-	gicd[GicdCTLR] = GicdCTLR_ARE | GicdCTLR_EN1;
 
 	seticcpmr(0xff);			/* unmask all priorities */
 	seticcbpr1(0);				/* no sub-priority preemption */
 	seticcgrpen1(1);			/* enable group 1 at cpu interface */
 
 	gicenable(timerirq);
+}
+
+void
+gicinit(void)
+{
+	u32 *gicd;
+	int i;
+
+	timerirq = GicPPITimer;
+	gicd = (u32*)GICD;
+	gicv3 = ((getpfr0() >> 24) & 0xf) != 0;
+	if(!gicv3){
+		gicd[GicdCTLR] = 1;
+		giccpuinit();
+		return;
+	}
+
+	/*
+	 * The distributor, once for the machine.  Affinity routing goes
+	 * on before group 1 is enabled: with ARE set an SPI's target
+	 * comes from GICD_IROUTER, which is ignored until it is.
+	 */
+	for(i = GicSpiBase/32; i < GicIRQMax/32 + 1; i++)
+		gicd[GicdIGROUPR + i] = ~0;	/* all SPIs in group 1 */
+	gicd[GicdCTLR] = GicdCTLR_ARE;
+	gicd[GicdCTLR] = GicdCTLR_ARE | GicdCTLR_EN1;
+
+	giccpuinit();
 }
 
 void
@@ -312,9 +413,20 @@ trap(Ureg *ur)
 			iar = gicc[GiccIAR];
 			irq = iar & 0x3ff;
 		}
-		if(irq == timerirq)
-			clockintr(ur);
-		else if(irq < GicIRQMax && (f = irqhandler[irq]) != nil)
+		if(irq == timerirq){
+			/*
+			 * A processor that is not machno 0 is not in the
+			 * scheduler yet, and clockintr() is: checkalarms()
+			 * and timercheck() walk structures that belong to
+			 * it.  So a secondary re-arms its own timer and
+			 * counts, which is all this increment claims and
+			 * all it is entitled to do.
+			 */
+			if(m->machno == 0)
+				clockintr(ur);
+			else
+				clocksecondary();
+		}else if(irq < GicIRQMax && (f = irqhandler[irq]) != nil)
 			f(ur, irqarg[irq]);
 		if(gicv3)
 			seticceoir(iar);

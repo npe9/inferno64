@@ -677,12 +677,20 @@ dead0:
  * Interrupt level.  DAIF.I is the whole of it -- MAXMACH is 1, so
  * masking IRQs is the only atomicity primitive this board needs.
  */
+/*
+ * m->splpc through R27, which is m, and not through $mach0(SB), which
+ * is processor 0's Mach.  With one Mach the two were the same address
+ * and the difference did not exist; with a Mach per processor, a
+ * secondary taking a trap would have recorded its splpc in processor
+ * 0's Mach -- writing the first word of a structure another processor
+ * is using.  splpc is the first field for exactly this reason, and
+ * dat.h says so.
+ */
 TEXT	splhi(SB), 1, $-4
 	MRS	DAIF, R0
 	AND	$0x80, R0, R1		/* previous I-bit, for the return value */
 	MSR	$2, DAIFSet		/* imm bit1 = IRQ */
-	MOV	$mach0(SB), R2
-	MOV	R30, 0(R2)		/* m->splpc */
+	MOV	R30, 0(R27)		/* m->splpc */
 	MOV	R1, R0
 	RET	R30
 
@@ -694,8 +702,7 @@ TEXT	spllo(SB), 1, $-4
 	RET	R30
 
 TEXT	splx(SB), 1, $-4
-	MOV	$mach0(SB), R2
-	MOV	R30, 0(R2)
+	MOV	R30, 0(R27)		/* m->splpc; see splhi above */
 	CMP	$0, R0
 	BEQ	splxlo
 	MSR	$2, DAIFSet
