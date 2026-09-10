@@ -24,6 +24,9 @@ include "tk.m";
 	tk: Tk;
 include "titlebar.m";
 	titlebar: Titlebar;
+include "tklayout.m";
+	tklayout: Tklayout;
+	Problem: import tklayout;
 include "wmclient.m";
 include "tkclient.m";
 	tkclient: Tkclient;
@@ -47,6 +50,7 @@ H: con 700;			# so that packing is never what clamps a measurement
 
 off: ref Image;
 win: ref Image;
+scr: ref Screen;
 disp: ref Display;
 
 ok := 0;
@@ -175,6 +179,9 @@ init(nil: ref Draw->Context, nil: list of string)
 	titlebar = load Titlebar Titlebar->PATH;
 	if(titlebar != nil)
 		titlebar->init();
+	tklayout = load Tklayout Tklayout->PATH;
+	if(tklayout != nil)
+		tklayout->init();
 	if(tk == nil){
 		sys->print("FAIL no tk: %r\n");
 		raise "fail:no tk";
@@ -185,7 +192,7 @@ init(nil: ref Draw->Context, nil: list of string)
 		raise "fail:no display";
 	}
 	off = disp.newimage(Rect((0,0),(W,H)), Draw->RGB24, 0, Draw->White);
-	scr := Screen.allocate(off, disp.color(Draw->White), 0);
+	scr = Screen.allocate(off, disp.color(Draw->White), 0);
 	if(off == nil || scr == nil){
 		sys->print("FAIL no offscreen screen: %r\n");
 		raise "fail:no screen";
@@ -255,6 +262,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	checktitlebar(large, "a font twice as tall");
 
 	checkdefault();
+	checklayout();
 
 	# If a TrueType face is being served, say whether Tk antialiases.
 	# A bitmap font can only ever put two values on the page.
@@ -356,6 +364,92 @@ checkdefault()
 	else
 		sys->print("     default font is %s: bitmap, so %d levels is right\n",
 			realfont, lv);
+}
+
+# The failure a bigger font actually causes is not a mis-sized widget -
+# libtk sizes those from the font, asserted above - but a window whose
+# pixels were counted out around the old size and no longer holds its
+# contents.  Tk clips rather than overflows, so the widget rectangles all
+# still look reasonable; what gives it away is the room a widget asked
+# for against the room it got.  tklayout(2) does that walk.
+checklayout()
+{
+	if(tklayout == nil){
+		sys->print("     no tklayout module; layouts not checked\n");
+		return;
+	}
+
+	# A checker that has never been seen to report anything has not been
+	# shown to look at anything, so the positive control comes first:
+	# the same dialog, at the same font, in a pane far too small for it.
+	# It must name the widgets that lost room.
+	tight := scr.newwindow(Rect((0,0),(140,40)), Draw->Refbackup, Draw->Nofill);
+	if(tight == nil){
+		report(0, "a small pane can be allocated for the layout control");
+		return;
+	}
+	blank();
+	squashed := tk->toplevel(disp, "");
+	if(squashed == nil)
+		return;
+	squashed.screenr = Rect((0,0),(140,40));
+	tk->cmd(squashed, "label .l -text {Handgloves 123} -font " + large);
+	tk->cmd(squashed, "button .b -text {Cancel} -font " + large);
+	tk->cmd(squashed, "pack .l");
+	tk->cmd(squashed, "pack .b");
+	tk->putimage(squashed, ". -1", tight, nil);
+	tk->cmd(squashed, "update");
+	bad := tklayout->check(squashed, ".");
+	n := 0;
+	for(l := bad; l != nil; l = tl l)
+		if((hd l).kind == Tklayout->Clipped){
+			n++;
+			sys->print("     control: %s\n", (hd l).text());
+		}
+	report(n > 0, sys->sprint(
+		"the layout checker names widgets that lost room (%d of 2)", n));
+	if(n == 0)
+		return;			# it cannot vouch for anything below
+
+	# The negative half: the same two widgets with room to spare must
+	# come back clean, or the checker is merely always complaining.
+	blank();
+	roomy := offscreen();
+	if(roomy == nil)
+		return;
+	tk->cmd(roomy, "label .l -text {Handgloves 123} -font " + large);
+	tk->cmd(roomy, "button .b -text {Cancel} -font " + large);
+	tk->cmd(roomy, "pack .l");
+	tk->cmd(roomy, "pack .b");
+	map(roomy);
+	good := tklayout->check(roomy, ".");
+	for(l = good; l != nil; l = tl l)
+		sys->print("     %s\n", (hd l).text());
+	report(good == nil, "the same widgets with room to spare come back clean");
+
+	# and now the chrome every window has, at both fonts.  A fault here
+	# would be a real bug.
+	for(i := 0; i < 2; i++){
+		font := small;
+		what := "the tree's own font";
+		if(i == 1){
+			font = large;
+			what = "a font twice as tall";
+		}
+		blank();
+		top := offscreen();
+		if(top == nil || titlebar == nil)
+			return;
+		tk->cmd(top, ". configure -font " + font);
+		titlebar->new(top, Titlebar->Appl);
+		titlebar->settitle(top, "A Window With Quite A Long Title Indeed");
+		map(top);
+		probs := tklayout->check(top, ".Wm_t");
+		for(l = probs; l != nil; l = tl l)
+			sys->print("     %s\n", (hd l).text());
+		report(probs == nil, sys->sprint(
+			"no titlebar widget is short of room in %s", what));
+	}
 }
 
 # the real titlebar, built by the real code, measured

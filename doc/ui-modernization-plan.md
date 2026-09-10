@@ -207,15 +207,64 @@ font-sized widget grows in both axes:
 `text`'s `-width` and `-height` — deliberately do not grow, which is Tk's
 own semantics.
 
-So the toolkit is safe and the applications are the risk: the ~60 programs
-in `appl/wm/` and `appl/lib/titlebar.b`, which pack by computed pixel
-geometry and draw directly.
+So the toolkit is safe and the applications were the presumed risk: the
+~60 programs in `appl/wm/` and `appl/lib/titlebar.b`, which pack by
+computed pixel geometry and draw directly.
 
-The method that worked, carried forward: **record every text box a screen
-draws, test it for overlap and for leaving the pane, drive the check
-through the entry point production uses, and confirm with a negative
-control.** Three checks in that session reported "no problems" while
-looking at a subset of what had changed.
+### That risk was measured, and for the Tk programs it is small
+
+`tklayout(2)` reports widgets that did not get the room they asked for.
+It runs from **`tkclient->onscreen`**, guarded by `$tklayout`, so the
+check goes through the entry point every real program already passes
+rather than through a reconstruction of it — the rule the previous
+session's three blind checks earned.
+
+Swept over 21 `appl/wm` programs that open a window and settle
+(`about calendar clock colors date dir edit keyboard logwindow man memory
+reversi sh smenu snake stopwatch sweeper task tetris toolbar view`) on a
+900x700 screen:
+
+| font | reports |
+| --- | --- |
+| the tree's default bitmap | 0 |
+| `/mnt/ft/go.r.13.font` | 0 |
+| `/mnt/ft/go.r.20.font` | 0 |
+
+**The positive control is the important half of that table.** Zero
+reports everywhere is exactly what a checker that has gone blind also
+produces. The same sweep on a 260x200 screen at 28 pixels — where things
+*must* be clipped — gives 16 reports naming widgets and numbers, down to
+`wm/task`'s `.b.kill got 2x41 but needs 50x39`, a button squeezed until
+its label is gone. So the zeros are a result, not silence.
+
+Three ways to detect a broken layout were tried and two of them cannot
+work here, which is worth writing down so nobody builds on them:
+
+- **Siblings overlapping** almost cannot happen: this Tk has only `pack`
+  and `grid`, no `place`, and both hand out disjoint space. Kept, never
+  seen to fire.
+- **A widget outside the pane** cannot happen at all. Tk *clips* to the
+  room available, so a label needing 502 pixels in a 200-pixel window
+  reports itself as 200 wide. A checker built on this would have passed
+  everything, always — and my first one was.
+- **Asked-for against given** works, because `Tk->Required` is *not*
+  clipped. The difference between the two is exactly the text that was
+  cut off, per widget, by name.
+
+Two false positives had to be removed first, and both are informative:
+a widget created and never packed still reports its border as a rectangle
+(`wm/toolbar` makes a `button .b -text {XXX}` solely to ask how tall a
+button would be), and `pack .b .l1 -in .f` — which `wm/about` does —
+leaves widgets named under the root while laying them out inside `.f`, so
+grouping by name reports a frame as overlapping its own contents. Three
+`winfo` queries were added to `libtk` to tell the difference: `children`,
+`manager` and `master`. See `winfo(9)`.
+
+**What this does not cover** is a program that draws its own text into an
+image rather than packing widgets — the games and the temple ports — which
+is where the previous session's overlaps actually were. The method for
+those (record every text box a screen draws, test it for overlap and for
+leaving the pane) still exists only inside the temple ports.
 
 **The switch already exists, and it works.** `emu -f <path>` sets the
 default font for every Tk widget in every program — one global,

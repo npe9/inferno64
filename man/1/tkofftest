@@ -106,6 +106,28 @@ gives 199.
 When the default is a bitmap face the count is printed rather than
 asserted, since 3 is then the right answer.
 .TP
+.B "the layout checker names widgets that lost room"
+A positive control for
+.IR tklayout (2):
+the same two widgets are packed into a pane far too small for them, and
+both must be named with the room they got and the room they needed.
+A checker that has never been seen to report anything has not been shown
+to look at anything, and this one twice reported nothing while broken \(em
+once because the control used
+.BR place ,
+which this
+.B Tk
+does not have, and once because a filter added to suppress false
+positives suppressed the real detection too.
+.TP
+.B "the same widgets with room to spare come back clean"
+The other half of that control.
+Without it, a checker that simply always complains would pass.
+.TP
+.B "no titlebar widget is short of room"
+The chrome every window has, at both fonts, through
+.IR tklayout (2).
+.TP
 .B "Tk antialiases a TrueType face"
 Draws through the first face
 .IR ttffs (4)
@@ -142,6 +164,7 @@ To see the whole chain instead, name a face as the default:
 .IR tkclient (2),
 .IR draw (2),
 .IR ttffs (4),
+.IR tklayout (2),
 .B /doc/ui-modernization-plan.md
 .SH BUGS
 It checks that widgets are sized by the font, not that they are
@@ -154,6 +177,15 @@ been made general.
 .PP
 Only the packing of one flat dialog is exercised; no menu, canvas or text
 widget is drawn at all.
+.PP
+The layout checks here are of
+.IR tklayout (2)
+itself, on two widgets and on the titlebar.
+Sweeping real programs with it is a separate exercise, driven through
+.B $tklayout
+and
+.IR tkclient (2);
+nothing in this test does that.
 .PP
 The antialiasing checks are skipped silently rather than failing when no
 face is being served, so a green run does not by itself mean that path was
