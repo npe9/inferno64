@@ -11116,6 +11116,32 @@ the input path go on draining the serial line so the rest of the boot is
 still there to be read.  The control is in the same boot as the claim,
 which is the shape every screendump here has.
 .PP
+.B "3.2v: a machine to use rather than to check."
+Two things stood between the checked boot and one a person can sit in
+front of, and both are small enough to say in a paragraph.
+.PP
+The shell had no interactive mode.  rio starts the shell in a window it
+sweeps with no arguments at all, and
+.CW shlib.c
+answered no arguments with a usage line and an exit \- so a new window
+ran a shell that printed one line and died, and the window went with it.
+A window system whose windows close as fast as they open is not one you
+can use.  No arguments is a shell to type at now: it reads a line at a
+time from descriptor 0, which in a rio window is that window's own
+.CW /dev/cons ,
+and does not echo, because rio has already drawn what was typed.
+.PP
+And the personality's loop runs for fifteen seconds, which is what a
+check wants and no use to a person.
+.CW scripts/osprey-play.sh
+boots an image built with that number set long, with a display instead of
+.CW "-display none"
+and the serial console on a file instead of on stdout.  It is the same
+kernel otherwise: the same personality, the same rio, the same driver.
+The committed source keeps the fifteen seconds, because that is what the
+check reads, and the script says in its own comment how to build the
+other one.
+.PP
 The second was the probe itself, and it is the plainest lesson here.
 .CW p9open
 is the personality's own open and it

@@ -161,9 +161,47 @@ startboot(char *argv0, char **argv)
 	long n, got;
 
 	USED(argv0);
+	/*
+	 * No arguments is a shell to type at.
+	 *
+	 * rio starts the shell in a window it sweeps with no arguments at
+	 * all, so without this a new window ran a shell that printed a
+	 * usage line and exited, and the window went with it.  A window
+	 * system whose windows close as fast as they open is not one you
+	 * can use.
+	 *
+	 * The reader is descriptor 0, which in a rio window is that
+	 * window's own /dev/cons: rio assembles the line and hands it over
+	 * when Enter is pressed, so this reads a line at a time and does
+	 * not echo - the window has already drawn what was typed.
+	 */
 	if(argv == nil || argv[1] == nil){
-		print("libsh: usage: libsh [-c command] script\n");
-		exits("usage");
+		print("libsh: a shell to type at; one command a line, "
+			"words at blanks, stages at |\n");
+		for(;;){
+			/*
+			 * A prompt, because a window with nothing in it looks
+			 * like a window with nothing running in it.  It goes
+			 * out before every read, so it is there the moment the
+			 * window is swept and again after every command.
+			 */
+			print("; ");
+			n = read(0, line, sizeof line - 1);
+			if(n <= 0)
+				break;		/* end of file: the window is gone */
+			line[n] = 0;
+			nl = strchr(line, '\n');
+			if(nl != nil)
+				*nl = 0;
+			nl = strchr(line, '#');
+			if(nl != nil)
+				*nl = 0;
+			if(line[0] == 0)
+				continue;
+			runline(line);
+		}
+		print("libsh: end of input; this shell is done\n");
+		exits(nil);
 	}
 	/*
 	 * -c command, which is how rio starts a shell in a window: it runs

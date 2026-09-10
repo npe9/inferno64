@@ -1864,7 +1864,18 @@ a mouse move as a decoded packet and a position on
 .BR /dev/mouse ,
 and a button held down in rio's screen opens rio's menu - libdraw's
 .B DPalegreen
-in the shot with the button and none of it in the shot without.  rio is spawned rather than run to completion, and the
+in the shot with the button and none of it in the shot without.
+.PP
+.B scripts/osprey-play.sh
+boots the same kernel with a display, for a machine to use rather than
+to check.  It wants an image whose
+.I p9inputloop
+argument is long - the committed source is fifteen seconds, which is
+what the check reads - and the script says how to build one.  The shell
+a window gets with no arguments is interactive: it reads a line at a
+time from the window's own
+.BR /dev/cons ,
+and does not echo, because rio has drawn what was typed.  rio is spawned rather than run to completion, and the
 personality gives it three seconds and says so, which is both how the
 boot ends and where the screendump is taken.  The personality
 asks the name space what rio is about to ask it and logs the answers

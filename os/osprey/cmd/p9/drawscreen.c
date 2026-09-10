@@ -46,7 +46,14 @@ getcolor(ulong p, ulong *pr, ulong *pg, ulong *pb)
 int	setcolor(ulong, ulong, ulong, ulong){ return 0; }
 void	mouseresize(void){}
 void	blankscreen(int){}
-void	flushmemscreen(Rectangle){ /* the screen data IS the frame buffer */ }
+/*
+ * The screen data IS the frame buffer, so there is nothing to copy - but
+ * this is still where devdraw says what it drew, and the cursor needs to
+ * be told: the pixels it saved from under the arrow are stale the moment
+ * something is drawn there.
+ */
+extern void p9cursorflush(int, int, int, int);
+void	flushmemscreen(Rectangle r){ p9cursorflush(r.min.x, r.min.y, r.max.x, r.max.y); }
 
 Memdata*
 attachscreen(Rectangle *r, ulong *chan, int *depth, int *width, int *softscreen)

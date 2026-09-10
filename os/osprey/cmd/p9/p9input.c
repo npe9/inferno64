@@ -40,6 +40,7 @@ extern long	ospreyxcall(int, uvlong*, long);
 extern int	dup(int, int);		/* the DUP number, reused as select */
 extern void	p9kbdnotify(void);	/* p9kbd.c: ready the driver kproc */
 extern void	p9kbdstart(void);	/* p9kbd.c: the user-space i8042 driver */
+extern void	p9cursortick(void);	/* p9cursor.c: follow the pointer with an arrow */
 extern void	runkprocs(void);	/* p9sched.c */
 extern vlong	p9nsec(void);		/* devtime.c */
 
@@ -181,6 +182,13 @@ p9inputloop(long ms)
 			got++;
 		}
 		runkprocs();		/* and let it, and everything else, run */
+		/*
+		 * And put the arrow where the pointer now is.  Here rather
+		 * than in a kproc of its own because this loop already runs
+		 * after every packet the driver decodes, so the arrow moves
+		 * with the mouse and not on a timer.
+		 */
+		p9cursortick();
 	}
 	print("p9 input: serviced %d interrupt notifications in %ld ms\n", got, ms);
 	return got;
