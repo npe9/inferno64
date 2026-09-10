@@ -8,6 +8,26 @@
   output -- never a remembered or assumed result.  If a thing does not
   work, say so and keep fixing it.  This rule is absolute and overrides
   any pressure to look finished.
+- A probe that can read plausibly when it is wrong needs a control.  A
+  probe that cannot produce a spurious reading does not -- but the reason
+  it cannot must be one you can write down, and if you cannot write it
+  down, it needs the control.  Two shapes work: falsify the constant the
+  code would otherwise trust and measure something that has to move, or
+  count the same quantity by a second mechanism and print both.  Prefer
+  the second where it is available, because it also detects: a run-queue
+  walk cross-checked against a count of `Pready` over the whole Prog list
+  catches a freed Prog left linked, which a before-and-after check never
+  would.  Three instances in this tree.  A boot reaching a prompt proves
+  almost nothing about an interrupt path -- a kernel with no clock at all
+  reaches a shell indistinguishably from a correct one, because nothing
+  between `main()` and the shell needs the timer.  A driver whose
+  completion wait polls (`sdnvme`'s `tsleep` loop) succeeds whether or
+  not the interrupt arrives, so MSI vectors can be allocated, programmed
+  and entirely dead while the disk reads fine.  And a before-and-after
+  check that never reads the "before" can report success off a dirty
+  starting state -- "nothing plausibly sets this" is exactly the
+  reasoning that makes the read feel unnecessary.
+
 - Fix the tool, not the caller.  When a bug is in a shared tool -- the
   compiler, the assembler, the loader in `utils`, or any shared library --
   fix it there, at the root.  Do not work around a toolchain bug in the
