@@ -92,9 +92,10 @@ and nothing changes but the size.
 At scale 1, which is every configuration that does not ask for a larger
 font, nothing is touched at all.
 .IR Tkofftest (1)
-asserts both halves: that the artwork grows, and that the proportion of
-it inked is unchanged, which is what a whole-number scale of the same
-picture gives.
+asserts both halves at three font sizes \(em that the artwork grows
+(20, 36 and 52 pixels of button), and that the proportion of it inked
+stays put (81, 76 and 74 per cent), which is what a whole-number scale
+of the same picture gives and a broken one would not.
 .PP
 The colours are still literals in
 .B /appl/lib/titlebar.b

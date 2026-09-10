@@ -58,11 +58,12 @@ fail := 0;
 
 small := "";		# two fonts, 15 pixels high and 30
 large := "";
+huge := "";		# and a third, if one is served, to reach scale 3
 
 servedttf := 0;		# this test started ttffs, so this test stops it
 
-butsz := array[2] of {* => 0};		# chrome button size, per font
-butink := array[2] of {* => 0.0};	# and how much of it is inked
+butsz := array[3] of {* => 0};		# chrome button size, per font
+butink := array[3] of {* => 0.0};	# and how much of it is inked
 nchrome := 0;
 
 report(good: int, what: string)
@@ -235,6 +236,8 @@ init(nil: ref Draw->Context, nil: list of string)
 	# from this tree, 15 and 30 pixels high, no TrueType needed.
 	small = "/fonts/lucidasans/unicode.8.font";
 	large = "/fonts/pelm/ascii.16.font";
+	if((tn0 := ttfname()) != "")
+		huge = "/mnt/ft/" + tn0[0:len tn0 - len ".r.16.font"] + ".r.32.font";
 	blank();
 	t1 := offscreen();
 	s1 := dialog(t1, small);
@@ -264,6 +267,8 @@ init(nil: ref Draw->Context, nil: list of string)
 	# the buttons, and nothing may leave the pane.
 	checktitlebar(small, "the tree's own font");
 	checktitlebar(large, "a font twice as tall");
+	if(huge != "")
+		checktitlebar(huge, "a font four times as tall");
 
 	checkdefault();
 	checklayout();
@@ -272,10 +277,12 @@ init(nil: ref Draw->Context, nil: list of string)
 	# resolves a bare -bitmap name straight there, so without help the
 	# buttons stay one size while the bar around them follows the font.
 	# Before titlebar(2) scaled them this read 20x20 at both fonts.
-	if(nchrome == 2){
-		report(butsz[1] > butsz[0], sys->sprint(
-			"the titlebar's artwork grows with the font (%d -> %d)",
-			butsz[0], butsz[1]));
+	if(nchrome >= 2){
+		grew := "";
+		for(g := 0; g < nchrome; g++)
+			grew += sys->sprint(" %d", butsz[g]);
+		report(butsz[1] > butsz[0] && (nchrome < 3 || butsz[2] > butsz[1]),
+			sys->sprint("the titlebar's artwork grows with the font (%s )", grew));
 		# and it is the same picture, not a broken one: a whole-number
 		# scale replicates pixels, so the proportion inked is kept.
 		d := butink[1] - butink[0];
