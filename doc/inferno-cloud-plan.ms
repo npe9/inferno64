@@ -4553,7 +4553,19 @@ NVMe
 .CW ( sdnvme )
 or IDE, and IPMI or serial-over-LAN.  That is broad enough that a
 typical box from either provider needs no driver written, which is what
-makes this the cheapest genuine hardware boot on the list.  This is independent of the cloud items and can be
+makes this the cheapest genuine hardware boot on the list.
+.PP
+Checked rather than inferred from the config: the same 1 GiB raw image
+built for Compute Engine boots on an AHCI disk with an Intel 82574
+NIC \(em a rented-metal shape rather than a virtio one \(em reaching
+.CW "#l0: i82574: 1000Mbps" ,
+.CW "#l0: i82574: link up: 1000Mbps" ,
+.CW "#S/sdE: ich: sata-I with 6 ports"
+and a shell prompt.  So the driver binds, the link comes up and the
+SATA controller enumerates, on the image that would be written to the
+disk.  With the hybrid ISO above, either route into such a box works:
+.CW dd
+the raw image, or attach the ISO.  This is independent of the cloud items and can be
 bought at any time.
 .IP "\f(CWOracle\ Cloud\fP" 12
 Item 8, and the one item with a second blocker that is not an account.
