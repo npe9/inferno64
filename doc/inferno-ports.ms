@@ -22365,3 +22365,170 @@ panics less often than
 .CW pc64
 only because it never starts the shell.  The clean runs are the
 evidence; the panics are the other hunt's.
+.NH 1
+The suite does not build, and three re-runs measured the wrong kernel
+.PP
+.CW tools/boardsuite/run
+names a kernel per configuration and boots it.  It has never built one:
+.CW config_kernel()
+answers a path, and the only check was that the file existed \(em
+.CW "FAIL no kernel at ... (mk it first)" .
+Nothing compared the kernel's age against the sources it came from.  So
+a run made after an edit and before
+.CW "mk install"
+booted the previous kernel, found the previous markers, and said
+everything was fine.  That is the worst answer a harness can give,
+because it is indistinguishable from the right one.
+.PP
+Three re-runs in this session were spent that way, and two of them are
+claims in commit messages that cannot be edited:
+.IP \(bu
+.CW 2d307d69
+says the
+.CW usbd.b
+change \(em the
+.CW "ref Hub"
+fix \(em was checked against every arm that runs it, and lists
+.CW "raspi3b-usb 41, raspi4-usb 38, raspi3b-2eth 40, raspi4-2eth 37,
+virt 42, virts 42" ,
+all unchanged.  Every one of those kernels predates the rebuilt
+.CW /dis/usb/usbd.dis
+that carries the fix: the Pi kernels by an hour and a half, the riscv
+ones by half an hour.  Those six arms were running the unfixed
+.CW usbd .
+The same commit says the eight tracked baselines re-recorded
+byte-identical \(lqafter the rebuild\(rq.  There was no rebuild.
+.IP \(bu
+.CW f3825dd8
+says the nine arms that link
+.CW os/inferno/port/pci.c
+were re-run after it changed and no baseline moved.
+.CW pci.c
+was written at 18:50 and no kernel was newer than 17:53.
+.PP
+The damage is bounded, and worth stating as precisely as the error.
+.CW virtarm64
+was built at 17:53, after
+.CW usbd.dis
+at 17:44, so
+.CW 2d307d69 's
+own evidence \(em both bugs, two root hubs,
+.CW super ,
+vector 80 taken and delivered, 47 markers \(em was real; what it was
+missing was only the two edits made after that build, neither of which
+can change a marker.  Every pc64 and pc64dev result in
+.CW 866416ca
+and
+.CW f3825dd8
+is unaffected, because
+.CW ipc64dev
+was rebuilt by hand immediately before each of those boots.
+.PP
+And then the whole thing was done properly: eight boards rebuilt, all
+twenty configurations run.  Nineteen re-recorded byte-identical \(em
+including
+.CW virt
+and
+.CW virts ,
+whose kernels had never contained either fix before, and the four Pi
+arms, which had never contained the
+.CW usbd
+one.  So the numbers those two commits cited were right.  What was
+wrong was the method: they had not been measured the way the text said
+they had.
+.PP
+The twentieth is worth its own paragraph.
+.CW raspi3b-usb
+came back with 39 markers against a baseline of 41, having lost
+.CW USB-MOUSE-OK
+and
+.CW USB-TABLET-OK ,
+and the refusal-to-record-a-shrink guard stopped it \(em which is
+exactly what that guard is for and the first time it has caught
+anything real.  Six runs of that configuration on an otherwise idle
+host then gave
+.CW USB-MOUSE-OK
+and
+.CW USB-TABLET-OK
+six times out of six.  Both checks wait a bounded window for events
+injected through the QEMU monitor, and host load only ever costs them
+events; the failures happened during a twenty-configuration run and
+alongside other builds.  This is the starvation this suite's README
+already describes for the timer checks, reaching two more.  Not a
+regression, and now with a number rather than a verdict.
+.PP
+Two repairs, both in
+.CW tools/boardsuite/run .
+.PP
+The first is the staleness check.  A configuration whose kernel is
+older than any
+.CW .c ,
+.CW .h ,
+.CW .s ,
+.CW .b ,
+.CW .m
+or
+.CW .dis
+in the tree, or than the board's own configuration file, now fails
+before it boots.
+.CW .dis
+is in the set because a kernel embeds its root: rebuilding
+.CW /dis/usb/usbd.dis
+makes the kernel around it stale with no
+.CW .c
+touched, which is precisely what happened above.  It is deliberately
+conservative and deliberately not a per-board dependency list \(em a
+guessed list is worse than no check, because it reads as authoritative
+while missing exactly the shared file that caused the mistake.
+.PP
+Asking
+.CW mk
+would have been better and does not work.  Every board mkfile compiles
+.CW $CONF.c
+with
+.CW -DKERNDATE=<now> ,
+so the kernel is always out of date by
+.CW mk 's
+own reckoning and
+.CW "mk -n install"
+prints a full relink for a board that is entirely up to date.  The same
+fact is what makes the conservative check cheap to be wrong about: when
+it names a file the board does not link, the
+.CW "mk it first"
+it asks for still clears it, because that
+.CW mk
+relinks regardless.
+.CW BOARDSUITE_NOSTALECHECK=1
+skips the check, for a bare checkout in a container where every file
+has one mtime.
+.PP
+The second repair came out of the same run and is smaller only in
+lines.  The
+.CW -b
+guard refused the 39, so the run was repeated; the repeat produced 41
+markers with
+.CW USB-MOUSE-FAIL
+where the baseline had
+.CW USB-MOUSE-OK .
+One line lost, one gained, forty-one either way \(em the guard counts,
+so it saw nothing, and
+.CW -b
+wrote the failure down as the new baseline without a word.  This file's
+own README had considered that hole and argued it was covered by the
+set diff every ordinary run makes.  It is not: the diff is on the
+ordinary path and the hole is in
+.CW -b ,
+which does not take it.  The guard now refuses any name that is
+.CW -OK
+in the baseline and
+.CW -FAIL
+or
+.CW -NONE
+in the run, whatever the total says.
+.PP
+The baseline that was written was reverted by hand.  The general point
+is the one this file keeps arriving at from different directions: a
+test that cannot fail is not evidence, and the two ways a suite like
+this stops being able to fail are measuring a stale artifact and
+recording its own regression as the new truth.  Both were open here at
+the same time, and the second hid the first for one whole run.

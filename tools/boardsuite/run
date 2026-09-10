@@ -45,6 +45,67 @@ configs='raspi3b raspi3b-4g raspi3b-usb raspi3b-2eth raspi4 raspi4-hot raspi4-us
 # Each configuration: the kernel, the QEMU arguments, the line that
 # says the board is done printing, and the evidence lines that make
 # this configuration worth running as well as the marker set.
+# Is anything in the tree newer than this kernel?
+#
+# This suite does not build.  config_kernel() names a kernel that has
+# to exist already, and for a long time nothing checked that it was
+# newer than the sources it came from -- so a run made after an edit
+# but before "mk install" measured the PREVIOUS kernel and said
+# nothing was wrong, which is the worst possible answer.  Three
+# re-runs in one session were spent that way before it was noticed;
+# doc/inferno-ports.ms has the account.
+#
+# Deliberately conservative, and deliberately not a per-board
+# dependency list.  A guessed list is worse than no check at all,
+# because it reads as authoritative while missing exactly the shared
+# file -- os/inferno/port/pci.c, appl/cmd/usb/usbd.b -- that caused
+# the mistake it is meant to catch.  This can say stale when an
+# unrelated file was touched; it cannot say fresh when the kernel is
+# old.  .dis is in the list because a kernel embeds its root: a
+# rebuilt /dis/usb/usbd.dis makes the kernel around it stale even
+# though no .c changed.
+#
+# find stops at the first hit through the pipe, so this costs one
+# directory walk and usually much less.  doc and tools are pruned
+# because editing this file or a .ms is not a reason to relink nine
+# kernels.  BOARDSUITE_NOSTALECHECK=1 skips it, which is what a bare
+# checkout in a container wants: everything there has one mtime and
+# the ordering among them means nothing.
+#
+# Asking mk instead was tried and does not work.  Every board mkfile
+# compiles $CONF.c with -DKERNDATE=<now>, so the kernel is always out
+# of date by mk's own reckoning and "mk -n install" prints a full
+# relink whether anything changed or not.  That is also why the
+# false positives this check does produce cost nothing: a board that
+# does not link the file you touched is still cleared by the "mk it
+# first" the message asks for, because that mk relinks regardless.
+newer_source_than() {
+	[ -n "$BOARDSUITE_NOSTALECHECK" ] && return
+	find "$root" \
+		-name .git -prune -o \
+		-path "$root/doc" -prune -o \
+		-path "$root/tools" -prune -o \
+		-name '*.root.s' -prune -o \
+		-name '*.root.h' -prune -o \
+		\( -name '*.c' -o -name '*.h' -o -name '*.s' \
+		   -o -name '*.b' -o -name '*.m' -o -name '*.dis' \) \
+		-newer "$1" -print 2>/dev/null | head -1 > "$work/stale"
+	if [ -s "$work/stale" ]; then
+		cat "$work/stale"
+		return 0
+	fi
+	# The board's own configuration file, which names its drivers and
+	# its root list and has no extension for the pattern above to
+	# catch.  Derived from the kernel path rather than passed in:
+	# config_kernel() answers .../virtarm64/ivirtarm64, and the
+	# configuration beside it is that with the leading i dropped.
+	conf=`dirname "$1"`/`basename "$1" | sed 's/^i//'`
+	if [ -f "$conf" ] && [ "$conf" -nt "$1" ]; then
+		echo "$conf"
+	fi
+	return 0
+}
+
 config_kernel() {
 	case $1 in
 	raspi3b|raspi3b-4g|raspi3b-usb|raspi3b-2eth)
@@ -1371,6 +1432,14 @@ for c in $configs; do
 		status=1
 		continue
 	fi
+	newer=`newer_source_than "$kernel"`
+	if [ -n "$newer" ]; then
+		echo "$c: FAIL kernel older than $newer (mk it first)"
+		echo "    $kernel"
+		echo "    set BOARDSUITE_NOSTALECHECK=1 to run it anyway"
+		status=1
+		continue
+	fi
 
 	qemu=`config_qemu $c`
 	if [ -z "$qemu" ] || [ ! -x "$qemu" ]; then
@@ -1438,6 +1507,26 @@ for c in $configs; do
 				status=1
 				continue
 			fi
+			# Counting is not enough, and this cost a baseline
+			# before it was noticed.  A check that printed
+			# USB-MOUSE-OK and now prints USB-MOUSE-FAIL loses
+			# one line and gains one, so the count does not
+			# move and the shrink test above sees nothing --
+			# and -b writes the failure down as the new truth,
+			# which is exactly the thing this block exists to
+			# prevent.  So: any name that was -OK in the
+			# baseline and is now -FAIL or -NONE is a
+			# regression whatever the total says.
+			for m in `sed -n 's/-OK$//p' "$base"`; do
+				grep -qx "$m-OK" "$got" && continue
+				if grep -qxE "$m-(FAIL|NONE)" "$got"; then
+					echo "$c: FAIL refusing to record $m-OK degraded to" \
+						`grep -xE "$m-(FAIL|NONE)" "$got"`
+					echo "    read $log first; -f records it anyway"
+					status=1
+					continue 2
+				fi
+			done
 		fi
 		cp "$got" "$base"
 		if [ -s "$work/$c.failed" ]; then

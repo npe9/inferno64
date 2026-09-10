@@ -645,13 +645,52 @@ written down as the new truth, which is the failure this script exists
 to prevent.  -b -f records it anyway, for when the markers really did
 go away and you mean it.
 
-That guard compares counts, not sets, so a run that swapped one marker
-for another of the same name-count walks through it.  That is not
+That guard compared counts, not sets, so a run that swapped one marker
+for another of the same name-count walked through it.  That was not
 hypothetical either: virtarm64's BLK-FAIL became BLK-OK at no change in
-count.  What caught it was the check the guard does not do -- the diff
-against the recorded set, which every ordinary run makes -- so the hole
-is covered in practice by the thing that runs far more often.  Worth
-knowing rather than worth more code.
+count.  This file used to argue that the hole was covered in practice
+by the set diff every ordinary run makes, and that it was worth knowing
+rather than worth more code.  That was wrong, and it cost a baseline:
+the diff runs on an ordinary run, and the hole is in -b, which does not
+make one.  A raspi3b-usb boot starved by host load printed
+USB-MOUSE-FAIL where the baseline had USB-MOUSE-OK -- one line lost,
+one gained, 41 markers either way -- and -b wrote the failure down as
+the new truth without a word.
+
+So the guard now checks the shape as well as the size: any name that is
+-OK in the baseline and -FAIL or -NONE in the run is refused, whatever
+the total says.  -b -f still records it, for when the marker really did
+change and you mean it.
+
+STALE KERNELS.  This suite does not build.  Each configuration names a
+kernel that has to be there already, and for a long time nothing
+checked that the kernel was newer than the sources it came from.  A run
+made after an edit but before "mk install" therefore measured the
+PREVIOUS kernel and reported success, which is the worst answer a test
+harness can give.  Three re-runs in one session were spent that way --
+one of them the evidence for a commit -- before it was noticed; see
+doc/inferno-ports.ms.
+
+run now refuses a configuration whose kernel is older than any .c .h .s
+.b .m or .dis in the tree, or than the board's own configuration file.
+It is deliberately conservative and deliberately not a per-board
+dependency list: a guessed list is worse than no check, because it
+reads as authoritative while missing exactly the shared file --
+os/inferno/port/pci.c, appl/cmd/usb/usbd.b -- that caused the mistake
+it exists to catch.  .dis is in the set because a kernel embeds its
+root: rebuilding /dis/usb/usbd.dis makes the kernel around it stale
+with no .c changed at all.
+
+It can therefore say stale when the file you touched is one that board
+does not link.  That costs nothing, because the remedy the message asks
+for always works: every board mkfile compiles $CONF.c with
+-DKERNDATE=<now>, so "mk install" relinks whether anything changed or
+not.  (That is also why asking mk instead was tried and abandoned --
+"mk -n install" prints a full relink for an up-to-date board.)
+
+BOARDSUITE_NOSTALECHECK=1 skips it.  That is what a bare checkout in a
+container wants: everything there has one mtime and the ordering among
+them means nothing.
 
 RETRIES.  Several of these checks time themselves against the system
 timer and compare a count to what the elapsed time predicts.  Host load
