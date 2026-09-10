@@ -2698,3 +2698,188 @@ writing the rule: a before-and-after check that never reads the before
 can report success off a dirty starting state.  "Nothing plausibly sets
 this" is the reasoning that makes the read feel unnecessary, and is
 exactly the reasoning the rule rejects.
+.NH 1
+Phase 1b, as it landed: the Dis context is per executor
+.PP
+The register file, the run queue and the quantum state were one
+global, so a second interpreter on a second processor ran on the
+first's.  They now live in a
+.CW Pctx
+that
+.CW curP
+names, and on amd64
+.CW curP
+is an external register beside
+.CW m
+and
+.CW up .
+Go reaches the current goroutine through a register \(em R14 on amd64,
+R28 on arm64, so
+.CW getg()
+is a register read \(em and this is the same.  It is also the only route
+.CW libinterp
+can name, since the same sources link into emu and cannot see
+.CW Proc .
+.PP
+Opted into per architecture with
+.CW DISCTXREG .
+amd64 defines it; every other board and emu keep the global
+.CW curP
+and are unchanged.
+.NH 2
+What that cost, in the tools
+.PP
+kencc assigns external registers per file in declaration order, so a
+file declaring only
+.CW curP
+got R15 \(em the kernel's
+.CW m
+\(em and booting printed
+.CW "cpu3318016: registers for kernel" ,
+.CW m->machno
+read through a context pointer.
+.CW include/disreg.h
+declares all three together so both sides agree.
+.PP
+6c permitted four external registers and reserved two.  The reservation
+has to hold in every file 6c compiles, not just the files that declare
+the variable: a file that never sees the declaration uses R13 as
+scratch and clobbers it across a call into a file that did.  With two
+reserved, a third external register is silently broken.  7c had the
+same gap and was fixed first.
+.PP
+Three things the register itself needed, none of them obvious from the
+plan:
+.IP 1.
+It has no initialiser.
+.CW "Pctx* curP = &_pctx"
+is compiled out under
+.CW DISCTXREG
+and nothing else writes R13.
+.CW machinit()
+calls
+.CW disctxinit() ,
+which runs on cpu0 through
+.CW mach0init()
+and on each AP through
+.CW squidboy() .
+.IP 2.
+.CW _intrestore
+restored R13 from the trap frame on a kernel-mode return.  That is the
+staleness the comment there already forbids for
+.CW m
+and
+.CW up :
+.CW trap()
+can reach
+.CW sched() ,
+and a process resumed on another processor must keep the value that
+scheduler left.
+.CW _iretnested
+now skips three words.
+.IP 3.
+.CW sched()
+sets
+.CW curP
+beside
+.CW up ,
+and must not do so by pre-filling
+.CW Proc.pctx :
+.CW vmachine()
+reaches
+.CW claimctx()
+through
+.CW "if(up->pctx == nil)" ,
+so filling the field stopped any context after the first from ever
+being claimed \(em one context per boot instead of seven, with the
+register mechanism working and nothing using it.
+.PP
+.CW curR
+is gone.  A single
+.CW REG*
+naming "the current register file" is exactly the global Phase 1b
+undoes;
+.CW R
+is now
+.CW curP->reg ,
+which is also one indirection cheaper.
+.NH 2
+Verified
+.PP
+192 boots at
+.CW "-smp 2"
+and 192 at
+.CW "-smp 4" ,
+counting a boot as passing only if it reached the shell, panicked
+nowhere and left every tripwire silent.  Testing for panics alone calls
+silent queue and context corruption a pass, which is the failure mode
+this change can introduce.
+.NH 2
+With the VM lock off
+.PP
+.CW *parallelvm=1
+on the boot line selects the lock-free mode, so both come from one
+kernel; measuring the other used to mean an edit, a rebuild and a
+relink to ask a question a boot can answer.
+.PP
+It does not boot, but it now reaches the shell, which it never did
+before, and interpreters inside the VM at once went from one to eight.
+Four bugs were found and fixed on the way there, all of them wrong at
+.CW parallelvm=0
+too, where nothing read the state they corrupted:
+.IP \(bu
+A blocking Dis system call never reached a safepoint.
+.CW isave()
+published the registers but left
+.CW inxec
+set, so a context held its claim for the whole of an unbounded sleep;
+.CW stoptheworld()
+spun 5569345 times.
+.CW isave()
+is now entersyscall and
+.CW irestore()
+exitsyscall.
+.IP \(bu
+Freeing the running Prog cleared
+.CW curprog
+and left
+.CW inxec
+set, so that context never reached a safepoint again.  Named by
+instrumenting
+.CW Pctx
+with its owner and the caller that last set the flag:
+.CW "ctx 2 curprog 0x0 set by irestore from closeegrp+0xe, owner pid 9 Queueing" .
+.IP \(bu
+Two collectors could run at once.
+.CW stoptheworld()
+waits for contexts with a quantum open and a second collector has none.
+.CW gclock()
+does not prevent it \(em it is a counter, and both read it as zero.
+.CW collect()
+gates the whole sequence on a QLock.
+.IP \(bu
+.CW delrunq()
+searched this context's queue and the global one, so a Prog killed on
+another context's queue was freed while still linked.
+.PP
+A wakeup from a process with no context of its own now goes on the
+global queue rather than onto whatever
+.CW curP
+happens to name, which is
+.CW globrunqput
+and is there for the same reason.
+.PP
+What is left is not diagnosed:
+.CW "incref: bad r 0x300000003"
+from
+.CW fdtochan+0x63 ,
+a corrupt Chan out of an Fgrp.  Two hypotheses were tested and
+disproved on the way here \(em that context sharing at
+.CW claimctx()
+exhaustion was the cause (raising
+.CW MAXPCTX
+to 32 left five contexts claimed and changed nothing) and that the
+compiler's register reservation had broken codegen (the same tree
+boots clean with the fix and without
+.CW DISCTXREG ).
+Neither is written up as a cause anywhere, and neither should be.
