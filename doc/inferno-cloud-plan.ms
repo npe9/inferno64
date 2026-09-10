@@ -4469,10 +4469,11 @@ and
 conditionals, which is what AGENTS.md says and which cloud work is
 exactly where one is tempted to break.
 .NH 1
-What cannot be tested here, and why that matters
+Typing at a console, which nothing here could do
 .PP
-Console input.  Every board in this tree has a serial console and
-nothing in the repository can type at one.  The scripts drive QEMU with
+Every board in this tree has a serial console and, until
+.CW scripts/type-at-console.py ,
+nothing in the repository could press a key at one.  The scripts drive QEMU with
 .CW "-serial file:" ,
 which is output-only; piping into
 .CW "-serial mon:stdio"
@@ -4495,11 +4496,32 @@ ever pressed a key.  The bug was found by connecting to a Compute
 Engine instance's serial console by hand, and the fix (e383ca73) is
 verified the same way, because there is no other way to verify it.
 .PP
-Anyone building that harness should validate it against a board whose
-console input is known to work before trusting a negative result from
-it.  Skipping that step is how a claim that "serial input has never
-worked on pc64" got made here on the strength of a test that could not
-have shown it either way.
+What works is QEMU's
+.CW pipe
+chardev:
+.CW "-chardev pipe,id=c0,path=BASE"
+reads
+.CW BASE.in
+and writes
+.CW BASE.out
+as ordinary FIFOs, and a client holding both open O_RDWR can write into
+one while reading the other.
+.CW scripts/type-at-console.py
+is that client.  It was validated against arm64, whose console input
+already worked, before being pointed at pc64 \(em
+.CW "echo PIPE-WORKS"
+came back from one and
+.CW "echo PC64-TYPING-WORKS"
+from the other, and against the committed tree with no instrumentation
+in it,
+.CW "echo COMMITTED-STATE-WORKS" .
+.PP
+That ordering is the point and it is why this section is still here
+after the gap closed.  A claim that "serial input has never worked on
+pc64" was made in this branch on the strength of a test that could not
+have shown it either way, and was withdrawn only when the same test was
+finally pointed at a board known to answer.  Validate the instrument
+against a positive before trusting it on a negative.
 .NH 1
 What this needs that is not code
 .PP
