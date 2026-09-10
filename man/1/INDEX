@@ -428,6 +428,7 @@ nsbuild nsbuild
 ntest sh-expr
 ohgreat ohgreat
 or sh-std
+orchard orchard
 os os
 p p
 palette palette

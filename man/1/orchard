@@ -1,0 +1,100 @@
+.TH ORCHARD 1
+.SH NAME
+orchard \- a maze chase
+.SH SYNOPSIS
+.B games/orchard
+[
+.B -t
+|
+.B -s
+] [
+.B -q
+]
+.SH DESCRIPTION
+.I Orchard
+is a chase in the shape that genre took:
+a maze of berries to clear,
+four chasers that each want somewhere different,
+four bigger berries that turn them blue and edible for a while,
+and a tunnel across the middle row that both sides can use.
+Eating a frightened chaser is worth 200, then 400, then 800, then 1600
+until the fright wears off; it goes back to its pen as a pair of eyes
+and comes out again.
+Clearing the maze advances the level and shortens the fright.
+.PP
+What this exercises in
+.IR nes (2)
+that the other two do not is per-tile reasoning.
+Everything moves on the grid and may only change direction at a tile's
+centre, and a chaser picks its direction each time it reaches one by
+scoring the exits \- all but the one it came from \- against a target
+square, ties going to a fixed order of up, left, down, right so a chase
+is repeatable rather than a coin toss.
+The target is the only thing that differs between the four:
+one comes straight at you,
+one aims four squares in front of you,
+one mirrors the first about a point ahead of you so it closes from the
+far side,
+and one gives up and goes home when it gets close.
+They alternate between chasing and scattering to their own corners, and
+turn round when that changes, which is what stops one tailing you down a
+corridor for ever.
+.PP
+Arrow keys or
+.BR wasd .
+A direction is remembered until it can be taken, so a turn may be asked
+for before the corner.
+.B q
+or Escape quits.
+.PP
+.B -q
+starts silent.
+.B -t
+runs the self test.
+.B -s
+plays a scripted opening headless and writes the frame to
+.BR orchard.raw .
+.SH EXAMPLE
+.EX
+games/orchard
+emu\-cocoa \-r. /dis/games/orchard.dis \-t
+.EE
+.SH SOURCE
+.B /appl/games/orchard.b
+.SH SEE ALSO
+.IR nes (2),
+.IR rivet (1),
+.IR sprocket (1),
+.IR starling (1)
+.SH DIAGNOSTICS
+.B -t
+drives the same
+.I step
+the game loop drives and asserts on game state.
+It checks the maze's shape and that it fits the screen;
+that the player starts on a tile centre and returns to one;
+that a wall stops it rather than letting it through;
+that berries are eaten, the count agrees with the maze afterwards, and
+eating scores;
+that a big berry frightens all four chasers at once;
+that eating a frightened one is worth 200 then 400 and turns it to eyes,
+and that an unfrightened one costs a life;
+that the four want four different squares and the first wants the
+player's own;
+that a chaser released from the pen gets out of it;
+that the tunnel wraps both ways;
+and that an empty maze advances the level and refills.
+.SH BUGS
+There is one maze.
+Levels differ only in how long a big berry lasts.
+.PP
+A frightened chaser aims at the opposite corner rather than fleeing the
+player directly, so it can run towards you across a room on its way
+there.
+.PP
+.I Newround
+deliberately does not rebuild the maze \- that is what keeps a lost life
+from refilling it \- which means a test that wants berries where the
+player starts has to ask for both.
+Two checks failed for that reason before it was noticed, and read
+exactly like a broken pickup.
