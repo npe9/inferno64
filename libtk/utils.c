@@ -71,10 +71,38 @@ static struct Cmd cmdmain[] =
  */
 TkSpace	tkspaces[] =
 {
-	/* labelpadx, labelpady, bitpadx, bitpady, entrypadx, entrypady, textpadx, textpady */
-	{ 3, 0, 0, 0, 0, 0, 2, 0 },	/* TkSclassic */
-	{ 8, 4, 2, 2, 4, 3, 4, 3 },	/* TkSflat */
+	/* labelpadx, labelpady, bitpadx, bitpady, entrypadx, entrypady, textpadx, textpady, scaleborder */
+	{ 3, 0, 0, 0, 0, 0, 2, 0, 0 },	/* TkSclassic */
+	{ 8, 4, 2, 2, 4, 3, 4, 3, 1 },	/* TkSflat */
 };
+
+/*
+ * The default border width a widget asks for, given the one it would
+ * have asked for before styles existed.
+ *
+ * The chrome's artwork already scales with the font, but the borders did
+ * not, so a one-pixel line that reads as an edge at the tree's own font
+ * is a hairline beside a 32-pixel one.  The classic style keeps the
+ * literal number - every existing layout depends on it, since a border
+ * is part of what a widget measures - and only a style that has opted
+ * in gets a line that grows.  16 is the height the unscaled numbers were
+ * chosen against, so a font that size still gets exactly them.
+ */
+int
+tkborderwidth(Tk *tk, int bd)
+{
+	int h, s;
+
+	if(bd <= 0 || !tkspace(tk)->scaleborder)
+		return bd;
+	if(tk == nil || tk->env == nil || tk->env->font == nil)
+		return bd;
+	h = tk->env->font->height;
+	s = (h + 8) / 16;
+	if(s < 1)
+		s = 1;
+	return bd * s;
+}
 
 TkSpace*
 tkspace(Tk *tk)

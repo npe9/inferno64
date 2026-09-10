@@ -72,6 +72,23 @@ The spacings, though, are read when a widget is
 .IR configured ,
 so they apply to widgets built after the command and not to ones already
 on the screen \- set the style before building the interface.
+.PP
+The
+.B flat
+style also derives a widget's default border width from the font, so
+that a line which reads as an edge at one size is not a hairline at
+another.
+It is the TOPLEVEL's font that decides it, not the widget's: the default
+is set when the object is made, before its own
+.B -font
+has been parsed.
+An explicit
+.B -borderwidth
+is never scaled.
+Under
+.B classic
+the border is the literal number it always was, because every existing
+layout has measured itself against that.
 .SH EXAMPLE
 .EX
 style flat

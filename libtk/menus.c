@@ -191,7 +191,7 @@ tkmkmenubutton(TkTop *t, char *arg, char **ret, int type, TkOption *opts)
 	tk = tknewobj(t, type, sizeof(Tk)+sizeof(TkLabel));
 	if(tk == nil)
 		return TkNomem;
-	tk->borderwidth = 2;
+	tk->borderwidth = tkborderwidth(tk, 2);
 	tk->flag |= Tknograb;
 
 	tkl = TKobj(TkLabel, tk);
@@ -663,7 +663,7 @@ tkmenu(TkTop *t, char *arg, char **ret)
 	tkw->di = (void*)-1;		// XXX
 	tk->relief = TKraised;
 	tk->flag |= Tknograb;
-	tk->borderwidth = 1;
+	tk->borderwidth = tkborderwidth(tk, 1);
 
 	tko[0].ptr = tk;
 	tko[0].optab = tkgeneric;

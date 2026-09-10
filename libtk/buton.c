@@ -128,7 +128,7 @@ newbutton(TkTop *t, int btype, char *arg, char **ret)
 		break;
 	default:
 		tk->relief = TKraised;
-		tk->borderwidth = 1;
+		tk->borderwidth = tkborderwidth(tk, 1);
 		tko[2].ptr = nil;
 		break;
 	}

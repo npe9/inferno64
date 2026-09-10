@@ -106,7 +106,7 @@ tkscrollbar(TkTop *t, char *arg, char **ret)
 	tks = TKobj(TkScroll, tk);
 
 	tk->relief = TKflat;
-	tk->borderwidth = 1;
+	tk->borderwidth = tkborderwidth(tk, 1);
 	tks->activer = TKraised;
 	tks->orient = Tkvertical;
 

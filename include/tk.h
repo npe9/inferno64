@@ -447,6 +447,7 @@ struct TkSpace
 	int	entrypady;
 	int	textpadx;	/* text widget contents */
 	int	textpady;
+	int	scaleborder;	/* derive the default border from the font? */
 };
 
 struct TkGeom
@@ -661,6 +662,7 @@ extern	char*	tkscale(TkTop*, char*, char**);
 extern	char*	tkscrollbar(TkTop*, char*, char**);
 extern	char*	tkstylecmd(TkTop*, char*, char**);
 extern	TkSpace	tkspaces[];
+extern	int	tkborderwidth(Tk*, int);
 extern	TkSpace*	tkspace(Tk*);
 extern	char*	tksend(TkTop*, char*, char**);
 extern	char*	tktext(TkTop*, char*, char**);

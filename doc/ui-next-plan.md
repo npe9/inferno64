@@ -501,11 +501,25 @@ than a constraint.
   restyled is worse than a style whose spacings apply to what is built
   after it, so the re-measure was taken back out and `style(9)` says to
   set the style before building the interface.
-- **Square corners and one-pixel lines at every size.** The chrome now
-  scales its artwork with the font (§ *The chrome scales too*), but the
-  borders do not: a 1-pixel bevel at a 32-pixel font is a hairline. A
-  border width derived from the font, the way the button artwork now is,
-  is the same fix one layer down.
+- **Square corners** remain. ~~**and one-pixel lines at every size**~~ —
+  **the scaled border is done**, as `tkborderwidth()` in `libtk/utils.c`,
+  and it is the same fix one layer down as the plan predicted. Under the
+  flat style a widget's default border is derived from the font: 1 pixel
+  at a 15-pixel font, 2 at 30. Under classic it is the literal number it
+  always was, because every existing layout has measured itself against
+  that — and `tkofftest(1)` asserts *both*, the growth and the
+  non-growth, so the check that protects old layouts is a check and not
+  an intention.
+
+  **It is the toplevel's font that decides it, not the widget's**, which
+  is not a choice so much as an order of operations: the default border
+  is set when the object is made, before `tkparse()` has looked at the
+  widget's own `-font`. A `-font` on the button arrives too late to be
+  measured, so the test uses two toplevels rather than two buttons. An
+  explicit `-borderwidth` is never scaled.
+
+  Corners are what is left, and they want a rounded-rectangle primitive
+  that `libtk` does not have.
 - **The colours are flat because they were literals.** That part is done
   — `wmtheme(2)` — but nothing yet *uses* it to do anything more than
   reproduce the old palette. A second table is now a small change, and
@@ -528,8 +542,10 @@ the switch is `style(9)` rather than `wmtheme(2)`, because the choice has
 to be made where the border is drawn, in C, and `wmtheme(2)` is Limbo and
 holds colours. A Limbo caller says `tk->cmd(top, "style flat")` like any
 other Tk command, so nothing had to be plumbed between the two.
-~~**Spacing is next**~~ — done, and it *was* mostly a table. Corners and
-scaled borders are last and are cosmetic.
+~~**Spacing is next**~~ — done, and it *was* mostly a table.
+~~Corners and scaled borders are last~~ — scaled borders done; corners
+are all that remain of this section, and they need a primitive that is
+not there.
 
 **Still open in this section:** nothing yet *uses* the flat style —
 `tkclient(2)` does not offer it, so a program has to ask by name. Whether

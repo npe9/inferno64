@@ -232,7 +232,7 @@ tkentry(TkTop *t, char *arg, char **ret)
 		return TkNomem;
 
 	tk->relief = TKsunken;
-	tk->borderwidth = 1;
+	tk->borderwidth = tkborderwidth(tk, 1);
 	tk->flag |= Tktakefocus;
 	tk->highlightwidth = 1;
 

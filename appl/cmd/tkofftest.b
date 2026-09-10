@@ -771,7 +771,52 @@ checkstyle()
 		"the flat style insets a widget's contents further (%dx%d against %dx%d)",
 		fw, fh, cw, ch));
 
-	tk->cmd(top, "style classic");
+	checkscaledborder();
+}
+
+# A one-pixel line reads as an edge at the tree's own font and as a
+# hairline beside one twice as tall.  Under the flat style the default
+# border is derived from the font instead, the way the titlebar's artwork
+# already is.
+#
+# It has to be the TOPLEVEL's font, not the widget's: the default border
+# is set when the object is made, before tkparse() has looked at the
+# widget's own -font, so a `-font' on the button itself arrives too late
+# to be measured.  Hence two toplevels rather than two buttons.
+checkscaledborder()
+{
+	sm := "/fonts/lucidasans/unicode.8.font";	# 15 pixels high
+	lg := "/fonts/pelm/ascii.16.font";		# 30
+	bs := array[2] of int;
+	bc := array[2] of int;
+	fonts := array[2] of {sm, lg};
+	for(i := 0; i < 2; i++){
+		blank();
+		t := tk->toplevel(disp, "-font " + fonts[i]);
+		if(t == nil)
+			return;
+		t.screenr = off.r;
+		tk->cmd(t, "style flat");
+		tk->cmd(t, "button .b -text {Cancel}");
+		tk->cmd(t, "pack .b");
+		bs[i] = int tk->cmd(t, ".b cget -borderwidth");
+
+		t2 := tk->toplevel(disp, "-font " + fonts[i]);
+		if(t2 == nil)
+			return;
+		t2.screenr = off.r;
+		tk->cmd(t2, "button .b -text {Cancel}");
+		tk->cmd(t2, "pack .b");
+		bc[i] = int tk->cmd(t2, ".b cget -borderwidth");
+	}
+	sys->print("     border flat %d -> %d, classic %d -> %d (font 15 -> 30)\n",
+		bs[0], bs[1], bc[0], bc[1]);
+	report(bs[1] > bs[0], sys->sprint(
+		"a flat border grows with the font (%d at 15 pixels, %d at 30)",
+		bs[0], bs[1]));
+	report(bc[0] == bc[1] && bc[0] == 1, sys->sprint(
+		"and a classic border does not, as every existing layout assumes (%d and %d)",
+		bc[0], bc[1]));
 }
 
 # the one widget whose relief WAS its state, built the same way every time
