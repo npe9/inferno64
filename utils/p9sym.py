@@ -220,6 +220,17 @@ class Resolver:
 			fns, self.d, self.entry, self.text = readsyms(path)
 		self.fns = [(a, n) for a, n in fns if self.entry <= a < self.entry + self.text]
 		self.addrs = [a for a, _ in self.fns]
+		"""
+		Data symbols, kept separately.  A capture is not always a pc:
+		a Type pointer, a static object, a global named in a panic --
+		this tool could resolve none of them, and the answer was
+		being got by eye against a link map.  Same table, different
+		half: everything the text filter above threw away, in
+		address order.
+		"""
+		self.data = sorted((a, n) for a, n in fns
+			if not (self.entry <= a < self.entry + self.text))
+		self.daddrs = [a for a, _ in self.data]
 		self.md = None
 		try:
 			from capstone import Cs, CS_ARCH_X86, CS_MODE_64
@@ -235,6 +246,15 @@ class Resolver:
 			return None, None, None
 		nxt = self.addrs[k+1] if k+1 < len(self.addrs) else self.entry + self.text
 		return self.fns[k][1], pc - self.fns[k][0], (self.fns[k][0], nxt)
+
+	def dname(self, a):
+		"""Nearest data symbol at or below a, and the offset into it."""
+		if not self.data:
+			return None, None
+		k = bisect.bisect_right(self.daddrs, a) - 1
+		if k < 0:
+			return None, None
+		return self.data[k][1], a - self.data[k][0]
 
 	def check(self, pc):
 		"""'ret', 'boundary', 'interior', or None if unavailable.
@@ -386,13 +406,14 @@ class Resolver:
 
 def main():
 	av = sys.argv[1:]
-	docheck = doscan = False
-	while av and av[0] in ('-c', '-s'):
+	docheck = doscan = dodata = False
+	while av and av[0] in ('-c', '-s', '-d'):
 		if av[0] == '-c': docheck = True
+		elif av[0] == '-d': dodata = True
 		else: doscan = True
 		av = av[1:]
 	if not av:
-		sys.exit("usage: p9sym.py [-c] kernel [pc...]")
+		sys.exit("usage: p9sym.py [-c] [-s] [-d] kernel [addr...]")
 	try:
 		r = Resolver(av[0])
 	except ValueError as e:
@@ -430,7 +451,11 @@ def main():
 				% bad, file=sys.stderr)
 	vals = [int(s, 16) for s in pcs]
 	for v in vals:
-		print(r.describe(v))
+		if dodata:
+			n, off = r.dname(v)
+			print("%#x -> %s" % (v, ("%s+%#x" % (n, off)) if n else "?"))
+		else:
+			print(r.describe(v))
 	if doscan:
 		if r.md is None:
 			sys.exit("p9sym: -s needs capstone")

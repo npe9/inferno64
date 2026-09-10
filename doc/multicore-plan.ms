@@ -3366,3 +3366,39 @@ which is the direction to look and is not yet a hypothesis.
 .PP
 Six raised, five refuted, one confirmed and fixed.  The confirmed one
 was the only one put to a counter before it was believed.
+.NH 2
+A note on the bench, because it invalidated a measurement
+.PP
+This machine runs other work.  Partway through a
+.CW "-smp 2"
+against
+.CW "-smp 4"
+comparison, a foreign
+.CW qemu-system-aarch64
+appeared at 299% of a core, and the boots on both arms slowed by about
+half: 182 lines of console in thirty-five seconds where the same kernel
+had produced 422, and shell loop iterations across sixteen boots
+falling from about sixty to eleven.
+.PP
+The comparison duly reported
+.CW "-smp 4"
+failing less often, and it means nothing.  Fewer failures because less
+happened.  It is the third time on this branch that a quieter number
+has turned out to be a slower kernel rather than a better one \(em the
+first was a probe that leaked, the second a kernel that hung instead of
+crashing \(em and the shape is always the same: something that should
+have gone up did not, and only the failure count was being read.
+.PP
+So a rule for anything measured here.  Record work done, not just
+failures: shell loop iterations, console lines, whatever the workload
+makes.  A run that fails less while doing less has not improved, and
+the only way to see that is to have counted both.  The boot batch
+counts
+.CW noshell
+separately for this reason and should have been the model for the
+smaller experiments sooner than it was.
+.PP
+The corollary is scheduling.  A 192-boot batch and a sixteen-boot
+comparison cannot share this machine; each makes the other's numbers
+untrustworthy, and the batch is the one that matters, because it is
+what guards the configuration that ships.
