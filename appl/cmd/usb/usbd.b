@@ -12,12 +12,14 @@ implement Usbd;
 # what was found.
 #
 # What is real: root hubs (USB 2 and USB 3), external hubs behind them,
-# and boot-protocol HID keyboards and mice, which are what a machine's
-# firmware also drives.  Keys arrive as UTF-8 on /dev/keyboard, mouse
-# motion as "m x y b" on /dev/pointer.  Not done: report-descriptor
-# parsing (so a device that only speaks the HID report protocol, such
-# as a tablet, is configured and then ignored), mass storage, and any
-# other class.  The reference is 9front's nusb/usbd and nusb/kb;
+# boot-protocol HID keyboards and mice, which are what a machine's
+# firmware also drives, and HID devices that offer no boot protocol at
+# all -- a tablet, most modern keyboards in their native mode -- whose
+# report descriptor is parsed to find where the buttons and the axes
+# sit in the report.  Keys arrive as UTF-8 on /dev/keyboard, pointer
+# motion as "m x y b" on /dev/pointer.  Not done: output and feature
+# reports, and report-ID multiplexing beyond skipping the leading id
+# byte.  The reference is 9front's nusb/usbd and nusb/kb;
 # doc/inferno-ports.ms says what was verified under QEMU.
 #
 
@@ -59,6 +61,8 @@ Ddev: con 1;
 Dconf: con 2;
 Diface: con 4;
 Dep: con 5;
+Dhid: con 16r21;	# HID class descriptor, follows its interface
+Dhidreport: con 16r22;	# the report descriptor it names the length of
 Dhub: con 16r29;
 Dsshub: con 16r2a;
 
@@ -316,8 +320,9 @@ attachdev(pp: ref Port)
 		return;
 	# walk the interface and endpoint descriptors, tracking the kind
 	# of the current interface and collecting its endpoints
-	iface := -1;		# HID boot interface number, else -1
-	proto := 0;		# 1 keyboard, 2 mouse
+	iface := -1;		# HID interface number, else -1
+	proto := 0;		# 1 keyboard, 2 mouse, Preport for no boot
+	replen := 0;		# its report descriptor's length, from Dhid
 	ums := 0;		# in a Bulk-Only mass-storage interface
 	bin := -1;		# its bulk in endpoint number
 	bout := -1;		# its bulk out endpoint number
@@ -332,14 +337,27 @@ attachdev(pp: ref Port)
 		case t {
 		Diface =>
 			iface = -1;
+			replen = 0;
 			ums = 0;
 			if(i + 8 <= r && int cd[i+5] == 3 && int cd[i+6] == 1){
 				iface = int cd[i+2];
 				proto = int cd[i+7];
+			} else if(i + 8 <= r && int cd[i+5] == 3){
+				# HID class with no boot subclass: the
+				# report descriptor is the only thing
+				# that says what its reports contain.
+				iface = int cd[i+2];
+				proto = Preport;
 			} else if(i + 8 <= r && int cd[i+5] == 8 && int cd[i+7] == 16r50){
 				# class 8 mass storage, protocol 0x50 Bulk-Only
 				ums = 1;
 			}
+		Dhid =>
+			# the class descriptor that follows the interface.
+			# bNumDescriptors at [i+5], then pairs of (type,
+			# length); the first is the report descriptor.
+			if(iface >= 0 && i + 9 <= r && int cd[i+6] == Dhidreport)
+				replen = int cd[i+7] | int cd[i+8]<<8;
 		Dep =>
 			if(i + 7 > r)
 				;
@@ -349,7 +367,7 @@ attachdev(pp: ref Port)
 				maxpkt := int cd[i+4] | int cd[i+5]<<8;
 				ival := int cd[i+6];
 				if(iface >= 0 && (addr & 16r80) != 0 && (attr & 3) == 3){
-					hidstart(d, iface, proto, addr & 16r0f, maxpkt, ival);
+					hidstart(d, iface, proto, replen, addr & 16r0f, maxpkt, ival);
 					return;
 				}
 				if(ums && (attr & 3) == 2){
@@ -373,7 +391,7 @@ attachdev(pp: ref Port)
 		etherstart(d);
 		return;
 	}
-	sys->print("usbd: %s: no boot-protocol HID, mass-storage or ethernet interface, left configured\n", d.name);
+	sys->print("usbd: %s: no HID, mass-storage or ethernet interface, left configured\n", d.name);
 }
 
 #
@@ -439,12 +457,20 @@ etherstart(d: ref Dev)
 
 #
 # boot-protocol keyboard (proto 1) or mouse (proto 2): put the
-# interface in boot protocol, make the interrupt endpoint and read it
+# interface in boot protocol, make the interrupt endpoint and read it.
+# proto Preport is a HID interface that offers no boot protocol: it
+# stays in report protocol and its report descriptor is parsed instead.
 #
-hidstart(d: ref Dev, iface, proto, epn, maxpkt, ival: int)
+hidstart(d: ref Dev, iface, proto, replen, epn, maxpkt, ival: int)
 {
+	rep: ref Hidrep;
+
 	usbcmd(d, Rh2d|Rclass|Riface, Rsetidle, 0, iface, nil, 0);
-	if(usbcmd(d, Rh2d|Rclass|Riface, Rsetproto, 0, iface, nil, 0) < 0){
+	if(proto == Preport){
+		rep = hidparse(d, iface, replen);
+		if(rep == nil)
+			return;
+	} else if(usbcmd(d, Rh2d|Rclass|Riface, Rsetproto, 0, iface, nil, 0) < 0){
 		sys->fprint(sys->fildes(2), "usbd: %s: set boot protocol: %r\n", d.name);
 		return;
 	}
@@ -475,9 +501,344 @@ hidstart(d: ref Dev, iface, proto, epn, maxpkt, ival: int)
 	2 =>
 		sys->print("usbd: %s: boot mouse on %s\n", d.name, ep.name);
 		spawn mousereader(d, ep);
+	Preport =>
+		spawn hidreader(d, ep, rep);
 	* =>
 		sys->print("usbd: %s: HID protocol %d ignored\n", d.name, proto);
 	}
+}
+
+#
+# HID report descriptors.  A device with no boot protocol says nothing
+# about its reports except through this descriptor, which is a byte
+# stream of items: a one-byte prefix (tag<<4 | type<<2 | size, where
+# size 3 means four bytes) and that many data bytes.  Global items
+# (usage page, logical minimum and maximum, report size and count,
+# report id) persist until changed; local items (usage, usage minimum
+# and maximum) are cleared after every main item; a main Input item
+# turns the current globals and locals into report_count fields of
+# report_size bits each, laid end to end from the current bit offset.
+#
+# Two rules are easy to get wrong and both are load-bearing here.  The
+# bit offset advances for every Input item including a constant one --
+# QEMU's tablet puts three bits of padding between its five button bits
+# and its 16-bit X, and skipping that reads X three bits early.  And the
+# nth field of a multi-count Input takes the nth local usage, which is
+# how "Usage (X), Usage (Y), Report Count (2), Input" names two
+# different axes in one item.
+#
+Preport: con 16r10;	# a proto value no HID protocol byte can hold
+
+Hidfld: adt {
+	page:	int;		# usage page this field belongs to
+	usage:	int;		# its usage within that page
+	off:	int;		# bit offset into the report
+	size:	int;		# width in bits
+	lmin:	int;		# logical minimum and maximum, which say
+	lmax:	int;		# both the range and whether it is signed
+	rel:	int;		# Input item's Relative bit
+};
+
+Hidrep: adt {
+	id:	int;		# report id, or 0 if the device uses none
+	nbit:	int;		# total bits of the report
+	f:	list of ref Hidfld;
+	xf:	ref Hidfld;	# generic desktop X, Y and Wheel, if any
+	yf:	ref Hidfld;
+	wf:	ref Hidfld;
+	btn:	list of ref Hidfld;	# button page fields, in order
+};
+
+# The generic desktop page and the usages this reads from it.
+Updesktop: con 1;
+Upbutton: con 9;
+Ugx: con 16r30;
+Ugy: con 16r31;
+Ugwheel: con 16r38;
+
+hidparse(d: ref Dev, iface, replen: int): ref Hidrep
+{
+	if(replen <= 0 || replen > 4096){
+		sys->print("usbd: %s: HID report descriptor length %d, not parsed\n",
+			d.name, replen);
+		return nil;
+	}
+	# recipient is the interface, and wIndex is the interface number:
+	# unlike the device-level fetches around it
+	(n, rd) := usbin(d, Rd2h|Rstd|Riface, Rgetdesc, Dhidreport<<8, iface, replen);
+	if(n < 2){
+		sys->fprint(sys->fildes(2), "usbd: %s: get report descriptor: %r\n", d.name);
+		return nil;
+	}
+	if(debug){
+		s := "";
+		for(i := 0; i < n; i++)
+			s += sys->sprint(" %.2ux", int rd[i]);
+		sys->print("usbd: %s: report descriptor%s\n", d.name, s);
+	}
+
+	rep := ref Hidrep(0, 0, nil, nil, nil, nil, nil);
+	page := 0;
+	lmin := 0;
+	lmax := 0;
+	rsize := 0;
+	rcount := 0;
+	usages: list of int;		# local usages, in the order given
+	umin := -1;
+	umax := -1;
+	i := 0;
+	while(i < n){
+		b := int rd[i++];
+		sz := b & 3;
+		if(sz == 3)
+			sz = 4;
+		if(i + sz > n)
+			break;
+		v := 0;
+		for(k := 0; k < sz; k++)
+			v |= int rd[i+k] << (8*k);
+		i += sz;
+		case b & 16rfc {
+		16r84 =>				# Report ID (global)
+			rep.id = v;
+		16r04 =>				# Usage Page (global)
+			page = v;
+		16r14 =>				# Logical Minimum (global)
+			lmin = sext32(v, sz);
+		16r24 =>				# Logical Maximum (global)
+			lmax = sext32(v, sz);
+		16r74 =>				# Report Size (global)
+			rsize = v;
+		16r94 =>				# Report Count (global)
+			rcount = v;
+		16r08 =>				# Usage (local)
+			usages = v :: usages;
+		16r18 =>				# Usage Minimum (local)
+			umin = v;
+		16r28 =>				# Usage Maximum (local)
+			umax = v;
+		16r80 =>				# Input (main)
+			ul := rev(usages);
+			if(ul == nil && umin >= 0 && umax >= umin)
+				for(u := umax; u >= umin; u--)
+					ul = u :: ul;
+			for(k = 0; k < rcount; k++){
+				usage := 0;
+				if(ul != nil){
+					usage = hd ul;
+					# the last usage repeats: a
+					# descriptor may name fewer
+					# usages than it has fields
+					if(tl ul != nil)
+						ul = tl ul;
+				}
+				# (v&1) is the Constant bit: padding, no
+				# usage, but its bits are still there
+				if((v & 1) == 0)
+					rep.f = ref Hidfld(page, usage, rep.nbit,
+						rsize, lmin, lmax, (v>>2) & 1) :: rep.f;
+				rep.nbit += rsize;
+			}
+			usages = nil; umin = -1; umax = -1;
+		16ra0 or 16rc0 =>			# Collection, End
+			usages = nil; umin = -1; umax = -1;
+		16r90 or 16rb0 =>			# Output, Feature (main)
+			# not read here, but their locals are cleared
+			# and they occupy no input-report bits
+			usages = nil; umin = -1; umax = -1;
+		* =>
+			;			# every other item kind
+		}
+	}
+	rep.f = rev2(rep.f);
+	for(fl := rep.f; fl != nil; fl = tl fl){
+		f := hd fl;
+		if(f.page == Updesktop){
+			case f.usage {
+			Ugx => if(rep.xf == nil) rep.xf = f;
+			Ugy => if(rep.yf == nil) rep.yf = f;
+			Ugwheel => if(rep.wf == nil) rep.wf = f;
+			}
+		} else if(f.page == Upbutton && f.usage > 0)
+			rep.btn = f :: rep.btn;
+	}
+	rep.btn = rev2(rep.btn);
+	if(rep.xf == nil || rep.yf == nil){
+		sys->print("usbd: %s: HID report has no X/Y, %d bits, left configured\n",
+			d.name, rep.nbit);
+		return nil;
+	}
+	return rep;
+}
+
+rev(l: list of int): list of int
+{
+	r: list of int;
+	for(; l != nil; l = tl l)
+		r = hd l :: r;
+	return r;
+}
+
+rev2(l: list of ref Hidfld): list of ref Hidfld
+{
+	r: list of ref Hidfld;
+	for(; l != nil; l = tl l)
+		r = hd l :: r;
+	return r;
+}
+
+sext32(v, sz: int): int
+{
+	case sz {
+	1 => if(v & 16r80) return v - 16r100;
+	2 => if(v & 16r8000) return v - 16r10000;
+	}
+	return v;
+}
+
+# pull one field out of a report, sign-extending if its logical
+# minimum says the value can be negative
+hidfield(rep: array of byte, n: int, f: ref Hidfld): int
+{
+	v := 0;
+	for(k := 0; k < f.size; k++){
+		bit := f.off + k;
+		if(bit >= n*8)
+			return 0;
+		if(int rep[bit/8] & (1 << (bit%8)))
+			v |= 1 << k;
+	}
+	if(f.lmin < 0 && f.size > 0 && f.size < 32 && (v & (1 << (f.size-1))))
+		v -= 1 << f.size;
+	return v;
+}
+
+# The screen the absolute axes are scaled onto.  Reading /dev/draw/new
+# returns twelve 11-column fields; 4 and 5 are the screen image's
+# r.min, 6 and 7 its r.max.  A board with no #i bound scales onto a
+# default instead: a tablet reporting motion at the wrong scale is
+# still a decoded tablet, and a reader that never starts proves
+# nothing.
+screensize(): (int, int)
+{
+	fd := sys->open("/dev/draw/new", Sys->ORDWR);
+	if(fd == nil)
+		return (640, 480);
+	buf := array[144] of byte;
+	n := sys->read(fd, buf, len buf);
+	fd = nil;
+	if(n < 12*12)
+		return (640, 480);
+	(nf, flds) := sys->tokenize(string buf[0:n], " \t\n");
+	if(nf < 8)
+		return (640, 480);
+	f := flds;
+	for(k := 0; k < 6; k++)
+		f = tl f;
+	w := int hd f;
+	h := int hd tl f;
+	if(w <= 0 || h <= 0)
+		return (640, 480);
+	return (w, h);
+}
+
+hidreader(d: ref Dev, ep: ref Dev, rep: ref Hidrep)
+{
+	mfd := sys->open("/dev/pointer", Sys->OWRITE);
+	if(mfd == nil){
+		sys->fprint(sys->fildes(2), "usbd: /dev/pointer: %r\n");
+		return;
+	}
+	(scrw, scrh) := screensize();
+	nbtn := 0;
+	for(bl := rep.btn; bl != nil; bl = tl bl)
+		nbtn++;
+	sys->print("usbd: %s: HID report pointer on %s: %d-bit report, x %s at %d+%d, y at %d+%d, %d buttons, screen %dx%d\n",
+		d.name, ep.name, rep.nbit,
+		relname(rep.xf.rel), rep.xf.off, rep.xf.size,
+		rep.yf.off, rep.yf.size, nbtn, scrw, scrh);
+
+	nb := (rep.nbit + 7) / 8;
+	if(rep.id != 0)
+		nb++;
+	if(nb < 1)
+		nb = 1;
+	buf := array[nb] of byte;
+	x := scrw/2;
+	y := scrh/2;
+	for(;;){
+		n := sys->read(ep.dfd, buf, len buf);
+		if(n < 0){
+			sys->fprint(sys->fildes(2), "usbd: %s: HID device gone: %r\n", d.name);
+			return;
+		}
+		body := buf;
+		nbody := n;
+		if(rep.id != 0){
+			# a device that numbers its reports puts the id
+			# in the first byte; anything else is another
+			# report and not this one
+			if(n < 1 || int buf[0] != rep.id)
+				continue;
+			body = buf[1:];
+			nbody = n - 1;
+		}
+		if(nbody <= 0)
+			continue;
+		xv := hidfield(body, nbody, rep.xf);
+		yv := hidfield(body, nbody, rep.yf);
+		if(rep.xf.rel)
+			x += xv;
+		else
+			x = scale(xv, rep.xf, scrw);
+		if(rep.yf.rel)
+			y += yv;
+		else
+			y = scale(yv, rep.yf, scrh);
+		if(x < 0)
+			x = 0;
+		if(y < 0)
+			y = 0;
+		if(x >= scrw)
+			x = scrw - 1;
+		if(y >= scrh)
+			y = scrh - 1;
+		# HID button 1 is left, 2 right, 3 middle; devpointer
+		# wants 1, 4, 2 -- the same shuffle mousereader does,
+		# here driven by the descriptor rather than by fixed
+		# bit positions
+		b := 0;
+		i := 0;
+		for(b2 := rep.btn; b2 != nil; b2 = tl b2){
+			if(hidfield(body, nbody, hd b2) != 0)
+				case i {
+				0 => b |= 1;
+				1 => b |= 4;
+				2 => b |= 2;
+				}
+			i++;
+		}
+		sys->fprint(mfd, "m %d %d %d", x, y, b);
+	}
+}
+
+relname(rel: int): string
+{
+	if(rel)
+		return "relative";
+	return "absolute";
+}
+
+scale(v: int, f: ref Hidfld, n: int): int
+{
+	span := f.lmax - f.lmin;
+	if(span <= 0)
+		return v;
+	if(v < f.lmin)
+		v = f.lmin;
+	if(v > f.lmax)
+		v = f.lmax;
+	return (v - f.lmin) * (n - 1) / span;
 }
 
 # HID usage ids 4..56 of the boot keyboard, US layout, plain and shifted

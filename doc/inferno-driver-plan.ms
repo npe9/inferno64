@@ -72,6 +72,19 @@ no built-in NIC a network.
 Report-descriptor parsing in the HID driver, so a device that does not
 offer boot protocol \(en a tablet, most modern keyboards in their
 native mode \(en is usable rather than configured and ignored.
+Done:
+.CW usbd
+parses the descriptor's global, local and main items, lays out the
+input report bit by bit (padding included, which is where a naive
+parser loses three bits and reads X wrong), and drives the axes and
+buttons it finds.  Verified against QEMU's
+.CW usb-tablet
+on both Pi configurations that carry USB: the parser derives a 48-bit
+report with absolute X at bit 8 and Y at bit 24, and an absolute point
+commanded in the tablet's 0..32767 units arrives on
+.CW /dev/pointer
+as the matching screen coordinate.  A boot mouse is attached at the
+same time and still reports, from the same reader.
 .PP
 None of this touches the kernel.  It is the same shape as this round's
 .CW usbd :

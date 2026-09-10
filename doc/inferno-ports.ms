@@ -20226,3 +20226,172 @@ no hardware looks exactly like a check that has been run, and the
 marker set is the same shape either way.
 .CW SD-NONE
 was in the baseline for as long as the board was in the suite.
+.NH 1
+HID report descriptors, and the device that was enumerated and ignored
+.PP
+.CW usbd 's
+own header said what was missing: \(lqNot done: report-descriptor
+parsing (so a device that only speaks the HID report protocol, such as
+a tablet, is configured and then ignored)\(rq.  The driver plan's USB
+list said the same in its own words, and named QEMU's
+.CW usb-tablet
+as the thing to test against.  A boot-protocol mouse and keyboard have
+fixed report layouts \(em that is what boot protocol means, and it is
+why a machine's firmware can drive them \(em so
+.CW mousereader
+and
+.CW kbdreader
+read bytes at constant offsets.  A device with no boot subclass says
+nothing about its reports except through the report descriptor.
+.PP
+The descriptor is a stream of items: a one-byte prefix (tag, type and
+size, where a size field of 3 means four data bytes) and its data.
+Global items \(em usage page, logical minimum and maximum, report size
+and count, report id \(em persist until changed.  Local items \(em
+usage, usage minimum and maximum \(em are cleared after every main
+item.  A main
+.CW Input
+item turns the current globals and locals into
+.I report_count
+fields of
+.I report_size
+bits each, laid end to end from the running bit offset.
+.PP
+Two of those rules are load-bearing and both are easy to get wrong.
+The bit offset advances for
+.I every
+.CW Input
+item, including one marked Constant: QEMU's tablet puts three bits of
+padding between its five button bits and its sixteen-bit X, and a
+parser that skips padding because padding has no usage reads X three
+bits early and gets nonsense.  And the
+.I n th
+field of a multi-count
+.CW Input
+takes the
+.I n th
+local usage, which is how
+.CW "Usage (X)" ,
+.CW "Usage (Y)" ,
+.CW "Report Count (2)" ,
+.CW Input
+names two different axes in one item; a parser that takes one usage
+per item reads Y as a second X.
+.PP
+What the parser derived, first time, from the tablet QEMU offers:
+.P1
+usbd: ep7.0: HID report pointer on ep7.1: 48-bit report,
+	x absolute at 8+16, y at 24+16, 5 buttons, screen 640x480
+.P2
+Five one-bit button fields and three of padding, then X and Y as
+sixteen-bit absolute fields, then a relative wheel: 5+3+16+16+8 = 48.
+X landing at bit 8 is itself the proof that the constant item's three
+bits were counted, since nothing but counting them puts it there.  The absolute axes are
+scaled from the descriptor's own logical minimum and maximum onto the
+screen, which
+.CW usbd
+reads out of
+.CW /dev/draw/new
+\(em twelve eleven-column fields, of which 6 and 7 are the screen
+image's
+.CW r.max .
+A board with no
+.CW #i
+bound scales onto 640x480 instead, which is what these boards' own
+framebuffer is: a tablet reporting motion at the wrong scale is still a
+decoded tablet, and a reader that refuses to start proves nothing.
+.PP
+The check asserts absolute positioning, which is the one thing a
+relative decode cannot fake.  The hand on the QEMU monitor sends the
+pointer to three quarters along x and one quarter down y in the
+tablet's own 0..32767 units; the guest scales the same fractions onto
+its screen and waits for that point:
+.P1
+USB-TABLET-OK absolute 479 119 on 640x480 through usbd's
+	HID report-descriptor decode
+USB-MOUSE-OK 14 events, motion and buttons 6 through usbd's
+	HID decode to #m/pointer
+.P2
+Both markers, from one boot.  QEMU routes
+.CW abs
+events to an absolute device and
+.CW rel
+events to a relative one, so the tablet and the boot mouse take their
+own halves of what the monitor sends and neither sees the other's.
+The boot mouse sweeps x by eight and never touches y, so it can drift
+through the x the tablet check wants but never through the pair.
+.PP
+One reader, not two.
+.CW devpointer
+has a single event queue for the whole machine
+.CW ( ptrq
+in
+.CW os/inferno/port/devpointer.c ),
+so a second reader on
+.CW /dev/pointer
+consumes events the first was waiting for and makes both checks flaky.
+Two windows in series would have been worse for a different reason: the
+four Pi configurations with no pointer attached would each wait out two
+twenty-five second timeouts instead of one.  So one loop watches both
+conditions and reports both markers, and the configurations with
+nothing plugged in say
+.CW USB-TABLET-NONE
+beside
+.CW USB-MOUSE-NONE
+in the same window they always used.
+.NH 1
+A console line and its newline, in one write
+.PP
+Adding the tablet to
+.CW raspi3b-usb
+made an evidence line fail that had passed for as long as it had
+existed:
+.P1
+missing evidence: DISK-DOS-OK /n/dos: usb\e.txt[^ ]*$
+.P2
+and the log said why.
+.P1
+DISK-DOS-OK /n/dos: usb.txtetherusb: ep4.0: bulk in ep4.1 (64) ...
+.P2
+Another process's message had landed between
+.CW usb.txt
+and the newline that belonged to it.  The tablet is a fifth device on
+the hub, so
+.CW usbd
+takes a moment longer to reach the NIC, and that moment put
+.CW etherusb 's
+first print exactly there.  It failed twice, which is what the suite's
+retry is for and what tells a shifted race apart from a starved run.
+.PP
+The cause was in
+.CW putstrn0
+in
+.CW os/inferno/port/devcons.c ,
+and the comment above it had said so since it was written: \(lqMulti-line
+messages to serial consoles may get interspersed with other
+messages\(rq.  The loop finds each newline and writes the line and its
+CRLF as two separate calls:
+.P1
+(*wq)(serialoq, str, m);
+(*wq)(serialoq, "\e r\e n", 2);
+.P2
+.CW qwrite
+sleeps when the output queue is full, so a second writer can run
+between those two and append its own block first.  The line it lands in
+is then split at a point that has nothing to do with either message.
+.PP
+Both go out as one
+.CW qwrite
+now, out of a 256-byte buffer, with the old two-write path kept for a
+line too long for it \(em no worse there than it always was.  Lines from
+different processes still interleave with each other, which is right
+and unavoidable; what cannot happen any more is a second writer landing
+inside a line.
+.PP
+This is worth more than the evidence line it was found by.  A console
+line is the unit a log is read in, by a person as much as by a script,
+and a suite whose markers are single lines rests on that unit being
+whole.  The defect had been there all along and only ever showed when
+two processes printed close enough together \(em which is to say, it
+showed when the board was doing two things at once, which is exactly
+when a log matters most.

@@ -142,8 +142,10 @@ kmesgputs(char *str, int n)
 /*
  *   Print a string on the console.  Convert \n to \r\n for serial
  *   line consoles.  Locking of the queues is left up to the screen
- *   or uart code.  Multi-line messages to serial consoles may get
- *   interspersed with other messages.
+ *   or uart code.  Messages from different processes may be
+ *   interleaved with each other, but not within a line: putstrn0
+ *   writes each line and its CRLF as a single qwrite so a second
+ *   writer cannot land between a line's text and its newline.
  */
 static void
 putstrn0(char *str, int n, int usewrite)
@@ -151,6 +153,7 @@ putstrn0(char *str, int n, int usewrite)
 	int m;
 	char *t;
 	int (*wq)(Queue*, void*, int);
+	char lbuf[256];		/* one console line plus its CRLF */
 
 	/*
 	 *  how many different output devices do we need?
@@ -184,8 +187,29 @@ putstrn0(char *str, int n, int usewrite)
 		t = memchr(str, '\n', n);
 		if(t != nil) {
 			m = t-str;
-			(*wq)(serialoq, str, m);
-			(*wq)(serialoq, "\r\n", 2);
+			/*
+			 * The line and its CRLF go out in one qwrite, not
+			 * two.  qwrite sleeps when the queue is full, and a
+			 * second writer that ran in between used to land
+			 * inside the line: a boot with a USB stick and a USB
+			 * NIC printed "DISK-DOS-OK /n/dos: usb.txt" and then
+			 * another process's message before the newline that
+			 * belonged to it.  The console line is the unit a log
+			 * is read in -- and the unit the board suite's
+			 * evidence lines match against -- so a line split in
+			 * the middle is a real fault and not cosmetic.  A
+			 * line too long for the buffer falls back to the two
+			 * writes, which is no worse than it always was.
+			 */
+			if(m + 2 <= sizeof lbuf) {
+				memmove(lbuf, str, m);
+				lbuf[m] = '\r';
+				lbuf[m+1] = '\n';
+				(*wq)(serialoq, lbuf, m+2);
+			} else {
+				(*wq)(serialoq, str, m);
+				(*wq)(serialoq, "\r\n", 2);
+			}
 			n -= m+1;
 			str = t+1;
 		} else {

@@ -563,6 +563,16 @@ ethercheck()
 # are injected and both are checked: right must arrive as 4 and middle
 # as 2, which fails if the shuffle is dropped or reversed.
 #
+# The tablet is checked by the same reader, in the same window.  Two
+# readers would not do: devpointer has one event queue for the whole
+# machine (ptrq in os/inferno/port/devpointer.c), so a second reader
+# consumes events the first was waiting for and makes both checks
+# flaky.  Two windows in series would not do either: a board with
+# neither device attached would then wait out two timeouts instead of
+# one, which is four of the six Pi configurations paying fifty seconds
+# for nothing.  So one loop watches for both conditions and reports
+# both markers.
+#
 # Movement is asserted as growth between consecutive events, not as a
 # coordinate.  The first event a fresh reader sees is the cursor's own
 # starting position -- 320 240, the middle of the screen -- delivered
@@ -583,6 +593,26 @@ mousecheck()
 		sys->print("USB-MOUSE-NONE /dev/pointer: %r\n");
 		return;
 	}
+	# The point the tablet is sent to, scaled the way usbd scales it.
+	# drawtest() has already bound #i and loaded Draw; if it could
+	# not, 640x480 is this board's framebuffer (ScrX/ScrY in
+	# os/inferno/raspi4/screenbcm.c) and is what usbd falls back to
+	# as well, so the two ends still agree.
+	scrw := 640;
+	scrh := 480;
+	if(draw != nil){
+		disp: ref Display;
+		{ disp = Display.allocate("/dev"); }
+		exception { "*" => disp = nil; }
+		if(disp != nil && disp.image != nil){
+			dr := disp.image.r;
+			scrw = dr.max.x - dr.min.x;
+			scrh = dr.max.y - dr.min.y;
+		}
+	}
+	wantx := 3*(scrw-1)/4;
+	wanty := (scrh-1)/4;
+
 	evc := chan of string;
 	tmo := chan of int;
 	spawn mousereadproc(fd, evc);
@@ -592,6 +622,9 @@ mousecheck()
 	moved := 0;
 	buttons := 0;
 	nev := 0;
+	tabhit := 0;
+	bestx := -1;
+	besty := -1;
 loop:
 	for(;;) alt {
 	ev := <-evc =>
@@ -600,6 +633,7 @@ loop:
 			continue;
 		flds = tl flds;			# drop the leading "m"
 		x := int hd flds;
+		y := int hd tl flds;
 		b := int hd tl tl flds;
 		if(prevx < 0){
 			# The first event is the cursor's own starting
@@ -613,11 +647,23 @@ loop:
 			moved = 1;
 		prevx = x;
 		buttons |= b;
-		if(moved && (buttons & 4) != 0 && (buttons & 2) != 0)
+		# the tablet's own condition, on the same events: the
+		# nearest point seen is kept so a decode that is wrong
+		# by a scale factor can be named rather than merely
+		# missed
+		if(bestx < 0 || iabs(x-wantx)+iabs(y-wanty) < iabs(bestx-wantx)+iabs(besty-wanty)){
+			bestx = x;
+			besty = y;
+		}
+		if(iabs(x-wantx) <= 4 && iabs(y-wanty) <= 4)
+			tabhit = 1;
+		if(moved && (buttons & 4) != 0 && (buttons & 2) != 0 && tabhit)
 			break loop;
 	<-tmo =>
 		break loop;
 	}
+
+	tabletreport(nev, tabhit, wantx, wanty, scrw, scrh, bestx, besty);
 
 	if(nev == 0){
 		sys->print("USB-MOUSE-NONE no pointer events (no mouse attached?)\n");
@@ -638,6 +684,45 @@ loop:
 		return;
 	}
 	sys->print("USB-MOUSE-OK %d events, motion and buttons %d through usbd's HID decode to #m/pointer\n", nev, buttons);
+}
+
+# The tablet's half of the HID path, reported from the same reader.  A
+# usb-tablet offers no boot protocol, so nothing in usbd's fixed-offset
+# mouse decode can read it: it is the device the report-descriptor
+# parser exists for, and before that parser it was enumerated,
+# configured and then ignored.
+#
+# What this asserts is absolute positioning, which is the thing a
+# relative decode cannot fake.  The hand on the monitor sends the
+# pointer to three quarters along x and one quarter down y in the
+# tablet's own 0..32767 logical units; usbd scales those onto the
+# screen, so the event that arrives has to name that point.  The boot
+# mouse's relative events interleave with these -- it sweeps x by +8
+# and never touches y, so it can drift through the x this wants but
+# never through the pair.
+#
+# USB-TABLET-NONE is the right answer for an invocation with no tablet,
+# exactly as USB-MOUSE-NONE is for one with no mouse.
+tabletreport(nev, hit, wantx, wanty, scrw, scrh, bestx, besty: int)
+{
+	if(nev == 0){
+		sys->print("USB-TABLET-NONE no pointer events (no tablet attached?)\n");
+		return;
+	}
+	if(!hit){
+		sys->print("USB-TABLET-FAIL %d events, wanted %d %d on %dx%d, nearest %d %d\n",
+			nev, wantx, wanty, scrw, scrh, bestx, besty);
+		return;
+	}
+	sys->print("USB-TABLET-OK absolute %d %d on %dx%d through usbd's HID report-descriptor decode\n",
+		wantx, wanty, scrw, scrh);
+}
+
+iabs(v: int): int
+{
+	if(v < 0)
+		return -v;
+	return v;
 }
 
 mousereadproc(fd: ref Sys->FD, evc: chan of string)

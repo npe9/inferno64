@@ -100,7 +100,7 @@ config_args() {
 		# SMSC half of appl/cmd/usb/etherusb.b -- a thousand
 		# lines of vendor requests, command words and receive
 		# status -- has no other way to execute.
-		echo "-M raspi3b -m 1G -drive file=$work/sd16d.img,if=sd,format=raw -drive if=none,id=d0,file=$work/usb16.img,format=raw -device usb-storage,drive=d0 -netdev user,id=n0 -device usb-lan9514,netdev=n0 -device usb-mouse -device usb-kbd";;
+		echo "-M raspi3b -m 1G -drive file=$work/sd16d.img,if=sd,format=raw -drive if=none,id=d0,file=$work/usb16.img,format=raw -device usb-storage,drive=d0 -netdev user,id=n0 -device usb-lan9514,netdev=n0 -device usb-mouse -device usb-kbd -device usb-tablet";;
 	raspi4)
 		echo "-M raspi4b -m 2G -drive file=$work/sd16b.img,if=sd,format=raw";;
 	raspi4-hot)
@@ -173,7 +173,7 @@ config_args() {
 		# and ethernet checks, so this is the same six markers
 		# reached over a different host controller -- the one
 		# thing about them the Pi 3 configuration cannot say.
-		echo "-M raspi4b -m 2G -drive file=$work/sd16e.img,if=sd,format=raw -drive if=none,id=d0,file=$work/usb16b.img,format=raw -device usb-storage,drive=d0 -netdev user,id=n0 -device usb-lan9514,netdev=n0 -device usb-mouse -device usb-kbd";;
+		echo "-M raspi4b -m 2G -drive file=$work/sd16e.img,if=sd,format=raw -drive if=none,id=d0,file=$work/usb16b.img,format=raw -device usb-storage,drive=d0 -netdev user,id=n0 -device usb-lan9514,netdev=n0 -device usb-mouse -device usb-kbd -device usb-tablet";;
 	virtarm64-peer)
 		# virtarm64 with a peer link, the same shape as virt-peer
 		# and on its own socket port: the two peer configurations
@@ -328,7 +328,19 @@ config_evidence() {
 		# carries this -- but the number is what says which
 		# direction usbd's remap went.
 		echo 'USB-MOUSE-OK [0-9]+ events, motion and buttons 6'
-		echo 'USB-KBD-OK [0-9]+ chars';;
+		echo 'USB-KBD-OK [0-9]+ chars'
+		# The tablet's two lines say different things and both
+		# are needed.  The first is usbd's own: the bit offsets
+		# it derived from the report descriptor, which no fixed
+		# decode could have known -- x sixteen bits wide at bit
+		# 8, past five button bits and three of padding.  The
+		# second is the coordinate that came out the other end,
+		# three quarters along a 640-pixel screen and a quarter
+		# down a 480-pixel one, which is the point the monitor
+		# commanded in the tablet's own 0..32767 units.  A
+		# relative decode cannot land there.
+		echo 'HID report pointer on [^ ]*: 48-bit report, x absolute at 8\+16'
+		echo 'USB-TABLET-OK absolute 479 119 on 640x480';;
 	raspi4)
 		echo 'from capabilities'
 		echo 'die 24\.';;
@@ -339,7 +351,9 @@ config_evidence() {
 		echo 'ETHER-DHCP-OK ip=10\.0\.2\.15 gw=10\.0\.2\.2'
 		echo 'DISK-WRITE-OK pi\.txt [0-9]+ bytes read back'
 		echo 'DISK-DOS-OK /n/dos: usb\.txt[^ ]*$'
-		echo 'DISK-READ-OK usb\.txt';;
+		echo 'DISK-READ-OK usb\.txt'
+		echo 'HID report pointer on [^ ]*: 48-bit report, x absolute at 8\+16'
+		echo 'USB-TABLET-OK absolute 479 119 on 640x480';;
 	virt-peer|virtarm64-peer|peer-mixed)
 		echo 'peer: 525400aaaa01 is 192\.168\.77\.1'
 		echo 'PEER-ARP-OK 192\.168\.77\.2';;
@@ -767,7 +781,19 @@ def send(events):
     f.flush()
     f.readline()
 
+# Three quarters along x and one quarter down y, in QEMU's absolute
+# range (0..0x7fff, INPUT_EVENT_ABS_MAX).  QEMU routes 'abs' to an
+# absolute device and 'rel' to a relative one, so the tablet takes
+# these and the mouse takes the sweep below without either seeing the
+# other's events.  The guest's tablet check scales the same fractions
+# onto its screen and waits for that point to arrive.
+ABSMAX = 0x7fff
+absx = ABSMAX * 3 // 4
+absy = ABSMAX // 4
+
 while time.time() < deadline:
+    send([{'type': 'abs', 'data': {'axis': 'x', 'value': absx}},
+          {'type': 'abs', 'data': {'axis': 'y', 'value': absy}}])
     send([{'type': 'rel', 'data': {'axis': 'x', 'value': 8}}])
     for b in ('right', 'middle'):
         send([{'type': 'btn', 'data': {'down': True, 'button': b}}])
