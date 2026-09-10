@@ -87,7 +87,11 @@ enum {
 	GicdCTLR_ARE	= 1<<4,		/* affinity routing enable */
 	GicdCTLR_EN1	= 1<<1,		/* enable group 1 (with ARE set) */
 
-	GicIRQMax	= 96,		/* 32 virtio slots start at 48; plenty of room */
+	/*
+	 * 32 virtio slots start at 48, and a GICv2m frame's SPIs sit above
+	 * those -- QEMU's is 80..143, which is why this is not 96 any more.
+	 */
+	GicIRQMax	= 224,
 	GicSpiBase	= 32,
 	GicPPITimer	= 30,		/* non-secure physical timer, from the DTB */
 };
@@ -108,3 +112,60 @@ enum {
 void	cycles(uvlong*);
 void	hwtimerset(uvlong*);
 void	cntfrq(uvlong*);
+
+/*
+ * What acpi.c reads out of the MADT's GICC structures, one per
+ * processor.  Kept as a board type rather than a private one in
+ * acpi.c because the MPIDR is what anything that starts a second
+ * processor has to hand PSCI.
+ */
+enum {
+	Nacpicpu	= 64,	/* processors recorded; the rest are counted */
+	Nacpitab	= 24,	/* tables remembered for printing afterwards */
+	Nacpimsi	= 8,	/* GICv2m MSI frames */
+	Nacpiits	= 8,	/* GICv3 ITS blocks */
+};
+
+typedef struct Acpimsi Acpimsi;
+struct Acpimsi {		/* MADT GIC MSI frame, type 0x0D */
+	u32int	id;
+	uvlong	base;
+	u32int	flags;		/* bit 0: the SPI count and base below are real */
+	int	spicount;
+	int	spibase;
+};
+
+typedef struct Acpiits Acpiits;
+struct Acpiits {		/* MADT GIC ITS, type 0x0F */
+	u32int	id;
+	uvlong	base;
+};
+
+typedef struct Acpitab Acpitab;
+struct Acpitab {
+	char	sig[5];
+	uvlong	addr;
+	int	len;
+	int	ok;		/* header length and checksum are good */
+};
+
+typedef struct Acpicpu Acpicpu;
+struct Acpicpu {
+	u32int	uid;		/* ACPI processor UID */
+	u32int	flags;		/* 1 Enabled, 2 Online Capable (ACPI 6.3) */
+	uvlong	mpidr;		/* PSCI CPU_ON's target */
+	uvlong	gicr;		/* this processor's redistributor, GICv3 */
+};
+
+extern Acpicpu acpicpu[Nacpicpu];
+extern int acpincpudesc, acpincpuall, acpincpu, acpicpushort;
+extern int acpiarmboot, acpipsci, acpipscihvc;
+extern uvlong acpiuart;
+extern int acpiuartiface, acpiuartspace, acpiuartwidth, acpiuartaccess;
+extern int acpiuartintr, acpiuartirq, acpiuartgsi, acpiuartbaud;
+extern Acpitab acpitab[Nacpitab];
+extern int acpintab, acpintaball, acpirev, acpixsdt, acpibad;
+extern Acpimsi acpimsiframe[Nacpimsi];
+extern Acpiits acpiits[Nacpiits];
+extern int acpinmsiframe, acpinits;
+extern uvlong acpiroot;

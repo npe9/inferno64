@@ -31,13 +31,6 @@ poolinit(void)
 {
 }
 
-char*
-getconf(char *name)
-{
-	USED(name);
-	return nil;
-}
-
 static void
 poolsizeinit(void)
 {
@@ -104,10 +97,26 @@ main(void)
 	while(p < ep)
 		*p++ = 0;
 
+	/*
+	 * First, because the block it copies lives in the loader's
+	 * memory and nothing has reserved that: see
+	 * os/inferno/virtarm64/bootargs.c.
+	 */
+	bootargsinit();
+
 	machinit();
 	archreset();
 	confinit();
 	fpinit();
+
+	/*
+	 * Before anything touches the UART.  acpitables() only reads;
+	 * spcrconsole() puts the console where the firmware says it is,
+	 * silently, because there is nowhere to print yet.  acpiinit()
+	 * below reports what both of them found.
+	 */
+	acpitables();
+	spcrconsole();
 
 	serialputs("Inferno/arm64 virt\n", -1);
 
@@ -128,6 +137,10 @@ main(void)
 	}
 	quotefmtinstall();
 	printinit();
+
+	/* prints what acpitables() found, and acts on the rest of it */
+	acpiinit();
+	startcpus();
 
 	procinit();
 	links();
@@ -175,6 +188,15 @@ init0(void)
 	up->egrp = o->egrp;
 
 	chandevinit();
+
+	/*
+	 * Put the loader's configuration in /env, the way pc64's init0
+	 * does, so a boot under UEFI can be told things -- bootfile,
+	 * console, *acpi -- rather than only compiled ones.  Harmless
+	 * when there was no loader: bootargsinit() left it empty.
+	 */
+	setconfenv();
+
 	poperror();
 	disinit("/osinit.dis");
 }

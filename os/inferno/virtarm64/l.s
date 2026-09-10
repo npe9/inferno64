@@ -24,6 +24,7 @@
 #define	D_ICC_EOIR1_EL1	SYSARG5(3,0,12,12,1)
 #define	D_ID_AA64PFR0_EL1	SYSARG5(3,0,0,4,0)
 #define	D_CNTP_CVAL_EL0	SYSARG5(3,3,14,2,2)
+#define	D_MPIDR_EL1	SYSARG5(3,0,0,0,5)
 
 /*
  * QEMU -M virt, AArch64 (cortex-a72), single privilege level (EL1),
@@ -123,11 +124,19 @@ TEXT	_main(SB), 1, $-4
 	 */
 	MOV	$setSB(SB), R28
 	MOV	R0, dtbptr(SB)		/* x0 holds the DTB physical address at boot */
+	/*
+	 * x1 is reserved zero by the AArch64 Linux boot protocol, which
+	 * QEMU's -kernel path honours, so a loader can use it without
+	 * disturbing that path.  os/inferno/boot/efi/aa64.s's jump()
+	 * puts the configuration block there; bootargs.c copies it.
+	 */
+	MOV	R1, confptr(SB)
 	BL	main(SB)
 dead:
 	B	dead
 
 GLOBL	dtbptr(SB), $8
+GLOBL	confptr(SB), $8
 GLOBL	stack(SB), $KSTACK
 GLOBL	mach0(SB), $(4*1024)
 
@@ -169,13 +178,72 @@ TEXT	getcallerpc(SB), 1, $-4
  * storing the real new value (R2, "1") instead of the stale R1.
  */
 /*
- * psci(fn, a1, a2, a3): a PSCI call through HVC, QEMU virt's conduit.
- * The four args are already in R0-R3 (x0-x3) where SMCCC wants them;
- * HVC #0 uses them and returns the result in x0.
+ * A PSCI call.  SMCCC wants the function number in x0 and the three
+ * arguments in x1-x3, and returns in x0.
+ *
+ * Only x0 arrives that way on its own.  7c passes the first argument
+ * in a register (REGARG is 0, see utils/7c/txt.c's curarg==0 case) and
+ * every argument after it on the stack, so x1-x3 hold whatever the
+ * caller last had in them unless they are loaded here.  This was
+ * written the other way first, on the assumption that a four-argument
+ * call arrives in x0-x3, and nothing caught it because the only PSCI
+ * calls this kernel made were SYSTEM_OFF and SYSTEM_RESET, which take
+ * no arguments at all -- both of which are now known to complete, see
+ * archvirtarm64.c.  CPU_ON, which takes three, answered
+ * INVALID_PARAMETERS every time.  The frame offsets below are the same
+ * ones os/inferno/boot/efi/aa64.s's eficall uses: the slot at 0(FP) is
+ * reserved for the register-passed first argument and never written,
+ * so the second argument is at 8(FP).
+ *
+ * Which instruction reaches PSCI is firmware's to say: a guest running
+ * at EL1 under a hypervisor reaches it with HVC, a machine whose
+ * firmware sits at EL3 reaches it with SMC.  The FADT's ARM Boot
+ * Architecture Flags carry the answer and archvirtarm64.c's psci()
+ * picks between these two on it.
  */
-TEXT	psci(SB), 1, $-4
+TEXT	pscihvc(SB), 1, $-4
+	MOV	a1+8(FP), R1
+	MOV	a2+16(FP), R2
+	MOV	a3+24(FP), R3
 	HVC	$0
 	RET	R30
+
+TEXT	pscismc(SB), 1, $-4
+	MOV	a1+8(FP), R1
+	MOV	a2+16(FP), R2
+	MOV	a3+24(FP), R3
+	SMC	$0
+	RET	R30
+
+/*
+ * getmpidr(): this processor's own affinity, the one value MPIDR_EL1
+ * can give and the MADT cannot -- MPIDR_EL1 reads only the processor
+ * executing it, which is how startcpu.c tells its own entry in the
+ * MADT's list from the others.
+ */
+TEXT	getmpidr(SB), 1, $-4
+	MRS	SPR(D_MPIDR_EL1), R0
+	RET	R30
+
+/*
+ * Where PSCI CPU_ON lands a processor this kernel has just started.
+ * It runs with the MMU and caches off, at EL1, on no stack and with
+ * no SB set, so it must not touch a global by name and must not call
+ * anything: x0 holds whatever was handed to CPU_ON as its context id,
+ * and startcpu.c hands it the address of that processor's own slot.
+ * Writing its MPIDR there is the whole of what it does -- the value
+ * comes from the processor's own register, not from the caller, so a
+ * slot that fills in is a processor that really is the one the MADT
+ * named.  Then it parks: WFE in a loop, waking on any event and going
+ * straight back, touching nothing further.
+ */
+TEXT	_secondary(SB), 1, $-4
+	MRS	SPR(D_MPIDR_EL1), R1
+	MOV	R1, (R0)
+	DSB	$15
+_secondarypark:
+	WFE
+	B	_secondarypark
 
 /*
  * GICv3 CPU-interface accessors.  On a GICv3 the per-CPU interface is

@@ -161,7 +161,50 @@ extern ulong	geticciar(void);
 extern ulong	getpfr0(void);
 extern void	seticceoir(ulong);
 
-static void
+/*
+ * The architected timer's interrupt.  io.h's GicPPITimer is the value
+ * QEMU's device tree gives and the one this board booted on before
+ * there was any ACPI; acpi.c replaces it from the GTDT when the
+ * firmware says something different, which is why this is a variable
+ * and not the constant it reads from.  Set in gicinit() rather than
+ * here: 7c rejects an initialiser on a definition a header has already
+ * declared extern.
+ */
+int timerirq;
+
+/*
+ * Make an SPI edge-triggered.  A GICv2m frame raises an MSI by pulsing
+ * the SPI -- QEMU's arm_gicv2m.c calls qemu_irq_pulse(), raise and drop
+ * in one step -- and a level-triggered input latches nothing from a
+ * pulse: the pending bit is cleared as the line drops again.  Measured
+ * rather than reasoned: writing an SPI number to the frame's SETSPI
+ * register left GICD_ISPENDR unchanged at 0, and setting the SPI to
+ * edge here is what makes the same write land.  GICD_ICFGR is two bits
+ * per interrupt, sixteen interrupts to a register, and 0b10 is edge.
+ */
+void
+gicedge(int irq)
+{
+	u32 *gicd, v;
+	int i, sh;
+
+	if(irq < GicSpiBase || irq >= GicIRQMax)
+		return;
+	gicd = (u32*)GICD;
+	i = GicdICFGR + irq/16;
+	sh = (irq%16)*2;
+	v = gicd[i];
+	v &= ~(3 << sh);
+	v |= 2 << sh;
+	gicd[i] = v;
+}
+
+/*
+ * Not static any more: acpi.c calls it to enable the timer's line when
+ * the GTDT names a different one from io.h's, and msivirtarm64.c calls
+ * gicedge() above.
+ */
+void
 gicenable(int irq)
 {
 	u32 *gicd, *sgi;
@@ -193,6 +236,7 @@ gicinit(void)
 	u32 *gicd, *gicc, *rd, *sgi;
 	int i;
 
+	timerirq = GicPPITimer;
 	gicd = (u32*)GICD;
 	gicv3 = ((getpfr0() >> 24) & 0xf) != 0;
 	if(!gicv3){
@@ -200,7 +244,7 @@ gicinit(void)
 		gicd[GicdCTLR] = 1;
 		gicc[GiccPMR] = 0xff;
 		gicc[GiccCTLR] = 1;
-		gicenable(GicPPITimer);
+		gicenable(timerirq);
 		return;
 	}
 
@@ -232,7 +276,7 @@ gicinit(void)
 	seticcbpr1(0);				/* no sub-priority preemption */
 	seticcgrpen1(1);			/* enable group 1 at cpu interface */
 
-	gicenable(GicPPITimer);
+	gicenable(timerirq);
 }
 
 void
@@ -268,7 +312,7 @@ trap(Ureg *ur)
 			iar = gicc[GiccIAR];
 			irq = iar & 0x3ff;
 		}
-		if(irq == GicPPITimer)
+		if(irq == timerirq)
 			clockintr(ur);
 		else if(irq < GicIRQMax && (f = irqhandler[irq]) != nil)
 			f(ur, irqarg[irq]);

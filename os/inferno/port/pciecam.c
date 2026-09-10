@@ -29,6 +29,16 @@ static Pcidev *pciroot;
  */
 static uvlong Ecambase = PCIECAM;
 
+/*
+ * Set by a board that can find the window at run time rather than
+ * only in mem.h: os/inferno/virtarm64/acpi.c points this at its MCFG
+ * reader.  Nil on a board with no firmware description, which is every
+ * RISC-V one here, and then Ecambase stays what mem.h said.  Same
+ * shape and the same name as os/inferno/pc/pcipc.c's, which
+ * archacpi.c sets from the PC's MCFG.
+ */
+uvlong (*pciecam)(int*, int*);
+
 static uintptr
 ecamaddr(int tbdf, int rno)
 {
@@ -106,6 +116,20 @@ pciinit(void)
 
 	fmtinstall('T', tbdffmt);
 	pcimaxdno = 31;
+
+	if(pciecam != nil){
+		uvlong pa;
+		int b0, b1;
+
+		b0 = 0;
+		b1 = 255;
+		if((pa = (*pciecam)(&b0, &b1)) != 0){
+			if(pa != Ecambase)
+				print("pci: ecam %#llux from the firmware, mem.h says %#llux\n",
+					pa, (uvlong)Ecambase);
+			Ecambase = pa;
+		}
+	}
 	pciscan(0, &pciroot, nil);
 	if(pciroot == nil){
 		print("pci ecam %#llux: no devices\n", (uvlong)Ecambase);

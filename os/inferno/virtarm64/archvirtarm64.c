@@ -11,6 +11,25 @@ archreset(void)
 }
 
 /*
+ * PSCI's conduit is a property of the firmware, not of the
+ * architecture.  acpi.c sets this from the FADT's ARM Boot
+ * Architecture Flags; nothing said leaves it zero, which is HVC --
+ * what this board did before there was any ACPI and what QEMU's virt
+ * machine wants.  Getting it wrong is not a wrong answer but an
+ * undefined instruction, so the default is the one that is known to
+ * work here rather than the one a server is more likely to want.
+ */
+int pscismcconduit;
+
+uvlong
+psci(uvlong fn, uvlong a1, uvlong a2, uvlong a3)
+{
+	if(pscismcconduit)
+		return pscismc(fn, a1, a2, a3);
+	return pscihvc(fn, a1, a2, a3);
+}
+
+/*
  * The PL031 RTC's data register (offset 0) is a 32-bit count of seconds
  * since the epoch.  main() seeds the time-of-day clock from it, scaled
  * to nanoseconds, so wall time is calendar-correct rather than relative
@@ -45,10 +64,20 @@ archconsole(void)
 	/* uartconsole already set consuart / serwrite */
 }
 
+/*
+ * These two are reached only from a panic, so for a long time nothing
+ * showed whether they did anything: a panic's log ends at "Hit the
+ * reset button" either way.  Called deliberately from main() on the
+ * -kernel path, each stops QEMU on its own -- the process exits with
+ * status 0 and a print placed after the call never appears, where the
+ * same kernel with no call is killed by the timeout.  Neither takes
+ * arguments, which is why neither was affected by l.s's psci argument
+ * bug; see the comment there.
+ */
 void
 archreboot(void)
 {
-	/* PSCI SYSTEM_RESET (0x84000009); QEMU restarts the machine */
+	/* PSCI SYSTEM_RESET (0x84000009) */
 	psci(0x84000009ULL, 0, 0, 0);
 	for(;;)
 		idle();
@@ -57,7 +86,7 @@ archreboot(void)
 void
 archshutdown(void)
 {
-	/* PSCI SYSTEM_OFF (0x84000008); QEMU powers the machine off */
+	/* PSCI SYSTEM_OFF (0x84000008) */
 	psci(0x84000008ULL, 0, 0, 0);
 }
 

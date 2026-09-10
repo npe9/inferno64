@@ -26,7 +26,11 @@ KTZERO=0x40000000
 
 OBJ=\
 	l.$O\
+	acpi.$O\
 	auth.$O\
+	bootargs.$O\
+	startcpu.$O\
+	msivirtarm64.$O\
 	clock.$O\
 	main.$O\
 	mmu.$O\

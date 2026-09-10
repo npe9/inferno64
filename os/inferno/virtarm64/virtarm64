@@ -104,7 +104,7 @@ mod
 	draw
 
 init
-	virtinit
+	virtarm64init
 
 code
 	int main_pool_pcnt = 20;
