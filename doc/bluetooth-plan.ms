@@ -890,6 +890,12 @@ because its service class is looked for too.
 .NH 2
 The bench, and what it cannot cover
 .PP
+.CW doc/bluetooth.ms
+is the paper: what the stack is shaped like and how it is checked,
+with the four kinds of check set out as a ladder and what each of them
+found.  This section is the shorter account and the plan's own view of
+it.
+.PP
 .CW scripts/bthci.py
 models a controller and the devices on the other side of it: LE and
 BR/EDR both, inquiry, connections, secure simple pairing, service
