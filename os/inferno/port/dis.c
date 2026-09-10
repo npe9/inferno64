@@ -1221,6 +1221,29 @@ killcomm(Progq **q)
 	}
 }
 
+/*
+ * What a placeholder Prog does when somebody runs it: nothing.
+ *
+ * addprog() builds a zeroed Prog with no module and no code -- it is
+ * not a program.  It is queued (execatidle()'s addrun(up->prog), the
+ * BusyGC path's pushrun) so the scheduler counts this executor as
+ * having work while it collects, and taken off again by delrunq().
+ * With the VM lock it could only ever be picked by its own owner, who
+ * does not run it.  Without the lock another executor picks it off the
+ * queue and calls r->xec, which is nil: "panic: invalid opcode", PC 0,
+ * from vmachine+0x47d.  Instrumenting the call named the object
+ * outright -- "prog 0x7a7f038 xec 0x0 state 0x4 pid 0 link 0x0" --
+ * zeroed, Pready, and not a freed Prog, which carries 0xdeadbeef.
+ *
+ * Returning is right, not just safe: vmachine() rotates the queue
+ * after a quantum, so the placeholder goes to the tail and the real
+ * programs behind it run.
+ */
+static void
+idlexec(Prog*)
+{
+}
+
 void
 addprog(Proc *p)
 {
@@ -1234,6 +1257,8 @@ addprog(Proc *p)
 	} else
 		memset(n, 0, sizeof(Prog));
 	n->osenv = p->env;
+	n->xec = idlexec;
+	n->quanta = PQUANTA;
 }
 
 static void
