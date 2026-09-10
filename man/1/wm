@@ -60,6 +60,47 @@ built, or somebody already serving
 \- since none of those is a broken system.
 .B /lib/sh/fonts
 does the same by hand for a session with no window system.
+.SS Window chrome
+The titlebar follows the font too, including its artwork.
+.PP
+The buttons carry 16-pixel bitmaps from
+.BR /icons/tk ,
+and
+.B libtk
+resolves a bare
+.B -bitmap
+name straight to that directory, so left alone they would be one fixed
+size while the bar around them grew: at the tree's 8-pixel face the title
+is 15 pixels high and a button 20, and at a face twice as tall the title
+is 30 and the button still 20.
+.B /appl/lib/titlebar.b
+scales the artwork by a whole number instead \(em replicating pixels
+rather than resampling, since this is pixel art and blurring it would
+look worse than leaving it small \(em and hands it to the button as an
+image.
+.B Libtk
+draws
+.B -image
+and
+.B -bitmap
+through the same code, choosing between stencil and picture on the
+image's channel rather than on which option was used, so an 8-bit grey
+icon is still drawn in the button's own
+.B -fg
+and nothing changes but the size.
+.PP
+At scale 1, which is every configuration that does not ask for a larger
+font, nothing is touched at all.
+.IR Tkofftest (1)
+asserts both halves: that the artwork grows, and that the proportion of
+it inked is unchanged, which is what a whole-number scale of the same
+picture gives.
+.PP
+The colours are still literals in
+.B /appl/lib/titlebar.b
+and
+.BR /appl/lib/wmclient.b ,
+not a theme.
 .SS Control Interface
 .I Wm
 provides a control interface to programs running inside it

@@ -3,7 +3,7 @@ include "sys.m";
 	sys: Sys;
 include "draw.m";
 	draw: Draw;
-	Point, Rect: import draw;
+	Display, Font, Image, Point, Rect: import draw;
 include "tk.m";
 	tk: Tk;
 include "env.m";
@@ -77,7 +77,98 @@ new(top: ref Tk->Toplevel, buts: int): chan of string
 	cmd(top, "pack .Wm_t.title -side left");
 	cmd(top, "pack .Wm_t -fill x");
 
+	scalechrome(top);
+
 	return ctl;
+}
+
+# Which button carries which piece of artwork.  A configuration that does
+# not have one of these simply has no such widget.
+chromebuts := array[] of {
+	(".Wm_t.e",	"exit.bit"),
+	(".Wm_t.ok",	"ok.bit"),
+	(".Wm_t.top",	"task.bit"),
+	(".Wm_t.m",	"maxf.bit"),
+	(".Wm_t.h",	"help.bit"),
+	(".Wm_t.d",	"/icons/charon/edit.bit"),
+};
+
+#
+# Grow the chrome's artwork with the font.
+#
+# The icons in /icons/tk are 16 pixels square, and libtk resolves a bare
+# -bitmap name straight to that directory, so they are one fixed size
+# while the bar around them follows the font.  Measured: at the tree's
+# 8-pixel face the title is 15 pixels high and a button 20; at a face
+# twice as tall the title is 30 and the button is still 20.
+#
+# Scale by a whole number and replicate pixels rather than resample -
+# this is pixel art, and blurring it would look worse than leaving it
+# small.  libtk draws -image and -bitmap through the same code, choosing
+# between stencil and picture on the image's *channel* rather than on
+# which option was used, so an 8-bit grey icon handed over as an image is
+# still drawn in the button's own -fg and nothing changes but the size.
+#
+# At scale 1 - every configuration that exists today - this returns
+# without touching anything.
+#
+scalechrome(top: ref Tk->Toplevel)
+{
+	if(top == nil || top.display == nil)
+		return;
+	fp := tk->cmd(top, ".Wm_t.title cget -font");
+	if(len fp == 0 || fp[0] == '!')
+		fp = tk->cmd(top, ". cget -font");
+	if(len fp == 0 || fp[0] == '!')
+		return;
+	f := Font.open(top.display, fp);
+	if(f == nil)
+		return;
+	n := (f.height + 8) / 16;
+	if(n < 2)
+		return;
+	for(i := 0; i < len chromebuts; i++){
+		(w, art) := chromebuts[i];
+		if(tk->cmd(top, "winfo class " + w)[0] == '!')
+			continue;
+		if(len art > 0 && art[0] != '/')
+			art = "/icons/tk/" + art;
+		scaleicon(top, w, art, n);
+	}
+}
+
+scaleicon(top: ref Tk->Toplevel, w, art: string, n: int)
+{
+	src := top.display.open(art);
+	if(src == nil || src.depth != 8)
+		return;			# one byte a pixel, which every icon here is
+	sw := src.r.dx();
+	sh := src.r.dy();
+	if(sw <= 0 || sh <= 0)
+		return;
+	buf := array[sw*sh] of byte;
+	if(src.readpixels(src.r, buf) != len buf)
+		return;
+
+	dw := sw*n;
+	dh := sh*n;
+	out := array[dw*dh] of byte;
+	for(y := 0; y < dh; y++){
+		row := (y/n)*sw;
+		o := y*dw;
+		for(x := 0; x < dw; x++)
+			out[o+x] = buf[row + x/n];
+	}
+	dst := top.display.newimage(Rect((0,0),(dw,dh)), src.chans, 0, Draw->Nofill);
+	if(dst == nil || dst.writepixels(dst.r, out) != len out)
+		return;
+
+	name := tk->cmd(top, "image create bitmap");
+	if(len name == 0 || name[0] == '!')
+		return;
+	if(tk->putimage(top, name, dst, nil) != nil)
+		return;
+	cmd(top, w + " configure -image " + name);
 }
 
 title(top: ref Tk->Toplevel): string

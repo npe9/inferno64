@@ -61,6 +61,10 @@ large := "";
 
 servedttf := 0;		# this test started ttffs, so this test stops it
 
+butsz := array[2] of {* => 0};		# chrome button size, per font
+butink := array[2] of {* => 0.0};	# and how much of it is inked
+nchrome := 0;
+
 report(good: int, what: string)
 {
 	if(good){
@@ -263,6 +267,24 @@ init(nil: ref Draw->Context, nil: list of string)
 
 	checkdefault();
 	checklayout();
+
+	# The chrome's artwork is 16-pixel bitmaps in /icons/tk, and libtk
+	# resolves a bare -bitmap name straight there, so without help the
+	# buttons stay one size while the bar around them follows the font.
+	# Before titlebar(2) scaled them this read 20x20 at both fonts.
+	if(nchrome == 2){
+		report(butsz[1] > butsz[0], sys->sprint(
+			"the titlebar's artwork grows with the font (%d -> %d)",
+			butsz[0], butsz[1]));
+		# and it is the same picture, not a broken one: a whole-number
+		# scale replicates pixels, so the proportion inked is kept.
+		d := butink[1] - butink[0];
+		if(d < 0.0)
+			d = -d;
+		report(butink[0] > 0.0 && d < 0.10, sys->sprint(
+			"and is still the same picture (%d%% inked against %d%%)",
+			int(butink[0]*100.0), int(butink[1]*100.0)));
+	}
 
 	# If a TrueType face is being served, say whether Tk antialiases.
 	# A bitmap font can only ever put two values on the page.
@@ -483,6 +505,23 @@ checktitlebar(font, what: string)
 		if(r.max.x > W || r.max.y > H)
 			leftmost = -1;		# off the pane
 	}
+	# The chrome's own proportions, reported rather than asserted: the bar
+	# and the title follow the font, and the buttons are fixed-size
+	# bitmaps out of /icons/tk, so the gap between them is what a bigger
+	# font opens up.
+	# The chrome's own proportions.  The bar and the title follow the
+	# font; the artwork in the buttons is fixed-size unless titlebar(2)
+	# scales it, so this is where that shows.
+	e := tk->rect(top, ".Wm_t.e", Tk->Border);
+	ink := inkfraction(e);
+	sys->print("     %-22s bar %dx%d, title h %d, button %dx%d, %d%% inked\n",
+		what, bar.dx(), bar.dy(), title.dy(), e.dx(), e.dy(), int(ink*100.0));
+	if(nchrome < len butsz){
+		butsz[nchrome] = e.dx();
+		butink[nchrome] = ink;
+		nchrome++;
+	}
+
 	good := nb > 0 && title.max.x <= leftmost && bar.max.x <= W && bar.max.y <= H;
 	report(good, sys->sprint(
 		"the titlebar holds together in %s (title ends %d, %d buttons from %d, bar %dx%d)",
@@ -498,6 +537,24 @@ checktitlebar(font, what: string)
 	report(ms.y >= bb.dy(), sys->sprint(
 		"a window cannot be shorter than its titlebar in %s (minsize %d, bar %d)",
 		what, ms.y, bb.dy()));
+}
+
+# what fraction of a rectangle is not the background it sits on
+inkfraction(r: Rect): real
+{
+	if(r.dx() <= 0 || r.dy() <= 0)
+		return 0.0;
+	n := r.dx()*r.dy();
+	b := array[n*3] of byte;
+	off.readpixels(r, b);
+	seen := array[256] of {* => 0};
+	for(i := 0; i < n*3; i += 3)
+		seen[int b[i]]++;
+	most := 0;
+	for(i = 0; i < 256; i++)
+		if(seen[i] > most)
+			most = seen[i];
+	return real (n - most) / real n;
 }
 
 # first face ttffs is serving, if any, at a middling size

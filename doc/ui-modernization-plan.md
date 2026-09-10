@@ -308,6 +308,52 @@ What is untouched is the programs that draw their own text, which is a
 different exercise, and the network-facing ones that will not come up
 unattended.
 
+### The chrome scales too, and did not
+
+The window furniture is the one piece of UI on every window there is, so
+it is worth its own measurement. Half of it already followed the font and
+half did not:
+
+| | tree's 8-pixel face | a face twice as tall |
+| --- | --- | --- |
+| titlebar height | 20 | 30 |
+| title text height | 15 | 30 |
+| button | 20x20 | **20x20** |
+
+The buttons carry 16-pixel bitmaps out of `/icons/tk`, and
+`libtk/parse.c:751` resolves a bare `-bitmap` name straight to that
+directory with no size in the path — so there is exactly one chrome icon
+size in the tree. (There is a second set, `/icons/tinytk` at 10 pixels,
+which nothing anywhere references. It is dead.)
+
+`titlebar.b` now scales the artwork by a whole number and hands it to the
+button as an image. Two things make that safe rather than a rewrite of
+the look:
+
+- `libtk`'s label drawing takes `-image` and `-bitmap` down **the same
+  path**, and chooses between stencil and picture on the image's
+  *channel*, not on which option was used. An 8-bit grey icon is drawn
+  in the button's own `-fg` either way, so nothing changes but the size.
+- The scale is a whole number and replicates pixels rather than
+  resampling. This is pixel art; blurring it would look worse than
+  leaving it small. At scale 1 — every configuration that does not ask
+  for a bigger font — the code returns without touching anything, and
+  the measured chrome is byte-for-byte what it was.
+
+Measured after: 20x20 at the tree's font, **36x36** at a face twice as
+tall. `tkofftest` asserts both halves — that the artwork grows, and that
+the fraction of the button inked is unchanged (81% against 76%), which is
+what a whole-number scale of the same picture gives and a broken one
+would not. The control is the code disabled: the growth check then reads
+`20 -> 20` and fails, which is exactly the state the table above records.
+
+**What is still not done in the chrome is colour.** `titlebar.b` carries
+four literals (`#8A9098` inactive, `#3D6A9A` focused, `#D4D0C4` button,
+`#2A2A22` glyph) and `wmclient.b` a fifth for the desktop. That is
+section 5's theme register, and `grpalette(2)` is the mechanism this tree
+already has for exactly this shape of problem — a colour table used in
+many places and written down in none.
+
 ### The font server could lose a race, and does not now
 
 `wm`'s `startfonts()` waited for `/mnt/ft/index` to be *openable*. That
