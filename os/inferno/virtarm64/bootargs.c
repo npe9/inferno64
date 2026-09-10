@@ -98,12 +98,24 @@ setconfenv(void)
 	}
 }
 
+/*
+ * The boot configuration, abbreviated.  *e820 is a single value some
+ * six hundred characters long on a UEFI machine and longer on a real
+ * one, and printing it whole pushed everything else off a 80-column
+ * console for no gain: archmemreport() prints the same map parsed, one
+ * run to a line, which is the form anyone reading it wants.
+ */
 void
 showconf(void)
 {
-	int i;
+	int i, n;
 
 	print("Boot configuration\n");
-	for(i = 0; i < nconf; i++)
-		print("	%s=%s\n", confname[i], confval[i]);
+	for(i = 0; i < nconf; i++){
+		n = strlen(confval[i]);
+		if(n > 72)
+			print("	%s=%.72s... (%d bytes)\n", confname[i], confval[i], n);
+		else
+			print("	%s=%s\n", confname[i], confval[i]);
+	}
 }

@@ -80,6 +80,49 @@ extern int main_pool_pcnt;
 static int nmemrun;
 static int memfromfirmware;
 
+/*
+ * The firmware's map kept whole, and not only the usable runs of it.
+ * conf.mem[] says what may be allocated; this says what exists.  The
+ * MMU needs the second: the ACPI tables acpiinit() reads are not type
+ * 1 and would be unmapped if the map were built from conf.mem[] alone,
+ * and -- the reason this is a separate array rather than a span from
+ * PHYSDRAM to conf.topofmem -- the space between two runs is not
+ * necessarily memory at all.  See mmuinit().
+ */
+typedef struct Fwrun Fwrun;
+struct Fwrun {
+	uvlong	base;
+	uvlong	top;
+	int	type;
+};
+static Fwrun fwmap[64];
+static int nfwrun;
+
+static void
+addfwrun(uvlong base, uvlong top, int type)
+{
+	if(nfwrun >= nelem(fwmap))
+		return;
+	fwmap[nfwrun].base = base;
+	fwmap[nfwrun].top = top;
+	fwmap[nfwrun].type = type;
+	nfwrun++;
+}
+
+/*
+ * The i'th entry of that map, for mmuinit().  Returns 0 past the end.
+ */
+int
+archfwrun(int i, uvlong *base, uvlong *top, int *type)
+{
+	if(i < 0 || i >= nfwrun)
+		return 0;
+	*base = fwmap[i].base;
+	*top = fwmap[i].top;
+	*type = fwmap[i].type;
+	return 1;
+}
+
 static void
 addmemrun(uintptr base, uintptr top, uintptr kend)
 {
@@ -126,7 +169,10 @@ e820mem(uintptr kend)
 		top = strtoull(s, &s, 16);
 		if(*s != ' ' && *s != 0)
 			break;
-		if(base < top && type == 1)
+		if(base >= top)
+			continue;
+		addfwrun(base, top, type);
+		if(type == 1)
 			addmemrun(base, top, kend);
 	}
 	return nmemrun;
@@ -142,11 +188,13 @@ archconfinit(void)
 	conf.npage = 0;
 	conf.topofmem = 0;
 	nmemrun = 0;
+	nfwrun = 0;
 	if(e820mem(kend) > 0)
 		memfromfirmware = 1;
 	else {
 		conf.topofmem = PHYSDRAM + DRAMSIZE;
 		addmemrun(kend, conf.topofmem, kend);
+		addfwrun(PHYSDRAM, conf.topofmem, 1);
 	}
 	conf.base0 = conf.mem[0].base;
 	conf.npage0 = conf.mem[0].npage;
@@ -177,6 +225,17 @@ archmemreport(void)
 		print("\tmem%d %#llux..%#llux\n", i,
 			(uvlong)conf.mem[i].base,
 			(uvlong)(conf.mem[i].base + conf.mem[i].npage*BY2PG));
+	/*
+	 * And the map entire, types and all, because it is what mmuinit()
+	 * builds the page tables from -- a run missing from here is a run
+	 * that will fault when it is touched, and this is the only place
+	 * that says so.  1 usable, 2 reserved or device, 3 ACPI reclaim,
+	 * 4 ACPI NVS; os/inferno/boot/efi/efi.c's memtype[] is where the
+	 * firmware's own types are turned into these.
+	 */
+	for(i = 0; i < nfwrun; i++)
+		print("\tfw%d %#llux..%#llux type %d\n", i,
+			fwmap[i].base, fwmap[i].top, fwmap[i].type);
 }
 
 void

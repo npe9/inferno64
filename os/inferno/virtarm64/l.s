@@ -23,6 +23,7 @@
 #define	D_ICC_IAR1_EL1	SYSARG5(3,0,12,12,0)
 #define	D_ICC_EOIR1_EL1	SYSARG5(3,0,12,12,1)
 #define	D_ID_AA64PFR0_EL1	SYSARG5(3,0,0,4,0)
+#define	D_ID_AA64MMFR0_EL1	SYSARG5(3,0,0,7,0)
 #define	D_CNTP_CVAL_EL0	SYSARG5(3,3,14,2,2)
 #define	D_MPIDR_EL1	SYSARG5(3,0,0,0,5)
 #define	D_MAIR_EL1	SYSARG5(3,0,10,2,0)
@@ -311,6 +312,19 @@ TEXT	getpfr0(SB), 1, $-4
 	MRS	SPR(D_ID_AA64PFR0_EL1), R0
 	RET	R30
 
+/*
+ * ID_AA64MMFR0_EL1.PARange (bits 3:0): the physical address size this
+ * core implements, in the same encoding TCR_EL1.IPS uses -- 0 is 32
+ * bits, 1 is 36, 2 is 40, 3 is 42, 4 is 44, 5 is 48.  mmuinit() reads
+ * it because writing an IPS larger than PARange is CONSTRAINED
+ * UNPREDICTABLE, and the value that was there was a constant 4 chosen
+ * for no reason beyond covering the map: correct on a core with 44-bit
+ * addressing and unspecified on one with less.
+ */
+TEXT	getmmfr0(SB), 1, $-4
+	MRS	SPR(D_ID_AA64MMFR0_EL1), R0
+	RET	R30
+
 TEXT	seticceoir(SB), 1, $-4
 	MSR	R0, SPR(D_ICC_EOIR1_EL1)
 	RET	R30
@@ -485,15 +499,15 @@ dcidone:
 	RET	R30
 
 /*
- * mmuenable(l0): 48-bit virtual addresses, four levels, 4 KiB granule,
- * TTBR0 only.  T0SZ = 16 gives the full 48 bits, which is what reaches
- * this machine's high PCIe window at 0x8000000000; raspi3b's T0SZ = 25
- * would stop at 512 GiB.  EPD1 disables the TTBR1 half, which this
- * kernel does not use -- there is one address space and Dis is the
- * isolation boundary.
+ * mmuenable(l0, tcr): 48-bit virtual addresses, four levels, 4 KiB
+ * granule, TTBR0 only.  T0SZ = 16 gives the full 48 bits, which is
+ * what reaches this machine's high PCIe window at 0x8000000000;
+ * raspi3b's T0SZ = 25 would stop at 512 GiB.  EPD1 disables the TTBR1
+ * half, which this kernel does not use -- there is one address space
+ * and Dis is the isolation boundary.
  *
- * TCR_EL1 = IPS(44bit)<<32 | TG0(4KB) | SH0(inner) | ORGN0(WB) |
- * IRGN0(WB) | EPD1 | T0SZ(16).
+ * The TCR_EL1 value itself is built by mmuinit(), because its IPS
+ * field is not a constant: see Tcrbase there.
  */
 TEXT	mmuenable(SB), 1, $-4
 	/*
@@ -507,14 +521,14 @@ TEXT	mmuenable(SB), 1, $-4
 	 */
 	MOV	R0, R19
 	MOV	R30, R20
+	MOV	tcr+8(FP), R21		/* before the call, for the same reason */
 	BL	dcinvalidate(SB)
 	MOV	R20, R30
 	MOV	R19, R0
 
 	MOV	$0xff00, R1		/* MAIR: attr1=Normal(ff), attr0=Device(00) */
 	MSR	R1, SPR(D_MAIR_EL1)
-	MOV	$0x400803510, R1	/* IPS=4 TG0=0 SH0=3 ORGN0=1 IRGN0=1 EPD1 T0SZ=16 */
-	MSR	R1, SPR(D_TCR_EL1)
+	MSR	R21, SPR(D_TCR_EL1)
 	MSR	R0, SPR(D_TTBR0_EL1)	/* R0 = &l0 table (REGARG) */
 	ISB	$15
 	SYS	$SYSARG5(0,0,8,7,0)	/* TLBI VMALLE1 */

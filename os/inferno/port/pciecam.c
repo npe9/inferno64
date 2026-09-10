@@ -145,20 +145,23 @@ pciinit(void)
 		print("pci %T: %.4ux/%.4ux class %.6lux irq %d\n",
 			p->tbdf, p->vid, p->did, p->ccrb<<16|p->ccru<<8|p->ccrp, p->intl);
 		/*
-		 * The bar addresses, not just the device.  On a board that
-		 * is about to map its address space rather than run flat,
-		 * where the firmware put the windows decides how wide the
-		 * virtual addresses have to be: QEMU's arm64 virt has a
-		 * high PCIe MMIO window at 0x8000000000, which a 39-bit VA
-		 * cannot reach at all.  Printed for every bar that is set,
-		 * so the answer comes from the machine rather than from a
-		 * reading of its documentation.
+		 * A bar above 4 GiB, and only that.  On a board that maps
+		 * its address space rather than running flat, where the
+		 * firmware put the windows decides how wide the virtual
+		 * addresses have to be: QEMU's arm64 virt has a high PCIe
+		 * MMIO window at 0x8000000000, which a 39-bit VA cannot
+		 * reach at all, and virtarm64's mmuinit() carries a fourth
+		 * table level for it.  This printed every bar while that
+		 * question was open and the answer here was that none is
+		 * high; the question stays open for a machine with more
+		 * devices than QEMU's, so what is left is the line that
+		 * would say so, on the boot where it first happens.
 		 */
 		for(i = 0; i < nelem(p->mem); i++)
-			if(p->mem[i].size != 0)
-				print("\tbar%d %#llux size %#llux%s\n", i,
+			if(p->mem[i].size != 0
+			&& ((uvlong)p->mem[i].bar & ~0xFULL) >= 0x100000000ULL)
+				print("\tbar%d %#llux size %#llux: above 4G\n", i,
 					(uvlong)p->mem[i].bar & ~0xFULL,
-					(uvlong)p->mem[i].size,
-					(p->mem[i].bar & 1) ? " io" : "");
+					(uvlong)p->mem[i].size);
 	}
 }

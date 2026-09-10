@@ -28,10 +28,11 @@
  * finding out on rented hardware.
  *
  * The map is built from what the machine says about itself rather than
- * from constants: conf.mem[], which archvirtarm64.c fills from the
- * firmware's memory map, decides which 1 GiB blocks are RAM.
- * Everything else below the top of RAM, and the two PCIe windows above
- * it, is Device.
+ * from constants: every entry of the firmware's memory map, which
+ * archvirtarm64.c keeps whole beside the usable subset it puts in
+ * conf.mem[], is mapped according to its type.  Below where RAM starts
+ * is Device, the two PCIe windows above it are Device, and what the
+ * firmware did not describe is not mapped at all.
  */
 
 enum {
@@ -80,6 +81,15 @@ enum {
 	Ecamsize	= 0x10000000ULL,
 	Pciehigh	= 0x8000000000ULL,
 	Pciehighsize	= 0x8000000000ULL,
+
+	/*
+	 * TCR_EL1 without its IPS field: TG0 4 KiB, SH0 inner shareable,
+	 * ORGN0 and IRGN0 write-back write-allocate, EPD1 (no TTBR1),
+	 * T0SZ 16 for a 48-bit virtual address.  IPS is added by
+	 * ipsfield() below and is the only part of this word that is not
+	 * a property of how the kernel wants to run.
+	 */
+	Tcrbase		= 0x00803510,
 };
 
 /*
@@ -91,8 +101,55 @@ static uchar tablemem[2*Tblblock];
 static uvlong *tables;
 static int ntable;
 static uvlong *l0;
+static uvlong mapmax;			/* one past the highest address mapped */
 
-extern void mmuenable(void*);
+extern void mmuenable(void*, uvlong);
+extern uvlong getmmfr0(void);
+
+/*
+ * TCR_EL1.IPS, which says how wide a physical address the translation
+ * regime may produce.  Two things bound it and it must satisfy both.
+ *
+ * Below, the map: an IPS narrower than the highest address mapped
+ * makes every access to the top of it an address size fault, so the
+ * high PCIe window at 0x8000000000 needs at least 40 bits.  Above,
+ * the core: ID_AA64MMFR0_EL1.PARange is what it implements, and
+ * writing an IPS larger than that is CONSTRAINED UNPREDICTABLE -- an
+ * implementation may treat it as PARange or may fault, and neither is
+ * something to find out on a machine that is not here.  This was a
+ * hard-coded 4 (44 bits), which is neither of those numbers: it was
+ * chosen because it covered the map, and it happens to be within
+ * PARange on Cortex-A72 and on QEMU, which is the whole of the
+ * evidence there was for it.
+ *
+ * The encoding is shared between the two registers, which is what
+ * makes the comparison a comparison of field values.
+ */
+static int
+ipsfield(void)
+{
+	static int pabits[8] = {32, 36, 40, 42, 44, 48, 52, 56};
+	int need, have;
+
+	have = (int)(getmmfr0() & 0xf);
+	if(have > 7)
+		have = 7;			/* reserved: assume the widest named */
+	for(need = 0; need < 7; need++)
+		if(mapmax <= (uvlong)1<<pabits[need])
+			break;
+	if(need > have){
+		/*
+		 * The map asks for more address than the core can make.
+		 * Said out loud rather than clamped quietly: what follows
+		 * is address size faults on whatever lives up there, and
+		 * the print is the only thing that will connect the two.
+		 */
+		print("mmu: map needs %d physical address bits, cpu has %d\n",
+			pabits[need], pabits[have]);
+		need = have;
+	}
+	return need;
+}
 
 static uvlong*
 newtable(void)
@@ -170,6 +227,8 @@ maprange(uvlong base, uvlong top, uvlong attr)
 	 */
 	base &= ~(((uvlong)1<<L2SHIFT)-1);
 	top = (top + (((uvlong)1<<L2SHIFT)-1)) & ~(((uvlong)1<<L2SHIFT)-1);
+	if(top > mapmax)
+		mapmax = top;
 	for(pa = base; pa < top; ){
 		l1 = subtable(&l0[(pa >> 39) & (Nent-1)], L1SHIFT);
 		i = (pa >> L1SHIFT) & (Nent-1);
@@ -189,12 +248,14 @@ maprange(uvlong base, uvlong top, uvlong attr)
 void
 mmuinit(void)
 {
-	uvlong ptlo, pthi;
-	int i;
+	uvlong ptlo, pthi, base, top, unmapped;
+	int i, type, ips;
 
 	if(!Mmuon)
 		return;
 
+	unmapped = 0;
+	mapmax = 0;
 	tables = (uvlong*)(((uintptr)tablemem + (Tblblock-1)) & ~((uintptr)Tblblock-1));
 	l0 = newtable();
 
@@ -206,21 +267,41 @@ mmuinit(void)
 	 */
 	maprange(0, PHYSDRAM, Pdevice);
 
-	/* RAM, as the firmware described it */
-	for(i = 0; i < nelem(conf.mem); i++)
-		if(conf.mem[i].npage != 0)
-			maprange(conf.mem[i].base,
-				conf.mem[i].base + (uvlong)conf.mem[i].npage*BY2PG,
-				Pnormal);
-
 	/*
-	 * The gaps between those runs are the firmware's own reserved
-	 * regions -- ACPI tables among them, which acpiinit() reads --
-	 * so they are mapped too, as Normal: they are memory, this
-	 * kernel only reads them, and leaving them unmapped would fault
-	 * on the next table walk rather than protect anything.
+	 * Memory, entry by entry as the firmware described it.
+	 *
+	 * Not conf.mem[]: that holds only the usable runs, and the ACPI
+	 * tables acpiinit() reads are not in one of them.  And not a
+	 * single span from PHYSDRAM to conf.topofmem, which is what this
+	 * did and which happens to be right on this machine for the one
+	 * reason that QEMU's virt has a single contiguous bank.  A
+	 * machine whose RAM comes in two banks with an MMIO hole between
+	 * them would have had the hole mapped Normal, and Normal memory
+	 * permits speculative reads: a speculative read into a hole is an
+	 * imprecise external abort, arriving with no address and nothing
+	 * to blame.  That is a fault the emulator cannot produce and a
+	 * real machine can, so it would have been found on the rented
+	 * board and not here.
+	 *
+	 * Types 1 (usable), 3 (ACPI reclaim) and 4 (ACPI NVS) are memory
+	 * and are mapped.  Type 2 is not: os/inferno/boot/efi/efi.c gives
+	 * it to EfiMemoryMappedIO and EfiRuntimeServicesData alike, so a
+	 * type-2 run is as likely to be a device aperture as it is to be
+	 * firmware memory, and this kernel calls no runtime service.
+	 * Anything left unmapped faults at the access rather than at some
+	 * later consequence of it.
+	 *
+	 * maprange() rounds out to 2 MiB, so a firmware that put memory
+	 * and registers within one 2 MiB block of each other would still
+	 * spill.  Nothing does -- a DRAM bank's edges are megabyte-
+	 * aligned on every machine this targets -- but a map that fine
+	 * would want page-granular tables here, not a wider rounding.
 	 */
-	maprange(PHYSDRAM, conf.topofmem, Pnormal);
+	for(i = 0; archfwrun(i, &base, &top, &type); i++)
+		if(type == 1 || type == 3 || type == 4)
+			maprange(base, top, Pnormal);
+		else
+			unmapped += top - base;
 
 	maprange(Ecambase, Ecambase + Ecamsize, Pdevice);
 	maprange(Pciehigh, Pciehigh + Pciehighsize, Pdevice);
@@ -237,8 +318,10 @@ mmuinit(void)
 	pthi = ptlo + Tblblock;
 	maprange(ptlo, pthi, Pnormal|Pro);
 
-	print("mmu: %d tables, ram to %#llux, ecam %#llux, pcie-high %#llux\n",
-		ntable, (uvlong)conf.topofmem, (uvlong)Ecambase, (uvlong)Pciehigh);
+	ips = ipsfield();
+	print("mmu: %d tables, ram to %#llux, %llud KB firmware-reserved unmapped, ecam %#llux, top %#llux, ips %d\n",
+		ntable, (uvlong)conf.topofmem, unmapped/1024,
+		(uvlong)Ecambase, mapmax, ips);
 
-	mmuenable(l0);
+	mmuenable(l0, Tcrbase | ((uvlong)ips<<32));
 }

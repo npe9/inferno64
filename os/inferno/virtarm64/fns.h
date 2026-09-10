@@ -77,6 +77,7 @@ int	ainc(int*);		/* l.s; interp.h's AINC */
 int	adec(int*);		/* l.s; interp.h's ADEC */
 void	atomiccheck(void);
 void	archmemreport(void);
+int	archfwrun(int, uvlong*, uvlong*, int*);
 void	memspeed(void);
 long	archkprofmicrosecondspertick(void);
 void	archkprofenable(int);
