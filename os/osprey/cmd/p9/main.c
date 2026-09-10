@@ -43,6 +43,28 @@ p9setup(void)
 	conf.pipeqsize = 32*1024;
 	print("p9: a pipe holds %lud bytes before its writer waits for its reader\n", conf.pipeqsize);
 	chandevreset();
+	/*
+	 * How much room there is between the end of this personality's own
+	 * image and the first address a loaded program is linked at.  The
+	 * quantity on the left grows whenever a program is added to the boot
+	 * files - each one is a byte array in this program's data - and when
+	 * it passed the quantity on the right the machine died at touser
+	 * with nothing printed.  So it is said at every boot, and it is said
+	 * before anything else can go wrong.
+	 */
+	{
+		extern char end[];
+		uvlong e = (uvlong)(uintptr)end;
+
+		if(e >= (uvlong)P9progbase)
+			print("p9: MY OWN IMAGE ENDS AT %#llux, WHICH IS PAST %#llux, "
+				"WHERE THE FIRST LOADED PROGRAM IS LINKED: the boot files "
+				"have outgrown the map in p9lib.h\n", e, (uvlong)P9progbase);
+		else
+			print("p9: my image ends at %#llux, %llud bytes below %#llux, "
+				"where the first loaded program is linked\n",
+				e, (uvlong)P9progbase - e, (uvlong)P9progbase);
+	}
 	up->pgrp = newpgrp();
 	up->egrp = smalloc(sizeof(Egrp));
 	up->egrp->ref = 1;
@@ -853,6 +875,28 @@ p9main(void)
 		print("p9: the shell has ended; loading a module through exec again, "
 			"to see the slot it held given back\n");
 		p9exec("/boot/reloc", rargv);
+	}
+
+	/*
+	 * And rio.  This is the program Phase 3.2 is named for: the real
+	 * 9front rio, from the source in 9front/src/cmd/rio, linked against
+	 * this personality and against nothing else - the prebuilt archive
+	 * of generated system-call stubs is left off its link line, so every
+	 * call it makes is either the personality's through the table or
+	 * code in its own image.
+	 *
+	 * What happens when it runs is the report, not the claim.  It is
+	 * started here so that the failure, if it fails, is a thing on a
+	 * booted machine with a message rather than a guess.
+	 */
+	{
+		char *rioargv[2];
+
+		rioargv[0] = "/boot/rio";
+		rioargv[1] = nil;
+		print("p9: starting /boot/rio, the real 9front rio, linked against this personality\n");
+		p9exec("/boot/rio", rioargv);
+		print("p9: /boot/rio returned\n");
 	}
 
 	poperror();

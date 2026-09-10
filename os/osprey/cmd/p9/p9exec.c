@@ -38,6 +38,7 @@
 #include "libcatprog.i"		/* uchar libcatprog[]: cat, linked against this personality */
 #include "libwcprog.i"		/* uchar libwcprog[]: wc, the far end of a pipeline */
 #include "libnsprog.i"		/* uchar libnsprog[]: the program that changes the name space */
+#include "rioprogp9.i"		/* uchar rioprogp9[]: the real rio, as a module for this personality */
 #include "libshprog.i"		/* uchar libshprog[]: the shell that runs on this personality */
 #include "libgenprog.i"		/* uchar libgenprog[]: the near end of a pipeline */
 #include "libdrawprog.i"		/* uchar libdrawprog[]: the program that draws */
@@ -77,6 +78,7 @@ p9execfile(void)
 	addbootfile("libcat", libcatprog, sizeof libcatprog);
 	addbootfile("libwc", libwcprog, sizeof libwcprog);
 	addbootfile("libns", libnsprog, sizeof libnsprog);
+	addbootfile("rio", rioprogp9, sizeof rioprogp9);
 	addbootfile("libsh", libshprog, sizeof libshprog);
 	addbootfile("libgen", libgenprog, sizeof libgenprog);
 	addbootfile("libdraw", libdrawprog, sizeof libdrawprog);
@@ -159,6 +161,8 @@ extern int	libunmount(char*, char*);
 extern int	libchdir(char*);
 extern int	p9forkns(int);
 extern int	p9waitany(char*, int);
+extern void	p9saveflow(void);		/* p9proc.c: the groups and dot this flow had */
+extern void	p9restoreflow(char *name);
 extern int	libfstat(int, uchar*, int);
 extern int	libsleep(long);
 extern int	libpid(void);
@@ -660,12 +664,28 @@ p9exec(char *name, char **argv)
 	 * personality does not hold: -1 says so */
 	std[0] = std[1] = std[2] = -1;
 	print("p9 exec: entering %s at %#llux with the personality's own name space under it\n", name, entry);
+	/*
+	 * A program run to completion runs on the personality's own flow of
+	 * control, so what it changes about that flow it changes for the
+	 * personality.  rfork gives it a Pgrp, an Egrp or an Fgrp of its
+	 * own by putting one in up->; chdir puts a Chan in up->dot.  None
+	 * of those is restored by the program, and a spawned program has
+	 * nothing to restore because its flow ends - this one's does not.
+	 * So they are saved here and put back, and the personality goes on
+	 * with the name space, environment, descriptors and working
+	 * directory it had.
+	 *
+	 * What a program made for itself is closed; what it was given is
+	 * not, because every flow holds those by pointer with no count.
+	 */
+	p9saveflow();
 	p9execstatus = nil;
 	if(setjmp(p9execjmp) == 0)
 		((void(*)(P9lib*, char**, int*))(uintptr)entry)(p9libtable(), argv, std);
 	else
 		print("p9 exec: %s exited with status \"%s\", into the personality that loaded it, not out of the task\n",
 			name, p9execstatus == nil ? "" : p9execstatus);
+	p9restoreflow(name);
 	/*
 	 * A program may have made flows of control of its own, and one of
 	 * them may still be running in its image.  The personality must not

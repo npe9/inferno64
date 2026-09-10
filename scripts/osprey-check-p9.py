@@ -103,13 +103,24 @@ def main():
     # gengetwindow allocates a window over the whole screen and clears
     # it - which is what any Plan 9 graphics program does.  The first
     # shot fires the moment the hand-written paint reports itself, while
-    # the program is in that pause; the second at the end of the run.
+    # the program is in that pause; the second when that program is done
+    # painting.
+    #
+    # The second used to fire at the end of the run, which was the same
+    # thing while /boot/libdraw was the last program to touch the
+    # screen.  rio is not: it runs afterwards, calls initdraw and takes
+    # the whole screen for itself, so a shot at the end of the run
+    # photographs rio's screen and says nothing about libdraw's.  The
+    # shot is taken where the claim is, which is where the painting
+    # ends.
     rawshot = tempfile.mktemp(prefix='osprey-p9-raw-', suffix='.ppm')
     subprocess.run(['./scripts/osprey-console.py', '-q', '-p', '2', '-n', 'e1000',
                     '-l', log, '-S', '-d', ROOT + '/.qemu/9front-root.qcow2',
-                    '-t', '150', '-u', 'the microkernel idles', '--shot', shot,
+                    '-t', '150', '-u', 'the microkernel idles',
                     '--shot-at',
-                    'libdraw: painted the screen 112233 and 200 150 600 450 cc7722=' + rawshot],
+                    'libdraw: painted the screen 112233 and 200 150 600 450 cc7722=' + rawshot,
+                    '--shot-at',
+                    r'libdraw: real libdraw painted 700 150 1100 450 33aa55=' + shot],
                    env=env, capture_output=True, text=True)
     try:
         t = plain(open(log, errors='replace').read())
@@ -156,8 +167,8 @@ def main():
     results.append(("and it duplicates a descriptor, the two sharing one channel and offset (what a shell redirects with)",
                     'the rest on its dup fd 2: " from the 9P server' in t))
     results.append(("and it loads a second program and runs it: the personality reads /boot/prog2 through the name space it built, asks the kernel only for the address space, lays the binary in it and calls its entry - the loading a library operating system does for itself",
-                    re.search(r'osprey user: \d+ bytes of address space at 0x1000000 for a program the caller loads itself', t) is not None
-                    and re.search(r'p9 exec: /boot/prog2: text \d+, data \d+, bss \d+; \d+ bytes of address space at 0x1000000, entry 0x1000028', t) is not None
+                    re.search(r'osprey user: \d+ bytes of address space at 0x1c00000 for a program the caller loads itself', t) is not None
+                    and re.search(r'p9 exec: /boot/prog2: text \d+, data \d+, bss \d+; \d+ bytes of address space at 0x1c00000, entry 0x1c00028', t) is not None
                     and 'prog2: I am the second program on the library-OS personality, loaded into its address space and called by it' in t))
     results.append(("and that program reaches the file system by calling the personality, not by trapping: it opens and reads /greeting through the entry points it was handed, in its own address space",
                     'prog2: opened and read /greeting by calling the personality, no trap and no ring: "hello osprey"' in t))
@@ -608,6 +619,34 @@ def main():
                     and afterslot.group(1) == shslot.group(1)
                     and 'reloc: 5 function pointers summing to 15' in after
                     and 'reloc: that is not the' not in after))
+    #
+    # rio.  The real 9front rio, from the source in 9front/src/cmd/rio,
+    # linked against this personality and against nothing else - the
+    # prebuilt archive of generated system-call stubs is off its link
+    # line, so a call it makes that the personality does not answer is a
+    # link error rather than a fault.
+    #
+    # What is claimed here is exactly what happens and no more: it is
+    # laid in a slot, entered, takes flows of control of its own through
+    # the personality's proccreate, and gets as far as its own file
+    # system server, which wants a name this personality's name space
+    # does not have.  Then it ends, and the personality is still there.
+    # It does not draw a window and nothing here says it does.
+    rio = re.search(r'p9 reloc: /boot/rio laid at (0x[0-9a-f]+), (\d+) bytes, '
+                    r'(\d+) absolute addresses corrected; it was linked at 0', t)
+    rioprocs = re.findall(r'p9 proccreate: p9server gets a second flow of control as (\d+), '
+                          r'sharing its memory and its descriptors', t)
+    results.append(("and rio itself runs on it, as far as its own file system: the real 9front rio, linked against this personality with the archive of system-call stubs left off, is laid in a slot with two thousand absolute addresses corrected, is entered, and takes flows of control of its own through the personality's proccreate - which is libthread's procrfork underneath",
+                    rio is not None
+                    and int(rio.group(1), 16) >= 0x2c00000
+                    and int(rio.group(3)) > 1000
+                    and len(rioprocs) >= 3
+                    and "p9 exec: entering /boot/rio at " in t))
+    results.append(("and where it stops is a name and not a fault: rio wants /mnt/temp for its file system server and this name space has no such name, so it says so and ends - and the personality it was loaded by is still running afterwards, with the groups and the working directory it had",
+                    "rio: can't create file system server: Enonexist: '/mnt/temp'" in t
+                    and 'p9 exec: /boot/rio exited with status' in t
+                    and 'osprey user: the program exited; the microkernel idles' in t
+                    and 'panic' not in t))
     results.append(("and it exits through the microkernel's minimal syscall interface, no in-kernel personality",
                     'the program exited' in t and 'panic' not in t))
 

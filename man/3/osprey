@@ -1729,8 +1729,16 @@ symbols were
 .I exec
 and
 .IR await .
-One is still undefined when it is linked that way:
-.IR exec .
+None is undefined when it is linked the way the real build links it.
+.I exec
+appeared to be until the enumeration was corrected: it was linking
+9front's own
+.B libthread/main.c
+rather than this tree's
+.BR threadmain9.c ,
+whose
+.I _schedexec
+refuses and never calls exec.
 .IR rfork ,
 .I await
 and
@@ -1753,15 +1761,37 @@ answers
 .I winshell
 asks, and is true here, since nothing posts a note to a loaded program \-
 and refuses a handler, because a handler recorded would never be called.
-.I exec
-is not a missing table entry but a question: on Plan 9 it replaces the
-calling process's image, and in one address space shared with the
-library there is nothing to replace and nowhere for the caller's stack
-to go.  rio reaches it through
-.IR efork ,
-which forks and then execs, and fork-then-exec fused is what
-.I spawn
-already is.
+.B /boot/rio
+is the real 9front rio built as a
+.B "6l -u"
+module, and it runs: laid in a slot, entered at
+.IR p9start ,
+taking three flows of control of its own through
+.IR proccreate ,
+and stopping at its own file system server on a name this name space has
+not got
+.RB ( "'/mnt/temp'" ).
+It does not draw a window.  Two things were found by adding it: the boot
+files are byte arrays in the personality's data, so rio's size pushed
+the personality's bss past
+.B P9progbase
+and the machine died at
+.I touser
+with nothing printed
+.RB ( P9progbase
+moved, and
+.I p9setup
+now prints the distance at every boot); and
+.I libchdir
+had been closing the
+.B Chan
+it replaced, which every flow of control holds by pointer, so a chdir
+took the working directory away from the shell and the personality both.
+.I p9saveflow
+and
+.I p9restoreflow
+put a p9exec'd program's groups and directory back when it returns,
+closing what it made and leaving what it was given.
 .PP
 Version 5 added
 .IR pread ,

@@ -10582,19 +10582,111 @@ which is the one of the three refusals rio actually needs.  So the note
 group is owed, and it is owed for a reason written down above rather
 than discovered later.
 .PP
+And then it was none, because the last one was my own mistake.
 .CW exec
-is the last one, and it is the real question rather than a missing
-entry.  On Plan 9 exec replaces the calling process's image; in one
-address space shared with the library there is nothing to replace it
-with and nowhere for the caller's stack to go.  What rio does with it is
-.CW efork :
-fork, then exec in the child \- and fork-then-exec fused is exactly what
-.CW spawn
-already is.  So the shape of the answer is probably that
-.CW procexec
-becomes a spawn and the flow that called it ends, rather than that exec
-becomes a thing this personality has.  That is a design decision and is
-named as one here rather than guessed at in code.
+was on the list because the enumeration linked 9front's own
+.CW libthread/main.c ,
+and this tree does not use it: the real build substitutes
+.CW threadmain9.c ,
+whose
+.CW _schedexec
+refuses \-
+.CW "procexec: the library operating system has no exec; use the personality's spawn"
+\- and never calls exec at all.  With the enumeration corrected to link
+what the real build links, rio has no undefined symbols whatever.
+.PP
+.B "3.2l: rio runs."
+.CW /boot/rio
+is the real 9front rio, out of
+.CW 9front/src/cmd/rio ,
+linked against
+.CW p9crt.c
+and
+.CW threadmain9.c
+and the source-built libraries, with the prebuilt archive of generated
+system-call stubs left off the line entirely \- so a call it makes that
+this personality does not answer is a link error and not a fault on a
+booted machine.  It is a
+.CW "6l -u"
+module of 1318912 bytes with 2004 absolute addresses in it, and it
+passes every check in
+.CW checkmodule.py .
+.PP
+On the machine it is laid in a slot, entered at
+.CW p9start ,
+and it runs.  It takes three flows of control of its own through the
+personality's
+.CW proccreate ,
+which is libthread's
+.CW procrfork
+underneath, and gets as far as its own file system server, where it
+stops on a name:
+.CW "rio: can't create file system server: Enonexist: '/mnt/temp'" .
+Then it ends, and the personality it was loaded by is still running,
+with the groups and the working directory it had.
+.PP
+That is the whole of the claim.  It does not draw a window and nothing
+here says it does.  What it does say is that the last thing between this
+personality and rio is a name space rather than a mechanism.
+.PP
+.B "Two bugs that only rio was big enough to find."
+The first was not rio running.  Adding rio to the boot files at all
+killed the machine at
+.CW touser ,
+before the personality printed a word, with every check failing at once.
+The boot files are byte arrays in the personality's own data, so rio's
+373KB moved the end of its image: bss ended at 16.31MB and
+.CW P9progbase ,
+where the first loaded program is linked, was 0x1000000 - 16MB exactly.
+Shrinking p9shim.c's arena until the bss ended below 16MB brought the
+entire boot back, 59 of 59, which is what identified it; the personality
+had been within 300KB of that cliff for some time and nothing said so.
+.CW P9progbase
+is 0x1c00000 now, in ground one of the freed bases used to hold, and
+.CW p9setup
+prints the distance at every boot \-
+.CW "my image ends at 0x104ff48, 12255416 bytes below 0x1c00000"
+\- because the quantity that closes the gap is the personality's own
+size, and that grows whenever a program is added to the boot files.
+.PP
+The second was mine, and rio only exposed it by shifting the text far
+enough to change which memory a freed pointer pointed at.
+.CW libchdir
+closed the
+.CW Chan
+it was replacing.  kproc on this personality hands its child
+.CW up->dot
+by pointer and increments no count, so every flow of control holds the
+same one: closing it took the working directory away from the shell and
+from the personality, and what came back was a read of address 0 in
+.CW incref ,
+which is nowhere near a chdir.  It is the same rule that was already
+written down two functions away for the
+.CW Pgrp
+a program rforks, and I had not applied it here.
+.PP
+Which raised the question that rule always raises: what puts things
+back?  A spawned program has nothing to put back because its flow ends.
+A program
+.CW p9exec
+runs to completion is on the personality's own flow, so a name space, an
+environment, a descriptor table or a directory it takes for itself is
+one the personality is left with.  rio takes all of them.  So
+.CW p9saveflow
+and
+.CW p9restoreflow
+save the four and put them back, closing what the program made and
+leaving alone what it was given, and the boot says which of the four a
+program had changed.
+.PP
+One check had to move rather than change.  The second screendump fired
+at the end of the run, which was the same thing as "when the drawing
+program is done" for as long as
+.CW /boot/libdraw
+was the last thing to touch the screen.  rio is not: it calls
+.CW initdraw
+afterwards and takes the whole screen.  The shot is taken where the
+claim is now, which is where the painting ends.
 The pieces exist \-
 .CW p9spawn
 starts a program on a flow of its own,

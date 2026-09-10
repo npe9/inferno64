@@ -131,11 +131,26 @@ struct P9lib {
 enum {
 	P9libversion	= 9,
 	/*
-	 * Where a loaded program is linked: well above the personality's own
-	 * image (its bss ends near 7MB) and well below the stack.  The
-	 * loader does not take this on trust - it works the address out of
-	 * the binary's entry and refuses one that would land on the
-	 * personality - so a program only has to be linked somewhere clear.
+	 * Where a loaded program is linked: above the personality's own
+	 * image and well below the stack.  The loader does not take this on
+	 * trust - it works the address out of the binary's entry and refuses
+	 * one that would land on the personality - so a program only has to
+	 * be linked somewhere clear.
+	 *
+	 * "Somewhere clear" is not a large margin and it moved.  The
+	 * personality's bss holds p9shim.c's 12MB malloc arena, so its image
+	 * ends past 16MB - 16.31MB when rio was added to the boot files -
+	 * and the first program's base was 0x1000000, which is 16MB exactly.
+	 * The overlap did not fail gracefully: the machine died at touser,
+	 * before the personality printed a word, and every check failed at
+	 * once.  Shrinking the arena until the bss ended below 16MB brought
+	 * the whole boot back, which is how the cliff was identified.
+	 *
+	 * So the first program is at 28MB now, in ground one of the freed
+	 * bases below used to hold, and there is 11MB of headroom rather
+	 * than 300KB.  p9setup says so out loud at every boot, because the
+	 * quantity that closes this gap is the personality's own size and
+	 * that grows whenever a program is added to the boot files.
 	 *
 	 * A program is at the address it was linked for and this compiler
 	 * does not relocate, so two of the same program cannot run at once;
@@ -143,10 +158,13 @@ enum {
 	 * wants either relocation or every mutable thing in a program's
 	 * image reached through a per-process pointer, and neither is here.
 	 */
-	P9progbase	= 0x1000000,	/* prog2, the first loaded program */
-	P9progbase2	= 0x1400000,	/* free: libcat is a module now, and has no base */
-	P9progbase3	= 0x1800000,	/* free: libwc is a module now, and has no base */
-	P9progbase4	= 0x1c00000,	/* free: libsh is a module now, and has no base */
+	P9progbase	= 0x1c00000,	/* prog2, the first loaded program */
+	/*
+	 * 0x1000000, 0x1400000 and 0x1800000 are not bases any more.  The
+	 * first is inside the personality's own image; the other two were
+	 * libcat's and libwc's before those became modules, and they are
+	 * left unused as the headroom this arrangement now has.
+	 */
 	P9progbase5	= 0x2000000,	/* libgen, the near end of a pipeline */
 	P9progbase6	= 0x2400000,	/* libdraw, the program that draws */
 	P9progbase7	= 0x2800000,	/* libthread, the program with threads in it */

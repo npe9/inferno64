@@ -950,16 +950,28 @@ libunmount(char *name, char *old)
 int
 libchdir(char *name)
 {
-	Chan *c, *old;
+	Chan *c;
 
 	if(waserror())
 		return -1;
 	c = p9chdirchan(name);
 	poperror();
-	old = up->dot;
+	/*
+	 * The old one is not closed, and finding out why cost a crash.
+	 * kproc here hands its child up->dot by pointer and increments no
+	 * count, so every flow of control on this personality is holding
+	 * the same Chan.  Closing it because this flow chdir'd took the
+	 * personality's working directory away from the shell and from the
+	 * personality itself, and what came back was a fault reading
+	 * address 0 in incref, a long way from the chdir - the same
+	 * reasoning that says a program's rfork must not close the Pgrp it
+	 * was given, which was already written down two functions up and
+	 * which I did not apply here.
+	 *
+	 * p9exec puts the flow's dot back when the program returns, which
+	 * is what keeps a program from leaving the library somewhere else.
+	 */
 	up->dot = c;
-	if(old != nil)
-		cclose(old);
 	return 0;
 }
 

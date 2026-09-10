@@ -11,11 +11,11 @@ set -e
 cd "$(dirname "$0")/../../../.."
 P=os/osprey/cmd/p9
 LIBINC="-I Osprey/amd64/include -I Osprey/include -I include -I $P"
-BASE=0x1000000		# P9progbase in p9lib.h; the two must agree
+BASE=0x1c00000		# P9progbase in p9lib.h; the two must agree
 # -T is the address of the first instruction, not of the header: 6l puts
 # the forty-byte header below it, which is where the loader lays the file
 # down, so the text address is the base plus the header.
-TEXT=0x1000028
+TEXT=0x1c00028
 6c $LIBINC -o /tmp/prog2p9.6 $P/prog2p9.c
 OBJ="/tmp/prog2p9.6"
 SUP=""

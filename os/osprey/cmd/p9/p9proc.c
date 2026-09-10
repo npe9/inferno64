@@ -688,6 +688,79 @@ isdone(void *a)
  * an error and a hang, and the hang is what a shared "any program at
  * all" would have given the moment two flows both waited.
  */
+/*
+ * The groups and the working directory a flow had before it ran a
+ * program to completion.
+ *
+ * A program p9exec runs is on the personality's own flow of control, so
+ * what it changes about that flow it changes for the personality: rfork
+ * puts a Pgrp, an Egrp or an Fgrp of its own in up->, and chdir puts a
+ * Chan in up->dot.  A spawned program has nothing to put back because
+ * its flow ends; this one's does not.  So they are saved and restored,
+ * and the personality goes on with the name space, environment,
+ * descriptors and directory it had.
+ *
+ * What the program made for itself is closed.  What it was given is not,
+ * because kproc hands every flow those by pointer and increments no
+ * count - the rule the rest of this file already follows, and the rule
+ * that libchdir did not: it closed the dot it was replacing, which was
+ * the personality's and the shell's as well, and the fault that came
+ * back was a read of address 0 in incref, a long way from the chdir.
+ *
+ * Not reentrant, and does not need to be: p9exec runs a program to
+ * completion and the personality calls it one at a time.  The depth
+ * count is here so that a second caller says so rather than losing the
+ * first caller's groups silently.
+ */
+static struct {
+	int	depth;
+	Pgrp	*pgrp;
+	Egrp	*egrp;
+	Fgrp	*fgrp;
+	Chan	*dot;
+} flowsave;
+
+void
+p9saveflow(void)
+{
+	if(flowsave.depth++ != 0){
+		print("p9 exec: a program is being run inside another one; "
+			"the outer one's groups are not saved\n");
+		return;
+	}
+	flowsave.pgrp = up->pgrp;
+	flowsave.egrp = up->egrp;
+	flowsave.fgrp = up->fgrp;
+	flowsave.dot = up->dot;
+}
+
+void
+p9restoreflow(char *name)
+{
+	if(--flowsave.depth != 0)
+		return;
+	if(up->pgrp != flowsave.pgrp){
+		closepgrp(up->pgrp);
+		up->pgrp = flowsave.pgrp;
+		print("p9 exec: %s had a name space of its own; the personality has its own back\n", name);
+	}
+	if(up->egrp != flowsave.egrp){
+		closeegrp(up->egrp);
+		up->egrp = flowsave.egrp;
+		print("p9 exec: %s had an environment of its own; the personality has its own back\n", name);
+	}
+	if(up->fgrp != flowsave.fgrp){
+		closefgrp(up->fgrp);
+		up->fgrp = flowsave.fgrp;
+		print("p9 exec: %s had a descriptor table of its own; the personality has its own back\n", name);
+	}
+	if(up->dot != flowsave.dot){
+		cclose(up->dot);
+		up->dot = flowsave.dot;
+		print("p9 exec: %s changed directory; the personality is back where it was\n", name);
+	}
+}
+
 typedef struct Waitany Waitany;
 struct Waitany {
 	int	ppid;
