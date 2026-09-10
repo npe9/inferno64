@@ -48,6 +48,8 @@ headless := array[] of {
 		"styxlog(1) reading a trace as the right paths, and styxreplay(1)"),
 	Test("refstress", nil,
 		"that exactly one process executes Dis at a time"),
+	Test("keyholdtest", nil,
+		"keyhold(2) decoding a press, a release and the arrow-key trap"),
 };
 
 # Run with -g, which needs a screen and so needs this to be started under
@@ -68,8 +70,8 @@ graphical := array[] of {
 		"that what was drawn into a window is still there"),
 	Test("masktest", nil,
 		"the icons/temple sprite masks, and the code that reads them"),
-	Test("nestest", nil,
-		"nes(2): its palette, tile sheets, drawing, scrolling and pad"),
+	Test("tilestest", nil,
+		"tiles(2): its palette, tile sheets, drawing and scrolling"),
 };
 
 # Still not run by anything here, and why.

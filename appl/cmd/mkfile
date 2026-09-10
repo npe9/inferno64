@@ -161,6 +161,7 @@ TARG=\
 	itreplay.dis\
 	keychartest.dis\
 	keyuptest.dis\
+	keyholdtest.dis\
 	kill.dis\
 	line3test.dis\
 	listen.dis\
@@ -187,7 +188,6 @@ TARG=\
 	mouse.dis\
 	mprof.dis\
 	mv.dis\
-	nestest.dis\
 	netkey.dis\
 	netstat.dis\
 	newer.dis\
@@ -242,6 +242,7 @@ TARG=\
 	tee.dis\
 	telnet.dis\
 	test.dis\
+	tilestest.dis\
 	time.dis\
 	timestamp.dis\
 	tkcmd.dis\

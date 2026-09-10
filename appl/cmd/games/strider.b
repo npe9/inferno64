@@ -39,8 +39,12 @@ include "math/draw3d.m";
 	draw3d: Draw3d;
 	Vector: import draw3d;
 
-include "nes.m";
-	nes: Nes;
+include "keyhold.m";
+	keyhold: Keyhold;
+	Binding: import keyhold;
+
+include "tone.m";
+	tone: Tone;
 
 include "frameclock.m";
 	fclock: Frameclock;
@@ -52,6 +56,31 @@ Strider: module
 {
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
+
+# What this game's keys do.  The bits are its own and so is the table:
+# keyhold(2) names no buttons, because what a button means is the
+# program's business - the same bit is jump in one of these games and
+# fire in another.
+KLEFT, KRIGHT, KUP, KDOWN, KA, KB, KSEL, KSTART: con 1 << iota;
+
+BINDS := array[] of {
+	(Keyboard->Left, KLEFT), ('a', KLEFT), ('A', KLEFT),
+	(Keyboard->Right, KRIGHT), ('d', KRIGHT), ('D', KRIGHT),
+	(Keyboard->Up, KUP), ('w', KUP), ('W', KUP),
+	(Keyboard->Down, KDOWN), ('s', KDOWN), ('S', KDOWN),
+	('z', KB), ('Z', KB), (',', KB),
+	('x', KA), ('X', KA), ('.', KA), (' ', KA),
+	('\n', KSTART), ('\t', KSEL),
+};
+
+kb: ref Binding;
+
+# Playing, as against running a self test or writing a screenshot.  Only
+# a playing program asks tone(2) for audio.
+playing(): int
+{
+	return mode == 0;
+}
 
 WIDE:	con 640;
 HIGH:	con 480;
@@ -174,7 +203,9 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
 	math = load Math Math->PATH;
-	nes = load Nes Nes->PATH;
+	keyhold = load Keyhold Keyhold->PATH;
+	tone = load Tone Tone->PATH;
+	kb = keyhold->mk(BINDS);
 	fclock = load Frameclock Frameclock->PATH;
 	scorestore = load Scorestore Scorestore->PATH;
 	for(a := tl argv; a != nil; a = tl a){
@@ -213,8 +244,6 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		raise "fail:load";
 	}
 	d3->init();
-	if(nes != nil)
-		nes->init();
 	if(fclock != nil)
 		fclock->init();
 	if(mode == 1 || mode == 3){
@@ -242,8 +271,11 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		font = Font.open(disp, "*default*");
 	if(scorestore != nil)
 		best = scorestore->loadint("strider", 0);
-	if(audio == 0 && nes != nil)
-		audio = nes->sound(1);
+	# Only when actually playing.  tone(2)'s sfx() is silent until
+	# init() has succeeded, so the self test and the screenshot modes
+	# make no sound and spawn nothing by simply not asking for any.
+	if(audio == 0 && playing() && tone != nil && tone->init() == nil)
+		audio = 1;
 	newgame();
 	case mode {
 	1 =>	selftest();
@@ -270,8 +302,8 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		win.pointer(*p);
 	k := <-win.ctxt.kbd =>
 		if(k == 16r1b || k == 'q' || k == 'Q'){
-			if(nes != nil)
-				nes->quiet();
+			if(tone != nil)
+				tone->stop();
 			if(score > best && scorestore != nil)
 				scorestore->saveint("strider", score);
 			if(fclock != nil)
@@ -393,16 +425,18 @@ key(k: int)
 	'1' =>	group = LASER;
 	'2' =>	group = CANNON;
 	'3' =>	group = MISSILE;
-	# NOT Tab: nes(2)'s pad maps Tab to PSEL, which is what twists the
-	# torso right, and intercepting it here left that with no key at
-	# all.  A binding taken twice is a binding taken once.
+	# NOT Tab: this program's own binding table gives Tab to KSEL,
+	# which is what twists the torso right, and intercepting it here
+	# left that with no key at all.  A binding taken twice is a binding
+	# taken once - and it is a table this program writes now, so it is
+	# a table this program can read.
 	'e' or 'E' =>	nexttarget();
 	'c' or 'C' =>	me.twist = 0.0;		# centre the torso
 	'=' or '+' =>	me.throt += 0.25;
 	'-' or '_' =>	me.throt -= 0.25;
 	'0' =>	me.throt = 0.0;
 	* =>
-		pad = nes->padkey(pad, k);
+		pad = kb.key(pad, k);
 		return;
 	}
 	if(me.throt > 1.0)
@@ -417,8 +451,8 @@ nexttarget()
 		j := (lock + i) % NFOE;
 		if(foes[j] != nil && foes[j].alive){
 			lock = j;
-			if(nes != nil)
-				nes->sfx(1, 1400, 40);
+			if(tone != nil)
+				tone->sfx(1, 1400, 40);
 			return;
 		}
 	}
@@ -430,8 +464,7 @@ nexttarget()
 step()
 {
 	frames++;
-	if(nes != nil)
-		nes->sfxtick();
+	tone->sfxtick();
 	if(over > 0){
 		over--;
 		stepshots();
@@ -480,27 +513,27 @@ stepme()
 		me.down = SHUTDOWN;
 		me.throt = 0.0;
 		me.spd = 0.0;
-		if(nes != nil)
-			nes->sfx(4, 140, 700);
+		if(tone != nil)
+			tone->sfx(4, 140, 700);
 		return;
 	}
 	# legs
-	if((pad & Nes->PLEFT) && !(pad & Nes->PRIGHT))
+	if((pad & KLEFT) && !(pad & KRIGHT))
 		me.face -= TURN;
-	else if((pad & Nes->PRIGHT) && !(pad & Nes->PLEFT))
+	else if((pad & KRIGHT) && !(pad & KLEFT))
 		me.face += TURN;
 	# torso, independent of them, and this is the whole of the genre
-	if((pad & Nes->PB))
+	if((pad & KB))
 		me.twist -= TWIST;
-	if((pad & Nes->PSEL))
+	if((pad & KSEL))
 		me.twist += TWIST;
 	if(me.twist > TWISTMAX)
 		me.twist = TWISTMAX;
 	if(me.twist < -TWISTMAX)
 		me.twist = -TWISTMAX;
-	if(pad & Nes->PUP)
+	if(pad & KUP)
 		me.throt += 0.02;
-	if(pad & Nes->PDOWN)
+	if(pad & KDOWN)
 		me.throt -= 0.02;
 	if(me.throt > 1.0)
 		me.throt = 1.0;
@@ -529,7 +562,7 @@ stepme()
 	# Held, not edged: a weapon group fires again as soon as it has
 	# cycled, for as long as the trigger is down.  shoot() is what
 	# gates on the cooldown, the heat and the ammunition.
-	if(pad & Nes->PA)
+	if(pad & KA)
 		shoot(me, group, 1);
 }
 
@@ -559,8 +592,8 @@ shoot(m: ref Mech, g, mine: int)
 		addbeam(m.x, ey, m.z, hx, hy, hz, mine);
 		if(hit != nil)
 			damage(hit, DMG[LASER], mine);
-		if(nes != nil)
-			nes->sfx(3, 1500, 90);
+		if(tone != nil)
+			tone->sfx(3, 1500, 90);
 		return;
 	}
 	n := SALVO[g];
@@ -573,11 +606,11 @@ shoot(m: ref Mech, g, mine: int)
 		fire(m.x, ey, m.z, math->cos(aa)*sp, 0.0, math->sin(aa)*sp,
 			DMG[g], mine);
 	}
-	if(nes != nil){
+	if(tone != nil){
 		if(g == CANNON)
-			nes->sfx(3, 320, 110);
+			tone->sfx(3, 320, 110);
 		else
-			nes->sfx(2, 700, 140);
+			tone->sfx(2, 700, 140);
 	}
 }
 
@@ -722,14 +755,14 @@ damage(m: ref Mech, d: real, mine: int)
 		if(lock >= 0 && foes[lock] == m)
 			nexttarget();
 	}
-	if(nes != nil && mine)
-		nes->sfx(2, 260, 60);
+	if(tone != nil && mine)
+		tone->sfx(2, 260, 60);
 }
 
 bigboom(x, z: real)
 {
-	if(nes != nil)
-		nes->sfx(5, 120, 600);
+	if(tone != nil)
+		tone->sfx(5, 120, 600);
 }
 
 # The other machines: close to a stand-off range, face you, and shoot.
@@ -1273,8 +1306,7 @@ radar(cx, cy, rad: int)
 
 bench()
 {
-	if(nes != nil)
-		nes->sound(0);
+			audio = 0;
 	win.reshape(Rect((0,0),(WIDE,HIGH)));
 	win.onscreen("place");
 	win.startinput("kbd" :: "ptr" :: nil);
@@ -1299,7 +1331,7 @@ benchrun(n: int): int
 {
 	t0 := sys->millisec();
 	for(i := 0; i < n; i++){
-		pad = Nes->PUP;
+		pad = KUP;
 		step();
 		target = win.image;
 		frame();
@@ -1310,8 +1342,7 @@ benchrun(n: int): int
 
 shot()
 {
-	if(nes != nil)
-		nes->sound(0);
+			audio = 0;
 	newgame();
 	ctx = d3->context(target);
 	lock = 0;
@@ -1330,9 +1361,9 @@ shot()
 	for(i := 0; i < 56; i++){
 		pad = 0;
 		if(i > 8 && i < 24)
-			pad = Nes->PB;
+			pad = KB;
 		else if(i >= 28 && i < 44)
-			pad = Nes->PSEL;
+			pad = KSEL;
 		step();
 		if((i % 10) == 0 || i == 119)
 			frame();
@@ -1394,8 +1425,7 @@ run(n: int, held: int)
 selftest()
 {
 	sys->print("strider: self test\n");
-	if(nes != nil)
-		nes->sound(0);
+			audio = 0;
 	ctx = d3->context(target);
 	newgame();
 
@@ -1428,17 +1458,17 @@ selftest()
 	# The torso turns independently of the legs, and only so far.
 	newgame();
 	f0 := me.face;
-	run(20, Nes->PB);
+	run(20, KB);
 	cktrue("the torso twists", me.twist < 0.0);
 	ck("and the legs do not follow", int me.face, int f0);
 	cktrue("aim is legs plus twist",
 		int (aim(me)*10.0) == int ((me.face + me.twist)*10.0));
-	run(200, Nes->PB);
+	run(200, KB);
 	cktrue("the twist stops at its limit", me.twist >= -TWISTMAX - 0.001);
-	run(400, Nes->PSEL);
+	run(400, KSEL);
 	cktrue("and at the other one", me.twist <= TWISTMAX + 0.001);
 	newgame();
-	run(30, Nes->PRIGHT);
+	run(30, KRIGHT);
 	cktrue("the legs turn", me.face > 0.0);
 	ck("and the torso stays put", int (me.twist*100.0), 0);
 
@@ -1447,7 +1477,7 @@ selftest()
 	newgame();
 	h0 := me.heat;
 	prevpad = 0;
-	run(1, Nes->PA);
+	run(1, KA);
 	cktrue("firing makes heat", me.heat > h0);
 	hh := me.heat;
 	run(60, 0);
@@ -1460,7 +1490,7 @@ selftest()
 	run(1, 0);
 	cktrue("full heat shuts it down", me.down > 0);
 	d0 := me.down;
-	run(5, Nes->PUP);
+	run(5, KUP);
 	ck("a shut down machine ignores the throttle", int (me.spd*100.0), 0);
 	cktrue("and the shutdown counts down", me.down < d0);
 	run(SHUTDOWN + 5, 0);
@@ -1472,18 +1502,18 @@ selftest()
 	group = CANNON;
 	a0 := me.ammo[CANNON];
 	prevpad = 0;
-	run(1, Nes->PA);
+	run(1, KA);
 	ck("firing spends a round", me.ammo[CANNON], a0-1);
-	run(2, Nes->PA);
+	run(2, KA);
 	ck("and the cooldown holds it", me.ammo[CANNON], a0-1);
-	run(COOL[CANNON] + 2, Nes->PA);
+	run(COOL[CANNON] + 2, KA);
 	cktrue("until it expires", me.ammo[CANNON] < a0-1);
 	ck("a laser has no ammunition to spend", me.ammo[LASER], -1);
 	newgame();
 	group = MISSILE;
 	me.ammo[MISSILE] = 0;
 	prevpad = 0;
-	run(1, Nes->PA);
+	run(1, KA);
 	n := 0;
 	for(i = 0; i < NSHOT; i++)
 		if(shots[i] != nil && shots[i].live)
@@ -1494,7 +1524,7 @@ selftest()
 	newgame();
 	group = MISSILE;
 	prevpad = 0;
-	run(1, Nes->PA);
+	run(1, KA);
 	n = 0;
 	for(i = 0; i < NSHOT; i++)
 		if(shots[i] != nil && shots[i].live)

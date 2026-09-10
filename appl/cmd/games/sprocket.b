@@ -6,7 +6,7 @@ implement Sprocket;
 # with by landing on them, boxes that give something up when hit from
 # below, things to collect, and a flag at the right-hand end.
 #
-# Where rivet(1) exercises nes(2)'s tile map on one screen, this one
+# Where rivet(1) exercises tiles(2)'s tile map on one screen, this one
 # exercises the scroll: the level is 128 tiles wide, drawn once into a
 # surface four screens across, and each frame is a window of it plus
 # whatever is moving.  Hitting a box rewrites a tile in that surface
@@ -27,9 +27,16 @@ include "wmclient.m";
 
 include "keyboard.m";
 
-include "nes.m";
-	nes: Nes;
-	Chr, Pal, Surface: import nes;
+include "keyhold.m";
+	keyhold: Keyhold;
+	Binding: import keyhold;
+
+include "tone.m";
+	tone: Tone;
+
+include "tiles.m";
+	tiles: Tiles;
+	Chr, Pal, Surface: import tiles;
 
 include "frameclock.m";
 	fclock: Frameclock;
@@ -42,10 +49,35 @@ Sprocket: module
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+# What this game's keys do.  The bits are its own and so is the table:
+# keyhold(2) names no buttons, because what a button means is the
+# program's business - the same bit is jump in one of these games and
+# fire in another.
+KLEFT, KRIGHT, KUP, KDOWN, KA, KB, KSEL, KSTART: con 1 << iota;
+
+BINDS := array[] of {
+	(Keyboard->Left, KLEFT), ('a', KLEFT), ('A', KLEFT),
+	(Keyboard->Right, KRIGHT), ('d', KRIGHT), ('D', KRIGHT),
+	(Keyboard->Up, KUP), ('w', KUP), ('W', KUP),
+	(Keyboard->Down, KDOWN), ('s', KDOWN), ('S', KDOWN),
+	('z', KB), ('Z', KB), (',', KB),
+	('x', KA), ('X', KA), ('.', KA), (' ', KA),
+	('\n', KSTART), ('\t', KSEL),
+};
+
+kb: ref Binding;
+
+# Playing, as against running a self test or writing a screenshot.  Only
+# a playing program asks tone(2) for audio.
+playing(): int
+{
+	return testmode == 0;
+}
+
 SCALE:	con 2;
-W:	con Nes->W;
-H:	con Nes->H;
-NTH:	con Nes->NTH;
+W:	con Tiles->W;
+H:	con Tiles->H;
+NTH:	con Tiles->NTH;
 LW:	con 128;		# level width, in tiles
 LTOP:	con 10;			# first row the map below gives; above is sky
 
@@ -291,14 +323,17 @@ init(ctxt: ref Draw->Context, argv: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
-	nes = load Nes Nes->PATH;
+	keyhold = load Keyhold Keyhold->PATH;
+	tone = load Tone Tone->PATH;
+	kb = keyhold->mk(BINDS);
+	tiles = load Tiles Tiles->PATH;
 	fclock = load Frameclock Frameclock->PATH;
 	scorestore = load Scorestore Scorestore->PATH;
-	if(nes == nil){
-		sys->fprint(sys->fildes(2), "sprocket: cannot load nes: %r\n");
+	if(tiles == nil){
+		sys->fprint(sys->fildes(2), "sprocket: cannot load tiles: %r\n");
 		raise "fail:load";
 	}
-	e := nes->init();
+	e := tiles->init();
 	if(e != nil){
 		sys->fprint(sys->fildes(2), "sprocket: %s\n", e);
 		raise "fail:init";
@@ -331,8 +366,11 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	setup(d);
 	if(scorestore != nil)
 		best = scorestore->loadint("sprocket", 0);
-	if(audio == 0)
-		audio = nes->sound(1);
+	# Only when actually playing.  tone(2)'s sfx() is silent until
+	# init() has succeeded, so the self test and the screenshot modes
+	# make no sound and spawn nothing by simply not asking for any.
+	if(audio == 0 && playing() && tone != nil && tone->init() == nil)
+		audio = 1;
 	newgame();
 	if(testmode == 1){
 		selftest();
@@ -355,12 +393,12 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		win.pointer(*p);
 	k := <-win.ctxt.kbd =>
 		if(k == 16r1b || k == 'q' || k == 'Q'){
-			nes->quiet();
+			tone->stop();
 			if(score > best && scorestore != nil)
 				scorestore->saveint("sprocket", score);
 			exit;
 		}
-		pad = nes->padkey(pad, k);
+		pad = kb.key(pad, k);
 	<-ticks =>
 		step();
 		draw1();
@@ -373,23 +411,23 @@ setup(d: ref Display)
 {
 	art := array[len SMALL + 4*8*(len BIG / 16)] of string;
 	art[0:] = SMALL;
-	art[len SMALL:] = nes->meta(BIG);
-	sheet = nes->chr(d, Draw->RGB24, SCALE, art);
-	fnt = nes->font(d, Draw->RGB24, SCALE);
+	art[len SMALL:] = tiles->meta(BIG);
+	sheet = tiles->chr(d, Draw->RGB24, SCALE, art);
+	fnt = tiles->font(d, Draw->RGB24, SCALE);
 
-	sky := nes->entry(Nes->MID, Nes->AZURE);
-	psky = nes->pal(sky, sky, nes->entry(Nes->PALE, Nes->GREY),
-		nes->entry(Nes->LIGHT, Nes->GREY));
-	pbrick = nes->pal(sky, nes->entry(Nes->DARK, Nes->ORANGE),
-		nes->entry(Nes->MID, Nes->ORANGE), nes->entry(Nes->LIGHT, Nes->ORANGE));
-	pturf = nes->pal(sky, nes->entry(Nes->DARK, Nes->GREEN),
-		nes->entry(Nes->MID, Nes->LIME), nes->entry(Nes->LIGHT, Nes->LIME));
-	psoil = nes->pal(sky, nes->entry(Nes->DARK, Nes->ORANGE),
-		nes->entry(Nes->DARK, Nes->RED), nes->entry(Nes->MID, Nes->ORANGE));
-	pbox = nes->pal(sky, nes->entry(Nes->DARK, Nes->ORANGE),
-		nes->entry(Nes->PALE, Nes->YELLOW), nes->entry(Nes->MID, Nes->YELLOW));
-	pbolt = nes->pal(sky, nes->entry(Nes->DARK, Nes->YELLOW),
-		nes->entry(Nes->PALE, Nes->YELLOW), nes->entry(Nes->MID, Nes->YELLOW));
+	sky := tiles->entry(Tiles->MID, Tiles->AZURE);
+	psky = tiles->pal(sky, sky, tiles->entry(Tiles->PALE, Tiles->GREY),
+		tiles->entry(Tiles->LIGHT, Tiles->GREY));
+	pbrick = tiles->pal(sky, tiles->entry(Tiles->DARK, Tiles->ORANGE),
+		tiles->entry(Tiles->MID, Tiles->ORANGE), tiles->entry(Tiles->LIGHT, Tiles->ORANGE));
+	pturf = tiles->pal(sky, tiles->entry(Tiles->DARK, Tiles->GREEN),
+		tiles->entry(Tiles->MID, Tiles->LIME), tiles->entry(Tiles->LIGHT, Tiles->LIME));
+	psoil = tiles->pal(sky, tiles->entry(Tiles->DARK, Tiles->ORANGE),
+		tiles->entry(Tiles->DARK, Tiles->RED), tiles->entry(Tiles->MID, Tiles->ORANGE));
+	pbox = tiles->pal(sky, tiles->entry(Tiles->DARK, Tiles->ORANGE),
+		tiles->entry(Tiles->PALE, Tiles->YELLOW), tiles->entry(Tiles->MID, Tiles->YELLOW));
+	pbolt = tiles->pal(sky, tiles->entry(Tiles->DARK, Tiles->YELLOW),
+		tiles->entry(Tiles->PALE, Tiles->YELLOW), tiles->entry(Tiles->MID, Tiles->YELLOW));
 	# Two passes at this, both found by looking at a frame and not by
 	# any assertion.  Colour 3 is the face plate and was MID AZURE,
 	# which is exactly the sky, so the head rendered as an outline with
@@ -397,24 +435,24 @@ setup(d: ref Display)
 	# BLUE, near enough to the same sky that the legs disappeared and
 	# the robot looked half its height.  Black for the outline; nothing
 	# on an azure sky is closer to it than that.
-	pbot = nes->pal(sky, nes->entry(Nes->DARK, Nes->BLACK),
-		nes->entry(Nes->PALE, Nes->CYAN), nes->entry(Nes->MID, Nes->BLUE));
-	pfoe = nes->pal(sky, nes->entry(Nes->DARK, Nes->VIOLET),
-		nes->entry(Nes->MID, Nes->MAGENTA), nes->entry(Nes->LIGHT, Nes->ROSE));
-	phud = nes->pal(sky, nes->entry(Nes->PALE, Nes->GREY),
-		nes->entry(Nes->PALE, Nes->GREY), nes->entry(Nes->PALE, Nes->GREY));
-	pflash = nes->pal(sky, nes->entry(Nes->PALE, Nes->YELLOW),
-		nes->entry(Nes->PALE, Nes->YELLOW), nes->entry(Nes->PALE, Nes->YELLOW));
+	pbot = tiles->pal(sky, tiles->entry(Tiles->DARK, Tiles->BLACK),
+		tiles->entry(Tiles->PALE, Tiles->CYAN), tiles->entry(Tiles->MID, Tiles->BLUE));
+	pfoe = tiles->pal(sky, tiles->entry(Tiles->DARK, Tiles->VIOLET),
+		tiles->entry(Tiles->MID, Tiles->MAGENTA), tiles->entry(Tiles->LIGHT, Tiles->ROSE));
+	phud = tiles->pal(sky, tiles->entry(Tiles->PALE, Tiles->GREY),
+		tiles->entry(Tiles->PALE, Tiles->GREY), tiles->entry(Tiles->PALE, Tiles->GREY));
+	pflash = tiles->pal(sky, tiles->entry(Tiles->PALE, Tiles->YELLOW),
+		tiles->entry(Tiles->PALE, Tiles->YELLOW), tiles->entry(Tiles->PALE, Tiles->YELLOW));
 
-	scr = nes->surface(d, sheet, fnt, W, H, sky);
-	bg = nes->surface(d, sheet, fnt, LW*8, H, sky);
+	scr = tiles->surface(d, sheet, fnt, W, H, sky);
+	bg = tiles->surface(d, sheet, fnt, LW*8, H, sky);
 	lmap = array[LW*NTH] of int;
 	buildlevel();
 }
 
 buildlevel()
 {
-	sky := nes->entry(Nes->MID, Nes->AZURE);
+	sky := tiles->entry(Tiles->MID, Tiles->AZURE);
 	bg.fill(Rect((0,0),(LW*8, H)), sky);
 	# clouds first, so the sky is not a flat field; the terrain loop
 	# below skips its empty cells and leaves them alone.
@@ -498,7 +536,7 @@ setmap(tx, ty, v: int)
 	lmap[ty*LW + tx] = v;
 	if(v == SKY)
 		bg.fill(Rect((tx*8, ty*8), (tx*8+8, ty*8+8)),
-			nes->entry(Nes->MID, Nes->AZURE));
+			tiles->entry(Tiles->MID, Tiles->AZURE));
 	else
 		bg.tile(tx, ty, tileof(v), palof(v));
 }
@@ -569,7 +607,7 @@ boxhit(x, y: int): int
 step()
 {
 	frames++;
-	nes->sfxtick();
+	tone->sfxtick();
 	if(dead > 0){
 		dead--;
 		if(dead == 0){
@@ -603,12 +641,12 @@ VCUT:	con -2.2;		# rise left after letting go of the button
 stepplayer()
 {
 	vmax := VMAX;
-	if(pad & Nes->PB)
+	if(pad & KB)
 		vmax = VRUN;
-	if((pad & Nes->PLEFT) && !(pad & Nes->PRIGHT)){
+	if((pad & KLEFT) && !(pad & KRIGHT)){
 		pvx -= ACC;
 		pface = -1;
-	}else if((pad & Nes->PRIGHT) && !(pad & Nes->PLEFT)){
+	}else if((pad & KRIGHT) && !(pad & KLEFT)){
 		pvx += ACC;
 		pface = 1;
 	}else{
@@ -646,17 +684,17 @@ stepplayer()
 
 	# jump: an edge starts it, and letting go early cuts it short, which
 	# is what makes the height controllable rather than fixed.
-	if(pground && (nes->edge(pad, prevpad) & Nes->PA)){
+	if(pground && (keyhold->edge(pad, prevpad) & KA)){
 		pvy = VJUMP;
 		pground = 0;
-		nes->sfx(2, 700, 90);
+		tone->sfx(2, 700, 90);
 	}
 	# Letting go early cuts the jump short.  This CLAMPS the rise rather
 	# than scaling it: scaling ran every frame the button was up, so the
 	# cut compounded and a tapped jump reached seven pixels - lower than
 	# the character is tall, and indistinguishable from not jumping.
 	# A clamp applies as many times as it likes and still means one cut.
-	if(!(pad & Nes->PA) && pvy < VCUT)
+	if(!(pad & KA) && pvy < VCUT)
 		pvy = VCUT;
 
 	pvy += GRAV;
@@ -691,7 +729,7 @@ stepplayer()
 	|| cell((int px + 8)/8, (int py + 8)/8) == POLE){
 		won = 120;
 		score += 1000;
-		nes->sfx(4, 1400, 500);
+		tone->sfx(4, 1400, 500);
 		return;
 	}
 	# camera: the player sits a third in, and it stops at both ends.
@@ -715,10 +753,10 @@ bump(oy: int)
 		setmap(tx, ty, SPENT);
 		score += 200;
 		bolts++;
-		nes->sfx(3, 1100, 80);
+		tone->sfx(3, 1100, 80);
 		return;
 	}
-	nes->sfx(1, 260, 50);
+	tone->sfx(1, 260, 50);
 }
 
 pickups()
@@ -733,7 +771,7 @@ pickups()
 				setmap(tx, ty, SKY);
 				bolts++;
 				score += 100;
-				nes->sfx(2, 1600, 60);
+				tone->sfx(2, 1600, 60);
 			}
 }
 
@@ -741,7 +779,7 @@ hurt()
 {
 	lives--;
 	dead = 100;
-	nes->sfx(5, 170, 500);
+	tone->sfx(5, 170, 500);
 }
 
 stepfoes()
@@ -792,7 +830,7 @@ stepfoes()
 			pvy = -3.4;
 			pground = 0;
 			score += 200;
-			nes->sfx(3, 900, 70);
+			tone->sfx(3, 900, 70);
 		}else
 			hurt();
 		return;
@@ -844,7 +882,7 @@ drawplayer()
 	}
 	f := 0;
 	if(pface < 0)
-		f = Nes->FLIPX;
+		f = Tiles->FLIPX;
 	scr.put16(int px - cam, int py, t, pbot, f);
 }
 
@@ -871,14 +909,14 @@ pad0(v, n: int): string
 
 shot()
 {
-	nes->sound(0);
+	audio = 0;
 	newgame();
 	# Enough to be somewhere worth looking at, jumping often enough to
 	# clear what is in the way rather than walking into the first pit.
 	for(i := 0; i < 260; i++){
-		pad = Nes->PRIGHT;
+		pad = KRIGHT;
 		if((i % 34) < 12)
-			pad |= Nes->PA;
+			pad |= KA;
 		step();
 		draw1();
 	}
@@ -937,7 +975,7 @@ walkto(t: int): int
 	for(i := 0; i < 3000; i++){
 		if(int px >= t)
 			return 1;
-		run(1, Nes->PRIGHT);
+		run(1, KRIGHT);
 		if(dead > 0 || won > 0)
 			return 0;
 	}
@@ -947,8 +985,8 @@ walkto(t: int): int
 selftest()
 {
 	sys->print("sprocket: self test\n");
-	nes->sound(0);
-	cktrue("level rows given", len LEVEL == Nes->NTH - LTOP);
+	audio = 0;
+	cktrue("level rows given", len LEVEL == Tiles->NTH - LTOP);
 	for(i := 0; i < len LEVEL; i++)
 		if(len LEVEL[i] != LW){
 			sys->print("FAIL level row %d is %d wide, want %d\n",
@@ -971,12 +1009,12 @@ selftest()
 	ck("and does not drift", int px, 24);
 
 	# Momentum: it takes time to get up to speed and time to stop.
-	run(4, Nes->PRIGHT);
+	run(4, KRIGHT);
 	v4 := pvx;
-	run(30, Nes->PRIGHT);
+	run(30, KRIGHT);
 	cktrue("accelerates", pvx > v4);
 	cktrue("caps at the walk speed", pvx <= VMAX + 0.001);
-	run(30, Nes->PRIGHT|Nes->PB);
+	run(30, KRIGHT|KB);
 	cktrue("the run button is faster", pvx > VMAX);
 	run(30, 0);
 	ck("friction stops it", int (pvx * 100.0), 0);
@@ -989,9 +1027,9 @@ selftest()
 	yb := int py;
 	pad = 0; prevpad = 0; step();
 	hi := yb;
-	run(1, Nes->PA);
+	run(1, KA);
 	for(i = 0; i < 40; i++){
-		run(1, Nes->PA);
+		run(1, KA);
 		if(int py < hi)
 			hi = int py;
 	}
@@ -1000,7 +1038,7 @@ selftest()
 	run(20, 0);
 	pad = 0; prevpad = 0; step();
 	hi = yb;
-	run(1, Nes->PA);
+	run(1, KA);
 	for(i = 0; i < 40; i++){
 		run(1, 0);
 		if(int py < hi)
@@ -1016,7 +1054,7 @@ selftest()
 	# the steps before the flag are the tallest wall in the level
 	walkto(114*8 - 20);
 	xw := int px;
-	run(40, Nes->PRIGHT);
+	run(40, KRIGHT);
 	cktrue("a wall stops it", int px < xw + 40);
 	cktrue("and it is not inside the wall", !boxhit(int px, int py));
 

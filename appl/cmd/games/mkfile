@@ -20,7 +20,9 @@ SYSMODULES=\
 	keyboard.m\
 	math.m\
 	rand.m\
-	nes.m\
+	tiles.m\
+	keyhold.m\
+	tone.m\
 	frameclock.m\
 	scorestore.m\
 

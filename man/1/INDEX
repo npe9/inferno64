@@ -359,6 +359,7 @@ join spree-join
 keepaway keepaway
 keyboard keyboard
 keychartest keychartest
+keyholdtest keyholdtest
 kill tiny
 lattice lattice
 lc ls
@@ -420,7 +421,6 @@ munload sh-mload
 mux mux
 mv mv
 nedmail nedmail
-nestest nestest
 netkey netkey
 netofdots netofdots
 netstat netstat
@@ -588,6 +588,7 @@ text sh-sexprs
 textels sh-sexprs
 thedead thedead
 tictactoe tictactoe
+tilestest tilestest
 time time
 timeclock timeclock
 timestamp timestamp

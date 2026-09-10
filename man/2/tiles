@@ -1,12 +1,12 @@
-.TH NES 2
+.TH TILES 2
 .SH NAME
-nes: init, rgb, colour, entry, pal, chr, meta, font, surface, padkey, edge, sound, sfx, sfxtick, quiet \- an 8-bit console look-alike
+tiles: init, rgb, colour, entry, pal, chr, meta, font, surface, padkey, edge, sound, sfx, sfxtick, quiet \- an 8-bit console look-alike
 .SH SYNOPSIS
 .EX
 include "draw.m";
-include "nes.m";
-nes := load Nes Nes->PATH;
-Chr, Pal, Surface: import nes;
+include "tiles.m";
+nes := load Tiles Tiles->PATH;
+Chr, Pal, Surface: import tiles;
 
 W, H: con 256, 240;
 TW, TH: con 8, 8;
@@ -40,7 +40,7 @@ sfxtick: fn();
 quiet:   fn();
 .EE
 .SH DESCRIPTION
-.I Nes
+.I Tiles
 is the graphics of the 8-bit console era, in Limbo:
 a fixed 256 by 240 logical screen built from 8 by 8 tiles,
 four colours to a tile out of a 64-entry master palette,
@@ -209,10 +209,10 @@ turns audio on or off and returns whether it is on;
 .I quiet
 silences whatever is playing.
 .SH SOURCE
-.B /appl/lib/nes.b
+.B /appl/lib/tiles.b
 .SH SEE ALSO
 .IR rivet (1),
-.IR nestest (1),
+.IR tilestest (1),
 .IR vsprite (2),
 .IR draw3d (2),
 .IR tone (2),

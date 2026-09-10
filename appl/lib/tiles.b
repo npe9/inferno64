@@ -1,4 +1,4 @@
-implement Nes;
+implement Tiles;
 
 # See module/nes.m for what this is and is not.
 #
@@ -20,12 +20,7 @@ include "draw.m";
 	draw: Draw;
 	Display, Image, Point, Rect, Chans: import draw;
 
-include "tone.m";
-	tone: Tone;
-
-include "keyboard.m";
-
-include "nes.m";
+include "tiles.m";
 
 # The master palette's shape.  Four rows of sixteen: a grey, twelve
 # hues, three blacks.  Changing these moves the whole ramp together,
@@ -97,7 +92,7 @@ hue(h, s, l: real): int
 	# half sixths - took the wrong sextant every other one, and the
 	# fraction within it came out negative.  Two pairs of hues then
 	# clamped to the same colour, which is not visible in any single
-	# colour and is exactly what nestest(1) counts.
+	# colour and is exactly what tilestest(1) counts.
 	h6 := h * 6.0;
 	seg := int h6;
 	if(real seg > h6)
@@ -488,101 +483,4 @@ Surface.blit(s: self ref Surface, dst: ref Surface, x, y: int)
 	sc := dst.scale;
 	r := Rect((x*sc, y*sc), (x*sc + s.img.r.dx(), y*sc + s.img.r.dy()));
 	dst.img.draw(r, s.img, nil, s.img.r.min);
-}
-
-# ---------------------------------------------------------------- input
-
-# The pad, and the keys that work it.  Two sets for the directions so
-# either hand can drive, and three for the two buttons because no
-# arrangement suits everyone.
-padkeys := array[] of {
-	(Keyboard->Left, PLEFT), ('a', PLEFT), ('A', PLEFT),
-	(Keyboard->Right, PRIGHT), ('d', PRIGHT), ('D', PRIGHT),
-	(Keyboard->Up, PUP), ('w', PUP), ('W', PUP),
-	(Keyboard->Down, PDOWN), ('s', PDOWN), ('S', PDOWN),
-	('z', PB), ('Z', PB), (',', PB),
-	('x', PA), ('X', PA), ('.', PA), (' ', PA),
-	('\n', PSTART), ('\t', PSEL),
-};
-
-padkey(pad, k: int): int
-{
-	up := 0;
-	if((k & (Keyboard->Spec | 16r800)) == Keyboard->Keyup){
-		up = 1;
-		k &= 16r7ff;
-	}
-	for(i := 0; i < len padkeys; i++){
-		(key, bit) := padkeys[i];
-		match := key;
-		if(up)
-			match = key & 16r7ff;
-		if(k != match)
-			continue;
-		if(up)
-			return pad & ~bit;
-		return pad | bit;
-	}
-	return pad;
-}
-
-edge(pad, prev: int): int
-{
-	return pad & ~prev;
-}
-
-# ---------------------------------------------------------------- sound
-
-# tone(2) plays one thing at a time and beep() returns at once, so what
-# is needed is an arbiter: an effect states a priority and how long it
-# lasts, and a quieter one asked for while a louder one is still
-# sounding is dropped rather than cutting it off.
-haveaudio := 0;
-sfxpri := 0;
-sfxuntil := 0;
-
-sound(on: int): int
-{
-	if(!on){
-		if(haveaudio && tone != nil)
-			tone->stop();
-		haveaudio = 0;
-		return 0;
-	}
-	if(haveaudio)
-		return 1;
-	if(tone == nil)
-		tone = load Tone Tone->PATH;
-	if(tone == nil)
-		return 0;
-	if(tone->init() != nil)
-		return 0;
-	haveaudio = 1;
-	return 1;
-}
-
-sfx(pri, freq, ms: int)
-{
-	if(!haveaudio || ms <= 0)
-		return;
-	now := sys->millisec();
-	if(now < sfxuntil && pri < sfxpri)
-		return;
-	tone->beep(freq, ms);
-	sfxpri = pri;
-	sfxuntil = now + ms;
-}
-
-sfxtick()
-{
-	if(haveaudio && sys->millisec() >= sfxuntil)
-		sfxpri = 0;
-}
-
-quiet()
-{
-	if(haveaudio && tone != nil)
-		tone->stop();
-	sfxpri = 0;
-	sfxuntil = 0;
 }

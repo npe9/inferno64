@@ -1,6 +1,6 @@
 implement Command;
 
-# Checks nes(2) itself, which the games on top of it only exercise
+# Checks tiles(2) itself, which the games on top of it only exercise
 # indirectly: a game's own test asserts on the game's state and would
 # pass with every tile drawn in the wrong palette.  This one reads the
 # pixels back and compares them against the palette entries they are
@@ -15,11 +15,9 @@ include "draw.m";
 	draw: Draw;
 	Display, Image, Point, Rect: import draw;
 
-include "keyboard.m";
-
-include "nes.m";
-	nes: Nes;
-	Chr, Pal, Surface: import nes;
+include "tiles.m";
+	tiles: Tiles;
+	Chr, Pal, Surface: import tiles;
 
 Command: module
 {
@@ -117,49 +115,48 @@ at(s: ref Surface, x, y: int): int
 
 rgb24(i: int): int
 {
-	return (nes->rgb(i) >> 8) & 16rFFFFFF;
+	return (tiles->rgb(i) >> 8) & 16rFFFFFF;
 }
 
 init(nil: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
-	nes = load Nes Nes->PATH;
-	if(nes == nil){
-		sys->print("nestest: cannot load nes: %r\n");
+	tiles = load Tiles Tiles->PATH;
+	if(tiles == nil){
+		sys->print("tilestest: cannot load nes: %r\n");
 		raise "fail:load";
 	}
-	e := nes->init();
+	e := tiles->init();
 	if(e != nil){
-		sys->print("nestest: %s\n", e);
+		sys->print("tilestest: %s\n", e);
 		raise "fail:init";
 	}
 	d = Display.allocate(nil);
 	if(d == nil){
-		sys->print("nestest: no display: %r\n");
+		sys->print("tilestest: no display: %r\n");
 		raise "fail:display";
 	}
 	palette();
-	tiles();
+	sheets();
 	drawing();
 	scrolling();
-	input();
 	if(nfail == 0)
-		sys->print("nestest: PASSED\n");
+		sys->print("tilestest: PASSED\n");
 	else{
-		sys->print("nestest: FAILED (%d)\n", nfail);
-		raise "fail:nestest";
+		sys->print("tilestest: FAILED (%d)\n", nfail);
+		raise "fail:tilestest";
 	}
 }
 
 palette()
 {
-	sys->print("nestest: the master palette\n");
+	sys->print("tilestest: the master palette\n");
 	# The greys are grey, and they climb.
 	last := -1;
 	up := 1;
 	for(r := 0; r < 4; r++){
-		v := rgb24(nes->entry(r, Nes->GREY));
+		v := rgb24(tiles->entry(r, Tiles->GREY));
 		rr := (v >> 16) & 16rFF;
 		gg := (v >> 8) & 16rFF;
 		bb := v & 16rFF;
@@ -172,29 +169,29 @@ palette()
 		last = rr;
 	}
 	cktrue("the greys climb from dark to pale", up);
-	ckx("the palest grey is white", rgb24(nes->entry(Nes->PALE, Nes->GREY)),
+	ckx("the palest grey is white", rgb24(tiles->entry(Tiles->PALE, Tiles->GREY)),
 		16rFFFFFF);
-	ckx("column 13 is black", rgb24(nes->entry(Nes->MID, Nes->BLACK)), 0);
+	ckx("column 13 is black", rgb24(tiles->entry(Tiles->MID, Tiles->BLACK)), 0);
 
 	# Twelve distinct hues on the mid row.
 	n := 0;
-	for(c := Nes->RED; c <= Nes->ROSE; c++)
-		for(c2 := c+1; c2 <= Nes->ROSE; c2++)
-			if(rgb24(nes->entry(Nes->MID, c)) ==
-			   rgb24(nes->entry(Nes->MID, c2)))
+	for(c := Tiles->RED; c <= Tiles->ROSE; c++)
+		for(c2 := c+1; c2 <= Tiles->ROSE; c2++)
+			if(rgb24(tiles->entry(Tiles->MID, c)) ==
+			   rgb24(tiles->entry(Tiles->MID, c2)))
 				n++;
 	ck("no two hues on a row are the same", n, 0);
 
 	# A hue gets brighter across the rows.
-	dark := rgb24(nes->entry(Nes->DARK, Nes->CYAN));
-	pale := rgb24(nes->entry(Nes->PALE, Nes->CYAN));
+	dark := rgb24(tiles->entry(Tiles->DARK, Tiles->CYAN));
+	pale := rgb24(tiles->entry(Tiles->PALE, Tiles->CYAN));
 	cktrue("a hue brightens down the rows", lum(pale) > lum(dark));
 
 	# Out of range is clamped rather than faulting.
-	ckx("entry clamps low", rgb24(nes->entry(-5, -5)),
-		rgb24(nes->entry(0, 0)));
-	ckx("entry clamps high", rgb24(nes->entry(99, 99)),
-		rgb24(nes->entry(3, 15)));
+	ckx("entry clamps low", rgb24(tiles->entry(-5, -5)),
+		rgb24(tiles->entry(0, 0)));
+	ckx("entry clamps high", rgb24(tiles->entry(99, 99)),
+		rgb24(tiles->entry(3, 15)));
 }
 
 lum(v: int): int
@@ -202,10 +199,10 @@ lum(v: int): int
 	return ((v>>16) & 16rFF) + ((v>>8) & 16rFF) + (v & 16rFF);
 }
 
-tiles()
+sheets()
 {
-	sys->print("nestest: tile sheets\n");
-	c := nes->chr(d, Draw->RGB24, 2, ART);
+	sys->print("tilestest: tile sheets\n");
+	c := tiles->chr(d, Draw->RGB24, 2, ART);
 	ck("two tiles", c.n, 2);
 	ck("corner is colour 1", c.pix(0, 0, 0), 1);
 	ck("inside is colour 2", c.pix(0, 1, 1), 2);
@@ -217,7 +214,7 @@ tiles()
 	# left, bottom right.  Getting this wrong scrambles every 16x16
 	# character in every game, so it is worth checking by colour rather
 	# than by eye.
-	m := nes->chr(d, Draw->RGB24, 2, nes->meta(ART16));
+	m := tiles->chr(d, Draw->RGB24, 2, tiles->meta(ART16));
 	ck("one 16x16 makes four tiles", m.n, 4);
 	ck("top left quadrant", m.pix(0, 0, 0), 1);
 	ck("top right quadrant", m.pix(1, 1, 0), 2);
@@ -225,7 +222,7 @@ tiles()
 	ck("bottom right quadrant", m.pix(3, 1, 0), 1);
 	ck("the gap between them is colour 0", m.pix(1, 0, 0), 0);
 
-	f := nes->font(d, Draw->RGB24, 2);
+	f := tiles->font(d, Draw->RGB24, 2);
 	cktrue("the font loads", f != nil);
 	if(f != nil){
 		ck("256 glyphs", f.n, 256);
@@ -246,89 +243,89 @@ tiles()
 
 drawing()
 {
-	sys->print("nestest: drawing\n");
+	sys->print("tilestest: drawing\n");
 	SC: con 2;
-	bk := nes->entry(Nes->DARK, Nes->BLACK);
-	c := nes->chr(d, Draw->RGB24, SC, ART);
-	f := nes->font(d, Draw->RGB24, SC);
-	pa := nes->pal(bk, nes->entry(Nes->MID, Nes->RED),
-		nes->entry(Nes->MID, Nes->GREEN), nes->entry(Nes->MID, Nes->BLUE));
-	pb := nes->pal(bk, nes->entry(Nes->MID, Nes->CYAN),
-		nes->entry(Nes->MID, Nes->YELLOW), nes->entry(Nes->MID, Nes->MAGENTA));
-	s := nes->surface(d, c, f, 64, 64, nes->entry(Nes->PALE, Nes->GREY));
+	bk := tiles->entry(Tiles->DARK, Tiles->BLACK);
+	c := tiles->chr(d, Draw->RGB24, SC, ART);
+	f := tiles->font(d, Draw->RGB24, SC);
+	pa := tiles->pal(bk, tiles->entry(Tiles->MID, Tiles->RED),
+		tiles->entry(Tiles->MID, Tiles->GREEN), tiles->entry(Tiles->MID, Tiles->BLUE));
+	pb := tiles->pal(bk, tiles->entry(Tiles->MID, Tiles->CYAN),
+		tiles->entry(Tiles->MID, Tiles->YELLOW), tiles->entry(Tiles->MID, Tiles->MAGENTA));
+	s := tiles->surface(d, c, f, 64, 64, tiles->entry(Tiles->PALE, Tiles->GREY));
 	cktrue("a surface is made", s != nil);
 	if(s == nil)
 		return;
 	ck("the image is scale times the logical size", s.img.r.dx(), 64*SC);
 	ckx("and starts in its background colour", at(s, 0, 0),
-		rgb24(nes->entry(Nes->PALE, Nes->GREY)));
+		rgb24(tiles->entry(Tiles->PALE, Tiles->GREY)));
 
 	# tile(): opaque, at tile coordinates, in the palette given.
 	s.tile(1, 1, 0, pa);
 	ckx("tile corner is palette colour 1", at(s, 8*SC, 8*SC),
-		rgb24(nes->entry(Nes->MID, Nes->RED)));
+		rgb24(tiles->entry(Tiles->MID, Tiles->RED)));
 	ckx("tile inside is colour 2", at(s, 9*SC, 9*SC),
-		rgb24(nes->entry(Nes->MID, Nes->GREEN)));
+		rgb24(tiles->entry(Tiles->MID, Tiles->GREEN)));
 	ckx("tile middle is colour 3", at(s, 11*SC, 11*SC),
-		rgb24(nes->entry(Nes->MID, Nes->BLUE)));
+		rgb24(tiles->entry(Tiles->MID, Tiles->BLUE)));
 	# and the scale really is a block, not a point
 	ckx("a logical pixel is a block of real ones", at(s, 8*SC+1, 8*SC+1),
-		rgb24(nes->entry(Nes->MID, Nes->RED)));
+		rgb24(tiles->entry(Tiles->MID, Tiles->RED)));
 
 	# The composite cache is keyed by palette as well as by tile.  If it
 	# were not, this second draw would come out in the first palette's
 	# colours - which looks like a working game in one colour scheme.
 	s.tile(3, 1, 0, pb);
 	ckx("the same tile in another palette", at(s, 24*SC, 8*SC),
-		rgb24(nes->entry(Nes->MID, Nes->CYAN)));
+		rgb24(tiles->entry(Tiles->MID, Tiles->CYAN)));
 	s.tile(5, 1, 0, pa);
 	ckx("and back again in the first", at(s, 40*SC, 8*SC),
-		rgb24(nes->entry(Nes->MID, Nes->RED)));
+		rgb24(tiles->entry(Tiles->MID, Tiles->RED)));
 
 	# put(): colour 0 is transparent.  Tile 1 is empty at its top right.
-	s.fill(Rect((0, 24), (64, 32)), nes->entry(Nes->MID, Nes->LIME));
+	s.fill(Rect((0, 24), (64, 32)), tiles->entry(Tiles->MID, Tiles->LIME));
 	s.put(0, 24, 1, pa, 0);
 	ckx("put draws colour 3", at(s, 0, 24*SC),
-		rgb24(nes->entry(Nes->MID, Nes->BLUE)));
+		rgb24(tiles->entry(Tiles->MID, Tiles->BLUE)));
 	ckx("and leaves colour 0 alone", at(s, 7*SC, 24*SC),
-		rgb24(nes->entry(Nes->MID, Nes->LIME)));
+		rgb24(tiles->entry(Tiles->MID, Tiles->LIME)));
 
 	# tile() does NOT: colour 0 is the background there.
-	s.fill(Rect((16, 24), (64, 32)), nes->entry(Nes->MID, Nes->LIME));
+	s.fill(Rect((16, 24), (64, 32)), tiles->entry(Tiles->MID, Tiles->LIME));
 	s.tile(2, 3, 1, pa);
 	ckx("tile paints colour 0 as the background", at(s, 23*SC, 24*SC),
 		rgb24(bk));
 
 	# Flips.  Tile 1 is lopsided on purpose: colour 3 is at its left
 	# edge and nothing is at its right.
-	s.fill(Rect((0, 40), (64, 48)), nes->entry(Nes->MID, Nes->LIME));
-	s.put(0, 40, 1, pa, Nes->FLIPX);
+	s.fill(Rect((0, 40), (64, 48)), tiles->entry(Tiles->MID, Tiles->LIME));
+	s.put(0, 40, 1, pa, Tiles->FLIPX);
 	ckx("flipx moves colour 3 to the right", at(s, 7*SC, 40*SC),
-		rgb24(nes->entry(Nes->MID, Nes->BLUE)));
+		rgb24(tiles->entry(Tiles->MID, Tiles->BLUE)));
 	ckx("and clears the left", at(s, 0, 40*SC),
-		rgb24(nes->entry(Nes->MID, Nes->LIME)));
-	s.fill(Rect((8, 40), (64, 48)), nes->entry(Nes->MID, Nes->LIME));
-	s.put(8, 40, 1, pa, Nes->FLIPY);
+		rgb24(tiles->entry(Tiles->MID, Tiles->LIME)));
+	s.fill(Rect((8, 40), (64, 48)), tiles->entry(Tiles->MID, Tiles->LIME));
+	s.put(8, 40, 1, pa, Tiles->FLIPY);
 	ckx("flipy moves colour 1 to the top", at(s, 8*SC, 40*SC),
-		rgb24(nes->entry(Nes->MID, Nes->RED)));
+		rgb24(tiles->entry(Tiles->MID, Tiles->RED)));
 
 	# put16: the quadrants land where meta() put them, and FLIPX swaps
 	# the halves as well as mirroring each.
-	m := nes->chr(d, Draw->RGB24, SC, nes->meta(ART16));
-	s2 := nes->surface(d, m, f, 64, 64, bk);
+	m := tiles->chr(d, Draw->RGB24, SC, tiles->meta(ART16));
+	s2 := tiles->surface(d, m, f, 64, 64, bk);
 	s2.put16(0, 0, 0, pa, 0);
-	ckx("put16 top left", at(s2, 0, 0), rgb24(nes->entry(Nes->MID, Nes->RED)));
+	ckx("put16 top left", at(s2, 0, 0), rgb24(tiles->entry(Tiles->MID, Tiles->RED)));
 	ckx("put16 top right", at(s2, 9*SC, 0),
-		rgb24(nes->entry(Nes->MID, Nes->GREEN)));
+		rgb24(tiles->entry(Tiles->MID, Tiles->GREEN)));
 	ckx("put16 bottom left", at(s2, 0, 8*SC),
-		rgb24(nes->entry(Nes->MID, Nes->BLUE)));
-	s2.put16(16, 0, 0, pa, Nes->FLIPX);
+		rgb24(tiles->entry(Tiles->MID, Tiles->BLUE)));
+	s2.put16(16, 0, 0, pa, Tiles->FLIPX);
 	ckx("flipx swaps the halves", at(s2, (16+15)*SC, 0),
-		rgb24(nes->entry(Nes->MID, Nes->RED)));
+		rgb24(tiles->entry(Tiles->MID, Tiles->RED)));
 
 	# text: one glyph every eight logical pixels, and a space leaves the
 	# ground alone.
-	s.fill(Rect((0, 52), (64, 60)), nes->entry(Nes->MID, Nes->LIME));
+	s.fill(Rect((0, 52), (64, 60)), tiles->entry(Tiles->MID, Tiles->LIME));
 	s.text(0, 52, "A A", pa);
 	na := lit(s, 0, 52, 8, 8);
 	nb := lit(s, 8, 52, 8, 8);
@@ -344,7 +341,7 @@ drawing()
 # ground's own colour would still read as nothing.
 lit(s: ref Surface, x, y, w, h: int): int
 {
-	g := rgb24(nes->entry(Nes->MID, Nes->LIME));
+	g := rgb24(tiles->entry(Tiles->MID, Tiles->LIME));
 	n := 0;
 	for(j := 0; j < h; j++)
 		for(i := 0; i < w; i++)
@@ -355,71 +352,41 @@ lit(s: ref Surface, x, y, w, h: int): int
 
 scrolling()
 {
-	sys->print("nestest: view and blit\n");
+	sys->print("tilestest: view and blit\n");
 	SC: con 2;
-	bk := nes->entry(Nes->DARK, Nes->BLACK);
-	c := nes->chr(d, Draw->RGB24, SC, ART);
-	f := nes->font(d, Draw->RGB24, SC);
+	bk := tiles->entry(Tiles->DARK, Tiles->BLACK);
+	c := tiles->chr(d, Draw->RGB24, SC, ART);
+	f := tiles->font(d, Draw->RGB24, SC);
 	# A level twice as wide as a screen, with a marker at each end.
-	lvl := nes->surface(d, c, f, Nes->W*2, Nes->H, bk);
-	scr := nes->surface(d, c, f, Nes->W, Nes->H, bk);
-	lvl.fill(Rect((0,0),(8,8)), nes->entry(Nes->MID, Nes->YELLOW));
-	lvl.fill(Rect((Nes->W*2-8, 0), (Nes->W*2, 8)),
-		nes->entry(Nes->MID, Nes->CYAN));
-	lvl.fill(Rect((Nes->W, 0), (Nes->W+8, 8)),
-		nes->entry(Nes->MID, Nes->MAGENTA));
+	lvl := tiles->surface(d, c, f, Tiles->W*2, Tiles->H, bk);
+	scr := tiles->surface(d, c, f, Tiles->W, Tiles->H, bk);
+	lvl.fill(Rect((0,0),(8,8)), tiles->entry(Tiles->MID, Tiles->YELLOW));
+	lvl.fill(Rect((Tiles->W*2-8, 0), (Tiles->W*2, 8)),
+		tiles->entry(Tiles->MID, Tiles->CYAN));
+	lvl.fill(Rect((Tiles->W, 0), (Tiles->W+8, 8)),
+		tiles->entry(Tiles->MID, Tiles->MAGENTA));
 
 	lvl.view(scr, 0, 0);
 	ckx("view at 0 shows the left end", at(scr, 0, 0),
-		rgb24(nes->entry(Nes->MID, Nes->YELLOW)));
-	lvl.view(scr, Nes->W, 0);
+		rgb24(tiles->entry(Tiles->MID, Tiles->YELLOW)));
+	lvl.view(scr, Tiles->W, 0);
 	ckx("view at one screen shows the middle marker", at(scr, 0, 0),
-		rgb24(nes->entry(Nes->MID, Nes->MAGENTA)));
+		rgb24(tiles->entry(Tiles->MID, Tiles->MAGENTA)));
 	# Clamping: a window asked for past the end shows the last screen,
 	# not a repeat of the level.  draw() replicates a short source
 	# rather than stopping, so without the clamp this tiles.
-	lvl.view(scr, Nes->W*4, 0);
+	lvl.view(scr, Tiles->W*4, 0);
 	ckx("view past the end clamps to the last screen",
-		at(scr, (Nes->W-8)*SC, 0),
-		rgb24(nes->entry(Nes->MID, Nes->CYAN)));
+		at(scr, (Tiles->W-8)*SC, 0),
+		rgb24(tiles->entry(Tiles->MID, Tiles->CYAN)));
 	lvl.view(scr, -100, 0);
 	ckx("and a negative origin clamps to the first", at(scr, 0, 0),
-		rgb24(nes->entry(Nes->MID, Nes->YELLOW)));
+		rgb24(tiles->entry(Tiles->MID, Tiles->YELLOW)));
 
-	small := nes->surface(d, c, f, 16, 16, nes->entry(Nes->MID, Nes->GREEN));
-	scr.fill(Rect((0,0),(Nes->W, Nes->H)), bk);
+	small := tiles->surface(d, c, f, 16, 16, tiles->entry(Tiles->MID, Tiles->GREEN));
+	scr.fill(Rect((0,0),(Tiles->W, Tiles->H)), bk);
 	small.blit(scr, 32, 40);
 	ckx("blit lands where it is put", at(scr, 32*SC, 40*SC),
-		rgb24(nes->entry(Nes->MID, Nes->GREEN)));
+		rgb24(tiles->entry(Tiles->MID, Tiles->GREEN)));
 	ckx("and not one tile over", at(scr, 31*SC, 40*SC), rgb24(bk));
-}
-
-input()
-{
-	sys->print("nestest: the pad\n");
-	p := 0;
-	p = nes->padkey(p, Keyboard->Right);
-	ck("right presses", p, Nes->PRIGHT);
-	p = nes->padkey(p, 'z');
-	ck("and b as well", p, Nes->PRIGHT|Nes->PB);
-	q := nes->edge(p, Nes->PRIGHT);
-	ck("edge is what is new", q, Nes->PB);
-	p = nes->padkey(p, Keyboard->Keyup | (Keyboard->Right & 16r7ff));
-	ck("right releases", p, Nes->PB);
-	p = nes->padkey(p, Keyboard->Keyup | 'z');
-	ck("and b releases", p, 0);
-	# The letters work the same pad as the arrows.
-	p = nes->padkey(0, 'a');
-	ck("a is left", p, Nes->PLEFT);
-	p = nes->padkey(p, Keyboard->Keyup | 'a');
-	ck("and releases", p, 0);
-	p = nes->padkey(0, ' ');
-	ck("space is a", p, Nes->PA);
-	p = nes->padkey(p, '\n');
-	ck("and enter is start", p, Nes->PA|Nes->PSTART);
-	# Anything else is left alone rather than clearing the pad.
-	p = nes->padkey(p, 'k');
-	ck("an unknown key changes nothing", p, Nes->PA|Nes->PSTART);
-	p = nes->padkey(p, Keyboard->Keyup | 'k');
-	ck("and neither does its release", p, Nes->PA|Nes->PSTART);
 }

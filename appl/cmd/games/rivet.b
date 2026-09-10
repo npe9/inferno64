@@ -5,7 +5,7 @@ implement Rivet;
 # a zigzag, a mallet that turns the hazards into points for a few
 # seconds, and one thing at the top to reach.
 #
-# It is here to exercise nes(2) end to end - a tile map built once into
+# It is here to exercise tiles(2) end to end - a tile map built once into
 # a background surface, metasprites composited over it, a gamepad read
 # from held keys, and effects arbitrated by priority - and to be
 # playable, which is the only way to find out whether any of that is
@@ -32,9 +32,16 @@ include "keyboard.m";
 include "rand.m";
 	rand: Rand;
 
-include "nes.m";
-	nes: Nes;
-	Chr, Pal, Surface: import nes;
+include "keyhold.m";
+	keyhold: Keyhold;
+	Binding: import keyhold;
+
+include "tone.m";
+	tone: Tone;
+
+include "tiles.m";
+	tiles: Tiles;
+	Chr, Pal, Surface: import tiles;
 
 include "frameclock.m";
 	fclock: Frameclock;
@@ -47,11 +54,36 @@ Rivet: module
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+# What this game's keys do.  The bits are its own and so is the table:
+# keyhold(2) names no buttons, because what a button means is the
+# program's business - the same bit is jump in one of these games and
+# fire in another.
+KLEFT, KRIGHT, KUP, KDOWN, KA, KB, KSEL, KSTART: con 1 << iota;
+
+BINDS := array[] of {
+	(Keyboard->Left, KLEFT), ('a', KLEFT), ('A', KLEFT),
+	(Keyboard->Right, KRIGHT), ('d', KRIGHT), ('D', KRIGHT),
+	(Keyboard->Up, KUP), ('w', KUP), ('W', KUP),
+	(Keyboard->Down, KDOWN), ('s', KDOWN), ('S', KDOWN),
+	('z', KB), ('Z', KB), (',', KB),
+	('x', KA), ('X', KA), ('.', KA), (' ', KA),
+	('\n', KSTART), ('\t', KSEL),
+};
+
+kb: ref Binding;
+
+# Playing, as against running a self test or writing a screenshot.  Only
+# a playing program asks tone(2) for audio.
+playing(): int
+{
+	return testmode == 0;
+}
+
 SCALE:	con 2;
-W:	con Nes->W;
-H:	con Nes->H;
-NTW:	con Nes->NTW;
-NTH:	con Nes->NTH;
+W:	con Tiles->W;
+H:	con Tiles->H;
+NTW:	con Tiles->NTW;
+NTH:	con Tiles->NTH;
 
 # map cells
 EMPTY, GIRDER, LADDER: con iota;
@@ -308,15 +340,18 @@ init(ctxt: ref Draw->Context, argv: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
-	nes = load Nes Nes->PATH;
+	keyhold = load Keyhold Keyhold->PATH;
+	tone = load Tone Tone->PATH;
+	kb = keyhold->mk(BINDS);
+	tiles = load Tiles Tiles->PATH;
 	rand = load Rand Rand->PATH;
 	fclock = load Frameclock Frameclock->PATH;
 	scorestore = load Scorestore Scorestore->PATH;
-	if(nes == nil){
-		sys->fprint(sys->fildes(2), "rivet: cannot load nes: %r\n");
+	if(tiles == nil){
+		sys->fprint(sys->fildes(2), "rivet: cannot load tiles: %r\n");
 		raise "fail:load";
 	}
-	e := nes->init();
+	e := tiles->init();
 	if(e != nil){
 		sys->fprint(sys->fildes(2), "rivet: %s\n", e);
 		raise "fail:init";
@@ -352,8 +387,11 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	setup(d);
 	if(scorestore != nil)
 		best = scorestore->loadint("rivet", 0);
-	if(audio == 0)
-		audio = nes->sound(1);
+	# Only when actually playing.  tone(2)'s sfx() is silent until
+	# init() has succeeded, so the self test and the screenshot modes
+	# make no sound and spawn nothing by simply not asking for any.
+	if(audio == 0 && playing() && tone != nil && tone->init() == nil)
+		audio = 1;
 	newgame();
 
 	if(testmode == 1){
@@ -379,11 +417,11 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		win.pointer(*p);
 	k := <-win.ctxt.kbd =>
 		if(k == 16r1b || k == 'q' || k == 'Q'){
-			nes->quiet();
+			tone->stop();
 			savebest();
 			exit;
 		}
-		pad = nes->padkey(pad, k);
+		pad = kb.key(pad, k);
 	<-ticks =>
 		step();
 		draw1();
@@ -396,37 +434,37 @@ setup(d: ref Display)
 {
 	art := array[len SMALL + 4*8*(len BIG / 16)] of string;
 	art[0:] = SMALL;
-	art[len SMALL:] = nes->meta(BIG);
-	sheet = nes->chr(d, Draw->RGB24, SCALE, art);
-	fnt = nes->font(d, Draw->RGB24, SCALE);
+	art[len SMALL:] = tiles->meta(BIG);
+	sheet = tiles->chr(d, Draw->RGB24, SCALE, art);
+	fnt = tiles->font(d, Draw->RGB24, SCALE);
 
-	sky := nes->entry(Nes->DARK, Nes->BLACK);
-	pgirder = nes->pal(sky, nes->entry(Nes->DARK, Nes->AZURE),
-		nes->entry(Nes->MID, Nes->CYAN), nes->entry(Nes->LIGHT, Nes->CYAN));
-	pladder = nes->pal(sky, nes->entry(Nes->MID, Nes->ORANGE),
-		nes->entry(Nes->LIGHT, Nes->ORANGE), nes->entry(Nes->PALE, Nes->YELLOW));
-	pskin = nes->pal(sky, nes->entry(Nes->DARK, Nes->RED),
-		nes->entry(Nes->LIGHT, Nes->ORANGE), nes->entry(Nes->MID, Nes->AZURE));
-	phaz = nes->pal(sky, nes->entry(Nes->DARK, Nes->ORANGE),
-		nes->entry(Nes->MID, Nes->YELLOW), nes->entry(Nes->LIGHT, Nes->RED));
-	pmallet = nes->pal(sky, nes->entry(Nes->DARK, Nes->GREY),
-		nes->entry(Nes->LIGHT, Nes->GREY), nes->entry(Nes->MID, Nes->ROSE));
-	pprize = nes->pal(sky, nes->entry(Nes->DARK, Nes->VIOLET),
-		nes->entry(Nes->PALE, Nes->YELLOW), nes->entry(Nes->MID, Nes->MAGENTA));
-	phud = nes->pal(sky, nes->entry(Nes->PALE, Nes->GREY),
-		nes->entry(Nes->PALE, Nes->GREY), nes->entry(Nes->PALE, Nes->GREY));
-	pflash = nes->pal(sky, nes->entry(Nes->PALE, Nes->YELLOW),
-		nes->entry(Nes->PALE, Nes->YELLOW), nes->entry(Nes->PALE, Nes->YELLOW));
+	sky := tiles->entry(Tiles->DARK, Tiles->BLACK);
+	pgirder = tiles->pal(sky, tiles->entry(Tiles->DARK, Tiles->AZURE),
+		tiles->entry(Tiles->MID, Tiles->CYAN), tiles->entry(Tiles->LIGHT, Tiles->CYAN));
+	pladder = tiles->pal(sky, tiles->entry(Tiles->MID, Tiles->ORANGE),
+		tiles->entry(Tiles->LIGHT, Tiles->ORANGE), tiles->entry(Tiles->PALE, Tiles->YELLOW));
+	pskin = tiles->pal(sky, tiles->entry(Tiles->DARK, Tiles->RED),
+		tiles->entry(Tiles->LIGHT, Tiles->ORANGE), tiles->entry(Tiles->MID, Tiles->AZURE));
+	phaz = tiles->pal(sky, tiles->entry(Tiles->DARK, Tiles->ORANGE),
+		tiles->entry(Tiles->MID, Tiles->YELLOW), tiles->entry(Tiles->LIGHT, Tiles->RED));
+	pmallet = tiles->pal(sky, tiles->entry(Tiles->DARK, Tiles->GREY),
+		tiles->entry(Tiles->LIGHT, Tiles->GREY), tiles->entry(Tiles->MID, Tiles->ROSE));
+	pprize = tiles->pal(sky, tiles->entry(Tiles->DARK, Tiles->VIOLET),
+		tiles->entry(Tiles->PALE, Tiles->YELLOW), tiles->entry(Tiles->MID, Tiles->MAGENTA));
+	phud = tiles->pal(sky, tiles->entry(Tiles->PALE, Tiles->GREY),
+		tiles->entry(Tiles->PALE, Tiles->GREY), tiles->entry(Tiles->PALE, Tiles->GREY));
+	pflash = tiles->pal(sky, tiles->entry(Tiles->PALE, Tiles->YELLOW),
+		tiles->entry(Tiles->PALE, Tiles->YELLOW), tiles->entry(Tiles->PALE, Tiles->YELLOW));
 
-	scr = nes->surface(d, sheet, fnt, W, H, sky);
-	bg = nes->surface(d, sheet, fnt, W, H, sky);
+	scr = tiles->surface(d, sheet, fnt, W, H, sky);
+	bg = tiles->surface(d, sheet, fnt, W, H, sky);
 	pmap = array[NTW*NTH] of int;
 	buildmap();
 }
 
 buildmap()
 {
-	sky := nes->entry(Nes->DARK, Nes->BLACK);
+	sky := tiles->entry(Tiles->DARK, Tiles->BLACK);
 	bg.fill(Rect((0,0),(W,H)), sky);
 	for(ty := 0; ty < NTH; ty++){
 		row := MAP[ty];
@@ -527,8 +565,8 @@ platrow(y: int): int
 step()
 {
 	frames++;
-	if(nes != nil)
-		nes->sfxtick();
+	if(tiles != nil)
+		tone->sfxtick();
 	if(dead > 0){
 		dead--;
 		if(dead == 0){
@@ -566,11 +604,11 @@ stepplayer()
 	onlad := cellat(int px + 8, int py + 8) == LADDER;
 	below := cellat(int px + 8, int py + 16) == LADDER;
 	if(pclimb){
-		if(pad & Nes->PUP)
+		if(pad & KUP)
 			py -= 1.0;
-		if(pad & Nes->PDOWN)
+		if(pad & KDOWN)
 			py += 1.0;
-		if(pad & (Nes->PUP|Nes->PDOWN))
+		if(pad & (KUP|KDOWN))
 			panim++;
 		# Off the top of a ladder onto the girder above, or off the
 		# bottom onto the one below.
@@ -578,14 +616,14 @@ stepplayer()
 			pclimb = 0;
 			pvy = 0.0;
 			snapup();
-		}else if(!onlad && below && (pad & Nes->PDOWN) == 0)
+		}else if(!onlad && below && (pad & KDOWN) == 0)
 			;
 	}else{
-		if((pad & Nes->PLEFT) && !(pad & Nes->PRIGHT)){
+		if((pad & KLEFT) && !(pad & KRIGHT)){
 			px -= 1.0;
 			pface = -1;
 			panim++;
-		}else if((pad & Nes->PRIGHT) && !(pad & Nes->PLEFT)){
+		}else if((pad & KRIGHT) && !(pad & KLEFT)){
 			px += 1.0;
 			pface = 1;
 			panim++;
@@ -595,19 +633,19 @@ stepplayer()
 		if(px > real (W-16))
 			px = real (W-16);
 		pground = grounded();
-		if(pground && (pad & Nes->PUP) && onlad){
+		if(pground && (pad & KUP) && onlad){
 			pclimb = 1;
 			px = real ((int px + 8) / 8 * 8 - 4);
 			pvy = 0.0;
-		}else if(pground && (pad & Nes->PDOWN) && cellat(int px + 8, int py + 17) == LADDER){
+		}else if(pground && (pad & KDOWN) && cellat(int px + 8, int py + 17) == LADDER){
 			pclimb = 1;
 			px = real ((int px + 8) / 8 * 8 - 4);
 			py += 2.0;
 			pvy = 0.0;
-		}else if(pground && (nes->edge(pad, prevpad) & Nes->PA)){
+		}else if(pground && (keyhold->edge(pad, prevpad) & KA)){
 			pvy = -3.4;
 			pground = 0;
-			nes->sfx(2, 640, 70);
+			tone->sfx(2, 640, 70);
 		}
 		if(!pground){
 			pvy += 0.22;
@@ -631,13 +669,13 @@ stepplayer()
 	if(int py + 16 <= PLAT[0]*8 && int px > 13*8 - 12 && int px < 15*8 + 4){
 		won = 90;
 		score += 500 + 100*level;
-		nes->sfx(4, 1200, 400);
+		tone->sfx(4, 1200, 400);
 		return;
 	}
 	if(hot == 0 && !gotmallet && overmallet()){
 		gotmallet = 1;
 		hot = 420;
-		nes->sfx(3, 900, 200);
+		tone->sfx(3, 900, 200);
 	}
 	# Hazards.
 	for(i := 0; i < NHAZ; i++){
@@ -649,7 +687,7 @@ stepplayer()
 		if(hot > 0){
 			h.live = 0;
 			score += 300;
-			nes->sfx(3, 1500, 90);
+			tone->sfx(3, 1500, 90);
 		}else
 			hurt();
 		return;
@@ -724,7 +762,7 @@ hurt()
 	lives--;
 	score -= 0;
 	dead = 90;
-	nes->sfx(5, 180, 500);
+	tone->sfx(5, 180, 500);
 }
 
 stephaz()
@@ -765,7 +803,7 @@ stephaz()
 		&& int h.x + 14 > int px && int h.x < int px + 14){
 			h.scored = 1;
 			score += 100;
-			nes->sfx(2, 1500, 60);
+			tone->sfx(2, 1500, 60);
 		}
 	}
 }
@@ -805,11 +843,11 @@ drawplayer()
 	}else{
 		if(!pground)
 			t = TWALK;
-		else if(pad & (Nes->PLEFT|Nes->PRIGHT))
+		else if(pad & (KLEFT|KRIGHT))
 			if((panim / 6 & 1) != 0)
 				t = TWALK;
 		if(pface < 0)
-			f = Nes->FLIPX;
+			f = Tiles->FLIPX;
 	}
 	scr.put16(int px, int py, t, p, f);
 }
@@ -847,14 +885,14 @@ savebest()
 # so what the game actually looks like can be seen from outside it.
 shot()
 {
-	nes->sound(0);
+	audio = 0;
 	newgame();
 	for(i := 0; i < 200; i++){
 		pad = 0;
 		if(i > 40 && i < 150)
-			pad = Nes->PRIGHT;
+			pad = KRIGHT;
 		if(i == 100)
-			pad = Nes->PRIGHT|Nes->PA;
+			pad = KRIGHT|KA;
 		step();
 		draw1();
 	}
@@ -916,7 +954,7 @@ run(n: int, held: int)
 selftest()
 {
 	sys->print("rivet: self test\n");
-	nes->sound(0);
+	audio = 0;
 	# The map is the thing everything else stands on.
 	cktrue("map is 30 rows", len MAP == NTH);
 	for(i := 0; i < len MAP; i++)
@@ -939,15 +977,15 @@ selftest()
 
 	# Walking right moves right, and one pixel a frame is one pixel a
 	# frame - a walk that silently doubled would still "work".
-	run(30, Nes->PRIGHT);
+	run(30, KRIGHT);
 	ck("walked right 30 frames", int px, STARTX + 30);
 	cktrue("faces right", pface == 1);
-	run(10, Nes->PLEFT);
+	run(10, KLEFT);
 	ck("walked back 10", int px, STARTX + 20);
 	cktrue("faces left", pface == -1);
 
 	# The left wall.
-	run(60, Nes->PLEFT);
+	run(60, KLEFT);
 	ck("stopped at the wall", int px, 0);
 
 	# A jump leaves the ground and comes back to exactly the same row.
@@ -955,7 +993,7 @@ selftest()
 	yj := int py;
 	pad = 0; prevpad = 0;
 	step();				# so PA is an edge, not a held key
-	run(1, Nes->PA);
+	run(1, KA);
 	cktrue("jump left the ground", int py < yj);
 	run(60, 0);
 	ck("jump landed back", int py, yj);
@@ -965,13 +1003,13 @@ selftest()
 	newlevel();
 	lx := 7*8 - 4;
 	while(int px < lx)
-		run(1, Nes->PRIGHT);
+		run(1, KRIGHT);
 	run(1, 0);
 	yl := int py;
-	run(20, Nes->PUP);
+	run(20, KUP);
 	cktrue("climbing", pclimb != 0);
 	cktrue("climbed up the ladder", int py < yl - 10);
-	run(30, Nes->PDOWN);
+	run(30, KDOWN);
 	cktrue("climbed back down", int py >= yl - 4);
 
 	# A hazard rolls, falls, and reverses on the row it lands on.

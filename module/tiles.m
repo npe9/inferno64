@@ -1,6 +1,6 @@
-Nes: module
+Tiles: module
 {
-	PATH:	con "/dis/lib/nes.dis";
+	PATH:	con "/dis/lib/tiles.dis";
 
 	# An 8-bit-console look-alike: a fixed 256x240 logical screen made
 	# of 8x8 tiles from a 64-entry master palette, four colours to a
@@ -27,8 +27,6 @@ Nes: module
 
 	MASTER:	con 64;		# entries in the master palette
 
-	# Gamepad bits.  A pad is an int; every bit is a button held now.
-	PA, PB, PSEL, PSTART, PUP, PDOWN, PLEFT, PRIGHT: con 1 << iota;
 
 	# put() flags
 	FLIPX, FLIPY: con 1 << iota;
@@ -40,7 +38,7 @@ Nes: module
 	# 64 entries as four rows of sixteen: column 0 is a grey, columns
 	# 1 to 12 are twelve hues, and 13 to 15 are black.  Row 0 is dark,
 	# row 3 is nearly white.  Computed at init(), so the whole ramp
-	# moves together if the constants at the top of nes.b are changed.
+	# moves together if the constants at the top of tiles.b are changed.
 	rgb:	fn(i: int): int;			# 0xRRGGBB00, for Display.rgb2cmap and friends
 	colour:	fn(d: ref Draw->Display, i: int): ref Draw->Image;
 
@@ -124,26 +122,4 @@ Nes: module
 	};
 	surface:	fn(d: ref Draw->Display, chr, fnt: ref Chr, w, h, bg: int): ref Surface;
 
-	# --- input ---
-	#
-	# One key event in, the new pad state out.  Handles both the press
-	# and the release, so a game holds no key state of its own.  The
-	# window must have asked for "keyup" as well as "kbd", or nothing
-	# is ever released.
-	padkey:	fn(pad, k: int): int;
-	# Held for the first time this frame: what was pressed since the
-	# last call.  Games use this for jump and fire, and the raw pad for
-	# walking.
-	edge:	fn(pad, prev: int): int;
-
-	# --- sound ---
-	#
-	# tone(2) plays one thing at a time, so an effect carries a
-	# priority and a deadline: a louder event cuts a quieter one, and
-	# a quieter one never cuts a louder one that is still sounding.
-	# sfxtick() must be called once a frame.
-	sound:	fn(on: int): int;
-	sfx:	fn(pri, freq, ms: int);
-	sfxtick:	fn();
-	quiet:	fn();
 };

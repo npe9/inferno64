@@ -2,7 +2,7 @@ implement Gorge;
 
 # Gorge - fly a canyon, dodge what stands in it, shoot what you can.
 #
-# The four games beside this one are 8-bit in shape: nes(2) composites
+# The four games beside this one are 8-bit in shape: tiles(2) composites
 # tiles once at the destination's scale and every frame is blits.  That
 # is deliberate, and it is also the thing doc/draw3d-adoption-plan.md
 # names as getting no GPU at all, because it composes into an offscreen
@@ -43,8 +43,12 @@ include "math/draw3d.m";
 	draw3d: Draw3d;
 	Vector: import draw3d;
 
-include "nes.m";
-	nes: Nes;
+include "keyhold.m";
+	keyhold: Keyhold;
+	Binding: import keyhold;
+
+include "tone.m";
+	tone: Tone;
 
 include "frameclock.m";
 	fclock: Frameclock;
@@ -56,6 +60,31 @@ Gorge: module
 {
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
+
+# What this game's keys do.  The bits are its own and so is the table:
+# keyhold(2) names no buttons, because what a button means is the
+# program's business - the same bit is jump in one of these games and
+# fire in another.
+KLEFT, KRIGHT, KUP, KDOWN, KA, KB, KSEL, KSTART: con 1 << iota;
+
+BINDS := array[] of {
+	(Keyboard->Left, KLEFT), ('a', KLEFT), ('A', KLEFT),
+	(Keyboard->Right, KRIGHT), ('d', KRIGHT), ('D', KRIGHT),
+	(Keyboard->Up, KUP), ('w', KUP), ('W', KUP),
+	(Keyboard->Down, KDOWN), ('s', KDOWN), ('S', KDOWN),
+	('z', KB), ('Z', KB), (',', KB),
+	('x', KA), ('X', KA), ('.', KA), (' ', KA),
+	('\n', KSTART), ('\t', KSEL),
+};
+
+kb: ref Binding;
+
+# Playing, as against running a self test or writing a screenshot.  Only
+# a playing program asks tone(2) for audio.
+playing(): int
+{
+	return mode == 0;
+}
 
 WIDE:	con 640;
 HIGH:	con 480;
@@ -152,7 +181,9 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
 	math = load Math Math->PATH;
-	nes = load Nes Nes->PATH;
+	keyhold = load Keyhold Keyhold->PATH;
+	tone = load Tone Tone->PATH;
+	kb = keyhold->mk(BINDS);
 	fclock = load Frameclock Frameclock->PATH;
 	scorestore = load Scorestore Scorestore->PATH;
 	for(a := tl argv; a != nil; a = tl a){
@@ -218,8 +249,6 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		raise "fail:load";
 	}
 	d3->init();
-	if(nes != nil)
-		nes->init();
 	if(fclock != nil)
 		fclock->init();
 
@@ -248,8 +277,11 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		font = Font.open(disp, "*default*");
 	if(scorestore != nil)
 		best = scorestore->loadint("gorge", 0);
-	if(audio == 0 && nes != nil)
-		audio = nes->sound(1);
+	# Only when actually playing.  tone(2)'s sfx() is silent until
+	# init() has succeeded, so the self test and the screenshot modes
+	# make no sound and spawn nothing by simply not asking for any.
+	if(audio == 0 && playing() && tone != nil && tone->init() == nil)
+		audio = 1;
 	newgame();
 
 	case mode {
@@ -278,15 +310,15 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		win.pointer(*p);
 	k := <-win.ctxt.kbd =>
 		if(k == 16r1b || k == 'q' || k == 'Q'){
-			if(nes != nil)
-				nes->quiet();
+			if(tone != nil)
+				tone->stop();
 			if(score > best && scorestore != nil)
 				scorestore->saveint("gorge", score);
 			if(fclock != nil)
 				fclock->report("gorge");
 			exit;
 		}
-		pad = nes->padkey(pad, k);
+		pad = kb.key(pad, k);
 	<-ticks =>
 		step();
 		target = win.image;
@@ -428,8 +460,7 @@ absr(v: real): real
 step()
 {
 	frames++;
-	if(nes != nil)
-		nes->sfxtick();
+	tone->sfxtick();
 	if(dead > 0){
 		dead--;
 		stepbooms();
@@ -453,13 +484,13 @@ step()
 		recycle();
 	}
 	# steering, in the corridor's own frame
-	if((pad & Nes->PLEFT) && !(pad & Nes->PRIGHT))
+	if((pad & KLEFT) && !(pad & KRIGHT))
 		sx -= SHIPVX;
-	else if((pad & Nes->PRIGHT) && !(pad & Nes->PLEFT))
+	else if((pad & KRIGHT) && !(pad & KLEFT))
 		sx += SHIPVX;
-	if((pad & Nes->PUP) && !(pad & Nes->PDOWN))
+	if((pad & KUP) && !(pad & KDOWN))
 		sy += SHIPVY;
-	else if((pad & Nes->PDOWN) && !(pad & Nes->PUP))
+	else if((pad & KDOWN) && !(pad & KUP))
 		sy -= SHIPVY;
 	if(sy < FLOORY + 0.6)
 		sy = FLOORY + 0.6;
@@ -479,7 +510,7 @@ step()
 	}
 	if(firecool > 0)
 		firecool--;
-	if((nes->edge(pad, prevpad) & Nes->PA) && firecool == 0){
+	if((keyhold->edge(pad, prevpad) & KA) && firecool == 0){
 		fire();
 		firecool = 9;
 	}
@@ -525,8 +556,8 @@ fire()
 		if(bolts[i] != nil && bolts[i].live)
 			continue;
 		bolts[i] = ref Bolt(sx, sy, SHIPZ, 1);
-		if(nes != nil)
-			nes->sfx(2, 900, 50);
+		if(tone != nil)
+			tone->sfx(2, 900, 50);
 		return;
 	}
 }
@@ -566,8 +597,8 @@ stepbolts()
 			b.live = 0;
 			score += 150;
 			boom(px, FLOORY + p.h*0.5, pz);
-			if(nes != nil)
-				nes->sfx(3, 420, 130);
+			if(tone != nil)
+				tone->sfx(3, 420, 130);
 			break;
 		}
 	}
@@ -602,8 +633,8 @@ graze()
 		return;
 	if((frames & 7) != 0)
 		return;
-	if(nes != nil)
-		nes->sfx(1, 220, 60);
+	if(tone != nil)
+		tone->sfx(1, 220, 60);
 }
 
 crash(x, y, z: real)
@@ -612,8 +643,8 @@ crash(x, y, z: real)
 	dead = 110;
 	boom(x, y, z);
 	boom(x + 0.8, y - 0.5, z - 1.0);
-	if(nes != nil)
-		nes->sfx(5, 150, 600);
+	if(tone != nil)
+		tone->sfx(5, 150, 600);
 }
 
 boom(x, y, z: real)
@@ -798,9 +829,9 @@ ship()
 	# A delta, drawn in the corridor's frame.  Banking with the turn is
 	# two extra multiplies and makes the whole thing read as flying.
 	bank := 0.0;
-	if(pad & Nes->PLEFT)
+	if(pad & KLEFT)
 		bank = 0.45;
-	if(pad & Nes->PRIGHT)
+	if(pad & KRIGHT)
 		bank = -0.45;
 	cb := math->cos(bank);
 	sb := math->sin(bank);
@@ -904,8 +935,7 @@ hud()
 # for the screen itself, which is what this gets with no window manager.
 gpushot()
 {
-	if(nes != nil)
-		nes->sound(0);
+			audio = 0;
 	win.reshape(Rect((0,0),(WIDE,HIGH)));
 	win.onscreen("place");
 	win.startinput("kbd" :: "ptr" :: nil);
@@ -913,9 +943,9 @@ gpushot()
 	ctx = d3->context(target);
 	newgame();
 	for(i := 0; i < 90; i++){
-		pad = Nes->PRIGHT;
+		pad = KRIGHT;
 		if((i % 34) < 12)
-			pad |= Nes->PA;
+			pad |= KA;
 		step();
 		target = win.image;
 		frame();
@@ -959,8 +989,7 @@ nbench := 240;
 
 bench()
 {
-	if(nes != nil)
-		nes->sound(0);
+			audio = 0;
 	win.reshape(Rect((0,0),(WIDE,HIGH)));
 	win.onscreen("place");
 	win.startinput("kbd" :: "ptr" :: nil);
@@ -991,7 +1020,7 @@ benchrun(nframes: int): int
 {
 	t0 := sys->millisec();
 	for(i := 0; i < nframes; i++){
-		pad = Nes->PRIGHT;
+		pad = KRIGHT;
 		step();
 		target = win.image;
 		frame();
@@ -1002,8 +1031,7 @@ benchrun(nframes: int): int
 
 shot()
 {
-	if(nes != nil)
-		nes->sound(0);
+			audio = 0;
 	newgame();
 	ctx = d3->context(target);
 	# Short, because -s renders with the software provider and that
@@ -1011,11 +1039,11 @@ shot()
 	for(i := 0; i < 90; i++){
 		pad = 0;
 		if((i / 25 & 1) != 0)
-			pad = Nes->PRIGHT;
+			pad = KRIGHT;
 		else
-			pad = Nes->PLEFT;
+			pad = KLEFT;
 		if(i % 18 == 0)
-			pad |= Nes->PA;
+			pad |= KA;
 		step();
 		frame();
 	}
@@ -1083,8 +1111,7 @@ run(n: int, held: int)
 selftest()
 {
 	sys->print("gorge: self test\n");
-	if(nes != nil)
-		nes->sound(0);
+			audio = 0;
 	ctx = d3->context(target);
 	newgame();
 
@@ -1118,30 +1145,30 @@ selftest()
 	# Steering moves the ship and the walls stop it.
 	restart();
 	x0 := sx;
-	run(10, Nes->PRIGHT);
+	run(10, KRIGHT);
 	cktrue("steering right moves right", sx > x0);
-	run(10, Nes->PLEFT);
+	run(10, KLEFT);
 	cktrue("and left moves left", sx < x0 + 10.0*SHIPVX);
 	restart();
-	run(300, Nes->PRIGHT);
+	run(300, KRIGHT);
 	kk := shipseg();
 	cktrue("the right wall stops it",
 		sx <= spine(kk) + halfwidth(kk) - 0.7 + 0.001);
 	restart();
-	run(300, Nes->PLEFT);
+	run(300, KLEFT);
 	kk = shipseg();
 	cktrue("and the left wall stops it",
 		sx >= spine(kk) - halfwidth(kk) + 0.7 - 0.001);
 	restart();
-	run(300, Nes->PUP);
+	run(300, KUP);
 	cktrue("the roof stops it", sy <= ROOFY - 0.6 + 0.001);
-	run(300, Nes->PDOWN);
+	run(300, KDOWN);
 	cktrue("and the floor stops it", sy >= FLOORY + 0.6 - 0.001);
 
 	# Firing is rate limited and a bolt travels away from the eye.
 	restart();
 	prevpad = 0;
-	run(1, Nes->PA);
+	run(1, KA);
 	n := 0;
 	for(i := 0; i < NBOLT; i++)
 		if(bolts[i] != nil && bolts[i].live)
@@ -1150,7 +1177,7 @@ selftest()
 	bz := bolts[0].z;
 	run(3, 0);
 	cktrue("a bolt flies away from the eye", bolts[0].z < bz);
-	run(1, Nes->PA);
+	run(1, KA);
 	n = 0;
 	for(i = 0; i < NBOLT; i++)
 		if(bolts[i] != nil && bolts[i].live)

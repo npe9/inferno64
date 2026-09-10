@@ -1,6 +1,6 @@
 .TH TONE 2
 .SH NAME
-tone: init, snd, beep, stop, play, voicenames, setvoice, playparts, settempo \- a small synthesiser
+tone: init, snd, beep, stop, play, voicenames, setvoice, playparts, settempo, sfx, sfxtick \- a small synthesiser
 .SH SYNOPSIS
 .EX
 include "tone.m";
@@ -176,6 +176,27 @@ per-note dynamic, and no way to slur two notes into one.
 The harmonic amplitudes are fixed per voice rather than varying with
 pitch, so the top of a voice's range is brighter than an instrument's
 would be.
+.SS One voice, several things wanting it
+.I Beep
+returns at once and the next one replaces whatever is sounding.
+That is right for a program making one noise at a time and wrong for
+anything with events in it: a footstep issued a frame after an explosion
+cuts the explosion off.
+.PP
+.I Sfx
+is an arbiter rather than a mixer, because there is nothing here to mix
+with.
+An effect states a priority and how long it lasts; one of lower priority
+asked for while a louder one is still sounding is dropped, and one of
+equal or higher priority takes over.
+.I Sfxtick
+must be called regularly \- once a frame, for a program that has frames
+\- or a finished effect goes on holding the voice.
+.PP
+Both are silent until
+.I init
+has succeeded, so a program with no audio, or one running a self test,
+makes no sound and spawns no process by simply not asking for any.
 .SH SOURCE
 .B /appl/lib/tone.b
 .br

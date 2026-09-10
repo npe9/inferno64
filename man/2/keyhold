@@ -1,0 +1,98 @@
+.TH KEYHOLD 2
+.SH NAME
+keyhold: mk, key, edge \- which keys are held down now
+.SH SYNOPSIS
+.EX
+include "keyboard.m";
+include "keyhold.m";
+keyhold := load Keyhold Keyhold->PATH;
+Binding: import keyhold;
+
+Binding: adt {
+	code: array of int;
+	bit:  array of int;
+
+	key:  fn(h: self ref Binding, held, k: int): int;
+};
+
+mk:   fn(binds: array of (int, int)): ref Binding;
+edge: fn(held, prev: int): int;
+.EE
+.SH DESCRIPTION
+.I Keyhold
+turns the stream of key events a window delivers into the set of actions
+held down right now.
+That is a small thing, and it exists because of two facts about Inferno
+rather than anything about the program using it.
+.PP
+The first is that a window gets key
+.I releases
+only if it asked for them.
+.IR Wmclient (2)'s
+.I startinput
+must be given
+.B keyup
+as well as
+.BR kbd ,
+and
+.IR wm (1)
+drops releases for a client that did not \- see
+.B Keyupstarted
+in
+.BR appl/wm/wm.b .
+A program that forgets sees only presses, and every key it reads sticks
+down for good.
+.PP
+The second is how a release arrives.
+.B include/keyboard.h
+encodes it as
+.BR "Keyup | (key & 0x7ff)" ,
+where
+.B Keyup
+is
+.BR Spec|0x800 .
+So a release carries only the low eleven bits of the key, and \- because
+every arrow and function key already carries
+.B Spec
+\- a naive
+.B "k & Keyup"
+says a plain Left arrow is a release.
+The whole of
+.B Spec
+has to match, which is why
+.I wm
+has an
+.I iskeyup
+rather than a mask.
+.PP
+.I Mk
+takes a table of (key, bit) pairs.
+A bit may appear more than once, which is how a program offers both the
+arrow keys and
+.B wasd
+for the same action.
+.I Binding.key
+folds one event into a held set and returns the new one; a key the table
+does not mention changes nothing rather than clearing the set.
+.I Edge
+returns what is held now and was not held then, for the actions that
+should happen once a press rather than every frame the key is down.
+.PP
+Nothing here names the buttons.
+What a button means is the caller's business: the same bit is jump in one
+program and fire in another, and a table the program writes is a table
+the program can read \- which matters, because a binding taken twice is
+a binding taken once.
+.SH SOURCE
+.B /appl/lib/keyhold.b
+.SH SEE ALSO
+.IR keyboard (2),
+.IR wmclient (2),
+.IR keyholdtest (1),
+.IR tiles (2)
+.SH BUGS
+It knows nothing about shift, control or the other held modifiers, which
+arrive as ordinary keys with their own codes and can simply be bound.
+.PP
+The table is searched linearly for every event.
+Events arrive at the speed a person types, so this has never mattered.

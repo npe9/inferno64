@@ -61,7 +61,7 @@ emu\-cocoa \-r. /dis/games/rivet.dis \-t
 .B /appl/cmd/games/rivet.b
 .SH SEE ALSO
 .IR nes (2),
-.IR nestest (1)
+.IR tilestest (1)
 .SH DIAGNOSTICS
 .B -t
 drives the same

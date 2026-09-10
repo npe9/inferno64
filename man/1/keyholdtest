@@ -1,0 +1,49 @@
+.TH KEYHOLDTEST 1
+.SH NAME
+keyholdtest \- check keyhold(2)
+.SH SYNOPSIS
+.B keyholdtest
+.SH DESCRIPTION
+.I Keyholdtest
+checks
+.IR keyhold (2):
+that a press sets its action and a release clears it, that a second key
+bound to the same action works it too, that
+.I edge
+reports only what is new, and that a key outside the table changes
+nothing rather than clearing what is held.
+.PP
+Two of its checks are about one trap, because it is the trap the module
+exists for: a plain arrow key carries
+.B Spec
+and
+.B Keyup
+is
+.BR Spec|0x800 ,
+so a mask that tests only for the release bit reads a Left arrow
+.I press
+as a release.
+A program that got it wrong would walk left for ever the moment an arrow
+key was touched.
+.PP
+It needs no display.
+The last line is
+.B PASSED
+or
+.BR FAILED .
+.SH EXAMPLE
+.EX
+emu \-r. /dis/keyholdtest.dis
+.EE
+.SH SOURCE
+.B /appl/cmd/keyholdtest.b
+.SH SEE ALSO
+.IR keyhold (2)
+.SH BUGS
+It drives
+.I Binding.key
+with key codes made up here rather than with codes a window actually
+delivered, so it checks the decoding and not the plumbing.
+That a window receives releases at all is
+.IR keyuptest (1)'s
+business.

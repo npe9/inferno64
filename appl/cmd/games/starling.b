@@ -5,7 +5,7 @@ implement Starling;
 # along a curve, settle into a swaying formation, and peel off it one at
 # a time to dive at you and drop something on the way past.
 #
-# Of the three games on nes(2) this is the one that tests how many
+# Of the three games on tiles(2) this is the one that tests how many
 # sprites the library can actually put on a screen: a full formation is
 # forty 16x16 characters, which is 160 tile blits a frame before the
 # shots and the stars.  Run it with INFERNO_FPS set and frameclock(2)
@@ -32,9 +32,16 @@ include "keyboard.m";
 include "rand.m";
 	rand: Rand;
 
-include "nes.m";
-	nes: Nes;
-	Chr, Pal, Surface: import nes;
+include "keyhold.m";
+	keyhold: Keyhold;
+	Binding: import keyhold;
+
+include "tone.m";
+	tone: Tone;
+
+include "tiles.m";
+	tiles: Tiles;
+	Chr, Pal, Surface: import tiles;
 
 include "frameclock.m";
 	fclock: Frameclock;
@@ -47,9 +54,34 @@ Starling: module
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+# What this game's keys do.  The bits are its own and so is the table:
+# keyhold(2) names no buttons, because what a button means is the
+# program's business - the same bit is jump in one of these games and
+# fire in another.
+KLEFT, KRIGHT, KUP, KDOWN, KA, KB, KSEL, KSTART: con 1 << iota;
+
+BINDS := array[] of {
+	(Keyboard->Left, KLEFT), ('a', KLEFT), ('A', KLEFT),
+	(Keyboard->Right, KRIGHT), ('d', KRIGHT), ('D', KRIGHT),
+	(Keyboard->Up, KUP), ('w', KUP), ('W', KUP),
+	(Keyboard->Down, KDOWN), ('s', KDOWN), ('S', KDOWN),
+	('z', KB), ('Z', KB), (',', KB),
+	('x', KA), ('X', KA), ('.', KA), (' ', KA),
+	('\n', KSTART), ('\t', KSEL),
+};
+
+kb: ref Binding;
+
+# Playing, as against running a self test or writing a screenshot.  Only
+# a playing program asks tone(2) for audio.
+playing(): int
+{
+	return testmode == 0;
+}
+
 SCALE:	con 2;
-W:	con Nes->W;
-H:	con Nes->H;
+W:	con Tiles->W;
+H:	con Tiles->H;
 
 TSHOT, TBOMB, TSTAR: con iota;		# 8x8
 TSHIP:	con 3;				# 16x16 from here
@@ -258,15 +290,18 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
 	math = load Math Math->PATH;
-	nes = load Nes Nes->PATH;
+	keyhold = load Keyhold Keyhold->PATH;
+	tone = load Tone Tone->PATH;
+	kb = keyhold->mk(BINDS);
+	tiles = load Tiles Tiles->PATH;
 	rand = load Rand Rand->PATH;
 	fclock = load Frameclock Frameclock->PATH;
 	scorestore = load Scorestore Scorestore->PATH;
-	if(nes == nil){
-		sys->fprint(sys->fildes(2), "starling: cannot load nes: %r\n");
+	if(tiles == nil){
+		sys->fprint(sys->fildes(2), "starling: cannot load tiles: %r\n");
 		raise "fail:load";
 	}
-	e := nes->init();
+	e := tiles->init();
 	if(e != nil){
 		sys->fprint(sys->fildes(2), "starling: %s\n", e);
 		raise "fail:init";
@@ -301,8 +336,11 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	setup(d);
 	if(scorestore != nil)
 		best = scorestore->loadint("starling", 0);
-	if(audio == 0)
-		audio = nes->sound(1);
+	# Only when actually playing.  tone(2)'s sfx() is silent until
+	# init() has succeeded, so the self test and the screenshot modes
+	# make no sound and spawn nothing by simply not asking for any.
+	if(audio == 0 && playing() && tone != nil && tone->init() == nil)
+		audio = 1;
 	newgame();
 	if(testmode == 1){
 		selftest();
@@ -329,14 +367,14 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		win.pointer(*p);
 	k := <-win.ctxt.kbd =>
 		if(k == 16r1b || k == 'q' || k == 'Q'){
-			nes->quiet();
+			tone->stop();
 			if(score > best && scorestore != nil)
 				scorestore->saveint("starling", score);
 			if(fclock != nil)
 				fclock->report("starling");
 			exit;
 		}
-		pad = nes->padkey(pad, k);
+		pad = kb.key(pad, k);
 	<-ticks =>
 		step();
 		draw1();
@@ -349,29 +387,29 @@ setup(d: ref Display)
 {
 	art := array[len SMALL + 4*8*(len BIG / 16)] of string;
 	art[0:] = SMALL;
-	art[len SMALL:] = nes->meta(BIG);
-	sheet = nes->chr(d, Draw->RGB24, SCALE, art);
-	fnt = nes->font(d, Draw->RGB24, SCALE);
-	sky := nes->entry(Nes->DARK, Nes->BLACK);
-	pship = nes->pal(sky, nes->entry(Nes->PALE, Nes->GREY),
-		nes->entry(Nes->MID, Nes->CYAN), nes->entry(Nes->LIGHT, Nes->AZURE));
-	pfoe = nes->pal(sky, nes->entry(Nes->PALE, Nes->YELLOW),
-		nes->entry(Nes->MID, Nes->RED), nes->entry(Nes->LIGHT, Nes->ORANGE));
-	pboss = nes->pal(sky, nes->entry(Nes->PALE, Nes->CYAN),
-		nes->entry(Nes->MID, Nes->VIOLET), nes->entry(Nes->LIGHT, Nes->MAGENTA));
-	pboom = nes->pal(sky, nes->entry(Nes->PALE, Nes->YELLOW),
-		nes->entry(Nes->PALE, Nes->YELLOW), nes->entry(Nes->LIGHT, Nes->ORANGE));
-	pshot = nes->pal(sky, nes->entry(Nes->PALE, Nes->GREY),
-		nes->entry(Nes->PALE, Nes->CYAN), nes->entry(Nes->LIGHT, Nes->CYAN));
-	pbomb = nes->pal(sky, nes->entry(Nes->PALE, Nes->ROSE),
-		nes->entry(Nes->MID, Nes->MAGENTA), nes->entry(Nes->LIGHT, Nes->RED));
-	pstar = nes->pal(sky, nes->entry(Nes->MID, Nes->GREY),
-		nes->entry(Nes->PALE, Nes->GREY), nes->entry(Nes->LIGHT, Nes->GREY));
-	phud = nes->pal(sky, nes->entry(Nes->PALE, Nes->GREY),
-		nes->entry(Nes->PALE, Nes->GREY), nes->entry(Nes->PALE, Nes->GREY));
-	pflash = nes->pal(sky, nes->entry(Nes->PALE, Nes->YELLOW),
-		nes->entry(Nes->PALE, Nes->YELLOW), nes->entry(Nes->PALE, Nes->YELLOW));
-	scr = nes->surface(d, sheet, fnt, W, H, sky);
+	art[len SMALL:] = tiles->meta(BIG);
+	sheet = tiles->chr(d, Draw->RGB24, SCALE, art);
+	fnt = tiles->font(d, Draw->RGB24, SCALE);
+	sky := tiles->entry(Tiles->DARK, Tiles->BLACK);
+	pship = tiles->pal(sky, tiles->entry(Tiles->PALE, Tiles->GREY),
+		tiles->entry(Tiles->MID, Tiles->CYAN), tiles->entry(Tiles->LIGHT, Tiles->AZURE));
+	pfoe = tiles->pal(sky, tiles->entry(Tiles->PALE, Tiles->YELLOW),
+		tiles->entry(Tiles->MID, Tiles->RED), tiles->entry(Tiles->LIGHT, Tiles->ORANGE));
+	pboss = tiles->pal(sky, tiles->entry(Tiles->PALE, Tiles->CYAN),
+		tiles->entry(Tiles->MID, Tiles->VIOLET), tiles->entry(Tiles->LIGHT, Tiles->MAGENTA));
+	pboom = tiles->pal(sky, tiles->entry(Tiles->PALE, Tiles->YELLOW),
+		tiles->entry(Tiles->PALE, Tiles->YELLOW), tiles->entry(Tiles->LIGHT, Tiles->ORANGE));
+	pshot = tiles->pal(sky, tiles->entry(Tiles->PALE, Tiles->GREY),
+		tiles->entry(Tiles->PALE, Tiles->CYAN), tiles->entry(Tiles->LIGHT, Tiles->CYAN));
+	pbomb = tiles->pal(sky, tiles->entry(Tiles->PALE, Tiles->ROSE),
+		tiles->entry(Tiles->MID, Tiles->MAGENTA), tiles->entry(Tiles->LIGHT, Tiles->RED));
+	pstar = tiles->pal(sky, tiles->entry(Tiles->MID, Tiles->GREY),
+		tiles->entry(Tiles->PALE, Tiles->GREY), tiles->entry(Tiles->LIGHT, Tiles->GREY));
+	phud = tiles->pal(sky, tiles->entry(Tiles->PALE, Tiles->GREY),
+		tiles->entry(Tiles->PALE, Tiles->GREY), tiles->entry(Tiles->PALE, Tiles->GREY));
+	pflash = tiles->pal(sky, tiles->entry(Tiles->PALE, Tiles->YELLOW),
+		tiles->entry(Tiles->PALE, Tiles->YELLOW), tiles->entry(Tiles->PALE, Tiles->YELLOW));
+	scr = tiles->surface(d, sheet, fnt, W, H, sky);
 }
 
 # A repeatable generator, so -t sees the same waves every run.  rand(2)
@@ -453,7 +491,7 @@ sloty(r: int): int
 step()
 {
 	frames++;
-	nes->sfxtick();
+	tone->sfxtick();
 	for(i := 0; i < NSTAR; i++){
 		stary[i] += starv[i];
 		if(stary[i] >= H){
@@ -486,7 +524,7 @@ step()
 	if(alive == 0 && clear == 0){
 		clear = 120;
 		score += 1000;
-		nes->sfx(4, 1300, 400);
+		tone->sfx(4, 1300, 400);
 	}
 	prevpad = pad;
 }
@@ -503,9 +541,9 @@ SHIPV:	con 2.0;
 
 stepship()
 {
-	if((pad & Nes->PLEFT) && !(pad & Nes->PRIGHT))
+	if((pad & KLEFT) && !(pad & KRIGHT))
 		sx -= SHIPV;
-	else if((pad & Nes->PRIGHT) && !(pad & Nes->PLEFT))
+	else if((pad & KRIGHT) && !(pad & KLEFT))
 		sx += SHIPV;
 	if(sx < 0.0)
 		sx = 0.0;
@@ -513,10 +551,10 @@ stepship()
 		sx = real (W-16);
 	if(firecool > 0)
 		firecool--;
-	if((pad & Nes->PA) && firecool == 0 && nmine() < 2){
+	if((pad & KA) && firecool == 0 && nmine() < 2){
 		fire(sx + 4.0, real (H-32), -4.5, 1);
 		firecool = 8;
-		nes->sfx(2, 1200, 40);
+		tone->sfx(2, 1200, 40);
 	}
 }
 
@@ -572,7 +610,7 @@ stepshots()
 				if(f.st == DIVE)
 					v *= 2;
 				score += v;
-				nes->sfx(3, 500, 90);
+				tone->sfx(3, 500, 90);
 				break;
 			}
 		}else if(dead == 0
@@ -694,7 +732,7 @@ startdive()
 		f.t = 0;
 		f.vx = 0.0;
 		f.vy = 1.0;
-		nes->sfx(1, 380, 120);
+		tone->sfx(1, 380, 120);
 		return;
 	}
 }
@@ -705,14 +743,14 @@ hurt()
 		return;
 	lives--;
 	dead = 110;
-	nes->sfx(5, 160, 500);
+	tone->sfx(5, 160, 500);
 }
 
 # ------------------------------------------------------------------ draw
 
 draw1()
 {
-	scr.fill(Rect((0,0),(W,H)), nes->entry(Nes->DARK, Nes->BLACK));
+	scr.fill(Rect((0,0),(W,H)), tiles->entry(Tiles->DARK, Tiles->BLACK));
 	for(i := 0; i < NSTAR; i++)
 		scr.put(starx[i], stary[i], TSTAR, pstar, 0);
 	for(i = 0; i < NSHOT; i++){
@@ -773,14 +811,14 @@ pad0(v, n: int): string
 
 shot()
 {
-	nes->sound(0);
+	audio = 0;
 	newgame();
 	for(i := 0; i < 260; i++){
-		pad = Nes->PA;
+		pad = KA;
 		if((i / 40 & 1) != 0)
-			pad |= Nes->PRIGHT;
+			pad |= KRIGHT;
 		else
-			pad |= Nes->PLEFT;
+			pad |= KLEFT;
 		step();
 		draw1();
 	}
@@ -806,7 +844,7 @@ shot()
 # frame pacing, so the number is the work and not the wait.
 bench()
 {
-	nes->sound(0);
+	audio = 0;
 	newgame();
 	divecool = 1000000;
 	for(i := 0; i < 900 && nstate(SLOT) < NFOE; i++){
@@ -890,7 +928,7 @@ nstate(st: int): int
 selftest()
 {
 	sys->print("starling: self test\n");
-	nes->sound(0);
+	audio = 0;
 	newgame();
 	ck("a full formation", alive, NFOE);
 	ck("all of it entering", nstate(ENTER), NFOE);
@@ -917,20 +955,20 @@ selftest()
 
 	# The ship moves and is stopped by both walls.
 	x := int sx;
-	run(10, Nes->PRIGHT);
+	run(10, KRIGHT);
 	ck("the ship moves right", int sx, x + 10*int SHIPV);
-	run(400, Nes->PLEFT);
+	run(400, KLEFT);
 	ck("and stops at the left wall", int sx, 0);
-	run(400, Nes->PRIGHT);
+	run(400, KRIGHT);
 	ck("and at the right wall", int sx, W-16);
 
 	# Firing: at most two of ours in the air, and a hit removes an
 	# attacker and scores.
 	run(30, 0);
-	run(1, Nes->PA);
-	run(2, Nes->PA);
+	run(1, KA);
+	run(2, KA);
 	cktrue("firing makes a shot", nmine() >= 1);
-	run(40, Nes->PA);
+	run(40, KA);
 	cktrue("no more than two at once", nmine() <= 2);
 
 	sc := score;

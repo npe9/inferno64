@@ -1,8 +1,8 @@
-.TH NESTEST 1
+.TH TILESTEST 1
 .SH NAME
-nestest \- check nes(2)
+tilestest \- check tiles(2)
 .SH SYNOPSIS
-.B nestest
+.B tilestest
 .SH DESCRIPTION
 .I Nestest
 checks
@@ -87,10 +87,10 @@ or
 .BR FAILED .
 .SH EXAMPLE
 .EX
-emu\-cocoa \-r. /dis/nestest.dis
+emu\-cocoa \-r. /dis/tilestest.dis
 .EE
 .SH SOURCE
-.B /appl/cmd/nestest.b
+.B /appl/cmd/tilestest.b
 .SH SEE ALSO
 .IR nes (2),
 .IR rivet (1),
@@ -102,7 +102,7 @@ It checks that the palette's entries differ from each other, not that
 any of them is the right colour: there is no reference to be right
 against, the ramp being computed.
 A change to the constants at the top of
-.B nes.b
+.B tiles.b
 that made every colour uglier would pass.
 .PP
 It says nothing about how a game looks.

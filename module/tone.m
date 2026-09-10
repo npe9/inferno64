@@ -49,4 +49,21 @@ Tone: module
 	# tempo: quarter-note length in milliseconds, for play() and
 	# playparts().  500 (120bpm) unless set.
 	settempo:	fn(quarter_ms: int);
+
+	# --- one voice, several things wanting it ---
+	#
+	# beep() returns at once and the next one replaces what is
+	# sounding, which is fine for a program making one noise at a time
+	# and wrong for anything with events in it: a footstep issued a
+	# frame after an explosion cuts the explosion off.
+	#
+	# sfx() is an arbiter rather than a mixer, because there is nothing
+	# here to mix with.  An effect states a priority and how long it
+	# lasts; one of lower priority asked for while a louder one is
+	# still sounding is dropped, and one of equal or higher priority
+	# takes over.  sfxtick() must be called regularly - once a frame,
+	# for a program that has frames - or a finished effect goes on
+	# holding the voice.
+	sfx:		fn(pri, freq, ms: int);
+	sfxtick:	fn();
 };

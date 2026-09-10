@@ -225,6 +225,7 @@ json json
 jvalue json
 key spki
 keyboard tk
+keyhold keyhold
 keyring keyring-0intro
 keyring-auth keyring-auth
 keyring-certtostr keyring-certtostr
@@ -277,7 +278,6 @@ name spki
 namechan tk
 names names
 nametree styxservers-nametree
-nes nes
 netinfo dial
 netmkaddr dial
 newns newns
@@ -504,6 +504,7 @@ text daytime
 tftp tftp
 ticker frameclock
 tickms frameclock
+tiles tiles
 time daytime
 timers timers
 tk tk

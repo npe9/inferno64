@@ -106,6 +106,7 @@ init(): string
 	twopi = 2.0 * Math->Pi;
 	stopch = chan[1] of int;	# buffered: a stop is never dropped
 	opened = 0;
+	inited = 1;
 	buildtable();
 	return nil;
 }
@@ -532,3 +533,34 @@ playparts(parts: array of string): string
 	return render(evs);
 }
 
+
+# --- one voice, several things wanting it ---
+#
+# See tone(2).  This is deliberately not a mixer: there is one voice and
+# the question is only which event gets it.
+
+inited := 0;
+sfxpri := 0;
+sfxuntil := 0;
+
+sfx(pri, freq, ms: int)
+{
+	# init() not called, or it failed: say nothing rather than spawning
+	# a sound process per effect for a program that has no audio.  A
+	# self test firing weapons thousands of times found this the hard
+	# way.
+	if(!inited || ms <= 0)
+		return;
+	now := sys->millisec();
+	if(now < sfxuntil && pri < sfxpri)
+		return;
+	beep(freq, ms);
+	sfxpri = pri;
+	sfxuntil = now + ms;
+}
+
+sfxtick()
+{
+	if(inited && sys->millisec() >= sfxuntil)
+		sfxpri = 0;
+}

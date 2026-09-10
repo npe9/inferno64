@@ -5,7 +5,7 @@ implement Orchard;
 # berries that turn them blue for a while, and a tunnel across the middle
 # row that both sides can use.
 #
-# What this one exercises in nes(2) that the others do not is per-tile
+# What this one exercises in tiles(2) that the others do not is per-tile
 # reasoning: everything moves on the grid and may only change direction
 # at a tile's centre, and the chasers pick a direction each time they
 # reach one by scoring the exits against a target square.  Different
@@ -26,9 +26,16 @@ include "wmclient.m";
 
 include "keyboard.m";
 
-include "nes.m";
-	nes: Nes;
-	Chr, Pal, Surface: import nes;
+include "keyhold.m";
+	keyhold: Keyhold;
+	Binding: import keyhold;
+
+include "tone.m";
+	tone: Tone;
+
+include "tiles.m";
+	tiles: Tiles;
+	Chr, Pal, Surface: import tiles;
 
 include "frameclock.m";
 	fclock: Frameclock;
@@ -41,9 +48,34 @@ Orchard: module
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
+# What this game's keys do.  The bits are its own and so is the table:
+# keyhold(2) names no buttons, because what a button means is the
+# program's business - the same bit is jump in one of these games and
+# fire in another.
+KLEFT, KRIGHT, KUP, KDOWN, KA, KB, KSEL, KSTART: con 1 << iota;
+
+BINDS := array[] of {
+	(Keyboard->Left, KLEFT), ('a', KLEFT), ('A', KLEFT),
+	(Keyboard->Right, KRIGHT), ('d', KRIGHT), ('D', KRIGHT),
+	(Keyboard->Up, KUP), ('w', KUP), ('W', KUP),
+	(Keyboard->Down, KDOWN), ('s', KDOWN), ('S', KDOWN),
+	('z', KB), ('Z', KB), (',', KB),
+	('x', KA), ('X', KA), ('.', KA), (' ', KA),
+	('\n', KSTART), ('\t', KSEL),
+};
+
+kb: ref Binding;
+
+# Playing, as against running a self test or writing a screenshot.  Only
+# a playing program asks tone(2) for audio.
+playing(): int
+{
+	return testmode == 0;
+}
+
 SCALE:	con 2;
-W:	con Nes->W;
-H:	con Nes->H;
+W:	con Tiles->W;
+H:	con Tiles->H;
 MW:	con 28;			# maze, in tiles
 MH:	con 29;
 OX:	con 2;			# where the maze sits on the screen, in tiles
@@ -278,14 +310,17 @@ init(ctxt: ref Draw->Context, argv: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
-	nes = load Nes Nes->PATH;
+	keyhold = load Keyhold Keyhold->PATH;
+	tone = load Tone Tone->PATH;
+	kb = keyhold->mk(BINDS);
+	tiles = load Tiles Tiles->PATH;
 	fclock = load Frameclock Frameclock->PATH;
 	scorestore = load Scorestore Scorestore->PATH;
-	if(nes == nil){
-		sys->fprint(sys->fildes(2), "orchard: cannot load nes: %r\n");
+	if(tiles == nil){
+		sys->fprint(sys->fildes(2), "orchard: cannot load tiles: %r\n");
 		raise "fail:load";
 	}
-	e := nes->init();
+	e := tiles->init();
 	if(e != nil){
 		sys->fprint(sys->fildes(2), "orchard: %s\n", e);
 		raise "fail:init";
@@ -318,8 +353,11 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	setup(d);
 	if(scorestore != nil)
 		best = scorestore->loadint("orchard", 0);
-	if(audio == 0)
-		audio = nes->sound(1);
+	# Only when actually playing.  tone(2)'s sfx() is silent until
+	# init() has succeeded, so the self test and the screenshot modes
+	# make no sound and spawn nothing by simply not asking for any.
+	if(audio == 0 && playing() && tone != nil && tone->init() == nil)
+		audio = 1;
 	newgame();
 	if(testmode == 1){
 		selftest();
@@ -342,12 +380,12 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		win.pointer(*p);
 	k := <-win.ctxt.kbd =>
 		if(k == 16r1b || k == 'q' || k == 'Q'){
-			nes->quiet();
+			tone->stop();
 			if(score > best && scorestore != nil)
 				scorestore->saveint("orchard", score);
 			exit;
 		}
-		pad = nes->padkey(pad, k);
+		pad = kb.key(pad, k);
 		wanted();
 	<-ticks =>
 		step();
@@ -361,35 +399,35 @@ setup(d: ref Display)
 {
 	art := array[len SMALL + 4*8*(len BIG / 16)] of string;
 	art[0:] = SMALL;
-	art[len SMALL:] = nes->meta(BIG);
-	sheet = nes->chr(d, Draw->RGB24, SCALE, art);
-	fnt = nes->font(d, Draw->RGB24, SCALE);
-	bk := nes->entry(Nes->DARK, Nes->BLACK);
-	pwall = nes->pal(bk, nes->entry(Nes->DARK, Nes->BLUE),
-		nes->entry(Nes->MID, Nes->AZURE), nes->entry(Nes->LIGHT, Nes->CYAN));
-	ppip = nes->pal(bk, bk, bk, nes->entry(Nes->PALE, Nes->ORANGE));
-	pberry = nes->pal(bk, bk, bk, nes->entry(Nes->PALE, Nes->ROSE));
-	pgate = nes->pal(bk, bk, nes->entry(Nes->MID, Nes->ROSE), bk);
-	pplay = nes->pal(bk, nes->entry(Nes->DARK, Nes->YELLOW),
-		nes->entry(Nes->PALE, Nes->YELLOW), nes->entry(Nes->MID, Nes->YELLOW));
+	art[len SMALL:] = tiles->meta(BIG);
+	sheet = tiles->chr(d, Draw->RGB24, SCALE, art);
+	fnt = tiles->font(d, Draw->RGB24, SCALE);
+	bk := tiles->entry(Tiles->DARK, Tiles->BLACK);
+	pwall = tiles->pal(bk, tiles->entry(Tiles->DARK, Tiles->BLUE),
+		tiles->entry(Tiles->MID, Tiles->AZURE), tiles->entry(Tiles->LIGHT, Tiles->CYAN));
+	ppip = tiles->pal(bk, bk, bk, tiles->entry(Tiles->PALE, Tiles->ORANGE));
+	pberry = tiles->pal(bk, bk, bk, tiles->entry(Tiles->PALE, Tiles->ROSE));
+	pgate = tiles->pal(bk, bk, tiles->entry(Tiles->MID, Tiles->ROSE), bk);
+	pplay = tiles->pal(bk, tiles->entry(Tiles->DARK, Tiles->YELLOW),
+		tiles->entry(Tiles->PALE, Tiles->YELLOW), tiles->entry(Tiles->MID, Tiles->YELLOW));
 	pfoe = array[NFOE] of ref Pal;
-	hue := array[NFOE] of {Nes->RED, Nes->ROSE, Nes->CYAN, Nes->ORANGE};
+	hue := array[NFOE] of {Tiles->RED, Tiles->ROSE, Tiles->CYAN, Tiles->ORANGE};
 	for(i := 0; i < NFOE; i++)
-		pfoe[i] = nes->pal(bk, nes->entry(Nes->LIGHT, hue[i]),
-			nes->entry(Nes->PALE, Nes->GREY),
-			nes->entry(Nes->MID, Nes->BLUE));
-	phud = nes->pal(bk, nes->entry(Nes->PALE, Nes->GREY),
-		nes->entry(Nes->PALE, Nes->GREY), nes->entry(Nes->PALE, Nes->GREY));
-	pflash = nes->pal(bk, nes->entry(Nes->PALE, Nes->YELLOW),
-		nes->entry(Nes->PALE, Nes->YELLOW), nes->entry(Nes->PALE, Nes->YELLOW));
-	scr = nes->surface(d, sheet, fnt, W, H, bk);
-	bg = nes->surface(d, sheet, fnt, W, H, bk);
+		pfoe[i] = tiles->pal(bk, tiles->entry(Tiles->LIGHT, hue[i]),
+			tiles->entry(Tiles->PALE, Tiles->GREY),
+			tiles->entry(Tiles->MID, Tiles->BLUE));
+	phud = tiles->pal(bk, tiles->entry(Tiles->PALE, Tiles->GREY),
+		tiles->entry(Tiles->PALE, Tiles->GREY), tiles->entry(Tiles->PALE, Tiles->GREY));
+	pflash = tiles->pal(bk, tiles->entry(Tiles->PALE, Tiles->YELLOW),
+		tiles->entry(Tiles->PALE, Tiles->YELLOW), tiles->entry(Tiles->PALE, Tiles->YELLOW));
+	scr = tiles->surface(d, sheet, fnt, W, H, bk);
+	bg = tiles->surface(d, sheet, fnt, W, H, bk);
 	cells = array[MW*MH] of int;
 }
 
 buildmaze()
 {
-	bk := nes->entry(Nes->DARK, Nes->BLACK);
+	bk := tiles->entry(Tiles->DARK, Tiles->BLACK);
 	bg.fill(Rect((0,0),(W,H)), bk);
 	pips = 0;
 	for(ty := 0; ty < MH; ty++){
@@ -531,20 +569,20 @@ oncentre(x, y: int): int
 
 wanted()
 {
-	if(pad & Nes->PUP)
+	if(pad & KUP)
 		pnext = UP;
-	else if(pad & Nes->PDOWN)
+	else if(pad & KDOWN)
 		pnext = DOWN;
-	else if(pad & Nes->PLEFT)
+	else if(pad & KLEFT)
 		pnext = LEFT;
-	else if(pad & Nes->PRIGHT)
+	else if(pad & KRIGHT)
 		pnext = RIGHT;
 }
 
 step()
 {
 	frames++;
-	nes->sfxtick();
+	tone->sfxtick();
 	if(dead > 0){
 		dead--;
 		if(dead == 0){
@@ -590,7 +628,7 @@ step()
 	if(pips == 0 && clear == 0){
 		clear = 150;
 		score += 1000;
-		nes->sfx(4, 1300, 400);
+		tone->sfx(4, 1300, 400);
 	}
 	prevpad = pad;
 }
@@ -627,7 +665,7 @@ eat(tx, ty: int)
 		paint(tx, ty);
 		pips--;
 		score += 10;
-		nes->sfx(1, 900, 30);
+		tone->sfx(1, 900, 30);
 	}else if(v == BERRY){
 		cells[ty*MW + tx] = OPEN;
 		paint(tx, ty);
@@ -642,7 +680,7 @@ eat(tx, ty: int)
 				foes[i].scared = 1;
 				foes[i].dir = (foes[i].dir + 2) % NDIR;
 			}
-		nes->sfx(3, 300, 200);
+		tone->sfx(3, 300, 200);
 	}
 }
 
@@ -724,7 +762,7 @@ stepfoes()
 			for(k := 1; k < eaten; k++)
 				v *= 2;
 			score += v;
-			nes->sfx(3, 1500, 120);
+			tone->sfx(3, 1500, 120);
 		}else
 			hurt();
 	}
@@ -774,7 +812,7 @@ hurt()
 {
 	lives--;
 	dead = 120;
-	nes->sfx(5, 160, 600);
+	tone->sfx(5, 160, 600);
 }
 
 # ------------------------------------------------------------------ draw
@@ -808,10 +846,10 @@ drawplayer()
 	fl := 0;
 	if((panim / 5 & 1) != 0){
 		case pdir {
-		LEFT =>	t = TPLAY1; fl = Nes->FLIPX;
+		LEFT =>	t = TPLAY1; fl = Tiles->FLIPX;
 		RIGHT =>	t = TPLAY1;
 		UP =>	t = TPLAY2;
-		DOWN =>	t = TPLAY2; fl = Nes->FLIPY;
+		DOWN =>	t = TPLAY2; fl = Tiles->FLIPY;
 		}
 	}
 	scr.put16(px, py, t, pplay, fl);
@@ -840,15 +878,15 @@ pad0(v, n: int): string
 
 shot()
 {
-	nes->sound(0);
+	audio = 0;
 	newgame();
 	for(i := 0; i < 420; i++){
 		pad = 0;
 		case (i / 60) % 4 {
-		0 =>	pad = Nes->PLEFT;
-		1 =>	pad = Nes->PUP;
-		2 =>	pad = Nes->PRIGHT;
-		3 =>	pad = Nes->PDOWN;
+		0 =>	pad = KLEFT;
+		1 =>	pad = KUP;
+		2 =>	pad = KRIGHT;
+		3 =>	pad = KDOWN;
 		}
 		step();
 		draw1();
@@ -923,7 +961,7 @@ holdfoes()
 selftest()
 {
 	sys->print("orchard: self test\n");
-	nes->sound(0);
+	audio = 0;
 	cktrue("maze is the right height", len MAZE == MH);
 	for(i := 0; i < len MAZE; i++)
 		if(len MAZE[i] != MW){
@@ -940,14 +978,14 @@ selftest()
 	# The player starts on a tile centre, and stays on the grid.
 	cktrue("starts on a tile centre", oncentre(px, py));
 	holdfoes();
-	run(8, Nes->PLEFT);
+	run(8, KLEFT);
 	cktrue("back on a centre after eight steps", oncentre(px, py));
 
 	# A wall stops it rather than letting it through.
 	newround();
 	holdfoes();
 	x0 := px;
-	run(400, Nes->PLEFT);
+	run(400, KLEFT);
 	(tx, ty) := tileof(px, py);
 	cktrue("still inside the maze", free(tx, ty, 0));
 	cktrue("did not pass through a wall", px != x0 - 400);
@@ -957,7 +995,7 @@ selftest()
 	holdfoes();
 	p0 := pips;
 	s0 := score;
-	run(60, Nes->PLEFT);
+	run(60, KLEFT);
 	cktrue("berries were eaten", pips < p0);
 	cktrue("and scored", score > s0);
 	n := 0;
