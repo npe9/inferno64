@@ -228,15 +228,35 @@ indistinguishable from one whose layout is fine, and a sweep cannot tell
 Swept over 21 `appl/wm` programs that open a window and settle
 (`about calendar clock colors date dir edit keyboard logwindow man memory
 reversi sh smenu snake stopwatch sweeper task tetris toolbar view`) on a
-900x700 screen, at the tree's default bitmap font: **19 of 21 reached the
-check, 433 widgets examined, nothing to report.** The two that did not
-are `clock` and `smenu`, which use `wmclient` directly and draw their own
-contents rather than packing widgets — outside what this can see, by
-construction, not by accident.
+900x700 screen:
+
+| default font | reached | widgets | reports |
+| --- | --- | --- | --- |
+| the tree's bitmap `/fonts/pelm/unicode.8.font` | 19 of 21 | 433 | **0** |
+| `/mnt/ft/go.r.20.font` | 19 of 21 | 433 | **0** |
+
+The two that never reach the check are `clock` and `smenu`, which use
+`wmclient` directly and draw their own contents rather than packing
+widgets — outside what this can see, by construction rather than by
+accident.
 
 Per-program, the widget counts are what make the zero meaningful:
 `sweeper` 122, `keyboard` 74, `calendar` 28, `stopwatch` 22, `reversi`
 21, `edit` 19, and so on down to `toolbar` 4.
+
+**That the two rows are identical is the point, and needed its own
+proof** — two passes that quietly used the same font would also produce
+identical rows. They did not: a plain `label` with no `-font` measures
+`118x14` under the bitmap default and `151x27` under
+`/mnt/ft/go.r.20.font`, and no run in the second pass printed
+`tk: font not found`. So 19 programs and 433 widgets were laid out in a
+face whose text is nearly twice as tall, and not one widget lost room.
+
+**This is the answer to the question section 3 opened with.** Layout was
+the remaining objection to adopting a scalable font; for the Tk programs
+it does not materialise, because `libtk` sizes each widget from its font
+and `pack` gives each the room it asks for. What is left is the programs
+that draw their own text, which is a different exercise.
 
 **The positive control is the important half.** Zero reports is also what
 a checker that has gone blind produces. The same sweep on a 260x200
