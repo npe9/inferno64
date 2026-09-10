@@ -29,7 +29,14 @@
 
 /* Physical / virtual (identity, MMU off) */
 #define	PHYSDRAM	((uintptr)0x40000000)
-#define	DRAMSIZE	(256*1024*1024)		/* matches -m 256 */
+/*
+ * The floor, not the size.  The suite runs this board with -m 1G and
+ * has for a long time, so the old "matches -m 256" was simply wrong;
+ * archconfinit() now takes the real total from the device tree and
+ * uses this only as the fallback when there is no tree, and as the
+ * minimum it will accept from one.
+ */
+#define	DRAMSIZE	(256*1024*1024)
 #define	KZERO		PHYSDRAM
 /*
  * The kernel links 2MB above the base of RAM, and the gap is not
@@ -85,6 +92,19 @@
  * PHYSDRAM+0x100000.
  */
 #define	MACHADDR	(PHYSDRAM+0x100000)
+/*
+ * Vestigial, and deliberately left deriving from DRAMSIZE rather than
+ * from the real top of memory, because nothing on this board reads
+ * it.  Checked, in this board's link line and config: nothing calls
+ * os/inferno/port/proc.c's kexit(), and portclock.c and devproc.c --
+ * whose profiling tick and address check are the other two readers of
+ * USTKTOP under os/inferno/port -- are not in the config at all
+ * (clock.c is the board's own, devprog.c is linked and devproc.c is
+ * not).  Were any of them to appear, this would need to become
+ * conf.topofmem: since archconfinit() started sizing memory
+ * from the device tree, PHYSDRAM+DRAMSIZE is no longer the top of RAM
+ * but a point in the middle of the allocator's range.
+ */
 #define	USTKTOP		(PHYSDRAM+DRAMSIZE)
 
 /* PCIe (pci-host-ecam-generic) from QEMU -M virt's device tree:

@@ -354,7 +354,19 @@ config_evidence() {
 		echo 'DISK-READ-OK usb\.txt'
 		echo 'HID report pointer on [^ ]*: 48-bit report, x absolute at 8\+16'
 		echo 'USB-TABLET-OK absolute 479 119 on 640x480';;
-	virt-peer|virtarm64-peer|peer-mixed)
+	virtarm64-peer)
+		# Both halves: the peer lines this arm shares with the
+		# riscv peer configurations, and the device-tree lines
+		# only an arm64 kernel prints.  It needs its own arm and
+		# it needs to come first, because a case takes the first
+		# match and the shared arm below would otherwise swallow
+		# it and check neither.
+		echo 'peer: 525400aaaa01 is 192\.168\.77\.1'
+		echo 'PEER-ARP-OK 192\.168\.77\.2'
+		echo 'fdt: pci ecam @ 0x4010000000 size 0x10000000'
+		echo 'fdt: pl011 @ 0x9000000 size 0x1000'
+		echo '^[0-9a-f]+ 80000000 [0-9]+';;
+	virt-peer|peer-mixed)
 		echo 'peer: 525400aaaa01 is 192\.168\.77\.1'
 		echo 'PEER-ARP-OK 192\.168\.77\.2';;
 	virts)
@@ -425,6 +437,29 @@ config_evidence() {
 		echo 'SD 16-block RW \(SD-MULTIBLOCK-OK\)'
 		echo 'SD-FS-OK \(kfs-on-sd works\)';;
 	virtarm64)
+		# This board reads QEMU's own device tree, and nothing in
+		# the marker set says so: the markers are the same words
+		# whether the bases came from the tree or from mem.h.
+		# These are the lines only the real path can print.  The
+		# ECAM line is deliberately the anchor rather than the
+		# memory one -- it does not depend on what -m the
+		# invocation passes, so it still proves the tree was
+		# found and parsed if that flag ever changes.
+		echo 'fdt: pci ecam @ 0x4010000000 size 0x10000000'
+		echo 'fdt: pl011 @ 0x9000000 size 0x1000'
+		# And this is what proves the size the tree reported was
+		# acted on rather than merely printed.  xalloc prints its
+		# extent as "base top size"; the middle field is
+		# conf.topofmem, and archconfinit() takes it from the
+		# tree.  At -m 1G that is 0x80000000.  Before the tree
+		# was read it was 0x50000000, a quarter of the machine,
+		# because DRAMSIZE said 256MB.  The first and third
+		# fields are PGROUND(end) and the difference, so both
+		# move with the kernel image and neither is checked --
+		# this used to read '1069756416 bytes free' and would
+		# have had to be retyped after every commit that changed
+		# the image size.
+		echo '^[0-9a-f]+ 80000000 [0-9]+'
 		;;
 	esac
 }

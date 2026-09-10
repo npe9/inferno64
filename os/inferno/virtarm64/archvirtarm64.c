@@ -35,7 +35,41 @@ pciarchinit(void)
 void
 archconfinit(void)
 {
+	/*
+	 * The tree, when there is one, rather than DRAMSIZE.  main.c's
+	 * fdtfind() runs before confinit() for exactly this.  QEMU's
+	 * -M virt puts all of -m in one bank at PHYSDRAM, and
+	 * fdtmemory() totals every bank it finds, so on -m 1G this is
+	 * 0x40000000 where DRAMSIZE would have said 0x10000000 and
+	 * three quarters of the machine's memory would have gone
+	 * unused.
+	 *
+	 * Three guards.  fdtmemory() returns the number of banks it
+	 * summed, and only one bank makes base+size a contiguous
+	 * extent; two would put the hole between them into the pool.
+	 * Every -M virt tree from -m 256 to -m 16G has a single
+	 * memory@40000000, checked with -machine dumpdtb, so this is
+	 * the guard staying honest about an assumption rather than a
+	 * case seen here.  The base must be PHYSDRAM, because
+	 * everything on this board is identity-mapped from there and
+	 * confinit() computes npage0 from one range.  And the total
+	 * must be at least DRAMSIZE, so a tree reporting less cannot
+	 * shrink the board below a size known to boot -- a machine
+	 * genuinely given less than 256MB is a configuration to fix,
+	 * not to limp along in.  There is deliberately no ceiling:
+	 * conf.ialloc is a ulong and this board would need 32GB of
+	 * RAM before main_pool_pcnt of it overflowed one.
+	 */
 	conf.topofmem = PHYSDRAM + DRAMSIZE;
+	{
+		extern int fdtvalid(void);
+		extern int fdtmemory(uvlong*, uvlong*);
+		uvlong base, size;
+
+		if(fdtvalid() && fdtmemory(&base, &size) == 1
+		&& base == (uvlong)PHYSDRAM && size >= (uvlong)DRAMSIZE)
+			conf.topofmem = PHYSDRAM + (uintptr)size;
+	}
 	conf.cpuspeed = 100000000;	/* refined once cntfrq() is read, see clockinit */
 }
 

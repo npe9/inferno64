@@ -20982,10 +20982,30 @@ is
 .CW H ,
 the sentinel, overwritten with nil during
 .CW readmod .
-That the detector still fires is what makes the other twelve boards'
-silence mean something.  Whether a real bug sits under those three is
-open \(em it is no longer answered by the description this section
-withdrew, and it is not the
+Whether a real bug sits under those three is open \(em it is no longer
+answered by the description this section withdrew, and it is not the
 .CW movp
 the old entry named, because nothing in these reports mentions
 .CW Sh .
+.PP
+Those three do not reproduce, which matters more than it first looks.
+They appeared on one full-fifteen run and on none of the two full runs
+and six single virt32s runs after it, so they are load-dependent and
+they are not evidence of anything on their own.  That leaves the
+question they were supposed to answer: with every board at zero, is
+this a detector that has been silenced or noise that has been removed?
+Those two look identical from a green run, and no amount of green
+distinguishes them.
+.PP
+What distinguishes them is turning the clear off and leaving everything
+else alone.  With
+.CW "if(0 && ts > (uchar*)sx)"
+in
+.CW destroystack() ,
+one rebuild of libinterp and the board, virtarm64 printed 31
+.CW track:
+lines and still passed 41 markers and 12 known failures.  Restoring the
+line and rebuilding the same two things printed 0, on the same
+invocation.  So the instrumentation is intact and firing, and the clear
+is what removes the reports.  That is the claim, and it now rests on a
+back-to-back pair rather than on three intermittent survivors.

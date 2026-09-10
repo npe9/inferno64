@@ -1340,19 +1340,38 @@ correctly, so MSI buys nothing here.  It is for real hardware that
 needs more vectors than INTx has.
 .IP 2.
 .B "arm64 device-tree discovery."
-QEMU's
+.B DONE
+for
+.CW virtarm64 ,
+and the reason it was listed as blocked was wrong.  QEMU's
 .CW -kernel
-path enters an arm64 ELF with
+path does enter an arm64 ELF with
 .CW "x0 == 0" ,
-so the DTB pointer the riscv boards read is simply not passed.  Every
-riscv board in the tree now reads its tree;
+so the pointer the riscv boards read is not passed \(em but
+.CW hw/arm/boot.c 's
+.CW arm_setup_direct_kernel_boot()
+loads the ELF and then, if
+.CW "image_low_addr > loader_start || image_high_addr < loader_start" ,
+writes the machine's generated tree at
+.CW loader_start
+anyway.
 .CW virtarm64
-cannot, and neither can
-.CW spike ,
-which is handed no tree at all.  Booting arm64 through a loader that
-does pass one \(em UEFI, or
-.CW -bios \(em
-would unblock it.
+linked at exactly
+.CW 0x40000000 ,
+which is
+.CW loader_start ,
+so that test was false and no tree was written at all.  The gate was
+the link address.  The board now links 2MB up, finds the tree at
+.CW PHYSDRAM
+by its magic, drives its virtio-mmio and PCIe ECAM bases from it, sizes
+memory from it \(em
+.CW "-m 1G"
+was giving the board 256MB \(em and prints every other finding beside
+what
+.CW mem.h
+assumed.
+.CW spike
+is still handed no tree at all, and that half stays open.
 .IP 3.
 .B "virtio-gpu 3-D."
 Needs a QEMU built against virglrenderer.  The packaged 10.1.3 here

@@ -334,6 +334,7 @@ struct Findm {
 	uvlong	base;
 	uvlong	size;
 	int	found;
+	int	nbank;
 };
 
 /*
@@ -366,12 +367,18 @@ matchmem(char *name, uchar *props, int acells, int scells, void *a)
 		f->base = base;
 	f->size += size;
 	f->found = 1;
+	f->nbank++;
 	return 0;	/* keep walking: a board may have several banks */
 }
 
 /*
- * The base and total size of RAM as the tree describes it.  Returns 1
- * and fills *base/*size, else 0.
+ * The lowest base and the total size of RAM as the tree describes it.
+ * Returns the number of banks it summed -- 0 if the tree names no
+ * memory -- because base and size describe one contiguous extent only
+ * when that count is 1.  A caller that hands the pair to an allocator
+ * must check it: every QEMU -M virt tree from -m 256 to -m 16G has a
+ * single memory@40000000, but a board with two banks would otherwise
+ * have the hole between them handed out as RAM.
  */
 int
 fdtmemory(uvlong *base, uvlong *size)
@@ -386,5 +393,5 @@ fdtmemory(uvlong *base, uvlong *size)
 		*base = f.base;
 	if(size != nil)
 		*size = f.size;
-	return 1;
+	return f.nbank;
 }
