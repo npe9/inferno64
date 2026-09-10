@@ -389,9 +389,36 @@ os/pc64/forth.h
 *.dis
 *.sbl
 # kernel binaries: os/inferno/<board>/i<board>, os/*/pc64/9pc64 etc.
-os/inferno/*/i[a-z]*[0-9a-z]
-!os/inferno/*/i*.[ch]
-!os/inferno/*/i*.s
+#
+# Named one at a time rather than globbed.  The glob that was here,
+# os/inferno/*/i[a-z]*[0-9a-z], matched more than kernels: the * does
+# not cross a slash but the pattern has exactly four components, so
+# os/inferno/<board>/icons matched as a directory and took every icon
+# under it, and os/inferno/init/init.b matched as i + "nit." + b.  The
+# two !i*.[chs] lines below were an attempt at the same problem and
+# reach only two suffixes.  None of it showed, because git does not
+# apply an ignore rule to a file it is already tracking and all of
+# those were tracked before the rule arrived -- so the rule looked
+# clean for as long as nobody added a new one.
+#
+# A new board costs a line here.  That is the price of a rule that
+# means what its comment says.
+os/inferno/armv7/iarmv7
+os/inferno/mangopi/imangopi
+os/inferno/mps2/imps2
+os/inferno/nucleof303/inucleof303
+os/inferno/pc64/ipc64
+os/inferno/raspi3b/iraspi3b
+os/inferno/raspi4/iraspi4
+os/inferno/shakti/ishakti
+os/inferno/sifiveu/isifiveu
+os/inferno/spike/ispike
+os/inferno/teensy41/iteensy41
+os/inferno/virt/ivirt
+os/inferno/virt32/ivirt32
+os/inferno/virt32s/ivirt32s
+os/inferno/virtarm64/ivirtarm64
+os/inferno/virts/ivirts
 os/*/pc64/9pc64
 os/*/pc64/9upc64
 os/*/pc64/ipc64
