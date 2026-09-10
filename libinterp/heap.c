@@ -525,7 +525,24 @@ destroy(void *v)
 		if(n < 0){
 			extern void dumpstack(void);
 
-			print("destroy: h->ref underflow, h %#p n %d\n", h, n);
+			/*
+			 * The colour and type are printed because they answer
+			 * the first question anyone asks here: had the
+			 * collector already swept this object, so that the
+			 * count belongs to whatever now occupies the block?
+			 *
+			 * Asked and answered on this branch, at
+			 * parallelvm=1: "n -1 colour 0 (mutator 0) t
+			 * 0x345700".  Mutator-coloured, with a type pointer
+			 * that is still a type -- an intact, live-looking
+			 * object whose count simply went one drop too far.
+			 * Not a swept block, which ruled out the write
+			 * barrier as the cause and saved the next reader the
+			 * same hypothesis.  See doc/multicore-plan.ms.
+			 */
+			print("destroy: h->ref underflow, h %#p n %d"
+				" colour %d (mutator %d) t %#p\n",
+				h, n, h->color, mutator, h->t);
 			dumpstack();
 			abort();
 		}
