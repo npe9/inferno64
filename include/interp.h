@@ -257,6 +257,7 @@ struct Pctx
 	Prog*	curprog;	/* whose live registers `reg' holds, or nil */
 	Prog*	runhd;		/* this context's run queue */
 	Prog*	runtl;
+	int	nlocal;		/* its length, for the Runqmax bound */
 };
 
 struct Progs

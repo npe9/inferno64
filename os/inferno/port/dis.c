@@ -24,7 +24,97 @@ struct
 	int	creating;
 	Proc*	idlevmq;	/* interpreters with no program to run */
 	Atidle*	idletasks;
+	Prog*	ghead;		/* global run queue; see gput() */
+	Prog*	gtail;
+	int	ngq;
 } isched;
+
+/*
+ * The global run queue, on Go's shape.
+ *
+ * A per-P local run queue cannot simply replace the shared one: a Prog
+ * that one context queues would be invisible to another, and if that
+ * context then blocks, the program never runs.  Go does not split it
+ * either -- runqput overflows a bounded local queue into a global one
+ * and runqget falls back to the global queue before stealing.  The
+ * global queue is not a remnant there; it is what makes the local ones
+ * correct.
+ *
+ * So it is built first, while there is still one P, because it is the
+ * only piece of that design that can be exercised before the last one
+ * lands.  Runqmax is the local bound.  At its default nothing overflows
+ * -- the deepest local queue this workload produces is 2, measured --
+ * so this path is inert unless the bound is lowered, and it is lowered
+ * on purpose to test it.  That is the point of having it: a mechanism
+ * whose default is "never runs" is untested, and the bound is the
+ * constant to falsify.
+ */
+int Runqmax = 256;	/* MULTICORE - local run queue bound, Go's is 256 */
+enum { Gqevery = 61 };	/* Go's schedule() uses 61 for the same reason */
+int gqtick;
+int gqput, gqget;	/* MULTICORE INSTRUMENTATION - temporary */
+
+static void
+gput(Prog *p)
+{
+	lock(&isched.l);
+	p->link = nil;
+	if(isched.gtail != nil)
+		isched.gtail->link = p;
+	else
+		isched.ghead = p;
+	isched.gtail = p;
+	isched.ngq++;
+	gqput++;
+	unlock(&isched.l);
+}
+
+static Prog*
+gget(void)
+{
+	Prog *p;
+
+	lock(&isched.l);
+	p = isched.ghead;
+	if(p != nil){
+		isched.ghead = p->link;
+		if(isched.ghead == nil)
+			isched.gtail = nil;
+		isched.ngq--;
+		gqget++;
+		p->link = nil;
+	}
+	unlock(&isched.l);
+	return p;
+}
+
+/* is p on the global queue?  used only by delrunq() */
+static int
+gdel(Prog *p)
+{
+	Prog *f, *prev;
+
+	lock(&isched.l);
+	prev = nil;
+	for(f = isched.ghead; f != nil; f = f->link){
+		if(f == p)
+			break;
+		prev = f;
+	}
+	if(f == nil){
+		unlock(&isched.l);
+		return 0;
+	}
+	if(prev == nil)
+		isched.ghead = p->link;
+	else
+		prev->link = p->link;
+	if(p == isched.gtail)
+		isched.gtail = prev;
+	isched.ngq--;
+	unlock(&isched.l);
+	return 1;
+}
 
 int	bflag;
 int	cflag;
@@ -190,7 +280,7 @@ int
 tready(void *a)
 {
 	USED(a);
-	return curP->runhd != nil;
+	return curP->runhd != nil || isched.ghead != nil;
 }
 
 Prog*
@@ -925,12 +1015,17 @@ addrun(Prog *p)
 		panic("addrun of ready prog %8.8p by %8.8zux\n", p, getcallerpc(&p));
 	p->state = Pready;
 	p->link = nil;
+	if(curP->nlocal >= Runqmax){
+		gput(p);		/* local queue full; see gput() */
+		return;
+	}
 	if(curP->runhd == nil)
 		curP->runhd = p;
 	else
 		curP->runtl->link = p;
 
 	curP->runtl = p;
+	curP->nlocal++;
 }
 
 Prog*
@@ -943,6 +1038,7 @@ delrun(int state)
 	curP->runhd = p->link;
 	if(p->link == nil)
 		curP->runtl = nil;
+	curP->nlocal--;
 
 	return p;
 }
@@ -958,14 +1054,17 @@ delrunq(Prog *p)
 			break;
 		prev = f;
 	}
-	if(f == nil)
+	if(f == nil){
+		gdel(p);	/* it may be on the global queue instead */
 		return;
+	}
 	if(prev == nil)
 		curP->runhd = p->link;
 	else
 		prev->link = p->link;
 	if(p == curP->runtl)
 		curP->runtl = prev;
+	curP->nlocal--;
 }
 
 Prog*
@@ -1062,6 +1161,7 @@ acquire(void)
 	curP->runhd = p;
 	if(p->link == nil)
 		curP->runtl = p;
+	curP->nlocal++;
 }
 
 void
@@ -1088,7 +1188,18 @@ release(void)
 	 */
 	lock(&isched.l);
 	spawn = 0;
-	if(curP->runhd != nil && isched.nidle == 0 && isched.creating == 0){
+	/*
+	 * The global queue counts as work here.  Testing curP->runhd alone
+	 * asks "is there work on THIS context's local queue", which stopped
+	 * being the same question as "is there work" the moment a bounded
+	 * local queue could overflow.  With Runqmax forced to 1 the boot
+	 * stalled: programs sat on the global queue, this test saw an empty
+	 * local one, no further interpreter was spawned, and the only one
+	 * running parked.  88 scheduler passes in a whole boot, against
+	 * 8318 for the same boot at the default bound.
+	 */
+	if((curP->runhd != nil || isched.ghead != nil)
+	&& isched.nidle == 0 && isched.creating == 0){
 		isched.creating = 1;
 		spawn = 1;
 	}
@@ -1366,6 +1477,36 @@ vmachine(void*)
 			cycles = 0;
 		}
 
+		/*
+		 * Take from the global queue when the local one is empty,
+		 * and every Gqevery picks even when it is not.
+		 *
+		 * The second half is not optional, and a forced-bound test
+		 * proved it: with Runqmax 1 the boot stalled after the shell
+		 * spawned.  The round-robin at the foot of this loop only
+		 * rotates when runhd != runtl, so a local queue of one never
+		 * rotates, the same Prog is picked forever, and everything
+		 * that overflowed to the global queue starves.  Go has the
+		 * same hazard and the same answer -- schedule() takes from
+		 * the global queue every 61st tick regardless of the local
+		 * one, precisely so a busy local queue cannot starve it.
+		 *
+		 * Linked directly rather than through addrun(), which panics
+		 * on a Prog already in Pready, and one that reached the
+		 * global queue is.
+		 */
+		if(curP->runhd == nil || (++gqtick % Gqevery) == 0){
+			Prog *g;
+
+			if((g = gget()) != nil){
+				g->link = curP->runhd;
+				curP->runhd = g;
+				if(g->link == nil)
+					curP->runtl = g;
+				curP->nlocal++;
+			}
+		}
+
 		r = curP->runhd;
 		if(r != nil) {
 			{	/* MULTICORE INSTRUMENTATION - temporary */
@@ -1402,9 +1543,18 @@ vmachine(void*)
 						"(%d by state), cpu%d\n",
 						n, ready, m->machno);
 				}
-				if(ready != n && nrunqmismatch++ == 0)
-					print("runq: %d linked but %d in Pready -- "
-						"the two counts disagree\n", n, ready);
+				/*
+				 * Pready counts Progs on the global queue too,
+				 * so the local walk is short by exactly ngq.
+				 * Comparing without that term made this fire
+				 * the moment the global queue was first used,
+				 * which is the control working -- it noticed a
+				 * real change in what the structures mean.
+				 */
+				if(ready != n + isched.ngq && nrunqmismatch++ == 0)
+					print("runq: %d linked + %d global but %d in "
+						"Pready -- the counts disagree\n",
+						n, isched.ngq, ready);
 			}
 			o = r->osenv;
 			up->env = o;
@@ -1529,6 +1679,7 @@ pushrun(Prog *p)
 	curP->runhd = p;
 	if(p->link == nil)
 		curP->runtl = p;
+	curP->nlocal++;
 }
 
 /*
@@ -1565,6 +1716,9 @@ disdump(void)
 	print("dis: maxrunq %d, %llud of %llud scheduler passes had an "
 		"interpreter blocked on the vm lock\n",
 		maxnrunq, vmblocked, vmpasses);
+	/* MULTICORE INSTRUMENTATION - temporary */
+	print("dis: global runq: %d put, %d got, %d now, bound %d\n",
+		gqput, gqget, isched.ngq, Runqmax);
 
 	for(p = curP->runhd; p != nil; p = p->link)
 		print("dis: runq prog %d %s\n", p->pid,
