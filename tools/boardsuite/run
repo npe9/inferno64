@@ -1015,7 +1015,11 @@ for c in $configs; do
 	fi
 
 	makecard `config_card $c`
-	case $c in virt|virtarm64|virt-peer|virtarm64-peer|peer-mixed) needfat=true;; *) needfat=false;; esac
+	# virts belongs on this list as much as virt does -- it carries the
+	# same fat16.img in its qemu line.  It ran only because virt comes
+	# before it in $configs and had already made the image; asked for
+	# on its own with an empty work directory, qemu had no such file.
+	case $c in virt|virts|virtarm64|virt-peer|virtarm64-peer|peer-mixed) needfat=true;; *) needfat=false;; esac
 	if $needfat && ! makefat fat16.img marker.txt 'FS-OK boardsuite'; then
 		echo "$c: FAIL no way to make a FAT16 image here (hdiutil or mkfs.vfat)"
 		echo "    BLK-OK needs a filesystem, not a blank card; see the README"

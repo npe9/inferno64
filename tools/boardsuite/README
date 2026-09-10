@@ -27,9 +27,11 @@ with anything inside it.
 
 That only works while the committed binary is the one the baseline was
 recorded against, and it was not: a container run of a clean checkout
-gave sifiveu three markers where the baseline says five.  The committed
-isifiveu had been linked before the sd device went into its config, and
-so had virtarm64's virtarm64.c -- 22 devices where the config names 26.
+gave sifiveu three markers where the baseline said five (five at the
+time; nine since the board got a card and read its device tree).  The
+committed isifiveu had been linked before the sd device went into its
+config, and so had virtarm64's virtarm64.c -- 22 devices where the
+config names 26.
 Neither was noticed because every run until this one used a working
 tree where both had since been rebuilt.
 
