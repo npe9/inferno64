@@ -19980,3 +19980,51 @@ takes longer.  At twenty seconds both boards are ten of ten.  The rate
 is worth writing down rather than hiding behind the suite's own retry,
 because it is the number to compare against if either board starts
 missing again.
+.NH 1
+The riscv64 board in supervisor mode
+.PP
+.CW os/inferno/virts
+was already in the tree: riscv64 virt, linked at 0x80200000 so QEMU's
+own OpenSBI can stay where it loads and hand the kernel S-mode.  It was
+not in the suite, and nothing had run it since it was written.  It runs
+now, as a fifteenth configuration.
+.PP
+It needed one line.  Its root file list was
+.CW virt 's
+own but for
+.CW /n/styx
+\(em the empty mount point
+.CW styxcheck()
+needs, because the static namespace devroot serves refuses a runtime
+create.  With that added the two roots are identical, and so is
+everything else: the same
+.CW virtinit ,
+the same device list, the same host rig, the same qemu line but for
+.CW "-bios none" .
+.PP
+And the result is identical too, which is the point.
+.CW virts
+comes back with
+.CW virt 's
+marker set exactly \(em the same 42 markers and the same 12 known
+.CW -FAIL .
+Every driver on that board, the virtio-mmio disk and NIC, PCI and NVMe
+and xHCI, the framebuffer, the ip stack, DHCP and ping and TCP and
+Styx, works the same read from supervisor mode as from machine mode.
+That is what the configuration is for: not a new capability, but the
+statement that the privilege level is not load-bearing anywhere in the
+board.
+.PP
+Because the marker sets are the same, the marker set cannot say which
+kernel ran, so the configuration carries two evidence lines.  The
+kernel's own
+.CW "conf virts ("
+is the one that names the payload \(em checked in both directions, and
+the trailing space before the bracket is what stops
+.CW "conf virt ("
+matching
+.CW virts 's
+banner.  OpenSBI's
+.CW "Domain0 Next Mode : S-mode"
+is firmware rather than payload, so it says the machine was started at
+supervisor mode, which is the other half of what this run asserts.

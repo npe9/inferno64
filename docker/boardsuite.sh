@@ -51,7 +51,7 @@ fi
 
 # The Pi configurations need the patched qemu of tools/qemu-patches,
 # which nothing packages: it is a source build against v10.1.3, and it
-# lives in an image of its own so that the eight that do not want it
+# lives in an image of its own so that the nine that do not want it
 # are not made to wait on it.  The patch series is the build context,
 # so a changed patch rebuilds it and an unchanged one does not.
 if [ "$1" = all ]; then

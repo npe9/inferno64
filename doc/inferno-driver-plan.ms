@@ -528,10 +528,25 @@ other, because
 read the CLINT's 64-bit mtime word-swapped \(em silent.  Full account in
 .CW doc/inferno-ports.ms .
 .PP
-Remaining: MSI (item 4), the rest of item 5 (riscv supervisor mode,
-SBI, wiring boards to the discovered DTB addresses), item 6 (USB
-ethernet, HID report descriptors, virtio-gpu 3-D), and item 7 (per-SoC
-drivers).
+riscv supervisor mode, the rest of item 5: both S-mode boards now run
+in the suite.
+.CW virt32s
+is riscv32 under OpenSBI, and
+.CW virts
+\(em riscv64 under OpenSBI, in the tree but never run \(em comes back
+with
+.CW virt 's
+marker set exactly, the same 42 markers and the same 12 known
+.CW -FAIL .
+Every driver the board has, from the virtio-mmio disk to NVMe over PCI
+to the framebuffer to Styx over TCP, reads the same from supervisor
+mode as from machine mode.  Its one missing piece was
+.CW /n/styx
+in the root file list.
+.PP
+Remaining: MSI (item 4), wiring the remaining boards to their
+discovered DTB addresses, item 6 (USB ethernet, HID report
+descriptors, virtio-gpu 3-D), and item 7 (per-SoC drivers).
 .NH 1
 Remaining QEMU-tractable work, and what is out of reach
 .PP

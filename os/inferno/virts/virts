@@ -140,6 +140,11 @@ root
 	/env	/
 	/fd	/
 	/n	/
+# styxcheck() mounts its exported /dis on /n/styx, and the static
+# namespace devroot serves refuses a runtime create -- the same
+# permission denied that sent fsmount() to /tmp.  So the mount point
+# is in the root file list, empty, rather than made when it is wanted.
+	/n/styx	/
 	/net	/
 	/net.alt	/
 	/nvfs	/

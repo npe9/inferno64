@@ -40,7 +40,7 @@ verbose=false
 record=false
 force=false
 
-configs='raspi3b raspi3b-4g raspi3b-usb raspi4 raspi4-hot raspi4-usb virtarm64 virtarm64-peer sifiveu virt virt32 virt32s virt-peer peer-mixed'
+configs='raspi3b raspi3b-4g raspi3b-usb raspi4 raspi4-hot raspi4-usb virtarm64 virtarm64-peer sifiveu virt virts virt32 virt32s virt-peer peer-mixed'
 
 # Each configuration: the kernel, the QEMU arguments, the line that
 # says the board is done printing, and the evidence lines that make
@@ -56,6 +56,7 @@ config_kernel() {
 	sifiveu)		echo "$root/os/inferno/sifiveu/isifiveu";;
 	virt|virt-peer|peer-mixed)
 				echo "$root/os/inferno/virt/ivirt";;
+	virts)			echo "$root/os/inferno/virts/ivirts";;
 	virt32)			echo "$root/os/inferno/virt32/ivirt32";;
 	virt32s)		echo "$root/os/inferno/virt32s/ivirt32s";;
 	esac
@@ -75,7 +76,7 @@ config_qemu() {
 	raspi*)			echo "$QEMU";;
 	virtarm64|virtarm64-peer)
 				echo "${QEMU_AARCH64:-`command -v qemu-system-aarch64`}";;
-	sifiveu|virt|virt-peer|peer-mixed)
+	sifiveu|virt|virts|virt-peer|peer-mixed)
 				echo "${QEMU_RISCV64:-`command -v qemu-system-riscv64`}";;
 	virt32|virt32s)		echo "${QEMU_RISCV32:-`command -v qemu-system-riscv32`}";;
 	esac
@@ -125,6 +126,14 @@ config_args() {
 		# here as known failures while the invocation had no
 		# network device at all.
 		echo "-M virt -bios none -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-device,drive=blk0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-device,netdev=n0";;
+	virts)
+		# virt's line without -bios none: QEMU's default OpenSBI
+		# runs first and enters the kernel at supervisor mode,
+		# which is what this configuration is for.  The kernel
+		# links at 0x80200000 rather than 0x80000000 to leave
+		# OpenSBI where it loads.  Everything else is virt
+		# exactly, so its marker set has to come out the same.
+		echo "-M virt -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-device,drive=blk0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-device,netdev=n0";;
 	virt32)
 		# The netdev is new: the board links ethervirtiommio as
 		# of the round that fixed zc's vlong word order, and
@@ -268,7 +277,7 @@ config_last() {
 	raspi4|raspi4-hot)	echo 'USB-MOUSE';;
 	raspi4-usb)		echo 'RASPI4-SH-OK';;
 	virtarm64|virtarm64-peer)	echo 'ROOT-CMDS-OK';;
-	virt|virt-peer|peer-mixed)	echo 'ROOT-CMDS-OK';;
+	virt|virts|virt-peer|peer-mixed)	echo 'ROOT-CMDS-OK';;
 	sifiveu)		echo 'SIFIVEU-SH-OK';;
 	virt32|virt32s)		echo 'VIRT32-INIT-OK';;
 	esac
@@ -325,6 +334,15 @@ config_evidence() {
 	virt-peer|virtarm64-peer|peer-mixed)
 		echo 'peer: 525400aaaa01 is 192\.168\.77\.1'
 		echo 'PEER-ARP-OK 192\.168\.77\.2';;
+	virts)
+		# virt and virts share an init and a root, so they print
+		# the same marker set and only these tell them apart:
+		# the kernel's own banner, and OpenSBI's, which is
+		# firmware rather than payload but says the machine was
+		# started at supervisor mode -- this configuration's
+		# whole point.
+		echo 'conf virts \('
+		echo 'Domain0 Next Mode *: S-mode';;
 	virt32s)
 		# These two boards share an init, so they print the same
 		# five markers and the marker set cannot tell them
@@ -342,6 +360,9 @@ config_evidence() {
 		echo 'Domain0 Next Mode *: S-mode'
 		echo 'ip=10\.0\.2\.15 ipmask=255\.255\.255\.0 ipgw=10\.0\.2\.2'
 		echo 'IP32-OK';;
+	virt)
+		# conf virt, for the same reason virts has its own.
+		echo 'conf virt \(';;
 	virt32)
 		# conf virt32, for the same reason virt32s has its own:
 		# the two share an init and print the same markers, so
@@ -361,7 +382,7 @@ config_evidence() {
 		# regression there shows up here first.
 		echo 'ip=10\.0\.2\.15 ipmask=255\.255\.255\.0 ipgw=10\.0\.2\.2'
 		echo 'IP32-OK';;
-	virtarm64|sifiveu|virt)
+	virtarm64|sifiveu)
 		;;
 	esac
 }
@@ -526,7 +547,7 @@ markers() {
 # starts and stops around one boot.
 config_hostnet() {
 	case $1 in
-	virt|virt-peer|peer-mixed)	echo yes;;
+	virt|virts|virt-peer|peer-mixed)	echo yes;;
 	esac
 }
 
