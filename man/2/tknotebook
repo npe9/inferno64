@@ -1,0 +1,82 @@
+.TH TKNOTEBOOK 2
+.SH NAME
+tknotebook \- tabs above a page, out of the widgets there are
+.SH SYNOPSIS
+.EX
+include "tk.m";
+include "tknotebook.m";
+tknotebook := load Tknotebook Tknotebook->PATH;
+
+Notebook: adt {
+    top:   ref Tk->Toplevel;
+    path:  string;
+    tabs:  array of string;
+    sel:   int;
+
+    page:   fn(nb: self ref Notebook, i: int): string;
+    select: fn(nb: self ref Notebook, i: int);
+    chosen: fn(nb: self ref Notebook): int;
+};
+
+init: fn();
+new:  fn(top: ref Tk->Toplevel, path: string,
+         tabs: array of string): ref Notebook;
+.EE
+.SH DESCRIPTION
+.B New
+makes a notebook at
+.I path
+inside an existing toplevel: a row of tabs above a page.
+The caller packs
+.I path
+itself and packs each page's contents into
+.BR page ( i ).
+.B Select
+shows one page and hides the rest;
+.B chosen
+says which is showing.
+.PP
+This
+.B Tk
+is 8.0-era.
+There is no notebook, treeview, combobox, progressbar or spinbox, and no
+themed-widget layer.
+The expensive half of that gap wants C; the cheap half is compositions
+like this one \(em a frame of tabs, a frame per page, and
+.B "pack forget"
+for the pages that are not showing.
+.SS Why the tabs are radiobuttons
+Not a detail of appearance.
+A radiobutton is a control with a state, so
+.B libtk
+already announces it to
+.IR voice (3)
+when the keyboard arrives at it and again when it changes \(em
+.B "General radio button selected"
+\(em and a person choosing a tab by ear is told what they chose, without
+this module knowing that speech exists.
+Buttons would have been silent.
+.SH SOURCE
+.B /appl/lib/tknotebook.b
+.SH SEE ALSO
+.IR tk (2),
+.IR tkclient (2),
+.IR voice (3),
+.B /doc/ui-next-plan.md
+.SH BUGS
+The tabs are not drawn as tabs.
+They are radiobuttons in a row, so they look like radiobuttons; making
+them look like a notebook wants either a canvas or a themed-widget layer,
+which is the expensive half.
+.PP
+No keyboard traversal between tabs beyond what focus already does, and no
+way to add or remove one after
+.BR new .
+.PP
+A label passed here is quoted with
+.BR tk->quote .
+Passing text with a leading
+.B '
+of your own will still be read to the end of the line, which is what that
+character means in
+.IR tk (2).

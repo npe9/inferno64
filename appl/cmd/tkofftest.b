@@ -29,6 +29,9 @@ include "tklayout.m";
 	Problem: import tklayout;
 include "wmtheme.m";
 	wmtheme: Wmtheme;
+include "tknotebook.m";
+	tknotebook: Tknotebook;
+	Notebook: import tknotebook;
 include "wmclient.m";
 include "tkclient.m";
 	tkclient: Tkclient;
@@ -192,6 +195,9 @@ init(nil: ref Draw->Context, nil: list of string)
 	wmtheme = load Wmtheme Wmtheme->PATH;
 	if(wmtheme != nil)
 		wmtheme->init();
+	tknotebook = load Tknotebook Tknotebook->PATH;
+	if(tknotebook != nil)
+		tknotebook->init();
 	if(tk == nil){
 		sys->print("FAIL no tk: %r\n");
 		raise "fail:no tk";
@@ -278,6 +284,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	checkdefault();
 	checklayout();
 	checktheme();
+	checknotebook();
 	checkvoice();
 
 	# The chrome's artwork is 16-pixel bitmaps in /icons/tk, and libtk
@@ -553,6 +560,64 @@ checktitlebar(font, what: string)
 		what, ms.y, bb.dy()));
 }
 
+# A notebook made out of the widgets libtk already has - the plan's claim
+# that the cheap half of the missing widget set is composition in Limbo.
+# What makes it a notebook rather than three frames is that exactly one
+# page is laid out at a time, so that is what this checks, through the
+# same winfo the layout checker uses.
+checknotebook()
+{
+	if(tknotebook == nil){
+		sys->print("     no tknotebook module; not checked\n");
+		return;
+	}
+	blank();
+	top := offscreen();
+	if(top == nil)
+		return;
+	nb := tknotebook->new(top, ".nb",
+		array[] of {"General", "Fonts", "Advanced"});
+	if(nb == nil){
+		report(0, "a notebook can be made");
+		return;
+	}
+	for(i := 0; i < 3; i++)
+		tk->cmd(top, sys->sprint("label %s.l -text {page %d}",
+			nb.page(i), i));
+	for(i = 0; i < 3; i++)
+		tk->cmd(top, "pack " + nb.page(i) + ".l");
+	tk->cmd(top, "pack .nb -fill both -expand 1");
+	map(top);
+
+	report(shown(top, nb) == "0", sys->sprint(
+		"a notebook lays out one page, the first (%s)", shown(top, nb)));
+
+	nb.select(2);
+	tk->cmd(top, "update");
+	report(shown(top, nb) == "2", sys->sprint(
+		"and selecting a tab swaps which one (%s)", shown(top, nb)));
+
+	# it is made of real widgets, so it follows the font like the rest
+	small1 := tk->rect(top, ".nb.tabs", Tk->Border).dy();
+	tk->cmd(top, ".nb.tabs.t0 configure -font " + large);
+	tk->cmd(top, ".nb.tabs.t1 configure -font " + large);
+	tk->cmd(top, ".nb.tabs.t2 configure -font " + large);
+	tk->cmd(top, "update");
+	large1 := tk->rect(top, ".nb.tabs", Tk->Border).dy();
+	report(large1 > small1, sys->sprint(
+		"and its tabs grow with the font (%d -> %d)", small1, large1));
+}
+
+# which pages a geometry manager has, as a string of indices
+shown(top: ref Tk->Toplevel, nb: ref Notebook): string
+{
+	o := "";
+	for(i := 0; i < len nb.tabs; i++)
+		if(tk->cmd(top, "winfo manager " + nb.page(i)) != "")
+			o += string i;
+	return o;
+}
+
 # The window system's colours moved out of titlebar.b into wmtheme(2).
 # A refactor of a look must change no pixel, so this checks both ends:
 # that the register still holds what was written down before, and that
@@ -793,6 +858,28 @@ checkvoice()
 
 	h2 := slurpfile("/dev/voice/history");
 	report(h2 == h1, "and reading it does not consume it");
+
+	# tknotebook(2) makes its tabs radiobuttons rather than buttons, on
+	# the grounds that a control with a state announces itself and a
+	# button does not.  That is a claim about this system's behaviour, so
+	# it is checked rather than asserted in a comment.
+	if(tknotebook == nil)
+		return;
+	blank();
+	t5 := offscreen();
+	if(t5 == nil)
+		return;
+	nb := tknotebook->new(t5, ".nb", array[] of {"General", "Fonts"});
+	if(nb == nil)
+		return;
+	tk->cmd(t5, "pack .nb");
+	map(t5);
+	drain(sfd);
+	tk->cmd(t5, "focus .nb.tabs.t0");
+	tk->cmd(t5, "update");
+	said = next(sfd);
+	report(has(said, "General") && has(said, "selected"), sys->sprint(
+		"a notebook tab says its name and that it is chosen (%#q)", said));
 }
 
 slurpfile(p: string): string

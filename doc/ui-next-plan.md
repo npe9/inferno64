@@ -269,7 +269,7 @@ physical resolution; there is no scaling layer to correct. What native
 wants instead is for the UI to follow a *measured* size — which is what
 the font work did — not a scale factor.
 
-## 5. The widget set
+## 5. The widget set — begun
 
 `libtk` has button, canvas, entry, frame, grid, image, label, listbox,
 menu, pack, panel, scale, scrollbar and text. Verified absent: notebook,
@@ -281,6 +281,32 @@ the widgets that exist — a notebook is a frame, a row of buttons and
 `pack forget`; a progressbar is a canvas rectangle. Only a treeview
 really wants C. So this is not one task but a series, and it can start
 whenever without blocking anything.
+
+**`tknotebook(2)` is the first**, and it makes the case: a frame of tabs,
+a frame per page, `pack forget` for the ones not showing. `tkofftest(1)`
+checks what makes it a notebook rather than three frames — that exactly
+one page has a geometry manager, that selecting swaps which, and that its
+tabs follow the font like everything else.
+
+**Its tabs are radiobuttons, and that is not about appearance.** A
+radiobutton is a control with a state, so `libtk` already announces it to
+`voice(3)` on arrival and on change — "General radio button selected" —
+and a person choosing a tab by ear is told what they chose, without the
+module knowing speech exists. Buttons would have been silent. Every new
+widget in this series should be asked the same question: is there an
+existing widget whose *state* means the right thing, before reaching for
+one that merely looks right?
+
+**The announcement caught a bug the eye would have found slower.** The
+first version passed `-text 'General`, and in this Tk a `'` quotes to the
+*end of the line* — so every tab was labelled with its own source. What
+said so was the speech check printing
+`'General -variable nbv_nb -value 0 -command {send nbc_nb 0} radio button
+selected'`. `tk->quote` is the fix.
+
+What it does not do is *look* like a notebook: the tabs are radiobuttons
+in a row. Drawing them as tabs wants a canvas or a themed layer, which is
+the expensive half.
 
 **Done when:** each new widget has a `man/9/` page, like the ones there
 now, and `tkofftest(1)` packs it at two fonts and finds it grows.
@@ -294,10 +320,30 @@ written in C, which is an argument for the Limbo half first.
 supported. Only 8-bit greyscale anti-aliased fonts are served."*
 
 So: no kerning, no shaping (Arabic, Indic), no bidi, and no colour fonts
-— no emoji. For a system that now ships a scalable face and draws it
-through a fast coverage blit, this is the next rung, and the cheapest
-step on it is kerning: FreeType already has the pairs, `ttffs` simply
-does not ask.
+— no emoji.
+
+**Correcting this document:** it said the cheapest step was kerning,
+because "FreeType already has the pairs and `ttffs` simply does not ask."
+That is wrong, and wrong in a way worth keeping visible. `ttffs` serves
+*subfonts*, and a subfont's advance model is one byte per glyph —
+`include/draw.h`:
+
+```
+struct Fontchar {
+	...
+	uchar	width;		/* width of baseline */
+};
+	p.x += i->width;
+```
+
+Kerning is a property of a *pair*. There is nowhere in the font file to
+put it and nothing in the drawing path that would read it, so this is not
+"ask FreeType for one more number": it is a change to the font format and
+to every consumer of it, or a kerning table carried beside the font and
+consulted at draw time. Either is a real piece of work, not a cheap one.
+The same is true of shaping, which needs to reorder and substitute
+glyphs, and of colour fonts, which need more than the 8-bit coverage
+`ttffs` emits.
 
 **Native:** blocked on the same thing as the fonts — no config links
 `freetype`.
