@@ -448,6 +448,7 @@ struct TkSpace
 	int	textpadx;	/* text widget contents */
 	int	textpady;
 	int	scaleborder;	/* derive the default border from the font? */
+	int	corner;		/* corner radius, 0 for square */
 };
 
 struct TkGeom

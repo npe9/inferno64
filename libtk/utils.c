@@ -71,9 +71,9 @@ static struct Cmd cmdmain[] =
  */
 TkSpace	tkspaces[] =
 {
-	/* labelpadx, labelpady, bitpadx, bitpady, entrypadx, entrypady, textpadx, textpady, scaleborder */
-	{ 3, 0, 0, 0, 0, 0, 2, 0, 0 },	/* TkSclassic */
-	{ 8, 4, 2, 2, 4, 3, 4, 3, 1 },	/* TkSflat */
+	/* labelpadx, labelpady, bitpadx, bitpady, entrypadx, entrypady, textpadx, textpady, scaleborder, corner */
+	{ 3, 0, 0, 0, 0, 0, 2, 0, 0, 0 },	/* TkSclassic */
+	{ 14, 7, 5, 5, 8, 6, 7, 5, 1, 5 },	/* TkSflat */
 };
 
 /*
@@ -911,6 +911,81 @@ tkbevel(Image *i, Point o, int w, int h, int bw, Image *top, Image *bottom)
  * light and dark versions following immediately after
  * that index
  */
+/*
+ * A rounded rectangle, stroked.
+ *
+ * The first version of this only ERASED the corners - painted them back
+ * to the parent's background and stopped - which on a one-pixel outline
+ * leaves four disconnected line segments and no curve at all.  A rounded
+ * rectangle needs the border to FOLLOW the arc, so the corner rows both
+ * erase what is outside the curve and draw the border pixel on it.
+ *
+ * The erase uses the PARENT's background, not the widget's own: the
+ * point is to let whatever is behind the widget show through where the
+ * corner has been cut away.
+ *
+ * No sqrt.  The radius is a handful of pixels, so the arc position on
+ * each row is found by walking out from the edge until the pixel falls
+ * inside the circle - exact at these sizes, and it keeps the maths
+ * library out of every kernel that links libtk.
+ */
+static void
+tkroundbox(Image *i, Tk *tk, Point o, int w, int h, int bd, Image *col)
+{
+	TkEnv *pe;
+	Image *bg;
+	int rad, x, y, dx, dy, cut, r2;
+
+	rad = tkspace(tk)->corner;
+	if(rad*2 > w)
+		rad = w/2;
+	if(rad*2 > h)
+		rad = h/2;
+	if(rad < 0)
+		rad = 0;
+
+	/* the straight runs, stopping short of the corners */
+	if(w > 2*rad) {
+		draw(i, Rect(o.x+rad, o.y, o.x+w-rad, o.y+bd), col, nil, ZP);
+		draw(i, Rect(o.x+rad, o.y+h-bd, o.x+w-rad, o.y+h), col, nil, ZP);
+	}
+	if(h > 2*rad) {
+		draw(i, Rect(o.x, o.y+rad, o.x+bd, o.y+h-rad), col, nil, ZP);
+		draw(i, Rect(o.x+w-bd, o.y+rad, o.x+w, o.y+h-rad), col, nil, ZP);
+	}
+	if(rad <= 0)
+		return;
+
+	pe = tk->env;
+	if(tk->parent != nil && tk->parent->env != nil)
+		pe = tk->parent->env;
+	bg = tkgc(pe, TkCbackgnd);
+
+	r2 = rad*rad;
+	for(y = 0; y < rad; y++){
+		dy = rad - y;
+		cut = 0;
+		for(x = 0; x < rad; x++){
+			dx = rad - x;
+			if(dx*dx + dy*dy <= r2)
+				break;
+			cut++;
+		}
+		/* outside the curve: let the parent through */
+		if(bg != nil && cut > 0){
+			draw(i, Rect(o.x, o.y+y, o.x+cut, o.y+y+1), bg, nil, ZP);
+			draw(i, Rect(o.x+w-cut, o.y+y, o.x+w, o.y+y+1), bg, nil, ZP);
+			draw(i, Rect(o.x, o.y+h-1-y, o.x+cut, o.y+h-y), bg, nil, ZP);
+			draw(i, Rect(o.x+w-cut, o.y+h-1-y, o.x+w, o.y+h-y), bg, nil, ZP);
+		}
+		/* on the curve: the border itself */
+		draw(i, Rect(o.x+cut, o.y+y, o.x+cut+bd, o.y+y+1), col, nil, ZP);
+		draw(i, Rect(o.x+w-cut-bd, o.y+y, o.x+w-cut, o.y+y+1), col, nil, ZP);
+		draw(i, Rect(o.x+cut, o.y+h-1-y, o.x+cut+bd, o.y+h-y), col, nil, ZP);
+		draw(i, Rect(o.x+w-cut-bd, o.y+h-1-y, o.x+w-cut, o.y+h-y), col, nil, ZP);
+	}
+}
+
 void
 tkdrawrelief(Image *i, Tk *tk, Point o, int color, int rlf)
 {
@@ -946,8 +1021,7 @@ tkdrawrelief(Image *i, Tk *tk, Point o, int color, int rlf)
 	 */
 	if(tk->env->top != nil && tk->env->top->style == TkSflat) {
 		if(rlf != TKflat)
-			tkbox(i, Rect(o.x, o.y, o.x + w + 2*bd, o.y + h + 2*bd),
-				bd, d);
+			tkroundbox(i, tk, o, w + 2*bd, h + 2*bd, bd, d);
 		return;
 	}
 

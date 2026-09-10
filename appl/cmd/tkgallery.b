@@ -118,6 +118,22 @@ one(style: string)
 	# the borders and not the sizes.
 	cmd(top, "style " + style);
 
+	# The window manager's toolbar, built the way wm/toolbar.b builds it:
+	# a frame, a menubutton for the start menu, and one button per task
+	# packed to the left, each -takefocus 0.  Reproduced rather than
+	# driven, because the real one needs a running wm.
+	cmd(top, "frame .tb -borderwidth 1 -relief raised");
+	cmd(top, "menubutton .tb.start -text {Start} -borderwidth 0");
+	cmd(top, "pack .tb.start -side left");
+	tasks := array[] of {"sh", "edit  charter.ms", "acme", "wm/logon"};
+	for(i := 0; i < len tasks; i++){
+		b := sys->sprint(".tb.t%d", i);
+		cmd(top, sys->sprint("button %s -text %s -takefocus 0",
+			b, tk->quote(tasks[i])));
+		cmd(top, "pack " + b + " -side left -fill y");
+	}
+	cmd(top, "pack .tb -side top -fill x");
+
 	cmd(top, "frame .l");
 	cmd(top, "frame .r");
 

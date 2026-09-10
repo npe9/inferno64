@@ -75,7 +75,9 @@ on the screen \- set the style before building the interface.
 .PP
 The
 .B flat
-style also derives a widget's default border width from the font, so
+style rounds a widget's corners, painting what falls outside the curve
+back to the parent's background, and derives its default border width
+from the font, so
 that a line which reads as an edge at one size is not a hairline at
 another.
 It is the TOPLEVEL's font that decides it, not the widget's: the default
@@ -113,13 +115,26 @@ command resized the whole window and moved every widget in it.
 A window that jumps size because its borders were restyled is a worse
 thing than a style that applies its spacings to what is built after it.
 .PP
-It changes borders and spacings.
-The colours and the corner shape are what else would have to move for
-the two styles to look like two designs rather than one design with its
-edges redrawn, and neither of those is here.
-The colours already have a register of their own in
+It changes borders, spacings and corners.
+The colours are what else would have to move for the two styles to look
+like two designs rather than one design redrawn, and they are not here.
+They already have a register of their own in
 .IR wmtheme (2),
 which nothing yet connects to this.
+.PP
+.IR Scale (9)
+and
+.IR scrollbar (9)
+do not follow the style.
+They call
+.I tkbevel
+directly \- ten times and twice respectively \- rather than going through
+.IR tkdrawrelief ,
+so their troughs, thumbs and arrows keep the two-tone chisel whatever
+the style says, and so does the little box a
+.IR checkbutton (9)
+draws for its indicator.
+Every other widget's border goes through the one function and follows.
 .PP
 A
 .I frame
