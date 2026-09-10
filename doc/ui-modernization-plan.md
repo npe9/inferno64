@@ -609,6 +609,15 @@ touching them twice.
   `libtk/textw.c`), and the clipboard is wired both ways in the backend
   (`clipread`/`clipwrite`).
 
+## What is left
+
+The forward half of this document is `doc/ui-next-plan.md`: the remaining
+gaps, ordered, each with the evidence that it is real and the test that
+would say it is finished. It opens with the question this survey never
+asked — how much of any of this reaches native Inferno, which turns out
+to be the portable C and Dis and none of the rest, because no kernel
+config links `freetype` and `voice(3)` exists only under `emu`.
+
 ## What this survey did not check
 
 The Linux and Plan 9 backends — every backend claim here is about
