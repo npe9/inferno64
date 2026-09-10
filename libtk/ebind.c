@@ -6,6 +6,7 @@
 #include "label.h"
 
 extern void voiceannounce(char*);   /* voice(3) */
+extern char* tkscalestate(Tk*, char*, int);	/* scale.c */
 
 enum
 {
@@ -615,7 +616,7 @@ tkannouncetext(Tk *tk)
  * announced when it changed either.
  */
 static char*
-tkannouncestate(Tk *tk)
+tkannouncestate(Tk *tk, char *buf, int nbuf)
 {
 	TkLabel *tkl;
 
@@ -626,7 +627,10 @@ tkannouncestate(Tk *tk)
 	case TKradiobutton:
 		tkl = TKobj(TkLabel, tk);
 		return tkl->check ? "selected" : "not selected";
+	case TKscale:
+		return tkscalestate(tk, buf, nbuf);
 	}
+	USED(buf); USED(nbuf);
 	return nil;
 }
 
@@ -639,11 +643,12 @@ tkannouncestate(Tk *tk)
 void
 tkannouncechange(Tk *tk)
 {
+	char buf[64];
 	char *state;
 
 	if(tk == nil)
 		return;
-	state = tkannouncestate(tk);
+	state = tkannouncestate(tk, buf, sizeof buf);
 	if(state != nil)
 		voiceannounce(state);
 }
@@ -651,13 +656,13 @@ tkannouncechange(Tk *tk)
 static void
 tkannouncefocus(Tk *tk)
 {
-	char buf[128];
+	char buf[128], sbuf[64];
 	char *text, *state;
 
 	if(tk == nil || tk->name == nil)
 		return;
 	text = tkannouncetext(tk);
-	state = tkannouncestate(tk);
+	state = tkannouncestate(tk, sbuf, sizeof sbuf);
 	if(text != nil && *text != '\0' && state != nil)
 		snprint(buf, sizeof buf, "%s %s %s", text,
 			tkclassname(tk->type), state);

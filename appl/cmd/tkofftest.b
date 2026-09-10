@@ -593,6 +593,30 @@ checkvoice()
 	# control they were told about when they arrived at it.
 	report(said == "checked", sys->sprint(
 		"and changing it says what it became (%#q)", said));
+
+	# A slider is the case with no label at all, so its value is the only
+	# thing there is to say.  Arrow keys move it, so a person using their
+	# ears can, and needs to hear what happened.
+	blank();
+	t2 := offscreen();
+	if(t2 == nil)
+		return;
+	tk->cmd(t2, "scale .s -orient horizontal -from 0 -to 100");
+	tk->cmd(t2, ".s set 40");
+	tk->cmd(t2, "pack .s");
+	map(t2);
+	drain(sfd);
+	tk->cmd(t2, "focus .s");
+	tk->cmd(t2, "update");
+	said = next(sfd);
+	report(has(said, "scale") && has(said, "40"), sys->sprint(
+		"focusing a slider says where it is set (%#q)", said));
+
+	tk->cmd(t2, sys->sprint(".s tkScaleKey 0x%x", 16rE015));	# Keyboard->Right
+	tk->cmd(t2, "update");
+	said = next(sfd);
+	report(said != "" && said != "40", sys->sprint(
+		"and moving it with a key says the new value (%#q)", said));
 }
 
 waiting(): int

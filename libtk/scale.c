@@ -4,6 +4,8 @@
 #include "tk.h"
 #include "keyboard.h"
 
+extern void tkannouncechange(Tk*);	/* ebind.c, for voice(3) */
+
 #define	O(t, e)		((long)(&((t*)0)->e))
 
 typedef struct TkScale TkScale;
@@ -936,9 +938,29 @@ tkscalekey(Tk *tk, char *arg, char **val)
 	if (pos != nil) {
 		e = stepscale(tk, pos, nil);
 		tk->dirty = tkrect(tk, 1);
+		tkannouncechange(tk);	/* voice(3); see man 3 voice */
 		return e;
 	}
 	return nil;
+}
+
+/*
+ * The value, for voice(3).  A slider that says only "scale" when you
+ * arrive at it, and nothing at all while the arrow keys move it, tells a
+ * person using their ears that a control is there and never what it is
+ * set to or whether they changed it.
+ *
+ * Here rather than in ebind.c because TkScale is private to this file.
+ */
+char*
+tkscalestate(Tk *tk, char *buf, int nbuf)
+{
+	TkScale *tks = TKobj(TkScale, tk);
+	char f[32];
+
+	tkfprint(f, tks->value);
+	snprint(buf, nbuf, "%s", f);
+	return buf;
 }
 
 TkCmdtab tkscalecmd[] =

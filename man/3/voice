@@ -79,12 +79,18 @@ and a radiobutton
 .B "Every third radio button selected" .
 Naming a control without its state answers the wrong question, and there
 is no way to find out by listening otherwise.
+A scale is the case with no label at all, so its value is the only thing
+there is to say:
+.B "scale 40" .
+.PP
 When the person changes one, what it became is announced on its own \(em
 just
 .B checked
-\(em without repeating the label, since they were told which control they
-were on when they arrived at it and a reader that reads the whole thing
-back on every keypress is tiring to use.
+, or the slider's new value \(em without repeating the label, since they
+were told which control they were on when they arrived at it and a reader
+that reads the whole thing back on every keypress is tiring to use.
+A scale takes the arrow keys, so this is not a mouse-only path: it is the
+only way a person using their ears knows the key did anything.
 .PP
 That makes the screen reader a pipeline of things that already exist:
 .IP
