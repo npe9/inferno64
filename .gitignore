@@ -461,3 +461,13 @@ os/inferno/pc64/rebootcode.out
 tools/aout2elf
 Inferno/amd64/ipc64.elf
 os/inferno/pc64/ipc64.elf
+
+# built kernels and loaders that the board directories keep instead
+/Inferno/*/ipc64dev
+/Inferno/*/ipc64dev.elf
+/Inferno/*/ipc64fp
+/Inferno/*/ipc64fp.elf
+os/inferno/boot/efi/boot*.efi
+os/inferno/boot/efi/boot*.out
+os/inferno/boot/pc/mbr
+os/inferno/boot/pc/pbs
