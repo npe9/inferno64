@@ -1731,12 +1731,80 @@ already detects v3 at boot \(em it just has no ITS driver, because
 gives it a v2 by default and an untested ITS path is worth less than a
 tested v2m one.  pc64's MSI address is the x86
 .CW 0xFEE00000
-form and needs no frame at all, but pc64 does not build in this tree
-today:
+form and needs no frame at all.
+.PP
+A correction, and it is the useful part of this item.  Two commits \(em
+.CW a1ba83d2 ,
+which gave
+.CW sdnvme
+its vector, and
+.CW 2d307d69 ,
+which gave
+.CW usbxhci
+one \(em both say pc64 cannot be linked in this tree because
 .CW mkfiles/mkfile-os-amd64
-does not exist.  The three changed portable files were compiled with
-.CW 6c
-against pc64's own headers to check that much.
+does not exist.  The file does not exist and pc64 does not want it.
+.CW os/inferno/pc64/mkfile
+sets
+.CW SYSTARG=Inferno
+in its own configurable-parameters block, so the line that reads a
+target mkfile resolves to
+.CW mkfiles/mkfile-Inferno-amd64 ,
+which has been there all along.
+.CW SYSTARG=os
+is the arm64 and riscv board convention, passed on the command line
+because those mkfiles do not set it themselves, and carrying it to pc64
+asks for a file nothing in pc64 ever names.  Plain
+.CW mk
+in
+.CW os/inferno/pc64
+links
+.CW ipc64 ,
+7.3 MB, and it boots: multiboot entry, memory and page tables, ECAM at
+.CW 0xb0000000 ,
+.CW chandevreset
+bringing up
+.CW "#l0: i82574"
+and
+.CW "#S/sdE: ich" ,
+the Dis interpreter, and
+.CW /dis/sh.dis .
+A commit message cannot be rewritten, so the record is set straight
+here.
+.PP
+Two things are true instead.  The first is that nothing on pc64
+installs a
+.CW pcimsirouter :
+.CW os/inferno/virtarm64/gicv2m.c
+is the only file in the tree that assigns one, so
+.CW pcimsixintr()
+returns \-1 on pc64 and all four drivers fall back to INTx there.  That
+is a gap in written code, not a build failure, and it is the item.  The
+second is that a pc64 suite arm is blocked behind something else
+entirely: the heap corruption
+.CW doc/inferno-ports.ms
+has a hunt of its own for, at
+.CW markheap+26 ,
+.CW destroy+649
+and
+.CW alloc:D2B .
+Two boots taken while writing this landed in the same family \(em a
+general protection violation at
+.CW indc+0xc2 ,
+and a page fault at
+.CW destroy+0x273
+with
+.CW CR2
+all ones \(em from one binary and one command line, with an
+.CW indl
+index of
+.CW 0xF0002A74696E692B ,
+which is the ASCII of
+.CW +init*
+and not an index at all.  The panic arrives long after
+.CW chandevreset ,
+so driver initialisation on pc64 can be shown without touching that
+hunt; a marker-counting arm cannot, because the shell never comes up.
 .IP 2.
 .B "arm64 device-tree discovery."
 .B DONE
