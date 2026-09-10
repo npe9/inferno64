@@ -59,10 +59,34 @@ new(top: ref Tk->Toplevel, path: string, lo, hi, step, start: int): (ref Spinbox
 	tk->cmd(top, "frame " + path);
 	# Wide enough for the longest number it can hold, so the field does
 	# not resize under the person as they spin it.
-	w := len string lo;
-	if((n := len string hi) > w)
-		w = n;
-	tk->cmd(top, sys->sprint("entry %s.e -width %d", path, w + 1));
+	#
+	# Measured rather than counted.  This Tk's -width is a DISTANCE, not
+	# a count of characters as it is in real Tk (see the `dist' in
+	# entry(9)), so the digit count cannot be handed to it - the first
+	# version of this did, and a range of 0 to 100 asked for a field four
+	# PIXELS wide, which showed one clipped digit.  A throwaway label in
+	# the widget's own font gives the real number, and stays right when
+	# the font changes.
+	wide := string lo;
+	if(len string hi > len wide)
+		wide = string hi;
+	tk->cmd(top, sys->sprint("label %s.m -text %s", path, tk->quote(wide)));
+	tk->cmd(top, "pack " + path + ".m");
+	tk->cmd(top, "update");
+	# mr.dx() would be an adt method, and an adt method is dispatched
+	# through the module it belongs to - so calling it would oblige this
+	# module to load Draw purely to subtract two numbers, and failing to
+	# do so raises "module not loaded" at the call rather than the load.
+	mr := tk->rect(top, path + ".m", Tk->Border);
+	pw := mr.max.x - mr.min.x;
+	tk->cmd(top, "destroy " + path + ".m");
+	if(pw < 8)
+		pw = 8;
+	# The slack is for the entry's own inset and text cursor, and it has
+	# to be generous rather than exact: style(9)'s flat row pads an entry
+	# more than the classic one does, so a margin tuned to classic clips
+	# the last digit under flat.
+	tk->cmd(top, sys->sprint("entry %s.e -width %d", path, pw + 24));
 	# tk->quote() and not a bare ' - in this Tk a ' quotes to the END of
 	# the line, so an unquoted label swallows the rest of the command.
 	tk->cmd(top, sys->sprint("button %s.up -text %s -command {send %s up}",

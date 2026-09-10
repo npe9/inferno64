@@ -1,0 +1,104 @@
+.TH TKGALLERY 1
+.SH NAME
+tkgallery \- render one of every widget, in both styles, to a file
+.SH SYNOPSIS
+.B tkgallery
+[
+.B -f
+.I font
+]
+[
+.B -o
+.I prefix
+]
+.SH DESCRIPTION
+.I Tkgallery
+builds one of every widget
+.I libtk
+has \(em label, button, checkbutton with and without its indicator,
+radiobutton, menubutton,
+.IR choicebutton (9),
+entry, scale, scrollbar, listbox, text, a row of frames showing each
+relief, and the
+.IR tknotebook (2)
+and
+.IR tkspinbox (2)
+compositions \(em renders them once under each of
+.IR style (9)'s
+two looks, and writes the result as two PPM files,
+.IB prefix -classic.ppm
+and
+.IB prefix -flat.ppm .
+The default prefix is
+.BR gallery .
+.PP
+.B -f
+sets the font for the toplevel, which is also what decides the border
+width under the flat style.
+.PP
+It exists because the one item in the widget work that cannot be settled
+by measurement is what the widgets look like, and that has to be looked
+at by the person whose taste it is.
+.IR Tkofftest (1)
+can already say whether a flat border uses fewer distinct values than a
+chisel; it cannot say which is nicer.
+.SS How it can draw at all
+.I Image.readpixels
+returns
+.B "00 00 00"
+for a window on the display's screen and for
+.I display.image
+itself under the Metal present path, so what a widget puts on the page is
+invisible to the program that drew it.
+A Tk toplevel does not have to be given the display's screen, though:
+allocate a
+.I Screen
+over an ordinary image, make a window in it, and hand the toplevel that
+window under the request id
+.IR tkclient (2)
+uses when there is no window manager,
+.BR -1 .
+Tk then draws into memory, where
+.I readpixels
+works.
+.IR Tkofftest (1)
+uses the same trick to measure widgets; this one uses it to see them.
+.PP
+PPM because PPM is a header and the bytes, and needs nothing from the
+tree.
+Anything on the far side can turn it into a PNG.
+.SH EXAMPLE
+.EX
+emu\-cocoa \-r. /dis/sh.dis \-c 'tkgallery \-o /tmp/g'
+.EE
+.SH SOURCE
+.B /appl/cmd/tkgallery.b
+.SH SEE ALSO
+.IR style (9),
+.IR tkofftest (1),
+.IR tknotebook (2),
+.IR tkspinbox (2)
+.SH BUGS
+It needs a window system to allocate a display, so it runs under
+.I emu\-cocoa
+and not
+.IR emu\-g ,
+even though it never puts anything on the screen.
+.PP
+The sizes in it are distances, not character cells.
+This Tk's
+.B -width
+on an entry or a listbox counts pixels where real Tk counts characters,
+so
+.B "-width 22"
+is a field three letters wide and
+.B "-height 3"
+is a listbox three pixels tall.
+Both of those were in the first version of this file and neither is an
+error any command reports.
+.PP
+Nothing here is checked.
+A widget that stopped drawing entirely would produce a smaller picture
+and no complaint;
+.IR tkofftest (1)
+is what asserts, and this is what shows.
