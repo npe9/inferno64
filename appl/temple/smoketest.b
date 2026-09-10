@@ -17,6 +17,10 @@ include "tk.m";
 include "wmclient.m";
 	wmclient: Wmclient;
 
+include "bufio.m";
+	bufio: Bufio;
+	Iobuf: import bufio;
+
 include "plot.m";
 	plot: Plot;
 	Plotter: import plot;
@@ -64,46 +68,58 @@ tmods := array[] of {
 	"xcaliber", "zing", "zoneout"
 };
 
-# appl/danby/*.b, installed by appl/danby/mkfile into /dis/danby — a
-# separate DISBIN, so these must NOT be looked for under /dis/temple.
-# The eleven that are model libraries rather than Commands (atmosphere,
-# ballistics, cartpendulum, doublependulumlib, gravity, oscillator, pendulum,
-# propulsion, reaction, rotatinghoop, spinorbit) have no init(ctxt, argv) and
-# are left out: "load Command" on one is a link typecheck failure, not a bug.
-dmods := array[] of {
-	"aerobraking", "alternativepredation", "amusementchaos", "attractingwires", "atwoodpendulum",
-	"badfootball", "badminton", "balloon", "baseballpitch", "basketball",
-	"bernoulli", "boom", "brusselator", "budworm", "bungee",
-	"cannibalism", "carbonmicrophone", "carrierlanding", "catastrophemachine", "changingenvironment",
-	"chaosmap", "chaoticwheel", "childcare", "clockpendulum", "columnbuckling",
-	"cometcatch", "compass", "competition", "cooperation", "cricketbowl",
-	"cricketswing", "crossinfection", "dampedpendulum", "decomposition", "discus",
-	"diseasebirthdeath1", "diseasebirthdeath2", "diving", "doublependulum", "drypendulum",
-	"duffing", "dumbbellsatellite", "dynamoreversal", "ecology", "enzymeapplication",
-	"enzymekinetics", "epidemic", "fireflies", "fireworks", "fishingone",
-	"fishingtwo", "flight", "flyball", "foodchain", "forcedpendulum",
+# appl/danby holds two different kinds of thing now, and they are
+# checked two different ways.
+#
+# The models are TEXT: each is a script in the dynsys(2)/danbylab(2)
+# languages, installed into /dis/danby executable with a #! header so
+# that danby/NAME still resolves.  "load Command" on one is not a
+# failure to report, it is a category error - there is no module.  So
+# they are checked for being present, non-empty and headed by the
+# hashpling, which is exactly what makes danby/NAME work.  Whether
+# they PARSE is danbylabtest(1)'s job and it does it properly.
+dspecs := array[] of {
+	"alternativepredation", "amusementchaos", "attractingwires", "atwoodpendulum", "badfootball",
+	"badminton", "balloon", "baseballpitch", "basketball", "bernoulli",
+	"brusselator", "budworm", "bungee", "cannibalism", "carbonmicrophone",
+	"carrierlanding", "catastrophemachine", "changingenvironment", "chaoticwheel", "childcare",
+	"clockpendulum", "columnbuckling", "cometcatch", "compass", "competition",
+	"cooperation", "cricketbowl", "cricketswing", "crossinfection", "dampedpendulum",
+	"decomposition", "discus", "diseasebirthdeath1", "diseasebirthdeath2", "diving",
+	"doublependulum", "drypendulum", "duffing", "dumbbellsatellite", "dynamoreversal",
+	"ecology", "enzymeapplication", "enzymekinetics", "fireflies", "fireworks",
+	"fishingone", "fishingtwo", "flight", "flyball", "foodchain",
 	"galaxies", "golfdrive", "gonorrhea", "grandtour", "gravitypendulum",
-	"heartbeat", "heliumburning", "hiv", "hovercraft", "hyperionrotation",
-	"icbmaccuracy", "icbmrange", "incubation", "internalcompetition", "javelin",
-	"joggingcompanion", "jupiterboost", "knuckleball", "lagrange1", "lagrange2",
-	"lakepollution", "lanchester", "limitstogrowth", "loadedpendulum", "logisticpredators",
-	"logisticprey", "lorenz", "lowbombing", "lowthrust", "magneticpendulum2d",
-	"magneticpendulum3d", "malaria", "manyspecies", "maypredator", "mercuryrotation",
-	"migration", "moonrotation", "moontrip", "moreenzyme", "movingpivot",
-	"multistagerocket", "nonlinearsprings", "oregonator", "parasite", "pegpendulum",
-	"pendulumperiod", "perihelion", "periodicvolterra", "pistonflywheel", "polevault",
-	"poyntingrobertson", "predatorfishing", "productionexchange", "projectile", "pursuit", "reactorstability",
-	"reentry", "reservoir", "rocket2d", "rocketintro", "rotatingring1",
-	"rotatingring2", "running", "schrodinger", "seasonaldisease", "shipmotion",
-	"simplependulum",
+	"heliumburning", "hiv", "hovercraft", "hyperionrotation", "icbmaccuracy",
+	"icbmrange", "incubation", "internalcompetition", "javelin", "joggingcompanion",
+	"jupiterboost", "knuckleball", "lagrange1", "lagrange2", "lakepollution",
+	"lanchester", "limitstogrowth", "loadedpendulum", "logisticpredators", "logisticprey",
+	"lowbombing", "lowthrust", "magneticpendulum2d", "magneticpendulum3d", "malaria",
+	"manyspecies", "maypredator", "mercuryrotation", "migration", "moonrotation",
+	"moontrip", "moreenzyme", "movingpivot", "multistagerocket", "nonlinearsprings",
+	"oregonator", "parasite", "pegpendulum", "pendulumperiod", "perihelion",
+	"periodicvolterra", "pistonflywheel", "polevault", "poyntingrobertson", "predatorfishing",
+	"productionexchange", "projectile", "pursuit", "reactorstability", "reentry",
+	"reservoir", "rocket2d", "rocketintro", "rotatingring1", "rotatingring2",
+	"running", "schrodinger", "seasonaldisease", "shipmotion", "simplependulum",
 	"skijump", "skylab", "slidingpendulum1", "slidingpendulum2", "soccerkick",
 	"softballpitch", "spacestationball", "spaceyoyo", "spinningball", "springpendulum",
-	"springpivot", "stability", "starmodel", "stillmoreenzyme", "stretchyoyo",
-	"swing1", "swing2", "swingingcenser", "synchronousmotor", "tablependulum",
-	"tabletennis", "tankcontrol", "threebody", "tidalrotation", "twocapital",
-	"twomagnet", "vaccination", "vanderpol", "variationparameters", "varyingpendulum",
-	"venushead", "violetsantsrodents", "violinbow", "wattgovernor", "weightchange",
-	"wheelpendulum", "whitedwarf", "windpendulum", "yoyo"
+	"springpivot", "starmodel", "stillmoreenzyme", "stretchyoyo", "swing1",
+	"swing2", "swingingcenser", "synchronousmotor", "tablependulum", "tabletennis",
+	"tankcontrol", "threebody", "tidalrotation", "twocapital", "twomagnet",
+	"vanderpol", "variationparameters", "varyingpendulum", "venushead", "violetsantsrodents",
+	"violinbow", "wattgovernor", "weightchange", "wheelpendulum", "whitedwarf",
+	"windpendulum", "yoyo"
+};
+
+# The handful in appl/danby that really are programs: these predate
+# the script languages and were never converted.  The eleven model
+# libraries (atmosphere, ballistics, cartpendulum, doublependulumlib,
+# gravity, oscillator, pendulum, propulsion, reaction, rotatinghoop,
+# spinorbit) have no init(ctxt, argv) and are left out.
+dmods := array[] of {
+	"aerobraking", "boom", "chaosmap", "epidemic", "forcedpendulum",
+	"heartbeat", "lorenz", "stability", "vaccination"
 };
 
 init(ctxt: ref Context, argv: list of string)
@@ -112,6 +128,11 @@ init(ctxt: ref Context, argv: list of string)
 	draw = load Draw Draw->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
 	plot = load Plot Plot->PATH;
+	bufio = load Bufio Bufio->PATH;
+	if(bufio == nil){
+		sys->print("FAIL load bufio: %r\n");
+		raise "fail:bufio";
+	}
 	if(plot == nil){
 		sys->print("FAIL load plot module: %r\n");
 		raise "fail:plot";
@@ -171,6 +192,23 @@ init(ctxt: ref Context, argv: list of string)
 	# /dis/danby.  Looking for both under /dis/temple used to "pass" only
 	# because stale copies of the danby models were left there by an older
 	# layout; a clean tree would have failed 155 of them.
+	for(i := 0; i < len dspecs; i++){
+		if(!wanted(dspecs[i],argv))
+			continue;
+		total++;
+		path := "/dis/danby/" + dspecs[i];
+		iob := bufio->open(path, Bufio->OREAD);
+		line: string;
+		if(iob != nil)
+			line = iob.gets('\n');
+		if(line == nil || len line < 2 || line[0:2] != "#!"){
+			sys->print("FAIL spec %s: no #! header at %s\n", dspecs[i], path);
+			bad++;
+		}else{
+			sys->print("OK   spec %s\n", dspecs[i]);
+			ok++;
+		}
+	}
 	for(pass := 0; pass < 2; pass++){
 		dir := "/dis/temple/";
 		mods := tmods;

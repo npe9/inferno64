@@ -81,13 +81,15 @@ init(nil: ref Draw->Context, argv: list of string)
 	checked := 0;
 	for(i := 0; i < n; i++){
 		name := d[i].name;
-		if(len name < 3 || name[len name-2:] != ".b")
+		if(len name < 6 || name[len name-5:] != ".spec")
 			continue;
 		spec := specof(DIR+"/"+name);
-		if(spec == nil)
+		if(spec == nil){
+			fail(name+": cannot read it");
 			continue;
+		}
 		checked++;
-		checkspec(name[0:len name-2], spec);
+		checkspec(name[0:len name-5], spec);
 	}
 	# a family with no models left would make its checks below dead code
 	# and nothing would say so
@@ -107,64 +109,23 @@ familynames := array[] of {
 	"ecology", "flight", "profile"
 };
 
-# specof: the SPEC constant of a danbylab model, or nil if this file is
-# not one.  A Limbo string constant is quoted segments joined with +,
-# possibly with # comment lines between them, ending at the ; that
-# closes the declaration.
+# specof: a model's spec, which is now simply the file.  This used to
+# scrape a Limbo string constant out of a module and unescape it by
+# hand, because that is where the spec lived; the models are text files
+# in the two little languages now, so the scraper and its private
+# understanding of \\n and \\t are gone.  That hack had already bitten
+# once - a \\u0027 in a spec meant one thing to the compiler and another
+# to the scraper, so the string under test was not the string that
+# shipped.  A file cannot drift from itself.
 specof(path: string): string
 {
 	iob := bufio->open(path, Bufio->OREAD);
 	if(iob == nil)
 		return nil;
-	ismodel := 0;
-	inspec := 0;
 	spec := "";
-	while((line := iob.gets('\n')) != nil){
-		if(!inspec && len line >= 9 && line[0:9] == "SPEC: con"){
-			inspec = 1;
-			line = line[9:];
-		}else if(!inspec){
-			if(strstr(line, "danbylab->run") >= 0)
-				ismodel = 1;
-			continue;
-		}
-		(seg, done) := quoted(line);
-		spec += seg;
-		if(done)
-			inspec = 0;
-	}
-	if(!ismodel)
-		return nil;
+	while((line := iob.gets('\n')) != nil)
+		spec += line;
 	return spec;
-}
-
-# quoted: the concatenation of every double-quoted segment on one line,
-# with \n understood, and whether the line ends the declaration.
-quoted(line: string): (string, int)
-{
-	s := "";
-	i := 0;
-	for(; i < len line; i++){
-		if(line[i] == '#')
-			break;
-		if(line[i] == ';')
-			return (s, 1);
-		if(line[i] != '"')
-			continue;
-		for(i++; i < len line && line[i] != '"'; i++){
-			if(line[i] == '\\' && i+1 < len line){
-				i++;
-				case line[i] {
-				'n' => s[len s] = '\n';
-				't' => s[len s] = '\t';
-				* => s[len s] = line[i];
-				}
-				continue;
-			}
-			s[len s] = line[i];
-		}
-	}
-	return (s, 0);
 }
 
 strstr(s, sub: string): int

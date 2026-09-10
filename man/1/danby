@@ -1040,11 +1040,42 @@ See
 .SH FILES
 .TP
 .B /dis/danby/
-Compiled commands.  Each model is one module: the file named after it
-holds its own equations, parameters and drawing and is also the command
-that runs them.  There is no longer a
-.B plugin
-subdirectory.
+The models.  A model is not a module: it is a TEXT file in the two
+little languages \(em
+.IR dynsys (2)'s
+equations and
+.IR danbylab (2)'s
+picture \(em installed executable with
+.B #!/dis/danby/model.dis
+as its first line.
+.BI danby/ name
+therefore still resolves:
+.IR sh (1)
+finds no
+.IB name .dis\fR,
+opens
+.IR name ,
+sees the header and hands the path to
+.BR danby/model .
+Since
+.IR danbylab (2)'s
+parser treats a line beginning with # as a comment, the header is a
+hashpling to the shell and a comment to the model, and neither has to
+know about the other.
+.PP
+To change a model, edit the file.  There is no compiler in the loop, and
+.IR danbylabtest (1)
+reads the same files the shell runs.
+.TP
+.B /dis/danby/model.dis
+The one command that runs them.
+.TP
+.B /appl/danby/*.spec
+Their source.  A handful of programs in
+.B /appl/danby
+really are modules \(em they predate the languages and were never
+converted \(em along with the model libraries that have no command of
+their own.
 .TP
 .B /dis/temple/
 The shared viewers the models hand themselves to.

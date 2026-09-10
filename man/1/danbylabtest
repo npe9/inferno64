@@ -8,14 +8,24 @@ danbylabtest \- check every Danby model written as a danbylab(2) script
 ]
 .SH DESCRIPTION
 .I Danbylabtest
-reads the
+checks every
+.B *.spec
+under
+.BR /appl/danby ,
+which is every model: a model is a text file in the
+.IR dynsys (2)/ danbylab (2)
+languages and this reads it whole.
+.PP
+It used to scrape a
 .B SPEC
-constant out of every model under
-.B /appl/danby
-that calls
-.BR danbylab->run ,
-so that what is checked is the string that ships rather than a copy of
-it that could drift, and checks each one.
+string constant out of a Limbo module and unescape it by hand, because
+that is where a model lived.  That was always a hedge against the string
+under test drifting from the string that shipped, and the hedge leaked:
+a
+.B \eu0027
+in a spec meant one thing to the compiler and another to the scraper, so
+the two were briefly not the same text at all.  A file cannot drift from
+itself, and the scraper is gone.
 .PP
 Nothing here opens a window.
 .B Danbylab->parse
