@@ -634,10 +634,24 @@ newprog(Prog *p, Modlink *m)
 			error(exNomem);
 	}
 
+	n->group = nil;
+
+	/*
+	 * pidnum, the isched list and proghash[] are shared by every
+	 * executor, and nothing here took a lock: the VM lock was doing
+	 * it, and it is the lock parallelvm=1 removes.  rungc() walks
+	 * isched.head, so a torn list is a collector walking off into
+	 * freed memory -- page faults and general protection violations,
+	 * which is how *parallelvm=1 fails once the earlier bugs are out
+	 * of the way.
+	 *
+	 * isched.l is the lock the global run queue and claimctx() already
+	 * use.  Nothing in here sleeps, which a Lock requires.
+	 */
+	lock(&isched.l);
 	n->pid = ++pidnum;
 	if(n->pid <= 0)
 		panic("no pids");
-	n->group = nil;
 
 	if(isched.tail != nil) {
 		n->prev = isched.tail;
@@ -654,6 +668,7 @@ newprog(Prog *p, Modlink *m)
 		panic("dup pid");
 	n->pidlink = nil;
 	*ph = n;
+	unlock(&isched.l);
 
 	n->osenv = (Osenv*)((uchar*)n + sizeof(Prog));
 	n->xec = xec;
@@ -662,7 +677,16 @@ newprog(Prog *p, Modlink *m)
 	n->exval = H;
 
 	h = D2H(m);
-	h->ref++;
+	/*
+	 * AINC, not h->ref++.  Every other reference count in the Dis heap
+	 * goes through AINC/ADEC because two executors really do touch the
+	 * same object's count at once (interp.h says so where the macros
+	 * are defined); these two sites in this file were the exceptions,
+	 * and a lost update here frees a Modlink that is still linked --
+	 * "alloc:D2B:destroy-entry", which is one of the ways
+	 * *parallelvm=1 fails.
+	 */
+	AINC(&h->ref);
 	Setmark(h);
 	n->reg.M = m;
 	n->reg.MP = m->MP;
@@ -740,6 +764,7 @@ delprog(Prog *p, char *msg)
 
 	delgrp(p);
 
+	lock(&isched.l);	/* see newprog(); the same list */
 	if(p->prev)
 		p->prev->next = p->next;
 	else
@@ -754,6 +779,7 @@ delprog(Prog *p, char *msg)
 	if(*ph == nil)
 		panic("lost pid");
 	*ph = p->pidlink;
+	unlock(&isched.l);
 
 	/*
 	 * This removed p only when it was the head of the run queue, so a
@@ -1473,7 +1499,7 @@ schedmod(Module *m)
 
 	p = newprog(nil, ml);
 	h = D2H(ml);
-	h->ref--;
+	ADEC(&h->ref);		/* see newprog(); the count cannot reach 0 here */
 	p->reg.PC = m->entry;
 	/*
 	 * newstack() (libinterp/stack.c) does memmove(p->reg.FP, f, f->t->size)
@@ -1954,6 +1980,26 @@ vmachine(void*)
 			up->fgrp = o->fgrp;
 			up->egrp = o->egrp;
 
+			{	/* MULTICORE INSTRUMENTATION - temporary */
+				static int told;
+
+				/*
+				 * Naming the object beats inferring it: this
+				 * probe identified the placeholder Prog by
+				 * printing it, and one *parallelvm=1 run in
+				 * three still faults here, so something else
+				 * reaches this call without a usable xec.
+				 * state 0xdeadbeef separates freed-while-queued
+				 * from a second placeholder class.
+				 */
+				if(r->xec != xec && r->xec != idlexec && told++ < 6)
+					print("vmachine: prog %#p xec %#p"
+						" state %#x pid %d link %#p"
+						" osenv %#p ctx %#p cpu%d\n",
+						r, r->xec, r->state, r->pid,
+						r->link, r->osenv, curP,
+						m->machno);
+			}
 			fpurestore(up->env->fpuostate);
 			r->xec(r);
 			up->env->fpuostate = fpusave();
