@@ -19464,3 +19464,64 @@ whenever its pid was empty, which does not mean wait for nothing: it
 means wait for every background job in the shell.  That was harmless
 while the host rig was the only one and became a four-minute pause the
 day the mouse got a process of its own.
+.NH 1
+The keyboard was reporting, not checking
+.PP
+The mouse's other half.
+.CW usbcheck()
+has spawned a
+.CW kbdreport()
+since the USB work landed, and its comment says what it is for: a USB
+boot keyboard delivers UTF-8 to
+.CW /dev/keyboard ,
+and the function should
+.I "report what arrives so an injected \(lqhello\(rq from the QEMU monitor shows the whole path."
+It did report.  One line per character, for as long as the board ran,
+and no marker either way \(em a reader had to decide for themselves
+whether what arrived was right, and no log said.  Nobody had ever
+injected the hello.
+.PP
+It is
+.CW kbdcheck()
+now, built like
+.CW mousecheck()
+beside it: a bounded window, a word to wait for, and three answers.
+.CW USB-KBD-NONE
+for a board with no keyboard attached, which is the right answer and
+not a failure;
+.CW USB-KBD-FAIL
+with the characters quoted for a keyboard that delivered something
+other than what was typed \(em the case the old report could not
+distinguish from success;
+.CW USB-KBD-OK
+otherwise.  The word is
+.CW hello ,
+because that is the word the comment had already named.
+.PP
+The harness types it, once a second, through the same QMP connection
+that moves the mouse.  Both boards answer
+.CW "USB-KBD-OK 5 chars, hello through usbd's HID decode to /dev/keyboard"
+\(em the Pi 3 over dwc2 and the Pi 4 over xHCI, and five characters
+rather than an accumulation, so each caught a single burst cleanly.
+.PP
+One detail worth the line it costs.  The two checks time out at twenty
+seconds and twenty-five.  Both are spawned together and both report
+their
+.CW -NONE
+by timing out, so on a board with neither device attached the two
+markers would race \(em and
+.CW config_last
+would be naming a marker that is not always last, which is the harness
+rule everything else here rests on.  The keyboard goes first, by five
+seconds, and the order was checked with a container suite running
+beside it rather than on an idle machine.
+.PP
+Every Pi baseline gains a marker from this: five configurations that
+said nothing about their keyboard now say
+.CW USB-KBD-NONE
+or
+.CW USB-KBD-OK .
+That is the point.  A check that cannot fail is not evidence, and for
+as long as this one only printed, the whole HID keyboard path \(em split
+interrupt transfers, usbd's decode, the console queue \(em was carried
+on the assumption that somebody had once read the lines.

@@ -98,7 +98,7 @@ config_args() {
 		# SMSC half of appl/cmd/usb/etherusb.b -- a thousand
 		# lines of vendor requests, command words and receive
 		# status -- has no other way to execute.
-		echo "-M raspi3b -m 1G -drive file=$work/sd16d.img,if=sd,format=raw -drive if=none,id=d0,file=$work/usb16.img,format=raw -device usb-storage,drive=d0 -netdev user,id=n0 -device usb-lan9514,netdev=n0 -device usb-mouse";;
+		echo "-M raspi3b -m 1G -drive file=$work/sd16d.img,if=sd,format=raw -drive if=none,id=d0,file=$work/usb16.img,format=raw -device usb-storage,drive=d0 -netdev user,id=n0 -device usb-lan9514,netdev=n0 -device usb-mouse -device usb-kbd";;
 	raspi4)
 		echo "-M raspi4b -m 2G -drive file=$work/sd16b.img,if=sd,format=raw";;
 	raspi4-hot)
@@ -144,7 +144,7 @@ config_args() {
 		# and ethernet checks, so this is the same six markers
 		# reached over a different host controller -- the one
 		# thing about them the Pi 3 configuration cannot say.
-		echo "-M raspi4b -m 2G -drive file=$work/sd16e.img,if=sd,format=raw -drive if=none,id=d0,file=$work/usb16b.img,format=raw -device usb-storage,drive=d0 -netdev user,id=n0 -device usb-lan9514,netdev=n0 -device usb-mouse";;
+		echo "-M raspi4b -m 2G -drive file=$work/sd16e.img,if=sd,format=raw -drive if=none,id=d0,file=$work/usb16b.img,format=raw -device usb-storage,drive=d0 -netdev user,id=n0 -device usb-lan9514,netdev=n0 -device usb-mouse -device usb-kbd";;
 	virtarm64-peer)
 		# virtarm64 with a peer link, the same shape as virt-peer
 		# and on its own socket port: the two peer configurations
@@ -298,7 +298,8 @@ config_evidence() {
 		# wrong bits gives USB-MOUSE-FAIL, so the marker alone
 		# carries this -- but the number is what says which
 		# direction usbd's remap went.
-		echo 'USB-MOUSE-OK [0-9]+ events, motion and buttons 6';;
+		echo 'USB-MOUSE-OK [0-9]+ events, motion and buttons 6'
+		echo 'USB-KBD-OK [0-9]+ chars';;
 	raspi4)
 		echo 'from capabilities'
 		echo 'die 24\.';;
@@ -623,13 +624,14 @@ hostnet_stop() {
 	hostnetpid=
 }
 
-# The hand on the mouse.  Connects to qemu's monitor and sends, once a
-# second, a motion in x and a press and release of the right and middle
-# buttons -- which is exactly what mousecheck() waits for.  It repeats
-# rather than firing once because the window it has to land in opens
-# when the guest opens /dev/pointer, and nothing outside the guest
-# knows when that is; events sent before then go nowhere and cost
-# nothing.
+# The hand on the mouse and on the keyboard.  Connects to qemu's
+# monitor and sends, once a second, a motion in x with a press and
+# release of the right and middle buttons, and the word the keyboard
+# check waits for -- which is exactly what mousecheck() and kbdcheck()
+# are looking for.  It repeats rather than firing once because the
+# windows it has to land in open when the guest opens /dev/pointer and
+# /dev/keyboard, and nothing outside the guest knows when that is;
+# events sent before then go nowhere and cost nothing.
 mousepid=
 mouse_start() {
 	port=`config_qmp $1`
@@ -673,6 +675,13 @@ while time.time() < deadline:
     for b in ('right', 'middle'):
         send([{'type': 'btn', 'data': {'down': True, 'button': b}}])
         send([{'type': 'btn', 'data': {'down': False, 'button': b}}])
+    # The word is "hello" because the comment above the guest's own
+    # call has said so since before either end of this existed.
+    for k in 'hello':
+        send([{'type': 'key', 'data': {'down': True,
+                                       'key': {'type': 'qcode', 'data': k}}}])
+        send([{'type': 'key', 'data': {'down': False,
+                                       'key': {'type': 'qcode', 'data': k}}}])
     time.sleep(1)
 MOUSE
 	python3 "$work/mouse.py" "$port" "$timeout" >"$work/$1.mouse.log" 2>&1 &

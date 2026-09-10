@@ -362,6 +362,22 @@ USB-MOUSE-OK ... buttons 6 is the evidence line: 6 is right (4) and
 middle (2) together, and the number is what says which direction
 usbd's HID-to-devpointer remap went.  Both boards report 6.
 
+The keyboard is the other half of the same path and had even less to
+show for itself: its code printed one line per character for as long as
+the board ran, which is a report and not a check -- a reader had to
+decide for themselves whether what arrived was right, and no log said
+either way.  It is kbdcheck() now, it waits for the word the comment
+above its own call has always named, and it says USB-KBD-OK, -NONE or
+-FAIL.  The harness types "hello" once a second alongside the mouse
+events.  Both boards answer "USB-KBD-OK 5 chars, hello".
+
+The two checks time out at twenty seconds and twenty-five, and the
+difference is deliberate: both are spawned together and both report
+-NONE by timing out, so on a board with neither device attached the
+markers would race and config_last would name one that is not last.
+The keyboard goes first.  Checked under load -- a container suite
+running beside it -- and the order held.
+
 Attaching it moved config_last.  With a mouse the check reports as soon
 as it has what it wants instead of waiting out its 25-second timeout,
 so USB-MOUSE -- the marker that is last on every other Pi

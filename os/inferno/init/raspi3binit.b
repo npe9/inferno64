@@ -365,7 +365,7 @@ usbcheck()
 	# to /dev/keyboard (the graphics console queue).  Report what arrives
 	# so an injected "hello" from the QEMU monitor shows the whole path --
 	# split interrupt transfers, HID translation, cons -- end to end.
-	spawn kbdreport();
+	spawn kbdcheck();
 	sys->print("USB-OK\n");
 	# Spawned, not called: the check waits a bounded time for events
 	# that only arrive if a mouse is attached, and a boot with none
@@ -646,20 +646,76 @@ mousetimer(tmo: chan of int, ms: int)
 	tmo <-= 1;
 }
 
-kbdreport()
+# The keyboard's half of the HID path, and the mirror of mousecheck().
+#
+# This used to print one line per character for as long as the board
+# ran, which is a report and not a check: a reader had to decide for
+# themselves whether what arrived was right, and nothing in a log said
+# either way.  The comment above the call has always named the word to
+# send -- "an injected hello from the QEMU monitor" -- so that is the
+# word, and the check waits for it.
+#
+# USB-KBD-NONE is the right answer for an invocation with no keyboard
+# attached, exactly as USB-MOUSE-NONE is.  A keyboard that enumerated
+# and delivered something other than what was typed gives -FAIL, which
+# is the case the old report could not distinguish from success.
+Kbdword: con "hello";
+
+kbdcheck()
 {
 	fd := sys->open("/dev/keyboard", Sys->OREAD);
 	if(fd == nil){
-		sys->print("USB-KBD-NONE: %r\n");
+		sys->print("USB-KBD-NONE /dev/keyboard: %r\n");
 		return;
 	}
-	buf := array[16] of byte;
-	for(;;){
-		n := sys->read(fd, buf, len buf);
-		if(n <= 0)
-			return;
-		sys->print("USB-KBD got %d: %q\n", n, string buf[0:n]);
+	evc := chan of string;
+	tmo := chan of int;
+	spawn mousereadproc(fd, evc);
+	# Twenty seconds against the mouse check's twenty-five, and the
+	# difference is deliberate.  Both are spawned together and both
+	# report -NONE by timing out, so on a board with neither device
+	# attached the two markers would race, and the harness has to
+	# know which one is last.  This one goes first.
+	spawn mousetimer(tmo, 20000);
+
+	# Everything that arrives is accumulated and the word is looked
+	# for anywhere in it, because the harness sends it once a second
+	# and the check cannot know which burst it caught the start of.
+	# That does mean a keyboard delivering the right letters in the
+	# wrong order could, across enough repeats, spell the word by
+	# accident.  The marker prints what actually arrived, so a log
+	# says which happened.
+	got := "";
+loop:
+	for(;;) alt {
+	s := <-evc =>
+		got += s;
+		if(kbdsaw(got, Kbdword))
+			break loop;
+	<-tmo =>
+		break loop;
 	}
+
+	if(got == nil){
+		sys->print("USB-KBD-NONE no keystrokes (no keyboard attached?)\n");
+		return;
+	}
+	if(!kbdsaw(got, Kbdword)){
+		sys->print("USB-KBD-FAIL %d chars %q, wanted %q\n",
+			len got, got, Kbdword);
+		return;
+	}
+	sys->print("USB-KBD-OK %d chars, %q through usbd's HID decode to /dev/keyboard\n",
+		len got, Kbdword);
+}
+
+kbdsaw(s: string, want: string): int
+{
+	n := len want;
+	for(i := 0; i + n <= len s; i++)
+		if(s[i:i+n] == want)
+			return 1;
+	return 0;
 }
 
 init()
