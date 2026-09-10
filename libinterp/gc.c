@@ -365,7 +365,22 @@ checklistcell(List *l)
 	Heap *h;
 
 	h = D2H(l);
-	if(h->t == &Tlist && h->ref > 0)
+	/*
+	 * ref == 0 was part of "bad" here, and stopped being so when
+	 * destroy() started handing objects to the collector rather than
+	 * freeing them under it (see the gcstopped branch there).  A
+	 * deferred object has reached zero and is still allocated, with
+	 * its type header intact, which is exactly this shape.  Measured
+	 * before it is asserted: "marklist: bad container ... ref 0"
+	 * appears in no boot at parallelvm=0, in no boot at
+	 * parallelvm=1 before the deferral landed, and in six after it.
+	 *
+	 * A negative count and a wrong type are still reported, and they
+	 * are what this was for -- a stale cell whose memory has been
+	 * reused reads as neither &Tlist nor a count the allocator would
+	 * ever leave.
+	 */
+	if(h->t == &Tlist && h->ref >= 0)
 		return;
 	print("marklist: bad container %#p t %#p (want %#p) ref %d color %d\n",
 		l, h->t, &Tlist, h->ref, h->color);
