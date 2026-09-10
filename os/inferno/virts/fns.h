@@ -79,3 +79,6 @@ void	archkprofenable(int);
 int	(*pcicfgrw8)(int, int, int, int);
 int	(*pcicfgrw16)(int, int, int, int);
 int	(*pcicfgrw32)(int, int, int, int);
+
+void	blankscreen(int);		/* the board's screen*.c */
+int	isaconfig(char*, int, void*);	/* stubs.c */

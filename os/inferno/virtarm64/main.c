@@ -138,6 +138,8 @@ main(void)
 	quotefmtinstall();
 	printinit();
 
+	atomiccheck();
+
 	/* prints what acpitables() found, and acts on the rest of it */
 	acpiinit();
 	startcpus();

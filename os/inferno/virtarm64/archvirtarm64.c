@@ -128,50 +128,6 @@ microdelay(int us)
 		clockpoll();
 }
 
-int
-cmpswap(s32 *addr, s32 old, s32 new)
-{
-	int s, r;
-
-	s = splhi();
-	if(*addr == old){
-		*addr = new;
-		r = 1;
-	}else
-		r = 0;
-	splx(s);
-	return r;
-}
-
-/*
- * interp.h's AINC/ADEC (libinterp's Dis reference-counting primitives)
- * -- spl-masked, same uniprocessor assumption cmpswap above already
- * makes (MAXMACH is 1 on this board).  Nothing in os/inferno provides
- * these for the "arm" (5c) objtype yet; every other board either
- * never actually links a caller of them or has its own equivalent
- * this port didn't inherit.
- */
-int
-ainc(int *addr)
-{
-	int s, r;
-
-	s = splhi();
-	r = ++*addr;
-	splx(s);
-	return r;
-}
-
-int
-adec(int *addr)
-{
-	int s, r;
-
-	s = splhi();
-	r = --*addr;
-	splx(s);
-	return r;
-}
 
 long
 archkprofmicrosecondspertick(void)
@@ -183,4 +139,43 @@ void
 archkprofenable(int on)
 {
 	USED(on);
+}
+
+/*
+ * The four atomics are hand-written assembly (l.s) and nothing else in
+ * the tree tests them, so a subtly wrong one is silent: it does not
+ * fail to build, it fails to be atomic.  7l had exactly that shape of
+ * bug -- LDAXRW encoded with o2 set, which is LDLARW, a load that does
+ * not take the exclusive monitor at all, so every STLXRW paired with
+ * it would fail forever -- and it was found by reading the encoding,
+ * not by running anything.
+ *
+ * This runs once, before any other processor exists, and checks what
+ * a caller actually depends on: the value stored, the value returned,
+ * and, for cmpswap, that a failed compare stores nothing and says so.
+ * The negative case is the point; a cmpswap that always succeeds
+ * passes every positive check there is.
+ */
+void
+atomiccheck(void)
+{
+	int v, r;
+	char *bad;
+
+	bad = nil;
+	v = 41;
+	if((r = ainc(&v)) != 42 || v != 42)
+		bad = "ainc";
+	else if((r = adec(&v)) != 41 || v != 41)
+		bad = "adec";
+	else if(cmpswap(&v, 41, 7) != 1 || v != 7)
+		bad = "cmpswap on a match";
+	else if(cmpswap(&v, 41, 9) != 0 || v != 7)
+		bad = "cmpswap on a mismatch";
+	else if(_tas(&v) != 7 || v != 1)
+		bad = "_tas";
+	USED(r);
+	if(bad != nil)
+		panic("atomiccheck: %s is wrong, v %d", bad, v);
+	print("atomics: ainc, adec, cmpswap both ways and _tas all correct\n");
 }

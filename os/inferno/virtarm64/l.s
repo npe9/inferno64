@@ -300,15 +300,85 @@ TEXT	seticceoir(SB), 1, $-4
 	MSR	R0, SPR(D_ICC_EOIR1_EL1)
 	RET	R30
 
+/*
+ * _tas, cmpswap, ainc and adec: the four primitives everything above
+ * them assumes are atomic.  They were spl-masked C in
+ * archvirtarm64.c, which is correct on one processor and silently
+ * wrong on two -- masking interrupts on this processor says nothing
+ * about what another one is doing to the same word -- so they are
+ * exclusive-monitor loops here before a second processor is allowed
+ * to run any portable code.
+ *
+ * The acquire and release halves are not decoration.  LDAXRW gives
+ * the acquire side, so nothing the caller does after taking a lock
+ * can be observed before the lock is taken, and STLXRW gives the
+ * release side on the way out.  os/inferno's own history has the
+ * counter-example: emu's unlock() had no release barrier and the
+ * scheduler deadlocked once in every couple of runs, with a signature
+ * ("a list changed between two locked operations") that reads as a
+ * lock bug and is a memory-ordering one.
+ *
+ * All four take a word (32-bit) rather than a doubleword: Lock.key,
+ * Ref.ref and Heap.ref are all int.
+ */
 TEXT	_tas(SB), 1, $-4
 	MOV	R0, R3
-tas1:
-	LDXRW	(R3), R1
 	MOV	$1, R2
-	STXRW	R4, R2, (R3)
+tas1:
+	LDAXRW	(R3), R1
+	STLXRW	R4, R2, (R3)
 	CBNZW	R4, tas1
-	DSB	$15
 	MOV	R1, R0
+	RET	R30
+
+/*
+ * cmpswap(int *addr, int old, int new): store new only if *addr is
+ * still old, and say whether it was.  A failed compare clears the
+ * monitor with CLREX rather than leaving it set for whatever runs
+ * next -- an abandoned exclusive monitor is not a correctness bug on
+ * its own, but leaving one behind on every failed compare is the kind
+ * of thing that makes an unrelated STLXR fail spuriously and forever.
+ */
+TEXT	cmpswap(SB), 1, $-4
+	MOV	R0, R3
+	MOVW	arg1+8(FP), R1
+	MOVW	arg2+16(FP), R2
+cas1:
+	LDAXRW	(R3), R4
+	CMPW	R4, R1
+	BNE	cas2
+	STLXRW	R5, R2, (R3)
+	CBNZW	R5, cas1
+	MOVW	$1, R0
+	RET	R30
+cas2:
+	CLREX	$0
+	MOVW	$0, R0
+	RET	R30
+
+/*
+ * ainc/adec: libinterp's Dis reference-counting primitives (AINC/ADEC
+ * in include/interp.h), which return the new value.  Nothing in
+ * os/inferno provides these for the aarch64 objtype but this file.
+ */
+TEXT	ainc(SB), 1, $-4
+	MOV	R0, R3
+ainc1:
+	LDAXRW	(R3), R1
+	ADDW	$1, R1
+	STLXRW	R2, R1, (R3)
+	CBNZW	R2, ainc1
+	MOVW	R1, R0
+	RET	R30
+
+TEXT	adec(SB), 1, $-4
+	MOV	R0, R3
+adec1:
+	LDAXRW	(R3), R1
+	SUBW	$1, R1
+	STLXRW	R2, R1, (R3)
+	CBNZW	R2, adec1
+	MOVW	R1, R0
 	RET	R30
 
 TEXT	setlabel(SB), 1, $-4

@@ -73,9 +73,13 @@ ulong	va2pa(void*);
 #define PADDR(v)	va2pa((void*)(v))
 
 int	cmpswap(s32*, s32, s32);
+int	ainc(int*);		/* l.s; interp.h's AINC */
+int	adec(int*);		/* l.s; interp.h's ADEC */
+void	atomiccheck(void);
 long	archkprofmicrosecondspertick(void);
 void	archkprofenable(int);
 int	isaconfig(char*, int, void*);
+void	blankscreen(int);
 void	cycles(uvlong*);		/* also in io.h; proc.c includes fns.h, not io.h */
 
 /*

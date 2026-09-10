@@ -61,3 +61,5 @@ void	cycles(uvlong*);
 uvlong	rdcycle(void);
 long	archkprofmicrosecondspertick(void);
 void	archkprofenable(int);
+
+int	isaconfig(char*, int, void*);	/* stubs.c */
