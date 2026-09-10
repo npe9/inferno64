@@ -4670,6 +4670,75 @@ and to note where the emulator is more forgiving than hardware; this is
 the first time the port has been shown one rather than argued about it,
 and it cost about a cent.
 .PP
-The lesson for the rest of the list is not about MSRs.  It is that the
-cheapest account bought a real bug within minutes of the first boot,
-which is the argument for buying the next one.
+.B "The second bug, which the first was hiding."
+With the MSR fault survivable the kernel reached
+.CW intrinit()
+and died there:
+.DS
+.CW
+cpu0: 0MHz GenuineIntel P6 (AX 000406F0 ...)
+panic: assert failed at 0x2dd21b: v >= (100*HZ)
+.DE
+Not an APIC bug.
+.CW lapictimerinit()
+calibrates the local APIC against
+.CW fastticks(&hz) ,
+and
+.CW hz
+was zero, so its hundred-millisecond delay loop returned at once, the
+APIC counter had not moved, and the assert was the first thing
+downstream to complain.
+.CW i8253init()
+had never measured the processor's frequency:
+.CW guesscpuhz()
+has been in
+.CW os/inferno/pc/i8253.c ,
+declared in both
+.CW fns.h ,
+and called from nowhere in the tree, while
+.CW hpetinit()
+\(em the other
+.CW arch->clockinit
+\(em sets all four of
+.CW cpuhz ,
+.CW cpumhz ,
+.CW cyclefreq
+and
+.CW loopconst .
+.CW archacpi.c
+picks
+.CW hpetinit
+when ACPI describes an HPET and QEMU always does; Compute Engine does
+not.  Fixed in 4a9ec166.
+.PP
+.B "And then it booted."
+.DS
+.CW
+Inferno release built at 1789054866
+cpu0: 2196MHz GenuineIntel P6 (AX 000406F0 ...)
+#l0: virtio: 1000Mbps port 0xC000 irq 11 ea 42010a800005
+Welcome to Inferno...
+loading /dis/sh.dis
+spawn sh -n /dis/init
+;
+.DE
+An e2-micro in
+.CW us-central1-a ,
+on a Broadwell vCPU whose frequency the kernel now measures correctly,
+with its virtio NIC bound.  Item 3 is no longer "every piece exists";
+it is a boot log.
+.PP
+.B "What the exercise cost and what it bought."
+Four images, four instances, under an hour, and small change.  It
+bought two bugs that twelve local boots could not have found, and the
+second of them is now reproducible here \(em QEMU will hide its HPET
+with
+.CW "-machine q35,hpet=off" ,
+and under it the old kernel prints
+.CW "cpu0: 0MHz"
+and panics exactly as Compute Engine did while the new one reaches a
+shell at
+.CW "cpu0: 983MHz" .
+That is the pattern worth repeating on the rest of the list: rent the
+machine, read the log, and bring the failure home where a regression
+can be caught for nothing.
