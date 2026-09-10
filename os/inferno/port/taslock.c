@@ -19,6 +19,33 @@ uintptr maxilockpc;
 uintptr ilockpc[8];
 void *ilockm[8];
 
+/*
+ * A shadow of m->ilockdepth kept outside Mach, one per processor,
+ * moved at exactly the two places m->ilockdepth is moved.
+ *
+ * This exists to split one question in two.  Every ilock/iunlock pair
+ * this hunt has caught is balanced and local -- poolalloc+0x5b with
+ * poolalloc+0x141, timerintr+0x47 with timerintr+0x77, uartkick+0x2b
+ * with uartkick+0x4b -- and yet cpu0's depth reaches -1.  Either
+ * something writes Mach behind the counter's back, in which case the
+ * shadow and the counter part company, or the count really is
+ * unbalanced, in which case they go negative together.  They cannot
+ * both be true, and until now there was no way to tell which.
+ */
+int ilockshadow[8];
+int ilockshadowbad;
+
+/*
+ * The m each machno was first seen with, and a one-shot report when a
+ * second Mach turns up claiming the same number.  ilockshadow above is
+ * indexed by m->machno, so if two processors ever agree on a machno
+ * while disagreeing on m, they race on one shadow word while keeping
+ * separate depths -- which would make the shadow the corrupted half,
+ * not Mach, and the whole reading backwards.  This says which.
+ */
+void *ilockmach[8];
+int ilockmachbad;
+
 void
 ilockheldpcs(void)
 {
@@ -193,6 +220,16 @@ acquire:
 	 * A tool that corrupts memory in the case it exists to observe
 	 * is worse than no tool.
 	 */
+	if((uint)m->machno < nelem(ilockshadow)){
+		if(ilockmach[m->machno] == nil)
+			ilockmach[m->machno] = m;
+		else if(ilockmach[m->machno] != m && ilockmachbad == 0){
+			ilockmachbad = 1;
+			iprint("ilock: machno %d claimed by m %#p and m %#p, pc %#p\n",
+				m->machno, ilockmach[m->machno], m, pc);
+		}
+		ilockshadow[m->machno]++;
+	}
 	if(m->ilockdepth > 0 && m->ilockdepth <= nelem(ilockpc)){
 		ilockpc[m->ilockdepth-1] = pc;
 		ilockm[m->ilockdepth-1] = m;
@@ -297,11 +334,32 @@ iunlock(Lock *l)
 	if(islo())
 		print("iunlock(%#p) while lo: pc %#p, held by %#p\n", l, getcallerpc(&l), l->pc);
 
+	/*
+	 * Released on a different processor than took it.  ilock()
+	 * records MACHP(m->machno) in l->m and this is the only place
+	 * that can compare the two, which makes it the direct test of
+	 * the one story that fits everything seen so far: a balanced
+	 * pair whose halves ran on different processors leaves one
+	 * Mach's depth up by one and the other's down by one, and each
+	 * half looks correct where it stands.
+	 */
+	if(l->m != nil && l->m != MACHP(m->machno))
+		iprint("iunlock(%#p): locked on m %#p, released on m %#p (cpu%d), pc %#p, lock pc %#p\n",
+			l, l->m, MACHP(m->machno), m->machno, getcallerpc(&l), l->pc);
 	sr = l->sr;
 	l->m = nil;
 	coherence();
 	l->key = 0;
 	m->ilockdepth--;
+	if((uint)m->machno < nelem(ilockshadow)){
+		ilockshadow[m->machno]--;
+		if(ilockshadow[m->machno] != m->ilockdepth && ilockshadowbad == 0){
+			ilockshadowbad = 1;
+			iprint("iunlock: cpu%d shadow %d but m->ilockdepth %d, m %#p, pc %#p\n",
+				m->machno, ilockshadow[m->machno], m->ilockdepth,
+				m, getcallerpc(&l));
+		}
+	}
 	if(m->ilockdepth >= 0 && m->ilockdepth < nelem(ilockpc))
 		ilockpc[m->ilockdepth] = 0;
 	/*
@@ -316,8 +374,10 @@ iunlock(Lock *l)
 	 * laptop does not.
 	 */
 	if(m->ilockdepth < 0)
-		iprint("iunlock(%#p): ilockdepth %d, pc %#p, lock pc %#p, m %#p\n",
-			l, m->ilockdepth, getcallerpc(&l), l->pc, m);
+		iprint("iunlock(%#p): cpu%d ilockdepth %d shadow %d, pc %#p, lock pc %#p, m %#p\n",
+			l, m->machno, m->ilockdepth,
+			(uint)m->machno < nelem(ilockshadow)? ilockshadow[m->machno]: -1,
+			getcallerpc(&l), l->pc, m);
 	if(up)
 		up->lastilock = nil;
 	splx(sr);

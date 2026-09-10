@@ -22,6 +22,8 @@ squidboy(Apic* apic)
 		arch->clockinit();
 	cpuidprint();
 	syncclock();
+	print("cpu%d: squidboy m %#p, MACHP(0) %#p, MACHP(1) %#p\n",
+		m->machno, m, MACHP(0), MACHP(1));
 	active.machs[m->machno] = 1;
 	apic->online = 1;
 	lapicinit(apic);

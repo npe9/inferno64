@@ -5158,3 +5158,131 @@ shell at
 That is the pattern worth repeating on the rest of the list: rent the
 machine, read the log, and bring the failure home where a regression
 can be caught for nothing.
+.NH 2
+The ilockdepth panic was never about the cloud
+.LP
+Everything above reads the
+.CW ilockdepth
+panic as something Compute Engine does and this laptop does not, and
+hunts it with rented instances at ten to twelve minutes an image.  That
+reading was wrong, and the thing that made it wrong was in the boot
+scripts, not in the kernel.
+.PP
+A Compute Engine
+.CW e2-micro
+has two vCPUs.  Every local boot script in this tree runs QEMU with
+one.  So the kernel started a second processor on every instance and on
+none of the local runs, and the difference that was being attributed to
+real hardware, or to the missing HPET, or to Google's virtio devices,
+was that
+.CW mpstartap()
+had run.
+.PP
+With
+.CW "-smp 2"
+it reproduces here, in well under a minute:
+.DS
+.CW
+iunlock: cpu0 shadow 2 but m->ilockdepth 3, m 0x102000, pc 0x29d833
+iunlock: interrupts on at ilockdepth 1, pc 0x29d833, lock pc 0x29c46f
+panic: cpu0: ilockdepth -1 (now -1)
+.DE
+.CW scripts/check-pc64-smp.sh
+is that, with the arm that makes it mean something: the same
+two-processor QEMU machine, the same kernel, the same ISO recipe, but
+.CW *ncpu=1
+in
+.CW plan9.ini
+so the kernel leaves the second processor alone.  Four runs each at the
+time of writing: four faults with the AP started, none without.  A
+failure without that control could be blamed on the extra vCPU rather
+than on the kernel's use of it.
+.PP
+.B "What the instruments say, and what they do not."
+Every lock and unlock this hunt has caught is balanced and local \(em
+.CW poolalloc+0x5b
+with
+.CW poolalloc+0x141 ,
+.CW timerintr+0x47
+with
+.CW timerintr+0x77 ,
+.CW uartkick+0x2b
+with
+.CW uartkick+0x4b ,
+.CW qiwrite+0x91
+with
+.CW qiwrite+0xf3 .
+No function leaks a lock.  What is wrong is the count.
+.PP
+A shadow of
+.CW m->ilockdepth
+kept outside
+.CW Mach ,
+one per processor, moved at exactly the two places the counter is
+moved, parts company with it \(em and in both directions
+.CW ( "shadow 2 but m->ilockdepth 3" ,
+.CW "shadow 1 but m->ilockdepth 0" ).
+Both words are private to cpu0: the second processor gets its own
+.CW Mach
+.CW ( "cpu1: squidboy m 0xda9d000, MACHP(0) 0x102000, MACHP(1) 0xda9d000" ),
+and a detector that reports the first time two different
+.CW Mach
+pointers claim one
+.CW machno
+has never fired.  Two private counters written at adjacent statements
+under
+.CW splhi ,
+diverging, is a wild write, not an unbalanced count.
+.PP
+Ruled out by reading the machine rather than guessing at it:
+.CW tas()
+is
+.CW "XCHGL AX, (RARG)" ,
+which is implicitly locked on x86;
+.CW ainc/adec
+are
+.CW "LOCK; XADDL" ;
+.CW unlock()
+and
+.CW iunlock()
+both have a
+.CW coherence()
+before releasing the key; the run queue is locked.  Every literal
+.CW Mach
+offset in
+.CW pc64/l.s
+was checked against what
+.CW 6c
+actually lays out, and every literal
+.CW Ureg
+offset in the interrupt path with it \(em
+.CW ax
+0,
+.CW r15
+112,
+.CW ds/es/fs/gs
+120 to 126,
+.CW type
+128,
+.CW pc
+144 \(em and the interrupt path is correct.
+.PP
+Not ruled out, and stated so plainly: the check for a lock released on
+a different processor than took it compares
+.CW l->m
+with
+.CW MACHP(m->machno) ,
+which cannot see the case where two processors share one
+.CW Mach .
+It has not fired, and that is not evidence.
+.PP
+.B "Where this leaves the cloud target."
+Inferno boots on Compute Engine and gets a DHCP lease there; that
+stands.  What does not stand is running it on a multi-vCPU instance
+with the AP started, and until the wild write is found the honest
+setting for a cloud image is
+.CW *ncpu=1
+in
+.CW plan9.ini .
+That is a real restriction, not a fix, and it should be written on the
+image rather than discovered by a user.
