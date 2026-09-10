@@ -1292,21 +1292,44 @@ buildop(void)
 		case AMSR:
 			break;
 
+		/*
+		 * The acquire/release forms take the same operands as the
+		 * plain exclusive ones -- LDAXR is LDXR with o0 set, STLXR
+		 * is STXR with o0 set -- and opload()/opstore() below
+		 * already encode all of them.  What was missing was the
+		 * oprange entry, so 7a accepted the mnemonic and 7l then
+		 * said "illegal combination LDAXRW NONE NONE REG" and
+		 * refused to encode it.  Without them a port has the
+		 * exclusive monitor but no way to spell the barriers that
+		 * make a lock a lock.
+		 */
 		case ALDXR:
 			oprange[ALDXRB] = t;
 			oprange[ALDXRH] = t;
 			oprange[ALDXRW] = t;
+			oprange[ALDAXR] = t;
+			oprange[ALDAXRB] = t;
+			oprange[ALDAXRH] = t;
+			oprange[ALDAXRW] = t;
 			break;
 		case ALDXP:
 			oprange[ALDXPW] = t;
+			oprange[ALDAXP] = t;
+			oprange[ALDAXPW] = t;
 			break;
 		case ASTXR:
 			oprange[ASTXRB] = t;
 			oprange[ASTXRH] = t;
 			oprange[ASTXRW] = t;
+			oprange[ASTLXR] = t;
+			oprange[ASTLXRB] = t;
+			oprange[ASTLXRH] = t;
+			oprange[ASTLXRW] = t;
 			break;
 		case ASTXP:
 			oprange[ASTXPW] = t;
+			oprange[ASTLXP] = t;
+			oprange[ASTLXPW] = t;
 			break;
 
 		case AAESD:

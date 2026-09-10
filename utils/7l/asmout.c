@@ -1456,7 +1456,16 @@ opload(int a)
 	case ALDAXP:	return LDSTX(3,0,1,1,1);
 	case ALDAXPW:	return LDSTX(2,0,1,1,1);
 	case ALDAXR:	return LDSTX(3,0,1,0,1) | 0x1F<<10;
-	case ALDAXRW:	return LDSTX(2,1,1,0,1) | 0x1F<<10;
+	/*
+	 * o2 is 0 for an exclusive access and 1 only for the ordered,
+	 * non-exclusive LDLAR/STLLR family.  This row had o2 = 1, copied
+	 * from ALDARW two lines up, which encodes LDLARW -- a load that
+	 * does not take the exclusive monitor at all, so the STLXRW
+	 * pairing with it would never succeed and every compare-and-swap
+	 * built on the pair would spin forever.  Compare ALDAXR, the
+	 * 64-bit form of this same instruction, which was already right.
+	 */
+	case ALDAXRW:	return LDSTX(2,0,1,0,1) | 0x1F<<10;
 	case ALDAXRB:	return LDSTX(0,0,1,0,1) | 0x1F<<10;
 	case ALDAXRH:	return LDSTX(1,0,1,0,1) | 0x1F<<10;
 	case ALDXR:		return LDSTX(3,0,1,0,0) | 0x1F<<10;
@@ -1482,8 +1491,13 @@ opstore(int a)
 	case ASTLP:		return LDSTX(3,0,0,1,1);
 	case ASTLPW:		return LDSTX(2,0,0,1,1);
 	case ASTLRW:		return LDSTX(2,1,0,0,1) | 0x1F<<10;
-	case ASTLXP:		return LDSTX(2,0,0,1,1);
-	case ASTLXPW:		return LDSTX(3,0,0,1,1);
+	/*
+	 * These two were swapped: for a pair instruction the size field
+	 * is 3 for the 64-bit form and 2 for the 32-bit one, which is
+	 * how ASTXP/ASTXPW below and ALDAXP/ALDAXPW above have it.
+	 */
+	case ASTLXP:		return LDSTX(3,0,0,1,1);
+	case ASTLXPW:		return LDSTX(2,0,0,1,1);
 	case ASTLXR:		return LDSTX(3,0,0,0,1) | 0x1F<<10;
 	case ASTLXRB:		return LDSTX(0,0,0,0,1) | 0x1F<<10;
 	case ASTLXRH:		return LDSTX(1,0,0,0,1) | 0x1F<<10;
