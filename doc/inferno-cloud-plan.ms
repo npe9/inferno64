@@ -4167,6 +4167,33 @@ corruption it is chasing \(em TCG implements a global monitor whatever
 the memory type, so the emulator cannot show the difference \(em but it
 is a prerequisite before any of that is sound on a core.
 .PP
+What it would cost that branch to take them, checked against its own
+tree rather than guessed.  7l's fix is a clean cherry-pick of
+.CW d79cd026 :
+.CW utils/7l/span.c
+is untouched there since the merge base, and the patch applies without
+a reject.  The MMU is not a single pick \(em
+.CW virtarm64/mmu.c
+is untouched there and would drop straight in, but
+.CW l.s ,
+.CW main.c ,
+.CW fns.h
+and
+.CW archvirtarm64.c
+have all diverged, and the version here reads its map from
+.CW bootargs.c ,
+which that branch does not have at all.  What ports without any of
+that is the smaller MMU: the same four-level tables over one run from
+.CW PHYSDRAM ,
+which is what
+.CW archconfinit()
+falls back to when there is no
+.CW *e820 .
+GICv3 is a manual merge either way, since
+.CW trap.c
+is where that branch put
+.CW gicsecondary() .
+.PP
 So what is left of item 9 on arm64 is not this branch's to build twice.
 Secondaries that reach
 .CW schedinit() ,
