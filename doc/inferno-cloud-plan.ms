@@ -4889,6 +4889,47 @@ did, and finding it wants instrumentation on the machine itself:
 printed where it changes, which is a boot's worth of cloud round-trip
 per iteration.  Open, and NOT confined to that configuration \(em see below.
 .PP
+.B "Caught, and it is iallocb."
+The instrument in
+.CW b50ee696
+records which caller holds each ilock level and prints them before the
+panic.  Six resets of an instance later, on the boot that failed:
+.DS
+.CW
+  ilock 0 held from 0x285a85
+panic: cpu0: ilockdepth 0, last lock 0x0 at 0x0,
+       sched called from 0x28dd6e
+.DE
+0x285a85 is
+.CW iallocb+0xa5
+and 0x28dd6e is
+.CW acquire+0xff .
+So the held lock is
+.CW &ialloc ,
+taken at
+.CW os/inferno/port/allocb.c :135
+by the interrupt-context block allocator, which is the one place a lock
+is taken with no process current \(em matching the
+.CW "last lock 0x0"
+that made this opaque for so long.
+.PP
+Two things about that are strange and both constrain what it can be.
+The
+.CW ilock(&ialloc)
+at line 135 is unlocked at line 137, straight-line code with an
+addition between; there is no path that skips it.  And the panic prints
+.CW "ilockdepth 0"
+while
+.CW sched()
+only panics when the depth is
+.I not
+zero \(em so the value fell between the test and the print, which means
+an interrupt ran in that window and performed a net unlock.  A handler
+that unlocks more than it locks, or a counter sampled while a handler
+is inside that two-line region, are the two readings; distinguishing
+them is the next step, and it is a smaller question than the one this
+started as.
+.PP
 .B "And it is the shipped kernel too."
 Recorded here as a correction, because this document said twice that
 .CW ipc64
