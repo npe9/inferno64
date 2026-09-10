@@ -903,6 +903,38 @@ checkvoice()
 	said = next(sfd);
 	report(has(said, "Mail Reader"), sys->sprint(
 		"entering a window says which window (%#q)", said));
+
+	# Moving about in text is most of what a person does in a shell
+	# window, and it said nothing: output was announced and could not be
+	# read back.  A line when the cursor changes line, a character when
+	# it does not - up and down to survey, left and right to spell out.
+	blank();
+	t7 := offscreen();
+	if(t7 == nil)
+		return;
+	tk->cmd(t7, "text .t -width 40 -height 5");
+	tk->cmd(t7, ".t insert end 'first line\n");
+	tk->cmd(t7, ".t insert end 'second line");
+	tk->cmd(t7, "pack .t");
+	map(t7);
+	tk->cmd(t7, ".t mark set insert 1.0");
+	tk->cmd(t7, "update");
+	drain(sfd);
+
+	tk->cmd(t7, ".t tkTextSetCursor {insert+1l}");
+	tk->cmd(t7, "update");
+	said = next(sfd);
+	report(has(said, "second"), sys->sprint(
+		"moving to another line reads the line (%#q)", said));
+
+	tk->cmd(t7, ".t mark set insert 2.0");
+	tk->cmd(t7, "update");
+	drain(sfd);
+	tk->cmd(t7, ".t tkTextSetCursor {insert+1c}");
+	tk->cmd(t7, "update");
+	said = next(sfd);
+	report(said == "e", sys->sprint(
+		"and moving along one reads the character (%#q)", said));
 }
 
 slurpfile(p: string): string

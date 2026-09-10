@@ -3480,18 +3480,79 @@ tktprevwrapline(Tk *tk, TkTline *l)
 	return l->prev;
 }
 
+/*
+ * Say where the cursor went, for voice(3).
+ *
+ * Moving about in text is most of what a person does in a shell window
+ * or an editor, and it said nothing at all: the only thing announced
+ * here was text arriving. Someone reading by ear could hear output and
+ * could not read it back.
+ *
+ * A line when the cursor changed line, a character when it did not,
+ * which is the distinction every other screen reader makes and the one
+ * that makes arrow keys usable: up and down to survey, left and right to
+ * spell out.
+ *
+ * Only from tktextsetcursor(), which is what the arrow keys, Home and
+ * End are bound to. Text arriving moves the insert mark by another path
+ * and is announced by its own rule, so this does not double up on it.
+ */
+static void
+announcecursor(Tk *tk, TkTline *was, TkTindex *now)
+{
+	TkText *tkt = TKobj(TkText, tk);
+	TkTindex a, b;
+	char *s;
+
+	s = nil;
+	if(now->line != was) {
+		/*
+		 * The line's own ends, from the index itself.  Parsing
+		 * "insert linestart" as a string would go through the same
+		 * code the get command uses, but it is the command layer that
+		 * strips the braces around such an index, and this is below
+		 * that layer.
+		 */
+		a = *now;
+		b = *now;
+		tktadjustind(tkt, TkTbylinestart, &a);
+		tktadjustind(tkt, TkTbylineend, &b);
+	} else {
+		a = *now;
+		b = a;
+		if(!tktadjustind(tkt, TkTbychar, &b))
+			return;
+	}
+	if(tktget(tkt, &a, &b, 0, &s) != nil) {
+		free(s);
+		return;
+	}
+	if(s != nil && *s != '\0')
+		voiceannounce(s);
+	free(s);
+}
+
 static char*
 tktextsetcursor(Tk *tk, char *arg, char **val)
 {
 	char *e;
-	TkTindex ix;
+	TkTindex ix, before;
 	TkTmarkinfo *mi;
+	TkTline *was;
+	char ibuf[16], *p;
 	TkText *tkt = TKobj(TkText, tk);
 
 	USED(val);
 
 	/* do clearsel here, because it can change indices */
 	tktclearsel(tk);
+
+	/* where the cursor was, so the move can be described */
+	was = nil;
+	strcpy(ibuf, "insert");
+	p = ibuf;
+	if(tktindparse(tk, &p, &before) == nil)
+		was = before.line;
 
 	e = tktindparse(tk, &arg, &ix);
 	if(e != nil)
@@ -3504,6 +3565,8 @@ tktextsetcursor(Tk *tk, char *arg, char **val)
 	}
 	tktmarkmove(tk, mi, &ix);
 	tktsee(tk, &ix, 0);
+	if(was != nil)
+		announcecursor(tk, was, &ix);
 	return nil;
 }
 

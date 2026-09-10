@@ -144,6 +144,24 @@ When the ring is full the
 announcement is dropped.
 A screen reader is saying where you are now, and a backlog of where you used to
 be is worse than useless because you have to sit through it.
+.SS Moving about in text
+Moving the cursor in a
+.B text
+widget says where it went: the line when it changed line, the character
+when it did not.
+.PP
+That is the distinction every other screen reader makes, and the one that
+makes the arrow keys usable \(em up and down to survey, left and right to
+spell out.
+Moving about in text is most of what a person does in a shell window or
+an editor, and it used to say nothing at all: output was announced and
+could not be read back.
+.PP
+Only from the arrow keys, Home and End \(em what
+.B tkTextSetCursor
+is bound to.
+Text arriving moves the same cursor by another path and is announced by
+its own rule, so the two do not double up.
 .SS Which window
 Arriving in a window announces which window it is, and then where the
 keyboard is inside it \(em the order a person needs.
