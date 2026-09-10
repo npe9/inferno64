@@ -2883,3 +2883,56 @@ compiler's register reservation had broken codegen (the same tree
 boots clean with the fix and without
 .CW DISCTXREG ).
 Neither is written up as a cause anywhere, and neither should be.
+.NH 2
+Channels: a hazard by reading, not by measurement
+.PP
+.CW isend()
+and
+.CW irecv()
+walk and edit the channel's send and recv queues, and read and write
+the other Prog's
+.CW ptr ,
+which points into that program's stack.  None of it is locked.  It did
+not need to be: the VM lock made every Dis instruction atomic with
+respect to every other, and that is the lock
+.CW parallelvm=1
+removes.  Go's
+.CW hchan
+carries a mutex for exactly this.
+.PP
+That much is established by reading.  What reading cannot establish is
+whether two executors reach the same channel at once in practice, so
+the question was put to a probe \(em twice, because the first one was
+wrong.
+.IP "first attempt, rejected"
+A per-channel nesting count, incremented on entry and decremented on
+exit, reporting when it found a count already up.  Its
+.CW parallelvm=0
+arm fired, and under the VM lock a collision is impossible, so the
+count was measuring something else.  It was: a Dis exception leaves
+.CW isend()
+by longjmp, the decrement never runs, and the count is stuck high for
+the life of that channel.  This is the rule of this document's last
+section applied to itself \(em a probe that can produce a spurious
+reading needs a falsification arm, and this one needed it.
+.IP "second attempt, sound and silent"
+A stateless check: walk the queue on entry and report an entry that is
+not a plausible Prog in a plausible state.  It holds nothing, so it
+cannot leak, and it reports damage rather than suspicion.  Silent at
+.CW parallelvm=0 ,
+and silent at
+.CW parallelvm=1
+across three boots that all crashed \(em general protection violation
+once, page fault twice, after six or seven shell loop iterations.
+.PP
+So the queues are intact at every entry to
+.CW isend()
+and
+.CW irecv()
+in boots that go on to die.  The unlocked channel operations are still
+a hazard and a lock is still the right answer for them; they are not
+what is breaking these boots, and a channel lock should not be written
+up as the fix for a fault it has been measured not to cause.  The
+probe is not left in the tree: it is silent, and it walks a queue on
+every send and every receive, which is a cost the shipping
+configuration should not pay for a detector that has never fired.
