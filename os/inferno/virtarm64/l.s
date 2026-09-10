@@ -33,6 +33,7 @@
 #define	D_CLIDR_EL1	SYSARG5(3,1,0,0,1)
 #define	D_CCSIDR_EL1	SYSARG5(3,1,0,0,0)
 #define	D_CSSELR_EL1	SYSARG5(3,2,0,0,0)
+#define	D_CTR_EL0	SYSARG5(3,3,0,0,1)
 
 /*
  * QEMU -M virt, AArch64 (cortex-a72), single privilege level (EL1),
@@ -156,6 +157,16 @@ GLOBL	confptr(SB), $8
 GLOBL	stack(SB), $KSTACK
 GLOBL	mach0(SB), $(4*1024)
 
+/*
+ * The static base this kernel was linked with, so startcpu.c can hand
+ * it to a processor that has to load R28 before it can run any C.
+ * $setSB(SB) is the linker's own symbol for it and there is no way to
+ * name it from C.
+ */
+TEXT	getsb(SB), 1, $-4
+	MOV	$setSB(SB), R0
+	RET	R30
+
 TEXT	getcallerpc(SB), 1, $-4
 	MOV	0(RSP), R0
 	RET	R30
@@ -253,10 +264,46 @@ TEXT	getmpidr(SB), 1, $-4
  * named.  Then it parks: WFE in a loop, waking on any event and going
  * straight back, touching nothing further.
  */
+/*
+ * _secondary(record): where a processor started by PSCI's CPU_ON
+ * arrives.  R0 holds the context id CPU_ON was given, which is the
+ * address of that processor's own Secboot record; the MMU is off, so
+ * the address is physical as it stands and every access is to memory
+ * rather than to a cache.  startcpu.c cleaned the record, the Mach and
+ * the stack to the point of coherency before making the call, which is
+ * what the AArch64 boot protocol requires of whoever starts a
+ * processor ("the address range corresponding to the loaded kernel
+ * image must be cleaned to the PoC", and those requirements "apply to
+ * all CPUs").
+ *
+ * Nothing is written from here.  Every write this processor makes
+ * happens in secondary() below, with the MMU on and the memory Normal
+ * inner-shareable, so the primary reading it back is reading coherent
+ * memory rather than polling a location two agents touch with
+ * different cacheability -- which is the arrangement that works under
+ * an emulator with no cache and fails on a core with one.
+ *
+ * Secboot offsets; keep in sync with startcpu.c.
+ */
+#define	SB_MPIDR	0
+#define	SB_STACK	8
+#define	SB_SB		16
+#define	SB_MACH		24
+#define	SB_L0		32
+#define	SB_TCR		40
+
 TEXT	_secondary(SB), 1, $-4
-	MRS	SPR(D_MPIDR_EL1), R1
-	MOV	R1, (R0)
-	DSB	$15
+	MOV	R0, R19			/* the record; R19 survives mmuon */
+	MOV	SB_STACK(R19), R1
+	MOV	R1, RSP
+	MOV	SB_SB(R19), R28		/* SB, before any C */
+	MOV	SB_MACH(R19), R27	/* m */
+	MOV	$0, R26			/* up */
+	MOV	SB_L0(R19), R0
+	MOV	SB_TCR(R19), R1
+	BL	mmuon(SB)
+	MOV	R19, R0
+	BL	secondary(SB)
 _secondarypark:
 	WFE
 	B	_secondarypark
@@ -523,13 +570,27 @@ TEXT	mmuenable(SB), 1, $-4
 	MOV	R30, R20
 	MOV	tcr+8(FP), R21		/* before the call, for the same reason */
 	BL	dcinvalidate(SB)
-	MOV	R20, R30
 	MOV	R19, R0
+	MOV	R21, R1
+	BL	mmuon(SB)
+	MOV	R20, R30
+	RET	R30
 
-	MOV	$0xff00, R1		/* MAIR: attr1=Normal(ff), attr0=Device(00) */
-	MSR	R1, SPR(D_MAIR_EL1)
-	MSR	R21, SPR(D_TCR_EL1)
-	MSR	R0, SPR(D_TTBR0_EL1)	/* R0 = &l0 table (REGARG) */
+/*
+ * mmuon(l0, tcr): the switch itself, with no cache maintenance in it,
+ * so that a secondary can use it too.  A processor started by CPU_ON
+ * comes out of a power-on reset with its caches invalid -- which is
+ * why it does not repeat mmuenable()'s set/way walk, and why it must
+ * not: that walk on a core whose outer level is shared with a running
+ * processor would discard the other one's dirty lines.  Nothing here
+ * touches memory, so it is callable before there is a usable stack,
+ * and it uses only R0, R1, R2, R3 and R30.
+ */
+TEXT	mmuon(SB), 1, $-4
+	MOV	$0xff00, R2		/* MAIR: attr1=Normal(ff), attr0=Device(00) */
+	MSR	R2, SPR(D_MAIR_EL1)
+	MSR	R1, SPR(D_TCR_EL1)
+	MSR	R0, SPR(D_TTBR0_EL1)
 	ISB	$15
 	SYS	$SYSARG5(0,0,8,7,0)	/* TLBI VMALLE1 */
 	DSB	$15
@@ -537,11 +598,44 @@ TEXT	mmuenable(SB), 1, $-4
 	SYS	$SYSARG5(0,0,7,5,0)	/* IC IALLU: invalidate I-cache */
 	DSB	$15
 	ISB	$15
-	MRS	SPR(D_SCTLR_EL1), R1
-	MOV	$0x1005, R2		/* M(0) | C(2) | I(12) */
-	ORR	R2, R1, R1
-	MSR	R1, SPR(D_SCTLR_EL1)
+	MRS	SPR(D_SCTLR_EL1), R2
+	MOV	$0x1005, R3		/* M(0) | C(2) | I(12) */
+	ORR	R3, R2, R2
+	MSR	R2, SPR(D_SCTLR_EL1)
 	ISB	$15
+	RET	R30
+
+/*
+ * dccleanrange(p, n): clean [p, p+n) to the point of coherency, by
+ * virtual address, so that a processor reading it with its MMU off
+ * sees what this one wrote through its cache.  That is the whole of
+ * what starting a processor requires of the one that starts it.
+ *
+ * By VA and not by set/way: a set/way walk cleans whatever happens to
+ * be in the cache, which is not the same set of addresses and is not
+ * safe on a shared level.  The line size is CTR_EL0.DminLine, in words,
+ * and is read rather than assumed -- it is 64 bytes on the cores this
+ * has run on and 128 on some.
+ *
+ * Under TCG this is exercised and not tested: an emulator with no
+ * cache cannot tell a kernel that omits it from one that does not.
+ */
+TEXT	dccleanrange(SB), 1, $-4
+	MOVW	n+8(FP), R1
+	ADD	R0, R1, R1		/* end */
+	MRS	SPR(D_CTR_EL0), R2
+	LSR	$16, R2, R2
+	AND	$0xf, R2, R2		/* DminLine: log2 of the line in words */
+	MOV	$4, R3
+	LSL	R2, R3, R3		/* line size in bytes */
+	SUB	$1, R3, R4
+	BIC	R4, R0, R0		/* down to the line the range starts in */
+dcclean1:
+	SYS	R0, $SYSARG5(0,3,7,10,1)	/* DC CVAC, R0 */
+	ADD	R3, R0, R0
+	CMP	R1, R0
+	BLO	dcclean1
+	DSB	$15
 	RET	R30
 
 TEXT	setlabel(SB), 1, $-4

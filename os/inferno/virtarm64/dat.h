@@ -161,9 +161,19 @@ struct
 	s32	thunderbirdsarego;
 }active;
 
-#define	MACHP(n)	((Mach*)(void*)&mach0)
+/*
+ * MACHP(n) was a macro that ignored n and returned the one Mach there
+ * was.  It is an array now, filled by machinit() for machno 0 and by
+ * startcpus() for each processor it starts, and nil for a slot no
+ * processor occupies.  Every MACHP() in the portable code that walks
+ * to MAXMACH is guarded by active.machs[], which is why nil is safe:
+ * see the comment in startcpus() about why a parked processor does
+ * not set it.
+ */
+#define	MACHP(n)	(machp[n])
 
 extern Mach mach0;
+extern Mach *machp[MAXMACH];
 
 /*
  * m and up are registers rather than globals, which is what makes them

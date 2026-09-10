@@ -102,6 +102,19 @@ static uvlong *tables;
 static int ntable;
 static uvlong *l0;
 static uvlong mapmax;			/* one past the highest address mapped */
+static uvlong tcrword;			/* the TCR_EL1 the primary was given */
+
+/*
+ * The table base and the TCR, for a processor that has not run
+ * mmuinit() and must not: there is one map and every processor uses
+ * it.  startcpu.c hands these to each processor it starts.
+ */
+void
+mmuparams(uvlong *l0p, uvlong *tcrp)
+{
+	*l0p = (uvlong)(uintptr)l0;
+	*tcrp = tcrword;
+}
 
 extern void mmuenable(void*, uvlong);
 extern uvlong getmmfr0(void);
@@ -319,9 +332,10 @@ mmuinit(void)
 	maprange(ptlo, pthi, Pnormal|Pro);
 
 	ips = ipsfield();
+	tcrword = Tcrbase | ((uvlong)ips<<32);
 	print("mmu: %d tables, ram to %#llux, %llud KB firmware-reserved unmapped, ecam %#llux, top %#llux, ips %d\n",
 		ntable, (uvlong)conf.topofmem, unmapped/1024,
 		(uvlong)Ecambase, mapmax, ips);
 
-	mmuenable(l0, Tcrbase | ((uvlong)ips<<32));
+	mmuenable(l0, tcrword);
 }

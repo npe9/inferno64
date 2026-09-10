@@ -8,6 +8,7 @@
 #include "version.h"
 
 extern Mach mach0;
+Mach *machp[MAXMACH];
 Conf conf;
 
 extern ulong kerndate;
@@ -72,6 +73,7 @@ machinit(void)
 	m = &mach0;
 	memset(m, 0, sizeof(Mach));
 	m->machno = 0;
+	machp[0] = m;
 	memset(&active, 0, sizeof(active));
 	active.machs[0] = 1;
 }
