@@ -260,6 +260,7 @@ struct Pctx
 	int	nlocal;		/* its length, for the Runqmax bound */
 	Inst*	syncpc;		/* the PC p->reg carries; see REGSYNCED() */
 	int	inxec;		/* a quantum is open on this context */
+	void*	owner;		/* the Proc that claimed it; Proc*, diagnosis */
 };
 
 struct Progs

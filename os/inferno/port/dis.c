@@ -87,6 +87,7 @@ claimctx(void)
 	 */
 	if(npctxused == 0){
 		npctxused = 1;
+		pctxs[0]->owner = up;
 		unlock(&isched.l);
 		return pctxs[0];	/* == &_pctx, already in pctxs[] */
 	}
@@ -95,6 +96,7 @@ claimctx(void)
 		return pctxs[0];	/* share; correct, just not parallel */
 	}
 	c = &pctxpool[npctxused - 1];
+	c->owner = up;
 	pctxs[npctx++] = c;
 	npctxused++;
 	unlock(&isched.l);
@@ -189,6 +191,32 @@ stoptheworld(void)
 	coherence();
 	while(othersrunning() > 0){
 		stwwaits++;
+		{	/* MULTICORE INSTRUMENTATION - temporary */
+			static int told;
+			Proc *q;
+			int i;
+
+			if((stwwaits % 50000) == 0 && told++ < 4){
+				print("stw: %d waits, cpu%d %s pid %d waiting for:\n",
+					stwwaits, m->machno, up->text, up->pid);
+				for(i = 0; i < npctx; i++){
+					if(pctxs[i] == curP || !pctxs[i]->inxec)
+						continue;
+					q = (Proc*)pctxs[i]->owner;
+					print("  ctx %d curprog %#p", i,
+						pctxs[i]->curprog);
+					if(q == nil)
+						print(" owner nil\n");
+					else
+						print(" owner pid %d %s state %d"
+							" mach %#p vmheld %d"
+							" iprog %#p wired %#p\n",
+							q->pid, q->text, q->state,
+							q->mach, q->vmheld,
+							q->iprog, q->wired);
+				}
+			}
+		}
 		sched();
 	}
 }
@@ -727,8 +755,25 @@ delprog(Prog *p, char *msg)
 	 * address to a new Prog, progreg() gives out curR for a program
 	 * whose live registers are somewhere else.
 	 */
-	if(p == curP->curprog)
+	if(p == curP->curprog){
 		curP->curprog = nil;
+		/*
+		 * And the quantum with it: there is no quantum once the
+		 * program running in it has been freed.
+		 *
+		 * delprog() releases and reacquires the interpreter while it
+		 * closes p's groups (see the comment above disracepid), and
+		 * acquire()'s irestore() re-opens a quantum on a Prog that is
+		 * about to be destroyed.  Nothing afterwards closes it:
+		 * vmachine()'s handler cleared inxec before progexit() ran,
+		 * and this path never returns to xec().  The context is then
+		 * never at a safepoint again -- with parallelvm=1
+		 * stoptheworld() waited on it for the rest of the boot,
+		 * "ctx 2 curprog 0x0 set by irestore from closeegrp+0xe,
+		 * owner pid 9 dis state Queueing vmheld 0".
+		 */
+		curP->inxec = 0;
+	}
 	p->state = 0xdeadbeef;
 	free(o->user);
 	free(p->killstr);
