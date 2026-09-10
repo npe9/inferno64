@@ -697,32 +697,40 @@ second, and
 (was a register-poke stub) now does full-duplex FIFO transfers and
 reads each flash's JEDEC id - the NOR flash answers 0x9d 0x70 0x19
 (ISSI IS25WP256), proving the bus reaches its slave.  Reading an SD
-card over the MMC-SPI controller is a separate matter: the SD-over-SPI
-handshake (CMD0/CMD8/ACMD41/CMD58 then a CMD17 block read) was written
-and exercised, but no slave answered on that controller - the very same
-transfer code reads the NOR flash correctly, so the transport is sound;
-the card is attached (QEMU's qtree shows an
-.CW ssi-sd
-with a
-.CW sd-card-spi
-behind it) but its chip-select is not the SPI controller's own: QEMU
-wires it to a GPIO line
-.CW ( ssi-gpio-cs ) ,
-so the card only listens when that GPIO pin is driven low, which the
-SiFive SPI's
+card over the MMC-SPI controller works too, and this paragraph used to
+say the opposite, so the correction belongs here rather than a
+footnote.  It read: the SD-over-SPI handshake was written and exercised
+but no slave ever answered, QEMU wires the card's chip-select to a GPIO
+line
+.CW ( ssi-gpio-cs )
+the SiFive SPI's
 .CW csmode
-never touches.  Driving all sixteen GPIO pins low in turn as a candidate chip-select
-never once selected the card (QEMU's SSI returns 0 for an unselected
-slave, and every transfer read 0), and the SiFive controller's own
-chip-select does not reach it either.  The GPIO writes do take effect -
-sweeping the low pins trips
-.CW gpio-restart
-and reboots the machine - so the conclusion is that QEMU's sifive_u
-does not wire the SD's chip-select to anything the guest can drive:
-SD-over-SPI is unreachable on this machine, a model limitation rather
-than a driver gap.  The full handshake and block read are written and
-correct; they simply have no way to assert CS here.  The flash JEDEC
-read already shows the SPI driver works against a real slave.  I2C is a
+never touches, sweeping all sixteen GPIO pins never selected it, and so
+SD-over-SPI was a model limitation and unreachable here.  That
+conclusion was wrong, and the reason it looked right is worth keeping:
+QEMU's
+.CW sifive_u
+creates the
+.CW ssi-sd
+and its
+.CW sd-card-spi
+whether or not a card is behind them, and the qtree is character for
+character the same either way \(em
+.CW "drive = \(dqsd0\(dq\&"
+and all, naming a blockdev that does not exist \(em so the qtree that was
+read as proof that a card was attached was showing an empty slot.
+.CW "info qtree"
+with and without
+.CW "-drive if=sd"
+was compared on 10.1.3 to be sure of that, since it is the whole reason
+the earlier conclusion looked well founded.  Handed a real card, the
+same handshake completes, and
+.CW sdspisifive.c
+reads blocks, writes and reads a block back, moves sixteen blocks in
+single calls, and carries a reamed kfs with a file round-tripped
+through it.  The chip-select was never the problem; the empty slot was.
+The flash JEDEC read shows the SPI driver works against a real slave,
+and the card now shows it works against two.  I2C is a
 different story: no QEMU machine this tree currently boots models an
 I2C controller at all (sifive_u and spike have none), so delivering I2C
 needs a raspi-class board bring-up - a real SoC with BCM2835 SPI, I2C
