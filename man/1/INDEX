@@ -389,6 +389,7 @@ mand wm-misc
 mash wm-sh
 mash-make mash-make
 mash-tk mash-tk
+masktest masktest
 massspring massspring
 match sh-regex
 math-misc math-misc

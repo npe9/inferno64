@@ -1215,6 +1215,43 @@ zwin(zs: ref Polyfill->Zstate, zv, x, y: int): int
 # Software Z-rotate blit (nearest-neighbour) for Sprite3ZB.
 
 
+# Plan 9 lays an image row out relative to a byte boundary, not to the
+# rectangle's left edge, so an image whose r.min.x is not a multiple of
+# 8/depth carries an extra unit per row and starts its first pixel part
+# way into the first one.  (r.dx()*depth + 7)/8 - which this file used to
+# compute for a foreign image it was about to read - is that length only
+# when the rectangle happens to be byte-aligned, and it is short for 84
+# of the 229 masks in icons/temple.  readpixels then failed outright and
+# transformsprite returned without drawing, so every rotated or z-tested
+# sprite from those files came out blank; the other 145 were read at the
+# wrong bit offset, misaligned by up to seven pixels.  The .mask files
+# themselves are right - this was the reader.  Transcribed from
+# libdraw/bytesperline.c, whose ceildiv() is the (a+b-1)/b form only for
+# a non-negative argument.
+ceildiv(a, b: int): int
+{
+	if(a >= 0)
+		return (a + b - 1) / b;
+	return -((-a) / b);
+}
+
+bytesperline(r: Rect, d: int): int
+{
+	if(r.min.x >= 0)
+		return ceildiv(r.max.x * d, 8) - (r.min.x * d) / 8;
+	return ceildiv(-r.min.x * d, 8) + ceildiv(r.max.x * d, 8);
+}
+
+# Bit offset of r.min.x within the first unit of a row.  Zero for depth 8
+# and 32, which is why the source image never needed it and only the
+# 1-bit mask does.
+firstbit(r: Rect, d: int): int
+{
+	if(r.min.x >= 0)
+		return r.min.x * d - (r.min.x * d) / 8 * 8;
+	return r.min.x * d + ceildiv(-r.min.x * d, 8) * 8;
+}
+
 # Truncate towards zero for a non-negative argument.  Limbo's int rounds
 # to nearest and rounds a half away from zero, so int(0.5) is 1 - which
 # on a 1:1 sprite made every column come out one to the right and lost
@@ -1369,23 +1406,29 @@ transformsprite(dst: ref Image, sp: Point, sw, sh: int,
 		return;
 	# The coverage mask is not optional.  It used to be built only when
 	# the caller supplied a mask of its own, so a sprite with no mask -
-	# and 85 of this tree's 230 .mask files fail to open, see
-	# icons/temple - was drawn as the whole bw x bh box, padding
-	# included, which for a CMAP8 tmp is a solid black rectangle around
-	# the art.  Every pixel this loop actually writes sets its bit; the
-	# rest stay clear and never reach the destination.
+	# and 85 of icons/temple's 230 .mask files were once too short to
+	# open, so nil was what the caller had - was drawn as the whole
+	# bw x bh box, padding included, which for a CMAP8 tmp is a solid
+	# black rectangle around the art.  Those files were repacked and all
+	# 229 open now, checked by masktest(1); the mask is still built
+	# unconditionally, because a caller with no mask at all is an
+	# ordinary case and a black box is not an acceptable answer to it.
+	# Every pixel this loop actually writes sets its bit; the rest stay
+	# clear and never reach the destination.
 	tmpm := disp.newimage(Rect((0, 0), (bw, bh)), Draw->GREY1, 0, 0);
 	if(tmpm == nil)
 		return;
 	# Source pixels
-	sbpl := (iw * img.depth + 7) / 8;
+	sbpl := bytesperline(img.r, img.depth);
 	src := array[sbpl * ih] of byte;
 	if(img.readpixels(img.r, src) < 0)
 		return;
 	mbpl := 0;
+	mb0 := 0;
 	msrc: array of byte = nil;
 	if(mask != nil){
-		mbpl = (iw * mask.depth + 7) / 8;
+		mbpl = bytesperline(mask.r, mask.depth);
+		mb0 = firstbit(mask.r, mask.depth);
 		msrc = array[mbpl * ih] of byte;
 		if(mask.readpixels(mask.r, msrc) < 0)
 			return;
@@ -1423,10 +1466,11 @@ transformsprite(dst: ref Image, sp: Point, sw, sh: int,
 			opaque := 1;
 			if(msrc != nil){
 				if(mask.depth == 1){
-					bit := msrc[v * mbpl + (u >> 3)];
-					opaque = (int bit & (16r80 >> (u & 7))) != 0;
+					ub := mb0 + u;
+					bit := msrc[v * mbpl + (ub >> 3)];
+					opaque = (int bit & (16r80 >> (ub & 7))) != 0;
 				}else
-					opaque = msrc[v * mbpl + u] != byte 0;
+					opaque = msrc[v * mbpl + mb0 / 8 + u] != byte 0;
 			}
 			if(!opaque)
 				continue;

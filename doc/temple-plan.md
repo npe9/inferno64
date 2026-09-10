@@ -216,11 +216,45 @@ no re-extraction was needed. `sprite2d` now always builds its coverage
 mask, so a missing mask degrades to an unmasked sprite rather than a
 black box.
 
-Still broken: `asciiorgan_1`. Its rectangle is `(-108,-56)-(-51,1)`, the
-only asset lying entirely to the left of the origin, and both its `.bit`
-and `.mask` fail `memload` with "bad writeimage call" even at the size
-`bytesperline` asks for. `unitsperline` computes that size through an
-unsigned wraparound for a negative `r.max.x`; that is where to start.
+`asciiorgan_1` outlived that repack. Its rectangle is `(-108,-56)-(-51,1)`,
+the only asset lying entirely to the left of the origin, and both its
+files still failed `memload` with "bad writeimage call" at the size
+`bytesperline` asked for. The cause was in `libdraw` rather than in the
+asset: `unitsperline` added `bitsperunit-1` before dividing on both
+terms, and `(a+b-1)/b` is the ceiling only for a non-negative `a`, so a
+negative `r.max.x` came out one unit too long while `loadimage`'s own
+shift floored. Fixed with an explicit `ceildiv()`; the row length changes
+for that one image in the whole tree and for nothing else.
+
+## The code that read the masks had the same bug
+
+Fixed 2026-09-10. Repacking the files fixed `Display.open`, which is the
+route a plain masked `draw` takes. It did not fix the other route.
+
+`draw3d`'s `transformsprite` - the general resample, taken whenever a
+sprite is rotated or z-tested - does not hand the mask to `draw`. It
+reads the mask's bytes itself, and it sized that buffer with
+`(iw * mask.depth + 7) / 8`, which is the same wrong formula the
+extractors used. **84 of the 229 masks need a longer row than that**, so
+`readpixels` refused the buffer, `transformsprite` returned on the error
+path, and the sprite drew *nothing at all*. The other 145 were read with
+the first pixel assumed to be at bit 0, which is off by up to seven
+pixels wherever `r.min.x * depth` is not a multiple of 8.
+
+The two providers now carry a transcription of `bytesperline` and a
+`firstbit` beside it, and use both. `blackdiamond_1`, `bombergolf_4` and
+`pick_1` go from 0 lit pixels to 621, 220 and 293; `rocket_1`, whose row
+length happened to match, goes from a coverage shifted one pixel left to
+the right one.
+
+`masktest(1)` is the standing check: for all 229 pairs, that both files
+open, that a 1:1 masked draw changes exactly the pixels the mask marks,
+and that `draw3d`'s own resample agrees with that draw pixel for pixel.
+Its negative control needs no edit - it asks `readpixels` for every mask
+at the old row length and fails if *none* of them is refused, since that
+would mean the shape that broke had left the tree. Restoring the old
+formula fails 103 of the 229 loop cases: the 84 blank ones and 19 more
+that were misaligned.
 
 ## Getting the source and the art
 

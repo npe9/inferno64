@@ -1,0 +1,119 @@
+.TH MASKTEST 1
+.SH NAME
+masktest \- check the icons/temple sprite masks, and the code that reads them
+.SH SYNOPSIS
+.B masktest
+[
+.B \-v
+]
+.SH DESCRIPTION
+A Plan 9 image row is laid out from a byte boundary, not from the
+rectangle's left edge:
+an image whose
+.B r.min.x
+is not a multiple of 8/depth carries an extra unit per row and starts
+its first pixel part way into the first one \- see
+.B libdraw/bytesperline.c .
+Every mask in
+.B /icons/temple
+is 1 bit deep and most of them are centred on the sprite's origin, so
+most of them have such a rectangle, and both halves of that layout have
+been got wrong here before: once in the files, when the extractors wrote
+.RI ( width +7)/8
+bytes with the first pixel at bit 0, and once in
+.IR draw3d (2),
+which computed the same wrong length for the buffer it read a mask into.
+.PP
+.I Masktest
+runs three checks over every
+.B .bit
+and
+.B .mask
+pair in
+.BR /icons/temple ,
+in the order the data flows:
+.TP
+.B open
+Both files open at all, and describe the same rectangle.
+A mask whose file is shorter than
+.I bytesperline
+asks for does not open, and a sprite whose mask came back nil used to
+draw as its whole bounding box \- a black rectangle.
+.TP
+.B draw
+A 1:1 masked
+.I draw
+onto a ground the 16-colour palette does not contain changes exactly the
+pixels the mask marks, and no others.
+Neither side of that comparison is computed by the test: the coverage
+comes back from painting white through the same mask, so a row-length
+mistake in the test cannot cancel one in what it is testing.
+.TP
+.B loop
+The same sprite through
+.IR draw3d (2)'s
+general resample \- the path that reads the mask's bytes itself rather
+than handing it to
+.I draw
+\- agrees with that masked draw in every pixel.
+The call is a full turn rather than no turn, which is an identity
+rotation but is not literally zero, so it misses the native-blit
+shortcut and takes the pixel loop.
+.PP
+.B \-v
+prints a line per sprite rather than only the failures.
+The last line is
+.B PASSED
+or
+.BR FAILED .
+.SH EXAMPLE
+.EX
+emu\-cocoa \-r. /dis/masktest.dis
+.EE
+.SH SOURCE
+.B /appl/cmd/masktest.b
+.SH SEE ALSO
+.IR draw3d (2),
+.IR sprite2dtest (1),
+.IR vspritetest (1),
+.IR draw3dbench (1)
+.SH DIAGNOSTICS
+The
+.B loop
+check only tests anything if the corpus still contains a mask whose row
+is longer than
+.RI ( width +7)/8,
+so the test asks
+.I readpixels
+for every mask at that old length and counts the refusals.
+That count is printed as
+.BR control: ,
+and the test fails if it is zero \- which would mean the shape that
+broke had left the tree and the check had quietly stopped covering it.
+84 of the 229 masks have it today.
+.SH BUGS
+It needs a display, so it runs under
+.I emu\-cocoa
+and not
+.IR emu\-g ,
+though it draws only into memory.
+.PP
+It checks the resample at an identity rotation only.
+That is the case with an oracle; a reader that got the mask's row right
+and the resample wrong at thirty degrees would pass here, and
+.IR sprite2dtest (1)
+is what covers the resample itself.
+.PP
+Only
+.B /icons/temple
+is checked.
+The masks under
+.B /icons
+proper are not, and neither are the 64
+.B .mesh
+files beside these, which are not images.
+.PP
+It says nothing about whether a mask marks the right pixels \- only that
+whatever it marks is what gets painted.
+A mask that covered the wrong half of its sprite would pass every check
+here.

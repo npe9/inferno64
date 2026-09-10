@@ -171,6 +171,7 @@ TARG=\
 	man2html.dis\
 	man2speak.dis\
 	man2txt.dis\
+	masktest.dis\
 	masto.dis\
 	mastotest.dis\
 	mc.dis\
