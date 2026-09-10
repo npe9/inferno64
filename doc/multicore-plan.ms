@@ -3154,3 +3154,92 @@ Both were caught the same way, by an arm that had to be silent and was
 not.  The one that held \(em the heapmonitor counter \(em was the one
 whose control was built into it as a second bucket rather than bolted
 on as a second configuration.
+.NH 2
+The livelock in the stop, and how it was hiding
+.PP
+.CW stoptheworld()
+waited with "while another context has a quantum open,
+.CW sched() ",
+and
+.CW enterquantum()
+withdrew and retried the same way.  That is a spin.  With more than one
+interpreter it livelocks: the collector yields, every other interpreter
+yields, and the one process that has to finish its quantum to clear the
+flag is the one that does not get a processor.
+.PP
+It was found by accident, while trying to answer a different question,
+and the accident is the part worth keeping.  A twenty-eight boot
+interleaved comparison of two kernels differing only in four
+reference counts reported the one with the atomic counts failing less
+often \(em five boots in fourteen against eight.  That looked like a
+result.  It was not: the same kernel made no progress at all in eight
+boots of fourteen and did a quarter of the work, because it was hanging
+rather than crashing.  Forty-four of fifty-one stalls named the same
+blocker, a context whose owner sat in
+.CW Ready
+with a quantum open, while the collector logged
+.CW "stw: 200000 waits" .
+.PP
+Three separate mistakes had to be corrected before that was visible,
+and all three are the same mistake in different clothes:
+.IP 1.
+The failure classifier keyed on
+.CW panic: ,
+and the kernel in question failed with
+.CW "marklist: bad container"
+and
+.CW "destroy: bad v" ,
+neither of which contains that word.  So "seven panics became one" was
+mostly a change in how the failures were spelled.
+.IP 2.
+A boot that stalls before reaching the shell has nothing to report, and
+was therefore scored a pass.  Silence is not success \(em the rule was
+already written down in this document, about somebody else's probe.
+.IP 3.
+The A/B ran the same kernel first in every pair, so any varying
+background load fell on the second slot.  Alternating the order left
+the result standing, which is the only reason it can be believed.
+.PP
+The fix is a bound: two thousand tries, then
+.CW gcstw
+is cleared and the collection is abandoned.  A collection that does not
+happen costs memory until the next one, and there is always a next one;
+a collection that cannot start costs the boot.  Parking the waiter, as
+Go parks an M, is the better answer and a larger change.
+.PP
+Measured at
+.CW *parallelvm=1 ,
+.CW "-smp 2" ,
+fourteen boots against the two arms of that comparison:
+.IP
+.nf
+                    failed  no-progress  iters  stalled
+pre-fix, unbounded   8/14      2/14        52      4
+atomic,  unbounded   5/14      8/14        14      9
+bounded              8/14      1/14        60      2
+.fi
+.PP
+It gives up eight times in fourteen, which is the mechanism working.
+The boot fails as often as it ever did \(em the heap corruption is
+untouched \(em but it now fails while running rather than while stuck,
+and throughput is the highest measured on this configuration.
+.NH 2
+A false alarm this branch created
+.PP
+.CW "marklist: bad container ... ref 0"
+is not a fault.
+.CW destroy() Ns 's
+handover leaves an object that has reached zero still allocated with
+its type header intact, and that is exactly the shape
+.CW checklistcell()
+was calling bad.  Zero boots at
+.CW parallelvm=0 ,
+where the handover cannot trigger; zero at
+.CW parallelvm=1
+before it landed; six after.  The check now reports a negative count
+and a wrong type, which is what it was written for.
+.PP
+Worth noticing as a class: a fix that changes an invariant has to go
+looking for the assertions that rest on it.  Nothing pointed at this
+one \(em it was found because the new message had not been seen before
+and was chased rather than assumed to be the bug being hunted.
