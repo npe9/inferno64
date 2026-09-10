@@ -250,13 +250,16 @@ sched(void)
 {
 	Proc *p;
 
-	if(m->ilockdepth != 0)
+	if(m->ilockdepth != 0){
+		extern void ilockheldpcs(void);
+		ilockheldpcs();
 		panic("cpu%d: ilockdepth %d, last lock %#p at %#p, sched called from %#p",
 			m->machno,
 			m->ilockdepth,
 			up != nil ? up->lastilock: nil,
 			(up != nil && up->lastilock != nil) ? up->lastilock->pc: 0,
 			getcallerpc(&p+2));
+	}
 	if(up != nil) {
 		/*
 		 * Delay the sched until the process gives up the locks

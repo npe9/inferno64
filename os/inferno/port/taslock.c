@@ -13,6 +13,21 @@ long cumilockcycles;
 uintptr maxlockpc;
 uintptr maxilockpc;
 
+/*
+ * The caller of each held ilock, innermost last.  See ilock().
+ */
+uintptr ilockpc[8];
+
+void
+ilockheldpcs(void)
+{
+	int i;
+
+	for(i = 0; i < nelem(ilockpc); i++)
+		if(ilockpc[i] != 0)
+			iprint("  ilock %d held from %#p\n", i, (void*)ilockpc[i]);
+}
+
 struct
 {
 	ulong	locks;
@@ -151,6 +166,16 @@ ilock(Lock *l)
 	}
 acquire:
 	m->ilockdepth++;
+	/*
+	 * Who is holding each level, so that a depth that never comes
+	 * back down can be attributed.  sched() and qlock() report the
+	 * depth and os/inferno/port/proc.c's panic prints up->lastilock,
+	 * which is nil for a lock taken in interrupt context -- exactly
+	 * the case that leaks one -- so the depth is all there was to go
+	 * on.  ilockpc[] is that missing half; ilockheldpcs() prints it.
+	 */
+	if((uint)m->ilockdepth <= nelem(ilockpc))
+		ilockpc[m->ilockdepth-1] = pc;
 	if(up)
 		up->lastilock = l;
 	l->sr = x;
@@ -256,6 +281,8 @@ iunlock(Lock *l)
 	coherence();
 	l->key = 0;
 	m->ilockdepth--;
+	if((uint)m->ilockdepth < nelem(ilockpc))
+		ilockpc[m->ilockdepth] = 0;
 	/*
 	 * Caught here rather than at the next sched(), which is where
 	 * proc.c notices and which is too late to say who did it: by
