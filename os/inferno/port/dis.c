@@ -1653,12 +1653,31 @@ vmachine(void*)
 		}
 
 		/*
-		 * Safepoint.  Checked before a quantum is opened, which is
-		 * the point at which this context's p->reg is current and
-		 * the collector may walk it.
+		 * Safepoint.  Publish first, then re-check.
+		 *
+		 * Testing gcstw and only afterwards letting xec() set
+		 * inxec leaves a window: a context can pass the test, the
+		 * collector can then set gcstw and find othersrunning() == 0
+		 * because inxec is not set yet, and marking begins while
+		 * this context enters a quantum.  The panic that showed up
+		 * with parallelvm forced to 1 was in poolalloc and poolfree,
+		 * which is what a collector running against a live mutator
+		 * looks like.
+		 *
+		 * So claim the quantum first, make the claim visible, and
+		 * only then look at gcstw; if a collection has started,
+		 * withdraw the claim and wait.  The collector sets gcstw and
+		 * then reads inxec, so the two orderings cannot both miss.
 		 */
-		while(gcstw)
+		for(;;){
+			curP->inxec = 1;
+			coherence();
+			if(gcstw == 0)
+				break;
+			curP->inxec = 0;
+			coherence();
 			sched();
+		}
 
 		r = curP->runhd;
 		if(r != nil) {
@@ -1744,6 +1763,8 @@ vmachine(void*)
 			}
 			up->env = &up->defenv;
 		}
+		curP->inxec = 0;	/* claim withdrawn; xec() clears it too */
+		coherence();
 		/*
 		 * BusyGC like emu (throttled).  Never pushrun when addrun is
 		 * set — that panics "pushrun addrun" (seen on virt at

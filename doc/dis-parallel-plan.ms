@@ -2068,3 +2068,51 @@ per-collection mark state has to avoid.  It has already earned that
 once, catching
 .CW regsyncpc
 still being a global on the first boot where a second context existed.
+.NH 2
+What breaks when the lock comes off, measured
+.PP
+.CW parallelvm
+forced to 1 on virtarm64, so the VM lock is not taken and the
+stop-the-world added for the collector is what keeps it correct.
+.CW nvm
+\(em the count of processes inside the interpreter at once, which has
+read 1 for the whole life of this branch \(em reaches 7.
+DIS-STRESS-OK and VIRT-OK pass.  Then it faults, and the fault is
+specific enough to name the next work.
+.P1
+runq: 8 dis programs ready at once (8 by state), cpu0
+delprog: pid 4 opening window while pid 3's was still open (overlap 1)
+trap type 0 esr 0x96000021 pc 0x4004d844
+ tval 0x747269762d796de5
+.P2
+.IP \(bu
+.CW "esr 0x96000021"
+is a data abort at the current EL with DFSC 0x21, an alignment fault,
+and
+.CW tval
+is the address:
+.CW 0x747269762d796de5 ,
+which is ASCII \(em
+.CW "my-virt" .
+A pointer field is holding string bytes.
+.IP \(bu
+The line above it is this tree's own instrumentation, written long
+before this experiment:
+.CW delprog()
+releases the VM lock to close the file, environment and signal groups
+and then re-acquires it, and the counter exists because that window was
+suspected.  With one lock it could only overlap with itself; with the
+lock off, pid 4 entered it while pid 3 was still inside.
+.PP
+So the first thing to fix is not the collector, which the
+stop-the-world already covers and whose assertion stayed silent
+throughout, but
+.CW delprog() Ns 's
+own window \(em and the tree already knew where it was.  That is the
+value of having left the instrumentation in: the first real
+concurrency exposed it in one boot.
+.PP
+Recorded as an experiment, not a state.  The default is 0, which is the
+configuration 192 boots verify.  What has been shown is that the lock
+can be removed, that seven interpreters then run at once, and that two
+specific things break when they do.
