@@ -317,7 +317,17 @@ iunlock(Lock *l)
 	 * running while an outer ilock is still held, which is an
 	 * out-of-order release.
 	 */
-	if(m->ilockdepth > 0 && islo())
+	if(m->ilockdepth > 0 && islo()){
 		iprint("iunlock: interrupts on at ilockdepth %d, pc %#p, lock pc %#p\n",
 			m->ilockdepth, getcallerpc(&l), l->pc);
+		/*
+		 * And who still holds one.  That is the lock taken while
+		 * interrupts were enabled, which is the state that makes
+		 * the rest possible: this unlock only restores what its
+		 * own ilock saved, so if it turns interrupts back on with
+		 * a lock outstanding, the outstanding one was taken in a
+		 * context that already had them on.
+		 */
+		ilockheldpcs();
+	}
 }
