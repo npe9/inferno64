@@ -3684,6 +3684,209 @@ exported with no authentication.  Both are named in
 .CW doc/inferno-ndb.ms
 as what is demonstrated rather than done.
 .NH 1
+Towards a second processor on arm64
+.PP
+Item 9's arm64 half is the only thing left on this plan that does not
+need an account or a rented box, so it is what this round went at.  It
+lists a
+.CW Mach ,
+a stack and a scheduler per processor,
+.CW MAXMACH
+above 1, a real
+.CW cmpswap
+and per-processor redistributor setup.  Four of those are done, and
+the list was missing the one that has to come first.
+.PP
+.B "The atomics were spl-masked C."
+.CW cmpswap() ,
+.CW ainc()
+and
+.CW adec()
+in
+.CW archvirtarm64.c
+masked interrupts, did the read-modify-write and restored \(em correct
+on one processor and silent about what another is doing to the same
+word.  They are exclusive-monitor loops in
+.CW l.s
+now, with LDAXRW for the acquire side and STLXRW for the release side,
+beside
+.CW _tas ,
+which already was one.  This tree has the counter-example for why the
+barriers are not decoration: emu's
+.CW unlock()
+had no release barrier and the scheduler deadlocked in roughly one run
+in two, with a signature that reads as a lock bug and is a
+memory-ordering one.
+.PP
+7l could not encode them.  7a has accepted LDAXR and STLXR all along
+and
+.CW asmout.c
+had the encodings, but the
+.CW oprange
+entry that maps them onto the ldxr/stxr forms was missing, so 7l
+answered "illegal combination LDAXRW NONE NONE REG".  Two rows were
+also wrong: ALDAXRW had o2 set, which encodes LDLARW \(em a load that
+does not take the exclusive monitor at all, so any compare-and-swap
+built on it would spin forever \(em and ASTLXP/ASTLXPW had their sizes
+swapped.  The encodings 7l emits were checked against an independent
+disassembler (assembled as data by clang, read back by objdump) rather
+than against a second reading of the manual.
+.PP
+.CW atomiccheck()
+runs once, before any other processor exists, and checks the value
+stored, the value returned, and that a failed
+.CW cmpswap
+stores nothing and says so.  The negative case is the point: a
+.CW cmpswap
+that always succeeds passes every positive check there is.
+.PP
+.B "m and up were globals."
+A global has exactly one of itself, so every processor would have
+shared one "which
+.CW Mach
+am I" and one "which
+.CW Proc
+am I running".  They are extern registers now, R27 and R26, the same
+mechanism
+.CW os/inferno/pc64
+uses for R15 and R14.  Nothing in the toolchain had to change: 7c's
+.CW ginit()
+already reserves REGEXT and REGEXT-1 in
+.CW resvreg
+before any declaration is seen, so no C it compiles ever allocates
+them, in any translation unit \(em which is why libinterp and libsec,
+which never see this board's
+.CW dat.h ,
+are unaffected.  Two things are load-bearing and the header now says
+so: declaration order is the register assignment, since
+.CW exreg()
+counts down from REGEXT; and
+.CW l.s 's
+.CW _main
+must load R27 before it calls
+.CW main() .
+The proof it is real rather than a rename is the symbol table \(em the
+kernel before it has
+.CW "400eb100 D m"
+and
+.CW "400eb338 D up" ,
+and the one after has neither.
+.PP
+.B "The kernel used 256 MB of whatever machine it was given."
+.CW archconfinit()
+set
+.CW conf.topofmem
+to
+.CW PHYSDRAM+DRAMSIZE ,
+and
+.CW mem.h 's
+.CW DRAMSIZE
+is 256 MiB commented "matches -m 256".  The firmware already knows, and
+.CW bootargsinit()
+had already parsed its map into
+.CW /env
+as
+.CW *e820= .
+What was needed was to read all of it: a UEFI map is not one run, and
+on this machine with
+.CW "-m 1024"
+the usable memory comes back as eight type-1 stretches with the
+firmware's own reserved regions between them \(em the run containing
+the kernel being the smallest of them at 64 MiB, so taking only that
+one is worse than the constant it replaces.  Every run goes into
+.CW conf.mem[] ,
+which
+.CW xinit()
+already walks in full.  Measured: 476 MB at
+.CW "-m 512" ,
+988 at
+.CW "-m 1024" ,
+4060 at
+.CW "-m 4096" ,
+and the main Dis pool follows \(em a 100 MB contiguous chunk against
+851 MB \(em where before it was the same either way.
+.PP
+.B "And then the MMU, which was not on the list."
+With
+.CW SCTLR_EL1.M
+clear every data access is Device-nGnRnE, and LDXR/STXR on Device
+memory is CONSTRAINED UNPREDICTABLE.  QEMU's TCG implements a global
+monitor regardless of memory type, so the new atomics behave correctly
+under it and would not necessarily behave correctly on a core.  That
+makes the MMU a prerequisite for the rest of item 9 rather than an
+optimisation, and it is recorded here because the plan did not have
+it.
+.PP
+Four levels and a 48-bit virtual address, where
+.CW os/inferno/raspi3b/mmu.c
+has three and 39 bits: this machine's ECAM is at 0x4010000000 and its
+high PCIe MMIO window at 0x8000000000, which 39 bits cannot reach.  The
+map comes from
+.CW conf.mem[] ,
+so it describes the machine rather than a constant, and the page
+tables get a 2 MiB block of their own mapped read-only \(em the
+tripwire raspi3b keeps, so a wild store into them faults at the store.
+.PP
+Three bugs, each found a different way.
+.CW mmuenable()
+called
+.CW dcinvalidate() ,
+which reads CLIDR_EL1 into R0 \(em REGARG, holding the table pointer
+\(em so TTBR0 was loaded with cache geometry and the machine died at
+the SCTLR write with a correct set of tables nothing pointed at; found
+by writing single characters to the PL011 and seeing which arrived.
+.CW "base &= ~((uvlong)1<<L2SHIFT)-1"
+is not that mask, because unary
+.CW ~
+binds tighter than
+.CW - ,
+so it cleared two bits and left the rest; every other caller had an
+aligned base and was unharmed, and the one it broke made the kernel's
+own text and stack read-only.  And
+.CW subtable()
+refused to split a block, which was a deliberate choice and a wrong
+one: the order a map is built in is not the caller's to control when
+it comes from a firmware map, and the same code panicked under UEFI
+and not under
+.CW -kernel .
+.PP
+.B "What a bench cannot say."
+.CW memspeed()
+reads 16 MB and reports 15503 MB/s with the MMU on against 14427 with
+it off.  That is not evidence the mapping is right; it is evidence
+this bench cannot weigh it, because TCG models no cache and so
+cacheable and Device memory cost the same under it.  The same applies
+to
+.CW dcinvalidate() 's
+set/way walk, which DC ISW makes a no-op here.  What is evidence is
+that the machine boots with
+.CW SCTLR.M ,
+.CW .C
+and
+.CW .I
+set, that NVMe works over an ECAM 256 GiB up, and that 7 or 8 tables
+were built rather than a number that happens to be right.
+.PP
+What is left of item 9 on arm64: a
+.CW Mach
+and a stack per processor with a real
+.CW MACHP() ,
+secondaries that set SP, SB, m and up and reach
+.CW schedinit() ,
+per-processor GIC redistributor and generic-timer setup, and
+.CW MAXMACH
+above 1 with
+.CW conf.nmach
+from the MADT.  The secondaries still park in
+.CW _secondary
+with the MMU off, which is what they did before.  The evidence to
+insist on when they do run is not a shell prompt: a per-\c
+.CW Mach
+count of scheduler passes, printed, and different under
+.CW "-smp 1"
+and
+.CW "-smp 4" .
+.NH 1
 The order
 .IP 1.
 .B "The heap fault."
@@ -3878,18 +4081,26 @@ boot volume is not needed.
 .B "Big machines."
 x2APIC, more than 255 logical processors, memory regions above 4GB,
 and a MADT with hundreds of entries.  Item 1, which used to block this,
-is fixed.  On arm64 the groundwork is now in and measured: the MADT's
-processor list is read, and PSCI starts every processor it names on a
-seventeen-processor machine.  What is left there is a
-.CW Mach ,
-a stack and a scheduler per processor,
+is fixed.  On arm64 five pieces are now in and measured, and section
+14 has them: real acquire/release atomics (and the 7l fix that made
+them encodable),
+.CW m
+and
+.CW up
+as extern registers,
+.CW conf.mem[]
+built from the firmware's memory map instead of a 256 MiB constant,
+and the MMU \(em which was not on this list and has to be, since
+LDXR/STXR on the Device memory an MMU-off kernel runs in is
+CONSTRAINED UNPREDICTABLE.  What is left there is a
+.CW Mach
+and a stack per processor with a real
+.CW MACHP() ,
+secondaries that reach
+.CW schedinit() ,
+per-processor redistributor and timer setup, and
 .CW MAXMACH
-above 1, a real
-.CW cmpswap
-rather than the spl-masked one
-.CW os/inferno/virtarm64/archvirtarm64.c
-has, and per-processor redistributor setup.  A metal box is where the
-x86 half arrives.
+above 1.  A metal box is where the x86 half arrives.
 .IP 10.
 .B "Xen PVH's devices."
 xenbus and XenStore, grant tables, event channels,
