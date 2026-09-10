@@ -262,10 +262,10 @@ familyof(name: string): int
 # to that family and to no other, which is what the seven separate
 # libraries used to say by not implementing each other's vocabulary.
 ownwords := array[] of {
-	"link", "body", "scale", "equilibrium", "radius", "samples", "normalise"
+	"link", "plain", "body", "scale", "equilibrium", "radius", "samples", "normalise"
 };
 ownfamily := array[] of {
-	Mechanism, Orbit, Ecology, Ecology, Profile, Profile, Profile
+	Mechanism, Mechanism, Orbit, Ecology, Ecology, Profile, Profile, Profile
 };
 
 ownedby(word: string): int
@@ -336,6 +336,15 @@ parse(spec: string): (ref Model, ref Config, string)
 				err = "sprite: usage: sprite NAME";
 			else
 				c.sprite = w[1];
+		"caption" =>
+			claimed = 1;
+			if(nwords < 2)
+				err = "caption: usage: caption TEXT...";
+			else
+				c.captions = growstrings(c.captions, joinfrom(w, 1));
+		"plain" =>
+			claimed = 1;
+			err = plain(m, c, w, nwords);
 		"link" =>
 			claimed = 1;
 			err = link(m, c, w, nwords);
@@ -383,6 +392,9 @@ parse(spec: string): (ref Model, ref Config, string)
 	if(c.family < 0)
 		return (nil, nil, "spec has no family command, so nothing knows what to draw");
 	# there is no time in a profile; dynsys wants a maxtime all the same
+	if(len c.captions > 0 && !captionable(c.family))
+		return (nil, nil, sys->sprint("caption: the %s family draws no diagram, "+
+			"so it has nowhere to put one", familynames[c.family]));
 	if(c.family == Profile && m.maxtime <= 0.0)
 		dynsys->cmd(m, array[] of {"maxtime", "1.0"});
 	if((err := dynsys->check(m)) != nil)
@@ -579,6 +591,14 @@ checkspec(m: ref Model, c: ref Config): string
 	return nil;
 }
 
+# A caption is drawn along the bottom of the diagram pane, so a family
+# that has no diagram pane has nowhere to put one, and saying so beats
+# silently dropping the text a model went to the trouble of writing.
+captionable(family: int): int
+{
+	return family == Mechanism || family == Orbit || family == Population;
+}
+
 wantobservables(m: ref Model, n: int): string
 {
 	if(len m.observablelabels != n)
@@ -652,6 +672,44 @@ march(m: ref Model, c: ref Config): array of real
 lineerr(n: int, s: string): string
 {
 	return sys->sprint("spec line %d: %s", n, s);
+}
+
+# plain: points that are samples of a drawn curve rather than parts of a
+# mechanism.  Every point normally gets a sprite - a weight, or an anchor
+# if it has never moved - which is right for a linkage and wrong for a
+# line with nine points on it, where nine blobs bury the shape they are
+# meant to describe.  A plain point contributes its links and nothing
+# else.
+plain(m: ref Model, c: ref Config, w: array of string, nwords: int): string
+{
+	if(nwords < 2)
+		return "plain: usage: plain NAME...";
+	for(i := 1; i < nwords; i++){
+		if((k := nameindex(m.pointnames, w[i])) < 0)
+			return "plain: no point named "+w[i];
+		n := len c.plainpts;
+		a := array[n+1] of int;
+		a[0:] = c.plainpts;
+		a[n] = k;
+		c.plainpts = a;
+	}
+	return nil;
+}
+
+isplain(c: ref Config, i: int): int
+{
+	for(k := 0; k < len c.plainpts; k++)
+		if(c.plainpts[k] == i)
+			return 1;
+	return 0;
+}
+
+growstrings(a: array of string, s: string): array of string
+{
+	b := array[len a + 1] of string;
+	b[0:] = a;
+	b[len a] = s;
+	return b;
 }
 
 joinfrom(w: array of string, from: int): string
@@ -1411,6 +1469,35 @@ drawdiagram()
 	Orbit =>
 		draworbits(im);
 	}
+	drawcaptions(im);
+}
+
+# The band along the bottom of a diagram pane that the captions occupy,
+# and which the picture above them must keep out of.
+captionband(): int
+{
+	if(len cfg.captions == 0 || font == nil)
+		return 0;
+	return len cfg.captions*font.height + 6;
+}
+
+# The picture's own rect: the pane, less a margin, less the captions.
+diagramview(im: ref Image, margin: int): Rect
+{
+	r := im.r.inset(margin);
+	r.max.y -= captionband();
+	return r;
+}
+
+drawcaptions(im: ref Image)
+{
+	if(len cfg.captions == 0)
+		return;
+	y := im.r.max.y - captionband() + 3;
+	for(i := 0; i < len cfg.captions; i++){
+		im.text((im.r.min.x+8, y), fg, Point(0,0), font, cfg.captions[i]);
+		y += font.height;
+	}
 }
 
 drawmechanism(im: ref Image)
@@ -1419,7 +1506,7 @@ drawmechanism(im: ref Image)
 	points := dynsys->points(model, sim.state);
 	if(len points == 0)
 		return;
-	view := im.r.inset(8);
+	view := diagramview(im, 8);
 	(xmin, xmax) := (points[0], points[0]);
 	(ymin, ymax) := (points[1], points[1]);
 	for(i := 0; i < len points/2; i++){
@@ -1468,6 +1555,8 @@ drawmechanism(im: ref Image)
 
 	scale := viewscale(view);
 	for(i = 0; i < len points/2; i++){
+		if(isplain(cfg, i))
+			continue;
 		at := onview(view, points[2*i], points[2*i+1],
 			xmin, xmax, ymin, ymax);
 		name := "bob";
@@ -1761,7 +1850,7 @@ onview(view: Rect, x, y, xmin, xmax, ymin, ymax: real): Point
 drawstatebars(im: ref Image)
 {
 	im.draw(im.r, bg, nil, Point(0,0));
-	r := im.r.inset(6);
+	r := diagramview(im, 6);
 	height := r.dy()/len sim.state;
 	for(i := 0; i < len sim.state; i++){
 		y := r.min.y+i*height;
@@ -1788,7 +1877,7 @@ draworbits(im: ref Image)
 {
 	s := sim;
 	im.draw(im.r, bg, nil, Point(0,0));
-	view := im.r.inset(8);
+	view := diagramview(im, 8);
 	focus := 0;
 	for(i := 1; i < len s.mass; i++)
 		if(s.mass[i] > s.mass[focus])

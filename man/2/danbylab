@@ -61,6 +61,22 @@ rules a step obeys, and a family's own words are refused in any other.
 .BI title " text..."
 The window title.  Required.
 .TP
+.BI caption " text..."
+A line of text drawn along the bottom of the diagram pane.  Repeatable;
+the lines appear in the order given, and the picture above them is inset
+to leave room.  This is for a model whose parameters are the letters in
+an equation, which otherwise has nowhere to say which slider is which
+letter \(em see
+.IR danby-schrodinger (1),
+where the sliders are E, k, lambda and m.  Words are re-joined with
+single spaces, so captions cannot be aligned into columns; punctuate
+instead.  Only the three families that draw a diagram
+.RB ( mechanism ,
+.B orbit
+and
+.BR population )
+have anywhere to put one, and it is an error in the other four.
+.TP
 .BI manual " page"
 The manual page the window manager's Help menu opens.  A model that
 names none is assumed to have a page called
@@ -76,6 +92,14 @@ lines, and at least one
 .TP
 .BI link " name name"
 A rod between two of the model's points.  Repeatable.
+.TP
+.BI "plain " "name..."
+Points that are samples of a drawn curve rather than parts of a linkage.
+Every point normally gets a sprite \(em a weight, or an anchor if it has
+never moved \(em which is right for a mechanism and wrong for a line
+with seventeen points on it, where seventeen blobs bury the shape they
+are meant to describe.  A plain point contributes its links and nothing
+else.  Repeatable, and the points must already have been declared.
 .PP
 .B Population
 draws a stack of bars beside a graph with one trace per state; a click in

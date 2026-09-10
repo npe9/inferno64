@@ -394,6 +394,54 @@ checkschrodinger(name: string, m: ref Model)
 	near(name+": odd psi(0)", o[0], 0.0, 0.0);
 	near(name+": odd psi'(0)", o[1], 1.0, 0.0);
 
+	# The well drawn in the diagram is a polyline of seventeen points
+	# whose heights are written out as precomputed coefficients of
+	# stiffness and quartic, one pair per sample.  Seventeen hand-copied
+	# constants is exactly the sort of thing that rots without saying
+	# so, and nothing else here would notice: a wrong coefficient draws
+	# a slightly wrong well and every other check still passes.  So each
+	# one is compared with the potential evaluated from scratch.
+	# These two are chosen so that NOTHING clamps: 0.1x^2 + 0.002x^4 is
+	# 3.75 at the outermost sample, inside the 4.5 the spec clamps at.
+	# That matters more than it looks.  The obvious settings to test at
+	# were stiffness 1.5 and quartic 0.25, and under those six of the
+	# eight samples sit above the clamp, so their coefficients could be
+	# any number at all and the comparison would still pass - which it
+	# duly did when one was deliberately broken.  A clamped point tests
+	# the clamp and nothing else.
+	m.parameter[1] = 0.2;		# stiffness
+	m.parameter[2] = 0.002;		# quartic
+	pts := dynsys->points(m, dynsys->initialstate(m));
+	for(j := 0; j < 17; j++){
+		wx := pts[2*j];
+		wv := 0.5*0.2*wx*wx + 0.002*wx*wx*wx*wx;
+		if(wv >= 4.5 || wv <= -1.5)
+			fail(sys->sprint("%s: well point %d clamps, so it tests "+
+				"nothing about its coefficients", name, j));
+		near(sys->sprint("%s: well point %d at x=%g", name, j, wx),
+			pts[2*j+1], wv, 1.0e-12);
+	}
+	# and then the clamp itself, at a well steep enough to need it
+	m.parameter[1] = 4.0;
+	m.parameter[2] = 1.0;
+	cl := dynsys->points(m, dynsys->initialstate(m));
+	near(name+": well clamps high at the rim", cl[2*16+1], 4.5, 1.0e-12);
+	m.parameter[1] = -4.0;
+	m.parameter[2] = 0.0;
+	cl = dynsys->points(m, dynsys->initialstate(m));
+	near(name+": well clamps low when inverted", cl[2*16+1], -1.5, 1.0e-12);
+	m.parameter[1] = 0.2;
+	m.parameter[2] = 0.002;
+	# and the polyline has to be in order and symmetric, or it is a
+	# scribble rather than a well
+	for(j = 1; j < 17; j++)
+		if(pts[2*j] <= pts[2*(j-1)])
+			fail(sys->sprint("%s: well point %d at x=%g is not right of %g",
+				name, j, pts[2*j], pts[2*(j-1)]));
+	for(j = 0; j < 8; j++)
+		near(sys->sprint("%s: well is symmetric at x=%g", name, pts[2*(16-j)]),
+			pts[2*(16-j)+1], pts[2*j+1], 1.0e-12);
+
 	# the eigenvalues themselves, alternating even and odd, each with
 	# its own negative control one slider notch (0.025) to either side
 	levels := array[] of {0.5, 1.5, 2.5, 3.5};

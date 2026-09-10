@@ -46,6 +46,16 @@ Danbylab: module
 		# edited to gain a picture.
 		sprite:		string;
 
+		# What the model's own symbols mean, drawn along the bottom of
+		# the diagram pane.  Shared by the three families that have one:
+		# a model whose parameters are the letters in an equation has no
+		# other way to say which slider is which letter.
+		captions:	array of string;
+
+		# Mechanism: points that are samples of a drawn curve, and so
+		# get their links drawn but no sprite of their own.
+		plainpts:	array of int;
+
 		links:		array of int;		# Mechanism: pairs of point indices
 		linkspr:	array of string;	# and the component each is drawn as
 		bodies:		array of string;	# Orbit: what each body is called

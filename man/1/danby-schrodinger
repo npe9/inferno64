@@ -77,11 +77,36 @@ square of a number that has run away, so it dwarfs everything and the
 axis goes with it \(em which is the loudest possible way of saying that
 this energy is not one.
 .SS The diagram
-Left of the graph, a rod from the centre of the well out to where the
-march has got to, and a second rod standing on it whose length and sign
-are
-.I psi
-right there.  The centre never moves, so it is drawn as an anchor.
+Left of the graph is the physical picture, and it holds still: the well
+.IR V ( x )
+as a curve with a wall on each side, the energy
+.I E
+as a straight line drawn across it, and one marker.
+.PP
+Nothing in it is a particle, and nothing in it is moving.  This is the
+time-INDEPENDENT equation: it has no time in it, the solution is a
+standing shape, and there is nothing to animate.  What the marker shows
+is how far the integration has got \(em it is the solver's own position,
+not anybody's.  It rides along the energy line because that is the
+energy the shot is being taken at.
+.PP
+The march runs outward from the centre only, since a symmetric well's
+solutions are even or odd and the other half follows from parity, so the
+marker crosses the right half and stops.  The well is drawn whole
+because the WELL is whole; it is only the integration that is done once.
+.PP
+Where the energy line cuts the wall is the classical turning point.
+Inside it the wave oscillates and outside it decays, which is what the
+graph beside it shows happening.
+.PP
+The well is drawn to seventeen samples and clipped into \-1.5 to 4.5, so
+that a steep well or an upside-down one cannot drag the vertical scale
+away and squash the energy line flat against the floor.  Inside that
+band the shape is exact.  Drag
+.B stiffness
+below zero with
+.B quartic
+up and the single well visibly becomes two with a hump between them.
 .SS The parameters
 .TP
 .B energy
