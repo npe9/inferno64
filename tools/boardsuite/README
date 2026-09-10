@@ -67,6 +67,16 @@ were made by reading markers off a terminal:
 	out as "SD-FS-CREATE-OKtrack:".  That looked exactly like a
 	regression in the SD path, and was not.
 
+	The same regex began with \b too, and that took longer to
+	meet: it needs another process to print immediately BEFORE a
+	marker rather than after.  Attaching a mouse to the Pi did it
+	-- the usb controller's ctl dump is still printing when
+	USB-OK arrives, and the log carries "... hub 2 port 3
+	rUSB-OK".  There is no \b between "r" and "U", so the marker
+	was not there and the run reported 38 where the board said
+	39.  Anyone adding a device to a configuration is changing
+	the interleaving, which is how this one was found.
+
 Both are fixed here, once, and the first of them twice.  The obvious fix
 -- wait for the board's own marker and then sleep a while -- is still a
 race, and this script lost it on its first day out: on a loaded machine
@@ -337,9 +347,31 @@ lines of vendor requests and command words and receive status, has no
 other way to execute.  ETHER-DHCP-OK there is a DHCP exchange that
 crossed the USB link in both directions.
 
+Both of them also carry a mouse, and it is the reason USB-MOUSE-NONE
+finally leaves a baseline in this tree.  That check has never once run
+to completion: with nothing attached it says -NONE, which is the right
+answer and the only one it has ever given.  A usb-mouse alone does not
+help either -- an emulated mouse nobody moves says nothing -- so the
+suite opens qemu's monitor on a TCP port and sends, once a second, a
+motion in x and a press and release of the right and middle buttons,
+which is exactly what mousecheck() waits for.  It repeats because the
+window opens when the guest opens /dev/pointer and nothing outside the
+guest knows when that is.
+
+USB-MOUSE-OK ... buttons 6 is the evidence line: 6 is right (4) and
+middle (2) together, and the number is what says which direction
+usbd's HID-to-devpointer remap went.  Both boards report 6.
+
+Attaching it moved config_last.  With a mouse the check reports as soon
+as it has what it wants instead of waiting out its 25-second timeout,
+so USB-MOUSE -- the marker that is last on every other Pi
+configuration, precisely because of that timeout -- is not last on
+these two.  The shell's marker is.
+
 raspi4-usb is the same again on the Pi 4, and worth its own run for one
 reason: that board's USB is xHCI where the Pi 3's is dwc2, so the same
-six markers are reached over a different host controller.  It gives 36
+six markers, and the mouse, are reached over a different host
+controller.  It gives 36
 where the plain Pi 4 gives 32 -- four fewer than the Pi 3 pair because
 the Pi 4 baseline is four markers shorter to begin with, not because
 anything is missing here.

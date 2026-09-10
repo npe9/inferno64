@@ -98,7 +98,7 @@ config_args() {
 		# SMSC half of appl/cmd/usb/etherusb.b -- a thousand
 		# lines of vendor requests, command words and receive
 		# status -- has no other way to execute.
-		echo "-M raspi3b -m 1G -drive file=$work/sd16d.img,if=sd,format=raw -drive if=none,id=d0,file=$work/usb16.img,format=raw -device usb-storage,drive=d0 -netdev user,id=n0 -device usb-lan9514,netdev=n0";;
+		echo "-M raspi3b -m 1G -drive file=$work/sd16d.img,if=sd,format=raw -drive if=none,id=d0,file=$work/usb16.img,format=raw -device usb-storage,drive=d0 -netdev user,id=n0 -device usb-lan9514,netdev=n0 -device usb-mouse";;
 	raspi4)
 		echo "-M raspi4b -m 2G -drive file=$work/sd16b.img,if=sd,format=raw";;
 	raspi4-hot)
@@ -144,7 +144,7 @@ config_args() {
 		# and ethernet checks, so this is the same six markers
 		# reached over a different host controller -- the one
 		# thing about them the Pi 3 configuration cannot say.
-		echo "-M raspi4b -m 2G -drive file=$work/sd16e.img,if=sd,format=raw -drive if=none,id=d0,file=$work/usb16b.img,format=raw -device usb-storage,drive=d0 -netdev user,id=n0 -device usb-lan9514,netdev=n0";;
+		echo "-M raspi4b -m 2G -drive file=$work/sd16e.img,if=sd,format=raw -drive if=none,id=d0,file=$work/usb16b.img,format=raw -device usb-storage,drive=d0 -netdev user,id=n0 -device usb-lan9514,netdev=n0 -device usb-mouse";;
 	virtarm64-peer)
 		# virtarm64 with a peer link, the same shape as virt-peer
 		# and on its own socket port: the two peer configurations
@@ -221,6 +221,23 @@ config_peer_evidence() {
 	esac
 }
 
+# The QMP port a configuration wants, or nothing.
+#
+# mousecheck() has never once run to completion in this tree: with no
+# mouse attached it says USB-MOUSE-NONE, which is the right answer and
+# also the only one it has ever given.  A usb-mouse alone does not help
+# -- an emulated mouse that nobody moves says nothing either -- so the
+# suite opens qemu's monitor and sends the motion and the two button
+# presses the check is looking for.  A TCP port rather than a unix
+# socket because a unix socket path must fit in 104 bytes and a work
+# directory under TMPDIR does not always leave room.
+config_qmp() {
+	case $1 in
+	raspi3b-usb)	echo 14447;;
+	raspi4-usb)	echo 14448;;
+	esac
+}
+
 # The line that says a board has finished printing.  This has to be the
 # LAST marker, not the last interesting one: on the Pi boards the mouse
 # check waits out its own timeout and reports after RASPI*-SH-OK, so
@@ -231,10 +248,14 @@ config_peer_evidence() {
 # that race into a timeout with a name in it.
 config_last() {
 	case $1 in
-	raspi3b|raspi3b-4g|raspi3b-usb)
-				echo 'USB-MOUSE';;
-	raspi4|raspi4-hot|raspi4-usb)
-				echo 'USB-MOUSE';;
+	raspi3b|raspi3b-4g)	echo 'USB-MOUSE';;
+	# With a mouse attached the mouse check reports as soon as it
+	# has what it wants rather than waiting out its timeout, so the
+	# marker that made it last on every other Pi configuration is
+	# not last here.  The shell's is.
+	raspi3b-usb)		echo 'RASPI3B-SH-OK';;
+	raspi4|raspi4-hot)	echo 'USB-MOUSE';;
+	raspi4-usb)		echo 'RASPI4-SH-OK';;
 	virtarm64|virtarm64-peer)	echo 'ROOT-CMDS-OK';;
 	virt|virt-peer|peer-mixed)	echo 'ROOT-CMDS-OK';;
 	sifiveu)		echo 'SIFIVEU-SH-OK';;
@@ -271,7 +292,13 @@ config_evidence() {
 		# straight after the name matches nothing, which cost a
 		# run to work out.
 		echo 'DISK-DOS-OK /n/dos: usb\.txt[^ ]*$'
-		echo 'DISK-READ-OK usb\.txt';;
+		echo 'DISK-READ-OK usb\.txt'
+		# 6 is right (4) and middle (2) together.  A mouse that
+		# enumerated and moved but whose buttons landed on the
+		# wrong bits gives USB-MOUSE-FAIL, so the marker alone
+		# carries this -- but the number is what says which
+		# direction usbd's remap went.
+		echo 'USB-MOUSE-OK [0-9]+ events, motion and buttons 6';;
 	raspi4)
 		echo 'from capabilities'
 		echo 'die 24\.';;
@@ -419,11 +446,22 @@ makefat() {
 	return 1
 }
 
-# Markers, as a sorted set.  No trailing word boundary: a marker can be
-# followed immediately by another process's output on the same line,
-# which is exactly what hid SD-FS-CREATE-OK once.
+# Markers, as a sorted set.  No word boundary at either end.
+#
+# The trailing one went first: a marker can be followed immediately by
+# another process's output on the same line, which is what hid
+# SD-FS-CREATE-OK.  The leading one is the same bug in a mirror and
+# took longer to meet -- on a board with a mouse attached, the usb
+# controller's ctl dump is still printing when USB-OK arrives, and the
+# log carries "... hub 2 port 3 rUSB-OK".  A \b between "r" and "U"
+# does not exist, so the marker was not there, and the run reported 38
+# where the board had said 39.
+#
+# The cost of dropping it is that a word ending in a marker's name
+# would match.  The cost of keeping it is losing markers a board really
+# printed, which this suite exists to prevent.
 markers() {
-	grep -oE '\b[A-Z][A-Z0-9]+(-[A-Z0-9]+)*-(OK|NONE|FAIL|ACCEPTED)' "$1" |
+	grep -oE '[A-Z][A-Z0-9]+(-[A-Z0-9]+)*-(OK|NONE|FAIL|ACCEPTED)' "$1" |
 		sort -u
 }
 
@@ -573,9 +611,105 @@ HOSTNET
 }
 
 hostnet_stop() {
-	[ -n "$hostnetpid" ] && kill $hostnetpid 2>/dev/null
-	wait $hostnetpid 2>/dev/null || true
+	# The guard covers the wait as well as the kill.  A bare "wait"
+	# does not mean "wait for nothing", it means wait for every
+	# background job in this shell -- which was harmless while the
+	# host rig was the only one, and became a four-minute pause the
+	# day the mouse got its own process.
+	if [ -n "$hostnetpid" ]; then
+		kill $hostnetpid 2>/dev/null
+		wait $hostnetpid 2>/dev/null || true
+	fi
 	hostnetpid=
+}
+
+# The hand on the mouse.  Connects to qemu's monitor and sends, once a
+# second, a motion in x and a press and release of the right and middle
+# buttons -- which is exactly what mousecheck() waits for.  It repeats
+# rather than firing once because the window it has to land in opens
+# when the guest opens /dev/pointer, and nothing outside the guest
+# knows when that is; events sent before then go nowhere and cost
+# nothing.
+mousepid=
+mouse_start() {
+	port=`config_qmp $1`
+	[ -z "$port" ] && return 0
+	if ! command -v python3 >/dev/null 2>&1; then
+		echo "boardsuite: no python3; $1 has no way to move its mouse" >&2
+		return 1
+	fi
+	cat > "$work/mouse.py" <<'MOUSE'
+import json, socket, sys, time
+
+port = int(sys.argv[1])
+deadline = time.time() + float(sys.argv[2])
+
+s = None
+while time.time() < deadline:
+    try:
+        s = socket.socket()
+        s.connect(('127.0.0.1', port))
+        break
+    except OSError:
+        s = None
+        time.sleep(0.5)
+if s is None:
+    sys.exit('no qmp port %d' % port)
+
+f = s.makefile('rw')
+f.readline()                                    # the greeting
+f.write(json.dumps({'execute': 'qmp_capabilities'}) + '\n')
+f.flush()
+f.readline()
+
+def send(events):
+    f.write(json.dumps({'execute': 'input-send-event',
+                        'arguments': {'events': events}}) + '\n')
+    f.flush()
+    f.readline()
+
+while time.time() < deadline:
+    send([{'type': 'rel', 'data': {'axis': 'x', 'value': 8}}])
+    for b in ('right', 'middle'):
+        send([{'type': 'btn', 'data': {'down': True, 'button': b}}])
+        send([{'type': 'btn', 'data': {'down': False, 'button': b}}])
+    time.sleep(1)
+MOUSE
+	python3 "$work/mouse.py" "$port" "$timeout" >"$work/$1.mouse.log" 2>&1 &
+	mousepid=$!
+	return 0
+}
+
+mouse_stop() {
+	if [ -n "$mousepid" ]; then
+		kill $mousepid 2>/dev/null
+		wait $mousepid 2>/dev/null || true
+	fi
+	mousepid=
+}
+
+# The USB stick is made fresh before every boot, unlike every other
+# image here, because the check that reads it also writes to it:
+# diskcheck() creates pi.txt, so a second boot finds two files and
+# DISK-READ-OK reports whichever the directory read returns first.
+# Before every boot and not once per configuration, because a
+# configuration that fails is booted again and the second boot would
+# otherwise get the stick the first one wrote on.
+#
+# The file's contents are lower case on purpose.  The first thing
+# diskcheck() does with the file it finds is print it, and the marker
+# extractor reads the log rather than the board's intentions: a stick
+# carrying the virt image's "FS-OK boardsuite" made this configuration
+# report FS-OK, a marker no check on this board prints.  Nothing on a
+# disk here may be shaped like a marker.
+freshstick() {
+	case $1 in
+	raspi3b-usb)	img=usb16.img;;
+	raspi4-usb)	img=usb16b.img;;
+	*)		return 0;;
+	esac
+	rm -f "$work/$img"
+	makefat $img usb.txt 'a file on the usb stick'
 }
 
 status=0
@@ -590,6 +724,10 @@ attempt() {
 	base="$here/$c.markers"
 	rm -f "$log"
 	last=`config_last $c`
+	if ! freshstick "$c"; then
+		echo "no way to make a FAT16 image here (hdiutil, or mkfs.vfat and mcopy)"
+		return
+	fi
 	if ! hostnet_start "$c"; then
 		echo "no host end for its network checks"
 		return
@@ -601,10 +739,20 @@ attempt() {
 	# "never reached ROOT-CMDS-OK", which is true and useless.
 	err="$work/$c.qemu.err"
 	rm -f "$err"
-	# shellcheck disable=SC2046
-	"$qemu" `config_args $c` -display none -serial file:"$log" \
+	qmp=
+	qmpport=`config_qmp $c`
+	[ -n "$qmpport" ] && qmp="-qmp tcp:127.0.0.1:$qmpport,server=on,wait=off"
+	# shellcheck disable=SC2046,SC2086
+	"$qemu" `config_args $c` $qmp -display none -serial file:"$log" \
 		-kernel "$kernel" >/dev/null 2>"$err" &
 	pid=$!
+	if ! mouse_start "$c"; then
+		echo "no hand on the mouse"
+		kill $pid 2>/dev/null || true
+		wait $pid 2>/dev/null || true
+		hostnet_stop
+		return
+	fi
 
 	# The other guest, if this configuration has one.  It goes second
 	# because the first one holds the listening end of the socket the
@@ -682,6 +830,7 @@ attempt() {
 		wait $peerpid 2>/dev/null || true
 	fi
 	hostnet_stop
+	mouse_stop
 
 	if ! grep -q "$last" "$log" 2>/dev/null; then
 		if [ -s "$err" ]; then
@@ -767,38 +916,6 @@ for c in $configs; do
 		status=1
 		continue
 	fi
-
-	# The USB stick is made fresh every run, unlike every other image
-	# here, because the check that reads it also writes to it:
-	# diskcheck() creates pi.txt, so a second run finds two files and
-	# DISK-READ-OK reports whichever the directory read returns first.
-	# A marker that means a different thing on the second run is worse
-	# than no marker.
-	case $c in
-	raspi4-usb)
-		rm -f "$work/usb16b.img"
-		if ! makefat usb16b.img usb.txt 'a file on the usb stick'; then
-			echo "$c: FAIL no way to make a FAT16 image here (hdiutil or mkfs.vfat)"
-			echo "    the USB stick needs a filesystem with a file on it"
-			status=1
-			continue
-		fi;;
-	raspi3b-usb)
-		rm -f "$work/usb16.img"
-		# Lower case on purpose.  The first thing diskcheck()
-		# does with the file it finds is print its contents, and
-		# the marker extractor reads the log, not the board's
-		# intentions: a stick carrying the virt image's "FS-OK
-		# boardsuite" made this configuration report FS-OK, a
-		# marker no check on this board ever prints.  Nothing on
-		# a disk here may be shaped like a marker.
-		if ! makefat usb16.img usb.txt 'a file on the usb stick'; then
-			echo "$c: FAIL no way to make a FAT16 image here (hdiutil or mkfs.vfat)"
-			echo "    the USB stick needs a filesystem with a file on it"
-			status=1
-			continue
-		fi;;
-	esac
 
 	fail=`attempt $c`
 	retried=false

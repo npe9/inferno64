@@ -19378,3 +19378,89 @@ qemu's
 takes
 .CW -device\ usb-storage
 at all only because the machine models a controller for it.
+.NH 1
+A mouse nobody had ever moved, and the other half of the marker regex
+.PP
+.CW mousecheck()
+in the Pi inits has never once run to completion in this tree.  With
+nothing attached it prints
+.CW USB-MOUSE-NONE ,
+which is the right answer and also the only answer it has ever given \(em
+that marker is in every Pi baseline here.  Attaching
+.CW -device\ usb-mouse
+does not help either: an emulated mouse that nobody moves says nothing,
+and the check times out exactly as before.
+.PP
+So the suite opens qemu's monitor and moves it.  A TCP QMP port rather
+than a unix socket, because a unix socket path must fit in 104 bytes
+and a work directory under
+.CW TMPDIR
+does not always leave room \(em that is a real error message and not a
+precaution.  A small python client sends, once a second, a relative
+motion in x and a press and release of the right and middle buttons,
+which is precisely what the check waits for.  It repeats rather than
+firing once because the window opens when the guest opens
+.CW /dev/pointer
+and nothing outside the guest knows when that is; events sent before
+then go nowhere.
+.PP
+Both boards now report
+.CW "USB-MOUSE-OK 3 events, motion and buttons 6 through usbd's HID decode to #m/pointer" .
+The 6 is the point: right must land on 4 and middle on 2, so the number
+says which direction
+.CW usbd 's
+HID-to-devpointer remap went, and it is the evidence line.  The Pi 3
+reaches it over dwc2 and the Pi 4 over xHCI.
+.PP
+Attaching it moved
+.CW config_last .
+With a mouse the check reports as soon as it has what it wants instead
+of waiting out its 25-second timeout \(em so
+.CW USB-MOUSE ,
+which is the last marker on every other Pi configuration precisely
+because of that timeout, is not last on these two.  The shell's marker
+is.
+.PP
+.B "The other half of the marker regex."
+The extractor has had no trailing word boundary since
+.CW SD-FS-CREATE-OK
+was swallowed by another process printing after it.  It still had a
+leading one, and that is the same bug in a mirror: it needs a process
+to print immediately
+.I before
+a marker rather than after.  Attaching the mouse did it.  The USB
+controller's ctl dump is still printing when
+.CW USB-OK
+arrives, and the log carries
+.CW "... hub 2 port 3 rUSB-OK" .
+There is no
+.CW \\b
+between
+.CW r
+and
+.CW U ,
+so the marker was not there, and the run reported 38 markers where the
+board had said 39.
+.PP
+Both boundaries are gone now.  The cost is that a word ending in a
+marker's name would match; the cost of keeping them is losing markers a
+board really printed.  All thirteen configurations were re-run with the
+change and not one gained a marker, so the eleven that were not
+expected to move did not: the change added exactly the one real marker
+it was made for.
+.PP
+Two smaller things came out of the same work.  The USB stick is now
+remade before every
+.I boot
+rather than once per configuration \(em a configuration that fails is
+booted again, and the second boot was getting the stick the first one
+had written
+.CW pi.txt
+onto.  And
+.CW hostnet_stop
+had been calling a bare
+.CW wait
+whenever its pid was empty, which does not mean wait for nothing: it
+means wait for every background job in the shell.  That was harmless
+while the host rig was the only one and became a four-minute pause the
+day the mouse got a process of its own.
