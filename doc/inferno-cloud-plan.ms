@@ -3952,20 +3952,96 @@ and
 set, that NVMe works over an ECAM 256 GiB up, and that 7 or 8 tables
 were built rather than a number that happens to be right.
 .PP
-What is left of item 9 on arm64: a
-.CW Mach
-and a stack per processor with a real
-.CW MACHP() ,
-secondaries that set SP, SB, m and up and reach
-.CW schedinit() ,
-per-processor GIC redistributor and generic-timer setup, and
+.B "A Mach and a stack per processor."
+.CW MACHP(n)
+was a macro that ignored
+.CW n .
+It is an array now,
 .CW MAXMACH
-above 1 with
-.CW conf.nmach
-from the MADT.  The secondaries still park in
+is 8, and
+.CW startcpus()
+gives each processor it starts a
+.CW Mach
+and a 32 KiB stack of its own out of
+.CW xspanalloc() ,
+together with a record carrying the stack top, the static base, that
+.CW Mach ,
+the page-table base and the TCR.  CPU_ON's context id is the address of
+that record, so a processor touches its own and nothing else and there
+is no lock and no shared cursor.
 .CW _secondary
-with the MMU off, which is what they did before.  The evidence to
-insist on when they do run is not a shell prompt: a per-\c
+sets SP, R28, R27 and R26 from it, turns the MMU on with the same
+tables the first processor built, and calls C.
+.PP
+The claim this supports is narrow and worth stating as exactly what it
+is: each processor reports the
+.CW machno
+it read out of its own
+.CW m ,
+and they are different.  That is the one thing that has to be true
+before anything else in SMP can be built, and it cannot pass if
+.CW m
+is shared.  Under
+.CW "-smp 4" :
+3 started, 3 answered in 1ms, 3 mpidrs match, 3 own machnos, machnos 1
+2 3.  Under
+.CW "-smp 17" :
+nine clipped at MAXMACH and said so, 7 started, machnos 1 through 7.
+The negative control is the half that makes it mean anything \(em the
+same kernel with every record's
+.CW Mach
+pointed at
+.CW mach0 ,
+which is what a shared
+.CW m
+would look like, reports "machno 1 reported 0", "machno 2 reported 0",
+"machno 3 reported 0" and 0 own machnos.
+.PP
+.B "What the first processor owes the ones it starts."
+A processor enters
+.CW _secondary
+with its MMU off, so it reads memory and not a cache, while the
+processor that filled the record wrote it through one.  The AArch64
+boot protocol puts that obligation on the caller \(em the memory a
+starting processor reads must be cleaned to the point of coherency,
+and the requirement applies to all processors, not only the first \(em
+so
+.CW startcpus()
+cleans the record, the
+.CW Mach
+and the stack with a new
+.CW dccleanrange() ,
+by virtual address out of CTR_EL0's line size rather than by set/way,
+because a set/way walk cleans whatever is in the cache and not a set
+of addresses.  Nothing is written from the far side until the MMU is
+on: the two answers come back from C, through Normal inner-shareable
+memory, rather than from a location two processors touch with
+different cacheability, which is the arrangement that works on an
+emulator with no cache and does not work on a core with one.  Under
+TCG all of this is exercised and none of it is tested.
+.PP
+A parked processor deliberately does not set
+.CW active.machs[] .
+That array is what the portable code walks to find processors running
+a scheduler, and
+.CW devcons.c 's
+.CW Qsysstat
+sizes its buffer from
+.CW conf.nmach
+while looping over it, so setting it now would be a heap overflow
+rather than a step forward.  It belongs with
+.CW conf.nmach ,
+in the increment that makes these processors schedule.
+.PP
+What is left of item 9 on arm64: secondaries that reach
+.CW schedinit()
+rather than parking in WFE, per-processor GIC redistributor and
+generic-timer setup, and
+.CW conf.nmach
+from the MADT with
+.CW active.machs[]
+alongside it.  The evidence to insist on then is not a shell prompt: a
+per-\c
 .CW Mach
 count of scheduler passes, printed, and different under
 .CW "-smp 1"
@@ -4175,17 +4251,23 @@ and
 as extern registers,
 .CW conf.mem[]
 built from the firmware's memory map instead of a 256 MiB constant,
-and the MMU \(em which was not on this list and has to be, since
-LDXR/STXR on the Device memory an MMU-off kernel runs in is
-CONSTRAINED UNPREDICTABLE.  What is left there is a
-.CW Mach
-and a stack per processor with a real
-.CW MACHP() ,
-secondaries that reach
-.CW schedinit() ,
-per-processor redistributor and timer setup, and
+the MMU \(em which was not on this list and has to be, since LDXR/STXR
+on the Device memory an MMU-off kernel runs in is CONSTRAINED
+UNPREDICTABLE \(em and a
+.CW Mach ,
+a stack and a real
+.CW MACHP()
+per processor, with
 .CW MAXMACH
-above 1.  A metal box is where the x86 half arrives.
+at 8 and each started processor reporting the
+.CW machno
+it read out of its own
+.CW m .
+What is left there is secondaries that reach
+.CW schedinit()
+rather than parking, per-processor redistributor and timer setup, and
+.CW conf.nmach
+from the MADT.  A metal box is where the x86 half arrives.
 .IP 10.
 .B "Xen PVH's devices."
 xenbus and XenStore, grant tables, event channels,
