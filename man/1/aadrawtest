@@ -1,0 +1,100 @@
+.TH AADRAWTEST 1
+.SH NAME
+aadrawtest \- check and time drawing through an 8-bit coverage mask
+.SH SYNOPSIS
+.B aadrawtest
+[
+.I font ...
+]
+.SH DESCRIPTION
+.I Aadrawtest
+paints a solid colour through an 8-bit coverage mask, which is what text
+through a scalable font is, and checks both what came out and what it
+cost.
+.PP
+.IR Libmemdraw 's
+optimized text blit,
+.BR chardraw ,
+stores the source colour wherever a mask
+.I bit
+is set.
+It used to refuse any mask deeper than one bit, so an antialiased glyph
+went through the general per-pixel path instead;
+it now takes a coverage mask too, blending rather than storing.
+.SS Correctness
+For each of
+.BR RGB24 ,
+.B XRGB32
+and
+.BR GREY8 ,
+a colour is painted over a known destination through a mask whose
+coverage runs 0 to 255 across the image, so every value is exercised,
+and every byte of the result is compared against
+.if n \{\
+MUL(a, src) + MUL(255-a, dst)
+.\}
+computed in Limbo rather than against the C's own idea of it.
+A byte the pixel format does not use must come back exactly as it was.
+.PP
+.BR CMAP8 ,
+.B RGB16
+and
+.B RGBA32
+are refused by the fast path by design \(em a palette index cannot be
+blended, a five-bit channel is not a byte, and a destination alpha
+channel needs the general path's arithmetic \(em and go the old way.
+.SS Cost
+A 512x512 masked blit is timed for
+.BR RGB24 ,
+.B XRGB32
+and
+.BR RGBA32 .
+Draw operations queue to
+.BR /dev/draw ,
+so each blit is flushed inside the timed region; without that the
+measurement is of how fast requests can be enqueued.
+.PP
+The microsecond counts alone cannot say whether the fast path is wired
+in, because they depend on the machine.
+What is asserted is the
+.I ratio
+between
+.BR RGB24 ,
+which takes it, and
+.BR RGBA32 ,
+which by design does not: the first must be at least a third quicker.
+With the dispatch disabled that check fails, which is the control.
+.PP
+Any
+.I font
+arguments are opened and a string timed through each.
+If a TrueType file is present in
+.BR /fonts/ttf ,
+.I aadrawtest
+starts
+.IR ttffs (4)
+itself and times the first face it serves at 16 and 32 pixels.
+.SH EXAMPLE
+.EX
+	aadrawtest /fonts/lucidasans/unicode.8.font
+.EE
+.SH SOURCE
+.B /appl/cmd/aadrawtest.b
+.SH SEE ALSO
+.IR draw (2),
+.IR tkofftest (1),
+.IR ttffs (4),
+.B /doc/ui-modernization-plan.md
+.SH BUGS
+Nothing checks that the formats named above are still refused: were the
+fast path to start accepting
+.B CMAP8
+it would corrupt a palette index and this test would not notice, because
+it never draws to one.
+.PP
+The correctness check draws a rectangle, not glyphs, so it exercises the
+arithmetic rather than the addressing of a real subfont, and it uses one
+source colour and one destination colour.
+.PP
+The timing of a string is reported and never asserted on, so a font that
+became slower would show only to a reader.

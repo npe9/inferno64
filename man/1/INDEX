@@ -1,6 +1,7 @@
 ! sh-std
 3dpoly 3dpoly
 9win 9win
+aadrawtest aadrawtest
 abc alphabet-abc
 about wm-misc
 ack math-misc

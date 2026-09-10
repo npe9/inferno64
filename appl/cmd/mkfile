@@ -101,6 +101,7 @@ TARG=\
 	drawdecodetest.dis\
 	gputest.dis\
 	adectest.dis\
+	aadrawtest.dis\
 	amrtest.dis\
 	krylovtest.dis\
 	mltest.dis\

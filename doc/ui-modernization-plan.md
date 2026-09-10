@@ -13,6 +13,11 @@ Item zero was that none of this could be checked, because the screen does
 not read back. That is fixed: `tkofftest(1)` renders Tk into memory and
 measures it, and every Tk number below comes from it.
 
+Since this was written, section 2 has been done: `chardraw` takes an 8-bit
+coverage mask, and antialiased text went from 17 us a string to 2 — which
+removes cost as an argument against adopting a scalable font and leaves
+layout as the only real risk.
+
 ## 0. First: UI work in this tree could not be checked. Now it can
 
 `Image.readpixels` returns **`00 00 00`** for the on-screen framebuffer.
@@ -65,12 +70,14 @@ counting distinct values:
 | --- | --- | --- | --- | --- |
 | `/fonts/lucidasans/unicode.8.font` | 15 | 113 | **2** | 1 us |
 | `/fonts/lucida/unicode.8.font` | 20 | 115 | **2** | 1 us |
-| `/mnt/ft/andale-mono.r.16.font` | 21 | 140 | **190** | 18 us |
-| `/mnt/ft/andale-mono.r.32.font` | 41 | 266 | **244** | 62 us |
+| `/mnt/ft/andale-mono.r.16.font` | 21 | 140 | **190** | 2 us |
+| `/mnt/ft/andale-mono.r.32.font` | 41 | 266 | **244** | 6 us |
 
 A bitmap font can only ever produce two. 190 and 244 are antialiasing, at
 sizes chosen at open time rather than at whatever size somebody rasterised
-a `.font` to. Opening cost 0 ms at 16 px and 2 ms at 32 px, once.
+a `.font` to. Opening cost 0 ms at 16 px and 2 ms at 32 px, once. (Those
+draw times were 17 and 50 us when this survey was written; section 2 is
+why they are not any more.)
 
 **Tk renders such a font, antialiased.** Measured through the harness in
 section 0, a `label` drawn into an offscreen pane puts **190** distinct
@@ -98,36 +105,67 @@ from something that has a draw context (it needs `ctxt.display`, so not a
 bare `sh`), make `/mnt/ft` exist first, and open
 `/mnt/ft/<name>.r.<size>.font`.
 
-## 2. What antialiasing costs, and why it is not what it must cost
+## 2. What antialiasing cost, and what it costs now — **done**
 
-18 us against 1 us per 14-character string is 18x relative and 1.3 us per
-character absolute. For window chrome and labels that is nothing. For a
-full redraw of a text window — 50 lines of 80 characters — it is about
-5 ms against 0.3 ms, which is real.
-
-But that is what *this implementation* costs, not what antialiasing costs.
-`libmemdraw/draw.c`'s optimized text blit, `chardraw`, begins:
+It was 17 us against 1 us per 14-character string, 17x. That was never
+what antialiasing costs; it was what *this implementation* cost.
+`libmemdraw/draw.c`'s optimized text blit, `chardraw`, stored the source
+colour wherever a mask **bit** was set and began:
 
 ```
-	if((par->state&(Replsrc|Simplesrc|Replmask)) != (Replsrc|Simplesrc)
-	|| mask->depth != 1 || ...)
+	|| mask->depth != 1 || ...
 		return 0;
 ```
 
-`mask->depth != 1` — the fast path handles **one-bit masks only**. An 8-bit
-coverage mask falls through to the generic per-pixel `alphadraw`. So there
-is a well-shaped optimization available: an 8-bit-mask case in `chardraw`,
-the same loop reading a byte of coverage instead of a bit. The baseline to
-beat is in the table above, and the negative control is trivial — disable
-the new case and the 18 us comes back.
+so an 8-bit coverage mask — every glyph of a scalable font — fell through
+to the general per-pixel `alphadraw`, with its per-scanline conversion
+buffers and per-pixel indirect calls.
 
-Per-pixel alpha itself is already right: a half-alpha red over white gives
-`#FF8080`, and red through a 50% grey mask gives `#FF7F7F`.
+`chardraw` takes a coverage mask now, blending rather than storing.
+Measured, with each blit flushed inside the timed region because draw
+operations queue to `/dev/draw`:
+
+| | before | after |
+| --- | --- | --- |
+| 512x512 masked blit, RGB24 | 1675 us | **475 us** |
+| 512x512 masked blit, XRGB32 | 1200 us | **525 us** |
+| 14-character string, TrueType 16px | 17 us | **2 us** |
+| 14-character string, TrueType 32px | 50 us | **6 us** |
+| 14-character string, bitmap font | 1 us | 1 us |
+
+**Antialiased text now costs 2 us against the bitmap font's 1.** Not 17x;
+2x, on a string, in a frame with 16,700 us in it.
+
+The new path blends the destination's bytes against the same bytes of the
+source colour, which `memimagedraw` has already converted to the
+destination's format — so it needs to know nothing about which channel is
+which. What it does need is which bytes are channels at all: it decodes
+the descriptor, leaves a byte the format ignores exactly as it was
+(because that is what the general path does), and refuses a palette index,
+a channel narrower than a byte, and a destination with alpha, all of which
+still go the old way. The arithmetic is `alphacalcS`'s, `MUL(a, src) +
+MUL(255-a, dst)`, so the result is the same to the byte.
+
+How that is known, and what would catch it breaking: `aadrawtest(1)`
+paints through a mask whose coverage runs 0 to 255 and compares every byte
+against the blend computed independently in Limbo, for `RGB24`, `XRGB32`
+and `GREY8`. It passes identically with the fast path in and disabled —
+which is the point, the two paths agree — so a *second* check asserts the
+ratio between `RGB24`, which takes the fast path, and `RGBA32`, which by
+design does not. With the dispatch disabled that check fails and every
+timing returns to the "before" column. `vspritetest` (57/57 against the
+`.bit` files) and the temple smoketest (297 ok) cover the one-bit path,
+which is untouched.
+
+Per-pixel alpha itself was already right: a half-alpha red over white
+gives `#FF8080`, and red through a 50% grey mask gives `#FF7F7F`.
 
 ## 3. Adopting a scalable font is the temple font pass, one layer up
 
-This is the part to be careful about, because the tree has just done it and
-knows what it costs. Moving 76 temple ports from the 8x8 TempleOS font to
+**There were two arguments against adoption and section 2 removed one of
+them.** Cost is no longer an objection: 2 us a string against 1. What is
+left is layout, and that is the part to be careful about, because the tree
+has just done it and knows what it costs. Moving 76 temple ports from the 8x8 TempleOS font to
 Inferno's own broke, in ways that only measurement found:
 
 - `strut`'s `txtat` returned `col + len s` — a character count — and
