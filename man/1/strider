@@ -74,6 +74,25 @@ taken once.
 .PP
 .B q
 or Escape quits.
+.SS The other machines
+They walk rather than slide.
+One sine drives the whole gait, advanced by ground covered and not by
+the clock, so a machine standing still does not march on the spot and
+one backing away steps backwards: the legs swing against each other, the
+leading foot lifts, the hips drop at mid stride when both feet are down,
+and the arms swing against the legs.
+They start out of step with one another, because a lance walking in
+lockstep looks like one machine drawn four times.
+.PP
+Their torsos lead their legs.
+Legs turn at a fixed rate and the torso covers whatever the legs have
+not turned yet, so a machine that has just been flanked is aiming at you
+long before it has walked round \- which is the same thing your own
+torso twist does, seen from the outside.
+.PP
+A destroyed machine goes down over about a second rather than vanishing:
+the legs fold, the torso pitches forward over them, the head is thrown
+out ahead.
 .SS The display
 Heat and throttle read along the bottom, the weapon groups top left with
 their remaining rounds, the target's range and centre-torso armour along
@@ -144,8 +163,15 @@ centre torso is not;
 that targeting cycles only what is still up;
 that the other machines close the range and shoot back;
 that a frame draws something;
-and that an enemy in front of the cockpit puts pixels on the screen
-while one behind it does not.
+that an enemy in front of the cockpit puts pixels on the screen while
+one behind it does not;
+that a machine standing still does not advance its stride and a walking
+one does, and that the stride stays in range;
+that three different points in the stride produce three different
+frames, which is the check that the gait reaches the screen rather than
+only the state;
+and that a destroyed machine falls over several frames, is still drawn
+while it falls, and ends flat.
 .SH BUGS
 The last two checks exist because of a bug that thirty-eight state
 checks could not see.

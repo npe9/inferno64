@@ -81,6 +81,16 @@ GNAME := array[NGROUP] of {"LASER", "CANNON", "MISSILE"};
 MAXHEAT:	con 100.0;
 COOLRATE:	con 0.42;	# heat shed a frame
 SHUTDOWN:	con 200;	# frames a machine is down for after overheat
+BOOMFRAMES:	con 70;		# frames a destroyed machine takes to fall
+
+# Degrees of stride per world unit walked.  A full cycle is two steps,
+# so at the closing speed above that is a step every half second or so -
+# a big machine's pace, not a person's.
+STRIDERATE:	con 26.0;
+STRIDE:	con 1.6;		# how far a foot swings, world units
+LIFT:	con 0.9;		# how far the leading foot leaves the ground
+BOB:	con 0.55;		# how far the hips drop at mid stride
+ARMSW:	con 1.0;		# arms swing against the legs
 
 Mech: adt {
 	x, z:	real;
@@ -96,6 +106,8 @@ Mech: adt {
 	alive:	int;
 	fire:	int;		# ai: frames until it shoots
 	boom:	int;
+	phase:	real;		# stride, degrees; advanced by distance walked
+	fall:	real;		# 0 upright, 1 flat, once it is destroyed
 };
 
 Shot: adt {
@@ -332,6 +344,8 @@ newgame()
 	me.ammo = array[NGROUP] of {-1, 40, 24};	# -1 = unlimited
 	me.alive = 1;
 	me.boom = 0;
+	me.phase = 0.0;
+	me.fall = 0.0;
 	foes = array[NFOE] of ref Mech;
 	for(i := 0; i < NFOE; i++)
 		foes[i] = spawnfoe(i);
@@ -364,6 +378,10 @@ spawnfoe(i: int): ref Mech
 	f.alive = 1;
 	f.fire = 90 + i*30;
 	f.boom = 0;
+	# Start them out of step with each other.  A lance walking in
+	# lockstep looks like one machine drawn four times.
+	f.phase = real (i * 90);
+	f.fall = 0.0;
 	return f;
 }
 
@@ -697,7 +715,8 @@ damage(m: ref Mech, d: real, mine: int)
 	}
 	if(m.armour[CTORSO] <= 0.0 && m != me && m.alive){
 		m.alive = 0;
-		m.boom = 40;
+		m.boom = BOOMFRAMES;
+		m.fall = 0.0;
 		score += 500;
 		bigboom(m.x, m.z);
 		if(lock >= 0 && foes[lock] == m)
@@ -717,8 +736,13 @@ bigboom(x, z: real)
 stepfoe(f: ref Mech, idx: int)
 {
 	if(!f.alive){
-		if(f.boom > 0)
+		# Going down: legs fold, the torso pitches forward over them.
+		if(f.boom > 0){
 			f.boom--;
+			f.fall = 1.0 - real f.boom / real BOOMFRAMES;
+			if(f.fall > 1.0)
+				f.fall = 1.0;
+		}
 		return;
 	}
 	f.heat -= COOLRATE;
@@ -742,7 +766,21 @@ stepfoe(f: ref Mech, idx: int)
 		f.face -= TURN;
 	else
 		f.face = want;
-	f.twist = 0.0;
+	# The torso covers what the legs have not turned yet.  Legs turn at
+	# TURN a frame and this does not, so a machine that has just been
+	# flanked twists to face you long before it has walked round - which
+	# is the whole point of a torso that turns on its own, and it is
+	# only visible on the machines, never on your own.
+	tw := want - f.face;
+	while(tw > 180.0)
+		tw -= 360.0;
+	while(tw < -180.0)
+		tw += 360.0;
+	if(tw > TWISTMAX)
+		tw = TWISTMAX;
+	if(tw < -TWISTMAX)
+		tw = -TWISTMAX;
+	f.twist += (tw - f.twist) * 0.25;
 	# Stand off: close if far, back away if very close.  Expressed
 	# against the range they will actually shoot at rather than as two
 	# bare numbers, so the band cannot end up outside it.
@@ -754,13 +792,21 @@ stepfoe(f: ref Mech, idx: int)
 		f.spd = 0.0;
 	f.x += f.spd * math->cos(f.face*DEG);
 	f.z += f.spd * math->sin(f.face*DEG);
+	# The stride is driven by ground covered, not by the clock, so a
+	# machine that is standing still does not march on the spot and one
+	# backing away steps backwards.
+	f.phase += f.spd * STRIDERATE;
+	while(f.phase >= 360.0)
+		f.phase -= 360.0;
+	while(f.phase < 0.0)
+		f.phase += 360.0;
 	if(--f.fire <= 0){
 		f.fire = 70 + (idx * 13 + frames/7) % 60;
 		if(d < FARV && absr(da) < 12.0){
-			g := LASER;
+			wg := LASER;
 			if((frames/29 + idx) % 2 == 0)
-				g = CANNON;
-			shoot(f, g, 0);
+				wg = CANNON;
+			shoot(f, wg, 0);
 		}
 	}
 }
@@ -812,7 +858,7 @@ frame()
 	d3->translate(-me.x, -ey, -me.z);
 	ground();
 	for(i := 0; i < NFOE; i++)
-		if(foes[i] != nil && foes[i].alive)
+		if(foes[i] != nil && (foes[i].alive || foes[i].boom > 0))
 			mech(foes[i], cfoe, cfoe2);
 	drawshots();
 	drawbeams();
@@ -910,21 +956,53 @@ mech(m: ref Mech, c1, c2: ref Image)
 	if(!ok || ez > -3.0)
 		return;			# behind the cockpit
 	f := fog(math->sqrt(dx*dx + dz*dz));
+	# Two frames, not one: the legs stand in the machine's own heading
+	# and everything above the hips stands in the heading plus the
+	# torso twist.  That is what makes a machine walking one way and
+	# aiming another look like one, and it costs two more cosines.
 	ca := math->cos(m.face*DEG);
 	sa := math->sin(m.face*DEG);
-	# Taller than it is wide, or it reads as a shed.  Legs are most of
-	# the height, the torso is narrower than the stance, and the arms
-	# hang outside it.
+	tb := (m.face + m.twist) * DEG;
+	cb := math->cos(tb);
+	sb := math->sin(tb);
+
+	# The stride.  One sine drives the whole gait: the legs swing
+	# against each other, the leading foot lifts, the hips drop at mid
+	# stride when both feet are down, and the arms swing against the
+	# legs.  Nothing here is a keyframe.
+	ph := m.phase * DEG;
+	sw := math->sin(ph);
+	lfoot := 0.0;
+	rfoot := 0.0;
+	if(sw > 0.0)
+		lfoot = LIFT * sw;
+	else
+		rfoot = -LIFT * sw;
+	bob := -BOB * absr(sw);
+
+	# And the topple, once it is dead: the legs fold under it and the
+	# torso pitches forward over them.
+	fl := m.fall;
+	legh := 7.0 * (1.0 - fl*0.85);
+	hip := base + legh + bob*(1.0 - fl);
+	pitch := 7.0 * fl;			# how far forward the torso goes
+	drop := 3.4 * fl;
+
 	d3->setcolour(ctx, c2);
-	box(m.x, base, m.z, ca, sa, 1.3, 7.0, 1.5, -2.0, 0.0, f*0.85);
-	box(m.x, base, m.z, ca, sa, 1.3, 7.0, 1.5, 2.0, 0.0, f*0.85);
+	box(m.x, base + lfoot, m.z, ca, sa, 1.3, legh, 1.5,
+		-2.0, STRIDE*sw*(1.0-fl), f*0.85);
+	box(m.x, base + rfoot, m.z, ca, sa, 1.3, legh, 1.5,
+		2.0, -STRIDE*sw*(1.0-fl), f*0.85);
 	d3->setcolour(ctx, c1);
-	box(m.x, base + 7.0, m.z, ca, sa, 3.0, 4.6, 2.2, 0.0, 0.0, f);
+	box(m.x, hip - drop, m.z, cb, sb, 3.0, 4.6, 2.2, 0.0, pitch, f);
 	d3->setcolour(ctx, c2);
-	box(m.x, base + 7.4, m.z, ca, sa, 1.0, 3.8, 1.0, -3.8, 0.0, f*0.9);
-	box(m.x, base + 7.4, m.z, ca, sa, 1.0, 3.8, 1.0, 3.8, 0.0, f*0.9);
+	box(m.x, hip + 0.4 - drop, m.z, cb, sb, 1.0, 3.8, 1.0,
+		-3.8, pitch - ARMSW*sw*(1.0-fl), f*0.9);
+	box(m.x, hip + 0.4 - drop, m.z, cb, sb, 1.0, 3.8, 1.0,
+		3.8, pitch + ARMSW*sw*(1.0-fl), f*0.9);
 	d3->setcolour(ctx, c1);
-	box(m.x, base + 11.6, m.z, ca, sa, 1.6, 1.5, 1.4, 0.0, 0.5, f*1.15);
+	box(m.x, hip + 4.6 - drop*1.6, m.z, cb, sb, 1.6, 1.5, 1.4,
+		0.0, 0.5 + pitch*1.25, f*1.15);
 }
 
 # One box, in the machine's own frame: hw/hh/hd are half extents, ox is
@@ -1242,14 +1320,19 @@ shot()
 	# is drawn, so a screenshot of the opening shows an empty valley.
 	# Bring two of them to where a pilot would first see them.
 	a := me.face * DEG;
-	foes[0].x = me.x + 45.0 * math->cos(a);
-	foes[0].z = me.z + 45.0 * math->sin(a);
+	foes[0].x = me.x + 30.0 * math->cos(a);
+	foes[0].z = me.z + 30.0 * math->sin(a);
 	foes[1].x = me.x + 72.0 * math->cos(a) - 22.0 * math->sin(a);
 	foes[1].z = me.z + 72.0 * math->sin(a) + 22.0 * math->cos(a);
-	for(i := 0; i < 40; i++){
+	# Twist the torso out and back, so the run exercises it and the
+	# frame that gets written is still looking at the target.  There is
+	# no auto-centre: the twist stays where it was left.
+	for(i := 0; i < 56; i++){
 		pad = 0;
-		if(i > 10 && i < 26)
-			pad = Nes->PB;		# twist the torso
+		if(i > 8 && i < 24)
+			pad = Nes->PB;
+		else if(i >= 28 && i < 44)
+			pad = Nes->PSEL;
 		step();
 		if((i % 10) == 0 || i == 119)
 			frame();
@@ -1536,6 +1619,86 @@ selftest()
 	frame();
 	cktrue("and one behind the cockpit is not", lit() <= bare + 200);
 
+	# The gait.  Two things to establish and they are different: that
+	# the stride advances with ground covered, and that it reaches the
+	# SCREEN.  The second is the one a state check cannot make.
+	# Setting spd to zero does not make a machine stand still: stepfoe
+	# sets it every frame from the stand-off logic.  Put it in the band
+	# where that logic holds instead, which is the machine deciding to
+	# stand still rather than the test pretending it has.
+	newgame();
+	fo := foes[0];
+	fo.x = me.x + FARV*0.55;
+	fo.z = me.z;
+	fo.face = 180.0;
+	run(5, 0);
+	p0 := fo.phase;
+	run(30, 0);
+	ck("standing still does not march on the spot",
+		int (fo.phase*10.0), int (p0*10.0));
+	fo.x = me.x + FARV*1.5;
+	run(30, 0);
+	cktrue("walking advances the stride", fo.phase != p0);
+	moved := 0;
+	for(i = 0; i < 400; i++){
+		run(1, 0);
+		if(fo.phase < 0.0 || fo.phase >= 360.0)
+			moved++;
+	}
+	ck("and the stride stays in range", moved, 0);
+
+	newgame();
+	me.face = 0.0;
+	me.twist = 0.0;
+	for(i = 0; i < NFOE; i++)
+		foes[i].alive = 0;
+	foes[0].alive = 1;
+	foes[0].x = me.x + 34.0;
+	foes[0].z = me.z;
+	foes[0].spd = 0.0;
+	foes[0].phase = 0.0;
+	frame();
+	a := framesum();
+	foes[0].phase = 90.0;
+	frame();
+	b := framesum();
+	foes[0].phase = 270.0;
+	frame();
+	c := framesum();
+	cktrue("the stride changes the picture", a != b && b != c && a != c);
+
+	# And a machine that is destroyed goes down over several frames
+	# rather than vanishing, and is still drawn while it does.
+	# One kept alive a long way off, or destroying the last machine ends
+	# the sortie and step() takes its early return - so nothing would
+	# advance the fall being measured.
+	newgame();
+	me.face = 0.0;
+	me.twist = 0.0;
+	for(i = 2; i < NFOE; i++)
+		foes[i].alive = 0;
+	foes[1].x = me.x + 4000.0;
+	foes[1].z = me.z;
+	fo = foes[0];
+	fo.alive = 1;
+	fo.x = me.x + 34.0;
+	fo.z = me.z;
+	for(i = 0; i < 60 && fo.alive; i++)
+		damage(fo, 40.0, 1);
+	cktrue("it is destroyed", !fo.alive);
+	ck("and starts upright", int (fo.fall*100.0), 0);
+	frame();
+	falling := lit();
+	run(BOOMFRAMES/2, 0);
+	cktrue("the fall progresses", fo.fall > 0.3 && fo.fall < 0.9);
+	frame();
+	cktrue("and it is still on the screen while it falls",
+		lit() > bare + 1000);
+	run(BOOMFRAMES, 0);
+	cktrue("then it is flat", fo.fall >= 0.99);
+	if(falling < 0)
+		nfail++;
+
 	if(nfail == 0)
 		sys->print("strider: PASSED\n");
 	else{
@@ -1557,6 +1720,23 @@ armourof(m: ref Mech): real
 	for(i := 0; i < NSECT; i++)
 		t += m.armour[i];
 	return t;
+}
+
+# A cheap hash of the whole frame, for asking whether two frames differ
+# at all.  Counting lit pixels cannot answer that: a leg that has swung
+# forward lights exactly as many pixels as one that has not.
+framesum(): int
+{
+	w := target.r.dx();
+	h := target.r.dy();
+	bpp := target.depth / 8;
+	b := array[w*h*bpp] of byte;
+	if(target.readpixels(target.r, b) < 0)
+		return -1;
+	sum := 0;
+	for(i := 0; i < w*h*bpp; i += 7)
+		sum = (sum * 31 + int b[i]) & 16r3FFFFFFF;
+	return sum;
 }
 
 lit(): int
