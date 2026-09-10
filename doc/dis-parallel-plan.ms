@@ -1918,3 +1918,90 @@ which set
 .IP \(bu
 .B "Any of it without ThreadSanitizer."
 Step 0 is step 0.
+.NH 1
+What Dis already has of Go's model, and what it is missing
+.PP
+Go's runtime is G, M and P.  Mapping it onto this kernel as it stands
+today, rather than onto the plan, changes what the next piece of work
+is.
+.IP "\f(CWG\fP \(em the goroutine"
+.CW Prog .
+Already many, already cheap, already scheduled in quanta.  Nothing
+missing.
+.IP "\f(CWM\fP \(em the OS thread"
+The
+.CW "kproc(\"dis\", vmachine, ...)"
+workers.  Also already many, and that is the finding: dis.c spawns
+another whenever
+.CW isched.creating
+says one is wanted, and a live pc64 boot shows four of them \(em procs
+8, 9, 10 and 13, one Running and three Queueing or Wakeme.  The M's
+exist.
+.IP "\f(CWP\fP \(em the context that a thread must hold to run"
+.CW Pctx .
+There is exactly one, and every M shares it.
+.PP
+So Inferno is not short of threads or of work.  It has N M's, many G's,
+and one P, and the global
+.CW vmlock
+is what makes that safe: an M must hold it to run, so only one M ever
+touches the single P.  Go's equivalent statement is that a thread must
+acquire a P to execute Go code, except that Go has
+.CW GOMAXPROCS
+of them and Dis has one.
+.PP
+That reframes the remaining work.  The interpreter is not serialised
+because the register file is global \(em it is serialised because there
+is one P, and the register file being global is a consequence.  What
+has to be built is a second P, and everything else follows from what a
+P must own.
+.NH 2
+What a P must own, and the ordering that falls out
+.PP
+Counting the uses of
+.CW curP
+in the tree says which parts are hard:
+.TS
+box, tab(;);
+l l l.
+field;uses;what it is
+_
+runhd, runtl;76;the run queue
+curprog;17;whose live registers reg holds
+reg;via R;the Dis register file
+.TE
+.PP
+The register file is the part the plan has been treating as the
+problem, and it is the easy part: under
+.CW vmlock
+only one M runs, so making
+.CW curR
+per-M changes nothing until the lock goes, and the lock cannot go until
+the collector is safe.  Phase 1b and Phase 5 together, as already
+written.
+.PP
+The run queue is the part that actually blocks, and it is 76 sites.  It
+also cannot simply be split: with a per-P queue and no global queue, a
+.CW Prog
+that M A queues is invisible to M B, and if A then blocks, that program
+never runs.  Go does not split it either \(em it has
+.I both,
+a bounded per-P local queue and a global one, with
+.CW runqput
+overflowing to the global queue and
+.CW runqget
+falling back to it and then to stealing from another P.  The global
+queue is not a legacy remnant in Go; it is what makes the local ones
+correct.
+.PP
+So the order is: the global queue first, because it is the thing a
+per-P queue needs in order to be safe, and it can be built and
+exercised while there is still one P \(em give the local queue a bound
+and let it overflow, and the global path runs today, on one processor,
+where it can be tested.  Then a second P.  Then the collector, and the
+lock.
+.PP
+Stated plainly so it is not mistaken for more than it is: none of this
+makes Dis run on two processors.  It is the order the pieces have to be
+built in for the last step to be a small one, and the first piece is
+chosen because it is the only one that can be tested before the last.
