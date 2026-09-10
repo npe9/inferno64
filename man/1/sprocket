@@ -1,0 +1,98 @@
+.TH SPROCKET 1
+.SH NAME
+sprocket \- a side-scrolling platformer
+.SH SYNOPSIS
+.B games/sprocket
+[
+.B -t
+|
+.B -s
+] [
+.B -q
+]
+.SH DESCRIPTION
+.I Sprocket
+is a platformer in the shape that genre took:
+run and jump with momentum,
+a jump whose height depends on how long the button is held,
+walkers that turn at a wall or at the edge of what they are standing on
+and are dealt with by landing on them,
+boxes that give something up when hit from below,
+bolts to collect, pits to clear, and a flag at the right-hand end.
+.PP
+Where
+.IR rivet (1)
+exercises
+.IR nes (2)'s
+tile map on a single screen, this exercises the scroll.
+The level is 128 tiles wide, drawn once into a surface four screens
+across; each frame is a window of that plus whatever is moving.
+Hitting a box rewrites one tile in that surface rather than rebuilding
+it, which is the point of keeping it around.
+.PP
+Arrow keys or
+.B wasd
+to walk;
+.BR x ,
+.B .
+or space to jump, held for height;
+.B z
+or
+.B ,
+to run.
+.B q
+or Escape quits.
+.PP
+.B -q
+starts silent.
+.B -t
+runs the self test and needs no window.
+.B -s
+plays a scripted opening headless and writes the composed frame to
+.B sprocket.raw
+as
+.IR w " by " h
+of blue, green, red bytes.
+.SH EXAMPLE
+.EX
+games/sprocket
+emu\-cocoa \-r. /dis/games/sprocket.dis \-t
+.EE
+.SH SOURCE
+.B /appl/games/sprocket.b
+.SH SEE ALSO
+.IR nes (2),
+.IR rivet (1)
+.SH DIAGNOSTICS
+.B -t
+drives the same
+.I step
+the game loop drives and asserts on game state.
+It checks the level's shape and that the walkers came from it;
+that the character accelerates, caps at the walk speed, goes faster with
+the run button and is stopped by friction;
+that a held jump goes higher than a tapped one, which is the whole
+difference between this genre and
+.IR rivet (1)'s;
+that a wall stops it and leaves it outside the wall;
+that a pit costs a life;
+that a box hit from below is spent and yields a bolt;
+that a bolt is collected once and once only;
+that landing on a walker flattens it and bounces while running into one
+costs a life;
+that a walker turns round rather than walking off its ledge;
+and that the camera starts clamped, follows, and stops at the far end.
+.SH BUGS
+There is one course.
+Clearing it starts the same one again with the score kept.
+.PP
+The self test asserts on state, so it cannot see a palette entry that
+happens to match the background behind it.
+That fault occurred twice while this was written \- the character's
+face, then its legs, drawn in colours near enough to the sky to vanish \-
+and both times only
+.B -s
+and a look at the result found it.
+.PP
+A walker knocked off the level by nothing in particular simply
+disappears when it falls past the bottom; it does not come back.

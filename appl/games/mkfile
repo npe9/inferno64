@@ -2,6 +2,7 @@
 
 TARG=\
 	rivet.dis\
+	sprocket.dis\
 
 MODULES=\
 

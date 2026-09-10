@@ -549,6 +549,7 @@ spriteput spriteput
 spriteputext spriteputext
 spriteraw spriteraw
 spritetext spritetext
+sprocket sprocket
 squirt squirt
 stack stack
 stackv stack
