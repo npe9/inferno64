@@ -61,6 +61,18 @@ void	(*heapmonitor)(int, void*, ulong);
  * destroy() below for what it is for.
  */
 int	(*gcstopped)(void);
+static int statictype(Type*);		/* named below; used by destroy() */
+/*
+ * Names for what statictype() returns, which is a 1-based index into
+ * statics[] below, or 0 for a type that is not one of them.  Slot 0 is
+ * the "?" and is why this array is one longer than that one -- a new
+ * static type has to be added in both places, and the comment above
+ * statics[] already says so for its half.
+ */
+static char* const staticname[] = {
+	"?", "Tarray", "Tstring", "Tlist", "Tmodlink", "Tchannel",
+	"Tptr", "Tbyte", "Tword", "Tlong", "Treal",
+};
 
 #define	BIT(bt, nb)	(bt & (1<<nb))
 
@@ -541,8 +553,10 @@ destroy(void *v)
 			 * same hypothesis.  See doc/multicore-plan.ms.
 			 */
 			print("destroy: h->ref underflow, h %#p n %d"
-				" colour %d (mutator %d) t %#p\n",
-				h, n, h->color, mutator, h->t);
+				" colour %d (mutator %d) t %#p %s\n",
+				h, n, h->color, mutator, h->t,
+				h->t == nil ? "(nil)" :
+				staticname[statictype(h->t)]);
 			dumpstack();
 			abort();
 		}
