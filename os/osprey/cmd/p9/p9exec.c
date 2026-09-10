@@ -80,9 +80,22 @@ p9execfile(void)
 	addbootfile("libns", libnsprog, sizeof libnsprog);
 	addbootfile("rio", rioprogp9, sizeof rioprogp9);
 	/*
-	 * And the same shell again under the name rio's windows ask for.
-	 * /boot is bound onto /bin, so rio's "/bin/rc" is this - one image,
-	 * two names, which is what a bind is for.
+	 * And a shell at the name rio's windows ask for, which is a
+	 * substitution and is not pretended otherwise.
+	 *
+	 * rio runs "/bin/rc -i" in a window it sweeps, because that is what
+	 * it does on Plan 9.  There is no rc here: the 9front source this
+	 * tree vendors is rio and its libraries, not the command set, and
+	 * real rc could not run as it stands anyway - it forks without
+	 * execing for subshells, pipeline stages and functions, and a
+	 * library operating system has no fork to give it (p9lib.h says why,
+	 * and p9forkns refuses RFPROC by name).  Fork-and-exec fused is
+	 * spawn, and that covers rc's simple commands and nothing else.
+	 *
+	 * So the name resolves to this tree's own small shell.  The boot
+	 * says so, and the shell says so in the window's first line, because
+	 * a program that answers to a name it is not is the kind of thing
+	 * this tree does not do quietly.
 	 */
 	addbootfile("rc", libshprog, sizeof libshprog);
 	addbootfile("libsh", libshprog, sizeof libshprog);

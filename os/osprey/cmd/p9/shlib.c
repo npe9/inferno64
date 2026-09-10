@@ -174,9 +174,23 @@ startboot(char *argv0, char **argv)
 	 * window's own /dev/cons: rio assembles the line and hands it over
 	 * when Enter is pressed, so this reads a line at a time and does
 	 * not echo - the window has already drawn what was typed.
+	 *
+	 * "-i" as well as no arguments, because that is what rio asks for.
+	 * A window rio sweeps runs "/bin/rc -i", the way it does on Plan 9,
+	 * and this shell took the -i for a file to open: it said "cannot
+	 * open -i" into the window and exited, rio took the window down
+	 * with it, and what a person saw was a window that would not stay.
+	 * rio's own -D said so in one line, which is what it is for.
 	 */
-	if(argv == nil || argv[1] == nil){
-		print("libsh: a shell to type at; one command a line, "
+	if(argv == nil || argv[1] == nil || strcmp(argv[1], "-i") == 0){
+		/*
+		 * What this is, said first.  rio asks for /bin/rc and this
+		 * answers to that name; it is not rc, and a window that
+		 * opened with a prompt and no word about it would be letting
+		 * the name speak for the program.
+		 */
+		print("libsh: this is not rc - there is no rc on this personality.\n");
+		print("libsh: it is the library-OS shell: one command a line, "
 			"words at blanks, stages at |\n");
 		for(;;){
 			/*

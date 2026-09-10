@@ -1866,6 +1866,28 @@ and a button held down in rio's screen opens rio's menu - libdraw's
 .B DPalegreen
 in the shot with the button and none of it in the shot without.
 .PP
+A window rio sweeps runs
+.BR "/bin/rc -i" ,
+and this personality answers that name with a shell of its own.  It is
+not rc: the 9front source vendored here is rio and its libraries, not
+the command set, and real rc forks without execing - for subshells, for
+pipeline stages that are builtins, for functions - which a library
+operating system has no fork to give it.  The boot says so and the
+window's first line says so.
+.PP
+Every program here is linked against
+.I p9crt.c
+and reaches the personality through the
+.B P9lib
+table, which is a library per program rather than a personality that
+runs executables.  The other arrangement - the personality answering the
+ordinary system calls of an ordinary a.out in its own address space, the
+way
+.I p9buddy
+answers them for a container it serves - is written up as the next phase
+in
+.BR doc/osprey-progress.ms .
+.PP
 .B scripts/osprey-play.sh
 boots the same kernel with a display, for a machine to use rather than
 to check.  It wants an image whose

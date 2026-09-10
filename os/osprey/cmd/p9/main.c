@@ -999,6 +999,8 @@ p9main(void)
 		extern int p9inputloop(long ms);
 
 		std[0] = std[1] = std[2] = -1;
+		print("p9: /bin/rc is /boot/libsh, this tree's own small shell, and not rc: "
+			"rio asks for rc by name and there is none here\n");
 		print("p9: starting /boot/rio, the real 9front rio, linked against this personality\n");
 		riopid = p9spawn("/boot/rio", rioargv, std);
 		if(riopid < 0)

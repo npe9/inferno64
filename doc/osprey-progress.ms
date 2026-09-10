@@ -11230,6 +11230,77 @@ of what
 .CW rfork
 can mean where there is one address space.
 .PP
+.B "3.2w: what a shell in a window is, and what it is not."
+rio runs
+.CW "/bin/rc -i"
+in a window it sweeps, because that is what it does on Plan 9, and this
+personality answers that name with a shell of its own.  That is a
+substitution and it is written down rather than left to the name: the
+boot says
+.CW "/bin/rc is /boot/libsh, this tree's own small shell, and not rc" ,
+and the first line in every window says it again.
+.PP
+There is no rc here.  The 9front source this tree vendors is rio and its
+libraries, not the command set, and real rc could not run as it stands
+anyway: it forks without execing \- for subshells, for pipeline stages
+that are builtins, for functions \- and a library operating system has
+no fork to give it.  Fork and exec fused is spawn, and that covers rc's
+simple commands and nothing else.  Naming that limit is worth more than
+a shell that answers to rc's name and hopes.
+.PP
+One line of rio's own
+.CW -D
+found the bug underneath this, which no check had: a swept window ran
+.CW "/bin/rc -i" ,
+the shell took
+.CW -i
+for a file to open, said
+.CW "cannot open -i"
+into the window and exited, and rio took the window down with it.  What
+a person saw was a window that would not stay.  A check that swept a
+window and looked for pixels would have caught it; there was none,
+because until this session nothing could sweep a window at all.
+.PP
+.B "Phase 3.3: the personality runs executables, not libraries."
+The arrangement this document has built is a library per program: every
+one of them is linked against
+.CW p9crt.c ,
+which turns its libc calls into calls on the
+.CW P9lib
+table.  That is what makes rio work here, and it is not what a library
+operating system is for.  A personality should run
+.I an
+executable \- an ordinary Plan 9 a.out, built the ordinary way, whose
+libc makes ordinary system calls \- and answer those calls itself.
+.PP
+The mechanism to do it already exists in this tree, pointed the other
+way.
+.CW p9buddy 's
+.CW dosyscall
+sends a call it has no entry for to the container's server
+.CW ( ospreybuddyforward ),
+and a peer personality answers it; that is how an unmodified Plan 9
+binary runs on the server side.  The library-OS form of the same thing
+is that the personality answers the calls of programs in its own address
+space: the library operating system is its own buddy.
+.PP
+What that needs, in the order it will have to be built: a
+.CW dosyscall
+on this configuration that hands an unimplemented call to this
+container rather than printing that it is unimplemented; a way for the
+kernel to block the calling flow and wake the personality's own service
+on it, which is what
+.CW p9buddy.c 's
+workers already do for containers it answers for; and nothing at all for
+the arguments, because a pointer a program passes is a pointer the
+personality can already follow \- one address space, which is the whole
+point of the arrangement and the one place it is easier than the server.
+.PP
+When that works,
+.CW p9crt.c
+is not needed to run a program, and the programs this document has been
+linking against it are the special case rather than the rule.
+.PP
 .B "Phase 3.2: a real program, then rio, linked with the library."
 A real program \- a command, then a shell, then rio \- is linked with
 the personality library into one microkernel task and run by the exec of
