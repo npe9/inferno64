@@ -195,6 +195,8 @@ void	showframe(void*, void*);
 void	syncclock(void);
 uvlong	tscticks(uvlong*);
 void	trapenable(int, void (*)(Ureg*, void*), void*, char*);
+void	ilockwatchtrap(Ureg*, void*);
+void	ilockwatch(void);
 void	trapinit(void);
 void	trapinit0(void);
 int	tas(void*);

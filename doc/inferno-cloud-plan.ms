@@ -5286,3 +5286,84 @@ in
 .CW plan9.ini .
 That is a real restriction, not a fix, and it should be written on the
 image rather than discovered by a user.
+.NH 2
+Two more things the two-processor boot says
+.LP
+.B "cpu1 faults in the scheduler."
+One two-processor boot in four dies on the second processor rather than
+in the counter:
+.DS
+.CW
+cpu1: registers for kernel
+ R14 up 0000000000000000 R15 m 000000000DA9D000
+  CS A7F0   SS 31B1    PC 0000000000298E74  SP 000000000DAACF08
+ CR2 0000000000000000
+panic: page fault
+.DE
+.CW 0x298E74
+is
+.CW dequeueproc+0x108 ,
+.CW CR2
+is zero, so it is a nil dereference inside the run queue with
+.CW up
+nil, on cpu1's own stack
+.CW ( estackx
+.CW daad000 ,
+and cpu1's Mach is
+.CW 0xda9d000 ).
+Whether this is the same fault as the stray write or a second one is
+not established.
+.PP
+.B "The hardware watchpoint fires, and cannot say so."
+The question the counters cannot answer is which processor makes the
+stray store, and x86 can answer it directly: cpu1 has no business
+writing cpu0's
+.CW Mach ,
+so point cpu1's
+.CW DR0
+at
+.CW 0x102074
+.CW ( "m->ilockdepth" ,
+offset 116 in
+.CW Mach ,
+which is
+.CW PMach 's
+field now) and trap on any write.
+.CW squidboy() 's
+.CW ilockwatch()
+does that under
+.CW *ilockwatch
+in
+.CW plan9.ini .
+.PP
+It does not work, and the way it fails is worth writing down.  With
+.CW *ilockwatch=test
+cpu1 writes the watched word itself, on purpose, as a positive control
+\(em and the machine stops dead at that instruction, both processors,
+with nothing printed.  Not the handler's
+.CW iprint ,
+not
+.CW trap() 's
+own
+.CW "unknown trap/intr" ,
+not even a handler cut back to storing the pc in a global for cpu0 to
+print later.  A
+.CW trapenable(VectorDE)
+handler is installed and says so at boot.  So the write does trap; the
+debug exception simply is not survivable on an application processor
+here, and every quiet
+.CW *ilockwatch
+run is a run in which nothing happened to trap, not a run that proves
+cpu1 innocent.
+.PP
+That distinction is the whole reason the control was written.  Four
+watched boots were silent before it existed, and reading that silence
+as "cpu1 does not write cpu0's Mach" would have been the same mistake
+as the serial-input claim earlier in this document: a negative from an
+instrument that had never been shown capable of a positive.
+.PP
+So the open question stays open, and it is now two questions: which
+processor stores into cpu0's
+.CW m->ilockdepth ,
+and why a debug exception kills this kernel.  The second is a
+prerequisite for answering the first this way.

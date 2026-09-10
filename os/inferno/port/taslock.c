@@ -46,6 +46,42 @@ int ilockshadowbad;
 void *ilockmach[8];
 int ilockmachbad;
 
+/*
+ * Both counters are checked immediately after each is moved, so the
+ * first report says which of the two operations lost the update and
+ * what the depth held before it: a depth that went from D to something
+ * other than D+1 under splhi was written by someone else between the
+ * read and the store, and a depth that moved correctly while the
+ * shadow did not says the opposite.  Reported once; after the first
+ * divergence every later one is a consequence.
+ */
+static void
+ilockcheck(char *where, int was, uintptr pc)
+{
+	int s, i;
+
+	if(ilockshadowbad || (uint)m->machno >= nelem(ilockshadow))
+		return;
+	s = ilockshadow[m->machno];
+	if(s == m->ilockdepth)
+		return;
+	ilockshadowbad = 1;
+	iprint("%s: cpu%d depth was %d, now %d, shadow %d, m %#p, pc %#p\n",
+		where, m->machno, was, m->ilockdepth, s, m, pc);
+	/*
+	 * The shape of the write, which is the thing left to learn.  A
+	 * single word changed says a stray pointer store; a run of
+	 * words gone to zero says a memset or a free landing on top of
+	 * cpu0's Mach, which is at a fixed address (CPU0MACH) that no
+	 * allocator should ever hand out.  ilockdepth is inside PMach,
+	 * so the neighbours printed here are PMach's own fields.
+	 */
+	iprint("  m+0x40:");
+	for(i = 0x40; i < 0x94; i += 4)
+		iprint(" %8.8ux", *(u32int*)((uchar*)m + i));
+	iprint("\n");
+}
+
 void
 ilockheldpcs(void)
 {
@@ -178,6 +214,7 @@ void
 ilock(Lock *l)
 {
 	ulong x;
+	int was;
 	uintptr pc;
 
 	pc = getcallerpc(&l);
@@ -202,6 +239,7 @@ ilock(Lock *l)
 		}
 	}
 acquire:
+	was = m->ilockdepth;
 	m->ilockdepth++;
 	/*
 	 * Who is holding each level, so that a depth that never comes
@@ -229,6 +267,7 @@ acquire:
 				m->machno, ilockmach[m->machno], m, pc);
 		}
 		ilockshadow[m->machno]++;
+		ilockcheck("ilock", was, pc);
 	}
 	if(m->ilockdepth > 0 && m->ilockdepth <= nelem(ilockpc)){
 		ilockpc[m->ilockdepth-1] = pc;
@@ -316,6 +355,7 @@ void
 iunlock(Lock *l)
 {
 	ulong sr;
+	int was;
 
 #ifdef LOCKCYCLES
 	l->lockcycles += lcycles();
@@ -350,15 +390,11 @@ iunlock(Lock *l)
 	l->m = nil;
 	coherence();
 	l->key = 0;
+	was = m->ilockdepth;
 	m->ilockdepth--;
 	if((uint)m->machno < nelem(ilockshadow)){
 		ilockshadow[m->machno]--;
-		if(ilockshadow[m->machno] != m->ilockdepth && ilockshadowbad == 0){
-			ilockshadowbad = 1;
-			iprint("iunlock: cpu%d shadow %d but m->ilockdepth %d, m %#p, pc %#p\n",
-				m->machno, ilockshadow[m->machno], m->ilockdepth,
-				m, getcallerpc(&l));
-		}
+		ilockcheck("iunlock", was, getcallerpc(&l));
 	}
 	if(m->ilockdepth >= 0 && m->ilockdepth < nelem(ilockpc))
 		ilockpc[m->ilockdepth] = 0;
