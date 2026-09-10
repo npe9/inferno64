@@ -2,6 +2,9 @@
  * MacOSX/Darwin ARM64 fpu support.
  * Plan 9 FCR/FSR bits (lib9.h) are translated to AArch64 FPCR/FPSR.
  *
+ * setfcr-Linux-arm64.c is the same file: these are the architecture's
+ * registers, not the operating system's.  Change them together.
+ *
  * Important: never enable FPCR trap-enable bits (IOE/DZE/…).  On Apple
  * Silicon those turn benign framework FP ops (e.g. AudioToolbox sinc
  * setup) into EXC_BAD_INSTRUCTION / SIGILL on host threads that inherit
