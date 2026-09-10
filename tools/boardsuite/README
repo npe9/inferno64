@@ -202,7 +202,7 @@ temperature.  So each configuration also names evidence lines that must
 appear in its log, and a run that produces the right markers with the
 wrong evidence fails.
 
-THE OTHER BOARDS.  Four more configurations boot the boards this tree
+THE OTHER BOARDS.  Nine more configurations boot the boards this tree
 has besides the Pis, each with the qemu its architecture needs -- the
 Pi ones need the patched build, the rest are ordinary machines and use
 the system qemu:
@@ -213,7 +213,19 @@ the system qemu:
 			without it NET-FAIL, with it NET-OK, and that
 			was a known failure until the day something
 			attached one.
-	sifiveu		QEMU -M sifive_u, no bios.
+	sifiveu		QEMU -M sifive_u, no bios, with an SD card.
+			The card is worth the line for the same reason
+			virtarm64's netdev is: the board printed
+			SD-NONE on every run for as long as it was in
+			the suite, and nothing had ever handed it one.
+			The FU540 has no SD host controller, so
+			-drive if=sd here means SD command frames on a
+			SPI bus, through sdspisifive.c over
+			spisifive.c -- a driver stack no other
+			configuration touches.  It is also the first
+			configuration outside the Pi ones to want a
+			card at all, so it is what says makecard runs
+			for the boards the container builds.
 	virt		QEMU -M virt riscv64, with a virtio-blk disk
 			and a virtio-net, both the mmio transport.
 	virts		The same board in supervisor mode: no -bios
@@ -446,15 +458,36 @@ finally leaves a baseline in this tree.  That check has never once run
 to completion: with nothing attached it says -NONE, which is the right
 answer and the only one it has ever given.  A usb-mouse alone does not
 help either -- an emulated mouse nobody moves says nothing -- so the
-suite opens qemu's monitor on a TCP port and sends, once a second, a
-motion in x and a press and release of the right and middle buttons,
-which is exactly what mousecheck() waits for.  It repeats because the
+suite opens qemu's monitor on a TCP port and sends, once a second, an
+absolute position, a motion in x, and a press and release of the right
+and middle buttons -- which is exactly what mousecheck() waits for, all
+three of them.  It repeats because the
 window opens when the guest opens /dev/pointer and nothing outside the
 guest knows when that is.
 
 USB-MOUSE-OK ... buttons 6 is the evidence line: 6 is right (4) and
 middle (2) together, and the number is what says which direction
 usbd's HID-to-devpointer remap went.  Both boards report 6.
+
+Both also carry a usb-tablet, which is a different device in the one
+way that matters: it offers no boot protocol, so nothing in usbd's
+fixed-offset mouse decode can read it, and it is what the HID
+report-descriptor parser exists for.  The harness sends, in the same
+one-second cycle, an absolute position at three quarters along x and a
+quarter down y in QEMU's 0..0x7fff units; the guest scales the same
+fractions onto its 640x480 screen and waits for that point.
+USB-TABLET-OK ... absolute 479 119 on 640x480 is the evidence, and a
+relative decode cannot land on the pair -- the mouse sweeps x and never
+touches y.  The second evidence line is usbd's own: "48-bit report, x
+absolute at 8+16", the layout it derived from the descriptor, which no
+fixed decode could have known.
+
+Both conditions are watched by one reader in one window.  devpointer
+has a single event queue for the machine, so a second reader on
+/dev/pointer would consume events the first was waiting for; and two
+windows in series would make the four configurations with no pointer
+attached wait out two timeouts instead of one.  Those four say
+USB-TABLET-NONE beside USB-MOUSE-NONE.
 
 The keyboard is the other half of the same path and had even less to
 show for itself: its code printed one line per character for as long as
@@ -465,12 +498,14 @@ above its own call has always named, and it says USB-KBD-OK, -NONE or
 -FAIL.  The harness types "hello" once a second alongside the mouse
 events.  Both boards answer "USB-KBD-OK 5 chars, hello".
 
-The two checks time out at twenty seconds and twenty-five, and the
-difference is deliberate: both are spawned together and both report
--NONE by timing out, so on a board with neither device attached the
-markers would race and config_last would name one that is not last.
-The keyboard goes first.  Checked under load -- a container suite
-running beside it -- and the order held.
+The keyboard check times out at twenty seconds and the pointer one at
+twenty-five, and the difference is deliberate: both are spawned
+together and both report -NONE by timing out, so on a board with
+neither device attached the markers would race and config_last would
+name one that is not last.  The keyboard goes first.  Checked under
+load -- a container suite running beside it -- and the order held.  The
+pointer check reports two markers out of its one window, USB-TABLET
+before USB-MOUSE, so USB-MOUSE is still the one that comes last.
 
 Attaching it moved config_last.  With a mouse the check reports as soon
 as it has what it wants instead of waiting out its 25-second timeout,

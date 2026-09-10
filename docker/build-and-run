@@ -122,13 +122,26 @@ done
 
 say "built; running the suite"
 
-# The same nine the image's CMD names.  Not the whole list: the six
-# Pi configurations want the patched qemu, and the suite refuses before
-# it starts rather than part way through, which is right but makes a
-# bare "build" look like a failure of the build.
+# What this image can actually run, which is not the whole list.
+#
+# The six Pi configurations want the patched qemu, and the suite
+# refuses before it starts rather than part way through -- right, but
+# it makes a bare "build" look like a failure of the build.
+#
+# Two more want a qemu newer than the packaged 7.2 bookworm has.
+# sifive_u there does not put a -drive if=sd behind its MMC-SPI
+# controller, so sifiveu comes back SD-NONE against a baseline that
+# says otherwise; and the firmware package ships no riscv32 OpenSBI at
+# all, so virt32s cannot start.  Both are qemu's age and not the
+# board's: they pass on v10.1.3.  Boardsuite-pi.Dockerfile carries
+# stock v10.1.3 riscv binaries beside the patched aarch64 one and
+# names them in QEMU_RISCV64/QEMU_RISCV32, so the "all" path runs
+# them and the apt-only image does not pretend to.
 if [ $# -eq 0 ]; then
-	set -- virtarm64 virtarm64-peer sifiveu virt virts virt32 virt32s \
-		virt-peer peer-mixed
+	set -- virtarm64 virtarm64-peer virt virts virt32 virt-peer peer-mixed
+	if [ -n "$QEMU_RISCV32" ] && [ -x "$QEMU_RISCV32" ]; then
+		set -- sifiveu virt32s "$@"
+	fi
 	if [ -n "$QEMU" ] && [ -x "$QEMU" ]; then
 		set -- raspi3b raspi3b-4g raspi3b-usb raspi4 raspi4-hot \
 			raspi4-usb "$@"

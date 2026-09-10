@@ -24,6 +24,25 @@ ARG QEMU_TAG=v10.1.3
 RUN git clone --depth 1 --branch $QEMU_TAG \
 	https://gitlab.com/qemu-project/qemu.git /qemu
 
+# The riscv targets, built from the pristine clone before a single
+# patch is applied.  Debian bookworm packages qemu 7.2, and two
+# configurations have outgrown it: sifive_u there does not put a
+# -drive if=sd behind its MMC-SPI controller, so sifiveu reports
+# SD-NONE, and its firmware package ships no riscv32 OpenSBI at all,
+# so virt32s cannot start.  Building them here from the same v10.1.3
+# the host uses makes the container run the same fifteen.
+#
+# Before the patches on purpose.  Every patch in tools/qemu-patches is
+# a BCM or Pi device model, and the point of the packaged binary
+# elsewhere in this image is that the non-Pi boards pass on a qemu that
+# has none of them.  A riscv binary built out of a patched tree would
+# still have that property in fact, but not visibly; built here, ahead
+# of the series, it has it by construction.
+RUN cd /qemu && mkdir build-riscv && cd build-riscv && \
+	../configure --target-list=riscv64-softmmu,riscv32-softmmu \
+		--disable-docs --disable-fuse --disable-jack >/dev/null && \
+	ninja
+
 COPY patches /patches
 
 # One at a time, and stop on the first that does not apply.  git am
@@ -57,6 +76,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	libglib2.0-0 libpixman-1-0 zlib1g libslirp0 \
 	&& rm -rf /var/lib/apt/lists/*
 COPY --from=build /qemu/build/qemu-system-aarch64 /usr/local/bin/qemu-system-aarch64
+COPY --from=build /qemu/build-riscv/qemu-system-riscv64 /usr/local/bin/qemu-system-riscv64
+COPY --from=build /qemu/build-riscv/qemu-system-riscv32 /usr/local/bin/qemu-system-riscv32
+# One blob set for all three: pc-bios is the whole firmware directory
+# and both builds produce the same one, so this carries the riscv32
+# OpenSBI the packaged qemu has never had.
 COPY --from=build /qemu/build/pc-bios /usr/local/share/qemu
 ENV QEMU=/usr/local/bin/qemu-system-aarch64
 CMD ["/usr/local/bin/qemu-system-aarch64", "--version"]
