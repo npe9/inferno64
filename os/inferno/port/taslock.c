@@ -304,4 +304,20 @@ iunlock(Lock *l)
 	if(up)
 		up->lastilock = nil;
 	splx(sr);
+	/*
+	 * The question this answers: something re-enables interrupts
+	 * while an ilock is still held, and there is no other way to see
+	 * it.  A lock that is simply leaked leaves interrupts masked --
+	 * ilock() begins with splhi(), which on pc64 really is CLI --
+	 * so no clock interrupt could arrive to trip sched()'s
+	 * ilockdepth panic at all.  Yet that panic happens, repeatedly,
+	 * with uartkick's tlock recorded as held.  So the enabling is
+	 * the bug, not the holding, and this is where it becomes
+	 * visible: an iunlock whose saved spl says "interrupts were on"
+	 * running while an outer ilock is still held, which is an
+	 * out-of-order release.
+	 */
+	if(m->ilockdepth > 0 && islo())
+		iprint("iunlock: interrupts on at ilockdepth %d, pc %#p, lock pc %#p\n",
+			m->ilockdepth, getcallerpc(&l), l->pc);
 }
