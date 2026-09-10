@@ -642,11 +642,25 @@ def main():
                     and int(rio.group(3)) > 1000
                     and len(rioprocs) >= 3
                     and "p9 exec: entering /boot/rio at " in t))
-    results.append(("and where it stops is a name and not a fault: rio wants /mnt/temp for its file system server and this name space has no such name, so it says so and ends - and the personality it was loaded by is still running afterwards, with the groups and the working directory it had",
-                    "rio: can't create file system server: Enonexist: '/mnt/temp'" in t
-                    and 'p9 exec: /boot/rio exited with status' in t
-                    and 'osprey user: the program exited; the microkernel idles' in t
-                    and 'panic' not in t))
+    #
+    # And it gets past the thing that stopped it first.  rio's cexecpipe
+    # binds the pipe device onto /mnt/temp and opens both ends through
+    # it; the root device keeps /mnt/temp and /mnt/wsys for exactly that,
+    # and the personality's own bind demonstration had been leaving the
+    # environment device over /mnt with MREPL, hiding both.  What rio
+    # said about it was "can't create file system server: Enonexist:
+    # '/mnt/temp'", so the absence of that line is the claim, together
+    # with the fourth flow of control it only reaches afterwards.
+    #
+    # What is NOT claimed: that rio draws a window, or reaches its event
+    # loop, or ends.  It runs on past its file system and the boot ends
+    # with it still inside p9exec, and where it goes after that is not
+    # established here.
+    results.append(("and it gets past its own file system, which the personality's name space had been hiding: rio binds the pipe device onto /mnt/temp, which the root device keeps for it, and the bind demonstration in the personality had been leaving the environment device over /mnt - so rio makes its file server and a fourth flow of control, where before it stopped on the name",
+                    "can't create file system server" not in t
+                    and len(rioprocs) >= 4
+                    and 'panic' not in t
+                    and 'osprey user: the program exited; the microkernel idles' in t))
     results.append(("and it exits through the microkernel's minimal syscall interface, no in-kernel personality",
                     'the program exited' in t and 'panic' not in t))
 

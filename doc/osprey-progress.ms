@@ -10614,20 +10614,46 @@ passes every check in
 .PP
 On the machine it is laid in a slot, entered at
 .CW p9start ,
-and it runs.  It takes three flows of control of its own through the
+and it runs.  It takes flows of control of its own through the
 personality's
 .CW proccreate ,
 which is libthread's
 .CW procrfork
-underneath, and gets as far as its own file system server, where it
-stops on a name:
-.CW "rio: can't create file system server: Enonexist: '/mnt/temp'" .
-Then it ends, and the personality it was loaded by is still running,
-with the groups and the working directory it had.
+underneath, and it makes its own file system server.
 .PP
-That is the whole of the claim.  It does not draw a window and nothing
-here says it does.  What it does say is that the last thing between this
-personality and rio is a name space rather than a mechanism.
+It stopped on a name first, and the name was the personality's fault
+rather than rio's.
+.CW "rio: can't create file system server: Enonexist: '/mnt/temp'" .
+rio's
+.CW cexecpipe
+binds the pipe device onto
+.CW /mnt/temp ,
+opens both ends through it and unmounts it again, and the root device
+keeps
+.CW /mnt/temp
+and
+.CW /mnt/wsys
+for exactly that program \- the comment in
+.CW devroot.c
+says so and names rio.  What hid them was the personality's own
+demonstration of bind, which put the environment device over
+.CW /mnt
+with
+.CW MREPL
+and never took it off.  The name space a library operating system holds
+is the one every program it loads is given, so a demonstration that
+rearranges it and walks away has taken a mount point out from under a
+program that has not run yet.  It puts
+.CW /mnt
+back now.
+.PP
+With that, rio makes its file server and a fourth flow of control and
+runs on.  That is the whole of the claim.  It does not draw a window,
+the boot ends with rio still inside
+.CW p9exec ,
+and where it goes after its file system is not established here.  What
+is established is that the last thing between this personality and rio
+was a name space rather than a mechanism, twice over.
 .PP
 .B "Two bugs that only rio was big enough to find."
 The first was not rio running.  Adding rio to the boot files at all

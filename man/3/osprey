@@ -1766,12 +1766,22 @@ is the real 9front rio built as a
 .B "6l -u"
 module, and it runs: laid in a slot, entered at
 .IR p9start ,
-taking three flows of control of its own through
+taking flows of control of its own through
 .IR proccreate ,
-and stopping at its own file system server on a name this name space has
-not got
-.RB ( "'/mnt/temp'" ).
-It does not draw a window.  Two things were found by adding it: the boot
+and making its own file system server.  It stopped on
+.B /mnt/temp
+at first \- the root device keeps that and
+.B /mnt/wsys
+for rio's
+.IR cexecpipe ,
+and the personality's own demonstration of bind had been leaving the
+environment device over
+.B /mnt
+with
+.BR MREPL ,
+which hid them; a name space a library operating system rearranges is
+the one every program it loads is given.  It does not draw a window and
+where it goes after its file system is not established.  Two things were found by adding it: the boot
 files are byte arrays in the personality's data, so rio's size pushed
 the personality's bss past
 .B P9progbase

@@ -440,6 +440,22 @@ p9main(void)
 		buf[rn] = 0;
 		print("p9: read /mnt/bound across the binding: \"%.*s\"\n", (int)rn, (char*)buf);
 		p9close(fd);
+
+		/*
+		 * And put /mnt back, which this did not do and had to.  The
+		 * name space here is the one every program the personality
+		 * loads is given, and the root device keeps /mnt/temp and
+		 * /mnt/wsys in it for exactly the program that wants them:
+		 * rio binds the pipe device onto /mnt/temp in cexecpipe.  An
+		 * MREPL of the environment device over /mnt hid both, and
+		 * what rio said about it was "can't create file system
+		 * server: Enonexist: '/mnt/temp'" - the demonstration above
+		 * had taken the mount point out from under a program that had
+		 * not run yet.
+		 */
+		p9unmount(nil, "/mnt");
+		print("p9: unbound the environment device from /mnt, "
+			"which the root device keeps temp and wsys in\n");
 	}
 
 	/*
