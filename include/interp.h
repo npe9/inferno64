@@ -496,7 +496,18 @@ extern	Type Treal;
  * running on one other than this one.  There is exactly one today and
  * the array is the shape Phase 1b needs, not a claim that more exist.
  */
-enum { MAXPCTX = 8 };
+/*
+ * Enough that claimctx() does not run out.  Eight was not: a
+ * parallelvm=1 boot claims twelve, exhausts the pool every time, and
+ * then shares -- which is two executors on one register file.  Measured
+ * both ways: raising this cut failures from 8 of 20 boots to 2 while
+ * raising the work done, 60 shell loop iterations to 84.  A boot claims
+ * 5 to 12, so this is headroom, not a fit.
+ *
+ * A Pctx is a register file and a few pointers, so the whole pool is a
+ * few tens of kilobytes.
+ */
+enum { MAXPCTX = 64 };
 extern	Pctx*	pctxs[MAXPCTX];
 extern	int	npctx;
 /*
@@ -634,6 +645,7 @@ extern	Heap*	heap(Type*);
 extern	Heap*	heaparray(Type*, int);
 extern	void		(*heapmonitor)(int, void*, ulong);
 extern	int		(*gcstopped)(void);	/* see libinterp/heap.c */
+extern	int		(*execid)(void);	/* which executor; heap.c */
 extern	int		heapref(void*);
 extern	Heap*		heapz(Type*);
 extern	int		hmsize(void*);

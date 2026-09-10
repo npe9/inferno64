@@ -61,6 +61,19 @@ void	(*heapmonitor)(int, void*, ulong);
  * destroy() below for what it is for.
  */
 int	(*gcstopped)(void);
+/*
+ * "Which executor is this?", answered by the kernel.
+ *
+ * curP is not that answer, though it was used as one and gave an
+ * ambiguous capture.  A context can be shared -- by processes that
+ * never claimed one, which run on defpctx, and by interpreters once
+ * claimctx() has handed out its last -- so two executors can report
+ * the same curP and "the same context dropped it twice" does not
+ * distinguish one executor making two drops from two making one each.
+ *
+ * nil unless a kernel sets it, so emu is unaffected.
+ */
+int	(*execid)(void);
 static int statictype(Type*);		/* named below; used by destroy() */
 /*
  * Names for what statictype() returns, which is a 1-based index into
@@ -73,6 +86,52 @@ static char* const staticname[] = {
 	"?", "Tarray", "Tstring", "Tlist", "Tmodlink", "Tchannel",
 	"Tptr", "Tbyte", "Tword", "Tlong", "Treal",
 };
+
+/*
+ * INSTRUMENTATION - temporary.  Who took this object to zero?
+ *
+ * The hypothesis is that movp() is a read-modify-write on its
+ * destination slot -- read dv, store sv, destroy(dv) -- and that two
+ * Progs of one module share module data, so two executors can read the
+ * same dv and both drop it.  One object, two drops, which is the
+ * count underflow this branch keeps capturing.
+ *
+ * A ring, not a field: Type has no spare word and widening Heap moves
+ * what the JITs' offsets depend on.  Bounded and self-overwriting, so
+ * it cannot leak the way a nesting count does; a miss just means the
+ * ring wrapped, which is reported rather than assumed.
+ */
+enum { Nzero = 128 };
+static struct {
+	void	*h;
+	void	*ctx;
+	int	who;
+} zeroed[Nzero];
+static int zeroedi;
+
+static void
+notezero(void *h)
+{
+	int i = zeroedi++ & (Nzero-1);
+
+	zeroed[i].h = h;
+	zeroed[i].ctx = curP;
+	zeroed[i].who = execid != nil ? execid() : -1;
+}
+
+static int
+whozeroed(void *h, void **ctx)
+{
+	int i;
+
+	for(i = 0; i < Nzero; i++)
+		if(zeroed[i].h == h){
+			*ctx = zeroed[i].ctx;
+			return zeroed[i].who;
+		}
+	*ctx = nil;
+	return -1;
+}
 
 #define	BIT(bt, nb)	(bt & (1<<nb))
 
@@ -557,11 +616,24 @@ destroy(void *v)
 				h, n, h->color, mutator, h->t,
 				h->t == nil ? "(nil)" :
 				staticname[statictype(h->t)]);
+			{
+				void *zctx;
+				int zwho;
+
+				zwho = whozeroed(h, &zctx);
+				print("destroy: this ctx %#p exec %d;"
+					" zeroed by ctx %#p exec %d"
+					" (-1 = not in the last %d)\n",
+					curP, execid != nil ? execid() : -1,
+					zctx, zwho, Nzero);
+			}
 			dumpstack();
 			abort();
 		}
 		if(n > 0)
 			return;
+		if(n == 0)
+			notezero(h);
 		if(gcdepth > 64){
 			/*
 			 * Too deep to keep recursing; protect the C stack and

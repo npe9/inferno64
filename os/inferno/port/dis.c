@@ -67,6 +67,8 @@ int Runqmax = 256;	/* MULTICORE - local run queue bound, Go's is 256 */
  */
 static void gput(Prog*);	/* defined below */
 
+extern int parallelvm;		/* defined below, with stoptheworld() */
+
 static Pctx pctxpool[MAXPCTX];
 static int npctxused;
 
@@ -92,8 +94,30 @@ claimctx(void)
 		return pctxs[0];	/* == &_pctx, already in pctxs[] */
 	}
 	if(npctxused >= MAXPCTX){
+		static int said;
+
+		/*
+		 * Sharing here was described as "correct, just not
+		 * parallel".  That is true with the VM lock and false
+		 * without it: two executors on one Pctx are two executors on
+		 * one Dis register file, which is the whole thing curP was
+		 * made per-executor to avoid.  It was measured doing damage
+		 * -- a heap object dropped twice, by executors 15 and 17,
+		 * both reporting the same context.
+		 *
+		 * MAXPCTX is now large enough that this should not be
+		 * reached.  If it is, say so once rather than silently
+		 * handing out a shared register file: at parallelvm=0 the
+		 * old behaviour is still correct, and at parallelvm=1 this
+		 * line is the warning that the pool needs to be bigger or
+		 * that contexts need releasing when an interpreter blocks.
+		 */
+		if(said++ == 0)
+			print("claimctx: pool of %d exhausted, sharing"
+				" (unsafe while parallelvm=%d)\n",
+				MAXPCTX, parallelvm);
 		unlock(&isched.l);
-		return pctxs[0];	/* share; correct, just not parallel */
+		return pctxs[0];
 	}
 	c = &pctxpool[npctxused - 1];
 	c->owner = up;
@@ -237,6 +261,13 @@ gcstwothers(void)
 	return gcstw != 0 && up != gcstwproc;
 }
 
+/* libinterp/heap.c's execid hook: Proc is opaque there. */
+static int
+disexecid(void)
+{
+	return up != nil ? up->pid : -1;
+}
+
 int stwgaveup;		/* MULTICORE INSTRUMENTATION - temporary */
 
 /*
@@ -267,6 +298,7 @@ stoptheworld(void)
 	if(heapmonitor == nil){
 		heapmonitor = gcstwmonitor;	/* INSTRUMENTATION - temporary */
 		gcstopped = gcstwothers;
+		execid = disexecid;
 	}
 	gcstwproc = up;
 	gcstw = 1;
