@@ -1126,12 +1126,53 @@ _intrestore:
 	POPQ	R11
 	POPQ	R12
 	POPQ	R13
-	POPQ	R14		/* RUSER up-> */
-	POPQ	R15		/* RMACH m-> */
 
-	ADDQ $8, SP		/* to ignore the [DEFG]S registers as they should not be changing */
+	/*
+	 * m and up are NOT restored from the Ureg when this interrupt
+	 * was taken in the kernel.  They belong to the processor, not
+	 * to the interrupted code, and this is the whole of the pc64
+	 * SMP fault.
+	 *
+	 * What was here was an unconditional "POPQ R14; POPQ R15",
+	 * which reloads m and up out of the saved Ureg on every
+	 * interrupt return.  On one processor that is harmless: the
+	 * Ureg was built by this processor, so the m it holds is this
+	 * processor's.  With a second processor started it is not.  A
+	 * process interrupted on cpu0 carries a Ureg on its kernel
+	 * stack naming cpu0's Mach; when the scheduler later resumes
+	 * that process on cpu1 and it returns through here, cpu1's
+	 * RMACH becomes cpu0's Mach.  From that instant cpu1's own
+	 * entirely correct ilock() and iunlock() count up and down
+	 * cpu0's m->ilockdepth, which is why every corrupted value
+	 * captured was 0 or 1 rather than garbage, why the two
+	 * directions of divergence appeared, why cpu0's depth drifted
+	 * negative, and why a detector watching for two Mach pointers
+	 * claiming one machno never fired -- on cpu1, m->machno then
+	 * reads 0 and there is only one pointer to see.  up comes back
+	 * wrong the same way, which is the nil up in the
+	 * dequeueproc+0x108 fault.
+	 *
+	 * os/9front/pc64/l.s does not have the bug: it compares the
+	 * saved CS with KESEL and jumps past the reload for a kernel
+	 * -> kernel return.  This is that test.  Inferno's interrupt
+	 * entry has no SWAPGS -- the only SWAPGS in this file is in
+	 * forkret, the syscall path -- so nothing on this path ever
+	 * returns to user mode and the reload below is unreachable
+	 * here; it is kept so the routine is correct rather than
+	 * accidentally correct, and so it lines up with upstream.
+	 *
+	 * SP points at Ureg.r14 now: 0(SP) is r14, 8(SP) r15, 48(SP)
+	 * cs, and the 40 skipped are r14, r15, the [DEFG]S slot, the
+	 * trap type and the error code.
+	 */
+	CMPQ	48(SP), $KESEL
+	JEQ	_iretnested
 
-	ADDQ	$16, SP	/* pop error code and trap type */
+	MOVQ	8(SP), R15	/* RMACH m-> */
+	MOVQ	0(SP), R14	/* RUSER up-> */
+
+_iretnested:
+	ADDQ	$40, SP
 	IRETQ
 
 TEXT noteret(SB), 1, $-4

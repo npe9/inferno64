@@ -5367,3 +5367,143 @@ processor stores into cpu0's
 .CW m->ilockdepth ,
 and why a debug exception kills this kernel.  The second is a
 prerequisite for answering the first this way.
+.NH 2
+Found: the interrupt return hands m and up to the wrong processor
+.LP
+.B "The wild-write reading above is withdrawn."
+It was written from the fact that two counters diverged while cpu0 had
+interrupts off, and it did not survive looking at the numbers.  Every
+corrupted value of
+.CW m->ilockdepth
+captured across every run is 0 or 1 \(em never garbage, never a
+fragment of a pointer, never a size or a block header.  Small integers
+in lock-depth range do not say "a stray pointer store"; they say
+something is running lock bookkeeping on that word.
+.PP
+.CW os/inferno/pc64/l.s 's
+.CW _intrestore
+ended with
+.DS
+.CW
+	POPQ	R14		/* RUSER up-> */
+	POPQ	R15		/* RMACH m-> */
+.DE
+so every interrupt return reloads
+.CW m
+and
+.CW up
+out of the saved
+.CW Ureg .
+On one processor that is harmless: the
+.CW Ureg
+was built by this processor and the
+.CW m
+it holds is this processor's.  With a second processor started it is
+not.  A process interrupted on cpu0 carries a
+.CW Ureg
+on its kernel stack naming cpu0's
+.CW Mach ;
+when the scheduler resumes that process on cpu1 and it returns through
+here, cpu1's
+.CW RMACH
+becomes cpu0's
+.CW Mach .
+From that instant cpu1's own entirely correct
+.CW ilock()
+and
+.CW iunlock()
+count up and down cpu0's
+.CW m->ilockdepth .
+.PP
+That accounts for every observation, including the ones that looked
+like alibis.  Values always in lock-depth range, because they are lock
+depths.  Divergence in both directions, because two processors race a
+non-atomic
+.CW ++
+and
+.CW \-\-
+on one word.  cpu0's depth drifting negative.  And the detector
+watching for two
+.CW Mach
+pointers claiming one
+.CW machno
+never firing \(em on cpu1,
+.CW m->machno
+then reads 0, so there is only one pointer to see and nothing to
+report.  The shadow, indexed by
+.CW machno ,
+is raced the same way.
+.CW up
+comes back wrong by the same instruction, which is the nil
+.CW up
+in the
+.CW dequeueproc+0x108
+fault.
+.PP
+.CW os/9front/pc64/l.s
+does not have it.  Upstream compares the saved
+.CW CS
+with
+.CW KESEL
+and jumps past the reload for a kernel-to-kernel return:
+.DS
+.CW
+	CMPQ	48(SP), $KESEL
+	JEQ	_iretnested
+	SWAPGS
+	MOVQ	8(SP), RMACH
+	MOVQ	0(SP), RUSER
+_iretnested:
+	ADDQ	$40, SP
+	IRETQ
+.DE
+The two
+.CW Ureg
+layouts agree exactly \(em
+.CW 48(SP)
+is
+.CW cs
+and the 40 skipped are
+.CW r14 ,
+.CW r15 ,
+the
+.CW [DEFG]S
+slot, the trap type and the error code \(em so the test transplants
+unchanged.  The
+.CW SWAPGS
+does not: Inferno's interrupt entry has none, the only one in the file
+being in
+.CW forkret ,
+the syscall path.  Nothing on this path returns to user mode here, so
+the reload is now unreachable; it is kept so the routine is correct
+rather than accidentally correct, and so it lines up with upstream.
+.PP
+This is the second time
+.CW _intrcommon /
+.CW _intrestore
+has diverged from 9front in a way that only showed up as corruption
+elsewhere.  The first was the segment-register push that handed every
+interrupt back
+.CW AX =0.
+.PP
+.B "The same bug is on arm64, and it is not fixed here."
+.CW os/inferno/virtarm64/l.s
+restores
+.CW up
+and
+.CW m
+from the trap frame the same way \(em
+.CW "MOV UR_R26(RSP), R26"
+and
+.CW "MOV UR_R27(RSP), R27"
+\(em on this branch and on
+.CW multicore .
+It is latent on this branch, where the secondaries start and stay idle
+with
+.CW conf.nmach
+1, so nothing here can test a change to it and none is made.  It is
+not latent on
+.CW multicore ,
+where cpu1 runs processes, and that is the branch whose notes say cpu1
+was switched back off because one boot in ten showed Dis heap
+corruption.  Same design, same instruction, different architecture.

@@ -83,6 +83,28 @@ squidboy(Apic* apic)
 	syncclock();
 	print("cpu%d: squidboy m %#p, MACHP(0) %#p, MACHP(1) %#p\n",
 		m->machno, m, MACHP(0), MACHP(1));
+	/*
+	 * Do cpu0's Mach and this one's occupy the same physical memory?
+	 *
+	 * Every corrupted value of cpu0's m->ilockdepth captured so far
+	 * is 0 or 1 -- never garbage, never a fragment of a pointer.
+	 * Values in lock-depth range mean something is running lock
+	 * bookkeeping on that word, not spraying it, and the only
+	 * writers of 0 and 1 in the tree are ilock(), iunlock() and
+	 * machinit().  If these two Mach structures alias, then this
+	 * processor's own perfectly correct ilock/iunlock land on
+	 * cpu0's counter, which produces divergence in both directions,
+	 * always in lock-depth range, drifting negative -- everything
+	 * seen -- while a shadow indexed by machno stays separate and
+	 * correct.  Two prints settle it.
+	 */
+	print("cpu%d: m %#p PADDR %#p; MACHP(0) %#p PADDR %#p\n",
+		m->machno, m, (void*)PADDR(m),
+		MACHP(0), (void*)PADDR(MACHP(0)));
+	*(u32int*)((uchar*)m + 0x70) = 0x5A5AC0DE;
+	print("cpu%d: wrote magic at own m+0x70; cpu0 m+0x70 reads %#ux\n",
+		m->machno, *(u32int*)((uchar*)MACHP(0) + 0x70));
+	*(u32int*)((uchar*)m + 0x70) = 0;
 	active.machs[m->machno] = 1;
 	ilockwatch();
 	apic->online = 1;
