@@ -59,7 +59,7 @@ games/sprocket
 emu\-cocoa \-r. /dis/games/sprocket.dis \-t
 .EE
 .SH SOURCE
-.B /appl/games/sprocket.b
+.B /appl/cmd/games/sprocket.b
 .SH SEE ALSO
 .IR nes (2),
 .IR rivet (1)

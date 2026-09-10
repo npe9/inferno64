@@ -58,7 +58,7 @@ games/starling
 emu\-cocoa \-r. /dis/games/starling.dis \-b
 .EE
 .SH SOURCE
-.B /appl/games/starling.b
+.B /appl/cmd/games/starling.b
 .SH SEE ALSO
 .IR nes (2),
 .IR rivet (1),

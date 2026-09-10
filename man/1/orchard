@@ -60,7 +60,7 @@ games/orchard
 emu\-cocoa \-r. /dis/games/orchard.dis \-t
 .EE
 .SH SOURCE
-.B /appl/games/orchard.b
+.B /appl/cmd/games/orchard.b
 .SH SEE ALSO
 .IR nes (2),
 .IR rivet (1),
