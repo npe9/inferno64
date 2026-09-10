@@ -14,32 +14,6 @@
  */
 int	SECURE = 0;
 
-/*
- * See dis.c's disracepid comment.  Cheap, capped reachability probe:
- * did any progpid()-based read here ever find a pid that dis.c's
- * delprog() had, at that same instant, mid-way through closing its
- * pgrp/fgrp/egrp/sigs (o->pgrp etc possibly already freed, p not yet
- * unlinked from proghash[])?  Diagnostic only; see doc/inferno-ports.ms.
- */
-extern int disracepid;
-static int dishitcount;
-static int disreachcount;
-
-static void
-disracecheck(Prog *p, char *where)
-{
-	disreachcount++;
-	if(disreachcount == 1 || disreachcount == 10 || disreachcount == 100 ||
-	   disreachcount == 1000 || (disreachcount % 10000) == 0)
-		print("devprog: %s progpid() reached, count %d\n", where, disreachcount);
-	if(p != nil && disracepid != -1 && p->pid == disracepid && dishitcount < 8) {
-		dishitcount++;
-		print("devprog: %s touched pid %d live inside its own delprog close window\n",
-			where, p->pid);
-	}
-}
-
-
 enum
 {
 	Qdir,
@@ -234,7 +208,6 @@ proggen(Chan *c, char *name, Dirtab *tab, int, int s, Dir *dp)
 
 	acquire();
 	p = progpid(PID(c->qid));
-	disracecheck(p, "progpid");
 	if(p == nil) {
 		release();
 		return -1;
@@ -288,7 +261,6 @@ progopen(Chan *c, u32 omode)
 		nexterror();
 	}
 	p = progpid(PID(c->qid));
-	disracecheck(p, "progpid");
 	if(p == nil)
 		error(Ethread);
 
@@ -368,7 +340,6 @@ progwstat(Chan *c, uchar *db, s32 n)
 		error(Eperm);
 	acquire();
 	p = progpid(PID(c->qid));
-	disracecheck(p, "progpid");
 	if(p == nil) {
 		release();
 		error(Ethread);
@@ -933,7 +904,6 @@ progread(Chan *c, void *va, s32 n, s64 offset)
 			nexterror();
 		}
 		p = progpid(PID(c->qid));
-		disracecheck(p, "progpid");
 		if(p == nil || p->state == Pexiting || p->R.M == H) {
 			poperror();
 			release();
@@ -964,7 +934,6 @@ progread(Chan *c, void *va, s32 n, s64 offset)
 			nexterror();
 		}
 		p = progpid(PID(c->qid));
-		disracecheck(p, "progpid");
 		if(p == nil)
 			error(Ethread);
 		mw = c->aux;
@@ -996,7 +965,6 @@ progread(Chan *c, void *va, s32 n, s64 offset)
 	case Qnsgrp:
 		acquire();
 		p = progpid(PID(c->qid));
-		disracecheck(p, "progpid");
 		if(p == nil) {
 			release();
 			error(Ethread);
@@ -1007,7 +975,6 @@ progread(Chan *c, void *va, s32 n, s64 offset)
 	case Qpgrp:
 		acquire();
 		p = progpid(PID(c->qid));
-		disracecheck(p, "progpid");
 		if(p == nil) {
 			release();
 			error(Ethread);
@@ -1018,7 +985,6 @@ progread(Chan *c, void *va, s32 n, s64 offset)
 	case Qstack:
 		acquire();
 		p = progpid(PID(c->qid));
-		disracecheck(p, "progpid");
 		if(p == nil || p->state == Pexiting) {
 			release();
 			error(Ethread);
@@ -1049,7 +1015,6 @@ progread(Chan *c, void *va, s32 n, s64 offset)
 			nexterror();
 		}
 		p = progpid(PID(c->qid));
-		disracecheck(p, "progpid");
 		if(p == nil)
 			error(Ethread);
 		o = p->osenv;
@@ -1060,7 +1025,6 @@ progread(Chan *c, void *va, s32 n, s64 offset)
 	case Qexception:
 		acquire();
 		p = progpid(PID(c->qid));
-		disracecheck(p, "progpid");
 		if(p == nil) {
 			release();
 			error(Ethread);
@@ -1136,7 +1100,6 @@ progwrite(Chan *c, void *va, s32 n, s64 offset)
 		nexterror();
 	}
 	p = progpid(PID(c->qid));
-	disracecheck(p, "progpid");
 	if(p == nil)
 		error(Ethread);
 

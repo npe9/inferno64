@@ -1255,8 +1255,6 @@ disfault(void *reg, char *msg)
 			opn, R.M->m->path,
 			(long)(R.PC - R.M->prog),
 			(long)R.PC->s.ind, (long)R.PC->d.ind);
-		if(strcmp(R.M->m->path, "/dis/wm/wm.dis") == 0)
-			wmtracedump(p);
 	}
 
 	/* Print the Dis-level call stack at fault time: which module/pc was

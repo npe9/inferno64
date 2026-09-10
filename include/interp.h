@@ -266,24 +266,6 @@ struct Prog
 
 	void*		osenv;
 
-	/* Diagnostic: per-proc instruction trace (see wmtracedump() in
-	 * xec.c). Attached to the Prog itself, not thread-local: a proc
-	 * that yields (blocking send/recv, quantum expiry) can resume on a
-	 * different native thread or be interleaved with many other procs
-	 * on the same one, and either way a shared/thread-local buffer
-	 * gets swamped by unrelated procs' instructions long before this
-	 * one gets scheduled again. */
-	struct {
-		int	pc;
-		int	op;
-		void*	fp;
-		void*	mp;
-		void*	d;	/* decoded destination operand, R.d */
-		void*	s;
-		void*	m;
-	} wmtrace[256];
-	int	wmtracei;
-	int	wmtracen;
 };
 
 struct Module
@@ -495,12 +477,6 @@ extern	int		hmsize(void*);
 extern	void		incmem(void*, Type*);
 extern	void		initarray(Type*, Array*);
 extern	void		initmem(Type*, void*);
-extern	void		initmemtt(Type*, void*, Type**);
-extern	void		checktracked(void);
-extern	void		trackclear(void*, long);	/* pc64-only tracker -- see heap.c */
-extern	Modlink*	trackM;	/* set by xec()'s dispatch loop -- see heap.c */
-extern	Inst*		trackPC;
-extern	char*		trackpoint;	/* finer-grained checkpoint name -- see heap.c */
 extern	void		irestore(Prog*);
 extern	Prog*		isave(void);
 extern	void		keyringmodinit(void);
@@ -523,7 +499,6 @@ extern	void		mlink(Module*, Link*, uchar*, int, int, Type*);
 extern	void		modinit(void);
 extern	WORD		modstatus(REG*, char*, int);
 extern	int			progstack(REG*, int, char*, int, long);
-extern	void		wmtracedump(Prog*);
 extern	void		movp(void);
 extern	void		movtmp(void);
 extern	void		movtmpsafe(void);

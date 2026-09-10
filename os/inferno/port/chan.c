@@ -315,35 +315,23 @@ copypath(Path *p)
 {
 	int i;
 	Path *pp;
-	extern void checktracked(void);
-	extern char *trackpoint;
 
-	trackpoint = "copypath:entry";
-	checktracked();
 	pp = smalloc(sizeof(Path));
 	pp->ref = 1;
-	trackpoint = "copypath:after-alloc";
-	checktracked();
 
 	pp->len = p->len;
 	pp->alen = p->alen;
 	pp->s = smalloc(p->alen);
 	memmove(pp->s, p->s, p->len+1);
-	trackpoint = "copypath:after-strcopy";
-	checktracked();
 
 	pp->mlen = p->mlen;
 	pp->malen = p->malen;
 	pp->mtpt = smalloc(p->malen*sizeof pp->mtpt[0]);
-	trackpoint = "copypath:before-mtptloop";
-	checktracked();
 	for(i=0; i<pp->mlen; i++){
 		pp->mtpt[i] = p->mtpt[i];
 		if(pp->mtpt[i] != nil)
 			incref(pp->mtpt[i]);
 	}
-	trackpoint = "copypath:after-mtptloop";
-	checktracked();
 
 	return pp;
 }
@@ -398,19 +386,11 @@ static Path*
 uniquepath(Path *p)
 {
 	Path *new;
-	extern void checktracked(void);
-	extern char *trackpoint;
 
 	if(p->ref > 1){
 		/* copy on write */
-		trackpoint = "uniquepath:before-copypath";
-		checktracked();
 		new = copypath(p);
-		trackpoint = "uniquepath:after-copypath";
-		checktracked();
 		pathclose(p);
-		trackpoint = "uniquepath:after-pathclose";
-		checktracked();
 		p = new;
 	}
 	return p;
@@ -422,8 +402,6 @@ addelem(Path *p, char *s, Chan *from)
 	char *t;
 	int a, i;
 	Chan *c, **tt;
-	extern void checktracked(void);
-	extern char *trackpoint;
 
 	if(s[0]=='.' && s[1]=='\0')
 		return p;
@@ -436,11 +414,7 @@ addelem(Path *p, char *s, Chan *from)
 	 * refcount bug would have, so bracketed first.  pc64-only,
 	 * temporary.  See doc/inferno-ports.ms.
 	 */
-	trackpoint = "addelem:before-uniquepath";
-	checktracked();
 	p = uniquepath(p);
-	trackpoint = "addelem:after-uniquepath";
-	checktracked();
 
 	i = strlen(s);
 	a = p->len+1+i+1;
@@ -457,8 +431,6 @@ addelem(Path *p, char *s, Chan *from)
 		p->s[p->len++] = '/';
 	memmove(p->s+p->len, s, i+1);
 	p->len += i;
-	trackpoint = "addelem:after-strbuf";
-	checktracked();
 	if(isdotdot(s)){
 		fixdotdotname(p);
 		if(p->mlen > 1 && (c = p->mtpt[--p->mlen]) != nil){
@@ -477,8 +449,6 @@ addelem(Path *p, char *s, Chan *from)
 		if(from != nil)
 			incref(from);
 	}
-	trackpoint = "addelem:end";
-	checktracked();
 	return p;
 }
 
@@ -677,8 +647,6 @@ chanok(Chan *c, char *where)
 Chan*
 cunique(Chan *c)
 {
-	extern void checktracked(void);
-	extern char *trackpoint;
 	Chan *nc;
 
 	/*
@@ -688,15 +656,9 @@ cunique(Chan *c)
 	 * cclose.  See doc/inferno-cloud-plan.ms.
 	 */
 	if(c->ref != 1){
-		trackpoint = "cunique:before-cclone";
-		checktracked();
 		chanok(c, "cunique:before-cclone");
 		nc = cclone(c);
-		trackpoint = "cunique:after-cclone";
-		checktracked();
 		cclose(c);
-		trackpoint = "cunique:after-cclose";
-		checktracked();
 		c = nc;
 	}
 
@@ -1105,8 +1067,6 @@ walk(Chan **cp, char **names, int nnames, int nomount, int *nerror)
 	Mhead *mh, *nmh;
 	Mount *f;
 	Walkqid *wq;
-	extern void checktracked(void);
-	extern char *trackpoint;
 
 	c = *cp;
 	incref(c);
@@ -1127,8 +1087,6 @@ walk(Chan **cp, char **names, int nnames, int nomount, int *nerror)
 	if(path != nil)
 		incref(path);
 	mh = nil;
-	trackpoint = "walk:entry";
-	checktracked();
 
 	/*
 	 * While we haven't gotten all the way down the path:
@@ -1169,12 +1127,8 @@ walk(Chan **cp, char **names, int nnames, int nomount, int *nerror)
 			}
 		}
 
-		trackpoint = "walk:before-domount";
-		checktracked();
 		if(!dotdot && !nomount && !didmount)
 			domount(&c, &mh, &path);
-		trackpoint = "walk:after-domount";
-		checktracked();
 
 		type = c->type;
 		dev = c->dev;
@@ -1188,8 +1142,6 @@ walk(Chan **cp, char **names, int nnames, int nomount, int *nerror)
 		 * own bookkeeping around it.  pc64-only, temporary.  See
 		 * doc/inferno-ports.ms.
 		 */
-		trackpoint = "walk:before-ewalk";
-		checktracked();
 		if((wq = ewalk(c, nil, names+nhave, ntry)) == nil){
 			/* try a union mount, if any */
 			if(mh != nil && !nomount){
@@ -1216,8 +1168,6 @@ walk(Chan **cp, char **names, int nnames, int nomount, int *nerror)
 				return -1;
 			}
 		}
-		trackpoint = "walk:after-ewalk";
-		checktracked();
 
 		didmount = 0;
 		if(dotdot){
@@ -1231,8 +1181,6 @@ walk(Chan **cp, char **names, int nnames, int nomount, int *nerror)
 		}else{
 			nc = nil;
 			nmh = nil;
-			trackpoint = "walk:before-findmount";
-			checktracked();
 			if(!nomount){
 				for(i=0; i<wq->nqid && i<ntry-1; i++){
 					if(findmount(&nc, &nmh, type, dev, wq->qid[i])){
@@ -1241,8 +1189,6 @@ walk(Chan **cp, char **names, int nnames, int nomount, int *nerror)
 					}
 				}
 			}
-			trackpoint = "walk:after-findmount";
-			checktracked();
 			if(nc == nil){	/* no mount points along path */
 				if(wq->clone == nil){
 					cclose(c);
@@ -1270,39 +1216,27 @@ walk(Chan **cp, char **names, int nnames, int nomount, int *nerror)
 				}
 				n = i+1;
 			}
-			trackpoint = "walk:before-addelem";
-			checktracked();
 			for(i=0; i<n; i++){
 				mtpt = nil;
 				if(i==n-1 && nmh!=nil)
 					mtpt = nmh->from;
 				path = addelem(path, names[nhave+i], mtpt);
 			}
-			trackpoint = "walk:after-addelem";
-			checktracked();
 		}
-		trackpoint = "walk:before-loopend";
-		checktracked();
 		cclose(c);
 		c = nc;
 		putmhead(mh);
 		mh = nmh;
 		free(wq);
-		trackpoint = "walk:after-loopend";
-		checktracked();
 	}
 	putmhead(mh);
 	c = cunique(c);
-	trackpoint = "walk:after-cunique";
-	checktracked();
 
 	pathclose(c->path);
 	c->path = path;
 
 	cclose(*cp);
 	*cp = c;
-	trackpoint = "walk:before-return";
-	checktracked();
 	if(nerror)
 		*nerror = nhave;
 	return 0;
@@ -1495,8 +1429,6 @@ namec(char *aname, int amode, int omode, ulong perm)
 	Mhead *volatile m;
 	char *err;
 	char *name;
-	extern void checktracked(void);
-	extern char *trackpoint;
 
 	if(aname[0] == '\0')
 		error("empty file name");
@@ -1660,15 +1592,11 @@ namec(char *aname, int amode, int omode, ulong perm)
 	 * which.  pc64-only, temporary.  See doc/inferno-ports.ms.
 	 */
 	{
-	trackpoint = "namec:before-walk";
-	checktracked();
 	if(walk(&c, e.elems, e.nelems, nomount, &e.nerror) < 0){
 		if(e.nerror < 0 || e.nerror > e.nelems)
 			e.nerror = 0;
 		nexterror();
 	}
-	trackpoint = "namec:after-walk";
-	checktracked();
 	chanok(c, "namec:after-walk");
 	}
 
@@ -1716,13 +1644,9 @@ namec(char *aname, int amode, int omode, ulong perm)
 			nexterror();
 		}
 		m = nil;
-		trackpoint = "namec:before-domount";
-		checktracked();
 		chanok(c, "namec:before-domount");
 		if(!nomount)
 			domount(&c, &m, &path);
-		trackpoint = "namec:after-domount";
-		checktracked();
 		chanok(c, "namec:after-domount");
 		if(waserror()){
 			putmhead(m);
@@ -1730,8 +1654,6 @@ namec(char *aname, int amode, int omode, ulong perm)
 		}
 		/* our own copy to open or remove */
 		c = cunique(c);
-		trackpoint = "namec:after-cunique";
-		checktracked();
 		poperror();
 
 		/* now it's our copy anyway, we can put the name back */
@@ -1766,11 +1688,7 @@ namec(char *aname, int amode, int omode, ulong perm)
 			saveregisters();
 			DBG("namec walk pid %d c->type %d devtab[c->type]->name %s c->path %s\n",
 					up->pid, c->type, devtab[c->type]->name, chanpath(c));
-			trackpoint = "namec:before-devopen";
-			checktracked();
 			c = devtab[c->type]->open(c, omode&~OCEXEC);
-			trackpoint = "namec:after-devopen";
-			checktracked();
 			if(omode & ORCLOSE)
 				c->flag |= CRCLOSE;
 			break;
