@@ -1117,6 +1117,31 @@ checkvoice()
 	report(said == "checked", sys->sprint(
 		"and changing it says what it became (%#q)", said));
 
+	# A choicebutton is this toolkit's combobox, and it is the widget the
+	# plan for all this listed as MISSING - it is not, it just is not
+	# called one.  What was genuinely missing is this: it has no label of
+	# its own, what it displays IS the chosen value, so arriving at it
+	# always said the right thing and CHANGING it said nothing at all.
+	blank();
+	tc := offscreen();
+	if(tc == nil)
+		return;
+	tk->cmd(tc, "choicebutton .cb -values {Red Green Blue} -variable cbi");
+	tk->cmd(tc, "pack .cb");
+	map(tc);
+	drain(sfd);
+	tk->cmd(tc, "focus .cb");
+	tk->cmd(tc, "update");
+	said = next(sfd);
+	report(has(said, "Red") && has(said, "choice button"), sys->sprint(
+		"arriving at a combobox says the value it is showing (%#q)", said));
+
+	tk->cmd(tc, ".cb set 2");
+	tk->cmd(tc, "update");
+	said = next(sfd);
+	report(said == "Blue", sys->sprint(
+		"and choosing another one says which (%#q)", said));
+
 	# A slider is the case with no label at all, so its value is the only
 	# thing there is to say.  Arrow keys move it, so a person using their
 	# ears can, and needs to hear what happened.

@@ -638,6 +638,18 @@ tkannouncestate(Tk *tk, char *buf, int nbuf)
 		return tklistbstate(tk, buf, nbuf);
 	case TKentry:
 		return tkentrystate(tk, buf, nbuf);
+	case TKchoicebutton:
+		/*
+		 * A choicebutton has no label of its own - what it displays IS
+		 * the chosen value - so on arrival announce() already says it.
+		 * This is for the other half: choosing a different one from the
+		 * menu changed the widget and said nothing at all.
+		 */
+		tkl = TKobj(TkLabel, tk);
+		if(tkl->text == nil)
+			return nil;
+		snprint(buf, nbuf, "%s", tkl->text);
+		return buf;
 	}
 	USED(buf); USED(nbuf);
 	return nil;

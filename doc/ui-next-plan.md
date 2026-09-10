@@ -390,8 +390,28 @@ the font work did — not a scale factor.
 
 `libtk` has button, canvas, entry, frame, grid, image, label, listbox,
 menu, pack, panel, scale, scrollbar and text. Verified absent: notebook,
-treeview, combobox, progressbar, spinbox. There is no themed-widget
-layer.
+treeview, progressbar, spinbox.
+
+**Correction: combobox was on that list and should not have been.**
+`choicebutton(9)` is one — it shows one of a `-values` list, opens a menu
+of them when clicked, and writes the chosen index to a `-variable`. It
+was missed because it is not called a combobox. That is the "look for an
+existing mechanism before building one" rule catching a would-be
+reimplementation, and it is worth noting *how* it was caught: not by
+reading the widget list again, but by going to write the thing and
+checking first.
+
+**What was genuinely missing was on the accessibility side, and the
+widget's own shape hid it.** A choicebutton has no label of its own —
+what it displays *is* the chosen value — so arriving at one always said
+the right thing, and every announcement test would have passed. Changing
+it said *nothing*: `tkannouncestate()` had no case for it, and neither
+commit path called `tkannouncechange()`. So a person choosing from a
+combobox by ear got silence at the only moment that mattered. Both are
+fixed and `tkofftest(1)` checks both, with the change check confirmed to
+fail (`''`) when the announcement is taken back out.
+
+There is no themed-widget layer.
 
 **The split that matters:** the cheap half is compositions in Limbo over
 the widgets that exist — a notebook is a frame, a row of buttons and

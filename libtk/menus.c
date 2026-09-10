@@ -3,6 +3,7 @@
 #include "keyboard.h"
 #include "tk.h"
 extern void tkannouncewidget(Tk*);	/* ebind.c, for voice(3) */
+extern void tkannouncechange(Tk*);	/* ebind.c, for voice(3) */
 #include "frame.h"
 #include "label.h"
 
@@ -495,6 +496,7 @@ tkchoicebutset(Tk *tk, char *arg, char **val)
 		return e;
 
 	tk->dirty = tkrect(tk, 1);
+	tkannouncechange(tk);	/* voice(3); see man 3 voice */
 	return nil;
 }
 
@@ -560,6 +562,7 @@ tkchoicebutsetvalue(Tk *tk, char *arg, char **val)
 	tkl->check = v - tkl->values;
 
 	tk->dirty = tkrect(tk, 1);
+	tkannouncechange(tk);	/* voice(3); see man 3 voice */
 	return nil;
 }
 
