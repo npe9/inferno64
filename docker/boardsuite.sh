@@ -1,7 +1,7 @@
 #!/bin/sh
 # boardsuite.sh - run tools/boardsuite inside the Linux container.
 #
-#	docker/boardsuite.sh			the five it runs by default
+#	docker/boardsuite.sh			the seven it runs by default
 #	docker/boardsuite.sh virt		one of them
 #	docker/boardsuite.sh -v virt		the suite's own flags pass through
 #	docker/boardsuite.sh sh			a shell in the image
@@ -9,8 +9,9 @@
 #						container first, and run
 #						what was built
 #	docker/boardsuite.sh all		the same, with the patched
-#						qemu built too, so the Pi
-#						configurations run as well
+#						qemu and the stock riscv
+#						ones built too, so all
+#						fifteen run
 #
 # The tree is bind-mounted read-only.  By default the suite boots the
 # kernel binaries that happen to be in it; "build" instead builds them
@@ -51,8 +52,11 @@ fi
 
 # The Pi configurations need the patched qemu of tools/qemu-patches,
 # which nothing packages: it is a source build against v10.1.3, and it
-# lives in an image of its own so that the nine that do not want it
-# are not made to wait on it.  The patch series is the build context,
+# lives in an image of its own so that the seven that do not want it
+# are not made to wait on it.  That image also carries stock v10.1.3
+# riscv binaries, built from the same clone ahead of the patch series,
+# for sifiveu and virt32s: bookworm's packaged qemu 7.2 has neither an
+# SD card behind sifive_u's MMC-SPI controller nor a riscv32 OpenSBI.  The patch series is the build context,
 # so a changed patch rebuilds it and an unchanged one does not.
 if [ "$1" = all ]; then
 	shift
