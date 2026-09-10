@@ -4779,8 +4779,18 @@ with
 and no panic at all.  So the virtio driver's transmit and receive paths
 are known good against an emulator and remain untested against a
 hypervisor, and what differs is some interrupt path that machine takes
-and this one does not.  Open, and the next thing to instrument: the
-shipped configuration,
+and this one does not.  The obvious guess has been tried and is wrong: the
+HPET is not the difference.  The same
+.CW ipc64dev
+under
+.CW "-machine q35,hpet=off"
+\(em the knob that reproduced the frequency bug \(em still reaches
+.CW "DHCP-OK ip=10.0.2.15"
+here with no panic.  So this one does not come home the way that one
+did, and finding it wants instrumentation on the machine itself:
+.CW m->ilockdepth
+printed where it changes, which is a boot's worth of cloud round-trip
+per iteration.  Open.  The shipped configuration,
 .CW ipc64 ,
 is unaffected and reaches a shell there.
 .PP
