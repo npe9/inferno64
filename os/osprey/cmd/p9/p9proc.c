@@ -69,6 +69,7 @@ struct Proc9 {
 	Proc	*p;		/* the kproc it runs on, while it runs */
 	Pgrp	*pgrp;		/* a name space of its own, if it asked for one */
 	Egrp	*egrp;		/* and an environment of its own */
+	int	ppid;		/* the flow that spawned it, or 0 for the personality */
 	Fgrp	*fgrp;		/* its own descriptor table */
 	int	std[3];		/* its numbers for its standard descriptors */
 	int	inproc;		/* a second flow of control inside a program already running */
@@ -83,6 +84,12 @@ struct Proc9 {
 };
 
 static Proc9 proc9[Nproc9];
+/*
+ * Woken whenever any program ends, for a caller waiting on await(2)
+ * rather than on a pid: the per-program Rendez is no use to a flow that
+ * does not yet know which program it is waiting for.
+ */
+static Rendez anydone;
 static int p9nextpid = 100;	/* clear of the scheduler's own kproc pids */
 
 /*
@@ -425,6 +432,7 @@ procdone(Proc9 *t, char *status)
 		t->egrp = nil;
 	}
 	wakeup(&t->r);
+	wakeup(&anydone);
 }
 
 /*
@@ -535,6 +543,15 @@ p9spawn(char *name, char **argv, int *std)
 		return -1;
 	}
 	t->pid = ++p9nextpid;
+	/*
+	 * Who started it, so that await(2) can mean "a program of mine"
+	 * rather than "any program at all".  A flow that is not itself a
+	 * loaded program - the personality running its own script - is 0.
+	 */
+	{
+		Proc9 *me = procof(up);
+		t->ppid = me != nil ? me->pid : 0;
+	}
 	t->used = 1;
 	t->live = 1;
 	t->done = 0;
@@ -659,6 +676,86 @@ isdone(void *a)
  * Wait for a spawned program.  Answers its number, or -1 if there is no
  * such program; the status it exited with is copied out.
  */
+/*
+ * await(2): wait for any program this flow started, rather than for a
+ * pid it names.  libc's wait() is written on it, and rio's is written on
+ * that, which is how it came to be needed here.
+ *
+ * "Mine" is real and not a convenience: a program waits for what it
+ * spawned, and the personality's own flow waits for what the personality
+ * spawned.  A caller with no children is told so rather than left asleep
+ * on a wakeup that will never name it - which is the difference between
+ * an error and a hang, and the hang is what a shared "any program at
+ * all" would have given the moment two flows both waited.
+ */
+typedef struct Waitany Waitany;
+struct Waitany {
+	int	ppid;
+	Proc9	*t;
+	int	live;
+};
+
+static Proc9*
+anyofmine(int ppid, int *live)
+{
+	Proc9 *t;
+	int i;
+
+	*live = 0;
+	for(i = 0; i < Nproc9; i++){
+		t = &proc9[i];
+		if(!t->used || t->ppid != ppid)
+			continue;
+		if(t->done)
+			return t;
+		*live = 1;
+	}
+	return nil;
+}
+
+/*
+ * The sleep condition, which does the looking rather than merely saying
+ * "something happened".  One Rendez serves every waiter, so a wakeup is
+ * news that a program ended and not news of which; and a condition of
+ * return0 - sleep until woken - would lose a program that ended between
+ * the look and the sleep.  This scheduler is cooperative and would not
+ * have run the other flow in that gap, but a condition that is only
+ * correct because of how the scheduler happens to work is a bug written
+ * down as an assumption.
+ */
+static int
+waitready(void *a)
+{
+	Waitany *w;
+
+	w = a;
+	w->t = anyofmine(w->ppid, &w->live);
+	return w->t != nil || !w->live;
+}
+
+int
+p9waitany(char *status, int nstatus)
+{
+	Waitany w;
+	Proc9 *me;
+	int pid;
+
+	me = procof(up);
+	w.ppid = me != nil ? me->pid : 0;
+	ksleep(&anydone, waitready, &w);
+	if(w.t == nil){
+		kstrcpy(up->errstr, "no living processes", ERRMAX);
+		return -1;
+	}
+	if(status != nil && nstatus > 0){
+		strncpy(status, w.t->status, nstatus - 1);
+		status[nstatus - 1] = 0;
+	}
+	pid = w.t->pid;
+	w.t->used = 0;			/* the slot is free again */
+	return pid;
+}
+
 int
 p9waitpid(int pid, char *status, int nstatus)
 {

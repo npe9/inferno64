@@ -118,10 +118,18 @@ struct P9lib {
 	 * what spawn gives every program it starts.
 	 */
 	int	(*forkns)(int flags);
+	/*
+	 * await(2): wait for any program this flow started rather than for
+	 * a pid it names.  libc's wait() is written on it and rio's wait is
+	 * written on that.  "Mine" is the flow that spawned it - a program
+	 * waits for what it started, the personality for what it started -
+	 * so two flows both waiting do not take each other's children.
+	 */
+	int	(*waitany)(char *status, int nstatus);
 };
 
 enum {
-	P9libversion	= 8,
+	P9libversion	= 9,
 	/*
 	 * Where a loaded program is linked: well above the personality's own
 	 * image (its bss ends near 7MB) and well below the stack.  The

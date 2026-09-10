@@ -10448,20 +10448,97 @@ the devices a name space is refused, was not carried across to the copy.
 A program that rforked was quietly given back devices its parent had
 been refused.  It is copied now.
 .PP
-Where that leaves rio: linked this way, three symbols are undefined
-rather than four.
+.PP
+.B "3.2j: await, and what "mine" has to mean."
+.CW await (2)
+is what libc's
+.CW wait ()
+is written on, and rio's wait is written on that.  It waits for a
+program without naming it, which the personality could not do:
+.CW p9waitpid
+takes a pid and sleeps on that program's own
+.CW Rendez ,
+which is no use to a flow that does not yet know which program it is
+waiting for.  So there is one
+.CW Rendez
+that every ending program wakes, and
+.CW p9waitany
+sleeps on it.
+.PP
+Two things about that were worth getting right rather than nearly right.
+.PP
+The first is the sleep condition.  A wakeup on a shared
+.CW Rendez
+is news that a program ended, not news of which, so the condition has to
+do the looking; and a condition of
+.CW return0
+\- sleep until woken \- would lose a program that ended between the look
+and the sleep.  This scheduler is cooperative and would not have run the
+other flow in that gap, so it would have worked.  A condition that is
+only correct because of how the scheduler happens to work is a bug
+written down as an assumption, so the condition is a real predicate.
+.PP
+The second is what
+.CW await
+means by a program of one's own.  A
+.CW Proc9
+records the flow that spawned it, and
+.CW p9waitany
+takes only those.  Without that it would be any program at all, and the
+falsification is the loudest in this document: with
+.CW mine
+made global,
+.CW /boot/libns 's
+waits take the shell's children out from under it, the shell never
+learns what its programs did, the rest of the script derails, and
+.B eleven
+criteria fail rather than one.  That is the shape of the bug
+.CW ppid
+is there to prevent, and it is not subtle once it happens \- it is only
+subtle before.
+.PP
+.CW /boot/libns
+starts two copies of cat, waits for both without naming either, and
+parses each line with
+.CW tokenize ,
+which is the same parser libc's
+.CW wait ()
+uses on it: five fields or it is not an await line.  Then a third wait,
+with none of its own left, which is refused \-
+.CW "no living processes"
+\- rather than answered with somebody else's program or left asleep.
+.PP
+The three times in the line are zeroes, and that is said rather than
+left to be inferred from a plausible-looking number: this personality
+does not account processor time to a loaded program, since every flow of
+control is a kproc of one cooperative scheduler and nothing charges the
+clock to one of them.
+.PP
+One thing this cost that is worth recording because it was my mistake
+and not the mechanism's: the first version handed the spawned cats the
+megabyte of
+.CW /boot/libcat
+to copy to the console, and the console write failed part way through,
+so both children ended with
+.CW "write failed"
+as their status.  The await was working perfectly.  A test's argument
+can be the thing that is wrong.
+.PP
+Where that leaves rio: linked this way, two symbols are undefined rather
+than four.
 .CW rfork
-resolves, and
+and
+.CW await
+both resolve, and
 .CW winshell 's
-call is answered \- but
+rfork is answered \- but
 .CW main 's
 is not, because it asks for
 .CW RFNOTEG ,
 which is the one of the three refusals that rio actually needs.  So the
 note group is owed, and it is owed for a reason that is written down
 above rather than discovered later.
-.CW exec ,
-.CW await
+.CW exec
 and
 .CW notify
 are the rest.

@@ -393,6 +393,26 @@ def main():
                     re.search(r'libns: after rfork\(RFFDG\) the descriptor I held reads (\d+), '
                               r'because that is a copy', ns) is not None
                     and 'libns: after rfork(RFCFDG) it reads -1, because that is an empty table' in ns))
+    #
+    # await(2), which libc's wait() is written on and rio's wait on
+    # that.  It waits for a program of this flow's own rather than for a
+    # pid, and the line it answers is parsed in the program with
+    # tokenize - the same parser libc's wait() uses on it - so a line
+    # with the wrong shape fails here rather than in rio much later.
+    #
+    # The third wait has to be refused.  A wait with none of its own
+    # left that answered anyway would be taking somebody else's program,
+    # and one that slept would be a hang.
+    awaited = re.findall(r'libns: await says (\d+) ended, status "([^"]*)", '
+                         r'in (\d+) (\d+) (\d+) ms', ns)
+    started = re.search(r'libns: started two of /boot/libcat, as (\d+) and (\d+)', ns)
+    results.append(("and a program can wait for what it started without naming it: await answers whichever of its own ended, in five fields that the program parses with tokenize, which is the parser libc's wait uses on the same line - and a third wait, with none of its own left, is refused rather than answered with somebody else's program or left asleep",
+                    started is not None
+                    and len(awaited) == 2
+                    and {a[0] for a in awaited} == {started.group(1), started.group(2)}
+                    and 'libns: a third await, with none of mine left, refused: no living processes' in ns
+                    and 'libns: await gave' not in ns
+                    and 'libns: a third await answered' not in ns))
     results.append(("and what this personality cannot mean by rfork is refused by name rather than granted, with the bits it cannot mean named in the message: RFPROC would split the caller's own flow of control, which spawn and proccreate are what there is for, and a success that did nothing would leave a program believing it was two",
                     re.search(r'libns: rfork\(RFPROC\) refused: rfork 0x10: this personality '
                               r'cannot mean 0x10 of it \(RFPROC, RFMEM, RFNOWAIT, RFREND, '

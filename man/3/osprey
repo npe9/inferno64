@@ -1600,7 +1600,33 @@ instruction with an absolute operand named the byte before its field.
 Of one module's 287 relocations, 45 were wrong that way and every one of
 them was rex-prefixed.
 .PP
-The table is version 8.  Version 8 added
+The table is version 9.  Version 9 added
+.I waitany
+\- the personality's half of
+.IR await (2),
+which libc's
+.I wait
+is written on.  It waits for a program the calling flow started, rather
+than for a pid, and a caller with none of its own is told
+.B "no living processes"
+rather than left asleep.  What a flow started is recorded when it is
+spawned; without that, a wait would take any program at all, including
+one another flow was waiting for.  One
+.B Rendez
+serves every waiter, so the sleep condition does the looking rather than
+merely saying something happened.
+.I p9crt.c
+formats the line
+.IR await (2)
+answers with: the pid, three times and the quoted exit status, which
+.I tokenize
+splits into the five fields libc's
+.I wait
+expects.  The times are zero \- nothing here accounts processor time to a
+loaded program, since every flow of control is a kproc of one
+cooperative scheduler.
+.PP
+Version 8 added
 .I forkns
 \- the name-space half of
 .IR rfork (2).
@@ -1699,13 +1725,14 @@ symbols were
 .I exec
 and
 .IR await .
-Three are still undefined when it is linked that way:
-.IR exec ,
-.I await
+Two are still undefined when it is linked that way:
+.I exec
 and
 .IR notify .
 .I rfork
-resolves, and rio's
+and
+.I await
+resolve, and rio's
 .I winshell
 asks
 .B RFNAMEG|RFFDG|RFENVG

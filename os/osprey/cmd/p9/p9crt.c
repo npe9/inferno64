@@ -328,6 +328,62 @@ chdir(char *name)
 }
 
 /*
+ * await(2), which is what libc's wait() is written on and rio's wait is
+ * written on that.  The kernel's await hands back one line that
+ * tokenize splits into five fields - the pid, three times and the exit
+ * status - and the status is quoted because it may hold blanks.
+ *
+ * The three times are 0.  This personality does not account processor
+ * time to a loaded program: every flow of control is a kproc of one
+ * cooperative scheduler and nothing charges the clock to one of them.
+ * Reporting zeroes is the honest answer to a question nothing here
+ * measures, and it is said rather than left to be inferred from a
+ * number that looked plausible.
+ */
+static int
+quoted(char *p, char *e, char *s)
+{
+	char *b;
+
+	b = p;
+	if(p < e)
+		*p++ = '\'';
+	for(; *s != 0; s++){
+		if(*s == '\''){		/* a quote inside is doubled */
+			if(p < e)
+				*p++ = '\'';
+		}
+		if(p < e)
+			*p++ = *s;
+	}
+	if(p < e)
+		*p++ = '\'';
+	return (int)(p - b);
+}
+
+int
+await(char *buf, int n)
+{
+	char status[ERRMAX], line[ERRMAX+64];
+	char *p, *e;
+	int pid, k;
+
+	status[0] = 0;
+	pid = p9lib->waitany(status, sizeof status);
+	if(pid < 0)
+		return -1;
+	p = line;
+	e = line + sizeof line;
+	p += snprint(p, (int)(e - p), "%d 0 0 0 ", pid);
+	p += quoted(p, e, status);
+	k = (int)(p - line);
+	if(k > n)
+		k = n;
+	memmove(buf, line, k);
+	return k;
+}
+
+/*
  * rfork(2).  The name-space bits are answered and the rest are refused
  * by name: a program that asks for RFPROC here has asked the library to
  * split its caller's flow of control, which spawn and proccreate are

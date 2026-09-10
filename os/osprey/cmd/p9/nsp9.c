@@ -27,6 +27,8 @@
 #include <u.h>
 #include <libc.h>
 
+extern int spawn(char *name, char **argv, int in, int out);
+
 /*
  * The environment is files under /env, so putting a variable in it is a
  * create and a write and reading one is an open and a read.  libc has
@@ -175,6 +177,59 @@ startboot(char *argv0, char **argv)
 	envset("libnsprivate", "after");
 	print("libns: and libnsprivate is \"%s\" here, where the personality should not see it\n",
 		envget("libnsprivate"));
+
+	/*
+	 * await(2), which is what libc's wait() is written on and rio's
+	 * wait is written on that.  Two copies of one module are started -
+	 * cat is relocatable, so two of it run at once - and waited for
+	 * without naming either: await answers whichever ended, in the
+	 * order they ended, and the line it answers is parsed here with
+	 * tokenize, which is the same parser libc's wait() uses on it.
+	 * Five fields or it is not an await line.
+	 *
+	 * Then a third wait, with nothing left of this program's own to end,
+	 * which has to fail: a wait that answered anyway would be waiting
+	 * for somebody else's program, and a wait that hung would be worse.
+	 */
+	{
+		char *catav[3], line[256], *fld[5];
+		int p1, p2, i, nf, n;
+
+		/*
+		 * Something small to read.  /env/libnsshared holds six bytes
+		 * and the children inherit this program's groups, so they can
+		 * see it; the first version of this handed cat the megabyte of
+		 * /boot/libcat and the console write failed part way through,
+		 * which was a bad argument and not a bad await - but it is why
+		 * the file is named rather than left to be any file at all.
+		 */
+		catav[0] = "/boot/libcat";
+		catav[1] = "/env/libnsshared";
+		catav[2] = nil;
+		/* -1 for each end: their console is the machine's, as this one's is */
+		p1 = spawn("/boot/libcat", catav, -1, -1);
+		p2 = spawn("/boot/libcat", catav, -1, -1);
+		print("libns: started two of /boot/libcat, as %d and %d\n", p1, p2);
+		for(i = 0; i < 2; i++){
+			n = await(line, sizeof line - 1);
+			if(n < 0){
+				print("libns: await %d of 2 failed: %r\n", i+1);
+				continue;
+			}
+			line[n] = 0;
+			nf = tokenize(line, fld, 5);
+			if(nf != 5){
+				print("libns: await gave %d fields, not the 5 libc's wait parses\n", nf);
+				continue;
+			}
+			print("libns: await says %s ended, status \"%s\", in %s %s %s ms\n",
+				fld[0], fld[4], fld[1], fld[2], fld[3]);
+		}
+		if(await(line, sizeof line - 1) < 0)
+			print("libns: a third await, with none of mine left, refused: %r\n");
+		else
+			print("libns: a third await answered, which would be somebody else's program\n");
+	}
 
 	/*
 	 * And the descriptor table.  A spawned program's table is already
