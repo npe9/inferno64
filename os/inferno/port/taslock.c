@@ -256,6 +256,20 @@ iunlock(Lock *l)
 	coherence();
 	l->key = 0;
 	m->ilockdepth--;
+	/*
+	 * Caught here rather than at the next sched(), which is where
+	 * proc.c notices and which is too late to say who did it: by
+	 * then the caller has returned and getcallerpc() names the
+	 * scheduler.  The three prints above cover an iunlock of a lock
+	 * that is not held, is not an ilock, or is unlocked with
+	 * interrupts enabled; none of them covers a depth that has gone
+	 * negative while every individual unlock looked correct, which
+	 * is what a Compute Engine e2-micro does with ipc64dev and this
+	 * laptop does not.
+	 */
+	if(m->ilockdepth < 0)
+		iprint("iunlock(%#p): ilockdepth %d, pc %#p, lock pc %#p, m %#p\n",
+			l, m->ilockdepth, getcallerpc(&l), l->pc, m);
 	if(up)
 		up->lastilock = nil;
 	splx(sr);

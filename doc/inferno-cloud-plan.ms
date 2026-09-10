@@ -4779,7 +4779,50 @@ with
 and no panic at all.  So the virtio driver's transmit and receive paths
 are known good against an emulator and remain untested against a
 hypervisor, and what differs is some interrupt path that machine takes
-and this one does not.  The obvious guess has been tried and is wrong: the
+and this one does not.  .PP
+.B "Characterised, on the second round."
+It is intermittent and it is an interrupt handler that sleeps.  Adding
+a print to
+.CW iunlock()
+for a depth gone negative did not fix it and did not need to: the same
+kernel booted twice on that machine reached
+.CW "DEVTEST: done"
+once and panicked once, so it is roughly half there and has never
+happened here.  The second failure names the path the first could not:
+.DS
+.CW
+qlock: 0x29a7f6: ilockdepth 1
+panic: cpu0: ilockdepth 1, last lock 0x0 at 0x0,
+       sched called from 0x2965b7
+.DE
+0x29a7f6 is
+.CW kproc+0x42
+and 0x2965b7 is
+.CW irqhandled+0x113 .
+So
+.CW sched()
+is entered from interrupt context, and a
+.CW qlock()
+is taken with an ilock held.  The first boot's \-1 from
+.CW acquire+0xff
+and this boot's +1 from
+.CW irqhandled
+are the same fault seen from either side of the counter: something in
+this configuration's interrupt path reaches code that sleeps, on a
+machine whose interrupts arrive where QEMU's do not.
+.PP
+The networking question it was sent to answer is answered, and
+positively:
+.DS
+.CW
+DEVTEST: /net/ether0 DHCP-OK ip=10.128.0.7 gw=10.128.0.1
+DEVTEST: done
+.DE
+That is a Compute Engine address from Google's own DHCP server, not
+QEMU's 10.0.2.15, so the virtio-net driver's transmit and receive paths
+work on real hardware.  Item 3 has a network as well as a shell.
+.PP
+The obvious guess has been tried and is wrong: the
 HPET is not the difference.  The same
 .CW ipc64dev
 under
