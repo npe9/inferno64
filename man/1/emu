@@ -72,22 +72,33 @@ service or services.
 The emulator supports the following options:
 .TP
 .BI \-c n
-Unless specified otherwise by the module (see
+How Dis instructions are executed, unless the module says otherwise (see
 .B wm/rt
 in
-.IR wm-misc (1)),
-.I emu
-uses an interpreter to execute Dis instructions.
-Setting
-.I n
-to 1 (the default value is 0)
-makes the default behaviour
-to compile Dis
-into native instructions when a module is loaded,
-resulting in faster execution but larger run-time size.
-Setting
-.I n
-to values larger than 1 enables increasingly detailed traces of the compiler.
+.IR wm-misc (1)).
+.PP
+.B 1
+compiles Dis into native instructions when a module is loaded, which runs
+faster and takes more room, and
+.B 0
+uses the interpreter.
+.B "The default is 1"
+\(em see
+.B cflag
+in
+.BR /emu/port/dis.c .
+This page said the default was 0 until 2026, which was true of Inferno as
+it came and is not true here: the two were swapped, so
+.B -c0
+is the flag that changes anything and the one to reach for when a fault
+wants locating, since the interpreter reports an array's length and the
+index that missed it.
+.PP
+Values above 1 enable increasingly detailed traces of the compiler.
+.PP
+.IR Runtests (1)
+says which of the two a run used, so a result carries the path it
+exercised rather than leaving it to be assumed.
 .TP
 .BI \-d " daemon"
 Run 
@@ -301,6 +312,21 @@ name of directory in host file system that acts as Inferno's root directory
 name in host file system of directory where
 .I emu
 was invoked
+.TP
+.B emuexec
+.B compile
+or
+.B interp
+\(em how this
+.I emu
+executes Dis, which is what
+.B -c
+selects.
+Reading this rather than
+.B emuargs
+is the reliable way to ask: options may also come from the
+.B EMU
+environment variable, so the arguments are not the whole story.
 .PD
 .SH "RECORDING AND REPLAYING INPUT"
 Two environment variables record the input a whole session received and give

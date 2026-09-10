@@ -362,6 +362,16 @@ emuinit(void *imod)
 	putenvqv("emuargs", rebootargv, rebootargc, 1);
 	putenvq("emuroot", rootdir, 1);
 	ksetenv("emuhost", hosttype, 1);
+	/*
+	 * How Dis is being executed, in emu's own words - the same "interp"
+	 * or "compile" that -v prints.  Until now the only way to find out
+	 * was to pass -v and read it, or to parse $emuargs, which is wrong:
+	 * options may come from the EMU environment variable instead, so a
+	 * program looking there would call a compiled run interpreted.
+	 * A test that says which path it exercised is worth more than one
+	 * that does not, and the suites had no way to say.
+	 */
+	ksetenv("emuexec", cflag? "compile": "interp", 1);
 	wdir = malloc(1024);
 	if(wdir != nil){
 		if(getwd(wdir, 1024) != nil)

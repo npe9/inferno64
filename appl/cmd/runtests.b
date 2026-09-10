@@ -196,7 +196,8 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	# program's exit status out to whatever started it: a run with a failing
 	# test exits 0 exactly like a clean one. Anything deciding automatically
 	# has to read this.
-	verdict := sprint("%d of %d ran clean\n", len tests - failed, len tests);
+	verdict := sprint("%d of %d ran clean%s\n", len tests - failed, len tests,
+		execmode());
 	if(failed)
 		verdict += "FAIL\n";
 	else
@@ -205,7 +206,13 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	if(rfd != nil)
 		fprint(rfd, "%s", verdict);
 
-	print("\n%d of %d ran clean.\n", len tests - failed, len tests);
+	# Which execution path these results are about.  The Dis interpreter
+	# and the on-the-fly compiler are different code, and emu runs the
+	# interpreter unless asked otherwise - so a green run said nothing
+	# about the compiler, and the compiler is what emu(1)'s own startup
+	# example uses.
+	print("\n%d of %d ran clean%s.\n", len tests - failed, len tests,
+		execmode());
 	rest := graphical;
 	what := "need a screen, so run runtests -g under wm";
 	if(gui){
@@ -279,4 +286,26 @@ run(t: Test, ctxt: ref Draw->Context, verbose: int): string
 	if(err != nil && !verbose)
 		err += lastwords();
 	return err;
+}
+
+# ", compiled" or ", interpreted", from emu(1) rather than from $emuargs:
+# options may come from the EMU environment variable, so the arguments are
+# not the whole story.
+execmode(): string
+{
+	fd := sys->open("/env/emuexec", Sys->OREAD);
+	if(fd == nil)
+		return "";
+	b := array[32] of byte;
+	n := sys->read(fd, b, len b);
+	if(n <= 0)
+		return "";
+	s := string b[0:n];
+	while(len s > 0 && (s[len s-1] == '\n' || s[len s-1] == 0))
+		s = s[0:len s-1];
+	case s {
+	"compile" =>	return ", compiled";
+	"interp" =>	return ", interpreted";
+	}
+	return "";
 }
