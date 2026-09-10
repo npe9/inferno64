@@ -14,6 +14,31 @@ a driver bound to one machine.
 .NH 1
 What each board still needs, in one place
 .PP
+.I "This section has been overtaken."
+Every gap it names below has since been closed except the display on
+real hardware, and
+.CW doc/inferno-platforms.ms
+is the survey that says what each board does today, measured against
+booted kernels.  In short: riscv64
+.CW virt
+has a device-tree reader
+.CW os/inferno/port/fdt.c , (
+which it uses for its PLIC, UART and virtio window) and a display
+.CW os/inferno/port/virtiogpu.c , (
+through
+.CW screenvirt.c ),
+and
+.CW os/inferno/virts
+is the same board in S-mode, entered by OpenSBI;
+.CW os/inferno/virtarm64
+has PCI, the shared PCI drivers, GICv3 and PSCI, and reads an NVMe
+disk over ECAM; USB device classes are done for HID and mass storage
+in
+.CW appl/cmd/usb/usbd.b ;
+and MSI, single-vector MSI-X and multi-vector MSI-X are all wired on
+.CW pc64 .
+The paragraphs that follow are left as they were written.
+.PP
 pc64 is the most complete: this round linked NVMe, virtio 1.0, the
 xHCI controller, SD/MMC, HD audio, ECAM, and the Intel and Realtek
 NICs.  What it lacks is USB device classes above the controller, a

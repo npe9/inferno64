@@ -537,6 +537,2258 @@ three bytes at
 .CW end
 are left, which is not enough to matter and is noted so it is not
 re-derived.
+.PP
+.B "A deterministic trigger, on a board that boots every time."
+The ndb work of section 10 turned one up by accident.
+.CW os/inferno/virtarm64/virtarm64ndb
+running
+.CW os/inferno/init/ndbinit.b
+prints exactly nine
+.CW "track: CHANGED TO BAD VALUE"
+events, and two runs of the same kernel produce the identical sequence
+of events \(em same checkpoints, same instruction, same object types
+and word indices, differing only in addresses.  The plain
+.CW virtarm64
+kernel booting to a shell prints none.  So the workload, not the boot,
+is what provokes it, and the board it provokes it on reaches its
+prompt every time, which is the opposite of
+.CW pc64 's
+one boot in twenty-four.
+.PP
+All nine have
+.CW "diff 0x18" ,
+which
+.CW libinterp/heap.c 's
+own comment says means the tracked object is a
+.CW Frame ;
+seven fire at
+.CW "checkpoint instr"
+inside
+.CW Styx
+and
+.CW Daytime ,
+and two at
+.CW readmod:after-parsemod
+and
+.CW freemodlink:after-unload
+around a
+.CW load
+of
+.CW /dis/ndb/query.dis .
+Two of them record a word going from
+.CW -0x1
+to
+.CW 0 ,
+which is not a pointer value at either end.
+.PP
+All nine were the instrument, and the reproducer is what made that
+answerable in one experiment instead of a boot batch.
+.CW libinterp/heap.c 's
+own comment above
+.CW NTRACK
+predicted the channel and left it open: "\c
+.CW trackclear()
+only runs on
+.I creation ;
+nothing runs on teardown".  The
+.CW typetagp
+validation added for the first stale-registration capture only catches
+the case where the next occupant of the memory overwrites
+.CW &f->t ;
+a frame built at a different base leaves that word alone, so the
+registration survives and the next write anywhere in the dead frame's
+range is reported against a frame that returned long ago.
+.PP
+.CW freeptrs
+is the one place both callers \(em
+.CW OP(ret)
+and
+.CW OP(mcall) 's
+native branch \(em pass through at the moment a frame stops existing,
+and it has the frame and its Type in hand.  One
+.CW trackclear(v,
+.CW t->size)
+there and the nine events become none, with every assertion of the ndb
+test still passing.  That is the second channel closed the way the
+first was, and it removes false positives from every board the tracker
+runs on, not just this one.
+.PP
+.B "What the quiet instrument then caught."
+Twelve boots of
+.CW pc64
+rebuilt on top of it, on
+.CW "qemu-system-x86_64 -kernel ipc64.elf -append console=0" ,
+printed one
+.CW track:
+event in total \(em and that one is real.  Eight of the twelve reached
+a prompt, and the three that did not failed with
+.CW "panic: general protection violation" ,
+.CW "panic: page fault"
+and
+.CW "panic: movp: bad sv 0x0" .
+The
+.CW movp
+one is the boot that carries the event, four instructions ahead of it:
+.IP
+.DS L
+.CW
+track: CHANGED TO BAD VALUE addr 0xb283c0 old -0x1 new 0x0 regpid 1 checkpoint kopen:after-newfd
+track: instruction that just ran: PC 0xb2a920 op 0x09 add 0x48 module Init pid 1 inst 292
+track: object 0xb28368 word 11, type 0xb2b0c0 size 128 np 2 map 0x00 0xb1
+track: R.FP 0xb28368 R.SP 0xb283e8 R.MP 0xdf674d0 R.d 0xdf67698
+movp: bad sv 0, running Dis pid 1 module Init PC 0xb2a998 inst 296
+.R
+.DE
+.PP
+That is not a stale registration:
+.CW "R.FP 0xb28368"
+is the object's own base, so the frame that owns the word is the one
+executing.
+.CW "old -0x1"
+is
+.CW H
+\(em
+.CW include/interp.h
+defines it as
+.CW "((void*)(-1))"
+\(em so a declared pointer local that was nil became
+.CW 0 ,
+and four instructions later
+.CW movp
+read it and panicked on the same address.  Word 11 is at frame offset
+88, past the four header words, and the map byte
+.CW 0xb1
+does mark it a pointer.  The checkpoint is inside
+.CW kopen ,
+which
+.CW os/inferno/port/inferno.c 's
+.CW Sys_open
+reaches across a
+.CW release() / acquire()
+pair \(em the one window in that call where this process is not
+holding the interpreter and another Dis process, or the collector, can
+run.  Nothing in
+.CW Sys_open
+writes
+.CW 0
+to
+.CW "*f->ret" ;
+it writes
+.CW H
+and then
+.CW mkfd .
+Where the zero comes from is the next thing to find, and the boot that
+produces it now prints one line instead of a page.
+.PP
+.B "A second branch's numbers, at a scale this one did not run."
+The multicore branch measured the same kernel either side of the fix,
+96 boots each, same command line and same timeout, each batch confirmed
+to be a single build by
+.CW etext .
+Before: 82 of 96 panicked.  After: 2 of 96.
+.IP
+.DS L
+.CW
+                                before  after
+  no panic                          14     94
+  page fault                        26      0
+  general protection violation      20      2
+  movp: bad sv/dv                   13      0
+  alloc:D2B:destroy                  5      0
+  invalid opcode                     4      0
+  incref/decref: bad r               4      0
+  cclose / cclone                    3      0
+  smalloc: huge size                 1      0
+  assert failed: m                   1      0
+  freetype: static Type underflow    3      0
+.R
+.DE
+.LP
+Every signature that branch had been chasing is gone but two general
+protection violations, which resolve to
+.CW modstatus+0x18
+faulting on a non-canonical pointer whose upper half is the real-mode
+BIOS stub
+.CW F000:FF53
+\(em a different and far rarer bug, two samples, not theorised about
+there or here.  The three
+.CW freetype
+hits are the interesting confirmation:
+.CW Tptr
+and
+.CW Tlist
+are file-scope statics in
+.CW libinterp ,
+so a pointer landing on
+.CW Tptr+0x0
+is what a slot holds when it never held a heap pointer at all, and
+they went to zero with everything else.  That branch also reports
+.CW "-smp 2"
+booting with
+.CW cpu1
+up, which follows: the APs come up through the same
+.CW _intrcommon
+and were losing
+.CW AX
+on every interrupt too.
+.PP
+The eight-in-twelve is
+.I not
+offered as evidence that anything was fixed.  Section 3.1 of
+.CW doc/inferno-platforms.ms
+says why: the same kernel has measured one in twenty-four and nine in
+twelve.  What changed measurably is the instrument's noise floor, from
+nine deterministic false positives per arm64 run and a page per
+.CW pc64
+boot to zero and one.
+.PP
+.B "The bug, and how the quiet instrument found it."
+Six captures came out of twenty-five boots on the build with those
+extra checkpoints, and read side by side they say something none of
+them says alone:
+.IP
+.DS L
+.CW
+b4  addr 0xb296b8 old -0x1 new 0x18 op 0x10 R.d 0xb296b8 module Sh
+b6  addr 0xb296b8 old -0x1 new 0x18 op 0x10 R.d 0xb296b8 module Sh
+b23 addr 0xe178e28 old -0x1 new 0x18 op 0x10 R.d 0xe178e28 module Sh
+b5  addr 0xb29860 old 0xdf6c3d0 new 0x0 op 0x71 R.d 0xb29860 module String
+b7  addr 0xb29708 old -0x1 new 0x0 op 0x53 R.d 0xb29708 module Env
+b15 addr 0xb297c0 old -0x1 new 0x0 op 0x51 R.d 0xb297c0 module Sh
+.R
+.DE
+.PP
+In every one the corrupted address is
+.CW R.d ,
+the destination of the instruction that just ran, and in every one the
+opcode is one that stores an allocator's result:
+.CW 0x10
+is
+.CW INEW ,
+.CW 0x71
+.CW ISLICEC ,
+.CW 0x53
+.CW IADDC ,
+.CW 0x51
+.CW IINSC .
+So the question stopped being "who wrote over this word".
+.CW 0x18
+is 24, which is
+.CW sizeof(Heap)
+and therefore
+.CW H2D()
+of a nil
+.CW Heap* ;
+.CW 0
+is a nil
+.CW String* .
+Every one of these instructions had been handed
+.CW 0
+by a function that cannot return it \(em
+.CW heap() ,
+.CW nheap() ,
+.CW heapz() ,
+.CW addstring() ,
+.CW slicer()
+all check and
+.CW error(exHeap) ,
+and
+.CW os/inferno/port/proc.c 's
+.CW error()
+ends in
+.CW gotolabel .
+.CW 6c -S
+on
+.CW libinterp/xec.c
+confirms
+.CW OP(new) 's
+own code is right:
+.CW "CALL heap; MOVQ AX,CX; ADDQ $24,CX; MOVQ CX,(AX)" .
+.PP
+That leaves the value being lost between the callee's
+.CW RET
+and the caller's store, which on this port can only be an interrupt.
+.CW os/inferno/pc64/regtorture.s
+asks that directly: load twelve registers with distinct values, spin
+comparing them, report the first that changes.
+.IP
+.DS L
+.CW
+regtorture: interrupts off, 1M iterations: clean
+regtorture: interrupts on: REGISTER 1 became 0x0
+.R
+.DE
+.PP
+Register 1 is
+.CW AX ,
+and it became
+.CW 0 ,
+which is the value every capture had.  The cause is four instructions
+in
+.CW os/inferno/pc64/l.s 's
+interrupt entry:
+.IP
+.DS L
+.CW
+	PUSHW	GS
+	PUSHW	FS
+	MOVW	ES, AX	/* PUSHW ES is invalid in amd64 */
+	PUSHW	AX
+	MOVW	DS, AX	/* PUSHW DS is invalid in amd64 */
+	PUSHW	AX
+
+	PUSHQ	R15
+	...
+	PUSHQ	AX
+.R
+.DE
+.PP
+.CW Ureg.ds
+and
+.CW Ureg.es
+were built
+.I before
+.CW "PUSHQ AX"
+saved the interrupted code's
+.CW AX ,
+using
+.CW AX
+as the scratch the reads need.
+.CW MOVW
+from a segment register assembles to the 32-bit form, which
+zero-extends into the whole of
+.CW RAX ,
+so what got pushed as
+.CW Ureg.ax
+\(em and what
+.CW _intrestore
+faithfully popped back \(em was the
+.CW DS
+selector, which is
+.CW 0
+on this kernel.  Every interrupt, every time, on every
+.CW pc64
+boot since the port began.
+.PP
+It survived this long because compiled code keeps a value in
+.CW AX
+for only the one or two instructions between a call returning and the
+store of its result, so the great majority of interrupts land somewhere
+that does not care.  When one lands in that window the caller gets
+.CW 0 :
+.CW OP(new)
+stores
+.CW H2D(nil) ,
+.CW OP(addc)
+and
+.CW OP(slicec)
+and
+.CW OP(insc)
+store a nil
+.CW String* ,
+and a few instructions later
+.CW movp
+panics, or
+.CW addstring
+faults reading
+.CW D2H(0)->ref
+at
+.CW 0xffffffffffffffec ,
+or the mark phase computes a garbage
+.CW Heap* .
+It also explains the non-Dis signatures this hunt collected \(em
+.CW "panic: general protection violation"
+in
+.CW mntrpcread ,
+.CW "panic: smalloc: size 18446744073441179738" ,
+.CW alloc:D2B:destroy-entry :
+kernel C code has the same one-instruction windows.
+.PP
+The fix reserves the eight bytes with
+.CW "SUBQ $8, SP"
+and fills
+.CW ds ,
+.CW es ,
+.CW fs
+and
+.CW gs
+in afterwards, at
+.CW 120(SP)
+through
+.CW 126(SP) ,
+once
+.CW AX
+is safely on the stack and free to be the scratch.
+.CW _intrestore
+is unchanged: it already skipped the four words on the way out.
+.PP
+Afterwards, on the same machine and the same command line:
+.IP
+.DS L
+.CW
+regtorture: interrupts off, 1M iterations: clean
+regtorture: interrupts on, 2M iterations: clean
+.R
+.DE
+.PP
+and thirty consecutive boots of
+.CW pc64
+reached a shell prompt, with no
+.CW track:
+event, no
+.CW movp
+or
+.CW freeptrs
+or
+.CW markheap
+capture and no panic of any kind.  The measurements before it were one
+in twenty-four, nine in twelve, eight in twelve, ten in twenty-five and
+eight in thirteen.
+.PP
+.CW os/inferno/pc64/regtorture.s
+stays, called once from
+.CW init0
+with interrupts on, so a kernel that reintroduces this prints it on
+every boot instead of losing a pointer once an hour.  That claim was
+checked rather than assumed: the two hunks of the bug were put back in
+.CW l.s ,
+the kernel rebuilt and booted, and it printed
+.CW "regtorture: interrupts on: REGISTER 1 became 0x0" ;
+the file was then restored, verified byte-identical to the fixed one,
+and the line came back clean.
+.PP
+It reports two things beyond the verdict, both because the osprey-port
+branch pointed out that it could otherwise lie.  It prints how many
+clock ticks the run spanned, and says
+.CW INCONCLUSIVE
+at zero, because a fixed count of iterations proves nothing on a
+machine whose clock has stopped \(em that is the case a bare "the
+registers survived" passes hardest.  And it runs the identical loop
+with interrupts disabled in the same boot and requires that control to
+come back clean, because "the registers survived" and "the loop never
+ran" are otherwise the same sentence.
+.PP
+The obvious way to guarantee coverage \(em spin until the tick counter
+moves \(em was tried and abandoned, and what it turned into is a better
+lesson than what it looked like at first.  Bounding the loop at four
+ticks made a boot take 39.6 seconds to reach a shell prompt where the
+same kernel without the call takes 9.6, and shrinking the pass size did
+not help.  The reading here was "waiting on the clock is slow"; the
+osprey-port branch then measured the same bound on its own guest and
+got 191 passes over 20 ticks for a whole-check cost of 241.26 seconds
+against 242.69 for the fixed form \(em no difference at all.  So the
+general statement is not about waiting.  A tick bound takes its cost
+from the guest's clock rather than from the work, which makes it free
+where the clock is healthy and unbounded where it is not: two orders of
+magnitude apart on the same code, and neither branch could have said
+which it had without measuring.  A boot-time check has to run on
+machines nobody has seen, so the count is bounded by iterations and the
+ticks are reported \(em two million spans 167 ticks here anyway.
+.PP
+One trap for anyone scripting around it: the console prompt in these
+kernels is
+.CW "; " ,
+and the success line first read "ticks; control clean", so every batch
+that grepped for the prompt matched the instrument's own output and
+scored thirty clean boots as thirty hangs.  The line carries no
+semicolon now.  The
+.CW newfd()
+and
+.CW growfd()
+checkpoints are reverted, and it is worth saying that they never
+narrowed anything: the inference that put them there \(em the hit fired
+at
+.CW kopen:after-newfd
+and the earlier checkpoints were quiet, so the write must be in between
+\(em does not follow, because a hit clears its own watch, so a quiet
+earlier checkpoint says nothing unless the watch already existed when
+it ran.  The inferno-ports branch reached the same correction
+independently on raspi3b.  What made the captures legible was the
+instrument going quiet, not the bisection.
+.CW libinterp/heap.c 's
+teardown
+.CW trackclear
+and the nil-result checks in
+.CW OP(new) ,
+.CW OP(addc)
+and
+.CW OP(slicec)
+stay, being invariants rather than probes.
+.PP
+.B "Why everyone in this hunt wrote their own symbol reader."
+Resolving a captured pc to a name was done here with an ad-hoc Python
+reader, and the multicore branch landed one of its own, because
+.CW inm
+prints nothing for these kernels and exits 0, and
+.CW acid
+says "no symbol information".  Both are
+.CW utils/libmach ,
+and the cause is the fourth instance of the rule AGENTS.md already
+states:
+.CW "struct Exec" 's
+eight fields are 32-bit words in the file, written four bytes at a
+time by
+.CW lput() ,
+and were declared
+.CW long ,
+which is 64 bits on the hosts these tools are built on.  So the struct
+was twice the width of the record, and
+.CW fp->symsz
+came from the top half of the 64-bit entry word, which is zero.
+.CW hswal
+had the matching bug, stepping a
+.CW ulong*
+through a sequence of 32-bit words.
+.PP
+.CW Exec
+now has fixed-width fields,
+.CW hswal
+steps and counts in
+.CW u32 s,
+and
+.CW utils/libmach/elf.h 's
+32-bit ELF records are fixed the same way.
+.CW inm
+now agrees symbol for symbol with an independent reader on
+.CW ipc64
+\(em 4675 text symbols, and
+.CW "0x2ef5fc"
+resolves to
+.CW movp
+in both, which is where one of the captures panicked.
+.CW utils/nm/nm.c
+also swallowed the failure silently, returning with no message when
+.CW syminit
+failed or the table was empty; it says which now.
+.PP
+.B "And then the rest of the boards."
+The arm boards worked as soon as the width bug was fixed.  The others
+did not, for two further reasons, and both are closed now.
+.CW libmach
+knew arm64 objects and not arm64 executables \(em
+.CW R_MAGIC
+had no
+.CW exectab
+entry and there was no
+.CW Mach ,
+so
+.CW crackhdr
+said "Can't read header" for every
+.CW 7l
+output;
+.CW utils/libmach/7.c
+and
+.CW ureg7.h
+add it.  There is no arm64 disassembler, so it is deliberately not in
+.CW setmach.c 's
+.CW machines[] :
+a
+.CW Mach
+is all
+.CW crackhdr
+and
+.CW syminit
+need, and a
+.CW Machdata
+would claim something that does not exist.
+.PP
+And every board but
+.CW pc64
+and
+.CW armv7
+links its kernel as ELF64, which
+.CW libmach
+read only to reject: "bad ELF class \(em not 32 bit", at
+.CW executable.c 's
+.CW elfdotout .
+There was an ELF reader; it was 32-bit only.  The Plan 9 layout is the
+same at both widths \(em one LOAD segment R|X for text, one R|W for
+data, and the symbol table in a
+.CW PT_NULL
+segment whose
+.CW filesz
+is the symbols and whose
+.CW memsz
+is the pc/line table \(em so
+.CW elf64dotout
+is that routine with the wider header.
+.PP
+One thing had to be found by running it.  The symbol value width is a
+property of the loader that wrote the file, not of the ELF class.
+.CW utils/7l/span.c 's
+.CW putsymb
+writes eight-byte values only for
+.CW HEADTYPE
+2, the Plan 9 a.out, and four for its ELF output, and
+.CW utils/6l
+does the same;
+.CW utils/jl 's
+writes eight unconditionally, on
+.CW "if(thechar == 'j')" .
+So a riscv64 ELF has eight-byte values where an arm64 one has four,
+and read at the wrong width the table decodes into nonsense that still
+looks like a symbol table \(em
+.CW "74696e69 t"
+for a symbol whose name is "init".
+.CW Fhdr
+carries the width now, in the field that used to be
+.CW spare ;
+.CW crackhdr
+sets the a.out default and
+.CW elf64dotout
+sets its own.
+.PP
+Ten of the fifteen boards' kernels now resolve, each starting at
+.CW _main
+at its own load address:
+.CW pc64
+4675 text symbols,
+.CW virt
+and
+.CW sifiveu
+and
+.CW shakti
+and
+.CW spike
+and
+.CW mangopi
+and
+.CW virts
+on RISC\-V,
+.CW virtarm64
+2436 and
+.CW raspi3b
+on arm64, and
+.CW armv7 .
+Both readings were checked against an independent reader written for
+the purpose, on both formats: 4675 against 4675 on
+.CW pc64 's
+a.out, and 2436 against 2436 on
+.CW virtarm64 's
+ELF with the sampled entries matching name and address.
+.CW virt32
+and
+.CW virt32s
+are ELF32 RISC\-V and would want an
+.CW mriscv32 ,
+which
+.CW libmach
+does not have;
+.CW mps2 ,
+.CW nucleof303
+and
+.CW teensy41
+are raw binaries with no header at all, so refusing them is right.
+.PP
+.B "The width is derived, so it is checked."
+Which width to use is worked out in
+.CW executable.c
+from which loader wrote the file, and a derivation is worth checking
+against the thing it claims to describe.
+.CW syminit
+now does two checks, and it is worth being exact about which one does
+the work.
+.PP
+The first is that the table must be consumed exactly: each record is a
+value, a type byte and a name, and a well-formed table's records sum
+to
+.CW symsz .
+That catches a width that is too small \(em
+.CW virt 's
+table read with four-byte values reports "symbol table is 427742
+bytes, 4-byte values consume 427746" \(em and it is
+.I not
+enough on its own.  Read
+.CW virtarm64 's
+table with eight-byte values and the records happen to land on
+.CW symsz
+exactly: 563 records of rubbish come back looking like a symbol table,
+starting
+.CW "6d63636f6e647569 t" ,
+and nothing complains.  So the arithmetic check catches one direction
+of the mistake and not the other, which is the sort of thing only a
+control in both directions shows.
+.PP
+The second is the one that works.  Every symbol record this tree's
+loaders write has
+.CW 0x80
+set in its type byte \(em the new-style, length-prefixed name \(em and
+a type from
+.CW TtLlDdBbapmzZf .
+That is measured rather than assumed: a survey counting exceptions
+across all ten readable boards, covering
+.CW 6l ,
+.CW 7l ,
+.CW jl
+and
+.CW 5l
+output and both header types, found none.  With it in,
+.CW virtarm64
+read at eight bytes fails at symbol 0 and
+.CW virt
+read at four fails at symbol 2, each naming the byte it found, and all
+ten boards read exactly as before \(em the same symbol counts, 6011 on
+.CW pc64
+through 3316 on
+.CW spike .
+.PP
+Two smaller things came out of running that.
+.CW ksize
+reported "bad ELF class \(em not 32 bit" on
+.CW ivirtarm64
+long after
+.CW libmach
+had stopped containing that sentence: the installed binary was linked
+against the old library, which is the stale-artifact trap AGENTS.md
+already records \(em rebuilding a library does not rebuild what was
+linked against it, and
+.CW mk
+lists only sources.  All ten programs that use
+.CW libmach 's
+interface are rebuilt now, and
+.CW ksize
+sizes all ten readable boards.  And
+.CW elfdotout 's
+machine
+.CW default
+returned 0 without setting
+.CW errstr ,
+so a caller printing
+.CW %r
+printed "Undefined error: 0" and a reader could not tell a corrupt
+file from a kind
+.CW libmach
+has no table for.  It says "unsupported ELF32 machine 243" now, which
+names the
+.CW mriscv32
+gap rather than hiding it.
+.PP
+One more thing fell out.
+.CW srclist
+runs on
+.CW libmach ,
+so it had been listing no sources at all: every board's
+.CW i$CONF.acid
+was one line long.  With it working, the acid rule in
+.CW os/inferno/port/portmkfile
+compiles all 312 of
+.CW pc64 's
+sources, which exposed that it hands foreign sources the board's own
+include path \(em
+.CW libinterp/keyring.c 's
+.CW "#include <mp.h>"
+found
+.CW os/inferno/pc64/mp.h ,
+the MP/APIC table header.
+.CW ip.h
+and
+.CW mp.h
+are the only two names that collide between
+.CW $ROOT/include
+and the kernel directories, and each file now gets the include path of
+the tree it came from.
+.PP
+Which boards that is evidence from is worth being exact about, because
+it is easy to over-claim: of the fifteen boards that build,
+.CW pc64
+is the
+.I only
+one whose
+.CW default
+target names
+.CW i$CONF.acid
+\(em every other board's is
+.CW i$CONF
+alone \(em so "the boards still build" says nothing about this rule.
+.CW "mk acid"
+on
+.CW armv7
+is the independent check, and it now writes a 6.7 MB listing over 211
+sources where it used to write one line.  The remaining boards cannot
+exercise it at all: their kernels are ELF, and
+.CW libmach
+has no Elf64, so
+.CW srclist
+still has nothing to say about them.
+.NH 1
+A function that did the opposite of its comment
+.PP
+.CW os/inferno/port/proc.c 's
+.CW userureg()
+returned
+.CW Proc.kp
+where the paragraph directly above it says to return
+.CW !Proc.kp .
+Every kernel process's trap was therefore classified as coming from
+user mode, and the one process
+.CW newproc()
+makes without
+.CW kp
+was classified as a kernel trap.  Both backwards, since the day it was
+written.
+.PP
+This was found by the multicore branch, which also caught the
+consequence in the act on
+.CW pc64 :
+a general protection fault on the
+.CW IRETQ
+in
+.CW _intrr ,
+twelve times in about 864 boots, with a probe at both ends of
+.CW trap()
+watching a newly created kproc's frame have its
+.CW SS
+word overwritten between entry and exit, and the fault's error code
+equal to the low half of the value the probe had just seen written.
+Their narrowing was by elimination, one region per batch: a probe at
+trap entry silent over 52 boots including two faults, one across
+.CW irqhandled()
+silent over 192 including one, and the one inside
+.CW trap()
+firing.
+.PP
+What was checked here rather than taken on trust.  The code is present
+verbatim in this tree, and a probe in
+.CW os/inferno/pc64 's
+.CW trap()
+printing what
+.CW userureg()
+says about each kind of process shows the inversion directly, in one
+boot:
+.IP
+.DS L
+.CW
+UUPROBE pid 1 kp 0 userureg 0 vno 81
+UUPROBE pid 2 kp 1 userureg 1 vno 50
+.R
+.DE
+.LP
+\(em the real user process told it is not one, a kernel process told it
+is.  With the fix, the same probe on the same boot path prints
+.CW "pid 1 kp 0 userureg 1"
+and
+.CW "pid 2 kp 1 userureg 0" .
+Vector 50 is the one their capture named.
+.PP
+The blast radius here is one board.
+.CW userureg()
+is called from
+.CW os/inferno/pc64 's
+.CW trap.c
+and
+.CW fpu.c
+and from
+.CW kenter()
+in the shared
+.CW proc.c ,
+and no other board in
+.CW os/inferno
+calls
+.CW kenter() ,
+.CW kexit()
+or
+.CW notify()
+at all \(em they trap without a user tail.  The
+.CW os/9front
+and
+.CW os/osprey
+trees have their own
+.CW userureg
+macro, testing the code segment's privilege level, and are untouched.
+.PP
+Ninety-six boots with the fix in, six at a time under QEMU/TCG, all
+ninety-six reaching the shell with no panic and no general protection
+fault.  That is a regression check and nothing more, and it is worth
+saying why: at the multicore branch's measured rate of twelve in about
+864, the chance of ninety-six clean boots happening anyway is about one
+in four.  The weight is on the classification having been seen wrong
+and then seen right, not on the batch.  The other fourteen boards were
+rebuilt against the changed
+.CW proc.c
+and the two that are booted routinely still are \(em
+.CW virtarm64
+starts sixteen processors on a seventeen-processor machine and reaches
+a shell,
+.CW virt
+prints its eleven
+.CW DEVTEST
+lines.
+.PP
+One thing this does not settle, and the comment in the source says so:
+on a port where the kernel and the user share a code segment, whether
+any frame should be called a user frame is a real question, and
+"always 0" may be the right answer.  This makes the function do what
+it says, no more.
+.NH 1
+Floating point, and a comparison that forgot its mask
+.PP
+The multicore branch raised a possible regression from the
+.CW userureg()
+fix: a
+.CW "panic: math emu pid 1"
+they had not seen in 880 boots before it and saw once in 304 after.
+One sample, Fisher about
+.CW "p = 0.26" ,
+so nothing on counts \(em but the panic is in one of the three call
+sites the fix touches, and it names the one process whose
+classification changed.  That is worth answering with evidence rather
+than with an opinion.
+.PP
+.B "First, an instrument."
+Waiting for a 0.3% panic is the wrong tool, for the reason section 5
+gives.
+.CW os/inferno/init/fpinit.b
+is
+.CW disinit.b
+with a floating-point stress in front of it and nothing else changed:
+six Dis threads, three rounds, each summing 0 to 199999 as reals and
+doubling and halving as it goes.  Every intermediate is a small
+integer times a power of two, so the sum is exact and can be written
+in closed form, and each worker folds its own id in so no two compute
+the same number.  A corrupted register file, or two threads' state
+swapped, is then a wrong number rather than only a panic.
+.CW os/inferno/pc64/pc64fp
+is the
+.CW pc64
+configuration with that init, so a boot of one and a boot of the other
+differ in exactly one thing.  Dis programs run in kernel processes and
+do their arithmetic inside the interpreter, and
+.CW os/inferno/port/dis.c
+pushes and pops FPU state through
+.CW fpusave()
+and
+.CW fpurestore()
+around every
+.CW r->xec(r) ,
+so several threads doing real arithmetic at once is what makes those
+pushes interleave.
+.PP
+Forty-four boots of it in four arms, eight to twelve each, differing in
+one thing at a time: the tree as it stands, the tree with
+.CW userureg()
+put back to its inversion, the tree again as a repeat, and the tree
+with the
+.CW notify()
+mask below.  Every boot printed
+.CW FP-STRESS-OK ,
+which is 3.6 million exact floating-point results per boot across
+eighteen Dis threads, with no
+.CW "math emu" ,
+no
+.CW fpslot
+panic and no wrong value in any arm.  Two things follow, and the second
+matters more than the first: the fix does no harm under heavy floating
+point, and the stress does not discriminate between the arms at all \(em
+so it is evidence about
+.I damage ,
+not about the reported panic, which it never reproduced in any
+configuration.
+.PP
+.B "Second, where the bug actually is."
+On this board the bits
+.CW userureg()
+controls in
+.CW mathemu
+are write-only.
+.CW FPnouser
+and
+.CW FPkernel
+are read in exactly one place that does not mask them,
+.CW fpuprocfork 's
+switch at
+.CW fpu.c:293 ,
+and
+.CW fpuprocfork
+is never called: there is no
+.CW procfork
+hook in
+.CW os/inferno/port/proc.c ,
+.CW newproc()
+sets
+.CW "p->fpstate = FPinit"
+inline, and the comment at
+.CW proc.c:701
+still reads "TODO fpusetup() and procsetup() of 9front".  Every other
+comparison masks them \(em
+.CW fpu.c:177 ,
+.CW 314 ,
+.CW 351 ,
+.CW 361 ,
+.CW 366
+\(em and the assignments at 200 and 217 preserve them.  So the only
+reachable behaviour the answer changes inside
+.CW fpu.c
+is which processes can reach the
+.CW "fpslot index %d != 0 for user"
+panic, which is a different panic from the one reported.
+.PP
+.CW notify()
+is where it does matter, and
+.CW notify()
+is also where the multicore branch's other observation comes from.
+.CW os/inferno/pc64/trap.c 's
+copy ends:
+.IP
+.DS L
+.CW
+	ureg->cs = UESEL;
+	ureg->ss = UDSEL;
+	...
+	if(up->fpstate == FPactive){
+		fpsave(up->fpsave);
+		up->fpstate = FPinactive;
+	}
+	up->fpstate |= FPillegal;
+.R
+.DE
+.LP
+The first two lines explain their capture completely: before the fix,
+kernel processes were classified as user, so
+.CW trap() 's
+tail called
+.CW notify()
+on a
+.CW Ureg
+sitting on a kernel stack, rewrote its
+.CW ss
+to
+.CW UDSEL
+and returned into it \(em which is a probe watching the frame's
+.CW SS
+word change under a kproc's first interrupt, and a general protection
+fault whose error code is the low half of that word.
+.PP
+The third is the one still there.  That comparison is unmasked where
+every sibling masks, so a process carrying
+.CW FPnouser ,
+.CW FPkernel
+or a non-zero
+.CW FPindex
+fails it:
+.CW fpsave()
+is skipped, the FPU is left live with
+.CW TS
+clear, and
+.CW FPillegal
+is set anyway.
+.CW mathemu
+then tests
+.CW FPillegal
+first and returns without repairing anything, so the state stays out
+of step.  And the fix changes which way that goes for the one process
+that reaches
+.CW notify() :
+before it, that process had
+.CW FPnouser|FPkernel
+set permanently, so the comparison was always false and the save never
+happened; after it, the process is clean except for whatever
+.CW FPindex
+.CW fpusave()
+pushed, so the same comparison is true sometimes and false others.
+Which is a mechanism by which a correct fix makes a second, older bug
+start to matter.
+.PP
+.B "What was done about it."
+.CW notify() 's
+comparison is masked now, like its siblings, and the assignment
+preserves the bits the same way
+.CW fpu.c:200
+and
+.CW 217
+do.  That is written down for what it is: found by reading, consistent
+with another branch's report, and
+.I not
+reproduced here \(em reaching it wants a note delivered, and a clean
+boot delivers none.  What is measured is only that it breaks nothing:
+forty-four boots of the stress above and forty-eight of the ordinary
+.CW pc64
+kernel with it in.
+.PP
+.B "A third bare call, and where this file actually came from."
+The multicore branch's three checks, run in the order suggested, found
+that the panicking process had taken no note \(em so
+.CW notify()
+never ran, and neither its unmasked comparison nor
+.CW fpu.c 's
+own branch could have been the mechanism.  They resolved the panic's pc
+to
+.CW _fxsave+0x0 ,
+which says the fault is the save instruction itself.
+.PP
+That points at a third site with the same shape.
+.CW matherror()
+and
+.CW simderror()
+call
+.CW fpsave()
+with no
+.CW _clts()
+and no state test at all.
+.CW fpsave
+is
+.CW _fxsave()
+followed by
+.CW _stts() ,
+so calling it with
+.CW TS
+already set faults on its own first instruction, reported at
+.CW _fxsave+0x0 ,
+with no intermediate step needed.  And the window where
+.CW TS
+is set while
+.CW fpstate
+still says active is not hypothetical:
+.CW fpusave()
+sets
+.CW TS
+and stores
+.CW FPpush|FPactive ,
+and
+.CW os/inferno/port/dis.c
+holds every Dis program inside exactly that window, between
+.CW fpusave()
+and
+.CW fpurestore()
+around
+.CW r->xec(r) .
+.PP
+This one can be settled against a source rather than by reading.
+.CW os/9front/pc64/fpu.c
+is in this tree, and its
+.CW matherror
+does three things this copy does not: returns early for a trap from
+kernel mode, guards on
+.CW "up->fpstate != FPinactive" ,
+and does
+.CW _clts()
+before
+.CW fpsave() .
+All three were lost in the port.  The two that cannot change the state
+machine are back \(em a nil check on
+.CW up->fpsave
+and the
+.CW _clts()
+\(em and the third is left alone, for a reason worth recording on its
+own.
+.PP
+.B "The 9front file in this tree is not this file's upstream."
+.CW os/9front/pc64/fpu.c
+has no
+.CW fpusave ,
+no
+.CW fpurestore ,
+no
+.CW FPpush ,
+no
+.CW FPnouser ,
+no
+.CW FPkernel
+and no
+.CW fpslot
+array; it uses
+.CW m->fpsave
+and
+.CW up->kfpsave
+instead.  So the Inferno
+.CW pc64
+floating-point design came from somewhere else, and a diff against the
+9front copy shows a different design rather than a drift.  That is a
+general caution about this tree: a file under
+.CW os/9front
+with the same name as one under
+.CW os/inferno
+is not necessarily what the Inferno one was copied from, and treating
+it as the upstream will produce confident wrong answers.  Here it was
+still useful \(em it showed three things missing from two functions
+that
+.I are
+recognisably the same two functions \(em but only because the
+difference was checked rather than assumed.
+.PP
+The other half of the answer to that report is a coverage claim rather
+than a fix.  This board's
+.CW fpuprocfork
+is dead code, so the flags are write-only here; on a branch that has
+wired it for SMP they are not, and the fork path's switch at
+.CW fpu.c:293
+is the other place that does not mask.  That is where to look next on
+a tree where this board's reasoning does not apply.
+.NH 1
+The arm64 EFI loader
+.PP
+.CW doc/inferno-platforms.ms
+section 4.3 makes an AArch64 build of
+.CW os/inferno/boot/efi
+the gate for the arm64 server: ACPI on arm64 takes the RSDP from the
+UEFI system table rather than from a scan of low memory, so nothing
+below it can start until the loader runs.  It builds, AAVMF loads it,
+and it executes.  What follows is what was found by running it, and
+what is still in the way.
+.PP
+.B "The static base was never set."
+.CW efimain 's
+third instruction is
+.CW "STR X0, [X28]" ,
+.CW "IH = ih" ,
+and it took a data abort at address
+.CW 0
+\(em ESR
+.CW 0x96000047 ,
+translation fault third level, FAR
+.CW 0 .
+.CW R28
+is
+.CW SB ,
+the static base every 7c reference to a global goes through, and
+nothing had set it: the firmware enters at
+.CW start(SB)
+and
+.CW reloc()
+copies the image, so there is no runtime startup doing what
+.CW os/inferno/virtarm64/l.s 's
+.CW _main
+does with
+.CW "MOV $setSB(SB), R28"
+before it calls
+.CW main .
+One instruction in
+.CW entry ,
+and the fault moved from address
+.CW 0
+to real addresses.
+.PP
+That diagnosis needed a symbol for
+.CW 0x48000D18 ,
+which is why
+.CW utils/libmach
+was repaired first and then given the arm64 half it never had \(em see
+the section above and
+.CW utils/libmach/7.c .
+.CW inm
+now reads
+.CW 7l
+output, and said in one line what the address was.
+.PP
+.B "The PE the loader is wrapped in was not a valid one."
+.CW tools/aout2efi
+wrote
+.CW SectionAlignment
+.CW 0x200 ,
+a single section spanning text, data and bss, and
+.CW Characteristics
+.CW 0x86000020
+\(em
+.CW MEM_WRITE
+.CW | MEM_DISCARDABLE
+.CW | MEM_NOT_CACHED
+.CW | CNT_CODE ,
+with neither
+.CW MEM_READ
+nor
+.CW MEM_EXECUTE
+set and two flags inviting the firmware to discard the section or map
+it uncached.  EDK2 can only apply per-section memory attributes to an
+image whose sections are whole EFI pages; with
+.CW 0x200
+it printed "ProtectUefiImage failed to create image properties record"
+and the image's pages kept whatever the default policy gave them,
+which on AArch64 is not executable \(em an instruction abort on the
+loader's first instruction, ESR
+.CW 0x8600000E ,
+deterministic three runs out of three.
+.PP
+.CW aout2efi
+now emits a page-aligned image with
+.CW SectionAlignment
+and
+.CW FileAlignment
+both a whole EFI page, one section claiming
+.CW CNT_CODE
+.CW | CNT_INITIALIZED_DATA
+.CW | MEM_EXECUTE
+.CW | MEM_READ
+.CW | MEM_WRITE ,
+and
+.CW AddressOfEntryPoint
+computed as the entry's RVA rather than as
+.CW entry-base ,
+which is only the same thing while the two bases coincide.
+.PP
+Both loaders are linked
+.CW -R4096
+now, which page-aligns the data segment, and that turned up a defect of
+its own: in the a.out file data follows text immediately, but its
+virtual address is a page-rounded distance above the text's, so a
+single PE section has to reproduce that gap in the file or every
+address in the data segment lands short by it.  It does.
+.PP
+That the whole change is right and not merely different is measured on
+the platform where the path can be run end to end: with it,
+.CW bootx64.efi
+under OVMF still loads
+.CW ipc64
+and reaches a shell prompt.  That was checked again after every shape
+the image took.
+.PP
+.B "Two sections was tried and is not what is in the tree."
+Two sections \(em
+.CW .text
+read-only and executable,
+.CW .data
+writable and not \(em is the shape a compiler emits and the shape EDK2
+protects properly, and it is the obvious fix for a code section that
+holds the data too.  With it, this AAVMF build loads the image away
+from its
+.CW ImageBase
+and leaves
+.CW .text
+non-executable, so nothing runs at all and the loader's own
+.CW reloc
+never gets the chance to copy itself down.  Reproduced three times,
+with and without
+.CW RELOCS_STRIPPED ,
+at two image bases.  One section costs nothing here, because the
+loader never writes to the image the firmware loaded \(em
+.CW start
+and
+.CW reloc
+only read it, copy it to the address it was linked for, and enter the
+copy \(em so read-only at the load address is the right protection for
+it, which is what EDK2 gives a code section.
+.PP
+.B "What the firmware will not do, and what was built for it."
+Copying the image to its link address puts it in memory the firmware
+still believes is free, and ArmVirtQemu marks free conventional memory
+non-executable: the copy takes an instruction abort at its own first
+instruction, ESR
+.CW 0x8600000E .
+That was seen directly, by giving the PE an
+.CW ImageBase
+different from the address the code runs at \(em
+.CW aout2efi
+takes it as a third argument now, and
+.CW PEBASEARM
+in the mkfile supplies it \(em so that the firmware could not place the
+image where
+.CW reloc
+was going to put it.
+.CW efiallocpages
+in
+.CW efi.c
+is the answer: it asks
+.CW BootServices->AllocatePages
+for the destination range by address and as
+.CW EfiLoaderCode
+before the copy.
+.PP
+.B "Three more, each found by the one before it."
+.CW eficall
+kept the link register in
+.CW R10
+and the caller's stack pointer in
+.CW R11
+across the firmware call.  Both are caller-saved in AAPCS64, so the
+firmware is free to destroy them, and restoring
+.CW RSP
+and
+.CW R30
+from them afterwards returns to wherever the firmware happened to
+leave
+.CW X10
+\(em an instruction abort in the firmware's own address range.  Nothing
+had noticed because no EFI call had ever completed on this port: the
+loader faulted before its first print.  They live on the stack now.
+.PP
+.CW reloc
+copied text and data and stopped at
+.CW edata ,
+and nothing zeroed the bss.  The a.out carries no image for it, so
+every uninitialised global held whatever the firmware had left in the
+pages just allocated.  It also asked for only
+.CW edata-IMAGEBASE
+bytes, so the bss was not in the allocation at all.  Both fixed: the
+request covers through
+.CW end ,
+and a zeroing loop follows the copy.  This was invisible while the
+image ran from a fixed address that happened to be zeroed RAM.
+.PP
+And
+.CW confaddr ,
+which
+.CW sub.c 's
+.CW BOOTLINE
+and
+.CW BOOTARGS
+are defined in terms of, was
+.CW CONFADDR ,
+.CW 0x1200 :
+a fixed address in low memory that the amd64 kernel reads by
+convention.  There is no such convention on AArch64 and 0x1200 is not
+memory this loader owns, so
+.CW configure
+took a data abort on the first thing it does.  It points at a page of
+the loader's own bss now.
+.PP
+.B "Four more, and then it boots."
+.CW eficall
+kept the link register in
+.CW R10
+and the caller's stack pointer in
+.CW R11
+across the firmware call.  Both are caller-saved in AAPCS64, so the
+firmware is free to destroy them, and restoring
+.CW RSP
+and
+.CW R30
+from them afterwards returns to wherever the firmware happened to leave
+.CW X10 .
+Nothing had noticed because no EFI call had ever completed on this
+port: the loader faulted before its first print.  They live on the
+stack now.
+.PP
+.CW reloc
+copied text and data and stopped at
+.CW edata ,
+and nothing zeroed the bss.  The a.out carries no image for it, so
+every uninitialised global held whatever the firmware had left in the
+pages just allocated; the allocation did not cover the bss either.
+Both fixed.  Invisible while the image ran from a fixed address that
+happened to be zeroed RAM.
+.PP
+.CW confaddr ,
+which
+.CW sub.c 's
+.CW BOOTLINE
+and
+.CW BOOTARGS
+are defined in terms of, was
+.CW CONFADDR ,
+.CW 0x1200 :
+a fixed low-memory address the amd64 kernel reads by convention.
+There is no such convention on AArch64 and it is not memory this
+loader owns, so
+.CW configure
+took a data abort on the first thing it does.  It points at a page of
+the loader's own bss now.
+.PP
+And
+.CW jump
+did not spin.  It was
+.CW "B ,-4(PC)" ,
+which in this assembler branches back four instructions rather than to
+itself \(em out of the one-instruction function and into whatever
+preceded it.  Control came back through
+.CW bootkern
+to
+.CW efimain 's
+.CW print(bootkern(f)) ,
+after
+.CW ExitBootServices ,
+where the console protocol is gone: a data abort in
+.CW putc
+at
+.CW FAR
+.CW 8 ,
+which is
+.CW ConOut->OutputString
+through a null
+.CW ConOut .
+.PP
+.B "Loading the kernel."
+.CW bootkern
+accepted only Plan 9 a.out, and every board in this tree but
+.CW pc64
+and
+.CW armv7
+links its kernel as ELF, because that is what QEMU's
+.CW -kernel
+takes.  It reads ELF64 now:
+.CW loadelf
+in
+.CW sub.c
+walks the program headers and loads each
+.CW PT_LOAD
+at its physical address.  The file interface is open/read/close with
+no seek, so it reads forward and skips, which is enough because the
+loaders write their segments in ascending offset order.  The
+.CW R_MAGIC
+case also lost its
+.CW "& 0x0FFFFFFF" ,
+a PC convention for turning a high-mapped amd64 entry into its low
+physical alias, which gives 0 for an arm64 kernel linked at
+.CW 0x40000000 .
+.PP
+.CW memconf 's
+96 KiB memory-map buffer moved from the stack to bss on the way past:
+that is more stack than a UEFI application can count on, and it is
+called three deep.
+.PP
+.B "And the handover."
+.CW jump
+now clears
+.CW SCTLR_EL1 's
+.CW M ,
+.CW C
+and
+.CW I
+and branches to the entry with
+.CW X0
+zero.  Clearing
+.CW M
+does not move the instruction stream because the firmware maps RAM
+one-to-one.
+.CW X0
+is what
+.CW os/inferno/virtarm64/l.s 's
+.CW _main
+stores as
+.CW dtbptr ,
+and it is zero because a UEFI machine describes itself with ACPI \(em
+the RSDP is in the configuration block as
+.CW *acpi= .
+One thing is deliberately not there: the kernel image was written with
+the D-cache on and is not cleaned to the point of unification before
+.CW C
+is cleared, so a machine with real caches may fetch stale lines.  QEMU
+models no cache, so that loop could not be exercised, and this tree
+does not ship loops it cannot run \(em the reason
+.CW os/inferno/raspi3b/l.s
+gives for leaving its own CLIDR/CCSIDR walk out.
+.PP
+.B "What it does."
+Booted from the removable-media path with stock AAVMF and a fresh
+variable store:
+.IP
+.DS L
+.CW
+BdsDxe: starting Boot0001 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x2,0x0)
+*acpi=0x5cb43018
+bootfile=/aarch64/ivirtarm64
+console=0
+boot
+Inferno/arm64 virt
+...
+Inferno Fourth Edition (20151010)
+conf virtarm64 (1788913460) jit 0
+Initial Dis: "/osinit.dis"
+** Inferno/arm64 virt **
+VIRTARM64-OK
+interactive sh
+;
+.R
+.DE
+.PP
+That is the arm64 server's gate, open:
+.CW doc/inferno-platforms.ms
+section 4.3 makes an AArch64 build of
+.CW os/inferno/boot/efi
+the thing everything else waits on, because on arm64 the RSDP comes
+from the UEFI system table and from nowhere else.  The loader now
+finds it, and the kernel boots from UEFI to a shell.
+.PP
+.B "And the configuration reaches the kernel."
+The loader's block lives in the loader's own memory, and there is no
+low memory on this board for a fixed
+.CW CONFADDR
+\(em RAM starts at
+.CW KTZERO ,
+where the kernel is linked.  So
+.CW jump
+passes the block's address in
+.CW x1 ,
+which the AArch64 Linux boot protocol reserves as zero and QEMU's
+.CW -kernel
+path therefore leaves zero: a boot with no loader sees nothing and
+behaves as before.
+.CW os/inferno/virtarm64/l.s
+records it beside
+.CW dtbptr ,
+and a new
+.CW os/inferno/virtarm64/bootargs.c
+\(em the generic half of
+.CW os/inferno/pc/bootargs.c ,
+without the multiboot and PVH readers, which this board has no use for
+\(em copies and parses it.  The copy matters: the block is in memory
+the kernel is free to allocate over, so
+.CW main
+calls
+.CW bootargsinit
+first, immediately after zeroing bss.
+.CW getconf
+was a stub returning nil on this board and is real now, and
+.CW init0
+calls
+.CW setconfenv
+the way
+.CW pc64 's
+does.
+.IP
+.DS L
+.CW
+Boot configuration
+	*acpi=0x5cb43018
+	bootfile=/aarch64/ivirtarm64
+	console=0
+	*e820=1 0000000040000000 0000000044000000 2 0000000044000000 ...
+.R
+.DE
+.LP
+so the RSDP, the boot file, the console setting and the firmware's
+whole memory map are all in
+.CW /env
+by the time Dis starts.
+.CW os/inferno/init/virtarm64init.b
+prints
+.CW ARM64-ACPI-OK
+with the RSDP on a UEFI boot and
+.CW ARM64-ACPI-NONE
+on the
+.CW -kernel
+path, so the difference is visible in a boot log rather than assumed.
+.NH 1
+ACPI on arm64
+.PP
+.CW os/inferno/virtarm64/acpi.c
+follows the pointer.  A PC finds the RSDP by scanning the BIOS area;
+an AArch64 machine has no such area and the pointer comes from the UEFI
+system table, which is why the loader had to exist first.  Now
+.CW acpiinit
+takes
+.CW *acpi=
+from the configuration, checks the RSDP's signature and both its
+checksums, walks the XSDT or the RSDT, checksums every table it names,
+and reads what an arm64 kernel needs: the GIC distributor,
+redistributor and cpu-interface bases and the processor list from the
+MADT, the PCIe ECAM base from the MCFG, the console UART from the
+SPCR, and the ARM boot architecture flags from the FADT.  Fields are read a byte at a time, because ACPI tables
+are byte-packed and several of these are not naturally aligned \(em the
+GICC structure puts an eight-byte physical address at offset 32 of an
+entry that itself starts at an odd offset from the table.
+.PP
+Every value is printed beside the constant
+.CW mem.h
+compiles in, because agreement on a machine whose layout is already
+known is what shows the reader is right.  Three are then used rather
+than only printed \(em the ECAM window, the PSCI conduit and the
+processor list \(em and each has a machine below that shows the
+difference between a reader that parses and a reader that works.  The
+GIC bases and the console UART are still the compiled-in ones.
+.PP
+On the default machine, which is GICv2 with one processor:
+.IP
+.DS L
+.CW
+acpi: rev 2 XSDT at 0x5cb43f18, 8 tables
+acpi: FACP at 0x5cb43b18 len 276
+acpi: APIC at 0x5cb43c98 len 172
+acpi: PPTT at 0x5cb43d98 len 96
+acpi: GTDT at 0x5cb43098 len 104
+acpi: MCFG at 0x5cb43a98 len 60
+acpi: SPCR at 0x5cb43e98 len 80
+acpi: DBG2 at 0x5cb43818 len 87
+acpi: IORT at 0x5cb43898 len 128
+acpi: gicd 0x8000000 (mem.h 0x8000000) gicr 0x0 (mem.h 0x80a0000) gicc 0x8010000 (mem.h 0x8010000)
+acpi: ecam 0x4010000000 (mem.h 0x4010000000) uart 0x9000000 (mem.h 0x9000000) cpus 1
+.R
+.DE
+.LP
+and on
+.CW "-M virt,gic-version=3 -smp 2" :
+.IP
+.DS L
+.CW
+acpi: gicd 0x8000000 (mem.h 0x8000000) gicr 0x80a0000 (mem.h 0x80a0000) gicc 0x0 (mem.h 0x8010000)
+acpi: ecam 0x4010000000 (mem.h 0x4010000000) uart 0x9000000 (mem.h 0x9000000) cpus 2
+.R
+.DE
+.PP
+Every value the reader extracts matches what the board knows, on both
+GIC versions, and the two that come back zero are zero for the right
+reason: a GICv2 machine has no redistributor and a GICv3 machine has no
+MMIO cpu interface, so each is absent from the MADT of the machine that
+does not have it.  The processor count follows
+.CW -smp .
+That is the check \(em not that it parsed something, but that what it
+parsed agrees with an independently known answer twice, and disagrees
+in exactly the places the architecture says it should.
+.PP
+The
+.CW -kernel
+path prints none of it and reports
+.CW ARM64-ACPI-NONE ,
+because there is no configuration and therefore no pointer, which is
+the behaviour that board had before any of this.
+.PP
+.B "One value is used, and there is a machine that proves it."
+The PCIe ECAM window comes from the MCFG now.
+.CW os/inferno/port/pciecam.c
+gained a
+.CW "uvlong (*pciecam)(int*, int*)"
+\(em the same name and the same shape as
+.CW os/inferno/pc/pcipc.c 's,
+which
+.CW archacpi.c
+sets from the PC's MCFG \(em and
+.CW acpi.c
+points it at its reader.  A board with no firmware description leaves
+it nil and keeps
+.CW mem.h 's
+constant, which is every RISC\-V board here.
+.PP
+That the value is used rather than merely equal is not something QEMU's
+default machine can show, because there the two agree.
+.CW "-M virt,highmem-ecam=off"
+moves the window into the 32-bit space, and then they do not:
+.IP
+.DS L
+.CW
+acpi: ecam 0x3f000000 (mem.h 0x4010000000) bus 0..15 uart 0x9000000 (mem.h 0x9000000) cpus 1
+pci: ecam 0x3f000000 from the firmware, mem.h says 0x4010000000
+pci PCI.0.0.0: 1b36/0008 class 060000 irq 255
+pci PCI.0.1.0: 1af4/1000 class 020000 irq 36
+pci PCI.0.2.0: 1af4/1001 class 010000 irq 37
+.R
+.DE
+.LP
+All three devices, at a base and a bus range the kernel could only have
+learned from the firmware.  The control is the same kernel with the one
+assignment removed, so the value is still read and printed and not
+used: on that machine it panics in configuration space and prints "Hit
+the reset button", where with the assignment it reaches a shell.  That
+is the difference between a reader that parses and a reader that works.
+.PP
+.B "The processor list, and the first thing it is for."
+Each GICC structure in the MADT is one processor, and its MPIDR is the
+only way a kernel can learn the affinity of a processor other than the
+one it is running on:
+.CW MPIDR_EL1
+reads the current processor and nothing else.  PSCI's
+.CW CPU_ON
+takes exactly that value as its target, so the MADT's list is not a
+convenience, it is the whole input to starting a second processor.
+.CW acpi.c
+now keeps the MPIDR, the ACPI processor UID, the flags and the
+per-processor redistributor base of each in
+.CW io.h 's
+.CW Acpicpu ,
+and guards field by field rather than once for the whole structure:
+GICC grew from 40 bytes in ACPI 5.0 to 76 in 5.1, which is where the
+MPIDR at offset 68 first appears, to 80 in 6.0, and a length that
+covers the cpu interface at offset 32 does not mean it covers the
+MPIDR.  The count that was there before is now named for what it is,
+the entries with the Enabled bit set, since ACPI 6.3's Online Capable
+bit makes "enabled" and "startable" two different questions.
+.PP
+.CW os/inferno/virtarm64/startcpu.c
+starts them, and the log is written so that nobody can read it as SMP.
+.CW MAXMACH
+is 1 on this board,
+.CW conf.nmach
+is 1, there is one
+.CW Mach
+and one scheduler, and a processor started here parks in
+.CW l.s 's
+.CW _secondary
+and never runs anything else.  What it is, is the proof that the two
+pieces SMP will need are right before anything is built on them: that
+the MPIDRs read out of the MADT are the ones the machine answers to,
+and that PSCI's conduit and calling convention are what this kernel
+thinks they are.
+.PP
+The proof is that the value comes back from the other side.  The MPIDR
+handed to
+.CW CPU_ON
+is the firmware's; the MPIDR that appears in the slot is read from
+.CW MPIDR_EL1
+by the processor that woke up.  Each started processor is handed the
+address of its own slot as
+.CW CPU_ON 's
+context id, which arrives in x0, so
+.CW _secondary
+needs no stack, no static base, no lock and no shared cursor, and is
+four instructions.  The wait for them is bounded and the bound is
+reported, so a processor that never answers is a number in a line
+rather than a boot that stops.
+.PP
+The machine that discriminates is
+.CW "-M virt,gic-version=3 -smp 17" ,
+because QEMU packs sixteen processors into Aff0 and steps Aff1 for the
+seventeenth.  Everywhere below that the MPIDR and the array index are
+the same number and a reader that used the index would pass:
+.IP
+.DS L
+.CW
+acpi: 17 processors described, 17 enabled, 1 used
+acpi: cpu0 uid 0 mpidr 0x0 gicr 0x0 enabled
+ ... cpu1 through cpu14, mpidr 0x1 through 0xe ...
+acpi: cpu15 uid 15 mpidr 0xf gicr 0x0 enabled
+acpi: cpu16 uid 16 mpidr 0x100 gicr 0x0 enabled
+cpu: this one is mpidr 0x0; entry 0x40000054, cpu_on through hvc
+cpu: 16 started, 16 answered in 0ms, 16 mpidrs match; parked, conf.nmach 1
+.R
+.DE
+.LP
+The control is the same kernel with
+.CW CPU_ON 's
+target changed from the MADT's MPIDR to the array index, which is the
+bug a smaller machine could not have caught:
+.IP
+.DS L
+.CW
+cpu: mpidr 0x100 cpu_on: invalid parameters (-2)
+cpu: 15 started, 15 answered in 3ms, 15 mpidrs match; parked, conf.nmach 1
+.R
+.DE
+.LP
+Fifteen of the sixteen start, because for them the two numbers agree,
+and the sixteenth is refused by name.  The
+.CW gicr
+column is zero throughout: QEMU describes its redistributors in a GICR
+structure rather than per-GICC, which is allowed and is why the GICR
+base is read from both places.
+.PP
+.B "The conduit, and a bug that had been there since the beginning."
+Which instruction reaches PSCI is the firmware's to say \(em a guest at
+EL1 under a hypervisor uses HVC, a machine whose firmware sits at EL3
+uses SMC \(em and the FADT's ARM Boot Architecture Flags, at offset 129
+from FADT revision 5.1 onwards, carry the answer.
+.CW acpi.c
+reads them,
+.CW l.s
+has an
+.CW HVC
+and an
+.CW SMC
+entry point, and
+.CW archvirtarm64.c 's
+.CW psci()
+picks between them.  Nothing said leaves it HVC, which is what this
+board did before there was any ACPI.  QEMU's virt machine says
+.CW "arm boot flags 0x3: psci yes, conduit hvc" ,
+and that is a free self-check on the offset: the same firmware's
+.CW SYSTEM_OFF
+demonstrably answers HVC, so a
+.CW PSCI_COMPLIANT
+bit that read 0 would have meant the field was being read from the
+wrong place.
+.PP
+Writing
+.CW CPU_ON
+found a bug that had been in
+.CW psci
+since it was written.  kencc passes the first argument in a register
+and every other one on the stack \(em
+.CW utils/7c/7.out.h
+sets
+.CW REGARG
+to 0 and
+.CW utils/7c/txt.c
+uses it only for
+.CW "curarg == 0"
+\(em so the assembly stub, written on the assumption that a
+four-argument call arrives in x0 through x3, got one right and three
+wrong.  Nothing had caught it because the only PSCI calls this kernel
+made were
+.CW SYSTEM_OFF
+and
+.CW SYSTEM_RESET ,
+which take no arguments, so the wrong registers were never read \(em
+and the paragraph below turns that from an argument into a
+measurement.
+.CW CPU_ON ,
+which takes three, answered
+.CW INVALID_PARAMETERS
+on every processor of every machine, on the first boot.  The fix is the
+three loads
+.CW os/inferno/boot/efi/aa64.s 's
+.CW eficall
+already had.  An assembly entry point whose extra arguments have never
+been read is not evidence that it passes them.
+.PP
+That bug's discovery left two PSCI calls that had been in this board
+since it was written and had never been observed to do anything.
+.CW archshutdown 's
+.CW SYSTEM_OFF
+and
+.CW archreboot 's
+.CW SYSTEM_RESET
+are reached only from a panic, and a panic's log ends at "Hit the reset
+button" whether the machine then stopped or not.  Called deliberately
+from
+.CW main()
+on the
+.CW -kernel
+path, each of them stops QEMU on its own \(em exit status 0, and the
+.CW print
+placed after the call never appears \(em where the same kernel with no
+call at all is killed by the 45-second timeout, exit status 124.  They
+were unaffected by the argument bug because they take no arguments,
+which was an argument; this is a measurement.
+.PP
+The SMC half cannot be exercised here, because no QEMU aarch64 machine
+this port can boot presents a firmware that wants it: the one that
+does,
+.CW "-M virt,virtualization=on" ,
+runs the guest at EL2, and everything in
+.CW l.s
+\(em
+.CW VBAR_EL1 ,
+.CW ICC_SRE_EL1 ,
+the whole trap path \(em is written for EL1.  That is a port, not a
+test.  What can be shown is that the branch is reached and the
+instruction is real, by forcing the conduit to SMC on a machine whose
+firmware said HVC:
+.IP
+.DS L
+.CW
+acpi: arm boot flags 0x3: psci yes, conduit hvc
+cpu: this one is mpidr 0x0; entry 0x40000054, cpu_on through smc
+trap type 0 esr 0x2000000 pc 0x40000044
+ r0 0xc4000003 r30 0x400646ac
+.R
+.DE
+.LP
+.CW pscismc
+begins at
+.CW 0x40000038 ,
+so
+.CW 0x40000044
+is its fourth instruction, which is the
+.CW SMC ;
+.CW ESR_EL1
+of
+.CW 0x2000000
+is exception class 0, unknown reason, which is what
+.CW SMC
+is on a machine with no EL3; and
+.CW x0
+holds
+.CW 0xC4000003 ,
+.CW CPU_ON 's
+function number, where SMCCC wants it.  So the dispatcher picks the
+branch, the assembler encodes the instruction and the argument arrives.
+Whether an EL3 firmware answers it is untested and is written here as
+untested.
+.PP
+.PP
+.B "The architected timer, and a kernel that boots without a clock."
+The GTDT is where a server says which interrupt its timer raises.  This
+board had the number from the device tree QEMU also publishes, compiled
+into
+.CW io.h
+as
+.CW GicPPITimer ;
+.CW acpi.c
+reads all four GSIVs now and
+.CW trap.c 's
+.CW timerirq
+is a variable rather than that constant, set from the non-secure EL1
+one when the firmware names a different one.
+.IP
+.DS L
+.CW
+acpi: timer ns-el1 30 (io.h 30) flags 0x4 sec 29 virt 27 el2 26
+acpi: cntctl 0xffffffffffffffff cntread 0xffffffffffffffff 0 platform timers
+.R
+.DE
+.LP
+Four independent numbers, all agreeing with the architecture's own PPI
+assignments \(em 14, 13, 11 and 10, which are INTIDs 30, 29, 27 and 26
+\(em and flags of 4, level-triggered, active high, always-on capable.
+The two counter base addresses come back as all ones, which is ACPI's
+"not provided" and is right: QEMU's
+.CW virt
+has no memory-mapped counter frame.  A reader that invented those
+would have had to invent five consistent things.
+.PP
+Agreement does not show the value is used, and here the usual trick of
+finding a machine where the two differ does not work: no QEMU
+.CW virt
+puts its timer anywhere else.  So the constant was made wrong instead.
+Three kernels, one variable at a time, each measuring
+.CW m->ticks
+across a 300 ms delay from
+.CW init0
+after
+.CW spllo()
+\(em only
+.CW clockintr()
+advances that count, and
+.CW clockpoll()
+does not, so a count that stays put means no clock:
+.IP
+.DS L
+.CW
+io.h 30, acpi used     TICKPROBE irq 30 ticks 1 -> 25   [reached shell]
+io.h 31, acpi used     timer: irq 30 from the firmware, io.h says 31
+                       TICKPROBE irq 30 ticks 1 -> 27   [reached shell]
+io.h 31, acpi unused   TICKPROBE irq 31 ticks 0 -> 0    [reached shell]
+.R
+.DE
+.LP
+The middle one is the point: with the compiled-in number deliberately
+wrong, the clock runs anyway, on the number the firmware gave.  The
+third is why a boot log alone would not have shown it \(em all three
+reach an interactive shell, because nothing between
+.CW main()
+and the prompt needs the timer interrupt.  A kernel with no clock looks
+exactly like a kernel with one until something asks it the time.
+.PP
+The first probe of this was in the wrong place and said so: put in
+.CW main()
+after
+.CW startcpus() ,
+it read
+.CW "ticks 0 -> 0"
+on a kernel whose timer was entirely correct, because interrupts are
+masked for the whole of
+.CW main()
+and are not enabled until
+.CW init0
+calls
+.CW spllo() .
+.PP
+.B "The console the firmware names, and why the PC's shape does not port."
+The SPCR is where a server says where its console is, and
+.CW os/inferno/pc
+has read it since section 7.  On arm64 the plan said this was harder
+than it looks because the console is up long before
+.CW acpiinit
+runs.  It is harder than that: the PC's shape does not work here at
+all, and finding out why took falsifying the constant rather than
+reading the code.
+.PP
+Reading the table is the easy half and it is right on every field:
+.IP
+.DS L
+.CW
+acpi: uart 0x9000000 (mem.h 0x9000000) type 0x3 space 0 access 3 gsi 33 baud 3
+.R
+.DE
+.LP
+Interface type 3 is a PL011, address space 0 is system memory, access
+size 3 is DWord, and baud 3 is 9600 in the SPCR's own encoding \(em all
+correct for QEMU's
+.CW virt .
+The
+.CW gsi
+is the one worth pausing on: 33 is the number this board had compiled
+in from the device tree, with a comment deriving it by hand as
+"pl011@9000000's SPI is 1 -> GIC IRQ 33".  The firmware arrives at the
+same number by a different route, which is a check on both.
+.PP
+.B "Then the control, which failed in a way worth keeping."
+No QEMU
+.CW virt
+puts its console anywhere else, so the constant was falsified instead,
+as with the ECAM and the timer.  The kernel did not go quiet.  It died:
+.IP
+.DS L
+.CW
+Synchronous Exception at 0x0000000040064E20
+  ...  X2 0x0000000009030000  ...
+ASSERT [ArmCpuDxe] .../DefaultExceptionHandler.c(343)
+.R
+.DE
+.LP
+That is EDK2's own exception handler, with the falsified base in
+.CW X2 .
+.CW uartconsole()
+programs the PL011 in
+.CW main() ,
+long before
+.CW trapinit()
+installs a vector table, so a wrong base is a data abort the kernel
+cannot take: the firmware's handler gets it and the kernel never
+reaches
+.CW acpiinit()
+at all.  Reading the SPCR there and moving the console afterwards \(em
+which is what
+.CW os/inferno/pc
+does, and what this board did first \(em is useless on precisely the
+machine the code exists for.
+.PP
+.B "So the walk was split."
+.CW acpitables()
+parses every table into globals and prints nothing; it runs in
+.CW main()
+right after
+.CW confinit() ,
+before anything touches the UART.
+.CW spcrconsole()
+moves the base there, also silently, because there is nowhere to print
+yet, and records what it did.
+.CW acpiinit()
+keeps its old place after
+.CW printinit()
+and prints what the two of them found, then acts on everything that is
+not the console.  Nothing in the early half allocates, locks, or keeps
+a pointer into the tables, so running it that early costs nothing.
+.PP
+With that, the same falsified constant gives a boot instead of a
+firmware exception, and the three arms separate:
+.IP
+.DS L
+.CW
+mem.h right, spcr used     2751 bytes  [shell]
+    spcr: console already where the SPCR says
+mem.h wrong, spcr used     2777 bytes  [shell]
+    spcr: console moved from 0x9030000 to 0x9000000; this line is proof
+mem.h wrong, spcr unused   5184 bytes  [NO SHELL]
+.R
+.DE
+.LP
+The middle one is the result.  The compiled-in base is an address that,
+in the third arm, kills the kernel inside the firmware's exception
+handler before it prints a byte; with the SPCR read first, the console
+is at the right place before anything touches it and the whole boot log
+arrives \(em twenty-six bytes more than the first arm, which is the
+extra line saying so.  The third arm is the control and it is the one
+that shows the second arm is not luck: 5184 bytes of EDK2 register dump
+and no shell.
+.PP
+The interrupt moved too.
+.CW uartconsolesetup()
+took the SPCR's global system interrupt when it differs from the
+board's 33, which on every machine here it does not.  What is still not
+acted on: the access size, the register bit width and the baud rate.
+The first two matter for the SBSA generic UART's 32-bit-only variant,
+interface type 0x0D, and the third only for a firmware that hands over
+at a rate the kernel is expected to keep.  Interface types this board
+accepts are 3, 0x0D and 0x0E; anything else \(em a 16550, say \(em is
+named and refused rather than driven with PL011 register offsets.
+.PP
+What is left of ACPI is the IORT, which is what an SMMU would be found
+through; it is read and checksummed and not parsed.
+And a started processor still only parks.  Giving it a
+.CW Mach ,
+a stack and a scheduler is SMP, which is item 9 and wants
+.CW MAXMACH
+above 1, a real
+.CW cmpswap
+rather than the spl-masked one
+.CW archvirtarm64.c
+has, and per-processor GIC redistributor setup.
+.NH 1
+MSI-X on arm64, and an interrupt that was allocated and dead
+.PP
+On arm64 a PCI MSI is a memory write and something has to turn it into
+an interrupt.  A GICv2 machine does it with an MSI frame: a page whose
+.CW SETSPI
+register takes an SPI number as its data and raises that SPI.  A GICv3
+machine does it with an ITS, which translates a device id and an event
+id into an LPI and wants command queues and two levels of table.  Which
+one a machine has is in the MADT \(em GIC MSI frame structures, type
+0x0D, and GIC ITS structures, type 0x0F \(em so the board asks the
+firmware rather than inferring it from the GIC version.  Three machines
+give three answers:
+.IP
+.DS L
+.CW
+gic-version=2          acpi: gic msi frame 0 at 0x8020000 flags 0x1 spi 80..143
+gic-version=3          acpi: gic its 0 at 0x8080000
+gic-version=3,its=off  acpi: no gic msi frame and no its; msi is not available
+.R
+.DE
+.LP
+The frame's range is the reason
+.CW io.h 's
+.CW GicIRQMax
+is 224 and not 96: QEMU puts the MSI SPIs at 80..143, above the 32
+virtio slots that start at 48.
+.PP
+.CW os/inferno/virtarm64/msivirtarm64.c
+drives the v2m half.  One SPI per vector out of the frame's range,
+.CW pcimsixenable()
+programming the device's table with the frame's
+.CW SETSPI
+address and the SPI number as data, and
+.CW intrenable()
+for the handler.  There is no affinity to set, because the frame raises
+an ordinary SPI and
+.CW gicenable()
+already routes SPIs to processor 0.  The ITS half is not written.
+.PP
+.B "It did not work, and the thing that looked like proof was not."
+The first version allocated its vectors, programmed the table, reported
+.CW "sdN (nvme): msix, 2 of 65 vectors" ,
+and read the disk successfully.  None of that is evidence.
+.CW os/inferno/port/sdnvme.c 's
+completion wait is
+.CW "while(!wdone(ws)){ nvmeintr(nil, ctlr); tsleep(ws->sleep, wdone, ws, 10); }"
+\(em it polls the completion queue on a timer, so a read succeeds
+whether or not any interrupt is delivered.  The line that does prove it
+is the driver's own
+.CW "nvme: msix vector %d delivered" ,
+printed on each vector's first interrupt, and it was absent.  The same
+.CW ARM64-DISK-OK
+appeared with the mechanism working and with it entirely dead, which is
+the clock's shape again: an outcome that survives its own cause.
+.PP
+.B "Then a probe that separates the two halves."
+The question is whether the frame reaches the distributor at all, and
+that can be asked with interrupts still masked and no device involved:
+write an unallocated SPI number to the frame's
+.CW SETSPI
+register and read
+.CW GICD_ISPENDR .
+.IP
+.DS L
+.CW
+MSIPROBE spi 143 ispendr 0x0 -> 0x0     (before)
+MSIPROBE spi 143 ispendr 0x0 -> 0x8000  (after)
+.R
+.DE
+.LP
+Nothing became pending, so the fault was the controller's and not the
+device's.  A GICv2m frame raises an MSI by
+.I pulsing
+the SPI \(em QEMU's
+.CW hw/intc/arm_gicv2m.c
+calls
+.CW qemu_irq_pulse() ,
+raise and drop in one step \(em and a level-triggered input latches
+nothing from a pulse: the pending bit clears as the line falls.
+.CW GICD_ICFGR
+has to say edge, two bits per interrupt and sixteen to a register, and
+.CW gicenable()
+had never touched it.
+.CW gicedge()
+in
+.CW trap.c
+does now.
+.PP
+With that, both vectors deliver:
+.IP
+.DS L
+.CW
+acpi: gic msi frame 0 at 0x8020000 flags 0x1 spi 80..143
+msix: v2m frame at 0x8020000, spi 80..143, 64 vectors
+msix: sdN (nvme) tbdf 0xc001000 vec 0 -> spi 80: enabled
+msix: sdN (nvme) tbdf 0xc001000 vec 1 -> spi 81: enabled
+sdN (nvme): msix, 2 of 65 vectors
+nvme: msix vector 0 delivered
+nvme: msix vector 1 delivered
+ARM64-DISK-OK /dev/sdN0/data read 512 bytes
+.R
+.DE
+.LP
+and the GICv3 machine says what it can and cannot do rather than
+failing quietly:
+.CW "msix: this machine has an ITS and no v2m frame; msi-x is not"
+.CW available ,
+after which
+.CW sdnvme
+falls back to INTx and reads its disk.
+.PP
+The probe stayed, as a silent self-test in
+.CW msiinit() :
+it writes an unallocated SPI to the frame, checks
+.CW ISPENDR ,
+clears it again, and prints only if the path is dead.  A boot log that
+says nothing there means the MSI path was tested on this machine and
+works, which is a better thing for a log to mean than that nobody
+looked.
 .NH 1
 If a guest counts
 .PP
@@ -779,17 +3031,582 @@ The console is easier still.  A 16550 at
 which
 .CW uarti8250
 drives, is what EC2 Serial Console, OCI's console connection and IPMI
-serial-over-LAN all present.  The one gap is that the port is assumed
-rather than discovered: a machine that puts it at
-.CW 0x2F8 ,
-or describes it in the ACPI SPCR table, is not handled.
+serial-over-LAN all present, and a machine that puts it elsewhere is
+now handled: see the next section.
+.NH 1
+The console ACPI names
+.PP
+The port was assumed rather than discovered, and a machine whose
+console is not the 16550 at
+.CW 0x3F8
+was silent for that reason alone.  It is now read out of ACPI's SPCR
+table (Serial Port Console Redirection, in the ACPI registry), which
+is what a server's firmware writes to say where its console is.
+.PP
+.CW os/inferno/pc/archacpi.c
+gained
+.CW acpispcr() ,
+which finds the table the same way
+.CW acpimcfg()
+finds MCFG and hands back the address space, the address, the access
+size, the interrupt and the baud rate; it sets
+.CW spcrconsole
+beside
+.CW pciecam .
+.CW os/inferno/pc/uarti8250.c
+gained a third
+.CW Ctlr
+and
+.CW Uart ,
+a
+.CW mmio
+pointer and a register
+.CW shift
+in
+.CW Ctlr ,
+and
+.CW "csr8r, csr8w and csr8o"
+as functions rather than macros, so a register access can go to
+memory as well as to a port.
+.CW i8250spcrconsole()
+does the move, and
+.CW os/inferno/pc64/main.c
+calls it immediately after
+.CW archinit() ,
+which is the first moment the tables are mapped.
+.PP
+That ordering has a consequence worth stating plainly: the prints
+before
+.CW archinit()
+still go wherever
+.CW console=
+sent them.  On a machine whose console is elsewhere they are lost, and
+everything from the switch onwards arrives.  Reading SPCR earlier
+would mean mapping the tables earlier, since the boot page tables in
+.CW os/inferno/pc64/l.s
+cover only the first 468 MiB and ACPI's tables on a 1 GiB machine sit
+above that.
+.PP
+Verified under QEMU q35 with the table injected by
+.CW "-acpitable sig=SPCR,rev=2,data=..." ,
+two serial ports written to separate files:
+.IP \(bu 4
+SPCR naming
+.CW 0x2F8 :
+COM1 ends with
+.CW "spcr: console 16550 at port 0x2f8 irq 3"
+and COM2 begins with
+.CW "spcr: console is SPCR" ,
+carrying every line from there to the end of the boot \(en 2627 bytes
+on the first port, 4153 on the second.
+.IP \(bu 4
+SPCR naming
+.CW 0x3F8 :
+.CW "spcr: console already at port 0x3f8" ,
+no move, 6754 bytes on COM1 and nothing on COM2.
+.IP \(bu 4
+No SPCR at all: no
+.CW spcr:
+line, 7889 bytes on COM1, nothing on COM2.  The fallback is intact.
+.IP \(bu 4
+SPCR naming system memory at
+.CW 0xFEB00000
+with access size 3:
+.CW "spcr: console 16550 at 0xfeb00000 stride 4 irq -1" ,
+so the address-space decode, the stride arithmetic and the
+.CW vmap
+all work, and the console then moves to an address with no UART behind
+it and the boot goes silent, which is what should happen.  The
+byte-level register access over memory is
+.I not
+verified: no QEMU x86 machine presents a memory-mapped 16550 to point
+the table at.  That half is written and compiled and nothing more.
+.NH 1
+A vector per queue
+.PP
+Single-vector MSI-X was already there.  What was missing was the
+thing ENA and the current Intel and Mellanox parts are actually
+built around: several vectors on one device, a queue behind each,
+each with its own handler and its own idt vector.
+.PP
+.CW intrenable()
+cannot express it \(en its
+.CW irq
+argument has no room for "the third of this device's MSI-X vectors"
+\(en so there is a second entry point.
+.CW os/inferno/pc/irq.c 's
+.CW intrenable()
+was split: the list work is now
+.CW intrenablev() ,
+which takes a filled
+.CW Vctl ,
+and
+.CW intrenable()
+fills one the old way while
+.CW msixintrenable()
+fills one with a new
+.CW Vctl
+member,
+.CW msixvec ,
+set to the table index.
+.CW intrenable()
+sets it to \-1, which is what says "not an MSI-X request".
+.CW os/inferno/pc/mp.c 's
+.CW msiintrenable()
+then takes the MSI-X path whenever
+.CW msixvec
+is not \-1, without consulting the
+.CW *msix
+flag \(en a driver that names a vector has already said what it wants
+\(en and
+.CW msixirqenable()
+programs that entry rather than entry 0.
+.CW msixirqdisable()
+masks the one vector through a new
+.CW os/inferno/port/pci.c
+call,
+.CW pcimsixmask() ,
+instead of turning the whole capability off underneath the device's
+other queues.
+.PP
+The two entry points reach
+.CW ../port 's
+drivers as the function pointers
+.CW pcimsixintrenable
+and
+.CW pcimsixintrdisable ,
+declared in
+.CW os/inferno/port/pci.h
+and set by
+.CW irqinit() ,
+the same shape as
+.CW pciecam .
+They are nil on every board but
+.CW pc64 ,
+and a driver must test before using them.
+.PP
+.CW os/inferno/port/sdnvme.c
+is the first driver to use them, and it is the right first one:
+NVMe fixes the admin completion queue on interrupt vector 0 and lets
+the Create I/O Completion Queue command name the vector for every
+other queue, so two vectors is the smallest arrangement that proves
+anything.  The driver takes vector 0 and vector 1 when the device's
+table has at least two entries, sets
+.CW "IV<<16"
+in dword 11 of that command, and counts the interrupts each vector
+delivers in a new
+.CW Ivec
+structure.
+.PP
+Verified under QEMU q35 with
+.CW "-device nvme" ,
+booting
+.CW ipc64dev :
+.DS L
+.CW
+msix: sdN (nvme) tbdf C001000 msixvec 0 vector 97 cpu 0: enabled
+msix: sdN (nvme) tbdf C001000 msixvec 1 vector 105 cpu 0: enabled
+sdN (nvme): msix, 2 of 65 vectors
+nvme: msix vector 0 delivered
+sdN (nvme): using 1 submit queues
+inquiry QEMU NVMe Ctrl
+nvme: msix vector 1 delivered
+DEVTEST: /dev/sdN0/data sector 0 (512 bytes): INFERNO-MSIX-TEST-SECTOR
+.R
+.DE
+Two distinct idt vectors, 97 and 105; vector 0 delivering during the
+admin work; vector 1 delivering only once the I/O completion queue
+had something on it; and the sector the host wrote read back through
+it.  The
+.CW *msix
+flag was not set for that boot \(em the driver asked directly.
+.PP
+The single-vector path the flag drives was re-checked after the
+refactor, because nothing in the new test covers it any more:
+.CW sdnvme
+asks for two vectors directly, so it no longer takes that route at
+all.  Booting
+.CW ipc64dev
+with
+.CW "*msix=1"
+and a modern virtio disk and NIC
+.CW ( disable-legacy=on )
+gives
+.DS L
+.CW
+msix: ether0 tbdf C001800 msixvec 0 vector 65 cpu 0: enabled
+msix: sdF (virtio10) tbdf C001000 msixvec 0 vector 97 cpu 0: enabled
+DEVTEST: /dev/sdF0/data sector 0 (512 bytes): INFERNO-MSIX-TEST-SECTOR
+DEVTEST: /net/ether0 DHCP-FAIL no response
+.R
+.DE
+and the same boot without the flag gives
+.CW "DHCP-OK ip=10.0.2.15"
+and the same sector.  So the disk works either way and the NIC goes
+silent under MSI-X \(em which is the behaviour
+.CW os/inferno/pc/mp.c 's
+comment already describes, not a regression: a virtio device sends
+nothing until its driver writes a vector into
+.CW queue_msix_vector ,
+and
+.CW ethervirtio10
+does not.  That is why the flag is opt-in.
+.PP
+The
+UEFI path was rebooted after all of this \(em
+.CW scripts/mkinferno-efi-iso.sh
+then
+.CW scripts/qemu-inferno-efi.sh
+\(em and reaches its interactive prompt, which matters because
+.CW irqinit()
+is reached through
+.CW trapinit()
+and that early sequence is not multiboot's.
+.PP
+.B "But the device was not on that boot, and when it was put there it
+.B "did not attach."
+Every run above is the multiboot
+.CW -kernel
+path, where SeaBIOS assigns the BARs.  Under OVMF the same kernel with
+the same
+.CW "-device nvme"
+prints
+.DS L
+.CW
+vmap pa=c000000000 size=16384 pc=0x2b8ccb
+nvme: can't vmap bar0
+.R
+.DE
+and stops there.  OVMF on
+.CW q35
+puts a 64-bit BAR at 0xc000000000, 768 GiB, and
+.CW os/inferno/pc64/mmu.c 's
+.CW vmap()
+refused any physical address at or above
+.CW VMAPSIZE ,
+a constant 512 GiB in
+.CW mem.h .
+Every cloud machine boots UEFI, so all of the above was unreachable
+where it is meant to be used, and so was every other PCIe device whose
+BAR the firmware puts up there.
+.PP
+The ceiling comes from the machine now.  This kernel's mapping is the
+identity, so a physical address is also the virtual address it is
+reached at, and two things bound it: what the processor can address
+physically \(em CPUID 80000008H, EAX bits 7..0 \(em and what the
+four-level page table this kernel builds can name, which is the low
+canonical half, 2**47.  The smaller of the two, floored at the old 512
+GiB, computed on the first
+.CW vmap()
+since
+.CW cpuidentify()
+has run by then.  With it the UEFI boot gives the same six lines the
+multiboot one does, ending in
+.CW INFERNO-MSIX-TEST-SECTOR .
+That the CPUID read is what drives it, rather than the fallback,
+follows from the number: the fallback is 512 GiB and would still refuse
+0xc000000000.
+.PP
+One thing to know before trying to reproduce the failure: the firmware
+sizes its own 64-bit MMIO window from the same CPUID leaf.  Booting
+with
+.CW "-cpu qemu64,phys-bits=36"
+does not reproduce it, because OVMF then places the BAR below 4 GiB
+instead.  The two ends move together, which is why the bug appears only
+on a machine wide enough to have somewhere high to put it \(em and why
+it was invisible for as long as the device was only ever attached to
+the multiboot path.
+.PP
+Two fallbacks were checked as well.  With
+.CW "-device nvme,msix_qsize=1"
+the device's table holds one entry, the driver takes the old
+.CW intrenable()
+path, no
+.CW msix:
+line is printed and the sector still reads.  And on
+.CW os/inferno/virt
+under
+.CW qemu-system-riscv64 ,
+where
+.CW pcimsixintrenable
+is nil because that board has no MSI-X plumbing at all, the same
+driver falls back the same way and reads the same sector \(em which is
+the check that matters, since
+.CW sdnvme.c
+is a
+.CW ../port
+file shared with every board.
+.PP
+The release path was checked too, because masking a vector and
+leaving the capability enabled is right only while the device's other
+queues are still running.
+.CW msixintrdisable()
+walks
+.CW vctl[]
+after unlinking and calls
+.CW pcimsixdisable()
+when nothing on that device is left.  Exercising it needed a way to
+detach a controller from a booted kernel, which
+.CW os/inferno/port/devsd.c
+already has:
+.CW "config switch off spec N"
+written to
+.CW #S/sdctl
+runs the controller's
+.CW disable() .
+.CW os/inferno/init/pc64devinit.b
+now does that and then checks the device has gone:
+.DS L
+.CW
+sdN (nvme): msix vector 0 delivered 5
+sdN (nvme): msix vector 1 delivered 1
+DEVTEST: MSIX-DETACH-OK sdN gone after switch off
+DEVTEST: MSIX-REATTACH not available: sd type cannot probe
+.R
+.DE
+Five interrupts on the admin vector, one on the I/O queue's, both
+released, and the device gone.  The last line is recorded rather than
+fixed: devsd's
+.CW "switch on"
+needs an
+.CW SDifc
+.CW probe() ,
+and
+.CW sdnvme 's
+is nil, so a controller detached this way cannot be put back, and no
+boot therefore reaches a second
+.CW nvmeenable
+after an
+.CW nvmedisable .
+Two of three boots reached that point; the third died in the heap
+fault first.
+.NH 1
+Joining the database
+.PP
+A rented fleet is not a laboratory: instances come up, take an address
+from the provider's DHCP, do some work and go away.  The tree's network
+database is
+.CW /lib/ndb/local ,
+a text file, and a machine is in it because somebody wrote it there.
+That is the wrong shape for anything this plan is aiming at.
+.PP
+Half of the answer was already in the tree and unconnected to the other
+half.
+.CW registry(4)
+is a file server for services that come and go: an entry lives exactly
+as long as the file descriptor that created it, and vanishes when that
+descriptor closes, when the process holding it dies, or when the
+connection to a remote registry drops.  It has an
+.CW index
+of every entry and an
+.CW event
+file whose read blocks until something changes.
+.CW appl/svc/registry.sh
+already exports one over
+.CW "tcp!*!registry" .
+What nothing did was let a reader of the network database see any of
+it:
+.CW cs(8)
+opens
+.CW /lib/ndb/local
+and
+.CW /net/ndb
+through
+.CW attrdb(2)
+and knows nothing about registries.
+.PP
+.CW ndb/regndb
+is the missing link \(em a file server that renders a registry as an
+.CW attrdb(6)
+database, and
+.CW ndb/register
+is the command that joins one.  Both are in
+.CW appl/cmd/ndb
+and documented in
+.CW regndb(4) .
+The design and what was measured are in
+.CW doc/inferno-ndb.ms ;
+three things decide whether such a bridge works and all three are
+recorded there: the served file's
+.CW Qid.vers
+has to move on every rendering or
+.CW attrdb
+caches the first version forever; the rendered file has to begin with a
+.CW database=
+entry naming
+.CW /lib/ndb/local
+so the static entries come with it and
+.CW cs
+needs no change; and only registrations carrying the key attribute may
+become host entries, because a registry holds a mixture.
+.PP
+It was run on
+.CW os/inferno/virtarm64/virtarm64ndb ,
+the
+.CW virtarm64
+kernel with
+.CW os/inferno/init/ndbinit.b
+as its init, under QEMU
+.CW "-M virt -cpu cortex-a72" .
+Three phases.  A machine joins over a pipe-mounted registry and is
+resolved by
+.CW attrdb
+and by
+.CW ndb/query ;
+its process is killed and the same lookups come back empty:
+.IP
+.DS L
+.CW
+NDB-EMPTY-OK joiner1 absent before anyone joins
+NDB-JOIN-OK joiner1 ip=10.42.0.7 after 100 ms
+NDB-CHANGED-OK quiet database reports no change
+NDB-KILL pid 11
+NDB-CHANGED-OK Db.changed() true 100 ms after the leave
+NDB-LEAVE-OK joiner1 gone after 0 ms
+.R
+.DE
+.LP
+Then the awkward registrations \(em a value with a space, a value with
+a quote, and an attribute called
+.CW regsvc ,
+which is the name
+.CW regndb
+gives the registry's own service name:
+.CW "note='it''s'"
+and
+.CW "desc='a b c'"
+round-trip through both quoting schemes, and the registration's own
+.CW regsvc
+is dropped and counted rather than written out beside the real one.
+.PP
+Then the registry is exported over a real TCP connection on loopback
+and mounted back, a second machine joins through the mount, and the
+connection is broken with
+.CW hangup
+\(em nothing clunked, nothing unmounted, the way a machine that has
+gone away breaks it:
+.IP
+.DS L
+.CW
+NDB-NET-MOUNTED /mnt/netreg over tcp!127.0.0.1!6699
+NDB-NET-JOIN-OK joiner2 ip=10.42.0.8 after 100 ms
+NDB-NET-HANGUP tcp!127.0.0.1!6699
+NDB-NET-LEAVE-OK joiner2 gone 100 ms after the connection dropped
+.R
+.DE
+.PP
+.PP
+.B "Then cs itself, which found a bug."
+Everything above looks names up through
+.CW attrdb
+and
+.CW ndb/query
+\(em the same library and the same file
+.CW cs
+would open, but not the same program.  A fourth phase starts the real
+connection server with
+.CW "-f /mnt/regndb/ndb"
+and asks it to translate a name, then kills the machine and asks
+again.  The second question is the point, and
+.CW cs
+kept answering: it went on translating
+.CW joiner3
+to
+.CW 10.42.0.10!564
+after the registering process was killed and the rendered file had
+gone back to zero entries.
+.PP
+.CW appl/cmd/ndb/cs.b 's
+.CW refresh()
+re-read the database and left the cache alone, and
+.CW xlate()
+consults the cache before it consults
+.CW ndb
+at all.  Against a static
+.CW /lib/ndb/local
+that only meant a stale answer for the 120 seconds a cache entry
+lives.  Against a registry it means the opposite of what
+.CW regndb
+is for: an entry disappears the moment a machine leaves, and the whole
+purpose of the refresh is that the next query must miss.
+.CW refresh()
+drops every cached answer now, which is what re-reading the database
+has to mean.  The refresh check also compared the control write for
+exact equality, so
+.CW "echo refresh > /net/cs"
+\(em the obvious way to do it from a shell \(em came back
+.CW "bad format request" ;
+a trailing newline is accepted.
+.IP
+.DS L
+.CW
+NDB-CS-STARTED /net/cs after 100 ms, -f /mnt/regndb/ndb
+NDB-CS-OK cs translated joiner3 to '/net/tcp/clone 10.42.0.10!564'
+NDB-CS-GONE-OK cs no longer translates joiner3 ('')
+.R
+.DE
+.LP
+That was reproduced and fixed against the hosted
+.CW emu
+first, which turns a three-minute kernel boot into a five-second run,
+and then confirmed on the booted arm64 kernel.  Worth remembering: a
+Limbo program that a kernel test drives is usually reachable from
+.CW emu-g
+with the same arguments, and the loop is forty times shorter.  Two
+gotchas in that path on this branch \(em
+.CW emu
+cannot create a directory (its
+.CW setid()
+runs Dis as uid \-1), so a mount point has to exist on the host
+filesystem first; and a shell heredoc into
+.CW emu 's
+stdin never sees EOF, so the script has to be a file.
+.PP
+Two kernels talking over a wire have not been run, and the registry was
+exported with no authentication.  Both are named in
+.CW doc/inferno-ndb.ms
+as what is demonstrated rather than done.
 .NH 1
 The order
 .IP 1.
 .B "The heap fault."
-Four boots in ten reach a shell on the UEFI path, six on the other.
-Everything below is worth less on a kernel that fails half its boots,
-and a rented machine is the worst place to debug one.  The
+Found and fixed, in section 6.
+.CW os/inferno/pc64/l.s 's
+interrupt entry built
+.CW Ureg.ds
+and
+.CW Ureg.es
+with
+.CW AX
+as its scratch
+.I before
+.CW "PUSHQ AX"
+saved the interrupted code's
+.CW AX ,
+and
+.CW MOVW
+from a segment register zero-extends, so every interrupt on this
+machine handed the interrupted code back an
+.CW AX
+of
+.CW 0 .
+Thirty consecutive boots reach a shell with no capture and no panic;
+before it, one in twenty-four, nine in twelve, eight in twelve, ten in
+twenty-five and eight in thirteen.  Re-measured on a tree rebuilt from
+source after the fix landed, six QEMU instances at a time rather than
+serially \(em different timing, arguably a harder test, not the same
+test \(em thirty of thirty reached an interactive shell with no panic
+and no tracker capture.  What made it findable was the
+instrument going quiet: the teardown
+.CW trackclear
+in
+.CW libinterp/heap.c 's
+.CW freeptrs
+removed the last false positives, and the captures that were left all
+had the corrupted word equal to
+.CW R.d .
+Everything below is worth less on a kernel that fails most of its
+boots, and a rented machine is the worst place to debug one.  The
 mechanism is recorded in
 .CW doc/inferno-ports.ms ;
 it is not this plan's to re-derive, but it is this plan's blocker.
@@ -797,10 +3614,8 @@ it is not this plan's to re-derive, but it is this plan's blocker.
 .B "Make the memory map safe."
 Done, in section 3: merging and a bound in
 .CW memconf .
-What is left of it is the console \(en the 16550 at
-.CW 0x3F8
-is assumed rather than read out of ACPI's SPCR table \(en and a machine
-that puts its console elsewhere is silent in exactly the same way.
+The console half is done too, in section 7: the kernel now reads
+ACPI's SPCR table and moves the console to whatever UART it names.
 .IP 3.
 .B "Run as a KVM guest, on somebody's hardware."
 UEFI, virtio-net, virtio-blk, a compiled-in root: every piece exists,
@@ -823,22 +3638,106 @@ provider's.  AWS's remaining Xen generations additionally need
 .CW os/inferno/boot/pc ,
 since they answer
 .CW legacy-bios
-alone, and that loader is a 386 target this tree does not build \(en
-no
-.CW Inferno/386/include ,
-no 386
+alone.  That loader is a 386 target and the 386 headers are there:
+.CW Inferno/386/include
+holds
+.CW lib9.h ,
+.CW u.h
+and
+.CW ureg.h .
+Its first two stages build today \(em
+.CW mk
+.CW mbr
+.CW pbs
+in
+.CW os/inferno/boot/pc
+links a 407-byte master boot record and a 473-byte partition boot
+sector with
+.CW 8l
+.CW -H3 .
+What is not built is the second stage
+.CW 9bootfat ,
+.CW 9bootiso ,
+.CW 9bootpxe
+and
+.CW 9boothyb ,
+which want 386 builds of
 .CW libkern ,
 .CW libfis
-or
-.CW libflate .
+and
+.CW libflate ,
+and a host-side program to lay the pieces into a disk image.
 On a Xen host one controls, OVMF for the domain avoids all of it.
+.IP
+.I "The 386 kernel is a separate thing and still does not build."
+.CW os/inferno/pc
+stopped at
+.CW i8259.c:199 ,
+"not a member of struct/union: enable", which was one declaration left
+behind: that board's
+.CW irq.c
+is already the 9front one that assigns
+.CW v->vno ,
+.CW v->cpu
+and
+.CW v->local
+and calls
+.CW v->enable ,
+and its
+.CW i8259.c
+sets
+.CW v->enable
+and
+.CW v->disable ,
+but
+.CW os/inferno/pc/io.h 's
+.CW Vctl
+was still the older layout.  It has
+.CW pc64 's
+shape now and the board compiles past that file.  The Chan naming, the
+.CW FPU
+typedef,
+.CW active.machs ,
+a stale
+.CW i8250.$O
+in its mkfile, a private copy of
+.CW waserror()
+and an
+.CW ip
+line naming three drivers that are not in the tree are all fixed too.
+Where it stops now is the floating point, and that is a real piece of
+work rather than a declaration:
+.DS L
+.CW
+main.c:229 name not declared: FPINIT
+main.c:329 syntax error, last name: FPsave
+.R
+.DE
+.CW FPsave
+is a type in this tree rather than a routine and
+.CW Proc.fpsave
+is a pointer, so that board's floating point has to come forward the
+way
+.CW os/inferno/pc64/fpu.c
+did, on a 386 where there is x87 and not necessarily SSE \(em and
+there is no 386 machine here to boot the result on, so writing it blind
+would be a change nothing could verify.  Nothing on
+this plan needs it \(em item 4 wants
+.CW os/inferno/boot/pc ,
+the loader, which is a different program \(em so it is recorded here
+rather than done.
 .IP 5.
 .B "MSI-X."
-The single-vector half is done and verified against NVMe, per section
-2.  What is left is multi-vector allocation \(en a vector per queue,
-which is how ENA and the current Intel parts are meant to be driven \(en
-and it is better done alongside the first driver that needs it than
-before.
+Done, both halves: section 8 has the multi-vector plumbing and the
+NVMe driver that takes two vectors through it, verified live.  What
+a new driver has to do is call
+.CW pcimsixintrenable
+once per queue.  Attaching that driver on the UEFI path found a second
+thing, now also fixed:
+.CW vmap() 's
+ceiling was a 512 GiB constant and OVMF puts a 64-bit BAR above it, so
+NVMe did not attach at all under the firmware every cloud machine
+runs.  It takes the limit from CPUID now.
 .IP 6.
 .B "ENA."
 Then Nitro AWS, first on a cheap virtual instance, then on
@@ -861,8 +3760,19 @@ boot volume is not needed.
 .IP 9.
 .B "Big machines."
 x2APIC, more than 255 logical processors, memory regions above 4GB,
-and a MADT with hundreds of entries.  SMP is blocked on item 1 today.
-A metal box is where all four arrive at once.
+and a MADT with hundreds of entries.  Item 1, which used to block this,
+is fixed.  On arm64 the groundwork is now in and measured: the MADT's
+processor list is read, and PSCI starts every processor it names on a
+seventeen-processor machine.  What is left there is a
+.CW Mach ,
+a stack and a scheduler per processor,
+.CW MAXMACH
+above 1, a real
+.CW cmpswap
+rather than the spl-masked one
+.CW os/inferno/virtarm64/archvirtarm64.c
+has, and per-processor redistributor setup.  A metal box is where the
+x86 half arrives.
 .IP 10.
 .B "Xen PVH's devices."
 xenbus and XenStore, grant tables, event channels,
@@ -877,6 +3787,18 @@ reaches the same hosts for one driver.
 VMBus,
 .CW storvsc ,
 .CW netvsc .
+.IP 12.
+.B "Machines that join and leave."
+Done, in section 10, and independent of everything above it:
+.CW ndb/regndb
+renders a
+.CW registry(4)
+as an
+.CW attrdb(6)
+database and
+.CW ndb/register
+joins one, so a machine can be looked up by name for exactly as long as
+it is running.  A fleet wants this before it wants item 9.
 .PP
 Per-provider differences belong in new configuration files beside
 .CW os/inferno/pc64/pc64
