@@ -818,6 +818,22 @@ i8250spcrconsole(void)
 	print("spcr: console is %s\n", uart->name);
 }
 
+/*
+ * A character from the serial console into the console queue, the way
+ * kbd.c's interrupt handler puts one there from the PS/2 controller.
+ * kbdcr2nl maps a carriage return to a newline, which is what a
+ * terminal emulator on the other end of a serial line sends.
+ */
+static int
+i8250consolerx(Queue*, int ch)
+{
+	extern Queue *kbdq;
+
+	if(kbdq == nil)
+		return 0;
+	return kbdcr2nl(kbdq, ch);
+}
+
 void
 i8250console(void)
 {
@@ -839,4 +855,27 @@ i8250console(void)
 
 	consuart = uart;
 	uart->console = 1;
+
+	/*
+	 * And where a character typed at it should go.
+	 *
+	 * Without this the serial console is output-only: uartrecv()
+	 * hands a received character to p->putc if there is one and
+	 * otherwise leaves it in the uart's own input ring, which
+	 * /dev/eia0 reads and /dev/cons does not -- so the shell, which
+	 * reads /dev/cons, never sees it.  pc64's only console input was
+	 * the PS/2 keyboard, and on a machine that has none, typing at
+	 * the console did nothing at all.
+	 *
+	 * Every other board in this tree already does this:
+	 * os/inferno/virtarm64, raspi3b, armv7, virts, virt32, shakti,
+	 * teensy41 and nucleof303 all set consuart->putc to a function
+	 * of exactly this shape.  pc64 was the one that did not.
+	 *
+	 * It survived because every test drove QEMU with "-serial
+	 * file:", which is output-only too, so nothing ever typed at it.
+	 * It was found by connecting to a Compute Engine instance's
+	 * serial console and pressing return.
+	 */
+	uart->putc = i8250consolerx;
 }
