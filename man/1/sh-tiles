@@ -31,6 +31,19 @@ sh-tiles \- build a screen of tiles from a shell script
 .B bind
 .I action key ...
 .br
+.BI ${tiles " id " wait}
+[
+.I ms
+]
+.br
+.B tiles
+.I id
+.B events
+.I name
+[
+.I ms
+]
+.br
 .BI ${tiles " id " keys}
 |
 .BI ${tiles " id " pressed}
@@ -132,6 +145,60 @@ against an absolute deadline rather than for a fixed time \- which is
 why
 .IR frameclock (2)
 exists for Limbo and is needed here for the same reason.
+.SS Waiting
+A poll is not a wait, and a script that polls has to have a frame to
+hang the poll on.
+There are two ways here and they are for different things.
+.PP
+.BI ${tiles " id " wait\ ms}
+blocks until a key arrives or until
+.I ms
+have passed, whichever comes first, and answers
+.B tick
+or
+.BR "key " IactionP...
+That is an
+.BR alt ,
+done in Limbo because the shell has none of its own, and it is what a
+game loop wants: one call, no plumbing, and no frame of latency on a
+key.
+With no
+.I ms
+it waits for a key and nothing else.
+.PP
+.BI "tiles " id " events " name \ ms
+is the other answer and the more Inferno one: the same stream as a
+.I file
+in
+.BR /chan ,
+whose read blocks.
+Waiting is what a read does, so nothing new has to be invented \- and
+because it is a file, another process can wait on it, a script can
+filter it through
+.IR sed (1),
+and exporting the namespace exports the game's input.
+.IP
+.EX
+tiles $id events warren.ev 110
+ev = `{read < /chan/warren.ev}
+.EE
+.PP
+What that costs is a process and the keyboard: once the server has it,
+.B wait
+and
+.B keys
+see nothing and say so.
+.PP
+The shell's own answer to this question is
+.IR sh-tk (1)'s
+.B ${recv}
+and
+.BR ${alt} ,
+which are the right thing and are not reachable from here:
+that module's channel table is private to it, the same way its window
+table is.
+A file is reachable from anywhere, which is the argument for the second
+form.
 .PP
 Ask for these with
 .B ${}
@@ -210,8 +277,14 @@ There is no way to hand a surface back to a Limbo program from here, so
 a script can build a screen and draw it or write it, and cannot pass it
 to something else.
 .PP
-The keyboard is polled and not selected on, so a script cannot wait for
-a key without spinning; it has to have a frame to hang the poll on.
-For a game that is what
-.B pace
-is for, and for anything else it is wrong.
+Only one reader waits on an event file at a time; a second is told so
+rather than silently replacing the first.
+The queue behind it is bounded at 32 events, so a script that stops
+reading loses events rather than making the server eat memory.
+.PP
+.B Wait
+answers on a press and not on a release, because a loop woken by
+somebody letting go of a key has nothing to do.  A script that wants to
+see releases has to poll
+.B keys
+as well.

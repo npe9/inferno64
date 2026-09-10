@@ -31,6 +31,7 @@ What is left over is the rules, and the rules of a maze game are twenty
 lines of shell:
 .IP
 .EX
+ev = ${tiles $id wait 110}
 ks = ${tiles $id keys}
 if {~ $ks left}  { nx = ${expr $x 1 \-} }
 c = ${tiles $id at level $nx $ny}
@@ -44,7 +45,6 @@ if {! ~ $c \(aq#\(aq} {
 tiles $id blit level screen 0 0
 tiles $id put screen ${expr $x 8 \(aq*\(aq} ${expr $y 8 \(aq*\(aq} art 6 skin
 tiles $id draw screen
-tiles $id pace 110
 .EE
 .PP
 The level is
@@ -74,9 +74,18 @@ the tile art
 .SH DIAGNOSTICS
 Two hundred unpaced frames of this loop take 44 milliseconds \- 220
 microseconds a frame, four and a half thousand a second.
-The frame is paced to 110 milliseconds because a maze walked a tile at a
-time wants to be walked at a walking speed, not because the shell cannot
-go faster.
+The loop asks for 110 because a maze walked a tile at a time wants a
+walking speed, not because the shell cannot go faster; twenty frames of
+it measure 2206 milliseconds, which is 110.3 each.
+.PP
+It waits rather than polls.
+.B Wait
+blocks until a key or until the frame is due, whichever comes first, so
+a key press is acted on when it happens rather than at the next frame.
+See
+.IR sh-tiles (1)
+for the other way of waiting, which is to serve the same events as a
+file and let an ordinary blocking read be the wait.
 .SH BUGS
 There is one level and nothing chases you.
 .PP

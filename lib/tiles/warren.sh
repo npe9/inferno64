@@ -11,6 +11,12 @@
 #	sh /lib/tiles/warren.sh
 #
 # Arrow keys or wasd, Esc or q to stop.
+#
+# The loop waits rather than polls: ${tiles $id wait 110} blocks until a
+# key or until 110ms have passed.  See sh-tiles(1) for the other way,
+# which is to serve the same events as a file in /chan and let an
+# ordinary blocking read be the wait - that one composes, because a file
+# is a file and another process, or another machine, can read it too.
 load std
 load expr
 load tiles
@@ -42,9 +48,15 @@ coins = 12
 running = 1
 
 while {~ $running 1} {
+	# The wait.  This blocks until a key arrives or 110ms have passed,
+	# whichever comes first - which is an alt, done in Limbo because
+	# the shell has none of its own.  A poll plus a sleep would be a
+	# frame late on every key.
+	#
 	# ${...} and not `{...}: a backquote runs the block in a
 	# subprocess, and a subprocess reaching into the parent's Tk
 	# window deadlocks.  The sbuiltin answers in this process.
+	ev = ${tiles $id wait 110}
 	ks = ${tiles $id keys}
 	if {~ $ks quit} { running = 0 }
 
@@ -72,5 +84,4 @@ while {~ $running 1} {
 	tiles $id text screen 8 0 hud SCORE $score
 	if {~ $coins 0} { tiles $id text screen 80 40 hud ALL COINS }
 	tiles $id draw screen
-	tiles $id pace 110
 }

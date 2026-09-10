@@ -20,6 +20,8 @@ include "keyhold.m";
 	keyhold: Keyhold;
 	Binding: import keyhold;
 include "keyboard.m";
+include "frameclock.m";
+	fclock: Frameclock;
 
 # A loadable sh(1) module giving shell scripts tiles(2)'s own command
 # language, the same way sh-plot(1) gives them plot(2)'s and sh-tk(1)
@@ -55,6 +57,9 @@ Handle: adt {
 	held:	int;
 	prev:	int;
 	last:	int;		# millisec, for pace
+	tick:	chan of int;	# the frame clock, made on first use
+	tickms:	int;
+	served:	int;		# an event file has the keyboard
 };
 
 handles: array of list of ref Handle;
@@ -82,6 +87,9 @@ initbuiltin(ctxt: ref Context, shmod: Sh): string
 	keyhold = load Keyhold Keyhold->PATH;
 	if(keyhold == nil)
 		ctxt.fail("bad module", sys->sprint("tiles: cannot load %s: %r", Keyhold->PATH));
+	fclock = load Frameclock Frameclock->PATH;
+	if(fclock != nil)
+		fclock->init();
 	handles = array[16] of list of ref Handle;
 	ctxt.addbuiltin("tiles", myself);
 	ctxt.addsbuiltin("tiles", myself);
@@ -152,6 +160,19 @@ runbuiltin(ctxt: ref Context, nil: Sh,
 		pace(h, int (hd tl rest).word);
 		return nil;
 	}
+	if((hd rest).word == "events"){
+		if(tl rest == nil)
+			ctxt.fail("usage", "usage: tiles <id> events NAME [ms]");
+		ms := 0;
+		if(tl tl rest != nil)
+			ms = int (hd tl tl rest).word;
+		e := events(ctxt, h, (hd tl rest).word, ms);
+		if(e != nil){
+			remark(ctxt, e);
+			return e;
+		}
+		return nil;
+	}
 	if((hd rest).word == "keys" || (hd rest).word == "pressed"){
 		remark(ctxt, readkeys(ctxt, h, (hd rest).word == "pressed"));
 		return nil;
@@ -189,6 +210,11 @@ runsbuiltin(ctxt: ref Context, nil: Sh,
 	# The input verbs answer here too, and this is where a game loop
 	# actually uses them: ks := ${tiles $id keys}.
 	case (hd rest).word {
+	"wait" =>
+		ms := 0;
+		if(tl rest != nil)
+			ms = int (hd tl rest).word;
+		return words(waitev(ctxt, h, ms));
 	"keys" =>
 		return words(readkeys(ctxt, h, 0));
 	"pressed" =>
@@ -246,7 +272,8 @@ newhandle(ctxt: ref Context, argv: list of ref Listnode): int
 	if(scr == nil)
 		ctxt.fail("tiles", "tiles: cannot make a screen");
 	h := ref Handle(nexthandle++, top, buffer, scr, Point(pw, ph), 0,
-		array[0] of string, array[0] of (int, int), nil, 0, 0, 0);
+		array[0] of string, array[0] of (int, int), nil, 0, 0, 0,
+		nil, 0, 0);
 	addhandle(h);
 	return h.id;
 }
@@ -520,4 +547,155 @@ words(s: string): list of ref Listnode
 	for(; l != nil; l = tl l)
 		rl = hd l :: rl;
 	return rl;
+}
+
+# ------------------------------------------------------------ waiting
+#
+# A poll is not a wait, and a script that polls has to have a frame to
+# hang the poll on.  Two ways to wait, and they are for different
+# things.
+#
+# ${tiles $id wait [ms]} blocks until a key or, if ms is given, until ms
+# have passed - whichever comes first - and answers "key ..." or "tick".
+# It is one call, it is a real select, and it is what a game loop wants:
+# the shell has no alt of its own, and this is Limbo doing the alt on
+# its behalf.
+#
+# "tiles $id events NAME [ms]" is the other answer, and it is the more
+# Inferno one: the same stream as a FILE in /chan, whose read blocks.
+# Waiting is what a read does, so nothing new has to be invented; and
+# because it is a file, another process can wait on it, a script can
+# filter it through sed(1), and exporting the namespace exports the
+# game's input.  What it costs is a process and the keyboard: once the
+# server has it, "keys" and "wait" no longer see anything.
+
+# The frame clock, made once per handle and shared by both waits.
+ticker(h: ref Handle, ms: int): chan of int
+{
+	if(ms <= 0)
+		return nil;
+	if(h.tick != nil && h.tickms == ms)
+		return h.tick;
+	c := chan of int;
+	if(fclock == nil)
+		return nil;
+	spawn fclock->tickms(c, ms);
+	h.tick = c;
+	h.tickms = ms;
+	return c;
+}
+
+waitev(ctxt: ref Context, h: ref Handle, ms: int): string
+{
+	if(h.kb == nil)
+		return "";
+	if(h.served)
+		return "!the event file owns the keyboard";
+	show(ctxt, h);
+	tc := ticker(h, ms);
+	# A nil channel in an alt simply never fires, so no ms means wait
+	# for a key and nothing else.
+	for(;;) alt{
+	k := <-h.top.ctxt.kbd =>
+		h.held = h.kb.key(h.held, k);
+		# Answer on a press, not on a release: a loop woken by
+		# someone letting go of a key has nothing to do.
+		if(h.held != 0)
+			return "key " + heldnames(h);
+	<-tc =>
+		return "tick";
+	}
+}
+
+heldnames(h: ref Handle): string
+{
+	s := "";
+	for(i := 0; i < len h.acts; i++)
+		if(h.held & (1 << i)){
+			if(s != "")
+				s += " ";
+			s += h.acts[i];
+		}
+	return s;
+}
+
+# The same stream, as a file.  file2chan wants a directory served by the
+# srv device and /chan in a bare namespace is an ordinary directory, so
+# bind #s over it if it is not already - the same thing orchard(1) has
+# to do.
+events(ctxt: ref Context, h: ref Handle, name: string, ms: int): string
+{
+	if(h.kb == nil)
+		return "!bind some keys first";
+	if(h.served)
+		return "!already serving";
+	show(ctxt, h);
+	fio := sys->file2chan("/chan", name);
+	if(fio == nil){
+		if(sys->bind("#s", "/chan", Sys->MREPL) < 0)
+			return sys->sprint("!no /chan: %r");
+		fio = sys->file2chan("/chan", name);
+	}
+	if(fio == nil)
+		return sys->sprint("!cannot serve /chan/%s: %r", name);
+	h.served = 1;
+	spawn serve(h, fio, ticker(h, ms));
+	return nil;
+}
+
+serve(h: ref Handle, fio: ref Sys->FileIO, tc: chan of int)
+{
+	pending: Sys->Rread;
+	queued: list of string;
+	for(;;) alt{
+	(nil, nil, nil, rc) := <-fio.read =>
+		if(rc == nil)
+			continue;
+		if(queued != nil){
+			rc <-= (array of byte hd queued, nil);
+			queued = tl queued;
+		}else if(pending != nil)
+			# Only one reader waits at a time here; a second is
+			# told so rather than silently replacing the first.
+			rc <-= (nil, "already a reader waiting");
+		else
+			pending = rc;
+	(nil, nil, nil, wc) := <-fio.write =>
+		if(wc != nil)
+			wc <-= (0, "read only");
+	k := <-h.top.ctxt.kbd =>
+		h.held = h.kb.key(h.held, k);
+		if(h.held != 0)
+			(pending, queued) = post(pending, queued,
+				"key " + heldnames(h) + "\n");
+	<-tc =>
+		(pending, queued) = post(pending, queued, "tick\n");
+	}
+}
+
+# An event goes to whoever is waiting, or waits itself.  The queue is
+# bounded: a game that stops reading must not make the server eat memory
+# holding key presses nobody will ever look at.
+MAXQUEUE:	con 32;
+
+post(pending: Sys->Rread, queued: list of string,
+		ev: string): (Sys->Rread, list of string)
+{
+	if(pending != nil){
+		pending <-= (array of byte ev, nil);
+		return (nil, queued);
+	}
+	n := 0;
+	for(l := queued; l != nil; l = tl l)
+		n++;
+	if(n >= MAXQUEUE)
+		return (nil, queued);
+	nq: list of string;
+	for(l = queued; l != nil; l = tl l)
+		nq = hd l :: nq;
+	nq = ev :: nq;
+	rl: list of string;
+	for(; nq != nil; nq = tl nq)
+		rl = hd nq :: rl;
+	return (nil, rl);
 }
