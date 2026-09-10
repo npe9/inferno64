@@ -1095,8 +1095,8 @@ startfonts()
 	# what it says.
 	b := array[8192] of byte;
 	for(i := 0; i < 50; i++){
-		if((fd = sys->open("/mnt/ft/index", Sys->OREAD)) != nil
-		&& sys->read(fd, b, len b) > 0)
+		ix := sys->open("/mnt/ft/index", Sys->OREAD);
+		if(ix != nil && sys->read(ix, b, len b) > 0)
 			return;
 		sys->sleep(100);
 	}
