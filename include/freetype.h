@@ -18,6 +18,7 @@ typedef struct FTface FTface;
 struct FTface {
 	void*	ft_lib;
 	void*	ft_face;
+	void*	ft_data;	/* the file, held for the life of the face */
 };
 
 typedef struct FTglyph FTglyph;

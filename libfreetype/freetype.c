@@ -1,4 +1,5 @@
 #include "freetype/freetype.h"
+#include "kernel.h"
 #include "freetype.h"
 
 static char* fterrstr(int);
@@ -9,19 +10,69 @@ ftnewface(char *path, int index, FTface *f, FTfaceinfo *finfo)
 	FT_Library ft_lib;
 	FT_Face ft_face;
 	char *err;
+	Dir *d;
+	uchar *data;
+	int fd;
+	vlong len, tot;
+	s32 n;
+
+	/*
+	 * Read the file here rather than let FreeType keep a descriptor open
+	 * on it for the life of the face.  A Face is a garbage-collected Dis
+	 * value, so FT_Done_Face runs whenever the collector reaches it, in
+	 * whichever process happens to be running then - and the close
+	 * underneath it is kclose(), which acts on *that* process's file
+	 * descriptor table.  When the process that opened the font has since
+	 * exited that faults in kfgrpclose(); when it has not, it closes
+	 * whatever unrelated file sits at the same number.  Neither is a
+	 * thing to leave in place, and a font is small.
+	 */
+	fd = kopen(path, OREAD);
+	if (fd < 0)
+		return "cannot open font file";
+	d = kdirfstat(fd);
+	if (d == nil) {
+		kclose(fd);
+		return "cannot stat font file";
+	}
+	len = d->length;
+	free(d);
+	if (len <= 0) {
+		kclose(fd);
+		return "empty font file";
+	}
+	data = malloc(len);
+	if (data == nil) {
+		kclose(fd);
+		return "out of memory reading font file";
+	}
+	for (tot = 0; tot < len; tot += n) {
+		n = kread(fd, data+tot, len-tot);
+		if (n <= 0)
+			break;
+	}
+	kclose(fd);
+	if (tot != len) {
+		free(data);
+		return "short read of font file";
+	}
 
 	err = fterrstr(FT_Init_FreeType(&ft_lib));
-	if (err != nil)
+	if (err != nil) {
+		free(data);
 		return err;
+	}
 
-	err = fterrstr(FT_New_Face(ft_lib, path, index, &ft_face));
+	err = fterrstr(FT_New_Memory_Face(ft_lib, data, len, index, &ft_face));
 	if (err != nil) {
 		FT_Done_FreeType(ft_lib);
+		free(data);
 		return err;
 	}
 
 	f->ft_lib = ft_lib;
 	f->ft_face = ft_face;
+	f->ft_data = data;
 	finfo->nfaces = ft_face->num_faces;
 	finfo->index = ft_face->face_index;
 	finfo->style = ft_face->style_flags;
@@ -99,6 +150,8 @@ ftdoneface(FTface f)
 		FT_Done_Face(f.ft_face);
 	if (f.ft_lib != nil)
 		FT_Done_FreeType(f.ft_lib);
+	if (f.ft_data != nil)
+		free(f.ft_data);	/* FT_New_Memory_Face does not copy it */
 }
 
 /*
