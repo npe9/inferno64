@@ -4520,11 +4520,40 @@ dollars an hour, so it is rented for an afternoon and released.
 Item 7, and the first genuine bare-metal boot.  Hetzner or Vultr.
 Hetzner is a monthly dedicated server with a KVM console on request;
 Vultr is bare metal by the hour with custom-ISO upload, and wants the
-ISO to be a hybrid image, which is a change to
+ISO to be a hybrid image, which was a change to
 .CW scripts/mkinferno-efi-iso.sh
-rather than a purchase.  What to specify when ordering: an Intel 1G NIC
-and AHCI or NVMe, which are the drivers already linked, and IPMI or
-serial-over-LAN.  This is independent of the cloud items and can be
+rather than a purchase and is done: the ESP is appended as a real GPT
+partition of type 0xEF with El Torito pointed at that same partition,
+so the one file boots as a disc and as a disk.  Both were checked under
+OVMF \(en as
+.CW -cdrom
+and as a raw
+.CW virtio-blk
+volume, each reaching
+.CW "spawn sh -n /dis/init"
+and a prompt.  What to specify when ordering, checked against what
+.CW os/inferno/pc64/pc64dev
+actually links rather than against the driver directory: Intel 1G
+.CW ( etherigbe ,
+.CW ether82563 ),
+Intel 2.5G
+.CW ( etheri225 ),
+Intel 10G
+.CW ( etherx550 ,
+.CW ether82598 ),
+Realtek
+.CW ( ether8169 ),
+Broadcom
+.CW ( etherbcm )
+or Marvell
+.CW ( etheryuk ) ,
+with AHCI
+.CW ( sdiahci ),
+NVMe
+.CW ( sdnvme )
+or IDE, and IPMI or serial-over-LAN.  That is broad enough that a
+typical box from either provider needs no driver written, which is what
+makes this the cheapest genuine hardware boot on the list.  This is independent of the cloud items and can be
 bought at any time.
 .IP "\f(CWOracle\ Cloud\fP" 12
 Item 8.  What is needed: an account, and a bare-metal shape, which is

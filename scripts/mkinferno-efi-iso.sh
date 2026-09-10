@@ -27,10 +27,15 @@ export PATH ROOT
 ISO=${1:-$ROOT/.qemu/inferno-efi.iso}
 KERNEL=${INFERNO_KERNEL:-$ROOT/Inferno/amd64/ipc64}
 LOADER=$ROOT/os/inferno/boot/efi/bootx64.efi
-TREE=`mktemp -d "${TMPDIR:-/tmp}/inferno-iso.XXXXXX"`
-ESP=$TREE/efiboot.fat
+WORK=`mktemp -d "${TMPDIR:-/tmp}/inferno-iso.XXXXXX"`
+TREE=$WORK/src
+# Outside $TREE deliberately: the FAT is appended to the image as a real
+# partition now, not carried inside the ISO filesystem as a file, so
+# having it in both places would only make the image twice the size.
+ESP=$WORK/efiboot.fat
+mkdir -p "$TREE"
 
-trap 'rm -rf "$TREE"' 0
+trap 'rm -rf "$WORK"' 0
 
 echo "mk bootx64.efi"
 (cd "$ROOT/os/inferno/boot/efi" && mk bootx64.efi)
@@ -70,8 +75,28 @@ cp "$CFG" "$TREE/plan9.ini"
 echo "iso $ISO"
 mkdir -p `dirname "$ISO"`
 rm -f "$ISO"
+#
+# An image as well as a disc.  With El Torito alone the ESP is reachable
+# only by a machine that treats the file as a CD; a machine that treats
+# it as a disk finds no partition table and does not boot, which is what
+# happens when a provider writes the file to a volume and is what
+# Vultr's custom-ISO path wants.
+#
+# The FAT is therefore appended as a real GPT partition of type 0xEF and
+# El Torito is pointed at that same appended partition, so one file
+# boots both ways and there is only one copy of the ESP in it.
+# -partition_offset 16 leaves room for the protective MBR and the GPT
+# header ahead of the filesystem.  (-isohybrid-gpt-basdat, which is the
+# flag usually reached for, is for an image that also has a BIOS boot
+# record: without one xorriso writes neither MBR nor GPT and says
+# nothing, which is how this was found -- by looking for 0x55AA at
+# offset 510 and not finding it.)
+#
 xorriso -as mkisofs -quiet -R -J -N -d -V INFERNO \
-	-e efiboot.fat -no-emul-boot \
+	-partition_offset 16 \
+	-append_partition 2 0xef "$ESP" \
+	-appended_part_as_gpt \
+	-e '--interval:appended_partition_2:all::' -no-emul-boot \
 	-o "$ISO" "$TREE"
 
 ls -l "$ISO"
