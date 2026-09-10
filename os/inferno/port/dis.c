@@ -348,7 +348,9 @@ vmacquire(void)
 		up->vmheld = 1;
 		if(up->pctx != nil){
 			curP = (Pctx*)up->pctx;
+#ifndef DISCTXREG
 			curR = &curP->reg;
+#endif
 		}
 		{	/* MULTICORE INSTRUMENTATION - temporary */
 			int n = ainc(&nvm);

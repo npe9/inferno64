@@ -25,7 +25,9 @@ disctxinit(void)
 	curP = defpctx;
 }
 #endif
+#ifndef DISCTXREG
 REG*	curR = &_pctx.reg;		/* interp.h: #define R (*curR) */
+#endif
 Pctx*	pctxs[MAXPCTX] = { &_pctx };	/* every context; see progreg() */
 int	npctx = 1;
 String	snil;			/* String known to be zero length */
@@ -2554,7 +2556,7 @@ progreg(Prog *p)
 	int i;
 
 	if(p == curP->curprog)
-		return curR;		/* the common case: this context */
+		return &curP->reg;	/* the common case: this context */
 	/*
 	 * A program can be mid-quantum on a context other than the one
 	 * asking.  The collector is the caller that matters -- it walks

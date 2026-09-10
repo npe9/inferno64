@@ -514,7 +514,22 @@ extern	Pctx*	curP;
 extern	Pctx*	defpctx;	/* the context a Proc starts with */
 REG*	progreg(Prog*);	/* where a program's live roots are; see xec.c */
 Module*	modlinkmod(Modlink*);	/* the Module of a Modlink worth trusting; see heap.c */
+/*
+ * Phase 1b: with a per-executor curP, R reaches the register file
+ * through it and curR does not exist.  A single REG* naming "the
+ * current register file" is exactly the global this is undoing --
+ * two executors inside xec() at once would share it.
+ *
+ * The code generators (libinterp/comp-*.c) bake (uintptr)&R into the
+ * code they emit.  Under a register curP that address is this
+ * executor's, not a constant, so a JIT built this way would be wrong
+ * the moment a second context ran.  It compiles and is not reached:
+ * cflag is 0 on every native board, so nothing in comp-*.c executes.
+ * Making the JIT per-executor is its own change and is not this one.
+ */
+#ifndef DISCTXREG
 extern	REG*	curR;		/* == &curP->reg */
+#endif
 /*
  * Per context, for the same reason syncpc is: it answers "is a quantum
  * open on THIS context", and a single global answers it for whichever
@@ -542,7 +557,11 @@ extern	REG*	curR;		/* == &curP->reg */
  * context whose registers had never been loaded.
  */
 #define	REGSYNCED()	(curP->syncpc = R.PC)
+#ifdef DISCTXREG
+#define	R	(curP->reg)
+#else
 #define	R	(*curR)
+#endif
 extern	String	snil;
 extern	void	(*optab[256])(void);
 extern	void	(*comvec)(void);
