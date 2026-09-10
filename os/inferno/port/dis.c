@@ -237,11 +237,33 @@ gcstwothers(void)
 	return gcstw != 0 && up != gcstwproc;
 }
 
-void
+int stwgaveup;		/* MULTICORE INSTRUMENTATION - temporary */
+
+/*
+ * Stop every other context, or give up trying.
+ *
+ * Bounded, and that is the point.  The wait was "while somebody has a
+ * quantum open, sched()", which is a spin: this process yields, every
+ * other interpreter yields in enterquantum()'s withdraw-and-retry loop,
+ * and the one process that has to finish its quantum to clear the flag
+ * is the one that does not get a processor.  Measured, not supposed --
+ * 44 of 51 stalls across a 28-boot comparison named the same blocker,
+ * a context whose owner sat in Ready with a quantum open while the
+ * collector logged "stw: 200000 waits".
+ *
+ * Returning 0 abandons the collection, and that is safe in a way that
+ * waiting is not: a collection that does not happen costs memory until
+ * the next one, and there is always a next one, while a collection
+ * that cannot start costs the boot.  Parking rather than spinning, as
+ * Go does with an M, is the better answer and a larger change.
+ */
+int
 stoptheworld(void)
 {
+	int tries;
+
 	if(parallelvm == 0)
-		return;		/* the VM lock already is one */
+		return 1;	/* the VM lock already is one */
 	if(heapmonitor == nil){
 		heapmonitor = gcstwmonitor;	/* INSTRUMENTATION - temporary */
 		gcstopped = gcstwothers;
@@ -249,8 +271,16 @@ stoptheworld(void)
 	gcstwproc = up;
 	gcstw = 1;
 	coherence();
-	while(othersrunning() > 0){
+	for(tries = 0; othersrunning() > 0; tries++){
 		stwwaits++;
+		if(tries >= 2000){
+			gcstw = 0;	/* let them run; collect next time */
+			coherence();
+			if(stwgaveup++ == 0)
+				print("stw: gave up after %d tries, cpu%d %s\n",
+					tries, m->machno, up->text);
+			return 0;
+		}
 		{	/* MULTICORE INSTRUMENTATION - temporary */
 			static int told;
 			Proc *q;
@@ -279,6 +309,7 @@ stoptheworld(void)
 		}
 		sched();
 	}
+	return 1;
 }
 
 /*
@@ -338,13 +369,14 @@ enterquantum(void)
 static QLock gcsema;
 
 static void	starttheworld(void);
+int		stoptheworld(void);
 
 void
 collect(Prog *head)
 {
 	qlock(&gcsema);
-	stoptheworld();
-	rungc(head);
+	if(stoptheworld())
+		rungc(head);
 	starttheworld();
 	qunlock(&gcsema);
 }
@@ -1549,7 +1581,7 @@ schedmod(Module *m)
 		t = m->type[0];
 		h = nheap(t->size);
 		h->t = t;
-		t->ref++;
+		AINC(&t->ref);		/* heap.c's own heaptype() does the same */
 		ml->MP = H2D(uchar*, h);
 		if(ml->MP != H && (uintptr)ml->MP < 0x1000)
 			print("schedmod: bad ml->MP %#p right after H2D, h %#p ml %#p\n",
