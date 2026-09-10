@@ -1780,16 +1780,57 @@ environment device over
 with
 .BR MREPL ,
 which hid them; a name space a library operating system rearranges is
-the one every program it loads is given.  It paints the screen: the display QEMU scans out while rio idles is
+the one every program it loads is given.  It makes a window and runs a shell in it.  With
+.B -k
+rio allocates a window over the bottom third of the screen and hands it
+to
+.IR winshell ,
+which rforks a name space, an environment and a descriptor table of its
+own, mounts its own wsys, opens the window's
+.B /dev/cons
+for input and again for output, renames itself through
+.BR /proc/<n>/args ,
+and execs
+.B /bin/rc
+\- which is spawn here.  The shell is given the window's own descriptors
+rather than the machine's console, which is what says it worked.
+.PP
+Two things in
+.I p9crt.c
+had to change for that.  The descriptor table is per-flow now, held
+through a
+.IR privalloc (2)
+word, because that numbering is the program's and one array for the
+whole program meant a close in one flow freed the number in every flow -
+which is what winshell does first, and it took rio's own file server
+down.  And
+.I fdnew
+allocates the lowest free number rather than starting at 3, which is
+what
+.IR open (2)
+answers and what winshell depends on.  The console survives
+.BR RFCFDG :
+it is not a descriptor here but the one trap a loaded program makes, so
+a program that empties its table can still say so, which on Plan 9 it
+could not.
+.PP
+It paints the screen: the display QEMU scans out while rio idles is
 1280x800 and every pixel is
 .BR 0x777777 ,
 which is the colour rio allocates its background with on line 190 of
 .BR 9front/src/cmd/rio/data.c ,
 and the screendump taken before rio ran has none of that colour and all
-of libdraw's.  There is no window in it, because rio waits for a mouse
-click and nothing clicks; rio is spawned rather than run to completion
-for that reason, and the personality gives it three seconds and says so,
-which is both how the boot ends and where the screendump is taken.  The personality
+of libdraw's.  Nothing is drawn in the window: a
+.B -k
+window is allocated
+.B DNofill
+and the shell rio starts in it - this tree's own shell under the name
+.B /bin/rc
+- does not understand the
+.B -c
+rio passes it.  rio is spawned rather than run to completion, and the
+personality gives it three seconds and says so, which is both how the
+boot ends and where the screendump is taken.  The personality
 asks the name space what rio is about to ask it and logs the answers
 first:
 .BR /dev/draw ,

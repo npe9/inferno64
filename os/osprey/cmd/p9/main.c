@@ -933,7 +933,9 @@ p9main(void)
 		 * is not a window and the boot should not claim one.
 		 */
 		rioargv[0] = "/boot/rio";
-		rioargv[1] = nil;
+		rioargv[1] = "-k";
+		rioargv[2] = "-i";
+		rioargv[3] = nil;
 		/*
 		 * What a window system finds here, said before it runs.  rio
 		 * opens these in this order and each is a different part of

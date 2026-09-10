@@ -699,6 +699,30 @@ def main():
                         ('/dev/draw', '/dev/mouse', '/dev/kbd', '/dev/cons', '/dev/winname'))
                     and devs.get('/dev/snarf') == 'not there'))
     #
+    # And the window.  rio's -k asks for one at startup without a mouse
+    # click: it allocates one over the bottom third of the screen and
+    # hands it to winshell, which rforks its own name space, environment
+    # and descriptor table, mounts its own wsys, opens the window's
+    # /dev/cons for input and again for output, renames itself through
+    # /proc/<n>/args, and execs /bin/rc - which is spawn here.
+    #
+    # What says it worked is the descriptor table the shell was given.
+    # (0 1 -1) is the window: the shell's input and output are
+    # descriptors of the personality's that winshell opened on the
+    # window, and not the machine's console, which is what -1 would be.
+    # The shell's own complaint about its arguments goes into the window
+    # rather than to the console, which is why it is absent from the
+    # log.
+    #
+    # The screen is still the background alone, and that is not a
+    # failure: rio allocates a -k window with DNofill and nothing has
+    # drawn in it at the moment of the photograph.
+    riorc = re.search(r'p9 spawn: /bin/rc runs as (\d+) at 0x[0-9a-f]+, '
+                      r'with its own descriptor table \(0 1 -1\)', t)
+    results.append(("and rio makes a window and runs a shell in it: winshell rforks a name space, an environment and a descriptor table of its own, mounts its own wsys, opens the window's /dev/cons for input and again for output, renames itself through /proc/<n>/args and execs /bin/rc - which this personality spawns - and the shell is given the window's own descriptors rather than the machine's console",
+                    riorc is not None
+                    and 'libsh: cannot open -c' not in t))
+    #
     # And rio's own screen.  rio announces no painting, so this shot is
     # taken at the first thing the machine says after rio has settled,
     # which is the watchdog noticing the personality's server loop
@@ -718,6 +742,9 @@ def main():
                     and nriolib == 0
                     and nlib > 0
                     and 'p9: /boot/rio has had 3 seconds and a screen of its own' in t))
+    # A -k window is allocated DNofill, so the screen being the
+    # background alone is the state, not a fault: nothing has drawn in
+    # the window when the photograph is taken.
     results.append(("and rio itself runs on it, as far as its own file system: the real 9front rio, linked against this personality with the archive of system-call stubs left off, is laid in a slot with two thousand absolute addresses corrected, is entered, and takes flows of control of its own through the personality's proccreate - which is libthread's procrfork underneath",
                     rio is not None
                     and int(rio.group(1), 16) >= 0x2c00000

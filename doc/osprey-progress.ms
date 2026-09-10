@@ -10847,14 +10847,96 @@ descriptors" means when the caller is not a container: exactly where
 .CW fdtochan
 was going to look anyway.
 .PP
-rio still has no window.  With
+.PP
+.B "3.2q: a window, and a descriptor table that was one table too few."
+With exec answered,
 .CW -k
-its
+got as far as having the window's own 9P channel closed under it, and
+the reason was the same shape as everything else in this section: a
+thing that has to be per-something was per-something-larger.
+.PP
 .CW winshell
-now gets further and the window's own 9P channel is closed under it
-before procexec is reached, which is the next thing to find.  rio runs
-plain in the boot, because a window that is taken down again is not a
-window and the boot should not claim one.
+begins by closing the server end of the pipe its file server reads.
+That is safe on Plan 9 exactly because winshell rforked
+.CW RFFDG
+first, so the close is to its own copy.  The personality-side table was
+per-flow already \- that was built two sections ago \- but
+.CW p9crt.c 's
+is the program's own numbering, and it was one array for the whole
+program.  So the close freed the number in every flow of rio at once,
+and rio's file server, reading the descriptor it still thought it had,
+got end of file on its own channel and shut the window system down.
+.PP
+The table is per-flow now, and the word that says which one is a
+.CW privalloc (2)
+word \- the one mechanism here for something a flow has of its own,
+whose contents the scheduler swaps at every switch.  Nil means the
+program's table, so a flow that never rforked and a flow made after
+another one did both share, which is right.
+.PP
+Two things about that were found by the boot rather than by reading.
+.PP
+.CW privalloc
+hands out a word and never takes one back, and claiming one at every
+program's start spent them all on programs that never rfork \- so the
+ones that did were refused, and fifteen criteria failed.  It is claimed
+when a flow first asks for a table of its own and not before.
+.PP
+And
+.CW RFCFDG
+empties the table, which silenced the program that was reporting on it.
+The machine's console is not a descriptor here: it is the one trap a
+loaded program makes, reachable whether or not the program has a
+descriptor table at all.  So it survives an emptying, and a program that
+empties its table can still say that it did \- which on Plan 9 it could
+not, because there the console is a descriptor like any other.  That is
+a difference from Plan 9 and it is written down rather than smoothed
+over.
+.PP
+One more, and it is the one that made the window a window.
+.CW fdnew
+allocated from 3 upwards, keeping the standard descriptors out of the
+way.  A Plan 9 program does not expect that:
+.CW winshell
+closes 0 and opens
+.CW /dev/cons
+expecting the window to become its standard input, closes 1 and opens it
+again for output, and never looks at the numbers it got.  Starting at 3
+handed it 3 and 4 and left 0 and 1 as the machine's console, so the
+shell rio then started read and wrote the console instead of the window.
+It allocates the lowest free number now, which is what
+.CW open (2)
+answers.
+.PP
+So: rio allocates a window over the bottom third of the screen, hands it
+to
+.CW winshell ,
+which rforks a name space, an environment and a descriptor table of its
+own, mounts its own wsys, opens the window's
+.CW /dev/cons
+twice, renames itself through
+.CW /proc/<n>/args
+and execs
+.CW /bin/rc
+\- which is spawn here, and which the personality lays in a slot as
+.CW "/bin/rc runs as 133 at 0x3000000, with its own descriptor table (0 1 -1)" .
+Those two numbers are the window.  The shell's own complaint about the
+arguments rio gave it goes into the window rather than to the console,
+which is how the log shows it arrived.
+.PP
+The screen is still the background alone, and that is the state rather
+than a fault: a
+.CW -k
+window is allocated
+.CW DNofill
+and nothing has drawn in it at the moment the screendump is taken.  What
+would draw in it is the shell, and the shell rio starts is
+.CW /boot/libsh
+under the name
+.CW /bin/rc ,
+which does not understand the
+.CW -c
+that rio passes it.  That is the next thing.
 .PP
 The second was the probe itself, and it is the plainest lesson here.
 .CW p9open

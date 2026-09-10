@@ -81,6 +81,7 @@ extern void startboot(char *argv0, char **argv);
  * descriptor table below included, comes after it.
  */
 static void fdinit(int *std);
+static void **fdpriv;		/* this flow's descriptor table, or nil for the program's */
 static int fdof(int fd);
 static int fdnew(int pfd);
 
@@ -132,8 +133,66 @@ enum {
 	Nfd	= 32,
 	Fdfree	= -1,
 	Fdcons	= -2,
+	Nfdtab	= 8,		/* flows that may have a table of their own */
 };
+
+/*
+ * The program's own table, shared by every flow of control it has -
+ * which is what rfork without RFFDG means, and what a second flow made
+ * by proccreate gets.
+ *
+ * A flow that rforks RFFDG or RFCFDG gets one of its own, and that is
+ * not a nicety.  This numbering is the program's, not the
+ * personality's, so one array for the whole program meant a close in
+ * one flow freed the number in every flow - and rio's winshell begins
+ * by closing the server end of the pipe its file server is reading,
+ * which is safe on Plan 9 precisely because it rforked first.  Here it
+ * took the number out from under rio's own file server, which then read
+ * end of file on its own channel and shut the window system down.  The
+ * personality-side table was already per-flow by then; this is the
+ * program-side half of the same thing.
+ *
+ * The word that says which table is a privalloc(2) word, which is the
+ * one mechanism here for something a flow has of its own: the
+ * personality swaps its contents at every switch.  Nil means the
+ * program's, so a flow that never rforked, and one made after this one
+ * did, both share - which is right.
+ */
 static int fdmap[Nfd];
+static int fdpool[Nfdtab][Nfd];
+static int fdpoolused[Nfdtab];
+
+static int*
+fdtab(void)
+{
+	if(fdpriv != nil && *fdpriv != nil)
+		return (int*)*fdpriv;
+	return fdmap;
+}
+
+static void
+fdtabfree(int *t)
+{
+	int i;
+
+	for(i = 0; i < Nfdtab; i++)
+		if(fdpool[i] == t)
+			fdpoolused[i] = 0;
+}
+
+/* a table for a flow that is about to have one of its own */
+static int*
+fdtabnew(void)
+{
+	int i;
+
+	for(i = 0; i < Nfdtab; i++)
+		if(!fdpoolused[i]){
+			fdpoolused[i] = 1;
+			return fdpool[i];
+		}
+	return nil;
+}
 
 static void
 fdinit(int *std)
@@ -152,20 +211,33 @@ fdof(int fd)
 {
 	if(fd < 0 || fd >= Nfd)
 		return Fdfree;
-	return fdmap[fd];
+	return fdtab()[fd];
 }
 
 /* a program number for a personality descriptor just opened */
 static int
 fdnew(int pfd)
 {
+	int *t;
 	int i;
 
 	if(pfd < 0)
 		return -1;
-	for(i = 3; i < Nfd; i++)
-		if(fdmap[i] == Fdfree){
-			fdmap[i] = pfd;
+	/*
+	 * The lowest free number, which is what open(2) answers and
+	 * includes 0, 1 and 2 once a program has closed them.  This
+	 * started at 3, to keep the standard descriptors out of the way,
+	 * and that is not what a Plan 9 program expects: rio's winshell
+	 * closes 0 and opens /dev/cons expecting the window to become its
+	 * standard input, closes 1 and opens it again for output, and does
+	 * not look at what number it got.  Starting at 3 handed it 3 and 4
+	 * and left 0 and 1 as the machine's console, so the shell rio then
+	 * started read and wrote the console instead of the window.
+	 */
+	t = fdtab();
+	for(i = 0; i < Nfd; i++)
+		if(t[i] == Fdfree){
+			t[i] = pfd;
 			return i;
 		}
 	p9lib->close(pfd);
@@ -478,7 +550,76 @@ await(char *buf, int n)
 int
 rfork(int flags)
 {
-	return p9lib->forkns(flags);
+	int *nt, *ot;
+	int i, r;
+
+	/*
+	 * The descriptor half is this program's to do, because this
+	 * numbering is this program's.  The table is taken before the
+	 * personality is asked, so that running out of tables refuses
+	 * before anything has changed rather than after.
+	 */
+	nt = nil;
+	if((flags & (RFFDG|RFCFDG)) != 0){
+		char e[ERRMAX];
+
+		/*
+		 * The word that says which table this flow is using, claimed
+		 * when a flow first asks for a table of its own and not
+		 * before.  privalloc(2) hands out a word and never takes one
+		 * back - the personality has a fixed block of them for the
+		 * whole boot - so claiming one at every program's start spent
+		 * them all on programs that never rfork, and the ones that
+		 * did were refused.  That cost fifteen criteria and was found
+		 * the same way everything else here was: by the boot.
+		 */
+		if(fdpriv == nil){
+			fdpriv = p9lib->privalloc();
+			if(fdpriv == nil){
+				snprint(e, sizeof e,
+					"rfork: the personality has no private word left "
+					"for a descriptor table");
+				errstr(e, sizeof e);
+				return -1;
+			}
+			*fdpriv = nil;
+		}
+		if((nt = fdtabnew()) == nil){
+			snprint(e, sizeof e, "rfork: all %d descriptor tables of mine are taken",
+				Nfdtab);
+			errstr(e, sizeof e);
+			return -1;
+		}
+	}
+	r = p9lib->forkns(flags);
+	if(r < 0){
+		if(nt != nil)
+			fdtabfree(nt);
+		return r;
+	}
+	if(nt != nil){
+		ot = fdtab();
+		for(i = 0; i < Nfd; i++){
+			if((flags & RFFDG) != 0)
+				nt[i] = ot[i];
+			else
+				/*
+				 * RFCFDG empties the table, and the machine's
+				 * console is not in it: Fdcons is not a
+				 * descriptor of the personality's, it is the
+				 * one trap a loaded program makes, and it is
+				 * reachable whether or not the program has a
+				 * descriptor table at all.  So it survives,
+				 * and a program that empties its table can
+				 * still say that it did - which on Plan 9 it
+				 * could not, because there the console is a
+				 * descriptor like any other.
+				 */
+				nt[i] = ot[i] == Fdcons ? Fdcons : Fdfree;
+		}
+		*fdpriv = nt;
+	}
+	return r;
 }
 
 /*
@@ -503,7 +644,7 @@ close(int fd)
 		return -1;
 	if(pfd != Fdcons)
 		p9lib->close(pfd);
-	fdmap[fd] = Fdfree;
+	fdtab()[fd] = Fdfree;
 	return 0;
 }
 
@@ -536,9 +677,11 @@ dup(int oldfd, int newfd)
 	if(pfd == Fdcons){
 		int i;
 
-		for(i = 3; i < Nfd; i++)
-			if(fdmap[i] == Fdfree){
-				fdmap[i] = Fdcons;
+		int *t = fdtab();
+
+		for(i = 0; i < Nfd; i++)
+			if(t[i] == Fdfree){
+				t[i] = Fdcons;
 				return i;
 			}
 		return -1;
