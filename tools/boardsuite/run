@@ -40,16 +40,16 @@ verbose=false
 record=false
 force=false
 
-configs='raspi3b raspi3b-4g raspi3b-usb raspi4 raspi4-hot raspi4-usb virtarm64 virtarm64-peer sifiveu virt virts virt32 virt32s virt-peer peer-mixed'
+configs='raspi3b raspi3b-4g raspi3b-usb raspi3b-2eth raspi4 raspi4-hot raspi4-usb raspi4-2eth virtarm64 virtarm64-peer sifiveu virt virts virt32 virt32s virt-peer peer-mixed'
 
 # Each configuration: the kernel, the QEMU arguments, the line that
 # says the board is done printing, and the evidence lines that make
 # this configuration worth running as well as the marker set.
 config_kernel() {
 	case $1 in
-	raspi3b|raspi3b-4g|raspi3b-usb)
+	raspi3b|raspi3b-4g|raspi3b-usb|raspi3b-2eth)
 				echo "$root/os/inferno/raspi3b/iraspi3b";;
-	raspi4|raspi4-hot|raspi4-usb)
+	raspi4|raspi4-hot|raspi4-usb|raspi4-2eth)
 				echo "$root/os/inferno/raspi4/iraspi4";;
 	virtarm64|virtarm64-peer)
 				echo "$root/os/inferno/virtarm64/ivirtarm64";;
@@ -88,6 +88,29 @@ config_args() {
 		echo "-M raspi3b -m 1G -drive file=$work/sd16.img,if=sd,format=raw";;
 	raspi3b-4g)
 		echo "-M raspi3b -m 1G -drive file=$work/sd4g.img,if=sd,format=raw";;
+	raspi4-2eth)
+		# The same two adapters on the Pi 4's xHCI rather than the
+		# Pi 3B's DWC2, so the pair is exercised on both of this
+		# tree's USB host controllers.  raspi4init takes the same
+		# change as raspi3binit; without this arm that half of it
+		# would be compiled and never run.
+		echo "-M raspi4b -m 2G -drive file=$work/sd16g.img,if=sd,format=raw -netdev user,id=n0 -device usb-lan9514,netdev=n0,mac=52:54:00:12:34:56 -netdev user,id=n1,net=10.0.3.0/24 -device usb-net,netdev=n1,mac=52:54:00:12:34:58";;
+	raspi3b-2eth)
+		# Two USB ethernets on one board: the Pi's own LAN9514 and
+		# a CDC ECM adapter, on separate SLIRP networks so the two
+		# interfaces cannot be confused for one.  Before this
+		# existed, usbd started an etherusb for each and both
+		# served a directory named "ether" mounted MREPL over
+		# /net.alt -- the second replaced the first, and a board
+		# with two adapters had one interface.
+		#
+		# n1 is 10.0.3.0/24 because a second interface on the same
+		# subnet in one stack is a routing question, not a driver
+		# one, and this configuration is about the driver.  The
+		# second interface is configured statically for the reason
+		# the init gives: one devip stack holds udp!*!68 once, and
+		# the first interface's DHCP proc has it for its lease.
+		echo "-M raspi3b -m 1G -drive file=$work/sd16f.img,if=sd,format=raw -netdev user,id=n0 -device usb-lan9514,netdev=n0,mac=52:54:00:12:34:56 -netdev user,id=n1,net=10.0.3.0/24 -device usb-net,netdev=n1,mac=52:54:00:12:34:58";;
 	raspi3b-usb)
 		# The richer run: a USB stick and the Pi's own network
 		# adapter.  doc/raspi3b-completion-plan.ms has described
@@ -292,6 +315,8 @@ config_last() {
 	# marker that made it last on every other Pi configuration is
 	# not last here.  The shell's is.
 	raspi3b-usb)		echo 'RASPI3B-SH-OK';;
+	raspi3b-2eth)		echo 'USB-MOUSE';;
+	raspi4-2eth)		echo 'USB-MOUSE';;
 	raspi4|raspi4-hot)	echo 'USB-MOUSE';;
 	raspi4-usb)		echo 'RASPI4-SH-OK';;
 	virtarm64|virtarm64-peer)	echo 'ROOT-CMDS-OK';;
@@ -312,6 +337,26 @@ config_evidence() {
 	raspi3b-4g)
 		echo 'from firmware clock 1'
 		echo 'csd v2';;
+	raspi4-2eth)
+		# The same two lines as raspi3b-2eth: what this arm adds
+		# is the controller underneath them.
+		echo 'ETHERUSB serving /net\.alt/ether mac 525400123456 \(SMSC LAN95xx'
+		echo 'ETHERUSB serving /net\.alt/ether1 mac 525400123458 \(CDC ECM'
+		echo 'ETHER2-ADDR-OK ip=10\.0\.3\.15 gw=10\.0\.3\.2';;
+	raspi3b-2eth)
+		echo 'from firmware clock 1'
+		# Both adapters, named apart, and the second one carrying
+		# traffic.  The MACs distinguish them, and the invocation
+		# names both rather than letting QEMU derive them from
+		# device order, so these lines check the kernel's report
+		# against something the command line states.  A run where
+		# one instance served both directories, or where the
+		# second replaced the first, cannot produce them together.
+		echo 'ETHERUSB serving /net\.alt/ether mac 525400123456 \(SMSC LAN95xx'
+		echo 'ETHERUSB serving /net\.alt/ether1 mac 525400123458 \(CDC ECM'
+		# And the second interface's own address, on a subnet the
+		# first one has no route to.
+		echo 'ETHER2-ADDR-OK ip=10\.0\.3\.15 gw=10\.0\.3\.2';;
 	raspi3b-usb)
 		echo 'from firmware clock 1'
 		# The markers alone cannot tell this configuration apart
@@ -510,6 +555,8 @@ config_card() {
 	raspi3b)	echo "sd16.img 16m";;
 	raspi3b-4g)	echo "sd4g.img 4g";;
 	raspi3b-usb)	echo "sd16d.img 16m";;
+	raspi3b-2eth)	echo "sd16f.img 16m";;
+	raspi4-2eth)	echo "sd16g.img 16m";;
 	raspi4)		echo "sd16b.img 16m";;
 	raspi4-hot)	echo "sd16c.img 16m";;
 	raspi4-usb)	echo "sd16e.img 16m";;

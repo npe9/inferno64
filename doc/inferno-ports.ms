@@ -21358,3 +21358,145 @@ that is being ignored.  Deleting the object as well grew the kernel by
 .CW .dis
 files \(em and the three arms then reported 41, 43 and 44 markers, their
 baselines, under a host running 21 competing emulators.
+.NH 1
+Two USB ethernets, and a wrong variable in a return
+.PP
+.CW doc/inferno-driver-plan.ms
+item 4 said a second
+.CW devip
+ethernet over USB "faults the Dis interpreter at
+.CW OP(movp) 's
+own first load", and filed it with the crash hunt rather than with the
+drivers.  It is neither.  It is two defects, one in a board's own
+plumbing and one in a library every Inferno program that takes an
+address by DHCP goes through, and the second is the one worth carrying
+away.
+.NH 2
+Two adapters, one name
+.PP
+.CW usbd
+starts an
+.CW etherusb
+per ethernet it recognises, and every instance served a directory
+called
+.CW ether
+and mounted it
+.CW MREPL
+over
+.CW /net.alt .
+With one adapter that is right.  With two, the second mount replaced
+the first, and the first instance went on running \(em reading its bulk
+endpoints, answering nothing \(em with no name left to reach it by.  The
+board had one interface however many were plugged in, and which one it
+had depended on which enumerated last.
+.PP
+.CW etherusb
+now takes
+.CW -i
+to name its directory, and
+.CW usbd
+gives the first ethernet
+.CW ether
+and numbers the rest.  The first keeps the old name deliberately: every
+board's init and every recorded baseline in the suite already says
+.CW /net.alt/ether ,
+and a rename would have churned five baselines to no purpose.  The
+mount is
+.CW MAFTER|MCREATE ,
+which is only useful because the names now differ.
+.NH 2
+A nil request and a nil error, returned together
+.PP
+With both adapters bound, the second interface panicked the kernel:
+.DS
+.CW "panic: movp: bad sv 0x0"
+.CW "unning Dis pid 1 module Dhcpclient PC 0x3d051d8 inst 927"
+.DE
+.CW resolve_sbl.py
+puts inst 926 at
+.CW dhcpclient.b:522 ,
+.CW "initopt := (Oparams, params) :: req.options;" ,
+and column 22 is
+.CW req .
+.CW req
+comes from
+.CW setup() ,
+four lines above, guarded by
+.CW "if(err != nil) return" .
+So
+.CW setup()
+had returned a nil request and a nil error together.  It had:
+.DS
+.CW "	(dfd, err2) := udpannounce(net);"
+.CW "	if(err2 != nil)"
+.CW "		return (nil, nil, err);"
+.DE
+.CW err ,
+not
+.CW err2 .
+.CW err
+is
+.CW gethaddr() 's,
+and
+.CW gethaddr()
+has already succeeded by the time control reaches that line, so it is
+reliably nil.  Both callers of
+.CW setup()
+\(em
+.CW dhcp()
+and
+.CW bootp()
+\(em test the error and nothing else, and the next thing either does is
+read a field off the request.  This is not board code and not new: any
+Inferno program whose
+.CW udpannounce
+fails takes the same nil dereference, and gets it as an interpreter
+panic in
+.CW OP(movp)
+rather than as the sentence
+.CW udpannounce
+already wrote.  Returning
+.CW err2
+turns the panic into
+.CW "ETHER2-DHCP-FAIL can't announce dhcp port: announce writing /net/udp/clone: address in use" ,
+which names the real problem in one line.
+.NH 2
+One stack, one DHCP client
+.PP
+That message is itself the answer to why the second interface cannot
+take an address by DHCP here.
+.CW devip
+in this kernel is one stack; the first interface's
+.CW dhcp1
+proc holds
+.CW udp!*!68
+for the life of its lease so it can renew, and a second announce on the
+same stack is refused.  Nothing is broken \(em it is what one port and
+one stack means.  The second interface is configured statically, on its
+own subnet, which still puts every packet through the second adapter's
+bulk endpoints.  That is what there was to prove about the driver; the
+routing question a second interface on the same subnet would raise is a
+different subject.
+.NH 2
+What runs
+.PP
+Two configurations,
+.CW raspi3b-2eth
+and
+.CW raspi4-2eth ,
+seventeen in the suite now.  Each boots its board with the Pi's own
+LAN9514 and QEMU's CDC ECM
+.CW usb-net ,
+on separate SLIRP networks, with both MACs named on the command line so
+the evidence lines check the kernel's report against something the
+invocation states.  Both report
+.CW ETHERBIND-OK ,
+.CW ETHER-DHCP-OK
+on the first and
+.CW ETHER2BIND-OK ,
+.CW ETHER2-ADDR-OK
+and three ICMP replies on the second.  The two boards do this over
+different host controllers \(em DWC2 on the Pi 3B, xHCI on the Pi 4 \(em
+so the pair is exercised on both of the controllers this tree has.
+The four single-adapter Pi configurations were re-run against the same
+binaries and report their recorded counts unchanged: 37, 41, 34 and 38.

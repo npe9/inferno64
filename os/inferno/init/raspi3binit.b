@@ -497,46 +497,102 @@ diskcheck()
 # user,id=n0 (SLIRP answers DHCP at 10.0.2.2).
 ethercheck()
 {
-	addr := "/net.alt/ether/addr";
-	for(i := 0; i < 100; i++){
+	etherone("ether", "ETHER", 100, nil, nil, nil);
+
+	# A second adapter, if there is one.  usbd names the first netif
+	# directory "ether" and the rest "ether1", "ether2", so a board
+	# with two USB ethernets now has two directories to bind rather
+	# than two instances fighting over one name.  The wait is short
+	# because the first call already waited out enumeration: either
+	# the second etherusb is up by now or there is no second adapter.
+	#
+	# Nothing is printed when there is no second one.  A -NONE here
+	# would appear on every board in the suite that has one adapter or
+	# none, which is five of them, and would say only that a device
+	# nobody plugged in is not present.
+	if(sys->open("/net.alt/ether1/addr", Sys->OREAD) != nil)
+		etherone("ether1", "ETHER2", 20, "10.0.3.15", "255.255.255.0", "10.0.3.2");
+}
+
+# One USB ethernet: wait for etherusb to serve it, bind it into devip
+# as its own interface, take an address by DHCP and ping the gateway.
+# The DHCP exchange crosses the USB link in both directions, so the
+# -DHCP-OK marker proves the whole path -- styx server, bulk in and
+# out, the DWC2 driver.  tag names the marker family so a second
+# adapter reports separately from the first.
+# ip nil means take an address by DHCP; an ip means configure it
+# statically.  The second interface has to be static: devip here is one
+# stack, the first interface's DHCP proc holds udp!*!68 for the life of
+# its lease so it can renew, and a second announce on the same stack
+# comes back "address in use".  One stack, one DHCP client.  A static
+# address on its own subnet still puts every packet through the second
+# adapter's bulk endpoints, which is what there is to prove.
+etherone(ifname, tag: string, tries: int, ip, mask, gw: string)
+{
+	dir := "/net.alt/" + ifname;
+	addr := dir + "/addr";
+	for(i := 0; i < tries; i++){
 		if(sys->open(addr, Sys->OREAD) != nil)
 			break;
 		sys->sleep(100);
 	}
 	if(sys->open(addr, Sys->OREAD) == nil){
-		sys->print("ETHER-NONE (no USB ethernet served at %s)\n", addr);
+		sys->print("%s-NONE (no USB ethernet served at %s)\n", tag, addr);
 		return;
 	}
 	sys->bind("#I", "/net", Sys->MAFTER);
 	cfd := sys->open("/net/ipifc/clone", Sys->ORDWR);
-	if(cfd == nil || sys->fprint(cfd, "bind ether /net.alt/ether") < 0){
-		sys->print("ETHER-FAIL bind ether: %r\n");
+	if(cfd == nil || sys->fprint(cfd, "bind ether %s", dir) < 0){
+		sys->print("%s-FAIL bind ether: %r\n", tag);
 		return;
 	}
-	sys->print("ETHERBIND-OK\n");
-	dhcpclient = load Dhcpclient Dhcpclient->PATH;
+	sys->print("%sBIND-OK\n", tag);
+	if(ip != nil){
+		if(sys->fprint(cfd, "add %s %s", ip, mask) < 0){
+			sys->print("%s-ADDR-FAIL add %s: %r\n", tag, ip);
+			return;
+		}
+		sys->print("%s-ADDR-OK ip=%s gw=%s\n", tag, ip, gw);
+		pingcheck(tag, gw);
+		return;
+	}
+	# Load and initialise once, not once per interface.  Limbo's load
+	# of a path already loaded gives back the same instance, module
+	# data and all, so a second init() on behalf of a second adapter
+	# resets globals the first interface's state still points into.
+	# That is what faulted here: with two adapters bound, the second
+	# call panicked the interpreter at OP(movp) reading a nil slot,
+	# "module Dhcpclient PC 0x3d051d8 inst 927".
 	if(dhcpclient == nil){
-		sys->print("ETHER-FAIL load dhcpclient: %r\n");
-		return;
+		dhcpclient = load Dhcpclient Dhcpclient->PATH;
+		if(dhcpclient == nil){
+			sys->print("%s-FAIL load dhcpclient: %r\n", tag);
+			return;
+		}
+		dhcpclient->init();
 	}
-	dhcpclient->init();
 	cfg := Bootconf.new();
 	lease: ref Lease;
 	err: string;
 	(cfg, lease, err) = dhcpclient->dhcp("/net", cfd, addr, cfg, nil);
 	if(err != nil || cfg == nil || cfg.ip == nil){
-		sys->print("ETHER-DHCP-FAIL %s\n", err);
+		sys->print("%s-DHCP-FAIL %s\n", tag, err);
 		return;
 	}
-	sys->print("ETHER-DHCP-OK ip=%s gw=%s\n", cfg.ip, cfg.ipgw);
+	sys->print("%s-DHCP-OK ip=%s gw=%s\n", tag, cfg.ip, cfg.ipgw);
+	pingcheck(tag, cfg.ipgw);
+	lease = nil;
+}
+
+pingcheck(tag, gw: string)
+{
 	ping := load Command "/dis/ip/ping.dis";
 	if(ping == nil){
-		sys->print("ETHER-PING-NONE load: %r\n");
+		sys->print("%s-PING-NONE load: %r\n", tag);
 		return;
 	}
-	ping->init(nil, "ping" :: "-n" :: "3" :: cfg.ipgw :: nil);
-	sys->print("ETHER-PING-DONE\n");
-	lease = nil;
+	ping->init(nil, "ping" :: "-n" :: "3" :: gw :: nil);
+	sys->print("%s-PING-DONE\n", tag);
 }
 
 # Phase 2's other half: a boot-protocol USB mouse, through usbd's HID

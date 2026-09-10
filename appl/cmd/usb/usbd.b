@@ -441,6 +441,16 @@ etherprobe(d: ref Dev): int
 	return 0;
 }
 
+# Each ethernet gets its own directory under ETHERMNT.  The first is
+# "ether", because that is the name every board's init and every
+# recorded marker already uses; the rest are "ether1", "ether2" and so
+# on.  Before this, a machine with two USB ethernets started two
+# etherusb instances that both served "ether" and both mounted MREPL
+# over the same point: the second won, the first went on running with
+# nothing able to reach it, and the board had one interface no matter
+# how many adapters were plugged in.
+nether := 0;
+
 etherstart(d: ref Dev)
 {
 	eth := load Command ETHERUSB;
@@ -448,11 +458,16 @@ etherstart(d: ref Dev)
 		sys->fprint(sys->fildes(2), "usbd: %s: load %s: %r\n", d.name, ETHERUSB);
 		return;
 	}
+	ifname := "ether";
+	if(nether > 0)
+		ifname = "ether" + string nether;
+	nether++;
 	# the driver reopens ep0's data file for its own control transfers;
 	# the kernel allows one open of an endpoint, so let go of ours
 	d.dfd = nil;
-	sys->print("usbd: %s: ethernet, starting etherusb\n", d.name);
-	spawn eth->init(nil, "etherusb" :: "-m" :: ETHERMNT :: d.name :: nil);
+	sys->print("usbd: %s: ethernet, starting etherusb as %s\n", d.name, ifname);
+	spawn eth->init(nil, "etherusb" :: "-m" :: ETHERMNT ::
+		"-i" :: ifname :: d.name :: nil);
 }
 
 #

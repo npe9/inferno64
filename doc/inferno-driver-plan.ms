@@ -760,22 +760,36 @@ guard never fired, because it checks the value it read and this
 faulted reading it.  That is the same family as the interpreter crash
 hunt written up at length in
 .CW doc/inferno-ports.ms ,
-and it is in the interpreter rather than in any driver.  It is timing-dependent: the same kernel
-booted by hand without the disk and the host rig did not get as far as
-serving
-.CW /net.alt/ether
-at all.  Chasing it means either bisecting Limbo across
-.CW dhcpclient ,
-.CW etherusb
+and it is in the interpreter rather than in any driver.
+.PP
+That was wrong, and the
+.CW tval
+above is what says so.  0x6f is not a random slot: it is the address
+.CW OP(movp)
+computes for
+.CW req
+in
+.CW dhcpclient.b:522 ,
 and
-.CW styxservers ,
-or fixing the larger thing underneath \(em that a nil dereference in
-Limbo faults a native kernel where it ought to raise an exception.  The
-driver itself is not what is blocked here: the ECM path works, and the
-SMSC path takes a DHCP lease on two Pi configurations every run.  What
-is blocked is a second
-.CW devip
-ethernet on a board that already has one.
+.CW req
+is nil there because
+.CW setup()
+returns
+.CW err
+where it means
+.CW err2
+and hands back a nil request with a nil error.  Not timing, not the
+interpreter, not a driver: a wrong variable in a return, in a library
+every caller of
+.CW dhcp()
+or
+.CW bootp()
+goes through.  It reached the interpreter as a fault because a nil
+dereference in Limbo does fault a native kernel where it ought to
+raise \(em that part stands, and is still worth fixing \(em but it was
+never what made this configuration fail.  Item 4 below, and
+.CW doc/inferno-ports.ms ,
+have the whole of it.
 .IP \(bu
 SPI is now real on the one SoC board the tree boots with a modelled
 bus: QEMU's
@@ -1329,8 +1343,8 @@ The QEMU-tractable part of this plan is done.  Items 1 through 5 are
 finished and in the board suite \(em USB mass storage, virtio-gpu 2-D,
 PCI on arm64, S-mode and SBI and the device tree on riscv \(em and item
 6 is finished as far as anything on this machine can take it.  Six
-things remain, and none of them is waiting on a decision or on more of
-the same work.  Each is here with the reason it stops, so that a reader
+things remain \(em five now, with item 4 done \(em and none of them is
+waiting on a decision or on more of the same work.  Each is here with the reason it stops, so that a reader
 who has hardware, or a QEMU built differently, knows exactly which one
 they have unblocked.
 .IP 1.
@@ -1465,17 +1479,61 @@ at all, and this tree's own patched build is aarch64 only and
 configured without it.  The 2-D path is done and in the suite.
 .IP 4.
 .B "A second devip ethernet over USB."
-The controller and the enumeration are real \(em xHCI is found, the CDC
-ECM device enumerates,
+.B DONE ,
+and it was neither a crash-hunt item nor a driver one.  Two adapters
+enumerated and
+.CW usbd
+started an
 .CW etherusb
-serves it, and
+for each, but both served a directory named
+.CW ether
+and mounted it
+.CW MREPL
+over
+.CW /net.alt ,
+so the second replaced the first and the board had one interface
+whatever was plugged in.
+.CW etherusb
+takes
+.CW -i
+now and
+.CW usbd
+numbers them.
+.PP
+The fault behind the interpreter panic was in
+.CW appl/lib/dhcpclient.b ,
+not in a board:
+.CW setup()
+returned
+.CW err
+where it meant
+.CW err2
+when
+.CW udpannounce()
+failed, and
+.CW err
+is reliably nil there, so the caller got a nil request together with a
+nil error and read a field off it.
+.CW dhcp()
+and
+.CW bootp()
+both go through
+.CW setup() ,
+so every Inferno program that takes an address by DHCP inherits it.
+With the right variable returned, the panic becomes
+.CW "can't announce dhcp port: ... address in use" .
+One
 .CW devip
-binds it \(em and the step after that faults the Dis interpreter at
-.CW OP(movp) 's
-own first load.  It is in the crash-hunt family described in
-.CW doc/inferno-ports.ms ,
-not in a driver, and the USB-Ethernet driver itself works on both its
-paths.
+stack holds
+.CW udp!*!68
+once, and the first interface's lease has it.  The second interface
+takes a static address on its own subnet and pings its gateway, which
+still crosses the second adapter's bulk endpoints.
+.CW raspi3b-2eth
+and
+.CW raspi4-2eth
+run it on both host controllers, DWC2 and xHCI.  See
+.CW doc/inferno-ports.ms .
 .IP 5.
 .B "The ASIX and Realtek USB dongles."
 No QEMU machine this tree boots models either chip, so they would need

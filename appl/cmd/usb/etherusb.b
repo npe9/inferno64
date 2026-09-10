@@ -63,8 +63,9 @@ Etherusb: module {
 # qid paths.  The served tree is mounted at an existing directory, but
 # chandial's dial-string parser rejects a single-component path (the '/'
 # must not be at position 0), so the ethernet interface itself is one
-# level down: root -> "ether" dir -> clone/addr/N.  bind is
-# "ether <mnt>/ether".  conversation n occupies three consecutive paths
+# level down: root -> the interface dir -> clone/addr/N.  bind is
+# "ether <mnt>/<ifname>", where <ifname> is "ether" unless -i names
+# another.  conversation n occupies three consecutive paths
 # from Cbase + n*3 (dir, ctl, data).
 Qroot, Qether, Qclone, Qaddr: con big iota;
 Cbase: con big 16;
@@ -167,6 +168,12 @@ init(nil: ref Draw->Context, argv: list of string)
 	nametree->init();
 
 	mnt := "/net.alt";
+	# The name of the netif directory this instance serves.  It is an
+	# argument because a machine can have more than one USB ethernet:
+	# two instances both serving "ether" under the same mount point can
+	# never both be reached, whatever the mount flag.  usbd names the
+	# first one "ether" and numbers the rest.
+	ifname := "ether";
 	devname: string;
 	macarg: string;
 	for(argv = tl argv; argv != nil; argv = tl argv){
@@ -176,6 +183,9 @@ init(nil: ref Draw->Context, argv: list of string)
 		else if(a == "-m" && tl argv != nil){
 			argv = tl argv;
 			mnt = hd argv;
+		} else if(a == "-i" && tl argv != nil){
+			argv = tl argv;
+			ifname = hd argv;
 		} else if(a == "-a" && tl argv != nil){
 			argv = tl argv;
 			macarg = hd argv;
@@ -214,7 +224,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	(tchan, srv) = Styxserver.new(p[0], nav, Qroot);
 
 	tree.create(Qroot, dir(".", Sys->DMDIR|8r555, Qroot));
-	tree.create(Qroot, dir("ether", Sys->DMDIR|8r555, Qether));
+	tree.create(Qroot, dir(ifname, Sys->DMDIR|8r555, Qether));
 	tree.create(Qether, dir("clone", 8r666, Qclone));
 	tree.create(Qether, dir("addr", 8r444, Qaddr));
 
@@ -230,12 +240,17 @@ init(nil: ref Draw->Context, argv: list of string)
 	# already be running or mount deadlocks.
 	spawn server(tchan, rxc);
 
-	if(sys->mount(p[1], nil, mnt, Sys->MREPL, "") < 0){
+	# MAFTER, not MREPL.  MREPL was right while one adapter was the
+	# most a board could have; with two, the second instance's mount
+	# replaced the first and the first became unreachable while its
+	# procs went on running.  A union keeps both directories visible,
+	# which is only useful because they now have different names.
+	if(sys->mount(p[1], nil, mnt, Sys->MAFTER|Sys->MCREATE, "") < 0){
 		sys->print("etherusb: mount %s: %r\n", mnt);
 		return;
 	}
 	p[1] = nil;
-	sys->print("ETHERUSB serving %s/ether mac %s %s\n", mnt, macstr(), kindname());
+	sys->print("ETHERUSB serving %s/%s mac %s %s\n", mnt, ifname, macstr(), kindname());
 
 	# keep the process alive so the server and transfer procs keep running
 	c := chan of int;

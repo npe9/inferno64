@@ -472,7 +472,15 @@ setup(net: string, device: string, init: ref Bootconf): (ref Dhcp, ref DhcpIO, s
 	}
 	(dfd, err2) := udpannounce(net);
 	if(err2 != nil)
-		return (nil, nil, err);
+		# err2, not err.  err is gethaddr()'s, and gethaddr has
+		# already succeeded by this point, so returning it gave the
+		# caller a nil request and a nil error together: dhcp() and
+		# bootp() both test only the error, and the next thing
+		# either does is read req.options off the nil.  That is not
+		# a Limbo-level nil check away from working -- it panicked
+		# the interpreter in OP(movp), which is a much longer walk
+		# from the cause than "udpannounce failed" would have been.
+		return (nil, nil, err2);
 	bootfile: string;
 	options: array of array of byte;
 	if(init != nil){
