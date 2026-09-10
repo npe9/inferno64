@@ -164,5 +164,25 @@ struct
 #define	MACHP(n)	((Mach*)(void*)&mach0)
 
 extern Mach mach0;
-extern Mach *m;
-extern Proc *up;
+
+/*
+ * m and up are registers rather than globals, which is what makes them
+ * per-processor at all: on a machine with more than one processor
+ * every one of them needs its own "which Mach am I" and "which Proc am
+ * I running", and a global has exactly one of each.  7c reserves R27
+ * and R26 for this (REGEXT and REGEXT-1 in utils/7c/7.out.h) and never
+ * allocates them for anything else, in any translation unit, whether
+ * or not it has seen this declaration -- so libinterp, libsec and the
+ * rest, none of which include this header, are unaffected.
+ *
+ * The order of these two lines is the register assignment: 7c's
+ * exreg() hands out registers counting down from REGEXT, so the first
+ * extern register it sees gets R27.  m must stay first, and nothing
+ * earlier on the include path may declare another one, or m would be
+ * R27 in one file and R26 in another with nothing to say so.
+ *
+ * l.s must keep them: _main loads R27 before calling main(), and the
+ * trap path saves and restores both as UR_R27 and UR_R26.
+ */
+extern register Mach* m;			/* R27 */
+extern register Proc* up;			/* R26 */

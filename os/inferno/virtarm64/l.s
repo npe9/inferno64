@@ -123,6 +123,14 @@ TEXT	_main(SB), 1, $-4
 	 * branch-folding pass.
 	 */
 	MOV	$setSB(SB), R28
+	/*
+	 * m and up are extern registers (see dat.h): R27 and R26.  The
+	 * first C code to run reads m->, so R27 must point at a Mach
+	 * before main() is called rather than inside it, and up must be
+	 * nil rather than whatever the firmware left.
+	 */
+	MOV	$mach0(SB), R27
+	MOV	$0, R26
 	MOV	R0, dtbptr(SB)		/* x0 holds the DTB physical address at boot */
 	/*
 	 * x1 is reserved zero by the AArch64 Linux boot protocol, which
