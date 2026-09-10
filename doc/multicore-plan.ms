@@ -2383,11 +2383,28 @@ appends through
 .CW up->qnext
 and sleeps the process, so every entry must be in
 .CW Queueing ;
-the check is silent) and counts the waiters.  On virtarm64 it reaches
-3.  So at the moment the scheduler looks, as many as three interpreters
-are queued behind the one global lock \(em which is what a per-executor
-register file would release, and a stronger claim than "one was
-waiting".
+the check is silent) and counts the waiters.
+.PP
+Over 192 pc64 boots at
+.CW "-smp 2"
+the deepest queue seen in a boot is never less than four:
+.TS
+box, tab(;);
+l l.
+deepest vm-lock queue in the boot;boots
+_
+4;123
+5;61
+6;8
+.TE
+.PP
+So at the moment the scheduler looks, between four and six interpreters
+are stacked behind the one global lock.  That is the number that says
+what the serialisation costs \(em not the duty cycle, which says only
+that someone was waiting, but the depth, which says how many runnable
+interpreters a second context would have to draw from.  Six on a
+two-processor guest is more than the two processors could absorb, which
+means the ceiling here is the lock and not the hardware.
 .PP
 At the median, three quarters of scheduler passes are taken with a
 runnable interpreter blocked.  That is the justification for Phase 1b
