@@ -192,8 +192,33 @@ because the dedup already makes that harmless.
 
 **What is left here:** a way to review the screen rather than the
 announcements — reading a window's contents without moving the keyboard
-— which is a different mechanism again. And nothing announces a
-scrollbar's position or a selection changing.
+— which is a different mechanism again. Nothing announces a scrollbar's
+position either, though what it should say is not obvious: paging moves
+the view and not the cursor, and inventing a behaviour there would be
+guessing.
+
+### And one gap that is not an announcement gap at all
+
+Looking for the next thing to announce turned up something else. **The
+`text` widget has no keyboard selection.** Its binding table has
+`Left`, `Right`, `Up`, `Down`, `Home`, `End` and the emacs equivalents,
+and nothing shifted; selecting is mouse-only, and `brutus` is the only
+program that selects at all — from its own code, by adding the `sel` tag.
+
+So a person who cannot use a mouse cannot select text, which is a
+usability gap before it is an accessibility one: no copy, no cut, no
+replace-a-region.
+
+**It cannot be fixed in `libtk`.** A shifted arrow is not distinguishable
+from an arrow by the time Tk sees it. `Shift` in `keyboard.m` is a
+*shifter key* — `LShift`, `RShift` arrive as key presses of their own —
+and `keyDown` in `win-cocoa.m` drops `modifierFlags` except to swallow
+Cmd chords. There is no modifier bit riding on the arrow to bind against.
+
+So this is platform work first: carry the modifier through the key path,
+which is the same file and the same function as the `NSTextInputClient`
+item in section 2, and a good argument for doing them together. Only then
+is `{TkKey|Shift|Left}` a thing that could exist.
 
 ## 2. Text input
 
