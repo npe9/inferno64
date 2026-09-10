@@ -283,6 +283,7 @@ init(nil: ref Draw->Context, nil: list of string)
 
 	checkdefault();
 	checklayout();
+	checkplaintitle();
 	checktheme();
 	checknotebook();
 	checkvoice();
@@ -616,6 +617,33 @@ shown(top: ref Tk->Toplevel, nb: ref Notebook): string
 		if(tk->cmd(top, "winfo manager " + nb.page(i)) != "")
 			o += string i;
 	return o;
+}
+
+# A window without a titlebar has no .Wm_t.title, and asking a widget
+# that is not there for its text is an error that tkclient(2) reports on
+# standard error - which is what wm/logon printed on every focus until
+# the call that did it was removed.  titlebar(2)'s own accessor checks
+# first, and tkclient uses it now, so this pins that contract.
+checkplaintitle()
+{
+	if(titlebar == nil){
+		sys->print("     no titlebar module; not checked\n");
+		return;
+	}
+	blank();
+	bare := offscreen();
+	if(bare == nil)
+		return;
+	# no titlebar->new at all: the shape of a Plain window
+	got := titlebar->title(bare);
+	report(got == nil, sys->sprint(
+		"asking a window with no titlebar for its title gives nothing (%#q)",
+		got));
+
+	# and the raw query, which is what the removed code did, is an error
+	raw := tk->cmd(bare, ".Wm_t.title cget -text");
+	report(len raw > 0 && raw[0] == '!', sys->sprint(
+		"where asking the widget directly is an error (%#q)", raw));
 }
 
 # The window system's colours moved out of titlebar.b into wmtheme(2).

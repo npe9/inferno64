@@ -234,7 +234,14 @@ wmctl(top: ref Tk->Toplevel, req: string): string
 	"task" =>
 		(r, nil) := splitqword(req, next);
 		if(r.t0 == r.t1) {
-			title := cmd(top, ".Wm_t.title cget -text");
+			# titlebar(2)'s accessor, which checks the widget is
+			# there.  Asking for it directly is what printed
+			# "bad window path .Wm_t.title" out of wm/logon on
+			# every focus: a Plain window has no titlebar, and
+			# cmd() reports every error to standard error.
+			title := "";
+			if(titlebar != nil)
+				title = titlebar->title(top);
 			ip := geticon(top);
 			if(ip != "")
 				req = sys->sprint("task %q %q", title, ip);
