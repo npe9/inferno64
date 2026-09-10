@@ -31,7 +31,27 @@
 #define	PHYSDRAM	((uintptr)0x40000000)
 #define	DRAMSIZE	(256*1024*1024)		/* matches -m 256 */
 #define	KZERO		PHYSDRAM
-#define	KTZERO		PHYSDRAM
+/*
+ * The kernel links 2MB above the base of RAM, and the gap is not
+ * spare: it is where QEMU puts the device tree.  hw/arm/boot.c's
+ * arm_setup_direct_kernel_boot() loads an ELF -kernel and then, only
+ * if "image_low_addr > loader_start || image_high_addr <
+ * loader_start", sets info->dtb_start = info->loader_start and writes
+ * the generated tree there.  Linking at exactly loader_start
+ * (0x40000000 on -M virt) makes that test false, so no tree is
+ * written anywhere -- which is why this board read no device tree for
+ * as long as KTZERO was PHYSDRAM.  x0 is still 0 on the ELF entry
+ * path (QEMU only fills the arg pointer for a Linux-format image), so
+ * the tree is found at PHYSDRAM by its magic, not by a handed-over
+ * pointer.  QEMU's virt tree is 0x100000 bytes; 2MB leaves room and
+ * keeps the kernel 2MB-aligned.
+ *
+ * Nothing else has to move: the MMU is off (mmu.c), so this is a pure
+ * relink, and confinit() starts conf.base0 at PGROUND(end), so the
+ * gap below the kernel is never in the allocator's pool and the tree
+ * stays readable for the life of the boot.
+ */
+#define	KTZERO		(PHYSDRAM+0x200000)
 
 /* pl011@9000000, same as armv7's own board (same QEMU virt machine) */
 #define	UART0		((uintptr)0x09000000)
@@ -57,7 +77,13 @@
 #define	VIRTIO_SIZE	0x200
 #define	VIRTIO_NDEV	32
 
-/* Mach struct above typical kernel image */
+/*
+ * Vestigial: unlike the pc port, where dat.h defines up as
+ * ((Mach*)MACHADDR)->externup, this board's m and up are plain
+ * globals (main.c) and mach0 is a GLOBL in l.s.  Nothing reads this,
+ * which is just as well -- the kernel image has long since grown past
+ * PHYSDRAM+0x100000.
+ */
 #define	MACHADDR	(PHYSDRAM+0x100000)
 #define	USTKTOP		(PHYSDRAM+DRAMSIZE)
 

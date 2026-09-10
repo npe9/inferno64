@@ -122,11 +122,21 @@ TEXT	_main(SB), 1, $-4
 	 * branch-folding pass.
 	 */
 	MOV	$setSB(SB), R28
-	MOV	R0, dtbptr(SB)		/* x0 holds the DTB physical address at boot */
+	MOV	R0, dtbptr(SB)		/* x0 would hold the DTB address; 0 on QEMU's ELF path */
 	BL	main(SB)
 dead:
 	B	dead
 
+/*
+ * dtbptr must live in the data segment, not BSS: main()'s first act is
+ * to zero edata..end, which would wipe anything stored here on the way
+ * in.  A DATA directive gives it an initialised home that the clear
+ * does not reach.  (It has been zero on this board either way, since
+ * QEMU's ELF -kernel path leaves x0 at 0 -- but main() now falls back
+ * to finding the tree by magic at PHYSDRAM, and a board booted by a
+ * loader that does pass x0 must get the pointer through intact.)
+ */
+DATA	dtbptr+0(SB)/8, $0
 GLOBL	dtbptr(SB), $8
 GLOBL	stack(SB), $KSTACK
 GLOBL	mach0(SB), $(4*1024)

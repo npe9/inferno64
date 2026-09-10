@@ -328,3 +328,63 @@ fdtregmin(char *compat, uvlong *base, uvlong *size)
 		*size = f.size;
 	return 1;
 }
+
+typedef struct Findm Findm;
+struct Findm {
+	uvlong	base;
+	uvlong	size;
+	int	found;
+};
+
+/*
+ * /memory nodes are not found by compatible: they carry
+ * device_type = "memory" and no compatible property at all, so
+ * matchcompat walks straight past them.  Keep the lowest base seen
+ * and total the sizes of every bank at that base or above, which on
+ * a QEMU virt machine is the single bank -m gave it.
+ */
+static uintptr
+matchmem(char *name, uchar *props, int acells, int scells, void *a)
+{
+	Findm *f = a;
+	uchar *dv, *rv;
+	u32int dlen, rlen;
+	uvlong base, size;
+
+	USED(name);
+	dv = fdtprop(props, "device_type", &dlen);
+	if(dv == nil || dlen < 7 || strcmp((char*)dv, "memory") != 0)
+		return 0;
+	rv = fdtprop(props, "reg", &rlen);
+	if(rv == nil || rlen < (u32int)(acells+scells)*4)
+		return 0;
+	base = fdtbecells(rv, acells);
+	size = fdtbecells(rv + acells*4, scells);
+	if(size == 0)
+		return 0;
+	if(!f->found || base < f->base)
+		f->base = base;
+	f->size += size;
+	f->found = 1;
+	return 0;	/* keep walking: a board may have several banks */
+}
+
+/*
+ * The base and total size of RAM as the tree describes it.  Returns 1
+ * and fills *base/*size, else 0.
+ */
+int
+fdtmemory(uvlong *base, uvlong *size)
+{
+	Findm f;
+
+	memset(&f, 0, sizeof f);
+	fdtwalk(matchmem, &f);
+	if(!f.found)
+		return 0;
+	if(base != nil)
+		*base = f.base;
+	if(size != nil)
+		*size = f.size;
+	return 1;
+}

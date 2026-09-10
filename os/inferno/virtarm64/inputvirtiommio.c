@@ -11,6 +11,8 @@
 #include "dat.h"
 #include "fns.h"
 #include "io.h"
+
+extern uintptr virtiobase;
 #include "ureg.h"
 #include "../port/error.h"
 
@@ -589,7 +591,7 @@ mmioprobe1(int slot)
 	uintptr base;
 	u32int magic, vers, id, feat1, n;
 
-	base = VIRTIO0 + (uintptr)slot*VIRTIO_SIZE;
+	base = virtiobase + (uintptr)slot*VIRTIO_SIZE;	/* main.c: the tree's base, else VIRTIO0 */
 	magic = *(volatile u32int*)(base+Magic);
 	if(magic != VirtMagic)
 		return nil;

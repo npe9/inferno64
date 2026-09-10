@@ -64,6 +64,87 @@ halt(void)
 		idle();
 }
 
+/*
+ * The device tree.  QEMU's -M virt always generates one (hw/arm/boot.c
+ * have_dtb() is true because the machine sets info->get_dtb), but on
+ * the ELF -kernel path it neither passes the address in x0 nor writes
+ * the tree at all unless the kernel image leaves the base of RAM free.
+ * mem.h's KTZERO comment has the detail; the consequence here is that
+ * the tree is found by its magic at PHYSDRAM when x0 is empty.
+ */
+uintptr virtiobase = VIRTIO0;
+static int fdtfound;
+
+void
+fdtfind(void)
+{
+	extern void *dtbptr;
+	extern void fdtinit(void*);
+	extern int fdtvalid(void);
+	extern int fdtreg(char*, uvlong*, uvlong*);
+	extern int fdtregmin(char*, uvlong*, uvlong*);
+	extern void ecamsetbase(uvlong);
+	uvlong base, size;
+
+	fdtinit(dtbptr);
+	if(!fdtvalid())
+		fdtinit((void*)PHYSDRAM);
+	fdtfound = fdtvalid();
+	if(!fdtfound)
+		return;
+
+	/*
+	 * Drive what is already parameterised.  Each of these is a
+	 * variable rather than an inline constant precisely so a board
+	 * can set it at boot; a lookup that misses leaves the mem.h
+	 * default in place.  The GIC, the PL011 and the PCI memory
+	 * windows are still compiled-in constants used at many sites,
+	 * so fdtreport() prints what the tree says about them beside
+	 * what mem.h assumed, which is what would catch a machine whose
+	 * layout differs.
+	 */
+	if(fdtregmin("virtio,mmio", &base, &size) && base != 0)
+		virtiobase = (uintptr)base;	/* lowest slot; drivers scan up */
+	if(fdtreg("pci-host-ecam-generic", &base, &size) && base != 0)
+		ecamsetbase(base);
+}
+
+void
+fdtreport(void)
+{
+	extern int fdtreg(char*, uvlong*, uvlong*);
+	extern int fdtregmin(char*, uvlong*, uvlong*);
+	extern int fdtmemory(uvlong*, uvlong*);
+	uvlong base, size;
+
+	if(!fdtfound){
+		print("fdt: no device tree\n");
+		return;
+	}
+	print("fdt: tree at %#p\n", (uintptr)PHYSDRAM);
+	if(fdtmemory(&base, &size))
+		print("fdt: memory @ %#llux size %#llux (mem.h PHYSDRAM %#p DRAMSIZE %#p)\n",
+			base, size, (uintptr)PHYSDRAM, (uintptr)DRAMSIZE);
+	if(fdtreg("arm,pl011", &base, &size))
+		print("fdt: pl011 @ %#llux size %#llux (mem.h UART0 %#p)\n",
+			base, size, (uintptr)UART0);
+	if(fdtreg("arm,pl031", &base, &size))
+		print("fdt: pl031 @ %#llux (mem.h RTC0 %#p)\n", base, (uintptr)RTC0);
+	if(fdtreg("arm,cortex-a15-gic", &base, &size))
+		print("fdt: gicv2 dist @ %#llux (mem.h GICD %#p GICC %#p)\n",
+			base, (uintptr)GICD, (uintptr)GICC);
+	else if(fdtreg("arm,gic-v3", &base, &size))
+		print("fdt: gicv3 dist @ %#llux (mem.h GICD %#p GICR %#p)\n",
+			base, (uintptr)GICD, (uintptr)GICR);
+	if(fdtregmin("virtio,mmio", &base, &size))
+		print("fdt: virtio-mmio @ %#llux size %#llux, using %#p (mem.h VIRTIO0 %#p)\n",
+			base, size, virtiobase, (uintptr)VIRTIO0);
+	if(fdtreg("pci-host-ecam-generic", &base, &size))
+		print("fdt: pci ecam @ %#llux size %#llux (mem.h PCIECAM %#p PCIECAMSZ %#p)\n",
+			base, size, (uintptr)PCIECAM, (uintptr)PCIECAMSZ);
+	print("fdt: ok\n");
+}
+
 void
 confinit(void)
 {
@@ -106,6 +187,17 @@ main(void)
 
 	machinit();
 	archreset();
+	/*
+	 * Before everything, because the bases it sets are read by
+	 * drivers that chandevreset() brings up and because confinit()
+	 * is where memory sizing will go.  fdtfind() only reads memory
+	 * -- no hardware, no allocation, no print -- and every lookup
+	 * falls back to the mem.h constant, so a missing or unexpected
+	 * tree cannot hang the board: it boots exactly as it did when
+	 * it read no tree at all.  fdtreport() prints the findings
+	 * later, once print() works.
+	 */
+	fdtfind();
 	confinit();
 	fpinit();
 
@@ -132,14 +224,7 @@ main(void)
 	procinit();
 	links();
 	screeninit();
-	{
-		/* QEMU passes no DTB in x0 to a bare ELF via -kernel, so this
-		 * is inert here; correct if a future Image-header kernel gets
-		 * x0.  The reader (../port/fdt.c) is exercised on riscv. */
-		extern void *dtbptr;
-		extern void fdtinit(void*);
-		fdtinit(dtbptr);
-	}
+	fdtreport();
 	pciarchinit();
 	chandevreset();
 	uartconsolesetup();

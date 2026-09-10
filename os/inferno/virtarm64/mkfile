@@ -22,7 +22,7 @@ PORTDIR=../port
 # QEMU -M virt (64 bit), same address layout as armv7's own board
 # (verified via -machine dumpdtb regardless of -cpu cortex-a15 vs
 # cortex-a72 -- see mem.h); RAM starts at 0x40000000.
-KTZERO=0x40000000
+KTZERO=0x40200000	# see mem.h: the gap below is QEMU's device tree
 
 OBJ=\
 	l.$O\

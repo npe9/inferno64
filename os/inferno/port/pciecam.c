@@ -29,6 +29,16 @@ static Pcidev *pciroot;
  */
 static uvlong Ecambase = PCIECAM;
 
+/*
+ * A board that reads a device tree sets the window from it before
+ * pciinit(); boards that do not keep the mem.h constant above.
+ */
+void
+ecamsetbase(uvlong base)
+{
+	Ecambase = base;
+}
+
 static uintptr
 ecamaddr(int tbdf, int rno)
 {
