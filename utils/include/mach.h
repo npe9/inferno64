@@ -241,7 +241,11 @@ typedef struct Fhdr
 	uchar	type;		/* file type - see codes above */
 	uchar	hdrsz;		/* header size */
 	uchar	_magic;		/* _MAGIC() magic */
-	uchar	spare;
+	uchar	symwidth;	/* bytes per symbol value in the table:
+				 * 8 for an a.out with HDR_MAGIC, and for
+				 * riscv ELF because jl writes eight
+				 * regardless of header type, 4 otherwise.
+				 * Set by crackhdr; read by syminit. */
 	long	magic;		/* magic number */
 	uvlong	txtaddr;	/* text address */
 	vlong	txtoff;		/* start of text in file */

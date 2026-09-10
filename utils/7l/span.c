@@ -217,6 +217,19 @@ addpool(Prog *p, Adr *a)
 		t.to = *a;
 		break;
 
+	/*
+	 * $auto(SP) -- the address of a local -- has no encoding as a
+	 * pool word: what asmout's case 34 wants is the offset, which it
+	 * loads into REGTMP and adds SP to.  Without this the pool got
+	 * "DWORD ,$name-8(SP)" and asmout rejected it as an illegal
+	 * combination, which is what stopped os/inferno/boot/efi's
+	 * efi.c from linking for arm64 (&mapsize passed to eficall).
+	 */
+	case C_LACON:
+		t.to.type = D_CONST;
+		t.to.offset = instoffset;
+		break;
+
 	case C_PSAUTO:
 	case C_PPAUTO:
 	case C_UAUTO4K:
@@ -422,20 +435,34 @@ constclass(vlong l)
  * return the offset value to use in the instruction,
  * scaled if necessary
  */
+/*
+ * How far the scaled 12-bit unsigned form shifts an offset for class
+ * c: 0 for a byte access, 1 halfword, 2 word, 3 doubleword.  An offset
+ * that is not a multiple of that cannot use the scaled encoding at all
+ * -- see asmout's cases 20 and 21, which fall back to the unscaled
+ * 9-bit signed form.
+ */
+int
+offsetscale(int c)
+{
+	static int shifts[] = {0, 1, 2, 3, 4};
+
+	if(c >= C_SEXT1 && c <= C_SEXT16)
+		return shifts[c-C_SEXT1];
+	if(c >= C_UAUTO4K && c <= C_UAUTO64K)
+		return shifts[c-C_UAUTO4K];
+	if(c >= C_UOREG4K && c <= C_UOREG64K)
+		return shifts[c-C_UOREG4K];
+	return 0;
+}
+
 vlong
 offsetshift(vlong v, int c)
 {
 	vlong vs;
 	int s;
-	static int shifts[] = {0, 1, 2, 3, 4};
 
-	s = 0;
-	if(c >= C_SEXT1 && c <= C_SEXT16)
-		s = shifts[c-C_SEXT1];
-	else if(c >= C_UAUTO4K && c <= C_UAUTO64K)
-		s = shifts[c-C_UAUTO4K];
-	else if(c >= C_UOREG4K && c <= C_UOREG64K)
-		s = shifts[c-C_UOREG4K];
+	s = offsetscale(c);
 	vs = v>>s;
 	if(vs<<s != v)
 		diag("odd offset: %lld\n%P", v, curp);

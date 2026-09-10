@@ -194,8 +194,22 @@ execsyms(int fd)
 		error("Can't read header for %s", filename);
 		return;
 	}
-	if (syminit(fd, &f) < 0)
+	/*
+	 * Both of these used to return silently, so a kernel whose
+	 * symbol table libmach could not read printed nothing at all
+	 * and exited 0 -- indistinguishable from a stripped binary, and
+	 * it cost a session's worth of hand-written symbol readers
+	 * before anyone noticed nm was failing rather than answering.
+	 * Say which it is.
+	 */
+	if (syminit(fd, &f) < 0) {
+		error("%s: can't read symbol table: %r", filename);
 		return;
+	}
+	if (f.symsz == 0) {
+		error("%s: no symbol table (stripped?)", filename);
+		return;
+	}
 	s = symbase(&n);
 	nsym = 0;
 	while(n--)

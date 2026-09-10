@@ -334,7 +334,19 @@ asmout(Prog *p, Optab *o)
 		r = p->to.reg;
 		if(r == NREG)
 			r = o->param;
-		if(v < 0){	/* unscaled 9-bit signed */
+		/*
+		 * The scaled 12-bit form can only carry an offset that is a
+		 * multiple of the access width.  A small positive one that
+		 * is not -- an unaligned field of a packed on-disk structure,
+		 * which is where this first bit: os/inferno/boot/efi/iso.c
+		 * reading an ISO9660 directory record -- goes through the
+		 * unscaled 9-bit signed form, the same one a negative offset
+		 * already used.
+		 */
+		if(v < 0 || (v & ((1<<offsetscale(o->a3))-1)) != 0){
+			if(v < -256 || v > 255)
+				diag("offset %lld needs the scaled form but is not a multiple of %d\n%P",
+					v, 1<<offsetscale(o->a3), p);
 			o1 = olsr9s(opstr9(p->as), v, r, p->from.reg);
 		}else{
 			v = offsetshift(v, o->a3);
@@ -347,7 +359,10 @@ asmout(Prog *p, Optab *o)
 		r = p->from.reg;
 		if(r == NREG)
 			r = o->param;
-		if(v < 0){	/* unscaled 9-bit signed */
+		if(v < 0 || (v & ((1<<offsetscale(o->a1))-1)) != 0){	/* unscaled 9-bit signed */
+			if(v < -256 || v > 255)
+				diag("offset %lld needs the scaled form but is not a multiple of %d\n%P",
+					v, 1<<offsetscale(o->a1), p);
 			o1 = olsr9s(opldr9(p->as), v, r, p->to.reg);
 		}else{
 			v = offsetshift(v, o->a1);
@@ -1613,7 +1628,6 @@ omovlit(int as, Prog *p, Adr *a, int dr)
 
 	if(p->cond == nil){	/* not in literal pool */
 		aclass(a);
-fprint(2, "omovlit add %lld (%#llux)\n", instoffset, instoffset);
 		/* TO DO: could be clever, and use general constant builder */
 		o1 = opirr(AADD);
 		v = instoffset;

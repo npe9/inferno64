@@ -1,14 +1,26 @@
 typedef	struct	Exec	Exec;
+/*
+ * Every field here is a 32-bit big-endian word in the file: the
+ * loaders write them with lput(), four bytes at a time.  They were
+ * declared `long', which is 32 bits in a Plan 9 kernel and 64 on the
+ * hosts these tools are built on, so on a 64-bit host the struct was
+ * twice the width of the record it describes and every field after
+ * `magic' read the wrong four bytes.  That is what made libmach report
+ * symsz == 0 for every amd64 kernel -- it was reading the top half of
+ * the 64-bit entry record where `syms' should be -- so inm printed
+ * nothing and acid said "no symbol information".  See AGENTS.md on
+ * `long' is 32 bits.
+ */
 struct	Exec
 {
-	long	magic;		/* magic number */
-	long	text;	 	/* size of text segment */
-	long	data;	 	/* size of initialized data */
-	long	bss;	  	/* size of uninitialized data */
-	long	syms;	 	/* size of symbol table */
-	long	entry;	 	/* entry point */
-	long	spsz;		/* size of pc/sp offset table */
-	long	pcsz;		/* size of pc/line number table */
+	int	magic;		/* magic number */
+	int	text;	 	/* size of text segment */
+	int	data;	 	/* size of initialized data */
+	int	bss;	  	/* size of uninitialized data */
+	int	syms;	 	/* size of symbol table */
+	int	entry;	 	/* entry point */
+	int	spsz;		/* size of pc/sp offset table */
+	int	pcsz;		/* size of pc/line number table */
 };
 
 #define HDR_MAGIC	0x00008000		/* header expansion */
