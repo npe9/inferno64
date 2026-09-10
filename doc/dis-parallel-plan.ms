@@ -2172,3 +2172,67 @@ confirmed by this rather than changed.  What has moved is which half is
 outstanding: the collector's half is built and its assertion stayed
 silent through every parallel boot, while the register file's half is
 the one that faults.
+.NH 2
+Why Phase 1b is blocked, from having tried it
+.PP
+The obstacle is not the design, which is a page above and is right; it
+is that the interpreter cannot reach the per-executor storage the
+kernel already has.
+.PP
+.CW up
+is a register variable on both boards \(em R14 on amd64, R26 on arm64
+\(em so
+.CW "(Pctx*)up->pctx"
+is one load, and giving every
+.CW Proc
+a context in
+.CW newproc()
+makes it never nil.  That was implemented, and it does not compile:
+.P1
+xec.c:86 name not declared: up
+.P2
+libinterp is built with
+.CW "-I$ROOT/Inferno/$OBJTYPE/include -I$ROOT/include"
+and nothing else, because the same objects are linked into emu.  It
+cannot see the kernel's
+.CW Proc ,
+so it cannot see
+.CW up .
+The register file lives in libinterp and the per-executor route lives
+in the kernel, and neither can name the other.
+.PP
+The obvious repairs are each worse than they look.
+.IP \(bu
+A host-provided accessor,
+.CW "#define curP (ctx())" .
+Correct and portable, and it puts a function call on every
+.CW R
+reference \(em
+.CW R
+is
+.CW "(*curR)" ,
+so
+.CW R.PC
+becomes a call.  There are 1921 of them.
+.IP \(bu
+Thread-local storage.  kencc has none, on any of its compilers.
+.IP \(bu
+Letting libinterp see the kernel's headers.  It is the same objects in
+emu, whose
+.CW Proc
+is a different structure entirely.
+.PP
+So Phase 1b needs a route from libinterp to per-executor storage that
+costs a load and not a call, and the shape of that is the open
+question.  One candidate worth measuring rather than arguing:
+.CW curR
+stays a global pointer and the host swaps it at every point it already
+swaps context, which is what happens today \(em the question is whether
+every such point is under a lock that also excludes the collector, and
+if it is, per-executor storage is not needed at all.  The measurement
+that decides it is where
+.CW curR
+is read outside the VM lock.
+.PP
+Recorded as an attempt with a result, not as a plan.  The reverted
+change is in the history; the tree builds and boots as before.
