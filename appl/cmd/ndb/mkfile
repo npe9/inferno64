@@ -8,12 +8,16 @@ TARG=\
 	mkhash.dis\
 	query.dis\
 	registry.dis\
+	register.dis\
+	regndb.dis\
 	regquery.dis\
 
 SYSMODULES=\
 	sys.m\
 	draw.m\
 	bufio.m\
+	daytime.m\
+	string.m\
 	arg.m\
 	attrdb.m\
 	ip.m\

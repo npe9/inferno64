@@ -1,0 +1,215 @@
+.TH REGNDB 4
+.SH NAME
+regndb, register \- the network database as machines join and leave it
+.SH SYNOPSIS
+.B ndb/regndb
+[
+.B -N
+]
+[
+.BI -m " regmnt"
+]
+[
+.BI -a " attr"
+]
+[
+.BI -f " database"
+] ...
+.PP
+.B ndb/register
+[
+.BI -m " regmnt"
+]
+[
+.B -p
+]
+[
+.B -r
+]
+.I svcname
+[
+.I "attr value"
+] ...
+.SH DESCRIPTION
+.IR Ndb (6)
+databases are text files: a machine is in the network database because
+somebody wrote it there.
+.IR Registry (4),
+on the other hand, already knows how to let a service come and go \- an
+entry lives exactly as long as the file descriptor that created it, and
+vanishes when that descriptor is closed, when the registering process
+dies, or when its connection to the registry drops.
+What was missing was any way for a reader of the network database to see
+that.
+.PP
+.I Regndb
+is a file server that renders a registry as an
+.IR attrdb (6)
+database, which is the form
+.IR cs (8),
+.IR dial (2)
+and everything above them read.
+It serves 9P on its standard input, in the manner of
+.IR registry (4),
+and presents two files:
+.TF index
+.PD
+.TP
+.B ndb
+The rendered database.
+Its
+.B Qid.vers
+is incremented on every rendering, so that
+.B Db.changed
+of
+.IR attrdb (2)
+reports a change and
+.B Db.reopen
+picks one up.
+.TP
+.B ctl
+Read for the registry being watched, the key attribute, the current
+generation, the number of services rendered, the number skipped, the
+number of attribute pairs dropped, and the last error.
+A pair is dropped when its name or value has no
+.IR attrdb (6)
+spelling, and when a registration carries an attribute named
+.BR regsvc ,
+which
+.I regndb
+writes itself.
+Write
+.B refresh
+to re-render immediately.
+.PP
+.I Regndb
+watches the registry's
+.B event
+file, which blocks until the registry changes and coalesces changes, so
+it costs nothing while the network is quiet.
+It re-renders on each change and, when the registry becomes
+unreachable, every
+.B 2
+seconds until it can attach again.
+.PP
+Each line of the registry's
+.B index
+is a service name followed by attribute/value pairs.
+A service that carries the key attribute (\c
+.BR sys ,
+or the one named by
+.BR -a )
+becomes one entry of the database, keyed on that attribute; the service
+name appears as
+.BR regsvc .
+A service that does not carry the key attribute is skipped: a registry
+normally holds a mixture of registrations, and rendering, say, a Grid
+service as a host entry would corrupt lookups.
+So
+.IP
+.EX
+ndb/register 'tcp!10.42.0.7!0' sys joiner1 ip 10.42.0.7 dom joiner1.test
+.EE
+.PP
+becomes
+.IP
+.EX
+sys=joiner1
+	regsvc=tcp!10.42.0.7!0 dom=joiner1.test ip=10.42.0.7
+.EE
+.PP
+Unless
+.B -N
+is given, the rendered file begins with a
+.B database=
+entry naming the static databases given by
+.B -f
+(default
+.BR /lib/ndb/local ).
+.B Db.open
+of
+.IR attrdb (2)
+follows it, so opening the served
+.B ndb
+file yields the dynamic entries followed by the static ones, and
+.I cs
+needs no change.
+.I Cs
+opens its databases once, when it starts, so
+.I regndb
+must be mounted before it:
+.IP
+.EX
+mount {ndb/registry} /mnt/registry
+mount {ndb/regndb} /mnt/regndb
+ndb/cs -f /mnt/regndb/ndb
+.EE
+.PP
+.I Register
+joins a registry.
+It writes
+.I svcname
+and the given attribute/value pairs to the registry's
+.B new
+file and then holds that file descriptor open, so the registration lasts
+exactly as long as the process: killing it, or losing the connection to
+a remote registry, takes the machine out of the database.
+With
+.B -p
+the entry is marked
+.B persist
+and
+.I register
+returns at once, leaving the entry until it is removed explicitly;
+.B -r
+removes the named entry.
+.SH EXAMPLE
+Serve one registry to the network, and let every machine on it be
+looked up by name as it comes and goes:
+.IP
+.EX
+mount {ndb/registry} /mnt/registry
+listen -v 'tcp!*!registry' {export /mnt/registry&}
+mount {ndb/regndb} /mnt/regndb
+ndb/cs -f /mnt/regndb/ndb
+.EE
+.PP
+On a machine that is joining, with the registry mounted from that
+server:
+.IP
+.EX
+ndb/register 'tcp!'^$ip^'!0' sys $sysname ip $ip &
+.EE
+.SH SOURCE
+.B /appl/cmd/ndb/regndb.b
+.br
+.B /appl/cmd/ndb/register.b
+.SH SEE ALSO
+.IR attrdb (2),
+.IR registry (4),
+.IR ndb (6),
+.IR cs (8)
+.SH BUGS
+.I Cs
+opens its databases only at startup, so a
+.I regndb
+started afterwards is never seen; nothing reports that.
+.PP
+An attribute name or value containing a newline has no
+.IR attrdb (6)
+spelling; the pair is dropped and counted in
+.BR ctl .
+An empty value is written
+.BR '' ,
+which
+.IR attrdb (2)
+reads back as an attribute with no value.
+.PP
+A registry may hold two services carrying the same key value; the
+rendered database then has two entries with that key, and a lookup finds
+the first.
+.PP
+Re-rendering reads the registry's
+.B index
+synchronously in the process that also answers 9P, so a slow or distant
+registry stalls readers of the served files.

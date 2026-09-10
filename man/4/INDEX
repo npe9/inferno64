@@ -27,6 +27,8 @@ palmsrv palmsrv
 pinboard pinboard
 ramfile ramfile
 rawdbfs dbfs
+regndb regndb
+register regndb
 registry registry
 regquery registry
 spree spree

@@ -3,7 +3,7 @@
 #Configurable parameters
 
 CONF=virtarm64
-CONFLIST=virtarm64
+CONFLIST=virtarm64 virtarm64ndb
 
 SYSTARG=$OSTARG
 OBJTYPE=aarch64
