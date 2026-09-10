@@ -2936,3 +2936,98 @@ up as the fix for a fault it has been measured not to cause.  The
 probe is not left in the tree: it is silent, and it walks a queue on
 every send and every receive, which is a cost the shipping
 configuration should not pay for a detector that has never fired.
+.NH 2
+Where the remaining faults are, and the structural reason
+.PP
+The three faults left at
+.CW *parallelvm=1
+resolve, against the kernel that produced them, to
+.CW frame+0x1a ,
+.CW movp+0xf7
+and
+.CW string2c+0x17 .
+All three are Dis instructions, and all three are dereferencing a bad
+pointer out of the Dis heap.  Not the run queues, not the channels, not
+the contexts: the heap.
+.PP
+Two things were checked first and are not the cause.  The pools are MP
+safe \(em
+.CW poolalloc()
+and
+.CW poolfree()
+both take
+.CW ilock(&p->l) ,
+so the commented-out lock on the pool table is not a gap.  And the
+tri-colour scheme tolerates a stale read of
+.CW mutator :
+an object born in the previous cycle's mutator colour is born in this
+cycle's
+.I marker
+colour, which is not swept.
+.PP
+What follows is a hypothesis, and it has not been measured.  Three
+before it were reached the same way -- by reading, after eliminating
+something else -- and all three were wrong: context sharing at
+.CW claimctx()
+exhaustion, the
+.CW fpuostate
+field, and the channel queues.  This one is written down to be tested,
+not because elimination has made it true.
+.PP
+The suspect is the shape of the safepoint.
+.CW stoptheworld()
+waits for contexts with a quantum open, and
+.CW isave()
+gives that claim up when a Dis program enters a blocking system call
+\(em which it must, or the collector waits out an unbounded sleep.  But
+a released program's system call runs in kernel context and goes on
+touching the Dis heap: the builtins allocate,
+.CW destroy() ,
+.CW incref() ,
+and drop the last reference to an object.  None of that is stopped by
+stopping the interpreters, so the collector marks and sweeps against a
+live mutator that it has been told is at a safepoint.
+.PP
+This is where the Go analogy stops paying.  Go's
+.CW entersyscall
+hands the P back and the GC does not care, because a syscall cannot
+free anything: the collector owns freeing, and the G's stack stays
+scannable.  Dis refcounts, so a system call
+.I can
+take an object to zero and free it, and "at a safepoint" has to mean
+more than "not executing bytecode".
+.PP
+The Go reasoning above is sound whether or not the hypothesis is: a
+refcounting runtime cannot borrow Go's definition of a safepoint
+unchanged, because Go's rests on the collector owning every free.
+That much is a property of the two designs and needs no boot.  What
+needs a boot is whether it is what breaks these three.
+.PP
+The measurement is one counter: heap operations that happen while
+.CW gcstw
+is set, in a process that is not the one collecting.
+.CW parallelvm=0
+is not a control for it \(em
+.CW stoptheworld()
+returns before setting
+.CW gcstw
+there, so a zero is a zero for the wrong reason.  The control has to be
+inside the probe: count the collector's own heap operations under the
+same flag as a second bucket.  A non-zero own-bucket with a zero
+foreign-bucket kills the hypothesis and proves the counter works; two
+zeroes mean the counter is broken.
+.PP
+If it is the cause, the mechanism to fix it already exists.
+.CW gclock()
+raises
+.CW gchalt ,
+.CW rungc()
+honours it by returning, and
+.CW delprog()
+and
+.CW destroystack()
+already use it.  What is missing is that the kernel side of a Dis
+system call does not, and that
+.CW stoptheworld()
+does not wait on it.  Both halves are needed and neither is written
+here.
