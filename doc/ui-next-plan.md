@@ -182,6 +182,23 @@ put them the other way round and the words happened to match, so
 the only layer that knows a window has just been entered and the only one
 that also covers a toplevel with no client library under it.
 
+**And removing `tkclient`'s copy fixed something else.** The documented
+startup — `emu /dis/wm/wm.dis wm/logon` — printed this on every run:
+
+```
+tkclient: tk error !bad window path .Wm_t.title on '.Wm_t.title cget -text'
+```
+
+It had been noted three times in passing as pre-existing and unrelated,
+which it was. `wm/logon` asks for a `Plain` window, so there is no
+titlebar and no `.Wm_t.title`, and `announce()` read that widget's text
+on every focus without checking whether it existed. Establishing the
+connection took a control rather than an inference: putting the call back
+brings the message back, taking it away removes it.
+
+A redundant announcement was also the only thing complaining on the path
+a person follows to log in.
+
 That bug could not have been caught by anything here: `tkofftest(1)`
 builds toplevels with `tk->toplevel` and hands them an image of its own,
 which is what lets it read pixels back, and that path never goes through
