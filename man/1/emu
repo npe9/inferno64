@@ -116,6 +116,26 @@ The path is interpreted in the Inferno name space, and is opened when the
 first Tk toplevel is made rather than at startup, so a font served by
 .IR ttffs (4)
 can be named here as long as that is running by then.
+It is:
+.IR wm (1)
+serves
+.B /fonts/ttf
+at
+.B /mnt/ft
+before it builds its own first toplevel.
+.B /lib/sh/fonts
+does the same by hand for a session with no window system.
+Naming a scalable face here is therefore all that is needed to make every
+Tk widget in every program antialiased:
+.EX
+emu -f /mnt/ft/go-mono.r.13.font
+; wm/wm wm/logon
+.EE
+If the font cannot be opened,
+.B libtk
+prints
+.B "tk: font not found:"
+once and falls back.
 If unspecified the default is
 .BR /fonts/pelm/unicode.8.font ,
 which is the value

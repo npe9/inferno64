@@ -26,6 +26,40 @@ does not provide any means for starting new applications;
 that facility must be provided by an auxilliary program,
 .B wm/toolbar
 being one such example.
+.SS Fonts
+Before it builds its own first window,
+.I wm
+serves the TrueType faces in
+.B /fonts/ttf
+at
+.BR /mnt/ft ,
+by starting
+.IR ttffs (4).
+The order is the point:
+.IR emu (1)'s
+.B -f
+names the default font for every Tk widget in every program, and
+.B libtk
+opens it when the first Tk toplevel is made, so a face served by
+.I ttffs
+can be named there only if the server is already running by then.
+So
+.IP
+.EX
+emu -f /mnt/ft/go-mono.r.13.font
+; wm/wm wm/logon
+.EE
+.PP
+is all that is needed to make the whole window system use a scalable,
+antialiased face.
+.I Wm
+is quiet about every reason it may decline - no faces to serve, no
+.I ttffs
+built, or somebody already serving
+.B /mnt/ft
+\- since none of those is a broken system.
+.B /lib/sh/fonts
+does the same by hand for a session with no window system.
 .SS Control Interface
 .I Wm
 provides a control interface to programs running inside it
@@ -218,4 +252,6 @@ File holding current screen rectangle.
 .IR pinboard (1),
 .IR logon (1),
 .IR tkclient (2),
-.IR wmclient (2)
+.IR wmclient (2),
+.IR ttffs (4),
+.IR emu (1)

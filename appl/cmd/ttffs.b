@@ -168,7 +168,7 @@ readranges(path: string, mtime: int): array of ref (int, int)
 {
 	fd := sys->open(path, Sys->OREAD);
 	if(fd == nil)
-		return xwarn(sprint("open %q: %r", path));
+		return nil;		# no cache yet is the normal first run, not a fault
 	(ok, d) := sys->fstat(fd);
 	if(ok != 0)
 		return xwarn(sprint("fstat %q: %r", path));

@@ -18,6 +18,10 @@ include "winplace.m";
 	winplace: Winplace;
 include "keyboard.m";
 
+Ttffs: module {
+	init:	fn(ctxt: ref Draw->Context, argv: list of string);
+};
+
 Wm: module {
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
@@ -97,6 +101,8 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	if (ctxt == nil)
 		ctxt = wmclient->makedrawcontext();
 	display = ctxt.display;
+
+	startfonts();
 
 	buts := Wmclient->Appl;
 	if(ctxt.wm == nil)
@@ -1047,4 +1053,43 @@ command(ctxt: ref Draw->Context, args: list of string, sync: chan of string)
 	}
 	sync <-= nil;
 	c->init(ctxt, args);
+}
+
+# Serve the scalable faces in /fonts/ttf at /mnt/ft, before the window
+# system builds its own first toplevel.
+#
+# The order is the whole point.  Emu's -f flag names the default font for
+# every Tk widget in every program, and libtk opens it when the first
+# toplevel is made; a face served by ttffs(4) can be named there only if
+# the server is already running by then.  The window system is the right
+# thing to own that: it is the process every graphical session goes
+# through, its lifetime is the session's, and it gets here before any
+# widget exists.  Putting it in /lib/sh/profile instead looked tidier and
+# was wrong - a Styx server's loop never returns, so emu would no longer
+# exit when a batch script finished.
+#
+# Quiet about every way it can decline: a tree with no faces to serve, no
+# ttffs built, or somebody already serving there is not a broken one.
+# /lib/sh/fonts does the same by hand for a session with no window system.
+startfonts()
+{
+	if(sys->open("/mnt/ft/index", Sys->OREAD) != nil)
+		return;			# already served
+	if((fd := sys->open("/fonts/ttf", Sys->OREAD)) == nil)
+		return;
+	(n, nil) := sys->dirread(fd);
+	if(n <= 0)
+		return;			# nothing to serve
+	tf := load Ttffs "/dis/ttffs.dis";
+	if(tf == nil)
+		return;
+	sys->create("/mnt", Sys->OREAD, Sys->DMDIR|8r777);
+	sys->create("/mnt/ft", Sys->OREAD, Sys->DMDIR|8r777);
+	spawn tf->init(ref Draw->Context(display, nil, nil), "ttffs" :: nil);
+	for(i := 0; i < 50; i++){
+		if(sys->open("/mnt/ft/index", Sys->OREAD) != nil)
+			return;
+		sys->sleep(100);
+	}
+	sys->fprint(sys->fildes(2), "wm: ttffs did not come up; fonts under /mnt/ft unavailable\n");
 }

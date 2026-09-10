@@ -386,3 +386,6 @@ lib/ml/en_US.dict
 # Python bytecode from the scripts/ extractors
 __pycache__/
 *.pyc
+
+# ttffs(4) caches each face's glyph ranges beside it on first read
+fonts/ttf/ranges.*

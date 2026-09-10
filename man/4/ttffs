@@ -26,7 +26,8 @@ file (described below) is opened.
 Each ttf file has an associated
 .I ranges
 file listing the glyphs available in the ttf file.
-If a ttf file does not yet have a ranges file, it is created by ttffs automatically.
+If a ttf file does not yet have a ranges file, it is created by ttffs automatically;
+that is the ordinary state of a fresh checkout, and is not reported as an error.
 .I Ttffs
 mounts itself on
 .I /mnt/ft
@@ -78,11 +79,44 @@ Subfonts that are referenced by the
 .IR .font -files.
 .I Index
 is a number indicating the glyph range of the subfont.
+.SS The faces this tree ships
+.B /fonts/ttf
+holds the Go fonts, which
+.I ttffs
+indexes as two families,
+.B go
+(proportional) and
+.BR go-mono ,
+each in all four styles.
+They were drawn by Bigelow & Holmes, who also drew the Lucida faces
+Inferno has always shipped in
+.B /fonts/lucida
+and
+.BR /fonts/lucm ;
+unlike those, they are under a three-clause BSD licence rather than the
+restrictions in
+.BR /fonts/LICENCE ,
+so they can be the default without encumbering anything downstream.
+The licence is in
+.BR /fonts/ttf/LICENCE.gofont .
 .SH EXAMPLES
+Serve the faces and use one for a single window:
 .EX
-# ensure /fonts/ttf/DejaVuSansMono.ttf and /mnt/ft exist
 ttffs
-wm/sh -f /mnt/ft/dejavu-sans-mono.r.10.font
+wm/sh -f /mnt/ft/go-mono.r.13.font
+.EE
+.PP
+Make one the default for every Tk widget in every program instead.
+.IR Wm (1)
+starts
+.I ttffs
+itself, before it builds its first toplevel, so only
+.IR emu 's
+.B -f
+is needed:
+.EX
+emu -f /mnt/ft/go-mono.r.13.font
+; wm/wm wm/logon
 .EE
 .SH SOURCE
 .B /appl/cmd/ttffs.b
@@ -97,7 +131,10 @@ wm/sh -f /mnt/ft/dejavu-sans-mono.r.10.font
 .SH SEE ALSO
 .IR draw-font (2),
 .IR fontsrv (4),
-.IR fonts (6).
+.IR fonts (6),
+.IR emu (1),
+.IR wm (1),
+.B /lib/sh/fonts
 .SH BUGS
 No kerning or subpixel rendering is supported.
 Only 8-bit greyscale anti-aliased fonts are served.
@@ -106,4 +143,17 @@ The name
 .I ttffs
  is not appropriate, more formats than just ttf could be served: freetype supports more than just ttf.
 .PP
-Generating ranges.* files is slow.
+Generating ranges.* files is slow: for the eight faces this tree ships it
+takes about 2.8 seconds, once, on the first read of
+.BR index .
+The result is cached beside the fonts, so it is paid once per checkout -
+the caches are derived and are not in the repository, because
+.I readranges
+rejects one no newer than its
+.BR .ttf ,
+and a checkout's timestamps cannot be relied on to satisfy that.
+.PP
+That cache is written into
+.BR /fonts/ttf ,
+so a read-only font directory means the work is redone at every start and
+a warning printed for each face.

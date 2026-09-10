@@ -1,0 +1,24 @@
+# Serve the TrueType faces in /fonts/ttf at /mnt/ft, so that scalable
+# antialiased text is available to Tk.  Safe to run again: if something is
+# already serving there, this does nothing.
+#
+# wm(1) does this for itself, in startfonts(), before it builds its first
+# toplevel - so a graphical session needs nothing from here.  This is for a
+# session that runs a Tk program without the window system, and for saying
+# by hand what wm does by default.
+#
+# Not run from /lib/sh/profile, deliberately.  A Styx server's loop never
+# returns and emu waits for every process, so starting one there stops emu
+# from ever exiting - which would hang every scripted invocation.
+#
+#	emu -f /mnt/ft/go-mono.r.12.font
+#	; wm/wm wm/logon
+#
+# See ttffs(4) for the names, and emu(1) for -f.
+
+load std
+
+and {ftest -e /fonts/ttf} {! ftest -e /mnt/ft/index} {
+	or {ftest -e /mnt/ft} {mkdir -p /mnt/ft}
+	ttffs
+}
