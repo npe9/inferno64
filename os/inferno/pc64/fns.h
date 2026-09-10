@@ -61,6 +61,7 @@ void	i8042auxenable(void (*)(int, int));
 int i8042auxdetect(void);
 void	i8042reset(void);
 void	i8250console(void);
+void	i8250spcrconsole(void);
 void	i8253enable(void);
 void	i8253init(void);
 void	i8253link(void);

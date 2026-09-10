@@ -221,6 +221,49 @@ acpimcfg(int *bus0, int *bus1)
 	return 0;
 }
 
+/*
+ * The SPCR table (Serial Port Console Redirection, in the ACPI
+ * registry) names the machine's console UART, which need not be the
+ * 16550 at 0x3F8 this kernel assumes: an interface type, a Generic
+ * Address Structure for the registers, an interrupt and a baud rate.
+ * ../pc/uarti8250.c asks for it through spcrconsole once the tables
+ * are mapped.  Offsets below are from t->data, which is the 36-byte
+ * header in:
+ *
+ *	 0 interface type		16 interrupt type
+ *	 1 reserved[3]			17 PC-AT irq
+ *	 4 address space id		18 global system interrupt (4)
+ *	 5 register bit width		22 baud rate
+ *	 6 register bit offset		23 parity
+ *	 7 access size			24 stop bits
+ *	 8 address (8)			25 flow control
+ *
+ * The interrupt type is a bitmap: bit 0 says the PC-AT irq at 17 is
+ * valid, any higher bit says the global system interrupt at 18 is.
+ */
+extern int (*spcrconsole)(int*, uvlong*, int*, int*, int*);
+
+static int
+acpispcr(int *space, uvlong *addr, int *access, int *irq, int *baud)
+{
+	Tbl *t;
+	uchar *p;
+
+	if((t = findtable("SPCR")) == nil || tbldlen(t) < 26)
+		return -1;
+	p = t->data;
+	*space = p[4];
+	*addr = get64(p+8);
+	*access = p[7];
+	*irq = -1;
+	if(p[16] & 1)
+		*irq = p[17];
+	else if(p[16] & ~1)
+		*irq = get32(p+18);
+	*baud = p[22];
+	return p[0];
+}
+
 static Tbl*
 findtable(char sig[4])
 {
@@ -872,6 +915,7 @@ identify(void)
 	}
 	maptables();
 	pciecam = acpimcfg;
+	spcrconsole = acpispcr;
 	addarchfile("acpitbls", 0444, readtbls, nil);
 	addarchfile("acpimem", 0600, readmem, writemem);
 	if(v == 0 || findtable("APIC") == nil){

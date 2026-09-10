@@ -107,6 +107,14 @@ enum {					/* Msr */
 
 typedef struct Ctlr {
 	int	io;
+	/*
+	 * A 16550 named by ACPI's SPCR table can sit behind memory
+	 * instead of I/O ports, with its registers spread by the
+	 * access size the table's address structure gives.  mmio is
+	 * nil for the ordinary port-mapped case.
+	 */
+	uchar	*mmio;
+	int	shift;
 	int	irq;
 	int	tbdf;
 	int	iena;
@@ -121,7 +129,7 @@ typedef struct Ctlr {
 
 extern PhysUart i8250physuart;
 
-static Ctlr i8250ctlr[2] = {
+static Ctlr i8250ctlr[3] = {
 {	.io	= Uart0,
 	.irq	= Uart0IRQ,
 	.tbdf	= BUSUNKNOWN, },
@@ -129,9 +137,13 @@ static Ctlr i8250ctlr[2] = {
 {	.io	= Uart1,
 	.irq	= Uart1IRQ,
 	.tbdf	= BUSUNKNOWN, },
+
+/* filled in by i8250spcrconsole() from ACPI's SPCR table */
+{	.irq	= -1,
+	.tbdf	= BUSUNKNOWN, },
 };
 
-static Uart i8250uart[2] = {
+static Uart i8250uart[3] = {
 {	.regs	= &i8250ctlr[0],
 	.name	= "COM1",
 	.freq	= UartFREQ,
@@ -145,10 +157,39 @@ static Uart i8250uart[2] = {
 	.phys	= &i8250physuart,
 	.special= 0,
 	.next	= nil, },
+
+/* linked on to COM2 only when SPCR names a console */
+{	.regs	= &i8250ctlr[2],
+	.name	= "SPCR",
+	.freq	= UartFREQ,
+	.phys	= &i8250physuart,
+	.special= 0,
+	.next	= nil, },
 };
 
-#define csr8r(c, r)	inb((c)->io+(r))
-#define csr8w(c, r, v)	outb((c)->io+(r), (c)->sticky[(r)]|(v))
+static uchar
+csr8r(Ctlr *c, int r)
+{
+	if(c->mmio != nil)
+		return c->mmio[r<<c->shift];
+	return inb(c->io+r);
+}
+
+static void
+csr8o(Ctlr *c, int r, int v)
+{
+	if(c->mmio != nil){
+		c->mmio[r<<c->shift] = v;
+		return;
+	}
+	outb(c->io+r, v);
+}
+
+static void
+csr8w(Ctlr *c, int r, int v)
+{
+	csr8o(c, r, c->sticky[r]|v);
+}
 
 static long
 i8250status(Uart* uart, void* buf, long n, long offset)
@@ -406,8 +447,8 @@ i8250baud(Uart* uart, int baud)
 
 	ctlr = uart->regs;
 	csr8w(ctlr, Lcr, Dlab);
-	outb(ctlr->io+Dlm, bgc>>8);
-	outb(ctlr->io+Dll, bgc);
+	csr8o(ctlr, Dlm, bgc>>8);
+	csr8o(ctlr, Dll, bgc);
 	csr8w(ctlr, Lcr, 0);
 
 	uart->baud = baud;
@@ -453,7 +494,7 @@ i8250kick(Uart* uart)
 			break;
 		if(uart->op >= uart->oe && uartstageoutput(uart) == 0)
 			break;
-		outb(ctlr->io+Thr, *(uart->op++));
+		csr8o(ctlr, Thr, *(uart->op++));
 	}
 }
 
@@ -658,7 +699,7 @@ i8250putc(Uart *uart, int c)
 	ctlr = uart->regs;
 	for(i = 0; !(csr8r(ctlr, Lsr)&Thre) && i < 128; i++)
 		delay(1);
-	outb(ctlr->io+Thr, c);
+	csr8o(ctlr, Thr, c);
 	for(i = 0; !(csr8r(ctlr, Lsr)&Thre) && i < 128; i++)
 		delay(1);
 }
@@ -682,6 +723,100 @@ PhysUart i8250physuart = {
 	.getc		= i8250getc,
 	.putc		= i8250putc,
 };
+
+/*
+ * ../pc/archacpi.c sets this to its SPCR reader once the ACPI tables
+ * are mapped; it stays nil on a machine with no ACPI, or with no SPCR
+ * in it, and then this file keeps the ports it has always assumed.
+ */
+int (*spcrconsole)(int*, uvlong*, int*, int*, int*);
+
+/* the baud rates SPCR can name; 0 means "leave it as the firmware set it" */
+static int spcrbaud[] = {
+	[3]	9600,
+	[4]	19200,
+	[6]	57600,
+	[7]	115200,
+};
+
+/*
+ * Move the console to the UART ACPI's SPCR table names, if there is
+ * one and it is not where the kernel is already talking.  This runs
+ * after archinit(), because the tables cannot be reached before they
+ * are mapped -- so on a machine whose console is elsewhere the prints
+ * before this point are lost, and everything after it arrives.  Only
+ * the 16550 family is handled here: interface type 0 (full 16550),
+ * 1 (16450 subset) and 0x12 (16550 with the parameters DBG2 gives).
+ * A PL011 or an SBSA UART is a different driver and is left alone.
+ */
+void
+i8250spcrconsole(void)
+{
+	int space, access, irq, baud, type, shift, rate;
+	uvlong addr;
+	char cmd[32];
+	Ctlr *ctlr;
+	Uart *uart;
+
+	if(spcrconsole == nil)
+		return;
+	if((type = (*spcrconsole)(&space, &addr, &access, &irq, &baud)) < 0)
+		return;
+	if(type != 0 && type != 1 && type != 0x12){
+		print("spcr: interface type %d is not a 16550, left alone\n", type);
+		return;
+	}
+	if(addr == 0)
+		return;
+
+	ctlr = &i8250ctlr[2];
+	uart = &i8250uart[2];
+	switch(space){
+	case 1:				/* system I/O */
+		if(consuart != nil && ((Ctlr*)consuart->regs)->io == (int)addr){
+			print("spcr: console already at port %#lux\n", (ulong)addr);
+			return;
+		}
+		ctlr->io = addr;
+		ctlr->mmio = nil;
+		print("spcr: console 16550 at port %#lux irq %d\n", (ulong)addr, irq);
+		break;
+	case 0:				/* system memory */
+		shift = 0;
+		if(access == 3)
+			shift = 2;
+		else if(access == 2)
+			shift = 1;
+		if((ctlr->mmio = vmap(addr, 8<<shift)) == nil){
+			print("spcr: cannot map registers at %#llux\n", addr);
+			return;
+		}
+		ctlr->shift = shift;
+		print("spcr: console 16550 at %#llux stride %d irq %d\n",
+			addr, 1<<shift, irq);
+		break;
+	default:
+		print("spcr: address space %d is neither memory nor ports\n", space);
+		return;
+	}
+	ctlr->irq = irq;
+
+	i8250uart[1].next = uart;
+	(*uart->phys->enable)(uart, 0);
+	rate = 0;
+	if(baud >= 0 && baud < nelem(spcrbaud))
+		rate = spcrbaud[baud];
+	if(rate != 0){
+		snprint(cmd, sizeof(cmd), "b%d l8 pn s1", rate);
+		uartctl(uart, cmd);
+	}else
+		uartctl(uart, "l8 pn s1");
+	if(consuart != nil)
+		consuart->console = 0;
+	consuart = uart;
+	uart->console = 1;
+	print("spcr: console is %s\n", uart->name);
+}
 
 void
 i8250console(void)

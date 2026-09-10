@@ -182,6 +182,13 @@ main(void)
 	meminit0();			/* builds the memmap */
 	doc("archinit");
 	archinit();
+	/*
+	 * archinit() maps the ACPI tables, so this is the first moment
+	 * the console ACPI names can be reached.  See i8250spcrconsole()
+	 * in ../pc/uarti8250.c.
+	 */
+	doc("i8250spcrconsole");
+	i8250spcrconsole();
 	doc("arch->clockinit");
 	if(arch->clockinit)
 		arch->clockinit();
