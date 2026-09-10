@@ -4655,15 +4655,87 @@ deliverchars(NSString *chars, unsigned short keyCode)
 	sendbuttons(mousebuttons, mouseX, mouseY);
 }
 
+/*
+ * One wheel click per scroll EVENT was wrong for every device that sends
+ * precise deltas - a trackpad, a Magic Mouse - and wrong in a way that
+ * feels like acceleration going astray rather than like a bug.
+ *
+ * Those devices do not send detents.  They send a dense stream of pixel
+ * deltas while the fingers move, and then, after the fingers LIFT, a
+ * momentum tail of further events that decays over about a second.  With
+ * one click per event the number of clicks tracked how many events the
+ * system chose to send rather than how far the finger went: a quick flick
+ * under-scrolled while it was happening, and then the momentum tail
+ * arrived as a burst with nothing touching the mouse.  That is the jump.
+ *
+ * So accumulate the pixels and spend them a click at a time.  The click
+ * count is then proportional to distance travelled, which is the thing
+ * the person is actually controlling, and the momentum tail becomes a
+ * decelerating series instead of a lump.  The accumulator is reset when a
+ * new gesture begins so that a scroll cannot inherit a fraction left over
+ * from the last one.
+ *
+ * A classic wheel is left exactly as it was: it reports in lines, one or
+ * a few per detent, and one click per event is right there.
+ *
+ * INFERNO_SCROLLSTEP is the pixels per click, for anyone whose hands
+ * disagree with 16.
+ */
 - (void)scrollWheel:(NSEvent *)e
 {
 	CGFloat dyw = [e scrollingDeltaY];
+	static CGFloat acc;
+	static CGFloat step;
+	int clicks, i, isup;	/* not `up': emu defines that as the current process */
 
 	[self mousePosFromEvent:e];
 	if(dyw == 0)
 		return;
-	sendbuttons(dyw > 0 ? 8 : 16, mouseX, mouseY);
-	sendbuttons(mousebuttons, mouseX, mouseY);
+
+	if([e hasPreciseScrollingDeltas]){
+		if(step == 0){
+			char *p = getenv("INFERNO_SCROLLSTEP");
+			step = p != nil ? atof(p) : 16.0;
+			if(step < 1.0)
+				step = 16.0;
+		}
+		if([e phase] == NSEventPhaseBegan || [e momentumPhase] == NSEventPhaseBegan)
+			acc = 0;
+		acc += dyw;
+		clicks = (int)(acc / step);
+		if(clicks == 0)
+			return;
+		acc -= clicks * step;
+	}else{
+		/*
+		 * A classic wheel reports lines, and this stays exactly what it
+		 * has always been: one click per event.  Honouring the line
+		 * count would make a wheel with the system's acceleration
+		 * applied scroll several times faster than it does today, and
+		 * that is a change nobody asked for - the complaint that
+		 * prompted this is about precise devices, where the old code
+		 * genuinely could not track the finger.
+		 */
+		clicks = dyw > 0 ? 1 : -1;
+	}
+
+	if(getenv("INFERNO_SCROLLDEBUG") != nil)
+		print("scroll: precise=%d phase=%d momentum=%d dy=%d clicks=%d\n",
+			(int)[e hasPreciseScrollingDeltas], (int)[e phase],
+			(int)[e momentumPhase], (int)dyw, clicks);
+	isup = clicks > 0;
+	if(clicks < 0)
+		clicks = -clicks;
+	/*
+	 * A guard, not a policy: a single event carrying an absurd delta
+	 * should not lock the VM up delivering hundreds of clicks.
+	 */
+	if(clicks > 32)
+		clicks = 32;
+	for(i = 0; i < clicks; i++){
+		sendbuttons(isup ? 8 : 16, mouseX, mouseY);
+		sendbuttons(mousebuttons, mouseX, mouseY);
+	}
 }
 @end
 
