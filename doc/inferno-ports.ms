@@ -20395,3 +20395,86 @@ whole.  The defect had been there all along and only ever showed when
 two processes printed close enough together \(em which is to say, it
 showed when the board was doing two things at once, which is exactly
 when a log matters most.
+.NH 1
+All fifteen from a bare checkout, and the two that had outgrown Debian
+.PP
+The container path had run thirteen configurations from a fresh
+.CW "git worktree add --detach" .
+With
+.CW sifiveu
+given a card and
+.CW virt32s
+in the list it ran fifteen on the host and came back with two failures
+in the container that had nothing to do with the tree:
+.P1
+sifiveu: FAIL markers evidence (6 markers)
+    -SD-FS-OK -SD-MULTIBLOCK-OK -SD-OK -SD-WRITE-OK
+    +SD-NONE
+virt32s: FAIL qemu: Unable to load the RISC-V firmware
+    "opensbi-riscv32-generic-fw_dynamic.bin"
+.P2
+Debian bookworm packages qemu 7.2.22.  Its
+.CW sifive_u
+does not put a
+.CW "-drive if=sd"
+behind the MMC-SPI controller, so the board honestly reports no card;
+and its firmware package ships
+.CW opensbi-riscv64-generic-fw_dynamic.bin
+and no riscv32 one at all, so the supervisor-mode riscv32 board cannot
+start.  Both configurations pass on 10.1.3, which is what the host has.
+.PP
+The image already builds a qemu from source \(em the Pi boards need
+the patched one in
+.CW tools/qemu-patches ,
+which nothing packages \(em so it builds two more targets now,
+.CW riscv64-softmmu
+and
+.CW riscv32-softmmu ,
+and it builds them
+.I before
+a single patch is applied.  That ordering is the point.  Every patch in
+the series is a BCM or Pi device model, and the reason the non-Pi
+boards use the packaged binary at all is that their passing on a qemu
+with none of those patches is what says the patches are Pi patches.  A
+riscv binary built out of the patched tree would still have had that
+property in fact; built ahead of the series it has it by construction.
+.PP
+One thing about that did not work first time, and it is worth writing
+down because the symptom would have been identical to the bug being
+fixed.  The binaries went in and their firmware did not:
+.CW ls
+of the image's
+.CW /usr/local/share/qemu
+listed the edk2 images and the keymaps and no OpenSBI.  A build
+directory's
+.CW pc-bios
+holds what its configured targets
+.I generate ,
+and OpenSBI is not generated \(em it is shipped prebuilt in QEMU's
+source tree.  Neither build directory had it.  Copying
+.CW /qemu/pc-bios
+alongside the aarch64 build's gives the image both blobs.
+.PP
+.CW docker/build-and-run
+now picks its list from what the image it is running in can do: seven
+configurations on the apt-only image, nine when the newer riscv
+binaries are beside it, fifteen when the patched aarch64 one is too.
+An image that cannot run a configuration should say so by not listing
+it, rather than by failing it against a baseline that was recorded
+somewhere else.
+.PP
+The result, from a bare checkout, built inside the container from
+source:
+.P1
+raspi3b 37   raspi3b-4g 37   raspi3b-usb 41
+raspi4 34    raspi4-hot 34   raspi4-usb 38
+sifiveu 9    virt 42+12      virts 42+12
+virt32 5     virt32s 5       virtarm64 32+15
+virtarm64-peer 34+15  virt-peer 44+12  peer-mixed 44+12
+.P2
+which is the same fifteen the host gives.
+.CW raspi3b-usb
+needed its second boot, and said so \(em the container builds a tree and
+boots six Pi kernels on the same machine, and a pointer check that
+times itself against a twenty-five second window is the first thing to
+notice.

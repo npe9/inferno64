@@ -1396,8 +1396,8 @@ that are blocked off this machine \(em the ARM timer's GIC line against
 the BCM2711 datasheet, and the Arasan as the wireless part's SDIO \(em
 are the same kind of thing.
 .PP
-Fifteen configurations run on this host and thirteen of them run from a
-bare checkout inside a container.  What that buys is not the marker
+Fifteen configurations run on this host, and all fifteen run from a
+bare checkout inside a container, built there from source.  What that buys is not the marker
 count: it is that every one of these six statements can be checked
 against a booted kernel by anyone who runs the suite, and that a change
 which breaks one of the finished items says so in the same run.
