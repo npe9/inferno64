@@ -157,13 +157,35 @@ schedinit(void)		/* never returns */
  * is the user's code segment. We use the same segment for
  * the kernel and the user. Hence, return !Proc.kp. Proc.kp
  * is true for a kernel process.
+ *
+ * It returned Proc.kp, the opposite of what the paragraph above says,
+ * from the day it was written.  Every kernel process's trap was
+ * therefore classified as coming from user mode, so kenter() published
+ * a Ureg sitting on a kernel stack as up->dbgreg and os/inferno/pc64's
+ * trap() ran notify() and kexit() over it; and the one process
+ * newproc() makes without kp was classified as a kernel trap, so it
+ * never got the user tail it should have had.  Seen directly on this
+ * branch with a probe in trap(): "pid 1 kp 0 userureg 0" and "pid 2
+ * kp 1 userureg 1", both backwards, and both the right way round
+ * after this.  The multicore branch found it and caught the
+ * consequence in the act on pc64 -- a general protection fault on the
+ * IRETQ in _intrr, a probe watching the frame's SS word change under
+ * a newly created kproc's first interrupt.
+ *
+ * Only os/inferno/pc64 calls this; every other board here traps
+ * without kenter(), kexit() or notify(), so nothing else changes.
+ *
+ * What this does not settle: on a port where kernel and user share a
+ * code segment, whether any frame should be called a user frame is a
+ * real question and "always 0" may be the right answer.  This makes
+ * the function do what it says, no more.
  */
 int
 userureg(Ureg *ur)
 {
-	if(ur == nil || ur->r14 == 0 || ((Proc*)(ur->r14))->kp == 0)
+	if(ur == nil || ur->r14 == 0)
 		return 0;
-	return 1;
+	return ((Proc*)(ur->r14))->kp == 0;
 }
 
 int
