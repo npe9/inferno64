@@ -118,7 +118,16 @@ config_args() {
 		# board rather than of the invocation.
 		echo "-M virt -cpu cortex-a57 -m 1G -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-pci,disable-legacy=on,drive=blk0 -netdev user,id=n0 -device virtio-net-device,netdev=n0";;
 	sifiveu)
-		echo "-M sifive_u -bios none";;
+		# if=sd, and the FU540 has no SD host controller: QEMU's
+		# sifive_u puts an ssi-sd on the second SPI controller,
+		# the spi@10050000 the device tree gives an mmc-spi-slot
+		# child.  So this card is driven by sdspisifive.c over
+		# spisifive.c -- SD command frames on a SPI bus -- and
+		# not by any of the SDHCI code the Pi boards use.  The
+		# board printed SD-NONE for as long as the suite ran it,
+		# and the reason was only ever that nothing handed it a
+		# card.
+		echo "-M sifive_u -bios none -drive file=$work/sdspi.img,if=sd,format=raw";;
 	virt)
 		# This kernel is the other way round: it links sdvirtiommio
 		# and ethervirtiommio, so both devices are the mmio form.
@@ -391,7 +400,16 @@ config_evidence() {
 		# seed at the wrong node and the driver line changes
 		# with it.
 		echo 'fdt: gem base 0x10090000 \(mem\.h GEM0 0x10090000\)'
-		echo 'ethersifivegem: 0x10090000';;
+		echo 'ethersifivegem: 0x10090000'
+		# The SD markers say the block device answered.  This
+		# line says which controller answered it: the JEDEC id
+		# is read by spisifive.c off the other SPI controller at
+		# boot, so a run where the SPI layer never came up
+		# cannot print it, and the SD checks below it run on
+		# that same layer.
+		echo 'spi spi0-nor at 0x10040000: jedec'
+		echo 'SD 16-block RW \(SD-MULTIBLOCK-OK\)'
+		echo 'SD-FS-OK \(kfs-on-sd works\)';;
 	virtarm64)
 		;;
 	esac
@@ -409,6 +427,7 @@ config_card() {
 	raspi4)		echo "sd16b.img 16m";;
 	raspi4-hot)	echo "sd16c.img 16m";;
 	raspi4-usb)	echo "sd16e.img 16m";;
+	sifiveu)	echo "sdspi.img 16m";;
 	*)		;;		# no card
 	esac
 }

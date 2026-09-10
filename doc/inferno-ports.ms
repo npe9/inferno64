@@ -20158,3 +20158,71 @@ and not the constant.
 .CW sifiveu
 goes from five markers to six, and remains the thinnest 64-bit board in
 the suite.
+.NH 1
+SD over SPI, on the board that had been printing SD-NONE
+.PP
+.CW sifiveu 's
+init has carried a full block-device check since it was written \(em
+block 0 and block 1 read, a write and read-back on block 2, sixteen
+blocks written and read in single calls to catch a misaligned
+multi-block transfer, and a kfs reamed onto the card and a file
+round-tripped through it.  Every run of the suite printed
+.CW SD-NONE .
+The board was not failing.  Nothing had ever handed it a card.
+.PP
+The FU540 has no SD host controller.  QEMU's
+.CW sifive_u
+puts an
+.CW ssi-sd
+on the second SPI controller \(em the
+.CW spi@10050000
+the device tree gives an
+.CW mmc-spi-slot
+child \(em so
+.CW "-drive if=sd"
+on this machine means SD command frames on a SPI bus, driven by
+.CW os/inferno/riscv/sdspisifive.c
+over
+.CW spisifive.c ,
+and none of the SDHCI code the Pi boards use.  That is a different
+driver stack from every other card in the suite, and it had never been
+executed.
+.PP
+With a blank sixteen-megabyte card attached it executes, and all of it
+works first time:
+.P1
+spi spi0-nor at 0x10040000: jedec 9d 70 19
+SD block0 00000000
+SD block1 00000000
+SD block2 wrote 9091 readback 9091 (SD-WRITE-OK)
+SD 16-block RW (SD-MULTIBLOCK-OK)
+SD-OK
+kfs: reaming the file system using 1024 byte blocks
+SD-FS-OK (kfs-on-sd works)
+.P2
+The two zero blocks are the card the suite makes, which is blank; a
+hand-made image with
+.CW aa550102
+in block 0 and
+.CW bb660304
+in block 1 read back exactly those, which is what says the reads are
+reads and not a driver returning a zeroed buffer.  The
+.CW jedec
+line is the other SPI controller, the NOR flash at
+.CW spi@10040000 ,
+which the board has always read at boot; it is carried as evidence
+because it says the SPI layer under the card came up, and a run where
+it did not could not print it.
+.PP
+.CW sifiveu
+goes from five markers to nine.  Four of the new ones \(em
+.CW SD-OK ,
+.CW SD-WRITE-OK ,
+.CW SD-MULTIBLOCK-OK ,
+.CW SD-FS-OK
+\(em were waiting on one word in a qemu line, which is worth recording
+as its own kind of failure: a check that reports honestly that it found
+no hardware looks exactly like a check that has been run, and the
+marker set is the same shape either way.
+.CW SD-NONE
+was in the baseline for as long as the board was in the suite.

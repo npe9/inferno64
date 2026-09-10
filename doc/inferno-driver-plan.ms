@@ -603,6 +603,30 @@ and a shell just the same \(em which is the claim the source comments
 make in two places, that a lookup miss cannot hang a board that boots
 today, demonstrated rather than asserted.
 .PP
+The same board's SD-over-SPI stack runs too.
+.CW sifiveu
+had printed
+.CW SD-NONE
+on every suite run since it joined, and the reason was that nothing
+handed it a card: the FU540 has no SD host controller, so QEMU's
+.CW sifive_u
+puts an
+.CW ssi-sd
+on
+.CW spi@10050000
+and
+.CW "-drive if=sd"
+reaches it through
+.CW sdspisifive.c
+over
+.CW spisifive.c ,
+a driver stack no other configuration in the suite exercises.  With a
+blank card attached, block reads, a write and read-back, a sixteen-block
+single-call transfer and a kfs reamed and round-tripped all worked the
+first time.
+.CW sifiveu
+goes from five markers to nine.
+.PP
 Remaining: MSI (item 4), item 6 (USB ethernet, HID report
 descriptors, virtio-gpu 3-D), and item 7 (per-SoC drivers).
 .CW virtarm64
