@@ -475,6 +475,106 @@ once, loudly, and a phase that failed an assertion never is: those are
 answers, and running answers again until they change is how a bench
 stops meaning anything.
 .NH 1
+Discussion
+.NH 2
+What the name space bought, and what it cost
+.PP
+The usual objection to serving a protocol stack as files is
+performance, and it is a real one.  Every operation is a Styx
+transaction: opening a characteristic, reading it, writing a control
+line.  There is no zero-copy path and no way to express an atomic
+operation except by making the control file's grammar carry it.
+Errors are strings, so a caller that wants to distinguish two failures
+matches text.  For a stack whose busiest link carries a few hundred
+kilobits a second this is irrelevant, and on something with a real
+data path it would not be.
+.PP
+What it bought was not mainly elegance.  It was that the interface has
+no privileged side.  A test is a program that opens files, so the
+bench is a shell script and a Limbo program that between them use
+nothing the stack does not already offer to any other caller \(em
+which means the thing being tested is the thing that ships, not a
+test harness bolted to its internals.  The same property makes the
+radio mountable from another machine, and makes
+.CW bthid ,
+.CW btpan
+and
+.CW bthfp
+contain no Bluetooth: they are file clients, and they would work
+unchanged against a radio in another room.
+.PP
+That is worth stating as a design claim rather than a happy accident.
+The shape of the interface determined the shape of the testing, and
+the testing is where most of the work went.
+.NH 2
+Does the ladder generalise
+.PP
+Nothing about the four rungs is specific to Bluetooth.  Any
+implementation of a specified protocol faces the same-reader problem
+the moment its tests are written by whoever wrote it, and the four
+questions are general:
+.IP \(bu
+Would this test fail if the code were wrong?
+.IP \(bu
+Are these bytes well formed by someone else's reading?
+.IP \(bu
+Does an independent implementation accept them?
+.IP \(bu
+Is the value right that nobody sends?
+.PP
+The first is old advice and still the most often skipped, because a
+test that has never failed is indistinguishable from a test that
+cannot.  The second and third have become cheap in a way they were not
+twenty years ago: a container with another implementation in it costs
+minutes, and dissectors for most wire formats already exist.
+.PP
+The fourth is the one worth arguing for, because it has no wire to
+look at and so no cheap substitute.  It applies wherever a protocol
+computes something both ends must agree on without transmitting it,
+which is most of what cryptography is: derived keys, confirmation
+values, comparison numbers.  Those are exactly the values whose
+wrongness is invisible \(em a wrong
+.CW g2
+does not corrupt a packet, it just quietly stops the six digits from
+meaning anything \(em and they are also exactly where the security
+lives.  A test suite that checks only the wire has its widest blind
+spot precisely where it can least afford one.
+.NH 2
+When the oracle is wrong
+.PP
+Three of the nine faults were in the implementation brought in to
+check this one.  That is the obvious hazard of using a reference
+implementation as an oracle, and it is worth being clear about why it
+did not defeat the method.
+.PP
+A single oracle cannot tell you who is wrong.  When this stack and
+BlueZ disagreed, the tie was broken by the other rungs rather than by
+preference.  The RFCOMM length is the cleanest case: BlueZ's sender
+and BlueZ's own receiver disagree with each other \(em
+.CW rfcomm_uih_recv
+would reject the frame
+.CW bthost_send_rfcomm_data
+built \(em so the question was settled inside BlueZ without appeal to
+anything here, and Wireshark and the specification agreed.  The
+credit-based segmentation case was settled by the capture: the peer
+acknowledged an MPS of 188 in a message that is in the file, and then
+sent 202 bytes.
+.PP
+The corollary is that the rungs must stay independent to be worth
+anything.  That independence is partial and should be said plainly:
+while diagnosing passkey entry, bthost's round logic was read, so for
+that one function this is no longer a wholly independent reading of
+the specification.  It is recorded in the plan and it is a real
+weakening.
+.PP
+A milder version of the same hazard is that bthost is BlueZ's test
+host stack, not the Linux kernel's Bluetooth implementation.  Its
+faults are in code exercised less hard than the kernel's, which makes
+finding three of them less surprising and less damning than it would
+otherwise be.  It is still the right oracle for this purpose, because
+it is the half of BlueZ that can be driven from a socket without a
+radio.
+.NH 2
 Two lessons
 .PP
 The first is about instrumentation.
@@ -535,3 +635,28 @@ tested.  Every rung of the ladder above was built to check the stack
 against something that did not share its author's assumptions; the one
 thing left checking itself was the apparatus, and that is where the
 day went.
+.NH 1
+Conclusion
+.PP
+A Bluetooth stack can be an ordinary program that serves a name space,
+and this one is: fifteen libraries and about ten thousand lines of
+Limbo, with the kernel carrying HCI packets and nothing more.  The
+programs above it \(em a keyboard, an ethernet, a telephone \(em
+contain no Bluetooth at all, because there is nothing to contain: they
+open files.
+.PP
+Writing the protocols was not the hard part.  The hard part was
+establishing that any of it was right, given that the obvious way to
+test a protocol stack is against a model that shares its author's
+misreadings.  Four kinds of check, arranged so that each is answerable
+by something that did not share that reading, found nine faults: six
+here, every one of them something the stack's own bench had been
+passing, and three in the implementation brought in to check it, which
+were diagnosable as its faults and not this one's only because there
+was more than one rung to triangulate from.
+.PP
+What is here is a stack that agrees with someone else's about every
+byte it sends, and about the numbers it computes and does not send.
+What is not here is a radio.  The next thing that would find faults
+none of this can is a real controller, and the record says so in the
+places where it would otherwise be tempting to imply more.
