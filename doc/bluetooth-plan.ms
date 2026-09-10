@@ -281,9 +281,51 @@ works out the peer's part for the peripheral phase rather than leaving
 it to whoever runs it: btvirt hands out controllers in the order they
 connect, the peer takes the first and the guest the second, so the
 guest is always the second address.
+.NH 3
+Passkey entry, attempted and not shipped
 .PP
-What is left is passkey entry, which needs six digits read in rather
-than shown.  Numeric comparison is done, both roles, and is described
+Passkey entry was written and is not here.  It is twenty rounds, one
+per bit of a twenty bit secret that never goes on the wire: each round
+commits to one bit \(em f4 with 0x80 or 0x81 as its last argument
+according to that bit \(em so a side with the wrong passkey is caught
+in the round of the first differing bit rather than at the end.
+.PP
+It does not work against BlueZ, and what could be established is worth
+more than the code was.
+.IP \(bu
+bthost's passkey is always zero and nothing can set it: the field
+exists and is read for the rounds, but no interface writes it.  A
+fixture whose secret is zero cannot tell a right implementation from
+one that ignores the secret, so a patch gave it 0x0abcde.
+.IP \(bu
+With that, round 0 agrees and round 1 fails with Confirm Value Failed.
+.IP \(bu
+Both sides used the same last argument in round 1.  That is not
+inferred: bthost's own round 1 confirm, recomputed from the capture
+with openssl, matches 0x81 and not 0x80, and 0x81 is what bit 1 of
+0x0abcde calls for.
+.IP \(bu
+This side's round 1 confirm, recomputed the same way, is exactly
+.CW f4
+over its own public key, the peer's, its own round 1 nonce and 0x81.
+.PP
+So both sides computed the same function over what looks like the same
+input and one of them refused it, which is not a thing that should be
+possible and was not resolved.  Reusing one nonce for all twenty
+rounds, which is what bthost does and which the specification does not
+say to do, was tried on this side too and changed nothing.
+.PP
+The code is not kept.  A pairing method that fails is worse than one
+that is not offered \(em
+.CW "pair passkey"
+would have been a verb that never worked \(em and an unverified path
+that agrees a key is not something to ship on the grounds that it
+looks right.  What is kept is this, and the observation that bthost's
+passkey path reuses a single nonce across all twenty rounds, which
+suggests it is not a path BlueZ's own tests exercise hard.
+.PP
+Numeric comparison, which is the other half of the same item, is done
+in both roles and is described above.  Numeric comparison is done, both roles, and is described
 under the next item, which is where the asking lives.
 .PP
 .B "A way to ask the user."
