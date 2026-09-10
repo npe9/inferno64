@@ -134,7 +134,7 @@ def main():
                     '--shot-at',
                     r'libdraw: real libdraw painted 700 150 1100 450 33aa55=' + shot,
                     '--shot-at',
-                    r'/boot/rio has had 3 seconds and a screen of its own=' + rioshot],
+                    r'/boot/rio has had 6 seconds, a screen of its own=' + rioshot],
                    env=env, capture_output=True, text=True)
     try:
         t = plain(open(log, errors='replace').read())
@@ -506,12 +506,17 @@ def main():
 
     riopix = readppm(rioshot)
     rw2 = rh2 = 0
-    nriobg = nriolib = 0
-    riobox = (0, 0, 0, 0)
+    nriobg = nriolib = nriotext = nrioglyph = nrioframe = 0
+    riobox = textbox = (0, 0, 0, 0)
     if riopix is not None:
         rw2, rh2, rd2 = riopix
         nriobg, riobox = boxof(rd2, (0x77, 0x77, 0x77), rw2)
         nriolib, _ = boxof(rd2, (0x33, 0xaa, 0x55), rw2)
+        # the window: its text area, the glyphs in it, and rio's own
+        # border colour around it
+        nriotext, textbox = boxof(rd2, (0xff, 0xff, 0xff), rw2)
+        nrioglyph, _ = boxof(rd2, (0x00, 0x00, 0x00), rw2)
+        nrioframe, _ = boxof(rd2, (0x55, 0xaa, 0xaa), rw2)
 
     pix = readppm(shot)
     pw = ph = 0
@@ -725,16 +730,15 @@ def main():
     # which is why they are not in the console log.  That absence is
     # the check: the same cat writing to the console appears there
     # every other time it runs in this boot.
-    riowincat = re.search(r'p9 spawn: /boot/libcat runs as (\d+) at 0x[0-9a-f]+, '
+    riowingen = re.search(r'p9 spawn: /boot/libgen runs as (\d+) at 0x[0-9a-f]+, '
                           r'with its own descriptor table \(0 1 -1\)',
                           t[t.index('p9: starting /boot/rio'):]
                           if 'p9: starting /boot/rio' in t else '')
     results.append(("and rio makes a window and runs a shell in it: winshell rforks a name space, an environment and a descriptor table of its own, mounts its own wsys, opens the window's /dev/cons for input and again for output, renames itself through /proc/<n>/args and execs /bin/rc - which this personality spawns - and the shell is given the window's own descriptors rather than the machine's console",
                     riorc is not None
                     and 'libsh: cannot open -c' not in t))
-    results.append(("and a command the window's shell runs writes into the window: the shell's own 0 and 1 are the window, a command with no redirection of its own is given them, and the bytes cat reads out of /hello go there - which is why they are not in this log, where every other cat in this boot puts them",
-                    riowincat is not None
-                    and t.count('hello from the 9P server, a container across the ring') >= 1
+    results.append(("and a command the window's shell runs writes into the window: the shell's own 0 and 1 are the window, a command with no redirection of its own is given them, and the 20000 bytes the generator writes go there rather than to the console - which is what puts the glyphs on the screen below",
+                    riowingen is not None
                     and 'p9 spawn: /bin/rc runs as' in t))
     #
     # And rio's own screen.  rio announces no painting, so this shot is
@@ -749,13 +753,30 @@ def main():
     # changed.  The shot taken just before rio ran has none of it - it is
     # libdraw's white screen with libdraw's green rectangle - so a screen
     # that is entirely 0x777777 is rio's and could be nobody else's.
-    results.append(("and rio draws: the screen QEMU scans out while rio idles is 1280x800 and every one of its 1024000 pixels is 0x777777, which is the colour rio allocates its background image with in data.c - source this tree did not write - and the shot taken before rio ran has none of that colour and all of libdraw's, so this screen is rio's and can be nobody else's",
+    results.append(("and rio draws: the screen QEMU scans out is rio's own - 0x777777 is the colour it allocates its background image with on line 190 of 9front/src/cmd/rio/data.c, source this tree did not write, and the shot taken before rio ran has none of that colour and all of libdraw's, so this screen is rio's and can be nobody else's",
                     riopix is not None and (rw2, rh2) == (1280, 800)
-                    and nriobg == 1280*800
-                    and riobox == (0, 0, 1279, 799)
+                    and nriobg > 600000
                     and nriolib == 0
                     and nlib > 0
-                    and 'p9: /boot/rio has had 3 seconds and a screen of its own' in t))
+                    and 'p9: /boot/rio has had 6 seconds, a screen of its own' in t))
+    #
+    # And the window is on it, with the program's output drawn in it.
+    # The bottom third of the display is a rio window: a white text area
+    # with black glyphs in it, rio's own border colour around it and its
+    # scrollbar beside it.  The glyphs are what says a program's output
+    # reached the frame buffer rather than only the window's file
+    # server.
+    #
+    # Counts are bounded rather than exact, because how much text has
+    # been drawn depends on how far the generator got in six seconds.
+    # What is not bounded is where: the text area is in the bottom half
+    # of the screen, which is where -k puts a window.
+    results.append(("and the window is on the screen with the program's output drawn in it: the bottom third of the display is a rio window - a white text area with black glyphs in it, rio's border colour around it and its scrollbar beside it - which is what says the output reached the frame buffer and not only the window's file server",
+                    riopix is not None
+                    and nriotext > 200000
+                    and nrioglyph > 5000
+                    and nrioframe > 5000
+                    and textbox[1] > 400 and textbox[3] < 800))
     # A -k window is allocated DNofill, so the screen being the
     # background alone is the state, not a fault: nothing has drawn in
     # the window when the photograph is taken.

@@ -934,7 +934,7 @@ p9main(void)
 		 */
 		rioargv[0] = "/boot/rio";
 		rioargv[1] = "-k";
-		rioargv[2] = "/boot/libcat /hello";
+		rioargv[2] = "/boot/libgen 20000";
 		rioargv[3] = nil;
 		/*
 		 * What a window system finds here, said before it runs.  rio
@@ -1003,9 +1003,9 @@ p9main(void)
 		if(riopid < 0)
 			print("p9: /boot/rio: cannot start it\n");
 		else {
-			libsleep(3000);
-			print("p9: /boot/rio has had 3 seconds and a screen of its own; "
-				"it waits for a mouse click, and nothing here clicks\n");
+			libsleep(6000);
+			print("p9: /boot/rio has had 6 seconds, a screen of its own "
+				"and a window with a program's output in it\n");
 		}
 	}
 

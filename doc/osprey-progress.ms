@@ -10956,17 +10956,45 @@ and cat is started
 there.  They are not in the console log, which is where every other cat
 in this boot puts them, and that absence is what the check asks for.
 .PP
-The screen is still the background alone.  Everything up to the
-window's contents works and the contents do not reach the frame buffer:
-rio allocates a
+.PP
+.B "3.2s: the window is on the screen."
+The screen stayed the background alone for a while, and I wrote down
+that the composite of a layered window was what had not been shown to
+happen.  That was wrong, and finding out how it was wrong is the point
+of this paragraph.
+.PP
+rio does not flush after every draw.  libdraw buffers, and rio flushes
+when it has handled an event \- which is why the background appeared at
+all: rio calls
+.CW flushimage
+itself, once, after painting it.  This configuration has no keyboard or
+mouse driver running behind
+.CW /dev/kbd
+and
+.CW /dev/mouse ,
+so no event ever arrives, so nothing is ever flushed again.  Driving
+QEMU's mouse over QMP changed nothing, which is what said the events
+were not reaching rio rather than that rio was ignoring them.
+.PP
+The way to see it without an event is to give libdraw more than its
+buffer holds.  The window's shell runs
+.CW "/boot/libgen 20000" ,
+20000 bytes go into the window, the buffer fills and flushes itself, and
+the window is on the screen: 296135 pixels of the white text area,
+29651 of black glyphs in it, 12304 of rio's own border colour around it
+and 2390 of its scrollbar, against 683520 of background.  Those five
+account for every pixel of a 1280 by 800 screen, and the text area is
+rows 538 to 795 \- the bottom third, which is where
 .CW -k
-window
-.CW Refbackup ,
-so its pixels live in a backup image the draw device composites onto
-the screen, and that composite is what has not been shown to happen.
-The next thing is the draw device's layered screens rather than
-anything about programs, name spaces or descriptors, all of which are
-now carrying a window system's worth of traffic.
+puts a window.
+.PP
+So the real 9front rio, linked against a library operating system and
+loaded into a slot the loader chose, draws a window on a microkernel's
+frame buffer with a program's output in it.  What is missing is input:
+this configuration has no driver behind the keyboard and mouse files,
+so rio cannot be clicked, and a window it is not asked for is the only
+window there is.  That is the next thing, and it is a driver rather than
+anything about the personality.
 .PP
 The second was the probe itself, and it is the plainest lesson here.
 .CW p9open

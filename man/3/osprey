@@ -1822,13 +1822,22 @@ which is the colour rio allocates its background with on line 190 of
 and the screendump taken before rio ran has none of that colour and all
 of libdraw's.  A command the window's shell runs writes into the window: the shell's
 own 0 and 1 are the window and a command with no redirection of its own
-is given them, so cat's bytes go there rather than to the console.
-Nothing is drawn on the screen for it: rio allocates a
+is given them.  The window is on the screen with that output drawn in
+it - a white text area with black glyphs, rio's border colour around it
+and its scrollbar beside it, in the bottom third where
 .B -k
-window
-.BR Refbackup ,
-so its pixels live in a backup image the draw device composites, and
-that composite has not been shown to happen.  rio is spawned rather than run to completion, and the
+puts a window.
+.PP
+rio flushes when it has handled an event, and this configuration has no
+driver running behind
+.B /dev/kbd
+and
+.BR /dev/mouse ,
+so no event arrives: the background appears because rio flushes once
+itself after painting it, and the window appears because the program in
+it writes more than libdraw's buffer holds and the buffer flushes
+itself.  rio cannot be clicked here, which is a driver rather than
+anything about the personality.  rio is spawned rather than run to completion, and the
 personality gives it three seconds and says so, which is both how the
 boot ends and where the screendump is taken.  The personality
 asks the name space what rio is about to ask it and logs the answers
