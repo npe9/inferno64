@@ -324,8 +324,6 @@ Window.wmctl(w: self ref Window, req: string): string
 		(w.displayr, nil) = s2r(req, next);
 	"haskbdfocus" =>
 		w.focused = int qword(req, next).t0;
-		if(w.focused)
-			announce(w);
 		if(w.titlebar != nil){
 			tk->cmd(w.titlebar, "focus -global " + string w.focused);
 			tk->cmd(w.titlebar, "update");
@@ -386,38 +384,14 @@ recvimage(w: ref Window)
 }
 
 #
-# Say which window the keyboard has moved to, for anyone who cannot see it.
+# Saying which window the keyboard moved to used to be done here, by
+# writing the title to /dev/voice/screen when wm handed this window the
+# keyboard.  libtk does it now: titlebar(2) puts the title in the Tk
+# variable "windowname", and libtk announces it from the one place that
+# knows a window has just been entered - which also covers a toplevel
+# that has no wmclient at all.  Doing both said it twice, "Colors window"
+# and then "Colors".  See voice(3).
 #
-# Tk announces the widget holding the keyboard, which says where you are inside
-# a window and not which window it is - two shell windows announce the same
-# thing. The title is the answer, and this is the only layer that has it: wm's
-# own idea of a client carries the Tk tag, which is ".", and the title lives
-# here in the titlebar.
-#
-# Best effort. Where there is no voice(3) the open fails and nothing happens,
-# which is all the error handling this needs - a window manager must not fail
-# to give a window the keyboard because nobody is listening.
-#
-announce(w: ref Window)
-{
-	if(w.titlebar == nil)
-		return;
-	title := titlebar->title(w.titlebar);
-	if(title == nil)
-		return;
-	fd := sys->open("/dev/voice/screen", Sys->OWRITE);
-	if(fd == nil){
-		# the device may not be in this program's namespace yet
-		if(sys->bind("#V", "/dev", Sys->MAFTER) < 0)
-			return;
-		fd = sys->open("/dev/voice/screen", Sys->OWRITE);
-		if(fd == nil)
-			return;
-	}
-	b := array of byte (title + " window");
-	sys->write(fd, b, len b);
-}
-
 Window.settitle(w: self ref Window, title: string): string
 {
 	if(w.titlebar == nil)

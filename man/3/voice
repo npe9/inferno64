@@ -181,8 +181,9 @@ is bound to.
 Text arriving moves the same cursor by another path and is announced by
 its own rule, so the two do not double up.
 .SS Which window
-Arriving in a window announces which window it is, and then where the
-keyboard is inside it \(em the order a person needs.
+Arriving in a window announces
+.BI "" name " window"
+and then where the keyboard is inside it \(em the order a person needs.
 .PP
 .B Tk
 has no title of its own; a title belongs to the window system.
@@ -198,6 +199,17 @@ at all can still set it.
 Without one, a window that has nothing focused inside it says only
 .BR window ,
 which is what this always used to say.
+.PP
+.IR Wmclient (2)
+used to say this itself, by writing the title to
+.B screen
+when the window manager handed a window the keyboard.
+Doing both said it twice \(em
+.B "Colors window"
+and then
+.B Colors
+\(em so it says it in one place now, and that place also covers a
+toplevel with no window manager under it.
 .SS history
 Everything that has been announced, newest first, one to a line.
 .PP

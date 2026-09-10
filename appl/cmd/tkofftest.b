@@ -901,7 +901,10 @@ checkvoice()
 	tk->cmd(t6, "focus -global 1");
 	tk->cmd(t6, "update");
 	said = next(sfd);
-	report(has(said, "Mail Reader"), sys->sprint(
+	# "... window" and not just the name: this is the wording wmclient.b
+	# used when it said this itself, and it tells a person that a window
+	# changed rather than merely naming something.
+	report(said == "Mail Reader window", sys->sprint(
 		"entering a window says which window (%#q)", said));
 
 	# Moving about in text is most of what a person does in a shell

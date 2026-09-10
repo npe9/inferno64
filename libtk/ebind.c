@@ -753,6 +753,7 @@ tksetglobalfocus(TkTop *top, int in)
 {
 	Tk *tk;
 	TkVar *v;
+	char wbuf[128];
 	int named;
 	in = (in != 0);
 	if (in != top->focused){
@@ -786,7 +787,16 @@ tksetglobalfocus(TkTop *top, int in)
 			v = tkmkvar(top, "windowname", 0);
 			if(v != nil && v->type == TkVstring && v->value != nil
 			&& *(char*)v->value != '\0'){
-				voiceannounce((char*)v->value);
+				/*
+				 * "... window", because at this call site that
+				 * is what it is: the wording wmclient.b used
+				 * when it said this itself, and it tells a
+				 * person a window changed rather than merely
+				 * naming something.
+				 */
+				snprint(wbuf, sizeof wbuf, "%s window",
+					(char*)v->value);
+				voiceannounce(wbuf);
 				named = 1;
 			}
 			if(tk != nil && tk != top->root)
