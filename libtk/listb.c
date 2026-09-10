@@ -3,6 +3,7 @@
 #include "keyboard.h"
 #include "tk.h"
 #include "listb.h"
+extern void tkannouncechange(Tk*);	/* ebind.c, for voice(3) */
 
 #define	O(t, e)		((long)(&((t*)0)->e))
 
@@ -1029,6 +1030,29 @@ tklistbkey(Tk *tk, char *arg, char **val)
 		tk->dirty = tkrect(tk, 0);
 	}
 	entrysee(tk, active);
+	tkannouncechange(tk);	/* voice(3); see man 3 voice */
+	return nil;
+}
+
+/*
+ * The entry the list cursor is on, for voice(3).  A list that says only
+ * "list" when you arrive at it, and nothing as the arrow keys walk it,
+ * is a control a person using their ears cannot read at all: the whole
+ * content of a listbox is which line you are on.
+ *
+ * Here rather than in ebind.c because TkListbox is private to this file.
+ */
+char*
+tklistbstate(Tk *tk, char *buf, int nbuf)
+{
+	TkListbox *l = TKobj(TkListbox, tk);
+	TkLentry *e;
+
+	for(e = l->head; e != nil; e = e->link)
+		if(e->flag & Tkactive){
+			snprint(buf, nbuf, "%s", e->text);
+			return buf;
+		}
 	return nil;
 }
 

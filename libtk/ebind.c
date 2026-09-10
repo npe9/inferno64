@@ -7,6 +7,7 @@
 
 extern void voiceannounce(char*);   /* voice(3) */
 extern char* tkscalestate(Tk*, char*, int);	/* scale.c */
+extern char* tklistbstate(Tk*, char*, int);	/* listb.c */
 
 enum
 {
@@ -629,6 +630,8 @@ tkannouncestate(Tk *tk, char *buf, int nbuf)
 		return tkl->check ? "selected" : "not selected";
 	case TKscale:
 		return tkscalestate(tk, buf, nbuf);
+	case TKlistbox:
+		return tklistbstate(tk, buf, nbuf);
 	}
 	USED(buf); USED(nbuf);
 	return nil;

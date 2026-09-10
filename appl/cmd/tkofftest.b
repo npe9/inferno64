@@ -617,6 +617,30 @@ checkvoice()
 	said = next(sfd);
 	report(said != "" && said != "40", sys->sprint(
 		"and moving it with a key says the new value (%#q)", said));
+
+	# A list's whole content is which line you are on, so a list that
+	# says only "list" is one a person using their ears cannot read.
+	blank();
+	t3 := offscreen();
+	if(t3 == nil)
+		return;
+	tk->cmd(t3, "listbox .l");
+	tk->cmd(t3, ".l insert end {Inbox} {Drafts} {Sent}");
+	tk->cmd(t3, ".l activate 0");
+	tk->cmd(t3, "pack .l");
+	map(t3);
+	drain(sfd);
+	tk->cmd(t3, "focus .l");
+	tk->cmd(t3, "update");
+	said = next(sfd);
+	report(has(said, "Inbox"), sys->sprint(
+		"focusing a list says which line the cursor is on (%#q)", said));
+
+	tk->cmd(t3, sys->sprint(".l tkListbKey 0x%x", 16rE013));	# Keyboard->Down
+	tk->cmd(t3, "update");
+	said = next(sfd);
+	report(has(said, "Drafts"), sys->sprint(
+		"and walking it with a key says the new line (%#q)", said));
 }
 
 waiting(): int
