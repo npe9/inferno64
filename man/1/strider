@@ -143,8 +143,32 @@ that a machine with no arms or legs is still standing and a destroyed
 centre torso is not;
 that targeting cycles only what is still up;
 that the other machines close the range and shoot back;
-and that a frame draws something.
+that a frame draws something;
+and that an enemy in front of the cockpit puts pixels on the screen
+while one behind it does not.
 .SH BUGS
+The last two checks exist because of a bug that thirty-eight state
+checks could not see.
+An
+.B if(0)
+left in front of the loop that draws the other machines \- from an
+experiment isolating which geometry provoked
+.B "bad ratzerr1"
+\- hid every enemy for a whole commit, and everything still passed:
+they walked, they closed, they fired, the radar showed them and the
+reticle boxed empty sky.
+A test that only ever asks about state cannot see a thing that is not
+drawn.
+Putting the
+.B if(0)
+back fails the check, which is how it is known to test anything.
+.PP
+The same experiment left the frame counter comparing against a sky
+colour written out by hand, so when the sky was later brightened
+.B "a frame draws something"
+became true of a frame that drew nothing.
+It reads the sky out of a corner of the frame now.
+.PP
 The terrain cull is
 .IR draw3d (2)'s
 own

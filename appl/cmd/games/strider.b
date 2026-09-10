@@ -293,8 +293,8 @@ colours()
 	csky = rgb32(58, 74, 116);
 	cmech = rgb32(150, 165, 180);
 	cmech2 = rgb32(90, 105, 125);
-	cfoe = rgb32(226, 116, 88);
-	cfoe2 = rgb32(150, 74, 58);
+	cfoe = rgb32(246, 138, 96);
+	cfoe2 = rgb32(186, 96, 72);
 	cbeam = rgb32(255, 90, 90);
 	cshell = rgb32(255, 220, 120);
 	cwhite = rgb32(235, 240, 245);
@@ -811,7 +811,7 @@ frame()
 	ey := height(me.x, me.z) + EYEY;
 	d3->translate(-me.x, -ey, -me.z);
 	ground();
-	if(0) for(i := 0; i < NFOE; i++)
+	for(i := 0; i < NFOE; i++)
 		if(foes[i] != nil && foes[i].alive)
 			mech(foes[i], cfoe, cfoe2);
 	drawshots();
@@ -912,16 +912,19 @@ mech(m: ref Mech, c1, c2: ref Image)
 	f := fog(math->sqrt(dx*dx + dz*dz));
 	ca := math->cos(m.face*DEG);
 	sa := math->sin(m.face*DEG);
+	# Taller than it is wide, or it reads as a shed.  Legs are most of
+	# the height, the torso is narrower than the stance, and the arms
+	# hang outside it.
 	d3->setcolour(ctx, c2);
-	box(m.x, base, m.z, ca, sa, 2.0, 5.0, 2.0, -2.2, 0.0, f*0.8);
-	box(m.x, base, m.z, ca, sa, 2.0, 5.0, 2.0, 2.2, 0.0, f*0.8);
+	box(m.x, base, m.z, ca, sa, 1.3, 7.0, 1.5, -2.0, 0.0, f*0.85);
+	box(m.x, base, m.z, ca, sa, 1.3, 7.0, 1.5, 2.0, 0.0, f*0.85);
 	d3->setcolour(ctx, c1);
-	box(m.x, base + 5.0, m.z, ca, sa, 4.4, 5.0, 3.0, 0.0, 0.0, f);
+	box(m.x, base + 7.0, m.z, ca, sa, 3.0, 4.6, 2.2, 0.0, 0.0, f);
 	d3->setcolour(ctx, c2);
-	box(m.x, base + 5.5, m.z, ca, sa, 1.4, 3.6, 1.4, -5.2, 0.0, f*0.9);
-	box(m.x, base + 5.5, m.z, ca, sa, 1.4, 3.6, 1.4, 5.2, 0.0, f*0.9);
+	box(m.x, base + 7.4, m.z, ca, sa, 1.0, 3.8, 1.0, -3.8, 0.0, f*0.9);
+	box(m.x, base + 7.4, m.z, ca, sa, 1.0, 3.8, 1.0, 3.8, 0.0, f*0.9);
 	d3->setcolour(ctx, c1);
-	box(m.x, base + 10.0, m.z, ca, sa, 2.4, 1.8, 2.0, 0.0, 0.6, f*1.1);
+	box(m.x, base + 11.6, m.z, ca, sa, 1.6, 1.5, 1.4, 0.0, 0.5, f*1.15);
 }
 
 # One box, in the machine's own frame: hw/hh/hd are half extents, ox is
@@ -939,9 +942,9 @@ box(x, y, z, ca, sa, hw, hh, hdp, ox, oz, lv: real)
 	y1 := y + hh;
 	# front, back, left, right - the top is only visible from a hill
 	quadface(cx-ux-vx, cz-uz-vz, cx+ux-vx, cz+uz-vz, y0, y1, lv*1.0);
-	quadface(cx+ux+vx, cz+uz+vz, cx-ux+vx, cz-uz+vz, y0, y1, lv*0.55);
-	quadface(cx-ux+vx, cz-uz+vz, cx-ux-vx, cz-uz-vz, y0, y1, lv*0.8);
-	quadface(cx+ux-vx, cz+uz-vz, cx+ux+vx, cz+uz+vz, y0, y1, lv*0.7);
+	quadface(cx+ux+vx, cz+uz+vz, cx-ux+vx, cz-uz+vz, y0, y1, lv*0.7);
+	quadface(cx-ux+vx, cz-uz+vz, cx-ux-vx, cz-uz-vz, y0, y1, lv*0.88);
+	quadface(cx+ux-vx, cz+uz-vz, cx+ux+vx, cz+uz+vz, y0, y1, lv*0.8);
 }
 
 quadface(ax, az, bx, bz, y0, y1, lv: real)
@@ -950,8 +953,8 @@ quadface(ax, az, bx, bz, y0, y1, lv: real)
 	qv[1] = Vector(bx, y0, bz);
 	qv[2] = Vector(bx, y1, bz);
 	qv[3] = Vector(ax, y1, az);
-	ql[0] = lv*0.7;
-	ql[1] = lv*0.7;
+	ql[0] = lv*0.78;
+	ql[1] = lv*0.78;
 	ql[2] = lv;
 	ql[3] = lv;
 	d3->fillpoly3g(ctx, qv, ql);
@@ -1235,9 +1238,17 @@ shot()
 	ctx = d3->context(target);
 	lock = 0;
 	me.throt = 0.6;
-	for(i := 0; i < 120; i++){
+	# The other machines start a long way out, further than the terrain
+	# is drawn, so a screenshot of the opening shows an empty valley.
+	# Bring two of them to where a pilot would first see them.
+	a := me.face * DEG;
+	foes[0].x = me.x + 45.0 * math->cos(a);
+	foes[0].z = me.z + 45.0 * math->sin(a);
+	foes[1].x = me.x + 72.0 * math->cos(a) - 22.0 * math->sin(a);
+	foes[1].z = me.z + 72.0 * math->sin(a) + 22.0 * math->cos(a);
+	for(i := 0; i < 40; i++){
 		pad = 0;
-		if(i > 30 && i < 70)
+		if(i > 10 && i < 26)
 			pad = Nes->PB;		# twist the torso
 		step();
 		if((i % 10) == 0 || i == 119)
@@ -1502,6 +1513,29 @@ selftest()
 	frame();
 	cktrue("a frame draws something", lit() > 20000);
 
+	# And an enemy in front must actually put pixels on the screen.
+	# Nothing above this line does: every other check asks about state,
+	# and an `if(0)` left in front of the loop that draws the other
+	# machines hid all of them for a whole commit while all 38 passed.
+	# A game's test that never looks at the picture cannot see that.
+	newgame();
+	me.face = 0.0;
+	me.twist = 0.0;
+	for(i = 0; i < NFOE; i++)
+		foes[i].alive = 0;
+	frame();
+	bare := lit();
+	foes[0].alive = 1;
+	foes[0].x = me.x + 40.0;
+	foes[0].z = me.z;
+	frame();
+	withfoe := lit();
+	cktrue("an enemy in front is drawn", withfoe > bare + 2000);
+	# and one behind the cockpit is not
+	foes[0].x = me.x - 40.0;
+	frame();
+	cktrue("and one behind the cockpit is not", lit() <= bare + 200);
+
 	if(nfail == 0)
 		sys->print("strider: PASSED\n");
 	else{
@@ -1533,10 +1567,17 @@ lit(): int
 	b := array[w*h*bpp] of byte;
 	if(target.readpixels(target.r, b) < 0)
 		return -1;
+	# The sky is whatever the frame was cleared to, read from a corner,
+	# NOT a colour written down here.  It was written down here, and
+	# when the sky colour changed this silently began counting every
+	# pixel in the window - so "a frame draws something" was true of a
+	# frame that drew nothing.
+	sk0 := b[0];
+	sk1 := b[1];
+	sk2 := b[2];
 	n := 0;
 	for(i := 0; i < w*h; i++)
-		if(b[i*bpp] != byte 16r26 || b[i*bpp+1] != byte 16r2e
-		|| b[i*bpp+2] != byte 16r48)
+		if(b[i*bpp] != sk0 || b[i*bpp+1] != sk1 || b[i*bpp+2] != sk2)
 			n++;
 	return n;
 }
