@@ -44,7 +44,13 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 docker rm -f btvirt-run >/dev/null 2>&1 || true
-docker run -d --name btvirt-run -p $UPPORT:5555 "$IMAGE" >/dev/null
+#
+# PEERARGS reaches btpeer inside the container.  "-c <address>" makes
+# it the central: it connects to the guest and asks to pair, which is
+# how the guest's responder is tested rather than its initiator.
+#
+docker run -d --name btvirt-run -p $UPPORT:5555 \
+	-e PEERARGS="${PEERARGS:-}" "$IMAGE" >/dev/null
 #
 # btvirt has to be listening and the peer advertising before the guest
 # scans, or the scan finds nothing and the phase fails for a reason

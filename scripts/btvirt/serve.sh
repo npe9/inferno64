@@ -10,6 +10,12 @@
 set -e
 PORT=${PORT:-5555}
 SOCK=${SOCK:-/tmp/bt-server-bredrle}
+#
+# PEERARGS reaches btpeer: "-c <address>" makes it the central and
+# have it pair with the guest, which is how the guest\x27s responder
+# gets tested rather than only its initiator.
+#
+PEERARGS=${PEERARGS:-}
 
 btvirt -s &
 i=0
@@ -27,7 +33,7 @@ fi
 # list, so the two can hear each other -- and advertises on it.
 #
 if [ "${PEER:-1}" != 0 ]; then
-	btpeer "$SOCK" &
+	btpeer $PEERARGS "$SOCK" &
 	sleep 1
 fi
 

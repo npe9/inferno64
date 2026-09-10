@@ -422,6 +422,157 @@ scfinish(c: ref Conn, nil: ref Mux, ch: chan of array of byte,
 }
 
 #
+# The responder's half of a Secure Connections pairing.
+#
+# The same exchange as scpair() with the sides swapped, and the swaps
+# are where a transliteration goes wrong.  The initiator sends its
+# public key first and this side answers with its own.  This side is
+# the one that commits: the confirm goes out before either nonce, and
+# it is built from this side's own nonce, which the peer has not seen.
+# f5 and f6 take the initiator's address first whoever is calling
+# them, so the arguments that were "us, them" in scpair() are "them,
+# us" here.  And the DHKey check arrives before ours goes out.
+#
+screspond(c: ref Conn, m: ref Mux, ch: chan of array of byte,
+	preq: array of byte, ask: ref Ask): (ref Bond, string)
+{
+	auth := Abonding|Asc;
+	iocap := Ionoio;
+	if(ask != nil && (int preq[3] & Amitm)){
+		iocap = Iodisplayyesno;
+		auth |= Amitm;
+	}
+	pres := array[7] of byte;
+	pres[0] = byte Presp;
+	pres[1] = byte iocap;
+	pres[2] = byte 0;
+	pres[3] = byte auth;
+	pres[4] = byte 16;
+	pres[5] = byte 0;		# nothing to distribute: the key is derived
+	pres[6] = byte 0;
+	if((e := l2cap->send(m, L2cap->Csmp, pres)) != nil)
+		return (nil, e);
+
+	(sk, pkx, pky, ge) := genkey(c.x);
+	if(ge != nil)
+		return (nil, ge);
+
+	(pp, e1) := await(ch, Ppubkey);
+	if(e1 != nil)
+		return (nil, e1);
+	if(len pp < 65)
+		return (nil, "short pairing public key");
+	rpkx := pp[1:33];
+	rpky := pp[33:65];
+
+	pk := array[65] of byte;
+	pk[0] = byte Ppubkey;
+	pk[1:] = pkx;
+	pk[33:] = pky;
+	if((e2 := l2cap->send(m, L2cap->Csmp, pk)) != nil)
+		return (nil, e2);
+
+	(dhbe, nil, e3) := p256->mult(sk, be(rpkx), be(rpky));
+	if(e3 != nil)
+		return (nil, "diffie-hellman: " + e3);
+	dhkey := reverse(dhbe);
+
+	(nb, e4) := random16(c.x);
+	if(e4 != nil)
+		return (nil, e4);
+
+	#
+	# This side commits first: f4 over its own public key, then the
+	# peer's, with its own nonce as the key.
+	#
+	cf := array[17] of byte;
+	cf[0] = byte Pconfirm;
+	cf[1:] = f4(pkx, rpkx, nb, byte 0);
+	if((e5 := l2cap->send(m, L2cap->Csmp, cf)) != nil)
+		return (nil, e5);
+
+	(ra0, e6) := await(ch, Prandom);
+	if(e6 != nil)
+		return (nil, e6);
+	if(len ra0 < 17)
+		return (nil, "short pairing random");
+	na := ra0[1:17];
+
+	rf := array[17] of byte;
+	rf[0] = byte Prandom;
+	rf[1:] = nb;
+	if((e7 := l2cap->send(m, L2cap->Csmp, rf)) != nil)
+		return (nil, e7);
+
+	ia := c.addr;
+	a1 := array[7] of byte;
+	a1[0:] = ia;
+	a1[6] = byte c.atype;
+	ra := hci->localaddr(c.x);
+	a2 := array[7] of byte;
+	a2[0:] = ra;
+	a2[6] = byte Bt->Apublic;
+
+	(mackey, ltk) := f5(dhkey, na, nb, a1, a2);
+
+	if(ask != nil && (int preq[3] & Amitm) && (auth & Amitm)){
+		v := g2(rpkx, pkx, na, nb);
+		ask.q <-= sys->sprint("numeric %6.6d", v);
+		if(<-ask.a != 1){
+			fail(m, 16r08);		# numeric comparison failed
+			return (nil, "the numbers were not the same: refused here");
+		}
+	}
+
+	zero16 := array[16] of {* => byte 0};
+	(ea, e8) := await(ch, Pdhcheck);
+	if(e8 != nil)
+		return (nil, e8);
+	if(len ea < 17)
+		return (nil, "short dhkey check");
+	if(!same(f6(mackey, na, nb, zero16, preq[1:4], a1, a2), ea[1:17])){
+		fail(m, 16r0b);		# dhkey check failed
+		return (nil, "the peer's dhkey check does not match");
+	}
+
+	eb := f6(mackey, nb, na, zero16, pres[1:4], a2, a1);
+	df := array[17] of byte;
+	df[0] = byte Pdhcheck;
+	df[1:] = eb;
+	if((e9 := l2cap->send(m, L2cap->Csmp, df)) != nil)
+		return (nil, e9);
+
+	#
+	# The peer starts encryption with the key both sides derived,
+	# and the controller asks this side for it.  There is no EDIV
+	# and no Rand to match: a Secure Connections key has neither.
+	#
+	tick := chan[1] of int;
+	spawn timer(Encwait, tick);
+	alt {
+	(nil, nil) := <-c.ltkreq =>
+		if((ke := hci->leltkreply(c, ltk)) != nil)
+			return (nil, "answering the key request: " + ke);
+	<-tick =>
+		return (nil, "the peer never asked for the key");
+	}
+	for(i := 0; i < Encwait/100 && !c.encrypted; i++)
+		sys->sleep(100);
+	if(!c.encrypted)
+		return (nil, "the link did not become encrypted");
+
+	b := ref Bond;
+	b.addr = bt->addrstr(c.addr);
+	b.local = bt->addrstr(hci->localaddr(c.x));
+	b.atype = c.atype;
+	b.ltk = ltk;
+	b.ediv = 0;
+	b.rand = array[8] of {* => byte 0};
+	b.sc = 1;
+	return (b, nil);
+}
+
+#
 # wait for one particular SMP command; a pairing failure is an
 # answer to anything
 #
@@ -910,7 +1061,7 @@ scpair(c: ref Conn, m: ref Mux, ch: chan of array of byte,
 # key, which is the one thing a peripheral does that a central never
 # does.
 #
-respond(c: ref Conn, m: ref Mux, known: ref Bond): (ref Bond, string)
+respond(c: ref Conn, m: ref Mux, known: ref Bond, ask: ref Ask): (ref Bond, string)
 {
 	ch := l2cap->open(m, L2cap->Csmp);
 	#
@@ -957,10 +1108,16 @@ respond(c: ref Conn, m: ref Mux, known: ref Bond): (ref Bond, string)
 		return (nil, e0);
 	if(len preq < 7)
 		return (nil, "short pairing request");
-	if(int preq[3] & Asc){
-		fail(m, 16r05);		# pairing not supported
-		return (nil, "the peer wants LE Secure Connections, which this stack does not do");
-	}
+	#
+	# A peer asking for Secure Connections gets it if this side can
+	# do it, and legacy if it cannot.  Refusing the pairing outright
+	# -- which is what this did -- is wrong twice over: it is not
+	# what the specification says a device without it does, and
+	# since everything modern asks for it, a peripheral behaving
+	# that way can be paired with by almost nothing.
+	#
+	if((int preq[3] & Asc) && cmac != nil && p256 != nil)
+		return screspond(c, m, ch, preq, ask);
 
 	#
 	# What we will distribute: a long term key and the numbers that

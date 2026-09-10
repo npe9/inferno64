@@ -3263,7 +3263,7 @@ responder(d: ref Dev)
 			known = hd bl;
 	d.r.bondlock <-= 1;
 
-	(b, e) := smp->respond(c, m, known);
+	(b, e) := smp->respond(c, m, known, nil);
 	if(e != nil){
 		#
 		# Only worth a line when the peer actually started.  A

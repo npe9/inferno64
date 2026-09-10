@@ -286,6 +286,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	"crypto" =>
 		cryptophase();
 		return;
+	"btvirtperiph" =>
+		btvirtperiph();
+		return;
 	"coc" or "cocstingy" =>
 		cocphase(mode);
 		return;
@@ -4120,4 +4123,78 @@ confirmer(dev: string)
 		sys->sleep(100);
 	}
 	sys->print("BT: FAILED: the pairing never asked anything\n");
+}
+
+#
+# The other way round against BlueZ: this side advertises and BlueZ
+# connects to it and asks to pair, so what is being tested is the
+# responder rather than the initiator.
+#
+# bthost adds the Secure Connections bit to whatever it was told to
+# ask for, so what arrives is a modern initiator, which is the case
+# this stack used to refuse outright.
+#
+btvirtperiph()
+{
+	if((e := writefile(mnt + "/0/ctl", "advname inferno-bt")) != nil){
+		sys->print("BT: FAILED: advname: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	if((e = writefile(mnt + "/0/ctl", "advertise on")) != nil){
+		sys->print("BT: FAILED: advertise on: %s\n", e);
+		sys->print("BT: done\n");
+		return;
+	}
+	sys->print("BT: advertising, waiting to be paired with\n");
+
+	dev := "";
+	for(i := 0; i < 60 && dev == ""; i++){
+		sys->sleep(500);
+		for(l := lsdir(mnt + "/0/remote"); l != nil; l = tl l){
+			d := mnt + "/0/remote/" + hd l;
+			if(hasword(trim(readfile(d + "/state")), "connected"))
+				dev = d;
+		}
+	}
+	if(dev == ""){
+		sys->print("BT: FAILED: nothing connected to us\n");
+		sys->print("BT: done\n");
+		return;
+	}
+	sys->print("BT: %s connected to us\n", dev);
+
+	#
+	# The pairing is the peer's to start and this side's to answer,
+	# so what is waited for is the link becoming encrypted and a
+	# bond appearing -- neither of which this side asked for.
+	#
+	enc := 0;
+	for(i = 0; i < 60 && !enc; i++){
+		sys->sleep(500);
+		enc = hasword(trim(readfile(dev + "/state")), "encrypted");
+	}
+	if(!enc){
+		sys->print("BT: FAILED: the peer never encrypted the link\n");
+		sys->print("BT: done\n");
+		return;
+	}
+	show(dev + "/state");
+	#
+	# The bond is written after the pairing returns, which is after
+	# the link reads encrypted: the state file is set by the
+	# controller's event and the bond by the code that was waiting
+	# for it.  Checking straight away catches the gap between them
+	# rather than anything about the pairing.
+	#
+	bonds: list of string;
+	for(i = 0; i < 40 && bonds == nil; i++){
+		sys->sleep(250);
+		bonds = lines(readfile(mnt + "/0/bonds"));
+	}
+	if(bonds == nil)
+		sys->print("BT: FAILED: encrypted but no bond was kept\n");
+	for(bl := bonds; bl != nil; bl = tl bl)
+		say("BT: bond " + hd bl);
+	sys->print("BT: done\n");
 }

@@ -43,6 +43,15 @@ static struct bthost *host;
 /* the name it advertises under, and the one its GATT database gives */
 static const char advname[] = "bluez-peer";
 
+/*
+ * With -c <address> this peer is the central instead: it connects to
+ * the address given and starts a pairing, so the other side's
+ * responder can be tested rather than only its initiator.  Without
+ * it, it advertises and waits, which is everything else here.
+ */
+static const uint8_t *connect_to;
+static uint8_t connect_addr[6];
+
 /* H4 out: whatever bthost built, straight down the socket */
 static void send_handler(const struct iovec *iov, int iovlen, void *user_data)
 {
@@ -475,6 +484,22 @@ static void rfcomm_conn(uint16_t handle, uint16_t cid, void *user_data,
 	bthost_add_rfcomm_chan_hook(host, handle, RFCHAN, rfcomm_data, NULL);
 }
 
+static uint16_t pairhandle;
+
+/*
+ * A moment before asking to pair.  The other side has a link to
+ * notice, a device directory to make and an SMP channel to open
+ * before it can hear a Pairing Request, and this is a test fixture
+ * rather than an adversary.
+ */
+static bool ask_to_pair(void *user_data)
+{
+	printf("btpeer: asking to pair\n");
+	fflush(stdout);
+	bthost_request_auth(host, pairhandle);
+	return false;
+}
+
 static void connect_cb(uint16_t handle, void *user_data)
 {
 	int sv[2];
@@ -482,6 +507,25 @@ static void connect_cb(uint16_t handle, void *user_data)
 	printf("btpeer: connected, handle %u\n", handle);
 	fflush(stdout);
 	conn_handle = handle;
+
+	/*
+	 * As the central, ask to pair straight away.  bthost adds the
+	 * Secure Connections bit to whatever auth req it was given, so
+	 * what the other side sees is a modern initiator.
+	 */
+	if (connect_to) {
+		/*
+		 * Straight away, with no pause.  A central may send a
+		 * Pairing Request the moment the link is up, and the
+		 * other side has to cope; pausing here to be kind would
+		 * hide exactly the case worth testing.  It did hide it
+		 * once: l2cap dropped frames for a fixed channel nobody
+		 * had opened yet, and a delay here made that look fine.
+		 */
+		pairhandle = handle;
+		ask_to_pair(NULL);
+		return;
+	}
 
 	if (socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK, 0, sv) < 0) {
 		perror("btpeer: socketpair");
@@ -510,6 +554,23 @@ static void connect_cb(uint16_t handle, void *user_data)
  * and what a bench phase can then assert on.
  */
 
+static unsigned int conntimer;
+
+static bool try_connect(void *user_data)
+{
+	if (conn_handle)			/* already there */
+		return false;
+	/*
+	 * 0x01 and not 0x00.  In BlueZ's numbering BDADDR_BREDR is 0,
+	 * LE public is 1 and LE random is 2, so passing 0 here pages
+	 * on BR/EDR instead of connecting on LE -- and the guest,
+	 * which is advertising, sees nothing at all and reports that
+	 * nothing connected to it.
+	 */
+	bthost_hci_connect(host, connect_to, 0x01);
+	return true;
+}
+
 static void ready_cb(void)
 {
 	uint8_t ad[3 + 2 + sizeof(advname) - 1];
@@ -523,8 +584,6 @@ static void ready_cb(void)
 	memcpy(ad + n, advname, sizeof(advname) - 1);
 	n += sizeof(advname) - 1;
 
-	bthost_set_adv_data(host, ad, n);
-	bthost_set_adv_enable(host, 0x01);
 	bthost_write_scan_enable(host, 0x03);	/* discoverable for BR/EDR too */
 	/*
 	 * Secure simple pairing on the BR/EDR side.  No Input No
@@ -575,14 +634,53 @@ static void ready_cb(void)
 	 */
 	bthost_add_l2cap_server(host, 0x0003, NULL, NULL, NULL);
 	bthost_add_rfcomm_server(host, RFCHAN, rfcomm_conn, NULL);
+
+	if (connect_to) {
+		/*
+		 * Keep trying.  The guest is not advertising yet when
+		 * this peer becomes ready -- it has a controller to
+		 * bring up and a name space to serve first -- and a
+		 * single attempt simply fails into silence.
+		 */
+		printf("btpeer: connecting to the guest to pair with it\n");
+		fflush(stdout);
+		conntimer = timeout_add(1000, try_connect, NULL, NULL);
+		return;
+	}
+	bthost_set_adv_data(host, ad, n);
+	bthost_set_adv_enable(host, 0x01);
 	printf("btpeer: advertising as %s\n", advname);
 	fflush(stdout);
 }
 
+static int unhex6(const char *s, uint8_t *out)
+{
+	int i, hi, lo;
+
+	for (i = 0; i < 6; i++) {
+		if (sscanf(s + 2 * i, "%1x%1x", &hi, &lo) != 2)
+			return -1;
+		out[5 - i] = (hi << 4) | lo;	/* text is written order */
+	}
+	return 0;
+}
+
 int main(int argc, char *argv[])
 {
-	const char *path = argc > 1 ? argv[1] : "/tmp/bt-server-bredrle";
+	const char *path = "/tmp/bt-server-bredrle";
 	struct sockaddr_un addr;
+	int i;
+
+	for (i = 1; i < argc; i++) {
+		if (!strcmp(argv[i], "-c") && i + 1 < argc) {
+			if (unhex6(argv[++i], connect_addr) < 0) {
+				fprintf(stderr, "btpeer: bad address\n");
+				return 1;
+			}
+			connect_to = connect_addr;
+		} else
+			path = argv[i];
+	}
 
 	sk = socket(PF_UNIX, SOCK_STREAM, 0);
 	if (sk < 0) {

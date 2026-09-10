@@ -102,36 +102,55 @@ open(m: ref Mux, cid: int): chan of array of byte
 {
 	<-m.reply;
 	c := lookup(m, cid);
-	if(c == nil){
-		c = ref Chan;
-		#
-		# The credit fields too, though a fixed channel never
-		# reads them: a ref adt's integer fields are whatever was
-		# in the heap, and a channel whose dcid or credit count
-		# is garbage is a channel that looks open to anything
-		# that walks the list.
-		#
-		c.cid = cid;
-		c.state = Sfixed;
-		c.basic = 0;
-		c.confin = 0;
-		c.rq = chan[Qdepth] of array of byte;
-		c.dcid = 0;
-		c.psm = 0;
-		c.mtu = 0;
-		c.mps = 0;
-		c.dmtu = 0;
-		c.dmps = 0;
-		c.rxcred = 0;
-		c.txcred = 0;
-		c.have = 0;
-		c.pdus = 0;
-		c.sdu = nil;
-		c.err = nil;
-		m.chans = c :: m.chans;
-	}
+	if(c == nil)
+		c = mkfixed(m, cid);
 	m.reply <-= 1;
 	return c.rq;
+}
+
+#
+# Make a fixed channel.  The mux lock is held by the caller.
+#
+# This is called from open() and also from the demultiplexer when a
+# frame arrives for a fixed channel nobody has opened yet, and the
+# second is the point.  A central that connects and sends a Pairing
+# Request straight away -- which is what BlueZ does, and what any
+# central may do -- gets there before the responder has opened CID 6,
+# and a frame with no channel to go on used to be dropped.  The
+# pairing then never happened and nothing said why: the request was
+# on the wire, the capture showed it, and this side simply never
+# answered.  Making the channel here means the frame waits on the
+# queue for whoever opens it next.
+#
+mkfixed(m: ref Mux, cid: int): ref Chan
+{
+	c := ref Chan;
+	#
+	# The credit fields too, though a fixed channel never
+	# reads them: a ref adt's integer fields are whatever was
+	# in the heap, and a channel whose dcid or credit count
+	# is garbage is a channel that looks open to anything
+	# that walks the list.
+	#
+	c.cid = cid;
+	c.state = Sfixed;
+	c.basic = 0;
+	c.confin = 0;
+	c.rq = chan[Qdepth] of array of byte;
+	c.dcid = 0;
+	c.psm = 0;
+	c.mtu = 0;
+	c.mps = 0;
+	c.dmtu = 0;
+	c.dmps = 0;
+	c.rxcred = 0;
+	c.txcred = 0;
+	c.have = 0;
+	c.pdus = 0;
+	c.sdu = nil;
+	c.err = nil;
+	m.chans = c :: m.chans;
+	return c;
 }
 
 #
@@ -224,8 +243,19 @@ demux(m: ref Mux)
 			<-m.reply;
 			c := lookup(m, cid);
 			if(c == nil){
-				m.reply <-= 1;
-				continue;	# nobody opened that channel
+				#
+				# A fixed channel gets made here so the
+				# frame waits rather than being thrown
+				# away; anything else is a channel
+				# nobody opened and the frame is not
+				# ours to keep.
+				#
+				if(cid == Csmp || cid == Cattr)
+					c = mkfixed(m, cid);
+				else {
+					m.reply <-= 1;
+					continue;
+				}
 			}
 			if(c.state != Sfixed && !c.basic){
 				#

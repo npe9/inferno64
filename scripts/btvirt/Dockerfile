@@ -71,5 +71,6 @@ COPY --from=build /src/emulator/btvirt /usr/local/bin/btvirt
 COPY --from=build /src/tools/btproxy /usr/local/bin/btproxy
 COPY --from=build /src/emulator/btpeer /usr/local/bin/btpeer
 COPY serve.sh /usr/local/bin/serve.sh
+ENV PEERARGS=""
 EXPOSE 5555
 ENTRYPOINT ["/usr/local/bin/serve.sh"]

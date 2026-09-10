@@ -196,9 +196,64 @@ optional thing the initiator offered; a device behaving that way would
 fail to pair with anything modern, since everything modern offers it.
 Nothing noticed until this stack started asking.  It now leaves the
 bit out of its response, which is what a legacy-only device does.
+.NH 3
+The responder
 .PP
-What is left is the peripheral role, which still pairs the legacy way,
-and the numeric comparison g2 computes \(em which is not shown to
+The peripheral role does Secure Connections too.
+.CW screspond
+is
+.CW scpair
+with the sides exchanged, and the swaps are where a transliteration
+goes wrong: the initiator's public key arrives before this side's goes
+out, this side is the one that commits so its confirm goes out before
+either nonce, f5 and f6 take the initiator's address first whoever is
+calling them, and the DHKey check arrives before ours is sent.  The
+peer starts encryption with the derived key and the controller asks
+this side for it, with no EDIV and no Rand to match, because a Secure
+Connections key has neither.
+.PP
+What it did before was refuse: a peer asking for Secure Connections
+got
+.CW "pairing not supported"
+and nothing else.  That is the same mistake the model was making from
+the other side, in this tree's own stack, and it is worse here \(em
+everything modern asks for Secure Connections, so a peripheral
+behaving that way can be paired with by almost nothing.
+.PP
+Testing it needed BlueZ to be the central, which
+.CW "btpeer -c <address>"
+now does: it connects to the guest and asks to pair.  Two things had
+to be got right for that to mean anything.  BlueZ numbers address
+types with BR/EDR as 0, LE public as 1 and LE random as 2, so passing
+0 pages on BR/EDR instead of connecting on LE, and the guest sees
+nothing at all.  And the peer's settings were being made after an
+early return, so it paired with its defaults and the exchange came out
+as legacy while the file plainly asked for Secure Connections.
+.NH 3
+A frame with no channel to go on
+.PP
+That test found a real fault, and only because the fixture was
+impatient.  BlueZ sends its Pairing Request the moment the link is up.
+.CW l2cap.b
+made a fixed channel when somebody opened it, and a frame arriving for
+a channel nobody had opened yet was dropped:
+.EX
+	c := lookup(m, cid);
+	if(c == nil){
+		m.reply <-= 1;
+		continue;	# nobody opened that channel
+	}
+.EE
+So the request was on the wire, the capture showed it, and this side
+never answered.  Nothing timed out and nothing was logged, because
+from the responder's point of view no request had arrived.
+.PP
+The channel is made in the demultiplexer now, for the two fixed CIDs
+that have one, so the frame waits on the queue for whoever opens it
+next.  A pause in the fixture before asking to pair made the fault
+disappear, which is exactly why the pause was taken out again.
+.PP
+What is left is the numeric comparison g2 computes \(em which is not shown to
 anyone, because there is nowhere to show it, and claiming protection
 against a man in the middle without asking a person would be a lie.
 That needs the next item.
@@ -258,8 +313,7 @@ comparison that cannot refuse is Just Works with a number printed
 over it.
 .PP
 What is still missing is passkey entry, which needs six digits to be
-read in rather than shown, and the peripheral role, which pairs the
-legacy way whatever the central asks for.
+read in rather than shown.
 .NH 2
 The shape of what is built
 .PP

@@ -1358,5 +1358,5 @@ Smp: module
 	# that one, and answering it is what lets a bonded peer come
 	# back without pairing again.
 	respond:	fn(c: ref Hci->Conn, m: ref L2cap->Mux,
-				known: ref Bond): (ref Bond, string);
+				known: ref Bond, ask: ref Ask): (ref Bond, string);
 };
