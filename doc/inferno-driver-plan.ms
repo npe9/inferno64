@@ -745,11 +745,22 @@ exception cause 0x5 epc 0x800641ee tval 0x6f
 which resolves against the kernel's own symbols to
 .CW movp+0xe
 called from
-.CW xec+0x2a4
-\(em a Dis
-.CW MOVP
-loading through a pointer 0x6f bytes off nil, inside the interpreter
-rather than in any driver.  It is timing-dependent: the same kernel
+.CW xec+0x2a4 .
+Offset 0xe is
+.CW OP(movp) 's
+own first load,
+.CW "sv = P(s)" ,
+so what was bad is the source
+.I slot
+address and not the pointer in it \(em the addressing mode reached
+0x6f, which is a nil frame or module pointer plus a field offset.
+.CW OP(movp) 's
+.CW badptrslot()
+guard never fired, because it checks the value it read and this
+faulted reading it.  That is the same family as the interpreter crash
+hunt written up at length in
+.CW doc/inferno-ports.ms ,
+and it is in the interpreter rather than in any driver.  It is timing-dependent: the same kernel
 booted by hand without the disk and the host rig did not get as far as
 serving
 .CW /net.alt/ether
