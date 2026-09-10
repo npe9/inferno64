@@ -144,6 +144,24 @@ When the ring is full the
 announcement is dropped.
 A screen reader is saying where you are now, and a backlog of where you used to
 be is worse than useless because you have to sit through it.
+.SS Which window
+Arriving in a window announces which window it is, and then where the
+keyboard is inside it \(em the order a person needs.
+.PP
+.B Tk
+has no title of its own; a title belongs to the window system.
+It can be told one: the variable
+.B windowname
+is where anything that knows may put it, and
+.IR titlebar (2)
+does whenever the title is set.
+A variable rather than a widget path, because it is a fact about the
+window rather than a thing on the screen, and a program with no titlebar
+at all can still set it.
+.PP
+Without one, a window that has nothing focused inside it says only
+.BR window ,
+which is what this always used to say.
 .SS history
 Everything that has been announced, newest first, one to a line.
 .PP

@@ -211,6 +211,10 @@ settitle(top: ref Tk->Toplevel, t: string): string
 {
 	s := title(top);
 	tk->cmd(top, ".Wm_t.title configure -text '" + t);
+	# Also where libtk looks when the window itself gains the keyboard,
+	# so a person arriving in it is told which one it is rather than
+	# just "window". See voice(3).
+	tk->cmd(top, "variable windowname " + tk->quote(t));
 	return s;
 }
 

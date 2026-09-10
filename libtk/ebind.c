@@ -719,6 +719,8 @@ void
 tksetglobalfocus(TkTop *top, int in)
 {
 	Tk *tk;
+	TkVar *v;
+	int named;
 	in = (in != 0);
 	if (in != top->focused){
 		top->focused = in;
@@ -733,14 +735,30 @@ tksetglobalfocus(TkTop *top, int in)
 			 * Arriving in a window is a bigger move than stepping
 			 * between two things inside one, and a person who
 			 * cannot see it has nothing else to tell them it
-			 * happened. What is announced is where they now are:
-			 * Tk has no title to give - that belongs to wm - so
-			 * the widget holding the keyboard is the best answer
-			 * available, and it is the useful one.
+			 * happened.
+			 *
+			 * Which window, then where in it - the order a person
+			 * needs, and the order a screen reader elsewhere would
+			 * use. This used to say only where the keyboard was,
+			 * on the grounds that Tk has no title to give because
+			 * a title belongs to wm. It still has none of its own,
+			 * but it can be told: the variable "windowname" is
+			 * where anything that knows may put it, and
+			 * titlebar(2) does when the title is set. A variable
+			 * rather than a widget path because it is a fact about
+			 * the window, not a thing on the screen, and any
+			 * program can set it without having a titlebar at all.
 			 */
+			named = 0;
+			v = tkmkvar(top, "windowname", 0);
+			if(v != nil && v->type == TkVstring && v->value != nil
+			&& *(char*)v->value != '\0'){
+				voiceannounce((char*)v->value);
+				named = 1;
+			}
 			if(tk != nil && tk != top->root)
 				tkannouncefocus(tk);
-			else
+			else if(!named)
 				voiceannounce("window");
 		}else{
 			if(tk != nil && tk != top->root){

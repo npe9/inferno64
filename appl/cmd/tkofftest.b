@@ -880,6 +880,29 @@ checkvoice()
 	said = next(sfd);
 	report(has(said, "General") && has(said, "selected"), sys->sprint(
 		"a notebook tab says its name and that it is chosen (%#q)", said));
+
+	# Arriving in a window used to say "window", or where the keyboard
+	# was inside it, because Tk has no title of its own. It can be told
+	# one now: titlebar(2) puts it in the variable libtk reads.
+	if(titlebar == nil)
+		return;
+	blank();
+	t6 := offscreen();
+	if(t6 == nil)
+		return;
+	titlebar->new(t6, Titlebar->Appl);
+	titlebar->settitle(t6, "Mail Reader");
+	tk->cmd(t6, "label .l -text {body}");
+	tk->cmd(t6, "pack .l");
+	map(t6);
+	tk->cmd(t6, "focus -global 0");
+	tk->cmd(t6, "update");
+	drain(sfd);
+	tk->cmd(t6, "focus -global 1");
+	tk->cmd(t6, "update");
+	said = next(sfd);
+	report(has(said, "Mail Reader"), sys->sprint(
+		"entering a window says which window (%#q)", said));
 }
 
 slurpfile(p: string): string
