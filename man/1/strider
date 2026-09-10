@@ -1,0 +1,176 @@
+.TH STRIDER 1
+.SH NAME
+strider \- a walking-machine combat sim
+.SH SYNOPSIS
+.B games/strider
+[
+.B -t
+|
+.B -b
+|
+.B -s
+] [
+.B -q
+] [
+.B -S
+|
+.B -D
+] [
+.B -n
+.I frames
+]
+.SH DESCRIPTION
+.I Strider
+is a combat sim in the shape that genre took:
+a throttle rather than a speed, so the machine takes time to get moving
+and time to stop;
+legs that turn slower than the torso they carry;
+a torso that aims independently of them;
+three weapon groups that trade damage against heat and ammunition;
+a heat scale that will shut the machine down if it is ignored;
+and armour that is lost a section at a time rather than a point at a
+time.
+.PP
+Where
+.IR gorge (1)
+is a corridor that slides past a fixed eye, this is a heightfield with a
+machine walking over it, and the eye is the cockpit.
+.SS Controls
+.TP
+.B "left, right"
+Turn the legs.
+Slowly \- this is what the machine is standing on.
+.TP
+.B "up, down"
+Throttle.
+.B =
+and
+.B -
+step it, and
+.B 0
+sets it to zero.
+.TP
+.BR z ", " Tab
+Twist the torso left and right respectively, up to seventy degrees
+either side of the legs.
+.B c
+centres it.
+This is the mechanic the whole genre is built on: you can walk one way
+and shoot another.
+.TP
+.BR x ", " . ", space"
+Fire the selected group.
+Held, it fires again as each group cycles.
+.TP
+.BR 1 ", " 2 ", " 3
+Select laser, autocannon or missiles.
+The laser needs no ammunition and makes the most heat; missiles fire a
+salvo of six.
+.TP
+.B e
+Cycle the target.
+Not Tab: that twists the torso, and a binding taken twice is a binding
+taken once.
+.PP
+.B q
+or Escape quits.
+.SS The display
+Heat and throttle read along the bottom, the weapon groups top left with
+their remaining rounds, the target's range and centre-torso armour along
+the top, and the machine's own armour as a diagram top right \- six
+boxes in the shape of the machine, each falling and changing colour as
+that section is spent.
+The radar bottom right is turned so that up is where the
+.I torso
+points, which is what a pilot needs and is not the same as north.
+.PP
+All of it is drawn over the 3-D with the depth test off.
+A head-up display that the terrain could occlude would be no use at all.
+.SH EXAMPLE
+.EX
+emu\-cocoa \-r. /dis/games/strider.dis
+.EE
+.PP
+Not under
+.IR wm (1)
+if the frame rate matters; see BUGS in
+.IR gorge (1),
+which this shares.
+.SH SOURCE
+.B /appl/cmd/games/strider.b
+.SH SEE ALSO
+.IR gorge (1),
+.IR draw3d (2),
+.IR nes (2)
+.SH DIAGNOSTICS
+.B -b
+draws as fast as it will go and reports what a frame costs.
+On this host, the full grid at 640 by 480 through
+.B /dis/math/draw3ddev.dis
+with no window manager is about 2225 microseconds a frame.
+.B -n
+sets the frames timed,
+.B -S
+forces the software provider and
+.B -D
+the device one.
+.PP
+.B -t
+runs the self test, which needs no window; it draws a fifth of the grid
+and one frame in ten, for the reasons
+.IR gorge (1)
+gives.
+Thirty-eight checks: that the ground never steps; that the throttle is a
+throttle and not a speed, and that the machine stops where it is set;
+that the torso twists without the legs following and stops at its limit,
+that the legs turn without the torso following, and that the aim is the
+sum;
+that firing makes heat, that heat sheds, that full heat shuts the
+machine down, that a shut down machine ignores its throttle, and that it
+comes back at half heat;
+that a group spends a round and honours its own cooldown, that a laser
+spends none, that an empty group fires nothing and that a missile group
+fires a salvo;
+that a laser takes armour off what it is pointed at and misses what it
+is not, and leaves a beam to draw;
+that a machine with no arms or legs is still standing and a destroyed
+centre torso is not;
+that targeting cycles only what is still up;
+that the other machines close the range and shoot back;
+and that a frame draws something.
+.SH BUGS
+The terrain cull is
+.IR draw3d (2)'s
+own
+.I project
+and not trigonometry of this file's, and that is not tidiness.
+A cull written from a separate idea of where the camera points can
+disagree with the camera, and the first one here did \- it kept exactly
+the cells the camera was not looking at, and the world came out empty
+with the head-up display drawn over it perfectly.
+.PP
+The cull is also load bearing for a reason that is not visible.
+A cell far off the view axis projects to enormous screen coordinates,
+and that drives
+.IR polyfill (2)'s
+rational-z accumulator out of range: thousands of
+.B "bad ratzerr1"
+lines a frame, a diagnostic that has been in
+.B fillpoly
+since Plan 9.
+.IR Gorge (1)
+never hit it because its corridor stays near the axis.
+With the cull the count is zero; the underlying fault is not fixed and
+is not this program's.
+.PP
+Damage lands on a section chosen arithmetically rather than on the
+section the shot actually struck.
+What matters to the game is that armour is spent unevenly and that the
+centre torso is what kills, and both of those are true, but a shot to
+the leg can take the arm.
+.PP
+The other machines all behave the same way and have the same loadout.
+There is no lance, no formation and no retreat.
+.PP
+Missiles fly straight.
+The salvo spreads, but nothing homes.

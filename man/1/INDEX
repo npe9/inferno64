@@ -562,6 +562,7 @@ status sh-std
 std sh-std
 stopwatch wm-misc
 stream stream
+strider strider
 strings strings
 strut strut
 styxlisten listen
