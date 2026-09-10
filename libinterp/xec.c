@@ -2228,9 +2228,16 @@ destroystack(REG *reg)
 	Frame *f, *fp;
 	Modlink *m;
 	Stkext *sx;
-	uchar *ex;
+	uchar *ex, *ts;
 
 	ex = reg->EX;
+	/*
+	 * The extent chain's tops, the way unextend() reads them: the
+	 * head extent runs to reg->TS, and each Stkext's own reg.TS is
+	 * the top of the one below it.  Read before the walk because
+	 * free(sx) below hands each extent back.
+	 */
+	ts = (uchar*)reg->TS;
 	reg->EX = nil;
 	while(ex != nil) {
 		sx = (Stkext*)ex;
@@ -2270,6 +2277,34 @@ destroystack(REG *reg)
 			}
 		} while(f != fp);
 		ex = sx->reg.EX;
+		/*
+		 * And the whole extent, not just the frames the fp chain
+		 * walks.  A frame that was pushed and popped before this
+		 * process died left its registrations behind: the pop
+		 * moves R.SP back and nothing clears, on the correct
+		 * assumption that the next OP(frame) at that address
+		 * calls initmemtt() and trackclear()s it first.  That
+		 * assumption ends here, because free(sx) hands the range
+		 * to mainmem where an ordinary kernel allocation --
+		 * which never registers anything -- can land on it and
+		 * zero it.  Every one of those is then a live pointer
+		 * word apparently going to nil, attributed to whatever
+		 * process happens to be running at the next checkpoint.
+		 * On virtarm64 that was every one of the 24 track: lines
+		 * a boot printed; they go to 0 with this clear, and the
+		 * board still passes its 41 markers and 12 known -FAIL.
+		 * virt 17, virts 17, peer-mixed 12, virt-peer 10 and
+		 * virt32 3 go to 0 the same way, all with obj outside
+		 * the reporting process's own [R.EX, R.TS) and regpid
+		 * naming a process already gone.  What survives is a
+		 * different shape and is left alone: virt32s still
+		 * reports 3, on heap objects that carry a live type
+		 * descriptor, at readmod:after-parsemod.
+		 * Same reasoning as unextend()'s clear, one level up.
+		 */
+		if(ts > (uchar*)sx)
+			trackclear(sx, ts - (uchar*)sx);
+		ts = (uchar*)sx->reg.TS;
 		free(sx);
 	}
 	destroy(reg->M);

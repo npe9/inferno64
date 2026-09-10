@@ -18794,11 +18794,14 @@ and data-abort pair; the shared
 .CW checktracked()
 heap-checkpoint that riscv64 and arm64 both print past
 .CW ROOT-APPS-OK
-(a
+(described here as a
 .CW movp
 writing nil over a live slot in
-.CW Sh ,
-non-fatal, the same op on both); the igb NIC seeing no link; riscv32's
+.CW Sh ;
+that description is withdrawn in the last section of this document \-
+almost all of those reports were stale registrations from freed stack
+extents, and what remains is three on virt32s, on heap objects, whose
+cause is open); the igb NIC seeing no link; riscv32's
 .CW todfix
 clock spam; and the Limbo audio library's
 .CW audioctl
@@ -20877,3 +20880,112 @@ because
 had never named this configuration, so the host echo rig it dials was
 never started, and its netdev had neither hostfwd rule.  Both are the
 suite's, not the kernel's.
+.NH 1
+Most of the track: lines were the instrumentation's own bookkeeping
+.PP
+The open item above says the
+.CW checktracked()
+heap-checkpoint lines that riscv64 and arm64 both print are
+.I "a movp writing nil over a live slot in Sh."
+That description is now withdrawn.  It was drawn from reports that
+were not describing the heap at all.
+.PP
+The counts across the fifteen configurations made the shape plain
+before any theory did: virtarm64 24, virt 17, virts 17, peer-mixed 12,
+virt-peer 10, virt32 3, virt32s 3, the four Pi configurations 3 or 1,
+sifiveu 0.  The boards that print the most are the ones that start and
+finish the most Dis processes, which is a poor fit for a bug in one
+module's
+.CW movp
+and a good fit for something proportional to process teardown.  The
+reports themselves said the same thing twice over: the
+.CW obj
+address in each one lay outside the reporting process's own
+.CW [R.EX,\ R.TS) ,
+and
+.CW regpid
+named a process that had already gone.  A checkpoint attributes a
+changed word to whoever happens to be running when the sweep notices,
+so a stale registration always surfaces under an innocent bystander.
+.PP
+.CW destroystack()
+is where they came from.  It walks the frame chain of each
+.CW Stkext
+with
+.CW "do { ... } while(f != fp)" ,
+calling the destructors it finds, and then hands the whole extent back
+with
+.CW free(sx) .
+The walk reaches the frames that are live at the moment the process
+dies.  It does not reach a frame that was pushed and popped earlier:
+popping moves
+.CW R.SP
+back and clears nothing, on the correct assumption that the next
+.CW OP(frame)
+at that address will
+.CW initmemtt()
+and
+.CW trackclear()
+it first.  That assumption is true for as long as the extent is the
+process's own stack.  It stops being true at
+.CW free(sx) ,
+because the range then belongs to
+.CW mainmem ,
+and an ordinary kernel allocation \(em which registers nothing \(em can
+land on it and zero it.  Each such word is a pointer the tracker still
+believes in, apparently going to nil.
+.PP
+The fix is one clear, of the same kind
+.CW unextend()
+already does a level down, over the whole extent rather than the walked
+frames:
+.CW "if(ts > (uchar*)sx) trackclear(sx, ts - (uchar*)sx)" ,
+with
+.CW ts
+read before the walk because
+.CW free(sx)
+invalidates it \(em the head extent runs to
+.CW reg->TS ,
+and each
+.CW Stkext 's
+own
+.CW reg.TS
+is the top of the one below.
+.PP
+What it is worth saying exactly:
+.CW trackclear()
+writes nothing but the tracker's own table.  It cannot fix a board and
+it cannot break one, and the fifteen configurations passing after it is
+the expected result, not evidence of a repair.  The claim is only that
+the instrumentation no longer reports stale registrations from freed
+stack extents.  Measured: virtarm64 24 to 0 while still passing its 41
+markers and 12 known failures, and virt, virts, peer-mixed, virt-peer
+and virt32 to 0 as well.
+.PP
+Three survive, on virt32s, and they are the reason this is worth
+having.  They are a different shape:
+.sp
+.nf
+.CW
+track: CHANGED TO BAD VALUE addr 0x83864ad8 old -0x1 new 0x0
+    regpid 6 checkpoint readmod:after-parsemod
+track: object 0x83864a98 word 16, type 0x838175b0 size 176 np 4
+track: R.EX 0x8364de38 R.TS 0x8364e5b8
+.R
+.fi
+.sp
+The object carries a live type descriptor and a size, so it is a heap
+allocation and not a stack frame; it is nowhere near the reporting
+process's extent; and
+.CW old\ -0x1
+is
+.CW H ,
+the sentinel, overwritten with nil during
+.CW readmod .
+That the detector still fires is what makes the other twelve boards'
+silence mean something.  Whether a real bug sits under those three is
+open \(em it is no longer answered by the description this section
+withdrew, and it is not the
+.CW movp
+the old entry named, because nothing in these reports mentions
+.CW Sh .
