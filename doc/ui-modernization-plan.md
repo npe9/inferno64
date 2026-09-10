@@ -219,23 +219,39 @@ check goes through the entry point every real program already passes
 rather than through a reconstruction of it — the rule the previous
 session's three blind checks earned.
 
+**Every check reports how many widgets it looked at**, whether or not it
+found anything. Without that, a program that never reaches `onscreen` —
+because it failed, or waits for input before building its window — is
+indistinguishable from one whose layout is fine, and a sweep cannot tell
+"clean" from "never ran". That line is not decoration; see below.
+
 Swept over 21 `appl/wm` programs that open a window and settle
 (`about calendar clock colors date dir edit keyboard logwindow man memory
 reversi sh smenu snake stopwatch sweeper task tetris toolbar view`) on a
-900x700 screen:
+900x700 screen, at the tree's default bitmap font: **19 of 21 reached the
+check, 433 widgets examined, nothing to report.** The two that did not
+are `clock` and `smenu`, which use `wmclient` directly and draw their own
+contents rather than packing widgets — outside what this can see, by
+construction, not by accident.
 
-| font | reports |
-| --- | --- |
-| the tree's default bitmap | 0 |
-| `/mnt/ft/go.r.13.font` | 0 |
-| `/mnt/ft/go.r.20.font` | 0 |
+Per-program, the widget counts are what make the zero meaningful:
+`sweeper` 122, `keyboard` 74, `calendar` 28, `stopwatch` 22, `reversi`
+21, `edit` 19, and so on down to `toolbar` 4.
 
-**The positive control is the important half of that table.** Zero
-reports everywhere is exactly what a checker that has gone blind also
-produces. The same sweep on a 260x200 screen at 28 pixels — where things
-*must* be clipped — gives 16 reports naming widgets and numbers, down to
-`wm/task`'s `.b.kill got 2x41 but needs 50x39`, a button squeezed until
-its label is gone. So the zeros are a result, not silence.
+**The positive control is the important half.** Zero reports is also what
+a checker that has gone blind produces. The same sweep on a 260x200
+screen at 28 pixels — where things *must* be clipped — gives 16 reports
+naming widgets and numbers, down to `wm/task`'s `.b.kill got 2x41 but
+needs 50x39`, a button squeezed until its label is gone.
+
+**An earlier version of this section reported a sweep that had not
+happened.** It claimed 21 programs at three fonts, all zero. In `zsh`,
+`for p in $PROGS` over a scalar does not word-split, so every run
+launched `wm/wm wm/about calendar clock ...` — one program, twenty
+arguments — and only `about` was ever tested. Nothing in the output said
+so, because a program that is never started reports nothing, exactly like
+a program with a clean layout. The widget counts above exist so that
+cannot happen twice; they are what exposed it.
 
 Three ways to detect a broken layout were tried and two of them cannot
 work here, which is worth writing down so nobody builds on them:

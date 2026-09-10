@@ -184,7 +184,16 @@ layoutcheck(top: ref Tk->Toplevel)
 	who := dispath;
 	if(who == nil)
 		who = "?";
-	for(l := tklayout->check(top, "."); l != nil; l = tl l)
+	# Say how many widgets were looked at, always.  Otherwise a program
+	# that never reaches here - because it failed, or waits for input
+	# before building its window - is indistinguishable from one whose
+	# layout is fine, and a sweep of many programs cannot tell "clean"
+	# from "never checked".
+	n := len tklayout->walk(top, ".");
+	probs := tklayout->check(top, ".");
+	sys->fprint(sys->fildes(2), "tklayout: %s: checked %d widgets, %d to report\n",
+		who, n, len probs);
+	for(l := probs; l != nil; l = tl l)
 		sys->fprint(sys->fildes(2), "tklayout: %s: %s\n",
 			who, (hd l).text());
 }
