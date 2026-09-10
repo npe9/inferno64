@@ -1322,3 +1322,82 @@ Left out on purpose until the machine is otherwise complete: Bluetooth
 largely out of scope).  The kfs deadlock above is worth fixing for a
 reliable native filesystem, but the port is not blocked on it: dossrv,
 ramfs, and 9660srv all run over the same working SD block device.
+.NH 1
+What is left, and the reason each one is left
+.PP
+The QEMU-tractable part of this plan is done.  Items 1 through 5 are
+finished and in the board suite \(em USB mass storage, virtio-gpu 2-D,
+PCI on arm64, S-mode and SBI and the device tree on riscv \(em and item
+6 is finished as far as anything on this machine can take it.  Six
+things remain, and none of them is waiting on a decision or on more of
+the same work.  Each is here with the reason it stops, so that a reader
+who has hardware, or a QEMU built differently, knows exactly which one
+they have unblocked.
+.IP 1.
+.B "MSI and MSI-X."
+PCI on both virt machines runs on legacy INTx, which QEMU delivers
+correctly, so MSI buys nothing here.  It is for real hardware that
+needs more vectors than INTx has.
+.IP 2.
+.B "arm64 device-tree discovery."
+QEMU's
+.CW -kernel
+path enters an arm64 ELF with
+.CW "x0 == 0" ,
+so the DTB pointer the riscv boards read is simply not passed.  Every
+riscv board in the tree now reads its tree;
+.CW virtarm64
+cannot, and neither can
+.CW spike ,
+which is handed no tree at all.  Booting arm64 through a loader that
+does pass one \(em UEFI, or
+.CW -bios \(em
+would unblock it.
+.IP 3.
+.B "virtio-gpu 3-D."
+Needs a QEMU built against virglrenderer.  The packaged 10.1.3 here
+has no
+.CW virtio-gpu-gl-pci
+at all, and this tree's own patched build is aarch64 only and
+configured without it.  The 2-D path is done and in the suite.
+.IP 4.
+.B "A second devip ethernet over USB."
+The controller and the enumeration are real \(em xHCI is found, the CDC
+ECM device enumerates,
+.CW etherusb
+serves it, and
+.CW devip
+binds it \(em and the step after that faults the Dis interpreter at
+.CW OP(movp) 's
+own first load.  It is in the crash-hunt family described in
+.CW doc/inferno-ports.ms ,
+not in a driver, and the USB-Ethernet driver itself works on both its
+paths.
+.IP 5.
+.B "The ASIX and Realtek USB dongles."
+No QEMU machine this tree boots models either chip, so they would need
+a model written first \(em the way
+.CW usb-lan9514
+was, in
+.CW tools/qemu-patches
+0003.  The difference is that the LAN9514 is the Pi 3B's own onboard
+part, soldered to a board this tree boots, and the dongles are chips no
+board here has.  The class is covered twice already: CDC ECM and the
+SMSC vendor path, one of them exercised by the suite on two
+configurations every run.  A model for a third would be nine hundred
+lines of QEMU for redundancy.
+.IP 6.
+.B "Item 7, the per-SoC drivers."
+The VisionFive 2's DesignWare GMAC, the Icicle's Cadence controllers,
+the Pi 4's GENET and VL805, UEFI and ACPI on the arm64 servers.  These
+need the silicon, and the two Pi items in
+.CW doc/raspi4-plan.ms
+that are blocked off this machine \(em the ARM timer's GIC line against
+the BCM2711 datasheet, and the Arasan as the wireless part's SDIO \(em
+are the same kind of thing.
+.PP
+Fifteen configurations run on this host and thirteen of them run from a
+bare checkout inside a container.  What that buys is not the marker
+count: it is that every one of these six statements can be checked
+against a booted kernel by anyone who runs the suite, and that a change
+which breaks one of the finished items says so in the same run.
