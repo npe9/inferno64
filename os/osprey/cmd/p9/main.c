@@ -906,8 +906,28 @@ p9main(void)
 	 * booted machine with a message rather than a guess.
 	 */
 	{
-		char *rioargv[2];
+		char *rioargv[4];
 
+		/*
+		 * Plain, with no window asked for.
+		 *
+		 * -k asks rio for a window at startup without a mouse click:
+		 * it allocates one over the bottom third of the screen and
+		 * creates it.  That was tried and it is not a window that
+		 * stands.  rio's new() hands the window to winshell, which
+		 * rforks (answered), mounts its own wsys (answered), opens
+		 * /dev/cons twice (answered), renames itself by writing
+		 * /proc/<n>/args (answered, once this personality served that
+		 * file) and then execs /bin/rc - which threadmain9.c refuses,
+		 * because a library operating system has no exec.  new()
+		 * gets the failure back on its pid channel, rio takes the
+		 * window down again and aborts its file server.  The window
+		 * exists for as long as the exec takes to fail.
+		 *
+		 * So a window needs exec, and exec here means spawn: that is
+		 * written down in this document as the shape of the answer
+		 * and it is still the next thing rather than a done thing.
+		 */
 		rioargv[0] = "/boot/rio";
 		rioargv[1] = nil;
 		/*

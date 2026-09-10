@@ -33,10 +33,13 @@ enum {
 	Qnote,
 	Qnotepg,
 	Qstatus,
+	Qargs,			/* /proc/<n>/args: what the flow was started with */
 	ReqPostnote = 37,	/* devosprey.c's xcall op */
 };
 
 extern long ospreyxcall(int, uvlong*, long);
+extern long p9argsof(int schedpid, char *buf, long nbuf);	/* p9proc.c */
+extern long p9setargs(int schedpid, char *buf, long n);
 extern uvlong p9servingcontainer(void);	/* p9buddy.c: whose call this process is answering */
 extern uchar *p9srvdata(void);		/* this personality's own data area */
 
@@ -123,6 +126,8 @@ notewalk(Chan *c, Chan *nc, char **name, int nname)
 				f = Qnotepg;
 			else if(strcmp(name[i], "status") == 0)
 				f = Qstatus;
+			else if(strcmp(name[i], "args") == 0)
+				f = Qargs;
 			else
 				goto Nope;
 			tc->qid.path = QPATH(QPID(tc->qid.path), f);
@@ -173,6 +178,9 @@ notestat(Chan *c, uchar *dp, int n)
 	case Qstatus:
 		strcpy(name, "status");
 		break;
+	case Qargs:
+		strcpy(name, "args");
+		break;
 	default:
 		strcpy(name, "notepg");
 		break;
@@ -186,14 +194,20 @@ notestat(Chan *c, uchar *dp, int n)
 	 * the two.  "mount failed: permission denied", and no window.
 	 */
 	devdir(c, c->qid, name, 0, eve,
-		f == Qdir || f == Qpid ? DMDIR|0555 : f == Qstatus ? 0444 : 0222, &d);
+		f == Qdir || f == Qpid ? DMDIR|0555
+		: f == Qstatus ? 0444 : f == Qargs ? 0666 : 0222, &d);
 	return convD2M(&d, dp, n);
 }
 
 static Chan*
 noteopen(Chan *c, int omode)
 {
-	if(QFILE(c->qid.path) == Qdir || QFILE(c->qid.path) == Qpid
+	if(QFILE(c->qid.path) == Qargs){
+		/* read to see what a flow is running, write to rename it */
+		if(openmode(omode) != OREAD && openmode(omode) != OWRITE
+		&& openmode(omode) != ORDWR)
+			error(Eperm);
+	} else if(QFILE(c->qid.path) == Qdir || QFILE(c->qid.path) == Qpid
 	|| QFILE(c->qid.path) == Qstatus){
 		if(openmode(omode) != OREAD)
 			error(Eperm);
@@ -235,6 +249,27 @@ noteread(Chan *c, void *a, long n, vlong off)
 		memmove(a, buf + off, n);
 		return n;
 	}
+	if(QFILE(c->qid.path) == Qargs){
+		/*
+		 * What the flow was started with, blank-separated, which is
+		 * what devproc(3) puts here.  rio reads it to name a window
+		 * after the command running in it, and the personality is
+		 * where that is known: spawn copied the argument vector into
+		 * the program's own slot, and a second flow of control made
+		 * by proccreate carries the same one, because it is the same
+		 * program running.
+		 *
+		 * A number that is not a flow of this personality's answers
+		 * nothing rather than guessing.
+		 */
+		m = (int)p9argsof((int)QPID(c->qid.path), buf, sizeof buf);
+		if(off >= m)
+			return 0;
+		if(n > m - off)
+			n = m - off;
+		memmove(a, buf + off, n);
+		return n;
+	}
 	/*
 	 * Nothing lists.  A directory here would have to be the kernel's
 	 * table of containers, which this personality does not hold; the
@@ -251,6 +286,19 @@ notewrite(Chan *c, void *a, long n, vlong)
 	uchar *d;
 	long m;
 
+	if(QFILE(c->qid.path) == Qargs){
+		/*
+		 * A program renaming itself.  rio writes the command a window
+		 * is running here so the window has a name, which is what
+		 * this file is for on Plan 9 - and it is a write the
+		 * personality can answer truthfully, because the flow being
+		 * renamed is one of its own.
+		 */
+		m = p9setargs((int)QPID(c->qid.path), a, n);
+		if(m < 0)
+			error(Enonexist);
+		return m;
+	}
 	if(QFILE(c->qid.path) != Qnote && QFILE(c->qid.path) != Qnotepg)
 		error(Eperm);
 	target = QPID(c->qid.path);

@@ -630,7 +630,21 @@ p9proccreate(void (*f)(void*), void *arg)
 		print("p9 proccreate: no free process slot\n");
 		return -1;
 	}
-	memset(t, 0, sizeof *t);
+	{
+		/*
+		 * The arguments are the creating program's, because a second
+		 * flow of control of one program was started with them: it is
+		 * that program running, not another.  /proc/<n>/args is read
+		 * off this - rio names a window from it - and answering with
+		 * nothing there would be answering wrongly rather than not at
+		 * all.
+		 */
+		Proc9 *me = procof(up);
+
+		memset(t, 0, sizeof *t);
+		if(me != nil)
+			memmove(t->argbuf, me->argbuf, sizeof t->argbuf);
+	}
 	strncpy(t->name, up->text, sizeof t->name - 1);
 	t->inproc = 1;
 	t->fn = f;
@@ -774,6 +788,76 @@ p9restoreflow(char *name)
 		up->dot = flowsave.dot;
 		print("p9 exec: %s changed directory; the personality is back where it was\n", name);
 	}
+}
+
+/*
+ * The argument vector of the program a flow of control belongs to, as
+ * one blank-separated line, for /proc/<n>/args.
+ *
+ * The pid is the flow's own number - what getpid(2) answers here, which
+ * is the scheduler's - and not the number spawn gave the program, so the
+ * search is over the kproc each Proc9 is running on.  A flow that is not
+ * a loaded program at all (the personality's own) has no arguments and
+ * says so by answering 0.
+ */
+long
+p9argsof(int schedpid, char *buf, long nbuf)
+{
+	Proc9 *t;
+	char *p, *e, *a;
+	int i;
+
+	if(nbuf <= 0)
+		return 0;
+	for(i = 0; i < Nproc9; i++){
+		t = &proc9[i];
+		if(!t->used || !t->live || t->p == nil || t->p->pid != schedpid)
+			continue;
+		p = buf;
+		e = buf + nbuf - 1;
+		for(a = t->argbuf; a < t->argbuf + sizeof t->argbuf && *a != 0; ){
+			if(p > buf && p < e)
+				*p++ = ' ';
+			while(*a != 0 && p < e)
+				*p++ = *a++;
+			while(*a != 0)
+				a++;
+			a++;			/* past the NUL, to the next word */
+		}
+		*p = 0;
+		return (long)(p - buf);
+	}
+	buf[0] = 0;
+	return 0;
+}
+
+/*
+ * And the other direction: a program writing /proc/<n>/args is renaming
+ * itself, which is what that file is for on Plan 9 - rio writes the
+ * command a window is running so that the window has a name.  The line
+ * is stored as one argument, because that is what was written: one
+ * string, not a vector.
+ */
+long
+p9setargs(int schedpid, char *buf, long n)
+{
+	Proc9 *t;
+	int i;
+
+	if(n < 0)
+		return -1;
+	if(n > Nargbuf - 2)
+		n = Nargbuf - 2;
+	for(i = 0; i < Nproc9; i++){
+		t = &proc9[i];
+		if(!t->used || !t->live || t->p == nil || t->p->pid != schedpid)
+			continue;
+		memset(t->argbuf, 0, sizeof t->argbuf);
+		memmove(t->argbuf, buf, n);
+		t->argbuf[n] = 0;
+		return n;
+	}
+	return -1;
 }
 
 typedef struct Waitany Waitany;

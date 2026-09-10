@@ -10737,6 +10737,71 @@ The real 9front rio, linked against a library operating system and
 loaded into a slot the loader chose, paints a microkernel's frame buffer
 its own grey.  It has no window in it, because nothing has clicked.
 .PP
+.PP
+.B "3.2o: what a window costs, and /proc/<n>/args."
+rio makes a window when a mouse button is pressed, and nothing here
+presses one.  It has one other way in:
+.CW -k ,
+which allocates a window over the bottom third of the screen at startup
+and creates it without a click.  That was tried, and following it is how
+the next gap was found.
+.PP
+.CW new ()
+hands the window to
+.CW winshell ,
+which rforks
+.CW RFNAMEG|RFFDG|RFENVG
+\- all three answered \- mounts its own wsys, opens
+.CW /dev/cons
+twice, and then renames itself by writing
+.CW /proc/<n>/args ,
+which this personality did not serve.  Its
+.CW devnote.c
+had
+.CW note ,
+.CW notepg
+and
+.CW status
+under
+.CW /proc/<n>
+and not
+.CW args ,
+so the walk failed; making it walk got
+.CW Eperm ,
+because rio
+.I writes
+that file rather than reading it, which is what a program renaming
+itself does on Plan 9.
+.PP
+Both halves are served now, and both are answered from something the
+personality genuinely knows: spawn already copies a program's argument
+vector into its slot, so a read is that vector blank-separated, and a
+second flow of control made by
+.CW proccreate
+carries the same one because it is the same program running.  A write
+stores what was written.  A number that is not a flow of this
+personality's is answered with nothing rather than with a guess.
+.PP
+And then rio still has no window, for a reason that is the design
+question rather than a gap.
+.CW winshell
+ends by execing
+.CW /bin/rc ,
+.CW threadmain9.c 's
+.CW _schedexec
+refuses because a library operating system has no exec,
+.CW new ()
+gets the failure back on its pid channel, and rio takes the window down
+again and aborts its file server.  The window exists for exactly as long
+as the exec takes to fail.
+.PP
+So a window costs exec, and exec here means spawn \- which is what this
+document already worked out and still has not built.  rio is run plain
+in the boot, without
+.CW -k ,
+because a window that is taken down again is not a window and the boot
+should not claim one.
+.PP
 The second was the probe itself, and it is the plainest lesson here.
 .CW p9open
 is the personality's own open and it

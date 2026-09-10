@@ -1837,6 +1837,23 @@ and
 put a p9exec'd program's groups and directory back when it returns,
 closing what it made and leaving what it was given.
 .PP
+.B /proc/<n>/args
+is served, read and written: a read is the argument vector spawn copied
+into the program's slot, blank-separated, and a second flow of control
+made by
+.I proccreate
+carries the same one; a write renames the flow, which is what a program
+does to that file on Plan 9 and what rio does to name a window.  rio's
+.B -k
+reaches it \- and then still has no window, because
+.I winshell
+ends by execing
+.BR /bin/rc ,
+which
+.IR threadmain9.c 's
+.I _schedexec
+refuses.  A window costs an exec, and exec here would mean spawn.
+.PP
 Version 5 added
 .IR pread ,
 .IR pwrite ,
