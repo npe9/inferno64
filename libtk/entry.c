@@ -367,7 +367,7 @@ tkdrawentry(Tk *tk, Point orig)
 	r.min = ZP;
 	r.max.x = tk->act.width + 2*tk->borderwidth;
 	r.max.y = tk->act.height + 2*tk->borderwidth;
-	i = tkitmp(env, r.max, TkCbackgnd);
+	i = tkitmp(env, r.max, tkstyleflat(tk) ? TkCfield : TkCbackgnd);
 	if(i == nil)
 		return nil;
 

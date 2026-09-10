@@ -255,6 +255,20 @@ tkdrawbutton(Tk *tk, Point orig)
 
 	fgnd = TkCforegnd;
 	bgnd = TkCbackgnd;
+	/*
+	 * A push button is a FILLED control sitting on the page, not an
+	 * outline drawn on it.  That is what every current system does -
+	 * macOS puts a white control on a grey page, Windows and GNOME a
+	 * filled grey one - and it is the difference between a button and a
+	 * rectangle with a label in it.
+	 *
+	 * Only the push buttons.  A checkbutton or radiobutton with its
+	 * indicator is a LABEL beside a control, so it belongs on the page;
+	 * filling it would put a slab behind every line of a list of
+	 * options.
+	 */
+	if (tkstyleflat(tk) && (tk->type == TKbutton || tk->type == TKmenubutton))
+		bgnd = TkCfield;
 	if (tk->flag & Tkdisabled)
 		fgnd = TkCdisablefgnd;
 	else if ((tk->type == TKcheckbutton || tk->type == TKradiobutton) && tkl->indicator == BoolF && tkl->check)

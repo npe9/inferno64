@@ -405,6 +405,15 @@ enum
 	TkChighlightfgnd,
 	TkCfill,
 	TkCtransparent,
+	/*
+	 * The surface a FIELD sits on - an entry, a listbox, a text widget.
+	 * Under the classic style it is the same as the background, which
+	 * is what it always was; under flat it is a level above the page,
+	 * and that difference is most of what makes a window look modern.
+	 * A field outlined on the same colour as everything else is the
+	 * look of a wireframe.
+	 */
+	TkCfield,
 
 	TkNcolor,
 
@@ -726,7 +735,7 @@ extern	void		tkgetpanelimage(Tk*, Image**, Image**);
 extern	void		tksetpanelimage(Tk *tk, Image*, Image*);
 
 /* General - colrs.c */
-extern	void		tksetenvcolours(TkEnv*);
+extern	void		tksetenvcolours(TkEnv*, int);
 
 /* General - ebind.c */
 extern	void		tkcmdbind(Tk*, int, char*, void*);

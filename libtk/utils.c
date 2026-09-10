@@ -598,7 +598,7 @@ tkdefaultenv(TkTop *t)
 	if(locked)
 		unlockdisplay(d);
 
-	tksetenvcolours(env);
+	tksetenvcolours(env, t != nil ? t->style : TkSclassic);
 	return env;
 }
 
@@ -1116,6 +1116,17 @@ tkstylecmd(TkTop *t, char *arg, char **ret)
 	 * here first, exactly as tkbuttonselect() does.  Without that the
 	 * style changed and almost nothing repainted.
 	 */
+	/*
+	 * Colours CAN be re-applied to a window that already exists, unlike
+	 * the spacings above: a colour does not feed back into layout, so
+	 * nothing re-requests a size and the toplevel does not re-fit
+	 * itself.  Widgets that have been given a colour of their own hold
+	 * a cloned env and keep it, which is right - an explicit
+	 * -background is not the style's to overrule.
+	 */
+	if(t->env != nil)
+		tksetenvcolours(t->env, t->style);
+
 	for(tk = t->root; tk != nil; tk = tk->siblings) {
 		tk->dirty = tkrect(tk, 1);
 		tkdirty(tk);

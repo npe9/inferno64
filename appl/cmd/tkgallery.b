@@ -329,7 +329,7 @@ opts(style: string): string
 	# the default font is a bitmap monospace and always has been.  That
 	# one substitution does more for how a window LOOKS than any amount
 	# of border geometry.
-	if(style == "proposed" && sys->open("/mnt/ft/go.r.14.font", Sys->OREAD) != nil)
+	if(style != "classic" && sys->open("/mnt/ft/go.r.14.font", Sys->OREAD) != nil)
 		return "-font /mnt/ft/go.r.14.font";
 	return "";
 }
