@@ -3,8 +3,8 @@
 #Configurable parameters
 
 CONF=pc64			#default configuration
-CONFLIST=pc64
-CLEANCONFLIST=pc64
+CONFLIST=pc64 pc64fp
+CLEANCONFLIST=pc64 pc64fp
 
 SYSTARG=Inferno # $OSTARG
 OBJTYPE=amd64 # 386

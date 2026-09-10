@@ -1,0 +1,263 @@
+#
+#	disinit with a floating-point stress in front of it.
+#
+#	Everything below the stress is disinit.b unchanged, so a boot of
+#	pc64fp and a boot of pc64 differ in exactly one thing.  The point
+#	is os/inferno/pc64/fpu.c: Dis programs run in kernel processes and
+#	do their floating point inside the interpreter, so every scheduler
+#	slice pushes and pops FPU state through os/inferno/port/dis.c's
+#	fpusave()/fpurestore() around r->xec(r).  Several threads doing
+#	real arithmetic at once is what makes those pushes interleave.
+#
+#	The check is a value, not the absence of a panic.  Each worker
+#	sums 0..NITER-1 as reals and doubles and halves as it goes; every
+#	intermediate is exactly representable, so the answer is exact and
+#	a corrupted FPU register file shows up as a wrong number rather
+#	than only as "math emu".
+#
+implement Init;
+
+include "sys.m";
+include "draw.m";
+
+sys: Sys;
+FD: import sys;
+print, fprint, bind: import sys;
+
+stderr:	ref sys->FD;						# standard error FD
+
+Init: module
+{
+	init:	fn(nil: ref Draw->Context, nil: list of string);
+};
+
+NWORK:	con 6;			# concurrent Dis threads doing floating point
+NITER:	con 200000;		# iterations each; sum stays under 2^53
+NROUND:	con 3;			# rounds, so the stress spans many slices
+
+Sh: module
+{
+	init:	fn(ctxt: ref Draw->Context, argv: list of string);
+};
+
+init(nil: ref Draw->Context, nil: list of string)
+{
+	sys = load Sys Sys->PATH;
+	stderr = sys->fildes(2);
+
+	sys->print("Welcome to Inferno...\n");
+
+	# set up basic devices, ignoring errors
+	# 9front does this in the shell. Can move them to dis/init later
+	sys->bind("#b", "/dev", sys->MAFTER);	# kbd
+	sys->print("bound #b\n");
+	sys->bind("#c", "/dev", sys->MAFTER);	# console device
+	sys->print("bound #c\n");
+	sys->bind("#d", "/fd", Sys->MREPL);		# dup(3)
+	sys->print("bound #d\n");
+	sys->bind("#e", "/env", sys->MREPL|sys->MCREATE);	# environment
+	sys->print("bound #e\n");
+#	sys->bind("#i", "/dev", sys->MREPL);	# draw device
+	sys->bind("#l0", "/net", sys->MAFTER);	# Ethernet device
+	sys->print("bound #l0\n");
+	sys->bind("#m","/dev",sys->MAFTER);     # pointer/mouse
+	sys->print("bound #m\n");
+	sys->bind("#p", "/prog", sys->MREPL);	# prog device
+	sys->print("bound #p\n");
+	sys->bind("#r", "/dev", sys->MAFTER);	# rtc
+	sys->print("bound #r\n");
+	sys->bind("#s", "/chan", sys->MREPL);	# server registry
+	sys->print("bound #s\n");
+	sys->bind("#t", "/dev", sys->MAFTER);	# serial line
+	sys->print("bound #t\n");
+#	sys->bind("#v","/dev",sys->MAFTER);     # VGA
+	sys->bind("#I0", "/net", sys->MAFTER);	# IP
+	sys->print("bound #I0\n");
+	sys->bind("#P","/dev",sys->MAFTER);		# arch
+	sys->print("bound #P\n");
+#	sys->bind("#P/realmode","/dev",sys->MAFTER); # not in the arch(3). What is this for?
+#	sys->bind("#P/realmodemem","/dev",sys->MAFTER);# not in the arch(3). What is this for?
+#	sys->bind("#O", "/dev", sys->MAFTER);	# Modem
+	sys->bind("#S", "/dev", sys->MAFTER);	# Disks
+	sys->print("bound #S\n");
+#	sys->bind("#T","/dev",sys->MAFTER);		# Touchscreen
+#	sys->bind("#W","/dev",sys->MAFTER);		# Flash
+#	sys->bind("#o", "/proc", sys->MREPL);	# proc device
+
+	# set clock
+	#	does not handle bootp provided time source
+	# port/devcons.c's writetime() takes #c/time in plain seconds
+	# (it multiplies by 1e9 itself to get nsec) -- the same unit
+	# #r/rtc already returns.  The *1000000 this 9ferno code carried
+	# turned ~1.8e9 seconds into a ~1.8e15 write, past writetime()'s
+	# 12-byte buffer: "bad time control" on every boot, unconditionally,
+	# since this call has never run in this tree until now (pc64's mod
+	# section was empty, so Sys never loaded and init() never got this far).
+	now := getclock("#r/rtc");
+	setclock("#c/time", now);
+
+	# TODO '#c/sysenv' seems obsolete
+	#sys->print("srv()\n");
+	#srv();
+
+	fpstress();
+
+	# using -n to use this namespace instead of re-creating the binds above
+	sys->print("loading /dis/sh.dis\n");
+	sh := load Sh "/dis/sh.dis";
+	(s, nil) := sys->stat("/dis/init");
+	if(s == 0){
+		sys->print("spawn sh -n /dis/init\n");
+		{
+			sh->init(nil, "sh" :: "-n" :: "/dis/init" :: nil);
+		} exception e {
+			"*" =>
+				sys->fprint(stderr, "dis/init status: %s\nStarting fallback shell\n", e);
+				# fallback console
+				sh1 := load Sh "/dis/sh.dis";
+				sys->print("sh -n\n");
+				sh1->init(nil, "sh" :: "-n" :: nil);
+		}
+	}{
+		# fallback console
+		sh1 := load Sh "/dis/sh.dis";
+		sys->print("sh -n -x\n");
+		sh1->init(nil, "sh" :: "-n" :: "-x" :: nil);
+	}
+}
+
+#
+#	Sum 0..NITER-1 as reals, doubling and halving each step.  Every
+#	intermediate is a small integer times a power of two, so the whole
+#	thing is exact in a double and the expected value can be written
+#	in closed form.  id is folded in so no two workers compute the
+#	same number: a swap of two workers' FPU state is then visible.
+#
+fpwork(id: int, c: chan of (int, real))
+{
+	x := real id;
+	for(i := 0; i < NITER; i++){
+		x += real i;
+		x = x * 2.0;
+		x = x / 2.0;
+	}
+	c <-= (id, x);
+}
+
+fpwant(id: int): real
+{
+	n := real NITER;
+	return real id + n * (n - 1.0) / 2.0;
+}
+
+fpstress()
+{
+	c := chan of (int, real);
+	bad := 0;
+	for(r := 0; r < NROUND; r++){
+		for(i := 0; i < NWORK; i++)
+			spawn fpwork(i, c);
+		for(i = 0; i < NWORK; i++){
+			(id, got) := <-c;
+			want := fpwant(id);
+			if(got != want){
+				bad++;
+				sys->print("FP-STRESS-BAD round %d id %d got %g want %g\n",
+					r, id, got, want);
+			}
+		}
+	}
+	if(bad == 0)
+		sys->print("FP-STRESS-OK %d threads %d rounds %d iterations\n",
+			NWORK, NROUND, NITER);
+	else
+		sys->print("FP-STRESS-BAD %d wrong results\n", bad);
+}
+
+srv()
+{
+	remotedebug := sysenv("remotedebug");
+	if(remotedebug != "1")
+		return;
+
+	sys->print("srv...");
+	if(echoto("#t/eia0ctl", "b38400") < 0)
+		return;
+
+	fd := sys->open("/dev/eia0", Sys->ORDWR);
+	if (fd == nil) {
+		sys->print("eia data open: %r\n");
+		return;
+	}
+	if (sys->export(fd, "/", Sys->EXPASYNC) < 0) {
+		sys->print("export: %r\n");
+		return;
+	}
+	sys->print("ok\n");
+}
+
+sysenv(param: string): string
+{
+	fd := sys->open("#c/sysenv", sys->OREAD);
+	if (fd == nil)
+		return(nil);
+	buf := array[4096] of byte;
+	nb := sys->read(fd, buf, len buf);
+	(nfl,fl) := sys->tokenize(string buf, "\n");
+	while (fl != nil) {
+		pair := hd fl;
+		(npl, pl) := sys->tokenize(pair, "=");
+		if (npl > 1) {
+			if ((hd pl) == param)
+				return hd tl pl;
+		}
+		fl = tl fl;
+	}
+	return nil ;
+}
+
+echoto(fname, str: string): int
+{
+	fd := sys->open(fname, Sys->OWRITE);
+	if(fd == nil) {
+		sys->print("%s: %r\n", fname);
+		return -1;
+	}
+	x := array of byte str;
+	if(sys->write(fd, x, len x) == -1) {
+		sys->print("write: %r\n");
+		return -1;
+	}
+	return 0;
+}
+
+getclock(timefile: string): big
+{
+	now := big 0;
+	if(timefile != nil){
+		fd := sys->open(timefile, Sys->OREAD);
+		if(fd != nil){
+			b := array[64] of byte;
+			n := sys->read(fd, b, len b-1);
+			if(n > 0){
+				now = big string b[0:n];
+				if(now <= big 16r20000000)
+					now = big 0;	# remote itself is not initialised
+			}
+		}
+	}
+	return now;
+}
+
+setclock(timefile: string, now: big)
+{
+	fd := sys->open(timefile, sys->OWRITE);
+	if (fd == nil) {
+		sys->print("init: can't open %s: %r", timefile);
+		return;
+	}
+
+	b := sys->aprint("%ubd", now);
+	if (sys->write(fd, b, len b) != len b)
+		sys->print("init: can't write to %s: %r", timefile);
+}

@@ -682,9 +682,24 @@ if(0) print("%s %ud: notify %#p %#p %#p %s\n",
 	memmove(&up->note[0], &up->note[1], up->nnote*sizeof(Note));
 	qunlock(&up->debug);
 	splhi();
-	if(up->fpstate == FPactive){
+	/*
+	 * Masked, like every other comparison against these states in
+	 * fpu.c -- 177, 314, 351, 361 and 366 all strip FPnouser,
+	 * FPkernel and the slot index, and the assignments at 200 and 217
+	 * preserve them.  This one did not, so a process carrying any of
+	 * those bits failed the test: fpsave() was skipped, the FPU was
+	 * left live with TS clear, and FPillegal was set anyway, after
+	 * which mathemu() tests FPillegal first and returns without
+	 * repairing anything.  Found by inspection while answering the
+	 * multicore branch's report of "panic: math emu pid 1"; it is
+	 * consistent with that report and is not reproduced here, since
+	 * reaching it wants a note delivered and a clean boot delivers
+	 * none.  Forty-four boots of the pc64fp floating-point stress
+	 * show it changes nothing that was working.
+	 */
+	if((up->fpstate & ~(FPnouser|FPkernel|FPindexm)) == FPactive){
 		fpsave(up->fpsave);
-		up->fpstate = FPinactive;
+		up->fpstate = FPinactive | (up->fpstate & (FPnouser|FPkernel|FPindexm));
 	}
 	up->fpstate |= FPillegal;
 	return 1;
