@@ -177,12 +177,27 @@ tkrgbavals(ulong rgba, int *R, int *G, int *B, int *A)
 
 	a = rgba & 0xff;
 	*A = a;
+	/*
+	 * The red byte is masked like the other two.  It was not, and on a
+	 * 32-bit ulong that was harmless - the shift alone left exactly one
+	 * byte.  Here ulong is 64 bits, so anything in the top half of the
+	 * word comes through as well, and the RGB() macro in colrs.c put it
+	 * there: R<<24 is computed as a signed int, so every colour with a
+	 * red byte of 0x80 or more was sign-extended when it was widened.
+	 *
+	 * Red then arrived here as a negative number, rgb2hsv() computed a
+	 * hue from it, and the shade came back out of a completely different
+	 * sector of the colour wheel.  That is why every bevel drawn from a
+	 * light background was TEAL: #F5F0D8 shaded to #00C0AB and #009080.
+	 * Colours whose red byte was under 0x80 were unaffected, which is
+	 * why the text and the selection accent always looked right.
+	 */
 	if (a != 0xff) {
-		*R = revalpha(rgba>>24, a);
+		*R = revalpha((rgba>>24) & 0xFF, a);
 		*G = revalpha((rgba>>16) & 0xFF, a);
 		*B = revalpha((rgba >> 8) & 0xFF, a);
 	} else {
-		*R = (rgba>>24);
+		*R = ((rgba>>24) & 0xFF);
 		*G = ((rgba>>16) & 0xFF);
 		*B = ((rgba >> 8) & 0xFF);
 	}

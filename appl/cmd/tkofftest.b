@@ -292,6 +292,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	checkfocusring();
 	checkstyle();
 	checkstyleenv();
+	checkbevelhue();
 	checkcanvastag();
 	checkplaintitle();
 	checktheme();
@@ -847,6 +848,76 @@ checkstyleenv()
 		"$tkstyle=flat reaches a real tkclient window (%s)", got[0]));
 	report(got[1] == "classic", sys->sprint(
 		"and anything else leaves it classic (%s)", got[1]));
+}
+
+
+# A raised border is drawn in a LIGHTER and a DARKER shade of the colour
+# behind it, and for a long time it was drawn in teal instead - on a
+# cream background, #F5F0D8 shading to #00C0AB and #009080.
+#
+# The cause was two things that were each harmless alone.  colrs.c builds
+# its colours with (R<<24)|..., computed as a signed int, so any colour
+# with a red byte of 0x80 or more went negative and sign-extended when it
+# was widened to this platform's 64-bit ulong.  And tkrgbavals() pulled
+# the red byte out with (rgba>>24) and no mask - correct when a ulong is
+# 32 bits and the shift alone leaves one byte, wrong here, where the top
+# half of the word came too.  Red arrived negative, rgb2hsv() computed a
+# hue from it, and the shade came back from a different sector of the
+# wheel entirely.  Colours with a red byte under 0x80 were untouched,
+# which is why the text and the blue accent always looked right and only
+# the BEVELS were wrong.
+#
+# What makes this checkable without naming a colour: cream has red as its
+# largest channel, and every shade of cream must too.  Teal has red as its
+# smallest.  So the test is that the border keeps the background's channel
+# ORDER, which stays true if anyone ever changes the palette.
+checkbevelhue()
+{
+	blank();
+	top := offscreen();
+	if(top == nil)
+		return;
+	tk->cmd(top, "frame .f -width 90 -height 50 -borderwidth 3 -relief raised");
+	tk->cmd(top, "pack .f -padx 10 -pady 10");
+	map(top);
+	r := tk->rect(top, ".f", Tk->Border);
+	if(r.dx() <= 6 || r.dy() <= 6)
+		return;
+	# the top edge is the light shade, the bottom edge the dark one
+	lt := pixel(r.min.x + r.dx()/2, r.min.y);
+	dk := pixel(r.min.x + r.dx()/2, r.max.y - 1);
+	bg := pixel(r.min.x + r.dx()/2, r.min.y + r.dy()/2);
+	sys->print("     background %s, light edge %s, dark edge %s\n",
+		hex(bg), hex(lt), hex(dk));
+	report(ordered(bg) && ordered(lt) && ordered(dk), sys->sprint(
+		"a bevel is a shade of the colour behind it, not another hue (%s / %s / %s)",
+		hex(bg), hex(lt), hex(dk)));
+	# and it is actually a bevel: two different shades, neither the body
+	report(hex(lt) != hex(dk) && hex(lt) != hex(bg), sys->sprint(
+		"and its two edges differ from each other and from the body"));
+}
+
+# the (r,g,b) of one pixel of the offscreen image
+pixel(x, y: int): (int, int, int)
+{
+	b := array[3] of byte;
+	off.readpixels(Rect((x,y),(x+1,y+1)), b);
+	# RGB24 is stored little-endian, so byte 0 of a pixel is blue
+	return (int b[2], int b[1], int b[0]);
+}
+
+hex(c: (int, int, int)): string
+{
+	(r, g, b) := c;
+	return sys->sprint("#%.2X%.2X%.2X", r, g, b);
+}
+
+# does this colour keep cream's channel order, red largest and blue
+# smallest?  A shade of the background must; a wrong-sector hue will not.
+ordered(c: (int, int, int)): int
+{
+	(r, g, b) := c;
+	return r >= g && g >= b;
 }
 
 # The widget style: whether a relief is a two-tone chisel or one

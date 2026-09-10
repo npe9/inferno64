@@ -920,6 +920,12 @@ See
 Coupled translation and rotation of a yo-yo.
 See
 .IR danby-yoyo (1).
+.SS Quantum Mechanics
+.TP
+.B danby/schrodinger
+Shoot Schrodinger's equation and hunt for an eigenvalue.
+See
+.IR danby-schrodinger (1).
 .SS Numerical Methods, Classical Problems & Lessons
 .TP
 .B danby/bernoulli

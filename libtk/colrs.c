@@ -2,7 +2,14 @@
 #include "draw.h"
 #include "tk.h"
 
-#define RGB(R,G,B) ((R<<24)|(G<<16)|(B<<8)|(0xff))
+/*
+ * The casts are load-bearing.  R<<24 as a plain int is negative whenever
+ * R is 0x80 or more, and widening that to a 64-bit ulong sign-extends it
+ * - so the table held 0xfffffffff5f0d8ff where it meant 0xf5f0d8ff.
+ * tkrgbavals() masks the red byte now and would cope either way, but a
+ * colour constant should be the number it looks like.
+ */
+#define RGB(R,G,B) ((((ulong)(R)&0xff)<<24)|(((ulong)(G)&0xff)<<16)|(((ulong)(B)&0xff)<<8)|0xffUL)
 
 enum
 {

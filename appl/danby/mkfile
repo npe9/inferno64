@@ -146,6 +146,7 @@ TARG=\
 	tidalrotation.dis\
 	nonlinearsprings.dis\
 	duffing.dis\
+	schrodinger.dis\
 	vanderpol.dis\
 	variationparameters.dis\
 	columnbuckling.dis\

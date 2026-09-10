@@ -314,6 +314,104 @@ checkmechanism(name: string, m: ref Model, c: ref Config,
 		# the diver leaves the board at the takeoff speed
 		launch := math->sqrt(state[2]*state[2]+state[3]*state[3]);
 		near(sys->sprint("%s: launch speed", name), launch, m.parameter[0], 1.0e-12);
+	"schrodinger" =>
+		checkschrodinger(name, m);
+	}
+}
+
+
+# ------------------------------------------------------- the wave equation
+#
+# danby/schrodinger marches in POSITION, not time, and the thing it has
+# to get right is that the tail comes down at an eigenvalue and at no
+# other energy.  That is the only check worth making on it, and it is
+# one a spec can get wrong quietly: an expression whose precedence is
+# not what it reads as still integrates, still stays finite, and still
+# draws a curve.
+#
+# So this shoots the model the way the window does and looks at where
+# the wave function has got to at the far wall, at the harmonic
+# oscillator's own eigenvalues - which are exactly (n + 1/2) h-bar
+# omega, and with the spec's own defaults h-bar, omega and the mass are
+# all 1, so they are exactly 0.5, 1.5, 2.5 and 3.5.
+#
+# The negative control is the half of this that makes it a test: the
+# same shot one slider notch away from each of those energies has to
+# come out large.  Without it, a model whose equation was wrong but
+# whose tail happened to stay small - one with the psi term dropped,
+# say - would pass every line here.
+
+SCHRODEND: con 5.0;		# the spec's own maxtime
+SCHRODDT: con 0.005;		# and the mechanism family's own step
+
+# psi at the far wall, for one energy and one parity.
+schrodshoot(m: ref Model, energy, parity: real): real
+{
+	m.parameter[0] = energy;
+	m.parameter[1] = 1.0;		# stiffness
+	m.parameter[2] = 0.0;		# quartic
+	m.parameter[3] = 1.0;		# mass
+	m.parameter[4] = parity;
+	stepping = m;
+	state := dynsys->initialstate(m);
+	work := numerics->workspace(len state);
+	t := 0.0;
+	for(i := 0; i < int (SCHRODEND/SCHRODDT+0.5); i++){
+		numerics->rk4(work, steprhs, t, SCHRODDT, state);
+		t += SCHRODDT;
+	}
+	return state[0];
+}
+
+checkschrodinger(name: string, m: ref Model)
+{
+	# the potential is written in eqn(7) syntax, where `quartic t sup 4`
+	# is one term and `0.5 stiffness t t` is another; this is the oracle
+	# for that reading, and it is the line a precedence mistake breaks
+	m.parameter[0] = 0.75;		# energy
+	m.parameter[1] = 1.5;		# stiffness
+	m.parameter[2] = 0.25;		# quartic
+	m.parameter[3] = 2.0;		# mass
+	m.parameter[4] = 0.0;		# parity, even
+	x := 1.25;
+	st := array[] of {0.6, 0.0};
+	d := array[len st] of real;
+	dynsys->rhs(m, x, st, d);
+	v := 0.5*1.5*x*x + 0.25*x*x*x*x;
+	near(name+": psi'' at x=1.25", d[1], 2.0*2.0*(v-0.75)*st[0], 1.0e-13);
+	# and psi' is the state that is called the slope
+	if(d[0] != st[1])
+		fail(sys->sprint("%s: dpsi/dx is %g, not the slope %g", name, d[0], st[1]));
+
+	# even parity starts at psi=1, psi'=0 and odd at psi=0, psi'=1;
+	# a slider is continuous, so what selects them is a step() of it
+	m.parameter[4] = 0.0;
+	e := dynsys->initialstate(m);
+	near(name+": even psi(0)", e[0], 1.0, 0.0);
+	near(name+": even psi'(0)", e[1], 0.0, 0.0);
+	m.parameter[4] = 1.0;
+	o := dynsys->initialstate(m);
+	near(name+": odd psi(0)", o[0], 0.0, 0.0);
+	near(name+": odd psi'(0)", o[1], 1.0, 0.0);
+
+	# the eigenvalues themselves, alternating even and odd, each with
+	# its own negative control one slider notch (0.025) to either side
+	levels := array[] of {0.5, 1.5, 2.5, 3.5};
+	for(i := 0; i < len levels; i++){
+		parity := real (i%2);
+		at := math->fabs(schrodshoot(m, levels[i], parity));
+		if(at > 1.0e-3)
+			fail(sys->sprint("%s: E=%g is an eigenvalue but psi(%g) is %g",
+				name, levels[i], real SCHRODEND, at));
+		below := math->fabs(schrodshoot(m, levels[i]-0.025, parity));
+		above := math->fabs(schrodshoot(m, levels[i]+0.025, parity));
+		# the control: if these were small too, the line above would
+		# be passing on a model that had stopped being sensitive to
+		# the energy at all
+		if(below < 1.0 || above < 1.0)
+			fail(sys->sprint("%s: E=%g off by one notch leaves psi(%g) at "+
+				"%g and %g, so the eigenvalue check proves nothing",
+				name, levels[i], real SCHRODEND, below, above));
 	}
 }
 

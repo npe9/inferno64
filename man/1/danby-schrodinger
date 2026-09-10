@@ -1,0 +1,192 @@
+.TH DANBY-SCHRODINGER 1
+.SH NAME
+danby-schrodinger \- shoot Schrodinger's equation and hunt for an eigenvalue
+.SH SYNOPSIS
+.B danby/schrodinger
+.SH MODEL
+The time-independent Schrodinger equation in one dimension, in units
+where h-bar is 1:
+.PP
+.EX
+psi'' = 2 m (V(x) - E) psi,   V(x) = k x\ep2 / 2 + lambda x\ep4
+.EE
+.PP
+The well is symmetric about the origin, so every solution is either even
+or odd there, and the march starts at
+.I x
+= 0 from one or the other \(em
+.I psi
+= 1,
+.I psi'
+= 0 for an even state,
+.I psi
+= 0,
+.I psi'
+= 1 for an odd one \(em and runs outward to
+.I x
+= 5.
+.PP
+Almost every energy is wrong, and says so.  A general solution of that
+equation contains the growing exponential as well as the decaying one,
+so unless the two are in exactly the proportion that kills the growing
+part,
+.I psi
+runs away and the plot's own axis rescales to hold it.  Only at an
+eigenvalue does the tail stay down.  That is the exercise: turn the
+energy slider until it does.
+.SH DESCRIPTION
+.B Danby/schrodinger
+is a
+.IR danbylab (2)
+script and nothing else \(em the equations, the parameter ranges, the
+two curves and the little diagram are all one string in
+.BR /appl/danby/schrodinger.b .
+.PP
+It belongs to that library's
+.B mechanism
+family, whose independent variable is called
+.I t
+and whose graph's own x axis is therefore labelled
+.BR time .
+Here it is
+.IR position .
+That family was chosen because it is the only one that integrates with
+.IR numerics (2)'s
+Runge-Kutta stepper
+.I and
+plots its two observables on an axis that goes below zero, which is what
+a wave function needs; the
+.B profile
+family, which marches outward in a radius and would otherwise have been
+the obvious home, holds every state at or above zero \(em correct for
+the stellar densities it was written for, fatal for anything that
+oscillates through the axis.
+.SS The two curves
+.B Amplitude
+is
+.I psi
+and
+.B probability
+is
+.IR "psi squared" ,
+the probability density.  They share one axis.  At an eigenvalue both
+are of order 1 and the picture is the textbook one: a hump with
+.I n
+nodes under a smooth density.  At any other energy the density is the
+square of a number that has run away, so it dwarfs everything and the
+axis goes with it \(em which is the loudest possible way of saying that
+this energy is not one.
+.SS The diagram
+Left of the graph, a rod from the centre of the well out to where the
+march has got to, and a second rod standing on it whose length and sign
+are
+.I psi
+right there.  The centre never moves, so it is drawn as an anchor.
+.SS The parameters
+.TP
+.B energy
+.IR E .
+The slider runs \-1 to 4 in steps of 0.025, and lands exactly on 0.5,
+1.5, 2.5 and 3.5.
+.TP
+.B stiffness
+.IR k .
+Positive for a single well; negative, with
+.B quartic
+turned up, for a double one.
+.TP
+.B quartic
+.IR lambda ,
+the anharmonic term.  Zero for the plain harmonic oscillator.
+.TP
+.B mass
+.IR m .
+.TP
+.B parity
+Below 0.5 the march starts even, above it odd.  It is a switch, not a
+quantity; a
+.IR danbylab (2)
+parameter is a slider, and this is what a slider makes of a switch.
+.PP
+Changing any of them starts the march again from
+.I x
+= 0, which is what makes the hunt work: drag the energy, watch the tail.
+.SS What to look for
+With the defaults \(em
+.B stiffness
+and
+.B mass
+both 1,
+.B quartic
+zero \(em the well is the harmonic oscillator, whose eigenvalues are
+exactly
+.RI ( n
++ 1/2), so 0.5, 1.5, 2.5 and 3.5, alternating even and odd.  The model
+opens on the first of them.  One notch of the slider away from 0.5 the
+tail is 3e8 times larger.
+.PP
+Winding
+.B mass
+up moves the ground state down as 0.5 sqrt(k/m), which is the same
+statement as saying a heavier particle is less confined.
+.PP
+Winding
+.B stiffness
+negative and
+.B quartic
+up bends the well into two, and the single level becomes a pair \(em one
+even, one odd, split by how easily the particle tunnels through the
+barrier between them.  With
+.B stiffness
+\-1 and
+.B quartic
+0.15 the barrier is shallow, the tunnelling is easy and the pair is far
+apart; deepening the well brings them together.
+.SS Keys
+Space pauses and resumes, period advances one displayed step while
+paused, r starts again, and q or Escape quits, as in
+.IR danby (1).
+.SH SOURCE
+.B /appl/danby/schrodinger.b
+.SH SEE ALSO
+.IR danby (1),
+.IR danbylab (2),
+.IR danbylabtest (1),
+.IR dynsys (2),
+.IR hoc (2),
+.IR numerics (2)
+.SH BUGS
+Shooting outward from the centre is the wrong way to integrate into a
+classically forbidden region: out there the growing solution is the
+stable one, so roundoff feeds it, and far enough out the computed tail
+stops being the wave function at all.  At the far wall this model
+actually uses it has not happened yet \(em at
+.I x
+= 5 all four harmonic tails are within 2% of the analytic wave function
+\(em but at
+.I x
+= 6 the ground state's computed tail is already 2165 times its analytic
+value, and the contrast between a right energy and a wrong one has
+stopped improving, both ends of it being the same roundoff.  That is why
+the wall is at 5.
+.PP
+.IR Danbylabtest (1)
+checks the potential against a formula written out in Limbo, checks that
+each parity starts where it should, and checks all four harmonic
+eigenvalues with a control one slider notch either side.  It does
+.I not
+check the anharmonic or double-well cases against anything \(em there is
+no closed form for those eigenvalues to check them against \(em and it
+does not look at the picture at all.
+.PP
+There is no normalisation.  The
+.B probability
+curve is
+.I psi
+squared for whatever
+.I psi
+the march happened to start with, not a density that integrates to one,
+so its height is arbitrary even when its shape is right.
+.PP
+The energy slider cannot reach an eigenvalue below \-1, so a well deep
+enough to put one there cannot be solved here.
