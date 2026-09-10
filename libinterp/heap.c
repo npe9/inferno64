@@ -118,6 +118,21 @@ freeptrs(void *v, Type *t)
 	WORD **w, *x;
 	uchar *p, *ep;
 
+	/*
+	 * The teardown clear the comment above NTRACK says is missing.
+	 * freeptrs()'s two callers, OP(ret) and OP(mcall)'s native
+	 * branch, are the moment a frame stops existing; after them the
+	 * memory is dead and any tracked word inside it is stale.  The
+	 * typetagp validation catches the case where the next occupant
+	 * overwrites &f->t, but a frame built at a different base leaves
+	 * that word alone, so the registration survives and the next
+	 * write anywhere in the range is reported against a frame that
+	 * returned long ago.  Clearing here costs one pass over a
+	 * 1024-entry table per return and removes the whole channel.
+	 * See doc/inferno-cloud-plan.ms.
+	 */
+	trackclear(v, t->size);
+
 	if(t->np == 0)
 		return;
 
@@ -952,8 +967,10 @@ nheap(int n)
 	Heap *h;
 
 	h = poolalloc(heapmem, sizeof(Heap)+n);
-	if(h == nil)
+	if(h == nil){
+		print("nheap: poolalloc nil for %d bytes\n", (int)(sizeof(Heap)+n));
 		error(exHeap);
+	}
 
 	h->t = nil;
 	h->ref = 1;
@@ -970,8 +987,10 @@ heapz(Type *t)
 	Heap *h;
 
 	h = poolalloc(heapmem, sizeof(Heap)+t->size);
-	if(h == nil)
+	if(h == nil){
+		print("heapz: poolalloc nil for %d bytes\n", (int)(sizeof(Heap)+t->size));
 		error(exHeap);
+	}
 
 	h->t = t;
 	AINC(&t->ref);
@@ -990,8 +1009,10 @@ heap(Type *t)
 	Heap *h;
 
 	h = poolalloc(heapmem, sizeof(Heap)+t->size);
-	if(h == nil)
+	if(h == nil){
+		print("heap: poolalloc nil for %d bytes\n", (int)(sizeof(Heap)+t->size));
 		error(exHeap);
+	}
 
 	h->t = t;
 	AINC(&t->ref);

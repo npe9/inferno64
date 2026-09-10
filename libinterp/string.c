@@ -155,11 +155,15 @@ slicer(ulong start, ulong v, String *ds)
 	return ns;
 }
 
+extern void badresult(char*, void*);
+
 OP(slicec)
 {
 	String *ns, **sp;
 
 	ns = slicer(W(s), W(m), S(d));
+	if(ns == nil)
+		badresult("slicec: slicer() returned nil", ns);
 	sp = R.d;
 	destroy(*sp);
 	*sp = ns;
@@ -247,6 +251,8 @@ OP(addc)
 	String *ns, **sp;
 
 	ns = addstring(S(m), S(s), R.m == R.d);
+	if(ns == nil)
+		badresult("addc: addstring() returned nil", ns);
 
 	sp = R.d;
 	if(ns != *sp) {

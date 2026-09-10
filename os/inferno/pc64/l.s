@@ -1042,12 +1042,27 @@ _intrcommon:
 						/* Stack is SS, RSP, RFLAGS, CS, RIP, Error Code or vectortable(SB) Return PC, trap type
 								AX = AX */
 
-	PUSHW	GS
-	PUSHW	FS
-	MOVW	ES, AX	/* PUSHW ES is invalid in amd64, but showing the value for debugging */
-	PUSHW	AX
-	MOVW	DS, AX	/* PUSHW DS is invalid in amd64, but showing the value as JMP uses it */
-	PUSHW	AX
+	/*
+	 * Ureg.ds/es/fs/gs.  These four used to be built here, with
+	 * "MOVW ES, AX; PUSHW AX; MOVW DS, AX; PUSHW AX" -- before
+	 * PUSHQ AX saved the interrupted code's AX.  MOVW from a
+	 * segment register assembles to the 32-bit form, which
+	 * zero-extends, so every single interrupt on this machine
+	 * handed the interrupted code back an AX holding the DS
+	 * selector, which is 0 here.  Compiled code keeps a called
+	 * function's return value in AX for the one or two
+	 * instructions before it stores it, so an interrupt landing
+	 * in that window turned a good pointer into 0: that is
+	 * libinterp/xec.c's OP(new) storing H2D(nil) == 0x18, and
+	 * OP(addc)/OP(slicec)/OP(insc) each storing 0, which is the
+	 * Dis heap fault this port has been chasing.  Proved directly
+	 * by os/inferno/pc64/regtorture.s -- twelve registers spun
+	 * with interrupts off: clean; with interrupts on: AX became
+	 * 0x0.  Reserve the space now and fill it in below, once AX
+	 * is on the stack and free to use.  See
+	 * doc/inferno-cloud-plan.ms.
+	 */
+	SUBQ	$8, SP
 
 	PUSHQ	R15		/* RMACH m-> */
 	PUSHQ	R14		/* RUSER up-> */
@@ -1064,6 +1079,21 @@ _intrcommon:
 	PUSHQ	CX
 	PUSHQ	BX
 	PUSHQ	AX
+
+	/*
+	 * SP now points at Ureg.ax, so ds/es/fs/gs are the four words
+	 * at 120, 122, 124 and 126 -- fifteen saved quadwords up.  AX
+	 * is safe on the stack, so it can be the scratch the segment
+	 * reads need.
+	 */
+	MOVW	DS, AX
+	MOVW	AX, 120(SP)
+	MOVW	ES, AX
+	MOVW	AX, 122(SP)
+	MOVW	FS, AX
+	MOVW	AX, 124(SP)
+	MOVW	GS, AX
+	MOVW	AX, 126(SP)
 
 	MOVQ	SP, RARG /* Ureg* argument to trap */
 	PUSHQ	SP

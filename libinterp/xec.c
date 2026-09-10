@@ -647,6 +647,27 @@ probenewtype(Type *t)
 	print(" module %s\n", R.M->m->name);
 }
 
+/*
+ * Every capture in the batch that produced doc/inferno-cloud-plan.ms
+ * section 6's newfd note had the corrupted address equal to R.d and
+ * the opcode a destination-writing one -- INEW writing 0x18, which is
+ * H2D() of a nil Heap*, ISLICEC and IADDC each writing 0.  So the
+ * question is no longer "who wrote over this word" but "did the
+ * allocating call really hand back nil".  heap(), nheap() and heapz()
+ * all check poolalloc() and error(exHeap), and error() must not
+ * return; badresult() is the one place that says which of those two
+ * assumptions is false.  Native-kernel-only, temporary.  See
+ * doc/inferno-cloud-plan.ms.
+ */
+void
+badresult(char *what, void *v)
+{
+	print("%s: %#p to R.d %#p, running Dis pid %d module %s inst %d\n",
+		what, v, R.d, currun() != nil ? currun()->pid : -1,
+		R.M != nil && R.M->m != nil ? R.M->m->name : "?",
+		R.M != nil && R.M->m != nil ? (int)((R.PC - 1) - R.M->m->prog) : -1);
+}
+
 OP(new)
 {
 	Heap *h;
@@ -656,6 +677,8 @@ OP(new)
 	nt = R.M->type[W(s)];
 	probenewtype(nt);
 	h = heap(nt);
+	if(h == nil)
+		badresult("new: heap() returned nil", h);
 	wp = R.d;
 	t = *wp;
 	*wp = H2D(WORD*, h);

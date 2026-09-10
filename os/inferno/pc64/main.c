@@ -329,6 +329,55 @@ init0(void)
 	kproc("alarm", alarmkproc, 0, 0);
 
 	/*
+	 * Run once, here, with interrupts on and before any Dis runs:
+	 * os/inferno/pc64/regtorture.s says whether an interrupt on this
+	 * machine gives every register back.  Temporary; see
+	 * doc/inferno-cloud-plan.ms.
+	 */
+	{
+		extern int regtorture(int);
+		extern int regtorturecli(int);
+		extern uvlong regtorturebad;
+		ulong t0, dt;
+		int r, rc;
+
+		/*
+		 * Two things this must not be able to say, both of which
+		 * the osprey-port branch pointed out after porting the
+		 * file: "the registers survived" when no interrupt ever
+		 * arrived, and "the registers survived" when the loop
+		 * never ran.  So report how many clock ticks the run
+		 * spanned and call it inconclusive at zero, and require
+		 * the interrupts-off control -- the identical loop, which
+		 * must come back clean -- in the same boot.
+		 *
+		 * The loop is bounded by iterations rather than by ticks.
+		 * Spinning until the tick counter moves is the more
+		 * obvious way to guarantee coverage and it is far too dear
+		 * here: this guest's clock advances in bursts under QEMU,
+		 * so waiting for four ticks cost about thirty seconds of
+		 * wall time before the shell came up, where two million
+		 * iterations cost under two and span ticks anyway.
+		 */
+		rc = regtorturecli(10*1000);
+		t0 = m->ticks;
+		r = regtorture(2*1000*1000);
+		dt = m->ticks - t0;
+		if(r != 0)
+			print("regtorture: interrupts on: REGISTER %d became %#llux\n",
+				r, regtorturebad);
+		else if(rc != 0)
+			print("regtorture: INCONCLUSIVE: the interrupts-off control failed\n");
+		else if(dt == 0)
+			print("regtorture: INCONCLUSIVE: no clock tick during the run\n");
+		else
+			/* no semicolon in this line: the console prompt is
+			 * "; " and a batch that greps for it must not
+			 * match our own output */
+			print("regtorture: 12 registers survived 2M iterations over %lud ticks, control clean\n", dt);
+	}
+
+	/*
 	 * This kernel came from 9ferno (github.com/gophone2015), whose
 	 * own userland is a Forth interpreter -- goforth(up->fmem) ran
 	 * init.f, this board's equivalent of init.rc, from here, and
