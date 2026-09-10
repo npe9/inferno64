@@ -284,6 +284,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	checkdefault();
 	checklayout();
 	checkfocusring();
+	checkstyle();
 	checkcanvastag();
 	checkplaintitle();
 	checktheme();
@@ -658,6 +659,114 @@ checkfocusring()
 	report(held != away, sys->sprint(
 		"a focused button looks different from an unfocused one (%d inked against %d)",
 		held, away));
+}
+
+
+# The widget style: whether a relief is a two-tone chisel or one
+# restrained outline.  What makes this measurable rather than a matter of
+# taste is that the two looks differ in a way that can be counted - a
+# chisel needs a light edge AND a dark edge, so it puts more distinct
+# values into the border than a single outline does.
+#
+# The check that matters most is the last one.  Collapsing raised and
+# sunken is only safe because every state that uses a relief also changes
+# the fill behind it; an indicator-less checkbutton is the case where the
+# relief was doing the work, so if anything was going to lose its state
+# to this it is that.  It is checked in BOTH styles, because a flat look
+# that quietly stopped saying which option is chosen would be a
+# regression no count of grey levels would notice.
+checkstyle()
+{
+	blank();
+	top := offscreen();
+	if(top == nil)
+		return;
+	# A frame carries no text, so every value inside its rectangle comes
+	# from the border.  Measured on a button instead, the glyphs dominate
+	# the count and the two styles read alike - which is what the first
+	# version of this check did, and it reported no difference where
+	# there plainly is one.
+	tk->cmd(top, "frame .f -width 80 -height 40 -borderwidth 2 -relief raised");
+	tk->cmd(top, "checkbutton .c -text {Wrap} -indicatoron 0 -borderwidth 2 -variable cbv");
+	tk->cmd(top, "pack .f");
+	tk->cmd(top, "pack .c");
+	map(top);
+
+	was := tk->cmd(top, "style");
+	r := tk->rect(top, ".f", Tk->Border);
+
+	tk->cmd(top, "style classic");
+	tk->cmd(top, "update");
+	classic := levels(r);
+	tk->cmd(top, "style flat");
+	tk->cmd(top, "update");
+	flat := levels(r);
+
+	report(was == "classic",
+		sys->sprint("the default style is classic (%s)", was));
+	report(tk->cmd(top, "style") == "flat",
+		"the style command reports back what was set");
+	report(flat < classic, sys->sprint(
+		"a flat border uses fewer distinct values than a chisel (%d against %d)",
+		flat, classic));
+	report(flat > 1, sys->sprint(
+		"a flat widget still has a border at all (%d values)", flat));
+
+	# The state a relief used to carry.  Collapsing raised and sunken is
+	# only safe because every state that used one also changes the fill;
+	# an indicator-less checkbutton is where the relief was doing the
+	# work, so it is checked in BOTH styles - a flat look that quietly
+	# stopped saying which option is chosen would be a regression no
+	# count of grey levels would notice.
+	cr := tk->rect(top, ".c", Tk->Border);
+	bad := "";
+	for(sl := list of {"classic", "flat"}; sl != nil; sl = tl sl){
+		st := hd sl;
+		tk->cmd(top, "style " + st);
+		tk->cmd(top, ".c deselect");
+		tk->cmd(top, "update");
+		off0 := dominant(cr);
+		tk->cmd(top, ".c select");
+		tk->cmd(top, "update");
+		on := dominant(cr);
+		# Not ink(): that counts pixels which are not the commonest
+		# value, and a fill which merely CHANGES COLOUR leaves that
+		# count exactly where it was.  It read 366 either way in both
+		# styles - a number with no power to answer the question.
+		sys->print("     %-8s checked %s, unchecked %s\n", st, on, off0);
+		if(on == off0)
+			bad += " " + st;
+	}
+	report(bad == nil, sys->sprint(
+		"an indicator-less checkbutton still shows its state%s",
+		badly(bad)));
+
+	tk->cmd(top, "style classic");
+}
+
+badly(bad: string): string
+{
+	if(bad == nil)
+		return "";
+	return " - NOT in" + bad;
+}
+
+# how many distinct values a rectangle holds
+levels(r: Rect): int
+{
+	if(r.dx() <= 0 || r.dy() <= 0)
+		return 0;
+	n := r.dx()*r.dy();
+	b := array[n*3] of byte;
+	off.readpixels(r, b);
+	seen := array[256] of {* => 0};
+	for(i := 0; i < n*3; i += 3)
+		seen[int b[i]] = 1;
+	d := 0;
+	for(i = 0; i < 256; i++)
+		if(seen[i])
+			d++;
+	return d;
 }
 
 # how many pixels in a rectangle are not the background

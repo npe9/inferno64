@@ -439,12 +439,45 @@ than a constraint.
 
 **What actually makes them look that way**, in the order it shows:
 
-- **Hard 3D bevels everywhere.** `tkdrawrelief` in `libtk/utils.c` paints
-  a one-pixel light edge and a one-pixel dark edge, and `raised` and
-  `sunken` are the only shapes a widget has. Every button, entry, frame
-  and scrollbar is a rectangle with a chisel round it. Flat surfaces with
-  a restrained border, and a *pressed* state that is a fill change rather
-  than a bevel inversion, is most of the distance to something modern.
+- ~~**Hard 3D bevels everywhere.**~~ **Done — `style(9)`.** `tkdrawrelief`
+  in `libtk/utils.c` painted a one-pixel light edge and a one-pixel dark
+  edge, and `raised` and `sunken` were the only shapes a widget had.
+  There is now a per-toplevel `style classic|flat`; flat draws one
+  restrained outline instead of the chisel, and classic stays the
+  default, so the existing look is not taken away from anyone.
+
+  **The pressed state needed no work at all, which was the surprise.**
+  The plan above assumed a fill change would have to be *added*. It was
+  already there: `buton.c` sets `bgnd = TkCactivebgnd` for a pressed
+  button and `TkCselect` for a chosen indicator-less checkbutton, and the
+  fill is drawn from `bgnd`. The relief was reinforcing a state that the
+  fill already carried, so collapsing `raised` and `sunken` loses nothing
+  — which is what makes the flat style one branch rather than a second
+  set of shapes. `tkofftest(1)` checks that in **both** styles, because a
+  flat look that quietly stopped saying which option is chosen is exactly
+  the regression a border-pixel count would not notice.
+
+  **Two instrument failures worth keeping, both of the same kind.** The
+  border count was first taken over a *button*, where the glyphs dominate
+  and both styles read 3 distinct values — a metric with no power to see
+  the change. A text-free `frame` reads 2 against 3. Then the checkbutton
+  state was measured with `ink()`, which counts pixels that are not the
+  commonest value: a fill that merely *changes colour* leaves that count
+  exactly where it was, and it read 366 either way in both styles.
+  `dominant()` reads `#3D6A9A` chosen against `#F5F0D8` not. Neither
+  metric was wrong about pixels; both were wrong about the question.
+
+  **And the repaint had to be asked for properly.** `tkdirty()` only
+  *propagates* dirtiness — to masters, and to views under a transparent
+  widget — and returns at once unless the widget's own dirty rectangle is
+  already set. Setting the style and calling `tkdirty()` on every widget
+  therefore repainted almost nothing: 2 widgets took the flat branch and
+  the check reported no difference. `tk->dirty = tkrect(tk, 1)` first, as
+  `tkbuttonselect()` does, is the fix. The failing check said "3 against
+  3" throughout, which is the same reading a broken flat style would
+  give — so the negative control was run deliberately afterwards
+  (`if(0 &&` on the branch): 3 against 3 with it disabled, 2 against 3
+  with it back.
 - **No spacing discipline.** Padding is per-widget and ad hoc —
   `Textpadx`, `Bitpadx`, a `-padx` here and a `-borderwidth 2` there —
   so nothing lines up between programs. A named set of spacings, used by
@@ -471,11 +504,18 @@ than a constraint.
   what composition gets you. Making them look like tabs wants a canvas or
   the themed layer below.
 
-**The order to do it in.** The bevel and the focus ring are `libtk` and
-affect every widget at once, so they are both the most visible and the
-easiest to get wrong; do them behind `wmtheme(2)` so the old look stays
-reachable. Spacing is next and is mostly a table. Corners and scaled
-borders are last and are cosmetic.
+**The order to do it in.** ~~The bevel and the focus ring~~ — both done;
+the switch is `style(9)` rather than `wmtheme(2)`, because the choice has
+to be made where the border is drawn, in C, and `wmtheme(2)` is Limbo and
+holds colours. A Limbo caller says `tk->cmd(top, "style flat")` like any
+other Tk command, so nothing had to be plumbed between the two.
+**Spacing is next** and is mostly a table. Corners and scaled borders are
+last and are cosmetic.
+
+**Still open in this section:** nothing yet *uses* the flat style —
+`tkclient(2)` does not offer it, so a program has to ask by name. Whether
+it should become the default, or be reachable from a session-wide
+setting, is a taste question and so is the user's, not this document's.
 
 **How to know it worked.** `tkofftest(1)` renders offscreen and reads
 pixels, so a look can be pinned the way the chrome's artwork is: the

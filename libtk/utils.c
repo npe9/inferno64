@@ -48,6 +48,7 @@ static struct Cmd cmdmain[] =
 	"scrollbar",	tkscrollbar,
 	"see",	tkseecmd,
 	"send",		tksend,
+	"style",	tkstylecmd,
 	"text",		tktext,
 	"update",	tkupdatecmd,
 	"variable",	tkvariable,
@@ -860,6 +861,22 @@ tkdrawrelief(Image *i, Tk *tk, Point o, int color, int rlf)
 	bd = tk->borderwidth;
 	if(rlf < 0)
 		rlf = TKraised;
+
+	/*
+	 * One restrained outline instead of a two-tone chisel.  Every state
+	 * that a relief is asked to show also changes the FILL behind it -
+	 * a pressed button is drawn in activebgnd, an indicator-less
+	 * checkbutton in select - so collapsing raised and sunken here
+	 * loses no information a person could act on, which is why the flat
+	 * style can be one line rather than a second set of shapes.
+	 */
+	if(tk->env->top != nil && tk->env->top->style == TkSflat) {
+		if(rlf != TKflat)
+			tkbox(i, Rect(o.x, o.y, o.x + w + 2*bd, o.y + h + 2*bd),
+				bd, d);
+		return;
+	}
+
 	switch(rlf) {
 	case TKflat:
 		break;
@@ -884,6 +901,55 @@ tkdrawrelief(Image *i, Tk *tk, Point o, int color, int rlf)
 		tkbevel(i, o, w, h, bd2, d, l);
 		break;
 	}
+}
+
+/*
+ * style ?flat|classic?
+ *
+ * Picks what a relief means for this toplevel, and reports what is in
+ * force when asked with no argument.  It is deliberately a whole-window
+ * setting rather than a per-widget option: the thing that makes a set of
+ * widgets look like one set is that they agree, and an option each
+ * widget could set differently is an option each program would set
+ * differently.
+ *
+ * The old look stays reachable, which is the point of having the switch
+ * at all - the existing chisel is coherent and somebody chose it.
+ */
+char*
+tkstylecmd(TkTop *t, char *arg, char **ret)
+{
+	Tk *tk;
+	char buf[Tkmaxitem];
+
+	tkword(t, arg, buf, buf+sizeof(buf), nil);
+	if(buf[0] == '\0') {
+		if(ret != nil)
+			return tkvalue(ret, "%s",
+				t->style == TkSflat ? "flat" : "classic");
+		return nil;
+	}
+	if(strcmp(buf, "flat") == 0)
+		t->style = TkSflat;
+	else if(strcmp(buf, "classic") == 0)
+		t->style = TkSclassic;
+	else
+		return TkBadvl;
+
+	/*
+	 * Every widget's border is drawn from this, so every widget has to
+	 * be told, not just the one the command was aimed at.  tkdirty()
+	 * only PROPAGATES dirtiness to masters and to views under a
+	 * transparent widget - it returns at once unless the widget's own
+	 * dirty rectangle is already set - so the rectangle has to be set
+	 * here first, exactly as tkbuttonselect() does.  Without that the
+	 * style changed and almost nothing repainted.
+	 */
+	for(tk = t->root; tk != nil; tk = tk->siblings) {
+		tk->dirty = tkrect(tk, 1);
+		tkdirty(tk);
+	}
+	return tkupdate(t);
 }
 
 Point

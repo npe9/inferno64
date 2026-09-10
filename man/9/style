@@ -1,0 +1,80 @@
+.TH STYLE 9
+.SH NAME
+style \- choose what a relief looks like
+.SH SYNOPSIS
+\f5style\fP ?\f5classic\fP|\f5flat\fP?
+.SH DESCRIPTION
+.B Style
+sets, for the whole toplevel, what a
+.B -relief
+means when it is drawn.
+With no argument it reports which is in force.
+.TP
+\f5classic\fP
+Every relief is a two-tone chisel: a light edge and a dark edge, so that
+.B raised
+stands out of the surface and
+.B sunken
+is cut into it.
+This is the default, and it is the look this toolkit has always had.
+.TP
+\f5flat\fP
+Every relief is one restrained outline of the widget's border width, in
+the darker of the two shades.
+.B Raised
+and
+.B sunken
+draw the same thing;
+.B flat
+still draws nothing.
+.PP
+It is a property of the toplevel rather than an option on each widget,
+and deliberately so.
+What makes a set of widgets look like one set is that they agree, and an
+option each widget could set differently is an option each program would
+set differently.
+.PP
+Collapsing
+.B raised
+and
+.B sunken
+loses no information a person could act on, because every state that
+uses a relief to show itself also changes the fill behind it: a pressed
+button is drawn in
+.BR activebgnd ,
+and a
+.IR checkbutton (9)
+or
+.IR radiobutton (9)
+with
+.B -indicatoron
+false is drawn in
+.B select
+when it is chosen.
+The relief was reinforcing those, not carrying them.
+.PP
+Changing the style repaints every widget in the toplevel, since every
+border is drawn from this.
+.SH EXAMPLE
+.EX
+style flat
+.EE
+.SH SEE ALSO
+.IR options (9),
+.IR frame (9),
+.IR button (9),
+.IR wmtheme (2)
+.SH BUGS
+It changes borders only.
+The colours, the padding and the corner shape are what else would have
+to move for the two styles to look like two designs rather than one
+design with its edges redrawn, and none of those is here.
+.PP
+A
+.I frame
+used purely as a divider, with a relief and no fill of its own, says
+less in the flat style than in the classic one, because there the chisel
+was the whole of what it drew.
+.PP
+There is no way to set it for a session, only per toplevel, so a program
+that wants it must say so itself.

@@ -56,6 +56,16 @@ enum
 	TKgroove,
 	TKridge,
 
+	/*
+	 * Widget style, per toplevel, set by the `style' command.  It picks
+	 * what a relief MEANS, not what any widget asks for: every widget
+	 * keeps saying `raised' or `sunken' and this decides whether that
+	 * is a two-tone chisel or one restrained outline.  Classic is the
+	 * default and is the look this toolkit has always had.
+	 */
+	TkSclassic	= 0,
+	TkSflat,
+
 	TkArepl		= 0,	/* Bind options */
 	TkAadd,
 	TkAsub,
@@ -583,6 +593,7 @@ struct TkTop
 	TkPanelimage*	panelimages;
 	TkAction*	binds[TKwidgets];
 	int		debug;
+	char		style;			/* TkSclassic or TkSflat */
 	int		execdepth;
 	char		focused;
 	char		dirty;
@@ -622,6 +633,7 @@ extern	char*	tkradiobutton(TkTop*, char*, char**);
 extern	char*	tkraise(TkTop*, char*, char**);
 extern	char*	tkscale(TkTop*, char*, char**);
 extern	char*	tkscrollbar(TkTop*, char*, char**);
+extern	char*	tkstylecmd(TkTop*, char*, char**);
 extern	char*	tksend(TkTop*, char*, char**);
 extern	char*	tktext(TkTop*, char*, char**);
 extern	char*	tkupdatecmd(TkTop*, char*, char**);
