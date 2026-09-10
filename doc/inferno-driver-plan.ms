@@ -1370,8 +1370,92 @@ was giving the board 256MB \(em and prints every other finding beside
 what
 .CW mem.h
 assumed.
+.B DONE
+for
 .CW spike
-is still handed no tree at all, and that half stays open.
+too, and the claim that it is handed no tree was wrong the same way.
+QEMU's
+.CW -M
+.CW spike
+writes a six-instruction reset ROM at
+.CW 0x1000 :
+.DS
+.CW
+	auipc	t0, 0
+	addi	a2, t0, 0x28
+	csrr	a0, mhartid
+	ld	a1, 0x20(t0)
+	ld	t0, 0x18(t0)
+	jr	t0
+.DE
+with the kernel entry at
+.CW 0x1018
+and the tree's address at
+.CW 0x1020 ,
+so
+.CW a1
+holds the tree at entry exactly as it does on
+.CW virt
+and
+.CW sifiveu .
+The board's
+.CW l.s
+had simply never saved it.  It does now, and drives its memory size,
+its CLINT timebase and its reporting from the tree.
+.PP
+The tree's placement turns out to be an architecture difference and not
+a machine one.  On arm64 the tree goes below the kernel's link address,
+under
+.CW conf.base0 ,
+where nothing will ever reach it.  On riscv every machine goes through
+.CW riscv_compute_fdt_addr()
+and the tree lands at
+.CW dram_end-2MB
+\(em
+.CW 0x87e00000
+at the 128MB default,
+.CW 0xffe00000
+at
+.CW "-m 2G" ,
+and OpenSBI passes the same address on rather than relocating it \(em
+which is inside the range
+.CW confinit()
+hands to the allocator.  So this was not a
+.CW spike
+problem:
+.CW virt ,
+.CW virts ,
+.CW virt32 ,
+.CW virt32s ,
+.CW sifiveu
+and
+.CW shakti
+were all reading a tree the allocator owned, surviving only because
+nothing had allocated that far up yet.  Each of the seven now trims
+.CW conf.topofmem
+down to the blob, and
+.CW spike 's
+smoke test checks that the xalloc extent's top is the blob's own
+address rather than trusting the print.
+.PP
+Sizing memory from the tree went to those six as well, and it mattered
+most where nobody was looking:
+.CW virt ,
+.CW virts ,
+.CW virt32
+and
+.CW virt32s
+compile
+.CW DRAMSIZE
+as 256MB while the suite passed no
+.CW -m
+at all, so QEMU gave them 128MB and the kernels claimed
+.CW 0x90000000
+as the top of a machine ending at
+.CW 0x88000000 .
+The suite now names
+.CW "-m 256M"
+on those arms.
 .IP 3.
 .B "virtio-gpu 3-D."
 Needs a QEMU built against virglrenderer.  The packaged 10.1.3 here

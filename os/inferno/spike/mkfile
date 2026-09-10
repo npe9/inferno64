@@ -30,6 +30,7 @@ OBJ=\
 	trap.$O\
 	tod.$O\
 	mul64fract.$O\
+	fdt.$O\
 	stubs.$O\
 	$CONF.root.$O\
 	$DEVS\
@@ -74,6 +75,9 @@ tod.$O:	../port/tod.c
 
 mul64fract.$O:	../port/mul64fract.c
 	$CC $CFLAGS ../port/mul64fract.c
+
+fdt.$O:	../port/fdt.c
+	$CC $CFLAGS ../port/fdt.c
 
 devuart.$O:	../port/devuart.c
 	$CC $CFLAGS ../port/devuart.c

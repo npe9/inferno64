@@ -30,11 +30,12 @@
 /* Physical / virtual (identity, MMU off) */
 #define	PHYSDRAM	((uintptr)0x40000000)
 /*
- * The floor, not the size.  The suite runs this board with -m 1G and
- * has for a long time, so the old "matches -m 256" was simply wrong;
- * archconfinit() now takes the real total from the device tree and
- * uses this only as the fallback when there is no tree, and as the
- * minimum it will accept from one.
+ * The fallback, not the size.  The suite runs this board with -m 1G
+ * and has for a long time, so the old "matches -m 256" was simply
+ * wrong; archconfinit() now takes the real total from the device tree
+ * and uses this only when there is no tree.  It is not a floor: it
+ * was one briefly, and that rejected a tree reporting less than 256MB
+ * and left the board claiming memory a smaller machine does not have.
  */
 #define	DRAMSIZE	(256*1024*1024)
 #define	KZERO		PHYSDRAM

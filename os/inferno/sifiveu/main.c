@@ -113,6 +113,20 @@ main(void)
 
 	machinit();
 	archreset();
+	{
+		/*
+		 * Before confinit(), because archconfinit() sizes memory
+		 * from the tree and keeps the pool off the blob.  This
+		 * only reads the header and saves the pointer -- no
+		 * hardware, nothing that can hang a board -- and the
+		 * later block that seeds the driver bases calls it again
+		 * harmlessly.
+		 */
+		extern void *dtbptr;
+		extern void fdtinit(void*);
+
+		fdtinit(dtbptr);
+	}
 	confinit();
 
 	serialputs("Inferno/riscv64 sifive_u\n", -1);

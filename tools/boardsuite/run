@@ -117,6 +117,15 @@ config_args() {
 		# halves were BLK-FAIL, recorded as a known failure of the
 		# board rather than of the invocation.
 		echo "-M virt -cpu cortex-a57 -m 1G -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-pci,disable-legacy=on,drive=blk0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-device,netdev=n0";;
+	# The riscv arms below name -m explicitly.  They used to pass none
+	# at all, which meant QEMU's 128MB default while virt, virts,
+	# virt32 and virt32s each compiled DRAMSIZE as 256MB and took it
+	# as the top of memory: the kernels were handing out 128MB of
+	# addresses the machine leaves unassigned.  The boards now size
+	# themselves from the device tree, so an invocation that says
+	# nothing gets a 128MB board; these say what mem.h always claimed
+	# they wanted.  sifive_u's own DRAMSIZE is 128MB, so its -m makes
+	# the default explicit rather than changing it.
 	sifiveu)
 		# if=sd, and the FU540 has no SD host controller: QEMU's
 		# sifive_u puts an ssi-sd on the second SPI controller,
@@ -127,14 +136,14 @@ config_args() {
 		# board printed SD-NONE for as long as the suite ran it,
 		# and the reason was only ever that nothing handed it a
 		# card.
-		echo "-M sifive_u -bios none -drive file=$work/sdspi.img,if=sd,format=raw";;
+		echo "-M sifive_u -m 128M -bios none -drive file=$work/sdspi.img,if=sd,format=raw";;
 	virt)
 		# This kernel is the other way round: it links sdvirtiommio
 		# and ethervirtiommio, so both devices are the mmio form.
 		# The netdev is new -- NET-FAIL and IP-FAIL were recorded
 		# here as known failures while the invocation had no
 		# network device at all.
-		echo "-M virt -bios none -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-device,drive=blk0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-device,netdev=n0";;
+		echo "-M virt -m 256M -bios none -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-device,drive=blk0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-device,netdev=n0";;
 	virts)
 		# virt's line without -bios none: QEMU's default OpenSBI
 		# runs first and enters the kernel at supervisor mode,
@@ -142,19 +151,19 @@ config_args() {
 		# links at 0x80200000 rather than 0x80000000 to leave
 		# OpenSBI where it loads.  Everything else is virt
 		# exactly, so its marker set has to come out the same.
-		echo "-M virt -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-device,drive=blk0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-device,netdev=n0";;
+		echo "-M virt -m 256M -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-device,drive=blk0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-device,netdev=n0";;
 	virt32)
 		# The netdev is new: the board links ethervirtiommio as
 		# of the round that fixed zc's vlong word order, and
 		# without a device behind it the DHCP check has nothing
 		# to answer it.  mmio, like riscv64/virt's -- this board
 		# has no PCI.
-		echo "-M virt -bios none -netdev user,id=n0 -device virtio-net-device,netdev=n0";;
+		echo "-M virt -m 256M -bios none -netdev user,id=n0 -device virtio-net-device,netdev=n0";;
 	virt32s)
 		# The same board in supervisor mode: no -bios none, so
 		# QEMU's default OpenSBI runs first and drops the kernel
 		# into S-mode.  Everything else is virt32's line.
-		echo "-M virt -netdev user,id=n0 -device virtio-net-device,netdev=n0";;
+		echo "-M virt -m 256M -netdev user,id=n0 -device virtio-net-device,netdev=n0";;
 	peer-mixed)
 		# The riscv64 board listening for the arm64 one.  The two
 		# ends of this wire are different architectures running
@@ -166,7 +175,7 @@ config_args() {
 		# marker set has to come out the same: the same board on
 		# the same run, and the only thing changed is who is on
 		# the other end of the wire.
-		echo "-M virt -bios none -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-device,drive=blk0,bus=virtio-mmio-bus.0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-device,netdev=n0,bus=virtio-mmio-bus.1 -netdev socket,id=p0,listen=:14446 -device virtio-net-device,netdev=p0,mac=52:54:00:aa:aa:01,bus=virtio-mmio-bus.2";;
+		echo "-M virt -m 256M -bios none -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-device,drive=blk0,bus=virtio-mmio-bus.0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-device,netdev=n0,bus=virtio-mmio-bus.1 -netdev socket,id=p0,listen=:14446 -device virtio-net-device,netdev=p0,mac=52:54:00:aa:aa:01,bus=virtio-mmio-bus.2";;
 	raspi4-usb)
 		# The richer run again, on the board whose USB is xHCI
 		# rather than dwc2.  raspi4init.b carries the same disk
@@ -195,7 +204,7 @@ config_args() {
 		# does not.  bus.1 is 0x10002000 and bus.2 0x10003000;
 		# ethervirtiommio scans ascending, so the numbering
 		# follows.
-		echo "-M virt -bios none -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-device,drive=blk0,bus=virtio-mmio-bus.0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-device,netdev=n0,bus=virtio-mmio-bus.1 -netdev socket,id=p0,listen=:14444 -device virtio-net-device,netdev=p0,mac=52:54:00:aa:aa:01,bus=virtio-mmio-bus.2";;
+		echo "-M virt -m 256M -bios none -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-device,drive=blk0,bus=virtio-mmio-bus.0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-device,netdev=n0,bus=virtio-mmio-bus.1 -netdev socket,id=p0,listen=:14444 -device virtio-net-device,netdev=p0,mac=52:54:00:aa:aa:01,bus=virtio-mmio-bus.2";;
 	esac
 }
 
@@ -377,7 +386,11 @@ config_evidence() {
 		# started at supervisor mode -- this configuration's
 		# whole point.
 		echo 'conf virts \('
-		echo 'Domain0 Next Mode *: S-mode';;
+		echo 'Domain0 Next Mode *: S-mode'
+		# The memory top, for the reason the virt arm gives:
+		# conf.topofmem comes from the tree and stops at the
+		# blob, so at -m 256M it is 0x8fe00000.
+		echo '^[0-9a-f]+ 8fe00000 [0-9]+';;
 	virt32s)
 		# These two boards share an init, so they print the same
 		# five markers and the marker set cannot tell them
@@ -394,10 +407,24 @@ config_evidence() {
 		echo 'conf virt32s \('
 		echo 'Domain0 Next Mode *: S-mode'
 		echo 'ip=10\.0\.2\.15 ipmask=255\.255\.255\.0 ipgw=10\.0\.2\.2'
-		echo 'IP32-OK';;
+		echo 'IP32-OK'
+		# The memory top, for the reason the virt arm gives:
+		# conf.topofmem comes from the tree and stops at the
+		# blob, so at -m 256M it is 0x8fe00000.
+		echo '^[0-9a-f]+ 8fe00000 [0-9]+';;
 	virt)
 		# conf virt, for the same reason virts has its own.
-		echo 'conf virt \(';;
+		echo 'conf virt \('
+		# The memory top.  xalloc prints its extent as
+		# "base top size"; the middle field is conf.topofmem,
+		# which archconfinit() takes from the device tree and
+		# then trims to the tree's own address, since QEMU's
+		# riscv machines put the blob at dram_end-2MB, inside
+		# the range confinit() hands out.  At -m 256M that is
+		# 0x8fe00000 and not 0x90000000.  The first and third
+		# fields move with the kernel image, so neither is
+		# matched.
+		echo '^[0-9a-f]+ 8fe00000 [0-9]+';;
 	virt32)
 		# conf virt32, for the same reason virt32s has its own:
 		# the two share an init and print the same markers, so
@@ -416,7 +443,11 @@ config_evidence() {
 		# compiler's word order used to write backwards, so a
 		# regression there shows up here first.
 		echo 'ip=10\.0\.2\.15 ipmask=255\.255\.255\.0 ipgw=10\.0\.2\.2'
-		echo 'IP32-OK';;
+		echo 'IP32-OK'
+		# The memory top, for the reason the virt arm gives:
+		# conf.topofmem comes from the tree and stops at the
+		# blob, so at -m 256M it is 0x8fe00000.
+		echo '^[0-9a-f]+ 8fe00000 [0-9]+';;
 	sifiveu)
 		# SIFIVEU-FDT-OK says the tree agreed with mem.h.  These
 		# two say the discovered numbers were the ones the board
@@ -435,7 +466,13 @@ config_evidence() {
 		# that same layer.
 		echo 'spi spi0-nor at 0x10040000: jedec'
 		echo 'SD 16-block RW \(SD-MULTIBLOCK-OK\)'
-		echo 'SD-FS-OK \(kfs-on-sd works\)';;
+		echo 'SD-FS-OK \(kfs-on-sd works\)'
+		# The memory top.  -M sifive_u is a 128MB machine, so
+		# this reads 0x87e00000: the tree's 0x88000000 trimmed
+		# to the 2MB the blob sits in.  Before the board sized
+		# itself from the tree it read 0x88000000 and the tree
+		# was inside the pool.
+		echo '^[0-9a-f]+ 87e00000 [0-9]+';;
 	virtarm64)
 		# This board reads QEMU's own device tree, and nothing in
 		# the marker set says so: the markers are the same words
@@ -1006,8 +1043,25 @@ attempt() {
 	mouse_stop
 
 	if ! grep -q "$last" "$log" 2>/dev/null; then
-		if [ -s "$err" ]; then
-			echo "qemu: `head -1 "$err"`"
+		# Two things were wrong with what this used to report.
+		#
+		# Every run ends by killing qemu, and qemu writes
+		# "terminating on signal 15" to stderr when it is killed,
+		# so $err was never empty and the honest message below was
+		# dead code.  A boot that simply ran out of time came back
+		# dressed as an emulator error -- which is how three arm64
+		# configurations starved by another process on the host
+		# were reported as "qemu: terminating on signal 15".  The
+		# teardown line is filtered out before deciding.
+		#
+		# And $got is left over from whatever ran last.  Returning
+		# here without rewriting it made the caller's marker count
+		# a number from a previous run: a log holding two markers
+		# was reported as 41.  Write this run's count, even when
+		# it is zero.
+		markers "$log" > "$got" 2>/dev/null || : > "$got"
+		if grep -v 'terminating on signal 15' "$err" 2>/dev/null | grep -q .; then
+			echo "qemu: `grep -v 'terminating on signal 15' "$err" | head -1`"
 		else
 			echo "never reached $last in ${timeout}s"
 		fi

@@ -44,21 +44,29 @@ archconfinit(void)
 	 * three quarters of the machine's memory would have gone
 	 * unused.
 	 *
-	 * Three guards.  fdtmemory() returns the number of banks it
+	 * Two guards.  fdtmemory() returns the number of banks it
 	 * summed, and only one bank makes base+size a contiguous
 	 * extent; two would put the hole between them into the pool.
 	 * Every -M virt tree from -m 256 to -m 16G has a single
 	 * memory@40000000, checked with -machine dumpdtb, so this is
 	 * the guard staying honest about an assumption rather than a
-	 * case seen here.  The base must be PHYSDRAM, because
+	 * case seen here.  And the base must be PHYSDRAM, because
 	 * everything on this board is identity-mapped from there and
-	 * confinit() computes npage0 from one range.  And the total
-	 * must be at least DRAMSIZE, so a tree reporting less cannot
-	 * shrink the board below a size known to boot -- a machine
-	 * genuinely given less than 256MB is a configuration to fix,
-	 * not to limp along in.  There is deliberately no ceiling:
-	 * conf.ialloc is a ulong and this board would need 32GB of
-	 * RAM before main_pool_pcnt of it overflowed one.
+	 * confinit() computes npage0 from one range.
+	 *
+	 * There is deliberately no floor and no ceiling.  A floor was
+	 * here -- the tree had to report at least DRAMSIZE -- and it
+	 * was wrong in the dangerous direction: at -m 64M the tree said
+	 * 0x4000000, the floor rejected it, and the board kept
+	 * conf.topofmem at 0x50000000 with real memory ending at
+	 * 0x44000000.  The xalloc line read "403cd000 50000000
+	 * 264450048": 252MB claimed on a 64MB machine, 192MB of it
+	 * addresses -M virt leaves unassigned.  Trusting a tree that
+	 * reports less than expected wastes nothing and asserts
+	 * nothing; disbelieving it hands out memory that is not there.
+	 * No ceiling either: conf.ialloc is a ulong and this board
+	 * would need 32GB of RAM before main_pool_pcnt of it overflowed
+	 * one.
 	 */
 	conf.topofmem = PHYSDRAM + DRAMSIZE;
 	{
@@ -67,7 +75,7 @@ archconfinit(void)
 		uvlong base, size;
 
 		if(fdtvalid() && fdtmemory(&base, &size) == 1
-		&& base == (uvlong)PHYSDRAM && size >= (uvlong)DRAMSIZE)
+		&& base == (uvlong)PHYSDRAM)
 			conf.topofmem = PHYSDRAM + (uintptr)size;
 	}
 	conf.cpuspeed = 100000000;	/* refined once cntfrq() is read, see clockinit */

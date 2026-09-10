@@ -395,3 +395,121 @@ fdtmemory(uvlong *base, uvlong *size)
 		*size = f.size;
 	return f.nbank;
 }
+
+/*
+ * Where the blob is and how long it is: the address the board's boot
+ * code handed fdtinit(), and the length its own header declares.
+ *
+ * A board needs both when its firmware puts the tree inside RAM.
+ * QEMU's -M virt for arm64 writes the tree below the kernel's link
+ * address, where nothing will ever allocate; -M spike instead puts it
+ * 2MB below the top of memory -- 0x87e00000 at the default -m 128M,
+ * 0xffe00000 at -m 2G -- which is squarely inside the range confinit()
+ * hands to the allocator.  Sizing memory from the tree and then
+ * allocating over the tree is not a trade a board should make
+ * silently, so this lets archconfinit() keep the pool off it.
+ *
+ * Returns 0 if there is no valid tree.
+ */
+int
+fdtblob(uvlong *base, uvlong *size)
+{
+	Fdthdr *h = fdt;
+
+	if(fdt == nil)
+		return 0;
+	if(base != nil)
+		*base = (uvlong)(uintptr)fdt;
+	if(size != nil)
+		*size = be32(&h->totalsize);
+	return 1;
+}
+
+typedef struct Findu Findu;
+struct Findu {
+	char	*prop;
+	u32int	val;
+	int	found;
+};
+
+static uintptr
+matchu32(char *name, uchar *props, int acells, int scells, void *a)
+{
+	Findu *f = a;
+	uchar *v;
+	u32int len;
+
+	USED(name, acells, scells);
+	v = fdtprop(props, f->prop, &len);
+	if(v == nil || len < 4)
+		return 0;
+	f->val = be32(v);
+	f->found = 1;
+	return 1;
+}
+
+/*
+ * The first cell of the first node carrying the named property, in
+ * tree order.  Not every useful number in a tree hangs off a reg:
+ * timebase-frequency, the rate the riscv CLINT's mtime counts at,
+ * sits on /cpus and is what a board would otherwise have to guess.
+ * Returns 1 and fills *val, else 0.
+ */
+int
+fdtu32(char *prop, u32int *val)
+{
+	Findu f;
+
+	memset(&f, 0, sizeof f);
+	f.prop = prop;
+	fdtwalk(matchu32, &f);
+	if(!f.found)
+		return 0;
+	if(val != nil)
+		*val = f.val;
+	return 1;
+}
+
+static uintptr
+matchpresent(char *name, uchar *props, int acells, int scells, void *a)
+{
+	Findc *f = a;
+	uchar *cv;
+	u32int clen;
+	char *c, *ce;
+
+	USED(name, acells, scells);
+	cv = fdtprop(props, "compatible", &clen);
+	if(cv == nil)
+		return 0;
+	c = (char*)cv;
+	ce = c + clen;
+	for(; c < ce; c += strlen(c)+1)
+		if(strcmp(c, f->compat) == 0){
+			f->found = 1;
+			return 1;
+		}
+	return 0;
+}
+
+/*
+ * Whether the tree names a node with this compatible at all, without
+ * asking it for a reg.  Not every node has one, and the absence can
+ * be the interesting fact rather than a malformed tree: QEMU's -M
+ * spike gives its htif node a reg of 0x1000000 when it boots a kernel
+ * whose ELF has no tohost symbol, and gives it no reg at all when the
+ * kernel does, because then the symbol addresses are the console and
+ * the fixed window is not used.  A board that asked fdtreg() for the
+ * htif would conclude the tree was broken; what it wants to know is
+ * that the node is there.
+ */
+int
+fdthas(char *compat)
+{
+	Findc f;
+
+	memset(&f, 0, sizeof f);
+	f.compat = compat;
+	fdtwalk(matchpresent, &f);
+	return f.found;
+}

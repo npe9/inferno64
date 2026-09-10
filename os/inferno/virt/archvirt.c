@@ -46,7 +46,51 @@ static uintptr physdram = (uintptr)8 << 28;
 void
 archconfinit(void)
 {
+	extern int fdtvalid(void);
+	extern int fdtmemory(uvlong*, uvlong*);
+	extern int fdtblob(uvlong*, uvlong*);
+	uvlong base, size, top;
+
+	/*
+	 * The device tree rather than DRAMSIZE.  main.c calls fdtinit()
+	 * before confinit() for exactly this.  Two guards: exactly one
+	 * memory bank, since base and size describe a contiguous extent
+	 * only then and two banks would put the hole between them into
+	 * the pool; and a base of physdram, since everything here is
+	 * identity mapped from there and confinit() computes npage0 from
+	 * one range.  The third test is for the 32-bit boards: a tree
+	 * naming more memory than a uintptr can hold must be left alone
+	 * rather than truncated into a smaller top than it started with.
+	 *
+	 * There is no floor.  DRAMSIZE said 256MB here while QEMU's
+	 * riscv -M virt defaults to 128MB, so this board was claiming
+	 * 0x90000000 as the top of a machine whose memory ends at
+	 * 0x88000000 -- the xalloc line read "801c7000 90000000
+	 * 266571776" -- and 128MB of that pool was addresses the machine
+	 * leaves unassigned.  Believing a tree that reports less than
+	 * expected costs a smaller pool; disbelieving it hands out
+	 * memory that is not there.
+	 */
 	conf.topofmem = physdram + DRAMSIZE;
+	if(fdtvalid() && fdtmemory(&base, &size) == 1
+	&& base == (uvlong)physdram && size != 0
+	&& base + size == (uvlong)(uintptr)(base + size))
+		conf.topofmem = (uintptr)(base + size);
+
+	/*
+	 * And keep the allocator off the tree.  QEMU's riscv machines
+	 * put the blob at dram_end-2MB -- 0x87e00000 at the 128MB
+	 * default, 0xbfe00000 at -m 1G -- which is inside the range
+	 * confinit() is about to hand out.  It survived only because
+	 * nothing had allocated that far up yet.  xalloc here takes one
+	 * range, so the honest move is to stop below the blob rather
+	 * than to carve a hole in the middle of it.
+	 */
+	if(fdtblob(&base, &size) && base >= (uvlong)physdram && base < (uvlong)conf.topofmem){
+		top = base & ~((uvlong)BY2PG-1);
+		if(top > (uvlong)physdram)
+			conf.topofmem = (uintptr)top;
+	}
 	conf.cpuspeed = 10000000;
 }
 

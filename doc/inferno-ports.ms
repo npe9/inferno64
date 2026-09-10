@@ -21009,3 +21009,352 @@ line and rebuilding the same two things printed 0, on the same
 invocation.  So the instrumentation is intact and firing, and the clear
 is what removes the reports.  That is the claim, and it now rests on a
 back-to-back pair rather than on three intermittent survivors.
+.NH 2
+Two boards were given a device tree and neither was reading it
+.PP
+The entry that said
+.CW virtarm64
+could not be handed a tree, and that
+.CW spike
+was handed none at all, was wrong about both, and wrong for the same
+kind of reason: nobody had looked at what QEMU actually does.
+.PP
+On arm64 the ELF path in
+.CW hw/arm/boot.c 's
+.CW arm_setup_direct_kernel_boot()
+does not fill
+.CW x0 ,
+which is true, and the conclusion drawn from it \(em that no tree is
+written \(em does not follow.  A few lines further on the same function
+writes the machine's generated tree at
+.CW loader_start
+whenever
+.CW "image_low_addr > loader_start || image_high_addr < loader_start" .
+.CW virtarm64
+linked at
+.CW 0x40000000 ,
+which is
+.CW loader_start
+exactly, so the test was false and the tree was never written.  The
+gate was the link address and nothing else.  Linking 2MB up produces a
+tree at
+.CW PHYSDRAM ,
+found by its magic without any register at all.
+.PP
+On riscv the story is shorter.  QEMU's
+.CW "-M spike"
+lays a six-instruction reset ROM at
+.CW 0x1000
+that loads
+.CW a1
+from
+.CW 0x1020
+and jumps to the entry at
+.CW 0x1018 .
+Reading those two cells out of a stopped machine gives
+.CW 0x80000000
+and
+.CW 0xbfe00000 :
+the kernel entry and the tree.
+.CW a1
+holds the tree the way it does on every other riscv board in this
+tree.  The board's
+.CW l.s
+had simply never saved it.
+.NH 2
+Where QEMU puts the tree decides what the kernel must do about it
+.PP
+The two architectures place the tree differently and the difference is
+not cosmetic.  It is an architecture difference and not a machine one,
+which is worth saying because the obvious guess \(em that
+.CW "-M virt"
+behaves one way and
+.CW "-M spike"
+another \(em is wrong.  On arm64,
+.CW arm_setup_direct_kernel_boot()
+writes the tree at
+.CW loader_start ,
+below the kernel's link address and under
+.CW conf.base0 ,
+where the allocator will never reach it.  On riscv, every machine goes
+through
+.CW riscv_compute_fdt_addr()
+and the tree lands at
+.CW dram_end-2MB :
+.CW 0x87e00000
+at the 128MB default,
+.CW 0x8fe00000
+at
+.CW "-m 256M" ,
+.CW 0xffe00000
+at
+.CW "-m 2G" .
+Reading
+.CW 0x1018
+and
+.CW 0x1020
+out of a stopped machine gives the same pair of numbers for
+.CW "-M spike"
+and for riscv
+.CW "-M virt" ,
+and OpenSBI hands on the same address rather than relocating it:
+.CW virts
+sees the blob at
+.CW 0x87e00000
+too.
+.PP
+That address is inside the range
+.CW confinit()
+hands out, so every riscv board in the tree \(em
+.CW virt ,
+.CW virts ,
+.CW virt32 ,
+.CW virt32s ,
+.CW sifiveu ,
+.CW spike
+and
+.CW shakti
+\(em was reading a tree the allocator owned.  It survived only because
+nothing had allocated that far up yet, and reading it late in boot
+proved exactly that and nothing about safety.
+.CW archconfinit()
+on each of them now trims
+.CW conf.topofmem
+down to the blob's page, which costs the 2MB tail QEMU chose to put it
+in, and
+.CW spike 's
+smoke test checks that the xalloc extent's top is the blob's own
+address rather than trusting the kernel's print of it.
+.CW shakti
+is the one that got the change without evidence: it takes the same
+patch and compiles clean, and it prints nothing under
+.CW "-M shakti_c"
+or under
+.CW "-M virt" ,
+where its
+.CW 0x11300
+UART is not present.  That is where the board already stood; nothing
+here made it so, and nothing here shows the change works on it.
+.PP
+.CW raspi3b
+and
+.CW raspi4
+link the same reader and needed nothing, which is worth saying so that
+the next reader does not go looking.  They save
+.CW x0
+into
+.CW dtbptr
+and call
+.CW fdtinit()
+with it, and QEMU hands them nothing to read:
+.CW "-M raspi3b,dumpdtb=..."
+and
+.CW "-M raspi4b,dumpdtb=..."
+both answer
+.CW "This machine doesn't have an FDT" ,
+and address zero, where the arm64 path would have written one, is
+zeroes.  So
+.CW fdt
+stays nil,
+.CW fdtblob()
+returns 0, and the trim cannot fire.  The board that carries the arm
+hazard-free case is
+.CW virtarm64 ,
+where the tree is real and sits below
+.CW conf.base0 .
+Both ends of that are measured on the board rather than inferred from
+QEMU's source.
+The board calls
+.CW fdtinit()
+on
+.CW dtbptr
+first, which is the zero
+.CW x0
+arrived with, and falls back to
+.CW PHYSDRAM ;
+.CW fdtvalid()
+then finds a header there, which is what makes
+.CW "fdt: tree at 0x40000000"
+a fact about the machine and not a print of a constant.  The extent
+line's first field,
+.CW 0x403cd000 ,
+is where the pool begins.  The blob is 3.8MB below the pool,
+which is why
+.CW virtarm64
+took the floor removal and not the trim.
+.NH 2
+A guard that protected the wrong direction
+.PP
+Sizing memory from the tree first went in with three guards: one
+memory bank, a base equal to
+.CW PHYSDRAM ,
+and a total of at least
+.CW DRAMSIZE .
+The third was written as caution \(em a tree reporting less than a size
+known to boot should not be allowed to shrink the board \(em and it was
+the one guard that could do damage.  At
+.CW "-m 64M"
+the tree reports
+.CW 0x4000000 ,
+the floor rejected it, and
+.CW virtarm64
+kept
+.CW conf.topofmem
+at
+.CW 0x50000000
+with real memory ending at
+.CW 0x44000000 .
+The xalloc line read
+.CW "403cd000 50000000 264450048" :
+252MB claimed on a 64MB machine, 192MB of it addresses
+.CW "-M virt"
+leaves unassigned.
+.PP
+The asymmetry is the whole point.  Believing a tree that reports less
+than expected costs a smaller pool and nothing else.  Disbelieving it
+hands out memory that is not there.  Every board that reads a tree now
+trusts one bank at
+.CW PHYSDRAM
+whatever size it names, and
+.CW DRAMSIZE
+is only what they use when there is no tree.  At
+.CW "-m 64M"
+.CW virtarm64
+now stops at
+.CW 0x44000000 ,
+and
+.CW spike
+boots to a shell at 64M, 128M, 256M, 512M and 2G with its top at the
+blob every time.
+.PP
+The same defect was live on the riscv virt boards and larger there.
+.CW virt ,
+.CW virts ,
+.CW virt32
+and
+.CW virt32s
+each compile
+.CW DRAMSIZE
+as 256MB, and the suite passed no
+.CW -m
+at all, so QEMU gave them the 128MB default while the kernels took
+.CW 0x90000000
+as the top:
+.CW "801c7000 90000000 266571776"
+on a machine whose memory ends at
+.CW 0x88000000 .
+Half that pool was addresses the machine leaves unassigned.  The suite
+now names
+.CW "-m 256M"
+on those four arms, which is what
+.CW mem.h
+always said they wanted and what nothing had ever actually asked for.
+.NH 2
+A node with no reg, and why that is the interesting fact
+.PP
+.CW spike 's
+htif node arrives carrying a
+.CW compatible
+and nothing else, so
+.CW fdtreg()
+reports it missing and a board that asked that way would conclude the
+tree was broken.  It is not.  QEMU gives the htif node
+.CW "reg = <0 0x1000000 0 0x1000>"
+only when the kernel it boots has no
+.CW tohost
+symbol in its ELF.  This kernel has one:
+.CW elf-htif-syms.py
+injects
+.CW tohost
+and
+.CW fromhost
+after the link precisely so QEMU maps HTIF over the kernel's own two
+cells, and
+.CW htif.c
+reaches the console through
+.CW &tohost .
+So the fixed window in
+.CW mem.h
+is not the address this board uses, and the tree says so by omission.
+.CW fdthas()
+asks the question that has an answer here \(em is the node there \(em
+and the report prints
+.CW &tohost
+beside the constant it does not use.
+.NH 2
+Two messages from the suite that were not true
+.PP
+A run of the fifteen came back with
+.CW virtarm64 ,
+.CW virtarm64-peer
+and
+.CW peer-mixed
+red, and the reason each gave was
+.CW "qemu: qemu-system-aarch64: terminating on signal 15" ,
+with a marker count of 41 \(em the exact baseline.  Both halves of that
+were false, and each was false for its own reason.
+.PP
+.CW attempt()
+chooses between two messages when the last marker never arrives: the
+first line of qemu's stderr if there is one, and
+.CW "never reached <marker> in <n>s"
+if there is not.  qemu's stderr is never empty.  Every run ends by
+killing qemu, and qemu writes
+.CW "terminating on signal 15"
+when it is killed, so the file exists on every configuration in the
+suite \(em the passing ones too, checked.  The second message was
+unreachable code, and a boot that failed for any reason at all was
+reported as an emulator failure.  The teardown line is now filtered
+before the choice is made.
+.PP
+The count was worse, because 41 is exactly the number a reader would
+take as evidence that the board was fine.
+.CW $got
+is written at the end of
+.CW attempt() ,
+after the marker comparison, and the early return skips it, so the
+caller counted a file left behind by whichever configuration ran
+before.  The log itself held two markers.  The early return now writes
+this run's count, zero included.
+.NH 2
+A board whose init is not named after it
+.PP
+The three red arms were real, and neither message pointed at the cause.
+.CW virtarm64
+had been rebuilt with
+.CW INIT=virtarm64init ,
+which is a file that exists:
+.CW os/inferno/init/virtarm64init.b ,
+a console-only init that binds the devices, prints two markers and
+starts an interactive shell.  The board's own config says otherwise \(em
+.CW "init virtinit"
+\(em because
+.CW virtinit
+is the device test suite the 41 markers come from, and
+.CW virtarm64
+links the devices to run it.  A board's init is not derivable from its
+name; it is written in the config, and a sweep should read it there.
+.PP
+Correcting the build did not correct the kernel, twice.
+.CW mkroot
+resolves
+.CW /osinit.dis
+to
+.CW $ROOT/os/inferno/init/$INIT.dis
+and regenerates
+.CW <conf>.root.s
+and
+.CW <conf>.root.h ,
+but
+.CW <conf>.root.$O
+kept its old timestamp and was not reassembled, so the link took the
+previous root and produced a kernel identical to the byte.  Two rebuilds
+came back at 1932419 bytes with
+.CW VIRTARM64-OK
+still in them, which reads exactly like an
+.CW INIT
+that is being ignored.  Deleting the object as well grew the kernel by
+34520 bytes \(em the difference between the two
+.CW .dis
+files \(em and the three arms then reported 41, 43 and 44 markers, their
+baselines, under a host running 21 competing emulators.

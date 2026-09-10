@@ -101,6 +101,126 @@ machinit(void)
 	active.machs[0] = 1;
 }
 
+static int fdtfound;
+
+/*
+ * QEMU's -M spike does hand the kernel a tree, and this board did not
+ * read it.  The reset ROM at 0x1000 is six instructions:
+ *
+ *	auipc	t0, 0
+ *	addi	a2, t0, 0x28
+ *	csrr	a0, mhartid
+ *	ld	a1, 0x20(t0)
+ *	ld	t0, 0x18(t0)
+ *	jr	t0
+ *
+ * with the kernel entry at 0x1018 and the DTB address at 0x1020, so
+ * a1 holds the tree exactly the way it does on virt and sifiveu.
+ * l.s now saves it.
+ *
+ * This runs before confinit(), because archconfinit() sizes memory
+ * from the tree, and therefore long before the console: nothing here
+ * can print, and everything it finds is reported later by
+ * fdtreport().  A lookup miss leaves the constant in place, so a tree
+ * that is absent or unrecognisable cannot stop a board that boots.
+ */
+void
+fdtfind(void)
+{
+	extern void *dtbptr;
+	extern void fdtinit(void*);
+	extern int fdtvalid(void);
+	extern int fdtu32(char*, u32int*);
+	u32int hz;
+
+	fdtinit(dtbptr);
+	fdtfound = fdtvalid();
+	if(!fdtfound)
+		return;
+	/*
+	 * mtime counts at timebase-frequency, and clock.c divides
+	 * m->cpuhz by HZ to program mtimecmp, so this is the one number
+	 * in the tree the board acts on rather than merely checks.
+	 * What can be shown is that it agrees: QEMU's -M spike reports
+	 * 10MHz and machinit() had already guessed 10MHz, and the
+	 * machine offers no way to make its CLINT run at another rate,
+	 * so this path is demonstrated to agree and is not demonstrated
+	 * to correct anything.
+	 */
+	if(fdtu32("timebase-frequency", &hz) && hz != 0){
+		m->cpuhz = hz;
+		m->delayloop = m->cpuhz/1000;
+	}
+}
+
+/*
+ * What the tree said against what mem.h compiles in.  The CLINT and
+ * the HTIF are reported and not seeded: clock.c and htif.c reach
+ * their registers through the constants at compile time, and the
+ * console is up long before any of this could speak, so a board that
+ * discovered its own console could not tell you it had discovered the
+ * wrong one.  Reporting them still has the value of failing loudly if
+ * a QEMU release ever moves them.
+ */
+static void
+fdtreport(void)
+{
+	extern void *dtbptr;
+	extern int fdtreg(char*, uvlong*, uvlong*);
+	extern int fdtmemory(uvlong*, uvlong*);
+	extern int fdtblob(uvlong*, uvlong*);
+	extern int fdthas(char*);
+	extern volatile uvlong tohost;
+	uvlong base, size;
+	int ok, nbank;
+
+	if(!fdtfound){
+		print("SPIKE-FDT-NONE\n");
+		return;
+	}
+	ok = 1;
+	print("fdt: dtb %#p\n", dtbptr);
+	nbank = fdtmemory(&base, &size);
+	if(nbank == 1)
+		print("fdt: memory @ %#llux size %#llux (mem.h PHYSDRAM %#p DRAMSIZE %#ux)\n",
+			base, size, (uintptr)PHYSDRAM, (uint)DRAMSIZE);
+	else
+		ok = 0;
+	if(fdtreg("riscv,clint0", &base, &size) && base == CLINT)
+		print("fdt: clint @ %#llux size %#llux (mem.h CLINT %#p)\n",
+			base, size, (uintptr)CLINT);
+	else
+		ok = 0;
+	/*
+	 * Presence, not reg, and the reason is worth writing down.  QEMU
+	 * gives the htif node a reg of 0x1000000 only when the kernel it
+	 * boots has no tohost symbol in its ELF.  This one does --
+	 * elf-htif-syms.py puts tohost and fromhost there after the link
+	 * precisely so QEMU maps HTIF over the kernel's own two cells --
+	 * so the node arrives with a compatible and nothing else, and
+	 * asking it for a reg would report a broken tree.  mem.h's
+	 * HTIF_TOHOST is not the address this board uses; &tohost is.
+	 */
+	if(fdthas("ucb,htif0"))
+		print("fdt: htif node present, no reg (tohost %#p, mem.h HTIF_TOHOST %#p unused)\n",
+			&tohost, (uintptr)HTIF_TOHOST);
+	else
+		ok = 0;
+	if(fdtblob(&base, &size))
+		print("fdt: blob @ %#llux size %#llux (top of mem %#p)\n",
+			base, size, (uintptr)conf.topofmem);
+	print("fdt: timebase %lud Hz\n", (ulong)m->cpuhz);
+	/*
+	 * The marker asserts agreement, not merely that nodes were
+	 * found: a tree naming addresses this board cannot use would
+	 * have satisfied a bare "found it" and told nobody anything.
+	 */
+	if(ok)
+		print("SPIKE-FDT-OK\n");
+	else
+		print("SPIKE-FDT-FAIL\n");
+}
+
 void
 main(void)
 {
@@ -113,6 +233,7 @@ main(void)
 
 	machinit();
 	archreset();
+	fdtfind();
 	confinit();
 
 	serialputs("Inferno/riscv64 spike\n", -1);
@@ -141,6 +262,7 @@ main(void)
 
 	print("\nInferno %s\n", VERSION);
 	print("conf %s (%lud) jit %d\n\n", conffile, kerndate, cflag);
+	fdtreport();
 	{
 		char abibuf[64];
 
