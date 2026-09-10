@@ -5507,3 +5507,49 @@ not latent on
 where cpu1 runs processes, and that is the branch whose notes say cpu1
 was switched back off because one boot in ten showed Dis heap
 corruption.  Same design, same instruction, different architecture.
+.NH 2
+Confirmed on the machine that found it
+.LP
+The fix was measured under QEMU, and QEMU is not the target.  A
+Compute Engine
+.CW e2-micro
+has two vCPUs, and the serial log of every instance rented during this
+hunt shows the kernel starting both:
+.DS
+.CW
+cpu0: 2185MHz GenuineIntel P6
+cpu1: 2185MHz GenuineIntel P6
+.DE
+So the mechanism was live there, which is what made the fault look like
+a property of the cloud rather than of a second processor.
+.PP
+.CW inferno-pc64-smpfix ,
+built from the fixed kernel by the recipe above, on four fresh
+.CW e2-micro
+instances, each booted twice:
+.TS
+center;
+l r r.
+_
+	before	after
+_
+instances showing a fault	9 of 10	0 of 4
+completed boots		\(em	8
+cpu1 started		yes	yes
+_
+.TE
+Eight boots, both processors up on every one, no
+.CW ilockdepth
+line and no panic on any, every one reaching
+.CW "DEVTEST: done"
+and taking a DHCP lease from Google's server
+.CW ( 10.128.0.17
+through
+.CW .20 ).
+The ten instances carrying the old kernel have 32 fault lines between
+them, spread over nine of the ten.
+.PP
+.B "So the *ncpu=1 advice above is withdrawn."
+A cloud image no longer wants it.  It was the right thing to say while
+the cause was unknown and it is the wrong thing to say now: the
+processors are useful and the reason they were dangerous is gone.
