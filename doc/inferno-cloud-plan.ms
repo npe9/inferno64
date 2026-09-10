@@ -5041,6 +5041,58 @@ fix, on hardware, where this laptop does not show it \(em and a second
 symptom, the leaked lock, that is easier to catch than the corruption
 itself.
 .PP
+.B "A consistent holder, and a contradiction to resolve."
+With
+.CW checkb
+made legible (2e285f65) the next two failures on one instance were
+identical, which none of the earlier ones were:
+.DS
+.CW
+ ilock 0 held from 0x25355b, m was 0x102000, m now 0x102000
+panic: cpu0: ilockdepth 1 (now 0), ... sched from 0x2966d1
+.DE
+0x25355b is
+.CW uartkick+0x2b
+\(em the
+.CW ilock(&p->tlock)
+in
+.CW os/inferno/port/devuart.c
+\(em and 0x2966d1 is
+.CW irqhandled+0x113
+again.  Both boots, the same address.
+.PP
+And
+.CW checkb
+printed nothing on either, so these two are not the Block corruption:
+the earlier catch that showed
+.CW checkb 's
+strings and the ones that do not are different events, and treating
+them as one was wrong.
+.PP
+What is left is a contradiction worth stating precisely, because it
+constrains the answer.
+.CW uartkick 's
+.CW ilock
+and
+.CW iunlock
+have straight-line code between them \(em
+.CW "(*p->phys->kick)(p)" ,
+which is
+.CW i8250kick ,
+bounded at 128 iterations with no early exit that skips a return.  And
+.CW ilock()
+begins with
+.CW splhi() ,
+which on pc64 really does
+.CW CLI
+(checked in
+.CW l.s ,
+not assumed).  So if that lock were simply leaked, interrupts would
+stay masked and no clock interrupt could arrive to panic.  For this
+panic to happen at all, something must re-enable interrupts while the
+lock is still held.  That is the next thing to find, and it is a
+narrower question than any asked so far.
+.PP
 .B "And it is the shipped kernel too."
 Recorded here as a correction, because this document said twice that
 .CW ipc64
