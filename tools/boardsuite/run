@@ -59,7 +59,7 @@ verbose=false
 record=false
 force=false
 
-configs='raspi3b raspi3b-4g raspi3b-usb raspi3b-2eth raspi4 raspi4-hot raspi4-usb raspi4-2eth virtarm64 virtarm64-msi virtarm64-nvme virtarm64-xhci virtarm64-gicv3 virtarm64-efi virtarm64-noscan virtarm64-peer sifiveu virt virts virt32 virt32s virt-peer peer-mixed'
+configs='raspi3b raspi3b-4g raspi3b-usb raspi3b-2eth raspi4 raspi4-hot raspi4-usb raspi4-2eth virtarm64 virtarm64-msi virtarm64-nvme virtarm64-xhci virtarm64-gicv3 virtarm64-efi virtarm64-noscan virtarm64-acpi virtarm64-peer sifiveu virt virts virt32 virt32s virt-peer peer-mixed'
 
 # Each configuration: the kernel, the QEMU arguments, the line that
 # says the board is done printing, and the evidence lines that make
@@ -159,7 +159,22 @@ newer_source_than() {
 		case "$f" in
 		*.c)	d=`dirname "$f"`
 			b=`basename "$f" .c`
-			[ -f "$d/$b" ] && continue;;
+			[ -f "$d/$b" ] && continue
+			# A source in a shared directory counts only if this
+			# board compiled it.  ../port and ../ip hold files
+			# every board can reach and no board links all of;
+			# os/inferno/port/acpi.c is read by virtarm64 and by
+			# nothing else, and without this it made every Pi and
+			# riscv kernel stale -- with a "mk it first" that
+			# could not clear it, because mk correctly declines to
+			# relink a kernel that does not depend on the file.
+			# The object beside the kernel is the evidence: a
+			# board that compiled acpi.c has an acpi.$O in its own
+			# directory and a board that did not has nothing.
+			case "$d" in
+			"$root"/os/inferno/port|"$root"/os/inferno/ip)
+				ls "$bdir/$b".? >/dev/null 2>&1 || continue;;
+			esac;;
 		esac
 		echo "$f"
 		break
@@ -192,7 +207,7 @@ config_kernel() {
 	# bootkern() has always read, and "mk ivirtarm64.a" in the board
 	# directory makes it from the same objects as the ELF.  Naming it
 	# here is also what puts it under the staleness check.
-	virtarm64-efi|virtarm64-noscan)
+	virtarm64-efi|virtarm64-noscan|virtarm64-acpi)
 				echo "$root/os/inferno/virtarm64/ivirtarm64.a";;
 	sifiveu)		echo "$root/os/inferno/sifiveu/isifiveu";;
 	virt|virt-peer|peer-mixed)
@@ -215,7 +230,7 @@ config_kernel() {
 config_qemu() {
 	case $1 in
 	raspi*)			echo "$QEMU";;
-	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-efi|virtarm64-noscan|virtarm64-peer)
+	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-efi|virtarm64-noscan|virtarm64-acpi|virtarm64-peer)
 				echo "${QEMU_AARCH64:-`command -v qemu-system-aarch64`}";;
 	sifiveu|virt|virts|virt-peer|peer-mixed)
 				echo "${QEMU_RISCV64:-`command -v qemu-system-riscv64`}";;
@@ -345,6 +360,23 @@ config_args() {
 		# partial boot should carry as little that can drift as
 		# possible.
 		echo "-M virt -cpu cortex-a57 -m 1G -drive if=pflash,format=raw,unit=0,file=$fwdir/edk2-aarch64-code.fd,readonly=on -drive if=pflash,format=raw,unit=1,file=$work/vars.fd -drive file=$work/esp.img,format=raw,if=none,id=esp0 -device virtio-blk-pci,drive=esp0 -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-pci,disable-legacy=on,drive=blk0";;
+	virtarm64-acpi)
+		# No device tree anywhere, and a GICv3 with an ITS.
+		#
+		# This is the arm that is about SystemReady rather than
+		# about QEMU.  The firmware publishes ACPI and no tree,
+		# *nofdtscan=1 stops the kernel finding QEMU's own tree at
+		# the bottom of DRAM, and so every address the board uses
+		# past mem.h comes from the MADT and the IORT: the ITS
+		# base, and the requester-id-to-DeviceID window that makes
+		# a PCI function's MSI land on the right vector.  "fdt: no
+		# device tree" in the log is the point of it.
+		#
+		# gic-version=3 because that is where the ITS is: QEMU's
+		# create_gic() gives a version 2 machine a v2m frame, which
+		# the MADT describes but this board reads out of the tree,
+		# and the MADT's ITS entry only exists on a version 3.
+		echo "-M virt,gic-version=3 -cpu cortex-a57 -m 1G -drive if=pflash,format=raw,unit=0,file=$fwdir/edk2-aarch64-code.fd,readonly=on -drive if=pflash,format=raw,unit=1,file=$work/vars.fd -drive file=$work/esp.img,format=raw,if=none,id=esp0 -device virtio-blk-pci,drive=esp0 -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-pci,disable-legacy=on,drive=blk0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-pci,disable-legacy=on,netdev=n0";;
 	virtarm64-msi)
 		# The same board with both devices on PCI rather than one
 		# on PCI and one on virtio-mmio, which is what makes this
@@ -609,7 +641,7 @@ config_last() {
 	raspi4-2eth)		echo 'USB-MOUSE'; echo 'RASPI4-SH-OK';;
 	raspi4|raspi4-hot)	echo 'USB-MOUSE';;
 	raspi4-usb)		echo 'RASPI4-SH-OK';;
-	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-efi|virtarm64-noscan|virtarm64-peer)	echo 'ROOT-CMDS-OK';;
+	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-efi|virtarm64-noscan|virtarm64-acpi|virtarm64-peer)	echo 'ROOT-CMDS-OK';;
 	virt|virts|virt-peer|peer-mixed)	echo 'ROOT-CMDS-OK';;
 	sifiveu)		echo 'SIFIVEU-SH-OK';;
 	virt32|virt32s)		echo 'VIRT32-INIT-OK';;
@@ -932,6 +964,39 @@ config_evidence() {
 		echo 'sdF \(virtio10\): irq 81 msi-x'
 		echo 'MSI-DOORBELL-OK'
 		;;
+	virtarm64-acpi)
+		# Nothing came from a device tree, because there was not
+		# one.  This line first, because every line under it is
+		# only interesting given this one.
+		echo 'fdt: no device tree'
+		# The MADT: a GICv3 distributor, a redistributor range,
+		# and an ITS.  The bases are matched as digits, not as
+		# QEMU's values, for the same reason the gicv3 arm's
+		# widths are -- what is asserted is that they were read.
+		echo 'acpi: madt gicv3 dist @ 0x[0-9a-f]+'
+		echo 'acpi: madt redist @ 0x[0-9a-f]+'
+		echo 'acpi: madt its @ 0x[0-9a-f]+, ACPI-ITS-OK'
+		# The IORT, which is the msi-map property's job done by a
+		# table: which requester ids this window covers and what
+		# DeviceID the first of them becomes.
+		echo 'acpi: iort rid 0x[0-9a-f]+\.\.0x[0-9a-f]+ -> devid 0x[0-9a-f]+, ACPI-IORT-OK'
+		# And the ITS driver running on what the tables said, with
+		# two PCI functions on distinct LPIs and an interrupt that
+		# arrived.
+		#
+		# The ITS base is proved by these lines: there is no device
+		# tree and no mem.h constant for it, so the only place it
+		# can have come from is the MADT.  The IORT window is not,
+		# and saying so matters -- QEMU's window is the identity,
+		# which is also what ridtodevid() falls back to when there
+		# is no window at all, so a machine whose IORT says
+		# something else is what would tell the two apart and this
+		# is not that machine.
+		echo 'its: gicv3 @ 0x[0-9a-f]+ translate'
+		echo '#l0: irq 8192 msi-x'
+		echo 'sdF: first interrupt, irq 8193 msi-x'
+		echo 'BLK-OK /dev/sdF0/data'
+		echo 'DHCP-OK';;
 	virtarm64-noscan)
 		# The scan is off, the tree was not found, and the board
 		# booted anyway on its compiled-in constants.  All three
@@ -1313,7 +1378,7 @@ config_hostnet() {
 	# inbound halves all dial the host rig, and without it the
 	# board reported TCP-NET-FAIL "connection refused" -- the host
 	# end that was never started, not the board.
-	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-efi|virtarm64-peer)	echo yes;;
+	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-efi|virtarm64-acpi|virtarm64-peer)	echo yes;;
 	esac
 }
 
@@ -1604,8 +1669,8 @@ attempt() {
 	# job in silence, and the arm would pass with a broken loader.
 	kern=
 	case $c in
-	virtarm64-efi|virtarm64-noscan)	;;
-	*)				kern="-kernel $kernel";;
+	virtarm64-efi|virtarm64-noscan|virtarm64-acpi)	;;
+	*)						kern="-kernel $kernel";;
 	esac
 	# shellcheck disable=SC2046,SC2086
 	"$qemu" `config_args $c` $qmp -display none -serial file:"$log" \
@@ -1803,7 +1868,7 @@ for c in $configs; do
 	# same fat16.img in its qemu line.  It ran only because virt comes
 	# before it in $configs and had already made the image; asked for
 	# on its own with an empty work directory, qemu had no such file.
-	case $c in virt|virts|virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-efi|virtarm64-noscan|virt-peer|virtarm64-peer|peer-mixed) needfat=true;; *) needfat=false;; esac
+	case $c in virt|virts|virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-efi|virtarm64-noscan|virtarm64-acpi|virt-peer|virtarm64-peer|peer-mixed) needfat=true;; *) needfat=false;; esac
 	if $needfat && ! makefat fat16.img marker.txt 'FS-OK boardsuite'; then
 		echo "$c: FAIL no way to make a FAT16 image here (hdiutil or mkfs.vfat)"
 		echo "    BLK-OK needs a filesystem, not a blank card; see the README"
@@ -1820,9 +1885,14 @@ for c in $configs; do
 	fwdir=
 	case $c in
 	virtarm64-efi)		espextra=;;
-	virtarm64-noscan)	espextra='*nofdtscan=1';;
+	virtarm64-noscan|virtarm64-acpi)
+				espextra='*nofdtscan=1';;
 	esac
-	if [ "$c" = virtarm64-efi ] || [ "$c" = virtarm64-noscan ]; then
+	case $c in
+	virtarm64-efi|virtarm64-noscan|virtarm64-acpi)	wantsesp=true;;
+	*)						wantsesp=false;;
+	esac
+	if $wantsesp; then
 		loader=$root/os/inferno/boot/efi/bootaa64.efi
 		if [ ! -f "$loader" ]; then
 			echo "$c: FAIL no loader at $loader"

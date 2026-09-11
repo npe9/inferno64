@@ -103,6 +103,12 @@ misc
 # both because which one exists is a property of the machine QEMU was
 # started as, not of the kernel.
 	gicv3its
+# acpiarm: the MADT and the IORT, for a machine that hands the kernel
+# ACPI instead of a device tree -- which is every SystemReady arm64
+# machine and no QEMU direct boot.  Everything it finds is optional:
+# a board with no tables falls back to the device tree, and a board
+# with neither falls back to mem.h.
+	acpiarm
 	sdvirtio10	pci sdscsi virtio10mem
 	sdnvme	pci
 	screenarm

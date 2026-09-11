@@ -23400,3 +23400,152 @@ value, the way
 was shown to come from the DTB and not from
 .CW mem.h
 \(em and not this marker count.
+.NH 1
+ACPI, and the last thing item 1 owed
+.PP
+A SystemReady machine hands the kernel ACPI and no device tree.  The
+loader has been passing the RSDP since the previous section; this reads
+what it points at.
+.CW os/inferno/port/acpi.c
+finds tables by signature and
+.CW os/inferno/virtarm64/acpiarm.c
+reads the two that matter: the MADT for the GIC, and the IORT for the
+map from a PCI requester id to a DeviceID the ITS will accept.
+.PP
+The portable half is deliberately not
+.CW os/inferno/pc/archacpi.c .
+That file does the same job on x86 and none of how it does it applies
+here: it scans the BIOS area for the pointer, maps every table through
+.CW vmap() ,
+checks each against the e820 map, and carries the AML interpreter behind
+it.  Here the firmware hands the pointer to the loader, the loader hands
+it to the kernel, and the tables are ordinary memory in the map the
+firmware already described.  What is kept is the discipline: every table
+is checksummed before it is believed, the RSDP with both of its
+checksums, because deriving a GIC base from rubbish is worse than not
+having one.
+.PP
+Everything falls back.  No tables, tables that do not sum, a MADT with
+no GIC this kernel drives \(em the board boots as it did before any of
+it existed, on the device tree or on mem.h.  That is what makes it safe
+to link into every virtarm64 kernel, and it is also why the marker count
+cannot show it working, which is what the previous section's
+.CW *nofdtscan=
+switch is for.
+.NH 2
+One, not two
+.PP
+The IORT walk found nothing for an afternoon, on a machine whose XSDT
+plainly listed an IORT.  The node header is
+.CW Type
+at 0 and
+.CW Length
+at
+.I 1
+\(em one, not two, an unaligned two-byte field.  Read at 2, every node
+on this machine reports a length of 256, the first step of the walk
+lands past the end of a 128-byte table, and the answer is silently "no
+root complex here".  The table listing that found it is worth keeping
+and is now printed on every ACPI boot:
+.P1
+acpi: revision 2: FACP APIC PPTT GTDT MCFG SPCR DBG2 IORT
+.P2
+because the first thing worth knowing, when a table that should be there
+is not, is whether the firmware provided it at all.
+.PP
+The other thing that cost time was not the code.  Three separate tests
+of this were run against a
+.CW ivirtarm64.a
+that
+.CW mk
+had not rebuilt, because
+.CW "mk install"
+built the ELF and the a.out was a target somebody had to remember to
+ask for.  Each of those was a UEFI boot quietly running the previous
+kernel \(em the same failure as the stale kernels the board suite now
+refuses, one directory down, and the third time this session.  The board
+mkfile builds both from
+.CW install
+now.  A target that is built only when somebody remembers is a target
+that is stale.
+.NH 2
+What runs, with no device tree at all
+.PP
+.CW virtarm64-acpi
+boots
+.CW "-M virt,gic-version=3"
+through edk2 with
+.CW *nofdtscan=1
+in
+.CW plan9.ini :
+.P1
+acpi: revision 2: FACP APIC PPTT GTDT MCFG SPCR DBG2 IORT
+acpi: madt gicv3 dist @ 0x8000000 (mem.h GICD 0x8000000)
+acpi: madt redist @ 0x80a0000 size 0xf60000 (mem.h GICR 0x80a0000)
+acpi: madt its @ 0x8080000, ACPI-ITS-OK
+acpi: iort rid 0x0..0xffff -> devid 0x0, ACPI-IORT-OK
+conf: the device-tree scan at PHYSDRAM is off
+fdt: no device tree
+its: gicv3 @ 0x8080000 translate 0x8090040, 16 devid bits, itt 12 bytes
+#l0: irq 8192 msi-x
+sdF: first interrupt, irq 8193 msi-x
+BLK-OK /dev/sdF0/data
+DHCP-OK
+.P2
+45 markers:
+.CW virtarm64 's
+set plus ACPI-RSDP-OK, ACPI-ITS-OK, ACPI-IORT-OK and ITS-OK, less
+MSI-DOORBELL-OK, which is the v2m frame a version 3 machine does not
+have.
+.PP
+Be exact about what that proves.  The ITS base is proved: there is no
+device tree, there is no mem.h constant for an ITS, so the MADT is the
+only place it can have come from, and
+.CW "sdF: first interrupt"
+says the vector it produced is delivered.  The IORT window is
+.I not
+proved.  QEMU's is the identity map, which is also what
+.CW ridtodevid()
+falls back to when there is no window at all, so the two are
+indistinguishable here; a machine whose IORT says something else is what
+would tell them apart, and this is not that machine.
+.PP
+What item 1 owed was ACPI discovery and a UEFI entry.  Both exist now
+and both are checked every run.  What is still true is that no arm64
+server hardware has been near any of it: an Ampere Altra has more in its
+IORT than one root complex pointing at one ITS group \(em a chain
+through an SMMU, which this reads far enough to report and not far
+enough to use \(em and its MADT describes redistributors this kernel
+would have to walk rather than take the first of.  The difference
+between this and that machine is now a list of specific things rather
+than "no ACPI at all", which is the whole of what this round changed.
+.NH 2
+A check that could not be cleared
+.PP
+Adding
+.CW os/inferno/port/acpi.c
+broke the staleness check in a new way, and this one was worse than
+noise.
+.CW port
+is scanned for every board, because every board links most of what is in
+it \(em but virtarm64 links
+.CW acpi.c
+and nothing else does.  So every Pi and riscv arm failed with "kernel
+older than os/inferno/port/acpi.c (mk it first)", and
+.CW "mk install"
+did not clear it: mk is right to decline to relink a kernel that does
+not depend on the file, so the message asked for something that could
+not work and the arm would have failed forever.
+.PP
+The object beside the kernel settles it.  A board that compiled
+.CW acpi.c
+has an
+.CW acpi.$O
+in its own directory; a board that did not has nothing there.  A source
+in a shared directory is only counted when the matching object exists,
+which is derived from what the board actually built rather than from a
+list anybody has to keep.  Tested both ways, like the last one: touching
+.CW os/inferno/port/acpi.c
+fails virtarm64 and does not fail raspi3b, and
+.CW "mk install"
+in the board's directory clears it.

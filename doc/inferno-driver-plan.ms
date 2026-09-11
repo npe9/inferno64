@@ -2248,23 +2248,30 @@ one;
 is kept beside the loader as the test that the toolchain and the header
 are right at all.
 .IP
-So what item 1 still owes is only the ACPI half, and it is now the
-difference between booting on QEMU and booting on the hardware.  Under
-.CW "-M virt,acpi=off"
-the loader hands the kernel edk2's device tree and everything works
-except MSI, because edk2's tree has no v2m frame in it.  Under the
-default, with ACPI, there is no device tree and the kernel boots only
-because it falls back to finding QEMU's own DTB at the bottom of DRAM \(em
-which a real machine does not have.  What is needed is MADT for the GICD,
-GICR and ITS bases and IORT for RID-to-DeviceID, read from the RSDP that
-.CW acpiconf()
-in
-.CW efi.c
-already finds and passes.  IORT is not a one-to-one port of the
-single-window
-.CW msi-map
-read: it can chain root complex to SMMU to ITS, and a machine with an
-SMMU in the path needs the chain walked.
+And so is the ACPI half.
+.CW os/inferno/port/acpi.c
+finds tables by signature from the RSDP the loader passes in its
+configuration, and
+.CW os/inferno/virtarm64/acpiarm.c
+reads the MADT for the GIC distributor, redistributor and ITS and the
+IORT for the requester-id-to-DeviceID window.
+.CW virtarm64-acpi
+in the board suite boots
+.CW "-M virt,gic-version=3"
+through edk2 with the device-tree scan switched off, so there is no
+tree of any kind:
+.CW "fdt: no device tree" ,
+and then the ITS found from the MADT, two PCI functions on distinct
+LPIs, an interrupt delivered, a disk read and DHCP.  45 markers, checked
+every run.
+.IP
+What is left is the hardware itself.  An Ampere Altra has more in its
+IORT than one root complex pointing at one ITS group \(em a chain
+through an SMMU, which this reads far enough to report and not far
+enough to use \(em and a MADT describing redistributors this kernel
+would have to walk rather than take the first of.  That is a list of
+specific things now, rather than "no ACPI at all", and none of it can be
+written against anything but the silicon.
 .IP 2.
 .B "Raspberry Pi Zero 2 W."
 A BCM2710A1 \(em the Pi 3B's die in a smaller package \(em so the

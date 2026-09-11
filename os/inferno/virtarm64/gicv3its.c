@@ -503,8 +503,25 @@ readmsimap(void)
 	int n;
 
 	n = fdtu32array("pci-host-ecam-generic", "msi-map", cells, nelem(cells));
-	if(n < 4)
+	if(n < 4){
+		/*
+		 * The IORT says the same thing the msi-map property does,
+		 * in the same three numbers: which requester ids this
+		 * window covers, what DeviceID the first of them becomes,
+		 * and how many.  A machine with tables and no tree is the
+		 * whole reason either is read.
+		 */
+		extern int acpiridmap(ulong*, ulong*, ulong*);
+		ulong rid, devid, count;
+
+		if(acpiridmap(&rid, &devid, &count)){
+			msiridbase = rid;
+			msidevbase = devid;
+			msimaplen = count;
+			havemsimap = 1;
+		}
 		return;
+	}
 	if(n > 4)
 		print("gicv3its: msi-map has %d cells; using the first window\n", n);
 	msiridbase = cells[0];
@@ -517,9 +534,28 @@ void
 gicv3itsinit(void)
 {
 	extern int fdtreg(char*, uvlong*, uvlong*);
+	extern uvlong acpiits(void);
 	uvlong base, size, typer, v;
 
-	if(!fdtreg("arm,gic-v3-its", &base, &size) || base == 0)
+	/*
+	 * The device tree first, then the MADT.  Both describe the same
+	 * part and a machine has one or the other: QEMU booted with
+	 * -kernel has only a tree, a SystemReady machine has only tables,
+	 * and a QEMU booted through UEFI happens to have both.  The order
+	 * between them is arbitrary because of that; the tree comes first
+	 * only because it is what every board here was using already.
+	 *
+	 * The MADT carries no size, because an ITS is architecturally
+	 * two 64K pages and there is nothing to say.  fdtreg() gives a
+	 * size that is already clamped up to the same thing below.
+	 */
+	base = 0;
+	size = 0;
+	if(!fdtreg("arm,gic-v3-its", &base, &size) || base == 0){
+		base = acpiits();
+		size = 0;
+	}
+	if(base == 0)
 		return;
 	if(size < 0x20000)
 		size = 0x20000;

@@ -32,6 +32,14 @@ void	gicv2minit(void);		/* gicv2m.c: find the MSI frame, if any */
 void	gicv2mreport(void);
 void	gicv3itsinit(void);		/* gicv3its.c: find the ITS, if any */
 int	gicv3itspresent(void);
+
+/* acpiarm.c: the MADT and the IORT, when a loader passed an RSDP */
+void	acpifind(void);
+void	acpireport(void);
+uvlong	acpiits(void);
+int	acpiridmap(ulong*, ulong*, ulong*);
+/* main.c: one line of the boot loader's configuration, by name */
+char*	bootconfline(char*);
 int	islo(void);
 void	kbdinit(void);
 void	screeninit(void);

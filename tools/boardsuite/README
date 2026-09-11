@@ -821,3 +821,37 @@ tree was NOT found, not that anything was found instead.  When the ACPI
 path lands, the test that it does anything is the falsify test the riscv
 boards already use -- set the constant wrong, see the board take the
 discovered value -- and not this marker count.
+
+THE ACPI ARM.  virtarm64-acpi is the arm that is about SystemReady
+rather than about QEMU: a GICv3 with an ITS, the firmware publishing
+ACPI and no device tree, and *nofdtscan=1 stopping the kernel from
+finding QEMU's own tree at the bottom of DRAM.  "fdt: no device tree"
+in its log is the point of it.  Everything the board uses past mem.h
+then comes from the MADT and the IORT.
+
+45 markers: virtarm64's set plus ACPI-RSDP-OK, ACPI-ITS-OK,
+ACPI-IORT-OK and ITS-OK, less MSI-DOORBELL-OK, which is the v2m frame a
+version 3 machine does not have.
+
+What it proves and what it does not.  The ITS base is proved: there is
+no device tree and no mem.h constant for it, so the MADT is the only
+place it can have come from, and sdF's first interrupt says the vector
+it produced is delivered.  The IORT window is not proved.  QEMU's is the
+identity map, which is also what ridtodevid() falls back to when there
+is no window at all, so a machine whose IORT says something else is what
+would tell the two apart -- and this is not that machine.
+
+A SHARED SOURCE COUNTS ONLY IF THE BOARD COMPILED IT.  The staleness
+check scans os/inferno/port and os/inferno/ip for every board, because
+every board links most of what is in them -- but not all of it.
+os/inferno/port/acpi.c is read by virtarm64 and by nothing else, and
+when it appeared it made every Pi and riscv kernel stale with a "mk it
+first" that could not clear it: mk correctly declines to relink a kernel
+that does not depend on the file, so the arm failed forever.
+
+The object beside the kernel is the evidence.  A board that compiled
+acpi.c has an acpi.$O in its own directory and a board that did not has
+nothing there, so a source in a shared directory is only counted when
+the matching object exists.  Tested both ways: touching
+os/inferno/port/acpi.c fails virtarm64 and does not fail raspi3b, and
+"mk install" in os/inferno/virtarm64 clears it.

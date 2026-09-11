@@ -301,6 +301,13 @@ main(void)
 	 */
 	confcopy();
 	/*
+	 * And the tables, if the loader passed an RSDP.  Same contract as
+	 * fdtfind() below and for the same reason: reads memory, touches
+	 * no hardware, allocates nothing, prints nothing, and every
+	 * lookup falls back.  acpireport() prints later.
+	 */
+	acpifind();
+	/*
 	 * Before everything, because the bases it sets are read by
 	 * drivers that chandevreset() brings up and because confinit()
 	 * is where memory sizing will go.  fdtfind() only reads memory
@@ -337,6 +344,7 @@ main(void)
 	procinit();
 	links();
 	screeninit();
+	acpireport();
 	fdtreport();
 	/*
 	 * Before pciarchinit(), because the PCI scan is what reaches the

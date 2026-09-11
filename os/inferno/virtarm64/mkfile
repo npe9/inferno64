@@ -34,6 +34,7 @@ OBJ=\
 	tod.$O\
 	mul64fract.$O\
 	fdt.$O\
+	acpi.$O\
 	stubs.$O\
 	$CONF.root.$O\
 	$IP\
@@ -57,7 +58,15 @@ KERNDATE=`{$NDATE}
 
 default:V: i$CONF
 
-install:V: i$CONF
+#
+#	i$CONF.a comes with i$CONF, not on request.  They are two
+#	wrappers around one set of objects, and the only thing that can
+#	go wrong between them is one being older than the other -- which
+#	happened three times in one afternoon, each time as a UEFI boot
+#	that quietly ran the previous kernel.  A target that is built
+#	only when somebody remembers is a target that is stale.
+#
+install:V: i$CONF i$CONF.a
 	cp i$CONF $INSTALLDIR/i$CONF
 
 i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES
@@ -100,6 +109,9 @@ mul64fract.$O:	../port/mul64fract.c
 
 fdt.$O:	../port/fdt.c
 	$CC $CFLAGS ../port/fdt.c
+
+acpi.$O:	../port/acpi.c
+	$CC $CFLAGS ../port/acpi.c
 
 pciecam.$O:	../port/pciecam.c
 	$CC $CFLAGS ../port/pciecam.c
