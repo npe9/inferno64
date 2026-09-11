@@ -111,6 +111,44 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	}
 	check(worstbad > 1.0e-6, "negative control: a deliberately wrong rhs should NOT match gray(), worst diff was " + sys->sprint("%g", worstbad));
 
+	# x and y: a rhs that cannot see position cannot express a
+	# potential, a source, or any coefficient that varies across the
+	# mesh.  Checked by writing them straight into the field, since a
+	# rhs of "x" must leave every cell holding its own coordinate.
+	(px, errx) := pde->newproblem(sys->sprint(
+		"mesh %dx%d domain %gx%g bc clamp\n" +
+		"equation hoc ax bx\nsubsteps 1\n" +
+		"rhs ax x\nrhs bx y\n" +
+		"time step 1.0\n", nx, ny, real nx, real ny));
+	check(errx == nil, "coordinate newproblem: " + errx);
+	if(errx == nil){
+		errx = pde->step(px, 1.0);
+		check(errx == nil, "coordinate step: " + errx);
+		worstx := 0.0; worsty := 0.0;
+		for(j := 0; j < px.field.ny; j++)
+			for(i := 0; i < px.field.nx; i++){
+				k := j*px.field.nx+i;
+				dxv := px.field.u[k] - real i*px.field.dx;
+				dyv := px.fieldb.u[k] - real j*px.field.dy;
+				if(dxv < 0.0) dxv = -dxv;
+				if(dyv < 0.0) dyv = -dyv;
+				if(dxv > worstx) worstx = dxv;
+				if(dyv > worsty) worsty = dyv;
+			}
+		check(worstx < 1.0e-12, "rhs x did not give each cell its own x, worst " +
+			sys->sprint("%g", worstx));
+		check(worsty < 1.0e-12, "rhs y did not give each cell its own y, worst " +
+			sys->sprint("%g", worsty));
+		# and the control: they must not be the same array, or the two
+		# checks above would both pass on one coordinate bound twice
+		same := 1;
+		for(k2 := 0; k2 < len px.field.u; k2++)
+			if(px.field.u[k2] != px.fieldb.u[k2])
+				same = 0;
+		check(!same, "x and y came out identical, so one of them is not "+
+			"the coordinate it claims to be");
+	}
+
 	if(nfail == 0)
 		sys->print("PASS\n");
 	else{

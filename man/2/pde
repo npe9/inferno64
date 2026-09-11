@@ -127,9 +127,34 @@ is its five-point Laplacian (computed the same fast way
 .BR diffuse / wave / gray
 already do \(em only the per-cell update itself is hoc-driven),
 .B h
-is the current substep's own dt, and any
+is the current substep's own dt,
+.B x
+and
+.B y
+are the cell's own physical coordinates, and any
 .B param
 is that name's value.
+.IP
+.B X
+and
+.B y
+run from the corner: cell (i,j) is at (i*dx, j*dy), the same indexing
+.B u
+itself uses.  A rhs wanting the middle of the domain subtracts half of
+it, which is what a
+.B param
+is for.  They are ordinary per-cell arrays, bound exactly as
+.BI lap_ NAME
+is, so
+.B evalarray()
+walks them with everything else at no extra cost.
+.IP
+Without them a rhs can only be a function of the field values, which
+rules out a potential, a source term, an absorbing edge, or any
+coefficient at all that varies across the mesh \(em which is most of
+them.  The time-dependent Schrodinger equation is the example: its
+potential is the whole physics and lives entirely in
+.BR x .
 .RE
 .IP
 Evaluated with

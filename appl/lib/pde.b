@@ -486,9 +486,23 @@ newproblem(spec: string): (ref Problem, string)
 				return (nil, "equation hoc: could not parse rhs " + hocnameb + " " + hocrhsbsrc);
 		}
 	}
+	# The coordinate of every cell, built once.  Cell (i,j) sits at
+	# (i*dx, j*dy) with the origin at the corner, which is the same
+	# indexing u itself uses; a rhs wanting the centre subtracts half
+	# the domain, which is what a param is for.
+	xs, ys: array of real;
+	if(equation == "hoc"){
+		xs = array[f.nx*f.ny] of real;
+		ys = array[f.nx*f.ny] of real;
+		for(j := 0; j < f.ny; j++)
+			for(i := 0; i < f.nx; i++){
+				xs[j*f.nx+i] = real i*f.dx;
+				ys[j*f.nx+i] = real j*f.dy;
+			}
+	}
 	return (ref Problem(f, fb, equation, solvermethod, diffusivity, speed, damping,
 		da, db, feed, kill, tolerance, restart, maxiter, defaultstep,
-		hocmod, hocname, hocnameb, hocra, hocrb, hocsubsteps), nil);
+		hocmod, hocname, hocnameb, hocra, hocrb, hocsubsteps, xs, ys), nil);
 }
 
 # Batch/unattended driver: repeatedly step() by p's own "time step DT"
@@ -554,6 +568,13 @@ hocstep(p: ref Problem, dt: real)
 	h := dt/real(p.hocsubsteps);
 	hs := p.hocmod->symbol("h");
 	hs.val = h;
+	# x and y are per-cell arrays, bound exactly as lap_NAME is: one
+	# value per mesh cell, row-major, so evalarray() walks them with
+	# everything else and a rhs can be a function of position.
+	xs := p.hocmod->symbol("x");
+	xs.vals = p.hocxs;
+	ys := p.hocmod->symbol("y");
+	ys.vals = p.hocys;
 	fs := p.hocmod->symbol(p.hocname);
 	ls := p.hocmod->symbol("lap_"+p.hocname);
 	fbs: ref Hoc->Sym; lbs: ref Hoc->Sym;

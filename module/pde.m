@@ -151,6 +151,13 @@ Pde: module
 						# if only one field was declared
 		hocra, hocrb:	ref Hoc->Expr;	# compiled rhs; hocrb nil if unused
 		hocsubsteps:	int;
+
+		# The physical coordinate of every cell, row-major like u, so a
+		# rhs can say where it is.  Built once by newproblem(): a rhs
+		# that cannot see position cannot express a potential, a source
+		# term, or any coefficient that varies across the mesh, which
+		# is most of them.
+		hocxs, hocys:	array of real;
 	};
 
 	# Parses spec; returns a ready Problem, or (nil, an error describing
