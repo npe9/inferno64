@@ -1,0 +1,89 @@
+.TH DANBY-TWOSLIT 1
+.SH NAME
+danby-twoslit \- two slits, and the pattern they make
+.SH SYNOPSIS
+.B danby/twoslit
+.SH MODEL
+Feynman called the double slit the one phenomenon that contains the only
+mystery.  This draws what it produces: fringes, under an envelope, with
+the two coming from different things.
+.PP
+Send particles through two slits of width w a distance d apart and count
+where they land.  A single particle arrives at one spot; send enough and
+the pattern that builds up is
+.PP
+.EX
+I = [ sin(beta)/beta ]^2  cos^2(alpha)
+alpha = pi d sin(theta) / lambda
+beta  = pi w sin(theta) / lambda
+.EE
+.SH DESCRIPTION
+.B Danby/twoslit
+is a
+.IR danbylab (2)
+script \(em the whole model is the text of
+.BR /appl/danby/twoslit.spec .
+The x axis is position across the screen, not time.
+.SS Two effects, not one
+The
+.B cos squared
+is INTERFERENCE.  It comes from the two paths differing by d sin theta,
+and it is the part with no classical account: each particle goes through
+both slits, in the only sense in which that sentence means anything.
+.PP
+The
+.B sinc squared
+is DIFFRACTION.  It comes from the width of a single slit, and it is the
+envelope the fringes sit under.  It would be there with one slit.
+.PP
+Set
+.B separation
+to zero and the fringes vanish while the envelope stays: that is one
+slit, and it is the model's own control.  The test makes it, and also
+makes the other half \(em that with both slits the intensity really does
+depart from the envelope, or the first check would pass on a model that
+had stopped interfering at all.
+.SS The missing orders
+Worth hunting.  When d is a whole multiple of w, a fringe maximum lands
+exactly on an envelope zero and simply is not there: the interference
+says put light here, the diffraction says there is none to put.  Set
+.B separation
+to 2 and
+.B slit_width
+to 1 and count the gaps.
+.SS The angles are exact
+sin(theta) is y/sqrt(L^2 + y^2) here and not the paraxial y/L, so the
+fringes are exactly where d sin(theta) = n lambda and the envelope
+vanishes exactly where w sin(theta) = n lambda.  The familiar spacing
+lambda L/d is what those become near the axis; it is visibly wrong at
+the edges of a short screen, and shortening
+.B distance
+shows it going wrong.
+.SH SOURCE
+.B /appl/danby/twoslit.spec
+.SH SEE ALSO
+.IR danby (1),
+.IR danby-packet (1),
+.IR danby-tunnel (1),
+.IR danbylab (2)
+.SH BUGS
+This is the pattern, not the arrival.  It draws where particles go in
+the aggregate and never shows one landing, which is the half that makes
+the double slit strange: the pattern is built of individual, localised,
+random-looking events and appears even when they are sent one at a time.
+Nothing here has a particle in it.
+.PP
+Both slits are always open and nothing observes them.  The other half of
+the mystery \(em that finding out which slit destroys the fringes \(em
+needs a detector in the model and there is none.
+.PP
+Far field, infinitely long slits, one wavelength, no source size.  A
+real beam has a spread of wavelengths and a finite source, and both blur
+the fringes; the envelope of a real pattern is never quite this clean.
+.PP
+sin(beta)/beta is 0/0 on the axis, and the answer there is 1.  It is
+written as sin(bb)/bb with bb = |beta| + 1e\-12, which is the same
+function everywhere else because sine is odd and this is squared.
+Guarding only the denominator is the obvious thing and leaves the hole
+exactly where it matters, returning zero at the brightest point on the
+screen.  It did, until the test asked for the central maximum.

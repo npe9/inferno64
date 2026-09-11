@@ -213,6 +213,7 @@ danby-duffing danby-duffing
 danby-bands danby-bands
 danby-packet danby-packet
 danby-tunnel danby-tunnel
+danby-twoslit danby-twoslit
 danby-hydrogen danby-hydrogen
 danby-rabi danby-rabi
 danby-schrodinger danby-schrodinger

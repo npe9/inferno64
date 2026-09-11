@@ -951,6 +951,11 @@ See
 Getting through a wall you have not the energy to climb.
 See
 .IR danby-tunnel (1).
+.TP
+.B danby/twoslit
+Two slits, and the pattern they make.
+See
+.IR danby-twoslit (1).
 .SS Numerical Methods, Classical Problems & Lessons
 .TP
 .B danby/bernoulli

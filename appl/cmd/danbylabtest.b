@@ -287,7 +287,98 @@ checkmechanism(name: string, m: ref Model, c: ref Config,
 		checktunnel(name, m);
 	"packet" =>
 		checkpacket(name, m);
+	"twoslit" =>
+		checktwoslit(name, m);
 	}
+}
+
+
+# ----------------------------------------------------------------- twoslit
+#
+# Two exact statements, and the usual warning about both.  At
+# d sin(theta) = n lambda the interference factor is exactly 1, so the
+# intensity equals the envelope; at w sin(theta) = n lambda the envelope
+# is exactly 0, so both are.  Each is exact because a term hits a
+# stationary point, and each is therefore blind to what that term
+# contains - the first cannot see the separation, the second cannot see
+# the interference at all.  So the whole expression is also compared
+# against the closed form at generic positions.
+
+slitat(m: ref Model, lambda, sep, w, dist, y: real): (real, real)
+{
+	m.parameter[0] = lambda;
+	m.parameter[1] = sep;
+	m.parameter[2] = w;
+	m.parameter[3] = dist;
+	st := dynsys->initialstate(m);
+	d := array[len st] of real;
+	dynsys->rhs(m, y+10.0, st, d);		# the spec's own centre offset
+	v := dynsys->observables(m, st);
+	return (v[0], v[1]);
+}
+
+# the screen position where sin(theta) = s
+slity(dist, s: real): real
+{
+	return dist*s/math->sqrt(1.0-s*s);
+}
+
+checktwoslit(name: string, m: ref Model)
+{
+	(lam, sep, w, dist) := (0.5, 4.0, 1.0, 20.0);
+	# fringe maxima: d sin(theta) = n lambda, so intensity IS the envelope
+	for(n := 1; n <= 3; n++){
+		s := real n*lam/sep;
+		y := slity(dist, s);
+		(it, en) := slitat(m, lam, sep, w, dist, y);
+		near(sys->sprint("%s: order %d is a full fringe", name, n), it, en, 1.0e-12);
+	}
+	# envelope zeros: w sin(theta) = n lambda, so there is nothing there
+	for(n = 1; n <= 2; n++){
+		s := real n*lam/w;
+		if(s >= 1.0)
+			continue;
+		y := slity(dist, s);
+		(it, en) := slitat(m, lam, sep, w, dist, y);
+		near(sys->sprint("%s: envelope zero %d", name, n), en, 0.0, 1.0e-18);
+		near(sys->sprint("%s: nothing lands at envelope zero %d", name, n), it, 0.0, 1.0e-18);
+	}
+	# the closed form at generic places, which is what sees every factor
+	for(i := 1; i <= 6; i++){
+		y := 0.9*real i;
+		sint := y/math->sqrt(dist*dist+y*y);
+		al := Math->Pi*sep*sint/lam;
+		be := Math->Pi*w*sint/lam;
+		if(math->fabs(math->cos(al)) < 0.15 || math->fabs(math->sin(be)) < 0.15)
+			fail(sys->sprint("%s: sample at y=%g sits on a node, so it "+
+				"tests less than it looks", name, y));
+		want := (math->sin(be)/be)*(math->sin(be)/be)*math->cos(al)*math->cos(al);
+		(it, nil) := slitat(m, lam, sep, w, dist, y);
+		# 1e-9, not tighter: the spec adds 1e-12 to |beta| to keep the
+		# sinc finite on the axis, which moves the value by 1e-12/|beta|
+		near(sys->sprint("%s: intensity at y=%g", name, y), it, want, 1.0e-9);
+	}
+	# close the second slit and the fringes go, leaving the envelope
+	for(i = 1; i <= 20; i++){
+		y := 0.5*real i;
+		(it, en) := slitat(m, lam, 0.0, w, dist, y);
+		near(sys->sprint("%s: one slit has no fringes, at y=%g", name, y),
+			it, en, 1.0e-14);
+	}
+	# ... and with both slits it really does fringe, or that proves nothing
+	differ := 0;
+	for(i = 1; i <= 40; i++){
+		y := 0.25*real i;
+		(it, en) := slitat(m, lam, sep, w, dist, y);
+		if(math->fabs(it-en) > 0.01*en)
+			differ++;
+	}
+	if(differ == 0)
+		fail(name+": with two slits the intensity never departed from the "+
+			"envelope, so the one-slit check proves nothing");
+	# on axis everything is in phase and the intensity is the full 1
+	(centre, nil) := slitat(m, lam, sep, w, dist, 0.0);
+	near(name+": the central maximum is 1", centre, 1.0, 1.0e-8);
 }
 
 
