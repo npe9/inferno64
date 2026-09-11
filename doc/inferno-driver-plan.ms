@@ -2325,3 +2325,18 @@ once serves three of the six boards, which is the same argument the
 shared
 .CW fdt.c
 made.
+.PP
+One thing has to be said plainly about this list, because it reads like
+a queue and it is not one.  Item 1 was workable here because QEMU has an
+arm64 machine with a GICv3, an ITS and UEFI firmware, so every piece of
+it could be written against something that boots.  Items 2 through 6
+have no such machine.  There is no QEMU model of a BCM2710A1 in a Zero
+2 W's package, none of the JH7110, none of the RK3588, none of the FU740
+or the PolarFire SoC, and the parts of them this tree would have to
+drive are exactly the parts that differ from anything modelled: the
+DesignWare GMAC, dw-mmc, the Cadence controllers, each SoC's PCIe.  None
+of that is blocked on effort.  It is blocked on having the board on the
+desk, and the standard the rest of this tree holds to \(em say what was
+checked against a booted kernel \(em cannot be met for any of them from
+here.  What can be done from here is to keep correct the shared work
+they will all land on.

@@ -23549,3 +23549,61 @@ list anybody has to keep.  Tested both ways, like the last one: touching
 fails virtarm64 and does not fail raspi3b, and
 .CW "mk install"
 in the board's directory clears it.
+.NH 2
+An SMMU in the path, and a branch that had never run
+.PP
+Two corrections to the section above, both found by checking claims
+rather than by anything failing.
+.PP
+The signature line was built in
+.CW acpireport() ,
+which runs after
+.CW xinit()
+and
+.CW poolinit() .
+Every other field is captured by
+.CW acpifind()
+at the top of
+.CW main() ,
+but that line walked the XSDT and every table pointer in it after the
+allocator was live \(em and the tables are at 0x7cb43018 on this
+machine, most of a gigabyte into DRAM, which with no device tree is
+inside the memory the kernel sized from mem.h and handed out.  It worked
+because xalloc starts low.  That is the same hazard
+.CW confcopy()
+exists for, three sections up, still open in the file that described it.
+The line is built in
+.CW acpifind()
+now and
+.CW acpireport()
+prints the copy.
+.PP
+And the SMMU branch had never executed.  It was tested with
+.CW "-M virt,gic-version=3,iommu=smmuv3"
+while the node length was still being read at offset 2, so the walk
+bailed before reaching a node and the branch was written up as "reads
+far enough to say so" on the strength of code that had not run.  With
+the length read correctly, what that machine actually has is a root
+complex with
+.I both
+kinds of mapping: a direct window to the ITS group for requesters
+0x100..0xffff, and everything below that through the SMMU.  The walk
+returned on the first ITS mapping it found, so it took the direct window
+and never saw the other \(em and the consequence was in the log and had
+not been read:
+.P1
+sdF: first interrupt, irq 38 intx
+.P2
+The disk's requester id is below 0x100, so
+.CW ridtodevid()
+refused it and the driver fell back to INTx.  That is the right
+behaviour \(em a DeviceID wrong by a constant is an interrupt delivered
+to another device's vector, and refusing costs one device MSI and
+nothing else \(em but it was happening silently.  Every mapping of the
+node is looked at now, and a root complex with an SMMU in it says so:
+.P1
+acpi: iort rid 0x100..0xffff -> devid 0x100, ACPI-IORT-OK
+acpi: iort also maps requesters through an smmu; those keep intx
+.P2
+An Ampere Altra is the machine where that second line matters, and
+composing the two mappings is the work it will need.

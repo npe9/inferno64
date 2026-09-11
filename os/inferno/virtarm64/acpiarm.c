@@ -60,6 +60,19 @@ static int	ridviasmmu;		/* the map goes through an SMMU */
 
 static int	tablesfound;
 
+/*
+ * The signature line, built while the tables are still safe to read.
+ *
+ * acpireport() runs after xinit() and poolinit(), and the tables sit
+ * wherever the firmware put them -- 0x7cb43018 on this machine, most of
+ * a gigabyte into DRAM, which with no device tree is inside the memory
+ * this kernel sized from mem.h and handed to the allocator.  Reading
+ * them there works only because xalloc starts low.  That is the same
+ * hazard confcopy() exists for, so the answer is the same: take the
+ * copy early and print the copy.
+ */
+static char	sigline[256];
+
 static uint
 le32(uchar *p)
 {
@@ -186,27 +199,36 @@ iort(void)
 			if(map + 20 > e)
 				break;
 			/*
-			 * One hop.  A root complex that points straight at
-			 * an ITS group is the whole answer; one that points
-			 * at an SMMU means the real map is the composition
-			 * of this mapping with the SMMU's own, and that is
-			 * not implemented.  It is reported rather than
-			 * half-applied, because a DeviceID that is wrong by
-			 * a constant is an interrupt delivered to some
-			 * other device's vector.
+			 * One hop, and every mapping of the node is looked
+			 * at rather than stopping at the first useful one.
+			 *
+			 * A mapping that points straight at an ITS group is
+			 * a window this board can use.  One that points at
+			 * an SMMU means the real map for those requesters
+			 * is the composition of this mapping with the
+			 * SMMU's own, which is not implemented -- and a
+			 * root complex can have both, which is exactly what
+			 * QEMU's -M virt,iommu=smmuv3 produces.  There the
+			 * direct window is 0x100..0xffff and the devices
+			 * below it go through the SMMU, so taking the first
+			 * ITS mapping and stopping would have hidden the
+			 * fact that half the bus is unreachable.  It is not
+			 * composed and it is not guessed: a DeviceID wrong
+			 * by a constant is an interrupt delivered to some
+			 * other device's vector, and ridtodevid() refusing
+			 * a requester outside the window costs that device
+			 * MSI and nothing else.
 			 */
 			outref = le32(map+12);
 			if(outref == 0 || t + outref + 16 > e)
 				continue;
 			out = t + outref;
-			if(out[0] == Iortits){
+			if(out[0] == Iortits && !haveridmap){
 				ridbase = le32(map+0);
 				ridcount = le32(map+4) + 1;
 				devidbase = le32(map+8);
 				haveridmap = 1;
-				return;
-			}
-			if(out[0] == Iortsmmu || out[0] == Iortsmmuv3)
+			} else if(out[0] == Iortsmmu || out[0] == Iortsmmuv3)
 				ridviasmmu = 1;
 		}
 	next:
@@ -233,6 +255,17 @@ acpifind(void)
 	if(!acpivalid())
 		return;
 	tablesfound = 1;
+	{
+		extern char *acpisig(int, char[5]);
+		extern int acpirevision(void);
+		char buf[5], *e;
+		int i;
+
+		e = seprint(sigline, sigline+sizeof sigline,
+			"acpi: revision %d:", acpirevision());
+		for(i = 0; acpisig(i, buf) != nil && e < sigline+sizeof sigline - 8; i++)
+			e = seprint(e, sigline+sizeof sigline, " %s", buf);
+	}
 	madt();
 	iort();
 }
@@ -240,24 +273,12 @@ acpifind(void)
 void
 acpireport(void)
 {
-	extern int acpirevision(void);
-
 	if(!tablesfound){
 		if(bootconfline("*acpi=") != nil)
 			print("acpi: the rsdp the loader passed is not one\n");
 		return;
 	}
-	{
-		extern char *acpisig(int, char[5]);
-		char buf[5], line[256], *e;
-		int i;
-
-		e = seprint(line, line+sizeof line, "acpi: revision %d:",
-			acpirevision());
-		for(i = 0; acpisig(i, buf) != nil && e < line+sizeof line - 8; i++)
-			e = seprint(e, line+sizeof line, " %s", buf);
-		print("%s\n", line);
-	}
+	print("%s\n", sigline);
 	if(gicdbase != 0)
 		print("acpi: madt gicv%d dist @ %#llux (mem.h GICD %#p)\n",
 			gicversion, gicdbase, (uintptr)GICD);
@@ -269,8 +290,9 @@ acpireport(void)
 	if(haveridmap)
 		print("acpi: iort rid %#lux..%#lux -> devid %#lux, ACPI-IORT-OK\n",
 			ridbase, ridbase + ridcount - 1, devidbase);
-	else if(ridviasmmu)
-		print("acpi: iort maps through an smmu; not walked\n");
+	if(ridviasmmu)
+		print("acpi: iort also maps requesters through an smmu;"
+			" those keep intx\n");
 	if(gicdbase == 0 && gicitsbase == 0 && !haveridmap)
 		print("acpi: tables carry nothing this board reads\n");
 }
