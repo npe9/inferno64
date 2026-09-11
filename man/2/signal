@@ -1,0 +1,201 @@
+.TH SIGNAL 2
+.SH NAME
+signal: fft, ifft, rfft, window, periodogram, convolve, firdesign, butterworth \- the discrete Fourier transform, windows and filters
+.SH SYNOPSIS
+.EX
+include "signal.m";
+signal := load Signal Signal->PATH;
+Biquad: import signal;
+
+signal->init();
+signal->fft(re, im);
+signal->ifft(re, im);
+(re, im) := signal->rfft(x);
+p := signal->periodogram(x, Signal->HANN);
+y := signal->convolve(x, h);
+(h, err) := signal->firdesign(Signal->LOWPASS, 63, 0.1, 0.0, Signal->HAMMING);
+y = signal->fir(x, h);
+(bq, err) = signal->butterworth(Signal->LOWPASS, 4, 0.1);
+y = signal->runiir(bq, x);
+.EE
+.SH DESCRIPTION
+.I Signal
+is the discrete Fourier transform and the things built directly on it.
+.PP
+A spectrum is two parallel arrays of reals, the real and the imaginary
+parts, rather than an array of a complex adt: an array of
+.B ref
+would be an array of pointers and every loop over it would chase one.
+.PP
+.B Frequency
+is in
+.B cycles
+.B per
+.B sample
+throughout, from 0 to 1/2, and never in hertz.
+A sampled signal does not know its own sample rate \- that is the
+caller's business, and belongs in the caller's axis labels \- and a
+library that took hertz would have to be told the rate by every function
+in it.
+Nyquist is therefore always 0.5.
+.PP
+The forward transform carries no scale factor and the inverse divides by
+.IR n ,
+so the transform of a constant is
+.I n
+at bin 0.
+This is said here because the other convention exists and nothing in a
+test can tell a reader which one a library chose.
+.SS The transform
+.B Fft
+and
+.B ifft
+transform in place, for
+.B any
+length and not only a power of two.
+A power of two is done by Cooley-Tukey; any other length by Bluestein's
+method, which rewrites the transform as a convolution that
+.I is
+a power of two, and so is exact rather than approximate.
+No length is refused, which matters: a recording is however long it is,
+and a library that silently padded to the next power of two would be
+answering about a different signal.
+.PP
+.B Rfft
+transforms a real signal into a new pair of arrays.
+Its result has the full length
+.IR n ,
+whose upper half is the conjugate mirror of its lower half;
+.B realbins
+says how many are distinct.
+.B Binfreq
+gives the frequency a bin stands for.
+Bins above
+.IR n /2
+stand for
+.B negative
+frequencies, which is the thing most often got wrong when labelling an
+axis; at bin
+.IR n /2
+exactly, +0.5 and \-0.5 are the same frequency and +0.5 is reported.
+.SS Windows
+.BR Rect ,
+.BR Hann ,
+.B Hamming
+and
+.B Blackman
+are chosen by the constants of those names.
+A window is not a detail: the rectangular one smears a strong tone
+across the whole spectrum and hides a weak one beside it, and that is
+what the others are for.
+.PP
+There are two forms and the difference matters.
+.B Window
+is the periodic form, for use before a transform: it treats the
+.I n
+samples as one period of something that repeats, which is what the
+transform assumes, and makes a tone sitting on a bin land on that one
+bin.
+.B Windowsym
+is the symmetric form, for designing a filter: its first and last taps
+are equal, and that symmetry is the whole reason a windowed-sinc filter
+has exactly linear phase.
+Designing with the periodic form costs the symmetry, and with it the
+linear phase, silently.
+.PP
+.B Periodogram
+is the one-sided power spectrum of a real signal, windowed and scaled so
+that a sinusoid of amplitude
+.I A
+reads
+.IR A * A /2
+in its bin whatever the window and whatever the length.
+Without that scaling a Hann window halves every height and the reader
+concludes the signal got quieter.
+.SS Convolution
+.B Convolve
+is the definition and
+.B fftconvolve
+is the same thing through the transform; both are here because the
+second is only worth having if it agrees with the first, and
+.IR signaltest (1)
+says by how much.
+.B Correlate
+is the cross-correlation, at lags \-(\fBlen\fP \fIy\fP\-1) to
+.RB ( len
+.IR x \-1).
+.SS Filters
+.B Firdesign
+designs a finite-impulse-response filter by windowing a sinc.
+The ideal low pass is a sinc, which is infinitely long; cutting it off
+is what makes the ripple, and multiplying the cut-off piece by a window
+is what controls it.
+The window is the entire design decision.
+An odd number of taps is required, since only that has a whole-sample
+delay and so an exactly linear phase.
+.B Fir
+filters, returning the same length as its input with the design's own
+delay removed, so that a plot of the two can be read together.
+.PP
+A
+.B Biquad
+is one second-order section.
+.B Butterworth
+designs a cascade of them by the bilinear transform, with the cutoff
+pre-warped so the \-3 dB point lands where it was asked for rather than
+where the transform happens to put it.
+A cascade rather than one high-order recursion, because a single
+high-order recursion loses its poles to rounding.
+.B Onepole
+is the one-pole low pass, the shape an RC circuit has.
+.B Runiir
+runs a cascade over a signal;
+.B Biquad.reset
+clears what it remembers.
+.PP
+.B Firresponse
+and
+.B iirresponse
+give the magnitude and phase of a filter at
+.I nf
+points from 0 to Nyquist, computed from its own coefficients.
+.SH SOURCE
+.B /appl/lib/signal.b
+.SH SEE ALSO
+.IR circuit (2),
+.IR ffts (2),
+.IR math-elem (2),
+.IR signaltest (1)
+.SH DIAGNOSTICS
+.B Firdesign,
+.B butterworth
+and
+.B onepole
+return nil and a diagnostic for a design that cannot be made: an even
+number of taps, a cutoff at or above Nyquist, an upper cutoff below the
+lower one, an order out of range.
+.SH BUGS
+Everything here is offline: a whole signal goes in and a whole signal
+comes out.
+There is no streaming interface, no overlap-add, and no way to filter a
+signal that does not fit in memory.
+.PP
+.B Butterworth
+is the only IIR design.
+There is no Chebyshev, elliptic or Bessel, and no band-pass or
+band-stop IIR \- for those, cascade a low pass and a high pass, which
+is not the same filter a direct design would give.
+.PP
+.B Periodogram
+is a single transform of the whole signal.
+There is no Welch averaging, so its variance does not fall with the
+length of the recording: a longer signal buys frequency resolution, not
+a smoother estimate.
+.PP
+.B Fftconvolve
+transforms the whole of both inputs, so filtering a long signal with a
+short kernel costs a transform of the long one rather than a series of
+short ones.
+For a short kernel
+.B convolve
+is usually faster, which is the opposite of what the name suggests.

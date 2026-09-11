@@ -1,0 +1,107 @@
+.TH SIGNALTEST 1
+.SH NAME
+signaltest \- check signal(2) against the definitions
+.SH SYNOPSIS
+.B signaltest
+[
+.B -v
+]
+.SH DESCRIPTION
+.I Signaltest
+checks
+.IR signal (2)
+and prints
+.B OK
+if everything agrees.
+.B -v
+prints each measured number as well.
+.PP
+The transform is checked against the
+.RI O( n \u\s-22\s+2\d)
+sum it is an accelerated form of, at seventeen lengths, powers of two
+and otherwise.
+That is an oracle and not a property: if the two disagree the fast one
+is wrong, and no argument about which is more likely applies.
+The lengths that are not powers of two go through Bluestein's method,
+which is a different piece of code that nothing else here would reach.
+.PP
+Everything else is checked against a closed form too: Parseval, the
+shift theorem, the convolution theorem, the exact height a sinusoid must
+reach in a periodogram under any window, and \- for a Butterworth filter
+\- the whole of its magnitude response, not merely the \-3 dB point.
+The bilinear transform bends the frequency axis exactly, so the digital
+filter's magnitude must equal
+.RI 1/sqrt(1+( W / Wc )\u\s-22\fIN\fP\s+2\d)
+at
+.I W
+= 2 tan(pi
+.IR f ),
+at every frequency, to rounding.
+.PP
+Two of the checks are about the measurement rather than the library.
+The amplitude of a filtered sinusoid is measured by projecting onto that
+frequency, not by taking the largest sample: at
+.I f
+= 0.45 the samples are 2.2 apart in a period and the crest is missed by
+3%, which is a property of sampling and not of the filter.
+And the windows are checked against each other for leakage rather than
+against a number: rectangular must leak more than Hamming, Hamming more
+than Hann, Hann more than Blackman, measured four bins from a tone that
+sits half a bin off.
+.SS The cross-check against circuit(2)
+An RC circuit and a one-pole low-pass filter are the same object reached
+from two directions, and this tree has both.
+.IR Circuit (2)
+integrates
+.I i
+=
+.I C
+d\fIv\fP/d\fIt\fP with the trapezoidal rule;
+.IR signal (2)
+maps the pole through the bilinear transform.
+Two things then differ, and both are understood rather than tolerated.
+.PP
+The libraries put the switch at different instants:
+.IR circuit (2)
+has the source on at both ends of its first interval, while a filter fed
+a step sees zero at the sample before the first and takes half a step.
+Priming the filter's memory with the input it has been seeing makes both
+solve the same problem \- and means the filter's sample 0 stands for
+.I t
+=
+.IR h ,
+not
+.I t
+= 0.
+.PP
+The pre-warping does not go away: it moves the pole by
+tan(pi\fIfc\fP)/(pi\fIfc\fP).
+So the check is not a tolerance plucked from the air but the
+.IR rate :
+halve the step and the disagreement must fall by four.
+It falls by 4.007 and then 4.002.
+.SH SOURCE
+.B /appl/cmd/signaltest.b
+.SH SEE ALSO
+.IR signal (2),
+.IR circuit (2)
+.SH DIAGNOSTICS
+Each disagreement prints a line beginning
+.B FAIL
+naming what was measured, what came out and what was wanted; the count
+follows and the program raises an exception.
+.SH BUGS
+The transform is checked against the direct sum only for lengths up to
+128, because the direct sum is quadratic.
+A bug that appeared only at some larger length would not be caught,
+though the round trip is checked at every length used.
+.PP
+Nothing here measures speed.
+The fast transform is checked to be
+.IR right ,
+not to be fast, and a change that made it correct and quadratic would
+pass every check in this program.
+.PP
+The FIR stopband is checked to be below a level, not to have the shape
+the window predicts, so a design that attenuated well for the wrong
+reason would pass.

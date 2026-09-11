@@ -29,6 +29,7 @@ auth security-auth
 basename names
 beginfromdc circuit
 bind sys-bind
+biquad signal
 block diskblocks
 bloomfilter bloomfilter
 bootconf dhcpclient
@@ -37,6 +38,7 @@ btos convcs
 bufio bufio-chanfill
 bufio-chanfill bufio-chanfill
 bufiofill bufio
+butterworth signal
 byte2char sys-byte2char
 cardlib spree-cardlib
 categories palmfile
@@ -63,6 +65,7 @@ connect security-ssl
 consistent ida
 context draw-context
 convcs convcs
+convolve signal
 copyattrs factotum
 cos math-elem
 cosh math-elem
@@ -152,6 +155,7 @@ export_real32 math-export
 factotum factotum
 fauth sys-fauth
 fd2path sys-fd2path
+fft signal
 fildes sys-dup
 file2chan sys-file2chan
 filepat filepat
@@ -162,6 +166,7 @@ filter-slip filter-slip
 find lists
 findattr factotum
 findattrval factotum
+firdesign signal
 font draw-font
 format format
 fprint sys-print
@@ -197,6 +202,7 @@ ida ida
 ideacbc keyring-crypt
 ideaecb keyring-crypt
 ideasetup keyring-crypt
+ifft signal
 image draw-image
 imagefile imagefile
 imageget tk
@@ -308,6 +314,7 @@ partition lists
 pathname names
 pcpart disks
 pctl sys-pctl
+periodogram signal
 pfile palmfile
 phon phon
 pipe sys-pipe
@@ -321,6 +328,7 @@ popup popup
 plot plot
 populationmodel populationmodel
 ramp grpalette
+rfft signal
 roomsrv roomsrv
 security security-0intro
 session session
@@ -426,6 +434,7 @@ sha384 crypt-sha1
 sha512 crypt-sha1
 shade grpalette
 sign security-oldauth
+signal signal
 signature spki
 sin math-elem
 sinh math-elem

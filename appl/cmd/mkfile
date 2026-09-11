@@ -231,6 +231,7 @@ TARG=\
 	sentences.dis\
 	seq.dis\
 	sha1sum.dis\
+	signaltest.dis\
 	sleep.dis\
 	slitstest.dis\
 	sort.dis\
