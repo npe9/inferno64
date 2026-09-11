@@ -13,6 +13,8 @@ implement Command;
 include "sys.m";
 	sys: Sys;
 include "draw.m";
+include "math.m";
+	math: Math;
 include "pde.m";
 	pde: Pde;
 	Field: import pde;
@@ -24,6 +26,7 @@ nfail := 0;
 init(ctxt: ref Draw->Context, argv: list of string)
 {
 	sys = load Sys Sys->PATH;
+	math = load Math Math->PATH;
 	pde = load Pde Pde->PATH;
 	if(pde == nil){
 		sys->print("cannot load pde: %r\n");
@@ -149,6 +152,24 @@ init(ctxt: ref Draw->Context, argv: list of string)
 			"the coordinate it claims to be");
 	}
 
+	# stagger: the second field's rhs sees the first already advanced.
+	# For a two-field Hamiltonian system that is the difference between
+	# a step that works and one that cannot: the time-dependent
+	# Schrodinger equation, split into real and imaginary parts, has
+	# purely imaginary eigenvalues, so advancing both fields from the
+	# same old values amplifies every mode by sqrt(1+(lambda h)^2) every
+	# step whatever h is.  Staggered, the same explicit formula is
+	# symplectic and conserves the norm.
+	#
+	# Both are run here, which makes the control part of the test rather
+	# than something done once by hand: the unstaggered one MUST blow up
+	# or the staggered one has proved nothing.
+	checkstagger();
+	# and stagger is refused where there is nothing to stagger against
+	(nil, err1) := pde->newproblem("mesh 8x8\nequation hoc only\nsubsteps 1\n" +
+		"stagger\nrhs only only\ntime step 1.0\n");
+	check(err1 != nil, "stagger with one field should be refused");
+
 	if(nfail == 0)
 		sys->print("PASS\n");
 	else{
@@ -173,4 +194,70 @@ check(ok: int, msg: string)
 		sys->print("FAIL: %s\n", msg);
 		nfail++;
 	}
+}
+
+checkstagger()
+{
+	sn := 128;
+	sdx := 0.1;
+	base := sys->sprint("mesh %dx2 domain %gx%g bc clamp\n", sn, real sn*sdx, 2.0*sdx) +
+		"equation hoc sre sim\nsubsteps 20\n";
+	tail := "rhs sre sre+h*(-0.5*lap_sim)\nrhs sim sim+h*(0.5*lap_sre)\n" +
+		"time step 0.02\n";
+	norms := array[2] of real;
+	for(st := 0; st < 2; st++){
+		sp := base;
+		if(st)
+			sp += "stagger\n";
+		(ps, errs) := pde->newproblem(sp + tail);
+		check(errs == nil, "schrodinger newproblem: " + errs);
+		if(errs != nil)
+			break;
+		n0 := 0.0;
+		for(i := 0; i < sn; i++){
+			xv := real i*sdx;
+			g := math->exp(-(xv-6.0)*(xv-6.0)/4.0);
+			# A packet at rest: real, so it spreads where it sits
+			# rather than travelling into the clamped edge, whose
+			# reflection this scheme does not handle unitarily.
+			for(r := 0; r < 2; r++){
+				pde->set(ps.field, i, r, g);
+				pde->set(ps.fieldb, i, r, 0.0);
+			}
+			n0 += (g*g)*sdx;
+		}
+		# The norm is measured after every step and the run STOPS as
+		# soon as it has grown a thousandfold, which the unstaggered
+		# case does in about fifty steps.  Letting it run on is what
+		# the obvious version did, and that does not merely produce a
+		# large number: taken to overflow AFTER other math has run in
+		# the same process it raises "invalid math argument" from the
+		# VM and kills the test rather than reporting anything.  Run
+		# first, in a fresh process, the identical code returns 4.6e19
+		# quite happily - so it is state left behind by earlier work
+		# and not a property of the arithmetic.  Not chased here;
+		# stopping once the control has made its point removes the
+		# dependence on it, and a control only has to show that the
+		# thing it guards against CAN happen.
+		nt := 0.0;
+		for(k := 0; k < 60; k++){
+			pde->step(ps, 0.02);
+			nt = 0.0;
+			for(i = 0; i < sn; i++){
+				uu := pde->get(ps.field, i, 0);
+				vv := pde->get(ps.fieldb, i, 0);
+				nt += (uu*uu+vv*vv)*sdx;
+			}
+			if(nt > 1000.0*n0)
+				break;
+		}
+		norms[st] = nt/n0;
+	}
+	check(norms[1] > 0.999 && norms[1] < 1.001,
+		"staggered: the norm must be conserved, but it went to " +
+		sys->sprint("%g", norms[1]) + " of what it started at");
+	check(norms[0] >= 1000.0,
+		"unstaggered: this step is unstable for a Hamiltonian pair and MUST "+
+		"blow up, but the norm only reached " + sys->sprint("%g", norms[0]) +
+		" - if it is stable then the staggered check proves nothing");
 }

@@ -189,7 +189,13 @@ lapinto(f: ref Field): array of real
 {
 	if(math == nil)
 		return nil;
-	if(lapbuf == nil || len lapbuf < f.nx*f.ny)
+	# EXACTLY nx*ny, not "at least": math(2)'s lap5 requires its output
+	# array to be the same length as its input and raises "invalid math
+	# argument" otherwise.  Growing this buffer and never shrinking it
+	# meant a program that ran a big problem and then a smaller one
+	# died on the smaller one's first step, with an error naming
+	# arithmetic and pointing nowhere near the cause.
+	if(lapbuf == nil || len lapbuf != f.nx*f.ny)
 		lapbuf = array[f.nx*f.ny] of real;
 	math->lap5(f.nx, f.ny, f.dx, f.dy, f.bc, f.u, lapbuf);
 	return lapbuf;
@@ -199,7 +205,7 @@ lapintob(f: ref Field): array of real
 {
 	if(math == nil)
 		return nil;
-	if(lapbufb == nil || len lapbufb < f.nx*f.ny)
+	if(lapbufb == nil || len lapbufb != f.nx*f.ny)
 		lapbufb = array[f.nx*f.ny] of real;
 	math->lap5(f.nx, f.ny, f.dx, f.dy, f.bc, f.u, lapbufb);
 	return lapbufb;
@@ -345,6 +351,7 @@ newproblem(spec: string): (ref Problem, string)
 	# compiled once at the very end once the whole spec has been read.
 	hocname := ""; hocnameb := "";
 	hocsubsteps := 0;
+	hocstagger := 0;
 	hocparams: list of (string, real);
 	hocrhssrc := ""; hocrhsbsrc := "";
 
@@ -423,6 +430,10 @@ newproblem(spec: string): (ref Problem, string)
 			defaultstep = real a[2];
 			if(defaultstep <= 0.0)
 				return (nil, "time: step must be positive");
+		"stagger" =>
+			if(len a != 1)
+				return (nil, "stagger: usage: stagger");
+			hocstagger = 1;
 		"substeps" =>
 			if(len a != 2)
 				return (nil, "substeps: usage: substeps N");
@@ -465,6 +476,10 @@ newproblem(spec: string): (ref Problem, string)
 	if(equation == "hoc"){
 		if(hocsubsteps <= 0)
 			return (nil, "equation hoc: spec has no substeps line");
+		if(hocstagger && hocnameb == "")
+			return (nil, "stagger: there is nothing to stagger against - it "+
+				"makes the SECOND field's rhs see the first already updated, "+
+				"and this spec declares one field");
 		if(hocrhssrc == "")
 			return (nil, "equation hoc: spec has no \"rhs " + hocname + " ...\" line");
 		if(hocnameb != "" && hocrhsbsrc == "")
@@ -502,7 +517,8 @@ newproblem(spec: string): (ref Problem, string)
 	}
 	return (ref Problem(f, fb, equation, solvermethod, diffusivity, speed, damping,
 		da, db, feed, kill, tolerance, restart, maxiter, defaultstep,
-		hocmod, hocname, hocnameb, hocra, hocrb, hocsubsteps, xs, ys), nil);
+		hocmod, hocname, hocnameb, hocra, hocrb, hocsubsteps, hocstagger,
+		xs, ys), nil);
 }
 
 # Batch/unattended driver: repeatedly step() by p's own "time step DT"
@@ -600,12 +616,27 @@ hocstep(p: ref Problem, dt: real)
 		newa := p.hocmod->evalarray(p.hocra, n);
 		for(i := 0; i < n; i++)
 			p.field.work[i] = newa[i];
+		# Staggered: commit the first field before evaluating the
+		# second, and recompute its Laplacian, so the second rhs sees
+		# the value the first has JUST taken rather than the one it
+		# had.  For a two-field Hamiltonian system - the wave function
+		# split into real and imaginary parts, say - that is what makes
+		# the step symplectic instead of merely explicit.
+		if(p.hocstagger){
+			swap(p.field);
+			la = lapinto(p.field);
+			if(la == nil)
+				la = lapfallback(p.field);
+			fs.vals = p.field.u;
+			ls.vals = la;
+		}
 		if(p.fieldb != nil){
 			newb := p.hocmod->evalarray(p.hocrb, n);
 			for(j := 0; j < n; j++)
 				p.fieldb.work[j] = newb[j];
 		}
-		swap(p.field);
+		if(!p.hocstagger)
+			swap(p.field);
 		if(p.fieldb != nil)
 			swap(p.fieldb);
 	}

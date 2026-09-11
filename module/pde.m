@@ -152,6 +152,13 @@ Pde: module
 		hocra, hocrb:	ref Hoc->Expr;	# compiled rhs; hocrb nil if unused
 		hocsubsteps:	int;
 
+		# "stagger" on the equation line: the second field's rhs sees
+		# the FIRST field already updated, instead of both advancing
+		# from the same old values.  For a two-field Hamiltonian system
+		# that turns an unstable explicit step into a symplectic one -
+		# see the grammar comment and man/2/pde.
+		hocstagger:	int;
+
 		# The physical coordinate of every cell, row-major like u, so a
 		# rhs can say where it is.  Built once by newproblem(): a rhs
 		# that cannot see position cannot express a potential, a source

@@ -109,6 +109,27 @@ Required.  Unlike
 there is no general stability heuristic to derive a substep count from
 for an arbitrary user rhs, so it is explicit.
 .TP
+.B stagger
+Advance the SECOND field with the first already updated, rather than
+both from the same old values, and recompute the first's Laplacian in
+between.  Two fields are required; it is an error otherwise, since there
+is nothing to stagger against.
+.IP
+For a two-field Hamiltonian pair this is the difference between a step
+that works and one that cannot.  The time-dependent Schrodinger
+equation, split into real and imaginary parts, has purely imaginary
+eigenvalues, so advancing both together multiplies every mode by
+sqrt(1 + (lambda h)^2) EVERY step, for any h however small: it is not a
+step-size problem and no substep count fixes it.  Staggered, the same
+explicit formula becomes symplectic and conserves the norm.  Measured on
+a free packet over a hundred steps: staggered holds the norm to five
+decimal places, unstaggered reaches 4.6e19.
+.IP
+Reaction-diffusion equations do not want it \(em
+.B gray
+and its relatives are dissipative and the simultaneous update is the
+right one \(em which is why this is opt-in and off by default.
+.TP
 .BI "param " NAME " " VALUE
 Repeatable.  Binds a hoc variable any
 .B rhs
