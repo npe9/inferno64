@@ -2474,40 +2474,52 @@ d3ellipsez(Client *cl, Memimage *dst, Point c, int rx, int ry, int thick,
 static Memimage*
 d3applylit(Memimage *src, float lit, Memimage **tmp)
 {
-	u32 v, r, g, b, a;
+	u32 c[4];
+	int bpp, i;
 	uchar *p;
 
 	*tmp = nil;
 	if(src == nil || (lit >= 0.999f && lit <= 1.001f))
 		return src;
-	if(!(src->flags & Frepl) || src->depth != 32)
+	/*
+	 * 24 as well as 32.  This took only depth 32, and the screen here
+	 * is 24, so on this host it returned the colour UNLIT every time
+	 * and devdraw's own rasteriser applied no per-face lighting at all.
+	 * g3probe(1): a white face came back 255,255,255 at every lit from
+	 * 1.0 down to 0.2, where Metal gave 254, 211, 158, 110, 62.  The
+	 * Limbo provider had the identical bug, keyed to the identical
+	 * constant, and this is why castlefrankenstein(1) looked brighter
+	 * on the CPU than on the GPU: the GPU was the one doing it right.
+	 *
+	 * The channels are scaled where they lie and written back where
+	 * they lay, so which of them is red does not come into it.
+	 */
+	if(!(src->flags & Frepl))
+		return src;
+	bpp = src->depth / 8;
+	if(bpp != 3 && bpp != 4)
 		return src;
 	p = byteaddr(src, src->r.min);
 	if(p == nil)
 		return src;
-	v = (u32)p[0] | ((u32)p[1]<<8) | ((u32)p[2]<<16) | ((u32)p[3]<<24);
-	r = v & 0xff;
-	g = (v>>8) & 0xff;
-	b = (v>>16) & 0xff;
-	a = (v>>24) & 0xff;
 	if(lit < 0.0f)
 		lit = 0.0f;
-	r = (u32)(r * lit);
-	g = (u32)(g * lit);
-	b = (u32)(b * lit);
-	if(r > 255) r = 255;
-	if(g > 255) g = 255;
-	if(b > 255) b = 255;
+	for(i = 0; i < 3; i++){
+		c[i] = (u32)(p[i] * lit);
+		if(c[i] > 255)
+			c[i] = 255;
+	}
+	c[3] = bpp == 4 ? p[3] : 0;	/* alpha, if there is one, unscaled */
 	*tmp = allocmemimage(Rect(0, 0, 1, 1), src->chan);
 	if(*tmp == nil)
 		return src;
 	(*tmp)->flags |= Frepl;
 	(*tmp)->clipr = Rect(-0x3FFFFFF, -0x3FFFFFF, 0x3FFFFFF, 0x3FFFFFF);
 	p = byteaddr(*tmp, (*tmp)->r.min);
-	p[0] = (uchar)r;
-	p[1] = (uchar)g;
-	p[2] = (uchar)b;
-	p[3] = (uchar)a;
+	for(i = 0; i < 3; i++)
+		p[i] = (uchar)c[i];
+	if(bpp == 4)
+		p[3] = (uchar)c[3];
 	return *tmp;
 }
 

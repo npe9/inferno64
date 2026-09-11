@@ -97,6 +97,34 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	lines3(Draw3d->PATH, "software", 1);
 	lines3("/dis/math/draw3ddev.dis", "device", 1);
 
+	# What does a lit value actually do to a colour?
+	#
+	# castlefrankenstein draws its walls with fillpoly3 at a per-face
+	# lit of 0.82 and comes out at about half the brightness through
+	# Metal that it does on the CPU.  This is that, with nothing else
+	# in the way: one white quad, one lit, read the middle pixel.
+	sys->print("\n%-10s %6s %16s %16s\n", "lit", "", "software r,g,b", "device r,g,b");
+	lv := array[] of {1.0, 0.82, 0.6, 0.4, 0.2};
+	for(i := 0; i < len lv; i++){
+		(sr, sg, sb) := litpix(Draw3d->PATH, lv[i], Draw->White);
+		(dr, dg, db) := litpix("/dis/math/draw3ddev.dis", lv[i], Draw->White);
+		pct := 0;
+		if(sr > 0)
+			pct = dr*100/sr;
+		sys->print("%-10g %6s %6d,%3d,%3d %9d,%3d,%3d   device is %d%%\n",
+			lv[i], "", sr, sg, sb, dr, dg, db, pct);
+	}
+
+	# And a coloured pen, because scaling a colour is where the channel
+	# order shows up: a red face that comes back blue is still "dimmer".
+	sys->print("\n%-10s %6s %16s %16s\n", "lit (red)", "", "software r,g,b", "device r,g,b");
+	for(i = 0; i < len lv; i++){
+		(sr, sg, sb) := litpix(Draw3d->PATH, lv[i], Draw->Red);
+		(dr, dg, db) := litpix("/dis/math/draw3ddev.dis", lv[i], Draw->Red);
+		sys->print("%-10g %6s %6d,%3d,%3d %9d,%3d,%3d\n",
+			lv[i], "", sr, sg, sb, dr, dg, db);
+	}
+
 	# Does geometry stay inside the window it is drawn into?  A window
 	# smaller than the screen, and a face that projects bigger than the
 	# window: anything outside is paint that escaped the clip.
@@ -376,6 +404,44 @@ insideout(r: Rect): (int, int)
 		}
 	}
 	return (ins, out);
+}
+
+# One white quad at a given lit, and the pixel in the middle of it.
+litpix(path: string, lit: real, colour: int): (int, int, int)
+{
+	d3 := load Draw3d path;
+	if(d3 == nil)
+		return (-1, -1, -1);
+	d3->init();
+	win.reshape(Rect((0,0),(640,480)));
+	win.onscreen("place");
+	img := win.image;
+	img.draw(img.r, d.black, nil, img.r.min);
+	img.flush(Draw->Flushnow);
+	c := d3->context(img);
+	d3->setzarea(c, img.r);
+	d3->setz(c, 1);
+	d3->viewport(c, img.r.min.x, img.r.min.y, img.r.max.x, img.r.max.y);
+	d3->mode(Draw3d->PROJ);
+	d3->identity();
+	d3->frustum(0.1, 0.1, 100.0);
+	d3->mode(Draw3d->MODEL);
+	d3->identity();
+	d3->clearz(c);
+	d3->setcolour(c, d.color(colour));
+	v := array[] of {
+		Draw3d->Vector(-0.5, -0.4, -3.0), Draw3d->Vector( 0.5, -0.4, -3.0),
+		Draw3d->Vector( 0.5,  0.4, -3.0), Draw3d->Vector(-0.5,  0.4, -3.0),
+	};
+	d3->fillpoly3(c, v, Draw3d->Vector(0.0, 0.0, 1.0), lit);
+	img.flush(Draw->Flushnow);
+	mid := Point((img.r.min.x+img.r.max.x)/2, (img.r.min.y+img.r.max.y)/2);
+	buf := array[4] of byte;
+	if(d.image.readpixels(Rect(mid, (mid.x+1, mid.y+1)), buf) < 0)
+		return (-1, -1, -1);
+	# read back as it lies; the two providers are compared with each
+	# other, so the channel order only has to be consistent
+	return (int buf[2], int buf[1], int buf[0]);
 }
 
 lithash(img: ref Image): (int, int)

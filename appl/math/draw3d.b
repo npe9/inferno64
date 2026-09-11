@@ -708,7 +708,20 @@ litcolour(c: ref Context, lit: real): ref Image
 	if(c == nil || c.colour == nil || (lit >= 0.999 && lit <= 1.001))
 		return c.colour;
 	col := c.colour;
-	if(col.depth != 32 || col.display == nil)
+	# 24 as well as 32.  This used to take only 32, and the screen here
+	# is 24, so on this host litcolour() returned the colour UNLIT every
+	# time and the software provider applied no per-face lighting at
+	# all - silently, for every port that passes a lit with a fixed pen.
+	# g3probe(1): a white face came back 255,255,255 at every lit value
+	# from 1.0 down to 0.2, where the device provider tracked it.
+	#
+	# gorge(1) and strider(1) did not show it because they make a pen a
+	# shade and pass the lit as well; castlefrankenstein(1) passes 0.82
+	# with one pen, and was drawn flat.
+	if(col.display == nil)
+		return col;
+	bpp := col.depth / 8;
+	if(bpp < 3)
 		return col;
 	if(lit < 0.0)
 		lit = 0.0;
@@ -741,14 +754,18 @@ litcolour(c: ref Context, lit: real): ref Image
 	tab := lit_tab[slot];
 	if(tab[k] != nil)
 		return tab[k];
-	buf := array[4] of byte;
+	buf := array[bpp] of byte;
 	r1 := Rect(col.r.min, col.r.min.add(Point(1, 1)));
 	if(col.readpixels(r1, buf) < 0)
 		return col;
 	f := real k / real LITSTEPS;
-	r := int (real buf[0] * f);
+	# The bytes come back in the image's own order, which for both of
+	# the depths here puts blue first; display.rgb() wants them the
+	# other way round.  Checked with a red pen, not assumed: getting
+	# this wrong turns a lit red face blue and nothing else notices.
+	r := int (real buf[2] * f);
 	g := int (real buf[1] * f);
-	b := int (real buf[2] * f);
+	b := int (real buf[0] * f);
 	if(r > 255) r = 255;
 	if(g > 255) g = 255;
 	if(b > 255) b = 255;
