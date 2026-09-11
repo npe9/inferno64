@@ -48,16 +48,39 @@ draws.
 frames
 the same corridor drawn over one frame and over eight, with a present
 between each.
+.TP
+model
+the corridor again with a non-identity model matrix, since everything
+else leaves it at identity and the games do not.
+.TP
+eye plane
+a wall running from behind the eye to well in front, as
+.IR gorge (1)'s
+canyon does every frame, with
+.B fillpoly3g
+and with
+.BR line3 .
 .PP
 It also writes the first device frame to
 .B g3probe.raw
 as raw pixels in the display's format, for looking at.
 .SH RESULTS
-The first three agree between providers to within about 1%, which is
-rasterisation.
 Placement, the depth test,
-.B frustumoffset
-and two hundred and fifty-six faces are all correct on the GPU.
+.BR frustumoffset ,
+a model transform and two hundred and fifty-six faces all agree between
+providers to within about 1%, which is rasterisation.
+.PP
+The two that did not are why this exists.
+A wall crossing the eye plane lit 40596 pixels through software and
+.B 185898
+through Metal until
+.I devdraw
+was made to clip Gouraud polygons the way it always clipped flat ones;
+it is 40290 now.
+And
+.B line3
+still does not clip in either provider, where they fail in opposite
+directions \- software draws nothing, the device draws something.
 .PP
 The fourth does not:
 .IP
