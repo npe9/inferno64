@@ -234,13 +234,29 @@ practice, then the four layers have been reinvented rather than
 removed, and the honest conclusion is that they were load-bearing all
 along.
 .NH 2
-Phase 2: the listening half works, and a client mount panics the kernel
+Phase 2: one Inferno mounts another, and the line that stopped it
 .LP
 Item 5 is
 .CW styxlisten
-in the root and a service that exports a namespace.  Both are there
-now, and so is the piece underneath them: nothing this branch had
-written for the cloud ever listened \(em
+in the root and a service that exports a namespace; item 6 is a second
+machine mounting it.  Both work now:
+.DS
+.CW
+(kernel)  cloudinit; styxlisten -A -s tcp!*!6666 export /
+(client)  mount -A tcp!127.0.0.1!PORT /n/remote
+          ls /n/remote
+          /n/remote/chan  /n/remote/dev  /n/remote/dis  /n/remote/net
+          /n/remote/prog  /n/remote/proc ...
+.DE
+That is a hosted
+.CW emu
+reading the whole namespace of a kernel on the other side of a TCP
+connection, on two processors, with nothing installed on either side
+for the purpose.
+.PP
+Underneath it, the listening half of the stack is now proved and has a
+regression test.  Nothing this branch had written for the cloud ever
+listened \(em
 .CW hget ,
 .CW gcs ,
 .CW cloudfs
@@ -254,84 +270,72 @@ had never run on a native kernel.
 .CW tcpserve (1)
 and
 .CW scripts/check-pc64-tcp.sh
-run them: a client on the host connects to the kernel through a
-forwarded port and reads back
-.CW INFERNO-ACCEPTED-YOUR-CONNECTION .
+run them.
 .PP
-.B "A correction."
-An earlier draft of this section said
-.CW styxlisten
-does not serve.  It does.  Instrumented, it prints
-.CW "addr=tcp!*!6666"
-and
-.CW "announced, dir=/net/tcp/0"
-and then blocks in its listener, and a client on the host connects to
-it.  Two things produced the wrong reading.
-.CW styxlisten
-kills its own listener when the served command exits \(em
-.CW runcmd()
-says so:
-.CW "kill listener, as command has exited"
-\(em so testing with
-.CW "echo hi"
-measured that deliberate behaviour and not a failure.  And the harness
-used to probe the port killed the guest fourteen seconds after typing,
-so some probes ran after the machine was gone.
-.CW scripts/serve-and-hold.py
-exists because of the second.
-.PP
-.B "The real fault."
-With
-.CW "styxlisten -A -s tcp!*!6666 export /"
-running on the kernel and
-.CW "mount -A tcp!127.0.0.1!PORT /n/remote"
-from a hosted
-.CW emu
-on the other side of a forwarded port, the client's attach succeeds \(em
-.CW mount
-returns no error \(em and the kernel then dies:
+.B "What stopped it was one missing line in qlock()."
+A client mount killed the kernel with
 .DS
 .CW
+RDY: pid 21 state 8 r 0xe696698 from 0x29df11
 e696698 e696698 2
 panic: wakeup: state
 .DE
-The three numbers are the
-.CW iprint
-just above the panic in
-.CW os/inferno/port/proc.c :
-.CW p->r ,
-.CW r ,
+.CW qlock()
+appends
+.CW up
+to the queue and sets
+.CW up->eql ,
+.CW up->state
 and
-.CW p->state .
-The first two match, so the process is the one this
+.CW up->qpc
+\(em but never
+.CW up->qnext .
+It is the only enqueue in
+.CW os/inferno/port/qlock.c
+that did not:
+.CW eqlock ,
+.CW rlock
+and
+.CW wlock
+all clear it, and so does
+.CW os/9front/port/qlock.c ,
+which this came from.
+.PP
+So the tail of the queue kept whatever
+.CW qnext
+that process had the last time it was queued anywhere, and
+.CW qunlock 's
+.DS
+.CW
+q->head = p->qnext;
+.DE
+walked off into that stale value and installed a process that had long
+since moved on as the queue head.  A later
+.CW qunlock
+then readied it wherever it was \(em caught above readying pid 21 in
+state 8
+.CW ( Wakeme )
+with its
 .CW Rendez
-names; the third is 2, which is
-.CW Ready ,
-where
+still set, from
+.CW qunlock+0x6f ,
+one instruction before
 .CW wakeup()
-requires
+found
+.CW r->p
+naming a process that was
+.CW Ready
+rather than
 .CW Wakeme
-(7).  Something readies a sleeping process without clearing
-.CW r->p
-and
-.CW p->r .
-The stack is
-.CW queueproc
-under
-.CW ready
-under
-.CW wakeup .
+and panicked.
 .PP
-It is not an SMP race: it happens identically with
-.CW "-smp 1" .
-.CW sleep() 's
-own early exit clears
-.CW r->p
-correctly, and
-.CW postnote() 's
-Wakeme case clears both before readying, so neither is the site.  The
-client's first directory read then hangs, because by then the server is
-dead.
-.PP
-This is the next thing to fix, and it is cheap to reproduce: one
-command on each side.
+Exporting a namespace is what exposed it:
+.CW exportfs 's
+slaves queue on one
+.CW QLock
+and sleep on one
+.CW Rendez ,
+which is the combination that turns a stale link into a wakeup of the
+wrong process.  It is not an SMP race \(em it happens with one
+processor \(em and it was in the port for every board, not just this
+one.

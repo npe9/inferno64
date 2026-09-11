@@ -90,6 +90,35 @@ qlock(QLock *q)
 	else
 		p->qnext = up;
 	q->tail = up;
+	/*
+	 * Terminate the queue.  This line was missing, and it is the only
+	 * enqueue in this file that was missing it -- eqlock, rlock and
+	 * wlock below all clear qnext, and so does os/9front/port/qlock.c,
+	 * which this came from.
+	 *
+	 * up->qnext holds whatever it did the last time this process was
+	 * queued anywhere.  Left stale at the tail, qunlock's
+	 *
+	 *	q->head = p->qnext;
+	 *
+	 * walks off into that old value and installs a process that has
+	 * long since moved on as the queue head.  A later qunlock then
+	 * ready()s it, wherever it is: caught here readying a process in
+	 * state Wakeme with its Rendez still set, from qunlock+0x6f, one
+	 * instruction before the kernel died in
+	 *
+	 *	panic: wakeup: state
+	 *
+	 * because wakeup() then found r->p pointing at a process that was
+	 * Ready rather than Wakeme.
+	 *
+	 * Reproduced by exporting a namespace and mounting it: exportfs's
+	 * slaves queue on one QLock and sleep on one Rendez, which is the
+	 * combination that turns the stale link into a wakeup of the
+	 * wrong process.  Not an SMP race -- it happens with one
+	 * processor.
+	 */
+	up->qnext = nil;
 	up->eql = nil;
 	up->state = Queueing;
 	up->qpc = getcallerpc(&q);

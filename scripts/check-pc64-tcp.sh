@@ -13,10 +13,16 @@ PATH=$ROOT/MacOSX/arm64/bin:$PATH
 export PATH ROOT
 KERN=$ROOT/os/inferno/pc64/ipc64
 [ -f "$KERN" ] || { echo "check-pc64-tcp: no $KERN; mk CONF=pc64 first" >&2; exit 1; }
-WORK=`mktemp -d`; trap 'rm -rf "$WORK"; kill $QPID 2>/dev/null' 0
+WORK=`mktemp -d`
+trap 'kill $QPID 2>/dev/null; sleep 1; pkill -f "cdrom $WORK/t.iso" 2>/dev/null; rm -rf "$WORK"' 0
 INFERNO_KERNEL=$KERN sh "$ROOT/scripts/mkinferno-efi-iso.sh" "$WORK/t.iso" >/dev/null 2>&1
 cp "$ROOT/.qemu/edk2-vars.fd" "$WORK/vars.fd"
-PORT=6670
+# A free port, asked for rather than assumed: a fixed one collides with
+# a guest left behind by an earlier run and the forward then silently
+# fails to bind, which reads exactly like the kernel refusing to listen.
+PORT=`python3 -c "
+import socket
+s=socket.socket(); s.bind(('127.0.0.1',0)); print(s.getsockname()[1]); s.close()"`
 python3 "$ROOT/scripts/serve-and-hold.py" "$WORK/p" 50 60 "$WORK/log" \
 	'cloudinit; tcpserve' \
 	qemu-system-x86_64 -machine q35 -m 1024 -display none -smp 2 \
