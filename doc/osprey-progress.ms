@@ -11341,6 +11341,138 @@ the address out of the binary's entry and refuses one that would land on
 the personality \- is what caught this, and it is the check that will
 say when the move has worked.
 .PP
+.B "3.3b: the library moves, and the program is entered."
+The personality is linked at
+.CW 0x40000000
+now, and the low addresses are left to the programs.  Three things had
+to follow it and the third is the useful finding.  The kernel's a.out
+loader lays an image where the binary says it goes rather than at
+.CW UTZERO
+always, working the text base out of the entry the way
+.CW p9exec.c
+does.  The entry
+.CW touser
+and
+.CW touserv
+jump to is the task's
+.CW ( up->aoutentry ),
+set by whichever loader laid the image out.  A kernel-wide word for that
+entry was the first attempt and this machine falsifies it in one boot:
+it loads more than one kind of image, the personality's load overwrote
+the flat tasks' entry before they had used it, and
+.CW osprey-fs
+died at
+.CW 0x40000028 ,
+which is the personality's entry and no address of its own.
+.PP
+.CW init0
+also had to stop entering the vector with the stack pointer on it.  The
+entry spills its argument register into the caller's frame at
+.CW 8(SP) ,
+and with
+.CW SP
+naming the vector that spill lands on
+.CW argv[1] .
+That was nil and unread while the personality took no arguments; the
+moment it took one, the argument went in and never came out.
+.CW touserv
+leaves two words below the vector for exactly this reason and
+.CW init0
+uses it now.
+.PP
+.B "3.3c: the traps of a program that was not built for this."
+The personality asks the kernel for its program's system calls
+.CW ( ReqSyscallup ),
+naming the image they must come from, and the kernel hands each one up:
+the frame the call arrived on is copied to the stack and the task is
+re-entered at
+.CW p9syscall.c ,
+with the call's number, its arguments where the caller left them, and
+that frame.  The handler does the work with the name space it already
+has \- the same
+.CW libopen
+and
+.CW libpread
+that serve a program linked against the table \- and hands the frame
+back with a value in it
+.CW ( ReqSyscallret ),
+which is
+.CW noted(NCONT)
+with a return substituted.  The program's libc sees an ordinary
+system-call return.
+.PP
+What tells the program's traps from the personality's own is where they
+were made.  A task here has many flows, and while the program runs the
+personality's own are still asking the kernel for
+.CW select
+and for the console; those come from the personality's text, a gigabyte
+above the program's image, and are not calls to hand to a name space.
+A flag alone would not have done it, and the address range is not a
+heuristic: the trap came from inside the program's image or it did not.
+.PP
+.CW /boot/legacy
+runs.  Its
+.CW open(2)
+is answered with a descriptor, its
+.CW read(2)
+with the bytes of a directory read through
+.CW namec ,
+and
+.CW pipe ,
+.CW rfork(RFNAMEG) ,
+.CW bind ,
+.CW unmount
+and
+.CW chdir
+are served too, so it changes a name space of its own and the
+personality gets its own back afterwards.  A request of the
+microkernel's own \- number 60, above the Plan 9 table \- is passed on
+rather than answered, because a program making one is asking the kernel
+and not this name space.
+.PP
+Two of the calls matter more than the rest.
+.CW exits(2)
+returns to the personality rather than ending the task: on this
+microkernel
+.CW EXITS
+idles the machine, and a library operating system whose program's exit
+stopped the machine could run one program and no more.  And a fault in
+the program is handed up the same way a system call is
+.CW ( ReqFaultup ),
+so the personality catches it the way a kernel catches a process's \-
+the program ends there and the machine goes on.  The program faults on
+purpose, reading address 0 to test a note handler it cannot have here,
+and the personality runs the window system afterwards in the same boot.
+The honest part of that claim is what it does not say: the personality
+shares an address space with what it is catching, so it can report that
+the program is over and cannot claim the program did no damage on its
+way out.
+.PP
+What is not served yet, and is named in the log as it is asked for:
+.CW alarm(2)
+and
+.CW notify(2)
+with a handler, which need note delivery into a program that is code in
+the personality's own address space;
+.CW rfork(RFPROC) ,
+which is a flow of control a library cannot split for its caller
+.CW ( p9lib.h
+says why); and a second legacy program at the same time, since the
+kernel keeps one outstanding call and one image range.
+.PP
+The demonstration is behind
+.CW *legacydemo=
+in plan9.ini, because what it does to the machine \- run a program that
+deliberately faults \- is not what the boot every other check is written
+against should do.
+.CW *legacycontrol=
+runs the same binary in the same kernel with the service not asked for,
+and it dies at
+.CW "unimplemented syscall 14" ,
+which is where every Plan 9 binary died here before.
+.CW scripts/osprey-check-p9legacy.py
+is eleven criteria over the two boots.
+.PP
 .B "Phase 3.2: a real program, then rio, linked with the library."
 A real program \- a command, then a shell, then rio \- is linked with
 the personality library into one microkernel task and run by the exec of

@@ -201,6 +201,8 @@ void
 init0(void)
 {
 	char buf[2*KNAMELEN], **sp;
+	int argc;
+
 	chandevinit();
 
 	if(!waserror()){
@@ -252,10 +254,19 @@ init0(void)
 	 */
 	sp = (char**)(USTKTOP - sizeof(Tos) - 8 - sizeof(sp[0])*8);
 	strcpy((char*)&sp[4], "boot");
-	strcpy((char*)&sp[6], "legacy");
-	sp[0] = (char*)&sp[4];		/* argv[0] */
-	sp[1] = getconf("*legacydemo") != nil ? (char*)&sp[6] : nil;
-	sp[2] = nil;			/* and the vector ends */
+	/*
+	 * "legacy" runs the unmodified binary with the personality serving
+	 * its system calls; "legacycontrol" runs the same binary with the
+	 * service not asked for, which is the control that says what the
+	 * service is doing.  Thirteen bytes, so two words.
+	 */
+	strcpy((char*)&sp[6], getconf("*legacycontrol") != nil ? "legacycontrol" : "legacy");
+	argc = 0;
+	sp[argc++] = (char*)&sp[4];	/* argv[0] */
+	if(getconf("*legacydemo") != nil || getconf("*legacycontrol") != nil)
+		sp[argc++] = (char*)&sp[6];
+	sp[argc] = nil;			/* and the vector ends */
+	sp[argc+1] = (char*)(USTKTOP - sizeof(Tos));	/* the word past it, which init9prog reads */
 
 	splhi();
 	fpukexit(nil);
@@ -268,7 +279,18 @@ init0(void)
 	 * whose loader named no entry - initcode, which proc0 lays down by
 	 * hand rather than through a loader - keeps the old address.
 	 */
-	touser(sp, up->aoutentry != 0 ? up->aoutentry : (uintptr)(UTZERO+0x28));
+	/*
+	 * touserv and not touser: the argument register names the vector
+	 * and the stack starts two words below it.  They cannot be the same
+	 * word.  The entry spills its argument into the caller's frame at
+	 * 8(SP), and with SP on the vector that spill lands on argv[1] -
+	 * which was nil and unread while the personality took no arguments,
+	 * and is a real argument now.  The *legacydemo word went in and
+	 * never came out, because the entry had overwritten it with a
+	 * pointer before startboot looked.  ospreyenteruservec leaves the
+	 * same two words for the same reason (pc64/l.s says it at length).
+	 */
+	touserv((char*)sp, (char*)(sp - 2), up->aoutentry != 0 ? up->aoutentry : (uintptr)(UTZERO+0x28));
 }
 
 static void

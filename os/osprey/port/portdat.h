@@ -791,6 +791,11 @@ struct Proc
 
 	Sargs	s;		/* syscall arguments */
 	uintptr	aoutentry;	/* where touserv enters this task's a.out: its text base plus the header, since not every image is at UTZERO */
+	uintptr	p9syscallup;	/* a personality in this task's own address space that serves its legacy program's system calls, or 0 */
+	int	p9insyscallup;	/* one is up there now: route no more until it answers */
+	uintptr	p9faultup;	/* and where a fault in that program goes, so the personality catches it rather than the machine stopping */
+	uintptr	p9progbase;	/* and the text the legacy program occupies: a call from anywhere else is the personality's own */
+	uintptr	p9progend;
 	int	oslinux;	/* a Linux legacy process: Linux syscall ABI */
 	int	buddyimage;	/* its image is the buddy's: page faults go there first */
 	int	buddyredir;	/* a bit per standard descriptor a legacy program has dup'd something else onto: those writes go to the buddy, not the console */

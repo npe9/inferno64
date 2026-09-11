@@ -158,6 +158,7 @@ void*	sigsearch(char*, int);
 void	syncclock(void);
 void	syscallentry(void);
 void	touser(void*, uintptr);
+void	touserv(void*, void*, uintptr);
 void	trapenable(int, void (*)(Ureg*, void*), void*, char*);
 void	trapinit(void);
 void	trapinit0(void);

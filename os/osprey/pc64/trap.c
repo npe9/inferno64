@@ -613,6 +613,7 @@ void
 syscall(Ureg* ureg)
 {
 	ulong scallnr;
+	int bent;
 
 	if(!kenter(ureg))
 		panic("syscall: cs 0x%4.4lluX", ureg->cs);
@@ -630,11 +631,11 @@ syscall(Ureg* ureg)
 		scallnr = ureg->ax;
 		a[0] = ureg->di; a[1] = ureg->si; a[2] = ureg->dx;
 		a[3] = ureg->r10; a[4] = ureg->r8; a[5] = ureg->r9;
-		if(dosyscall(scallnr, &up->s, &ureg->ax))
+		if((bent = dosyscall(scallnr, &up->s, &ureg->ax)) != 0)
 			((void**)&ureg)[-1] = (void*)noteret;
 	} else {
 		scallnr = ureg->bp;	/* RARG */
-		if(dosyscall(scallnr, (Sargs*)(ureg->sp+BY2WD), &ureg->ax))
+		if((bent = dosyscall(scallnr, (Sargs*)(ureg->sp+BY2WD), &ureg->ax)) != 0)
 			((void**)&ureg)[-1] = (void*)noteret;	/* loads RARG */
 	}
 	if((up->procctl || up->nnote) && donotify(ureg))
@@ -642,8 +643,19 @@ syscall(Ureg* ureg)
 	/* if we delayed sched because we held a lock, sched now */
 	if(up->delaysched)
 		sched();
-	/* Some multiboot firmware returns the SYSCALL opcode in RCX. */
-	if(waserror() == 0){
+	/*
+	 * Some multiboot firmware returns the SYSCALL opcode in RCX, so the
+	 * pc this returns to is the instruction that made the call and has
+	 * to be stepped over.
+	 *
+	 * Not when the frame was replaced rather than returned through
+	 * (dosyscall answered 1): the pc is then a handler's entry, which
+	 * is an instruction of the personality's and not a call to step
+	 * over.  When the frame is put BACK (2) the correction is wanted
+	 * and is made here, once, as it would have been for the call that
+	 * was handed up - which is why the two are told apart.
+	 */
+	if(bent != 1 && waserror() == 0){
 		validaddr(ureg->pc, 2, 0);
 		if(*(ushort*)ureg->pc == 0x050f)
 			ureg->pc += 2;

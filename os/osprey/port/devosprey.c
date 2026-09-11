@@ -2641,6 +2641,9 @@ uintptr
 #define ReqNsec 36	/* xcall op: the kernel's clock in nanoseconds, which the personality serves as /dev/bintime */
 #define ReqPostnote 37	/* xcall op: post a note to a container the caller serves, on behalf of one it also serves */
 #define ReqWhoami 38	/* xcall op: which slot the caller's own slice is, so it can map it */
+#define ReqSyscallup 39	/* xcall op: the caller serves its own legacy program's system calls, at the address in arg[0] */
+#define ReqFaultup 41	/* xcall op: and where a fault in that program goes, since a request carries only three words */
+#define ReqSyscallret 40	/* xcall op: that service is done - put the frame in arg[0] back, with arg[1] as the call's value.  Answered in dosyscall, not here, because its own return value must not land on the one it is substituting */
 ospreyxcall(va_list list)
 {
 	uvlong op, *ubuf, arg[Ospreynarg];
@@ -2863,6 +2866,57 @@ ospreyxcall(va_list list)
 		todset((vlong)arg[0] * 1000000000LL, 0, 0);
 		print("osprey: container %llud set the kernel's time of day by request: %llud seconds since the epoch; it holds the console, the capability granted at boot\n",
 			ospreyid(up->osprey), (uvlong)seconds());
+		ubuf[0] = 0;
+		return 0;
+	}
+	if(op == ReqSyscallup){
+		/*
+		 * The caller will serve the system calls its own address
+		 * space's legacy program makes.  This is the library
+		 * operating system asking for the traps of a binary it did
+		 * not compile - the one thing a program built against libc
+		 * rather than against the P9lib table needs from it.
+		 *
+		 * The address is the caller's own text and is checked as
+		 * such; 0 takes the service back, which is what the
+		 * personality does the moment its legacy program returns.
+		 *
+		 * arg[1] and arg[2] are the image the legacy program was laid
+		 * in, and they are what tells one caller from the other.  A
+		 * task here has many flows and they all trap: the
+		 * personality's own flows ask this kernel for select and for
+		 * the console while the program runs, and those are not calls
+		 * to hand to a Plan 9 name space.  The program's traps come
+		 * from its own text and nothing else does.
+		 */
+		if(arg[0] != 0 && !okaddr((uintptr)arg[0], 1, 0)){
+			print("osprey: container %llud offered to serve its own system calls at %#llux, which is not its memory\n",
+				ospreyid(up->osprey), arg[0]);
+			return -1;
+		}
+		up->p9syscallup = (uintptr)arg[0];
+		up->p9progbase = (uintptr)arg[1];
+		up->p9progend = (uintptr)arg[2];
+
+		up->p9insyscallup = 0;
+		if(up->p9syscallup == 0)
+			print("osprey user: %s serves no program's system calls any more; they are this kernel's again\n",
+				up->text);
+		else
+			print("osprey user: %s serves the system calls made from %#p to %#p - its legacy program's image - at %#p\n",
+				up->text, up->p9progbase, up->p9progend, up->p9syscallup);
+		ubuf[0] = 0;
+		return 0;
+	}
+	if(op == ReqFaultup){
+		/*
+		 * And where a fault in that program is to be handed, which is
+		 * a request of its own only because a request carries three
+		 * words and the one above uses them.
+		 */
+		if(arg[0] != 0 && !okaddr((uintptr)arg[0], 1, 0))
+			return -1;
+		up->p9faultup = (uintptr)arg[0];
 		ubuf[0] = 0;
 		return 0;
 	}

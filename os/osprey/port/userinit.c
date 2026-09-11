@@ -5,6 +5,7 @@
 #include	"fns.h"
 #include	"tos.h"
 #include	"../port/error.h"
+#include	"ureg.h"		/* the frame a system call arrives on, for the upcall below */
 
 /*
  * The initcode array contains the binary text of the first
@@ -28,8 +29,8 @@ extern int ospreyp9pair;
 extern int ospreyp9buddy;
 extern int ospreyp9linux;
 extern void touserat(char*);
-extern void touserv(char*, char*, uintptr);
 extern int ospreyuserprep(void);
+extern int uregok(void*);		/* trap.c: a frame wholly in user memory */
 extern int ospreyframebuffer(void);
 extern int ospreypointerexpose(void);
 
@@ -1014,4 +1015,161 @@ userinit(void)
 	 */
 	kstrdup(&eve, "");
 	kproc("*init*", proc0, nil);
+}
+
+/*
+ * A system call the task serves for itself.
+ *
+ * The p964 personality is a library operating system: the programs it
+ * loads call it as a library, through the P9lib table, because they are
+ * linked against p9crt.c and have no system calls of their own.  An
+ * ordinary Plan 9 binary is not built that way and cannot be - it is
+ * built against libc, whose file calls are the generated system-call
+ * stubs, and the whole point of the arrangement is that such a binary
+ * should run unchanged.  Its traps land here, in a microkernel that
+ * answers five calls and no name space at all.
+ *
+ * So the trap is handed up to the personality, in the address space it
+ * already shares with the program.  This is notify(2)'s mechanism with a
+ * different payload: the frame the call arrived on is copied to the
+ * user stack, and the task is resumed at a handler it registered, with
+ * the call's number, its arguments where the caller left them, and the
+ * saved frame.  The handler does the work with the name space it has -
+ * the same libopen and libpread that serve a program linked against the
+ * table - and then asks the kernel to put the frame back with a value
+ * in it, which is noted(NCONT) with a return substituted.
+ *
+ * One flag for a Proc that has many flows means one legacy program at a
+ * time: while a call is up, routing is off, so the personality's own
+ * flows reach the kernel normally and a second legacy program's calls
+ * would too.  That is a real limit of this step and not an oversight.
+ */
+/*
+ * Whether the system call now being made was made by the legacy program
+ * rather than by the personality that is serving it.  Where it was made
+ * is the whole of the test: the program's image is one range of
+ * addresses, named when the personality asked for the service, and the
+ * personality's own text is elsewhere (it is linked at P9selfbase, well
+ * above every program).
+ */
+int
+ospreyfromprog(void)
+{
+	Ureg *ureg;
+
+	ureg = up->dbgreg;
+	if(ureg == nil || up->p9progend == 0)
+		return 0;
+	return ureg->pc >= up->p9progbase && ureg->pc < up->p9progend;
+}
+
+/*
+ * And the other thing that happens to a program: it faults.
+ *
+ * On a kernel with processes the fault is the process's and the kernel
+ * kills it.  Here the program is code in the personality's own address
+ * space, so a fault in it is a fault in the task and this configuration
+ * has nowhere to send it - donotify panics and the machine stops, which
+ * is right for a fault in the personality and wrong for one in a program
+ * it loaded.  The personality can do what a kernel does: take the flow
+ * of control back and say what happened.  So the frame is bent to a
+ * handler of its own, exactly as a system call is, with the note's text
+ * for it to print; that handler does not return - it jumps back to the
+ * frame p9execlegacy left, and the personality goes on running.
+ *
+ * Only for a fault inside the program's own image.  A fault in the
+ * personality, or in the handler serving the program, is the panic it
+ * always was.
+ */
+int
+ospreyfaultup(char *msg)
+{
+	Ureg *ureg;
+	uintptr sp, *f;
+	char *m;
+
+	ureg = up->dbgreg;
+	if(ureg == nil || up->p9faultup == 0 || up->p9progend == 0)
+		return 0;
+	if(ureg->pc < up->p9progbase || ureg->pc >= up->p9progend)
+		return 0;
+	sp = ureg->sp - 256;
+	sp -= ERRMAX;
+	if(!okaddr(sp - 4*BY2WD, ERRMAX + 4*BY2WD, 1))
+		return 0;
+	m = (char*)sp;
+	strecpy(m, m+ERRMAX, msg);
+	sp -= 2*BY2WD;
+	f = (uintptr*)sp;
+	f[0] = 0;			/* nothing returns through it */
+	f[1] = (uintptr)m;		/* arg0, which RARG also carries */
+	ureg->sp = sp;
+	ureg->pc = up->p9faultup;
+	ureg->bp = (uintptr)m;
+	ureg->cs = UESEL;
+	ureg->ss = UDSEL;
+	up->p9insyscallup = 0;
+	return 1;
+}
+
+int
+ospreysyscallup(ulong scallnr)
+{
+	Ureg *ureg, *nureg;
+	uintptr sp, osp, *f;
+
+	ureg = up->dbgreg;
+	if(ureg == nil || up->p9syscallup == 0)
+		return 0;
+	osp = ureg->sp;
+	sp = osp - 256;			/* as notify leaves: the context that caused it */
+	sp -= sizeof(Ureg);
+	/*
+	 * The stack this lands on is a flow's, not a process's: the legacy
+	 * program was entered by a call from one of the personality's
+	 * cooperative flows and is running on that flow's stack.  So say so
+	 * rather than faulting somewhere unrelated if it will not fit.
+	 */
+	if(!okaddr(sp - 8*BY2WD, sizeof(Ureg) + 8*BY2WD, 1)){
+		print("osprey user: no room at %#p to hand system call %uld up to the personality\n",
+			sp, scallnr);
+		return 0;
+	}
+	nureg = (Ureg*)sp;
+	memmove(nureg, ureg, sizeof(Ureg));
+	sp -= 4*BY2WD;
+	f = (uintptr*)sp;
+	f[0] = 0;			/* the pc a return would use; nothing returns through it */
+	f[1] = scallnr;			/* arg0, which RARG also carries */
+	f[2] = osp + BY2WD;		/* arg1: the arguments, where the caller left them */
+	f[3] = (uintptr)nureg;		/* arg2: the frame, to be handed back */
+	ureg->sp = sp;
+	ureg->pc = up->p9syscallup;
+	ureg->bp = scallnr;		/* RARG */
+	ureg->cs = UESEL;
+	ureg->ss = UDSEL;
+	up->p9insyscallup = 1;
+	return 1;
+}
+
+/*
+ * And the answer: put the frame back, with the value the personality
+ * worked out where the call's return belongs.  The frame is the one
+ * handed up, which is on the user stack and is checked as noted(2)'s is.
+ */
+int
+ospreysyscallret(uintptr frame, uintptr val)
+{
+	Ureg *ureg, *nureg;
+
+	ureg = up->dbgreg;
+	nureg = (Ureg*)frame;
+	if(ureg == nil || !uregok(nureg)){
+		print("osprey user: the personality answered a system call with a frame at %#p that is not its own\n", frame);
+		return 0;
+	}
+	setregisters(ureg, (char*)ureg, (char*)nureg, sizeof(Ureg));
+	ureg->ax = val;
+	up->p9insyscallup = 0;
+	return 1;
 }

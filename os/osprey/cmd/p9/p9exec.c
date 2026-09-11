@@ -33,6 +33,7 @@
  */
 #include <u.h>
 #include <libc.h>
+#include <tos.h>
 #include "p9lib.h"
 #include "prog2.i"		/* uchar prog2[]: the second program, as a file */
 #include "libcatprog.i"		/* uchar libcatprog[]: cat, linked against this personality */
@@ -281,6 +282,14 @@ p9libtable(void)
  * asked the kernel for ground it already held.
  */
 enum { Nattach = 16 };
+/*
+ * The region the last load was laid in.  The legacy path needs it twice
+ * over: the kernel is told it, so that a trap made inside it is the
+ * program's and a trap made anywhere else is the personality's, and the
+ * break lives in it.
+ */
+uvlong p9loadbase, p9loadend, p9loadextra;
+
 static uvlong attachbase[Nattach];
 static uvlong attachsize[Nattach];
 static int nattached;
@@ -406,8 +415,15 @@ p9load(char *name, uvlong *entryp, uvlong *basep)
 	 * a program into and then run.  Everything after this is the
 	 * library's own work.
 	 */
-	/* a program at a base of its own needs exactly its own image */
-	base = attachfor(name, progbase, imgsz, imgsz);
+	/*
+	 * A program at a base of its own needs exactly its own image -
+	 * except a legacy one, whose brk(2) this personality answers and
+	 * which therefore wants room above its bss to grow a heap into.
+	 * p9loadextra is how the caller asks for that room; it is set for
+	 * one load and cleared, because every other program here grows its
+	 * heap through p9crt's sbrk inside the region it already has.
+	 */
+	base = attachfor(name, progbase, imgsz, imgsz + p9loadextra);
 	if(base == nil){
 		p9close(fd);
 		return -1;
@@ -436,6 +452,8 @@ p9load(char *name, uvlong *entryp, uvlong *basep)
 	p9close(fd);
 	*entryp = entry;
 	*basep = progbase;
+	p9loadbase = progbase;
+	p9loadend = progbase + imgsz + p9loadextra;
 	return 0;
 }
 
@@ -763,20 +781,80 @@ int
 int
 p9execlegacy(char *name, char **argv)
 {
+	extern void p9syscallprog(uvlong, uvlong);
+	extern void p9syscallnoprog(void);
+	extern int libpid(void);
+	extern int p9legacyserve;
+	static Tos legacytos;		/* the Tos this personality gives its program */
+	char *lav[10];
 	uvlong entry, progbase;
 
-	if(p9load(name, &entry, &progbase) < 0)
+	/*
+	 * Room above its bss for a heap, because brk(2) is one of the calls
+	 * this personality now answers and a program whose break cannot
+	 * move has no malloc.
+	 */
+	p9loadextra = 4*1024*1024;
+	if(p9load(name, &entry, &progbase) < 0){
+		p9loadextra = 0;
 		return -1;
+	}
+	p9loadextra = 0;
 	USED(progbase);
 	print("p9 legacy: entering %s at %#llux as an ordinary Plan 9 binary - "
 		"libc, no table, real system calls\n", name, entry);
 	p9execstatus = nil;
 	p9saveflow();
+	/*
+	 * The vector the entry expects, which is not quite the one the
+	 * caller passed: one word past its nil is the address of the Tos,
+	 * and init9tos.c reads it there (a Plan 9 kernel leaves it in AX;
+	 * here the argument register carries the vector, so it travels at
+	 * the end of the vector instead).
+	 *
+	 * Without it the program did not reach its first line: _tos was
+	 * whatever lay past the caller's array, and libc reads _tos->pid
+	 * the first time anything asks the time - "fault at user pc
+	 * 0x201eb1 in *init*: fault read addr=0x3f", which is that field's
+	 * offset in a Tos at nothing.
+	 *
+	 * The Tos is the library operating system's to provide, the way the
+	 * kernel provides one for a program it execs.  pid is the flow this
+	 * program runs on, and the cycle frequency is zero, which libc
+	 * reads as "this machine has no cycle counter to time with" rather
+	 * than as a rate.
+	 */
+	{
+		int i;
+
+		for(i = 0; i < nelem(lav)-2 && argv != nil && argv[i] != nil; i++)
+			lav[i] = argv[i];
+		lav[i] = nil;
+		memset(&legacytos, 0, sizeof legacytos);
+		legacytos.pid = libpid();
+		legacytos.cyclefreq = 0;
+		lav[i+1] = (char*)&legacytos;
+		argv = lav;
+	}
+	/*
+	 * And ask the kernel for the program's traps before it can make
+	 * one.  From here until p9syscallnoprog, a system call made from
+	 * inside the image at p9loadbase is handed to p9syscall.c instead
+	 * of to the microkernel.
+	 */
+	if(p9legacyserve)
+		p9syscallprog(p9loadbase, p9loadend);
+	else
+		print("p9 legacy: the control - I do not ask for this program's "
+			"system calls, so its first one goes to the microkernel, "
+			"which has no name space to answer it with\n");
 	if(setjmp(p9execjmp) == 0)
 		((void(*)(char**))(uintptr)entry)(argv);
 	else
 		print("p9 legacy: %s exited with status \"%s\"\n",
 			name, p9execstatus == nil ? "" : p9execstatus);
+	if(p9legacyserve)
+		p9syscallnoprog();
 	p9restoreflow(name);
 	print("p9 legacy: %s returned; the personality is still here\n", name);
 	return 0;

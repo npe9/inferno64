@@ -15,6 +15,7 @@ void p9paircli(void);
 extern void memimageinit(void);	/* libmemdraw: the shared masks a draw reads */
 int p9riodemo;		/* *riodemo= in plan9.ini: also exec rio and leave it running */
 int p9legacydemo;	/* *legacydemo= in plan9.ini: also run the unmodified Plan 9 binary, which ends the task */
+int p9legacyserve = 1;	/* and whether to serve its system calls: *legacycontrol= runs it without, which is the control */
 void p9server(char *arg);
 void p9setup(void);
 
@@ -1748,6 +1749,11 @@ startboot(char *argv0, char **argv)
 	 * would catch it - so the boot that carries it is not the boot the
 	 * rest of the checks are written against.
 	 */
-	p9legacydemo = argv != nil && argv[1] != nil && strcmp(argv[1], "legacy") == 0;
+	p9legacydemo = argv != nil && argv[1] != nil
+		&& strncmp(argv[1], "legacy", 6) == 0;
+	p9legacyserve = p9legacydemo && strcmp(argv[1], "legacy") == 0;
+	print("p9: entered as \"%s\" with %s\n", argv0 == nil ? "" : argv0,
+		argv == nil ? "no vector" :
+		argv[1] == nil ? "one word" : argv[1]);
 	p9main();
 }

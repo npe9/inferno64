@@ -146,7 +146,27 @@ port
 		 * inside the personality's names the personality.
 		 */
 		extern uintptr uregpc(void*);
-		iprint("osprey: fault at user pc %#p: %s\n", (void*)uregpc(a),
+		extern int ospreyfaultup(char*);
+		char *msg = up->nnote > 0 ? up->note[up->nnote-1]->msg : "a note with no message";
+		uintptr pc;
+
+		/*
+		 * Unless the personality is serving a program of its own and
+		 * this is that program's fault, in which case it is the
+		 * personality's to catch: the frame goes to its handler, the
+		 * program ends there, and the machine carries on.  That is
+		 * what a kernel does with a process, done by the library
+		 * operating system for the program in its own address space.
+		 */
+		pc = uregpc(a);		/* before the frame is bent, which changes it */
+		if(ospreyfaultup(msg)){
+			iprint("osprey: fault at user pc %#p, inside %s's own program: handed to it, not a panic\n",
+				(void*)pc, up->text != nil ? up->text : "the task");
+			up->nnote = 0;
+			return 1;
+		}
+		iprint("osprey: fault at user pc %#p in %s (pid %lud): %s\n", (void*)pc,
+			up->text != nil ? up->text : "a task with no name", up->pid,
 			up->nnote > 0 ? up->note[up->nnote-1]->msg : "a note with no message");
 		panic("microkernel: donotify");
 		return 0;
@@ -291,27 +311,70 @@ port
 	};
 	int nsyscall = nelem(systab);
 
+	/*
+	 * The personality serves its legacy program's system calls.
+	 *
+	 * A program this personality loaded and linked against p9crt.c
+	 * calls it as a library and makes no system calls at all.  An
+	 * ordinary Plan 9 binary - libc, the generated stubs, nothing of
+	 * this tree in it - makes every one of them, and there is no kernel
+	 * under this one to answer.  So when the personality has asked for
+	 * them (ReqSyscallup), the call is handed up to it and this kernel
+	 * answers nothing: not the five in the table either, because EXITS
+	 * is one of them and a legacy program's exits must return to the
+	 * personality that started it rather than idle the machine, and
+	 * PWRITE is another and its output belongs to the program's
+	 * descriptor rather than to the console.
+	 *
+	 * What tells the program's call from the personality's is where it
+	 * was made: a Proc here has many flows, and while the legacy
+	 * program is running the personality's own flows are still asking
+	 * this kernel for select and for the console.  Those come from the
+	 * personality's text, high above the program's image, and are not
+	 * calls to hand to a name space.  ospreyfromprog is that test.
+	 *
+	 * Routing is off as well while a call is up there, which is one
+	 * legacy program at a time and is the limit of this step.
+	 */
+	extern int ospreysyscallup(ulong);
+	extern int ospreysyscallret(uintptr, uintptr);
+	extern int ospreyfromprog(void);
+
 	int dosyscall(ulong scallnr, Sargs *args, uintptr *retp)
 	{
-		int s;
+		int s, bent;
+		uvlong *a, *ub;
 
 		up->insyscall = 1;
+		bent = 0;
 		s = spllo();
 		if(!waserror()){
 			validaddr((uintptr)args, sizeof(Sargs), 0);
 			up->s = *args;
-			if(scallnr < (ulong)nsyscall && systab[scallnr] != nil)
-				*retp = systab[scallnr]((va_list)up->s.args);
-			else {
-				print("osprey user: unimplemented syscall %uld\n", scallnr);
-				*retp = (uintptr)-1;
+			a = (uvlong*)up->s.args;
+			if(scallnr == 60 && a[0] == 40){	/* the xcall ReqSyscallret: the personality's answer */
+				ub = (uvlong*)a[1];
+				validaddr((uintptr)ub, 2*sizeof(uvlong), 0);
+				bent = ospreysyscallret((uintptr)ub[0], (uintptr)ub[1]) ? 2 : 0;
+				if(bent == 0)
+					*retp = (uintptr)-1;
+			} else if(up->p9syscallup != 0 && !up->p9insyscallup && !up->oslinux
+			&& ospreyfromprog())
+				bent = ospreysyscallup(scallnr);
+			if(bent == 0){
+				if(scallnr < (ulong)nsyscall && systab[scallnr] != nil)
+					*retp = systab[scallnr]((va_list)up->s.args);
+				else {
+					print("osprey user: unimplemented syscall %uld\n", scallnr);
+					*retp = (uintptr)-1;
+				}
 			}
 			poperror();
 		} else
 			*retp = (uintptr)-1;
 		splx(s);
 		up->insyscall = 0;
-		return 0;
+		return bent;
 	}
 
 	/*

@@ -66,6 +66,7 @@ run p9pair  scripts/osprey-check-p9pair.py
 run p9buddy scripts/osprey-check-p9buddy.py
 run p9linux scripts/osprey-check-p9linux.py
 run p9      scripts/osprey-check-p9.py
+run p9legacy scripts/osprey-check-p9legacy.py
 run kbd     scripts/osprey-check-kbd.py
 run rio     scripts/osprey-check-rio.py
 run riowin  scripts/osprey-check-riowin.py
