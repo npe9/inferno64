@@ -690,7 +690,38 @@ lock dropped, when it is in process context with interrupts on (the
 task runs on the other processor meanwhile), and falls through to the
 port only then; a boot's direct bytes fell from about a thousand to a
 hundred, the rest being the fault prints that are meant to be
-synchronous.  And the clock: the CMOS real-time clock is
+synchronous.
+.PP
+Those hundred bytes are the whole of what is left of it, and on 11
+September they were measured rather than assumed: one boot in three has
+a line cut in two, and the sweep of that day lost a criterion to one \-
+.CW "osprey: fault at uscat: started wer pc 0x2000f7, inside ..." ,
+which is the personality's fault line with fourteen characters of a
+program's line driven through it.  The obvious fix was tried the same
+day and taken out again:
+.CW iprint
+was made to offer its line to the console task, the way
+.CW putstrn0
+does, and p9legacy's lines came out in order for it \- the fault line
+moved from log line 496, before the faulting program had even been
+loaded, to 521, where it happened.  Then
+.CW xup64
+said why that is wrong.  Its console task is a user program that stops,
+and the three lines it had not taken when it stopped were the last
+three of the boot, with three criteria on them.  An
+.CW iprint
+is a line that must be seen, and a queue is a promise that somebody
+will drain it; a kernel cannot make that promise for a user program.
+.PP
+So what remains is not a gap that a lock would close, and that is worth
+being precise about, because a lock looks like the answer.  With a
+console task the port has two writers: this kernel, through
+.CW putc
+on the chip, and the task's own uart driver, which is a user program
+with a port grant.  No lock in this kernel reaches the second of them.
+Ordering them means the kernel not writing the port at all \- which is
+the arrangement, and which is exactly what cannot be relied on for the
+print that says a fault happened.  And the clock: the CMOS real-time clock is
 read in user space now, the exokernel way, the personality's own
 .CW outb / inb
 on ports 0x70 and 0x71 under a port grant, reading the date and time with
