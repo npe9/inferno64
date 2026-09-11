@@ -1002,7 +1002,22 @@ config_evidence() {
 		# the riscv boards use for plicbase, in one line: mem.h
 		# would say 0x50000000 and the machine has twice that, so a
 		# board that ignored the map would lose half its memory.
-		echo 'conf: memtop 0x[0-9a-f]+ from the loader \(mem.h would say 0x50000000\)';;
+		echo 'conf: memtop 0x[0-9a-f]+ from the loader \(mem.h would say 0x50000000\)'
+		# And the tables are outside the memory that number gives
+		# the allocator.  This is the check the map walk exists to
+		# pass, and it is asserted rather than read off, because it
+		# is the one that was silently failing: memtop used to be
+		# the highest usable address anywhere in the map, which put
+		# the ACPI tables, the firmware's runtime services and
+		# every reserved hole between them inside the single range
+		# confinit() claims.  Nothing had allocated that far up, so
+		# nothing said anything.  The board now prints ACPI-IN-HEAP
+		# when it goes back that way, and this line fails.
+		echo 'ACPI-OUTSIDE-HEAP'
+		# The loader's own account of where the run stopped and what
+		# stopped it, which on a real machine is the interesting
+		# fact: type 5 is EfiRuntimeServicesCode here.
+		echo 'usable to 0x[0-9a-f]+, stopped by efi type 0x[0-9a-f]+';;
 	virtarm64-noscan)
 		# The scan is off, the tree was not found, and the board
 		# booted anyway on its compiled-in constants.  All three

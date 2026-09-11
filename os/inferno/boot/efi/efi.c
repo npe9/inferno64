@@ -4,11 +4,47 @@
 
 UINTN MK;
 /*
- * The highest address the firmware calls usable, from the memory map.
- * Written by memconf() and read only by the arm64 path, which has
- * nowhere else to learn it when there is no device tree.
+ * The firmware's memory map, kept after memconf() has taken MK out of
+ * it so that memtopat() below can walk it.
+ *
+ * static, not automatic, and for two reasons.  A 96K map buffer on the
+ * firmware's own stack is a lot to ask of it; and 7c cannot pass the
+ * address of a stack local as an argument to a variadic function on
+ * arm64 -- it emits a DWORD of a stack address-constant and 7l refuses
+ * it as "illegal combination DWORD NONE NONE LACON".  The addresses of
+ * statics are $sym(SB) and assemble.
  */
-uvlong memtop;
+static UINTN mapsize, entsize;
+static uchar mapbuf[96*1024];
+
+/*
+ * What memtopat() counts as the kernel's, which is not the same
+ * question memconf()'s table answers.
+ *
+ * memconf() is describing memory to a pc kernel that will read the map
+ * while boot services are still meaningful, so it calls boot-services
+ * code and data reserved.  memtopat() is answering for a kernel that
+ * runs after ExitBootServices(), and at that point the firmware's
+ * boot-services memory is the guest's -- every OS reclaims it.  Calling
+ * it reserved here does not make the kernel safer, it makes the run
+ * stop at the first thing edk2 happened to allocate in the middle of
+ * DRAM: measured, that was 0x44000000 on a machine with memory to
+ * 0x80000000, and 63MB free where there had been 532MB.
+ *
+ * Runtime services, ACPI reclaim and ACPI NVS stay barriers.  Runtime
+ * and NVS because the firmware keeps them across the call; reclaim
+ * because the tables this board reads are in it, and the kernel reads
+ * them after the allocator is live.
+ */
+static uchar mine[EfiMaxMemoryType] = {
+	[EfiLoaderCode]			1,
+	[EfiLoaderData]			1,
+	[EfiBootServicesCode]		1,
+	[EfiBootServicesData]		1,
+	[EfiConventionalMemory]		1,
+};
+static int havemap;
+
 EFI_HANDLE IH;
 EFI_SYSTEM_TABLE *ST;
 
@@ -78,21 +114,9 @@ memconf(char **cfg)
 		[EfiMemoryMappedIOPortSpace]	2,
 		[EfiPalCode]			2,
 	};
-	/*
-	 * static, not automatic, and for two reasons.  A 96K map buffer
-	 * on the firmware's own stack is a lot to ask of it; and 7c
-	 * cannot pass the address of a stack local as an argument to a
-	 * variadic function on arm64 -- it emits a DWORD of a stack
-	 * address-constant and 7l refuses it as "illegal combination
-	 * DWORD NONE NONE LACON".  The addresses of statics are
-	 * $sym(SB) and assemble.
-	 */
-	static UINTN mapsize, entsize;
 	static UINT32 entvers;
-	static uchar mapbuf[96*1024];
 	EFI_MEMORY_DESCRIPTOR *t;
 	uchar *p, m;
-	uvlong top;
 	UINTN n;
 	char *s;
 
@@ -102,29 +126,18 @@ memconf(char **cfg)
 	if(eficall(ST->BootServices->GetMemoryMap, &mapsize, mapbuf, &MK, &entsize, &entvers))
 		return;
 
-	/*
-	 * The top of usable memory, before anything else: this is the
-	 * one number an arm64 kernel needs and cannot get anywhere else
-	 * when the firmware publishes ACPI and no device tree.  Computed
-	 * even when the caller wants only MK, because that is exactly
-	 * the arm64 call.  Types the memtype table calls 1 are the ones
-	 * that are the guest's after ExitBootServices.
-	 */
-	for(p = mapbuf, n = mapsize; n >= entsize; p += entsize, n -= entsize){
-		t = (EFI_MEMORY_DESCRIPTOR*)p;
-		if(t->Type >= EfiMaxMemoryType || memtype[t->Type] != 1)
-			continue;
-		top = t->PhysicalStart + t->NumberOfPages*4096ULL;
-		if(top > memtop)
-			memtop = top;
-	}
+	havemap = 1;
 
 	/* only called to get MK for ExitBootServices() */
 	if(cfg == nil)
 		return;
 
 	s = *cfg;
-	for(p = mapbuf; mapsize >= entsize; p += entsize, mapsize -= entsize){
+	/*
+	 * n, not mapsize: the walk used to consume mapsize, which left
+	 * memtopat() below with nothing to walk.
+	 */
+	for(p = mapbuf, n = mapsize; n >= entsize; p += entsize, n -= entsize){
 		t = (EFI_MEMORY_DESCRIPTOR*)p;
 
 		m = 0;
@@ -321,6 +334,80 @@ Found:
 
 	print(*cfg);
 	*cfg = s;
+}
+
+/*
+ * The top of the contiguous usable run that contains base.
+ *
+ * Not the highest usable address anywhere, which is what this used to
+ * answer and which is wrong in a way that matters: a kernel whose
+ * confinit() claims one range from the bottom of memory to that top
+ * has claimed every reserved hole in between -- the ACPI tables, the
+ * firmware's runtime services, anything the map calls unusable.  On
+ * QEMU those sit near the top and nothing allocates that far, which is
+ * exactly the "surviving only because nothing had allocated that far
+ * up yet" the riscv boards were caught by.  A real machine's map is not
+ * one clean run and claiming its holes is a fault rather than a
+ * survivable overwrite.
+ *
+ * The walk makes no assumption about the order of the map: it starts
+ * with the descriptor holding base and then looks for a usable
+ * descriptor that begins exactly where the run so far ends, repeatedly.
+ * The map is small and this is once.
+ */
+uvlong
+memtopat(uvlong base, int *stoptype)
+{
+	EFI_MEMORY_DESCRIPTOR *t;
+	uchar *p;
+	UINTN n;
+	uvlong top, end;
+	int grew;
+
+	*stoptype = -1;
+	if(!havemap || mapsize == 0 || entsize == 0)
+		return 0;
+	top = 0;
+	for(p = mapbuf, n = mapsize; n >= entsize; p += entsize, n -= entsize){
+		t = (EFI_MEMORY_DESCRIPTOR*)p;
+		if(t->Type >= EfiMaxMemoryType || mine[t->Type] != 1)
+			continue;
+		end = t->PhysicalStart + t->NumberOfPages*4096ULL;
+		if(base >= t->PhysicalStart && base < end){
+			top = end;
+			break;
+		}
+	}
+	if(top == 0)
+		return 0;
+	do {
+		grew = 0;
+		for(p = mapbuf, n = mapsize; n >= entsize; p += entsize, n -= entsize){
+			t = (EFI_MEMORY_DESCRIPTOR*)p;
+			if(t->Type >= EfiMaxMemoryType || mine[t->Type] != 1)
+				continue;
+			if(t->PhysicalStart != top)
+				continue;
+			top = t->PhysicalStart + t->NumberOfPages*4096ULL;
+			grew = 1;
+			break;
+		}
+	} while(grew);
+
+	/*
+	 * What the run ran into, for the report.  -1 means the map has
+	 * nothing at all at that address, which is the top of memory;
+	 * anything else is the EFI type of whatever is in the way, and on
+	 * a real machine that is the interesting fact.
+	 */
+	for(p = mapbuf, n = mapsize; n >= entsize; p += entsize, n -= entsize){
+		t = (EFI_MEMORY_DESCRIPTOR*)p;
+		if(t->PhysicalStart == top){
+			*stoptype = t->Type;
+			break;
+		}
+	}
+	return top;
 }
 
 void

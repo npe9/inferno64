@@ -59,6 +59,7 @@ static int	haveridmap;
 static int	ridviasmmu;		/* the map goes through an SMMU */
 
 static int	tablesfound;
+static uvlong	rsdppa;			/* where the loader said they are */
 
 /*
  * The signature line, built while the tables are still safe to read.
@@ -251,6 +252,7 @@ acpifind(void)
 	if(p == nil)
 		return;
 	pa = (uintptr)strtoull(p, nil, 16);
+	rsdppa = pa;
 	acpiinit(pa);
 	if(!acpivalid())
 		return;
@@ -293,6 +295,31 @@ acpireport(void)
 	if(ridviasmmu)
 		print("acpi: iort also maps requesters through an smmu;"
 			" those keep intx\n");
+	/*
+	 * Whether the tables are inside the memory the allocator owns.
+	 *
+	 * This is the check the whole *memtop= path exists to pass.  The
+	 * kernel sizes memory from the loader's number and confinit()
+	 * claims one range from the bottom of DRAM to it; if the tables
+	 * are under that top they are in the heap, and every read of them
+	 * after xinit() is a read of memory something else may already
+	 * have been handed.  It survived that way for a while, which is
+	 * the same "nothing had allocated that far up yet" the riscv
+	 * boards were caught by, and it is not evidence of anything.
+	 *
+	 * Printed either way.  A board where it goes wrong should say so
+	 * rather than going quiet, because going quiet is what it did.
+	 */
+	if(rsdppa != 0){
+		if(rsdppa < (uvlong)conf.topofmem)
+			print("acpi: tables at %#llux are below topofmem %#p --"
+				" xalloc owns them, ACPI-IN-HEAP\n",
+				rsdppa, (uintptr)conf.topofmem);
+		else
+			print("acpi: tables at %#llux above topofmem %#p,"
+				" ACPI-OUTSIDE-HEAP\n",
+				rsdppa, (uintptr)conf.topofmem);
+	}
 	if(gicdbase == 0 && gicitsbase == 0 && !haveridmap)
 		print("acpi: tables carry nothing this board reads\n");
 }

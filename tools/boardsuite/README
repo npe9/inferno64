@@ -841,6 +841,19 @@ identity map, which is also what ridtodevid() falls back to when there
 is no window at all, so a machine whose IORT says something else is what
 would tell the two apart -- and this is not that machine.
 
+It also carries the memory check, which is the one piece of this arm
+that was silently failing.  The loader sizes memory from the firmware's
+map and the kernel claims one range up to that top, so where the top is
+decides whether the ACPI tables are inside the heap.  Four lines are
+asserted: "usable to 0x..., stopped by efi type 0x..." from the loader,
+"conf: memtop ... (mem.h would say 0x50000000)" from the kernel, and
+ACPI-OUTSIDE-HEAP, which the board prints by comparing the RSDP against
+conf.topofmem after confinit() has run.  The board prints ACPI-IN-HEAP
+instead when it goes the other way; it never prints neither, because
+printing neither is what it used to do.  Falsified by putting the old
+highest-usable-address-anywhere walk back and rebuilding only the
+loader: the arm fails with "missing evidence: ACPI-OUTSIDE-HEAP".
+
 A SHARED SOURCE COUNTS ONLY IF THE BOARD COMPILED IT.  The staleness
 check scans os/inferno/port and os/inferno/ip for every board, because
 every board links most of what is in them -- but not all of it.

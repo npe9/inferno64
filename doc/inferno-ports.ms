@@ -23629,10 +23629,9 @@ already calls
 .CW GetMemoryMap ,
 because
 .CW ExitBootServices()
-will not proceed without the current map's key; it now also takes the
-highest address the firmware calls usable, and the arm64 path puts one
-line in the configuration:
-.CW *memtop=0x80000000 .
+will not proceed without the current map's key; the map is kept after
+that call, and the arm64 path puts one line in the configuration:
+.CW *memtop=0x7c770000 .
 One number and not the whole map, because
 .CW confinit()
 computes its page count from a single range starting at PHYSDRAM and a
@@ -23641,21 +23640,96 @@ whole map and a
 .CW confinit()
 that can take it.
 .PP
+Which number, though, is the whole of it, and the first answer was
+wrong in exactly the way this document has a section about.  The
+highest address the firmware calls usable anywhere in the map is not
+the top of anything the kernel can have: between it and the kernel sit
+the firmware's runtime services, the ACPI tables, and whatever holes
+the map describes, and a
+.CW confinit()
+that claims one range to that top has claimed all of them.  On QEMU it
+booted and measured well \(em 532MB free at
+.CW "-m 512M" ,
+1069703168 bytes at
+.CW "-m 1G" \(em
+and the RSDP at 0x7cb43018 was most of a gigabyte inside what xalloc
+was handing out.  That is verbatim the sentence four pages up about the
+seven riscv boards: reading a tree the allocator owned, surviving only
+because nothing had allocated that far up yet.  The difference is that
+those boards now trim
+.CW conf.topofmem
+down to the blob, and this one had been extended past it.
+.PP
+.CW memtopat()
+answers the question the kernel is actually asking: the top of the
+contiguous usable run that contains the kernel's own load address.  It
+starts with the descriptor holding that address and then repeatedly
+looks for a usable descriptor beginning exactly where the run so far
+ends, so it makes no assumption about the order of the map, and it
+cannot walk over a reserved hole.
+.PP
+What counts as usable there is not what
+.CW memconf()
+counts.
+.CW memconf()
+is describing memory to a pc kernel that reads the map with boot
+services still meaningful, so it calls boot-services code and data
+reserved;
+.CW memtopat()
+is answering for a kernel that runs after
+.CW ExitBootServices() ,
+where that memory is the guest's.  Counting it reserved was measured
+and it is not a conservative choice, it is a wrong one: edk2 allocates
+boot-services data in the middle of DRAM, the run stopped at
+0x44000000 on a machine with memory to 0x80000000, and the board came
+up with 63074304 bytes free where it had had 532MB.  Runtime services,
+ACPI reclaim and ACPI NVS stay barriers \(em the first two because the
+firmware keeps them across the call, reclaim because the tables this
+board reads are in it and it reads them after the allocator is live.
+.PP
 The result, on
 .CW "-M virt,gic-version=3"
-with no device tree:
+with no device tree and 1GB:
 .P1
--m 512M   532832256 bytes free   (was 264400896)
--m 1G    1069703168 bytes free   (was 264400896)
+usable to 0x000000007c770000, stopped by efi type 0x05
+conf: memtop 0x000000007c770000 from the loader (mem.h would say 0x50000000)
+1010397184 bytes free
+acpi: tables at 0x7cb43018 above topofmem 0x7c770000, ACPI-OUTSIDE-HEAP
 .P2
-and the board says which authority it used:
-.P1
-conf: memtop 0x80000000 from the loader (mem.h would say 0x50000000)
-.P2
-That line is the falsify test in one sentence, and it is the same one
-the riscv boards use for
+Type 5 is
+.CW EfiRuntimeServicesCode ,
+and on a real machine which type stopped the run is the interesting
+fact, so the loader prints it.  The 59MB between 0x7c770000 and the top
+of DRAM is the firmware's, and it was being claimed.
+.PP
+Two falsify tests, and both were run rather than reasoned about.  The
+.CW memtop
+line itself is the one the riscv boards use for
 .CW plicbase :
-the constant says one thing, the machine says another, and the board
-takes the machine's.  The
+the constant says 0x50000000, the machine says twice that, and the
+board takes the machine's.  The second is
+.CW ACPI-OUTSIDE-HEAP ,
+which the board prints by comparing the RSDP against
+.CW conf.topofmem
+after
+.CW confinit()
+has run.  Putting the old highest-address-anywhere walk back and
+rebuilding only the loader produced
+.P1
+usable to 0x0000000080000000, stopped by efi type 0xff
+acpi: tables at 0x7cb43018 are below topofmem 0x80000000 -- xalloc owns them, ACPI-IN-HEAP
+.P2
+and
+.P1
+virtarm64-acpi: FAIL evidence (45 markers)
+    missing evidence: ACPI-OUTSIDE-HEAP
+.P2
+The board prints one line or the other, never neither, because a board
+where this goes wrong should say so rather than going quiet \(em going
+quiet is what it did.  The
 .CW virtarm64-acpi
-arm asserts it.
+arm asserts all four lines.
+.PP
+None of this was reaching a failure on QEMU and it would have on
+hardware.  An Ampere Altra's memory map is not one clean run, and
+claiming its holes is a fault rather than a survivable overwrite.

@@ -155,7 +155,7 @@ timeout(int ms)
 #define	BOOTARGSLEN	(4096-0x200-BOOTLINELEN)
 
 extern char *confaddr;
-extern uvlong memtop;			/* efi.c, from the firmware's map */
+extern uvlong memtopat(uvlong, int*);	/* efi.c, from the firmware's map */
 /* Values consumed by the mode-switch stub after ExitBootServices. */
 extern void *jumpentry;
 void *jumpargs;
@@ -352,6 +352,11 @@ bootkern(void *f)
 	uchar *e, *d, *t;
 	ulong n;
 	Exec ex;
+#ifdef AA64
+	char msg[64], *mp;
+	uvlong memtop;
+	int stoptype;
+#endif
 
 	if(readn(f, &ex, sizeof(ex)) != sizeof(ex))
 		return "bad header";
@@ -462,7 +467,19 @@ bootkern(void *f)
 	 * count from a single range starting at PHYSDRAM, so a top is
 	 * all it can use.  A machine with holes in its memory needs the
 	 * whole map and a confinit() that can take it.
+	 *
+	 * Which is exactly why the number is the top of the run the
+	 * kernel itself was loaded into, and not the highest usable
+	 * address anywhere in the map.  Those differ the moment the
+	 * firmware puts anything reserved between them -- its runtime
+	 * services, the ACPI tables, a hole -- and a kernel handed the
+	 * higher number claims all of it, which is the "reading a tree
+	 * the allocator owned, surviving only because nothing had
+	 * allocated that far up yet" the riscv boards were caught by.
+	 * Here it would be worse than survivable: an Altra's map is not
+	 * one clean run.
 	 */
+	memtop = memtopat((uvlong)(uintptr)e, &stoptype);
 	if(memtop != 0 && confend + 32 < BOOTARGS + BOOTARGSLEN){
 		memmove(confend, "*memtop=0x", 10);
 		confend += 10;
@@ -470,6 +487,20 @@ bootkern(void *f)
 		*confend++ = '\n';
 		*confend = '\0';
 	}
+	/*
+	 * Said out loud, because the number the kernel ends up with is
+	 * the whole point of the change and there is no other place to
+	 * see what the firmware's map actually said.  print() here takes
+	 * a string and nothing else, so the line is built by hand.
+	 */
+	mp = msg;
+	memmove(mp, "usable to 0x", 12), mp += 12;
+	mp = hexfmt(mp, 16, memtop);
+	memmove(mp, ", stopped by efi type 0x", 24), mp += 24;
+	mp = hexfmt(mp, 2, (uvlong)(uint)stoptype);
+	*mp++ = '\n';
+	*mp = '\0';
+	print(msg);
 	unload();
 
 	/*
