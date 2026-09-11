@@ -77,20 +77,6 @@ trapinit(void)
 	 */
 	/* 9front specific trapenable(VectorDE, debugexc, 0, "debugexc"); */
 	trapenable(VectorBPT, debugbpt, 0, "debugpt");
-	/*
-	 * With *ilockwatch set, squidboy() points the second processor's
-	 * DR0 at cpu0's m->ilockdepth and asks for a trap on any write
-	 * to it.  Without a handler here the debug exception reaches
-	 * trap()'s "unknown trap/intr" and the machine stops without
-	 * printing -- which is what a control write did, so the
-	 * watchpoint does fire; it just had nowhere to say so.  This
-	 * disarms the watchpoint first, so the report itself cannot
-	 * re-trigger it, and then says who wrote.
-	 */
-	if(getconf("*ilockwatch") != nil){
-		trapenable(VectorDE, ilockwatchtrap, 0, "ilockwatch");
-		print("trapinit: ilockwatch handler installed on vector %d\n", VectorDE);
-	}
 /*	trapenable(VectorPF, faultamd64, 0, "faultamd64");
 	trapenable(Vector2F, doublefault, 0, "doublefault");
 	trapenable(Vector15, unexpected, 0, "unexpected");
@@ -570,34 +556,6 @@ debugexc(Ureg *ureg, void *)
 		postnote(up, 0, buf, NDebug);
 	}
 	qunlock(&up->debug);
-}
-
-/*
- * A write to the word this processor is watching -- see squidboy()'s
- * ilockwatch().  Nothing on a processor other than cpu0 has any
- * business storing into cpu0's Mach, so reaching here at all is the
- * answer the counters could not give.
- */
-uintptr	ilockwatchpc;
-int	ilockwatchhits;
-
-void
-ilockwatchtrap(Ureg* ureg, void*)
-{
-	putdr7(0);
-	putdr6(0);
-	/*
-	 * No printing at all from here.  dumpregs() prints with
-	 * print(), which takes kmesg's lock, and a processor stopping
-	 * inside that lock takes the other one with it: the first
-	 * version of this handler called dumpregs() and the deliberate
-	 * control write killed the machine silently, both processors.
-	 * Cutting it back to iprint() did the same.  So the handler now
-	 * only records, and whoever notices prints later, on a
-	 * processor that is not in a trap.
-	 */
-	ilockwatchpc = ureg->pc;
-	ilockwatchhits++;
 }
 
 static void

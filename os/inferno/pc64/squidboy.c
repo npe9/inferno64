@@ -11,65 +11,6 @@
 #define DP	if(1){}else print
 
 extern void _stts(void);
-extern uintptr ilockwatchpc;
-extern int ilockwatchhits;
-
-/*
- * Point this processor's first debug register at cpu0's m->ilockdepth
- * and ask for a trap on any write to it.
- *
- * The question this answers is the one the counters cannot: cpu0's
- * ilockdepth changes under cpu0 while cpu0 has interrupts off, the
- * words around it in Mach stay sane, so it is a single stray store and
- * not a memset -- but nothing so far says which processor makes it.
- * This processor has no business writing cpu0's Mach at all, so any
- * trap here is the bug, and trap.c dumps the registers and panics with
- * the pc in them.  Equally, silence is a real answer: it means the
- * store comes from cpu0 itself.
- *
- * Off unless *ilockwatch is set in plan9.ini, and DR0-3 are otherwise
- * a per-process resource (main.c reloads them from p->dr), so this is
- * for a kernel booted to be watched, not for a shipped one.
- *
- * DR7: L0 enables DR0 for this processor, LE is the recommended exact
- * -match bit, R/W0 = 01 is "break on data write", LEN0 = 11 is four
- * bytes.  DR0 must be set before DR7 enables it, so putdr01236 (which
- * does not touch DR7) comes first.
- */
-void
-ilockwatch(void)
-{
-	static u64 dr[8];
-
-	if(getconf("*ilockwatch") == nil)
-		return;
-	dr[0] = (u64)(uintptr)&MACHP(0)->ilockdepth;
-	putdr01236(dr);
-	putdr7(1 | (1<<8) | ((u64)1<<16) | ((u64)3<<18));
-	print("cpu%d: watching %#p (cpu0 m->ilockdepth) for writes\n",
-		m->machno, (void*)(uintptr)dr[0]);
-	/*
-	 * The positive control.  Silence from a watchpoint reads exactly
-	 * like a watchpoint that was never armed, and this tree has
-	 * already published one conclusion drawn from an instrument that
-	 * could not have shown the thing either way.  With
-	 * *ilockwatch=test this processor writes the watched word itself,
-	 * on purpose, and the kernel is expected to die on the spot with
-	 * a debug exception.  A boot that survives it means the trap does
-	 * not work and no silence from it means anything.
-	 */
-	if(strcmp(getconf("*ilockwatch"), "test") == 0){
-		print("cpu%d: control write to %#p, expect a trap\n",
-			m->machno, (void*)(uintptr)dr[0]);
-		MACHP(0)->ilockdepth += 0;
-		if(ilockwatchhits == 0)
-			print("cpu%d: CONTROL FAILED, the write did not trap\n",
-				m->machno);
-		else
-			print("cpu%d: CONTROL OK, %d hit(s), writer pc %#p\n",
-				m->machno, ilockwatchhits, (void*)ilockwatchpc);
-	}
-}
 
 static void
 squidboy(Apic* apic)
@@ -81,32 +22,7 @@ squidboy(Apic* apic)
 		arch->clockinit();
 	cpuidprint();
 	syncclock();
-	print("cpu%d: squidboy m %#p, MACHP(0) %#p, MACHP(1) %#p\n",
-		m->machno, m, MACHP(0), MACHP(1));
-	/*
-	 * Do cpu0's Mach and this one's occupy the same physical memory?
-	 *
-	 * Every corrupted value of cpu0's m->ilockdepth captured so far
-	 * is 0 or 1 -- never garbage, never a fragment of a pointer.
-	 * Values in lock-depth range mean something is running lock
-	 * bookkeeping on that word, not spraying it, and the only
-	 * writers of 0 and 1 in the tree are ilock(), iunlock() and
-	 * machinit().  If these two Mach structures alias, then this
-	 * processor's own perfectly correct ilock/iunlock land on
-	 * cpu0's counter, which produces divergence in both directions,
-	 * always in lock-depth range, drifting negative -- everything
-	 * seen -- while a shadow indexed by machno stays separate and
-	 * correct.  Two prints settle it.
-	 */
-	print("cpu%d: m %#p PADDR %#p; MACHP(0) %#p PADDR %#p\n",
-		m->machno, m, (void*)PADDR(m),
-		MACHP(0), (void*)PADDR(MACHP(0)));
-	*(u32int*)((uchar*)m + 0x70) = 0x5A5AC0DE;
-	print("cpu%d: wrote magic at own m+0x70; cpu0 m+0x70 reads %#ux\n",
-		m->machno, *(u32int*)((uchar*)MACHP(0) + 0x70));
-	*(u32int*)((uchar*)m + 0x70) = 0;
 	active.machs[m->machno] = 1;
-	ilockwatch();
 	apic->online = 1;
 	lapicinit(apic);
 	lapiconline();

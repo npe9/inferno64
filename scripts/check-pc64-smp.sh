@@ -39,11 +39,11 @@ one=0
 i=1
 while [ $i -le $RUNS ]; do
 	sh "$ROOT/scripts/qemu-inferno-efi.sh" "$WORK/smp.iso" "$WORK/smp$i.log" 45 -smp 2 >/dev/null 2>&1
-	if grep -q 'ilockdepth -\|shadow .* but m->ilockdepth' "$WORK/smp$i.log"; then
+	if grep -q 'ilockdepth -\|ilockdepth [0-9]\|panic:' "$WORK/smp$i.log"; then
 		bad=`expr $bad + 1`
 	fi
 	sh "$ROOT/scripts/qemu-inferno-efi.sh" "$WORK/one.iso" "$WORK/one$i.log" 45 -smp 2 >/dev/null 2>&1
-	if grep -q 'ilockdepth -\|shadow .* but m->ilockdepth' "$WORK/one$i.log"; then
+	if grep -q 'ilockdepth -\|ilockdepth [0-9]\|panic:' "$WORK/one$i.log"; then
 		one=`expr $one + 1`
 	fi
 	i=`expr $i + 1`

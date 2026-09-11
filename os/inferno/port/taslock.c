@@ -14,92 +14,23 @@ uintptr maxlockpc;
 uintptr maxilockpc;
 
 /*
- * The caller of each held ilock, innermost last.  See ilock().
- */
-uintptr ilockpc[8];
-void *ilockm[8];
-
-/*
- * A shadow of m->ilockdepth kept outside Mach, one per processor,
- * moved at exactly the two places m->ilockdepth is moved.
+ * What is left of the instruments this file carried while the pc64 SMP
+ * fault was open.  The fault is fixed -- os/inferno/pc64/l.s's
+ * _intrestore was reloading m and up out of the interrupted frame, so a
+ * process resumed on another processor made that processor's m point at
+ * the first one's Mach, and its own correct ilock/iunlock then counted
+ * the other processor's depth -- so the per-level holder array, the
+ * shadow counter kept outside Mach and the machno-collision detector
+ * are gone with it; they cost two array writes on every ilock and their
+ * question is answered.
  *
- * This exists to split one question in two.  Every ilock/iunlock pair
- * this hunt has caught is balanced and local -- poolalloc+0x5b with
- * poolalloc+0x141, timerintr+0x47 with timerintr+0x77, uartkick+0x2b
- * with uartkick+0x4b -- and yet cpu0's depth reaches -1.  Either
- * something writes Mach behind the counter's back, in which case the
- * shadow and the counter part company, or the count really is
- * unbalanced, in which case they go negative together.  They cannot
- * both be true, and until now there was no way to tell which.
+ * The three checks below stay because they are invariants rather than
+ * instruments, they cost a compare each, and one of them could not fire
+ * at all until pc64's Mach stopped shadowing PMach's ilockdepth with an
+ * unsigned field.  A depth that goes negative is the signature the
+ * whole hunt turned on, and it is worth catching where it happens
+ * rather than at the next sched().
  */
-int ilockshadow[8];
-int ilockshadowbad;
-
-/*
- * The m each machno was first seen with, and a one-shot report when a
- * second Mach turns up claiming the same number.  ilockshadow above is
- * indexed by m->machno, so if two processors ever agree on a machno
- * while disagreeing on m, they race on one shadow word while keeping
- * separate depths -- which would make the shadow the corrupted half,
- * not Mach, and the whole reading backwards.  This says which.
- */
-void *ilockmach[8];
-int ilockmachbad;
-
-/*
- * Both counters are checked immediately after each is moved, so the
- * first report says which of the two operations lost the update and
- * what the depth held before it: a depth that went from D to something
- * other than D+1 under splhi was written by someone else between the
- * read and the store, and a depth that moved correctly while the
- * shadow did not says the opposite.  Reported once; after the first
- * divergence every later one is a consequence.
- */
-static void
-ilockcheck(char *where, int was, uintptr pc)
-{
-	int s, i;
-
-	if(ilockshadowbad || (uint)m->machno >= nelem(ilockshadow))
-		return;
-	s = ilockshadow[m->machno];
-	if(s == m->ilockdepth)
-		return;
-	ilockshadowbad = 1;
-	iprint("%s: cpu%d depth was %d, now %d, shadow %d, m %#p, pc %#p\n",
-		where, m->machno, was, m->ilockdepth, s, m, pc);
-	/*
-	 * The shape of the write, which is the thing left to learn.  A
-	 * single word changed says a stray pointer store; a run of
-	 * words gone to zero says a memset or a free landing on top of
-	 * cpu0's Mach, which is at a fixed address (CPU0MACH) that no
-	 * allocator should ever hand out.  ilockdepth is inside PMach,
-	 * so the neighbours printed here are PMach's own fields.
-	 */
-	iprint("  m+0x40:");
-	for(i = 0x40; i < 0x94; i += 4)
-		iprint(" %8.8ux", *(u32int*)((uchar*)m + i));
-	iprint("\n");
-}
-
-void
-ilockheldpcs(void)
-{
-	int i;
-
-	/*
-	 * Unconditional, and first.  A silent return from here reads
-	 * exactly like a print that was lost on the way out of a
-	 * Compute Engine serial console, and I drew a conclusion from
-	 * that silence once already ("the array is all zeros while the
-	 * depth is 1") without being able to tell the two apart.
-	 */
-	iprint("ilockheld: depth %d\n", m->ilockdepth);
-	for(i = 0; i < nelem(ilockpc); i++)
-		if(ilockpc[i] != 0)
-			iprint("  ilock %d held from %#p, m was %#p, m now %#p\n",
-				i, (void*)ilockpc[i], ilockm[i], m);
-}
 
 struct
 {
@@ -214,7 +145,6 @@ void
 ilock(Lock *l)
 {
 	ulong x;
-	int was;
 	uintptr pc;
 
 	pc = getcallerpc(&l);
@@ -239,40 +169,7 @@ ilock(Lock *l)
 		}
 	}
 acquire:
-	was = m->ilockdepth;
 	m->ilockdepth++;
-	/*
-	 * Who is holding each level, so that a depth that never comes
-	 * back down can be attributed.  sched() and qlock() report the
-	 * depth and os/inferno/port/proc.c's panic prints up->lastilock,
-	 * which is nil for a lock taken in interrupt context -- exactly
-	 * the case that leaks one -- so the depth is all there was to go
-	 * on.  ilockpc[] is that missing half; ilockheldpcs() prints it.
-	 */
-	/*
-	 * m->ilockdepth > 0 first.  Written as an unsigned compare
-	 * against nelem() alone this indexes ilockpc[-1] whenever the
-	 * depth arrives at 0 -- which is to say every time an
-	 * already-negative depth is incremented back through zero,
-	 * which is the very state this instrument was added to catch.
-	 * A tool that corrupts memory in the case it exists to observe
-	 * is worse than no tool.
-	 */
-	if((uint)m->machno < nelem(ilockshadow)){
-		if(ilockmach[m->machno] == nil)
-			ilockmach[m->machno] = m;
-		else if(ilockmach[m->machno] != m && ilockmachbad == 0){
-			ilockmachbad = 1;
-			iprint("ilock: machno %d claimed by m %#p and m %#p, pc %#p\n",
-				m->machno, ilockmach[m->machno], m, pc);
-		}
-		ilockshadow[m->machno]++;
-		ilockcheck("ilock", was, pc);
-	}
-	if(m->ilockdepth > 0 && m->ilockdepth <= nelem(ilockpc)){
-		ilockpc[m->ilockdepth-1] = pc;
-		ilockm[m->ilockdepth-1] = m;
-	}
 	if(up)
 		up->lastilock = l;
 	l->sr = x;
@@ -355,7 +252,6 @@ void
 iunlock(Lock *l)
 {
 	ulong sr;
-	int was;
 
 #ifdef LOCKCYCLES
 	l->lockcycles += lcycles();
@@ -390,14 +286,7 @@ iunlock(Lock *l)
 	l->m = nil;
 	coherence();
 	l->key = 0;
-	was = m->ilockdepth;
 	m->ilockdepth--;
-	if((uint)m->machno < nelem(ilockshadow)){
-		ilockshadow[m->machno]--;
-		ilockcheck("iunlock", was, getcallerpc(&l));
-	}
-	if(m->ilockdepth >= 0 && m->ilockdepth < nelem(ilockpc))
-		ilockpc[m->ilockdepth] = 0;
 	/*
 	 * Caught here rather than at the next sched(), which is where
 	 * proc.c notices and which is too late to say who did it: by
@@ -410,9 +299,8 @@ iunlock(Lock *l)
 	 * laptop does not.
 	 */
 	if(m->ilockdepth < 0)
-		iprint("iunlock(%#p): cpu%d ilockdepth %d shadow %d, pc %#p, lock pc %#p, m %#p\n",
+		iprint("iunlock(%#p): cpu%d ilockdepth %d, pc %#p, lock pc %#p, m %#p\n",
 			l, m->machno, m->ilockdepth,
-			(uint)m->machno < nelem(ilockshadow)? ilockshadow[m->machno]: -1,
 			getcallerpc(&l), l->pc, m);
 	if(up)
 		up->lastilock = nil;
@@ -433,14 +321,5 @@ iunlock(Lock *l)
 	if(m->ilockdepth > 0 && islo()){
 		iprint("iunlock: interrupts on at ilockdepth %d, pc %#p, lock pc %#p\n",
 			m->ilockdepth, getcallerpc(&l), l->pc);
-		/*
-		 * And who still holds one.  That is the lock taken while
-		 * interrupts were enabled, which is the state that makes
-		 * the rest possible: this unlock only restores what its
-		 * own ilock saved, so if it turns interrupts back on with
-		 * a lock outstanding, the outstanding one was taken in a
-		 * context that already had them on.
-		 */
-		ilockheldpcs();
 	}
 }
