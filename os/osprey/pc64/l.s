@@ -624,6 +624,28 @@ TEXT setlabel(SB), 1, $-4
 	MOVL	$0, AX				/* return 0 */
 	RET
 
+/*
+ * Leave this task and enter that one: setlabel and gotolabel in one
+ * instruction stream.  Two of them would not do, because the code
+ * between them would run on a stack that is about to be left.
+ *
+ * A label is a stack pointer and a program counter and that is the
+ * whole of a context here: the Plan 9 compilers keep nothing in a
+ * register across a call, which is why this kernel's own setlabel, and
+ * the tree's setjmp for amd64, save those two and no registers at all.
+ *
+ * The second argument is read before SP moves, since FP is SP.
+ */
+TEXT taskswitch(SB), 1, $-4
+	MOVQ	to+8(FP), BX			/* where we are going, first */
+	MOVQ	SP, 0(RARG)			/* store this task's SP */
+	MOVQ	0(SP), AX			/* and the PC it resumes at */
+	MOVQ	AX, 8(RARG)
+	MOVQ	0(BX), SP			/* the other task's SP */
+	MOVQ	8(BX), AX			/* its PC, onto its own stack */
+	MOVQ	AX, 0(SP)
+	RET
+
 TEXT halt(SB), 1, $-4
 	CLI
 	CMPL	nrdy(SB), $0

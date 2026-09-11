@@ -635,6 +635,19 @@ static int ospreynseg;
 static Chan *ospreyfd[16][Nfd];		/* per container, indexed as procs are */
 static Proc *ospreyprocs[16];		/* the process bound to each container */
 static Rendez ospreyservrend[16];	/* wakes a container's service process */
+
+/*
+ * What the service process does with the time a caller spends waiting
+ * for it.  The caller measures its wait as one number, and that number
+ * holds three things: the scheduler getting to this process, the work
+ * it does, and the scheduler getting back to the caller.  Only the
+ * middle one would survive a task that answered without being
+ * scheduled, so the two are worth telling apart before anything is
+ * built on the difference.  #O/bench zeroes these and reads them after.
+ */
+static uvlong ospreysrvwork;	/* answering requests and routing replies */
+static uvlong ospreysrvwake;	/* and its own sweep of the rendezvouses */
+static long ospreysrvpass;
 static Rendez ospreyselrend[16];	/* wakes a container's select */
 static int ospreyserving[16];		/* a service process is running for it */
 static uvlong ospreyservingid[16];	/* and which container it was started for */
@@ -1265,8 +1278,11 @@ ospreyserver(void *a)
 	if(waserror())
 		goto done;
 	for(;;){
+		uvlong s0, s1, s2;
+
 		if((x = ospreyindex(p)) < 0)
 			break;
+		cycles(&s0);
 		qlock(&ospreylock);
 		if(waserror()){
 			qunlock(&ospreylock);
@@ -1277,9 +1293,14 @@ ospreyserver(void *a)
 		ospreyroute(p);
 		poperror();
 		qunlock(&ospreylock);
+		cycles(&s1);
 		ospreywakeup();
 		/* a request routed to somebody else's ring is theirs to answer */
 		ospreywakeservers(x);
+		cycles(&s2);
+		ospreysrvwork += s1 - s0;
+		ospreysrvwake += s2 - s1;
+		ospreysrvpass++;
 		if(ospreyindex(p) < 0)
 			break;
 		sleep(&ospreyservrend[x], ospreyhaswork, p);
@@ -8000,6 +8021,164 @@ ospreyuartbind(Ospreyproc *p, char *name, int sem, int takeconsole)
 	}
 }
 
+/*
+ * A task that is not a Proc.
+ *
+ * Item 10 of the plan is the talk's 270 nanoseconds, and what stands in
+ * the way of it is named there: this microkernel's tasks are Procs, so
+ * a message between two of them is a sleep and a wakeup through the
+ * Plan 9 scheduler.  The section on latency measures what that costs -
+ * 48.5 microseconds of a round trip's 66 - and a cost is only half of a
+ * comparison.  The other half is what the same exchange costs between
+ * two things that are not Procs, and that is what this is: two tasks
+ * with a stack each, passing a message by switching straight from one
+ * to the other, nothing scheduled and nothing woken.
+ *
+ * The switch keeps a stack pointer and a program counter and nothing
+ * else, which is the whole of a context in this ABI: the tree's own
+ * setjmp for amd64 (9front/src/libc/amd64/setjmp.s) saves those two and
+ * no registers at all, because the Plan 9 compilers hold nothing in a
+ * register across a call.  taskswitch is setlabel and gotolabel in one
+ * instruction stream, and the reason to write it rather than to call
+ * those two is that a switch must save and restore in one place: with
+ * setlabel and gotolabel the code between them runs on a stack that is
+ * about to be left.
+ *
+ * What these tasks are not: they are not preemptible, they run in the
+ * kernel context of whatever Proc entered them, they share its address
+ * space, and nothing schedules them but each other.  A microkernel's
+ * task is preemptible and can be picked up by any processor.  So this
+ * measures a lower bound - what a message costs when no scheduler is
+ * in it - and not the talk's task reproduced.  Nothing else in this
+ * kernel uses it: the containers' service path still wakes a kproc,
+ * and converting that path is the rest of item 10.
+ */
+typedef struct Osprtask Osprtask;
+struct Osprtask {
+	Label	l;		/* where it is when it is not running */
+	uchar	*stack;
+	Osprtask *peer;
+	uvlong	msg;		/* the one message slot */
+	int	full;
+	int	stop;
+};
+
+enum {
+	Taskstack	= 8*1024,	/* the talk dumps an 8 KB task */
+};
+
+extern void taskswitch(Label*, Label*);
+
+/*
+ * Two of them, because the exchange the talk measures is between two.
+ * They are static because the task that is entered on a new stack is
+ * entered with no argument: a label restores a stack pointer and a
+ * program counter, and there is nowhere for an argument to be.
+ */
+static Osprtask osprtask[2];
+
+static void
+tasksend(Osprtask *t, uvlong v)
+{
+	Osprtask *o = t->peer;
+
+	o->msg = v;
+	o->full = 1;
+	taskswitch(&t->l, &o->l);
+}
+
+static uvlong
+taskrecv(Osprtask *t)
+{
+	while(!t->full)
+		taskswitch(&t->l, &t->peer->l);
+	t->full = 0;
+	return t->msg;
+}
+
+/*
+ * The far end of the exchange: take a message, give it back with one
+ * added, until the near end says to stop.  Its last act is a switch
+ * home that it never returns from, which is what lets the near end free
+ * its stack.
+ */
+static void
+taskecho(void)
+{
+	Osprtask *t = &osprtask[1];
+	uvlong v;
+
+	for(;;){
+		v = taskrecv(t);
+		if(t->stop)
+			break;
+		tasksend(t, v + 1);
+	}
+	taskswitch(&t->l, &t->peer->l);
+}
+
+/*
+ * count round trips between the two, and beside it the same loop with
+ * the switch replaced by a read of the cycle counter - not a correction
+ * to the first number, which reads the counter twice for the whole loop
+ * and not once a trip, but the scale it is read against: a switch worth
+ * a handful of counter reads is a different claim from one worth a
+ * hundred, and under an emulator neither is obvious.
+ */
+static void
+taskbench(long count, uvlong *pertrip, uvlong *perread)
+{
+	Osprtask *me = &osprtask[0], *far = &osprtask[1];
+	uvlong t0, t1, v;
+	uintptr sp;
+	long i;
+	int s;
+
+	memset(osprtask, 0, sizeof osprtask);
+	me->peer = far;
+	far->peer = me;
+	far->stack = smalloc(Taskstack);
+	if(waserror()){
+		free(far->stack);
+		far->stack = nil;
+		nexterror();
+	}
+	sp = ((uintptr)far->stack + Taskstack) & ~(uintptr)15;
+	far->l.sp = sp - BY2WD;		/* a word for the switch's return pc */
+	far->l.pc = (uintptr)taskecho;
+
+	/*
+	 * Interrupts off for the measurement.  A trap taken while the
+	 * stack pointer is on a task's stack and up still names the Proc
+	 * is a thing to think about rather than a thing to allow in a
+	 * bench, and it keeps the clock out of the numbers besides.
+	 */
+	s = splhi();
+	cycles(&t0);
+	for(i = 0; i < count; i++){
+		tasksend(me, (uvlong)i);
+		v = taskrecv(me);
+		USED(v);
+	}
+	cycles(&t1);
+	*pertrip = (t1 - t0)/count;
+
+	cycles(&t0);
+	for(i = 0; i < count; i++){
+		cycles(&v);
+		USED(v);
+	}
+	cycles(&t1);
+	*perread = (t1 - t0)/count;
+	splx(s);
+
+	far->stop = 1;
+	tasksend(me, 0);		/* it takes this one and comes home */
+	poperror();
+	free(far->stack);
+	far->stack = nil;
+}
+
 static long
 ospreywrite(Chan *c, void *a, long n, vlong offset)
 {
@@ -8042,9 +8221,10 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		 * they are measured apart it is an assertion.
 		 *
 		 * ta is the submit, tb the wake, te the wake of the servers,
-		 * tc the wait and td the collect; nsleep counts the round trips that actually slept, because
-		 * a reply that is already there when it is looked for costs
-		 * nothing at all and averages the rest away.
+		 * tc the wait and td the collect; nsleep counts the round
+		 * trips that actually slept, because a reply that is already
+		 * there when it is looked for costs nothing at all and
+		 * averages the rest away.
 		 */
 		uvlong ta, tb, tc, td, te, u0, u1, u2;
 		long nsleep;
@@ -8061,6 +8241,38 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		count = (long)strtoul(cb->f[1], nil, 0);
 		if(count <= 0 || count > 100000)
 			error(Ebadarg);
+		/*
+		 * "task n" is the other end of the comparison: the same
+		 * exchange between two things that are not Procs.  No
+		 * container is named because none is involved.
+		 */
+		if(strcmp(cb->f[0], "task") == 0){
+			uvlong pertrip, perread, hz;
+
+			taskbench(count, &pertrip, &perread);
+			r = smalloc(256);
+			if(waserror()){
+				free(r);
+				nexterror();
+			}
+			hz = m->cpuhz == 0 ? 1 : m->cpuhz;
+			snprint(r, 256, "%ld task round trips, %llud cycles"
+				" each, %llud ns each, at %llud hz;"
+				" two switches a trip, so %llud ns a switch;"
+				" one read of the cycle counter is %llud ns\n",
+				count, pertrip,
+				m->cpuhz == 0 ? 0 : pertrip*1000000000ULL/hz,
+				m->cpuhz,
+				m->cpuhz == 0 ? 0 : pertrip*1000000000ULL/hz/2,
+				m->cpuhz == 0 ? 0 : perread*1000000000ULL/hz);
+			poperror();
+			if(c->aux != nil)
+				free(c->aux);
+			c->aux = r;
+			poperror();
+			free(cb);
+			return n;
+		}
 		qlock(&ospreylock);
 		if(waserror()){
 			qunlock(&ospreylock);
@@ -8078,6 +8290,8 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 
 		ta = tb = tc = td = te = 0;
 		nsleep = 0;
+		ospreysrvwork = ospreysrvwake = 0;
+		ospreysrvpass = 0;
 		cycles(&t0);
 		for(i = 0; i < count; i++){
 			memset(arg, 0, sizeof arg);
@@ -8119,7 +8333,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		}
 		cycles(&t1);
 
-		r = smalloc(256);
+		r = smalloc(384);
 		if(waserror()){
 			free(r);
 			nexterror();
@@ -8129,13 +8343,16 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		{
 			uvlong hz = m->cpuhz == 0 ? 1 : m->cpuhz;
 #define NS(c)	((c)/i*1000000000ULL/hz)
-			snprint(r, 256, "%ld round trips, %llud cycles each,"
+			snprint(r, 384, "%ld round trips, %llud cycles each,"
 				" %llud ns each, at %llud hz;"
 				" submit %llud ns, wake %llud ns, wakeservers %llud ns,"
-				" wait %llud ns, collect %llud ns, %ld of them slept\n",
+				" wait %llud ns, collect %llud ns, %ld of them slept;"
+				" in the wait: server work %llud ns, server wake %llud ns,"
+				" %ld passes\n",
 				i, (t1 - t0)/i,
 				m->cpuhz == 0 ? 0 : NS(t1 - t0), m->cpuhz,
-				NS(ta), NS(tb), NS(te), NS(tc), NS(td), nsleep);
+				NS(ta), NS(tb), NS(te), NS(tc), NS(td), nsleep,
+				NS(ospreysrvwork), NS(ospreysrvwake), ospreysrvpass);
 #undef NS
 		}
 		poperror();

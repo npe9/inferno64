@@ -22,6 +22,8 @@ class _None2: pass
 None2 = _None2()   # a check whose answer is a time rather than a string
 class _None3: pass
 None3 = _None3()   # a check whose answer is the breakdown of a round trip
+class _None4: pass
+None4 = _None4()   # a check whose answer is what a task exchange costs
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.chdir(ROOT)
@@ -358,9 +360,12 @@ CHECKS = [
  ("a round trip that does not wait for the clock",
   ["{echo '1 2000' >[1=0]; cat} <>/n/osprey/bench"],
   None),   # checked by the number, not by a string
- ("and the round trip is accounted for rather than asserted: the four parts - putting the request on the ring, waking the machine's waiters, waking the servers, and waiting for the other process to answer - are measured apart and add up to the whole, so the breakdown is an account of the round trip and not a set of unrelated numbers",
+ ("and the round trip is accounted for rather than asserted: the four parts - putting the request on the ring, waking the machine's waiters, waking the servers, and waiting for the other process to answer - are measured apart and add up to the whole, and the service process's own share of the waiting is measured from inside it and is less than it",
   ["{echo '1 2000' >[1=0]; cat} <>/n/osprey/bench"],
   None3),
+ ("the same exchange between two things that are not Procs: two tasks with a stack each, switching straight from one to the other, which costs less than a microsecond against the sixty a round trip through the scheduler costs",
+  ["{echo 'task 20000' >[1=0]; cat} <>/n/osprey/bench"],
+  None4),
  ("four hundred round trips through the mapped ring with no trap at all",
   ["time /tmp/ring osprey0 $sz bench 400"],
   None2),
@@ -573,7 +578,8 @@ def main():
             # so the criterion is the sum, and only the sum.
             m = re.search(r'(\d+) ns each,.*? submit (\d+) ns, wake (\d+) ns,'
                           r' wakeservers (\d+) ns, wait (\d+) ns, collect (\d+) ns,'
-                          r' (\d+) of them slept', parts[i])
+                          r' (\d+) of them slept; in the wait: server work (\d+) ns,'
+                          r' server wake (\d+) ns, (\d+) passes', parts[i])
             ok = False
             if m is not None:
                 tot = int(m.group(1))
@@ -586,9 +592,33 @@ def main():
                 # would go red the day the waiting got smaller, and a
                 # check that fails when the system improves is worse
                 # than no check.
-                ok = (tot > 0 and got > 0 and abs(tot - got) < tot/10)
-                what += ' (%d ns: submit %s, wake %s, wakeservers %s, wait %s, collect %s, %d slept)' % (
-                    tot, m.group(2), m.group(3), m.group(4), m.group(5), m.group(6), slept)
+                # And the server's share of the wait is inside the wait.
+                # That one is an accounting identity rather than a
+                # snapshot: the service process does its work while the
+                # caller is waiting for it, so measuring more of it than
+                # the caller waited would mean one of the two clocks is
+                # not what it says.
+                srv = int(m.group(8)) + int(m.group(9))
+                ok = (tot > 0 and got > 0 and abs(tot - got) < tot/10
+                      and 0 < srv <= int(m.group(5)))
+                what += (' (%d ns: submit %s, wake %s, wakeservers %s, wait %s'
+                         ' [server %s work + %s wake over %s passes], collect %s,'
+                         ' %d slept)') % (
+                    tot, m.group(2), m.group(3), m.group(4), m.group(5),
+                    m.group(8), m.group(9), m.group(10), m.group(6), slept)
+        elif want is None4:
+            # What a message costs with no scheduler in it.  The
+            # criterion is a microsecond because the thing it is set
+            # against - a round trip through sleep and wakeup - is
+            # sixty of them; the point is the order, not the number.
+            m = re.search(r'(\d+) task round trips, (\d+) cycles each,'
+                          r' (\d+) ns each,.*? (\d+) ns a switch;'
+                          r' one read of the cycle counter is (\d+) ns',
+                          parts[i])
+            ok = m is not None and 0 < int(m.group(3)) < 1000
+            if m:
+                what += ' (%s ns a trip, %s a switch, %s to read the counter)' % (
+                    m.group(3), m.group(4), m.group(5))
         elif want is None:
             # a round trip took a whole clock tick until something woke
             # the service process; anything near a millisecond is that
