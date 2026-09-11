@@ -1,0 +1,161 @@
+.TH CONTROL 2
+.SH NAME
+control: tf, series, feedback, roots, routh, stable, stepresponse, bode, margins, metrics, pid \- linear systems as transfer functions
+.SH SYNOPSIS
+.EX
+include "control.m";
+control := load Control Control->PATH;
+Tf, Margins, Metrics: import control;
+
+control->init();
+(g, err) := control->tf(num, den);
+(cl, err) = control->feedback(g, h, -1);
+(y, err) := control->stepresponse(cl, dt, n);
+m := control->metrics(y, dt);
+(mag, ph) := control->bode(g, w);
+(mm, err) := control->margins(g);
+(n, err) := control->routh(den);
+.EE
+.SH DESCRIPTION
+.I Control
+is linear systems written the way a controls course writes them: a
+transfer function, a ratio of polynomials in
+.IR s .
+.PP
+Coefficients are given
+.B highest
+.B power
+.BR first ,
+the way they are written down, so
+.B "{1.0, 3.0}"
+over
+.B "{1.0, 2.0, 5.0}"
+is
+.RI ( s +3)/( s \u\s-22\s+2\d+2\fIs\fP+5).
+The other order exists in other libraries and nothing in an answer
+reveals which was meant.
+.PP
+Everything is continuous-time.
+A discrete system is a different object with a different stability test,
+and mixing the two silently is the classic way to get a confident wrong
+answer;
+.IR signal (2)
+is where the discrete filters live.
+.SS Building and connecting
+.B Tf
+builds a transfer function, trimming leading zeros and refusing a
+numerator of higher degree than the denominator \- a system that answers
+before it is asked.
+.B Series,
+.B parallel
+and
+.B feedback
+put two together;
+.B feedback
+with sign \-1 is the negative feedback every control loop is made of,
+.IR g /(1+\fIgh\fP).
+.B Polymul,
+.B polyadd,
+.B polyeval
+and
+.B polyfromroots
+are the polynomial arithmetic underneath, exported because a caller
+building a system by hand needs them.
+.SS Roots and stability
+.B Roots
+finds every root of a polynomial at once, by Durand-Kerner, rather than
+one at a time with deflation \- deflation bakes each root's error into
+the polynomial the next is found from, and the last roots of a
+high-order polynomial come out visibly wrong.
+A real polynomial's real roots are returned with an imaginary part of
+exactly zero, not the 1e-45 the iteration leaves: a plot would otherwise
+show a conjugate pair where there is one root.
+.B Poles
+and
+.B zeros
+are the roots of the denominator and the numerator.
+.PP
+Stability is asked
+.B twice
+and on purpose.
+.B Routh
+answers it from the coefficients alone, by the Routh array, without
+finding a single root, and returns the
+.I number
+of roots with positive real part.
+.B Stable
+answers it by finding the roots and looking at them.
+They are independent routes to one fact, which is what makes either
+believable;
+.IR controltest (1)
+runs them against each other on three thousand polynomials.
+.SS Responses
+.B Stepresponse,
+.B impulseresponse
+and
+.B lsim
+integrate the system in controllable canonical form with fourth-order
+Runge-Kutta, ten sub-steps to a sample, so that how finely the answer is
+sampled and how accurately it is integrated are separate questions.
+An input to
+.B lsim
+is held constant between samples, as a computer driving a plant holds
+it.
+.PP
+.B Bode
+gives magnitude and phase at each frequency in radians per second.
+The phase is unwrapped, so a high-order roll-off does not jump by 2 pi
+in the middle.
+.PP
+.B Margins
+gives the gain and phase margins with the frequencies they occur at.
+The gain margin is a ratio and not decibels.
+.B Hasgain
+is zero when the phase never reaches \-180 degrees, which is
+.I not
+the same as a large margin and is why there is a flag rather than a big
+number.
+.PP
+.B Metrics
+reduces a step response to what a course asks about it: final value,
+10-to-90 rise time, peak and the time of it, overshoot as a fraction of
+the final value, and the last time the response was outside a 2% band.
+.SS Controllers
+.B Pid
+builds
+.IR kp " + " ki /\fIs\fP " + " kd * s /(\fItaud\fP*\fIs\fP+1).
+The derivative term needs that filter: a bare
+.IR kd * s
+is not proper, cannot be built, and differentiates the noise in
+preference to the signal.
+.SH SOURCE
+.B /appl/lib/control.b
+.SH SEE ALSO
+.IR circuit (2),
+.IR signal (2),
+.IR dynsys (2),
+.IR controltest (1)
+.SH DIAGNOSTICS
+All of these return a diagnostic string, nil on success.
+.B Impulseresponse
+refuses a system whose numerator degree equals its denominator's:
+its impulse response contains a delta at
+.I t
+= 0 that no array of samples can hold, and returning the rest without
+saying so would be a plot with a piece missing.
+.SH BUGS
+Single-input, single-output only.
+There is no state-space interface, no MIMO, no observer or regulator
+design, and no discrete-time transfer function.
+.PP
+.B Margins
+sweeps a fixed grid of twenty thousand frequencies over eight decades
+around the largest pole and interpolates between neighbours, so a system
+with two crossings very close together will have only the first
+reported.
+.PP
+There is no root locus.
+It would be a sweep of
+.B roots
+over gain, which the pieces here support, but the plotting is the
+substance of it and belongs with the plotting.

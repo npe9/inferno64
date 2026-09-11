@@ -32,6 +32,7 @@ bind sys-bind
 biquad signal
 block diskblocks
 bloomfilter bloomfilter
+bode control
 bootconf dhcpclient
 bootp dhcpclient
 btos convcs
@@ -64,6 +65,7 @@ concat lists
 connect security-ssl
 consistent ida
 context draw-context
+control control
 convcs convcs
 convolve signal
 copyattrs factotum
@@ -265,6 +267,7 @@ login security-login
 makedrawcontext wmclient
 map lists
 march danbylab
+margins control
 masses danbylab
 match filepat
 math math-0intro
@@ -318,6 +321,7 @@ pctl sys-pctl
 periodogram signal
 pfile palmfile
 phon phon
+pid control
 pipe sys-pipe
 pktostr security-oldauth
 plumbmsg plumbmsg
@@ -331,6 +335,7 @@ populationmodel populationmodel
 ramp grpalette
 rfft signal
 roomsrv roomsrv
+routh control
 security security-0intro
 session session
 pow math-elem
@@ -464,6 +469,7 @@ srv srv
 ssl security-ssl
 startinput tkclient
 stat sys-stat
+stepresponse control
 stob convcs
 stream sys-read
 string string
@@ -539,6 +545,7 @@ toplev spki
 toplevel tkclient
 toreal string
 toupper string
+transferfunction control
 translate translate
 tuple cfg
 ubfa ubfa

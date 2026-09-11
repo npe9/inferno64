@@ -1,0 +1,116 @@
+.TH CONTROLTEST 1
+.SH NAME
+controltest \- check control(2) against the textbook answers
+.SH SYNOPSIS
+.B controltest
+[
+.B -v
+]
+.SH DESCRIPTION
+.I Controltest
+checks
+.IR control (2)
+and prints
+.B OK
+if everything agrees.
+.B -v
+prints each measured number.
+.PP
+A second-order system's step response is checked against
+.RI 1\- e \u\s-2\-\fIzeta\fP\fIwn\fP\fIt\fP\s+2\d(cos
+.IR wd t
++
+.IR zeta wn / wd
+sin
+.IR wd t )
+at every sample, and its overshoot against
+.RI exp(\-pi* zeta /sqrt(1\- zeta \u\s-22\s+2\d)),
+which is the first formula in the subject.
+A polynomial built from known roots must give those roots back.
+An integrator is exactly 1/\fIw\fP with exactly \-90 degrees of phase.
+The loop
+.IR k /(\fIs\fP(\fIs\fP+1)(\fIs\fP+2))
+is stable up to exactly
+.I k
+= 6 and oscillates at exactly sqrt(2) radians per second, which is also
+the gain margin of the same loop at
+.I k
+= 1.
+.SS The check that is not against a formula
+.B Routh
+and
+.B stable
+answer the same question by completely different means \- one from the
+coefficients, one by finding every root \- and they are run against each
+other on three thousand random polynomials of degree 2 to 6.
+Neither is the oracle; agreeing is the evidence.
+The count of stable and unstable cases is checked as well, so that a run
+in which everything happened to be stable cannot pass for agreement.
+.PP
+Five polynomials with roots
+.I on
+the imaginary axis are checked separately, since the random sweep skips
+them: they are neither stable nor unstable, and they are exactly what
+makes a whole row of the Routh array zero.
+That row must be replaced by the derivative of the polynomial the row
+above stands for.
+The dodge used for a single zero in the first column \- substituting a
+small number \- gives the
+.I wrong
+count here, and that is how it is known the derivative branch is doing
+the work: without it those five answer 3, 2, 3 and 3 instead of 1, 0, 1
+and 1.
+.SS Two checks that exist because of a blindness
+Every system in a controls course is strictly proper, and so was every
+system this program tested.
+A system whose numerator has the
+.I same
+degree as its denominator has a direct path from input to output, which
+the state-space form must subtract out of the output matrix \- and in a
+strictly proper system that correction is multiplied by zero and cannot
+be seen.
+Deleting it passed every check here.
+.RI ( s +1)/( s +2)
+has the step response 1/2 + exp(\-2\fIt\fP)/2, which starts at 1 and not
+at 0, and it is now checked.
+.PP
+The same system is what
+.B impulseresponse
+must refuse, since its impulse response contains a delta.
+.SS The same RC a third way
+.IR Circuit (2)
+integrates the network,
+.IR signal (2)
+filters the samples, and
+.IR control (2)
+integrates the transfer function.
+Three independent pieces of code for one first-order lag, each compared
+with 1\-exp(\-\fIt\fP/\fIRC\fP) rather than with each other, since each
+has its own step size and its own error.
+.SH SOURCE
+.B /appl/cmd/controltest.b
+.SH SEE ALSO
+.IR control (2),
+.IR circuit (2),
+.IR signaltest (1)
+.SH DIAGNOSTICS
+Each disagreement prints a line beginning
+.B FAIL
+naming what was measured, what came out and what was wanted; the count
+follows and the program raises an exception.
+.SH BUGS
+The random polynomials are drawn with coefficients between \-5 and 5,
+which produces far more unstable cases than stable ones \- about fifteen
+to one.
+Both are required to appear, but the stable side is tested much less
+heavily than the count suggests.
+.PP
+Nothing here checks
+.B margins
+against a system with two gain crossings, which is the case its fixed
+frequency grid handles worst.
+.PP
+The accuracy of the Runge-Kutta integration is checked at one step size
+per system.
+A first-order bug in something billed as fourth-order would pass if its
+error at that step were small enough.

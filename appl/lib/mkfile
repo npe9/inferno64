@@ -29,6 +29,7 @@ TARG=\
 	cfgfile.dis\
 	chanfill.dis\
 	circuit.dis\
+	control.dis\
 	complete.dis\
 	crc.dis\
 	csv.dis\

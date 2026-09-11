@@ -51,6 +51,7 @@ TARG=\
 	chgrp.dis\
 	chmod.dis\
 	circuittest.dis\
+	controltest.dis\
 	cleanname.dis\
 	cmp.dis\
 	comm.dis\
