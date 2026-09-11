@@ -540,18 +540,69 @@ gorge correct — but gorge's geometry is *entirely* `fillpoly3g`, so that
 moves all of it to the CPU and cannot tell a Gouraud fault from any other
 Metal fault. It was recorded here as an isolation and it is not one.
 
-The real gap is a missing measurement. `draw3dbench` checks the GPU's
-**flat** `fillpoly3` for position, scale, rotation, occlusion and equal
-depth, and all of those pass. For Gouraud it checks only *that it shades*
-— "distinct colours in one face: software 1, GPU 16" — and nothing about
-where the face lands or what it occludes. gorge also differs in using
-`frustumoffset` rather than `frustum`, in drawing two hundred faces
-rather than a handful, and in running the z-buffer hard. Any of those is
-still a candidate.
+The real gap was a missing measurement, and `g3probe(1)` is now it.
+`draw3dbench` checks the GPU's **flat** `fillpoly3` for position, scale,
+rotation, occlusion and equal depth; for Gouraud it checks only *that it
+shades*, and nothing about where a face lands or what it occludes.
 
-So the next step is not a fix, it is the check that would have caught
-this: the flat occlusion and placement tests, repeated for `fillpoly3g`,
-and once more through `frustumoffset`.
+`g3probe` closes that, and the answer is that four of the five suspects
+are innocent. Software against device, within about 1% throughout, which
+is rasterisation:
+
+- **placement**: one quad at six depths, `fillpoly3` against `fillpoly3g`
+  — the two entry points agree, in both providers, at every depth.
+- **the depth test**: a near quad and a far one drawn in both orders —
+  the order does not matter in either provider.
+- **`frustumoffset`**: the same occlusion test through gorge's own
+  projection rather than `frustum` — no difference.
+- **scale**: a corridor of 1 to 256 faces — 23366 lit against software's
+  23588 at 256.
+
+The fifth is guilty, and it is not about geometry at all:
+
+```
+provider       frames        lit
+software            1      23376
+device              1          0
+device              1          0
+device              1      23154
+device              1      23154
+device              1      23154
+device              1          0
+device              1      23154
+device              1          0
+software            8      23376
+device              8      23154     (four runs, all)
+```
+
+**One frame drawn and read gives nothing at all about half the time.**
+Eight frames is right every time; software is right every time. That is
+the present-eats-the-queue race above, measured: over several frames a
+readback eventually wins and the softscreen gets the geometry; over one
+it may not.
+
+So gorge's wrong picture is not a rasterisation fault to be found in a
+shader. It is this, and the fix is the one named above — make
+materialising into the softscreen deterministic instead of a race.
+
+**An attempt at that fix is recorded here because it did not work.**
+Calling `gpudrawreadback()` from `drawflush()`, so every flush
+materialises, fixes the single-frame case outright (0 → 23388) and
+*breaks gorge*: its head-up display goes back to 0. gorge draws its HUD
+with `Image.text()`, which is not the draw message, so the hook that
+materialises at the first 2-D after the 3-D never fires for it and the
+flush-time materialise happens at a different point in the frame.
+Repairing that with a full softscreen upload restores gorge and loses
+the single-frame case again. The two pull against each other and the
+pair was not committed: what is wanted is one materialise at a
+well-defined point in the frame, not two hooks that each half-work.
+
+Two smaller things this turned up, both my own instruments rather than
+the code, and both worth knowing: a probe that does not flush before
+reading measures the screen as it stood *before* the drawing — that
+reported a first-call blow-up that did not exist; and a quad with any
+vertex outside the frustum is dropped whole rather than clipped, in both
+providers.
 
 ### There is a third path, and it is the fastest and the only correct one — 2026-09-11
 

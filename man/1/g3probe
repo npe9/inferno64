@@ -1,0 +1,111 @@
+.TH G3PROBE 1
+.SH NAME
+g3probe \- compare the 3-D providers on one face at a time
+.SH SYNOPSIS
+.B g3probe
+.SH DESCRIPTION
+.I G3probe
+draws the same small scenes through
+.B /dis/math/draw3d.dis
+and
+.B /dis/math/draw3ddev.dis
+and counts what lands, so that a difference between the two is a number
+rather than an impression.
+It exists because
+.IR draw3dbench (1)
+checks the GPU's flat
+.B fillpoly3
+for placement, scale, rotation, occlusion and equal depth, and checks
+.B fillpoly3g
+\- the per-vertex entry point that
+.IR gorge (1)
+and
+.IR strider (1)
+are built almost entirely on \- for nothing but whether it shades.
+.PP
+Four measurements, each for both providers:
+.TP
+depth
+one quad at six depths, through
+.B fillpoly3
+and
+.BR fillpoly3g ,
+lit pixels each.
+The two entry points must agree.
+.TP
+occlusion
+a near green quad and a far red one, drawn in both orders, through
+.B frustum
+and through
+.BR frustumoffset .
+With a working depth buffer the order cannot matter.
+.TP
+scale
+a corridor of 1 to 256 faces, the shape
+.I gorge
+draws.
+.TP
+frames
+the same corridor drawn over one frame and over eight, with a present
+between each.
+.PP
+It also writes the first device frame to
+.B g3probe.raw
+as raw pixels in the display's format, for looking at.
+.SH RESULTS
+The first three agree between providers to within about 1%, which is
+rasterisation.
+Placement, the depth test,
+.B frustumoffset
+and two hundred and fifty-six faces are all correct on the GPU.
+.PP
+The fourth does not:
+.IP
+.EX
+provider       frames        lit
+software            1      23376
+device              1          0
+device              1          0
+device              1      23154
+device              1      23154
+device              1      23154
+device              1          0
+device              1      23154
+device              1          0
+software            8      23376
+device              8      23154      (4 runs, all)
+.EE
+.PP
+**One frame drawn and read gives nothing at all about half the time.**
+Eight frames is right every time, and the software provider is right
+every time.
+.PP
+The cause is in
+.B /doc/draw3d-adoption-plan.md:
+presentation consumes the geometry queue without writing the softscreen
+back, so whether a frame's 3-D ever reaches the image everything else
+reads is a race between the present and the next readback.
+Over several frames a readback eventually wins; over one it may not.
+.SH SOURCE
+.B /appl/cmd/g3probe.b
+.SH SEE ALSO
+.IR draw3dbench (1),
+.IR framegrab (1),
+.IR gorge (1)
+.PP
+.B /doc/draw3d-adoption-plan.md
+.SH BUGS
+It needs a window and no window manager: with no
+.I wm
+the display is what the program drew into, which is what makes reading
+it back mean anything.
+.PP
+It flushes before every read.
+Without that it measures the screen as it stood before the drawing, and
+an early version of this reported a first-call fault that was entirely
+its own missing flush.
+.PP
+Nothing here asserts.
+It prints numbers for a person to compare, because two of the four
+measurements have no single right answer to check against \- only the
+other provider.

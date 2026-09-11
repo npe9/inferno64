@@ -50,6 +50,7 @@ TARG=\
 	cddb.dis\
 	chgrp.dis\
 	chmod.dis\
+	circuittest.dis\
 	cleanname.dis\
 	cmp.dis\
 	comm.dis\
@@ -95,6 +96,7 @@ TARG=\
 	fortune.dis\
 	freq.dis\
 	framegrab.dis\
+	g3probe.dis\
 	fs.dis\
 	fdstresstest.dis\
 	ftest.dis\
