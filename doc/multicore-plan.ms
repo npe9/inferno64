@@ -3444,3 +3444,48 @@ first, five boots reaching 68 to 72 shell loop iterations inside a
 45-second window, so a
 .CW noshell
 in the batch would mean the kernel and not the bench.
+.NH 2
+The noise floor, measured at last
+.PP
+Every comparison on this branch assumed one and none had measured it.
+The same kernel, byte for byte, under two names, twelve boots each,
+order alternating, at
+.CW *parallelvm=1 :
+.IP
+.nf
+selfa  53 iterations   2 4 7 9 5 2 5 5 4 3 5 2   gave up 6
+selfb  47 iterations   5 5 2 3 5 6 3 7 5 4 1 1   gave up 3
+.fi
+.PP
+Three things follow, and one of them is a warning about numbers this
+document already contains.
+.IP 1.
+Totals differ by twelve percent between identical binaries.  So the
+ratios acted on earlier \(em eighteen against two, thirty-six against
+three, thirty-five against nothing \(em are far outside the spread and
+those conclusions stand.
+.IP 2.
+Every one of the twenty-four boots reached the shell, between one and
+nine times.  None produced nothing.  A kernel that produces a column of
+zeroes is therefore different in kind, not unlucky, which is what makes
+the trimmed kernel's zeroes evidence rather than variance.
+.IP 3.
+.B "Give-ups vary by a factor of two between identical binaries."
+Six against three.  That number was read as a mechanism working \(em
+"give-ups nine to three" \(em and at twelve boots it cannot carry that
+weight.  The conclusion it supported is held up by the iteration counts,
+which are outside the spread, and not by the give-ups, which are not.
+.PP
+The general form: a comparison needs its own control run before it
+needs more samples.  Twelve boots of one kernel against itself costs
+what one arm of an A/B costs, and it is the difference between a ratio
+that means something and a ratio that is arithmetic.
+.NH 2
+Where parallelvm=1 stands
+.PP
+Nought failures in twenty-four boots, against eight in twenty earlier
+in the branch, and every boot reaching the shell.  That is not "it
+works" \(em the sample is small, the bench is shared, and the
+underflow that started the last hunt appears about once in twenty-two
+boots, which twenty-four cannot resolve.  It is the first measurement
+on this configuration that does not have a failure in it.
