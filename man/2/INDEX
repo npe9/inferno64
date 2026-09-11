@@ -174,6 +174,7 @@ find lists
 findattr factotum
 findattrval factotum
 firdesign signal
+flow flow
 font draw-font
 format format
 fprint sys-print
@@ -303,6 +304,7 @@ name spki
 namechan tk
 names names
 nametree styxservers-nametree
+navier flow
 netinfo dial
 netlist circuit
 netmkaddr dial
@@ -349,6 +351,7 @@ pop3 pop3
 popup popup
 plot plot
 populationmodel populationmodel
+projection flow
 quantile stats
 ramp grpalette
 rfft signal
@@ -487,6 +490,7 @@ sprint sys-print
 sqrt math-elem
 srv srv
 ssl security-ssl
+staggered flow
 startinput tkclient
 stat sys-stat
 stats stats

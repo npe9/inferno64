@@ -1,0 +1,139 @@
+.TH FLOW 2
+.SH NAME
+flow: new, setvelocity, step, maxstep \- incompressible flow in two dimensions
+.SH SYNOPSIS
+.EX
+include "flow.m";
+flow := load Flow Flow->PATH;
+Sim: import flow;
+
+flow->init();
+(s, err) := flow->new(nx, ny, lx, ly, visc, Flow->PERIODIC);
+flow->setvelocity(s, f);
+err = flow->step(s, dt);
+(u, v) := s.at(x, y);
+d := s.divergence();
+dt := flow->maxstep(s);
+.EE
+.SH DESCRIPTION
+.I Flow
+solves the Navier-Stokes equations for a fluid that cannot be
+compressed, in two dimensions, by Chorin's projection method on a
+staggered grid.
+.PP
+.B New
+makes a box
+.I lx
+by
+.I ly
+divided into
+.I nx
+by
+.I ny
+cells, with kinematic viscosity
+.IR visc .
+The edges are
+.B PERIODIC
+(both directions wrap),
+.B CHANNEL
+(wraps left to right, walls top and bottom) or
+.B CAVITY
+(walls all round).
+.B Sim.lid
+is how fast the top wall slides, for a channel or a cavity;
+.B Sim.fx
+and
+.B Sim.fy
+are a uniform body force.
+.PP
+.B Setvelocity
+sets the initial field from a function of position.
+Each component is sampled where it lives and not at the cell centre,
+which is the whole point of the arrangement below.
+.PP
+.B Step
+advances by
+.IR dt .
+.B Maxstep
+is the largest step that is stable, for advection and for diffusion
+whichever binds; a step far beyond it is refused rather than answered
+with numbers that are about to become infinite, and
+.B Sim.courant
+gives the ratio for a proposed step.
+.SS The staggered grid
+Pressure lives at cell centres and each velocity component on the faces
+it points through.
+That is not a detail.
+Putting everything at the centres instead is the obvious arrangement and
+it is wrong: it leaves the pressure free to oscillate from cell to cell
+without the velocity noticing \- the chequerboard mode \- and a solution
+full of it looks perfectly smooth in the velocity and is nonsense in the
+pressure.
+.PP
+Because of it, no array holds both components at one place.
+.B Sim.at
+interpolates each from where it lives, which is the only honest way to
+ask for the velocity at a point.
+.SS The projection
+A step is taken ignoring the pressure, which leaves a velocity that does
+not conserve mass.
+The pressure is then whatever must be subtracted to make it do so, and
+finding it is a Poisson equation.
+That system
+.I is
+symmetric positive definite \- unlike
+.IR circuit (2)'s,
+which is why that one is solved directly \- so it goes to
+.IR krylov (2)'s
+conjugate gradients, matrix-free.
+.PP
+.B Sim.divergence
+is the largest divergence anywhere.
+After a step it is the projection's own residual and belongs at
+rounding; it sits at about 1e\-15 in
+.IR flowtest (1).
+If it drifts upward, mass is being made.
+.PP
+With every edge periodic the pressure is determined only up to a
+constant and the Poisson operator is singular.
+That is the physics \- only the gradient of pressure appears in the
+equations \- and the mean is removed from the right-hand side and the
+answer.
+.SH SOURCE
+.B /appl/lib/flow.b
+.SH SEE ALSO
+.IR krylov (2),
+.IR pde (2),
+.IR circuit (2),
+.IR flowtest (1)
+.SH DIAGNOSTICS
+.B New
+and
+.B step
+return a diagnostic string, nil on success: a grid too small to have an
+interior, a box of no size, a negative viscosity, a step far beyond the
+stable one, a pressure solve that did not converge.
+.SH BUGS
+Time stepping is first order \- the momentum step is forward Euler and
+the projection is Chorin's original, which commits a splitting error of
+the same order.
+The scheme is second order in space, so a run that halves the spacing
+should also shorten the step to keep the two balanced.
+.PP
+Advection is by a centred difference, which is second order and has no
+numerical dissipation at all.
+That is why it is right for the smooth flows here and wrong for a
+sharp one: at a high Reynolds number it produces oscillations cell by
+cell rather than the smearing an upwind scheme would give, and there is
+no upwind option.
+.PP
+Two dimensions only, one fluid, constant density and viscosity, no
+temperature, no free surface, no obstacle inside the box.
+The only inflow is a body force or a sliding lid.
+.PP
+The mean removed from the pressure right-hand side is, for all three
+edge conditions here, only rounding: the divergences telescope to the
+flux through the boundary, which is zero by construction.
+Deleting it changes no answer in
+.IR flowtest (1).
+It is kept because the next boundary condition added may not telescope.

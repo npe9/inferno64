@@ -93,6 +93,7 @@ TARG=\
 	eqn2hoctest.dis\
 	export.dis\
 	fftstest.dis\
+	flowtest.dis\
 	frametest.dis\
 	fc.dis\
 	fcp.dis\

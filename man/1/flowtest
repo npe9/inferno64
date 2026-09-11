@@ -1,0 +1,111 @@
+.TH FLOWTEST 1
+.SH NAME
+flowtest \- check flow(2) against the flows that have closed forms
+.SH SYNOPSIS
+.B flowtest
+[
+.B -v
+]
+.SH DESCRIPTION
+.I Flowtest
+checks
+.IR flow (2)
+and prints
+.B OK
+if everything agrees.
+.B -v
+prints each measured number.
+.PP
+Most of fluid mechanics has no closed form, which is why the subject is
+computational at all.
+Four things here do.
+.PP
+.B Taylor-Green
+is an exact unsteady solution of the
+.I full
+nonlinear equations: a lattice of vortices decaying as
+exp(\-2\fInu t\fP).
+It is run on a 16 by 16 grid and a 32 by 32 one, and what is checked is
+not a tolerance but the
+.IR rate :
+halving the spacing must divide the error by about four, which is what
+says the scheme is second order in space rather than merely convergent.
+It divides it by 3.875.
+The energy is separately checked to decay as exp(\-4\fInu t\fP), twice
+the rate of the velocity.
+.PP
+.B Poiseuille
+is a channel under a steady push, which settles into the parabola
+.IR gy ( H \- y )/2\fInu\fP.
+.PP
+.B Couette
+is the same channel with a sliding lid instead, which gives a straight
+line \- and gives it
+.I exactly,
+since a unidirectional flow's nonlinear term vanishes identically.
+It comes out right to 1.5e\-14, which is the strongest single number
+here.
+.PP
+.B Mass
+is not an approximation to be checked against a tolerance.
+After the projection, zero divergence is an identity, and it sits at
+about 1e\-15.
+If it drifts, mass is being made.
+.PP
+The lid-driven cavity has no closed form at all, which is why it is the
+standard benchmark.
+What can be checked without one is checked: mass is conserved, the flow
+settles, nothing passes through a wall, the fluid under the lid goes the
+way the lid pushes it and the flow along the floor comes back the other
+way.
+.SS The test that had to be invented
+Nothing in the list above exercises the advection term, and deleting it
+outright left every one of them passing.
+.PP
+That is not an oversight in the choice of cases so much as a property of
+them.
+Taylor-Green's own nonlinear term is a pure gradient, which the pressure
+projection absorbs completely; Poiseuille and Couette are
+unidirectional, so theirs vanishes identically.
+The three standard flows that have closed forms are exactly the three
+where advection cannot be seen.
+.PP
+What sees it is the same vortex with a uniform drift added.
+Galilean invariance makes that an exact solution too \- the pattern is
+carried along while it decays \- and the carrying is done by the
+advection term and by nothing else.
+At the settings used the pattern moves one radian in a box of 2 pi, and
+with the advection deleted it stays where it was: the error goes from
+0.007 to 0.47.
+.SS And one about where the samples are taken
+Every sample of the channel profile sat exactly at a cell centre, where
+the interpolation weights come out whole and it does not matter which
+pair of cells was chosen.
+Sampled at twenty-one generic heights it does matter: taking the nearest
+cell rather than the one below turns an interpolation into an
+extrapolation, and the worst error goes from 9.6e\-4 to 3.8e\-3.
+.SH SOURCE
+.B /appl/cmd/flowtest.b
+.SH SEE ALSO
+.IR flow (2),
+.IR krylov (2)
+.SH DIAGNOSTICS
+Each disagreement prints a line beginning
+.B FAIL
+naming what was measured, what came out and what was wanted; the count
+follows and the program raises an exception.
+.SH BUGS
+Every flow here is smooth and slow.
+Nothing is run at a Reynolds number high enough for the centred
+advection to produce the cell-by-cell oscillation that
+.IR flow (2)'s
+BUGS describes, so that failure mode is described and not demonstrated.
+.PP
+The order in time is not measured.
+Only the spatial order is, by refining the grid at a fixed step; halving
+the step at a fixed grid would measure the other, and does not happen.
+.PP
+The cavity is checked for settling, for conserving mass and for
+circulating the right way, but not against the published profiles for
+it.
+A solver that was wrong in a way that preserved all three would pass.

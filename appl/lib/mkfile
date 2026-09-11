@@ -30,6 +30,7 @@ TARG=\
 	chanfill.dis\
 	circuit.dis\
 	control.dis\
+	flow.dis\
 	frame.dis\
 	complete.dis\
 	crc.dis\

@@ -285,6 +285,7 @@ danby-vaccination danby-vaccination
 danbylabtest danbylabtest
 danbyviztest danbyviztest
 fftstest fftstest
+flowtest flowtest
 frametest frametest
 optimtest optimtest
 signaltest signaltest
