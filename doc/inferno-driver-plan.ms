@@ -2221,34 +2221,50 @@ installs an RSDP where a guest can find it, so the UEFI entry is not the
 second half of the work but the only way to put a table in front of
 .CW gicv3itsinit() .
 .IP
-That entry has started.
-.CW os/inferno/boot/efi/aa64.s
-and
-.CW aa64hello.c
-build a PE/COFF image with 7a, 7c and 7l that edk2 accepts and runs on
-.CW "-M virt" ,
-printing
-.CW EFI-AA64-OK
-and returning EFI_SUCCESS; and
-.CW tools/aout2efi
-learned the arm64 machine type, a passed image base, and to read the
-entry point from the fat header's 64-bit field rather than the 32-bit
-.CW PADDR
-one.  What that is not is a loader: it reads no filesystem and loads
-nothing.  Building
+That entry is done.
+.CW os/inferno/boot/efi
+builds
+.CW bootaa64.efi
+from
+.CW aa64.s
+and the same
 .CW efi.c ,
 .CW fs.c
 and
 .CW sub.c
-for arm64 with a
-.CW jump()
-that hands off to an Inferno kernel is the next piece, and ACPI
-discovery of the GICD, GICR and ITS bases from MADT, with IORT for
-RID-to-DeviceID, is the piece after that.  IORT is not a one-to-one port
-of the single-window
+the x86 loaders use, and on
+.CW "-M virt"
+with edk2 as pflash it reads
+.CW plan9.ini
+off an ESP, loads the kernel it names, turns the MMU and the caches off,
+and hands over: the kernel reaches
+.CW ROOT-CMDS-OK .
+.CW tools/aout2efi
+learned the arm64 machine type, a passed image base, and to read the
+entry from the fat header's 64-bit field rather than the 32-bit
+.CW PADDR
+one;
+.CW aa64hello.efi
+is kept beside the loader as the test that the toolchain and the header
+are right at all.
+.IP
+So what item 1 still owes is only the ACPI half, and it is now the
+difference between booting on QEMU and booting on the hardware.  Under
+.CW "-M virt,acpi=off"
+the loader hands the kernel edk2's device tree and everything works
+except MSI, because edk2's tree has no v2m frame in it.  Under the
+default, with ACPI, there is no device tree and the kernel boots only
+because it falls back to finding QEMU's own DTB at the bottom of DRAM \(em
+which a real machine does not have.  What is needed is MADT for the GICD,
+GICR and ITS bases and IORT for RID-to-DeviceID, read from the RSDP that
+.CW acpiconf()
+in
+.CW efi.c
+already finds and passes.  IORT is not a one-to-one port of the
+single-window
 .CW msi-map
-read either: it can chain root complex to SMMU to ITS, and a machine
-with an SMMU in the path needs the chain walked.
+read: it can chain root complex to SMMU to ITS, and a machine with an
+SMMU in the path needs the chain walked.
 .IP 2.
 .B "Raspberry Pi Zero 2 W."
 A BCM2710A1 \(em the Pi 3B's die in a smaller package \(em so the

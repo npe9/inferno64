@@ -65,6 +65,20 @@ i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES
 	$LD -o $target -H7 -T$KTZERO -R4096 -l $OBJ $CONF.$O $LIBFILES
 	cp $target $INSTALLDIR/$target
 
+#
+#	The same kernel as a Plan 9 a.out rather than an ELF.  QEMU's
+#	-kernel wants ELF, which is why i$CONF is -H7; the EFI loader in
+#	os/inferno/boot/efi reads an a.out, because that is the format
+#	bootkern() has always read and it carries the entry, the three
+#	segment sizes and nothing else.  Both come from the same objects,
+#	so there is no second kernel to keep in step -- only a second
+#	wrapper around one.  Not in install: nothing boots it unless
+#	somebody puts it on an ESP.
+#
+i$CONF.a: $OBJ $CONF.c $CONF.root.h $LIBNAMES
+	$CC $CFLAGS '-DKERNDATE='$KERNDATE $CONF.c
+	$LD -o $target -H2 -T$KTZERO -R4096 -l $OBJ $CONF.$O $LIBFILES
+
 <../port/portmkfile
 
 ../init/$INIT.dis:	../init/$INIT.b

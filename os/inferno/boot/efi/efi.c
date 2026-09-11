@@ -72,10 +72,20 @@ memconf(char **cfg)
 		[EfiMemoryMappedIOPortSpace]	2,
 		[EfiPalCode]			2,
 	};
-	UINTN mapsize, entsize;
+	/*
+	 * static, not automatic, and for two reasons.  A 96K map buffer
+	 * on the firmware's own stack is a lot to ask of it; and 7c
+	 * cannot pass the address of a stack local as an argument to a
+	 * variadic function on arm64 -- it emits a DWORD of a stack
+	 * address-constant and 7l refuses it as "illegal combination
+	 * DWORD NONE NONE LACON".  The addresses of statics are
+	 * $sym(SB) and assemble.
+	 */
+	static UINTN mapsize, entsize;
+	static UINT32 entvers;
+	static uchar mapbuf[96*1024];
 	EFI_MEMORY_DESCRIPTOR *t;
-	uchar mapbuf[96*1024], *p, m;
-	UINT32 entvers;
+	uchar *p, m;
 	char *s;
 
 	mapsize = sizeof(mapbuf);
@@ -306,8 +316,21 @@ efimain(EFI_HANDLE ih, EFI_SYSTEM_TABLE *st)
 	ST = st;
 
 	f = nil;
+#ifdef AA64
+	/*
+	 * Only the filesystem.  pxe.c wants the x86 PXE protocols, and
+	 * iso.c reads an ISO9660 directory entry whose 32-bit fields sit
+	 * at odd offsets -- which 7c will not compile for arm64 at all
+	 * ("isowalk: odd offset: 42"), because the instruction it wants
+	 * does not exist there.  Neither is a way anyone boots an arm64
+	 * machine.
+	 */
+	if(fsinit(&f))
+		print("no boot devices\n");
+#else
 	if(pxeinit(&f) && isoinit(&f) && fsinit(&f))
 		print("no boot devices\n");
+#endif
 
 	open = rebase(open);
 	read = rebase(read);

@@ -17,6 +17,15 @@ enum {
 	ByProtocol,
 };
 
+/* the first argument to AllocatePages */
+enum {
+	AllocateAnyPages,
+	AllocateMaxAddress,
+	AllocateAddress,
+};
+
+typedef UINT64	EFI_PHYSICAL_ADDRESS;
+
 typedef struct {
 	UINT32		Data1;
 	UINT16		Data2;

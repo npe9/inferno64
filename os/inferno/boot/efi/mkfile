@@ -150,15 +150,39 @@ test.fat:D:	bootia32.efi bootx64.efi
 	rm /srv/$s
 
 
-bootaa64.efi:	aa64.7 aa64hello.7
+CFLAGSAA64=$CFLAGS -DAA64 $INCAA64
+
+#	The loader.  aa64hello.efi below is the same entry with nothing
+#	behind it, and is the test that the toolchain and the header are
+#	right at all; keep both, because when the loader stops working
+#	the first question is which of the two halves broke.
+bootaa64.efi:	aa64.7 aa64boot.7 efi.7 fs.7 sub.7
 	7l -l -s -R1 -T$AA64LINK -o bootaa64.out $prereq
 	$ROOT/tools/aout2efi bootaa64.out $target $AA64BASE
+
+aa64hello.efi:	aa64.7 aa64hello.7
+	7l -l -s -R1 -T$AA64LINK -o aa64hello.out $prereq
+	$ROOT/tools/aout2efi aa64hello.out $target $AA64BASE
 
 aa64.7:	aa64.s
 	7a '-DIMAGEBASE='$AA64BASE -o $target aa64.s
 
+aa64boot.7:	aa64boot.c efi.h
+	7c $CFLAGSAA64 -o $target aa64boot.c
+
 aa64hello.7:	aa64hello.c
-	7c $CFLAGS $INCAA64 -o $target aa64hello.c
+	7c $CFLAGSAA64 -o $target aa64hello.c
+
+efi.7:	efi.c efi.h
+	7c $CFLAGSAA64 -o $target efi.c
+
+fs.7:	fs.c efi.h
+	7c $CFLAGSAA64 -o $target fs.c
+
+sub.7:	sub.c
+	7c $CFLAGSAA64 -o $target sub.c
+
+%.7:	$HFILES
 
 clean:V:
-	rm -f *.[678] *.out $TARG bootaa64.efi test.* 
+	rm -f *.[678] *.out $TARG bootaa64.efi aa64hello.efi test.* 

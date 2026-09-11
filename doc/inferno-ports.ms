@@ -23076,3 +23076,162 @@ built for arm64 and a
 .CW jump()
 that hands off to an Inferno kernel, is the next piece; ACPI discovery
 for the ITS is the piece after it.
+.NH 1
+Inferno boots on arm64 through UEFI
+.PP
+The EFI application of the previous section printed a line and returned.
+This one loads a kernel.
+.CW "mk bootaa64.efi"
+in
+.CW os/inferno/boot/efi
+now links
+.CW aa64.s
+against the loader proper \(em
+.CW efi.c
+for the console, the configuration table and the memory map,
+.CW fs.c
+for the filesystem,
+.CW sub.c
+for the a.out and the handoff \(em and on
+.CW "-M virt"
+with edk2 as pflash it reads
+.CW plan9.ini
+off the ESP, loads the kernel it names, and hands the machine over.  The
+kernel reaches
+.CW ROOT-CMDS-OK ,
+which is the marker the board suite waits for.
+.PP
+All three shared files compiled for arm64 with 7c on the first try.
+.CW pxe.c
+and
+.CW iso.c
+did not:
+.CW iso.c
+reads an ISO9660 directory entry whose 32-bit fields sit at odd offsets
+and 7c refuses it outright with
+.CW "isowalk: odd offset: 42" ,
+because the instruction it wants does not exist on this architecture.
+Neither is a way anybody boots an arm64 machine, so
+.CW efimain()
+tries only
+.CW fsinit()
+there.
+.NH 2
+Five things that are the architecture, not the loader
+.PP
+.B "The kernel is an ELF and bootkern() reads an a.out."
+.CW i$CONF
+is linked
+.CW -H7
+because QEMU's
+.CW -kernel
+wants ELF.  Rather than teach
+.CW bootkern()
+to read ELF \(em which would also want a seek that
+.CW fs.c
+does not implement \(em the board mkfile gained
+.CW i$CONF.a ,
+the same objects linked
+.CW -H2 .
+There is no second kernel to keep in step, only a second wrapper around
+one.
+.PP
+.B "The entry is not the low twenty-eight bits."
+.CW bootkern()
+masked the 64-bit entry with
+.CW 0x0FFFFFFF ,
+which is right for a pc kernel linked in the kernel segment and loaded
+at the physical address under it.  An arm64 kernel here links at
+0x40200000, which is already physical, and masking turns it into
+0x00200000 \(em memory the machine does not have.
+.PP
+.B "The configuration cannot go at 0x1200."
+.CW confaddr
+on x86 is CONFADDR, the fixed low address a pc kernel reads its
+configuration from.  UEFI on arm64 has nothing mapped below 0x40000000
+and no arm64 kernel in this tree reads a configuration block at all, so
+it points at four kilobytes of the loader's own bss.
+.PP
+.B "GetMemoryMap could not be called at all."
+7c cannot pass the address of a stack local as an argument to a variadic
+function on arm64: it emits a DWORD of a stack address-constant and 7l
+refuses it with
+.CW "illegal combination DWORD NONE NONE LACON" .
+.CW memconf()
+passes five such addresses.  Making its locals static fixes it, because
+the address of a static is
+.CW $sym(SB)
+and assembles \(em and it also takes a 96K memory-map buffer off the
+firmware's stack, which was never a good place for it.  This matters
+beyond the map itself:
+.CW ExitBootServices()
+will not proceed without the key of the
+.I current
+memory map, so
+.CW memconf(nil)
+has to be called on the arm64 path too, for
+.CW MK
+and nothing else.  The x86 loaders grew by the 96K, which is the price.
+.PP
+.B "UEFI hands over with the MMU on."
+Every arm64 kernel in this tree starts with translation and caches off:
+.CW l.s
+sets a stack and calls
+.CW main() ,
+and
+.CW mmu.c
+builds the tables later.  So
+.CW jump()
+clears M, C and I in SCTLR_EL1, synchronises, and invalidates the
+instruction cache before branching, and the kernel image is cleaned to
+the point of coherency by
+.CW cachewb()
+first \(em it was written through the data cache and is about to be read
+with the cache off.  Execution survives clearing M only because UEFI
+identity-maps DRAM, so the physical address of the instruction after the
+MSR is the virtual one it was fetched at; a firmware that mapped the
+loader anywhere else would stop there and there is no way to find that
+out from inside the function.
+.NH 2
+What the firmware gives, and what it does not
+.PP
+An arm64 kernel here wants a device tree pointer in x0, and UEFI has one
+to give only when the firmware published it.  QEMU's ArmVirtQemu build
+chooses between ACPI and a device tree, so the two cases differ and both
+were run.
+.PP
+Under
+.CW "-M virt,acpi=off"
+the loader finds the DTB under
+.CW EFI_DTB_TABLE_GUID ,
+passes it, and the kernel boots on it.  One thing is missing from it:
+.P1
+msi: no gicv2m frame and no its; pci interrupts are intx
+.P2
+edk2 regenerates a smaller device tree than QEMU's own and the v2m frame
+is not in it, so PCI interrupts fall back to INTx on this path.  The
+drivers work; the MSI work of two sections ago is simply unreachable
+through edk2's tree.
+.PP
+Under the default, with ACPI, there is no device tree at all.  The
+loader says so \(em
+.CW "no device tree from the firmware (acpi=off?)"
+\(em and the kernel boots anyway, because
+.CW main()
+falls back to finding a tree by magic at the bottom of DRAM and QEMU's
+own DTB is still sitting there at 0x40000000.  That fallback is a QEMU
+artifact and nothing else: a real machine has no DTB at the bottom of
+memory, and this is exactly the hole ACPI discovery fills.  Usefully,
+.CW acpiconf()
+in
+.CW efi.c
+already finds the RSDP and puts it in the configuration \(em
+.CW *acpi=0x7cb43018
+on this boot \(em so the pointer MADT and IORT would be read through is
+in hand.  What is missing is the reading.
+.PP
+And with QEMU's own tree rather than edk2's, the v2m frame is there, so
+the ACPI boot gets
+.CW MSI-DOORBELL-OK
+where the device-tree boot does not.  Two paths, each with something the
+other lacks, and neither of them is what an Ampere Altra presents.

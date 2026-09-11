@@ -158,6 +158,11 @@ extern char *confaddr;
 /* Values consumed by the mode-switch stub after ExitBootServices. */
 extern void *jumpentry;
 void *jumpargs;
+#ifdef AA64
+extern void *dtb(void);			/* aa64boot.c */
+extern int claim(void*, uintptr);
+extern void cachewb(void*, void*);	/* aa64.s */
+#endif
 static char *confend;
 
 char*
@@ -356,14 +361,40 @@ bootkern(void *f)
 	case R_MAGIC:
 		if(readn(f, &e, 8) != 8)
 			goto Error;
+#ifdef AA64
+		/*
+		 * The whole address, not the low twenty-eight bits of it.
+		 * Masking is right for a pc kernel, which is linked in the
+		 * kernel segment and loaded at the physical address under
+		 * it; an arm64 kernel here links at 0x40200000, which is
+		 * already physical, and masking turns it into 0x00200000 --
+		 * memory an arm64 machine does not have.
+		 */
+		e = (uchar*)beswall((uvlong)e);
+#else
 		/* load low address */
 		e = (uchar*)(beswall((uvlong)e) & 0x0FFFFFFFUL);
+#endif
 		break;
 	case I_MAGIC:
 		break;
 	default:
 		return "bad magic";
 	}
+
+#ifdef AA64
+	/*
+	 * Ask the firmware for the range before writing a byte of it.
+	 * AllocateAddress asks for one address and takes no other, so a
+	 * refusal means UEFI has that memory and the load would have
+	 * corrupted it -- which, without this, is a thing found out after
+	 * ExitBootServices, past the last point anything can be printed.
+	 */
+	n = PGROUND(beswal(ex.text)) + PGROUND(beswal(ex.data))
+		+ PGROUND(beswal(ex.bss));
+	if(claim(e, n) < 0)
+		return "the firmware will not give up the kernel's address";
+#endif
 
 	t = e;
 	n = beswal(ex.text);
@@ -380,6 +411,15 @@ bootkern(void *f)
 	t += PGROUND(beswal(ex.bss));
 	memset(d, 0, t - d);
 
+#ifdef AA64
+	/*
+	 * Last write to the image, so the last chance to get it out of
+	 * the data cache: jump() runs with the cache off and the kernel
+	 * reads itself from memory.
+	 */
+	cachewb(e, t);
+#endif
+
 	close(f);
 
 	/* stop device */
@@ -387,6 +427,30 @@ bootkern(void *f)
 
 	print("boot\n");
 
+#ifdef AA64
+	/*
+	 * No memconf(): its e820 map is a pc kernel's way of being told
+	 * about memory and nothing on arm64 reads one.  What an arm64
+	 * kernel does want is a device tree in x0, and UEFI has one to
+	 * give only when the firmware published it -- so say which way it
+	 * went while there is still a console to say it on.
+	 */
+	jumpargs = dtb();
+	if(jumpargs == nil)
+		print("no device tree from the firmware (acpi=off?)\n");
+	jumpentry = e;
+	/*
+	 * For MK, which ExitBootServices() will not proceed without: it
+	 * takes the key of the current memory map and refuses a stale
+	 * one.  nil asks memconf() for the key and nothing else, which is
+	 * what the x86 path does too when the configuration already
+	 * carries an e820 list.
+	 */
+	memconf(nil);
+	unload();
+
+	jump(e, jumpargs);
+#else
 	memconf(findconf("*e820=")?nil:&confend);
 	jumpentry = e;
 	/* Osprey's entry records BX as the Multiboot pointer.  EFI has no
@@ -395,6 +459,7 @@ bootkern(void *f)
 	unload();
 
 	jump(e, BOOTARGS);
+#endif
 
 Error:
 	return "i/o error";
