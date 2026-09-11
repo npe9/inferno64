@@ -268,25 +268,25 @@ or
 .B FAIL
 a line at a time, and the sweep prints a tally per check.
 .PP
-363 lines against the kernel this file describes, and eight more from
+364 lines against the kernel this file describes, and eight more from
 the two that build rather than boot \- the 9front userland this tree
-builds itself, and the policy layer for 386 and riscv64.  The count is
-given as of a run rather than as a property: on the sweep of 11
-September 2026 every line was
-.B ok
-but one, and that one was not a failure of what it checks.  The
-personality's fault line and a program's output went to the same serial
-port from two paths \- the kernel's
-.CW iprint ,
-which writes the port itself, and an ordinary
-.CW print ,
-which queues behind the console task \- and one cut the other in half:
-.CW "osprey: fault at uscat: started wer pc 0x2000f7, inside ..." .
-The criterion looks for that line and it was not there to find.  Run
-again twice, the same check was 16 of 16 both times, and one boot in
-three shows a cut line somewhere.  It is a defect of the console and
-not of the thing being checked, which is why it is written here rather
-than counted as a pass.
+builds itself, and the policy layer for 386 and riscv64.  All
+.BR ok ,
+on the sweep of 11 September 2026.
+.PP
+The count is given as of a run rather than as a property, and the
+reason is worth one paragraph.  An earlier sweep the same day lost a
+line to the console rather than to what it checks: the personality's
+fault line and a program's output reach the same serial port by two
+paths and one cut the other in half, leaving
+.CW "osprey: fault at uscat: started wer pc 0x2000f7, inside ..." ,
+which the criterion that reads that line could not find.  About one
+boot in three has a cut line somewhere.  The section on the console as
+a task says what is left of that and why a lock does not close it.  A
+tally is a measurement of a run, and a run of three hundred and
+sixty-four things on an emulated machine is not a proof that will
+repeat exactly; what it is proof of is that every one of them passed
+when it was asked.
 .NH 1
 Next, in order
 .PP
