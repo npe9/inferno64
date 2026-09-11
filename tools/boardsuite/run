@@ -40,7 +40,7 @@ verbose=false
 record=false
 force=false
 
-configs='raspi3b raspi3b-4g raspi3b-usb raspi3b-2eth raspi4 raspi4-hot raspi4-usb raspi4-2eth virtarm64 virtarm64-msi virtarm64-nvme virtarm64-xhci virtarm64-peer sifiveu virt virts virt32 virt32s virt-peer peer-mixed'
+configs='raspi3b raspi3b-4g raspi3b-usb raspi3b-2eth raspi4 raspi4-hot raspi4-usb raspi4-2eth virtarm64 virtarm64-msi virtarm64-nvme virtarm64-xhci virtarm64-gicv3 virtarm64-peer sifiveu virt virts virt32 virt32s virt-peer peer-mixed'
 
 # Each configuration: the kernel, the QEMU arguments, the line that
 # says the board is done printing, and the evidence lines that make
@@ -133,7 +133,7 @@ config_kernel() {
 				echo "$root/os/inferno/raspi3b/iraspi3b";;
 	raspi4|raspi4-hot|raspi4-usb|raspi4-2eth)
 				echo "$root/os/inferno/raspi4/iraspi4";;
-	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-peer)
+	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-peer)
 				echo "$root/os/inferno/virtarm64/ivirtarm64";;
 	sifiveu)		echo "$root/os/inferno/sifiveu/isifiveu";;
 	virt|virt-peer|peer-mixed)
@@ -156,7 +156,7 @@ config_kernel() {
 config_qemu() {
 	case $1 in
 	raspi*)			echo "$QEMU";;
-	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-peer)
+	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-peer)
 				echo "${QEMU_AARCH64:-`command -v qemu-system-aarch64`}";;
 	sifiveu|virt|virts|virt-peer|peer-mixed)
 				echo "${QEMU_RISCV64:-`command -v qemu-system-riscv64`}";;
@@ -222,6 +222,22 @@ config_args() {
 		# halves were BLK-FAIL, recorded as a known failure of the
 		# board rather than of the invocation.
 		echo "-M virt -cpu cortex-a57 -m 1G -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-pci,disable-legacy=on,drive=blk0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-device,netdev=n0";;
+	virtarm64-gicv3)
+		# The same two PCI functions as virtarm64-msi, on a GICv3
+		# instead of a GICv2.  That one flag changes the whole MSI
+		# mechanism underneath them: hw/arm/virt.c's create_gic()
+		# gives a gic-version=2 machine an SBSA v2m frame and a
+		# gic-version=3 machine an ITS, never both, so this arm
+		# exercises os/inferno/virtarm64/gicv3its.c where the msi
+		# arm exercises gicv2m.c, with no driver aware of the
+		# difference.
+		#
+		# It is also the only arm that runs the GICv3 SPI path at
+		# all.  That path was written, committed and never booted
+		# -- every other arm takes -M virt's default v2 -- so the
+		# uart at 33 and the virtio-mmio slots arriving here are
+		# worth as much as the MSI half.
+		echo "-M virt,gic-version=3 -cpu cortex-a57 -m 1G -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-pci,disable-legacy=on,drive=blk0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-pci,disable-legacy=on,netdev=n0";;
 	virtarm64-msi)
 		# The same board with both devices on PCI rather than one
 		# on PCI and one on virtio-mmio, which is what makes this
@@ -461,7 +477,7 @@ config_last() {
 	raspi4-2eth)		echo 'USB-MOUSE';;
 	raspi4|raspi4-hot)	echo 'USB-MOUSE';;
 	raspi4-usb)		echo 'RASPI4-SH-OK';;
-	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-peer)	echo 'ROOT-CMDS-OK';;
+	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-peer)	echo 'ROOT-CMDS-OK';;
 	virt|virts|virt-peer|peer-mixed)	echo 'ROOT-CMDS-OK';;
 	sifiveu)		echo 'SIFIVEU-SH-OK';;
 	virt32|virt32s)		echo 'VIRT32-INIT-OK';;
@@ -784,6 +800,45 @@ config_evidence() {
 		echo 'sdF \(virtio10\): irq 81 msi-x'
 		echo 'MSI-DOORBELL-OK'
 		;;
+	virtarm64-gicv3)
+		echo 'BLK-OK /dev/sdF0/data'	# see virtarm64-peer
+		# The ITS found, sized from its own registers, and its
+		# tables and command queue accepted.  Checked rather than
+		# assumed because every field in this line came from a
+		# register read: GITS_TYPER says how wide a DeviceID is
+		# and how big an ITT entry is, and a driver that guessed
+		# either would build tables the part walks incorrectly.
+		# The widths are matched as digits, not as the 16 and 12
+		# QEMU reports today.  Pinning them would fail this arm on
+		# a QEMU that raised ITS_DEVBITS, which is not a
+		# regression in anything here; what is worth asserting is
+		# that the driver read the fields at all and printed what
+		# it read.
+		echo 'its: gicv3 @ 0x8080000 translate 0x8090040, [0-9]+ devid bits, itt [0-9]+ bytes'
+		# LPIs, which are the thing a v2 does not have.  8192 is
+		# the first INTID the architecture allows for one, so the
+		# two devices landing on 8192 and 8193 says the LPI
+		# allocator started where it should -- it started at zero
+		# once, and the ITS refused the mapping with "invalid
+		# interrupt ID 0x0".
+		echo '#l0: irq 8192 msi-x'
+		echo 'sdF \(virtio10\): irq 8193 msi-x'
+		# And delivery.  The disk reports the first interrupt to
+		# reach its handler, which is the whole chain: the device
+		# wrote its EventID to GITS_TRANSLATER, the ITS walked the
+		# device table to an ITT and the ITT to an LPI, the
+		# collection table sent that LPI to this cpu's
+		# redistributor, and trap() dispatched an INTID far above
+		# anything GICD knows about.  Every step before this one
+		# can be right while this line is missing: it was, for an
+		# afternoon, because GICR_PROPBASER.IDbits was one too
+		# small and the redistributor dropped INTID 8192 as out of
+		# range without a word.
+		echo 'sdF: first interrupt, irq 8193 msi-x'
+		# The network half, which proves receive and not just the
+		# one queue the disk uses.
+		echo 'DHCP-OK'
+		;;
 	virtarm64-msi)
 		echo 'BLK-OK /dev/sdF0/data'	# see virtarm64-peer
 		# Message-signalled interrupts, end to end, in four lines.
@@ -883,6 +938,7 @@ for c in $configs; do
 done
 
 mkdir -p "$work"
+
 
 # A blank card of the given size.  Sparse: the 4G one costs nothing
 # until something writes to it, and nothing here writes 4G.
@@ -993,7 +1049,7 @@ config_hostnet() {
 	# inbound halves all dial the host rig, and without it the
 	# board reported TCP-NET-FAIL "connection refused" -- the host
 	# end that was never started, not the board.
-	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-peer)	echo yes;;
+	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-peer)	echo yes;;
 	esac
 }
 
@@ -1474,7 +1530,7 @@ for c in $configs; do
 	# same fat16.img in its qemu line.  It ran only because virt comes
 	# before it in $configs and had already made the image; asked for
 	# on its own with an empty work directory, qemu had no such file.
-	case $c in virt|virts|virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virt-peer|virtarm64-peer|peer-mixed) needfat=true;; *) needfat=false;; esac
+	case $c in virt|virts|virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virt-peer|virtarm64-peer|peer-mixed) needfat=true;; *) needfat=false;; esac
 	if $needfat && ! makefat fat16.img marker.txt 'FS-OK boardsuite'; then
 		echo "$c: FAIL no way to make a FAT16 image here (hdiutil or mkfs.vfat)"
 		echo "    BLK-OK needs a filesystem, not a blank card; see the README"

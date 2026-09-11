@@ -8,6 +8,8 @@
 
 static void	(*irqhandler[GicIRQMax])(Ureg*, void*);
 static void	*irqarg[GicIRQMax];
+static void	(*lpihandler[GicLpiMax])(Ureg*, void*);
+static void	*lpiarg[GicLpiMax];
 
 extern char	etext[];
 
@@ -304,6 +306,9 @@ trap(Ureg *ur)
 			clockintr(ur);
 		else if(irq < GicIRQMax && (f = irqhandler[irq]) != nil)
 			f(ur, irqarg[irq]);
+		else if(irq >= GicLpiBase && irq < GicLpiBase + GicLpiMax
+		&& (f = lpihandler[irq - GicLpiBase]) != nil)
+			f(ur, lpiarg[irq - GicLpiBase]);
 		if(gicv3)
 			seticceoir(iar);
 		else
@@ -346,6 +351,22 @@ void
 intrenable(int v, void (*f)(Ureg*, void*), void *a, int tbdf, char *name)
 {
 	USED(tbdf, name);
+	/*
+	 * An LPI arrives here as the INTID the ITS was told to raise,
+	 * which is 8192 and up and so outside everything gicenable()
+	 * knows how to touch.  There is nothing to enable at the
+	 * distributor: gicv3its.c already wrote the enable bit into the
+	 * LPI configuration table and invalidated the redistributor's
+	 * cached copy of it before returning the number.  All that is
+	 * left is to remember the handler.
+	 */
+	if(v >= GicLpiBase){
+		if(v >= GicLpiBase + GicLpiMax)
+			panic("intrenable: lpi %d", v);
+		lpihandler[v - GicLpiBase] = f;
+		lpiarg[v - GicLpiBase] = a;
+		return;
+	}
 	if(v <= 0 || v >= GicIRQMax)
 		panic("intrenable: irq %d", v);
 	irqhandler[v] = f;
@@ -357,6 +378,11 @@ void
 intrdisable(int v, void (*f)(Ureg*, void*), void *a, int tbdf, char *name)
 {
 	USED(tbdf, f, a, name);
+	if(v >= GicLpiBase && v < GicLpiBase + GicLpiMax){
+		lpihandler[v - GicLpiBase] = nil;
+		lpiarg[v - GicLpiBase] = nil;
+		return;
+	}
 	if(v > 0 && v < GicIRQMax){
 		irqhandler[v] = nil;
 		irqarg[v] = nil;

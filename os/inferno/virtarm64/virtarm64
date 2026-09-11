@@ -96,6 +96,13 @@ misc
 # GICv2 has no ITS, so QEMU's -M virt puts an SBSA v2m frame beside
 # the distributor and one memory write there becomes one SPI.
 	gicv2m
+# gicv3its: the same job on a GICv3, where there is no frame.  The ITS
+# translates (DeviceID, EventID) pairs through tables in memory into
+# LPIs, so it needs a command queue, a device table, a collection
+# table and one translation table per device -- and the board links
+# both because which one exists is a property of the machine QEMU was
+# started as, not of the kernel.
+	gicv3its
 	sdvirtio10	pci sdscsi virtio10mem
 	sdnvme	pci
 	screenarm

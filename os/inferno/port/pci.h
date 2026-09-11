@@ -268,7 +268,7 @@ extern int pcimsixenable(Pcidev *p, int vec, uvlong addr, ulong data);
 extern int pcimsixintr(Pcidev *p);
 /* set by a board that routes MSI; nil elsewhere, and then pcimsixintr()
  * answers -1 and the driver uses p->intl as it always did */
-extern int (*pcimsirouter)(uvlong *addr, ulong *data);
+extern int (*pcimsirouter)(Pcidev *p, uvlong *addr, ulong *data);
 
 extern int pcigetpms(Pcidev* p);
 extern int pcisetpms(Pcidev* p, int state);

@@ -470,6 +470,72 @@ fdtu32(char *prop, u32int *val)
 	return 1;
 }
 
+struct Finda {
+	char	*compat;
+	char	*prop;
+	u32int	*cells;
+	int	max;
+	int	n;
+};
+typedef struct Finda Finda;
+
+static uintptr
+matchu32array(char *name, uchar *props, int acells, int scells, void *a)
+{
+	Finda *f = a;
+	uchar *cv, *v;
+	u32int clen, len;
+	char *c, *ce;
+	int i;
+
+	USED(name, acells, scells);
+	cv = fdtprop(props, "compatible", &clen);
+	if(cv == nil)
+		return 0;
+	c = (char*)cv;
+	ce = c + clen;
+	for(; c < ce; c += strlen(c)+1)
+		if(strcmp(c, f->compat) == 0)
+			break;
+	if(c >= ce)
+		return 0;
+	v = fdtprop(props, f->prop, &len);
+	if(v == nil || len < 4)
+		return 0;
+	f->n = len / 4;
+	if(f->n > f->max)
+		f->n = f->max;
+	for(i = 0; i < f->n; i++)
+		f->cells[i] = be32(v + 4*i);
+	return 1;
+}
+
+/*
+ * Every cell of a named property on the node with this compatible, up
+ * to max of them.  Returns how many were copied, or 0.
+ *
+ * fdtu32() above takes the first cell of the first node that has the
+ * property at all, which is right for a scalar like
+ * timebase-frequency and wrong for anything structured: a PCI host
+ * bridge's msi-map is four cells that only mean anything together
+ * (RID base, MSI controller phandle, DeviceID base, length), and the
+ * node it is on has to be named or the walk would take the first
+ * msi-map in the tree regardless of whose bus it describes.
+ */
+int
+fdtu32array(char *compat, char *prop, u32int *cells, int max)
+{
+	Finda f;
+
+	memset(&f, 0, sizeof f);
+	f.compat = compat;
+	f.prop = prop;
+	f.cells = cells;
+	f.max = max;
+	fdtwalk(matchu32array, &f);
+	return f.n;
+}
+
 static uintptr
 matchpresent(char *name, uchar *props, int acells, int scells, void *a)
 {

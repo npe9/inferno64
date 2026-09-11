@@ -159,7 +159,7 @@ showglobalconfig(void)
 	print("\n");
 }
 
-static int pcmsixrouter(uvlong *addr, ulong *data);
+static int pcmsixrouter(Pcidev *p, uvlong *addr, ulong *data);
 
 void
 mpinit(void)
@@ -609,10 +609,11 @@ msiirqdisable(Vctl *v, int)
  * already had.
  */
 static int
-pcmsixrouter(uvlong *addr, ulong *data)
+pcmsixrouter(Pcidev *p, uvlong *addr, ulong *data)
 {
 	int vno, cpu;
 
+	USED(p);
 	/*
 	 * *nomsi turns off message-signalled interrupts, and MSI-X is
 	 * one however separately the two capabilities are named;

@@ -1128,12 +1128,22 @@ pcimsixenable(Pcidev *p, int vec, uvlong addr, ulong data)
  * back the address and data a device must write to raise an interrupt,
  * and returns the number that write will show up as at intrenable().
  *
+ * The Pcidev is passed because one of the three routers needs it.  A
+ * GICv2m frame and an x86 LAPIC both answer the question "give me a
+ * vector" without caring who asked -- the device writes a fixed
+ * address and the interrupt controller does the rest.  A GICv3 ITS
+ * cannot: it translates (DeviceID, EventID) pairs, the DeviceID comes
+ * from the requester's bus RID, and a vector cannot be handed out
+ * until that device has had an interrupt translation table mapped for
+ * it.  So the interface carries the requester even though two of its
+ * three implementations discard it.
+ *
  * This is a function pointer rather than a linked-in symbol because
  * pci.c is shared by pc64, the riscv virt boards and virtarm64, and
  * only one of them routes MSI today.  A board that does not set it
  * links unchanged and every driver below falls back to INTx.
  */
-int (*pcimsirouter)(uvlong *addr, ulong *data);
+int (*pcimsirouter)(Pcidev *p, uvlong *addr, ulong *data);
 
 /*
  * The whole of what a driver needs: ask the board for a vector, point
@@ -1173,7 +1183,7 @@ pcimsixintr(Pcidev *p)
 		addr = p->msixaddr;
 		data = p->msixdata;
 		irq = p->msixirq;
-	} else if((irq = (*pcimsirouter)(&addr, &data)) < 0)
+	} else if((irq = (*pcimsirouter)(p, &addr, &data)) < 0)
 		return -1;
 	if(pcimsixenable(p, 0, addr, data) < 0)
 		return -1;

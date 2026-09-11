@@ -22598,3 +22598,189 @@ it is also why a twenty-configuration run that normally finishes in
 minutes took twenty of them.  A suite on a shared host is not measuring
 only the kernel under it, and the two repairs above are what keep that
 from being written down as a result.
+.NH 1
+A GICv3 with an ITS, and three ways to lose the top bits of a register
+.PP
+The GICv2 half of MSI is
+.CW gicv2m.c :
+one register, a fixed block of SPIs, nothing to program per device.
+The GICv3 half has none of that.  QEMU's
+.CW hw/arm/virt.c
+.CW create_gic()
+gives a
+.CW gic-version=2
+machine a v2m frame and a
+.CW gic-version=3
+machine an Interrupt Translation Service, never both, and the ITS is a
+different shape entirely: a command queue in memory, a device table, a
+collection table, one translation table per device, and a class of
+interrupt \(em LPIs, INTID 8192 and up \(em that a v2 does not have.
+Four things must be set up before a single message can land.  The
+redistributor needs LPIs enabled with a configuration table and a
+pending table.  The ITS needs its tables and its queue.  The collection
+needs mapping to this cpu, with MAPC.  The device needs an ITT, with
+MAPD, and one entry per vector, with MAPTI.  None of it is discoverable
+from the device, which is why
+.CW os/inferno/virtarm64/gicv3its.c
+is five hundred lines against gicv2m.c's hundred and fifty.
+.PP
+Everything is sized from what the part reports.
+.CW GITS_TYPER
+gives the ITT entry size, the DeviceID width, and whether RDBASE is a
+processor number or a redistributor address;
+.CW GITS_BASER
+gives each table's entry size.  A driver that assumed QEMU's answers
+would build tables real silicon walks wrong, and the numbers differ
+between the two.
+.NH 2
+Bits 59 and 63, and a test that measured the old object file
+.PP
+The first
+.CW GITS_BASER
+write went out as
+.CW 0x0107000004d271400 .
+Type right, entry size right, bit 10 right, bits 59 and 63 gone.  The
+ITS stored exactly what it was given and said nothing; the only symptom
+anywhere was a table that would not turn valid.  The constants were in
+an enum, and an enum constant in this compiler is an
+.CW int ,
+so
+.CW 1<<63
+and
+.CW 1<<59
+are both zero with no diagnostic.  That much is real, and it is the
+kind of thing that will recur anywhere in this tree that composes a
+64-bit register value out of named bits.
+.PP
+What was written down next was wrong, and the way it was wrong is worth
+more than the bug.  Rewriting the enum as
+.CW 1ULL<<63
+appeared not to help; rewriting it as
+.CW (uvlong)1<<63
+appeared not to help either.  The conclusion drawn \(em that the
+suffix does not widen a small literal and that a cast does not survive
+constant folding \(em went into a comment in the driver and was believed
+for a day.  It is false.  Asking the compiler directly settles it:
+.CW "7c -S"
+on a file containing both forms emits
+.CW "ORR $-9223372036854775808"
+for each, in an enum and out of it, and
+.CW 6c
+folds
+.CW 1LL<<56
+correctly at file scope too.  Both forms work.
+.PP
+The reason the test said otherwise is that it was not a test of the new
+code.  mk rebuilds on mtime, and the edits that changed those constants
+had not moved the source's mtime far enough for it to notice, so the
+kernel being booted still contained the enum.  This is the boardsuite
+failure of the previous section, one directory down: a measurement of
+the old artifact, reported as a measurement of the new one.  The
+harness now refuses a kernel older than its sources.  Nothing refuses a
+.CW .7
+older than its
+.CW .c ,
+and until something does, the only defence is to check the compiler's
+output rather than the kernel's behaviour when the question is what the
+compiler did.
+.PP
+The full-width hex literals stay in the driver, because a literal whose
+own magnitude needs 64 bits cannot be narrowed by anything.  The
+comment that said the alternatives were broken has been corrected in
+place.  One genuine trap does remain, and this file does not hit it: an
+enum member written
+.CW 1<<31
+is the
+.CW int
+.CW -2147483648 ,
+so casting it to a
+.CW uvlong
+sign-extends to
+.CW 0xFFFFFFFF80000000 ,
+not
+.CW 0x80000000 .
+The tree has forty-odd such members.  Every one of them is used against
+a 32-bit register today, which is why none of them is a bug today.
+.NH 2
+Two off-by-ones, one of them silent
+.PP
+With the tables valid, the ITS refused the first mapping:
+.CW "process_mapti: invalid interrupt ID 0x0" ,
+which is QEMU's model complaining under
+.CW "-d guest_errors" .
+The LPI allocator was a static
+.CW int
+and had never been set to
+.CW GicLpiBase ,
+so it offered INTID 0, which is not an LPI.  That one announced itself.
+.PP
+The second did not.  With the allocator fixed, MAPD, MAPC, MAPTI and
+INV all went through, the driver printed
+.CW "#l0: irq 8192 msi-x" ,
+and
+.CW --trace
+.CW "'gicv3_its_*'"
+showed four
+.CW gicv3_its_translation_write
+events with
+.CW "requester_id 0x10" :
+the doorbell was being rung and the translation was happening.  No
+handler ever ran.
+.CW GICR_PROPBASER.IDbits
+had been written as
+.CW Idbits-1 ,
+on the theory that the field wanted a count.  It does not \(em it is
+already a minus-one field, and the largest INTID the redistributor will
+accept is
+.CW 2^(IDbits+1)-1 .
+Writing 12 capped it at 8191, one below the first LPI there is, and the
+redistributor dropped every one of them as out of range without a word
+to anybody.  Writing 13 spans 8192 to 16383 and costs an 8K
+configuration table.
+.CW "sdF: first interrupt, irq 8193 msi-x"
+appeared on the next boot.
+.NH 2
+What runs
+.PP
+.CW virtarm64-gicv3
+boots
+.CW "-M virt,gic-version=3"
+with a virtio-blk and a virtio-net on PCI.  The board finds the ITS
+through the device tree, sizes it from its own registers, takes the
+RID-to-DeviceID map from the host bridge's
+.CW msi-map
+property, and hands two PCI functions distinct LPIs:
+.CW "#l0: irq 8192 msi-x"
+and
+.CW "sdF (virtio10): irq 8193 msi-x" .
+.CW "sdF: first interrupt"
+proves delivery through the redistributor,
+.CW BLK-OK
+proves the disk reads, and
+.CW DHCP-OK
+proves the network receives.  Forty-two markers and twelve known
+.CW -FAIL ,
+the same set as
+.CW virtarm64-msi
+but for
+.CW ITS-OK
+in place of
+.CW MSI-DOORBELL-OK :
+the same two drivers, the same two devices, an entirely different
+interrupt mechanism underneath, and no driver aware of the difference.
+That is the point of putting the router behind
+.CW pcimsirouter .
+.PP
+It is also the first time the GICv3 SPI path has been booted.  That
+path was written, committed and never run \(em every other arm takes
+.CW "-M virt" 's
+default GICv2 \(em so the uart arriving on 33 and the virtio-mmio slots
+arriving at all on this arm are worth as much as the MSI half.
+.PP
+None of this is SystemReady, and the commit says so.  A real Ampere
+Altra or SolidRun HoneyComb hands the kernel ACPI: MADT for the GICD,
+GICR and ITS bases, IORT for the RID-to-DeviceID map.  Both of the
+discoveries above are device-tree reads that will find nothing on that
+machine, and the tree's EFI loader is x86 only.  What this arm
+demonstrates is the ITS protocol, on the one machine available to
+demonstrate it on.

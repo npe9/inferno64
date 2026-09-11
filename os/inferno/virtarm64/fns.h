@@ -30,6 +30,8 @@ void	intrenable(int, void (*)(Ureg*, void*), void*, int, char*);	/* (irq, handle
 void	gicedge(int);			/* trap.c: make one SPI edge-triggered */
 void	gicv2minit(void);		/* gicv2m.c: find the MSI frame, if any */
 void	gicv2mreport(void);
+void	gicv3itsinit(void);		/* gicv3its.c: find the ITS, if any */
+int	gicv3itspresent(void);
 int	islo(void);
 void	kbdinit(void);
 void	screeninit(void);

@@ -2161,3 +2161,112 @@ from source.  What that buys is not the marker
 count: it is that every one of these six statements can be checked
 against a booted kernel by anyone who runs the suite, and that a change
 which breaks one of the finished items says so in the same run.
+.NH 1
+Real boards worth supporting, and the order to do them in
+.PP
+Every machine this tree boots is QEMU.  That is the right place to
+have written the drivers \(em twenty-one configurations fail in
+seconds where a board takes a card swap and a serial cable \(em but it
+is not where the work is worth anything.  The question is which real
+parts to aim at, and the answer follows from what is already written:
+PCIe with CAM and ECAM, NVMe, xHCI, AHCI, the 9front Ethernet set,
+.CW libaml
+for ACPI,
+.CW os/inferno/port/fdt.c
+for device trees, and
+.CW uartdw.c
+for the DesignWare UART that most non-Arm-designed SoCs carry.  A
+board that needs only glue around those is close; a board that needs a
+new bus controller is not.
+.IP 1.
+.B "An arm64 SystemReady machine \(em Ampere Altra, SolidRun HoneyComb, Arm's own reference parts."
+The nearest of all of them, because the machine looks like the
+.CW "-M virt"
+board this tree already runs: GICv3, PSCI, PCIe ECAM, NVMe and an
+Ethernet the tree has a driver for.  What landed for it is the
+Interrupt Translation Service, in
+.CW os/inferno/virtarm64/gicv3its.c :
+a GICv3 has no v2m frame, so MSI means LPIs, a command queue, a device
+table, a collection table and a per-device translation table, all
+sized from
+.CW GITS_TYPER
+and
+.CW GITS_BASER
+rather than from what QEMU happens to provide.  Verified on
+.CW "-M virt,gic-version=3" :
+two PCI functions take distinct LPIs 8192 and 8193,
+.CW "sdF: first interrupt"
+says the second was delivered through the redistributor, and
+.CW DHCP-OK
+says the first receives.  The
+.CW virtarm64-gicv3
+suite arm holds it, and is also the only arm that boots the GICv3 SPI
+path, which had been written and committed and never run.
+.IP
+What is
+.I not
+done is the part that makes it SystemReady.  A real Altra hands the
+kernel ACPI, not a device tree: MADT for the GICD, GICR and ITS bases,
+IORT for the RID-to-DeviceID map.  This driver finds all of those
+through
+.CW fdtreg("arm,gic-v3-its")
+and the host bridge's
+.CW msi-map
+property, and neither exists on the hardware.  Nor is there an entry
+path: the tree's EFI loader in
+.CW os/inferno/boot/efi
+is x86 only.  ACPI discovery beside the FDT discovery, and an arm64
+EFI stub, are what item 1 still owes.
+.IP 2.
+.B "Raspberry Pi Zero 2 W."
+A BCM2710A1 \(em the Pi 3B's die in a smaller package \(em so the
+.CW raspi3b
+kernel's mailbox, SDHOST, DWC2 and LAN9514 work is the same silicon,
+and the board costs fifteen dollars.  What differs is the absence of
+the LAN9514: the Zero 2 W has no Ethernet, only the wireless part on
+SDIO, which is exactly the Arasan work
+.CW doc/raspi4-plan.ms
+records as blocked off this machine.  So it boots to a console over
+the same serial pinout and stops there until SDIO is real.
+.IP 3.
+.B "StarFive VisionFive 2 (JH7110)."
+The riscv64 board people actually own.  Its UART is the DesignWare
+part
+.CW uartdw.c
+already drives, its Ethernet is a DesignWare GMAC, its storage is a
+dw-mmc controller and an NVMe behind the SoC's PCIe.  It boots OpenSBI
+and hands the kernel a device tree in a1, which is exactly the entry
+.CW os/inferno/virt
+takes today.  The new drivers are GMAC, dw-mmc and the JH7110 PCIe
+controller; nothing about the entry, the trap path or the SBI calls
+changes.
+.IP 4.
+.B "Rockchip RK3588 or RK3399."
+The arm64 single-board machine with the widest availability \(em
+Radxa, Orange Pi, Firefly, Pine64 all ship one.  GICv3 (so the ITS
+above applies), PCIe with NVMe, a DesignWare UART, a DesignWare GMAC,
+and dw-mmc for the eMMC.  It is item 3's driver list on an arm64
+entry, which is why the two should be done near each other.
+.IP 5.
+.B "SiFive HiFive Unmatched (FU740)."
+The riscv64 board with real PCIe: an x16 slot, NVMe, and a Marvell
+Ethernet the tree already has a driver for in
+.CW etheryuk.c .
+Expensive and out of production, but it is the riscv machine that most
+resembles a PC, and the tree's PCI driver set would light up on it
+with the least new code of any riscv part.
+.IP 6.
+.B "Microchip PolarFire SoC Icicle Kit."
+Five cores, a Cadence GEM Ethernet, a Cadence SDHCI, and PCIe on the
+FPGA fabric.  The Cadence controllers are the new work.  It is here
+rather than higher because it is a development kit rather than a
+machine people run, but it is the riscv64 part with the best
+documentation of the three.
+.PP
+Items 1, 3 and 4 share the same shape: an entry the tree already
+takes, a bus the tree already drives, and two or three controllers
+from the DesignWare family.  Writing the DesignWare GMAC and dw-mmc
+once serves three of the six boards, which is the same argument the
+shared
+.CW fdt.c
+made.

@@ -57,10 +57,11 @@ static int	v2mok;		/* the self-test in gicv2minit() passed */
  * virtual address would be meaningless to the device.
  */
 static int
-v2malloc(uvlong *addr, ulong *data)
+v2malloc(Pcidev *p, uvlong *addr, ulong *data)
 {
 	int spi;
 
+	USED(p);
 	if(v2m == nil || v2mnext >= v2mbase + v2mcount)
 		return -1;
 	spi = v2mnext++;
@@ -152,7 +153,8 @@ void
 gicv2mreport(void)
 {
 	if(v2m == nil){
-		print("msi: no gicv2m frame; pci interrupts are intx\n");
+		if(!gicv3itspresent())
+			print("msi: no gicv2m frame and no its; pci interrupts are intx\n");
 		return;
 	}
 	print("msi: gicv2m @ %#llux spi %d..%d (%d vectors), doorbell %#llux, MSI-DOORBELL-OK\n",

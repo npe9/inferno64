@@ -96,6 +96,17 @@ enum {
 	 * frame it had just found.
 	 */
 	GicIRQMax	= 160,
+	/*
+	 * LPIs, which exist only on a GICv3 and only with an ITS.  They
+	 * start at 8192 by architecture and are not SPIs: they are not
+	 * in GICD, have no ICFGR or IROUTER, are enabled by a byte in a
+	 * table in memory rather than a register, and need no EOI
+	 * distinct from any other group-1 interrupt.  So they get their
+	 * own handler table in trap.c rather than an irqhandler[] grown
+	 * to 8192 entries to hold sixty-four of them.
+	 */
+	GicLpiBase	= 8192,
+	GicLpiMax	= 64,		/* how many this kernel will dispatch */
 	GicSpiBase	= 32,
 	GicPPITimer	= 30,		/* non-secure physical timer, from the DTB */
 };

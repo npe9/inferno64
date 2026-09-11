@@ -230,7 +230,21 @@ main(void)
 	 * drivers that ask for a vector, and a router set afterwards
 	 * would be found nil by every one of them.
 	 */
+	/*
+	 * One or the other, never both: QEMU's create_gic() gives a
+	 * gic-version=2 machine a v2m frame and a gic-version=3 machine
+	 * an ITS, and each init returns silently when its node is not in
+	 * the tree.  Whichever finds itself sets pcimsirouter, and the
+	 * order between them does not matter for that reason.
+	 *
+	 * The report comes after both, because the only board that has
+	 * neither is the one that should say so, and gicv2mreport()
+	 * cannot know that until the ITS has had its look.  Run before
+	 * gicv3itsinit(), it told a gic-version=3 machine its interrupts
+	 * were intx a line before the ITS claimed them.
+	 */
 	gicv2minit();
+	gicv3itsinit();
 	gicv2mreport();
 	pciarchinit();
 	chandevreset();
