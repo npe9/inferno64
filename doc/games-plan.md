@@ -39,6 +39,7 @@ Verified by running them, and by each one's own `-t` mode.
 | `leap(1)` | side-scrolling platformer | the same, with gravity, a camera and an entity list. Measured cost **~1 ms per entity**, so ~40 entities is the shell's ceiling at 25 Hz |
 | `camber(1)` | side-view racer, with a design mode | **content as data**: every tile and every feature of a course is read from a file at run time, through `tiles(2)`'s command language, and `camber -e` writes those files |
 | `spire(1)` | vertical climber with rooms off it | **the namespace**: a room is a *mount*. A door runs a program that serves four files over Styx, mounts it on `/n/room`, and reads and writes those files; leaving is an unmount, and the room's process ends with the connection |
+| `tandem(1)` | two players on one screen | **Styx across a machine boundary**: the game is a file server with no window, and every player — the local one included — is a client of it. A frame over the mount costs **1278 µs**, 8% of the 60 Hz budget |
 
 Two things follow from that table. `orchard` is the only one that exposes itself
 as a filesystem. And until `camber`, nothing in it loaded its content from
@@ -196,12 +197,43 @@ from `sh(1)` leaves the server running after the unmount for exactly this reason
 
 ### 3. `tandem` — shape 4 — Styx across a machine boundary
 
-Two players, one screen, one of them somewhere else. The game exports a pad as a
-file and the second player's `emu` mounts it — the same mechanism whether that is
-another window on this host or another machine. `orchard` proved a game can serve
-a file interface; this proves the interface is enough to *play* through, at
-frame rate, which is a considerably stronger claim and one that can be measured:
-the number to report is the added latency per frame over the mount.
+**Built.** See `tandem(1)` and `tests/tandemnet.sh`.
+
+Two players, one screen, one of them somewhere else. The design that makes the
+point is that there is no host program and no client program: **the game is a file
+server with no window and no keyboard, and every player is a client of it**,
+including the local one. `tandem` with no arguments starts `tandem -serve` down a
+pipe and mounts it; `tandem -j tcp!host!port` mounts a game on another machine.
+From the mount onwards it is the same code, because mounting a pipe and mounting
+a TCP connection are the same thing. `orchard` proved a game could serve a file
+interface; this proves the interface is enough to *play* through.
+
+The number to report was the cost of a frame over the mount, and it is **1278 µs**
+— about 8% of the 60 Hz budget — with the two files a client touches every frame
+held open. Opening them each frame instead costs **3083 µs**, 19%, because an
+open-write-clunk is four Styx round trips where one would do. That is the single
+most useful thing the measurement produced and it changed the client.
+
+`tests/tandemnet.sh` runs the whole self test through `styxlisten(1)` on a TCP
+port, so the claim is checked over a real connection and not only over a pipe.
+The negative control is built into the test it runs: it ends by unmounting the
+game and asserting the client can then read nothing. A client with a local copy
+of anything would pass everything else and fail that.
+
+Three real bugs came out of it, all of them in the *plumbing* rather than the
+game:
+
+- **`break` in an `alt` arm leaves the alt, not the loop** — again. The server's
+  message loop never ended on a read error, so it outlived every client.
+- A spawned ticker process outlives the server that spawned it and keeps `emu`
+  alive after everything has exited. The clock is now not a process at all: the
+  game catches up to the wall clock when somebody reads `state`, which also means
+  a game nobody is reading burns nothing.
+- The server ran its own clock *and* honoured `step`, so every assertion about
+  exactly how far the game had moved was a race against it — intermittently, about
+  one run in six. A client now writes `drive` to take the clock, and the test
+  asserts the game then does *not* move on its own, which is what makes the rest
+  of the frame assertions mean anything.
 
 ### 4. `bout` — shape 5 — behaviour as a little language
 

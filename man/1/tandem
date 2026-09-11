@@ -1,0 +1,204 @@
+.TH TANDEM 1
+.SH NAME
+tandem \- two players, one screen, one of them somewhere else
+.SH SYNOPSIS
+.B games/tandem
+.br
+.B games/tandem -j
+.I addr
+.br
+.B games/tandem -serve
+.br
+.B games/tandem
+[
+.B -t
+|
+.B -b
+]
+.PP
+.B "styxlisten -A 'tcp!*!" port "' games/tandem -serve"
+.SH DESCRIPTION
+.I Tandem
+is an arena of girders with coins on it and two players in it.
+Running along collects coins; jumping up into the underside of a girder
+knocks whoever is standing on it off their feet, which is the only way
+the two players touch and is both the help and the hindrance.
+The world wraps left to right.
+After a minute the higher score wins.
+.PP
+Arrow keys or
+.B wasd
+move,
+.BR x ,
+.B .
+or space jumps,
+.B q
+or Escape quits.
+.SS The game is a file server
+.I Tandem
+in its playing form has a window and a keyboard.
+The game does not.
+.B "tandem -serve"
+has neither: it serves Styx on its standard input and output, and what
+it serves is
+.TP
+.B ctl
+written to:
+.B join
+asks for a player number,
+.B reset
+starts the round again,
+.B drive
+takes the clock,
+.B step
+moves the game on one frame
+.TP
+.B pad
+written to:
+.BI "" N " MASK" ,
+meaning player
+.I N
+is holding
+.I MASK
+.TP
+.B state
+read: where everything is, as text
+.TP
+.B status
+read: the answer to the last write
+.PP
+A player is whatever is writing to
+.BR pad .
+Running
+.I tandem
+with no arguments starts a server down a pipe and mounts it; running it
+with
+.BI -j " addr"
+mounts a game somewhere else.
+From that point the two are the same code, because mounting a pipe and
+mounting a TCP connection are the same thing.
+That is the whole argument, and it is why there are no separate host and
+client programs here.
+.PP
+.B State
+is text so that a person can read it while the game is running, and
+because the first thing anybody does with a protocol they cannot read is
+guess about it.
+A frame is:
+.IP
+.EX
+frame N OVER
+p 1 X Y FLAGS SCORE
+p 2 X Y FLAGS SCORE
+c K TX TY LIVE
+.EE
+.PP
+.I Flags
+are 1 on the ground, 2 knocked over, 4 facing left, 8 joined.
+.SS Playing across machines
+On one:
+.IP
+.EX
+styxlisten -A 'tcp!*!6789' games/tandem -serve
+.EE
+.PP
+On the other:
+.IP
+.EX
+games/tandem -j tcp!thathost!6789
+.EE
+.PP
+Both players are then clients of the same game, and neither is
+simulating anything.
+.B /tests/tandemnet.sh
+does exactly this to a local port and runs the self test through it.
+.PP
+Nothing falls back to anything.
+A client that cannot mount does not play and says so, and a client whose
+read of
+.B state
+fails stops rather than drawing the last thing it saw \- which would
+look exactly like still being connected.
+.SS What it costs
+.B -b
+measures a frame over the mount.
+Over a pipe on an Apple M-series host, two thousand of each:
+.IP
+.EX
+                      opened each    held open
+write pad                 867.0 us      268.5 us
+read state               1263.5 us      641.0 us
+both, as a frame         3083.0 us     1278.0 us
+.EE
+.PP
+A frame at 60Hz has 16666 microseconds, so a frame over the mount is
+about
+.B 8%
+of the budget \- if the two files a client touches every frame are
+opened once and kept.
+Opening them each frame costs a walk, an open and a clunk on top of the
+read or write, which is four Styx round trips where one would do, and
+takes 19% of the budget instead.
+.SS The clock
+The game keeps the time, so that two clients on two machines cannot
+disagree about what frame it is, and it keeps it by catching up to the
+wall clock when somebody reads
+.B state
+rather than by running a process of its own.
+A client that writes
+.B drive
+takes the clock instead and the game then moves only when
+.B step
+is written, which is what makes
+.B -t
+reproducible.
+.SH FILES
+.TP
+.B /lib/tiles/tandem.art
+the sheets, the font and the palettes, as tiles(2) commands
+.TP
+.B /lib/tiles/tandem.chr
+the 8x8 tiles of the arena
+.TP
+.B /lib/tiles/tandem.map
+the arena
+.PP
+The players are the same sixteen-pixel art
+.IR spire (1)
+uses, drawn through two palettes: which player you are is a palette, not
+a sprite.
+.SH SOURCE
+.B /appl/cmd/games/tandem.b
+.br
+.B /tests/tandemnet.sh
+.SH SEE ALSO
+.IR spire (1),
+.IR roomsrv (2),
+.IR tiles (2),
+.IR styxlisten (1),
+.IR bind (1),
+.IR mntgen (4)
+.PP
+.B /doc/games-plan.md
+says why this game is in the tree and what the others demonstrate.
+.SH BUGS
+.B -t
+drives the rules, the join, the pad, the state, the held descriptors and
+the unmount.
+It presses no key: the tables that turn a key into an action are covered
+by nothing and have only ever been checked by playing.
+.PP
+Two people have never played it at once.
+Everything below that \- two clients, two pads, two players moving \- is
+checked, but by one process writing both pads.
+.PP
+There is no authentication and no attempt at one.
+Anybody who can reach the port can write anybody's pad, including yours.
+.PP
+Nothing times out.
+A client that stops reading does not stop the game, but a client reading
+from a wedged server waits for ever.
+.PP
+The catch-up is bounded at eight frames a read, so a client that stops
+reading for a second and comes back sees the game behind where the wall
+clock says it should be, and it stays behind.

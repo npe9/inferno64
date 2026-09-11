@@ -1,0 +1,30 @@
+; tandem(1): the art, as a script in tiles(2)'s command language.
+;
+; The climbers are the same sixteen-pixel art spire(1) uses, drawn
+; through two different palettes: which player you are is a palette, not
+; a sprite.
+
+sheet arena /lib/tiles/tandem.chr
+sheet16 folk /lib/tiles/spire16.chr
+font text
+
+palette pair    dark.black dark.black  dark.black  dark.black
+palette pgird   dark.black dark.orange mid.orange  light.orange
+palette pwall   dark.black dark.grey   mid.grey    light.grey
+palette pcoin   dark.black dark.yellow pale.yellow mid.yellow
+palette plamp   dark.black dark.grey   mid.yellow  pale.yellow
+palette pone    dark.black dark.black  pale.rose   mid.cyan
+palette ptwo    dark.black dark.black  pale.lime   mid.violet
+palette pstun   dark.black dark.black  pale.grey   pale.grey
+; A sprite's first colour is its outline and is black; text drawn in a
+; player's own palette was therefore black on a black panel and did not
+; appear at all.  The scores get palettes of their own, in each player's
+; body colour.
+palette ponetext dark.black pale.rose  pale.rose  pale.rose
+palette ptwotext dark.black pale.lime  pale.lime  pale.lime
+
+palette phud    dark.black pale.grey   pale.grey   pale.grey
+palette pwarn   dark.black light.red   light.red   light.red
+palette pgood   dark.black light.lime  light.lime  light.lime
+
+palette cair    dark.black dark.black  dark.black  dark.black

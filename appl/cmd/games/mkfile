@@ -7,6 +7,7 @@ TARG=\
 	orchard.dis\
 	rivet.dis\
 	spire.dis\
+	tandem.dis\
 	spireshop.dis\
 	spirespring.dis\
 	sprocket.dis\
