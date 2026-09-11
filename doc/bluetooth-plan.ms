@@ -55,6 +55,35 @@ RTS/CTS on the GPIO lines, the reset sequence, and swapping the
 console onto the mini-uart so the PL011 is free.  None of it is
 started.
 .PP
+.B "BR/EDR discoverability is never configured."
+Found by reading the HCI commands the stack actually issues rather
+than by any test.  There is no
+.CW "Write Scan Enable" ,
+no
+.CW "Write Class of Device"
+and no
+.CW "Change Local Name" ,
+so on a real controller this side cannot be found by an inquiry and
+cannot be paged: inquiry scan and page scan are off, which is what a
+controller does at reset.
+.PP
+The bench does not see it because the model accepts an incoming page
+whatever the scan state is, and never checks that the host asked to be
+connectable.  So
+.CW brincoming
+and
+.CW served
+pass against a model that is more permissive than a controller, which
+is the exact failure this document spends its length warning about,
+sitting in the model the whole time.  The LE side is not affected:
+advertising parameters, data and enable are all sent.
+.PP
+.B "The signing key is collected and never used."
+A bond keeps a CSRK, prints it, and stores it.  Nothing signs
+anything: there is no Signed Write anywhere in the stack.  Either the
+key should be used or it should not be asked for, and asking for a key
+in order to file it is the worse of the two.
+.PP
 .B "The pc64 uart fault."
 H4 over a uart does not survive on pc64 at all \(em see the capture in
 .I doc/inferno-ports.ms .
