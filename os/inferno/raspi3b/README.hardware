@@ -43,6 +43,54 @@ still boots, with the PL011 still wired to Bluetooth and the serial
 console dead, which looks exactly like a kernel that hung before its
 first print.
 
+SD card layout -- READ THIS BEFORE THE FIRST BOOT
+------------------------------------------------
+raspi3binit writes to the raw card, and where it writes was chosen for a
+blank QEMU image with no partition table (tools/boardsuite makes exactly
+that: dd of zeroes, no MBR).  On a real card partitioned the ordinary
+way, those writes land inside the boot partition and destroy it.
+
+Every raw-card write the init makes, by sector:
+
+    3               sdcheck single-block write/readback  (SDHOST, sdM0)
+    5               sdhcicheck single-block              (Arasan, sdH0)
+    8-11, 12-15     the two multi-block write/readbacks
+    256-8447        sdfs: "part fs 256 8448" and kfs -r reams all of it
+
+Sector 0 is read and never written, so the MBR survives.  The 4MB kfs
+partition does not: a Pi card conventionally starts its FAT partition at
+sector 2048, and 2048-8447 is inside it.  The board would boot once,
+scribble over the FAT's boot sector, its FATs and its root directory,
+and never boot again until the card was rewritten.
+
+So partition the card with the FAT boot partition starting at sector
+16384 (8MB) or later, leaving sectors 0-8447 unallocated:
+
+    Linux:
+        sudo sfdisk /dev/sdX <<'EOT'
+        label: dos
+        start=16384, size=524288, type=c, bootable
+        EOT
+        sudo mkfs.vfat -F 32 -n BOOT /dev/sdX1
+
+    macOS: diskutil picks the start offset itself, so use fdisk(8) to
+    set it, or write the card on a Linux box.  Do not assume
+    "diskutil partitionDisk ... MBR FAT32" put it past 8447; check with
+    "sudo fdisk /dev/rdiskX" and look at the partition's start sector.
+
+The firmware does not care where the FAT partition begins -- it reads
+the MBR and takes the first FAT partition it finds -- so 16384 costs
+nothing.  8MB of the card is simply left for the init to play in.
+
+Nothing here needs a second partition: the kernel carries its own root
+(devroot, built from the root list in the raspi3b configuration), so the
+FAT partition holds the firmware and kernel8.img and nothing else.
+
+If you would rather not have the card written at all on a bring-up
+boot, the three callers are sdhcicheck(), sdcheck() and sdfs() at the
+top of os/inferno/init/raspi3binit.b's init(); dropping sdfs() alone
+removes every write above sector 15.
+
 config.txt sets arm_64bit=1, kernel=kernel8.img, and routes the PL011
 UART (which this kernel's console drives, at 0x3f201000) to the GPIO
 header: on a Pi 3 the PL011 is wired to Bluetooth by default, so
