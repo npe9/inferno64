@@ -381,3 +381,54 @@ is the mount driver's readahead, which is real and is what the file
 abstraction buys back on a sequential caller \(em that part of the
 comparison is between like and like, because both halves of it are
 Styx.
+.NH 2
+The first sound number: a Styx round trip costs 1.2 to 1.5 times a TCP exchange
+.LP
+The measurement above was rejected because its two halves were answered
+by different kinds of server.
+.CW zerofs (1)
+fixes that: a file server written in Limbo, serving one file of zeros,
+so that the Styx half pays Dis interpretation exactly as
+.CW tcpserve
+.CW -e
+does on the raw half.  Both ends are then the same kind of program, the
+same client drives both, and what is left between them is the protocol.
+.PP
+Three runs of 3000 iterations of 64 bytes, client a hosted
+.CW emu ,
+server a native kernel, transport QEMU user-mode networking:
+.TS
+center;
+l r r r.
+_
+	raw tcp	styx seq	styx jumping
+_
+run 1	2040 us	2439 us (1.1x)	2611 us (1.2x)
+run 2	1446 us	1902 us (1.3x)	2257 us (1.5x)
+run 3	1057 us	1214 us (1.1x)	1680 us (1.5x)
+_
+.TE
+.PP
+.B "A Styx round trip costs about 1.2 to 1.5 times a bare TCP exchange"
+on this path.  The absolute figures swing by a factor of two between
+runs, which is the transport and not the protocol; the ratio is what
+holds, and the ratio is what should be quoted.
+.PP
+Section "what would falsify this" names the threshold: if Styx
+round-trips cost several times a conventional call, the file
+abstraction is too expensive for the thing it replaces.  One and a half
+times is not several times.  On this evidence the cost objection does
+not sink the design \(em with three caveats that keep it from being the
+final word.  The transport is a NAT on one host, not a network.  The
+comparison is against a raw TCP exchange, not against a conventional
+RPC with its own framing and serialisation, which would be a fairer
+stand-in for what the design replaces and would very likely narrow the
+gap further.  And client and server are not two like machines.  The
+plan's own version \(em two instances on a real network \(em is still
+the one that settles it.
+.PP
+The readahead result stands separately and is like-for-like, both
+halves of it being Styx: sequential reads cost consistently less than
+reads at offsets a megabyte apart, which is the mount driver answering
+from a buffer rather than from the wire.  That is what the file
+abstraction buys back on a caller that reads in order.

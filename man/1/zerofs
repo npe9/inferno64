@@ -1,0 +1,41 @@
+.TH ZEROFS 1
+.SH NAME
+zerofs \- a file server, in Limbo, serving one file of zeros
+.SH SYNOPSIS
+.B mount {zerofs}
+.I dir
+.br
+.B styxlisten
+.I address
+.B zerofs
+.SH DESCRIPTION
+.I Zerofs
+serves 9P on its standard input, presenting one directory holding one
+read-only file,
+.BR zero ,
+which returns as many zero bytes as are asked for.
+.PP
+It exists to make
+.IR styxbench (1)'s
+comparison a fair one.  That tool times a Styx round trip against a
+bare TCP exchange, and its first version answered the TCP half with a
+Limbo program and the Styx half with the kernel \(em
+.I exportfs
+reading
+.B /dev/zero
+in C.  The ratio it produced measured which language the server was
+written in rather than the protocol, and it came out with Styx cheaper
+than the transport it runs on, which cannot be so.
+.PP
+With
+.I zerofs
+on the Styx side both halves pay Dis interpretation and what is left
+between them is the protocol.  Serving zeros rather than anything real
+is deliberate: a read then costs the server nothing but the exchange
+itself.
+.SH SOURCE
+.B /appl/cmd/zerofs.b
+.SH SEE ALSO
+.IR styxbench (1),
+.IR tcpserve (1),
+.IR styxlisten (1)

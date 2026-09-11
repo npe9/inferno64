@@ -56,17 +56,30 @@ init(nil: ref Draw->Context, argv: list of string)
 		return;
 	}
 	if(echo){
+		#
+		# Keep accepting.  One connection was enough for the
+		# announce/accept test this command started as, and wrong
+		# for a benchmark server: a probe that merely checked the
+		# port was open consumed the only connection, and the
+		# measurement that followed failed with a broken pipe.
+		#
 		sys->print("tcpserve: echoing\n");
 		buf := array[8192] of byte;
 		for(;;){
-			n := sys->read(dfd, buf, len buf);
-			if(n <= 0)
-				break;
-			if(sys->write(dfd, buf[0:n], n) != n)
-				break;
+			for(;;){
+				n := sys->read(dfd, buf, len buf);
+				if(n <= 0)
+					break;
+				if(sys->write(dfd, buf[0:n], n) != n)
+					break;
+			}
+			nc = dial->listen(c);
+			if(nc == nil)
+				return;
+			dfd = dial->accept(nc);
+			if(dfd == nil)
+				return;
 		}
-		sys->print("tcpserve: echo done\n");
-		return;
 	}
 	msg := array of byte "INFERNO-ACCEPTED-YOUR-CONNECTION\n";
 	sys->write(dfd, msg, len msg);

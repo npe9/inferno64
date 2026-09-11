@@ -32,35 +32,29 @@ that proposes to measure the claim the rest of the plan rests on: that
 distribution in the operating system is cheaper than distribution
 assembled above one.  A namespace mounted across a network is the form
 that claim takes, and a Styx round trip is its price.
+.PP
+Both halves must be answered by the same kind of server or the ratio
+measures the server and not the protocol.  Use
+.IR zerofs (1)
+on the Styx side against
+.IR tcpserve (1)
+.B -e
+on the raw side: both are then Limbo, and both pay Dis interpretation
+per exchange.
 .SH BUGS
-.B "The comparison it makes is not yet a fair one, and the numbers it
-.B "prints should not be quoted."
-The Styx half is answered by the kernel \(em
-.IR exportfs (3)
-reading a file such as
-.B /dev/zero
-in C \(em while the raw half is answered by
-.IR tcpserve (1),
-a Limbo program paying Dis interpretation on every exchange.  So the
-ratio is dominated by which language the server is written in, not by
-the protocol.  Measured that way Styx comes out at 0.4 times the cost
-of raw TCP across three runs of 3000 iterations, stable to one decimal
-\(em and an abstraction cannot cost less than the transport it is
-carried on, which is how the flaw was noticed rather than published.
+The transport matters and is not controlled.  Measured through QEMU's
+user-mode networking the absolute figures swing by a factor of two
+between runs \(em raw exchanges from 1056 to 2040 microseconds \(em
+while the ratio holds.  Quote the ratio, not the microseconds, and say
+what the transport was.
 .PP
-A sound version needs both halves answered by the same kind of server:
-either a raw echo served by the kernel, which does not exist, or the
-Styx half served by a Limbo file server so that both pay Dis.  Until
-then this measures the tool and not the question.
+At 300 iterations the ratio itself is noise: it ranged from 0.3 to 1.3
+across runs and only settled at 3000.  An iteration count here has to
+be justified rather than assumed.
 .PP
-The transport is QEMU's user-mode networking, which is jittery: at 300
-iterations the ratio ranged from 0.3 to 1.3 across runs, and only at
-3000 did it settle.  The plan's own version of this experiment is
-between two instances on a real network, which is also where it should
-be repeated.
-.SH SOURCE
-.B /appl/cmd/styxbench.b
-.SH SEE ALSO
-.IR tcpserve (1),
-.IR styxlisten (1),
-.IR export (4)
+The client is a hosted
+.IR emu (1)
+and the server a native kernel.  That asymmetry cancels, because both
+halves use the same client, but it means these are not two like
+machines and the plan's own version of the experiment \(em two
+instances on a real network \(em has not been run.
