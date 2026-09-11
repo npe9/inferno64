@@ -413,41 +413,50 @@ the queue; this is about *when* the queue is drained relative to the
 2-D drawing that belongs on top of it, and the drain still happens at
 present time.
 
-### `castlefrankenstein` does *not* use the GPU correctly — 2026-09-11
+### `castlefrankenstein`: the GPU was right and both CPU paths were wrong — 2026-09-11
 
-Asked after `gorge` and `strider` were fixed, and checked the way that
-comparison has to be made: against the **C rasteriser** (`INFERNO_NOGPU`)
-rather than the Limbo provider, because the Limbo one is thirty times
-slower and at the same wall-clock moment the game is at a different
-frame. With that controlled, GPU at `Time:1.95s` against CPU at
-`Time:1.99s` — the same moment of the same game:
+Asked after `gorge` and `strider` were fixed. The first answer recorded
+here was that the port renders at about half brightness through Metal,
+with the implication that the GPU was at fault. **That was backwards.**
 
-| | wall (left) | wall (right) | floor |
+`g3probe(1)` draws one white face at a series of lit values and reads the
+middle pixel, which is the whole question with nothing else in the way:
+
+| lit | Limbo software | devdraw C | Metal |
 | --- | --- | --- | --- |
-| CPU | 186,180,176 | 186,180,176 | 103,94,88 |
-| GPU | 101,97,95 | 105,102,100 | 49,45,42 |
+| 1.0 | 255 | 255 | 254 |
+| 0.82 | 255 | 255 | 211 |
+| 0.6 | 255 | 255 | 158 |
+| 0.4 | 255 | 255 | 110 |
+| 0.2 | 255 | 255 | 62 |
 
-**The hue is right and the brightness is about half.** 0.54, 0.57 and
-0.48 of the CPU's. The port draws its walls with `fillpoly3` at a
-per-face lit of 0.82, so a plausible reading is that the lit is being
-applied twice — once into the source colour and once again in the
-fragment shader — but that has not been pinned down, and
-`INFERNO_METAL_FLAT` does not restore it: with the shader lighting off
-the picture changes again, and the ceiling comes out light where it
-should be black.
+**Both CPU paths ignored `lit` completely**, both for the same reason and
+keyed to the same constant: `litcolour()` in `draw3d.b` bails on
+`col.depth != 32`, `d3applylit()` in `devdraw.c` bails on
+`src->depth != 32`, and the screen here is 24. Every port that passes a
+lit with a fixed pen was drawn flat, silently, and always had been.
 
-It also paints over its own title bar, which the CPU does not.
-`g3probe(1)`'s clip test says geometry does *not* escape the window it
-is drawn into, so that is not a general clip failure — but note that the
-Metal geometry passes never consult `dst->clipr` at all (the only use of
-it in `win-cocoa.m` is `soft_bresenham`, the CPU fallback), so a client
-whose clip is smaller than its image would have nothing to stop it.
-Which of those two this is has not been established.
+`gorge` and `strider` never showed it because they make a pen a shade and
+pass the lit as well. `castlefrankenstein` passes 0.82 with one pen,
+which is why it was the port that looked wrong — and why it looked wrong
+in the direction that made the GPU the suspect.
 
-So: `gorge` and `strider` are right on the GPU; this one is not, and
-neither of the two faults is a fault either game would have shown, since
-both draw with `fillpoly3g` and this draws with `fillpoly3`. **The other
-seven of Phase 1's nine have not been re-checked since the fixes.**
+Both fixed. Afterwards, 0.82 → 207 / 209 / 211 and 0.2 → 52 / 51 / 62:
+within 2%, with Metal slightly higher at the dark end because its
+fragment shader adds a small ambient term, which is a choice.
+
+The lesson is the one this document keeps relearning from the other
+side: *the odd one out is not necessarily the wrong one.* Two paths
+agreed with each other and both were wrong, and the single disagreeing
+path was correct.
+
+**Still open:** it paints over its own title bar on the GPU and not on
+the CPU. `g3probe`'s clip test says geometry does not escape the window
+it is drawn into, so that is not a general clip failure — but the Metal
+geometry passes never consult `dst->clipr` at all (the only use of it in
+`win-cocoa.m` is `soft_bresenham`, the CPU fallback). Which of those two
+this is has not been established. **And the other seven of Phase 1's nine
+have not been re-checked since any of the fixes.**
 
 ### Phase 1's nine ports' pictures, checked at last — 2026-09-11
 
