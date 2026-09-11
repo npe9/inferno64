@@ -173,7 +173,6 @@ audio := 0;
 mode := 0;			# 0 play, 1 selftest, 2 bench
 provider := "/dis/math/draw3ddev.dis";
 forced: string;
-underwm := 0;
 wantdev := 0;
 
 init(ctxt: ref Draw->Context, argv: list of string)
@@ -232,15 +231,17 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	#	the readback composed geometry OVER the 2-D instead of under
 	#	  it, which is where the head-up display went.
 	#
-	# It is still not the default here, because what has been checked is
-	# headless: under a window manager this provider used to panic emu
-	# ("pushrun addrun"), that panic was an unbalanced error stack in
-	# devdraw's own fallback and is fixed, but nobody has run it under
-	# wm since.  -D asks for it; see gorge(1).
+	# Checked under a window manager too, which is where this provider
+	# used to panic emu ("pushrun addrun"): three runs of gorge and two
+	# of strider through wm(1), no panic, 1675 to 2416 us a frame.  The
+	# panic was the unbalanced error stack in devdraw's own Gouraud
+	# fallback, and it is fixed.
 	#
-	provider = Draw3d->PATH;
-	if(mode == 0 || mode == 2)
-		underwm = ctxt != nil;
+	# So this is the default now, and -S asks for the software one.
+	# The self test and the screenshot mode still take software: they
+	# render into an offscreen image, which the GPU hook will not have,
+	# and they are checks rather than play.
+	#
 	if(forced != nil)
 		provider = forced;
 	d3 = load Draw3d provider;

@@ -646,12 +646,21 @@ provider's 58225 — seventeen times — and `gorge -g -D` gives 2047
 head-up-display pixels where it gave 0. `strider -D` likewise draws its
 terrain, its enemy, its weapons, its armour diagram and its radar.
 
-**The default is still the software provider**, and the reason is
-narrow: everything checked here is headless. Under a window manager this
-provider used to panic `emu` with `pushrun addrun`; that panic was the
-unbalanced error stack in `devdraw`'s own Gouraud fallback, fixed above,
-but nobody has run it under `wm` since. That is the last thing standing
-between this and flipping `gorge` and `strider` over.
+**Both games now default to the device provider.** The last doubt was
+the window manager, where this provider used to panic `emu` with
+`pushrun addrun` — that panic was the unbalanced error stack in
+`devdraw`'s own Gouraud fallback, fixed above. Run under `wm(1)`: three
+runs of `gorge` and two of `strider`, no panic, 1675–2416 µs a frame.
+
+```
+gorge -b    (default)   2566 µs a frame, /dis/math/draw3ddev.dis
+strider -b  (default)   3350 µs a frame, /dis/math/draw3ddev.dis
+gorge -b -S (software) 58225 µs a frame
+```
+
+`-S` asks for software. `-t` and `-s` stay on software in both games:
+they render into an offscreen image, which the GPU hook does not take,
+and they are checks rather than play.
 
 ### There is a third path, and it is the fastest and the only correct one — 2026-09-11
 

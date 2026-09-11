@@ -111,14 +111,26 @@ See
 and
 .IR g3probe (1).
 .PP
-The software provider is still the default.
-What has been checked is headless; under a window manager this provider
-used to panic
+The device provider is the default as of that date, and
+.B -S
+asks for the software one.
+It has been run under a window manager too, which is where it used to
+panic
 .I emu
 with
-.BR "pushrun addrun" ,
-that panic was an unbalanced error stack in
+.BR "pushrun addrun" :
+three runs of this and two of
+.IR strider (1)
+through
+.IR wm (1),
+no panic, 1675 to 2416 microseconds a frame.
+That panic was an unbalanced error stack in
 .IR devdraw 's
-own fallback and is fixed, and nobody has run it under
-.I wm
-since.
+own Gouraud fallback.
+.PP
+.B -t
+and
+.B -s
+still render through the software provider: they draw into an offscreen
+image, which the GPU hook does not take, and they are checks rather than
+play.

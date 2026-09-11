@@ -194,7 +194,6 @@ audio := 0;
 mode := 0;
 provider := "/dis/math/draw3ddev.dis";
 forced: string;
-underwm := 0;
 nbench := 120;
 nnear := NEAR;
 
@@ -224,14 +223,16 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	}
 	if(mode == 1 || mode == 3)
 		provider = Draw3d->PATH;
-	# See gorge(1) BUGS.  The device provider reaches the GPU and is
-	# far faster, and it composes the frame wrongly - the geometry
-	# queue is drained after everything the CPU drew, so it paints over
-	# the head-up display.  A cockpit sim is the worst possible case
-	# for that.  Software by default; -D asks for the other one.
-	provider = Draw3d->PATH;
-	if((mode == 0 || mode == 2) && ctxt != nil)
-		underwm = 1;
+	# The device provider reaches the GPU, is far faster, and now
+	# composes the frame correctly - see doc/draw3d-adoption-plan.md,
+	# Phase 2b.  A cockpit sim was the worst possible case for the old
+	# fault, since everything it tells you is drawn after the 3D; it
+	# draws its terrain, its enemies, its weapons, its armour diagram
+	# and its radar through the GPU now, under wm(1) as well.
+	#
+	# Default, then, with -S for the software one.  The self test and
+	# the screenshot mode stay on software: they render into an
+	# offscreen image, which the GPU hook will not take.
 	if(forced != nil)
 		provider = forced;
 	d3 = load Draw3d provider;
