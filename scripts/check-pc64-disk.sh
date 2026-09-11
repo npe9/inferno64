@@ -15,7 +15,7 @@
 # of the same image that mounts the same disk and reads the file back.
 # The nonce differs per run, so a pass cannot come from a stale image.
 #
-# usage: scripts/check-pc64-disk.sh
+# usage: scripts/check-pc64-disk.sh        (FS=disk/kfs64 for the other one)
 # needs: a built os/inferno/pc64/ipc64 and .qemu/edk2-*.fd
 set -e
 ROOT=`cd \`dirname "$0"\`/.. && pwd`
@@ -44,12 +44,19 @@ run() {	# run WAIT COMMAND
 		-chardev pipe,id=c0,path="$WORK/p$3" -serial chardev:c0 2>/dev/null
 }
 
+# Both file servers, because they failed differently.  disk/kfs works;
+# disk/kfs64 used to die with "illegal dis instruction" the moment it
+# reached a byte/big cast, which was a Limbo compiler bug rather than
+# anything about kfs (see limbo/ecom.c's precastinit).  A regression in
+# that fix would show up here first.
+FS=${FS:-disk/kfs}
+
 # -c on the mount: without it kfs refuses the create with "mounted
 # directory forbids creation".  The explicit sync matters too --
 # unmount alone does not flush, and the first version of this test
 # wrote a file, saw it in the session, and left the disk image
 # untouched.
-run 55 "mount -c {disk/kfs -r -n main /dev/sdF0/data} /n; echo $NONCE > /n/proof; cat /n/proof; disk/kfscmd -n main sync; echo PHASE1-DONE" 1 > "$WORK/one.log"
+run 55 "mount -c {$FS -r -n main /dev/sdF0/data} /n; echo $NONCE > /n/proof; cat /n/proof; disk/kfscmd -n main sync; echo PHASE1-DONE" 1 > "$WORK/one.log"
 if ! grep -q PHASE1-DONE "$WORK/one.log"; then
 	echo "check-pc64-disk: FAIL -- first boot did not finish" >&2
 	tail -20 "$WORK/one.log" >&2
@@ -60,9 +67,9 @@ if ! strings "$WORK/disk.img" | grep -q "$NONCE"; then
 	exit 1
 fi
 
-run 55 'mount {disk/kfs -n main /dev/sdF0/data} /n; echo READBACK-FOLLOWS; cat /n/proof' 2 > "$WORK/two.log"
+run 55 "mount {$FS -n main /dev/sdF0/data} /n; echo READBACK-FOLLOWS; cat /n/proof" 2 > "$WORK/two.log"
 if grep -q "$NONCE" "$WORK/two.log"; then
-	echo "check-pc64-disk: ok -- $NONCE written, rebooted, read back"
+	echo "check-pc64-disk: ok ($FS) -- $NONCE written, rebooted, read back"
 	exit 0
 fi
 echo "check-pc64-disk: FAIL -- the file did not survive the reboot" >&2

@@ -500,7 +500,31 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 			for(i = 0; i < n; i++) {
 				hi = disw(isp);
 				lo = disw(isp);
-				*(LONG*)si = (LONG)hi << 32 | (LONG)(u32)lo;
+				/*
+				 * Masked, not cast.  hi and lo are WORD,
+				 * which is intptr and so 64 bits here, and
+				 * disw() returns s32: a low word with its
+				 * top bit set arrives sign-extended, so the
+				 * low half has to be narrowed before the or.
+				 * "(u32)lo" says that and does not do it --
+				 * 6c emits no truncation at all for a
+				 * narrowing unsigned cast of a 64-bit value,
+				 * so the or was against 0xffffffffffffffff
+				 * and every such constant loaded as -1.
+				 *
+				 * emu is built by the host compiler, which
+				 * honours the cast, so this went unseen: the
+				 * same Dis file worked hosted and failed on
+				 * a native kernel.  disk/kfs64 is how it
+				 * surfaced -- its MAXFILESIZE is
+				 * 16r7FFFFFFFFFFFFFFF, whose low word is
+				 * 0xffffffff, so the limit became -1 and
+				 * every write was refused with "write --
+				 * file size limit".  Any Limbo "big" whose
+				 * low 32 bits have the top bit set was
+				 * wrong, which is a large class.
+				 */
+				*(LONG*)si = (LONG)hi << 32 | ((LONG)lo & 0xffffffffLL);
 				DNP(",%lld 0x%zx", *(LONG*)si, *(LONG*)si);
 				si += sizeof(LONG);
 			}
