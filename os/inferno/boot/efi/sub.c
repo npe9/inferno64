@@ -155,6 +155,7 @@ timeout(int ms)
 #define	BOOTARGSLEN	(4096-0x200-BOOTLINELEN)
 
 extern char *confaddr;
+extern uvlong memtop;			/* efi.c, from the firmware's map */
 /* Values consumed by the mode-switch stub after ExitBootServices. */
 extern void *jumpentry;
 void *jumpargs;
@@ -447,6 +448,28 @@ bootkern(void *f)
 	 * carries an e820 list.
 	 */
 	memconf(nil);
+
+	/*
+	 * And one line the kernel can read it back out of.  virtarm64's
+	 * archconfinit() sizes memory from the device tree when there is
+	 * one and from mem.h's DRAMSIZE when there is not -- and on a
+	 * firmware that publishes ACPI there is not, so a machine with
+	 * more memory than DRAMSIZE loses the difference and one with
+	 * less is claimed anyway.  The firmware's own map is the only
+	 * authority left.
+	 *
+	 * One number, not the whole map: confinit() computes its page
+	 * count from a single range starting at PHYSDRAM, so a top is
+	 * all it can use.  A machine with holes in its memory needs the
+	 * whole map and a confinit() that can take it.
+	 */
+	if(memtop != 0 && confend + 32 < BOOTARGS + BOOTARGSLEN){
+		memmove(confend, "*memtop=0x", 10);
+		confend += 10;
+		confend = hexfmt(confend, 16, memtop);
+		*confend++ = '\n';
+		*confend = '\0';
+	}
 	unload();
 
 	/*

@@ -996,7 +996,13 @@ config_evidence() {
 		echo '#l0: irq 8192 msi-x'
 		echo 'sdF: first interrupt, irq 8193 msi-x'
 		echo 'BLK-OK /dev/sdF0/data'
-		echo 'DHCP-OK';;
+		echo 'DHCP-OK'
+		# And memory sized from the firmware's map rather than from
+		# mem.h.  The two numbers on this line are the falsify test
+		# the riscv boards use for plicbase, in one line: mem.h
+		# would say 0x50000000 and the machine has twice that, so a
+		# board that ignored the map would lose half its memory.
+		echo 'conf: memtop 0x[0-9a-f]+ from the loader \(mem.h would say 0x50000000\)';;
 	virtarm64-noscan)
 		# The scan is off, the tree was not found, and the board
 		# booted anyway on its compiled-in constants.  All three

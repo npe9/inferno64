@@ -223,6 +223,23 @@ fdtreport(void)
 		}
 		if(bootconfline("*nofdtscan=") != nil)
 			print("conf: the device-tree scan at PHYSDRAM is off\n");
+		/*
+		 * What the firmware's memory map said, and what mem.h
+		 * would have said instead.  Printed together because the
+		 * whole point is that they differ: on a 512MB machine
+		 * with no device tree this board used to claim mem.h's
+		 * 256MB and lose half the memory, and on a smaller one it
+		 * would have claimed memory that is not there.
+		 */
+		if((p = bootconfline("*memtop=")) != nil){
+			int n;
+
+			for(n = 0; p[n] != 0 && p[n] != '\n'; n++)
+				;
+			print("conf: memtop %.*s from the loader"
+				" (mem.h would say %#p)\n",
+				n, p, (uintptr)(PHYSDRAM + DRAMSIZE));
+		}
 	}
 	if(!fdtfound){
 		print("fdt: no device tree\n");

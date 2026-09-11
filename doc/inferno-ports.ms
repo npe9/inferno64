@@ -23607,3 +23607,55 @@ acpi: iort also maps requesters through an smmu; those keep intx
 .P2
 An Ampere Altra is the machine where that second line matters, and
 composing the two mappings is the work it will need.
+.NH 2
+Memory, from the firmware's map
+.PP
+One thing was still coming from mem.h on a machine that had no business
+being asked.
+.CW archconfinit()
+sizes memory from the device tree when there is one and from
+.CW DRAMSIZE
+when there is not \(em and on a firmware that publishes ACPI there is
+not.  The comment above that code already says what happens when a board
+disbelieves what it is told about memory: at
+.CW "-m 64M"
+the tree said 0x4000000, a floor rejected it, and the board claimed
+252MB on a 64MB machine.  The ACPI path had the same hole with nothing
+to disbelieve.
+.PP
+So the loader passes what the firmware told it.
+.CW memconf()
+already calls
+.CW GetMemoryMap ,
+because
+.CW ExitBootServices()
+will not proceed without the current map's key; it now also takes the
+highest address the firmware calls usable, and the arm64 path puts one
+line in the configuration:
+.CW *memtop=0x80000000 .
+One number and not the whole map, because
+.CW confinit()
+computes its page count from a single range starting at PHYSDRAM and a
+top is all it can use; a machine with holes in its memory needs the
+whole map and a
+.CW confinit()
+that can take it.
+.PP
+The result, on
+.CW "-M virt,gic-version=3"
+with no device tree:
+.P1
+-m 512M   532832256 bytes free   (was 264400896)
+-m 1G    1069703168 bytes free   (was 264400896)
+.P2
+and the board says which authority it used:
+.P1
+conf: memtop 0x80000000 from the loader (mem.h would say 0x50000000)
+.P2
+That line is the falsify test in one sentence, and it is the same one
+the riscv boards use for
+.CW plicbase :
+the constant says one thing, the machine says another, and the board
+takes the machine's.  The
+.CW virtarm64-acpi
+arm asserts it.

@@ -72,11 +72,35 @@ archconfinit(void)
 	{
 		extern int fdtvalid(void);
 		extern int fdtmemory(uvlong*, uvlong*);
-		uvlong base, size;
+		extern char *bootconfline(char*);
+		uvlong base, size, top;
+		char *p;
 
 		if(fdtvalid() && fdtmemory(&base, &size) == 1
 		&& base == (uvlong)PHYSDRAM)
 			conf.topofmem = PHYSDRAM + (uintptr)size;
+		else if((p = bootconfline("*memtop=")) != nil){
+			/*
+			 * No tree, so the boot loader's own reading of the
+			 * firmware's memory map is the only authority left
+			 * -- and it is the authority a SystemReady machine
+			 * has rather than a fallback for one that does not.
+			 * Without it this board takes mem.h's DRAMSIZE and
+			 * gets it wrong in both directions: 256MB claimed
+			 * on a 512MB machine wastes half of it, and the
+			 * same 256MB claimed on a 128MB machine hands out
+			 * addresses that are not there.
+			 *
+			 * The same two rules the tree gets: the top has to
+			 * be above PHYSDRAM to mean anything, and there is
+			 * no floor -- a firmware that reports less than
+			 * DRAMSIZE is describing a smaller machine, and
+			 * disbelieving it is the dangerous direction.
+			 */
+			top = strtoull(p, nil, 16);
+			if(top > (uvlong)PHYSDRAM)
+				conf.topofmem = (uintptr)top;
+		}
 	}
 	conf.cpuspeed = 100000000;	/* refined once cntfrq() is read, see clockinit */
 }

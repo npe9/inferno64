@@ -3,6 +3,12 @@
 #include "efi.h"
 
 UINTN MK;
+/*
+ * The highest address the firmware calls usable, from the memory map.
+ * Written by memconf() and read only by the arm64 path, which has
+ * nowhere else to learn it when there is no device tree.
+ */
+uvlong memtop;
 EFI_HANDLE IH;
 EFI_SYSTEM_TABLE *ST;
 
@@ -86,6 +92,8 @@ memconf(char **cfg)
 	static uchar mapbuf[96*1024];
 	EFI_MEMORY_DESCRIPTOR *t;
 	uchar *p, m;
+	uvlong top;
+	UINTN n;
 	char *s;
 
 	mapsize = sizeof(mapbuf);
@@ -93,6 +101,23 @@ memconf(char **cfg)
 	entvers = 1;
 	if(eficall(ST->BootServices->GetMemoryMap, &mapsize, mapbuf, &MK, &entsize, &entvers))
 		return;
+
+	/*
+	 * The top of usable memory, before anything else: this is the
+	 * one number an arm64 kernel needs and cannot get anywhere else
+	 * when the firmware publishes ACPI and no device tree.  Computed
+	 * even when the caller wants only MK, because that is exactly
+	 * the arm64 call.  Types the memtype table calls 1 are the ones
+	 * that are the guest's after ExitBootServices.
+	 */
+	for(p = mapbuf, n = mapsize; n >= entsize; p += entsize, n -= entsize){
+		t = (EFI_MEMORY_DESCRIPTOR*)p;
+		if(t->Type >= EfiMaxMemoryType || memtype[t->Type] != 1)
+			continue;
+		top = t->PhysicalStart + t->NumberOfPages*4096ULL;
+		if(top > memtop)
+			memtop = top;
+	}
 
 	/* only called to get MK for ExitBootServices() */
 	if(cfg == nil)
