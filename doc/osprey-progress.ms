@@ -4823,10 +4823,22 @@ a write, a close \- and gets six replies in one round trip: the open at
 version 2, the write making version 3 that is nobody else's until the
 close, the close committing version 3 (the store's record of it right
 after); then a second group resumes the session by its number and reads
-version 3's data.  Streams and tickets are answered as what they are
-here: no wire to stream on, no key to check a ticket against.  What is
-not built: the personality's \[*p]p on a wire of its own (the kernel's
-is).  Checked, with a second boot, by
+version 3's data.  Streams and tickets were answered here as what they were when this was
+written: no wire to stream on, no key to check a ticket against.  The
+wire is built since, and it is item 8 of the section on making the
+demonstrations real: the personality speaks \[*p]p across the cable to
+the other machine's personality, a
+.CW Tauth
+carrying a ticket its own kernel signed and the far kernel checking it
+.CW ( ReqTicket ,
+.CW ReqCheckticket ),
+so a session on the wire has a name and an open is judged by the file's
+owner against it.  The stream came with the wire:
+.CW Tstream
+is answered for a group that came over the cable, the wire's own task
+emitting the attribute at the period asked for, and it is still refused
+for a group that came over the ring \- where a reply is the answer to a
+request and there is no wire for an unasked frame to leave on.  Checked, with a second boot, by
 .CW /scripts/osprey-check-p9pair.py .
 .PP
 The second half of item 4 is the talk's slide 20 itself: the uart as a
