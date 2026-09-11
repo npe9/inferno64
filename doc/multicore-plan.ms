@@ -3489,3 +3489,44 @@ works" \(em the sample is small, the bench is shared, and the
 underflow that started the last hunt appears about once in twenty-two
 boots, which twenty-four cannot resolve.  It is the first measurement
 on this configuration that does not have a failure in it.
+.NH 2
+parallelvm=1, measured over 96 boots
+.PP
+Scored as the shipping configuration is, except for one exclusion
+explained below:
+.IP
+.nf
+96 boots, -smp 2      2 failed, 0 reached no shell
+shell loop iterations 303, mean 3.2, range 0 to 9
+collections abandoned 54
+.fi
+.PP
+Two failures in ninety-six, against eight in twenty earlier in the
+branch.  Both are the same shape: a jump into the Dis heap,
+.CW "PC 0x79174f0"
+and
+.CW 0x7917503 ,
+nineteen bytes apart and so probably the same structure, with the
+bad-xec tripwire silent \(em so not
+.CW Prog.xec
+but another function pointer, which leaves
+.CW Type.mark ,
+.CW Type.free
+and
+.CW Channel.mover .
+.PP
+The exclusion:
+.CW "counts disagree"
+fired in 96 boots of 96 and is not counted.  It is the
+.CW maxnrunq
+control, and it is sound with the VM lock and unsound without it \(em
+the walk reads other contexts'
+.CW nlocal
+while their owners are writing it.  0 of 192 at
+.CW parallelvm=0
+and 96 of 96 at
+.CW parallelvm=1
+is the signature of a counter that races, not a queue that does.  The
+first run of this batch counted it and reported 96 failures of 96,
+which is what a classifier does when it is handed a control that only
+holds in one of the two modes.
