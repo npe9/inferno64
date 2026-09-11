@@ -5899,6 +5899,49 @@ holds; nine files through the cache of eight with the ninth evicting
 the least recently used; and an entry still held and read from the
 copy three and a half seconds later.
 .PP
+And a fifth, which could not be asked until the store took a remove at
+all.  A cache holds a copy, and a copy of a file that has been removed
+is a file that does not exist; a cache that went on answering from it
+would be the worst kind of wrong, since the reader has no way to tell.
+The server already said so and nobody was listening: the stream watches
+a name \-
+.CW latest
+is the file's committed version now, which
+.CW fileversion
+finds by walking to it \- so a removed name makes that walk fail, and
+what goes out on the stream's tag is an
+.CW Rerror
+rather than a version.  The cache's reader threw away every frame that
+was not an
+.CW Rread .
+It reads the error now, lets the copy go, and takes the entry out of
+the table altogether when nobody is holding it \- so the name leaves
+the cache's directory, and the next open of it asks the server, which
+refuses.  The reason a reader gets is the server's own and not this
+cache's guess at it.
+.PP
+Two things had to be got right, and both are about where the code runs.
+Nothing is said on the wire from the reader: that kproc is the one that
+takes replies off the wire, so a close sent from there would be waiting
+for itself \- the fid is left, and its lease lapses on the server in
+three seconds, which stops the stream there.  And an entry with a chan
+open on it is read straight out of the copy, which is why eviction
+waits for its use count to fall to zero; freeing it in the reader would
+be freeing it under a reader.  Such an entry keeps what it has and is
+made to read as stale, so the next open refetches \- and the refetch is
+the call that fails.
+.PP
+The criterion is the whole path in one boot:
+.CW /n/cachef7
+is held by the cache with its stream running, removed on the server by
+the other path (9P over the ring, which is where the tombstone is
+written), and four stream periods later the cache says
+.CW "the stream says \(lqfile does not exist: '/n/cachef7'\(rq: the copy
+.CW "is let go" ,
+and the open after that is refused.  The check also carries the control
+it needs: a line that would print if the cache still answered from the
+copy, which is not in the log.
+.PP
 This is where the cooperative scheduler's one shared reply buffer
 showed at last.  The server builds a group's replies and a stream
 tick's frames through the same globals

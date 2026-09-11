@@ -1560,6 +1560,37 @@ create9p(char *name, char *text)
 	cclose(hc);
 }
 
+/* remove a file on the server over 9P, the path that is not the cache */
+static void
+remove9p(char *name)
+{
+	Chan *tc, *rc, *hc;
+	char *names[2];
+
+	tc = namec("#L", Aopen, ORDWR, 0);
+	rc = mntattach(tc, nil, "", 0);
+	cclose(tc);
+	names[0] = "n";
+	names[1] = name;
+	hc = cclone(rc);
+	cclose(rc);
+	if(walk(&hc, names, 2, 1, nil) < 0)
+		error("no such file on the server");
+	/*
+	 * Remove clunks the fid, so the Chan is freed without the device's
+	 * close being called on it - the shape sysremove and p9remove use.
+	 */
+	if(waserror()){
+		hc->type = 0;
+		cclose(hc);
+		nexterror();
+	}
+	devtab[hc->type]->remove(hc);
+	hc->type = 0;
+	poperror();
+	cclose(hc);
+}
+
 /*
  * The caching file system (devcache.c) through the name space: #K bound
  * over /n, so /n/hello here is the server's file, held in this
@@ -1668,6 +1699,33 @@ cachetest(void)
 		cachestats(&hits, &misses, &refetches, &nf);
 		print("p9 ip: cache: 3500 ms later /n/cachef8 is still held - %s; the stream's frames renewed its lease on the server\n",
 			strcmp(buf, "file 8, made on the server for the cache to hold") == 0 ? "read from the copy" : "not what was written");
+		/*
+		 * And a file the cache holds, removed on the server by the
+		 * other path.  The stream is watching that name; the server
+		 * answers the next frame with an error rather than a version,
+		 * the cache lets the copy go, and the open after it asks the
+		 * server and is refused - so the cache does not serve a file
+		 * that is not there.  Before the store took a remove at all
+		 * this could not be asked.
+		 */
+		remove9p("cachef7");
+		print("p9 ip: cache: /n/cachef7 removed on the server by the other path, 9P over the ring\n");
+		tsleep(&up->sleep, return0, nil, 400);	/* four periods of the stream */
+		{
+			char why[ERRMAX];
+
+			why[0] = 0;
+			if(!waserror()){
+				fd = p9open("/n/cachef7", OREAD);
+				n = p9read(fd, buf, sizeof buf - 1); if(n < 0) n = 0; buf[n] = 0;
+				p9close(fd);
+				poperror();
+				print("p9 ip: cache: BUG: /n/cachef7 still read through the cache after it was removed: \"%s\"\n", buf);
+			} else {
+				kstrcpy(why, up->errstr, sizeof why);
+				print("p9 ip: cache: an open of /n/cachef7 through the cache is refused now: %s\n", why);
+			}
+		}
 		{
 			extern void cachestopall(void);
 

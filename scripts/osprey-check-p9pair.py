@@ -250,6 +250,11 @@ def main():
          and 'p9: pair-client: removed /n/clientmade over 9P' in t),
         ("and the remove is a record rather than a change: a tombstone at the head of the log, nothing written in place",
          re.search(r'lfs: removed clientmade after version 1: a tombstone at sector \d+', t) is not None),
+        ("and a cache does not serve a file that has been removed: /n/cachef7 is removed on the server by the other path, the stream that was watching its version answers with an error instead, the cache lets its copy go, and the open after that is refused by the server",
+         re.search(r'p9 ip: cache: /n/cachef7 removed on the server by the other path', t) is not None
+         and re.search(r'cache: /n/cachef7: the stream says "[^"]+": the copy is let go', t) is not None
+         and re.search(r'p9 ip: cache: an open of /n/cachef7 through the cache is refused now: \S', t) is not None
+         and 'BUG: /n/cachef7 still read through the cache' not in t),
         ("and the file stays removed across a mount: the second boot's scan reads the tombstone and does not resurrect it, while hello, which was not removed, is there",
          re.search(r'lfs: hello version 46', t2) is not None
          and re.search(r'lfs: clientmade version', t2) is None),
