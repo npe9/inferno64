@@ -729,3 +729,37 @@ baseline, a -FAIL marker in it, or a missing evidence line.  It is the
 marker form that is checked, not prose: a check that printed the word
 failure without printing a -FAIL marker would not be caught here, and
 that is the same definition the rest of the tree uses.
+
+ONE WORK DIRECTORY PER CHECKOUT.  The scratch directory used to be
+$TMPDIR/boardsuite, with nothing in the name to say which tree it
+belonged to.  Two suites running at once out of two git worktrees --
+an ordinary thing to be doing here -- therefore shared the card images,
+the per-configuration logs, the generated helper scripts and the
+host-forwarded ports, and none of that produces a collision message.
+One suite's makecard truncates and rewrites a card while the other has
+a kernel booted from it; both append to the same log that the marker
+diff is then read out of.  It is now $TMPDIR/boardsuite-<checkout>, and
+a lock file holding the pid refuses a second run in the same directory
+rather than letting the two interleave.  BOARDSUITE_WORK overrides it.
+
+THE PORTS CANNOT BE SPLIT THE SAME WAY.  Two echo servers on 54322 and
+54325, two announce ports on 54323 and 54326, and the peer arms'
+socket netdevs on 14444..14448 are all fixed numbers, and the guest end
+of them is compiled into the init in os/inferno/init.  So the network
+arms of two concurrent suites still contend, and the second suite's
+host end fails to bind rather than quietly sharing.  Run them one at a
+time, or set BOARDSUITE_WORK and accept that the network checks of
+whichever starts second will report -FAIL.
+
+THE LAST MARKER MAY BE TWO MARKERS.  config_last names the line that
+says a board has finished printing, and the suite kills qemu a few
+seconds after seeing it.  On most boards one marker really is last.  On
+raspi3b-2eth and raspi4-2eth neither is: the pointer check reports when
+its own timeout expires, the shell marker comes after the kfs ream, and
+the two ethernets' DHCP and ping tests push the ream late enough that
+which of the two lands first depends on the host.  So config_last may
+name more than one, and the suite waits for all of them.  Waiting for
+only the pointer marker killed qemu in the middle of "kfs: reaming the
+file system" and reported the two markers after it as a board
+regression -- five times in a row on a loaded machine, while the
+identical qemu command line run by hand reached both in about a minute.

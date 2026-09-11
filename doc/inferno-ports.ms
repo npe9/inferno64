@@ -22784,3 +22784,126 @@ discoveries above are device-tree reads that will find nothing on that
 machine, and the tree's EFI loader is x86 only.  What this arm
 demonstrates is the ITS protocol, on the one machine available to
 demonstrate it on.
+.NH 1
+Three more holes in the harness, one of which reported a board that was fine
+.PP
+The previous round taught the suite to refuse a kernel older than its
+sources and to refuse to record a degraded baseline.  Writing the ITS
+arm turned up three more, and the third is the interesting one because
+it manufactured a regression out of nothing.
+.PP
+First, the staleness check is tree-wide and so it is noisy.  A change to
+.CW os/inferno/virtarm64/gicv3its.c
+makes
+.CW sifiveu 's
+kernel look stale, because the check compares each kernel against every
+source in the tree rather than against the ones that board links.  That
+is deliberate and it stays: the false positive costs one
+.CW mk ,
+and the false negative costs a run that measures the wrong kernel.  It
+did catch something real here, twice.  A comment edited in
+.CW gicv3its.c
+while a twenty-one configuration run was going failed every arm that had
+not yet started, which is exactly right \(em those arms would have
+booted the kernel from before the edit.
+.PP
+Second, the scratch directory had no checkout in its name.  It was
+.CW $TMPDIR/boardsuite ,
+and two suites running at once out of two worktrees \(em which is the
+normal way of working in this tree \(em shared the card images, the
+per-configuration logs, the generated helper scripts and the
+host-forwarded ports.  None of that announces itself.  One suite's
+.CW makecard
+truncates and rewrites a card while the other has a kernel booted from
+it, and both append to the log the marker diff is afterwards read out
+of, so while two suites share the directory the marker count is not
+evidence of anything.  It is
+.CW $TMPDIR/boardsuite- \fIcheckout\fP
+now, with a lock file holding the pid to refuse a second run in the same
+directory.  The ports cannot be split the same way: the guest end of
+54322, 54325, 54323, 54326 and the peer arms' 14444 and up is compiled
+into the init, so two concurrent suites still contend for them and the
+second one's host end fails to bind rather than sharing quietly.  That
+is written down in
+.CW tools/boardsuite/README
+rather than fixed.
+.NH 2
+A marker that stopped being last
+.PP
+.CW raspi3b-2eth
+started failing, reproducibly, two markers short:
+.CW RASPI3B-SH-OK
+and
+.CW SD-FS-CREATE-OK
+gone, the log ending in the middle of
+.CW "kfs: reaming the file system using 1024 byte blocks" .
+It had passed the day before, and the kernel it boots is byte-identical
+to the one
+.CW raspi3b
+and
+.CW raspi3b-usb
+were passing with in the same run.
+.PP
+Three theories were wrong before the right one.  Host load: the machine
+had thirty other
+.CW qemu-system
+processes on it from a second suite, but raising the timeout from 240
+seconds to 600 changed nothing.  The shared work directory: giving the
+arm a directory of its own changed nothing either, which is how that
+fix came to be written up honestly as a real hole that did not explain
+this.  A regression in something this round touched:
+.CW os/inferno/port/fdt.c
+is linked into the Pi kernel and had gained a function, but the
+addition is additive and the same kernel passed three other Pi arms.
+.PP
+What settled it was running the arm's own
+.CW qemu
+command line by hand.  It reached both markers in about a minute, twice,
+while the suite failed five times \(em with a command line the suite's
+own
+.CW "sh -x"
+showed to be byte-for-byte identical.  So the difference was not the
+command; it was what the suite does around it.  The suite waits for
+.CW config_last
+and kills qemu
+.CW $settle
+seconds later.
+.CW config_last
+for this arm is
+.CW USB-MOUSE ,
+and the comment above that function says why: on the Pi boards the
+pointer check waits out its own timeout and reports
+.I after
+the shell marker, so the shell marker is not last.  On this arm that is
+no longer true.  Two ethernets mean a DHCP lease, a static
+configuration and two ping runs before
+.CW sdfs()
+starts, which pushes the kfs ream past the pointer check's timeout \(em
+so
+.CW USB-MOUSE-NONE
+now arrives first, the suite waits six seconds, and kills the board in
+the middle of reaming a filesystem.  The board was never wrong.  The
+harness had been told the wrong line was last, and the ordering it
+depended on had moved under it.
+.PP
+.CW config_last
+may now name more than one marker and the suite waits for all of them:
+.CW USB-MOUSE
+and
+.CW RASPI3B-SH-OK
+for
+.CW raspi3b-2eth ,
+the same pair with
+.CW RASPI4-SH-OK
+for
+.CW raspi4-2eth .
+The arm returns 40 markers.
+.PP
+That is four harness bugs in two rounds against zero board bugs, and it
+is worth saying what they have in common.  Every one of them made the
+suite report something other than what the kernel did: a stale kernel
+booted as if it were new, a starved run recorded as a baseline, two
+suites overwriting each other's evidence, and a board killed mid-write
+and blamed for the markers it had not printed yet.  A harness that can
+fail in the direction of "everything is fine" is worse than no harness,
+and three of these four failed in that direction.

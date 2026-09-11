@@ -33,7 +33,26 @@ set -e
 here=`dirname "$0"`
 root=`cd "$here/../.." && pwd`
 QEMU=${QEMU:-/Users/npe/src/qemu-v10.1.3/build/qemu-system-aarch64}
-work=${BOARDSUITE_WORK:-${TMPDIR:-/tmp}/boardsuite}
+# One directory per checkout, and a lock inside it.
+#
+# This used to be ${TMPDIR}/boardsuite flat, with nothing in the name
+# to say which tree it belonged to.  Two suites running at once out of
+# two git worktrees -- which is an ordinary thing to be doing here --
+# therefore shared the card images, the per-configuration logs, the
+# generated helper scripts and the host-forwarded ports.  There is no
+# collision message for any of that: one suite's makecard truncates and
+# rewrites a card while the other has a kernel booted from it, and both
+# append to the same per-configuration log that the marker diff is read
+# out of afterwards.  While two suites share this directory the marker
+# count is not evidence of anything.
+#
+# Found while chasing a raspi3b-2eth failure, which it did not turn out
+# to explain -- that one was config_last naming a marker that is no
+# longer last, and is fixed there.  The sharing is a real hole
+# regardless, and it is the one that can be closed: the host-forwarded
+# ports cannot, because the guest end of them is compiled into the
+# init.  See tools/boardsuite/README.
+work=${BOARDSUITE_WORK:-${TMPDIR:-/tmp}/boardsuite-`basename "$root"`}
 timeout=${BOARDSUITE_TIMEOUT:-240}
 settle=${BOARDSUITE_SETTLE:-6}		# after the last marker; 3 is too few
 verbose=false
@@ -457,6 +476,20 @@ config_qmp() {
 	esac
 }
 
+# Is every one of these patterns in the log yet?  config_last names one
+# for most boards and two for the ones where nothing is reliably last;
+# they are markers, so none of them has a space in it and the caller
+# passes them unquoted on purpose.
+allseen() {
+	seenlog=$1
+	shift
+	[ -f "$seenlog" ] || return 1
+	for seenpat in "$@"; do
+		grep -q "$seenpat" "$seenlog" || return 1
+	done
+	return 0
+}
+
 # The line that says a board has finished printing.  This has to be the
 # LAST marker, not the last interesting one: on the Pi boards the mouse
 # check waits out its own timeout and reports after RASPI*-SH-OK, so
@@ -473,8 +506,19 @@ config_last() {
 	# marker that made it last on every other Pi configuration is
 	# not last here.  The shell's is.
 	raspi3b-usb)		echo 'RASPI3B-SH-OK';;
-	raspi3b-2eth)		echo 'USB-MOUSE';;
-	raspi4-2eth)		echo 'USB-MOUSE';;
+	# Two markers, both required, because on these two neither one is
+	# reliably last.  The pointer check reports when its own timeout
+	# runs out and the shell marker comes after the kfs ream, and the
+	# two ethernets' DHCP and ping tests push the ream late enough
+	# that the order between them depends on how busy the host is.
+	# Waiting for USB-MOUSE alone killed qemu six seconds later, in
+	# the middle of "kfs: reaming the file system", and reported the
+	# two markers after it as a board regression -- five times in a
+	# row on a loaded machine, while the identical qemu command line
+	# by hand reached both in about a minute.  This is the same race
+	# the comment above describes, on the other side of it.
+	raspi3b-2eth)		echo 'USB-MOUSE'; echo 'RASPI3B-SH-OK';;
+	raspi4-2eth)		echo 'USB-MOUSE'; echo 'RASPI4-SH-OK';;
 	raspi4|raspi4-hot)	echo 'USB-MOUSE';;
 	raspi4-usb)		echo 'RASPI4-SH-OK';;
 	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-peer)	echo 'ROOT-CMDS-OK';;
@@ -939,6 +983,23 @@ done
 
 mkdir -p "$work"
 
+# And a lock, because a per-checkout directory only stops the worktree
+# case.  Two runs out of the same checkout collide the same way, and
+# the second one is usually a "just this one arm" re-run started while
+# the full run is still going -- which is precisely how the shared-work
+# bug above was mistaken for a board regression three times over.  The
+# lock holds the pid, so a suite killed with ^C does not lock the tree
+# out: the stale entry is noticed and taken.
+if [ -f "$work/lock" ]; then
+	other=`cat "$work/lock" 2>/dev/null`
+	if [ -n "$other" ] && kill -0 "$other" 2>/dev/null; then
+		echo "boardsuite: pid $other is already running in $work" >&2
+		echo "    wait for it, or set BOARDSUITE_WORK to another directory" >&2
+		exit 2
+	fi
+fi
+echo $$ > "$work/lock"
+trap 'rm -f "$work/lock"' 0 1 2 3 15
 
 # A blank card of the given size.  Sparse: the 4G one costs nothing
 # until something writes to it, and nothing here writes 4G.
@@ -1400,7 +1461,7 @@ attempt() {
 
 	waited=0
 	while [ $waited -lt $timeout ]; do
-		if [ -f "$log" ] && grep -q "$last" "$log"; then
+		if allseen "$log" $last; then
 			break
 		fi
 		if ! kill -0 $pid 2>/dev/null; then
@@ -1424,7 +1485,7 @@ attempt() {
 	hostnet_stop
 	mouse_stop
 
-	if ! grep -q "$last" "$log" 2>/dev/null; then
+	if ! allseen "$log" $last; then
 		# Two things were wrong with what this used to report.
 		#
 		# Every run ends by killing qemu, and qemu writes
