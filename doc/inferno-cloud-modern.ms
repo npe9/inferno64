@@ -234,16 +234,12 @@ practice, then the four layers have been reinvented rather than
 removed, and the honest conclusion is that they were load-bearing all
 along.
 .NH 2
-Phase 2 so far: the listening half works, styxlisten does not
+Phase 2: the listening half works, and a client mount panics the kernel
 .LP
 Item 5 is
 .CW styxlisten
-in the root and a service that exports a namespace.  The root now
-carries
-.CW styxlisten
-and
-.CW export ,
-and the piece underneath them is proved: nothing this branch had
+in the root and a service that exports a namespace.  Both are there
+now, and so is the piece underneath them: nothing this branch had
 written for the cloud ever listened \(em
 .CW hget ,
 .CW gcs ,
@@ -258,37 +254,84 @@ had never run on a native kernel.
 .CW tcpserve (1)
 and
 .CW scripts/check-pc64-tcp.sh
-run them: with a forwarded port, a client on the host connects to the
-kernel and reads back
+run them: a client on the host connects to the kernel through a
+forwarded port and reads back
 .CW INFERNO-ACCEPTED-YOUR-CONNECTION .
 .PP
+.B "A correction."
+An earlier draft of this section said
 .CW styxlisten
-itself does not yet serve, and the shape of the failure is recorded
-here rather than guessed at.  It prints no diagnostic \(em not its own
-.CW "cannot announce on" ,
-which is the only thing it says when
-.CW dial->announce
-fails \(em and no listener appears in
-.CW /net/tcp ,
-with or without
-.CW -s ,
-whose synchronous path keeps the listener in the foreground.  With a
-command that exits immediately
-.CW ( "styxlisten -A tcp!*!6666 echo hi" )
-the command runs and the shell returns, so
-.CW popen()
-is reached, which puts the failure after the announce rather than
-before it.  The same address under
-.CW tcpserve
-announces and accepts without trouble, so it is not the address and it
-is not the stack.
+does not serve.  It does.  Instrumented, it prints
+.CW "addr=tcp!*!6666"
+and
+.CW "announced, dir=/net/tcp/0"
+and then blocks in its listener, and a client on the host connects to
+it.  Two things produced the wrong reading.
+.CW styxlisten
+kills its own listener when the served command exits \(em
+.CW runcmd()
+says so:
+.CW "kill listener, as command has exited"
+\(em so testing with
+.CW "echo hi"
+measured that deliberate behaviour and not a failure.  And the harness
+used to probe the port killed the guest fourteen seconds after typing,
+so some probes ran after the machine was gone.
+.CW scripts/serve-and-hold.py
+exists because of the second.
 .PP
-The next thing to look at is
-.CW dial->netmkaddr(addr,
-.CW "tcp" ,
-.CW "styx") ,
-which is the one transformation
-.CW styxlisten
-applies and
-.CW tcpserve
-does not.
+.B "The real fault."
+With
+.CW "styxlisten -A -s tcp!*!6666 export /"
+running on the kernel and
+.CW "mount -A tcp!127.0.0.1!PORT /n/remote"
+from a hosted
+.CW emu
+on the other side of a forwarded port, the client's attach succeeds \(em
+.CW mount
+returns no error \(em and the kernel then dies:
+.DS
+.CW
+e696698 e696698 2
+panic: wakeup: state
+.DE
+The three numbers are the
+.CW iprint
+just above the panic in
+.CW os/inferno/port/proc.c :
+.CW p->r ,
+.CW r ,
+and
+.CW p->state .
+The first two match, so the process is the one this
+.CW Rendez
+names; the third is 2, which is
+.CW Ready ,
+where
+.CW wakeup()
+requires
+.CW Wakeme
+(7).  Something readies a sleeping process without clearing
+.CW r->p
+and
+.CW p->r .
+The stack is
+.CW queueproc
+under
+.CW ready
+under
+.CW wakeup .
+.PP
+It is not an SMP race: it happens identically with
+.CW "-smp 1" .
+.CW sleep() 's
+own early exit clears
+.CW r->p
+correctly, and
+.CW postnote() 's
+Wakeme case clears both before readying, so neither is the site.  The
+client's first directory read then hangs, because by then the server is
+dead.
+.PP
+This is the next thing to fix, and it is cheap to reproduce: one
+command on each side.
