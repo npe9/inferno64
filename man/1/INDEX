@@ -285,6 +285,7 @@ danby-vaccination danby-vaccination
 danbylabtest danbylabtest
 danbyviztest danbyviztest
 fftstest fftstest
+frametest frametest
 signaltest signaltest
 tdsetest tdsetest
 date wm-misc

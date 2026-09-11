@@ -1,0 +1,91 @@
+.TH LINALG 2
+.SH NAME
+linalg: dgefa, dgesl, printmat \- dense linear equations, by LU factorisation
+.SH SYNOPSIS
+.EX
+include "linalg.m";
+linalg := load LinAlg LinAlg->PATH;
+Matrix, Vector: import linalg;
+
+info := linalg->dgefa(a, lda, n, ipvt);
+linalg->dgesl(a, lda, n, ipvt, b, job);
+linalg->printmat("k", a, lda, m, n);
+.EE
+.SH DESCRIPTION
+.I LinAlg
+is LINPACK's dense solver: Gaussian elimination with partial pivoting.
+.PP
+Matrices are stored the way scientific programming in C stores them,
+linearised in
+.B Fortran
+.BR order .
+For an
+.I m
+by
+.I n
+matrix
+.IR A ,
+the element in row
+.I i
+and column
+.I j
+is
+.BI a[i+lda*j]\fR,
+with 0-origin indexing throughout, including in the permutation vector.
+.I Lda
+is the leading dimension, so that a succession of problems of differing
+sizes can share one array without copying.
+.PP
+.B Dgefa
+factors
+.I a
+in place and records the pivots in
+.IR ipvt .
+It returns 0 if the matrix is nonsingular, and otherwise the index of
+the column at which a zero pivot was found \- which is a statement about
+the matrix and the only way to discover it.
+.PP
+.B Dgesl
+solves using that factorisation, replacing
+.I b
+with the answer.
+.I Job
+0 solves
+.IR Ax = b ,
+and nonzero solves the transposed system.
+Because the factorisation is separate, several right-hand sides cost one
+factorisation and a solve each.
+.PP
+.B Printmat
+writes a matrix out under a label, for looking at.
+.SH SOURCE
+.B /appl/math/linalg.b
+.SH SEE ALSO
+.IR frame (2),
+.IR krylov (2),
+.IR sparse (2),
+.IR math-elem (2)
+.SH DIAGNOSTICS
+.B Dgefa
+returns nonzero for a singular matrix.
+Nothing here raises an exception; a caller that ignores that return and
+solves anyway gets arithmetic on infinities.
+.SH BUGS
+Dense and in one process.
+For anything built on a grid, where the matrix is sparse and never
+formed,
+.IR krylov (2)
+over
+.IR sparse (2)
+is the right tool and this is not.
+.PP
+There is no condition estimate \- LINPACK's
+.B dgeco
+is not here \- so a matrix that is nearly singular factors without
+complaint and returns an answer with as many correct figures as it has,
+which may be none.
+.PP
+The
+.B Matrix
+adt is declared and unused: every function takes the array, stride and
+sizes separately.

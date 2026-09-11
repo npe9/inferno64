@@ -1,0 +1,95 @@
+.TH FRAMETEST 1
+.SH NAME
+frametest \- check frame(2) against the closed forms
+.SH SYNOPSIS
+.B frametest
+[
+.B -v
+]
+.SH DESCRIPTION
+.I Frametest
+checks
+.IR frame (2)
+and prints
+.B OK
+if everything agrees.
+.B -v
+prints each measured number.
+.PP
+A cantilever with a load on its end deflects
+.IR PL \u\s-23\s+2\d/3\fIEI\fP
+and turns through
+.IR PL \u\s-22\s+2\d/2\fIEI\fP.
+Simply supported with a load in the middle it is
+.IR PL \u\s-23\s+2\d/48\fIEI\fP,
+and under a uniform load
+5\fIwL\fP\u\s-24\s+2\d/384\fIEI\fP.
+A bar stretches
+.IR PL / EA .
+These are the first results in mechanics of materials, and they are
+exact rather than approximate: a Hermite beam element reproduces the
+cubic exactly, so the answer
+.I at the nodes
+is the textbook number to rounding however few elements are used.
+That is checked directly \- one element and two give tip deflections
+that agree to twelve figures \- and it means a disagreement here is a
+bug and never discretisation.
+.PP
+The truss is the textbook triangle, 8 across and 3 up, pinned at one end
+and on a roller at the other with a load hung from the apex.
+Its member forces are written in the test as the calculation a student
+does by resolving at a joint, not as numbers copied from a run: the
+bottom chord comes to +666.67 N and the diagonals to \-833.33 N.
+.SS Two checks that no formula gives
+A statically determinate truss's member forces follow from equilibrium
+alone and do not depend on
+.I E
+or
+.I A
+at all.
+Multiplying both by large factors must leave every force unchanged,
+while the displacements shrink in exact proportion.
+.PP
+That check would prove nothing if the forces never depended on the
+sections, so it is paired with an
+.I indeterminate
+truss \- the same triangle with a second one below it \- where changing
+one member's area by nine times
+.I must
+change the forces, and the test fails if it does not.
+.PP
+And every case is checked for equilibrium: the loads and reactions must
+sum to zero in both directions and in moment about the origin, which is
+not a special point of any of these structures.
+.SS The refusal that nothing else reaches
+A bar along
+.I x
+pushed along
+.I x
+has a far end with no vertical stiffness and no vertical load.
+The matrix is not singular, so nothing catches that except the rule that
+a translation with nothing resisting it is a mechanism.
+Every other refusal here \- no supports, two rollers \- is caught by the
+factorisation first, so this is the only case that reaches the rule, and
+without it the rule can be deleted with every test still passing.
+.SH SOURCE
+.B /appl/cmd/frametest.b
+.SH SEE ALSO
+.IR frame (2),
+.IR linalg (2)
+.SH DIAGNOSTICS
+Each disagreement prints a line beginning
+.B FAIL
+naming what was measured, what came out and what was wanted; the count
+follows and the program raises an exception.
+.SH BUGS
+Every structure here is small \- three nodes or four.
+Nothing checks that the assembly is right for a structure large enough
+for a numbering mistake to show, and nothing measures conditioning.
+.PP
+The distributed load is checked only on a horizontal member, where the
+member's own direction and the global one coincide.
+A
+.B udl
+on an inclined member exercises the transformation of the consistent
+load vector, and is not tested.

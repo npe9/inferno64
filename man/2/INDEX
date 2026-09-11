@@ -96,6 +96,8 @@ descbc keyring-crypt
 desecb keyring-crypt
 dessetup keyring-crypt
 devpointer devpointer
+dgefa linalg
+dgesl linalg
 dhcp dhcpclient
 dhcpclient dhcpclient
 dhparams keyring-gensk
@@ -175,6 +177,7 @@ format format
 fprint sys-print
 frag ida
 fragment ida
+frame frame
 frameclock frameclock
 fsproto fsproto
 fstat sys-stat
@@ -254,6 +257,7 @@ kindof vsprite
 last lists
 lease dhcpclient
 lgamma math-elem
+linalg linalg
 listen sys-dial
 lists lists
 liveplot liveplot
@@ -278,6 +282,7 @@ math-intro math-0intro
 math-linalg math-linalg
 md4 keyring-sha1
 md5 keyring-sha1
+memberforces frame
 millisec sys-millisec
 mix grpalette
 mkbutton popup
@@ -547,6 +552,7 @@ toreal string
 toupper string
 transferfunction control
 translate translate
+truss frame
 tuple cfg
 ubfa ubfa
 unmount sys-bind

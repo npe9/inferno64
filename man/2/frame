@@ -1,0 +1,145 @@
+.TH FRAME 2
+.SH NAME
+frame: parse, solve, memberforces, equilibrium \- plane frames and trusses
+.SH SYNOPSIS
+.EX
+include "frame.m";
+frame := load Frame Frame->PATH;
+Struct, Member, Node, Forces: import frame;
+
+frame->init();
+(s, err) := frame->parse(spec);
+err = frame->solve(s);
+v := s.displacement("c", Frame->DY);
+r := s.reactionat("a", Frame->DY);
+f := frame->memberforces(s, 0);
+(fx, fy, mo) := frame->equilibrium(s);
+.EE
+.SH DESCRIPTION
+.I Frame
+solves plane frames and trusses by the direct stiffness method.
+The structure is written down the way a statics problem is set out \-
+where the joints are, what runs between them, what holds it up, and what
+pushes on it:
+.IP
+.EX
+node a 0 0
+node b 4 0
+node c 4 3
+beam a b 200e9 0.01 1e-5
+bar  b c 200e9 0.005
+pin a
+roller b y
+force c 0 -1000
+.EE
+.PP
+A
+.B node
+is a name and two coordinates.
+A
+.B beam
+is two nodes, Young's modulus, the area and the second moment of area; a
+.B bar
+is the same without the second moment, which is what pin-jointed means.
+.B Udl
+on the line after a member puts a uniformly distributed load across it,
+positive to the member's left.
+.PP
+.B Fix
+holds a node completely,
+.B pin
+holds it in place but lets it turn, and
+.B roller
+.I node
+.RB [ x | y ]
+holds one direction only.
+.B Force
+is two components at a node and
+.B moment
+is one.
+.PP
+.B UNITS ARE THE CALLER'S
+and must be consistent \- newtons and metres throughout, or pounds and
+inches throughout.
+Nothing here converts anything, and a structure given
+.I E
+in gigapascals and the area in square millimetres returns a deflection
+wrong by a factor that no check can notice.
+.PP
+Every node has three degrees of freedom \- across, up, and rotation \-
+so one element does both jobs.
+.B Solve
+assembles the stiffness matrix, removes the held degrees of freedom and
+factors what is left with
+.IR linalg (2).
+.B Displacement
+and
+.B reactionat
+read the answer by node name and direction;
+.B memberforces
+gives one member's axial force (tension positive) and the shear and
+moment at each of its ends, in the member's own directions.
+.PP
+.B Equilibrium
+returns the residual of the three balance equations \- the sum of the
+sideways forces, of the vertical forces, and of the moments about the
+origin \- each of which must be zero, and which is the check every
+statics answer has to pass.
+.SS Rotations with nothing to resist them
+A joint where only bars meet has nothing resisting its rotation.
+That degree of freedom is
+.B held
+.B at
+.B zero
+rather than left to make the matrix singular, and
+.B Struct.heldrot
+counts how many were.
+This is a decision about the model and not an implementation detail,
+which is why it is said out loud and counted.
+.PP
+A
+.B translation
+with nothing resisting it is a different matter and is
+.BR refused :
+holding it would invent a support the structure does not have and return
+a confident answer about a different structure.
+A single pin-jointed bar with a free end is a pendulum, and
+.I frame
+says so, even when the load on it is purely along the bar \- in which
+case the matrix is not singular and nothing else would catch it.
+.SH SOURCE
+.B /appl/lib/frame.b
+.SH SEE ALSO
+.IR linalg (2),
+.IR fem (2),
+.IR femesh (2),
+.IR frametest (1)
+.SH DIAGNOSTICS
+.B Parse
+and
+.B solve
+return a diagnostic string, nil on success.
+A structure that is a mechanism \- some part of which moves without
+stretching anything \- is refused, naming the joint and the direction
+where that is possible.
+That is a real answer about the structure, not a numerical failure.
+.SH BUGS
+Plane structures only.
+There is no space frame, no torsion, and no out-of-plane bending.
+.PP
+Small displacements and linear elasticity throughout.
+There is no buckling check, so a member returned with a large
+compressive force may in reality have failed long before reaching it,
+and nothing here will say so.
+.PP
+Loads are applied at nodes, apart from
+.BR udl ,
+so a point load partway along a member needs a node put there.
+The element is exact at its nodes, so that costs nothing in accuracy \-
+but the deflection
+.I between
+nodes is not reported at all.
+.PP
+There is no self-weight: a member's mass is not used, and
+.B udl
+must be written out for it.
