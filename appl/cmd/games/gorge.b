@@ -52,6 +52,7 @@ include "tone.m";
 
 include "frameclock.m";
 	fclock: Frameclock;
+	Jitter: import fclock;
 
 include "scorestore.m";
 	scorestore: Scorestore;
@@ -1031,18 +1032,30 @@ bench()
 	sys->fprint(fd, "\n");
 	if(us > 16666)
 		sys->fprint(fd, "gorge: SLOWER THAN 60Hz\n");
+	if(jit != nil)
+		jit.report("gorge", 16666);
 }
+
+# Unpaced on purpose: the number wanted is what a frame costs, and
+# pacing is what hides it.  Every frame is timed, not just the run, so
+# the report can say how smooth it was and not only how fast - sixty
+# frames of 2ms and one of 200 average out to something that reads fine
+# and looks like a lurch.
+jit: ref Jitter;
 
 benchrun(nframes: int): int
 {
+	jit = fclock->jitter(nframes);
 	t0 := sys->millisec();
 	for(i := 0; i < nframes; i++){
+		jit.mark();
 		pad = KRIGHT;
 		step();
 		target = win.image;
 		frame();
 		target.flush(Draw->Flushnow);
 	}
+	jit.mark();
 	return (sys->millisec() - t0) * 1000 / nframes;
 }
 

@@ -79,6 +79,36 @@ emu\-cocoa \-r. /dis/games/gorge.dis \-b
 Run it as above and not under
 .IR wm (1);
 see BUGS.
+.SS How smooth, not just how fast
+.B -b
+runs unpaced \- the number wanted is what a frame costs, and pacing is
+what hides it \- and times every frame rather than the run as a whole,
+because a mean says nothing about smoothness: sixty frames of two
+milliseconds and one of two hundred average out to something that reads
+fine and looks like a lurch.
+It reports the spread, the tail, how many frames were slower than a
+sixtieth of a second, and a histogram.
+Three hundred frames on an Apple M-series host:
+.IP
+.EX
+                mean   min  median   p90    p99    max   over
+GPU             2204  1665    1988  2872   5354   7932    0
+devdraw C       1961  1381    1539  2733   7320   8838    0
+software       62179 56072   61683 69270  77048  77048   60
+.EE
+.PP
+All microseconds.
+.B over
+is frames past 16666.
+The two fast paths never miss a frame and their worst is about half the
+budget; the software provider misses every one of them, by up to four
+and a half times.
+.PP
+The same numbers for
+.IR strider (1),
+which draws rather more:
+mean 3237, median 2797, p99 8696, worst 9347 \- again nothing past the
+budget.
 .SH SOURCE
 .B /appl/cmd/games/gorge.b
 .SH SEE ALSO

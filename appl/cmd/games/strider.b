@@ -48,6 +48,7 @@ include "tone.m";
 
 include "frameclock.m";
 	fclock: Frameclock;
+	Jitter: import fclock;
 
 include "scorestore.m";
 	scorestore: Scorestore;
@@ -1326,18 +1327,28 @@ bench()
 	sys->fprint(fd, "%s", msg);
 	if(us > 16666)
 		sys->fprint(fd, "strider: SLOWER THAN 60Hz\n");
+	if(jit != nil)
+		jit.report("strider", 16666);
 }
+
+# Unpaced, and every frame timed rather than just the run: a mean says
+# how fast, the spread says how smooth, and a cockpit sim is judged on
+# the second.
+jit: ref Jitter;
 
 benchrun(n: int): int
 {
+	jit = fclock->jitter(n);
 	t0 := sys->millisec();
 	for(i := 0; i < n; i++){
+		jit.mark();
 		pad = KUP;
 		step();
 		target = win.image;
 		frame();
 		target.flush(Draw->Flushnow);
 	}
+	jit.mark();
 	return (sys->millisec() - t0) * 1000 / n;
 }
 

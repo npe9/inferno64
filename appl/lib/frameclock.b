@@ -127,3 +127,117 @@ report(who: string)
 		who, h/100, h%100, n, us/1000, us%1000,
 		period/1000, period%1000);
 }
+
+# ------------------------------------------------------- how smooth
+#
+# Kept apart from the pacing above on purpose: a caller that wants to
+# know what its frames cost usually does NOT want them paced, because
+# pacing is what hides the answer.  gorge -b and strider -b run flat out
+# and measure; the play loops pace and could measure as well.
+
+timefd: ref Sys->FD;
+
+now(): big
+{
+	init();
+	if(timefd == nil){
+		timefd = sys->open("/dev/time", Sys->OREAD);
+		if(timefd == nil)
+			return big 0;
+	}
+	b := array[32] of byte;
+	sys->seek(timefd, big 0, Sys->SEEKSTART);
+	n := sys->read(timefd, b, len b);
+	if(n <= 0)
+		return big 0;
+	s := string b[0:n];
+	# the file is microseconds since the epoch, and nothing else
+	v := big 0;
+	for(i := 0; i < len s; i++){
+		if(s[i] < '0' || s[i] > '9')
+			break;
+		v = v*big 10 + big (s[i] - '0');
+	}
+	return v;
+}
+
+jitter(most: int): ref Jitter
+{
+	if(most < 1)
+		most = 1;
+	return ref Jitter(array[most] of int, 0, big 0, 0);
+}
+
+Jitter.mark(j: self ref Jitter)
+{
+	t := now();
+	if(j.prev != big 0 && j.n < len j.us)
+		j.us[j.n++] = int (t - j.prev);
+	j.prev = t;
+}
+
+Jitter.stats(j: self ref Jitter): (int, int, int, int, int, int, int)
+{
+	if(j.n == 0)
+		return (0, 0, 0, 0, 0, 0, 0);
+	a := array[j.n] of int;
+	a[0:] = j.us[0:j.n];
+	# insertion sort: this runs once, at the end, over a few hundred
+	for(i := 1; i < j.n; i++){
+		v := a[i];
+		k := i - 1;
+		while(k >= 0 && a[k] > v){
+			a[k+1] = a[k];
+			k--;
+		}
+		a[k+1] = v;
+	}
+	sum := 0;
+	for(i = 0; i < j.n; i++)
+		sum += a[i];
+	return (j.n, sum/j.n, a[0], a[j.n/2], a[(j.n*90)/100],
+		a[(j.n*99)/100], a[j.n-1]);
+}
+
+Jitter.report(j: self ref Jitter, who: string, budget: int)
+{
+	init();
+	(n, mean, lo, p50, p90, p99, hi) := j.stats();
+	if(n == 0){
+		sys->print("%s: no frames timed\n", who);
+		return;
+	}
+	if(budget <= 0)
+		budget = 1000000/FPS;
+	over := 0;
+	for(i := 0; i < j.n; i++)
+		if(j.us[i] > budget)
+			over++;
+	sys->print("%s: %d frames  mean %d  min %d  median %d  p90 %d  p99 %d  max %d us\n",
+		who, n, mean, lo, p50, p90, p99, hi);
+	sys->print("%s: %d past %d us (%d%%), worst is %d%% of budget\n",
+		who, over, budget, over*100/n, hi*100/budget);
+	# A histogram, because a tail is easier to see than to read.  Ten
+	# buckets from the fastest frame to the slowest.
+	if(hi > lo){
+		bk := array[10] of int;
+		for(i = 0; i < j.n; i++){
+			b := (j.us[i] - lo) * 10 / (hi - lo);
+			if(b > 9)
+				b = 9;
+			bk[b]++;
+		}
+		most := 1;
+		for(i = 0; i < 10; i++)
+			if(bk[i] > most)
+				most = bk[i];
+		for(i = 0; i < 10; i++){
+			bar := "";
+			w := bk[i] * 40 / most;
+			for(k := 0; k < w; k++)
+				bar[len bar] = '#';
+			sys->print("%s: %7d us %-40s %d\n", who,
+				lo + (hi-lo)*i/10, bar, bk[i]);
+		}
+	}
+}
