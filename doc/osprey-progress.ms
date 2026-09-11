@@ -5061,9 +5061,61 @@ with no trap taken at all, is 46483, 49889, 46800 and 50551 nanoseconds
 on four runs of
 .CW #O/bench ,
 and four hundred round trips in a hundredth to a fiftieth of a second.
-Two orders of magnitude, and structural rather than tuning: a round
-trip here wakes a Plan 9 kernel process to answer it.  The talk's
-number is a microkernel's, and this is not one.
+Two orders of magnitude.
+.PP
+This document used to explain the difference in one sentence \- a round
+trip here wakes a Plan 9 kernel process to answer it \- and that
+sentence was an assertion.  A round trip is five things: putting the
+request on the ring, waking the machine's waiters, waking the
+container's servers, waiting for one of them to answer, and taking the
+reply off; only the fourth is the other process's, and the total on its
+own says nothing about which of them is the cost.  So
+.CW #O/bench
+reads the cycle counter at each stage now and prints the parts beside
+the whole.  Two thousand round trips, on four processors, on the
+eleventh of September 2026:
+.CW "66145 ns each; submit 1457, wake 12606, wakeservers 2496" ,
+.CW "wait 48588, collect 840" ,
+and every one of the two thousand slept.
+.PP
+Three quarters of it is the waiting, and that much of the old sentence
+holds: this process goes to sleep, the scheduler runs the container's
+service kproc, it answers, and this process is woken and scheduled
+again.  A microkernel's send-receive does not do that, and no tuning of
+this code removes it.
+.PP
+The other fifth is not the process shape at all, and the breakdown is
+what shows it.
+.CW ospreywakeup
+wakes three rendezvous for each of sixteen container slots \- forty
+eight
+.CW wakeup
+calls, all but one of them on a rendezvous nobody is sleeping on \- and
+it is called on every submit, which is the 12.6 microseconds.  That is
+this kernel's bluntness, not Plan 9's process, and it would cost the
+same in a kernel whose tasks were anything at all.  It is a fifth of
+the round trip sitting in a loop that a targeted wake would remove; it
+is written down here and not done, because a wake that misses is an
+intermittent hang across every check in the tree and the win would take
+66 microseconds to 54, which is still two orders off the talk.
+.PP
+One control, because there was an explanation that would have made all
+of this the emulator's: on four processors an idle core has to be
+brought out of a halt with an interprocessor interrupt, and under QEMU
+that is a vm exit.  If that were the cost, one processor would collapse
+the wait.  Booted with
+.CW "-p 1" ,
+the same bench says
+.CW "62833 and 68087 ns each" ,
+with the wait 46530 and 50619, which is the four-processor number.  The
+wait is the scheduler's, not the interrupt's.
+.PP
+What these numbers are not is hardware.  This is QEMU's software
+emulation on a loaded host, so a microsecond here is not a microsecond
+on a machine; what the breakdown supports is the division of the round
+trip into its parts and the ratios between them, which is what the
+argument needs.  The talk's number is a microkernel's, and this is not
+one.
 .NH 2
 A class of bug worth naming, and closed
 .PP
