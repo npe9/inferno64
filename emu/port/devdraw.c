@@ -1939,6 +1939,73 @@ d3projectline(Client *cl, float ax, float ay, float az, float bx, float by, floa
 	return 1;
 }
 
+/*
+ * The same clip, carrying a per-vertex value with it.
+ *
+ * The flat path ('k') has clipped against the eye plane since it was
+ * written; the Gouraud path ('K') did not, and that was the whole of
+ * gorge(1)'s wrong picture through Metal.  A polygon straddling the
+ * plane has a vertex with w <= 0 after projection, the triangle wraps,
+ * and the GPU paints an enormous wrong face: g3probe(1) measured 185898
+ * lit pixels against the software provider's 40596 for a wall running
+ * through the eye.
+ *
+ * Interpolating the lit value by the same parameter is the only
+ * addition.  It is right for the same reason the positions are: the
+ * model transform is affine, so eye z is affine along a model-space
+ * edge, and one parameter serves for every quantity carried along it.
+ *
+ * Bounded at D3CLIPMAX so the caller can keep its output on the stack.
+ * A polygon with more vertices than that is left to the caller, which
+ * refuses it to the GPU and lets the CPU path have it - correct, just
+ * not accelerated.  Every face either game draws is a triangle or a
+ * quad.
+ */
+enum { D3CLIPMAX = 8 };
+
+static int
+d3clipnearlit(Client *cl, float *ix, float *iy, float *iz, float *il, int n,
+	float *ox, float *oy, float *oz, float *ol)
+{
+	float sx, sy, sz, sl, ex, ey, ez, el, qx, qy, sez, eez, t;
+	float const nearz = -1.0e-4f;
+	int i, m, sin, ein;
+
+	if(!cl->d3clipbehind){
+		for(i = 0; i < n; i++){
+			ox[i] = ix[i];
+			oy[i] = iy[i];
+			oz[i] = iz[i];
+			ol[i] = il[i];
+		}
+		return n;
+	}
+	m = 0;
+	sx = ix[n-1]; sy = iy[n-1]; sz = iz[n-1]; sl = il[n-1];
+	d3mulpoint(cl->d3model, sx, sy, sz, &qx, &qy, &sez);
+	sin = sez < nearz;
+	for(i = 0; i < n; i++){
+		ex = ix[i]; ey = iy[i]; ez = iz[i]; el = il[i];
+		d3mulpoint(cl->d3model, ex, ey, ez, &qx, &qy, &eez);
+		ein = eez < nearz;
+		if(sin != ein){
+			t = (nearz - sez) / (eez - sez);
+			ox[m] = sx + t*(ex-sx);
+			oy[m] = sy + t*(ey-sy);
+			oz[m] = sz + t*(ez-sz);
+			ol[m++] = sl + t*(el-sl);
+		}
+		if(ein){
+			ox[m] = ex;
+			oy[m] = ey;
+			oz[m] = ez;
+			ol[m++] = el;
+		}
+		sx = ex; sy = ey; sz = ez; sl = el; sez = eez; sin = ein;
+	}
+	return m;
+}
+
 /* Sutherland-Hodgman clip against the eye plane used by clipbehind. */
 static int
 d3clipnear(Client *cl, float *ix, float *iy, float *iz, int n,
@@ -3516,7 +3583,10 @@ drawmesg(Client *client, void *av, int n)
 				{
 					Point pdrop;
 					float ezdrop;
-					int infront;
+					int infront, nc, gn;
+					float cvx[D3CLIPMAX+1], cvy[D3CLIPMAX+1];
+					float cvz[D3CLIPMAX+1], cvl[D3CLIPMAX+1];
+					float *gx, *gy, *gz, *gl;
 
 					infront = 1;
 					for(j = 0; j < nw; j++)
@@ -3525,8 +3595,26 @@ drawmesg(Client *client, void *av, int n)
 							infront = 0;
 							break;
 						}
+					gx = vx; gy = vy; gz = vz; gl = lits; gn = nw;
+					if(!infront && nw <= D3CLIPMAX){
+						/*
+						 * Straddles the eye plane.  Clip it and
+						 * give the GPU the part in front, the way
+						 * the flat path has always done - rather
+						 * than the whole thing, which wraps, or
+						 * nothing, which puts the nearest and
+						 * largest faces back on the CPU.
+						 */
+						nc = d3clipnearlit(client, vx, vy, vz, lits,
+							nw, cvx, cvy, cvz, cvl);
+						if(nc >= 3){
+							gx = cvx; gy = cvy; gz = cvz;
+							gl = cvl; gn = nc;
+							infront = 1;
+						}
+					}
 					if(infront && gpudrawfillpoly3g != nil
-					&& gpudrawfillpoly3g(dst, vx, vy, vz, lits, nw,
+					&& gpudrawfillpoly3g(dst, gx, gy, gz, gl, gn,
 					    src, op, client->d3model, client->d3proj,
 					    client->d3mx, client->d3cx, client->d3my,
 					    client->d3cy)){

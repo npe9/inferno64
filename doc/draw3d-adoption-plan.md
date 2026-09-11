@@ -621,10 +621,23 @@ of its picture — the big flat shapes that swallowed the scene.
 GPU if any is behind the eye, so those polygons take the CPU path and
 agree with software: **185898 → 40290**.
 
-The right answer is near-plane *clipping* — hand the GPU the part that is
-in front — and declining is not that. It is correct, it costs the GPU
-only the faces that straddle the plane, and it can be replaced by real
-clipping later without changing anything else.
+**Since replaced by real clipping.** `devdraw.c` already had a
+`d3clipnear()` — Sutherland-Hodgman against the eye plane, in model
+space, which works because the model transform is affine so eye z is
+affine along a model-space edge. The **flat** path `'k'` has used it
+since it was written; the Gouraud path `'K'` never did, and that
+asymmetry was the whole fault. `d3clipnearlit()` is the same clip
+carrying the per-vertex lit along by the same parameter, and `'K'` now
+uses it, so the straddling faces go to the GPU clipped instead of to the
+CPU whole: `g3_calls` 5713 → 6060, `g3_tris` 11339 → 12036, and the
+picture is unchanged.
+
+It is bounded at eight input vertices so the output can live on the
+stack; anything larger is still declined to the CPU, which is correct if
+unaccelerated, and every face either game draws is a triangle or a quad.
+
+`'G'` (line3) and `'h'` (plot3) still do not clip. Neither game leans on
+them, so nothing is visibly wrong today, but it is the same gap.
 
 **2. Presentation was the only thing that consumed the geometry queue,**
 and it does not write the softscreen back, so whether a frame's 3-D ever
