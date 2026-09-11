@@ -149,6 +149,84 @@ cantilever()
 		rel("and two elements give exactly the same tip",
 			s2.displacement("b", fr->DY), s.displacement("b", fr->DY), 1.0e-12);
 
+	# The member forces, which nothing above reads.  For a cantilever
+	# with P down at the tip, the wall end carries a shear of P and a
+	# moment of PL, and the far end carries no moment at all - which is
+	# the whole shape of the bending-moment diagram in two numbers.
+	# They are the forces the NODES apply to the member, so at the wall
+	# they are the same numbers as the reaction there - which is
+	# already checked independently just above, and is what makes
+	# these two agreeing mean something.
+	mf := fr->memberforces(s, 0);
+	if(mf == nil)
+		fail("memberforces returned nothing");
+	else {
+		rel("the shear at the wall", mf.shear1, p, 1.0e-10);
+		rel("and it is the reaction there", mf.shear1,
+			s.reactionat("a", fr->DY), 1.0e-10);
+		rel("the moment at the wall", mf.moment1, p*l, 1.0e-10);
+		rel("and that is the reaction too", mf.moment1,
+			s.reactionat("a", fr->DR), 1.0e-10);
+		rel("the shear at the tip is the load applied there", mf.shear2, -p, 1.0e-10);
+		near("and no moment at the free end", mf.moment2, 0.0, 1.0e-8);
+		near("nor any axial force", mf.axial, 0.0, 1.0e-8);
+	}
+
+	# A CANTILEVER AT 45 DEGREES under a distributed load.  Every udl
+	# tested above is on a horizontal member, where the member's own
+	# directions and the global ones coincide and transform() is the
+	# identity: the loop that turns the consistent load vector into
+	# global forces is multiplication by 1, and a transposed one would
+	# pass every test here.  Inclined, it cannot.
+	#
+	# The direction is the discriminating part.  localload() puts the
+	# load in the local across-direction, and transform() has
+	# t[1][0] = -s, t[1][1] = c, so local across is global (-s, c).  A
+	# transposed transform still gives a plausible magnitude and points
+	# it somewhere else.
+	w := 4000.0;
+	(cc, ss) := (math->sqrt(0.5), math->sqrt(0.5));
+	s45 := build(sys->sprint("node a 0 0\nnode b %g %g\nbeam a b %g %g %g\nudl %g\n" +
+		"fix a\n", l*cc, l*ss, E, A, I, w));
+	if(s45 != nil){
+		(ux, uy) := (s45.displacement("b", fr->DX), s45.displacement("b", fr->DY));
+		# resolve the tip movement into the member's own directions
+		along := cc*ux + ss*uy;
+		across := -ss*ux + cc*uy;
+		rel("a 45-degree cantilever under udl bends wL^4/8EI across itself",
+			across, w*l*l*l*l/(8.0*E*I), 1.0e-11);
+		near("and does not stretch along itself", along, 0.0,
+			1.0e-6*math->fabs(across));
+		rel("and turns through wL^3/6EI",
+			s45.displacement("b", fr->DR), w*l*l*l/(6.0*E*I), 1.0e-11);
+		checkbalance("45-degree cantilever", s45, w*l);
+		# and its member forces, which is the only place a member
+		# CARRYING a distributed load is asked what it carries: the
+		# end forces have to have that load taken back out of them,
+		# and with a horizontal member and no udl that subtraction is
+		# of zero.  Checked against the reaction, which is computed by
+		# a different route entirely, resolved into the member's own
+		# directions.
+		m45 := fr->memberforces(s45, 0);
+		if(m45 == nil)
+			fail("memberforces on the 45-degree cantilever returned nothing");
+		else {
+			(rx, ry) := (s45.reactionat("a", fr->DX), s45.reactionat("a", fr->DY));
+			rel("the shear at the wall is the reaction resolved along the member",
+				m45.shear1, -ss*rx + cc*ry, 1.0e-9);
+			rel("and the moment at the wall is the reaction moment",
+				m45.moment1, s45.reactionat("a", fr->DR), 1.0e-9);
+			# -wL^2/2 and not +: this udl is positive, i.e. towards
+			# the member's own left, where the tip load in the first
+			# cantilever was negative
+			rel("which comes to wL^2/2", m45.moment1, -w*l*l/2.0, 1.0e-9);
+			near("and the free end carries no moment", m45.moment2, 0.0,
+				1.0e-9*math->fabs(m45.moment1));
+		}
+		if(verbose)
+			sys->print("     45 degrees: across %.6g, along %.3g\n", across, along);
+	}
+
 	# an end moment instead: ML^2/2EI and ML/EI
 	m := 8000.0;
 	s3 := build(sys->sprint("node a 0 0\nnode b %g 0\nbeam a b %g %g %g\n" +

@@ -76,8 +76,12 @@ Frame: module
 	# a real answer about the structure and not a numerical failure.
 	solve:	fn(s: ref Struct): string;
 
-	# The forces in a member after a solve, in its own directions:
-	# axial (tension positive), then shear and moment at each end.
+	# The forces in a member after a solve, in its own directions.
+	# They are the forces the NODES apply to the member, so at a
+	# support they come out equal to the reaction there, and at a
+	# loaded joint equal to the load: a cantilever with P down at its
+	# tip has shear P and moment PL at the wall, and shear -P and no
+	# moment at the tip.  Axial is positive in tension.
 	Forces: adt {
 		axial:	real;
 		shear1, moment1: real;

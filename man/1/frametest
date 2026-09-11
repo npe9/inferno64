@@ -87,9 +87,13 @@ Every structure here is small \- three nodes or four.
 Nothing checks that the assembly is right for a structure large enough
 for a numbering mistake to show, and nothing measures conditioning.
 .PP
-The distributed load is checked only on a horizontal member, where the
-member's own direction and the global one coincide.
-A
-.B udl
-on an inclined member exercises the transformation of the consistent
-load vector, and is not tested.
+Every structure here is made of one or two element orientations \-
+horizontal, and one cantilever at 45 degrees.
+Nothing exercises an arbitrary angle, though the 45-degree case is
+enough to make every transformation non-trivial.
+.PP
+.B Memberforces
+is checked on a cantilever and on a member carrying a distributed load.
+Its shear and moment are not checked anywhere in a structure where the
+member's ends are both free to move, so a mistake that cancels between
+the two ends would not be seen.
