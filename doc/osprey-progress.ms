@@ -756,20 +756,23 @@ budget and leave the ring to the one that has it.  A member pid list was
 added to the container's status line
 .CW ( ospreygroupjoin
 in the adapter); it is not put in the checkpoint, so nothing there is
-signed differently.  What stays open, as above, is resume: the group
-is scheduled as one, but a checkpoint carries the container's state, not
-the group's running registers, so there is not yet a running group to
-carry to another machine.
+signed differently.  What stayed open when this was written was resume
+\- a checkpoint carries the container's state, not the group's running
+registers \- and it is item 6a below, where it is closed: the group is
+carried as a group, across a wire, its members' pages shared again at
+the far end.
 .PP
 .B "6a.  Resume, and a checkpoint that carries everything."
-The group above is scheduled as one; what is not built is carrying a
+The group above is scheduled as one; what this item was written for is
+carrying a
 .I running
-group across a wire.  Migration here is checkpoint-and-restart, and a
+group across a wire.  Migration was checkpoint-and-restart, and a
 checkpoint carries the container's rings, data area, semaphores, names
 and grants, not a process's registers or stack, nor its packets, its
 pages or its kernel channels, nor a checkpoint larger than one ethernet
-frame.  Resuming a process rather than restarting it is the piece, and
-it is the deepest one left.
+frame.  Resuming a process rather than restarting it was the piece, and
+the deepest one left; it is built, on one machine and then across a
+wire, and the rest of this item is how.
 .PP
 Resume is built, on one machine.  A process asks to be moved
 .CW ( ReqMove ,
