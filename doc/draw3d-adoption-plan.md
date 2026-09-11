@@ -413,6 +413,42 @@ the queue; this is about *when* the queue is drained relative to the
 2-D drawing that belongs on top of it, and the drain still happens at
 present time.
 
+### `castlefrankenstein` does *not* use the GPU correctly — 2026-09-11
+
+Asked after `gorge` and `strider` were fixed, and checked the way that
+comparison has to be made: against the **C rasteriser** (`INFERNO_NOGPU`)
+rather than the Limbo provider, because the Limbo one is thirty times
+slower and at the same wall-clock moment the game is at a different
+frame. With that controlled, GPU at `Time:1.95s` against CPU at
+`Time:1.99s` — the same moment of the same game:
+
+| | wall (left) | wall (right) | floor |
+| --- | --- | --- | --- |
+| CPU | 186,180,176 | 186,180,176 | 103,94,88 |
+| GPU | 101,97,95 | 105,102,100 | 49,45,42 |
+
+**The hue is right and the brightness is about half.** 0.54, 0.57 and
+0.48 of the CPU's. The port draws its walls with `fillpoly3` at a
+per-face lit of 0.82, so a plausible reading is that the lit is being
+applied twice — once into the source colour and once again in the
+fragment shader — but that has not been pinned down, and
+`INFERNO_METAL_FLAT` does not restore it: with the shader lighting off
+the picture changes again, and the ceiling comes out light where it
+should be black.
+
+It also paints over its own title bar, which the CPU does not.
+`g3probe(1)`'s clip test says geometry does *not* escape the window it
+is drawn into, so that is not a general clip failure — but note that the
+Metal geometry passes never consult `dst->clipr` at all (the only use of
+it in `win-cocoa.m` is `soft_bresenham`, the CPU fallback), so a client
+whose clip is smaller than its image would have nothing to stop it.
+Which of those two this is has not been established.
+
+So: `gorge` and `strider` are right on the GPU; this one is not, and
+neither of the two faults is a fault either game would have shown, since
+both draw with `fillpoly3g` and this draws with `fillpoly3`. **The other
+seven of Phase 1's nine have not been re-checked since the fixes.**
+
 ### Phase 1's nine ports' pictures, checked at last — 2026-09-11
 
 `framegrab(1)` is the tool that was missing: it runs a module with a

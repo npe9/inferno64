@@ -33,6 +33,10 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	win.reshape(Rect((0,0),(640,480)));
 	win.onscreen("place");
 	d = win.display;
+	sys->print("window image r=%d,%d..%d,%d  clipr=%d,%d..%d,%d\n",
+		win.image.r.min.x, win.image.r.min.y, win.image.r.max.x, win.image.r.max.y,
+		win.image.clipr.min.x, win.image.clipr.min.y,
+		win.image.clipr.max.x, win.image.clipr.max.y);
 	zs := array[] of {-6.0, -3.0, -2.0, -1.5, -1.2, -1.0};
 	sys->print("%-28s %8s %8s %8s %8s\n", "provider", "z", "flat", "gouraud", "equal");
 	one(Draw3d->PATH, "software", zs);
@@ -92,6 +96,13 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	lines3("/dis/math/draw3ddev.dis", "device", 0);
 	lines3(Draw3d->PATH, "software", 1);
 	lines3("/dis/math/draw3ddev.dis", "device", 1);
+
+	# Does geometry stay inside the window it is drawn into?  A window
+	# smaller than the screen, and a face that projects bigger than the
+	# window: anything outside is paint that escaped the clip.
+	sys->print("\n%-12s %10s %10s\n", "provider", "inside", "ESCAPED");
+	clipt(Draw3d->PATH, "software");
+	clipt("/dis/math/draw3ddev.dis", "device");
 }
 
 frames(path, what: string, nf: int)
@@ -300,6 +311,71 @@ lines3(path, what: string, cross: int)
 	if(cross)
 		nm = "thru eye";
 	sys->print("%-12s %-10s %10d %12d\n", what, nm, l, h);
+}
+
+clipt(path, what: string)
+{
+	d3 := load Draw3d path;
+	if(d3 == nil)
+		return;
+	d3->init();
+	# A window well inside the screen, so there is an outside to spill
+	# into.  The screen is cleared first, so anything lit beyond the
+	# window came from this drawing and nothing else.
+	win.reshape(Rect((120,90),(420,330)));
+	win.onscreen("place");
+	d.image.draw(d.image.r, d.black, nil, d.image.r.min);
+	d.image.flush(Draw->Flushnow);
+	img := win.image;
+	img.draw(img.r, d.black, nil, img.r.min);
+	img.flush(Draw->Flushnow);
+	c := d3->context(img);
+	d3->setzarea(c, img.r);
+	d3->setz(c, 1);
+	d3->viewport(c, img.r.min.x, img.r.min.y, img.r.max.x, img.r.max.y);
+	d3->mode(Draw3d->PROJ);
+	d3->identity();
+	d3->frustum(0.1, 0.1, 100.0);
+	d3->mode(Draw3d->MODEL);
+	d3->identity();
+	d3->clearz(c);
+	d3->setcolour(c, d.color(Draw->Red));
+	lits := array[] of {0.5, 0.7, 1.0, 0.8};
+	# Deliberately larger than the window once projected.
+	v := array[] of {
+		Draw3d->Vector(-0.9, -0.9, -1.2), Draw3d->Vector( 0.9, -0.9, -1.2),
+		Draw3d->Vector( 0.9,  0.9, -1.2), Draw3d->Vector(-0.9,  0.9, -1.2),
+	};
+	d3->fillpoly3g(c, v, lits);
+	img.flush(Draw->Flushnow);
+	(inside, out) := insideout(img.r);
+	sys->print("%-12s %10d %10d\n", what, inside, out);
+}
+
+# Lit pixels within r, and lit pixels anywhere else on the screen.
+insideout(r: Rect): (int, int)
+{
+	sr := d.image.r;
+	bpl := (sr.dx() * d.image.depth + 7) / 8;
+	pxb := d.image.depth / 8;
+	buf := array[bpl] of byte;
+	ins := 0;
+	out := 0;
+	for(y := sr.min.y; y < sr.max.y; y++){
+		if(d.image.readpixels(Rect((sr.min.x, y), (sr.max.x, y+1)), buf) != bpl)
+			return (-1, -1);
+		for(i := 0; i < sr.dx(); i++){
+			if(buf[i*pxb] == byte 0 && buf[i*pxb+1] == byte 0
+			&& buf[i*pxb+2] == byte 0)
+				continue;
+			x := sr.min.x + i;
+			if(x >= r.min.x && x < r.max.x && y >= r.min.y && y < r.max.y)
+				ins++;
+			else
+				out++;
+		}
+	}
+	return (ins, out);
 }
 
 lithash(img: ref Image): (int, int)
