@@ -90,7 +90,7 @@ dspecs := array[] of {
 	"ecology", "enzymeapplication", "enzymekinetics", "fireflies", "fireworks",
 	"fishingone", "fishingtwo", "flight", "flyball", "foodchain",
 	"galaxies", "golfdrive", "gonorrhea", "grandtour", "gravitypendulum",
-	"heliumburning", "hiv", "hovercraft", "hyperionrotation", "icbmaccuracy",
+	"heliumburning", "hiv", "hovercraft", "hydrogen", "hyperionrotation", "icbmaccuracy",
 	"icbmrange", "incubation", "internalcompetition", "javelin", "joggingcompanion",
 	"jupiterboost", "knuckleball", "lagrange1", "lagrange2", "lakepollution",
 	"lanchester", "limitstogrowth", "loadedpendulum", "logisticpredators", "logisticprey",

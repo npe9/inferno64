@@ -279,7 +279,98 @@ checkmechanism(name: string, m: ref Model, c: ref Config,
 		checkschrodinger(name, m);
 	"rabi" =>
 		checkrabi(name, m);
+	"hydrogen" =>
+		checkhydrogen(name, m);
 	}
+}
+
+
+# ---------------------------------------------------------------- hydrogen
+#
+# The only atom with an exact answer, which is what makes it worth
+# testing: the bound states are at E = -Z^2/2n^2 and nowhere else, so
+# the tail at the wall must come down at -0.5 and -0.125 for Z = 1 and
+# must not come down a slider notch either side.
+#
+# Everything here runs at the step the library itself uses.  That is not
+# a detail: this model's start_radius was chosen by measurement AT that
+# step, because below about 0.001 the equation stiffens as 1/r faster
+# than a 0.005 step can follow and the error starts growing again.  A
+# test at a finer step would sail past the very thing the number was
+# picked to avoid.
+
+HYDDT: con 0.005;		# the mechanism family's own step
+HYDWALL: con 20.0;		# the spec's own maxtime
+
+hydshoot(m: ref Model, energy, charge, ell: real): real
+{
+	m.parameter[0] = energy;
+	m.parameter[1] = charge;
+	m.parameter[2] = ell;
+	m.parameter[3] = 0.001;		# the spec's own start_radius
+	stepping = m;
+	state := dynsys->initialstate(m);
+	work := numerics->workspace(len state);
+	t := 0.0;
+	for(i := 0; i < int (HYDWALL/HYDDT+0.5); i++){
+		numerics->rk4(work, steprhs, t, HYDDT, state);
+		t += HYDDT;
+	}
+	return state[0];
+}
+
+checkhydrogen(name: string, m: ref Model)
+{
+	# E = -Z^2/2n^2, so for Z=1: 1s and 2s at l=0, 2p at l=1
+	levels := array[] of {-0.5, -0.125, -0.125};
+	ells := array[] of {0.0, 0.0, 1.0};
+	what := array[] of {"1s", "2s", "2p"};
+	for(i := 0; i < len levels; i++){
+		at := math->fabs(hydshoot(m, levels[i], 1.0, ells[i]));
+		if(at > 0.05)
+			fail(sys->sprint("%s: %s is a level but u(%g) is %g",
+				name, what[i], real HYDWALL, at));
+		below := math->fabs(hydshoot(m, levels[i]-0.0025, 1.0, ells[i]));
+		above := math->fabs(hydshoot(m, levels[i]+0.0025, 1.0, ells[i]));
+		if(below < 1.0 || above < 1.0)
+			fail(sys->sprint("%s: %s off by a notch leaves u at %g and %g, "+
+				"so the level check proves nothing", name, what[i], below, above));
+	}
+	# the Z^2 scaling: halve the charge and the ground state drops by four
+	at2 := math->fabs(hydshoot(m, -0.125, 0.5, 0.0));
+	if(at2 > 0.05)
+		fail(sys->sprint("%s: at Z=0.5 the ground state should be -0.125, "+
+			"but u(%g) is %g", name, real HYDWALL, at2));
+
+	# the effective potential drawn in the diagram, against the formula.
+	# Only the outer samples can be checked: V = -Z/r is below the -0.6
+	# floor for every sample inside r = 1.667 at Z = 1, and a clamped
+	# point tests the clamp and nothing about its own coefficients.
+	m.parameter[1] = 1.0;
+	m.parameter[2] = 0.0;
+	pts := dynsys->points(m, dynsys->initialstate(m));
+	for(i = 1; i <= 20; i++){
+		rr := pts[2*i];
+		v := -1.0/rr;			# l = 0, Z = 1
+		if(v <= -0.6){
+			near(sys->sprint("%s: well sample %d at r=%g clamps", name, i, rr),
+				pts[2*i+1], -0.6, 1.0e-12);
+			continue;
+		}
+		near(sys->sprint("%s: well sample %d at r=%g", name, i, rr),
+			pts[2*i+1], v, 1.0e-12);
+	}
+	# and the centrifugal barrier really is repulsive: at l=2 the inner
+	# samples must be ABOVE the l=0 ones, or the term has the wrong sign
+	m.parameter[2] = 2.0;
+	hi := dynsys->points(m, dynsys->initialstate(m));
+	rose := 0;
+	for(i = 1; i <= 20; i++)
+		if(hi[2*i+1] > pts[2*i+1] + 1.0e-9)
+			rose++;
+	if(rose == 0)
+		fail(name+": raising l did not lift the effective potential anywhere, "+
+			"so the centrifugal term is not doing what the model is about");
 }
 
 

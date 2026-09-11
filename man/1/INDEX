@@ -209,6 +209,7 @@ danby-mercuryrotation danby-mercuryrotation
 danby-tidalrotation danby-tidalrotation
 danby-nonlinearsprings danby-nonlinearsprings
 danby-duffing danby-duffing
+danby-hydrogen danby-hydrogen
 danby-rabi danby-rabi
 danby-schrodinger danby-schrodinger
 danby-vanderpol danby-vanderpol

@@ -1,0 +1,108 @@
+.TH DANBY-HYDROGEN 1
+.SH NAME
+danby-hydrogen \- the radial wave function of a hydrogen-like atom
+.SH SYNOPSIS
+.B danby/hydrogen
+.SH MODEL
+.IR Danby-schrodinger (1)
+shoots a particle in a made-up well.  This shoots the real one: an
+electron in the Coulomb field of a nucleus, the only atom with an exact
+answer and the reason anyone believed the theory.
+.PP
+In atomic units, with u(r) = r R(r),
+.PP
+.EX
+u'' = [ l(l+1)/r^2 - 2Z/r - 2E ] u
+.EE
+.PP
+and the bound states sit at
+.PP
+.EX
+E = -Z^2 / 2n^2,   n = l+1, l+2, ...
+.EE
+.PP
+and nowhere else.  For Z = 1 that is \-0.5, then \-0.125, then \-0.0556:
+the Lyman and Balmer numbers, which is to say the colours of hydrogen.
+.SH DESCRIPTION
+.B Danby/hydrogen
+is a
+.IR danbylab (2)
+script and nothing else \(em the whole model is the text of
+.BR /appl/danby/hydrogen.spec .
+.SS What to look for
+The energy slider steps by 0.0025, so \-0.5 and \-0.125 are both exactly
+reachable.  Land on one and the tail comes down; a single notch either
+side and it runs away, by a factor of 1.6 million at the ground state
+and by 176 at 2s.
+.PP
+.B Charge
+is the Z of a hydrogen-LIKE ion, and the levels go as Z squared: halve
+it and the ground state moves from \-0.5 to \-0.125.  That is a check
+the test makes, and it is also singly-ionised helium seen backwards.
+.PP
+.B Angular_momentum
+is what this model has that the well does not.
+.I l(l+1)/r^2
+is the centrifugal barrier, and going inwards it climbs faster than the
+Coulomb attraction falls, so an electron with angular momentum is held
+off the nucleus: a wall grows on the left of the diagram and the density
+stops reaching r = 0.  It is why the ground state must have l = 0, and
+why the lowest level for a given l is n = l+1 rather than n = 1 \(em at
+l = 1 there is no state at \-0.5 at all, only at \-0.125 and above.
+.PP
+A non-integer l is allowed and is not a state of anything.  The slider
+steps by 0.02 so every integer is reachable.
+.SS The diagram
+The effective potential \(em Coulomb plus centrifugal \(em with the
+energy drawn across it, and a marker showing how far the march has got.
+Nothing in it is a particle and nothing moves; see
+.IR danby-schrodinger (1),
+which says the same thing at more length.
+.SH SOURCE
+.B /appl/danby/hydrogen.spec
+.SH SEE ALSO
+.IR danby (1),
+.IR danby-schrodinger (1),
+.IR danby-rabi (1),
+.IR danbylab (2),
+.IR danbylabtest (1)
+.SH BUGS
+Shooting outward into a classically forbidden region is unstable, and
+hydrogen is far worse for it than a harmonic well: the ground state
+decays like e^-r across the whole range, so the growing solution is
+amplified against it by e^40.  Three numbers here were measured rather
+than chosen, and all three are load-bearing.
+.PP
+The march starts from the SERIES, u = r^(l+1)(1 - Zr/(l+1)), and not
+from the leading term alone.  That one extra term leaves an error of
+order r0 squared rather than r0, and since that error is what seeds the
+growing solution it is worth a factor of a hundred: without it the
+ground-state tail at the wall is 12.8, against a peak of 0.37 that it is
+meant to sit under.
+.PP
+.B Start_radius
+is 0.001 and not smaller.  Contamination keeps falling as r0 squared all
+the way down, but the equation stiffens as 1/r, and below about 0.001
+the library's own 0.005 step can no longer resolve the inner region and
+the error comes back: at 0.0001 the tail is 0.44, worse than at 0.001
+and larger than the peak.  That optimum does not exist at a finer step,
+which is why it had to be measured at the step the model actually runs
+at and not at a comfortable one.
+.PP
+The wall is at r = 20 and the choice is a compromise.  Nearer, the
+excited states cannot be told apart \(em one notch off 2s changes the
+tail by 8 at r = 16 against 176 at r = 20.  Further, the ground state's
+picture is ruined: its tail is 2.6 per cent of its own peak at r = 20
+and 17 per cent at r = 22.  There is no wall that is best for both, and
+a state much above n = 2 is simply outside this one.
+.PP
+n = 3, at \-0.0556, is not a multiple of the slider's 0.0025 and cannot
+be landed on exactly, only approached.
+.PP
+.IR Danbylabtest (1)
+checks the three lowest levels with a control a notch either side, the
+Z-squared scaling, the drawn potential against the formula, and that
+raising l lifts it.  It cannot check the inner samples of that potential
+against anything: at Z = 1 every sample inside r = 1.667 is below the
+drawing floor and clamps, and a clamped point tests the clamp and
+nothing about its own coefficients.
