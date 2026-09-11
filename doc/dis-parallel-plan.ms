@@ -973,6 +973,33 @@ worth fixing before it is trusted again.
 .NH 2
 Phase 1b is not Phase 1a, and it does not land alone
 .PP
+.B "Status, so this section is not planned twice."
+Phase 1b has landed on amd64, by the register route this document
+describes for native boards rather than the
+.CW __thread
+route it describes for emu.
+.CW curP
+is an external register beside
+.CW m
+and
+.CW up ,
+.CW curR
+is gone and
+.CW R
+reaches the register file through
+.CW curP ,
+and the configuration is verified at 192 boots on
+.CW "-smp 2"
+and 192 on
+.CW "-smp 4" .
+emu is untouched and the
+.CW __thread
+route below is still the right destination there.  What that took, and
+the nine bugs the VM lock had been hiding, are in
+doc/multicore-plan.ms; the reasoning here about why it must not land
+alone is what made it survivable, and is worth reading before the emu
+half is attempted.
+.PP
 .CW __thread REG R
 in emu looks like the whole of Phase 1 in one word, and the decomposition
 behind it is right:
