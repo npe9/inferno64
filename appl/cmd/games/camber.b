@@ -1667,6 +1667,23 @@ selftest()
 	ck("and removing it takes it off again", nriv, nr0);
 	ck("the course is as it was", trk.n, n0);
 
+	# And the designer's own picture, which nothing above draws.  Two
+	# frames with the cursor in two lanes: the background window is the
+	# same in both, so the only thing that can differ is the cursor.
+	curx = 20;
+	curlane = 0;
+	curkind = FRAMP;
+	pad = 0;
+	editstep();
+	editdraw();
+	d1 := boxsum(Rect((0, LTOP), (W, H)));
+	curlane = 2;
+	editstep();
+	editdraw();
+	d2 := boxsum(Rect((0, LTOP), (W, H)));
+	cktrue("the designer draws its cursor where the cursor is",
+		d1 >= 0 && d1 != d2);
+
 	if(nfail == 0)
 		sys->print("camber: PASSED\n");
 	else{
