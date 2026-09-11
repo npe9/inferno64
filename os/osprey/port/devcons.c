@@ -222,7 +222,24 @@ iprint(char *fmt, ...)
 	locked = iprintcanlock(&iprintlock);
 	if(screenputs != nil && iprintscreenputs)
 		screenputs(buf, n);
-	uartputs(buf, n);
+	/*
+	 * Through the console task when there is one, which is what every
+	 * ordinary print does (putstrn0).  iprint used to write the port
+	 * itself always, and that is the whole of this race: the task
+	 * drains its queue to the port a byte at a time, and an iprint
+	 * arriving in the middle of one of its lines put itself inside it.
+	 * A boot in three had a line cut in half - a fault line the p9legacy
+	 * check reads came out as "osprey: fault at uscat: started wer pc
+	 * ..." - so a check could fail for a line that was printed.
+	 *
+	 * The direct write stays as the fallback, which is what iprint is
+	 * for: a panic, a machine with no task, or a task a whole FIFO
+	 * behind answers -1 here and the port is written as before.  So
+	 * nothing that could be said before is lost; it is only ordered
+	 * when there is something to order it against.
+	 */
+	if(consoletask == nil || panicking || (*consoletask)(buf, n) != 0)
+		uartputs(buf, n);
 	if(locked)
 		unlock(&iprintlock);
 	splx(s);
