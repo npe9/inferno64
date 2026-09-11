@@ -339,3 +339,45 @@ which is the combination that turns a stale link into a wakeup of the
 wrong process.  It is not an SMP race \(em it happens with one
 processor \(em and it was in the port for every board, not just this
 one.
+.NH 2
+Phase 3 begun: the first measurement, and why its number does not count
+.LP
+Section "measure the claim" above says the claim this plan rests on is
+about cost, that it is settled by measurement rather than argument, and
+that the measurements do not exist.  The first of them now half exists.
+.PP
+.CW styxbench (1)
+times the same exchange three ways against one server: a write and read
+on a bare TCP connection, sequential reads of a file on a mounted
+namespace, and reads of that file at offsets a megabyte apart so the
+mount driver's readahead cannot answer one from another.
+.CW tcpserve (1)
+gained an echo mode to be the raw half's other end.
+.PP
+.B "The number it produces is not usable, and the reason is the useful part."
+Across three runs of 3000 iterations it reports Styx at 0.4 times the
+cost of raw TCP, stable to one decimal.  An abstraction cannot cost
+less than the transport it is carried on, and that is how the flaw was
+found rather than published: the Styx half is answered by the kernel,
+.CW exportfs
+reading
+.CW /dev/zero
+in C, while the raw half is answered by
+.CW tcpserve ,
+a Limbo program paying Dis interpretation on every exchange.  The ratio
+measures which language the server is written in.
+.PP
+A sound version needs both halves answered by the same kind of server:
+a raw echo served by the kernel, which does not exist, or the Styx half
+served by a Limbo file server so that both pay Dis.  That is the next
+piece of work on this item.
+.PP
+Two smaller results are sound and worth keeping.  The transport here is
+QEMU's user-mode networking and it is jittery: at 300 iterations the
+ratio ranged from 0.3 to 1.3 across runs and only settled at 3000, so
+any version of this experiment needs its iteration count justified
+rather than assumed.  And the gap between sequential and jumping reads
+is the mount driver's readahead, which is real and is what the file
+abstraction buys back on a sequential caller \(em that part of the
+comparison is between like and like, because both halves of it are
+Styx.

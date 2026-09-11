@@ -493,6 +493,7 @@ stopwatch wm-misc
 stream stream
 strings strings
 strut strut
+styxbench styxbench
 styxlisten listen
 sum sum
 sweeper wm-misc

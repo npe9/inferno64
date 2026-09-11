@@ -18,9 +18,24 @@ init(nil: ref Draw->Context, argv: list of string)
 	sys = load Sys Sys->PATH;
 	dial = load Dial Dial->PATH;
 	if(dial == nil){ sys->print("tcpserve: no Dial: %r\n"); return; }
+	#
+	# -e: keep the connection and echo whatever arrives, so that a
+	# client can time a round trip on a bare TCP connection and
+	# compare it with the same round trip carried over Styx.  That
+	# comparison is the point of section "measure the claim" in
+	# doc/inferno-cloud-modern.ms: the file abstraction is worth
+	# having only if it does not cost several times the thing it
+	# replaces, and nobody has the number.
+	#
+	echo := 0;
+	argv = tl argv;
+	if(argv != nil && hd argv == "-e"){
+		echo = 1;
+		argv = tl argv;
+	}
 	addr := "tcp!*!6666";
-	if(tl argv != nil)
-		addr = hd tl argv;
+	if(argv != nil)
+		addr = hd argv;
 	sys->print("tcpserve: announce %s\n", addr);
 	c := dial->announce(addr);
 	if(c == nil){
@@ -38,6 +53,19 @@ init(nil: ref Draw->Context, argv: list of string)
 	dfd := dial->accept(nc);
 	if(dfd == nil){
 		sys->print("tcpserve: accept failed: %r\n");
+		return;
+	}
+	if(echo){
+		sys->print("tcpserve: echoing\n");
+		buf := array[8192] of byte;
+		for(;;){
+			n := sys->read(dfd, buf, len buf);
+			if(n <= 0)
+				break;
+			if(sys->write(dfd, buf[0:n], n) != n)
+				break;
+		}
+		sys->print("tcpserve: echo done\n");
 		return;
 	}
 	msg := array of byte "INFERNO-ACCEPTED-YOUR-CONNECTION\n";
