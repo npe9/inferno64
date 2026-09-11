@@ -11521,8 +11521,10 @@ What is not served, and is named in the log as it is asked for:
 .CW rfork(RFPROC) ,
 which is a flow of control a library cannot split for its caller
 .CW ( p9lib.h
-says why); and a second legacy program at the same time, since the
-kernel keeps one outstanding call and one image range.
+says why); and a second legacy program at the same time as the first,
+since the kernel keeps one outstanding call and one image range and
+p9syscall.c one descriptor table \- a second is refused by name rather
+than served as though it were the first.
 .PP
 The demonstration is behind
 .CW *legacydemo=

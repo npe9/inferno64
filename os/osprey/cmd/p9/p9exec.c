@@ -283,6 +283,81 @@ p9libtable(void)
  */
 enum { Nattach = 16 };
 /*
+ * Which of this personality's files are ordinary Plan 9 binaries.
+ *
+ * The two kinds of program here are told apart by nothing in the file:
+ * both are a.outs of the same shape, and what differs is what they were
+ * linked against - p9crt.c, which makes them enter at p9start with the
+ * table, or libc, which makes them trap.  So the personality says which
+ * is which where it adds the files, rather than guessing from the bytes;
+ * p9legacyfile (p9linuxfile.c) is the one caller.
+ */
+enum { Nlegacyname = 8 };
+static char *legacyname[Nlegacyname];
+static int nlegacyname;
+
+void
+p9marklegacy(char *name)
+{
+	if(nlegacyname < Nlegacyname)
+		legacyname[nlegacyname++] = name;
+}
+
+int
+p9islegacy(char *name)
+{
+	int i;
+
+	for(i = 0; i < nlegacyname; i++)
+		if(strcmp(legacyname[i], name) == 0)
+			return 1;
+	return 0;
+}
+
+/*
+ * This sits here, above p9exec, and not beside p9execlegacy where it is
+ * used.  6c will not compile a function returning char** placed after
+ * p9exec in this file: it answers "illegal combination of types CHAR
+ * INT" and names p9exec's closing line, an unrelated one it has already
+ * compiled.  The same function returning int, or returning char** from
+ * above p9exec, compiles.  Moved rather than diagnosed.
+ */
+/*
+ * The vector an ordinary Plan 9 binary's entry expects, which is not
+ * quite the one the caller passed: one word past its nil is the address
+ * of the Tos, and init9tos.c reads it there (a Plan 9 kernel leaves it
+ * in AX; here the argument register carries the vector, so it travels at
+ * the end of the vector instead).
+ *
+ * Without it the program does not reach its first line: _tos is whatever
+ * lay past the caller's array, and libc reads _tos->pid the first time
+ * anything asks the time - "fault at user pc 0x201eb1 in *init*: fault
+ * read addr=0x3f", which is that field's offset in a Tos at nothing.
+ *
+ * The Tos is the library operating system's to provide, the way the
+ * kernel provides one for a program it execs.  pid is the flow the
+ * program runs on, and the cycle frequency is zero, which libc reads as
+ * "this machine has no cycle counter to time with" rather than as a
+ * rate.  One Tos, because one legacy program runs at a time.
+ */
+char**
+p9legacyargv(char **out, int nout, char **argv)
+{
+	extern int libpid(void);
+	static Tos legacytos;
+	int i;
+
+	for(i = 0; i < nout-2 && argv != nil && argv[i] != nil; i++)
+		out[i] = argv[i];
+	out[i] = nil;
+	memset(&legacytos, 0, sizeof legacytos);
+	legacytos.pid = libpid();
+	legacytos.cyclefreq = 0;
+	out[i+1] = (char*)&legacytos;
+	return out;
+}
+
+/*
  * The region the last load was laid in.  The legacy path needs it twice
  * over: the kernel is told it, so that a trap made inside it is the
  * program's and a trap made anywhere else is the personality's, and the
@@ -796,11 +871,9 @@ int
 int
 p9execlegacy(char *name, char **argv)
 {
-	extern void p9syscallprog(uvlong, uvlong);
+	extern void p9syscallprog(uvlong, uvlong, int*);
 	extern void p9syscallnoprog(void);
-	extern int libpid(void);
 	extern int p9legacyserve;
-	static Tos legacytos;		/* the Tos this personality gives its program */
 	char *lav[10];
 	uvlong entry, progbase;
 
@@ -820,37 +893,7 @@ p9execlegacy(char *name, char **argv)
 		"libc, no table, real system calls\n", name, entry);
 	p9execstatus = nil;
 	p9saveflow();
-	/*
-	 * The vector the entry expects, which is not quite the one the
-	 * caller passed: one word past its nil is the address of the Tos,
-	 * and init9tos.c reads it there (a Plan 9 kernel leaves it in AX;
-	 * here the argument register carries the vector, so it travels at
-	 * the end of the vector instead).
-	 *
-	 * Without it the program did not reach its first line: _tos was
-	 * whatever lay past the caller's array, and libc reads _tos->pid
-	 * the first time anything asks the time - "fault at user pc
-	 * 0x201eb1 in *init*: fault read addr=0x3f", which is that field's
-	 * offset in a Tos at nothing.
-	 *
-	 * The Tos is the library operating system's to provide, the way the
-	 * kernel provides one for a program it execs.  pid is the flow this
-	 * program runs on, and the cycle frequency is zero, which libc
-	 * reads as "this machine has no cycle counter to time with" rather
-	 * than as a rate.
-	 */
-	{
-		int i;
-
-		for(i = 0; i < nelem(lav)-2 && argv != nil && argv[i] != nil; i++)
-			lav[i] = argv[i];
-		lav[i] = nil;
-		memset(&legacytos, 0, sizeof legacytos);
-		legacytos.pid = libpid();
-		legacytos.cyclefreq = 0;
-		lav[i+1] = (char*)&legacytos;
-		argv = lav;
-	}
+	argv = p9legacyargv(lav, nelem(lav), argv);	/* and the Tos past its nil */
 	/*
 	 * And ask the kernel for the program's traps before it can make
 	 * one.  From here until p9syscallnoprog, a system call made from
@@ -858,7 +901,7 @@ p9execlegacy(char *name, char **argv)
 	 * of to the microkernel.
 	 */
 	if(p9legacyserve)
-		p9syscallprog(p9loadbase, p9loadend);
+		p9syscallprog(p9loadbase, p9loadend, nil);
 	else
 		print("p9 legacy: the control - I do not ask for this program's "
 			"system calls, so its first one goes to the microkernel, "

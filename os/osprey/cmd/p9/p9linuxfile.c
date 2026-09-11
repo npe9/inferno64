@@ -35,6 +35,8 @@
 void
 p9legacyfile(void)
 {
+	extern void p9marklegacy(char*);
+
 	addbootfile("legacy", legacyprog, sizeof legacyprog);
 	/*
 	 * And cat, which is the point of the exercise put plainly: the same
@@ -50,6 +52,16 @@ p9legacyfile(void)
 	 * itself because there is nobody in the program to give the note to.
 	 */
 	addbootfile("faulty", faultprog, sizeof faultprog);
+	/*
+	 * And which of them are the ordinary binaries.  Nothing in the file
+	 * says so - both kinds are a.outs of the same shape - and the
+	 * difference is what they were linked against, so it is recorded
+	 * here, where they are added, rather than guessed from the bytes.
+	 * p9spawn asks, so a shell can start one of these as a command.
+	 */
+	p9marklegacy("/boot/legacy");
+	p9marklegacy("/boot/cat");
+	p9marklegacy("/boot/faulty");
 }
 
 void

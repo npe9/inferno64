@@ -81,7 +81,7 @@ static int fdmap[Nfd];		/* the program's fd -> the personality's, or -1 */
 static int fdready;
 
 static void
-fdstart(void)
+fdstart(int *std)
 {
 	int i;
 
@@ -89,13 +89,29 @@ fdstart(void)
 		fdmap[i] = -1;
 	/*
 	 * 0, 1 and 2.  A Plan 9 program is started with them open and this
-	 * one is no different; they are /dev/cons here because that is what
-	 * the machine's console is in this name space.  2 is a dup of 1 and
-	 * not a second open, so that closing one does not take the other.
+	 * one is no different.
+	 *
+	 * A program a shell started is given the shell's own: that is what
+	 * makes a command in a pipeline write to the next one rather than
+	 * to the machine's console, and the descriptors are already in this
+	 * flow's own table, put there by givefds before the flow started.
+	 *
+	 * Where there is none - the personality running a program itself,
+	 * or a shell whose own descriptor is the machine's console and so
+	 * is -1 - the program is given /dev/cons, which is what the console
+	 * is in this name space.  A program with no descriptor at all is
+	 * not a Plan 9 program: the first thing this one did with three of
+	 * them missing was print, which failed, and it ended with the
+	 * descriptor error as its status before it had said anything.
+	 * 2 is a dup of 1 and not a second open, so that closing one does
+	 * not take the other.
 	 */
-	fdmap[0] = libopen("/dev/cons", OREAD);
-	fdmap[1] = libopen("/dev/cons", OWRITE);
-	fdmap[2] = fdmap[1] >= 0 ? libdup(fdmap[1]) : -1;
+	fdmap[0] = std != nil && std[0] >= 0 ? std[0] : libopen("/dev/cons", OREAD);
+	fdmap[1] = std != nil && std[1] >= 0 ? std[1] : libopen("/dev/cons", OWRITE);
+	if(std != nil && std[2] >= 0)
+		fdmap[2] = std[2];
+	else
+		fdmap[2] = fdmap[1] >= 0 ? libdup(fdmap[1]) : -1;
 	fdready = 1;
 }
 
@@ -106,7 +122,15 @@ fdstop(void)
 
 	for(i = 0; i < Nfd; i++)
 		if(fdmap[i] >= 0){
-			libclose(fdmap[i]);
+			int j;
+
+			/* a number the program dup'd onto two of its own is one
+			 * descriptor of the personality's and is closed once */
+			for(j = 0; j < i; j++)
+				if(fdmap[j] == fdmap[i])
+					break;
+			if(j == i)
+				libclose(fdmap[i]);
 			fdmap[i] = -1;
 		}
 	fdready = 0;
@@ -160,17 +184,29 @@ static uvlong heapbase, heaptop, heapbrk;
  * can tell the program's traps from the personality's.
  */
 void
-p9syscallprog(uvlong base, uvlong end)
+p9syscallprog(uvlong base, uvlong end, int *std)
 {
 	uvlong a[4];
 	extern void p9syscallup(ulong, uintptr, uintptr);
 	extern void p9faultup(char*);
 
+	/*
+	 * One at a time.  The kernel keeps one image range and one
+	 * outstanding call, and the descriptor table below is one table, so
+	 * a second legacy program started while one is running would be
+	 * served as though it were the first.  It is refused by name
+	 * instead, which a caller can act on; lifting the limit is
+	 * per-flow state on both sides of the trap and is not done.
+	 */
+	if(fdready){
+		print("p9 syscall: a legacy program is already being served; "
+			"%#llux cannot be served as well\n", base);
+		return;
+	}
 	heapbase = base;
 	heaptop = end;
 	heapbrk = 0;
-	if(!fdready)
-		fdstart();
+	fdstart(std);
 	a[0] = (uvlong)(uintptr)p9syscallup;
 	a[1] = base;
 	a[2] = end;

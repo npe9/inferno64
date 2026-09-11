@@ -73,8 +73,11 @@ def main():
 
     results = [
         ("an unmodified Plan 9 binary - libc, the generated system-call stubs, no personality linked into it - is laid at UTZERO and entered by the library operating system beside it",
+         # the exec line and not the attachment line: the region at
+         # 0x200000 is attached once and re-used, so which program causes
+         # the attachment depends on which runs first.
          'entering /boot/legacy at 0x200028 as an ordinary Plan 9 binary' in t
-         and 'address space at 0x200000 for /boot/legacy' in t),
+         and re.search(r'p9 exec: /boot/legacy: text \d+, data \d+, bss \d+; \d+ bytes of address space at 0x200000, entry 0x200028', t) is not None),
 
         ("the personality asks the kernel for that program's system calls, naming the image they must come from: a trap from inside it is the program's, and a trap from anywhere else is the personality's own - which matters because a task here has many flows and they are all calling the kernel while the program runs",
          reg is not None and int(reg.group(1), 16) == 0x200000
@@ -127,6 +130,11 @@ def main():
          and 'cat: descriptor 4 is /hello, by fd2path' in t
          and 'hello from the 9P server' in t
          and 'p9 legacy: /boot/cat returned; the personality is still here' in t),
+
+        ("the shell runs one as a command, which is what makes this an operating system for programs rather than a demonstration of one: libsh spawns a name and does not know the difference, and the personality recognises one of its own ordinary binaries, gives it the descriptors the shell gave it, enters it with an argument vector, serves the traps its libc makes, and hands the shell its exit status",
+         'libsh: /boot/cat /hello' in t
+         and re.search(r'p9 spawn: /boot/cat runs as \d+ at 0x200000', t) is not None
+         and 'libsh: /boot/cat ended, status ""' in t),
 
         ("the personality goes on to run the window system afterwards, in the same boot, with its name space and its working directory back where they were",
          'p9: starting /boot/rio' in t and 'p9 spawn: /boot/rio runs as' in t),

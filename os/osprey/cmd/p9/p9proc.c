@@ -49,6 +49,8 @@
 extern int	p9load(char *name, uvlong *entryp, uvlong *basep);
 extern int	p9loadreloc(char *name, uvlong progbase, uvlong *entryp, uvlong *basep);
 extern int	p9isreloc(char *name);
+extern int	p9islegacy(char *name);	/* one of the ordinary Plan 9 binaries this personality carries */
+extern uvlong	p9loadbase, p9loadend, p9loadextra;
 extern P9lib*	p9libtable(void);
 extern void	p9execexits(char *status);
 
@@ -73,6 +75,8 @@ struct Proc9 {
 	Fgrp	*fgrp;		/* its own descriptor table */
 	int	std[3];		/* its numbers for its standard descriptors */
 	int	inproc;		/* a second flow of control inside a program already running */
+	int	legacy;		/* an ordinary Plan 9 binary: entered with argv alone, its traps served */
+	uvlong	top;		/* the end of the region it was laid in, which is the range its traps come from */
 	int	slot;		/* the relocation slot it was laid in, or -1 */
 	void	(*fn)(void*);	/* what it runs, when it is one of those */
 	void	*arg;
@@ -479,7 +483,30 @@ procstart(void *a)
 		procdone(t, up->errstr);
 		return;			/* kproc's launch pexits from here */
 	}
-	((void(*)(P9lib*, char**, int*))(uintptr)t->entry)(p9libtable(), t->argv, t->std);
+	if(t->legacy){
+		/*
+		 * An ordinary Plan 9 binary, started by a shell the way any
+		 * other command is.  It is entered with an argument vector and
+		 * nothing else - no table, because it was not built for one -
+		 * and what makes it run is that the personality has asked the
+		 * kernel for the traps its libc makes.  Its standard
+		 * descriptors are the ones this flow was given, which is how
+		 * a command in a pipeline writes to the next one.
+		 *
+		 * It does not return here: its exits(2) is served too, and
+		 * p9anyexits ends this kproc.  The lines after the call are
+		 * for a program that returns from its main without one.
+		 */
+		extern char **p9legacyargv(char**, int, char**);
+		extern void p9syscallprog(uvlong, uvlong, int*);
+		extern void p9syscallnoprog(void);
+		char *lav[Nargv+2];
+
+		p9syscallprog(t->base, t->top, t->std);
+		((void(*)(char**))(uintptr)t->entry)(p9legacyargv(lav, nelem(lav), t->argv));
+		p9syscallnoprog();
+	} else
+		((void(*)(P9lib*, char**, int*))(uintptr)t->entry)(p9libtable(), t->argv, t->std);
 	poperror();
 	procdone(t, "");
 	/* kproc's launch pexits from here */
@@ -539,6 +566,7 @@ p9spawn(char *name, char **argv, int *std)
 	 * a second instance of it.
 	 */
 	t->slot = -1;
+	t->top = 0;
 	if(p9isreloc(name)){
 		t->slot = p9relocalloc();
 		if(t->slot < 0){
@@ -549,6 +577,21 @@ p9spawn(char *name, char **argv, int *std)
 			p9relocfree(t->slot);
 			return -1;
 		}
+	} else if(p9islegacy(name)){
+		/*
+		 * An ordinary Plan 9 binary: laid at the address it was
+		 * linked for, with room above its bss for the heap its brk(2)
+		 * will ask for, and marked so that procstart enters it with an
+		 * argument vector rather than with the table.
+		 */
+		p9loadextra = 4*1024*1024;
+		if(p9load(name, &entry, &base) < 0){
+			p9loadextra = 0;
+			return -1;
+		}
+		p9loadextra = 0;
+		t->legacy = 1;
+		t->top = p9loadend;
 	} else if(p9load(name, &entry, &base) < 0)	/* it refuses an image already running */
 		return -1;
 	t->entry = entry;

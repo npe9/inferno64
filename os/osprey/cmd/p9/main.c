@@ -891,6 +891,20 @@ p9main(void)
 			"/boot/libcat /n/libcat\n"
 			"/boot/libcat /env/libnsshared /env/libnsprivate\n"
 			"/boot/libgen 100 | /boot/libgen 100\n";
+		/*
+		 * And one more line when the machine was asked for it: a
+		 * command that is an ordinary Plan 9 binary rather than a
+		 * program linked against the table.  The shell does not know
+		 * the difference - it spawns a name - and the difference is
+		 * the personality's: it recognises one of its own ordinary
+		 * binaries and enters it with an argument vector, having asked
+		 * the kernel for the traps its libc will make.
+		 *
+		 * It is behind the same switch as the rest of the legacy
+		 * demonstration because the boot every other check is written
+		 * against should be the boot they were written against.
+		 */
+		char *legacyline = "/boot/cat /hello\n";
 		int fd;
 
 		fd = p9create("#e/script", OWRITE, 0666);
@@ -898,6 +912,8 @@ p9main(void)
 			print("p9: cannot write the script for the shell\n");
 		else {
 			p9write(fd, script, strlen(script));
+			if(p9legacydemo)
+				p9write(fd, legacyline, strlen(legacyline));
 			p9close(fd);
 			print("p9: wrote a script of ten lines, five of them pipelines\n");
 			shargv[0] = "/boot/libsh";
