@@ -23235,3 +23235,83 @@ the ACPI boot gets
 .CW MSI-DOORBELL-OK
 where the device-tree boot does not.  Two paths, each with something the
 other lacks, and neither of them is what an Ampere Altra presents.
+.NH 2
+The same markers, through the firmware
+.PP
+Booting once is a demonstration.
+.CW virtarm64-efi
+makes it a check.  It is the same board as
+.CW virtarm64
+with edk2 in pflash, an EFI system partition on the first disk carrying
+.CW bootaa64.efi
+at
+.CW /EFI/BOOT/BOOTAA64.EFI ,
+a
+.CW plan9.ini
+naming the kernel, and no
+.CW -kernel
+on the qemu line at all \(em that last is the point, and the suite has a
+case for it, because passing one as well would be qemu doing the
+loader's job in silence and the arm would pass with a broken loader.
+.PP
+It records 42 markers and 12 known
+.CW -FAIL ,
+which is
+.I exactly
+what
+.CW virtarm64
+records: the marker files are identical.  That is the result.  Everything
+the suite can see is unchanged by going through a boot loader, a
+firmware, an ExitBootServices and an MMU that was on and had to be
+turned off.  What the arm adds is four evidence lines nothing else in the
+suite can produce \(em the loader reading the kernel's name out of
+.CW plan9.ini ,
+its own
+.CW boot ,
+the RSDP from the EFI configuration table, and the kernel's first line
+after the handoff.
+.PP
+Two small things were wrong on the way to that.  The evidence line
+.CW ^boot$
+matched nothing, because the UEFI console ends every line CRLF and the
+carriage return is inside the log;
+.CW ^boot.$
+is the honest spelling.  And the staleness check failed fourteen board
+arms after a comment was edited in the EFI loader, because it compares
+every kernel against every source in the tree and
+.CW os/inferno/boot
+was not pruned.  Nothing under
+.CW os/inferno/boot
+is compiled into a board kernel \(em they are separate programs with
+their own targets \(em so it is pruned now, beside
+.CW doc
+and
+.CW tools .
+.PP
+The staleness check got its scope fixed in the same round, for the same
+reason as the CRLF: it had failed fourteen arms three separate times in
+one afternoon, each time for a change in
+.CW os/inferno/virtarm64
+that no Pi or riscv kernel links, and each time costing a full rebuild
+and a twenty-minute re-run to learn nothing.  It compared every kernel
+against every source in the checkout, which included
+.CW os/osprey ,
+a different kernel entirely, and every board directory but the one the
+kernel came from.  Each board mkfile reaches
+.CW ../port ,
+.CW ../init
+and
+.CW ../ip
+and nothing else \(em sifiveu also
+.CW ../riscv ,
+pc64 also
+.CW ../pc
+\(em so the rest is pruned now.  The libraries are still scanned,
+because they really are linked in, and the check was tested both ways
+before being believed: touching
+.CW os/inferno/port/fdt.c ,
+which a Pi kernel does link, fails
+.CW raspi3b ,
+and touching
+.CW os/inferno/virt/main.c ,
+which it does not, does not.

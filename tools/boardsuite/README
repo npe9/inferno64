@@ -763,3 +763,36 @@ only the pointer marker killed qemu in the middle of "kfs: reaming the
 file system" and reported the two markers after it as a board
 regression -- five times in a row on a loaded machine, while the
 identical qemu command line run by hand reached both in about a minute.
+
+THE EFI ARM.  virtarm64-efi boots the same board as virtarm64 the way a
+real arm64 machine boots: edk2 in pflash, an EFI system partition on the
+first disk carrying os/inferno/boot/efi/bootaa64.efi at
+/EFI/BOOT/BOOTAA64.EFI, a plan9.ini naming the kernel, and no -kernel on
+the qemu line at all.  The kernel it loads is ivirtarm64.a, the a.out
+link of the same objects as the ELF -- "mk ivirtarm64.a" in the board
+directory -- because bootkern() reads an a.out and qemu's -kernel wants
+an ELF.
+
+It records the same 42 markers and the same 12 known -FAIL as the direct
+boot, which is the result: the handoff changes nothing the suite can
+see.  What it does add is four evidence lines no other arm can produce
+-- the loader naming the kernel out of plan9.ini, its "boot", the RSDP
+from the EFI configuration table, and the kernel's own first line after
+the MMU and the caches were turned off under it.
+
+The firmware is not in this tree.  It ships with qemu as
+edk2-aarch64-code.fd, with no aarch64 vars image anywhere -- the arm one
+is the same 64M and works -- and the arm looks for both in
+/opt/homebrew/share/qemu, /usr/share/qemu and /usr/share/edk2/aarch64,
+or in $QEMUBIOS.  A host without them fails that one arm by name rather
+than reporting a board that never printed its last marker.
+
+ACPI is left on, which is qemu's default, and the consequence is worth
+knowing before reading the log.  The loader then has no device tree to
+pass and says so, and the kernel boots because main() falls back to
+finding qemu's own DTB at the bottom of DRAM.  That fallback is an
+artifact of qemu; a real machine has nothing there.  Under acpi=off edk2
+does publish a device tree, but a smaller one than qemu's with no v2m
+frame in it, so MSI disappears and PCI falls back to INTx.  Neither
+configuration is what an Ampere Altra presents; this is the one where
+all the drivers run.

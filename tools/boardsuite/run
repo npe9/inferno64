@@ -59,7 +59,7 @@ verbose=false
 record=false
 force=false
 
-configs='raspi3b raspi3b-4g raspi3b-usb raspi3b-2eth raspi4 raspi4-hot raspi4-usb raspi4-2eth virtarm64 virtarm64-msi virtarm64-nvme virtarm64-xhci virtarm64-gicv3 virtarm64-peer sifiveu virt virts virt32 virt32s virt-peer peer-mixed'
+configs='raspi3b raspi3b-4g raspi3b-usb raspi3b-2eth raspi4 raspi4-hot raspi4-usb raspi4-2eth virtarm64 virtarm64-msi virtarm64-nvme virtarm64-xhci virtarm64-gicv3 virtarm64-efi virtarm64-peer sifiveu virt virts virt32 virt32s virt-peer peer-mixed'
 
 # Each configuration: the kernel, the QEMU arguments, the line that
 # says the board is done printing, and the evidence lines that make
@@ -98,12 +98,46 @@ configs='raspi3b raspi3b-4g raspi3b-usb raspi3b-2eth raspi4 raspi4-hot raspi4-us
 # false positives this check does produce cost nothing: a board that
 # does not link the file you touched is still cleared by the "mk it
 # first" the message asks for, because that mk relinks regardless.
+#
+# os/inferno/boot is pruned along with doc and tools.  Nothing under it
+# is compiled into a board kernel -- it is the boot loaders, which are
+# separate programs with their own targets -- and leaving it in meant
+# that editing a comment in the EFI loader failed fourteen board arms
+# that have no EFI loader in them.
+#
+# So are os/9front and os/osprey, which are other kernels in the same
+# checkout and are not linked into any of these, and every board
+# directory except the one this kernel came from.  Each board mkfile
+# reaches ../port, ../init and ../ip and nothing else -- sifiveu also
+# ../riscv, pc64 also ../pc -- so a board's kernel being older than
+# another board's source says nothing at all, and it said it loudly:
+# a change in os/inferno/virtarm64 failed fourteen arms three separate
+# times in one afternoon, each time costing a full rebuild and a
+# twenty-minute re-run to learn nothing.  The libraries are still
+# scanned, because they really are linked in.
 newer_source_than() {
 	[ -n "$BOARDSUITE_NOSTALECHECK" ] && return
+	# Every board directory but this kernel's own.  Derived from the
+	# kernel path, the way the configuration file below is.
+	bdir=`dirname "$1"`
+	prunes=
+	for d in "$root"/os/inferno/*; do
+		[ -d "$d" ] || continue
+		case `basename "$d"` in
+		port|ip|init|riscv|pc)	continue;;
+		esac
+		[ "$d" = "$bdir" ] && continue
+		prunes="$prunes -path $d -prune -o"
+	done
+	# shellcheck disable=SC2086
 	find "$root" \
 		-name .git -prune -o \
 		-path "$root/doc" -prune -o \
 		-path "$root/tools" -prune -o \
+		-path "$root/os/inferno/boot" -prune -o \
+		-path "$root/os/9front" -prune -o \
+		-path "$root/os/osprey" -prune -o \
+		$prunes \
 		-name '*.root.s' -prune -o \
 		-name '*.root.h' -prune -o \
 		\( -name '*.c' -o -name '*.h' -o -name '*.s' \
@@ -154,6 +188,11 @@ config_kernel() {
 				echo "$root/os/inferno/raspi4/iraspi4";;
 	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-peer)
 				echo "$root/os/inferno/virtarm64/ivirtarm64";;
+	# The a.out rather than the ELF: the EFI loader reads the format
+	# bootkern() has always read, and "mk ivirtarm64.a" in the board
+	# directory makes it from the same objects as the ELF.  Naming it
+	# here is also what puts it under the staleness check.
+	virtarm64-efi)		echo "$root/os/inferno/virtarm64/ivirtarm64.a";;
 	sifiveu)		echo "$root/os/inferno/sifiveu/isifiveu";;
 	virt|virt-peer|peer-mixed)
 				echo "$root/os/inferno/virt/ivirt";;
@@ -175,7 +214,7 @@ config_kernel() {
 config_qemu() {
 	case $1 in
 	raspi*)			echo "$QEMU";;
-	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-peer)
+	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-efi|virtarm64-peer)
 				echo "${QEMU_AARCH64:-`command -v qemu-system-aarch64`}";;
 	sifiveu|virt|virts|virt-peer|peer-mixed)
 				echo "${QEMU_RISCV64:-`command -v qemu-system-riscv64`}";;
@@ -257,6 +296,27 @@ config_args() {
 		# uart at 33 and the virtio-mmio slots arriving here are
 		# worth as much as the MSI half.
 		echo "-M virt,gic-version=3 -cpu cortex-a57 -m 1G -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-pci,disable-legacy=on,drive=blk0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-pci,disable-legacy=on,netdev=n0";;
+	virtarm64-efi)
+		# The same board as virtarm64, booted the way a real arm64
+		# machine boots: edk2 in pflash, an EFI system partition on
+		# the first disk carrying os/inferno/boot/efi/bootaa64.efi
+		# at /EFI/BOOT/BOOTAA64.EFI, and no -kernel at all.  The
+		# loader reads plan9.ini, loads the kernel it names, turns
+		# the MMU and the caches off and branches to it.
+		#
+		# ACPI is left on, which is the default, and the
+		# consequence is worth stating: the loader then has no
+		# device tree to pass, and the kernel boots because main()
+		# falls back to finding QEMU's own DTB at the bottom of
+		# DRAM.  That fallback is an artifact of QEMU.  A real
+		# machine has nothing there, which is what ACPI discovery
+		# is for and why this arm is not a SystemReady test.
+		# acpi=off is the other half of the story: edk2 then
+		# publishes a device tree, but a smaller one than QEMU's
+		# with no v2m frame in it, so MSI disappears and PCI falls
+		# back to INTx.  Neither configuration is complete; this is
+		# the one where the drivers all run.
+		echo "-M virt -cpu cortex-a57 -m 1G -drive if=pflash,format=raw,unit=0,file=$fwdir/edk2-aarch64-code.fd,readonly=on -drive if=pflash,format=raw,unit=1,file=$work/vars.fd -drive file=$work/esp.img,format=raw,if=none,id=esp0 -device virtio-blk-pci,drive=esp0 -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-pci,disable-legacy=on,drive=blk0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-pci,disable-legacy=on,netdev=n0";;
 	virtarm64-msi)
 		# The same board with both devices on PCI rather than one
 		# on PCI and one on virtio-mmio, which is what makes this
@@ -521,7 +581,7 @@ config_last() {
 	raspi4-2eth)		echo 'USB-MOUSE'; echo 'RASPI4-SH-OK';;
 	raspi4|raspi4-hot)	echo 'USB-MOUSE';;
 	raspi4-usb)		echo 'RASPI4-SH-OK';;
-	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-peer)	echo 'ROOT-CMDS-OK';;
+	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-efi|virtarm64-peer)	echo 'ROOT-CMDS-OK';;
 	virt|virts|virt-peer|peer-mixed)	echo 'ROOT-CMDS-OK';;
 	sifiveu)		echo 'SIFIVEU-SH-OK';;
 	virt32|virt32s)		echo 'VIRT32-INIT-OK';;
@@ -844,6 +904,36 @@ config_evidence() {
 		echo 'sdF \(virtio10\): irq 81 msi-x'
 		echo 'MSI-DOORBELL-OK'
 		;;
+	virtarm64-efi)
+		# The loader, in its own words: it found plan9.ini, read the
+		# name of the kernel out of it, and got far enough to print
+		# "boot" before handing over.  Nothing else in this suite
+		# produces these two lines, because nothing else has a boot
+		# loader at all.
+		echo 'bootfile=/ikernel'
+		# "boot" on a line of its own, which is the last thing the
+		# loader prints before ExitBootServices.  Anchored at the
+		# front only, and with the carriage return the firmware's
+		# console puts there spelled out: the UEFI console ends
+		# every line CRLF, so "^boot$" matches nothing.
+		echo '^boot.$'
+		# The RSDP, from the EFI configuration table.  This is the
+		# pointer ACPI discovery will be read through when it is
+		# written, and it is here now, so the arm records that the
+		# firmware hands it over and the loader passes it on.
+		echo '\*acpi=0x[0-9a-f]+'
+		# And the kernel, past the handoff: the MMU and the caches
+		# were turned off and it built its own tables, found its
+		# uart, enumerated PCI and reached Dis.
+		echo 'Inferno/arm64 virt'
+		echo 'BLK-OK /dev/sdF0/data'
+		echo 'DHCP-OK'
+		# With ACPI on, the tree the kernel falls back to is QEMU's
+		# own rather than edk2's, and QEMU's has the v2m frame in
+		# it -- so MSI works here where it does not under acpi=off.
+		# Worth pinning: it is the one line that says which of the
+		# two device trees this arm actually got.
+		echo 'MSI-DOORBELL-OK';;
 	virtarm64-gicv3)
 		echo 'BLK-OK /dev/sdF0/data'	# see virtarm64-peer
 		# The ITS found, sized from its own registers, and its
@@ -1072,6 +1162,76 @@ makefat() {
 	return 1
 }
 
+# The UEFI firmware for aarch64, which is not part of this tree.
+#
+# It ships with qemu, under a name that says aarch64 and a companion
+# vars image that does not: there is no edk2-aarch64-vars.fd anywhere,
+# and the arm one is the same 64M and works.  Copied rather than used in
+# place, because the firmware writes its boot entries into the vars
+# image and a run must not depend on what the last one left there.
+firmware() {
+	for d in /opt/homebrew/share/qemu /usr/share/qemu \
+		/usr/share/edk2/aarch64 "$QEMUBIOS"; do
+		[ -n "$d" ] && [ -f "$d/edk2-aarch64-code.fd" ] || continue
+		[ -f "$d/edk2-arm-vars.fd" ] || continue
+		echo "$d"
+		return 0
+	done
+	return 1
+}
+
+# A FAT16 image holding an EFI system partition: the loader where the
+# firmware looks for it with no boot entry configured, the kernel, and
+# the plan9.ini that names the kernel.
+#
+# Same two host recipes as makefat and for the same reason -- hdiutil on
+# a mac, mkfs.vfat and mcopy elsewhere -- and rebuilt every run rather
+# than kept, because unlike a blank card its contents are the thing
+# under test.
+makeesp() {
+	f="$work/$1"
+	loader=$2
+	kern=$3
+	rm -f "$f"
+	if command -v hdiutil >/dev/null 2>&1; then
+		hdiutil create -size 64m -fs MS-DOS -volname ESP \
+			-layout NONE -ov "$work/espmk" >/dev/null 2>&1 || return 1
+		mv "$work/espmk.dmg" "$f" || return 1
+		mnt=`hdiutil attach -nobrowse "$f" 2>/dev/null |
+			sed -n 's;.*\(/Volumes/[^ 	]*\).*;\1;p' | head -1`
+		[ -z "$mnt" ] && { rm -f "$f"; return 1; }
+		{
+			mkdir -p "$mnt/EFI/BOOT" &&
+			cp "$loader" "$mnt/EFI/BOOT/BOOTAA64.EFI" &&
+			cp "$kern" "$mnt/ikernel" &&
+			echo 'bootfile=/ikernel' > "$mnt/plan9.ini"
+		} || {
+			hdiutil detach "$mnt" >/dev/null 2>&1
+			rm -f "$f"
+			return 1
+		}
+		hdiutil detach "$mnt" >/dev/null 2>&1 || return 1
+		return 0
+	fi
+	for mk in mkfs.vfat mkfs.fat; do
+		command -v $mk >/dev/null 2>&1 || continue
+		command -v mcopy >/dev/null 2>&1 || {
+			echo "boardsuite: no mcopy; the esp would carry no loader" >&2
+			return 1
+		}
+		dd if=/dev/zero of="$f" bs=1 count=0 seek=67108864 2>/dev/null
+		$mk -F 16 "$f" >/dev/null 2>&1 || { rm -f "$f"; return 1; }
+		echo 'bootfile=/ikernel' > "$work/plan9.ini"
+		mmd -i "$f" ::/EFI ::/EFI/BOOT >/dev/null 2>&1
+		mcopy -i "$f" "$loader" ::/EFI/BOOT/BOOTAA64.EFI >/dev/null 2>&1 &&
+		mcopy -i "$f" "$kern" ::/ikernel >/dev/null 2>&1 &&
+		mcopy -i "$f" "$work/plan9.ini" ::/plan9.ini >/dev/null 2>&1 ||
+			{ rm -f "$f"; return 1; }
+		return 0
+	done
+	return 1
+}
+
 # Markers, as a sorted set.  No word boundary at either end.
 #
 # The trailing one went first: a marker can be followed immediately by
@@ -1110,7 +1270,7 @@ config_hostnet() {
 	# inbound halves all dial the host rig, and without it the
 	# board reported TCP-NET-FAIL "connection refused" -- the host
 	# end that was never started, not the board.
-	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-peer)	echo yes;;
+	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-efi|virtarm64-peer)	echo yes;;
 	esac
 }
 
@@ -1395,9 +1555,15 @@ attempt() {
 	qmp=
 	qmpport=`config_qmp $c`
 	[ -n "$qmpport" ] && qmp="-qmp tcp:127.0.0.1:$qmpport,server=on,wait=off"
+	# The EFI arm gets no -kernel: the whole point of it is that the
+	# firmware finds the loader on the ESP and the loader finds the
+	# kernel.  Passing one as well would be qemu doing the loader's
+	# job in silence, and the arm would pass with a broken loader.
+	kern=
+	[ "$c" = virtarm64-efi ] || kern="-kernel $kernel"
 	# shellcheck disable=SC2046,SC2086
 	"$qemu" `config_args $c` $qmp -display none -serial file:"$log" \
-		-kernel "$kernel" >/dev/null 2>"$err" &
+		$kern >/dev/null 2>"$err" &
 	pid=$!
 	if ! mouse_start "$c"; then
 		echo "no hand on the mouse"
@@ -1591,12 +1757,47 @@ for c in $configs; do
 	# same fat16.img in its qemu line.  It ran only because virt comes
 	# before it in $configs and had already made the image; asked for
 	# on its own with an empty work directory, qemu had no such file.
-	case $c in virt|virts|virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virt-peer|virtarm64-peer|peer-mixed) needfat=true;; *) needfat=false;; esac
+	case $c in virt|virts|virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-efi|virt-peer|virtarm64-peer|peer-mixed) needfat=true;; *) needfat=false;; esac
 	if $needfat && ! makefat fat16.img marker.txt 'FS-OK boardsuite'; then
 		echo "$c: FAIL no way to make a FAT16 image here (hdiutil or mkfs.vfat)"
 		echo "    BLK-OK needs a filesystem, not a blank card; see the README"
 		status=1
 		continue
+	fi
+
+	# The EFI arm needs three things this suite does not otherwise
+	# touch: the firmware, a writable copy of its variable store, and
+	# an EFI system partition with the loader and the kernel on it.
+	# All three are made here rather than in config_args, because a
+	# missing one has to be reported as itself and not as a board that
+	# never printed its last marker.
+	fwdir=
+	if [ "$c" = virtarm64-efi ]; then
+		loader=$root/os/inferno/boot/efi/bootaa64.efi
+		if [ ! -f "$loader" ]; then
+			echo "$c: FAIL no loader at $loader"
+			echo "    mk bootaa64.efi in os/inferno/boot/efi"
+			status=1
+			continue
+		fi
+		fwdir=`firmware` || {
+			echo "$c: FAIL no aarch64 UEFI firmware on this host"
+			echo "    wanted edk2-aarch64-code.fd and edk2-arm-vars.fd;"
+			echo "    set QEMUBIOS to the directory holding them"
+			status=1
+			continue
+		}
+		cp "$fwdir/edk2-arm-vars.fd" "$work/vars.fd" || {
+			echo "$c: FAIL could not copy the firmware variable store"
+			status=1
+			continue
+		}
+		if ! makeesp esp.img "$loader" "$kernel"; then
+			echo "$c: FAIL no way to make an EFI system partition here"
+			echo "    wanted hdiutil, or mkfs.vfat with mmd and mcopy"
+			status=1
+			continue
+		fi
 	fi
 
 	fail=`attempt $c`
