@@ -1,5 +1,7 @@
 9p-ninep 9p-ninep
 Httpclient httpclient
+P256 p256
+TLS12 tls12
 accept dial
 acos math-elem
 acosh math-elem
@@ -291,6 +293,7 @@ opendict translate
 opendicts translate
 orbital orbital
 oscillator oscillator
+p256 p256
 packdir styx
 packdirsize styx
 pair lists
@@ -502,6 +505,7 @@ time daytime
 timers timers
 tk tk
 tkclient tkclient
+tls12 tls12
 tm2epoch daytime
 tmsg styx
 tobig string

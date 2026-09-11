@@ -223,6 +223,30 @@ main(void)
 	}
 	doc("timersinit");
 	timersinit();
+	{
+		/*
+		 * Seed the wall clock from the CMOS RTC.
+		 *
+		 * Nothing on this board ever did, so the calendar began at
+		 * the epoch on every boot: files were created in January
+		 * 1970 and, more to the point, every TLS handshake failed
+		 * with "leaf certificate expired or not yet valid",
+		 * because a certificate valid now is not yet valid then.
+		 * The clock is a prerequisite for talking to anything that
+		 * authenticates itself, which on a cloud machine is
+		 * everything.
+		 *
+		 * os/inferno/pc/devrtc.c has had rtctime() all along and
+		 * os/inferno/virtarm64/main.c has done exactly this with
+		 * its PL031 since that board was written; pc64 was the odd
+		 * one out.  A machine with a dead cell reads 0 and is left
+		 * at the epoch rather than being moved somewhere worse.
+		 */
+		extern vlong rtctime(void);
+		vlong t = rtctime();
+		if(t > 0)
+			todset(t, 0, 0);
+	}
 	doc("mathinit");
 	mathinit();
 	if(arch->clockenable){

@@ -54,3 +54,9 @@ hmac_md5(uchar *p, ulong len, uchar *key, ulong klen, uchar *digest, DigestState
 {
 	return hmac_x(p, len, key, klen, digest, s, md5, MD5dlen);
 }
+
+DigestState*
+hmac_sha256(uchar *p, ulong len, uchar *key, ulong klen, uchar *digest, DigestState *s)
+{
+	return hmac_x(p, len, key, klen, digest, s, sha256, SHA256dlen);
+}

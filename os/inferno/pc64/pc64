@@ -288,6 +288,17 @@ root
 	/dis/hget.dis
 	/dis/lib/httpclient.dis
 	/dis/lib/url.dis
+# tls12, so an https url works: the crypto is Limbo over libkeyring's
+# builtins, and the trust roots are a file the image has to carry
+	/dis/lib/crypt/tls12.dis
+	/dis/lib/crypt/x509.dis
+	/dis/lib/crypt/pkcs.dis
+	/dis/lib/crypt/p256.dis
+	/dis/lib/asn1.dis
+	/dis/lib/encoding
+	/dis/lib/encoding/base64.dis
+	/lib/tls	/
+	/lib/tls/ca-bundle.pem
 # libraries for the above commands
 	/dis/disk/calc.tab.dis
 	/dis/disk/pedit.dis

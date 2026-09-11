@@ -33,8 +33,9 @@ init(nil: ref Draw->Context, argv: list of string)
 
 	hdrs: list of Hdr;
 	showhdrs := 0;
+	addr := "";
 	arg->init(argv);
-	arg->setusage("hget [-v] [-h 'name: value']... url");
+	arg->setusage("hget [-v] [-A addr] [-h 'name: value']... url");
 	while((o := arg->opt()) != 0)
 		case o {
 		'h' =>	s := arg->earg();
@@ -47,6 +48,7 @@ init(nil: ref Draw->Context, argv: list of string)
 					hdrs = Hdr(nm, v) :: hdrs;
 					break;
 				}
+		'A' =>	addr = arg->earg();
 		'v' =>	showhdrs = 1;
 		* =>	arg->usage();
 		}
@@ -54,7 +56,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	if(len argv != 1)
 		arg->usage();
 
-	(r, e) := http->get(hd argv, hdrs);
+	(r, e) := http->requestat("GET", hd argv, addr, hdrs, nil);
 	if(e != nil)
 		fail(e);
 	if(showhdrs){

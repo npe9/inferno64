@@ -12,17 +12,24 @@ implement Httpclient;
 # Google", and every authenticated call to a storage API is an
 # "Authorization:" header.
 #
-# Plain HTTP only.  That is not a shortcoming for the first use: a
-# metadata service answers on a link-local address that never leaves the
-# hypervisor.  For anything off the machine this wants tls12(2) and
-# https(2), which exist on the inferno-rio branch.
+# https:// goes through tls12(2), loaded on first use so that a caller
+# who only ever speaks to a metadata service does not pay for the
+# crypto.  The server's certificate chain is verified against
+# /lib/tls/ca-bundle.pem and must name the host: tls12->client does
+# that itself and fails the handshake otherwise.
+#
+# Reading is done here rather than through bufio(2), because the same
+# code has to serve a plain file descriptor and a TLS session, and a
+# Session is not an fd.  Rd below is that one buffered reader.
 #
 include "sys.m";
 	sys: Sys;
 include "draw.m";
-include "bufio.m";
-	bufio: Bufio;
-	Iobuf: import bufio;
+include "keyring.m";
+include "security.m";
+include "tls12.m";
+	tls: TLS12;
+	Session: import tls;
 include "string.m";
 	str: String;
 include "dial.m";
@@ -35,9 +42,6 @@ include "httpclient.m";
 init(): string
 {
 	sys = load Sys Sys->PATH;
-	bufio = load Bufio Bufio->PATH;
-	if(bufio == nil)
-		return "cannot load " + Bufio->PATH;
 	str = load String String->PATH;
 	if(str == nil)
 		return "cannot load " + String->PATH;
@@ -74,6 +78,91 @@ lower(s: string): string
 	return t;
 }
 
+#
+# A buffered reader over either a file descriptor or a TLS session.
+#
+Rd: adt {
+	fd:	ref Sys->FD;
+	s:	ref Session;
+	buf:	array of byte;
+	n:	int;			# bytes held
+	p:	int;			# read point
+	eof:	int;
+};
+
+fill(r: ref Rd): int
+{
+	if(r.eof)
+		return 0;
+	if(r.p >= r.n){
+		r.p = 0;
+		if(r.s != nil)
+			r.n = r.s.read(r.buf, len r.buf);
+		else
+			r.n = sys->read(r.fd, r.buf, len r.buf);
+		if(r.n <= 0){
+			r.n = 0;
+			r.eof = 1;
+			return 0;
+		}
+	}
+	return r.n - r.p;
+}
+
+rdline(r: ref Rd): string
+{
+	line := "";
+	for(;;){
+		if(fill(r) <= 0)
+			return line;
+		c := int r.buf[r.p++];
+		line[len line] = c;
+		if(c == '\n')
+			return line;
+	}
+}
+
+rdn(r: ref Rd, n: int): (array of byte, string)
+{
+	if(n <= 0)
+		return (array[0] of byte, nil);
+	a := array[n] of byte;
+	got := 0;
+	while(got < n){
+		if(fill(r) <= 0)
+			break;
+		m := r.n - r.p;
+		if(m > n - got)
+			m = n - got;
+		a[got:] = r.buf[r.p:r.p+m];
+		r.p += m;
+		got += m;
+	}
+	if(got != n)
+		return (a[0:got], "short body");
+	return (a, nil);
+}
+
+rdall(r: ref Rd): (array of byte, string)
+{
+	a := array[8192] of byte;
+	got := 0;
+	for(;;){
+		if(fill(r) <= 0)
+			break;
+		m := r.n - r.p;
+		if(got + m > len a){
+			na := array[(got + m) * 2] of byte;
+			na[0:] = a[0:got];
+			a = na;
+		}
+		a[got:] = r.buf[r.p:r.p+m];
+		r.p += m;
+		got += m;
+	}
+	return (a[0:got], nil);
+}
+
 get(u: string, hdrs: list of Hdr): (ref Resp, string)
 {
 	return request("GET", u, hdrs, nil);
@@ -87,19 +176,40 @@ post(u: string, hdrs: list of Hdr, body: array of byte): (ref Resp, string)
 request(method: string, u: string, hdrs: list of Hdr,
 	body: array of byte): (ref Resp, string)
 {
+	return requestat(method, u, nil, hdrs, body);
+}
+
+requestat(method: string, u: string, addr: string, hdrs: list of Hdr,
+	body: array of byte): (ref Resp, string)
+{
 	if(sys == nil)
 		return (nil, "httpclient: init() not called");
 	pu := url->makeurl(u);
 	if(pu == nil)
 		return (nil, "cannot parse url: " + u);
-	if(pu.scheme != Url->HTTP)
-		return (nil, "httpclient: only http:// is supported (no tls here)");
+	usetls := 0;
+	case pu.scheme {
+	Url->HTTP =>	;
+	Url->HTTPS =>	usetls = 1;
+	* =>		return (nil, "httpclient: not an http or https url: " + u);
+	}
 	host := pu.host;
 	if(host == nil)
 		return (nil, "no host in url: " + u);
 	port := pu.port;
-	if(port == nil)
-		port = "80";
+	if(port == nil){
+		if(usetls)
+			port = "443";
+		else
+			port = "80";
+	}
+	if(usetls && tls == nil){
+		tls = load TLS12 TLS12->PATH;
+		if(tls == nil)
+			return (nil, sys->sprint("cannot load %s: %r", TLS12->PATH));
+		if((e := tls->init()) != nil)
+			return (nil, "tls12: " + e);
+	}
 
 	path := pu.pstart + pu.path;
 	if(path == nil || path == "")
@@ -107,9 +217,21 @@ request(method: string, u: string, hdrs: list of Hdr,
 	if(pu.query != nil)
 		path += "?" + pu.query;
 
-	c := dial->dial("tcp!" + host + "!" + port, nil);
+	if(addr == nil)
+		addr = "tcp!" + host + "!" + port;
+	c := dial->dial(addr, nil);
 	if(c == nil)
-		return (nil, sys->sprint("dial %s!%s: %r", host, port));
+		return (nil, sys->sprint("dial %s: %r", addr));
+
+	sess: ref Session;
+	if(usetls){
+		err: string;
+		# the chain is verified against TLS12->CAPATH and must name
+		# host; a failure of either aborts here rather than later
+		(sess, err) = tls->client(c.dfd, host, nil);
+		if(sess == nil)
+			return (nil, "tls: " + err);
+	}
 
 	# Connection: close, deliberately.  It costs a connection per
 	# request and removes every question about where one response
@@ -128,17 +250,15 @@ request(method: string, u: string, hdrs: list of Hdr,
 	req += "\r\n";
 
 	rb := array of byte req;
-	if(sys->write(c.dfd, rb, len rb) != len rb)
+	if(wr(c.dfd, sess, rb) < 0)
 		return (nil, sys->sprint("write request: %r"));
-	if(body != nil && sys->write(c.dfd, body, len body) != len body)
+	if(body != nil && wr(c.dfd, sess, body) < 0)
 		return (nil, sys->sprint("write body: %r"));
 
-	b := bufio->fopen(c.dfd, Bufio->OREAD);
-	if(b == nil)
-		return (nil, sys->sprint("fopen: %r"));
+	b := ref Rd(c.dfd, sess, array[4096] of byte, 0, 0, 0);
 
-	line := b.gets('\n');
-	if(line == nil)
+	line := rdline(b);
+	if(line == "")
 		return (nil, "no response");
 	line = trimcr(line);
 	(nf, fld) := sys->tokenize(line, " ");
@@ -152,8 +272,8 @@ request(method: string, u: string, hdrs: list of Hdr,
 	# headers, with continuation lines folded as RFC 9110 still allows
 	last := "";
 	for(;;){
-		line = b.gets('\n');
-		if(line == nil)
+		line = rdline(b);
+		if(line == "")
 			return (nil, "eof in headers");
 		line = trimcr(line);
 		if(line == "")
@@ -179,9 +299,11 @@ request(method: string, u: string, hdrs: list of Hdr,
 	if(te != nil && str->prefix("chunked", te))
 		(r.body, nil) = readchunked(b);
 	else if(cl != nil)
-		(r.body, nil) = readn(b, int cl);
+		(r.body, nil) = rdn(b, int cl);
 	else
-		(r.body, nil) = readall(b);
+		(r.body, nil) = rdall(b);
+	if(sess != nil)
+		sess.close();
 	return (r, nil);
 }
 
@@ -209,47 +331,23 @@ rev(l: list of Hdr): list of Hdr
 	return r;
 }
 
-readn(b: ref Iobuf, n: int): (array of byte, string)
+
+
+wr(fd: ref Sys->FD, s: ref Session, a: array of byte): int
 {
-	if(n <= 0)
-		return (array[0] of byte, nil);
-	a := array[n] of byte;
-	got := 0;
-	while(got < n){
-		m := b.read(a[got:], n - got);
-		if(m <= 0)
-			break;
-		got += m;
-	}
-	if(got != n)
-		return (a[0:got], "short body");
-	return (a, nil);
+	if(s != nil)
+		return s.write(a, len a);
+	if(sys->write(fd, a, len a) != len a)
+		return -1;
+	return len a;
 }
 
-readall(b: ref Iobuf): (array of byte, string)
-{
-	a := array[8192] of byte;
-	got := 0;
-	for(;;){
-		if(got == len a){
-			na := array[len a * 2] of byte;
-			na[0:] = a[0:got];
-			a = na;
-		}
-		m := b.read(a[got:], len a - got);
-		if(m <= 0)
-			break;
-		got += m;
-	}
-	return (a[0:got], nil);
-}
-
-readchunked(b: ref Iobuf): (array of byte, string)
+readchunked(b: ref Rd): (array of byte, string)
 {
 	out := array[0] of byte;
 	for(;;){
-		line := b.gets('\n');
-		if(line == nil)
+		line := rdline(b);
+		if(line == "")
 			return (out, "eof in chunk header");
 		line = trimcr(line);
 		# a chunk size may carry ";extension"
@@ -259,14 +357,14 @@ readchunked(b: ref Iobuf): (array of byte, string)
 			return (out, "bad chunk size: " + line);
 		if(n == 0)
 			break;
-		(chunk, err) := readn(b, n);
+		(chunk, err) := rdn(b, n);
 		if(err != nil)
 			return (out, err);
 		no := array[len out + len chunk] of byte;
 		no[0:] = out;
 		no[len out:] = chunk;
 		out = no;
-		b.gets('\n');		# the CRLF after the chunk
+		rdline(b);		# the CRLF after the chunk
 	}
 	return (out, nil);
 }

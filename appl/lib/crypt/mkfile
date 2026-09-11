@@ -1,6 +1,8 @@
 <../../../mkconfig
 
 TARG=\
+	p256.dis\
+	tls12.dis\
 	pkcs.dis\
 	ssl3.dis\
 	sslsession.dis\

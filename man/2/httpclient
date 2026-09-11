@@ -25,6 +25,8 @@ get:		fn(url: string, hdrs: list of Hdr): (ref Resp, string);
 post:		fn(url: string, hdrs: list of Hdr, body: array of byte): (ref Resp, string);
 request:	fn(method: string, url: string, hdrs: list of Hdr,
 			body: array of byte): (ref Resp, string);
+requestat:	fn(method: string, url: string, addr: string,
+			hdrs: list of Hdr, body: array of byte): (ref Resp, string);
 .EE
 .SH DESCRIPTION
 .B Httpclient
@@ -65,10 +67,35 @@ transfer-encoding, or to end of file, in that order of preference.
 .IR cloudfs (4),
 .IR url (2),
 .IR dial (2)
-.SH BUGS
-Plain HTTP only: there is no TLS on this branch.  For a metadata
-service on a link-local address that is not a limitation, because the
-request never leaves the hypervisor; for anything else it is.
 .PP
+An
+.B https
+URL goes through
+.IR tls12 (2),
+which is loaded on first use so that a caller who only ever reads a
+metadata service does not pay for the crypto.  The server's chain is
+verified against
+.B /lib/tls/ca-bundle.pem
+and must name the host; either failure aborts the request rather than
+returning a reply.
+.PP
+.B Requestat
+dials
+.I addr
+instead of resolving the URL's host, while still sending that host as
+.BR Host: ,
+naming it in SNI and requiring the certificate to match \(em it
+connects to one place and authenticates another, which
+.IR curl (1)
+spells
+.BR --connect-to .
+It is there because
+.B /net/cs
+resolves no names under hosted
+.IR emu (1),
+so without it none of this could be tested against a real server.
+.SH BUGS
 There is no redirect following, no authentication, and no connection
 reuse.
+.PP
+TLS 1.2 only, and the key exchange is X25519 only.

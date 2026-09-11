@@ -100,6 +100,20 @@ Keyring: module
 		# all the state is hidden
 	};
 
+	# AES-GCM state: the above plus the GHASH subkey
+	AESGCMstate: adt
+	{
+		x:	int;		# dummy for C compiler for runt.h
+		# all the state is hidden
+	};
+
+	# ChaCha20 state (also backs ChaCha20-Poly1305 AEAD)
+	Chachastate: adt
+	{
+		x:	int;		# dummy for C compiler for runt.h
+		# all the state is hidden
+	};
+
 	# expanded DES key + state for chaining
 	DESstate: adt
 	{
@@ -194,6 +208,10 @@ Keyring: module
 		ref DigestState;
 	hmac_md5: fn(data: array of byte, n: int, key: array of byte, digest: array of byte, state: ref DigestState):
 		ref DigestState;
+	# needed for the TLS 1.2 PRF (RFC 5246 5) - unlike SSLv3/TLS1.0's
+	# dual MD5+SHA1 PRF, TLS 1.2 is HMAC-SHA256-based (see doc/ssl-modernization-plan.md)
+	hmac_sha256: fn(data: array of byte, n: int, key: array of byte, digest: array of byte, state: ref DigestState):
+		ref DigestState;
 
 	SHA1dlen:	con 20;
 	SHA224dlen:	con 28;
@@ -211,6 +229,48 @@ Keyring: module
 
 	aessetup: fn(key: array of byte, ivec: array of byte): ref AESstate;
 	aescbc: fn(state: ref AESstate, buf: array of byte, n: int, direction: int);
+
+	# AES-GCM (NIST SP 800-38D) - primitive 5 of the SSL modernization
+	# plan (see doc/ssl-modernization-plan.md), ported from 9front's
+	# libsec/port/aes_gcm.c with the GHASH precomputed-table path
+	# (16*256*4 words per state) dropped in favour of the same source's
+	# own table-free gfmul() path (its "if(0)" branch, made live here) -
+	# correctness-identical, just without a 64KB-per-state table this
+	# tree's Dis heap has no need to carry for a handful of TLS records.
+	# tag is always 16 bytes, caller-supplied both ways (filled on
+	# encrypt, compared on decrypt) - buf is encrypted/decrypted in
+	# place, matching aescbc's own convention above.
+	aesgcmsetup: fn(key: array of byte, ivec: array of byte): ref AESGCMstate;
+	aesgcm_setiv: fn(state: ref AESGCMstate, iv: array of byte);
+	aesgcm_encrypt: fn(state: ref AESGCMstate, buf: array of byte, n: int, aad: array of byte, tag: array of byte);
+	aesgcm_decrypt: fn(state: ref AESGCMstate, buf: array of byte, n: int, aad: array of byte, tag: array of byte): int;
+
+	# ChaCha20-Poly1305 AEAD (RFC 8439) - primitive 6 of the SSL
+	# modernization plan (doc/ssl-modernization-plan.md), needed for
+	# TLS 1.2's TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305 record protection.
+	# key is 32 bytes; iv is 8 bytes (the original, "classic" 64-bit
+	# nonce construction) or 12 bytes (RFC 8439's own 96-bit nonce,
+	# what TLS 1.2 actually negotiates) - both share this one entry
+	# point, matching 9front's own ccpoly.c/Chachastate.ivwords
+	# convention. buf is encrypted/decrypted in place; tag is always
+	# 16 bytes, caller-supplied both ways, same convention as the
+	# AES-GCM entries just above.
+	ccpolysetup: fn(key: array of byte, iv: array of byte): ref Chachastate;
+	ccpoly_setiv: fn(state: ref Chachastate, iv: array of byte);
+	ccpoly_encrypt: fn(state: ref Chachastate, buf: array of byte, n: int, aad: array of byte, tag: array of byte);
+	ccpoly_decrypt: fn(state: ref Chachastate, buf: array of byte, n: int, aad: array of byte, tag: array of byte): int;
+
+	# raw ChaCha20 block-counter set and stream encryption, plus a
+	# one-shot Poly1305 - the pieces the chacha20-poly1305@openssh.com
+	# construction (ssh(1)) needs beyond the RFC 8439 AEAD wrapper
+	# above. The Chachastate is created with ccpolysetup() (32-byte
+	# key, 8-byte iv) and its nonce set with ccpoly_setiv(); these then
+	# set the 64-bit block counter and encrypt in place. chacha_encrypt
+	# is the raw stream cipher (no tag); poly1305 authenticates a
+	# message under a one-time 32-byte key, returning a 16-byte tag.
+	chacha_setblock: fn(state: ref Chachastate, block: int);
+	chacha_encrypt: fn(state: ref Chachastate, buf: array of byte, n: int);
+	poly1305: fn(msg: array of byte, n: int, key: array of byte): array of byte;
 
 	DESbsize: con 8;
 
@@ -237,6 +297,15 @@ Keyring: module
 
 	# create an alpha and p for diffie helman exchanges
 	dhparams: fn(nbits: int): (ref IPint, ref IPint);
+
+	# X25519 (RFC 7748) - see doc/ssl-modernization-plan.md. All three
+	# take/return raw 32-byte little-endian arrays, matching the C
+	# curve25519 API this wraps directly (no IPint bignum involved -
+	# curve25519 arithmetic is fixed-width, not the arbitrary-precision
+	# kind IPint is for).
+	curve25519: fn(mypublic: array of byte, secret: array of byte, basepoint: array of byte);
+	curve25519_dh_new: fn(x: array of byte, y: array of byte);
+	curve25519_dh_finish: fn(x: array of byte, y: array of byte, z: array of byte): int;
 
 	# comm link authentication is symmetric
 	auth: fn(fd: ref Sys->FD, info: ref Authinfo, setid: int): (string, array of byte);

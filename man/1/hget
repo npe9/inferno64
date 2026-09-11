@@ -7,6 +7,9 @@ hget \- fetch a URL over HTTP, with request headers
 .B -v
 ]
 [
+.BI -A " addr"
+]
+[
 .BI -h " 'name: value'"
 ]...
 .I url
@@ -14,13 +17,21 @@ hget \- fetch a URL over HTTP, with request headers
 .I Hget
 fetches
 .I url
-over plain HTTP and writes the body to standard output.  It exits with
+over HTTP or HTTPS and writes the body to standard output.  It exits with
 an error if the reply is not 200.
 .PP
 Options:
 .TP
 .BI -h " 'name: value'"
 Send a request header.  May be repeated.
+.TP
+.BI -A " addr"
+Dial
+.I addr
+instead of resolving the URL's host.  The host from the URL is still
+sent as
+.BR Host: ,
+named in SNI and required of the certificate.
 .TP
 .B -v
 Print the status line and the reply headers before the body.
@@ -48,5 +59,4 @@ hget -h 'Metadata-Flavor: Google' \e
 .IR cloudfs (4),
 .IR webgrab (1)
 .SH BUGS
-Plain HTTP only.  There is no TLS on this branch, so this cannot talk
-to anything that requires it.
+No redirects are followed.

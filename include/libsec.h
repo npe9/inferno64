@@ -29,8 +29,33 @@ struct AESstate
 
 void	setupAESstate(AESstate *s, uchar key[], int keybytes, uchar *ivec);
 void	aesCBCencrypt(uchar *p, int len, AESstate *s);
-void	aes_encrypt(u32int rk[], int Nr, uchar pt[16], uchar ct[16]);
 void	aesCBCdecrypt(uchar *p, int len, AESstate *s);
+
+/* single-block AES encrypt, exposed for AES-GCM's CTR mode below -
+ * thin wrapper over aes.c's own (file-static) rijndaelEncrypt(),
+ * named to match 9front's libsec.h so aes_gcm.c ports unmodified */
+void	aes_encrypt(u32int rk[], int Nr, uchar pt[16], uchar ct[16]);
+
+/*
+ * AES-GCM (NIST SP 800-38D) - see doc/ssl-modernization-plan.md.
+ * Ported from 9front's libsec/port/aes_gcm.c, minus its precomputed
+ * GHASH table (16*256*4 words = 64KB per state) - libsec/aes_gcm.c
+ * uses that same source's own table-free gfmul() path instead,
+ * correctness-identical, just without a 64KB table this tree has no
+ * bulk-throughput need for yet (a handful of TLS records, not a
+ * high-volume server).
+ */
+typedef struct AESGCMstate AESGCMstate;
+struct AESGCMstate
+{
+	AESstate	aes;
+	u32int	ghashH[4];		/* GHASH subkey */
+};
+
+void	setupAESGCMstate(AESGCMstate *s, uchar *key, int keylen, uchar *iv, int ivlen);
+void	aesgcm_setiv(AESGCMstate *s, uchar *iv, int ivlen);
+void	aesgcm_encrypt(uchar *dat, u32int ndat, uchar *aad, u32int naad, uchar tag[16], AESGCMstate *s);
+int	aesgcm_decrypt(uchar *dat, u32int ndat, uchar *aad, u32int naad, uchar tag[16], AESGCMstate *s);
 
 enum
 {
@@ -63,6 +88,38 @@ void	chacha_setblock(Chachastate*, u64);
 void	chacha_encrypt(uchar*, u32, Chachastate*);
 void	chacha_encrypt2(uchar*, uchar*, u32, Chachastate*);
 void	hchacha(uchar[32], uchar*, u32, uchar[16], int);
+
+/*
+ * Poly1305 (RFC 8439) - see doc/ssl-modernization-plan.md. A private
+ * state struct, not the shared DigestState (whose state[5] is too
+ * small for poly1305's 14 words of key+accumulator, and which other
+ * code - the sha1pickle.c/md5pickle.c on-disk pickling - already
+ * depends on the exact size of) - see libsec/poly1305.c's own header
+ * comment for the full reasoning.
+ */
+typedef struct Poly1305state Poly1305state;
+struct Poly1305state
+{
+	u32int	r[5];		/* clamped one-time "r" key, 26-bit limbs */
+	u32int	pad[4];		/* one-time "s" pad, added at the end */
+	u32int	h[5];		/* running accumulator */
+	uchar	buf[16];
+	int	blen;
+	int	seeded;
+	int	malloced;
+};
+
+Poly1305state*	poly1305(uchar *m, ulong len, uchar *key, ulong klen, uchar *digest, Poly1305state *s);
+
+/*
+ * ChaCha20-Poly1305 AEAD (RFC 8439) - the record-protection cipher
+ * mastodon.social measured to (TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305).
+ * cs->ivwords distinguishes the original (64-bit nonce, 2 ivwords)
+ * construction from RFC 8439's (96-bit nonce, 3 ivwords) - both share
+ * this one entry point, matching 9front's own ccpoly.c.
+ */
+void	ccpoly_encrypt(uchar *dat, ulong ndat, uchar *aad, ulong naad, uchar tag[16], Chachastate *cs);
+int	ccpoly_decrypt(uchar *dat, ulong ndat, uchar *aad, ulong naad, uchar tag[16], Chachastate *cs);
 
 /*/////////////////////////////////////////////////////// */
 /* Blowfish Definitions */
@@ -217,6 +274,7 @@ DigestState* sha384(uchar*, ulong, uchar*, DigestState*);
 DigestState* sha512(uchar*, ulong, uchar*, DigestState*);
 DigestState* hmac_md5(uchar*, ulong, uchar*, ulong, uchar*, DigestState*);
 DigestState* hmac_sha1(uchar*, ulong, uchar*, ulong, uchar*, DigestState*);
+DigestState* hmac_sha256(uchar*, ulong, uchar*, ulong, uchar*, DigestState*);
 char* md5pickle(MD5state*);
 MD5state* md5unpickle(char*);
 char* sha1pickle(SHA1state*);
@@ -257,6 +315,18 @@ void	setupRC4state(RC4state*, uchar*, int);
 void	rc4(RC4state*, uchar*, int);
 void	rc4skip(RC4state*, int);
 void	rc4back(RC4state*, int);
+
+/*/////////////////////////////////////////////////////// */
+/* curve25519 (RFC 7748) - see doc/ssl-modernization-plan.md */
+/*/////////////////////////////////////////////////////// */
+void	curve25519(uchar mypublic[32], uchar secret[32], uchar basepoint[32]);
+void	curve25519_dh_new(uchar x[32], uchar y[32]);
+int	curve25519_dh_finish(uchar x[32], uchar y[32], uchar z[32]);
+
+/*/////////////////////////////////////////////////////// */
+/* timing-safe memcmp - see doc/ssl-modernization-plan.md */
+/*/////////////////////////////////////////////////////// */
+int	tsmemcmp(void*, void*, ulong);
 
 /*/////////////////////////////////////////////////////// */
 /* rsa */

@@ -18,6 +18,8 @@
 
 static Type*	TDigestState;
 static Type*	TAESstate;
+static Type*	TAESGCMstate;
+static Type*	TChachastate;
 static Type*	TDESstate;
 static Type*	TIDEAstate;
 static Type*	TBFstate;
@@ -45,6 +47,8 @@ enum {
 
 static uchar DigestStatemap[] = Keyring_DigestState_map;
 static uchar AESstatemap[] = Keyring_AESstate_map;
+static uchar AESGCMstatemap[] = Keyring_AESGCMstate_map;
+static uchar Chachastatemap[] = Keyring_Chachastate_map;
 static uchar DESstatemap[] = Keyring_DESstate_map;
 static uchar IDEAstatemap[] = Keyring_IDEAstate_map;
 static uchar BFstatemap[] = Keyring_BFstate_map;
@@ -1395,6 +1399,61 @@ Keyring_hmac_md5(void *fp)
 }
 
 void
+Keyring_hmac_sha256(void *fp)
+{
+	F_Keyring_hmac_sha256 *f;
+	void *r;
+
+	f = fp;
+	r = *f->ret;
+	*f->ret = H;
+	destroy(r);
+	*f->ret = keyring_hmac_x(f->data, f->n, f->key, f->digest, SHA256dlen, f->state, hmac_sha256);
+}
+
+/* X25519 (RFC 7748) - see doc/ssl-modernization-plan.md. All three
+ * arrays are fixed 32 bytes, checked here since curve25519()/
+ * curve25519_dh_*() index them directly with no bounds check of
+ * their own. */
+
+void
+Keyring_curve25519(void *fp)
+{
+	F_Keyring_curve25519 *f;
+
+	f = fp;
+	if(f->mypublic == H || f->mypublic->len < 32
+	|| f->secret == H || f->secret->len < 32
+	|| f->basepoint == H || f->basepoint->len < 32)
+		error(exInval);
+	curve25519(f->mypublic->data, f->secret->data, f->basepoint->data);
+}
+
+void
+Keyring_curve25519_dh_new(void *fp)
+{
+	F_Keyring_curve25519_dh_new *f;
+
+	f = fp;
+	if(f->x == H || f->x->len < 32 || f->y == H || f->y->len < 32)
+		error(exInval);
+	curve25519_dh_new(f->x->data, f->y->data);
+}
+
+void
+Keyring_curve25519_dh_finish(void *fp)
+{
+	F_Keyring_curve25519_dh_finish *f;
+
+	f = fp;
+	if(f->x == H || f->x->len < 32
+	|| f->y == H || f->y->len < 32
+	|| f->z == H || f->z->len < 32)
+		error(exInval);
+	*f->ret = curve25519_dh_finish(f->x->data, f->y->data, f->z->data);
+}
+
+void
 Keyring_dhparams(void *fp)
 {
 	F_Keyring_dhparams *f;
@@ -2100,6 +2159,10 @@ keyringmodinit(void)
 		sizeof(DigestStatemap));
 	TAESstate = dtype(freeheap, sizeof(XAESstate), AESstatemap,
 		sizeof(AESstatemap));
+	TAESGCMstate = dtype(freeheap, sizeof(XAESGCMstate), AESGCMstatemap,
+		sizeof(AESGCMstatemap));
+	TChachastate = dtype(freeheap, sizeof(XChachastate), Chachastatemap,
+		sizeof(Chachastatemap));
 	TDESstate = dtype(freeheap, sizeof(XDESstate), DESstatemap,
 		sizeof(DESstatemap));
 	TIDEAstate = dtype(freeheap, sizeof(XIDEAstate), IDEAstatemap,
@@ -2125,6 +2188,21 @@ keyringmodinit(void)
 		algs[nalg++] = sav;
 	if((sav = dsainit()) != nil)
 		algs[nalg++] = sav;
+
+	/*
+	 * These are static to this file, so heapaudit.c's old "extern Type*
+	 * TSigAlg" and friends never resolved to them - they were undefined
+	 * references that went unnoticed only because nothing ever linked
+	 * heapaudit.o.  Registering them here is what actually makes
+	 * /dev/memheap name a leaked key or digest state.
+	 */
+	/*
+	 * inferno-rio's heapaudittype() calls are dropped here.  They
+	 * register a type with that branch's heap auditor, which is part
+	 * of its leak-tracing work (/dev/memheap and mprof) and has not
+	 * been carried across.  They are diagnostic registration only:
+	 * nothing in the key or cipher paths reads them.
+	 */
 
 	fmtinstall('U', big64conv);
 	/* %B in libkeyring *alg.c is base64 (same as %U / big64conv) */
@@ -2551,6 +2629,289 @@ Keyring_aescbc(void *fp)
 		aesCBCencrypt(p, f->n, &is->state);
 	else
 		aesCBCdecrypt(p, f->n, &is->state);
+}
+
+void
+Keyring_aesgcmsetup(void *fp)
+{
+	F_Keyring_aesgcmsetup *f;
+	Heap *h;
+	XAESGCMstate *is;
+	uchar *ivec;
+	int ivlen;
+	void *r;
+
+	f = fp;
+	r = *f->ret;
+	*f->ret = H;
+	destroy(r);
+
+	if(f->key == H ||
+	   f->key->len != 16 && f->key->len != 24 && f->key->len != 32)
+		error(exBadKey);
+	if(f->ivec != H){
+		ivec = f->ivec->data;
+		ivlen = f->ivec->len;
+	}else{
+		ivec = nil;
+		ivlen = 0;
+	}
+
+	h = heap(TAESGCMstate);
+	is = H2D(XAESGCMstate*, h);
+
+	setupAESGCMstate(&is->state, f->key->data, f->key->len, ivec, ivlen);
+
+	*f->ret = (Keyring_AESGCMstate*)is;
+}
+
+void
+Keyring_aesgcm_setiv(void *fp)
+{
+	F_Keyring_aesgcm_setiv *f;
+	XAESGCMstate *is;
+
+	f = fp;
+
+	if(f->iv == H || f->iv->len <= 0)
+		error(exBadIvec);
+
+	is = checktype(f->state, TAESGCMstate, exBadState, 0);
+	aesgcm_setiv(&is->state, f->iv->data, f->iv->len);
+}
+
+void
+Keyring_aesgcm_encrypt(void *fp)
+{
+	F_Keyring_aesgcm_encrypt *f;
+	XAESGCMstate *is;
+	uchar *aad;
+	int naad;
+
+	f = fp;
+
+	/* unlike aescbc's silent return on a nil buf (which has no output
+	 * parameter to leave undefined), this one has a tag - a caller
+	 * passing nil buf must not walk away thinking a nil/stale tag is
+	 * authentic, so this errors like the wrong-length-tag case below,
+	 * matching aesgcm_decrypt's own convention for the same input. */
+	if(f->buf == H)
+		error(exInval);
+	if(f->n < 0 || f->n > f->buf->len)
+		error(exBounds);
+	if(f->tag == H || f->tag->len != 16)
+		error(exInval);
+
+	is = checktype(f->state, TAESGCMstate, exBadState, 0);
+
+	if(f->aad != H){
+		aad = f->aad->data;
+		naad = f->aad->len;
+	}else{
+		aad = nil;
+		naad = 0;
+	}
+
+	aesgcm_encrypt(f->buf->data, f->n, aad, naad, f->tag->data, &is->state);
+}
+
+void
+Keyring_aesgcm_decrypt(void *fp)
+{
+	F_Keyring_aesgcm_decrypt *f;
+	XAESGCMstate *is;
+	uchar *aad;
+	int naad;
+
+	f = fp;
+
+	if(f->buf == H)
+		error(exInval);
+	if(f->n < 0 || f->n > f->buf->len)
+		error(exBounds);
+	if(f->tag == H || f->tag->len != 16)
+		error(exInval);
+
+	is = checktype(f->state, TAESGCMstate, exBadState, 0);
+
+	if(f->aad != H){
+		aad = f->aad->data;
+		naad = f->aad->len;
+	}else{
+		aad = nil;
+		naad = 0;
+	}
+
+	*f->ret = aesgcm_decrypt(f->buf->data, f->n, aad, naad, f->tag->data, &is->state);
+}
+
+void
+Keyring_ccpolysetup(void *fp)
+{
+	F_Keyring_ccpolysetup *f;
+	Heap *h;
+	XChachastate *is;
+	void *r;
+
+	f = fp;
+	r = *f->ret;
+	*f->ret = H;
+	destroy(r);
+
+	if(f->key == H || f->key->len != 32)
+		error(exBadKey);
+	if(f->iv == H || (f->iv->len != 8 && f->iv->len != 12))
+		error(exBadIvec);
+
+	h = heap(TChachastate);
+	is = H2D(XChachastate*, h);
+
+	setupChachastate(&is->state, f->key->data, f->key->len, f->iv->data, f->iv->len, 0);
+
+	*f->ret = (Keyring_Chachastate*)is;
+}
+
+void
+Keyring_ccpoly_setiv(void *fp)
+{
+	F_Keyring_ccpoly_setiv *f;
+	XChachastate *is;
+
+	f = fp;
+
+	if(f->iv == H)
+		error(exBadIvec);
+
+	is = checktype(f->state, TChachastate, exBadState, 0);
+
+	/* chacha_setiv() reads exactly is->state.ivwords*4 bytes, fixed
+	 * at ccpolysetup() time from the SETUP iv's own length - not a
+	 * fixed 8-or-12 (a mismatched length here reads past the end of
+	 * a shorter Limbo array). */
+	if(f->iv->len != is->state.ivwords*4)
+		error(exBadIvec);
+
+	chacha_setiv(&is->state, f->iv->data);
+}
+
+void
+Keyring_ccpoly_encrypt(void *fp)
+{
+	F_Keyring_ccpoly_encrypt *f;
+	XChachastate *is;
+	uchar *aad;
+	int naad;
+
+	f = fp;
+
+	/* see the matching comment in Keyring_aesgcm_encrypt() above */
+	if(f->buf == H)
+		error(exInval);
+	if(f->n < 0 || f->n > f->buf->len)
+		error(exBounds);
+	if(f->tag == H || f->tag->len != 16)
+		error(exInval);
+
+	is = checktype(f->state, TChachastate, exBadState, 0);
+
+	if(f->aad != H){
+		aad = f->aad->data;
+		naad = f->aad->len;
+	}else{
+		aad = nil;
+		naad = 0;
+	}
+
+	ccpoly_encrypt(f->buf->data, f->n, aad, naad, f->tag->data, &is->state);
+}
+
+void
+Keyring_ccpoly_decrypt(void *fp)
+{
+	F_Keyring_ccpoly_decrypt *f;
+	XChachastate *is;
+	uchar *aad;
+	int naad;
+
+	f = fp;
+
+	if(f->buf == H)
+		error(exInval);
+	if(f->n < 0 || f->n > f->buf->len)
+		error(exBounds);
+	if(f->tag == H || f->tag->len != 16)
+		error(exInval);
+
+	is = checktype(f->state, TChachastate, exBadState, 0);
+
+	if(f->aad != H){
+		aad = f->aad->data;
+		naad = f->aad->len;
+	}else{
+		aad = nil;
+		naad = 0;
+	}
+
+	*f->ret = ccpoly_decrypt(f->buf->data, f->n, aad, naad, f->tag->data, &is->state);
+}
+
+void
+Keyring_chacha_setblock(void *fp)
+{
+	F_Keyring_chacha_setblock *f;
+	XChachastate *is;
+
+	f = fp;
+	is = checktype(f->state, TChachastate, exBadState, 0);
+	chacha_setblock(&is->state, (u64int)f->block);
+}
+
+void
+Keyring_chacha_encrypt(void *fp)
+{
+	F_Keyring_chacha_encrypt *f;
+	XChachastate *is;
+
+	f = fp;
+	if(f->buf == H)
+		error(exInval);
+	if(f->n < 0 || f->n > f->buf->len)
+		error(exBounds);
+	is = checktype(f->state, TChachastate, exBadState, 0);
+	chacha_encrypt(f->buf->data, f->n, &is->state);
+}
+
+void
+Keyring_poly1305(void *fp)
+{
+	F_Keyring_poly1305 *f;
+	Array *a;
+	uchar *msg;
+	int nmsg;
+	void *r;
+
+	f = fp;
+	r = *f->ret;
+	*f->ret = H;
+	destroy(r);
+
+	if(f->key == H || f->key->len != 32)
+		error(exBadKey);
+	if(f->msg != H){
+		msg = f->msg->data;
+		nmsg = f->msg->len;
+		if(f->n < 0 || f->n > nmsg)
+			error(exBounds);
+		nmsg = f->n;
+	}else{
+		if(f->n != 0)
+			error(exInval);
+		msg = nil;
+		nmsg = 0;
+	}
+	a = mem2array(nil, 16);
+	*f->ret = (Array*)a;
+	poly1305(msg, nmsg, f->key->data, f->key->len, a->data, nil);
 }
 
 void
