@@ -104,6 +104,9 @@ TARG=\
 	memfs.dis\
 	metamorph.dis\
 	mkdir.dis\
+	cloudfs.dis\
+	cloudinit.dis\
+	hget.dis\
 	mntgen.dis\
 	mount.dis\
 	mouse.dis\

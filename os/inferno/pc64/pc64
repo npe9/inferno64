@@ -282,6 +282,12 @@ root
 	/dis/ip/dhcp.dis
 	/dis/ip/ping.dis
 	/dis/auth/factotum.dis
+# the provider's control plane as a namespace, and the http client under it
+	/dis/cloudfs.dis
+	/dis/cloudinit.dis
+	/dis/hget.dis
+	/dis/lib/httpclient.dis
+	/dis/lib/url.dis
 # libraries for the above commands
 	/dis/disk/calc.tab.dis
 	/dis/disk/pedit.dis

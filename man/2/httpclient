@@ -1,0 +1,74 @@
+.TH HTTPCLIENT 2
+.SH NAME
+httpclient: Hdr, Resp, init, get, post, request \- HTTP/1.1 client
+.SH SYNOPSIS
+.EX
+include "httpclient.m";
+http := load Httpclient Httpclient->PATH;
+
+Hdr: adt {
+	name:	string;
+	val:	string;
+};
+
+Resp: adt {
+	code:	int;
+	reason:	string;
+	hdrs:	list of Hdr;
+	body:	array of byte;
+
+	hdr:	fn(r: self ref Resp, name: string): string;
+};
+
+init:		fn(): string;
+get:		fn(url: string, hdrs: list of Hdr): (ref Resp, string);
+post:		fn(url: string, hdrs: list of Hdr, body: array of byte): (ref Resp, string);
+request:	fn(method: string, url: string, hdrs: list of Hdr,
+			body: array of byte): (ref Resp, string);
+.EE
+.SH DESCRIPTION
+.B Httpclient
+makes an HTTP/1.1 request and returns the reply.
+.PP
+.B Init
+must be called first and returns nil, or a diagnostic if a module it
+needs will not load.
+.PP
+.BR Get ,
+.B post
+and
+.B request
+each return a
+.B Resp
+and a nil error string, or nil and a diagnostic.  A reply that is not
+200 is not an error: the status is in
+.BR Resp.code ,
+and it is for the caller to decide.
+.PP
+.B Resp.hdr
+looks up a reply header by name, case-insensitively as the protocol
+requires, and returns nil if it is absent.
+.PP
+Every request is sent with
+.BR "Connection: close" .
+That costs a connection per request and in exchange removes every
+question about where one reply ends and the next begins.  Replies are
+read with a
+.BR Content-Length ,
+as
+.B chunked
+transfer-encoding, or to end of file, in that order of preference.
+.SH SOURCE
+.B /appl/lib/httpclient.b
+.SH SEE ALSO
+.IR hget (1),
+.IR cloudfs (4),
+.IR url (2),
+.IR dial (2)
+.SH BUGS
+Plain HTTP only: there is no TLS on this branch.  For a metadata
+service on a link-local address that is not a limitation, because the
+request never leaves the hypervisor; for anything else it is.
+.PP
+There is no redirect following, no authentication, and no connection
+reuse.

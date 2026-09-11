@@ -39,6 +39,7 @@ TARG=\
 	dhcpclient.dis\
 	dhcpserver.dis\
 	dial.dis\
+	httpclient.dis\
 	dialog.dis\
 	dict.dis\
 	dis.dis\
@@ -224,6 +225,7 @@ SYSMODULES= \
 	styxservers.m\
 	sys.m\
 	tables.m\
+	httpclient.m\
 	url.m\
 	venti.m\
 	volume.m\
@@ -262,6 +264,7 @@ csv.dis: $ROOT/module/csv.m
 json.dis: $ROOT/module/json.m
 lists.dis:	$ROOT/module/lists.m
 vac.dis:	$ROOT/module/vac.m $ROOT/module/venti.m
+httpclient.dis:	$ROOT/module/httpclient.m $ROOT/module/url.m $ROOT/module/dial.m
 dial.dis:	$ROOT/module/dial.m
 styxflush.dis:	$ROOT/module/styxflush.m
 msgio.dis:	$ROOT/module/msgio.m

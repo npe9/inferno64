@@ -3,6 +3,7 @@
 9srvfs 9srvfs
 acme acme
 archfs archfs
+cloudfs cloudfs
 cpu grid-cpu
 dbfs dbfs
 dossrv dossrv
@@ -27,9 +28,9 @@ palmsrv palmsrv
 pinboard pinboard
 ramfile ramfile
 rawdbfs dbfs
-regndb regndb
 register regndb
 registry registry
+regndb regndb
 regquery registry
 spree spree
 tarfs tarfs

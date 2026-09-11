@@ -1,0 +1,66 @@
+.TH CLOUDINIT 1
+.SH NAME
+cloudinit \- configure a cloud instance's network
+.SH SYNOPSIS
+.B cloudinit
+[
+.B -v
+]
+[
+.BI -m " metadataip"
+]
+[
+.BI -n " nifc"
+]
+.SH DESCRIPTION
+.I Cloudinit
+binds the IP stack into
+.BR /net ,
+attaches the first Ethernet interface that answers, takes a DHCP lease,
+and adds a host route to the metadata service.
+.PP
+Options:
+.TP
+.B -v
+Report each step.
+.TP
+.BI -m " metadataip"
+The metadata service's address, routed explicitly.  The default is
+.BR 169.254.169.254 .
+.TP
+.BI -n " nifc"
+How many Ethernet interfaces to try.  The default is 3.
+.PP
+None of this can be done from a shell.
+.B #I
+has to be bound into
+.B /net
+before there is an IP stack; the interface that
+.B /net/ipifc/clone
+allocates lasts only while that file descriptor stays open, so the
+process that configures it must hold it; and the metadata service is on
+a link-local address that no lease covers, so it needs a route of its
+own through the lease's gateway.
+.PP
+The lease is not released.  The
+.B pc64dev
+configuration's startup does release it, because it is testing the
+exchange rather than keeping the address; an instance that means to
+keep its address must not.
+.SH SOURCE
+.B /appl/cmd/cloudinit.b
+.SH SEE ALSO
+.IR cloudfs (4),
+.IR hget (1),
+.IR dhcp (8)
+.SH BUGS
+It does not work on Compute Engine, and the reason is worth stating.
+Google's DHCP hands out a /32 netmask with a gateway outside it, and
+expects the guest to install a link-scope route to that gateway before
+a default route through it can resolve.  This kernel's IP stack takes
+the lease and then cannot reach the gateway: a ping to it is lost, so
+nothing off the instance is reachable, the metadata service included.
+Under QEMU, whose DHCP hands out a conventional netmask, the same code
+takes a lease, pings its gateway and fetches over TCP without trouble.
+Fixing it means teaching the stack, or this program, how to make an
+off-link gateway reachable.

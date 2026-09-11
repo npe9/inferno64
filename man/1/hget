@@ -1,0 +1,52 @@
+.TH HGET 1
+.SH NAME
+hget \- fetch a URL over HTTP, with request headers
+.SH SYNOPSIS
+.B hget
+[
+.B -v
+]
+[
+.BI -h " 'name: value'"
+]...
+.I url
+.SH DESCRIPTION
+.I Hget
+fetches
+.I url
+over plain HTTP and writes the body to standard output.  It exits with
+an error if the reply is not 200.
+.PP
+Options:
+.TP
+.BI -h " 'name: value'"
+Send a request header.  May be repeated.
+.TP
+.B -v
+Print the status line and the reply headers before the body.
+.PP
+.IR Webgrab (1)
+also fetches a URL and is the better tool for fetching a page; what it
+cannot do is send a header the caller chooses, which is the one thing a
+cloud provider's API requires.  Google's metadata service answers
+nothing without
+.BR "Metadata-Flavor: Google" ,
+and every authenticated call to a storage API carries an
+.B Authorization
+header.
+.SH EXAMPLE
+Read this instance's zone on Compute Engine:
+.IP
+.EX
+hget -h 'Metadata-Flavor: Google' \e
+	http://169.254.169.254/computeMetadata/v1/instance/zone
+.EE
+.SH SOURCE
+.B /appl/cmd/hget.b
+.SH SEE ALSO
+.IR httpclient (2),
+.IR cloudfs (4),
+.IR webgrab (1)
+.SH BUGS
+Plain HTTP only.  There is no TLS on this branch, so this cannot talk
+to anything that requires it.
