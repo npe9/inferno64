@@ -1,38 +1,163 @@
 Booting this kernel on a real Raspberry Pi 3 Model B
 =====================================================
 
-On a Pi 3 the ARM cores do not fetch the kernel directly.  The VideoCore
-GPU boots first, reads the firmware and config from the first (FAT) SD
+A step-by-step procedure, with the reason behind each step and an
+honest label on what has actually been checked.
+
+EVIDENCE.  doc/raspi3b-completion-plan.ms labels results by what they
+were tested against, strongest first:
+
+    hardware        a real Raspberry Pi 3 Model B
+    qemu            a device model QEMU already shipped
+    qemu+patch      a device model in tools/qemu-patches
+
+Nothing in this file is "hardware".  No real board has been near this
+kernel; the completion plan says so in those words.  Every step below
+is marked with the strongest evidence it has, and the ones marked
+"untested" are exactly where a first bring-up will spend its time.
+
+
+How the board starts, and why the kernel is a flat binary
+---------------------------------------------------------
+On a Pi 3 the ARM cores do not fetch the kernel.  The VideoCore GPU
+boots first, reads the firmware and config from the first (FAT) SD
 partition, loads the ARM kernel image into RAM at 0x80000, and releases
-core 0 into it.  So there is no ELF loader on the board: the kernel must
-be a raw flat binary, and its startup must cope with the EL the firmware
-drops it at.
+core 0 into it.  There is no ELF loader on the board: the kernel must be
+a raw flat binary, and its startup must cope with the exception level
+the firmware drops it at.
 
-Build
------
-    export PATH=$ROOT/MacOSX/arm64/bin:$PATH
+
+Step 1 -- build the kernel and the flat image          [qemu+patch]
+-------------------------------------------------------------------
+    export PATH=$ROOT/MacOSX/arm64/bin:$PATH   # or Linux/<arch>/bin
     cd os/inferno/raspi3b
-    mk INIT=raspi3binit install     # builds the ELF kernel (iraspi3b)
-    mk kernel8.img                  # -> raw flat image for the firmware
+    mk INIT=raspi3binit install     # the ELF kernel, iraspi3b
+    mk kernel8.img                  # the flat image for the firmware
 
-kernel8.img is iraspi3b (ELF) reduced to its loadable segments laid out
-at their link addresses, produced by mkrawimg.py from the ELF program
-headers.  (7l -H6 emits a headerless image but packs the segments
+    ("mk boot" does both and reminds you what else the card needs.)
+
+SYSTARG and OBJTYPE need not be given: this board's mkfile sets
+OBJTYPE=aarch64 and SYSTARG=$OSTARG, and both mkhost-MacOSX and
+mkhost-Linux set OSTARG=os and SHELLTYPE=sh.  Passing them anyway is
+harmless here and is a habit worth not forming: pc64's mkfile sets
+SYSTARG=Inferno for itself, and carrying "SYSTARG=os" into that
+directory asks for a mkfiles/mkfile-os-amd64 that does not exist, which
+is how that board got a reputation for not building.
+
+kernel8.img is iraspi3b reduced to its loadable segments laid out at
+their link addresses, produced by mkrawimg.py from the ELF program
+headers.  7l -H6 emits a headerless image but packs the segments
 contiguously, which puts .data at the wrong address; mkrawimg.py honours
-the vaddr gap so a flat load at 0x80000 lands .text at 0x80000 and .data
-at 0x100000, matching the link.)
+the vaddr gap, so a flat load at 0x80000 lands .text at 0x80000 and
+.data at 0x100000, matching the link.  Expect:
 
-FAT boot partition
-------------------
-Format the first SD partition FAT32 and copy onto it:
+    wrote kernel8.img: 1601800 bytes, 2 PT_LOAD segments, base 0x80000
 
-    bootcode.bin            }
-    start.elf               }  Pi firmware (raspberrypi/firmware, boot/)
-    fixup.dat               }
-    bcm2710-rpi-3-b.dtb     }
-    overlays/disable-bt.dtbo}
-    config.txt          (this directory)
-    kernel8.img         (mk kernel8.img)
+and a first instruction of MRS x0, CurrentEL (od -t x1 -N 4 gives
+a0 00 38 d5), which is the exception-level test in step 6.
+
+
+Step 2 -- prove the flat image before touching a card  [qemu+patch]
+-------------------------------------------------------------------
+QEMU's -kernel wants a Linux Image header for a raw binary, so to boot
+the exact bytes the firmware will load, place them with an explicit
+loader and start core 0 there:
+
+    dd if=/dev/zero of=sd.img bs=1m count=16
+    $QEMU -M raspi3b -m 1G -nographic \
+      -drive file=sd.img,if=sd,format=raw \
+      -device loader,file=kernel8.img,addr=0x80000,force-raw=on \
+      -device loader,addr=0x80000,cpu-num=0
+
+$QEMU must be the patched build (tools/qemu-patches/README).  On a stock
+QEMU this boot still reaches a shell, but seven checks report -NONE --
+PWM, ARMTIMER, I2S, AUXSPI, SMI, BSCSL and UART-PUTC -- because those
+blocks are the ones the patches model.  That is a QEMU you have not
+patched, not a kernel fault; the messages name the missing block and its
+address ("PWM-NONE no PWM block at 0x3f20c000").
+
+On the patched build this produces a marker set identical to the
+ordinary "-kernel iraspi3b" boot the suite uses -- 37 markers, the same
+37 -- which is the point of the step: it is the flat image, and the
+thing that makes it, that get proven here, not the ELF.
+
+-M raspi3b enters at EL3; real firmware enters at EL2.  So this step
+does not exercise the EL2 path.  See step 6.
+
+
+Step 3 -- partition the card                           [see below]
+-------------------------------------------------------------------
+READ THIS BEFORE THE FIRST BOOT.  raspi3binit writes to the raw card,
+and where it writes was chosen for a blank QEMU image with no partition
+table -- tools/boardsuite makes exactly that, dd of zeroes, no MBR.  On
+a card partitioned the ordinary way those writes land inside the boot
+partition and destroy it.
+
+Every raw-card write the init makes, by sector:
+
+    3               sdcheck single-block write/readback  (SDHOST, sdM0)
+    5               sdhcicheck single-block              (Arasan, sdH0)
+    8-11, 12-15     the two multi-block write/readbacks
+    256-8447        sdfs: "part fs 256 8448", and kfs -r reams all of it
+
+Sector 0 is read and never written, so the MBR survives.  The FAT does
+not: a Pi card conventionally starts its first partition at sector 2048,
+and 2048-8447 is inside it.  The board would boot once, scribble the
+FAT's boot sector, its FATs and its root directory, and never boot again
+until the card was rewritten.
+
+So leave sectors 0-8447 unallocated and start the FAT partition at 16384
+(8MB) or later.  The firmware reads the MBR and takes the first FAT
+partition it finds, wherever it begins, so this costs 8MB and nothing
+else.
+
+macOS -- diskutil will not let you name a start sector, but it will
+leave a gap, which is the same thing:            [tested on an image]
+
+    diskutil partitionDisk /dev/diskN MBR free FREE 16M MS-DOS BOOT R
+    fdisk /dev/rdiskN        # check partition 1's start is past 8447
+
+Run against a 64MB image file this put the FAT partition at sector
+31311, type 0x0B.  Check it anyway: the number is diskutil's choice, not
+a promise.
+
+Linux:                                                    [untested]
+
+    sudo sfdisk /dev/sdX <<'EOT'
+    label: dos
+    start=16384, size=524288, type=c, bootable
+    EOT
+    sudo mkfs.vfat -F 32 -n BOOT /dev/sdX1
+
+No second partition is needed.  The kernel carries its own root
+(devroot, built from the root list in the raspi3b configuration), so the
+FAT partition holds the firmware and kernel8.img and nothing else.
+
+If you would rather nothing wrote to the card on a bring-up boot, the
+three callers are sdhcicheck(), sdcheck() and sdfs() at the top of
+os/inferno/init/raspi3binit.b's init().  Dropping sdfs() alone removes
+every write above sector 15.
+
+
+Step 4 -- put the files on the FAT partition           [untested]
+-------------------------------------------------------------------
+From raspberrypi/firmware, the boot/ directory:
+
+    bootcode.bin
+    start.elf
+    fixup.dat
+    bcm2710-rpi-3-b.dtb
+    overlays/disable-bt.dtbo        (keep it in an overlays/ directory)
+
+    git clone --depth 1 https://github.com/raspberrypi/firmware
+    cp firmware/boot/{bootcode.bin,start.elf,fixup.dat} /Volumes/BOOT/
+    cp firmware/boot/bcm2710-rpi-3-b.dtb               /Volumes/BOOT/
+    mkdir -p /Volumes/BOOT/overlays
+    cp firmware/boot/overlays/disable-bt.dtbo          /Volumes/BOOT/overlays/
+
+and from here:
+
+    cp config.txt kernel8.img /Volumes/BOOT/
 
 The base .dtb and the overlays directory are not optional even though
 this kernel reads no device tree on this board.  dtoverlay= is applied
@@ -43,89 +168,142 @@ still boots, with the PL011 still wired to Bluetooth and the serial
 console dead, which looks exactly like a kernel that hung before its
 first print.
 
-SD card layout -- READ THIS BEFORE THE FIRST BOOT
-------------------------------------------------
-raspi3binit writes to the raw card, and where it writes was chosen for a
-blank QEMU image with no partition table (tools/boardsuite makes exactly
-that: dd of zeroes, no MBR).  On a real card partitioned the ordinary
-way, those writes land inside the boot partition and destroy it.
 
-Every raw-card write the init makes, by sector:
+Step 5 -- wire the console                             [untested]
+-------------------------------------------------------------------
+config.txt sets arm_64bit=1 and kernel=kernel8.img, and routes the PL011
+UART -- which this kernel's console drives, at 0x3f201000 -- to the GPIO
+header.  On a Pi 3 the PL011 is wired to Bluetooth by default, so
+dtoverlay=disable-bt hands it back to GPIO 14/15.  core_freq=250 pins the
+core clock so the baud divisor does not move under you.
 
-    3               sdcheck single-block write/readback  (SDHOST, sdM0)
-    5               sdhcicheck single-block              (Arasan, sdH0)
-    8-11, 12-15     the two multi-block write/readbacks
-    256-8447        sdfs: "part fs 256 8448" and kfs -r reams all of it
+    header pin 6    GND
+    header pin 8    GPIO14, the Pi's TXD  -> adapter RX
+    header pin 10   GPIO15, the Pi's RXD  <- adapter TX
 
-Sector 0 is read and never written, so the MBR survives.  The 4MB kfs
-partition does not: a Pi card conventionally starts its FAT partition at
-sector 2048, and 2048-8447 is inside it.  The board would boot once,
-scribble over the FAT's boot sector, its FATs and its root directory,
-and never boot again until the card was rewritten.
+115200 8N1, and a 3.3V adapter -- a 5V one can damage the SoC.  Cross TX
+and RX; leave the adapter's 5V pin unconnected and power the Pi from its
+own USB supply.
 
-So partition the card with the FAT boot partition starting at sector
-16384 (8MB) or later, leaving sectors 0-8447 unallocated:
+    screen /dev/tty.usbserial-XXXX 115200      (macOS)
+    picocom -b 115200 /dev/ttyUSB0             (Linux)
 
-    Linux:
-        sudo sfdisk /dev/sdX <<'EOT'
-        label: dos
-        start=16384, size=524288, type=c, bootable
-        EOT
-        sudo mkfs.vfat -F 32 -n BOOT /dev/sdX1
 
-    macOS: diskutil picks the start offset itself, so use fdisk(8) to
-    set it, or write the card on a Linux box.  Do not assume
-    "diskutil partitionDisk ... MBR FAT32" put it past 8447; check with
-    "sudo fdisk /dev/rdiskX" and look at the partition's start sector.
-
-The firmware does not care where the FAT partition begins -- it reads
-the MBR and takes the first FAT partition it finds -- so 16384 costs
-nothing.  8MB of the card is simply left for the init to play in.
-
-Nothing here needs a second partition: the kernel carries its own root
-(devroot, built from the root list in the raspi3b configuration), so the
-FAT partition holds the firmware and kernel8.img and nothing else.
-
-If you would rather not have the card written at all on a bring-up
-boot, the three callers are sdhcicheck(), sdcheck() and sdfs() at the
-top of os/inferno/init/raspi3binit.b's init(); dropping sdfs() alone
-removes every write above sector 15.
-
-config.txt sets arm_64bit=1, kernel=kernel8.img, and routes the PL011
-UART (which this kernel's console drives, at 0x3f201000) to the GPIO
-header: on a Pi 3 the PL011 is wired to Bluetooth by default, so
-dtoverlay=disable-bt hands it back to GPIO 14/15 (header pins 8/10),
-115200 8N1.  Attach a 3.3 V USB-serial adapter there for the console.
-
-Exception level
----------------
-The firmware enters a 64-bit kernel at EL2 (not EL3).  l.s's core-0 path
+Step 6 -- boot, and what you should see
+-------------------------------------------------------------------
+The firmware enters a 64-bit kernel at EL2, not EL3.  l.s's core-0 path
 reads CurrentEL and drops to EL1 from whichever of EL3 (what QEMU -M
-raspi3b gives) or EL2 (real hardware) it finds; an EL3-only drop faults on
-the SCR_EL3 write at EL2.
+raspi3b gives) or EL2 (real hardware) it finds; an EL3-only drop would
+fault on the SCR_EL3 write at EL2.  The EL2 branch has been read, never
+run -- this is the first thing that happens on the board and the first
+thing to suspect if nothing prints.
 
-Known hardware gaps (verified only under emulation so far)
-----------------------------------------------------------
-These are no-ops on QEMU (which models no caches and drains the SD FIFO
-synchronously) but matter on the board; grep the sources for the notes:
-  - MMU enable does not invalidate the caches first (l.s mmuenable): the
-    A53's cache reset state is UNKNOWN and must be invalidated before
-    SCTLR.C/I are set.
-  - The SDHOST bio now gates each FIFO word on the SDEDM fill level
-    (sdhostbcm.c fifospace()/fifodata()), which is real; keep it.
-  - Uniprocessor: cores 1-3 are parked at WFE (l.s), MAXMACH is 1.  SMP
-    (and the BCM2836 mailbox IPIs) is the next hardware milestone.
+Below is a real boot, but an emulated one -- the patched QEMU, a blank
+16MB card, no USB devices.  Hardware will differ where noted.
 
-Emulator boot that mirrors the firmware
----------------------------------------
-QEMU's -kernel wants a Linux Image header for a raw binary, so to exercise
-the exact flat image the firmware would load, use an explicit loader that
-places it at 0x80000 and starts core 0 there:
+    Inferno/arm64 raspi3b
+    ...
+    MBOX firmware-rev 346337 arm-mem base 0x0 size 0x3c000000 (MBOX-OK)
+    rng: bcm2835 hwrng at 0x3f104000 up (...) RNG-OK
+    WDOG-PRESENT loaded and holding while disarmed
+    PWM-OK clock, mark/space, balanced, FIFO full/empty and errors
+    SYSTMR-OK counter runs, and agrees with the ARM generic timer
+    therm: die 25.178 C (adc 719) at 0x3f212000
+    board: revision 0x00a02082 serial 0000000000000000
+    OTP-OK board identity and customer OTP read (never written)
+    DMA-OK control block fetched on a channel the firmware gave us
+    AUX-OK mini uart enabled and sent 15 bytes
+    ARMTIMER-OK countdown wraps at its programmed rate
+    I2S-OK 48kHz frames, both FIFOs, errors, and the frame rate
+    AUXSPI-OK gate, FIFO levels, and an 8-bit transaction
+    SMI-OK timing registers, FIFO depth, both error paths
+    BSCSL-OK addressed by the Pi's own master, both directions
+    Inferno Fourth Edition (20151010)
+    usbdwc: 8 chan, fifo 4096 words, layout 774+256+512
+    ARMTIMER-INTR-OK interrupt arrives at the programmed rate
+    UART-PUTC-OK polled writes waited for FIFO room 407 times
+    Initial Dis: "/osinit.dis"
+    raspi3b init
+    RASPI3B-OK
+    RANDOM-OK bc6d06e3cc914ded53bf9237c05f7381
+    SDHCI-4BIT-OK ... SDHCI-OK
+    SD block3 wrote 7071 readback 7071 (SD-WRITE-OK)
+    SD-CAP-OK ... SD-OK
+    DRAW-OK 640x480
+    usbd: 1 root hub(s)
+    USB-OK
+    SD-FS-CREATE-OK
+    RASPI3B-SH-OK
 
-    qemu-system-aarch64 -M raspi3b -m 1G -nographic -sd disk.img \
-      -device loader,file=kernel8.img,addr=0x80000,force-raw=on \
-      -device loader,addr=0x80000,cpu-num=0
+What will read differently on a board:
 
-(-M raspi3b still enters at EL3 there; the EL2 path above is only taken on
-real hardware.)  For day-to-day testing, -kernel iraspi3b (the ELF) is
-simpler and equivalent.
+  - firmware-rev, board revision, serial, die temperature and card
+    capacity are all real values there and fixed ones here.
+
+  - USB.  A Pi 3B has an SMSC LAN9514 hub-plus-ethernet soldered to it,
+    so usbd should find a hub and an ethernet where this log finds an
+    empty root hub, DISK-NONE and ETHER-NONE.  The suite's raspi3b-usb
+    configuration is the closer picture (patch 0003 models that part for
+    exactly this reason), minus its injected keyboard and mouse.  The
+    DWC2 needs its USB power domain enabled through the mailbox
+    (SET_POWER_STATE) before it responds; that call is made, and its
+    failure ignored, in raspi3b/usbdwc.c -- look there first if USB is
+    dead.
+
+  - SDHCI.  Under QEMU the card answers on both controllers, because
+    the driver routes it between them through the GPIO alt functions
+    (the same mechanism Linux uses) and patch 0002 models that routing.
+    On a real Pi 3 the card normally lives on SDHOST and the Arasan
+    drives the SDIO wireless part, which rejects SD memory commands.
+    If the card half misbehaves, sdhcicheck() is the first suspect and
+    dropping that one call is a safe simplification -- sdcheck() and
+    sdfs() do not depend on it.
+
+
+Troubleshooting
+-------------------------------------------------------------------
+Nothing at all on the serial line
+    Almost always the console, not the kernel.  Check: the .dtb and
+    overlays/disable-bt.dtbo really are on the card (their absence is
+    silent -- see step 4); enable_uart=1 and dtoverlay=disable-bt are in
+    config.txt; TX and RX are crossed; ground is connected; 115200 8N1.
+    Only after that suspect the EL2 entry path or the MMU/cache gap
+    below.
+
+The green ACT LED blinks a pattern and nothing boots
+    The firmware never found a kernel.  kernel8.img is missing from the
+    card, or the FAT partition is not first, or arm_64bit=1 is absent.
+
+It booted once and never again
+    Step 3.  The FAT partition started before sector 8448 and kfs reamed
+    it.  Rewrite the card with the gap.
+
+Seven -NONE markers under QEMU
+    Stock QEMU rather than the patched build.  Step 2.
+
+Boots, then stops after RASPI3B-OK
+    The SD checks are next.  Try a kernel built with sdfs() dropped, and
+    then with sdhcicheck() dropped, to separate the card from the
+    controller routing.
+
+
+Known gaps that will bite on hardware and cannot bite here
+-------------------------------------------------------------------
+These are no-ops under QEMU, which models no caches and drains the SD
+FIFO synchronously.  Grep the sources for the notes.
+
+  - MMU enable does not invalidate the caches first (l.s mmuenable).
+    The A53's cache reset state is architecturally UNKNOWN and must be
+    invalidated before SCTLR.C/I are set.  This is the strongest
+    candidate for a board that prints nothing and the reason to look
+    here before blaming the console.
+
+  - The SDHOST bio gates each FIFO word on the SDEDM fill level
+    (sdhostbcm.c fifospace()/fifodata()), which is real hardware
+    behaviour QEMU does not need.  Keep it.
+
+  - Uniprocessor: cores 1-3 are parked at WFE (l.s) and MAXMACH is 1.
+    SMP, and the BCM2836 mailbox IPIs, is the next hardware milestone.
+
+  - CMD52/CMD53 (SDIO) have never run: an SD memory card rejects them
+    and QEMU models no SDIO device to answer them.
