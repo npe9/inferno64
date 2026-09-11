@@ -248,23 +248,45 @@ times what it costs now.
 .NH 1
 What proves it
 .PP
-.CW scripts/osprey-check.py
-boots one kernel,
-.CW scripts/osprey-check-wire.py
-boots two on one wire, and
-.CW scripts/osprey-check-net.py
+.CW scripts/osprey-check-all.sh
+builds every configuration and runs every check, one after another,
+because a list kept in someone's head is not a list.  Fourteen of them:
+.CW osprey-check.py
+boots one kernel;
+.CW osprey-check-wire.py
+boots two on one wire;
+.CW osprey-check-net.py
 boots two more and pings a container's own protocol stack from the
-second, and
-.CW scripts/osprey-check-p9wire.py
-boots two microkernels on one cable with the real stack in user space
-on each and carries a process from each to the other; between them they
-ask for everything above and say
+second;
+.CW osprey-check-p9wire.py
+boots two microkernels on one cable with the real stack in user space on
+each and carries a process from each to the other; and the rest ask for
+the personalities, the window system, the keyboard and the rest of what
+is below.  Each says
 .B ok
 or
 .B FAIL
-a line at a time.  Eighty-one lines, all
-.BR ok ,
-against the kernel this file describes.
+a line at a time, and the sweep prints a tally per check.
+.PP
+363 lines against the kernel this file describes, and eight more from
+the two that build rather than boot \- the 9front userland this tree
+builds itself, and the policy layer for 386 and riscv64.  The count is
+given as of a run rather than as a property: on the sweep of 11
+September 2026 every line was
+.B ok
+but one, and that one was not a failure of what it checks.  The
+personality's fault line and a program's output went to the same serial
+port from two paths \- the kernel's
+.CW iprint ,
+which writes the port itself, and an ordinary
+.CW print ,
+which queues behind the console task \- and one cut the other in half:
+.CW "osprey: fault at uscat: started wer pc 0x2000f7, inside ..." .
+The criterion looks for that line and it was not there to find.  Run
+again twice, the same check was 16 of 16 both times, and one boot in
+three shows a cut line somewhere.  It is a defect of the console and
+not of the thing being checked, which is why it is written here rather
+than counted as a pass.
 .NH 1
 Next, in order
 .PP
