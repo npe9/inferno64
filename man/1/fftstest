@@ -1,0 +1,74 @@
+.TH FFTSTEST 1
+.SH NAME
+fftstest \- check ffts(2), the multivariate transform
+.SH SYNOPSIS
+.B fftstest
+[
+.B -v
+]
+.SH DESCRIPTION
+.I Fftstest
+checks
+.IR ffts (2)
+against the direct sums and prints
+.B OK
+if everything agrees.
+.B -v
+prints each measured number.
+.PP
+The univariate case is checked against the
+.RI O( n \u\s-22\s+2\d)
+sum, in both sign conventions, at sixteen lengths.
+The multivariate case is checked against a two-dimensional direct sum,
+which is the only check that can see a wrong stride: a transform down
+the columns when it should be along the rows returns perfectly good
+numbers about the wrong array, and every one-dimensional check would
+pass.
+It is also checked that the two calls may be made in either order, which
+the interface promises.
+.PP
+The interleaved form \- one array of alternating real and imaginary
+parts, with the magnitude of
+.I isn
+set to 2 \- is checked against the separate-array form.
+It agrees exactly, because it is the same arithmetic reached through
+different index calculations, and those calculations are what is under
+test.
+.PP
+Every length from 8 upward is a regression test.
+The implementation this replaced indexed past the end of its argument
+for every length of 8 or more and the process died; it passed for 2
+through 7, and nothing in the tree ever called it.
+.PP
+Since the interface cannot report an error, the refusals are checked by
+what does
+.I not
+happen: a shape that is not an array must leave the data untouched.
+A good call is then checked to change it, or a routine that did nothing
+at all would satisfy every refusal.
+.SH SOURCE
+.B /appl/cmd/fftstest.b
+.SH SEE ALSO
+.IR ffts (2),
+.IR signal (2),
+.IR signaltest (1)
+.SH BUGS
+A stride computed wrongly does not produce wrong numbers, it indexes off
+the end of the array, and a Dis process that faults leaves
+.I emu
+waiting rather than exiting.
+So that class of fault shows up as this program appearing to hang, with
+.B "Broken: array bounds error"
+on the standard error, and not as a
+.B FAIL
+line.
+Run it under
+.IR timeout (1)
+or its equivalent if that matters.
+.PP
+The direct sums are quadratic in one dimension and quartic in two, so
+the lengths checked are small: 128 in one dimension and 8 by 6 in two.
+.PP
+Only two-dimensional transforms are checked against a direct sum.
+A three-dimensional transform is three calls of the same machinery, but
+that it composes correctly at rank three is inferred and not measured.

@@ -32,6 +32,7 @@ MODULES=
 
 SYSMODULES=\
 	math.m\
+	signal.m\
 	gr.m\
 	linalg.m\
 	draw.m\

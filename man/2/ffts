@@ -1,0 +1,115 @@
+.TH FFTS 2
+.SH NAME
+ffts \- the multivariate discrete Fourier transform, in place
+.SH SYNOPSIS
+.EX
+include "ffts.m";
+ffts := load FFTs FFTs->PATH;
+
+ffts->ffts(a, b, ntot, n, nspan, isn);
+.EE
+.SH DESCRIPTION
+.B Ffts
+transforms one variate of a multidimensional complex array in place.
+.I A
+and
+.I b
+hold the real and imaginary parts and are replaced by the real and
+imaginary parts of the result.
+.PP
+The array is indexed as Fortran indexes one, without limit on the number
+of implied subscripts, and the subroutine is called once for each
+variate.
+.I Ntot
+is the total number of complex values;
+.I n
+is the dimension of the variate being transformed now; and
+.IR nspan / n
+is the spacing between consecutive values of that variate.
+The sign of
+.I isn
+selects the sign of the complex exponential, and its magnitude is
+normally 1.
+.PP
+A univariate transform is
+.IP
+.EX
+ffts(a, b, n, n, n, 1);
+.EE
+.PP
+and a trivariate transform of
+.IR a ( n1 , n2 , n3 )
+is
+.IP
+.EX
+ffts(a, b, n1*n2*n3, n1, n1, 1);
+ffts(a, b, n1*n2*n3, n2, n1*n2, 1);
+ffts(a, b, n1*n2*n3, n3, n1*n2*n3, 1);
+.EE
+.PP
+The calls for one multivariate transform may be made in any order.
+.PP
+The data may instead be a single array of alternating real and imaginary
+parts, with the magnitude of
+.I isn
+changed to 2 to give the right indexing increment and
+.B a[0:]
+and
+.B a[1:]
+passed for
+.I a
+and
+.IR b .
+.PP
+There is no scale factor in either direction, so transforming and
+transforming back multiplies by
+.IR n .
+.SH SOURCE
+.B /appl/math/ffts.b
+.SH SEE ALSO
+.IR signal (2),
+.IR fftstest (1)
+.SH HISTORY
+This was R. C. Singleton's mixed-radix algorithm (Stanford Research
+Institute, 1968), translated to Limbo by Eric Grosse in 1997.
+That translation was wrong: for every length of 8 or more it indexed
+past the end of the array it was given and the process died \- n=8
+reached element 10 of 8, n=16 element 20 of 16.
+It worked for the seven shortest lengths, and since nothing in the tree
+ever called it, nobody found out for twenty-nine years.
+.PP
+The interface is kept, because the Fortran-style multivariate form is
+the part worth keeping: a two-dimensional transform is two calls and a
+three-dimensional one is three, with no copying and no separate code for
+each rank.
+The engine underneath is now
+.IR signal (2).
+.SH DIAGNOSTICS
+There is no way to report an error through this interface.
+A call whose
+.IR ntot ,
+.I n
+and
+.I nspan
+do not describe an array \- where
+.I n
+does not divide
+.IR nspan ,
+or
+.I nspan
+does not divide
+.IR ntot ,
+or the arrays are shorter than the shape claims \- leaves the data
+untouched rather than transforming some other array that happens to fit.
+.IR Fftstest (1)
+checks that it does.
+.SH BUGS
+The transform is done by copying each variate out into a contiguous
+buffer, transforming it and copying it back, rather than in place with
+strides.
+That is a copy per variate per transform, which the original algorithm
+avoided.
+.PP
+The multivariate form is the only reason to use this rather than
+.IR signal (2)
+directly, which has the better interface for one dimension.

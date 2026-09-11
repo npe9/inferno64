@@ -156,6 +156,7 @@ factotum factotum
 fauth sys-fauth
 fd2path sys-fd2path
 fft signal
+ffts ffts
 fildes sys-dup
 file2chan sys-file2chan
 filepat filepat

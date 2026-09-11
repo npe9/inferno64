@@ -90,6 +90,7 @@ TARG=\
 	env.dis\
 	eqn2hoctest.dis\
 	export.dis\
+	fftstest.dis\
 	fc.dis\
 	fcp.dis\
 	fmt.dis\
