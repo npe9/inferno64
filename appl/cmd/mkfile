@@ -235,6 +235,7 @@ TARG=\
 	seq.dis\
 	sha1sum.dis\
 	signaltest.dis\
+	statstest.dis\
 	sleep.dis\
 	slitstest.dis\
 	sort.dis\

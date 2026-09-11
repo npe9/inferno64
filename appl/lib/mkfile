@@ -153,6 +153,7 @@ TARG=\
 	sexprs.dis\
 	slip.dis\
 	signal.dis\
+	stats.dis\
 	smtp.dis\
 	smtp2.dis\
 	sort.dis\

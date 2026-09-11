@@ -69,6 +69,7 @@ control control
 convcs convcs
 convolve signal
 copyattrs factotum
+correlation stats
 cos math-elem
 cosh math-elem
 crc crc
@@ -258,6 +259,7 @@ last lists
 lease dhcpclient
 lgamma math-elem
 linalg linalg
+linefit stats
 listen sys-dial
 lists lists
 liveplot liveplot
@@ -282,6 +284,8 @@ math-intro math-0intro
 math-linalg math-linalg
 md4 keyring-sha1
 md5 keyring-sha1
+mean stats
+median stats
 memberforces frame
 millisec sys-millisec
 mix grpalette
@@ -291,6 +295,7 @@ mktabs tabs
 mount sys-bind
 mpeg mpeg
 msgio msgio
+multifit stats
 name spki
 namechan tk
 names names
@@ -301,6 +306,7 @@ netmkaddr dial
 newns newns
 newuser newns
 nodev circuit
+normalcdf stats
 numerics numerics
 ninep 9p-ninep
 norm1 math-linalg
@@ -333,10 +339,12 @@ plumbmsg plumbmsg
 point draw-point
 pointer tk
 polyfill polyfill
+polyfit stats
 pop3 pop3
 popup popup
 plot plot
 populationmodel populationmodel
+quantile stats
 ramp grpalette
 rfft signal
 roomsrv roomsrv
@@ -474,6 +482,7 @@ srv srv
 ssl security-ssl
 startinput tkclient
 stat sys-stat
+stats stats
 stepresponse control
 stob convcs
 stream sys-read
@@ -526,6 +535,7 @@ take string
 takeattrs factotum
 tan math-elem
 tanh math-elem
+tcdf stats
 tempfile diskblocks
 text daytime
 tftp tftp
@@ -553,6 +563,7 @@ toupper string
 transferfunction control
 translate translate
 truss frame
+ttest1 stats
 tuple cfg
 ubfa ubfa
 unmount sys-bind
@@ -564,6 +575,7 @@ uvalue ubfa
 v23 v23-0intro
 valid spki
 values grpalette
+variance stats
 venti venti
 verifier spki-verifier
 verify spki-verifier

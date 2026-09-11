@@ -1,0 +1,100 @@
+.TH STATSTEST 1
+.SH NAME
+statstest \- check stats(2) against answers worked out by hand
+.SH SYNOPSIS
+.B statstest
+[
+.B -v
+]
+.SH DESCRIPTION
+.I Statstest
+checks
+.IR stats (2)
+and prints
+.B OK
+if everything agrees.
+.B -v
+prints each measured number.
+.PP
+Most of what a statistics library does has an exact answer on a small
+enough data set, and those are what is used: the eight values 2 4 4 4 5
+5 7 9, whose population standard deviation is exactly 2 and whose sample
+variance is exactly 32/7; a least-squares line through points that lie
+exactly on a line; a polynomial of degree
+.IR n \-1
+through
+.I n
+points, which interpolates them.
+.PP
+The distributions are checked at the values everyone knows \- 1.96 is
+the 97.5th percentile of the normal, 2.086 the 97.5th of
+.I t
+with 20 degrees of freedom \- and against two closed forms:
+.I t
+with one degree of freedom is the Cauchy distribution, 1/2 +
+atan(\fIt\fP)/pi, and with two it is 1/2 +
+.IR t /2sqrt(2+ t \u\s-22\s+2\d),
+both exact.
+The normal quantile is checked by round trip at forty probabilities and
+six tail decades, which is stronger than any table: it comes back to
+1.1e\-16.
+.SS Anscombe's quartet
+Four data sets with the same mean, variance, regression line and
+correlation and utterly different shapes.
+As a test it is unusually good, because the four agreeing is a
+coincidence that a wrong formula would break.
+The agreement is not exact and was never claimed to be \- the means
+agree to two decimal places and the variances to about three \- and the
+test asserts that much and no more, since asserting more would be
+asserting something about Anscombe's arithmetic rather than about this
+library.
+.SS Three tests that exist because the first version of them was blind
+Each of these replaced a test that passed with the code deliberately
+broken.
+.PP
+The two-pass variance was checked on five values near a
+.IR million ,
+where every intermediate of the one-pass formula is still a whole number
+small enough to hold exactly \- so the one-pass formula gives 2.5 as
+well.
+At a thousand million it gives exactly
+.BR zero .
+.PP
+The normal cdf was checked to six tail decades, which
+.I erf
+survives.
+At \-10, \-15 and \-20 it does not: 1+erf(\fIx\fP) is one minus a number
+that rounds to one, and the answer comes out zero \- a library saying a
+ten-sigma event is impossible rather than one in 1.3e23.
+.PP
+The incomplete beta function has two branches and every
+.I t
+value tested took the same one, because the continued fraction converges
+on the wrong side of its symmetry too, only slowly.
+A large number of degrees of freedom with a small
+.I t
+puts the argument a hair under 1, where 300 iterations are nowhere near
+enough: taking the wrong branch returns 0.988 where the answer is
+0.5004, and every other check in this program passes while it does.
+.SH SOURCE
+.B /appl/cmd/statstest.b
+.SH SEE ALSO
+.IR stats (2)
+.SH DIAGNOSTICS
+Each disagreement prints a line beginning
+.B FAIL
+naming what was measured, what came out and what was wanted; the count
+follows and the program raises an exception.
+.SH BUGS
+The regression checks all use data that fits the model exactly or nearly
+so.
+Nothing here has genuinely noisy data with a known true coefficient, so
+the standard errors are checked for being zero when they should be and
+positive when they should be, but never for being the right size.
+.PP
+.B Polyfit
+is checked to degree 5.
+The loss of accuracy the normal equations cause at higher degrees is
+described in
+.IR stats (2)
+and is not measured anywhere.
