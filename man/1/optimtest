@@ -1,0 +1,115 @@
+.TH OPTIMTEST 1
+.SH NAME
+optimtest \- check optim(2) against answers known in advance
+.SH SYNOPSIS
+.B optimtest
+[
+.B -v
+]
+.SH DESCRIPTION
+.I Optimtest
+checks
+.IR optim (2)
+and prints
+.B OK
+if everything agrees.
+.B -v
+prints each measured number.
+.PP
+Every problem here has a known answer: sqrt(2) is a root of
+.IR x \u\s-22\s+2\d\-2,
+0.7390851332151607 is the root of cos(\fIx\fP)\-\fIx\fP,
+.RI ( x \-1)( x \-2)( x \-3)
+has its three, Rosenbrock's function has its only minimum at (1,1) with
+value 0, Powell's quartic has its at the origin, and the linear
+programme every textbook opens with is worth 36 at (2,6).
+.SS What the tests are for, one at a time
+Several checks exist because a deliberately broken version passed
+without them.
+.PP
+.B Brent
+.B against
+.BR bisection .
+The answer alone cannot tell them apart, since both converge.
+The function calls can: ten against fifty-one.
+.PP
+.B Newton
+.B where
+.B it
+.BR fails .
+On atan started from 2 it is thrown to 7e168 and then divides by a slope
+that has underflowed to zero, and it must say so rather than return a
+number.
+.B Root
+finds the same function's root without difficulty.
+That contrast is why both exist.
+.PP
+.B Powell's
+.BR quartic .
+It is the case that needs Nelder-Mead's shrink step: reflection,
+extension and contraction all fail near its minimum, and without
+shrinking the simplex the method reaches the neighbourhood and crawls
+forever \- 40000 evaluations without converging, against 2200 with it.
+The value is small either way, so only the iteration count and the
+converged flag can tell.
+.PP
+.B A
+.B fit
+.B from
+.B a
+.B long
+.B way
+.BR off .
+A Gauss-Newton step from there overshoots, and what saves it is the
+damping being increased when a step makes things worse.
+Without that the fit stops after two iterations with a residual of 143
+instead of 3e\-30.
+What is checked is the residual and the fitted curve, not the
+parameters: sin(\-1.3\fIx\fP+2.7416) is the same curve as
+sin(1.3\fIx\fP+0.4) and the fit is entitled to find either.
+.PP
+.B Beale's
+.BR example .
+The classic linear programme on which a simplex that always takes the
+steepest column cycles forever, returning to a tableau it has seen.
+Under Bland's rule it finishes in a handful of pivots.
+Nothing else in this program can tell the two rules apart.
+.PP
+.B A
+.B local
+.BR minimum .
+From one start the curve fit settles into a different minimum than the
+one the data came from, and reports that it converged \- because it has.
+That is checked as
+.I expected
+behaviour, with a guard that fails if that start ever stops finding a
+local minimum, since the check would then say nothing.
+.SH SOURCE
+.B /appl/cmd/optimtest.b
+.SH SEE ALSO
+.IR optim (2),
+.IR stats (2)
+.SH DIAGNOSTICS
+Each disagreement prints a line beginning
+.B FAIL
+naming what was measured, what came out and what was wanted; the count
+follows and the program raises an exception.
+.SH BUGS
+Nothing here distinguishes central from one-sided differences in
+.BR fit ;
+the reason is in
+.IR optim (2)'s
+BUGS and is a property of the problems, not an oversight that a better
+test would fix.
+.PP
+The linear programmes are tiny \- at most four variables and three
+constraints.
+Nothing checks a problem large enough for the accumulated arithmetic of
+many pivots to matter, and there is no check of the tableau's
+conditioning at all.
+.PP
+.B Minimise1
+is checked on functions with one minimum in the interval given.
+What it does when the interval holds two, or none, is described in
+.IR optim (2)
+and is not tested.

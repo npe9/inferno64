@@ -286,6 +286,7 @@ danbylabtest danbylabtest
 danbyviztest danbyviztest
 fftstest fftstest
 frametest frametest
+optimtest optimtest
 signaltest signaltest
 statstest statstest
 tdsetest tdsetest

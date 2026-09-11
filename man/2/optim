@@ -1,0 +1,166 @@
+.TH OPTIM 2
+.SH NAME
+optim: root, newton, bracket, minimise1, minimise, fit, linprog \- root finding, minimisation, curve fitting and linear programming
+.SH SYNOPSIS
+.EX
+include "optim.m";
+optim := load Optim Optim->PATH;
+Result: import optim;
+
+optim->init();
+(x, err) := optim->root(f, a, b, tol);
+(a, b, err) = optim->bracket(f, a, b);
+(x, fx, err) := optim->minimise1(f, a, b, tol);
+(r, err) := optim->minimise(f, start, step, tol, maxit);
+(r, err) = optim->fit(model, xs, ys, start, tol, maxit);
+(r, err) = optim->linprog(c, a, b);
+.EE
+.SH DESCRIPTION
+.I Optim
+searches: for where a function crosses zero, for where it is least, for
+the parameters that make a model match data, and for the best point of a
+linear programme.
+.PP
+The objective is a function reference, not a table, which is the only
+shape that works for a thing being searched \- the search decides where
+to look next.
+Limbo has no closures, so a caller needing extra data puts it in a
+variable of its own module and reads it inside the function, the same
+arrangement
+.IR krylov (2)
+uses.
+.SS Roots
+.B Root
+is Brent's method: bisection so that it cannot fail, with secant and
+inverse quadratic interpolation so that it is not slow.
+.I A
+and
+.I b
+must straddle a root, which is checked and refused if not \- there is
+nothing else honest to do, since nothing says a root is there.
+It reaches 1e\-15 on
+.IR x \u\s-22\s+2\d\-2
+in ten function calls where bisection would need about fifty.
+.PP
+.B Bracket
+widens an interval until it does straddle a root, so that
+.B root
+has something to work with.
+.PP
+.B Newton
+is the unsafeguarded method, here because it is what a course teaches
+and because being able to show its failures is worth something.
+It returns a diagnostic when the slope goes to zero, when the iteration
+leaves the real numbers, or when it runs out of steps.
+On atan started from 2, it is thrown to 7e168 and then divides by a
+slope that has underflowed to zero;
+.B root
+finds the same function's root without difficulty.
+.SS Minimisation
+.B Minimise1
+is Brent's method in one variable: golden section with parabolic
+interpolation where that helps.
+The interval must contain the minimum; nothing can tell whether it does,
+and if it does not the answer is an end of it.
+.PP
+.B Minimise
+is Nelder and Mead's simplex in several variables, which needs no
+derivative at all \- the thing to reach for when the function is
+measured rather than written down.
+A simplex of
+.IR n +1
+points crawls downhill by reflecting its worst point through the
+opposite face, stretching when that helps, pulling in when it does not,
+and shrinking onto its best point when nothing does.
+That last step is not an optimisation: without it the method reaches the
+neighbourhood of a minimum and then crawls forever.
+.SS Curve fitting
+.B Fit
+adjusts a model's parameters to match data by least squares, using
+Levenberg-Marquardt: Gauss-Newton where that works and gradient descent
+where it does not, sliding between them by a damping parameter that
+grows when a step makes things worse and shrinks when it helps.
+Derivatives are taken numerically, so a caller supplies only the model.
+.PP
+This is the nonlinear counterpart of
+.IR stats (2)'s
+.BR linefit ,
+and unlike it, it is
+.BR local :
+it finds a minimum, not the minimum.
+From a bad start on an oscillating model it settles into a different one
+and reports, correctly, that it converged.
+A caller who needs the global optimum must start near it, or try several
+starts and compare.
+.SS Linear programming
+.B Linprog
+maximises
+.IR c . x
+subject to
+.IR ax " <= " b
+and
+.IR x " >= 0,"
+by the simplex method.
+Only
+.B <=
+constraints with a non-negative right-hand side, which is the form every
+textbook problem is in and which needs no first phase; anything else is
+refused rather than silently mangled.
+.PP
+The entering column is chosen by
+.BR Bland 's
+.BR rule ,
+which is slower than taking the steepest column and cannot cycle.
+That is not a theoretical worry: on Beale's example the steepest rule
+returns to a tableau it has already seen and never terminates, and
+.IR optimtest (1)
+checks that this one does.
+.SH SOURCE
+.B /appl/lib/optim.b
+.SH SEE ALSO
+.IR stats (2),
+.IR linalg (2),
+.IR krylov (2),
+.IR optimtest (1)
+.SH DIAGNOSTICS
+All of these return a diagnostic string, nil on success: a bracket that
+does not bracket, an interval that cannot be widened to one, fewer data
+points than parameters, a negative right-hand side, an objective nothing
+bounds.
+.SH BUGS
+.B Minimise
+and
+.B fit
+are local.
+Neither has any way to tell a local minimum from the global one, and
+neither tries.
+.PP
+There are no constraints in
+.B minimise
+or
+.BR fit :
+no bounds on a parameter, no way to hold one fixed.
+A parameter that must stay positive has to be reparameterised by the
+caller.
+.PP
+.B Fit
+returns the parameters and the sum of squares but no uncertainties on
+them.
+The matrix needed for that is formed and then thrown away.
+.PP
+.B Linprog
+handles no equality constraints, no variables free in sign, and no
+integer restriction, so it cannot express scheduling or assignment
+problems at all.
+.PP
+The jacobian in
+.B fit
+uses central differences, which is second order in the step rather than
+first.
+On every problem in
+.IR optimtest (1)
+a one-sided difference reaches the same answer, and that is not an
+accident: where a model fits exactly, the minimum is where the residuals
+vanish, and an inaccurate jacobian changes the route and not the
+destination.
+So nothing here distinguishes the two.

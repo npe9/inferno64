@@ -35,6 +35,7 @@ bloomfilter bloomfilter
 bode control
 bootconf dhcpclient
 bootp dhcpclient
+bracket optim
 btos convcs
 bufio bufio-chanfill
 bufio-chanfill bufio-chanfill
@@ -260,6 +261,7 @@ lease dhcpclient
 lgamma math-elem
 linalg linalg
 linefit stats
+linprog optim
 listen sys-dial
 lists lists
 liveplot liveplot
@@ -288,6 +290,7 @@ mean stats
 median stats
 memberforces frame
 millisec sys-millisec
+minimise optim
 mix grpalette
 mkbutton popup
 mkdictname translate
@@ -304,6 +307,7 @@ netinfo dial
 netlist circuit
 netmkaddr dial
 newns newns
+newton optim
 newuser newns
 nodev circuit
 normalcdf stats
@@ -319,6 +323,7 @@ onscreen tkclient
 open sys-open
 opendict translate
 opendicts translate
+optim optim
 packdir styx
 packdirsize styx
 pair lists
@@ -348,6 +353,7 @@ quantile stats
 ramp grpalette
 rfft signal
 roomsrv roomsrv
+root optim
 routh control
 security security-0intro
 session session
@@ -455,6 +461,7 @@ shade grpalette
 sign security-oldauth
 signal signal
 signature spki
+simplex optim
 sin math-elem
 sinh math-elem
 sktopk keyring-gensk

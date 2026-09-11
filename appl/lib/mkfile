@@ -152,6 +152,7 @@ TARG=\
 	sets32.dis\
 	sexprs.dis\
 	slip.dis\
+	optim.dis\
 	signal.dis\
 	stats.dis\
 	smtp.dis\
