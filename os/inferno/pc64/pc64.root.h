@@ -88,16 +88,16 @@ extern unsigned char root65code[];
 extern int root65len;
 extern unsigned char root66code[];
 extern int root66len;
-extern unsigned char root68code[];
-extern int root68len;
+extern unsigned char root67code[];
+extern int root67len;
+extern unsigned char root70code[];
+extern int root70len;
 extern unsigned char root71code[];
 extern int root71len;
 extern unsigned char root72code[];
 extern int root72len;
 extern unsigned char root73code[];
 extern int root73len;
-extern unsigned char root74code[];
-extern int root74len;
 extern unsigned char root75code[];
 extern int root75len;
 extern unsigned char root76code[];
@@ -108,12 +108,8 @@ extern unsigned char root78code[];
 extern int root78len;
 extern unsigned char root79code[];
 extern int root79len;
-extern unsigned char root80code[];
-extern int root80len;
 extern unsigned char root81code[];
 extern int root81len;
-extern unsigned char root82code[];
-extern int root82len;
 extern unsigned char root83code[];
 extern int root83len;
 extern unsigned char root84code[];
@@ -136,6 +132,8 @@ extern unsigned char root92code[];
 extern int root92len;
 extern unsigned char root93code[];
 extern int root93len;
+extern unsigned char root94code[];
+extern int root94len;
 extern unsigned char root95code[];
 extern int root95len;
 extern unsigned char root96code[];
@@ -148,10 +146,32 @@ extern unsigned char root99code[];
 extern int root99len;
 extern unsigned char root100code[];
 extern int root100len;
+extern unsigned char root101code[];
+extern int root101len;
 extern unsigned char root102code[];
 extern int root102len;
-int rootmaxq = 103;
-Dirtab roottab[103] = {
+extern unsigned char root103code[];
+extern int root103len;
+extern unsigned char root104code[];
+extern int root104len;
+extern unsigned char root105code[];
+extern int root105len;
+extern unsigned char root107code[];
+extern int root107len;
+extern unsigned char root108code[];
+extern int root108len;
+extern unsigned char root109code[];
+extern int root109len;
+extern unsigned char root110code[];
+extern int root110len;
+extern unsigned char root111code[];
+extern int root111len;
+extern unsigned char root112code[];
+extern int root112len;
+extern unsigned char root114code[];
+extern int root114len;
+int rootmaxq = 115;
+Dirtab roottab[115] = {
 	"",	{0, 0, QTDIR},	 0,	0555,
 	"chan",	{1, 0, QTDIR},	 0,	0555,
 	"dev",	{2, 0, QTDIR},	 0,	0555,
@@ -200,70 +220,82 @@ Dirtab roottab[103] = {
 	"cloudinit.dis",	{45, 0, QTFILE},	 0,	0444,
 	"gcs.dis",	{46, 0, QTFILE},	 0,	0444,
 	"hget.dis",	{47, 0, QTFILE},	 0,	0444,
-	"usb",	{48, 0, QTDIR},	 0,	0555,
-	"cat.f",	{49, 0, QTFILE},	 0,	0444,
-	"helpers.f",	{50, 0, QTFILE},	 0,	0444,
-	"ns.f",	{51, 0, QTFILE},	 0,	0444,
-	"httpclient.dis",	{52, 0, QTFILE},	 0,	0444,
-	"url.dis",	{53, 0, QTFILE},	 0,	0444,
-	"crypt",	{54, 0, QTDIR},	 0,	0555,
-	"asn1.dis",	{55, 0, QTFILE},	 0,	0444,
-	"encoding",	{56, 0, QTDIR},	 0,	0555,
-	"arg.dis",	{57, 0, QTFILE},	 0,	0444,
-	"auth.dis",	{58, 0, QTFILE},	 0,	0444,
-	"bufio.dis",	{59, 0, QTFILE},	 0,	0444,
-	"daytime.dis",	{60, 0, QTFILE},	 0,	0444,
-	"dhcpclient.dis",	{61, 0, QTFILE},	 0,	0444,
-	"dial.dis",	{62, 0, QTFILE},	 0,	0444,
-	"disks.dis",	{63, 0, QTFILE},	 0,	0444,
-	"env.dis",	{64, 0, QTFILE},	 0,	0444,
-	"factotum.dis",	{65, 0, QTFILE},	 0,	0444,
-	"filepat.dis",	{66, 0, QTFILE},	 0,	0444,
-	"ip.dis",	{67, 0, QTFILE},	 0,	0444,
-	"names.dis",	{68, 0, QTFILE},	 0,	0444,
-	"nametree.dis",	{69, 0, QTFILE},	 0,	0444,
-	"rand.dis",	{70, 0, QTFILE},	 0,	0444,
-	"random.dis",	{71, 0, QTFILE},	 0,	0444,
-	"readdir.dis",	{72, 0, QTFILE},	 0,	0444,
-	"regex.dis",	{73, 0, QTFILE},	 0,	0444,
-	"ssl.dis",	{74, 0, QTFILE},	 0,	0444,
-	"string.dis",	{75, 0, QTFILE},	 0,	0444,
-	"styx.dis",	{76, 0, QTFILE},	 0,	0444,
-	"styxconv",	{77, 0, QTDIR},	 0,	0555,
-	"styxpersist.dis",	{78, 0, QTFILE},	 0,	0444,
-	"styxservers.dis",	{79, 0, QTFILE},	 0,	0444,
-	"timers.dis",	{80, 0, QTFILE},	 0,	0444,
-	"workdir.dis",	{81, 0, QTFILE},	 0,	0444,
-	"std.dis",	{82, 0, QTFILE},	 0,	0444,
-	"fdisk.dis",	{83, 0, QTFILE},	 0,	0444,
-	"kfs.dis",	{84, 0, QTFILE},	 0,	0444,
-	"kfs64.dis",	{85, 0, QTFILE},	 0,	0444,
-	"kfscmd.dis",	{86, 0, QTFILE},	 0,	0444,
-	"prep.dis",	{87, 0, QTFILE},	 0,	0444,
-	"calc.tab.dis",	{88, 0, QTFILE},	 0,	0444,
-	"pedit.dis",	{89, 0, QTFILE},	 0,	0444,
-	"dhcp.dis",	{90, 0, QTFILE},	 0,	0444,
-	"ping.dis",	{91, 0, QTFILE},	 0,	0444,
-	"factotum.dis",	{92, 0, QTFILE},	 0,	0444,
-	"tls12.dis",	{93, 0, QTFILE},	 0,	0444,
-	"x509.dis",	{94, 0, QTFILE},	 0,	0444,
-	"pkcs.dis",	{95, 0, QTFILE},	 0,	0444,
-	"p256.dis",	{96, 0, QTFILE},	 0,	0444,
-	"base64.dis",	{97, 0, QTFILE},	 0,	0444,
-	"tls",	{98, 0, QTDIR},	 0,	0555,
-	"ca-bundle.pem",	{99, 0, QTFILE},	 0,	0444,
-	"new2old.dis",	{100, 0, QTFILE},	 0,	0444,
-	"ostyx.dis",	{101, 0, QTFILE},	 0,	0444,
-	"usbd.dis",	{102, 0, QTFILE},	 0,	0444,
+	"ndb",	{48, 0, QTDIR},	 0,	0555,
+	"usb",	{49, 0, QTDIR},	 0,	0555,
+	"cat.f",	{50, 0, QTFILE},	 0,	0444,
+	"helpers.f",	{51, 0, QTFILE},	 0,	0444,
+	"ns.f",	{52, 0, QTFILE},	 0,	0444,
+	"httpclient.dis",	{53, 0, QTFILE},	 0,	0444,
+	"url.dis",	{54, 0, QTFILE},	 0,	0444,
+	"attrdb.dis",	{55, 0, QTFILE},	 0,	0444,
+	"ipattr.dis",	{56, 0, QTFILE},	 0,	0444,
+	"crypt",	{57, 0, QTDIR},	 0,	0555,
+	"asn1.dis",	{58, 0, QTFILE},	 0,	0444,
+	"encoding",	{59, 0, QTDIR},	 0,	0555,
+	"arg.dis",	{60, 0, QTFILE},	 0,	0444,
+	"auth.dis",	{61, 0, QTFILE},	 0,	0444,
+	"bufio.dis",	{62, 0, QTFILE},	 0,	0444,
+	"daytime.dis",	{63, 0, QTFILE},	 0,	0444,
+	"dhcpclient.dis",	{64, 0, QTFILE},	 0,	0444,
+	"dial.dis",	{65, 0, QTFILE},	 0,	0444,
+	"disks.dis",	{66, 0, QTFILE},	 0,	0444,
+	"env.dis",	{67, 0, QTFILE},	 0,	0444,
+	"factotum.dis",	{68, 0, QTFILE},	 0,	0444,
+	"filepat.dis",	{69, 0, QTFILE},	 0,	0444,
+	"ip.dis",	{70, 0, QTFILE},	 0,	0444,
+	"names.dis",	{71, 0, QTFILE},	 0,	0444,
+	"nametree.dis",	{72, 0, QTFILE},	 0,	0444,
+	"rand.dis",	{73, 0, QTFILE},	 0,	0444,
+	"random.dis",	{74, 0, QTFILE},	 0,	0444,
+	"readdir.dis",	{75, 0, QTFILE},	 0,	0444,
+	"regex.dis",	{76, 0, QTFILE},	 0,	0444,
+	"ssl.dis",	{77, 0, QTFILE},	 0,	0444,
+	"string.dis",	{78, 0, QTFILE},	 0,	0444,
+	"styx.dis",	{79, 0, QTFILE},	 0,	0444,
+	"styxconv",	{80, 0, QTDIR},	 0,	0555,
+	"styxpersist.dis",	{81, 0, QTFILE},	 0,	0444,
+	"styxservers.dis",	{82, 0, QTFILE},	 0,	0444,
+	"timers.dis",	{83, 0, QTFILE},	 0,	0444,
+	"workdir.dis",	{84, 0, QTFILE},	 0,	0444,
+	"std.dis",	{85, 0, QTFILE},	 0,	0444,
+	"fdisk.dis",	{86, 0, QTFILE},	 0,	0444,
+	"kfs.dis",	{87, 0, QTFILE},	 0,	0444,
+	"kfs64.dis",	{88, 0, QTFILE},	 0,	0444,
+	"kfscmd.dis",	{89, 0, QTFILE},	 0,	0444,
+	"prep.dis",	{90, 0, QTFILE},	 0,	0444,
+	"calc.tab.dis",	{91, 0, QTFILE},	 0,	0444,
+	"pedit.dis",	{92, 0, QTFILE},	 0,	0444,
+	"dhcp.dis",	{93, 0, QTFILE},	 0,	0444,
+	"ping.dis",	{94, 0, QTFILE},	 0,	0444,
+	"factotum.dis",	{95, 0, QTFILE},	 0,	0444,
+	"cs.dis",	{96, 0, QTFILE},	 0,	0444,
+	"dns.dis",	{97, 0, QTFILE},	 0,	0444,
+	"dnsquery.dis",	{98, 0, QTFILE},	 0,	0444,
+	"csquery.dis",	{99, 0, QTFILE},	 0,	0444,
+	"ndb",	{100, 0, QTDIR},	 0,	0555,
+	"tls",	{101, 0, QTDIR},	 0,	0555,
+	"local",	{102, 0, QTFILE},	 0,	0444,
+	"common",	{103, 0, QTFILE},	 0,	0444,
+	"dns",	{104, 0, QTFILE},	 0,	0444,
+	"services",	{105, 0, QTFILE},	 0,	0444,
+	"tls12.dis",	{106, 0, QTFILE},	 0,	0444,
+	"x509.dis",	{107, 0, QTFILE},	 0,	0444,
+	"pkcs.dis",	{108, 0, QTFILE},	 0,	0444,
+	"p256.dis",	{109, 0, QTFILE},	 0,	0444,
+	"base64.dis",	{110, 0, QTFILE},	 0,	0444,
+	"ca-bundle.pem",	{111, 0, QTFILE},	 0,	0444,
+	"new2old.dis",	{112, 0, QTFILE},	 0,	0444,
+	"ostyx.dis",	{113, 0, QTFILE},	 0,	0444,
+	"usbd.dis",	{114, 0, QTFILE},	 0,	0444,
 };
-Rootdata rootdata[103] = {
+Rootdata rootdata[115] = {
 	0,	 &roottab[1],	 16,	nil,
 	0,	 nil,	 0,	 nil,
 	0,	 nil,	 0,	 nil,
-	0,	 &roottab[17],	 32,	nil,
+	0,	 &roottab[17],	 33,	nil,
 	0,	 nil,	 0,	 nil,
 	0,	 nil,	 0,	 nil,
-	0,	 &roottab[49],	 3,	nil,
+	0,	 &roottab[50],	 3,	nil,
 	0,	 nil,	 0,	 nil,
 	0,	 nil,	 0,	 nil,
 	0,	 nil,	 0,	 nil,
@@ -273,8 +305,8 @@ Rootdata rootdata[103] = {
 	0,	 nil,	 0,	 nil,
 	0,	 root17code,	 0,	 &root17len,
 	0,	 root18code,	 0,	 &root18len,
-	0,	 &roottab[98],	 1,	nil,
-	3,	 &roottab[52],	 30,	nil,
+	0,	 &roottab[100],	 2,	nil,
+	3,	 &roottab[53],	 32,	nil,
 	3,	 nil,	 0,	 nil,
 	3,	 nil,	 0,	 nil,
 	3,	 root22code,	 0,	 &root22len,
@@ -295,37 +327,28 @@ Rootdata rootdata[103] = {
 	3,	 root37code,	 0,	 &root37len,
 	3,	 root38code,	 0,	 &root38len,
 	3,	 root39code,	 0,	 &root39len,
-	3,	 &roottab[82],	 1,	nil,
+	3,	 &roottab[85],	 1,	nil,
 	3,	 root42code,	 0,	 &root42len,
 	3,	 root43code,	 0,	 &root43len,
-	3,	 &roottab[83],	 7,	nil,
-	3,	 &roottab[90],	 2,	nil,
-	3,	 &roottab[92],	 1,	nil,
+	3,	 &roottab[86],	 7,	nil,
+	3,	 &roottab[93],	 2,	nil,
+	3,	 &roottab[95],	 1,	nil,
 	3,	 root55code,	 0,	 &root55len,
 	3,	 root56code,	 0,	 &root56len,
 	3,	 root57code,	 0,	 &root57len,
 	3,	 root58code,	 0,	 &root58len,
-	3,	 &roottab[102],	 1,	nil,
+	3,	 &roottab[96],	 4,	nil,
+	3,	 &roottab[114],	 1,	nil,
 	6,	 root19code,	 0,	 &root19len,
 	6,	 root20code,	 0,	 &root20len,
 	6,	 root21code,	 0,	 &root21len,
 	17,	 root59code,	 0,	 &root59len,
 	17,	 root60code,	 0,	 &root60len,
-	17,	 &roottab[93],	 4,	nil,
 	17,	 root66code,	 0,	 &root66len,
-	17,	 &roottab[97],	 1,	nil,
-	17,	 root74code,	 0,	 &root74len,
-	17,	 root75code,	 0,	 &root75len,
-	17,	 root76code,	 0,	 &root76len,
-	17,	 root77code,	 0,	 &root77len,
-	17,	 root78code,	 0,	 &root78len,
+	17,	 root67code,	 0,	 &root67len,
+	17,	 &roottab[106],	 4,	nil,
 	17,	 root79code,	 0,	 &root79len,
-	17,	 root80code,	 0,	 &root80len,
-	17,	 root81code,	 0,	 &root81len,
-	17,	 root82code,	 0,	 &root82len,
-	17,	 root83code,	 0,	 &root83len,
-	17,	 root84code,	 0,	 &root84len,
-	17,	 root85code,	 0,	 &root85len,
+	17,	 &roottab[110],	 1,	nil,
 	17,	 root86code,	 0,	 &root86len,
 	17,	 root87code,	 0,	 &root87len,
 	17,	 root88code,	 0,	 &root88len,
@@ -334,30 +357,51 @@ Rootdata rootdata[103] = {
 	17,	 root91code,	 0,	 &root91len,
 	17,	 root92code,	 0,	 &root92len,
 	17,	 root93code,	 0,	 &root93len,
-	17,	 &roottab[100],	 2,	nil,
+	17,	 root94code,	 0,	 &root94len,
+	17,	 root95code,	 0,	 &root95len,
+	17,	 root96code,	 0,	 &root96len,
 	17,	 root97code,	 0,	 &root97len,
 	17,	 root98code,	 0,	 &root98len,
 	17,	 root99code,	 0,	 &root99len,
 	17,	 root100code,	 0,	 &root100len,
+	17,	 root101code,	 0,	 &root101len,
+	17,	 root102code,	 0,	 &root102len,
+	17,	 root103code,	 0,	 &root103len,
+	17,	 root104code,	 0,	 &root104len,
+	17,	 root105code,	 0,	 &root105len,
+	17,	 &roottab[112],	 2,	nil,
+	17,	 root109code,	 0,	 &root109len,
+	17,	 root110code,	 0,	 &root110len,
+	17,	 root111code,	 0,	 &root111len,
+	17,	 root112code,	 0,	 &root112len,
 	38,	 root41code,	 0,	 &root41len,
 	41,	 root45code,	 0,	 &root45len,
 	41,	 root46code,	 0,	 &root46len,
 	41,	 root47code,	 0,	 &root47len,
 	41,	 root48code,	 0,	 &root48len,
 	41,	 root49code,	 0,	 &root49len,
-	41,	 root72code,	 0,	 &root72len,
-	41,	 root73code,	 0,	 &root73len,
+	41,	 root84code,	 0,	 &root84len,
+	41,	 root85code,	 0,	 &root85len,
 	42,	 root51code,	 0,	 &root51len,
 	42,	 root52code,	 0,	 &root52len,
 	43,	 root54code,	 0,	 &root54len,
-	54,	 root62code,	 0,	 &root62len,
-	54,	 root63code,	 0,	 &root63len,
-	54,	 root64code,	 0,	 &root64len,
-	54,	 root65code,	 0,	 &root65len,
-	56,	 root68code,	 0,	 &root68len,
-	16,	 &roottab[99],	 1,	nil,
-	98,	 root71code,	 0,	 &root71len,
-	77,	 root95code,	 0,	 &root95len,
-	77,	 root96code,	 0,	 &root96len,
-	48,	 root102code,	 0,	 &root102len,
+	48,	 root62code,	 0,	 &root62len,
+	48,	 root63code,	 0,	 &root63len,
+	48,	 root64code,	 0,	 &root64len,
+	48,	 root65code,	 0,	 &root65len,
+	16,	 &roottab[102],	 4,	nil,
+	16,	 &roottab[111],	 1,	nil,
+	100,	 root70code,	 0,	 &root70len,
+	100,	 root71code,	 0,	 &root71len,
+	100,	 root72code,	 0,	 &root72len,
+	100,	 root73code,	 0,	 &root73len,
+	57,	 root75code,	 0,	 &root75len,
+	57,	 root76code,	 0,	 &root76len,
+	57,	 root77code,	 0,	 &root77len,
+	57,	 root78code,	 0,	 &root78len,
+	59,	 root81code,	 0,	 &root81len,
+	101,	 root83code,	 0,	 &root83len,
+	80,	 root107code,	 0,	 &root107len,
+	80,	 root108code,	 0,	 &root108len,
+	49,	 root114code,	 0,	 &root114len,
 };

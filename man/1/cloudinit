@@ -17,9 +17,18 @@ cloudinit \- configure a cloud instance's network
 binds the IP stack into
 .BR /net ,
 attaches the first Ethernet interface that answers, takes a DHCP lease,
-and adds a host route to the metadata service.
+adds a host route to the metadata service, and starts the resolver \(em
+.IR dns (8)
+and
+.IR cs (8)
+\(em so that
+.IR dial (2)
+can translate a name.
 .PP
 Options:
+.TP
+.B -R
+Do not start the resolver.
 .TP
 .B -v
 Report each step.
@@ -71,6 +80,24 @@ contains it, every gateway route is unusable, and the instance can
 reach nothing at all.  Linux's client is expected to cope with the same
 thing by installing a link-scope route to the gateway before a default
 route through it; naming the interface is how that is said here.
+.SS "The resolver"
+.I Cloudinit
+starts
+.B ndb/dns
+first and waits for
+.B /net/dns
+to appear before starting
+.BR ndb/cs .
+Both publish by binding their own srv directory over
+.BR /net ,
+and started back to back the second bind raced the first:
+.B /net/cs
+appeared,
+.B /net/dns
+did not, and
+.B cs
+answered every name with
+.BR "unknown host" .
 .SH BUGS
 .IR Ping (1)
 to the gateway is lost on Compute Engine whether or not routing works,

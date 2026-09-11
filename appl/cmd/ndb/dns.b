@@ -133,8 +133,6 @@ init(nil: ref Draw->Context, args: list of string)
 		cantload(IPattr->PATH);
 	ipattr->init(attrdb, ip);
 
-	sys->pctl(Sys->NEWPGRP | Sys->FORKFD, nil);
-
 	random = load Random Random->PATH;
 	if(random == nil)
 		cantload(Random->PATH);
@@ -155,6 +153,19 @@ init(nil: ref Draw->Context, args: list of string)
 	file := sys->file2chan(mntpt, "dns");
 	if(file == nil)
 		error(sys->sprint("can't make %s/dns: %r", mntpt));
+	#
+	# The namespace is forked here and not before the bind above.
+	#
+	# NEWPGRP makes this process's namespace private, so anything
+	# bound after it is invisible to everyone else.  This call used
+	# to come before the bind of #s onto /net, which meant /net/dns
+	# was created in a namespace no other process could reach: the
+	# resolver ran, answered nothing, and "ls /net/dns" reported no
+	# such file while /net/cs sat right beside it.  ndb/cs does the
+	# same two operations in the other order and has always worked,
+	# which is what the comparison turned on.
+	#
+	sys->pctl(Sys->NEWPGRP | Sys->FORKFD, nil);
 	sync := chan of int;
 	spawn dnscache(sync);
 	<-sync;
@@ -411,6 +422,30 @@ readservers(): list of string
 		l = dblooknet("sys", myname, "dns");
 	if(l == nil)
 		l = dblook("infernosite", "", "dns");
+	if(l == nil){
+		#
+		# Last: any tuple that carries both an ip= and a dns=.
+		#
+		# That is what a DHCP lease leaves behind.  dhcpclient(2)
+		# writes the lease into /net/ndb as
+		#
+		#	ip=10.0.2.15 ipmask=255.255.255.0 ipgw=10.0.2.2
+		#		dns=10.0.2.3
+		#
+		# keyed by ip=, while the two lookups above want the
+		# nameserver hung off a sys= or an infernosite= tuple.  So
+		# a machine that learns its resolver from DHCP -- which is
+		# every cloud instance, and every laptop on a network it
+		# did not configure -- found no servers at all, and "ndb/dns
+		# -D" printed an empty "servers:" list while cs answered
+		# every lookup with "unknown host".
+		#
+		# Plan 9's own resolver reads the same file and gathers the
+		# attributes of the tuple holding the local address, which
+		# is the behaviour this restores.
+		#
+		l = anydns();
+	}
 	servers = l;
 #	zones := dblook("soa", "", "dom");
 #printlist("zones", zones);
@@ -486,6 +521,34 @@ defaultresolvers(): list of ref NS
 		return nil;
 	}
 	return ref NS("defaultns", al, 1, now+60) :: nil;
+}
+
+#
+# Every dns= in the database, whatever tuple carries it.
+#
+# dblook() matches an attribute's value exactly -- nextentry() is
+# called with useval set -- so passing "" asks for an empty value and
+# not for any value, which is why the infernosite lookup above finds
+# nothing on a machine that has no such tuple.  Db.find() walks entries
+# by attribute alone, which is what is wanted here.
+#
+anydns(): list of string
+{
+	rl: list of string;
+	ptr: ref Attrdb->Dbptr;
+	for(;;){
+		e: ref Dbentry;
+		(e, ptr) = dnsdb.find(ptr, "dns");
+		if(e == nil)
+			break;
+		for(l := e.find("dns"); l != nil; l = tl l){
+			(nil, al) := hd l;
+			for(; al != nil; al = tl al)
+				if(!inlist((hd al).val, rl))
+					rl = (hd al).val :: rl;
+		}
+	}
+	return rl;
 }
 
 dblook(attr: string, val: string, rattr: string): list of string
