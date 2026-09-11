@@ -636,8 +636,31 @@ It is bounded at eight input vertices so the output can live on the
 stack; anything larger is still declined to the CPU, which is correct if
 unaccelerated, and every face either game draws is a triangle or a quad.
 
-`'G'` (line3) and `'h'` (plot3) still do not clip. Neither game leans on
-them, so nothing is visibly wrong today, but it is the same gap.
+`'G'` (line3) and `'h'` (plot3) still do not clip, and `g3probe(1)` says
+the two providers do not merely differ there, they fail in *opposite*
+directions. Twenty-four lines running from behind the eye to well in
+front:
+
+```
+provider     lines        lit
+software     in front    19821
+device       in front    19848
+software     thru eye        0
+device       thru eye    19686
+```
+
+In front they agree. Crossing the eye plane the **software provider
+draws nothing at all** — it drops the whole line — and the device draws
+something. Which of those is wrong depends on what `line3` is supposed
+to mean for a line that is half behind you, and the answer is surely
+"draw the half in front", which is neither.
+
+Deliberately not changed here. Clipping only the device path would make
+it *more* right while leaving software at zero, so the two would still
+disagree; making them agree means changing what the Limbo provider does
+with such a line, which is a semantic decision rather than a bug fix.
+`appl/temple/box.b` is the only thing in the tree that draws with
+`line3`, and neither game does, so nothing is visibly wrong today.
 
 **2. Presentation was the only thing that consumed the geometry queue,**
 and it does not write the softscreen back, so whether a frame's 3-D ever

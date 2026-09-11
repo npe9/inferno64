@@ -84,6 +84,14 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	span("/dis/math/draw3ddev.dis", "device", 0);
 	span(Draw3d->PATH, "software", 1);
 	span("/dis/math/draw3ddev.dis", "device", 1);
+
+	# line3 has the same shape of question: devdraw clips fillpoly3 and
+	# fillpoly3 gouraud against the eye plane, and does not clip lines.
+	sys->print("\n%-12s %-10s %10s %12s\n", "provider", "lines", "lit", "hash");
+	lines3(Draw3d->PATH, "software", 0);
+	lines3("/dis/math/draw3ddev.dis", "device", 0);
+	lines3(Draw3d->PATH, "software", 1);
+	lines3("/dis/math/draw3ddev.dis", "device", 1);
 }
 
 frames(path, what: string, nf: int)
@@ -249,6 +257,42 @@ span(path, what: string, cross: int)
 			Draw3d->Vector(-0.45, -0.35, zb),
 		};
 		d3->fillpoly3g(c, v, lits);
+	}
+	img.flush(Draw->Flushnow);
+	(l, h) := lithash(img);
+	nm := "in front";
+	if(cross)
+		nm = "thru eye";
+	sys->print("%-12s %-10s %10d %12d\n", what, nm, l, h);
+}
+
+lines3(path, what: string, cross: int)
+{
+	d3 := load Draw3d path;
+	if(d3 == nil)
+		return;
+	d3->init();
+	img := win.image;
+	img.draw(img.r, d.black, nil, img.r.min);
+	img.flush(Draw->Flushnow);
+	c := d3->context(img);
+	d3->setzarea(c, img.r);
+	d3->setz(c, 1);
+	d3->viewport(c, img.r.min.x, img.r.min.y, img.r.max.x, img.r.max.y);
+	d3->mode(Draw3d->PROJ);
+	d3->identity();
+	d3->frustumoffset(1.55, -1.55*456.0/638.0, 0.0);
+	d3->mode(Draw3d->MODEL);
+	d3->identity();
+	d3->clearz(c);
+	d3->setcolour(c, d.color(Draw->Red));
+	z0 := -0.4;
+	if(cross)
+		z0 = 0.8;
+	for(i := 0; i < 24; i++){
+		y := -0.3 + real i * 0.025;
+		d3->line3(c, Draw3d->Vector(-0.4, y, z0),
+			Draw3d->Vector(-0.4, y, z0 - 8.0), 1);
 	}
 	img.flush(Draw->Flushnow);
 	(l, h) := lithash(img);
