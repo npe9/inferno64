@@ -457,3 +457,28 @@ os/inferno/raspi3b/raspi3b.c
 
 # p9sym.py is imported by ad-hoc analysis scripts
 utils/__pycache__/
+
+# python bytecode from scripts/
+__pycache__/
+*.pyc
+
+# host tools, built from the .c beside them
+/tools/aout2efi
+/tools/aout2imxrt
+
+# kernels built into the install trees
+/9front/*/9pc64
+/Osprey/*/9pc64
+/Osprey/*/ipc64
+
+# Osprey install tree: built binaries, and the headers os/osprey copies
+# in.  Osprey/include/*.h themselves are tracked source and stay so --
+# only the copies are ignored: osprey9.h comes from
+# os/osprey/libosprey9, and osprey/ from os/osprey/port and
+# os/osprey/policy.
+/Osprey/*/bin/*
+/Osprey/include/osprey9.h
+/Osprey/include/osprey/
+
+# qemu test images, disks and boot logs
+/.qemu/
