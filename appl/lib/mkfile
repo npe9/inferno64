@@ -99,6 +99,7 @@ TARG=\
 	msgio.dis\
 	keyhold.dis\
 	tiles.dis\
+	roomsrv.dis\
 	numerics.dis\
 	nametree.dis\
 	names.dis\
@@ -256,6 +257,7 @@ SYSMODULES= \
 	string.m\
 	styx.m\
 	styxservers.m\
+	roomsrv.m\
 	sys.m\
 	tables.m\
 	url.m\

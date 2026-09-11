@@ -38,6 +38,7 @@ Verified by running them, and by each one's own `-t` mode.
 | `warren(1)` | maze chase | **the shell as the language**: rules in ~20 lines of `sh(1)` over `sh-tiles(1)`, a frame in 220 µs |
 | `leap(1)` | side-scrolling platformer | the same, with gravity, a camera and an entity list. Measured cost **~1 ms per entity**, so ~40 entities is the shell's ceiling at 25 Hz |
 | `camber(1)` | side-view racer, with a design mode | **content as data**: every tile and every feature of a course is read from a file at run time, through `tiles(2)`'s command language, and `camber -e` writes those files |
+| `spire(1)` | vertical climber with rooms off it | **the namespace**: a room is a *mount*. A door runs a program that serves four files over Styx, mounts it on `/n/room`, and reads and writes those files; leaving is an unmount, and the room's process ends with the connection |
 
 Two things follow from that table. `orchard` is the only one that exposes itself
 as a filesystem. And until `camber`, nothing in it loaded its content from
@@ -156,6 +157,8 @@ the command language was written, and it took a second caller to find it.
 
 ### 2. `spire` — shape 2 — rooms as a namespace
 
+**Built.** See `spire(1)`, `roomsrv(2)`, `lib/tiles/spire.doors`.
+
 The doors are the point. A room is a *mount*: entering one binds a server onto
 the game's namespace and the room's rules come from whatever is mounted there,
 so a shop is a file server with a `wares` file and a `ctl` file, and buying is a
@@ -163,9 +166,33 @@ write. Add a room by writing a server and mounting it; the game needs no change
 and no recompile. That is the namespace argument made in a form somebody can
 play, and nothing else in this tree makes it as plainly.
 
-The horizontal wrap is free — the level surface is already wider than the screen
-and `view` already takes an origin — so the mechanical work is the vertical
-camera and the doorways, and the interesting work is all in the mount.
+It was built that way and the claim holds up: `spire -t` asserts the three
+states that make it a claim rather than a decoration — `/n/room/wares` unreadable
+before the door, readable *with the server's own name and stock* during, and
+unreadable again after. The control is a door pointed at a program that does not
+exist; it must refuse to open, and it does. There is deliberately no fallback
+anywhere: a door that could show a shop without having mounted one would make the
+mount decoration, and a test would pass on the decoration. Stubbing the mount out
+and faking a shop fails eight assertions.
+
+Two rooms ship, `spireshop` and `spirespring`, and nothing in the game
+distinguishes them: both are named only in `lib/tiles/spire.doors`. Each is under
+a hundred lines because `roomsrv(2)` does the serving and the contents are in a
+file. Either can be mounted by hand from a shell — `mount {games/spireshop} /n/room`
+— which is the same interface `styxlisten(1)` would present it over a network.
+
+Building it turned up one bug worth the whole exercise. A server started down a
+pipe must be given a file-descriptor group containing **only** its end of that
+pipe. `FORKFD` copies the whole table, which still holds the *client* end, so the
+server holds its own connection open, its read never reaches end of file, and its
+process outlives every unmount — `mntgen` and both rooms were still in `ps` after
+the game had exited, and `emu` would not exit either. The same goes for the name
+space: a server sharing the one the mount lands in holds a reference to the mount
+of itself. `NEWFD` plus a name space copied *before* the mount fixes both, and the
+self test went from 90 seconds (killed by a timeout) to 0.23 seconds.
+
+That trap is not specific to games, and the shell has it too: `mount {cmd} dir`
+from `sh(1)` leaves the server running after the unmount for exactly this reason.
 
 ### 3. `tandem` — shape 4 — Styx across a machine boundary
 

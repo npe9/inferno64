@@ -316,6 +316,7 @@ popup popup
 plot plot
 populationmodel populationmodel
 ramp grpalette
+roomsrv roomsrv
 security security-0intro
 session session
 pow math-elem

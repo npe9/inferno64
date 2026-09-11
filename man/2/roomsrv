@@ -1,0 +1,179 @@
+.TH ROOMSRV 2
+.SH NAME
+roomsrv \- serve a room for spire(1), and mount a program that serves one
+.SH SYNOPSIS
+.EX
+include "roomsrv.m";
+roomsrv := load Roomsrv Roomsrv->PATH;
+
+Ware: adt {
+    key:   string;
+    price: int;
+    text:  string;
+    gone:  int;
+};
+
+Room: adt {
+    name:  string;
+    ctl:   chan of (string, chan of string);
+    wares: chan of chan of string;
+    done:  chan of int;
+};
+
+init:       fn(): string;
+room:       fn(name: string): ref Room;
+serve:      fn(fd: ref Sys->FD, r: ref Room);
+mountprog:  fn(prog: string, argv: list of string, mntpt: string,
+                flags: int): string;
+stock:      fn(path: string): (string, array of ref Ware, string);
+wares:      fn(w: array of ref Ware): string;
+ware:       fn(w: array of ref Ware, key: string): ref Ware;
+.EE
+.SH DESCRIPTION
+.I Roomsrv
+is the Styx side of a room in
+.IR spire (1),
+so that writing a room is writing what it stocks and what it will do,
+and not writing a file server.
+.PP
+A room is four files:
+.TP
+.B name
+one line, what the room calls itself
+.TP
+.B wares
+zero or more lines of
+.I "KEY PRICE TEXT..."
+.TP
+.B ctl
+written to;
+.BI "coins " N
+and
+.BI "buy " KEY
+.TP
+.B status
+one line, the answer to the last write
+.PP
+.B Init
+loads
+.IR styx (2),
+.IR styxservers (2)
+and
+.I nametree
+and returns nil, or why not.
+.B Room
+makes a
+.B Room
+with its channels.
+.PP
+.B Serve
+serves
+.I r
+on
+.I fd
+until the far end goes away, and runs until then, so a caller with
+anything else to do spawns it.
+A write to
+.B ctl
+arrives on
+.BR r.ctl ,
+with a channel to answer on: the answer is the line
+.B status
+is to hold, or, beginning with
+.BR ! ,
+the error the write is to fail with.
+A refusal is an error on the write and not a line in
+.BR status ,
+so that a caller which ignores the error and reads
+.B status
+does not read the last thing that worked and believe it.
+A read of
+.B wares
+arrives on
+.BR r.wares ,
+every time rather than once, because what a room has left may depend on
+what has already been taken.
+When the connection goes,
+.B serve
+sends on
+.B r.done
+if anything is listening, so a room can end rather than waiting on a
+visitor who has already left.
+.PP
+.B Mountprog
+runs a Dis program as a file server on a pipe and mounts what it serves
+at
+.IR mntpt ,
+with
+.I flags
+as in
+.IR sys-bind (2).
+The program serves Styx on its standard input and output, which is what
+.BI "mount {" prog "} " dir
+and
+.IR styxlisten (1)
+already expect, so the same program works down a pipe, over a network,
+or started by hand from a shell to look at.
+It returns nil, or why not; nothing falls back to anything, because a
+caller that could not mount has not got the thing and must say so.
+.PP
+The server is given a file descriptor group containing only its end of
+the pipe and standard error, and a copy of the name space taken before
+the mount is made.
+Both matter.
+A server that kept a copy of the whole descriptor table would still hold
+the
+.I client
+end of its own pipe, so its read would never reach end of file and its
+process would outlive every unmount; a server sharing the name space
+that the mount lands in holds a reference to the mount of itself, with
+the same result.
+Getting either wrong leaves servers in
+.IR ps (1)
+after the program that started them has exited, and
+.IR emu (1)
+does not exit either.
+.SS Stock
+What a room stocks is kept in a file, so that a room's contents are data
+like everything else.
+.B Stock
+reads one and returns the room's name, its wares, and an error.
+The file is a header of
+.BI "name " WORDS...
+lines, then a line of
+.BR % ,
+then one ware a line as
+.IR "KEY PRICE TEXT..." ;
+lines beginning with
+.B ;
+are comments.
+A price that is not a number is an error and says which line: Limbo's
+.B "int \(dqabc\(dq"
+is 0, so without that check a mistyped price would be a free ware and
+nobody would be told.
+.PP
+.B Wares
+renders what is left, one line each, skipping anything whose
+.B gone
+is set \- which is the text the
+.B wares
+file is to hold.
+.B Ware
+finds one by key.
+.SH SOURCE
+.B /appl/lib/roomsrv.b
+.SH SEE ALSO
+.IR spire (1),
+.IR styxservers (2),
+.IR sys-bind (2),
+.IR mntgen (4),
+.IR styxlisten (1)
+.SH BUGS
+There is no authentication and none is wanted: a room is a game.
+.B Mountprog
+mounts what it is told to mount and a room is trusted with nothing,
+because the game spends only what the room says it spent and understands
+only three words from it.
+.PP
+Nothing times out.
+A room that never answers a read leaves its visitor waiting.

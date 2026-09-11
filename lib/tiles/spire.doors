@@ -1,0 +1,8 @@
+; Which room is behind which door, for spire(1).
+; X Y PROGRAM - the cell the door stands in, and the program that serves
+; the room behind it.  The game mounts whatever this names; it does not
+; know one room from another, and adding a room means adding a line here
+; and writing a server, not changing the game.
+
+5 75 /dis/games/spireshop.dis
+5 39 /dis/games/spirespring.dis

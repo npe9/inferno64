@@ -573,6 +573,14 @@ Screen.pal(s: self ref Screen, name: string): ref Pal
 	return e.pal;
 }
 
+Screen.grid(nil: self ref Screen, name: string): array of string
+{
+	e := find(name);
+	if(e == nil)
+		return nil;
+	return e.grid;
+}
+
 # A colour, as ROW.COLUMN or as a bare master index.  Named is what an
 # artist writes; the index is what a program that has already worked one
 # out passes back in.

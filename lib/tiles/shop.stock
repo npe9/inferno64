@@ -1,0 +1,13 @@
+; What the market on the ledge has to sell, for spireshop(1).
+; The header names the room; after the % come the wares, one a line,
+; as KEY PRICE TEXT.  The key is what the game does about it and has to
+; be one of the few words spire(1) knows; the price, the text and what
+; is stocked at all are this room's business.
+
+name Ledge Market
+
+%
+
+jump   30 boots, and a longer jump
+shield 45 a charm; takes one blow
+heart  60 one more try

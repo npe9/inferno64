@@ -1,0 +1,188 @@
+.TH SPIRE 1
+.SH NAME
+spire, spireshop, spirespring \- a climb up a tower, and the rooms off it
+.SH SYNOPSIS
+.B games/spire
+[
+.B -t
+|
+.B -s
+[
+.B -r
+] ] [
+.B -q
+]
+.PP
+.B "mount {games/spireshop [" file ]}
+.I dir
+.br
+.B "mount {games/spirespring [" file ]}
+.I dir
+.SH DESCRIPTION
+.I Spire
+is a climb, in the shape that genre took: the view goes up and does not
+come back down, so what has been passed is gone and falling has a price;
+the world wraps left to right, so there is no edge to the tower, only a
+top; there are things drifting about that must be jumped over or gone
+round; and there are doors in the wall that lead somewhere with entirely
+different rules.
+.PP
+Arrow keys or
+.B wasd
+move.
+.BR x ,
+.B .
+or space jumps, held for height.
+.B Up
+in a doorway goes in.
+.B q
+or Escape quits.
+.SS The doors are mounts
+A room is not part of this program.
+Going through a door runs a program that serves four files over Styx and
+mounts what it serves on
+.BR /n/room ;
+the game then reads the room's name out of a file, reads what it has to
+offer out of a file, and writes to a file to take something.
+Coming out is an unmount, and the room's process ends when the
+connection does \- which is why neither room in this tree has to
+remember anything between visits.
+The mount point is made by
+.IR mntgen (4),
+mounted on
+.B /n
+in the game's own name space.
+.PP
+Nothing in
+.I spire
+knows one room from another.
+Which program is behind which door is
+.BR /lib/tiles/spire.doors ;
+the room decides what it stocks, what it charges and what it will
+refuse; and the game spends what the room says it spent, not what it
+thought the price was.
+Adding a room means writing a server and adding a line to that file.
+See
+.IR roomsrv (2)
+for what a room has to serve, which is little enough that both of the
+rooms here are under a hundred lines with their contents in a file.
+.PP
+There is no fallback.
+If the mount fails the door does not open and says why.
+A door that opened onto something built into this program would make the
+mount decoration, and a test of it would pass on the decoration.
+.SS What a room can hand over
+The game understands three words, and only these three:
+.TP
+.B jump
+a longer jump, for the rest of the climb
+.TP
+.B shield
+one blow taken for you
+.TP
+.B heart
+another try
+.PP
+A room may stock any of them, at any price, in any order, or none.
+A room offering anything else is not refused: it is taken, it has no
+effect, and the game says so rather than pretending to know.
+.SS The two rooms here
+.I Spireshop
+is a market: it sells from
+.B /lib/tiles/shop.stock
+for the coins picked up on the climb, refuses what cannot be paid for,
+and refuses anything already sold.
+.I Spirespring
+sells nothing: it gives one draught to whoever reaches it, from
+.BR /lib/tiles/spring.stock ,
+and is then still until the visit ends.
+Both serve on standard input and output, so either can be mounted by
+hand from a shell to look at:
+.IP
+.EX
+mount {mntgen} /n
+mount {games/spireshop} /n/room
+cat /n/room/wares
+echo coins 100 > /n/room/ctl
+echo buy jump > /n/room/ctl
+cat /n/room/status
+.EE
+.SS The tower is a file
+.B /lib/tiles/spire.map
+is the tower, in the tile-map format
+.IR tiles (2)
+already reads: a legend, then the grid, one character a cell.
+It is exactly one screen wide because the world wraps.
+.B /lib/tiles/spire.art
+declares the sheets, the font and the palettes and is itself a script in
+.IR tiles (2)'s
+command language.
+Nothing about the tower or its art is compiled into the program.
+.SS Other options
+.B -q
+starts silent.
+.B -t
+runs the self test and needs no window.
+.B -s
+plays four seconds and writes the frame to
+.B spire.raw
+as 24-bit BGR;
+.B -r
+goes through the first door first, so the picture is of a room.
+.SH FILES
+.TP
+.B /lib/tiles/spire.art
+the sheets, the font and the palettes, as tiles(2) commands
+.TP
+.B /lib/tiles/spire.chr
+the 8x8 tiles of the tower
+.TP
+.B /lib/tiles/spire16.chr
+the climber and the drifters
+.TP
+.B /lib/tiles/spire.map
+the tower
+.TP
+.B /lib/tiles/spire.doors
+which room is behind which door
+.TP
+.B /lib/tiles/shop.stock
+what the market sells
+.TP
+.B /lib/tiles/spring.stock
+what the spring gives
+.SH SOURCE
+.B /appl/cmd/games/spire.b
+.br
+.B /appl/cmd/games/spireshop.b
+.br
+.B /appl/cmd/games/spirespring.b
+.SH SEE ALSO
+.IR roomsrv (2),
+.IR tiles (2),
+.IR mntgen (4),
+.IR styxlisten (1),
+.IR camber (1)
+.PP
+.B /doc/games-plan.md
+says why this game is in the tree and what the others demonstrate.
+.SH BUGS
+.B -t
+drives the rules, the mount, the buying and the unmount, and reads the
+pixels back to check the climber is drawn on both sides of the wrap.
+It presses no key: the tables that turn a key into an action are covered
+by nothing and have only ever been checked by playing.
+.PP
+A room served from another machine is untested.
+Nothing here would have to change for it \- a room is mounted, and a
+mount does not care where the other end is \- but the claim that has
+been demonstrated is a room in another process, not a room on another
+host.
+.PP
+A room may keep a read waiting for ever and the game will wait with it:
+there is no timeout on any of the four files, and a slow or wedged room
+wedges the climb.
+.PP
+Nothing checks that the tower can be climbed.
+The map is data and can be edited into a tower with a gap too wide to
+jump.

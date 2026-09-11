@@ -1,0 +1,10 @@
+; The spring, for spirespring(1).  It sells nothing; it gives one
+; draught to anyone who reaches it, and then it is still until they
+; leave and come back.  Same file format as the market's stock: a room
+; that charges nothing is a room whose prices are nought.
+
+name Quiet Spring
+
+%
+
+heart 0 a draught, and your wind

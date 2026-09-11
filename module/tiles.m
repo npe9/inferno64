@@ -185,6 +185,12 @@ Tiles: module
 		# rest of the program can still reach.
 		sheet:	fn(s: self ref Screen, name: string): ref Chr;
 		pal:	fn(s: self ref Screen, name: string): ref Pal;
+		# What "map" painted on a surface, a row of legend characters
+		# a line, or nil if no map was painted there.  A game that
+		# built its level with "map" needs the cells to collide
+		# against, and going back through cmd() with "at" for every
+		# probe of every frame is not how to get them.
+		grid:	fn(s: self ref Screen, name: string): array of string;
 	};
 	screen:	fn(d: ref Draw->Display, chans: Draw->Chans, scale: int): ref Screen;
 };

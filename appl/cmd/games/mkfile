@@ -6,6 +6,9 @@ TARG=\
 	gorge.dis\
 	orchard.dis\
 	rivet.dis\
+	spire.dis\
+	spireshop.dis\
+	spirespring.dis\
 	sprocket.dis\
 	starling.dis\
 	strider.dis\
@@ -26,6 +29,9 @@ SYSMODULES=\
 	tone.m\
 	frameclock.m\
 	scorestore.m\
+	styx.m\
+	styxservers.m\
+	roomsrv.m\
 
 DISBIN=$ROOT/dis/games
 

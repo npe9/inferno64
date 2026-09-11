@@ -1,0 +1,26 @@
+; spire(1): the art, as a script in tiles(2)'s command language.  The
+; game runs this file line by line at start-up; none of it is compiled
+; in.  The surfaces are made in the program because their size depends
+; on how tall the tower is.
+
+sheet tower /lib/tiles/spire.chr
+sheet16 folk /lib/tiles/spire16.chr
+font text
+
+palette psky   mid.azure  mid.azure   pale.grey   light.grey
+palette pstone mid.azure  dark.violet mid.violet  light.violet
+palette pledge mid.azure  dark.grey   light.grey  pale.grey
+palette pdoor  mid.azure  dark.black  mid.orange  light.yellow
+palette pcoin  mid.azure  dark.yellow pale.yellow mid.yellow
+palette pcloud mid.azure  light.grey  pale.grey   pale.grey
+palette pgoal  mid.azure  dark.yellow pale.yellow light.yellow
+palette pyou   mid.azure  dark.black  pale.rose   mid.cyan
+palette pfoe   mid.azure  dark.black  mid.green   light.lime
+palette phud   dark.black pale.grey   pale.grey   pale.grey
+palette pwarn  dark.black light.red   light.red   light.red
+palette pgood  dark.black light.lime  light.lime  light.lime
+
+; Colours that belong to no tile, declared the way the command language
+; names a colour: as a palette whose first entry is the one wanted.
+palette csky   mid.azure  mid.azure   mid.azure   mid.azure
+palette cpanel dark.black dark.black  dark.black  dark.black
