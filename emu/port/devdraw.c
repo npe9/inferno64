@@ -2487,6 +2487,7 @@ drawmesg(Client *client, void *av, int n)
 		case 'j':
 		case 'J':
 		case 'k':
+		case 'K':	/* fillpoly3 gouraud: a draw3d letter like the rest */
 		case 'q':
 		case 'M':
 		case 'w':
@@ -3487,13 +3488,52 @@ drawmesg(Client *client, void *av, int n)
 				 * those) gets Gouraud for free from one colour per
 				 * vertex, same as Metal's vgmain/fgmain do here.
 				 */
-				if(gpudrawfillpoly3g != nil && gpudrawfillpoly3g(dst,
-				    vx, vy, vz, lits, nw, src, op, client->d3model,
-				    client->d3proj, client->d3mx, client->d3cx,
-				    client->d3my, client->d3cy)){
-					poperror();
-					free(vx);
-					goto Kdone;
+				/*
+				 * Only if every vertex is in front of the eye.
+				 *
+				 * A polygon straddling the eye plane has a vertex with
+				 * w <= 0 after projection; interpolated across the
+				 * triangle that wraps, and the GPU paints an enormous
+				 * wrong face instead of the sliver that should be
+				 * visible.  g3probe(1): a wall running through the eye
+				 * lights 40596 pixels through the software provider
+				 * and 185898 through Metal, four and a half times as
+				 * many, where the same wall entirely in front of the
+				 * eye agrees to within 1%.
+				 *
+				 * That is gorge(1)'s wrong picture: it flies a canyon
+				 * THROUGH the eye, so some faces straddle the plane
+				 * every frame, and they came out as the big flat
+				 * shapes that swallowed the rest of the scene.
+				 *
+				 * The right answer is to clip against the near plane
+				 * and hand the GPU the piece that is in front.  Until
+				 * something does that, decline - the hook is nullable
+				 * by convention and declining puts the polygon on the
+				 * CPU path, which rejects it exactly as the software
+				 * provider does, so the two agree.
+				 */
+				{
+					Point pdrop;
+					float ezdrop;
+					int infront;
+
+					infront = 1;
+					for(j = 0; j < nw; j++)
+						if(!d3project(client, vx[j], vy[j], vz[j],
+						    &pdrop, &ezdrop)){
+							infront = 0;
+							break;
+						}
+					if(infront && gpudrawfillpoly3g != nil
+					&& gpudrawfillpoly3g(dst, vx, vy, vz, lits, nw,
+					    src, op, client->d3model, client->d3proj,
+					    client->d3mx, client->d3cx, client->d3my,
+					    client->d3cy)){
+						poperror();
+						free(vx);
+						goto Kdone;
+					}
 				}
 				/*
 				 * No GPU hook wired (or it declined): degrade to a single

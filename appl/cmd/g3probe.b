@@ -65,6 +65,25 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	frames(Draw3d->PATH, "software", 8);
 	for(k = 0; k < 4; k++)
 		frames("/dis/math/draw3ddev.dis", "device", 8);
+
+	# A model transform.  Everything above leaves the model matrix at
+	# identity; gorge(1) rides the eye through the canyon with rotatex
+	# and translate, and there is history in this tree about the GPU
+	# path and non-identity model matrices.
+	sys->print("\n%-12s %-10s %10s %12s\n", "provider", "model", "lit", "hash");
+	model(Draw3d->PATH, "software", 0);
+	model("/dis/math/draw3ddev.dis", "device", 0);
+	model(Draw3d->PATH, "software", 1);
+	model("/dis/math/draw3ddev.dis", "device", 1);
+
+	# Geometry that crosses the eye plane.  gorge(1) flies a canyon
+	# THROUGH the eye: every frame some faces have vertices behind it.
+	# Nothing above does, and this is the last thing that differs.
+	sys->print("\n%-12s %-10s %10s %12s\n", "provider", "spans", "lit", "hash");
+	span(Draw3d->PATH, "software", 0);
+	span("/dis/math/draw3ddev.dis", "device", 0);
+	span(Draw3d->PATH, "software", 1);
+	span("/dis/math/draw3ddev.dis", "device", 1);
 }
 
 frames(path, what: string, nf: int)
@@ -146,6 +165,97 @@ many(path, what: string, n: int)
 	img.flush(Draw->Flushnow);
 	(l, h) := lithash(img);
 	sys->print("%-12s %8d %10d %12d\n", what, n, l, h);
+}
+
+model(path, what: string, xform: int)
+{
+	d3 := load Draw3d path;
+	if(d3 == nil)
+		return;
+	d3->init();
+	img := win.image;
+	img.draw(img.r, d.black, nil, img.r.min);
+	img.flush(Draw->Flushnow);
+	c := d3->context(img);
+	d3->setzarea(c, img.r);
+	d3->setz(c, 1);
+	d3->viewport(c, img.r.min.x, img.r.min.y, img.r.max.x, img.r.max.y);
+	d3->mode(Draw3d->PROJ);
+	d3->identity();
+	d3->frustumoffset(1.55, -1.55*456.0/638.0, 0.0);
+	d3->mode(Draw3d->MODEL);
+	d3->identity();
+	if(xform){
+		d3->rotatex(7.0);
+		d3->translate(-0.3, -1.7, 0.0);
+	}
+	d3->clearz(c);
+	d3->setcolour(c, d.color(Draw->Red));
+	lits := array[] of {0.4, 0.6, 1.0, 0.8};
+	for(i := 0; i < 64; i++){
+		z := -1.5 - real i * 0.12;
+		x := 0.45;
+		if(i & 1)
+			x = -0.45;
+		v := array[] of {
+			Draw3d->Vector(x, -0.35, z),
+			Draw3d->Vector(x,  0.35, z),
+			Draw3d->Vector(x*0.5,  0.35, z - 0.12),
+			Draw3d->Vector(x*0.5, -0.35, z - 0.12),
+		};
+		d3->fillpoly3g(c, v, lits);
+	}
+	img.flush(Draw->Flushnow);
+	(l, h) := lithash(img);
+	nm := "identity";
+	if(xform)
+		nm = "rot+trans";
+	sys->print("%-12s %-10s %10d %12d\n", what, nm, l, h);
+}
+
+span(path, what: string, cross: int)
+{
+	d3 := load Draw3d path;
+	if(d3 == nil)
+		return;
+	d3->init();
+	img := win.image;
+	img.draw(img.r, d.black, nil, img.r.min);
+	img.flush(Draw->Flushnow);
+	c := d3->context(img);
+	d3->setzarea(c, img.r);
+	d3->setz(c, 1);
+	d3->viewport(c, img.r.min.x, img.r.min.y, img.r.max.x, img.r.max.y);
+	d3->mode(Draw3d->PROJ);
+	d3->identity();
+	d3->frustumoffset(1.55, -1.55*456.0/638.0, 0.0);
+	d3->mode(Draw3d->MODEL);
+	d3->identity();
+	d3->clearz(c);
+	d3->setcolour(c, d.color(Draw->Red));
+	lits := array[] of {0.4, 0.6, 1.0, 0.8};
+	# A wall running away from the eye.  With cross set, its near end is
+	# BEHIND the eye, so each near quad straddles the eye plane.
+	z0 := -0.4;
+	if(cross)
+		z0 = 0.8;
+	for(i := 0; i < 32; i++){
+		za := z0 - real i * 0.4;
+		zb := za - 0.4;
+		v := array[] of {
+			Draw3d->Vector(-0.45, -0.35, za),
+			Draw3d->Vector(-0.45,  0.35, za),
+			Draw3d->Vector(-0.45,  0.35, zb),
+			Draw3d->Vector(-0.45, -0.35, zb),
+		};
+		d3->fillpoly3g(c, v, lits);
+	}
+	img.flush(Draw->Flushnow);
+	(l, h) := lithash(img);
+	nm := "in front";
+	if(cross)
+		nm = "thru eye";
+	sys->print("%-12s %-10s %10d %12d\n", what, nm, l, h);
 }
 
 lithash(img: ref Image): (int, int)

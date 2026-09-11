@@ -1181,7 +1181,7 @@ hud()
 	radar(x0 + w - 60, y0 + h - 60, 48);
 	target.text(Point(x0+12, y0+h-70), cwhite, (0,0), font,
 		sys->sprint("SCORE %d", score));
-	why := "gpu (mis-composed, see gorge(1) BUGS)";
+	why := "gpu";
 	if(provider == Draw3d->PATH)
 		why = "software";
 	target.text(Point(x0+12, y0+h-14), cmech2, (0,0), font, why);

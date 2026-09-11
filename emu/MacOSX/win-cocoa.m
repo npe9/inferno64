@@ -1661,6 +1661,8 @@ soft_bresenham(Memimage *dst, GPULine *L)
  * On the first 2D draw after geometry, snapshot the softscreen so present can
  * put subsequent HUD over the Metal 3D layer (j/q are GPU; overlay is leftover 2D).
  */
+static void	metal_readback_geom(void);
+
 static void
 metal_flush_geom(void)
 {
@@ -1702,6 +1704,31 @@ metal_flush_geom(void)
 	[blit endEncoding];
 	[cmd commit];
 	mtl_have_under = 1;
+	/*
+	 * And put the geometry down, here, now.
+	 *
+	 * This is called on the first message after queued geometry that is
+	 * not itself a draw3d letter - so the 3D for this frame is complete
+	 * and the 2D that belongs on top of it has not been drawn yet.
+	 * That is the one well-defined point in a frame at which the
+	 * softscreen can be made whole, and making it whole here is what
+	 * stops presentation being the only thing that ever consumes the
+	 * geometry queue.
+	 *
+	 * Before this, whether a frame's 3D reached the image everything
+	 * else reads was a race between the present and the next readback:
+	 * g3probe(1) drew one frame and read it back, and got nothing at
+	 * all in about half of eight runs.  The same scene over eight
+	 * frames came out right because by then a readback had won once.
+	 *
+	 * The snapshot above is still taken first, because the readback
+	 * composes with it.  At this instant it equals the current
+	 * softscreen, so the overlay in there is a no-op and the result is
+	 * simply softscreen + geometry - which the 2D about to be drawn
+	 * then lands on top of, in the right order, with no present
+	 * involved.
+	 */
+	metal_readback_geom();
 }
 
 static int

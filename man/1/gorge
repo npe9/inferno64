@@ -93,157 +93,32 @@ it to
 .B gorge.gpu.raw
 as 32-bit BGRX, reporting how many pixels are not sky and how many are
 white.
-The white count is the head-up display, and it is the one that matters:
+The white count is the head-up display:
 .IP
 .EX
 games/gorge -g -S   -> non-sky 289920 of 290928, HUD pixels 1277
-games/gorge -g -D   -> non-sky 290835 of 290928, HUD pixels 0
+games/gorge -g -D   -> non-sky 290559 of 290928, HUD pixels 2047
 .EE
 .PP
-The device provider draws geometry and loses everything the program drew
-after it, because the geometry queue is drained at present time rather
-than when the drawing that belongs on top of it happens.
-Until that is fixed this is the reproducer, and it needs no camera:
-before it existed the only way to see the fault was to photograph the
-screen from outside
+Both draw the canyon, the ceiling, the pylons, the bolt and the whole
+head-up display.
+That was not true until 2026-09-11: the device provider drew a frame
+with no HUD at all and a mis-composed canyon, and three faults in
 .IR emu ,
-since a
-.B readpixels
-of a GPU pass returned nothing.
+none of them in this program, were behind it.
 See
 .B /doc/draw3d-adoption-plan.md
-Phase 2b.
-.SH DIAGNOSTICS
-.B -b
-draws the same scene into the window as fast as it will go, with no
-frame pacing, and reports what a frame costs.
-On this host, 202 faces at 640 by 480:
-.IP
-.EX
-/dis/math/draw3ddev.dis, no window manager   2408 us a frame
-/dis/math/draw3d.dis                        73366 us a frame
-.EE
+and
+.IR g3probe (1).
 .PP
-That is a factor of thirty on the same geometry, and it is the whole
-case for the provider:
-the software one approximates a per-vertex fill by subdividing each
-triangle four ways and flat-filling the leaves, while the device one
-hands the face over as it stands and lets the hardware interpolate it.
-.B -n
-sets the number of frames timed;
-.B -S
-forces the software provider and
-.B -D
-the device one, for running the comparison.
-.PP
-.B -t
-runs the self test, which needs no window.
-It checks that the canyon never pinches shut, opens out or kinks between
-segments and that the fog ramp spans its range;
-that flying covers ground and moves the eye;
-that steering moves the ship and all four walls stop it;
-that one press makes one bolt and holding fire does not stream them;
-that a bolt destroys a pylon, scores and leaves an explosion;
-that flying into one costs a ship;
-that pylons are recycled ahead rather than lost;
-that the flight speeds up;
-and that a frame draws something.
-It steps every frame and draws one in ten \- drawing is a crash check
-here, and the software provider is slow and allocates heavily enough
-that a full run does not finish.
-.PP
-.B -s
-plays a scripted opening headless and writes the frame to
-.BR gorge.raw ,
-.I w
-by
-.I h
-of the display's own pixels, the size of one in the last line it prints.
-.SH BUGS
-.B The GPU path draws the wrong picture, so it is not the default.
-Photographed off the screen from outside
+The software provider is still the default.
+What has been checked is headless; under a window manager this provider
+used to panic
 .I emu
-\- which is the only way to see it, because a readback of a GPU pass
-returns nothing \- a frame drawn through
-.B /dis/math/draw3ddev.dis
-is missing the ship, the pylons and the whole head-up display, and the
-canyon itself is mis-composed.
-The geometry queue is drained at present time,
-.I after
-everything the CPU drew, so it paints over the text rather than under
-it.
-Two captures out of two, against a software frame that has all of it.
-.PP
-.B g3_calls
-being high and
-.B soft_fallbacks
-zero says the geometry reached the hardware, and that
-.I devdraw
-did not draw it on the CPU \- a successful
-.I gpudrawfillpoly3d
-does
-.B "goto gdone"
-at
-.BR devdraw.c:3326 .
-It does not say the result is right.
-That is the same trap
-.IR draw3ddemo (1)
-records for
-.IR frustum :
-submissions counted, colours valid, nothing correct on the screen.
-Counting the submissions and timing the frame are what this originally
-did, and both said the GPU was working.
-.PP
-So the software provider is the default and
-.B -D
-is how to ask for the other one.
-The window says which is in use.
-.PP
-.B And the GPU is only reached with no window manager, and driving it
-.B under one panics emu.
-.IR Emu 's
-Metal backend takes the screen image or a
-.I fully clear
-layer of it and nothing else, and a window manager's window is neither,
-so under
-.IR wm (1)
-every face falls back to the CPU:
-.B INFERNO_METAL_STATS=1
-shows
-.B g3_calls=0
-for the whole run, and the device provider is then
-.I slower
-than the software one because it pays the wire cost on top.
-Worse, driving the device provider under
-.IR wm (1)
-panics
-.I emu
-outright with
+with
 .BR "pushrun addrun" ,
-reproducibly.
-.PP
-A window manager is the only thing that hands its clients a
-.BR Draw->Context ,
-so that condition is known before anything is drawn.
-.B -D
-under
-.IR wm (1)
-panics.
-.PP
-The panic has not been reduced below this program.
-A loop of two hundred frames of a hundred and thirty Gouraud quads plus
-a
-.I sprite3zb
-into a memory image, through the same provider, survives.
-.PP
-Nothing automated looks at what the GPU path puts on the screen, and
-nothing can: a
-.I readpixels
-after a GPU pass returns black, which is Phase 3 of
-.BR doc/draw3d-adoption-plan.md .
-A photograph of the screen taken from outside
-.I emu
-is the only check there is, and it is a manual one.
-.PP
-The canyon is generated from two sines, so it never repeats, and it is
-also never interesting in a way a designer chose.
+that panic was an unbalanced error stack in
+.IR devdraw 's
+own fallback and is fixed, and nobody has run it under
+.I wm
+since.

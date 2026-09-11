@@ -214,27 +214,30 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	# headless anyway.
 	if((mode == 1 || mode == 3) && !wantdev)
 		provider = Draw3d->PATH;
-	# Which provider, and it is not a preference.
+	# Which provider.
 	#
-	# The /dev/draw one reaches the GPU and is thirty times faster on
-	# this scene.  It also DRAWS THE WRONG PICTURE.  Photographed off
-	# the screen from outside emu - which is the only way to see it,
-	# since a readback of a GPU pass returns nothing - a GPU frame is
-	# missing the ship, the pylons and the whole head-up display, and
-	# the canyon itself is mis-composed: the geometry queue is drained
-	# at present time, after everything the CPU drew, so it paints over
-	# the text rather than under it.  Two captures out of two.
+	# The /dev/draw one reaches the GPU and is about seventeen times
+	# faster on this scene: 3433 us a frame against 58225.  It also used
+	# to draw the wrong picture, and no longer does - three faults, all
+	# in emu and none in this file:
 	#
-	# g3_calls being high and soft_fallbacks zero says the geometry
-	# reached the hardware and that devdraw did not draw it on the CPU
-	# (a successful gpudrawfillpoly3d does `goto gdone`).  It does not
-	# say the result is right, and here it is not.  So the software
-	# provider is the default and -D is how to ask for the other one.
+	#	a polygon straddling the eye plane was handed to the GPU,
+	#	  where w <= 0 wraps and it paints an enormous wrong face.
+	#	  gorge flies a canyon THROUGH the eye every frame, so this
+	#	  was most of the picture.  devdraw declines those now and
+	#	  the CPU takes them, as the software provider does.
+	#	the geometry queue was consumed by presentation, which does
+	#	  not write the softscreen back, so whether a frame's 3D
+	#	  reached the image anything else reads was a race.
+	#	the readback composed geometry OVER the 2-D instead of under
+	#	  it, which is where the head-up display went.
 	#
-	# Under wm(1) the device provider is not merely wrong, it panics
-	# emu ("pushrun addrun", reproducible).  A window manager is the
-	# only thing that hands a client a Draw->Context, so that condition
-	# is known before anything is drawn.
+	# It is still not the default here, because what has been checked is
+	# headless: under a window manager this provider used to panic emu
+	# ("pushrun addrun"), that panic was an unbalanced error stack in
+	# devdraw's own fallback and is fixed, but nobody has run it under
+	# wm since.  -D asks for it; see gorge(1).
+	#
 	provider = Draw3d->PATH;
 	if(mode == 0 || mode == 2)
 		underwm = ctxt != nil;
@@ -909,7 +912,7 @@ hud()
 	target.text(Point(r.min.x+10, r.min.y+8+font.height), cwhite, (0,0),
 		font, sys->sprint("SHIPS %d    SPEED %3d    %5d M",
 			lives, int (speed*300.0), int dist));
-	why := "gpu (mis-composed, see gorge(1) BUGS)";
+	why := "gpu";
 	if(provider == Draw3d->PATH)
 		why = "software";
 	target.text(Point(r.min.x+10, r.min.y+8+2*font.height), cwhite, (0,0),

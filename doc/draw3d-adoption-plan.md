@@ -604,6 +604,55 @@ reported a first-call blow-up that did not exist; and a quad with any
 vertex outside the frustum is dropped whole rather than clipped, in both
 providers.
 
+### Phase 2b closed: the GPU draws the right picture — 2026-09-11
+
+`gorge` and `strider` both render correctly through Metal. Three faults,
+all in `emu`, none in either game.
+
+**1. A polygon straddling the eye plane was handed to the GPU.** A vertex
+behind the eye gives `w <= 0`; interpolated across the triangle that
+wraps, and the GPU paints an enormous wrong face instead of the sliver
+that should be visible. `g3probe(1)`: a wall running through the eye
+lights 40596 pixels through the software provider and **185898** through
+Metal, where the same wall entirely in front of the eye agrees to within
+1%. gorge flies a canyon *through* the eye every frame, so this was most
+of its picture — the big flat shapes that swallowed the scene.
+`devdraw.c`'s `'K'` case now projects every vertex first and declines the
+GPU if any is behind the eye, so those polygons take the CPU path and
+agree with software: **185898 → 40290**.
+
+The right answer is near-plane *clipping* — hand the GPU the part that is
+in front — and declining is not that. It is correct, it costs the GPU
+only the faces that straddle the plane, and it can be replaced by real
+clipping later without changing anything else.
+
+**2. Presentation was the only thing that consumed the geometry queue,**
+and it does not write the softscreen back, so whether a frame's 3-D ever
+reached the image everything else reads was a race. One frame drawn and
+read gave nothing at all in four of eight runs. `metal_flush_geom()` now
+*materialises* rather than only snapshotting: it is called on the first
+message after queued geometry that is not itself a draw3d letter, which
+is the one well-defined point in a frame where the 3-D is complete and
+the 2-D that belongs on top of it has not been drawn. Eight runs of one
+frame, all correct.
+
+**3. `'K'` was missing from the list of draw3d letters** that must not
+flush mid-batch — `'G'`, `'g'`, `'h'`, `'j'`, `'J'`, `'k'`, `'q'` and the
+rest are all there. It is the one letter gorge uses for everything, so
+every face triggered the flush hook. Added.
+
+Measured after: `gorge -b -D` is **3433 µs a frame** against the software
+provider's 58225 — seventeen times — and `gorge -g -D` gives 2047
+head-up-display pixels where it gave 0. `strider -D` likewise draws its
+terrain, its enemy, its weapons, its armour diagram and its radar.
+
+**The default is still the software provider**, and the reason is
+narrow: everything checked here is headless. Under a window manager this
+provider used to panic `emu` with `pushrun addrun`; that panic was the
+unbalanced error stack in `devdraw`'s own Gouraud fallback, fixed above,
+but nobody has run it under `wm` since. That is the last thing standing
+between this and flipping `gorge` and `strider` over.
+
 ### There is a third path, and it is the fastest and the only correct one — 2026-09-11
 
 Everything above compares two things: the Limbo software provider and
