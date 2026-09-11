@@ -65,7 +65,19 @@ threading.Thread(target=reader, daemon=True).start()
 time.sleep(wait)
 sys.stderr.write("typing %r after %gs, %d bytes of boot seen\n" % (cmd, wait, len(buf)))
 sys.stderr.flush()
-os.write(fin, cmd.encode() + b'\n')
+# A character at a time, paced.
+#
+# Writing the whole line in one go loses characters: a kernel booted
+# from this tree turned "echo" into "echl" partway through a typed
+# command, which then failed as "echl: file does not exist" and looked
+# like a bug in whatever was being tested.  There is no flow control on
+# this line and the receiver is an 8250 with a 16-byte FIFO being
+# drained by an interrupt handler, so a whole line arriving at once can
+# overrun it.  A real person cannot type fast enough to do this, which
+# is why it only shows up under a harness.
+for ch in cmd.encode() + b'\n':
+    os.write(fin, bytes([ch]))
+    time.sleep(0.01)
 time.sleep(14)
 proc.kill()
 time.sleep(0.3)
