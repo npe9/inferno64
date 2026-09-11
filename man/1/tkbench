@@ -35,6 +35,21 @@ and is otherwise awkward to provoke.
 .PP
 .B -v
 prints the repetition count and elapsed time behind each figure.
+.PP
+.B -s
+puts the window on the display's real screen instead of an offscreen
+image, so that every repaint ends in a Metal upload and present.
+Offscreen there is no present at all, which is what makes the default
+figures drawing-only.
+.PP
+.B -i
+repaints slowly, 200 times at 25ms apart, leaving the processor idle
+between frames.
+It is for reading the present timers in
+.B emu
+with
+.BR INFERNO_METAL_STATS ,
+and it is not optional for that purpose \(em see BUGS.
 .SS The number that means something is the slope
 For each widget it reports the repaint time of a toplevel holding a few
 of them, the same holding many, and
@@ -69,12 +84,31 @@ and not
 .IR emu\-g ,
 even though it draws nothing on the screen.
 .PP
-It times the DRAWING only.
-What it costs to get those pixels onto the display \(em the Metal upload
-and present in
-.B emu/MacOSX/win\-cocoa.m
-\(em is not measured here and is not included in any figure, so these
-numbers are a lower bound on what a frame costs.
+The default figures time the DRAWING only.
+What it costs to get those pixels onto the display is reported separately
+by
+.B emu
+under
+.BR INFERNO_METAL_STATS ,
+as
+.B METALTIME
+and
+.BR METALSPLIT .
+On an idle machine a present of a 900\(mu700 screen costs about 250
+.RI \(mc s,
+of which roughly 170 is work, 134 of that the upload, and the rest a
+wait for a drawable.
+.PP
+THOSE TIMERS ARE WALL CLOCK ON THE APPKIT THREAD, and that is a trap
+rather than a detail.
+Run while this benchmark is saturating the processor, the same present
+reports 23
+.IR ms ,
+ninety times larger, because the thread spent that time waiting to be
+scheduled rather than working.
+A figure taken under load measures the load.
+.B -i
+exists to avoid it, and any present number quoted without it is wrong.
 .PP
 A widget packed outside the window might be clipped and never drawn,
 which would make an expensive widget look cheap.

@@ -52,6 +52,8 @@ off: ref Image;
 scr: ref Screen;
 win: ref Image;
 verbose := 0;
+onscreen := 0;
+idle := 0;
 
 init(nil: ref Draw->Context, argv: list of string)
 {
@@ -61,10 +63,12 @@ init(nil: ref Draw->Context, argv: list of string)
 	arg := load Arg Arg->PATH;
 	if(arg != nil){
 		arg->init(argv);
-		arg->setusage("tkbench [-v]");
+		arg->setusage("tkbench [-isv]");
 		while((c := arg->opt()) != 0)
 			case c {
 			'v' =>	verbose = 1;
+			's' =>	onscreen = 1;
+			'i' =>	idle = 1;
 			* =>	arg->usage();
 			}
 	}
@@ -77,7 +81,17 @@ init(nil: ref Draw->Context, argv: list of string)
 		sys->print("tkbench: no display: %r\n");
 		raise "fail:no display";
 	}
-	off = disp.newimage(Rect((0,0),(W,H)), Draw->RGB24, 0, Draw->White);
+	# -s puts the window on the display's REAL screen, so each repaint
+	# ends in a Metal upload and present.  Offscreen there is no present
+	# at all, which is what makes the default figures drawing-only.
+	if(onscreen){
+		off = disp.image;
+		if(off == nil){
+			sys->print("tkbench: no screen image: %r\n");
+			raise "fail:no screen image";
+		}
+	}else
+		off = disp.newimage(Rect((0,0),(W,H)), Draw->RGB24, 0, Draw->White);
 	scr = Screen.allocate(off, disp.color(Draw->White), 0);
 	win = scr.newwindow(off.r, Draw->Refbackup, Draw->Nofill);
 	if(off == nil || scr == nil || win == nil){
@@ -89,7 +103,21 @@ init(nil: ref Draw->Context, argv: list of string)
 	how := "unknown";
 	if(e != nil && (s := e->getenv("emuexec")) != "")
 		how = s;
-	sys->print("tkbench: %s, %dx%d offscreen\n", how, W, H);
+	where := "offscreen";
+	if(onscreen)
+		where = "ON SCREEN (each repaint presents)";
+	sys->print("tkbench: %s, %dx%d %s\n", how, off.r.dx(), off.r.dy(), where);
+
+	# -i repaints slowly, leaving the processor idle between frames.  The
+	# timers inside emu are WALL CLOCK on the AppKit thread, so with the
+	# benchmark saturating the machine they measure how long that thread
+	# waited to be scheduled rather than how long the work took.  Idle is
+	# the only condition in which those numbers mean what they say.
+	if(idle){
+		sys->print("tkbench: idle present mode, 200 repaints 25ms apart\n");
+		idlepresents();
+		return;
+	}
 
 	kinds := array[] of {
 		("label",	"label %s -text {Handgloves}"),
@@ -128,6 +156,29 @@ init(nil: ref Draw->Context, argv: list of string)
 	sys->print("tkbench: only figure here that does not include the fixed cost of a\n");
 	sys->print("tkbench: repaint.  If it is negative or absurd, the widgets are not\n");
 	sys->print("tkbench: all being drawn - check that %d of them still fit.\n", Nhi);
+}
+
+idlepresents()
+{
+	off.draw(off.r, disp.color(Draw->White), nil, off.r.min);
+	top := tk->toplevel(disp, "");
+	if(top == nil)
+		return;
+	top.screenr = off.r;
+	tk->cmd(top, "style flat");
+	tk->cmd(top, "frame .a");
+	for(i := 0; i < 6; i++){
+		w := sys->sprint(".a.w%d", i);
+		tk->cmd(top, "button " + w + " -text {Cancel}");
+		tk->cmd(top, "pack " + w);
+	}
+	tk->cmd(top, "pack .a");
+	tk->putimage(top, ". -1", win, nil);
+	tk->cmd(top, "update");
+	for(i = 0; i < 200; i++){
+		tk->cmd(top, "style flat");
+		sys->sleep(25);
+	}
 }
 
 # nanoseconds per full-tree repaint of a toplevel holding n of spec

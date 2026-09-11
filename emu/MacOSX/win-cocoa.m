@@ -157,6 +157,20 @@ static uvlong	metal_g3_calls;	/* gpudrawfillpoly3d successes: real GPU T&L, not 
 static uvlong	metal_spr_calls;	/* gpudrawsprite successes: a textured Metal quad, not d3spritez */
 static uvlong	metal_g3_tris;
 static int	metal_stat_frames;
+/*
+ * Wall-clock for the present path.  Every other counter here is BYTES,
+ * which says how much was moved and nothing about how long it took - and
+ * "how long" is the half of the frame that tkbench(1) explicitly does
+ * not measure.
+ */
+extern vlong	osusectime(void);
+static uvlong	metal_presents;		/* calls to present_softscreen */
+static uvlong	metal_present_us;	/* total time inside it */
+static uvlong	metal_uploads;		/* calls to metal_upload_damage */
+static uvlong	metal_upload_us;	/* total time inside that */
+static uvlong	metal_drawable_us;	/* blocked in nextDrawable, i.e. vsync */
+static uvlong	metal_slotwait_us;	/* blocked on the staging-buffer ring */
+static uvlong	metal_uploadwork_us;	/* the tile copy and encode: actual work */
 static id<MTLBuffer>	metal_validate_buf;
 static uchar	*metal_validate_cpu;
 static int	metal_validate_len;
@@ -682,7 +696,8 @@ metal_init(void)
 		gpudrawline = metal_queue_line;
 		gpudrawfillpoly = metal_queue_fillpoly;
 		gpudrawfillpoly3d = metal_queue_fillpoly3d;
-		gpudrawfillpoly3g = metal_queue_fillpoly3g;
+		if(getenv("INFERNO_NOGOURAUD") == nil)
+			gpudrawfillpoly3g = metal_queue_fillpoly3g;
 		gpudrawplot = metal_queue_plot;
 		gpudrawsprite = metal_queue_sprite;
 		gpudrawsprite2d = metal_queue_sprite2d;
@@ -1187,10 +1202,31 @@ metal_replay_copies(id<MTLCommandBuffer> cmd, id<MTLTexture> tex, int pw, int ph
 /* Upload dirty tile runs with screen-relative offsets.  The staging stride
  * is 256-byte aligned and tile offsets retain native pixel alignment, so no
  * rectangle repacking is needed. */
+static int	metal_upload_damage_body(id<MTLTexture>, int);
+
+/*
+ * A shim rather than a timer at each return: metal_upload_damage_body()
+ * leaves by several paths and an added clock read at each is a place for
+ * one to be missed.
+ */
 static int
 metal_upload_damage(id<MTLTexture> tex, int full)
 {
+	vlong t0;
+	int r;
+
+	t0 = osusectime();
+	r = metal_upload_damage_body(tex, full);
+	metal_upload_us += osusectime() - t0;
+	metal_uploads++;
+	return r;
+}
+
+static int
+metal_upload_damage_body(id<MTLTexture> tex, int full)
+{
 	int bpl, pw, ph, sbpl, need, slot, tx, tx1, ty, x, y, w, h, ry, any, i, hadcopies;
+	vlong t0work;
 	uchar *base, *dst, *damage, *swap;
 	id<MTLBuffer> buf;
 	id<MTLCommandBuffer> cmd;
@@ -1237,9 +1273,18 @@ metal_upload_damage(id<MTLTexture> tex, int full)
 	base = (!full && soft_shadow != nil) ? soft_shadow : gscreen->data->bdata;
 	slot = mtl_upload_next++ % nelem(mtl_upload_buf);
 	if(mtl_upload_pending[slot] != nil){
+		/*
+		 * Waiting for the blit that last used this staging slot, which
+		 * is paced by the display.  Timed apart from the copy below
+		 * because the two answer different questions: this one is the
+		 * frame interval, that one is what the CPU actually does.
+		 */
+		vlong t0s = osusectime();
 		[mtl_upload_pending[slot] waitUntilCompleted];
+		metal_slotwait_us += osusectime() - t0s;
 		mtl_upload_pending[slot] = nil;
 	}
+	t0work = osusectime();
 	if(mtl_upload_buf[slot] == nil || mtl_upload_len < need){
 		mtl_upload_len = need;
 		for(y = 0; y < nelem(mtl_upload_buf); y++){
@@ -1295,6 +1340,7 @@ metal_upload_damage(id<MTLTexture> tex, int full)
 		}
 	}
 	[blit endEncoding];
+	metal_uploadwork_us += osusectime() - t0work;
 	if(!any && !hadcopies)
 		return 0;
 	[cmd commit];
@@ -3735,11 +3781,34 @@ metal_present_sprites(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
  * pre-Metal image.  Render into a shared off-screen target with the same
  * pipelines/depth state, wait for completion, and copy its bytes back.
  */
+static void	metal_blit_tex(id<MTLCommandBuffer>, id<MTLTexture>,
+			id<MTLRenderPipelineState>, id<MTLTexture>, id<MTLTexture>,
+			id<MTLSamplerState>);
+static void	metal_overlay_soft(id<MTLCommandBuffer>, id<MTLTexture>,
+			id<MTLTexture>, id<MTLTexture>, id<MTLSamplerState>);
+
+/* Nearest, and shared: present built its own and the readback needs the
+ * same one now that both composite the frame the same way. */
+static id<MTLSamplerState>
+metal_nearest_samp(void)
+{
+	static id<MTLSamplerState> s;
+	MTLSamplerDescriptor *sd;
+
+	if(s == nil){
+		sd = [[MTLSamplerDescriptor alloc] init];
+		sd.minFilter = MTLSamplerMinMagFilterNearest;
+		sd.magFilter = MTLSamplerMinMagFilterNearest;
+		s = [mtl_device newSamplerStateWithDescriptor:sd];
+	}
+	return s;
+}
+
 static void
 metal_readback_geom(void)
 {
 	int pw, ph, bpl;
-	id<MTLTexture> tex, depthtex;
+	id<MTLTexture> tex, depthtex, soft, under;
 	id<MTLCommandBuffer> cmd;
 	MTLTextureDescriptor *td;
 	MTLRegion region;
@@ -3763,16 +3832,49 @@ metal_readback_geom(void)
 	depthtex = metal_depth_tex(pw, ph);
 	if(tex == nil || depthtex == nil)
 		return;
-	metal_upload_damage(tex, 1);
+	/*
+	 * Compose the frame the way present does, and for the same reason.
+	 *
+	 * This used to upload the CURRENT softscreen and draw the geometry
+	 * on top of it.  The current softscreen already contains everything
+	 * the program drew after its 3D - its head-up display, its reticle,
+	 * its score - so the geometry went over the top of all of it and
+	 * every one of those was lost.  gorge(1) read back with no HUD at
+	 * all: 0 white pixels against the software provider's 1277.
+	 *
+	 * present_softscreen_body() has always had this right.  metal_flush_geom()
+	 * snapshots the softscreen as it was BEFORE the 3D - mtl_under - on
+	 * the first 2D draw after geometry is queued, and present then draws
+	 * under, then the geometry, then metal_overlay_soft() puts back the
+	 * pixels that changed afterwards.  The readback simply did not use
+	 * any of it.  Now it does, and the two paths agree by construction
+	 * rather than by coincidence.
+	 */
+	soft = nil;
+	under = nil;
+	if(mtl_have_under && mtl_under != nil){
+		soft = metal_soft_tex(pw, ph);
+		under = mtl_under;
+	}
+	if(soft != nil){
+		/* the softscreen texture is the post-3D CPU state */
+		metal_upload_damage(soft, mtl_tex_fresh);
+		mtl_tex_fresh = 0;
+	}else
+		metal_upload_damage(tex, 1);
 	cmd = [mtl_queue commandBuffer];
 	if(cmd == nil)
 		return;
+	if(soft != nil)
+		metal_blit_tex(cmd, tex, mtl_pipe, under, nil, metal_nearest_samp());
 	mtl_soft_defer = 1;
 	metal_present_tris(cmd, tex, depthtex, pw, ph);
 	metal_present_tris3d(cmd, tex, depthtex, pw, ph);
 	metal_present_lines(cmd, tex, depthtex, pw, ph);
 	metal_present_sprites(cmd, tex, depthtex, pw, ph);
 	mtl_soft_defer = 0;
+	if(soft != nil)
+		metal_overlay_soft(cmd, tex, soft, under, metal_nearest_samp());
 	[cmd commit];
 	[cmd waitUntilCompleted];
 	p = byteaddr(gscreen, gscreen->r.min);
@@ -3840,8 +3942,23 @@ metal_overlay_soft(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
  * If a flush snapshot exists (2D after 3D), draw under → 3D → softscreen overlay
  * so sprites/minimap/HUD win over the wireframe.  Otherwise softscreen then 3D.
  */
+static void	present_softscreen_body(void);
+
+/* Same shim, same reason: present_softscreen_body() has several early
+ * returns and a timer at each is one to forget. */
 static void
 present_softscreen(void)
+{
+	vlong t0;
+
+	t0 = osusectime();
+	present_softscreen_body();
+	metal_present_us += osusectime() - t0;
+	metal_presents++;
+}
+
+static void
+present_softscreen_body(void)
 {
 	int pw, ph, have_geom, overlay, validate, bpl, sbpl, need, x, y;
 	uchar *vp, *cp;
@@ -3901,7 +4018,17 @@ present_softscreen(void)
 	under = mtl_under;
 	/* Do CPU staging and enqueue texture uploads before acquiring a scarce
 	 * drawable; this shortens drawable ownership and avoids frame-pacing stalls. */
-	drawable = [mtl_layer nextDrawable];
+	/*
+	 * nextDrawable BLOCKS until the display hands one back, so the time
+	 * spent here is the frame interval, not work.  Timed apart from the
+	 * rest for exactly that reason: without the split, present time
+	 * looks like a 25ms cost and it is mostly waiting.
+	 */
+	{
+		vlong t0d = osusectime();
+		drawable = [mtl_layer nextDrawable];
+		metal_drawable_us += osusectime() - t0d;
+	}
 	if(drawable == nil){
 		if(npresent_copies != 0)
 			mtl_tex_fresh = 1;
@@ -3963,6 +4090,17 @@ present_softscreen(void)
 			}
 	}
 	if(getenv("INFERNO_METAL_STATS") != nil && ++metal_stat_frames >= 30){
+		fprint(2, "METALTIME presents=%llud each_us=%llud waiting_us=%llud working_us=%llud | uploads=%llud each_us=%llud\n",
+			metal_presents,
+			metal_presents ? metal_present_us/metal_presents : 0,
+			metal_presents ? metal_drawable_us/metal_presents : 0,
+			metal_presents ? (metal_present_us-metal_drawable_us)/metal_presents : 0,
+			metal_uploads,
+			metal_uploads ? metal_upload_us/metal_uploads : 0);
+		fprint(2, "METALSPLIT per present: vsync_wait=%llud slot_wait=%llud real_work=%llud (us)\n",
+			metal_presents ? metal_drawable_us/metal_presents : 0,
+			metal_presents ? metal_slotwait_us/metal_presents : 0,
+			metal_presents ? (metal_present_us - metal_drawable_us - metal_slotwait_us)/metal_presents : 0);
 		fprint(2, "METALSTATS frames=%d damage_calls=%llud damage_bytes=%llud full_uploads=%llud readbacks=%llud upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud largest_copy_bytes=%llud largest_dirty_bytes=%llud copy_notes=%llud rejected=%llud reject_storage=%llud reject_damage=%llud reject_geometry=%llud alias_storage=%llud armed=%llud cancelled=%llud g3_calls=%llud g3_tris=%llud spr_calls=%llud soft_fallbacks=%llud teximg_alloced=%ud teximg_declined=%ud(chan=%ud small=%ud) teximg_freed=%ud live=%d\n",
 			metal_stat_frames, metal_damage_calls, metal_damage_bytes,
 			metal_full_uploads, metal_readbacks, metal_upload_bytes,
