@@ -2632,6 +2632,27 @@ drawmesg(Client *client, void *av, int n)
 			drawpoint(&p, a+29);
 			drawpoint(&q, a+37);
 			op = drawclientop(client);
+			/*
+			 * A draw observes all preceding draw3d work, exactly
+			 * as a read does.  Without this, geometry the GPU has
+			 * queued but not yet presented is invisible to a COPY,
+			 * so a port that composites its window into a buffer
+			 * reads black - draw3dbench(1)'s readback line showed
+			 * "layer draw=0" against software's 210183.
+			 *
+			 * Cheap when nothing is queued: the hook returns at
+			 * once in that case, which is almost every draw, and
+			 * gorge -b -D is unchanged at 2358us a frame.
+			 *
+			 * This does NOT fix the separate fault that GPU output
+			 * composes over the 2-D rather than under it: the
+			 * queue is still drained at present time, and gorge -g
+			 * -D still reports 0 head-up-display pixels against
+			 * software's 1277, with or without this.  See
+			 * doc/draw3d-adoption-plan.md, Phase 2b.
+			 */
+			if(gpudrawreadback)
+				gpudrawreadback();
 			memdraw(dst, r, src, p, mask, q, op);
 			dstflush(dst, r);
 			continue;

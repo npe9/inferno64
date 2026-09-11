@@ -388,6 +388,34 @@ either.** That wants doing before any more ports move.
 `gorge(1)` and `strider(1)` therefore default to the software provider
 and offer `-D` for the other one, and say on screen which is in use.
 
+**Now reproducible from inside the process, 2026-09-11.** With Phase 3
+fixed, `gorge -g` reads its own window back and counts two things: the
+pixels that are not sky, and the pixels that are white — which is the
+head-up display, and which is exactly the part that goes missing.
+
+```
+games/gorge -g -S   non-sky 289920 of 290928, HUD pixels 1277
+games/gorge -g -D   non-sky 290835 of 290928, HUD pixels 0
+```
+
+Two commands, two numbers, no camera. `-g` also writes the frame to
+`gorge.gpu.raw`; rendered, the GPU frame has no text, no pylons, and a
+canyon composed wrongly, matching what the photographs showed.
+
+(`gorge -g` existed as `gpushot()` and **nothing called it** — there was
+no `-g` flag. A diagnostic this document referred to by name could not
+be run at all. It is wired up now.)
+
+Phase 3's fix does *not* fix this: HUD pixels are 0 on the device
+provider both with and without it, checked by rebuilding `emu` both
+ways. The two faults are separate. Phase 3 was about a copy not seeing
+the queue; this is about *when* the queue is drained relative to the
+2-D drawing that belongs on top of it, and the drain still happens at
+present time.
+
+**Phase 1's nine ports' pictures still have not been checked** — but
+they now *can* be, by the same method, which was the blocker.
+
 ### Phase 2a — `litcolour` allocated a colour image per fill
 
 Fixed 2026-09-10, and it is the reason a Gouraud scene could not be run
@@ -414,23 +442,38 @@ one-pixel image in the display's own channels is depth 32 and does get
 shaded; `gorge`'s `rgb32()` is that, and says so. Whether `litcolour`
 should handle depth 24 is open.
 
-### Phase 3 — make the GPU readback produce pixels
+### Phase 3 — make the GPU readback produce pixels — **done, 2026-09-11**
 
-Point 4 is a bug with a two-line reproducer in `draw3dbench(1)`, and it
-already has its own control: the software provider reads back correctly
-on the same scene through the same code, so the fault is in what the
-readback writes and not in reading a layer. Until it is fixed, any port
-that mixes GPU 3D with `readpixels` silently reads black, which is worse
-than being slow.
+The hook was only ever called on the draw(3) *read* message. A `draw()`
+that copies out of a GPU-backed image never drained the queue, so
+anything the GPU had queued but not presented was invisible to a copy —
+which is what every port that composites its window into a buffer does.
 
-Start by checking whether `metal_readback_geom()` is writing into
-`gscreen` while the reader is looking at `screenimage` or at the layer's
-backing store; the two are distinguished in `metal_queue_fillpoly3d()`
-and may not be the same image here.
+`emu/port/devdraw.c`'s `'d'` case now calls `gpudrawreadback()` before
+`memdraw()`, exactly as the `'r'` case does. It is cheap when there is
+nothing queued: `metal_readback_geom()` returns at once on an empty
+queue, which is almost every draw.
 
-*Evidence:* `draw3dbench`'s last two lines agree between providers.
-Negative control: revert the fix, confirm the protocol row returns to
-0 / 16166.
+*Evidence*, `draw3dbench`'s readback line, the `layer draw` column:
+
+```
+before  software layer draw=210183   protocol layer draw=0
+after   software layer draw=210183   protocol layer draw=209696
+```
+
+209696 against 210183 is 0.2%, the same order of difference the
+provider-agreement checks already show between GPU and software
+rasterisation. *Negative control*: reverting the two lines returns the
+protocol column to 0, confirmed by rebuilding `emu` both ways.
+
+It costs nothing measurable. `gorge -b -D` is 2358 µs a frame against
+the 2408 recorded above.
+
+**What this unblocks.** Until now a `readpixels` of a GPU pass could not
+be trusted, so every in-process check was blind to what the GPU actually
+drew and the only way to see it was to photograph the screen. That is
+no longer true, and Phase 2b below now has a reproducer that is two
+commands and a number.
 
 ### Phase 4 — close the z gap in the Limbo fallback
 

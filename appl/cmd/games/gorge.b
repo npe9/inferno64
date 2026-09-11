@@ -191,6 +191,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		"-t" =>	mode = 1;
 		"-b" =>	mode = 2;
 		"-s" =>	mode = 3;
+		"-g" =>	mode = 4;
 		"-q" =>	audio = -1;
 		"-S" =>	forced = Draw3d->PATH;
 		"-D" =>	wantdev = 1;
@@ -288,6 +289,8 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	1 =>	selftest();
 		return;
 	3 =>	shot();
+		return;
+	4 =>	gpushot();
 		return;
 	}
 	if(mode == 2){
@@ -971,8 +974,18 @@ gpushot()
 	for(i = 0; i < w*h; i++)
 		if(b[i*bpp] != sk0 || b[i*bpp+1] != sk1 || b[i*bpp+2] != sk2)
 			lit++;
-	sys->fprint(fd, "gorge -g: provider %s, non-sky pixels %d of %d\n",
-		provider, lit, w*h);
+	# The head-up display is white text, and it is the part that goes
+	# missing when the GPU path composes the frame in the wrong order:
+	# geometry drained at present time paints over everything the CPU
+	# drew into the same image.  Counting near-white pixels turns "the
+	# HUD is gone" from something you have to see into a number, and
+	# makes the two providers comparable without a camera.
+	white := 0;
+	for(i = 0; i < w*h; i++)
+		if(int b[i*bpp] > 200 && int b[i*bpp+1] > 200 && int b[i*bpp+2] > 200)
+			white++;
+	sys->fprint(fd, "gorge -g: provider %s, non-sky pixels %d of %d, HUD pixels %d\n",
+		provider, lit, w*h, white);
 	rd := sys->create("gorge.gpu.raw", Sys->OWRITE, 8r666);
 	if(rd == nil)
 		sys->fprint(fd, "gorge -g: create: %r\n");

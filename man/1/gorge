@@ -9,6 +9,8 @@ gorge \- fly a canyon, in real 3-D
 .B -b
 |
 .B -s
+|
+.B -g
 ] [
 .B -q
 ] [
@@ -84,6 +86,33 @@ see BUGS.
 .IR draw3dbench (1),
 .IR tiles (2),
 .IR rivet (1)
+.SS Looking at what the GPU actually drew
+.B -g
+plays ninety frames into the window, reads the window back, and writes
+it to
+.B gorge.gpu.raw
+as 32-bit BGRX, reporting how many pixels are not sky and how many are
+white.
+The white count is the head-up display, and it is the one that matters:
+.IP
+.EX
+games/gorge -g -S   -> non-sky 289920 of 290928, HUD pixels 1277
+games/gorge -g -D   -> non-sky 290835 of 290928, HUD pixels 0
+.EE
+.PP
+The device provider draws geometry and loses everything the program drew
+after it, because the geometry queue is drained at present time rather
+than when the drawing that belongs on top of it happens.
+Until that is fixed this is the reproducer, and it needs no camera:
+before it existed the only way to see the fault was to photograph the
+screen from outside
+.IR emu ,
+since a
+.B readpixels
+of a GPU pass returned nothing.
+See
+.B /doc/draw3d-adoption-plan.md
+Phase 2b.
 .SH DIAGNOSTICS
 .B -b
 draws the same scene into the window as fast as it will go, with no
