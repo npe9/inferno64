@@ -1,0 +1,89 @@
+.TH TKBENCH 1
+.SH NAME
+tkbench \- time a widget repaint
+.SH SYNOPSIS
+.B tkbench
+[
+.B -v
+]
+.SH DESCRIPTION
+.I Tkbench
+measures what it costs to redraw a widget, under each of
+.IR style (9)'s
+two looks.
+The question it was written for is whether
+.I libtk
+should be drawing on the GPU: it draws with
+.I memdraw
+which is scalar C, and nothing in the tree had ever timed it, so
+"fast enough" was an inference from what the work looks like rather than
+a number.
+.PP
+It builds a toplevel offscreen, over an ordinary image rather than the
+display's screen, the same way
+.IR tkofftest (1)
+and
+.IR tkgallery (1)
+do.
+.B "style \fIthe style it already has\fP"
+is the repaint trigger:
+.I tkstylecmd
+marks every widget dirty and calls
+.IR tkupdate ,
+so one call is one full-tree repaint, which is the thing being measured
+and is otherwise awkward to provoke.
+.PP
+.B -v
+prints the repetition count and elapsed time behind each figure.
+.SS The number that means something is the slope
+For each widget it reports the repaint time of a toplevel holding a few
+of them, the same holding many, and
+.B each
+\(em the difference divided by the difference in count.
+Only
+.B each
+is free of the fixed cost of a repaint, which is about 60
+.RI \(mc s
+and swamps a single widget.
+.PP
+The first version of this subtracted an empty toplevel instead, and the
+figures were noise: the scaling control reported one widget's cost at
+336937 per cent of an eighth of eight of them, which is a measurement
+saying it is worthless.
+A slope between two counts cancels the fixed cost without relying on two
+separately measured runs agreeing.
+.SH EXAMPLE
+.EX
+emu\-cocoa \-r. /dis/sh.dis \-c tkbench
+.EE
+.SH SOURCE
+.B /appl/cmd/tkbench.b
+.SH SEE ALSO
+.IR style (9),
+.IR tkgallery (1),
+.IR tkofftest (1)
+.SH BUGS
+It needs a window system to allocate a display, so it runs under
+.I emu\-cocoa
+and not
+.IR emu\-g ,
+even though it draws nothing on the screen.
+.PP
+It times the DRAWING only.
+What it costs to get those pixels onto the display \(em the Metal upload
+and present in
+.B emu/MacOSX/win\-cocoa.m
+\(em is not measured here and is not included in any figure, so these
+numbers are a lower bound on what a frame costs.
+.PP
+A widget packed outside the window might be clipped and never drawn,
+which would make an expensive widget look cheap.
+Nothing detects that automatically; the two counts are reported beside
+the slope so that a figure which does not grow with the count is visible
+as such.
+.PP
+The clock is
+.I sys->millisec
+and so has millisecond resolution.
+Each figure is a loop run for at least 600ms to get below that, which
+makes a full run take about half a minute.

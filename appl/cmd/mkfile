@@ -76,6 +76,7 @@ TARG=\
 	limborepl.dis\
 	draw3dbench.dis\
 	draw3dsafetest.dis\
+	tkbench.dis\
 	tkgallery.dis\
 	drawbind.dis\
 	dossrv.dis\
