@@ -1,0 +1,42 @@
+.TH TCPSERVE 1
+.SH NAME
+tcpserve \- accept one TCP connection and answer it
+.SH SYNOPSIS
+.B tcpserve
+[
+.I address
+]
+.SH DESCRIPTION
+.I Tcpserve
+announces on
+.I address
+\(em
+.B tcp!*!6666
+by default \(em waits for one connection, writes a line to it and
+exits.  It exists to test the half of the network stack that nothing
+else in the kernel root uses.
+.PP
+Every command written for the cloud so far dials out:
+.IR hget (1)
+and
+.IR gcs (1)
+make connections,
+.IR cloudfs (4)
+reads a service, and
+.IR cloudinit (1)
+takes a lease.  None of them listens, so
+.B announce
+and
+.B accept
+were never exercised on a native kernel at all.  They work: run under
+QEMU with a forwarded port, a client on the host connects and reads
+.BR INFERNO-ACCEPTED-YOUR-CONNECTION .
+.SH SOURCE
+.B /appl/cmd/tcpserve.b
+.SH SEE ALSO
+.IR styxlisten (1),
+.IR dial (2)
+.SH BUGS
+One connection, then it exits.  That is the point of it; anything that
+wants to serve should use
+.IR styxlisten (1).

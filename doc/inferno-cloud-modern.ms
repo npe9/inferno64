@@ -233,3 +233,62 @@ need a supervisor, a retry policy and a naming service to be usable in
 practice, then the four layers have been reinvented rather than
 removed, and the honest conclusion is that they were load-bearing all
 along.
+.NH 2
+Phase 2 so far: the listening half works, styxlisten does not
+.LP
+Item 5 is
+.CW styxlisten
+in the root and a service that exports a namespace.  The root now
+carries
+.CW styxlisten
+and
+.CW export ,
+and the piece underneath them is proved: nothing this branch had
+written for the cloud ever listened \(em
+.CW hget ,
+.CW gcs ,
+.CW cloudfs
+and
+.CW cloudinit
+all dial out \(em so
+.CW announce()
+and
+.CW accept()
+had never run on a native kernel.
+.CW tcpserve (1)
+and
+.CW scripts/check-pc64-tcp.sh
+run them: with a forwarded port, a client on the host connects to the
+kernel and reads back
+.CW INFERNO-ACCEPTED-YOUR-CONNECTION .
+.PP
+.CW styxlisten
+itself does not yet serve, and the shape of the failure is recorded
+here rather than guessed at.  It prints no diagnostic \(em not its own
+.CW "cannot announce on" ,
+which is the only thing it says when
+.CW dial->announce
+fails \(em and no listener appears in
+.CW /net/tcp ,
+with or without
+.CW -s ,
+whose synchronous path keeps the listener in the foreground.  With a
+command that exits immediately
+.CW ( "styxlisten -A tcp!*!6666 echo hi" )
+the command runs and the shell returns, so
+.CW popen()
+is reached, which puts the failure after the announce rather than
+before it.  The same address under
+.CW tcpserve
+announces and accepts without trouble, so it is not the address and it
+is not the stack.
+.PP
+The next thing to look at is
+.CW dial->netmkaddr(addr,
+.CW "tcp" ,
+.CW "styx") ,
+which is the one transformation
+.CW styxlisten
+applies and
+.CW tcpserve
+does not.

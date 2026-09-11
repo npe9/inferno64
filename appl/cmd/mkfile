@@ -152,6 +152,7 @@ TARG=\
 	styxchat.dis\
 	styxmon.dis\
 	styxlisten.dis\
+	tcpserve.dis\
 	sum.dis\
 	tac.dis\
 	tail.dis\

@@ -288,6 +288,7 @@ root
 	/dis/gcs.dis
 # export a namespace over a connection, and answer one: the pair that
 # makes a second instance able to mount this one's files
+	/dis/tcpserve.dis
 	/dis/styxlisten.dis
 	/dis/export.dis
 	/dis/hget.dis

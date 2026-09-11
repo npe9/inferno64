@@ -501,6 +501,7 @@ tail tail
 take sh-string
 talons talons
 task wm-misc
+tcpserve tcpserve
 tcs tcs
 tee tee
 telnet telnet
