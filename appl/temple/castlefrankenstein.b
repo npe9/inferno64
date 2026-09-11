@@ -53,6 +53,10 @@ MONS: con 10;
 VIEWW: con 24;
 VIEWH: con 18;
 SCRN_SCALE: con 512;
+# The screen SCRN_SCALE was written for.  TempleOS had one size; this
+# has a window, and the scale has to be read as a field of view rather
+# than as a number of pixels.
+SCRN_W:	con 640;
 WALL_H: con 1.0;
 PI: con 3.141592653589793;
 NEAR: con 0.05;
@@ -482,14 +486,29 @@ setup3d(img: ref Image)
 	draw3d->mode(Draw3d->MODEL);
 	draw3d->loadmatrix(view);
 
-	# frustumoffset's sx/sy are NDC-per-world-unit; dividing SCRN_SCALE by
-	# the current viewport half-extent here (rather than baking a fixed
-	# scale into the matrix) reproduces the old per-vertex "/d3c.mx"/"/d3c.my"
-	# exactly, including on resize.
+	# frustumoffset's sx/sy are NDC per world unit.
+	#
+	# This used to divide SCRN_SCALE by the viewport half-extent, which
+	# cancels: screen x came out as (SCRN_SCALE/2)*x/w whatever the
+	# window was, so the world was drawn at a FIXED pixel size and a
+	# bigger window just got more black around the edges.  That is what
+	# "reproduces the old per-vertex /d3c.mx exactly, including on
+	# resize" preserved, and on a 640x480 screen it was invisible
+	# because there was only ever one size.
+	#
+	# SCRN_SCALE is a field of view, not a pixel count.  Divided by the
+	# screen it was written for it gives a constant NDC scale, so the
+	# same view fills whatever window it is given.  At 640x480 the two
+	# forms are identical, which is the check.
+	#
+	# sy is sx times the window's own ratio, because viewport() maps NDC
+	# to half the width and half the height independently - that is what
+	# keeps the pixels square, and a castle a castle.
 	draw3d->mode(Draw3d->PROJ);
 	draw3d->identity();
-	draw3d->frustumoffset((real SCRN_SCALE/2.0) / d3c.mx,
-		-(real SCRN_SCALE/2.0) / d3c.my, FOCAL_OFFSET);
+	sx := (real SCRN_SCALE/2.0) / (real SCRN_W/2.0);
+	draw3d->frustumoffset(sx,
+		-sx * real img.r.dx() / real img.r.dy(), FOCAL_OFFSET);
 }
 
 solid(mx, my: int): int
@@ -715,12 +734,39 @@ redraw()
 	img.line(Point(o.x+cx, o.y+cy-6), Point(o.x+cx, o.y+cy+6), 0, 0, 0, yellow, Point(0, 0));
 
 	# TempleOS keeps its tactical map in the lower-right corner.
-	mmx := o.x + w - 2*MW - 4;
-	mmy := o.y + h - 2*MH - 22;
+	#
+	# It scales with the window, and it keeps its own shape while doing
+	# it.  ONE scale for both axes, so MW by MH cells always comes out
+	# MW:MH however the window is shaped - a scale worked out per axis
+	# would fill the corner nicely and draw a square castle as an
+	# oblong, which is worse than being small.
+	#
+	# The size is the largest whole number of pixels a cell that keeps
+	# the map inside a sixth of the window each way.  A sixth rather
+	# than some rounder fraction because it is the one that gives back
+	# exactly the two pixels a cell this had before at 640x480 - the
+	# size it was drawn and tuned at - so the original window is
+	# reproduced to the pixel and only bigger ones change.  A quarter
+	# was tried first and gives three there, which is a nicer-looking
+	# map and is not the same picture.
+	ms := (w/6) / MW;
+	if((h/6) / MH < ms)
+		ms = (h/6) / MH;
+	if(ms < 2)
+		ms = 2;
+	if(ms > 10)
+		ms = 10;
+	# A cell is a pixel short of the pitch, which is what draws the grid
+	# lines.  At ms == 2 that is the single pixel it always was.
+	mcell := ms - 1;
+	if(mcell < 1)
+		mcell = 1;
+	mmx := o.x + w - ms*MW - 4;
+	mmy := o.y + h - ms*MH - 22;
 	# This backing deliberately differs from the black world clear.  The Metal
 	# compositor identifies post-3D overlays by their difference from that
 	# snapshot, so an identical black backing would incorrectly let walls show.
-	img.draw(Rect((mmx-2, mmy-2), (mmx+2*MW+2, mmy+2*MH+2)), hudbg, nil, Point(0, 0));
+	img.draw(Rect((mmx-2, mmy-2), (mmx+ms*MW+2, mmy+ms*MH+2)), hudbg, nil, Point(0, 0));
 	for(my = 0; my < MH; my++)
 		for(mx = 0; mx < MW; mx++){
 			if(map[my][mx] == T_EMPTY)
@@ -732,21 +778,24 @@ redraw()
 				mc = blue;
 			else if(map[my][mx] == T_STATUE)
 				mc = yellow;
-			if(visible[my][mx])
-				img.draw(Rect((mmx+2*mx, mmy+2*my), (mmx+2*mx+1, mmy+2*my+1)), mc, nil, Point(0, 0));
-			else
-				img.draw(Rect((mmx+2*mx, mmy+2*my), (mmx+2*mx+1, mmy+2*my+1)), fog, nil, Point(0, 0));
+			if(!visible[my][mx])
+				mc = fog;
+			img.draw(Rect((mmx+ms*mx, mmy+ms*my),
+				(mmx+ms*mx+mcell, mmy+ms*my+mcell)), mc, nil, Point(0, 0));
 		}
 	for(mi := 0; mi < MONS; mi++)
 		if(!mon_dead[mi])
-			img.draw(Rect((mmx+2*cell(mon_x[mi]), mmy+2*cell(mon_y[mi])),
-				(mmx+2*cell(mon_x[mi])+1, mmy+2*cell(mon_y[mi])+1)), red, nil, Point(0, 0));
-	img.draw(Rect((mmx+2*cell(man_x), mmy+2*cell(man_y)),
-		(mmx+2*cell(man_x)+1, mmy+2*cell(man_y)+1)), cyan, nil, Point(0, 0));
-	# facing tick
-	ex := mmx + 2*cell(man_x) + int(math->cos(cam_a)*3.0);
-	ey := mmy + 2*cell(man_y) - int(math->sin(cam_a)*3.0);
-	img.line(Point(mmx+2*cell(man_x), mmy+2*cell(man_y)), Point(ex, ey), 0, 0, 0, yellow, Point(0, 0));
+			img.draw(Rect((mmx+ms*cell(mon_x[mi]), mmy+ms*cell(mon_y[mi])),
+				(mmx+ms*cell(mon_x[mi])+mcell,
+				 mmy+ms*cell(mon_y[mi])+mcell)), red, nil, Point(0, 0));
+	img.draw(Rect((mmx+ms*cell(man_x), mmy+ms*cell(man_y)),
+		(mmx+ms*cell(man_x)+mcell, mmy+ms*cell(man_y)+mcell)), cyan, nil, Point(0, 0));
+	# facing tick, the same length in cells whatever the scale
+	mpx := mmx + ms*cell(man_x) + mcell/2;
+	mpy := mmy + ms*cell(man_y) + mcell/2;
+	ex := mpx + int(math->cos(cam_a) * real ms * 1.5);
+	ey := mpy - int(math->sin(cam_a) * real ms * 1.5);
+	img.line(Point(mpx, mpy), Point(ex, ey), 0, 0, 0, yellow, Point(0, 0));
 
 	if(font != nil){
 		img.draw(Rect((o.x, o.y+h-20), (o.x+w, o.y+h)), hudbg, nil, Point(0, 0));
