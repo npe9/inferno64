@@ -54,9 +54,6 @@ static uvlong	gicrbase, gicrlen;
 static uvlong	gicitsbase;
 static int	gicversion;
 
-static ulong	ridbase, devidbase, ridcount;
-static int	haveridmap;
-static int	ridviasmmu;		/* the map goes through an SMMU */
 
 static int	tablesfound;
 static uvlong	rsdppa;			/* where the loader said they are */
@@ -161,13 +158,140 @@ madt(void)
  *
  * A root complex node carries a list of id mappings; each says that
  * inputs from base for count map to outputs from base on some other
- * node, named by an offset from the start of the table.  Follow that
- * reference: an ITS group node is the end of the walk, and an SMMU in
- * between means the real map is the composition of two, which this does
- * not do.  It says so rather than composing the first one and hoping,
- * because a wrong DeviceID is an interrupt that is delivered to some
- * other device's vector.
+ * node, named by an offset from the start of the table.  A mapping that
+ * points at an ITS group is the end of the walk.  One that points at an
+ * SMMU is not: the requester's DeviceID is then the composition of two
+ * mappings, the root complex's requester-id-to-StreamID and the SMMU's
+ * StreamID-to-DeviceID, and the result is the intersection of the two
+ * ranges rather than either of them.  A root complex can have both
+ * kinds, which is exactly what QEMU's -M virt,iommu=smmuv3 produces and
+ * what an Ampere Altra has.
+ *
+ * So this keeps a list of windows rather than one window.  Composing is
+ * not optional on a machine like that: QEMU's direct window covers
+ * 0x100..0xffff and every device on bus 0 is below it, so a board that
+ * read only the direct window refused them all and they fell back to
+ * INTx -- correctly, and silently.
  */
+
+enum {
+	Nwindow		= 16,		/* composed windows kept */
+	Smsingle	= 1<<0,		/* mapping flags: Single Mapping */
+};
+
+static struct {
+	ulong	rid;			/* first requester id covered */
+	ulong	count;			/* how many */
+	ulong	devid;			/* what the first one becomes */
+	int	single;			/* every rid maps to devid, not devid+i */
+	int	viasmmu;		/* composed through an SMMU */
+} window[Nwindow];
+static int	nwindow;
+static int	windowlost;		/* more than Nwindow of them */
+static int	smmuskipped;		/* a mapping shape not composed */
+
+static void
+addwindow(ulong rid, ulong count, ulong devid, int single, int viasmmu)
+{
+	if(count == 0)
+		return;
+	if(nwindow >= Nwindow){
+		windowlost++;
+		return;
+	}
+	window[nwindow].rid = rid;
+	window[nwindow].count = count;
+	window[nwindow].devid = devid;
+	window[nwindow].single = single;
+	window[nwindow].viasmmu = viasmmu;
+	nwindow++;
+}
+
+/*
+ * Which of an SMMUv3 node's mappings is the SMMU's own MSI DeviceID
+ * rather than a translation for the devices behind it, or -1 when none
+ * is.  Composing that one maps device traffic onto the SMMU's own event
+ * vector.
+ *
+ * Three conditions, all of them from the spec and all of them load
+ * bearing on the machine in front of this: the field only exists from
+ * node revision 1, it is ignored when all four of the SMMU's control
+ * interrupts are wired (which is how QEMU's virt wires them -- event
+ * 106, PRI 107, GERR 109, sync 108, so the index of 0 in its table is
+ * not an index at all and taking it would have discarded the only
+ * mapping the node has), and it has to be inside the mapping array.
+ */
+static int
+smmudidindex(uchar *node, uint len, uint nmap)
+{
+	uint idx;
+
+	if(node[0] != Iortsmmuv3 || node[3] < 1 || len < 68)
+		return -1;
+	if(le32(node+44) != 0 && le32(node+48) != 0 &&
+	   le32(node+52) != 0 && le32(node+56) != 0)
+		return -1;
+	idx = le32(node+64);
+	if(idx >= nmap)
+		return -1;
+	return (int)idx;
+}
+
+/*
+ * Compose one root-complex mapping with the mappings of the SMMU node
+ * it points at.
+ *
+ * The root complex turns requester ids [rid, rid+count) into StreamIDs
+ * [sid, sid+count).  Each of the SMMU's mappings turns StreamIDs
+ * [sb, sb+n) into DeviceIDs [db, db+n).  What comes out is one window
+ * per overlapping pair, and the overlap is computed rather than assumed:
+ * on QEMU the root complex offers 0..0xff and the SMMU accepts
+ * 0..0xffff, so the answer is 0..0xff, but an Altra's SMMU is one of
+ * several and each accepts a slice.
+ */
+static void
+compose(uchar *e, uchar *smmu, ulong rid, ulong count, ulong sid)
+{
+	uchar *map;
+	uint nmap, mapoff, len, j;
+	int didx;
+	ulong sb, n, db, lo, hi;
+
+	len = le16(smmu+1);
+	nmap = le32(smmu+8);
+	mapoff = le32(smmu+12);
+	if(mapoff == 0 || smmu + mapoff > e)
+		return;
+	didx = smmudidindex(smmu, len, nmap);
+	for(j = 0; j < nmap; j++){
+		if((int)j == didx)
+			continue;
+		map = smmu + mapoff + j*20;
+		if(map + 20 > e)
+			break;
+		db = le32(map+8);
+		if(le32(map+16) & Smsingle){
+			/*
+			 * Every StreamID the SMMU sees becomes one
+			 * DeviceID, so every requester id in this
+			 * mapping does too.  Input base and count are
+			 * meaningless when this bit is set and reading
+			 * them as a range gives a one-requester window
+			 * that looks plausible.
+			 */
+			addwindow(rid, count, db, 1, 1);
+			continue;
+		}
+		sb = le32(map+0);
+		n = (ulong)le32(map+4) + 1;
+		lo = sid > sb ? sid : sb;
+		hi = sid + count < sb + n ? sid + count : sb + n;
+		if(lo >= hi)
+			continue;
+		addwindow(rid + (lo - sid), hi - lo, db + (lo - sb), 0, 1);
+	}
+}
+
 static void
 iort(void)
 {
@@ -176,6 +300,7 @@ iort(void)
 	uchar *t, *e, *node, *map, *out;
 	uint nnode, off, nmap, mapoff, outref;
 	int i, j;
+	ulong rid, count, ob;
 
 	t = acpitable("IORT");
 	if(t == nil)
@@ -199,38 +324,28 @@ iort(void)
 			map = node + mapoff + j*20;
 			if(map + 20 > e)
 				break;
-			/*
-			 * One hop, and every mapping of the node is looked
-			 * at rather than stopping at the first useful one.
-			 *
-			 * A mapping that points straight at an ITS group is
-			 * a window this board can use.  One that points at
-			 * an SMMU means the real map for those requesters
-			 * is the composition of this mapping with the
-			 * SMMU's own, which is not implemented -- and a
-			 * root complex can have both, which is exactly what
-			 * QEMU's -M virt,iommu=smmuv3 produces.  There the
-			 * direct window is 0x100..0xffff and the devices
-			 * below it go through the SMMU, so taking the first
-			 * ITS mapping and stopping would have hidden the
-			 * fact that half the bus is unreachable.  It is not
-			 * composed and it is not guessed: a DeviceID wrong
-			 * by a constant is an interrupt delivered to some
-			 * other device's vector, and ridtodevid() refusing
-			 * a requester outside the window costs that device
-			 * MSI and nothing else.
-			 */
 			outref = le32(map+12);
 			if(outref == 0 || t + outref + 16 > e)
 				continue;
 			out = t + outref;
-			if(out[0] == Iortits && !haveridmap){
-				ridbase = le32(map+0);
-				ridcount = le32(map+4) + 1;
-				devidbase = le32(map+8);
-				haveridmap = 1;
-			} else if(out[0] == Iortsmmu || out[0] == Iortsmmuv3)
-				ridviasmmu = 1;
+			rid = le32(map+0);
+			count = (ulong)le32(map+4) + 1;
+			ob = le32(map+8);
+			if(le32(map+16) & Smsingle){
+				/*
+				 * A root complex with Single Mapping set has
+				 * no requester range to compose: every id it
+				 * produces is one output, and the table does
+				 * not say which ids it produces.  Counted and
+				 * reported rather than guessed at.
+				 */
+				smmuskipped++;
+				continue;
+			}
+			if(out[0] == Iortits)
+				addwindow(rid, count, ob, 0, 0);
+			else if(out[0] == Iortsmmuv3 || out[0] == Iortsmmu)
+				compose(e, out, rid, count, ob);
 		}
 	next:
 		if(le16(node+1) == 0)
@@ -272,9 +387,23 @@ acpifind(void)
 	iort();
 }
 
+/* how many of the windows came through an SMMU */
+static int
+smmucomposed(void)
+{
+	int i, n;
+
+	for(n = 0, i = 0; i < nwindow; i++)
+		if(window[i].viasmmu)
+			n++;
+	return n;
+}
+
 void
 acpireport(void)
 {
+	int i;
+
 	if(!tablesfound){
 		if(bootconfline("*acpi=") != nil)
 			print("acpi: the rsdp the loader passed is not one\n");
@@ -289,12 +418,28 @@ acpireport(void)
 			gicrbase, gicrlen, (uintptr)GICR);
 	if(gicitsbase != 0)
 		print("acpi: madt its @ %#llux, ACPI-ITS-OK\n", gicitsbase);
-	if(haveridmap)
-		print("acpi: iort rid %#lux..%#lux -> devid %#lux, ACPI-IORT-OK\n",
-			ridbase, ridbase + ridcount - 1, devidbase);
-	if(ridviasmmu)
-		print("acpi: iort also maps requesters through an smmu;"
-			" those keep intx\n");
+	for(i = 0; i < nwindow; i++){
+		if(window[i].single)
+			print("acpi: iort rid %#lux..%#lux -> devid %#lux for all"
+				" via smmu, ACPI-IORT-OK\n",
+				window[i].rid, window[i].rid + window[i].count - 1,
+				window[i].devid);
+		else
+			print("acpi: iort rid %#lux..%#lux -> devid %#lux%s,"
+				" ACPI-IORT-OK\n",
+				window[i].rid, window[i].rid + window[i].count - 1,
+				window[i].devid,
+				window[i].viasmmu ? " via smmu" : "");
+	}
+	if(nwindow > 0 && smmucomposed())
+		print("acpi: iort composed %d of %d window(s) through an smmu,"
+			" ACPI-IORT-SMMU-OK\n", smmucomposed(), nwindow);
+	if(windowlost > 0)
+		print("acpi: iort has %d more window(s) than this board keeps;"
+			" those requesters keep intx\n", windowlost);
+	if(smmuskipped > 0)
+		print("acpi: iort has %d mapping(s) in a shape this board does"
+			" not compose; those requesters keep intx\n", smmuskipped);
 	/*
 	 * Whether the tables are inside the memory the allocator owns.
 	 *
@@ -320,7 +465,7 @@ acpireport(void)
 				" ACPI-OUTSIDE-HEAP\n",
 				rsdppa, (uintptr)conf.topofmem);
 	}
-	if(gicdbase == 0 && gicitsbase == 0 && !haveridmap)
+	if(gicdbase == 0 && gicitsbase == 0 && nwindow == 0)
 		print("acpi: tables carry nothing this board reads\n");
 }
 
@@ -336,13 +481,44 @@ acpiits(void)
 	return gicitsbase;
 }
 
+/*
+ * How many windows the IORT gave, and what a requester id becomes.
+ *
+ * Two calls rather than one because the caller has to be able to tell
+ * "the table says nothing, fall back" from "the table says this
+ * requester is not covered".  They are not the same answer: a board
+ * with no IORT uses the identity, which is right often enough to boot,
+ * and a board whose IORT does not cover a requester must refuse it --
+ * a DeviceID wrong by a constant is an interrupt delivered to another
+ * device's vector, where refusing costs that one device MSI.
+ *
+ * The lookup takes a requester id and nothing else, which is the limit
+ * worth stating: an IORT can have several root complexes distinguished
+ * by PCI segment number, and this collapses them into one list.  On a
+ * machine with one segment -- QEMU, and a single-socket Altra -- that
+ * is the same thing.  On a multi-segment machine it is not, and the
+ * segment would have to come down from the PCI code, which does not
+ * carry one.
+ */
 int
-acpiridmap(ulong *rid, ulong *devid, ulong *count)
+acpinwindow(void)
 {
-	if(!haveridmap)
-		return 0;
-	*rid = ridbase;
-	*devid = devidbase;
-	*count = ridcount;
-	return 1;
+	return nwindow;
+}
+
+int
+acpiridtodevid(ulong rid, ulong *devid)
+{
+	int i;
+
+	for(i = 0; i < nwindow; i++){
+		if(rid < window[i].rid || rid >= window[i].rid + window[i].count)
+			continue;
+		if(window[i].single)
+			*devid = window[i].devid;
+		else
+			*devid = window[i].devid + (rid - window[i].rid);
+		return 1;
+	}
+	return 0;
 }

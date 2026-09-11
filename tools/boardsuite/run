@@ -59,7 +59,7 @@ verbose=false
 record=false
 force=false
 
-configs='raspi3b raspi3b-4g raspi3b-usb raspi3b-2eth raspi4 raspi4-hot raspi4-usb raspi4-2eth virtarm64 virtarm64-msi virtarm64-nvme virtarm64-xhci virtarm64-gicv3 virtarm64-efi virtarm64-noscan virtarm64-acpi virtarm64-peer sifiveu virt virts virt32 virt32s virt-peer peer-mixed'
+configs='raspi3b raspi3b-4g raspi3b-usb raspi3b-2eth raspi4 raspi4-hot raspi4-usb raspi4-2eth virtarm64 virtarm64-msi virtarm64-nvme virtarm64-xhci virtarm64-gicv3 virtarm64-efi virtarm64-noscan virtarm64-acpi virtarm64-smmu virtarm64-peer sifiveu virt virts virt32 virt32s virt-peer peer-mixed'
 
 # Each configuration: the kernel, the QEMU arguments, the line that
 # says the board is done printing, and the evidence lines that make
@@ -207,7 +207,7 @@ config_kernel() {
 	# bootkern() has always read, and "mk ivirtarm64.a" in the board
 	# directory makes it from the same objects as the ELF.  Naming it
 	# here is also what puts it under the staleness check.
-	virtarm64-efi|virtarm64-noscan|virtarm64-acpi)
+	virtarm64-efi|virtarm64-noscan|virtarm64-acpi|virtarm64-smmu)
 				echo "$root/os/inferno/virtarm64/ivirtarm64.a";;
 	sifiveu)		echo "$root/os/inferno/sifiveu/isifiveu";;
 	virt|virt-peer|peer-mixed)
@@ -230,7 +230,7 @@ config_kernel() {
 config_qemu() {
 	case $1 in
 	raspi*)			echo "$QEMU";;
-	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-efi|virtarm64-noscan|virtarm64-acpi|virtarm64-peer)
+	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-efi|virtarm64-noscan|virtarm64-acpi|virtarm64-smmu|virtarm64-peer)
 				echo "${QEMU_AARCH64:-`command -v qemu-system-aarch64`}";;
 	sifiveu|virt|virts|virt-peer|peer-mixed)
 				echo "${QEMU_RISCV64:-`command -v qemu-system-riscv64`}";;
@@ -360,7 +360,7 @@ config_args() {
 		# partial boot should carry as little that can drift as
 		# possible.
 		echo "-M virt -cpu cortex-a57 -m 1G -drive if=pflash,format=raw,unit=0,file=$fwdir/edk2-aarch64-code.fd,readonly=on -drive if=pflash,format=raw,unit=1,file=$work/vars.fd -drive file=$work/esp.img,format=raw,if=none,id=esp0 -device virtio-blk-pci,drive=esp0 -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-pci,disable-legacy=on,drive=blk0";;
-	virtarm64-acpi)
+		virtarm64-acpi)
 		# No device tree anywhere, and a GICv3 with an ITS.
 		#
 		# This is the arm that is about SystemReady rather than
@@ -377,6 +377,17 @@ config_args() {
 		# the MADT describes but this board reads out of the tree,
 		# and the MADT's ITS entry only exists on a version 3.
 		echo "-M virt,gic-version=3 -cpu cortex-a57 -m 1G -drive if=pflash,format=raw,unit=0,file=$fwdir/edk2-aarch64-code.fd,readonly=on -drive if=pflash,format=raw,unit=1,file=$work/vars.fd -drive file=$work/esp.img,format=raw,if=none,id=esp0 -device virtio-blk-pci,drive=esp0 -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-pci,disable-legacy=on,drive=blk0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-pci,disable-legacy=on,netdev=n0";;
+	virtarm64-smmu)
+		# The same machine with an SMMUv3 in front of the PCI bus,
+		# which is the machine shape an Ampere Altra has and the
+		# one the IORT's second half describes.  Under iommu=smmuv3
+		# QEMU's root complex node carries two kinds of mapping: a
+		# direct window to the ITS for requester ids 0x100..0xffff,
+		# and a path through the SMMUv3 node for everything below
+		# it -- which is where every device on bus 0 is.  A board
+		# that reads only the direct window refuses those and they
+		# fall back to INTx.
+		echo "-M virt,gic-version=3,iommu=smmuv3 -cpu cortex-a57 -m 1G -drive if=pflash,format=raw,unit=0,file=$fwdir/edk2-aarch64-code.fd,readonly=on -drive if=pflash,format=raw,unit=1,file=$work/vars.fd -drive file=$work/esp.img,format=raw,if=none,id=esp0 -device virtio-blk-pci,drive=esp0 -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-pci,disable-legacy=on,drive=blk0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-pci,disable-legacy=on,netdev=n0";;
 	virtarm64-msi)
 		# The same board with both devices on PCI rather than one
 		# on PCI and one on virtio-mmio, which is what makes this
@@ -641,7 +652,7 @@ config_last() {
 	raspi4-2eth)		echo 'USB-MOUSE'; echo 'RASPI4-SH-OK';;
 	raspi4|raspi4-hot)	echo 'USB-MOUSE';;
 	raspi4-usb)		echo 'RASPI4-SH-OK';;
-	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-efi|virtarm64-noscan|virtarm64-acpi|virtarm64-peer)	echo 'ROOT-CMDS-OK';;
+	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-efi|virtarm64-noscan|virtarm64-acpi|virtarm64-smmu|virtarm64-peer)	echo 'ROOT-CMDS-OK';;
 	virt|virts|virt-peer|peer-mixed)	echo 'ROOT-CMDS-OK';;
 	sifiveu)		echo 'SIFIVEU-SH-OK';;
 	virt32|virt32s)		echo 'VIRT32-INIT-OK';;
@@ -1018,6 +1029,36 @@ config_evidence() {
 		# stopped it, which on a real machine is the interesting
 		# fact: type 5 is EfiRuntimeServicesCode here.
 		echo 'usable to 0x[0-9a-f]+, stopped by efi type 0x[0-9a-f]+';;
+	virtarm64-smmu)
+		# The same tables read on a machine with an SMMUv3 in front
+		# of the bus, where the IORT's answer is a composition and
+		# not a window.  QEMU's root complex sends requester ids
+		# 0..0xff through the SMMUv3 node and 0x100..0xffff
+		# straight to the ITS; the SMMU's own mapping takes
+		# StreamIDs 0..0xffff to DeviceIDs 0..0xffff.  Composed,
+		# that is two windows, and the first of them is the one
+		# every device on bus 0 needs.
+		echo 'fdt: no device tree'
+		echo 'acpi: iort rid 0x0\.\.0xff -> devid 0x0 via smmu, ACPI-IORT-OK'
+		echo 'acpi: iort rid 0x100\.\.0xffff -> devid 0x100, ACPI-IORT-OK'
+		echo 'acpi: iort composed 1 of 2 window\(s\) through an smmu, ACPI-IORT-SMMU-OK'
+		# What the composition buys, and the only part of it this
+		# machine can prove.  The disk's requester id is 0x08, below
+		# the direct window, so a board that read only that window
+		# refused it and it fell back to INTx -- correctly, and
+		# without saying so.  Now it takes an LPI and the interrupt
+		# arrives.
+		#
+		# The VALUES are not proved here and the reason is the one
+		# the direct window has: QEMU's composed map is the
+		# identity, which is also what ridtodevid() would produce
+		# with no table at all.  What is proved is that the
+		# requester is covered where it was refused, and that the
+		# vector the composition produced is delivered.
+		echo 'sdF: first interrupt, irq 819[0-9] msi-x'
+		echo 'BLK-OK /dev/sdF0/data'
+		echo 'DHCP-OK'
+		echo 'ACPI-OUTSIDE-HEAP';;
 	virtarm64-noscan)
 		# The scan is off, the tree was not found, and the board
 		# booted anyway on its compiled-in constants.  All three
@@ -1399,7 +1440,7 @@ config_hostnet() {
 	# inbound halves all dial the host rig, and without it the
 	# board reported TCP-NET-FAIL "connection refused" -- the host
 	# end that was never started, not the board.
-	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-efi|virtarm64-acpi|virtarm64-peer)	echo yes;;
+	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-efi|virtarm64-acpi|virtarm64-smmu|virtarm64-peer)	echo yes;;
 	esac
 }
 
@@ -1690,7 +1731,7 @@ attempt() {
 	# job in silence, and the arm would pass with a broken loader.
 	kern=
 	case $c in
-	virtarm64-efi|virtarm64-noscan|virtarm64-acpi)	;;
+	virtarm64-efi|virtarm64-noscan|virtarm64-acpi|virtarm64-smmu)	;;
 	*)						kern="-kernel $kernel";;
 	esac
 	# shellcheck disable=SC2046,SC2086
@@ -1889,7 +1930,7 @@ for c in $configs; do
 	# same fat16.img in its qemu line.  It ran only because virt comes
 	# before it in $configs and had already made the image; asked for
 	# on its own with an empty work directory, qemu had no such file.
-	case $c in virt|virts|virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-efi|virtarm64-noscan|virtarm64-acpi|virt-peer|virtarm64-peer|peer-mixed) needfat=true;; *) needfat=false;; esac
+	case $c in virt|virts|virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-efi|virtarm64-noscan|virtarm64-acpi|virtarm64-smmu|virt-peer|virtarm64-peer|peer-mixed) needfat=true;; *) needfat=false;; esac
 	if $needfat && ! makefat fat16.img marker.txt 'FS-OK boardsuite'; then
 		echo "$c: FAIL no way to make a FAT16 image here (hdiutil or mkfs.vfat)"
 		echo "    BLK-OK needs a filesystem, not a blank card; see the README"
@@ -1906,11 +1947,11 @@ for c in $configs; do
 	fwdir=
 	case $c in
 	virtarm64-efi)		espextra=;;
-	virtarm64-noscan|virtarm64-acpi)
+	virtarm64-noscan|virtarm64-acpi|virtarm64-smmu)
 				espextra='*nofdtscan=1';;
 	esac
 	case $c in
-	virtarm64-efi|virtarm64-noscan|virtarm64-acpi)	wantsesp=true;;
+	virtarm64-efi|virtarm64-noscan|virtarm64-acpi|virtarm64-smmu)	wantsesp=true;;
 	*)						wantsesp=false;;
 	esac
 	if $wantsesp; then

@@ -2254,7 +2254,7 @@ finds tables by signature from the RSDP the loader passes in its
 configuration, and
 .CW os/inferno/virtarm64/acpiarm.c
 reads the MADT for the GIC distributor, redistributor and ITS and the
-IORT for the requester-id-to-DeviceID window.
+IORT for the requester-id-to-DeviceID windows.
 .CW virtarm64-acpi
 in the board suite boots
 .CW "-M virt,gic-version=3"
@@ -2262,16 +2262,34 @@ through edk2 with the device-tree scan switched off, so there is no
 tree of any kind:
 .CW "fdt: no device tree" ,
 and then the ITS found from the MADT, two PCI functions on distinct
-LPIs, an interrupt delivered, a disk read and DHCP.  45 markers, checked
-every run.
+LPIs, an interrupt delivered, a disk read and DHCP.  46 markers, checked
+every run.  Memory is sized from the firmware's map rather than from
+.CW DRAMSIZE ,
+and the board checks that the tables it read are outside the range it
+gave the allocator.
 .IP
-What is left is the hardware itself.  An Ampere Altra has more in its
-IORT than one root complex pointing at one ITS group \(em a chain
-through an SMMU, which this reads far enough to report and not far
-enough to use \(em and a MADT describing redistributors this kernel
-would have to walk rather than take the first of.  That is a list of
-specific things now, rather than "no ACPI at all", and none of it can be
-written against anything but the silicon.
+The IORT's chain through an SMMU is composed rather than reported.  A
+root complex mapping that points at an SMMUv3 node is intersected with
+that node's own StreamID-to-DeviceID mappings, so a requester behind the
+SMMU gets a DeviceID instead of being refused;
+.CW virtarm64-smmu
+runs it on
+.CW "-M virt,gic-version=3,iommu=smmuv3" ,
+where every device on bus 0 is behind the SMMU and used to fall back to
+INTx.  See
+.CW doc/inferno-ports.ms
+for the three details in the table that each produce a wrong answer
+quietly, and for what the arm proves \(em the coverage and the delivery,
+not the values, because QEMU's composed map is the identity.
+.IP
+What is left is the hardware itself.  An Altra has several root
+complexes told apart by PCI segment number, and
+.CW acpiridtodevid()
+takes a requester id and nothing else because the PCI code carries no
+segment; and its MADT describes redistributors this kernel would have to
+walk rather than take the first of.  That is a list of specific things
+now, rather than "no ACPI at all", and none of it can be written against
+anything but the silicon.
 .IP 2.
 .B "Raspberry Pi Zero 2 W."
 A BCM2710A1 \(em the Pi 3B's die in a smaller package \(em so the

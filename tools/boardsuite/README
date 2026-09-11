@@ -854,6 +854,27 @@ printing neither is what it used to do.  Falsified by putting the old
 highest-usable-address-anywhere walk back and rebuilding only the
 loader: the arm fails with "missing evidence: ACPI-OUTSIDE-HEAP".
 
+THE SMMU ARM.  virtarm64-smmu is the same machine with
+iommu=smmuv3, which is the shape an Ampere Altra has: a root complex
+whose requesters go two ways.  QEMU's IORT sends requester ids 0..0xff
+through the SMMUv3 node and 0x100..0xffff straight to the ITS, and the
+SMMU's own mapping takes StreamIDs 0..0xffff to DeviceIDs 0..0xffff.
+Every device on bus 0 has a requester id below 0x100, so a board that
+reads only the direct window refuses all of them and the whole bus falls
+back to INTx -- which is the right behaviour for an uncovered requester,
+and it was covering everything.
+
+46 markers, the ACPI arm's set plus ACPI-IORT-SMMU-OK.
+
+What it proves and what it does not, the same limit the direct window
+has: QEMU's composed map is the identity, which is also what
+ridtodevid() produces with no table at all, so the values are not
+proved.  What is proved is that requester ids the board used to refuse
+are covered and that the vector the composition produced is delivered --
+#l0 and sdF both on LPIs rather than INTx.  Falsified by turning
+compose() off: the arm fails with three missing evidence lines and both
+devices back on irq 37 and 38.
+
 A SHARED SOURCE COUNTS ONLY IF THE BOARD COMPILED IT.  The staleness
 check scans os/inferno/port and os/inferno/ip for every board, because
 every board links most of what is in them -- but not all of it.

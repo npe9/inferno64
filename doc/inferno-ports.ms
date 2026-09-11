@@ -23608,6 +23608,152 @@ acpi: iort also maps requesters through an smmu; those keep intx
 An Ampere Altra is the machine where that second line matters, and
 composing the two mappings is the work it will need.
 .NH 2
+Composing the IORT through an SMMU
+.PP
+That work is done, and the machine it was checked on is
+.CW "-M virt,gic-version=3,iommu=smmuv3" ,
+which is a fair model of the shape: a root complex whose requesters go
+two ways, some straight to the ITS and the rest through an SMMUv3.
+.PP
+The first question was whether the item was reachable at all.  Inferno
+never programs the SMMU, so whether a doorbell write from a device
+behind it arrives depends on QEMU's SMMUv3 being in bypass until an OS
+enables it.  If it were not, the whole item would be blocked on writing
+stream-table entries, which is a much larger job than reading a table.
+That was checked in one boot before anything was built, by making
+.CW ridtodevid()
+return the requester id unchanged instead of refusing it:
+.P1
+#l0: irq 8192 msi-x
+sdF: first interrupt, irq 8193 msi-x
+.P2
+Both arrived.  The SMMU is in bypass and the item is a table-reading
+one.
+.PP
+The second question was what the table actually says, and it was
+answered by dumping it rather than by reasoning from the spec \(em the
+same way the Length-at-offset-1 bug was found.  Reading the tables in
+.CW acpireport()
+is safe now that
+.CW memtop
+excludes them from the heap, so a temporary hex dump was enough:
+.P1
+node@0x30 type=0  len=24 nmap=0
+node@0x48 type=4  len=88 nmap=1 base=0x9050000
+         event=106 pri=107 gerr=109 sync=108 didx=0
+         map[0] in=0x0   n=0xffff  out=0x0   ref=0x30 flags=0
+node@0xa0 type=2  len=76 nmap=2 seg=0
+         map[0] in=0x0   n=0xff    out=0x0   ref=0x48 flags=0
+         map[1] in=0x100 n=0xfeff  out=0x100 ref=0x30 flags=0
+.P2
+Requester ids 0 to 0xff go to the SMMUv3 at 0x48, 0x100 to 0xffff go
+straight to the ITS group at 0x30, and the SMMU takes StreamIDs 0 to
+0xffff to DeviceIDs 0 to 0xffff.
+.PP
+Three details in that dump would each have produced a wrong answer
+quietly.
+.IP 1.
+.CW DeviceIdMappingIndex ,
+the
+.CW didx=0
+above, is not an index here.  It names the mapping the SMMU uses for
+its
+.I own
+MSIs, and the spec says it is ignored when all four of the SMMU's
+control interrupts are wired \(em which these are, 106, 107, 109 and
+108.  A walk that believed it would have skipped mapping 0, which is
+the only mapping the node has, and composed nothing at all.  It is also
+a late field, so a node too short to contain it has to be rejected on
+Length rather than read past.
+.IP 2.
+The
+.B "Single Mapping"
+flag, bit 0 of the Flags word at offset 16 of the twenty-byte mapping.
+Set, it means every input maps to Output Base and that Input Base and
+Number of IDs are meaningless.  SMMUv3 nodes carry such entries
+routinely.  Composing one as a range gives a one-requester window that
+looks entirely plausible, so the window carries a
+.CW single
+bit and
+.CW acpiridtodevid()
+returns the same DeviceID across it.  A root complex with the flag set
+has no requester range to compose at all and is counted and reported
+rather than guessed at.
+.IP 3.
+Composition is an intersection and not a window.  The root complex
+turns requester ids
+.CW [rid,\ rid+count)
+into StreamIDs
+.CW [sid,\ sid+count) ;
+each of the SMMU's mappings turns StreamIDs
+.CW [sb,\ sb+n)
+into DeviceIDs
+.CW [db,\ db+n) ;
+what comes out is one window per overlapping pair.  On QEMU the overlap
+is the whole of the root complex's 0..0xff, but an Altra has several
+SMMUs and each accepts a slice, so the overlap is computed.
+.PP
+So
+.CW acpiarm.c
+keeps a bounded list of windows rather than one window, built in
+.CW acpifind()
+and looked up by
+.CW acpiridtodevid() ,
+and a list that overflows says so and refuses the rest rather than
+wrapping \(em the same shape as
+.CW itsrouter() 's
+bound on
+.CW nextlpi .
+.CW gicv3its.c
+asks the list when the IORT supplied one and keeps its single-window
+device-tree path otherwise.  On the SMMU machine:
+.P1
+acpi: iort rid 0x0..0xff -> devid 0x0 via smmu, ACPI-IORT-OK
+acpi: iort rid 0x100..0xffff -> devid 0x100, ACPI-IORT-OK
+acpi: iort composed 1 of 2 window(s) through an smmu, ACPI-IORT-SMMU-OK
+#l0: irq 8192 msi-x
+sdF: first interrupt, irq 8193 msi-x
+.P2
+.PP
+What that proves and what it does not, stated the same way the direct
+window's limit is.  QEMU's composed map is the identity, which is also
+what
+.CW ridtodevid()
+produces with no table at all, so the
+.I values
+are not proved here; proving them would take a patch to QEMU's
+.CW build_iort()
+making the SMMU's output base non-zero.  What is proved is the
+behaviour, and the falsify test is blunt about it.  With
+.CW compose()
+turned off and only the direct window kept, the arm fails:
+.P1
+acpi: iort rid 0x100..0xffff -> devid 0x100, ACPI-IORT-OK
+acpi: iort has 1 mapping(s) in a shape this board does not compose;
+        those requesters keep intx
+#l0: irq 38 intx
+sdF: first interrupt, irq 37 intx
+.P2
+.P1
+missing evidence: acpi: iort rid 0x0\.\.0xff -> devid 0x0 via smmu, ...
+missing evidence: acpi: iort composed 1 of 2 window\(s\) ...
+missing evidence: sdF: first interrupt, irq 819[0-9] msi-x
+.P2
+Both devices, not one.  Every device on bus 0 has a requester id below
+0x100, so before this a board on a machine with an SMMU got MSI for
+nothing at all and reported no error \(em the fallback to INTx is the
+right behaviour for an uncovered requester and it was covering the
+whole bus.  The new arm is
+.CW virtarm64-smmu .
+.PP
+One limit is worth writing down rather than discovering later.
+.CW acpiridtodevid()
+takes a requester id and nothing else, so the windows of every root
+complex go into one list.  An IORT may have several root complexes
+distinguished by PCI segment number, which is the real Altra shape, and
+telling them apart needs a segment from the PCI code, which does not
+carry one.  On a single-segment machine the two are the same thing.
+.NH 2
 Memory, from the firmware's map
 .PP
 One thing was still coming from mem.h on a machine that had no business

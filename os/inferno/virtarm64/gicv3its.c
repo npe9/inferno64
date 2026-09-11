@@ -191,6 +191,7 @@ static int	nextevent[Ndev];
 /* the PCI RID-to-DeviceID window from the host bridge's msi-map */
 static ulong	msiridbase, msidevbase, msimaplen;
 static int	havemsimap;
+static int	acpimsimap;		/* the IORT's windows, not the tree's */
 
 /*
  * One command is four 64-bit words.  The queue is a ring; the ITS
@@ -384,6 +385,21 @@ ridtodevid(Pcidev *p)
 	ulong rid;
 
 	rid = (BUSBNO(p->tbdf) << 8) | (BUSDNO(p->tbdf) << 3) | BUSFNO(p->tbdf);
+	if(acpimsimap){
+		extern int acpiridtodevid(ulong, ulong*);
+		ulong devid;
+
+		/*
+		 * Several windows, not one: a root complex in front of an
+		 * SMMU has a mapping per SMMU as well as whatever it sends
+		 * straight to the ITS, and the composed answers do not
+		 * form a single range.  Not covered is refused, for the
+		 * reason in the comment above.
+		 */
+		if(acpiridtodevid(rid, &devid))
+			return devid;
+		return ~0UL;
+	}
 	if(havemsimap){
 		if(rid < msiridbase || rid >= msiridbase + msimaplen)
 			return ~0UL;
@@ -505,21 +521,18 @@ readmsimap(void)
 	n = fdtu32array("pci-host-ecam-generic", "msi-map", cells, nelem(cells));
 	if(n < 4){
 		/*
-		 * The IORT says the same thing the msi-map property does,
-		 * in the same three numbers: which requester ids this
-		 * window covers, what DeviceID the first of them becomes,
-		 * and how many.  A machine with tables and no tree is the
-		 * whole reason either is read.
+		 * The IORT says what the msi-map property says and more of
+		 * it: a list of windows rather than one, because a root
+		 * complex with an SMMU in front of it needs its mappings
+		 * composed with the SMMU's and the result is not a single
+		 * range.  acpiarm.c does the composing; this only asks
+		 * whether there is anything to ask.  A machine with tables
+		 * and no tree is the whole reason either is read.
 		 */
-		extern int acpiridmap(ulong*, ulong*, ulong*);
-		ulong rid, devid, count;
+		extern int acpinwindow(void);
 
-		if(acpiridmap(&rid, &devid, &count)){
-			msiridbase = rid;
-			msidevbase = devid;
-			msimaplen = count;
-			havemsimap = 1;
-		}
+		if(acpinwindow() > 0)
+			acpimsimap = 1;
 		return;
 	}
 	if(n > 4)
