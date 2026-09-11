@@ -413,8 +413,55 @@ the queue; this is about *when* the queue is drained relative to the
 2-D drawing that belongs on top of it, and the drain still happens at
 present time.
 
-**Phase 1's nine ports' pictures still have not been checked** — but
-they now *can* be, by the same method, which was the blocker.
+### Phase 1's nine ports' pictures, checked at last — 2026-09-11
+
+`framegrab(1)` is the tool that was missing: it runs a module with a
+draw context, waits, reads the display back and writes the frame out,
+with a hash so two runs can be compared without rendering either. The
+other provider is put in its place with a `bind` — the ports name the
+provider by path, and a path is a name in a name space — so the two runs
+differ in nothing else:
+
+```
+bind /dis/math/draw3d.dis /dis/math/draw3ddev.dis
+framegrab -n 1800 -o soft.raw temple/rotatetank
+```
+
+**The result is that the device provider loses the whole 3-D content of
+a frame most of the time.** `rotatetank`, pixels that are not the
+background, five software runs and six device runs:
+
+```
+software  20461 20461 20465 20448 20459
+device    14503 20031 14503 19960 14503 14503
+```
+
+14503 is the window chrome and the caption with nothing between them,
+and all four of those runs hash *identically* — which for a demo that
+animates means nothing was drawn, not that a frame was caught half
+finished. The software provider never does it, in five runs out of five.
+
+Rendered, the pattern is the same in every port that has both kinds of
+primitive: **lines, points and 2-D survive; filled polygons do not.**
+`3dpoly` draws its five coloured polygons and a mirror line on software
+and, on the device, the mirror line alone. `pick3d` keeps every green
+line, circle and cross and loses every blue and gold triangle.
+`spriteplot3d` and `rotatetank` go blank. `shading` — whose entire
+picture is one Gouraud sphere — comes out right when it comes out at
+all.
+
+So Phase 1's nine were declared done on `g3_calls` rising and
+`soft_fallbacks` staying at zero, and this document said in as many
+words that neither of those says the result is correct. It was right.
+
+**What this does not establish.** `framegrab` reads the display's
+software image. A present straight to a drawable that never writes that
+image back would be invisible to it, so "a readback sees nothing" is
+what every in-process check and every port that composites its window
+would see — but it is not proof the screen was blank. Separating those
+two still wants a camera. The `gorge -g` head-up-display count above is
+a *different* fault and was photographed.
+
 
 ### Phase 2a — `litcolour` allocated a colour image per fill
 

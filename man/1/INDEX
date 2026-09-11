@@ -329,6 +329,7 @@ fmt fmt
 fn sh-std
 fonted fonted
 fortune fortune
+framegrab framegrab
 freq freq
 fs fs
 ftest ftest

@@ -93,6 +93,7 @@ TARG=\
 	fmt.dis\
 	fortune.dis\
 	freq.dis\
+	framegrab.dis\
 	fs.dis\
 	fdstresstest.dis\
 	ftest.dis\

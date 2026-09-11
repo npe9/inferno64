@@ -1,0 +1,110 @@
+.TH FRAMEGRAB 1
+.SH NAME
+framegrab \- run a graphical program for a moment and write down what it drew
+.SH SYNOPSIS
+.B framegrab
+[
+.B -n
+.I ms
+] [
+.B -o
+.I file
+]
+.I module
+[
+.I arg ...
+]
+.SH DESCRIPTION
+.I Framegrab
+loads
+.I module
+as a
+.B Command
+in a process group of its own, gives it a draw context, waits
+.I ms
+milliseconds, reads the display back, kills it, and writes the pixels to
+.I file
+as raw bytes in the display's own format.
+.I Ms
+defaults to 1500 and
+.I file
+to
+.BR framegrab.raw .
+A
+.I module
+without a
+.B .dis
+suffix is looked for in
+.BR /dis .
+.PP
+There was no way to do this.
+The demos in
+.B /dis/temple
+open a window, draw, and keep drawing; the only way to find out whether
+the picture was right was to be in front of the screen.
+That is why
+.B /doc/draw3d-adoption-plan.md
+had nine ports whose pictures "have not been checked" \- the evidence
+for them was a submission counter and a pixel count taken on the
+software path, and neither says the GPU drew the right thing.
+.PP
+With no window manager the display
+.I is
+what the program drew into, so what comes back is the frame.
+.SS Comparing two providers without touching a port
+The ports name their 3-D provider by path, and a path is a name in a
+name space, so the other one can be bound over it:
+.IP
+.EX
+bind /dis/math/draw3d.dis /dis/math/draw3ddev.dis
+framegrab -n 1800 -o soft.raw temple/rotatetank
+.EE
+.PP
+and again in a fresh name space without the bind.
+No source changes, and the two runs are otherwise identical.
+.SS What it prints
+Three lines: the size and depth, some numbers about the pixels, and
+where they went.
+The numbers are the pixels that are not the background, the pixels that
+are nearly white, and a hash of the whole frame.
+The background is read from the corner rather than written down, because
+a demo may clear to anything.
+.PP
+The hash is the useful one for a fault that comes and goes: two runs
+that differ have drawn different frames, and two that agree
+.I byte for byte
+have drawn the same one, which for a demo that animates means neither of
+them drew anything at all.
+.SH EXAMPLE
+.B rotatetank
+through each provider, five and six runs:
+.IP
+.EX
+software  20461 20461 20465 20448 20459
+device    14503 20031 14503 19960 14503 14503
+.EE
+.PP
+14503 is the window chrome and the caption with nothing in between, and
+every one of those runs hashes identically.
+.SH SOURCE
+.B /appl/cmd/framegrab.b
+.SH SEE ALSO
+.IR draw3dbench (1),
+.IR gorge (1),
+.IR bind (1)
+.PP
+.B /doc/draw3d-adoption-plan.md
+.SH BUGS
+It reads the display's image, which is the software screen.
+A present straight to a drawable that never writes that image back is
+invisible to this, so a blank result means "a readback sees nothing",
+which is what any in-process check and any port that composites its
+window would also see \- but it is not proof that the screen was blank.
+Deciding that still wants a camera.
+.PP
+The wait is wall-clock, so a demo that animates is caught at whatever
+moment it is in.
+Compare several runs rather than one.
+.PP
+It gives the module no keyboard and no pointer, so a demo that needs a
+keypress to get past a title page never gets there.
