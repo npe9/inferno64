@@ -27,6 +27,7 @@ attrdb attrdb
 attrtext factotum
 auth security-auth
 basename names
+beginfromdc circuit
 bind sys-bind
 block diskblocks
 bloomfilter bloomfilter
@@ -49,6 +50,7 @@ changebutton popup
 char2byte sys-byte2char
 chdir sys-chdir
 chstext disks
+circuit circuit
 cleanname names
 client security-auth
 cmd tk
@@ -279,9 +281,11 @@ namechan tk
 names names
 nametree styxservers-nametree
 netinfo dial
+netlist circuit
 netmkaddr dial
 newns newns
 newuser newns
+nodev circuit
 numerics numerics
 ninep 9p-ninep
 norm1 math-linalg
@@ -299,6 +303,7 @@ packdirsize styx
 pair lists
 palmfile palmfile
 parseattrs factotum
+parti circuit
 partition lists
 pathname names
 pcpart disks

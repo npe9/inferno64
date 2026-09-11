@@ -1,0 +1,179 @@
+.TH CIRCUIT 2
+.SH NAME
+circuit: parse, dc, begin, beginfromdc, step, nodev, parti, solve \- lumped electrical circuits
+.SH SYNOPSIS
+.EX
+include "circuit.m";
+circuit := load Circuit Circuit->PATH;
+Net, Part: import circuit;
+
+circuit->init();
+(n, err) := circuit->parse(netlist);
+err = circuit->dc(n);
+err = circuit->begin(n);
+err = circuit->beginfromdc(n);
+err = circuit->step(n, h);
+v := circuit->nodev(n, "out");
+i := circuit->parti(n, "R1");
+(x, err) = circuit->solve(a, b);
+.EE
+.SH DESCRIPTION
+.I Circuit
+analyses a lumped linear circuit given as a netlist, in the form every
+engineering student is already taught.
+.PP
+.B Parse
+reads a netlist and returns the circuit, or nil and a message saying
+what was wrong with the text and on which line.
+One component to a line:
+.IP
+.EX
+R1 in out 1k
+C1 out 0 1u
+V1 in 0 5
+\&.tran 10u 5m
+.EE
+.PP
+The first letter of a component's name says what it is:
+.BR R esistor,
+.BR C apacitor,
+.BR I nductor
+(spelled
+.BR L ),
+.BR V oltage
+source,
+.BR I
+current source.
+Node
+.B 0
+(or
+.BR gnd )
+is ground; every other name is a node, created by being mentioned.
+Values take SPICE's multipliers \-
+.BR t ,
+.BR g ,
+.BR meg ,
+.BR k ,
+.BR m ,
+.BR u ,
+.BR n ,
+.BR p ,
+.B f
+\- with
+.B meg
+and not
+.B M
+for a million, since
+.B M
+is milli.
+A unit may follow, as in
+.B 1kohm
+or
+.BR 10uF ,
+and is ignored; anything else is refused rather than silently read as a
+bare number.
+.PP
+Lines beginning with a dot are directives.
+.B .dc
+and
+.B .tran
+.I step
+.I stop
+say which analysis the netlist is for and are recorded in the
+.B Net
+for a caller to use;
+.B .method
+selects
+.B trap
+(the default) or
+.BR be ;
+and
+.B .ic
+.I part
+.I value
+gives a capacitor an initial voltage or an inductor an initial current.
+.PP
+.B Dc
+solves the operating point: capacitors open, inductors shorted, which is
+where the circuit ends up.
+.PP
+.B Begin
+and
+.B beginfromdc
+set the initial condition for a transient, and one of them must be
+called before the first
+.BR step .
+.B Begin
+is the circuit at rest \- no charge on any capacitor and no current in
+any inductor, except where a
+.B .ic
+line says otherwise.
+.B Beginfromdc
+is the circuit that has been switched on a long time.
+Both then solve once more with every storage element holding the state
+it has, to find the other half of that state: the current through each
+capacitor and the voltage across each inductor.
+At rest does not make those zero \- at
+.I t
+= 0 in an RC the capacitor already carries
+.IR V / R ,
+and the trapezoidal rule reads it on the very first step.
+.PP
+.B Step
+advances the circuit by
+.I h
+seconds.
+Each capacitor and inductor is replaced for that solve by a
+.I companion
+.IR model :
+a conductance with a current source beside it, chosen so that the linear
+solve reproduces the integration rule applied to
+.I i
+=
+.I C
+d\fIv\fP/d\fIt\fP or
+.I v
+=
+.I L
+d\fIi\fP/d\fIt\fP.
+That is why a transient analysis is a sequence of linear solves and not
+an ODE integration.
+.PP
+.B Nodev
+returns the voltage at a node and
+.B parti
+the current through a part, both by name, from the last solve.
+.B Parti
+measures current from a part's first node to its second.
+.PP
+.B Solve
+solves a small dense system by Gaussian elimination with partial
+pivoting, and is exported because MNA needs one and nothing else in the
+tree had one.
+.SH SOURCE
+.B /appl/lib/circuit.b
+.SH SEE ALSO
+.IR dynsys (2),
+.IR pde (2),
+.IR krylov (2),
+.IR circuittest (1)
+.SH DIAGNOSTICS
+All of these return a diagnostic string, nil on success.
+A circuit that has no single answer \- a node with nothing to hold its
+voltage, two voltage sources argued across each other, a loop of nothing
+but voltage sources \- is refused by the solve rather than answered, and
+says which unknown was not determined.
+.SH BUGS
+Everything here is linear and every source is constant.
+There are no diodes, transistors, switches or time-varying sources, so
+there is no Newton loop and no need for one; a step response is obtained
+by starting from
+.B begin
+rather than by turning a source on.
+.PP
+The step size is whatever the caller passes; there is no automatic step
+control and no local truncation error estimate, so a step too large for
+the circuit's time constants is quietly inaccurate rather than refused.
+.PP
+Mutual inductance, transmission lines and small-signal AC analysis are
+all absent.

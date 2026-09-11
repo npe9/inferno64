@@ -1,0 +1,74 @@
+.TH CIRCUITTEST 1
+.SH NAME
+circuittest \- check circuit(2) against the closed forms
+.SH SYNOPSIS
+.B circuittest
+[
+.B -v
+]
+.SH DESCRIPTION
+.I Circuittest
+checks
+.IR circuit (2)
+against circuits whose answers are known in advance, and prints
+.B OK
+if every one agrees.
+.B -v
+prints each measured number as well.
+.PP
+Every circuit here has a closed form, which is the point.
+A divider is a ratio.
+An RC step is
+.I V
+(1 \- e\u\s-2\-\fIt\fP/\fIRC\fP\s+2\d) and an RL step the same shape in
+current.
+A series RLC rings as a damped sinusoid whose frequency and decay rate
+are both known, and both are checked, because a scheme can get one and
+not the other: backward Euler keeps the frequency about right and damps
+far too fast.
+An inductor with current already in it and a capacitor with charge
+already on it each decay into a resistor as e\u\s-2\-\fIt\fP/\(*t\s+2\d.
+Nothing is checked against a previous run of this program.
+.PP
+The refusals are checked too, and they are half of what makes the rest
+mean anything.
+A solver that answered for a floating node, or for two voltage sources
+argued across each other, would pass every positive check above while
+being useless \- so both must be refused, and a circuit that does have
+an answer must not be, or the refusals would be satisfied by a solver
+that refused everything.
+.PP
+Two of the checks exist because of a blindness rather than a bug.
+With the circuit at rest the inductor's initial-condition stamp is a
+current source of zero amps and the capacitor's a source of zero volts,
+so a sign error in either is invisible to every other test here.
+Only a nonzero initial condition can see it, and the inductive kick \-
+1 A through 100 ohms putting \-100 V across a circuit that was at 0 V \-
+is large, signed, and could not be produced by an accident.
+.SH SOURCE
+.B /appl/cmd/circuittest.b
+.SH SEE ALSO
+.IR circuit (2)
+.SH DIAGNOSTICS
+Each disagreement prints a line beginning
+.B FAIL
+naming what was measured, what came out and what was wanted; the count
+follows and the program raises an exception.
+.SH BUGS
+Everything checked here is linear with constant sources, because that is
+all
+.IR circuit (2)
+does.
+.PP
+The accuracy checks run at one step size each.
+They would catch a scheme that was wrong, but they do not measure the
+order of either method by refining the step and watching the error fall,
+so a first-order bug in something billed as second-order would pass if
+its error at that one step size were small enough.
+The comparison between the two methods is real, though: it is measured
+at a step coarse enough that they differ by two orders of magnitude, and
+it is checked that backward Euler's error at that step is large enough
+for the comparison to mean something.
+.PP
+Nothing here checks the netlist parser's behaviour on a file rather than
+a string, since it takes only a string.

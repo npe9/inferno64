@@ -59,6 +59,7 @@ chat collab-clients
 chgrp chgrp
 chmod chmod
 circletrace circletrace
+circuittest circuittest
 cleanname cleanname
 clicktest clicktest
 clock wm-misc
