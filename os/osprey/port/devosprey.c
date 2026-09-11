@@ -8235,6 +8235,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		 */
 		uvlong ta, tb, tc, td, te, u0, u1, u2;
 		long nsleep;
+		int benchself = 0;
 		long i, count, status;
 		char *r;
 
@@ -8242,6 +8243,27 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		if(waserror()){
 			free(cb);
 			nexterror();
+		}
+		/*
+		 * "self <container> <n>" is the third arrangement, and it is
+		 * here to put a number on the one the latency section leaves
+		 * as an inference.  A round trip through a service process
+		 * costs about sixty microseconds, of which the work is four
+		 * and the scheduler's two legs are thirty; the question that
+		 * leaves is what the same request costs with nobody woken at
+		 * all - the caller putting it on the ring and then answering
+		 * it in its own context, which is what "ctl service" already
+		 * does by hand.  That is not a proposal to answer every
+		 * request this way: a request the kernel forwards is answered
+		 * in another container's name space by a program that is not
+		 * this one, and no arrangement of this kernel makes that free.
+		 * It is the floor the rest is measured against.
+		 */
+		if(cb->nf == 3 && strcmp(cb->f[0], "self") == 0){
+			cb->f[0] = cb->f[1];
+			cb->f[1] = cb->f[2];
+			cb->nf = 2;
+			benchself = 1;
 		}
 		if(cb->nf != 2)
 			error(Ebadarg);
@@ -8309,7 +8331,7 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 			error(Eperm);
 		if((x = ospreyindex(p)) < 0)
 			error(Enonexist);
-		if(ospreyserving[x] == 0)
+		if(ospreyserving[x] == 0 && !benchself)
 			error("the container has no service process");
 		while(ospreyreplyready(p))	/* start from a quiet ring */
 			ospreycollect(p, &op, &status, arg);
@@ -8326,12 +8348,26 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 				break;
 			cycles(&u1);
 			ta += u1 - u0;
-			ospreywakeup();
-			cycles(&u2);
-			tb += u2 - u1;
-			ospreywakeservers(-1);
-			cycles(&u0);
-			te += u0 - u2;
+			if(benchself){
+				/*
+				 * Answered here, in the process that asked:
+				 * one call, no wakeup, no sleep, no second
+				 * process.  The lock is the one the service
+				 * kproc takes for the same work.
+				 */
+				ospreyservicep(p, ospreynow());
+				ospreyroute(p);
+				cycles(&u2);
+				tb += u2 - u1;
+				u0 = u2;
+			} else {
+				ospreywakeup();
+				cycles(&u2);
+				tb += u2 - u1;
+				ospreywakeservers(-1);
+				cycles(&u0);
+				te += u0 - u2;
+			}
 			if(!ospreyreplyready(p))
 				nsleep++;
 			while(!ospreyreplyready(p)){

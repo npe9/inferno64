@@ -24,6 +24,8 @@ class _None3: pass
 None3 = _None3()   # a check whose answer is the breakdown of a round trip
 class _None4: pass
 None4 = _None4()   # a check whose answer is what a task exchange costs
+class _None5: pass
+None5 = _None5()   # a check whose answer is a round trip nobody was woken for
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.chdir(ROOT)
@@ -363,6 +365,9 @@ CHECKS = [
  ("and the round trip is accounted for rather than asserted: the four parts - putting the request on the ring, waking the machine's waiters, waking the servers, and waiting for the other process to answer - are measured apart and add up to the whole, and the service process's own share of the waiting is measured from inside it and is less than it",
   ["{echo '1 2000' >[1=0]; cat} <>/n/osprey/bench"],
   None3),
+ ("and the same request answered by the process that asked it, with nobody woken: the kernel's own work on it, and none of the scheduling - under ten microseconds against the sixty a round trip through a service process costs",
+  ["{echo 'self 1 20000' >[1=0]; cat} <>/n/osprey/bench"],
+  None5),
  ("the same exchange between two things that are not Procs: two tasks with a stack each, switching straight from one to the other, which costs a thousandth of what a round trip through the scheduler costs",
   ["{echo 'task 20000' >[1=0]; cat} <>/n/osprey/bench"],
   None4),
@@ -606,6 +611,17 @@ def main():
                          ' %d slept)') % (
                     tot, m.group(2), m.group(3), m.group(4), m.group(5),
                     m.group(8), m.group(9), m.group(10), m.group(6), slept)
+        elif want is None5:
+            # The floor: the same request, answered in the caller's own
+            # context.  Ten microseconds is loose on purpose - it
+            # measures under two on a quiet boot - because the claim is
+            # that the scheduling is the cost and not the work, and a
+            # bound that tracked the host's load would say nothing about
+            # that.
+            m = re.search(r'(\d+) ns each,.*? (\d+) of them slept', parts[i])
+            ok = m is not None and 0 < int(m.group(1)) < 10000 and int(m.group(2)) == 0
+            if m:
+                what += ' (%s ns a trip, none of them slept)' % m.group(1)
         elif want is None4:
             # What a message costs with no scheduler in it.  The
             # claim under test is the order of magnitude, so the bound

@@ -2150,6 +2150,31 @@ and
 in turn is that the code between the two would run on a stack that is
 about to be left.
 .PP
+Between the two there is a third number, and it is the one that says
+which of the round trip's parts is really the scheduling.
+.CW "self 1 20000"
+written to
+.CW #O/bench
+puts each request on the ring and then answers it in the process that
+asked \- one call to the same service routine the kproc calls, under
+the same lock, with nobody woken and nothing slept on.  That is
+.B "1.8 microseconds"
+a round trip, against 65 through the service process, on the same boot.
+So thirty-six parts in thirty-seven of what a request costs here is
+getting to another process and back, and the work itself is the other
+one.
+.PP
+That is a floor and not a proposal.  A request the kernel answers
+itself \- a poll, an allocation, a reservation, a bind, a clock tick \-
+could be answered this way, and those are the requests the bench makes.
+A request a personality makes is not one of them: it is forwarded to a
+container that has a name space of its own and a program of its own to
+run in it, and no arrangement of this kernel makes reaching that
+program free.  What the three numbers give is the shape of the cost
+rather than an optimisation: 66 nanoseconds between two tasks, 1.8
+microseconds with no scheduling but a Proc's context, 65 with the
+scheduler in it.
+.PP
 What this is not is the talk's 270 nanoseconds reproduced, and the
 difference is not in the tasks' favour.  These tasks are not
 preemptible; they run in the kernel context of whatever Proc entered
