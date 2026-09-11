@@ -491,6 +491,53 @@ rootset(Prog *root)
 				if(t == nil){
 					t = sx->reg.TR;
 				}
+				{	/* INSTRUMENTATION - temporary */
+					extern void dumpstack(void);
+					extern uchar etext[];
+
+					/*
+					 * The two failures in ninety-six boots
+					 * are a jump into the Dis heap reached
+					 * from here: this is rootset+0x112, and
+					 * t->mark is the indirect call.
+					 *
+					 * What is not yet known is whether t is
+					 * a freed Type or whether the frame
+					 * itself is corrupt and t was never a
+					 * Type at all.  freetype() was asked
+					 * and answered no -- it frees nothing
+					 * under a collection in twenty boots --
+					 * so this asks the frame instead, and
+					 * prints what it found rather than
+					 * jumping through it.
+					 */
+					/*
+					 * t->mark is a function pointer and
+					 * function pointers are not aligned:
+					 * markheap sits at 0x2f4139 in this
+					 * build.  An alignment check on it
+					 * rejected every correct Type and
+					 * reported 41 faults that were the
+					 * check's own.  What can be said about
+					 * a code pointer is that it is inside
+					 * the text segment, so that is what is
+					 * asked.
+					 */
+					if(((uintptr)t & 7) != 0
+					|| (uintptr)t < 0x100000
+					|| (uintptr)t->mark < 0x200000
+					|| (uintptr)t->mark >= (uintptr)etext){
+						print("rootset: bad frame type"
+							" t %#p mark %#p size %d"
+							" f %#p f->t %#p TR %#p"
+							" pid %d\n",
+							t, t->mark, t->size, f,
+							f->t, sx->reg.TR,
+							root->pid);
+						dumpstack();
+						abort();
+					}
+				}
 				fp += t->size;
 				t->mark(t, f);
 				ml = f->mr;
