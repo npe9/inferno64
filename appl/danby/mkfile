@@ -212,6 +212,7 @@ SPECS=\
 	threebody\
 	tidalrotation\
 	twocapital\
+	tunnel\
 	twomagnet\
 	vanderpol\
 	variationparameters\

@@ -283,7 +283,99 @@ checkmechanism(name: string, m: ref Model, c: ref Config,
 		checkhydrogen(name, m);
 	"bands" =>
 		checkbands(name, m);
+	"tunnel" =>
+		checktunnel(name, m);
 	}
+}
+
+
+# ------------------------------------------------------------------ tunnel
+#
+# T and R are written out as two separate expressions in the spec rather
+# than one as 1 minus the other, precisely so that T + R = 1 is a claim
+# about both and not a tautology about one.  It is conservation of the
+# particle - it has to end up somewhere - and it holds to the last bit.
+#
+# The resonances are exact: above the barrier, at ka = n pi the sine
+# vanishes and T is exactly 1.  That is a lovely check and, by the same
+# mechanism that makes it exact, a BLIND one - with the sine zero the
+# whole V^2 sin^2 term disappears and the check cannot see any of it.
+# So T is also compared against the closed form at energies where the
+# sine is not zero, on both sides of the barrier, which is what pins
+# every factor.  See the bands model for the same trap caught the hard
+# way.
+
+tunnelat(m: ref Model, barrier, width, e: real): (real, real)
+{
+	m.parameter[0] = barrier;
+	m.parameter[1] = width;
+	st := dynsys->initialstate(m);
+	d := array[len st] of real;
+	dynsys->rhs(m, e-0.001, st, d);		# the spec's own 0.001 offset
+	v := dynsys->observables(m, st);
+	return (v[0], v[1]);
+}
+
+checktunnel(name: string, m: ref Model)
+{
+	# the particle ends up somewhere
+	for(i := 1; i <= 400; i++){
+		(tt, rr) := tunnelat(m, 10.0, 1.0, 0.1*real i);
+		near(sys->sprint("%s: T+R at E=%g", name, 0.1*real i), tt+rr, 1.0, 1.0e-13);
+	}
+	# perfect transmission at ka = n pi, for several widths
+	for(w := 0; w < 3; w++){
+		a := 0.5 + 0.5*real w;
+		for(n := 1; n <= 3; n++){
+			k := real n*Math->Pi/a;
+			e := 10.0 + k*k/2.0;
+			(tt, nil) := tunnelat(m, 10.0, a, e);
+			near(sys->sprint("%s: resonance a=%g n=%d", name, a, n), tt, 1.0, 1.0e-9);
+		}
+	}
+	# ... and the closed form away from the nodes, both sides of V
+	for(i = 0; i < 6; i++){
+		e := 2.0 + 4.0*real i;		# straddles V = 10
+		a := 1.0;
+		v := 10.0;
+		dd := e - v;
+		ad := math->fabs(dd) + 0.000001;
+		kk := math->sqrt(2.0*ad);
+		arg := kk*a;
+		s2: real;
+		if(dd < 0.0)
+			s2 = math->sinh(arg)*math->sinh(arg);
+		else
+			s2 = math->sin(arg)*math->sin(arg);
+		if(dd > 0.0 && math->fabs(math->sin(arg)) < 0.2)
+			fail(sys->sprint("%s: sample at E=%g sits too near a resonance "+
+				"to test the V^2 term", name, e));
+		num := 4.0*e*ad;
+		want := num/(num + v*v*s2);
+		(tt, nil) := tunnelat(m, v, a, e);
+		near(sys->sprint("%s: T at E=%g", name, e), tt, want, 1.0e-12);
+	}
+	# no barrier, nothing to reflect from - either way of having none
+	for(i = 1; i <= 200; i++){
+		(t1, nil) := tunnelat(m, 0.0, 1.0, 0.2*real i);
+		(t2, nil) := tunnelat(m, 10.0, 0.0, 0.2*real i);
+		near(sys->sprint("%s: zero height at E=%g", name, 0.2*real i), t1, 1.0, 1.0e-12);
+		near(sys->sprint("%s: zero width at E=%g", name, 0.2*real i), t2, 1.0, 1.0e-12);
+	}
+	# and there really is a barrier otherwise, or the two checks above
+	# are passing because nothing ever reflects
+	(deep, nil) := tunnelat(m, 10.0, 1.0, 2.0);
+	if(deep > 0.01)
+		fail(sys->sprint("%s: well below the barrier T is %g, so the "+
+			"zero-barrier checks prove nothing", name, deep));
+	if(deep <= 0.0)
+		fail(sys->sprint("%s: T below the barrier is %g - it must be small "+
+			"but it must not be zero, or nothing is tunnelling", name, deep));
+	# widening the barrier kills it exponentially
+	(wide, nil) := tunnelat(m, 10.0, 2.0, 2.0);
+	if(wide >= deep/100.0)
+		fail(sys->sprint("%s: doubling the width took T from %g only to %g, "+
+			"which is not exponential", name, deep, wide));
 }
 
 

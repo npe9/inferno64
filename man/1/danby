@@ -941,6 +941,11 @@ See
 Shoot Schrodinger's equation and hunt for an eigenvalue.
 See
 .IR danby-schrodinger (1).
+.TP
+.B danby/tunnel
+Getting through a wall you have not the energy to climb.
+See
+.IR danby-tunnel (1).
 .SS Numerical Methods, Classical Problems & Lessons
 .TP
 .B danby/bernoulli

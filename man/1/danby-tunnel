@@ -1,0 +1,104 @@
+.TH DANBY-TUNNEL 1
+.SH NAME
+danby-tunnel \- getting through a wall you have not the energy to climb
+.SH SYNOPSIS
+.B danby/tunnel
+.SH MODEL
+A particle meets a rectangular barrier of height V and width a.
+Classically that is the whole story: below V it bounces, every time;
+above V it goes over, every time.  Quantum mechanically neither is true.
+.PP
+Below the barrier some of it gets through.  That is tunnelling, and it
+is how alpha decay works and how a scanning tunnelling microscope sees
+individual atoms.  Above the barrier some of it bounces back, which is
+the more surprising half and has no classical counterpart at all.
+.PP
+Matching the wave and its slope at both faces gives, with
+k = sqrt(2|E\-V|),
+.PP
+.EX
+T = 4E|E-V| / ( 4E|E-V| + V^2 s )
+R =     V^2 s / ( 4E|E-V| + V^2 s )
+.EE
+.PP
+where s is sinh squared of ka below the barrier and sin squared of ka
+above it.  Those are the same formula: sinh is what sin becomes when its
+argument turns imaginary, which is exactly what happens to k when E
+drops below V.
+.SH DESCRIPTION
+.B Danby/tunnel
+is a
+.IR danbylab (2)
+script \(em the whole model is the text of
+.BR /appl/danby/tunnel.spec .
+The x axis is ENERGY, not time; the model sweeps E upward and evaluates
+a formula.  The diagram shows the barrier itself with the energy drawn
+across it, rising through the run.
+.SS What to look for
+.B The resonances.
+Above the barrier, whenever ka is a whole number of pi the sine
+vanishes and T is exactly 1: the barrier becomes perfectly transparent,
+because the reflections from its two faces cancel.  Those energies are
+.PP
+.EX
+E = V + n^2 pi^2 / 2a^2
+.EE
+.PP
+This is the Ramsauer-Townsend effect, measured in the noble gases some
+twenty years before anyone could explain it \(em slow electrons pass
+through argon as though it were not there.
+.PP
+.B Tunnelling.
+Set the energy below the barrier and T is small but not zero: at V = 10,
+a = 1 and E = 2 it is 8.6e\-4.  Widen the barrier and it dies
+exponentially \(em T goes as exp(\-2ka) once ka is large \(em so at
+a = 2 the same energy gives 2.9e\-7, and at a = 2.5, 5.3e\-9.  That
+steepness is why a tunnelling microscope can resolve a single atomic
+step: a fraction of a nanometre changes the current by orders of
+magnitude.
+.PP
+Widening the barrier also draws the resonances together, since they go
+as 1 over a squared.  One slider does both.
+.SS Conservation
+.B T
+and
+.B R
+are written out as two separate expressions, and not one as 1 minus the
+other, so that T + R = 1 is a claim about both rather than a tautology
+about one.  It is conservation of the particle \(em it has to end up
+somewhere \(em and
+.IR danbylabtest (1)
+holds it to the last bit: the worst error over four thousand energies is
+2.2e\-16.
+.SH SOURCE
+.B /appl/danby/tunnel.spec
+.SH SEE ALSO
+.IR danby (1),
+.IR danby-bands (1),
+.IR danby-schrodinger (1),
+.IR danbylab (2),
+.IR danbylabtest (1)
+.SH BUGS
+This is a steady state, not an event.  T is the fraction of a continuous
+beam that gets through, and nothing here is a particle arriving, pausing
+and emerging.  The question of how LONG tunnelling takes is not answered
+here and is not settled in the literature either.
+.PP
+The barrier is one-dimensional and perfectly rectangular.  Alpha decay
+is really a Coulomb barrier, curved, and the exponential there is an
+integral through the forbidden region rather than a single ka.
+.PP
+At E exactly equal to V both the numerator and sinh squared vanish
+together, and the true limit is finite.  Rather than special-case it the
+spec adds 1e\-6 to |E\-V|, so the value at exactly the barrier top is
+wrong in the sixth decimal.  It is one point of an axis that is swept,
+and no slider can land the sweep on it exactly.
+.PP
+.IR Danbylabtest (1)
+checks T + R = 1 at four hundred energies, the resonance identity at
+three widths and three orders, T against its closed form on both sides
+of the barrier, that a zero height or a zero width transmits everything,
+and that a real barrier does not.  The closed-form check is the one that
+matters most: the resonance identity is exact BECAUSE the sine vanishes
+there, so it cannot see the V squared factor at all, and breaking V
+squared to V passes it.  Only the off-resonance comparison catches that.

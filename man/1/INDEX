@@ -211,6 +211,7 @@ danby-tidalrotation danby-tidalrotation
 danby-nonlinearsprings danby-nonlinearsprings
 danby-duffing danby-duffing
 danby-bands danby-bands
+danby-tunnel danby-tunnel
 danby-hydrogen danby-hydrogen
 danby-rabi danby-rabi
 danby-schrodinger danby-schrodinger
