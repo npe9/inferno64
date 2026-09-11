@@ -106,7 +106,7 @@ dspecs := array[] of {
 	"softballpitch", "spacestationball", "spaceyoyo", "spinningball", "springpendulum",
 	"springpivot", "starmodel", "stillmoreenzyme", "stretchyoyo", "swing1",
 	"swing2", "swingingcenser", "synchronousmotor", "tablependulum", "tabletennis",
-	"tankcontrol", "tdse", "threebody", "tidalrotation", "twocapital", "tunnel", "twomagnet", "twoslit",
+	"tankcontrol", "threebody", "tidalrotation", "twocapital", "tunnel", "twomagnet", "twoslit",
 	"vanderpol", "variationparameters", "varyingpendulum", "venushead", "violetsantsrodents",
 	"violinbow", "wattgovernor", "weightchange", "wheelpendulum", "whitedwarf",
 	"windpendulum", "yoyo"
@@ -119,7 +119,7 @@ dspecs := array[] of {
 # spinorbit) have no init(ctxt, argv) and are left out.
 dmods := array[] of {
 	"aerobraking", "boom", "chaosmap", "epidemic", "forcedpendulum",
-	"heartbeat", "lorenz", "stability", "vaccination"
+	"heartbeat", "lorenz", "stability", "tdse", "vaccination"
 };
 
 init(ctxt: ref Context, argv: list of string)
