@@ -1,0 +1,21 @@
+; bout(1): the art, as a script in tiles(2)'s command language.
+
+sheet hall /lib/tiles/bout.chr
+sheet16 duel /lib/tiles/bout16.chr
+font text
+
+palette pback  dark.blue  dark.blue   dark.azure  mid.azure
+palette pfloor dark.blue  dark.orange mid.orange  light.orange
+palette pbeam  dark.blue  dark.grey   mid.grey    light.grey
+palette plamp  dark.blue  dark.grey   mid.yellow  pale.yellow
+palette pyou   dark.blue  dark.black  mid.cyan    pale.rose
+palette pthem  dark.blue  dark.black  mid.violet  pale.lime
+palette phud   dark.black pale.grey   pale.grey   pale.grey
+palette pwarn  dark.black light.red   light.red   light.red
+palette pgood  dark.black light.lime  light.lime  light.lime
+palette ptell  dark.black light.yellow light.yellow light.yellow
+
+palette cback  dark.blue  dark.blue   dark.blue   dark.blue
+palette cpanel dark.black dark.black  dark.black  dark.black
+palette cbarhi light.red  light.red   light.red   light.red
+palette cbarlo mid.lime   mid.lime    mid.lime    mid.lime

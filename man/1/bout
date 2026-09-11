@@ -1,0 +1,198 @@
+.TH BOUT 1
+.SH NAME
+bout \- a duel against an opponent written in a file
+.SH SYNOPSIS
+.B games/bout
+[
+.B -l
+|
+.B -c
+.I file
+|
+.B -t
+|
+.B -s
+] [
+.B -q
+]
+.SH DESCRIPTION
+.I Bout
+is a duel you cannot win by being quicker, only by learning what the
+other one does before they do it.
+Every attack is wound up visibly first \- a
+.I tell
+\- and that wind-up is the only warning there is.
+Guard the side they are telling and the blow costs almost nothing;
+guard the other side and it costs everything it says it costs.
+While they are recovering from a blow they are open, and that window is
+when a counter lands hard.
+.PP
+Up and down guard high and low;
+left and right step out of reach and back in;
+.BR x ,
+.B .
+or space strikes.
+Enter takes the next opponent after a win, or the same one again after a
+loss.
+.B q
+or Escape quits.
+.SS An opponent is a file
+The opponents are why this game is in the tree.
+.I Bout
+reads
+.B /lib/bouts
+and fights whatever it finds there; there is no table of opponents
+anywhere in the program, and nothing in it knows the name, the rhythm or
+the tricks of any of them.
+Adding an opponent is writing a file.
+Where
+.IR camber (1)
+demonstrates authored levels, this demonstrates authored
+.IR conduct ,
+which is the part of a game that is usually hardest to get out of the
+source.
+.PP
+A file is a header of
+.I "KEY VALUE"
+lines \-
+.BR name ,
+.B health
+and
+.B reach
+\- then a line holding
+.BR % ,
+then states:
+.IP
+.EX
+state NAME
+	INSTRUCTION
+	...
+.EE
+.PP
+The instructions are:
+.TP
+.BI wait " N"
+do nothing for
+.I N
+frames
+.TP
+.BI tell " high|low N"
+wind up, visibly, for
+.I N
+frames
+.TP
+.BI strike " high|low D"
+the blow;
+.I D
+damage if it is not guarded on that side
+.TP
+.BI recover " N"
+open to a counter for
+.I N
+frames
+.TP
+.BI goto " STATE"
+.TP
+.BI hurt " STATE"
+go to
+.I STATE
+the next time this one is struck
+.PP
+Lines beginning with
+.B ;
+are comments.
+Execution runs down a state and round to its start again; an instruction
+that takes frames holds there until they are up.
+.PP
+That is enough for the three that ship to be quite different from each
+other.
+.I Ironhand
+is slow and tells for a long time.
+.I Willow
+tells for barely long enough and throws two high before a low, so
+counting is worth as much as watching.
+.I Crane
+tells low and strikes high, once, early \- and then never again, so the
+lesson only works the first time.
+.SS Checking one
+.B -c
+.I file
+reads a file and says what is wrong with it, with the line, the way a
+compiler would:
+.IP
+.EX
+% games/bout -c /tmp/mine.bout
+/tmp/mine.bout:6: high or low, not sideways
+/tmp/mine.bout:7: no state called opne
+.EE
+.PP
+A file that is right prints what it describes instead.
+.B -l
+lists what is in
+.B /lib/bouts
+and says nothing else.
+.PP
+Every
+.B goto
+and every
+.B hurt
+is checked against the states that exist, because a typo there is a
+fighter that stops moving in the middle of a bout, and that reads as the
+game being broken rather than the file being wrong.
+.SS Other options
+.B -q
+starts silent.
+.B -t
+runs the self test and needs no window.
+.B -s
+fights for a few seconds and writes the frame to
+.B bout.raw
+as 24-bit BGR.
+.SH FILES
+.TP
+.B /lib/bouts/*.bout
+the opponents
+.TP
+.B /lib/tiles/bout.art
+the sheets, the font and the palettes, as tiles(2) commands
+.TP
+.B /lib/tiles/bout.chr
+the 8x8 tiles of the hall
+.TP
+.B /lib/tiles/bout16.chr
+one figure in seven poses; both duellists are this art
+.TP
+.B /lib/tiles/bout.map
+the hall
+.SH SOURCE
+.B /appl/cmd/games/bout.b
+.SH SEE ALSO
+.IR camber (1),
+.IR spire (1),
+.IR tiles (2)
+.PP
+.B /doc/games-plan.md
+says why this game is in the tree and what the others demonstrate.
+.SH BUGS
+.B -t
+checks that every file in the directory reads, that thirteen kinds of
+wrong file are refused, that a right one is accepted, that the tell
+comes before the blow, that guarding the told side survives where
+guarding the other does not, and that each of the three can be beaten by
+reading the tells and none of them by standing still.
+It presses no key: the tables that turn a key into an action are covered
+by nothing.
+.PP
+There is no way for a file to say anything about where the opponent
+stands.
+Distance is the player's alone, and an opponent cannot close, retreat or
+refuse to be backed away from \- so standing out of reach is always
+safe, and only the clock stops it being a strategy.
+.PP
+The figures are sixteen pixels tall, which is small for a game whose
+whole content is reading somebody's posture.
+The tell is drawn as a bar as well as a pose for that reason.
+.PP
+An opponent that never writes
+.B recover
+can never be hit hard, and nothing warns about it.

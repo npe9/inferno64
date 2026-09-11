@@ -1,0 +1,31 @@
+; Crane, for bout(1).  Tells low and strikes high, once, early on - and
+; then never does it again, so the lesson only works the first time.
+
+name Crane
+health 26
+reach 48
+
+%
+
+state open
+	hurt reel
+	wait 34
+	tell low 20
+	strike high 5
+	recover 26
+	goto honest
+
+state honest
+	hurt reel
+	wait 30
+	tell low 18
+	strike low 3
+	recover 24
+	tell high 18
+	strike high 3
+	recover 24
+	goto honest
+
+state reel
+	wait 38
+	goto honest

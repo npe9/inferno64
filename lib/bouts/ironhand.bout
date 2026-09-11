@@ -1,0 +1,43 @@
+; Ironhand, for bout(1).  An opponent is a file; this is the whole of
+; one.  Adding another means writing another file and nothing else -
+; the game reads /lib/bouts and fights whatever it finds.
+;
+; The header is KEY VALUE lines; after the % come states.  A state is
+;
+;	state NAME
+;		INSTRUCTION
+;		...
+;
+; and the instructions are
+;
+;	wait N           do nothing for N frames
+;	tell high|low N  wind up, visibly, for N frames - this is the
+;	                 warning, and the only warning
+;	strike high|low D  the blow; D damage if it is not guarded
+;	recover N        open to a counter for N frames
+;	goto STATE
+;	hurt STATE       go to STATE next time this one is struck
+;
+; Ironhand is slow and tells for a long time.  He is the one to learn on.
+
+name Ironhand
+health 22
+reach 46
+
+%
+
+state open
+	hurt reel
+	wait 50
+	tell high 26
+	strike high 4
+	recover 34
+	wait 30
+	tell low 26
+	strike low 3
+	recover 34
+	goto open
+
+state reel
+	wait 46
+	goto open

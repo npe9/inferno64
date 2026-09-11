@@ -40,6 +40,7 @@ Verified by running them, and by each one's own `-t` mode.
 | `camber(1)` | side-view racer, with a design mode | **content as data**: every tile and every feature of a course is read from a file at run time, through `tiles(2)`'s command language, and `camber -e` writes those files |
 | `spire(1)` | vertical climber with rooms off it | **the namespace**: a room is a *mount*. A door runs a program that serves four files over Styx, mounts it on `/n/room`, and reads and writes those files; leaving is an unmount, and the room's process ends with the connection |
 | `tandem(1)` | two players on one screen | **Styx across a machine boundary**: the game is a file server with no window, and every player — the local one included — is a client of it. A frame over the mount costs **1278 µs**, 8% of the 60 Hz budget |
+| `bout(1)` | a duel against a scripted opponent | **behaviour as a little language**: an opponent is a file of states and timed instructions, read at start-up. The game reads `/lib/bouts` and fights what it finds; `bout -c` checks a file and reports `file:line` like a compiler |
 
 Two things follow from that table. `orchard` is the only one that exposes itself
 as a filesystem. And until `camber`, nothing in it loaded its content from
@@ -237,11 +238,37 @@ game:
 
 ### 4. `bout` — shape 5 — behaviour as a little language
 
+**Built.** See `bout(1)` and `lib/bouts/*.bout`.
+
 The content of this genre is the opponents, and an opponent is a state machine.
-Written as a script in a small language, read at start-up, an opponent becomes a
-file somebody can write without touching the game — the `tk(2)` argument applied
-to behaviour rather than to layout. It pairs with `camber`: one demonstrates
-authored *levels*, this one authored *conduct*.
+Written as a script, read at start-up, an opponent becomes a file somebody can
+write without touching the game — the `tk(2)` argument applied to conduct rather
+than to layout. It pairs with `camber`: one demonstrates authored *levels*, this
+one authored *conduct*, which is the part of a game usually hardest to get out of
+the source.
+
+The directory **is** the list. There is no table of opponents anywhere in
+`bout.b`, and nothing in it knows the name, the rhythm or the tricks of any of
+them: it reads `/lib/bouts` and fights whatever is there. The three that ship are
+genuinely different from each other in a way that is entirely in the files —
+`Ironhand` is slow and tells for a long time, `Willow` tells for barely long
+enough and throws two high before a low, and `Crane` tells low and strikes high
+once, early, and then never again.
+
+The half that makes it a language rather than a config file is `bout -c FILE`,
+which checks a file and reports `file:line` the way a compiler would. Every `goto`
+and `hurt` is resolved against the states that exist, because a typo there is a
+fighter that stops moving mid-bout, and that reads as the game being broken rather
+than the file being wrong. `-t` asserts that thirteen kinds of wrong file are
+refused *and* that a right one is accepted — the second half being the control
+that stops a parser which rejects everything from passing.
+
+The test also asserts each of the three can be beaten by reading the tells, and
+none of them by standing still. Two of its own assertions were wrong first time
+and both were instructive: a ratio of damage taken guarding right against guarding
+wrong failed on `Crane`, because `Crane` lies about its tell on purpose — a test
+should not be tuned around a feature — and "standing still loses" was false
+because a bout begins out of reach, so standing still meant nothing landing at all.
 
 ### 5. `sprig` — shape 1 — one process per entity
 

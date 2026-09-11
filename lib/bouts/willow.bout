@@ -1,0 +1,26 @@
+; Willow, for bout(1).  Quick, and tells for barely long enough.  Two
+; high in a row, then a low, so counting is worth as much as watching.
+
+name Willow
+health 18
+reach 52
+
+%
+
+state open
+	hurt reel
+	wait 26
+	tell high 13
+	strike high 3
+	recover 18
+	tell high 13
+	strike high 3
+	recover 18
+	tell low 15
+	strike low 4
+	recover 22
+	goto open
+
+state reel
+	wait 24
+	goto open
