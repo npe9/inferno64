@@ -23,7 +23,7 @@ and comes out again.
 Clearing the maze advances the level and shortens the fright.
 .PP
 What this exercises in
-.IR nes (2)
+.IR tiles (2)
 that the other two do not is per-tile reasoning.
 Everything moves on the grid and may only change direction at a tile's
 centre, and a chaser picks its direction each time it reaches one by
@@ -107,7 +107,7 @@ emu\-cocoa \-r. /dis/games/orchard.dis \-t
 .SH SOURCE
 .B /appl/cmd/games/orchard.b
 .SH SEE ALSO
-.IR nes (2),
+.IR tiles (2),
 .IR rivet (1),
 .IR sprocket (1),
 .IR starling (1)

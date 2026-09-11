@@ -23,7 +23,7 @@ Being touched by one costs a life; three lives and the game is over.
 Jumping clean over a hazard scores 100.
 .PP
 The controls are the pad
-.IR nes (2)
+.IR tiles (2)
 defines: the arrow keys or
 .B wasd
 to walk and to climb a ladder,
@@ -60,7 +60,7 @@ emu\-cocoa \-r. /dis/games/rivet.dis \-t
 .SH SOURCE
 .B /appl/cmd/games/rivet.b
 .SH SEE ALSO
-.IR nes (2),
+.IR tiles (2),
 .IR tilestest (1)
 .SH DIAGNOSTICS
 .B -t

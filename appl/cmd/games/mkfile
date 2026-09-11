@@ -2,6 +2,7 @@
 
 TARG=\
 	bf.dis\
+	camber.dis\
 	gorge.dis\
 	orchard.dis\
 	rivet.dis\

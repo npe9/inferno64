@@ -144,7 +144,11 @@ Tiles: module
 	#		and transparent for put.
 	#	sheet NAME FILE          8x8 art, eight lines a tile
 	#	sheet16 NAME FILE        16x16 art, sixteen lines each
-	#	font NAME                the built-in 8x8 text font
+	#	font NAME                the built-in 8x8 text font.  Declare
+	#	                         it before any surface: a surface takes
+	#	                         the font that is bound when it is made,
+	#	                         and text() on a surface made earlier
+	#	                         draws nothing.
 	#	surface NAME W H COLOUR  W and H in logical pixels
 	#	tile SURF TX TY SHEET N PAL
 	#	put SURF X Y SHEET N PAL [flipx] [flipy]

@@ -1,0 +1,113 @@
+; Coldwater Ridge - a track for camber(1).
+;
+; This file is the whole course.  Nothing about it is compiled into the
+; game: camber reads it at start-up, camber -e writes it, and a shell
+; script can generate one, because it is text.
+;
+; The header is KEY VALUE lines.  After the % comes one feature a line:
+;
+;	X LANE FEATURE [SPEED]
+;
+; X is in tiles of eight logical pixels from the start line, LANE counts
+; down from nought, and FEATURE is one of ramp, bump, mud, strip or
+; rider.  SPEED is a rider's pace in hundredths of a pixel a frame and
+; is ignored for everything else.
+
+title Coldwater Ridge
+length 200
+lanes 4
+
+%
+
+; A row of strips to get everyone moving.
+16 0 strip
+16 1 strip
+16 2 strip
+16 3 strip
+
+; Somebody is already ahead on the outside.
+30 3 rider 180
+
+26 1 bump
+26 2 bump
+
+; Ramps from here on, staggered, so the lane you pick decides when you
+; are in the air and who you are next to when you land.
+34 0 ramp
+34 2 ramp
+42 1 ramp
+42 3 ramp
+
+55 0 rider 200
+
+52 0 mud
+52 3 mud
+60 1 bump
+60 2 bump
+
+; The first row that leaves no way round.
+68 0 ramp
+68 1 ramp
+68 2 ramp
+68 3 ramp
+
+75 2 rider 170
+
+78 1 strip
+78 2 strip
+86 1 mud
+86 2 mud
+
+98 1 rider 210
+
+94 0 ramp
+94 1 bump
+94 2 ramp
+94 3 bump
+104 0 bump
+104 1 ramp
+104 2 bump
+104 3 ramp
+
+114 0 strip
+114 3 strip
+
+120 3 rider 190
+
+; The whole width goes to mud.  There is no clean line through this, only
+; a choice about whether to arrive at it hot.
+122 0 mud
+122 1 mud
+122 2 mud
+122 3 mud
+
+132 1 ramp
+132 2 ramp
+140 0 bump
+140 3 bump
+
+145 2 rider 200
+
+148 0 ramp
+148 3 ramp
+156 1 strip
+156 2 strip
+
+160 0 rider 175
+
+; Last ramps, then the run-in.
+164 0 ramp
+164 1 ramp
+164 2 ramp
+164 3 ramp
+174 0 bump
+174 1 bump
+174 2 bump
+174 3 bump
+
+178 1 rider 205
+
+182 0 strip
+182 1 strip
+182 2 strip
+182 3 strip

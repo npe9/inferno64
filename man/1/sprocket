@@ -23,7 +23,7 @@ bolts to collect, pits to clear, and a flag at the right-hand end.
 Where
 .IR rivet (1)
 exercises
-.IR nes (2)'s
+.IR tiles (2)'s
 tile map on a single screen, this exercises the scroll.
 The level is 128 tiles wide, drawn once into a surface four screens
 across; each frame is a window of that plus whatever is moving.
@@ -61,7 +61,7 @@ emu\-cocoa \-r. /dis/games/sprocket.dis \-t
 .SH SOURCE
 .B /appl/cmd/games/sprocket.b
 .SH SEE ALSO
-.IR nes (2),
+.IR tiles (2),
 .IR rivet (1)
 .SH DIAGNOSTICS
 .B -t

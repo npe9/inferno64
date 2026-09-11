@@ -123,7 +123,7 @@ which this shares.
 .SH SEE ALSO
 .IR gorge (1),
 .IR draw3d (2),
-.IR nes (2)
+.IR tiles (2)
 .SH DIAGNOSTICS
 .B -b
 draws as fast as it will go and reports what a frame costs.

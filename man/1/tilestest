@@ -6,7 +6,7 @@ tilestest \- check tiles(2)
 .SH DESCRIPTION
 .I Nestest
 checks
-.IR nes (2)
+.IR tiles (2)
 itself, which the games built on it only exercise indirectly:
 each of those asserts on its own game state and would pass with every
 tile drawn in the wrong palette.
@@ -92,7 +92,7 @@ emu\-cocoa \-r. /dis/tilestest.dis
 .SH SOURCE
 .B /appl/cmd/tilestest.b
 .SH SEE ALSO
-.IR nes (2),
+.IR tiles (2),
 .IR rivet (1),
 .IR sprocket (1),
 .IR starling (1),

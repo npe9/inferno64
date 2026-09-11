@@ -28,7 +28,7 @@ is the other half of the argument the four games beside it make.
 and
 .IR orchard (1)
 are 8-bit in shape:
-.IR nes (2)
+.IR tiles (2)
 composites tiles once at the destination's scale and every frame is
 blits into an offscreen surface.
 That is deliberate, and it is also what
@@ -82,7 +82,7 @@ see BUGS.
 .SH SEE ALSO
 .IR draw3d (2),
 .IR draw3dbench (1),
-.IR nes (2),
+.IR tiles (2),
 .IR rivet (1)
 .SH DIAGNOSTICS
 .B -b

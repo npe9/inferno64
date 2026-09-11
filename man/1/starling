@@ -23,7 +23,7 @@ A diver shot is worth double.
 Clearing the formation ends the wave and the next one dives sooner.
 .PP
 Of the three games on
-.IR nes (2)
+.IR tiles (2)
 this is the one that tests how many sprites the library will put on a
 screen: a full formation is forty 16 by 16 characters, which is a
 hundred and sixty tile blits a frame before the shots and the
@@ -60,7 +60,7 @@ emu\-cocoa \-r. /dis/games/starling.dis \-b
 .SH SOURCE
 .B /appl/cmd/games/starling.b
 .SH SEE ALSO
-.IR nes (2),
+.IR tiles (2),
 .IR rivet (1),
 .IR sprocket (1)
 .SH DIAGNOSTICS

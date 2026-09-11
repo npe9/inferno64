@@ -726,6 +726,12 @@ docmd(s: ref Screen, a: array of string): string
 		if(f == nil)
 			return "!cannot open the 8x8 font";
 		bind(a[1]).chr = f;
+		# Remember which name it went under.  fontof() used to look for
+		# the literal name "font", so a font declared under any other
+		# name was never found and every surface silently took the
+		# first tile sheet as its font instead: text() then drew road
+		# tiles for letters, or nothing, with no error anywhere.
+		fontname = a[1];
 		return "";
 	"surface" =>
 		if(len a != 5)
@@ -925,9 +931,15 @@ anychr(s: ref Screen): ref Chr
 	return nil;
 }
 
+# The name the font command last bound, so a font may be called
+# whatever its author likes.
+fontname := "font";
+
 fontof(s: ref Screen): ref Chr
 {
-	e := find("font");
+	e := find(fontname);
+	if(e == nil || e.chr == nil)
+		e = find("font");
 	if(e != nil && e.chr != nil)
 		return e.chr;
 	return anychr(s);

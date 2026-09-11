@@ -255,6 +255,20 @@ colour NAME                  \-> "#rrggbb"
 count SHEET                  \-> how many tiles
 .EE
 .PP
+A surface takes the font that is bound when it is made, so
+.B font
+must be given before any
+.B surface
+that is to carry text on it; a surface made earlier draws nothing for
+.BR text .
+The font may be called anything.
+It once had to be called
+.BR font :
+a font bound under any other name was not found, every surface silently
+took the first tile sheet as its font instead, and
+.B text
+then drew tiles for letters, or nothing at all, reporting no error.
+.PP
 .I Named ,
 .I sheet
 and

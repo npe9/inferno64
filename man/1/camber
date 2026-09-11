@@ -1,0 +1,185 @@
+.TH CAMBER 1
+.SH NAME
+camber \- a side-view racer, and a course designer for it
+.SH SYNOPSIS
+.B games/camber
+[
+.B -e
+] [
+.B -t
+|
+.B -s
+[
+.B -n
+.I frames
+] ] [
+.B -q
+] [
+.I track
+]
+.SH DESCRIPTION
+.I Camber
+is a racer in the shape that genre took on the early consoles.
+Four lanes run left to right and the machine moves between them;
+ramps throw it into the air, where it no longer steers but rotates,
+and the attitude it is in when the wheels come back decides whether the
+landing is clean or whether it goes down;
+mud holds the speed to a crawl and strips give it back;
+rivals occupy lanes and touching one is a fall.
+A gauge reads the engine temperature: the hot throttle is faster and
+fills the gauge, and a full gauge seizes the engine for a hundred frames.
+The choice the whole game is made of is when
+.I not
+to use it.
+.PP
+.I Track
+is the course to race, and defaults to
+.BR /lib/tiles/ridge.trk .
+.SS The course is a file
+Every other game in
+.B /dis/games
+compiles its art and its levels into the program.
+This one holds none:
+the tiles are
+.B /lib/tiles/camber.chr
+and
+.BR /lib/tiles/camber16.chr ,
+loaded by name through
+.IR tiles (2)'s
+.B sheet
+and
+.B sheet16
+commands, and the course is a text file that
+.B -e
+writes,
+that a shell script can generate,
+and that an editor can edit.
+There is not one tile and not one feature of any course in
+.BR camber.b .
+.PP
+A track file is a header of
+.I "KEY VALUE"
+lines, then a line holding
+.BR % ,
+then one feature a line:
+.IP
+.EX
+X LANE FEATURE [SPEED]
+.EE
+.PP
+.I X
+is in tiles of eight logical pixels from the start line,
+.I LANE
+counts inward from nought, and
+.I FEATURE
+is one of
+.BR ramp ,
+.BR bump ,
+.BR mud ,
+.B strip
+or
+.BR rider .
+.I SPEED
+is a rider's pace in hundredths of a pixel a frame and is ignored for
+anything else.
+Lines beginning with
+.B ;
+are comments.
+The header settings are
+.BR title ,
+.B length
+in tiles, and
+.BR lanes ,
+which may be one to four.
+A course must be at least thirty-six tiles long, because the camera
+assumes there is more course than screen.
+A file that is wrong is refused with the line it went wrong on.
+.SS Racing
+Arrow keys or
+.B wasd
+move between lanes.
+.BR x ,
+.B .
+or space is the throttle;
+.B z
+or
+.B ,
+is the hot one.
+.B a
+or left brakes.
+In the air, left and right rotate the machine: left brings the nose up,
+right brings it down, and the wheels must be somewhere near level when
+they arrive.
+Enter restarts a finished race.
+.B q
+or Escape quits.
+The best time is kept by
+.IR scorestore (2).
+.SS Designing
+.B -e
+opens the course for editing instead of racing.
+Arrow keys move the cursor, which shows the size of the feature about to
+be laid;
+.B [
+and
+.B ]
+choose which feature that is;
+space or Enter lays it;
+.B d
+removes whatever is under the cursor;
+and
+.B w
+writes the file back.
+Laying a feature clears everything it covers, so features never overlap.
+.B q
+or Escape quits without writing, so
+.B w
+is the only thing that changes the file.
+.SS Other options
+.B -q
+starts silent.
+.B -t
+runs the self test and needs no window.
+.B -s
+plays nine hundred frames and writes the last one to
+.B camber.raw
+as 24-bit BGR at the window's scale;
+.B -n
+gives a different number of frames, which is how to look at a particular
+part of a course.
+.SH FILES
+.TP
+.B /lib/tiles/camber.chr
+the 8x8 track tiles
+.TP
+.B /lib/tiles/camber16.chr
+the machines, sixteen pixels square
+.TP
+.B /lib/tiles/ridge.trk
+the course raced by default
+.SH SOURCE
+.B /appl/cmd/games/camber.b
+.SH SEE ALSO
+.IR tiles (2),
+.IR sh-tiles (1),
+.IR sprocket (1),
+.IR strider (1),
+.IR scorestore (2)
+.PP
+.B /doc/games-plan.md
+says why this game is in the tree and what the others demonstrate.
+.SH BUGS
+.B -t
+drives the rules and the design mode's editing directly.
+It does not press any key: the tables that turn a key into an action,
+and the repeat in the designer's cursor, are covered by nothing and have
+only ever been checked by playing.
+.PP
+Nothing checks that a course is finishable.
+A design mode that can write a wall of mud across every lane can write a
+course that cannot be completed, and
+.B -e
+will let it.
+.PP
+The machine is drawn in four attitudes rather than rotated, so the
+picture in the air steps between them instead of turning.
