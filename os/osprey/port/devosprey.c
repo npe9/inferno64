@@ -8067,6 +8067,13 @@ enum {
 	Taskstack	= 8*1024,	/* the talk dumps an 8 KB task */
 };
 
+/*
+ * The machine layer's, since a context is machine-shaped.  amd64 has
+ * it; the 386 layer in os/osprey/pc has none, because nothing in this
+ * tree assembles that file - 8a rejects the FXSAVE, FXRSTOR and
+ * LDMXCSR in it - so putting one there would be a line nobody could
+ * prove.  Osprey builds for amd64.
+ */
 extern void taskswitch(Label*, Label*);
 
 /*
@@ -8249,7 +8256,26 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		if(strcmp(cb->f[0], "task") == 0){
 			uvlong pertrip, perread, hz;
 
+			/*
+			 * The one lock, and a bound of its own.  Two of
+			 * these at once would each memset the other's
+			 * labels and free a stack the other was running
+			 * on; and the count above is the container path's,
+			 * where a round trip is sixty microseconds - here
+			 * it is sixty nanoseconds with interrupts off, and
+			 * a hundred thousand of them is a long time to
+			 * hold them off for a measurement.
+			 */
+			if(count > 20000)
+				error(Ebadarg);
+			qlock(&ospreylock);
+			if(waserror()){
+				qunlock(&ospreylock);
+				nexterror();
+			}
 			taskbench(count, &pertrip, &perread);
+			poperror();
+			qunlock(&ospreylock);
 			r = smalloc(256);
 			if(waserror()){
 				free(r);

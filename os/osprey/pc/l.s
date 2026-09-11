@@ -791,23 +791,6 @@ TEXT setlabel(SB), $0
 	RET
 
 /*
- * Leave this task and enter that one (see taskswitch in pc64/l.s and
- * the task bench in port/devosprey.c): setlabel and gotolabel in one
- * instruction stream, since the code between two of them would run on
- * a stack that is about to be left.
- */
-TEXT taskswitch(SB), $0
-	MOVL	from+0(FP), AX
-	MOVL	to+4(FP), BX			/* before SP moves */
-	MOVL	SP, 0(AX)			/* store this task's sp */
-	MOVL	0(SP), CX			/* and the pc it resumes at */
-	MOVL	CX, 4(AX)
-	MOVL	0(BX), SP			/* the other task's sp */
-	MOVL	4(BX), CX			/* its pc, onto its own stack */
-	MOVL	CX, 0(SP)
-	RET
-
-/*
  * Attempt at power saving. -rsc
  */
 TEXT halt(SB), $0

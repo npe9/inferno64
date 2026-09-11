@@ -1993,8 +1993,10 @@ or
 .CW LDMXCSR ,
 which
 .CW os/osprey/pc/l.s
-uses, so that file has never been through an assembler in this tree.
-Nothing builds it, which is why nobody had noticed.  A non-x86
+uses, nor the
+.CW "JMPF syscall(SB)"
+in the same file, so it has never been through an assembler in this
+tree.  Nothing builds it, which is why nobody had noticed.  A non-x86
 board is written from nothing.  The plan's "adapter selected by OBJTYPE"
 has one adapter to select.
 .PP
@@ -2049,9 +2051,17 @@ other side is what the same exchange costs when there is no scheduler
 in it, and that is now measured rather than assumed.
 .PP
 .CW taskswitch
-.CW ( os/osprey/pc64/l.s ,
-and the 386 machine layer as well) leaves one task and enters another
-in one instruction stream, and
+.CW ( os/osprey/pc64/l.s ;
+amd64 only, since the 386 machine layer in this tree does not assemble
+at all \- 8a rejects the
+.CW FXSAVE ,
+.CW FXRSTOR
+and
+.CW LDMXCSR
+in its
+.CW l.s \-
+and a line nobody can assemble is a line nobody can prove) leaves one
+task and enters another in one instruction stream, and
 .CW devosprey.c
 has two tasks with an eight-kilobyte stack each \- the size the talk
 dumps \- that pass a message by switching straight from one to the
@@ -2061,10 +2071,17 @@ written to
 .CW #O/bench
 measures them: 65 to 100 nanoseconds a round trip, which is two
 switches, so 32 to 50 nanoseconds a switch, against 33 to 39
-nanoseconds to read the cycle counter once.  Three orders below the
-Proc path, on the same emulator, in the same boot, reported by the same
-counter \- which is what makes the comparison worth anything, since
-none of these absolute numbers is a hardware figure.
+nanoseconds to read the cycle counter once.  A switch here costs about
+what reading the clock costs.
+.PP
+Three orders below the whole round trip, but that comparison flatters
+it, since the round trip carries four microseconds of real work the
+tasks are not doing.  The same-quantity comparison is the one the
+section is really making: 65 nanoseconds of handoff against the
+thirty microseconds the scheduler's two legs cost, which is a factor of
+four hundred and sixty.  Both numbers come off the same emulator in the
+same boot from the same counter, which is what makes the ratio worth
+anything when none of the absolute figures is a hardware one.
 .PP
 A label in this kernel is a stack pointer and a program counter and
 nothing else, and that is the whole of a context in this ABI: the
