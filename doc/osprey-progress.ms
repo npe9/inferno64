@@ -1982,7 +1982,19 @@ and
 and claims the system for hard real-time embedded work.  Osprey builds
 for amd64 only.  The 386 libraries build and its machine layer is in the
 tree; what a 386 kernel lacks is a 386 userland for its boot file system
-(section "One instance where the plan asks for a choice").  A non-x86
+(section "One instance where the plan asks for a choice") \- and, found
+by trying it rather than by reading,
+.I "an assembler that will take its machine layer" :
+.CW 8a
+here does not know
+.CW FXSAVE ,
+.CW FXRSTOR
+or
+.CW LDMXCSR ,
+which
+.CW os/osprey/pc/l.s
+uses, so that file has never been through an assembler in this tree.
+Nothing builds it, which is why nobody had noticed.  A non-x86
 board is written from nothing.  The plan's "adapter selected by OBJTYPE"
 has one adapter to select.
 .PP
