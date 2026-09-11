@@ -290,11 +290,19 @@ talk's 270-nanosecond round trip, item 10, needs a task that is not a
 Plan 9 process, which this kernel's is (the microkernel number is
 measured, 56 \(mcs a request between two personalities under QEMU after
 the demonstrations' item 2, but that is a Proc waking a Proc, not a
-task); and rio, which runs on the full
-.CW pc64
-personality above the microkernel-exposed frame buffer and interrupt
-rings, does not yet run on the microkernel itself as a library
-personality with exec.  Slide 15 \- processes sharing an address space
+task).  The other half of that sentence is closed: rio runs on the
+microkernel itself now, on the
+.CW p964
+library personality, which has exec, the name space, processes, a
+window and input (phase 3.2), and which serves the system calls of an
+ordinary Plan 9 binary that was not built for it (phase 3.3) \- so the
+personality runs executables and not only programs linked against it.
+What a library operating system still cannot do for a program is split
+the program's own flow of control:
+.CW rfork(RFPROC)
+is refused by name, which is why rio on
+.CW p964
+is rio relinked against the library rather than rio unmodified.  Slide 15 \- processes sharing an address space
 migrating as a group \- is whole, on one machine and across a wire, and
 the migrated process carries its descriptor table and its private name
 space with it.
