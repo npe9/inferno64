@@ -277,7 +277,91 @@ checkmechanism(name: string, m: ref Model, c: ref Config,
 		near(sys->sprint("%s: launch speed", name), launch, m.parameter[0], 1.0e-12);
 	"schrodinger" =>
 		checkschrodinger(name, m);
+	"rabi" =>
+		checkrabi(name, m);
 	}
+}
+
+
+# ------------------------------------------------------------ the two-level atom
+#
+# dR/dt = W x R is a rotation, so |R| cannot change: that is exact, it
+# is a property of the equations and not of the integrator, and it is
+# the one thing this model must not get wrong.  A sign slip in any of
+# the three derivatives turns the rotation into something that grows or
+# decays, which this catches at once.
+#
+# Then the physics the model exists to show.  On resonance the atom
+# inverts completely - the excited fraction is sin^2(rabi t / 2) and
+# reaches exactly 1 at t = pi/rabi.  Detuned, it CANNOT: the ceiling is
+# rabi^2/(rabi^2 + detuning^2).  The second is the negative control for
+# the first.  Without it, a model that had stopped responding to
+# detuning at all would pass the resonance check and still be wrong
+# about the only thing a detuning slider is for.
+
+rabilen(st: array of real): real
+{
+	return math->sqrt(st[0]*st[0]+st[1]*st[1]+st[2]*st[2]);
+}
+
+# integrate to t, returning the state
+rabirun(m: ref Model, rabi, detuning, w0, until: real): array of real
+{
+	m.parameter[0] = rabi;
+	m.parameter[1] = detuning;
+	m.parameter[2] = w0;
+	stepping = m;
+	state := dynsys->initialstate(m);
+	work := numerics->workspace(len state);
+	# a whole number of steps that lands EXACTLY on `until\', rather
+	# than a fixed dt and however many steps that rounds to.  Stopping
+	# 4e-4 past pi puts w 8e-8 below 1 - which is the cosine being
+	# quadratic at its peak, not the integrator being inaccurate, and
+	# it would have been absorbed by a looser tolerance and quietly
+	# hidden how good rk4 actually is here
+	n := 20000;
+	dt := until/real n;
+	t := 0.0;
+	for(i := 0; i < n; i++){
+		numerics->rk4(work, steprhs, t, dt, state);
+		t += dt;
+	}
+	return state;
+}
+
+checkrabi(name: string, m: ref Model)
+{
+	# the rotation invariant, at a detuning that tilts the axis so all
+	# three derivatives are doing something
+	before := rabilen(dynsys->initialstate(m));
+	st := rabirun(m, 1.0, 1.7, -1.0, 9.0);
+	near(name+": |R| is conserved", rabilen(st), before, 1.0e-12);
+
+	# on resonance the atom inverts completely at t = pi/rabi
+	st = rabirun(m, 1.0, 0.0, -1.0, math->Pi);
+	near(name+": resonant inversion w(pi)", st[2], 1.0, 1.0e-9);
+
+	# the control: detuned it can never get there.  The ceiling is
+	# rabi^2/(rabi^2+detuning^2), so at detuning 2 and rabi 1 the
+	# excited fraction cannot pass 0.2 and w cannot pass -0.6
+	(om, de) := (1.0, 2.0);
+	ceiling := om*om/(om*om+de*de);
+	worst := -1.0;
+	for(k := 1; k <= 400; k++){
+		s2 := rabirun(m, om, de, -1.0, 0.02*real k);
+		excited := (1.0+s2[2])/2.0;
+		if(excited > worst)
+			worst = excited;
+	}
+	if(worst > ceiling+1.0e-6)
+		fail(sys->sprint("%s: detuned by %g it reached %g excited, "+
+			"above the %g ceiling", name, de, worst, ceiling));
+	# and the control has to be a real constraint, not a vacuous one:
+	# it must get close to the ceiling, or it is not being driven at all
+	if(worst < ceiling-0.01)
+		fail(sys->sprint("%s: detuned it only reached %g of a %g "+
+			"ceiling, so the ceiling check proves nothing",
+			name, worst, ceiling));
 }
 
 

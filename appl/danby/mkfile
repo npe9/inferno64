@@ -173,6 +173,7 @@ SPECS=\
 	productionexchange\
 	projectile\
 	pursuit\
+	rabi\
 	reactorstability\
 	reentry\
 	reservoir\

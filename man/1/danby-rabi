@@ -1,0 +1,115 @@
+.TH DANBY-RABI 1
+.SH NAME
+danby-rabi \- a two-level atom driven by a field, as a Bloch vector
+.SH SYNOPSIS
+.B danby/rabi
+.SH MODEL
+Two levels and the amplitude in each \(em no wave in space at all, which
+is what makes this the other half of quantum mechanics from
+.IR danby-schrodinger (1).
+A qubit is this.  So is a spin in a magnetic field, and so is an atom
+driven by a laser; the equations do not know which, which is the point
+of writing them in the Bloch form.
+.PP
+The state is the Bloch vector R = (u, v, w).
+.I w
+is the population INVERSION \(em the excited fraction less the ground
+fraction, so \-1 is an atom certainly in the ground state and +1 one
+certainly excited \(em and
+.I u
+and
+.I v
+are the coherence, the part with no classical meaning at all.  The
+motion is a rotation and nothing else:
+.PP
+.EX
+dR/dt = W x R,   W = (rabi, 0, detuning)
+.EE
+.PP
+which is why the length of R never changes.  A rotation cannot change
+it.
+.SH DESCRIPTION
+.B Danby/rabi
+is a
+.IR danbylab (2)
+script and nothing else \(em the whole model is the text of
+.BR /appl/danby/rabi.spec ,
+and editing it needs no compiler.
+.SS What to look for
+On resonance \(em
+.B detuning
+zero \(em the vector turns steadily in the plane the diagram draws, and
+the atom cycles ground to excited and back for ever.  The excited
+fraction is sin squared of
+.IR "rabi t" /2
+and it reaches exactly 1: the atom is certainly excited, momentarily,
+once per turn.  That is Rabi flopping, and it is the thing a
+.B pi
+pulse in a real experiment is timed to.
+.PP
+Wind
+.B detuning
+up and the rotation axis tilts out of the plane.  The vector now sweeps
+a cone that does not reach the pole, and the atom can NEVER be fully
+excited however long the field is left on.  The ceiling is
+.PP
+.EX
+rabi^2 / (rabi^2 + detuning^2)
+.EE
+.PP
+so at a detuning equal to the Rabi frequency it can only ever get half
+way.  Watching the top of the excited curve come down as the detuning
+goes up is the experiment, and it is why an off-resonant laser cannot
+excite an atom no matter how long you wait.
+.SS The diagram
+The unit circle the Bloch vector turns in, and the vector itself.  Only
+the tip is a marker; the circle is a drawn curve and not a mechanism.
+.PP
+The circle is the
+.IR v - w
+plane, which is the plane the vector stays in ON RESONANCE.  With a
+detuning it leaves that plane \(em
+.I u
+becomes non-zero \(em and what is drawn is its projection, so the tip
+comes inside the circle rather than off it.  The vector has not
+shortened; it is leaning out of the page.
+.SS The parameters
+.TP
+.B rabi
+How hard the field drives, in the same units as the clock.  Zero leaves
+the atom alone.
+.TP
+.B detuning
+How far the field is from resonance.  Signed: either side is equivalent,
+which is worth seeing.
+.TP
+.B start_inversion
+Where
+.I w
+starts.  \-1 is the ground state.  Anything between is a mixed state,
+and its Bloch vector is shorter than 1 and stays shorter \(em the
+rotation preserves whatever length it is given.
+.SH SOURCE
+.B /appl/danby/rabi.spec
+.SH SEE ALSO
+.IR danby (1),
+.IR danby-schrodinger (1),
+.IR danbylab (2),
+.IR danbylabtest (1)
+.SH BUGS
+There is no damping.  A real excited atom decays, and with spontaneous
+emission in the equations the Bloch vector spirals inward to a steady
+state instead of turning for ever \(em which is the more honest picture
+of an atom in a laser beam, and is not this model.  The exact
+length-conservation that
+.IR danbylabtest (1)
+checks is a property of the undamped equations and would have to go.
+.PP
+The rotating-wave approximation is assumed and not shown.  The fast
+counter-rotating term has already been dropped, so nothing here wiggles
+at the optical frequency, and the Bloch-Siegert shift that term causes
+cannot appear.
+.PP
+The test checks the rotation invariant, complete inversion on resonance,
+and the detuned ceiling with a control that fails if the atom is not
+actually being driven.  It does not check the diagram at all.

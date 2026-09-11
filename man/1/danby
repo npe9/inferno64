@@ -922,6 +922,11 @@ See
 .IR danby-yoyo (1).
 .SS Quantum Mechanics
 .TP
+.B danby/rabi
+A two-level atom driven by a field, as a Bloch vector.
+See
+.IR danby-rabi (1).
+.TP
 .B danby/schrodinger
 Shoot Schrodinger's equation and hunt for an eigenvalue.
 See

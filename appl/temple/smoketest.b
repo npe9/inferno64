@@ -99,7 +99,7 @@ dspecs := array[] of {
 	"moontrip", "moreenzyme", "movingpivot", "multistagerocket", "nonlinearsprings",
 	"oregonator", "parasite", "pegpendulum", "pendulumperiod", "perihelion",
 	"periodicvolterra", "pistonflywheel", "polevault", "poyntingrobertson", "predatorfishing",
-	"productionexchange", "projectile", "pursuit", "reactorstability", "reentry",
+	"productionexchange", "projectile", "pursuit", "rabi", "reactorstability", "reentry",
 	"reservoir", "rocket2d", "rocketintro", "rotatingring1", "rotatingring2",
 	"running", "schrodinger", "seasonaldisease", "shipmotion", "simplependulum",
 	"skijump", "skylab", "slidingpendulum1", "slidingpendulum2", "soccerkick",
