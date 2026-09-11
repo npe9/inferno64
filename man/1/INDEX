@@ -469,6 +469,7 @@ powers math-misc
 predatorprey predatorprey
 prefix sh-string
 primes math-misc
+procbench procbench
 prof prof
 ps ps
 psalmody psalmody

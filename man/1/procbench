@@ -1,0 +1,118 @@
+.TH PROCBENCH 1
+.SH NAME
+procbench \- what a Dis process and a channel cost
+.SH SYNOPSIS
+.B procbench
+[
+.B -n
+.I entity-steps
+]
+.SH DESCRIPTION
+.I Procbench
+measures the cost of doing a fixed amount of per-entity work three ways,
+so that "one process per entity" can be a decision rather than a
+preference.
+.PP
+.B /doc/games-plan.md
+proposes a game whose swarm is one Dis process an entity, communicating
+over channels, on the grounds that this is the obvious Inferno reading
+of "many small independent things at once".
+That reading might have been wrong: execution here is serialised, not
+parallel, so N processes and their traffic could cost strictly more than
+a loop and buy nothing but shape.
+This says by how much.
+.PP
+The three arrangements all do the same arithmetic per entity per frame,
+so what is measured is the machinery:
+.TP
+.B loop
+one process, a loop over an array
+.TP
+.B procs
+one process an entity, each woken on its own channel and waited for
+.TP
+.B pool
+one process an entity, all taking from one channel and replying on one
+.PP
+.B Pool
+is the arrangement a game would actually have, because
+.B alt
+cannot be written over an array of channels.
+A bare channel round trip and a
+.B spawn
+are timed separately.
+.PP
+.I Entity-steps
+is the work each measurement is given, four million by default.
+Every measurement gets the same amount rather than the same number of
+frames, because the clock is
+.IR sys-millisec (2)
+and a measurement lasting two milliseconds is two significant figures of
+nothing.
+The first version of this printed 0.00 for half the table.
+.SH EXAMPLE
+Numbers from this tree, on an Apple M-series host.
+Compiled is
+.BR "emu -c1" ,
+interpreted is
+.BR "emu -c0" ;
+say which, because they are different code and emu interprets unless
+asked.
+.PP
+.EX
+                  compiled   interpreted
+channel round trip    0.03 us       0.07 us
+spawn                13.56 us       7.29 us
+
+microseconds per entity per frame, compiled:
+
+entities    loop   procs    pool   procs/loop
+       1    0.01    0.05    0.05     3.7x
+      16    0.01    0.08    0.10     6.4x
+     256    0.01    0.21    0.35    15.8x
+.EE
+.SH RESULTS
+A process per entity costs four to sixteen times a loop, per entity, and
+the shared-channel arrangement a game would really use costs more again.
+.PP
+It does not matter at the sizes these games run at.
+Two hundred and fifty-six entities as processes come to about
+.B 54
+microseconds a frame against
+.B 3
+for the loop, out of the sixteen thousand a sixtieth of a second allows.
+The ratio is bad and the absolute cost is negligible, so the shape is
+affordable and the argument for it is that it reads well, not that it
+runs fast.
+.PP
+What is not free is
+.BR spawn ,
+at seven to fourteen microseconds.
+Spawning a process per entity per frame would cost milliseconds and is
+the thing to avoid; spawning once when a level is loaded costs nothing
+worth counting.
+.PP
+Spawning is
+.I cheaper
+interpreted than compiled, which is the opposite of everything else
+here.
+Why has not been chased.
+.SH SOURCE
+.B /appl/cmd/procbench.b
+.SH SEE ALSO
+.IR emu (1),
+.IR sys-millisec (2)
+.PP
+.B /doc/games-plan.md
+.SH BUGS
+It measures one host.
+The ratios are what to carry away, not the absolute figures.
+.PP
+The entities do not touch each other, so nothing here measures what
+locking or shared state would cost, and a real swarm has both.
+.PP
+The three arrangements are checked against each other and the run fails
+if they disagree, so a transcription error in one of them cannot show up
+as a timing difference instead of a wrong answer.
+Nothing checks them against anything else: if all three are wrong in the
+same way, the timings are still comparable and still meaningless.

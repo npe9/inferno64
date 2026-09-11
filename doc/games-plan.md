@@ -211,20 +211,45 @@ file somebody can write without touching the game — the `tk(2)` argument appli
 to behaviour rather than to layout. It pairs with `camber`: one demonstrates
 authored *levels*, this one authored *conduct*.
 
-### 5. `sprig` — shape 1 — one process per entity, if the measurement allows
+### 5. `sprig` — shape 1 — one process per entity
+
+**Measured; not yet written.** The measurement is `procbench(1)`.
 
 The obvious Inferno reading of "many small independent things descending at
-once" is one Dis process each, communicating over channels, multiplexed with
-`alt`. That reading may be wrong: Dis execution in this emu is serialised, not
-parallel, so thirty processes and their channel traffic may cost strictly more
-than a loop over an array and buy nothing but shape.
+once" is one Dis process each, communicating over channels. That reading might
+have been wrong, since Dis execution in this emu is serialised rather than
+parallel, so the plan said to measure before writing 1200 lines on the strength
+of it. Measured, compiled, on an Apple M-series host:
 
-**This must be measured before the game is written, not after.** The measurement
-is a channel round-trip and an N-process step against the equivalent loop, and
-whichever way it comes out it is worth writing down. If processes lose, the
-finding — *one Dis process per entity costs X µs, so this is a teaching shape and
-not a performance one* — is a better artefact than the game would have been, and
-the game gets written as a loop.
+| | channel round trip | spawn |
+|---|---|---|
+| compiled (`emu -c1`) | 0.03 µs | 13.56 µs |
+| interpreted (`emu -c0`) | 0.07 µs | 7.29 µs |
+
+Microseconds per entity per frame, compiled:
+
+| entities | loop | procs | pool | procs/loop |
+|---|---|---|---|---|
+| 1 | 0.01 | 0.05 | 0.05 | 3.7× |
+| 16 | 0.01 | 0.08 | 0.11 | 6.0× |
+| 256 | 0.01 | 0.20 | 0.34 | 15.2× |
+
+`pool` — every entity taking from one channel — is what a game would actually
+have, because `alt` cannot be written over an array of channels.
+
+**The answer is that the shape is affordable.** A process per entity costs four
+to sixteen times a loop per entity, and at the sizes these games run at that
+ratio is charged on a number too small to matter: 256 entities as processes come
+to about 54 µs a frame against 3 µs for the loop, out of the 16600 µs a sixtieth
+of a second allows. So `sprig` gets written as one process per entity, and the
+honest claim is that it reads well, not that it runs fast.
+
+What is not free is `spawn`, at 7 to 14 µs. Spawning per entity per frame would
+cost milliseconds; spawning once when a wave is created costs nothing worth
+counting. That is the one design constraint the measurement imposes.
+
+(Spawning is *cheaper* interpreted than compiled, which is the opposite of
+everything else measured here. Not chased.)
 
 ### Not planned
 
