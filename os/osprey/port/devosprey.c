@@ -287,6 +287,52 @@ struct Pairarg {
 };
 
 /*
+ * The offer, said again until it is answered.
+ *
+ * It used to be said once: the offering machine wrote its frame and
+ * then blocked reading for the reply.  If the other machine was not
+ * listening yet - and which of two machines is ready first is not
+ * either one's to arrange - the frame went into the wire and nothing
+ * ever came back, so both sides waited for good and both said
+ * .CW "key none" .
+ * That is what the two-machine check's transient was: the check gives
+ * the listener a head start of a few seconds, and a loaded host is
+ * enough to spend it.
+ *
+ * So a second process says it again every half second, up to a minute,
+ * until the reply arrives.  A repeated offer costs the listener
+ * nothing: it answers whichever one it sees and the rest are frames
+ * with nobody waiting for them.
+ */
+typedef struct Pairretry Pairretry;
+struct Pairretry {
+	Chan	*dc;
+	uchar	*frame;
+	long	n;
+	int	stop;		/* the answer came: say it no more */
+	int	done;		/* and the saying has stopped */
+};
+
+static void
+pairretryproc(void *a)
+{
+	Pairretry *r = a;
+	int i;
+
+	if(!waserror()){
+		for(i = 0; i < 120 && !r->stop; i++){
+			tsleep(&up->sleep, return0, nil, 500);
+			if(r->stop)
+				break;
+			devtab[r->dc->type]->write(r->dc, r->frame, r->n, 0);
+		}
+		poperror();
+	}
+	r->done = 1;
+	pexit("osprey pair offer", 1);
+}
+
+/*
  * Agree a key with whoever is on the other end of an interface.  One
  * machine listens and one offers; both end up holding the same key and
  * saying the same fingerprint, and neither of them has been told what
@@ -298,14 +344,16 @@ pairproc(void *a)
 	Pairarg *pa;
 	Chan *dc, *cc;
 	mpint *x, *p;
+	Pairretry *retry;
 	uchar *in, *out;
 	long n;
-	int k;
+	int k, i;
 
 	pa = a;
 	in = out = nil;
 	dc = cc = nil;
 	x = p = nil;
+	retry = nil;
 	if(waserror())
 		goto done;
 	in = smalloc(Pipframe);
@@ -324,8 +372,14 @@ pairproc(void *a)
 	while(n < Minframe)
 		out[n++] = 0;
 
-	if(pa->offer)
+	if(pa->offer){
 		devtab[dc->type]->write(dc, out, n, 0);
+		retry = smalloc(sizeof(Pairretry));
+		retry->dc = dc;
+		retry->frame = out;
+		retry->n = n;
+		kproc("ospreypairoffer", pairretryproc, retry);
+	}
 	for(;;){
 		k = devtab[dc->type]->read(dc, in, Pipframe, 0);
 		if(k <= Etherhdr + 3)
@@ -343,6 +397,29 @@ pairproc(void *a)
 		pairfinish(x, p, in+Etherhdr+3, k);
 	poperror();
 done:
+	/*
+	 * The frame and the channel the retransmitter is using are freed
+	 * below, so it has to have stopped first.  It looks at stop every
+	 * half second; a second and a half of waiting is three of its
+	 * turns, and if it is somehow still there after that the memory is
+	 * left rather than taken out from under it.
+	 */
+	if(retry != nil){
+		retry->stop = 1;
+		for(i = 0; i < 30 && !retry->done; i++)
+			tsleep(&up->sleep, return0, nil, 50);
+		if(!retry->done){
+			/*
+			 * Still writing.  The frame and the channel are its
+			 * now: three allocations left behind is better than
+			 * freeing memory a running process is in the middle
+			 * of using, and it stops within the minute.
+			 */
+			out = nil;
+			dc = nil;
+			retry = nil;
+		}
+	}
 	if(x != nil)
 		mpfree(x);
 	if(p != nil)
@@ -353,6 +430,7 @@ done:
 		cclose(cc);
 	free(in);
 	free(out);
+	free(retry);
 	free(pa);
 	pexit("osprey pair", 1);
 }

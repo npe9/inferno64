@@ -2194,6 +2194,27 @@ fingerprints is the only thing that says it was the machine that was
 meant, and there is nothing a machine could compare instead without
 something already shared to compare it against.
 .PP
+One thing about the exchange itself was wrong and is fixed.  The
+offering machine wrote its frame once and then waited for the reply, so
+if the listening machine was not up yet the offer went into the wire
+with nobody to hear it and both ends waited for good, each saying
+.CW "key none" .
+Which of two machines is ready first is not either one's to arrange,
+and it is exactly what a loaded host decides: this is what the
+two-machine check's transient was, and it cost a sweep six criteria on
+11 September 2026.  The offer is said again every half second now, for
+up to a minute, until it is answered; a repeated offer costs the
+listener nothing, since it answers whichever one it sees.
+.PP
+The check for it is a falsification rather than a repetition
+.CW ( scripts/osprey-check-pair.py ):
+the listener is held back forty seconds on purpose, which no head start
+covers.  Against the kernel of the commit before, the two machines end
+with no key at all; against this one they agree
+.CW 1996c4d63924cb9d ,
+both of them.  A flaky check that passes when run again proves nothing
+about what was changed; this one fails on demand.
+.PP
 .B "12.  What is a demonstration's size."
 Sixteen containers, eight cores, thirty-two packets, eight names, four
 grants, eight pages, sixteen arms, one producer and one consumer per

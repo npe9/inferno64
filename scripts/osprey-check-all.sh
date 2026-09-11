@@ -74,6 +74,7 @@ run micro   scripts/osprey-check-micro.py
 run user    scripts/osprey-check-user.py
 run net     scripts/osprey-check-net.py
 run wire    scripts/osprey-check-wire.py
+run pair    scripts/osprey-check-pair.py
 i=1
 while [ $i -le $wire ]; do
 	run p9wire scripts/osprey-check-p9wire.py
