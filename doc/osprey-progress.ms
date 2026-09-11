@@ -2159,10 +2159,9 @@ puts each request on the ring and then answers it in the process that
 asked \- one call to the same service routine the kproc calls, under
 the same lock, with nobody woken and nothing slept on.  That is
 .B "1.8 microseconds"
-a round trip, against 65 through the service process, on the same boot.
-So thirty-six parts in thirty-seven of what a request costs here is
-getting to another process and back, and the work itself is the other
-one.
+a round trip, against 65 through the service process, on the same boot:
+a thirty-sixth of what a request costs here is the work, and the rest
+is getting to another process and back.
 .PP
 That is a floor and not a proposal.  A request the kernel answers
 itself \- a poll, an allocation, a reservation, a bind, a clock tick \-

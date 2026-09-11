@@ -8352,8 +8352,14 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 				/*
 				 * Answered here, in the process that asked:
 				 * one call, no wakeup, no sleep, no second
-				 * process.  The lock is the one the service
-				 * kproc takes for the same work.
+				 * process.  This runs with ospreylock held,
+				 * which is the lock the service kproc takes
+				 * around the same call rather than one taken
+				 * inside it, so the two do not nest.  The
+				 * request is a poll, which the dispatcher
+				 * answers out of the container's own counts
+				 * and forwards nowhere, so nothing reached
+				 * from here asks for the lock either.
 				 */
 				ospreyservicep(p, ospreynow());
 				ospreyroute(p);
