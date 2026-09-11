@@ -14,6 +14,7 @@ void p9server(char *arg);
 void p9paircli(void);
 extern void memimageinit(void);	/* libmemdraw: the shared masks a draw reads */
 int p9riodemo;		/* *riodemo= in plan9.ini: also exec rio and leave it running */
+int p9legacydemo;	/* *legacydemo= in plan9.ini: also run the unmodified Plan 9 binary, which ends the task */
 void p9server(char *arg);
 void p9setup(void);
 
@@ -44,26 +45,56 @@ p9setup(void)
 	print("p9: a pipe holds %lud bytes before its writer waits for its reader\n", conf.pipeqsize);
 	chandevreset();
 	/*
-	 * How much room there is between the end of this personality's own
-	 * image and the first address a loaded program is linked at.  The
-	 * quantity on the left grows whenever a program is added to the boot
-	 * files - each one is a byte array in this program's data - and when
-	 * it passed the quantity on the right the machine died at touser
-	 * with nothing printed.  So it is said at every boot, and it is said
-	 * before anything else can go wrong.
+	 * How much room there is between the top of the region loaded
+	 * programs live in and the address this personality starts at.
+	 *
+	 * This used to read the other way round - the end of this image
+	 * against the first program's base - because the personality was
+	 * below the programs and grew up towards them, and when it reached
+	 * them the machine died at touser with nothing printed.  It is
+	 * above them now, at P9selfbase, so that an ordinary Plan 9 binary
+	 * can have UTZERO; the quantity that can close is the one below.
+	 * Left as it was it said MY OWN IMAGE ENDS AT ... WHICH IS PAST ...
+	 * at every boot, in capitals, and was right about the arithmetic
+	 * and wrong about what it meant.
 	 */
 	{
 		extern char end[];
 		uvlong e = (uvlong)(uintptr)end;
+		uvlong me = (uvlong)(uintptr)p9setup;
+		uvlong progtop = (uvlong)P9relocbase +
+			(uvlong)Nrelocslot * (uvlong)P9relocslot;
 
-		if(e >= (uvlong)P9progbase)
-			print("p9: MY OWN IMAGE ENDS AT %#llux, WHICH IS PAST %#llux, "
-				"WHERE THE FIRST LOADED PROGRAM IS LINKED: the boot files "
-				"have outgrown the map in p9lib.h\n", e, (uvlong)P9progbase);
+		/*
+		 * Where this program actually is, against where p9lib.h says
+		 * it is.  The two are set in different files - build.sh's -T
+		 * and P9selfbase - and nothing but this would notice them
+		 * drifting apart: the loader refuses a program that would
+		 * land on the personality, and it works that out from
+		 * P9selfbase, so a stale P9selfbase would let a program be
+		 * laid on top of this one and the machine would die with
+		 * nothing to say.  p9setup is a text address, so it is at or
+		 * above the base and not far above it.
+		 */
+		if(me < (uvlong)P9selfbase || me - (uvlong)P9selfbase > 64*1024*1024)
+			print("p9: I AM LINKED AT %#llux BUT p9lib.h SAYS %#llux: "
+				"build.sh's -T and P9selfbase disagree, and the loader's "
+				"check on where a program may go is reading the wrong "
+				"address\n", me, (uvlong)P9selfbase);
 		else
-			print("p9: my image ends at %#llux, %llud bytes below %#llux, "
-				"where the first loaded program is linked\n",
-				e, (uvlong)P9progbase - e, (uvlong)P9progbase);
+			print("p9: I am at %#llux, the base p9lib.h names (%#llux) plus "
+				"%llud bytes of my own text\n",
+				me, (uvlong)P9selfbase, me - (uvlong)P9selfbase);
+
+		if(progtop > (uvlong)P9selfbase)
+			print("p9: THE PROGRAM REGION ENDS AT %#llux, WHICH IS PAST %#llux, "
+				"WHERE I AM: a program laid in the top slots would be laid "
+				"on me, and the map in p9lib.h has outgrown the gap\n",
+				progtop, (uvlong)P9selfbase);
+		else
+			print("p9: programs live below %#llux, %llud bytes below me, and "
+				"my own image is %llud bytes of text, data and bss\n",
+				progtop, (uvlong)P9selfbase - progtop, e - (uvlong)P9selfbase);
 	}
 	up->pgrp = newpgrp();
 	up->egrp = smalloc(sizeof(Egrp));
@@ -1008,7 +1039,7 @@ p9main(void)
 		 * the traps is what says whether this is a library operating
 		 * system or a set of libraries.
 		 */
-		{
+		if(p9legacydemo){
 			extern int p9execlegacy(char*, char**);
 			char *lav[2];
 
@@ -1709,6 +1740,14 @@ startboot(char *argv0, char **argv)
 		p9paircli();		/* the buddy's client: mount it and read its files */
 		exits(nil);
 	}
-	USED(argv);
+	/*
+	 * "legacy": run the unmodified Plan 9 binary as well.  It is asked
+	 * for rather than always done, because what it does to the machine
+	 * is end it - its exits is a real system call, made by real libc,
+	 * and this personality has nothing between it and the kernel that
+	 * would catch it - so the boot that carries it is not the boot the
+	 * rest of the checks are written against.
+	 */
+	p9legacydemo = argv != nil && argv[1] != nil && strcmp(argv[1], "legacy") == 0;
 	p9main();
 }

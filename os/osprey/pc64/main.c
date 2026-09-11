@@ -240,14 +240,35 @@ init0(void)
 	 * ends by _exits, as it does on the microkernel entry, which has
 	 * had this same shape since 2.1.
 	 */
-	sp = (char**)(USTKTOP - sizeof(Tos) - 8 - sizeof(sp[0])*4);
-	strcpy((char*)&sp[2], "boot");
-	sp[0] = (char*)&sp[2];		/* argv[0] */
-	sp[1] = nil;			/* and the vector ends */
+	/*
+	 * A second word when the machine was configured for it.  A
+	 * demonstration that ends the task - an ordinary Plan 9 binary,
+	 * whose exits is a real system call and ends the container it runs
+	 * in - cannot be in the boot every other check is written against,
+	 * for the same reason the window system is behind *riodemo: it is
+	 * a thing that happens to the machine rather than a thing the
+	 * machine does.  So it is asked for, in plan9.ini, and the
+	 * personality is told by its argument vector.
+	 */
+	sp = (char**)(USTKTOP - sizeof(Tos) - 8 - sizeof(sp[0])*8);
+	strcpy((char*)&sp[4], "boot");
+	strcpy((char*)&sp[6], "legacy");
+	sp[0] = (char*)&sp[4];		/* argv[0] */
+	sp[1] = getconf("*legacydemo") != nil ? (char*)&sp[6] : nil;
+	sp[2] = nil;			/* and the vector ends */
 
 	splhi();
 	fpukexit(nil);
-	touser(sp);
+	/*
+	 * Where the image this task was given actually starts.  init0 used
+	 * to enter UTZERO+0x28 outright, which is initcode's entry and was
+	 * every image's entry while nothing else was loaded; the p964
+	 * personality is linked high now so that an ordinary Plan 9 binary
+	 * can have UTZERO, and it comes in through this same init0.  A task
+	 * whose loader named no entry - initcode, which proc0 lays down by
+	 * hand rather than through a loader - keeps the old address.
+	 */
+	touser(sp, up->aoutentry != 0 ? up->aoutentry : (uintptr)(UTZERO+0x28));
 }
 
 static void

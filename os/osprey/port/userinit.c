@@ -28,7 +28,7 @@ extern int ospreyp9pair;
 extern int ospreyp9buddy;
 extern int ospreyp9linux;
 extern void touserat(char*);
-extern void touserv(char*, char*);
+extern void touserv(char*, char*, uintptr);
 extern int ospreyuserprep(void);
 extern int ospreyframebuffer(void);
 extern int ospreypointerexpose(void);
@@ -62,6 +62,7 @@ ospreyloadprog(void)
 	ulong npg, i, off, cnt;
 
 	npg = (sizeof(userprog) + BY2PG - 1) / BY2PG;
+	up->aoutentry = UTZERO+0x28;	/* flat, at the usual place; said rather than assumed */
 	up->seg[SSEG] = newseg(SG_STACK | SG_NOEXEC, USTKTOP-USTKSIZE, USTKSIZE / BY2PG);
 	up->seg[TSEG] = newseg(SG_TEXT | SG_RONLY, UTZERO, npg);
 	up->seg[TSEG]->flushme = 1;
@@ -85,8 +86,10 @@ ospreyloadprog(void)
  * into text, data and bss segments.  Unlike ospreyloadprog's flat load,
  * this parses the exec header and lays out the segments the way the
  * linker and sysproc's exec do, eager-mapping every page (xup64 has no
- * demand paging).  The entry is init9's _main at UTZERO+0x28, which
- * touser jumps to.
+ * demand paging).  The entry is init9's _main, one header above the text
+ * base, which touser jumps to - it reads the address out of
+ * ospreyaoutentry rather than assuming UTZERO, because the personality
+ * is no longer linked there.
  */
 static void
 ospreyfillseg(Segment *s, uvlong va, ulong npg, uchar *src, ulong srclen)
@@ -116,7 +119,7 @@ ospreyloadaout(uchar *prog)
 {
 	struct Exec { long magic, text, data, bss, syms, entry, spsz, pcsz; } *h;
 	ulong magic, hdrsz, textsz, datasz, bsssz, tseg;
-	uvlong textend, adata, abss, ebss;
+	uvlong textend, adata, abss, ebss, utext;
 
 	h = (struct Exec*)prog;
 	magic = beswal(h->magic);
@@ -124,17 +127,58 @@ ospreyloadaout(uchar *prog)
 	datasz = beswal(h->data);
 	bsssz = beswal(h->bss);
 	hdrsz = (magic & 0x8000) ? sizeof(struct Exec)+8 : sizeof(struct Exec);
+	/*
+	 * Where the program says it is, rather than where a program usually
+	 * is.  This laid every image at UTZERO, which is right for a program
+	 * linked there and is the only thing a program could be while the
+	 * personality was the only program.  A library operating system that
+	 * is to run an ordinary Plan 9 binary cannot be at UTZERO itself -
+	 * that is where an ordinary binary is linked - so it is linked
+	 * elsewhere and this follows it.
+	 *
+	 * The address comes out of the entry, which is the first
+	 * instruction and so the text base plus the header: the same
+	 * arithmetic p9exec.c does to recover a loaded program's base, and
+	 * for the same reason.  An entry below UTZERO is not a program this
+	 * kernel can lay out, and it falls back rather than mapping at zero.
+	 */
+	utext = (uvlong)(ulong)beswal(h->entry);
+	if(magic & 0x8000)
+		utext = ((uvlong)(ulong)beswal(((long*)prog)[8]) << 32)
+			| (uvlong)(ulong)beswal(((long*)prog)[9]);
+	utext = utext > hdrsz ? utext - hdrsz : UTZERO;
+	if(utext < UTZERO)
+		utext = UTZERO;
 	tseg = hdrsz + textsz;
-	textend = UTZERO + tseg;
+	textend = utext + tseg;
 	adata = (textend + BY2PG-1) & ~(uvlong)(BY2PG-1);
 	abss = (adata + datasz + BY2PG-1) & ~(uvlong)(BY2PG-1);
 	ebss = (adata + datasz + bsssz + BY2PG-1) & ~(uvlong)(BY2PG-1);
 
+	/*
+	 * Where touserv will enter this task.  It was written into the
+	 * entry itself as UTZERO+0x28, which was true of every image while
+	 * the only a.out this kernel loaded was linked at UTZERO; the
+	 * personality is linked high now and the constant sent it to an
+	 * address with nothing mapped (fault read addr=0x200028, with the
+	 * text correctly laid at 0x40000000).
+	 *
+	 * It belongs to the task and not to the kernel.  A kernel-wide word
+	 * was the first attempt and it is wrong for a plain reason: this
+	 * machine loads more than one kind of image in a boot - the
+	 * personality high, the flat microkernel tasks at UTZERO - and the
+	 * second load overwrote the first task's entry before that task had
+	 * used it.  What that looked like was osprey-fs, a flat task, dying
+	 * at 0x40000028, which is the personality's entry and no address of
+	 * its own.
+	 */
+	up->aoutentry = utext + hdrsz;
+
 	up->seg[SSEG] = newseg(SG_STACK | SG_NOEXEC, USTKTOP-USTKSIZE, USTKSIZE/BY2PG);
 
-	up->seg[TSEG] = newseg(SG_TEXT | SG_RONLY, UTZERO, PGROUND(tseg)>>PGSHIFT);
+	up->seg[TSEG] = newseg(SG_TEXT | SG_RONLY, utext, PGROUND(tseg)>>PGSHIFT);
 	up->seg[TSEG]->flushme = 1;
-	ospreyfillseg(up->seg[TSEG], UTZERO, PGROUND(tseg)>>PGSHIFT, prog, tseg);
+	ospreyfillseg(up->seg[TSEG], utext, PGROUND(tseg)>>PGSHIFT, prog, tseg);
 
 	up->seg[DSEG] = newseg(SG_DATA, adata, PGROUND(datasz)>>PGSHIFT);
 	ospreyfillseg(up->seg[DSEG], adata, PGROUND(datasz)>>PGSHIFT, prog+tseg, datasz);
@@ -683,7 +727,8 @@ ospreyenteruservec(char **argv, int argc)
 	 * (see touserv in pc64/l.s).  Without the gap the spill lands on
 	 * argv[1].
 	 */
-	touserv((char*)sp, (char*)(sp - 2*sizeof(uintptr)));
+	touserv((char*)sp, (char*)(sp - 2*sizeof(uintptr)),
+		up->aoutentry != 0 ? up->aoutentry : (uintptr)(UTZERO+0x28));
 }
 
 void

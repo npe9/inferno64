@@ -158,6 +158,20 @@ enum {
 	 * wants either relocation or every mutable thing in a program's
 	 * image reached through a per-process pointer, and neither is here.
 	 */
+	/*
+	 * Where this personality itself is linked, which is the one address
+	 * a program may not be at.  It is high, and deliberately: an
+	 * ordinary Plan 9 binary is linked at UTZERO, 0x200000, because that
+	 * is where Plan 9 puts one, and a library operating system that sits
+	 * there can only run programs built to miss it - a library per
+	 * program rather than an operating system.  So the library gets out
+	 * of the way and the low addresses are left to programs.
+	 *
+	 * build.sh links with -T P9selfbase+0x28, and p9setup checks at boot
+	 * that the two agree, because nothing else would notice if they did
+	 * not.
+	 */
+	P9selfbase	= 0x40000000,	/* 1GB: this personality's own text */
 	P9progbase	= 0x1c00000,	/* prog2, the first loaded program */
 	/*
 	 * 0x1000000, 0x1400000 and 0x1800000 are not bases any more.  The

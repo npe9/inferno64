@@ -157,7 +157,7 @@ void	setconfenv(void);
 void*	sigsearch(char*, int);
 void	syncclock(void);
 void	syscallentry(void);
-void	touser(void*);
+void	touser(void*, uintptr);
 void	trapenable(int, void (*)(Ureg*, void*), void*, char*);
 void	trapinit(void);
 void	trapinit0(void);

@@ -108,7 +108,10 @@ OBJ="$OBJ /tmp/p9_netvirtio.6"
 6a -o /tmp/p9_xcall.6 $P/xcall.s
 OBJ="$OBJ /tmp/p9_xcall.6"
 
-6l -l -R4096 -o /tmp/p9lib $OBJ $SUP Osprey/amd64/lib/libc.a
+# -T is P9selfbase plus the forty-byte header (p9lib.h says why the
+# personality is linked high: UTZERO belongs to the programs).  p9setup
+# checks at boot that this number and the one in p9lib.h agree.
+6l -l -R4096 -T 0x40000028 -o /tmp/p9lib $OBJ $SUP Osprey/amd64/lib/libc.a
 echo "built /tmp/p9lib"
 
 # Emit the loader image os/osprey/pc64/p9prog.i from the linked binary,

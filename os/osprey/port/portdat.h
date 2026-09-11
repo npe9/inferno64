@@ -790,6 +790,7 @@ struct Proc
 	void	*kparg;
 
 	Sargs	s;		/* syscall arguments */
+	uintptr	aoutentry;	/* where touserv enters this task's a.out: its text base plus the header, since not every image is at UTZERO */
 	int	oslinux;	/* a Linux legacy process: Linux syscall ABI */
 	int	buddyimage;	/* its image is the buddy's: page faults go there first */
 	int	buddyredir;	/* a bit per standard descriptor a legacy program has dup'd something else onto: those writes go to the buddy, not the console */

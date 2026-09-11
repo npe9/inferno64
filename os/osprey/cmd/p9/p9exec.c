@@ -367,14 +367,22 @@ p9load(char *name, uvlong *entryp, uvlong *basep)
 	 * thing in a loaded program's text (p9lib.h), so the entry is the
 	 * header's length above the address the file is laid down at.  The
 	 * loader takes nothing on trust about it: the address must be a page
-	 * boundary, and it must be above this personality's own image, or
-	 * the program would be laid over the operating system that is
+	 * boundary, and it must not be inside this personality's own image,
+	 * or the program would be laid over the operating system that is
 	 * loading it.
+	 *
+	 * Not above: beside.  The rule was "above my own image" while this
+	 * personality was linked at the bottom of the address space, and
+	 * that rule made an ordinary Plan 9 binary impossible to load, since
+	 * one is linked at UTZERO and the personality was there.  The
+	 * personality is high now and the programs are below it, so what
+	 * matters is that the two do not overlap.
 	 */
 	progbase = entry - hdrsz;
-	if((progbase & 4095) != 0 || progbase < (uvlong)(uintptr)end){
-		print("p9 exec: %s: it is linked at %#llux, which is not a page boundary above my own image (%#llux)\n",
-			name, progbase, (uvlong)(uintptr)end);
+	if((progbase & 4095) != 0
+	|| (progbase >= (uvlong)P9selfbase && progbase < (uvlong)(uintptr)end)){
+		print("p9 exec: %s: it is linked at %#llux, which is not a page boundary clear of my own image (%#llux..%#llux)\n",
+			name, progbase, (uvlong)P9selfbase, (uvlong)(uintptr)end);
 		p9close(fd);
 		return -1;
 	}
@@ -529,9 +537,10 @@ p9loadreloc(char *name, uvlong progbase, uvlong *entryp, uvlong *basep)
 	pcsz = be(hdr+28, 4);
 	hdrsz = 40;
 
-	if((progbase & 4095) != 0 || progbase < (uvlong)(uintptr)end){
-		print("p9 reloc: %s: %#llux is not a page boundary above my own image (%#llux)\n",
-			name, progbase, (uvlong)(uintptr)end);
+	if((progbase & 4095) != 0
+	|| (progbase >= (uvlong)P9selfbase && progbase < (uvlong)(uintptr)end)){
+		print("p9 reloc: %s: %#llux is not a page boundary clear of my own image (%#llux..%#llux)\n",
+			name, progbase, (uvlong)P9selfbase, (uvlong)(uintptr)end);
 		p9close(fd);
 		return -1;
 	}
