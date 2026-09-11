@@ -932,6 +932,11 @@ The radial wave function of a hydrogen-like atom.
 See
 .IR danby-hydrogen (1).
 .TP
+.B danby/packet
+A free particle, spreading.
+See
+.IR danby-packet (1).
+.TP
 .B danby/rabi
 A two-level atom driven by a field, as a Bloch vector.
 See

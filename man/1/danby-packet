@@ -1,0 +1,104 @@
+.TH DANBY-PACKET 1
+.SH NAME
+danby-packet \- a free particle, spreading
+.SH SYNOPSIS
+.B danby/packet
+.SH MODEL
+Every other quantum model here draws a standing shape.
+.IR Danby-schrodinger (1),
+.IR danby-hydrogen (1)
+and
+.IR danby-bands (1)
+all solve for states that do not change, and
+.IR danby-tunnel (1)
+is a steady beam.  This one is the exception, and that is why it is
+worth having: it is the only one in which a wave function actually moves
+and changes, and the diagram draws it doing so.
+.PP
+A free Gaussian packet, released at the origin with momentum k.  Its
+centre travels at the group velocity k/m \(em the classical answer, and
+the only classical thing about it.  Its width does not stay put:
+.PP
+.EX
+sigma(t) = sqrt( sigma0^2 + ( t / 2 m sigma0 )^2 )
+.EE
+.SH DESCRIPTION
+.B Danby/packet
+is a
+.IR danbylab (2)
+script \(em the whole model is the text of
+.BR /appl/danby/packet.spec .
+.SS What to look for
+.B It spreads, and it never unspreads.
+The width has no term that can decrease.  A free particle released
+anywhere becomes less and less localised for ever, and nothing in the
+equations offers a way back.
+.PP
+.B A tighter packet spreads faster.
+.I Sigma0
+appears in the DENOMINATOR of the growing term, so squeezing the initial
+packet makes it fly apart sooner.  Halve the initial width and it is
+wider than the loose one within a few units of time.  That is the
+uncertainty principle stated about time rather than about measurement:
+pin a particle down and it escapes you the quicker.
+.PP
+.B The momentum spread never changes.
+Nothing acts on a free particle, so dp stays at 1/(2 sigma0) for ever
+and the product is
+.PP
+.EX
+dx dp = sigma(t) / 2 sigma0
+.EE
+.PP
+which is exactly 1/2 at release.  That is the least any state can have,
+and it is why a Gaussian and no other shape is where textbooks start.
+From then on it only grows.
+.SS The diagram
+The point of the model.  It samples |psi|^2 at forty-eight fixed
+positions and draws the curve through them, so the bump visibly slides
+right and flattens as the run goes on.
+.PP
+Because the sample positions are fixed and the frame is pinned, what
+moves on the screen is the packet and not the view rescaling around it.
+The curve is normalised, so as it widens it must also fall \(em the area
+under it is a probability and stays one.
+.IR Danbylabtest (1)
+checks exactly that, by summing the drawn samples.
+.SH SOURCE
+.B /appl/danby/packet.spec
+.SH SEE ALSO
+.IR danby (1),
+.IR danby-schrodinger (1),
+.IR danby-tunnel (1),
+.IR danbylab (2)
+.SH BUGS
+The spreading is the closed-form answer substituted in, not a solution
+being integrated.  Nothing here solves the time-dependent Schrodinger
+equation; the packet is told how wide to be at each instant.  A real
+solver \(em the packet meeting a barrier and splitting into a reflected
+and a transmitted piece, which is the picture everyone wants \(em is a
+PDE, and
+.IR danbylab (2)
+has no family that can host one.
+.PP
+Only the envelope is drawn.  A real packet carries
+.I exp(ikx)
+underneath, oscillating far faster than the envelope, and |psi|^2 hides
+it completely.  Nothing on screen shows the momentum except the speed at
+which the bump travels.
+.PP
+The drawn window runs from \-4 to 20.  Late in a fast run the packet has
+spread past the right edge, and the sum of the samples then falls short
+of one \(em honestly, because the probability really has left the
+window, but it means the normalisation check only holds early and the
+test only asks it early.
+.PP
+.IR Danbylabtest (1)
+checks the minimum-uncertainty value at release, sigma against its
+closed form at five later times, the group velocity, that the drawn
+density integrates to one, and that a tighter packet overtakes a looser
+one.  The release check is exact and blind \(em at t = 0 the whole
+spreading term is zero, so it sees neither the mass nor the initial
+width in it \(em which is why the later times are there.  The
+normalisation check is the only one that sees the peak factor at all:
+breaking root-two-pi to 2 passes every other test in the file.

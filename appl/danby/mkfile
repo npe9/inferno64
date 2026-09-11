@@ -163,6 +163,7 @@ SPECS=\
 	multistagerocket\
 	nonlinearsprings\
 	oregonator\
+	packet\
 	parasite\
 	pegpendulum\
 	pendulumperiod\

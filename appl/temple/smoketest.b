@@ -97,7 +97,7 @@ dspecs := array[] of {
 	"lowbombing", "lowthrust", "magneticpendulum2d", "magneticpendulum3d", "malaria",
 	"manyspecies", "maypredator", "mercuryrotation", "migration", "moonrotation",
 	"moontrip", "moreenzyme", "movingpivot", "multistagerocket", "nonlinearsprings",
-	"oregonator", "parasite", "pegpendulum", "pendulumperiod", "perihelion",
+	"oregonator", "packet", "parasite", "pegpendulum", "pendulumperiod", "perihelion",
 	"periodicvolterra", "pistonflywheel", "polevault", "poyntingrobertson", "predatorfishing",
 	"productionexchange", "projectile", "pursuit", "rabi", "reactorstability", "reentry",
 	"reservoir", "rocket2d", "rocketintro", "rotatingring1", "rotatingring2",

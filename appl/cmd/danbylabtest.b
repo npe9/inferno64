@@ -285,7 +285,109 @@ checkmechanism(name: string, m: ref Model, c: ref Config,
 		checkbands(name, m);
 	"tunnel" =>
 		checktunnel(name, m);
+	"packet" =>
+		checkpacket(name, m);
 	}
+}
+
+
+# ------------------------------------------------------------------ packet
+#
+# The only model here whose wave function moves, so the only one where
+# the drawn curve is a thing to check rather than a decoration.  It is
+# checked against a physical requirement rather than against a formula:
+# |psi|^2 is a probability density, so the forty-eight samples the
+# diagram draws must integrate to one.  That catches the peak factor,
+# the width and the sample positions together, and none of the
+# closed-form checks would.
+#
+# dx dp = 1/2 at release is exact and, like every exact point in these
+# models, blind: at t = 0 the whole (t/2 m sigma0)^2 term is zero, so it
+# cannot see the mass or the initial width in it.  sigma is therefore
+# also checked against its closed form at several non-zero times.
+
+packetat(m: ref Model, momentum, w0, mass, t: real): (array of real, array of real)
+{
+	m.parameter[0] = momentum;
+	m.parameter[1] = w0;
+	m.parameter[2] = mass;
+	stepping = m;
+	state := dynsys->initialstate(m);
+	work := numerics->workspace(len state);
+	# A whole number of steps that lands EXACTLY on t, and NOT
+	# `int(t/dt + 0.5)\' steps of a fixed dt.  Limbo\'s int() of a real
+	# already rounds to nearest rather than truncating, so the + 0.5
+	# rounds a second time: at t = 10 and dt = 0.005 it asks for 2001
+	# steps and arrives at 10.005, which showed up here as sigma being
+	# wrong in the fourth decimal.
+	n := 2000;
+	tt := 0.0;
+	if(t > 0.0){
+		dt := t/real n;
+		for(i := 0; i < n; i++){
+			numerics->rk4(work, steprhs, tt, dt, state);
+			tt += dt;
+		}
+		tt = t;
+	}
+	dynsys->rhs(m, tt, state, array[len state] of real);
+	return (dynsys->observables(m, state), dynsys->points(m, state));
+}
+
+checkpacket(name: string, m: ref Model)
+{
+	# minimum uncertainty at release
+	(v0, nil) := packetat(m, 1.0, 1.0, 1.0, 0.0);
+	near(name+": dx dp at release", v0[1], 0.5, 1.0e-14);
+
+	# sigma against its closed form, away from t = 0 where the whole
+	# spreading term vanishes and the check would see nothing of it
+	for(i := 1; i <= 5; i++){
+		t := 2.0*real i;
+		w0 := 0.5 + 0.25*real i;
+		ms := 0.75 + 0.25*real i;
+		(v, nil) := packetat(m, 1.0, w0, ms, t);
+		want := math->sqrt(w0*w0 + (t/(2.0*ms*w0))*(t/(2.0*ms*w0)));
+		near(sys->sprint("%s: sigma at t=%g w0=%g m=%g", name, t, w0, ms),
+			v[0], want, 1.0e-9);
+		near(sys->sprint("%s: dx dp at t=%g", name, t), v[1], want/(2.0*w0), 1.0e-9);
+	}
+
+	# the centre really does travel at the group velocity
+	st := dynsys->initialstate(m);
+	d := array[len st] of real;
+	m.parameter[0] = 2.0; m.parameter[2] = 0.5;
+	st = dynsys->initialstate(m);
+	dynsys->rhs(m, 0.0, st, d);
+	near(name+": group velocity k/m", d[0], 4.0, 1.0e-14);
+
+	# the drawn density is a probability: the samples must sum to one.
+	# The samples run -4..20 at even spacing, so this only holds while
+	# the packet is well inside that window - at t=0 it is, at t=12 it
+	# has spread past the right edge and the sum falls short honestly.
+	dx := 24.0/47.0;
+	for(i = 0; i <= 2; i++){
+		t := 2.0*real i;
+		(nil, pts) := packetat(m, 1.0, 1.0, 1.0, t);
+		total := 0.0;
+		for(k := 3; k < 3+48; k++)
+			total += pts[2*k+1]*dx;
+		near(sys->sprint("%s: drawn density integrates to 1 at t=%g", name, t),
+			total, 1.0, 0.01);
+	}
+
+	# it spreads, and a tighter packet spreads faster - the whole point
+	(wide, nil) := packetat(m, 1.0, 2.0, 1.0, 6.0);
+	(narrow, nil) := packetat(m, 1.0, 0.5, 1.0, 6.0);
+	if(narrow[0] <= wide[0])
+		fail(sys->sprint("%s: at t=6 a sigma0=0.5 packet reached %g and a "+
+			"sigma0=2 packet %g - the tighter one must be wider by now",
+			name, narrow[0], wide[0]));
+	(early, nil) := packetat(m, 1.0, 1.0, 1.0, 0.0);
+	(late, nil) := packetat(m, 1.0, 1.0, 1.0, 10.0);
+	if(late[0] <= early[0]*1.5)
+		fail(sys->sprint("%s: it barely spread, %g to %g, so the spreading "+
+			"checks prove nothing", name, early[0], late[0]));
 }
 
 
@@ -506,7 +608,7 @@ hydshoot(m: ref Model, energy, charge, ell: real): real
 	state := dynsys->initialstate(m);
 	work := numerics->workspace(len state);
 	t := 0.0;
-	for(i := 0; i < int (HYDWALL/HYDDT+0.5); i++){
+	for(i := 0; i < int (HYDWALL/HYDDT); i++){
 		numerics->rk4(work, steprhs, t, HYDDT, state);
 		t += HYDDT;
 	}
@@ -686,7 +788,9 @@ schrodshoot(m: ref Model, energy, parity: real): real
 	state := dynsys->initialstate(m);
 	work := numerics->workspace(len state);
 	t := 0.0;
-	for(i := 0; i < int (SCHRODEND/SCHRODDT+0.5); i++){
+	# int() of a real already rounds in Limbo, so no + 0.5 here: with
+	# it this marched one step past the wall it claims to stop at
+	for(i := 0; i < int (SCHRODEND/SCHRODDT); i++){
 		numerics->rk4(work, steprhs, t, SCHRODDT, state);
 		t += SCHRODDT;
 	}
