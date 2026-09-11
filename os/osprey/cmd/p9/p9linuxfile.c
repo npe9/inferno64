@@ -18,6 +18,7 @@
  */
 #include	"linuxprog.i"
 #include	"legacyprog.i"
+#include	"faultprog.i"
 #include	"catprog.i"
 #include	"execprog.i"
 #include	"shprog.i"
@@ -43,6 +44,12 @@ p9legacyfile(void)
 	 * both - and the second is the one an ordinary Plan 9 program is.
 	 */
 	addbootfile("cat", catprog, sizeof catprog);
+	/*
+	 * And the control for the fault path: an ordinary Plan 9 program
+	 * with no note handler of its own, which the personality has to end
+	 * itself because there is nobody in the program to give the note to.
+	 */
+	addbootfile("faulty", faultprog, sizeof faultprog);
 }
 
 void

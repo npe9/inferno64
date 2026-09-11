@@ -1062,6 +1062,20 @@ p9main(void)
 			lav[1] = "/hello";
 			lav[2] = nil;
 			p9execlegacy("/boot/cat", lav);
+			/*
+			 * And the other half of the fault path.  /boot/legacy
+			 * registers a note handler and catches its own fault,
+			 * which is what a Plan 9 program does; this one has no
+			 * handler, which is what most programs are, and there
+			 * is nobody in it to give the note to.  On this
+			 * configuration a note nothing handles is a panic, so
+			 * the personality takes the flow of control back
+			 * instead - and the proof that it did is that the boot
+			 * goes on to the window system below.
+			 */
+			lav[0] = "/boot/faulty";
+			lav[1] = nil;
+			p9execlegacy("/boot/faulty", lav);
 		}
 		print("p9: /bin/rc is /boot/libsh, this tree's own small shell, and not rc: "
 			"rio asks for rc by name and there is none here\n");

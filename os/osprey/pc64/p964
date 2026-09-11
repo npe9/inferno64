@@ -147,6 +147,8 @@ port
 		 */
 		extern uintptr uregpc(void*);
 		extern int ospreyfaultup(char*);
+		extern int ospreyfromprog(void);
+		extern int ospreyholdnote(char*);
 		char *msg = up->nnote > 0 ? up->note[up->nnote-1]->msg : "a note with no message";
 		uintptr pc;
 
@@ -159,6 +161,43 @@ port
 		 * operating system for the program in its own address space.
 		 */
 		pc = uregpc(a);		/* before the frame is bent, which changes it */
+		/*
+		 * A note about the program, and the program registered a
+		 * handler for it with notify(2).  Then it is the program's
+		 * note and not the personality's: notify() builds the
+		 * handler's frame on the program's own stack and points the
+		 * pc at it, and noted(NCONT) below puts the frame back.  This
+		 * is the ordinary Plan 9 arrangement, reached by an ordinary
+		 * Plan 9 binary, in a task whose other flows are the library
+		 * operating system serving it.
+		 */
+		if(ospreyfromprog() && up->notify != nil){
+			Ureg *nureg = notify(a, msg);
+
+			if(nureg != nil){
+				if(up->nnote > 0)
+					up->nnote--;
+				up->notified = 1;
+				up->dbgreg = a;
+				*(Ureg**)((uintptr)nureg - BY2WD) = up->noteureg;
+				up->noteureg = nureg;
+				iprint("osprey: note at user pc %#p handed to the program's own handler: %s\n",
+					(void*)pc, msg);
+				return 1;
+			}
+		}
+		/*
+		 * The same note, arriving while the personality is running
+		 * rather than the program: held, and delivered on the way
+		 * back into the program (ospreysyscallret).
+		 */
+		if(!ospreyfromprog() && ospreyholdnote(msg)){
+			if(up->nnote > 0)
+				up->nnote--;
+			iprint("osprey: a note for %s's program arrived while the personality was running; it is held: %s\n",
+				up->text != nil ? up->text : "the task", msg);
+			return 0;
+		}
 		if(ospreyfaultup(msg)){
 			iprint("osprey: fault at user pc %#p, inside %s's own program: handed to it, not a panic\n",
 				(void*)pc, up->text != nil ? up->text : "the task");
@@ -183,6 +222,8 @@ port
 	 * boot process down (that would panic) but idles the machine.
 	 */
 	extern uintptr ospreyxcall(va_list);
+	extern int uregok(void*);
+	extern void ospreyexits(long);
 	extern void ospreyawaitreply(int);
 	typedef uintptr Xsyscall(va_list);
 
@@ -301,9 +342,80 @@ port
 		return (uintptr)ospreyselectcaller((uvlong)(ulong)armoff, narms);
 	}
 
+	/*
+	 * notify(2), noted(2) and alarm(2), for a legacy program the
+	 * personality is serving.  They are the buddy configuration's, and
+	 * they are here for the same reason they are there: a program that
+	 * registers a handler catches its own fault, and one that does not
+	 * is killed by the note rather than the machine panicking.  What is
+	 * different here is only who the program is - code in the
+	 * personality's own address space rather than a container of its
+	 * own - and so donotify above asks where the note happened before
+	 * it treats one as a program's.
+	 */
+	uintptr xnotify(va_list list)
+	{
+		void *f = va_arg(list, void*);
+		if(f != nil)
+			validaddr((uintptr)f, sizeof(void*), 0);
+		up->notify = (int(*)(void*, char*))f;
+		return 0;
+	}
+	uintptr xnoted(va_list list)
+	{
+		Ureg *nureg;
+		int arg;
+
+		arg = va_arg(list, int);
+		qlock(&up->debug);
+		if(up->notified){
+			if(up->fpsave != nil || (up->fpstate & FPnotify)){
+				splhi();
+				fpunoted(up);
+				spllo();
+			}
+		} else if(arg != NRSTR){
+			qunlock(&up->debug);
+			error(Ebadarg);
+		}
+		qunlock(&up->debug);
+		nureg = up->noteureg;
+		if(!uregok(nureg)){
+			print("osprey: %s: bad ureg in noted\n", up->text);
+			ospreyexits(1);
+		}
+		switch(arg){
+		case NCONT:
+		case NRSTR:
+			up->noteureg = *(Ureg**)((uintptr)nureg-BY2WD);
+			/* wet floor */
+		case NSAVE:
+			if(noted(up->dbgreg, nureg, arg)){
+				print("osprey: %s: trap in noted\n", up->text);
+				ospreyexits(1);
+			}
+			break;
+		default:
+		case NDFLT:
+			noted(up->dbgreg, nureg, arg);
+			print("osprey: %s: noted(%d) ends it: %s\n", up->text, arg,
+				up->lastnote != nil ? up->lastnote->msg : "");
+			ospreyexits(1);
+		}
+		up->notified = 0;
+		return 0;
+	}
+	uintptr xalarm(va_list list)
+	{
+		return (uintptr)procalarm(va_arg(list, ulong));
+	}
+
 	Xsyscall *systab[] = {
 		[5]	xselect,	/* DUP number reused: select over arms */
+		[6]	xalarm,		/* ALARM: the kernel's clock, for a program the personality serves */
 		[8]	xexits,		/* EXITS */
+		[28]	xnotify,	/* NOTIFY: a program's own note handler */
+		[29]	xnoted,		/* NOTED: that handler's return */
 		[17]	xsleep,		/* SLEEP: yield and service the ring */
 		[30]	xsegattach,	/* SEGATTACH */
 		[51]	xpwrite,	/* PWRITE */
@@ -340,6 +452,19 @@ port
 	extern int ospreysyscallret(uintptr, uintptr);
 	extern int ospreyfromprog(void);
 
+	/*
+	 * The three a program makes that this kernel answers even while the
+	 * personality is serving the rest of them.  They are not name space
+	 * and they are not the personality's to answer: notify and noted
+	 * act on the register frame the trap arrived on, which is this
+	 * kernel's, and alarm is the kernel's clock.  A personality that
+	 * took them would have to hand them straight back.
+	 */
+	int ownhere(ulong scallnr)
+	{
+		return scallnr == 6 || scallnr == 28 || scallnr == 29;
+	}
+
 	int dosyscall(ulong scallnr, Sargs *args, uintptr *retp)
 	{
 		int s, bent;
@@ -359,7 +484,7 @@ port
 				if(bent == 0)
 					*retp = (uintptr)-1;
 			} else if(up->p9syscallup != 0 && !up->p9insyscallup && !up->oslinux
-			&& ospreyfromprog())
+			&& ospreyfromprog() && !ownhere(scallnr))
 				bent = ospreysyscallup(scallnr);
 			if(bent == 0){
 				if(scallnr < (ulong)nsyscall && systab[scallnr] != nil)

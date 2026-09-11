@@ -2897,8 +2897,19 @@ ospreyxcall(va_list list)
 		up->p9syscallup = (uintptr)arg[0];
 		up->p9progbase = (uintptr)arg[1];
 		up->p9progend = (uintptr)arg[2];
-
 		up->p9insyscallup = 0;
+		/*
+		 * And the note handler is the program's, so it goes with the
+		 * program.  Leaving it set was a loop rather than a mistake
+		 * one could miss: the next program, laid over the last one's
+		 * image, faulted, and the kernel handed the note to an
+		 * address in the image that no longer held a handler - which
+		 * faulted again, at the same pc, for ever.
+		 */
+		up->notify = nil;
+		up->notified = 0;
+		up->noteureg = nil;
+		up->p9haveprognote = 0;
 		if(up->p9syscallup == 0)
 			print("osprey user: %s serves no program's system calls any more; they are this kernel's again\n",
 				up->text);

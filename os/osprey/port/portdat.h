@@ -796,6 +796,8 @@ struct Proc
 	uintptr	p9faultup;	/* and where a fault in that program goes, so the personality catches it rather than the machine stopping */
 	uintptr	p9progbase;	/* and the text the legacy program occupies: a call from anywhere else is the personality's own */
 	uintptr	p9progend;
+	int	p9haveprognote;	/* a note for that program arrived while the personality was running: held until the program runs again */
+	char	p9prognote[ERRMAX];
 	int	oslinux;	/* a Linux legacy process: Linux syscall ABI */
 	int	buddyimage;	/* its image is the buddy's: page faults go there first */
 	int	buddyredir;	/* a bit per standard descriptor a legacy program has dup'd something else onto: those writes go to the buddy, not the console */

@@ -11467,12 +11467,57 @@ duplicates a descriptor and names it with
 .CW p9crt.c
 is the special case here now, not the rule.
 .PP
-What is not served yet, and is named in the log as it is asked for:
-.CW alarm(2)
-and
+.B "3.3d: notes, and where a note may be delivered."
+Three calls stay with the kernel while the personality serves the rest:
 .CW notify(2)
-with a handler, which need note delivery into a program that is code in
-the personality's own address space;
+and
+.CW noted(2) ,
+because the frame they act on is the frame the trap arrived on and that
+is the kernel's, and
+.CW alarm(2) ,
+because that is the kernel's clock.  A personality that took them would
+have to hand them straight back.  They are the buddy configuration's
+own, moved across.
+.PP
+With them, an unmodified binary's notes work the way Plan 9's do.
+.CW /boot/legacy
+sets
+.CW alarm(150) ,
+its handler is called with
+.CW alarm ,
+it calls
+.CW noted(NCONT) ,
+and it comes back to the instruction after the call.  Then it registers
+a handler and reads address 0 on purpose, and its own handler catches
+the fault and exits on it.
+.PP
+The thing that had to be got right is when a note may be delivered.  A
+note arriving while the personality is running is not the program's to
+take: the frame it would bend is the library's, and the handler would
+return into the middle of the call it was serving.  So a note that is
+not a fault is held and delivered on the way back into the program,
+which is the first moment the program's own registers are the ones being
+returned to.  That is what a kernel does \- a note is delivered at a
+safe point rather than at the instant it is posted \- and here the unsafe
+points are most of the time, because the program's flow spends it inside
+the personality.  A note that
+.I is
+a fault is about the instruction that made it, so one outside the
+program's image is the personality's own and is the panic it always was.
+.PP
+And the other half:
+.CW /boot/faulty
+is an ordinary Plan 9 program with no note handler, which is what most
+programs are.  There is nobody in it to give the note to, so the
+personality ends it and goes on \- and the proof that it did is that the
+boot reaches the window system afterwards.  Writing that control found a
+real bug at once: the handler belongs to the program, and leaving
+.CW up->notify
+set across programs sent the next program's fault to an address in an
+image that had been overwritten, which faulted again at the same pc for
+ever.
+.PP
+What is not served, and is named in the log as it is asked for:
 .CW rfork(RFPROC) ,
 which is a flow of control a library cannot split for its caller
 .CW ( p9lib.h
@@ -11490,7 +11535,7 @@ and it dies at
 .CW "unimplemented syscall 14" ,
 which is where every Plan 9 binary died here before.
 .CW scripts/osprey-check-p9legacy.py
-is twelve criteria over the two boots.
+is fifteen criteria over the two boots.
 .PP
 .B "Phase 3.2: a real program, then rio, linked with the library."
 A real program \- a command, then a shell, then rio \- is linked with

@@ -1171,5 +1171,55 @@ ospreysyscallret(uintptr frame, uintptr val)
 	setregisters(ureg, (char*)ureg, (char*)nureg, sizeof(Ureg));
 	ureg->ax = val;
 	up->p9insyscallup = 0;
+	/*
+	 * And a note that arrived for the program while the personality was
+	 * running it is delivered here, on the way back in, which is the
+	 * first moment the program's own registers are the ones being
+	 * returned to.  That is what a kernel does - a note is delivered at
+	 * a safe point and not at the instant it is posted - and here the
+	 * unsafe points are most of the time, because the program's flow
+	 * spends it inside the personality serving its last call.
+	 *
+	 * notify() saves the frame just restored, so noted(NCONT) resumes
+	 * the program with this call's return value still in it.
+	 */
+	if(up->p9haveprognote && up->notify != nil){
+		Ureg *n2 = notify(ureg, up->p9prognote);
+
+		if(n2 != nil){
+			if(up->nnote > 0)
+				up->nnote--;
+			up->notified = 1;
+			*(Ureg**)((uintptr)n2 - BY2WD) = up->noteureg;
+			up->noteureg = n2;
+			up->p9haveprognote = 0;
+			print("osprey user: the note held for %s's program is delivered to its handler now that the program is running again: %s\n",
+				up->text, up->p9prognote);
+		}
+	}
+	return 1;
+}
+
+/*
+ * A note for the program that arrived while the personality was running.
+ * Hold it rather than delivering it: the frame this would bend is the
+ * personality's, and the program's handler running on it would return
+ * into the middle of the library serving its last call.
+ *
+ * Only a note that is not a fault.  A fault is about the instruction
+ * that made it, so a fault outside the program's image is the
+ * personality's own and is the panic it always was; a posted note -
+ * alarm(2)'s, or one a peer sends - is about the process, and the
+ * process a legacy program's notes belong to is that program.
+ */
+int
+ospreyholdnote(char *msg)
+{
+	if(up->p9progend == 0 || up->notify == nil)
+		return 0;
+	if(strncmp(msg, "sys:", 4) == 0)
+		return 0;
+	strecpy(up->p9prognote, up->p9prognote+ERRMAX, msg);
+	up->p9haveprognote = 1;
 	return 1;
 }

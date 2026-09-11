@@ -99,10 +99,27 @@ def main():
          'p9 legacy: /boot/legacy exited with status' in t
          and 'p9 legacy: /boot/legacy returned; the personality is still here' in t),
 
-        ("and a fault in the program is caught by the personality the way a kernel catches a process's: the program ends there and the machine does not stop.  The program faults on purpose, reading address 0 to test a note handler",
+        ("alarm(2) is the kernel's clock and notify(2) the kernel's frame, so those two stay with the kernel while the rest of the program's calls are the personality's - and the note reaches the program's own handler, which calls noted(NCONT) and carries on from the instruction after the call, the ordinary Plan 9 arrangement in a task whose other flows are the library serving it",
+         'legacy: my note handler got the alarm note I asked for' in t
+         and 'legacy: alarm(150) delivered its note and I woke to it' in t
+         and 'noted(NCONT) brought me back to the instruction after the call' in t),
+
+        ("a note that arrives while the personality is running is held and delivered on the way back into the program, which is what a kernel does with a note - deliver it at a safe point, not at the instant it is posted.  Here the unsafe points are most of the time, because the program's flow spends it inside the personality serving its last call",
+         re.search(r'a note for .*program arrived while the personality was running; it is held: alarm', t) is not None
+         and re.search(r'the note held for .*program is delivered to its handler now that the program is running again', t) is not None),
+
+        ("a fault in the program with a handler of its own goes to that handler, so the program catches its own fault and exits on it - which is what it would do on Plan 9.  It reads address 0 on purpose",
          'now reading a bad address on purpose' in t
+         and 'handed to the program\'s own handler: sys: trap: fault read addr=0x0' in t
+         and 'legacy: my note handler caught the fault' in t
+         and 'exits("note handled") comes back to me' in t),
+
+        ("and a fault in a program with no handler - which is what most programs are - is the personality's to catch, because there is nobody in the program to give the note to and a note nothing handles is a panic on this configuration.  /boot/faulty is that control: it ends and the boot goes on",
+         'faultp9: an ordinary Plan 9 program with no note handler of its own' in t
          and re.search(r'fault at user pc 0x20[0-9a-f]+, inside .*own program: handed to it, not a panic', t) is not None
-         and 'my program faulted' in t),
+         and 'my program faulted' in t
+         and 'p9 legacy: /boot/faulty returned; the personality is still here' in t
+         and 'faultp9: BUG' not in t),
 
         ("and the same source runs both ways: /boot/libcat is catp9.c linked against p9crt.c, which is a library per program, and /boot/cat is the same source built the ordinary Plan 9 way - libc, the generated stubs, an argument vector, a heap grown with sbrk - and this personality serves both.  The second reads the file, grows a heap of half a megabyte through brk(2), duplicates a descriptor and names it with fd2path",
          'entering /boot/cat at 0x200028 as an ordinary Plan 9 binary' in t
