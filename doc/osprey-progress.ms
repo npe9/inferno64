@@ -3188,7 +3188,9 @@ members this loader reads, as
 does.  The fix is a libc built from source with this toolchain, which is
 the userland the plan's
 .I "User-level services"
-section is about and which no part of this tree yet holds.
+section is about.  No part of this tree held one when this was written;
+it does now, and the section "2.3c: the userland this tree builds
+itself" is where it was built.
 .PP
 One more thing came out of it, and it belongs to the fact that two
 sessions are working in one tree.  Relinking any of these programs gave
@@ -4261,12 +4263,16 @@ a mount point, is stubbed), so ls of "/" composes the root device, the
 environment and the 9P mount but would not reflect a mount made on one of
 their entries; the ring's data area is about nine kilobytes and today's messages
 are tens of bytes, so a larger tree would want the transport to page a
-big read rather than assume one fits; the file syscalls exported back as a 9P server the personality offers to
-others are built as an exportfs but shown only as a loopback \- the
-personality mounting its own export \- not yet reached by a client in a
-container of its own over the ring; and the third of the three unreachable
-things \- processes that share an address space migrating as a group \-
-is not begun.  What was unreachable from a Plan 9 kernel is reached by
+big read rather than assume one fits.  Two things this paragraph used
+to call open are closed, and both are checked: the exportfs is reached
+by a client in a container of its own over the ring (the client
+personality mounts the server personality and reads, writes, creates
+and removes in its name space, ninety-odd criteria of
+.CW osprey-check-p9pair ),
+and the third of the three unreachable things \- processes that share
+an address space migrating as a group \- is whole, on one machine and
+across a wire
+.CW ( osprey-check-p9wire ).  What was unreachable from a Plan 9 kernel is reached by
 not running on one: the kernel is cut to the microkernel, and the
 personality is a library the task links.
 .PP
@@ -4495,10 +4501,15 @@ handler if it registered one \- the microkernel's own
 frame builder points the frame at the handler with the note message, the
 same machinery a full Plan 9 kernel uses \- and otherwise kills the
 container cleanly, its parent's wait seeing a non-zero status.  The
-handler catches the fault and exits; the
+handler catches the fault and exits.  The
 .CW noted (2)
-continuation that resumes the interrupted instruction is not built, since
-a bad-address fault cannot exercise it.
+continuation that resumes the interrupted instruction is built too, and
+a bad-address fault is not what exercises it: the legacy program asks
+for an
+.CW alarm (2)
+note and for a note posted by request, its handler takes each and calls
+.CW noted(NCONT) ,
+and it comes back to the instruction after the call both times.
 .PP
 Memory is the kernel's to give, and the Linux calls that ask for it are
 answered there rather than forwarded: they are the microkernel's
