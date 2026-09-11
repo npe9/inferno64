@@ -123,6 +123,7 @@ TEXT	_main(SB), 1, $-4
 	 */
 	MOV	$setSB(SB), R28
 	MOV	R0, dtbptr(SB)		/* x0 would hold the DTB address; 0 on QEMU's ELF path */
+	MOV	R1, confptr(SB)		/* x1: the EFI loader's configuration block */
 	BL	main(SB)
 dead:
 	B	dead
@@ -138,6 +139,21 @@ dead:
  */
 DATA	dtbptr+0(SB)/8, $0
 GLOBL	dtbptr(SB), $8
+
+/*
+ * x1, for the same reason and with the same caution as x0: main()
+ * zeroes edata..end on the way in, so anything the loader handed over
+ * has to live in the data segment to survive it.
+ *
+ * The Linux arm64 boot protocol requires x1, x2 and x3 to be zero, and
+ * QEMU's ELF -kernel path leaves them that way, so a board booted
+ * directly finds nothing here.  os/inferno/boot/efi's jump() puts the
+ * address of its configuration block in x1 instead.  main() does not
+ * trust it: confcopy() checks the block looks like a configuration
+ * before copying a byte of it.
+ */
+DATA	confptr+0(SB)/8, $0
+GLOBL	confptr(SB), $8
 GLOBL	stack(SB), $KSTACK
 GLOBL	mach0(SB), $(4*1024)
 

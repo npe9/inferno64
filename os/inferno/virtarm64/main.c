@@ -75,6 +75,75 @@ halt(void)
 uintptr virtiobase = VIRTIO0;
 static int fdtfound;
 
+/*
+ * The boot loader's configuration, copied out of the loader's own
+ * memory before anything can allocate over it.
+ *
+ * os/inferno/boot/efi puts the block at 0x48000000, 128M into DRAM,
+ * because arm64 has no low memory to put it in the way a pc kernel's
+ * CONFADDR does -- and that is inside the range xalloc() hands out.
+ * So it is copied here, at the top of main(), after the bss clear and
+ * before anything else runs.  Reading it later would be reading
+ * whatever the allocator had since put there.
+ *
+ * x1 is not trusted.  The Linux arm64 boot protocol requires it to be
+ * zero and QEMU's ELF -kernel path leaves it zero, but "probably zero"
+ * is not a thing to copy 4K from, so the block has to look like a
+ * configuration first: printable text, at least one assignment, and a
+ * NUL inside the first 4K.
+ */
+static char bootconf[4096];
+
+static void
+confcopy(void)
+{
+	extern void *confptr;
+	char *p;
+	int i, eq;
+
+	p = confptr;
+	if(p == nil)
+		return;
+	eq = 0;
+	for(i = 0; i < sizeof(bootconf)-1; i++){
+		if(p[i] == 0)
+			break;
+		if(p[i] == '=')
+			eq++;
+		if(p[i] != '\n' && (p[i] < 0x20 || p[i] > 0x7e))
+			return;		/* not text; x1 held something else */
+	}
+	if(i == sizeof(bootconf)-1 || eq == 0)
+		return;			/* no terminator, or no name=value */
+	memmove(bootconf, p, i);
+	bootconf[i] = 0;
+}
+
+/*
+ * One line of it, by name, with the name included in what is returned
+ * the way the loader's own findconf() does.  nil when the loader
+ * passed nothing or the name is not there.
+ */
+char*
+bootconfline(char *name)
+{
+	char *p;
+	int n;
+
+	if(bootconf[0] == 0)
+		return nil;
+	n = strlen(name);
+	for(p = bootconf; *p != 0; ){
+		if(strncmp(p, name, n) == 0)
+			return p + n;
+		while(*p != 0 && *p != '\n')
+			p++;
+		while(*p == '\n')
+			p++;
+	}
+	return nil;
+}
+
 void
 fdtfind(void)
 {
@@ -87,7 +156,24 @@ fdtfind(void)
 	uvlong base, size;
 
 	fdtinit(dtbptr);
-	if(!fdtvalid())
+	/*
+	 * The fallback, and the switch that turns it off.
+	 *
+	 * QEMU writes its device tree at the bottom of DRAM and does not
+	 * pass the address on the ELF -kernel path, so scanning for the
+	 * magic there is how this board has always found its tree.  It
+	 * is also why a UEFI boot with ACPI and no device tree still
+	 * works: the kernel finds QEMU's tree anyway, and every check
+	 * passes without a line of ACPI being read.
+	 *
+	 * A machine that is not QEMU has nothing at the bottom of DRAM.
+	 * So *nofdtscan= in the loader's configuration suppresses the
+	 * scan, and a board that boots with it set is a board that found
+	 * its tree properly.  That is the only way an ACPI path can be
+	 * shown to be doing anything at all; without it a completely
+	 * broken one would look exactly like this.
+	 */
+	if(!fdtvalid() && bootconfline("*nofdtscan=") == nil)
 		fdtinit((void*)PHYSDRAM);
 	fdtfound = fdtvalid();
 	if(!fdtfound)
@@ -117,6 +203,27 @@ fdtreport(void)
 	extern int fdtmemory(uvlong*, uvlong*);
 	uvlong base, size;
 
+	/*
+	 * What the loader passed, before what the tree says, because on a
+	 * UEFI boot the first is how the second was found -- or was not.
+	 * *acpi= is the RSDP, which is the pointer the tables a real
+	 * SystemReady machine hands over are reached through; it is
+	 * printed rather than used, because nothing reads them yet.
+	 */
+	if(bootconf[0] != 0){
+		char *p;
+
+		print("conf: %ld bytes from the loader\n", strlen(bootconf));
+		if((p = bootconfline("*acpi=")) != nil){
+			int n;
+
+			for(n = 0; p[n] != 0 && p[n] != '\n'; n++)
+				;
+			print("conf: rsdp %.*s, ACPI-RSDP-OK\n", n, p);
+		}
+		if(bootconfline("*nofdtscan=") != nil)
+			print("conf: the device-tree scan at PHYSDRAM is off\n");
+	}
 	if(!fdtfound){
 		print("fdt: no device tree\n");
 		return;
@@ -187,6 +294,12 @@ main(void)
 
 	machinit();
 	archreset();
+	/*
+	 * Before fdtfind(), which reads it, and before anything that
+	 * allocates: the block it copies from is in memory this kernel
+	 * is about to hand out.
+	 */
+	confcopy();
 	/*
 	 * Before everything, because the bases it sets are read by
 	 * drivers that chandevreset() brings up and because confinit()

@@ -5,7 +5,12 @@ enum {
 extern char hex[];
 
 void usleep(int t);
+#ifdef AA64
+/* and the configuration block, in x1; see aa64.s */
+void jump(void *pc, void *args, void *conf);
+#else
 void jump(void *pc, void *args);
+#endif
 
 int pxeinit(void **pf);
 int isoinit(void **pf);

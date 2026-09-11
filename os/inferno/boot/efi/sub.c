@@ -449,7 +449,13 @@ bootkern(void *f)
 	memconf(nil);
 	unload();
 
-	jump(e, jumpargs);
+	/*
+	 * The configuration goes in x1.  It is the only way the kernel
+	 * can be told the RSDP the firmware handed over, and on a machine
+	 * that publishes ACPI rather than a device tree it is the only
+	 * thing in this call that is not nil.
+	 */
+	jump(e, jumpargs, BOOTARGS);
 #else
 	memconf(findconf("*e820=")?nil:&confend);
 	jumpentry = e;

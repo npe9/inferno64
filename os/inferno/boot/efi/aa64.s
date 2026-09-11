@@ -196,11 +196,15 @@ wbline:
  * this function.
  *
  * args goes in x0, which is where an arm64 kernel expects the device
- * tree.  Nothing returns.
+ * tree, and conf in x1, where the Linux boot protocol requires a zero
+ * and QEMU's -kernel path leaves one -- so a kernel that does not know
+ * about it finds nothing there and a kernel that does gets the
+ * configuration block.  Nothing returns.
  */
 TEXT jump(SB), 1, $-4
 	MOV	R0, R9			/* entry */
 	MOV	16(RSP), R10		/* args, for x0 */
+	MOV	24(RSP), R11		/* conf, for x1 */
 
 	MRS	SPR(D_SCTLR_EL1), R1
 	MOV	$0x1005, R2		/* M | C | I */
@@ -212,4 +216,5 @@ TEXT jump(SB), 1, $-4
 	ISB	$15
 
 	MOV	R10, R0
+	MOV	R11, R1
 	B	(R9)

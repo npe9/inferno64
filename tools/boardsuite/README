@@ -780,6 +780,12 @@ see.  What it does add is four evidence lines no other arm can produce
 from the EFI configuration table, and the kernel's own first line after
 the MMU and the caches were turned off under it.
 
+The image is built with hdiutil on a mac and with mkfs.vfat, mmd and
+mcopy elsewhere, the same two recipes makefat uses.  Only the first of
+them has ever run: this suite's host is a mac, and the mkfs.vfat path is
+written from the makefat one and is unexercised.  Say so rather than let
+the next person read it as tested.
+
 The firmware is not in this tree.  It ships with qemu as
 edk2-aarch64-code.fd, with no aarch64 vars image anywhere -- the arm one
 is the same 64M and works -- and the arm looks for both in
@@ -796,3 +802,22 @@ does publish a device tree, but a smaller one than qemu's with no v2m
 frame in it, so MSI disappears and PCI falls back to INTx.  Neither
 configuration is what an Ampere Altra presents; this is the one where
 all the drivers run.
+
+THE NO-SCAN ARM.  virtarm64-noscan is the EFI arm with one line added to
+plan9.ini: *nofdtscan=1, which stops main() from finding QEMU's device
+tree by its magic at the bottom of DRAM.
+
+That scan is the reason virtarm64-efi passes with ACPI on and no device
+tree from the firmware -- the kernel finds QEMU's tree anyway, and every
+check passes without a line of ACPI being read.  A machine that is not
+QEMU has nothing at the bottom of DRAM, so this arm is what the board
+really does on a firmware that publishes ACPI, and it is the arm that
+ACPI discovery will have to change.
+
+It still boots, 33 markers rather than 43, because every device-tree
+lookup falls back to a mem.h constant and mem.h happens to describe this
+machine correctly.  Be blunt about what that means: the arm proves the
+tree was NOT found, not that anything was found instead.  When the ACPI
+path lands, the test that it does anything is the falsify test the riscv
+boards already use -- set the constant wrong, see the board take the
+discovered value -- and not this marker count.

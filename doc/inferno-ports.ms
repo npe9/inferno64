@@ -23315,3 +23315,88 @@ which a Pi kernel does link, fails
 and touching
 .CW os/inferno/virt/main.c ,
 which it does not, does not.
+.NH 1
+Telling the kernel where the ACPI tables are
+.PP
+The loader has been finding the RSDP since before any of this:
+.CW acpiconf()
+in
+.CW efi.c
+walks the EFI configuration table for it and writes
+.CW *acpi=0x7cb43018
+into the configuration.  What it did not have was anywhere to put it.
+.CW jump()
+passed the device tree in x0 and nothing else, no arm64 kernel in this
+tree read a configuration block, and so the pointer every ACPI table is
+reached through was found, printed and dropped on every boot.
+.PP
+It now goes in x1.  The Linux arm64 boot protocol requires x1, x2 and x3
+to be zero and QEMU's ELF
+.CW -kernel
+path leaves them that way, so a board booted directly finds nothing
+there and is unchanged \(em checked, not assumed:
+.CW virtarm64
+boots with no
+.CW conf:
+line and the same 42 markers.
+.CW l.s
+stores x1 beside x0, and
+.CW confcopy()
+copies the block at the top of
+.CW main() ,
+after the bss clear and before anything else.
+.PP
+That copy is not tidiness.  The x86 loaders put their configuration at
+CONFADDR, 0x1200, precisely because it is below everything a kernel
+touches; the arm64 loader's is at 0x48000000, which is 128M into DRAM
+and inside the range
+.CW xalloc()
+hands out.  Read later, it would be whatever the allocator had since put
+there \(em an intermittent corruption that would look like anything but
+a configuration buffer.
+.PP
+x1 is not trusted either.  "Probably zero" is not a thing to copy four
+kilobytes from, so
+.CW confcopy()
+requires the block to look like a configuration first: printable text,
+at least one assignment, and a terminator inside the first 4K.  A boot
+that finds something else there copies nothing and says nothing.
+.NH 2
+The switch that makes an ACPI test possible
+.PP
+There is a trap in the arm as it stands, and it is worth naming before
+writing the code it would have hidden.
+.CW virtarm64-efi
+passes with ACPI on and no device tree from the firmware.  It does not
+pass because anything reads ACPI.  It passes because
+.CW main()
+falls back to scanning for a device tree at the bottom of DRAM, QEMU
+writes one there, and the kernel gets exactly the same tree the direct
+.CW -kernel
+boot gets \(em which is
+.I why
+the two marker sets are identical.  A completely broken ACPI
+implementation would produce a green arm.
+.PP
+So
+.CW *nofdtscan=
+in the loader's configuration turns the scan off, and
+.CW virtarm64-noscan
+is the same boot with that line in
+.CW plan9.ini .
+It prints
+.P1
+conf: the device-tree scan at PHYSDRAM is off
+fdt: no device tree
+.P2
+and boots anyway, 33 markers against 43, because every lookup falls back
+to a mem.h constant and mem.h happens to describe this machine.  That is
+the honest limit of what the arm proves: the tree was not found, not
+that anything was found instead.  When ACPI discovery lands, the test
+that it does anything is the falsify test the riscv boards already use
+\(em set the constant wrong and watch the board take the discovered
+value, the way
+.CW plicbase
+was shown to come from the DTB and not from
+.CW mem.h
+\(em and not this marker count.
