@@ -2253,6 +2253,63 @@ and the JIT and the interpreter produce a **bit-identical** 128² solve
 subtly perturbed. Cost, alternating: `refstress` 0.12s either way, `pde(2)` 128²
 0.56s either way — four pairs, no difference at all.
 
+### 9. Limbo's `<`, `>`, `<=`, `>=` all return **true** when either side is NaN
+
+Not the VM: `libinterp/xec.c`'s `bltf`, `blef`, `bgtf`, `bgef` are plain C
+comparisons and so are IEEE-correct, and `doc/dis.ms` specifies them as
+`if src1 < src2 then pc = dst` with nothing said about NaN.
+
+The fault is in the compiler. `bcom()` at `limbo/ecom.c:2124` compiles a
+boolean so that control *falls through when the condition is true*, and gets
+there by branching on the inverted relation:
+
+```c
+	if(iftrue)
+		op = oprelinvert[op];
+```
+
+`!(a >= b)` is not `a < b` under IEEE — when either operand is NaN both are
+false — so the branch away is not taken and the expression yields true.
+Every ordering comparison against a NaN is therefore true, in both directions:
+
+```
+p=NaN q=NaN
+p <  one : 1   (want 0)
+p >  one : 1   (want 0)
+p >= one : 1   (want 0)
+p <= one : 1   (want 0)
+one <  p : 1   (want 0)
+p == q   : 0   (right)
+p != q   : 1   (right)
+isnan(p) : 1   (right)
+```
+
+Reproducer kept at `nantest.b` in this session's scratchpad; it is six lines
+and easy to rewrite. Two things to get right when rewriting it: build the NaN
+from a value the compiler cannot see (add up `argv`), or it is constant-folded,
+and use two *different* variables for `==`, because limbo folds `x == x` to
+true and `x != x` to false regardless of type. That folding means **`x != x` is
+not a usable NaN test in Limbo** — `math->isnan()` is the only reliable one. A
+sweep of `appl/`, `module/` and `libinterp/` found no code using the `x != x`
+idiom, so nothing in the tree is broken by that half today.
+
+Found via `circuittest`: with `circuit.b`'s singular-pivot guard deliberately
+disabled, a floating node was still refused, which should have been impossible.
+It was NaN contamination from the zero pivot reaching a later row and making
+`fabs(piv) < 0.0` true. The real guard does not depend on this — with it
+enabled the refusal names unknown 2 (the genuinely all-zero row) and with it
+disabled unknown 3, so a fix here will not change `circuit(2)`'s behaviour.
+
+**Not fixed, deliberately.** The fix is a different instruction sequence for
+float ordering — branch on the true condition to a label, then an unconditional
+jump to the false target — which costs one instruction on every real comparison
+in the tree, including the numerics inner loops measured at 9-16x above, and
+has to be confirmed identical in every JIT backend, not just the arm64 one this
+was found on. Changing codegen also silently changes behaviour for anyone else
+building in this worktree until every `.dis` is rebuilt. It is a quality bug
+against an unspecified case, with a reproducer; that is worth recording and not
+worth doing between other work.
+
 ### 7. Smaller, noted, unfixed
 
 **`emu-g` faulted once in the console keyboard slave**, at startup, and did not
