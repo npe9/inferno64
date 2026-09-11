@@ -1990,10 +1990,12 @@ between tasks of the shape slide 25 dumps \- an 8 KB task with
 and
 .CW msgrecv .
 Here a round trip is 46\-59 \(mcs under QEMU, and the section "Latency"
-says why: a message wakes a Plan 9 kernel process.  The microkernel's
-tasks are still Procs.  A task of the talk's shape on the microkernel,
-and the number measured on hardware, is the piece; it is structural, and
-it is last because everything above it is correct without it.
+says where it goes: half in the scheduler, a third in two blunt wake
+sweeps, four microseconds in the work.  The microkernel's tasks are
+still Procs.  A task of the talk's shape on the microkernel, and the
+number measured on hardware, is the piece; it is structural, and it is
+last because everything above it is correct without it.  What a task
+that is not a Proc costs is measured now, in 10a below.
 .PP
 The microkernel's own number, between two personalities, is measured
 now \- 56 \(mcs a request after item 2 of the section on making the
@@ -2021,6 +2023,60 @@ and a client answered in a hundred microseconds outran it and made
 writers pay, so the tick now takes up to eight steps until the log is
 half free, still under the storage task's reservation.  What remains
 of the item is what it was: a task that is not a Proc, and hardware.
+.PP
+.B "10a.  What a task that is not a Proc costs."
+The claim the item rests on is that the shape is the cost \- that a
+message is expensive here because the two ends are Procs and a message
+between them goes through the scheduler.  The section "Latency"
+measures one side of that: half of a 59-microsecond round trip is the
+scheduler's two legs, and four microseconds of it is the work.  The
+other side is what the same exchange costs when there is no scheduler
+in it, and that is now measured rather than assumed.
+.PP
+.CW taskswitch
+.CW ( os/osprey/pc64/l.s ,
+and the 386 machine layer as well) leaves one task and enters another
+in one instruction stream, and
+.CW devosprey.c
+has two tasks with an eight-kilobyte stack each \- the size the talk
+dumps \- that pass a message by switching straight from one to the
+other.
+.CW "task 20000"
+written to
+.CW #O/bench
+measures them: 65 to 100 nanoseconds a round trip, which is two
+switches, so 32 to 50 nanoseconds a switch, against 33 to 39
+nanoseconds to read the cycle counter once.  Three orders below the
+Proc path, on the same emulator, in the same boot, reported by the same
+counter \- which is what makes the comparison worth anything, since
+none of these absolute numbers is a hardware figure.
+.PP
+A label in this kernel is a stack pointer and a program counter and
+nothing else, and that is the whole of a context in this ABI: the
+tree's own
+.CW setjmp
+for amd64 saves those two and no registers at all, because the Plan 9
+compilers keep nothing in a register across a call.  So the switch is
+eight instructions.  The reason to write it rather than to call
+.CW setlabel
+and
+.CW gotolabel
+in turn is that the code between the two would run on a stack that is
+about to be left.
+.PP
+What this is not is the talk's 270 nanoseconds reproduced, and the
+difference is not in the tasks' favour.  These tasks are not
+preemptible; they run in the kernel context of whatever Proc entered
+them and share its address space; nothing schedules them but each
+other; the measured loop runs with interrupts off.  A microkernel's
+task is preemptible and may be picked up by any processor, and the
+talk's number includes all of that.  This is a lower bound on what a
+message costs with no scheduler in it, and nothing else in the kernel
+uses it: the containers' service path still wakes a kproc.  Converting
+that path \- the request ring waking a task, the task answering, the
+caller resumed without the scheduler \- is what would close item 10 on
+this side, and the hardware figure is the other side, still
+board-bound.
 .PP
 .B "11.  Knowing who agreed the key."
 The exchange is with whoever answers.  A person comparing two
@@ -5078,26 +5134,47 @@ eleventh of September 2026:
 .CW "wait 48588, collect 840" ,
 and every one of the two thousand slept.
 .PP
-Three quarters of it is the waiting, and that much of the old sentence
-holds: this process goes to sleep, the scheduler runs the container's
-service kproc, it answers, and this process is woken and scheduled
-again.  A microkernel's send-receive does not do that, and no tuning of
-this code removes it.
+Three quarters of it is the waiting, but the waiting is not one thing
+either, and a wait measured only from outside is still an assertion
+about what the other process does with it.  So the service process
+reads the counter around its own pass too, and the same bench prints
+that: of a 45 microsecond wait, the server spends
+.B 4
+microseconds answering the request and routing the reply, and
+.B 11
+more in its own sweep of the rendezvouses, which leaves about
+.B 30
+in the scheduler's two legs \- getting to the server after the caller
+wakes it, and getting back to the caller after it replies.
 .PP
-The other fifth is not the process shape at all, and the breakdown is
-what shows it.
+That is the division the section exists to give.  Half of a round trip
+is the scheduler, a third of it is two blunt wake sweeps, and four
+microseconds of it is the work the whole thing is for.
+.PP
+The half that is the scheduler is the process shape, and that much of
+the old sentence holds: this process goes to sleep, the scheduler runs
+the container's service kproc, it answers, and this process is woken
+and scheduled again.  A microkernel's send-receive does not do that,
+and no tuning of this code removes it.  What it costs instead, when the
+two ends are not Procs, is measured in item 10a above: 65 to 100
+nanoseconds for the same exchange, three orders down.
+.PP
+The third that is the sweeps is not the process shape at all, and the
+breakdown is what shows it.
 .CW ospreywakeup
 wakes three rendezvous for each of sixteen container slots \- forty
 eight
 .CW wakeup
 calls, all but one of them on a rendezvous nobody is sleeping on \- and
-it is called on every submit, which is the 12.6 microseconds.  That is
-this kernel's bluntness, not Plan 9's process, and it would cost the
-same in a kernel whose tasks were anything at all.  It is a fifth of
-the round trip sitting in a loop that a targeted wake would remove; it
-is written down here and not done, because a wake that misses is an
-intermittent hang across every check in the tree and the win would take
-66 microseconds to 54, which is still two orders off the talk.
+it is called on every submit, which is the caller's 10 to 12
+microseconds; the service process calls it too on every pass, which is
+the 11 inside the wait.  That is this kernel's bluntness, not Plan 9's
+process, and it would cost the same in a kernel whose tasks were
+anything at all.  It is a third of the round trip sitting in two loops
+that a targeted wake would remove; it is written down here and not
+done, because a wake that misses is an intermittent hang across every
+check in the tree, and the win would take 60 microseconds to 39, which
+is still two orders off the talk.
 .PP
 One control, because there was an explanation that would have made all
 of this the emulator's: on four processors an idle core has to be
@@ -5107,8 +5184,12 @@ the wait.  Booted with
 .CW "-p 1" ,
 the same bench says
 .CW "62833 and 68087 ns each" ,
-with the wait 46530 and 50619, which is the four-processor number.  The
-wait is the scheduler's, not the interrupt's.
+with the wait 46530 and 50619, which is the four-processor number.  So
+the interrupt is not where the wait goes.  The control bounds that
+share rather than removing it: on one processor the caller must be
+descheduled for the server to run at all, so what it shows is that
+nothing is added by having three more processors to wake, which is the
+explanation that was on offer.
 .PP
 What these numbers are not is hardware.  This is QEMU's software
 emulation on a loaded host, so a microsecond here is not a microsecond
