@@ -20,6 +20,8 @@ import os, re, subprocess, sys, tempfile, time
 
 class _None2: pass
 None2 = _None2()   # a check whose answer is a time rather than a string
+class _None3: pass
+None3 = _None3()   # a check whose answer is the breakdown of a round trip
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.chdir(ROOT)
@@ -356,6 +358,9 @@ CHECKS = [
  ("a round trip that does not wait for the clock",
   ["{echo '1 2000' >[1=0]; cat} <>/n/osprey/bench"],
   None),   # checked by the number, not by a string
+ ("and the round trip is accounted for rather than asserted: the four parts - putting the request on the ring, waking the machine's waiters, waking the servers, and waiting for the other process to answer - are measured apart and add up to the whole, so the breakdown is an account of the round trip and not a set of unrelated numbers",
+  ["{echo '1 2000' >[1=0]; cat} <>/n/osprey/bench"],
+  None3),
  ("four hundred round trips through the mapped ring with no trap at all",
   ["time /tmp/ring osprey0 $sz bench 400"],
   None2),
@@ -562,6 +567,28 @@ def main():
                   and m is not None and float(m.group(1)) < 1.0)
             if m:
                 what += ' (%ss)' % m.group(1)
+        elif want is None3:
+            # The parts against the whole.  An instrument that measured
+            # its own parts and did not add up would be worth nothing,
+            # so the criterion is the sum, and only the sum.
+            m = re.search(r'(\d+) ns each,.*? submit (\d+) ns, wake (\d+) ns,'
+                          r' wakeservers (\d+) ns, wait (\d+) ns, collect (\d+) ns,'
+                          r' (\d+) of them slept', parts[i])
+            ok = False
+            if m is not None:
+                tot = int(m.group(1))
+                got = sum(int(m.group(k)) for k in (2, 3, 4, 5, 6))
+                slept = int(m.group(7))
+                # Only that the parts account for the whole.  Which part
+                # is the largest is a fact about this kernel today and
+                # belongs in the doc with a date on it: a criterion that
+                # required the waiting to be most of the round trip
+                # would go red the day the waiting got smaller, and a
+                # check that fails when the system improves is worse
+                # than no check.
+                ok = (tot > 0 and got > 0 and abs(tot - got) < tot/10)
+                what += ' (%d ns: submit %s, wake %s, wakeservers %s, wait %s, collect %s, %d slept)' % (
+                    tot, m.group(2), m.group(3), m.group(4), m.group(5), m.group(6), slept)
         elif want is None:
             # a round trip took a whole clock tick until something woke
             # the service process; anything near a millisecond is that

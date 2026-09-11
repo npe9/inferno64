@@ -8031,6 +8031,23 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		 * ctl serve -- or there would be nothing to switch to.
 		 */
 		uvlong t0, t1, arg[Ospreynarg], op;
+		/*
+		 * And where the time goes, which the total on its own does
+		 * not say.  A round trip is four things: putting the request
+		 * on the ring, waking whoever serves the container, waiting
+		 * for the answer, and taking it off the ring.  Only the third
+		 * is the other process's; the rest is this kernel's work on
+		 * this process.  Saying "a round trip wakes a Plan 9 process"
+		 * is a claim about which of the four is the cost, and until
+		 * they are measured apart it is an assertion.
+		 *
+		 * ta is the submit, tb the wake, te the wake of the servers,
+		 * tc the wait and td the collect; nsleep counts the round trips that actually slept, because
+		 * a reply that is already there when it is looked for costs
+		 * nothing at all and averages the rest away.
+		 */
+		uvlong ta, tb, tc, td, te, u0, u1, u2;
+		long nsleep;
 		long i, count, status;
 		char *r;
 
@@ -8059,13 +8076,24 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		while(ospreyreplyready(p))	/* start from a quiet ring */
 			ospreycollect(p, &op, &status, arg);
 
+		ta = tb = tc = td = te = 0;
+		nsleep = 0;
 		cycles(&t0);
 		for(i = 0; i < count; i++){
 			memset(arg, 0, sizeof arg);
+			cycles(&u0);
 			if(ospreysubmit(p, ospreyop("poll"), arg) < 0)
 				break;
+			cycles(&u1);
+			ta += u1 - u0;
 			ospreywakeup();
+			cycles(&u2);
+			tb += u2 - u1;
 			ospreywakeservers(-1);
+			cycles(&u0);
+			te += u0 - u2;
+			if(!ospreyreplyready(p))
+				nsleep++;
 			while(!ospreyreplyready(p)){
 				if((x = ospreyindex(p)) < 0)
 					error(Enonexist);
@@ -8083,7 +8111,11 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 				ospreyawake(x, waitid);
 				p = ospreyproc(cb->f[0]);
 			}
+			cycles(&u1);
+			tc += u1 - u0;
 			ospreycollect(p, &op, &status, arg);
+			cycles(&u0);
+			td += u0 - u1;
 		}
 		cycles(&t1);
 
@@ -8094,12 +8126,18 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		}
 		if(i <= 0)
 			error("nothing was measured");
-		snprint(r, 256, "%ld round trips, %llud cycles each,"
-			" %llud ns each, at %llud hz\n",
-			i, (t1 - t0)/i,
-			m->cpuhz == 0 ? 0 :
-				((t1 - t0)/i)*1000000000ULL/m->cpuhz,
-			m->cpuhz);
+		{
+			uvlong hz = m->cpuhz == 0 ? 1 : m->cpuhz;
+#define NS(c)	((c)/i*1000000000ULL/hz)
+			snprint(r, 256, "%ld round trips, %llud cycles each,"
+				" %llud ns each, at %llud hz;"
+				" submit %llud ns, wake %llud ns, wakeservers %llud ns,"
+				" wait %llud ns, collect %llud ns, %ld of them slept\n",
+				i, (t1 - t0)/i,
+				m->cpuhz == 0 ? 0 : NS(t1 - t0), m->cpuhz,
+				NS(ta), NS(tb), NS(te), NS(tc), NS(td), nsleep);
+#undef NS
+		}
 		poperror();
 		if(c->aux != nil)
 			free(c->aux);
