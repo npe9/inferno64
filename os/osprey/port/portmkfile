@@ -1,8 +1,22 @@
 MKSHELL=rc
 KERNDATE=`{$NDATE}
 
-PORTFILES=`{$KERNELSHELL $PORTDIR/mkfilelist $PORTDIR}
-^($PORTFILES)\.$O'$':R:	$PORTDIR'/\1.c'
+# The rule that compiles a port file is a regular expression naming every
+# one of them, and there are enough of them now that one expression will
+# not compile: libregexp's parser has a fixed operator stack (NSTACK, 20
+# in regcomp.c) and an alternation of ninety-odd branches overruns it.
+# What that looks like is not an error - regcomp answers nil and mk
+# quietly has no rule at all, so adding one file to this directory made
+# every port object in every configuration report "no recipe to make
+# xalloc.6".  The machine directory's list was split a-m/n-z long ago for
+# the same reason (REPCC1/REPCC2 in pc64/mkfile); this one is split by
+# alternate lines, which does not care what a file is called.
+PORTFILELIST=`{$KERNELSHELL $PORTDIR/mkfilelist $PORTDIR | sed 's/\|/ /g'}
+PORTFILES1=`{echo $PORTFILELIST | tr ' ' '\012' | awk 'NR%2==1{if(n++)printf "|"; printf "%s", $0}END{print ""}'}
+PORTFILES2=`{echo $PORTFILELIST | tr ' ' '\012' | awk 'NR%2==0{if(n++)printf "|"; printf "%s", $0}END{print ""}'}
+^($PORTFILES1)\.$O'$':R:	$PORTDIR'/\1.c'
+	$CC $CFLAGS -I. $PORTDIR/$stem1.c
+^($PORTFILES2)\.$O'$':R:	$PORTDIR'/\1.c'
 	$CC $CFLAGS -I. $PORTDIR/$stem1.c
 
 IPFILES=`{$KERNELSHELL $PORTDIR/mkfilelist $IPDIR}

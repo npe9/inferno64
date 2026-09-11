@@ -43,6 +43,11 @@ DEVS=`{$KERNELSHELL $DEVCONF/mkdevlist $CONF}
 # code still references from the cut sources is stubbed in upc64's own
 # port section.
 PORTOBJCUT=pgrp.$O sysfile.$O sysproc.$O syscallfmt.$O chan.$O cache.$O auth.$O rdb.$O
+# The Plan 9 personality's image - two megabytes of it - is linked only
+# into the configurations that load one.  p9progimg.c holds it and
+# p9progstub.c stands in its place elsewhere; p9progimg.c says why.
+P9PROGOBJ=`{if [ "$CONF" = p964 -o "$CONF" = p9pair -o "$CONF" = p9buddy -o "$CONF" = p9linux ]; then echo p9progimg.$O; else echo p9progstub.$O; fi}
+
 PORTOBJALL=\
 	alarm.$O\
 	alloc.$O\
@@ -74,6 +79,7 @@ PORTOBJALL=\
 	tod.$O\
 	xalloc.$O\
 	userinit.$O\
+	$P9PROGOBJ\
 	kerncore.$O\
 	ospreyrt.$O\
 
@@ -208,7 +214,18 @@ initcode.out:		init9.$O initcode.$O $TARGETLIB/libc.a
 	$LD -l -R1 -s -o $target $prereq
 
 # userinit.c embeds the boot programs as .i images; rebuild it when they change.
-userinit.$O:	initcode.i userprog.i p9prog.i
+#
+# The Plan 9 personality is two megabytes of them, and only four
+# configurations run it.  Carrying it in the other three cost them that
+# much of their image for nothing, and it was not free: 9pc64 grew past
+# the conventional memory below 8MB that the EFI loader claims its load
+# region from, and the loader halted with "the region the kernel links at
+# is not free".  So the image is compiled in only where it is used, and
+# ospreyloadp9 panics by name in a kernel built without it rather than
+# loading a stub.
+userinit.$O:	initcode.i userprog.i
+
+p9progimg.$O:	p9prog.i
 
 # userprog.i (the file-server container) and p9prog.i (the Plan 9
 # personality) are built by the scripts in cmd/p9: they compile against

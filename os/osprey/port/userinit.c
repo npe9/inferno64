@@ -19,7 +19,13 @@
  */
 #include	"initcode.i"
 #include	"userprog.i"
-#include	"p9prog.i"
+/*
+ * The Plan 9 personality's image is an object of its own (p9progimg.c),
+ * linked into the four configurations that run it and replaced by a stub
+ * in the others; p9progimg.c says why at length.
+ */
+extern uchar	p9prog[];
+extern int	p9proghere;
 
 extern int ospreymicro;
 extern void ospreymicroboot(void);
@@ -191,6 +197,8 @@ ospreyloadaout(uchar *prog)
 void
 ospreyloadp9(void)
 {
+	if(!p9proghere)
+		panic("osprey: this kernel carries no Plan 9 personality (it links p9progstub.c); it cannot load one");
 	ospreyloadaout(p9prog);		/* the Plan 9 personality library */
 }
 

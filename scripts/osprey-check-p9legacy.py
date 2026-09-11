@@ -41,7 +41,15 @@ def boot(ini, until):
     log = tempfile.mktemp(prefix='osprey-p9legacy-', suffix='.log')
     subprocess.run(['./scripts/osprey-console.py', '-q', '-p', '2', '-n', 'e1000',
                     '-l', log, '-S', '-d', ROOT + '/.qemu/9front-root.qcow2',
-                    '-t', '150', '-u', until],
+                    # Longer than the other checks': this boot runs the
+                    # whole p9 script, three legacy programs after it and
+                    # then the window system, and 150 seconds was enough
+                    # for it alone and not enough under the load of the
+                    # whole sweep running two machines at a time - which
+                    # showed up as the three criteria about the end of
+                    # the boot failing while the ones about its start
+                    # passed.
+                    '-t', '300', '-u', until],
                    env=env, capture_output=True, text=True)
     try:
         return log, plain(open(log, errors='replace').read())
