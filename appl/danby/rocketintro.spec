@@ -29,6 +29,15 @@ eq aboard { remaining + abs { remaining } } over 2.0
 eq acceleration burning { thrust over { dry_mass + aboard } }
 derivative altitude speed
 derivative speed acceleration - gravity - drag speed abs { speed }
+# The rocket, its fins and its nose all ride up together, so with
+# nothing else in the picture the box rose with them and the launch
+# looked like a rocket standing still.  The pad pins the ground.
+# It cannot pin the sky as well: this climbs to about 1500 units
+# and the rocket is 1.4 long, so a frame holding the whole flight
+# would draw it a thousandth of a pane high.  The view follows it
+# once it is up, which is the right thing; what was missing was
+# the ground to leave.
+point pad 0.0 , 0.0
 point base 0.0 , altitude
 point nose 0.0 , { altitude + 1.0 }
 point fin_left - 0.35 , altitude
@@ -38,3 +47,4 @@ link base fin_left
 link base fin_right
 observable altitude altitude
 observable speed speed
+plain pad

@@ -22,6 +22,8 @@ state v 0.0
 derivative x v
 derivative v { - linear x - quadratic x x - cubic x x x - damping v } over mass
 point wall - 2.0 , 0.0
+# Nothing pinned the right, so the box's right edge was the mass.
+point stop 2.0 , 0.0
 point mass_point x , 0.0
 point mass_top x , - 0.3
 point mass_bottom x , 0.3
@@ -29,3 +31,4 @@ link wall mass_point spring
 link mass_top mass_bottom
 observable displacement x
 observable velocity v
+plain stop

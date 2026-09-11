@@ -163,6 +163,22 @@ checkspec(name, spec: string)
 		return;
 	}
 	state := dynsys->initialstate(m);
+	# BEFORE any rhs(): danbylab draws its first frame before it takes
+	# its first step, so points() and observables() are called with
+	# whatever time the model holds.  `ref Model\' does not initialise,
+	# so that used to be allocation residue, and a model with t in a
+	# point drew one frame at 7e194 before settling down.  Anything
+	# not finite here is that bug coming back.
+	pre := dynsys->points(m, state);
+	for(i = 0; i < len pre; i++)
+		if(pre[i] != pre[i] || pre[i] > 1.0e30 || pre[i] < -1.0e30)
+			fail(sys->sprint("%s: point %d is %g before the first step - "+
+				"the model's time is not initialised", name, i/2, pre[i]));
+	preo := dynsys->observables(m, state);
+	for(i = 0; i < len preo; i++)
+		if(preo[i] != preo[i] || preo[i] > 1.0e30 || preo[i] < -1.0e30)
+			fail(sys->sprint("%s: observable %s is %g before the first step",
+				name, m.observablelabels[i], preo[i]));
 	deriv := array[len state] of real;
 	dynsys->rhs(m, 0.0, state, deriv);
 	for(i = 0; i < len deriv; i++)

@@ -61,6 +61,14 @@ caption left: the lattice itself. gaps lose to the bands as E rises.
 eq e t + 0.001
 eq kk sqrt { 2.0 e }
 eq ka kk lattice
+# The lattice itself does not move, and the thing that does is the
+# electron: its de Broglie wavelength, 2 pi / k, shrinks as the sweep
+# climbs.  Drawn against the spacing it is the whole argument for why
+# the gaps close - a fast electron whose wavelength is short compared
+# with a barely notices there is a lattice there at all.  Clipped to
+# the frame, since at the bottom of the sweep it is 140 wide.
+eq lamraw 6.283185307179586 over kk
+eq lam lamraw - { lamraw - 12.5 } step { lamraw - 12.5 }
 eq raw { cos { ka } } + { strength { sin { ka } } over ka }
 eq fhi 3.0
 eq flo 0.0 - 3.0
@@ -69,6 +77,9 @@ eq allowedq step { 1.0 - abs { raw } }
 state bandwidth 0.0
 derivative bandwidth allowedq
 point frame_right 12.5000 , 0.0
+point wave_base 0.0 , - 1.6
+point wave_tip lam , - 1.6
+point frame_bottom 0.0 , - 2.4
 point frame_top 0.0 , 10.0
 point base_left 0.0 , 0.0
 point foot0 0 lattice , 0.0
@@ -84,13 +95,14 @@ point peak4 4 lattice , strength
 point foot5 5 lattice , 0.0
 point peak5 5 lattice , strength
 link base_left frame_right line
+link wave_base wave_tip accent
 link foot0 peak0 accent
 link foot1 peak1 accent
 link foot2 peak2 accent
 link foot3 peak3 accent
 link foot4 peak4 accent
 link foot5 peak5 accent
-plain frame_right frame_top base_left foot0 peak0 foot1 peak1 foot2 peak2 foot3 peak3 foot4 peak4 foot5 peak5
+plain wave_base frame_bottom frame_right frame_top base_left foot0 peak0 foot1 peak1 foot2 peak2 foot3 peak3 foot4 peak4 foot5 peak5
 observable band_function f
 observable allowed allowedq
 shade allowed

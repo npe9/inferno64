@@ -1,0 +1,94 @@
+.TH DANBYVIZTEST 1
+.SH NAME
+danbyviztest \- check that the danby models' pictures make sense
+.SH SYNOPSIS
+.B danbyviztest
+[
+.B -v
+] [
+.I model
+]
+.SH DESCRIPTION
+.IR Danbylabtest (1)
+checks the equations.  This checks the DRAWING, which is a different
+thing and can be wrong while every number is right.
+.PP
+Nothing here opens a window.  That is the point: the geometry of a
+picture is arithmetic, and arithmetic can be checked where there is no
+display.  Each model is run, and each of its points is put through the
+same mapping
+.IR danbylab (2)'s
+own
+.B drawmechanism()
+uses, so what is measured is where the thing would actually be drawn.
+.SH "THE CHECK THAT MATTERS"
+.IR Danbylab (2)
+scales a mechanism's diagram to the bounding box of the model's points.
+If the only points are the moving ones, the view is scaled to the very
+thing it is drawing \(em and that thing then never appears to move.
+.PP
+.IR Danby-schrodinger (1)
+shipped like that: its marker sat at 0.885 of the pane's width from a
+fifth of the way through the run to the end, because the box's right
+edge WAS the marker.  Every number in it was correct.
+.PP
+Eleven models had it, found by this and fixed: duffing, van der Pol,
+variationparameters, movingpivot, nonlinearsprings and
+carbonmicrophone all had a wall pinning one side of the view and
+nothing pinning the other; joggingcompanion had the leader pinning one
+end and the follower BEING the other; fireflies had nothing in the
+picture but the four flies; the two rockets rode up with their own
+nose and fins and had no ground to leave; synchronousmotor had a stator
+with east, west and south poles and no north.
+.PP
+The fix in every case is a fixed point at the extreme the motion was
+defining, declared
+.B plain
+so it pins the frame and draws nothing.
+.SH "WHAT IS FAILED AND WHAT IS NOTED"
+A point that DEFINES an extreme of the box necessarily sits at the same
+place on screen \(em the topmost thing is always at the top \(em and
+that is not a defect by itself.  A rocket whose nose is the highest
+point still reads as flying, because its base and fins cross the pane.
+.PP
+So the judgement is made over the whole picture: it fails when NOT ONE
+moving point gets anywhere on screen.  A point that is merely
+compressed is noted, as is a rocket whose view follows it once it is
+up \(em which cannot be otherwise, since these climb to about 1500
+units and are 1.4 long, and a frame holding the whole flight would draw
+the rocket a thousandth of a pane high.
+.PP
+A profile whose density reaches zero is noted rather than failed: that
+is the surface of the star, and the march holding it there is the right
+answer.
+.IR Danby-starmodel (1)
+says so itself, with an
+.B "eq live step { density }"
+that stops the derivative at the same place.
+.SH "KNOWN, AND NOT A SLIP"
+.B Tablependulum
+goes not-a-number at t = 0.56.  It is real: the bob is drawn towards the
+pivot, the pendulum length hits its floor, and omega runs away with the
+angular momentum exactly as the equations say it should.  Ending that
+properly means modelling the string reaching its end, which is a
+decision about the physics rather than a guard to bolt on, so it is
+recorded here and not quietly patched.  Anything else going
+not-a-number is new, and fails.
+.SH BUGS
+It looks at the first 120 frames, which at the mechanism family's own
+step is 2.4 seconds of model time.  A model whose picture is fine at the
+start and degenerates later will pass.
+.PP
+Only the mechanism family's diagram is checked this way.  Orbit has its
+own focus-centred extent and population its bars, and neither is
+measured here; the four families with no diagram at all are only checked
+for their observables.
+.PP
+It cannot tell whether a picture is a good picture.  It can tell whether
+the thing that moves appears to.
+.SH SOURCE
+.B /appl/cmd/danbyviztest.b
+.SH SEE ALSO
+.IR danbylabtest (1),
+.IR danbylab (2),
+.IR danby (1)

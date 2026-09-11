@@ -63,6 +63,7 @@ TARG=\
 	orbitviewtest.dis\
 	danbyeqnall.dis\
 	danbylabtest.dis\
+	danbyviztest.dis\
 	tonetest.dis\
 	danbyeqntest.dis\
 	date.dis\

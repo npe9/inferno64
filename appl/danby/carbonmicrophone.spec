@@ -33,9 +33,13 @@ point fixed_top - 1.5 , 0.8
 point plate_bottom x , - 0.8
 point plate_top x , 0.8
 point lead_in - 1.5 , 0.0
+# The fixed plate pinned the left of the view and the moving one was
+# the right edge of it, so the diaphragm never appeared to move.
+point stop 1.5 , 0.0
 point lead_out x , 0.0
 link fixed_bottom fixed_top
 link plate_bottom plate_top
 link lead_in lead_out
 observable diaphragm x
 observable current current
+plain stop

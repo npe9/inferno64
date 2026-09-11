@@ -43,6 +43,11 @@ eq a2 { 2.0 PI 2.0 } over 4.0
 eq a3 { 2.0 PI 3.0 } over 4.0
 eq sumc cos { p0 } + cos { p1 } + cos { p2 } + cos { p3 }
 eq sums sin { p0 } + sin { p1 } + sin { p2 } + sin { p3 }
+# The four flies were the only points in the picture, so the box was
+# scaled by them and their circling did not show.  These two pin a
+# frame a little outside the ring and draw nothing.
+point ring_lo - 1.2 , - 1.2
+point ring_hi 1.2 , 1.2
 point fly_0 { r0 cos { a0 } } , { r0 sin { a0 } }
 point fly_1 { r1 cos { a1 } } , { r1 sin { a1 } }
 point fly_2 { r2 cos { a2 } } , { r2 sin { a2 } }
@@ -53,3 +58,4 @@ link fly_2 fly_3
 link fly_3 fly_0
 observable coherence sqrt { sumc sumc + sums sums } over 4.0
 observable mean_flash sumc over 4.0
+plain ring_lo ring_hi

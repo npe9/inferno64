@@ -27,6 +27,10 @@ derivative leader_x leader_v
 derivative leader_v response { leader_pace - leader_v } - { drag leader_v } over mass
 derivative follower_x follower_v
 derivative follower_v response { leader_pace - follower_v } + coupling separationerror - { drag follower_v } over mass
+# The leader pinned the right of the view and the follower was its
+# left edge, so closing the gap moved the scale instead of the
+# runners.  This pins a stretch of road behind them.
+point road - 4.0 , 0.0
 point leader_feet 0.0 , 0.0
 point leader_hip 0.0 , 1.0
 point leader_head 0.0 , 1.4
@@ -47,3 +51,4 @@ link follower_hip follower_hand_left
 link follower_hip follower_hand_right
 observable leader_speed leader_v
 observable separation separation
+plain road

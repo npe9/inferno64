@@ -22,6 +22,11 @@ state v 0.0
 derivative x v
 derivative v drive cos { frequency t } - damping v - linear x - cubic x x x
 point wall - 2.0 , 0.0
+# The wall pins the left of the view and nothing pinned the right,
+# so the box's right edge was the mass itself and the mass sat at
+# the same spot on screen however far it swung.  This pins the
+# right; `plain' means it contributes the frame and no sprite.
+point stop 2.0 , 0.0
 point mass x , 0.0
 point mass_top x , - 0.3
 point mass_bottom x , 0.3
@@ -29,3 +34,4 @@ link wall mass
 link mass_top mass_bottom
 observable displacement x
 observable velocity v
+plain stop

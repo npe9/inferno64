@@ -19,6 +19,17 @@ include "dynsys.m";
 newmodel(): ref Model
 {
 	m := ref Model;
+	# `ref Model' allocates and does not initialise, so every scalar
+	# field here starts as whatever the heap block last held.  time is
+	# the one that shows: it is otherwise only assigned by rhs(), so a
+	# caller that draws before it steps - which danbylab(2) does, its
+	# first redraw happening before the first step - binds hoc's `t' to
+	# allocation residue.  A model with t in a point or an observable
+	# then draws one frame at, measured, 7e194.  maxtime matters for a
+	# different reason: check() rejects a spec with maxtime <= 0, and
+	# residue could let one through that never said.
+	m.time = 0.0;
+	m.maxtime = 0.0;
 	m.hocmod = load Hoc Hoc->PATH;
 	# hoc(2)'s own reset() is the one required call before compile()/
 	# compileeqn()/symbol() for a caller (this one) that never calls

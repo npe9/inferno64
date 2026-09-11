@@ -27,8 +27,12 @@ point stator_centre 0.0 , 0.0
 point stator_east 1.0 , 0.0
 point stator_west - 1.0 , 0.0
 point stator_south 0.0 , - 1.0
+# East, west and south were here and north was not, so the top of the
+# box was the rotor itself and its swing upwards did not show.
+point stator_north 0.0 , 1.0
 link centre rotor
 link stator_centre stator_east
 link stator_west stator_south
 observable phase_lag lag
 observable slip_speed slip
+plain stator_north

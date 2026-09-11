@@ -29,7 +29,12 @@ point pivot 0.0 , pivoty
 point bob { length sin { theta } } , { pivoty - length cos { theta } }
 point rail_left - 0.7 , pivoty
 point rail_right 0.7 , pivoty
+# Every point that was not the bob rode up and down with the pivot,
+# so the top of the box was the pivot and the pivot never appeared
+# to move.  This pins the top; it draws nothing.
+point headroom 0.0 , 0.5
 link pivot bob
 link rail_left rail_right
 observable angle theta
 observable pivot_height pivoty
+plain headroom

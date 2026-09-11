@@ -25,6 +25,11 @@ derivative v mu { 1.0 - x x } v - frequency frequency x
 derivative amplitude 0.5 mu amplitude { 1.0 - { amplitude amplitude } over 4.0 }
 derivative phase frequency
 point wall - 2.0 , 0.0
+# The wall pins the left of the view and nothing pinned the right,
+# so the box's right edge was the mass itself and the mass sat at
+# the same spot on screen however far it swung.  This pins the
+# right; `plain' means it contributes the frame and no sprite.
+point stop 2.0 , 0.0
 point numerical x , 0.0
 point averaged_wall - 2.0 , - 0.5
 point averaged_point averaged , - 0.5
@@ -32,3 +37,4 @@ link wall numerical
 link averaged_wall averaged_point
 observable numerical_x x
 observable averaged_x averaged
+plain stop
