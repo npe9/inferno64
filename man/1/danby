@@ -947,6 +947,11 @@ Shoot Schrodinger's equation and hunt for an eigenvalue.
 See
 .IR danby-schrodinger (1).
 .TP
+.B danby/tdse
+A wave packet meeting a barrier, solved as it happens.
+See
+.IR danby-tdse (1).
+.TP
 .B danby/tunnel
 Getting through a wall you have not the energy to climb.
 See

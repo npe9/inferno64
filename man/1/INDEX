@@ -215,6 +215,7 @@ danby-bands danby-bands
 danby-packet danby-packet
 danby-tunnel danby-tunnel
 danby-twoslit danby-twoslit
+danby-tdse danby-tdse
 danby-hydrogen danby-hydrogen
 danby-rabi danby-rabi
 danby-schrodinger danby-schrodinger
@@ -278,6 +279,7 @@ danby-strains danby-strains
 danby-tennis danby-tennis
 danby-vaccination danby-vaccination
 danbylabtest danbylabtest
+tdsetest tdsetest
 date wm-misc
 dd dd
 deb deb

@@ -1,0 +1,101 @@
+.TH DANBY-TDSE 1
+.SH NAME
+danby-tdse \- a wave packet meeting a barrier, solved as it happens
+.SH SYNOPSIS
+.B danby/tdse
+.SH MODEL
+Every other quantum model in
+.IR danby (1)
+draws an answer worked out in advance: a standing state, a steady beam,
+or a formula evaluated along an axis.
+.IR Danby-packet (1)
+comes closest to motion and still only substitutes a known width at each
+instant.  This one solves the time-dependent Schrodinger equation, step
+by step, and draws the result as it appears.
+.PP
+With psi = u + iv, in atomic units,
+.PP
+.EX
+du/dt = -(1/2) v'' + V v
+dv/dt = +(1/2) u'' - V u
+.EE
+.PP
+which is a two-field problem of the shape
+.IR pde (2)'s
+.B "equation hoc"
+takes, with V written as a function of x.
+.SH DESCRIPTION
+The equation is not in the program.  It is the text of
+.BR /lib/danby/tdse.pde ,
+read at startup, so it can be changed without a compiler \(em and so
+.IR tdsetest (1)
+can run the same text rather than a copy of it.  The two sliders that
+appear in it are overridden afterwards through the problem's own
+.IR hoc (2)
+variables, which is why the file needs no substitution.
+.SS What to look for
+.B The packet splits.
+Not "some particles go through and some do not": one packet arrives at
+the wall and two leave it, one carrying on and one coming back.  The
+numbers along the top are what fraction of it went each way, and the
+last of them is the total, which must not change.
+.PP
+Set the barrier above the packet's energy and watch anyway.  At the
+defaults the energy is 8 and the wall is 10, so nothing classical would
+get through at all, and about a fifth of it does.
+.PP
+Widen the barrier and transmission collapses \(em 0.45 at width 0.4,
+0.13 at 0.8, 0.064 at 1.2 \(em which is the exponential that makes a
+tunnelling microscope work.
+.PP
+.IR Danby-tunnel (1)
+gives the same two numbers from a formula, without solving anything.
+Comparing them is the point of
+.IR tdsetest (1).
+.SS The numerics, which are not optional
+The step is STAGGERED: v is advanced using the u just computed, not the
+one it started with.  The eigenvalues here are purely imaginary, so
+advancing both fields together multiplies every mode by
+sqrt(1 + (lambda h)^2) at every step, for any h however small.  That is
+not a step-size problem and no substep count fixes it \(em a
+simultaneous update cannot solve this equation at all.  Measured: over
+sixty steps the staggered norm holds to five decimals while the
+simultaneous one passes a thousandfold on its way to 4.6e19.
+.PP
+The mesh is 384 by 2 rather than 384 by 1, because
+.IR pde (2)
+wants at least two rows each way.  The rows are seeded identically and
+the boundary is clamped, so the y part of the Laplacian is exactly zero
+and the problem is honestly one-dimensional.
+.SS Controls
+Space pauses, period advances one step while paused, r restarts, and q
+or Escape quits.  The four tracks along the bottom are dragged with
+button 1; any of them restarts the run, since the barrier is in the
+equations and the packet is an initial condition, and neither can be
+changed part way through and still mean anything.
+.SH FILES
+.TP
+.B /lib/danby/tdse.pde
+The equation.
+.SH SOURCE
+.B /appl/danby/tdse.b
+.SH SEE ALSO
+.IR danby (1),
+.IR danby-tunnel (1),
+.IR danby-packet (1),
+.IR tdsetest (1),
+.IR pde (2)
+.SH BUGS
+The edges reflect.  The boundary is clamped, so a packet that reaches
+either end comes back rather than leaving, and after long enough the
+returning pieces interfere with what is still in flight.  The run is
+sized so that the interesting part happens first; an absorbing boundary
+would be the fix and is not here.
+.PP
+The barrier sits where the spec file puts it and is not on a slider, so
+the distance the packet travels before it arrives is fixed.
+.PP
+The two numbers along the top are the probability each side of the
+barrier's centre, which is what "reflected" and "transmitted" mean only
+once the packet has finished crossing.  While it is still arriving they
+are simply where the wave happens to be, and they move about.

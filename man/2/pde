@@ -60,7 +60,15 @@ err = pde->step(p, dt);
 parses a spec into a ready
 .B Problem
 in one call, the same relationship a printf format string has to what
-it produces.  A spec is one or more newline-separated lines:
+it produces.  A spec is one or more newline-separated lines.  A blank
+line is ignored, and so is one whose first word begins with
+.BR # ,
+so a spec kept in a file can say why it is what it is \(em the same
+comment rule
+.IR dynsys (2)
+and
+.IR danbylab (2)
+already follow.  The lines are:
 .TP
 .BI "mesh " NXxNY " [domain " WxH "] [bc clamp|periodic|zero]"
 Delegates to

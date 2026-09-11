@@ -363,6 +363,11 @@ newproblem(spec: string): (ref Problem, string)
 		a := specwords(line);
 		if(len a == 0)
 			continue;
+		# A spec is a text format and is now kept in files, so it has
+		# to be possible to say why a line is there.  # to end of line,
+		# the same as dynsys(2) and danbylab(2) already do.
+		if(a[0][0] == '#')
+			continue;
 		case a[0] {
 		"mesh" =>
 			(g, err) := mesh->parse(line);

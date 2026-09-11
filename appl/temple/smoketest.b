@@ -106,7 +106,7 @@ dspecs := array[] of {
 	"softballpitch", "spacestationball", "spaceyoyo", "spinningball", "springpendulum",
 	"springpivot", "starmodel", "stillmoreenzyme", "stretchyoyo", "swing1",
 	"swing2", "swingingcenser", "synchronousmotor", "tablependulum", "tabletennis",
-	"tankcontrol", "threebody", "tidalrotation", "twocapital", "tunnel", "twomagnet", "twoslit",
+	"tankcontrol", "tdse", "threebody", "tidalrotation", "twocapital", "tunnel", "twomagnet", "twoslit",
 	"vanderpol", "variationparameters", "varyingpendulum", "venushead", "violetsantsrodents",
 	"violinbow", "wattgovernor", "weightchange", "wheelpendulum", "whitedwarf",
 	"windpendulum", "yoyo"

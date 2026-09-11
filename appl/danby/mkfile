@@ -29,6 +29,7 @@ TARG=\
 	rotatinghoop.dis\
 	spinorbit.dis\
 	stability.dis\
+	tdse.dis\
 	vaccination.dis\
 
 DISBIN=$ROOT/dis/danby

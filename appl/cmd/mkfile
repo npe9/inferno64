@@ -242,6 +242,7 @@ TARG=\
 	tarfs.dis\
 	tclsh.dis\
 	tcs.dis\
+	tdsetest.dis\
 	tee.dis\
 	telnet.dis\
 	test.dis\

@@ -1,0 +1,65 @@
+.TH TDSETEST 1
+.SH NAME
+tdsetest \- check danby/tdse's solver against the closed form
+.SH SYNOPSIS
+.B tdsetest
+[
+.B -v
+]
+.SH DESCRIPTION
+.IR Danby-tdse (1)
+integrates the time-dependent Schrodinger equation through a barrier.
+.IR Danby-tunnel (1)
+gives the transmitted fraction for the same barrier from a formula.
+They are worked out completely differently \(em one steps a field
+forward in time, the other matches waves at two faces and never
+integrates anything \(em so making them agree is worth considerably more
+than either being self-consistent.
+.PP
+This reads the same spec file the program runs,
+.BR /lib/danby/tdse.pde ,
+and not a copy of it.
+.SH "WHAT IT CHECKS"
+.TP
+.B The solver is unitary
+The norm must not change.  It holds to about one part in 1e5 across
+every run here, which is the one number that says the step is still
+solving something.
+.TP
+.B It agrees with the formula
+Measured against analytic, at barrier 10 and width 0.6: 0.079 against
+0.071, 0.139 against 0.126, 0.235 against 0.219, 0.378 against 0.367,
+0.557 against 0.569.
+.TP
+.B Transmission rises with energy, and falls with width
+0.45, 0.13, 0.064 at widths 0.4, 0.8 and 1.2.
+.TP
+.B A barrier of zero height stops nothing
+The control: without it, the width and energy checks would pass on a
+model that reflected nothing ever.
+.SH "WHY THE AGREEMENT IS NOT EXACT"
+The reason is physical and not numerical, and it is why the test asserts
+a bracket rather than a number.  The formula is for ONE energy.  A
+packet is a spread of them, of width 1/(2 sigma) in k, and T varies
+sharply across that spread.  So the measured fraction is required to lie
+between the formula's values at the two ends of the packet's own
+spectrum.
+.PP
+The sign of the disagreement is itself a check that nothing is wrong:
+the measured value sits ABOVE the single-energy formula at low energy
+and BELOW it at high, which is what averaging a curve of that shape over
+a spread must do.
+.SH SOURCE
+.B /appl/cmd/tdsetest.b
+.SH SEE ALSO
+.IR danby-tdse (1),
+.IR danby-tunnel (1),
+.IR pdehoctest (1),
+.IR pde (2)
+.SH BUGS
+It runs for a fixed number of steps rather than detecting that the
+packet has finished crossing, so changing the mesh or the barrier
+position in the spec file will need that number changed with it.
+.PP
+Nothing here checks the picture.  It checks the field the picture is
+drawn from.
