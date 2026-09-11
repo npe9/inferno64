@@ -53,14 +53,29 @@ keep its address must not.
 .IR cloudfs (4),
 .IR hget (1),
 .IR dhcp (8)
+.SS "The off-link gateway"
+Every route is added with an interface, which is the fifth field
+.B add
+accepts in
+.BR /net/iproute .
+That is not decoration.  A route carrying an interface is used as it
+stands; a route without one has to find its interface, and
+.B findipifc
+in
+.B /os/inferno/ip/ipifc.c
+will only match an interface whose subnet contains the gateway.
+.PP
+Compute Engine hands out a /32 netmask with the gateway outside it \(em
+10.128.0.25/32 with gateway 10.128.0.1 \(em so no interface's subnet
+contains it, every gateway route is unusable, and the instance can
+reach nothing at all.  Linux's client is expected to cope with the same
+thing by installing a link-scope route to the gateway before a default
+route through it; naming the interface is how that is said here.
 .SH BUGS
-It does not work on Compute Engine, and the reason is worth stating.
-Google's DHCP hands out a /32 netmask with a gateway outside it, and
-expects the guest to install a link-scope route to that gateway before
-a default route through it can resolve.  This kernel's IP stack takes
-the lease and then cannot reach the gateway: a ping to it is lost, so
-nothing off the instance is reachable, the metadata service included.
-Under QEMU, whose DHCP hands out a conventional netmask, the same code
-takes a lease, pings its gateway and fetches over TCP without trouble.
-Fixing it means teaching the stack, or this program, how to make an
-off-link gateway reachable.
+.IR Ping (1)
+to the gateway is lost on Compute Engine whether or not routing works,
+because ICMP to it is dropped there.  It is not a test of reachability
+on that network, and reading it as one cost an afternoon.
+.PP
+Only DHCP.  An instance with a static address configured out of band is
+not handled.

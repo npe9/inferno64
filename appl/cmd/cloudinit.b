@@ -34,6 +34,48 @@ Cloudinit: module {
 
 MDADDR: con "169.254.169.254";
 
+#
+# Routes, each bound to the interface by name.
+#
+# /net/iproute's "add" takes an optional fifth field naming an
+# interface, and a route carrying one is used as it stands:
+# routefindipifc() returns r->ifc without asking whether the gateway is
+# reachable.  A route without one has to find its interface, and
+# findipifc() will only match an interface whose subnet contains the
+# gateway -- so on a network that hands out a /32 with the gateway
+# outside it, every gateway route is unusable and the machine can reach
+# nothing.  That is Compute Engine: 10.128.0.25/32 with gateway
+# 10.128.0.1, which is exactly how Linux's client is expected to behave
+# too, installing a link-scope route to the gateway before a default
+# route through it.
+#
+# findipifcstr() takes either an interface number or an address on it,
+# so this names the interface by the address the lease just gave us.
+#
+routes(ip: string, gw: string, mdaddr: string, verbose: int)
+{
+	rfd := sys->open("/net/iproute", Sys->OWRITE);
+	if(rfd == nil){
+		sys->print("cloudinit: /net/iproute: %r\n");
+		return;
+	}
+	# the gateway itself, reachable directly on this interface
+	add(rfd, gw, "255.255.255.255", gw, ip, verbose);
+	# everything else through it
+	add(rfd, "0.0.0.0", "0.0.0.0", gw, ip, verbose);
+	# and the metadata service, which no lease covers
+	if(mdaddr != nil)
+		add(rfd, mdaddr, "255.255.255.255", gw, ip, verbose);
+}
+
+add(rfd: ref Sys->FD, targ, mask, gw, ifc: string, verbose: int)
+{
+	if(sys->fprint(rfd, "add %s %s %s %s", targ, mask, gw, ifc) < 0)
+		sys->print("cloudinit: route %s: %r\n", targ);
+	else if(verbose)
+		sys->print("cloudinit: route %s %s via %s on %s\n", targ, mask, gw, ifc);
+}
+
 init(nil: ref Draw->Context, argv: list of string)
 {
 	sys = load Sys Sys->PATH;
@@ -85,16 +127,8 @@ init(nil: ref Draw->Context, argv: list of string)
 		# instance that means to keep its address must not.
 		#
 		sys->print("cloudinit: %s ip %s gw %s\n", ether, cfg.ip, cfg.ipgw);
-		if(cfg.ipgw != nil && mdaddr != nil){
-			rfd := sys->open("/net/iproute", Sys->OWRITE);
-			if(rfd == nil)
-				sys->print("cloudinit: /net/iproute: %r\n");
-			else if(sys->fprint(rfd, "add %s 255.255.255.255 %s",
-					mdaddr, cfg.ipgw) < 0)
-				sys->print("cloudinit: route %s: %r\n", mdaddr);
-			else if(verbose)
-				sys->print("cloudinit: route %s via %s\n", mdaddr, cfg.ipgw);
-		}
+		if(cfg.ipgw != nil)
+			routes(cfg.ip, cfg.ipgw, mdaddr, verbose);
 		return;
 	}
 	sys->fprint(sys->fildes(2), "cloudinit: no interface took a lease\n");
