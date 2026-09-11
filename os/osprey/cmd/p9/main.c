@@ -1042,11 +1042,26 @@ p9main(void)
 		 */
 		if(p9legacydemo){
 			extern int p9execlegacy(char*, char**);
-			char *lav[2];
+			char *lav[3];
 
 			lav[0] = "/boot/legacy";
 			lav[1] = nil;
 			p9execlegacy("/boot/legacy", lav);
+			/*
+			 * And the same question asked of a program that is not
+			 * a demonstration of anything: /boot/cat is catp9.c,
+			 * the same source as /boot/libcat, built the ordinary
+			 * Plan 9 way - libc, the generated stubs, an argument
+			 * vector, a heap grown with sbrk.  /boot/libcat is that
+			 * source linked against p9crt.c, which is a library per
+			 * program; this is the program itself.  If the second
+			 * reads the same file as the first, then p9crt.c is the
+			 * special case here and not the rule.
+			 */
+			lav[0] = "/boot/cat";
+			lav[1] = "/hello";
+			lav[2] = nil;
+			p9execlegacy("/boot/cat", lav);
 		}
 		print("p9: /bin/rc is /boot/libsh, this tree's own small shell, and not rc: "
 			"rio asks for rc by name and there is none here\n");

@@ -300,6 +300,8 @@ static int nattached;
  * slot, so that any module small enough to fit one can be laid in it
  * afterwards).  Answers the base, or nil with the reason printed.
  */
+static uvlong attachgot;	/* how much is attached at the base the last call answered */
+
 static uchar*
 attachfor(char *name, uvlong progbase, uvlong need, uvlong want)
 {
@@ -315,6 +317,7 @@ attachfor(char *name, uvlong progbase, uvlong need, uvlong want)
 					name, need, progbase, attachsize[i]);
 				return nil;
 			}
+			attachgot = attachsize[i];
 			return (uchar*)(uintptr)progbase;
 		}
 	if(nattached >= Nattach){
@@ -330,6 +333,7 @@ attachfor(char *name, uvlong progbase, uvlong need, uvlong want)
 	}
 	attachbase[nattached] = progbase;
 	attachsize[nattached] = want;
+	attachgot = want;
 	nattached++;
 	print("p9 load: %llud bytes of address space at %#llux for %s, attachment %d of %d\n",
 		want, progbase, name, nattached, Nattach);
@@ -431,8 +435,14 @@ p9load(char *name, uvlong *entryp, uvlong *basep)
 	print("p9 exec: %s: text %llud, data %llud, bss %llud; %llud bytes of address space at %#llux, entry %#llux\n",
 		name, textsz, datasz, bsssz, imgsz, progbase, entry);
 
-	/* a fresh image: whatever a previous run of it left is not its own */
-	memset(base, 0, (long)imgsz);
+	/*
+	 * A fresh image: whatever a previous run of it left is not its own.
+	 * For a program whose heap this personality serves, that is the
+	 * whole region and not only the image - the room above the bss is
+	 * where its malloc will be, and the last program's bytes are not
+	 * its either.
+	 */
+	memset(base, 0, (long)(p9loadextra != 0 ? attachgot : imgsz));
 	/* the text, its header with it, exactly as the file has it */
 	p9seek(fd, 0, 0);
 	if((n = readall(fd, base, (long)tseg)) != (long)tseg){
@@ -453,7 +463,12 @@ p9load(char *name, uvlong *entryp, uvlong *basep)
 	*entryp = entry;
 	*basep = progbase;
 	p9loadbase = progbase;
-	p9loadend = progbase + imgsz + p9loadextra;
+	/*
+	 * What the program has, which is what is attached and not what was
+	 * asked for: a second program laid at the same base gets the region
+	 * the first one caused to be attached.
+	 */
+	p9loadend = progbase + (p9loadextra != 0 ? attachgot : imgsz);
 	return 0;
 }
 

@@ -26,15 +26,23 @@
 #include	"rioprog.i"
 
 /*
- * Just the one, for a personality that is not the buddy.  The library-OS
- * side wants /boot/legacy - an ordinary Plan 9 binary, linked against
- * libc and against no personality - and none of the rest of these, which
- * are the buddy's to lay out for containers.
+ * Two, for a personality that is not the buddy: /boot/legacy and
+ * /boot/cat, both ordinary Plan 9 binaries linked against libc and
+ * against no personality.  The rest are the buddy's to lay out for
+ * containers.
  */
 void
 p9legacyfile(void)
 {
 	addbootfile("legacy", legacyprog, sizeof legacyprog);
+	/*
+	 * And cat, which is the point of the exercise put plainly: the same
+	 * source is /boot/libcat, linked against p9crt.c and calling this
+	 * personality as a library, and /boot/cat, linked against libc and
+	 * trapping.  One program, two arrangements, one personality serving
+	 * both - and the second is the one an ordinary Plan 9 program is.
+	 */
+	addbootfile("cat", catprog, sizeof catprog);
 }
 
 void

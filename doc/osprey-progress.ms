@@ -11448,6 +11448,25 @@ shares an address space with what it is catching, so it can report that
 the program is over and cannot claim the program did no damage on its
 way out.
 .PP
+And the claim this phase was for, put plainly.
+.CW catp9.c
+is one source.  Linked against
+.CW p9crt.c
+it is
+.CW /boot/libcat ,
+which calls this personality as a library; built the ordinary Plan 9 way
+\- libc, the generated stubs, an argument vector, a heap grown with
+.CW sbrk
+\- it is
+.CW /boot/cat ,
+which traps.  Both run in the same boot, and the second reads the same
+file, grows half a megabyte of heap through
+.CW brk(2) ,
+duplicates a descriptor and names it with
+.CW fd2path .
+.CW p9crt.c
+is the special case here now, not the rule.
+.PP
 What is not served yet, and is named in the log as it is asked for:
 .CW alarm(2)
 and
@@ -11471,7 +11490,7 @@ and it dies at
 .CW "unimplemented syscall 14" ,
 which is where every Plan 9 binary died here before.
 .CW scripts/osprey-check-p9legacy.py
-is eleven criteria over the two boots.
+is twelve criteria over the two boots.
 .PP
 .B "Phase 3.2: a real program, then rio, linked with the library."
 A real program \- a command, then a shell, then rio \- is linked with

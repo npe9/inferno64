@@ -361,7 +361,13 @@ p9syscallup(ulong scallnr, uintptr aargs, uintptr frame)
 			snprint(up->errstr, ERRMAX, "fd out of range or not open");
 			break;
 		}
-		ret = (uintptr)libfd2path(fd, buf, (int)len);
+		/*
+		 * The library answers with the byte count and the system call
+		 * with 0, which is the shape p9crt's own fd2path converts
+		 * between too.  Without the conversion cat said "fd2path of 4
+		 * failed" about a call that had worked.
+		 */
+		ret = libfd2path(fd, buf, (int)len) > 0 ? 0 : (uintptr)-1;
 		break;
 	case STAT:
 		name = va_arg(list, char*);

@@ -55,7 +55,11 @@ def main():
     if r.returncode != 0:
         print('FAIL 9p964 did not build'); print(r.stdout[-800:]); print(r.stderr[-800:]); return 1
 
-    log, t = boot('*legacydemo=1', 'p9 legacy: /boot/legacy returned')
+    # Read to where rio is started and not to where the legacy program
+    # returned: the criteria below are about what the personality does
+    # afterwards, and a marker that fires before them is a race the
+    # machine wins or loses under load rather than a claim.
+    log, t = boot('*legacydemo=1', 'p9 spawn: /boot/rio runs as')
     # and the control: the same kernel, the same binary, the service not
     # asked for.  It is a separate boot because the service is asked for
     # once, at the one place the program is entered.
@@ -99,6 +103,13 @@ def main():
          'now reading a bad address on purpose' in t
          and re.search(r'fault at user pc 0x20[0-9a-f]+, inside .*own program: handed to it, not a panic', t) is not None
          and 'my program faulted' in t),
+
+        ("and the same source runs both ways: /boot/libcat is catp9.c linked against p9crt.c, which is a library per program, and /boot/cat is the same source built the ordinary Plan 9 way - libc, the generated stubs, an argument vector, a heap grown with sbrk - and this personality serves both.  The second reads the file, grows a heap of half a megabyte through brk(2), duplicates a descriptor and names it with fd2path",
+         'entering /boot/cat at 0x200028 as an ordinary Plan 9 binary' in t
+         and re.search(r'cat: sbrk grew the heap \d+ bytes at [0-9a-f]+, now to [0-9a-f]+; \d+ bytes written and read back, 0 wrong', t) is not None
+         and 'cat: descriptor 4 is /hello, by fd2path' in t
+         and 'hello from the 9P server' in t
+         and 'p9 legacy: /boot/cat returned; the personality is still here' in t),
 
         ("the personality goes on to run the window system afterwards, in the same boot, with its name space and its working directory back where they were",
          'p9: starting /boot/rio' in t and 'p9 spawn: /boot/rio runs as' in t),
