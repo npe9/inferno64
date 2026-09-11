@@ -304,6 +304,7 @@ freq freq
 fs fs
 ftest ftest
 ftree ftree
+gcs gcs
 genprimes math-misc
 getcsv sh-csv
 getlines sh-std

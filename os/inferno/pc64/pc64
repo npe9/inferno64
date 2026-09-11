@@ -285,6 +285,7 @@ root
 # the provider's control plane as a namespace, and the http client under it
 	/dis/cloudfs.dis
 	/dis/cloudinit.dis
+	/dis/gcs.dis
 	/dis/hget.dis
 	/dis/lib/httpclient.dis
 	/dis/lib/url.dis

@@ -39,6 +39,7 @@ TARG=\
 	dhcpclient.dis\
 	dhcpserver.dis\
 	dial.dis\
+	awsv4.dis\
 	httpclient.dis\
 	dialog.dis\
 	dict.dis\
@@ -225,6 +226,7 @@ SYSMODULES= \
 	styxservers.m\
 	sys.m\
 	tables.m\
+	awsv4.m\
 	httpclient.m\
 	url.m\
 	venti.m\

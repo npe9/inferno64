@@ -106,6 +106,7 @@ TARG=\
 	mkdir.dis\
 	cloudfs.dis\
 	cloudinit.dis\
+	gcs.dis\
 	hget.dis\
 	mntgen.dis\
 	mount.dis\
