@@ -3592,3 +3592,61 @@ references, and the JIT's
 .CW freeptrs()
 paths are untouched.  It was built to test the diagnosis, not to ship,
 and the diagnosis is now supported by the captures instead.
+.NH 2
+framerefs, measured properly, does nothing
+.PP
+120 boots an arm, interleaved, order alternating, at
+.CW *parallelvm=1 :
+.IP
+.nf
+framerefs=0   2 bad frames in 120   0 underflows   470 iterations
+framerefs=1   2 bad frames in 120   0 underflows   477 iterations
+.fi
+.PP
+The same number, and the work done within one and a half percent.  The
+release side was completed first \(em OP(mcall) and destroystack() as
+well as OP(ret) \(em so this is the complete switch and not the partial
+one, and no count underflow appeared in either arm, which is what the
+two added releases had to be shown not to cause.
+.PP
+That is a negative result and it is informative, because
+.CW leaktypes
+is not.  An earlier session measured that one: eight boots leaking
+showed no freed or garbage Type, six not leaking showed twelve
+occurrences.  Both switches prevent the same
+.CW freetype()
+call in
+.CW freemod() ,
+which does respect the count \(em so preventing the free works and
+holding a reference does not.
+.PP
+The difference says where to look next.  If a frame's reference cannot
+save its type, the frame may not be alive when
+.CW rootset()
+walks it:
+.CW OP(ret)
+has already run and released, and the walk is covering a frame that has
+been popped.  That is a bug in the range
+.CW rootset()
+walks \(em
+.CW sx->reg.tos.fu
+down to
+.CW sp
+\(em rather than in the type's lifetime, and it would explain why
+leaking types hides it and counting references does not.  Untested, and
+written down as the next thing to test rather than as the answer.
+.NH 2
+The fault rate depends on the bench
+.PP
+The same
+.CW framerefs=0
+kernel measured 3 bad frames in 60 boots earlier in the day and 0 in
+89 later.  If the rate were constant, the second is about a one percent
+event.  It is not constant: the machine was carrying other virtual
+machines during the first and was quieter during the second, and a race
+gets more chances when the host preempts more.
+.PP
+So every rate in this document is conditional on the bench, and two
+runs taken at different times cannot be compared \(em including the
+"2 failures in 96 boots" above.  Only an interleaved A/B within one run
+holds, which is why the later comparisons are built that way.
