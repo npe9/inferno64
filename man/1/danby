@@ -922,6 +922,11 @@ See
 .IR danby-yoyo (1).
 .SS Quantum Mechanics
 .TP
+.B danby/bands
+Why a solid has energies an electron cannot have.
+See
+.IR danby-bands (1).
+.TP
 .B danby/hydrogen
 The radial wave function of a hydrogen-like atom.
 See

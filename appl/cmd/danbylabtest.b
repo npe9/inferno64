@@ -281,7 +281,109 @@ checkmechanism(name: string, m: ref Model, c: ref Config,
 		checkrabi(name, m);
 	"hydrogen" =>
 		checkhydrogen(name, m);
+	"bands" =>
+		checkbands(name, m);
 	}
+}
+
+
+# ------------------------------------------------------------------- bands
+#
+# This model has no dynamics: it sweeps energy and evaluates a formula,
+# so there is nothing to integrate and the checks are identities.
+#
+# The sharp one is the band edge.  At ka = n pi the sine in
+# cos(ka) + P sin(ka)/(ka) vanishes exactly, so the whole thing is
+# (-1)^n whatever P happens to be - those energies are band edges for
+# every lattice strength there is.  It is an exact statement and it
+# holds to the last few bits, which makes it a far better test than
+# measuring a gap width.
+#
+# The control is P = 0.  With no barriers there is no lattice, the
+# function is just cos(ka), and it can never leave -1..1: every energy
+# is allowed and there are no gaps at all.  A model that had stopped
+# depending on the strength would still pass the edge identity - (-1)^n
+# does not mention P - and is caught here.
+
+bandsat(m: ref Model, strength, lattice, e: real): (real, real)
+{
+	m.parameter[0] = strength;
+	m.parameter[1] = lattice;
+	st := dynsys->initialstate(m);
+	d := array[len st] of real;
+	dynsys->rhs(m, e-0.001, st, d);		# the spec's own 0.001 offset
+	v := dynsys->observables(m, st);
+	return (v[0], v[1]);
+}
+
+checkbands(name: string, m: ref Model)
+{
+	# at ka = n pi the function is exactly (-1)^n, for any P and any a
+	for(pi := 0; pi < 3; pi++){
+		p := 1.0 + 4.0*real pi;
+		for(ai := 0; ai < 2; ai++){
+			a := 1.0 + real ai;
+			for(n := 1; n <= 3; n++){
+				k := real n*Math->Pi/a;
+				e := k*k/2.0;
+				(f, nil) := bandsat(m, p, a, e);
+				want := 1.0;
+				if(n%2 == 1)
+					want = -1.0;
+				near(sys->sprint("%s: edge at ka=%d pi, P=%g a=%g", name, n, p, a),
+					f, want, 1.0e-9);
+			}
+		}
+	}
+	# The edge identity above is exact and is also BLIND to most of the
+	# formula: at ka = n pi the sine is zero, so the whole
+	# P sin(ka)/(ka) term vanishes and the check cannot tell
+	# sin(ka)/(ka) from sin(ka).  Deleting the 1/ka - which is the
+	# reason gaps lose to bands as the energy rises, the entire point of
+	# the model - passed every other check here.  So the function is
+	# also compared against the closed form at energies where the sine
+	# is NOT zero, which is what pins every term.
+	for(ei := 0; ei < 6; ei++){
+		p2 := 1.0 + 2.0*real (ei%3);
+		a2 := 1.0 + 0.5*real (ei/3);
+		e2 := 0.7 + 1.3*real ei;
+		k2 := math->sqrt(2.0*e2);
+		ka := k2*a2;
+		want := math->cos(ka) + p2*math->sin(ka)/ka;
+		if(want > 3.0 || want < -3.0)
+			continue;			# the spec clamps the drawn value
+		if(math->fabs(math->sin(ka)) < 0.2)
+			fail(sys->sprint("%s: sample %d has sin(ka)=%g, too near a node "+
+				"to test the 1/ka", name, ei, math->sin(ka)));
+		(f2, nil) := bandsat(m, p2, a2, e2);
+		near(sys->sprint("%s: f at E=%g, P=%g, a=%g", name, e2, p2, a2),
+			f2, want, 1.0e-12);
+	}
+
+	# no barriers, no gaps: every energy allowed
+	barred := 0;
+	for(i := 1; i <= 400; i++){
+		(nil, al) := bandsat(m, 0.0, 1.0, 0.125*real i);
+		if(al < 0.5)
+			barred++;
+	}
+	if(barred > 0)
+		fail(sys->sprint("%s: with strength 0 there is no lattice, so every "+
+			"energy must be allowed, but %d of 400 were not", name, barred));
+	# and with barriers there really are gaps, or the control above is
+	# passing because nothing is ever forbidden
+	barred = 0;
+	for(i = 1; i <= 400; i++){
+		(nil, al) := bandsat(m, 3.0, 1.0, 0.125*real i);
+		if(al < 0.5)
+			barred++;
+	}
+	if(barred == 0)
+		fail(name+": with strength 3 nothing was forbidden anywhere, so the "+
+			"strength-0 check proves nothing");
+	# edges go as 1/a^2: double the spacing and every edge quarters
+	(f1, nil) := bandsat(m, 3.0, 2.0, (Math->Pi/2.0)*(Math->Pi/2.0)/2.0);
+	near(name+": edge scales as 1/a^2", f1, -1.0, 1.0e-9);
 }
 
 

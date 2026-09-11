@@ -1,0 +1,116 @@
+.TH DANBY-BANDS 1
+.SH NAME
+danby-bands \- why a solid has energies an electron cannot have
+.SH SYNOPSIS
+.B danby/bands
+.SH MODEL
+One atom gives sharp levels;
+.IR danby-hydrogen (1)
+draws them.  A LINE of atoms, repeated for ever, gives something else
+entirely: broad BANDS of allowed energy separated by GAPS that no
+electron in the crystal can occupy at all.  That is the whole of why
+there are conductors, insulators and semiconductors, and this is the
+simplest model that produces it.
+.PP
+The lattice is a Dirac comb \(em a delta-function barrier of strength P
+every a \(em which is the Kronig-Penney model.  Bloch's theorem says a
+solution in a periodic potential must repeat up to a phase, and matching
+across one barrier gives
+.PP
+.EX
+cos(Ka) = cos(ka) + P sin(ka)/(ka),   k = sqrt(2E)
+.EE
+.PP
+The left side is a cosine and CANNOT leave \-1 to 1.  The right side is
+a function of the energy alone and happily does.  So an energy is
+allowed only where the right side happens to land inside that range, and
+is forbidden everywhere else.
+.PP
+Nothing here is approximated and nothing is numerical.  The gaps exist
+because a cosine is bounded and the thing it is being set equal to is
+not.
+.SH DESCRIPTION
+.B Danby/bands
+is a
+.IR danbylab (2)
+script \(em the whole model is the text of
+.BR /appl/danby/bands.spec .
+.PP
+The x axis is ENERGY, not time.  The model has no dynamics at all: it
+sweeps E upward and evaluates a formula.  The one state it is obliged to
+carry is put to use \(em it integrates the allowed indicator, so it
+accumulates the total width of band passed so far.
+.SS What to look for
+The shaded regions are the bands.  Where the curve leaves \-1 to 1 the
+shading stops, and that is a gap.
+.PP
+Gaps lose to bands as the energy rises, because the term that pushes the
+function out of range carries a 1/ka and dies away: a fast electron
+barely notices the lattice.  They do NOT shrink in absolute width \(em
+measured at P = 3 and a = 1 they are 4.52 then 5.35 wide \(em but the
+bands they separate widen much faster, 2.98 then 10.28 then 19.32.  The
+first gap is one and a half times the band below it and the next only
+half.  It is the RATIO that collapses, and the ratio is what decides
+whether a material conducts.
+.PP
+Raising
+.B strength
+widens the gaps: a stronger lattice binds harder.  Turn it to zero and
+every gap closes at once \(em with no barriers the function is just
+cos(ka), which can never leave the range, so a free electron may have
+any energy it likes.  That is the model's own control and the test makes
+it.
+.PP
+Widening
+.B lattice
+moves every band down.  The edges sit at ka = n pi, so
+E = n squared pi squared / 2a squared, and doubling the spacing quarters
+every edge.
+.SS The band edges are exact
+At ka = n pi the sine vanishes, so the whole P term goes with it and the
+function is exactly plus or minus one whatever P happens to be.  Those
+energies are band edges for every lattice strength there is.  It is an
+identity rather than a measurement, and
+.IR danbylabtest (1)
+holds it to nine places.
+.SS The diagram
+The lattice: a barrier every
+.BR lattice ,
+as tall as
+.BR strength .
+The frame is pinned, so shortening the spacing really does draw a
+tighter comb rather than the same comb at a different zoom.
+.SH SOURCE
+.B /appl/danby/bands.spec
+.SH SEE ALSO
+.IR danby (1),
+.IR danby-hydrogen (1),
+.IR danby-schrodinger (1),
+.IR danbylab (2),
+.IR danbylabtest (1)
+.SH BUGS
+A delta comb is not a solid.  Real lattices are three-dimensional, their
+barriers have width, and the bands depend on direction; none of that is
+here.  What survives the simplification is the part worth having \(em
+that periodicity alone forbids some energies \(em and that part is
+exact.
+.PP
+The drawn curve is clipped to plus or minus three.  Between bands the
+function runs away, and without the clip the axis would rescale to it
+and flatten every band on the screen.  The shading is computed from the
+UNCLIPPED value, so the bands are in the right places even where the
+curve is drawn flat along the clip.
+.PP
+At exactly ka = n pi the function is exactly plus or minus one, and
+whether that counts as allowed depends on which side of one the
+floating-point result lands.  The shading there is a coin toss on the
+last bit.  It is a set of measure zero and the test does not ask.
+.PP
+.IR Danbylabtest (1)
+checks the edge identity at three orders and two spacings, that zero
+strength forbids nothing, that non-zero strength forbids something, the
+1/a squared scaling, and the function against its closed form away from
+the nodes.  That last check exists because the edge identity is BLIND:
+at ka = n pi the sine is zero, so it cannot tell sin(ka)/(ka) from
+sin(ka), and deleting the 1/ka \(em the reason gaps lose to bands, the
+entire point of the model \(em passed every other check.

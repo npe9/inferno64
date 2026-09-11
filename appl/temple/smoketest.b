@@ -80,7 +80,7 @@ tmods := array[] of {
 # they PARSE is danbylabtest(1)'s job and it does it properly.
 dspecs := array[] of {
 	"alternativepredation", "amusementchaos", "attractingwires", "atwoodpendulum", "badfootball",
-	"badminton", "balloon", "baseballpitch", "basketball", "bernoulli",
+	"badminton", "bands", "balloon", "baseballpitch", "basketball", "bernoulli",
 	"brusselator", "budworm", "bungee", "cannibalism", "carbonmicrophone",
 	"carrierlanding", "catastrophemachine", "changingenvironment", "chaoticwheel", "childcare",
 	"clockpendulum", "columnbuckling", "cometcatch", "compass", "competition",
