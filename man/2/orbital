@@ -1,0 +1,72 @@
+.TH ORBITAL 2
+.SH NAME
+orbital: psi, radial, angular, peak, extent \- hydrogen wave functions
+.SH SYNOPSIS
+.EX
+include "orbital.m";
+orb := load Orbital Orbital->PATH;
+orb->init();
+
+v   := orb->psi(n, l, m, z, x, y, zc);
+r   := orb->radial(n, l, z, r);
+a   := orb->angular(l, m, x, y, zc);
+pk  := orb->peak(n, l, m, z, half, steps);
+h   := orb->extent(n, z);
+.EE
+.SH DESCRIPTION
+.B Psi
+is psi_nlm at a point: R_nl(r) times the REAL spherical harmonic, in
+atomic units, for nuclear charge
+.IR z .
+It returns 0 for any combination that is not a state \(em l outside
+0..n\-1, or |m| above l \(em rather than an approximation to one.
+.PP
+The angular part is the real form, the combinations of +m and \-m with
+names: p_x, p_y, p_z, d_z2 and the rest.  The complex Y_lm have constant
+modulus in phi and would draw as featureless rings; these are what has a
+shape, and what the sign of a lobe means anything for.
+.PP
+.B Angular
+takes a direction as a VECTOR and not as angles, because a caller
+walking a grid has one and would otherwise compute an arctangent it does
+not want.  cos(m phi) and sin(m phi) come from a recurrence on
+(x + iy)^m, so nothing goes wrong on the axis.
+.PP
+Nothing is written out per state.  The radial part is the general
+formula with an associated Laguerre polynomial by recurrence and the
+angular part an associated Legendre, so n is limited only by the
+factorials rather than by whoever's patience ran out writing cases.
+.SS Phase
+.B Legendre
+carries the Condon-Shortley phase \(em P_1^1 is MINUS sin(theta) \(em
+and
+.B angular
+takes it back out again with a factor of (\-1)^m, which is the usual
+convention for the real harmonics and the one that puts p_x's positive
+lobe at positive x.
+.PP
+Which lobe is positive is a convention and not physics: psi and \-psi
+are the same state.  But it is a convention a PICTURE shows, so
+.IR orbitaltest (1)
+pins it rather than leaving it free to flip.
+.SS Scaling a picture
+.B Extent
+is a sensible half-width to draw a state in.  Orbitals grow as n^2/z, so
+one fixed box is wrong for every n but one.
+.B Peak
+is the largest |psi| on a grid of that half-width, which is what a
+picture needs to scale itself and what a sampler needs for a threshold.
+.SH SOURCE
+.B /appl/lib/orbital.b
+.SH SEE ALSO
+.IR danby-orbital (1),
+.IR orbitaltest (1),
+.IR danby-hydrogen (1)
+.SH BUGS
+.B Peak
+walks a cube and costs steps^3 evaluations.  It is meant to be called
+when something changes, not per frame.
+.PP
+There is no spin, so nothing here has four quantum numbers, and no
+electron-electron anything: this is hydrogen, or a one-electron ion, and
+not an atom with a filled shell.

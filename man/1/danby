@@ -932,6 +932,11 @@ The radial wave function of a hydrogen-like atom.
 See
 .IR danby-hydrogen (1).
 .TP
+.B danby/orbital
+What a hydrogen wave function looks like in space.
+See
+.IR danby-orbital (1).
+.TP
 .B danby/packet
 A free particle, spreading.
 See

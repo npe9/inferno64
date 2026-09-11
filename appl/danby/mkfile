@@ -22,6 +22,7 @@ TARG=\
 	heartbeat.dis\
 	lorenz.dis\
 	model.dis\
+	orbital.dis\
 	oscillator.dis\
 	pendulum.dis\
 	propulsion.dis\

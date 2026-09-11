@@ -106,6 +106,7 @@ TARG=\
 	newns.dis\
 	ninep.dis\
 	ode.dis\
+	orbital.dis\
 	pde.dis\
 	oldauth.dis\
 	palm.dis\

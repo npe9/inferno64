@@ -213,6 +213,7 @@ danby-nonlinearsprings danby-nonlinearsprings
 danby-duffing danby-duffing
 danby-bands danby-bands
 danby-packet danby-packet
+danby-orbital danby-orbital
 danby-tunnel danby-tunnel
 danby-twoslit danby-twoslit
 danby-tdse danby-tdse
@@ -445,6 +446,7 @@ ntest sh-expr
 ohgreat ohgreat
 or sh-std
 orchard orchard
+orbitaltest orbitaltest
 os os
 p p
 palette palette

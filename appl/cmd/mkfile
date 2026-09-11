@@ -197,6 +197,7 @@ TARG=\
 	nowmtest.dis\
 	ns.dis\
 	nsbuild.dis\
+	orbitaltest.dis\
 	os.dis\
 	p.dis\
 	paste.dis\

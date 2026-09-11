@@ -1,0 +1,46 @@
+.TH ORBITALTEST 1
+.SH NAME
+orbitaltest \- check orbital(2)'s hydrogen wave functions
+.SH SYNOPSIS
+.B orbitaltest
+[
+.B -v
+]
+.SH DESCRIPTION
+These are the functions
+.IR danby-orbital (1)
+draws, not a copy of them, so a shape that would come out wrong on
+screen fails here first.
+.PP
+The checks are the ones that DEFINE the wave functions rather than
+describe them.  Each is normalised; states differing in any quantum
+number are orthogonal; the radial part has exactly n\-l\-1 nodes; psi at
+the nucleus is 1/sqrt(pi) for the ground state and exactly zero for
+every state with angular momentum.  A set of formulas satisfying all of
+those IS the hydrogen wave function, so this is a definition and not a
+sample of values.
+.PP
+The integrals are done separately in r and over the sphere rather than
+on a three-dimensional grid.  The product of the two normalisations is
+the one that matters, and doing it this way is both far cheaper and far
+more accurate than any grid a test could afford.
+.SH ORIENTATION
+Every integral above is blind to which way round an orbital points: an
+integral over all space cannot tell p_x from p_y, and swapping them
+passes every one.  So the orientations are checked directly \(em p_z
+largest along z and zero in the xy plane, p_x the other way about, p_y a
+quarter turn from p_x \(em and so are the signs, since the (\-1)^m phase
+that puts p_x's positive lobe at positive x is exactly the sort of
+factor that can be dropped without any integral noticing.
+.SH SOURCE
+.B /appl/cmd/orbitaltest.b
+.SH SEE ALSO
+.IR orbital (2),
+.IR danby-orbital (1)
+.SH BUGS
+It checks the functions, not the picture.  Whether
+.IR danby-orbital (1)
+projects or colours them correctly is not tested here; its
+.B -c
+option reports the cloud it would draw, which is how that is checked by
+hand.

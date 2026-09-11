@@ -1,0 +1,106 @@
+.TH DANBY-ORBITAL 1
+.SH NAME
+danby-orbital \- what a hydrogen wave function looks like in space
+.SH SYNOPSIS
+.B danby/orbital
+.br
+.B danby/orbital -c
+.RB [ -n
+.IR n ]
+.RB [ -l
+.IR l ]
+.RB [ -m
+.IR m ]
+.SH MODEL
+.IR Danby-hydrogen (1)
+shoots the RADIAL equation and draws u(r): how the electron is
+distributed with distance, and nothing at all about direction.  That is
+half the answer.
+.PP
+The other half is the angular part, and it is the half with the shapes
+in it \(em the s sphere, the p dumbbells, the d cloverleaves.  Those are
+the pictures everyone has seen, and they are the reason chemistry has
+directions in it: a bond points somewhere because an orbital does.
+.SH DESCRIPTION
+Two views of the same state, because neither is enough on its own.
+.SS Left: the wave function in three dimensions
+Every place where |psi| rises above a chosen fraction of its largest
+value, drawn as a point and projected onto the screen, turning slowly.
+Colour is the SIGN of psi, not its size, so the lobes are distinguished
+by the thing that makes two of them cancel when they overlap.
+.PP
+That view shows the shape and cannot show the inside, because a
+projection is a sum over everything behind everything else.  Which is
+exactly what makes it a projection, and exactly what you get when you
+look at any solid thing.
+.SS Right: a slice
+Psi in the y = 0 plane, with sign, as a signed density.  This shows what
+the projection hides: the radial nodes, the spheres inside spheres, and
+where psi passes through zero rather than merely getting small.
+.PP
+The pair is the point of the program.  A 2s orbital and a 1s orbital
+project to almost the same blob and are not remotely the same thing;
+the slice shows the shell inside the shell at once, and the change of
+sign across it.
+.SS Keys
+.B n
+and
+.B N
+step the principal quantum number up and down;
+.B l
+and
+.BR L ,
+.B m
+and
+.B M
+the others.  A step that would leave a combination that is not a state
+is refused rather than silently corrected, so the numbers on screen are
+always a state.
+.PP
+.B +
+and
+.B \-
+move the contour the cloud sits on \(em down to see the faint outer
+parts, up to see only the core.
+The arrow keys turn it, space stops the turning, q quits.
+.SS Checking it without a display
+.B -c
+builds the cloud, reports how many points it holds and how their signs
+fall about the axes, and exits without opening anything.  The lobes and
+their signs are the whole content of the picture, so that is how the
+picture is checked where there is no display:
+.PP
+.EX
+danby/orbital -c -n 2 -l 1 -m 0
+.EE
+.PP
+reports 492 positive points above z = 0 and 492 negative below, with
+x > 0 holding 246 of each, which is a dumbbell along z and could not be
+anything else.
+.SH SOURCE
+.B /appl/danby/orbital.b
+.br
+.B /appl/lib/orbital.b
+.SH SEE ALSO
+.IR danby (1),
+.IR danby-hydrogen (1),
+.IR orbital (2),
+.IR orbitaltest (1)
+.SH BUGS
+The cloud is a contour and not a density.  Every point inside it is
+drawn the same, so where the electron is MOST likely to be does not
+stand out from where it is merely likely enough.  The slice carries that
+information and the cloud does not.
+.PP
+Points are drawn far side first so the near side covers them, which is
+all that makes a cloud read as solid.  It is not a depth buffer: two
+points at nearly the same depth are drawn in grid order.
+.PP
+The sign convention is the usual one for real harmonics, with p_x's
+positive lobe at positive x.  Psi and \-psi are the same state, so the
+colours could be swapped throughout without anything being wrong; what
+matters is that neighbouring lobes differ, and they do.
+.PP
+n is capped at 5.  Beyond that the cloud needs a finer grid than it has
+to resolve the shells, and would draw a misleading picture rather than a
+slow one.
