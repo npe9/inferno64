@@ -3530,3 +3530,65 @@ is the signature of a counter that races, not a queue that does.  The
 first run of this batch counted it and reported 96 failures of 96,
 which is what a classifier does when it is handed a control that only
 holds in one of the two modes.
+.NH 2
+The remaining parallelvm=1 fault is an old one
+.PP
+It is the frame-type lifetime bug this document already describes, and
+.CW xec.c
+already carries the diagnosis above
+.CW framerefs :
+a frame stores
+.CW R.M->type[]
+in
+.CW f->t
+and takes no reference on it, because a frame is stack and its module
+is meant to outlive it.  The shell drops a module while a frame of one
+of its types is still on a stack,
+.CW freemod()
+frees the type, and the next reader walks it.
+.PP
+The captures match that and nothing else.  Three in sixty boots, all
+one shape:
+.CW f->t
+still holding the pointer the frame always held, so the frame is
+intact; the block it names no longer a Type;
+.CW mark
+inside the Dis heap at a constant
+.CW t+0xA200 ;
+.CW size
+zero, which is where a freed block keeps
+.CW reallocpc
+and what malloc leaves there.
+.PP
+So this is not a parallelism bug.  It reproduces on virtarm64, which
+has one scheduling processor, and
+.CW parallelvm=1
+only makes it likelier -- more interpreters, more module loading and
+dropping, more frames alive across it.  That is worth saying plainly,
+because a fault found while chasing parallelism invites being blamed on
+it.
+.NH 2
+What the framerefs switch measured, and what it did not
+.PP
+Turning it on, sixty boots each at
+.CW *parallelvm=1 :
+.IP
+.nf
+framerefs=0   3 bad frames in 60
+framerefs=1   1 bad frame  in 60
+.fi
+.PP
+That is not an improvement, and it should not be read as one.  Against
+an expected three, seeing one or fewer happens about a fifth of the
+time by chance; at sixty boots the two numbers are the same number.
+Separating them needs a few hundred boots an arm, which is the
+measurement to run, not another sixty.
+.PP
+The switch stays off regardless, and its own comment says why: it
+counts the reference at
+.CW OP(ret)
+only, so a process killed with frames on its stack leaks type
+references, and the JIT's
+.CW freeptrs()
+paths are untouched.  It was built to test the diagnosis, not to ship,
+and the diagnosis is now supported by the captures instead.
