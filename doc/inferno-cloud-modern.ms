@@ -432,3 +432,67 @@ halves of it being Styx: sequential reads cost consistently less than
 reads at offsets a megabyte apart, which is the mount driver answering
 from a buffer rather than from the wire.  That is what the file
 abstraction buys back on a caller that reads in order.
+.NH 2
+The experiment this plan actually specified: two instances, real network
+.LP
+Section "measure the claim" asks for the Styx round trip between two
+instances, not between a hosted client and a guest through a NAT.  Two
+Compute Engine
+.CW e2-micro
+instances, both running this kernel, on the provider's internal network
+\(em
+.CW inferno-bench-a
+at 10.128.0.29 serving
+.CW zerofs
+and
+.CW "tcpserve -e" ,
+.CW inferno-bench-b
+at 10.128.0.30 mounting and measuring:
+.TS
+center;
+l r r r.
+_
+size	raw tcp	styx seq	styx jumping
+_
+64	440 us	373 us (0.8x)	393 us (0.8x)
+64	397 us	367 us (0.9x)	367 us (0.9x)
+64	367 us	470 us (1.2x)	397 us (1.0x)
+512	327 us	387 us (1.1x)	433 us (1.3x)
+_
+.TE
+.PP
+.B "On a real network a Styx round trip costs about what a raw TCP"
+.B "request and reply costs"
+\(em 0.8 to 1.3 times it across these samples, which is parity within
+the run-to-run spread, with a little more cost at the larger payload.
+The absolute figures are also four to five times better than the QEMU
+ones, and far steadier, which says most of what the earlier numbers
+measured was the NAT.
+.PP
+.B "What the comparison still is not."
+Both sides are one network round trip, so the transport dominates and
+what separates them is implementation.  On the Styx side the client is
+the kernel's mount driver, in C, and the whole exchange is one system
+call.  On the raw side the client is a Limbo program making two \(em a
+write and a read \(em and paying Dis for the loop between them.  That
+asymmetry cannot be removed while comparing "read a file" with "send a
+request and wait for a reply", because the first genuinely is one
+operation and the second genuinely is two.  It is arguably the
+design's advantage rather than a flaw in the measurement, but it is not
+a measurement of the protocol in isolation and should not be quoted as
+one.
+.PP
+The earlier figure of 1.2 to 1.5 times, from the QEMU pair, used a
+hosted
+.CW emu
+as the client, whose mount driver is emu's own C rather than a
+kernel's.  Both numbers are kept above; the two-instance one is the
+one this plan asked for.
+.PP
+So the cost objection in "what would falsify this" is answered as far
+as this experiment can answer it: a mounted namespace is not several
+times more expensive than the raw exchange it replaces.  It costs about
+the same.  What remains untested is the comparison against a
+conventional RPC with its own framing and serialisation, which is the
+thing a real service would otherwise use, and which would carry costs
+Styx does not.
