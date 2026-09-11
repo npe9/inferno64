@@ -502,6 +502,57 @@ two still wants a camera. The `gorge -g` head-up-display count above is
 a *different* fault and was photographed.
 
 
+### Phase 2b, half of it: the readback composed the geometry over the 2-D — fixed 2026-09-11
+
+The architecture for correct ordering was already here and one of the two
+compositors did not use it.
+
+`metal_flush_geom()` snapshots the softscreen as it stood *before* any 3-D
+was queued — `mtl_under` — on the first 2-D draw after geometry.
+`present_softscreen_body()` then draws `under`, then the geometry, then
+`metal_overlay_soft()` puts back the pixels that changed afterwards. Under
+goes beneath, the head-up display goes on top, and the order is right.
+
+`metal_readback_geom()` used none of it. It uploaded the **current**
+softscreen — which already contains everything drawn after the 3-D — and
+then drew the geometry on top of all of it. Every HUD, reticle and score
+was lost, and since `gorge -g` reads back to see its frame, that is
+exactly the 0 white pixels it reported.
+
+The readback now composes the same way present does: `under`, geometry,
+`metal_overlay_soft`. The two paths agree by construction rather than by
+coincidence.
+
+*Evidence:* `gorge -g -D` head-up-display pixels **0 → 2047**, against
+1277 on the software provider. (2047 rather than 1277 because the
+provider line it prints differs in length.) `draw3dbench`'s readback line
+is unchanged, and its twenty-five checks still pass.
+
+### And the half that is still open: gorge's geometry
+
+The HUD is back and the canyon is still wrong: no ceiling, no pylons, no
+bolt, and two large planes where there should be a receding corridor.
+The same scene through devdraw's C rasteriser is correct, so this is
+Metal's geometry and not gorge's model or its ordering.
+
+**What is *not* established.** Removing the `gpudrawfillpoly3g` hook makes
+gorge correct — but gorge's geometry is *entirely* `fillpoly3g`, so that
+moves all of it to the CPU and cannot tell a Gouraud fault from any other
+Metal fault. It was recorded here as an isolation and it is not one.
+
+The real gap is a missing measurement. `draw3dbench` checks the GPU's
+**flat** `fillpoly3` for position, scale, rotation, occlusion and equal
+depth, and all of those pass. For Gouraud it checks only *that it shades*
+— "distinct colours in one face: software 1, GPU 16" — and nothing about
+where the face lands or what it occludes. gorge also differs in using
+`frustumoffset` rather than `frustum`, in drawing two hundred faces
+rather than a handful, and in running the z-buffer hard. Any of those is
+still a candidate.
+
+So the next step is not a fix, it is the check that would have caught
+this: the flat occlusion and placement tests, repeated for `fillpoly3g`,
+and once more through `frustumoffset`.
+
 ### There is a third path, and it is the fastest and the only correct one — 2026-09-11
 
 Everything above compares two things: the Limbo software provider and

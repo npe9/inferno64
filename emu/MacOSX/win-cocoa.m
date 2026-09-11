@@ -696,8 +696,7 @@ metal_init(void)
 		gpudrawline = metal_queue_line;
 		gpudrawfillpoly = metal_queue_fillpoly;
 		gpudrawfillpoly3d = metal_queue_fillpoly3d;
-		if(getenv("INFERNO_NOGOURAUD") == nil)
-			gpudrawfillpoly3g = metal_queue_fillpoly3g;
+		gpudrawfillpoly3g = metal_queue_fillpoly3g;
 		gpudrawplot = metal_queue_plot;
 		gpudrawsprite = metal_queue_sprite;
 		gpudrawsprite2d = metal_queue_sprite2d;
