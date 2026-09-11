@@ -454,6 +454,45 @@ So Phase 1's nine were declared done on `g3_calls` rising and
 `soft_fallbacks` staying at zero, and this document said in as many
 words that neither of those says the result is correct. It was right.
 
+**The mechanism, found the same day.** `INFERNO_METAL_STATS=1` alongside
+the pixel count, four runs of `rotatetank`:
+
+```
+lit 14503   readbacks=0   g3_calls=2460
+lit 20417   readbacks=5   g3_calls=2460
+lit 14503   readbacks=0   g3_calls=2460
+lit 14503   readbacks=0   g3_calls=2460
+```
+
+`g3_calls` is **identical in every run**: the geometry reached the GPU
+every time, blank frame or not. What differs is `readbacks`. A blank
+frame is one where `metal_readback_geom()` found the queue already empty
+and returned at its first line.
+
+So: **a present consumes the geometry queue without writing it back into
+`gscreen`.** The four `metal_present_*` functions each take the queued
+vertices, draw them into the drawable, and zero the counters. Whether a
+readback ever sees that geometry is therefore a race against
+presentation — win it and `gscreen` gets the frame, lose it and there is
+nothing left to render.
+
+This is also the sharpest possible demonstration of the trap this
+document keeps warning about. `g3_calls=2460` was Phase 1's evidence for
+`rotatetank`, and it is the same 2460 in the runs where the picture is
+there and the runs where it is not.
+
+**The fix that follows**, not attempted here: `metal_present_tris3d()`
+already copies the vertices into a retained `present_tri3d_verts` before
+zeroing the counters, so the last presented geometry survives — its
+`batches` array is freed, though. Retaining that, and the equivalents in
+the other three present paths, would let `metal_readback_geom()` re-render
+the last presented batch when the live queue is empty. The hazard is
+staleness: a program that has cleared and not yet re-queued would get the
+*previous* frame's geometry painted onto a fresh clear, so the retained
+batch needs invalidating when the destination is cleared, and getting
+that wrong is worse than the present fault. It wants doing deliberately
+rather than as a two-line guess.
+
 **What this does not establish.** `framegrab` reads the display's
 software image. A present straight to a drawable that never writes that
 image back would be invisible to it, so "a readback sees nothing" is
