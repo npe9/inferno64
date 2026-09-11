@@ -199,6 +199,7 @@ void
 fdtreport(void)
 {
 	extern int fdtreg(char*, uvlong*, uvlong*);
+	extern int fdtregn(char*, int, uvlong*, uvlong*);
 	extern int fdtregmin(char*, uvlong*, uvlong*);
 	extern int fdtmemory(uvlong*, uvlong*);
 	uvlong base, size;
@@ -254,12 +255,27 @@ fdtreport(void)
 			base, size, (uintptr)UART0);
 	if(fdtreg("arm,pl031", &base, &size))
 		print("fdt: pl031 @ %#llux (mem.h RTC0 %#p)\n", base, (uintptr)RTC0);
-	if(fdtreg("arm,cortex-a15-gic", &base, &size))
-		print("fdt: gicv2 dist @ %#llux (mem.h GICD %#p GICC %#p)\n",
-			base, (uintptr)GICD, (uintptr)GICC);
-	else if(fdtreg("arm,gic-v3", &base, &size))
-		print("fdt: gicv3 dist @ %#llux (mem.h GICD %#p GICR %#p)\n",
-			base, (uintptr)GICD, (uintptr)GICR);
+	/*
+	 * The distributor and whatever the node's second reg entry is --
+	 * the MMIO cpu interface on a v2, the redistributor range on a
+	 * v3.  Printed without mem.h beside them: gicreport() says which
+	 * source the GIC code latched, which is the line that means
+	 * something, and a comparison against a constant that agrees is
+	 * what let these be discovered and ignored.
+	 */
+	if(fdtregn("arm,cortex-a15-gic", 0, &base, &size)){
+		uvlong c;
+
+		c = 0;
+		fdtregn("arm,cortex-a15-gic", 1, &c, nil);
+		print("fdt: gicv2 dist @ %#llux cpuif @ %#llux\n", base, c);
+	} else if(fdtregn("arm,gic-v3", 0, &base, &size)){
+		uvlong r;
+
+		r = 0;
+		fdtregn("arm,gic-v3", 1, &r, nil);
+		print("fdt: gicv3 dist @ %#llux redist @ %#llux\n", base, r);
+	}
 	if(fdtregmin("virtio,mmio", &base, &size))
 		print("fdt: virtio-mmio @ %#llux size %#llux, using %#p (mem.h VIRTIO0 %#p)\n",
 			base, size, virtiobase, (uintptr)VIRTIO0);
@@ -363,6 +379,7 @@ main(void)
 	screeninit();
 	acpireport();
 	fdtreport();
+	gicreport();
 	/*
 	 * Before pciarchinit(), because the PCI scan is what reaches the
 	 * drivers that ask for a vector, and a router set afterwards

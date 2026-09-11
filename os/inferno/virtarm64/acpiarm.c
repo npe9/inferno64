@@ -51,6 +51,7 @@ enum {
 
 static uvlong	gicdbase;
 static uvlong	gicrbase, gicrlen;
+static uvlong	giccbase;		/* the v2 MMIO cpu interface */
 static uvlong	gicitsbase;
 static int	gicversion;
 
@@ -132,13 +133,21 @@ madt(void)
 			break;
 		case Madtgicc:
 			/*
-			 * The per-cpu entry also carries a redistributor
-			 * base, for parts that have no discovery range.
-			 * Only taken when the GICR entry did not appear,
-			 * because the range is the better answer: it
-			 * describes every redistributor and this one
+			 * The per-cpu entry carries two bases.  Physical
+			 * Base Address at offset 32 is the GICv2 MMIO cpu
+			 * interface -- the only ACPI source for it, and
+			 * the one a version 2 machine with tables and no
+			 * tree has nothing else to go on.
+			 *
+			 * GICR Base Address at offset 60 is this cpu's
+			 * redistributor, for parts that have no discovery
+			 * range.  Only taken when the GICR entry did not
+			 * appear, because the range is the better answer:
+			 * it describes every redistributor and this one
 			 * describes one cpu's.
 			 */
+			if(n >= 40 && giccbase == 0)
+				giccbase = le64(p+32);
 			if(n >= 76 && gicrbase == 0)
 				gicrbase = le64(p+60);
 			break;
@@ -411,11 +420,13 @@ acpireport(void)
 	}
 	print("%s\n", sigline);
 	if(gicdbase != 0)
-		print("acpi: madt gicv%d dist @ %#llux (mem.h GICD %#p)\n",
-			gicversion, gicdbase, (uintptr)GICD);
+		print("acpi: madt gicv%d dist @ %#llux\n",
+			gicversion, gicdbase);
 	if(gicrbase != 0)
-		print("acpi: madt redist @ %#llux size %#llux (mem.h GICR %#p)\n",
-			gicrbase, gicrlen, (uintptr)GICR);
+		print("acpi: madt redist @ %#llux size %#llux\n",
+			gicrbase, gicrlen);
+	if(giccbase != 0)
+		print("acpi: madt gicc @ %#llux\n", giccbase);
 	if(gicitsbase != 0)
 		print("acpi: madt its @ %#llux, ACPI-ITS-OK\n", gicitsbase);
 	for(i = 0; i < nwindow; i++){
@@ -475,6 +486,24 @@ acpireport(void)
  * mem.h -- which is why none of these can break a board that has no
  * tables.
  */
+/*
+ * The GIC the MADT describes, for trap.c to use rather than print.
+ * Zero for anything the tables did not carry, and the caller falls back
+ * one source at a time -- a MADT with a distributor and no cpu
+ * interface is an ordinary GICv3 table, not a broken one.
+ */
+int
+acpigic(uvlong *d, uvlong *r, uvlong *c, int *version)
+{
+	if(gicdbase == 0)
+		return 0;
+	*d = gicdbase;
+	*r = gicrbase;
+	*c = giccbase;
+	*version = gicversion;
+	return 1;
+}
+
 uvlong
 acpiits(void)
 {

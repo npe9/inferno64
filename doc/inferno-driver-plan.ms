@@ -2282,14 +2282,24 @@ for the three details in the table that each produce a wrong answer
 quietly, and for what the arm proves \(em the coverage and the delivery,
 not the values, because QEMU's composed map is the identity.
 .IP
+The GIC's own three bases are discovered and used, not printed:
+.CW gicdiscover()
+takes the distributor, the redistributor range and the GICv2 cpu
+interface from the MADT, else from the device tree, else from mem.h, and
+the board says which source won.  They had been mem.h constants at
+twenty-four sites while the discovered values were printed beside them
+for comparison, which is a line that cannot fail on a machine where the
+two agree.
+.IP
 What is left is the hardware itself.  An Altra has several root
 complexes told apart by PCI segment number, and
 .CW acpiridtodevid()
 takes a requester id and nothing else because the PCI code carries no
-segment; and its MADT describes redistributors this kernel would have to
-walk rather than take the first of.  That is a list of specific things
-now, rather than "no ACPI at all", and none of it can be written against
-anything but the silicon.
+segment; and its MADT describes several redistributor ranges, which
+.CW gicdiscover()
+takes the first of rather than choosing by the booting cpu's affinity.
+That is a list of specific things now, rather than "no ACPI at all", and
+none of it can be written against anything but the silicon.
 .IP 2.
 .B "Raspberry Pi Zero 2 W."
 A BCM2710A1 \(em the Pi 3B's die in a smaller package \(em so the

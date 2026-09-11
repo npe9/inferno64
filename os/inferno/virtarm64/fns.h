@@ -52,6 +52,7 @@ void	trap(Ureg*);
 void	trapinit(void);
 void	vectorinit(void*);
 void	gicinit(void);
+void	gicreport(void);
 void	timerie(void);
 void	uartconsole(void);
 void	uartconsolesetup(void);

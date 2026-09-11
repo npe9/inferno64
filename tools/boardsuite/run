@@ -865,6 +865,15 @@ config_evidence() {
 		# was inside the pool.
 		echo '^[0-9a-f]+ 87e00000 [0-9]+';;
 	virtarm64)
+		# And where the GIC is, from the source that supplied it.
+		# The three bases used to be mem.h constants read at a
+		# dozen sites while the tree's and the MADT's values were
+		# printed beside them for comparison -- which proves
+		# nothing on a machine where they agree, and on QEMU they
+		# always agree.  This line is what the GIC code latched
+		# and what it took it from, so it fails if the source stops
+		# working rather than only if the numbers change.
+		echo 'gic: dist 0x8000000 redist 0x80a0000 cpuif 0x8010000 from the tree, GIC-ADDR-OK'
 		echo 'BLK-OK /dev/sdF0/data'	# see virtarm64-peer
 		# This board reads QEMU's own device tree, and nothing in
 		# the marker set says so: the markers are the same words
@@ -976,6 +985,15 @@ config_evidence() {
 		echo 'MSI-DOORBELL-OK'
 		;;
 	virtarm64-acpi)
+		# And where the GIC is, from the source that supplied it.
+		# The three bases used to be mem.h constants read at a
+		# dozen sites while the tree's and the MADT's values were
+		# printed beside them for comparison -- which proves
+		# nothing on a machine where they agree, and on QEMU they
+		# always agree.  This line is what the GIC code latched
+		# and what it took it from, so it fails if the source stops
+		# working rather than only if the numbers change.
+		echo 'gic: dist 0x8000000 redist 0x80a0000 cpuif 0x8010000 from the madt, GIC-ADDR-OK'
 		# Nothing came from a device tree, because there was not
 		# one.  This line first, because every line under it is
 		# only interesting given this one.
@@ -1030,6 +1048,15 @@ config_evidence() {
 		# fact: type 5 is EfiRuntimeServicesCode here.
 		echo 'usable to 0x[0-9a-f]+, stopped by efi type 0x[0-9a-f]+';;
 	virtarm64-smmu)
+		# And where the GIC is, from the source that supplied it.
+		# The three bases used to be mem.h constants read at a
+		# dozen sites while the tree's and the MADT's values were
+		# printed beside them for comparison -- which proves
+		# nothing on a machine where they agree, and on QEMU they
+		# always agree.  This line is what the GIC code latched
+		# and what it took it from, so it fails if the source stops
+		# working rather than only if the numbers change.
+		echo 'gic: dist 0x8000000 redist 0x80a0000 cpuif 0x8010000 from the madt, GIC-ADDR-OK'
 		# The same tables read on a machine with an SMMUv3 in front
 		# of the bus, where the IORT's answer is a composition and
 		# not a window.  QEMU's root complex sends requester ids
@@ -1060,6 +1087,15 @@ config_evidence() {
 		echo 'DHCP-OK'
 		echo 'ACPI-OUTSIDE-HEAP';;
 	virtarm64-noscan)
+		# And where the GIC is, from the source that supplied it.
+		# The three bases used to be mem.h constants read at a
+		# dozen sites while the tree's and the MADT's values were
+		# printed beside them for comparison -- which proves
+		# nothing on a machine where they agree, and on QEMU they
+		# always agree.  This line is what the GIC code latched
+		# and what it took it from, so it fails if the source stops
+		# working rather than only if the numbers change.
+		echo 'gic: dist 0x8000000 redist 0x80a0000 cpuif 0x8010000 from the madt, GIC-ADDR-OK'
 		# The scan is off, the tree was not found, and the board
 		# booted anyway on its compiled-in constants.  All three
 		# lines matter: the first says the switch reached the
@@ -1100,6 +1136,15 @@ config_evidence() {
 		# two device trees this arm actually got.
 		echo 'MSI-DOORBELL-OK';;
 	virtarm64-gicv3)
+		# And where the GIC is, from the source that supplied it.
+		# The three bases used to be mem.h constants read at a
+		# dozen sites while the tree's and the MADT's values were
+		# printed beside them for comparison -- which proves
+		# nothing on a machine where they agree, and on QEMU they
+		# always agree.  This line is what the GIC code latched
+		# and what it took it from, so it fails if the source stops
+		# working rather than only if the numbers change.
+		echo 'gic: dist 0x8000000 redist 0x80a0000 cpuif 0x8010000 from the tree, GIC-ADDR-OK'
 		echo 'BLK-OK /dev/sdF0/data'	# see virtarm64-peer
 		# The ITS found, sized from its own registers, and its
 		# tables and command queue accepted.  Checked rather than

@@ -143,9 +143,10 @@ vectorbuild(void)
 }
 
 /*
- * The distributor at GICD is present on both a GICv2 and a GICv3; the
- * two differ in the per-cpu interface (MMIO GICC vs the ICC_* system
- * registers) and in where SGI/PPI enable state lives (GICD on v2, the
+ * The distributor is present on both a GICv2 and a GICv3; the two
+ * differ in the per-cpu interface (the MMIO GICC page vs the ICC_*
+ * system registers) and in where SGI/PPI enable state lives (GICD on
+ * v2, the
  * per-cpu redistributor SGI frame on v3).  gicv3 is set once at boot
  * from ID_AA64PFR0_EL1.GIC (the cpu's own "is the ICC_* system-register
  * interface present" bit - a CPU ID read, so it never aborts, unlike
@@ -154,6 +155,70 @@ vectorbuild(void)
  * other board runs -M virt's default GICv2 and never touches v3.
  */
 static int gicv3;
+
+/*
+ * Where the GIC is.
+ *
+ * Variables and not the mem.h constants, because the constants describe
+ * QEMU's virt machine and nothing else.  mem.h stays the last resort:
+ * a board with neither tables nor a tree boots exactly as it did when
+ * these were constants, which is the whole point of the fallback chain.
+ *
+ * gicdiscover() runs at the top of gicinit(), after acpifind() and
+ * fdtfind() have read whatever the machine came with and before any GIC
+ * register is touched.  gicreport() says which source won, later, once
+ * print() works -- and that line is the evidence, not a comparison
+ * against mem.h.  A line reading "discovered 0x8000000 (mem.h says
+ * 0x8000000)" proves nothing on a machine where the two agree, which on
+ * QEMU is always, and is exactly how these three came to be discovered
+ * and then ignored for as long as they were.
+ */
+uintptr	gicdaddr = GICD;
+uintptr	gicraddr = GICR;
+uintptr	giccaddr = GICC;
+static char *gicfrom = "mem.h";
+
+static void
+gicdiscover(void)
+{
+	extern int acpigic(uvlong*, uvlong*, uvlong*, int*);
+	extern int fdtregn(char*, int, uvlong*, uvlong*);
+	uvlong d, r, c;
+	int version;
+
+	d = r = c = 0;
+	version = 0;
+	if(acpigic(&d, &r, &c, &version)){
+		gicfrom = "the madt";
+	} else if(fdtregn("arm,gic-v3", 0, &d, nil)){
+		/*
+		 * On a v3 node the second reg entry is the redistributor
+		 * range; on a v2 node it is the MMIO cpu interface.  Same
+		 * slot, different device, which is why this asks for the
+		 * node by name rather than reading reg[1] and hoping.
+		 */
+		fdtregn("arm,gic-v3", 1, &r, nil);
+		gicfrom = "the tree";
+	} else if(fdtregn("arm,cortex-a15-gic", 0, &d, nil)){
+		fdtregn("arm,cortex-a15-gic", 1, &c, nil);
+		gicfrom = "the tree";
+	} else
+		return;
+
+	if(d != 0)
+		gicdaddr = (uintptr)d;
+	if(r != 0)
+		gicraddr = (uintptr)r;
+	if(c != 0)
+		giccaddr = (uintptr)c;
+}
+
+void
+gicreport(void)
+{
+	print("gic: dist %#p redist %#p cpuif %#p from %s, GIC-ADDR-OK\n",
+		gicdaddr, gicraddr, giccaddr, gicfrom);
+}
 
 extern void	seticcsre(ulong);
 extern void	seticcpmr(ulong);
@@ -170,22 +235,22 @@ gicenable(int irq)
 
 	if(irq <= 0 || irq >= GicIRQMax)
 		return;
-	gicd = (u32*)GICD;
+	gicd = (u32*)gicdaddr;
 	if(!gicv3){
-		*((uchar*)GICD + 0x400 + irq) = 0xa0;	/* GICD_IPRIORITYR[irq] */
+		*((uchar*)gicdaddr + 0x400 + irq) = 0xa0;	/* GICD_IPRIORITYR[irq] */
 		gicd[GicdISENABLER + irq/32] = 1 << (irq%32);
 		return;
 	}
 	if(irq < GicSpiBase){
 		/* SGI/PPI: this cpu's redistributor SGI frame, not GICD */
-		sgi = (u32*)(GICR + GicrSGIoff);
+		sgi = (u32*)(gicraddr + GicrSGIoff);
 		*((uchar*)sgi + 0x400 + irq) = 0xa0;	/* GICR_IPRIORITYR */
 		sgi[GicrISENABLER0] = 1 << (irq%32);
 		return;
 	}
 	/* SPI: priority, affinity-route to cpu 0 (affinity 0), enable */
-	*((uchar*)GICD + 0x400 + irq) = 0xa0;
-	*(uvlong*)((uchar*)GICD + GicdIROUTER + 8*irq) = 0;
+	*((uchar*)gicdaddr + 0x400 + irq) = 0xa0;
+	*(uvlong*)((uchar*)gicdaddr + GicdIROUTER + 8*irq) = 0;
 	gicd[GicdISENABLER + irq/32] = 1 << (irq%32);
 }
 
@@ -195,10 +260,11 @@ gicinit(void)
 	u32 *gicd, *gicc, *rd, *sgi;
 	int i;
 
-	gicd = (u32*)GICD;
+	gicdiscover();
+	gicd = (u32*)gicdaddr;
 	gicv3 = ((getpfr0() >> 24) & 0xf) != 0;
 	if(!gicv3){
-		gicc = (u32*)GICC;
+		gicc = (u32*)giccaddr;
 		gicd[GicdCTLR] = 1;
 		gicc[GiccPMR] = 0xff;
 		gicc[GiccCTLR] = 1;
@@ -218,11 +284,11 @@ gicinit(void)
 	 */
 	seticcsre(1);				/* ICC_SRE_EL1.SRE = 1 */
 
-	rd = (u32*)GICR;
+	rd = (u32*)gicraddr;
 	rd[GicrWAKER] &= ~2;			/* clear ProcessorSleep */
 	while(rd[GicrWAKER] & 4)			/* wait ChildrenAsleep == 0 */
 		;
-	sgi = (u32*)(GICR + GicrSGIoff);
+	sgi = (u32*)(gicraddr + GicrSGIoff);
 	sgi[GicrIGROUPR0] = ~0;			/* all SGI/PPI in group 1 */
 
 	for(i = GicSpiBase/32; i < GicIRQMax/32 + 1; i++)
@@ -263,7 +329,7 @@ gicedge(int irq)
 
 	if(irq < GicSpiBase || irq >= GicIRQMax)
 		return;
-	gicd = (u32*)GICD;
+	gicd = (u32*)gicdaddr;
 	reg = GicdICFGR + irq/16;
 	shift = (irq%16) * 2;
 	gicd[reg] = (gicd[reg] & ~(3<<shift)) | (2<<shift);
@@ -298,7 +364,7 @@ trap(Ureg *ur)
 			iar = geticciar();
 			irq = iar & 0xffffff;
 		}else{
-			gicc = (u32*)GICC;
+			gicc = (u32*)giccaddr;
 			iar = gicc[GiccIAR];
 			irq = iar & 0x3ff;
 		}

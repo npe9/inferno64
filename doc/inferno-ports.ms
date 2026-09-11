@@ -23754,6 +23754,111 @@ distinguished by PCI segment number, which is the real Altra shape, and
 telling them apart needs a segment from the PCI code, which does not
 carry one.  On a single-segment machine the two are the same thing.
 .NH 2
+The GIC's own address, discovered and then used
+.PP
+The next thing on that list turned out to be a line that read as
+evidence and was not.  The MADT's GIC entries were parsed, and
+.CW acpireport()
+printed:
+.P1
+acpi: madt gicv3 dist @ 0x8000000 (mem.h GICD 0x8000000)
+acpi: madt redist @ 0x80a0000 size 0x20000 (mem.h GICR 0x80a0000)
+.P2
+and
+.CW fdtreport()
+printed the same shape for the tree.  Nothing used either.
+.CW GICD ,
+.CW GICR
+and
+.CW GICC
+were mem.h constants at nineteen sites in
+.CW trap.c ,
+three in
+.CW gicv2m.c
+and two in
+.CW gicv3its.c ,
+and the printed comparison agreed with them because on QEMU it always
+does.  The ITS is the one base that was discovered
+.I and
+used, through
+.CW acpiits() ;
+these three were discovered and admired.
+.PP
+They are variables now, set by
+.CW gicdiscover()
+at the top of
+.CW gicinit()
+\(em after
+.CW acpifind()
+and
+.CW fdtfind()
+have read whatever the machine came with, before any GIC register is
+touched \(em from the MADT, else the tree, else mem.h.  Two details in
+that chain are not interchangeable.
+.IP \(bu
+The tree's second
+.CW reg
+entry is a different device on each kind of GIC node:
+.CW arm,cortex-a15-gic
+lists the distributor and then the MMIO cpu interface,
+.CW arm,gic-v3
+the distributor and then the redistributor range.  Same slot, so the
+node is asked for by name rather than reading
+.CW reg[1]
+and hoping.
+.CW fdtreg()
+only ever returned the first entry, so
+.CW os/inferno/port/fdt.c
+gained
+.CW fdtregn() ,
+which takes an index \(em and that is a file every board compiles, so
+all ten were rebuilt.
+.IP \(bu
+The MADT's GICC entry carries two bases: Physical Base Address at offset
+32, which is the GICv2 MMIO cpu interface, and GICR Base Address at
+offset 60, which is one cpu's redistributor.  Only the second was being
+read.  A GICv2 machine with tables and no tree \(em which is exactly the
+.CW virtarm64-noscan
+arm \(em had no ACPI source for its cpu interface at all.
+.PP
+The evidence line changed with the code, because the old one is the
+defect.  "discovered 0x8000000 (mem.h says 0x8000000)" cannot fail on a
+machine where the two agree.  What the board prints now is what the GIC
+code latched and where it came from:
+.P1
+gic: dist 0x8000000 redist 0x80a0000 cpuif 0x8010000 from the tree, GIC-ADDR-OK
+gic: dist 0x8000000 redist 0x80a0000 cpuif 0x8010000 from the madt, GIC-ADDR-OK
+.P2
+and the arms assert the source, not only the numbers:
+.CW virtarm64
+and
+.CW virtarm64-gicv3
+must say
+.CW "from the tree" ,
+the three ACPI arms
+.CW "from the madt" .
+That is a line which fails when a source stops working rather than only
+when a machine's addresses change.
+.PP
+Falsified one constant at a time, because breaking three at once does
+not say which recovery path worked.  Each was set to a wrong address,
+every board rebuilt, and the arms run:
+.TS
+center allbox;
+l l l.
+mem.h constant	discovery on	discovery off
+_
+GICD 0x08100000	all four arms boot	virtarm64: 0 markers
+GICR 0x08200000	gicv3 and acpi boot	gicv3: 0 markers
+GICC 0x08300000	virtarm64 and noscan boot	both: 0 markers
+.TE
+The second column is the recovery; the third is what says the first
+column is not vacuous.  A wrong constant with nothing to override it
+does not degrade the board, it kills it before the first marker \(em
+which is what had been one edit away from true for as long as those
+three were constants.  mem.h is back as it was; the broken versions
+were never committed.
+.NH 2
 Memory, from the firmware's map
 .PP
 One thing was still coming from mem.h on a machine that had no business

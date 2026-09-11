@@ -6,6 +6,9 @@
 #include "io.h"
 #include "../port/pci.h"
 
+/* trap.c: the GIC the machine actually has, not mem.h's guess */
+extern uintptr gicdaddr, gicraddr, giccaddr;
+
 /*
  * The GICv3 Interrupt Translation Service, which is how a GICv3 board
  * does MSI.
@@ -248,7 +251,7 @@ static uvlong
 rdbase(void)
 {
 	if(pta)
-		return PADDR(GICR) >> 16 << 16;
+		return PADDR(gicraddr) >> 16 << 16;
 	return 0;			/* processor number of cpu 0 */
 }
 
@@ -339,7 +342,7 @@ lpienable(void)
 	uchar *rd, *pend;
 	u32int typer;
 
-	rd = (uchar*)GICR;
+	rd = (uchar*)gicraddr;
 	typer = *(u32int*)(rd + GicrTYPER);
 	if((typer & GicrTYPER_PLPIS) == 0){
 		print("gicv3its: redistributor reports no physical LPIs\n");

@@ -6,6 +6,9 @@
 #include "io.h"
 #include "../port/pci.h"
 
+/* trap.c: the GIC the machine actually has, not mem.h's guess */
+extern uintptr gicdaddr, gicraddr, giccaddr;
+
 /*
  * GICv2m: message-signalled interrupts on a GICv2, which has no ITS.
  *
@@ -129,7 +132,7 @@ gicv2minit(void)
 	 * handler had by then been installed on it.
 	 */
 	{
-		u32int *gicd = (u32int*)GICD;
+		u32int *gicd = (u32int*)gicdaddr;
 		int spi = v2mbase;
 
 		gicedge(spi);

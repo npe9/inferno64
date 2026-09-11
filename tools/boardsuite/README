@@ -875,6 +875,21 @@ are covered and that the vector the composition produced is delivered --
 compose() off: the arm fails with three missing evidence lines and both
 devices back on irq 37 and 38.
 
+WHERE THE GIC IS, AND WHY THE OLD LINE WAS NOT EVIDENCE.  Every
+virtarm64 arm now asserts one line naming the three GIC bases and the
+source they came from -- "from the tree" on virtarm64 and
+virtarm64-gicv3, "from the madt" on the three ACPI arms.  The line it
+replaced printed the discovered value beside the mem.h constant for
+comparison, which on QEMU always agree, so it passed for as long as the
+values were discovered and never used.  Assert the source: that fails
+when a source stops working, not only when a machine's addresses change.
+
+Falsified one constant at a time -- three at once does not say which
+recovery path worked.  With GICD, GICR or GICC set wrong in mem.h and
+every board rebuilt, the arms that have a source still boot; with
+gicdiscover() also disabled, the same arms reach 0 markers.  The second
+run is what says the first is not vacuous.
+
 A SHARED SOURCE COUNTS ONLY IF THE BOARD COMPILED IT.  The staleness
 check scans os/inferno/port and os/inferno/ip for every board, because
 every board links most of what is in them -- but not all of it.

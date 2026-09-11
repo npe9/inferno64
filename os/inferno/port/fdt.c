@@ -214,6 +214,7 @@ fdtprop(uchar *props, char *want, u32int *plen)
 typedef struct Findc Findc;
 struct Findc {
 	char	*compat;
+	int	idx;			/* which reg entry of the node */
 	uvlong	base;
 	uvlong	size;
 	int	found;
@@ -238,8 +239,18 @@ matchcompat(char *name, uchar *props, int acells, int scells, void *a)
 		if(strcmp(c, f->compat) != 0)
 			continue;
 		rv = fdtprop(props, "reg", &rlen);
-		if(rv == nil || rlen < (u32int)(acells+scells)*4)
+		/*
+		 * reg is a list of (address, size) pairs, and which pair
+		 * is wanted is the caller's business.  A GIC node is the
+		 * reason: "arm,cortex-a15-gic" lists the distributor and
+		 * then the MMIO cpu interface, "arm,gic-v3" the
+		 * distributor and then the redistributor range, so the
+		 * second pair is a different thing on each and a caller
+		 * that reads only the first gets half a GIC.
+		 */
+		if(rv == nil || rlen < (u32int)(f->idx+1)*(acells+scells)*4)
 			return 0;
+		rv += (u32int)f->idx*(acells+scells)*4;
 		f->base = fdtbecells(rv, acells);
 		f->size = fdtbecells(rv + acells*4, scells);
 		f->found = 1;
@@ -259,6 +270,28 @@ fdtreg(char *compat, uvlong *base, uvlong *size)
 
 	memset(&f, 0, sizeof f);
 	f.compat = compat;
+	fdtwalk(matchcompat, &f);
+	if(!f.found)
+		return 0;
+	if(base != nil)
+		*base = f.base;
+	if(size != nil)
+		*size = f.size;
+	return 1;
+}
+
+/*
+ * The i'th reg entry of the first node whose compatible list contains
+ * compat.  fdtreg() is this with i == 0.
+ */
+int
+fdtregn(char *compat, int i, uvlong *base, uvlong *size)
+{
+	Findc f;
+
+	memset(&f, 0, sizeof f);
+	f.compat = compat;
+	f.idx = i;
 	fdtwalk(matchcompat, &f);
 	if(!f.found)
 		return 0;
