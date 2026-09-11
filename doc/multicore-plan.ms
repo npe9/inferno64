@@ -3402,3 +3402,45 @@ The corollary is scheduling.  A 192-boot batch and a sixteen-boot
 comparison cannot share this machine; each makes the other's numbers
 untrustworthy, and the batch is the one that matters, because it is
 what guards the configuration that ships.
+.NH 2
+How many contexts a boot actually wants
+.PP
+Counted across 192 boots at
+.CW parallelvm=0 ,
+now that the pool is large enough to record the answer rather than
+truncate it:
+.IP
+.nf
+ 7 contexts   102 boots
+ 8             56
+ 9             18
+10             11
+11              3
+12              2
+.fi
+.PP
+Thirty-four boots in 192 want more than eight.  The pool held eight, so
+in those thirty-four the interpreters after the eighth were handed
+pctxs[0] and ran on a register file somebody else was using.  With the
+VM lock that is harmless and invisible, which is why it took
+.CW parallelvm=1
+to find it \(em but the pool was undersized in the shipping
+configuration as well, and had been all along.
+.PP
+Worth stating because it inverts the obvious reading.  The context pool
+looked like a parallel-mode concern, and the number that mattered was
+sitting in the boots everyone had already run.
+.NH 2
+Verified, on the tree as it stands
+.PP
+192 boots at
+.CW "-smp 2"
+and 192 at
+.CW "-smp 4" :
+no panics, no tripwires, and no boot that failed to reach the shell.
+A boot counts as passing only if it reached the shell, panicked
+nowhere, and left every tripwire silent; the timeout was calibrated
+first, five boots reaching 68 to 72 shell loop iterations inside a
+45-second window, so a
+.CW noshell
+in the batch would mean the kernel and not the bench.
