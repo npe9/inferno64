@@ -447,7 +447,17 @@ itsrouter(Pcidev *p, uvlong *addr, ulong *data)
 		return -1;
 
 	ilock(&itslock);
-	if(nextlpi >= GicLpiBase + Nlpi){
+	/*
+	 * Two limits, and trap.c's is the tighter one.  lpiconf has a
+	 * byte for every INTID the redistributor will accept, but the
+	 * dispatch table in trap.c holds GicLpiMax of them and
+	 * intrenable() panics on one it cannot reach.  Refusing here
+	 * turns that panic into a negative return, which is what
+	 * pcimsixintr() reads as "no vector" before falling back to
+	 * INTx.  Two devices do not come near either limit; a board with
+	 * a multiqueue NIC on it would.
+	 */
+	if(nextlpi >= GicLpiBase + Nlpi || nextlpi - GicLpiBase >= GicLpiMax){
 		iunlock(&itslock);
 		return -1;
 	}
@@ -576,7 +586,8 @@ gicv3itsinit(void)
 	print("its: gicv3 @ %#llux translate %#llux, %d devid bits, itt %d bytes,"
 		" rdbase %s, lpi %d..%d, ITS-OK\n",
 		base, itstranslate, devbits, ittsize,
-		pta ? "address" : "procnum", GicLpiBase, GicLpiBase + Nlpi - 1);
+		pta ? "address" : "procnum", GicLpiBase,
+		GicLpiBase + (Nlpi < GicLpiMax ? Nlpi : GicLpiMax) - 1);
 
 	pcimsirouter = itsrouter;
 }
