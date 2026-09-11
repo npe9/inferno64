@@ -688,6 +688,23 @@ for always works: every board mkfile compiles $CONF.c with
 not.  (That is also why asking mk instead was tried and abandoned --
 "mk -n install" prints a full relink for an up-to-date board.)
 
+One kind of false positive was not free and is filtered out.  $CONF.c
+is generated from the board's configuration file and rewritten whenever
+that configuration changes, so building one board made every OTHER
+board's kernel look stale -- rebuilding virt32 after an edit to its
+configuration put os/inferno/virt32/virt32.c ahead of iraspi3b and
+failed four Pi arms that have nothing to do with virt32.  A .c with an
+extensionless file of the same name beside it is that generated file
+and is skipped; the configuration file itself is checked, which is the
+dependency the generated one stands for.
+
+RECORDING RETRIES.  -b used to record without the retry an ordinary run
+gets, which is backwards: a starved run is exactly what must not become
+a baseline.  Refusing to record it was right, but refusing when one more
+boot would have passed spends a twenty-configuration run to learn the
+host was busy.  Both paths retry now, and both say so.  A stale kernel
+is not retried -- booting the same wrong kernel twice answers nothing.
+
 BOARDSUITE_NOSTALECHECK=1 skips it.  That is what a bare checkout in a
 container wants: everything there has one mtime and the ordering among
 them means nothing.

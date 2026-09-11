@@ -22532,3 +22532,69 @@ test that cannot fail is not evidence, and the two ways a suite like
 this stops being able to fail are measuring a stale artifact and
 recording its own regression as the new truth.  Both were open here at
 the same time, and the second hid the first for one whole run.
+.PP
+Two more things came out of exercising those two repairs, which is the
+argument for exercising a repair rather than reasoning about it.
+.PP
+The staleness check had a false positive that was not free.
+.CW $CONF.c
+\(em
+.CW virt32.c ,
+.CW raspi3b.c
+\(em is generated from the board's configuration file and rewritten
+whenever that configuration changes.  So building one board put
+.CW os/inferno/virt32/virt32.c
+three seconds ahead of
+.CW iraspi3b
+and failed four Pi arms that have nothing to do with
+.CW virt32 .
+A
+.CW .c
+with an extensionless file of the same name beside it is that
+generated file and is now skipped; the configuration file itself is
+checked, which is the dependency the generated one stands for.  That
+rule also catches
+.CW pc64dev.c
+and leaves an ordinary
+.CW foo.c
+alone.
+.PP
+And the retry.  An ordinary run that fails is booted once more, because
+host load costs these checks events and never gains them.
+.CW -b
+did not do that, which is backwards: a starved run is exactly what must
+not become a baseline.  Refusing to record it was right, but refusing
+when one more boot would have passed spends a twenty-configuration run
+to learn the host was busy.  Both paths retry now and both say so.  A
+stale kernel is excluded from the retry, because booting the same wrong
+kernel twice answers nothing.
+.PP
+The pointer checks got a number in the process.  Alone on an idle host,
+.CW raspi3b-usb
+gave
+.CW USB-MOUSE-OK
+and
+.CW USB-TABLET-OK
+six times out of six and
+.CW raspi4-usb
+four out of four; inside a twenty-configuration run each of them lost
+both markers once.  Seven Pi arms run back to back gave both on both
+boards.  So it is not the sequence and it is not a regression \(em it
+is the same one-sided starvation the timer checks already have a retry
+for, reaching two checks that wait on injected input instead of on a
+clock.
+.PP
+The load has a name, with one honest caveat about when it was counted.
+.CW "ps aux"
+during the last of these runs \(em not during the two that lost their
+markers \(em showed twenty-eight
+.CW qemu-system
+processes on this host.  The earlier failures are put down to the same
+cause by mechanism rather than by measurement: nobody was counting
+then.  One board suite boots one at a time; the rest
+belonged to a second suite running concurrently in another worktree.
+That is the machine these two checks lose their injected events on, and
+it is also why a twenty-configuration run that normally finishes in
+minutes took twenty of them.  A suite on a shared host is not measuring
+only the kernel under it, and the two repairs above are what keep that
+from being written down as a result.

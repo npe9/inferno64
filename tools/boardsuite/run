@@ -89,7 +89,28 @@ newer_source_than() {
 		-name '*.root.h' -prune -o \
 		\( -name '*.c' -o -name '*.h' -o -name '*.s' \
 		   -o -name '*.b' -o -name '*.m' -o -name '*.dis' \) \
-		-newer "$1" -print 2>/dev/null | head -1 > "$work/stale"
+		-newer "$1" -print 2>/dev/null |
+	while read f; do
+		# $CONF.c is generated from the board's configuration file
+		# by the mkfile, and regenerated whenever that
+		# configuration changes -- so without this every other
+		# board's kernel looks stale the moment one board is
+		# touched, which is not a theory: rebuilding virt32 after
+		# an edit to its configuration made os/inferno/virt32/
+		# virt32.c newer than iraspi3b and failed four Pi arms.
+		# Recognised by the extensionless configuration file
+		# sitting beside it, which is what makes pc64dev.c a
+		# generated file too and an ordinary foo.c not one.  The
+		# configuration itself is checked below; that is the
+		# dependency this generated file stands for.
+		case "$f" in
+		*.c)	d=`dirname "$f"`
+			b=`basename "$f" .c`
+			[ -f "$d/$b" ] && continue;;
+		esac
+		echo "$f"
+		break
+	done > "$work/stale"
 	if [ -s "$work/stale" ]; then
 		cat "$work/stale"
 		return 0
@@ -1474,9 +1495,15 @@ for c in $configs; do
 	# regression fails twice; a starved run passes the second time and
 	# says it needed to, because a retry that is not reported is a
 	# suite that hides a flake.
-	if [ -n "$fail" ] && ! $record; then
+	# Retried when recording too, which it did not used to be.  A
+	# starved run is exactly what must not become a baseline, and the
+	# second boot is the remedy already written for it: refusing to
+	# record is right, but refusing when one more boot would have
+	# passed spends a twenty-configuration run to learn the host was
+	# busy.
+	if [ -n "$fail" ]; then
 		case "$fail" in
-		*"no baseline"*|*"no kernel"*)	;;
+		*"no baseline"*|*"no kernel"*|*"kernel older"*)	;;
 		*)	fail=`attempt $c`; retried=true;;
 		esac
 	fi
