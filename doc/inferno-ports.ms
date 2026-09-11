@@ -22907,3 +22907,172 @@ suites overwriting each other's evidence, and a board killed mid-write
 and blamed for the markers it had not printed yet.  A harness that can
 fail in the direction of "everything is fine" is worse than no harness,
 and three of these four failed in that direction.
+.NH 1
+An arm64 EFI application, built by this tree's own compiler
+.PP
+Item 1's remaining debt is ACPI and a UEFI entry, and the order between
+them is forced.  A real SystemReady machine hands the kernel ACPI
+rather than a device tree, but there is no way to test reading ACPI on
+.CW "-M virt"
+without firmware: QEMU builds the tables and only edk2 installs an RSDP
+where a guest can find it, so a
+.CW -kernel
+direct boot gets a DTB and nothing else.  The entry is not the second
+half of the work.  It is the only way to put an ACPI table in front of
+.CW gicv3itsinit() .
+.PP
+So the first thing to build is an EFI application that this tree's own
+compiler produces and edk2 agrees to run.  That is
+.CW os/inferno/boot/efi/aa64hello.c ,
+which prints one line and returns EFI_SUCCESS, and
+.CW os/inferno/boot/efi/aa64.s ,
+which is the half of the loader that is architecture.  Between them
+they answer the three questions that have to be answered before any
+loader logic is worth writing.
+.NH 2
+What the firmware has to be told
+.PP
+.CW tools/aout2efi
+wraps a Plan 9 a.out in a PE/COFF header.  It was written for amd64 and
+had three things in it that only worked there.  The machine type was
+the constant 0x8664; arm64 is 0xAA64, and a firmware handed the wrong
+one says "Not a valid application" and nothing else.  The image base
+was the constant 0x8000, which is where the x86 loader lives and is not
+memory an arm64 machine has \(em QEMU's virt machine starts RAM at
+0x40000000.  And the entry point was read from the a.out's 32-bit entry
+field, which holds
+.CW PADDR(entry) :
+a loader linked at 0x48000200 reports 0x08000200 there, the kernel
+segment cut off it, and 0x48000200 in the 64-bit field the fat header
+adds at offset 32.  The wide field is the one to read whenever
+.CW HDR_MAGIC
+is set, which is both 64-bit Plan 9 formats.
+.PP
+While it was being rebuilt it turned out
+.CW tools/mkfile
+had never built it.  The rule was
+.CW "$CC -o $target aout2efi.c" ,
+and
+.CW $CC
+comes from mkconfig with
+.CW -c
+already in it, so mk wrote a relocatable object named
+.CW aout2efi
+and called it done.  The binary in the tree had been built by hand.
+The rule now uses a
+.CW HOSTCC
+of its own.
+.NH 2
+Two calling conventions, and a stack that has to be aligned
+.PP
+UEFI on aarch64 is AAPCS64: arguments in X0 up.  kencc passes the first
+argument in R0 and the rest in the caller's outgoing argument area from
+16(RSP), which is what
+.CW "7c -S"
+shows and what
+.CW eficall
+in
+.CW aa64.s
+has to bridge.  That part is nearly free \(em eight loads \(em and the
+part that is not free is the stack.  AAPCS64 wants SP 16-byte aligned
+at a call, SCTLR.SA makes that a fault rather than a convention, and
+kencc frame sizes are multiples of eight, so about half the call sites
+arrive at
+.CW eficall
+with SP at 8 mod 16.
+.CW eficall
+aligns it down, calls, and puts it back.
+.PP
+The entry into C has the same shape of problem from the other side.
+.CW start
+is handed ImageHandle in X0 and SystemTable in X1, and a kencc function
+of two arguments wants the second one at 16(RSP) \(em an area
+.CW start
+has no frame for, so writing it would be writing into the firmware's
+stack.  The entry therefore takes one argument, the system table, and
+the image handle goes into a global that
+.CW start
+writes after setting R28.  This was found the way such things are
+found: the firmware faulted at a known address, the linker's own
+listing named the instruction as
+.CW "MOV 8(R11),R0" ,
+and R11 held
+.CW SystemTable->ConOut
+read from a pointer that was the image handle.
+.NH 2
+Relocation, and a fault that was the firmware being right
+.PP
+The code is not position independent.  Globals are reached through R28,
+which holds an absolute address, and every
+.CW "MOV $sym(SB)"
+is a PC-relative load of a literal whose contents are a link-time
+address.  So
+.CW start
+works out how far the firmware moved the image \(em a
+.CW BL
+leaves a runtime address in R30 and
+.CW "MOV $pcnow(SB)"
+loads the link-time one \(em and copies the image back to where it was
+linked, exactly as the x86 loader does.
+.PP
+The first boot faulted at 0x4800023C with "Data abort: Permission
+fault, third level", which is the copy's own store.  The reason is that
+edk2 had already put the image at 0x48000000: it honours ImageBase for
+an image with no relocation section, and then maps that image
+read-only.  The copy was writing over itself with the firmware's
+protection on it.  So
+.CW start
+now skips the copy when the delta is zero, which is the case on every
+boot seen so far.  The copy remains for the firmware that does move the
+image, and it is followed by a clean to the point of unification and an
+.CW "IC IALLU" ,
+because the instruction cache is not architecturally coherent with the
+data cache and code written through the D-cache has to be cleaned
+before it is fetched.  QEMU does not notice if that is missing.  Silicon
+would, and this tree already has one hole of exactly that kind in
+.CW raspi3b 's
+MMU enable.
+.PP
+edk2 does print "ProtectUefiImage failed to create image properties
+record" on the way in, which is it noticing that the single section
+this loader declares is both writable and executable.  It is a
+complaint, not a refusal, and splitting text from data is work for the
+loader proper rather than for the thing that proves the loader can
+start.
+.NH 2
+What runs
+.PP
+.CW "mk bootaa64.efi"
+in
+.CW os/inferno/boot/efi
+builds a 1K PE image.  Put at
+.CW /EFI/BOOT/BOOTAA64.EFI
+on a FAT filesystem and handed to
+.CW "-M virt"
+with edk2 as pflash, it prints
+.CW "EFI-AA64-OK inferno"
+and returns, and the firmware goes on to its own menu without
+complaint:
+.P1
+qemu-system-aarch64 -M virt -cpu cortex-a57 -m 1G \e
+  -drive if=pflash,format=raw,unit=0,\e
+         file=edk2-aarch64-code.fd,readonly=on \e
+  -drive if=pflash,format=raw,unit=1,file=vars.fd \e
+  -drive file=esp.img,format=raw,if=none,id=hd0 \e
+  -device virtio-blk-pci,drive=hd0
+.P2
+This is not a boot loader.  It loads nothing, reads no filesystem and
+exits to the firmware.  What it establishes is that a PE/COFF image
+built by 7a, 7c and 7l is accepted and run by real UEFI firmware on
+this architecture, that the two calling conventions meet correctly, and
+that the image base and entry point in the header are what the firmware
+expects \(em and every one of those three was wrong once before this
+line appeared.  The loader proper, which needs
+.CW efi.c ,
+.CW fs.c
+and
+.CW sub.c
+built for arm64 and a
+.CW jump()
+that hands off to an Inferno kernel, is the next piece; ACPI discovery
+for the ITS is the piece after it.

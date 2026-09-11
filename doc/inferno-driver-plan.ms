@@ -2212,11 +2212,43 @@ through
 .CW fdtreg("arm,gic-v3-its")
 and the host bridge's
 .CW msi-map
-property, and neither exists on the hardware.  Nor is there an entry
-path: the tree's EFI loader in
-.CW os/inferno/boot/efi
-is x86 only.  ACPI discovery beside the FDT discovery, and an arm64
-EFI stub, are what item 1 still owes.
+property, and neither exists on the hardware.  The order between the
+two is forced, and it is the opposite of the order the debt reads in:
+ACPI cannot be tested on
+.CW "-M virt"
+at all without firmware, because QEMU builds the tables and only edk2
+installs an RSDP where a guest can find it, so the UEFI entry is not the
+second half of the work but the only way to put a table in front of
+.CW gicv3itsinit() .
+.IP
+That entry has started.
+.CW os/inferno/boot/efi/aa64.s
+and
+.CW aa64hello.c
+build a PE/COFF image with 7a, 7c and 7l that edk2 accepts and runs on
+.CW "-M virt" ,
+printing
+.CW EFI-AA64-OK
+and returning EFI_SUCCESS; and
+.CW tools/aout2efi
+learned the arm64 machine type, a passed image base, and to read the
+entry point from the fat header's 64-bit field rather than the 32-bit
+.CW PADDR
+one.  What that is not is a loader: it reads no filesystem and loads
+nothing.  Building
+.CW efi.c ,
+.CW fs.c
+and
+.CW sub.c
+for arm64 with a
+.CW jump()
+that hands off to an Inferno kernel is the next piece, and ACPI
+discovery of the GICD, GICR and ITS bases from MADT, with IORT for
+RID-to-DeviceID, is the piece after that.  IORT is not a one-to-one port
+of the single-window
+.CW msi-map
+read either: it can chain root complex to SMMU to ITS, and a machine
+with an SMMU in the path needs the chain walked.
 .IP 2.
 .B "Raspberry Pi Zero 2 W."
 A BCM2710A1 \(em the Pi 3B's die in a smaller package \(em so the

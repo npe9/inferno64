@@ -9,6 +9,14 @@ DIRS=\
 #	other boot loader insists on.  They are built with the host's own
 #	compiler, not the tree's, because nothing about them is Inferno.
 #
+#	HOSTCC rather than $CC: the tree's $CC comes from mkconfig with
+#	-c already in it, so "$CC -o aout2efi aout2efi.c" wrote a
+#	relocatable object named aout2efi and mk called it done.  The
+#	committed binaries were built by hand, and the rule had never
+#	produced a working one.
+#
+HOSTCC=cc
+
 TOOLS=\
 	aout2efi\
 	aout2imxrt\
@@ -19,7 +27,7 @@ all:V:	$TOOLS
 install:V: $TOOLS
 
 aout2efi:	aout2efi.c
-	$CC -o $target aout2efi.c
+	$HOSTCC -o $target aout2efi.c
 
 aout2imxrt:	aout2imxrt.c
-	$CC -o $target aout2imxrt.c
+	$HOSTCC -o $target aout2imxrt.c

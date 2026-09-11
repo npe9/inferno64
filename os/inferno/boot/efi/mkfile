@@ -20,6 +20,26 @@ HFILES=fns.h mem.h
 IMAGEBASE=0x8000
 LINKBASE=0x8200
 
+#
+#	arm64 is not in $TARG because $TARG's last member is built with
+#	Plan 9's disk/format and dossrv, which this tree is cross-built
+#	from a unix host without.  "mk bootaa64.efi" builds it on its
+#	own; see doc/inferno-ports.ms for the edk2 invocation that runs
+#	it.
+#
+#	The image base is in DRAM because arm64 has no low memory to
+#	live in: QEMU's virt machine starts RAM at 0x40000000 and the
+#	kernel links at 0x40200000, so 0x48000000 is 128M above the
+#	bottom and clear of the kernel the loader will place.  edk2
+#	honours ImageBase for an image with no relocation section, so in
+#	practice the loader is not moved at all and aa64.s's copy does
+#	not run -- which is just as well, because edk2 maps the image it
+#	loaded read-only and copying over it is a data abort.
+#
+AA64BASE=0x48000000
+AA64LINK=0x48000200
+INCAA64=-I$ROOT/Inferno/aarch64/include -I$ROOT/include
+
 # The loader is freestanding: it uses only the kernel-side headers, so the
 # include path is set per object type rather than taken from the host mkfile.
 INC32=-I$ROOT/9front/386/include -I$ROOT/9front/include -I$ROOT/include
@@ -130,5 +150,15 @@ test.fat:D:	bootia32.efi bootx64.efi
 	rm /srv/$s
 
 
+bootaa64.efi:	aa64.7 aa64hello.7
+	7l -l -s -R1 -T$AA64LINK -o bootaa64.out $prereq
+	$ROOT/tools/aout2efi bootaa64.out $target $AA64BASE
+
+aa64.7:	aa64.s
+	7a '-DIMAGEBASE='$AA64BASE -o $target aa64.s
+
+aa64hello.7:	aa64hello.c
+	7c $CFLAGS $INCAA64 -o $target aa64hello.c
+
 clean:V:
-	rm -f *.[68] *.out $TARG test.* 
+	rm -f *.[678] *.out $TARG bootaa64.efi test.* 
