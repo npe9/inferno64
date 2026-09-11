@@ -286,6 +286,10 @@ root
 	/dis/cloudfs.dis
 	/dis/cloudinit.dis
 	/dis/gcs.dis
+# export a namespace over a connection, and answer one: the pair that
+# makes a second instance able to mount this one's files
+	/dis/styxlisten.dis
+	/dis/export.dis
 	/dis/hget.dis
 	/dis/lib/httpclient.dis
 	/dis/lib/url.dis

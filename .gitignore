@@ -471,3 +471,40 @@ os/inferno/boot/efi/boot*.efi
 os/inferno/boot/efi/boot*.out
 os/inferno/boot/pc/mbr
 os/inferno/boot/pc/pbs
+
+# --- build output that was tracked, untracked 2026-09-11 ---
+#
+# Merging another branch of this tree meant resolving 187 conflicted
+# files, and 167 of them were these: riscv64 objects, generated root
+# images, kernel binaries.  None of it is source, all of it is rebuilt
+# by mk, and every one of those conflicts was noise standing between
+# the reader and the twenty real ones.
+#
+# Left tracked on purpose: MacOSX/*/bin/ holds the host toolchain
+# (6c, 6l, limbo, mk) that bootstraps a build, so a fresh clone needs
+# it; and *.i under os/inferno/pc64 is source -- nothing generates
+# rebootcode.i -- despite the neighbouring .out files being dd output.
+
+# riscv64 objects ("O= j" in mkfiles/mkfile-{os,Inferno}-riscv64)
+*.j
+
+# kernel root images, built by ../port/mkroot from the config file
+/os/inferno/*/*.root.[sch]
+
+# linked kernels and the raw images made from them
+/os/inferno/*/i[a-z0-9]*
+/os/inferno/*/*.bin
+/os/inferno/pc64/[0-9].apbootstrap
+/os/inferno/pc64/[0-9].rebootcode
+/os/inferno/pc64/*.out
+
+# compiled Limbo that lives outside /appl
+/os/inferno/init/*.dis
+/os/inferno/init/*.sbl
+/dis/**/*.sbl
+/*.dis
+/*.sbl
+
+# emu objects and its generated root
+/emu/*/o.emu*
+/emu/*/*.root.c
