@@ -3520,8 +3520,26 @@ drawmesg(Client *client, void *av, int n)
 						float ez;
 
 						if(!d3project(client, vx[j], vy[j], vz[j], &pp2[j], &ez)){
+							/*
+							 * BOTH handlers, not one.  This popped
+							 * pp2's and jumped, leaving vx's waserror
+							 * on the error stack and vx itself leaked.
+							 * An unbalanced error stack does not fail
+							 * here; it fails later, as "panic: pushrun
+							 * addrun" when the next unwind lands on a
+							 * frame that has been reused.
+							 *
+							 * Only a client whose geometry crosses the
+							 * near plane ever reaches this, which is
+							 * why it looked like "the device provider
+							 * panics under wm": under wm the GPU hook
+							 * declines, this fallback runs, and gorge
+							 * flies a canyon straight through the eye.
+							 */
 							poperror();
 							free(pp2);
+							poperror();
+							free(vx);
 							goto Kdone;
 						}
 					}

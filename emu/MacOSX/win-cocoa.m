@@ -665,13 +665,28 @@ metal_init(void)
 	if(mtl_depth_on == nil || mtl_depth_off == nil)
 		return -1;
 
-	gpudrawline = metal_queue_line;
-	gpudrawfillpoly = metal_queue_fillpoly;
-	gpudrawfillpoly3d = metal_queue_fillpoly3d;
-	gpudrawfillpoly3g = metal_queue_fillpoly3g;
-	gpudrawplot = metal_queue_plot;
-	gpudrawsprite = metal_queue_sprite;
-	gpudrawsprite2d = metal_queue_sprite2d;
+	/*
+	 * INFERNO_NOGPU leaves the geometry hooks unset.  devdraw then
+	 * takes its own C rasteriser for every 3D primitive - see the
+	 * `gpudrawfillpoly3d != nil &&` conditions in devdraw.c - while
+	 * the softscreen is still uploaded and presented by Metal.
+	 *
+	 * That is a third path, and it is not a debugging curiosity: the
+	 * Limbo software provider subdivides a Gouraud triangle four ways
+	 * to depth four and fills up to 256 sub-triangles for it, and the
+	 * Metal one draws the wrong picture (doc/draw3d-adoption-plan.md,
+	 * Phase 2b).  The C rasteriser in the middle is neither.  Without
+	 * a switch there was no way to ask for it or to measure it.
+	 */
+	if(getenv("INFERNO_NOGPU") == nil){
+		gpudrawline = metal_queue_line;
+		gpudrawfillpoly = metal_queue_fillpoly;
+		gpudrawfillpoly3d = metal_queue_fillpoly3d;
+		gpudrawfillpoly3g = metal_queue_fillpoly3g;
+		gpudrawplot = metal_queue_plot;
+		gpudrawsprite = metal_queue_sprite;
+		gpudrawsprite2d = metal_queue_sprite2d;
+	}
 	gpuimagealloc = metal_image_alloc;
 	gpuimagefree = metal_image_free;
 	gpuimagedecode = metal_image_decode;

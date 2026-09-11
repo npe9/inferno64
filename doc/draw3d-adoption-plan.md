@@ -502,6 +502,63 @@ two still wants a camera. The `gorge -g` head-up-display count above is
 a *different* fault and was photographed.
 
 
+### There is a third path, and it is the fastest and the only correct one — 2026-09-11
+
+Everything above compares two things: the Limbo software provider and
+Metal. There is a third, and nothing could reach it.
+
+`devdraw.c` guards every GPU hook as `if(gpudrawfillpoly3g != nil &&
+gpudrawfillpoly3g(...))` and falls through to **its own C rasteriser**
+when the hook is unset or declines. On this host the hook is always set,
+so that C path only ran when Metal refused a destination — which is why
+it showed up as "the device provider panics under `wm`" and not as
+itself. `INFERNO_NOGPU` now leaves the geometry hooks unwired, so it can
+be asked for and measured. The softscreen is still uploaded and
+presented by Metal either way.
+
+**It panicked, and the panic was a two-character bug.** In the `'K'`
+(Gouraud) case, the `d3project` failure path did
+
+```c
+poperror();  free(pp2);  goto Kdone;
+```
+
+with **two** `waserror()` handlers pushed — `vx`'s was left on the error
+stack, and `vx` itself leaked. An unbalanced error stack does not fail
+where it happens; it fails later, as `panic: pushrun addrun`, when the
+next unwind lands on a frame that has been reused. Only a client whose
+geometry crosses the near plane ever reaches that exit, which is why
+`gorge` panicked and `draw3dbench` and `temple/rotatetank` did not.
+Fixed by popping both.
+
+With that fixed, `gorge`, 202 faces a frame into the window:
+
+| path | µs a frame | the picture |
+| --- | --- | --- |
+| Limbo `draw3d.dis` | 58225 | correct, Gouraud |
+| **devdraw C, `INFERNO_NOGPU`** | **1383–1650** | **correct**, flat-shaded |
+| Metal | 2433 | wrong: no HUD, mis-composed |
+
+The C rasteriser is **35 to 42 times** the Limbo provider and *faster
+than Metal*, and it is the only one of the three that draws the right
+picture. Checked with `gorge -g`: head-up-display pixels are 1277 on
+software, **2047** on the C path, 0 on Metal; rendered, the C frame has
+the canyon, the ceiling, the pylons, the bolt and every line of the HUD.
+
+**So the optimisation was not to make the GPU work.** The fast, correct
+renderer was already in the tree, unreachable behind a missing switch
+and a `poperror()`.
+
+What it costs is shading: the `'K'` fallback degrades per-vertex Gouraud
+to one flat fill at the average of the lits, which its own comment calls
+"deliberately out of scope for this primitive's first cut". That is now
+the highest-value piece of work in this document — a scanline Gouraud in
+`devdraw.c` would give the quality of the Limbo path at roughly the speed
+of the flat one. For comparison, the Limbo provider gets its Gouraud by
+subdividing each triangle four ways to depth four: up to **256**
+sub-triangles and 256 array allocations per triangle, which is where its
+58 ms a frame goes — about 100,000 fills where 400 would do.
+
 ### Phase 2a — `litcolour` allocated a colour image per fill
 
 Fixed 2026-09-10, and it is the reason a Gouraud scene could not be run
