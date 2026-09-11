@@ -40,11 +40,22 @@ String	snil;			/* String known to be zero length */
  * types is still on a stack, freemod() frees the type, and the next
  * freeptrs(f, f->t) walks a freed Type.  See doc/multicore-plan.ms.
  *
- * Setting this counts the frame's reference.  It is NOT complete: the
- * release below covers OP(ret) only, so a proc killed with frames on
- * its stack leaks type references, and the JIT's own freeptrs() paths
- * in comp-*.c are not touched (cflag is 0 on every native board).  It
- * is here to test the diagnosis, not to ship.
+ * Setting this counts the frame's reference.  All three teardown paths
+ * release it now -- OP(ret), OP(mcall)'s native branch and
+ * destroystack(), which is the one an exception or a kill unwinds
+ * through -- so a process killed with frames on its stack no longer
+ * leaks them.  destroystack() releases only where f->t is non-nil,
+ * because a frame whose type came from sx->reg.TR never counted one.
+ *
+ * Still not complete, and still off: the JIT's own freeptrs() paths in
+ * comp-*.c take no reference and release none.  cflag is 0 on every
+ * native board so none of that code runs, but turning this on for a
+ * board that compiles Dis would leak a reference per frame.
+ *
+ * What it is measured to do, sixty boots each at *parallelvm=1: one
+ * bad frame in sixty against three with it off, which at that sample
+ * size is the same number -- see doc/multicore-plan.ms.  Separating
+ * them needs a few hundred boots an arm.
  */
 int	framerefs = 0;
 
@@ -1432,6 +1443,8 @@ OP(mcall)
 			scanframe(f, "OP(mcall)");
 			freeptrs(f, f->t);
 		}
+		if(framerefs)
+			freetype(f->t);	/* the reference OP(frame) took */
 		p = currun();
 		if(p->kill != nil)
 			error(p->kill);
@@ -2311,6 +2324,8 @@ destroystack(REG *reg)
 			trackclear(f, t->size);
 			if (t->np)
 				freeptrs(f, t);
+			if(framerefs && f->t != nil)
+				freetype(f->t);	/* see OP(frame) */
 			if(m != nil) {
 				destroy(reg->M);
 				reg->M = m;
