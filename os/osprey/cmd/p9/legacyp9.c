@@ -120,9 +120,22 @@ startboot(char *argv0, char **argv)
 			print("legacy: removed /n/p9test through the buddy\n");
 		else {
 			char ebuf[ERRMAX];
+			rerrstr(ebuf, sizeof ebuf);
+			print("legacy: remove of /n/p9test refused: \"%s\"\n", ebuf);
+		}
+		/*
+		 * And a call that must fail, for the error itself: errstr
+		 * crosses the buddy or it does not, and a call that succeeds
+		 * says nothing about that.  The store used to refuse every
+		 * remove and this was that refusal; now that it takes one,
+		 * removing a name that is not there is the refusal.
+		 */
+		if(remove("/n/nosuchfile") < 0){
+			char ebuf[ERRMAX];
 			rerrstr(ebuf, sizeof ebuf);	/* the real reason, over the buddy's errstr */
 			print("legacy: remove refused, errstr from the buddy: \"%s\"\n", ebuf);
-		}
+		} else
+			print("legacy: remove of a name that is not there was not refused\n");
 	}
 
 	/* a pipe the buddy makes: write one end, read the other */

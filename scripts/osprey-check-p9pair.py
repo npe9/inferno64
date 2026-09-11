@@ -244,10 +244,15 @@ def main():
          'server personality: name space up, answering 9P over the ring' in t and 'p9 server: serving this name space over the ring' in t),
         ("and the client reads the server personality's exported root over 9P, the kernel only routing",
          m is not None and int(m.group(1)) >= 10),
-        ("and create and remove over 9P: the client creates a file on the server, writes it, reads it back, and remove is refused by the immutable store - all on the ring",
+        ("and create and remove over 9P: the client creates a file on the server, writes it, reads it back, and removes it - all on the ring",
          'p9: pair-client: created /n/clientmade over 9P' in t
          and 'p9: pair-client: read /n/clientmade back over 9P: "made by the client over 9P"' in t
-         and re.search(r'pair-client: (removed|remove) /n/clientmade over 9P', t) is not None),
+         and 'p9: pair-client: removed /n/clientmade over 9P' in t),
+        ("and the remove is a record rather than a change: a tombstone at the head of the log, nothing written in place",
+         re.search(r'lfs: removed clientmade after version 1: a tombstone at sector \d+', t) is not None),
+        ("and the file stays removed across a mount: the second boot's scan reads the tombstone and does not resurrect it, while hello, which was not removed, is there",
+         re.search(r'lfs: hello version 46', t2) is not None
+         and re.search(r'lfs: clientmade version', t2) is None),
         ("and it exits cleanly, two library operating systems on the microkernel, one serving the other, no panic",
          'the program exited' in t and 'panic' not in t),
         ("a request exec starts a program - the Linux binary in the server's file system - in a container of its own, delegated to the same server",
@@ -267,8 +272,10 @@ def main():
          and 'legacy: read 46 bytes back from the file: "a file written and read back through the buddy"' in t
          and re.search(r'legacy: fstat\("/n/p9test"\) returned a (\d+)-byte stat message', t) is not None
          and re.search(r'legacy: stat\("/n/p9test"\) by name returned a (\d+)-byte stat message', t) is not None),
-        ("errstr crosses too: a refused remove leaves the real reason, which the program reads back over the buddy",
-         re.search(r'legacy: remove refused, errstr from the buddy: "(\S+)"', t) is not None),
+        ("the legacy binary removes the file it made, through the buddy, and the store takes it",
+         'legacy: removed /n/p9test through the buddy' in t),
+        ("errstr crosses too: a remove of a name that is not there leaves the real reason, which the program reads back over the buddy",
+         re.search(r'legacy: remove refused, errstr from the buddy: "([^"]+)"', t) is not None),
         ("the buddy makes a pipe: the program writes one end and reads the message from the other",
          re.search(r'legacy: pipe\(\) returned fds \d+ and \d+ from the buddy', t) is not None
          and 'legacy: wrote one pipe end and read 29 bytes from the other: "through a pipe the buddy made"' in t),

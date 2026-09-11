@@ -4759,10 +4759,11 @@ text.  Two things had to move for it: the 9P exporter walked with
 mounts turned off, so nothing a personality mounted was part of what it
 exported, and now follows them, which is what an exportfs does; and the
 block driver's own demonstration wrote sector 1, the log's first
-record, so it writes the last sector instead.  What is not built: the
-exporter answers no create or remove over 9P, so a client can rewrite a
-file the server made but not make one; a version is at most 8 KB and
-there are thirty-two files, and a removed file is not a tombstone yet.
+record, so it writes the last sector instead.  The exporter answers create and remove
+as well now, by the fid's own path so that the mount is followed: the
+client makes a file in the server's name space over the ring, writes it,
+reads it back and removes it.  What is not built: a version is at most
+8 KB and there are thirty-two files.
 .PP
 Reclamation is built, and it is what the plan's storage section asks
 of it: a scheduled task with a reservation of its own.  The log is a
