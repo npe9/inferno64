@@ -289,7 +289,7 @@ def main():
          "key at a time and Enter after it, and the shell in the window asks the buddy for a "
          "program of that name - which crosses the i8042, the user-space driver, /dev/kbd, "
          "rio, the window's own /dev/cons and the shell's own reader",
-         re.search(r"buddy: exec nosuchthing: Enonexist: 'nosuchthing'", swtext) is not None),
+         re.search(r"buddy: exec nosuchthing: file does not exist: 'nosuchthing'", swtext) is not None),
         ("and it answers into the window: the shell's complaint about the word does not appear "
          "on the machine's console, because the shell's print goes to descriptor 1 and that is "
          "the window",

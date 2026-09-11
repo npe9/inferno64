@@ -477,8 +477,8 @@ def main():
                     'p9 exec: /boot/libgen is already running at 0x2000000; it is one image and cannot be two programs' in t
                     and 'libsh: /boot/libgen: cannot start it' in t))
     results.append(("and a spawned program that fails ends with the failure as its status: the stage that was started writes into a pipe whose reader never arrived, the personality answers -1 and a reason the way a libc does, and the program makes that reason its exit status, which the shell reads out of the wait",
-                    re.search(r'libgen: the write failed after \d+ bytes: Ehungup', t) is not None
-                    and 'libsh: /boot/libgen ended, status "Ehungup"' in t
+                    re.search(r'libgen: the write failed after \d+ bytes: i/o on hungup channel', t) is not None
+                    and 'libsh: /boot/libgen ended, status "i/o on hungup channel"' in t
                     and 'libsh: the script is done, and the personality that started me is still here' in t))
     results.append(("and the shell ends into the personality that loaded it, having run its script, with the name space it and its programs shared still the one the personality built",
                     'libsh: the script is done, and the personality that started me is still here' in t

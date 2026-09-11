@@ -337,14 +337,15 @@ to a file descriptor is forwarded to the buddy instead of the kernel's
 console writer, which had been swallowing every legacy file write
 regardless of its descriptor.  The p9pair check has the legacy a.out
 create a file on the log store, write it, read the bytes back through the
-buddy, and stat it \- by descriptor and by name both; remove is forwarded and the immutable log store
-refuses it, which is the store's semantics, not a gap.  And errstr
-crosses now, genuinely: the buddy stashes the real reason a call failed,
+buddy, and stat it \- by descriptor and by name both; remove is
+forwarded, and the store takes it now (the section on storage says what
+a remove is there: a tombstone at the head of the log).  And errstr
+crosses, genuinely: the buddy stashes the real reason a call failed,
 per container, and answers the process's
 .CW errstr
-from it \- so the refused remove leaves the program not a lie but the
-store's own
-.CW Eperm ,
+from it \- so a remove of a name that is not there leaves the program
+not a lie but
+.CW "file does not exist" ,
 read back over the buddy like any other result.  And
 .CW pipe
 is answered: the buddy makes a pipe on its own
@@ -8754,7 +8755,7 @@ And something has been typed at it.  The word
 is typed at the window one key at a time through the emulated keyboard,
 with Enter after it, and the shell in the window asks the buddy for a
 program of that name:
-.CW "buddy: exec nosuchthing: Enonexist: 'nosuchthing'" .
+.CW "buddy: exec nosuchthing: file does not exist: 'nosuchthing'" .
 The word is one the shell cannot run on purpose \- what the criterion
 is about is the path, not the program.  A key crosses QEMU's i8042, the
 IRQ1 the microkernel routes to the personality's container as a bare
@@ -9331,7 +9332,7 @@ that raise would unwind off the top of a spawned program's stack into
 nothing.  The fourth script line is what shows it: the stage that was
 started writes into a pipe whose reader was refused, and the error
 becomes that program's wait status,
-.CW Ehungup ,
+.CW "i/o on hungup channel" ,
 which the shell prints before finishing its script.
 .PP
 One thing the checks turned up on the way.

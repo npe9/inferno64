@@ -36,60 +36,72 @@ Proc	*up = &theproc;
 char	*eve = "osprey";	/* the personality has a name: its files are somebody's, and a session on its wire must say who it is to open them */
 extern void exits(char*);
 
-char Enoerror[] = "Enoerror";
-char Emount[] = "Emount";
-char Eunmount[] = "Eunmount";
-char Eismtpt[] = "Eismtpt";
-char Eunion[] = "Eunion";
-char Emountrpc[] = "Emountrpc";
-char Eshutdown[] = "Eshutdown";
-char Enocreate[] = "Enocreate";
-char Enonexist[] = "Enonexist";
-char Eexist[] = "Eexist";
-char Ebadsharp[] = "Ebadsharp";
-char Enotdir[] = "Enotdir";
-char Eisdir[] = "Eisdir";
-char Ebadchar[] = "Ebadchar";
-char Efilename[] = "Efilename";
-char Eperm[] = "Eperm";
-char Ebadusefd[] = "Ebadusefd";
-char Ebadarg[] = "Ebadarg";
-char Einuse[] = "Einuse";
-char Eio[] = "Eio";
-char Etoobig[] = "Etoobig";
-char Etoosmall[] = "Etoosmall";
-char Enoport[] = "Enoport";
-char Ehungup[] = "Ehungup";
-char Ebadctl[] = "Ebadctl";
-char Enodev[] = "Enodev";
-char Eprocdied[] = "Eprocdied";
-char Enochild[] = "Enochild";
-char Eioload[] = "Eioload";
-char Enovmem[] = "Enovmem";
-char Ebadfd[] = "Ebadfd";
-char Enofd[] = "Enofd";
-char Eisstream[] = "Eisstream";
-char Ebadexec[] = "Ebadexec";
-char Etimedout[] = "Etimedout";
-char Econrefused[] = "Econrefused";
-char Econinuse[] = "Econinuse";
-char Eintr[] = "Eintr";
-char Enomem[] = "Enomem";
-char Esoverlap[] = "Esoverlap";
-char Emouseset[] = "Emouseset";
-char Eshort[] = "Eshort";
-char Egreg[] = "Egreg";
-char Ebadspec[] = "Ebadspec";
-char Enoreg[] = "Enoreg";
-char Enoattach[] = "Enoattach";
-char Eshortstat[] = "Eshortstat";
-char Ebadstat[] = "Ebadstat";
-char Enegoff[] = "Enegoff";
-char Ecmdargs[] = "Ecmdargs";
-char Ebadip[] = "Ebadip";
-char Edirseek[] = "Edirseek";
-char Etoolong[] = "Etoolong";
-char Echange[] = "Echange";
+/*
+ * The reasons, not their names.  Every one of these used to be its own
+ * C identifier as a string - Eperm was "Eperm" - so a program that
+ * asked why a call failed, or a 9P client reading an Rerror, was handed
+ * a symbol out of this kernel's source instead of something a person
+ * could read.  It showed up in the log as
+ * "remove refused, errstr from the buddy: \"Eperm\"" and in rio's own
+ * window as "can't create file system server: Enonexist: '/mnt/temp'".
+ * They are the strings the kernel beside this personality already uses
+ * (os/osprey/pc64/errstr.h), which is where these were copied from, so
+ * a reason reads the same whichever side of the ring produced it.
+ */
+char Enoerror[] = "no error";
+char Emount[] = "inconsistent mount";
+char Eunmount[] = "not mounted";
+char Eismtpt[] = "is a mount point";
+char Eunion[] = "not in union";
+char Emountrpc[] = "mount rpc error";
+char Eshutdown[] = "device shut down";
+char Enocreate[] = "mounted directory forbids creation";
+char Enonexist[] = "file does not exist";
+char Eexist[] = "file already exists";
+char Ebadsharp[] = "unknown device in # filename";
+char Enotdir[] = "not a directory";
+char Eisdir[] = "file is a directory";
+char Ebadchar[] = "bad character in file name";
+char Efilename[] = "file name syntax";
+char Eperm[] = "permission denied";
+char Ebadusefd[] = "inappropriate use of fd";
+char Ebadarg[] = "bad arg in system call";
+char Einuse[] = "device or object already in use";
+char Eio[] = "i/o error";
+char Etoobig[] = "read or write too large";
+char Etoosmall[] = "read or write too small";
+char Enoport[] = "network port not available";
+char Ehungup[] = "i/o on hungup channel";
+char Ebadctl[] = "bad process or channel control request";
+char Enodev[] = "no free devices";
+char Eprocdied[] = "process exited";
+char Enochild[] = "no living children";
+char Eioload[] = "i/o error in demand load";
+char Enovmem[] = "virtual memory allocation failed";
+char Ebadfd[] = "fd out of range or not open";
+char Enofd[] = "no free file descriptors";
+char Eisstream[] = "seek on a stream";
+char Ebadexec[] = "exec header invalid";
+char Etimedout[] = "connection timed out";
+char Econrefused[] = "connection refused";
+char Econinuse[] = "connection in use";
+char Eintr[] = "interrupted";
+char Enomem[] = "kernel allocate failed";
+char Esoverlap[] = "segments overlap";
+char Emouseset[] = "mouse type already set";
+char Eshort[] = "i/o count too small";
+char Egreg[] = "the front fell off";
+char Ebadspec[] = "bad attach specifier";
+char Enoreg[] = "process has no saved registers";
+char Enoattach[] = "mount/attach disallowed";
+char Eshortstat[] = "stat buffer too small";
+char Ebadstat[] = "malformed stat buffer";
+char Enegoff[] = "negative i/o offset";
+char Ecmdargs[] = "wrong #args in control message";
+char Ebadip[] = "bad ip address syntax";
+char Edirseek[] = "seek in directory";
+char Etoolong[] = "name too long";
+char Echange[] = "media or partition has changed";
 
 void
 p9init(void)
