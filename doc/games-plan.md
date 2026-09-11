@@ -100,6 +100,30 @@ chased around a maze (*Pac-Man*); forward motion through a receding world
    meter and ballistics (*Golf*). Real shapes, but the axis they exercise here is
    arithmetic, which `strider` and `gorge` already exercise harder.
 
+## The process each of these is built through
+
+The request these games answer is to demonstrate the *development process*, not
+only the system's features, so it is worth writing down what that process is
+here. It is the same for every item below.
+
+An interface goes in `module/`, as a `.m` file whose comments are the
+documentation of record. The implementation goes in `appl/lib` and is compiled by
+`mk`, never by calling `limbo` by hand, so the tree's own flags apply. Content —
+art, levels, behaviour — goes in a little language, in files under `lib/`, so it
+can be written and read by something other than the program. A `man/` page
+describes it and is checked with `groff -man -Tutf8 -k -ww`. A test goes in
+`appl/cmd/*test.b`, or in the program's own `-t`, and is not believed until it
+has been seen to fail: the check is disabled, the failure is confirmed to return,
+and the check is restored. What the test does *not* cover goes in BUGS. The
+section `INDEX` is hand-curated. The commit stages explicit pathspecs, because
+this tree holds other people's work in progress.
+
+`camber` is the worked example, defects and all. Writing it turned up three real
+bugs (below); two of its picture checks passed at first and were only made into
+checks by the control that failed them — one of those was reading the wrong
+sprites entirely, and the other was still passing with three of the four edges of
+a cursor drawn.
+
 ## What to build, in order, and why
 
 Each item names the Inferno axis it lands. An item that lands no axis the

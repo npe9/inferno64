@@ -5,6 +5,7 @@ camber \- a side-view racer, and a course designer for it
 .B games/camber
 [
 .B -e
+.I track
 ] [
 .B -t
 |
@@ -39,22 +40,25 @@ is the course to race, and defaults to
 Every other game in
 .B /dis/games
 compiles its art and its levels into the program.
-This one holds none:
-the tiles are
+This one holds none.
+.B /lib/tiles/camber.art
+declares the tile sheets, the font and every palette, and is itself a
+script in
+.IR tiles (2)'s
+command language rather than a format this program invented:
+.I camber
+runs it line by line at start-up.
+The tiles it names are
 .B /lib/tiles/camber.chr
 and
-.BR /lib/tiles/camber16.chr ,
-loaded by name through
-.IR tiles (2)'s
-.B sheet
-and
-.B sheet16
-commands, and the course is a text file that
+.BR /lib/tiles/camber16.chr .
+The course is a text file that
 .B -e
 writes,
 that a shell script can generate,
 and that an editor can edit.
-There is not one tile and not one feature of any course in
+There is not one tile, not one colour and not one feature of any course
+in
 .BR camber.b .
 .PP
 A track file is a header of
@@ -117,7 +121,12 @@ The best time is kept by
 .IR scorestore (2).
 .SS Designing
 .B -e
-opens the course for editing instead of racing.
+.I track
+opens a course for editing instead of racing.
+The name is not optional, because the designer writes back the file it
+opened and the default is the course that ships with the game.
+A name that does not exist yet starts an empty course of two hundred
+tiles and four lanes, which is how a new one begins.
 Arrow keys move the cursor, which shows the size of the feature about to
 be laid;
 .B [
@@ -148,6 +157,9 @@ as 24-bit BGR at the window's scale;
 gives a different number of frames, which is how to look at a particular
 part of a course.
 .SH FILES
+.TP
+.B /lib/tiles/camber.art
+the sheets, the font and the palettes, as tiles(2) commands
 .TP
 .B /lib/tiles/camber.chr
 the 8x8 track tiles
@@ -180,6 +192,14 @@ A design mode that can write a wall of mud across every lane can write a
 course that cannot be completed, and
 .B -e
 will let it.
+.PP
+A course may declare fewer than four lanes and the parser will take it,
+but the bands are laid out for four: a two-lane course paints two of
+them and leaves the rest of the screen as verge.
+No course here uses fewer, so nothing has ever drawn one.
+.PP
+Rivals are held up by mud and pushed along by strips, but they do not
+use ramps: they have no attitude to fly and simply ride through.
 .PP
 The machine is drawn in four attitudes rather than rotated, so the
 picture in the air steps between them instead of turning.

@@ -1,0 +1,39 @@
+; camber(1): the art, as a script in tiles(2)'s own command language.
+; camber runs this file line by line through Screen.cmd() at start-up;
+; nothing in it is compiled into the game.  The two surfaces are not
+; here because their size depends on how long the course is.
+;
+; Colours are ROW.COLUMN - the rows are dark, mid, light and pale, and
+; the columns are grey, the twelve hues, and black.
+
+sheet road /lib/tiles/camber.chr
+sheet16 bike /lib/tiles/camber16.chr
+font text
+
+; The four-colour palettes.  In a palette the first colour is the
+; background a tile is drawn on, and the colour a sprite treats as
+; transparent; the other three are the tile's own 1, 2 and 3.
+
+palette proad  dark.green dark.grey   mid.grey     light.grey
+palette prail  dark.green dark.grey   pale.grey    mid.grey
+palette pramp  dark.green mid.yellow  light.yellow pale.yellow
+palette pbump  dark.green dark.grey   mid.orange   light.orange
+palette pmud   dark.green dark.orange dark.red     mid.orange
+palette pstrip dark.green dark.grey   mid.cyan     pale.cyan
+palette pcheq  dark.green dark.grey   pale.grey    dark.black
+palette ppost  dark.green dark.grey   pale.grey    pale.grey
+palette pbike  dark.green dark.black  mid.red      pale.grey
+palette prival dark.green dark.black  mid.violet   light.cyan
+palette phud   dark.black pale.grey   pale.grey    pale.grey
+palette pwarn  dark.black light.red   light.red    light.red
+
+; Three colours the screen is painted with that are not part of any
+; tile: the verge either side of the road, the instrument panel, and
+; the two ends of a gauge.  A palette is how the command language names
+; a colour, so they are declared as palettes and only the first colour
+; of each is used.
+
+palette cverge dark.green dark.green dark.green dark.green
+palette cpanel dark.black dark.black dark.black dark.black
+palette cbarlo mid.lime   mid.lime   mid.lime   mid.lime
+palette cbarhi light.red  light.red  light.red  light.red

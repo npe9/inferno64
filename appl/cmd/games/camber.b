@@ -162,6 +162,8 @@ testmode: int;
 shotframes: int;
 audio:	int;
 trackfile: string;
+ARTFILE:	con "/lib/tiles/camber.art";
+DEFTRACK:	con "/lib/tiles/ridge.trk";
 
 # Playing, as against running a self test or writing a screenshot.  Only
 # a playing program asks tone(2) for audio.
@@ -224,8 +226,9 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	}
 	if(fclock != nil)
 		fclock->init();
-	trackfile = "/lib/tiles/ridge.trk";
+	trackfile = DEFTRACK;
 	edit := 0;
+	named := 0;
 	args := tl argv;
 	for(a := args; a != nil; a = tl a){
 		case hd a {
@@ -247,15 +250,33 @@ init(ctxt: ref Draw->Context, argv: list of string)
 				raise "fail:usage";
 			}
 			trackfile = hd a;
+			named = 1;
 		}
 	}
-
-	(t, err) := readtrack(trackfile);
-	if(t == nil){
-		sys->fprint(sys->fildes(2), "camber: %s\n", err);
-		raise "fail:track";
+	# The designer writes the file it opened.  Left to default, that is
+	# the course that ships with the game, and a w keystroke while
+	# looking round would have overwritten it.
+	if(edit && !named){
+		sys->fprint(sys->fildes(2),
+			"camber -e: name the track to design; %s is the one that ships\n",
+			DEFTRACK);
+		raise "fail:usage";
 	}
-	trk = t;
+
+	(ok, nil) := sys->stat(trackfile);
+	if(edit && ok < 0){
+		# Designing a course that does not exist yet: start an empty
+		# one rather than refusing, since that is how a new course has
+		# to begin.
+		trk = ref Track("untitled", 200, MAXLANE, array[16] of ref Feat, 0);
+	}else{
+		(t, err) := readtrack(trackfile);
+		if(t == nil){
+			sys->fprint(sys->fildes(2), "camber: %s\n", err);
+			raise "fail:track";
+		}
+		trk = t;
+	}
 
 	d: ref Display;
 	if(testmode){
@@ -311,6 +332,46 @@ docmd(c: string)
 	}
 }
 
+# Run a file of tiles(2) commands, one to a line.  Comments start with
+# a semicolon, as they do in the art and map files the library reads.
+runcmds(path: string)
+{
+	fd := sys->open(path, Sys->OREAD);
+	if(fd == nil){
+		sys->fprint(sys->fildes(2), "camber: cannot open %s: %r\n", path);
+		raise "fail:art";
+	}
+	(ok, dir) := sys->fstat(fd);
+	if(ok < 0 || dir.length <= big 0 || dir.length > big (1024*1024)){
+		sys->fprint(sys->fildes(2), "camber: unreasonable art file: %s\n", path);
+		raise "fail:art";
+	}
+	b := array[int dir.length] of byte;
+	if(sys->readn(fd, b, len b) != len b){
+		sys->fprint(sys->fildes(2), "camber: cannot read %s: %r\n", path);
+		raise "fail:art";
+	}
+	(nil, lines) := sys->tokenize(string b, "\n");
+	for(; lines != nil; lines = tl lines){
+		l := hd lines;
+		if(len l == 0 || l[0] == ';')
+			continue;
+		docmd(l);
+	}
+}
+
+# A colour declared in the art file as a palette of one colour four
+# times over, because a palette is how that language names a colour.
+colourof(name: string): int
+{
+	p := scn.pal(name);
+	if(p == nil || len p.c == 0){
+		sys->fprint(sys->fildes(2), "camber: %s: no such colour\n", name);
+		raise "fail:art";
+	}
+	return p.c[0];
+}
+
 setup(d: ref Display)
 {
 	scn = tiles->screen(d, Draw->RGB24, SCALE);
@@ -318,29 +379,15 @@ setup(d: ref Display)
 		sys->fprint(sys->fildes(2), "camber: no screen\n");
 		raise "fail:screen";
 	}
-	# All of the art, by name, out of files.  This is the whole of the
-	# difference between this game and the other four.
-	docmd("sheet road /lib/tiles/camber.chr");
-	docmd("sheet16 bike /lib/tiles/camber16.chr");
-	docmd("font text");
-
-	verge = tiles->entry(Tiles->DARK, Tiles->GREEN);
-	panel = tiles->entry(Tiles->DARK, Tiles->BLACK);
-	barlo = tiles->entry(Tiles->MID, Tiles->LIME);
-	barhi = tiles->entry(Tiles->LIGHT, Tiles->RED);
-
-	docmd("palette proad dark.green dark.grey mid.grey light.grey");
-	docmd("palette prail dark.green dark.grey pale.grey mid.grey");
-	docmd("palette pramp dark.green mid.yellow light.yellow pale.yellow");
-	docmd("palette pbump dark.green dark.grey mid.orange light.orange");
-	docmd("palette pmud dark.green dark.orange dark.red mid.orange");
-	docmd("palette pstrip dark.green dark.grey mid.cyan pale.cyan");
-	docmd("palette pcheq dark.green dark.grey pale.grey dark.black");
-	docmd("palette ppost dark.green dark.grey pale.grey pale.grey");
-	docmd("palette pbike dark.green dark.black mid.red pale.grey");
-	docmd("palette prival dark.green dark.black mid.violet light.cyan");
-	docmd("palette phud dark.black pale.grey pale.grey pale.grey");
-	docmd("palette pwarn dark.black light.red light.red light.red");
+	# All of the art, by name, out of a file - and the file is itself a
+	# script in tiles(2)'s command language rather than a format this
+	# program invented.  This is the whole of the difference between
+	# this game and the four before it.
+	runcmds(ARTFILE);
+	verge = colourof("cverge");
+	panel = colourof("cpanel");
+	barlo = colourof("cbarlo");
+	barhi = colourof("cbarhi");
 
 	docmd(sys->sprint("surface scr %d %d %d", W, H, verge));
 	docmd(sys->sprint("surface bg %d %d %d", trk.length*8, H, verge));
@@ -662,7 +709,20 @@ steprivals()
 		r := riv[i];
 		if(!r.live)
 			continue;
-		r.x += r.spd;
+		v := r.spd;
+		f := featat(int r.x + 8, r.lane);
+		if(f != nil){
+			# The same surfaces that hold the player up hold them
+			# up.  Ramps do not: a rival has no attitude to fly.
+			case f.kind {
+			FMUD =>
+				if(v > MUDCAP)
+					v = MUDCAP;
+			FSTRIP =>
+				v += STRIPACC * 4.0;
+			}
+		}
+		r.x += v;
 		if(r.x > end)
 			r.live = 0;
 	}
@@ -703,7 +763,9 @@ finish()
 	if(best == 0 || timems < best){
 		best = timems;
 		newbest = 1;
-		if(scorestore != nil)
+		# Not from the self test: it drives the course to the finish,
+		# and a scripted pad's time is not the player's record.
+		if(scorestore != nil && playing())
 			scorestore->saveint("camber", best);
 	}
 }
@@ -1039,6 +1101,30 @@ joinwords(l: list of string): string
 	return s;
 }
 
+# int "abc" is 0, so every mistyped number in a track file used to become
+# a feature at tile nought, silently.  This is the whole reason a
+# hand-written format needs a parser and not a cast.
+number(w: string): (int, int)
+{
+	if(len w == 0)
+		return (0, 0);
+	i := 0;
+	sign := 1;
+	if(w[0] == '-'){
+		sign = -1;
+		i = 1;
+	}
+	if(i >= len w)
+		return (0, 0);
+	v := 0;
+	for(; i < len w; i++){
+		if(w[i] < '0' || w[i] > '9')
+			return (0, 0);
+		v = v*10 + (w[i] - '0');
+	}
+	return (sign*v, 1);
+}
+
 kindof(w: string): int
 {
 	for(i := 0; i < len featname; i++)
@@ -1086,11 +1172,17 @@ readtrack(path: string): (ref Track, string)
 			"length" =>
 				if(nw != 2)
 					return (nil, where + "length wants one number");
-				t.length = int hd tl w;
+				(lv, lok) := number(hd tl w);
+				if(!lok)
+					return (nil, where + "not a number: " + hd tl w);
+				t.length = lv;
 			"lanes" =>
 				if(nw != 2)
 					return (nil, where + "lanes wants one number");
-				t.lanes = int hd tl w;
+				(nv, nok) := number(hd tl w);
+				if(!nok)
+					return (nil, where + "not a number: " + hd tl w);
+				t.lanes = nv;
 			* =>
 				return (nil, where + "no such setting: " + hd w);
 			}
@@ -1098,15 +1190,23 @@ readtrack(path: string): (ref Track, string)
 		}
 		if(nw < 3)
 			return (nil, where + "a feature is X LANE FEATURE [SPEED]");
-		x := int hd w;
-		l := int hd tl w;
+		(x, xok) := number(hd w);
+		if(!xok)
+			return (nil, where + "not a number: " + hd w);
+		(l, lok2) := number(hd tl w);
+		if(!lok2)
+			return (nil, where + "not a number: " + hd tl w);
 		kw := hd tl tl w;
 		k := kindof(kw);
 		if(k < 0)
 			return (nil, where + "no such feature: " + kw);
 		arg := 0;
-		if(nw > 3)
-			arg = int hd tl tl tl w;
+		if(nw > 3){
+			(av, aok) := number(hd tl tl tl w);
+			if(!aok)
+				return (nil, where + "not a number: " + hd tl tl tl w);
+			arg = av;
+		}
 		if(l < 0 || l >= t.lanes)
 			return (nil, where + "lane out of range: " + hd tl w);
 		if(x < 0 || x + featwide[k] > t.length)
@@ -1379,8 +1479,35 @@ selftest()
 		fd = nil;
 		(t5, e5) := readtrack(bad);
 		cktrue("a course shorter than the screen is refused", t5 == nil && e5 != nil);
+		# A number that is not one.  Limbo's int "abc" is 0, so before
+		# there was a parser this became a ramp at tile nought and
+		# nothing said a word.
+		fd = sys->create(bad, Sys->OWRITE, 8r666);
+		sys->fprint(fd, "title Bad\nlength 100\nlanes 4\n%s\nabc 0 ramp\n", "%");
+		fd = nil;
+		(t6, e6) := readtrack(bad);
+		cktrue("a column that is not a number is refused", t6 == nil && e6 != nil);
+		fd = sys->create(bad, Sys->OWRITE, 8r666);
+		sys->fprint(fd, "title Bad\nlength xx\nlanes 4\n%s\n", "%");
+		fd = nil;
+		(t7, e7) := readtrack(bad);
+		cktrue("and so is a length that is not", t7 == nil && e7 != nil);
 		sys->remove(bad);
 	}
+
+	# --- the art came out of the file ---
+	# Every palette and both sheets are named in /lib/tiles/camber.art,
+	# so if that file were not read none of these would be bound and
+	# setup() would have stopped before here.  What this adds is that
+	# the names really are the file's: a colour the file declares is
+	# the one the screen paints with.
+	cktrue("the art file supplied the sheets", road != nil && bike != nil);
+	cktrue("and every palette the game draws with",
+		proad != nil && pramp != nil && pmud != nil && pstrip != nil
+		&& pbike != nil && prival != nil && phud != nil && pwarn != nil);
+	ck("and the verge colour", verge, tiles->entry(Tiles->DARK, Tiles->GREEN));
+	cktrue("the sheets hold what the art files hold",
+		road.n == 10 && bike.n == 16);
 
 	# --- the throttle ---
 	# On a clear stretch: run on the course as written, these measured a
