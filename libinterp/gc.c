@@ -485,7 +485,26 @@ rootset(Prog *root)
 		while(ex != nil) {
 			sx = (Stkext*)ex;
 			fp = sx->reg.tos.fu;
-			while(fp != sp) {
+			/*
+			 * Ordering, not equality.  The frames are meant to tile
+			 * tos.fu..sp exactly and fp advances by t->size, so one
+			 * wrong size steps past sp, "!=" never holds, and the walk
+			 * runs on through whatever follows -- reading each block as
+			 * a Frame and Setmark()ing whatever it takes for a root.
+			 * That is how one bad frame became a jump into the Dis heap
+			 * through t->mark: the frame reported was the first garbage
+			 * reached, several frames past the wrong one.
+			 *
+			 * Measured before changing it: a 1632-byte span walked to
+			 * 0xf380d60, eight frames in, in 2 boots of 60 at
+			 * *parallelvm=1 and none at parallelvm=0.
+			 *
+			 * This does not make the root set right -- the frames after
+			 * the bad one go unwalked and their roots unmarked, which is
+			 * its own hazard and is reported below.  It stops the walk
+			 * marking arbitrary memory, which is the worse of the two.
+			 */
+			while(fp < sp) {
 				f = (Frame*)fp;
 				t = f->t;
 				if(t == nil){
@@ -550,6 +569,20 @@ rootset(Prog *root)
 						Setmark(h);
 					}
 				}
+			}
+			if(fp != sp){
+				static int told;
+
+				/*
+				 * The frames did not tile the extent, so this
+				 * stack's root set is short by whatever was
+				 * skipped and an object only it refers to can be
+				 * swept.  Said once.
+				 */
+				if(told++ == 0)
+					print("rootset: frames do not tile"
+						" %#p..%#p, stopped %#p, pid %d\n",
+						sx->reg.tos.fu, sp, fp, root->pid);
 			}
 			ex = sx->reg.EX;
 			sp = sx->reg.SP;
