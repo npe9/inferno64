@@ -1,0 +1,156 @@
+.TH SPRIG 1
+.SH NAME
+sprig \- a garden defended from below, where an entity is a process
+.SH SYNOPSIS
+.B games/sprig
+[
+.B -t
+|
+.B -s
+|
+.B -b
+] [
+.B -q
+]
+.SH DESCRIPTION
+.I Sprig
+is a fixed screen where everything comes down at you: a thing on a stalk
+working its way toward the garden, and waves of small fast things
+dropping out of the air.
+You have a spray that goes straight up and a tank that runs out.
+Spraying the thing on the stalk from directly underneath pushes it back;
+anything else lets it come on.
+A pest that reaches the ground eats a plot, and when the plots are gone
+so is the garden.
+.PP
+The whole game is deciding when
+.I not
+to fire.
+Holding the spray down empties the tank, and an empty tank is a second
+of nothing at all.
+.PP
+Arrow keys or
+.B wasd
+move;
+.BR x ,
+.B .
+or space sprays.
+Enter starts again.
+.B q
+or Escape quits.
+.SS An entity is a process
+This is what the game is in the tree for.
+Every pest is a Dis process: it owns its own state, waits on a channel
+for the frame, moves itself, and answers on another.
+The driver sends the tick once per pest and takes back one answer per
+pest, and knows nothing about which process got which tick \- only that
+as many came back as went out.
+A dead pest still takes its tick and answers, because a wave whose
+answers did not match its ticks would leave the driver waiting.
+.PP
+It was not obvious this was affordable.
+Execution here is serialised rather than parallel, so the processes and
+their traffic could have cost more than a loop over an array and bought
+nothing but shape.
+.IR Procbench (1)
+settled it before this was written: a process per entity costs four to
+sixteen times a loop
+.I per entity,
+and at these sizes that is charged on a number too small to matter.
+So the shape is affordable, and the honest claim for it is that it reads
+well, not that it runs fast.
+.PP
+The one thing the measurement forbade is spawning per entity per frame,
+at seven to fourteen microseconds a go.
+These are spawned once a wave.
+.B -b
+reports what a frame of them costs, by wave:
+.IP
+.EX
+   pests     us/frame      us/pest
+       6         0.50         0.08
+      12         2.00         0.17
+      16         2.00         0.13
+.EE
+.PP
+A frame at 60Hz has 16666 microseconds.
+.SS The waves are a file
+.B /lib/tiles/sprig.waves
+is the whole schedule, one wave a line:
+.IP
+.EX
+COUNT KIND SPEED SPREAD
+.EE
+.PP
+.I Count
+is how many come at once \- and therefore how many processes the game
+starts.
+.I Kind
+is
+.B flit
+(weaves from side to side) or
+.B borer
+(drops straight, fast).
+.I Speed
+is hundredths of a pixel a frame downward and
+.I spread
+is how far a flit wanders, in pixels, ignored by borers.
+Lines beginning with
+.B ;
+are comments.
+A count above sixty-four is refused rather than attempted, because every
+one of them is a process.
+.PP
+Making the last wave forty deep is editing that file.
+Nothing about the waves, the garden or the art is in the program.
+.SS Other options
+.B -q
+starts silent.
+.B -t
+runs the self test and needs no window.
+.B -s
+plays four seconds and writes the frame to
+.B sprig.raw
+as 24-bit BGR.
+.SH FILES
+.TP
+.B /lib/tiles/sprig.art
+the sheets, the font and the palettes, as tiles(2) commands
+.TP
+.B /lib/tiles/sprig.chr
+the 8x8 tiles of the garden
+.TP
+.B /lib/tiles/sprig16.chr
+the gardener, the pests and the thing on the stalk
+.TP
+.B /lib/tiles/sprig.map
+the garden
+.TP
+.B /lib/tiles/sprig.waves
+what comes, and how much of it
+.SH SOURCE
+.B /appl/cmd/games/sprig.b
+.SH SEE ALSO
+.IR procbench (1),
+.IR camber (1),
+.IR tiles (2)
+.PP
+.B /doc/games-plan.md
+says why this game is in the tree and what the others demonstrate.
+.SH BUGS
+.B -t
+checks that each pest's own process ran once per frame and moved its own
+pest, and it is a real check: doing the stepping in the driver instead
+fails it.
+It presses no key, so the tables that turn a key into an action are
+covered by nothing.
+.PP
+The pests do not notice each other, or you, or the ground until they hit
+it.
+A process per entity buys the shape of independence, and this game does
+not spend it on anything an array could not have done.
+.PP
+Nothing measures what the processes cost against the same game written
+as a loop: the comparison lives in
+.IR procbench (1),
+without a game around it, and has not been repeated here.

@@ -1,0 +1,25 @@
+; sprig(1): the art, as a script in tiles(2)'s command language.
+
+sheet garden /lib/tiles/sprig.chr
+sheet16 folk /lib/tiles/sprig16.chr
+font text
+
+palette psky    mid.azure   mid.azure   pale.grey    light.grey
+palette pstalk  mid.azure   dark.green  mid.green    light.lime
+palette pleaf   mid.azure   dark.green  mid.lime     light.lime
+palette pground mid.azure   dark.orange mid.orange   light.orange
+palette pplot   mid.azure   dark.green  mid.rose     pale.rose
+palette peaten  mid.azure   dark.grey   dark.grey    dark.grey
+palette pspray  mid.azure   pale.cyan   pale.cyan    light.cyan
+palette pyou    mid.azure   dark.black  mid.cyan     pale.rose
+palette pflit   mid.azure   dark.black  mid.yellow   light.orange
+palette pborer  mid.azure   dark.black  mid.violet   light.magenta
+palette pmenace mid.azure   dark.black  mid.green    light.lime
+palette phud    dark.black  pale.grey   pale.grey    pale.grey
+palette pwarn   dark.black  light.red   light.red    light.red
+palette pgood   dark.black  light.lime  light.lime   light.lime
+
+palette csky    mid.azure   mid.azure   mid.azure    mid.azure
+palette cpanel  dark.black  dark.black  dark.black   dark.black
+palette cbarlo  mid.cyan    mid.cyan    mid.cyan     mid.cyan
+palette cbarhi  light.red   light.red   light.red    light.red

@@ -41,6 +41,7 @@ Verified by running them, and by each one's own `-t` mode.
 | `spire(1)` | vertical climber with rooms off it | **the namespace**: a room is a *mount*. A door runs a program that serves four files over Styx, mounts it on `/n/room`, and reads and writes those files; leaving is an unmount, and the room's process ends with the connection |
 | `tandem(1)` | two players on one screen | **Styx across a machine boundary**: the game is a file server with no window, and every player — the local one included — is a client of it. A frame over the mount costs **1278 µs**, 8% of the 60 Hz budget |
 | `bout(1)` | a duel against a scripted opponent | **behaviour as a little language**: an opponent is a file of states and timed instructions, read at start-up. The game reads `/lib/bouts` and fights what it finds; `bout -c` checks a file and reports `file:line` like a compiler |
+| `sprig(1)` | fixed screen, defence upward, a meter that runs out | **one Dis process per entity**: every pest owns its state, takes the frame off a shared channel and moves itself. Cleared first by `procbench(1)`; a 16-pest wave costs **2 µs a frame** |
 
 Two things follow from that table. `orchard` is the only one that exposes itself
 as a filesystem. And until `camber`, nothing in it loaded its content from
@@ -129,7 +130,7 @@ a cursor drawn.
 
 ## What to build, in order, and why
 
-Each item names the Inferno axis it lands. An item that lands no axis the
+**All five are now built.** Each item names the Inferno axis it lands. An item that lands no axis the
 existing eight already land is not on this list, however good a game it would be.
 
 ### 1. `camber` — shape 3 — content as data, authored by a tool
@@ -272,13 +273,13 @@ because a bout begins out of reach, so standing still meant nothing landing at a
 
 ### 5. `sprig` — shape 1 — one process per entity
 
-**Measured; not yet written.** The measurement is `procbench(1)`.
+**Built.** See `sprig(1)`. The measurement that cleared it is `procbench(1)`.
 
-The obvious Inferno reading of "many small independent things descending at
-once" is one Dis process each, communicating over channels. That reading might
-have been wrong, since Dis execution in this emu is serialised rather than
-parallel, so the plan said to measure before writing 1200 lines on the strength
-of it. Measured, compiled, on an Apple M-series host:
+The obvious Inferno reading of "many small independent things descending at once"
+is one Dis process each, communicating over channels. That reading might have been
+wrong, since Dis execution in this emu is serialised rather than parallel, so the
+plan said to measure before writing a game on the strength of it. Measured,
+compiled, on an Apple M-series host:
 
 | | channel round trip | spawn |
 |---|---|---|
@@ -293,22 +294,25 @@ Microseconds per entity per frame, compiled:
 | 16 | 0.01 | 0.08 | 0.11 | 6.0× |
 | 256 | 0.01 | 0.20 | 0.34 | 15.2× |
 
-`pool` — every entity taking from one channel — is what a game would actually
-have, because `alt` cannot be written over an array of channels.
+`pool` — every entity taking from one channel — is what a game actually has,
+because `alt` cannot be written over an array of channels.
 
-**The answer is that the shape is affordable.** A process per entity costs four
-to sixteen times a loop per entity, and at the sizes these games run at that
-ratio is charged on a number too small to matter: 256 entities as processes come
-to about 54 µs a frame against 3 µs for the loop, out of the 16600 µs a sixtieth
-of a second allows. So `sprig` gets written as one process per entity, and the
-honest claim is that it reads well, not that it runs fast.
-
-What is not free is `spawn`, at 7 to 14 µs. Spawning per entity per frame would
-cost milliseconds; spawning once when a wave is created costs nothing worth
-counting. That is the one design constraint the measurement imposes.
+**The answer was that the shape is affordable.** Four to sixteen times a loop per
+entity, charged on a number too small to matter: 256 entities as processes come to
+about 54 µs a frame against 3 µs, out of the 16600 µs a sixtieth of a second
+allows. So `sprig` was written that way, and the honest claim for it is that it
+reads well, not that it runs fast. The one constraint the measurement imposed —
+never spawn per entity per frame, at 7 to 14 µs a go — is why pests are spawned
+once a wave. `sprig -b` reports the in-game cost, and a sixteen-pest wave is 2 µs
+a frame.
 
 (Spawning is *cheaper* interpreted than compiled, which is the opposite of
-everything else measured here. Not chased.)
+everything else measured. Not chased.)
+
+The claim is tested rather than asserted: each pest's process increments its own
+counter, and `-t` checks every counter equals the frame count and that the pests
+moved. Doing the stepping in the driver instead — which would leave every other
+assertion in the game passing — fails it.
 
 ### Not planned
 

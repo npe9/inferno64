@@ -84,7 +84,7 @@ notrun := array[] of {
 		"gpu(3) against the software path; slow, and wants a GPU"),
 	Test("fdstresstest", nil,
 		"the scheduler; hangs on failure, so it needs a timeout around it"),
-	# The eight games each carry a -t that drives their own step() with a
+	# The nine games each carry a -t that drives their own step() with a
 	# scripted pad and asserts on game state.  They cannot be loaded
 	# here: run() does `load Command`, and a game in appl/cmd/games
 	# implements a module of its own name, as the programs in appl/temple
@@ -105,6 +105,8 @@ notrun := array[] of {
 		"two players through a mount; tests/tandemnet.sh does it over TCP"),
 	Test("games/bout -t", nil,
 		"the duel's rules, and the little language its opponents are written in"),
+	Test("games/sprig -t", nil,
+		"the garden's rules, and that every pest really is its own process"),
 };
 
 Capture: con "/runtests.out";
