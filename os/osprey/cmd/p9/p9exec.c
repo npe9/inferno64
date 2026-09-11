@@ -55,6 +55,7 @@ extern int	p9dup(int fd);
 extern int	p9fd2path(int fd, char *buf, int nbuf);
 extern char	end[];		/* the personality's own image ends here */
 extern void	addbootfile(char *name, uchar *data, ulong len);
+extern void	p9legacyfile(void);	/* p9linuxfile.c: /boot/legacy, and only that one */
 extern int	p9pipe(int fd[2]);
 extern int	p9spawn(char *name, char **argv, int *std);
 extern int	p9waitpid(int pid, char *status, int nstatus);
@@ -103,6 +104,20 @@ p9execfile(void)
 	addbootfile("libdraw", libdrawprog, sizeof libdrawprog);
 	addbootfile("libthread", libthreadprog, sizeof libthreadprog);
 	addbootfile("reloc", relocprog, sizeof relocprog);
+	/*
+	 * And an ordinary Plan 9 binary.  Every other program here is linked
+	 * against p9crt.c and reaches this personality through the P9lib
+	 * table; this one is linked against libc and the generated
+	 * system-call stubs, and makes real system calls - it is the program
+	 * the buddy runs unmodified on the server side.  A library operating
+	 * system that can only run programs built for it is a library per
+	 * program, so this is the one that has to work.
+	 *
+	 * The bytes are p9linuxfile.c's, which is where every legacy binary
+	 * in this personality lives; including them here as well is a second
+	 * copy of a megabyte and the linker says so.
+	 */
+	p9legacyfile();
 }
 
 static uvlong
@@ -723,6 +738,41 @@ p9exec(char *name, char **argv)
  * address of its own, so the caller chooses, and the same module can be
  * laid at a second address while the first is still there.
  */
+int
+/*
+ * Run an ordinary Plan 9 binary: one linked against libc rather than
+ * against this personality, whose entry is libc's own _main(char **argv)
+ * and whose body makes real system calls.
+ *
+ * The difference from p9exec is only the shape of the call.  A program
+ * built for this personality is entered with the table, its argument
+ * vector and its descriptors, because that is how it reaches anything;
+ * this one is entered the way a kernel enters a program, with argv and
+ * nothing else, and reaches things by trapping.  Where those traps go is
+ * the question this is here to ask.
+ */
+int
+p9execlegacy(char *name, char **argv)
+{
+	uvlong entry, progbase;
+
+	if(p9load(name, &entry, &progbase) < 0)
+		return -1;
+	USED(progbase);
+	print("p9 legacy: entering %s at %#llux as an ordinary Plan 9 binary - "
+		"libc, no table, real system calls\n", name, entry);
+	p9execstatus = nil;
+	p9saveflow();
+	if(setjmp(p9execjmp) == 0)
+		((void(*)(char**))(uintptr)entry)(argv);
+	else
+		print("p9 legacy: %s exited with status \"%s\"\n",
+			name, p9execstatus == nil ? "" : p9execstatus);
+	p9restoreflow(name);
+	print("p9 legacy: %s returned; the personality is still here\n", name);
+	return 0;
+}
+
 int
 p9execreloc(char *name, char **argv, uvlong progbase)
 {

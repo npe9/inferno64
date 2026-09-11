@@ -999,6 +999,23 @@ p9main(void)
 		extern int p9inputloop(long ms);
 
 		std[0] = std[1] = std[2] = -1;
+		/*
+		 * Before rio, the question the whole arrangement turns on: an
+		 * ordinary Plan 9 binary, linked against libc and the
+		 * generated system-call stubs and against no personality at
+		 * all.  Everything else here is linked against p9crt.c, which
+		 * is a library per program; this one traps, and what answers
+		 * the traps is what says whether this is a library operating
+		 * system or a set of libraries.
+		 */
+		{
+			extern int p9execlegacy(char*, char**);
+			char *lav[2];
+
+			lav[0] = "/boot/legacy";
+			lav[1] = nil;
+			p9execlegacy("/boot/legacy", lav);
+		}
 		print("p9: /bin/rc is /boot/libsh, this tree's own small shell, and not rc: "
 			"rio asks for rc by name and there is none here\n");
 		print("p9: starting /boot/rio, the real 9front rio, linked against this personality\n");

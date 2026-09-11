@@ -11301,6 +11301,46 @@ When that works,
 is not needed to run a program, and the programs this document has been
 linking against it are the special case rather than the rule.
 .PP
+.B "3.3a: the question asked, and the address in the way."
+.CW /boot/legacy
+is the program to ask it with.  It is an ordinary Plan 9 binary \- libc,
+the generated system-call stubs, a body of ordinary
+.CW open ,
+.CW create ,
+.CW write ,
+.CW read ,
+.CW fstat ,
+.CW remove
+\- and it is the one the buddy runs unmodified on the server side.  It is
+a file of this personality now
+.CW ( p9legacyfile ),
+and
+.CW p9execlegacy
+enters it the way a kernel enters a program, with argv and nothing else,
+rather than the way this personality enters its own, with the table.
+.PP
+The loader refused it, and the refusal is the finding:
+.CW "/boot/legacy: it is linked at 0x200000, which is not a page boundary above my own image (0x10564f8)" .
+.PP
+An ordinary Plan 9 binary is linked at 0x200000, because that is where
+Plan 9 puts one.  This personality is linked at 0x200000, because that
+is where this linker puts a program.  They are the same address and
+there is one address space, so the one thing a library operating system
+must be able to do \- run the program, not a program built for it \- is
+the one thing this arrangement had made impossible, and nothing had
+noticed because every program so far was linked against
+.CW p9crt.c
+at an address chosen to miss the personality.
+.PP
+That is not a limit of the idea; it is a limit of where this personality
+put itself.  The library is supposed to get out of the way of the
+address the program was built for, which means linking the personality
+somewhere an ordinary binary is not: high, above everything, with the
+low addresses left for the programs.  The loader's own check \- it works
+the address out of the binary's entry and refuses one that would land on
+the personality \- is what caught this, and it is the check that will
+say when the move has worked.
+.PP
 .B "Phase 3.2: a real program, then rio, linked with the library."
 A real program \- a command, then a shell, then rio \- is linked with
 the personality library into one microkernel task and run by the exec of

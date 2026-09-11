@@ -25,6 +25,18 @@
 #include	"drawsrvprog.i"
 #include	"rioprog.i"
 
+/*
+ * Just the one, for a personality that is not the buddy.  The library-OS
+ * side wants /boot/legacy - an ordinary Plan 9 binary, linked against
+ * libc and against no personality - and none of the rest of these, which
+ * are the buddy's to lay out for containers.
+ */
+void
+p9legacyfile(void)
+{
+	addbootfile("legacy", legacyprog, sizeof legacyprog);
+}
+
 void
 p9linuxfile(void)
 {
