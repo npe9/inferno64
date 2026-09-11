@@ -220,6 +220,7 @@ danby-tdse danby-tdse
 danby-hydrogen danby-hydrogen
 danby-rabi danby-rabi
 danby-schrodinger danby-schrodinger
+danby-slits danby-slits
 danby-vanderpol danby-vanderpol
 danby-variationparameters danby-variationparameters
 danby-columnbuckling danby-columnbuckling
@@ -550,6 +551,7 @@ shadow shadow
 sieve math-misc
 sig man
 sleep sleep
+slitstest slitstest
 slice sh-string
 slider slider
 sort sort

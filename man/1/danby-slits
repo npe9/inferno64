@@ -1,0 +1,112 @@
+.TH DANBY-SLITS 1
+.SH NAME
+danby-slits \- the double slit, actually solved
+.SH SYNOPSIS
+.B danby/slits
+.br
+.B danby/slits -c
+.RB [ -one ]
+.RB [ -s
+.IR separation ]
+.RB [ -w
+.IR width ]
+.RB [ -v
+.IR height ]
+.SH MODEL
+.IR Danby-twoslit (1)
+draws the interference pattern from a formula: it assumes the answer's
+shape and fills in the numbers.  This solves the time-dependent
+Schrodinger equation on a grid and lets the pattern happen \(em one
+packet goes in, meets a wall with two gaps in it, and what comes out the
+far side is worked out rather than assumed.
+.PP
+Both are worth having.  The formula is exact and instant and says
+nothing about how the pattern arrives; this is approximate and slow and
+shows the wave going through BOTH slits at once, which is the part with
+no classical account and the part a formula cannot draw.
+.SH DESCRIPTION
+The equation is
+.BR /lib/danby/slits.pde ,
+read at startup, so it can be changed without a compiler.  See
+.IR pde (2)
+for the language.
+.SS The screen accumulates
+The strip on the right is the screen, and it adds up.  Each step
+contributes however much probability is passing that column at that
+moment, so the fringes build over the run the way a real pattern builds
+from arrivals \(em rather than appearing complete.
+.SS What to look for
+Press
+.B o
+and the second slit is blocked.  Everything else stays the same, and the
+pattern collapses to a single broad lobe sitting on the slit that is
+still open.  Press it again and the fringes come back.
+.PP
+That is the whole thing.  With both slits open the BRIGHTEST point on
+the screen is midway between them \(em directly behind the wall, where
+nothing came through at all.  Measured: the maximum sits at y = 9.60,
+which is the midpoint, and with one slit blocked it moves to y = 11.40,
+which is the open slit and where a classical particle would have gone.
+.SS Controls
+.B o
+blocks and unblocks a slit;
+.B s
+and
+.B S
+change their separation,
+.B w
+and
+.B W
+their width,
+.B v
+and
+.B V
+the height of the wall.  Any of them restarts, since all of them are in
+the equation or the initial condition.  Space pauses, r restarts, q
+quits.
+.SS Checking it without a display
+.B -c
+runs the problem, prints the accumulated screen profile as a bar chart
+and exits without opening anything.
+.B -one
+blocks a slit, and
+.BR -s ,
+.B -w
+and
+.B -v
+set the three numbers, so the comparison the program is for can be made
+where there is no display.
+.SH FILES
+.TP
+.B /lib/danby/slits.pde
+The equation.
+.SH SOURCE
+.B /appl/danby/slits.b
+.SH SEE ALSO
+.IR danby (1),
+.IR danby-twoslit (1),
+.IR danby-tdse (1),
+.IR slitstest (1),
+.IR pde (2)
+.SH BUGS
+A wall is only a wall if the packet cannot get through it.  The first
+version used a height of 30 against a packet energy of 18, and about
+three per cent tunnelled through EVERYWHERE along it; since the packet
+is broad, that leak was comparable to what came through the slits, and
+the pattern carried the packet's own shape rather than the slits'.  It
+looked like interference and was not.  The wall is 90 now, and the
+difference is visible in the one-slit case: two lobes at 30, one at 90.
+.PP
+The boundary is clamped, so anything reaching an edge comes back.  The
+run is sized so the interesting part happens first.
+.PP
+Blocking a slit moves it out of the domain rather than closing it.  The
+two slits are ADDED in the potential, so setting both to the same place
+gives 2 where they overlap, and 1\-2 is a well rather than a hole.
+.PP
+This is a wave in two dimensions and not a stream of particles.  It
+shows the pattern forming; it does not show anything arriving at a
+point, which is the other half of what makes the double slit strange.
+.PP
+At 240 by 192 a step costs about 90ms, so it runs at ten frames a
+second or so.  It is a simulation being watched, not an animation.

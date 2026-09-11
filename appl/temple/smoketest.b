@@ -119,7 +119,7 @@ dspecs := array[] of {
 # spinorbit) have no init(ctxt, argv) and are left out.
 dmods := array[] of {
 	"aerobraking", "boom", "chaosmap", "epidemic", "forcedpendulum",
-	"heartbeat", "lorenz", "orbital", "stability", "tdse", "vaccination"
+	"heartbeat", "lorenz", "orbital", "slits", "stability", "tdse", "vaccination"
 };
 
 init(ctxt: ref Context, argv: list of string)

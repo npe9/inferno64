@@ -952,6 +952,11 @@ Shoot Schrodinger's equation and hunt for an eigenvalue.
 See
 .IR danby-schrodinger (1).
 .TP
+.B danby/slits
+The double slit, actually solved.
+See
+.IR danby-slits (1).
+.TP
 .B danby/tdse
 A wave packet meeting a barrier, solved as it happens.
 See

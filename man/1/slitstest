@@ -1,0 +1,56 @@
+.TH SLITSTEST 1
+.SH NAME
+slitstest \- check that danby/slits really produces interference
+.SH SYNOPSIS
+.B slitstest
+.SH DESCRIPTION
+The claim
+.IR danby-slits (1)
+makes is not that a pattern appears.  Any hole in any wall gives a
+pattern.  The claim is INTERFERENCE: that what two slits give is not the
+sum of what each gives alone, and in particular that the brightest point
+on the screen is midway BETWEEN the slits, directly behind the wall,
+where nothing came through.
+.PP
+So the same problem is run twice, once with both slits open and once
+with one of them moved out of reach, and the two are compared.  It reads
+the same spec file the program runs.
+.SH "WHAT IT CHECKS"
+.TP
+.B With two slits, the maximum is at the midpoint
+Measured at y = 9.60 against a midpoint of 9.60.
+.TP
+.B Max, min, max
+A minimum either side of the central fringe and a secondary maximum
+beyond that.  A single broad lobe would pass a test that only looked for
+a central peak; this is what makes it a FRINGE.
+.TP
+.B The pattern is symmetric about the midpoint
+Because the slits are.
+.TP
+.B With one slit, the maximum moves onto that slit
+Measured at y = 11.40 against an open slit at 11.40.  This is the
+control, and it is the one that matters: without it every check above
+would pass on a model that produced a central blob for any reason
+whatever \(em including no wall at all, which puts the packet's own
+maximum at the midpoint.
+.TP
+.B The norm is conserved
+0.998 and 0.996 across the two runs.  The solver has to still be
+solving.
+.SH SOURCE
+.B /appl/cmd/slitstest.b
+.SH SEE ALSO
+.IR danby-slits (1),
+.IR tdsetest (1),
+.IR pde (2)
+.SH BUGS
+It takes a few minutes: two full two-dimensional runs of two hundred and
+forty steps each, and nothing about that is fast.
+.PP
+The fringe positions are not compared with a formula.  They could be \(em
+.IR danby-twoslit (1)
+has one \(em but the packet arrives over a spread of angles and
+distances, so the comparison would need a bracket wide enough to be
+worth little.  What is checked instead is the thing that distinguishes
+interference from diffraction, which is where the maximum IS.

@@ -28,6 +28,7 @@ TARG=\
 	propulsion.dis\
 	reaction.dis\
 	rotatinghoop.dis\
+	slits.dis\
 	spinorbit.dis\
 	stability.dis\
 	tdse.dis\

@@ -229,6 +229,7 @@ TARG=\
 	seq.dis\
 	sha1sum.dis\
 	sleep.dis\
+	slitstest.dis\
 	sort.dis\
 	src.dis\
 	stack.dis\
