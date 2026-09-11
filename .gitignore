@@ -482,3 +482,18 @@ __pycache__/
 
 # qemu test images, disks and boot logs
 /.qemu/
+
+# The two objtype letters the glob at the top of this file does not
+# cover: spim objects are .0 and 68020 objects are .2.  Every other
+# suffix a mkfile sets as O= is handled -- the glob takes 5 6 7 8 9 k o
+# q v, and .j, .t, .z and .obj have lines of their own.
+#
+# The fonts exception has to be restated after them, for the reason the
+# comment at the top gives about .8 and .9: 297 tracked subfonts end in
+# .0 and 244 in .2, named for their code page and not for a compiler
+# (fonts/lucida/Althebrew.10.0, fonts/lucida/latin1.5.2).  A later rule
+# wins in a gitignore, so without this the additions above would quietly
+# re-ignore them.
+*.0
+*.2
+!/fonts/**
