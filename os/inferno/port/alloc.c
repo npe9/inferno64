@@ -129,142 +129,6 @@ void (*poolfault)(void *, char *, uintptr) = _poolfault;
 						poolfault(dp, tag, pc);\
 				}
 
-/*
- * auditmemloc() answers "is this address live, free, or nowhere" but
- * not "who freed it" -- the open half of the alloc:D2B double-free
- * this hunt hardware-confirmed (heap.c's destroy() calling poolfree()
- * on a block already MAGIC_F).  A small ring of the last NFREEHIST
- * successful poolfree() calls, each with its caller's pc, answers
- * that directly: on the next alloc:D2B, if the bad address is in this
- * ring, the panic can name exactly who freed it the first time,
- * turning "somewhere frees this twice" into a specific call site
- * without having to catch the double-free in the act.  pc64-only,
- * temporary.  See doc/inferno-ports.ms.
- *
- * NFREEHIST was 32 -- every real alloc:D2B:destroy-entry capture so
- * far aged out of it before the panic that would have used it (3/3
- * captures, no "was freed before" line at all).  Bumped by two orders
- * of magnitude; each entry is address+pc (16 bytes on this port), so
- * 4096 entries is 64KiB, trivial next to this port's pool sizes.  See
- * doc/inferno-ports.ms.
- */
-enum { NFREEHIST = 4096 };
-static struct { void *addr; uintptr pc; int pid; char *mname; } freehist[NFREEHIST];
-static int freehistn;
-
-static void
-notefree(void *v, uintptr pc)
-{
-	int i;
-
-	/*
-	 * Bisection probe REMOVED: this used to print each distinct
-	 * poolfree() caller pc the first time it was seen, to settle
-	 * whether destroy() called poolfree() from more than one
-	 * compiled address. It already answered that question during
-	 * the pc64 hunt (doc/inferno-ports.ms) and was marked pc64-only,
-	 * temporary, remove-with-the-rest-of-this-ring even then.
-	 *
-	 * It should have been removed before any other board was built.
-	 * On riscv64/virt it instead caused a real, 100%-reproducible
-	 * permanent boot hang: the fifth distinct caller pc, discovered
-	 * mid-print during PCI device enumeration, never completed --
-	 * five independent boots hung at the identical byte offset in
-	 * the console output, and disabling just this loop (leaving the
-	 * freehist ring and currun() call below untouched) was sufficient
-	 * to restore a clean boot to a shell prompt, matching the
-	 * committed ivirt binary's own behaviour. Root cause of why THIS
-	 * print, from THIS call site, hangs riscv64 and not pc64 was not
-	 * chased further -- the probe had already served its purpose and
-	 * the fix is to remove it, not to make it portable. See
-	 * doc/inferno-ports.ms, "The pc64-only bisection probe hangs
-	 * riscv64/virt, deterministically".
-	 */
-
-	/*
-	 * Same Dis pid/module trick _poolfault() already uses (below) --
-	 * records which Dis process and module was current at the
-	 * moment of THIS free, so a later "was freed before" match can
-	 * compare it against whichever process/module is current at the
-	 * double-free, answering "same owner freeing its own stale
-	 * reference" vs "two different owners" directly (doc/inferno-
-	 * ports.ms, "Who freed it first, this time reliably"). pc64-
-	 * only, temporary.
-	 */
-	i = freehistn % NFREEHIST;
-	freehist[i].addr = v;
-	freehist[i].pc = pc;
-	{
-		Prog *xp;
-
-		xp = currun();
-		freehist[i].pid = xp != nil ? xp->pid : -1;
-		/*
-		 * THE dominant crash this hunt found: reading the PLAIN
-		 * GLOBAL R here (libinterp/xec.c's single, process-wide
-		 * interpreter register file) instead of xp->reg, currun()'s
-		 * own Prog's SAVED register file. A first fix gated the
-		 * global R.M read on "xp != nil" too, on the theory that a
-		 * live xp meant R was current for it -- rebuilt, reboot-
-		 * tested, and it kept crashing at the same site (now
-		 * notefree+292, same instruction shifted a few bytes): xp
-		 * was pid 2 module Sh (confirmed by the successful dumpregs()
-		 * print right before the crash, which already uses xp->reg.M
-		 * correctly), yet the global R.M was STILL dangling -- xp
-		 * being at the head of the run queue does not mean the
-		 * global R has been (re)loaded for it. pc64/trap.c's
-		 * dumpregs() never had this bug because it never touches
-		 * the global R at all; it reads xp->reg.M, the specific Prog's
-		 * own saved pointer, always valid for a live xp regardless
-		 * of whether R has been swapped in for it this instant. Use
-		 * the same source of truth here instead of trying to gate
-		 * the global. "notefree+270/+283" (the original global-R
-		 * bug, before the failed xp-gate attempt) accounted for 4416
-		 * of 765 post-fix boot logs' TYPE 0D captures -- the
-		 * dominant crash of the whole hunt. pc64-only, temporary.
-		 * See doc/inferno-ports.ms.
-		 */
-		/*
-		 * This tested M against nil and H and then dereferenced
-		 * M->m, which faulted here at notefree+0xb8: the bad value
-		 * is a non-canonical pointer on an otherwise intact Modlink,
-		 * so nil and H both say "fine".  modlinkmod() (dis.c) is the
-		 * check that matches the evidence; it returns the Module it
-		 * validated rather than a yes/no, so the pointer checked and
-		 * the pointer used are the same load.  modstatus() does the
-		 * same.
-		 */
-		{
-					Module *mod;
-
-			mod = (xp != nil) ? modlinkmod(xp->reg.M) : nil;
-			freehist[i].mname = (mod != nil) ? mod->name : nil;
-		}
-	}
-	freehistn++;
-}
-
-/*
- * Non-static so libinterp/xec.c's badptrslot() can also check the
- * ring, not just _poolfault()'s own call site -- the two genuine
- * "dv-freed" captures (doc/inferno-ports.ms, "Two genuine captures
- * with the corrected checker") want to know who freed the block
- * first, the same question this ring already answers for the native
- * pool allocator's own double-frees. pc64-only, temporary.
- */
-void
-printfreehist(void *v)
-{
-	int i, n;
-
-	n = freehistn < NFREEHIST ? freehistn : NFREEHIST;
-	for(i = 0; i < n; i++)
-		if(freehist[i].addr == v)
-			print("_poolfault: %#p was freed before, from pc=%#p pid %d module %s\n",
-				v, freehist[i].pc, freehist[i].pid,
-				freehist[i].mname != nil ? freehist[i].mname : "?");
-}
-
 int
 memusehigh(void)
 {
@@ -738,8 +602,6 @@ poolfree(Pool *p, void *v)
 	if((b->magic != MAGIC_A && b->magic != MAGIC_I) ||
 	   b->size <= 0 || (b->size & p->quanta))
 		poolfault(v, "poolfree:badhdr", getcallerpc(&p));
-
-	notefree(v, getcallerpc(&p));
 
 	ilock(&p->l);
 	p->nfree++;
@@ -1334,11 +1196,27 @@ poolsize(Pool *p, uintptr max, int contig)
 	else
 		p->ressize = max-RESERVED;
 	if (contig && max > 0) {
-		p->chunk = max-1024;
-		print("poolsize: poolalloc() contig chunk 0x%zx %zd\n", p->chunk, p->chunk);
+		/* what is left, not the whole pool.  The probe exists to
+		 * leave the pool holding one contiguous arena; asking for
+		 * max-1024 works only while nothing has been allocated
+		 * from the pool yet.  A machine whose loader hands over a
+		 * framebuffer -- every UEFI machine, so every cloud one --
+		 * has already drawn through imagmem in bootscreeninit by
+		 * the time this runs, so arenasize is a few megabytes and
+		 * the request cannot fit under maxsize: poolalloc() fails
+		 * and this panicked, on hardware that has the memory.
+		 */
+		if(max > p->arenasize + 1024)
+			p->chunk = max - p->arenasize - 1024;
+		else
+			p->chunk = 0;
+		print("poolsize: poolalloc() contig chunk 0x%zx %zd (arena 0x%zx)\n",
+			p->chunk, p->chunk, p->arenasize);
+		if(p->chunk == 0)
+			return;
 		x = poolalloc(p, p->chunk);
 		if(x == nil)
-			panic("poolsize: don't have %d bytes\n", p->chunk);
+			panic("poolsize: don't have %zd bytes\n", p->chunk);
 		print("poolsize: before poolfree()\n");
 		poolfree(p, x);
 		print("poolsize: after poolfree()\n");
@@ -1352,7 +1230,6 @@ _poolfault(void *v, char *msg, uintptr c)
 	Prog *xp;
 
 	auditmemloc(msg, v);
-	printfreehist(v);
 	/*
 	 * Same trick as pc64/trap.c's dumpregs() enhancement: name the
 	 * Dis Prog and module current when the allocator itself catches
@@ -1572,4 +1449,28 @@ secfree(void *p)
 		return;
 	memset(p, 0, msize(p));
 	free(p);
+}
+
+/*
+ * libinterp/xec.c asks this, when it finds a Dis value whose Bhdr magic
+ * is already gone, whether that address was freed before and by whom.
+ *
+ * multicore answers it from a ring of the last few thousand poolfree()
+ * calls.  That ring is not in this file: it was removed here because
+ * its per-caller-pc print hung riscv64/virt permanently and identically
+ * in five independent boots, mid-print during PCI enumeration, and the
+ * ring had already answered the question it was built for.  See the
+ * comment at D2BPC above and doc/inferno-ports.ms.
+ *
+ * So this says there is no record, rather than returning silently.  The
+ * caller is asking a yes/no question; saying nothing is indistinguishable
+ * from answering "no", which would be a wrong answer rather than a
+ * missing one.  emu/port/alloc.c's stub says the same thing for the same
+ * reason.
+ */
+void
+printfreehist(void *v)
+{
+	print("printfreehist: %#p: this kernel keeps no free history;"
+		" no record either way\n", v);
 }

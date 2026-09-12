@@ -118,7 +118,22 @@ mathnote(ulong status, uintptr pc)
 }
 
 /*
- *  math coprocessor error
+ *  math coprocessor error.  Save FPU state to check out the error.
+ *
+ * _clts() first, and only if there is a slot to save into.  fpsave()
+ * is _fxsave() followed by _stts(), so calling it with TS already set
+ * faults on its own first instruction -- a device-not-available trap
+ * reported at _fxsave+0x0.  That window is not hypothetical: fpusave()
+ * sets TS and leaves fpstate saying active, and os/inferno/port/dis.c
+ * holds every Dis program inside exactly that window, between
+ * fpusave() and fpurestore() around r->xec(r).
+ *
+ * os/9front/pc64/fpu.c, sitting in this tree, has the _clts() and also
+ * guards on the state and returns early for a trap from kernel mode;
+ * this copy had lost all three.  Only the two that cannot change the
+ * state machine are put back here -- the third would, and this design
+ * is not 9front's (that one has m->fpsave and up->kfpsave and no
+ * fpslot array at all), so there is nothing to copy it from.
  */
 static void
 matherror(Ureg *, void*)
@@ -159,7 +174,7 @@ matherror(Ureg *, void*)
 }
 
 /*
- *  SIMD error
+ *  SIMD error -- same as matherror above, with the same reasoning.
  */
 static void
 simderror(Ureg *ureg, void*)

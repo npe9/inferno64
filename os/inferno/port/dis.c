@@ -881,7 +881,7 @@ delprog(Prog *p, char *msg)
 		 * program running in it has been freed.
 		 *
 		 * delprog() releases and reacquires the interpreter while it
-		 * closes p's groups (see the comment above disracepid), and
+		 * closes p's groups while p is still reachable by pid, and
 		 * acquire()'s irestore() re-opens a quantum on a Prog that is
 		 * about to be destroyed.  Nothing afterwards closes it:
 		 * vmachine()'s handler cleared inxec before progexit() ran,

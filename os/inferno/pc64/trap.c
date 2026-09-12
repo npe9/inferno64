@@ -284,15 +284,29 @@ trap(Ureg *ureg)
 
 	user = kenter(ureg);
 	vno = ureg->type;
+
 	/*
-	 * #GP recovery for the three instructions that are allowed to
-	 * fault.  Carried from cloud-port (761f7bbb): rdmsr/wrmsr's
-	 * "returns -1 if it trapped" contract, which devarch.c depends
-	 * on, does not exist without this -- a #GP from either one is
-	 * otherwise a panic.  multicore has the _peekinst arm in
-	 * faultamd64() for the #PF case; this is the #GP case, and the
-	 * two are separate faults.  Found on GCE, where the kernel
-	 * probes MSRs that QEMU happens to implement.
+	 * Instructions this kernel executes knowing they may fault, and
+	 * whose callers are written to be told so rather than to die.
+	 *
+	 * rdmsr() and wrmsr() in l.s zero BP and carry the comment "BP
+	 * set to -1 if traped"; peek() is the fault-proof memcpy.  On
+	 * this board nothing ever set BP, because this recovery -- which
+	 * os/9front/pc/trap.c has and pc64's did not -- was never
+	 * carried across.  So the contract every "if(rdmsr(...) != -1)"
+	 * in os/inferno/pc/devarch.c is written against did not exist,
+	 * and a model-specific register the machine does not implement
+	 * was a panic rather than a -1.
+	 *
+	 * Found on the first boot on real hardware: a Compute Engine
+	 * e2-micro faulted in cpuidentify(), at _wrmsrinst, with
+	 * "general protection violation".  QEMU implements whatever
+	 * MSR this kernel asked for and Google's hypervisor does not,
+	 * which is the whole difference -- and it is the kind of
+	 * difference an emulator cannot show.
+	 *
+	 * RDMSR, WRMSR and REP MOVSB are two bytes each, so stepping
+	 * over one is pc += 2.
 	 */
 	if(vno == VectorGPF){
 		extern void _rdmsrinst(void);
