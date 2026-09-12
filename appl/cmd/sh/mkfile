@@ -7,6 +7,7 @@ TARG=sh.dis\
 	file2chan.dis\
 	mload.dis\
 	regex.dis\
+	stats.dis\
 	session.dis\
 	sexprs.dis\
 	std.dis\
@@ -36,6 +37,7 @@ INS=	$ROOT/dis/sh.dis\
 	$ROOT/dis/sh/mload.dis\
 	$ROOT/dis/sh/mpexpr.dis\
 	$ROOT/dis/sh/regex.dis\
+	$ROOT/dis/sh/stats.dis\
 	$ROOT/dis/sh/std.dis\
 	$ROOT/dis/sh/string.dis\
 #	$ROOT/dis/sh/tk.dis\

@@ -1,0 +1,242 @@
+.TH SH-STATS 1
+.SH NAME
+stats \- shell script interface to stats(2)
+.SH SYNOPSIS
+.B load stats
+
+.B id := ${stats new}
+.br
+.B stats
+.I id
+.B columns
+.I n
+.br
+.B stats
+.I id
+.B data
+.I value...
+.br
+.B stats
+.I id
+.B read
+.I file
+.br
+.B stats
+.I id
+.B linefit
+.I xcol ycol
+.br
+.B stats
+.I id
+.B polyfit
+.I xcol ycol degree
+.br
+.B stats
+.I id
+.B clear
+.br
+.B ${stats
+.I id
+.BR rows | cols | table
+.B }
+.br
+.B ${stats
+.I id
+.B column
+.I n
+.B }
+.br
+.B ${stats
+.I id
+.BR mean | median | total | variance | stddev | popvariance | popstddev | min | max
+.I col
+.B }
+.br
+.B ${stats
+.I id
+.B quantile
+.I col p
+.B }
+.br
+.B ${stats
+.I id
+.BR covariance | correlation
+.I col col
+.B }
+.br
+.B ${stats
+.I id
+.BR line | coefficients
+.B }
+.br
+.B ${stats
+.I id
+.B rsquared
+.I xcol ycol
+.B }
+.br
+.B ${stats
+.I id
+.B predict
+.I x
+.B }
+.br
+.B ${stats
+.I id
+.B ttest1
+.I col mean
+.B }
+.br
+.B ${stats
+.I id
+.B ttest2
+.I col col
+.B }
+.br
+.B ${stats
+.I id
+.B meanci
+.I col confidence
+.B }
+.br
+.B ${stats
+.I id
+.BR normalcdf | normalquantile
+.I x
+.B }
+.br
+.B ${stats
+.I id
+.BR tcdf | tquantile
+.I x df
+.B }
+.br
+.B stats del
+.I id...
+.SH DESCRIPTION
+.I Stats
+holds a table of numbers and gives
+.IR stats (2)'s
+summaries and fits of it from
+.IR sh (1).
+.PP
+The table is what makes this worth having.
+Say how many
+.B columns
+it has, then fill it with
+.B data
+or
+.BR read ,
+and everything afterwards names columns by number counting from 0 \- so
+.B stats
+.I id
+.B linefit 0 1
+fits the second column against the first.
+.PP
+.B Read
+takes whitespace-separated numbers however they are laid out: the rows
+are made by the column count and not by the newlines, so a file with one
+number to a line reads the same as one with a row to a line.
+.PP
+.B Column
+returns a whole column as a flat list and
+.B table
+the whole table, row after row \- which for a two-column table is
+exactly what
+.IR sh-plot (1)'s
+.B append
+wants for
+.I x
+and
+.IR y .
+.PP
+.B Line
+returns the slope, intercept,
+.IR r \u\s-22\s+2\d,
+the standard errors of the slope and the intercept, the residual
+standard deviation and the number of points.
+.B Coefficients
+returns a polynomial fit's, highest power first.
+.B Predict
+evaluates whichever fit was done last, and
+.B rsquared
+scores it against the data \-
+.B line
+carries that number for a straight line, but a polynomial fit has no
+such record and scoring it means evaluating it at every
+.I x
+and comparing.
+.PP
+.BR Ttest1 ,
+.B ttest2
+and the distributions return what
+.IR stats (2)
+returns:
+.B ttest1
+and
+.B ttest2
+give the statistic, the degrees of freedom and a two-sided
+.IR p ,
+and
+.B meanci
+gives the two ends of the interval.
+The distributions need no table.
+.SH EXAMPLE
+Anscombe's first data set, in a file of
+.I x y
+pairs:
+.IP
+.EX
+load std
+load stats
+d := ${stats new}
+stats $d columns 2
+stats $d read anscombe1
+echo ${stats $d mean 0}		# 9
+echo ${stats $d correlation 0 1}	# 0.8164
+stats $d linefit 0 1
+echo ${stats $d line}		# 0.50009 3.00009 0.66654 ...
+echo ${stats $d predict 10.0}	# 8.001
+stats del $d
+.EE
+.SH SOURCE
+.B /appl/cmd/sh/stats.b
+.SH SEE ALSO
+.IR sh (1),
+.IR sh-plot (1),
+.IR sh-circuit (1),
+.IR sh-control (1),
+.IR stats (2),
+.IR statstest (1)
+.SH DIAGNOSTICS
+A column number the table does not have, a count of values that is not a
+whole number of rows, a fit with more coefficients than points, a sample
+that does not vary: each fails the command, the last three with the
+message
+.IR stats (2)
+gives.
+.SH BUGS
+There is no test for this module in
+.BR /appl/cmd .
+.IR Stats (2)
+underneath it is checked by
+.IR statstest (1);
+what is added here is the table, the file reader and the column
+extraction, exercised by the example above and by
+.BR /lib/demo/fitlab.sh .
+.PP
+.B Read
+refuses a file containing a
+.BR # ,
+rather than half-supporting comments: the line endings are gone by the
+time the words are seen, so everything after a
+.B #
+would otherwise be read as a number.
+A file with headings or comments has to be stripped first.
+.PP
+The column count must be set before anything is put in the table and
+cannot be changed afterwards.
+.PP
+.B Multifit
+is not reachable from here, so a regression on several predictors needs
+a Limbo program.
