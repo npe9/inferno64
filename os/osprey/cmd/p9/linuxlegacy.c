@@ -75,6 +75,18 @@ num(char *p, long v)
 	return p;
 }
 
+/* the same in octal, for a mode */
+static char *
+onum(char *p, long v)
+{
+	char t[24];
+	int i = 0;
+	if(v < 0){ *p++ = '-'; v = -v; }
+	do { t[i++] = '0' + (v & 7); v >>= 3; } while(v);
+	while(i) *p++ = t[--i];
+	return p;
+}
+
 /*
  * The SIGSEGV handler and its restorer, as a libc supplies them: the
  * handler maps the page the fault named, so the retried store goes
@@ -259,6 +271,61 @@ lmain(void)
 	p = cat(line, "linux: close returned ");
 	p = num(p, r); *p++ = '\n'; *p = 0;
 	say(line);
+
+	{
+		/*
+		 * A real file, through the calls a Linux program built
+		 * against a libc actually makes.  open(2) compiles to
+		 * openat(AT_FDCWD, ...) in both glibc and musl, and a program
+		 * finds its way about a file with lseek and fstat.  The file
+		 * is the buddy's own store, which holds 46 bytes.
+		 */
+		enum { Atfdcwd = -100 };
+		static char st[144];		/* struct stat, x86-64 */
+		long ffd, m, sz, mode;
+
+		ffd = sys6(257, Atfdcwd, (long)"/n/hello", 0, 0, 0, 0);
+		p = cat(line, "linux: openat(AT_FDCWD, \"/n/hello\") returned fd ");
+		p = num(p, ffd); *p++ = '\n'; *p = 0;
+		say(line);
+
+		m = sys3(0, ffd, (long)buf, sizeof buf);
+		buf[m > 0 && m <= (long)sizeof buf - 1 ? m : 0] = 0;
+		p = cat(line, "linux: read ");
+		p = num(p, m); p = cat(p, " bytes of it: \"");
+		p = cat(p, buf);
+		p = cat(p, "\"\n"); *p = 0;
+		say(line);
+
+		r = sys3(8, ffd, 6, 0);		/* lseek(ffd, 6, SEEK_SET) */
+		m = sys3(0, ffd, (long)buf, 16);
+		buf[m > 0 && m <= 16 ? m : 0] = 0;
+		p = cat(line, "linux: lseek to 6 returned ");
+		p = num(p, r); p = cat(p, " and the 16 bytes there are \"");
+		p = cat(p, buf); p = cat(p, "\"\n"); *p = 0;
+		say(line);
+
+		r = sys3(5, ffd, (long)st, 0);	/* fstat(ffd, st) */
+		sz = *(long*)(st + 48);		/* st_size */
+		mode = *(int*)(st + 24);	/* st_mode */
+		p = cat(line, "linux: fstat returned ");
+		p = num(p, r); p = cat(p, ", st_size ");
+		p = num(p, sz); p = cat(p, ", st_mode 0");
+		p = onum(p, mode); *p++ = '\n'; *p = 0;
+		say(line);
+
+		sys3(3, ffd, 0, 0);
+
+		for(m = 0; m < 144; m++)
+			st[m] = 0;
+		r = sys3(4, (long)"/n", (long)st, 0);	/* stat("/n", st) */
+		mode = *(int*)(st + 24);
+		p = cat(line, "linux: stat(\"/n\") returned ");
+		p = num(p, r); p = cat(p, " and st_mode 0");
+		p = onum(p, mode);
+		p = cat(p, ", which has the directory bit\n"); *p = 0;
+		say(line);
+	}
 
 	{
 		/* the heap: brk, then memory that must be zero and must hold a write */

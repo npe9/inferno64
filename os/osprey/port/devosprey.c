@@ -3143,6 +3143,11 @@ static long ospreylegacyawait(Ospreyproc*, uintptr, int);
 long
 ospreybuddyforward(ulong scallnr, uintptr *a)
 {
+	int linuxstat = 0;	/* the answer is a 9P stat to be handed back as a Linux one */
+	enum {
+		Atfdcwd = -100,		/* openat's "relative to the working directory" */
+		Lstatroom = 512,	/* room asked of the buddy for a 9P stat message */
+	};
 	Ospreyproc *p;
 	uvlong *ab;
 	uchar *nd, *dd;
@@ -3187,14 +3192,47 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 		return ospreylegacyawait(p, a[0], (int)a[1]);
 
 	if(up->oslinux){
-		/* Linux system-call numbers to their Plan 9 equivalents; the
-		 * argument positions (descriptor, buffer, count) already line up. */
+		/* Linux system-call numbers to their Plan 9 equivalents; for
+		 * these five the argument positions (descriptor, buffer,
+		 * count) already line up. */
 		switch(scallnr){
 		case 0:  scallnr = Bread;  break;	/* read */
 		case 2:  scallnr = Bopen;  break;	/* open */
 		case 3:  scallnr = Bclose; break;	/* close */
 		case 8:  scallnr = Boseek; break;	/* lseek(fd, off, whence): the argument shape Plan 9's oseek has, not seek's, whose answer goes through a pointer Linux does not pass */
 		case 1:  scallnr = Bwrite; break;	/* write */
+		/*
+		 * And three whose arguments do not line up.  These are the
+		 * calls a Linux binary built against a libc actually makes:
+		 * open(2) compiles to openat(AT_FDCWD, ...) in both glibc and
+		 * musl, and a program finds its way about a file with stat.
+		 */
+		case 257:			/* openat(dirfd, path, flags, mode) */
+			/*
+			 * Only the two forms that mean what Plan 9's open
+			 * means: relative to the working directory, which is
+			 * what AT_FDCWD says, or an absolute path, for which
+			 * the descriptor is not consulted.  A path relative to
+			 * some other open directory is a name this buddy has
+			 * no way to resolve, and is refused rather than
+			 * answered as though the descriptor were not there.
+			 */
+			if((long)a[0] != Atfdcwd && ((char*)a[1])[0] != '/')
+				return -1;
+			a[0] = a[1];		/* path where Plan 9's open wants it */
+			a[1] = a[2];		/* and the flags after it */
+			scallnr = Bopen;
+			break;
+		case 4:				/* stat(path, statbuf) */
+			linuxstat = 1;
+			a[2] = Lstatroom;	/* room for the 9P message the buddy answers with */
+			scallnr = Bstat;
+			break;
+		case 5:				/* fstat(fd, statbuf) */
+			linuxstat = 1;
+			a[2] = Lstatroom;
+			scallnr = Bfstat;
+			break;
 		default: return -1;
 		}
 	}
@@ -3448,6 +3486,47 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 	if(status < 0)
 		return -1;
 
+	if(linuxstat && status > 0){
+		/*
+		 * A Linux stat.  The buddy answers with a 9P stat message,
+		 * which is not what the program's buffer is: x86-64 Linux
+		 * wants a 144-byte struct stat, and the two agree on almost
+		 * nothing.  Translate what a program actually reads - the
+		 * kind of the file, its permissions, its length - and leave
+		 * the rest zero rather than inventing it: this file system
+		 * has no inode numbers, no link counts and no device numbers
+		 * to report, and a made-up one would be worse than a zero.
+		 *
+		 * The 9P stat's fixed part: size[2] type[2] dev[4] qid[13]
+		 * mode[4] atime[4] mtime[4] length[8], so the mode is at 21
+		 * and the length at 33.
+		 */
+		enum {
+			Lstsize = 144,		/* sizeof(struct stat) on x86-64 */
+			Lstnlink = 16, Lstmode = 24, Lstsizeoff = 48,
+			Lstblksize = 56, Lstblocks = 64,
+			Lifdir = 040000, Lifreg = 0100000,
+		};
+		uchar *dst = (uchar*)a[1];
+		ulong p9mode, lmode;
+		vlong len;
+
+		validaddr((uintptr)dst, Lstsize, 1);
+		dd = ospreydata(p, Bdataoff, status);
+		if(dd == nil || status < 41)
+			return -1;
+		p9mode = GBIT32(dd+21);
+		len = (vlong)GBIT64(dd+33);
+		lmode = (p9mode & 0777) | ((p9mode & DMDIR) != 0 ? Lifdir : Lifreg);
+		for(i = 0; i < Lstsize; i++)
+			dst[i] = 0;
+		PBIT64(dst+Lstnlink, (uvlong)1);
+		PBIT32(dst+Lstmode, (ulong)lmode);
+		PBIT64(dst+Lstsizeoff, (uvlong)len);
+		PBIT64(dst+Lstblksize, (uvlong)4096);
+		PBIT64(dst+Lstblocks, (uvlong)((len + 511) / 512));
+		return 0;			/* Linux stat yields 0, not a byte count */
+	}
 	if((scallnr == Bread || scallnr == Bpread || scallnr == Bfstat || scallnr == Bstat || scallnr == Berrstr || scallnr == Bfd2path) && status > 0){
 		/* read/fstat/stat/fd2path return their bytes in a[1]; errstr in a[0] */
 		uchar *dst = (uchar*)(scallnr == Berrstr ? a[0] : a[1]);

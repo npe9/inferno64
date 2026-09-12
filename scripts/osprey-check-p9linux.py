@@ -38,8 +38,18 @@ def main():
                    env=dict(env, OSPREY_KERNEL=os.path.join(ROOT, 'os/osprey/pc64/9p9linux'), OSPREY_INI='ospreykey=this machine\'s secret'),
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     log = tempfile.mktemp(prefix='osprey-p9linux-', suffix='.log')
+    # A raw disk for the user-level virtio driver, as the p9buddy and p9pair
+    # checks give one.  With a SATA disk (-d, -S) p9blk finds no device
+    # exposed and returns silently, so the buddy mounts no store and there
+    # is no real file for the Linux program to open - only the root
+    # directory of a name space with nothing in it.
+    img = tempfile.mktemp(prefix='osprey-p9linux-blk-', suffix='.img')
+    d = bytearray(64 * 512)
+    stamp = b'osprey block device test image, sector 0 written by the host'
+    d[:len(stamp)] = stamp
+    open(img, 'wb').write(d)
     subprocess.run(['./scripts/osprey-console.py', '-q', '-p', '2', '-n', 'e1000',
-                    '-l', log, '-S', '-d', ROOT + '/.qemu/9front-root.qcow2',
+                    '-l', log, '--blk', img,
                     '-t', '150', '-u', 'the microkernel idles'],
                    env=env, capture_output=True, text=True)
     try: t = plain(open(log, errors='replace').read())
@@ -73,6 +83,25 @@ def main():
          re.search(r'linux: open\("/"\) returned fd \d+', t) is not None),
         ("its read() is forwarded and the buddy returns the file's bytes, copied back to the Linux buffer",
          m is not None and int(m.group(1)) > 0),
+        # The calls a Linux program built against a libc actually makes.
+        # open(2) compiles to openat(AT_FDCWD, ...) in glibc and in musl,
+        # and a program finds its way about a file with lseek and fstat.
+        # This buddy mapped five numbers - read, write, open, close, lseek
+        # - and refused everything else, so a binary from a toolchain
+        # rather than from this tree would have failed at its first open.
+        ("and the calls a real Linux binary makes, not only the five this had mapped: openat(AT_FDCWD, path) opens the buddy's own store, the read returns its bytes, and lseek moves within it",
+         re.search(r'linux: openat\(AT_FDCWD, "/n/hello"\) returned fd \d+', t) is not None
+         and 'linux: read 46 bytes of it: "hello from the log-structured store, version 1"' in t
+         and 'linux: lseek to 6 returned 6 and the 16 bytes there are "from the log-str"' in t),
+        # And stat, which is the one where the two worlds do not agree on
+        # anything: the buddy answers with a 9P stat message and x86-64
+        # Linux wants a 144-byte struct stat.  What a program reads out of
+        # one - the kind of the file, its permissions, its length - is
+        # translated; the rest is left zero rather than invented, because
+        # this file system has no inode numbers or link counts to report.
+        ("and stat, where the two ABIs agree on nothing: the buddy's 9P stat message is translated into an x86-64 struct stat, and the program reads its file's length and mode out of the fields Linux keeps them in - 46 bytes and a regular file for the store's own file, the directory bit for the directory holding it",
+         'linux: fstat returned 0, st_size 46, st_mode 0100666' in t
+         and 'linux: stat("/n") returned 0 and st_mode 040555, which has the directory bit' in t),
         ("brk grows a heap the kernel zero-fills on demand, and it holds what the program writes",
          'linux: brk grew the heap by 65536 bytes, zero-filled and holding what was written' in t),
         ("anonymous mmap gives a mapping the program writes at both ends, and munmap takes it back",

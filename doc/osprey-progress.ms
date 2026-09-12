@@ -6499,6 +6499,44 @@ each fails against the same kernel booted the old way.  The buddy could
 do all of it the whole time; what could not was the check.  It is worth
 saying which way round that was, because the log was four bug reports
 long and every one of them named the wrong thing.
+.PP
+The Linux buddy had the same disk and a narrower ABI, and both are
+widened here.  Its check booted the same SATA disk, so its program's
+only file was the root of a name space with nothing in it; it has the
+virtio disk now, and a store to open.  And the Linux side mapped five
+numbers \- read, write, open, close, lseek \- and refused every other,
+which is narrower than it sounds: a binary from a toolchain rather than
+from this tree would fail at its first open, because
+.CW open(2)
+compiles to
+.CW openat(AT_FDCWD, ...)
+in glibc and in musl alike.  Three more are mapped now, and they are the
+three whose arguments do not simply line up.
+.CW openat
+takes the path from the second slot rather than the first, and only in
+the two forms that mean what Plan 9's open means \- relative to the
+working directory, which is what
+.CW AT_FDCWD
+says, or an absolute path; a path relative to some other open directory
+is a name this buddy cannot resolve and is refused rather than answered
+as though the descriptor were not there.
+.CW stat
+and
+.CW fstat
+are the pair where the two worlds agree on nothing: the buddy answers
+with a 9P stat message and x86-64 Linux wants a 144-byte struct stat.
+What a program reads out of one is translated \- the kind of the file,
+its permissions, its length \- and the rest is left zero rather than
+invented, because this file system has no inode numbers, no link counts
+and no device numbers to report, and a made-up one is worse than a zero.
+The program opens the store's own file with
+.CW openat ,
+reads its 46 bytes, seeks six into it and reads what is there, and asks
+.CW fstat
+for its length and mode: 46 bytes and 0100666, a regular file, with
+0040555 for the directory holding it.  Run against the kernel from
+before the change all three return \-1.  The p9linux check is fifteen
+criteria.
 .NH 1
 Running real programs on the two personalities: a plan
 .PP
