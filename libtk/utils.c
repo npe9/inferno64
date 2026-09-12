@@ -44,6 +44,7 @@ static struct Cmd cmdmain[] =
 	"puts",		tkputs,
 	"radiobutton",	tkradiobutton,
 	"raise",	tkraise,
+	"render",	tkrendercmd,
 	"scale",	tkscale,
 	"scrollbar",	tkscrollbar,
 	"see",	tkseecmd,
@@ -93,6 +94,16 @@ TkSpace	tkspaces[] =
  * and scrollbar(9) draw their own chrome instead of going through
  * tkdrawrelief(), so they each have to ask.
  */
+/*
+ * Which drawing path a flat border takes: straight to draw() as it has
+ * done, or through a render-node tree.  Both must put down the same
+ * pixels, and a switch is the only way to check that - the same
+ * arrangement draw3d(2) uses, where a software provider and a device
+ * provider are compared against each other rather than each being
+ * trusted on its own.
+ */
+int tkviascene;
+
 int
 tkstyleflat(Tk *tk)
 {
@@ -1032,8 +1043,48 @@ tkdrawrelief(Image *i, Tk *tk, Point o, int color, int rlf)
 	 * style can be one line rather than a second set of shapes.
 	 */
 	if(tk->env->top != nil && tk->env->top->style == TkSflat) {
-		if(rlf != TKflat)
-			tkroundbox(i, tk, o, w + 2*bd, h + 2*bd, bd, d);
+		if(rlf == TKflat)
+			return;
+		if(tkviascene){
+			TkScene *sc;
+			TkEnv *pe;
+
+			pe = tk->env;
+			if(tk->parent != nil && tk->parent->env != nil)
+				pe = tk->parent->env;
+			sc = tkscenenew();
+			if(sc != nil){
+				ulong brgba;
+
+				/*
+				 * The SAME two-way choice the direct path makes
+				 * above: only the three background colours have
+				 * a precomputed dark shade in the table beside
+				 * them; for anything else the shade has to be
+				 * computed.  Using the table index for both
+				 * left some borders drawn in whatever colour
+				 * happened to sit two slots along, which for an
+				 * entry was the background - so the border
+				 * simply vanished, on 200 pixels, and only a
+				 * byte-for-byte comparison found it.
+				 */
+				if(color == TkCbackgnd || color == TkCselectbgnd
+				|| color == TkCactivebgnd)
+					brgba = e->colors[color+TkDarkshade];
+				else
+					brgba = tkrgbashade(e->colors[color], TkDarkshade);
+				tksceneborder(sc,
+					Rect(o.x, o.y, o.x + w + 2*bd, o.y + h + 2*bd),
+					tkspace(tk)->corner, bd,
+					brgba,
+					pe->colors[TkCbackgnd]);
+				tkscenerender(sc, e->top->ctxt, i);
+				tkscenefree(sc);
+				return;
+			}
+			/* no memory for a tree: draw it directly rather than not */
+		}
+		tkroundbox(i, tk, o, w + 2*bd, h + 2*bd, bd, d);
 		return;
 	}
 
@@ -1076,6 +1127,39 @@ tkdrawrelief(Image *i, Tk *tk, Point o, int color, int rlf)
  * The old look stays reachable, which is the point of having the switch
  * at all - the existing chisel is coherent and somebody chose it.
  */
+/*
+ * render ?direct|scene?
+ *
+ * Reports or sets which path a flat border takes.  It is a whole-process
+ * setting rather than per-toplevel because it exists to be compared
+ * against itself, not to be configured: a program has no reason to want
+ * one or the other, and a test has every reason to want both.
+ */
+char*
+tkrendercmd(TkTop *t, char *arg, char **ret)
+{
+	Tk *tk;
+	char buf[Tkmaxitem];
+
+	tkword(t, arg, buf, buf+sizeof(buf), nil);
+	if(buf[0] == '\0') {
+		if(ret != nil)
+			return tkvalue(ret, "%s", tkviascene ? "scene" : "direct");
+		return nil;
+	}
+	if(strcmp(buf, "scene") == 0)
+		tkviascene = 1;
+	else if(strcmp(buf, "direct") == 0)
+		tkviascene = 0;
+	else
+		return TkBadvl;
+	for(tk = t->root; tk != nil; tk = tk->siblings) {
+		tk->dirty = tkrect(tk, 1);
+		tkdirty(tk);
+	}
+	return tkupdate(t);
+}
+
 char*
 tkstylecmd(TkTop *t, char *arg, char **ret)
 {

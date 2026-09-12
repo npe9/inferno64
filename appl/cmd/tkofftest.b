@@ -293,6 +293,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	checkstyle();
 	checkstyleenv();
 	checkbevelhue();
+	checkscene();
 	checkcanvastag();
 	checkplaintitle();
 	checktheme();
@@ -850,6 +851,109 @@ checkstyleenv()
 		"and anything else leaves it classic (%s)", got[1]));
 }
 
+
+
+# libtk can draw a flat border two ways now: straight to draw(), or by
+# building a render-node tree and rendering that.  The node tree is the
+# first piece of a GTK4-shaped renderer (see libtk/scene.c), and the only
+# thing that makes it worth having yet is this check: the two paths must
+# put down the SAME PIXELS.
+#
+# Byte-for-byte, not "looks the same".  A node tree that is nearly right
+# is worse than no node tree, because every later backend gets to be
+# correct against it - and a difference of one pixel in a corner is
+# exactly what would survive a visual comparison and then be inherited.
+checkscene()
+{
+	if(tk->cmd(top0(), "render") == nil)
+		return;			# no render command in this libtk
+	blank();
+	top := offscreen();
+	if(top == nil)
+		return;
+	tk->cmd(top, "style flat");
+	# the three that actually have a border to draw
+	tk->cmd(top, "frame .f -width 90 -height 46 -borderwidth 2 -relief raised");
+	tk->cmd(top, "button .b -text {Cancel}");
+	tk->cmd(top, "entry .e -width 150");
+	tk->cmd(top, "pack .f -padx 6 -pady 6");
+	tk->cmd(top, "pack .b -padx 6 -pady 6");
+	tk->cmd(top, "pack .e -padx 6 -pady 6");
+	map(top);
+
+	# Prove each path was actually SELECTED before comparing.  Without
+	# this the check passed with 0 of 1890000 bytes differing while the
+	# render command did not exist at all - both snapshots were the same
+	# path, so of course they matched.  A comparison of a thing with
+	# itself is the easiest way for a test like this to be worthless.
+	tk->cmd(top, "render direct");
+	sel1 := tk->cmd(top, "render");
+	tk->cmd(top, "update");
+	a := snap();
+	tk->cmd(top, "render scene");
+	sel2 := tk->cmd(top, "render");
+	tk->cmd(top, "update");
+	b := snap();
+	tk->cmd(top, "render direct");
+	report(sel1 == "direct" && sel2 == "scene", sys->sprint(
+		"both drawing paths can be selected (%#q then %#q)", sel1, sel2));
+	if(sel1 != "direct" || sel2 != "scene")
+		return;		# comparing identical runs would say nothing
+
+	if(a == nil || b == nil){
+		report(0, "the offscreen pane reads back");
+		return;
+	}
+	diff := 0;
+	first := -1;
+	for(i := 0; i < len a; i++)
+		if(a[i] != b[i]){
+			diff++;
+			if(first < 0)
+				first = i;
+		}
+	if(diff != 0){
+		shown := 0;
+		for(j := 0; j < len a && shown < 6; j += 3)
+			if(a[j] != b[j] || a[j+1] != b[j+1] || a[j+2] != b[j+2]){
+				sys->print("     %d,%d direct #%.2X%.2X%.2X scene #%.2X%.2X%.2X\n",
+					(j/3)%W, (j/3)/W,
+					int a[j+2], int a[j+1], int a[j],
+					int b[j+2], int b[j+1], int b[j]);
+				shown++;
+			}
+	}
+	report(diff == 0, sys->sprint(
+		"a render-node tree draws a flat border identically to draw() (%d of %d bytes differ%s)",
+		diff, len a, at(first)));
+}
+
+# a toplevel to ask cheap questions of, made once
+scenetop: ref Tk->Toplevel;
+
+top0(): ref Tk->Toplevel
+{
+	if(scenetop == nil)
+		scenetop = tk->toplevel(disp, "");
+	return scenetop;
+}
+
+at(i: int): string
+{
+	if(i < 0)
+		return "";
+	return sys->sprint(", first at byte %d (pixel %d,%d)", i,
+		(i/3)%W, (i/3)/W);
+}
+
+# the whole offscreen pane, as bytes
+snap(): array of byte
+{
+	b := array[W*H*3] of byte;
+	if(off.readpixels(off.r, b) != len b)
+		return nil;
+	return b;
+}
 
 # A raised border is drawn in a LIGHTER and a DARKER shade of the colour
 # behind it, and for a long time it was drawn in teal instead - on a

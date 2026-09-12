@@ -1,0 +1,78 @@
+.TH RENDER 9
+.SH NAME
+render \- choose how a border reaches the page
+.SH SYNOPSIS
+\f5render\fP ?\f5direct\fP|\f5scene\fP?
+.SH DESCRIPTION
+.B Render
+sets which drawing path a flat border takes, and reports which is in
+force when asked with no argument.
+.TP
+\f5direct\fP
+Straight to
+.IR draw (2),
+as this toolkit has always done.
+This is the default.
+.TP
+\f5scene\fP
+By building a render-node tree and rendering that.
+.PP
+It exists to be compared against itself.
+A node tree is the first piece of a renderer shaped like GTK4's GSK \(em
+a retained description of a frame that something other than an immediate
+.I draw
+can consume \(em and the only thing that makes one worth having before a
+GPU backend exists is the ability to check that it draws the same pixels.
+The arrangement is the one
+.IR draw3d (2)
+already uses, where a software provider and a device provider are
+compared against each other by
+.IR sprite2dtest (1)
+rather than each being trusted alone.
+.PP
+So this is not a setting a program has any reason to change.
+It is a whole-process switch, not a property of a toplevel, because a
+test wants both and an application wants neither.
+.PP
+.IR Tkofftest (1)
+selects each in turn, reads back the offscreen pane, and requires the two
+to agree byte for byte.
+.SH SOURCE
+.B /libtk/scene.c
+.SH SEE ALSO
+.IR style (9),
+.IR tkofftest (1),
+.IR tkbench (1)
+.SH BUGS
+Only a flat border goes through it.
+Everything else \(em text, images, the classic two-tone bevel, and the
+chrome that
+.IR scale (9)
+and
+.IR scrollbar (9)
+draw for themselves \(em still draws directly, so a scene is at present a
+description of a small part of a frame rather than of a frame.
+.PP
+The tree is built and thrown away on every repaint, so none of the
+benefit of a RETAINED tree is realised: nothing is diffed, nothing is
+reused, and no animation is cheaper than it was.
+What exists is the vocabulary and a renderer for it.
+.PP
+.B TkNborder
+takes the colour that shows outside a rounded corner as an argument,
+which a real node tree would not need: the parent's own node would be
+drawn first and the border would go on top, so nothing would ever paint
+the corner.
+It is there because a widget fills its whole rectangle before its border
+is drawn, so the corner arrives already wrong.
+The repair is for a widget's background to become a
+.B TkNroundfill
+instead, and then the argument goes away.
+.PP
+Seven node types are declared and not implemented: texture, glyphs,
+linear gradient, shadow, clip, transform and opacity.
+They are written down so the numbering does not change later, and
+.I tkscenerender
+ignores them.
+The last three are the ones that make an animation cost nothing to
+rasterise, which is the whole point of the exercise and is not done.

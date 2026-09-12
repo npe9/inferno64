@@ -173,6 +173,9 @@ typedef struct TkImg TkImg;
 typedef struct TkPanelimage TkPanelimage;
 typedef struct TkWinfo TkWinfo;
 typedef struct TkSpace TkSpace;
+typedef struct TkNode TkNode;
+typedef struct TkNodeblk TkNodeblk;
+typedef struct TkScene TkScene;
 typedef struct TkCursor TkCursor;
 typedef struct TkGrid TkGrid;
 typedef struct TkGridbeam TkGridbeam;
@@ -460,6 +463,60 @@ struct TkSpace
 	int	corner;		/* corner radius, 0 for square */
 };
 
+/*
+ * Render nodes, after GTK4's GSK: a retained description of a frame that
+ * something other than an immediate draw() can consume.  See the head of
+ * libtk/scene.c for why, and for what the software renderer is FOR -
+ * it is the oracle a GPU backend gets to be correct against, not a
+ * stepping stone to one.
+ *
+ * A node carries VALUES and never a draw(2) Image.  An Image is a
+ * server-side resource belonging to one display; an rgba is a number,
+ * and a number is what a backend other than the software one can use.
+ */
+enum {
+	TkNgroup	= 0,
+	TkNcolour,		/* r filled with rgba */
+	TkNroundfill,		/* r filled, corners rounded by radius */
+	TkNborder,		/* rounded rectangle, stroked, width wide */
+
+	/*
+	 * Declared, not implemented.  This is the vocabulary a GPU backend
+	 * needs to express what a window contains, written down now so that
+	 * the node type is not renumbered later: a texture for an image or
+	 * a cached glyph run, a linear gradient, a shadow, and the three
+	 * that make animation cost nothing to rasterise - clip, transform
+	 * and opacity.  tkscenerender() ignores them and says so.
+	 */
+	TkNtexture,
+	TkNglyphs,
+	TkNlinear,
+	TkNshadow,
+	TkNclip,
+	TkNtransform,
+	TkNopacity
+};
+
+struct TkNode
+{
+	uchar		type;
+	uchar		hasout;		/* is `out' meaningful? */
+	short		radius;
+	short		width;
+	Rectangle	r;
+	ulong		rgba;
+	ulong		out;		/* what shows outside a rounded corner */
+	TkNode*		next;
+};
+
+struct TkScene
+{
+	TkNodeblk*	blk;		/* nodes, in blocks */
+	TkNode*		head;
+	TkNode*		tail;
+	int		n;
+};
+
 struct TkGeom
 {
 	int		x;
@@ -671,9 +728,18 @@ extern	char*	tkraise(TkTop*, char*, char**);
 extern	char*	tkscale(TkTop*, char*, char**);
 extern	char*	tkscrollbar(TkTop*, char*, char**);
 extern	char*	tkstylecmd(TkTop*, char*, char**);
+extern	char*	tkrendercmd(TkTop*, char*, char**);
+extern	int	tkviascene;
 extern	TkSpace	tkspaces[];
 extern	int	tkborderwidth(Tk*, int);
 extern	int	tkstyleflat(Tk*);
+extern	TkScene*	tkscenenew(void);
+extern	void		tkscenefree(TkScene*);
+extern	void		tkscenecolour(TkScene*, Rectangle, ulong);
+extern	void		tksceneroundfill(TkScene*, Rectangle, int, ulong);
+extern	void		tksceneborder(TkScene*, Rectangle, int, int, ulong, ulong);
+extern	int		tkscenerender(TkScene*, TkCtxt*, Image*);
+extern	int		tkscenecount(TkScene*);
 extern	TkSpace*	tkspace(Tk*);
 extern	char*	tksend(TkTop*, char*, char**);
 extern	char*	tktext(TkTop*, char*, char**);

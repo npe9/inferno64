@@ -24,6 +24,7 @@ pack pack
 panel panel
 radiobutton radiobutton
 raise raise
+render render
 scale scale
 scrollbar scrollbar
 see see

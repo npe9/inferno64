@@ -695,3 +695,73 @@ glyphs, and of colour fonts, which need more than the 8-bit coverage
 
 The first four are each a few days at most. The fifth is the one that
 would change what the system looks like to someone who has never used it.
+
+## 8. A GTK4-shaped renderer — begun
+
+Asked how modern systems do GPU-accelerated widgets, the answer is that
+almost none of them mean "the GPU draws the button". They mean a
+**retained node tree**, rasterisation that is often still CPU, and
+composition that is always GPU — with `transform`, `opacity`, `clip`,
+corner radius and shadow as *compositor properties*, so animating them
+never re-rasterises anything. Core Animation does this with a layer per
+view; GTK4/GSK does it with render nodes fed to a Vulkan or OpenGL
+renderer; Skia records display lists and rasterises in tiles.
+
+**Where this tree already sat.** CPU rasterisation into a softscreen,
+tile-damage upload into one Metal texture, GPU present. That *is* the
+Core Animation model — at one-layer-per-screen granularity rather than
+one-per-view. So the missing pieces are exactly: a retained display list,
+per-widget layers, a glyph atlas, and batching.
+
+**What is done: the node vocabulary and a software renderer**
+(`libtk/scene.c`, `render(9)`). Nodes carry *values* — a rectangle, a
+radius, an rgba — and never a `draw(2)` Image, because an Image is a
+server-side resource belonging to one display and a number is what
+another backend can consume. `tkdrawrelief`'s flat border can go either
+way, and `tkofftest(1)` requires the two to agree **byte for byte**.
+
+**The software renderer is the oracle, not a stepping stone.** Same
+arrangement as `draw3d(2)`, where a software and a device provider are
+compared rather than each trusted alone. It earned that immediately: the
+first version drew 200 pixels of border in the wrong colour, because
+`tkdrawrelief` picks its shade *two different ways* depending on whether
+the colour is one of the three backgrounds (a precomputed slot in the
+table) or anything else (a computed shade), and the node path used only
+the first. For an entry that landed on the background colour, so the
+border simply vanished. A visual comparison would have passed it, and
+every later backend would have inherited it.
+
+**A near-miss the test also caught about itself.** It first reported 0 of
+1,890,000 bytes differing while the `render` command *did not exist* —
+`cmdmain` in `libtk/utils.c` is binary-searched and must be sorted, and
+`render` had been inserted after `send`. Both snapshots were the same
+path, so of course they matched. The check now proves each path was
+actually selected before comparing, because a comparison of a thing with
+itself is the easiest way for a test like this to be worthless.
+
+**What this does NOT yet buy, stated plainly.** Nothing. The tree is
+built and thrown away every repaint, so no diffing, no reuse, and no
+animation is cheaper than before. `tkbench(1)` says a thirty-widget
+window is 400µs of drawing and 250µs of present — 4% of a frame — so
+there was never speed on the table here anyway.
+
+**The order the rest goes in, and why.**
+
+1. **Widget backgrounds become `TkNroundfill`.** This removes
+   `TkNborder`'s `out` argument, which only exists because a widget fills
+   its whole rectangle before its border is drawn so the corner arrives
+   already wrong. Until this is done a scene is not a correct description
+   of a frame, just a correct reproduction of one.
+2. **Text as `TkNglyphs`, with a glyph atlas.** The single biggest GPU
+   text technique, and this tree has the pieces — `chardraw` already
+   blends coverage masks — but the Metal sprite cache is explicit that it
+   is *"not a packed atlas — one Metal texture per distinct pair"*.
+3. **Whole-frame emission**, so a repaint produces one tree rather than
+   one per `tkdrawrelief` call. Prerequisite for batching.
+4. **A Metal backend.** Last, and only after 3: the measured hazard is
+   94% command-buffer overhead for small work, so a backend that issues a
+   draw call per node would be *slower* than the CPU, decisively. The
+   whole reason the real systems work is that they batch a frame into one
+   or two submissions.
+5. **`clip`, `transform`, `opacity`** — the three that make animation
+   free, and the actual prize.
