@@ -1,0 +1,221 @@
+.TH SH-CONTROL 1
+.SH NAME
+control \- shell script interface to control(2)'s transfer functions
+.SH SYNOPSIS
+.B load control
+
+.B id := ${control new}
+.br
+.B control
+.I id
+.BR num | den
+.I coefficient...
+.br
+.B control
+.I id
+.B pid
+.I kp ki kd taud
+.br
+.B control
+.I id
+.BR series | parallel
+.I id2
+.br
+.B control
+.I id
+.B feedback
+.I id2
+.RI [ sign ]
+.br
+.B control
+.I id
+.BR step | impulse
+.I dt n
+.br
+.B control
+.I id
+.B bode
+.I wlo whi n
+.br
+.B control
+.I id
+.B clear
+.br
+.B ${control
+.I id
+.BR num | den | text | order | dcgain | poles | zeros | stable | routh
+.B }
+.br
+.B ${control
+.I id
+.BR trace | names | rows | columns | margins | metrics
+.B }
+.br
+.B control del
+.I id...
+.SH DESCRIPTION
+.I Control
+makes
+.IR control (2)
+usable from
+.IR sh (1).
+.PP
+Coefficients go in
+.B highest
+.B power
+.BR first ,
+which is
+.IR control (2)'s
+order and the order a polynomial is written down in, so
+.B control
+.I id
+.B den 1 4 16
+is
+.IR s \u\s-22\s+2\d+4\fIs\fP+16.
+The transfer function is built the first time something needs it, so the
+numerator and denominator may be set in either order and there is no
+.B commit
+to remember.
+.PP
+.BR Series ,
+.B parallel
+and
+.B feedback
+combine this handle with another and replace this one's transfer
+function with the result;
+.B feedback
+defaults to \-1, the negative feedback a control loop is made of.
+.PP
+In the
+.B ${...}
+form,
+.B num
+and
+.B den
+return the coefficients instead of setting them, so one handle's
+transfer function can be copied into another:
+.IP
+.EX
+control $l num ${control $c num}
+control $l den ${control $c den}
+control $l series $p
+.EE
+.PP
+That is what combining systems in a script needs, since
+.B series
+and
+.B feedback
+replace a handle's transfer function in place.
+.SS Responses
+.BR Step ,
+.B impulse
+and
+.B bode
+each record a response, which
+.B trace
+then returns as one flat list \- the shape
+.IR sh-plot (1)'s
+.B append
+takes.
+.B Names
+gives the columns:
+.B t y
+for a response,
+.B w mag phase
+for a sweep.
+.PP
+.B Bode
+spaces its frequencies evenly in the
+.IR logarithm ,
+because that is how the plot is read and a linear sweep wastes nearly
+all its points at the top of the range.
+.SS Answers
+.B Poles
+and
+.B zeros
+return real and imaginary parts in pairs.
+.B Stable
+is 1 or 0;
+.B routh
+is the number of roots in the right half plane, arrived at without
+finding any of them.
+.PP
+.B Margins
+returns the gain margin, the frequency it occurs at, the phase margin
+.B in
+.B degrees
+and its frequency.
+A margin that does not exist comes back as the word
+.B none
+rather than a large number, because no gain margin at all is not the
+same as a big one \- an integrator's phase never reaches \-180 degrees.
+.PP
+.B Metrics
+describes the last step response:
+.BR settled ,
+then the final value, the 10-to-90 rise time, the peak, the time of the
+peak, the overshoot as a fraction, and the settling time.
+.PP
+.B Settled
+comes first because it says whether to believe the rest.
+Everything else is computed from the final value, and the final value is
+the average of the last tenth of the record \- so a run that stops
+before the response finishes reports a final value that is merely where
+the curve happened to be, and an overshoot measured against it.
+That is not a small error: a loop sampled for two thirds of one
+oscillation reported an overshoot of 0.037 where the answer was 0.139.
+When
+.B settled
+is 0, lengthen the run.
+.SH EXAMPLE
+A second-order system, and the loop every course opens with:
+.IP
+.EX
+load std
+load control
+g := ${control new}
+control $g num 16
+control $g den 1 4 16
+control $g step 0.005 1000
+echo ${control $g metrics}	# 1 (settled), then 0.1629 overshoot
+
+p := ${control new}
+control $p num 1
+control $p den 1 3 2 0
+echo ${control $p margins}	# 6 at 1.4142, 53.4 degrees
+control del $g $p
+.EE
+.SH SOURCE
+.B /appl/cmd/sh/control.b
+.SH SEE ALSO
+.IR sh (1),
+.IR sh-plot (1),
+.IR sh-circuit (1),
+.IR control (2),
+.IR controltest (1)
+.SH DIAGNOSTICS
+A numerator of higher degree than the denominator, a zero denominator,
+an impulse response that would contain a delta, a derivative term with
+no filter: each fails the command with the message
+.IR control (2)
+gives.
+.SH BUGS
+There is no test for this module in
+.BR /appl/cmd .
+.IR Control (2)
+underneath it is checked by
+.IR controltest (1),
+and what is added here \- handle bookkeeping, the logarithmic sweep and
+the flattening of the trace \- is exercised only by the example above
+and by
+.BR /lib/demo/pidlab.sh .
+.PP
+.B Metrics
+refuses to describe anything but a step response, so a caller who wants
+the rise time of an impulse response, or of a response computed some
+other way, cannot have it.
+.PP
+There is no root locus, for the same reason
+.IR control (2)
+has none: it is a sweep of the roots over gain, which the pieces here
+support, and the plotting is the substance of it.

@@ -21,6 +21,7 @@ TARG=sh.dis\
 	uq.dis\
 	verify.dis\
 	circuit.dis\
+	control.dis\
 	fem.dis\
 	gpu.dis\
 	synth.dis\
@@ -46,6 +47,7 @@ INS=	$ROOT/dis/sh.dis\
 	$ROOT/dis/sh/uq.dis\
 	$ROOT/dis/sh/verify.dis\
 	$ROOT/dis/sh/circuit.dis\
+	$ROOT/dis/sh/control.dis\
 	$ROOT/dis/sh/fem.dis\
 	$ROOT/dis/sh/gpu.dis\
 	$ROOT/dis/sh/synth.dis\

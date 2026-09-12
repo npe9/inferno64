@@ -100,6 +100,16 @@ Control: module
 
 	# What a course asks about a step response.
 	Metrics: adt {
+		# Whether the response had actually finished inside the record
+		# it was given.  Everything else here is computed from `final',
+		# and `final' is the average of the last tenth - so a run that
+		# stops before the response settles reports a final value that
+		# is merely where the curve happened to be, and an overshoot
+		# measured against it.  That is not a small error: a loop
+		# sampled for two thirds of one oscillation reported an
+		# overshoot of 0.037 where the answer was 0.139.  When this is
+		# zero, every other field is untrustworthy.
+		settled: int;
 		final:	real;
 		rise:	real;	# 10% to 90% of the final value
 		peak:	real;	# the largest value reached

@@ -329,6 +329,55 @@ responses()
 				z, worst, m.overshoot, os);
 	}
 
+	# WHETHER IT FINISHED.  Every number metrics() gives but one is
+	# computed from the final value, and the final value is the average
+	# of the last tenth of the record - so a run that stops before the
+	# response settles reports a final value that is merely where the
+	# curve happened to be.  This system oscillates with a period of
+	# about 6.5 s; sampled for 4 s it reports an overshoot of 0.037,
+	# and sampled for 40 s the same system reports 0.139.  The flag is
+	# what tells the two apart, and without it nothing here could.
+	slow := mk(array[] of {0.52, 2.03, 3.0},
+		array[] of {0.01, 1.03, 3.54, 4.03, 3.0});
+	if(slow != nil){
+		(ys, es) := ctl->stepresponse(slow, 0.002, 2000);
+		if(es != nil)
+			fail("slow step: " + es);
+		else {
+			ms := ctl->metrics(ys, 0.002);
+			if(ms.settled)
+				fail(sys->sprint("four seconds is two thirds of one oscillation "+
+					"of this loop and it claims to have settled, reporting a "+
+					"final value of %g and an overshoot of %g",
+					ms.final, ms.overshoot));
+		}
+		(yl, nil) := ctl->stepresponse(slow, 0.002, 20000);
+		ml := ctl->metrics(yl, 0.002);
+		if(!ml.settled)
+			fail("forty seconds is six oscillations and it has certainly settled");
+		else {
+			near("and then the final value is one", ml.final, 1.0, 1.0e-6);
+			near("and the overshoot is the real one", ml.overshoot, 0.1395, 1.0e-3);
+		}
+		# the short run's overshoot really is wrong, which is the whole
+		# reason the flag exists; if it were right the flag would be
+		# pointless
+		(ys2, nil) := ctl->stepresponse(slow, 0.002, 2000);
+		ms2 := ctl->metrics(ys2, 0.002);
+		if(math->fabs(ms2.overshoot - ml.overshoot) < 0.05)
+			fail("the short run's overshoot is meant to be badly wrong, and it "+
+				"agrees with the long run's, so this checks nothing");
+	}
+	# a well-damped system settles quickly and must say so
+	quick := mk(array[] of {1.0}, array[] of {1.0, 2.0, 1.0});
+	if(quick != nil){
+		(yq, nil) := ctl->stepresponse(quick, 0.01, 4000);
+		mq := ctl->metrics(yq, 0.01);
+		if(!mq.settled)
+			fail("a critically damped first-order-squared lag settles long "+
+				"before forty seconds");
+	}
+
 	# a first-order lag: the step response is 1-exp(-t/tau) and the
 	# impulse response is its derivative
 	tau := 0.4;
@@ -510,6 +559,62 @@ loops()
 		near(sys->sprint("parallel at s=%g", x),
 			ctl->polyeval(p.num, x)/ctl->polyeval(p.den, x), av+bv, 1.0e-12);
 	}
+	# A PD CONTROLLER, which is a PID with no integral term and was
+	# the case nothing here tested.  Building it over the common
+	# denominator s(taud s + 1) leaves a factor of s in the numerator
+	# too, and nothing downstream cancels it: the controller comes back
+	# with a pole at the origin, stable() calls every loop containing
+	# it unstable, and the step response is wrong.  Found by using the
+	# library rather than by testing it - lib/demo/pidlab.sh reported
+	# UNSTABLE for an ordinary PD loop.
+	(pd, epd) := ctl->pid(2.0, 0.0, 0.5, 0.01);
+	if(epd != nil)
+		fail("a PD controller is a normal thing to want: " + epd);
+	else {
+		(pre, nil, nil) := ctl->poles(pd);
+		for(t = 0; t < len pre; t++)
+			if(math->fabs(pre[t]) < 1.0e-9)
+				fail("a PD controller has no pole at the origin - it has no "+
+					"integral term - and one has been left there uncancelled");
+		near("a PD controller's DC gain is kp", pd.dcgain(), 2.0, 1.0e-12);
+		for(t = 0; t < 5; t++){
+			x := 0.3 + real t;
+			want := 2.0 + 0.5*x/(0.01*x + 1.0);
+			near(sys->sprint("pd at s=%g", x),
+				ctl->polyeval(pd.num, x)/ctl->polyeval(pd.den, x), want, 1.0e-10);
+		}
+		# and a loop closed round it is stable, which is the symptom
+		lp := ctl->series(pd, mk(array[] of {1.0}, array[] of {1.0, 3.0, 2.0}));
+		(cl, ecl) := ctl->feedback(lp, one, -1);
+		if(ecl != nil)
+			fail("closing a PD loop: " + ecl);
+		else {
+			(st, nil) := ctl->stable(cl);
+			if(!st)
+				fail("a PD controller on a stable plant, closed with unity "+
+					"feedback, is a stable loop, and it was called unstable");
+		}
+	}
+	# proportional only, and proportional-integral, which the general
+	# case also has to get right
+	(po, nil) := ctl->pid(3.0, 0.0, 0.0, 0.0);
+	if(po != nil){
+		near("a P controller is a constant", po.dcgain(), 3.0, 1.0e-14);
+		if(po.order() != 0)
+			fail("a P controller has no dynamics at all");
+	}
+	(pinteg, nil) := ctl->pid(2.0, 5.0, 0.0, 0.0);
+	if(pinteg != nil){
+		(pre2, nil, nil) := ctl->poles(pinteg);
+		found := 0;
+		for(t = 0; t < len pre2; t++)
+			if(math->fabs(pre2[t]) < 1.0e-12)
+				found = 1;
+		if(!found)
+			fail("a PI controller DOES have a pole at the origin - that is what "+
+				"the integral term is - and it is missing");
+	}
+
 	# a PID controller is what its parts say it is
 	(c, ep) := ctl->pid(2.0, 3.0, 0.5, 0.01);
 	if(ep != nil)

@@ -664,6 +664,32 @@ metrics(y: array of real, dt: real): ref Metrics
 	}
 	if(c > 0)
 		m.final = s/real c;
+	# and whether it had finished at all.  Compare the last tenth with
+	# the tenth before it: a response that is still moving - drifting
+	# up, or part way through an oscillation slower than the record -
+	# has two different averages, and every number below, computed
+	# against `final', is then measured from the wrong place.  Testing
+	# only that the last sample is near `final' would not catch it,
+	# since `final' is itself wrong in exactly the same way.
+	m.settled = 1;
+	if(n >= 20){
+		p0 := 0.0;
+		c0 := 0;
+		for(i = n - n/5 - 1; i < n - n/10 - 1; i++){
+			if(i < 0)
+				continue;
+			p0 += y[i];
+			c0++;
+		}
+		if(c0 > 0){
+			p0 /= real c0;
+			scale := math->fabs(m.final);
+			if(scale < 1.0e-12)
+				scale = 1.0;
+			if(math->fabs(m.final - p0) > 0.02*scale)
+				m.settled = 0;
+		}
+	}
 	m.peak = y[0];
 	m.peakt = 0.0;
 	for(i = 0; i < n; i++)
@@ -713,6 +739,18 @@ pid(kp, ki, kd, taud: real): (ref Tf, string)
 		# (kp s + ki)/s
 		return tf(array[] of {kp, ki}, array[] of {1.0, 0.0});
 	}
+	# With no integral term there is no 1/s, and the common
+	# denominator below would carry a factor of s in BOTH the
+	# numerator and the denominator - an uncancelled pole and zero at
+	# the origin.  Nothing downstream cancels them: poles() finds the
+	# pole, stable() calls the loop unstable because of it, and a PD
+	# controller - which is a perfectly ordinary thing to want - makes
+	# every loop it is put in report as unstable.  So the PD case is
+	# written out rather than reached through the general one:
+	#
+	#	kp + kd s/(taud s + 1) = ((kp taud + kd) s + kp)/(taud s + 1)
+	if(ki == 0.0)
+		return tf(array[] of {kp*taud + kd, kp}, array[] of {taud, 1.0});
 	# kp + ki/s + kd s/(taud s + 1), over the common denominator
 	# s(taud s + 1)
 	den := array[] of {taud, 1.0, 0.0};

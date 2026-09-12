@@ -120,6 +120,20 @@ number.
 reduces a step response to what a course asks about it: final value,
 10-to-90 rise time, peak and the time of it, overshoot as a fraction of
 the final value, and the last time the response was outside a 2% band.
+.PP
+It also reports whether the response
+.B settled
+inside the record it was given, and that field says whether to believe
+the others.
+All of them are computed from the final value, and the final value is
+the average of the last tenth \- so a run that stops early reports a
+final value that is merely where the curve happened to be, and an
+overshoot measured against it.
+The error is not small: a loop sampled for two thirds of one oscillation
+reports an overshoot of 0.037 where the answer is 0.139.
+It is detected by comparing the last tenth with the tenth before it,
+since testing the last sample against the final value would not catch it
+\- the final value is wrong in exactly the same way.
 .SS Controllers
 .B Pid
 builds
