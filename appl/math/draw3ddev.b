@@ -908,8 +908,11 @@ plot3(c: ref Context, v: Vector)
 		writemsg(c.dst.display, msg);
 		return;
 	}
-	(p, nil, ok) := project(c, v);
+	(p, ez, ok) := project(c, v);
 	if(!ok)
+		return;
+	# Depth-tested, as the 'h' message this falls back from is.
+	if(c.zenable && c.zstate != nil && !zwin(c.zstate, zdepth(-ez), p.x, p.y))
 		return;
 	c.dst.draw(Rect(p, p.add(Point(1, 1))), c.colour, nil, Point(0, 0));
 }

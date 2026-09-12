@@ -146,6 +146,15 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	# the transform-and-light entry points, so fillpoly3/fillpoly3g are
 	# projected in C and arrive as the 2-D fill instead.  Without it that
 	# queue has no caller a Limbo program can reach.
+	# Does a point behind a wall stay behind it?  devdraw's 'h' handler
+	# depth-tests plot3 and, until this was checked, neither Limbo
+	# provider did - so a port that looked right through Metal looked
+	# wrong on any host without it, which is the fallback every non-Metal
+	# host takes.
+	sys->print("\n%-12s %10s %10s\n", "provider", "in front", "behind");
+	plotz(Draw3d->PATH, "software");
+	plotz("/dis/math/draw3ddev.dis", "device");
+
 	kinds := array[] of {"fillpoly3g", "fillpoly3", "line3", "plot3", "sprite3"};
 	for(i = 0; i < len kinds; i++){
 		clipt(Draw3d->PATH, "software", kinds[i]);
@@ -520,6 +529,73 @@ insideout(r: Rect): (int, int)
 }
 
 # One white quad at a given lit, and the pixel in the middle of it.
+# A wall, then a grid of points in front of it and the same grid behind
+# it, counting the points that actually landed.  In front they must all
+# show; behind, none of them may.
+plotz(path, what: string)
+{
+	d3 := load Draw3d path;
+	if(d3 == nil)
+		return;
+	d3->init();
+	front := plotzone(d3, -1.2);
+	behind := plotzone(d3, -6.0);
+	sys->print("%-12s %10d %10d\n", what, front, behind);
+}
+
+plotzone(d3: Draw3d, pz: real): int
+{
+	img := win.image;
+	img.draw(img.r, d.black, nil, img.r.min);
+	img.flush(Draw->Flushnow);
+	c := d3->context(img);
+	d3->setzarea(c, img.r);
+	d3->setz(c, 1);
+	d3->viewport(c, img.r.min.x, img.r.min.y, img.r.max.x, img.r.max.y);
+	d3->mode(Draw3d->PROJ);
+	d3->identity();
+	d3->frustum(0.1, 0.1, 100.0);
+	d3->mode(Draw3d->MODEL);
+	d3->identity();
+	d3->clearz(c);
+	# the wall, in red, at z = -3
+	d3->setcolour(c, d.color(Draw->Red));
+	v := array[] of {
+		Draw3d->Vector(-0.9, -0.7, -3.0), Draw3d->Vector( 0.9, -0.7, -3.0),
+		Draw3d->Vector( 0.9,  0.7, -3.0), Draw3d->Vector(-0.9,  0.7, -3.0),
+	};
+	d3->fillpoly3(c, v, Draw3d->Vector(0.0, 0.0, 1.0), 1.0);
+	img.flush(Draw->Flushnow);
+	# and the points, in green, at pz - which is either nearer than the
+	# wall or further away than it
+	d3->setcolour(c, d.color(Draw->Green));
+	for(i := 0; i < 20; i++)
+		for(j := 0; j < 20; j++)
+			d3->plot3(c, Draw3d->Vector(
+				-0.5 + 1.0 * (real i) / 19.0,
+				-0.4 + 0.8 * (real j) / 19.0, pz));
+	img.flush(Draw->Flushnow);
+	return greenpix(img.r);
+}
+
+# Pixels that are more green than red: the points, not the wall.
+greenpix(r: Rect): int
+{
+	bpl := (r.dx() * d.image.depth + 7) / 8;
+	pxb := d.image.depth / 8;
+	buf := array[bpl] of byte;
+	n := 0;
+	for(y := r.min.y; y < r.max.y; y++){
+		if(d.image.readpixels(Rect((r.min.x, y), (r.max.x, y+1)), buf) != bpl)
+			return -1;
+		for(i := 0; i < r.dx(); i++)
+			if(buf[i*pxb+1] > byte 100 && buf[i*pxb+2] < byte 100
+			&& buf[i*pxb] < byte 100)
+				n++;
+	}
+	return n;
+}
+
 litpix(path: string, lit: real, colour: int): (int, int, int)
 {
 	d3 := load Draw3d path;

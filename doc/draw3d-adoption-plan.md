@@ -1113,21 +1113,40 @@ drew and the only way to see it was to photograph the screen. That is
 no longer true, and Phase 2b below now has a reproducer that is two
 commands and a number.
 
-### Phase 4 — close the z gap in the Limbo fallback
+### Phase 4 — close the z gap in the Limbo fallback — **done, 2026-09-12**
 
 The device depth-tests sprites, ellipses, lines and plots
-(`d3spritez`, `d3ellipsez`, `d3zpixel` in `emu/port/devdraw.c`). Neither
-Limbo provider does: `sprite3*`, `line3` and `plot3` project and blit and
-never touch `c.zstate`. That asymmetry is tolerable today only because no
-temple port calls those entry points — but it stops being tolerable the
-moment one does, because the fallback is what every non-Metal host and
-every `emu-g` run takes. A port that renders correctly on Metal and
-wrongly headless is worse than one that is slow both ways.
+(`d3spritez`, `d3ellipsez`, `d3zpixel` in `emu/port/devdraw.c`). This
+said neither Limbo provider does, and that `sprite3*`, `line3` and
+`plot3` all project and blit without touching `c.zstate`. Two thirds of
+that had already been closed by other work and nobody came back to say
+so: `line3` goes through `linez()` when `c.zenable`, and the sprites
+through `transformsprite`'s `zs`/`zv` arguments and `zwin()` — both in
+both providers.
 
-*Evidence:* a scene with a sprite behind a wall renders identically
-through `draw3d.dis`, through `draw3ddev.dis` with the protocol, and
-through `draw3ddev.dis` with the probe forced to fail. Negative control:
-disable the z test and confirm the sprite punches through.
+`plot3` was the one left, in both of them, and it is fixed. It now goes
+through the same `zwin()` the sprites use — bounds-checked, equal-wins,
+one depth per point — which is also what `devdraw`'s `'h'` handler does.
+
+*Evidence*, a wall at z=−3 and a 20 by 20 grid of points either in front
+of it or behind it, counting the points that landed:
+
+```
+provider       in front     behind
+software            400          0
+device             1600          0
+```
+
+400 is one pixel a point; the device draws a point as a square about a
+pixel and a half across, hence 1600. Negative control: take the test
+back out of `plot3` and the software row reads **400 behind** — every
+point straight through the wall — while the device stays at 0.
+
+The same change is in `draw3ddev.b`'s own software fallback by
+inspection only. That path runs when a server does not advertise
+`D3CapPlot`, which nothing in this tree does, so it is not exercised
+here; it is written to match `draw3d.b` line for line rather than left
+different.
 
 ### Phase 5 — a batch entry point
 

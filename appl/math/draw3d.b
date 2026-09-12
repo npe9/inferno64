@@ -660,8 +660,16 @@ linez(c: ref Context, pa, pb: Point, thick: int, eza, ezb: real)
 
 plot3(c: ref Context, v: Vector)
 {
-	(p, nil, ok) := project(c, v);
+	(p, ez, ok) := project(c, v);
 	if(!ok || c.dst == nil || c.colour == nil)
+		return;
+	# Depth-tested, like line3 and the sprites here already are, and like
+	# devdraw's own 'h' handler.  It was the one primitive in this file
+	# that projected and blitted without consulting the z buffer, so a
+	# point behind a wall appeared in front of it - and the fallback is
+	# what every non-Metal host takes, so a port that looked right on the
+	# GPU looked wrong headless.
+	if(c.zenable && c.zstate != nil && !zwin(c.zstate, zdepth(-ez), p.x, p.y))
 		return;
 	c.dst.draw(Rect(p, p.add(Point(1, 1))), c.colour, nil, Point(0, 0));
 }
