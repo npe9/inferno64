@@ -293,6 +293,7 @@ sh-control sh-control
 sh-signal sh-signal
 sh-stats sh-stats
 signaltest signaltest
+sleeptest sleeptest
 statstest statstest
 tdsetest tdsetest
 date wm-misc

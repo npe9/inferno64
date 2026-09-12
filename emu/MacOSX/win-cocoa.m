@@ -159,6 +159,27 @@ static uvlong	metal_fill_calls;	/* gpudrawfillpoly successes: the 2-D queue, CPU
 static uvlong	metal_blank_uploads;	/* full uploads of a screen of one colour */
 static int	metal_countblank = -1;	/* gated on INFERNO_METAL_STATS, read once */
 static uvlong	metal_torn_uploads;	/* presented uploads whose live bytes != the snapshot */
+/*
+ * Does each frame the program finishes get shown exactly once?  soft_seq
+ * counts frames flushed by the program; present records how many have
+ * arrived since the last one it showed.  0 means the display repeated a
+ * frame, 2 or more means it skipped one - both are visible as judder and
+ * neither shows up in an average present interval.
+ */
+static uvlong	metal_rbwait_us;	/* interpreter time blocked on the readback's GPU round trip */
+static uvlong	soft_seq;
+static uvlong	presented_seq;
+static uvlong	present_dup, present_once, present_skip2, present_skip3;
+/* Interval between presents.  A 1:1 frame count is still choppy if the
+ * gaps alternate 8ms and 25ms, and an average cannot tell the two apart. */
+static vlong	present_last_us;
+static int	present_gap[256];
+static int	npresent_gap;
+/* And the same for the program's own frames, to say which end the
+ * irregularity starts at. */
+static vlong	flush_last_us;
+static int	flush_gap[256];
+static int	nflush_gap;
 static int	mtl_materialising;	/* inside flush/readback: live bytes are the point */
 static id<MTLTexture>	mtl_rbtex;	/* readback target, kept like the others */
 static int	mtl_rbtex_w, mtl_rbtex_h;
@@ -4306,7 +4327,11 @@ metal_readback_geom(void)
 	if(soft != nil)
 		metal_overlay_soft(cmd, tex, soft, under, metal_nearest_samp());
 	[cmd commit];
-	[cmd waitUntilCompleted];
+	{
+		vlong t0rb = osusectime();
+		[cmd waitUntilCompleted];
+		metal_rbwait_us += osusectime() - t0rb;
+	}
 	p = byteaddr(gscreen, gscreen->r.min);
 	bpl = gscreen->width * sizeof(u32);
 	region = MTLRegionMake2D(0, 0, pw, ph);
@@ -4403,10 +4428,25 @@ present_softscreen(void)
 {
 	vlong t0;
 
+	uvlong d;
+
 	t0 = osusectime();
 	present_softscreen_body();
 	metal_present_us += osusectime() - t0;
 	metal_presents++;
+	if(present_last_us != 0 && npresent_gap < nelem(present_gap))
+		present_gap[npresent_gap++] = (int)(t0 - present_last_us);
+	present_last_us = t0;
+	d = soft_seq - presented_seq;
+	presented_seq = soft_seq;
+	if(d == 0)
+		present_dup++;
+	else if(d == 1)
+		present_once++;
+	else if(d == 2)
+		present_skip2++;
+	else
+		present_skip3++;
 }
 
 static void
@@ -4570,6 +4610,41 @@ present_softscreen_body(void)
 		metal_fill_calls = 0;
 		metal_blank_uploads = 0;
 		metal_torn_uploads = metal_torn_pixels = 0;
+		{
+			int gi, gj, gt, gn;
+
+			gn = npresent_gap;
+			for(gi = 1; gi < gn; gi++){	/* small n, insertion sort */
+				gt = present_gap[gi];
+				for(gj = gi; gj > 0 && present_gap[gj-1] > gt; gj--)
+					present_gap[gj] = present_gap[gj-1];
+				present_gap[gj] = gt;
+			}
+			for(gi = 1; gi < nflush_gap; gi++){
+				gt = flush_gap[gi];
+				for(gj = gi; gj > 0 && flush_gap[gj-1] > gt; gj--)
+					flush_gap[gj] = flush_gap[gj-1];
+				flush_gap[gj] = gt;
+			}
+			fprint(2, "METALFRAMEGAP n=%d min %d median %d p90 %d max %d us\n",
+				nflush_gap,
+				nflush_gap ? flush_gap[0] : 0,
+				nflush_gap ? flush_gap[nflush_gap/2] : 0,
+				nflush_gap ? flush_gap[(nflush_gap*9)/10] : 0,
+				nflush_gap ? flush_gap[nflush_gap-1] : 0);
+			nflush_gap = 0;
+			fprint(2, "METALCADENCE frames=%llud presents=%llud repeated=%llud once=%llud skipped1=%llud skipped2+=%llud rbwait=%llud us | gap min %d median %d p90 %d max %d us\n",
+				soft_seq, metal_presents, present_dup, present_once,
+				present_skip2, present_skip3,
+				metal_readbacks ? metal_rbwait_us/metal_readbacks : 0,
+				gn ? present_gap[0] : 0,
+				gn ? present_gap[gn/2] : 0,
+				gn ? present_gap[(gn*9)/10] : 0,
+				gn ? present_gap[gn-1] : 0);
+			npresent_gap = 0;
+		}
+		metal_rbwait_us = 0;
+		present_dup = present_once = present_skip2 = present_skip3 = 0;
 		metal_soft_fallbacks = 0;
 		metal_stat_frames = 0;
 		metal_damage_calls = metal_damage_bytes = 0;
@@ -5736,6 +5811,13 @@ flushmemscreen(Rectangle r)
 			metal_mark_tiles(scr, r, 1, 0);
 			unlock(&soft_dirty_lock);
 		}
+	}
+	soft_seq++;
+	{
+		vlong tf = osusectime();
+		if(flush_last_us != 0 && nflush_gap < nelem(flush_gap))
+			flush_gap[nflush_gap++] = (int)(tf - flush_last_us);
+		flush_last_us = tf;
 	}
 	/* Coalesce onto one AppKit/Metal present. */
 	mark_view_dirty();

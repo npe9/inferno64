@@ -23,6 +23,12 @@
 #define NSIG 32
 #endif
 #include	<signal.h>
+/* Narrow, deliberately: <mach/mach.h> declares a panic() that collides
+ * with Inferno's own. */
+#include	<mach/mach_init.h>
+#include	<mach/thread_act.h>
+#include	<mach/thread_policy.h>
+#include	<mach/mach_time.h>
 #include	<execinfo.h>
 #include	<pwd.h>
 #include	<sys/resource.h>
@@ -277,11 +283,66 @@ setsigs(void)
 
 
 
+/*
+ * Ask the kernel not to coalesce this thread's timers.
+ *
+ * macOS batches timer wakeups to save power, on an 8ms quantum, and does
+ * it to every thread that has not said otherwise.  Measured on this
+ * machine, nanosleep(16ms) two hundred times: without this the answer is
+ * never 16 and never 24 but one or the other - min 16.0ms, p90 24.0ms,
+ * median 21.9ms, worst 43ms.  A frame clock asking for 60Hz therefore
+ * gets a period that alternates between 16 and 24 milliseconds, which is
+ * not slowness - the frame is drawn in two - but unevenness, and uneven
+ * is exactly what an animation looks wrong for.  With zero slack asked
+ * for it is min 16.0, median 17.9, p90 18.0, worst 20.9.
+ *
+ * This is the polite request, not a reservation: it asks for no slack
+ * rather than for guaranteed CPU, so it cannot starve anything, and it is
+ * therefore unconditional.
+ *
+ * INFERNO_RT_FRAMES asks for the stronger THREAD_TIME_CONSTRAINT_POLICY
+ * as well, which on the same test gives a median of 16.012ms and a worst
+ * case of 16.043 - a frame clock that actually keeps time.  That one IS a
+ * real-time reservation, so it is behind a switch rather than handed to
+ * every Dis thread unasked: the numbers are 2ms of computation in each
+ * 16.667ms period with a 4ms constraint, preemptible, which is what a
+ * 60Hz frame that takes about 2ms to draw actually needs.
+ */
+static void
+osnotimerslack(void)
+{
+	thread_latency_qos_policy_data_t lat;
+	thread_time_constraint_policy_data_t tc;
+	static int rt = -1;
+	static double n2a;
+
+	lat.thread_latency_qos_tier = 0;
+	thread_policy_set(mach_thread_self(), THREAD_LATENCY_QOS_POLICY,
+		(thread_policy_t)&lat, THREAD_LATENCY_QOS_POLICY_COUNT);
+	if(rt < 0){
+		mach_timebase_info_data_t tb;
+
+		mach_timebase_info(&tb);
+		n2a = (double)tb.denom / (double)tb.numer;
+		rt = getenv("INFERNO_RT_FRAMES") != nil;
+	}
+	if(rt <= 0)
+		return;
+	tc.period = (uint32_t)(16666667.0 * n2a);
+	tc.computation = (uint32_t)(2000000.0 * n2a);
+	tc.constraint = (uint32_t)(4000000.0 * n2a);
+	tc.preemptible = 1;
+	thread_policy_set(mach_thread_self(), THREAD_TIME_CONSTRAINT_POLICY,
+		(thread_policy_t)&tc, THREAD_TIME_CONSTRAINT_POLICY_COUNT);
+}
+
 void *
 tramp(void *arg)
 {
 	Proc *p = arg;
 	Sem *sem;
+
+	osnotimerslack();
 
 	/*
 	 * Record the real pthread_t.  Proc.sigid is a 32-bit int (portable
