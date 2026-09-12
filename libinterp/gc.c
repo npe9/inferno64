@@ -511,8 +511,8 @@ rootset(Prog *root)
 					t = sx->reg.TR;
 				}
 				{	/* INSTRUMENTATION - temporary */
-					extern void dumpstack(void);
 					extern uchar etext[];
+					static int badtold;
 
 					/*
 					 * The two failures in ninety-six boots
@@ -546,15 +546,27 @@ rootset(Prog *root)
 					|| (uintptr)t < 0x100000
 					|| (uintptr)t->mark < 0x200000
 					|| (uintptr)t->mark >= (uintptr)etext){
-						print("rootset: bad frame type"
-							" t %#p mark %#p size %d"
-							" f %#p f->t %#p TR %#p"
-							" pid %d\n",
-							t, t->mark, t->size, f,
-							f->t, sx->reg.TR,
-							root->pid);
-						dumpstack();
-						abort();
+						if(badtold++ == 0)
+							print("rootset: bad frame"
+								" type t %#p mark %#p"
+								" size %d f %#p"
+								" f->t %#p TR %#p"
+								" pid %d\n",
+								t, t->mark,
+								t->size, f, f->t,
+								sx->reg.TR,
+								root->pid);
+						/*
+						 * Report and stop walking this
+						 * extent rather than abort.
+						 * Aborting here pre-empted the
+						 * tile report below on the same
+						 * boot -- the two could never
+						 * both be seen, which is why
+						 * "do not tile" read 0 of 40
+						 * while a bad frame read 1.
+						 */
+						break;
 					}
 				}
 				fp += t->size;
@@ -579,10 +591,118 @@ rootset(Prog *root)
 				 * skipped and an object only it refers to can be
 				 * swept.  Said once.
 				 */
-				if(told++ == 0)
-					print("rootset: frames do not tile"
-						" %#p..%#p, stopped %#p, pid %d\n",
-						sx->reg.tos.fu, sp, fp, root->pid);
+				if(told++ == 0){
+					uchar *q;
+					Type *qt;
+					int n;
+
+					/*
+					 * Which frame overstepped, and where
+					 * its type came from.  f->t is set by
+					 * OP(frame) and counted by framerefs;
+					 * a type reached through sx->reg.TR
+					 * is never counted, so if the
+					 * oversized frame is a TR one then
+					 * reference counting was never going
+					 * to protect it -- which would
+					 * explain why completing framerefs
+					 * changed nothing.
+					 */
+					for(q = sx->reg.tos.fu, n = 0;
+					    q < sp && n < 4096; n++){
+						qt = ((Frame*)q)->t;
+						if(qt == nil)
+							qt = sx->reg.TR;
+						if(qt == nil
+						|| ((uintptr)qt & 7) != 0
+						|| (uintptr)qt < 0x100000
+						|| qt->size <= 0){
+							/*
+							 * A zero size does not
+							 * overstep, it fails to
+							 * step at all -- fp +=
+							 * 0 never advances, so
+							 * neither the old loop
+							 * nor the bounded one
+							 * terminates.  The
+							 * first version of this
+							 * pre-walk had the same
+							 * bug and reported
+							 * nothing.
+							 */
+							print("rootset: frame %d"
+								" of %#p..%#p at %#p"
+								" has type %#p"
+								" size %d from %s,"
+								" pid %d\n",
+								n,
+								sx->reg.tos.fu, sp,
+								q, qt,
+								qt ? qt->size : -1,
+								((Frame*)q)->t
+								  ? "f->t"
+								  : "reg.TR",
+								root->pid);
+							break;
+						}
+						if(q + qt->size > sp){
+							print("rootset: frame %d"
+								" of %#p..%#p"
+								" at %#p steps"
+								" %d to %#p;"
+								" type %#p from"
+								" %s, pid %d\n",
+								n,
+								sx->reg.tos.fu,
+								sp, q, qt->size,
+								q + qt->size,
+								qt,
+								((Frame*)q)->t
+								  ? "f->t"
+								  : "reg.TR",
+								root->pid);
+							break;
+						}
+						q += qt->size;
+					}
+					{
+						int ci;
+
+						/*
+						 * Where did the bound come
+						 * from?  sp is rr->SP, and rr
+						 * is progreg(root), which
+						 * hands back a context's
+						 * register file when that
+						 * context's curprog names this
+						 * Prog.  curprog is allowed to
+						 * dangle -- vmachine() says so
+						 * where it clears it -- so a
+						 * stale one gives this walk
+						 * another program's SP, and a
+						 * bound past the live frames
+						 * makes the frames after them
+						 * leftover stack rather than
+						 * frames.  Frames 0..6 tiling
+						 * and 7 holding a Dis heap
+						 * pointer is that shape.
+						 */
+						for(ci = 0; ci < npctx; ci++)
+							if(rr == &pctxs[ci]->reg)
+								break;
+						print("rootset: frames do not"
+							" tile %#p..%#p,"
+							" stopped %#p, pid %d,"
+							" state %d, regs from"
+							" %s%d\n",
+							sx->reg.tos.fu, sp, fp,
+							root->pid, root->state,
+							rr == &root->reg
+							  ? "p->reg" : "ctx ",
+							rr == &root->reg
+							  ? 0 : ci);
+					}
+				}
 			}
 			ex = sx->reg.EX;
 			sp = sx->reg.SP;
