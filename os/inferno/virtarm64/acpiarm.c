@@ -39,6 +39,8 @@ enum {
 	Madtgicr	= 0x0E,
 	Madtgicits	= 0x0F,
 
+	Nredist		= 8,		/* redistributor ranges kept */
+
 	Madthdr		= 44,		/* header, then Local Interrupt Controller Address and Flags */
 
 	/* IORT node types (IORT rev E.e table 4) */
@@ -50,8 +52,21 @@ enum {
 };
 
 static uvlong	gicdbase;
-static uvlong	gicrbase, gicrlen;
 static uvlong	giccbase;		/* the v2 MMIO cpu interface */
+
+/*
+ * Every redistributor range the MADT names, not the first.
+ *
+ * QEMU's virt machine publishes a second one as soon as more cpus are
+ * asked for than the first range holds -- 124 is enough, and the second
+ * lands at 0x4000000000 -- and a machine with two sockets has at least
+ * two.  The frames inside them are what a cpu finds its own
+ * redistributor in, so the ranges have to be kept rather than reduced
+ * to a base.
+ */
+static uvlong	gicrbase[Nredist], gicrlen[Nredist];
+static int	ngicr;
+static int	gicrlost;		/* more ranges than this board keeps */
 static uvlong	gicitsbase;
 static int	gicversion;
 
@@ -123,8 +138,13 @@ madt(void)
 			break;
 		case Madtgicr:
 			if(n >= 16){
-				gicrbase = le64(p+4);
-				gicrlen = le32(p+12);
+				if(ngicr >= Nredist)
+					gicrlost++;
+				else {
+					gicrbase[ngicr] = le64(p+4);
+					gicrlen[ngicr] = le32(p+12);
+					ngicr++;
+				}
 			}
 			break;
 		case Madtgicits:
@@ -148,8 +168,11 @@ madt(void)
 			 */
 			if(n >= 40 && giccbase == 0)
 				giccbase = le64(p+32);
-			if(n >= 76 && gicrbase == 0)
-				gicrbase = le64(p+60);
+			if(n >= 76 && ngicr == 0 && le64(p+60) != 0){
+				gicrbase[0] = le64(p+60);
+				gicrlen[0] = 0;	/* one frame, size unstated */
+				ngicr = 1;
+			}
 			break;
 		}
 	}
@@ -422,9 +445,12 @@ acpireport(void)
 	if(gicdbase != 0)
 		print("acpi: madt gicv%d dist @ %#llux\n",
 			gicversion, gicdbase);
-	if(gicrbase != 0)
-		print("acpi: madt redist @ %#llux size %#llux\n",
-			gicrbase, gicrlen);
+	for(i = 0; i < ngicr; i++)
+		print("acpi: madt redist %d @ %#llux size %#llux\n",
+			i, gicrbase[i], gicrlen[i]);
+	if(gicrlost > 0)
+		print("acpi: madt has %d more redistributor range(s) than this"
+			" board keeps\n", gicrlost);
 	if(giccbase != 0)
 		print("acpi: madt gicc @ %#llux\n", giccbase);
 	if(gicitsbase != 0)
@@ -493,14 +519,36 @@ acpireport(void)
  * interface is an ordinary GICv3 table, not a broken one.
  */
 int
-acpigic(uvlong *d, uvlong *r, uvlong *c, int *version)
+acpigic(uvlong *d, uvlong *c, int *version)
 {
 	if(gicdbase == 0)
 		return 0;
 	*d = gicdbase;
-	*r = gicrbase;
 	*c = giccbase;
 	*version = gicversion;
+	return 1;
+}
+
+/*
+ * The redistributor ranges, one call per range.  Separate from
+ * acpigic() because a machine can have several and because the caller
+ * walks the frames inside them: a length of zero means the MADT gave a
+ * single redistributor rather than a range, which is what a GICC entry
+ * carries, and the caller treats that as one frame.
+ */
+int
+acpinredist(void)
+{
+	return ngicr;
+}
+
+int
+acpiredist(int i, uvlong *base, uvlong *len)
+{
+	if(i < 0 || i >= ngicr)
+		return 0;
+	*base = gicrbase[i];
+	*len = gicrlen[i];
 	return 1;
 }
 

@@ -174,30 +174,89 @@ static int gicv3;
  * and then ignored for as long as they were.
  */
 uintptr	gicdaddr = GICD;
-uintptr	gicraddr = GICR;
+uintptr	gicraddr = GICR;		/* this cpu's RD_base, after the walk */
 uintptr	giccaddr = GICC;
 static char *gicfrom = "mem.h";
+
+/*
+ * The redistributor ranges, and where in them this cpu's own
+ * redistributor turned out to be.
+ *
+ * gicraddr used to be the base of the first range, used directly as
+ * RD_base by trap.c for the SGI frame and by gicv3its.c for PROPBASER
+ * and for MAPC's target address.  That is the boot cpu's redistributor
+ * only on a machine where the boot cpu is the first frame of the first
+ * range.  It is on every machine QEMU builds -- cpu0's MPIDR is 0
+ * whatever topology is asked for, checked -- and it is not architecture:
+ * a cpu finds its own frame by comparing GICR_TYPER's Affinity Value
+ * against its MPIDR, and nothing says the boot cpu is first.
+ */
+enum {
+	Nredist		= 8,		/* ranges kept; acpiarm.c keeps as many */
+	GicrTYPER	= 0x0008,	/* RD_base-relative, 64-bit */
+	GicrTYPERvlpis	= 1<<1,		/* frames are 0x40000, not 0x20000 */
+	GicrTYPERlast	= 1<<4,		/* last frame in this range */
+	Gicrframe	= 0x20000,	/* GICv3 RD_base + SGI_base */
+	Gicrframev4	= 0x40000,	/* GICv4 adds VLPI_base + reserved */
+};
+static uvlong	rdbase[Nredist], rdlen[Nredist];
+static int	nrd;
+static int	rdframe = -1;		/* which frame matched, -1 for none */
+static int	rdrange = -1;		/* in which range */
+static int	rdcount;		/* frames in that range */
+
+static void
+addrange(uvlong base, uvlong len)
+{
+	if(base == 0 || nrd >= Nredist)
+		return;
+	rdbase[nrd] = base;
+	rdlen[nrd] = len;
+	nrd++;
+}
 
 static void
 gicdiscover(void)
 {
-	extern int acpigic(uvlong*, uvlong*, uvlong*, int*);
+	extern int acpigic(uvlong*, uvlong*, int*);
+	extern int acpinredist(void);
+	extern int acpiredist(int, uvlong*, uvlong*);
 	extern int fdtregn(char*, int, uvlong*, uvlong*);
-	uvlong d, r, c;
-	int version;
+	extern int fdtu32array(char*, char*, u32int*, int);
+	uvlong d, c, b, l;
+	u32int nregion;
+	int version, i;
 
-	d = r = c = 0;
+	d = c = 0;
 	version = 0;
-	if(acpigic(&d, &r, &c, &version)){
+	if(acpigic(&d, &c, &version)){
 		gicfrom = "the madt";
+		for(i = 0; i < acpinredist(); i++)
+			if(acpiredist(i, &b, &l))
+				addrange(b, l);
 	} else if(fdtregn("arm,gic-v3", 0, &d, nil)){
 		/*
 		 * On a v3 node the second reg entry is the redistributor
 		 * range; on a v2 node it is the MMIO cpu interface.  Same
 		 * slot, different device, which is why this asks for the
 		 * node by name rather than reading reg[1] and hoping.
+		 *
+		 * How many of the entries after the distributor are
+		 * redistributor ranges is the node's own business and it
+		 * says so: #redistributor-regions, defaulting to one.  The
+		 * entries after them are GICC, GICH and GICV, which are
+		 * not redistributors, so counting reg entries instead
+		 * would walk frames in a cpu interface.  QEMU publishes a
+		 * second range as soon as more cpus are asked for than the
+		 * first holds.
 		 */
-		fdtregn("arm,gic-v3", 1, &r, nil);
+		nregion = 1;
+		if(fdtu32array("arm,gic-v3", "#redistributor-regions",
+		    &nregion, 1) != 1 || nregion == 0 || nregion > Nredist)
+			nregion = 1;
+		for(i = 0; i < (int)nregion; i++)
+			if(fdtregn("arm,gic-v3", 1+i, &b, &l))
+				addrange(b, l);
 		gicfrom = "the tree";
 	} else if(fdtregn("arm,cortex-a15-gic", 0, &d, nil)){
 		fdtregn("arm,cortex-a15-gic", 1, &c, nil);
@@ -207,17 +266,88 @@ gicdiscover(void)
 
 	if(d != 0)
 		gicdaddr = (uintptr)d;
-	if(r != 0)
-		gicraddr = (uintptr)r;
 	if(c != 0)
 		giccaddr = (uintptr)c;
+	if(nrd > 0)
+		gicraddr = (uintptr)rdbase[0];
+}
+
+/*
+ * This cpu's RD_base, by walking the frames of every range and
+ * comparing GICR_TYPER's Affinity Value against MPIDR.
+ *
+ * Not an optimisation of "take the first frame": on a machine where the
+ * boot cpu is not the first redistributor, taking the first means the
+ * SGI frame this kernel enables its timer in, the configuration table
+ * the ITS is told about, and MAPC's target are all some other cpu's.
+ * That machine is not QEMU -- cpu0's MPIDR is 0 there under every
+ * topology -- so what this proves here is that the frames were walked
+ * and the match found, not that the answer differs from frame 0.
+ *
+ * Two bounds rather than a frame count: the stride is 0x20000 on a
+ * GICv3 and 0x40000 on a GICv4, which GICR_TYPER.VLPIS says, and a
+ * range whose length the firmware did not state (a MADT GICC entry
+ * gives one redistributor, not a range) holds exactly one frame.  A
+ * walk that got the stride wrong would read the next frame's registers
+ * at the wrong offsets and silently match nothing, or worse, match.
+ *
+ * No match leaves gicraddr as it was and says so.  Falling back to the
+ * first frame silently is the behaviour being removed.
+ */
+static void
+gicrwalk(void)
+{
+	extern uvlong getmpidr(void);
+	uvlong mpidr, want, typer, stride;
+	uintptr p, end;
+	int i, f;
+
+	if(nrd == 0)
+		return;
+	mpidr = getmpidr();
+	want = ((mpidr >> 32) & 0xff) << 24 | (mpidr & 0xffffff);
+	for(i = 0; i < nrd; i++){
+		p = (uintptr)rdbase[i];
+		typer = *(uvlong*)(p + GicrTYPER);
+		stride = (typer & GicrTYPERvlpis) ? Gicrframev4 : Gicrframe;
+		end = rdlen[i] != 0 ? p + (uintptr)rdlen[i] : p + (uintptr)stride;
+		for(f = 0; p + stride <= end; f++, p += stride){
+			typer = *(uvlong*)(p + GicrTYPER);
+			if((typer >> 32) == want){
+				gicraddr = p;
+				rdrange = i;
+				rdframe = f;
+			}
+			if(typer & GicrTYPERlast){
+				f++;
+				break;
+			}
+		}
+		if(rdrange == i)
+			rdcount = f;
+		if(rdframe >= 0)
+			return;
+	}
 }
 
 void
 gicreport(void)
 {
+	int i;
+
 	print("gic: dist %#p redist %#p cpuif %#p from %s, GIC-ADDR-OK\n",
 		gicdaddr, gicraddr, giccaddr, gicfrom);
+	for(i = 0; i < nrd; i++)
+		print("gic: redist range %d @ %#llux size %#llux\n",
+			i, rdbase[i], rdlen[i]);
+	if(!gicv3)
+		return;
+	if(rdframe >= 0)
+		print("gic: this cpu is frame %d of %d in range %d of %d,"
+			" GICR-FRAME-OK\n", rdframe, rdcount, rdrange, nrd);
+	else if(nrd > 0)
+		print("gic: no redistributor frame matches this cpu's affinity;"
+			" using %#p, GICR-FRAME-NONE\n", gicraddr);
 }
 
 extern void	seticcsre(ulong);
@@ -283,6 +413,13 @@ gicinit(void)
 	 * IRQ (group 0 would be an FIQ this kernel never enables).
 	 */
 	seticcsre(1);				/* ICC_SRE_EL1.SRE = 1 */
+
+	/*
+	 * Before the first redistributor write, and after gicv3 is known:
+	 * GICR_TYPER is readable with the frame still asleep, and every
+	 * write below goes to the frame this finds.
+	 */
+	gicrwalk();
 
 	rd = (u32*)gicraddr;
 	rd[GicrWAKER] &= ~2;			/* clear ProcessorSleep */

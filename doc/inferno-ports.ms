@@ -23859,6 +23859,91 @@ which is what had been one edit away from true for as long as those
 three were constants.  mem.h is back as it was; the broken versions
 were never committed.
 .NH 2
+Which redistributor is this cpu's
+.PP
+The GIC change above left
+.CW gicraddr
+as the base of the first redistributor range, and used it directly as
+RD_base: the SGI frame
+.CW trap.c
+enables the timer in, the configuration table
+.CW gicv3its.c
+hands the ITS in GICR_PROPBASER, and the redistributor MAPC names as a
+collection's target.  That is this cpu's redistributor on a machine
+where this cpu is the first frame of the first range, and nowhere else.
+The architecture says a cpu finds its own frame by comparing
+GICR_TYPER's Affinity Value against MPIDR, and nothing says the boot cpu
+is first.
+.PP
+.CW gicrwalk()
+does that, over every range rather than the first.  Two ranges is not a
+hypothetical shape:
+.CW hw/arm/virt.c
+gives the first range room for 123 redistributors and publishes a second
+at 0x4000000000 as soon as a 124th cpu is asked for, which is what a
+two-socket server has.  The MADT's redistributor entries and the tree's
+.CW #redistributor-regions
+are both read now \(em the tree's count matters because the reg entries
+after the redistributor ranges are GICC, GICH and GICV, so counting reg
+pairs instead would walk frames inside a cpu interface.
+.PP
+Two bounds instead of a frame count.  The stride is 0x20000 on a GICv3
+and 0x40000 on a GICv4, which GICR_TYPER.VLPIS says; a range whose
+length the firmware did not state \(em a MADT GICC entry gives one
+redistributor rather than a range \(em holds one frame.  A walk with the
+wrong stride reads the next frame's registers at the wrong offsets, and
+the bad case is not that it matches nothing.
+.PP
+On
+.CW "-M virt,gic-version=3" :
+.P1
+-smp 1     gic: redist range 0 @ 0x80a0000 size 0xf60000
+           gic: this cpu is frame 0 of 1 in range 0 of 1, GICR-FRAME-OK
+
+-smp 129   gic: redist range 0 @ 0x80a0000 size 0xf60000
+           gic: redist range 1 @ 0x4000000000 size 0x4000000
+           gic: this cpu is frame 0 of 123 in range 0 of 2, GICR-FRAME-OK
+.P2
+The frame count is what makes those lines evidence rather than
+arithmetic.  Range 0 is 0xf60000 bytes, which is exactly 123 frames of
+0x20000, so a count divided out of the range size would say 123 in both.
+It says 1 on the first, because the walk stops at GICR_TYPER.Last and
+size-divided-by-stride cannot see that bit.  The new arm is
+.CW virtarm64-gicr ,
+and 129 cpus cost nothing: this kernel is uniprocessor and never
+releases a secondary, so the boot takes the same five seconds as
+.CW "-smp 1" .
+.PP
+What is
+.I not
+proved has to be said, because the shape of the line invites the wrong
+reading.  QEMU gives cpu0 an MPIDR of 0 under every topology
+.CW "-M virt"
+accepts \(em checked, with
+.CW sockets=129
+and
+.CW cores=1
+and the default, all three giving
+.CW cpu@0
+an
+.CW reg
+of zero \(em so frame 0 is also the right answer on this machine.  The
+walk finds the architecturally specified frame; here that frame is the
+one the old code took.  The machine where the two differ is a
+two-socket server, or anything whose boot cpu is not affinity zero, and
+there is none on this host.
+.PP
+The falsify test is the other half, and it is the one that matters most
+here: with the target affinity deliberately altered so that no frame
+can match, the board prints
+.P1
+gic: no redistributor frame matches this cpu's affinity; using 0x80a0000, GICR-FRAME-NONE
+.P2
+and boots, and both arms fail on the missing
+.CW GICR-FRAME-OK .
+Falling back to the first frame silently is the behaviour that was
+removed; a board that cannot find itself now says so on its own line.
+.NH 2
 Memory, from the firmware's map
 .PP
 One thing was still coming from mem.h on a machine that had no business

@@ -23,6 +23,7 @@
 #define	D_ICC_IAR1_EL1	SYSARG5(3,0,12,12,0)
 #define	D_ICC_EOIR1_EL1	SYSARG5(3,0,12,12,1)
 #define	D_ID_AA64PFR0_EL1	SYSARG5(3,0,0,4,0)
+#define	D_MPIDR_EL1		SYSARG5(3,0,0,0,5)
 #define	D_CNTP_CVAL_EL0	SYSARG5(3,3,14,2,2)
 
 /*
@@ -250,6 +251,17 @@ TEXT	geticciar(SB), 1, $-4
  * faults on.  This is how gicinit tells v2 from v3 without touching an
  * address that might not answer.
  */
+/*
+ * MPIDR_EL1, for finding this cpu's redistributor among the frames the
+ * GICv3 redistributor ranges hold.  GICR_TYPER's Affinity Value field
+ * is Aff3:Aff2:Aff1:Aff0 packed into 32 bits, so the caller masks this
+ * down to those four bytes -- bits 30, 31 and 24 of MPIDR are U, RES1
+ * and MT and are set on real parts, so a raw comparison never matches.
+ */
+TEXT	getmpidr(SB), 1, $-4
+	MRS	SPR(D_MPIDR_EL1), R0
+	RET	R30
+
 TEXT	getpfr0(SB), 1, $-4
 	MRS	SPR(D_ID_AA64PFR0_EL1), R0
 	RET	R30

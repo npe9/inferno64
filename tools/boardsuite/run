@@ -59,7 +59,7 @@ verbose=false
 record=false
 force=false
 
-configs='raspi3b raspi3b-4g raspi3b-usb raspi3b-2eth raspi4 raspi4-hot raspi4-usb raspi4-2eth virtarm64 virtarm64-msi virtarm64-nvme virtarm64-xhci virtarm64-gicv3 virtarm64-efi virtarm64-noscan virtarm64-acpi virtarm64-smmu virtarm64-peer sifiveu virt virts virt32 virt32s virt-peer peer-mixed'
+configs='raspi3b raspi3b-4g raspi3b-usb raspi3b-2eth raspi4 raspi4-hot raspi4-usb raspi4-2eth virtarm64 virtarm64-msi virtarm64-nvme virtarm64-xhci virtarm64-gicv3 virtarm64-gicr virtarm64-efi virtarm64-noscan virtarm64-acpi virtarm64-smmu virtarm64-peer sifiveu virt virts virt32 virt32s virt-peer peer-mixed'
 
 # Each configuration: the kernel, the QEMU arguments, the line that
 # says the board is done printing, and the evidence lines that make
@@ -201,7 +201,7 @@ config_kernel() {
 				echo "$root/os/inferno/raspi3b/iraspi3b";;
 	raspi4|raspi4-hot|raspi4-usb|raspi4-2eth)
 				echo "$root/os/inferno/raspi4/iraspi4";;
-	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-peer)
+	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-gicr|virtarm64-peer)
 				echo "$root/os/inferno/virtarm64/ivirtarm64";;
 	# The a.out rather than the ELF: the EFI loader reads the format
 	# bootkern() has always read, and "mk ivirtarm64.a" in the board
@@ -230,7 +230,7 @@ config_kernel() {
 config_qemu() {
 	case $1 in
 	raspi*)			echo "$QEMU";;
-	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-efi|virtarm64-noscan|virtarm64-acpi|virtarm64-smmu|virtarm64-peer)
+	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-gicr|virtarm64-efi|virtarm64-noscan|virtarm64-acpi|virtarm64-smmu|virtarm64-peer)
 				echo "${QEMU_AARCH64:-`command -v qemu-system-aarch64`}";;
 	sifiveu|virt|virts|virt-peer|peer-mixed)
 				echo "${QEMU_RISCV64:-`command -v qemu-system-riscv64`}";;
@@ -312,6 +312,21 @@ config_args() {
 		# uart at 33 and the virtio-mmio slots arriving here are
 		# worth as much as the MSI half.
 		echo "-M virt,gic-version=3 -cpu cortex-a57 -m 1G -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-pci,disable-legacy=on,drive=blk0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-pci,disable-legacy=on,netdev=n0";;
+	virtarm64-gicr)
+		# The same machine with more cpus than one redistributor
+		# range holds, which is the only way to get a second one
+		# out of QEMU: hw/arm/virt.c gives the first range room for
+		# 123 redistributors and publishes a second at
+		# 0x4000000000 as soon as a 124th cpu is asked for.  Two
+		# ranges is what a two-socket arm64 server has, and the
+		# frames inside them are where a cpu finds its own
+		# redistributor.
+		#
+		# 129 cpus costs nothing here: this kernel is
+		# uniprocessor, never releases a secondary, and the other
+		# 128 sit in QEMU's reset loop.  The boot takes the same
+		# five seconds as -smp 1.
+		echo "-M virt,gic-version=3 -smp 129 -cpu cortex-a57 -m 1G -drive file=$work/fat16.img,if=none,id=blk0,format=raw -device virtio-blk-pci,disable-legacy=on,drive=blk0 -netdev user,id=n0,hostfwd=tcp::54323-:54323,hostfwd=udp::54326-:54326 -device virtio-net-pci,disable-legacy=on,netdev=n0";;
 	virtarm64-efi)
 		# The same board as virtarm64, booted the way a real arm64
 		# machine boots: edk2 in pflash, an EFI system partition on
@@ -652,7 +667,7 @@ config_last() {
 	raspi4-2eth)		echo 'USB-MOUSE'; echo 'RASPI4-SH-OK';;
 	raspi4|raspi4-hot)	echo 'USB-MOUSE';;
 	raspi4-usb)		echo 'RASPI4-SH-OK';;
-	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-efi|virtarm64-noscan|virtarm64-acpi|virtarm64-smmu|virtarm64-peer)	echo 'ROOT-CMDS-OK';;
+	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-gicr|virtarm64-efi|virtarm64-noscan|virtarm64-acpi|virtarm64-smmu|virtarm64-peer)	echo 'ROOT-CMDS-OK';;
 	virt|virts|virt-peer|peer-mixed)	echo 'ROOT-CMDS-OK';;
 	sifiveu)		echo 'SIFIVEU-SH-OK';;
 	virt32|virt32s)		echo 'VIRT32-INIT-OK';;
@@ -985,6 +1000,13 @@ config_evidence() {
 		echo 'MSI-DOORBELL-OK'
 		;;
 	virtarm64-acpi)
+		# And the redistributor frame walk on a machine with one
+		# range.  "of 1" rather than "of 123" is the evidence: the
+		# range is 0xf60000 bytes here too, so a count computed
+		# from size divided by stride would say 123.  1 is what
+		# GICR_TYPER.Last says, and only a walk reads it.  See
+		# virtarm64-gicr for the two-range machine.
+		echo 'gic: this cpu is frame 0 of 1 in range 0 of 1, GICR-FRAME-OK'
 		# And where the GIC is, from the source that supplied it.
 		# The three bases used to be mem.h constants read at a
 		# dozen sites while the tree's and the MADT's values were
@@ -1003,7 +1025,7 @@ config_evidence() {
 		# QEMU's values, for the same reason the gicv3 arm's
 		# widths are -- what is asserted is that they were read.
 		echo 'acpi: madt gicv3 dist @ 0x[0-9a-f]+'
-		echo 'acpi: madt redist @ 0x[0-9a-f]+'
+		echo 'acpi: madt redist 0 @ 0x[0-9a-f]+ size 0x[0-9a-f]+'
 		echo 'acpi: madt its @ 0x[0-9a-f]+, ACPI-ITS-OK'
 		# The IORT, which is the msi-map property's job done by a
 		# table: which requester ids this window covers and what
@@ -1048,6 +1070,13 @@ config_evidence() {
 		# fact: type 5 is EfiRuntimeServicesCode here.
 		echo 'usable to 0x[0-9a-f]+, stopped by efi type 0x[0-9a-f]+';;
 	virtarm64-smmu)
+		# And the redistributor frame walk on a machine with one
+		# range.  "of 1" rather than "of 123" is the evidence: the
+		# range is 0xf60000 bytes here too, so a count computed
+		# from size divided by stride would say 123.  1 is what
+		# GICR_TYPER.Last says, and only a walk reads it.  See
+		# virtarm64-gicr for the two-range machine.
+		echo 'gic: this cpu is frame 0 of 1 in range 0 of 1, GICR-FRAME-OK'
 		# And where the GIC is, from the source that supplied it.
 		# The three bases used to be mem.h constants read at a
 		# dozen sites while the tree's and the MADT's values were
@@ -1135,7 +1164,39 @@ config_evidence() {
 		# Worth pinning: it is the one line that says which of the
 		# two device trees this arm actually got.
 		echo 'MSI-DOORBELL-OK';;
+	virtarm64-gicr)
+		# Two redistributor ranges, and this cpu's own frame found
+		# in the first of them by walking frames and comparing
+		# GICR_TYPER's Affinity Value against MPIDR.  The second
+		# range is the point of the arm: it exists only above 123
+		# cpus, and a board that read one range would not print it.
+		#
+		# The frame COUNT is what says this is a walk and not
+		# arithmetic.  Range 0 is 0xf60000 bytes, which is 123
+		# frames of 0x20000, and on -smp 1 the same range makes
+		# this line say "frame 0 of 1" -- because the walk stops at
+		# GICR_TYPER.Last, which size-divided-by-stride cannot see.
+		# Here 129 cpus fill the range and the count is 123.
+		#
+		# What is NOT proved: that the answer differs from frame 0.
+		# QEMU gives cpu0 an MPIDR of 0 under every topology that
+		# -M virt accepts, checked, so frame 0 is also the right
+		# answer here.  The machine where it is not is a two-socket
+		# server or anything whose boot cpu is not affinity zero.
+		echo 'gic: redist range 0 @ 0x80a0000 size 0xf60000'
+		echo 'gic: redist range 1 @ 0x4000000000 size 0x4000000'
+		echo 'gic: this cpu is frame 0 of 123 in range 0 of 2, GICR-FRAME-OK'
+		echo 'BLK-OK /dev/sdF0/data'
+		echo 'DHCP-OK'
+		;;
 	virtarm64-gicv3)
+		# And the redistributor frame walk on a machine with one
+		# range.  "of 1" rather than "of 123" is the evidence: the
+		# range is 0xf60000 bytes here too, so a count computed
+		# from size divided by stride would say 123.  1 is what
+		# GICR_TYPER.Last says, and only a walk reads it.  See
+		# virtarm64-gicr for the two-range machine.
+		echo 'gic: this cpu is frame 0 of 1 in range 0 of 1, GICR-FRAME-OK'
 		# And where the GIC is, from the source that supplied it.
 		# The three bases used to be mem.h constants read at a
 		# dozen sites while the tree's and the MADT's values were
@@ -1485,7 +1546,7 @@ config_hostnet() {
 	# inbound halves all dial the host rig, and without it the
 	# board reported TCP-NET-FAIL "connection refused" -- the host
 	# end that was never started, not the board.
-	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-efi|virtarm64-acpi|virtarm64-smmu|virtarm64-peer)	echo yes;;
+	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-gicr|virtarm64-efi|virtarm64-acpi|virtarm64-smmu|virtarm64-peer)	echo yes;;
 	esac
 }
 
@@ -1975,7 +2036,7 @@ for c in $configs; do
 	# same fat16.img in its qemu line.  It ran only because virt comes
 	# before it in $configs and had already made the image; asked for
 	# on its own with an empty work directory, qemu had no such file.
-	case $c in virt|virts|virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-efi|virtarm64-noscan|virtarm64-acpi|virtarm64-smmu|virt-peer|virtarm64-peer|peer-mixed) needfat=true;; *) needfat=false;; esac
+	case $c in virt|virts|virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-gicr|virtarm64-efi|virtarm64-noscan|virtarm64-acpi|virtarm64-smmu|virt-peer|virtarm64-peer|peer-mixed) needfat=true;; *) needfat=false;; esac
 	if $needfat && ! makefat fat16.img marker.txt 'FS-OK boardsuite'; then
 		echo "$c: FAIL no way to make a FAT16 image here (hdiutil or mkfs.vfat)"
 		echo "    BLK-OK needs a filesystem, not a blank card; see the README"

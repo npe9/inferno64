@@ -2295,11 +2295,15 @@ What is left is the hardware itself.  An Altra has several root
 complexes told apart by PCI segment number, and
 .CW acpiridtodevid()
 takes a requester id and nothing else because the PCI code carries no
-segment; and its MADT describes several redistributor ranges, which
-.CW gicdiscover()
-takes the first of rather than choosing by the booting cpu's affinity.
-That is a list of specific things now, rather than "no ACPI at all", and
-none of it can be written against anything but the silicon.
+segment.  Its several redistributor ranges are handled:
+.CW gicrwalk()
+walks the frames of every range the MADT or the tree names and takes the
+one whose GICR_TYPER Affinity Value matches this cpu's MPIDR, which
+.CW virtarm64-gicr
+exercises on a machine with two ranges \(em though not with a boot cpu
+outside the first frame, because QEMU will not produce one.  That is a
+list of specific things now, rather than "no ACPI at all", and what is
+left of it cannot be written against anything but the silicon.
 .IP 2.
 .B "Raspberry Pi Zero 2 W."
 A BCM2710A1 \(em the Pi 3B's die in a smaller package \(em so the
