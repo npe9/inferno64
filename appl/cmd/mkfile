@@ -67,6 +67,7 @@ TARG=\
 	danbyeqnall.dis\
 	danbylabtest.dis\
 	danbyviztest.dis\
+	thermotest.dis\
 	tonetest.dis\
 	danbyeqntest.dis\
 	date.dis\

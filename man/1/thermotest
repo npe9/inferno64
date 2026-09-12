@@ -1,0 +1,93 @@
+.TH THERMOTEST 1
+.SH NAME
+thermotest \- check thermo(2) against the identities and the efficiencies
+.SH SYNOPSIS
+.B thermotest
+[
+.B -v
+]
+.SH DESCRIPTION
+.I Thermotest
+checks
+.IR thermo (2)
+and prints
+.B OK
+if everything agrees.
+.B -v
+prints each measured number.
+.PP
+Thermodynamics is unusually well supplied with things that must be
+.I exactly
+true rather than approximately so, and those are what is checked:
+.IP
+.EX
+cp \- cv = R		a relation, not a definition
+du = q \- w		on every process
+wnet = qin \- qout	around every cycle
+sum of q/T = 0		around a reversible cycle
+.EE
+.PP
+The first law is a real check here and not a tautology, because
+.IR thermo (2)
+computes the work from the process and the heat from the process and
+neither from the other.
+.PP
+The efficiencies are checked against their closed forms: Carnot at
+0.6667 between 300 and 900 K, Otto at 0.5848 for a compression ratio of
+9, Brayton at 0.4821 for a pressure ratio of 10.
+The Otto figure is checked at three different heat inputs, four times
+apart, and must not move \- that it depends on the compression ratio
+alone is the surprising part of the result, and repeating the formula
+would not test it.
+.PP
+The Diesel cycle is checked to be worse than the Otto at the same
+compression ratio, and to
+.I become
+it as the cutoff ratio approaches one: 0.6316, then 0.6852 at a cutoff
+of 1.001, against the Otto's 0.6853.
+.SS Nothing beats Carnot
+Every cycle is checked against the Carnot efficiency computed from its
+.I own
+hottest and coldest states, which is a bound the second law puts on it
+and which no arithmetic mistake in the cycle is likely to respect.
+The Carnot cycle itself meets that bound exactly and the others fall
+short of it, which is the shape the answer has to have.
+.SS Worked out twice
+The heat exchanger is done both standard ways.
+Effectiveness-NTU gives the outlet temperatures from the sizes; the log
+mean temperature difference gives the duty from the temperatures.
+They are different arithmetic and must give the same number, and they
+agree to twelve figures for both arrangements.
+Counterflow is separately checked to beat parallel flow, and parallel
+flow to be stuck at 1/(1+\fIcr\fP) however large it is made.
+.SS The critical point
+The van der Waals constants are built from the critical temperature and
+pressure, so asking for the critical point back is a round trip through
+two formulas that are inverses.
+And
+.I z
+at that point is exactly 3/8 for every van der Waals gas whatever its
+constants, which is a coincidence a wrong inversion would break.
+.SH SOURCE
+.B /appl/cmd/thermotest.b
+.SH SEE ALSO
+.IR thermo (2)
+.SH DIAGNOSTICS
+Each disagreement prints a line beginning
+.B FAIL
+naming what was measured, what came out and what was wanted; the count
+follows and the program raises an exception.
+.SH BUGS
+Everything checked here is a property of the ideal-gas model, so a check
+passing says the arithmetic is right and says nothing at all about
+whether the model describes air.
+.IR Thermo (2)'s
+BUGS says where it does not.
+.PP
+The entropy sum around a cycle is checked for the Carnot cycle only,
+where the heat crosses at two known temperatures.
+For the other three the heat is added over a range of temperature and
+the sum would need integrating, which is not done.
+.PP
+Nothing checks a process against its own reverse \- that expanding and
+recompressing along the same path returns the original state exactly.

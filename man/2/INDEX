@@ -36,6 +36,7 @@ bode control
 bootconf dhcpclient
 bootp dhcpclient
 bracket optim
+brayton thermo
 btos convcs
 bufio bufio-chanfill
 bufio-chanfill bufio-chanfill
@@ -43,6 +44,7 @@ bufiofill bufio
 butterworth signal
 byte2char sys-byte2char
 cardlib spree-cardlib
+carnot thermo
 categories palmfile
 cbrt math-elem
 cert spki
@@ -106,6 +108,7 @@ dhparams keyring-gensk
 dial sys-dial
 dialog dialog
 dict dict
+diesel thermo
 dir2text styx
 dirname names
 dirread sys-dirread
@@ -231,6 +234,7 @@ ipint keyring-ipint
 ipints ipints-genprime
 ipints-genprime ipints-genprime
 ir ir
+isentropic thermo
 ismember lists
 isprefix names
 istmsg styx
@@ -266,6 +270,7 @@ linprog optim
 listen sys-dial
 lists lists
 liveplot liveplot
+lmtd thermo
 loaded grpalette
 local daytime
 lock lock
@@ -326,6 +331,7 @@ open sys-open
 opendict translate
 opendicts translate
 optim optim
+otto thermo
 packdir styx
 packdirsize styx
 pair lists
@@ -347,6 +353,7 @@ point draw-point
 pointer tk
 polyfill polyfill
 polyfit stats
+polytropic thermo
 pop3 pop3
 popup popup
 plot plot
@@ -550,6 +557,7 @@ tcdf stats
 tempfile diskblocks
 text daytime
 tftp tftp
+thermo thermo
 ticker frameclock
 tickms frameclock
 tiles tiles
@@ -586,6 +594,7 @@ uvalue ubfa
 v23 v23-0intro
 valid spki
 values grpalette
+vanderwaals thermo
 variance stats
 venti venti
 verifier spki-verifier

@@ -156,6 +156,7 @@ TARG=\
 	optim.dis\
 	signal.dis\
 	stats.dis\
+	thermo.dis\
 	smtp.dis\
 	smtp2.dis\
 	sort.dis\

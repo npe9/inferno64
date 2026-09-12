@@ -621,6 +621,7 @@ tetris wm-misc
 text sh-sexprs
 textels sh-sexprs
 thedead thedead
+thermotest thermotest
 tictactoe tictactoe
 tilestest tilestest
 time time
