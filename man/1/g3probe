@@ -136,14 +136,41 @@ takes the GPU away entirely, so the device provider falls back on
 own C rasteriser.
 .PP
 .B INFERNO_METAL_NOTL
-leaves the GPU hooked but takes away the transform-and-light entry
-points, so each vertex is projected in C and faces arrive as
-screen-space triangles.
-Both routes end on the same Metal pipeline: a picture that changes
-between them is the GPU's own vertex stage, and one that does not is
-something further down.
-It is also the only way to reach the 2-D triangle queue, which nothing
-else calls.
+takes away the transform-and-light entry points and leaves the rest of
+the GPU hooked.
+For
+.B fillpoly3
+each vertex is then projected in C and the face still reaches the GPU,
+by the screen-space triangle queue instead of the transform one \- so
+both routes end on the same Metal pipeline, and a picture that changes
+between them is the GPU's own vertex stage.
+.PP
+.B Fillpoly3g
+is the exception, and it matters when reading the table above:
+.IR devdraw 's
+Gouraud case is a parallel block with its own projection and fill, and
+does not fall through to the screen-space queue.
+Under
+.B INFERNO_METAL_NOTL
+it is drawn on the CPU, so a
+.B fillpoly3g
+row taken under that variable says nothing about the GPU.
+.B Line3 ,
+.B plot3
+and
+.B sprite3
+are not affected by it at all.
+.PP
+The counters say which happened.
+.B INFERNO_METAL_STATS
+prints
+.B g3_calls
+for the transform-and-light queue and
+.B fill_calls
+for the screen-space one: one run of this program gives 2752 and 0 by
+default, and 0 and 6 with
+.B INFERNO_METAL_NOTL
+set.
 .SH SOURCE
 .B /appl/cmd/g3probe.b
 .SH SEE ALSO

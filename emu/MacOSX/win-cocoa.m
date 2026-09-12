@@ -155,6 +155,7 @@ static uvlong	metal_copy_armed;
 static uvlong	metal_copy_cancelled;
 static uvlong	metal_g3_calls;	/* gpudrawfillpoly3d successes: real GPU T&L, not CPU d3project */
 static uvlong	metal_spr_calls;	/* gpudrawsprite successes: a textured Metal quad, not d3spritez */
+static uvlong	metal_fill_calls;	/* gpudrawfillpoly successes: the 2-D queue, CPU-projected verts */
 static uvlong	metal_g3_tris;
 static int	metal_stat_frames;
 /*
@@ -735,15 +736,27 @@ metal_init(void)
 		gpudrawline = metal_queue_line;
 		gpudrawfillpoly = metal_queue_fillpoly;
 		/*
-		 * INFERNO_METAL_NOTL leaves the GPU hooked but takes away the
-		 * transform-and-light entry points, so devdraw projects each
-		 * vertex in C and the faces arrive as screen-space triangles
-		 * instead.  Both routes end on the same Metal pipeline, which
-		 * is what makes it a control: a picture that changes between
-		 * them is the GPU's own vertex stage, and one that does not is
-		 * something further down.  It is also the only way a Limbo
-		 * program can reach the 2-D triangle queue at all - nothing
-		 * else calls gpudrawfillpoly.
+		 * INFERNO_METAL_NOTL takes away the transform-and-light entry
+		 * points and leaves the rest of the GPU hooked.  What that
+		 * does depends on the message, and it is worth being exact
+		 * about which, because the obvious reading is wrong:
+		 *
+		 * 'k' (fillpoly3) projects each vertex in C and then falls
+		 * through to gpudrawfillpoly, so the face still reaches the
+		 * GPU - by the 2-D triangle queue instead of the T&L one.
+		 * That is a real control: both routes end on the same Metal
+		 * pipeline, so a picture that changes between them is the
+		 * GPU's own vertex stage.  It is also how that queue gets
+		 * exercised from a 3-D program at all.
+		 *
+		 * 'K' (fillpoly3g) does NOT: devdraw's Gouraud case is a
+		 * parallel block with its own d3project + memfillpoly
+		 * fallback, and does not try gpudrawfillpoly.  With NOTL set
+		 * it is rasterised on the CPU, so measuring it under NOTL
+		 * measures the CPU, not the GPU by another road.
+		 *
+		 * Measured, one run of g3probe(1): fill_calls 0 by default
+		 * and 6 with NOTL, g3_calls 2752 by default and 0 with NOTL.
 		 */
 		if(getenv("INFERNO_METAL_NOTL") == nil){
 			gpudrawfillpoly3d = metal_queue_fillpoly3d;
@@ -2405,6 +2418,7 @@ metal_queue_fillpoly(Memimage *dst, Point *pp, float *ez, int n, Memimage *src, 
 		unlock(&mtl_geom_lock);
 		return 0;
 	}
+	metal_fill_calls++;
 	for(i = 1; i < n - 1; i++){
 		v = &gtriverts[ngtriverts];
 		v[0].x = (float)pp[0].x;
@@ -4431,7 +4445,7 @@ present_softscreen_body(void)
 			metal_presents ? metal_drawable_us/metal_presents : 0,
 			metal_presents ? metal_slotwait_us/metal_presents : 0,
 			metal_presents ? (metal_present_us - metal_drawable_us - metal_slotwait_us)/metal_presents : 0);
-		fprint(2, "METALSTATS frames=%d damage_calls=%llud damage_bytes=%llud full_uploads=%llud readbacks=%llud upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud largest_copy_bytes=%llud largest_dirty_bytes=%llud copy_notes=%llud rejected=%llud reject_storage=%llud reject_damage=%llud reject_geometry=%llud alias_storage=%llud armed=%llud cancelled=%llud g3_calls=%llud g3_tris=%llud spr_calls=%llud soft_fallbacks=%llud teximg_alloced=%ud teximg_declined=%ud(chan=%ud small=%ud) teximg_freed=%ud live=%d\n",
+		fprint(2, "METALSTATS frames=%d damage_calls=%llud damage_bytes=%llud full_uploads=%llud readbacks=%llud upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud largest_copy_bytes=%llud largest_dirty_bytes=%llud copy_notes=%llud rejected=%llud reject_storage=%llud reject_damage=%llud reject_geometry=%llud alias_storage=%llud armed=%llud cancelled=%llud g3_calls=%llud g3_tris=%llud fill_calls=%llud spr_calls=%llud soft_fallbacks=%llud teximg_alloced=%ud teximg_declined=%ud(chan=%ud small=%ud) teximg_freed=%ud live=%d\n",
 			metal_stat_frames, metal_damage_calls, metal_damage_bytes,
 			metal_full_uploads, metal_readbacks, metal_upload_bytes,
 			metal_copy_bytes, metal_saved_bytes,
@@ -4440,10 +4454,11 @@ present_softscreen_body(void)
 			metal_copy_notes, metal_copy_rejected, metal_copy_reject_storage,
 			metal_copy_reject_damage, metal_copy_reject_geometry, metal_copy_alias_storage,
 			metal_copy_armed, metal_copy_cancelled, metal_g3_calls, metal_g3_tris,
-			metal_spr_calls,
+			metal_fill_calls, metal_spr_calls,
 			metal_soft_fallbacks, teximg_alloced, teximg_declined,
 			teximg_nchan, teximg_nsmall, teximg_freed, nteximg);
 		metal_g3_calls = metal_g3_tris = metal_spr_calls = 0;
+		metal_fill_calls = 0;
 		metal_soft_fallbacks = 0;
 		metal_stat_frames = 0;
 		metal_damage_calls = metal_damage_bytes = 0;

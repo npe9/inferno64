@@ -910,16 +910,24 @@ and is now 20427/20432/20471 against software's 20459/20500/20461: three
 runs out of three with the picture, agreeing to 0.3%. That was the
 present-consumes-the-queue race, and it went with `metal_flush_geom()`.
 
-**Two things the table does not settle, both new.** `shadow`, `3dpoly`
-and `pick3d` now come out with *more* lit than software, not less, and
-three of those readings are the whole screen. A colour census says why in
-at least one case: `pick3d`'s device frame has 266482 pixels of
-`#c4c0b4`, which is emu's own soft desktop Paper colour, where the
-software frame has white — so the readback composed the desktop where the
-port's own background belongs, and `framegrab`'s background-is-the-corner
--pixel rule then counts the entire frame. That is a composition question
-in `metal_readback_geom()`'s under/overlay ordering, not a clip or a
-transform one, and it is a separate investigation.
+**And it turned up a regression of my own.** `shadow`, `3dpoly` and
+`pick3d` now come out with *more* lit than software, not less, and three
+of those readings are the whole screen. A colour census says why:
+`pick3d`'s device frame has 266482 pixels of `#c4c0b4` — emu's own soft
+desktop Paper colour — where the software frame has white, over 227 rows
+of the window's interior. The window's background has been replaced by
+the desktop, and `framegrab`'s background-is-the-corner-pixel rule then
+counts the whole frame as lit.
+
+Bisected rather than guessed at: `win-cocoa.m` from `90b45964`, the
+commit before `76412182` ("the readback composes like present, so the
+head-up display survives"), built against everything else as it is now,
+gives `pick3d` **278619 white pixels and no Paper at all**. So this is
+that commit's doing: making `metal_readback_geom()` compose `under` →
+geometry → `metal_overlay_soft` fixed `gorge`'s head-up display and broke
+the window background of ports that clear to a colour of their own. The
+overlay is supposed to put back every pixel that changed after the
+snapshot, and for these ports it does not.
 
 The other is that `framegrab`'s metric cannot be used under `wm`: the
 corner pixel is then the desktop, and a single unit of difference there
