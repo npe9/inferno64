@@ -32,6 +32,15 @@ if len(sys.argv) < 5:
     sys.stderr.write(__doc__ or "usage: type-at-console.py BASE SECS CMD -- qemu...\n")
     raise SystemExit(2)
 base, wait, cmd = sys.argv[1], float(sys.argv[2]), sys.argv[3]
+# How long to leave the guest running after the command is typed.
+# Fourteen seconds suits a command that prints and finishes.  It does
+# not suit one that does real work: kfs reaming a 64M file system takes
+# well over a minute on a loaded machine, so check-pc64-disk.sh was
+# killing the guest mid-ream and reporting that nothing reached the
+# disk -- a harness timeout reported as a broken write path.  An
+# environment variable rather than an argument, because everything
+# after argv[3] is the qemu command line.
+hold = float(os.environ.get('INFERNO_CONSOLE_HOLD', '14'))
 qemu = sys.argv[4:]
 if qemu and qemu[0] == '--':
     qemu = qemu[1:]
@@ -78,7 +87,7 @@ sys.stderr.flush()
 for ch in cmd.encode() + b'\n':
     os.write(fin, bytes([ch]))
     time.sleep(0.01)
-time.sleep(14)
+time.sleep(hold)
 proc.kill()
 time.sleep(0.3)
 sys.stdout.write(buf.decode('utf-8', 'replace').replace('\r', ''))

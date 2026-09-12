@@ -35,9 +35,19 @@ NONCE=DISKPROOF-$$-`date +%s`
 INFERNO_KERNEL=$KERN sh "$ROOT/scripts/mkinferno-efi-iso.sh" "$WORK/d.iso" >/dev/null 2>&1
 qemu-img create -f raw "$WORK/disk.img" 64M >/dev/null
 
+# Each boot gets a generous window after the command is typed.
+# type-at-console.py defaults to 14 seconds, which is right for a
+# command that prints and exits and wrong for this one: kfs's ream
+# of a 64M file system runs well over a minute on a loaded machine,
+# and the guest was being killed in the middle of it -- which this
+# script then reported as "nothing reached the disk image", a
+# harness timeout dressed up as a broken write path.
+INFERNO_CONSOLE_HOLD=${INFERNO_CONSOLE_HOLD:-150}
+export INFERNO_CONSOLE_HOLD
+
 run() {	# run WAIT COMMAND
 	cp "$ROOT/.qemu/edk2-vars.fd" "$WORK/vars.fd"
-	timeout 240 python3 "$ROOT/scripts/type-at-console.py" "$WORK/p$3" "$1" "$2" \
+	timeout 420 python3 "$ROOT/scripts/type-at-console.py" "$WORK/p$3" "$1" "$2" \
 		qemu-system-x86_64 -machine q35 -m 1024 -display none -smp 2 \
 		-drive if=pflash,format=raw,unit=0,readonly=on,file="$ROOT/.qemu/edk2-code.fd" \
 		-drive if=pflash,format=raw,unit=1,file="$WORK/vars.fd" \

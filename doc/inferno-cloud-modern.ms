@@ -799,3 +799,30 @@ value; the same pattern is applied to
 and
 .CW check-pc64-smp.sh ,
 which had the shorter form of the same trap.
+.PP
+.B "And check-pc64-disk.sh was reporting a harness timeout as a broken write path."
+It failed with "nothing reached the disk image on the host", which
+reads as the kernel not writing.  The kernel writes.
+.CW type-at-console.py
+leaves the guest running for fourteen seconds after it types the
+command \(em right for a command that prints and exits, and wrong for
+this one, because
+.CW kfs 's
+ream of a 64M file system runs well over a minute on a loaded machine.
+The guest was being killed in the middle of the ream.  Given a longer
+window the nonce is on the image and both file servers pass,
+.CW disk/kfs
+and
+.CW disk/kfs64 .
+The hold is now an environment variable
+.CW ( INFERNO_CONSOLE_HOLD ,
+default 14 so existing callers are unchanged) and the disk check asks
+for 150 seconds.
+.PP
+That is three harness bugs in one session \(em a status lost to
+.CW "set -e" ,
+a hold too short, and an
+.CW rm
+cancelled by a zsh glob \(em each of which presented as a failure of
+the thing under test.  Two of them would have been caught by asking
+what a passing run looks like before trusting a failing one.
