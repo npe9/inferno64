@@ -12069,15 +12069,51 @@ which is where every Plan 9 binary died here before.
 .CW scripts/osprey-check-p9legacy.py
 is sixteen criteria over the two boots.
 .PP
-.B "Phase 3.2: a real program, then rio, linked with the library."
+.B "Phase 3.2: a real program, then rio, linked with the library. Done."
 A real program \- a command, then a shell, then rio \- is linked with
 the personality library into one microkernel task and run by the exec of
 3.1, drawing to the same
 .CW /dev/draw
 the draw server holds.  This is the exokernel end of the paper: rio with
 its operating system a library in its own address space, on the
-microkernel, no process boundary and no kernel personality.  It is the
-longest of the phases, and honestly named as the last.
+microkernel, no process boundary and no kernel personality.  It was
+written down as the longest of the phases and the last, and it was
+overtaken by the work of the two beside it: everything in that sentence
+runs on
+.CW p964
+now, and
+.CW scripts/osprey-check-p9.py
+is where each clause of it is checked.  A command runs:
+.CW /boot/libcat .
+A shell runs, with a pipeline under it and a program per stage, each
+stage in a relocation slot of its own, and the shell itself is a module
+the personality execs rather than a program the shell spawns.  And rio
+runs: the real 9front rio, linked against this personality with the
+archive of system-call stubs left off, laid in a slot with two thousand
+addresses corrected, past its own file system, making a window and
+running a shell in it, drawing its background in the 0x777777 its own
+.CW data.c
+names, and opening its menu when the pointer is moved into its screen
+and a button held down.  The paragraph above is what that is, and there
+is no part of it left to build.
+.PP
+One qualification, and it is the whole of the difference between this
+phase and the one after it.  Every program named here is linked against
+.CW p9crt.c ,
+which turns its libc calls into calls on the
+.CW P9lib
+table: a library per program, in the program's own address space, which
+is what "linked with the library" means and is not what a Plan 9 binary
+does.  3.3 is the other arrangement \- an ordinary a.out, built the
+ordinary way, whose libc makes real traps that the personality answers \-
+and that runs too, on the same configuration, in the boot
+.CW *legacydemo=
+in plan9.ini asks for \- a boot of its own because what it does, run a
+program that deliberately faults, is not what the boot every other check
+reads should do.
+The two are not a ladder with one rung above the other; they are the two
+ways a library operating system can carry a program, and this
+configuration does both.
 .NH 1
 Does an interrupt give back every register?
 .PP
