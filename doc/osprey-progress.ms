@@ -4473,6 +4473,43 @@ listing came back two entries short, again silently, and the next 9P
 request the personality sent was answered by nobody.  It now counts idle
 passes, and a request resets the count.
 .PP
+Stopping that server on purpose \- the original counting, put back for
+one boot \- showed a third fault, and a worse one than either.  The
+personality did not report the departed server; it died at "fault at
+user pc 0xffffffff", which names neither the error nor where it came
+from.  The transport raises a proper error when no reply comes, so the
+fault was in the unwinding, and
+.CW nexterror
+here longjmps to
+.CW errlab[\-1]
+when nothing is in scope to catch \- whatever lies in memory before the
+array, which is an address nobody chose.  It now says so and stops
+instead, and that sentence is what found the cause:
+.CW p9main
+installs a handler before it sets up, and
+.CW p9setup
+calls
+.CW p9init ,
+which set
+.CW up->nerrlab
+to zero.  The
+.CW Proc
+there is static and so starts zeroed; clearing the count again is not
+initialisation, it is throwing away the handler already on the stack.
+So every line of the personality after
+.CW p9setup
+\- the whole demonstration, and every program it loads \- had been
+running with nothing to catch anything, and any error anywhere in it
+would have jumped into whatever preceded the array.  Nothing had raised
+one before, which is why it took a file server departing in the middle
+of a directory sweep to show it.  The handler survives now, a departed
+server comes out as
+.CW "p9: error: 9P transport: no reply from the file server: '/hello'" ,
+and the boot says at the top that the handler it installed before setup
+is still the one in scope after it, one deep, with a deliberate error
+raised under a handler of its own to prove the unwinding leaves the
+count where it found it.
+.PP
 Two things this paragraph used
 to call open are closed, and both are checked: the exportfs is reached
 by a client in a container of its own over the ring (the client

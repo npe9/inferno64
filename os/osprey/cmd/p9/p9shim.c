@@ -109,7 +109,16 @@ p9init(void)
 	up->user = eve;
 	up->errstr = errbuf0;
 	up->syserrstr = errbuf1;
-	up->nerrlab = 0;
+	/*
+	 * And not up->nerrlab = 0.  The Proc here is static and so starts
+	 * zeroed; clearing the count again is not initialisation, it is
+	 * throwing away whatever handler is already on the stack.  p9main
+	 * installs one - the handler that names an error and exits - and
+	 * then calls p9setup, which calls this, so from here the whole
+	 * personality ran with nothing to catch anything: an error raised
+	 * anywhere longjmped to errlab[-1], whatever lay in memory before
+	 * the array.  That is what "fault at user pc 0xffffffff" was.
+	 */
 }
 
 _Noreturn void
@@ -122,6 +131,19 @@ error(char *s)
 _Noreturn void
 nexterror(void)
 {
+	/*
+	 * An error with no handler in scope used to read errlab[-1] -
+	 * whatever lies in memory before the array - and longjmp to it,
+	 * which is a jump to an address nobody chose.  What that looks
+	 * like from the outside is "fault at user pc 0xffffffff", with
+	 * nothing to say which error it was or where it came from.  Say
+	 * it plainly and stop instead: a personality that cannot unwind
+	 * has nowhere to go, but it can name the error on its way out.
+	 */
+	if(up->nerrlab <= 0){
+		print("p9: an error with no handler to catch it: %s\n", up->errstr);
+		exits("no error handler");
+	}
 	longjmp(up->errlab[--up->nerrlab], 1);
 }
 

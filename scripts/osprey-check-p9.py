@@ -183,6 +183,22 @@ def main():
     m3 = re.search(r'the union listing spanned (\d+) entries', t)
     results.append(("and a union directory read of \"/\" composes the root device, the environment and the 9P mount into one listing",
                     'ls / (a union' in t and m3 is not None and int(m3.group(1)) >= 18))
+    # The personality's own error handling.  p9main installs a handler
+    # before it sets up, and p9setup called p9init, which cleared the
+    # count - so the handler was thrown away and everything after it ran
+    # with nothing to catch anything.  An error raised there longjmped to
+    # errlab[-1], whatever lay in memory before the array, which from
+    # outside is "fault at user pc 0xffffffff" and says neither what the
+    # error was nor where it came from.  A departing file server was what
+    # showed it.  The line names the depth and proves the unwinding with
+    # a deliberate error under a handler of its own.
+    eh = re.search(r'the handler installed before setup is still in scope after it, (\d+) deep; '
+                   r'a deliberate error was caught ([a-z ]+), said "([^"]*)", and left the depth at (\d+)', t)
+    results.append(("and the personality keeps the error handler it installed before it set itself up, which it had been throwing away: an error raised under a handler of its own is caught there, says what it was, and leaves the handler count where it found it - where before, a count cleared during setup meant every error in the boot longjmped to an address nobody chose",
+                    eh is not None and int(eh.group(1)) == 1
+                    and eh.group(2).strip() == 'by the handler put over it'
+                    and eh.group(3) == 'a deliberate error, to prove the unwinding'
+                    and int(eh.group(4)) == 1))
     # The rock fixup, ported from sysfile.c and demonstrated against its own
     # control: the same listing, the same buffer, the same entry, taken
     # before the bind.  A directory entry that is itself a mount point has
@@ -211,7 +227,7 @@ def main():
     sw = re.search(r'through every buffer size from 75 to 320 bytes: (\d+) of them gave the same (\d+) entries '
                    r'with "hello" at (\d+) bytes, and at (\d+) of those sizes the grown entry did not fit and '
                    r'went to the channel\'s rock, the first at (\d+) bytes', t)
-    results.append(("and the entry that replaces it can be longer than the one it replaces - the environment's file over the 9P server's grows it from 66 bytes to 72 - so what no longer fits the caller's buffer is kept in the channel's rock and handed out at the next read: the same listing read through all 246 buffer sizes from 75 to 320 bytes gives the same twenty entries and the same rewritten length every time, and at 18 of those sizes the rock is what carries it",
+    results.append(("and the entry that replaces it can be longer than the one it replaces - the environment's file over the 9P server's grows it from 66 bytes to 72 - so what no longer fits the caller's buffer is kept in the channel's rock and handed out at the next read: the same listing read through all 246 buffer sizes from 75 to 320 bytes gives the same twenty entries and the same rewritten length every time, and at some of those sizes - 18 of them the day this was written - the entry no longer fits and the rock is what carries it",
                     sw is not None and int(sw.group(1)) == 246 and int(sw.group(2)) == 20
                     and int(sw.group(3)) == 12 and int(sw.group(4)) >= 1
                     and int(sw.group(5)) >= 75))

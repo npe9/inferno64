@@ -284,6 +284,35 @@ p9main(void)
 	p9execfile();		/* the second program, a file in this personality's own file system */
 	p9setup();
 
+	/*
+	 * The handler installed above has to still be there now.  It was
+	 * not: p9setup calls p9init, which set up->nerrlab = 0, and a count
+	 * cleared is a handler thrown away - so everything below this line
+	 * ran with nothing to catch anything, and an error raised anywhere
+	 * in it longjmped to errlab[-1], whatever lay in memory before the
+	 * array.  From the outside that is "fault at user pc 0xffffffff",
+	 * which says neither what the error was nor where it came from; it
+	 * took a file server departing mid-demonstration to show it at all.
+	 * So say the depth, and prove the unwinding while at it: an error
+	 * raised under a handler of its own is caught there and leaves the
+	 * depth where it found it.
+	 */
+	{
+		int depth, caught;
+
+		depth = up->nerrlab;
+		caught = 0;
+		if(!waserror()){
+			error("a deliberate error, to prove the unwinding");
+			poperror();
+		} else
+			caught = 1;
+		print("p9: the handler installed before setup is still in scope after it, %d deep; "
+			"a deliberate error was caught %s, said \"%s\", and left the depth at %d\n",
+			depth, caught ? "by the handler put over it" : "by nothing at all",
+			up->errstr, up->nerrlab);
+	}
+
 	c = namec("/", Aopen, OREAD, 0);
 	n = devtab[c->type]->read(c, buf, sizeof buf, 0);
 	print("p9: opened / and read %ld bytes of directory through the name space\n", n);
