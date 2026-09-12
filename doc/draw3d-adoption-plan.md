@@ -707,6 +707,39 @@ with such a line, which is a semantic decision rather than a bug fix.
 `appl/temple/box.b` is the only thing in the tree that draws with
 `line3`, and neither game does, so nothing is visibly wrong today.
 
+**Settled 2026-09-12, and the paragraph above has the diagnosis
+backwards.** `'G'` does clip: `d3projectline()` cuts the segment at the
+eye plane whenever `d3clipbehind` is set, which both providers set by
+default, and `'h'` correctly drops a point behind the eye. The C path
+clips everything. What had no near-plane clipping at all was the *Limbo*
+provider — `project()` returns not-ok for a vertex behind the eye and
+every caller in `draw3d.b` returned on the first one, so a polygon or a
+line with any vertex behind the viewer was dropped whole. "The answer is
+surely draw the half in front" was right, and the device was already
+doing it.
+
+So it was a bug fix after all, and in the other file. `clipnear()` is
+Sutherland-Hodgman against the eye plane and `clipnearline()` the
+two-endpoint case, both interpolating in model space and testing in eye
+space exactly as the C versions do:
+
+```
+                       before   after   device
+one straddling quad         0   56612    56120
+line through the eye        0   25570    25481
+```
+
+Attributable: reverting `appl/math/draw3d.b` alone puts both software
+numbers back to zero, and nothing else in the probe moves.
+
+The probe needed a new case to see the polygon half at all. Its wall of
+quads steps by 0.4 from 0.8, so their edges land *on* the eye plane
+rather than across it — every quad is wholly in front or wholly behind —
+and the Gouraud path subdivides to depth four before filling anything,
+which approximates the clip by accident. The old row read the same with
+the clip and without it. One flat quad from +0.6 to −2.0 straddles
+properly and separates the providers by 56120 pixels.
+
 **2. Presentation was the only thing that consumed the geometry queue,**
 and it does not write the softscreen back, so whether a frame's 3-D ever
 reached the image everything else reads was a race. One frame drawn and
