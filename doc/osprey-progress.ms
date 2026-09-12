@@ -6365,6 +6365,62 @@ What is left is breadth, not kind: the buddy maps the file calls the
 demonstration makes \- open, read, write, close, create, remove, stat,
 seek, pipe, bind, mount, errstr \- and rc or rio would need far more of
 the Plan 9 ABI than that.
+.PP
+Some of that breadth is now measured rather than guessed at, by reading
+the two configurations side by side.  The calls beyond the files are not
+the buddy's at all: heap growth, an alarm, a rendezvous and the time are
+asked of the machine, and the machine is this kernel.
+.CW p9pair 's
+.CW systab
+answered all four and
+.CW p9buddy 's
+answered none, so the same program run on the two behaved differently
+for no reason but the table.  The four are wired there now \-
+.CW xbrk ,
+.CW xalarm ,
+.CW xrendezvous ,
+.CW xnsec ,
+the same bodies \- and
+.CW EXEC
+deliberately is not, because on that configuration the buddy is the
+loader and the pager and answers
+.CW EXEC
+itself, so claiming the number in the kernel would take exec away from
+the container that performs it.
+.PP
+Under the four was a fault worth more than they are.
+.CW p9buddy 's
+.CW sleep(2)
+was the two-millisecond yield the ring clients use, whatever time it was
+asked for \-
+.CW p9pair
+had fixed exactly that and left a comment saying a test could not tell a
+short sleep from a wrong one \- and the shape of the lie is what makes
+it worth writing down.  The program asks for an alarm 150 milliseconds
+out and waits for it in forty sleeps of twenty; every sleep returned in
+about two, the forty of them finished in 130 milliseconds of the
+machine's time, and the program gave up and called the kernel's alarm
+broken.  The bug reported was in the call that worked.  With sleep
+sleeping, the alarm arrives at its handler and the program's own clock
+reads 51 milliseconds across a 50-millisecond sleep where it had read 2
+\- and that second number is the check, because a sleep that returns
+early is a clock that lies to every program that waits on one.  The
+p9buddy check is nine criteria now, and the four new ones were each run
+against the kernel from before the change and fail there.
+.PP
+What is still missing on that configuration is named plainly, because
+the same program says so in its own log: its working directory does not
+follow it (a chdir takes, but a relative name opened after it does not),
+a forked child inherits neither the descriptors nor the name space, a
+bind and a mount do not show in the names that follow them, and there is
+no writable store, so create is refused.  All of those work on
+.CW p9pair ,
+where the buddy is the server personality with a name space of its own
+per container; they are the per-container name space and descriptor
+table that
+.CW p9buddy 's
+smaller buddy does not keep.  That is the next piece of breadth, and it
+is one piece, not four.
 .NH 1
 Running real programs on the two personalities: a plan
 .PP
@@ -11992,7 +12048,7 @@ and it dies at
 .CW "unimplemented syscall 14" ,
 which is where every Plan 9 binary died here before.
 .CW scripts/osprey-check-p9legacy.py
-is fifteen criteria over the two boots.
+is sixteen criteria over the two boots.
 .PP
 .B "Phase 3.2: a real program, then rio, linked with the library."
 A real program \- a command, then a shell, then rio \- is linked with

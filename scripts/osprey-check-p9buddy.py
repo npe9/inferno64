@@ -39,6 +39,7 @@ def main():
     except OSError: t = ''
 
     m = re.search(r'read\(fd, buf, \d+\) returned (\d+) bytes, served by the buddy', t)
+    sl = re.search(r'nsec\(\) ran forward (\d+) milliseconds over a 50 millisecond sleep', t)
     results = [
         ("an unmodified Plan 9 binary runs on the microkernel and a buddy personality serves it",
          'unmodified Plan 9 program' in t and 'p9 server: serving this name space over the ring' in t),
@@ -49,6 +50,30 @@ def main():
          re.search(r'legacy: open\("/"\) returned fd \d+', t) is not None),
         ("its read() is forwarded and the buddy returns the file's bytes, copied back to the legacy buffer",
          m is not None and int(m.group(1)) > 0),
+        # The calls beyond the files.  A buddy answers what a program asks
+        # of its file system; these four are asked of the machine, and the
+        # machine is the microkernel - p9pair's systab had xbrk, xalarm,
+        # xrendezvous and xnsec and this configuration's had none of them.
+        # EXEC is deliberately not among them: here the buddy is the loader
+        # and the pager and answers EXEC itself.
+        ("and the calls beyond the files are the kernel's, not the buddy's: rendezvous(2) meets two processes of one address space and passes a word between them",
+         'rendezvous on tag 0x9001 met my thread and took the word it left: 0x1234' in t),
+        ("and brk(2) grows the heap the microkernel gave the program, so a buffer malloc returns is in the address space both flows share",
+         'the heap is shared too: what my thread wrote into a buffer malloc gave me reads back here' in t),
+        # sleep(2) was the real fault under these.  Every sleep of a legacy
+        # process was the two-millisecond yield the ring clients use,
+        # whatever it asked for - p9pair had fixed this and said so in a
+        # comment, and this configuration had not - so the program's forty
+        # 20ms sleeps waiting for a 150ms alarm all returned in about two,
+        # it gave up before the alarm was due, and called the kernel's
+        # alarm broken.  Both numbers below are of that one fault: a sleep
+        # that returns early is a clock that lies to every program that
+        # waits on one.
+        ("and sleep(2) sleeps for the time asked rather than yielding, which is what the program's own clock says: nsec(2) reads a rising 50 milliseconds across a 50-millisecond sleep, where a two-millisecond yield read 2",
+         sl is not None and 45 <= int(sl.group(1)) <= 70),
+        ("and alarm(2) delivers its note to the handler the program registered, which only a sleep that really sleeps can wait for",
+         'my note handler got the alarm note I asked for' in t
+         and 'alarm(150) delivered its note and I woke to it' in t),
         ("every file trap was served by the peer, and it exits cleanly, no unimplemented syscall, no panic",
          'the buddy answered every trap' in t and 'unimplemented syscall' not in t
          and 'the program exited' in t and 'panic' not in t),

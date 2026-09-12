@@ -227,6 +227,27 @@ port
 	}
 	uintptr xsleep(va_list list)
 	{
+		/*
+		 * A legacy process - one whose text is a buddy's image, which
+		 * on this configuration is the program itself - gets Plan 9's
+		 * sleep(2): the milliseconds it asked for.  p9pair had this
+		 * and this did not, and what the difference costs is not
+		 * visible in a sleep's own return: the program asked for 20
+		 * milliseconds forty times while waiting for an alarm it had
+		 * set 150 milliseconds out, each sleep returned in about two,
+		 * and it gave up before the alarm was due and called the
+		 * kernel's alarm broken.  A sleep that returns early is a
+		 * clock that lies to every program that waits on one.
+		 */
+		if(up->buddyimage){
+			long ms = va_arg(list, long);
+
+			if(ms <= 0)
+				yield();
+			else
+				tsleep(&up->sleep, return0, 0, ms);
+			return 0;
+		}
 		USED(list);
 		/*
 		 * The program's yield-and-service call.  It puts a request in
@@ -411,12 +432,85 @@ port
 		return 0;
 	}
 
+	/*
+	 * The four brought over from p9pair, which had them and this did
+	 * not.  They are the calls beyond the files: heap growth, a note on
+	 * the clock, two processes of one address space meeting, and the
+	 * time.  A buddy answers what a program asks of its file system;
+	 * these are asked of the machine, and the machine here is this
+	 * kernel.  EXEC is deliberately not among them: on this
+	 * configuration the buddy is the loader and the pager, and
+	 * p9buddy.c answers EXEC itself, so claiming 7 here would take exec
+	 * away from the container that performs it.
+	 */
+	uintptr xbrk(va_list list)
+	{
+		extern long ospreybuddybrk(uintptr);
+		uintptr addr = va_arg(list, uintptr);
+
+		if(up->buddyimage)
+			return (uintptr)ospreybuddybrk(addr);
+		return ibrk(addr, BSEG);
+	}
+
+	uintptr xalarm(va_list list)
+	{
+		return (uintptr)procalarm(va_arg(list, ulong));
+	}
+
+	uintptr xnsec(va_list list)
+	{
+		USED(list);
+		return (uintptr)todget(nil, nil);
+	}
+
+	uintptr xrendezvous(va_list list)
+	{
+		uintptr tag, val, new;
+		Proc *p, **l;
+
+		tag = va_arg(list, uintptr);
+		new = va_arg(list, uintptr);
+		if(up->rgrp == nil)
+			up->rgrp = newrgrp();
+		l = &REND(up->rgrp, tag);
+
+		lock(up->rgrp);
+		for(p = *l; p != nil; p = p->rendhash){
+			if(p->rendtag == tag){
+				*l = p->rendhash;
+				val = p->rendval;
+				p->rendval = new;
+				unlock(up->rgrp);
+				ready(p);
+				return val;
+			}
+			l = &p->rendhash;
+		}
+
+		/* nobody there yet: sleep on the tag until the other one comes */
+		up->rendtag = tag;
+		up->rendval = new;
+		up->rendhash = *l;
+		*l = up;
+		up->state = Rendezvous;
+		unlock(up->rgrp);
+
+		sched();
+
+		return up->rendval;
+	}
+
 	Xsyscall *systab[] = {
 		[5]	xselect,	/* DUP number reused: select over arms */
 		[8]	xexits,		/* EXITS */
 		[28]	xnotify,	/* NOTIFY: register a note handler */
 		[29]	xnoted,		/* NOTED: the handler returns; NCONT resumes */
 		[17]	xsleep,		/* SLEEP: yield and service the ring */
+		[24]	xbrk,		/* BRK_: heap growth, the address-space service */
+		[6]	xalarm,		/* ALARM: a note this many milliseconds from now */
+		[34]	xrendezvous,	/* RENDEZVOUS: two processes of one address space meet */
+		[53]	xnsec,		/* _NSEC: nanoseconds, the machine's clock */
 		[30]	xsegattach,	/* SEGATTACH */
 		[51]	xpwrite,	/* PWRITE */
 		[60]	ospreyxcall,	/* above the Plan 9 table, which a legacy binary uses whole: a request of the task's own, answered now */
