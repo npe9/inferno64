@@ -1148,6 +1148,49 @@ inspection only. That path runs when a server does not advertise
 here; it is written to match `draw3d.b` line for line rather than left
 different.
 
+The point size is measured, not inferred from the 4:1 ratio: a column
+plotting **one** point on its own reads 1 pixel through software and 4
+through the device, which is `metal_queue_plot`'s 1.5-pixel quad landing
+on four of them.
+
+#### Two things that column turned up, both open
+
+**1. Equal depth: the Limbo providers draw, `devdraw`'s C path does
+not.** `zwin()` lets an equal depth win — deliberately, because sprites
+sit one depth apiece and TempleOS's `GR_Z_ALL` puts whole groups at the
+same one, so a strict test would make every overlapping sprite after the
+first invisible. `devdraw`'s `'h'` is strict (`z < d3zbuf[zk]`). Points
+at exactly the wall's depth: software 400, Metal 1600, `devdraw` C
+**0**. Nothing in the tree plots at a wall's exact depth today, and the
+right answer is a semantic call — but the three paths should not differ.
+
+**2. `devdraw`'s C `'h'` rejects points that are genuinely in front.**
+This is not a tie-break question. With `INFERNO_NOGPU=1`, so the device
+provider falls back on `devdraw`'s own rasteriser:
+
+```
+provider     in front  at wall   behind one point
+software          400      400        0        1
+device (C)        204        0        0        0
+```
+
+`one point` is a single `plot3` at the centre of the screen, in front of
+a wall at z=−3, and it draws **nothing**. The 204 in the first column
+are the points that project *outside* the wall's own screen area — the
+grid at z=−1.2 spreads wider than the wall at z=−3, and about half of it
+misses. Every point that lands on the wall is rejected, and the wall is
+further away.
+
+It is the depth test and not something else: the same points with nothing
+in front of them all draw, and the `behind` column shows the test working
+in the other direction. The suspicion is units. `'h'` compares
+`(int)((-ez) * D3ZSCALE)` against `client->d3zbuf`, which `'k'` filled
+through `d3fillpolyz` with `pdc + pdx*x + pdy*y` straight out of
+`d3planecoeffs` — and `'k'`'s *own* eye-z conversion divides that by
+`D3ZSCALE` and negates it before handing it to the GPU, which says the
+two are not in the same units to begin with. Not chased further here.
+`g3probe(1)`'s `at wall`/`one point` columns are the reproducer.
+
 ### Phase 5 — a batch entry point
 
 Add a mesh call to the module — vertices, triangle indices, one lit per

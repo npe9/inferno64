@@ -151,7 +151,8 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	# provider did - so a port that looked right through Metal looked
 	# wrong on any host without it, which is the fallback every non-Metal
 	# host takes.
-	sys->print("\n%-12s %10s %10s\n", "provider", "in front", "behind");
+	sys->print("\n%-12s %8s %8s %8s %8s\n",
+		"provider", "in front", "at wall", "behind", "one point");
 	plotz(Draw3d->PATH, "software");
 	plotz("/dis/math/draw3ddev.dis", "device");
 
@@ -538,12 +539,21 @@ plotz(path, what: string)
 	if(d3 == nil)
 		return;
 	d3->init();
-	front := plotzone(d3, -1.2);
-	behind := plotzone(d3, -6.0);
-	sys->print("%-12s %10d %10d\n", what, front, behind);
+	front := plotzone(d3, -1.2, 20);
+	# At the wall's own depth.  devdraw's 'h' tests z strictly and this
+	# file's zwin() lets equal win, which is the sprite convention - so
+	# this column is where those two rules disagree, and it is the only
+	# geometry that can tell them apart: every point in the other columns
+	# is at its own screen position, so no two ever meet in one z cell.
+	same := plotzone(d3, -3.0, 20);
+	behind := plotzone(d3, -6.0, 20);
+	# and one point on its own, to measure how big a point actually is
+	# rather than inferring it from a ratio
+	one := plotzone(d3, -1.2, 1);
+	sys->print("%-12s %8d %8d %8d %8d\n", what, front, same, behind, one);
 }
 
-plotzone(d3: Draw3d, pz: real): int
+plotzone(d3: Draw3d, pz: real, side: int): int
 {
 	img := win.image;
 	img.draw(img.r, d.black, nil, img.r.min);
@@ -569,11 +579,14 @@ plotzone(d3: Draw3d, pz: real): int
 	# and the points, in green, at pz - which is either nearer than the
 	# wall or further away than it
 	d3->setcolour(c, d.color(Draw->Green));
-	for(i := 0; i < 20; i++)
-		for(j := 0; j < 20; j++)
-			d3->plot3(c, Draw3d->Vector(
-				-0.5 + 1.0 * (real i) / 19.0,
-				-0.4 + 0.8 * (real j) / 19.0, pz));
+	if(side < 2)
+		d3->plot3(c, Draw3d->Vector(0.0, 0.0, pz));
+	else
+		for(i := 0; i < side; i++)
+			for(j := 0; j < side; j++)
+				d3->plot3(c, Draw3d->Vector(
+					-0.5 + 1.0 * (real i) / (real (side-1)),
+					-0.4 + 0.8 * (real j) / (real (side-1)), pz));
 	img.flush(Draw->Flushnow);
 	return greenpix(img.r);
 }
