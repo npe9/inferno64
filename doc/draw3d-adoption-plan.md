@@ -922,12 +922,46 @@ counts the whole frame as lit.
 Bisected rather than guessed at: `win-cocoa.m` from `90b45964`, the
 commit before `76412182` ("the readback composes like present, so the
 head-up display survives"), built against everything else as it is now,
-gives `pick3d` **278619 white pixels and no Paper at all**. So this is
+gives `pick3d` **278619 white pixels and no Paper at all**. So it was
 that commit's doing: making `metal_readback_geom()` compose `under` →
 geometry → `metal_overlay_soft` fixed `gorge`'s head-up display and broke
-the window background of ports that clear to a colour of their own. The
-overlay is supposed to put back every pixel that changed after the
-snapshot, and for these ports it does not.
+the window background of ports that clear to a colour of their own.
+
+**Fixed the same day.** `metal_flush_geom()` brought the persistent soft
+texture up to date with an *incremental* upload before snapshotting it as
+`under` — and an incremental upload reads from `soft_shadow`, the frozen
+per-flush snapshot `flushmemscreen()` keeps, because it normally runs
+asynchronously on the AppKit thread where the live buffer may already be
+into a later frame. `metal_flush_geom()` does not: it runs on the
+interpreter thread at a defined point in the frame, and what it needs is
+the softscreen as it stands *now*. The overlay pass is a comparison
+against that snapshot, so a snapshot predating the program's own drawing
+makes the comparison meaningless and the drawing vanishes. The upload is
+full there now. It costs one texture conversion per frame in which 2-D
+follows 3-D, which `mtl_have_under` already limits it to: measured at 48
+us against a 16 ms frame, two full uploads a frame instead of one.
+
+The table re-run with that fix, device against software:
+
+| port | device | software |
+| --- | --- | --- |
+| `pick3d` | 36544 36520 36530 | 36953 36953 36953 |
+| `shadow` | 15095 15095 21500 | 14922 14922 14922 |
+| `3dpoly` | 27305 27305 27275 | 14790 25049 25049 |
+| `spriteplot3d` | 14447 14447 22681 | 22561 22561 22789 |
+| `rotatetank` | 20462 20463 20463 | 20476 20461 20500 |
+| `shading` | 101533 101553 101533 | 35516 100436 55131 |
+| `zoneout` | 258897 ×3 | 305324 305324 258897 |
+| `wenceslas` | 33169 ×3 | 33169 ×3 |
+| `castlefrankenstein` | 305233 ×3 | 305233 ×3 |
+
+No whole-screen readings left, and `pick3d` — the port that was 42624 to
+49466 with a desktop-coloured background — is 36530 against software's
+36953. What remains is the ordinary spread of an animating demo sampled
+at a wall-clock instant: `shading` and `zoneout` vary more between two
+*software* runs than between the providers, and `spriteplot3d` and
+`shadow` each have one run out of three at a different phase. Those want
+a port-by-port look at a still frame, not another counting pass.
 
 The other is that `framegrab`'s metric cannot be used under `wm`: the
 corner pixel is then the desktop, and a single unit of difference there

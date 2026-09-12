@@ -1914,10 +1914,27 @@ metal_flush_geom(void)
 	tex = metal_soft_tex(pw, ph);
 	if(under == nil || tex == nil)
 		return;
-	/* Bring the persistent soft texture current, then snapshot it entirely on
-	 * the GPU.  Uploading gscreen straight into under forced a full CPU texture
-	 * conversion every time 2D drawing followed queued geometry. */
-	metal_upload_damage(tex, mtl_tex_fresh);
+	/*
+	 * Bring the persistent soft texture current, then snapshot it entirely
+	 * on the GPU.  Uploading gscreen straight into under forced a full CPU
+	 * texture conversion every time 2D drawing followed queued geometry.
+	 *
+	 * Full, not incremental, and that is load-bearing.  An incremental
+	 * upload reads from soft_shadow - flushmemscreen()'s frozen per-flush
+	 * snapshot - because it runs asynchronously on the AppKit thread where
+	 * the live buffer may already be into a later frame.  This runs on the
+	 * interpreter thread at a defined point in the frame, and what it needs
+	 * is the softscreen as it stands NOW: the overlay pass is a comparison
+	 * against this snapshot, so a snapshot that predates the program's own
+	 * drawing makes that comparison meaningless and the drawing disappears.
+	 * With the incremental upload, ports that clear their window to a colour
+	 * of their own came back with emu's desktop through the middle of them -
+	 * pick3d(1) read 266482 pixels of the Paper desktop colour across 227
+	 * rows where the software provider has white, and reads 270586 white
+	 * and no Paper with this.  It costs one texture conversion per frame in
+	 * which 2-D follows 3-D, which mtl_have_under already limits it to.
+	 */
+	metal_upload_damage(tex, 1);
 	mtl_tex_fresh = 0;
 	cmd = [mtl_queue commandBuffer];
 	if(cmd == nil)
