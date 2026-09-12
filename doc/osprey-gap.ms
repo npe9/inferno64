@@ -368,23 +368,23 @@ Create and remove over 9P: the log store answers
 and refuses
 .CW remove
 because it is immutable, both over 9P
-.CW ( osprey-check-p9pair ).
+.CW osprey-check-p9pair ). (
 .IP \(bu
 A wire of its own for \[*p]p: the personality's \[*p]p is served on a
 TCP wire (stack B over the ring, stack A over the cable), one connection
 per kproc
-.CW ( pipconn ),
+.CW pipconn ), (
 and it authenticates \- a session proves who it is with a ticket the
 kernel signs and checks, and an open of a file that is somebody's is
 refused to a session that is nobody's
-.CW ( osprey-check-p9wire ,
+.CW osprey-check-p9wire , (
 .CW osprey-check-p9pair ).
 .IP \(bu
 A second machine: two kernels on a socket cable, each driving a
 user-space virtio-net device, run tcp.c to tcp.c, carry a megabyte, and
 migrate a process \- its pages, its descriptor table and its private
 name space \- from one to the other
-.CW ( osprey-check-p9wire ,
+.CW osprey-check-p9wire , (
 twenty criteria).  It is two amd64 machines under QEMU; a non-amd64 one
 is the part that still wants a board.
 .IP \(bu
@@ -400,7 +400,7 @@ The caching file system is a file system: write-through commits a
 version on the server, its directory lists what the cache holds, a
 ninth file evicts the least recently used, and a stream is the lease's
 heartbeat
-.CW ( osprey-check-p9pair ).
+.CW osprey-check-p9pair ). (
 .IP \(bu
 Configuration read, not derived: each machine reads
 .CW /n/net
@@ -409,7 +409,7 @@ disk and read from then on.
 .IP \(bu
 The i8042 driver owns the whole controller: the one-time command-byte
 enable is the driver's now, at CPL3, not the kernel's
-.CW ( osprey-check-kbd ) ;
+.CW osprey-check-kbd ); (
 the interrupt-path bug that had kept it in the kernel was run down with a
 trap-return checksum and fifty-two reproduction boots and did not
 reproduce.
