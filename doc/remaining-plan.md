@@ -104,21 +104,47 @@ over https) is the tractable start: pkt-line framing, ref advertisement,
 want/have negotiation, and packfile parsing (delta resolution is the
 hard part). *Effort:* large but high value; build read-only clone first.
 
-**D2. acme.** The iconic Plan 9 mouse-driven editor. `sam` exists;
-`acme` does not. *Approach:* it is a Tk/draw + filesystem-interface
-program; a real port is large. *Effort:* large. `sam` covers editing, so
-this is want-not-need.
+**D2. ~~acme.~~ CORRECTION: acme is already here, with source.** This
+entry claimed `acme` did not exist. That was wrong and should have been
+checked: `appl/acme/` holds the full 32-module Limbo source
+(`acme.b buff.b col.b dat.b disk.b ecmd.b edit.b elog.b exec.b file.b
+frame.b fsys.b graph.b gui.b look.b regx.b row.b scrl.b styxaux.b
+text.b time.b util.b wind.b xfid.b`, each with its `.m`), it builds to
+`dis/acme.dis`, and the `acme/` tree at the repository root carries its
+support programs (`acme/dis/{adiff,agrep,amail,awd,cd,ind,new,spout,
+unind,win,winm}`, `acme/edit/{a,c,d,e,g,i,p,pipe,x}`,
+`acme/acid/Acid{,0}`, `acme/mail/{Mail,Mailpop3,mkbox}`), all of which
+do resolve to sources under `appl/acme/`. The earlier probe missed it by
+looking only in `appl/cmd/`. Nothing to do here.
 
-**D3. Mail over modern TLS.** Pieces exist (`marshal`, `readmail`,
-`sendmail`), but no IMAP/SMTP-over-TLS client. *Approach:* build an IMAP
-and SMTP-submission client on `tls12(2)`/`https(2)`, feeding the
-existing mail UI. *Effort:* medium.
+**D3. ~~Mail over modern TLS.~~ CORRECTION: the client half shipped;
+the server half is the gap.** This entry claimed there was no
+IMAP/SMTP-over-TLS client. There is: `appl/cmd/upas/fetch.b` (IMAP4
+over TLS to an mbox), `appl/cmd/upas/send.b` (SMTP submission over TLS
+with MIME compose), `appl/cmd/upas/fs.b` (mbox or IMAP mailbox as a file
+tree) and `appl/cmd/upas/nedmail.b`, over `appl/lib/imap4.b` and
+`appl/lib/smtp.b`, all verified against real Gmail and against local
+Postfix/Dovecot. What is still missing is everything that would make
+this box a mail *host*: no `smtpd`, no `pop3d`, no `imap4d`, no delivery
+queue (`runq`/`qer`), no `/mail/lib/aliases` expansion, no spam or
+attachment filtering. See `doc/upas-plan.md` for the per-component
+table. *Effort:* medium-large, and it is a server project, not a client
+one.
 
-**D4. PDF / PostScript output, and a viewer.** No print path at all — no
-`lp`, no spooler, no PS/PDF writer, and no PDF viewer. A PostScript or
-PDF *writer* would also give Charon and the man tools a "save/print
-page" capability. *Approach:* a PDF-writer library first (contained),
-then a viewer. *Effort:* medium; niche but self-contained.
+**D4. PDF / PostScript output, and a viewer.** The "no print path at
+all" in the original wording overstated it, though the gap is real.
+What exists, checked: `appl/lib/print/` is a genuine print library —
+`print.b` (paper/printer/mode configuration), `hp_driver.b` (an HP PCL
+raster driver) and `scaler.b` — but its only caller in the tree is
+`appl/charon/paginate.b`, so it is Charon's print button and nothing
+else. `pslib(2)` (`appl/lib/pslib.b`) writes PostScript, but its entire
+interface is one function, `writeimage`, which dumps a `Draw->Image` as
+a raster; its only caller is `appl/wm/brutus/image.b`. So: no `lp`
+command, no spooler or queue, no text-or-vector PostScript writer, and
+no PDF in either direction — no writer and no viewer. *Approach:* a PDF
+writer library first (contained), then a viewer; an `lp`-style front end
+over the existing `print(2)` config layer is separately cheap.
+*Effort:* medium; niche but self-contained.
 
 **D5. scp / sftp.** The SSH client has no file transfer. `scp` (exec
 `scp -t`/`-f` on the far side) is the smaller build; sftp is a whole
@@ -130,8 +156,11 @@ a general `hget`/`curl` command over it (methods, headers, redirects,
 output to file) would make the HTTP stack usable from the shell.
 *Effort:* small.
 
-**D7. Package manager.** No install/update path (roadmap C6). Lowest
-priority; only matters if the tree is distributed to others.
+**D7. ~~Package manager.~~ CORRECTION: `pkg(1)` shipped.** This entry
+claimed there was no install/update path. `appl/cmd/pkg.b` exists and
+`doc/pkg-roadmap.md` records milestones M1-M4 as built and tested; the
+open work there is the federated Store/Dir/KeyServer design described at
+the end of that roadmap, not a missing package manager.
 
 ## Suggested order
 
@@ -140,4 +169,21 @@ completion) first. Then pick one flagship: **B1** (novel — verified Dis
 crypto) if the interest is formal methods, or **D1** (a git client) if
 the interest is making the system practically useful. **A4/B2/C2** are
 good medium-sized fill-ins. **A3** waits for a debugger session; **C1**,
-**D2**, **D3**, **D4** are large and can be scheduled deliberately.
+**D3** (the mail *server* half) and **D4** are large and can be
+scheduled deliberately. **D2** and **D7** are closed — see the
+corrections above.
+
+**Two gaps this section never listed, both real (checked, not recalled):**
+
+**D8. Version control.** Nothing in the tree does it — no `git`, `hg`,
+`svn` or anything of the kind under `appl/`, `p9/`, `module/` or `man/`.
+This is the same point as D1 above, restated so the absence is recorded
+as a *category* gap and not only as one candidate implementation. It is
+the single largest hole in the environment.
+
+**D9. Job scheduling.** No `cron`, no `at`, no batch queue anywhere in
+`appl/`, `p9/`, `module/` or `man/`. Nothing in the system can run on a
+timer or at a future time; every recurring task needs an external host
+scheduler or a hand-rolled `sleep` loop. *Effort:* small — a `cron`
+reading a crontab-shaped table, running entries as the owning user
+through the existing `runas`/factotum path, is a contained job.

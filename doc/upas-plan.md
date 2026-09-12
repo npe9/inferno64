@@ -13,8 +13,8 @@ with their role and current Inferno status:
 | Plan 9 dir | role | Inferno status |
 |---|---|---|
 | `common` | shared library: message parse, aliases, config, `libsys` | partial (mime(2) parses; no alias/config layer) |
-| `fs` | `upas/fs`: the mailbox file server (`/mail/fs`), backends mbox/mdir/pop3/imap/plan9, the `info` file and `ctl` | **partial** — snapshot presenter only, see below |
-| `ned` | `nedmail`: the interactive command-line reader | **missing** |
+| `fs` | `upas/fs`: the mailbox file server (`/mail/fs`), backends mbox/mdir/pop3/imap/plan9, the `info` file and `ctl` | **done for mbox/imap** (milestone 1, `c3bd7d5f`): real `/mail/fs` interface, 16-field `info`, full per-message file set, `ctl delete`. No mdir/pop3/plan9 backend. |
+| `ned` | `nedmail`: the interactive command-line reader | **done** (milestone 2, `5a21f08c`, `b2ff1088`) — `appl/cmd/upas/nedmail.b`; only the pipe escapes and filing remain |
 | `marshal` | compose + submit a message (headers, MIME, aliases) | partial — `upas/send` composes+submits over TLS |
 | `send` | delivery agent / `sendmail` front end into the queue | missing (send goes straight to one SMTP server) |
 | `smtp` | SMTP client (to smarthost/MX) and `smtpd` server | partial — client-submit only; no MX, no smtpd |
@@ -26,11 +26,14 @@ with their role and current Inferno status:
 | `ml` | mailing-list manager | missing |
 | `misc`, `unesc` | small tools | missing |
 
-Current Inferno `upas` = three Limbo commands: `fetch` (IMAP4-over-TLS
+Current Inferno `upas` = four Limbo commands: `fetch` (IMAP4-over-TLS
 download to an mbox), `send` (SMTP-over-TLS submission with MIME compose),
-`fs` (present an mbox — or an IMAP mailbox — as a read-only file tree). All
-verified against real Gmail and, now, against real Postfix/Dovecot/OpenSSH
-(`tests/mailsshinterop.sh`).
+`fs` (present an mbox — or an IMAP mailbox — as a file tree serving the real
+`/mail/fs` interface) and `nedmail` (the reader), plus the `wm/mail` Tk
+client. All verified against real Gmail and, now, against real
+Postfix/Dovecot/OpenSSH (`tests/mailsshinterop.sh`). The table above was
+written before milestones 1-2 landed; the **Progress** section at the end is
+the authority where the two disagree.
 
 ## The foundation gap: upas/fs
 
