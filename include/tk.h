@@ -479,6 +479,7 @@ enum {
 	TkNcolour,		/* r filled with rgba */
 	TkNroundfill,		/* r filled, corners rounded by radius */
 	TkNborder,		/* rounded rectangle, stroked, width wide */
+	TkNcorners,		/* the four corner cutaways, in rgba */
 
 	/*
 	 * Declared, not implemented.  This is the vocabulary a GPU backend
@@ -500,12 +501,11 @@ enum {
 struct TkNode
 {
 	uchar		type;
-	uchar		hasout;		/* is `out' meaningful? */
+	uchar		pad;
 	short		radius;
 	short		width;
 	Rectangle	r;
 	ulong		rgba;
-	ulong		out;		/* what shows outside a rounded corner */
 	TkNode*		next;
 };
 
@@ -733,11 +733,13 @@ extern	int	tkviascene;
 extern	TkSpace	tkspaces[];
 extern	int	tkborderwidth(Tk*, int);
 extern	int	tkstyleflat(Tk*);
+extern	TkEnv*	tkbehind(Tk*);
 extern	TkScene*	tkscenenew(void);
 extern	void		tkscenefree(TkScene*);
 extern	void		tkscenecolour(TkScene*, Rectangle, ulong);
 extern	void		tksceneroundfill(TkScene*, Rectangle, int, ulong);
-extern	void		tksceneborder(TkScene*, Rectangle, int, int, ulong, ulong);
+extern	void		tksceneborder(TkScene*, Rectangle, int, int, ulong);
+extern	void		tksceneborderon(TkScene*, Rectangle, int, int, ulong, ulong);
 extern	int		tkscenerender(TkScene*, TkCtxt*, Image*);
 extern	int		tkscenecount(TkScene*);
 extern	TkSpace*	tkspace(Tk*);

@@ -152,7 +152,7 @@ tksceneroundfill(TkScene *s, Rectangle r, int radius, ulong rgba)
  * argument goes away - which is the next piece of work, not a caveat.
  */
 void
-tksceneborder(TkScene *s, Rectangle r, int radius, int width, ulong rgba, ulong out)
+tksceneborder(TkScene *s, Rectangle r, int radius, int width, ulong rgba)
 {
 	TkNode *n;
 
@@ -164,8 +164,32 @@ tksceneborder(TkScene *s, Rectangle r, int radius, int width, ulong rgba, ulong 
 	n->radius = radius;
 	n->width = width;
 	n->rgba = rgba;
-	n->out = out;
-	n->hasout = 1;
+}
+
+/*
+ * A border, plus the colour that shows where its corners are cut away.
+ *
+ * For callers that are NOT a whole widget: tkdrawrelief() is handed an
+ * image in which the widget has already filled its whole rectangle and
+ * drawn its text, so the corner arrives wrong and painting it back is
+ * the only thing left.  Expressed as two nodes rather than as an
+ * argument, because what shows behind a widget is not a property of its
+ * border - and a widget whose fill is a TkNroundfill, as a frame's now
+ * is, calls tksceneborder() and has no use for this.
+ */
+void
+tksceneborderon(TkScene *s, Rectangle r, int radius, int width, ulong rgba, ulong out)
+{
+	TkNode *n;
+
+	if(Dx(r) <= 0 || Dy(r) <= 0 || width <= 0)
+		return;
+	if((n = newnode(s, TkNcorners)) == nil)
+		return;
+	n->r = r;
+	n->radius = radius;
+	n->rgba = out;
+	tksceneborder(s, r, radius, width, rgba);
 }
 
 int
@@ -237,19 +261,42 @@ renderroundfill(TkCtxt *c, Image *dst, TkNode *n)
 	USED(w);
 }
 
+/* just the four corner regions, in the colour behind the widget */
+static void
+rendercorners(TkCtxt *c, Image *dst, TkNode *n)
+{
+	Image *out;
+	int rad, y, cut, w, h;
+	Point o;
+
+	out = tkcolor(c, n->rgba);
+	if(out == nil)
+		return;
+	o = n->r.min;
+	w = Dx(n->r);
+	h = Dy(n->r);
+	rad = clamprad(n->r, n->radius);
+	for(y = 0; y < rad; y++){
+		cut = inset(rad, y);
+		if(cut <= 0)
+			continue;
+		draw(dst, Rect(o.x, o.y+y, o.x+cut, o.y+y+1), out, nil, ZP);
+		draw(dst, Rect(o.x+w-cut, o.y+y, o.x+w, o.y+y+1), out, nil, ZP);
+		draw(dst, Rect(o.x, o.y+h-1-y, o.x+cut, o.y+h-y), out, nil, ZP);
+		draw(dst, Rect(o.x+w-cut, o.y+h-1-y, o.x+w, o.y+h-y), out, nil, ZP);
+	}
+}
+
 static void
 renderborder(TkCtxt *c, Image *dst, TkNode *n)
 {
-	Image *col, *out;
+	Image *col;
 	int rad, bd, y, cut, w, h;
 	Point o;
 
 	col = tkcolor(c, n->rgba);
 	if(col == nil)
 		return;
-	out = nil;
-	if(n->hasout)
-		out = tkcolor(c, n->out);
 	o = n->r.min;
 	w = Dx(n->r);
 	h = Dy(n->r);
@@ -268,12 +315,6 @@ renderborder(TkCtxt *c, Image *dst, TkNode *n)
 		return;
 	for(y = 0; y < rad; y++){
 		cut = inset(rad, y);
-		if(out != nil && cut > 0){
-			draw(dst, Rect(o.x, o.y+y, o.x+cut, o.y+y+1), out, nil, ZP);
-			draw(dst, Rect(o.x+w-cut, o.y+y, o.x+w, o.y+y+1), out, nil, ZP);
-			draw(dst, Rect(o.x, o.y+h-1-y, o.x+cut, o.y+h-y), out, nil, ZP);
-			draw(dst, Rect(o.x+w-cut, o.y+h-1-y, o.x+w, o.y+h-y), out, nil, ZP);
-		}
 		draw(dst, Rect(o.x+cut, o.y+y, o.x+cut+bd, o.y+y+1), col, nil, ZP);
 		draw(dst, Rect(o.x+w-cut-bd, o.y+y, o.x+w-cut, o.y+y+1), col, nil, ZP);
 		draw(dst, Rect(o.x+cut, o.y+h-1-y, o.x+cut+bd, o.y+h-y), col, nil, ZP);
@@ -304,6 +345,9 @@ tkscenerender(TkScene *s, TkCtxt *c, Image *dst)
 			break;
 		case TkNroundfill:
 			renderroundfill(c, dst, n);
+			break;
+		case TkNcorners:
+			rendercorners(c, dst, n);
 			break;
 		case TkNborder:
 			renderborder(c, dst, n);

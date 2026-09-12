@@ -104,6 +104,31 @@ TkSpace	tkspaces[] =
  */
 int tkviascene;
 
+/*
+ * The environment of whatever is visually BEHIND this widget, which is
+ * what a rounded corner has to show.
+ *
+ * tk->master, not tk->parent.  `master' is the pack owner; `parent' is
+ * set only for a window inside a canvas or a text widget, so for an
+ * ordinary packed widget it is nil - and reading it gave the widget its
+ * OWN background as the colour behind itself.  Invisible for as long as
+ * every widget was the same colour as its container, which it was until
+ * the flat style gave fields a surface of their own, and then a rounded
+ * corner would have been filled in with the widget's own fill and not
+ * rounded at all.
+ */
+TkEnv*
+tkbehind(Tk *tk)
+{
+	if(tk == nil)
+		return nil;
+	if(tk->master != nil && tk->master->env != nil)
+		return tk->master->env;
+	if(tk->parent != nil && tk->parent->env != nil)
+		return tk->parent->env;
+	return tk->env;
+}
+
 int
 tkstyleflat(Tk *tk)
 {
@@ -979,9 +1004,7 @@ tkroundbox(Image *i, Tk *tk, Point o, int w, int h, int bd, Image *col)
 	if(rad <= 0)
 		return;
 
-	pe = tk->env;
-	if(tk->parent != nil && tk->parent->env != nil)
-		pe = tk->parent->env;
+	pe = tkbehind(tk);
 	bg = tkgc(pe, TkCbackgnd);
 
 	r2 = rad*rad;
@@ -1049,9 +1072,7 @@ tkdrawrelief(Image *i, Tk *tk, Point o, int color, int rlf)
 			TkScene *sc;
 			TkEnv *pe;
 
-			pe = tk->env;
-			if(tk->parent != nil && tk->parent->env != nil)
-				pe = tk->parent->env;
+			pe = tkbehind(tk);
 			sc = tkscenenew();
 			if(sc != nil){
 				ulong brgba;
@@ -1073,7 +1094,7 @@ tkdrawrelief(Image *i, Tk *tk, Point o, int color, int rlf)
 					brgba = e->colors[color+TkDarkshade];
 				else
 					brgba = tkrgbashade(e->colors[color], TkDarkshade);
-				tksceneborder(sc,
+				tksceneborderon(sc,
 					Rect(o.x, o.y, o.x + w + 2*bd, o.y + h + 2*bd),
 					tkspace(tk)->corner, bd,
 					brgba,

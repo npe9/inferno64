@@ -873,7 +873,14 @@ checkscene()
 		return;
 	tk->cmd(top, "style flat");
 	# the three that actually have a border to draw
-	tk->cmd(top, "frame .f -width 90 -height 46 -borderwidth 2 -relief raised");
+	# A distinct background, and it is load-bearing rather than decorative.
+	# With the frame the same colour as the page behind it, the rounded
+	# FILL is invisible whatever its radius - a control that perturbed the
+	# radius passed, because there was nothing for it to change.  A frame
+	# that differs from its parent is the only kind whose corners can be
+	# seen at all.
+	tk->cmd(top, "frame .f -width 90 -height 46 -borderwidth 2 " +
+		"-relief raised -bg white");
 	tk->cmd(top, "button .b -text {Cancel}");
 	tk->cmd(top, "entry .e -width 150");
 	tk->cmd(top, "pack .f -padx 6 -pady 6");

@@ -59,15 +59,27 @@ reused, and no animation is cheaper than it was.
 What exists is the vocabulary and a renderer for it.
 .PP
 .B TkNborder
-takes the colour that shows outside a rounded corner as an argument,
-which a real node tree would not need: the parent's own node would be
-drawn first and the border would go on top, so nothing would ever paint
-the corner.
-It is there because a widget fills its whole rectangle before its border
-is drawn, so the corner arrives already wrong.
-The repair is for a widget's background to become a
+is a pure stroke and takes no colour for what shows outside its corners,
+because a widget described entirely by nodes never needs one: its fill is
+a
 .B TkNroundfill
-instead, and then the argument goes away.
+and the corner is simply never painted.
+A
+.I frame
+works that way now.
+.PP
+Every other widget still needs
+.IR tksceneborderon ,
+which emits a
+.B TkNcorners
+before the stroke to paint the corner back.
+That is not a property of a border and is not pretended to be one \(em it
+is there because those widgets fill their whole rectangle, then draw
+text, and only then ask for a border, by which point the corner is
+already wrong.
+Each widget converted to emit its own fill as a
+.B TkNroundfill
+stops needing it.
 .PP
 Seven node types are declared and not implemented: texture, glyphs,
 linear gradient, shadow, clip, transform and opacity.

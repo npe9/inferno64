@@ -68,6 +68,8 @@ tkdrawframe(Tk *tk, Point orig)
 	Point p;
 	Image *i;
 	Tk *f;
+	TkScene *framescene;
+	Rectangle framebox;
 	Rectangle r, slaver;		/* dribbling, whipping or just square? */
 
 	i = tkimageof(tk);
@@ -77,7 +79,52 @@ tkdrawframe(Tk *tk, Point orig)
 	p.x = orig.x + tk->act.x + tk->borderwidth;
 	p.y = orig.y + tk->act.y + tk->borderwidth;
 
-	draw(i, rectaddpt(tk->dirty, p), tkgc(tk->env, TkCbackgnd), nil, ZP);
+	/*
+	 * A frame is the first widget whose WHOLE appearance can be a scene,
+	 * and that is why it is the one done first.  It draws straight into
+	 * its parent's image with no temporary and no blit, and its fill and
+	 * its border are adjacent with no content drawn between them - so the
+	 * three nodes below are the entire widget, in paint order, and the
+	 * border node needs no colour for what shows outside the corner.
+	 *
+	 * That argument to tksceneborder() exists only because every OTHER
+	 * widget fills its whole rectangle, then draws text, then asks
+	 * tkdrawrelief() for a border - by which point the corner is already
+	 * wrong and the only thing that can be done is to paint it back.  A
+	 * widget described entirely by nodes never has that problem, which
+	 * is the point of describing one entirely by nodes.
+	 *
+	 * Behind tkviascene, so nothing in a running system takes this path
+	 * until it has been compared against the other one.
+	 */
+	framescene = nil;
+	if(tkviascene && tkstyleflat(tk) && tk->type == TKframe)
+		framescene = tkscenenew();
+	if(framescene != nil){
+		ulong own, par;
+		TkEnv *pe;
+
+		/*
+		 * The box tkdrawrelief() would be given: its origin is the
+		 * widget's own position, NOT the content origin, and its size
+		 * includes the border on both sides.  Computed here once and
+		 * used for both nodes - the first attempt built it with
+		 * rectaddpt(tkrect(tk,1), p), which adds the border offset a
+		 * second time and drew the whole frame one border-width up and
+		 * to the left.  1044 pixels, found by the byte comparison.
+		 */
+		framebox = Rect(orig.x + tk->act.x, orig.y + tk->act.y, 0, 0);
+		framebox.max.x = framebox.min.x + tk->act.width + 2*tk->borderwidth;
+		framebox.max.y = framebox.min.y + tk->act.height + 2*tk->borderwidth;
+		own = tk->env->colors[TkCbackgnd];
+		pe = tkbehind(tk);
+		par = pe->colors[TkCbackgnd];
+		/* what shows where the corner is cut away, drawn first */
+		tkscenecolour(framescene, rectaddpt(tk->dirty, p), par);
+		/* the frame's own surface, with the corners it actually has */
+		tksceneroundfill(framescene, framebox, tkspace(tk)->corner, own);
+	}else
+		draw(i, rectaddpt(tk->dirty, p), tkgc(tk->env, TkCbackgnd), nil, ZP);
 
 	/*
 	 * doesn't matter about drawing TKseparator
@@ -115,6 +162,16 @@ tkdrawframe(Tk *tk, Point orig)
 	p.x -= tk->borderwidth;
 	p.y -= tk->borderwidth;
 
+	if(framescene != nil){
+		if(!rectinrect(tk->dirty, tkrect(tk, 0)) && tk->relief != TKflat
+		&& tk->borderwidth > 0)
+			tksceneborder(framescene, framebox, tkspace(tk)->corner,
+				tk->borderwidth,
+				tk->env->colors[TkCbackgnd+TkDarkshade]);
+		tkscenerender(framescene, tk->env->top->ctxt, i);
+		tkscenefree(framescene);
+		return nil;
+	}
 	if (!rectinrect(tk->dirty, tkrect(tk, 0)))
 		tkdrawrelief(i, tk, p, TkCbackgnd, tk->relief);
 	return nil;
