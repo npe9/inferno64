@@ -290,6 +290,7 @@ frametest frametest
 optimtest optimtest
 sh-circuit sh-circuit
 sh-control sh-control
+sh-signal sh-signal
 sh-stats sh-stats
 signaltest signaltest
 statstest statstest

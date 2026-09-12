@@ -1,0 +1,215 @@
+.TH SH-SIGNAL 1
+.SH NAME
+signal \- shell script interface to signal(2)
+.SH SYNOPSIS
+.B load signal
+
+.B id := ${signal new}
+.br
+.B signal
+.I id
+.B length
+.I n
+.br
+.B signal
+.I id
+.B tone
+.I amplitude frequency
+.RI [ phase ]
+.br
+.B signal
+.I id
+.B noise
+.I amplitude
+.RI [ seed ]
+.br
+.B signal
+.I id
+.B data
+.I value...
+.br
+.B signal
+.I id
+.B read
+.I file
+.br
+.B signal
+.I id
+.B spectrum
+.I window
+.br
+.B signal
+.I id
+.B fir
+.I kind ntaps f1
+.RI [ f2 ]
+.I window
+.br
+.B signal
+.I id
+.B butter
+.I kind order fc
+.br
+.B signal
+.I id
+.B onepole
+.I fc
+.br
+.B signal
+.I id
+.B filter
+.br
+.B signal
+.I id
+.B response
+.I n
+.br
+.B ${signal
+.I id
+.BR samples | waveform | taps | trace | names | rows | columns | length | realbins
+.B }
+.br
+.B ${signal
+.I id
+.B binfreq
+.I k
+.B }
+.br
+.B ${signal
+.I id
+.B peak
+.RI [ column ]
+.B }
+.br
+.B signal del
+.I id...
+.SH DESCRIPTION
+.I Signal
+makes
+.IR signal (2)
+usable from
+.IR sh (1).
+.PP
+.B Frequency
+.B is
+.B in
+.B cycles
+.B per
+.BR sample ,
+0 to 0.5, exactly as in
+.IR signal (2):
+a sampled signal does not know its own sample rate.
+Nyquist is always 0.5.
+.SS Building a signal
+.B Length
+makes a buffer of zeros;
+.B tone
+and
+.B noise
+.I add
+to whatever is there, so a test signal is built by saying what is in it.
+.B Data
+and
+.B read
+replace it instead.
+.SS Looking at it
+.B Spectrum
+computes the one-sided power spectrum under the named window \-
+.BR rect ,
+.BR hann ,
+.B hamming
+or
+.B blackman
+\- scaled so that a sinusoid of amplitude
+.I A
+reads
+.IR A * A /2
+in its bin whatever the window.
+.PP
+.B Peak
+returns the row of the last computed series where a column is largest,
+the power column by default.
+For a spectrum that is the strongest frequency present and how strong,
+which is the question a spectrum is usually asked.
+.SS Filtering
+.B Fir
+designs a windowed sinc,
+.B butter
+a Butterworth cascade and
+.B onepole
+a single pole; the kinds are
+.BR lowpass ,
+.BR highpass ,
+.B bandpass
+and
+.BR bandstop .
+.B Filter
+runs whichever is designed over the samples, in place.
+.B Response
+records the designed filter's own magnitude and phase from 0 to Nyquist.
+.PP
+.B Trace
+returns whatever series was last computed \- a spectrum or a response \-
+as one flat list, which is the shape
+.IR sh-plot (1)'s
+.B append
+takes.
+.B Waveform
+does the same for the samples, paired with their index.
+.SH EXAMPLE
+Two tones, a spectrum, and a filter that removes one of them:
+.IP
+.EX
+load std
+load signal
+s := ${signal new}
+signal $s length 256
+signal $s tone 2.0 0.0625
+signal $s tone 0.5 0.3125
+signal $s spectrum hann
+echo ${signal $s peak}		# 0.0625 2 - amplitude 2 reads 2
+signal $s fir lowpass 63 0.15 hamming
+signal $s filter
+signal $s spectrum hann
+echo ${signal $s peak}		# 0.0625 1.9995 - the other tone is gone
+signal del $s
+.EE
+.SH SOURCE
+.B /appl/cmd/sh/signal.b
+.SH SEE ALSO
+.IR sh (1),
+.IR sh-plot (1),
+.IR sh-circuit (1),
+.IR sh-control (1),
+.IR sh-stats (1),
+.IR signal (2),
+.IR signaltest (1)
+.SH DIAGNOSTICS
+An even number of taps, a cutoff at or above Nyquist, an order out of
+range, a filter run before one is designed: each fails the command, most
+with the message
+.IR signal (2)
+gives.
+.SH BUGS
+There is no test for this module in
+.BR /appl/cmd .
+.IR Signal (2)
+underneath it is checked by
+.IR signaltest (1);
+what is added here is the sample buffer, the tone and noise generators
+and the flattening, exercised by the example above and by
+.BR /lib/demo/spectrumlab.sh .
+.PP
+.B Filter
+replaces the samples, so the original is gone.
+Keep a second handle if both are wanted.
+.PP
+The convolution, correlation and inverse transform of
+.IR signal (2)
+are not reachable from here, nor is the complex spectrum: only the power
+spectrum is, since that is what a plot wants.
+.PP
+.B Noise
+is a linear congruential generator, which is fine for making a signal
+look untidy and is not fit for anything that depends on the quality of
+its randomness.
