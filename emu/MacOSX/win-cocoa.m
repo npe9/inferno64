@@ -182,6 +182,7 @@ static int	flush_gap[256];
 static int	nflush_gap;
 static int	mtl_materialising;	/* inside flush/readback: live bytes are the point */
 static id	mtl_dlink;		/* CADisplayLink: the display asks for frames */
+extern void	drawvsync(void);	/* devdraw.c: wake /dev/draw/vsync readers */
 static id<MTLTexture>	mtl_rbtex;	/* readback target, kept like the others */
 static int	mtl_rbtex_w, mtl_rbtex_h;
 static uvlong	metal_torn_pixels;
@@ -5098,6 +5099,8 @@ deliverchars(NSString *chars, unsigned short keyCode)
 {
 	USED(link);
 	present_on_main();
+	/* and let any program waiting on /dev/draw/vsync draw the next one */
+	drawvsync();
 }
 
 - (BOOL)acceptsFirstResponder

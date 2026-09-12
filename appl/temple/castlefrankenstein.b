@@ -200,14 +200,18 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	win.onscreen("place");
 	win.startinput("kbd" :: "ptr" :: nil);
 
-	# Redraw rate.  60 is the display's, and asking for exactly the
-	# display's rate off a timer is the one rate that cannot be right:
-	# the two clocks drift, so a frame is shown for one refresh or for
-	# two, unevenly.  Drawing FASTER than the display and letting it take
-	# whichever frame is latest costs CPU and looks better.  An argument,
-	# so the two can be measured against each other rather than argued
-	# about.
-	hz := 60;
+	# Redraw rate.  0 is "when the display asks", which is the right
+	# answer and the default: asking for 60Hz off a timer on a 60Hz
+	# display is the one rate that cannot be right, because they are two
+	# clocks and the drift shows a frame for one refresh or for two,
+	# unevenly.  -rN forces a timer at N instead, for comparing them.
+	#
+	# Safe here because nothing advances per tick: walking is driven by
+	# key events and the monsters have a clock of their own.  A port
+	# whose simulation steps once a frame must not do this without
+	# reading the milliseconds the tick carries, or it will run at
+	# whatever rate the display happens to be.
+	hz := 0;
 	for(av := tl argv; av != nil; av = tl av)
 		if(len hd av > 2 && (hd av)[0:2] == "-r")
 			hz = int (hd av)[2:];

@@ -5,6 +5,8 @@ sleeptest \- how accurate is sys->sleep
 .B sleeptest
 [
 .I ms
+|
+.B vsync
 ]
 .SH DESCRIPTION
 .I Sleeptest
@@ -15,6 +17,15 @@ actually got: mean, minimum, median, 90th and 99th percentile, maximum,
 in microseconds.
 .I Ms
 defaults to 16, which is the period a 60Hz frame clock asks for.
+.PP
+.B Vsync
+asks the same question of the display instead of the clock: it reads
+.B /dev/draw/vsync
+and reports how far apart the moments it asks for a frame are.
+The draw device must be in the name space, which it is for anything with
+a window and is not for a bare shell \-
+.B "bind -a '#i' /dev"
+first.
 .PP
 It exists because everything timed in this system stands on
 .IR sys-sleep (2)
@@ -77,8 +88,12 @@ This still matters, because the two together are what make it steady, and
 because a clock that alternates 16 and 24 milliseconds is wrong on its
 own terms.
 .IR Castlefrankenstein (1)'s
-own frames are 14.9 to 18.4 milliseconds apart now, against 6 to 28
-before any of it.
+own frames are 14.9 to 18.4 milliseconds apart with an accurate timer,
+against 6 to 28 before any of it \- and 16.2 to 17.0 when it takes its
+pace from the display instead, which is what it does by default now and
+what
+.B sleeptest vsync
+measures.
 .PP
 Two hundred samples of one duration, with whatever else the machine is
 doing at the time.

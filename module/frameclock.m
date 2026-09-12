@@ -14,8 +14,26 @@ Frameclock: module
 	# caller whose simulation has a timestep of its own can run the
 	# right number of substeps for the time that actually passed.
 	# A caller that ignores it sees the old chan of int.
+	#
+	# hz of 0 means "whenever the display wants one", read off
+	# /dev/draw/vsync: the rate is then the refresh rate by
+	# construction, and dynamic for free - a frame that takes longer
+	# than a refresh lands on the next one instead of putting the whole
+	# schedule out of phase.  Two clocks that are both nearly 60Hz are
+	# what choppy animation is made of; this is one clock.  It falls
+	# back to FPS off the timer where there is no such file, and stalls
+	# while the window is not being displayed, which is the point.
+	#
+	# A caller whose simulation advances a fixed step per tick must NOT
+	# ask for 0 without also reading the milliseconds the tick carries:
+	# the display is 60Hz here and need not be anywhere else, and such
+	# a port would then run at whatever rate the screen happens to be.
 	ticker:	fn(c: chan of int, hz: int);
 	tickms:	fn(c: chan of int, ms: int);
+
+	# Is display pacing available?  So a caller can say so on screen
+	# rather than wondering which it got.
+	vsyncok:	fn(): int;
 
 	FPS:	con 60;
 

@@ -52,11 +52,68 @@ init()
 		sys = load Sys Sys->PATH;
 }
 
+VSYNC: con "/dev/draw/vsync";
+
+# Is the display willing to say when it wants a frame?
+vsyncok(): int
+{
+	init();
+	fd := sys->open(VSYNC, Sys->OREAD);
+	return fd != nil;
+}
+
 ticker(c: chan of int, hz: int)
 {
-	if(hz <= 0)
+	if(hz == 0){
+		init();
+		fd := sys->open(VSYNC, Sys->OREAD);
+		if(fd != nil){
+			vsyncrun(c, fd);
+			return;
+		}
+		# No display to ask - a memory image, a host without the
+		# file, an emu built before it.  The timer is the fallback,
+		# not an error.
+		hz = FPS;
+	}
+	if(hz < 0)
 		hz = FPS;
 	run(c, 1000000/hz);
+}
+
+#
+# One tick per display refresh.  No deadline arithmetic and no sleep: the
+# read blocks until the display asks, so the period is the refresh period
+# and a frame that overruns simply misses one rather than shifting the
+# phase of every frame after it.
+#
+vsyncrun(c: chan of int, fd: ref Sys->FD)
+{
+	frames = 0;
+	elapsed = 0;
+	period = 1000000/FPS;	# for rate(), until we have measured one
+	if(watching < 0){
+		watching = 0;
+		wfd := sys->open("/env/INFERNO_FPS", Sys->OREAD);
+		if(wfd != nil)
+			watching = 1;
+	}
+	buf := array[32] of byte;
+	start := sys->millisec();
+	last := start;
+	for(;;){
+		if(sys->read(fd, buf, len buf) <= 0)
+			return;
+		now := sys->millisec();
+		c <-= now - last;
+		last = now;
+		frames++;
+		elapsed = sys->millisec() - start;
+		if(frames > 0 && elapsed > 0)
+			period = (elapsed*1000)/frames;
+		if(watching && frames % (2*FPS) == 0)
+			report("frameclock");
+	}
 }
 
 tickms(c: chan of int, ms: int)

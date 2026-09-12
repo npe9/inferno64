@@ -19,7 +19,8 @@ enum
 	Qdata,
 	Qrefresh,
 	Qvideo,
-	Qvideodata
+	Qvideodata,
+	Qvsync
 };
 
 /*
@@ -305,6 +306,56 @@ static	char Eoldname[] =	"named image no longer valid";
 static	char Enamed[] = 	"image already has name";
 static	char Ewrongname[] = 	"wrong name for image";
 
+/*
+ * /dev/draw/vsync: a read blocks until the display next wants a frame.
+ *
+ * A program that paces itself with a timer cannot be in step with the
+ * display, because they are two clocks: ask for 60Hz and you get a period
+ * that is close to the refresh and never equal to it, so a frame is shown
+ * for one refresh or for two, unevenly.  That is what choppy animation
+ * is, and no amount of accuracy in the timer fixes it.  Reading here
+ * instead means the rate is the display's by construction, and dynamic
+ * for free - a frame that takes longer than a refresh simply lands on the
+ * next one, rather than putting the whole schedule out of phase.
+ *
+ * One waiter per open, because Rendez holds a single Proc and a shared
+ * one would wake exactly one of several readers and strand the rest.
+ * The platform calls drawvsync() from the display's own callback, which
+ * on at least one host is not an Inferno kproc - so this uses the
+ * spinlock and Wakeup, never a QLock, for the same reason sdraw.q does.
+ */
+typedef struct Vsyncw Vsyncw;
+struct Vsyncw {
+	Rendez	r;
+	ulong	seen;
+	Vsyncw*	next;
+};
+
+static Lock	vsynclk;
+static Vsyncw*	vsyncw;
+static ulong	vsyncn;
+
+void
+drawvsync(void)
+{
+	Vsyncw *w;
+
+	lock(&vsynclk);
+	vsyncn++;
+	for(w = vsyncw; w != nil; w = w->next)
+		Wakeup(&w->r);
+	unlock(&vsynclk);
+}
+
+static int
+vsyncready(void *a)
+{
+	Vsyncw *w;
+
+	w = a;
+	return w->seen != vsyncn;
+}
+
 static int
 drawgen(Chan *c, char *name, Dirtab *tab, int x, int s, Dir *dp)
 {
@@ -359,10 +410,14 @@ drawgen(Chan *c, char *name, Dirtab *tab, int x, int s, Dir *dp)
 	/*
 	 * Second level contains "new" plus all the clients.
 	 */
-	if(t == Q2nd || t == Qnew){
+	if(t == Q2nd || t == Qnew || t == Qvsync){
 		if(s == 0){
 			mkqid(&q, Qnew, 0, QTFILE);
 			devdir(c, q, "new", 0, eve, 0666, dp);
+		}
+		else if(s == sdraw.nclient+1){
+			mkqid(&q, Qvsync, 0, QTFILE);
+			devdir(c, q, "vsync", 0, eve, 0444, dp);
 		}
 		else if(s <= sdraw.nclient){
 			cl = sdraw.client[s-1];
@@ -1145,6 +1200,22 @@ drawopen(Chan *c, int omode)
 	case Qnew:
 		break;
 
+	case Qvsync:
+		{
+			Vsyncw *w;
+
+			w = mallocz(sizeof(Vsyncw), 1);
+			if(w == nil)
+				error(Enomem);
+			lock(&vsynclk);
+			w->seen = vsyncn;
+			w->next = vsyncw;
+			vsyncw = w;
+			unlock(&vsynclk);
+			c->aux = w;
+		}
+		break;
+
 	case Qctl:
 		cl = drawclient(c);
 		if(cl->busy)
@@ -1178,6 +1249,23 @@ drawclose(Chan *c)
 	Client *cl;
 	Refresh *r;
 
+	if(QID(c->qid) == Qvsync){
+		Vsyncw *w, **p;
+
+		w = c->aux;
+		c->aux = nil;
+		if(w == nil)
+			return;
+		lock(&vsynclk);
+		for(p = &vsyncw; *p != nil; p = &(*p)->next)
+			if(*p == w){
+				*p = w->next;
+				break;
+			}
+		unlock(&vsynclk);
+		free(w);
+		return;
+	}
 	if(QID(c->qid) < Qcolormap)	/* Qtopdir, Qnew, Q3rd, Q2nd have no client */
 		return;
 	lock(&sdraw.q);
@@ -1255,6 +1343,35 @@ drawread(Chan *c, void *a, long n, vlong off)
 	USED(index);
 	if(c->qid.type & QTDIR)
 		return devdirread(c, a, n, 0, 0, drawgen);
+	if(QID(c->qid) == Qvsync){
+		Vsyncw *w;
+		char vb[32];
+
+		w = c->aux;
+		if(w == nil)
+			error(Eio);
+		lock(&vsynclk);
+		while(w->seen == vsyncn){
+			unlock(&vsynclk);
+			if(waserror()){
+				lock(&vsynclk);
+				w->seen = vsyncn;
+				unlock(&vsynclk);
+				nexterror();
+			}
+			Sleep(&w->r, vsyncready, w);
+			poperror();
+			lock(&vsynclk);
+		}
+		w->seen = vsyncn;
+		unlock(&vsynclk);
+		/* the refresh number, so a reader can see what it missed */
+		m = snprint(vb, sizeof vb, "%lud", w->seen);
+		if(n > m)
+			n = m;
+		memmove(a, vb, n);
+		return n;
+	}
 	cl = drawclient(c);
 	lock(&sdraw.q);
 	if(waserror()){
