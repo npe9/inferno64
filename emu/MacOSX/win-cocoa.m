@@ -156,6 +156,11 @@ static uvlong	metal_copy_cancelled;
 static uvlong	metal_g3_calls;	/* gpudrawfillpoly3d successes: real GPU T&L, not CPU d3project */
 static uvlong	metal_spr_calls;	/* gpudrawsprite successes: a textured Metal quad, not d3spritez */
 static uvlong	metal_fill_calls;	/* gpudrawfillpoly successes: the 2-D queue, CPU-projected verts */
+static uvlong	metal_blank_uploads;	/* full uploads of a screen of one colour */
+static int	metal_countblank = -1;	/* gated on INFERNO_METAL_STATS, read once */
+static uvlong	metal_torn_uploads;	/* presented uploads whose live bytes != the snapshot */
+static int	mtl_materialising;	/* inside flush/readback: live bytes are the point */
+static uvlong	metal_torn_pixels;
 static uvlong	metal_g3_tris;
 static int	metal_stat_frames;
 /*
@@ -1343,6 +1348,48 @@ metal_upload_damage_body(id<MTLTexture> tex, int full)
 	 * shadow bytes.
 	 */
 	base = (!full && soft_shadow != nil) ? soft_shadow : gscreen->data->bdata;
+	/*
+	 * Is what we are about to upload a screen of one single colour?
+	 * That is what a frame caught between a program's clear and its
+	 * redraw looks like, and counting it is the only way to see from
+	 * inside the process what the display is actually being shown.
+	 */
+	if(full && metal_countblank != 0){
+		u32 *q, *sh, first;
+		int nq, nd;
+
+		if(metal_countblank < 0)
+			metal_countblank = getenv("INFERNO_METAL_STATS") != nil;
+		if(metal_countblank > 0){
+			nq = (gscreen->width * (int)sizeof(u32) / 4) * ph;
+			q = (u32*)base;
+			first = q[0];
+			for(i = 1; i < nq; i++)
+				if(q[i] != first)
+					break;
+			if(i == nq)
+				metal_blank_uploads++;
+			/*
+			 * And how far the live buffer has drifted from the last
+			 * coherent snapshot.  A full upload reads gscreen live,
+			 * from the AppKit thread, while the interpreter may be
+			 * part way through a frame - so this is the number of
+			 * pixels being shown that no flush ever agreed to.
+			 */
+			if(soft_shadow != nil && base == gscreen->data->bdata
+			&& !mtl_materialising){
+				sh = (u32*)soft_shadow;
+				nd = 0;
+				for(i = 0; i < nq; i++)
+					if(q[i] != sh[i])
+						nd++;
+				if(nd > 0){
+					metal_torn_uploads++;
+					metal_torn_pixels += nd;
+				}
+			}
+		}
+	}
 	slot = mtl_upload_next++ % nelem(mtl_upload_buf);
 	if(mtl_upload_pending[slot] != nil){
 		/*
@@ -1914,6 +1961,10 @@ metal_flush_geom(void)
 	tex = metal_soft_tex(pw, ph);
 	if(under == nil || tex == nil)
 		return;
+	/* Uploads from here to the end of the readback are feeding the
+	 * compositor, not the display, and they want the softscreen as it
+	 * stands rather than as it was last flushed. */
+	mtl_materialising = 1;
 	/*
 	 * Bring the persistent soft texture current, then snapshot it entirely
 	 * on the GPU.  Uploading gscreen straight into under forced a full CPU
@@ -4193,6 +4244,9 @@ metal_readback_geom(void)
 	depthtex = metal_depth_tex(pw, ph);
 	if(tex == nil || depthtex == nil)
 		return;
+	/* Reached directly from a draw(3) read as well as from the flush;
+	 * either way these uploads feed the compositor, not the display. */
+	mtl_materialising = 1;
 	/*
 	 * Compose the frame the way present does, and for the same reason.
 	 *
@@ -4245,15 +4299,37 @@ metal_readback_geom(void)
 	/* Now the texture has landed, draw whatever the GPU passes could
 	 * not; doing it earlier would have been overwritten just above. */
 	metal_soft_replay();
-	/* The CPU image is authoritative again; force the next present to upload it. */
-	mtl_tex_fresh = 1;
+	/*
+	 * The composite is in gscreen and the texture does not have it, so
+	 * the next upload has to carry the whole screen.  Say that by marking
+	 * every tile dirty through metal_mark_tiles(), which freezes those
+	 * pixels into soft_shadow as it goes - NOT by clearing the damage map
+	 * and setting mtl_tex_fresh, which is what this did.
+	 *
+	 * That distinction is the whole of it.  A tile-by-tile upload reads
+	 * soft_shadow, the frozen image that flushmemscreen() agreed to; a
+	 * `full` upload reads gscreen's live bytes instead, because it has to
+	 * cover regions no flush ever snapshotted.  Since this function runs
+	 * once a frame it made every present a full upload, and every present
+	 * therefore drew the softscreen as it stood at some arbitrary instant
+	 * of the interpreter's next frame - often just after that frame's
+	 * clear and before anything had been drawn into it.  Measured with a
+	 * counter comparing the live bytes against the snapshot at upload
+	 * time: 30 torn uploads per 30 frames, about 91500 pixels each on a
+	 * 640x480 screen, which is the whole of castlefrankenstein(1)'s view.
+	 * On the screen that is a window that flickers between the frame and
+	 * the bare clear.
+	 *
+	 * The shadow now gets the composite, so the upload can come from it
+	 * and every presented frame is one the program actually finished.
+	 */
 	lock(&soft_dirty_lock);
-	if(soft_dirty != nil){
-		memset(soft_dirty, 0, soft_ntx * soft_nty);
+	if(soft_dirty != nil)
 		memset(soft_upload_dirty, 0, soft_ntx * soft_nty);
-	}
+	metal_mark_tiles(gscreen, gscreen->r, 1, 0);
 	unlock(&soft_dirty_lock);
 	mtl_have_under = 0;
+	mtl_materialising = 0;
 }
 
 static void
@@ -4462,7 +4538,7 @@ present_softscreen_body(void)
 			metal_presents ? metal_drawable_us/metal_presents : 0,
 			metal_presents ? metal_slotwait_us/metal_presents : 0,
 			metal_presents ? (metal_present_us - metal_drawable_us - metal_slotwait_us)/metal_presents : 0);
-		fprint(2, "METALSTATS frames=%d damage_calls=%llud damage_bytes=%llud full_uploads=%llud readbacks=%llud upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud largest_copy_bytes=%llud largest_dirty_bytes=%llud copy_notes=%llud rejected=%llud reject_storage=%llud reject_damage=%llud reject_geometry=%llud alias_storage=%llud armed=%llud cancelled=%llud g3_calls=%llud g3_tris=%llud fill_calls=%llud spr_calls=%llud soft_fallbacks=%llud teximg_alloced=%ud teximg_declined=%ud(chan=%ud small=%ud) teximg_freed=%ud live=%d\n",
+		fprint(2, "METALSTATS frames=%d damage_calls=%llud damage_bytes=%llud full_uploads=%llud readbacks=%llud upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud largest_copy_bytes=%llud largest_dirty_bytes=%llud copy_notes=%llud rejected=%llud reject_storage=%llud reject_damage=%llud reject_geometry=%llud alias_storage=%llud armed=%llud cancelled=%llud g3_calls=%llud g3_tris=%llud fill_calls=%llud blank_uploads=%llud torn_uploads=%llud torn_pixels=%llud spr_calls=%llud soft_fallbacks=%llud teximg_alloced=%ud teximg_declined=%ud(chan=%ud small=%ud) teximg_freed=%ud live=%d\n",
 			metal_stat_frames, metal_damage_calls, metal_damage_bytes,
 			metal_full_uploads, metal_readbacks, metal_upload_bytes,
 			metal_copy_bytes, metal_saved_bytes,
@@ -4471,11 +4547,14 @@ present_softscreen_body(void)
 			metal_copy_notes, metal_copy_rejected, metal_copy_reject_storage,
 			metal_copy_reject_damage, metal_copy_reject_geometry, metal_copy_alias_storage,
 			metal_copy_armed, metal_copy_cancelled, metal_g3_calls, metal_g3_tris,
-			metal_fill_calls, metal_spr_calls,
+			metal_fill_calls, metal_blank_uploads,
+			metal_torn_uploads, metal_torn_pixels, metal_spr_calls,
 			metal_soft_fallbacks, teximg_alloced, teximg_declined,
 			teximg_nchan, teximg_nsmall, teximg_freed, nteximg);
 		metal_g3_calls = metal_g3_tris = metal_spr_calls = 0;
 		metal_fill_calls = 0;
+		metal_blank_uploads = 0;
+		metal_torn_uploads = metal_torn_pixels = 0;
 		metal_soft_fallbacks = 0;
 		metal_stat_frames = 0;
 		metal_damage_calls = metal_damage_bytes = 0;

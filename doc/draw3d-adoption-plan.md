@@ -1054,6 +1054,64 @@ is built: with the assignment outside the guard and `INFERNO_NOGPU=1`,
 `line=0 fill=0 3d=0 ellipse=104459c7c sprite=0`; with it inside, all five
 are nil, and with the variable unset all five are wired.
 
+### Every presented frame was one the program had not finished — fixed 2026-09-12
+
+Reported from the screen, which is the only place it shows: *choppy
+updates with a black screen in between renderings*.
+
+It is not the drawing. `gorge -b` under `wm` reports a mean frame of 2335
+us against a 16666 us budget, nothing over it, `max` 3767. The fault is
+in what gets **presented**, and the instrument for that had to be built:
+a counter comparing `gscreen`'s live bytes against `soft_shadow` — the
+frozen image `flushmemscreen()` last agreed to — at the moment of each
+upload. Anything different is a pixel being shown that no flush ever
+produced.
+
+```
+                        full_uploads  readbacks  torn_uploads  torn_pixels
+GPU on, per 30 frames             60         30            30      2745120
+INFERNO_NOGPU=1                    0          0             0            0
+```
+
+One torn upload per frame, about 91500 pixels each on a 640x480 screen —
+which is the whole of `castlefrankenstein`'s view. Every presented frame
+showed that window at an arbitrary instant of the interpreter's *next*
+frame, and an interpreter frame begins by clearing the window. Hence a
+window flickering between the picture and the bare clear.
+
+**The chain, and it is mine.** `metal_flush_geom()` calls
+`metal_readback_geom()` once a frame so that materialising the geometry
+is not a race. The readback ended by clearing the damage map and setting
+`mtl_tex_fresh`, meaning "the CPU image is authoritative again, upload
+all of it" — so **every present became a full upload**. And a full upload
+reads `gscreen` live rather than `soft_shadow`, deliberately, because it
+has to cover regions no flush ever snapshotted. Once a frame, that is a
+present drawing from a half-written buffer. The nested-layer fix earlier
+the same day then turned the whole path on for everything run under a
+window manager, which is how it became visible.
+
+The fix is to say the same thing the way the rest of the machinery says
+it: mark every tile dirty through `metal_mark_tiles()`, which freezes
+those pixels into `soft_shadow` as it goes. The upload then covers the
+whole screen *from the snapshot*, and presents are coherent again.
+
+```
+                        full_uploads  readbacks  torn_uploads
+after                             30         30             0
+```
+
+The thirty that remain are the flush's own, on the interpreter thread,
+where the live bytes are exactly what is wanted — the counter now knows
+the difference (`mtl_materialising`). Frame time improves a little as a
+side effect, one full texture conversion a frame having gone: mean 2149
+us against 2335, `max` 3164 against 3767.
+
+**The lesson is the one this document keeps relearning.** A pixel count
+taken from `framegrab` said nothing was wrong — it reads the softscreen
+through a readback, which materialises the geometry first, so it sees the
+finished frame by construction. The fault was only ever in what the
+display was shown, and nothing in the process was measuring that.
+
 ### Phase 2a — `litcolour` allocated a colour image per fill
 
 Fixed 2026-09-10, and it is the reason a Gouraud scene could not be run
