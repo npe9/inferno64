@@ -1454,43 +1454,62 @@ src_rgba(Memimage *src, float *r, float *g, float *b, float *a)
 }
 
 /*
- * The clip rectangle a destination imposes, in screen coordinates.
+ * Resolve a destination to the image the GPU can actually draw into, the
+ * pixel offset to add to its coordinates to get there, and the clip
+ * rectangle the result must stay inside.
  *
- * Taken from the destination BEFORE line_pixdst/poly_pixdst redirect a clear
- * layer onto the physical screen: after that the layer is gone and there is
- * nothing left to say where the window was.
+ * A window is a layer over a screen's image - but that image can itself be
+ * a layer.  wmclient(2) allocates a Screen of its own over whatever image
+ * it was handed, so a program run under wm(1) draws into a layer over a
+ * layer over the physical screen, where the same program run on its own
+ * draws into a layer over the screen directly.  Following one level and
+ * requiring the result to BE the screen therefore worked without a window
+ * manager and silently declined with one: every 3-D port fell back to the
+ * CPU rasteriser the moment it was started from wm, which is how most of
+ * them are started.  Measured on castlefrankenstein(1): 22957 GPU calls in
+ * thirty frames on its own, 0 under wm.  So follow the chain to the end.
+ *
+ * Any obscured layer on the way stops it: part of that window is covered,
+ * so there is no single place on the screen its pixels belong, and the
+ * software memlayer machinery has to composite it instead.
  */
-static GPUClip
-geom_clip(Memimage *dst)
+enum { MaxLayerDepth = 8 };
+
+static Memimage*
+geom_target(Memimage *dst, Point *delta, GPUClip *clip)
 {
-	GPUClip c;
 	Rectangle r;
 	Memlayer *l;
+	Point d;
+	int n;
 
-	c.x0 = c.y0 = c.x1 = c.y1 = 0;
+	clip->x0 = clip->y0 = clip->x1 = clip->y1 = 0;
+	d.x = d.y = 0;
+	*delta = d;
 	if(dst == nil)
-		return c;
+		return nil;
 	r = dst->clipr;
-	l = dst->layer;
-	if(l != nil){
-		/* image coords → screen coords, and no wider than the window */
+	for(n = 0; (l = dst->layer) != nil; n++){
+		if(n >= MaxLayerDepth || !l->clear)
+			return nil;
+		/* image coords → the parent's coords, and no wider than the
+		 * window is on it */
+		d = addpt(d, l->delta);
 		r = rectaddpt(r, l->delta);
 		if(!rectclip(&r, l->screenr))
-			return c;
+			return nil;
+		dst = l->screen->image;
+		if(dst == nil)
+			return nil;
 	}
 	if(r.max.x <= r.min.x || r.max.y <= r.min.y)
-		return c;
-	c.x0 = r.min.x;
-	c.y0 = r.min.y;
-	c.x1 = r.max.x;
-	c.y1 = r.max.y;
-	return c;
-}
-
-static int
-clip_empty(GPUClip *c)
-{
-	return c->x1 <= c->x0 || c->y1 <= c->y0;
+		return nil;
+	clip->x0 = r.min.x;
+	clip->y0 = r.min.y;
+	clip->x1 = r.max.x;
+	clip->y1 = r.max.y;
+	*delta = d;
+	return dst;
 }
 
 static int
@@ -1571,38 +1590,34 @@ gtri_run(GPUClip *c, int count)
  * Obscured layers stay on the software memline/memfillpoly path.
  */
 static Memimage*
-line_pixdst(Memimage *dst, Point *p0, Point *p1)
+line_pixdst(Memimage *dst, Point *p0, Point *p1, GPUClip *clip)
 {
-	Memlayer *l;
+	Memimage *pix;
+	Point d;
 
-	if(dst == nil)
+	pix = geom_target(dst, &d, clip);
+	if(pix == nil)
 		return nil;
-	l = dst->layer;
-	if(l == nil)
-		return dst;
-	if(!l->clear)
-		return nil;
-	*p0 = addpt(*p0, l->delta);
-	*p1 = addpt(*p1, l->delta);
-	return l->screen->image;
+	*p0 = addpt(*p0, d);
+	*p1 = addpt(*p1, d);
+	return pix;
 }
 
 static Memimage*
-poly_pixdst(Memimage *dst, Point *pp, int n)
+poly_pixdst(Memimage *dst, Point *pp, int n, GPUClip *clip)
 {
-	Memlayer *l;
+	Memimage *pix;
+	Point d;
 	int i;
 
-	if(dst == nil || pp == nil || n < 3)
+	if(pp == nil || n < 3)
 		return nil;
-	l = dst->layer;
-	if(l == nil)
-		return dst;
-	if(!l->clear)
+	pix = geom_target(dst, &d, clip);
+	if(pix == nil)
 		return nil;
 	for(i = 0; i < n; i++)
-		pp[i] = addpt(pp[i], l->delta);
-	return l->screen->image;
+		pp[i] = addpt(pp[i], d);
+	return pix;
 }
 
 static Memimage*
@@ -2292,12 +2307,9 @@ metal_queue_line(Memimage *dst, Point p0, Point p1, int thick, Memimage *src, in
 		return 0;
 	if(thick < 0)
 		return 0;
-	clip = geom_clip(dst);
-	if(clip_empty(&clip))
-		return 0;
 	a = p0;
 	b = p1;
-	pix = line_pixdst(dst, &a, &b);
+	pix = line_pixdst(dst, &a, &b, &clip);
 	if(pix == nil)
 		return 0;
 	/* Direct present only composites onto the softscreen drawable. */
@@ -2360,10 +2372,7 @@ metal_queue_fillpoly(Memimage *dst, Point *pp, float *ez, int n, Memimage *src, 
 		return 0;
 	if(op != SoverD && op != S)
 		return 0;
-	clip = geom_clip(dst);
-	if(clip_empty(&clip))
-		return 0;
-	pix = poly_pixdst(dst, pp, n);
+	pix = poly_pixdst(dst, pp, n, &clip);
 	if(pix == nil)
 		return 0;
 	if(pix != gscreen && pix != screenimage)
@@ -2524,16 +2533,13 @@ metal_queue_fillpoly3d(Memimage *dst, float *vx, float *vy, float *vz, int n,
 	GPUXform xf;
 	GPUVert3D *v;
 	GPUClip clip;
+	Point delta;
 
 	if(vx == nil || vy == nil || vz == nil || n < 3)
 		return 0;
 	if(op != SoverD && op != S)
 		return 0;
 	if(dst == nil)
-		return 0;
-	/* before the redirect below, while the layer is still here to ask */
-	clip = geom_clip(dst);
-	if(clip_empty(&clip))
 		return 0;
 	/*
 	 * Same redirect poly_pixdst does for the 2D path: a fully-visible
@@ -2547,14 +2553,11 @@ metal_queue_fillpoly3d(Memimage *dst, float *vx, float *vy, float *vz, int n,
 	 * after the NDC scale" - delta is exactly that, one more pixel-space
 	 * offset) rather than needing the vertices themselves in screen space.
 	 */
-	if(dst->layer != nil){
-		Memlayer *l = dst->layer;
-		if(!l->clear)
-			return 0;
-		cx += (float)l->delta.x;
-		cy += (float)l->delta.y;
-		dst = l->screen->image;
-	}
+	dst = geom_target(dst, &delta, &clip);
+	if(dst == nil)
+		return 0;
+	cx += (float)delta.x;
+	cy += (float)delta.y;
 	if(dst != gscreen && dst != screenimage)
 		return 0;
 	if(gscreen == nil || gscreen->data == nil || gscreen->data->bdata == nil)
@@ -2650,6 +2653,7 @@ metal_queue_fillpoly3g(Memimage *dst, float *vx, float *vy, float *vz, float *li
 	GPUXform xf;
 	GPUVert3D *v;
 	GPUClip clip;
+	Point delta;
 
 	if(vx == nil || vy == nil || vz == nil || lits == nil || n < 3)
 		return 0;
@@ -2657,18 +2661,11 @@ metal_queue_fillpoly3g(Memimage *dst, float *vx, float *vy, float *vz, float *li
 		return 0;
 	if(dst == nil)
 		return 0;
-	/* before the redirect below, while the layer is still here to ask */
-	clip = geom_clip(dst);
-	if(clip_empty(&clip))
+	dst = geom_target(dst, &delta, &clip);
+	if(dst == nil)
 		return 0;
-	if(dst->layer != nil){
-		Memlayer *l = dst->layer;
-		if(!l->clear)
-			return 0;
-		cx += (float)l->delta.x;
-		cy += (float)l->delta.y;
-		dst = l->screen->image;
-	}
+	cx += (float)delta.x;
+	cy += (float)delta.y;
 	if(dst != gscreen && dst != screenimage)
 		return 0;
 	if(gscreen == nil || gscreen->data == nil || gscreen->data->bdata == nil)
@@ -2741,11 +2738,8 @@ metal_queue_plot(Memimage *dst, Point p, Memimage *src, int op, float ez)
 
 	if(op != SoverD && op != S)
 		return 0;
-	clip = geom_clip(dst);
-	if(clip_empty(&clip))
-		return 0;
 	a = p;
-	pix = line_pixdst(dst, &a, &a);
+	pix = line_pixdst(dst, &a, &a, &clip);
 	if(pix == nil)
 		return 0;
 	if(pix != gscreen && pix != screenimage)
@@ -3813,11 +3807,8 @@ metal_queue_sprite_at(Memimage *dst, Point sp, int sw, int sh, float z,
 		return 0;
 	if(sw < 1 || sh < 1 || img == nil)
 		return 0;
-	clip = geom_clip(dst);
-	if(clip_empty(&clip))
-		return 0;
 	a = sp;
-	pix = line_pixdst(dst, &a, &a);
+	pix = line_pixdst(dst, &a, &a, &clip);
 	if(pix == nil)
 		return 0;
 	if(pix != gscreen && pix != screenimage)
@@ -3924,12 +3915,9 @@ metal_queue_ellipse(Memimage *dst, Point c, int a, int b, int thick, int fill,
 		return 0;
 	if(a < 1) a = 1;
 	if(b < 1) b = 1;
-	clip = geom_clip(dst);
-	if(clip_empty(&clip))
-		return 0;
 	p0 = c;
 	p1 = c;
-	pix = line_pixdst(dst, &p0, &p1);
+	pix = line_pixdst(dst, &p0, &p1, &clip);
 	if(pix == nil)
 		return 0;
 	if(pix != gscreen && pix != screenimage)

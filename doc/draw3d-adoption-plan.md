@@ -800,6 +800,91 @@ subdividing each triangle four ways to depth four: up to **256**
 sub-triangles and 256 array allocations per triangle, which is where its
 58 ms a frame goes — about 100,000 fills where 400 would do.
 
+### GPU geometry escaped the window it was drawn into — fixed 2026-09-11
+
+`memdraw`'s contract is that a draw touches nothing outside the
+destination's `clipr`, and the software rasterisers keep it — `memfillpoly`
+takes the destination and stops at its clip rectangle. The Metal paths had
+no equivalent at all. `poly_pixdst()` and `line_pixdst()` redirect a fully
+visible layer onto the physical screen by adding the layer's `delta` to the
+coordinates, and then handed the screen to Metal with nothing left to say
+where the window had been.
+
+Measured with `g3probe(1)`: geometry aimed past the left edge of a 300 by
+240 window, everything behind it black, counting lit pixels landing outside
+the window.
+
+| entry | software | device |
+| --- | --- | --- |
+| `fillpoly3g` | 0 | **2500** |
+| `fillpoly3` | 0 | **2500** |
+| `sprite3` | 0 | **3120** |
+| `line3` | 0 | **435** |
+| `plot3` | 0 | **243** |
+
+This is what made `castlefrankenstein(1)` paint over its own title bar.
+The title bar is static chrome, so its pixels are a reproducible metric
+even though the view animates: the top 23 rows of the display hash the
+same across runs of one build and differently across the two builds, with
+about 320 pixels a row of 3-D paint on it when the clip is off and none
+when it is on.
+
+Every queued primitive now carries the rectangle it was given — taken
+before the layer redirect, while the layer is still there to ask — and each
+Metal pass sets it as the scissor. The clip is a batch key as much as the
+transform is, so geometry for a different window starts a new batch rather
+than inheriting its neighbour's scissor. The software fallbacks, which run
+only when a Metal allocation fails, had the identical hole (they rasterise
+into `gscreen`, whose `clipr` is the whole screen) and now narrow it for
+the length of the call.
+
+**The test that could not fail.** An earlier version of this check made the
+geometry *large* rather than putting it *outside*, and reported no escape.
+`viewport()` normalises to whatever the window is, so a quad made big in
+world space grows with the window and can never leave it. A later version
+reshaped its `wmclient` window small — and with no window manager under it
+`wmclient` gives a window the size of the display whatever is asked for, so
+again there was nowhere to escape to. It now makes its own `Screen.newwindow`,
+and the negative control (comment out the one `setScissorRect` call) brings
+every number in that table back.
+
+### The GPU was off under `wm`, and the reason was not the one recorded here — fixed 2026-09-11
+
+The section "Phase 2 answered, for the destination question at least" above
+says the GPU is reached only without a window manager, and gives the cause
+as a `wm(1)` client's window being a layer that is not clear. **That cause
+is wrong.** The layer is clear. What defeated it is that the chain is two
+layers deep, not one: `wmclient(2)` allocates a `Screen` of its own over
+whatever image it was handed, so a program started from `wm` draws into a
+layer over a layer over the screen, where the same program started on its
+own draws into a layer over the screen directly. `metal_queue_fillpoly3d()`
+followed exactly one level and then required the result to *be* `gscreen`,
+which it is not — so it declined, silently, and every 3-D port fell back to
+the CPU rasteriser the moment it was started the way people actually start
+it. Instrumented: `DBG: 3d dst not screen` on the first face, every time.
+
+`geom_target()` now follows the chain to the end (bounded at eight),
+accumulating the offset and intersecting each level's clip, and stops at
+the first obscured layer — where there genuinely is no single place on the
+screen the pixels belong. `castlefrankenstein(1)` under `wm`: 0 GPU calls
+per 30 frames before, **24870** after.
+
+That this is safe to do is a consequence of the clip fix above, not
+independent of it: following more layers means drawing further from the
+window, and without a scissor it would have meant a client painting over
+its neighbours rather than over its own title bar.
+
+Checked, under `wm`, against the previous build's CPU rendering of the same
+program: every differing pixel — the animation between two runs, and the
+CPU-against-GPU rasterisation difference — lies inside x 1..384, y 23..330,
+which is the client area exactly. Nothing outside the window changes.
+
+And **the `panic: pushrun addrun` recorded above no longer reproduces**:
+`gorge` and `gorge -D` and `strider` each run three times out of three
+under `wm` with the GPU live and no panic. That was the unbalanced
+`waserror()`/`poperror()` on the `'K'` failure path, fixed earlier in this
+run.
+
 ### Phase 2a — `litcolour` allocated a colour image per fill
 
 Fixed 2026-09-10, and it is the reason a Gouraud scene could not be run
