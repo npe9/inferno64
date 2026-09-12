@@ -2128,9 +2128,31 @@ d3planecoeffs(Client *cl, float nx, float ny, float nz,
 	|| b <= -(float)D3LIMIT || b >= (float)D3LIMIT
 	|| dd <= -(float)D3LIMIT || dd >= (float)D3LIMIT)
 		return 0;
-	*pdx = (int)(a * (float)D3ZSCALE);
-	*pdy = (int)(b * (float)D3ZSCALE);
-	*pdc = (int)(dd * (float)D3ZSCALE);
+	/*
+	 * Negated, because what the arithmetic above produces is the eye z
+	 * itself - negative in front of the viewer - and every producer and
+	 * consumer of this buffer uses its negation: positive in front,
+	 * smaller nearer.  d3planefromeyez() below starts from -ez[i] and
+	 * says so in its own comment; d3zpixel and the 'h' handler compare
+	 * (int)(-eyez * D3ZSCALE); draw3d.b's own copy of these formulae
+	 * negates too (z0 := -eye[0].z).  This one did not, so a face drawn
+	 * through it filled the depth buffer with the sign inverted: the
+	 * further face won, and a point in front of a wall lost to it.
+	 *
+	 * Measured with g3probe(1) and INFERNO_NOGPU=1, so that devdraw's
+	 * own rasteriser is what draws - a near green quad and a far red
+	 * one, green pixels surviving:
+	 *
+	 *	order       before   after   software
+	 *	far,near       527     594        594
+	 *	near,far         0     594        594
+	 *
+	 * Zero.  The near quad was entirely hidden by the far one, and the
+	 * order mattered, which is precisely what a depth buffer is for.
+	 */
+	*pdx = (int)(-a * (float)D3ZSCALE);
+	*pdy = (int)(-b * (float)D3ZSCALE);
+	*pdc = (int)(-dd * (float)D3ZSCALE);
 	return 1;
 }
 
@@ -3640,18 +3662,32 @@ drawmesg(Client *client, void *av, int n)
 				 * flat fill at the average of the per-vertex lits rather
 				 * than a from-scratch native Gouraud rasterizer -
 				 * deliberately out of scope for this primitive's first
-				 * cut. No z-buffer here either (unlike 'k''s CPU
-				 * fallback); this is the portable path every backend
-				 * gets today (X11, a plain framebuffer, etc.) until it
-				 * grows its own gpudrawfillpoly3g hook.
+				 * cut. This is the portable path every backend gets
+				 * today (X11, a plain framebuffer, etc.) until it grows
+				 * its own gpudrawfillpoly3g hook.
+				 *
+				 * It IS depth-buffered, as 'k''s CPU fallback is.  It
+				 * used to say "no z-buffer here either" and mean it,
+				 * and that was not a shading approximation but a
+				 * missing depth test: g3probe(1)'s occlusion case with
+				 * INFERNO_NOGPU=1 - a near green quad and a far red one
+				 * drawn in both orders - gave 527 green pixels one way
+				 * round and 0 the other, which is painter's order, not
+				 * a depth buffer.  The near quad vanished entirely
+				 * behind the far one.  Both orders give 594 now, which
+				 * is what the software provider and Metal both give.
 				 */
 				{
 					Point *pp2;
+					float *ezs2;
 					Memimage *lsrc, *ltmp;
+					int pdx2, pdy2, pdc2;
 
-					pp2 = malloc(sizeof(Point) * (nw+1));
+					pp2 = malloc(sizeof(Point) * (nw+1)
+						+ sizeof(float) * nw);
 					if(pp2 == nil)
 						error(Edrawmem);
+					ezs2 = (float*)(pp2 + nw + 1);
 					if(waserror()){
 						free(pp2);
 						nexterror();
@@ -3682,6 +3718,7 @@ drawmesg(Client *client, void *av, int n)
 							free(vx);
 							goto Kdone;
 						}
+						ezs2[j] = ez;
 					}
 					pp2[nw] = pp2[0];
 					ltmp = nil;
@@ -3691,7 +3728,12 @@ drawmesg(Client *client, void *av, int n)
 							freememimage(ltmp);
 						nexterror();
 					}
-					memfillpoly(dst, pp2, nw+1, ~0, lsrc, pp2[0], op);
+					if(client->d3zenable
+					&& d3planefromeyez(pp2, ezs2, nw, &pdx2, &pdy2, &pdc2))
+						d3fillpolyz(client, dst, pp2, nw, lsrc, op,
+							pdc2, pdx2, pdy2);
+					else
+						memfillpoly(dst, pp2, nw+1, ~0, lsrc, pp2[0], op);
 					poperror();
 					if(ltmp)
 						freememimage(ltmp);

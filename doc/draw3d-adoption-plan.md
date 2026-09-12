@@ -1153,7 +1153,7 @@ plotting **one** point on its own reads 1 pixel through software and 4
 through the device, which is `metal_queue_plot`'s 1.5-pixel quad landing
 on four of them.
 
-#### Two things that column turned up, both open
+#### Three things that column turned up, two of them fixed
 
 **1. Equal depth: the Limbo providers draw, `devdraw`'s C path does
 not.** `zwin()` lets an equal depth win — deliberately, because sprites
@@ -1181,15 +1181,40 @@ grid at z=−1.2 spreads wider than the wall at z=−3, and about half of it
 misses. Every point that lands on the wall is rejected, and the wall is
 further away.
 
-It is the depth test and not something else: the same points with nothing
-in front of them all draw, and the `behind` column shows the test working
-in the other direction. The suspicion is units. `'h'` compares
-`(int)((-ez) * D3ZSCALE)` against `client->d3zbuf`, which `'k'` filled
-through `d3fillpolyz` with `pdc + pdx*x + pdy*y` straight out of
-`d3planecoeffs` — and `'k'`'s *own* eye-z conversion divides that by
-`D3ZSCALE` and negates it before handing it to the GPU, which says the
-two are not in the same units to begin with. Not chased further here.
-`g3probe(1)`'s `at wall`/`one point` columns are the reproducer.
+**Fixed: it was a sign.** `d3planecoeffs()` — the fast plane fit `'k'`
+uses when the model matrix is identity — computes the eye z itself,
+negative in front of the viewer. Every producer and consumer of that
+buffer uses its negation: `d3planefromeyez()` starts from `-ez[i]` and
+says so in its own comment, `'h'` compares `(int)(-eyez * D3ZSCALE)`, and
+`draw3d.b`'s own copy of the same formulae negates (`z0 := -eye[0].z`).
+This one did not, so a face drawn through it filled the depth buffer with
+the sign inverted and everything behind it won. Negated, and the columns
+read 400 in front and 1 for one point — the software values.
+
+**3. And the Gouraud fallback had no depth test at all.** Fixing the
+sign did nothing for the occlusion table, which is how it came out: `occ`
+draws with `fillpoly3g`, and `'K'`'s CPU fallback called plain
+`memfillpoly`. Its own comment said so — "No z-buffer here either
+(unlike `'k'`'s CPU fallback)" — as though it were part of the
+degrade-to-one-flat-lit approximation. It is not; it is a missing depth
+test. With `INFERNO_NOGPU=1`, a near green quad and a far red one:
+
+```
+                       before        after     software
+order         red   green    red   green    red   green
+far,near     2086     527   2144     576   1952     594
+near,far     2613       0   2144     576   1952     594
+```
+
+Zero, one way round: the near quad entirely behind the far one, and the
+answer depending on draw order, which is the one thing a depth buffer
+exists to prevent. It now uses `d3planefromeyez` plus `d3fillpolyz`, the
+same pair `'k'` uses, and both orders agree with each other, with the
+software provider and with Metal (which gives 576 and 1000 for those two
+projections — identical greens).
+
+This is the path every backend without a Gouraud GPU hook takes, which
+is every backend but this one.
 
 ### Phase 5 — a batch entry point
 
