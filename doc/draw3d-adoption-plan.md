@@ -960,8 +960,50 @@ No whole-screen readings left, and `pick3d` — the port that was 42624 to
 36953. What remains is the ordinary spread of an animating demo sampled
 at a wall-clock instant: `shading` and `zoneout` vary more between two
 *software* runs than between the providers, and `spriteplot3d` and
-`shadow` each have one run out of three at a different phase. Those want
-a port-by-port look at a still frame, not another counting pass.
+`shadow` each have one run out of three at a different phase.
+
+### What the remaining spread actually is: shading, not lost geometry — 2026-09-12
+
+A pixel count cannot tell a differently-shaded picture from a picture
+missing a face, and that is exactly the distinction this document got
+wrong once already. A **colour census** can: a lost polygon takes its
+colour with it, so the question is whether every colour the software
+provider puts on the screen in quantity is on the device's screen too.
+
+Three runs each, counting colours present at 200 pixels or more:
+
+| port | device | software | software colours absent from the device |
+| --- | --- | --- | --- |
+| `3dpoly` | 67 | 8 | 3 — `#c02428` red, `#18913f` green, `#1a3fbf` blue |
+| `spriteplot3d` | 20 | 7 | 2 — `#c02428`, `#18913f` |
+| `shadow` | 32 | 5 | 0 |
+| `shading` | 257 | 171 | many |
+
+The device draws *many more* colours, and the software provider's flat
+fills are missing from it — replaced by ramps of the same hue.
+`#c02428` is (192,36,40); the device's own colours include (106,20,22),
+(127,24,26), (128,42,44). `#18913f` is (24,145,63); the device has
+(64,131,86), (74,191,112), (72,176,105). That is per-pixel shading —
+`d34a9095`, "shade fillpoly3 faces per pixel on the GPU" — against a
+provider that fills each face with one flat tone.
+
+**Controlled, not inferred.** `INFERNO_METAL_FLAT=1` turns that shading
+off in the fragment shader and changes nothing else:
+
+| port | device colours | with `INFERNO_METAL_FLAT` | software flats then missing |
+| --- | --- | --- | --- |
+| `3dpoly` | 67 | 9 | **0** (was 3) |
+| `spriteplot3d` | 20 | 7 | **0** (was 2) |
+| `shadow` | 32 | 7 | **0** |
+
+The palette collapses onto the software provider's, and every flat it was
+missing comes back. So no primitive is being lost: the device draws
+everything the software provider draws, in the same colours, and the
+extra colours are the shading ramp.
+
+That closes the question this document opened with "lines, points and 2-D
+survive; filled polygons do not". The filled polygons survive. They are
+shaded.
 
 The other is that `framegrab`'s metric cannot be used under `wm`: the
 corner pixel is then the desktop, and a single unit of difference there
