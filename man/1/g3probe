@@ -60,6 +60,22 @@ canyon does every frame, with
 .B fillpoly3g
 and with
 .BR line3 .
+.TP
+window clip
+a small window in the middle of the screen with everything behind it
+painted black, and geometry aimed past its edge, through each entry
+point in turn:
+.BR fillpoly3g ,
+.BR fillpoly3 ,
+.BR line3 ,
+.B plot3
+and
+.BR sprite3 .
+Two counts, the lit pixels inside the window and the lit pixels
+anywhere else on the screen.
+The second must be zero: a draw touches nothing outside its
+destination's clip rectangle, and a program that paints over its
+neighbours is not sharing a screen.
 .PP
 It also writes the first device frame to
 .B g3probe.raw
@@ -82,33 +98,52 @@ And
 still does not clip in either provider, where they fail in opposite
 directions \- software draws nothing, the device draws something.
 .PP
-The fourth does not:
-.IP
-.EX
-provider       frames        lit
-software            1      23376
-device              1          0
-device              1          0
-device              1      23154
-device              1      23154
-device              1      23154
-device              1          0
-device              1      23154
-device              1          0
-software            8      23376
-device              8      23154      (4 runs, all)
-.EE
+A single frame drawn and read back used to give nothing at all about
+half the time \- presentation consumed the geometry queue without
+writing the softscreen back, so whether a frame's 3-D reached the image
+everything else reads was a race between the present and the next
+readback.
+Eight frames won it eventually; one frame often did not.
+That is fixed:
+.I metal_flush_geom
+reads the geometry back as part of snapshotting, so materialising is
+no longer a race, and eight runs of the one-frame case now agree
+exactly.
 .PP
-**One frame drawn and read gives nothing at all about half the time.**
-Eight frames is right every time, and the software provider is right
-every time.
+The window clip is the most recent, and it did not agree.
+With the device provider, geometry aimed past the edge of a 300 by 240
+window put pixels on the screen outside it \- 2500 from
+.BR fillpoly3 ,
+2500 from
+.BR fillpoly3g ,
+3120 from
+.BR sprite3 ,
+435 from
+.B line3
+and 243 from
+.B plot3
+\- where the software provider put none.
+The Metal passes never consulted the destination's clip rectangle:
+.I poly_pixdst
+translated a window's coordinates onto the physical screen and then had
+nothing left to say where the window had been.
+Every queued primitive now carries that rectangle and each pass sets it
+as the scissor, and all five read zero.
+.SH CONTROLS
+.B INFERNO_NOGPU
+takes the GPU away entirely, so the device provider falls back on
+.IR devdraw 's
+own C rasteriser.
 .PP
-The cause is in
-.B /doc/draw3d-adoption-plan.md:
-presentation consumes the geometry queue without writing the softscreen
-back, so whether a frame's 3-D ever reaches the image everything else
-reads is a race between the present and the next readback.
-Over several frames a readback eventually wins; over one it may not.
+.B INFERNO_METAL_NOTL
+leaves the GPU hooked but takes away the transform-and-light entry
+points, so each vertex is projected in C and faces arrive as
+screen-space triangles.
+Both routes end on the same Metal pipeline: a picture that changes
+between them is the GPU's own vertex stage, and one that does not is
+something further down.
+It is also the only way to reach the 2-D triangle queue, which nothing
+else calls.
 .SH SOURCE
 .B /appl/cmd/g3probe.b
 .SH SEE ALSO
@@ -127,6 +162,15 @@ It flushes before every read.
 Without that it measures the screen as it stood before the drawing, and
 an early version of this reported a first-call fault that was entirely
 its own missing flush.
+.PP
+The window clip test makes its own window rather than reshaping the
+one it started with.
+With no window manager under it,
+.IR wmclient (2)
+gives a window the size of the display whatever size is asked for \- and
+geometry cannot escape a window that is already the whole screen.
+An earlier version reshaped, got a full-screen window, and reported no
+escape from a renderer that was escaping.
 .PP
 Nothing here asserts.
 It prints numbers for a person to compare, because two of the four

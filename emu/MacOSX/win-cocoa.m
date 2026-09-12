@@ -194,7 +194,41 @@ enum {
 	MaxGPUSprites = 8192,
 	MaxSpriteTexCache = 64,	/* reuse uploads across 'j' draws */
 	MaxG3Batches = 64,	/* distinct model/proj xforms per frame, GPU-T&L path */
+	MaxGPURuns = 256,	/* distinct clip rectangles per frame, 2D tri path */
 	EllipseSegs = 48,
+};
+
+/*
+ * Where a queued primitive is allowed to put pixels, in render-target
+ * (== gscreen) coordinates, max exclusive.
+ *
+ * memdraw's contract is that a draw touches nothing outside dst->clipr, and
+ * the software rasterisers honour it: memfillpoly takes the destination and
+ * clips to its clipr, so a polygon drawn into a window stops at the window.
+ * The GPU paths had no equivalent.  poly_pixdst() and line_pixdst() redirect
+ * a fully-visible layer onto the physical screen by adding the layer's delta
+ * to the coordinates - and then handed the screen to Metal with nothing left
+ * to say where the window had been.  Geometry that reached past its window
+ * was drawn anyway, over the window's own title bar and, under a window
+ * manager, over whatever else was on the screen.  Measured: a quad offset off
+ * one side of a 320x240 window put 190 pixels outside it on the device
+ * provider and 0 on the software one.
+ *
+ * So every queued primitive carries the rectangle it was given, and each
+ * Metal pass sets it as the scissor rect.  That is the same clip, done by
+ * the hardware the mechanism exists for.
+ */
+typedef struct GPUClip GPUClip;
+struct GPUClip {
+	int	x0, y0, x1, y1;
+};
+
+/* A contiguous span of vertices sharing one clip: one scissor, one draw. */
+typedef struct GPURun GPURun;
+struct GPURun {
+	GPUClip	clip;
+	int	start;
+	int	count;
 };
 
 typedef struct GPULine GPULine;
@@ -202,6 +236,7 @@ struct GPULine {
 	float	x0, y0, z0, x1, y1, z1;
 	float	r, g, b, a;
 	int	thick;
+	GPUClip	clip;
 };
 
 /*
@@ -250,6 +285,7 @@ struct GPUXform {
 typedef struct G3Batch G3Batch;
 struct G3Batch {
 	GPUXform	xform;
+	GPUClip	clip;	/* also a batch key: see metal_queue_fillpoly3d */
 	int	start;	/* first vertex in g3triverts */
 	int	count;
 };
@@ -265,6 +301,7 @@ struct GPUSprite {
 	GPUTexVert	v[6];	/* two tris */
 	id<MTLTexture>	tex;
 	int		nearest;	/* point-sample: see metal_present_sprites */
+	GPUClip		clip;
 };
 
 /* LRU cache of uploaded sprite textures (keyed by Memimage + mask + size). */
@@ -287,6 +324,8 @@ static GPUVert	*present_line_verts;
 static GPUVert	*present_tri_verts;
 static GPUVert	gtriverts[MaxGPUTriVerts];
 static int	ngtriverts;
+static GPURun	gtriruns[MaxGPURuns];
+static int	ngtriruns;
 static GPUVert3D	*present_tri3d_verts;
 static GPUVert3D	g3triverts[MaxGPUTriVerts];
 static int	ng3triverts;
@@ -542,7 +581,7 @@ static int	metal_queue_ellipse(Memimage*, Point, int, int, int, int, Memimage*, 
 static void	metal_present_lines(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
 static void	metal_present_tris(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
 static void	metal_present_sprites(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, int, int);
-static void	soft_burn_tris(GPUVert*, int);
+static void	soft_burn_tris(GPUVert*, int, GPUClip*);
 static void	soft_bresenham(Memimage*, GPULine*);
 static int	metal_tri_reserve(int);
 static void	metal_readback_geom(void);
@@ -695,8 +734,21 @@ metal_init(void)
 	if(getenv("INFERNO_NOGPU") == nil){
 		gpudrawline = metal_queue_line;
 		gpudrawfillpoly = metal_queue_fillpoly;
-		gpudrawfillpoly3d = metal_queue_fillpoly3d;
-		gpudrawfillpoly3g = metal_queue_fillpoly3g;
+		/*
+		 * INFERNO_METAL_NOTL leaves the GPU hooked but takes away the
+		 * transform-and-light entry points, so devdraw projects each
+		 * vertex in C and the faces arrive as screen-space triangles
+		 * instead.  Both routes end on the same Metal pipeline, which
+		 * is what makes it a control: a picture that changes between
+		 * them is the GPU's own vertex stage, and one that does not is
+		 * something further down.  It is also the only way a Limbo
+		 * program can reach the 2-D triangle queue at all - nothing
+		 * else calls gpudrawfillpoly.
+		 */
+		if(getenv("INFERNO_METAL_NOTL") == nil){
+			gpudrawfillpoly3d = metal_queue_fillpoly3d;
+			gpudrawfillpoly3g = metal_queue_fillpoly3g;
+		}
 		gpudrawplot = metal_queue_plot;
 		gpudrawsprite = metal_queue_sprite;
 		gpudrawsprite2d = metal_queue_sprite2d;
@@ -1402,6 +1454,119 @@ src_rgba(Memimage *src, float *r, float *g, float *b, float *a)
 }
 
 /*
+ * The clip rectangle a destination imposes, in screen coordinates.
+ *
+ * Taken from the destination BEFORE line_pixdst/poly_pixdst redirect a clear
+ * layer onto the physical screen: after that the layer is gone and there is
+ * nothing left to say where the window was.
+ */
+static GPUClip
+geom_clip(Memimage *dst)
+{
+	GPUClip c;
+	Rectangle r;
+	Memlayer *l;
+
+	c.x0 = c.y0 = c.x1 = c.y1 = 0;
+	if(dst == nil)
+		return c;
+	r = dst->clipr;
+	l = dst->layer;
+	if(l != nil){
+		/* image coords → screen coords, and no wider than the window */
+		r = rectaddpt(r, l->delta);
+		if(!rectclip(&r, l->screenr))
+			return c;
+	}
+	if(r.max.x <= r.min.x || r.max.y <= r.min.y)
+		return c;
+	c.x0 = r.min.x;
+	c.y0 = r.min.y;
+	c.x1 = r.max.x;
+	c.y1 = r.max.y;
+	return c;
+}
+
+static int
+clip_empty(GPUClip *c)
+{
+	return c->x1 <= c->x0 || c->y1 <= c->y0;
+}
+
+static int
+clip_eq(GPUClip *a, GPUClip *b)
+{
+	return a->x0 == b->x0 && a->y0 == b->y0
+		&& a->x1 == b->x1 && a->y1 == b->y1;
+}
+
+/* The clip as a Rectangle, for the software paths, which speak memdraw. */
+static Rectangle
+clip_rect(GPUClip *c)
+{
+	return Rect(c->x0, c->y0, c->x1, c->y1);
+}
+
+/*
+ * Set a render pass's scissor.  Metal rejects a scissor rectangle that leaves
+ * the attachment - a validation failure that kills the process, not a clamp -
+ * so clamp it here.  Both the present path and the readback path render into
+ * a target the size of gscreen, so one set of coordinates serves both.
+ * Returns 0 if there is nothing left to draw.
+ */
+static int
+clip_scissor(id<MTLRenderCommandEncoder> enc, GPUClip *c, int pw, int ph)
+{
+	MTLScissorRect sr;
+	int x0, y0, x1, y1;
+
+	x0 = c->x0;
+	y0 = c->y0;
+	x1 = c->x1;
+	y1 = c->y1;
+	if(x0 < 0) x0 = 0;
+	if(y0 < 0) y0 = 0;
+	if(x1 > pw) x1 = pw;
+	if(y1 > ph) y1 = ph;
+	if(x1 <= x0 || y1 <= y0)
+		return 0;
+	sr.x = x0;
+	sr.y = y0;
+	sr.width = x1 - x0;
+	sr.height = y1 - y0;
+	[enc setScissorRect:sr];
+	return 1;
+}
+
+/*
+ * Extend or open a clip run over the next `count` vertices of gtriverts.
+ * Called with the geometry lock held and before the vertices are written, so
+ * a caller that cannot get a run can still back out.  Returns 0 when the run
+ * table is full, which sends the caller to the CPU rasteriser rather than
+ * drawing the geometry under the wrong scissor.
+ */
+static int
+gtri_run(GPUClip *c, int count)
+{
+	GPURun *r;
+
+	if(ngtriruns > 0){
+		r = &gtriruns[ngtriruns-1];
+		if(clip_eq(&r->clip, c) && r->start + r->count == ngtriverts){
+			r->count += count;
+			return 1;
+		}
+	}
+	if(ngtriruns >= MaxGPURuns)
+		return 0;
+	r = &gtriruns[ngtriruns++];
+	r->clip = *c;
+	r->start = ngtriverts;
+	r->count = count;
+	return 1;
+}
+
+/*
  * Resolve clear layered windows to softscreen (screen coords).
  * Obscured layers stay on the software memline/memfillpoly path.
  */
@@ -1495,6 +1660,7 @@ note_soft_fallback(void)
 static GPULine	*defer_lines;
 static int	ndefer_lines, maxdefer_lines;
 static GPUVert	*defer_tverts;
+static GPUClip	*defer_tclips;	/* one per deferred triangle */
 static int	ndefer_tverts, maxdefer_tverts;
 
 static void
@@ -1515,11 +1681,13 @@ defer_line(GPULine *L)
 }
 
 static void
-defer_tris(GPUVert *v, int nv)
+defer_tris(GPUVert *v, int nv, GPUClip *clip)
 {
 	GPUVert *p;
-	int nmax;
+	GPUClip *q;
+	int nmax, i;
 
+	nv -= nv % 3;
 	if(nv <= 0)
 		return;
 	if(ndefer_tverts + nv > maxdefer_tverts){
@@ -1530,9 +1698,15 @@ defer_tris(GPUVert *v, int nv)
 		if(p == nil)
 			return;
 		defer_tverts = p;
+		q = realloc(defer_tclips, sizeof(GPUClip) * (nmax/3 + 1));
+		if(q == nil)
+			return;
+		defer_tclips = q;
 		maxdefer_tverts = nmax;
 	}
 	memmove(defer_tverts + ndefer_tverts, v, sizeof(GPUVert) * nv);
+	for(i = 0; i < nv/3; i++)
+		defer_tclips[ndefer_tverts/3 + i] = *clip;
 	ndefer_tverts += nv;
 }
 
@@ -1547,13 +1721,13 @@ soft_line_or_defer(GPULine *L)
 }
 
 static void
-soft_tris_or_defer(GPUVert *v, int nv)
+soft_tris_or_defer(GPUVert *v, int nv, GPUClip *clip)
 {
 	note_soft_fallback();
 	if(mtl_soft_defer)
-		defer_tris(v, nv);
+		defer_tris(v, nv, clip);
 	else
-		soft_burn_tris(v, nv);
+		soft_burn_tris(v, nv, clip);
 }
 
 static void
@@ -1564,22 +1738,37 @@ metal_soft_replay(void)
 	for(i = 0; i < ndefer_lines; i++)
 		soft_bresenham(gscreen, &defer_lines[i]);
 	ndefer_lines = 0;
-	if(ndefer_tverts > 0){
-		soft_burn_tris(defer_tverts, ndefer_tverts);
-		ndefer_tverts = 0;
-	}
+	for(i = 0; i + 2 < ndefer_tverts; i += 3)
+		soft_burn_tris(defer_tverts + i, 3, &defer_tclips[i/3]);
+	ndefer_tverts = 0;
 }
 
 static void
-soft_burn_tris(GPUVert *verts, int nverts)
+soft_burn_tris(GPUVert *verts, int nverts, GPUClip *clip)
 {
 	int i;
 	Point pp[4];
 	Memimage *src;
 	GPUVert *v0, *v1, *v2;
+	Rectangle saved, r;
 
 	if(gscreen == nil)
 		return;
+	/*
+	 * memfillpoly clips to the destination's clipr and to nothing else,
+	 * and gscreen's clipr is the whole screen - so narrow it, for the
+	 * length of this call, to the window the geometry was drawn into.
+	 * That is the same rectangle the Metal pass would have scissored to;
+	 * without it this fallback escapes its window exactly as the GPU path
+	 * used to.
+	 */
+	saved = gscreen->clipr;
+	if(clip != nil){
+		r = clip_rect(clip);
+		if(!rectclip(&r, saved))
+			return;
+		gscreen->clipr = r;
+	}
 	for(i = 0; i + 2 < nverts; i += 3){
 		v0 = &verts[i];
 		v1 = &verts[i+1];
@@ -1596,6 +1785,7 @@ soft_burn_tris(GPUVert *verts, int nverts)
 		pp[3] = pp[0];
 		memfillpoly(gscreen, pp, 4, ~0, src, pp[0], S);
 	}
+	gscreen->clipr = saved;
 }
 
 /* Return with the geometry lock held and room reserved for one atomic append. */
@@ -1631,6 +1821,9 @@ soft_bresenham(Memimage *dst, GPULine *L)
 	pix = ((u32)(L->a * 255) << 24) | ((u32)(L->b * 255) << 16)
 		| ((u32)(L->g * 255) << 8) | (u32)(L->r * 255);
 	clip = dst->clipr;
+	/* and no further than the window the line was drawn into */
+	if(!rectclip(&clip, clip_rect(&L->clip)))
+		return;
 	dx = x1 > x0 ? x1 - x0 : x0 - x1;
 	dy = y1 > y0 ? y1 - y0 : y0 - y1;
 	sx = x0 < x1 ? 1 : -1;
@@ -1765,7 +1958,7 @@ metal_vertex_data(id<MTLCommandBuffer> cmd, void *data, int n,
 static int
 metal_present_geom(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	id<MTLTexture> depthtex, int pw, int ph, GPUVert *verts, int nv,
-	MTLPrimitiveType prim)
+	MTLPrimitiveType prim, GPUClip *clip)
 {
 	float wh[2];
 	id<MTLBuffer> vbuf;
@@ -1803,6 +1996,12 @@ metal_present_geom(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	 * whenever the encoder could not be created, and the next geom pass
 	 * then loaded a stale depth buffer instead of a cleared one. */
 	mtl_zclear = 0;
+	if(clip != nil && !clip_scissor(enc, clip, pw, ph)){
+		/* the window has no visible pixels left: nothing to draw, and
+		 * nothing for the caller to rasterise on the CPU either */
+		[enc endEncoding];
+		return 0;
+	}
 	[enc setRenderPipelineState:mtl_geom_pipe];
 	[enc setDepthStencilState:mtl_zenable ? mtl_depth_on : mtl_depth_off];
 	[enc setVertexBuffer:vbuf offset:voff atIndex:0];
@@ -1816,12 +2015,16 @@ static void
 metal_present_tris(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	id<MTLTexture> depthtex, int pw, int ph)
 {
-	int n;
+	int i, n, nr, cnt;
 	GPUVert *verts;
+	GPURun runs[MaxGPURuns], *r;
 
 	lock(&mtl_geom_lock);
 	n = ngtriverts;
-	if(n == 0){
+	nr = ngtriruns;
+	if(n == 0 || nr == 0){
+		ngtriverts = 0;
+		ngtriruns = 0;
 		unlock(&mtl_geom_lock);
 		return;
 	}
@@ -1835,11 +2038,26 @@ metal_present_tris(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 		return;
 	}
 	memmove(verts, gtriverts, sizeof(GPUVert) * n);
+	memmove(runs, gtriruns, sizeof(GPURun) * nr);
 	ngtriverts = 0;
+	ngtriruns = 0;
 	unlock(&mtl_geom_lock);
-	if(metal_present_geom(cmd, drawabletex, depthtex, pw, ph, verts, n,
-	    MTLPrimitiveTypeTriangle) < 0)
-		soft_tris_or_defer(verts, n);
+	/* One pass per clip rectangle.  In the ordinary case - a frame drawn
+	 * into one window - that is one run and one pass, as before. */
+	for(i = 0; i < nr; i++){
+		r = &runs[i];
+		if(r->start < 0 || r->start >= n)
+			continue;
+		cnt = r->count;
+		if(r->start + cnt > n)
+			cnt = n - r->start;
+		cnt -= cnt % 3;
+		if(cnt < 3)
+			continue;
+		if(metal_present_geom(cmd, drawabletex, depthtex, pw, ph,
+		    verts + r->start, cnt, MTLPrimitiveTypeTriangle, &r->clip) < 0)
+			soft_tris_or_defer(verts + r->start, cnt, &r->clip);
+	}
 }
 
 /*
@@ -1927,6 +2145,8 @@ metal_present_tris3d(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	for(i = 0; i < nb; i++){
 		if(batches[i].count == 0)
 			continue;
+		if(!clip_scissor(enc, &batches[i].clip, pw, ph))
+			continue;
 		[enc setVertexBufferOffset:voff + batches[i].start * sizeof(GPUVert3D) atIndex:0];
 		[enc setVertexBytes:&batches[i].xform length:sizeof(GPUXform) atIndex:1];
 		[enc drawPrimitives:MTLPrimitiveTypeTriangle
@@ -1940,7 +2160,7 @@ static void
 metal_present_lines(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	id<MTLTexture> depthtex, int pw, int ph)
 {
-	int i, n, nv, nthin, nthick;
+	int i, n, nv, nthin, nthick, st, en;
 	GPUVert *verts, *tv;
 	GPULine *L, *lines;
 	float dx, dy, len, px, py, hw;
@@ -1962,17 +2182,6 @@ metal_present_lines(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	nglines = 0;
 	unlock(&mtl_geom_lock);
 
-	nthin = 0;
-	nthick = 0;
-	for(i = 0; i < n; i++){
-		if(lines[i].thick > 0)
-			nthick++;
-		else
-			nthin++;
-	}
-
-	/* Thin: 2 verts/line; thick: 6 verts (two tris) each. */
-	nv = nthin * 2 + nthick * 6;
 	if(present_line_verts == nil)
 		present_line_verts = malloc(sizeof(GPUVert) * MaxGPULines * 6);
 	verts = present_line_verts;
@@ -1981,65 +2190,90 @@ metal_present_lines(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 			soft_line_or_defer(&lines[i]);
 		return;
 	}
-	/* Pack thin endpoints first, then thick quads (stable offsets for draws). */
-	tv = verts;
-	for(i = 0; i < n; i++){
-		L = &lines[i];
-		if(L->thick > 0)
-			continue;
-		tv[0].x = L->x0; tv[0].y = L->y0; tv[0].z = L->z0;
-		tv[0].r = L->r; tv[0].g = L->g; tv[0].b = L->b; tv[0].a = L->a;
-		tv[1].x = L->x1; tv[1].y = L->y1; tv[1].z = L->z1;
-		tv[1].r = L->r; tv[1].g = L->g; tv[1].b = L->b; tv[1].a = L->a;
-		tv += 2;
-	}
-	for(i = 0; i < n; i++){
-		L = &lines[i];
-		if(L->thick <= 0)
-			continue;
-		/* Plan 9 width = 1+2*thick → half-width thick+0.5 in screen pixels. */
-		dx = L->x1 - L->x0;
-		dy = L->y1 - L->y0;
-		len = sqrtf(dx*dx + dy*dy);
-		if(len < 1e-4f){
-			px = 1.0f;
-			py = 0.0f;
-		}else{
-			px = -dy / len;
-			py = dx / len;
-		}
-		hw = (float)L->thick + 0.5f;
-		px *= hw;
-		py *= hw;
-		tv[0].x = L->x0 - px; tv[0].y = L->y0 - py; tv[0].z = L->z0;
-		tv[1].x = L->x0 + px; tv[1].y = L->y0 + py; tv[1].z = L->z0;
-		tv[2].x = L->x1 + px; tv[2].y = L->y1 + py; tv[2].z = L->z1;
-		tv[3].x = L->x0 - px; tv[3].y = L->y0 - py; tv[3].z = L->z0;
-		tv[4].x = L->x1 + px; tv[4].y = L->y1 + py; tv[4].z = L->z1;
-		tv[5].x = L->x1 - px; tv[5].y = L->y1 - py; tv[5].z = L->z1;
-		tv[0].r = tv[1].r = tv[2].r = tv[3].r = tv[4].r = tv[5].r = L->r;
-		tv[0].g = tv[1].g = tv[2].g = tv[3].g = tv[4].g = tv[5].g = L->g;
-		tv[0].b = tv[1].b = tv[2].b = tv[3].b = tv[4].b = tv[5].b = L->b;
-		tv[0].a = tv[1].a = tv[2].a = tv[3].a = tv[4].a = tv[5].a = L->a;
-		tv += 6;
-	}
 
-	/* Thick quads first (triangles), then thin lines — same depth buffer. */
-	if(nthick > 0){
-		if(metal_present_geom(cmd, drawabletex, depthtex, pw, ph,
-		    verts + nthin * 2, nthick * 6, MTLPrimitiveTypeTriangle) < 0){
-			for(i = 0; i < n; i++)
-				if(lines[i].thick > 0)
-					soft_line_or_defer(&lines[i]);
+	/*
+	 * A maximal run of lines sharing one clip rectangle is one scissor and
+	 * so one pair of passes.  Queue order is run order: a frame of lines
+	 * drawn into one window is a single run, exactly as it was before the
+	 * clip existed, and it costs the same two draws.
+	 */
+	for(st = 0; st < n; st = en){
+		for(en = st + 1; en < n && clip_eq(&lines[en].clip, &lines[st].clip); en++)
+			;
+		nthin = 0;
+		nthick = 0;
+		for(i = st; i < en; i++){
+			if(lines[i].thick > 0)
+				nthick++;
+			else
+				nthin++;
 		}
-	}
-	if(nthin > 0){
-		/* Rebuild thin verts at the front — already there. */
-		if(metal_present_geom(cmd, drawabletex, depthtex, pw, ph,
-		    verts, nthin * 2, MTLPrimitiveTypeLine) < 0){
-			for(i = 0; i < n; i++)
-				if(lines[i].thick <= 0)
-					soft_line_or_defer(&lines[i]);
+		/* Thin: 2 verts/line; thick: 6 verts (two tris) each. */
+		nv = nthin * 2 + nthick * 6;
+		if(nv == 0)
+			continue;
+		/* Pack thin endpoints first, then thick quads (stable offsets for draws). */
+		tv = verts;
+		for(i = st; i < en; i++){
+			L = &lines[i];
+			if(L->thick > 0)
+				continue;
+			tv[0].x = L->x0; tv[0].y = L->y0; tv[0].z = L->z0;
+			tv[0].r = L->r; tv[0].g = L->g; tv[0].b = L->b; tv[0].a = L->a;
+			tv[1].x = L->x1; tv[1].y = L->y1; tv[1].z = L->z1;
+			tv[1].r = L->r; tv[1].g = L->g; tv[1].b = L->b; tv[1].a = L->a;
+			tv += 2;
+		}
+		for(i = st; i < en; i++){
+			L = &lines[i];
+			if(L->thick <= 0)
+				continue;
+			/* Plan 9 width = 1+2*thick → half-width thick+0.5 in screen pixels. */
+			dx = L->x1 - L->x0;
+			dy = L->y1 - L->y0;
+			len = sqrtf(dx*dx + dy*dy);
+			if(len < 1e-4f){
+				px = 1.0f;
+				py = 0.0f;
+			}else{
+				px = -dy / len;
+				py = dx / len;
+			}
+			hw = (float)L->thick + 0.5f;
+			px *= hw;
+			py *= hw;
+			tv[0].x = L->x0 - px; tv[0].y = L->y0 - py; tv[0].z = L->z0;
+			tv[1].x = L->x0 + px; tv[1].y = L->y0 + py; tv[1].z = L->z0;
+			tv[2].x = L->x1 + px; tv[2].y = L->y1 + py; tv[2].z = L->z1;
+			tv[3].x = L->x0 - px; tv[3].y = L->y0 - py; tv[3].z = L->z0;
+			tv[4].x = L->x1 + px; tv[4].y = L->y1 + py; tv[4].z = L->z1;
+			tv[5].x = L->x1 - px; tv[5].y = L->y1 - py; tv[5].z = L->z1;
+			tv[0].r = tv[1].r = tv[2].r = tv[3].r = tv[4].r = tv[5].r = L->r;
+			tv[0].g = tv[1].g = tv[2].g = tv[3].g = tv[4].g = tv[5].g = L->g;
+			tv[0].b = tv[1].b = tv[2].b = tv[3].b = tv[4].b = tv[5].b = L->b;
+			tv[0].a = tv[1].a = tv[2].a = tv[3].a = tv[4].a = tv[5].a = L->a;
+			tv += 6;
+		}
+
+		/* Thick quads first (triangles), then thin lines — same depth buffer. */
+		if(nthick > 0){
+			if(metal_present_geom(cmd, drawabletex, depthtex, pw, ph,
+			    verts + nthin * 2, nthick * 6, MTLPrimitiveTypeTriangle,
+			    &lines[st].clip) < 0){
+				for(i = st; i < en; i++)
+					if(lines[i].thick > 0)
+						soft_line_or_defer(&lines[i]);
+			}
+		}
+		if(nthin > 0){
+			/* Rebuild thin verts at the front — already there. */
+			if(metal_present_geom(cmd, drawabletex, depthtex, pw, ph,
+			    verts, nthin * 2, MTLPrimitiveTypeLine,
+			    &lines[st].clip) < 0){
+				for(i = st; i < en; i++)
+					if(lines[i].thick <= 0)
+						soft_line_or_defer(&lines[i]);
+			}
 		}
 	}
 }
@@ -2052,10 +2286,14 @@ metal_queue_line(Memimage *dst, Point p0, Point p1, int thick, Memimage *src, in
 	Point a, b;
 	float r, g, bl, al;
 	GPULine *L, *p;
+	GPUClip clip;
 
 	if(op != SoverD && op != S)
 		return 0;
 	if(thick < 0)
+		return 0;
+	clip = geom_clip(dst);
+	if(clip_empty(&clip))
 		return 0;
 	a = p0;
 	b = p1;
@@ -2097,6 +2335,7 @@ retry:
 	L->b = bl;
 	L->a = al;
 	L->thick = thick;
+	L->clip = clip;
 	unlock(&mtl_geom_lock);
 	return 1;
 }
@@ -2115,10 +2354,14 @@ metal_queue_fillpoly(Memimage *dst, Point *pp, float *ez, int n, Memimage *src, 
 	float r, g, bl, al;
 	int i, ntri, need;
 	GPUVert *v;
+	GPUClip clip;
 
 	if(pp == nil || ez == nil || n < 3)
 		return 0;
 	if(op != SoverD && op != S)
+		return 0;
+	clip = geom_clip(dst);
+	if(clip_empty(&clip))
 		return 0;
 	pix = poly_pixdst(dst, pp, n);
 	if(pix == nil)
@@ -2141,6 +2384,10 @@ metal_queue_fillpoly(Memimage *dst, Point *pp, float *ez, int n, Memimage *src, 
 		return 0;
 	if(!metal_tri_reserve(need))
 		return 0;
+	if(!gtri_run(&clip, need)){
+		unlock(&mtl_geom_lock);
+		return 0;
+	}
 	for(i = 1; i < n - 1; i++){
 		v = &gtriverts[ngtriverts];
 		v[0].x = (float)pp[0].x;
@@ -2276,12 +2523,17 @@ metal_queue_fillpoly3d(Memimage *dst, float *vx, float *vy, float *vz, int n,
 	int i, ntri, need, bi, pw, ph;
 	GPUXform xf;
 	GPUVert3D *v;
+	GPUClip clip;
 
 	if(vx == nil || vy == nil || vz == nil || n < 3)
 		return 0;
 	if(op != SoverD && op != S)
 		return 0;
 	if(dst == nil)
+		return 0;
+	/* before the redirect below, while the layer is still here to ask */
+	clip = geom_clip(dst);
+	if(clip_empty(&clip))
 		return 0;
 	/*
 	 * Same redirect poly_pixdst does for the 2D path: a fully-visible
@@ -2330,13 +2582,22 @@ metal_queue_fillpoly3d(Memimage *dst, float *vx, float *vy, float *vz, int n,
 
 	if(!metal_tri3d_reserve(need))
 		return 0;
-	if(ng3batches == 0 || !g3xform_eq(&g3batches[ng3batches-1].xform, &xf)){
+	/*
+	 * The clip is a batch key as much as the transform is: a batch carries
+	 * one scissor rectangle, so geometry for a different window must start
+	 * a new one.  Leaving it out of the test drew a window's geometry under
+	 * its neighbour's scissor, which is worse than no scissor at all - it
+	 * is intermittent, and it depends on draw order.
+	 */
+	if(ng3batches == 0 || !g3xform_eq(&g3batches[ng3batches-1].xform, &xf)
+	|| !clip_eq(&g3batches[ng3batches-1].clip, &clip)){
 		if(ng3batches >= MaxG3Batches){
 			unlock(&mtl_geom_lock);
 			return 0;
 		}
 		bi = ng3batches++;
 		g3batches[bi].xform = xf;
+		g3batches[bi].clip = clip;
 		g3batches[bi].start = ng3triverts;
 		g3batches[bi].count = 0;
 	}else
@@ -2388,12 +2649,17 @@ metal_queue_fillpoly3g(Memimage *dst, float *vx, float *vy, float *vz, float *li
 	int i, ntri, need, bi, pw, ph;
 	GPUXform xf;
 	GPUVert3D *v;
+	GPUClip clip;
 
 	if(vx == nil || vy == nil || vz == nil || lits == nil || n < 3)
 		return 0;
 	if(op != SoverD && op != S)
 		return 0;
 	if(dst == nil)
+		return 0;
+	/* before the redirect below, while the layer is still here to ask */
+	clip = geom_clip(dst);
+	if(clip_empty(&clip))
 		return 0;
 	if(dst->layer != nil){
 		Memlayer *l = dst->layer;
@@ -2422,13 +2688,22 @@ metal_queue_fillpoly3g(Memimage *dst, float *vx, float *vy, float *vz, float *li
 
 	if(!metal_tri3d_reserve(need))
 		return 0;
-	if(ng3batches == 0 || !g3xform_eq(&g3batches[ng3batches-1].xform, &xf)){
+	/*
+	 * The clip is a batch key as much as the transform is: a batch carries
+	 * one scissor rectangle, so geometry for a different window must start
+	 * a new one.  Leaving it out of the test drew a window's geometry under
+	 * its neighbour's scissor, which is worse than no scissor at all - it
+	 * is intermittent, and it depends on draw order.
+	 */
+	if(ng3batches == 0 || !g3xform_eq(&g3batches[ng3batches-1].xform, &xf)
+	|| !clip_eq(&g3batches[ng3batches-1].clip, &clip)){
 		if(ng3batches >= MaxG3Batches){
 			unlock(&mtl_geom_lock);
 			return 0;
 		}
 		bi = ng3batches++;
 		g3batches[bi].xform = xf;
+		g3batches[bi].clip = clip;
 		g3batches[bi].start = ng3triverts;
 		g3batches[bi].count = 0;
 	}else
@@ -2462,8 +2737,12 @@ metal_queue_plot(Memimage *dst, Point p, Memimage *src, int op, float ez)
 	Point a;
 	float r, g, bl, al, z, hx;
 	GPUVert *v;
+	GPUClip clip;
 
 	if(op != SoverD && op != S)
+		return 0;
+	clip = geom_clip(dst);
+	if(clip_empty(&clip))
 		return 0;
 	a = p;
 	pix = line_pixdst(dst, &a, &a);
@@ -2475,6 +2754,10 @@ metal_queue_plot(Memimage *dst, Point p, Memimage *src, int op, float ez)
 		return 0;
 	if(!metal_tri_reserve(6))
 		return 0;
+	if(!gtri_run(&clip, 6)){
+		unlock(&mtl_geom_lock);
+		return 0;
+	}
 	z = eye_to_depth(ez);
 	hx = 0.75f;	/* ~1.5px square so the point is visible */
 	v = &gtriverts[ngtriverts];
@@ -3516,6 +3799,7 @@ metal_queue_sprite_at(Memimage *dst, Point sp, int sw, int sh, float z,
 	GPUSprite *spr;
 	id<MTLTexture> tex;
 	int i, bw, bh;
+	GPUClip clip;
 	static const float uv[6][2] = {
 		{0,0},{1,0},{1,1},
 		{0,0},{1,1},{0,1},
@@ -3528,6 +3812,9 @@ metal_queue_sprite_at(Memimage *dst, Point sp, int sw, int sh, float z,
 	if(op != SoverD && op != S)
 		return 0;
 	if(sw < 1 || sh < 1 || img == nil)
+		return 0;
+	clip = geom_clip(dst);
+	if(clip_empty(&clip))
 		return 0;
 	a = sp;
 	pix = line_pixdst(dst, &a, &a);
@@ -3572,6 +3859,7 @@ metal_queue_sprite_at(Memimage *dst, Point sp, int sw, int sh, float z,
 	spr = &gsprites[ngsprites];
 	spr->tex = tex;
 	spr->nearest = nearest;
+	spr->clip = clip;
 	for(i = 0; i < 6; i++){
 		lx = corner[i][0] * hx;
 		ly = corner[i][1] * hy;
@@ -3629,12 +3917,16 @@ metal_queue_ellipse(Memimage *dst, Point c, int a, int b, int thick, int fill,
 	float r, g, bl, al, z, ang, ca, sa, x0, y0, x1, y1;
 	int i, n, need;
 	GPUVert *v;
+	GPUClip clip;
 
 	USED(thick);
 	if(op != SoverD && op != S)
 		return 0;
 	if(a < 1) a = 1;
 	if(b < 1) b = 1;
+	clip = geom_clip(dst);
+	if(clip_empty(&clip))
+		return 0;
 	p0 = c;
 	p1 = c;
 	pix = line_pixdst(dst, &p0, &p1);
@@ -3650,6 +3942,10 @@ metal_queue_ellipse(Memimage *dst, Point c, int a, int b, int thick, int fill,
 		need = n * 3;
 		if(!metal_tri_reserve(need))
 			return 0;
+		if(!gtri_run(&clip, need)){
+			unlock(&mtl_geom_lock);
+			return 0;
+		}
 		for(i = 0; i < n; i++){
 			ang = (float)(2.0 * M_PI * i / n);
 			ca = cosf(ang);
@@ -3694,6 +3990,7 @@ metal_present_sprites(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	id<MTLTexture> depthtex, int pw, int ph)
 {
 	int i, voff, curnearest;
+	GPUClip curclip;
 	float wh[2];
 	id<MTLBuffer> vbuf;
 	id<MTLRenderCommandEncoder> enc;
@@ -3759,12 +4056,16 @@ metal_present_sprites(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	enc = nil;
 	curtex = nil;
 	curnearest = -1;
+	curclip.x0 = curclip.y0 = curclip.x1 = curclip.y1 = -1;
 	for(i = 0; i < ngsprites; i++){
 		if(gsprites[i].tex == nil || metal_vertex_data(cmd, gsprites[i].v,
 		    sizeof(GPUTexVert) * 6, &vbuf, &voff) < 0)
 			continue;
+		/* the clip is encoder state like the texture is: a sprite for a
+		 * different window needs its own pass, and its own scissor */
 		if(enc != nil && (gsprites[i].tex != curtex
-		    || gsprites[i].nearest != curnearest)){
+		    || gsprites[i].nearest != curnearest
+		    || !clip_eq(&gsprites[i].clip, &curclip))){
 			[enc endEncoding];
 			enc = nil;
 		}
@@ -3784,6 +4085,13 @@ metal_present_sprites(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 			mtl_zclear = 0;	/* this pass will run and carries the clear */
 			curtex = gsprites[i].tex;
 			curnearest = gsprites[i].nearest;
+			curclip = gsprites[i].clip;
+			if(!clip_scissor(enc, &curclip, pw, ph)){
+				[enc endEncoding];
+				enc = nil;
+				gsprites[i].tex = nil;
+				continue;
+			}
 			[enc setRenderPipelineState:mtl_sprite_pipe];
 			[enc setDepthStencilState:mtl_zenable ? mtl_depth_on : mtl_depth_off];
 			[enc setVertexBytes:wh length:sizeof(wh) atIndex:1];

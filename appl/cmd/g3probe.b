@@ -7,7 +7,7 @@ include "sys.m";
 	sys: Sys;
 include "draw.m";
 	draw: Draw;
-	Display, Image, Point, Rect: import draw;
+	Display, Image, Point, Rect, Screen: import draw;
 include "tk.m";
 include "wmclient.m";
 	wmclient: Wmclient;
@@ -17,9 +17,15 @@ include "math/draw3d.m";
 
 G3probe: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
 
+# Just inside the window's edge for the clip test's own camera: the
+# frustum is 1:1 at unit depth and the test draws at z=-1.2.
+EDGE: con 1.2 * 0.999;
+
 win: ref Window;
 d: ref Display;
 dumpnext := 0;
+dumpclip := 0;
+small: ref Image;
 
 init(ctxt: ref Draw->Context, nil: list of string)
 {
@@ -128,9 +134,21 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	# Does geometry stay inside the window it is drawn into?  A window
 	# smaller than the screen, and a face that projects bigger than the
 	# window: anything outside is paint that escaped the clip.
-	sys->print("\n%-12s %10s %10s\n", "provider", "inside", "ESCAPED");
-	clipt(Draw3d->PATH, "software");
-	clipt("/dis/math/draw3ddev.dis", "device");
+	# One number cannot attribute five separate paths: fillpoly3g,
+	# fillpoly3, line3, plot3 and sprite3 are different functions in the
+	# device provider and each is clipped by different code, so each is
+	# asked separately.
+	#
+	# The queue for screen-space 2-D triangles is reached by running with
+	# INFERNO_METAL_NOTL set: that leaves the GPU hooked but takes away
+	# the transform-and-light entry points, so fillpoly3/fillpoly3g are
+	# projected in C and arrive as the 2-D fill instead.  Without it that
+	# queue has no caller a Limbo program can reach.
+	kinds := array[] of {"fillpoly3g", "fillpoly3", "line3", "plot3", "sprite3"};
+	for(i = 0; i < len kinds; i++){
+		clipt(Draw3d->PATH, "software", kinds[i]);
+		clipt("/dis/math/draw3ddev.dis", "device", kinds[i]);
+	}
 }
 
 frames(path, what: string, nf: int)
@@ -341,20 +359,51 @@ lines3(path, what: string, cross: int)
 	sys->print("%-12s %-10s %10d %12d\n", what, nm, l, h);
 }
 
-clipt(path, what: string)
+clipt(path, what, kind: string)
 {
 	d3 := load Draw3d path;
 	if(d3 == nil)
 		return;
 	d3->init();
-	# A window well inside the screen, so there is an outside to spill
-	# into.  The screen is cleared first, so anything lit beyond the
-	# window came from this drawing and nothing else.
-	win.reshape(Rect((120,90),(420,330)));
-	win.onscreen("place");
+	# A window well inside the screen, so that there is an outside for
+	# geometry to spill into, and a front-most one, because the GPU paths
+	# only take a layer that is wholly visible - an obscured window goes
+	# to the CPU rasteriser and the question cannot even be asked of it.
+	#
+	# Not win.reshape: with no window manager under it wmclient gives a
+	# window the size of the display whatever is asked for, and geometry
+	# cannot escape a window that is already the screen.  That is how a
+	# clip test came to report no escape from a renderer that escaped.
+	if(small == nil){
+		scr := win.image.screen;
+		if(scr == nil){
+			sys->print("clip: window has no screen\n");
+			return;
+		}
+		small = scr.newwindow(Rect((120,90),(420,330)),
+			Draw->Refbackup, Draw->Black);
+		if(small == nil){
+			sys->print("clip: newwindow: %r\n");
+			return;
+		}
+	}
+	# everything behind goes black, so anything lit outside the small
+	# window came from this drawing and from nothing else.  Both: the
+	# window behind for its own content, and the screen itself for the
+	# border and title bar that window draws outside its client area.
+	win.image.draw(win.image.r, d.black, nil, win.image.r.min);
+	win.image.flush(Draw->Flushnow);
 	d.image.draw(d.image.r, d.black, nil, d.image.r.min);
 	d.image.flush(Draw->Flushnow);
-	img := win.image;
+	img := small;
+	if(dumpclip == 0){
+		dumpclip = 1;
+		sys->print("\nwindow %d,%d..%d,%d on a %dx%d screen\n",
+			img.r.min.x, img.r.min.y, img.r.max.x, img.r.max.y,
+			d.image.r.dx(), d.image.r.dy());
+		sys->print("%-12s %-12s %10s %10s\n",
+			"entry", "provider", "inside", "ESCAPED");
+	}
 	img.draw(img.r, d.black, nil, img.r.min);
 	img.flush(Draw->Flushnow);
 	c := d3->context(img);
@@ -369,15 +418,58 @@ clipt(path, what: string)
 	d3->clearz(c);
 	d3->setcolour(c, d.color(Draw->Red));
 	lits := array[] of {0.5, 0.7, 1.0, 0.8};
-	# Deliberately larger than the window once projected.
+	# OFF to one side, not merely large.  A quad made big in world space
+	# cannot leave the window: viewport() normalises to whatever the
+	# window is, so it grows with it.  Pushing it past the edge is what
+	# asks the question.
 	v := array[] of {
-		Draw3d->Vector(-0.9, -0.9, -1.2), Draw3d->Vector( 0.9, -0.9, -1.2),
-		Draw3d->Vector( 0.9,  0.9, -1.2), Draw3d->Vector(-0.9,  0.9, -1.2),
+		Draw3d->Vector(-1.4, -0.5, -1.2), Draw3d->Vector(-0.2, -0.5, -1.2),
+		Draw3d->Vector(-0.2,  0.5, -1.2), Draw3d->Vector(-1.4,  0.5, -1.2),
 	};
-	d3->fillpoly3g(c, v, lits);
+	case kind {
+	"fillpoly3g" =>
+		d3->fillpoly3g(c, v, lits);
+	"fillpoly3" =>
+		d3->fillpoly3(c, v, Draw3d->Vector(0.0, 0.0, 1.0), 0.9);
+	"line3" =>
+		# the same quad as its outline, and its diagonals, so a thin
+		# line has plenty of length outside the window to be seen on
+		for(j := 0; j < len v; j++)
+			d3->line3(c, v[j], v[(j+1) % len v], 0);
+		d3->line3(c, v[0], v[2], 2);
+		d3->line3(c, v[1], v[3], 2);
+	"plot3" =>
+		# A point outside the frustum is culled by both providers, so
+		# pushing one off the side proves nothing.  What can escape is
+		# the SIZE the device gives a point: it draws a square about a
+		# pixel and a half across, so a point just inside the edge has
+		# most of that square outside it.  Hence the edge, not beyond.
+		# EDGE is the world x or y that projects to the window's own
+		# edge: the frustum divides by -z, so at z=-1.2 the edge is at
+		# 1.2, not at 1.  Getting that wrong put every test point well
+		# inside the window, where nothing can escape from.
+		for(j := 0; j <= 60; j++){
+			t := -EDGE + 2.0 * EDGE * (real j) / 60.0;
+			d3->plot3(c, Draw3d->Vector(-EDGE, t, -1.2));
+			d3->plot3(c, Draw3d->Vector(EDGE, t, -1.2));
+			d3->plot3(c, Draw3d->Vector(t, -EDGE, -1.2));
+			d3->plot3(c, Draw3d->Vector(t, EDGE, -1.2));
+		}
+	"sprite3" =>
+		# Same shape of question: the sprite's quad is built around a
+		# projected point, so a point just inside the edge puts half
+		# the quad outside the window.
+		spr := d.newimage(Rect((0,0),(48,48)), d.image.chans, 0, Draw->Red);
+		if(spr != nil){
+			d3->sprite3(c, Draw3d->Vector(-EDGE, 0.0, -1.2), spr, nil, 1.0);
+			d3->sprite3(c, Draw3d->Vector(EDGE, 0.0, -1.2), spr, nil, 1.0);
+			d3->sprite3(c, Draw3d->Vector(0.0, -EDGE, -1.2), spr, nil, 1.0);
+			d3->sprite3(c, Draw3d->Vector(0.0, EDGE, -1.2), spr, nil, 1.0);
+		}
+	}
 	img.flush(Draw->Flushnow);
 	(inside, out) := insideout(img.r);
-	sys->print("%-12s %10d %10d\n", what, inside, out);
+	sys->print("%-12s %-12s %10d %10d\n", kind, what, inside, out);
 }
 
 # Lit pixels within r, and lit pixels anywhere else on the screen.
