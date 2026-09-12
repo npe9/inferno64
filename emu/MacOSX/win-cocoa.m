@@ -160,6 +160,8 @@ static uvlong	metal_blank_uploads;	/* full uploads of a screen of one colour */
 static int	metal_countblank = -1;	/* gated on INFERNO_METAL_STATS, read once */
 static uvlong	metal_torn_uploads;	/* presented uploads whose live bytes != the snapshot */
 static int	mtl_materialising;	/* inside flush/readback: live bytes are the point */
+static id<MTLTexture>	mtl_rbtex;	/* readback target, kept like the others */
+static int	mtl_rbtex_w, mtl_rbtex_h;
 static uvlong	metal_torn_pixels;
 static uvlong	metal_g3_tris;
 static int	metal_stat_frames;
@@ -4235,12 +4237,25 @@ metal_readback_geom(void)
 	ph = Dy(gscreen->r);
 	if(pw < 1 || ph < 1)
 		return;
-	td = [MTLTextureDescriptor
-		texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
-		width:pw height:ph mipmapped:NO];
-	td.usage = MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget;
-	td.storageMode = MTLStorageModeShared;
-	tex = [mtl_device newTextureWithDescriptor:td];
+	/*
+	 * Kept, like every other target in this file.  This function runs
+	 * once a frame now, and it was allocating a fresh full-screen
+	 * texture each time - a megabyte and a half of driver churn per
+	 * frame for a surface whose size only changes when the window does.
+	 */
+	if(mtl_rbtex != nil && mtl_rbtex_w == pw && mtl_rbtex_h == ph)
+		tex = mtl_rbtex;
+	else{
+		td = [MTLTextureDescriptor
+			texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+			width:pw height:ph mipmapped:NO];
+		td.usage = MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget;
+		td.storageMode = MTLStorageModeShared;
+		mtl_rbtex = [mtl_device newTextureWithDescriptor:td];
+		mtl_rbtex_w = pw;
+		mtl_rbtex_h = ph;
+		tex = mtl_rbtex;
+	}
 	depthtex = metal_depth_tex(pw, ph);
 	if(tex == nil || depthtex == nil)
 		return;
