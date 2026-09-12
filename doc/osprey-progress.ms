@@ -6405,22 +6405,41 @@ sleeping, the alarm arrives at its handler and the program's own clock
 reads 51 milliseconds across a 50-millisecond sleep where it had read 2
 \- and that second number is the check, because a sleep that returns
 early is a clock that lies to every program that waits on one.  The
-p9buddy check is nine criteria now, and the four new ones were each run
-against the kernel from before the change and fail there.
+p9buddy check is thirteen criteria now, and the four new ones were each
+run against the kernel from before the change and fail there.
 .PP
-What is still missing on that configuration is named plainly, because
-the same program says so in its own log: its working directory does not
-follow it (a chdir takes, but a relative name opened after it does not),
-a forked child inherits neither the descriptors nor the name space, a
-bind and a mount do not show in the names that follow them, and there is
-no writable store, so create is refused.  All of those work on
-.CW p9pair ,
-where the buddy is the server personality with a name space of its own
-per container; they are the per-container name space and descriptor
-table that
-.CW p9buddy 's
-smaller buddy does not keep.  That is the next piece of breadth, and it
-is one piece, not four.
+That left four things the same program said were broken on that
+configuration and not on
+.CW p9pair :
+its working directory did not follow it, a forked child inherited
+neither the descriptors nor the name space, a bind and a mount did not
+show in the names that followed them, and create was refused.  Four
+faults in the buddy's per-container state, which is where they would
+have been looked for.  They were none of them in the buddy.  This
+check booted the machine with a SATA disk and
+.CW p9blk ,
+the user-level driver, drives virtio; it found no device exposed and
+returned without a word, so the buddy mounted no store, so nothing
+existed under
+.CW /n
+\- and the program, reaching for
+.CW /n/hello
+and missing, read every miss as the call that had just returned being
+wrong.  The check gives it a virtio disk now, the way the p9pair check
+always did, and all four lines turn over together: the program creates a
+file in the store, writes it, reads it back, stats it by descriptor and
+by name, removes it, gets the buddy's own errstr for a remove it
+refuses, takes a private name space with
+.CW rfork(RFNAMEG) ,
+binds in it, mounts a 9P server at
+.CW /mnt
+and reads through it, chdirs and resolves relative names, and forks a
+child that inherits the working directory and the descriptors and whose
+own chdir does not move the parent's.  The four are criteria now, and
+each fails against the same kernel booted the old way.  The buddy could
+do all of it the whole time; what could not was the check.  It is worth
+saying which way round that was, because the log was four bug reports
+long and every one of them named the wrong thing.
 .NH 1
 Running real programs on the two personalities: a plan
 .PP

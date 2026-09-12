@@ -31,8 +31,22 @@ def main():
                    env=dict(env, OSPREY_KERNEL=os.path.join(ROOT, 'os/osprey/pc64/9p9buddy'), OSPREY_INI='ospreykey=this machine\'s secret'),
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     log = tempfile.mktemp(prefix='osprey-p9buddy-', suffix='.log')
+    # A raw disk for the user-level virtio driver, the way the p9pair check
+    # gives one.  This boot had a SATA disk (-d, -S), which that driver
+    # cannot drive: p9blk found no device exposed and returned without a
+    # word, so the buddy mounted no store at /n - and every name the legacy
+    # program reached for under /n was missing.  The program read those
+    # misses as broken calls and printed "BUG: the forked child did not
+    # inherit the working directory" and three more like it, when what was
+    # missing was the file.  A buddy with nothing to serve makes a poor
+    # test of serving.
+    img = tempfile.mktemp(prefix='osprey-p9buddy-blk-', suffix='.img')
+    d = bytearray(64 * 512)
+    stamp = b'osprey block device test image, sector 0 written by the host'
+    d[:len(stamp)] = stamp
+    open(img, 'wb').write(d)
     subprocess.run(['./scripts/osprey-console.py', '-q', '-p', '2', '-n', 'e1000',
-                    '-l', log, '-S', '-d', ROOT + '/.qemu/9front-root.qcow2',
+                    '-l', log, '--blk', img,
                     '-t', '150', '-u', 'the microkernel idles'],
                    env=env, capture_output=True, text=True)
     try: t = plain(open(log, errors='replace').read())
@@ -74,6 +88,28 @@ def main():
         ("and alarm(2) delivers its note to the handler the program registered, which only a sleep that really sleeps can wait for",
          'my note handler got the alarm note I asked for' in t
          and 'alarm(150) delivered its note and I woke to it' in t),
+        # And the file half, which this check could not see before: the
+        # buddy drives the disk from user space, mounts its log-structured
+        # store at /n, and the legacy program works in it.
+        ("and the buddy has a file system to serve: it drives the disk from user space, mounts its log-structured store at /n, and the legacy program creates a file there, writes it, reads it back, stats it by descriptor and by name, and removes it",
+         'lfs: mounted at /n of the server personality\'s name space' in t
+         and re.search(r'legacy: create\("/n/p9test"\) returned fd \d+', t) is not None
+         and 'read 46 bytes back from the file: "a file written and read back through the buddy"' in t
+         and re.search(r'legacy: fstat\("/n/p9test"\) returned a \d+-byte stat message from the buddy', t) is not None
+         and re.search(r'legacy: stat\("/n/p9test"\) by name returned a \d+-byte stat message from the buddy', t) is not None
+         and 'removed /n/p9test through the buddy' in t),
+        ("and a call the buddy refuses says why, in the program's own errstr(2)",
+         'remove refused, errstr from the buddy: "file does not exist: \'/n/nosuchfile\'"' in t),
+        ("and the name space is the program's to change: rfork(RFNAMEG) gives it one of its own, a bind in it shows in the names that follow, and a 9P server mounted at /mnt is read through and then unmounted away",
+         'rforked a private ns and bound /n into /; /hello (= /n/hello) reads:' in t
+         and 'mounted #X at /mnt and read /mnt/n/hello over 9P:' in t
+         and 'unmounted /mnt; /mnt/n/hello is no longer reachable' in t),
+        ("and a working directory is a program's own: chdir takes and relative names resolve against it, a forked child inherits both it and the descriptors, and the child's own chdir does not move the parent's",
+         'chdir\'d to /n and opened the relative name hello' in t
+         and 'the forked child inherited the working directory: it opened the relative name hello too' in t
+         and 'and the child chdir\'d to / on its own, where the relative name is n/hello' in t
+         and 'my own working directory did not move when my child chdir\'d' in t
+         and 'BUG' not in t),
         ("every file trap was served by the peer, and it exits cleanly, no unimplemented syscall, no panic",
          'the buddy answered every trap' in t and 'unimplemented syscall' not in t
          and 'the program exited' in t and 'panic' not in t),
