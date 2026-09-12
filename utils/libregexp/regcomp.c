@@ -234,7 +234,7 @@ optimize(Reprog *pp)
 	int size;
 	Reprog *npp;
 	Reclass *cl;
-	int diff;
+	intptr diff;	/* the distance realloc moved the program: a pointer difference, not an int */
 
 	/*
 	 *  get rid of NOOP chains
