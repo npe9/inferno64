@@ -59,7 +59,15 @@ a wall running from behind the eye to well in front, as
 canyon does every frame, with
 .B fillpoly3g
 and with
-.BR line3 .
+.BR line3 ;
+and then one
+.B fillpoly3
+quad that genuinely straddles the plane.
+The wall is made of quads stepping by 0.4 from 0.8, so their edges land
+.I on
+the eye plane rather than across it \- every one of them is wholly in
+front or wholly behind, and a test made of them cannot tell a straddling
+polygon that is clipped from one that is dropped.
 .TP
 window clip
 a small window in the middle of the screen with everything behind it
@@ -93,10 +101,22 @@ through Metal until
 .I devdraw
 was made to clip Gouraud polygons the way it always clipped flat ones;
 it is 40290 now.
-And
-.B line3
-still does not clip in either provider, where they fail in opposite
-directions \- software draws nothing, the device draws something.
+.PP
+The other was the Limbo provider, which had no near-plane clipping at
+all.
+.I Project
+returns not-ok for a vertex behind the eye and every caller returned on
+the first one, so a polygon or a line with any vertex behind the viewer
+was dropped whole \- and a wall running from behind the viewer to in
+front of them is what a corridor is made of.
+A single straddling quad lit 0 pixels through software and 56120 through
+the device; a line through the eye plane lit 0 and 25481.
+.I Devdraw 's
+C path has clipped both since it was written.
+With the same cut in
+.B /appl/math/draw3d.b
+they are 56612 against 56120 and 25570 against 25481, which is
+rasterisation.
 .PP
 A single frame drawn and read back used to give nothing at all about
 half the time \- presentation consumed the geometry queue without

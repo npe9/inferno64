@@ -21,6 +21,12 @@ include "math/draw3d.m";
 
 ∞: con real (1<<30);
 LIMIT: con real (1<<11);
+
+# The eye plane, a hair in front of the eye rather than exactly on it, so
+# that a vertex moved onto it still projects.  The same value devdraw's
+# d3clipnear and d3projectline use, because this file now does the same
+# thing they do and the two providers have to agree.
+NEARZ: con -1.0e-4;
 Pi: con Math->Pi;
 
 Mstate: adt
@@ -372,6 +378,76 @@ toeye(c: ref Context, v: Vector): (Vector, int)
 }
 
 # Eye → clip/NDC xy via projection matrix. Returns (x, y, ok).
+#
+# Clip a polygon against the eye plane, Sutherland-Hodgman, in MODEL space.
+#
+# Without this a polygon with any vertex behind the eye was dropped whole -
+# project() returns not-ok for such a vertex and every caller here returned
+# on the first one.  A wall that runs from behind the viewer to well in
+# front of them is exactly that polygon, and it is what a corridor is made
+# of, so the wall the viewer is standing next to vanished.  devdraw's C
+# path has clipped this since it was written (d3clipnear); this file never
+# did, and that was the last thing the two providers disagreed about.
+#
+# The interpolation is in model space and the test in eye space, which is
+# what d3clipnear does and for the same reason: a vertex has to come back
+# out of here as something the rest of the pipeline can project, and
+# project() starts from model space.  With a custom transform() the model-
+# space interpolation is an approximation, as it is in C.
+#
+clipnear(c: ref Context, v: array of Vector): array of Vector
+{
+	if(!c.clipbehind)
+		return v;
+	ms.cur = c;
+	n := len v;
+	# a convex polygon cut by one plane gains at most one vertex
+	out := array[n + 1] of Vector;
+	m := 0;
+	sv := v[n-1];
+	(se, nil) := toeye(c, sv);
+	sin := se.z < NEARZ;
+	for(i := 0; i < n; i++){
+		ev := v[i];
+		(ee, nil) := toeye(c, ev);
+		ein := ee.z < NEARZ;
+		if(sin != ein && ee.z != se.z){
+			t := (NEARZ - se.z) / (ee.z - se.z);
+			out[m++] = Vector(sv.x + t*(ev.x-sv.x),
+				sv.y + t*(ev.y-sv.y), sv.z + t*(ev.z-sv.z));
+		}
+		if(ein)
+			out[m++] = ev;
+		sv = ev;
+		se = ee;
+		sin = ein;
+	}
+	return out[0:m];
+}
+
+# The same cut for a single segment, which is d3projectline's half of it.
+# Returns 0 if the whole segment is behind the eye.
+clipnearline(c: ref Context, a, b: Vector): (Vector, Vector, int)
+{
+	if(!c.clipbehind)
+		return (a, b, 1);
+	ms.cur = c;
+	(ae, nil) := toeye(c, a);
+	(be, nil) := toeye(c, b);
+	ain := ae.z < NEARZ;
+	bin := be.z < NEARZ;
+	if(!ain && !bin)
+		return (a, b, 0);
+	if(!ain && ae.z != be.z){
+		t := (NEARZ - be.z) / (ae.z - be.z);
+		a = Vector(b.x + t*(a.x-b.x), b.y + t*(a.y-b.y), b.z + t*(a.z-b.z));
+	}else if(!bin && be.z != ae.z){
+		t := (NEARZ - ae.z) / (be.z - ae.z);
+		b = Vector(a.x + t*(b.x-a.x), a.y + t*(b.y-a.y), a.z + t*(b.z-a.z));
+	}
+	return (a, b, 1);
+}
+
 toclip(e: Vector): (real, real, int)
 {
 	m := hd ms.prjl;
@@ -482,6 +558,10 @@ end(c: ref Context)
 
 line3(c: ref Context, a, b: Vector, thick: int)
 {
+	ok: int;
+	(a, b, ok) = clipnearline(c, a, b);
+	if(!ok)
+		return;
 	(pa, eza, oka) := project(c, a);
 	(pb, ezb, okb) := project(c, b);
 	if(!oka || !okb || c.dst == nil || c.colour == nil)
@@ -599,8 +679,11 @@ fillpoly3(c: ref Context, verts: array of Vector, nil: Vector, lit: real)
 # z-plane fit, world-space normal or none.
 fillpoly3flat(c: ref Context, verts: array of Vector, lit: real)
 {
+	if(c.dst == nil || c.colour == nil)
+		return;
+	verts = clipnear(c, verts);
 	n := len verts;
-	if(n < 3 || c.dst == nil || c.colour == nil)
+	if(n < 3)
 		return;
 	ap := array[n + 1] of Point;
 	eye := array[n] of Vector;

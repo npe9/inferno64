@@ -90,10 +90,12 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	# THROUGH the eye: every frame some faces have vertices behind it.
 	# Nothing above does, and this is the last thing that differs.
 	sys->print("\n%-12s %-10s %10s %12s\n", "provider", "spans", "lit", "hash");
-	span(Draw3d->PATH, "software", 0);
-	span("/dis/math/draw3ddev.dis", "device", 0);
-	span(Draw3d->PATH, "software", 1);
-	span("/dis/math/draw3ddev.dis", "device", 1);
+	span(Draw3d->PATH, "software", 0, 0);
+	span("/dis/math/draw3ddev.dis", "device", 0, 0);
+	span(Draw3d->PATH, "software", 1, 0);
+	span("/dis/math/draw3ddev.dis", "device", 1, 0);
+	span(Draw3d->PATH, "software", 1, 1);
+	span("/dis/math/draw3ddev.dis", "device", 1, 1);
 
 	# line3 has the same shape of question: devdraw clips fillpoly3 and
 	# fillpoly3 gouraud against the eye plane, and does not clip lines.
@@ -278,7 +280,7 @@ model(path, what: string, xform: int)
 	sys->print("%-12s %-10s %10d %12d\n", what, nm, l, h);
 }
 
-span(path, what: string, cross: int)
+span(path, what: string, cross, flat: int)
 {
 	d3 := load Draw3d path;
 	if(d3 == nil)
@@ -304,6 +306,24 @@ span(path, what: string, cross: int)
 	z0 := -0.4;
 	if(cross)
 		z0 = 0.8;
+	if(flat){
+		# ONE quad that genuinely straddles, not a wall of them.  The
+		# wall's quads step by 0.4 from 0.8, so their edges land ON the
+		# eye plane rather than across it: every one of them is wholly
+		# in front or wholly behind, and a test made of them cannot see
+		# whether a straddling polygon is clipped or dropped.
+		w := array[] of {
+			Draw3d->Vector(-0.45, -0.35,  0.6),
+			Draw3d->Vector(-0.45,  0.35,  0.6),
+			Draw3d->Vector(-0.45,  0.35, -2.0),
+			Draw3d->Vector(-0.45, -0.35, -2.0),
+		};
+		d3->fillpoly3(c, w, Draw3d->Vector(1.0, 0.0, 0.0), 0.7);
+		img.flush(Draw->Flushnow);
+		(fl, fh) := lithash(img);
+		sys->print("%-12s %-10s %10d %12d\n", what, "one straddle", fl, fh);
+		return;
+	}
 	for(i := 0; i < 32; i++){
 		za := z0 - real i * 0.4;
 		zb := za - 0.4;
@@ -320,6 +340,7 @@ span(path, what: string, cross: int)
 	nm := "in front";
 	if(cross)
 		nm = "thru eye";
+
 	sys->print("%-12s %-10s %10d %12d\n", what, nm, l, h);
 }
 
