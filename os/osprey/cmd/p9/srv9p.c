@@ -195,17 +195,43 @@ srv9p(Srvstate *st, uchar *msg, long n, uchar *rbuf, long rmax)
 			r.data = content + off;
 			r.count = cnt;
 		} else {
-			/* directory: marshal every entry, return the slice at offset */
-			long total = 0, off = t.offset;
+			/*
+			 * A directory: marshal every entry, then return whole
+			 * entries only.  This used to return the byte slice at
+			 * the offset, which is wrong and only looked right
+			 * because every reader here asked for more bytes than
+			 * the whole directory: a smaller count cut the last
+			 * entry in half, devmnt raised "invalid directory
+			 * entry received from server" when the entries did not
+			 * add up to the count, and unionread - which runs each
+			 * member under waserror and moves on - dropped this
+			 * whole member from the listing without a word.  9P
+			 * has directory offsets land on entry boundaries, so
+			 * an offset that does not is the error it is, and a
+			 * count too small for one entry returns nothing, which
+			 * is what the kernel's own devdirread does.
+			 */
+			long total = 0, off = t.offset, at, end, dl;
 			int k;
 			for(k = 0; k < Nfile; k++){
 				mkdir(&d, k+1);
 				total += convD2M(&d, dirbuf + total, sizeof dirbuf - total);
 			}
-			if(off > total) off = total;
-			if(cnt > total - off) cnt = total - off;
+			at = 0;
+			while(at < off && at < total)
+				at += BIT16SZ + GBIT16(dirbuf + at);
+			if(at != off){
+				r.type = Rerror; r.ename = "bad offset in directory read"; break;
+			}
+			end = off;
+			while(end < total){
+				dl = BIT16SZ + GBIT16(dirbuf + end);
+				if(end + dl > off + (long)cnt)
+					break;
+				end += dl;
+			}
 			r.data = (char*)(dirbuf + off);
-			r.count = cnt;
+			r.count = end - off;
 		}
 		break;
 

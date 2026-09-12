@@ -224,6 +224,48 @@ p9setup(void)
 	print("p9: name space up, root attached\n");
 }
 
+/*
+ * One listing of "/", through a buffer of the caller's size, printing
+ * each entry's name and length and handing back the length the entry
+ * named "hello" carried.  It is a function because the same listing is
+ * run three times below: once before anything is bound over an entry of
+ * it, once after, and once through a buffer too small to hold the
+ * entry the fixup grew - which is the rock's case.
+ */
+static int
+lsunion(char *what, uchar *buf, long bufn, vlong *hellolen, int quiet)
+{
+	int dfd, nent, m;
+	long dn;
+	uchar *p, *e;
+	Dir dir;
+	char names[256];
+
+	*hellolen = -1;
+	nent = 0;
+	dfd = p9open("/", OREAD);
+	if(!quiet)
+		print("p9: ls / (%s):\n", what);
+	while((dn = p9read(dfd, buf, bufn)) > 0){
+		p = buf;
+		e = buf + dn;
+		while(p < e){
+			m = convM2D(p, (uint)(e - p), &dir, names);
+			if(m <= 0)
+				break;
+			if(!quiet)
+				print("p9:   %s %lld (%d bytes of entry)\n",
+					dir.name, (vlong)dir.length, m);
+			if(strcmp(dir.name, "hello") == 0)
+				*hellolen = dir.length;
+			nent++;
+			p += m;
+		}
+	}
+	p9close(dfd);
+	return nent;
+}
+
 extern void p9execfile(void);	/* p9exec.c: the second program, as /boot/prog2 */
 extern int p9exec(char *name, char **argv);	/* p9exec.c: read it through the name space and run it */
 
@@ -498,29 +540,93 @@ p9main(void)
 	 * and the server's hello, motd, readme and scratch, together.
 	 */
 	{
-		int dfd, nent = 0;
-		long dn;
-		uchar *p, *e;
-		Dir dir;
-		char names[256];
-		int m;
+		int nent, nbound, ncross, nafter, nsweep, nrocked, firstrock, i;
+		vlong hl, hlbound, hlcross, hlafter, hlsweep;
+		uchar small[512];
 
-		dfd = p9open("/", OREAD);
-		print("p9: ls / (a union of the root device, the environment and the 9P mount):\n");
-		while((dn = p9read(dfd, buf, sizeof buf)) > 0){
-			p = buf;
-			e = buf + dn;
-			while(p < e){
-				m = convM2D(p, (uint)(e - p), &dir, names);
-				if(m <= 0)
-					break;
-				print("p9:   %s\n", dir.name);
-				nent++;
-				p += m;
+		nent = lsunion("a union of the root device, the environment "
+			"and the 9P mount", buf, sizeof buf, &hl, 0);
+		print("p9: the union listing spanned %d entries across three mounted members\n", nent);
+		print("p9: and \"hello\" in it is %lld bytes, which is the 9P server's own\n", hl);
+
+		/*
+		 * Now make one entry of that listing a mount point and list it
+		 * again.  /motd is bound over /hello: the name "hello" still
+		 * resolves, but it reaches motd, and a listing that still said
+		 * 54 bytes would be describing a file the name no longer
+		 * reaches.  The listing above is the control - the same
+		 * program, the same buffer, the same entry, taken before the
+		 * bind - so if the fixup did nothing the two lengths would be
+		 * equal.  Both files are the 9P server's, so the entry is
+		 * rewritten where it stands: same name, same size, other file.
+		 */
+		p9bind("/motd", "/hello", MREPL);
+		print("p9: bound /motd over /hello, so one entry of that listing is a mount point\n");
+		nbound = lsunion("the same union, with /motd bound over /hello",
+			buf, sizeof buf, &hlbound, 0);
+		print("p9: the entry is still named \"hello\" and is now %lld bytes, "
+			"which is motd's, across %d entries\n", hlbound, nbound);
+
+		/*
+		 * And across devices, which is the case the rock is for.  The
+		 * environment device's files belong to eve, whose name is six
+		 * characters, and the 9P server's belong to "none", which is
+		 * four; a stat carries the owner three times, so the entry
+		 * that replaces this one is six bytes longer than the one it
+		 * replaces.  A rewritten entry that no longer fits the
+		 * caller's buffer is what the rock holds.
+		 */
+		p9unmount(nil, "/hello");
+		p9bind("/greeting", "/hello", MREPL);
+		print("p9: and bound /greeting, which the environment device serves, over /hello\n");
+		ncross = lsunion("the union with an entry of one device bound over "
+			"an entry of another", buf, sizeof buf, &hlcross, 0);
+		print("p9: with the environment's file over it the entry is %lld bytes "
+			"across %d entries, and the entry itself grew from 66 bytes to 72\n",
+			hlcross, ncross);
+
+		/*
+		 * Now read that listing through every buffer size from 75
+		 * bytes - the largest single entry, below which a member
+		 * cannot return anything - to 320, one byte at a time.  Every
+		 * one of them has to give the same twenty entries and the same
+		 * rewritten length: a buffer boundary is not allowed to lose
+		 * an entry or cut one in half.  The sizes where the grown
+		 * entry no longer fits are the rock's, and they are counted.
+		 */
+		nsweep = 0;
+		nrocked = 0;
+		firstrock = 0;
+		for(i = 75; i <= 320; i++){
+			long before = p9rockcount();
+			int n2 = lsunion(nil, small, i, &hlsweep, 1);
+			if(n2 != nent || hlsweep != hlcross){
+				print("p9: a %d-byte buffer gave %d entries and %lld bytes, "
+					"not %d and %lld\n", i, n2, hlsweep, nent, hlcross);
+				break;
+			}
+			nsweep++;
+			if(p9rockcount() > before){
+				nrocked++;
+				if(firstrock == 0)
+					firstrock = i;
 			}
 		}
-		print("p9: the union listing spanned %d entries across three mounted members\n", nent);
-		p9close(dfd);
+		print("p9: the same listing through every buffer size from 75 to 320 bytes: "
+			"%d of them gave the same %d entries with \"hello\" at %lld bytes, "
+			"and at %d of those sizes the grown entry did not fit and went to the "
+			"channel's rock, the first at %d bytes; %ld entries were carried in "
+			"the rock altogether\n",
+			nsweep, nent, hlcross, nrocked, firstrock, p9rockcount());
+
+		/*
+		 * Put it back.  Later demonstrations here and programs the
+		 * personality loads read /hello for the 9P server's own bytes.
+		 */
+		p9unmount(nil, "/hello");
+		nafter = lsunion("the union with the bind undone", buf, sizeof buf, &hlafter, 0);
+		print("p9: with the bind undone \"hello\" is %lld bytes again, across %d entries\n",
+			hlafter, nafter);
 	}
 
 	/*

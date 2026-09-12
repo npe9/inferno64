@@ -179,10 +179,24 @@ p9close(int fd)
  * union mount point (several things bound or mounted at one name), a
  * directory read walks the members in turn and returns each one's
  * entries, so a listing of "/" spans the root device, the environment
- * and a 9P mount together.  The rock fixup - rewriting an entry that is
- * itself a mount point - is stubbed here (mountfix returns the entries
- * unchanged, mountrockread finds no rock), which is correct as long as
- * the union's own entries are not themselves mount points.
+ * and a 9P mount together.
+ *
+ * The rock fixup comes with it, which it did not before.  A directory
+ * entry that is itself a mount point has to be answered with what is
+ * mounted there and not with what the underlying device says is there:
+ * a bind of one file over another leaves the name alone and changes
+ * everything else about it, and a listing that showed the covered file
+ * would be describing something the name no longer reaches.  The entry
+ * that comes back can be longer than the one it replaces, so what does
+ * not fit is kept in the channel's rock and handed out at the next
+ * read; that is what the rock is for, and why a directory's offset is
+ * the channel's and not a pread's to choose.
+ *
+ * This is os/osprey/port/sysfile.c's, which is 9front's, brought over
+ * whole rather than written again: dirfixed, dirname, dirsetname,
+ * mountrock, mountrockread, mountrewind and mountfix, resting on the
+ * findmount and eqchantdqid this personality already links from
+ * chan.c.
  */
 void
 unionrewind(Chan *c)
@@ -196,23 +210,272 @@ unionrewind(Chan *c)
 	qunlock(&c->umqlock);
 }
 
+static int
+dirfixed(uchar *p, uchar *e, Dir *d)
+{
+	int len;
+
+	len = GBIT16(p)+BIT16SZ;
+	if(p + len > e)
+		return -1;
+
+	p += BIT16SZ;	/* ignore size */
+	d->type = devno(GBIT16(p), 1);
+	p += BIT16SZ;
+	d->dev = GBIT32(p);
+	p += BIT32SZ;
+	d->qid.type = GBIT8(p);
+	p += BIT8SZ;
+	d->qid.vers = GBIT32(p);
+	p += BIT32SZ;
+	d->qid.path = GBIT64(p);
+	p += BIT64SZ;
+	d->mode = GBIT32(p);
+	p += BIT32SZ;
+	d->atime = GBIT32(p);
+	p += BIT32SZ;
+	d->mtime = GBIT32(p);
+	p += BIT32SZ;
+	d->length = GBIT64(p);
+
+	return len;
+}
+
+static char*
+dirname(uchar *p, int *n)
+{
+	p += BIT16SZ+BIT16SZ+BIT32SZ+BIT8SZ+BIT32SZ+BIT64SZ
+		+ BIT32SZ+BIT32SZ+BIT32SZ+BIT64SZ;
+	*n = GBIT16(p);
+	return (char*)p+BIT16SZ;
+}
+
+static long
+dirsetname(char *name, int len, uchar *p, long n, long maxn)
+{
+	char *oname;
+	int olen;
+	long nn;
+
+	if(n == BIT16SZ)
+		return BIT16SZ;
+
+	oname = dirname(p, &olen);
+
+	nn = n+len-olen;
+	PBIT16(p, nn-BIT16SZ);
+	if(nn > maxn)
+		return BIT16SZ;
+
+	if(len != olen)
+		memmove(oname+len, oname+olen, p+n-(uchar*)(oname+olen));
+	PBIT16((uchar*)(oname-2), len);
+	memmove(oname, name, len);
+	return nn;
+}
+
+/*
+ * Mountfix might have caused the fixed results of the directory read
+ * to overflow the buffer.  Catch the overflow in c->dirrock.
+ */
+static long nrocked;		/* entries put in a rock, so a demonstration can say the path ran */
+
+long
+p9rockcount(void)
+{
+	return nrocked;
+}
+
+static void
+mountrock(Chan *c, uchar *p, uchar **pe)
+{
+	uchar *e, *r;
+	int len, n;
+
+	e = *pe;
+	nrocked++;
+
+	/* find last directory entry */
+	for(;;){
+		len = BIT16SZ+GBIT16(p);
+		if(p+len >= e)
+			break;
+		p += len;
+	}
+
+	/* save it away */
+	qlock(&c->rockqlock);
+	if(c->nrock+len > c->mrock){
+		n = ROUND(c->nrock+len, 1024);
+		r = smalloc(n);
+		memmove(r, c->dirrock, c->nrock);
+		free(c->dirrock);
+		c->dirrock = r;
+		c->mrock = n;
+	}
+	memmove(c->dirrock+c->nrock, p, len);
+	c->nrock += len;
+	qunlock(&c->rockqlock);
+
+	/* drop it */
+	*pe = p;
+}
+
+/*
+ * Satisfy a directory read with the results saved in c->dirrock.
+ */
+int
+mountrockread(Chan *c, uchar *op, long n, long *nn)
+{
+	long dirlen;
+	uchar *rp, *erp, *ep, *p;
+
+	/* common case */
+	if(c->nrock == 0)
+		return 0;
+
+	/* copy out what we can */
+	qlock(&c->rockqlock);
+	rp = c->dirrock;
+	erp = rp+c->nrock;
+	p = op;
+	ep = p+n;
+	while(rp+BIT16SZ <= erp){
+		dirlen = BIT16SZ+GBIT16(rp);
+		if(p+dirlen > ep)
+			break;
+		memmove(p, rp, dirlen);
+		p += dirlen;
+		rp += dirlen;
+	}
+
+	if(p == op){
+		qunlock(&c->rockqlock);
+		return 0;
+	}
+
+	/* shift the rest */
+	if(rp != erp)
+		memmove(c->dirrock, rp, erp-rp);
+	c->nrock = erp - rp;
+
+	*nn = p - op;
+	qunlock(&c->rockqlock);
+	return 1;
+}
+
 void
 mountrewind(Chan *c)
 {
 	c->nrock = 0;
 }
 
-int
-mountrockread(Chan *c, uchar*, long, long*)
+/*
+ * Rewrite the results of a directory read to reflect current 
+ * name space bindings and mounts.  Specifically, replace
+ * directory entries for bind and mount points with the results
+ * of statting what is mounted there.  Except leave the old names.
+ */
+long
+mountfix(Chan *c, uchar *op, long n, long maxn)
 {
-	return c->nrock != 0 ? 0 : 0;	/* no rock is kept here */
+	char *name;
+	int nbuf, nname;
+	Chan *nc;
+	Mhead *mh;
+	Mount *m;
+	uchar *p;
+	int dirlen, rest;
+	long l;
+	uchar *buf, *e;
+	Dir d;
+
+	p = op;
+	buf = nil;
+	nbuf = 0;
+	for(e=&p[n]; p+BIT16SZ<e; p+=dirlen){
+		dirlen = dirfixed(p, e, &d);
+		if(dirlen < 0)
+			break;
+		nc = nil;
+		mh = nil;
+		if(findmount(&nc, &mh, d.type, d.dev, d.qid)){
+			/*
+			 * If it's a union directory and the original is
+			 * in the union, don't rewrite anything.
+			 */
+			rlock(&mh->lock);
+			for(m = mh->mount; m != nil; m = m->next){
+				if(eqchantdqid(m->to, d.type, d.dev, d.qid, 1)){
+					runlock(&mh->lock);
+					goto Norewrite;
+				}
+			}
+			runlock(&mh->lock);
+
+			if(waserror())
+				goto Norewrite;
+			name = dirname(p, &nname);
+			if(buf == nil){
+				nbuf = 4096;
+				buf = smalloc(nbuf);
+			}
+			l = devtab[nc->type]->stat(nc, buf, nbuf);
+			if(l < BIT16SZ)
+				error(Eshortstat);
+			rest = BIT16SZ + GBIT16(buf) + nname;
+			if(rest > nbuf){
+				free(buf);
+				nbuf = rest;
+				buf = smalloc(nbuf);
+				l = devtab[nc->type]->stat(nc, buf, nbuf);
+			}
+			l = dirsetname(name, nname, buf, l, nbuf);
+			if(l <= BIT16SZ)
+				error(Eshortstat);
+			poperror();
+
+			/*
+			 * Shift data in buffer to accomodate new entry,
+			 * possibly overflowing into rock.
+			 */
+			rest = e - (p+dirlen);
+			if(l > dirlen){
+				while(p+l+rest > op+maxn){
+					mountrock(c, p, &e);
+					if(e == p){
+						dirlen = 0;
+						goto Norewrite;
+					}
+					rest = e - (p+dirlen);
+				}
+			}
+			if(l != dirlen){
+				memmove(p+l, p+dirlen, rest);
+				dirlen = l;
+				e = p+dirlen+rest;
+			}
+
+			/*
+			 * Rewrite directory entry.
+			 */
+			memmove(p, buf, l);
+
+		    Norewrite:
+			cclose(nc);
+			putmhead(mh);
+		}
+	}
+	if(buf != nil)
+		free(buf);
+
+	if(p != e)
+		error("oops in rockfix");
+
+	return e-op;
 }
 
-long
-mountfix(Chan*, uchar*, long nn, long)
-{
-	return nn;			/* entries returned unchanged */
-}
+
 
 long
 unionread(Chan *c, void *va, long n)

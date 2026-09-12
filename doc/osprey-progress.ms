@@ -721,7 +721,37 @@ on the chip, and the task's own uart driver, which is a user program
 with a port grant.  No lock in this kernel reaches the second of them.
 Ordering them means the kernel not writing the port at all \- which is
 the arrangement, and which is exactly what cannot be relied on for the
-print that says a fault happened.  And the clock: the CMOS real-time clock is
+print that says a fault happened.
+.PP
+What was left after that argument was smaller than the argument, and it
+is now closed.  The rule the two-writers case leaves is that an
+.CW iprint
+is for a line that must be seen although the console machinery may be
+past helping \- a panic, an interrupt \- and p9pair's
+.CW donotify
+already drew that line in the right place: an ordinary
+.CW print
+for the note it handles and carries on from, an
+.CW iprint
+only for the line before the panic.  p964's
+.CW donotify
+used
+.CW iprint
+for all four, and three of those four are notes it handles and goes on
+from.  Each of them went straight at the port while the console task was
+part way through a line of the program's, which is where the cut lines
+came from: "faultp9: an ordinary Plan 9 program with no note handler of
+its own" came out as "faultp9:", then the kernel's whole fault line,
+then the rest of the program's.  The measurement above \- one boot in
+three \- was of exactly this, and the check that reads the program's
+line is the one that kept failing.  The three that carry on are ordinary
+prints now and take their turn behind the program's output; the fourth
+is still an
+.CW iprint ,
+for the reason it always was.  Six boots in a row came out whole where
+four before had lost two.  The two-writers gap is still there and still
+real \- a panic still cuts \- but nothing that carries on writes past
+the task any more.  And the clock: the CMOS real-time clock is
 read in user space now, the exokernel way, the personality's own
 .CW outb / inb
 on ports 0x70 and 0x71 under a port grant, reading the date and time with
@@ -4388,13 +4418,62 @@ by name and another find and mount it there, the way Plan 9 servers
 announce themselves - the personality posts its own exportfs and mounts
 it back by name.  What is not yet real is breadth, not
 structure: the served tree is a handful of files, one of them writable -
-listed, read and written, but small; the union directory read is ported
-in its plain form (the rock fixup, which rewrites an entry that is itself
-a mount point, is stubbed), so ls of "/" composes the root device, the
-environment and the 9P mount but would not reflect a mount made on one of
-their entries; the ring's data area is about nine kilobytes and today's messages
+listed, read and written, but small; the ring's data area is about nine kilobytes and today's messages
 are tens of bytes, so a larger tree would want the transport to page a
-big read rather than assume one fits.  Two things this paragraph used
+big read rather than assume one fits.  The union directory read's rock fixup, which this paragraph used to
+call stubbed, is ported and checked.  It is
+.CW sysfile.c 's
+own \-
+.CW dirfixed ,
+.CW dirname ,
+.CW dirsetname ,
+.CW mountrock ,
+.CW mountrockread ,
+.CW mountrewind
+and
+.CW mountfix
+\- brought over whole, resting on the
+.CW findmount
+and
+.CW eqchantdqid
+the personality already links from
+.CW chan.c ,
+and it is what makes a listing tell the truth about an entry that is
+itself a mount point: bind
+.CW /motd
+over
+.CW /hello
+and the entry is still named hello and is now motd's 69 bytes, where the
+same listing taken before the bind \- the control \- gives hello's 54, and
+undoing the bind gives 54 again.  The entry that replaces one can be
+longer than it (the environment's files belong to eve, whose name is six
+characters, and the 9P server's to "none", which is four, and a stat
+carries the owner three times, so a bind across those two devices grows
+the entry from 66 bytes to 72); what no longer fits the caller's buffer
+goes into the channel's rock and comes back at the next read.  The check
+reads that listing through every buffer size from 75 bytes \- the largest
+single entry \- to 320, one byte at a time: all 246 give the same twenty
+entries and the same rewritten length, and at 18 of them the rock is what
+carries it.  Sweeping the boundary rather than picking one size found two
+real faults that the size the demonstration had been using did not show.
+The 9P server was slicing a directory read at whatever byte count was
+asked for instead of at an entry boundary, so a small read cut the last
+entry in half,
+.CW devmnt
+raised "invalid directory entry received from server", and
+.CW unionread
+\- which runs each member under
+.CW waserror
+and moves on \- dropped that whole member from the listing without a word:
+four files simply were not there.  And the file-server container counted
+every pass of its service loop, answered or not, and stopped at 150,
+which was enough for the demonstration it was written for and not for a
+client that reads a directory a few hundred times; when it stopped, the
+listing came back two entries short, again silently, and the next 9P
+request the personality sent was answered by nobody.  It now counts idle
+passes, and a request resets the count.
+.PP
+Two things this paragraph used
 to call open are closed, and both are checked: the exportfs is reached
 by a client in a container of its own over the ring (the client
 personality mounts the server personality and reads, writes, creates

@@ -144,6 +144,19 @@ port
 		 * behind it is lost when the panic floods the console.  A pc
 		 * inside a loaded program's image names the program, and one
 		 * inside the personality's names the personality.
+		 *
+		 * That reason holds for the line before the panic and for no
+		 * other line here.  The three below it are notes this
+		 * configuration handles and carries on from, and an iprint
+		 * goes straight at the port while the console task is part
+		 * way through a line of the program's - so "faultp9: an
+		 * ordinary Plan 9 program with no note handler of its own"
+		 * came out as "faultp9:", then the kernel's whole fault line,
+		 * then the rest of the program's, and a check that read the
+		 * program's line failed about one boot in three.  Nothing is
+		 * being flooded away when the machine goes on, so those three
+		 * are ordinary prints and take their turn.  p9pair's donotify
+		 * already draws the line in that place.
 		 */
 		extern uintptr uregpc(void*);
 		extern int ospreyfaultup(char*);
@@ -181,7 +194,7 @@ port
 				up->dbgreg = a;
 				*(Ureg**)((uintptr)nureg - BY2WD) = up->noteureg;
 				up->noteureg = nureg;
-				iprint("osprey: note at user pc %#p handed to the program's own handler: %s\n",
+				print("osprey: note at user pc %#p handed to the program's own handler: %s\n",
 					(void*)pc, msg);
 				return 1;
 			}
@@ -194,12 +207,12 @@ port
 		if(!ospreyfromprog() && ospreyholdnote(msg)){
 			if(up->nnote > 0)
 				up->nnote--;
-			iprint("osprey: a note for %s's program arrived while the personality was running; it is held: %s\n",
+			print("osprey: a note for %s's program arrived while the personality was running; it is held: %s\n",
 				up->text != nil ? up->text : "the task", msg);
 			return 0;
 		}
 		if(ospreyfaultup(msg)){
-			iprint("osprey: fault at user pc %#p, inside %s's own program: handed to it, not a panic\n",
+			print("osprey: fault at user pc %#p, inside %s's own program: handed to it, not a panic\n",
 				(void*)pc, up->text != nil ? up->text : "the task");
 			up->nnote = 0;
 			return 1;

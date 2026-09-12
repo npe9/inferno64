@@ -418,7 +418,20 @@ ospreyserver(char *arg0)
 		for(z = 0; z < (long)sizeof st; z++)
 			((uchar*)&st)[z] = 0;
 		USED(rq); USED(reqm);
-		for(iters = 0; iters < 150; iters++){	/* up to ~30s of waiting, then finish */
+		/*
+		 * Serve until the client has been quiet for a long while, not
+		 * until a fixed number of passes have gone by.  This counted
+		 * every pass, answered or not, and stopped at 150: enough for
+		 * the demonstration it was written for, and not enough for a
+		 * client that reads a directory a few hundred times.  When it
+		 * stopped, the client's mount did not fail - unionread runs
+		 * each member under waserror and moves on - so a listing came
+		 * back two entries short with nothing said, and the next 9P
+		 * request the personality sent was answered by nobody.  A
+		 * server stops when it is idle; the count is of idle passes
+		 * and a request resets it.
+		 */
+		for(iters = 0; iters < 150; iters++){
 			Msg req, rep;
 			uvlong off, len, fd, dest, most;
 			char *content;
@@ -433,6 +446,7 @@ ospreyserver(char *arg0)
 			if(a != 0)			/* nothing ready this time; look again */
 				continue;
 			req = *reqp;			/* the request select took into our data area */
+			iters = -1;			/* a request; the idle count starts again */
 
 			for(i = 0; i < (long)sizeof rep; i++)
 				((uchar*)&rep)[i] = 0;

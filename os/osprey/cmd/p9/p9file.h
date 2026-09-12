@@ -19,3 +19,4 @@ Chan*	p9chdirchan(char *name);		/* the directory a name resolves to, for a conta
 int	p9unmount(char *name, char *old);	/* take name off the mount point old, or clear it */
 int	p9dup(int oldfd);			/* duplicate a descriptor onto a new one */
 int	p9fd2path(int fd, char *buf, int nbuf);	/* the path a descriptor resolved to; bytes written, terminator included */
+long	p9rockcount(void);		/* how many directory entries the union fixup has put in a channel's rock */

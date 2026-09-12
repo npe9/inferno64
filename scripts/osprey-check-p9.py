@@ -183,6 +183,38 @@ def main():
     m3 = re.search(r'the union listing spanned (\d+) entries', t)
     results.append(("and a union directory read of \"/\" composes the root device, the environment and the 9P mount into one listing",
                     'ls / (a union' in t and m3 is not None and int(m3.group(1)) >= 18))
+    # The rock fixup, ported from sysfile.c and demonstrated against its own
+    # control: the same listing, the same buffer, the same entry, taken
+    # before the bind.  A directory entry that is itself a mount point has
+    # to come back as what is mounted there under the name it was reached
+    # by, and the length is what says which file was statted - 54 is the 9P
+    # server's hello, 69 is its motd, 12 is the environment's greeting.
+    hl = re.search(r'and "hello" in it is (\d+) bytes, which is the 9P server\'s own', t)
+    hb = re.search(r'the entry is still named "hello" and is now (\d+) bytes, which is motd\'s, across (\d+) entries', t)
+    ha = re.search(r'with the bind undone "hello" is (\d+) bytes again, across (\d+) entries', t)
+    results.append(("and an entry of that listing that is itself a mount point is answered with what is mounted there, under the name it was reached by: /motd bound over /hello leaves an entry still named \"hello\" and gives it motd's length, where the same listing taken before the bind - the control - gives hello's, and undoing the bind gives hello's again",
+                    hl is not None and hb is not None and ha is not None
+                    and int(hl.group(1)) == 54 and int(hb.group(1)) == 69
+                    and int(ha.group(1)) == 54
+                    and int(hb.group(2)) == int(ha.group(2))))
+    # And the overflow path.  Across devices the replacing entry is six
+    # bytes longer (eve is six characters and the server's owner is four,
+    # and a stat carries the owner three times), so at some buffer sizes
+    # the rewritten entry no longer fits and the rest goes to the
+    # channel's rock to be handed out at the next read.  Every buffer size
+    # from the largest single entry upward has to give the same listing:
+    # a buffer boundary may not lose an entry or cut one in half.  That
+    # sweep found two real faults - the 9P server was slicing a directory
+    # read at an arbitrary byte count, and the file-server container quit
+    # after 150 passes - and neither showed at the buffer size the
+    # demonstration had been using.
+    sw = re.search(r'through every buffer size from 75 to 320 bytes: (\d+) of them gave the same (\d+) entries '
+                   r'with "hello" at (\d+) bytes, and at (\d+) of those sizes the grown entry did not fit and '
+                   r'went to the channel\'s rock, the first at (\d+) bytes', t)
+    results.append(("and the entry that replaces it can be longer than the one it replaces - the environment's file over the 9P server's grows it from 66 bytes to 72 - so what no longer fits the caller's buffer is kept in the channel's rock and handed out at the next read: the same listing read through all 246 buffer sizes from 75 to 320 bytes gives the same twenty entries and the same rewritten length every time, and at 18 of those sizes the rock is what carries it",
+                    sw is not None and int(sw.group(1)) == 246 and int(sw.group(2)) == 20
+                    and int(sw.group(3)) == 12 and int(sw.group(4)) >= 1
+                    and int(sw.group(5)) >= 75))
     results.append(("and the name space carries a pipe - two ends of a channel a program talks through, written and read",
                     'wrote one end of a pipe, read the other: "sent through a pipe"' in t))
     m4 = re.search(r'looked up /srv/export, mounted it, read (\d+) entries', t)
