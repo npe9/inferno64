@@ -1112,6 +1112,71 @@ through a readback, which materialises the geometry first, so it sees the
 finished frame by construction. The fault was only ever in what the
 display was shown, and nothing in the process was measuring that.
 
+### Why a program should not sleep to pace itself — 2026-09-12
+
+Asked, after the fix above did not settle it: *why does it need to sleep?
+why can't it update whenever it has a frame ready and have a dynamic
+frame rate?*
+
+It does not need to, and the sleep was never the mechanism that mattered.
+There are two clocks and the trouble is that they were independent.
+
+**The program's clock.** `frameclock(2)`'s ticker sleeps, and macOS
+coalesces timer wakeups onto an 8 ms quantum for any thread that has not
+said otherwise, so `sleep(16)` returns at 16 ms or at 24 ms and never
+between. A 60 Hz ticker under that has a period that alternates. Every
+emu thread now asks for zero timer slack, and `INFERNO_RT_FRAMES` asks
+for a real-time reservation on top; `sleeptest(1)` measures all three.
+
+**The display's clock.** Presents happened on the flush that marked the
+screen dirty, so the interval between them was whatever the program's
+clock happened to be — 13 to 21 ms against a 16.67 ms refresh. Some
+refreshes got a new frame and some got none. No accuracy in the sleep
+fixes that, because nothing was relating the two.
+
+A `CADisplayLink` now drives presents: `mark_view_dirty()` records that
+there is something to show and the display asks for it.
+
+```
+                        min   median      p90      max
+present gap, before   13013    16337    20209    21174 us
+present gap, after    16650    16667    16677    16682 us
+```
+
+Thirty-two microseconds of spread where there were eight thousand.
+Control, `INFERNO_NOVSYNC=1`: 2 to 6 repeated frames and 2 to 6 skipped
+per thirty presents, worst gap 33 ms; with the link, zero and zero over a
+forty-second run.
+
+**The second win is bigger than the first.** Presenting on demand called
+`nextDrawable` more often than the display could consume, so it blocked —
+14846 us of every present, on the AppKit main thread. One present per
+refresh is in step and does not wait: 20 us now. The main thread gets 16
+ms of every 16 ms back.
+
+**Why the earlier attempt at this failed.** A note in `win-cocoa.m` said
+a `CVDisplayLink` "added up to a refresh of latency and felt sluggish",
+and it would have: paired with a program drawing at 60 Hz off a timer, a
+link can only ever wait. It costs nothing when the program draws *faster*
+than the display, because then a fresh frame is always already there. The
+two halves have to go together, which is the real answer to the question.
+`castlefrankenstein` grows `-rHZ` so they can be measured against each
+other: at `-r240` its content is at most 4 ms stale instead of 16, and
+every present then *skips* frames rather than repeating them, which is
+the right way round.
+
+**What is left.** The program still decides when to draw on a timer. With
+both fixes that timer stays in step — its frames are 14.9 to 18.4 ms
+apart against 6 to 28 before any of this, and no frame is repeated or
+skipped over a long run — because 16666 us is 60.0024 Hz and the drift is
+one frame in seven minutes. The architecturally clean version is for the
+display to ask the *program* for a frame too, which means exposing the
+refresh to Limbo (a file under the draw device that blocks until the next
+one) and a `frameclock` mode that waits on it instead of sleeping. Then
+there is no timer anywhere and the rate is dynamic by construction: a
+frame that takes 30 ms simply lands on the next refresh. That is worth
+doing and is not done.
+
 ### Phase 2a — `litcolour` allocated a colour image per fill
 
 Fixed 2026-09-10, and it is the reason a Gouraud scene could not be run

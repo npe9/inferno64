@@ -62,14 +62,23 @@ what the third row measures.
 .IR frameclock (2),
 .IR g3probe (1)
 .SH BUGS
-An accurate sleep is not a steady frame.
-With
-.B INFERNO_RT_FRAMES
-set,
-.IR castlefrankenstein (1)
-still delivers frames between 12 and 21 milliseconds apart, because what
-remains is the variation in its own drawing and in the channel send that
-hands the tick over, not in the sleep.
+An accurate sleep is not a steady frame, and it is not what made the
+picture steady.
+.PP
+What did was giving the display the job of asking: a
+.B CADisplayLink
+drives presents, so the interval between them is the refresh interval by
+construction rather than whatever the program's own clock happened to be.
+Present gaps went from 13013-21174 microseconds to 16650-16682, and the
+main thread stopped blocking a refresh at a time in
+.BR nextDrawable .
+.PP
+This still matters, because the two together are what make it steady, and
+because a clock that alternates 16 and 24 milliseconds is wrong on its
+own terms.
+.IR Castlefrankenstein (1)'s
+own frames are 14.9 to 18.4 milliseconds apart now, against 6 to 28
+before any of it.
 .PP
 Two hundred samples of one duration, with whatever else the machine is
 doing at the time.
