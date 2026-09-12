@@ -269,7 +269,7 @@ execac(Ar0* ar0, int core, char *ufile, char **argv)
 	Hdr hdr;
 	Fgrp *f;
 	Tos *tos;
-	Chan *chan;
+	Chan *chan, *ichan;
 	Image *img;
 	Segment *s;
 	int argc, i, n;
@@ -336,13 +336,24 @@ execac(Ar0* ar0, int core, char *ufile, char **argv)
 		/*
 		 * Take the #! $0 as a file to open, and replace
 		 * $0 with the original path's name.
+		 *
+		 * The interpreter is opened before the script is closed.
+		 * This used to close the script, set chan to nil "in case
+		 * namec errors out", and open the interpreter into chan;
+		 * but the compiler deletes a store that is overwritten
+		 * before it is read, USED() or not, and it cannot see that
+		 * namec may not return.  So when the interpreter could not
+		 * be opened -- #!/bin/rc with no /bin -- the error handler
+		 * above found chan still pointing at the closed script and
+		 * closed it again: panic: cclose.  With the open first, chan
+		 * is the script until the interpreter is open, and the
+		 * handler closes whichever one is open.
 		 */
 		p = progarg[0];
 		progarg[0] = elem;
+		ichan = namec(p, Aopen, OEXEC, 0);
 		cclose(chan);
-		chan = nil;	/* in case namec errors out */
-		USED(chan);
-		chan = namec(p, Aopen, OEXEC, 0);
+		chan = ichan;
 		hdrsz = chan->dev->read(chan, &hdr, sizeof(Hdr), 0);
 		if(hdrsz < 2)
 			error(Ebadexec);
