@@ -3,28 +3,49 @@
 SYSTARG=nix
 OBJTYPE=amd64
 <$ROOT/mkfiles/mkfile-nix-amd64
-# fmtdef.h, for errfmt.c, is the private header of the fmt library
-# the kernel links, which is the tree's libkern.
-CFLAGS=$CFLAGS -I$ROOT/libkern
 
 # The part of the nix user libc and libip the kernel links, taken from
 # upstream sys/src/libc and sys/src/libip.  Everything else the kernel
 # needs from a C library comes from the tree's own libkern, libsec and
 # libmp, built once for every target.
 LIB=$ROOT/nix/$OBJTYPE/lib/libnix.a
+# The nix flavour's own libc/libip subset the kernel links.  The
+# rune, utf and fmt routines are here rather than taken from libkern
+# because nix's Rune is 16 bits and UTFmax is 3, where libkern (built
+# with Inferno's headers) has a 32-bit Rune and UTFmax 4; a kernel
+# compiled against nix's headers must link nix's own versions or the
+# widths disagree across the call and it corrupts what it formats.
 OFILES=\
 	bo.$O\
 	classmask.$O\
 	ctype.$O\
+	dofmt.$O\
 	eipfmt.$O\
 	equivip.$O\
+	fmt.$O\
+	fmtprint.$O\
+	fmtquote.$O\
+	fmtstr.$O\
+	fmtvprint.$O\
 	getcallerpc.$O\
 	ipaux.$O\
 	parseether.$O\
 	parseip.$O\
 	pool.$O\
+	rune.$O\
+	runestrlen.$O\
+	runetype.$O\
+	seprint.$O\
+	snprint.$O\
 	sprint.$O\
 	strncat.$O\
+	utfecpy.$O\
+	utflen.$O\
+	utfnlen.$O\
+	utfrrune.$O\
+	utfrune.$O\
+	vseprint.$O\
+	vsnprint.$O\
 
 all install:V: $OFILES $LIB
 
