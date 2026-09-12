@@ -265,6 +265,10 @@ splitbigpage(void)
 		p->pa = bigp->pa + npage*PGSZ;
 		palloc.tail = p;
 		palloc.freecount++;
+		p++;		/* advance to the next Page struct; without this
+				 * the loop chained one Page to itself and
+				 * inflated freecount, so newpage later found
+				 * freecount>0 with a nil head and faulted */
 	}
 
 	/*

@@ -104,6 +104,10 @@ rootreset(void)
 	addrootdir("proc");
 	addrootdir("root");
 	addrootdir("srv");
+	addrootdir("lib");
+	addrootdir("adm");
+	addrootdir("tmp");
+	addrootdir("usr");
 }
 
 static Chan*
