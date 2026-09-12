@@ -362,6 +362,26 @@ p9main(void)
 
 	mnttype = devno('M', 0);
 	c = namec("/hello", Aopen, OREAD, 0);
+	{
+		/*
+		 * What the mount agreed it may carry, against what the ring
+		 * can actually hold.  devmnt sets a channel's iounit to the
+		 * negotiated message size less 9P's header allowance, so this
+		 * is the largest read the client will ask for in one message,
+		 * and the R-message that answers it has to fit the reply
+		 * region of the server's data area.  The server was told it
+		 * had 8192 bytes of a 2048-byte region and advertised 8192 to
+		 * match; nothing it serves could make a message that long, so
+		 * nothing had gone wrong, and a file of three kilobytes would
+		 * have run the answer into the ticket window past the region.
+		 * It advertises what it has now, and the two numbers are
+		 * printed together so they cannot drift apart unnoticed.
+		 */
+		extern long ring9p_replyroom(void);
+
+		print("p9: the ring mount carries %lud bytes at a time, in a reply region of %ld\n",
+			c->iounit, ring9p_replyroom());
+	}
 	print("p9: /hello resolved across #M, served by device type=%d (mnt=%d)\n",
 		c->type, mnttype);
 	n = devtab[c->type]->read(c, buf, sizeof buf, 0);

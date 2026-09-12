@@ -136,7 +136,20 @@ srv9p(Srvstate *st, uchar *msg, long n, uchar *rbuf, long rmax)
 		break;
 
 	case Tversion:
+		/*
+		 * Advertise what can actually be returned.  The reply is
+		 * marshalled into rbuf, which is rmax bytes of the client's
+		 * data area, so a message size larger than that is a promise
+		 * this server cannot keep: the client would ask for a read
+		 * that fits its msize and the answer would run off the end of
+		 * the region.  Msize is the ceiling this server would like;
+		 * rmax is the one it has.  IOHDRSZ is 9P's own allowance for
+		 * the header of a read or write, so the data a client may ask
+		 * for is msize less that.
+		 */
 		r.msize = t.msize < Msize ? t.msize : Msize;
+		if(rmax > 0 && r.msize > (ulong)rmax)
+			r.msize = (ulong)rmax;
 		r.version = "9P2000";
 		break;
 
@@ -185,6 +198,16 @@ srv9p(Srvstate *st, uchar *msg, long n, uchar *rbuf, long rmax)
 		f = findfid(&st->fids, t.fid);
 		if(f < 0){ r.type = Rerror; r.ename = "unknown fid"; break; }
 		cnt = t.count;
+		/*
+		 * And clamp here too, because a client that never sent a
+		 * Tversion, or one that asks for more than it agreed, must
+		 * still get an answer that fits the region rather than one
+		 * that overruns it.  The clamp is the region less the
+		 * R-message's own header (9 bytes: size, type, tag, count),
+		 * with a little room rather than exactly that.
+		 */
+		if(rmax > IOHDRSZ && cnt > (long)(rmax - IOHDRSZ))
+			cnt = rmax - IOHDRSZ;
 		if(st->fids.f[f].qid != Qroot){
 			int q = st->fids.f[f].qid;
 			char *content; long len, off = t.offset;

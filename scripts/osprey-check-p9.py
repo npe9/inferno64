@@ -183,6 +183,20 @@ def main():
     m3 = re.search(r'the union listing spanned (\d+) entries', t)
     results.append(("and a union directory read of \"/\" composes the root device, the environment and the 9P mount into one listing",
                     'ls / (a union' in t and m3 is not None and int(m3.group(1)) >= 18))
+    # What the mount agreed to carry against what the ring can hold.  The
+    # server is handed the reply region of the client's data area as its
+    # rmax and must advertise no more than that in Tversion: devmnt sets a
+    # channel's iounit to the negotiated message size less 9P's header
+    # allowance, so iounit plus that allowance is the longest R-message the
+    # client can provoke.  It had been advertising 8192 into a 2048-byte
+    # region - four times over - and nothing it serves could make a message
+    # that long, so nothing had gone wrong; a file of three kilobytes would
+    # have run the answer into the ticket window past the region.  With the
+    # advertisement unclamped this line reads 8168 in a region of 2048.
+    io = re.search(r'the ring mount carries (\d+) bytes at a time, in a reply region of (\d+)', t)
+    results.append(("and the 9P server over the ring promises only what it can deliver: the message size the mount negotiates, plus 9P's own header allowance, fits the reply region of the data area the answer is written into - where the server had been advertising four times that region",
+                    io is not None and int(io.group(1)) + 24 <= int(io.group(2))
+                    and int(io.group(1)) > int(io.group(2)) - 64))
     # The personality's own error handling.  p9main installs a handler
     # before it sets up, and p9setup called p9init, which cleared the
     # count - so the handler was thrown away and everything after it ran

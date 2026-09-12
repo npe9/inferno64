@@ -4422,7 +4422,40 @@ it back by name.  What is not yet real is breadth, not
 structure: the served tree is a handful of files, one of them writable -
 listed, read and written, but small; the ring's data area is about nine kilobytes and today's messages
 are tens of bytes, so a larger tree would want the transport to page a
-big read rather than assume one fits.  The union directory read's rock fixup, which this paragraph used to
+big read rather than assume one fits.
+.PP
+That last sentence understated it: the bound was not merely unpaged, it
+was wrong.  The file server is handed a place in the client's data area
+to write its answer into, and the region is
+.CW Odr9len ,
+2048 bytes; the call handed it 8192, and the server advertised 8192 in
+its
+.CW Tversion
+to match.
+.CW devmnt
+believes what a server advertises \- it sets a channel's
+.CW iounit
+to the negotiated size less 9P's header allowance and asks for reads
+that large \- so the client had agreed to receive 8168 bytes into a
+2048-byte region, and the region past it is where a pi-p ticket goes.
+Nothing had gone wrong, because nothing this server holds can make a
+message that long: the one writable file is 512 bytes and the directory
+is 266.  The first file of three kilobytes would have found it.
+.PP
+A server advertises what it can return.  It is given the region's real
+size now, clamps the
+.CW Tversion
+it answers with to that, and clamps a
+.CW Tread 's
+count as well, for a client that never asked or asks for more than it
+agreed.  The boot prints the two numbers on one line \- what the mount
+carries and what the region holds \- so they cannot drift apart
+unnoticed, and the p9 check reads it: 2024 bytes carried in a region of
+2048.  Run with the advertisement unclamped, the same line says 8168 in
+a region of 2048, which is the fault stated in its own terms.  The
+smaller message costs more round trips per read, and the buffer-size
+sweep above is the check for that: all 246 sizes still give the same
+twenty entries.  The union directory read's rock fixup, which this paragraph used to
 call stubbed, is ported and checked.  It is
 .CW sysfile.c 's
 own \-

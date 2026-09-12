@@ -20,6 +20,7 @@
 #include <u.h>
 #include <libc.h>
 #include "srv9p.h"
+#include "ospreydata.h"		/* the one layout for a container's data area */
 
 enum {
 	Ospreymagic	= 0x4f53505259ULL,
@@ -501,7 +502,23 @@ ospreyserver(char *arg0)
 				uvlong toff = req.arg[2], tlen = req.arg[3], roff = req.arg[4];
 				long rn;
 
-				rn = srv9p(&st, cdata + toff, (long)tlen, cdata + roff, 8192);
+				/*
+				 * The reply goes at roff in the client's data
+				 * area, and what fits there is Odr9len - not
+				 * the 8192 this used to say, which is four
+				 * times the region and would have run the
+				 * R-message into the ticket window past it.
+				 * Nothing could produce a message that long
+				 * (the one writable file here is 512 bytes and
+				 * the directory is 266), so nothing had gone
+				 * wrong; the bound was wrong, and the first
+				 * file bigger than two kilobytes would have
+				 * found it.  srv9p clamps what it advertises
+				 * and what it returns to this number, so the
+				 * client never asks for more than can come
+				 * back.
+				 */
+				rn = srv9p(&st, cdata + toff, (long)tlen, cdata + roff, Odr9len);
 				rep.arg[0] = (uvlong)rn;
 			} else
 				rep.arg[0] = 2;				/* an op we do not answer */
