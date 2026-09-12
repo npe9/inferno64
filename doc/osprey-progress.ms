@@ -380,7 +380,7 @@ the per-config
 which was a stub that panicked, kills a legacy container cleanly when it
 faults \- it registered no handler, so the note is its death, its
 container exiting with the fault's own message
-.CW ( "sys: trap: fault read addr=0x0" )
+.CW "sys: trap: fault read addr=0x0" ) (
 \- while a personality process's fault still panics, so a real corruption
 stays visible.  The legacy binary reads a bad address on purpose and the
 microkernel carries on.  And the name-space calls are answered now:
@@ -413,12 +413,12 @@ frame builder points the faulting program at its handler with the note
 message, so the program catches its own fault instead of being killed.
 The legacy binary registers a handler, reads a bad address, and its
 handler prints the note
-.CW ( "sys: trap: fault read addr=0x0" )
+.CW "sys: trap: fault read addr=0x0" ) (
 and exits.  And
 .CW mount
 is answered, the last of the name-space calls: the program opens the
 personality's own exportfs
-.CW ( #X ,
+.CW #X , (
 a 9P connection), mounts it onto
 .CW /mnt
 in its private name space, and reads
@@ -443,7 +443,7 @@ saved on the program's stack and, for
 .CW NCONT ,
 resumes the interrupted instruction), and since a fault cannot exercise
 it \- the address is still bad \- the kernel posts a note by request
-.CW ( ReqNote ,
+.CW ReqNote , (
 an
 .CW ospreyxcall ),
 delivered to the handler on the way back from the call.  The legacy
@@ -455,7 +455,7 @@ found on the way: the config generator drops preprocessor lines from a
 config's C, so the frame check that needs
 .CW sizeof(Ureg)
 is an arch helper
-.CW ( uregok
+.CW uregok "" (
 in
 .CW os/osprey/pc64/trap.c );
 and the stock
@@ -496,12 +496,12 @@ the buddy pager), because the child's new container is one the buddy laid
 no image for and could not page; a data segment the buddy pages has no
 .CW Image ,
 so for the copy it is dupped as anonymous memory
-.CW ( SG_BSS ),
+.CW SG_BSS ), (
 its pages all resident from the prefault.
 The child inherits the parent's open files: the kernel asks the buddy, at
 the fork, to clone the parent container's descriptor table into the
 child's
-.CW ( Bforkfds
+.CW Bforkfds "" (
 in
 .CW devosprey.c ,
 .CW FORKFDS
@@ -529,7 +529,7 @@ the parent's
 .CW wait
 blocks in a bounded kernel sleep until a child of its container is done,
 then reads back the child's pid and exit status
-.CW ( ospreylegacyawait
+.CW ospreylegacyawait "" (
 in
 .CW devosprey.c ,
 intercepting
@@ -562,7 +562,7 @@ was: the kernel-side sources are compiled
 .CW -Dfastticks=kfastticks
 and the personality's
 .CW kfastticks
-.CW ( os/osprey/cmd/p9/p9sched.c )
+.CW os/osprey/cmd/p9/p9sched.c ) (
 is the cooperative clock's tick count at 100 Hz.  That print was what
 had been failing the last criterion of the p9buddy and p9linux checks;
 both pass whole now.)
@@ -583,7 +583,7 @@ driven from user space, the log-structured store on it, and its
 reclamation as a task on the clock tick under a reservation the task
 set by request, the log bounded rather than unbounded.  Create and remove
 over 9P are answered now too: the exportfs
-.CW ( p9srv.c )
+.CW p9srv.c ) (
 creates a file the client names on the ring and removes it, and because
 the store is mounted at
 .CW /n
@@ -608,7 +608,7 @@ container holds as a \[*p]p thing with the talk's attributes, its data
 attribute answered by the driver task.  The personality's \[*p]p is on a wire of
 its own now, too.  With a real stack in each of two containers over the
 ring (item 7a), the server personality's \[*p]p
-.CW ( pipfsrv.c )
+.CW pipfsrv.c ) (
 is spoken on a TCP connection between them \- port 9001 of stack B,
 answered by a kproc,
 .CW pipwire
@@ -631,7 +631,7 @@ a request, and nothing can arrive unasked): the server keeps a stream
 per fid and a second kproc,
 .CW pipstreamer ,
 puts what the streams owe on the connection every tick
-.CW ( pipfs_stream ),
+.CW pipfs_stream ), (
 an
 .B Rread
 with the
@@ -654,7 +654,7 @@ the line speed (readable, and writable as a request to the driver task),
 the bytes received \- and
 .CW name
 besides
-.CW ( devosprey.c ,
+.CW devosprey.c , (
 the uart case of the \[*p]p read and write).  Nothing of the item
 remains.  For the record, the talk's uart (slide 20) is
 reached as a \[*p]p file with string attributes \-
@@ -766,7 +766,7 @@ day started at zero, and tickets, which expire against
 .CW seconds() ,
 were measured from 1970.  Now the personality, having read the CMOS
 clock in user space, hands the kernel the time by a request of its own
-.CW ( ReqSettime ,
+.CW ReqSettime , (
 an
 .CW ospreyxcall ,
 answered by
@@ -816,11 +816,11 @@ container's state, is the piece that would make slide 15's
 real, and it is not begun.
 .PP
 The group-scheduling half is built.  A container
-.CW ( Groupid ,
+.CW Groupid , (
 made in the p9pair boot) holds not one process but two, both kernel
 processes bound to it, both sharing its arena slice, both running under
 its one reservation
-.CW ( ospreygroupdemo
+.CW ospreygroupdemo "" (
 in
 .CW os/osprey/port/devosprey.c ).
 The scheduler needed nothing new for it: it bills whichever of them runs
@@ -838,7 +838,7 @@ one arm area, and two selecting members are the double sleep the uart
 task hit \- so the group's members share the address space and the
 budget and leave the ring to the one that has it.  A member pid list was
 added to the container's status line
-.CW ( ospreygroupjoin
+.CW ospreygroupjoin "" (
 in the adapter); it is not put in the checkpoint, so nothing there is
 signed differently.  What stayed open when this was written was resume
 \- a checkpoint carries the container's state, not the group's running
@@ -859,7 +859,7 @@ the deepest one left; it is built, on one machine and then across a
 wire, and the rest of this item is how.
 .PP
 Resume is built, on one machine.  A process asks to be moved
-.CW ( ReqMove ,
+.CW ReqMove , (
 an
 .CW ospreyxcall ;
 .CW ospreymovekern
@@ -870,11 +870,11 @@ fork's own mechanism \- a new container delegated to the same server, a
 new
 .CW Proc
 whose return frame is the caller's
-.CW ( forkchild ),
+.CW forkchild ), (
 the caller's segments dupped copy-on-write, its descriptor table cloned
 by the buddy, its name space shared \- with the return register set to
 the new container's identity rather than 0
-.CW ( forkchildret ,
+.CW forkchildret , (
 in
 .CW os/osprey/pc64/trap.c ),
 and then, instead of two processes, one: the container it came from is
@@ -895,17 +895,17 @@ real stack on the exposed network device (the section on the real wire,
 under 7a) \- so the kernel hands the process's state to its server by
 request and the server carries it in a TCP connection of its own.  A
 process asks
-.CW ( ReqMove
+.CW ReqMove "" (
 to the wire), its whole image is made resident as for a fork, and it is
 parked in the kernel while the kernel tells its server
-.CW ( OpMigrate
+.CW OpMigrate "" (
 on the server's ring) and the server's
 .CW migsend
 pulls the state out: the segments and the register frame in one
 request
-.CW ( ReqMigsnap ),
+.CW ReqMigsnap ), (
 then every resident page by halves
-.CW ( ReqMigpage ,
+.CW ReqMigpage , (
 a half being what the server's data area has room for; the kernel
 answers a hole with the next resident address, so an empty megabyte of
 stack costs one request), each a record on the connection to the other
@@ -913,18 +913,18 @@ machine's
 .CW migrecv ,
 which has its kernel make a container and a process with those
 segments
-.CW ( ReqMigmake ),
+.CW ReqMigmake ), (
 fill each page
-.CW ( ReqMigput )
+.CW ReqMigput ) (
 and start it from the frame
-.CW ( ReqMigstart ,
+.CW ReqMigstart , (
 sanitised by
 .CW uregsanitize
 in
 .CW os/osprey/pc64/trap.c ,
 the return register set to the new container's identity); the answer
 comes back and the first server tells its kernel
-.CW ( ReqMigdone ),
+.CW ReqMigdone ), (
 whereupon the parked process's container is taken apart and its
 parent's wait answered as an exit.  All of it is in
 .CW ospreymigcall
@@ -958,20 +958,20 @@ program's signal handler and died 139.  And
 .CW fault()
 refuses an instruction fetch from a segment exec has not marked
 executable
-.CW ( flushme ),
+.CW flushme ), (
 so the arrived text faulted on its first instruction until the
 segment was marked as exec marks it.  Also the user-space driver's
 transmit ring dropped a frame when all eight were in flight, which a
 burst from tcp.c is, and every drop cost a retransmission timeout; it
 waits briefly for a slot now.  And the group crosses with it, which is slide 15 whole: asked to go
 with its group
-.CW ( ReqMove
+.CW ReqMove "" (
 with both flags), the kernel stops the members as the one-machine
 group move does, and the server carries each after the first \- its
 header marking the segments it shares with the first
-.CW ( Migshared ),
+.CW Migshared ), (
 which are carried once and shared again at the far end
-.CW ( ReqMigmake
+.CW ReqMigmake "" (
 with the first's identity), its own stack carried, its frame kept \-
 and the far kernel makes each a child of the arrived first, so the
 arrived parent reaps it; the members' containers go with the mover's
@@ -990,7 +990,7 @@ remains.
 .PP
 The group moves too, which is slide 15's own sentence.  Asked to move
 with its group
-.CW ( ReqMove
+.CW ReqMove "" (
 with a flag), the kernel finds the other containers' processes that
 share a data or bss segment with the caller \- what
 .CW "rfork(RFPROC|RFMEM)"
@@ -1009,7 +1009,7 @@ leaving it half done if a member never comes back.  Then each member
 gets a container of its own and a process built from its own register
 frame and its own stack, sharing the mover's new segments where it
 shared the old
-.CW ( ospreymoveproc ),
+.CW ospreymoveproc ), (
 its old container is taken apart, and its old process, still parked, is
 readied with
 .CW Proc_exitme
@@ -1030,7 +1030,7 @@ kernel straight into its link address with nothing said to the
 firmware, and with the kernel past a megabyte it stalled after printing
 its configuration one boot in several; it now claims the load region
 from the firmware first
-.CW ( claimpages
+.CW claimpages "" (
 in
 .CW os/osprey/boot/efi/efi.c ),
 which is what a loader owes the firmware on hardware too, and the
@@ -1045,7 +1045,7 @@ netsrv answers ARP for one address and echo, and now, when it is given a
 rule, drops echo from a blocked source and counts it \- the talk's
 packet filter, run in user space over the frames the card put in the
 container's own slice
-.CW ( blocked
+.CW blocked "" (
 in
 .CW os/osprey/cmd/netsrv.c ).
 The net check shows it: netsrv told to block the peer's address drops
@@ -1057,7 +1057,7 @@ for, and a drop-by-rule filter is the firewall's own primitive.  The
 reach of the stack has grown one transport past ICMP: a UDP datagram to
 the stack's echo port is answered with its payload, from it back to the
 sender, built and sent on the same zero-copy path
-.CW ( answerudp
+.CW answerudp "" (
 in
 .CW os/osprey/cmd/netsrv.c ).
 The net check dials it from the peer with
@@ -1071,7 +1071,7 @@ one connection at a time to the echo port, the three-way handshake
 answered, data acknowledged and sent back, the close answered, with
 real sequence and acknowledgement numbers and a checksum over the
 pseudo-header, so 9front's own TCP on the other end talks to it
-.CW ( answertcp
+.CW answertcp "" (
 in
 .CW os/osprey/cmd/netsrv.c ).
 The net check dials it with
@@ -1195,7 +1195,7 @@ the shim does not yet carry \-
 .CW ptclbsum ,
 .CW IPv4allsys
 \- and a few ip helpers
-.CW ( v4parseip ,
+.CW v4parseip , (
 .CW isv4 ,
 .CW v4tov6 ,
 .CW v6tov4 ,
@@ -1224,7 +1224,7 @@ are built by
 .CW os/osprey/cmd/p9/build.sh
 against the shim, with the ip address helpers from
 .CW os/osprey/kernlib
-.CW ( parseip.c ,
+.CW parseip.c , (
 .CW ptclbsum.c ,
 .CW ipaux.c ,
 .CW classmask.c ,
@@ -1419,7 +1419,7 @@ conversation; the scheduler was never at fault.)  Both transports run
 Two things loopback hid, that the next medium needs, are now in.  First,
 .CW tsleep
 had no clock: the protocol timer kprocs
-.CW ( arp 's
+.CW arp 's (
 .CW rxmitproc ,
 .CW tcp 's
 .CW tcpack )
@@ -1452,7 +1452,7 @@ can only block in the cooperative scheduler - but
 which the server loop calls each tick and which injects, in the loop's own
 context, whatever frames have arrived.  A second interface is bound on it
 at 10.0.0.1, and a kproc
-.CW ( ostcp ,
+.CW ostcp , (
 which lives through the server loop where the pump runs) announces a port
 and connects to 10.0.0.1: the route sends the SYN out the osprey
 interface through
@@ -1479,7 +1479,7 @@ form is now in, and it needed no second machine and no change to the
 osprey device: devip keeps an independent
 .CW Fs
 per attach spec
-.CW ( ipfs[dev] ),
+.CW ipfs[dev] ), (
 so a second whole stack lives in the same personality, reached as
 .CW #I1 .
 An osprey interface is bound on each - 10.0.0.1 on the first, 10.0.0.2 on
@@ -1526,7 +1526,7 @@ every boot.
 .PP
 The corruption itself is now sharply narrowed, though not yet caught.  A
 first help was making the trap handler's user-fault line synchronous
-.CW ( iprint ,
+.CW iprint , (
 not the async console that had been dropping it), so the fault reads the
 same every boot:
 .CW "pc=0xffffffff addr=0xffffffff" ,
@@ -1600,7 +1600,7 @@ an ICMP error is received, and
 calls the embedded protocol's
 .CW advise
 \- tcp's, udp's - which runs the address-translation code
-.CW ( transbackward ,
+.CW transbackward , (
 .CW icmpproxyadvice )
 that rewrites the quoted packet in place.  Each of those functions reads
 bounded, so the overrun is small and its landing depends on the heap, but
@@ -1670,7 +1670,7 @@ stages the frame in the client's data area and sends it as a
 .CW Reqframe
 request, the server loop answers that op by handing the frame to
 .CW ospreymediumreceive
-.CW ( ospreymedium.c ),
+.CW ospreymedium.c ), (
 which hands it to its own osprey interface with
 .CW ipiput4
 exactly as the pump hands over a locally-queued frame - the same path a
@@ -1678,7 +1678,7 @@ frame from a paired interface takes, so a frame from the peer container is
 a frame like any other and the kernel only routed it.  The frame is a real
 IP packet: the p9pair boot sends an ICMP echo request from the client
 container, addressed to the address the server injects into
-.CW ( 10.0.0.2 ),
+.CW 10.0.0.2 ), (
 and the server's stack accepts it and answers with an echo reply, which
 .CW ospreybwrite
 sees the stack send - the proof the stack at the far end received a real
@@ -1697,7 +1697,7 @@ Two whole stacks in two containers now run one
 .CW tcp.c
 conversation over the ring, and the wire is the stacks' own traffic, not
 a frame built by hand.  The medium
-.CW ( os/osprey/ip/ospreymedium.c )
+.CW os/osprey/ip/ospreymedium.c ) (
 has a third form beside the looped and the paired ones, chosen at bind:
 .CW "bind osprey ring"
 makes an interface whose wire is the ring to the peer container, and
@@ -1708,7 +1708,7 @@ differ.  At the client end
 sends the frame as a
 .CW Reqframe
 request
-.CW ( ring9p_frame
+.CW ring9p_frame "" (
 in
 .CW os/osprey/cmd/p9/ring9p.c ,
 now symmetric: a frame out, and whatever frame the far stack has sent
@@ -1725,18 +1725,18 @@ asks: the server loop, answering
 .CW Reqframe ,
 injects the frame that came (if one did; a request carrying none is a
 poll) and returns one of its own stack's from that queue
-.CW ( ospreymediumtake ).
+.CW ospreymediumtake ). (
 The client polls on every clock tick, and so needed a clock of its own:
 it takes the tick by the same request a server uses
-.CW ( ring9p_taketick ,
+.CW ring9p_taketick , (
 an
 .CW ospreyxcall )
 and waits for it by select on one arm in its data area
-.CW ( ring9p_waittick ),
+.CW ring9p_waittick ), (
 and on each tick polls the ring, advances the cooperative scheduler's
 clock and runs its ready kprocs \- the loop the server personality has,
 in the client, for as long as its stack is in use
-.CW ( p9clientnet
+.CW p9clientnet "" (
 in
 .CW os/osprey/cmd/p9/p9ip.c ).
 The ring interface's MTU is 1500, so
@@ -1826,7 +1826,7 @@ conversation, are read and counted there, 64 bytes each, and tcp.c never
 sees them; after two the conversation is closed, which lifts the rule,
 the next retransmitted SYN reaches tcp.c, and the connection is accepted
 and answered
-.CW ( fwsrv
+.CW fwsrv "" (
 and
 .CW fwtest
 in
@@ -1844,7 +1844,7 @@ And the stack on a real wire, which is what the plan's stage (3) first
 asked for \- a medium over the exposed interface \- done the exokernel
 way rather than over the kernel's ether driver.  The kernel's virtio
 exposure is one routine now
-.CW ( ospreyvioexpose
+.CW ospreyvioexpose "" (
 in
 .CW devosprey.c ,
 the block and the network device the same shape to it), and the
@@ -1908,7 +1908,7 @@ and does
 .I not
 read the scancode.  On that, the p9 personality carries a real i8042
 keyboard driver
-.CW ( p9kbd.c )
+.CW p9kbd.c ) (
 in user space above the microkernel: it takes the grant, registers the
 notification, and thereafter, woken through the container semaphore's own
 .CW oselect
@@ -1958,14 +1958,14 @@ and
 not in the driver's CPL3 kproc, because the handshake spins on the
 status port and a spin that long at CPL3 was thought to reopen the
 standing pc64 interrupt-path bug
-.CW ( "pc=0xffffffff" ,
+.CW "pc=0xffffffff" , (
 a corrupted return) whenever a clock or device interrupt landed while
 the kproc was the running context.  Item 15 of the demonstrations built
 the tooling to test exactly that: a trap-return checksum, and a
 reproduction that spins two hundred million times at CPL3 while
 interrupts land.  Run fifty-two boots, it corrupted no return.  So the
 handshake is the driver's now
-.CW ( i8042enable
+.CW i8042enable "" (
 in
 .CW p9kbd.c ,
 with the driver's own
@@ -1978,9 +1978,9 @@ both, is owned in user space, and the kernel only takes its own
 and
 .CW ospreymouseintr
 off the lines
-.CW ( intrdisable )
+.CW intrdisable ) (
 and arms the notification handlers
-.CW ( intrenable ).
+.CW intrenable ). (
 The interrupt is not enabled in the controller until the driver's
 handshake sets the command bit, so between the kernel's arming and that
 a keypress cannot fire, and a spurious one only wakes the driver, which
@@ -2002,14 +2002,14 @@ container keeps a replica of the server's
 .CW /n/hello
 and follows a stream of the file's committed version over the \[*p]p
 wire
-.CW ( replica
+.CW replica "" (
 in
 .CW os/osprey/cmd/p9/p9ip.c ).
 A fid's version is fixed at its open \- a fid's data is a snapshot \-
 so the server gained an attribute,
 .CW latest ,
 the file's committed version now
-.CW ( fileversion
+.CW fileversion "" (
 in
 .CW pipfsrv.c ),
 and that is what the stream carries, every 100 ms, unasked.  While each
@@ -2031,7 +2031,7 @@ The caching file system is that replica generalised and put behind a
 name space:
 .CW os/osprey/cmd/p9/devcache.c ,
 a device
-.CW ( #K )
+.CW #K ) (
 in the client personality, bound over its own
 .CW /n .
 An entry per name: the first open of
@@ -2108,13 +2108,13 @@ answered, and routed home \- and the check turns the cycles into time
 by the rate the kernel prints: 108 \(mcs a request, under QEMU.  Before
 that could be measured the number was two milliseconds, and not
 because of the path: a program's yield after a request
-.CW ( xsleep ,
+.CW xsleep , (
 the SLEEP call that services the ring) slept a fixed two milliseconds
 however fast the reply came, so every request from a personality \-
 every 9P message, every \[*p]p group, every frame poll \- cost at least
 that.  The yield now sleeps on the container's reply rendezvous, which
 the server's select wakes when it routes a reply home
-.CW ( ospreyawaitreply
+.CW ospreyawaitreply "" (
 in
 .CW devosprey.c ),
 with the two milliseconds as the bound.  The whole p9pair run is
@@ -2135,7 +2135,7 @@ other side is what the same exchange costs when there is no scheduler
 in it, and that is now measured rather than assumed.
 .PP
 .CW taskswitch
-.CW ( os/osprey/pc64/l.s ;
+.CW os/osprey/pc64/l.s ; (
 amd64 only, since the 386 machine layer in this tree does not assemble
 at all \- 8a rejects the
 .CW FXSAVE ,
@@ -2237,7 +2237,7 @@ up to a minute, until it is answered; a repeated offer costs the
 listener nothing, since it answers whichever one it sees.
 .PP
 The check for it is a falsification rather than a repetition
-.CW ( scripts/osprey-check-pair.py ):
+.CW scripts/osprey-check-pair.py ): (
 the listener is held back forty seconds on purpose, which no head start
 covers.  Against the kernel of the commit before, the two machines end
 with no key at all; against this one they agree
@@ -3328,11 +3328,13 @@ shape of the missing userland.  The programs link
 which is not built by this tree \- there is no recipe for it anywhere in
 the mkfiles, it is an untracked artifact dated before this work, and its
 members carry nonsense modes
-.CW ( "rws-ws-w-" on abort.6 )
+.CW "rws-ws-w-" "" (
+on abort.6)
 and a format this
 .CW 6l
 will not read
-.CW ( "opcode out of range 678" on exp, pow and log ) .
+.CW "opcode out of range 678" "" (
+on exp, pow and log).
 The members
 .I ring
 and
@@ -4129,12 +4131,12 @@ The draw service itself is now built and running.
 is the kernel's own
 .CW devdraw.c
 reused whole behind a small kernel-compat shim
-.CW ( kshim.c ,
+.CW kshim.c , (
 .CW kshim.h )
 and a
 .CW lib9p
 front end
-.CW ( main.c )
+.CW main.c ) (
 that turns each 9P request into the device's own Chan entry points and
 its kernel-style error unwinding back into an Rerror.  The shim's
 .CW attachscreen
@@ -4175,7 +4177,7 @@ The kernel exposes the PS/2 aux byte stream the way it exposes the frame
 buffer: a dedicated page holds a ring the IRQ12 handler fills, published
 as the physical segment
 .CW mousering
-.CW ( ospreymouseexpose
+.CW ospreymouseexpose "" (
 in devosprey.c, run at init on the full personality; xup64 keeps its own
 container path, so the two never both arm the interrupt).
 .CW os/osprey/cmd/draw/mouse.c
@@ -4247,7 +4249,7 @@ these the desktop is usable on its own - a live window (osprey-console's
 .CW --display
 .CW cocoa )
 comes up with a tracking cursor, a terminal
-.CW ( rio
+.CW rio "" (
 .CW -i
 .CW window )
 and a keyboard that types into it.  So all three of display, pointer and
@@ -4314,7 +4316,7 @@ writes a value into it, and opens
 a name with no device prefix, which the union walk carries from the root
 across the mount table into the environment device and reads the value
 back.  Then it mounts a real 9P server: it attaches the mount device
-.CW ( #M ,
+.CW #M , (
 .CW devmnt.c )
 to a transport, which runs
 .CW Tversion
@@ -4332,14 +4334,14 @@ walks and reads over 9P \-
 not the transport, which is what proves 9P carried it.  The server is a
 container of its own, delegated to over the microkernel ring: the
 marshalling
-.CW ( convS2M ,
+.CW convS2M , (
 .CW convM2S )
 and the mount client are the kernel's own, the transport
-.CW ( ring9p.c )
+.CW ring9p.c ) (
 maps the container's ring with
 .CW segattach
 and carries each 9P message across it, and the server
-.CW ( srv9p.c )
+.CW srv9p.c ) (
 is a second user program in the file-server container that answers.  The
 file's bytes are held only in that server binary, so reading them back
 through
@@ -4350,7 +4352,7 @@ way a program does: it opens
 and
 .CW /greeting
 by name and reads them by file descriptor, through the fd table
-.CW ( Fgrp )
+.CW Fgrp ) (
 the file-descriptor layer keeps \- small integers, not held channels,
 naming both the local file and the one the 9P server holds across the
 ring, and lists the server's directory by descriptor - opening it,
@@ -4358,7 +4360,7 @@ reading it, and unpacking a 9P stat entry per file - the way ls does -
 and it writes the server's one writable file and reads it back, a full
 read-write round trip over the ring.  Finally it turns the relation
 around: an exportfs
-.CW ( p9srv.c )
+.CW p9srv.c ) (
 answers 9P about this name space itself, walking and opening and reading
 the channels its own fids stand for, and the personality mounts that
 export and reads its own root directory back over 9P \- a loopback that
@@ -4380,17 +4382,17 @@ the mount client
 and the queue
 .CW qio.c
 the file-descriptor layer
-.CW ( p9file.c ,
+.CW p9file.c , (
 the fd table and open/read/write/close/seek/stat/dup lifted from
 .CW sysfile.c )
 and an exportfs
-.CW ( p9srv.c ,
+.CW p9srv.c , (
 the personality answering 9P about its own name space)
 \- linked into the program rather than the kernel, with the ring
 transport
-.CW ( ring9p.c )
+.CW ring9p.c ) (
 and the 9P server
-.CW ( srv9p.c ,
+.CW srv9p.c , (
 in the file-server container) written beside them; the rest of the
 syscall layer and the other devices are still on the other side.  This is checked by
 .CW /scripts/osprey-check-p9.py .
@@ -4519,7 +4521,8 @@ and removes in its name space, ninety-odd criteria of
 and the third of the three unreachable things \- processes that share
 an address space migrating as a group \- is whole, on one machine and
 across a wire
-.CW ( osprey-check-p9wire ).  What was unreachable from a Plan 9 kernel is reached by
+.CW osprey-check-p9wire ). (
+What was unreachable from a Plan 9 kernel is reached by
 not running on one: the kernel is cut to the microkernel, and the
 personality is a library the task links.
 .PP
@@ -4528,7 +4531,7 @@ And there are two of them now.  The
 configuration runs the personality in two containers at once: one the
 client, one the server, the client delegating to the server so its 9P
 crosses the ring.  The server
-.CW ( p9pairsrv.c )
+.CW p9pairsrv.c ) (
 brings up its own name space, then answers 9P about it \- the exportfs
 over the ring rather than the loopback \- for the client, which mounts it
 and reads its exported root.  One library operating system names another's
@@ -4567,18 +4570,18 @@ runs an unmodified legacy binary and answers its traps \- is built too,
 for the Plan 9 system-call ABI.  The
 .CW p9buddy
 configuration runs an ordinary Plan 9 program
-.CW ( legacyp9.c )
+.CW legacyp9.c ) (
 in one container: it opens and reads a file with the plain library,
 trapping in the Plan 9 ABI, and knows nothing of the microkernel or a
 peer.  Those calls are not implemented in the kernel; in
 .CW dosyscall 's
 otherwise-unimplemented path
-.CW ( ospreybuddyforward )
+.CW ospreybuddyforward ) (
 the kernel, running as the legacy process, copies the call's pointer
 arguments through the container's own data area, forwards the call over
 the ring to a peer personality, waits for it to answer, and copies any
 read bytes back.  The peer
-.CW ( p9buddy.c
+.CW p9buddy.c "" (
 against the name space and the descriptor layer) emulates open, read,
 close and the rest and holds the descriptor table that stands for the
 legacy process's.  On boot the legacy program opens the root, reads it,
@@ -4595,10 +4598,10 @@ The same buddy now serves the Linux ABI, which is the author's "plan9 to
 start then linux".  The
 .CW p9linux
 configuration runs an unmodified, statically linked Linux x86-64 binary
-.CW ( os/osprey/cmd/p9/linuxlegacy.c ,
+.CW os/osprey/cmd/p9/linuxlegacy.c , (
 built by clang for Linux with raw system calls and no libc, embedded
 whole as an ELF).  The kernel's ELF loader
-.CW ( ospreyloadelf
+.CW ospreyloadelf "" (
 in
 .CW os/osprey/port/userinit.c )
 maps each program header at its own address and
@@ -4609,7 +4612,7 @@ with a System V stack.  The binary's calls arrive in the Linux
 convention \- number in ax, arguments in di, si, dx, r10, r8, r9, cx
 and r11 clobbered, every other register preserved \- and that last
 clause was the piece that stood in the way: the Plan 9 SYSCALL entry
-.CW ( syscallentry
+.CW syscallentry "" (
 in
 .CW os/osprey/pc64/l.s )
 clobbered ax to load m, saved only bp, r14 and r15, and returned
@@ -4618,7 +4621,7 @@ Linux binary's callee-saved registers came back as whatever the kernel
 had left in them.  The entry now arrives with no register free and
 switches stacks through memory instead: the user sp is parked in a
 word of a per-processor block the GS base names
-.CW ( Gsblock
+.CW Gsblock "" (
 in
 .CW os/osprey/pc64/dat.h ,
 m at offset 0 as the assembly has always read it, the parked sp at 8),
@@ -4652,17 +4655,17 @@ the paper's buddy interposes on.  The kernel no longer carries the
 Linux binary at all: it is a file in the buddy's own file system,
 .CW /boot/linux ,
 embedded in the personality the way a kernel embeds its boot files
-.CW ( os/osprey/cmd/p9/p9linuxfile.c ).
+.CW os/osprey/cmd/p9/p9linuxfile.c ). (
 At boot the kernel, running as the legacy process, asks the buddy to
 exec it
-.CW ( ospreybuddyexec
+.CW ospreybuddyexec "" (
 in
 .CW os/osprey/port/devosprey.c ):
 the buddy opens the file in its own name space, reads the ELF and
 program headers, keeps the loadable ones, and answers with the entry
 and each segment's address, size and flags, from which the kernel makes
 segments with no page in them
-.CW ( ospreyexeclinux
+.CW ospreyexeclinux "" (
 in
 .CW os/osprey/port/userinit.c ).
 The first touch of every page is then a fault, and
@@ -4675,7 +4678,7 @@ before the kernel's own demand loader sees it: the kernel allocates the
 frame, asks the buddy for the page, and the buddy fills the data area
 with the file's bytes where the image has them and zero where it has
 none
-.CW ( p9buddy.c 's
+.CW p9buddy.c 's (
 .CW PAGE );
 the kernel copies it in, hangs it on the segment, and maps it.  That
 holds whether the process touched the page or the kernel did on its
@@ -4704,7 +4707,7 @@ machinery.  A file mapping \-
 .CW mmap
 with a descriptor \- is a data segment whose pages the buddy reads from
 the file at the offset
-.CW ( MAPPAGE ,
+.CW MAPPAGE , (
 the image's page path with an offset; the kernel keeps the mapping in
 the Proc and
 .CW ospreybuddyfault
@@ -4734,7 +4737,7 @@ handler with the System V arguments;
 .CW rt_sigreturn
 puts the saved frame back, so the faulting instruction is retried.
 The program's handler maps the page the fault named
-.CW ( MAP_FIXED
+.CW MAP_FIXED "" (
 is honoured for it) and returns, and the store that faulted goes
 through.  A process with no handler, or one that faults in its handler,
 is killed with status 139, the 128 plus the signal Linux gives, and its
@@ -4771,7 +4774,7 @@ makes a demand-zero segment at the next free address from 1 TB up,
 and
 .CW munmap
 detaches the segment mmap made at exactly that address
-.CW ( ospreylinuxbrk ,
+.CW ospreylinuxbrk , (
 .CW ospreylinuxmmap ,
 .CW ospreylinuxmunmap
 in
@@ -4809,13 +4812,13 @@ in
 appended after
 .CW gone ).
 The adapter's dispatcher hands it to the kernel
-.CW ( ospreyexeckern
+.CW ospreyexeckern "" (
 in
 .CW os/osprey/port/devosprey.c ),
 which makes a container of its own for the program, delegates it to the
 caller's server, and gives it a kernel process that binds to it, asks
 that server to lay the named file out
-.CW ( ospreyexecbuddy
+.CW ospreyexecbuddy "" (
 in
 .CW os/osprey/port/userinit.c ,
 the Linux buddy's exec made general), and enters user mode at its entry;
@@ -4826,17 +4829,17 @@ which the man page said nobody answered, is answered by the kernel:
 now, with the status, if a child of the caller has exited, and when it
 exits otherwise \- the dispatcher returns as if a server were answering
 and the kernel puts the reply on the caller's ring itself
-.CW ( ospreyreplylater
+.CW ospreyreplylater "" (
 in
 .CW os/osprey/adapter/ospreyrt.c )
 from the child's exit.  A program exec started ends when it exits
-.CW ( ospreyexits ):
+.CW ospreyexits ): (
 its parent told, its container taken apart the way the exit control
 message takes one apart, its server told
 .B gone
 so it lets go of the image it held.  The boot program's exit idles the
 machine as before.  The Linux system-call path
-.CW ( ospreylinuxsyscall )
+.CW ospreylinuxsyscall ) (
 moved out of the p9linux configuration into the port, since any
 personality configuration can now be asked to run one, and brk's heap
 and mmap's cursor moved from statics into the Proc, since there can be
@@ -4903,7 +4906,7 @@ by
 The first of the storage pieces the survey's item 3 asks for is built
 on p9pair too: a block device driven by a task above the kernel.  The
 kernel's part is what a kernel must do and no more
-.CW ( ospreyblkexpose
+.CW ospreyblkexpose "" (
 in
 .CW os/osprey/port/devosprey.c ):
 it finds a virtio 1.0 block device with the legacy interface off, so
@@ -4916,13 +4919,13 @@ notify multiplier, the physical address of the container's own slice
 and the number of a semaphore into a descriptor at
 .CW Ospreyblkoff
 in the server personality's data area
-.CW ( Ospreyblk
+.CW Ospreyblk "" (
 in
 .CW os/osprey/port/ospreyabi.h );
 and turns the device's interrupt into that semaphore, the handler
 reading the interrupt status to drop the line and giving the semaphore,
 the way the keyboard's does.  Everything else is a program
-.CW ( os/osprey/cmd/p9/blkvirtio.c ,
+.CW os/osprey/cmd/p9/blkvirtio.c , (
 compiled against the user headers, in the server personality): the
 reset and feature dance, a queue of eight kept in the container's own
 data area at
@@ -4947,7 +4950,7 @@ read and write.
 .PP
 The file system on it is built, and it is the shape the plan's storage
 section says storage on this system should have: a log
-.CW ( os/osprey/cmd/p9/devlfs.c ,
+.CW os/osprey/cmd/p9/devlfs.c , (
 the device
 .CW #l
 in the server personality's name space, reaching the driver through
@@ -4992,7 +4995,7 @@ on the clock tick when the log is more than half full, and by a writer
 that finds no room, so that normally the storage task's reservation
 pays for it and only a full log costs the writer.  The task says what it
 needs: two requests were added to the list
-.CW ( ReqReserve ,
+.CW ReqReserve , (
 .CW ReqTick
 in
 .CW os/osprey/policy/syscall.h ),
@@ -5011,9 +5014,9 @@ message on a server's request ring \- a client's 9P \- as the server's
 own, which sent the client's request through the kernel's personality
 and crashed the client.  The service path leaves a server's ring to the
 server's program now
-.CW ( ospreyisserver ),
+.CW ospreyisserver ), (
 and a task's own asks are a system call
-.CW ( ospreyxcall ,
+.CW ospreyxcall , (
 number 60, above the Plan 9 table: the first try reused PREAD, and an
 unmodified Plan 9 binary's read is pread, so the buddy's legacy program
 lost its read until the number moved),
@@ -5036,7 +5039,7 @@ owed against the new.
 And the file is reached over \[*p]p, which is the first half of the
 survey's item 4.  The kernel speaks \[*p]p about containers; the server
 personality now speaks it about its files
-.CW ( os/osprey/cmd/p9/pipfsrv.c ,
+.CW os/osprey/cmd/p9/pipfsrv.c , (
 the grammar of
 .I pip (5)
 served over the name space the way
@@ -5075,7 +5078,7 @@ demonstrations real: the personality speaks \[*p]p across the cable to
 the other machine's personality, a
 .CW Tauth
 carrying a ticket its own kernel signed and the far kernel checking it
-.CW ( ReqTicket ,
+.CW ReqTicket , (
 .CW ReqCheckticket ),
 so a session on the wire has a name and an open is judged by the file's
 owner against it.  The stream came with the wire:
@@ -5090,7 +5093,7 @@ The second half of item 4 is the talk's slide 20 itself: the uart as a
 \[*p]p thing, its attributes read and written by name and answered by
 the driver task.  On pc64 a uart a container has been given is a thing
 the kernel's \[*p]p walks to by the uart's own name
-.CW ( pipwalkuart
+.CW pipwalkuart "" (
 in
 .CW os/osprey/port/devosprey.c ,
 beside the numbered containers).  Its attributes are
@@ -5141,7 +5144,7 @@ the line format or the speed, which the device layer's
 sets when a port is first opened and which the direct bind skipped; on
 pc64 the port had been through that, on the microkernel nothing had
 opened it.  The hand-over
-.CW ( ospreyuartbind
+.CW ospreyuartbind "" (
 in
 .CW os/osprey/port/devosprey.c ,
 factored out of the control message so a boot can call it) enables the
@@ -5160,7 +5163,7 @@ The console follows: on the microkernel every print, the kernel's own
 and the tasks', now goes through a console task, which is the second
 cut's harder half because a kernel with no way to say anything is a
 kernel that cannot report a fault.  A container of its own
-.CW ( Consid ,
+.CW Consid , (
 made at boot) holds the console uart, its uart task the console driver;
 .CW putstrn0
 in
@@ -5179,7 +5182,7 @@ seL4 keeps for exactly this.  A boot shows every line of its own output
 arriving through the task and none going straight to the port, and at
 the end says how many bytes went each way.  The console uart is given
 up by the kernel to make this
-.CW ( ospreyuartbind
+.CW ospreyuartbind "" (
 with its take-console argument clears
 .CW serialoq
 and the uart's console flag), which is the kernel handing out the one
@@ -5686,7 +5689,7 @@ The form first planned \- a print sleeping until the task makes room \-
 would deadlock: a printer may hold the lock the task needs to take a
 message.  The real form is a FIFO the kernel keeps between printers and
 the task
-.CW ( ospreyconsput ,
+.CW ospreyconsput , (
 .CW ospreyconsflush ,
 .CW ospreyconsdrained
 in
@@ -5710,7 +5713,7 @@ fallbacks, and then noticed the intruding lines ended in carriage
 return and newline where the task's do not \- the mark of the bare
 port's own conversion.  The writer was the kernel's answer to a Linux
 program's write to its standard output
-.CW ( ospreylinuxsyscall
+.CW ospreylinuxsyscall "" (
 in
 .CW userinit.c ),
 which pushed each byte to the port itself; it goes through the console
@@ -5723,11 +5726,11 @@ never.
 .PP
 .B "2.  A reply wakes whom it is for."
 Done.  The route reports which containers received replies
-.CW ( ospreyroutewoke
+.CW ospreyroutewoke "" (
 in
 .CW ospreyrt.c )
 and only their reply rendezvous are woken
-.CW ( ospreyroutewake
+.CW ospreyroutewake "" (
 in
 .CW devosprey.c );
 the broadcast is gone.  The round trip between two personalities went
@@ -5738,7 +5741,7 @@ exit counts the containers woken, each for a reply of its own.
 .B "3.  Reclamation paid for by the reservation, not by a number."
 Done.  The tick asks the kernel what the task's reservation is and what
 it has used of it this period
-.CW ( ReqAccount ,
+.CW ReqAccount , (
 an xcall answered from the container's own accounting by
 .CW ospreyaccount
 in
@@ -5782,7 +5785,7 @@ says when every slot is in flight, the medium keeps the frame on a
 transmit queue of its own, and the pump \- run by the device's
 interrupt and on every tick \- sends what waited, in order, as slots
 free
-.CW ( vnetdrain
+.CW vnetdrain "" (
 in
 .CW ospreyvnetmedium.c ).
 Proof: machine 2 sends a megabyte across the cable in 8 KB writes and
@@ -5808,17 +5811,17 @@ Done.  A container's output queue is its own memory, and its server
 maps the slice: so the server end's frames go into the client's own
 packet buffers (sixteen through thirty-one) and a message naming each
 onto the client's output queue, written there in memory
-.CW ( ringsrv_output
+.CW ringsrv_output "" (
 in
 .CW p9pairsrv.c ),
 and one request
-.CW ( ReqKick )
+.CW ReqKick ) (
 has the kernel wake the client's select, which takes the message on an
 arm of its own beside the tick
-.CW ( ring9p_wait ,
+.CW ring9p_wait , (
 .CW ring9p_taken )
 and injects the frame from the buffer
-.CW ( ospreymediumtaken ).
+.CW ospreymediumtaken ). (
 The client's frames go the other way the same way, staged in its packet
 buffers naught through fifteen and named by the request, so neither
 direction copies through the small data area and the MTU is a packet
@@ -5844,7 +5847,7 @@ and the sleeps now arm the wait before every switch.
 Done.  The descriptor table is the buddy's, so it is the buddy's to
 carry: the sender's personality asks its buddy for the departing
 container's record
-.CW ( p9buddy_migout
+.CW p9buddy_migout "" (
 in
 .CW p9buddy.c :
 the image's file name and kind, and each open descriptor's number,
@@ -5853,13 +5856,13 @@ pipe's end has no name and is left behind, said so), sends it after
 the kernel's header, and the taker's buddy lays the same image out for
 the arrived container and reopens each descriptor at its offset in its
 own file system
-.CW ( p9buddy_migin ).
+.CW p9buddy_migin ). (
 The kernel's header says whether the process's text and data are a
 buddy image's
-.CW ( Migimage ),
+.CW Migimage ), (
 and before such a process is parked its text pages and every data page
 equal to the buddy's copy are let go
-.CW ( mfreeseg ,
+.CW mfreeseg , (
 a page at a time), as is every page of zeros in bss or stack; the far
 kernel makes the data segment data, not bss, marks the process the
 buddy's, and what was let go pages in from the image there, or from
@@ -5871,7 +5874,7 @@ pages.  Pages cross whole, staged across two adjacent packet buffer
 slots of the server's slice (a slot is 2112 bytes; slots 18 to 23 for
 arrivals, 24 to 31 for departures), the header alone through the data
 area.  Departures are a table of four
-.CW ( migouts ),
+.CW migouts ), (
 each with slots of its own, and the taker's listener hands each
 connection to a kproc of its own, so two cross at once; the parked
 process sleeps on its entry's rendezvous, woken by every page the
@@ -5891,7 +5894,7 @@ onto
 it made in a private name space before crossing, which names
 .CW /n/hello
 there because the buddy rebuilt the name space and replayed the bind
-.CW ( p9buddy_migout
+.CW p9buddy_migout "" (
 records each bind,
 .CW p9buddy_migin
 rforks the ns and replays them) \- and the sibling does the same.  So
@@ -5910,7 +5913,7 @@ Two bugs older than the item came out of it.  Letting go of shared
 text under a live sharer made the sharer fault, and the process that
 reached the note code with no container was a ghost: the old process
 of a group member that a local move had copied was told to exit
-.CW ( Proc_exitme )
+.CW Proc_exitme ) (
 and then, as its old container was taken apart, the container's
 release \- meant to undo a stop this device had imposed \- cleared
 that order and readied it, and it went back to user mode with no
@@ -5923,7 +5926,7 @@ residency of a fork hid until a page was let go; the clone carries
 them now.
 .PP
 Three more came out of running it.  A process may hold ten segments
-.CW ( NSEG ,
+.CW NSEG , (
 an enum in
 .CW portdat.h ),
 and the personality's text, data, bss and stack, its two device BARs
@@ -5941,13 +5944,13 @@ its segment references until the fourth exit after it, and a departing
 process's text always looked shared with a process that stays.  They
 free their memory now, and a departure lets go of what it may \- which
 found the last one: the buddy's page fault
-.CW ( ospreybuddyfault )
+.CW ospreybuddyfault ) (
 put the page it had fetched into the segment without looking again,
 and two sharers of a segment on two cores, faulting the same page once
 pages were let go that had always been resident, hit the assertion in
 .CW segpage ;
 a form of it that inserts only into an empty slot
-.CW ( segpageif )
+.CW segpageif ) (
 does it under the segment's own lock, and the page present is used.
 And an arrival exited against a departed container's child-table entry, whose
 container record had been reused: a lookup skips entries already done.
@@ -5957,16 +5960,16 @@ produce; it asks again.
 .PP
 .B "7.  A group member that is blocked still crosses."
 Done, Plan 9's own way.  With the stop
-.CW ( Proc_stopme )
+.CW Proc_stopme ) (
 the move posts each member a note
-.CW ( postnote ),
+.CW postnote ), (
 which cancels the sleep it is in; the interrupted call returns
 .CW Eintr
 on its way out, and there, at the return to user mode, the stop takes
 hold and the member is carried with the call's return in its
 registers.  The note itself is never delivered: a moved process starts
 with no notes, and a move refused takes it back
-.CW ( ospreydropnotes )
+.CW ospreydropnotes ) (
 before the member goes on, since a note delivered to a process without
 a handler would kill it.  What the program does with an interrupted
 call is the program's, as on Plan 9: the legacy program's thread
@@ -5984,14 +5987,14 @@ sleep return 0, not \-1: an arrival's frame is built by
 which zeroes the return register as fork's child's, and the leader's
 identity was then written over it for every arrival; a member gets its
 own saved return back
-.CW ( uregax ),
+.CW uregax ), (
 on a local move as on the wire.  Proof, the two-machine check's
 fifteenth criterion: the thread had counted to 1 before the crossing
 and to 17 after it, and said its minute's sleep was interrupted.
 .PP
 That post-exit fault \- the server personality returning into address
 \-1 on a kproc stack of zeros
-.CW ( "user fault: read addr=0xffffffff pc=0xffffffff" ,
+.CW "user fault: read addr=0xffffffff pc=0xffffffff" , (
 pid 6) \- was run down under item 9, whose caching file system made it
 happen every run: it was the one shared reply buffer of the
 cooperative scheduler, reset by a stream tick under a group that had
@@ -6005,11 +6008,11 @@ personality asks it: a
 .CW Tauth
 on the wire puts the ticket in the server's data area and the kernel
 says whom it names
-.CW ( ReqCheckticket ,
+.CW ReqCheckticket , (
 xcall 34: signed with this key and not expired, or no), and that name
 is the session's from then on; a session without one is nobody, which
 on a wire is all a frame can prove.  The personality has a name now
-.CW ( eve
+.CW eve "" (
 is
 .CW osprey ,
 in
@@ -6019,7 +6022,7 @@ file's owner and mode against the session's name: a file that is
 somebody's is refused to a session that is nobody's, and a named
 session reads as owner or as other.  The asking end gets its ticket
 from its own kernel
-.CW ( ReqTicket ,
+.CW ReqTicket , (
 xcall 35: for the caller's container and a name the container is for
 \- a container nobody has claimed is anyone's, and the ticket says just
 that).  What the ticket does not do is name a container on the far
@@ -6029,7 +6032,7 @@ The two kernels must hold the same key, and in this configuration the
 kernel has no wire of its own to agree one over (item 11's exchange is
 the kernel's, on a kernel ether); the check types the same key into
 both machines' plan9.ini
-.CW ( ospreykey= ,
+.CW ospreykey= , (
 read at
 .CW ospreyinit ,
 the fingerprint printed), which is the alternative the design names.
@@ -6045,7 +6048,7 @@ container's \[*p]p over the device-carried wire \- the pair check's
 own groups, the replica, the caching file system \- opened sessions
 that were nobody's and was refused the personality's files, as it
 should be; every client asks its kernel for a ticket once
-.CW ( pip_ticket )
+.CW pip_ticket ) (
 and says who it is in the first group of each session it opens.  Two
 more things came of that: the caching file system's group buffer was
 sixty-four bytes, a session alone, and a ticket in it smashed the
@@ -6063,7 +6066,7 @@ Done.  A write through
 .CW #K
 is taken into a draft of the entry and the close commits it: a \[*p]p
 open, write and close on a fid of its own over the wire
-.CW ( cachecommit ),
+.CW cachecommit ), (
 the server's close committing a version on the log, and the copy
 becomes the draft at the version the server said, which the entry's
 stream then says too.  The directory is the server's root listing,
@@ -6074,7 +6077,7 @@ is that window, not the whole of the store.  A ninth name in a cache of
 eight evicts the entry least recently used that has no chan open on
 it and nothing being written through: its fid is closed on the wire,
 which stops its stream on the server, and its copy is freed
-.CW ( cachedrop ).
+.CW cachedrop ). (
 A name the server has not got leaves no entry behind.  And the lease:
 a stream is the fid's use, and the session's, so each frame renews
 their leases on the server \- before this a streamed fid lapsed three
@@ -6137,7 +6140,7 @@ copy, which is not in the log.
 This is where the cooperative scheduler's one shared reply buffer
 showed at last.  The server builds a group's replies and a stream
 tick's frames through the same globals
-.CW ( rbuf ,
+.CW rbuf , (
 .CW rn );
 a group's
 .CW readattr
@@ -6147,7 +6150,7 @@ buffers and jumping wild in the end.  A flag holds the builder now, and
 the stream task defers a tick while a group is mid-build.  And the
 test leaves no streams firing behind it: it lets go of every entry
 when it is done
-.CW ( cachestopall ),
+.CW cachestopall ), (
 each entry's fid closed on the wire, its stream stopped on the server,
 so eight streams did not run on through the firewall and migration
 work that follows and, before that, a run that went on long enough
@@ -6155,7 +6158,7 @@ faulted the personality after the boot program had exited.
 .PP
 .B "10.  Authority on the kernel's requests."
 Done.  A container carries a capability word
-.CW ( caps ,
+.CW caps , (
 set at boot by
 .CW ospreyaddcaps ),
 a bit per authority, and the requests of a task's own check it.  The
@@ -6167,7 +6170,7 @@ when it is created, and
 .CW ReqSettime
 refuses a container without it.  The network device, when it is
 exposed to a server
-.CW ( ospreynetexpose ),
+.CW ospreynetexpose ), (
 grants that server
 .CW Capwire ,
 and
@@ -6184,7 +6187,7 @@ the authority in use.
 Done.  Each machine reads
 .CW /n/net
 from its store at boot
-.CW ( netconf_read )
+.CW netconf_read ) (
 \- its own address, its peer's, its role and the wire, pi-p and
 migration ports \- and the wire is brought up, the cable connected, the
 pi-p and migration reached, from those values.  A fresh disk has no
@@ -6207,9 +6210,9 @@ send: the client, holding the container by a ticket its kernel signed,
 opens a \[*p]p session over the ring and writes the
 .CW firewall
 attribute
-.CW ( pip_twrite ),
+.CW pip_twrite ), (
 and the server takes it only from an authenticated session
-.CW ( pipfs_firewall
+.CW pipfs_firewall "" (
 holds the value; a session that is nobody's is refused).  The firewall
 task waits for it, puts the rule up in the real stack's own
 .CW ipmux
@@ -6226,7 +6229,7 @@ Making the firewall a \[*p]p write, where the cache already held a
 \[*p]p wire, found that the server served one connection at a time: a
 cache holding its connection open for streams starved every other.  So
 the server serves each connection on a kproc of its own
-.CW ( pipconn ),
+.CW pipconn ), (
 each delivering its own sessions' stream frames to its own fd; a
 stream stops when its connection closes, though the session lives on;
 and a session with no open fid is reaped when its connection closes,
@@ -6237,10 +6240,10 @@ not cross.
 .B "13.  The loader refuses, and the stall is understood."
 Done, both halves.  When the firmware will not give up the kernel's
 load region
-.CW ( claimpages
+.CW claimpages "" (
 fails), the loader no longer reads into it anyway: it prints the
 firmware's memory map, region by region
-.CW ( printmemmap
+.CW printmemmap "" (
 in
 .CW efi.c ),
 says the region it links at is not free, and halts \- reading into
@@ -6275,7 +6278,7 @@ another fails the build with a divide check, as it should.
 .B "15.  The pc64 interrupt-path bug."
 Two things were once one.  The idle server faulting after a two-machine
 run
-.CW ( "pc=0xffffffff" )
+.CW "pc=0xffffffff" ) (
 was run down under item 9: it was the personality's one shared reply
 buffer, reset by a stream tick under a group that had slept mid-build,
 not a kernel interrupt-path bug at all \- and it is fixed there.  What
@@ -6284,7 +6287,7 @@ taking a legacy interrupt at CPL3.  The tooling the plan named is
 built: the trap handler snapshots the return frame on the way in for an
 interrupt from user mode and, on the way out, when no note was
 delivered and no fixup moved the pc, checks it is unchanged
-.CW ( ospreytraptrace ,
+.CW ospreytraptrace , (
 armed by the config).  And the reproduction: the i8042 driver spins two
 hundred million times at CPL3 while the clock and device interrupts
 land, the window the bug was said to corrupt.
@@ -6304,7 +6307,7 @@ of interrupts taken from user mode \- corrupted no return and panicked
 none.  The
 .CW pc64
 trap entry passes its argument in a slot of its own
-.CW ( "PUSHQ SP" ),
+.CW "PUSHQ SP" ), (
 not aliased to a saved register the way the arm64 entry's was before
 that port's fix, so the shape the plan guessed at is not present here;
 whatever the standing corruption was, the reproduction no longer
@@ -6356,7 +6359,7 @@ a file in the buddy's file system and every page of it arrives by a
 fault the buddy answers.  The Plan 9 a.out is paged the same way as the
 Linux ELF now \- the buddy lays it out as three pieces and supplies
 each page from its file
-.CW ( p9buddy_page ,
+.CW p9buddy_page , (
 by
 .CW img->kind ),
 which the p9buddy check shows: the legacy a.out laid out by the buddy
@@ -6455,17 +6458,50 @@ and
 .CW open
 as ordinary functions in its own address space, only the four
 microkernel services trapping to the kernel; this is arrangement three,
-the exokernel shape.  Today a hand-written demonstration binary runs on
-two, and the library-OS task runs as itself on three; neither starts an
-arbitrary program, and rio runs only on the full
+the exokernel shape.  When this was written a hand-written demonstration
+binary ran on two, and the library-OS task ran as itself on three;
+neither started an arbitrary program, and rio ran only on the full
 .CW pc64
-kernel.  The plan brings a real program, and then rio, to both.
+kernel.  The plan was to bring a real program, and then rio, to both.
+.PP
+Both are done, and this paragraph is the summary the phases below spell
+out.  rio runs on the server personality
+.CW p9pair , (
+its system calls answered by a peer container over the ring) and on the
+library-OS personality
+.CW p964 , (
+its operating system a library in its own address space), and on each it
+draws, makes a window, runs a shell in that window and opens its menu to
+the pointer.  Every phase of both tracks is marked done where it stands,
+and the two gaps still named in 3.3 are named as
+.I excluded
+rather than deferred:
+.CW rfork(RFPROC)
+is a flow of control a library cannot split for its caller, and two
+legacy programs at once would need the personality to multiplex user
+contexts, since its flows are cooperative label switches inside one
+kernel thread and a legacy program is entered by a jump rather than
+scheduled.  Neither is a thing left undone; both are consequences of the
+shape, written down where a reader would look for them.
+.PP
+What is left is breadth, and it is worth saying where, because "breadth"
+without a place is an excuse.  The buddy answers the file calls and the
+kernel the calls beyond them, and the line between the two moved twice
+in a day: four calls that were p9pair's and not p9buddy's are both
+configurations' now.  The served trees are small \- a handful of files
+on the ring, a log-structured store on one disk \- and a bigger tree
+would want the transport to page a large read rather than assume one
+frame holds it.  And the checks are where the next fault will be found
+as often as the code is: of the three faults in this document's last
+day, one was a server slicing a directory read at the wrong place, one
+was a personality throwing away its own error handler, and one was a
+check booting a disk its own driver cannot drive.
 .NH 2
 Track two: the server personality runs an arbitrary program, then rio
 .PP
 .B "Phase 2.1: exec carries arguments, and an arbitrary in-tree binary runs. Done."
 The exec request passed only the program's name
-.CW ( ring_exec ,
+.CW ring_exec , (
 .CW ReqExec ),
 and the a.out is entered with
 .CW argv0
@@ -6480,24 +6516,24 @@ and the
 .CW _tos \-
 and an ordinary in-tree libc program, not the hand-written demo, runs
 under the buddy: the tree already builds several
-.CW ( Osprey/amd64/bin :
+.CW Osprey/amd64/bin : (
 .CW o9cat ,
 .CW netsrv ,
 .CW fb ) .
 Done: the request carries the vector packed in the data area
-.CW ( ring_execv ),
+.CW ring_execv ), (
 the kernel copies it into the child and lays it on the new program's
 stack, strings and pointer array and a nil, entered with the stack
 pointer at the array
-.CW ( ospreyenteruservec ),
+.CW ospreyenteruservec ), (
 and the entry trampoline
-.CW ( init9.c 's
+.CW init9.c 's (
 .CW _main )
 takes the array and calls
 .CW startboot .
 A real
 .CW cat
-.CW ( os/osprey/cmd/p9/catp9.c ,
+.CW os/osprey/cmd/p9/catp9.c , (
 an ordinary Plan 9 binary that knows nothing of Osprey) is embedded as
 .CW /boot/cat ,
 exec'd as
@@ -6510,7 +6546,7 @@ exits.  One criterion of the pair check.
 A shell forks, execs, waits and pipes \- the buddy answers all four
 already.  What it wants beyond the demonstration's file calls is the
 handful a real program's libc reaches for: heap growth
-.CW ( brk ),
+.CW brk ), (
 .CW dup ,
 .CW fd2path ,
 .CW sleep ,
@@ -6530,7 +6566,7 @@ branches on
 .CW up->buddyimage :
 a program whose text and data are a buddy image dups through the buddy's
 descriptor table
-.CW ( Bdupfd ),
+.CW Bdupfd ), (
 everything else runs the real select.  The distinguisher had to be that
 and not merely having a server \- a ring client has a server too, and
 clobbering its select with a dup regressed seventeen pair criteria until
@@ -6544,7 +6580,7 @@ memory, which is the microkernel's own service and not a file the buddy
 holds, so
 .CW brk_
 is answered in the kernel
-.CW ( ospreybuddybrk ,
+.CW ospreybuddybrk , (
 called from the config's
 .CW xbrk
 for a buddy image and from
@@ -6567,7 +6603,7 @@ is the other half: the buddy holds the descriptor table, so it answers
 from the
 .CW Chan 's
 own path in the name space the container's buddy resolved it in
-.CW ( p9fd2path ,
+.CW p9fd2path , (
 by
 .CW chanpath ).
 .PP
@@ -6598,12 +6634,12 @@ crossed by index like all the others.  The header carries two more words
 \- the heap segment's index and the break in it \- and the taker restores
 them.  The header's shape was written down twice, in the kernel and in
 the personality that walks it
-.CW ( p9ip.c 's
+.CW p9ip.c 's (
 .CW "hdr + 2" ),
 and growing it in one place broke every migration criterion of the wire
 check until the constant moved to
 .CW ospreydata.h
-.CW ( Odmighdrwords )
+.CW Odmighdrwords ) (
 where both sides read it: the same duplicated-layout hazard item 14
 removed for the data area, in the one header it had not reached.
 .PP
@@ -6612,14 +6648,14 @@ and the note calls are already in and already proven: a legacy process
 gets Plan 9's
 .CW sleep (2)
 with the milliseconds it asked for
-.CW ( xsleep 's
+.CW xsleep 's (
 .CW buddyimage
 branch, item 9's minute-long sleep), and
 .CW notify (2)
 and
 .CW noted (2)
 are answered by the config
-.CW ( xnotify ,
+.CW xnotify , (
 .CW xnoted )
 with two pair criteria over them \- a note that is not a fault,
 delivered to the program's handler and resumed from with
@@ -6629,7 +6665,7 @@ and a declined fault the program catches itself.
 .B "2.2c: exec(2) in place."
 Done.  A shell forks and then execs, and the exec it makes is not the
 one the personality had: the exec request
-.CW ( ring_execv )
+.CW ring_execv ) (
 starts a program in a container of its own, while this one replaces the
 caller's own program in the caller's own container, keeping its
 descriptors.  It is in two parts and the order between them is the whole
@@ -6643,7 +6679,7 @@ to a process that goes on running.  Only then does the second part run,
 which cannot fail into anything the caller could survive: the old
 segments go, the new ones are made, and the process enters the new
 program without returning through the system call
-.CW ( ospreyexecself ,
+.CW ospreyexecself , (
 the config's
 .CW xexec ).
 .PP
@@ -6666,7 +6702,7 @@ Two bugs fell out of it, and the second is worth the space.  The first:
 Plan 9's
 .CW seek (2)
 yields its answer through a pointer libc passes as the first argument
-.CW ( "seek(vlong *ret, fd, n, type)" ,
+.CW "seek(vlong *ret, fd, n, type)" , (
 as
 .CW sysseek
 has it), and the buddy's marshalling read the descriptor out of that
@@ -6731,7 +6767,7 @@ second stage reads a pipe its first stage has not written yet, the read
 blocks in the buddy, and blocking there blocks the loop that would have
 carried the first stage's write.  The whole personality stopped and its
 cooperative scheduler said exactly what had happened
-.CW ( "no runnable proc" ).
+.CW "no runnable proc" ). (
 This is the same shape item 12 found on the pi-p server, and it has the
 same answer.  A pool of four workers, not a kproc for each container: a
 kproc costs a 32K stack and a slot in the scheduler's table, and a
@@ -6765,7 +6801,7 @@ and
 .CW close
 a legacy program makes, so it knows which of 0, 1 and 2 have had
 something else put on them
-.CW ( up->buddyredir ,
+.CW up->buddyredir , (
 carried across fork and across an exec in place, cleared for a program
 the exec request starts), and only a redirected descriptor leaves the
 console path.  The interrupted-call hazard is still there for a
@@ -6816,7 +6852,7 @@ wire log:
 The sentence the criterion matched was cut in half by a kernel print.
 .PP
 Both writers already go through the console task's FIFO
-.CW ( putstrn0
+.CW putstrn0 "" (
 routes the kernel's print there when a task is running, and the
 personality's write reaches the same
 .CW ospreyconsput
@@ -6928,7 +6964,7 @@ and links them ahead of the archive, and all four \-
 .CW vfprint
 \- are in the 34.  It works for a program that formats a little.  It
 does not scale to rio, which reaches the allocator
-.CW ( pool ,
+.CW pool , (
 .CW malloc ),
 the rune formatter and the Dir conversions, and the archive's own
 decomposition is not 9front's source decomposition \- 57 of its members
@@ -7234,7 +7270,7 @@ ignores it.
 .B "postnote, the sixth, and where the authority for a note lives."
 .CW postnote (PNGROUP, ...)
 is how rio interrupts what it started
-.CW ( wind.c 's
+.CW wind.c 's (
 .CW interruptproc ),
 and libc's postnote is not a call either: it writes
 .CW /proc/n/notepg ,
@@ -7276,12 +7312,12 @@ The write is where the two halves meet.  The personality serves the
 file, because a name space is the personality's; the kernel posts the
 note, because the processes are the kernel's.  So the write becomes one
 request
-.CW ( ReqPostnote ),
+.CW ReqPostnote ), (
 and the request carries three words, which is all a request carries
-.CW ( Ospreynarg ):
+.CW Ospreynarg ): (
 the container to post to, the container asking, and whether it is the
 group form, with the text at a fixed window in the caller's data area
-.CW ( Odnote )
+.CW Odnote ) (
 rather than at an offset, because an offset would have cost the word the
 group flag needs.  A count above three is refused by the call with no
 word about why, which is how the first version failed \- silently, and
@@ -7369,7 +7405,7 @@ holds 471 files imported from 9front at
 the revision this work has been reading all along: 52 headers, 220
 files of
 .CW libc
-.CW ( port ,
+.CW port , (
 .CW fmt ,
 .CW 9sys ,
 .CW amd64 ),
@@ -7484,7 +7520,7 @@ failed 25 of the 81 pair criteria, and the console says where: the
 legacy program printed its working-directory lines and then
 .CW "user fault: read addr=0x40 pc=0x201b1a" .
 The linker's own listing
-.CW ( 6l
+.CW 6l "" (
 .CW -a )
 names that instruction
 .CW "MOVL 64(CX),CX" ,
@@ -7617,7 +7653,7 @@ and the personality carries it as
 .CW /boot/kbdsrv ;
 the pair client execs it with an argument.  What the log says, in order:
 the buddy laid it out
-.CW ( "a Plan 9 a.out, text 74648 data 26224 bss 1400" ),
+.CW "a Plan 9 a.out, text 74648 data 26224 bss 1400" ), (
 the kernel demand-paged its five pages from the buddy, it was entered at
 .CW 0x200028
 through
@@ -8108,11 +8144,11 @@ copied.
 .PP
 Three plausible causes were tried first and each was disproved by its
 own instrumentation never firing: the request queue was ready
-.CW ( ospreysubmit
+.CW ospreysubmit "" (
 never failed), the container's data area was mapped
-.CW ( ospreydata
+.CW ospreydata "" (
 never returned nil), and the buddy was delegated
-.CW ( ospreyserverof
+.CW ospreyserverof "" (
 was not nil).  Each of those three fixes was taken back out, because a
 retry loop on the path of every forwarded call in every configuration
 is not something to leave behind on a hunch.
@@ -9029,9 +9065,9 @@ is that device.  Whose descriptor n is, is the question it exists to
 answer: the descriptors of a container are the buddy's, kept per
 container in the buddy's image record, so the open asks the buddy which
 container it is answering for
-.CW ( p9servingcontainer )
+.CW p9servingcontainer ) (
 and what that container's fd n stands for
-.CW ( p9containerfd ),
+.CW p9containerfd ), (
 and hands back the channel that descriptor of the buddy's holds.  A
 worker with no container to answer for gets nothing, because
 .CW /fd/<n>
@@ -9192,7 +9228,7 @@ said it was deliberate code and not corruption.
 .PP
 The rule is narrower now: the container's identity is the pid of a
 program the buddy loaded
-.CW ( up->buddyimage ),
+.CW up->buddyimage ), (
 and a native process bound into a container keeps the kernel's.  Four
 runs with the old number and four with the new, on the same experiment:
 four faults against none.  The check waits for the throttle rather than
@@ -9454,7 +9490,7 @@ is a separately linked binary, at
 well below the stack \- read through the name space the first program
 built, laid into the address space beside it, and called at its entry
 with a table of the personality's own entry points
-.CW ( p9lib.h ).
+.CW p9lib.h ). (
 It opens
 .CW /greeting
 and reads it by
@@ -9475,7 +9511,7 @@ whole of what a library operating system should have to ask.
 with the name
 .CW code
 is a region the caller may write a program into and then run
-.CW ( ospreysegcode ):
+.CW ospreysegcode ): (
 demand-zero, so nothing is carried until it is touched, writable because
 the loader writes the program in, and executable because the program
 then runs there \-
@@ -9563,7 +9599,7 @@ blocks until that number ends and yields its status;
 .CW pipe
 is the personality's own.  The three are new entries in the table a
 loaded program is handed
-.CW ( p9lib.h ,
+.CW p9lib.h , (
 version 3), and the program's standard descriptors come with it: a
 loaded program is entered as
 .CW "p9start(P9lib *lib, char **argv, int *std)" ,
@@ -9701,7 +9737,7 @@ the kernel's own upper half, so those are the types its name space is
 already built from.  The two changes are an include guard, so the file
 can be reached through a wrapper that supplies the personality's
 headers instead
-.CW ( devdrawp9.c ),
+.CW devdrawp9.c ), (
 and the kernel's
 .CW readstr
 under the name the shim gave it.  Thirty-four files of
@@ -9885,7 +9921,7 @@ is a trap into a microkernel that does not answer the Plan 9 table: a
 program that reached one did not get an error, it faulted.
 .PP
 So the table a loaded program is handed
-.CW ( P9lib ,
+.CW P9lib , (
 version 5) has
 .CW pread ,
 .CW pwrite ,
@@ -9984,7 +10020,7 @@ is asleep on a deadline, it is an idle machine, and the way out is time
 passing.  So
 .CW sched
 asks the microkernel what time it is
-.CW ( p9nsec ,
+.CW p9nsec , (
 the same clock
 .CW /dev/bintime
 reads) and turns the answer into the ticks the sleepers are counting.
@@ -10034,7 +10070,7 @@ some later write to the same channel landed in the wrong place.  A pipe
 whose reader has gone is the write that fails, and seek cannot be used
 to look at the offset because a pipe is a stream and refuses one, so the
 channel is asked directly
-.CW ( p9fdoffset ).
+.CW p9fdoffset ). (
 The check reads the offset before and after and both must be 0.  With
 the wind-back taken out the same boot prints 19, which is what makes the
 criterion worth having.
@@ -10183,7 +10219,7 @@ puts a proc with nothing to run to sleep on the address of its ready
 queue and
 .CW _threadready
 wakes it there
-.CW ( sched.c ),
+.CW sched.c ), (
 and without that a program's second proc would be started and never
 woken.  So the personality has a real one now \- a tag table over
 .CW ksleep
@@ -10325,7 +10361,7 @@ And the
 in a module's header is not a code entry.
 .CW dynld.c
 reads it as the address of the export table
-.CW ( l->export
+.CW l->export "" (
 .CW "= (Dynsym*)(base+entry)" ),
 which is why it points past the end of the text and into the data.  A
 loader that relocates one of these cannot recover
@@ -10500,9 +10536,9 @@ calls
 .CW dynreloc
 at every site that produces an absolute address, in data as well as in
 text.  It is called from the data path
-.CW ( asm.c )
+.CW asm.c ) (
 as well as the instruction path
-.CW ( span.c ),
+.CW span.c ), (
 which is the right shape, but a set that is nearly complete is worse
 than none \- it would lay down an image that runs until it reaches the
 one pointer nobody fixed.  That is settled by relocating a program to a
@@ -10526,7 +10562,7 @@ takes a free slot for a module and
 gives it back, and
 .CW p9spawn
 tells a module from an ordinary program by its magic
-.CW ( p9isreloc )
+.CW p9isreloc ) (
 and loads it accordingly.
 .PP
 So the personality spawns
@@ -11808,7 +11844,7 @@ way.
 .CW p9buddy 's
 .CW dosyscall
 sends a call it has no entry for to the container's server
-.CW ( ospreybuddyforward ),
+.CW ospreybuddyforward ), (
 and a peer personality answers it; that is how an unmodified Plan 9
 binary runs on the server side.  The library-OS form of the same thing
 is that the personality answers the calls of programs in its own address
@@ -11843,7 +11879,7 @@ the generated system-call stubs, a body of ordinary
 .CW remove
 \- and it is the one the buddy runs unmodified on the server side.  It is
 a file of this personality now
-.CW ( p9legacyfile ),
+.CW p9legacyfile ), (
 and
 .CW p9execlegacy
 enters it the way a kernel enters a program, with argv and nothing else,
@@ -11885,7 +11921,7 @@ does.  The entry
 and
 .CW touserv
 jump to is the task's
-.CW ( up->aoutentry ),
+.CW up->aoutentry ), (
 set by whichever loader laid the image out.  A kernel-wide word for that
 entry was the first attempt and this machine falsifies it in one boot:
 it loads more than one kind of image, the personality's load overwrote
@@ -11912,7 +11948,7 @@ uses it now.
 .PP
 .B "3.3c: the traps of a program that was not built for this."
 The personality asks the kernel for its program's system calls
-.CW ( ReqSyscallup ),
+.CW ReqSyscallup ), (
 naming the image they must come from, and the kernel hands each one up:
 the frame the call arrived on is copied to the stack and the task is
 re-entered at
@@ -11925,7 +11961,7 @@ and
 .CW libpread
 that serve a program linked against the table \- and hands the frame
 back with a value in it
-.CW ( ReqSyscallret ),
+.CW ReqSyscallret ), (
 which is
 .CW noted(NCONT)
 with a return substituted.  The program's libc sees an ordinary
@@ -11968,7 +12004,7 @@ microkernel
 idles the machine, and a library operating system whose program's exit
 stopped the machine could run one program and no more.  And a fault in
 the program is handed up the same way a system call is
-.CW ( ReqFaultup ),
+.CW ReqFaultup ), (
 so the personality catches it the way a kernel catches a process's \-
 the program ends there and the machine goes on.  The program faults on
 purpose, reading address 0 to test a note handler it cannot have here,
@@ -12050,7 +12086,7 @@ ever.
 What is not served, and is named in the log as it is asked for:
 .CW rfork(RFPROC) ,
 which is a flow of control a library cannot split for its caller
-.CW ( p9lib.h
+.CW p9lib.h "" (
 says why); and a second legacy program at the same time as the first,
 since the kernel keeps one outstanding call and one image range and
 p9syscall.c one descriptor table \- a second is refused by name rather
@@ -12251,7 +12287,7 @@ interrupts on never reaches them.
 .CW userregtorture.s
 asks the question from where a system call can be asked from, which is
 user mode.  It runs in the xup64 task
-.CW ( userprog.c ),
+.CW userprog.c ), (
 sets eleven registers, makes a real system call and compares them, a
 hundred times over.  The call is
 .CW "pwrite(2, sp, 0, -1)" ,
