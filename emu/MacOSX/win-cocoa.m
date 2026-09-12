@@ -181,6 +181,7 @@ static vlong	flush_last_us;
 static int	flush_gap[256];
 static int	nflush_gap;
 static int	mtl_materialising;	/* inside flush/readback: live bytes are the point */
+static id	mtl_dlink;		/* CADisplayLink: the display asks for frames */
 static id<MTLTexture>	mtl_rbtex;	/* readback target, kept like the others */
 static int	mtl_rbtex_w, mtl_rbtex_h;
 static uvlong	metal_torn_pixels;
@@ -4686,6 +4687,13 @@ mark_view_dirty(void)
 
 	if(view == nil)
 		return;
+	if(mtl_dlink != nil){
+		/* The display will ask.  Just say there is something to show. */
+		lock(&present_lock);
+		present_dirty = 1;
+		unlock(&present_lock);
+		return;
+	}
 	lock(&present_lock);
 	present_dirty = 1;
 	if([NSThread isMainThread]){
@@ -5067,6 +5075,29 @@ deliverchars(NSString *chars, unsigned short keyCode)
 + (Class)layerClass
 {
 	return [CAMetalLayer class];
+}
+
+/*
+ * One present per display refresh, asked for by the display.
+ *
+ * The alternative, and what this did, is to present whenever a program
+ * flushes.  That gives a present interval of whatever the program's own
+ * clock happens to be - measured at 13 to 21ms against a 16.67ms refresh -
+ * so some refreshes get a new frame and some get none, unevenly, which is
+ * what choppy is.  Asking the display when it wants a frame makes the
+ * interval the refresh interval by construction.
+ *
+ * A note here used to say a CVDisplayLink "added up to a refresh of
+ * latency and felt sluggish", and it would have: paired with a program
+ * drawing at 60Hz off a timer, the link can only ever wait.  It costs
+ * nothing when the program draws FASTER than the display, because then a
+ * fresh frame is always already there - which is the other half of this,
+ * and why the two have to go together.
+ */
+- (void)vsynctick:(id)link
+{
+	USED(link);
+	present_on_main();
 }
 
 - (BOOL)acceptsFirstResponder
@@ -5747,6 +5778,20 @@ createwindow(void)
 	[NSApp activateIgnoringOtherApps:YES];
 	present_dirty = 1;
 	present_softscreen();
+
+	/*
+	 * Drive presents off the display from here on.  INFERNO_NOVSYNC
+	 * keeps the old behaviour - present on the flush that marked the
+	 * screen dirty - because this is the sort of change that wants a
+	 * control sitting next to it.
+	 */
+	if(getenv("INFERNO_NOVSYNC") == nil && [view respondsToSelector:@selector(displayLinkWithTarget:selector:)]){
+		mtl_dlink = [view displayLinkWithTarget:view
+			selector:@selector(vsynctick:)];
+		if(mtl_dlink != nil)
+			[mtl_dlink addToRunLoop:[NSRunLoop currentRunLoop]
+				forMode:NSRunLoopCommonModes];
+	}
 
 	resizetest_start();
 	keytest_start();

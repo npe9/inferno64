@@ -137,7 +137,7 @@ fire_t0 := 0;
 t0, tf: int;
 best_score: real;
 
-init(ctxt: ref Draw->Context, nil: list of string)
+init(ctxt: ref Draw->Context, argv: list of string)
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
@@ -200,8 +200,19 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	win.onscreen("place");
 	win.startinput("kbd" :: "ptr" :: nil);
 
+	# Redraw rate.  60 is the display's, and asking for exactly the
+	# display's rate off a timer is the one rate that cannot be right:
+	# the two clocks drift, so a frame is shown for one refresh or for
+	# two, unevenly.  Drawing FASTER than the display and letting it take
+	# whichever frame is latest costs CPU and looks better.  An argument,
+	# so the two can be measured against each other rather than argued
+	# about.
+	hz := 60;
+	for(av := tl argv; av != nil; av = tl av)
+		if(len hd av > 2 && (hd av)[0:2] == "-r")
+			hz = int (hd av)[2:];
 	ticks := chan of int;
-	spawn fclock->ticker(ticks, 60);
+	spawn fclock->ticker(ticks, hz);
 	mtick := chan of int;
 	spawn mon_timer(mtick, 20);
 	for(;;) alt{
