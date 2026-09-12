@@ -379,7 +379,7 @@ p9main(void)
 		 */
 		extern long ring9p_replyroom(void);
 
-		print("p9: the ring mount carries %lud bytes at a time, in a reply region of %ld\n",
+		print("p9: the ring mount carries %lud bytes at a time, in a message region of %ld\n",
 			c->iounit, ring9p_replyroom());
 	}
 	print("p9: /hello resolved across #M, served by device type=%d (mnt=%d)\n",
@@ -472,6 +472,50 @@ p9main(void)
 		if(rn < 0) rn = 0;
 		buf[rn] = 0;
 		print("p9: read /scratch back over the ring: \"%.*s\"\n", (int)rn, (char*)buf);
+
+		/*
+		 * And a file larger than the ring carries in one message.
+		 * Everything above fits a single exchange - the files are
+		 * tens of bytes and the store was 512 - so the transport had
+		 * never been asked to carry a file in pieces, which is what
+		 * it does for anything of any size.  Write 4096 bytes of a
+		 * pattern no run of zeroes or repeats could imitate, read
+		 * them back into a fresh buffer, and compare every one.  The
+		 * write and the read are both loops because that is what a
+		 * program does with a descriptor: each call carries what the
+		 * mount's message size allows and returns how much it took.
+		 */
+		{
+			enum { Big = 4096 };
+			static uchar out[Big], in[Big];
+			long k, off, m, nbad;
+			int bfd;
+
+			for(k = 0; k < Big; k++)
+				out[k] = (uchar)(k*7 + (k>>8)*13 + 1);
+			bfd = p9open("/scratch", OWRITE);
+			for(off = 0; off < Big; off += m){
+				m = p9write(bfd, out + off, Big - off);
+				if(m <= 0)
+					break;
+			}
+			p9close(bfd);
+			print("p9: wrote %ld bytes of %d to /scratch, in messages of at most %lud\n",
+				off, Big, c->iounit);
+			bfd = p9open("/scratch", OREAD);
+			for(k = 0; k < Big; k += m){
+				m = p9read(bfd, in + k, Big - k);
+				if(m <= 0)
+					break;
+			}
+			p9close(bfd);
+			nbad = 0;
+			for(m = 0; m < k && m < Big; m++)
+				if(in[m] != out[m])
+					nbad++;
+			print("p9: read %ld bytes back, %ld of them wrong: a file larger than "
+				"one message crosses the ring in pieces\n", k, nbad + (Big - k));
+		}
 		p9close(rfd);
 	}
 

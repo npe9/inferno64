@@ -4448,14 +4448,37 @@ size now, clamps the
 it answers with to that, and clamps a
 .CW Tread 's
 count as well, for a client that never asked or asks for more than it
-agreed.  The boot prints the two numbers on one line \- what the mount
-carries and what the region holds \- so they cannot drift apart
-unnoticed, and the p9 check reads it: 2024 bytes carried in a region of
-2048.  Run with the advertisement unclamped, the same line says 8168 in
-a region of 2048, which is the fault stated in its own terms.  The
-smaller message costs more round trips per read, and the buffer-size
-sweep above is the check for that: all 246 sizes still give the same
-twenty entries.  The union directory read's rock fixup, which this paragraph used to
+agreed.
+.PP
+And the size it is given is the smaller of the two regions, not the
+reply's alone.  9P's message size bounds a T-message as well as an
+R-message, and the request region here is
+.CW Odt9len ,
+768 bytes, smaller than the reply's 2048.  A client told it may send
+2024 would chop a long write into 2024-byte messages, and the transport,
+which does check that a T-message fits its region, would refuse each one
+\- so a write too big for the ring would have come back as "9P
+transport: no reply from the file server", which is what a departed
+server says.  The ring carries what its smaller half carries: 744 bytes
+of data in a 768-byte message.
+.PP
+The boot prints the two numbers on one line \- what the mount carries and
+what the region holds \- so they cannot drift apart unnoticed, and the p9
+check reads it.  Run with the advertisement unclamped the same line says
+8168 in a region of 2048, which is the fault stated in its own terms.
+.PP
+With the bound honest in both directions, a file larger than one message
+is worth having, and there had not been one: the served files are tens
+of bytes and the writable one was 512, so every read and write in this
+document crossed the ring in a single exchange and the transport's
+behaviour on anything bigger was untested.  The store is 4096 bytes now
+\- it lives in the server container's stack frame, which is the ordinary
+16-megabyte demand-paged stack segment, so ten kilobytes of frame is
+nothing against it \- and the boot writes 4096 bytes of a pattern through
+it in messages of at most 744, reads them back into a fresh buffer, and
+compares every byte: none wrong.  The smaller message also costs more
+round trips per read, and this morning's buffer-size sweep is the check
+for that: all 246 sizes still give the same twenty entries.  The union directory read's rock fixup, which this paragraph used to
 call stubbed, is ported and checked.  It is
 .CW sysfile.c 's
 own \-

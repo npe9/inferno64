@@ -193,10 +193,21 @@ def main():
     # that long, so nothing had gone wrong; a file of three kilobytes would
     # have run the answer into the ticket window past the region.  With the
     # advertisement unclamped this line reads 8168 in a region of 2048.
-    io = re.search(r'the ring mount carries (\d+) bytes at a time, in a reply region of (\d+)', t)
-    results.append(("and the 9P server over the ring promises only what it can deliver: the message size the mount negotiates, plus 9P's own header allowance, fits the reply region of the data area the answer is written into - where the server had been advertising four times that region",
+    io = re.search(r'the ring mount carries (\d+) bytes at a time, in a message region of (\d+)', t)
+    results.append(("and the 9P server over the ring promises only what it can deliver: the message size the mount negotiates, plus 9P's own header allowance, fits the smaller of the two regions a message crosses in - where the server had been advertising 8192 into a 2048-byte reply region, and 9P's message size bounds the 768-byte request region too",
                     io is not None and int(io.group(1)) + 24 <= int(io.group(2))
                     and int(io.group(1)) > int(io.group(2)) - 64))
+    # And a file larger than one message.  Everything else the ring carries
+    # fits a single exchange - the served files are tens of bytes and the
+    # writable one was 512 - so the transport had never been asked to carry
+    # a file in pieces, which is what it does for anything of any size.
+    bw = re.search(r'wrote (\d+) bytes of (\d+) to /scratch, in messages of at most (\d+)', t)
+    br = re.search(r'read (\d+) bytes back, (\d+) of them wrong', t)
+    results.append(("and a file larger than one message crosses the ring in pieces: 4096 bytes written in messages of at most the negotiated size and read back into a fresh buffer, every byte of a pattern compared and none wrong",
+                    bw is not None and br is not None
+                    and int(bw.group(1)) == int(bw.group(2)) == 4096
+                    and int(bw.group(3)) < 4096
+                    and int(br.group(1)) == 4096 and int(br.group(2)) == 0))
     # The personality's own error handling.  p9main installs a handler
     # before it sets up, and p9setup called p9init, which cleared the
     # count - so the handler was thrown away and everything after it ran

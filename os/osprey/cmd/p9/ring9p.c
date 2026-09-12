@@ -160,7 +160,9 @@ ringxfer(uvlong op, uchar *tmsg, long tn, uchar *rbuf, long rmax)
 }
 
 /*
- * How much room an R-message has in the data area.  The server is given
+ * How much room a message has in the data area: the smaller of the two
+ * regions, because 9P's message size bounds a T-message as well as an
+ * R-message and the T region here is the smaller.  The server is given
  * this as its rmax and advertises no more than it in Tversion, so a
  * mount's iounit must come out at or below it less 9P's own header
  * allowance; the boot says both numbers so that the two cannot drift
@@ -170,7 +172,7 @@ ringxfer(uvlong op, uchar *tmsg, long tn, uchar *rbuf, long rmax)
 long
 ring9p_replyroom(void)
 {
-	return Odr9len;
+	return Odt9len < Odr9len ? Odt9len : Odr9len;
 }
 
 long

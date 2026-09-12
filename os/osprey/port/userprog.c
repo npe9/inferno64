@@ -517,8 +517,23 @@ ospreyserver(char *arg0)
 				 * and what it returns to this number, so the
 				 * client never asks for more than can come
 				 * back.
+				 *
+				 * And it is the smaller of the two regions,
+				 * not the reply's alone.  9P's message size
+				 * bounds a T-message as well as an R-message,
+				 * and the T region here is Odt9len, 768 bytes
+				 * - smaller than the reply's 2048.  A client
+				 * told it may send 2024 would chop a long
+				 * write into 2024-byte messages, and the
+				 * transport, which checks that a T-message
+				 * fits its region, would refuse each one:
+				 * "9P transport: no reply from the file
+				 * server" for a write that is merely too big.
+				 * The ring carries what its smaller half
+				 * carries.
 				 */
-				rn = srv9p(&st, cdata + toff, (long)tlen, cdata + roff, Odr9len);
+				rn = srv9p(&st, cdata + toff, (long)tlen, cdata + roff,
+					Odt9len < Odr9len ? Odt9len : Odr9len);
 				rep.arg[0] = (uvlong)rn;
 			} else
 				rep.arg[0] = 2;				/* an op we do not answer */

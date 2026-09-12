@@ -16,7 +16,17 @@ struct Fidtab { Fid9p f[Srv9pNfid]; };
  * container is flat-loaded: the fid table, and the one writable file's
  * contents and length.
  */
-enum { Srv9pScratch = 512 };
+/*
+ * The one writable file's size.  This was 512 - smaller than the ring
+ * carries in one message - so no read or write of it ever needed more
+ * than one exchange, and the transport's behaviour on a file larger than
+ * a message was untested.  4096 is several messages' worth.  Srvstate
+ * lives in the server container's stack frame, because that container is
+ * flat-loaded and has no data segment, so this is stack: that stack is
+ * the ordinary USTKSIZE segment, 16 MiB and demand-paged
+ * (ospreyloadprog), and ten kilobytes of frame is nothing against it.
+ */
+enum { Srv9pScratch = 4096 };
 typedef struct Srvstate Srvstate;
 struct Srvstate {
 	Fidtab	fids;
