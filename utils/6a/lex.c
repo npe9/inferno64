@@ -92,9 +92,13 @@ main(int argc, char *argv[])
 int
 assemble(char *file)
 {
-	char ofile[100], incfile[20], *p;
+	char *ofile, incfile[20], *p;
 	int i, of;
 
+	/* ofile was char[100]; a source path longer than that overflowed
+	 * it (a fortified strcpy aborts).  Size it to the actual name plus
+	 * room for the ".6" the extension is rewritten to. */
+	ofile = malloc(strlen(file)+4);
 	strcpy(ofile, file);
 	p = utfrrune(ofile, pathchar());
 	if(p) {
