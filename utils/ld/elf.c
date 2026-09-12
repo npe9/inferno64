@@ -110,7 +110,13 @@ elf32(int mach, int bo, int addpsects, void (*putpsects)(Putl))
 	putw(EXEC);
 	putw(mach);
 	putl(1L);			/* version = CURRENT */
-	putl(entryvalue());		/* entry vaddr */
+	/*
+	 * The entry is a physical address when the loader that reads the
+	 * file is a boot loader (multiboot, u-boot), so it moves with the
+	 * text: translated by the same offset -P gives the text segment,
+	 * and unchanged when there is no -P.
+	 */
+	putl(entryvalue() - (INITTEXT - INITTEXTP));	/* entry paddr */
 	putl(Ehdr32sz);			/* offset to first phdr */
 	if(debug['S'])
 		putl(HEADR+textsize+datsize+symsize); /* offset to first shdr */
@@ -228,7 +234,7 @@ elf64(int mach, int bo, int addpsects, void (*putpsects)(Putl))
 	putw(EXEC);
 	putw(mach);
 	putl(1L);			/* version = CURRENT */
-	putll(entryvalue());		/* entry vaddr */
+	putll(entryvalue() - (INITTEXT - INITTEXTP));	/* entry paddr, as in elf32 */
 	putll(Ehdr64sz);		/* offset to first phdr */
 	if(debug['S'])
 		putll(HEADR+textsize+datsize+symsize); /* offset to 1st shdr */
