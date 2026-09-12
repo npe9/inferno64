@@ -826,3 +826,75 @@ a hold too short, and an
 cancelled by a zsh glob \(em each of which presented as a failure of
 the thing under test.  Two of them would have been caught by asking
 what a passing run looks like before trusting a failing one.
+.NH 2
+The parallel Dis VM does not work on pc64 yet
+.PP
+.CW scripts/check-pc64-parallelvm.sh
+boots
+.CW ipc64dev
+on a two-processor machine at
+.CW *parallelvm=1
+and at
+.CW *parallelvm=0 ,
+from one kernel and one ISO recipe \(em
+.CW main.c
+reads the option at boot, so nothing is rebuilt between the arms.
+.PP
+It engages.  At
+.CW *parallelvm=1
+the log says
+.CW "nvm: 2 hold the vm" ,
+and
+.CW "nvm: 3"
+and
+.CW "nvm: 4"
+in other runs, so more than one interpreter really is inside
+.CW xec()
+at once, which is the whole point of the change.  At
+.CW *parallelvm=0
+that count never exceeds 1.
+.PP
+And it is broken.
+.CW dis.c 's
+own consistency check \(em
+.CW "runq: 2 linked + 0 global but 1 in Pready \-\- the counts disagree"
+\(em fired on
+.B every
+.CW parallelvm=1
+boot measured, six of six, including the boots that completed, and on
+.B none
+of the eleven
+.CW parallelvm=0
+boots.  Separately, most
+.CW parallelvm=1
+boots never reach
+.CW "DEVTEST: done" ,
+while
+.CW parallelvm=0
+reached it 26 times in 26.  Nothing panics in either arm; the failure
+is silent.
+.PP
+.B "The rate is not worth quoting and the difference is."
+Runs of this gave 8-of-10, then 5-of-6, then 2-of-6 not finishing,
+which is host load rather than three different phenomena.  The first
+of those numbers was worse than the truth for a reason worth recording:
+each boot was given 45 seconds, and
+.CW parallelvm=1
+does more work per boot, so a slower boot that would have finished was
+counted as a failure.  That is the same mistake as the disk check's
+fourteen-second hold, made again within the hour, which is why the
+per-boot window is a variable now and why the script reports the
+count-disagreement as well \(em that signal fires on a boot that
+completes as readily as on one that does not, so it separates the arms
+without any judgement about how long a boot should take.
+.PP
+.B "What this says, and what it does not."
+It says the parallel VM is not ready on pc64 and that the first thing
+to look at is the run queue bookkeeping, not the collector: the counts
+disagree on runs that otherwise finish normally, so it is not a
+stop-the-world failure.  It does not say the design is wrong, and it is
+not a measurement of multicore's own tree \(em that branch has arm64
+work and instrumentation this one deliberately did not take, and its
+own report is of Dis heap corruption on arm64 rather than of this.
+.CW parallelvm
+stays 0 here, which is what it was set to when the VM was merged.
