@@ -1,0 +1,183 @@
+.TH SH-CIRCUIT 1
+.SH NAME
+circuit \- shell script interface to circuit(2)'s netlists
+.SH SYNOPSIS
+.B load circuit
+
+.B id := ${circuit new}
+.br
+.B circuit
+.I id
+.B spec
+.I netlist-line...
+.br
+.B circuit
+.I id
+.B read
+.I file
+.br
+.B circuit
+.I id
+.B dc
+.br
+.B circuit
+.I id
+.B watch
+.BR v | i
+.I name
+.br
+.B circuit
+.I id
+.BR begin | begindc
+.br
+.B circuit
+.I id
+.B step
+.I dt
+.br
+.B circuit
+.I id
+.B run
+.I dt nsteps
+.br
+.B circuit
+.I id
+.B clear
+.br
+.B ${circuit
+.I id
+.BR node | current
+.I name
+.B }
+.br
+.B ${circuit
+.I id
+.BR trace | names | rows | columns | time | analysis | text
+.B }
+.br
+.B circuit del
+.I id...
+.SH DESCRIPTION
+.I Circuit
+makes
+.IR circuit (2)
+usable from
+.IR sh (1):
+a netlist can be run and its answer looked at without writing a Limbo
+program.
+.PP
+No netlist vocabulary is added here.
+What
+.B spec
+accumulates and
+.B read
+loads is
+.IR circuit (2)'s
+own language, documented there, and every line is passed through
+untouched.
+.PP
+.B Spec
+appends one line; several calls build the netlist up, and a single
+quoted argument containing newlines does it in one.
+The netlist is parsed the first time something needs it, so there is no
+.B commit
+to remember.
+.PP
+.B Dc
+solves the operating point.
+.B Begin
+sets the circuit at rest and
+.B begindc
+at the operating point; one of them must come before any stepping.
+.B Step
+takes one step and
+.B run
+takes several.
+.PP
+.B Watch
+says what to record, and must be said before the run \- otherwise the
+earlier rows would have fewer columns than the later ones, and it is
+refused rather than silently ragged.
+.B v
+records a node's voltage and
+.B i
+a part's current.
+.SS Plotting what happened
+.B Trace
+returns the whole recorded waveform as one flat list: the time and then
+each watched value, for every row in turn.
+That is exactly the shape
+.IR sh-plot (1)'s
+.B append
+takes, so a transient analysis becomes a picture in one command:
+.IP
+.EX
+plot $p history append ${circuit $c trace}
+.EE
+.PP
+.B Names
+gives the column headings in the same order,
+.B rows
+and
+.B columns
+their counts.
+.SH EXAMPLE
+A divider, and then the step response of an RC:
+.IP
+.EX
+load std
+load circuit
+c := ${circuit new}
+circuit $c spec 'V1 in 0 10
+R1 in mid 1k
+R2 mid 0 3k'
+circuit $c dc
+echo ${circuit $c node mid}		# 7.5
+
+r := ${circuit new}
+circuit $r spec 'V1 in 0 1
+R1 in out 1k
+C1 out 0 1u'
+circuit $r watch v out
+circuit $r watch i C1
+circuit $r begin
+circuit $r run 1e-4 5
+echo ${circuit $r names}		# t out C1
+echo ${circuit $r trace}
+circuit del $c $r
+.EE
+.SH SOURCE
+.B /appl/cmd/sh/circuit.b
+.SH SEE ALSO
+.IR sh (1),
+.IR sh-plot (1),
+.IR circuit (2),
+.IR circuittest (1)
+.SH DIAGNOSTICS
+A malformed netlist, a circuit with no single answer, a transient
+stepped before its initial condition is set, or a
+.B watch
+added after recording has begun, each fail the command with the message
+.IR circuit (2)
+gives.
+.SH BUGS
+There is no test for this module in
+.BR /appl/cmd .
+.IR Circuit (2)
+underneath it is checked thoroughly by
+.IR circuittest (1),
+and what is added here is handle bookkeeping and the flattening of the
+trace, which is exercised only by the example above and by
+.BR /lib/demo/circuitlab.sh .
+.PP
+A netlist cannot be changed once it has been parsed; a new handle is
+needed, which is what the demo does on every slider move.
+Rebuilding is cheap for the circuits this is for and wrong for a large
+one.
+.PP
+.B Trace
+returns every row as shell words, so a run of ten thousand steps builds
+a list of tens of thousands of strings.
+Record what is wanted and
+.B clear
+between runs.

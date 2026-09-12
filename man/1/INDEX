@@ -288,6 +288,7 @@ fftstest fftstest
 flowtest flowtest
 frametest frametest
 optimtest optimtest
+sh-circuit sh-circuit
 signaltest signaltest
 statstest statstest
 tdsetest tdsetest
