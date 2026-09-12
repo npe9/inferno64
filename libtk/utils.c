@@ -203,7 +203,20 @@ tkrgba(int r, int g, int b, int a)
 		b = 0;
 	else if(b > 255)
 		b = 255;
-	p = (r<<24)|(g<<16)|(b<<8)|0xFF;
+	/*
+	 * Cast, for the third time in this library and the one that matters
+	 * most: every COMPUTED shade comes through here, so without it every
+	 * bevel colour in the toolkit is a 64-bit value with its top half set
+	 * - 0xffffffff959283ff for #959283.  colrs.c and xdata.c had the same
+	 * fault in their RGB macros.
+	 *
+	 * It renders correctly anyway, because tkrgbavals() masks the red byte
+	 * on the way back out.  What it breaks is the VALUE: tkcolor() caches
+	 * by it and starts with `if(pix == DWhite) return d->white', a test a
+	 * dirty value cannot satisfy, and the render nodes in scene.c carry
+	 * these as the colour a backend would be handed.
+	 */
+	p = (((ulong)r&0xff)<<24)|(((ulong)g&0xff)<<16)|(((ulong)b&0xff)<<8)|0xffUL;
 	if(a == 255)
 		return p;
 	return setalpha(p, a);

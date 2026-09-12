@@ -11,7 +11,22 @@ TkStab tkorient[] =
 	nil
 };
 
-#define RGB(r,g,b) ((r<<24)|(g<<16)|(b<<8)|0xff)
+/*
+ * The casts are load-bearing, and this is the second place in libtk that
+ * needed them - colrs.c was the first.  r<<24 as a plain int is negative
+ * whenever r is 0x80 or more, and widening that to a 64-bit ulong
+ * sign-extends it: "white" was 0xffffffffffffffff where it meant
+ * 0xffffffff.  Eleven of the nineteen names below have a red byte that
+ * high.
+ *
+ * The visible cost was in tkcolor(), which starts `if(pix == DWhite)
+ * return d->white' - a comparison the dirty value can never satisfy.  So
+ * every `-bg white' missed the display's own shared white and allocated
+ * a fresh one-pixel image, cached under a key that could never match the
+ * clean constant.  `-bg white' and `-bg #ffffff' were two different
+ * Images for one colour.
+ */
+#define RGB(r,g,b) ((((ulong)(r)&0xff)<<24)|(((ulong)(g)&0xff)<<16)|(((ulong)(b)&0xff)<<8)|0xffUL)
 
 TkStab tkcolortab[] =
 {

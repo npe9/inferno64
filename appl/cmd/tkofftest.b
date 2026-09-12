@@ -294,6 +294,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	checkstyleenv();
 	checkbevelhue();
 	checkscene();
+	checkcolourwidth();
 	checkcanvastag();
 	checkplaintitle();
 	checktheme();
@@ -852,6 +853,51 @@ checkstyleenv()
 }
 
 
+
+
+# A colour is a 32-bit value, and three places in libtk built it with
+# (r<<24)|... computed as a signed int - so any colour with a red byte of
+# 0x80 or more went negative and sign-extended into this platform's
+# 64-bit ulong.  #FFFFFFFF was stored as 0xFFFFFFFFFFFFFFFF.
+#
+# It RENDERED correctly, because tkrgbavals() masks the red byte on the
+# way back out, so nothing anyone could see was wrong.  What it broke was
+# the value: tkcolor() caches by it and opens with `if(pix == DWhite)
+# return d->white', a test a dirty value cannot satisfy, so every -bg
+# white missed the display's shared white and allocated a fresh
+# one-pixel image under a key that could never match the clean constant.
+#
+# The signature is visible from here because parse.c formats a colour
+# with %.8lux: eight hex digits for a clean value, sixteen for a dirty
+# one.  Asking a widget for a colour is therefore a check on the width of
+# what is stored, which is why this can be tested at all without any new
+# interface.
+checkcolourwidth()
+{
+	blank();
+	top := offscreen();
+	if(top == nil)
+		return;
+	bad := "";
+	# one named colour per source: white and red come from xdata.c's
+	# table, and a bevel shade is computed by tkrgba()
+	tk->cmd(top, "frame .f -width 40 -height 20 -bg white");
+	tk->cmd(top, "frame .g -width 40 -height 20 -bg red");
+	tk->cmd(top, "frame .h -width 40 -height 20 -borderwidth 2 -relief raised");
+	tk->cmd(top, "pack .f");
+	tk->cmd(top, "pack .g");
+	tk->cmd(top, "pack .h");
+	map(top);
+	for(l := list of {".f", ".g", ".h"}; l != nil; l = tl l){
+		w := hd l;
+		c := tk->cmd(top, w + " cget -bg");
+		if(len c != 9)		# '#' and eight digits
+			bad += sys->sprint(" %s=%s", w, c);
+	}
+	report(bad == nil, sys->sprint(
+		"a colour is stored in 32 bits, not sign-extended to 64%s",
+		badly(bad)));
+}
 
 # libtk can draw a flat border two ways now: straight to draw(), or by
 # building a render-node tree and rendering that.  The node tree is the

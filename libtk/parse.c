@@ -886,7 +886,18 @@ tkparsecolor(char *buf, ulong *rgba)
 				break;
 		if (tkcolortab[i].val == nil)
 			return TkBadvl;
-		*rgba = tkcolortab[i].con;
+		/*
+		 * Masked on the way out, because TkStab.con is an `int' and a
+		 * colour does not fit in one: RGB(255,255,255) is 0xFFFFFFFF,
+		 * which is -1 as an int, and assigning that to a ulong on a
+		 * 64-bit host sign-extends it back to 0xFFFFFFFFFFFFFFFF.
+		 * Casting inside the RGB macro in xdata.c cannot help - the
+		 * narrowing happens when the table is built, not when it is
+		 * read - and widening TkStab is not an option, since the same
+		 * struct carries every other string-to-constant table in the
+		 * toolkit.
+		 */
+		*rgba = (ulong)tkcolortab[i].con & 0xffffffffUL;
 	}
 	if (alpha != 0xff) {
 		tkrgbavals(*rgba, &R, &G, &B, &A);
