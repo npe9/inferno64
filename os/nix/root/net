@@ -1,0 +1,15 @@
+#!/bin/rc
+
+echo -n glenda > /dev/hostowner
+bind -a '#p' /proc
+bind -a '#l0' /net
+bind -a '#I' /net
+ipconfig
+ramfs -m /mnt
+
+echo listen1 -tv1 tcp!*!23 /boot/rc -m /boot/rcmain -i
+echo assume hostfwd is 2323 to 23
+echo nc 127.0.0.1 2323
+echo /mnt/factotum
+echo  /boot/listen1 -tv1 tcp!*!17010 /boot/cpu -R
+

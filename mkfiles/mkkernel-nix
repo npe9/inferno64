@@ -1,0 +1,4 @@
+KERNEL_DIRS=\
+	os/nix/k8\
+
+KERNELPORT=$ROOT/os/nix

@@ -17,6 +17,8 @@ native Inferno headers, libraries and binaries
 native 9front headers, libraries and binaries
 .IP "\f(CWOsprey/amd64/\fP" 18
 Osprey headers, libraries and binaries
+.IP "\f(CWnix/amd64/\fP" 18
+NIX headers, libraries and binaries
 .IP "\f(CWMacOSX/arm64/\fP" 18
 host-side tools built on this Mac
 .LP
@@ -72,8 +74,9 @@ Each flavor owns one directory under
 .CW os :
 .CW os/inferno ,
 .CW os/9front ,
+.CW os/osprey
 and
-.CW os/osprey .
+.CW os/nix .
 That directory holds everything the kernel is built from:
 .IP
 portable code in the flavor directory itself
@@ -135,6 +138,7 @@ and the rest as siblings.
 os/9front/	port pc pc64 ip boot lib
 os/inferno/	port pc pc64 riscv virt sifiveu spike ip boot init
 os/osprey/	port pc pc64 ip boot adapter policy lib cmd kernlib libaml
+os/nix/		port 386 k8 ip boot mk root lib
 .fi
 .PP
 .CW os
@@ -167,6 +171,44 @@ boot file system and the user library its
 links against are prebuilt binaries copied into
 .CW Osprey/amd64 ,
 not built from source in this tree.
+.NH 1
+Building the NIX kernel
+.PP
+.CW os/nix
+is rminnich's NIX, jmk's 9k with application cores, vendored the same
+way; its README says where it came from and what was changed.  It is
+built like the others:
+.IP
+.CW 'PATH="$PWD/MacOSX/arm64/bin:$PATH"'
+.br
+.CW 'cd os/nix/k8'
+.br
+.CW 'mk install'
+.PP
+which links
+.CW nix/amd64/lib/libnix.a ,
+the part of the nix user libc the kernel needs, with the tree's
+libkern, libsec and libmp, and puts
+.CW 9k8cpufs
+and
+.CW 9k8cpufs.elf
+in
+.CW nix/amd64 .
+The ELF is the multiboot kernel a
+.CW "qemu -kernel"
+boots; it is linked with
+.CW -H5 ,
+.CW -8
+and
+.CW -P0x110000 ,
+the physical address of the text.  Two things are inputs rather than
+built: the first user process,
+.CW os/nix/k8/init.out ,
+and the embedded root,
+.CW os/nix/k8/k8cpufs.root.s ,
+because both are user programs linked against the nix libc, which this
+tree does not build.  The k8cpu and k8root configurations need a boot
+program of the same kind and are not built either.
 .NH 1
 Building the Osprey policy library
 .PP

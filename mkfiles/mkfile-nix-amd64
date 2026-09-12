@@ -1,0 +1,24 @@
+TARGMODEL=	nix
+TARGSHTYPE=	rc
+CPUS=		amd64
+
+O=		6
+OS=		v851ok0q26
+
+AR=		iar
+ARFLAGS=	vu
+
+AS=		6a
+ASFLAGS=
+
+CC=		6c
+CFLAGS=		-wFV -I$ROOT/nix/$OBJTYPE/include -I$ROOT/nix/include -I$ROOT/include
+ANSICPP= -p
+
+LD=		6l
+LDFLAGS=
+
+SYSLIBS=-lc
+
+YACC=		yacc
+YFLAGS=		-d

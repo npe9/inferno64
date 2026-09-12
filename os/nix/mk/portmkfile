@@ -1,0 +1,123 @@
+KERNDATE=`{$NDATE}
+
+%.$O:	%.s
+	$AS $AFLAGS $stem.s
+
+%.$O:	%.c
+	$CC $CFLAGS $stem.c
+
+%.m:	%.$O
+	$LD -o $target -uX -l $prereq
+
+%.acid:	%.c
+	$CC $CFLAGS -a $stem.c >$stem.acid
+
+%.acid:	$IPDIR/%.c
+	$CC $CFLAGS -a -I.  $IPDIR/$stem.c >$stem.acid
+
+%.acid:	$PORTDIR/%.c
+	$CC $CFLAGS -a -I. $PORTDIR/$stem.c >$stem.acid
+
+%.db:	main.$O
+	$CC -s$stem main.c | dbfmt > $stem.db
+
+%.$O:	$ROOT/nix/$objtype/include/u.h
+%.$O:	$PORTDIR/lib.h
+%.$O:	mem.h
+%.$O:	dat.h $PORTDIR/portdat.h
+%.$O:	fns.h $PORTDIR/portfns.h
+
+alloc.$O:	$ROOT/nix/include/pool.h
+chan.$O:	$PORTDIR/error.h
+dev.$O:		$PORTDIR/error.h
+devcap.$O:	$PORTDIR/error.h
+devcap.$O:	$ROOT/nix/include/libsec.h
+devcons.$O:	$ROOT/nix/include/authsrv.h $ROOT/nix/include/pool.h
+devdup.$O:	$PORTDIR/error.h
+devenv.$O:	$PORTDIR/error.h
+devkprof.$O:	$PORTDIR/error.h
+devmnt.$O:	$PORTDIR/error.h
+devpipe.$O:	$PORTDIR/error.h
+devprobe.$O:	$PORTDIR/netif.h probe.h
+devproc.$O:	$PORTDIR/error.h $PORTDIR/edf.h
+devproc.$O:	$ROOT/nix/include/tos.h $ROOT/nix/include/trace.h $ROOT/nix/$objtype/include/ureg.h
+devsd.$O:	$PORTDIR/error.h $PORTDIR/sd.h
+devsrv.$O:	$PORTDIR/error.h
+devssl.$O:	$PORTDIR/error.h
+devssl.$O:	$ROOT/nix/include/libsec.h
+devtab.$O:	$PORTDIR/error.h
+devtls.$O:	$PORTDIR/error.h
+devtls.$O:	$ROOT/nix/include/libsec.h
+devuart.$O:	$PORTDIR/error.h
+devwd.$O:	$PORTDIR/error.h
+edf.$O:		$PORTDIR/error.h $PORTDIR/edf.h
+edf.$O:		$ROOT/nix/include/trace.h
+ethermii.$O:	$PORTDIR/ethermii.h $PORTDIR/netif.h
+fault.$O:	$PORTDIR/error.h
+image.$O:	$PORTDIR/error.h
+initcode.$O:	$ROOT/nix/include/libc.h
+latin1.$O:	$PORTDIR/latin1.h
+netif.$O:	$PORTDIR/error.h $PORTDIR/netif.h
+parse.$O:	$PORTDIR/error.h
+pgrp.$O:	$PORTDIR/error.h
+portclock.$O:	$ROOT/nix/$objtype/include/ureg.h
+proc.$O:	$PORTDIR/error.h $PORTDIR/edf.h errstr.h
+proc.$O:	$ROOT/nix/include/trace.h
+qio.$O:		$PORTDIR/error.h
+rdb.$O:		$ROOT/nix/$objtype/include/ureg.h
+rebootcmd.$O:	$PORTDIR/error.h
+rebootcmd.$O:	$ROOT/nix/include/a.out.h
+segment.$O:	$PORTDIR/error.h
+swap.$O:	$PORTDIR/error.h
+sysauth.$O:	$PORTDIR/error.h
+sysauth.$O:	$ROOT/nix/include/authsrv.h
+sysfile.$O:	$PORTDIR/error.h
+sysproc.$O:	$PORTDIR/error.h $PORTDIR/edf.h
+sysproc.$O:	$ROOT/nix/include/a.out.h
+sysseg.$O:	$PORTDIR/error.h
+taslock.$O:	$PORTDIR/edf.h
+
+# Upstream derives latin1.h from /lib/keyboard with aux/mklatinkbd,
+# which this tree does not build; the generated file is carried in port.
+
+# The system call table is generated from the syscall numbers in
+# port/sys.h, which is upstream's /sys/src/libc/9syscall/sys.h.
+$PORTDIR/systab.c:	$MKDIR/parse $PORTDIR/sys.h
+	awk -v objtype=$objtype -v sysh=$PORTDIR/sys.h -f $MKDIR/parse -- -mksystab $CONF > $target
+
+systab.$O:	$PORTDIR/systab.c
+	$CC $CFLAGS -I. $PORTDIR/systab.c
+
+errstr.h:	$MKDIR/parse $PORTDIR/error.h
+	awk -v objtype=$objtype -f $MKDIR/parse -- -mkerrstr > $target
+
+$CONF.$O:	$CONF.c
+	$CC $CFLAGS '-DKERNDATE='$KERNDATE $CONF.c
+
+$CONF.c:	$MKDIR/parse $CONF
+	awk -v objtype=$objtype -f $MKDIR/parse -- -mkdevc $CONF > $CONF.c
+
+all:V:
+	for i in $CONFLIST
+	do
+		mk CONF=$i
+	done
+
+installall:V:
+	for i in $CONFLIST
+	do
+		mk CONF=$i install
+	done
+
+%.clean:V:
+	rm -f $stem.c [9bz]$stem [9bz]$stem.gz [9bz]$stem.elf boot$stem.*
+
+clean:V:
+	rm -f *.[$OS] *.out *.m *.acid errstr.h init.h sipi.h $objtype^l.h $PORTDIR/systab.c
+	for i in $CONFLIST
+	do
+		mk $i.clean
+	done
+
+nuke:V:	clean
+	rm -f $BOOTDIR/libboot.a$O *.rr

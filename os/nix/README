@@ -1,0 +1,106 @@
+#	nix, as vendored
+
+This is the NIX kernel from https://shithub.us/rminnich/nix, taken at
+commit f0927138 of 9 September 2026 and laid out the way the other
+kernels under ../ are: jmk's 9k, changed by rminnich, with 2 MiB pages
+and the NIX application cores.  Upstream keeps it at sys/src/nix in a
+Plan 9 tree; here it is a flavour of its own and names nothing outside
+this directory but the host toolchain in ../../utils, the top-level
+../../include, and libkern, libsec and libmp, which are built from one
+source tree for every target.
+
+#	what is inside
+
+k8		the amd64 machine, under upstream's name for it
+port		the portable kernel
+ip		the Internet protocol stack
+386		the drivers upstream shares with its 386 kernel and k8
+		takes through the "dir" section of a configuration
+boot		the boot programs; see below
+mk		parse, the awk program that turns a configuration into
+		mk rules and into the device, system call and error
+		tables, and the mkfiles it includes
+root		the sources of the user programs the k8cpufs
+		configuration embeds
+lib		the part of the nix user libc and libip the kernel
+		links, taken from upstream's sys/src/libc and
+		sys/src/libip
+
+Headers that belong to the target rather than to the source live in
+the target, as for the other flavours: ../../nix/include is upstream's
+sys/include with sys/src/nix/include laid over it, and
+../../nix/amd64/include is upstream's amd64/include.  The system call
+numbers, upstream's sys/src/libc/9syscall/sys.h, are port/sys.h.
+
+#	building
+
+	PATH="$PWD/MacOSX/arm64/bin:$PATH"
+	cd os/nix/k8
+	mk install
+
+puts 9k8cpufs, a Plan 9 a.out for acid and inm, and 9k8cpufs.elf, the
+same kernel in the ELF32 wrapper a multiboot loader reads, in
+../../nix/amd64.  The library is built on the way, into
+../../nix/amd64/lib/libnix.a, and libkern, libsec and libmp are
+expected in ../../Inferno/amd64/lib:
+
+	for i in libkern libsec libmp; do
+		(cd $i && mk SYSTARG=Inferno OBJTYPE=amd64 install)
+	done
+
+k8cpufs is the configuration that is built: a stand-alone cpu server
+with rc and a few programs embedded as /boot.  It is what upstream
+boots, with
+
+	qemu-system-x86_64 -machine pc,acpi=off,hpet=off -cpu Opteron_G3 \
+		-smp 4,sockets=4,cores=1,threads=1 \
+		-netdev user,id=net0,hostfwd=tcp::2323-:23 \
+		-device e1000,netdev=net0 \
+		-m 8192M -kernel 9k8cpufs.elf -nographic
+
+and reaches rc's prompt on the serial console with all four cores up.
+
+#	what is built here and what is not
+
+Everything in the kernel proper is compiled and linked by the tree's
+own 6c, 6a and 6l.  Two things are inputs taken from upstream, because
+they are user programs and this tree does not build the nix user
+libc they link against:
+
+k8/init.out	the first user process, init9.c and port/initcode.c
+		linked against upstream's libc.a; init.h is derived
+		from it here
+k8/k8cpufs.root.s
+		the /boot programs the configuration embeds -- rc, ls,
+		factotum, ipconfig, listen1, cpu, execac and the
+		rest -- as upstream's mkrootall wrote them
+
+The mk rules that would regenerate them are not run: the "rootdir"
+section of the configuration is read for the device table only, and
+mk/parse is not asked for its root rules.  For the same reason the
+boot programs in boot/ and the k8cpu and k8root configurations, which
+need one, are not built, and neither are libseg, libtube and test,
+which are user-side.  port/latin1.h is upstream's generated file;
+upstream derives it from /lib/keyboard with aux/mklatinkbd.
+
+#	what was changed from upstream
+
+k8/syscall.c, port/syscallfmt.c and the generated port/systab.c read
+../port/sys.h rather than /sys/src/libc/9syscall/sys.h.
+
+port/print.c defines errfmt, so that %r works: libkern names it in its
+verb table, and upstream's is in libc, built on the rerrstr system
+call.  It is the 9front kernel's definition.
+
+mk/parse: its regular-expression rules are written the way mk reads
+them on this host -- the target anchored with '$' and the prerequisite
+quoted, so the \1 survives; the -D_DBGC_ flag in the sh spelling, since
+mk here runs recipes with sh; the path of sys.h and objtype taken from
+-v.  mk/portmkfile and k8/mkfile are rewritten against
+../../../mkconfig and ../../../mkfiles/mkfile-nix-amd64, with od where
+upstream used xd and the tree's ndate and ksize.  The "lib" section of
+a configuration is not consulted; the libraries are named in k8/mkfile.
+
+The ELF is linked with -P0x110000, the physical address of the text,
+which the tree's loader takes explicitly where upstream's 6l masked it
+out of every address.

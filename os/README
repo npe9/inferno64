@@ -1,6 +1,6 @@
 #	the kernels
 
-Three kernels are built from this directory.  Each has one directory and
+Four kernels are built from this directory.  Each has one directory and
 names nothing outside it; what is shared is the host toolchain in
 ../utils, the flavour-independent headers in ../include, and libraries
 such as libsec, libmp, libfis and libkern.
@@ -8,6 +8,8 @@ such as libsec, libmp, libfis and libkern.
 inferno		the native Inferno kernel
 9front		the 9front kernel, as vendored
 osprey		Osprey: 9front's kernel with the Osprey policy layer in it
+nix		NIX, rminnich's 9k with application cores, as vendored;
+		see nix/README
 
 #	what is inside one
 
@@ -19,6 +21,8 @@ rest as siblings.  A machine directory reads the portable code as
 port		the portable kernel
 pc		PC drivers, shared by that flavour's PC machines
 pc64		the amd64 PC machine
+k8		the amd64 PC machine, under the name nix gives it
+386		nix's drivers shared with its 386 kernel; source only
 riscv		RISC-V drivers, shared by that flavour's RISC-V machines;
 		source only, with no mkfile of its own
 virt		QEMU -M virt, riscv64 (Inferno only)
@@ -33,8 +37,8 @@ adapter, the one file where that layer and the kernel meet; and cmd, the
 user programs that drive it.
 
 Headers that belong to a target rather than to a source tree are in the
-target: Inferno/amd64/include, 9front/amd64/include, Osprey/include and
-Osprey/amd64/include.
+target: Inferno/amd64/include, 9front/amd64/include, Osprey/include,
+Osprey/amd64/include, nix/include and nix/amd64/include.
 
 #	elsewhere
 

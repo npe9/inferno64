@@ -508,3 +508,17 @@ os/inferno/boot/pc/pbs
 # emu objects and its generated root
 /emu/*/o.emu*
 /emu/*/*.root.c
+
+# the nix kernel: what os/nix/k8/mk generates, and what it installs
+/os/nix/k8/9k8cpufs
+/os/nix/k8/9k8cpufs.elf
+/os/nix/k8/k8cpufs.c
+/os/nix/k8/errstr.h
+/os/nix/k8/init.h
+/os/nix/k8/sipi.h
+/os/nix/k8/amd64l.h
+/os/nix/k8/lsipi.out
+/os/nix/port/systab.c
+/nix/*/9k8cpufs
+/nix/*/9k8cpufs.elf
+/nix/*/bin/*

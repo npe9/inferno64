@@ -71,15 +71,17 @@
   exception is a genuinely destructive action outside the tree.
 
 - Kernels are self-contained.  Each flavor owns a directory under `os/` --
-  `os/inferno`, `os/9front`, `os/osprey` -- and nothing else lives beside
-  them.  Inside one, the layout is the one Plan 9 and Inferno use: the
+  `os/inferno`, `os/9front`, `os/osprey`, `os/nix` -- and nothing else lives
+  beside them.  Inside one, the layout is the one Plan 9 and Inferno use: the
   portable kernel in `port`, one directory per machine (`pc`, `pc64`, ...)
   beside it, and `ip`, `boot` and the rest as siblings.  A machine
   directory reads the portable code as `../port`.  Headers that belong to
   a target rather than to a source tree live in the target -- `Osprey/
-  amd64/include`, `9front/amd64/include`, `Inferno/amd64/include`.  No file, header, mkfile or build rule under one
+  amd64/include`, `9front/amd64/include`, `Inferno/amd64/include`,
+  `nix/amd64/include`.  No file, header, mkfile or build rule under one
   flavor may name another flavor's source directory or target tree: osprey
-  builds osprey, inferno builds inferno, 9front builds 9front.  Copy a file
+  builds osprey, inferno builds inferno, 9front builds 9front, nix builds
+  nix.  Copy a file
   into the flavor that needs it rather than reaching across.
 - What is shared is the host toolchain and the flavor-independent sources:
   the compilers and loaders in `utils`, `libmach`, the top-level `include`,

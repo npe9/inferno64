@@ -1,0 +1,134 @@
+# Recipes are run by the host shell, sh on this build machine; mk
+# does not read MKSHELL.  Scripts that need rc name it through
+# $KERNELSHELL.
+<../../../mkconfig
+
+CONF=k8cpufs
+CONFLIST=k8cpufs
+
+SYSTARG=nix
+OBJTYPE=amd64
+objtype=$OBJTYPE
+<$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
+
+FLAVOR=nix
+FLAVDIR=$ROOT/os/$FLAVOR
+PORTDIR=$FLAVDIR/port
+IPDIR=$FLAVDIR/ip
+BOOTDIR=$FLAVDIR/boot
+MKDIR=$FLAVDIR/mk
+PORTLIB=$FLAVDIR/lib
+TARGETLIB=$ROOT/$FLAVOR/$OBJTYPE/lib
+INSTALLDIR=$ROOT/$FLAVOR/$OBJTYPE
+KERNELSHELL=rc
+p=9
+
+default:V:	$p$CONF
+
+# must match mem.h: KTZERO is where the kernel is linked, KTZEROP
+# where a boot loader puts it in physical memory, KTZERO-KZERO.
+KTZERO=0xffffffff80110000
+KTZEROP=0x110000
+SIPIADDR=0xffffffff80003000
+
+# The configuration file is parsed by mk/parse, as upstream does it.
+# Upstream asks it for everything; here the root file system rules
+# (-mkrootrules) and the library list (-mklib) are left out.  The root
+# rules would rebuild $CONF.root.s from user programs this tree does
+# not build, and the libraries come from below rather than /$objtype/lib.
+<| awk -v objtype=$objtype -f $MKDIR/parse -- -mkdevlist -mkmach -mkport -mkrules $CONF
+<$MKDIR/bootmkfile
+<$MKDIR/portmkfile
+
+OBJ=$MACH $CONF.root.$O $DEVS $PORT
+
+LIB=\
+	$TARGETLIB/libnix.a\
+	$ROOT/Inferno/$OBJTYPE/lib/libsec.a\
+	$ROOT/Inferno/$OBJTYPE/lib/libmp.a\
+	$ROOT/Inferno/$OBJTYPE/lib/libkern.a\
+
+$TARGETLIB/libnix.a:V:
+	{ cd $PORTLIB; mk install; }
+
+# The a.out kernel is what the tree's own tools read (acid, inm); the
+# ELF32 wrapper is what a multiboot loader such as qemu -kernel loads.
+$p$CONF:	$CONF.$O $OBJ $LIB
+	$LD $LDFLAGS -o $target -T$KTZERO -R4096 -l $OBJ $CONF.$O $LIB
+	$LD $LDFLAGS -o $target.elf -H5 -8 -T$KTZERO -P$KTZEROP -l $OBJ $CONF.$O $LIB
+	$KSIZE $target
+
+install:V:	$p$CONF
+	cp $p$CONF $p$CONF.elf $INSTALLDIR/
+
+# init.out is the user-mode program the kernel starts first.  It links
+# init9.$O and initcode.$O against the nix user libc, which this tree
+# does not build; the copy here was taken from upstream and is an input.
+init.h:		init.out
+	{ echo 'uchar initcode[]={'
+	  od -A n -v -t x1 $prereq |
+		awk '{for(i = 1; i <= NF; i++) printf "0x%s,", $i; print ""}'
+	  echo '};'; } > $target
+
+l32p.$O:	${objtype}l.h
+l64idt.$O:	${objtype}l.h
+l64syscall.$O:	${objtype}l.h
+l64v.$O:	${objtype}l.h
+lsipi.$O:	${objtype}l.h
+l64acidt.$O:	${objtype}l.h
+l64acsyscall.$O:	${objtype}l.h
+
+${objtype}l.h:	$objtype.h
+	$KERNELSHELL $MKDIR/mkenum $objtype.h > $target
+
+apic.$O:	apic.h io.h
+devarch.$O:	$PORTDIR/error.h $ROOT/nix/$objtype/include/ureg.h
+fpu.$O:		amd64.h
+fpu.$O:		$ROOT/nix/$objtype/include/ureg.h
+ioapic.$O:	apic.h io.h
+main.$O:	$ROOT/nix/include/pool.h init.h
+memory.$O:	amd64.h
+mmu.$O:		amd64.h
+mp.$O:		apic.h
+sipi.$O:	apic.h sipi.h
+svm.$O:		amd64.h
+svm.$O:		$ROOT/nix/$objtype/include/ureg.h
+syscall.$O:	$PORTDIR/error.h $PORTDIR/sys.h
+syscall.$O:	$ROOT/nix/include/tos.h $ROOT/nix/$objtype/include/ureg.h
+syscall.$O:	amd64.h
+trap.$O:	$PORTDIR/error.h io.h
+trap.$O:	$ROOT/nix/include/tos.h $ROOT/nix/$objtype/include/ureg.h
+
+devaoe.$O:	$PORTDIR/error.h $PORTDIR/netif.h $IPDIR/ip.h
+devaoe.$O:	../386/aoe.h etherif.h
+devether.$O:	$PORTDIR/error.h $PORTDIR/netif.h etherif.h
+devrtc.$O:	$PORTDIR/error.h
+ether8169.$O:	$PORTDIR/error.h $PORTDIR/ethermii.h $PORTDIR/netif.h
+ether8169.$O:	etherif.h
+ether82557.$O:	$PORTDIR/netif.h
+ether82557.$O:	etherif.h io.h
+etherigbe.$O:	$PORTDIR/error.h $PORTDIR/ethermii.h $PORTDIR/netif.h
+etherigbe.$O:	etherif.h io.h
+etherm10g.$O:	$PORTDIR/error.h $PORTDIR/netif.h
+etherm10g.$O:	etherif.h io.h
+etherm10g.$O:	../386/etherm10g2k.i ../386/etherm10g4k.i
+i8259.$O:	io.h
+kbd.$O:		$PORTDIR/error.h io.h
+pci.$O:		io.h
+sdaoe.$O:	$PORTDIR/error.h $PORTDIR/netif.h $PORTDIR/sd.h
+sdaoe.$O:	../386/aoe.h etherif.h io.h
+sdscsi.$O:	$PORTDIR/error.h
+
+random.$O:	$PORTDIR/error.h
+devtube.$O:	$PORTDIR/tube.h
+syssem.$O:	$PORTDIR/tube.h
+
+# The startup IPI handler is linked at its real-mode address and
+# turned into a C array.  od rather than xd: xd is a Plan 9 program
+# and is not among the host tools this tree builds.
+sipi.h:		lsipi.$O
+	$LD -o lsipi.out -T$SIPIADDR -R4 -l -s $prereq
+	{ echo 'uchar sipihandler[]={'
+	  od -A n -v -t x1 -j 40 lsipi.out |
+		awk '{for(i = 1; i <= NF; i++) printf "0x%s,", $i; print ""}'
+	  echo '};'; } > $target

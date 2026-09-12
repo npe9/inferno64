@@ -1,0 +1,38 @@
+<../../../mkconfig
+
+SYSTARG=nix
+OBJTYPE=amd64
+<$ROOT/mkfiles/mkfile-nix-amd64
+# fmtdef.h, for errfmt.c, is the private header of the fmt library
+# the kernel links, which is the tree's libkern.
+CFLAGS=$CFLAGS -I$ROOT/libkern
+
+# The part of the nix user libc and libip the kernel links, taken from
+# upstream sys/src/libc and sys/src/libip.  Everything else the kernel
+# needs from a C library comes from the tree's own libkern, libsec and
+# libmp, built once for every target.
+LIB=$ROOT/nix/$OBJTYPE/lib/libnix.a
+OFILES=\
+	bo.$O\
+	classmask.$O\
+	ctype.$O\
+	eipfmt.$O\
+	equivip.$O\
+	getcallerpc.$O\
+	ipaux.$O\
+	parseether.$O\
+	parseip.$O\
+	pool.$O\
+	sprint.$O\
+	strncat.$O\
+
+all install:V: $OFILES $LIB
+
+$LIB: $OFILES
+	iar vu $target $prereq
+
+%.$O: %.c
+	$CC $CFLAGS $stem.c
+
+%.$O: %.s
+	$AS $AFLAGS $stem.s
