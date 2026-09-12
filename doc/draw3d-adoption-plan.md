@@ -885,6 +885,58 @@ under `wm` with the GPU live and no panic. That was the unbalanced
 `waserror()`/`poperror()` on the `'K'` failure path, fixed earlier in this
 run.
 
+### The nine ports re-checked after all of the above — 2026-09-11
+
+`framegrab(1)`, three runs each, no window manager (which is how the
+original check was run: the display *is* what the program drew into, so
+the corner pixel `framegrab` calls background is the port's own clear
+colour), device against software, pixels that are not that background:
+
+| port | device | software |
+| --- | --- | --- |
+| `shading` | 101604 101533 101579 | 100455 100436 100455 |
+| `zoneout` | 258897 259132 305324 | 305324 258897 258897 |
+| `wenceslas` | 33169 26741 33169 | 26741 39214 33169 |
+| `rotatetank` | 20427 20432 20471 | 20459 20500 20461 |
+| `pick3d` | 42624 49280 49466 | 36953 36953 36953 |
+| `shadow` | 29241 284736 29241 | 14922 14922 14922 |
+| `3dpoly` | 74829 305537 305537 | 24788 25049 24788 |
+| `spriteplot3d` | 30127 25470 22527 | — 22561 22789 |
+| `castlefrankenstein` | 305233 305233 305233 | 305233 305233 305233 |
+
+**The failure this document recorded is gone.** `rotatetank` was 14503 —
+chrome and caption with nothing between them — in four runs out of six,
+and is now 20427/20432/20471 against software's 20459/20500/20461: three
+runs out of three with the picture, agreeing to 0.3%. That was the
+present-consumes-the-queue race, and it went with `metal_flush_geom()`.
+
+**Two things the table does not settle, both new.** `shadow`, `3dpoly`
+and `pick3d` now come out with *more* lit than software, not less, and
+three of those readings are the whole screen. A colour census says why in
+at least one case: `pick3d`'s device frame has 266482 pixels of
+`#c4c0b4`, which is emu's own soft desktop Paper colour, where the
+software frame has white — so the readback composed the desktop where the
+port's own background belongs, and `framegrab`'s background-is-the-corner
+-pixel rule then counts the entire frame. That is a composition question
+in `metal_readback_geom()`'s under/overlay ordering, not a clip or a
+transform one, and it is a separate investigation.
+
+The other is that `framegrab`'s metric cannot be used under `wm`: the
+corner pixel is then the desktop, and a single unit of difference there
+makes every pixel in the frame count as lit. A device-against-software
+comparison under a window manager needs a metric confined to the window.
+
+### `INFERNO_NOGPU` did not turn off the GPU — fixed 2026-09-11
+
+`gpudrawellipse` was assigned outside the `INFERNO_NOGPU` guard, so
+circles and ellipses went to Metal even with the one switch this tree has
+for "draw it on the CPU instead" set. A control that leaves one primitive
+running is worse than no control, because the difference it fails to
+explain looks like evidence. Verified by printing the hook table after it
+is built: with the assignment outside the guard and `INFERNO_NOGPU=1`,
+`line=0 fill=0 3d=0 ellipse=104459c7c sprite=0`; with it inside, all five
+are nil, and with the variable unset all five are wired.
+
 ### Phase 2a — `litcolour` allocated a colour image per fill
 
 Fixed 2026-09-10, and it is the reason a Gouraud scene could not be run

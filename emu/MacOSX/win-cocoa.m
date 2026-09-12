@@ -752,6 +752,15 @@ metal_init(void)
 		gpudrawplot = metal_queue_plot;
 		gpudrawsprite = metal_queue_sprite;
 		gpudrawsprite2d = metal_queue_sprite2d;
+		/*
+		 * Inside the guard, where it always belonged: circles and
+		 * ellipses went to the GPU even with INFERNO_NOGPU set, so the
+		 * one switch this tree has for "draw it on the CPU instead"
+		 * did not turn all of it off.  A control that leaves one
+		 * primitive running is worse than no control, because the
+		 * difference it fails to explain looks like evidence.
+		 */
+		gpudrawellipse = metal_queue_ellipse;
 	}
 	gpuimagealloc = metal_image_alloc;
 	gpuimagefree = metal_image_free;
@@ -764,7 +773,6 @@ metal_init(void)
 	gpuvideostart = metal_video_start;
 	gpuvideonext = metal_video_next;
 	gpuvideoclose = metal_video_close;
-	gpudrawellipse = metal_queue_ellipse;
 	gpudrawflush = metal_flush_geom;
 	gpudrawreadback = metal_readback_geom;
 	gpudrawzclear = metal_zclear;
