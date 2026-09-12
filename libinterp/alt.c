@@ -59,7 +59,7 @@ altunmark(Channel *c, WORD *ptr, Prog *p, int sr, Channel **sel, int dn)
 		if(c != H && c->recv->prog)
 			cqdelp(&c->recv, p);
 		if(sr == 1 && *sel == c) {
-			W(p->R.d) = dn;
+			W(p->reg.d) = dn;
 			p->ptr = ptr + 1;
 			ptr[0] = n;
 			*sel = nil;
@@ -152,7 +152,7 @@ altdone(Alt *a, Prog *p, Channel *sel, int sr)
 				cqdelp(&c->send, p);
 			if(sr == 0 && c == sel) {
 				p->ptr = ac->ptr;
-				W(p->R.d) = n;
+				W(p->reg.d) = n;
 				sel = nil;
 			}
 		}
@@ -172,7 +172,7 @@ altdone(Alt *a, Prog *p, Channel *sel, int sr)
 					cqdelp(&c->recv, p);
 				if(sr == 1 && c == sel) {
 					p->ptr = ac->ptr;
-					W(p->R.d) = n;
+					W(p->reg.d) = n;
 					sel = nil;
 				}
 			}
@@ -264,7 +264,7 @@ altgone(Prog *p)
 	Alt *a;
 
 	if (p->state == Palt) {
-		a = p->R.s;
+		a = p->reg.s;
 		altdone(a, p, nil, -1);
 		p->kill = "alt channel hungup";
 		addrun(p);
@@ -286,8 +286,8 @@ xecalt(int block)
 	if(nrdy == 0) {
 		if(block) {
 			delrun(Palt);
-			p->R.s = R.s;
-			p->R.d = R.d;
+			p->reg.s = R.s;
+			p->reg.d = R.d;
 			R.IC = 1;
 			R.t = 1;
 			return;

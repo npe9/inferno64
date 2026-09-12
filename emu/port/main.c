@@ -435,6 +435,51 @@ enverror(void)
 	return up->env->errstr;
 }
 
+/*
+ * libinterp is shared between emu and the native kernels, and the
+ * crash-hunt hooks in gc.c, heap.c and xec.c call dumpstack() from
+ * that shared code -- but until now dumpstack() existed only in each
+ * board's trap.c, so nothing in emu defined it and emu had not
+ * linked since those hooks landed.  (The stale MacOSX .a hid it: the
+ * last emu binary on this tree predates them.)  The hooks are
+ * declared temporary at their call sites; this is the host-process
+ * answer to the same question for as long as they are there.
+ *
+ * A board dumps the interrupted kernel stack.  emu is an ordinary
+ * host process, so the honest analogue is the calling thread's C
+ * backtrace.  backtrace(3) is not portable across the hosts under
+ * emu/ -- Nt, Plan9, Irix, AIX and Unixware have no <execinfo.h> --
+ * so it is used where it exists and the rest say plainly that they
+ * cannot answer, rather than printing nothing and letting the
+ * caller's diagnostic read as an empty stack.
+ */
+#if defined(__APPLE__) || (defined(__linux__) && defined(__GLIBC__))
+#define HAVE_EXECINFO 1
+#include <execinfo.h>
+#endif
+
+void
+dumpstack(void)
+{
+#ifdef HAVE_EXECINFO
+	void *pc[64];
+	int n;
+
+	n = backtrace(pc, nelem(pc));
+	fprint(2, "dumpstack: host backtrace, %d frames, pid %d\n",
+		n, up != nil ? up->pid : -1);
+	/*
+	 * Written straight to fd 2 by libc: the symbol table lookup
+	 * allocates, and this is called from the allocator and from the
+	 * garbage collector, where the pools are exactly what is not to
+	 * be trusted.
+	 */
+	backtrace_symbols_fd(pc, n, 2);
+#else
+	fprint(2, "dumpstack: no host backtrace on %s\n", hosttype);
+#endif
+}
+
 void
 panic(char *fmt, ...)
 {

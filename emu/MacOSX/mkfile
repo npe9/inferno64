@@ -28,6 +28,31 @@ COCOAFLAGS=
 
 <mkfile-$OBJTYPE	# arm64 overrides CONF/SYSLIBS/COCOA*
 
+# Sanitiser builds -- the invocation is at the foot of this comment.
+# These are the
+# instruments doc/dis-parallel-plan.ms calls step 0: a parallel
+# interpreter written without a race detector is not a project anyone
+# finishes.  Kept here rather than as an ad-hoc invocation because the
+# one sanitiser binary this tree had was built by hand, went stale, and
+# then cost a round of the crash hunt a false lead.
+#
+# The object files are NOT interchangeable with an ordinary build --
+# `mk clean` between them -- and the binary is left as o.$CONF like any
+# other, so install it by hand under a name that says what it is.
+#
+# ASAN cannot see inside the Dis heap: poolalloc() carves objects out of
+# one large allocation, so the sanitiser sees a single live block and
+# none of the objects in it.  It catches stack and global errors (which
+# is how it found schedmod()'s bare Frame f) and nothing about a Dis
+# object overwriting its neighbour.  Making it useful for that needs
+# __asan_poison_memory_region() at poolalloc/poolfree, which is not
+# done.  TSan has no such limitation: it instruments accesses, not
+# allocations, and pool memory is instrumented like any other.
+# SANCFLAGS/SANLDFLAGS come from the environment, because mk takes a
+# command-line value beginning with '-' for an attribute.  See above.
+#	SANCFLAGS='-fsanitize=thread -fno-omit-frame-pointer' \
+#	SANLDFLAGS=-fsanitize=thread mk
+
 # Console emu-g: drop AppKit main() / Cocoa (mkfile-arm64 defaults).
 <| if [ "$CONF" = emu-g ]; then echo 'COCOAOBJ='; echo 'COCOAFLAGS='; echo 'SYSLIBS=-lm -lpthread -framework CoreFoundation -framework IOKit -framework AudioToolbox'; fi
 
@@ -48,7 +73,7 @@ CFLAGS='-DROOT="'$ROOT'"'\
 	-DEMU -I. -I../port\
 	-I$ROOT/$SYSTARG/$OBJTYPE/include\
 	-I$ROOT/include -I$ROOT/libinterp/w$DISWORD -I$ROOT/libinterp\
-	$CTHREADFLAGS $CFLAGS $EMUOPTIONS\
+	$CTHREADFLAGS $CFLAGS $EMUOPTIONS $SANCFLAGS\
 
 KERNDATE=`{$NDATE}
 
@@ -68,7 +93,7 @@ $O.$CONF:	$OBJ $COCOAOBJ $CONF.c $CONF.root.h $LIBFILES
 	# main.o is sensitive to COCOAFLAGS (-Dmain=emumain); always rebuild.
 	$CC $CFLAGS $COCOAFLAGS -I. ../port/main.c
 	$CC $CFLAGS '-DKERNDATE='$KERNDATE $CONF.c
-	$LD $LDFLAGS -o $target $OBJ $COCOAOBJ $CONF.$O $LIBFILES $SYSLIBS
+	$LD $LDFLAGS $SANLDFLAGS -o $target $OBJ $COCOAOBJ $CONF.$O $LIBFILES $SYSLIBS
 
 install:V: $O.$CONF
 	cp $O.$CONF $INSTALLDIR/$CONF

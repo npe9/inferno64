@@ -16,19 +16,433 @@ void	vmachine(void*);
 struct
 {
 	Lock	l;
-	Prog*	runhd;
-	Prog*	runtl;
 	Prog*	head;
 	Prog*	tail;
 	Rendez	irend;
-	int	idle;
+	int	nidle;		/* interpreters parked on idlevmq */
 	int	nyield;
 	int	creating;
-	Proc*	vmq;		/* queue of procs wanting vm */
-	Proc*	vmqt;
-	Proc*	idlevmq;	/* queue of procs wanting work */
+	Proc*	idlevmq;	/* interpreters with no program to run */
 	Atidle*	idletasks;
+	Prog*	ghead;		/* global run queue; see gput() */
+	Prog*	gtail;
+	int	ngq;
 } isched;
+
+/*
+ * The global run queue, on Go's shape.
+ *
+ * A per-P local run queue cannot simply replace the shared one: a Prog
+ * that one context queues would be invisible to another, and if that
+ * context then blocks, the program never runs.  Go does not split it
+ * either -- runqput overflows a bounded local queue into a global one
+ * and runqget falls back to the global queue before stealing.  The
+ * global queue is not a remnant there; it is what makes the local ones
+ * correct.
+ *
+ * So it is built first, while there is still one P, because it is the
+ * only piece of that design that can be exercised before the last one
+ * lands.  Runqmax is the local bound.  At its default nothing overflows
+ * -- the deepest local queue this workload produces is 2, measured --
+ * so this path is inert unless the bound is lowered, and it is lowered
+ * on purpose to test it.  That is the point of having it: a mechanism
+ * whose default is "never runs" is untested, and the bound is the
+ * constant to falsify.
+ */
+int Runqmax = 256;	/* MULTICORE - local run queue bound, Go's is 256 */
+/*
+ * A context per interpreter -- Go's P, one held by each M that runs.
+ *
+ * There is still exactly one vmlock, so only one interpreter executes
+ * at a time and only one of these is live at a time.  That is what
+ * makes this safe to land before the collector: a second P exists, is
+ * claimed, and is used, but never concurrently with the first.
+ *
+ * The local run queue has to be flushed back to the global queue when
+ * an interpreter gives up the lock.  A Prog left on the local queue of
+ * an M that does not run again is stranded -- invisible to every other
+ * M, exactly the hazard that made the global queue a prerequisite.
+ * Go's answer at this point is stealing; under a global lock, handing
+ * the work back is simpler and is correct for the same reason.
+ */
+static void gput(Prog*);	/* defined below */
+
+extern int parallelvm;		/* defined below, with stoptheworld() */
+
+static Pctx pctxpool[MAXPCTX];
+static int npctxused;
+
+static Pctx*
+claimctx(void)
+{
+	Pctx *c;
+
+	lock(&isched.l);
+	/*
+	 * The first interpreter takes the context that already exists.
+	 * xec.c's _pctx is what curP has pointed at since boot, and the
+	 * programs queued before any interpreter ran are on its local
+	 * queue.  Handing the first claimer a fresh context orphans them:
+	 * the run queue is abandoned, nothing is ever picked, and the boot
+	 * dies with zero scheduler passes.  Measured, not reasoned -- that
+	 * is exactly what the first version of this did.
+	 */
+	if(npctxused == 0){
+		npctxused = 1;
+		pctxs[0]->owner = up;
+		unlock(&isched.l);
+		return pctxs[0];	/* == &_pctx, already in pctxs[] */
+	}
+	if(npctxused >= MAXPCTX){
+		static int said;
+
+		/*
+		 * Sharing here was described as "correct, just not
+		 * parallel".  That is true with the VM lock and false
+		 * without it: two executors on one Pctx are two executors on
+		 * one Dis register file, which is the whole thing curP was
+		 * made per-executor to avoid.  It was measured doing damage
+		 * -- a heap object dropped twice, by executors 15 and 17,
+		 * both reporting the same context.
+		 *
+		 * MAXPCTX is now large enough that this should not be
+		 * reached.  If it is, say so once rather than silently
+		 * handing out a shared register file: at parallelvm=0 the
+		 * old behaviour is still correct, and at parallelvm=1 this
+		 * line is the warning that the pool needs to be bigger or
+		 * that contexts need releasing when an interpreter blocks.
+		 */
+		if(said++ == 0)
+			print("claimctx: pool of %d exhausted, sharing"
+				" (unsafe while parallelvm=%d)\n",
+				MAXPCTX, parallelvm);
+		unlock(&isched.l);
+		return pctxs[0];
+	}
+	c = &pctxpool[npctxused - 1];
+	c->owner = up;
+	pctxs[npctx++] = c;
+	npctxused++;
+	unlock(&isched.l);
+	return c;
+}
+
+/*
+ * Flush THIS process's context, not the global curP.
+ *
+ * curP is a global.  While the VM lock is held that is safe, because
+ * only one interpreter runs and the global names its context.  With
+ * parallelvm forced to 1 it is not: every interpreter assigns the
+ * global when it acquires, so vmrelease() flushed whichever context
+ * ran last rather than its own, walked a run queue belonging to
+ * someone else, and took an alignment fault on a link field that held
+ * string bytes.  The pc was flushlocal+0x18 under vmrelease+0x1c.
+ *
+ * up->pctx is the right answer here and is correct in both modes.  It
+ * does not fix the general case: every other use of curP in the
+ * interpreter has the same problem the moment contexts run at once,
+ * which is why the plan's Phase 1b is "curR becomes per-executor" and
+ * why that is what has to land next.
+ */
+static void
+flushlocal(void)
+{
+	Pctx *c;
+	Prog *p;
+
+	c = (Pctx*)up->pctx;
+	if(c == nil)
+		return;
+	while(c->runhd != nil){
+		p = c->runhd;
+		c->runhd = p->link;
+		if(c->runhd == nil)
+			c->runtl = nil;
+		c->nlocal--;
+		gput(p);
+	}
+}
+
+/*
+ * Stop-the-world, the shape Phase 5 of doc/dis-parallel-plan.ms chose
+ * and the shape Go uses for the phases that need it.
+ *
+ * It exists because of what the VM lock still protects.  With a context
+ * per interpreter the allocator is already safe (poolalloc takes the
+ * pool's own ilock) and the refcounts are already atomic; what is left
+ * is libinterp/gc.c's mark state, which lives in file-scope statics --
+ * one sweep position, one pointer table, one epoch.  Two contexts
+ * inside rungc() would interleave on all of it.  Stopping the others
+ * for the duration makes a serial marker correct without giving that
+ * state a per-collection home first, and parallel marking can follow.
+ *
+ * A context is at a safepoint when no quantum is open on it: curP->inxec
+ * is 0, which means isave() has written its registers back and the
+ * collector can trust p->reg.  A context blocked in a system call is
+ * therefore already at a safepoint and does not have to be waited for,
+ * which is the same reasoning Go uses to avoid waiting on an M in a
+ * syscall.
+ *
+ * parallelvm is the switch.  At 0 the VM lock is taken as before and
+ * this is inert -- nothing else can be running, so stopping the world
+ * stops nothing.  At 1 the lock is not taken and this is what keeps the
+ * collector correct.  It defaults to 0 because that is the tested
+ * configuration, and the other one is turned on to test it.
+ */
+int parallelvm = 0;	/* MULTICORE: 1 = no VM lock, stop-the-world GC */
+int gcstw;		/* a collection wants every other context stopped */
+int stwwaits;		/* MULTICORE INSTRUMENTATION - temporary */
+
+/* how many contexts other than this one have a quantum open */
+static int
+othersrunning(void)
+{
+	int i, n;
+
+	n = 0;
+	for(i = 0; i < npctx; i++)
+		if(pctxs[i] != curP && pctxs[i]->inxec)
+			n++;
+	return n;
+}
+
+static Proc *gcstwproc;
+
+/*
+ * libinterp/heap.c's hook: a collection is running and this process is
+ * not the one running it, so destroy() must hand the object over
+ * rather than free it underneath the collector.
+ */
+static int
+gcstwothers(void)
+{
+	return gcstw != 0 && up != gcstwproc;
+}
+
+int stwgaveup;		/* MULTICORE INSTRUMENTATION - temporary */
+int gcidlegaveup;	/* idle collections abandoned; see execatidle() */
+
+/*
+ * Stop every other context, or give up trying.
+ *
+ * Bounded, and that is the point.  The wait was "while somebody has a
+ * quantum open, sched()", which is a spin: this process yields, every
+ * other interpreter yields in enterquantum()'s withdraw-and-retry loop,
+ * and the one process that has to finish its quantum to clear the flag
+ * is the one that does not get a processor.  Measured, not supposed --
+ * 44 of 51 stalls across a 28-boot comparison named the same blocker,
+ * a context whose owner sat in Ready with a quantum open while the
+ * collector logged "stw: 200000 waits".
+ *
+ * Returning 0 abandons the collection, and that is safe in a way that
+ * waiting is not: a collection that does not happen costs memory until
+ * the next one, and there is always a next one, while a collection
+ * that cannot start costs the boot.  Parking rather than spinning, as
+ * Go does with an M, is the better answer and a larger change.
+ *
+ * Bounded by time, not by a count of tries, and the difference is not
+ * cosmetic.  A count measures how fast this loop goes round, which is
+ * whatever the compiler and the console happen to make it: with an
+ * unrelated print in the loop, two thousand tries spanned long enough
+ * for other contexts to finish their quanta and the world stopped;
+ * with the print removed the same two thousand tries elapsed too
+ * quickly to ever succeed, the collector gave up every time, and shell
+ * loop iterations fell from 22 to 4 across nine boots.  What the
+ * waiting is for is wall-clock time for somebody else's quantum to
+ * end, so that is what to bound.
+ */
+int
+stoptheworld(void)
+{
+	ulong start;
+	int tries;
+
+	if(parallelvm == 0)
+		return 1;	/* the VM lock already is one */
+	if(gcstopped == nil)
+		gcstopped = gcstwothers;	/* the handover; see heap.c */
+	gcstwproc = up;
+	gcstw = 1;
+	coherence();
+	start = m->ticks;
+	for(tries = 0; othersrunning() > 0; tries++){
+		stwwaits++;
+		if((ulong)(m->ticks - start) > HZ/4){
+			gcstw = 0;	/* let them run; collect next time */
+			coherence();
+			if(stwgaveup++ == 0)
+				print("stw: gave up after %d tries, %lud ticks,"
+					" cpu%d %s\n", tries,
+					(ulong)(m->ticks - start),
+					m->machno, up->text);
+			return 0;
+		}
+		sched();
+	}
+	return 1;
+}
+
+/*
+ * Claim a quantum on this context, and do not return while a collection
+ * is running.  The other half of stoptheworld().
+ *
+ * Publish first, then re-check.  Testing gcstw and only afterwards
+ * setting inxec leaves a window: a context can pass the test, the
+ * collector can then set gcstw and find othersrunning() == 0 because
+ * inxec is not set yet, and marking begins while this context enters a
+ * quantum.  The panic that showed up with parallelvm forced to 1 was in
+ * poolalloc and poolfree, which is what a collector running against a
+ * live mutator looks like.
+ *
+ * So claim the quantum first, make the claim visible, and only then
+ * look at gcstw; if a collection has started, withdraw the claim and
+ * wait.  The collector sets gcstw and then reads inxec, so the two
+ * orderings cannot both miss.
+ *
+ * Two callers: vmachine() before each quantum, and acquire(), where an
+ * interpreter coming back from a blocking Dis system call is entering a
+ * quantum just as much -- isave() gave the claim up on the way in.
+ */
+static void
+enterquantum(void)
+{
+	for(;;){
+		curP->inxec = 1;
+		coherence();
+		if(gcstw == 0)
+			return;
+		curP->inxec = 0;
+		coherence();
+		sched();
+	}
+}
+
+/*
+ * One collection at a time.
+ *
+ * stoptheworld() waits for contexts that have a quantum open.  A second
+ * collector has none -- it withdrew its own claim before calling -- so
+ * it walks straight through, and two collectors mark and sweep the same
+ * heap at once.  That is a double free: "alloc:D2B:poolfree 78faf58
+ * (from poolfree+0x1dd/rungc+0x322)", a block swept twice.
+ *
+ * gclock() does not prevent it and is not meant to.  It is a counter
+ * that says "do not collect now", which rungc() honours by returning;
+ * two collectors both read gchalt as 0 and both proceed.
+ *
+ * A QLock, not a Lock: this is held for a whole collection, and the
+ * holder can sleep in the allocator.  A process waiting here is
+ * Queueing with no quantum open, so it does not hold up the collection
+ * it is waiting for.  Go has one collector at a time for the same
+ * reason and gates it the same way.
+ */
+static QLock gcsema;
+
+static void	starttheworld(void);
+int		stoptheworld(void);
+
+/*
+ * Returns whether it actually collected.  A caller that loops until the
+ * collector has made progress has to know, or it spins: execatidle()
+ * waits for gccolor to advance, gccolor only advances when rungc()
+ * runs, and rungc() does not run when the world will not stop.  That
+ * turned the bounded give-up below into a tighter loop than the
+ * unbounded wait it replaced -- collect(), two thousand sched() calls,
+ * give up, collect() again, yielding only every 256th pass.
+ *
+ * Measured by its absence: removing an unrelated print from the wait
+ * loop made each pass cheaper, sped the spin up, and cut shell loop
+ * iterations from 18 to 2 across eight boots.  The print had been
+ * throttling it.
+ */
+int
+collect(Prog *head)
+{
+	int stopped;
+
+	qlock(&gcsema);
+	stopped = stoptheworld();
+	if(stopped)
+		rungc(head);
+	starttheworld();
+	qunlock(&gcsema);
+	return stopped;
+}
+
+static void
+starttheworld(void)
+{
+	if(parallelvm == 0)
+		return;
+	gcstw = 0;
+	coherence();
+}
+
+enum { Gqevery = 61 };	/* Go's schedule() uses 61 for the same reason */
+int gqtick;
+int gqput, gqget;	/* MULTICORE INSTRUMENTATION - temporary */
+
+static void
+gput(Prog *p)
+{
+	lock(&isched.l);
+	p->link = nil;
+	if(isched.gtail != nil)
+		isched.gtail->link = p;
+	else
+		isched.ghead = p;
+	isched.gtail = p;
+	isched.ngq++;
+	gqput++;
+	unlock(&isched.l);
+}
+
+static Prog*
+gget(void)
+{
+	Prog *p;
+
+	lock(&isched.l);
+	p = isched.ghead;
+	if(p != nil){
+		isched.ghead = p->link;
+		if(isched.ghead == nil)
+			isched.gtail = nil;
+		isched.ngq--;
+		gqget++;
+		p->link = nil;
+	}
+	unlock(&isched.l);
+	return p;
+}
+
+/* is p on the global queue?  used only by delrunq() */
+static int
+gdel(Prog *p)
+{
+	Prog *f, *prev;
+
+	lock(&isched.l);
+	prev = nil;
+	for(f = isched.ghead; f != nil; f = f->link){
+		if(f == p)
+			break;
+		prev = f;
+	}
+	if(f == nil){
+		unlock(&isched.l);
+		return 0;
+	}
+	if(prev == nil)
+		isched.ghead = p->link;
+	else
+		prev->link = p->link;
+	if(p == isched.gtail)
+		isched.gtail = prev;
+	isched.ngq--;
+	unlock(&isched.l);
+	return 1;
+}
 
 int	bflag;
 int	cflag;
@@ -37,6 +451,134 @@ uvlong	gcidle;
 uvlong	gcidlepass;
 uvlong	gcpartial;
 int keepbroken = 1;
+int nvm;	/* MULTICORE INSTRUMENTATION - temporary: VM holders */
+int maxnvm;
+/*
+ * MULTICORE INSTRUMENTATION - temporary.  nvm above answers "how many
+ * processes hold the VM lock", and with one global vmlock that is 1 by
+ * construction, which says nothing about whether there is parallelism
+ * to win.  maxnrunq answers the question that actually decides whether
+ * Phase 1b and Phase 5 are worth their risk: how many Dis programs are
+ * READY at the same moment.  A high-water mark of 1 on this workload
+ * would mean a per-executor register file buys nothing here, and the
+ * measurement is much cheaper than the work.
+ *
+ * Measured by walking curP->runhd at the scheduler's own pick rather
+ * than by a counter incremented in addrun().  The queue is inserted
+ * into and removed from in five places, not just addrun()/delrun()/
+ * delrunq() -- delprog() unlinks a head directly, and the Prog that
+ * takes the VM lock is pushed on the front -- so a maintained counter
+ * would drift.  The walk is once per quantum, not once per queue
+ * operation, and is capped so its cost is bounded whatever the queue
+ * does.  It runs under the VM lock, which is what serialises the queue.
+ */
+enum { Runqcap = 64 };
+int maxnrunq;
+int nrunqmismatch;	/* MULTICORE INSTRUMENTATION - temporary */
+int maxvmq;
+int vmqbad;
+uvlong vmpasses;	/* MULTICORE INSTRUMENTATION - temporary */
+uvlong vmblocked;
+
+/*
+ * Dis executes one program at a time, system-wide.
+ *
+ * This is not a scaling choice, it is what the interpreter is.  The
+ * virtual machine's register set is the single global REG R
+ * (libinterp/xec.c:11); irestore() loads it from a Prog and isave()
+ * stores it back (libinterp/xec.c:2280); and every JIT backend
+ * compiles the absolute address of that one object into the code it
+ * emits -- comp-amd64.c alone has eight con((uintptr)&R, RTMP).  Two
+ * processors interpreting at once share one register file.
+ *
+ * The isched.idle/vmq/idlevmq handshake this replaces was meant to be
+ * that exclusion and was not.  Instrumenting vmachine()'s xec() call
+ * with a counter showed ten kernel processes inside xec() at once on a
+ * four processor boot; "movp: bad sv", "movp: bad dv-freed" and the
+ * decref underflows all came from there.
+ *
+ * A QLock, not a Lock: the holder blocks in Dis system calls, and
+ * qunlock() hands the lock to the head of its own FIFO queue rather
+ * than dropping it, which is what makes iyield() a real yield.
+ *
+ * vmheld is per-process and makes both operations idempotent.  That is
+ * what lets this survive the error path: propex()/nexterror() longjmps
+ * out of xec() straight back to vmachine()'s waserror() block, over
+ * any unlock in between.  An earlier attempt at a single Dis lock was
+ * reverted for exactly that reason -- the history is in the long
+ * comment in emu/port/dis.c's vmachine() -- and the flag is the answer
+ * to it: the recovery path calls vmrelease() and it does the right
+ * thing whether or not the lock survived the jump.
+ */
+static QLock vmlock;
+
+static void
+vmacquire(void)
+{
+	if(up->vmheld == 0){
+		if(parallelvm == 0)
+			qlock(&vmlock);
+		else
+			while(gcstw)	/* do not start while a collection runs */
+				sched();
+		up->vmheld = 1;
+		if(up->pctx != nil){
+			curP = (Pctx*)up->pctx;
+#ifndef DISCTXREG
+			curR = &curP->reg;
+#endif
+		}
+		{	/* MULTICORE INSTRUMENTATION - temporary */
+			int n = ainc(&nvm);
+			if(n > maxnvm){
+				maxnvm = n;
+				print("nvm: %d hold the vm, cpu%d %s\n",
+					n, m->machno, up->text);
+			}
+		}
+	}
+}
+
+/*
+ * An interpreter with nothing to run parks itself on isched.idlevmq and
+ * gives up the processor; this is what restarts one.  It is not the VM
+ * lock -- a woken interpreter still has to take that -- it only says
+ * "there is work now".
+ *
+ * A Rendez holds exactly one sleeper, so the idle interpreters cannot
+ * simply sleep() on a shared one; doing that produced "double sleep
+ * called from vmachine+0x22b" the moment a second interpreter went
+ * idle.  Parking with state Queueing and restarting with ready() is
+ * what the code this replaced already did, and it takes any number.
+ */
+static void
+wakeidle(void)
+{
+	Proc *p;
+
+	lock(&isched.l);
+	p = isched.idlevmq;
+	if(p != nil){
+		isched.idlevmq = p->vmnext;
+		p->vmnext = nil;
+		isched.nidle--;
+	}
+	unlock(&isched.l);
+	if(p != nil)
+		ready(p);
+}
+
+static void
+vmrelease(void)
+{
+	if(up->vmheld){
+		adec(&nvm);	/* MULTICORE INSTRUMENTATION - temporary */
+		flushlocal();	/* do not strand work on a context that stops */
+		up->vmheld = 0;
+		if(parallelvm == 0)
+			qunlock(&vmlock);
+	}
+}
 static Prog*	proghash[64];
 
 static Progs*	delgrp(Prog*);
@@ -59,7 +601,7 @@ int
 tready(void *a)
 {
 	USED(a);
-	return isched.runhd != nil || isched.vmq != nil;
+	return curP->runhd != nil || isched.ghead != nil;
 }
 
 Prog*
@@ -95,7 +637,7 @@ accountant(void)
 {
 	Prog *p;
 
-	p = isched.runhd;
+	p = curP->runhd;
 	if(p != nil)
 		p->ticks++;
 }
@@ -115,11 +657,22 @@ execatidle(void)
 
 	done = gccolor+3;
 	while(gccolor < done && gcruns()) {
-		if(isched.vmq != nil || isched.runhd != isched.runtl) {
+		if(curP->runhd != curP->runtl) {
 			gcpartial++;
 			break;
 		}
-		rungc(isched.head);
+		if(!collect(isched.head)){
+			/*
+			 * The world would not stop, so gccolor has not moved
+			 * and this loop's condition is exactly as true as it
+			 * was.  Retrying now is a spin; there is nothing to
+			 * collect until whoever holds a quantum open finishes
+			 * it, and the way to let that happen is to stop
+			 * asking.
+			 */
+			gcidlegaveup++;
+			break;
+		}
 		gcidlepass++;
 		if(((ulong)gcidlepass&0xFF) == 0)
 			sched();
@@ -153,10 +706,24 @@ newprog(Prog *p, Modlink *m)
 			error(exNomem);
 	}
 
+	n->group = nil;
+
+	/*
+	 * pidnum, the isched list and proghash[] are shared by every
+	 * executor, and nothing here took a lock: the VM lock was doing
+	 * it, and it is the lock parallelvm=1 removes.  rungc() walks
+	 * isched.head, so a torn list is a collector walking off into
+	 * freed memory -- page faults and general protection violations,
+	 * which is how *parallelvm=1 fails once the earlier bugs are out
+	 * of the way.
+	 *
+	 * isched.l is the lock the global run queue and claimctx() already
+	 * use.  Nothing in here sleeps, which a Lock requires.
+	 */
+	lock(&isched.l);
 	n->pid = ++pidnum;
 	if(n->pid <= 0)
 		panic("no pids");
-	n->group = nil;
 
 	if(isched.tail != nil) {
 		n->prev = isched.tail;
@@ -182,6 +749,7 @@ newprog(Prog *p, Modlink *m)
 			n->pid, pidnum, ph, *ph, (*ph)->pid);
 	n->pidlink = nil;
 	*ph = n;
+	unlock(&isched.l);
 
 	n->osenv = (Osenv*)((uchar*)n + sizeof(Prog));
 	n->xec = xec;
@@ -190,10 +758,19 @@ newprog(Prog *p, Modlink *m)
 	n->exval = H;
 
 	h = D2H(m);
-	h->ref++;
+	/*
+	 * AINC, not h->ref++.  Every other reference count in the Dis heap
+	 * goes through AINC/ADEC because two executors really do touch the
+	 * same object's count at once (interp.h says so where the macros
+	 * are defined); these two sites in this file were the exceptions,
+	 * and a lost update here frees a Modlink that is still linked --
+	 * "alloc:D2B:destroy-entry", which is one of the ways
+	 * *parallelvm=1 fails.
+	 */
+	AINC(&h->ref);
 	Setmark(h);
-	n->R.M = m;
-	n->R.MP = m->MP;
+	n->reg.M = m;
+	n->reg.MP = m->MP;
 	if(m->MP != H)
 		Setmark(D2H(m->MP));
 	addrun(n);
@@ -249,6 +826,7 @@ delprog(Prog *p, char *msg)
 
 	delgrp(p);
 
+	lock(&isched.l);	/* see newprog(); the same list */
 	if(p->prev)
 		p->prev->next = p->next;
 	else
@@ -263,11 +841,57 @@ delprog(Prog *p, char *msg)
 	if(*ph == nil)
 		panic("lost pid");
 	*ph = p->pidlink;
+	unlock(&isched.l);
 
-	if(p == isched.runhd) {
-		isched.runhd = p->link;
-		if(p->link == nil)
-			isched.runtl = nil;
+	/*
+	 * This removed p only when it was the head of the run queue, so a
+	 * Prog deleted from anywhere else stayed linked into a list whose
+	 * every other reader -- vmachine()'s own pick, and disdump()'s
+	 * walk -- then dereferences it after free().  delrunq() already
+	 * removes from anywhere in the list and returns harmlessly when p
+	 * is not on it, which is exactly this job.
+	 *
+	 * Found while looking for unguarded dereferences in disdump()
+	 * rather than from a capture: the faults this hunt has in hand
+	 * come through the isched.head walk, and that list is unlinked
+	 * correctly here.  So this is a real use-after-free with no
+	 * observed instance, fixed on inspection.
+	 */
+	delrunq(p);
+	/*
+	 * vmachine()'s waserror() loop clears curprog because a Dis
+	 * exception leaves xec() by longjmp and "a later Prog allocated at
+	 * the same address would be handed the wrong register file" -- its
+	 * own words.  That covers non-local exits from the interpreter and
+	 * not this: a Prog can reach delprog() while curprog still names
+	 * it, and then the name outlives the object with nothing to clear
+	 * it.  Observed, not deduced: an assertion in rungc() that
+	 * dereferenced curprog printed state 0xdeadbeef, which is the
+	 * value written two lines below.
+	 *
+	 * progreg() compares curprog by pointer, so the damage is exactly
+	 * what that comment describes -- once the allocator hands this
+	 * address to a new Prog, progreg() gives out curR for a program
+	 * whose live registers are somewhere else.
+	 */
+	if(p == curP->curprog){
+		curP->curprog = nil;
+		/*
+		 * And the quantum with it: there is no quantum once the
+		 * program running in it has been freed.
+		 *
+		 * delprog() releases and reacquires the interpreter while it
+		 * closes p's groups (see the comment above disracepid), and
+		 * acquire()'s irestore() re-opens a quantum on a Prog that is
+		 * about to be destroyed.  Nothing afterwards closes it:
+		 * vmachine()'s handler cleared inxec before progexit() ran,
+		 * and this path never returns to xec().  The context is then
+		 * never at a safepoint again -- with parallelvm=1
+		 * stoptheworld() waited on it for the rest of the boot,
+		 * "ctx 2 curprog 0x0 set by irestore from closeegrp+0xe,
+		 * owner pid 9 dis state Queueing vmheld 0".
+		 */
+		curP->inxec = 0;
 	}
 	p->state = 0xdeadbeef;
 	free(o->user);
@@ -362,7 +986,7 @@ exprog(Prog *p, char *exc)
 {
 	switch(p->state) {
 	case Palt:
-		altdone(p->R.s, p, nil, -1);
+		altdone(p->reg.s, p, nil, -1);
 		break;
 	case Psend:
 		cqdelp(&p->chan->send, p);
@@ -436,7 +1060,7 @@ killprog(Prog *p, char *cause)
 	Osenv *env;
 	char msg[ERRMAX+2*KNAMELEN];
 
-	if(p == isched.runhd) {
+	if(p == curP->runhd) {
 		p->kill = "";
 		p->flags |= Pkilled;
 		p->state = Pexiting;
@@ -445,7 +1069,7 @@ killprog(Prog *p, char *cause)
 
 	switch(p->state) {
 	case Palt:
-		altdone(p->R.s, p, nil, -1);
+		altdone(p->reg.s, p, nil, -1);
 		break;
 	case Psend:
 		cqdelp(&p->chan->send, p);
@@ -493,14 +1117,14 @@ killprog(Prog *p, char *cause)
 		int i;
 
 		i = snprint(msg, sizeof(msg), "%d \"", p->pid);
-		i += snprint(msg+i, sizeof(msg)-i, "%s", p->R.M->m->name);
+		i += snprint(msg+i, sizeof(msg)-i, "%s", p->reg.M->m->name);
 		i += snprint(msg+i, sizeof(msg)-i, "\":");
 		snprint(msg+i, sizeof(msg)-i, "%s", cause);
 	}
 
 	p->state = Pexiting;
 	gclock();
-	destroystack(&p->R);
+	destroystack(&p->reg);
 	delprog(p, msg);
 	gcunlock();
 
@@ -685,6 +1309,29 @@ killcomm(Progq **q)
 	}
 }
 
+/*
+ * What a placeholder Prog does when somebody runs it: nothing.
+ *
+ * addprog() builds a zeroed Prog with no module and no code -- it is
+ * not a program.  It is queued (execatidle()'s addrun(up->prog), the
+ * BusyGC path's pushrun) so the scheduler counts this executor as
+ * having work while it collects, and taken off again by delrunq().
+ * With the VM lock it could only ever be picked by its own owner, who
+ * does not run it.  Without the lock another executor picks it off the
+ * queue and calls r->xec, which is nil: "panic: invalid opcode", PC 0,
+ * from vmachine+0x47d.  Instrumenting the call named the object
+ * outright -- "prog 0x7a7f038 xec 0x0 state 0x4 pid 0 link 0x0" --
+ * zeroed, Pready, and not a freed Prog, which carries 0xdeadbeef.
+ *
+ * Returning is right, not just safe: vmachine() rotates the queue
+ * after a quantum, so the placeholder goes to the tail and the real
+ * programs behind it run.
+ */
+static void
+idlexec(Prog*)
+{
+}
+
 void
 addprog(Proc *p)
 {
@@ -698,6 +1345,8 @@ addprog(Proc *p)
 	} else
 		memset(n, 0, sizeof(Prog));
 	n->osenv = p->env;
+	n->xec = idlexec;
+	n->quanta = PQUANTA;
 }
 
 static void
@@ -745,6 +1394,27 @@ cblock(Prog *p)
 	acquire();
 }
 
+/*
+ * Does this executor own the context curP names?
+ *
+ * curP follows up (proc.c's sched()), and a process that has never
+ * interpreted has no context of its own: sched() leaves it on defpctx,
+ * which is also pctxs[0], the context the first interpreter claimed.
+ * So a kernel process waking a Dis program -- #p writes (devprog.c),
+ * devprof, devbench -- reaches addrun() with curP naming somebody
+ * else's local run queue, and links into it.  Under the VM lock that
+ * was serialised with the owner and harmless.  Without it, two
+ * executors write runhd, runtl and nlocal at once.
+ *
+ * Go has the same case and the same answer: a wakeup from an M with no
+ * P goes on the global queue (globrunqput), not on a P's local one.
+ */
+static int
+ownctx(void)
+{
+	return up != nil && up->pctx != nil && (Pctx*)up->pctx == curP;
+}
+
 void
 addrun(Prog *p)
 {
@@ -756,12 +1426,21 @@ addrun(Prog *p)
 		panic("addrun of ready prog %8.8p by %8.8zux\n", p, getcallerpc(&p));
 	p->state = Pready;
 	p->link = nil;
-	if(isched.runhd == nil)
-		isched.runhd = p;
+	if(!ownctx()){
+		gput(p);		/* not our queue to touch; see ownctx() */
+		return;
+	}
+	if(curP->nlocal >= Runqmax){
+		gput(p);		/* local queue full; see gput() */
+		return;
+	}
+	if(curP->runhd == nil)
+		curP->runhd = p;
 	else
-		isched.runtl->link = p;
+		curP->runtl->link = p;
 
-	isched.runtl = p;
+	curP->runtl = p;
+	curP->nlocal++;
 }
 
 Prog*
@@ -769,34 +1448,75 @@ delrun(int state)
 {
 	Prog *p;
 
-	p = isched.runhd;
+	p = curP->runhd;
 	p->state = state;
-	isched.runhd = p->link;
+	curP->runhd = p->link;
 	if(p->link == nil)
-		isched.runtl = nil;
+		curP->runtl = nil;
+	curP->nlocal--;
 
 	return p;
 }
 
-void
-delrunq(Prog *p)
+/* unlink p from c's local queue; 1 if it was there */
+static int
+unlinkctx(Pctx *c, Prog *p)
 {
 	Prog *prev, *f;
 
 	prev = nil;
-	for(f = isched.runhd; f; f = f->link) {
+	for(f = c->runhd; f != nil; f = f->link) {
 		if(f == p)
 			break;
 		prev = f;
 	}
 	if(f == nil)
-		return;
+		return 0;
 	if(prev == nil)
-		isched.runhd = p->link;
+		c->runhd = p->link;
 	else
 		prev->link = p->link;
-	if(p == isched.runtl)
-		isched.runtl = prev;
+	if(p == c->runtl)
+		c->runtl = prev;
+	c->nlocal--;
+	return 1;
+}
+
+int delrunqother;	/* MULTICORE INSTRUMENTATION - temporary */
+
+/*
+ * Take p off whatever queue it is on.
+ *
+ * It searched this context's queue and then the global one, and gave
+ * up.  With one context that was every queue there was.  With more, a
+ * Prog killed while it sits on another context's local queue -- a #p
+ * write, a group exiting -- was found nowhere, and delprog() freed it
+ * while it was still linked.  The context that owned that queue then
+ * picked it and called through r->xec: "panic: invalid opcode", PC
+ * 0xb, from vmachine+0x47d.  That is the same fault, with the same
+ * signature, that three separate hunts this session ran into.
+ *
+ * Searching the other contexts reads their queues without their
+ * owner's cooperation, which is a race of its own under parallelvm=1;
+ * it is a smaller one than freeing a linked Prog, and the right answer
+ * -- a Prog naming the context it is queued on, so this asks one queue
+ * -- is a change to Prog, not to this function.
+ */
+void
+delrunq(Prog *p)
+{
+	int i;
+
+	if(unlinkctx(curP, p))
+		return;
+	for(i = 0; i < npctx; i++)
+		if(pctxs[i] != curP && unlinkctx(pctxs[i], p)){
+			if(delrunqother++ == 0)
+				print("delrunq: prog %d was on another "
+					"context's queue\n", p->pid);
+			return;
+		}
+	gdel(p);	/* it may be on the global queue instead */
 }
 
 Prog*
@@ -804,8 +1524,8 @@ delruntail(int state)
 {
 	Prog *p;
 
-	p = isched.runtl;
-	delrunq(isched.runtl);
+	p = curP->runtl;
+	delrunq(curP->runtl);
 	p->state = state;
 	return p;
 }
@@ -813,7 +1533,7 @@ delruntail(int state)
 Prog*
 currun(void)
 {
-	return isched.runhd;
+	return curP->runhd;
 }
 
 Prog*
@@ -831,7 +1551,7 @@ schedmod(Module *m)
 		t = m->type[0];
 		h = nheap(t->size);
 		h->t = t;
-		t->ref++;
+		AINC(&t->ref);		/* heap.c's own heaptype() does the same */
 		ml->MP = H2D(uchar*, h);
 		if(ml->MP != H && (uintptr)ml->MP < 0x1000)
 			print("schedmod: bad ml->MP %#p right after H2D, h %#p ml %#p\n",
@@ -841,10 +1561,10 @@ schedmod(Module *m)
 
 	p = newprog(nil, ml);
 	h = D2H(ml);
-	h->ref--;
-	p->R.PC = m->entry;
+	ADEC(&h->ref);		/* see newprog(); the count cannot reach 0 here */
+	p->reg.PC = m->entry;
 	/*
-	 * newstack() (libinterp/stack.c) does memmove(p->R.FP, f, f->t->size)
+	 * newstack() (libinterp/stack.c) does memmove(p->reg.FP, f, f->t->size)
 	 * -- f->t is m->entryt here, the *complete* entry-frame type covering
 	 * every local the root module's init() declares, routinely far
 	 * bigger than sizeof(Frame).  This used to pass a bare on-stack
@@ -863,7 +1583,7 @@ schedmod(Module *m)
 	f->t = m->entryt;
 	newstack(p);
 	free(f);
-	initmem(m->entryt, p->R.FP);
+	initmem(m->entryt, p->reg.FP);
 
 	return p;
 }
@@ -871,53 +1591,44 @@ schedmod(Module *m)
 void
 acquire(void)
 {
-	int empty;
 	Prog *p;
 
-	lock(&isched.l);
-	if(isched.idle) {
-		isched.idle = 0;
-		unlock(&isched.l);
-	}
-	else {
-		up->qnext = nil;
-		if(isched.vmq != nil){
-			empty = 0;
-			isched.vmqt->qnext = up;
-		}else{
-			isched.vmq = up;
-			empty = 1;
-		}
-		isched.vmqt = up;
-
-		up->state = Queueing;
-		up->pc = getcallerpc(&empty);
-		unlock(&isched.l);
-		if(empty)
-			wakeup(&isched.irend);
-		sched();
-	}
+	vmacquire();
 
 	if(up->type == Interp) {
 		p = up->iprog;
 		up->iprog = nil;
+		/*
+		 * isave() cleared inxec on the way into the blocking call,
+		 * so this context has been at a safepoint for as long as it
+		 * slept.  Take the quantum back before touching R, and wait
+		 * here if a collection started while it slept: vmacquire()
+		 * above waits too, but between that wait and the claim there
+		 * is a window, which is what enterquantum() closes.
+		 */
+		enterquantum();
 		irestore(p);
 	}
 	else
 		p = up->prog;
 
+	/*
+	 * Unlocked on purpose: the VM lock is held from here until the
+	 * matching release(), and nothing touches the run queue without
+	 * it.
+	 */
 	p->state = Pready;
-	p->link = isched.runhd;
-	isched.runhd = p;
+	p->link = curP->runhd;
+	curP->runhd = p;
 	if(p->link == nil)
-		isched.runtl = p;
+		curP->runtl = p;
+	curP->nlocal++;
 }
 
 void
 release(void)
 {
-	Proc *p, **pq;
-	int f;
+	int spawn;
 
 	if(up->type == Interp){
 		if(up->iprog != nil)
@@ -928,86 +1639,63 @@ release(void)
 		delrun(Prelease);
 	}
 
+	/*
+	 * This process is about to block.  If programs are left on the run
+	 * queue and no interpreter is sitting idle to pick them up, make
+	 * one: otherwise a single blocking Dis system call stops every
+	 * Limbo program in the system, which is the whole reason this
+	 * kernel spawns "dis" processes at all.  isched.creating keeps two
+	 * releases in a row from making two.
+	 */
 	lock(&isched.l);
-	if(*(pq = &isched.vmq) == nil && *(pq = &isched.idlevmq) == nil) {
-		isched.idle = 1;
-		f = isched.creating;
+	spawn = 0;
+	/*
+	 * The global queue counts as work here.  Testing curP->runhd alone
+	 * asks "is there work on THIS context's local queue", which stopped
+	 * being the same question as "is there work" the moment a bounded
+	 * local queue could overflow.  With Runqmax forced to 1 the boot
+	 * stalled: programs sat on the global queue, this test saw an empty
+	 * local one, no further interpreter was spawned, and the only one
+	 * running parked.  88 scheduler passes in a whole boot, against
+	 * 8318 for the same boot at the default bound.
+	 */
+	if((curP->runhd != nil || isched.ghead != nil)
+	&& isched.nidle == 0 && isched.creating == 0){
 		isched.creating = 1;
-		unlock(&isched.l);
-		if(f == 0)
-			/*
-			 * flags=0 left this kproc's pgrp/fgrp/egrp at
-			 * whatever newproc()'s recycled Proc slot last
-			 * had -- rptproc(), the same acquire()/release()
-			 * pattern this loop uses, passes KPDUP for exactly
-			 * this reason.  The per-iteration up->fgrp = o->fgrp
-			 * below resyncs before every xec(), but code that
-			 * can run before this kproc's first loop iteration
-			 * (startup(), the waserror() scaffolding) still sees
-			 * whatever newproc() handed it otherwise.
-			 */
-			kproc("dis", vmachine, nil, KPDUP);
-		return;
+		spawn = 1;
 	}
-	p = *pq;
-	*pq = p->qnext;
 	unlock(&isched.l);
 
-	ready(p);
+	vmrelease();
+	wakeidle();
+
+	if(spawn)
+		kproc("dis", vmachine, nil, KPDUP);
 }
 
 void
 iyield(void)
 {
-	Proc *p;
-
-	lock(&isched.l);
-	p = isched.vmq;
-	if(p == nil) {
-		unlock(&isched.l);
+	if(up->vmheld == 0)
 		return;
-	}
-	isched.nyield++;
-	isched.vmq = p->qnext;
-
 	if(up->iprog != nil)
 		panic("iyield but iprog, type %d", up->type);
-	if(up->type != Interp){
-		static int once;
-		if(!once++)
-			print("tell charles: #%p->type==%d\n", up, up->type);
-	}
-	up->qnext = isched.idlevmq;
-	isched.idlevmq = up;
-
-	up->state = Queueing;
-	up->pc = getcallerpc(&p);
-	unlock(&isched.l);
-	ready(p);
-	sched();
+	isched.nyield++;
+	vmrelease();
+	vmacquire();
 }
 
 void
 startup(void)
 {
-	int x;
-
 	up->type = Interp;
 	up->iprog = nil;
 
 	lock(&isched.l);
 	isched.creating = 0;
-	if(isched.idle) {
-		isched.idle = 0;
-		unlock(&isched.l);
-		return;
-	}
-	up->qnext = isched.idlevmq;
-	isched.idlevmq = up;
-	up->state = Queueing;
-	up->pc = getcallerpc(&x);
 	unlock(&isched.l);
-	sched();
+
+	vmacquire();
 }
 
 void
@@ -1111,10 +1799,26 @@ vmachine(void*)
 	int cycles;
 	static int gccounter;
 
+	if(up->pctx == nil)
+		up->pctx = claimctx();
 	startup();
 
 	/* cleans out the exception stack (error labels) */
 	while(waserror()) {
+		/*
+		 * A Dis exception leaves xec() by longjmp, so the
+		 * curP->curprog = nil at the bottom of the handler never
+		 * runs and the name would dangle -- past the Prog's own
+		 * destruction, in the exit case.  progreg() only compares
+		 * the pointer, never follows it, but a later Prog allocated
+		 * at the same address would be handed the wrong register
+		 * file.  Clear it here, where every non-local exit from the
+		 * interpreter lands.  The answer this restores is the right
+		 * one: exception.c has already synced p->reg from R on the
+		 * path that carries on executing.
+		 */
+		curP->curprog = nil;
+		curP->inxec = 0;	/* the quantum did not finish; see xec.c */
 		DBG("vmachine waserror() loop up->env->errstr %s\n",  up->env->errstr);
 		if(up->type != Interp)
 			panic("vmachine: non-interp kproc");
@@ -1157,44 +1861,245 @@ vmachine(void*)
 		clockcheck();
 
 		if(tready(nil) == 0) {
+			/*
+			 * execatidle() collects and calls addrun/delrunq, so
+			 * it wants the VM held.  Parking must not hold it, or
+			 * every Limbo program in the system stops here.
+			 */
 			execatidle();
-			sleep(&isched.irend, tready, 0);
+			vmrelease();
+			lock(&isched.l);
+			if(tready(nil) == 0){
+				/*
+				 * Re-checked under isched.l: the VM was given
+				 * up above, so another process may have made a
+				 * program ready and called wakeidle() before
+				 * this one was on the list to be found.
+				 */
+				up->vmnext = isched.idlevmq;
+				isched.idlevmq = up;
+				isched.nidle++;
+				up->state = Queueing;
+				up->pc = getcallerpc(&r);
+				unlock(&isched.l);
+				sched();
+			} else
+				unlock(&isched.l);
+			vmacquire();
 		}
 
-		if(isched.vmq != nil && (isched.runhd == nil || ++cycles > 2)){
+		/*
+		 * MULTICORE INSTRUMENTATION - temporary.  maxnrunq says how
+		 * many Dis programs are ready at once; this says how much
+		 * that costs.  vmlock.head is the queue of kernel processes
+		 * blocked in vmacquire(), so a pass that sees it non-nil is
+		 * a pass where a runnable interpreter was waiting on the one
+		 * global VM lock.  The ratio is the answer to "what would a
+		 * per-executor register file buy on this workload", in the
+		 * only units that matter: passes spent with someone blocked
+		 * over passes total.
+		 */
+		vmpasses++;
+		if(vmlock.head != nil) {
+			Proc *w;
+			int d = 0;
+
+			vmblocked++;
+			/*
+			 * The control this counter lacked.  vmblocked rests on
+			 * vmlock.head meaning "processes blocked in
+			 * qlock(&vmlock)", and would report a plausible
+			 * fraction whether or not that is what the field
+			 * holds.  qlock() appends up to the head/tail chain
+			 * through up->qnext and sleeps it, so every process on
+			 * that chain must be in Queueing; one that is not
+			 * would mean the field is stale or means something
+			 * else, and the fraction above would be measuring
+			 * nothing.
+			 *
+			 * The depth is worth having for its own sake too: the
+			 * boolean says a runnable interpreter was waiting, the
+			 * depth says how many, which is what a per-executor
+			 * register file would actually release.
+			 */
+			for(w = vmlock.head; w != nil && d < 64; w = w->qnext) {
+				d++;
+				if(w->state != Queueing && vmqbad++ == 0)
+					print("vmq: waiter %d %s state %d, not Queueing"
+						" -- vmlock.head is not the wait queue\n",
+						w->pid, w->text, w->state);
+			}
+			if(d > maxvmq) {
+				maxvmq = d;
+				print("vmq: %d interpreters blocked on the vm lock at once\n", d);
+			}
+		}
+
+		if(vmlock.head != nil && (curP->runhd == nil || ++cycles > 2)){
 			iyield();
 			cycles = 0;
 		}
 
-		r = isched.runhd;
+		/*
+		 * Take from the global queue when the local one is empty,
+		 * and every Gqevery picks even when it is not.
+		 *
+		 * The second half is not optional, and a forced-bound test
+		 * proved it: with Runqmax 1 the boot stalled after the shell
+		 * spawned.  The round-robin at the foot of this loop only
+		 * rotates when runhd != runtl, so a local queue of one never
+		 * rotates, the same Prog is picked forever, and everything
+		 * that overflowed to the global queue starves.  Go has the
+		 * same hazard and the same answer -- schedule() takes from
+		 * the global queue every 61st tick regardless of the local
+		 * one, precisely so a busy local queue cannot starve it.
+		 *
+		 * Linked directly rather than through addrun(), which panics
+		 * on a Prog already in Pready, and one that reached the
+		 * global queue is.
+		 */
+		if(curP->runhd == nil || (++gqtick % Gqevery) == 0){
+			Prog *g;
+
+			if((g = gget()) != nil){
+				g->link = curP->runhd;
+				curP->runhd = g;
+				if(g->link == nil)
+					curP->runtl = g;
+				curP->nlocal++;
+			}
+		}
+
+		enterquantum();
+
+		r = curP->runhd;
 		if(r != nil) {
+			{	/* MULTICORE INSTRUMENTATION - temporary */
+				Prog *q;
+				int i, n = 0, ready = 0;
+
+				for(q = r; q != nil && n < Runqcap; q = q->link)
+					n++;
+				/*
+				 * The same quantity by an independent path, as
+				 * a control on the walk above.  maxnrunq counts
+				 * the run-queue links; this counts Progs in
+				 * state Pready over isched.head, which is the
+				 * list of every Prog and is maintained by
+				 * different code.  Two counts that agree are a
+				 * measurement; one count is an assertion about
+				 * a data structure.
+				 *
+				 * They should agree, because addrun() sets
+				 * Pready exactly when it links, and delrun()
+				 * and delrunq() unlink.  A persistent
+				 * disagreement would mean one of those paths
+				 * leaves a Prog on the queue in another state
+				 * or in a state without being queued -- which
+				 * is the shape of the delprog() bug fixed
+				 * above, where a freed Prog stayed linked.
+				 */
+				for(q = isched.head; q != nil; q = q->next)
+					if(q->state == Pready)
+						ready++;
+				/*
+				 * Every context's local queue, not just this
+				 * one.  A Prog on another context's queue is
+				 * Pready and invisible to the walk above, so
+				 * comparing against this context alone made
+				 * the control fire the moment a second
+				 * context could hold work -- which is the
+				 * control noticing, correctly, that the
+				 * structures changed meaning again.  It did
+				 * the same when the global queue arrived.
+				 */
+				for(i = 0; i < npctx; i++)
+					if(pctxs[i] != curP)
+						n += pctxs[i]->nlocal;
+				if(n > maxnrunq){
+					maxnrunq = n;
+					print("runq: %d dis programs ready at once "
+						"(%d by state), cpu%d\n",
+						n, ready, m->machno);
+				}
+				/*
+				 * Pready counts Progs on the global queue too,
+				 * so the local walk is short by exactly ngq.
+				 * Comparing without that term made this fire
+				 * the moment the global queue was first used,
+				 * which is the control working -- it noticed a
+				 * real change in what the structures mean.
+				 */
+				if(ready != n + isched.ngq && nrunqmismatch++ == 0)
+					print("runq: %d linked + %d global but %d in "
+						"Pready -- the counts disagree\n",
+						n, isched.ngq, ready);
+			}
 			o = r->osenv;
+			/*
+			 * A placeholder belongs to the Proc that made it, and
+			 * addprog() gave it that Proc's own env -- not a Dis
+			 * program's.  idlexec() made it safe to call; this
+			 * makes it safe to pick.  Adopting o here would take
+			 * another process's pgrp, fgrp and egrp, write
+			 * fpuostate into that Osenv below, and leave up->fgrp
+			 * pointing there afterwards, since only up->env is put
+			 * back.  "incref: bad r 0x300000003" from
+			 * fdtochan+0x63 is what a borrowed Fgrp looks like.
+			 *
+			 * Its own owner still adopts it, which is the case
+			 * that existed before any of this and is unchanged.
+			 */
+			if(r->xec == idlexec && r != (Prog*)up->prog)
+				o = up->env;
 			up->env = o;
 			/* Keep Proc.*grp in sync for #e/#p and namec (pctl updates Osenv). */
 			up->pgrp = o->pgrp;
 			up->fgrp = o->fgrp;
 			up->egrp = o->egrp;
 
+			{	/* MULTICORE INSTRUMENTATION - temporary */
+				static int told;
+
+				/*
+				 * Naming the object beats inferring it: this
+				 * probe identified the placeholder Prog by
+				 * printing it, and one *parallelvm=1 run in
+				 * three still faults here, so something else
+				 * reaches this call without a usable xec.
+				 * state 0xdeadbeef separates freed-while-queued
+				 * from a second placeholder class.
+				 */
+				if(r->xec != xec && r->xec != idlexec && told++ < 6)
+					print("vmachine: prog %#p xec %#p"
+						" state %#x pid %d link %#p"
+						" osenv %#p ctx %#p cpu%d\n",
+						r, r->xec, r->state, r->pid,
+						r->link, r->osenv, curP,
+						m->machno);
+			}
 			fpurestore(up->env->fpuostate);
 			r->xec(r);
 			up->env->fpuostate = fpusave();
 
-			if(isched.runhd != nil)
-			if(r == isched.runhd)
-			if(isched.runhd != isched.runtl) {
-				isched.runhd = r->link;
+			if(curP->runhd != nil)
+			if(r == curP->runhd)
+			if(curP->runhd != curP->runtl) {
+				curP->runhd = r->link;
 				r->link = nil;
-				isched.runtl->link = r;
-				isched.runtl = r;
+				curP->runtl->link = r;
+				curP->runtl = r;
 			}
 			up->env = &up->defenv;
 		}
+		curP->inxec = 0;	/* claim withdrawn; xec() clears it too */
+		coherence();
 		/*
 		 * BusyGC like emu (throttled).  Never pushrun when addrun is
 		 * set — that panics "pushrun addrun" (seen on virt at
 		 * interactive sh with wm/toolbar load).
 		 */
-		if(isched.runhd != nil)
+		if(curP->runhd != nil)
 		if(up->iprog == nil)
 		if((++gccounter & 0xFF) == 0){
 			r = (Prog*)up->prog;
@@ -1202,7 +2107,7 @@ vmachine(void*)
 				gcbusy++;
 				up->type = BusyGC;
 				pushrun(r);
-				rungc(isched.head);
+				collect(isched.head);
 				up->type = Interp;
 				delrunq(r);
 			}
@@ -1269,8 +2174,6 @@ disinit(void *a)
 	o->errstr = o->errbuf0;
 	o->syserrstr = o->errbuf1;
 
-	isched.idle = 1;
-
 	if(kopen("#c/cons", OREAD) != 0)
 		panic("failed to make fd0 from #c/cons");
 	kopen("#c/cons", OWRITE);
@@ -1289,8 +2192,80 @@ pushrun(Prog *p)
 		return;
 	}
 	p->state = Pready;
-	p->link = isched.runhd;
-	isched.runhd = p;
+	if(!ownctx()){
+		p->link = nil;
+		gput(p);		/* not our queue to touch; see ownctx() */
+		return;
+	}
+	p->link = curP->runhd;
+	curP->runhd = p;
 	if(p->link == nil)
-		isched.runtl = p;
+		curP->runtl = p;
+	curP->nlocal++;
+}
+
+/*
+ * One dump of the Dis scheduler's state: who holds the interpreter, who
+ * is parked waiting for work, every live Prog, and every live kernel
+ * process with the Rendez it is asleep on.  Meant to be called once,
+ * from a clock handler, after a stall has set in.
+ *
+ * NOTE: this is a reimplementation.  An earlier disdump() existed in
+ * this tree as uncommitted work and was destroyed by a bad edit while
+ * the multicore work was going on; it could not be recovered from any
+ * commit or worktree.  os/inferno/raspi3b/clock.c calls this and needs
+ * it to link.  What it prints is what its caller's comment said it
+ * printed, written fresh against the structures here -- it is not the
+ * original text.
+ */
+void
+disdump(void)
+{
+	static char *pstate[] = {
+		"alt", "send", "recv", "debug",
+		"ready", "release", "exiting", "broken",
+	};
+	extern char *statename[];
+	char mbuf[64];
+	Prog *p;
+	Proc *q;
+	int i;
+
+	print("\ndis: vmlocked %d nidle %d creating %d runhd %#p runtl %#p\n",
+		vmlock.locked, isched.nidle, isched.creating,
+		curP->runhd, curP->runtl);
+	/* MULTICORE INSTRUMENTATION - temporary */
+	print("dis: maxrunq %d, %llud of %llud scheduler passes had an "
+		"interpreter blocked on the vm lock\n",
+		maxnrunq, vmblocked, vmpasses);
+	/* MULTICORE INSTRUMENTATION - temporary */
+	print("dis: global runq: %d put, %d got, %d now, bound %d\n",
+		gqput, gqget, isched.ngq, Runqmax);
+	print("dis: %d contexts claimed of %d, curP %#p, parallelvm %d, stw waits %d\n",
+		npctx, MAXPCTX, curP, parallelvm, stwwaits);
+
+	for(p = curP->runhd; p != nil; p = p->link)
+		print("dis: runq prog %d %s\n", p->pid,
+			(uint)p->state < nelem(pstate)? pstate[p->state]: "?");
+
+	for(p = isched.head; p != nil; p = p->next){
+		modstatus(&p->reg, mbuf, sizeof mbuf);
+		print("dis: prog %d %s %s\n", p->pid,
+			(uint)p->state < nelem(pstate)? pstate[p->state]: "?", mbuf);
+	}
+
+	for(q = vmlock.head; q != nil; q = q->qnext)
+		print("dis: waiting for the vm: proc %d %s\n", q->pid, q->text);
+
+	for(q = isched.idlevmq; q != nil; q = q->vmnext)
+		print("dis: parked for work: proc %d %s\n", q->pid, q->text);
+
+	for(i = 0; i < conf.nproc; i++){
+		q = proctab(i);
+		if(q->state == Dead)
+			continue;
+		print("dis: proc %d %s %s type %d vmheld %d iprog %#p r %#p sleeppc %#p qpc %#p\n",
+			q->pid, q->text, statename[q->state], q->type,
+			q->vmheld, q->iprog, q->r, q->sleeppc, q->qpc);
+	}
 }

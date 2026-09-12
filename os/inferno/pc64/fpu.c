@@ -118,26 +118,38 @@ mathnote(ulong status, uintptr pc)
 }
 
 /*
- *  math coprocessor error.  Save FPU state to check out the error.
- *
- * _clts() first, and only if there is a slot to save into.  fpsave()
- * is _fxsave() followed by _stts(), so calling it with TS already set
- * faults on its own first instruction -- a device-not-available trap
- * reported at _fxsave+0x0.  That window is not hypothetical: fpusave()
- * sets TS and leaves fpstate saying active, and os/inferno/port/dis.c
- * holds every Dis program inside exactly that window, between
- * fpusave() and fpurestore() around r->xec(r).
- *
- * os/9front/pc64/fpu.c, sitting in this tree, has the _clts() and also
- * guards on the state and returns early for a trap from kernel mode;
- * this copy had lost all three.  Only the two that cannot change the
- * state machine are put back here -- the third would, and this design
- * is not 9front's (that one has m->fpsave and up->kfpsave and no
- * fpslot array at all), so there is nothing to copy it from.
+ *  math coprocessor error
  */
 static void
 matherror(Ureg *, void*)
 {
+	/*
+	 * Save FPU state to check out the error.
+	 *
+	 * _clts() first.  fpsave is fpssesave (or fpxsaves/fpxsaveopt),
+	 * every one of which begins with the save instruction itself and
+	 * ends with _stts().  Called with TS already set, it faults on
+	 * its own first instruction -- reported at _fxsave+0x0, which is
+	 * exactly the pc the "math emu pid 1" capture printed, with no
+	 * intermediate step needed.
+	 *
+	 * The window where TS is set while a process is still live is the
+	 * ordinary one: fpusave() sets TS and stores FPpush|..., and
+	 * os/inferno/port/dis.c holds every Dis program between
+	 * fpusave() and fpurestore() around r->xec(r).  A #MF or #XM
+	 * delivered in that window lands here.
+	 *
+	 * Found by the cloud-port session.  os/9front/pc64/fpu.c's
+	 * matherror does three things this copy does not: return early
+	 * for a trap from kernel mode, guard on fpstate != FPinactive,
+	 * and _clts() before fpsave().  The two that cannot change the
+	 * state machine are taken here; the kernel-mode early return is
+	 * left alone, because this file's design is not 9front's -- that
+	 * copy has no fpusave, fpurestore, FPpush, FPnouser, FPkernel or
+	 * fpslot at all, and uses m->fpsave and up->kfpsave instead.  So
+	 * it is not the upstream of this file and cannot settle what the
+	 * third change should be.
+	 */
 	if(up->fpsave == nil)
 		return;
 	_clts();
@@ -147,11 +159,12 @@ matherror(Ureg *, void*)
 }
 
 /*
- *  SIMD error -- same as matherror above, with the same reasoning.
+ *  SIMD error
  */
 static void
 simderror(Ureg *ureg, void*)
 {
+	/* same as matherror(); see its comment */
 	if(up->fpsave == nil)
 		return;
 	_clts();
@@ -176,6 +189,48 @@ fpinit(void)
 	_fwait();
 	_fldcw(0x0232);
 	_ldmxcsr(0x1900);
+}
+
+/*
+ * Whose floating-point state is this?
+ *
+ * NOT the same question as userureg(), which asks whether a trap frame
+ * came from user mode, and this used to call it.
+ *
+ * Honesty about why this is here.  It was written when correcting
+ * userureg() was followed by a "math emu" panic that 880 earlier boots
+ * had not shown, and the panic looked like the flip reaching this
+ * file.  That reading is superseded: the real fault was kprocchild()
+ * starting every kproc's stack inside the Tos, so kexit()'s accounting
+ * landed on the interrupt frame (see the comment in trap.c), and the
+ * cloud-port session separately established that FPnouser and FPkernel
+ * are write-only on this board -- every other test of them masks, and
+ * fpuprocfork(), the one unmasked reader, is never called here.
+ *
+ * So this changes nothing reachable today, and the evidence that
+ * prompted it is gone.  It stays because the reasoning below stands on
+ * its own and the alternative is a call to userureg() that is right
+ * only by coincidence.
+ *
+ * The flags say why the two questions differ.  dat.h: FPnouser is
+ * "fpslot[0] is kernel regs", FPkernel is "fp use in kernel", and the
+ * whole scheme "is biased so that FPinit, FPactive and FPinactive
+ * without any flags refer to user fp state in fpslot[0]".  So slot 0
+ * belongs to the user's floating point.  On this port the user is a
+ * Dis program, and a Dis program runs in a kernel process -- there is
+ * no other userland.  Its fp state is the user's fp state, whatever
+ * privilege the frame was taken at.
+ *
+ * So this returns what userureg() used to return by accident, and says
+ * why it is the right answer here rather than leaving it to look like
+ * the bug that was just fixed.
+ */
+static int
+disfp(Ureg *ur)
+{
+	if(ur == nil || ur->r14 == 0)
+		return 0;
+	return ((Proc*)(ur->r14))->kp != 0;
 }
 
 /*
@@ -204,7 +259,7 @@ mathemu(Ureg *ureg, void*)
 		index = up->fpstate >> FPindexs;
 		if(index < 0 || index > (FPindexm>>FPindexs))
 			panic("fpslot index overflow: %d", index);
-		if(userureg(ureg)){
+		if(disfp(ureg)){
 			if(index != 0)
 				panic("fpslot index %d != 0 for user", index);
 		} else {
@@ -379,8 +434,24 @@ fpurestore(int ostate)
 		if((ostate & ~(FPnouser|FPkernel|FPindexm)) == FPactive)
 			_clts();
 	} else {
-		if(astate == FPinit)	/* don't restore on procexec()/procsetup() */
-			return;
+		/*
+		 * Masked, like every other test of fpstate in this file.
+		 * This was a bare == against FPinit, the state value 0, so a
+		 * process carrying FPnouser, FPkernel or a non-zero FPindex
+		 * never matched and fell through instead of returning.
+		 *
+		 * Hygiene, and no more than that.  I first claimed this
+		 * explained the "math emu ... pc _fxsave+0x0" capture, and
+		 * it does not: falling through reaches the demotion three
+		 * lines down, "if(ostate & FPactive) ostate = FPinactive |
+		 * ...", so the store below cannot leave fpstate saying
+		 * active.  The cloud-port session asked whether this copy
+		 * had that line.  It does, and that kills the mechanism.
+		 * The capture is matherror()/simderror() calling fpsave()
+		 * with TS set -- see the comment there.
+		 */
+		if((astate & ~(FPnouser|FPkernel|FPindexm)) == FPinit)
+			return;		/* procexec()/procsetup() */
 		if((astate & ~(FPnouser|FPkernel|FPindexm)) == FPactive)
 			_stts();
 		up->fpsave = up->fpslot[ostate>>FPindexs];

@@ -118,6 +118,8 @@ extern	ulong	gcnruns;
 extern	ulong	gcsweeps;
 extern	ulong	gcbroken;
 extern	ulong	gchalted;
+extern	int	gcdepthmax;
+extern	ulong	gcdeferred;
 extern	ulong	gcepochs;
 extern	uvlong	gcdestroys;
 extern	uvlong	gcinspects;
@@ -431,8 +433,8 @@ memread(Chan *c, void *va, long count, vlong offset)
 			free(s);
 			nexterror();
 		}
-		snprint(s, READSTR, "runs: %lud\nsweeps: %lud\nbchain: %lud\nhalted: %lud\nepochs: %lud\ndestroy: %llud\ninspects: %llud\nbusy: %llud\nidle: %llud\nidlepass: %llud\npartial: %llud\n",
-			gcnruns, gcsweeps, gcbroken, gchalted, gcepochs, gcdestroys, gcinspects, gcbusy, gcidle, gcidlepass, gcpartial);
+		snprint(s, READSTR, "depthmax: %d\ndeferred: %lud\nruns: %lud\nsweeps: %lud\nbchain: %lud\nhalted: %lud\nepochs: %lud\ndestroy: %llud\ninspects: %llud\nbusy: %llud\nidle: %llud\nidlepass: %llud\npartial: %llud\n",
+			gcdepthmax, gcdeferred, gcnruns, gcsweeps, gcbroken, gchalted, gcepochs, gcdestroys, gcinspects, gcbusy, gcidle, gcidlepass, gcpartial);
 		count = readstr(offset, va, count, s);
 		poperror();
 		free(s);

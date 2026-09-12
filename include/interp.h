@@ -67,6 +67,7 @@ typedef struct REG	REG;
 typedef struct Frame	Frame;
 typedef union  Stkext	Stkext;
 typedef struct Atidle	Atidle;
+typedef struct Pctx	Pctx;
 typedef struct Altc	Altc;
 typedef struct Except Except;
 typedef struct Handler Handler;
@@ -229,6 +230,39 @@ struct REG
 	WORD		dt;		/* Destination temporary */
 };
 
+/* An execution context for Dis: the state that becomes per-processor
+ * when there is more than one interpreter running at a time.  Phase 2
+ * of doc/dis-parallel-plan.ms, and like Phase 1a it arrives as pure
+ * indirection -- there is exactly one Pctx, curP is constant, and this
+ * is the same program it was.
+ *
+ * What is in here is what a second interpreter would need its own copy
+ * of.  What is deliberately NOT in here is isched.head/tail, the list
+ * of every Prog in the system, which execatidle() hands to rungc() as
+ * the root list.  Splitting that per-context would divide the root set
+ * and lose objects, which is the same failure Phase 1b is waiting on
+ * the collector for, and just as invisible to a race detector.  The
+ * root list is global and stays global.
+ *
+ * Raising the number of these above one is gated on Phase 5 for exactly
+ * the reason Phase 1b is: two contexts means two threads inside xec(),
+ * which is the condition that lets a collector walk a stale p->reg.
+ * The register file lives here so that there is one switch to throw and
+ * one gate in front of it, rather than two mechanisms a later reader
+ * could raise independently.
+ */
+struct Pctx
+{
+	REG	reg;		/* this context's Dis register file */
+	Prog*	curprog;	/* whose live registers `reg' holds, or nil */
+	Prog*	runhd;		/* this context's run queue */
+	Prog*	runtl;
+	int	nlocal;		/* its length, for the Runqmax bound */
+	Inst*	syncpc;		/* the PC p->reg carries; see REGSYNCED() */
+	int	inxec;		/* a quantum is open on this context */
+	void*	owner;		/* the Proc that claimed it; Proc*, diagnosis */
+};
+
 struct Progs
 {
 	int	id;
@@ -242,7 +276,7 @@ struct Progs
 
 struct Prog
 {
-	REG		R;		/* Register set */
+	REG		reg;		/* Register set */
 	Prog*		link;		/* Run queue */
 	Channel*		chan;	/* Channel pointer */
 	void*		ptr;		/* Channel data pointer */
@@ -266,6 +300,24 @@ struct Prog
 
 	void*		osenv;
 
+	/* Diagnostic: per-proc instruction trace (see wmtracedump() in
+	 * xec.c). Attached to the Prog itself, not thread-local: a proc
+	 * that yields (blocking send/recv, quantum expiry) can resume on a
+	 * different native thread or be interleaved with many other procs
+	 * on the same one, and either way a shared/thread-local buffer
+	 * gets swamped by unrelated procs' instructions long before this
+	 * one gets scheduled again. */
+	struct {
+		int	pc;
+		int	op;
+		void*	fp;
+		void*	mp;
+		void*	d;	/* decoded destination operand, R.d */
+		void*	s;
+		void*	m;
+	} wmtrace[256];
+	int	wmtracei;
+	int	wmtracen;
 };
 
 struct Module
@@ -366,8 +418,24 @@ struct Handler
 #define H		((void*)(-1))
 #define SEXTYPE(f)	((Stkext*)((uchar*)(f)-OA(Stkext, reg.tos.fu)))
 #define Setmark(h)	if((h)->color!=mutator) { (h)->color = propagator; nprop=1; }
-#define gclock()	gchalt++
-#define gcunlock()	gchalt--
+/*
+ * Two things, deliberately not one counter.  gcdepth is how deep this
+ * context is in nested destruction -- destroy() calls t->free() calls
+ * destroy() -- and libinterp/heap.c reads it to stop recursing before
+ * it runs out of C stack.  That is a property of one thread's stack.
+ * gchalt is "do not collect now", which is a property of the heap:
+ * libprefab raises it while building a Prefab, and the collector
+ * refuses to run while it is set.
+ *
+ * They shared a counter until now, which is harmless on one processor
+ * because the only thing nested inside a destroy is another destroy.
+ * On two it fails both ways: one processor's recursion depth would
+ * suppress another's collector, and one processor building a Prefab
+ * would make another believe it was 64 destroys deep and stop freeing.
+ * See doc/dis-parallel-plan.ms.
+ */
+#define gclock()	do{ gchalt++; if(++gcdepth > gcdepthmax) gcdepthmax = gcdepth; }while(0)
+#define gcunlock()	do{ gchalt--; gcdepth--; }while(0)
 #define gcruns()	(gchalt == 0)
 
 /* Atomic refcount inc/dec: the scheduler genuinely runs multiple native
@@ -403,7 +471,109 @@ extern	Type	Tbyte;
 extern	Type Tword;
 extern	Type Tlong;
 extern	Type Treal;
-extern	REG	R;
+/* The Dis register file.  Phase 1a of doc/dis-parallel-plan.ms: what
+ * used to be the object `REG R' is now a pointer to it, and every one
+ * of the 1921 `R.field' references in the tree redirects through the
+ * macro without an edit.  While curR never changes this is exactly the
+ * old program -- including for the code generators, whose
+ * con((uintptr)&R, RTMP) becomes con((uintptr)curR, RTMP), a constant
+ * for as long as curR is one.
+ *
+ * The point of the indirection is Phase 1b, where curR becomes
+ * per-executor so that two threads can be inside xec() at once.  That
+ * is NOT what this is yet, and it must not be done on its own: the
+ * collector's root walk (libinterp/gc.c) marks from root->reg.M/SP/EX,
+ * i.e. from p->reg, and xec() only writes p->reg back at the end of a whole
+ * PQUANTA window.  Today that is safe because the collector only runs
+ * between xec() calls.  With a genuinely per-executor R, a collector on
+ * one thread would walk a stale p->reg for a Prog mid-quantum on another
+ * and miss every root live only in that thread's registers.  Phase 1b
+ * therefore lands with Phase 5, not before.  A sanitizer cannot catch
+ * this: a missing root is not a data race.
+ */
+/*
+ * Every execution context, so progreg() can answer for a program
+ * running on one other than this one.  There is exactly one today and
+ * the array is the shape Phase 1b needs, not a claim that more exist.
+ */
+/*
+ * Enough that claimctx() does not run out.  Eight was not: a
+ * parallelvm=1 boot claims twelve, exhausts the pool every time, and
+ * then shares -- which is two executors on one register file.  Measured
+ * both ways: raising this cut failures from 8 of 20 boots to 2 while
+ * raising the work done, 60 shell loop iterations to 84.  A boot claims
+ * 5 to 12, so this is headroom, not a fit.
+ *
+ * A Pctx is a register file and a few pointers, so the whole pool is a
+ * few tens of kilobytes.
+ */
+enum { MAXPCTX = 64 };
+extern	Pctx*	pctxs[MAXPCTX];
+extern	int	npctx;
+/*
+ * Phase 1b: the Dis context is per executor.
+ *
+ * On an architecture that opts in (DISCTXREG), curP is an external
+ * register declared with m and up in include/disreg.h -- see there for
+ * why they must be declared together.  Elsewhere, and in emu, it stays
+ * the global it has always been and the behaviour is unchanged.
+ */
+#ifdef DISCTXREG
+#include	"disreg.h"	/* curP, and disctxinit() for files without it */
+#else
+extern	Pctx*	curP;
+#endif
+extern	Pctx*	defpctx;	/* the context a Proc starts with */
+REG*	progreg(Prog*);	/* where a program's live roots are; see xec.c */
+Module*	modlinkmod(Modlink*);	/* the Module of a Modlink worth trusting; see heap.c */
+/*
+ * Phase 1b: with a per-executor curP, R reaches the register file
+ * through it and curR does not exist.  A single REG* naming "the
+ * current register file" is exactly the global this is undoing --
+ * two executors inside xec() at once would share it.
+ *
+ * The code generators (libinterp/comp-*.c) bake (uintptr)&R into the
+ * code they emit.  Under a register curP that address is this
+ * executor's, not a constant, so a JIT built this way would be wrong
+ * the moment a second context ran.  It compiles and is not reached:
+ * cflag is 0 on every native board, so nothing in comp-*.c executes.
+ * Making the JIT per-executor is its own change and is not this one.
+ */
+#ifndef DISCTXREG
+extern	REG*	curR;		/* == &curP->reg */
+#endif
+/*
+ * Per context, for the same reason syncpc is: it answers "is a quantum
+ * open on THIS context", and a single global answers it for whichever
+ * context last ran.  The collector needs the per-context answer -- it
+ * has to know which contexts are inside xec() and must be stopped, and
+ * which are blocked in a system call and are already at a safepoint
+ * because isave() has written their registers back.
+ */
+/* use curP->inxec directly; a macro of the same name recurses in kencc */
+/*
+ * The PC that p->reg currently carries, for whichever program R holds.
+ * Updated wherever R is loaded from a Prog and wherever a Prog's reg is
+ * synced back from R, so "p->reg is stale" is regsyncpc != R.PC without
+ * naming the Prog at all.  That matters: curprog is allowed to dangle
+ * (vmachine() says so where it clears it), so any check that reaches
+ * through it to compare registers reads freed memory.  This does not.
+ */
+/*
+ * Per context, not global.  It tracks "the PC this context's saved
+ * register file carries", and with more than one context a single
+ * global tracks whichever synced last -- comparing it against another
+ * context's R.PC compares unrelated things.  The rungc() assertion
+ * reported exactly that the moment a second context existed: "snapshot
+ * PC 0x79fbee8 live 0x0", the live half being a freshly claimed
+ * context whose registers had never been loaded.
+ */
+#define	REGSYNCED()	(curP->syncpc = R.PC)
+#ifdef DISCTXREG
+#define	R	(curP->reg)
+#else
+#define	R	(*curR)
+#endif
 extern	String	snil;
 extern	void	(*optab[256])(void);
 extern	void	(*comvec)(void);
@@ -412,6 +582,9 @@ extern	Module*	modules;
 extern	int	mutator;
 extern	int	nprop;
 extern	int	gchalt;
+extern	int	gcdepth;
+extern	int	gcdepthmax;
+extern	ulong	gcdeferred;
 extern	int	gccolor;
 extern	int	minvalid;
 
@@ -471,12 +644,19 @@ extern	int		handler(char*);
 extern	Heap*	heap(Type*);
 extern	Heap*	heaparray(Type*, int);
 extern	void		(*heapmonitor)(int, void*, ulong);
+extern	int		(*gcstopped)(void);	/* see libinterp/heap.c */
 extern	int		heapref(void*);
 extern	Heap*		heapz(Type*);
 extern	int		hmsize(void*);
 extern	void		incmem(void*, Type*);
 extern	void		initarray(Type*, Array*);
 extern	void		initmem(Type*, void*);
+extern	void		initmemtt(Type*, void*, Type**);
+extern	void		checktracked(void);
+extern	void		trackclear(void*, long);	/* pc64-only tracker -- see heap.c */
+extern	Modlink*	trackM;	/* set by xec()'s dispatch loop -- see heap.c */
+extern	Inst*		trackPC;
+extern	char*		trackpoint;	/* finer-grained checkpoint name -- see heap.c */
 extern	void		irestore(Prog*);
 extern	Prog*		isave(void);
 extern	void		keyringmodinit(void);
@@ -499,6 +679,7 @@ extern	void		mlink(Module*, Link*, uchar*, int, int, Type*);
 extern	void		modinit(void);
 extern	WORD		modstatus(REG*, char*, int);
 extern	int			progstack(REG*, int, char*, int, long);
+extern	void		wmtracedump(Prog*);
 extern	void		movp(void);
 extern	void		movtmp(void);
 extern	void		movtmpsafe(void);

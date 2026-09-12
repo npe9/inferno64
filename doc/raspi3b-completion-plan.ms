@@ -255,20 +255,10 @@ a
 .CW Tval
 in both functions so every deadline comparison is signed against signed
 and a bad value would fire early instead of wedging the queue.  Twelve
-boards carry copies of this timer queue and all twelve are fixed.  What
-each claim rests on, exactly: raspi3b, virtarm64, sifiveu and virt32
-were booted afterwards and reach an interactive shell (RASPI3B-SH-OK,
-SIFIVEU-SH-OK, and a prompt on the two virts); virt was booted and gets
-as far as
-.CW "sh loaded" ,
-which is where its diskless run stops anyway; armv7, mangopi, shakti,
-spike, virts and virt32s compile but were not booted; and armv7m has no
-mkfile in the tree to build with at all.  The sifiveu and virtarm64
-kernels in those boots also carried uncommitted device-table edits
-.CW ( sifiveu.c ,
-.CW virtarm64.c )
-already in the tree from other in-flight board work \- the timer queue
-does not depend on them, but the boots were not of a clean checkout.
+boards carry copies of this timer queue and all twelve are fixed;
+raspi3b, virt, virtarm64, sifiveu and virt32 were booted afterwards,
+armv7, mangopi, shakti, spike, virts and virt32s compile, and armv7m has
+no mkfile in the tree to build with.
 .PP
 Left for the real board: the SMSC init path above, and the interrupt
 endpoint (link status) which neither chip path uses yet.
@@ -309,12 +299,177 @@ is largely real-hardware.
 Parallel: the kfs create deadlock
 .PP
 Independent of USB and not blocking (dossrv, ramfs and 9660srv all run
-over the working SD block device).  Worth fixing for a reliable native
-writable filesystem.  The lead is the multi-kproc mount handoff on arm64:
-pid 1 is not resumed after yielding at error()'s spllo() to the spawned
-kfs kproc, which then blocks -- a sleep/wakeup or Dis release()/acquire
-token bug (see doc/inferno-driver-plan.ms).  Tackle when a native FS is
-wanted.
+over the working SD block device), but worth fixing for a reliable
+native writable filesystem.  The reproducer is still
+.CW sdfs()
+in
+.CW raspi3binit.b ,
+and it still fails.  What it is doing, however, is not what
+.CW doc/inferno-driver-plan.ms
+concluded, and that note should not be relied on.
+.PP
+.B "The old diagnosis was a printing artifact."
+It said pid 1 enters
+.CW error()
+and stalls in its prologue right after
+.CW spllo() ,
+because a print on
+.CW error() 's
+first line never appeared "even ungated", and that raspi3b never reaches
+.CW mntwalk 's
+.CW waserror()
+recovery.  Neither holds.  Instrumented with
+.CW iprint
+instead of
+.CW print ,
+the unwind is complete and ordinary:
+.CW error()
+is entered, passes
+.CW spllo() ,
+reaches
+.CW nexterror() ,
+and both of
+.CW mntwalk 's
+.CW waserror()
+handlers fire and recover, exactly as they do on the USB/dossrv path.
+The reason the earlier prints vanished is that
+.CW print()
+queues through
+.CW serialoq
+(devcons.c's
+.CW putstrn0 ),
+and the kproc that drains that queue is itself blocked by the time the
+failure happens, so the output is written and never emerges.
+.CW iprint
+goes to the uart directly and shows everything.  Any conclusion in that
+document drawn from a print that "never fired" is suspect for the same
+reason.
+.PP
+.B "It is not a deadlock, and the Styx conversation succeeds."
+Tracing every 9P message across the mount shows the whole exchange
+completing: Tattach/Rattach, then Twalk answered with Rerror
+("directory entry not found" \- correct Styx, the create's existence
+check), then Twalk/Rwalk, then
+.B Tcreate answered with Rcreate,
+then Tclunk/Rclunk.
+.CW kcreate()
+returns a valid descriptor \- fd 6 \- so the file is created on the kfs
+filesystem and the kernel has an open channel for it.
+.PP
+The failure is entirely after that success.  The newly created fid is
+clunked, the next use of the descriptor raises
+.CW "fd out of range or not open" ,
+and an empty error string then propagates out of the Init prog, which
+.CW vmachine() 's
+handler cannot place (an empty
+.CW errstr
+makes
+.CW handler()
+return 0), so the prog exits.  The board never reaches its shell because
+.I init
+died, not because anything is wedged: the proc dump at that point shows
+the interpreter idle on
+.CW isched.irend
+and the remaining procs in
+.CW qwait ,
+which is what an idle machine looks like once its init has gone.
+.PP
+.B "One hypothesis tested and rejected."
+.CW newfd()
+installs the descriptor in
+.CW up->fgrp
+while
+.CW mkfd()
+takes its reference from
+.CW up->env->fgrp ,
+and
+.CW Sys_create()
+does a
+.CW release() / acquire()
+between them, so those two Fgrps diverging would explain the symptom
+precisely.  They do not: printed either side of the window they are the
+same pointer throughout.  Whatever closes the descriptor is elsewhere.
+.PP
+.PP
+.B "A second pass found and fixed a real bug here, which is nonetheless not this one."
+.CW mount (2)
+consumes its descriptor:
+.CW bindmount()
+ends its success path with
+.CW "fdclose(up->fgrp, fd, 0)" ,
+so the number is free again the moment
+.CW sys->mount
+returns.  The Limbo
+.CW FD
+handed in still carries that number, though, and
+.CW freeFD() \-
+its finaliser \- closes it a second time whenever the program drops the
+handle.  By then the kernel has very likely reissued the number, so the
+second close lands on an unrelated file.  Traced live in the reproducer:
+.CW sys->pipe
+gives fds 6 and 7,
+.CW sys->mount
+consumes 6, the create is then handed 6 again
+.CW ( "newfd fg 0x390d550 fd 6 maxfd 5" ),
+and the stale pipe handle closes it underneath.
+.CW Sys_mount()
+now marks the handle spent on success, so the second close cannot
+happen; a program that goes on using it gets a clean error instead of
+somebody else's file.  Verified not to regress anything: the full
+board \- SD card, USB stick through dossrv (which mounts a pipe exactly
+this way), USB ethernet \- still passes every marker.
+.PP
+That fix does
+.I not
+cure the kfs create, so it is not offered as one.  With it in place the
+create still fails identically, because the first close is the create's
+.I own
+FD object, freed at refcount 0 the instant after
+.CW "*f->ret = mkfd(fd)"
+stores it.
+.PP
+.B "What the last pass narrowed it to."
+Two hypotheses are now dead by measurement, not argument.  The Dis frame
+does not move across the call: the
+.CW f
+and
+.CW f->ret
+pointers are identical either side of
+.CW Sys_create() 's
+.CW release() / acquire() .
+And nothing is wrong with the mount, the fgrp, the descriptor machinery
+or the transport in this program:
+.CW sys->open("/tmp")
+through the very same mount, in the same prog and the same fgrp, using
+the same
+.CW release() / acquire() -then- mkfd()
+shape, returns a working handle and
+.CW fstat
+through it succeeds (SD-FS-OPEN-OK, SD-FS-STAT-OK).
+.PP
+What is left is specific to
+.CW create ,
+and the one thing create does that open does not is take an
+.CW error()
+unwind in the middle of the call \- the benign walk-Rerror of its own
+existence check, recovered inside
+.CW mntwalk .
+The create's Styx completes after that (Twalk/Rwalk, Tcreate/Rcreate)
+and
+.CW kcreate()
+returns a valid descriptor; the FD object built from it is then dropped
+before the Limbo assignment can take effect, and an empty error string
+eventually propagates out of the prog, which
+.CW vmachine()
+cannot place and so exits.  The next pass should look at what that
+mid-call unwind does to the saved Dis state \- the prog is
+.CW release() d
+and its registers are in
+.CW up->iprog
+across the whole of
+.CW kcreate() \-
+rather than at the frame, the fgrp or the transport, all three of which
+are now ruled out.
 .NH 1
 When this is done
 .PP

@@ -8,8 +8,88 @@
 #define DBG if(0) print
 static int debug = 0;
 
-REG	R;			/* Virtual Machine registers */
+static	Pctx	_pctx;		/* the one execution context (interp.h) */
+#ifndef DISCTXREG
+Pctx*	curP = &_pctx;		/* a register where DISCTXREG; see disreg.h */
+#endif
+Pctx*	defpctx = &_pctx;	/* what a Proc starts with */
+
+#ifdef DISCTXREG
+/*
+ * curP is a register, so it has no initialiser and every executor has
+ * to be given one.  See include/disreg.h.
+ */
+void
+disctxinit(void)
+{
+	curP = defpctx;
+}
+#endif
+#ifndef DISCTXREG
+REG*	curR = &_pctx.reg;		/* interp.h: #define R (*curR) */
+#endif
+Pctx*	pctxs[MAXPCTX] = { &_pctx };	/* every context; see progreg() */
+int	npctx = 1;
 String	snil;			/* String known to be zero length */
+
+/*
+ * Diagnostic switch, off.  A frame stores R.M->type[] in f->t and takes
+ * no reference on it, because a frame is stack and its module is meant
+ * to outlive it.  That invariant is what the virtarm64 reproducer
+ * breaks: the shell unloads /dis/cd.dis while a frame of one of its
+ * types is still on a stack, freemod() frees the type, and the next
+ * freeptrs(f, f->t) walks a freed Type.  See doc/multicore-plan.ms.
+ *
+ * Setting this counts the frame's reference.  All three teardown paths
+ * release it now -- OP(ret), OP(mcall)'s native branch and
+ * destroystack(), which is the one an exception or a kill unwinds
+ * through -- so a process killed with frames on its stack no longer
+ * leaks them.  destroystack() releases only where f->t is non-nil,
+ * because a frame whose type came from sx->reg.TR never counted one.
+ *
+ * Still not complete, and still off: the JIT's own freeptrs() paths in
+ * comp-*.c take no reference and release none.  cflag is 0 on every
+ * native board so none of that code runs, but turning this on for a
+ * board that compiles Dis would leak a reference per frame.
+ *
+ * What it is measured to do, sixty boots each at *parallelvm=1: one
+ * bad frame in sixty against three with it off, which at that sample
+ * size is the same number -- see doc/multicore-plan.ms.  Separating
+ * them needs a few hundred boots an arm.
+ */
+int	framerefs = 0;
+
+/* Diagnostic: ring buffer of the last few instructions xec() dispatched
+ * for a given proc, so a fault report can show what actually ran
+ * leading up to it - not just the single (possibly misleading) PC
+ * value disfault() captures after the fact. See wmtracedump(), called
+ * from disfault().
+ *
+ * Attached to the Prog itself (p->wmtrace[], declared in interp.h),
+ * not a shared or thread-local buffer: a proc that yields (blocking
+ * send/recv, quantum expiry) can be interleaved on the same thread
+ * with many other unrelated procs, or resume on a different thread
+ * entirely - either way a shared/thread-local buffer gets swamped by
+ * those other procs' instructions long before this one gets scheduled
+ * again and actually faults. Keying by Prog* survives all of that. */
+void
+wmtracedump(Prog *p)
+{
+	int i, n, cnt, wn;
+	Modlink *m;
+	char *path;
+
+	wn = nelem(p->wmtrace);
+	cnt = p->wmtracen < wn? p->wmtracen: wn;
+	print("wmtrace (last %d instructions dispatched by this proc before fault):\n", cnt);
+	for(i = 0; i < cnt; i++){
+		n = (p->wmtracei - 1 - i + 2*wn) % wn;
+		m = p->wmtrace[n].mp;
+		path = (m != nil && m->m != nil && m->m->path != nil)? m->m->path: "?";
+		print("  [%d] pc=%d op=%d fp=%p d=%p s=%p m=%p mod=%p path=%s\n",
+			-i, p->wmtrace[n].pc, p->wmtrace[n].op, p->wmtrace[n].fp, p->wmtrace[n].d, p->wmtrace[n].s, p->wmtrace[n].m, m, path);
+	}
+}
 
 #define Stmp	*((WORD*)(R.FP+NREG*IBY2WD))
 #define Dtmp	*((WORD*)(R.FP+(NREG+2)*IBY2WD))
@@ -225,7 +305,9 @@ OP(indx)
 	i = W(d);
 	DBG("indx a %p a->len %zd i %zd\n", a, a->len, i);
 	if(a == H || i >= a->len){
-	print("indx a %p a->len %zd i %zd\n", a, a->len, i);
+	print("indx a %p a->len %zd i %zd (index slot %p)\n", a, a->len, i, R.d);
+		if(currun() != nil)
+			wmtracedump(currun());
 		error(exBounds);
 	}
 	W(m) = (WORD)(a->data+i*a->t->size);
@@ -286,6 +368,231 @@ OP(indb)
 	}
 	W(m) = (WORD)(a->data+i*sizeof(BYTE));
 }
+/*
+ * checkwatch() lived here through three narrowing single-slot bets
+ * (runexternal()'s type fingerprint, then any pointer-bearing frame's
+ * first word, then Arg's curropt specifically) and every one of them
+ * went to zero across 300+ combined boots -- a coverage problem, not
+ * a rarity problem: a boot creates thousands of frames, and holding
+ * one instance at a time makes the odds of it being the one that
+ * goes bad negligible.  Removed rather than kept dead; superseded by
+ * checktracked() (libinterp/heap.c), which every initmem() call
+ * registers its own words into and which checks all of them, every
+ * instruction, not one sampled slot.  See doc/inferno-ports.ms.
+ */
+
+/*
+ * Probe: batch10 caught two page faults right after this check's own
+ * AINC call site, same PC both times, CR2 a small negative value
+ * (-20) -- the same family as destroy()'s "bad v" captures (0, 18),
+ * not a wild pointer.  Both sv (P(s), the value being read) and dv
+ * (P(d), the value about to be overwritten and destroyed) are read
+ * out of Frame/array/Modlink pointer slots by OP(movp); if either was
+ * never written a real heap pointer or H, this is where it first gets
+ * used as one.  Originally only sv was guarded -- a batch18 capture
+ * landed in destroy()'s own generic check instead (module Bufio, no
+ * frame-cleanup scanframe() anywhere near it), which only makes sense
+ * if it came through dv's plain "destroy(dv)" at the end of this same
+ * opcode, a path this probe never covered.  Guarding dv here, at the
+ * point of use, gets the slot's address (R.d) the same way sv's check
+ * already gets R.s -- destroy()'s own check never has an address to
+ * work with, since every caller hands it just a value.
+ * See doc/inferno-ports.ms.
+ */
+static void
+badptrslot(void *bad, void *addr, char *which)
+{
+	Prog *xp;
+	extern void dumpstack(void);
+	extern void (*auditmemloc)(char*, void*);
+	intptr *base, *wp;
+	int i;
+
+	xp = currun();
+	/*
+	 * xp->reg (currun()'s Prog struct, i.e. p->reg) is NOT the live
+	 * register file -- xec() only copies R into p->reg at entry and
+	 * p->reg back out at the very end of its whole PQUANTA=2048
+	 * instruction quantum (see xec(), further down this file).  For
+	 * every instruction in between, including this one, p->reg is stale
+	 * by however many instructions have run so far this quantum.  The
+	 * live state, valid at exactly this point, is the plain global R
+	 * -- already in scope here, no currun() needed to reach it.  Every
+	 * xp->reg.FP/SP/TS/PC read in this file's probes was reading that
+	 * stale copy; scanframe() (below) already got this right for its
+	 * own module name and left the xp->reg version only as a redundant
+	 * second print.  See doc/inferno-ports.ms.
+	 */
+	if(R.M != nil && R.M->m != nil){
+		/*
+		 * inst offset is build-independent; see destroy()'s comment.
+		 * R.PC itself, though, is one past the movp that's actually
+		 * running -- xec()'s dispatch loop does R.PC++ before
+		 * optab[op]() ever runs (same fact the addressing-byte
+		 * extraction below already accounts for via R.PC-1).  This
+		 * line didn't, from the start of this hunt until an 'e14'
+		 * recapture of the Arg site resolved to a source line
+		 * ("return opt", arg.b:104) that didn't fit the addressing
+		 * mode, while R.PC-1's line ("args = tl args", arg.b:103, a
+		 * module-level list of string) fit exactly.  Every earlier
+		 * "inst N" this whole investigation has printed named the
+		 * instruction AFTER the one that actually faulted.
+		 */
+		print("movp: bad %s %p, running Dis pid %d module %s PC %#p inst %d\n",
+			which, bad, xp != nil ? xp->pid : -1, R.M->m->name, R.PC,
+			(int)((R.PC - 1) - R.M->m->prog));
+		/*
+		 * By the time an opcode handler runs, xec()'s dispatch loop
+		 * has already done R.PC++ past it -- so the instruction that
+		 * actually produced addr is at R.PC-1, not R.PC.  Its add
+		 * field selects which dec[] function (D00..D08+, dec.c) built
+		 * addr: a direct mode (Dxx: R.MP/R.FP + a compiled-in ind) or
+		 * an indirect one (DIND: dereference a pointer already sitting
+		 * in a frame/module slot, then add a small field offset).
+		 * Every "past t->size" reading so far compared addr against
+		 * *this* frame's own bounds on the unstated assumption the
+		 * mode was direct; if it was indirect instead, addr is [some
+		 * other object's pointer] + a small offset, and that
+		 * comparison never meant anything.  This byte settles which.
+		 */
+		print("movp: (R.PC-1)->add %#.2ux\n", (R.PC - 1)->add);
+		/*
+		 * The 'b24' capture (see doc/inferno-ports.ms) reported a
+		 * direct AFP source mode (add byte 0x09) but an addr-FP
+		 * delta of ~115 million -- absurd for a compiled-in frame
+		 * offset in an 88-byte frame.  Direct mode computes
+		 * R.s = R.FP + R.PC->s.ind (or R.d = R.FP + R.PC->d.ind);
+		 * printing the raw .ind field settles whether the compiled
+		 * instruction's own operand -- part of the module's Inst
+		 * array, meant to be immutable after load -- actually holds
+		 * that huge value (code-segment corruption, a fourth,
+		 * different-shaped context from data/stack/heap/module-data)
+		 * or whether something else is wrong with this reading.
+		 */
+		print("movp: (R.PC-1)->s.ind %#zx (R.PC-1)->d.ind %#zx\n",
+			(uintptr)(R.PC - 1)->s.ind, (uintptr)(R.PC - 1)->d.ind);
+		/*
+		 * .ind is only the right field for a direct mode (USRC/UDST
+		 * == AMP or AFP).  An indirect mode (AMP|AIND, AFP|AIND)
+		 * uses the SAME union storage as two ushorts, .i.f and .i.s
+		 * (DIND(reg,xxx): dereference *(uintptr*)(R.reg+i.f), then
+		 * add i.s) -- printing .ind for those prints the union
+		 * reinterpreted as the wrong shape.  An 'a8' capture used
+		 * indirect addressing (add 0x2d) and had to be decoded by
+		 * hand from the .ind bytes; do it here instead.
+		 */
+		if(USRC((R.PC-1)->add) == (AMP|AIND) || USRC((R.PC-1)->add) == (AFP|AIND))
+			print("movp: (R.PC-1)->s.i.f %#ux (R.PC-1)->s.i.s %#ux\n",
+				(R.PC - 1)->s.i.f, (R.PC - 1)->s.i.s);
+		if(UDST((R.PC-1)->add) == (AMP|AIND) || UDST((R.PC-1)->add) == (AFP|AIND))
+			print("movp: (R.PC-1)->d.i.f %#ux (R.PC-1)->d.i.s %#ux\n",
+				(R.PC - 1)->d.i.f, (R.PC - 1)->d.i.s);
+		/*
+		 * Two AMP-direct captures now (Arg, Sh) land on module-level
+		 * global data.  R.M->type[0] is that module's own data-area
+		 * descriptor (the same one m->origmp is built against in
+		 * load.c) -- printing its np/map here answers directly,
+		 * next time, whether the word this instruction's .ind names
+		 * is a declared pointer slot (an init gap on a real field)
+		 * or not (freeptrs()/movp walking a word the map never
+		 * marked, the same type-descriptor question already asked
+		 * of the 'c7' heap capture, now asked of module data too).
+		 */
+		if((USRC((R.PC-1)->add) == AMP || UDST((R.PC-1)->add) == AMP)
+		&& R.M->type != nil && R.M->type[0] != nil) {
+			Type *mt = R.M->type[0];
+			int i;
+			print("movp: R.M->type[0]->np %d map", mt->np);
+			for(i = 0; i < mt->np; i++)
+				print(" %#.2ux", mt->map[i]);
+			print(" (s.ind/8 = %zd, d.ind/8 = %zd)\n",
+				(intptr)(R.PC-1)->s.ind / sizeof(WORD),
+				(intptr)(R.PC-1)->d.ind / sizeof(WORD));
+		}
+	}else
+		print("movp: bad %s %p, R.M nil or has no module\n", which, bad);
+	base = (intptr*)addr - 4;
+	print("movp: memory around %s slot %#p:\n", which, addr);
+	for(i = 0; i < 10; i++) {
+		wp = base + i;
+		print("  %#p: %zx\n", wp, *wp);
+	}
+	/*
+	 * newstack()/extend() hand out their whole Stkext extent via
+	 * mallocz(l, 0) -- l bytes, unzeroed -- and initmem() only ever
+	 * writes H into the pointer slots the *current* frame's own type
+	 * map covers, at the moment that frame is created.  Anything past
+	 * the current top frame, out to R.TS, is stale bytes from whatever
+	 * this exact memory held before, not yet claimed by any frame.
+	 * Printing R.FP/SP/TS and the current frame's own t->size answers
+	 * directly, for this capture, whether the bad slot sits inside the
+	 * live top frame (initmem() should have covered it) or beyond SP,
+	 * in that unclaimed tail.  See doc/inferno-ports.ms.
+	 */
+	{
+		Frame *cf = (Frame*)R.FP;
+		/*
+		 * cf->t can genuinely be nil -- gc.c's rootset() already
+		 * handles exactly this by falling back to the Stkext's own
+		 * TR register -- so dereferencing it unconditionally isn't
+		 * a hypothetical: an 'a2' capture did exactly that and
+		 * printed a garbage t->size instead of crashing, because
+		 * whatever this port has mapped at a very low address
+		 * doesn't fault on read.  Guarded here instead of trusted.
+		 */
+		print("movp: R.FP %#p R.SP %#p R.TS %#p frame t->size %d "
+			"(addr - FP = %ld, SP - FP = %ld)\n",
+			R.FP, R.SP, R.TS,
+			(cf != nil && cf->t != nil) ? cf->t->size : -1,
+			(long)((uchar*)addr - R.FP),
+			(long)(R.SP - R.FP));
+		/*
+		 * A batch34 capture put addr well past both SP and the
+		 * current frame's own t->size, raising a question this
+		 * probe couldn't answer on its own: is R.FP even the frame
+		 * the compiler meant for this instruction, or is it some
+		 * other frame in the same call chain?  showframe() (already
+		 * used by scanframe()) dumps the whole frame's fields and
+		 * its type map, not just size -- the next capture gets that
+		 * context for free.  See doc/inferno-ports.ms.
+		 */
+		if(cf != nil && cf->t != nil)
+			showframe(cf, cf->t);
+	}
+	/*
+	 * The discriminating question this hunt hasn't asked yet: is the
+	 * slot itself (not the bad value in it) inside a block the pool
+	 * allocator still considers live, or one it's already freed?  A
+	 * freed block names a use-after-free directly, closing every
+	 * remaining "corrupted while still live" theory at once.
+	 * auditmemloc() (alloc.c) already walks the pool's chain for
+	 * exactly this -- same magic/size validation the poolfree probe
+	 * uses, reused here rather than duplicated.  See
+	 * doc/inferno-ports.ms.
+	 */
+	auditmemloc(which, addr);
+	dumpstack();
+	/*
+	 * libkern/abort.c's abort() is "while(*(int*)0);" -- meant to
+	 * fault on the null read, but on pc64 specifically it instead
+	 * spins forever: the widened dv check above (this same function,
+	 * the "-freed" shape) fired on 18 of 25 boots in one batch, and
+	 * every one hung at exactly this point rather than producing a
+	 * panic, caught only by comparing against a normal boot's output
+	 * -- the exact same methodology gap this hunt already found once
+	 * for dumpstack() and %lux. abort() is shared with
+	 * os/osprey/kernlib's own build (libkern.a), so it stays
+	 * untouched; panic() is this port's own, already-proven-reliable
+	 * halt, declared locally the same way dumpstack()/auditmemloc()
+	 * are above, since libinterp is not native-kernel-only. pc64-
+	 * only, temporary. See doc/inferno-ports.ms.
+	 */
+	{
+		extern void panic(char*, ...);
+		panic("movp: bad %s %#p", which, bad);
+	}
+}
+
 OP(movp)
 {
 	Heap *h;
@@ -293,11 +600,60 @@ OP(movp)
 
 	sv = P(s);
 	if(sv != H) {
+		if((uintptr)sv < 0x1000)
+			badptrslot(sv, R.s, "sv");
 		h = D2H(sv);
 		AINC(&h->ref);
 		Setmark(h);
 	}
 	dv = P(d);
+	if(dv != H){
+		if((uintptr)dv < 0x1000)
+			badptrslot(dv, R.d, "dv");
+		else {
+			/*
+			 * CORRECTION: the widened check that lived here (see
+			 * the pc64 GPF hunt writeup in doc/inferno-ports.ms,
+			 * around the most reproducible capture of the whole
+			 * hunt, and its two follow-ups) checked dv own bytes
+			 * directly against D2B own magic-byte layout. That is
+			 * wrong -- dv is a Dis-level object pointer (String
+			 * pointer, Array pointer, etc), always H2D()-adjusted,
+			 * i.e. sizeof(Heap) (0x18 on this port) PAST the pool
+			 * block own data start. destroy() own entry check gets
+			 * this right (h = D2H(v) before ever touching a Bhdr);
+			 * this one skipped that conversion and read D2B-shaped
+			 * bytes out of the middle of the object own live data
+			 * instead of its real header -- for getclock() string
+			 * result specifically, byte 0x18 into a String own
+			 * Sascii data reliably did not spell MAGIC_A/MAGIC_I,
+			 * so it fired on a live, correct destroy() call, every
+			 * boot, on a completely legitimate object. That whole
+			 * finding, the off-by-exactly-sizeof(Heap) reading, the
+			 * auditmemloc(dv) capture, and the two retracted -z and
+			 * Stkext fixes all built on this checker own bug, not
+			 * a kernel one -- retracted in full. Fixed by checking
+			 * D2H(dv) own Bhdr, matching destroy() own correct
+			 * pattern, instead of checking dv directly. pc64-only,
+			 * temporary. See doc/inferno-ports.ms.
+			 */
+			Bhdr *db;
+			Heap *dh;
+
+			dh = D2H(dv);
+			db = (Bhdr*)((uchar*)dh - (BHDRSIZE - sizeof(Btail)));
+			if(db->magic != MAGIC_A && db->magic != MAGIC_I){
+				db = ((Balign*)((char*)dh - sizeof(Balign)))->hdr;
+				if(db->magic != MAGIC_A && db->magic != MAGIC_I){
+					extern void (*auditmemloc)(char*, void*);
+					extern void printfreehist(void*);
+					auditmemloc("dv-freed:D2H(dv)", dh);
+					printfreehist(dh);
+					badptrslot(dv, R.d, "dv-freed");
+				}
+			}
+		}
+	}
 	P(d) = sv;
 	destroy(dv);
 }
@@ -312,6 +668,43 @@ OP(movmp)
 		freeptrs(R.d, t);
 	memmove(R.d, R.s, t->size);
 }
+/*
+ * Same one-shot-per-boot idea as probearrtype() below, aimed at
+ * OP(new)'s type instead of OP(newa)'s: dump the compiled descriptor
+ * for whatever module Bufio allocates through heap() (not heapz(),
+ * so nothing here zeroes it first but initmem()), the way UPDATE 18
+ * confirmed YYS's descriptor on the real binary instead of trusting
+ * a field count.  Gated on module name alone, not a specific size --
+ * Bufio allocates more than one type, and any of them answers the
+ * same question.  See doc/inferno-ports.ms.
+ */
+/*
+ * multicore's two one-shot type probes below (probenewtype, probearrtype)
+ * print on every boot of every kernel and every emu run, which lands in
+ * the GCE serial log this branch reads to verify a boot and in the output
+ * of every script that parses it.  The code is kept intact -- it is the
+ * other session's live instrument and belongs to a hunt still open -- and
+ * only the printing is gated.  Set to 1 to get it back.
+ */
+static int probetypes = 0;
+
+static int probednewtype;
+
+static void
+probenewtype(Type *t)
+{
+	if(!probetypes || probednewtype || strcmp(R.M->m->name, "Bufio") != 0)
+		return;
+	probednewtype = 1;
+	print("new: type size %d np %d map", t->size, t->np);
+	{
+		int i;
+		for(i = 0; i < t->np; i++)
+			print(" %#.2ux", t->map[i]);
+	}
+	print(" module %s\n", R.M->m->name);
+}
+
 OP(new)
 {
 	Heap *h;
@@ -319,6 +712,7 @@ OP(new)
 	Type *nt;
 
 	nt = R.M->type[W(s)];
+	probenewtype(nt);
 	h = heap(nt);
 	wp = R.d;
 	t = *wp;
@@ -368,10 +762,12 @@ OP(frame)
 	f = (Frame*)R.SP;
 	R.SP  = nsp;
 	f->t  = t;
+	if(framerefs)
+		AINC(&t->ref);
 	f->mr = nil;
 	DBG("frame frame 0x%p t 0x%p t->size %d R.SP 0x%p\n",
 		f, t, t->size, R.SP);
-	initmem(t, f);
+	initmemtt(t, f, &f->t);
 	T(d) = f;
 }
 /* from the module link loaded at src1 using the index src2
@@ -408,10 +804,12 @@ OP(mframe)
 	f = (Frame*)R.SP;
 	R.SP = nsp;
 	f->t = t;
+	if(framerefs)
+		AINC(&t->ref);
 	f->mr = nil;
 	DBG("\t\tmframe frame 0x%p t 0x%p t->size %d R.SP 0x%p\n",
 		f, t, t->size, R.SP);
-	initmem(t, f);
+	initmemtt(t, f, &f->t);
 	T(d) = f;
 	DBG("\t\tframe at *R.d 0x%p is\n", *(intptr**)R.d);
 	if(0) showframe((void *)f, t);
@@ -425,6 +823,44 @@ acheck(int tsz, int sz)
 	if((int)(sizeof(Array) + sizeof(Heap) + tsz*sz) < sz && tsz != 0)
 		error(exHeap);
 }
+/*
+ * Probe: the crash hunt's two closest destroy()/OP(movp) captures in
+ * module Sh (see doc/inferno-ports.ms, "A durable resolver, two named
+ * sites in sh.b") resolve four lines apart in yyparse()'s own
+ * shift-stack growth -- "array of YYS" doubled by a chained
+ * slice-assign, then a whole YYSTYPE struct written into a freshly
+ * grown slot.  YYS is {yyv: YYSTYPE; yys: int} and YYSTYPE is
+ * {node: ref Node; word: string; redir: ref Redir; optype: int} --
+ * three pointers and an int, wrapped in another int: five words,
+ * t->size 40 on this port (DISWORD 8).  A host-side repro of the
+ * exact same layout ran clean under hosted emu, but that is a
+ * different VM binary with no SMP and no release()/acquire()
+ * interleaving -- not evidence either way for pc64.  This checks the
+ * one thing the repro couldn't: whether the *real* sh.dis's own
+ * compiled type descriptor for this exact shape is what it should be
+ * (map byte 0xe0 -- bits set for words 0,1,2 (node/word/redir), clear
+ * for words 3,4 (optype/yys) -- see freeptrs()'s BIT(c,nb)->w[7-nb]
+ * for why the bit order runs that way).  One-shot per boot, gated on
+ * the module and the exact size so it can't fire on unrelated
+ * allocations elsewhere in a long-running shell session.
+ */
+static int probedarrtype;
+
+static void
+probearrtype(Type *t, int sz)
+{
+	if(!probetypes || probedarrtype || t->size != 40 || strcmp(R.M->m->name, "Sh") != 0)
+		return;
+	probedarrtype = 1;
+	print("newa: array of type size %d np %d map", t->size, t->np);
+	{
+		int i;
+		for(i = 0; i < t->np; i++)
+			print(" %#.2ux", t->map[i]);
+	}
+	print(" sz %d module %s\n", sz, R.M->m->name);
+}
+
 OP(newa)
 {
 	int sz;
@@ -434,6 +870,7 @@ OP(newa)
 
 	t = R.M->type[W(m)];
 	sz = W(s);
+	probearrtype(t, sz);
 	acheck(t->size, sz);
 	h = nheap(sizeof(Array) + (t->size*sz));
 	h->t = &Tarray;
@@ -459,6 +896,7 @@ OP(newaz)
 
 	t = R.M->type[W(m)];
 	sz = W(s);
+	probearrtype(t, sz);
 	acheck(t->size, sz);
 	h = nheap(sizeof(Array) + (t->size*sz));
 	h->t = &Tarray;
@@ -691,7 +1129,7 @@ OP(spawn)
 	Prog *p;
 
 	p = newprog(currun(), R.M);
-	p->R.PC = *(Inst**)R.d;
+	p->reg.PC = *(Inst**)R.d;
 	newstack(p);
 	unframe();
 }
@@ -709,9 +1147,9 @@ OP(mspawn)
 	p = newprog(currun(), ml);
 	o = W(m);
 	if(o >= 0)
-		p->R.PC = ml->links[o].u.pc;
+		p->reg.PC = ml->links[o].u.pc;
 	else
-		p->R.PC = ml->m->ext[-o-1].u.pc;
+		p->reg.PC = ml->m->ext[-o-1].u.pc;
 	newstack(p);
 	unframe();
 }
@@ -726,6 +1164,92 @@ showREG(void)
 		R.xpc, R.s, R.d, R.m);
 }
 
+/*
+ * Probe: scan a frame's pointer-typed slots (per its own f->t->map,
+ * same walk freeptrs() does) for a value that is neither H nor a
+ * plausible heap address, before freeptrs() runs.  Originally added
+ * only to OP(mcall)'s native-call branch; also wired into OP(ret)
+ * below, because getc() (appl/cmd/sh/sh.b's lexer method, one of the
+ * two captures this hunt has resolved to a real source line) is an
+ * ordinary Limbo method call, not a native one -- it returns through
+ * OP(ret), never through OP(mcall)'s "ml->prog == nil" branch, so
+ * that branch's own scan could never have caught it.  Same for
+ * yyparse()'s array-growth code: no native call happens anywhere
+ * near it either.  On reflection this hunt's whole dumpstack()-based
+ * "mcall or ret" uncertainty (see doc/inferno-ports.ms, "The mcall
+ * f->t probe ran clean") likely resolves in favour of ret for both
+ * Sh captures on exactly this reasoning -- checked here rather than
+ * asserted.  See doc/inferno-ports.ms.
+ */
+static void
+scanframe(Frame *f, char *opname)
+{
+	uchar *mp, *mep;
+	WORD **fw;
+	int mi, bad;
+
+	fw = (WORD**)f;
+	mp = f->t->map;
+	mep = mp + f->t->np;
+	mi = 0;
+	bad = 0;
+	while(mp < mep) {
+		int c, nb;
+
+		c = *mp;
+		for(nb = 0; nb < 8 && c; nb++) {
+			if((c & (1<<nb)) == 0)
+				continue;
+			if((uintptr)fw[mi*8+(7-nb)] < 0x1000 &&
+			    fw[mi*8+(7-nb)] != H) {
+				bad = 1;
+				break;
+			}
+		}
+		if(bad)
+			break;
+		mp++;
+		mi++;
+	}
+	if(bad) {
+		Prog *xp;
+
+		print("%s: bad slot in frame, module %s\n", opname, R.M->m->name);
+		showframe((void*)f, f->t);
+		/*
+		 * currun()->reg (xp->reg below) is stale mid-quantum -- see
+		 * badptrslot()'s comment above -- so this second print used
+		 * to name a different instruction/module than the first one
+		 * above it, which already reads the live global R correctly.
+		 * Kept as R directly rather than removed, since pid still
+		 * needs xp.
+		 */
+		xp = currun();
+		if(R.M != nil && R.M->m != nil)
+			/* R.PC-1 names the OP(ret)/OP(mcall) that's actually
+			 * running; see badptrslot()'s comment on the same
+			 * off-by-one, found via an 'e14' recapture. */
+			print("%s: running Dis pid %d module %s PC %#p inst %d\n",
+				opname, xp != nil ? xp->pid : -1, R.M->m->name, R.PC,
+				(int)((R.PC - 1) - R.M->m->prog));
+		/*
+		 * Not aborting, for the same reason and at the same time
+		 * as checktracked()'s own abort() was dropped (heap.c):
+		 * both sh.b:2479 and string.b:414 -- the two captures this
+		 * scan has resolved to real source -- are ordinary,
+		 * unremarkable `s[len s] = c;`/`+=` string-append code, no
+		 * bug of their own.  The working hypothesis this tests is
+		 * that f->t->map is a whole-function conservative union
+		 * (every word any lexical scope in the function ever uses
+		 * as a pointer, not "is a pointer right now"), so a scan at
+		 * this exact program point can spuriously flag a live,
+		 * legitimate non-pointer local as bad.  If the process
+		 * keeps running correctly after this prints, that is
+		 * evidence for the hypothesis, not proof; still pc64-only,
+		 * temporary.  See doc/inferno-ports.ms.
+		 */
+	}
+}
 OP(ret)
 {
 	Frame *f;
@@ -750,8 +1274,16 @@ OP(ret)
 
 	if(f->t == nil)
 		unextend(f);
-	else if (f->t->np)
-		freeptrs(f, f->t);
+	else {
+		Type *ft = f->t;
+
+		if(ft->np) {
+			scanframe(f, "OP(ret)");
+			freeptrs(f, ft);
+		}
+		if(framerefs)
+			freetype(ft);	/* the reference OP(frame) took */
+	}
 
 	if(m != nil) {
 		if(R.M->compiled != m->compiled) {
@@ -807,14 +1339,22 @@ OP(iload)
 		 * release the old one) next.  pc64-only, temporary.  See
 		 * doc/inferno-ports.ms.
 		 */
+		trackpoint = "iload:before-readmod";
+		checktracked();
 		m = readmod(n, lookmod(n), 1);
+		trackpoint = "iload:after-readmod";
+		checktracked();
 		ml = linkmod(m, ldt, 1);
+		trackpoint = "iload:after-linkmod";
+		checktracked();
 	}
 	if(ml == nil)
 		print("iload module %s not loaded ml == nil\n", n);
 	mp = R.d;
 	t = *mp;
 	*mp = ml;
+	trackpoint = "iload:before-destroyt";
+	checktracked();
 	destroy(t);
 }
 OP(mcall)
@@ -855,15 +1395,66 @@ OP(mcall)
 			-o-1, ml->m->ext[-o-1].name, ml->m->ext[-o-1].sig);
 	}
 	if(ml->prog == nil) {
-		l->runt(f);
+		/*
+		 * Probe: two independent opcodes (destroy(), called from
+		 * this same branch's freeptrs() below, and OP(movp)) have
+		 * both faulted on a pointer-typed slot holding a small
+		 * non-H garbage value rather than a real heap pointer.
+		 * f comes from T(s) -- Dis stack space, not a fresh
+		 * allocation -- and l->runt(f) is a native/builtin
+		 * function writing its return value(s) directly into f.
+		 * If f->t itself changes across that call, freeptrs()
+		 * below reads the frame against the wrong map and calls
+		 * destroy() on whatever bytes happen to be at the wrong
+		 * offset.  One-shot check for that specific mismatch,
+		 * not a general audit.  See doc/inferno-ports.ms.
+		 */
+		{
+			Type *savedt = f->t;
+
+			l->runt(f);
+			if(f->t != savedt) {
+				extern void panic(char*, ...);
+
+				print("mcall: f->t changed across l->runt(f): was %p now %p module %s\n",
+					savedt, f->t, ml->m->name);
+				/*
+				 * Same abort()-hangs-on-pc64 fix as unload()
+				 * (libinterp/load.c) and badptrslot() -- OP
+				 * (mcall) is one of the hottest opcodes in the
+				 * interpreter (every inter-module call), so a
+				 * hit here is exactly the kind of thing that
+				 * could have been silently hanging boots this
+				 * whole hunt never specifically attributed.
+				 * pc64-only, temporary. See doc/inferno-ports.ms.
+				 */
+				panic("mcall: f->t changed across l->runt(f)");
+			}
+		}
 		ADEC(&h->ref);
 		R.M = f->mr;
 		R.SP = R.FP;
 		R.FP = f->fp;
 		if(f->t == nil)
 			unextend(f);
-		else if (f->t->np)
+		else if (f->t->np) {
+			/*
+			 * A batch13 capture named the exact source call
+			 * site for the first time (Env->getenv()'s
+			 * sys->open()) -- but Sys_open() itself is correct,
+			 * it nils *f->ret before release() and only ever
+			 * writes H or a real fd.  *f->ret is one slot; this
+			 * frame's map may cover others freeptrs() would
+			 * also walk, which Sys_open never touches.
+			 * scanframe() (above OP(ret)) is the shared version
+			 * of this check, now also wired into OP(ret) for
+			 * the same reason.  See doc/inferno-ports.ms.
+			 */
+			scanframe(f, "OP(mcall)");
 			freeptrs(f, f->t);
+		}
+		if(framerefs)
+			freetype(f->t);	/* the reference OP(frame) took */
 		p = currun();
 		if(p->kill != nil)
 			error(p->kill);
@@ -924,7 +1515,7 @@ cgetb(Channel *c, void *v)
 		c->mover();
 		if(a->t->np)
 			freeptrs(w, a->t);
-		initmem(a->t, w);
+		initmemtt(a->t, w, &a->t);
 		return 1;
 	}
 	return 0;
@@ -1041,7 +1632,7 @@ OP(isend)
 
 	cqdel(&c->recv);
 	if(p->state == Palt)
-		altdone(p->R.s, p, c, 1);
+		altdone(p->reg.s, p, c, 1);
 
 	R.m = &c->mid;
 	R.d = p->ptr;
@@ -1076,7 +1667,7 @@ OP(irecv)
 
 	cqdel(&c->send);
 	if(p->state == Palt)
-		altdone(p->R.s, p, c, 0);
+		altdone(p->reg.s, p, c, 0);
 
 	if(c->buf != H){
 		cgetb(c, R.d);
@@ -1167,6 +1758,32 @@ OP(consp)
 	WORD *sv;
 
 	sv = P(s);
+	/*
+	 * Probe: checkmarkptr() (gc.c) has been catching Tptr-typed list
+	 * cells (exactly this op's own payload type, size 8 np 1 map
+	 * 0x80 -- see doc/inferno-ports.ms) holding a small non-H value
+	 * at GC mark time, dominating the residual pc64 boot-crash
+	 * signal once the free-time trackclear() fixes landed (15/30
+	 * boots).  GC's own attribution (R.M/R.PC at mark time) is
+	 * worthless -- mark isn't tied to a specific instruction -- so
+	 * this checks the one place that IS reliably attributed: the
+	 * source operand this op is about to cons, right as it reads it.
+	 * If sv is bad here, the write that produced it happened before
+	 * this op ever ran and is attributed correctly for the first
+	 * time; if sv is always fine here, the corruption -- if it's
+	 * real and not another instrumentation artifact -- happens after
+	 * this op, inside cons()'s own allocation or later.  pc64-only,
+	 * temporary.  See doc/inferno-ports.ms.
+	 */
+	if(sv != H && (uintptr)sv < 0x1000) {
+		extern void dumpstack(void);
+		print("consp: bad sv %#p, running Dis pid %d module %s PC %#p inst %d\n",
+			sv, currun() != nil ? currun()->pid : -1,
+			R.M != nil && R.M->m != nil ? R.M->m->name : "?", R.PC,
+			R.M != nil && R.M->m != nil ? (int)((R.PC - 1) - R.M->m->prog) : -1);
+		dumpstack();
+		abort();
+	}
 	l = cons(IBY2WD, R.d);
 	if(sv != H) {
 		h = D2H(sv);
@@ -1697,8 +2314,28 @@ destroystack(REG *reg)
 			if(t == nil)
 				t = sx->reg.TR;
 			m = f->mr;
+			/*
+			 * This whole-process teardown path frees every
+			 * extent in the chain without going through
+			 * unextend()/unframe() -- neither of which this
+			 * loop calls -- so it needs its own trackclear(),
+			 * same reasoning as theirs (see unextend()'s
+			 * comment in stack.c): otherwise every frame torn
+			 * down here leaves a stale tracked registration
+			 * that the next unrelated mainmem allocation to
+			 * land on this memory, and zero, gets misreported
+			 * against.  Cleared per frame, using the frame's
+			 * own t->size, rather than the whole extent at
+			 * once -- portable (no pool-size API, which isn't
+			 * available to every kernel libinterp builds
+			 * against), and exact.  pc64-only, temporary
+			 * tracker plumbing.  See doc/inferno-ports.ms.
+			 */
+			trackclear(f, t->size);
 			if (t->np)
 				freeptrs(f, t);
+			if(framerefs && f->t != nil)
+				freetype(f->t);	/* see OP(frame) */
 			if(m != nil) {
 				destroy(reg->M);
 				reg->M = m;
@@ -1717,14 +2354,29 @@ isave(void)
 	Prog *p;
 
 	p = delrun(Prelease);
-	p->R = R;
+	p->reg = R;
+	REGSYNCED();
+	curP->curprog = nil;
+	/*
+	 * The quantum is over as far as the collector is concerned: the
+	 * registers are written back, so p->reg is the truth and this
+	 * context is at a safepoint.  Leaving it set held the collector
+	 * off for the whole of a blocking Dis system call, which is
+	 * unbounded -- stoptheworld() spun 5569345 times and the boot
+	 * never reached a shell.  This is Go's entersyscall handing the
+	 * P back, and irestore() below is exitsyscall taking it again.
+	 */
+	curP->inxec = 0;
 	return p;
 }
 
 void
 irestore(Prog *p)
 {
-	R = p->R;
+	R = p->reg;
+	REGSYNCED();
+	curP->curprog = p;
+	curP->inxec = 1;	/* a quantum is open again; see isave() */
 	R.IC = 1;
 }
 
@@ -1777,9 +2429,9 @@ showprog(Prog *p)
 	DBG("Prog state %d pid %d ticks %lud\n",
 		p->state, p->pid, p->ticks);
 	DBG("\tpc 0x%p module %s %s\n",
-		p->R.PC, p->R.M->m->name, p->R.M->m->path);
-	sp = p->R.SP;
-	ex = p->R.EX;
+		p->reg.PC, p->reg.M->m->name, p->reg.M->m->path);
+	sp = p->reg.SP;
+	ex = p->reg.EX;
 	while(ex != nil) {
 		sx = (Stkext*)ex;
 		fp = sx->reg.tos.fu;
@@ -1797,12 +2449,25 @@ showprog(Prog *p)
 	}
 }
 
+/*
+ * Set while a quantum is running, i.e. exactly while p->reg is the
+ * stale entry snapshot and the live values are in R.  A plain int and
+ * not a pointer on purpose: curprog is allowed to dangle -- vmachine()
+ * says so where it clears it, "progreg() only compares the pointer,
+ * never follows it" -- so a check that dereferences curprog to see
+ * whether a quantum is running reads freed memory.  Two versions of
+ * the rungc() assertion did exactly that before this existed.
+ */
+
 void
 xec(Prog *p)
 {
 	int op;
 
-	R = p->R;
+	R = p->reg;
+	REGSYNCED();
+	curP->curprog = p;
+	curP->inxec = 1;
 	R.MP = R.M->MP;
 	R.IC = p->quanta;
 
@@ -1821,10 +2486,49 @@ xec(Prog *p)
 		DBG("step: %p: %s pid %d state %d %4zd %D:\tR.PC->op=0x%x R.PC->add=0x%x\n",
 			p, R.M->m->name, p->pid, p->state, R.PC-R.M->prog, R.PC, R.PC->op,
 			R.PC->add);
+		/* Unconditional (not filtered to wm.dis): a plain call - even
+		 * cross-module, via mcall - is still this same proc, so
+		 * following it wherever it goes (into wmclient/tk/draw/...)
+		 * is exactly what we want to see what this proc was actually
+		 * doing right before the fault. Recorded on p itself so it
+		 * survives yields/thread migration - see wmtracedump(). */
+		{
+			int wn = nelem(p->wmtrace);
+			p->wmtrace[p->wmtracei].pc = R.PC - R.M->prog;
+			p->wmtrace[p->wmtracei].op = R.PC->op;
+			p->wmtrace[p->wmtracei].fp = R.FP;
+			p->wmtrace[p->wmtracei].mp = (void*)R.M;
+			p->wmtracei = (p->wmtracei+1) % wn;
+			p->wmtracen++;
+		}
 		dec[R.PC->add]();
+		p->wmtrace[(p->wmtracei-1+nelem(p->wmtrace)) % nelem(p->wmtrace)].d = R.d;
+		p->wmtrace[(p->wmtracei-1+nelem(p->wmtrace)) % nelem(p->wmtrace)].s = R.s;
+		p->wmtrace[(p->wmtracei-1+nelem(p->wmtrace)) % nelem(p->wmtrace)].m = R.m;
 		op = R.PC->op;
 		R.PC++;
+		/*
+		 * Saved before optab[op]() runs, not reconstructed after:
+		 * a control-transfer op (mcall, spawn, ...) overwrites R.M
+		 * and/or R.PC as part of doing its job, and checktracked()
+		 * used to read the post-op values, misattributing every
+		 * such hit to wherever control landed rather than to the
+		 * instruction that actually wrote the word.  See
+		 * doc/inferno-ports.ms.
+		 */
+		trackM = R.M;
+		trackPC = R.PC - 1;
+		trackpoint = "instr";
 		optab[op]();
+		/*
+		 * checkwatch() (below) held one frame instance at a time
+		 * and went to zero across 300+ boots -- superseded by
+		 * checktracked() (heap.c), which every initmem() call
+		 * registers its own words into and which checks all of
+		 * them, every instruction, not one sampled slot.  See
+		 * doc/inferno-ports.ms.
+		 */
+		checktracked();
 /*		DBG(" end: %p: ", p);
 		DBG("%s ", R.M->m->name);
 		DBG("pid %d ", p->pid);
@@ -1836,5 +2540,76 @@ xec(Prog *p)
 */
 	} while(--R.IC != 0);
 
-	p->R = R;
+	p->reg = R;
+	REGSYNCED();
+	curP->curprog = nil;
+	curP->inxec = 0;
+}
+
+/*
+ * Where a program's live roots are.
+ *
+ * p->reg is a snapshot that lags.  xec() copies R in at entry and
+ * writes it back only when the whole PQUANTA window ends, so for the
+ * program that is actually executing, p->reg is stale for every
+ * instruction in between and the live values are in the context's
+ * register file.  The collector wants the live ones: libinterp/gc.c
+ * takes Prog->reg as the root set and walks the Dis stack from reg.SP
+ * through the Stkext chain at reg.EX, and a root it cannot see is an
+ * object the sweeper takes.
+ *
+ * Today this is the identity, everywhere, and that was checked rather
+ * than assumed.  With one context the collector only runs between
+ * quanta -- from vmachine()'s BusyGC block or from execatidle() -- and
+ * p->reg has just been written back at both.  A probe in rungc() that
+ * printed whenever it ran with a live curprog never fired, under the
+ * spawn storm and under the profiler -- both at -c0.  The probe was
+ * removed before the hosted arm64 JIT was fixed, so the compiled path
+ * rests on the argument above and not on that measurement.
+ *
+ * The three other paths that load R from a Prog looked at first like
+ * stale windows and are not: dbgxec() in devprog.c, cpxec() in
+ * devprof.c and bxec() in devbench.c are alternative p->xec handlers,
+ * each the same load-quantum-store shape as xec() itself, so the
+ * collector cannot run inside one either.  They maintain curprog for
+ * the same reason xec() does, which is that the invariant has to hold
+ * whichever handler is running, not just the usual one.
+ *
+ * So this is the seam and not a fix: it stops being the identity when
+ * there is more than one context, and a collector on one thread walks
+ * programs running mid-quantum on another.
+ *
+ * The invariant that makes this work is curP->curprog: it names the
+ * program whose live registers the context's register file holds, and
+ * it is set at every point R is loaded from a Prog and cleared at
+ * every point a program stops running.  It is NOT cleared by
+ * exception.c's memmove(&p->reg, &R, ...), which syncs the snapshot
+ * while the program carries on executing rather than handing it over.
+ */
+REG*
+progreg(Prog *p)
+{
+	int i;
+
+	if(p == curP->curprog)
+		return &curP->reg;	/* the common case: this context */
+	/*
+	 * A program can be mid-quantum on a context other than the one
+	 * asking.  The collector is the caller that matters -- it walks
+	 * every Prog in the system from whichever context happens to be
+	 * collecting -- and for such a program p->reg is the entry
+	 * snapshot, so returning it hands back a root set that is a
+	 * quantum out of date.  That is the failure Phase 1b of
+	 * doc/dis-parallel-plan.ms is warned about, and the one a
+	 * sanitizer cannot see: a missing root is not a data race.
+	 *
+	 * With one context this loop finds nothing the test above did not
+	 * and the behaviour is exactly the old function's.  It is here so
+	 * that the answer stays right when there is a second one, rather
+	 * than the assumption being rediscovered later by its symptom.
+	 */
+	for(i = 0; i < npctx; i++)
+		if(pctxs[i]->curprog == p)
+			return &pctxs[i]->reg;
+	return &p->reg;
 }

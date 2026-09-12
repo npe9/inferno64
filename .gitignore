@@ -1,10 +1,22 @@
 # object files, libraries, etc
 *.[8qkv5967o]
+# ...but the font subfonts are named for their code page, not for a
+# compiler: fonts/lucm/latin1.9, fonts/pelm/latin1.8 and friends are
+# source and were being ignored by the glob above purely because 9, 8
+# and 5 are also objtype letters.  24 of them are tracked, so the ignore
+# had no effect; it would have bitten whoever next removed and re-added
+# one.
+!/fonts/**
+!/os/*/*/fonts/**
+!/emu/*/fonts/**
 *.obj
 [8qkv965o].out
 [8qkv965o].emu
 obj.out
 obj.map
+# the linked emu, named for its build directory: o.emu, o.emu-cocoa,
+# o.emu-cocoa-asan.  The [8qkv965o].emu glob above only catches "o.emu".
+o.emu*
 vc*.pdb
 *.a
 
@@ -69,6 +81,7 @@ y.debug
 /[A-Z]*/*/bin/asm
 /[A-Z]*/*/bin/data2s
 /[A-Z]*/*/bin/emu
+/[A-Z]*/*/bin/emu-*
 /[A-Z]*/*/bin/limbo
 
 /Nt/*/bin/?[acl].exe
@@ -384,10 +397,10 @@ os/pc64/forth.h
 # Dis bytecode and symbol files anywhere, not just under /appl
 *.dis
 *.sbl
-# kernel binaries: os/inferno/<board>/i<board>, os/*/pc64/9pc64 etc.
-os/inferno/*/i[a-z]*[0-9a-z]
-!os/inferno/*/i*.[ch]
-!os/inferno/*/i*.s
+# kernel binaries.  The os/inferno ones are enumerated further down,
+# one line per board -- see the comment there for why a glob cannot do
+# this job.  The exceptions this rule used to need (icons/, i*.[ch],
+# i*.s) went with it.
 os/*/pc64/9pc64
 os/*/pc64/9upc64
 os/*/pc64/ipc64
@@ -482,17 +495,60 @@ os/inferno/boot/pc/pbs
 #
 # Left tracked on purpose: MacOSX/*/bin/ holds the host toolchain
 # (6c, 6l, limbo, mk) that bootstraps a build, so a fresh clone needs
-# it; and *.i under os/inferno/pc64 is source -- nothing generates
-# rebootcode.i -- despite the neighbouring .out files being dd output.
+# it; (*.i under os/inferno/pc64 was described here as source, on the
+# grounds that nothing generated rebootcode.i; the mkfile does, with an
+# od/awk rule, so it is untracked with the rest.)
 
 # riscv64 objects ("O= j" in mkfiles/mkfile-{os,Inferno}-riscv64)
 *.j
 
+# Kernel objects, one suffix per architecture: the "O=" line in
+# mkfiles/mkfile-Inferno-<arch>.  *.j, *.z, *.t, *.0 and *.2 were
+# already listed above; these are the rest, and without them every
+# amd64 (.6) and aarch64 (.7) kernel object counted as source -- 104
+# of them on virtarm64 alone.
+/os/inferno/*/*.[5678qv]
+/os/9front/*/*.[5678qv]
+
 # kernel root images, built by ../port/mkroot from the config file
 /os/inferno/*/*.root.[sch]
 
-# linked kernels and the raw images made from them
-/os/inferno/*/i[a-z0-9]*
+# Linked kernels and the raw images made from them.
+#
+# Enumerated, not globbed.  A linked kernel is named for its own
+# directory -- os/inferno/pc64/ipc64 -- and no glob can say that, so
+# every attempt to approximate it with "i" + anything swallowed real
+# source: os/inferno/init/init.b (hand-written Limbo), then
+# os/inferno/port/inferno.c (16K of kernel C), then os/inferno/pc's
+# pcidb.acid and sd53c8xx.i, then the whole of os/inferno/virt/icons
+# (a directory called "icons" matches "i" + [a-z0-9] + "*").
+# Excepting dotted names in turn un-ignored 104 .7 objects and every
+# generated .root.[sch].  A list cannot over-match, and a board added
+# later shows up as an untracked kernel, which is visible, rather than
+# quietly untracking that board's source, which is not.
+#
+# The trailing * catches the extra configs a board may have (pc64dev
+# links ipc64dev) and the .acid/.elf the linker writes beside them.
+/os/inferno/armv7/iarmv7*
+/os/inferno/mangopi/imangopi*
+/os/inferno/mps2/imps2*
+/os/inferno/nucleof303/inucleof303*
+/os/inferno/pc/ipc*
+/os/inferno/pc64/ipc64*
+/os/inferno/raspi3b/iraspi3b*
+/os/inferno/shakti/ishakti*
+/os/inferno/sifiveu/isifiveu*
+/os/inferno/spike/ispike*
+/os/inferno/teensy41/iteensy41*
+/os/inferno/virt/ivirt*
+/os/inferno/virt32/ivirt32*
+/os/inferno/virt32s/ivirt32s*
+/os/inferno/virtarm64/ivirtarm64*
+/os/inferno/virts/ivirts*
+/os/inferno/*/*.bin
+/os/inferno/*/*.dis
+/os/inferno/*/*.sbl
+/os/inferno/*/*.out
 /os/inferno/*/*.bin
 /os/inferno/pc64/[0-9].apbootstrap
 /os/inferno/pc64/[0-9].rebootcode
@@ -508,3 +564,47 @@ os/inferno/boot/pc/pbs
 # emu objects and its generated root
 /emu/*/o.emu*
 /emu/*/*.root.c
+# p9sym.py is imported by ad-hoc analysis scripts
+utils/__pycache__/
+
+# python bytecode from scripts/
+__pycache__/
+*.pyc
+
+# host tools, built from the .c beside them
+/tools/aout2efi
+/tools/aout2imxrt
+
+# kernels built into the install trees
+/9front/*/9pc64
+/Osprey/*/9pc64
+/Osprey/*/ipc64
+
+# Osprey install tree: built binaries, and the headers os/osprey copies
+# in.  Osprey/include/*.h themselves are tracked source and stay so --
+# only the copies are ignored: osprey9.h comes from
+# os/osprey/libosprey9, and osprey/ from os/osprey/port and
+# os/osprey/policy.
+/Osprey/*/bin/*
+/Osprey/include/osprey9.h
+/Osprey/include/osprey/
+
+# qemu test images, disks and boot logs
+/.qemu/
+
+# The two objtype letters the glob at the top of this file does not
+# cover: spim objects are .0 and 68020 objects are .2.  Every other
+# suffix a mkfile sets as O= is handled -- the glob takes 5 6 7 8 9 k o
+# q v, and .j, .t, .z and .obj have lines of their own.
+#
+# The fonts exception has to be restated after them, for the reason the
+# comment at the top gives about .8 and .9: 297 tracked subfonts end in
+# .0 and 244 in .2, named for their code page and not for a compiler
+# (fonts/lucida/Althebrew.10.0, fonts/lucida/latin1.5.2).  A later rule
+# wins in a gitignore, so without this the additions above would quietly
+# re-ignore them.
+*.0
+*.2
+!/fonts/**
+!/os/*/*/fonts/**
+!/emu/*/fonts/**

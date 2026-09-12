@@ -14,6 +14,32 @@
  */
 int	SECURE = 0;
 
+/*
+ * See dis.c's disracepid comment.  Cheap, capped reachability probe:
+ * did any progpid()-based read here ever find a pid that dis.c's
+ * delprog() had, at that same instant, mid-way through closing its
+ * pgrp/fgrp/egrp/sigs (o->pgrp etc possibly already freed, p not yet
+ * unlinked from proghash[])?  Diagnostic only; see doc/inferno-ports.ms.
+ */
+extern int disracepid;
+static int dishitcount;
+static int disreachcount;
+
+static void
+disracecheck(Prog *p, char *where)
+{
+	disreachcount++;
+	if(disreachcount == 1 || disreachcount == 10 || disreachcount == 100 ||
+	   disreachcount == 1000 || (disreachcount % 10000) == 0)
+		print("devprog: %s progpid() reached, count %d\n", where, disreachcount);
+	if(p != nil && disracepid != -1 && p->pid == disracepid && dishitcount < 8) {
+		dishitcount++;
+		print("devprog: %s touched pid %d live inside its own delprog close window\n",
+			where, p->pid);
+	}
+}
+
+
 enum
 {
 	Qdir,
@@ -208,6 +234,7 @@ proggen(Chan *c, char *name, Dirtab *tab, int, int s, Dir *dp)
 
 	acquire();
 	p = progpid(PID(c->qid));
+	disracecheck(p, "progpid");
 	if(p == nil) {
 		release();
 		return -1;
@@ -261,6 +288,7 @@ progopen(Chan *c, u32 omode)
 		nexterror();
 	}
 	p = progpid(PID(c->qid));
+	disracecheck(p, "progpid");
 	if(p == nil)
 		error(Ethread);
 
@@ -340,6 +368,7 @@ progwstat(Chan *c, uchar *db, s32 n)
 		error(Eperm);
 	acquire();
 	p = progpid(PID(c->qid));
+	disracecheck(p, "progpid");
 	if(p == nil) {
 		release();
 		error(Ethread);
@@ -429,7 +458,7 @@ progsize(Prog *p)
 	uchar *fp;
 	Modlink *m;
 
-	m = p->R.M;
+	m = p->reg.M;
 	size = 0;
 	if(m->MP != H)
 		size += hmsize(D2H(m->MP));
@@ -444,7 +473,7 @@ progsize(Prog *p)
 	if(m->compiled)
 		return size/1024;
 
-	fp = p->R.FP;
+	fp = p->reg.FP;
 	for(depth = 0; fp != nil && depth < 256; depth++) {
 		f = (Frame*)fp;
 		fp = f->fp;
@@ -797,23 +826,126 @@ modstatus(REG *r, char *ptr, int len)
 {
 	Inst *PC;
 	Frame *f;
+	Modlink *ml;
+	Module *mod;
 
-	if(r->M->m->name[0] == '$') {
+	/*
+	 * Every panic left in this port's 96-boot batches, at -smp 1 and
+	 * -smp 2 alike, was a general protection violation here, on the
+	 * MOVQ 8(M), AX / MOVQ 0x68(AX), AX pair that walks M->m->name,
+	 * with a non-canonical M->m.  The guard was in the Qstatus read
+	 * below, and the faults were not coming through it: the resolved
+	 * stacks are disdump+0xe2 under hzclock, i.e. the other caller.
+	 * portclock.c calls disdump() unconditionally at 40*HZ, so every
+	 * boot that survives forty seconds walks every live Prog through
+	 * here -- which is why this became the dominant signature only
+	 * once boots stopped crashing before that.
+	 *
+	 * So the check belongs in the function that does the dereference,
+	 * where it covers both callers.  A Modlink is a Dis heap object
+	 * with its own type, so ask that rather than guessing whether a
+	 * pointer looks plausible.
+	 *
+	 * Containment and attribution.  newprog() takes a counted
+	 * reference to the Prog's own Modlink, so something dropping it
+	 * is a real bug and is not fixed here -- but a diagnostic dump
+	 * must not be the thing that panics the kernel.
+	 */
+	if(r->M == H || r->M == nil) {
+		static int saidh;
+
+		/*
+		 * Legitimate: H is ((void*)-1), the ordinary "no module"
+		 * sentinel.  The Qstatus read below has always tested for it
+		 * before calling here; disdump() never did.
+		 *
+		 * Reported once per boot, not silent, and that is the point.
+		 * Making it silent left an open contradiction: 192 boots
+		 * with no modstatus fault and no report from either of the
+		 * two exits that do report, which says whatever the guard
+		 * stops leaves through here -- while the captures say
+		 * otherwise, since M == H would fault on the SECOND
+		 * dereference at address -1+8 = 7, a page fault with CR2 7,
+		 * not the general protection violation with CR2 0 that every
+		 * capture shows.  One of those two readings is wrong.  If
+		 * this line appears, the silent exit is being taken and the
+		 * instruction-level reading needs revisiting; if it never
+		 * appears across a batch, the guard is not what stopped the
+		 * faults and the improvement has another cause.  Either way
+		 * the question is settled by a measurement rather than by
+		 * whichever story is more comfortable.
+		 *
+		 * Answered, on the branch that made more than one Dis
+		 * context exist: it appears.  Two boots out of ninety-six at
+		 * -smp 4 print it, both from disdump(), both for a Prog in
+		 * Prelease whose module reads [H], and both boots go on to
+		 * run seventy-odd shell loop iterations without a panic.  So
+		 * the silent exit IS taken, M == H does reach here, and this
+		 * guard is doing something rather than nothing.
+		 *
+		 * It is still not what stopped the faults, and the
+		 * instruction-level reading holds: M == H would fault on the
+		 * second dereference at -1+8 = 7, CR2 7, and every capture
+		 * shows a general protection violation with CR2 0.  Two
+		 * different things, and this is the harmless one -- H is the
+		 * ordinary "no module" sentinel and a Prog is entitled to
+		 * carry it.  A boot batch should not score this line as a
+		 * failure; it is a report, not a fault.
+		 */
+		if(!saidh) {
+			saidh = 1;
+			print("modstatus: M is %s (pid %d)\n",
+				r->M == H ? "H" : "nil", up != nil ? up->pid : -1);
+		}
+		snprint(ptr, len, "[H]");
+		return 0;
+	}
+	/*
+	 * M and its Module are read once, here, and every use below is of
+	 * these locals.  Checking r->M and then dereferencing r->M again
+	 * is two loads of the same memory with a window between them, and
+	 * that window is not theoretical: notefree() faulted in it, after
+	 * its check had passed.
+	 */
+	ml = r->M;
+	mod = modlinkmod(ml);
+	if(mod == nil) {
+		static int said;
+
+		if(!said) {
+			said = 1;
+			print("modstatus: M %#p stale\n", ml);
+		}
+		snprint(ptr, len, "[?]");
+		return 0;
+	}
+	if(mod->name[0] == '$') {
 		f = (Frame*)r->FP;
-		snprint(ptr, len, "%s[%s]", f->mr->m->name, r->M->m->name);
+		snprint(ptr, len, "%s[%s]", f->mr->m->name, mod->name);
 		if(f->mr->compiled)
 			return (WORD)f->lr;
 		return f->lr - f->mr->prog;
 	}
-	memmove(ptr, r->M->m->name, len);
-	if(r->M->compiled)
+	/*
+	 * m->name is a NUL-terminated string and this copied a fixed len
+	 * bytes of it, so it read up to len bytes past a short name and
+	 * left ptr unterminated for the %s that both callers apply to it.
+	 * Neither is what the caller wants, and in a diagnostic reached
+	 * from a clock handler an over-read of a freed name is exactly
+	 * the wrong place to have one.  Not the cause of anything
+	 * observed -- the buffers are 64 bytes and len is sizeof of
+	 * them, so nothing overflowed -- but it is wrong as written.
+	 */
+	snprint(ptr, len, "%s", mod->name);
+	if(ml->compiled)
 		return (WORD)r->PC;
 	PC = r->PC;
 	/* should really check for blocked states */
-	if(PC > r->M->prog)
+	if(PC > ml->prog)
 		PC--;
-	return PC - r->M->prog;
+	return PC - ml->prog;
 }
+
 
 static void
 int2flag(int flag, char *s)
@@ -904,7 +1036,8 @@ progread(Chan *c, void *va, s32 n, s64 offset)
 			nexterror();
 		}
 		p = progpid(PID(c->qid));
-		if(p == nil || p->state == Pexiting || p->R.M == H) {
+		disracecheck(p, "progpid");
+		if(p == nil || p->state == Pexiting || p->reg.M == H) {
 			poperror();
 			release();
 			progstatusline(up->genbuf, sizeof(up->genbuf),
@@ -912,7 +1045,7 @@ progread(Chan *c, void *va, s32 n, s64 offset)
 				progstate[Pexiting], 0, "[$Sys]");
 			return readstr(offset, va, n, up->genbuf);
 		}
-		modstatus(&p->R, mbuf, sizeof(mbuf));
+		modstatus(&p->reg, mbuf, sizeof(mbuf));
 		o = p->osenv;
 		progstatusline(up->genbuf, sizeof(up->genbuf),
 			p->pid,
@@ -934,6 +1067,7 @@ progread(Chan *c, void *va, s32 n, s64 offset)
 			nexterror();
 		}
 		p = progpid(PID(c->qid));
+		disracecheck(p, "progpid");
 		if(p == nil)
 			error(Ethread);
 		mw = c->aux;
@@ -965,6 +1099,7 @@ progread(Chan *c, void *va, s32 n, s64 offset)
 	case Qnsgrp:
 		acquire();
 		p = progpid(PID(c->qid));
+		disracecheck(p, "progpid");
 		if(p == nil) {
 			release();
 			error(Ethread);
@@ -975,6 +1110,7 @@ progread(Chan *c, void *va, s32 n, s64 offset)
 	case Qpgrp:
 		acquire();
 		p = progpid(PID(c->qid));
+		disracecheck(p, "progpid");
 		if(p == nil) {
 			release();
 			error(Ethread);
@@ -985,6 +1121,7 @@ progread(Chan *c, void *va, s32 n, s64 offset)
 	case Qstack:
 		acquire();
 		p = progpid(PID(c->qid));
+		disracecheck(p, "progpid");
 		if(p == nil || p->state == Pexiting) {
 			release();
 			error(Ethread);
@@ -993,7 +1130,7 @@ progread(Chan *c, void *va, s32 n, s64 offset)
 			release();
 			error(Estopped);
 		}
-		n = progstack(&p->R, p->state, va, n, offset);
+		n = progstack(&p->reg, p->state, va, n, offset);
 		release();
 		return n;
 	case Qheap:
@@ -1015,6 +1152,7 @@ progread(Chan *c, void *va, s32 n, s64 offset)
 			nexterror();
 		}
 		p = progpid(PID(c->qid));
+		disracecheck(p, "progpid");
 		if(p == nil)
 			error(Ethread);
 		o = p->osenv;
@@ -1025,6 +1163,7 @@ progread(Chan *c, void *va, s32 n, s64 offset)
 	case Qexception:
 		acquire();
 		p = progpid(PID(c->qid));
+		disracecheck(p, "progpid");
 		if(p == nil) {
 			release();
 			error(Ethread);
@@ -1100,6 +1239,7 @@ progwrite(Chan *c, void *va, s32 n, s64 offset)
 		nexterror();
 	}
 	p = progpid(PID(c->qid));
+	disracecheck(p, "progpid");
 	if(p == nil)
 		error(Ethread);
 
@@ -1158,10 +1298,10 @@ progwrite(Chan *c, void *va, s32 n, s64 offset)
 			break;
 		case CDtoret:
 			f = currun();
-			i = calldepth(&p->R);
+			i = calldepth(&p->reg);
 			while(f->kill == nil) {
 				dbgstep(c->aux, p, 1024);
-				if(i > calldepth(&p->R))
+				if(i > calldepth(&p->reg))
 					break;
 			}
 			break;
@@ -1454,7 +1594,9 @@ dbgxec(Prog *p)
 		nexterror();
 	}
 
-	R = p->R;
+	R = p->reg;
+	REGSYNCED();
+	curP->curprog = p;	/* R now holds p's live roots; see progreg() */
 	R.MP = R.M->MP;
 
 	R.IC = p->quanta;
@@ -1530,7 +1672,9 @@ save:
 	if(ctl->stop)
 		strcpy(buf, "stopped");
 
-	p->R = R;
+	p->reg = R;
+	REGSYNCED();
+	curP->curprog = nil;
 
 	if(env->debug == nil) {
 		poperror();

@@ -120,6 +120,18 @@ qlock(QLock *q)
 	 */
 	up->qnext = nil;
 	up->eql = nil;
+	/*
+	 * qnext must be cleared: this process is the tail now, and a
+	 * qnext left over from the last time it waited for something makes
+	 * the queue circular.  qunlock() then walks off the end of it --
+	 * "q->head = p->qnext" hands the head to a process that is not
+	 * waiting, the real waiter is never readied, and the lock is held
+	 * by nobody for ever.  eqlock(), rlock() and wlock() in this same
+	 * file all clear it; qlock() alone did not, and it only ever
+	 * showed once the Dis interpreter lock made a QLock hot enough to
+	 * queue the same process twice.
+	 */
+	up->qnext = nil;
 	up->state = Queueing;
 	up->qpc = getcallerpc(&q);
 	unlock(&q->use);

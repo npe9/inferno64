@@ -23,6 +23,9 @@ struct Ptrhash
 
 	int	nprop;
 	int	gchalt;
+	int	gcdepth;	/* this context's destroy recursion depth */
+	int	gcdepthmax;	/* high-water mark of it, for #%/memgc */
+	ulong	gcdeferred;	/* frees the depth guard handed to the collector */
 	int	mflag;
 	int	mutator = 0;
 	int	gccolor = 3;
@@ -103,11 +106,135 @@ noptrs(Type *t, void *vw)
 
 static int markdepth;
 
+/*
+ * markheap() trusts every declared-pointer word it's handed: if it's
+ * not H, it's D2H()'d and Setmark()'d (h->color written) with no
+ * validation at all -- unlike freeptrs(), which has had checkfreeptr()
+ * guarding the same kind of word since earlier in this hunt.  A small,
+ * non-H garbage value here (this hunt's whole population: 0, 0x18,
+ * 0x80, ...) computes a garbage Heap*, and Setmark() then WRITES to
+ * whatever h->color happens to resolve to -- a live, unrelated
+ * object's memory, corrupting it, with no crash at the write site
+ * itself (an ordinary store, not a fault) to point at what happened.
+ * rootset() calls markheap() on every live process's every stack
+ * frame every GC pass (libinterp/gc.c's rootset()), so if this is the
+ * mechanism, it explains the shape this hunt has chased for four-plus
+ * sessions: a legitimate word somewhere holds transient garbage for
+ * an instant mid-computation (register spill, uninitialized temp,
+ * whatever), a GC pass lands on exactly that instant, and the mark
+ * write lands on a frame that has nothing to do with the code that
+ * produced the garbage.  Checked here, not assumed: see
+ * doc/inferno-ports.ms.
+ */
+static void
+checkmarkptr(WORD **q, Type *t, void *vw)
+{
+	extern void dumpstack(void);
+	uintptr silent[8];
+	uintptr val;
+	int wordidx, i, n;
+
+	/*
+	 * Both earlier passes at this (one with a print() between each
+	 * reread, one calling itself "silent") still had two full
+	 * print() calls -- bad-word and object-type, each real kernel
+	 * I/O -- between the *first* read (the one that decided this was
+	 * worth reporting) and the reread loop.  Neither pass actually
+	 * tested "immediately after, nothing run in between" at all; both
+	 * left the print()-yields hypothesis open by accident.  This is
+	 * the real version: every read, the first included, happens back
+	 * to back in one tight loop with no function call of any kind
+	 * between them, into a local array, volatile-qualified against
+	 * ordinary compiler caching -- decided and reported only after.
+	 * pc64-only, temporary.  See doc/inferno-ports.ms.
+	 */
+	for(n = 0; n < 8; n++)
+		silent[n] = (uintptr)*(WORD*volatile*)q;
+	val = silent[0];
+	if(val == (uintptr)H || val >= 0x1000)
+		return;
+	/*
+	 * Sanity check on the diagnostic itself, before trusting a single
+	 * further line of this: val and silent[0] are the same variable
+	 * by construction (the line above). If they ever print as
+	 * different values in the very same print() call, that is proof
+	 * the mismatch is in how this print() marshals a uintptr through
+	 * %zx / FmtVLong, not in memory -- and would mean this whole
+	 * multi-session hunt's every %zx-based capture needs rereading
+	 * with that in mind. pc64-only, temporary.  See
+	 * doc/inferno-ports.ms.
+	 */
+	print("markheap: sanity val %#zx silent0 %#zx eq %d\n",
+		val, silent[0], val == silent[0]);
+	wordidx = (int)(q - (WORD**)vw);
+	print("markheap: bad word %#p (word %d of object %#p) val %#zx, "
+		"running Dis pid %d module %s PC %#p inst %d\n",
+		q, wordidx, vw, val,
+		currun() != nil ? currun()->pid : -1,
+		R.M != nil && R.M->m != nil ? R.M->m->name : "?", R.PC,
+		R.M != nil && R.M->m != nil ? (int)((R.PC - 1) - R.M->m->prog) : -1);
+	print("markheap: object type %#p size %d np %d map", t, t->size, t->np);
+	for(i = 0; i < t->np; i++)
+		print(" %#.2ux", t->map[i]);
+	print("\n");
+	for(n = 0; n < 8; n++)
+		print("markheap: tight reread %d val %#zx\n", n, silent[n]);
+	/*
+	 * Two genuinely different shapes have been showing up under this
+	 * one checker, conflated until now: word 0 of a size-8/np-1/map-
+	 * {0x80} object (Tptr, OP(consp)'s own list cells) reads bad once
+	 * and then reads as a valid pointer on literally the next access,
+	 * every single capture so far, regardless of how the write inside
+	 * OP(consp) is ordered (checked: reordering data-before-type made
+	 * no difference to the rate). Every other shape seen (word 8, 14,
+	 * 550, ... of larger objects, values like 0x18 matching this
+	 * hunt's own original landmark) reads the same bad value on every
+	 * one of the 8 tight rereads -- stable, not transient. Only the
+	 * second kind gets treated as the real signal now: the first
+	 * looks increasingly like it resolves before anything ever acts
+	 * on the bad intermediate value, so continuing past it (instead
+	 * of stopping the boot) is how the stable kind gets isolated for
+	 * enough captures to say anything about it. pc64-only, temporary.
+	 * See doc/inferno-ports.ms.
+	 */
+	for(n = 1; n < 8; n++)
+		if(silent[n] != silent[0])
+			return;
+	/*
+	 * Was made non-fatal on this (stable) kind too for one round, to
+	 * test whether it might be a benign mid-execution snapshot (a
+	 * marked frame slot legitimately holding a non-pointer value
+	 * while its lexical scope is live -- see doc/inferno-ports.ms,
+	 * "A live, correctly-typed object, one field wrong" for the full
+	 * argument for why that reading was even plausible here, unlike
+	 * the retracted map-imprecision one).  The answer came back
+	 * negative and decisive: with this non-fatal, boots that would
+	 * previously have stopped cleanly here instead ran on and hit
+	 * REAL native panics later -- page fault, general protection
+	 * violation, invalid opcode, the pool allocator's own alloc:D2B
+	 * consistency check, cclose on a nil c -- at a high rate (7 of 10
+	 * in one batch).  That rules out "benign, resolves on its own"
+	 * for this kind outright: whatever ml->MP (or the equivalent
+	 * field on another capture) held instead of H got used later as
+	 * if it were valid, and the boot paid for it downstream, just
+	 * less legibly than stopping cleanly right here would have.
+	 * Reverted to abort(), with the diagnostics (D2H(vw), the tight
+	 * reread, the sanity print) all kept -- they're what got this
+	 * far.  pc64-only, temporary.  See doc/inferno-ports.ms.
+	 */
+	{
+		Heap *dh = D2H(vw);
+		print("markheap: D2H(vw) %#p t %#p ref %d color %d\n",
+			dh, dh->t, dh->ref, dh->color);
+	}
+	dumpstack();
+	abort();
+}
+
 /* code simpler with a depth search compared to a width search*/
 void
 markheap(Type *t, void *vw)
 {
-	extern void panic(char*, ...);
 	Heap *h;
 	uchar *p;
 	int i, c, m;
@@ -115,18 +242,29 @@ markheap(Type *t, void *vw)
 	Type *t1;
 
 	/*
-	 * A wild-but-nonnil t sails past the "t == nil" half of the
-	 * check below and faults on t->np, this function's own first
-	 * dereference: a 20-boot batch resolved 5 of 8 general
-	 * protection faults to markheap+26, exactly there.  Every legal
-	 * caller (marklist's l->t, markarray's a->t, the recursive h->t
-	 * dispatch below) arrives with either a builtin Type's static
-	 * address or a live heap Type*, and neither shape is ever
-	 * near-zero or misaligned, so one that is is already known bad
-	 * without touching it further.
+	 * A 20-boot batch resolved 5/8 GPFs to markheap+26 -- this
+	 * function's own t->np read, the very first dereference of t,
+	 * right after the pre-existing "t == nil" half of the check
+	 * below (which a wild-but-nonnil t sails past).  Every legal
+	 * caller (marklist's l->t, markarray's a->t, the recursive
+	 * h->t dispatch below) reaches here with t either a valid
+	 * builtin Type's static address or a live heap Type*; neither
+	 * shape is ever near-zero or misaligned, so a t that is either
+	 * is already known-bad without needing to touch it further.
+	 * auditmemloc() (alloc.c) -- report live/free/not-in-pools --
+	 * on a confirmed-bad t, the same escalation chan.c's badref()
+	 * uses for a bad Ref*.  pc64-only, temporary.  See
+	 * doc/inferno-ports.ms.
 	 */
-	if(t != nil && ((uintptr)t < 0x1000 || ((uintptr)t & (sizeof(uintptr)-1)) != 0))
-		panic("markheap: bad t %#p vw %#p", t, vw);
+	if(t != nil && ((uintptr)t < 0x1000 || ((uintptr)t & (sizeof(uintptr)-1)) != 0)){
+		extern void dumpstack(void);
+		extern void (*auditmemloc)(char*, void*);
+
+		print("markheap: bad t %#p vw %#p\n", t, vw);
+		auditmemloc("markheap-t", t);
+		dumpstack();
+		abort();
+	}
 
 	if(t == nil || t->np == 0)
 		return;
@@ -139,7 +277,25 @@ markheap(Type *t, void *vw)
 		if(c != 0) {
 			q = w;
 			for(m = 0x80; m != 0; m >>= 1) {
-				if((c & m) && *q != H) {
+				/*
+				 * Probe: a silent, back-to-back reread of a
+				 * word checkmarkptr() has just flagged bad
+				 * shows the correct value immediately and
+				 * stably, every capture so far -- consistent
+				 * with a stale/cached read at exactly this
+				 * first touch, not a real writer catching up
+				 * (nothing runs between the two reads that
+				 * could write here).  This one forces a fresh
+				 * load via volatile instead of trusting the
+				 * compiler's normal (and normally correct,
+				 * single-threaded) assumption that nothing
+				 * changed *q since some earlier point.  If
+				 * this alone makes the whole signal vanish,
+				 * that is the answer.  pc64-only, temporary.
+				 * See doc/inferno-ports.ms.
+				 */
+				if((c & m) && *(WORD*volatile*)q != H) {
+					checkmarkptr(q, t, vw);
 					h = D2H(*q);
 					Setmark(h);
 					if(h->color == propagator && --visit >= 0 && markdepth < 64){
@@ -188,6 +344,50 @@ markarray(Type *t, void *vw)
 	visit -= a->len;
 }
 
+/*
+ * Probe: checkmarkptr() (below) only ever sees l->data, a field
+ * *inside* a list cell's own single allocation, with no way back to
+ * that cell's own Heap header from there.  So it can't tell "this
+ * cell is intact and something wrote garbage straight into l->data"
+ * from "this cell itself is stale -- freed, its memory reused, and
+ * l->data is just whatever the new occupant left there" apart.  This
+ * checks the one place that has the cell itself in hand: poolcompact()
+ * was checked and ruled out separately (heapmem's pool never gets
+ * poolsetcompact() wired up in this port, only imagmem does, so it's
+ * permanently a no-op here) -- this is the next item, the container's
+ * own sanity, right before each cell's payload gets walked.  pc64-only,
+ * temporary.  See doc/inferno-ports.ms.
+ */
+static void
+checklistcell(List *l)
+{
+	extern void dumpstack(void);
+	Heap *h;
+
+	h = D2H(l);
+	/*
+	 * ref == 0 was part of "bad" here, and stopped being so when
+	 * destroy() started handing objects to the collector rather than
+	 * freeing them under it (see the gcstopped branch there).  A
+	 * deferred object has reached zero and is still allocated, with
+	 * its type header intact, which is exactly this shape.  Measured
+	 * before it is asserted: "marklist: bad container ... ref 0"
+	 * appears in no boot at parallelvm=0, in no boot at
+	 * parallelvm=1 before the deferral landed, and in six after it.
+	 *
+	 * A negative count and a wrong type are still reported, and they
+	 * are what this was for -- a stale cell whose memory has been
+	 * reused reads as neither &Tlist nor a count the allocator would
+	 * ever leave.
+	 */
+	if(h->t == &Tlist && h->ref >= 0)
+		return;
+	print("marklist: bad container %#p t %#p (want %#p) ref %d color %d\n",
+		l, h->t, &Tlist, h->ref, h->color);
+	dumpstack();
+	abort();
+}
+
 void
 marklist(Type *t, void *vw)
 {
@@ -196,6 +396,7 @@ marklist(Type *t, void *vw)
 
 	USED(t);
 	l = vw;
+	checklistcell(l);
 	markheap(l->t, l->data);
 	while(visit > 0) {
 		l = l->tail;
@@ -203,6 +404,7 @@ marklist(Type *t, void *vw)
 			return;
 		h = D2H(l);
 		Setmark(h);
+		checklistcell(l);
 		markheap(l->t, l->data);
 		visit--;
 	}
@@ -222,6 +424,7 @@ rootset(Prog *root)
 	Module *m;
 	Stkext *sx;
 	Modlink *ml;
+	REG *rr;
 	uchar *fp, *sp, *ex, *mp;
 
 	mutator = gccolor % 3;
@@ -234,9 +437,9 @@ rootset(Prog *root)
 		DP("Prog state %d pid %d ticks %ld\n",
 			root->state, root->pid, root->ticks);
 		DP("\tpc 0x%p module %s %s\n",
-			root->R.PC, root->R.M->m->name, root->R.M->m->path);
-		sp = root->R.SP;
-		ex = root->R.EX;
+			root->reg.PC, root->reg.M->m->name, root->reg.M->m->path);
+		sp = root->reg.SP;
+		ex = root->reg.EX;
 		while(ex != nil) {
 			sx = (Stkext*)ex;
 			fp = sx->reg.tos.fu;
@@ -261,7 +464,14 @@ rootset(Prog *root)
 		root = root->next;
 	}*/
 	while(root != nil) {
-		ml = root->R.M;
+		/*
+		 * progreg(), not &root->reg: for a program that is
+		 * executing right now, the saved register file is a
+		 * quantum out of date and the roots that matter are in the
+		 * context's.  See the comment on progreg() in xec.c.
+		 */
+		rr = progreg(root);
+		ml = rr->M;
 		h = D2H(ml);
 		Setmark(h);
 		mp = ml->MP;
@@ -270,17 +480,48 @@ rootset(Prog *root)
 			Setmark(h);
 		}
 
-		sp = root->R.SP;
-		ex = root->R.EX;
+		sp = rr->SP;
+		ex = rr->EX;
 		while(ex != nil) {
 			sx = (Stkext*)ex;
 			fp = sx->reg.tos.fu;
-			while(fp != sp) {
+			/*
+			 * Ordering, not equality.  The frames are meant to tile
+			 * tos.fu..sp exactly and fp advances by t->size, so one
+			 * wrong size steps past sp, "!=" never holds, and the walk
+			 * runs on through whatever follows -- reading each block as
+			 * a Frame and Setmark()ing whatever it takes for a root.
+			 * That is how one bad frame became a jump into the Dis heap
+			 * through t->mark: the frame reported was the first garbage
+			 * reached, several frames past the wrong one.
+			 *
+			 * Measured before changing it: a 1632-byte span walked to
+			 * 0xf380d60, eight frames in, in 2 boots of 60 at
+			 * *parallelvm=1 and none at parallelvm=0.
+			 *
+			 * This does not make the root set right -- the frames after
+			 * the bad one go unwalked and their roots unmarked, which is
+			 * its own hazard and is reported below.  It stops the walk
+			 * marking arbitrary memory, which is the worse of the two.
+			 */
+			while(fp < sp) {
 				f = (Frame*)fp;
 				t = f->t;
 				if(t == nil){
 					t = sx->reg.TR;
 				}
+				/*
+				 * multicore's temporary probe here (a bad-frame-type
+				 * check that abort()ed) is not carried across.  It
+				 * compares t->mark against etext, which the host
+				 * linker does not define -- libinterp.a is built once
+				 * and shared by emu and every kernel, so there is no
+				 * -DEMU to key it on, and a host stand-in for etext
+				 * would make the bound wrong and the aborts false.
+				 * The condition it watches is a *parallelvm=1 failure
+				 * and parallelvm is 0 here.  The t == nil fallback
+				 * above is kept: that one is a real change.
+				 */
 				fp += t->size;
 				t->mark(t, f);
 				ml = f->mr;
@@ -293,6 +534,20 @@ rootset(Prog *root)
 						Setmark(h);
 					}
 				}
+			}
+			if(fp != sp){
+				static int told;
+
+				/*
+				 * The frames did not tile the extent, so this
+				 * stack's root set is short by whatever was
+				 * skipped and an object only it refers to can be
+				 * swept.  Said once.
+				 */
+				if(told++ == 0)
+					print("rootset: frames do not tile"
+						" %#p..%#p, stopped %#p, pid %d\n",
+						sx->reg.tos.fu, sp, fp, root->pid);
 			}
 			ex = sx->reg.EX;
 			sp = sx->reg.SP;
@@ -352,6 +607,39 @@ rungc(Prog *p)
 	Type *t;
 	Heap *h;
 	Bhdr *b;
+
+	/*
+	 * The invariant Phase 1b of doc/dis-parallel-plan.ms depends on.
+	 * The collector takes Prog->reg as its root set, and while a
+	 * quantum runs p->reg is the entry snapshot -- the live values are
+	 * in R.  A root the mark phase cannot see is an object the sweeper
+	 * takes, and a missing root is not a data race, so no sanitizer
+	 * will find it.
+	 *
+	 * inxec (xec.c) is set for exactly that window and cleared both at
+	 * the end of the quantum and in vmachine()'s waserror() loop,
+	 * where every non-local exit from the interpreter lands.
+	 *
+	 * Two earlier versions of this check tested curP->curprog instead,
+	 * first for nil and then by comparing its saved registers against
+	 * the live ones.  Both were unsound, and the second proved it: it
+	 * reported prog 5 with state 0xdeadbeef, which is what delprog()
+	 * writes into a Prog it is about to free.  curprog is allowed to
+	 * dangle -- vmachine() says so where it clears it, "progreg() only
+	 * compares the pointer, never follows it" -- so a check that
+	 * follows it reads freed memory.  A flag cannot dangle.
+	 */
+	if(curP->inxec && curP->syncpc != R.PC) {
+		static int said;
+
+		if(!said) {
+			said = 1;
+			print("rungc: collecting inside a quantum with p->reg "
+				"stale (snapshot PC %#p live %#p), called from "
+				"%#p -- the live roots are not in the root set\n",
+				curP->syncpc, R.PC, getcallerpc(&p));
+		}
+	}
 
 	gcnruns++;
 	if(gchalt) {

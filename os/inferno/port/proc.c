@@ -148,6 +148,7 @@ schedinit(void)		/* never returns */
 		 */
 		up->mach = nil;
 		up = nil;
+		curP = defpctx;
 	}
 	sched();
 }
@@ -157,32 +158,38 @@ schedinit(void)		/* never returns */
  * is the user's code segment. We use the same segment for
  * the kernel and the user. Hence, return !Proc.kp. Proc.kp
  * is true for a kernel process.
- *
- * It returned Proc.kp, the opposite of what the paragraph above says,
- * from the day it was written.  Every kernel process's trap was
- * therefore classified as coming from user mode, so kenter() published
- * a Ureg sitting on a kernel stack as up->dbgreg and os/inferno/pc64's
- * trap() ran notify() and kexit() over it; and the one process
- * newproc() makes without kp was classified as a kernel trap, so it
- * never got the user tail it should have had.  Seen directly on this
- * branch with a probe in trap(): "pid 1 kp 0 userureg 0" and "pid 2
- * kp 1 userureg 1", both backwards, and both the right way round
- * after this.  The multicore branch found it and caught the
- * consequence in the act on pc64 -- a general protection fault on the
- * IRETQ in _intrr, a probe watching the frame's SS word change under
- * a newly created kproc's first interrupt.
- *
- * Only os/inferno/pc64 calls this; every other board here traps
- * without kenter(), kexit() or notify(), so nothing else changes.
- *
- * What this does not settle: on a port where kernel and user share a
- * code segment, whether any frame should be called a user frame is a
- * real question and "always 0" may be the right answer.  This makes
- * the function do what it says, no more.
  */
 int
 userureg(Ureg *ur)
 {
+	/*
+	 * This returned kp, not !kp -- the opposite of what the comment
+	 * above it says and of what the name means.  Every kernel
+	 * process's trap was classified as a trap from user mode, and the
+	 * one process created by plain newproc() was classified as a
+	 * kernel trap.
+	 *
+	 * That is not cosmetic.  kenter() publishes the frame as
+	 * up->dbgreg when it believes a trap came from user mode, and
+	 * trap() then runs the user tail -- notify() and kexit() -- over
+	 * a Ureg sitting on a kernel stack.  Caught in the act on pc64:
+	 *
+	 *   trap: vector 50 changed frame ss 0x0 -> 0xb798
+	 *         (pc 0x208ca6 user 1)
+	 *
+	 * pc 0x208ca6 is linkproc+0x9, a newly created kproc's first
+	 * interrupt after spllo(), and "user 1" is this function saying
+	 * so.  The same boot then died with a general protection
+	 * violation on the IRETQ in _intrr, error code B798 -- the value
+	 * the probe had already reported being written into the frame's
+	 * SS.  Nine earlier captures have the same shape.
+	 *
+	 * A caveat worth leaving here: on a port where kernel and user
+	 * share a code segment, whether any frame should be called a user
+	 * frame is a real question, and "always 0" may be the right
+	 * answer.  This does not settle that.  It makes the function do
+	 * what it says.
+	 */
 	if(ur == nil || ur->r14 == 0)
 		return 0;
 	return ((Proc*)(ur->r14))->kp == 0;
@@ -245,29 +252,79 @@ procswitch(void)
  *  If changing this routine, look also at sleep().  It
  *  contains a copy of the guts of sched().
  */
+/*
+ * MULTICORE INSTRUMENTATION - temporary.  See newproc().  Reports once
+ * and keeps going, so the boot that follows still shows what it would
+ * have shown; the point is to learn whether the guard is ever touched,
+ * not to stop at it.
+ */
+/*
+ * The guard band this instrumentation paints.  pc64/mem.h defines
+ * these; the other fifteen boards' mem.h do not, and proc.c is
+ * portable -- so it carries defaults rather than requiring sixteen
+ * mem.h edits for a temporary probe.  Without them every native board
+ * except pc64 failed to compile at "name not declared: KSTACKGUARD".
+ */
+#ifndef KSTACKGUARD
+#define	KSTACKGUARD	128
+#endif
+#ifndef KSTACKFILL
+#define	KSTACKFILL	0xA5
+#endif
+
+uintptr kstackmin = ~(uintptr)0;	/* MULTICORE INSTRUMENTATION - temporary */
+char *kstackminproc = "none";
+
+void
+kstackcheck(char *where)
+{
+	static int reported;
+	uchar *g;
+	uintptr head;
+	int i;
+
+	if(up == nil || up->kstack == nil || up->kstackpainted == 0)
+		return;
+	/*
+	 * Headroom, not just guard integrity: a single frame bigger than
+	 * the guard band decrements SP straight past it and writes below
+	 * kstack+0 without ever storing into the band.  The minimum of
+	 * this over a boot answers the question outright.
+	 */
+	head = (uintptr)&head - (uintptr)up->kstack;
+	if(head < kstackmin && head < KSTACK){
+		kstackmin = head;
+		kstackminproc = up->text;
+	}
+	if(reported)
+		return;
+	g = (uchar*)up->kstack;
+	for(i = 0; i < KSTACKGUARD; i++){
+		if(g[i] != KSTACKFILL){
+			reported = 1;
+			print("kstack overflow: proc %d \"%s\" guard[%d] = %#ux, "
+				"kstack %#p top %#p, sp about %#p, at %s\n",
+				up->pid, up->text, i, g[i], up->kstack,
+				(uchar*)up->kstack+KSTACK, &g, where);
+			break;
+		}
+	}
+}
+
 void
 sched(void)
 {
 	Proc *p;
-	int d;
+	int s;
 
-	/*
-	 * d, not m->ilockdepth, in the message.  The test and the print
-	 * are not one operation -- panic()'s own formatting runs between
-	 * them, and an interrupt landing in that window can change the
-	 * counter, which is how this panic came to report "ilockdepth 0"
-	 * when sched() only panics for a depth that is not zero.  d is
-	 * the value that actually tripped it.
-	 */
-	d = m->ilockdepth;
-	if(d != 0){
-		panic("cpu%d: ilockdepth %d (now %d), last lock %#p at %#p, sched called from %#p",
+	kstackcheck("sched");
+	if(m->ilockdepth != 0)
+		panic("cpu%d: ilockdepth %d, last lock %#p at %#p, sched called from %#p",
 			m->machno,
-			d, m->ilockdepth,
+			m->ilockdepth,
 			up != nil ? up->lastilock: nil,
 			(up != nil && up->lastilock != nil) ? up->lastilock->pc: 0,
 			getcallerpc(&p+2));
-	}
 	if(up != nil) {
 		/*
 		 * Delay the sched until the process gives up the locks
@@ -294,9 +351,15 @@ sched(void)
 			return;
 		}
 		up->delaysched = 0;
-		splhi();
+		/*
+		 * splx(s), not spllo(): sched() is reached from callers that
+		 * had already raised spl, and lowering unconditionally hands
+		 * them interrupts back inside their own critical section.
+		 * 9front's sched() saves and restores for this reason.
+		 */
+		s = splhi();
 		procswitch();
-		spllo();
+		splx(s);
 		return;
 	}
 	/* if up == nil, it is the scheduler process after the
@@ -312,6 +375,21 @@ sched(void)
 		m->schedticks = m->ticks + HZ/10;
 	m->readied = nil;
 	up = p;
+	/*
+	 * curP follows up.  It is per executor, so it has to be set
+	 * wherever the scheduler changes which process runs, which is
+	 * here; without this a process that already held the VM lock and
+	 * moved to another processor kept that processor's context and
+	 * walked someone else's run queue.
+	 *
+	 * nil until vmachine() calls claimctx(), and every kernel process
+	 * that never interprets stays nil forever.  It must stay nil:
+	 * claimctx() is reached through "if(up->pctx == nil)", so filling
+	 * the field in newproc() to avoid this test stops any context
+	 * after the first from ever being claimed -- measured, one
+	 * context per boot instead of seven.
+	 */
+	curP = p->pctx != nil ? (Pctx*)p->pctx : defpctx;
 	up->state = Running;
 	up->mach = MACHP(m->machno);
 	m->proc = up;
@@ -722,6 +800,19 @@ newproc(void)
 		unlock(&procalloc);
 		return nil;
 	}
+	if(p->kstackpainted == 0){
+		/*
+		 * MULTICORE INSTRUMENTATION - temporary.  The kernel stack is
+		 * a plain malloc() out of the main pool: ordinary pool blocks
+		 * sit on either side of it and there is no guard page, because
+		 * it is a buffer and not a mapping.  A stack that runs past
+		 * its bottom writes into its neighbour, which is what this
+		 * tree's heap corruption looks like from the far side.  Paint
+		 * the low end once; kstackcheck() below reads it back.
+		 */
+		memset(p->kstack, KSTACKFILL, KSTACKGUARD);
+		p->kstackpainted = 1;
+	}
 	procalloc.free = p->qnext;
 	p->qnext = nil;
 	unlock(&procalloc);
@@ -854,8 +945,10 @@ void
 sleep(Rendez *r, int (*f)(void*), void *arg)
 {
 	int s;
+	uintptr callerpc;		/* XXX temporary */
 	void (*pt)(Proc*, int, vlong);
 
+	callerpc = getcallerpc(&r);	/* XXX temporary */
 	if(up == nil)
 		panic("sleep() not in process (%zux)", getcallerpc(&r));
 	/*
@@ -903,6 +996,7 @@ sleep(Rendez *r, int (*f)(void*), void *arg)
 			pt(up, SSleep, 0);
 		up->state = Wakeme;
 		up->r = r;	/* for swiproc */
+		up->sleeppc = callerpc;	/* XXX temporary */
 		unlock(&up->rlock);
 		unlock(r);
 		procswitch();

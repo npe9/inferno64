@@ -381,8 +381,17 @@ Mach* machp[MAXMACH];
 
 #define	MACHP(n)	(machp[n])
 
-extern register Mach* m;			/* R15 */
-extern register Proc* up;			/* R14 */
+/*
+ * m, up and curP are declared together in include/disreg.h, because
+ * kencc assigns external registers per file by declaration order and
+ * libinterp must see the same set in the same order to get the same
+ * register for curP.  Declaring m and up here as well would give this
+ * file five declarations where four registers exist.
+ *		m	R15
+ *		up	R14
+ *		curP	R13	(the Dis context)
+ */
+#include	"../../../include/disreg.h"
 
 extern s32 swcursor;
 

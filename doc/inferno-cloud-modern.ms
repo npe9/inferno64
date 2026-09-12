@@ -496,3 +496,306 @@ the same.  What remains untested is the comparison against a
 conventional RPC with its own framing and serialisation, which is the
 thing a real service would otherwise use, and which would carry costs
 Styx does not.
+.NH 2
+Merging the multicore branch
+.PP
+The
+.CW multicore
+branch carries arm64 SMP and a parallel Dis VM.  An earlier note in
+this document said the two branches had forked architecturally over the
+per-Dis-word-size generated headers
+.CW ( libinterp/w4 ,
+.CW libinterp/w8 ),
+and that the fork needed a decision.  That was wrong, and wrong in the
+direction that makes it worth recording: it was
+.I multicore
+that tracked those 22 headers and this branch that did not, and the
+generation rules in the two mkfiles are byte-identical.  The claim came
+from reading a
+.CW "git ls-tree"
+diff in the wrong direction.  There was no fork, only ordinary merge
+work, and this section is what that work turned out to be.
+.PP
+.B "What was taken."
+The Dis VM wholesale \(em
+.CW libinterp/xec.c ,
+.CW heap.c ,
+.CW gc.c
+and
+.CW include/interp.h ,
+which carries the
+.CW Prog.R
+to
+.CW Prog.reg
+rename, the
+.CW disreg.h
+context register and the
+.CW trackpoint
+declaration \(em together with
+.CW os/inferno/port/dis.c ,
+the two
+.CW utils/6c
+files that reserve the register it needs, and
+.CW libkern/ainc-aarch64.s .
+The parallel VM is board-independent, so every board gets it.
+.PP
+.B "What was not taken: the arm64 secondary bring-up."
+Both branches wrote it, in different files.  This one has
+.CW os/inferno/virtarm64/startcpu.c
+driven from
+.CW main.c 's
+.CW startcpus() ;
+multicore has no
+.CW startcpu.c
+at all and does the work inline in
+.CW main.c ,
+with its own
+.CW _secondary
+in
+.CW l.s .
+Taking either side discards a working implementation, and neither is a
+verified baseline: this branch's secondaries answer, report their
+MPIDRs and then idle at
+.CW "conf.nmach 1" ,
+and multicore's are switched off because one boot in ten shows Dis heap
+corruption.  So
+.CW os/inferno/virtarm64
+is left exactly as this branch had it \(em which is the configuration
+that passes UEFI 10/10,
+.CW "-smp 4"
+and
+.CW "-smp 17"
+to an interactive shell, and
+.CW ARM64-DISK-OK .
+Reconciling the two designs is the arm64 session's call, not a merge
+conflict to be resolved by picking a side.
+.PP
+That also keeps the fix this branch made to that board.  Its trap
+return does not reload
+.CW up
+and
+.CW m
+from the saved
+.CW Ureg
+.CW ( 2f640d0f ),
+and multicore's still does \(em
+.CW "MOV UR_R26(RSP), R26"
+and
+.CW UR_R27 .
+On one processor that is harmless.  Once cpu1 runs processes it is the
+arm64 twin of the
+.CW "POPQ R14; POPQ R15"
+that was the whole of pc64's SMP corruption, where the fix took 4-of-4
+boots faulting to 20-of-20 clean.  It is therefore the first thing to
+try against multicore's one-in-ten, and it is a live bug there rather
+than a latent one.
+.PP
+.B "Four things the merge broke that the build caught, and one it did not."
+Taking a side wholesale lost real work each time, and only reading the
+removed lines found it.  Taking multicore's
+.CW pc64/l.s
+dropped this branch's PVH entry point, the direct-boot ABI Xen,
+Firecracker and Cloud Hypervisor use.  Taking its
+.CW pc64/trap.c
+dropped the
+.CW #GP
+recovery for
+.CW rdmsr / wrmsr
+.CW ( 761f7bbb ),
+without which
+.CW devarch.c 's
+"returns \-1 if it trapped" contract does not exist \(em one of the two
+bugs only real hardware found.  Both were spliced back onto multicore's
+files rather than resolved by picking a side.  Going the other way,
+multicore's
+.CW devprog.c
+called a
+.CW disracepid
+probe whose other half this branch had deliberately retired, and its
+.CW xec.c
+calls
+.CW printfreehist() ,
+whose ring this branch removed because its per-caller print hung
+riscv64 permanently in five boots of five; that one gets a stub saying
+there is no record, the way
+.CW emu/port/alloc.c
+already does, because silence is indistinguishable from "no".
+.PP
+The one the build did not catch:
+.CW libinterp/gc.c
+carried a temporary probe comparing a type's
+.CW mark
+pointer against
+.CW etext ,
+which the host linker does not define \(em
+.CW libinterp.a
+is built once and shared by
+.CW emu
+and every kernel, so there is no
+.CW -DEMU
+to key it on, and a host stand-in would make the bound wrong and the
+aborts false.  It is dropped.  The other 23 probes multicore is
+carrying were audited rather than assumed: none of them aborts on a
+correct
+.CW parallelvm=0
+run \(em they print once under a rare guard, or run only inside
+.CW panic() ,
+or are silent counters.  Two that printed on every boot
+.CW ( probenewtype ,
+.CW probearrtype )
+are gated behind a flag rather than deleted, because they belong to a
+hunt that is still open and a serial log this branch reads to verify a
+boot is not the place for them.
+.PP
+.B "parallelvm stays 0."
+At 0 the VM lock is taken as before and the merged VM should behave
+exactly as the old one.  Turning it to 1 in the same change would make
+any failure unattributable between the merge and the parallel VM, and
+would throw away the control arm every other result in this document
+rests on.
+.PP
+.B "A gitignore rule that was quietly eating source."
+Untracking build outputs left a rule,
+.CW /os/inferno/*/i[a-z0-9]* ,
+meant for linked kernels \(em they are named for their board, as in
+.CW os/inferno/pc64/ipc64 .
+No glob can say "named for its own directory", and every attempt to
+approximate it took source with it:
+.CW os/inferno/init/init.b
+(hand-written Limbo, a sibling of
+.CW bootinit.b ),
+then
+.CW os/inferno/port/inferno.c
+(16K of kernel C), then
+.CW pcidb.acid
+and
+.CW sd53c8xx.i ,
+then the whole of
+.CW os/inferno/virt/icons ,
+because a directory named
+.CW icons
+matches too.  Excepting every dotted name in turn un-ignored 104
+.CW .7
+objects and every generated
+.CW .root.[sch] .
+The rule is now a list, one line per board: a list cannot over-match,
+and a board added later shows up as an untracked kernel, which is
+visible, rather than quietly untracking that board's source, which is
+not.  Separately, the object-suffix rules covered
+.CW .j ,
+.CW .z ,
+.CW .t ,
+.CW .0
+and
+.CW .2
+but not
+.CW .5 ,
+.CW .6 ,
+.CW .7 ,
+.CW .8 ,
+.CW .q
+or
+.CW .v ,
+so every amd64 and aarch64 kernel object counted as source \(em 151 of
+them.
+.PP
+.B "The merge did not boot, and the reason was the compiler."
+With everything resolved and every board linking, pc64 panicked
+.CW "vmachine: error \(dqillegal dis instruction\(dq with no current prog"
+immediately after the device binds, deterministically, on one processor
+and on two.  The same
+.CW disinit.dis
+ran past that point under hosted
+.CW emu ,
+which shares the same
+.CW libinterp ,
+and
+.CW libinterp/optab.h
+and
+.CW include/isa.h
+are byte-identical on both branches \(em so it was not an opcode table
+and not SMP.
+.PP
+The difference between the two is
+.CW -DDISCTXREG ,
+which puts the Dis context
+.CW curP
+in an external register (R13 on amd64) for the kernel and leaves it an
+ordinary global for
+.CW emu .
+multicore's
+.CW utils/6c
+reserves four external registers instead of two so that no compiled
+file uses R13 or R12 as scratch.  But
+.CW MacOSX/arm64/bin/6c
+is a checked-in host binary, and it was four days older than the
+.CW utils/6c
+sources the merge brought in.  Every amd64 object was therefore
+compiled by a
+.CW 6c
+that reserved two registers, while
+.CW libinterp
+kept the Dis context in the third \(em so ordinary C code used R13 as
+scratch and
+.CW curP
+was whatever the last expression left there.  Rebuilding the toolchain
+and every
+.CW .6
+from scratch gives 0 panics on one processor and 0 on two.
+.PP
+Two lessons, and the second is the one that cost the time.
+.B "Merging a branch that changes the compiler means rebuilding the compiler" ,
+and then rebuilding everything it compiled \(em a kernel that links is
+not evidence that its objects agree.  And the cleanup
+.CW rm
+that should have forced that rebuild silently did not run at all: under
+.CW zsh
+a glob matching nothing aborts the whole command, so one
+.CW libmp/*.6
+with no matches cancelled the
+.CW rm
+of eleven other directories, and the build that followed looked clean
+because it had nothing to do.  The command printed its error; it was
+read as a warning.
+.PP
+.B "One real bug this exposed."
+.CW os/inferno/pc64/main.c 's
+.CW userinit()
+did
+.CW "strcpy(p->text, \(dq*init*\(dq)" .
+.CW Proc.text
+is a
+.CW char* ,
+nothing has set it for that process yet, and so this wrote through a
+nil pointer into physical address 0, which is mapped here and took the
+write without complaining.  It was harmless for as long as nothing read
+a pointer back out of address 0; with
+.CW curP
+clobbered, something did, and the fault came back with CR2
+.CW 0x2a74696e692a ,
+which is
+.CW *init*
+in little-endian ASCII.  The other eleven boards in this tree all say
+.CW "kstrdup(&p->text, \(dqinterp\(dq)" ;
+pc64 was the only one that did not.  Fixed.
+.PP
+.B "check-pc64-tcp.sh has always exited 1 on success."
+It prints
+.CW "ok \-\- the kernel accepted an inbound connection"
+and then returns 1, so every previous "pass" of it was read from its
+text and not from its status.  The script runs under
+.CW "set -e" ,
+and its
+.CW EXIT
+trap calls
+.CW pkill ,
+which returns 1 when it matches nothing \(em the normal case once the
+guest is already gone.  That aborted the trap before the shell could
+restore the status.  The trap now latches
+.CW $?
+first, makes every cleanup command succeed, and exits with the latched
+value; the same pattern is applied to
+.CW check-pc64-disk.sh
+and
+.CW check-pc64-smp.sh ,
+which had the shorter form of the same trap.

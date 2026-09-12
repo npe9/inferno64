@@ -947,17 +947,7 @@ TEXT vmrestore(SB), 1, $-4
 	MOVQ	R15, 0x70(BP)
 	
 	BYTE	$0x65; MOVQ 0, RMACH /* MOVQ GS:(0), RMACH */
-	/*
-	 * m->externup, which is at 40 in this kernel's Mach and at 16
-	 * in 9front's, where this routine came from: Inferno embeds
-	 * PMach ahead of it.  Nothing calls vmrestore here (main.c's
-	 * vmxprocrestore is commented out), so the stale 16 has never
-	 * run -- it loaded m->pml4 into the up register.  Found by
-	 * checking every literal Mach offset in this file against what
-	 * 6c actually lays out; splhi/splx's 8(RMACH) for m->splpc is
-	 * correct.
-	 */
-	MOVQ	40(RMACH), RUSER
+	MOVQ	16(RMACH), RUSER
 	XORL	AX, AX
 	RET
 
@@ -1053,26 +1043,38 @@ _intrcommon:
 								AX = AX */
 
 	/*
-	 * Ureg.ds/es/fs/gs.  These four used to be built here, with
-	 * "MOVW ES, AX; PUSHW AX; MOVW DS, AX; PUSHW AX" -- before
-	 * PUSHQ AX saved the interrupted code's AX.  MOVW from a
-	 * segment register assembles to the 32-bit form, which
-	 * zero-extends, so every single interrupt on this machine
-	 * handed the interrupted code back an AX holding the DS
-	 * selector, which is 0 here.  Compiled code keeps a called
-	 * function's return value in AX for the one or two
-	 * instructions before it stores it, so an interrupt landing
-	 * in that window turned a good pointer into 0: that is
-	 * libinterp/xec.c's OP(new) storing H2D(nil) == 0x18, and
-	 * OP(addc)/OP(slicec)/OP(insc) each storing 0, which is the
-	 * Dis heap fault this port has been chasing.  Proved directly
-	 * by os/inferno/pc64/regtorture.s -- twelve registers spun
-	 * with interrupts off: clean; with interrupts on: AX became
-	 * 0x0.  Reserve the space now and fill it in below, once AX
-	 * is on the stack and free to use.  See
-	 * doc/inferno-cloud-plan.ms.
+	 * These four words used to be built here, with AX as the scratch,
+	 * BEFORE the PUSHQ AX below saved the interrupted code's AX:
+	 *
+	 *	MOVW	ES, AX
+	 *	PUSHW	AX
+	 *	MOVW	DS, AX
+	 *	PUSHW	AX
+	 *
+	 * MOVW from a segment register has no operand-size prefix and
+	 * assembles to 8C /r, MOV r/m32, Sreg -- "mov eax, ds" -- which
+	 * zero-extends into the whole of RAX.  So the value pushed as
+	 * Ureg.ax was the DS selector, 0 on this kernel, and _intrestore
+	 * faithfully popped that back.  Every interrupt handed the
+	 * interrupted code AX = 0, on every processor, since the port
+	 * began.
+	 *
+	 * It survived because compiled code holds a called function's
+	 * return value in AX for only the one or two instructions before
+	 * storing it, so almost every interrupt lands somewhere that does
+	 * not care.  When one lands in that window the caller reads 0.
+	 *
+	 * The frame layout is unchanged: eight bytes are reserved here
+	 * instead of pushed, and filled in after AX has been saved.  With
+	 * fifteen 8-byte pushes below, SP then points at Ureg.ax and the
+	 * four words sit at 120..126, in the order the pushes produced --
+	 * DS lowest.  _iretsegs still skips them with ADDQ $8, SP.
+	 *
+	 * Found by the cloud-port session; verified here by disassembling
+	 * this kernel (8c c0, 8c d8 at _strayintr+0x14/+0x18) and by
+	 * regtorture.  See doc/inferno-ports.ms.
 	 */
-	SUBQ	$8, SP
+	SUBQ	$8, SP		/* reserve Ureg.ds/es/fs/gs */
 
 	PUSHQ	R15		/* RMACH m-> */
 	PUSHQ	R14		/* RUSER up-> */
@@ -1091,10 +1093,8 @@ _intrcommon:
 	PUSHQ	AX
 
 	/*
-	 * SP now points at Ureg.ax, so ds/es/fs/gs are the four words
-	 * at 120, 122, 124 and 126 -- fifteen saved quadwords up.  AX
-	 * is safe on the stack, so it can be the scratch the segment
-	 * reads need.
+	 * AX is saved now, so it is free as a scratch.  SP points at
+	 * Ureg.ax; the reserved words are 120 bytes above it.
 	 */
 	MOVW	DS, AX
 	MOVW	AX, 120(SP)
@@ -1125,54 +1125,52 @@ _intrestore:
 	POPQ	R10
 	POPQ	R11
 	POPQ	R12
-	POPQ	R13
 
 	/*
-	 * m and up are NOT restored from the Ureg when this interrupt
-	 * was taken in the kernel.  They belong to the processor, not
-	 * to the interrupted code, and this is the whole of the pc64
-	 * SMP fault.
+	 * A kernel-mode return must NOT reload R13, RMACH and RUSER from
+	 * this frame.  trap() can reach sched(), and a process that gives up
+	 * the processor here may be resumed on a different one; the
+	 * scheduler that resumes it leaves the *new* processor's Mach in
+	 * RMACH and the process in RUSER, which are the correct values.
+	 * The words saved on entry name the processor the trap was taken
+	 * on, so restoring them hands the process a stale m -- it then
+	 * reads and writes another processor's Mach, and m->ilockdepth in
+	 * particular fluctuates underneath it.  That was a panic from
+	 * sched() ("cpu2: ilockdepth -2/-1/0/1, sched called from
+	 * acquire+0xff") within a second of every -smp 2 or -smp 4 boot.
 	 *
-	 * What was here was an unconditional "POPQ R14; POPQ R15",
-	 * which reloads m and up out of the saved Ureg on every
-	 * interrupt return.  On one processor that is harmless: the
-	 * Ureg was built by this processor, so the m it holds is this
-	 * processor's.  With a second processor started it is not.  A
-	 * process interrupted on cpu0 carries a Ureg on its kernel
-	 * stack naming cpu0's Mach; when the scheduler later resumes
-	 * that process on cpu1 and it returns through here, cpu1's
-	 * RMACH becomes cpu0's Mach.  From that instant cpu1's own
-	 * entirely correct ilock() and iunlock() count up and down
-	 * cpu0's m->ilockdepth, which is why every corrupted value
-	 * captured was 0 or 1 rather than garbage, why the two
-	 * directions of divergence appeared, why cpu0's depth drifted
-	 * negative, and why a detector watching for two Mach pointers
-	 * claiming one machno never fired -- on cpu1, m->machno then
-	 * reads 0 and there is only one pointer to see.  up comes back
-	 * wrong the same way, which is the nil up in the
-	 * dequeueproc+0x108 fault.
+	 * This is the nested check the comment above _strayintr says was
+	 * removed; it is not about code segments or tasks, it is about
+	 * more than one processor.  9front's l.s keeps it for this reason
+	 * (its _iretnested).  A return to user mode still restores both,
+	 * since there the words are the interrupted program's registers.
 	 *
-	 * os/9front/pc64/l.s does not have the bug: it compares the
-	 * saved CS with KESEL and jumps past the reload for a kernel
-	 * -> kernel return.  This is that test.  Inferno's interrupt
-	 * entry has no SWAPGS -- the only SWAPGS in this file is in
-	 * forkret, the syscall path -- so nothing on this path ever
-	 * returns to user mode and the reload below is unreachable
-	 * here; it is kept so the routine is correct rather than
-	 * accidentally correct, and so it lines up with upstream.
+	 * R13 is curP, the Dis context (include/disreg.h), and it belongs
+	 * to the executor exactly as m and up do: sched() sets it beside
+	 * up, so a process resumed on another processor must keep the
+	 * value that scheduler left, not the one saved on entry here.  It
+	 * is safe to leave unrestored on a nested return because 6c
+	 * reserves R12 and R13 in every file it compiles, so no C code
+	 * holds anything in them (utils/6c/txt.c, commit b39043c8).
 	 *
-	 * SP points at Ureg.r14 now: 0(SP) is r14, 8(SP) r15, 48(SP)
-	 * cs, and the 40 skipped are r14, r15, the [DEFG]S slot, the
-	 * trap type and the error code.
+	 * SP points at Ureg.r13 here, three words below where it pointed
+	 * before, so the saved CS is at 56 rather than 48.
 	 */
-	CMPQ	48(SP), $KESEL
+	CMPQ	56(SP), $KESEL
 	JEQ	_iretnested
 
-	MOVQ	8(SP), R15	/* RMACH m-> */
-	MOVQ	0(SP), R14	/* RUSER up-> */
+	POPQ	R13		/* curP */
+	POPQ	R14		/* RUSER up-> */
+	POPQ	R15		/* RMACH m-> */
+	JMP	_iretsegs
 
 _iretnested:
-	ADDQ	$40, SP
+	ADDQ	$24, SP	/* leave curP, RUSER and RMACH as this processor set them */
+
+_iretsegs:
+	ADDQ $8, SP		/* to ignore the [DEFG]S registers as they should not be changing */
+
+	ADDQ	$16, SP	/* pop error code and trap type */
 	IRETQ
 
 TEXT noteret(SB), 1, $-4

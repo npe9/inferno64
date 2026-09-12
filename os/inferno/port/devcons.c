@@ -320,6 +320,16 @@ panic(char *fmt, ...)
 	vseprint(buf+strlen(buf), buf+sizeof(buf), fmt, arg);
 	va_end(arg);
 	iprint("%s\n", buf);
+	{	/* MULTICORE INSTRUMENTATION - temporary: see proc.c */
+		extern uintptr kstackmin;
+		extern char *kstackminproc;
+
+		if(up != nil && up->kstack != nil)
+			iprint("kstack: least headroom seen %zud of %d bytes in \"%s\";"
+				" this proc %d \"%s\" kstack %#p sp about %#p\n",
+				kstackmin, KSTACK, kstackminproc,
+				up->pid, up->text, up->kstack, &s);
+	}
 	if(consdebug)
 		(*consdebug)();
 	splx(s);

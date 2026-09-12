@@ -18904,3 +18904,2075 @@ at offset 0; the read succeeds and the interrupt is delivered so the
 GICv3 conclusion is unaffected, and it is identical on v2, so it
 predates this work \(em the init reads a block other than 0, or the
 print is wrong.
+.NH 1
+The captured pcs were right; the reader and the binary were wrong
+.PP
+Every pc this hunt captured was written down unresolved, because
+.CW inm
+prints nothing for these kernels: nm's
+.CW execsyms()
+calls
+.CW syminit()
+and returns without a message when it fails, so a kernel whose symbol
+table libmach cannot read is indistinguishable from a stripped one.
+Two hand-written readers were used instead, and their answers \(em
+.CW destroy+703 ,
+.CW destroy+613 ,
+.CW freelist+419 ,
+.CW free+56
+\(em went into this document as findings.
+.PP
+.CW utils/p9sym.py
+reads the table properly, following libmach's own
+.CW syminit()
+and
+.CW decodename()
+(utils/libmach/sym.c) on the two points a hand-written reader gets
+wrong: values are 8 bytes when the magic has
+.CW HDR_MAGIC ,
+which amd64's
+.CW S_MAGIC
+does, and a type byte without
+.CW 0x80
+carries an old-style fixed-length name followed by a 3-byte skip while
+.CW z / Z
+names are 16-bit pairs terminated
+.CW "00 00" .
+Get either wrong and the table desyncs into names that look fine and
+cannot be falsified by inspection.  It is verified against
+.CW Inferno/amd64/ipc64
+three ways that do not restate each other: 24666 symbols decode with
+zero bytes of the table unconsumed (at a 32-byte header, 3 are left
+over);
+.CW free+0x79 Ns 's
+preceding
+.CW "MOVQ $0x32d998, AX; CALL *AX"
+resolves to
+.CW poolfault+0x0
+exactly; and the pair straddling
+.CW destroy+0x229 ,
+.CW "MOVL $0x32d1f4, AX; MOVL AX, $0x32dc10" ,
+resolves to
+.CW gcdepth+0x0
+and
+.CW gcdepthmax+0x0
+exactly \(em heap.c's own
+.CW "gcdepth > gcdepthmax"
+idiom.  Three absolute-addressed operands landing on distinct symbols
+at offset 0 checks the decode, not merely the lookup.
+.PP
+That fixed half the problem and exposed the other half.  Resolved
+against the current kernel, six of the seven raw pcs on record are not
+instruction boundaries at all \(em they land in the middle of a
+.CW MOV .
+A pc recorded by
+.CW getcallerpc()
+is a return address; it must be a boundary, and the instruction ending
+there must be a call.  The reason is not that the captures are bad.
+.B "A pc is only meaningful against the exact binary that produced it" ,
+and this tree rebuilds constantly while its panics carry no build
+stamp.  These pcs were recorded during boots of kernels that no longer
+exist and read against a later one, in which the functions concerned
+had moved.
+.PP
+.CW "p9sym.py -s"
+recovers the shift: it searches for a single offset that makes every pc
+in a capture a valid call-return address.  Chance hits run at the
+call-return density \(em 1.87% of this kernel's text bytes \(em so k pcs
+agreeing on one delta is about 0.019 Ns super k per delta tried.  Four
+agreeing, over 4096 deltas, is around 5\(mu10 super -4 .
+For this hunt's four heap.c captures the answer is unambiguous:
+.TS
+box, tab(;);
+l l l.
+captured;at build offset +0x74;call
+_
+0x2f249e;destroy+0x29d;poolfree
+0x2f24f3;destroy+0x2f2;*rax
+0x2f2083;freelist+0x1a3;poolfree
+0x2f1f43;freelist+0x63;free
+.TE
+.PP
+Two of the four are the
+.CW poolfree()
+call in
+.CW destroy()
+and the
+.CW poolfree()
+call in
+.CW freelist()
+exactly.  That is precisely what a freehist entry has to be:
+.CW notefree()
+is called from
+.CW poolfree()
+with
+.CW getcallerpc(&p) ,
+and
+.CW poolfree(Pool*, void*)
+takes the
+.CW Pool*
+first, so that anchor is a correct one \(em unlike the four
+.CW D2B
+sites this document and os/inferno/port/alloc.c already document as
+mis-anchored.  The freehist ring was never affected by that bug.
+.PP
+So the numbers in the earlier sections are wrong and the conclusion
+they supported is right.  The object that later trips
+.CW destroy-entry
+was freed the first time by an ordinary, successful
+.CW destroy()
+or
+.CW freelist()
+exit \(em not by corruption manufacturing a fake pointer, but by a
+genuine second free of a value some other, independent reference still
+held.  Read
+.CW destroy+613
+as
+.CW destroy+0x29d
+and
+.CW freelist+419
+as
+.CW freelist+0x1a3 ;
+the argument built on them stands as written.
+.PP
+One attribution changes.  The pc recorded in this document under
+.CW freearray
+is
+.CW freelist+0x63
+once the offset is applied \(em it crossed a function boundary when it
+was read against the wrong build.  It is the
+.CW free()
+call in
+.CW freelist() Ns 's
+.CW freejitcode / free
+limb, and
+.CW freearray()
+is not implicated by it at all.
+.PP
+Two pcs remain unplaced: no offset makes
+.CW 0x2614a3
+or
+.CW 0x28475a
+a call return, jointly or with the others.  Unplaced means the build
+they came from is not identified \(em not that they are invalid \(em but
+.CW "0x79b9af8 was freed before, from pc=0x2614a3"
+cannot be read as
+.CW free+56
+or as anything else on this evidence, and that reading is withdrawn.
+Captures taken across a long hunt come from many different kernels;
+only pcs from one boot can be expected to share an offset.
+.PP
+The build stamp turned out to exist already, unused.  Every board's
+mkfile compiles
+.CW $CONF.c
+with
+.CW "-DKERNDATE=`{$NDATE}" ,
+and pc64's main.c prints
+.CW "Inferno release built at %ud"
+in the boot banner, so every console log in this hunt has always named
+the kernel that produced it.
+.CW p9sym.py
+now reads the same
+.CW kerndate
+word back out of the binary's data segment and compares the two, which
+settles the question without any offset search at all: this tree's
+current
+.CW ipc64
+is built at 1788855526, while the boot logs these pcs came from say
+1788170900, 1788655402 and 1788656011 \(em three different kernels, all
+days older.  That is independent confirmation of the offset result,
+arrived at by a completely different route.
+.PP
+So the tool now refuses to mislead: given a capture on standard input
+it scrapes the banner, and if the build does not match the binary it
+says so before printing a single name.  Where the log is gone and only
+pcs survive,
+.CW -s
+recovers the offset, and reports honestly that one pc alone agrees with
+many offsets by chance \(em only a set of pcs from a single boot pins it
+down.
+.NH 2
+What the four resolved sites are in the source
+.PP
+With the offset applied the four pcs name specific lines of
+libinterp/heap.c, and two of them are not what the earlier reading
+supposed.
+.CW destroy+0x29d
+is the
+.CW "poolfree(heapmem, h)"
+that ends
+.CW destroy() ,
+and
+.CW destroy+0x2f2
+is the indirect
+.CW poolfault
+call inside
+.CW destroy() Ns 's
+own entry
+.CW D2BPC
+\(em 7c places that check's fault limb out of line, past the function's
+ordinary exit, which is why it sits at a higher offset than the
+.CW poolfree()
+it guards.  So those two are exactly the pair the hunt wanted: the
+first free, and the panic that later caught the second.
+.PP
+.CW freelist+0x1a3
+is the
+.CW "poolfree(heapmem, th)"
+in
+.CW freelist() Ns 's
+tail walk \(em another ordinary, successful free of a list node.
+.CW freelist+0x63
+is different in kind, and it is the one worth following.  It is the
+.CW free(t)
+in
+.CW freelist() Ns 's
+head-node limb:
+.P1
+	if(t != nil) {
+		if(!swept && t->np)
+			freeptrs(l->data, t);
+		if(ADEC(&t->ref) == 0) {
+			freejitcode(t->initialize);
+			free(t);
+		}
+	}
+.P2
+That block frees a
+.CW Type ,
+in mainmem, the moment its reference count reaches zero.  The freehist
+ring records mainmem and heapmem frees alike, because
+.CW notefree()
+sits in
+.CW poolfree()
+and is generic over pools, so a
+.CW Type
+freed here appears in the ring exactly like a heap object.
+.PP
+This lines up with the
+.CW framerefs
+result recorded earlier in this document: interpreter frames hold a
+.CW Type
+without counting it.  If a frame's uncounted reference outlives the
+last counted one, the
+.CW ADEC(&t->ref)
+above reaches zero while that frame still points at
+.CW t ,
+.CW free(t)
+hands the block back, and the second owner is left holding a dangling
+.CW Type
+\(em which is the "two independent owners each believing they hold the
+last reference" shape this hunt has been describing from the other
+end.  It is a lead, not a demonstration: nothing here yet shows the two
+happening to the same
+.CW Type
+in one boot.
+.NH 1
+The block being freed is Tptr, a static Type
+.PP
+With the reader, the build check and a kernel built from the current
+tree, a capture finally reads end to end.  Thirty-two pc64 boots at
+.CW "-smp 1"
+produced 27 panics, and among them:
+.P1
+alloc:D2B:free: 34b5f8 not in pools
+_poolfault: running Dis pid 1 module Sh PC 0x79aae80
+panic: alloc:D2B:free 34b5f8 (from 28474a/2f1fb7)
+.P2
+.CW 0x28474a
+is
+.CW free+0x79 ,
+the indirect
+.CW poolfault
+call inside
+.CW free() ,
+and
+.CW 0x2f1fb7
+is
+.CW freelist+0x63 ,
+the
+.CW free(t)
+in
+.CW freelist() Ns 's
+head-node limb.  Both are verified return addresses against this exact
+binary.  That pair also confirms the
+.CW +0x74
+offset by observation rather than by search: the older captures'
+.CW 0x2f1f43
+is this same call site, and a second boot's
+.CW 0x2f2512
+and
+.CW 0x2f2567
+are the older
+.CW 0x2f249e
+and
+.CW 0x2f24f3
+\(em
+.CW destroy() Ns 's
+.CW poolfree()
+and
+.CW destroy() Ns 's
+own entry
+.CW D2BPC
+fault \(em at their current addresses.
+.PP
+The address being freed is the finding.
+.CW 0x34b5f8
+is not a heap pointer at all; it resolves to
+.CW Tptr+0x0
+exactly \(em the statically allocated
+.CW Type
+declared at libinterp/heap.c:16:
+.P1
+Type	Tptr = { 1, 0, markheap, sizeof(WORD*), 1, 0, 0, { 0x80 } };
+.P2
+So
+.CW freelist()
+handed a kernel global to
+.CW free() ,
+which is what "not in pools" is reporting.  Every one of those static
+Types starts with a reference count of 1 that nothing is ever supposed
+to consume; for
+.CW ADEC(&t->ref)
+to reach zero on
+.CW Tptr
+there must have been one decrement more than the matching increment.
+.CW OP(consp)
+does exactly one
+.CW AINC(&Tptr.ref)
+per cons cell it types, and each free of such a cell does exactly one
+.CW ADEC .
+A list cell freed twice produces the imbalance directly \(em which is
+the same double free this hunt has been chasing, seen from a third
+vantage point.  Freeing
+.CW Tptr
+is the symptom; the double free is still the disease.
+.PP
+.CW freetype()
+now refuses it.  The three inline copies of its body in
+.CW freearray()
+and
+.CW freelist()
+call it instead, so one place decides.  When the count reaches zero on
+a static it reports the running Dis module, dumps the stack and puts
+the reference back rather than handing kernel data to the pool.  The
+conversion also settled a disagreement the three copies had with
+.CW freetype() :
+the inline ones freed only on
+.CW "ADEC == 0"
+and did nothing on a negative result, while
+.CW freetype()
+freed on
+.CW "<= 0" ,
+i.e. freed a second time.  Neither is right, and a negative count is
+now reported and frees nothing.  The module name comes from
+.CW currun() Ns 's
+own
+.CW xp->reg.M ,
+not the global
+.CW R.M ,
+for the reason os/inferno/port/alloc.c's
+.CW notefree()
+records: the global was found dangling with a live
+.CW currun() ,
+and dereferencing it inside a diagnostic that only runs when things
+are already broken would manufacture a fresh crash.
+.PP
+This is containment and attribution, not a cure, and it is labelled
+that way in the source.  What is verified is that a ktrace is now
+readable \(em
+.CW "p9sym.py -c"
+takes the raw
+.CW addr=value
+words
+.CW dumpstack()
+prints and keeps the ones that really follow a call, which turns a
+page of hex into
+.CW dumpstack+0xe ,
+.CW callwithureg+0x3e ,
+.CW panic+0xf2 ,
+.CW markheap+0x14d ,
+.CW poolalloc+0x5b .
+What the guard's own report says when it fires has not been seen yet.
+.NH 2
+The guard fires, and names Tarray
+.PP
+Thirty-two boots on a kernel carrying it, all confirmed from the same
+build by
+.CW "etext 0x32cf03" .
+.CW "alloc:D2B:free 34b5f8"
+is gone, but that is arithmetic rather than evidence \(em the guard
+removes it by construction.  With 27 of 32 baseline boots panicking
+from many causes, 32 boots cannot resolve whether containment changed
+any other rate, and no claim is made that it did:
+.TS
+box, tab(;);
+l l l.
+;baseline;with guard
+_
+page fault;11;7
+general protection violation;4;5
+no panic;5;8
+movp: bad sv/dv;4;7
+decref pc;2;2
+alloc:D2B:destroy;2;2
+alloc:D2B:free (Tptr);3;0
+invalid opcode;0;1
+.TE
+.PP
+The report is the result.  One boot in 32 fired it, on one address:
+.P1
+freetype: static type 0x344530 ref underflow n 0, pid 45 module Env
+.P2
+.CW 0x344530
+is
+.CW Tarray+0x0 ,
+and
+.CW "n 0"
+says the decrement landed exactly on zero \(em the static's own initial
+reference, consumed.  Run through
+.CW "p9sym.py -c" ,
+the accompanying ktrace reads as a real stack for the first time in
+this hunt:
+.P1
+0x2f2725 -> reportunder+0x66
+0x2f2810 -> freetype+0x55
+0x2f246a -> destroy+0x256
+0x2e0727 -> c2string+0x77
+0x2e029b -> cvtac+0x53
+0x2ec7a3 -> xec+0x292
+0x28e890 -> vmachine+0x31c
+.P2
+.CW destroy+0x256
+is
+.CW destroy() Ns 's
+.CW freetype(t)
+call, reached from
+.CW OP(cvtac) Ns 's
+.CW destroy(*dp) .
+.PP
+It fired eighteen times in that boot, and seventeen of those are an
+artefact of the repair rather than separate events.  Putting the
+static's reference back restores the 1 but not the live objects it was
+standing for, so the next destroy of an
+.CW Array
+lands on zero again and reports again.
+.CW freetype()
+now reports the first occurrence per type and stays quiet after, so a
+capture is one line and not a page of them.
+.PP
+.CW "n 0"
+is worth reading carefully, because it proves more than it first
+appears to.
+.CW n
+is the count after the decrement, so the count was exactly 1 before
+it.  But this call is
+.CW destroy() Ns 's
+own
+.CW freetype(t)
+on an
+.CW Array
+that is still being destroyed \(em that object is live, and its own
+.CW AINC
+from
+.CW heaparray()
+is still outstanding.  The count should therefore have been at least 2
+here: one for the static, one for this object.  Finding 1 means the
+invariant was already short by at least one
+.I before
+this call ran, which is independent confirmation that the imbalance is
+real and, at the same time, proof that the stack above is not where
+the surplus release happened.
+.PP
+The accounting says this cannot happen without an over-release, and
+that was checked rather than assumed.
+.CW heaparray()
+and
+.CW heap()
+each do one
+.CW AINC
+per object created, and every one of the six sites that sets
+.CW "h->t = &Tarray"
+increments too \(em five of them spell it
+.CW AINC(&h->t->ref) ,
+which is why a search for
+.CW AINC(&Tarray.ref)
+appears to find missing increments and does not.  Creation is 1:1 with
+destruction, so
+.CW Tarray.ref
+is exactly one more than the number of live
+.CW Array
+objects, and reaching zero means Arrays were destroyed more often than
+they were created.  That is the double free again, confirmed by a
+mechanism completely independent of the pool's magic check.
+.PP
+What this does not do is name the extra
+.CW destroy() .
+.CW Tarray.ref
+is an aggregate over every Array in the system, so the stack above is
+where the count happened to reach zero, not where the surplus release
+was.  It narrows the object kind and proves the imbalance; it does not
+locate it.
+.NH 2
+A third batch: no fire, and a new signature that resolves
+.PP
+Thirty-two more boots on a kernel with the report-once change
+.CW ( "etext 0x32ceee" ).
+The guard did not fire at all, so reporting-once is not verified in
+practice \(em only that nothing else broke.  At the one-in-32 rate the
+previous batch showed, zero in 32 is unsurprising (about a one in three
+chance), and no
+.CW "freetype:"
+line of either kind appeared.
+.PP
+A signature not seen in either earlier batch did appear, five times:
+.P1
+panic: smalloc: size 18446744073441179738 > mainmem maxsize 262987776, pc=0x286da7
+.P2
+.CW 0x286da7
+is
+.CW addelem+0x8b ,
+a verified return address, and
+.CW addelem()
+is os/inferno/port/chan.c:420.  The call is the
+.CW smalloc(a)
+a few lines in, with
+.P1
+	i = strlen(s);
+	a = p->len+1+i+1;
+	if(a > p->alen){
+		a += PATHSLOP;
+		t = smalloc(a);
+.P2
+.CW a
+is an
+.CW int ,
+and 18446744073441179738 is \-268371878 sign-extended, so
+.CW p->len
+is a large negative number: the
+.CW Path
+is corrupt before
+.CW addelem()
+ever touches it.  The same batch produced the first
+.CW cclose / cclone
+panics of these three runs as well, which is the same neighbourhood.
+That is the hunt's own disease again \(em a structure used after it was
+freed \(em reached through
+.CW Path
+rather than through the Dis heap.
+.PP
+Honesty about the counts: five of 32 here against none in the previous
+64, and two
+.CW cclose / cclone
+against none, look like a change and are not claimed as one.  These
+batches are far too small to compare panic-type distributions, the
+kernels either side of it differ only by which occurrences of a
+diagnostic get printed, and that cannot plausibly corrupt a
+.CW Path .
+The useful part is not the rate but the resolution: a panic that used
+to be an unreadable pc now names its line, and says what is wrong with
+the argument.
+.NH 2
+Ninety-six boots: three captures, two statics, two paths
+.PP
+Sized to the rate rather than repeated at 32.  Ninety-six boots on the
+report-once kernel
+.CW ( "etext 0x32ceee" )
+fired the guard in three, 3.1%, and each fired exactly one line \(em
+report-once verified against the previous build's eighteen from a
+single event.  Two different statics:
+.P1
+freetype: static type 0x34b5f8 ref underflow n 0, pid 15 module Env
+freetype: static type 0x332dd8 ref underflow n 0, pid 89 module Sh
+freetype: static type 0x34b5f8 ref underflow n 0, pid 90 module Env
+.P2
+.CW 0x34b5f8
+is
+.CW Tptr ,
+.CW 0x332dd8
+is
+.CW Tlist .
+The two
+.CW Tptr
+captures are the same path, in the same module, on different boots.
+.PP
+Both chains resolve completely, and every edge in them was checked
+against the disassembly rather than inferred from adjacency:
+.P1
+Tptr  (Env):  xec -> OP(tail)+0x1c -> movp+0xe1 -> destroy+0x23e
+              -> freelist+0x3c -> freetype+0x6f
+Tlist (Sh):   destroy+0x23e -> freearray+0x74 -> freeptrs+0x359
+              -> destroy+0x256 -> freetype+0x6f
+.P2
+.CW OP(tail)
+is three lines that set
+.CW "R.s = &l->tail"
+and call
+.CW movp() ,
+.CW movp
+destroys the destination slot's old value at
+.CW +0xe1 ,
+and
+.CW destroy+0x23e
+is the indirect
+.CW "t->free(h, 0)" .
+So both are entirely ordinary release paths: a list being dropped
+because a slot was overwritten, and an array's contained pointers
+being released.  Neither is doing anything wrong; by the
+.CW "n 0"
+argument above, the count was already short before either ran.
+.PP
+A caution the tool cannot remove.
+.CW dumpstack()
+prints every stack word that could be a return address, and a stale one
+left by an earlier call still passes the
+.CW -c
+test \(em it really is a return address, just not a live frame.  In the
+.CW Tptr
+stacks,
+.CW cons+0x24
+(the return from
+.CW cons() Ns 's
+own
+.CW AINC(&Tlist.ref) )
+and
+.CW new+0x54
+sit in the middle of the chain and are litter:
+.CW cons()
+contains no call to
+.CW destroy()
+at all.  What makes the chains above trustworthy is not that the words
+are adjacent but that each named function was disassembled and does
+call the next one at that offset.
+.PP
+The rate caution from the previous section was justified.  The
+.CW smalloc / addelem
+signature that appeared five times in 32 boots appeared once in these
+96 \(em 5/32 against 1/96.  Nothing had changed between them that could
+affect it, and the apparent jump was noise, as recorded.
+.NH 1
+Every interrupt handed the interrupted code AX = 0
+.PP
+Found by the cloud-port session and confirmed here independently.
+pc64's
+.CW _intrcommon
+built the four segment words of the
+.CW Ureg
+with
+.CW AX
+as its scratch,
+.I before
+the
+.CW "PUSHQ AX"
+that saves the interrupted code's own
+.CW AX :
+.P1
+	MOVW	ES, AX
+	PUSHW	AX
+	MOVW	DS, AX
+	PUSHW	AX
+.P2
+.CW MOVW
+from a segment register carries no operand-size prefix, so it
+assembles to
+.CW "8C /r" ,
+.CW "MOV r/m32, Sreg" ,
+which zero-extends into the whole of
+.CW RAX .
+The value pushed as
+.CW Ureg.ax
+was therefore the
+.CW DS
+selector \(em 0 on this kernel \(em and
+.CW _intrestore
+faithfully popped it back.  Every interrupt, on every processor, since
+the port began.
+.PP
+Verified in this tree rather than accepted on report.  Disassembling
+the built kernel with
+.CW utils/p9sym.py
+and a decoder shows, at
+.CW _strayintr+0x14
+and
+.CW +0x18 :
+.P1
+0x200695  mov eax, es    8c c0
+0x200699  mov eax, ds    8c d8
+.P2
+no
+.CW 66
+prefix, both ahead of the
+.CW "push rax"
+at
+.CW +0x28 .
+.PP
+It hid for years because compiled code holds a call's return value in
+.CW AX
+for only the one or two instructions before storing it, so almost
+every interrupt lands somewhere that does not care.  When one lands in
+that window, the caller reads 0.  That is the shape of nearly every
+signature in this document:
+.CW "movp: bad sv 0x0" ,
+.CW "smalloc: size 18446744073441179738"
+(a negative
+.CW int
+sign-extended, from a
+.CW p->len
+read as 0 and then decremented),
+.CW alloc:D2B:destroy-entry ,
+and the general protection violations.
+.PP
+The fix reserves the eight bytes with
+.CW "SUBQ $8, SP"
+instead of pushing them, and fills them in after
+.CW AX
+is safe.  The frame layout is unchanged: fifteen 8-byte pushes follow,
+so
+.CW SP
+then points at
+.CW Ureg.ax
+and the words sit at 120..126 in push order with
+.CW DS
+lowest.  The built code confirms stores at
+.CW +0x78 ,
+.CW +0x7a ,
+.CW +0x7c ,
+.CW +0x7e .
+.CW _iretsegs
+already skipped them with
+.CW "ADDQ $8, SP"
+and is untouched.
+.NH 2
+The arm64 boards do not have it, and that is consistent
+.PP
+Checked rather than assumed.  virtarm64's
+.CW vectrap
+saves the tag register first and then every interrupted register
+before anything else runs, and its own comment explains why AArch64
+needs no scratch held in advance:
+.CW "SUB SP, SP, #UR_SIZE"
+alone makes the frame safe to write into, so there is never a window
+where a live register is used as scratch.  The same is true of
+riscv64/virt, which it was modelled on.  This is a satisfying
+consistency check rather than a coincidence: virtarm64 boots to an
+interactive shell with CHANTEST-OK and DIS-STRESS-OK while pc64 was
+panicking in about 85% of boots, on the same interpreter and the same
+collector.
+.NH 2
+The number: 82 panics in 96 boots became 2
+.PP
+Same command line, same 60-second timeout, same machine, 96 boots
+either side, each batch confirmed to be one build by
+.CW etext .
+Before the fix
+.CW ( "etext 0x32ceee" ):
+82 of 96 boots panicked.  After it
+.CW ( "etext 0x32cf3e" ):
+.TS
+box, tab(;);
+l l l.
+;before;after
+_
+no panic;14;94
+page fault;26;0
+general protection violation;20;2
+movp: bad sv/dv;13;0
+alloc:D2B:destroy;5;0
+invalid opcode;4;0
+incref/decref: bad r;4;0
+cclose / cclone;3;0
+smalloc: huge size;1;0
+assert failed: m;1;0
+freetype: static Type underflow;3;0
+.TE
+.PP
+Every signature this hunt chased is gone except two general protection
+violations.  The static-Type guard, which fired three times in the 96
+boots before, fired not once in the 96 after \(em which is the
+prediction made when it was written, that
+.CW Tptr
+and
+.CW Tlist
+underflows were downstream of something else rather than a refcounting
+bug of their own.  They were.  The guard stays: refusing to hand a
+kernel global to
+.CW free()
+is right whatever put the count there, and it now costs nothing.
+.PP
+The one panic examined resolves to
+.CW modstatus+0x18 ,
+faulting on
+.CW "MOVQ 0x68(AX), AX"
+with a non-canonical pointer whose upper half is
+.CW 0x00FF53F0
+\(em the real-mode BIOS stub address
+.CW F000:FF53 .
+That is a different bug and a much rarer one; two samples are not worth
+a theory.
+.NH 2
+-smp 2 boots, and cpu1 comes up
+.PP
+The blocker doc/inferno-platforms.ms recorded as "-smp 2 brings cpu1
+up, where it meets the heap fault" is gone, which follows: squidboy's
+APs come up through the same vector table and the same
+.CW _intrcommon ,
+so every processor was losing
+.CW AX
+on every interrupt, not just the first.  A
+.CW "-smp 2"
+boot now runs to the timeout with no panic and reports both:
+.P1
+cpu0: 998MHz AuthenticAMD AMD-K8 (AX 00060FB1 CX 80002001 DX 178BFBFD)
+cpu1: 998MHz AuthenticAMD AMD-K8 (AX 00060FB1 CX 80002001 DX 178BFBFD)
+.P2
+.PP
+What that does not yet mean is a parallel interpreter.  The same boot
+prints
+.CW "nvm: 1 hold the vm, cpu1 <nil>" ,
+which is os/inferno/port/dis.c's own instrumentation reporting the
+high-water mark of processes holding
+.CW vmlock ,
+the single global VM
+.CW QLock .
+One.  cpu1 is real, takes interrupts, and runs kernel work; Dis itself
+is still serialised behind one lock.  That is the boundary the rest of
+this branch's plan is about, and it is now reachable to work on rather
+than blocked behind a crash.
+.NH 2
+-smp 2 measured, and the one bug that is left
+.PP
+Ninety-six boots at
+.CW "-smp 2" ,
+same kernel and command line as the
+.CW "-smp 1"
+batch:
+.TS
+box, tab(;);
+l l l.
+;-smp 1;-smp 2
+_
+boots;96;96
+no panic;94;91
+general protection violation;2;5
+cpu1 online;n/a;96
+max VM holders (nvm);1;1
+.TE
+.PP
+Two of 96 against five of 96 is not a difference at this sample size
+(Fisher, about p = 0.44), and it is not claimed as one.  cpu1 came up
+in all 96.
+.PP
+All seven of those panics \(em the two at
+.CW "-smp 1"
+and the five at
+.CW "-smp 2"
+\(em have the identical faulting pc,
+.CW "PC 0000000000230619" ,
+which is
+.CW modstatus+0x18 .
+One bug, seven samples, and not an SMP bug: it happens at
+.CW "-smp 1"
+too.  That is the whole of what is left after the interrupt fix.
+.PP
+.CW modstatus()
+(os/inferno/port/devprog.c) reads
+.CW r->M->m->name ,
+and the faulting instruction is the second of the pair that walks it:
+.P1
+	MOVQ	0x30(BP), AX	/* r->M */
+	MOVQ	8(AX), AX	/* r->M->m */
+	MOVQ	0x68(AX), AX	/* r->M->m->name -- faults */
+.P2
+.CW Modlink
+declares
+.CW "Module* m"
+second, at offset 8, so the disassembly and the structure agree.  The
+value in
+.CW AX
+at the fault was
+.CW 0x00FF53F000E2C3F0
+\(em non-canonical, hence a general protection violation rather than a
+page fault, and with
+.CW 0x00FF53F0
+in the upper half, the real-mode BIOS stub address
+.CW F000:FF53 .
+.PP
+The first attempt at this put the check in the
+.CW Qstatus
+read in devprog.c, which tested
+.CW "p->reg.M == H"
+and nothing else.  That was the wrong place, and a 96-boot batch said
+so: the guard never printed and the same pc faulted again.  Resolving
+the frames under the fault rather than assuming shows why \(em
+.CW modstatus+0x69
+sits under
+.CW disdump+0xe2 ,
+under
+.CW hzclock+0x115 ,
+.CW timerintr ,
+.CW lapicclock .
+It is the other caller.  The two earlier captures resolve the same
+way; all seven were always
+.CW disdump() .
+.PP
+.CW disdump()
+is not stall-triggered, whatever its comment says.
+os/inferno/port/portclock.c calls it unconditionally at
+.CW "m->ticks == 40*HZ" ,
+so every boot that survives forty seconds walks every live
+.CW Prog
+through
+.CW modstatus() .
+That is why this became the dominant signature only after the
+interrupt fix: before it, almost no boot lasted forty seconds.  These
+last panics are the temporary MULTICORE INSTRUMENTATION crashing, not
+the kernel under it.
+.PP
+So the check belongs in
+.CW modstatus()
+itself, which is the function that does the dereference and has two
+callers.  A
+.CW Modlink
+is a Dis heap object with its own type, so it asks that rather than
+guessing whether a pointer looks plausible: if
+.CW "D2H(M)->t"
+is not
+.CW &Tmodlink ,
+or
+.CW M->m
+is nil, it writes
+.CW [?]
+and returns 0, reporting once.
+.PP
+Containment and attribution, not a cure, and labelled that way in the
+source.
+.CW newprog()
+takes a counted reference to the Prog's own
+.CW Modlink
+.CW ( "h = D2H(m); h->ref++" ),
+so for one to be stale while a live Prog names it, something is
+dropping that reference.  That is the next thing to find \(em but a
+diagnostic dump must not be the thing that panics the kernel.
+.NH 2
+Zero panics in 96 boots at -smp 2
+.PP
+With the check moved into
+.CW modstatus() ,
+96 boots at
+.CW "-smp 2"
+.CW ( "etext 0x32d008" ):
+.TS
+box, tab(;);
+l l.
+boots;96
+no panic;96
+cpu1 online;96
+runq high-water 2;96
+.TE
+.PP
+Zero.  Against the 5 of 96 the same batch produced before the guard,
+that is not luck: at a 5.2% rate, none in 96 has probability 0.948
+super 96 , about 0.006.
+.PP
+The whole sequence, one board, one command line, each batch pinned to
+its build by
+.CW etext :
+.TS
+box, tab(;);
+l l l.
+;panics;of
+_
+before the interrupt fix;82;96
+after it, -smp 1;2;96
+after it, -smp 2;5;96
+with modstatus guarded, -smp 2;0;96
+.TE
+.PP
+And in all 96 of the last batch, the run-queue high-water mark is 2:
+two Dis programs ready at once, one permitted to run, in every boot.
+.NH 2
+A flaw in the diagnostic, and what it means for the reading above
+.PP
+The guard reported once in those 96 boots, and the report was wrong:
+.P1
+modstatus: M 0xffffffffffffffff is not a live Modlink
+.P2
+.CW H
+is
+.CW "((void*)(-1))"
+(include/interp.h:414), so that
+.I is
+.CW H
+\(em the ordinary "no module" sentinel, which the
+.CW Qstatus
+read has always tested for before calling
+.CW modstatus()
+and which
+.CW disdump()
+never did.  Reporting it as corruption was wrong, and worse than
+wrong: it made the two cases indistinguishable in the log, so this
+batch cannot say which of them it stopped.  Both are plausible \(em
+.CW disdump()
+passing an
+.CW H
+straight in, or a genuinely stale
+.CW Modlink
+\(em and the zero-panic result is solid either way, but the cause is
+not established by it.
+.PP
+Separated now.
+.CW H
+and nil are legitimate and silent, printing
+.CW [H] ;
+only a non-sentinel pointer that is not a live
+.CW Modlink ,
+or one with a nil
+.CW m ,
+reports, and it prints the type and module pointers so the next
+capture says which.
+.NH 1
+What the interrupt fix does to everything above it
+.PP
+Every measurement in this document taken before the
+.CW _intrcommon
+fix was made on a kernel where every interrupt handed the interrupted
+code
+.CW "AX = 0" .
+That is not a small confound to discover at the end: it accounted for
+80 of the 82 panics in a 96-boot batch, a factor of 40.  Conclusions
+drawn under it need re-reading, and the negative ones need it most.
+.PP
+The pattern to distrust is "the probe was armed and never fired, so
+that hypothesis is refuted".  There are several here \(em
+.CW checkmarkptr()
+at 0 of 15,
+.CW ADEC(&h->ref)
+underflow at 0 of 20, the
+.CW freelist()
+tail-walk assertion over six virtarm64 boots.  Each was a sound
+experiment when it was run.  But a kernel that panics in 85% of boots
+does not get far, and a probe that never runs cannot fire: a quiet
+probe on that kernel is weaker evidence than the same probe on this
+one.  None of those hypotheses is hereby revived; they are marked as
+resting on a base that has changed, and cheap to re-run now that a
+boot lasts.
+.PP
+A narrower version of the same trap, from the cloud-port session and
+independently from the inferno-ports branch on raspi3b: a tracker hit
+clears its own watch, so a quiet
+.I earlier
+checkpoint is ambiguous between "nothing had gone wrong yet" and
+"there was nothing here to go wrong on".  Bisection by checkpoint is
+invalid reasoning on that instrument, not merely wasted effort.  What
+made those captures legible was the instrument going quiet after the
+teardown
+.CW trackclear ,
+not the bracketing.  The two probes named above are not of that kind
+\(em they are direct assertions, armed continuously, and a hit does not
+disarm them \(em so they are weakened by the confound only, not by the
+ambiguity.
+.PP
+The positive results are in better shape, because a capture that
+happened, happened.  The
+.CW alloc:D2B
+double free, the freehist address matches, the
+.CW Tptr
+and
+.CW Tarray
+underflows: all real events.  What changed is their cause.  Three
+static-Type underflows in 96 boots became zero in 96 after the fix,
+which is what "downstream" means in practice \(em and it is the model
+for how to re-read the rest.
+.NH 2
+The guard works and the explanation does not close
+.PP
+96 boots at
+.CW "-smp 2"
+with
+.CW H
+and a stale pointer reported separately
+.CW ( "etext 0x32d050" ):
+94 clean, cpu1 up in all 96, and
+.B "zero"
+stale-Modlink reports.  Combined with the previous 96, that is 192
+boots since the guard landed with no
+.CW modstatus
+fault at all, against 5 in the 96 before it.  At that rate, none in 192
+has probability about 0.948 super 192 , around 4 in 100000, so the
+guard is doing something real.
+.PP
+But the mechanism is not established, and it is worth being plain about
+why rather than assuming the obvious.  The guard has three exits.  Two
+of them report and fired zero times in 192 boots.  So whatever it
+prevented left through the silent one \(em
+.CW M
+being
+.CW H
+or nil.  That does not fit the capture.  The faulting instruction was
+the third of the three,
+.CW "MOVQ 0x68(AX), AX" ,
+with
+.CW AX
+holding
+.CW 0x00FF53F000E2C3F0
+loaded by the second.  With
+.CW M
+equal to
+.CW H ,
+.CW "((void*)-1)" ,
+the second instruction would address
+.CW "-1 + 8" ,
+which wraps to 7: a canonical, unmapped address, so a page fault with
+.CW "CR2 = 7" ,
+not the general protection violation with
+.CW "CR2 = 0"
+that every one of those captures shows.  A non-canonical
+.CW M->m
+explains the fault exactly; an
+.CW M
+of
+.CW H
+does not.
+.PP
+So the two halves disagree: the captures say a real pointer with a bad
+.CW m ,
+and the instrumented kernel says that case never occurred in 192 boots.
+Both cannot be right, and the honest answer is that this is not
+resolved.  What is recorded, and what is not: the guard's effect is
+measured and large; its cause is asserted by nobody.  The next capture
+that fires either report will say which, and until one does the
+mechanism stays open.
+.NH 2
+-smp 4
+.PP
+Boots, four processors online, no panic, reaching the shell loop:
+.P1
+cpu0: 1002MHz AuthenticAMD AMD-K8 ...
+cpu1: 1002MHz AuthenticAMD AMD-K8 ...
+cpu2: 1002MHz AuthenticAMD AMD-K8 ...
+cpu3: 1002MHz AuthenticAMD AMD-K8 ...
+nvm: 1 hold the vm, cpu2 <nil>
+runq: 2 dis programs ready at once, cpu2
+.P2
+One boot, not a batch, so it is a smoke test and nothing more.  Note
+which processor the VM lock and the run queue report from: cpu2.  The
+kernel is genuinely running Dis on the APs, and still exactly one
+program at a time.
+.NH 2
+What is left
+.PP
+Two of 96 in the last batch, both general protection violations, both
+at
+.CW "PC 0x2006F7" ,
+which is
+.CW _intrr+0x28
+\(em the
+.CW IRETQ
+itself, with garbage selectors in the error code
+.CW ( AFC8 ,
+.CW 6978 ).
+The frame layout was checked against the built binary rather than the
+source, and balances: 15 register pushes plus
+.CW "SUBQ $8"
+on entry, 15 pops plus
+.CW "ADDQ $8"
+plus
+.CW "ADDQ $16"
+on return, landing exactly on
+.CW RIP ,
+with the nested path summing to the same 40 bytes from the
+.CW R14
+slot.  So this is corrupted frame contents, not the arithmetic changed
+by the interrupt fix.  Two samples; no theory offered.
+.NH 2
+The contradiction resolves against the guard
+.PP
+A second probe faulted the same way, and that settled it.
+.CW notefree+0xb8
+\(em os/inferno/port/alloc.c's freehist ring, reading
+.CW xp->reg.M->m->name
+\(em with the same guard shape
+.CW modstatus()
+had:
+.CW M
+tested against nil and
+.CW H ,
+then
+.CW M->m
+dereferenced.
+.PP
+Neither guard can catch what happens.  The captured value is
+.CW 0x00FF53F000E2C3F0 :
+not nil, not
+.CW H ,
+and sitting on a
+.CW Modlink
+whose heap type is intact, so every condition either probe tested
+passes.  What is wrong with it is that it is not a
+.I canonical
+address \(em bits 63:48 are
+.CW 0x00FF ,
+so the sign bits disagree \(em which is exactly why the fault is a
+general protection violation with
+.CW "CR2 0"
+and not a page fault.
+.PP
+That answers the open question of the previous section, and answers it
+against the guard.  It never reported across 192 boots because it asked
+whether the
+.CW Modlink
+was live and whether
+.CW m
+was nil, and in the observed failure both answers are "fine".  So it
+cannot have been what stopped the
+.CW modstatus
+faults, and the zero-in-192 is unexplained rather than explained.  The
+small probability quoted for it argues that something changed; it does
+not argue that this guard was the thing.  Recorded as an open result,
+not as a success.
+.PP
+.CW modlinkok()
+in dis.c is now the shared check for both probes \(em nil,
+.CW H ,
+canonical, live
+.CW Modlink ,
+and a non-nil canonical
+.CW m
+\(em and it is the first version of this check that would catch the
+capture in hand.
+.PP
+One thing the two faults have in common is worth stating on its own.
+Both are in temporary MULTICORE INSTRUMENTATION:
+.CW disdump() Ns 's
+walk, reached from the unconditional
+.CW 40*HZ
+call in portclock.c, and the freehist ring.  Neither is the kernel
+doing its work.  After the interrupt fix, what remains of this port's
+failures is largely the measuring apparatus, which is a much better
+position than it sounds \(em but it does mean the panic counts in these
+batches are counting the instruments as much as the machine.
+.NH 1
+What the global VM lock actually costs
+.PP
+.CW maxnrunq
+established that two Dis programs are ready at once on the ordinary
+boot workload, on both boards.  That says parallelism exists; it does
+not say the serialisation costs anything, because a program can be
+ready and still get the processor promptly.  The second measurement
+answers that directly.
+.CW vmlock.head
+is the queue of kernel processes blocked in
+.CW vmacquire() ,
+so a scheduler pass that finds it non-nil is a pass taken while a
+runnable interpreter was waiting on the one global lock.  Counted in
+.CW vmachine() Ns 's
+own loop and reported from
+.CW disdump() ,
+which portclock.c already runs at
+.CW 40*HZ
+in every boot, so it costs nothing to collect.
+.PP
+Across the 94 boots of a 96-boot batch at
+.CW "-smp 2"
+that reached the report:
+.TS
+box, tab(;);
+l l.
+passes with an interpreter blocked;
+_
+minimum;57.2%
+median;76.9%
+maximum;96.2%
+.TE
+.PP
+Three quarters of scheduler passes, at the median, are taken with a
+runnable interpreter blocked on
+.CW vmlock .
+That is the answer to whether Phase 1b and Phase 5 are worth their
+risk, and it is not close.  It is also a much stronger statement than
+.CW "maxrunq 2" :
+two ready programs could have meant two programs that briefly
+overlapped, and this says instead that the second one spends most of
+the boot waiting for the first.
+.PP
+The measurement is of this workload, which is a boot script and a
+shell, on a two processor guest.  It is not a claim about a general
+Dis workload, and the number would be different on four processors or
+under a program that blocks on I/O more.  What it does establish is
+that the serialisation is not academic on the one workload this branch
+can run today.
+.NH 2
+The -smp 1 control: two questions answered, one against me
+.PP
+96 boots at
+.CW "-smp 1"
+on the identical kernel, as a control for the two open readings.
+.TS
+box, tab(;);
+l l l.
+;-smp 1;-smp 2
+_
+boots;96;96
+no panic;95;94
+general protection violation;1;2
+of which _intrr (IRETQ);1;2
+contention, median;34.6%;76.9%
+contention, min;27.7%;57.2%
+contention, max;92.8%;96.2%
+.TE
+.PP
+First: the
+.CW IRETQ
+fault is
+.B not
+SMP-specific.  It had appeared only in
+.CW "-smp 2"
+batches, and the tempting reading was that
+.CW _iretnested ,
+whose whole purpose is more than one processor, was implicated.  It is
+1 of 96 at
+.CW "-smp 1"
+too.  That reading is withdrawn; the earlier absence was the
+confounding this document has now seen three times \(em boots that died
+at
+.CW modstatus
+never ran long enough to reach it.
+.PP
+Second, and this one holds: the contention figure is not an artefact of
+SMP.  On one processor a blocked interpreter is ordinary
+multiprogramming rather than an idle core, and the median is 34.6%.
+The second processor takes it to 76.9%.  The metric behaves the way a
+real measure of lost parallelism should \(em roughly a third of passes
+inherent to the workload, and the rest appearing only when there is a
+second processor to be wasted.
+.NH 2
+The collector tripwire fires, and the reason is not yet known
+.PP
+The assertion added to
+.CW rungc()
+fires on virtarm64, on the first boot, every boot.  Getting the caller
+required teaching
+.CW p9sym.py
+the ELF-wrapped kernels, which had no pc resolution at all before;
+it is
+.CW execatidle+0xb0 ,
+one of the two call sites the invariant is documented for.
+.P1
+rungc: prog 5 mid-quantum and p->reg is stale
+	(saved PC 0x0 live 0x43782428), called from 0x4004da58
+.P2
+.PP
+The first version of the check tested
+.CW "curP->curprog != nil"
+alone, and that was the wrong test: xec.c records that
+.CW curprog
+is deliberately not cleared by exception.c's
+.CW "memmove(&p->reg, &R, ...)" ,
+so it can be set with
+.CW p->reg
+current.  The version above compares the saved and live
+.CW PC ,
+.CW SP ,
+.CW FP
+and
+.CW EX ,
+which is the hazard itself rather than a proxy, and it still fires.
+.PP
+What is not established is why.
+.CW xec()
+sets
+.CW curprog
+after
+.CW "R = p->reg"
+and clears it after
+.CW "p->reg = R" ,
+so inside a quantum the two differ by construction and that is the
+documented stale window \(em the question is how
+.CW rungc()
+comes to run inside one.  The
+.CW "saved PC 0x0"
+is the part that does not fit either story: a program that has run has
+a real
+.CW Inst*
+there, and one that has not should not be
+.CW curprog .
+That is the thread to pull, and it is recorded as an open question
+rather than resolved.  The tripwire stays: it costs a compare, and
+whatever it is reporting is worth knowing before Phase 1b makes the
+same window a real one.
+.NH 2
+The invariant holds; the coarse checks were false positives
+.PP
+The assertion, made precise, does not fire.  On virtarm64 and on pc64
+at
+.CW "-smp 2" ,
+the collector never runs with a program's
+.CW p->reg
+actually stale.  The documented invariant is sound and Phase 1b's
+foundation is where it was said to be.
+.PP
+Getting there took three versions, and the first two were wrong in
+instructive ways.
+.IP 1.
+.CW "curP->curprog != nil" .
+Fired at once.  Wrong test: xec.c records that
+.CW curprog
+is deliberately not cleared by exception.c's snapshot sync, so it can
+be set with
+.CW p->reg
+perfectly current.
+.IP 2.
+Compare
+.CW curprog Ns 's
+saved registers against the live ones.  Fired too \(em and this one was
+not merely imprecise but unsafe.
+.CW vmachine()
+says, where it clears
+.CW curprog ,
+that the name is allowed to dangle and that "progreg() only compares
+the pointer, never follows it".  Version 2 followed it, and so read
+freed memory.
+.IP 3.
+.CW regsyncpc
+against
+.CW R.PC .
+.CW regsyncpc
+holds the PC that
+.CW p->reg
+carries, updated at all five places R is loaded from a Prog and all six
+where a Prog's
+.CW reg
+is synced back.  It names no Prog, so it cannot dangle, and it is the
+hazard itself rather than a proxy for it.  Silent.
+.PP
+So what the earlier versions saw was the coarseness, not a violation.
+.CW inxec
+is set for as long as a quantum is open, which includes a program
+blocked inside
+.CW xec()
+whose
+.CW reg
+has been synced \(em open, but not stale.
+.PP
+The second version paid for itself on the way out.  It printed
+.CW "prog 5 state 0xdeadbeef" ,
+which is what
+.CW delprog()
+writes into a Prog it is about to free, so
+.CW curprog
+can name freed memory.
+.CW vmachine() Ns 's
+clear covers non-local exits from the interpreter, not a Prog reaching
+.CW delprog()
+while
+.CW curprog
+still names it.  The damage is the one that comment already describes:
+.CW progreg()
+compares
+.CW curprog
+by pointer, so once the allocator reuses the address,
+.CW progreg()
+hands out
+.CW curR
+for a program whose live registers are elsewhere \(em and
+.CW progreg()
+is what Phase 1b is built on.
+.CW delprog()
+now clears it.
+.PP
+A negative result and a bug fix, from an assertion that was itself
+wrong twice.  The assertion stays: it costs a compare and a store per
+sync point, it is silent today, and it fires the moment Phase 1b opens
+the window it describes.
+.NH 2
+The last failure, characterised: an IRET on a newborn kproc's stack
+.PP
+Seven captures across five batches, at
+.CW "-smp 1"
+and
+.CW "-smp 2"
+alike, all with the same faulting pc,
+.CW _intrr+0x28 ,
+which is the
+.CW IRETQ
+itself.  They are far more alike than "general protection violation"
+suggests:
+.TS
+box, tab(;);
+l l l l.
+batch;ERROR;SP;estackx
+_
+cap-smp2d/b37;AFC8;0xa670a8;0xa670e0
+cap-smp2d/b42;6978;0xa670a8;0xa670e0
+cap-h/b12;8658;0xa670a8;0xa670e0
+cap-h/b31;8E70;0xa671a8;0xa671e0
+cap-toc/b34;1940;0xa670a8;0xa670e0
+cap-toc/b90;7918;0xa670a8;0xa670e0
+cap-smp1/b67;6978;0xa66ea8;0xa66ee0
+.TE
+.PP
+.CW SP
+is
+.CW "estackx - 0x38"
+in every one, and
+.CW estackx
+is
+.CW "up->kstack + KSTACK"
+\(em _dumpstack computes it that way.  So the interrupt frame sits at a
+fixed depth on a kernel stack that is essentially empty.
+.PP
+The frame's return pc says whose.  At
+.CW SP
+the word is
+.CW 0x208bcb ,
+which resolves to
+.CW linkproc+0x9 :
+.P1
+linkproc(void)
+{
+	spllo();
+	up->kpfun(up->kparg);
+	pexit("kproc dying", 0);
+}
+.P2
+.CW +0x9
+is immediately after the call to
+.CW spllo() ,
+so this is the first interrupt a newly created kproc takes after it
+enables them.  The geometry agrees:
+.CW kprocchild()
+sets
+.CW "p->sched.sp = p->kstack+KSTACK-BY2WD" ,
+and an interrupt taken with
+.CW SP
+one further word down puts the CPU's five-word frame exactly where
+these captures show it.
+.PP
+And the error code is not incidental.  For each capture it equals the
+low half of the word at
+.CW SP+32 ,
+which in an
+.CW IRETQ
+frame is
+.CW SS .
+.CW AFC8
+against
+.CW 0000afc8 ,
+.CW 1940
+against
+.CW 00011940 .
+So
+.CW IRETQ
+is rejecting the stack selector, not the code selector \(em and this
+kernel runs with
+.CW "SS 0000"
+everywhere else, as every register dump in this document shows.
+.PP
+What is not established is how a non-zero value gets into that slot.
+Two readings fit: the CPU pushed a non-zero
+.CW SS ,
+or the slot was written after the frame was built.  The values differ
+per boot
+.CW ( AFC8 ,
+.CW 6978 ,
+.CW 8658 ,
+.CW 8E70 ,
+.CW 1940 ,
+.CW 7918 ),
+which suits the second better than the first, but that is a preference
+and not evidence.
+.PP
+One thing was checked rather than assumed on the way, because it would
+have been an easy mistake.  The words either side of the
+.CW SS
+slot are absent from the dumps, and the tempting reading is that
+.CW CS ,
+.CW RFLAGS
+and
+.CW RSP
+are all zero \(em which would mean the frame was never CPU-pushed at
+all.  They are not zero;
+.CW _dumpstack()
+prints a word only when it looks like a text address or lies within
+the last 32 bytes of the stack, so those three are simply filtered.
+The frame is consistent with having been pushed normally.
+.NH 2
+Where the SS corruption is, and where it is not
+.PP
+Two probes, two answers, and the second batch went quiet.
+.PP
+The first asked whether the frame was already bad when the trap was
+taken, which would mean the CPU pushed a bad
+.CW SS .
+Fifty-two boots, two of them faulting this way, and it never fired.  So
+the CPU pushed a good frame and the word is overwritten before the
+.CW IRETQ
+reads it \(em the corruption happens during the handler.
+.PP
+That narrows it usefully, because
+.CW trap()
+is short and, on the path a newborn kproc takes, writes nothing to
+.CW ss .
+.CW kenter()
+touches only
+.CW up->dbgreg ,
+and only for a user trap; the two
+.CW "ureg->ss = KDSEL"
+writes are on the debug-register and user-entry paths, which a kernel
+trap does not reach; the
+.CW "ureg->sp = (uintptr)&ureg->sp"
+in the panic path writes
+.CW sp ,
+not
+.CW ss ,
+and runs only once the trap has already failed.  What is left is
+.CW irqhandled()
+and the device handler it dispatches to, each of which is handed the
+.CW Ureg*
+directly.
+.PP
+The second probe compares
+.CW ss
+across that call and names the vector.  It has not fired, because in 96
+boots the fault did not recur at all \(em the first entirely clean
+96-boot batch this port has produced.  At the observed rate of about 2%
+that has roughly a 13% chance, so it is not evidence that anything
+changed; the probe is simply untested.  A larger batch is the only way
+to give it the chance.
+.PP
+Worth stating for what it is: 96 of 96 boots at
+.CW "-smp 2"
+with no panic, no
+.CW freetype
+report, no
+.CW modstatus
+report and no collector-invariant firing.  That is the state of the
+port after the interrupt fix and the four lifetime fixes, and it is a
+different machine from the one this document opens on.
+.NH 2
+Caught in the act: userureg() returned kp instead of !kp
+.PP
+Three probes, each eliminating one region, found it.
+.IP \(bu
+At trap entry: silent over 52 boots including two faults.  The CPU
+pushed a good frame.
+.IP \(bu
+Across
+.CW irqhandled() :
+silent over 192 boots including one fault.  No device handler wrote the
+word.
+.IP \(bu
+At both ends of
+.CW trap() :
+fired.
+.P1
+trap: vector 50 changed frame ss 0x0 -> 0xb798 (pc 0x208ca6 user 1)
+.P2
+.PP
+.CW 0x208ca6
+is
+.CW linkproc+0x9 ,
+the same site as every capture, and the same boot then died on the
+.CW IRETQ
+with error code
+.CW B798
+\(em the value the probe had already watched being written into the
+frame's
+.CW SS .
+.PP
+.CW "user 1"
+is the finding.  os/inferno/port/proc.c's
+.CW userureg()
+carries a comment saying "return !Proc.kp.  Proc.kp is true for a
+kernel process", and returned
+.CW kp :
+.P1
+	if(ur == nil || ur->r14 == 0 || ((Proc*)(ur->r14))->kp == 0)
+		return 0;
+	return 1;
+.P2
+So every kernel process's trap was called a trap from user mode, and
+the one process made by plain
+.CW newproc()
+was called a kernel trap.
+.CW kenter()
+then publishes the frame as
+.CW up->dbgreg ,
+and
+.CW trap()
+runs the user tail \(em
+.CW notify()
+and
+.CW kexit()
+\(em over a
+.CW Ureg
+on a kernel stack.
+.PP
+That the other board agrees is worth stating, because it is the check
+that the fix is safe rather than merely quiet: virtarm64's trap.c calls
+.CW notify() ,
+.CW kexit() ,
+.CW kenter()
+and
+.CW userureg()
+not at all, and that board reaches an interactive shell with
+DIS-STRESS-OK, VIRT-OK, ROOT-CMDS-OK and CHANTEST-OK.  No kernel
+process needs the user tail; pc64 was the outlier in running it.
+virtarm64 was rebuilt with the corrected
+.CW userureg()
+and is unchanged.
+.NH 2
+192 of 192, and how strong that is
+.PP
+With
+.CW userureg()
+corrected, 192 boots at
+.CW "-smp 2"
+.CW ( "etext 0x32d305" ):
+.TS
+box, tab(;);
+l l.
+boots;192
+no panic;192
+cpu1 online;192
+IRETQ faults;0
+ss probes, entry and exit;0
+freetype static-Type reports;0
+collector-invariant firings;0
+modstatus reports;4, all "M is H"
+.TE
+.PP
+The four
+.CW modstatus
+lines are the benign sentinel, which is why the
+.CW H
+case was split from the stale case rather than left sharing a message;
+those boots finished without a panic.
+.PP
+How much weight the zero carries, stated plainly rather than implied.
+Across the batches that ran long enough to reach it, this fault
+occurred 12 times in about 864 boots, a rate near 1.4%.  Zero in 192 at
+that rate has a probability of roughly 0.067 \(em unlikely, not
+impossible.  So the batch on its own is suggestive and not conclusive.
+.PP
+What makes the case is not the batch.  It is that the mechanism was
+observed directly: the probe watched
+.CW ss
+change from 0 to
+.CW 0xb798
+inside
+.CW trap() ,
+named
+.CW "user 1"
+as the reason it was in that code path at all, and the same boot then
+died with
+.CW B798
+as the
+.CW IRETQ
+error code.  The fix removes that path for kernel processes, and the
+probe that caught it is silent across 192 boots.  A clean batch after a
+blind change would prove little; a clean batch after removing a
+mechanism that was watched doing the damage is a different thing.
+.NH 1
+The IRETQ corruption was the Tos, and the fix was in the wrong place
+.PP
+The frame was being overwritten by
+.CW kexit() ,
+because the frame was inside the
+.CW Tos .
+.PP
+pc64 is the only board in the tree that defines
+.CW USTKTOP
+as
+.CW "(up->kstack+KSTACK)" .
+Every other points it at real memory \(em
+.CW TOPOFMEM
+on the Cortex-M boards,
+.CW PHYSDRAM+DRAMSIZE
+on armv7, raspi3b, shakti, sifiveu and mangopi,
+.CW KZERO-BY2PG
+on pc.  So on this board the "kernel/user shared data" lives in the top
+.CW sizeof(Tos)
+bytes of a kernel stack.
+.PP
+main.c's
+.CW userinit()
+knows that and reserves it:
+.P1
+p->sched.sp = kstack+KSTACK - sizeof(uintptr) - sizeof(Tos) - sizeof(uintptr);
+.P2
+.CW kprocchild()
+reserved one word.  So every kproc's stack began inside the
+.CW Tos ,
+and its first interrupt put a frame on top of the accounting.
+.PP
+The arithmetic is exact.
+.CW Tos
+is 72 bytes here \(em
+.CW prof
+40,
+.CW cyclefreq
+at 40,
+.CW kcycles
+at 48,
+.CW pcycles
+at 56,
+.CW pid
+at 64 \(em so relative to the stack top
+.CW kcycles
+lands at \-24,
+.CW pcycles
+at \-16 and
+.CW pid
+at \-8.  An interrupt on a fresh kproc stack puts
+.CW SP
+at \-56, which puts its frame's
+.CW SS
+at \-24.
+.TS
+box, tab(;);
+l l l.
+stack word;Tos field;what the captures held
+_
+estackx\-24;kcycles;afc8, 6978, b798, 3068 ... (varying)
+estackx\-16;pcycles;3d0130, 401e10, 84530 (larger, cumulative)
+estackx\-8;pid;0x2, 0xd
+.TE
+.PP
+The top word is what settles it.
+.CW 0x2
+and
+.CW 0xd
+are process ids, sitting exactly where
+.CW Tos.pid
+is written.  Nine captures had been read as "a garbage stack selector"
+for want of knowing what wrote it.
+.PP
+Two readings are corrected by this, one of them mine.  It is not
+.CW notify() :
+its writes land
+.I below
+the frame, at
+.CW "ureg->sp - 256 - sizeof(Ureg)" ,
+and its
+.CW "ureg->ss = UDSEL"
+is the constant
+.CW 0x23 ,
+while every captured value differed \(em which is what made the
+suggestion worth checking rather than taking.  And correcting
+.CW userureg()
+stopped the faults, 192 boots clean, but treated the symptom: it
+stopped
+.CW kexit()
+running for kprocs while leaving the stacks overlapping, and
+portclock.c's
+.CW hzclock()
+still writes
+.CW tos->clock
+at \-4 for any running process, with no user check at all.
+.PP
+.CW kprocchild()
+now reserves the region where the stack is made, as
+.CW userinit()
+already did.
+.NH 2
+The FP regression: two bare == in a file that masks everywhere else
+.PP
+Correcting
+.CW userureg()
+was followed by a
+.CW "math emu"
+panic that 880 earlier boots had not shown \(em 1 in 304.  The counts
+did not carry it (Fisher about p = 0.26); what did was that the panic
+sat in one of
+.CW userureg() Ns 's
+three call sites and involved the one process whose answer changed.
+.PP
+My first explanation was wrong.  I supposed the flip reached
+.CW fpu.c Ns 's
+own branch, and the cloud-port session showed it could not:
+.CW FPnouser
+and
+.CW FPkernel
+are write-only on this board, because every other test of them masks
+and
+.CW fpuprocfork() ,
+the one unmasked reader, is never called.  They also checked whether
+the panicking process had taken a note \(em it had not, so
+.CW notify()
+never ran either.  Both eliminations were right, and both were reached
+by reading rather than by boots.
+.PP
+The mechanism is downstream of the flag, in
+.CW fpurestore() :
+.P1
+	if(astate == FPinit)	/* don't restore on procexec()/procsetup() */
+		return;
+.P2
+.CW FPinit
+is the state value 0, so a process carrying
+.CW FPnouser ,
+.CW FPkernel
+or a non-zero
+.CW FPindex
+never matched.  It fell through instead of returning, reached
+.CW "up->fpstate = ostate"
+with
+.CW ostate
+.CW FPactive ,
+and
+.CW _clts()
+is done only on the fast path above \(em so
+.CW fpstate
+says active with the FPU still disabled.  The next
+.CW fxsave
+takes a device-not-available trap,
+.CW mathemu()
+meets it in
+.CW "case FPactive" ,
+and panics.
+.PP
+The capture says exactly that.  The panic printed
+.CW "pc 0x2003fa" ,
+and that resolves to
+.CW _fxsave+0x0 :
+the trap is at the
+.CW fxsave
+instruction itself, not somewhere that led to it.  And it became
+reachable when correcting
+.CW userureg()
+started setting
+.CW FPkernel
+on kernel processes, which is why it appeared in the batch after that
+change and in none of the 880 boots before.
+.PP
+This is the second of a pair.  The cloud-port session found the first
+by reading \(em
+.CW notify() Ns 's
+bare
+.CW "up->fpstate == FPactive"
+\(em and both are the same mistake in a file where every other test
+masks the bookkeeping bits.  The rest was audited: the only remaining
+exact comparison,
+.CW "astate == (FPpush | (ostate & ~FPillegal))" ,
+is deliberately exact, matching what
+.CW fpusave()
+stored.
+.PP
+Weight, stated: the fix rests on the mechanism and the
+.CW _fxsave
+pc, not on a rate.  192 boots after the
+.CW Tos
+fix and before this one showed no
+.CW "math emu" ,
+but at 1 in 304 that has probability about 0.53 and says nothing
+either way.
+.NH 2
+The FP capture again: it was matherror(), and my second answer was wrong too
+.PP
+Retracting a retraction, so the record is not left with the wrong
+mechanism twice over.
+.PP
+I said
+.CW fpurestore() Ns 's
+bare
+.CW "astate == FPinit"
+explained the
+.CW "math emu ... pc _fxsave+0x0"
+capture.  It does not.  The cloud-port session asked one question \(em
+does this copy have the demotion in the else branch \(em and it does:
+.P1
+	if(ostate & FPactive)
+		ostate = FPinactive | (ostate & ~FPactive);
+.P2
+Falling through therefore cannot leave
+.CW fpstate
+saying active, so the mechanism never completes.  The mask stays, since
+every other test in the file masks and that one did not, but it is
+hygiene and claims nothing now.
+.PP
+The capture is
+.CW matherror()
+and
+.CW simderror() ,
+which called
+.CW fpsave()
+with no
+.CW _clts() .
+.CW fpsave
+is
+.CW fpssesave
+(or
+.CW fpxsaves ,
+.CW fpxsaveopt ),
+each of which
+.I begins
+with the save instruction and ends with
+.CW _stts() .
+Called with TS already set it faults on its own first instruction,
+reported at
+.CW _fxsave+0x0
+\(em the captured pc exactly, with no intermediate step.  The window is
+the ordinary one:
+.CW fpusave()
+sets TS, and port/dis.c holds every Dis program between
+.CW fpusave()
+and
+.CW fpurestore()
+around
+.CW r->xec(r) ,
+so a
+.CW #MF
+or
+.CW #XM
+delivered there lands in these handlers.
+.PP
+The pc was saying this all along.  A pc at a function's first
+instruction means the call itself faulted, not something it led to, and
+I read past that twice.
+.PP
+Audited the rest rather than stopping at the fix.  Every other
+.CW fpsave()
+call site holds TS clear:
+.CW mathemu() Ns 's
+has
+.CW _clts()
+immediately before it, and
+.CW fpuprocsave() Ns 's
+and
+.CW notify() Ns 's
+run only when
+.CW fpstate
+is
+.CW FPactive ,
+which is TS clear by definition.  One switch does not mask the
+bookkeeping bits \(em
+.CW fpuprocfork() Ns 's,
+.CW "switch(up->fpstate & ~FPillegal)" ,
+which enumerates combinations, has no default, and would fall through
+for any
+.CW FPnouser
+variant \(em but that function is never called on this port, which is
+the same reason those flags are write-only here.
+.PP
+A caution for anything else in this tree.  os/9front/pc64/fpu.c is
+present and is
+.I not
+the upstream of the Inferno file: it has no
+.CW fpusave ,
+.CW fpurestore ,
+.CW FPpush ,
+.CW FPnouser ,
+.CW FPkernel
+or
+.CW fpslot
+at all, and uses
+.CW m->fpsave
+and
+.CW up->kfpsave
+instead.  Two of its three differences in
+.CW matherror
+were safe to take \(em a nil guard and the
+.CW _clts()
+\(em and the third, an early return for a trap from kernel mode, was
+left alone because there is nothing here to copy it from.

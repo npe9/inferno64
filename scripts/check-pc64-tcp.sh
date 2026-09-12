@@ -14,7 +14,13 @@ export PATH ROOT
 KERN=$ROOT/os/inferno/pc64/ipc64
 [ -f "$KERN" ] || { echo "check-pc64-tcp: no $KERN; mk CONF=pc64 first" >&2; exit 1; }
 WORK=`mktemp -d`
-trap 'kill $QPID 2>/dev/null; sleep 1; pkill -f "cdrom $WORK/t.iso" 2>/dev/null; rm -rf "$WORK"' 0
+# The status is latched first and restored last, and every cleanup
+# command is made to succeed.  This script runs under "set -e", and
+# pkill returns 1 when it matches nothing -- the normal case once the
+# guest has already gone.  That aborted the trap before it could
+# restore the status, so the script printed "ok" and exited 1, and a
+# caller reading the status rather than the text saw a failure.
+trap 'st=$?; kill $QPID 2>/dev/null || true; sleep 1; pkill -f "cdrom $WORK/t.iso" 2>/dev/null || true; rm -rf "$WORK" || true; exit $st' 0
 INFERNO_KERNEL=$KERN sh "$ROOT/scripts/mkinferno-efi-iso.sh" "$WORK/t.iso" >/dev/null 2>&1
 cp "$ROOT/.qemu/edk2-vars.fd" "$WORK/vars.fd"
 # A free port, asked for rather than assumed: a fixed one collides with

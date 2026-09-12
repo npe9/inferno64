@@ -70,6 +70,13 @@ clockintr(Ureg *u)
 		kproftick((ulong)u->pc);
 
 	m->ticks++;
+	if(m->ticks % 200 == 0) iprint("[tick %lud]", m->ticks);	/* XXX */
+	if(m->ticks == 3000){					/* XXX stall dump */
+		extern void disdump(void);
+		extern void timerdump(void);
+		timerdump();
+		disdump();
+	}
 	checkalarms();
 	timercheck(u);
 
@@ -106,7 +113,7 @@ clockinit(void)
 	 * because a timer IRQ taken mid-transfer corrupted memory -- that was
 	 * the vectrap argument-home / UR_R1 collision fixed in l.s (trap()'s
 	 * Ureg* argument was spilled onto the saved R1 slot, clobbering a
-	 * live loop counter in irestore's R = p->R copy).  With that fixed
+	 * live loop counter in irestore's R = p->reg copy).  With that fixed
 	 * the tick is safe, so enable it.
 	 */
 	*(volatile ulong*)(0x40000040) = 1<<1;	/* Core0 timer int ctl: CNTPNSIRQ -> IRQ */

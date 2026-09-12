@@ -278,6 +278,27 @@ enum
 #define CBNZ_X(Rt, imm19) \
 	*code++ = (0xB5000000 | (((imm19) & 0x7FFFF)<<5) | (Rt))
 
+/*
+ * Exclusive (load-linked / store-conditional) access, 32-bit forms.
+ * Heap.ref is an int, so these are the W variants; see the note on the
+ * width bug that the plain Ldw/Stw here used to cause.
+ *
+ *	LDXR  Wt, [Xn]        0x885F7C00 | Rn<<5 | Rt
+ *	STXR  Ws, Wt, [Xn]    0x88007C00 | Rs<<16 | Rn<<5 | Rt
+ *	CLREX                 0xD5033F5F
+ *
+ * Ws is the status result (0 on success), NOT the value stored -- the
+ * same operand order that os/inferno/virtarm64/l.s records getting
+ * backwards in _tas, where it assembled cleanly and stored the old
+ * contents back over themselves.  Here the words are emitted directly
+ * rather than through 7a, but the failure mode is identical, so the
+ * encodings above are written out and the emitted words are checked
+ * with cflag > 3.
+ */
+#define LDXRW(Rt, Rn)		*code++ = (0x885F7C00 | ((Rn)<<5) | (Rt))
+#define STXRW(Rs, Rt, Rn)	*code++ = (0x88007C00 | ((Rs)<<16) | ((Rn)<<5) | (Rt))
+#define CLREX()			*code++ = 0xD5033F5F
+
 /* Patch helpers */
 #define RELPC(pc)		((ulong)(base + (pc)))
 #define IA(s, o)		(base + s[o])
@@ -2250,7 +2271,8 @@ preamble(void)
 static void
 macfrp(void)
 {
-	u32int *nilcheck, *destroy, *done;
+	u32int *nilcheck, *destroy, *done, *fretry;
+	long fretoff;
 
 	/* destroy the pointer in RA0; match arm32: leave ref==1 in memory
 	 * for rdestroy(), which does its own --h->ref. */
@@ -2258,15 +2280,26 @@ macfrp(void)
 	nilcheck = code;
 	BCOND(EQ, 0);			/* H → return */
 
-	mem(Ldw, O(Heap, ref) - sizeof(Heap), RA0, RA2);
-	SUBS_IMM(RA2, RA2, 1);
+	/*
+	 * --h->ref, atomically, storing only when it does not reach zero.
+	 * RA0 is the object and is handed to rdestroy() below, so it must
+	 * survive; RA1 and RA3 are free here, RTA is not used until the
+	 * destroy path.
+	 */
+	mem(Lea, O(Heap, ref) - sizeof(Heap), RA0, RA3);
+	fretry = code;
+	LDXRW(RA2, RA3);
+	SUBS_IMM32(RA2, RA2, 1);
 	destroy = code;
-	BCOND(EQ, 0);			/* was last ref → destroy */
-	mem(Stw, O(Heap, ref) - sizeof(Heap), RA0, RA2);
+	BCOND(EQ, 0);			/* was last ref → destroy, left unstored */
+	STXRW(RA1, RA2, RA3);
+	fretoff = fretry - code;
+	CBNZ_X(RA1, fretoff);
 	done = code;
 	B_IMM(0);			/* → return */
 
 	PATCH_BCOND(destroy);
+	CLREX();			/* reached with the load-exclusive still set */
 	mem(Stw, O(REG, FP), RREG, RFP);
 	mem(Stw, O(REG, s), RREG, RA0);
 	mem(Stw, O(REG, st), RREG, 30);
@@ -2285,11 +2318,23 @@ macfrp(void)
 static void
 maccolr(void)
 {
-	u32int *done;
+	u32int *done, *incref;
+	long increfoff;
 
-	mem(Ldw, O(Heap, ref) - sizeof(Heap), RA1, RA0);
+	/*
+	 * h->ref++, atomically.  This is the write barrier: it runs on
+	 * every pointer store in compiled code, so once a second
+	 * interpreter exists it is the hottest shared word in the system.
+	 * RA1 holds the object and must survive; RA0, RA2 and RA3 are
+	 * scratch here.
+	 */
+	mem(Lea, O(Heap, ref) - sizeof(Heap), RA1, RA3);
+	incref = code;
+	LDXRW(RA0, RA3);
 	ADD_IMM(RA0, RA0, 1);
-	mem(Stw, O(Heap, ref) - sizeof(Heap), RA1, RA0);
+	STXRW(RA2, RA0, RA3);
+	increfoff = incref - code;
+	CBNZ_X(RA2, increfoff);
 
 	mem(Ldw32, O(Heap, color) - sizeof(Heap), RA1, RA0);
 	con((uvlong)&mutator, RA2);
@@ -2312,7 +2357,8 @@ static void
 macret(void)
 {
 	u32int *notypelab, *nodestroylab, *nofplab, *nomrlab, *noreflab;
-	u32int *linterp;
+	u32int *linterp, *mretry;
+	long mretoff;
 	Inst dummy;
 
 	CBZ_X(RA1, 0);
@@ -2330,12 +2376,25 @@ macret(void)
 	CBZ_X(RA3, 0);
 	nomrlab = code - 1;
 
+	/*
+	 * --R.M->ref, atomically, and branch away without storing if that
+	 * would take it to zero -- the punt fallback below hands the
+	 * return back to the interpreter, which expects the count
+	 * untouched.  RA0 holds Type->destroy and is called below, so it
+	 * must survive; RA1 is reloaded at the next line and is free as
+	 * the store-exclusive status; RTA is unused until much later.
+	 * The zero test is SUBS_IMM32 because Heap.ref is an int.
+	 */
 	mem(Ldw, O(REG, M), RREG, RA2);
-	mem(Ldw, O(Heap, ref) - sizeof(Heap), RA2, RA3);
-	SUB_IMM(RA3, RA3, 1);
-	CBZ_X(RA3, 0);
-	noreflab = code - 1;
-	mem(Stw, O(Heap, ref) - sizeof(Heap), RA2, RA3);
+	mem(Lea, O(Heap, ref) - sizeof(Heap), RA2, RTA);
+	mretry = code;
+	LDXRW(RA3, RTA);
+	SUBS_IMM32(RA3, RA3, 1);
+	noreflab = code;
+	BCOND(EQ, 0);			/* was last ref -> punt, count unstored */
+	STXRW(RA1, RA3, RTA);
+	mretoff = mretry - code;
+	CBNZ_X(RA1, mretoff);
 
 	mem(Ldw, O(Frame, mr), RFP, RA1);
 	mem(Stw, O(REG, M), RREG, RA1);
@@ -2370,6 +2429,12 @@ macret(void)
 	PATCH_BCOND(nodestroylab);
 	PATCH_BCOND(nofplab);
 	PATCH_BCOND(noreflab);
+	/*
+	 * noreflab arrives here with a load-exclusive outstanding; the
+	 * others do not, and CLREX on a context with no monitor set is a
+	 * no-op, so one at the join serves all four.
+	 */
+	CLREX();
 	dummy.add = AXNON;
 	punt(&dummy, TCHECK|NEWPC, optab[IRET]);
 }
@@ -2433,6 +2498,8 @@ maccase(void)
 static void
 macmcal(void)
 {
+	u32int *mkref;
+	long mkrefoff;
 	u32int *notnil, *hasprog;
 
 	CMN_IMM(RA0, 1);
@@ -2471,9 +2538,20 @@ macmcal(void)
 	PATCH_BCOND(hasprog);
 	MOV_REG(RFP, RA2);
 	mem(Stw, O(REG, M), RREG, RA3);
-	mem(Ldw, O(Heap, ref) - sizeof(Heap), RA3, RA1);
+	/*
+	 * h->ref++ on the module link, atomically.  RA3 (the Modlink) and
+	 * RA0 (the compiled entry, branched to below) must survive; RA1 is
+	 * scratch and RA2 is dead after the MOV_REG above.  Nothing here
+	 * changes the instruction count between the CBNZ_X below and the
+	 * target its hard-coded 5 counts to.
+	 */
+	mem(Lea, O(Heap, ref) - sizeof(Heap), RA3, RTA);
+	mkref = code;
+	LDXRW(RA1, RTA);
 	ADD_IMM(RA1, RA1, 1);
-	mem(Stw, O(Heap, ref) - sizeof(Heap), RA3, RA1);
+	STXRW(RA2, RA1, RTA);
+	mkrefoff = mkref - code;
+	CBNZ_X(RA2, mkrefoff);
 	mem(Ldw, O(Modlink, MP), RA3, RMP);
 	mem(Stw, O(REG, MP), RREG, RMP);
 	mem(Ldw32, O(Modlink, compiled), RA3, RA1);

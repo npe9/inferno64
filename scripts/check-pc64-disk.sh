@@ -26,7 +26,10 @@ KERN=$ROOT/os/inferno/pc64/ipc64
 [ -f "$KERN" ] || { echo "check-pc64-disk: no $KERN; mk CONF=pc64 first" >&2; exit 1; }
 
 WORK=`mktemp -d`
-trap 'rm -rf "$WORK"' 0
+# status latched and restored; every cleanup command made to
+# succeed, because "set -e" would otherwise abort the trap and
+# lose it.  See the fuller note in check-pc64-tcp.sh.
+trap 'st=$?; rm -rf "$WORK" || true; exit $st' 0
 NONCE=DISKPROOF-$$-`date +%s`
 
 INFERNO_KERNEL=$KERN sh "$ROOT/scripts/mkinferno-efi-iso.sh" "$WORK/d.iso" >/dev/null 2>&1

@@ -42,7 +42,8 @@ smoke(sh: Sh)
 		"echo HELLO-FROM-SH; echo VIRT-OK; " +
 		"load std; " +
 		"echo ROOT-APPS-OK; " +
-		"cd /usr/inferno; pwd; echo ROOT-CMDS-OK" :: nil);
+		"cd /usr/inferno; pwd; echo ROOT-CMDS-OK; " +
+		"chantest" :: nil);
 }
 
 # Run a rooted Dis cmd briefly (load + spawn + soak). Returns 0 ok, -1 fail.

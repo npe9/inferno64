@@ -249,32 +249,50 @@ void
 trap(Ureg *ureg)
 {
 	int vno, user;
+	u64int ss0;
+
+	/*
+	 * MULTICORE INSTRUMENTATION - temporary.  The one failure left in
+	 * this port's batches is a general protection violation on the
+	 * IRETQ in _intrr, and in every capture the error code equals the
+	 * low half of the frame's SS word -- so IRETQ is rejecting the
+	 * stack selector.  This kernel runs with SS 0 everywhere, and the
+	 * only deliberate writes to a frame's ss set KDSEL, on the
+	 * debug-register paths, which a kernel trap does not take.
+	 *
+	 * The first version of this probe asked whether the frame was
+	 * already bad on entry, which would have meant the CPU pushed it.
+	 * 52 boots, two of them faulting this way, and it never fired:
+	 * SS is clean when the trap is taken and is corrupted before the
+	 * IRET.  So the write happens during the handler, and trap()
+	 * itself writes nothing to ss on the kernel path -- which leaves
+	 * irqhandled() and whatever device handler it dispatches to.
+	 *
+	 * This version compares across that call and names the vector, so
+	 * the next capture says which handler.
+	 */
+	ss0 = ureg->ss;
+	if(ss0 != 0 && ss0 != KDSEL) {
+		static int saident;
+
+		if(!saident) {
+			saident = 1;
+			iprint("trap: ss %#llux ALREADY BAD on entry, vector %llud pc %#p\n",
+				ss0, ureg->type, ureg->pc);
+		}
+	}
 
 	user = kenter(ureg);
 	vno = ureg->type;
-
 	/*
-	 * Instructions this kernel executes knowing they may fault, and
-	 * whose callers are written to be told so rather than to die.
-	 *
-	 * rdmsr() and wrmsr() in l.s zero BP and carry the comment "BP
-	 * set to -1 if traped"; peek() is the fault-proof memcpy.  On
-	 * this board nothing ever set BP, because this recovery -- which
-	 * os/9front/pc/trap.c has and pc64's did not -- was never
-	 * carried across.  So the contract every "if(rdmsr(...) != -1)"
-	 * in os/inferno/pc/devarch.c is written against did not exist,
-	 * and a model-specific register the machine does not implement
-	 * was a panic rather than a -1.
-	 *
-	 * Found on the first boot on real hardware: a Compute Engine
-	 * e2-micro faulted in cpuidentify(), at _wrmsrinst, with
-	 * "general protection violation".  QEMU implements whatever
-	 * MSR this kernel asked for and Google's hypervisor does not,
-	 * which is the whole difference -- and it is the kind of
-	 * difference an emulator cannot show.
-	 *
-	 * RDMSR, WRMSR and REP MOVSB are two bytes each, so stepping
-	 * over one is pc += 2.
+	 * #GP recovery for the three instructions that are allowed to
+	 * fault.  Carried from cloud-port (761f7bbb): rdmsr/wrmsr's
+	 * "returns -1 if it trapped" contract, which devarch.c depends
+	 * on, does not exist without this -- a #GP from either one is
+	 * otherwise a panic.  multicore has the _peekinst arm in
+	 * faultamd64() for the #PF case; this is the #GP case, and the
+	 * two are separate faults.  Found on GCE, where the kernel
+	 * probes MSRs that QEMU happens to implement.
 	 */
 	if(vno == VectorGPF){
 		extern void _rdmsrinst(void);
@@ -323,6 +341,28 @@ trap(Ureg *ureg)
 			notify(ureg);
 		kexit(ureg);
 	}
+
+	/*
+	 * Checked at the very end, after everything trap() does.  The
+	 * previous placement was before splhi() and covered only
+	 * irqhandled(); 192 boots, one of them faulting on the IRETQ with
+	 * a bad SS, and it never fired -- so no device handler writes the
+	 * word.  With entry and exit both checked, one faulting boot now
+	 * says which of the three regions is responsible: bad on entry
+	 * means the CPU pushed it, changed by here means trap()'s own
+	 * body, and neither means it happens after trap() returns, in
+	 * _intrestore's pops with interrupts already off.
+	 */
+	if(ureg->ss != ss0) {
+		static int said;
+
+		if(!said) {
+			said = 1;
+			iprint("trap: vector %d changed frame ss %#llux -> %#llux "
+				"(pc %#p user %d)\n", vno, ss0, ureg->ss,
+				ureg->pc, user);
+		}
+	}
 }
 
 /*
@@ -351,9 +391,9 @@ dumpregs(Ureg* ureg)
 	 * name is already a printable string.
 	 */
 	xp = currun();
-	if(xp != nil && xp->R.M != nil && xp->R.M != H && xp->R.M->m != nil)
+	if(xp != nil && xp->reg.M != nil && xp->reg.M != H && xp->reg.M->m != nil)
 		iprint("  running Dis pid %d module %s PC %#p\n",
-			xp->pid, xp->R.M->m->name, xp->R.PC);
+			xp->pid, xp->reg.M->m->name, xp->reg.PC);
 	else
 		iprint("  currun() nil or has no module\n");
 
@@ -725,23 +765,26 @@ if(0) print("%s %ud: notify %#p %#p %#p %s\n",
 	qunlock(&up->debug);
 	splhi();
 	/*
-	 * Masked, like every other comparison against these states in
-	 * fpu.c -- 177, 314, 351, 361 and 366 all strip FPnouser,
-	 * FPkernel and the slot index, and the assignments at 200 and 217
-	 * preserve them.  This one did not, so a process carrying any of
-	 * those bits failed the test: fpsave() was skipped, the FPU was
-	 * left live with TS clear, and FPillegal was set anyway, after
-	 * which mathemu() tests FPillegal first and returns without
-	 * repairing anything.  Found by inspection while answering the
-	 * multicore branch's report of "panic: math emu pid 1"; it is
-	 * consistent with that report and is not reproduced here, since
-	 * reaching it wants a note delivered and a clean boot delivers
-	 * none.  Forty-four boots of the pc64fp floating-point stress
-	 * show it changes nothing that was working.
+	 * Masked, like every other test of fpstate.  This one was bare
+	 * ==, and fpu.c's are all "& ~(FPnouser|FPkernel|FPindexm)" --
+	 * lines 208, 345 and the assignments that preserve those bits.
+	 * So for any process carrying FPnouser, FPkernel or a non-zero
+	 * FPindex, this compared false: fpsave() was skipped, the FPU was
+	 * left live, and FPillegal was OR'd in anyway.  mathemu() then
+	 * sees FPillegal first and returns without repairing anything,
+	 * and the state stays out of step.
+	 *
+	 * Found by the cloud-port session, by reading rather than by
+	 * catching it.  Reachable here only for a process with those bits
+	 * set, which after the userureg() correction is not the common
+	 * case on this board -- but it is wrong either way and the
+	 * assignment must preserve the bits it masked, or the next test
+	 * sees a different state than the one that was saved.
 	 */
 	if((up->fpstate & ~(FPnouser|FPkernel|FPindexm)) == FPactive){
 		fpsave(up->fpsave);
-		up->fpstate = FPinactive | (up->fpstate & (FPnouser|FPkernel|FPindexm));
+		up->fpstate = FPinactive |
+			(up->fpstate & (FPnouser|FPkernel|FPindexm));
 	}
 	up->fpstate |= FPillegal;
 	return 1;
@@ -903,9 +946,34 @@ kprocchild(Proc* p, void (*func)(void*), void* arg)
 	 * gotolabel() needs a word on the stack in
 	 * which to place the return PC used to jump
 	 * to linkproc().
+	 *
+	 * It also needs to stay out of the Tos.  On this board USTKTOP is
+	 * (up->kstack+KSTACK) -- pc64 is the only board in the tree that
+	 * points it at a kernel stack rather than at real memory -- so the
+	 * "kernel/user shared data" lives in the top sizeof(Tos) bytes of
+	 * this very stack.  main.c's userinit() reserves it, setting
+	 * sched.sp to KSTACK - sizeof(uintptr) - sizeof(Tos) -
+	 * sizeof(uintptr); this did not, and every kproc's stack therefore
+	 * began inside it.
+	 *
+	 * The overlap is exact, and it is what nine captures were showing.
+	 * Tos is 72 bytes here, so kcycles lands at KSTACK-24, pcycles at
+	 * KSTACK-16 and pid at KSTACK-8.  An interrupt taken on a fresh
+	 * kproc stack puts its frame's SS at KSTACK-24 and the two words
+	 * above it at -16 and -8.  Every capture read exactly that: a
+	 * varying cycle delta in the SS slot, a larger cumulative count
+	 * above it, and 0x2 or 0xd -- pids -- in the top word.  kexit()
+	 * writes those three, and portclock.c's hzclock() writes
+	 * tos->clock at KSTACK-4 for any running process, with no user
+	 * check at all.
+	 *
+	 * Correcting userureg() stopped kexit() running for kprocs and so
+	 * stopped the IRETQ faults, but it treated the symptom: the
+	 * stacks still overlapped, and hzclock() still wrote into them.
+	 * Reserve the region here, as userinit() does.
 	 */
 	p->sched.pc = (uintptr)linkproc;
-	p->sched.sp = (uintptr)p->kstack+KSTACK-BY2WD;
+	p->sched.sp = (uintptr)p->kstack+KSTACK-sizeof(Tos)-BY2WD;
 
 	p->kpfun = func;
 	p->kparg = arg;

@@ -207,6 +207,7 @@ ethercheck()
 		return;
 	}
 	sys->print("ETHER-DHCP-OK ip=%s gw=%s\n", cfg.ip, cfg.ipgw);
+	spawn tickprobe();	# XXX
 	ping := load Command "/dis/ip/ping.dis";
 	if(ping == nil){
 		sys->print("ETHER-PING-NONE load: %r\n");
@@ -215,6 +216,15 @@ ethercheck()
 	ping->init(nil, "ping" :: "-n" :: "3" :: cfg.ipgw :: nil);
 	sys->print("ETHER-PING-DONE\n");
 	lease = nil;
+}
+
+tickprobe()
+{
+	for(i := 0; i < 20; i++){
+		t0 := sys->millisec();
+		sys->sleep(500);
+		sys->print("TICK %d -> %d\n", t0, sys->millisec());
+	}
 }
 
 kbdreport()
@@ -243,6 +253,12 @@ init()
 	sys->bind("#c", "/dev", sys->MAFTER);
 	sys->bind("#e", "/env", sys->MREPL|sys->MCREATE);
 	sys->print("RASPI3B-OK\n");
+	t0 := sys->millisec();
+	sys->sleep(500);
+	sys->print("SLEEPTEST inline %d -> %d\n", t0, sys->millisec());
+	spawn tickprobe();
+	sys->sleep(2000);
+	sys->print("SLEEPTEST after spawn %d\n", sys->millisec());
 
 	sys->bind("#S", "/dev", sys->MAFTER);
 	sdcheck();

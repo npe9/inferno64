@@ -253,6 +253,21 @@ main(void)
 		doc("clockinit");
 		arch->clockenable();
 	}
+	/*
+	 * *parallelvm=1 on the boot line runs the Dis interpreter without
+	 * the VM lock.  A boot option rather than a compile-time constant
+	 * because both modes then come from one kernel: measuring the
+	 * other one used to mean an edit, a rebuild of dis.c and a relink,
+	 * which is a slow way to ask a question that a boot can answer.
+	 * It defaults to 0, which is the tested configuration.
+	 */
+	{
+		extern int parallelvm;		/* os/inferno/port/dis.c */
+		char *p;
+
+		if((p = getconf("*parallelvm")) != nil)
+			parallelvm = strtol(p, nil, 0);
+	}
 	doc("procinit");
 	procinit();
 	doc("links");
@@ -307,6 +322,20 @@ machinit(void)
 	 * calculate the real value later.
 	 */
 	m->loopconst = 100000;
+
+#ifdef DISCTXREG
+	/*
+	 * curP is a register (include/disreg.h), so libinterp's
+	 * "Pctx* curP = &_pctx" initialiser does not exist and nothing
+	 * else gives R13 a value.  Every processor starts on the default
+	 * context; sched() moves it to the running Proc's.  This runs on
+	 * cpu0 through mach0init() and on each AP through squidboy(),
+	 * which is every executor there is.
+	 */
+#ifdef DISCTXREG
+	disctxinit();
+#endif
+#endif
 }
 
 /*
@@ -468,7 +497,22 @@ userinit(void)
 	kstrdup(&p->user, eve);
 	kstrdup(&p->env->user, eve);
 
-	strcpy(p->text, "*init*");
+	/*
+	 * kstrdup, not strcpy.  Proc.text is a char* (portdat.h), not a
+	 * buffer, and nothing has set it for this process yet -- newproc()
+	 * does not, and only kproc() does, with kstrdup.  So this wrote
+	 * "*init*" through a nil pointer, into physical address 0, which
+	 * is mapped here and so took the write without complaining.
+	 *
+	 * It sat harmless for as long as nothing read a pointer back out
+	 * of address 0.  The parallel-VM merge made something do: with
+	 * curP nil on this path, curP->field reads from 0+offset, picked
+	 * up the bytes of the string, and dereferenced them -- a page
+	 * fault at CR2 0x2a74696e692a, which is "*init*" in little-endian
+	 * ASCII.  The other eleven boards in this tree all say
+	 * kstrdup(&p->text, "interp"); pc64 was the only one that did not.
+	 */
+	kstrdup(&p->text, "*init*");
 	/*
 	 * Kernel Stack
 	 *

@@ -1,14 +1,15 @@
 #
 #	aarch64-specific files
 #
-#	No hand-written atomics needed here the way riscv64's
-#	ainc-riscv64.$O is: os/inferno/virtarm64/archvirtarm64.c defines
-#	ainc()/adec() directly in C (spl-masked, MAXMACH==1), the same
-#	shape armv7's own archv7.c already uses -- copied from there
-#	verbatim.  Everything else is the portable, correct-and-slow C,
-#	same choice riscv64/virt's own mkfile-riscv64 makes.
+#	ainc-aarch64.$O is a real LDXRW/STXRW pair.  What it replaces
+#	was ainc()/adec() defined in C in os/inferno/virtarm64 and
+#	os/inferno/raspi3b, spl-masked and therefore correct only while
+#	MAXMACH is 1 -- see doc/dis-numa-survey.ms and the head of the
+#	file itself.  Everything else here is the portable,
+#	correct-and-slow C, the same choice mkfile-riscv64 makes.
 #
 TARGFILES=\
+	ainc-aarch64.$O\
 	frexp-386.$O\
 	memmove.$O\
 	memset.$O\

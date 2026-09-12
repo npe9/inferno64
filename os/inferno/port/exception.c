@@ -57,7 +57,14 @@ newestring(char *estr)
 
 	if(waserror()){
 		setstr(exstr, estr);
-		D2H(exstr)->ref++;
+		/*
+		 * AINC, not ->ref++.  These are Dis heap counts and two
+		 * executors reach them at once now; interp.h says so where
+		 * AINC is defined.  A lost update here frees a string or an
+		 * exception value that is still referred to.  Same fix as
+		 * dis.c's newprog() and schedmod().
+		 */
+		AINC(&D2H(exstr)->ref);
 		return exstr;
 	}
 	s = c2string(estr, strlen(estr));
@@ -133,7 +140,7 @@ handler(char *estr)
 		if(!str && fp != R.FP){		/* becomes a string exception in immediate caller */
 			v = p->exval;
 			p->exval = *(String**)v;
-			D2H(p->exval)->ref++;
+			AINC(&D2H(p->exval)->ref);	/* see setexc() above */
 			destroy(v);
 			str = 1;
 			continue;
@@ -205,14 +212,15 @@ found:
 	if(p->exval == H)
 		*eadr = (uchar*)newestring(estr);	/* might fail */
 	else{
-		D2H(p->exval)->ref++;
+		AINC(&D2H(p->exval)->ref);	/* see setexc() above */
 		*eadr = p->exval;
 	}
 	if(m->compiled)
 		R.PC = (Inst*)((uintptr)m->prog+newpc);
 	else
 		R.PC = m->prog+newpc;
-	memmove(&p->R, &R, sizeof(R));
+	memmove(&p->reg, &R, sizeof(R));
+	REGSYNCED();
 	p->kill = nil;
 	destroy(p->exval);
 	p->exval = H;

@@ -257,3 +257,25 @@ timersoon(void)
 	iunlock(&timerlock);
 	return when;
 }
+
+/*
+ * XXX temporary, for the post-ping stall: the soft-timer queue, with
+ * each entry's deadline relative to now.  Called from clockintr.
+ */
+void
+timerdump(void)
+{
+	Timer *t;
+	Tval now;
+	uvlong hz;
+	int i;
+
+	now = (Tval)fastticks(&hz);
+	iprint("timer: now %llud hz %llud head %#p\n", now, hz, timerhead);
+	i = 0;
+	for(t = timerhead; t != nil && i < 32; t = t->tnext, i++)
+		iprint("timer: %d twhen %llud (%lld ticks away) tns %lld tmode %d tf %#p\n",
+			i, t->twhen, (vlong)(t->twhen - now), (vlong)t->tns,
+			t->tmode, t->tf);
+	iprint("timer: %d queued\n", i);
+}

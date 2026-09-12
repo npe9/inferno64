@@ -556,7 +556,9 @@ cpxec(Prog *p)
 	Record *r;
 	Prog *n;
 
-	R = p->R;
+	R = p->reg;
+	REGSYNCED();
+	curP->curprog = p;	/* R now holds p's live roots; see progreg() */
 	R.MP = R.M->MP;
 	R.IC = p->quanta;
 
@@ -594,7 +596,9 @@ cpxec(Prog *p)
 		}while(--R.IC != 0);
 	}
 
-	p->R = R;
+	p->reg = R;
+	REGSYNCED();
+	curP->curprog = nil;
 }
 
 /* memory profiling */

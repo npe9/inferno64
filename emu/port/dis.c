@@ -196,8 +196,6 @@ static char *opnames[MAXDIS] = {
 struct
 {
 	Lock	l;
-	Prog*	runhd;
-	Prog*	runtl;
 	Prog*	head;
 	Prog*	tail;
 	Rendez	irend;
@@ -209,6 +207,45 @@ struct
 	Proc*	idlevmq;	/* queue of procs wanting work */
 	Atidle*	idletasks;
 } isched;
+
+/* Three places look at isched.vmq without holding isched.l, and all
+ * three are deliberate: tready(), which Sleep() calls as its wakeup
+ * condition while holding up->rlock and irend.l; the "someone wants the
+ * VM, stop collecting" test in execatidle(); and the iyield() test in
+ * vmachine().  None of the reads is load-bearing.  tready() is safe
+ * because
+ * every writer of vmq calls Wakeup(&isched.irend) *after* dropping
+ * isched.l, and Wakeup and Sleep serialise on irend.l -- so Sleep
+ * either sees the condition true or has registered itself before
+ * releasing that lock, and the wakeup cannot be lost.  vmachine()'s
+ * test is a heuristic whose only action is iyield(), which retakes
+ * isched.l and rechecks.
+ *
+ * They are still racing reads of a word another thread writes, which is
+ * undefined behaviour whatever the hardware does, and they were three
+ * of the eleven signatures ThreadSanitizer reports (doc/dis-parallel-plan.ms
+ * section 4).  Say so to the compiler rather than taking the lock:
+ * taking isched.l inside a condition function already called under two
+ * other locks would add a lock-order edge on the path every idle
+ * transition runs through, to protect a value that is rechecked under
+ * the lock a moment later anyway.
+ */
+#define	ISCHEDPEEK(f)	__atomic_load_n(&isched.f, __ATOMIC_RELAXED)
+/* and the matching writes.  A relaxed load paired with a plain store is
+ * still a data race -- the model needs both sides to be atomic, not one
+ * -- so vmq's three writers say so too.  They all still hold isched.l,
+ * which is what actually orders the handoff; this only tells the
+ * compiler the word may be read concurrently, and costs nothing on any
+ * machine emu runs on.  vmq is the whole of it: it is the only isched
+ * field the tool ever caught being written under the lock and read
+ * without it.
+ */
+#define	ISCHEDPOKE(p, v)	__atomic_store_n((p), (v), __ATOMIC_RELAXED)
+/* and the same for the run queue, which moved to the execution context
+ * in Phase 2 but is read by tready() from a thread that does not hold
+ * the VM, exactly as before.
+ */
+#define	PCTXPEEK(f)	__atomic_load_n(&curP->f, __ATOMIC_RELAXED)
 
 extern	int	bflag;
 int	cflag = 1;	/* JIT on by default; -c0 selects interpreter */
@@ -240,7 +277,7 @@ int
 tready(void *a)
 {
 	USED(a);
-	return isched.runhd != nil || isched.vmq != nil;
+	return PCTXPEEK(runhd) != nil || ISCHEDPEEK(vmq) != nil;
 }
 
 Prog*
@@ -285,7 +322,7 @@ execatidle(void)
 	addrun(up->prog);
 	done = gccolor+3;
 	while(gccolor < done && gcruns()) {
-		if(isched.vmq != nil || isched.runhd != isched.runtl) {
+		if(ISCHEDPEEK(vmq) != nil || curP->runhd != curP->runtl) {
 			gcpartial++;
 			break;
 		}
@@ -352,8 +389,8 @@ newprog(Prog *p, Modlink *m)
 	h = D2H(m);
 	AINC(&h->ref);
 	Setmark(h);
-	n->R.M = m;
-	n->R.MP = m->MP;
+	n->reg.M = m;
+	n->reg.MP = m->MP;
 	if(m->MP != H)
 		Setmark(D2H(m->MP));
 	addrun(n);
@@ -423,10 +460,10 @@ delprog(Prog *p, char *msg)
 		panic("lost pid");
 	*ph = p->pidlink;
 
-	if(p == isched.runhd) {
-		isched.runhd = p->link;
+	if(p == curP->runhd) {
+		curP->runhd = p->link;
 		if(p->link == nil)
-			isched.runtl = nil;
+			curP->runtl = nil;
 	}
 	p->state = 0xdeadbeef;
 	free(o->user);
@@ -502,7 +539,7 @@ exprog(Prog *p, char *exc)
 	/* similar code to killprog but not quite */
 	switch(p->state) {
 	case Palt:
-		altdone(p->R.s, p, nil, -1);
+		altdone(p->reg.s, p, nil, -1);
 		break;
 	case Psend:
 		cqdelp(&p->chan->send, p);
@@ -576,7 +613,7 @@ killprog(Prog *p, char *cause)
 	Osenv *env;
 	char msg[ERRMAX+2*KNAMELEN];
 
-	if(p == isched.runhd) {
+	if(p == curP->runhd) {
 		p->kill = "";
 		p->flags |= Pkilled;
 		p->state = Pexiting;
@@ -585,7 +622,7 @@ killprog(Prog *p, char *cause)
 
 	switch(p->state) {
 	case Palt:
-		altdone(p->R.s, p, nil, -1);
+		altdone(p->reg.s, p, nil, -1);
 		break;
 	case Psend:
 		cqdelp(&p->chan->send, p);
@@ -628,11 +665,11 @@ killprog(Prog *p, char *cause)
 
 	propex(p, "killed");
 
-	snprint(msg, sizeof(msg), "%d \"%s\":%s", p->pid, p->R.M->m->name, cause);
+	snprint(msg, sizeof(msg), "%d \"%s\":%s", p->pid, p->reg.M->m->name, cause);
 
 	p->state = Pexiting;
 	gclock();
-	destroystack(&p->R);
+	destroystack(&p->reg);
 	delprog(p, msg);
 	gcunlock();
 
@@ -885,12 +922,12 @@ addrun(Prog *p)
 	}
 	p->state = Pready;
 	p->link = nil;
-	if(isched.runhd == nil)
-		isched.runhd = p;
+	if(curP->runhd == nil)
+		curP->runhd = p;
 	else
-		isched.runtl->link = p;
+		curP->runtl->link = p;
 
-	isched.runtl = p;
+	curP->runtl = p;
 }
 
 Prog*
@@ -898,11 +935,11 @@ delrun(int state)
 {
 	Prog *p;
 
-	p = isched.runhd;
+	p = curP->runhd;
 	p->state = state;
-	isched.runhd = p->link;
+	curP->runhd = p->link;
 	if(p->link == nil)
-		isched.runtl = nil;
+		curP->runtl = nil;
 
 	return p;
 }
@@ -913,7 +950,7 @@ delrunq(Prog *p)
 	Prog *prev, *f;
 
 	prev = nil;
-	for(f = isched.runhd; f; f = f->link) {
+	for(f = curP->runhd; f; f = f->link) {
 		if(f == p)
 			break;
 		prev = f;
@@ -921,11 +958,11 @@ delrunq(Prog *p)
 	if(f == nil)
 		return;
 	if(prev == nil)
-		isched.runhd = p->link;
+		curP->runhd = p->link;
 	else
 		prev->link = p->link;
-	if(p == isched.runtl)
-		isched.runtl = prev;
+	if(p == curP->runtl)
+		curP->runtl = prev;
 }
 
 Prog*
@@ -933,7 +970,7 @@ delruntail(int state)
 {
 	Prog *p;
 
-	p = isched.runtl;
+	p = curP->runtl;
 	delrunq(p);
 	p->state = state;
 	return p;
@@ -942,7 +979,7 @@ delruntail(int state)
 Prog*
 currun(void)
 {
-	return isched.runhd;
+	return curP->runhd;
 }
 
 Prog*
@@ -968,8 +1005,8 @@ schedmod(Module *m)
 	p = newprog(nil, ml);
 	h = D2H(ml);
 	ADEC(&h->ref);
-	p->R.PC = m->entry;
-	/* newstack() below does memmove(p->R.FP, f, f->t->size) - f->t is
+	p->reg.PC = m->entry;
+	/* newstack() below does memmove(p->reg.FP, f, f->t->size) - f->t is
 	 * m->entryt here, the *complete* entry-frame type covering every
 	 * local the module's init() declares, which is routinely far
 	 * bigger than sizeof(Frame). A bare on-stack `Frame f` (as this
@@ -987,7 +1024,7 @@ schedmod(Module *m)
 	f->t = m->entryt;
 	newstack(p);
 	free(f);
-	initmem(m->entryt, p->R.FP);
+	initmem(m->entryt, p->reg.FP);
 
 	return p;
 }
@@ -997,9 +1034,9 @@ static char*
 m(Prog *p)
 {
 	if(p)
-		if(p->R.M)
-			if(p->R.M->m)
-				return p->R.M->m->name;
+		if(p->reg.M)
+			if(p->reg.M->m)
+				return p->reg.M->m->name;
 	return "nil";
 }
 */
@@ -1021,7 +1058,7 @@ acquire(void)
 			empty = 0;
 			isched.vmqt->qnext = up;
 		}else{
-			isched.vmq = up;
+			ISCHEDPOKE(&isched.vmq, up);
 			empty = 1;
 		}
 		isched.vmqt = up;
@@ -1042,10 +1079,10 @@ acquire(void)
 		p = up->prog;
 
 	p->state = Pready;
-	p->link = isched.runhd;
-	isched.runhd = p;
+	p->link = curP->runhd;
+	curP->runhd = p;
 	if(p->link == nil)
-		isched.runtl = p;
+		curP->runtl = p;
 
 	strcpy(up->text, "dis");
 }
@@ -1072,7 +1109,7 @@ release(void)
 		return;
 	}
 	p = *pq;
-	*pq = p->qnext;
+	ISCHEDPOKE(pq, p->qnext);
 	unlock(&isched.l);
 
 	osready(p);		/* wake up thread to run VM */
@@ -1091,7 +1128,7 @@ iyield(void)
 		return;
 	}
 	isched.nyield++;
-	isched.vmq = p->qnext;
+	ISCHEDPOKE(&isched.vmq, p->qnext);
 
 	if(up->iprog != nil)
 		panic("iyield but iprog, type %d", up->type);
@@ -1161,7 +1198,7 @@ progexit(void)
 			char *pc = strstr(estr, "pc=");
 
 			if(pc != nil)
-				R.PC = r->R.PC = (Inst*)strtol(pc+3, nil, 0);	/* for debugging */
+				R.PC = r->reg.PC = (Inst*)strtol(pc+3, nil, 0);	/* for debugging */
 		}
 		print("[%s] Broken: pid %d \"%s\"\n", m->name, getpid(), estr);
 	}
@@ -1236,10 +1273,10 @@ disfault(void *reg, char *msg)
 	 * one-line message and even the call stack below don't, since
 	 * several different ops share the same source line/PC bucketing.
 	 *
-	 * Deliberately the GLOBAL R here, not p->R: xec() only writes
-	 * p->R = R back on a *normal* quantum exit (falls off the bottom
+	 * Deliberately the GLOBAL R here, not p->reg: xec() only writes
+	 * p->reg = R back on a *normal* quantum exit (falls off the bottom
 	 * of the do-while, or blocks cleanly). A mid-instruction native
-	 * fault skips that entirely, so p->R is stale - frozen at wherever
+	 * fault skips that entirely, so p->reg is stale - frozen at wherever
 	 * this proc's *previous* quantum happened to end, which is
 	 * whatever instruction the scheduler last preempted it at, not
 	 * where it just crashed. The live global R (xec.c) is what the
@@ -1295,6 +1332,19 @@ vmachine(void *a)
 	startup();
 
 	while(waserror()) {
+		/*
+		 * A Dis exception leaves xec() by longjmp, so the
+		 * curP->curprog = nil at the bottom of the handler never
+		 * runs and the name would dangle -- past the Prog's own
+		 * destruction, in the exit case.  progreg() only compares
+		 * the pointer, never follows it, but a later Prog allocated
+		 * at the same address would be handed the wrong register
+		 * file.  Clear it here, where every non-local exit from the
+		 * interpreter lands.  The answer this restores is the right
+		 * one: exception.c has already synced p->reg from R on the
+		 * path that carries on executing.
+		 */
+		curP->curprog = nil;
 		if(up->iprog != nil)
 			acquire();
 		if(handler(up->env->errstr) == 0) {
@@ -1307,7 +1357,7 @@ vmachine(void *a)
 	/* GC-LOCK HISTORY: r->xec(r) below runs with no lock held, and
 	 * multiple vmachine kprocs (spun up by release() whenever a proc
 	 * blocks on native I/O) each independently pull procs off
-	 * isched.runhd and call xec() in parallel - genuine concurrent
+	 * curP->runhd and call xec() in parallel - genuine concurrent
 	 * execution, not hypothetical. libinterp/heap.c's destroy() used to
 	 * decrement refcounts with a plain, non-atomic `--h->ref`, so two
 	 * threads decrementing the same object's refcount at once was a
@@ -1358,12 +1408,12 @@ vmachine(void *a)
 			strcpy(up->text, "dis");
 		}
 
-		if(isched.vmq != nil && (isched.runhd == nil || ++cycles > 2)){
+		if(ISCHEDPEEK(vmq) != nil && (curP->runhd == nil || ++cycles > 2)){
 			iyield();
 			cycles = 0;
 		}
 
-		r = isched.runhd;
+		r = curP->runhd;
 		if(r != nil) {
 			o = r->osenv;
 			up->env = o;
@@ -1372,17 +1422,17 @@ vmachine(void *a)
 			r->xec(r);
 			FPsave(&o->fpu);
 
-			if(isched.runhd != nil)
-			if(r == isched.runhd)
-			if(isched.runhd != isched.runtl) {
-				isched.runhd = r->link;
+			if(curP->runhd != nil)
+			if(r == curP->runhd)
+			if(curP->runhd != curP->runtl) {
+				curP->runhd = r->link;
 				r->link = nil;
-				isched.runtl->link = r;
-				isched.runtl = r;
+				curP->runtl->link = r;
+				curP->runtl = r;
 			}
 			up->env = &up->defenv;
 		}
-		if(isched.runhd != nil)
+		if(curP->runhd != nil)
 		if((++gccounter&0xFF) == 0 || memlow()) {
 			gcbusy++;
 			up->type = BusyGC;
@@ -1448,8 +1498,8 @@ pushrun(Prog *p)
 	if(p->addrun != nil)
 		panic("pushrun addrun");
 	p->state = Pready;
-	p->link = isched.runhd;
-	isched.runhd = p;
+	p->link = curP->runhd;
+	curP->runhd = p;
 	if(p->link == nil)
-		isched.runtl = p;
+		curP->runtl = p;
 }

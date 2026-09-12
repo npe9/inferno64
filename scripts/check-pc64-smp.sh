@@ -28,7 +28,10 @@ KERN=$ROOT/os/inferno/pc64/ipc64dev
 [ -f "$KERN" ] || { echo "check-pc64-smp: no $KERN; mk CONF=pc64dev first" >&2; exit 1; }
 
 WORK=`mktemp -d`
-trap 'rm -rf "$WORK"' 0
+# status latched and restored; every cleanup command made to
+# succeed, because "set -e" would otherwise abort the trap and
+# lose it.  See the fuller note in check-pc64-tcp.sh.
+trap 'st=$?; rm -rf "$WORK" || true; exit $st' 0
 
 INFERNO_KERNEL=$KERN sh "$ROOT/scripts/mkinferno-efi-iso.sh" "$WORK/smp.iso" >/dev/null 2>&1
 INFERNO_KERNEL=$KERN INFERNO_INI='*ncpu=1' \
