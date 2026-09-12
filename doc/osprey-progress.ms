@@ -6534,9 +6534,55 @@ The program opens the store's own file with
 reads its 46 bytes, seeks six into it and reads what is there, and asks
 .CW fstat
 for its length and mode: 46 bytes and 0100666, a regular file, with
-0040555 for the directory holding it.  Run against the kernel from
-before the change all three return \-1.  The p9linux check is fifteen
-criteria.
+0040555 for the directory holding it.
+.PP
+A directory listing is the same disagreement in the other shape, and
+.CW getdents64
+is the fourth call mapped: the buddy answers a directory read with 9P
+stat messages and Linux wants dirent64 records \- inode, offset, record
+length, type, name, each rounded up to eight bytes.  There are no inode
+numbers here, so the qid path stands for one, which is fair: it is what
+9P has that names a file uniquely, which is what an inode number is for.
+The program lists the buddy's root by calling until the call returns 0,
+which is how a directory is listed, and walks what comes back by record
+length: fourteen entries in two calls, each with the directory bit.
+.PP
+And then the half of an ABI that a test usually leaves out, which is
+what running the check against the kernel from before the mapping
+exposed.  Linux returns a failure as a small negative number in rax, and
+a libc turns anything in \-4095 to \-1 into a \-1 and an errno; this was
+handing back a 32-bit \-1, which is 4294967295, a large positive number
+that is an error by no reading.  A program could not tell a failed open
+from a descriptor.  The control run showed it plainly: the test program
+called
+.CW getdents64 ,
+which that kernel did not map, was told the call had returned 4294967295
+bytes of entries, walked that many bytes of its own stale buffer and
+faulted.
+.PP
+Two things were wrong and both are fixed.  The number was not sign
+extended on its way to
+.CW rax :
+.CW long
+is 32 bits here and
+.CW "(uintptr)(vlong)r"
+of a negative long leaves
+.CW 0x00000000fffffffe ,
+because this toolchain emits no sign extension for that widening \- the
+same shape as its dropping the truncation for a narrowing cast to an
+unsigned type.  It is done by hand now.  And the number itself was
+always \-1, where a program acts on which error it was: 9P carries no
+errno, but the buddy has a message and
+.CW errstr
+is how it is asked for, so a failed call fetches it \- one extra round
+trip, on the failure path only \- and two names are told apart, a file
+that is not there (ENOENT, which "create it if missing" tests for) and
+one the program may not have (EACCES).  Everything else is EIO, which
+says no more than the message did, and a number this kernel does not map
+is ENOSYS.  The check reads both: a missing file comes back \-2 and an
+unmapped call \-38.  Matching the text is what the information allows;
+a number invented from nothing would be worse.  The p9linux check is
+seventeen criteria.
 .NH 1
 Running real programs on the two personalities: a plan
 .PP

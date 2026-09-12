@@ -318,6 +318,78 @@ lmain(void)
 
 		for(m = 0; m < 144; m++)
 			st[m] = 0;
+		{
+			/*
+			 * And a directory listing, which is the other place
+			 * the two ABIs disagree about what comes back: a
+			 * Linux program calls getdents64 and expects dirent64
+			 * records, and the buddy answers a directory read
+			 * with 9P stat messages.  Read the store's directory
+			 * and say what is in it.
+			 */
+			long dfd, nb, o, nent;
+			char *nm;
+
+			long calls;
+
+			dfd = sys6(257, Atfdcwd, (long)"/", 0, 0, 0, 0);
+			say("linux: getdents64 on /:");
+			nent = 0;
+			calls = 0;
+			/*
+			 * Until it returns 0, which is how a program lists a
+			 * directory: one call returns what fits the buffer and
+			 * the next goes on where it stopped.
+			 */
+			while((nb = sys3(217, dfd, (long)buf, sizeof buf)) > 0){
+				calls++;
+				for(o = 0; o + 19 < nb; ){
+					long rl = *(unsigned short*)(buf + o + 16);
+					if(rl <= 0 || o + rl > nb)
+						break;
+					nm = buf + o + 19;
+					p = cat(line, " ");
+					p = cat(p, nm);
+					p = cat(p, "/");
+					p = num(p, (long)(unsigned char)buf[o+18]);
+					*p = 0;
+					say(line);
+					nent++;
+					o += rl;
+				}
+				if(calls > 16)
+					break;
+			}
+			p = cat(line, "\nlinux: ");
+			p = num(p, nent);
+			p = cat(p, " entries in ");
+			p = num(p, calls);
+			p = cat(p, " calls, as dirent64 records the program walked by reclen\n"); *p = 0;
+			say(line);
+			sys3(3, dfd, 0, 0);
+		}
+
+		{
+			/*
+			 * And a failure, which is the half of an ABI a test
+			 * usually leaves out.  Linux returns a small negative
+			 * number in rax and a libc turns it into -1 and errno;
+			 * a call this kernel does not map must say ENOSYS (38)
+			 * and one that was made and failed EIO (5).  Ask for a
+			 * file that is not there, and make a call that is not
+			 * mapped (fchdir, 81).
+			 */
+			long e1 = sys6(257, Atfdcwd, (long)"/n/nosuchfile", 0, 0, 0, 0);
+			long e2 = sys3(81, 0, 0, 0);
+
+			p = cat(line, "linux: openat of a missing file returned ");
+			p = num(p, e1);
+			p = cat(p, " and an unmapped call returned ");
+			p = num(p, e2);
+			p = cat(p, "; both are errors a libc would see\n"); *p = 0;
+			say(line);
+		}
+
 		r = sys3(4, (long)"/n", (long)st, 0);	/* stat("/n", st) */
 		mode = *(int*)(st + 24);
 		p = cat(line, "linux: stat(\"/n\") returned ");

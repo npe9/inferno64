@@ -3141,9 +3141,57 @@ static long ospreyforkkern(Ospreyproc*, ulong);
 static long ospreylegacyawait(Ospreyproc*, uintptr, int);
 
 long
+/*
+ * Which Linux errno a failed call should carry.  9P has no errno: the
+ * buddy answers a failure with a message, and errstr(2) is how a Plan 9
+ * program asks for it.  A Linux program has no such call - it reads the
+ * small negative number the kernel returned - so the message has to
+ * become a number here, and the only place it can be got is from the
+ * buddy, by the same errstr the Plan 9 side uses.  One extra round trip,
+ * on the failure path only.
+ *
+ * Two names are worth telling apart, because a program acts on them: a
+ * file that is not there (ENOENT, which is what "create it if missing"
+ * tests for) and one it may not have (EACCES).  Everything else is EIO,
+ * which says no more than the message did.  Matching text is what the
+ * information allows; inventing a number from nothing would be worse.
+ */
+static int
+ospreylinuxerrno(Ospreyproc *p)
+{
+	enum { Lenoent = 2, Leacces = 13, Leio = 5 };
+	uvlong *ab;
+	uchar *dd;
+	char buf[ERRMAX];
+	long n, i;
+
+	ab = (uvlong*)ospreydata(p, Bargoff, 4*sizeof(uvlong));
+	if(ab == nil)
+		return Leio;
+	ab[1] = 0; ab[2] = sizeof buf - 1; ab[3] = 0;
+	ab[0] = Berrstr;
+	n = ospreybuddycall(p, Bsyscalltries);
+	if(n <= 0)
+		return Leio;
+	if(n > (long)sizeof buf - 1)
+		n = sizeof buf - 1;
+	dd = ospreydata(p, Bdataoff, n);
+	if(dd == nil)
+		return Leio;
+	for(i = 0; i < n; i++)
+		buf[i] = dd[i];
+	buf[n] = 0;
+	if(strstr(buf, "does not exist") != nil || strstr(buf, "not found") != nil)
+		return Lenoent;
+	if(strstr(buf, "permission denied") != nil)
+		return Leacces;
+	return Leio;
+}
+
 ospreybuddyforward(ulong scallnr, uintptr *a)
 {
 	int linuxstat = 0;	/* the answer is a 9P stat to be handed back as a Linux one */
+	int linuxdents = 0;	/* ... or 9P stats to be handed back as Linux directory entries */
 	enum {
 		Atfdcwd = -100,		/* openat's "relative to the working directory" */
 		Lstatroom = 512,	/* room asked of the buddy for a 9P stat message */
@@ -3233,7 +3281,27 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 			a[2] = Lstatroom;
 			scallnr = Bfstat;
 			break;
-		default: return -1;
+		case 217:			/* getdents64(fd, buf, count) */
+			/*
+			 * A directory read.  The arguments line up with
+			 * read(2)'s, and what comes back does not: the buddy
+			 * answers a directory read with 9P stat messages and
+			 * Linux wants dirent64 records.  The program was
+			 * getting the 9P ones through read(2) and could make
+			 * nothing of them; anything from a toolchain calls
+			 * this number instead.
+			 */
+			linuxdents = 1;
+			scallnr = Bread;
+			break;
+		default:
+			/*
+			 * A number this kernel does not map.  -38 rather than
+			 * -1 so the caller can answer the program with ENOSYS,
+			 * which is what a program tests for, and tell it from
+			 * a call that was made and failed.
+			 */
+			return -38;
 		}
 	}
 
@@ -3484,8 +3552,59 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 	ab[0] = scallnr;		/* last, for the reason above */
 	status = ospreybuddycall(p, Bsyscalltries);
 	if(status < 0)
-		return -1;
+		return up->oslinux ? -ospreylinuxerrno(p) : -1;
 
+	if(linuxdents && status > 0){
+		/*
+		 * A Linux directory read.  The buddy answered with 9P stat
+		 * messages, one after another; Linux wants dirent64 records:
+		 * inode[8] offset[8] reclen[2] type[1] name[], each record
+		 * rounded up to eight bytes.  A 9P stat is the longer of the
+		 * two (it carries three owner strings this does not), so the
+		 * translation only ever shrinks and cannot overrun the
+		 * program's buffer.
+		 *
+		 * The 9P stat's fixed part is 41 bytes - size[2] type[2]
+		 * dev[4] qid[13] mode[4] atime[4] mtime[4] length[8] - and
+		 * the name's own count follows it.  There are no inode
+		 * numbers here, so the qid path is what stands for one: it is
+		 * what 9P has that names a file uniquely, which is what an
+		 * inode number is for.
+		 */
+		enum { Ldtdir = 4, Ldtreg = 8, P9statfix = 41 };
+		uchar *dst = (uchar*)a[1];
+		long in, out, nl, rec;
+
+		validaddr((uintptr)dst, status, 1);
+		dd = ospreydata(p, Bdataoff, status);
+		if(dd == nil)
+			return -1;
+		out = 0;
+		for(in = 0; in + P9statfix + BIT16SZ <= status; ){
+			long m = BIT16SZ + GBIT16(dd+in);
+
+			if(m < P9statfix + BIT16SZ || in + m > status)
+				break;
+			nl = GBIT16(dd+in+P9statfix);
+			if(nl < 0 || in + P9statfix + BIT16SZ + nl > status)
+				break;
+			rec = 19 + nl + 1;
+			rec = (rec + 7) & ~7L;
+			if(out + rec > status)
+				break;		/* what does not fit waits for the next read */
+			PBIT64(dst+out, GBIT64(dd+in+13));	/* the qid path, for an inode number */
+			PBIT64(dst+out+8, (uvlong)(out + rec));	/* the offset of the next record */
+			PBIT16(dst+out+16, (ushort)rec);
+			dst[out+18] = (GBIT8(dd+in+8) & QTDIR) != 0 ? Ldtdir : Ldtreg;
+			for(i = 0; i < nl; i++)
+				dst[out+19+i] = dd[in+P9statfix+BIT16SZ+i];
+			for(i = 19+nl; i < rec; i++)
+				dst[out+i] = 0;
+			out += rec;
+			in += m;
+		}
+		return out;
+	}
 	if(linuxstat && status > 0){
 		/*
 		 * A Linux stat.  The buddy answers with a 9P stat message,

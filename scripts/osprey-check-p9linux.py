@@ -56,6 +56,7 @@ def main():
     except OSError: t = ''
 
     m = re.search(r'linux: read\(fd, buf, \d+\) returned (\d+) bytes, served by the buddy', t)
+    gd = re.search(r'linux: (\d+) entries in (\d+) calls, as dirent64 records', t)
     pages = re.findall(r'osprey buddy: page 0x[0-9a-f]+ of the legacy image supplied by the buddy', t)
     results = [
         # The entry is read out of both messages and required to agree
@@ -102,6 +103,34 @@ def main():
         ("and stat, where the two ABIs agree on nothing: the buddy's 9P stat message is translated into an x86-64 struct stat, and the program reads its file's length and mode out of the fields Linux keeps them in - 46 bytes and a regular file for the store's own file, the directory bit for the directory holding it",
          'linux: fstat returned 0, st_size 46, st_mode 0100666' in t
          and 'linux: stat("/n") returned 0 and st_mode 040555, which has the directory bit' in t),
+        # A directory listing is the other place the two ABIs disagree
+        # about what comes back: the buddy answers a directory read with
+        # 9P stat messages and Linux wants dirent64 records.  The program
+        # had been reading the 9P ones through read(2) and could make
+        # nothing of them; anything from a toolchain calls getdents64.
+        # The records are translated - the qid path standing for the inode
+        # number, which is what 9P has that names a file uniquely - and
+        # the program walks them by reclen, calling until it gets 0, which
+        # is how a directory is listed.
+        ("and a directory listing crosses the same way: getdents64 returns the buddy's 9P stat messages as dirent64 records, and the program walks them by reclen over as many calls as the buffer needs - fourteen entries of the buddy's root, each with the directory bit",
+         gd is not None and int(gd.group(1)) == 14 and int(gd.group(2)) >= 2
+         and re.search(r'getdents64 on /: boot/4 bin/4 dev/4 env/4 fd/4 mnt/4 n/4 net/4 net\.alt/4 proc/4 rc/4 root/4 srv/4 shr/4', t) is not None),
+        # The half of an ABI a test usually leaves out.  Linux returns a
+        # small negative number in rax and a libc turns it into -1 and
+        # errno; anything outside -4095..-1 is a successful return.  This
+        # had been handing back a 32-bit -1 - 4294967295, a large positive
+        # number that is an error by no reading - so a program could not
+        # tell a failed open from a descriptor.  What found it was running
+        # this check against the kernel from before the getdents64
+        # mapping: the program walked 4294967295 bytes of its own stale
+        # buffer and faulted.  9P has no errno, so the buddy's own message
+        # is fetched on the failure path and two names are told apart,
+        # because a program acts on them: a file that is not there
+        # (ENOENT, 2) and one it may not have (EACCES, 13).  A call this
+        # kernel does not map is ENOSYS (38), which is what a program
+        # tests for.
+        ("and a failed call comes back as Linux says one does, a small negative number in rax: a missing file is ENOENT, translated from the message the buddy answers with because 9P carries no errno, and a call this kernel does not map is ENOSYS",
+         'linux: openat of a missing file returned -2 and an unmapped call returned -38' in t),
         ("brk grows a heap the kernel zero-fills on demand, and it holds what the program writes",
          'linux: brk grew the heap by 65536 bytes, zero-filled and holding what was written' in t),
         ("anonymous mmap gives a mapping the program writes at both ends, and munmap takes it back",

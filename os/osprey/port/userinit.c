@@ -214,6 +214,8 @@ uintptr	ospreyuserentry;
 enum {
 	Lenomem		= 12,
 	Leinval		= 22,
+	Leio		= 5,
+	Lenosys		= 38,
 	Mapanon		= 0x20,
 	Mapfixed	= 0x10,
 	Lebadf		= 9,
@@ -585,7 +587,56 @@ ospreylinuxsyscall(ulong scallnr, uintptr *retp)
 		ospreylinuxsigreturn();
 		return 0;		/* ax is whatever the frame had */
 	}
-	*retp = (uintptr)ospreybuddyforward(scallnr, (uintptr*)up->s.args);
+	{
+		/*
+		 * A failed call has to come back as Linux says one does: a
+		 * small negative number in rax, which a libc tests for with
+		 * "(unsigned long)r >= -4095" and turns into -1 and errno.
+		 * This was `*retp = (uintptr)ospreybuddyforward(...)`, and
+		 * `long` here is 32 bits, so a -1 from the buddy arrived in
+		 * the program's rax as 0x00000000ffffffff - 4294967295, a
+		 * large positive number that is not an error by any reading.
+		 * A program could not tell a failed open from a descriptor,
+		 * and the test program that listed a directory with a call
+		 * this kernel did not map walked 4294967295 bytes of its own
+		 * stale buffer and faulted.  What found it was running the
+		 * check against the kernel from before the mapping, to see
+		 * the criterion fail.
+		 *
+		 * The buddy has no errno to give, so there are two answers
+		 * here and not a table of them: ENOSYS for a number this
+		 * kernel does not map, which is the one a program actually
+		 * tests for, and EIO for a call that was made and failed.
+		 */
+		long r = ospreybuddyforward(scallnr, (uintptr*)up->s.args);
+
+		/*
+		 * A negative result is already the errno to report, negated:
+		 * ENOSYS for a number this kernel does not map, and for a
+		 * call that was made and failed whatever the buddy's own
+		 * message says it was (ospreylinuxerrno).  It must be sign
+		 * extended on the way to rax, which is the whole of the bug
+		 * this replaced: `long` is 32 bits here, so -1 arrived as
+		 * 0x00000000ffffffff.
+		 */
+		if(r >= 0)
+			*retp = (uintptr)r;
+		else {
+			/*
+			 * Sign-extended by hand, and not with a cast.  `long`
+			 * is 32 bits here and `(uintptr)(vlong)r` of a
+			 * negative long leaves 0x00000000fffffffe: this
+			 * toolchain emits no sign extension for the widening,
+			 * the same way it emits no truncation for a narrowing
+			 * cast to an unsigned type.  The program reads rax as
+			 * 64 bits, so a half-extended -2 is 4294967294 and not
+			 * an error at all.
+			 */
+			uvlong u = (uvlong)(ulong)r;
+
+			*retp = (uintptr)(u | 0xffffffff00000000ULL);
+		}
+	}
 	return 0;
 }
 
