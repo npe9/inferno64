@@ -9,15 +9,26 @@ OBJTYPE=amd64
 # needs from a C library comes from the tree's own libkern, libsec and
 # libmp, built once for every target.
 LIB=$ROOT/nix/$OBJTYPE/lib/libnix.a
-# The nix flavour's own libc/libip subset the kernel links.  The
-# rune, utf and fmt routines are here rather than taken from libkern
-# because nix's Rune is 16 bits and UTFmax is 3, where libkern (built
-# with Inferno's headers) has a 32-bit Rune and UTFmax 4; a kernel
-# compiled against nix's headers must link nix's own versions or the
-# widths disagree across the call and it corrupts what it formats.
+# The nix flavour's own libc/libip subset the kernel links.  These are
+# here rather than taken from libkern because they are compiled against
+# a struct or a type on which nix's headers and Inferno's (which libkern
+# is built with) disagree, so a kernel compiled against nix's headers
+# must link nix's own versions:
+#	convS2M, convM2S, convD2M, convM2D -- the 9P Fcall/Dir marshalling.
+#		nix's fcall.h makes Fcall a real union; Inferno's has the
+#		union commented out, so every field sits at a different
+#		offset.  devmnt fills an Fcall at nix's offsets and hands
+#		it to convS2M; libkern's convS2M reads the string fields
+#		from Inferno's offsets and dereferences garbage.
+#	rune, utf and fmt -- nix's Rune is 16 bits and UTFmax is 3, where
+#		libkern has a 32-bit Rune and UTFmax 4.
 OFILES=\
 	bo.$O\
 	classmask.$O\
+	convD2M.$O\
+	convM2D.$O\
+	convM2S.$O\
+	convS2M.$O\
 	ctype.$O\
 	dofmt.$O\
 	eipfmt.$O\
