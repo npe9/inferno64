@@ -25,8 +25,8 @@ static Uart virtarm64uart = {
 	.phys	= &virtarm64physuart,
 };
 
-#define csr32r(c, r)	((c)->base[r])
-#define csr32w(c, r, v)	((c)->base[r] = (v))
+#define csr32r(c, r)	(((volatile u32*)(c)->base)[r])
+#define csr32w(c, r, v)	(((volatile u32*)(c)->base)[r] = (v))
 
 static Uart*
 virtarm64_pnp(void)
@@ -39,17 +39,23 @@ uartintr(Ureg*, void *arg)
 {
 	Uart *uart;
 	Ctlr *c;
+	u32 mis;
 	int i, ch;
 
 	uart = arg;
 	c = uart->regs;
-	for(i = 0; i < 128; i++){
-		if(csr32r(c, UartFR) & UartFRRXFE)
-			break;
-		ch = csr32r(c, UartDR) & 0xff;
-		uartrecv(uart, ch);
+	mis = csr32r(c, UartMIS);
+	if(mis & UartIMSCRX){
+		for(i = 0; i < 128; i++){
+			if(csr32r(c, UartFR) & UartFRRXFE)
+				break;
+			ch = csr32r(c, UartDR) & 0xff;
+			uartrecv(uart, ch);
+		}
 	}
 	csr32w(c, UartICR, UartICRALL);
+	if(mis & UartIMSCTX)
+		uartkick(uart);
 }
 
 static void
@@ -97,6 +103,11 @@ virtarm64_kick(Uart *uart)
 			break;
 		csr32w(c, UartDR, *uart->op++);
 	}
+	/* Keep TX interrupts armed only while staged/queued output remains. */
+	if(uart->op < uart->oe || qlen(uart->oq) != 0)
+		csr32w(c, UartIMSC, csr32r(c, UartIMSC) | UartIMSCTX);
+	else
+		csr32w(c, UartIMSC, csr32r(c, UartIMSC) & ~UartIMSCTX);
 }
 
 static void
@@ -262,8 +273,8 @@ uartconsolesetup(void)
 	if(consuart == nil)
 		return;
 	consuart->putc = consolerx;
-	/* pl011@9000000's SPI is 1 -> GIC IRQ 33 */
-	intrenable(33, uartintr, consuart, 0, "uart0");
+	/* BCM2837 PL011 is VideoCore/GPU interrupt 57 (pending bank 2). */
+	intrenable(57, uartintr, consuart, 0, "uart0");
 	c = consuart->regs;
 	csr32w(c, UartIMSC, UartIMSCRX);
 }

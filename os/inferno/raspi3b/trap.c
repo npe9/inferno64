@@ -161,6 +161,7 @@ enum {
 	CntpIStatus	= 1<<2,		/* CNTP_CTL_EL0.ISTATUS: timer fired */
 	IrqEnable1	= 0x10,
 	IrqPending1	= 0x04,
+	IrqPending2	= 0x08,
 };
 
 static void
@@ -201,9 +202,16 @@ trap(Ureg *ur)
 			clockintr(ur);
 			return;
 		}
-		pend = ((u32*)IRQBASE)[IrqPending1/4];
+		pend = ((volatile u32*)IRQBASE)[IrqPending1/4];
 		for(irq = 0; irq < 32; irq++){
 			if((pend & (1<<irq)) == 0)
+				continue;
+			if((f = irqhandler[irq]) != nil)
+				f(ur, irqarg[irq]);
+		}
+		pend = ((volatile u32*)IRQBASE)[IrqPending2/4];
+		for(irq = 32; irq < 64; irq++){
+			if((pend & (1<<(irq-32))) == 0)
 				continue;
 			if((f = irqhandler[irq]) != nil)
 				f(ur, irqarg[irq]);

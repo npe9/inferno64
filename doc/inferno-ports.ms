@@ -18996,3 +18996,24 @@ the algorithm uses the architectural geometry rather than hard-coding the
 Pi's L1/L2 sizes.  QEMU boots the rebuilt image through MMU-OK to
 RASPI3B-SH-OK, proving the instructions and loop do not regress the emulated
 board; only the next physical boot can verify the cache behavior silicon adds.
+.PP
+The cache-initialized physical boot stopped at the identical character, which
+falsifies cache state as the cause of this particular stop (the architectural
+cache initialization remains required).  The cutoff itself supplies the
+answer: "Inferno Fourth" is sixteen bytes including its leading newline,
+exactly one PL011 transmit FIFO.  chandevreset() had switched console output
+from early polled serialputs() to devuart's queued path.  The Pi copy of the
+virt PL011 driver filled the hardware FIFO and returned without enabling TX
+interrupts; it also registered QEMU virt's GIC IRQ 33 rather than BCM2837 GPU
+IRQ 57, while the board trap code inspected pending bank 1 only.  QEMU's
+PL011 drained quickly enough that kick() never encountered a full FIFO.
+.PP
+The hardware path is fixed end to end in
+.CW os/inferno/raspi3b/uartvirtarm64.c
+and
+.CW os/inferno/raspi3b/trap.c :
+kick arms TXIM while staged or queued bytes remain, the interrupt handler
+acknowledges MIS and calls uartkick() to refill the FIFO, UART0 registers IRQ
+57, and trap() dispatches both BCM pending banks (IRQs 0 through 63).  MMIO
+register accesses are volatile.  The rebuilt kernel again reaches
+RASPI3B-SH-OK under QEMU; the physical boot is the test of real FIFO backpressure.
