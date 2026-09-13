@@ -18961,3 +18961,16 @@ interrupts, and waits with a bounded poll for FIFO space before every byte.
 main prints PL011-OK immediately after that transition, making the hardware
 boundary observable.  This repair is QEMU-verified below; a second physical
 boot is still required to establish how far the board proceeds.
+.PP
+The second physical boot printed PL011-OK and stopped before xinit's first
+line.  This exposed an ordering bug that QEMU's memory model concealed:
+.CW os/inferno/raspi3b/main.c
+called xinit() before mmuinit(), and xinit() immediately ilocks the global
+xlists allocator through _tas()'s LDXR/STXR loop.  On the real Cortex-A53,
+exclusive locking is not sound until RAM has Normal-memory translation
+attributes; with the MMU off the architecture does not promise the exclusive
+store will succeed.  QEMU accepted it and let every emulated boot pass.
+mmuinit() uses statically reserved page tables and needs no allocator or lock,
+so it now establishes the identity mapping before xinit() takes the first
+kernel lock.  An MMU-OK serial marker makes that hardware transition explicit.
+This is the required hardware ordering, not an emulator workaround.

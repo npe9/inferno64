@@ -115,11 +115,18 @@ main(void)
 	serialputs("PL011-OK\n", -1);
 	archconsole();
 
+	/*
+	 * xinit() takes xlists with _tas().  On real A53 hardware an
+	 * LDXR/STXR lock is not sound while the MMU is off and RAM has no
+	 * Normal-memory translation attributes; QEMU happens to accept it.
+	 * Establish the identity map before the first kernel lock.
+	 */
+	mmuinit();
+	serialputs("MMU-OK\n", -1);
 	xinit();
 	poolinit();
 	poolsizeinit();
 	trapinit();
-	mmuinit();
 	clockinit();
 	{	/* seed wall-clock from the PL031 RTC (calendar time) */
 		extern vlong rtctime(void);
