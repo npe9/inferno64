@@ -18904,3 +18904,43 @@ at offset 0; the read succeeds and the interrupt is delivered so the
 GICv3 conclusion is unaffected, and it is identical on v2, so it
 predates this work \(em the init reads a block other than 0, or the
 print is wrong.
+.NH 1
+Raspberry Pi 3B setup recheck, 13 September 2026
+.PP
+The physical-board handoff was audited before preparing a new Pi 3B.  A clean
+build from
+.CW os/inferno/raspi3b
+with
+.CW "mk INIT=raspi3binit boot"
+produced both the AArch64 ELF
+.CW os/inferno/raspi3b/iraspi3b
+and the firmware-loadable flat image
+.CW os/inferno/raspi3b/kernel8.img .
+The mkfile's boot recipe incorrectly used make-style silent-command prefixes,
+so Plan 9 mk tried to execute a program named
+.CW @echo
+after successfully making the image; the prefixes are removed.  The hardware
+README now sets ROOT at the tree root before changing directory, rather than
+leaving a fresh builder vulnerable to pointing ROOT at the board directory.
+.PP
+Both newly built artifacts were booted independently with QEMU's raspi3b
+machine.  The ELF path and the firmware-equivalent raw-loader path (placing
+kernel8.img at 0x80000) each reported MBOX-OK, DRAW-OK, USB-OK and
+RASPI3B-SH-OK.  This verifies the current build and flat-image layout; it is
+not a physical-board boot, which remains to be captured from the Pi's PL011
+serial console.
+.PP
+The default
+.CW os/inferno/init/raspi3binit.b
+also no longer runs its historical SD write/multiblock test on every boot.
+That test overwrote raw sectors 3 and 8 through 11: outside the first partition
+on the QEMU test images, but not a safe assumption for somebody's firmware
+card.  Normal init now opens
+.CW /dev/sdM0/data
+read-only, reads sector zero and reports SD-READ-OK.  The earlier QEMU write and
+multiblock results remain valid historical driver tests, not startup policy.
+The raw-image boot was repeated with a 64MB SD image whose sector zero began
+with RPI3: init printed 52504933 and SD-READ-OK, reached RASPI3B-SH-OK, and the
+image's SHA-256 remained
+.CW 6e66723adefbfdf555c1d32f0ad95ceebb83d02b5fb586c4cbb21c57b9656d1c
+before and after the boot.
