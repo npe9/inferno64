@@ -17,7 +17,7 @@ enum {
 	MemACPI		= 3,		/* acpi Reclaim Memory */
 	NMemType,
 
-	MemMinMiB	= 4,		/* minimum physical memory (<=4MiB) */
+	MemMinMiB	= 16,		/* early boot maps 0-16MiB at KZERO (see l32p.s) */
 
 	NMemBase	= 10,
 };

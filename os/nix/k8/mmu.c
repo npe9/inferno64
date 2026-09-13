@@ -438,11 +438,11 @@ vmap(uintptr pa, usize size)
 
 	/*
 	 * XXX - replace with new vm stuff.
-	 * Crock after crock - the first 4MB is mapped with 2MB pages
-	 * so catch that and return good values because the current mmukmap
-	 * will fail.
+	 * Crock after crock - the first 16MB is mapped with 2MB pages
+	 * (see l32p.s) so catch that and return good values because the
+	 * current mmukmap will fail.
 	 */
-	if(pa+size < 4*MiB)
+	if(pa+size < 16*MiB)
 		return UINT2PTR(kseg0|pa);
 
 	osize = size;

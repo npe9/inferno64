@@ -19,6 +19,8 @@
  */
 #define BI2BY		8			/* bits per byte */
 #define BY2V		8			/* bytes per double word */
+#define BY2WD		4			/* bytes per word */
+#define BI2WD		32			/* bits per word */
 #define BY2SE		8			/* bytes per stack element */
 #define BY2PG		4096			/* bytes per page */
 #define BLOCKALIGN	8

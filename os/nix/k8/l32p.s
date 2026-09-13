@@ -126,6 +126,18 @@ TEXT _warp64<>(SB), 1, $-4
 	MOVL	DX, PDO(KZERO)(AX)		/* PDE for KZERO 0-2MiB */
 	ADDL	$(2*MiB), DX
 	MOVL	DX, PDO(KZERO+2*MiB)(AX)	/* PDE for KZERO 2-4MiB */
+	ADDL	$(2*MiB), DX
+	MOVL	DX, PDO(KZERO+4*MiB)(AX)		/* PDE for KZERO 4-6MiB */
+	ADDL	$(2*MiB), DX
+	MOVL	DX, PDO(KZERO+6*MiB)(AX)		/* PDE for KZERO 6-8MiB */
+	ADDL	$(2*MiB), DX
+	MOVL	DX, PDO(KZERO+8*MiB)(AX)		/* PDE for KZERO 8-10MiB */
+	ADDL	$(2*MiB), DX
+	MOVL	DX, PDO(KZERO+10*MiB)(AX)	/* PDE for KZERO 10-12MiB */
+	ADDL	$(2*MiB), DX
+	MOVL	DX, PDO(KZERO+12*MiB)(AX)	/* PDE for KZERO 12-14MiB */
+	ADDL	$(2*MiB), DX
+	MOVL	DX, PDO(KZERO+14*MiB)(AX)	/* PDE for KZERO 14-16MiB */
 
 	MOVL	AX, DX				/*  */
 	ADDL	$(PTPGSZ|PteRW|PteP), DX	/* PT at PML4 + 3*PTPGSZ */

@@ -1,0 +1,13 @@
+#!/boot/rc -m /boot/rcmain
+bind '#c' /dev
+bind -a '#p' /proc
+bind -c '#s' /srv
+bind -a '#l0' /net
+bind -a '#I' /net
+bind /boot /bin
+builtin cd /boot
+echo -n glenda > /dev/hostowner
+ip=$1
+if(~ $#ip 0) ip=192.168.0.2
+ipconfig -N ether /net/ether0 add $ip 255.255.255.0 >[2]/dev/null
+echo terminal at $ip

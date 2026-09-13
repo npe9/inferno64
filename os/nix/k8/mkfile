@@ -37,6 +37,11 @@ SIPIADDR=0xffffffff80003000
 # rules would rebuild $CONF.root.s from user programs this tree does
 # not build, and the libraries come from below rather than /$objtype/lib.
 <| awk -v objtype=$objtype -f $MKDIR/parse -- -mkdevlist -mkmach -mkport -mkrules $CONF
+
+# k8auth carries a self-contained set of prebuilt user programs.  Unlike the
+# installed paths in the older configurations, these inputs are available in
+# the tree and must regenerate the embedded root when a boot script changes.
+<| awk -v objtype=$objtype -f $MKDIR/parse -- -mkrootrules k8auth
 <$MKDIR/bootmkfile
 <$MKDIR/portmkfile
 
@@ -44,6 +49,9 @@ OBJ=$MACH $CONF.root.$O $DEVS $PORT
 
 LIB=\
 	$TARGETLIB/libnix.a\
+	$ROOT/$FLAVOR/$OBJTYPE/lib/libmemlayer.a\
+	$ROOT/$FLAVOR/$OBJTYPE/lib/libmemdraw.a\
+	$ROOT/$FLAVOR/$OBJTYPE/lib/libdraw.a\
 	$ROOT/Inferno/$OBJTYPE/lib/libsec.a\
 	$ROOT/Inferno/$OBJTYPE/lib/libmp.a\
 	$ROOT/Inferno/$OBJTYPE/lib/libkern.a\

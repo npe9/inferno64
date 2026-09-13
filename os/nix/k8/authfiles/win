@@ -1,0 +1,10 @@
+#!/boot/rc
+echo WINDIAG start > /dev/eia1
+riosrv=`{ls -d /srv/rio.*}
+echo WINDIAG srv=$riosrv > /dev/eia1
+mount $riosrv /mnt/wsys
+echo WINDIAG mountstatus=$status > /dev/eia1
+echo WINDIAG lsbefore: `{ls /mnt/wsys} > /dev/eia1
+echo new -r 100 100 850 620 rc >> /mnt/wsys/wctl
+echo WINDIAG wctlstatus=$status > /dev/eia1
+echo WINDIAG lsafter: `{ls /mnt/wsys} > /dev/eia1

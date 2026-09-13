@@ -466,6 +466,8 @@ confinit(void)
 
 	kpages = GiB/BY2PG;
 	kpages /= 2;
+	if(kpages >= conf.npage)
+		kpages = conf.npage/2;
 	conf.upages = conf.npage - kpages;
 	conf.ialloc = (kpages/2)*BY2PG;
 
