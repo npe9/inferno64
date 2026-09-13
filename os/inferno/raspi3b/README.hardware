@@ -59,10 +59,10 @@ the SCR_EL3 write at EL2.
 Hardware status
 ---------------
 The SDHOST path gates every FIFO word on the real SDEDM fill level, mailbox
-and USB DMA buffers receive explicit cache maintenance, and instruction-cache
-invalidation precedes enabling it.  The reset-time L1 data-cache set/way
-invalidation remains hardware-unverified; see l.s and cachebcm.c.  The kernel
-is uniprocessor: cores 1-3 are parked at WFE and MAXMACH is 1.
+and USB DMA buffers receive explicit cache maintenance, and architectural
+CLIDR/CCSIDR-driven set/way invalidation clears every data/unified cache before
+SCTLR.C is first enabled.  The kernel is uniprocessor: cores 1-3 are parked at
+WFE and MAXMACH is 1.
 
 The complete kernel has been verified under QEMU, but this tree does not yet
 contain a captured boot log from physical Pi 3B hardware.  In particular, the

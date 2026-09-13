@@ -18974,3 +18974,25 @@ mmuinit() uses statically reserved page tables and needs no allocator or lock,
 so it now establishes the identity mapping before xinit() takes the first
 kernel lock.  An MMU-OK serial marker makes that hardware transition explicit.
 This is the required hardware ordering, not an emulator workaround.
+.PP
+With that ordering on the physical board, boot passed MMU-OK, the complete
+allocator and pool setup, BCM I2C/SPI/GPIO probes, a real firmware mailbox
+reply (revision 1779362517 and 0x3b400000 bytes ARM RAM), and procinit.  It
+then stopped while printing the version line, after "Inferno Fourth".  This
+is the first boot to run enough cached code on silicon to expose the remaining
+hardware debt already named in
+.CW os/inferno/raspi3b/l.s :
+SCTLR.C was enabled while the Cortex-A53's reset-state data-cache contents were
+architecturally UNKNOWN.  QEMU models no cache and cannot reproduce it.
+.PP
+The gap is now closed rather than worked around.  cacheinit() in
+.CW os/inferno/raspi3b/cachebcm.c
+walks every data or unified cache level reported by CLIDR_EL1, selects it with
+CSSELR_EL1, derives line size, sets and ways from CCSIDR_EL1, and issues DC ISW
+for every set/way before mmuenable() sets SCTLR.C.  The system-register and DC
+helpers are in
+.CW os/inferno/raspi3b/l.s ;
+the algorithm uses the architectural geometry rather than hard-coding the
+Pi's L1/L2 sizes.  QEMU boots the rebuilt image through MMU-OK to
+RASPI3B-SH-OK, proving the instructions and loop do not regress the emulated
+board; only the next physical boot can verify the cache behavior silicon adds.

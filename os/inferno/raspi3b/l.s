@@ -22,6 +22,9 @@
 #define	D_SCTLR_EL1	SYSARG5(3,0,1,0,0)
 #define	D_MPIDR_EL1	SYSARG5(3,0,0,0,5)
 #define	D_CTR_EL0	SYSARG5(3,3,0,0,1)
+#define	D_CCSIDR_EL1	SYSARG5(3,1,0,0,0)
+#define	D_CLIDR_EL1	SYSARG5(3,1,0,0,1)
+#define	D_CSSELR_EL1	SYSARG5(3,2,0,0,0)
 #define	D_HCR_EL2	SYSARG5(3,4,1,1,0)
 #define	D_SCR_EL3	SYSARG5(3,6,1,1,0)
 #define	D_SPSR_EL3	SYSARG5(3,6,4,0,0)
@@ -415,6 +418,23 @@ TEXT	getctr(SB), 1, $-4
 	MRS	SPR(D_CTR_EL0), R0
 	RET	R30
 
+TEXT	getclidr(SB), 1, $-4
+	MRS	SPR(D_CLIDR_EL1), R0
+	RET	R30
+
+TEXT	getccsidr(SB), 1, $-4
+	MRS	SPR(D_CCSIDR_EL1), R0
+	RET	R30
+
+TEXT	setcsselr(SB), 1, $-4
+	MSR	R0, SPR(D_CSSELR_EL1)
+	ISB	$15
+	RET	R30
+
+TEXT	dcisw(SB), 1, $-4
+	SYS	R0, $SYSARG5(0,0,7,6,2)	/* DC ISW, R0 */
+	RET	R30
+
 TEXT	dccvac(SB), 1, $-4		/* clean D-line at R0 to PoC */
 	SYS	R0, $SYSARG5(0,3,7,10,1)
 	RET	R30
@@ -488,19 +508,6 @@ TEXT	mmuenable(SB), 1, $-4
 	SYS	$SYSARG5(0,0,7,5,0)	/* IC IALLU: invalidate I-cache */
 	DSB	$15
 	ISB	$15
-	/*
-	 * HARDWARE GAP (emulator is more forgiving; see AGENTS.md): on a real
-	 * Cortex-A53 the cache contents at reset are architecturally UNKNOWN.
-	 * The instruction cache is invalidated just above (IC IALLU); what
-	 * remains before turning the D-cache on below is a set/way invalidate
-	 * of the L1 data cache -- a CLIDR/CCSIDR level walk -- or the CPU may
-	 * hit stale/garbage D-lines once C is set.  That walk is loop logic
-	 * QEMU cannot validate (it models no cache), so it is deliberately
-	 * left out here rather than shipped unexercised; do NOT enable the
-	 * D-cache on real hardware without adding it first.  The page tables
-	 * were built with the caches off, so they are already in RAM and
-	 * need no clean.
-	 */
 	MRS	SPR(D_SCTLR_EL1), R1
 	MOV	$0x1005, R2		/* M(0) | C(2) | I(12) */
 	ORR	R2, R1, R1

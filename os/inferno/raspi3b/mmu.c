@@ -78,5 +78,7 @@ mmuinit(void)
 	l1[1] = (uvlong)0x40000000 | Pvalid | Pblock | Paf | Prw | Pdev;
 							/* 1-2GB 1GB block: BCM2836 */
 
+	/* ARMv8 reset leaves cache contents UNKNOWN; do this before SCTLR.C. */
+	cacheinit();
 	mmuenable(l1);
 }
