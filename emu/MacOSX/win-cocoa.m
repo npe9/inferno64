@@ -183,6 +183,7 @@ static int	nflush_gap;
 static int	mtl_materialising;	/* inside flush/readback: live bytes are the point */
 static id	mtl_dlink;		/* CADisplayLink: the display asks for frames */
 extern void	drawvsync(void);	/* devdraw.c: wake /dev/draw/vsync readers */
+extern void	drawvsyncavail(int);	/* devdraw.c: and whether it will ever tick */
 static id<MTLTexture>	mtl_rbtex;	/* readback target, kept like the others */
 static int	mtl_rbtex_w, mtl_rbtex_h;
 static uvlong	metal_torn_pixels;
@@ -5791,9 +5792,13 @@ createwindow(void)
 	if(getenv("INFERNO_NOVSYNC") == nil && [view respondsToSelector:@selector(displayLinkWithTarget:selector:)]){
 		mtl_dlink = [view displayLinkWithTarget:view
 			selector:@selector(vsynctick:)];
-		if(mtl_dlink != nil)
+		if(mtl_dlink != nil){
 			[mtl_dlink addToRunLoop:[NSRunLoop currentRunLoop]
 				forMode:NSRunLoopCommonModes];
+			/* only now may /dev/draw/vsync exist: a reader of it
+			 * blocks until this ticks, and nothing else ticks it */
+			drawvsyncavail(1);
+		}
 	}
 
 	resizetest_start();

@@ -334,6 +334,22 @@ struct Vsyncw {
 static Lock	vsynclk;
 static Vsyncw*	vsyncw;
 static ulong	vsyncn;
+static int	vsyncavail;
+
+/*
+ * The platform says whether anything will ever tick.  Without this the
+ * file exists, opens, and blocks forever - and a caller written to fall
+ * back when it is absent has no way to tell the difference, so it waits
+ * for a frame that is not coming.  Measured the hard way: with the
+ * display link switched off, castlefrankenstein(1) drew its first frame
+ * and then nothing, and the fallback never ran because the open had
+ * succeeded.
+ */
+void
+drawvsyncavail(int on)
+{
+	vsyncavail = on;
+}
 
 void
 drawvsync(void)
@@ -416,6 +432,8 @@ drawgen(Chan *c, char *name, Dirtab *tab, int x, int s, Dir *dp)
 			devdir(c, q, "new", 0, eve, 0666, dp);
 		}
 		else if(s == sdraw.nclient+1){
+			if(!vsyncavail)
+				return -1;
 			mkqid(&q, Qvsync, 0, QTFILE);
 			devdir(c, q, "vsync", 0, eve, 0444, dp);
 		}
@@ -1204,6 +1222,8 @@ drawopen(Chan *c, int omode)
 		{
 			Vsyncw *w;
 
+			if(!vsyncavail)
+				error(Enodev);
 			w = mallocz(sizeof(Vsyncw), 1);
 			if(w == nil)
 				error(Enomem);
