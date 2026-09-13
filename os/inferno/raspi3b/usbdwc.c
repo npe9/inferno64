@@ -247,6 +247,21 @@ chanhalt(Ep *ep, Hostchan *hc)
 	USED(ctlr);
 }
 
+/* Chdis is asynchronous on the BCM2837 DWC2.  Never spin forever if a
+ * channel remains enabled after a reset or a failed transaction. */
+static int
+chanhaltwait(Hostchan *hc)
+{
+	int i;
+
+	for(i = 0; i < 100000; i++){
+		if((hc->hcchar & Chen) == 0)
+			return 0;
+		microdelay(1);
+	}
+	return -1;
+}
+
 static int
 sofdone(void *a)
 {
@@ -386,8 +401,12 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 		hc->hctsiz = hctsiz & ~Dopng;
 		if(hc->hcchar&Chen){
 			hc->hcchar |= Chen | Chdis;
-			while(hc->hcchar&Chen)
-				;
+			if(chanhaltwait(hc) < 0){
+				print("usbdwc: ep%d.%d channel halt timeout hcchar %8.8ux\n",
+					ep->dev->nb, ep->nb, hc->hcchar);
+				iunlock(ctlr);
+				error(Eio);
+			}
 			hc->hcint = Chhltd;
 		}
 		if((i = hc->hcint) != 0)
@@ -428,8 +447,13 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 		 */
 		if(hc->hcchar & Chen){
 			hc->hcchar |= Chdis;
-			while(hc->hcchar & Chen)
-				;
+			if(chanhaltwait(hc) < 0){
+				print("usbdwc: ep%d.%d pre-start halt timeout hcchar %8.8ux\n",
+					ep->dev->nb, ep->nb, hc->hcchar);
+				ctlr->hcintr[chan] = Chhltd|Xacterr;
+				iunlock(ctlr);
+				goto started;
+			}
 		}
 		/*
 		 * Arm both interrupt masks BEFORE enabling the channel.  On
@@ -446,6 +470,7 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 		hc->hcchar = (hc->hcchar &~ Chdis) | Chen;
 		iunlock(ctlr);
 
+	started:
 		i = chanwait(ep, ctlr, hc, imask);
 		hc->hcintmsk = 0;
 		/* hc->hcint was already read-and-cleared by the interrupt handler */
