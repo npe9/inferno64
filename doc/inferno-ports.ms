@@ -19035,3 +19035,14 @@ DWC-CORE-RESET and DWC-FIFO milestones.  QEMU reports every milestone OK,
 enumerates its root hub, and reaches RASPI3B-SH-OK.  The next physical run will
 identify the exact real-controller transition rather than merely stopping
 after DRAW-OK.
+.PP
+The first run with DWC diagnostics reached the LAN9514 itself: hub and
+ethernet descriptors were read, the SMSC ID_REV was 0xec000002, and both
+512-byte bulk endpoints opened.  It then stopped in the first SMSC vendor
+control write (the LAN9514 lite-reset request).  chanwait() had the same
+unbounded completion wait as the early DWC reset path, so a missing channel
+completion looked like a whole-machine hang.  It now has a 20-second bound and
+returns a transaction error with the endpoint/channel printed.  QEMU's USB
+root hub still enumerates and reaches the shell after this change; the next
+Pi boot will report whether the failing operation is a real DWC channel,
+LAN9514 reset timing, or a cache/DMA visibility problem.

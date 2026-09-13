@@ -269,12 +269,20 @@ chandone(void *a)
 static int
 chanwait(Ep *ep, Ctlr *ctlr, Hostchan *hc, int mask)
 {
-	int chan;
+	int chan, i;
 
 	USED(ep, mask);
 	chan = hc - ctlr->regs->hchan;
-	while((ctlr->hcintr[chan] & Chhltd) == 0)
+	for(i = 0; i < 20 && (ctlr->hcintr[chan] & Chhltd) == 0; i++)
 		tsleep(&ctlr->chanintr[chan], chandone, &ctlr->hcintr[chan], 1000);
+	if((ctlr->hcintr[chan] & Chhltd) == 0){
+		/* A missing completion must not strand Limbo in a forever wait.
+		 * Return a normal transaction error; the caller unwinds the
+		 * endpoint operation and the diagnostic identifies the channel. */
+		print("usbdwc: ep%d.%d completion timeout channel %d\n",
+			ep->dev->nb, ep->nb, chan);
+		return Chhltd|Xacterr;
+	}
 	return ctlr->hcintr[chan];
 }
 
