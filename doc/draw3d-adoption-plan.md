@@ -1165,17 +1165,41 @@ other: at `-r240` its content is at most 4 ms stale instead of 16, and
 every present then *skips* frames rather than repeating them, which is
 the right way round.
 
-**What is left.** The program still decides when to draw on a timer. With
-both fixes that timer stays in step — its frames are 14.9 to 18.4 ms
-apart against 6 to 28 before any of this, and no frame is repeated or
-skipped over a long run — because 16666 us is 60.0024 Hz and the drift is
-one frame in seven minutes. The architecturally clean version is for the
-display to ask the *program* for a frame too, which means exposing the
-refresh to Limbo (a file under the draw device that blocks until the next
-one) and a `frameclock` mode that waits on it instead of sleeping. Then
-there is no timer anywhere and the rate is dynamic by construction: a
-frame that takes 30 ms simply lands on the next refresh. That is worth
-doing and is not done.
+**And the other half, done.** The program still decided *when to draw* on
+a timer, and a timer near the refresh rate is the one thing that cannot
+be right. `/dev/draw/vsync` is new: a read blocks until the display next
+wants a frame. There is then no timer in the loop at all, and the rate is
+dynamic by construction — a frame that takes longer than a refresh lands
+on the next one instead of putting the whole schedule out of phase.
+`frameclock(2)`'s ticker takes `hz` 0 to mean that; `castlefrankenstein`
+defaults to it and keeps `-rN` for a timer, so the two can be measured
+against each other.
+
+```
+                                     min  median     max
+before any of today                 6275   15143   28374
+accurate timer + display present   14914   16855   18444
+paced by the display               16191   16702   17042
+```
+
+850 us of spread, and every frame presented exactly once.
+
+Deliberately opt-in rather than a change to `ticker`'s existing callers:
+85 programs use it and many advance a fixed step per tick, which would
+then run at whatever rate the screen happens to be. The interface says
+so. `castlefrankenstein` is safe because nothing there advances per tick
+— walking is driven by key events and the monsters have their own clock.
+
+**A bug of mine in the middle of it, worth keeping.** `frameclock` treats
+"the file is not there" as "no display to ask" and falls back to a timer.
+The file was there whether or not a display link had been created, so
+with `INFERNO_NOVSYNC=1` the open succeeded, the read blocked, and
+nothing ever woke it: the game drew its first frame and froze. The
+platform now says whether anything will tick and the file is absent until
+it does. What hid it was checking the wrong thing — `framegrab(1)` showed
+a perfectly good frame either way, because **a frozen program still has
+the last thing it drew on the screen. A still frame is not evidence of
+animation.**
 
 ### Phase 2a — `litcolour` allocated a colour image per fill
 
