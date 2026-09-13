@@ -21,7 +21,7 @@ static Ctlr virtarm64ctlr = {
 static Uart virtarm64uart = {
 	.regs	= &virtarm64ctlr,
 	.name	= "eia0",
-	.freq	= 24000000,	/* apb-pclk, from the DTB (same as armv7) */
+	.freq	= 48000000,	/* BCM2837 PL011 UART clock set by the firmware */
 	.phys	= &virtarm64physuart,
 };
 
@@ -59,7 +59,17 @@ virtarm64_enable(Uart *uart, int ie)
 
 	c = uart->regs;
 	USED(ie);
+	/*
+	 * The firmware leaves UART0 usable, which is why main's first banner
+	 * appears on real hardware.  Do not then depend on its inherited baud
+	 * divisors: program the BCM2837's 48MHz PL011 explicitly for 115200
+	 * (48MHz/(16*115200) = 26 + 3/64).  QEMU ignores the baud rate but
+	 * models these standard PL011 registers.
+	 */
 	csr32w(c, UartCR, 0);
+	csr32w(c, UartICR, UartICRALL);
+	csr32w(c, UartIBRD, 26);
+	csr32w(c, UartFBRD, 3);
 	csr32w(c, UartLCRH, UartLCRHWLEN8|UartLCRHFEN);
 	csr32w(c, UartCR, UartCRUARTEN|UartCRTXE|UartCRRXE);
 }
@@ -163,14 +173,18 @@ static void
 virtarm64_putc(Uart *uart, int c)
 {
 	Ctlr *ctlr;
-	volatile int i;
+	int i;
 
 	ctlr = uart->regs;
-	/* QEMU raspi3b PL011 FR flags are unreliable; pace with a short
-	 * fixed delay (the garbling was the other cores, now parked). */
+	/*
+	 * Real PL011 hardware must not have DR written while its transmit FIFO
+	 * is full.  Bound the wait so a broken/emulator FR cannot deadlock the
+	 * only diagnostic channel during bring-up.
+	 */
+	for(i = 0; i < 1000000; i++)
+		if((csr32r(ctlr, UartFR) & UartFRTXFF) == 0)
+			break;
 	csr32w(ctlr, UartDR, c);
-	for(i = 0; i < 30000; i++)
-		;
 }
 
 PhysUart virtarm64physuart = {

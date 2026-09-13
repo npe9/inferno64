@@ -18944,3 +18944,20 @@ with RPI3: init printed 52504933 and SD-READ-OK, reached RASPI3B-SH-OK, and the
 image's SHA-256 remained
 .CW 6e66723adefbfdf555c1d32f0ad95ceebb83d02b5fb586c4cbb21c57b9656d1c
 before and after the boot.
+.PP
+The first physical Pi 3B boot printed exactly
+.CW "Inferno/arm64 raspi3b"
+and no later line.  That places execution in
+.CW os/inferno/raspi3b/main.c
+between its direct early serial banner and xinit's first report; the first
+operation there was uartconsole(), which disabled and re-enabled UART0 through
+.CW os/inferno/raspi3b/uartvirtarm64.c .
+That file was still the QEMU-virt copy: it claimed a 24MHz clock, never
+programmed IBRD/FBRD, and wrote DR followed by an arbitrary delay instead of
+obeying PL011's TXFF flow control.  The firmware-inherited state sufficed for
+the first banner but was not a kernel-owned UART setup.  The Pi driver now
+programs its real 48MHz PL011 for 115200 baud (IBRD 26, FBRD 3), clears stale
+interrupts, and waits with a bounded poll for FIFO space before every byte.
+main prints PL011-OK immediately after that transition, making the hardware
+boundary observable.  This repair is QEMU-verified below; a second physical
+boot is still required to establish how far the board proceeds.

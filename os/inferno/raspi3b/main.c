@@ -112,6 +112,7 @@ main(void)
 	serialputs("Inferno/arm64 raspi3b\n", -1);
 
 	uartconsole();
+	serialputs("PL011-OK\n", -1);
 	archconsole();
 
 	xinit();
