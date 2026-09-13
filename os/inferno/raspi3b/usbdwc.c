@@ -644,13 +644,21 @@ ctldata(Ep *ep, void *a, long n)
 	return n;
 }
 
-static void
+static int
 greset(Dwcregs *r, int bits)
 {
+	int i;
+
 	r->grstctl |= bits;
-	while(r->grstctl & bits)
-		;
+	for(i = 0; i < 100000; i++){
+		if((r->grstctl & bits) == 0)
+			break;
+		microdelay(1);
+	}
+	if(r->grstctl & bits)
+		return -1;
 	microdelay(10);
+	return 0;
 }
 
 static void
@@ -731,6 +739,7 @@ init(Hci *hp)
 	Ctlr *ctlr;
 	Dwcregs *r;
 	uint n, rx, tx, ptx;
+	int i;
 
 	ctlr = hp->aux;
 	r = ctlr->regs;
@@ -748,11 +757,26 @@ init(Hci *hp)
 	 * since the emulator returns before the domain matters.
 	 */
 	if(mboxsetpower(PowerUsb, 1) < 0)
-		print("usbdwc: mailbox SET_POWER_STATE(usb) failed (ignored)\n");
+		print("DWC-POWER-FAIL\n");
+	else
+		print("DWC-POWER-OK\n");
 
-	while((r->grstctl & Ahbidle) == 0)
-		;
-	greset(r, Csftrst);
+	for(i = 0; i < 100000; i++){
+		if(r->grstctl & Ahbidle)
+			break;
+		microdelay(1);
+	}
+	if((r->grstctl & Ahbidle) == 0){
+		print("DWC-AHBIDLE-TIMEOUT grstctl %#ux gusbcfg %#ux gahbcfg %#ux\n",
+			r->grstctl, r->gusbcfg, r->gahbcfg);
+		error("DWC2 AHB did not become idle");
+	}
+	print("DWC-AHBIDLE-OK\n");
+	if(greset(r, Csftrst) < 0){
+		print("DWC-CORE-RESET-TIMEOUT grstctl %#ux\n", r->grstctl);
+		error("DWC2 core reset timed out");
+	}
+	print("DWC-CORE-RESET-OK\n");
 
 	r->gusbcfg |= Force_host_mode;
 	tsleep(&up->sleep, return0, 0, 25);
@@ -766,9 +790,16 @@ init(Hci *hp)
 	r->gnptxfsiz = rx | tx<<ODepth;
 	tsleep(&up->sleep, return0, 0, 1);
 	r->hptxfsiz = (rx + tx) | ptx << ODepth;
-	greset(r, Rxfflsh);
+	if(greset(r, Rxfflsh) < 0){
+		print("DWC-RX-FLUSH-TIMEOUT grstctl %#ux\n", r->grstctl);
+		error("DWC2 RX FIFO flush timed out");
+	}
 	r->grstctl = TXF_ALL;
-	greset(r, Txfflsh);
+	if(greset(r, Txfflsh) < 0){
+		print("DWC-TX-FLUSH-TIMEOUT grstctl %#ux\n", r->grstctl);
+		error("DWC2 TX FIFO flush timed out");
+	}
+	print("DWC-FIFO-OK\n");
 	USED(n, ptx);
 
 	r->hport0 = Prtpwr|Prtconndet|Prtenchng|Prtovrcurrchng;
@@ -1035,6 +1066,7 @@ reset(Hci *hp)
 		ctlr->regs = nil;
 		return -1;			/* not a DWC OTG core */
 	}
+	print("DWC-PROBE-OK id %#ux\n", id);
 	dprint("usbdwc: DWC OTG rev %d.%3.3x at %#p\n",
 		(id>>12)&0xF, id&0xFFF, (void*)USBREGS);
 

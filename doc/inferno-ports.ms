@@ -19017,3 +19017,21 @@ acknowledges MIS and calls uartkick() to refill the FIFO, UART0 registers IRQ
 57, and trap() dispatches both BCM pending banks (IRQs 0 through 63).  MMIO
 register accesses are volatile.  The rebuilt kernel again reaches
 RASPI3B-SH-OK under QEMU; the physical boot is the test of real FIFO backpressure.
+.PP
+That physical test drained the formerly stranded "Inferno Fourth" first and
+then printed the complete fresh boot through the version, configuration,
+firmware MAC, Initial Dis, raspi3b init, RASPI3B-OK and DRAW-OK.  Thus the BCM
+UART transmit interrupt path is verified on silicon.  The next stop occurs as
+the init program enters its USB check after DRAW-OK.  The DWC2 initializer had
+four infinite hardware waits (AHB idle, core soft reset, RX FIFO flush and TX
+FIFO flush), any one of which made a failed power/reset transition
+indistinguishable from a dead kernel.
+.PP
+.CW os/inferno/raspi3b/usbdwc.c
+now bounds each wait at 100ms, reports the relevant GRSTCTL/GUSBCFG/GAHBCFG
+state on timeout and raises a device error so a missing USB controller cannot
+hold the entire boot forever.  It also emits DWC-PROBE, DWC-POWER, DWC-AHBIDLE,
+DWC-CORE-RESET and DWC-FIFO milestones.  QEMU reports every milestone OK,
+enumerates its root hub, and reaches RASPI3B-SH-OK.  The next physical run will
+identify the exact real-controller transition rather than merely stopping
+after DRAW-OK.
