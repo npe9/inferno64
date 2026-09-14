@@ -71,7 +71,38 @@ def reader():
             break
 
 threading.Thread(target=reader, daemon=True).start()
-time.sleep(wait)
+
+# Wait for the guest to SAY it is ready, not for a fixed number of
+# seconds.  INFERNO_CONSOLE_WAITFOR names a string to look for in the
+# console output; the numeric argument becomes a ceiling rather than
+# the plan.  Without it the old fixed sleep is kept exactly, so no
+# existing caller changes behaviour.
+#
+# This exists because a fixed delay is a guess about boot time, and
+# boot time is not a constant: the memory-floor sweep boots the same
+# kernel from 64M to 1024M, and at the bottom of that range the kernel
+# takes over twice as long to reach a shell.  A 40-second wait that is
+# ample at 128M types into a machine that has not finished booting at
+# 76M, and the run then looks like "the kernel cannot run a command in
+# 76M" when it means "the harness typed too early".  That is the third
+# time in this tree a fixed timeout has been read as a property of the
+# kernel; see doc/inferno-cloud-modern.ms.
+waitfor = os.environ.get('INFERNO_CONSOLE_WAITFOR')
+if waitfor:
+    target = waitfor.encode()
+    deadline = time.time() + wait
+    while time.time() < deadline:
+        if target in bytes(buf):
+            break
+        time.sleep(0.1)
+    else:
+        sys.stderr.write("WAITFOR %r never appeared in %gs; typing anyway\n"
+                         % (waitfor, wait))
+    # Let the prompt settle: the token can be printed a moment before
+    # the shell is actually reading.
+    time.sleep(2)
+else:
+    time.sleep(wait)
 sys.stderr.write("typing %r after %gs, %d bytes of boot seen\n" % (cmd, wait, len(buf)))
 sys.stderr.flush()
 # A character at a time, paced.

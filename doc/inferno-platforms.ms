@@ -1292,6 +1292,28 @@ leaves, and
 is still the amd64 kernel's
 .CW CONFADDR .
 So: it builds, it loads, it runs, it does not yet boot a kernel.
+.PP
+.B "That last sentence is out of date."
+Corrected 14 September 2026 by running it.  A GPT disk built by
+.CW scripts/mkinferno-efi-disk-arm64.sh ,
+booted under
+.CW "qemu-system-aarch64 -M virt"
+with
+.CW edk2-aarch64-code.fd
+as pflash and the disk on
+.CW virtio-blk-device ,
+reaches
+.CW "Inferno Fourth Edition" ,
+.CW "Initial Dis: \(dq/osinit.dis\(dq" ,
+.CW VIRTARM64-OK
+and an interactive shell.  The data abort described above is gone.  The
+paragraph is kept rather than deleted because what it records about the
+handover \(em that an AArch64 kernel wants the MMU and caches off and
+its own register state, which is not what
+.CW ExitBootServices
+leaves \(em is the reason the loader has the shape it does, and because
+a document that quietly rewrites its own history is worth less than one
+that shows where it was wrong.
 The firmware to test that against is here and works:
 .CW /opt/homebrew/share/qemu/edk2-aarch64-code.fd
 as a pflash under
