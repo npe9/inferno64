@@ -73,8 +73,8 @@ static struct Cmd cmdmain[] =
 TkSpace	tkspaces[] =
 {
 	/* labelpadx, labelpady, bitpadx, bitpady, entrypadx, entrypady, textpadx, textpady, scaleborder, corner */
+	{ 14, 7, 5, 5, 8, 6, 7, 5, 1, 5 },	/* TkSflat - the default */
 	{ 3, 0, 0, 0, 0, 0, 2, 0, 0, 0 },	/* TkSclassic */
-	{ 14, 7, 5, 5, 8, 6, 7, 5, 1, 5 },	/* TkSflat */
 };
 
 /*
@@ -156,9 +156,9 @@ TkSpace*
 tkspace(Tk *tk)
 {
 	if(tk == nil || tk->env == nil || tk->env->top == nil)
-		return &tkspaces[TkSclassic];
+		return &tkspaces[TkSflat];
 	if((uint)tk->env->top->style >= nelem(tkspaces))
-		return &tkspaces[TkSclassic];
+		return &tkspaces[TkSflat];
 	return &tkspaces[tk->env->top->style];
 }
 
@@ -647,7 +647,7 @@ tkdefaultenv(TkTop *t)
 	if(locked)
 		unlockdisplay(d);
 
-	tksetenvcolours(env, t != nil ? t->style : TkSclassic);
+	tksetenvcolours(env, t != nil ? t->style : TkSflat);
 	return env;
 }
 

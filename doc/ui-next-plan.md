@@ -597,10 +597,31 @@ it has to, since spacings and border widths are read when a widget is
 configured. So the whole look can be tried, or put back, across a session
 without editing one program. Unset means classic.
 
-That is deliberately where this stops. **Whether flat should be the
-default is a taste question, and the taste that matters is not the
-code's** — the switch is now in the user's hand, which is what the
-caution at the end of this section asked for.
+**Flat is now the default.** The taste question was put to the user and
+came back as "you do it, the goal here is to modernize inferno", which
+settles it: a modernization whose modern half is opt-in has not modernized
+anything. `TkSflat` is the constant that is zero and a `TkTop` is
+allocated zeroed, so the default is decided in one enum and at no
+creation site — there is no path that makes a toplevel and forgets.
+`$tkstyle=classic` puts a whole session back.
+
+**What flipping it cost, and it is worth knowing.** Five checks in
+`tkofftest(1)` failed immediately, every one of them a check that had
+silently relied on the default rather than stating a style: the two-tone
+bevel's shades, the "a classic border does not scale" control, the
+`$tkstyle` test, and the titlebar artwork measurement. That last is the
+interesting one — it asserts that scaling the chrome preserves the
+proportion of pixels inked, which is true of the *artwork* but stops being
+measurable under flat, because a widget's border now scales with the font
+too and by a different factor from the bitmap. 44% against 61%. Each of
+those now names the style it means, which they should have done all along.
+
+**One consequence not fixed:** a flat control is about 1.5× the width of
+a classic one (a checkbutton goes 44×20 to 66×34), so the `wm` toolbar
+holds about two thirds as many tasks before it overflows. That is the
+direction every current system has gone — a Dock or a Windows 11 taskbar
+is less dense than a 1995 one and handles overflow rather than shrinking —
+but this toolbar does not handle overflow, it just runs off the edge.
 
 **Still open in this section:** square corners, which want a
 rounded-rectangle primitive `libtk` does not have; and a second colour

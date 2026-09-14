@@ -521,6 +521,15 @@ checktitlebar(font, what: string)
 	top := offscreen();
 	if(top == nil)
 		return;
+	# Classic explicitly.  What this measures is titlebar(2)'s ARTWORK -
+	# 16-pixel bitmaps replicated at a whole-number scale, so the
+	# proportion inked is preserved.  Under the flat style a widget's
+	# border width is derived from the font as well, so a button's ink
+	# includes a border that scaled by a different factor from the
+	# bitmap, and the proportion moves for a reason that has nothing to
+	# do with the artwork: 44% against 61%.  The property is still true
+	# of the picture; the measurement stops being about the picture.
+	tk->cmd(top, "style classic");
 	tk->cmd(top, ". configure -font " + font);
 	titlebar->new(top, Titlebar->Appl);
 	titlebar->settitle(top, "A Window With Quite A Long Title Indeed");
@@ -828,7 +837,7 @@ checkstyleenv()
 	# tkclient caches the answer on first use, so this has to run in a
 	# fresh instance of it or it would only ever see the first setting.
 	got := array[2] of string;
-	want := array[2] of {"flat", "classic"};
+	want := array[2] of {"classic", "flat"};
 	for(i := 0; i < 2; i++){
 		e->setenv("tkstyle", want[i]);
 		tc := load Tkclient Tkclient->PATH;
@@ -846,10 +855,10 @@ checkstyleenv()
 		got[i] = tk->cmd(top, "style");
 	}
 	e->setenv("tkstyle", "");
-	report(got[0] == "flat", sys->sprint(
-		"$tkstyle=flat reaches a real tkclient window (%s)", got[0]));
-	report(got[1] == "classic", sys->sprint(
-		"and anything else leaves it classic (%s)", got[1]));
+	report(got[0] == "classic", sys->sprint(
+		"$tkstyle=classic reaches a real tkclient window (%s)", got[0]));
+	report(got[1] == "flat", sys->sprint(
+		"and anything else leaves it flat, the default (%s)", got[1]));
 }
 
 
@@ -1040,6 +1049,9 @@ checkbevelhue()
 	top := offscreen();
 	if(top == nil)
 		return;
+	# classic explicitly: this checks the two-tone CHISEL's shades, and
+	# the flat style draws one outline and has no second edge to compare.
+	tk->cmd(top, "style classic");
 	tk->cmd(top, "frame .f -width 90 -height 50 -borderwidth 3 -relief raised");
 	tk->cmd(top, "pack .f -padx 10 -pady 10");
 	map(top);
@@ -1126,8 +1138,8 @@ checkstyle()
 	tk->cmd(top, "update");
 	flat := levels(tk->rect(top, ".f", Tk->Border));
 
-	report(was == "classic",
-		sys->sprint("the default style is classic (%s)", was));
+	report(was == "flat",
+		sys->sprint("the default style is flat (%s)", was));
 	report(tk->cmd(top, "style") == "flat",
 		"the style command reports back what was set");
 	report(flat < classic, sys->sprint(
@@ -1226,6 +1238,10 @@ checkscaledborder()
 		if(t2 == nil)
 			return;
 		t2.screenr = off.r;
+		# explicitly classic: it is the control for "a classic border
+		# does not scale", and since flat became the default a toplevel
+		# that says nothing is no longer classic.
+		tk->cmd(t2, "style classic");
 		tk->cmd(t2, "button .b -text {Cancel}");
 		tk->cmd(t2, "pack .b");
 		bc[i] = int tk->cmd(t2, ".b cget -borderwidth");

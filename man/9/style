@@ -16,17 +16,30 @@ Every relief is a two-tone chisel: a light edge and a dark edge, so that
 stands out of the surface and
 .B sunken
 is cut into it.
-This is the default, and it is the look this toolkit has always had.
+The look this toolkit has always had.
+It is no longer the default; see below.
 .TP
 \f5flat\fP
 Every relief is one restrained outline of the widget's border width, in
 the darker of the two shades.
+THIS IS THE DEFAULT.
 .B Raised
 and
 .B sunken
 draw the same thing;
 .B flat
 still draws nothing.
+.PP
+Flat is the default because
+.B TkSflat
+is the constant that is zero and a
+.B TkTop
+is allocated zeroed \(em so the default is decided in one enum and at no
+creation site, and there is no path that makes a toplevel and forgets to
+choose.
+.B "$tkstyle=classic"
+puts a whole session back, through
+.IR tkclient (2).
 .PP
 It is a property of the toplevel rather than an option on each widget,
 and deliberately so.

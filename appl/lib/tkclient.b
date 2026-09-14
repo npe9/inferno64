@@ -125,23 +125,23 @@ toplevel(ctxt: ref Draw->Context, topconfig: string, title: string, buts: int): 
 stylewanted := -1;
 
 # $tkstyle picks the widget look for every program that goes through
-# tkclient(2), so the flat style of style(9) can be tried across a whole
-# session - or put back - without editing a single one of them.
+# tkclient(2), so a whole session can be put back to the old look without
+# editing a single one of them.
 #
-# Unset means classic, and that is the point rather than caution: the
-# existing look is coherent, somebody chose it, and which of the two is
-# better is a matter of taste belonging to whoever is looking at the
-# screen.  This hands them the switch instead of deciding for them.
+# Unset means FLAT, which is style(9)'s default since flat became the
+# constant that is zero.  $tkstyle=classic is the way back.  The switch
+# was added when classic was still the default and the direction had not
+# been settled; it is the same switch, pointing the other way.
 stylefromenv(top: ref Tk->Toplevel)
 {
 	if(stylewanted == -1){
 		stylewanted = 0;
 		e := load Env Env->PATH;
-		if(e != nil && e->getenv("tkstyle") == "flat")
+		if(e != nil && e->getenv("tkstyle") == "classic")
 			stylewanted = 1;
 	}
 	if(stylewanted == 1)
-		tk->cmd(top, "style flat");
+		tk->cmd(top, "style classic");
 }
 
 readscreenrect(top: ref Tk->Toplevel)

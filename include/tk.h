@@ -63,8 +63,14 @@ enum
 	 * is a two-tone chisel or one restrained outline.  Classic is the
 	 * default and is the look this toolkit has always had.
 	 */
-	TkSclassic	= 0,
-	TkSflat,
+	/*
+	 * FLAT IS ZERO, and that is the whole of how it became the default.
+	 * A TkTop is heapz'd, so a style nobody sets is whichever constant
+	 * is 0 - which means the default is chosen here and at no creation
+	 * site, and there is no path that makes a toplevel and forgets.
+	 */
+	TkSflat		= 0,
+	TkSclassic,
 
 	TkArepl		= 0,	/* Bind options */
 	TkAadd,
