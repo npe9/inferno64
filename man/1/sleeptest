@@ -22,6 +22,15 @@ defaults to 16, which is the period a 60Hz frame clock asks for.
 asks the same question of the display instead of the clock: it reads
 .B /dev/draw/vsync
 and reports how far apart the moments it asks for a frame are.
+.PP
+It is also the way to find out whether the display link is alive at all,
+which is worth knowing before trusting any frame-pacing number.
+A passive reader gets nothing from the fallback that presents on a flush,
+so the only thing that can make that read return is the display itself.
+A display that is asleep does not ask for frames \- correctly, there
+being nothing to show it \- and this then blocks rather than reporting.
+Two runs of the same binary minutes apart can legitimately disagree for
+that reason and nothing records it.
 The draw device must be in the name space, which it is for anything with
 a window and is not for a bare shell \-
 .B "bind -a '#i' /dev"
