@@ -1,0 +1,218 @@
+.TH SH-OPTIM 1
+.SH NAME
+optim \- shell script interface to optim(2), over hoc(2) expressions
+.SH SYNOPSIS
+.B load optim
+
+.B id := ${optim new}
+.br
+.B optim
+.I id
+.B expr
+.I hoc-expression
+.br
+.B optim
+.I id
+.B vars
+.I name...
+.br
+.B optim
+.I id
+.B params
+.I name...
+.br
+.B optim
+.I id
+.B data
+.I x y
+.RI [ x y ]...
+.br
+.B optim
+.I id
+.B objective
+.I coefficient...
+.br
+.B optim
+.I id
+.B constraint
+.I coefficient... rhs
+.br
+.B ${optim
+.I id
+.B value
+.I x...
+.B }
+.br
+.B ${optim
+.I id
+.BR root | bracket | minimise1
+.I a b
+.B }
+.br
+.B ${optim
+.I id
+.B minimise
+.I start...
+.B }
+.br
+.B ${optim
+.I id
+.B fit
+.I start...
+.B }
+.br
+.B ${optim
+.I id
+.B linprog
+.B }
+.br
+.B optim del
+.I id...
+.SH DESCRIPTION
+.I Optim
+searches, with the function written as a
+.IR hoc (2)
+expression.
+.PP
+That is the point of this one.
+.IR Optim (2)
+takes a function reference and a shell has no functions to give it, so
+the objective is compiled from text by
+.IR hoc (2)
+and evaluated by setting the named variables and calling
+.BR eval .
+.B optim
+.I id
+.B root 0 1
+on the expression
+.B cos(x)-x
+is then a complete root-finding session typed at a prompt.
+.PP
+.B Expr
+compiles the expression.
+.B Vars
+names its variables; one unnamed variable is called
+.BR x ,
+which is what anyone typing an expression means.
+.B Value
+evaluates it at a point, which is how to check that what was typed is
+what was meant before searching it.
+.SS Searching
+.B Root
+finds where the expression crosses zero between
+.I a
+and
+.IR b ,
+which must straddle a root;
+.B bracket
+widens an interval until it does.
+.B Minimise1
+returns the
+.I x
+where it is least between
+.I a
+and
+.IR b ,
+and the value there.
+.PP
+.B Minimise
+takes a starting point with one value per variable and returns the
+point, then the value, then whether it
+.B converged
+and how many evaluations it took.
+The converged flag is worth reading: Nelder-Mead stopping because it ran
+out of steps looks exactly like it finishing.
+.SS Fitting and programming
+.B Fit
+adjusts named
+.B params
+so the expression matches the
+.BR data ,
+by least squares.
+The expression is then a model in the parameters and the one variable \-
+.B a*exp(b*t)
+with
+.B params a b
+and
+.BR "vars t" .
+It returns the parameters, the sum of squares, the converged flag and
+the iteration count.
+.PP
+.B Linprog
+maximises the
+.B objective
+subject to the
+.BR constraint s,
+each of which is its coefficients followed by its right-hand side.
+Only
+.B <=
+constraints with a non-negative right-hand side, as in
+.IR optim (2).
+.SH EXAMPLE
+.IP
+.EX
+load std
+load optim
+o := ${optim new}
+optim $o expr 'cos(x) - x'
+echo ${optim $o value 0.5}	# 0.37758
+echo ${optim $o root 0 1}	# 0.73908513321516
+
+optim $o vars x y
+optim $o expr '(1-x)*(1-x) + 100*(y-x*x)*(y-x*x)'
+echo ${optim $o minimise -1.2 1.0}	# 1 1 4.9e-32 1 340
+
+l := ${optim new}
+optim $l objective 3 5
+optim $l constraint 1 0 4
+optim $l constraint 0 2 12
+optim $l constraint 3 2 18
+echo ${optim $l linprog}		# 2 6 36 1 3
+optim del $o $l
+.EE
+.SH SOURCE
+.B /appl/cmd/sh/optim.b
+.SH SEE ALSO
+.IR sh (1),
+.IR sh-hoc (1),
+.IR sh-stats (1),
+.IR optim (2),
+.IR hoc (2),
+.IR optimtest (1)
+.SH DIAGNOSTICS
+An expression that will not compile, a bracket that does not bracket, a
+count of starting values that does not match the variables, a
+constraint whose width does not match the objective: each fails the
+command.
+.SH BUGS
+There is no test for this module in
+.BR /appl/cmd ,
+and no lab in
+.B /lib/demo
+either \- the other shell interfaces have one, and a search has less to
+look at than a waveform or a deflected shape.
+.IR Optim (2)
+underneath is checked by
+.IR optimtest (1),
+and what is added here \- the hoc bridge, which is the part worth
+testing \- is exercised only by the example above.
+.PP
+There is one hoc symbol table for the whole shell session, as
+.IR sh-hoc (1)
+says.
+So an objective's variables are global: two handles whose expressions
+use
+.B x
+are using the same
+.BR x ,
+which does not matter while only one search runs at a time and would
+matter very much if one were ever nested inside another.
+.PP
+The derivative form of
+.B newton
+in
+.IR optim (2)
+is not reachable from here, since it needs a second expression.
+Use
+.BR root ,
+which is safeguarded anyway.

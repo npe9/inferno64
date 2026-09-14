@@ -291,6 +291,7 @@ optimtest optimtest
 sh-circuit sh-circuit
 sh-control sh-control
 sh-frame sh-frame
+sh-optim sh-optim
 sh-signal sh-signal
 sh-stats sh-stats
 signaltest signaltest
