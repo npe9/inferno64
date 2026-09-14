@@ -957,14 +957,32 @@ predicate, not a result.
 .PP
 .B "Corrected, the two thresholds differ \(em and the boundary is not sharp."
 Bisecting 56\-128 gives 66 MiB to boot and 68 MiB to run a command.
-Bisecting 66\-68 immediately afterwards gives 67 for both, because the
-predicate near the boundary is not deterministic: the same size passes
-some runs and fails others.  A bisect assumes the property is monotone,
-and over a noisy predicate it returns an arbitrary point inside the
-noisy band while looking exact.  The script now takes
+Bisecting 66\-68 immediately afterwards gives 67 for both.  That is not
+a third answer: the predicate near the boundary is not deterministic, a
+bisect assumes the property is monotone, and over a noisy predicate it
+returns an arbitrary point inside the noisy band while looking exact.
+The script takes
 .CW REPS
-to sweep with repeats and report a rate per size, which is the only
-honest way to state where the edge is.
+now and sweeps with repeats instead, which is the only honest way to
+say where the edge is.  Three runs at each size:
+.PP
+.TS
+center box tab(;);
+c | c | c
+n | c | c .
+MiB;boots;runs a command
+_
+65;0/3;0/3
+66;3/3;0/3
+67;3/3;2/3
+68;3/3;3/3
+69;3/3;3/3
+.TE
+.PP
+So the boot floor is sharp at 66 MiB and the useful-work floor is 68,
+with 67 the band where it depends on the run.  Two megabytes separate
+"reaches a shell" from "can run a program in it", and a number quoted
+from a single bisect would have landed anywhere in that gap.
 .PP
 .B "The floor is mostly the image."
 The kernel is 9.19 MB with its root compiled in and reserves memory up
