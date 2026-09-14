@@ -44,6 +44,7 @@ castlefrankenstein castlefrankenstein
 cat cat
 cd cd
 chan sh-tk
+chantest chantest
 chardemo chardemo
 charon charon
 chat collab-clients
@@ -284,6 +285,7 @@ els sh-sexprs
 emu emu
 engridden gridstart
 env sh-std
+etherusb etherusb
 exit sh
 expr sh-expr
 factor math-misc
@@ -428,6 +430,7 @@ query grid-query
 quote sh
 raindrops raindrops
 raise sh-std
+raisetest chantest
 raw2iaf auplay
 rawhide rawhide
 rblock sh-file2chan

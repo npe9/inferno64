@@ -1,0 +1,68 @@
+.TH ETHERUSB 1
+.SH NAME
+etherusb \- serve a USB ethernet device as a netif file tree
+.SH SYNOPSIS
+.B usb/etherusb
+[
+.B -d
+]
+[
+.B -m
+.I mountpoint
+]
+[
+.B -a
+.I macaddress
+]
+.I device
+.SH DESCRIPTION
+.I Etherusb
+is a Limbo driver in the shape of 9front's
+.BR nusb/ether .
+It serves the
+.IR netif (3)
+file interface that
+.IR ip (3)'s
+.B ethermedium
+binds to, backed by the bulk endpoints of a USB ethernet device reached
+through
+.BR #U .
+.PP
+The point of serving it rather than writing a kernel card is that
+.B ethermedium
+reaches an ethernet device purely by path \(em it opens
+.IR clone ,
+.IR addr
+and
+.IR N/data
+under whatever directory it is given \(em so this Styx server
+.I is
+devip's ethernet, and gets ARP, IPv6 neighbour discovery and
+multicast-MAC mapping from the kernel for free.  A kernel
+.IR ether (3)
+card cannot take this role at all: cards are probed at boot, before
+.IR usbd (4)
+has enumerated any USB device.
+.PP
+The options are
+.TP
+.B -d
+Report what the driver is doing on standard error.
+.TP
+.BI -m " mountpoint"
+Where to serve the tree; the default is
+.BR /net.alt ,
+so that it does not displace a kernel
+.B /net
+until something binds it there.
+.TP
+.BI -a " macaddress"
+Use this MAC address rather than the one the device reports.
+.SH SOURCE
+.B /appl/cmd/usb/etherusb.b
+.SH SEE ALSO
+.IR usbd (4),
+.IR ip (3),
+.IR netif (3)
+.SH BUGS
+One device per invocation.

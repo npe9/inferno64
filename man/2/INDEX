@@ -390,6 +390,7 @@ rsadecrypt crypt-dsagen
 rsaencrypt crypt-dsagen
 rsafill crypt-dsagen
 rsagen crypt-dsagen
+scorestore scorestore
 screen draw-screen
 scsi scsiio
 scsiio scsiio

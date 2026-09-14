@@ -1,0 +1,45 @@
+.TH CHANTEST 1
+.SH NAME
+chantest, raisetest \- diagnostics for the Dis virtual machine
+.SH SYNOPSIS
+.B chantest
+.PP
+.B raisetest
+.SH DESCRIPTION
+These are diagnostics rather than smoke tests: each exists to answer one
+question about the virtual machine, and each is meant to be run on a
+kernel and compared against hosted
+.IR emu (1).
+.PP
+.I Chantest
+exercises channel and
+.B alt
+semantics \(em send and receive, buffered and unbuffered, several arms
+ready at once, a channel closed under a waiting process.  It was written
+before the per-channel locking of
+.B doc/dis-parallel-plan.ms
+rather than after it.  With one interpreter every case passes trivially;
+the point is to have them passing beforehand, so that "still passes"
+means something once more than one processor runs Dis.
+.PP
+.I Raisetest
+asks whether a Limbo
+.B raise
+from inside a spawned process reaches the exception handler immediately
+surrounding it.  Under hosted
+.I emu
+it does, and the program prints
+.B "received caught"
+and exits.  On a native kernel it did not: the marker printed and the
+virtual machine went silent forever.  It is kept because a program that
+reproduces an open bug is worth more than a note saying the bug exists,
+and because the answer is expected to change.
+.SH SOURCE
+.B /appl/cmd/chantest.b
+.br
+.B /appl/cmd/raisetest.b
+.SH SEE ALSO
+.IR emu (1),
+.IR prog (3)
+.SH BUGS
+Neither prints a summary line; read the output.

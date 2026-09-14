@@ -36,6 +36,14 @@ build_documented() {
             sub(/\\-.*/,"",n)
             gsub(/\.[A-Z].*/,"",n)
             gsub(/[,[:space:]]+/,"\n",n)
+            # A section 2 NAME line names the module before its members:
+            #   httpclient: Hdr, Resp, init, get \- HTTP/1.1 client
+            # so the first token carries a colon.  Without stripping it,
+            # every module page in man/2 looked undocumented -- this
+            # check reported httpclient, tls12, p256 and awsv4 as
+            # missing while their pages sat in the tree with their names
+            # in the NAME section.
+            gsub(/:/,"",n)
             print n
         }
     ' \
