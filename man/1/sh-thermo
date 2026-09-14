@@ -1,0 +1,212 @@
+.TH SH-THERMO 1
+.SH NAME
+thermo \- shell script interface to thermo(2)
+.SH SYNOPSIS
+.B load thermo
+
+.B id := ${thermo new}
+.br
+.B thermo
+.I id
+.B gas air
+.RB "| gas " "name mw gamma"
+.br
+.B thermo
+.I id
+.B state
+.RB ( pt | pv | vt )
+.I a b
+.br
+.B thermo
+.I id
+.RB ( isothermal | isentropic )
+.I p2
+.br
+.B thermo
+.I id
+.RB ( isobaric | isochoric )
+.I t2
+.br
+.B thermo
+.I id
+.B polytropic
+.I p2 n
+.br
+.B thermo
+.I id
+.B carnot
+.I tc th p1 p2
+.br
+.B thermo
+.I id
+.B otto
+.I ratio t1 p1 qin
+.br
+.B thermo
+.I id
+.B diesel
+.I ratio cutoff t1 p1
+.br
+.B thermo
+.I id
+.B brayton
+.I ratio t1 p1 t3
+.br
+.B ${thermo
+.I id
+.BR r | cp | cv | gamma | p | v | t | u | h | s
+.B }
+.br
+.B ${thermo
+.I id
+.BR work | heat | du | ds
+.B }
+.br
+.B ${thermo
+.I id
+.BR efficiency | wnet | qin | qout | states | names
+.B }
+.br
+.B ${thermo
+.I id
+.B path
+.RI [ n ]
+.B }
+.br
+.B ${thermo
+.I id
+.B lmtd
+.RB ( parallel | counter )
+.I thi tho tci tco
+.B }
+.br
+.B ${thermo
+.I id
+.B effectiveness
+.RB ( parallel | counter )
+.I ntu cr
+.B }
+.br
+.B ${thermo
+.I id
+.B fin
+.I h k thickness length
+.B }
+.br
+.B thermo del
+.I id...
+.SH DESCRIPTION
+.I Thermo
+makes
+.IR thermo (2)
+usable from
+.IR sh (1).
+Units are SI and absolute, and the sign convention is heat in and work
+out positive, exactly as there.
+.PP
+A handle carries a gas, a current state, the last process and the last
+cycle.
+Each process moves the current state and records what it cost, so
+.B work,
+.B heat,
+.B du
+and
+.B ds
+describe the process just run and
+.B p,
+.B v,
+.B t
+and the rest describe where it ended up.
+.SS Cycles
+.BR Carnot ,
+.BR otto ,
+.B diesel
+and
+.B brayton
+each run a cycle;
+.B efficiency,
+.B wnet,
+.B qin
+and
+.B qout
+report it, and
+.B states
+gives the corners as
+.I p v T
+for each.
+.PP
+.B Path
+is the one thing here that is not a thin wrapper.
+It returns the loop as
+.I v p
+pairs,
+.I n
+a side, interpolated along the
+.B actual
+.B process
+joining each pair of corners \- an isentrope where the cycle is
+isentropic, an isotherm where it is isothermal, a straight line only
+where the process really is one.
+.PP
+.B Path 1
+is exactly the corners, which is what a plot of the state points wants.
+.PP
+That matters because the
+.B area
+inside a P-v loop is the work.
+Joining the corners with straight lines draws the wrong area: an
+isentrope bows well below its chord, and for a compression ratio of 9
+the midpoint of one leg sits at 279 kPa where the chord says 1.29 MPa.
+A diagram drawn the easy way overstates the work by eye.
+.SH EXAMPLE
+.IP
+.EX
+load std
+load thermo
+t := ${thermo new}
+thermo $t gas air
+thermo $t state pt 100000 300
+thermo $t isentropic 1000000
+echo ${thermo $t t}		# 579.2 K
+echo ${thermo $t heat}		# 0, it is isentropic
+
+thermo $t otto 9 300 100000 1e6
+echo ${thermo $t efficiency}	# 0.58476 = 1 - r^(1-gamma)
+echo ${thermo $t lmtd counter 400 350 300 350}	# 50
+thermo del $t
+.EE
+.SH SOURCE
+.B /appl/cmd/sh/thermo.b
+.SH SEE ALSO
+.IR sh (1),
+.IR sh-plot (1),
+.IR thermo (2),
+.IR thermotest (1)
+.SH DIAGNOSTICS
+A gamma outside the range any gas has, a negative absolute temperature
+or pressure, a cold reservoir hotter than the hot one, streams that
+cross in an exchanger: each fails the command with the message
+.IR thermo (2)
+gives.
+.SH BUGS
+There is no test for this module in
+.BR /appl/cmd .
+.IR Thermo (2)
+underneath it is checked by
+.IR thermotest (1);
+what is added here is the handle state and
+.BR path ,
+exercised by the example above and by
+.BR /lib/demo/cyclelab.sh .
+.PP
+.B Path
+knows the shape of the four cycles this module can run and nothing else.
+A cycle assembled by hand out of individual processes has no path,
+because the handle records only where each process ended and not which
+process it was.
+.PP
+.B Van
+.B der
+.B Waals
+is not reachable from here, so the one thing an ideal gas cannot do \-
+have a critical point \- needs a Limbo program.

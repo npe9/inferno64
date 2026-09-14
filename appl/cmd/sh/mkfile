@@ -15,6 +15,7 @@ TARG=sh.dis\
 	sexprs.dis\
 	std.dis\
 	string.dis\
+	thermo.dis\
 	tiles.dis\
 	tk.dis\
 	echo.dis\
@@ -46,7 +47,8 @@ INS=	$ROOT/dis/sh.dis\
 	$ROOT/dis/sh/stats.dis\
 	$ROOT/dis/sh/std.dis\
 	$ROOT/dis/sh/string.dis\
-#	$ROOT/dis/sh/tk.dis\
+#	$ROOT/dis/sh/thermo.dis\
+	$ROOT/dis/sh/tk.dis\
 	$ROOT/dis/sh/echo.dis\
 	$ROOT/dis/sh/csv.dis\
 	$ROOT/dis/sh/test.dis\

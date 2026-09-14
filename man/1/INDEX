@@ -294,6 +294,7 @@ sh-frame sh-frame
 sh-optim sh-optim
 sh-signal sh-signal
 sh-stats sh-stats
+sh-thermo sh-thermo
 signaltest signaltest
 sleeptest sleeptest
 statstest statstest
