@@ -757,7 +757,27 @@ there was never speed on the table here anyway.
    blends coverage masks — but the Metal sprite cache is explicit that it
    is *"not a packed atlas — one Metal texture per distinct pair"*.
 3. **Whole-frame emission**, so a repaint produces one tree rather than
-   one per `tkdrawrelief` call. Prerequisite for batching.
+   one per `tkdrawrelief` call. Prerequisite for batching, and bigger than
+   it looks — **measured, not guessed**: a `tkgallery(1)` frame draws 43
+   widgets and takes **27 scratch surfaces**, so a frame is 28 surfaces
+   and a flat node list cannot describe one. `tkdrawslaves1()` walks the
+   tree against a single `dst`, but seven of the widget files get a
+   scratch from `tkitmp()`, draw into it, and blit out.
+
+   **The good news is that it is sequential.** `tkitmp()` hands out *one
+   cached scratch per context* — `ti->i` opaque, `ti->ia` alpha — reused
+   whenever it is big enough, so those 27 are 27 reuses of the same image
+   and not 27 allocations. There is never more than one scratch live. So
+   `TkNlayer` is a *scope* — render these children into a scratch, then
+   composite the result at a point — rather than a live offscreen target,
+   which is much the easier thing to render and is why this is tractable
+   at all. The node is declared in `tk.h` so the numbering does not move.
+
+   Do not start this by converting widgets. Start by making the layer
+   node and proving it on one widget that uses `tkitmp` (a `button` is
+   the smallest), against the same byte-identity check — the scratch is
+   shared mutable state and getting its extent or its blit point wrong is
+   exactly the kind of error that looks fine and is off by a pixel.
 4. **A Metal backend.** Last, and only after 3: the measured hazard is
    94% command-buffer overhead for small work, so a backend that issues a
    draw call per node would be *slower* than the CPU, decisively. The

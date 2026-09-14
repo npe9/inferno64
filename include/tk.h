@@ -489,6 +489,16 @@ enum {
 	 * that make animation cost nothing to rasterise - clip, transform
 	 * and opacity.  tkscenerender() ignores them and says so.
 	 */
+	/*
+	 * A subtree rendered into a scratch surface and then composited at
+	 * a point.  Not speculative: a gallery frame draws 43 widgets and
+	 * takes 27 scratch surfaces, so a frame is 28 surfaces and a flat
+	 * list cannot describe one.  It is SEQUENTIAL though - tkitmp()
+	 * hands out one cached scratch per context, reused and blitted out
+	 * between widgets - so a layer node is a scope, not a live surface,
+	 * which is much the easier thing to render.
+	 */
+	TkNlayer,
 	TkNtexture,
 	TkNglyphs,
 	TkNlinear,
