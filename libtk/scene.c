@@ -231,6 +231,38 @@ tkscenetext(TkScene *s, Point p, char *text, Font *f, ulong rgba)
 		n->type = TkNgroup;	/* a node that draws nothing */
 }
 
+/*
+ * Open a layer: the nodes that follow, up to tkscenelayerend(), are drawn
+ * into a scratch surface `size' big filled with `fill', and the result is
+ * then blitted to `dstr' taking pixels from `sp'.
+ *
+ * A scope rather than a live offscreen target, and that is a measured
+ * choice: a frame takes 27 scratch surfaces but tkitmp() hands out ONE
+ * cached scratch per context, reused and blitted out between widgets, so
+ * there is never more than one live.  One saved pointer is therefore
+ * enough and layers do not nest - which is just as well, since two live
+ * layers would both be the same image.
+ */
+void
+tkscenelayer(TkScene *s, Point size, ulong fill, Rectangle dstr, Point sp)
+{
+	TkNode *n;
+
+	if((n = newnode(s, TkNlayer)) == nil)
+		return;
+	n->r.min = ZP;
+	n->r.max = size;
+	n->rgba = fill;
+	n->dstr = dstr;
+	n->sp = sp;
+}
+
+void
+tkscenelayerend(TkScene *s)
+{
+	newnode(s, TkNlayerend);
+}
+
 int
 tkscenecount(TkScene *s)
 {
@@ -368,33 +400,58 @@ renderborder(TkCtxt *c, Image *dst, TkNode *n)
 int
 tkscenerender(TkScene *s, TkCtxt *c, Image *dst)
 {
-	TkNode *n;
-	Image *col;
+	TkNode *n, *open;
+	Image *col, *target, *saved, *t;
 	int drawn;
 
 	if(s == nil || c == nil || dst == nil)
 		return 0;
 	drawn = 0;
+	target = dst;
+	saved = nil;
+	open = nil;
 	for(n = s->head; n != nil; n = n->next){
+		switch(n->type){
+		case TkNlayer:
+			if(saved != nil)
+				continue;	/* layers do not nest; see above */
+			t = tkitmppix(c, n->r.max, n->rgba);
+			if(t == nil)
+				continue;	/* no scratch: draw in place */
+			saved = target;
+			target = t;
+			open = n;
+			drawn++;
+			continue;
+		case TkNlayerend:
+			if(saved == nil)
+				continue;
+			draw(saved, open->dstr, target, nil, open->sp);
+			target = saved;
+			saved = nil;
+			open = nil;
+			drawn++;
+			continue;
+		}
 		switch(n->type){
 		case TkNcolour:
 			col = tkcolor(c, n->rgba);
 			if(col != nil)
-				draw(dst, n->r, col, nil, ZP);
+				draw(target, n->r, col, nil, ZP);
 			break;
 		case TkNroundfill:
-			renderroundfill(c, dst, n);
+			renderroundfill(c, target, n);
 			break;
 		case TkNcorners:
-			rendercorners(c, dst, n);
+			rendercorners(c, target, n);
 			break;
 		case TkNborder:
-			renderborder(c, dst, n);
+			renderborder(c, target, n);
 			break;
 		case TkNglyphs:
 			col = tkcolor(c, n->rgba);
 			if(col != nil)
-				string(dst, n->r.min, col, ZP, n->font, n->text);
+				string(target, n->r.min, col, ZP, n->font, n->text);
 			break;
 		default:
 			/*

@@ -499,6 +499,7 @@ enum {
 	 * which is much the easier thing to render.
 	 */
 	TkNlayer,
+	TkNlayerend,
 	TkNtexture,
 	TkNglyphs,
 	TkNlinear,
@@ -515,6 +516,8 @@ struct TkNode
 	short		radius;
 	short		width;
 	Rectangle	r;
+	Rectangle	dstr;		/* TkNlayer: where the result lands */
+	Point		sp;		/* TkNlayer: source point of the blit */
 	ulong		rgba;
 	Font*		font;		/* TkNglyphs */
 	char*		text;		/* TkNglyphs, owned by the scene */
@@ -753,6 +756,8 @@ extern	void		tksceneroundfill(TkScene*, Rectangle, int, ulong);
 extern	void		tksceneborder(TkScene*, Rectangle, int, int, ulong);
 extern	void		tksceneborderon(TkScene*, Rectangle, int, int, ulong, ulong);
 extern	void		tkscenetext(TkScene*, Point, char*, Font*, ulong);
+extern	void		tkscenelayer(TkScene*, Point, ulong, Rectangle, Point);
+extern	void		tkscenelayerend(TkScene*);
 extern	int		tkscenerender(TkScene*, TkCtxt*, Image*);
 extern	int		tkscenecount(TkScene*);
 extern	TkSpace*	tkspace(Tk*);
@@ -929,6 +934,7 @@ extern	TkCtxt*		tknewctxt(Display*);
 extern	void		tkfreectxt(TkCtxt*);
 extern	void		tkfreecolcache(TkCtxt*);
 extern	Image*		tkitmp(TkEnv*, Point, int);
+extern	Image*		tkitmppix(TkCtxt*, Point, ulong);
 extern	void		tkgeomchg(Tk*, TkGeom*, int);
 extern	Tk*		tkinwindow(Tk*, Point, int);
 extern	Tk*		tkfindfocus(TkTop*, int, int, int);

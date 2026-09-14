@@ -51,19 +51,28 @@ tkfreectxt(TkCtxt *c)
 Image*
 tkitmp(TkEnv *e, Point p, int fillcol)
 {
+	return tkitmppix(e->top->ctxt, p, e->colors[fillcol]);
+}
+
+/*
+ * The scratch surface, by colour value rather than by colour index.
+ *
+ * Split out so the render-node renderer can reach it: a TkNlayer carries
+ * an rgba, like every other node, and a node that had to carry a colour
+ * INDEX would be tied to the environment it was built in and useless to
+ * any other backend.  Everything this needs - the display and the two
+ * cached images - is on the context; the environment was only ever
+ * consulted to turn the index into the value.
+ */
+Image*
+tkitmppix(TkCtxt *ti, Point p, ulong pix)
+{
 	Image *i, **ip;
-	TkTop *t;
-	TkCtxt *ti;
 	Display *d;
 	Rectangle r;
-	ulong pix;
 	int alpha;
-	
-	t = e->top;
-	ti = t->ctxt;
-	d = t->display;
 
-	pix = e->colors[fillcol];
+	d = ti->display;
 	alpha = (pix & 0xff) != 0xff;
 	ip = alpha ? &ti->ia : &ti->i;
 
@@ -74,7 +83,7 @@ tkitmp(TkEnv *e, Point p, int fillcol)
 			r.max = p;
 			if (alpha)
 				drawop(i, r, nil, nil, ZP, Clear);
-			draw(i, r, tkgc(e, fillcol), nil, ZP);
+			draw(i, r, tkcolor(ti, pix), nil, ZP);
 			return i;
 		}
 		r = i->r;

@@ -70,6 +70,7 @@ tkdrawframe(Tk *tk, Point orig)
 	Tk *f;
 	TkScene *framescene;
 	Rectangle framebox;
+	Point off;
 	Rectangle r, slaver;		/* dribbling, whipping or just square? */
 
 	i = tkimageof(tk);
@@ -119,10 +120,37 @@ tkdrawframe(Tk *tk, Point orig)
 		own = tk->env->colors[TkCbackgnd];
 		pe = tkbehind(tk);
 		par = pe->colors[TkCbackgnd];
-		/* what shows where the corner is cut away, drawn first */
-		tkscenecolour(framescene, rectaddpt(tk->dirty, p), par);
-		/* the frame's own surface, with the corners it actually has */
-		tksceneroundfill(framescene, framebox, tkspace(tk)->corner, own);
+		/*
+		 * Through a LAYER: the nodes below are rendered into a scratch
+		 * and the result blitted back to where they would have gone.
+		 *
+		 * A frame has no need of one - it draws straight into its
+		 * parent's image - which is exactly why it is the thing to
+		 * prove the layer node on.  The result has to be identical to
+		 * rendering the same nodes in place, so any error in the
+		 * scratch's extent or the blit's offset shows up as a
+		 * difference rather than as a widget that merely looks fine.
+		 * Every widget that genuinely needs a layer uses tkitmp and
+		 * draws with something other than nodes, so none of them could
+		 * have told us whether this worked.
+		 *
+		 * Nodes inside are in layer-local coordinates, hence the
+		 * translation by -framebox.min.
+		 */
+		off = Pt(-framebox.min.x, -framebox.min.y);
+		tkscenelayer(framescene,
+			Pt(framebox.max.x - framebox.min.x,
+			   framebox.max.y - framebox.min.y),
+			par, framebox, ZP);
+		{
+			Rectangle fr;
+
+			fr = rectaddpt(tk->dirty, p);
+			if(rectclip(&fr, framebox))
+				tkscenecolour(framescene, rectaddpt(fr, off), par);
+		}
+		tksceneroundfill(framescene, rectaddpt(framebox, off),
+			tkspace(tk)->corner, own);
 	}else
 		draw(i, rectaddpt(tk->dirty, p), tkgc(tk->env, TkCbackgnd), nil, ZP);
 
@@ -165,9 +193,12 @@ tkdrawframe(Tk *tk, Point orig)
 	if(framescene != nil){
 		if(!rectinrect(tk->dirty, tkrect(tk, 0)) && tk->relief != TKflat
 		&& tk->borderwidth > 0)
-			tksceneborder(framescene, framebox, tkspace(tk)->corner,
+			tksceneborder(framescene,
+				rectaddpt(framebox, Pt(-framebox.min.x, -framebox.min.y)),
+				tkspace(tk)->corner,
 				tk->borderwidth,
 				tk->env->colors[TkCbackgnd+TkDarkshade]);
+		tkscenelayerend(framescene);
 		tkscenerender(framescene, tk->env->top->ctxt, i);
 		tkscenefree(framescene);
 		return nil;
