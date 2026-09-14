@@ -216,6 +216,8 @@ enum {
 	Leinval		= 22,
 	Leio		= 5,
 	Lenosys		= 38,
+	Archsetfs	= 0x1002,
+	Archgetfs	= 0x1003,
 	Mapanon		= 0x20,
 	Mapfixed	= 0x10,
 	Lebadf		= 9,
@@ -579,6 +581,37 @@ ospreylinuxsyscall(ulong scallnr, uintptr *retp)
 			}
 		}
 		*retp = 0;
+		return 0;
+	case 158:			/* arch_prctl(code, addr) */
+		/*
+		 * ARCH_SET_FS, and only that.  It is what stands between a
+		 * program that makes its own raw system calls and one built
+		 * against a libc: musl and glibc both set the thread pointer
+		 * here before anything else, and every thread-local access
+		 * afterwards is fs-relative, so a binary from a toolchain
+		 * faults on its first one without this.  The base is kept in
+		 * the process and restored on a switch (procrestore).
+		 * ARCH_GET_FS answers from the same place.  The other two
+		 * codes are for GS, which is this kernel's own register.
+		 */
+		switch(la[0]){
+		case Archsetfs:
+			up->linuxfsbase = (uintptr)la[1];
+			wrmsr(FSbase, (uvlong)la[1]);
+			*retp = 0;
+			return 0;
+		case Archgetfs:
+			if(!waserror()){
+				validaddr((uintptr)la[1], sizeof(uvlong), 1);
+				*(uvlong*)la[1] = (uvlong)up->linuxfsbase;
+				poperror();
+				*retp = 0;
+				return 0;
+			}
+			*retp = (uintptr)-Leinval;
+			return 0;
+		}
+		*retp = (uintptr)-Leinval;
 		return 0;
 	case 14:			/* rt_sigprocmask: no mask is kept */
 		*retp = 0;

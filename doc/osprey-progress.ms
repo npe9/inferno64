@@ -6581,8 +6581,58 @@ one the program may not have (EACCES).  Everything else is EIO, which
 says no more than the message did, and a number this kernel does not map
 is ENOSYS.  The check reads both: a missing file comes back \-2 and an
 unmapped call \-38.  Matching the text is what the information allows;
-a number invented from nothing would be worse.  The p9linux check is
-seventeen criteria.
+a number invented from nothing would be worse.
+.PP
+And one call more, which is the one standing between a program that
+makes its own system calls and a binary from a toolchain.  A Linux libc
+keeps the thread pointer in
+.CW FS
+\- musl's
+.CW __init_tp
+and glibc's TLS setup are both
+.CW "arch_prctl(ARCH_SET_FS, p)" ,
+and every access to a thread-local afterwards is fs-relative \- so a
+real binary faults on its first one without it.  This kernel uses
+.CW FS
+for nothing:
+.CW mmuinit
+sets its base to zero and leaves it, where
+.CW GS
+carries the Mach pointer and is not free the same way.  So the whole of
+the work is to put the base in the register, keep it in the process, and
+restore it on a switch
+.CW procrestore , (
+and back to zero in
+.CW procsave
+so that a process which never set one does not inherit the last one's).
+.CW ARCH_GET_FS
+answers from the same place.
+.PP
+The check sets the pointer at a block of the program's own, stores
+through
+.CW %fs:16 ,
+and reads it back both ways \- through the segment and through a plain
+pointer to the block \- then asks the kernel for the base and gets the
+one it gave.  Then it does it again after twenty thousand system calls
+and a round trip to the buddy, which is a switch to another container
+and back for certain where a clock tick is only likely.  The control is
+the sharp one: with the restore taken out of
+.CW procrestore
+the second read faults at address 16 \- the base is zero again \- and
+the program is killed by SIGSEGV, which is exactly what a binary from a
+toolchain would do on its first thread-local.  Nine criteria fail with
+it out.
+.PP
+One thing in the test program rather than the kernel, because it looked
+like a kernel fault and was not: the destination the kernel writes the
+base into has to be a static, not a stack local.  The address is passed
+to
+.CW arch_prctl
+as an integer, so the compiler cannot see that memory is written through
+it, and the first version read a stale
+.CW got
+back and reported a base sixteen bytes out.  The p9linux check is
+eighteen criteria.
 .NH 1
 Running real programs on the two personalities: a plan
 .PP

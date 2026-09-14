@@ -473,6 +473,18 @@ procfork(Proc *p)
 void
 procrestore(Proc *p)
 {
+	/*
+	 * A Linux process's thread pointer.  FS is the register a Linux
+	 * libc keeps it in - every access to a thread-local, and musl's and
+	 * glibc's own bookkeeping, is fs-relative - and this kernel uses FS
+	 * for nothing (mmuinit sets its base to zero and leaves it), so the
+	 * whole of what arch_prctl(ARCH_SET_FS) has to do is put the base
+	 * in the register and keep it across a switch.  GS is not free the
+	 * same way: it carries the Mach pointer.
+	 */
+	if(p->linuxfsbase != 0)
+		wrmsr(FSbase, (uvlong)p->linuxfsbase);
+
 	if(p->dr[7] != 0){
 		m->dr7 = p->dr[7];
 		putdr(p->dr);
@@ -487,6 +499,14 @@ procrestore(Proc *p)
 void
 procsave(Proc *p)
 {
+	/*
+	 * And back to zero on the way out, so that a process which never
+	 * set one does not inherit the last one's thread pointer from the
+	 * processor.
+	 */
+	if(p->linuxfsbase != 0)
+		wrmsr(FSbase, 0ull);
+
 	if(m->dr7 != 0){
 		m->dr7 = 0;
 		putdr7(0);

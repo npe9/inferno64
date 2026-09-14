@@ -811,6 +811,7 @@ struct Proc
 		int	fd;
 		vlong	off;
 	} linuxmap[4];
+	uintptr	linuxfsbase;	/* what arch_prctl(ARCH_SET_FS) set: a Linux libc's thread pointer */
 	uintptr	linuxsighandler;	/* SIGSEGV's handler, 0 for none */
 	uintptr	linuxsigrestorer;	/* what the handler returns to: it calls rt_sigreturn */
 	int	linuxinsig;		/* in the handler: a fault there kills */

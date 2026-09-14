@@ -371,6 +371,77 @@ lmain(void)
 
 		{
 			/*
+			 * The thread pointer.  A Linux libc keeps it in FS and
+			 * reaches every thread-local through it, so this is
+			 * the call a binary from a toolchain makes before it
+			 * does anything else: musl's __init_tp and glibc's TLS
+			 * setup are both arch_prctl(ARCH_SET_FS, p).  Point it
+			 * at a block of our own, write through %fs:16, read it
+			 * back both ways - through the segment and directly -
+			 * and ask the kernel what it thinks the base is.
+			 */
+			enum { Archsetfs = 0x1002, Archgetfs = 0x1003 };
+			static long tls[8];
+			static long got;	/* the kernel writes here: not a local the compiler may keep in a register */
+			long viafs = 0, r1, r2;
+
+			r1 = sys3(158, Archsetfs, (long)tls, 0);
+			__asm__ volatile("movq %0, %%fs:16" :: "r"((long)0x5eed1234) : "memory");
+			__asm__ volatile("movq %%fs:16, %0" : "=r"(viafs));
+			got = 0;
+			r2 = sys3(158, Archgetfs, (long)&got, 0);
+			p = cat(line, "linux: arch_prctl(ARCH_SET_FS) returned ");
+			p = num(p, r1);
+			p = cat(p, ", a store through %fs:16 reads back ");
+			p = num(p, viafs == 0x5eed1234 && tls[2] == 0x5eed1234 ? 1 : 0);
+			p = cat(p, " both ways, and ARCH_GET_FS returned ");
+			p = num(p, r2);
+			p = cat(p, " with the base it was given: ");
+			p = num(p, got == (long)tls ? 1 : 0);
+			p = cat(p, " (got ");
+			p = num(p, got);
+			p = cat(p, ", tls ");
+			p = num(p, (long)tls);
+			p = cat(p, ")");
+			*p++ = '\n'; *p = 0;
+			say(line);
+
+			/*
+			 * And across a reschedule, which is the whole of why
+			 * the base is kept in the process and not only in the
+			 * register: twenty thousand system calls is well past
+			 * a clock tick, so the kernel has run something else
+			 * and come back.  A base that lived only in the
+			 * processor would be whatever the last process left.
+			 */
+			{
+				long k;
+
+				for(k = 0; k < 20000; k++)
+					sys3(1, 2, (long)line, 0);	/* write(2, line, 0) */
+				/*
+				 * And a call the buddy answers, which is a
+				 * switch to another container and back for
+				 * certain, where a tick only makes one likely.
+				 */
+				k = sys6(257, Atfdcwd, (long)"/n/hello", 0, 0, 0, 0);
+				if(k >= 0)
+					sys3(3, k, 0, 0);
+				viafs = 0;
+				__asm__ volatile("movq %%fs:16, %0" : "=r"(viafs));
+				got = 0;
+				r2 = sys3(158, Archgetfs, (long)&got, 0);
+				p = cat(line, "linux: after 20000 system calls and a round trip to the buddy the thread pointer is still there: %fs:16 reads back ");
+				p = num(p, viafs == 0x5eed1234 ? 1 : 0);
+				p = cat(p, " and the base is still its own: ");
+				p = num(p, got == (long)tls ? 1 : 0);
+				*p++ = '\n'; *p = 0;
+				say(line);
+			}
+		}
+
+		{
+			/*
 			 * And a failure, which is the half of an ABI a test
 			 * usually leaves out.  Linux returns a small negative
 			 * number in rax and a libc turns it into -1 and errno;

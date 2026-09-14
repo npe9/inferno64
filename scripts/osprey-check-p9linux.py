@@ -115,6 +115,21 @@ def main():
         ("and a directory listing crosses the same way: getdents64 returns the buddy's 9P stat messages as dirent64 records, and the program walks them by reclen over as many calls as the buffer needs - fourteen entries of the buddy's root, each with the directory bit",
          gd is not None and int(gd.group(1)) == 14 and int(gd.group(2)) >= 2
          and re.search(r'getdents64 on /: boot/4 bin/4 dev/4 env/4 fd/4 mnt/4 n/4 net/4 net\.alt/4 proc/4 rc/4 root/4 srv/4 shr/4', t) is not None),
+        # The thread pointer, which is the call standing between a program
+        # that makes its own raw system calls and one built against a
+        # libc: musl's __init_tp and glibc's TLS setup are both
+        # arch_prctl(ARCH_SET_FS, p), and every thread-local access
+        # afterwards is fs-relative.  This kernel uses FS for nothing
+        # (mmuinit sets its base to zero and leaves it), so the whole of
+        # the work is the register and keeping it across a switch.
+        # Without the restore in procrestore the second read below faults
+        # at address 16 - FS base back to zero - and the program dies of
+        # SIGSEGV, which is what a real binary would do.
+        ("and the thread pointer a Linux libc keeps in FS: arch_prctl(ARCH_SET_FS) sets it, a store through %fs:16 lands in the block both the segment and a plain pointer name, ARCH_GET_FS reads the same base back, and it is still there after twenty thousand system calls and a round trip to the buddy - a base kept only in the processor would be whatever the last process left",
+         re.search(r'arch_prctl\(ARCH_SET_FS\) returned 0, a store through %fs:16 reads back 1 both ways, '
+                   r'and ARCH_GET_FS returned 0 with the base it was given: 1', t) is not None
+         and re.search(r'after 20000 system calls and a round trip to the buddy the thread pointer is still '
+                       r'there: %fs:16 reads back 1 and the base is still its own: 1', t) is not None),
         # The half of an ABI a test usually leaves out.  Linux returns a
         # small negative number in rax and a libc turns it into -1 and
         # errno; anything outside -4095..-1 is a successful return.  This
