@@ -1,0 +1,106 @@
+.TH SUPERVISE 1
+.SH NAME
+supervise \- keep a set of commands running
+.SH SYNOPSIS
+.B supervise
+[
+.B -v
+]
+[
+.B -n
+.I runs
+]
+[
+.B -m
+.I secs
+]
+.I command ...
+.SH DESCRIPTION
+.I Supervise
+starts each
+.I command
+with
+.IR sh (1)
+and starts it again whenever it ends, for any reason.  Each argument is
+one service and is a complete shell command line, so it may be quoted
+and may contain several commands.
+.PP
+The options are
+.TP
+.B -v
+Report each start and each exit on standard error.
+.TP
+.BI -n " runs"
+Start each service at most
+.I runs
+times and exit when every service has reached that limit.  The default
+is no limit, which never returns.
+.TP
+.BI -m " secs"
+Treat a service that lasted fewer than
+.I secs
+seconds as flapping and wait a second before starting it again.  The
+default is 1.
+.SH SOURCE
+.B /appl/cmd/supervise.b
+.SH "HOW IT WORKS"
+.I Supervise
+opens its own
+.B /prog/ pid /wait
+before it spawns anything and then blocks reading it.
+.IR dis (6)'s
+.B newprog
+gives every new process a pointer to its parent's wait queue, and the
+message posted when a process ends is
+.PP
+.EX
+	pid "module":cause
+.EE
+.PP
+with
+.I cause
+.B exited
+for an ordinary return and otherwise the exception that ended it.
+Nothing is polled, and no kernel change was needed for any of this:
+.IR prog (3)
+already exposes every process as files.
+.PP
+Only direct children appear.  A grandchild posts to its own parent's
+queue, which is empty unless that parent also opened its wait file, so
+.I supervise
+is told about the things it started and not about everything on the
+machine.  One consequence is worth knowing: a service written as a
+shell command line is supervised as the shell running it.  If that
+shell's own child is killed, the shell ends and the service is
+restarted, but the
+.B cause
+reported is the shell's
+.RB ( exited ),
+not the child's
+.RB ( killed ).
+.SH EXAMPLES
+Keep a file server and a listener up for as long as the machine runs:
+.IP
+.EX
+supervise -v 'styxlisten -A tcp!*!6666 export /' 'cloudfs /n/cloud'
+.EE
+.PP
+Run something three times and stop:
+.IP
+.EX
+supervise -n 3 'echo hello'
+.EE
+.SH SEE ALSO
+.IR sh (1),
+.IR ps (1),
+.IR kill (1),
+.IR prog (3)
+.SH BUGS
+A service is restarted immediately unless it ended sooner than
+.B -m
+allows, and the hold-off is a flat second rather than a growing one.  A
+service that fails slowly and forever is restarted forever.
+.PP
+There is no way to stop or restart one service without stopping
+.IR supervise ,
+and no control file of its own.

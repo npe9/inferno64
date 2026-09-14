@@ -496,6 +496,7 @@ strut strut
 styxbench styxbench
 styxlisten listen
 sum sum
+supervise supervise
 sweeper wm-misc
 symmetry symmetry
 tail tail

@@ -153,6 +153,7 @@ TARG=\
 	styxchat.dis\
 	styxmon.dis\
 	styxlisten.dis\
+	supervise.dis\
 	styxbench.dis\
 	zerofs.dis\
 	tcpserve.dis\
