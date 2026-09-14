@@ -1202,12 +1202,26 @@ against 869 with `INFERNO_NOVSYNC=1`.
 `CADisplayLink` stops when its window is not being displayed, and that
 includes states a program never sees and did not ask for. It had been
 measured working repeatedly hours earlier, 16.667 ms gaps over a long
-run, and not at all later: **it works while someone is watching**, which
-is the worst kind of dependency. The link is created after
-`makeKeyAndOrderFront` and `activateIgnoringOtherApps` and emu does run
-`[NSApp run]`, so neither an inactive application nor a missing run loop
-explains it, and the cause is still not known. That is why the answer is
-a fallback and not a fix to the link.
+run, and not at all later.
+
+**The cause, found afterwards: the display was asleep.** The zero-tick
+runs were at 04:16 on a machine that had been idle for hours. Waking the
+display — `caffeinate -d -u` once — and the link fires immediately:
+`sleeptest vsync`, which is a clean probe of the link alone because a
+passive reader gets nothing from the flush fallback, reads a median of
+16651 us and a p99 of 16682. Two further runs with no `caffeinate` at
+all, taken while the display was still awake, give 16652 and 16652. So
+"it works while someone is watching" is the literal truth and is correct
+behaviour: there is nothing to show a display that is off, and
+`CADisplayLink` says so by not asking.
+
+That makes the fallback necessary rather than defensive. A program must
+keep running while the screen sleeps — and one pacing off the display
+must not block — but nothing is wrong with the link, and a user with the
+screen on gets the exact pacing. It also means **any measurement of the
+display link is conditional on the state of the display at the time**,
+which is not something a run records; `sleeptest vsync` is the way to
+check before trusting a number.
 
 `mark_view_dirty()` presents for itself again when the link has been
 quiet for six refreshes — `gorge` goes from 0 stats blocks in 22 s to 43.
