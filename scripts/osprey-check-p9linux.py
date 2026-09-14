@@ -130,6 +130,12 @@ def main():
          and re.search(r'lfs: renamed linuxname to linuxmoved after version 1: 27 bytes carried over', t) is not None
          and 'linux: rename returned 0 and /n/linuxmoved reads "renamed by a Linux program' in t
          and 'linux: a rename into another directory returned -18 (EXDEV: a wstat does not move a file)' in t),
+        # And removing one, which a program that can make a file ought to
+        # be able to do and could not: create and rename were mapped and
+        # unlink was not.  Plan 9's remove takes down a directory as
+        # readily as a file, so AT_REMOVEDIR asks for nothing extra.
+        ("and it can remove one: unlink becomes Plan 9's remove, and unlinking the same name again is ENOENT rather than a second success",
+         'linux: unlink returned 0, and unlinking it again returned -2 (ENOENT: it is gone)' in t),
         # The rest of what a libc does before it reaches main.  writev is
         # the one that matters: a libc's stdout gathers its pieces and
         # writes them in one call, so without it a real binary prints
@@ -157,8 +163,9 @@ def main():
         ("and the thread pointer a Linux libc keeps in FS: arch_prctl(ARCH_SET_FS) sets it, a store through %fs:16 lands in the block both the segment and a plain pointer name, ARCH_GET_FS reads the same base back, and it is still there after twenty thousand system calls and a round trip to the buddy - a base kept only in the processor would be whatever the last process left",
          re.search(r'arch_prctl\(ARCH_SET_FS\) returned 0, a store through %fs:16 reads back 1 both ways, '
                    r'and ARCH_GET_FS returned 0 with the base it was given: 1', t) is not None
-         and re.search(r'after 20000 system calls and a round trip to the buddy the thread pointer is still '
-                       r'there: %fs:16 reads back 1 and the base is still its own: 1', t) is not None),
+         and 'linux: after 20000 system calls and a round trip to the buddy' in t
+         and re.search(r'the thread pointer is still there: %fs:16 reads back 1 and the base is '
+                       r'still its own: 1', t) is not None),
         # The half of an ABI a test usually leaves out.  Linux returns a
         # small negative number in rax and a libc turns it into -1 and
         # errno; anything outside -4095..-1 is a successful return.  This

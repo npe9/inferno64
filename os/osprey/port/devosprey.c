@@ -3315,6 +3315,23 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 			a[2] = Lstatroom;
 			scallnr = Bfstat;
 			break;
+		case 87:			/* unlink(path) */
+		case 263:			/* unlinkat(dirfd, path, flags) */
+			/*
+			 * A program that can make a file and cannot remove one
+			 * is an odd thing, and that is what this was: create
+			 * and rename were mapped and remove was not.  Plan 9's
+			 * remove takes down a directory as readily as a file,
+			 * so AT_REMOVEDIR asks for nothing extra and is not
+			 * examined.
+			 */
+			if(scallnr == 263){
+				if((long)a[0] != Atfdcwd && ((char*)a[1])[0] != '/')
+					return -Lenosys;
+				a[0] = a[1];
+			}
+			scallnr = Bremove;
+			break;
 		case 82:			/* rename(oldpath, newpath) */
 		case 264:			/* renameat(olddirfd, old, newdirfd, new) */
 			/*

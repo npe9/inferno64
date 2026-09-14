@@ -431,7 +431,22 @@ lmain(void)
 				__asm__ volatile("movq %%fs:16, %0" : "=r"(viafs));
 				got = 0;
 				r2 = sys3(158, Archgetfs, (long)&got, 0);
-				p = cat(line, "linux: after 20000 system calls and a round trip to the buddy the thread pointer is still there: %fs:16 reads back ");
+				/*
+				 * Two lines, because line[] holds 128 bytes and
+				 * this said about 150.  It overflowed the
+				 * buffer on to the frame below it, and what
+				 * that cost is written down: the program ran
+				 * for two commits, then adding a few calls
+				 * moved the frame and the overflow landed on a
+				 * pointer, which came back as a general
+				 * protection fault on a plain store to a
+				 * non-canonical address, in a boot that had
+				 * never touched this code.
+				 */
+				p = cat(line, "linux: after 20000 system calls and a round trip to the buddy\n");
+				*p = 0;
+				say(line);
+				p = cat(line, "linux: the thread pointer is still there: %fs:16 reads back ");
 				p = num(p, viafs == 0x5eed1234 ? 1 : 0);
 				p = cat(p, " and the base is still its own: ");
 				p = num(p, got == (long)tls ? 1 : 0);
@@ -473,7 +488,24 @@ lmain(void)
 				*p = 0;
 				say(line);
 			}
-			p = cat(line, "\"\nlinux: a rename into another directory returned ");
+			{
+				/*
+				 * And remove it, which a program that can make
+				 * a file ought to be able to do and could not:
+				 * create and rename were mapped and unlink was
+				 * not.
+				 */
+				long ru = sys3(87, (long)"/n/linuxmoved", 0, 0);
+				long ra = sys3(87, (long)"/n/linuxmoved", 0, 0);
+
+				p = cat(line, "\"\nlinux: unlink returned ");
+				p = num(p, ru);
+				p = cat(p, ", and unlinking it again returned ");
+				p = num(p, ra);
+				p = cat(p, " (ENOENT: it is gone)\n"); *p = 0;
+				say(line);
+			}
+			p = cat(line, "linux: a rename into another directory returned ");
 			p = num(p, rx);
 			p = cat(p, " (EXDEV: a wstat does not move a file)\n"); *p = 0;
 			say(line);

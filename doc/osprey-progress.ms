@@ -4532,8 +4532,41 @@ writes to it, renames it to
 .CW /n/linuxmoved ,
 reads its bytes back there, and is told EXDEV for a rename out of the
 directory.  Against the kernel before the change the create fails, the
-rename is ENOSYS, and nothing is renamed.  The p9linux check is twenty
-criteria.
+rename is ENOSYS, and nothing is renamed.  And
+.CW unlink ,
+because a program that can make a file and cannot remove one is an odd
+thing and that is what this was: unlinking the file it renamed returns
+0, and unlinking the same name again is ENOENT rather than a second
+success.  Plan 9's remove takes down a directory as readily as a file,
+so
+.CW AT_REMOVEDIR
+asks for nothing extra.
+.PP
+Adding those two calls made the boot panic, in three runs out of three,
+at a place none of them touched \- and what it took to find is worth
+the paragraph.  The kernel change was innocent (the same boot with only
+it is clean twice over); the test program's was not.  The panic was
+.CW "microkernel: donotify" ,
+which on this configuration is an unconditional
+.CW panic()
+saying neither which note nor which process, so the first thing built
+was a message: the process, the user pc, and the note.  It said "general
+protection violation" at a user pc, and this host has the
+.CW x86_64-linux-gnu
+binutils, so the instruction at that pc could simply be read:
+.CW "mov %dil,(%rax)" ,
+a plain byte store, which faults that way only when the address is not
+canonical.  A wild buffer pointer, in a string-building loop.
+.PP
+The line it was building is one I had written two commits earlier: about
+150 characters into a
+.CW line[128] .
+It overflowed on to the frame below it and the program ran anyway, twice
+over, until adding two calls moved the frame and the overflow landed on
+a pointer.  A test program's own bug, found by the kernel it was
+testing, and the reason it could be found in one boot rather than by
+bisection is the panic that now says what happened.  It is two lines
+now.  The p9linux check is twenty-one criteria.
 .PP
 That last sentence understated it: the bound was not merely unpaged, it
 was wrong.  The file server is handed a place in the client's data area
