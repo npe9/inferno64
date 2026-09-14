@@ -290,6 +290,7 @@ frametest frametest
 optimtest optimtest
 sh-circuit sh-circuit
 sh-control sh-control
+sh-flow sh-flow
 sh-frame sh-frame
 sh-optim sh-optim
 sh-signal sh-signal

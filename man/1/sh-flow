@@ -1,0 +1,192 @@
+.TH SH-FLOW 1
+.SH NAME
+flow \- shell script interface to flow(2)
+.SH SYNOPSIS
+.B load flow
+
+.B id := ${flow new}
+.br
+.B flow
+.I id
+.B grid
+.I nx ny lx ly viscosity
+.RB ( periodic | channel | cavity )
+.br
+.B flow
+.I id
+.B init
+.I u-expr v-expr
+.br
+.B flow
+.I id
+.B lid
+.I speed
+.br
+.B flow
+.I id
+.B force
+.I fx fy
+.br
+.B flow
+.I id
+.B step
+.I dt
+.br
+.B flow
+.I id
+.B run
+.I dt nsteps
+.br
+.B ${flow
+.I id
+.B at
+.I x y
+.B }
+.br
+.B ${flow
+.I id
+.B profile
+.I x n
+.B }
+.br
+.B ${flow
+.I id
+.B field
+.I nx ny
+.RI [ scale ]
+.B }
+.br
+.B ${flow
+.I id
+.BR divergence | energy | maxstep | time | nx | ny
+.B }
+.br
+.B ${flow
+.I id
+.B courant
+.I dt
+.B }
+.br
+.B flow del
+.I id...
+.SH DESCRIPTION
+.I Flow
+makes
+.IR flow (2)
+usable from
+.IR sh (1).
+.PP
+A flow is a
+.BR field ,
+not a series, which is the difficulty: there is no curve to hand to a
+plot.
+Three things come back instead, and between them they are how a flow is
+looked at.
+.TP
+.B Field
+a coarse grid of
+.I x y dx dy
+for a
+.B vector
+layer \- arrows, which here are right, because a velocity really is an
+arrow at a point.
+The scale is the caller's, since the right arrow length depends on the
+box and on how fast the flow happens to be.
+.TP
+.B Profile
+the velocity across a vertical line, as
+.I y u v
+for
+.I n
+points.
+That
+.I is
+a series, and it is what a channel flow is judged by.
+.TP
+.B At
+the velocity at one point, interpolated from the faces around it.
+.PP
+.B Init
+takes two
+.IR hoc (2)
+expressions in
+.I x
+and
+.IR y ,
+one per component, as
+.IR sh-optim (1)
+takes one: a shell has no functions to give, so the initial field is
+compiled from text.
+.PP
+.B Divergence
+is the projection's own residual and belongs at rounding.
+.B Maxstep
+is the largest stable step and
+.B courant
+the ratio for a proposed one, which is how to find out before rather
+than after.
+.SH EXAMPLE
+A channel under a steady push settles into a parabola:
+.IP
+.EX
+load std
+load flow
+f := ${flow new}
+flow $f grid 4 16 1.0 1.0 1.0 channel
+flow $f init 0 0
+flow $f force 2.0 0
+flow $f run 0.0009 4500
+echo ${flow $f at 0.5 0.5}		# 0.25 0, = gH^2/8nu
+echo ${flow $f divergence}		# 0
+.EE
+.PP
+and a Taylor-Green vortex decays at a known rate:
+.IP
+.EX
+g := ${flow new}
+flow $g grid 32 32 6.2832 6.2832 0.05 periodic
+flow $g init '0-cos(x)*sin(y)' 'sin(x)*cos(y)'
+flow $g run 0.002 250
+echo ${flow $g energy}	# 0.9051 of its first value, against exp(-0.1)
+.EE
+.SH SOURCE
+.B /appl/cmd/sh/flow.b
+.SH SEE ALSO
+.IR sh (1),
+.IR sh-plot (1),
+.IR sh-optim (1),
+.IR flow (2),
+.IR flowtest (1)
+.SH DIAGNOSTICS
+A grid too small to have an interior, a negative viscosity, a step far
+beyond the stable one, a pressure solve that did not converge: each
+fails the command with the message
+.IR flow (2)
+gives.
+.SH BUGS
+There is no test for this module in
+.BR /appl/cmd .
+.IR Flow (2)
+underneath it is checked by
+.IR flowtest (1);
+what is added here is the hoc bridge and the three samplers, exercised
+by the examples above and by
+.BR /lib/demo/cavitylab.sh .
+.PP
+.B Profile
+takes a vertical line only.
+A horizontal one, which is what a boundary layer is read along, needs a
+Limbo program.
+.PP
+The pressure field is not reachable from here at all, so the one thing
+the staggered grid exists to get right cannot be looked at.
+.PP
+A run of any size is slow from a shell, because every step is a
+conjugate-gradient solve and the shell adds a command dispatch per
+.BR run ,
+not per step \- so use
+.B run
+with a large count rather than looping
+.B step
+in
+.IR sh (1).
