@@ -41,6 +41,7 @@ enum {
 	REMOVE	= 25,
 	FSTAT	= 43,
 	STAT	= 42,
+	WSTAT	= 44,
 	ERRSTR	= 41,
 	PIPE	= 21,
 	RFORK	= 19,
@@ -1022,6 +1023,17 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 	case STAT:
 		/* stat(name, edir, nedir): name at cdata[Nameoff], message to cdata[Dataoff], a1 = nedir */
 		r = p9statraw((char*)(cdata + Nameoff), cdata + Dataoff, (int)a1);
+		break;
+
+	case WSTAT:
+		/*
+		 * wstat(name, edir, nedir): the name at cdata[Nameoff] and the
+		 * message the program marshalled at cdata[Dataoff].  It is the
+		 * one call whose argument is a Dir the caller built, so the
+		 * data travels out with the request rather than back with the
+		 * reply.
+		 */
+		r = p9wstatraw((char*)(cdata + Nameoff), cdata + Dataoff, (int)a1);
 		break;
 
 	case PIPE:

@@ -98,6 +98,20 @@ def main():
          and re.search(r'legacy: fstat\("/n/p9test"\) returned a \d+-byte stat message from the buddy', t) is not None
          and re.search(r'legacy: stat\("/n/p9test"\) by name returned a \d+-byte stat message from the buddy', t) is not None
          and 'removed /n/p9test through the buddy' in t),
+        # A rename, which nothing running on this system could ask for.
+        # The store's wstat was devwstat - error(Eperm) - and the buddy
+        # forwarded no wstat at all, so the call had nowhere to go even
+        # once the store could do it.  wstat(2) is the call and a Dir with
+        # every field left alone but the name is what says "rename"; the
+        # message the program marshalled travels out with the request, the
+        # way a write's data does, because it is the one call whose
+        # argument is a Dir the caller built.
+        ("and the legacy program can rename a file it made, which nothing here could ask for: wstat(2) with a Dir naming only the name, forwarded to the buddy, which hands it to the store - the bytes read back under the new name, the old name gone, and the rename done again in the other direction",
+         'legacy: wstat renamed /n/p9test to /n/p9renamed, which reads "a file written and read back through the buddy"' in t
+         and 'legacy: and the name it had is gone, which is what a rename means' in t
+         and 'legacy: and renamed it back to /n/p9test' in t
+         and re.search(r'lfs: renamed p9test to p9renamed after version 1: 46 bytes carried over', t) is not None
+         and 'legacy: BUG' not in t),
         ("and a call the buddy refuses says why, in the program's own errstr(2)",
          'remove refused, errstr from the buddy: "file does not exist: \'/n/nosuchfile\'"' in t),
         ("and the name space is the program's to change: rfork(RFNAMEG) gives it one of its own, a bind in it shows in the names that follow, and a 9P server mounted at /mnt is read through and then unmounted away",

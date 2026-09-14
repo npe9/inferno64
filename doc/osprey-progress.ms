@@ -4459,8 +4459,35 @@ are no owners here, the mode is the device's, and a length is changed by
 writing \- because a caller told its wstat succeeded when nothing
 happened is worse off than one told it cannot be done.  The boot makes a
 file, renames it, reads the bytes back under the name it was given, and
-finds the name it had gone; run against the store before the change the
-same line reads "the rename failed: permission denied".
+finds the name it had gone.
+.PP
+And a program can ask for one, which took the other half.  The buddy
+forwarded no
+.CW wstat
+at all, so even once the store could rename, the call had nowhere to go:
+a legacy program's wstat came back with nothing said.
+.CW Bwstat
+is forwarded now, and it is the one call whose argument is a
+.CW Dir
+the caller built, so the marshalled message travels out with the
+request the way a write's data does rather than back with the reply.
+The legacy program makes a file, renames it with a
+.CW Dir
+whose every field is left alone but the name \- which is what "rename"
+is in Plan 9 \- reads its bytes back under the new name, finds the old
+name gone, and renames it back, so that the remove it does next still
+has the file it was written to remove and the rename is done in both
+directions.  With the forward taken out the same line reads "wstat
+rename refused" with an empty message, which is what a call nobody
+answers says.
+.PP
+The demonstration is the program's and not the personality's on purpose.
+A first cut had the personality rename a file of its own in
+.CW p9lfsmount ,
+and that store is sixty-one sectors deliberately \- the pair check fills
+it so that reclamation has to run \- so those few sectors came out of a
+budget another test was counting, and eighteen criteria failed for it.
+The program asking is the thing worth showing anyway.
 .PP
 That last sentence understated it: the bound was not merely unpaged, it
 was wrong.  The file server is handed a place in the client's data area

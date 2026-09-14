@@ -10,6 +10,7 @@
  */
 #include <u.h>
 #include <libc.h>
+#include <fcall.h>		/* convD2M and BIT16SZ, for the wstat this builds */
 
 /*
  * Entry is startboot (init9's trampoline), since the host linker cannot
@@ -116,6 +117,55 @@ startboot(char *argv0, char **argv)
 		n = stat("/n/p9test", statbuf, sizeof statbuf);
 		print("legacy: stat(\"/n/p9test\") by name returned a %ld-byte stat message from the buddy\n", n);
 
+		/*
+		 * A rename, before the remove takes the file away.  wstat(2)
+		 * is the call, and a Dir with every field left alone but the
+		 * name is what says "rename": the buddy hands the message to
+		 * the store, which writes a version under the new name and a
+		 * tombstone for the old.  Until the buddy forwarded wstat no
+		 * program could ask for one at all.
+		 */
+		{
+			uchar wbuf[512];
+			Dir wd;
+			int wn;
+
+			nulldir(&wd);
+			wd.name = "p9renamed";
+			wn = convD2M(&wd, wbuf, sizeof wbuf);
+			if(wn > BIT16SZ && wstat("/n/p9test", wbuf, wn) >= 0){
+				int rfd2 = open("/n/p9renamed", OREAD);
+				char rb[64];
+				long rn2 = rfd2 >= 0 ? read(rfd2, rb, sizeof rb - 1) : -1;
+
+				if(rn2 < 0)
+					rn2 = 0;
+				rb[rn2] = 0;
+				if(rfd2 >= 0)
+					close(rfd2);
+				print("legacy: wstat renamed /n/p9test to /n/p9renamed, which reads \"%s\"\n", rb);
+				if(open("/n/p9test", OREAD) < 0)
+					print("legacy: and the name it had is gone, which is what a rename means\n");
+				else
+					print("legacy: BUG: /n/p9test still opens after the rename\n");
+				/*
+				 * And back, so that the remove below still has
+				 * the file it is written to remove - and so the
+				 * rename is done in both directions.
+				 */
+				nulldir(&wd);
+				wd.name = "p9test";
+				wn = convD2M(&wd, wbuf, sizeof wbuf);
+				if(wn > BIT16SZ && wstat("/n/p9renamed", wbuf, wn) >= 0)
+					print("legacy: and renamed it back to /n/p9test\n");
+				else
+					print("legacy: BUG: could not rename it back\n");
+			} else {
+				char ebuf[ERRMAX];
+				rerrstr(ebuf, sizeof ebuf);
+				print("legacy: wstat rename refused: \"%s\"\n", ebuf);
+			}
+		}
 		if(remove("/n/p9test") == 0)
 			print("legacy: removed /n/p9test through the buddy\n");
 		else {

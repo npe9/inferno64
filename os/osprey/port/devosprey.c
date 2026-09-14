@@ -2615,7 +2615,7 @@ enum {
 	Bwrite = 20, Bpwrite = 51, Bseek = 39, Boseek = 16,
 	Bcreate = 22, Bremove = 25, Bfstat = 43, Bstat = 42, Berrstr = 41, Bpipe = 21,
 	Brfork = 19, Bbind = 2, Bmount = 46, Bawait = 47, Bfd2path = 23,
-	Bchdir = 3, Bunmount = 35,
+	Bchdir = 3, Bunmount = 35, Bwstat = 44,
 	/*
 	 * Not system calls: what the kernel asks the buddy on a legacy
 	 * process's behalf beyond its traps.  exec has the buddy lay a
@@ -3437,6 +3437,29 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 		break;
 	case Bfd2path:				/* fd2path(fd, buf, nbuf): the path back at Bdataoff */
 		ab[1] = Aint(a[0]); ab[2] = Aint(a[2]); ab[3] = 0;
+		break;
+	case Bwstat:				/* wstat(name, edir, nedir): name at Bnameoff, the message the caller built at Bdataoff */
+		nd = ospreydata(p, Bnameoff, 256);
+		if(nd == nil)
+			return -1;
+		{
+			char *name = (char*)a[0];
+			ospreytouch(a[0], 256);
+			for(i = 0; i < 255 && name[i] != 0; i++)
+				nd[i] = name[i];
+			nd[i] = 0;
+		}
+		/*
+		 * And the message itself goes out with the call, the way a
+		 * write's data does: this is the one call whose argument is a
+		 * marshalled Dir the program made.
+		 */
+		ospreytouch(a[1], a[2] > Odbuddydatalen ? Odbuddydatalen : (ulong)a[2]);
+		dd = ospreydata(p, Bdataoff, a[2]);
+		if(dd != nil)
+			for(i = 0; i < (long)a[2]; i++)
+				dd[i] = ((uchar*)a[1])[i];
+		ab[1] = 0; ab[2] = Aint(a[2]); ab[3] = 0;
 		break;
 	case Bstat:				/* stat(name, edir, nedir): name at Bnameoff, message back at Bdataoff */
 		nd = ospreydata(p, Bnameoff, 256);

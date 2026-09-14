@@ -202,19 +202,6 @@ def main():
         ("a log-structured file store on that disk is mounted into the server personality's name space, and creates a file: version 1 on the log",
          'lfs: mounted the log: 0 records' in t and 'lfs: mounted at /n' in t
          and 'lfs: committed hello version 1, 46 bytes, at sector 1' in t),
-        # wstat, which this store answered with "permission denied" because
-        # devwstat is what its wstat was.  A rename is the one thing a log
-        # can express without reading like a lie: a version of the file
-        # under the new name and a tombstone for the old, which is what
-        # every other change here is.  The bytes are carried over because
-        # that is where they live.  Everything else a wstat can ask for is
-        # refused by name rather than accepted and dropped.
-        ("and a file in that store can be renamed, which it could not be: the wstat writes a version under the new name and a tombstone for the old, the bytes come over with it, and the name it had no longer opens",
-         re.search(r'lfs: renamed oldname to newname after version 1: 33 bytes carried over, '
-                   r'a tombstone at sector \d+', t) is not None
-         and 'lfs: after the rename /n/newname reads "bytes that must survive a rename"' in t
-         and re.search(r"lfs: and /n/oldname is gone: file does not exist: '/n/oldname'", t) is not None
-         and 'lfs: BUG' not in t),
         ("the client reads the file across the ring over 9P, writes it, and the clunk commits version 2 to the disk",
          'p9: pair-client: read /n/hello from the disk over 9P: "hello from the log-structured store, version 1"' in t
          and 'lfs: committed hello version 2, 56 bytes' in t),

@@ -1996,51 +1996,12 @@ p9lfsmount(void)
 	}
 
 	/*
-	 * A rename, which this store used to answer with "permission
-	 * denied" because devwstat is what its wstat was.  A log can
-	 * express one: a version of the file under the new name and a
-	 * tombstone for the old, which is what every other change here is.
-	 * Make a file, rename it, read it back under the name it was given,
-	 * and look for it under the name it had.
+	 * A rename is demonstrated by the legacy program instead of here,
+	 * and deliberately: a program asking is the thing worth showing,
+	 * and this log is sixty-one sectors on purpose - the pair check
+	 * fills it to make reclamation run - so a demonstration of my own
+	 * spent sectors that test is counting.
 	 */
-	if(!waserror()){
-		uchar wbuf[512];
-		char rbuf[128];
-		Dir d;
-		long wn, rn;
-		int wfd;
-
-		wfd = p9create("/n/oldname", OWRITE, 0666);
-		p9write(wfd, "bytes that must survive a rename\n", 33);
-		p9close(wfd);
-
-		memset(&d, ~0, sizeof d);	/* every field: leave it alone */
-		d.name = "newname";
-		d.uid = d.gid = d.muid = "";
-		wn = convD2M(&d, wbuf, sizeof wbuf);
-		if(wn <= BIT16SZ)
-			error("could not marshal the wstat");
-		p9wstatraw("/n/oldname", wbuf, wn);
-
-		wfd = p9open("/n/newname", OREAD);
-		rn = p9read(wfd, rbuf, sizeof rbuf - 1);
-		if(rn < 0)
-			rn = 0;
-		rbuf[rn] = 0;
-		p9close(wfd);
-		print("lfs: after the rename /n/newname reads \"%.*s\"\n",
-			(int)rn - 1, rbuf);
-
-		if(!waserror()){
-			wfd = p9open("/n/oldname", OREAD);
-			p9close(wfd);
-			poperror();
-			print("lfs: BUG: /n/oldname still opens after the rename\n");
-		} else
-			print("lfs: and /n/oldname is gone: %s\n", up->errstr);
-		poperror();
-	} else
-		print("lfs: the rename failed: %s\n", up->errstr);
 }
 
 void
