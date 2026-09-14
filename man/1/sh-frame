@@ -1,0 +1,158 @@
+.TH SH-FRAME 1
+.SH NAME
+frame \- shell script interface to frame(2)'s structures
+.SH SYNOPSIS
+.B load frame
+
+.B id := ${frame new}
+.br
+.B frame
+.I id
+.B spec
+.I line...
+.br
+.B frame
+.I id
+.B read
+.I file
+.br
+.B frame
+.I id
+.B solve
+.br
+.B ${frame
+.I id
+.B displacement
+.I node
+.RB ( x | y | r )
+.B }
+.br
+.B ${frame
+.I id
+.B reaction
+.I node
+.RB ( x | y | r )
+.B }
+.br
+.B ${frame
+.I id
+.B force
+.I n
+.B }
+.br
+.B ${frame
+.I id
+.B member
+.I n
+.RB [ deflected
+.IR scale ]
+.B }
+.br
+.B ${frame
+.I id
+.BR equilibrium | nodes | nnodes | nmembers | heldrot | text
+.B }
+.br
+.B frame del
+.I id...
+.SH DESCRIPTION
+.I Frame
+makes
+.IR frame (2)
+usable from
+.IR sh (1).
+What
+.B spec
+accumulates and
+.B read
+loads is
+.IR frame (2)'s
+own notation, passed through untouched, and the structure is parsed the
+first time anything needs it.
+.PP
+.B Displacement
+and
+.B reaction
+take a node name and a direction.
+.B Force
+gives a member's axial force, then the shear and moment at each end, in
+the member's own directions.
+.B Equilibrium
+returns the three residuals, which must be zero.
+.B Heldrot
+counts the rotations
+.IR frame (2)
+held because nothing resisted them.
+.SS Drawing a structure
+.B Member
+is the one thing here that is not a thin wrapper.
+It returns a member's two endpoints,
+.I x1 y1 x2 y2,
+and with
+.B deflected
+it returns them moved by the displacements times a scale.
+.PP
+A structure has no natural curve to plot \- it is a set of segments, not
+a series \- so a drawing of one wants exactly that, one member at a
+time, each in its own table with its own
+.B line
+layer.
+The scale is there because a real structure's displacements are far too
+small to see: the truss in
+.B /lib/demo/trusslab.sh
+moves about three millimetres under a tonne, on a span of eight metres.
+.SH EXAMPLE
+The textbook triangle:
+.IP
+.EX
+load std
+load frame
+f := ${frame new}
+frame $f spec 'node a 0 0
+node b 8 0
+node c 4 3
+bar a b 200e9 0.01
+bar a c 200e9 0.01
+bar c b 200e9 0.01
+pin a
+roller b y
+force c 0 -1000'
+frame $f solve
+echo ${frame $f reaction a y}	# 500
+echo ${frame $f force 0}		# 666.67, the bottom chord in tension
+echo ${frame $f force 1}		# -833.33, a diagonal in compression
+echo ${frame $f equilibrium}	# 0 0 0
+.EE
+.SH SOURCE
+.B /appl/cmd/sh/frame.b
+.SH SEE ALSO
+.IR sh (1),
+.IR sh-plot (1),
+.IR sh-circuit (1),
+.IR frame (2),
+.IR frametest (1)
+.SH DIAGNOSTICS
+A structure that is a mechanism, a member naming a node that is not
+there, a query before
+.BR solve :
+each fails the command, the first two with the message
+.IR frame (2)
+gives.
+.SH BUGS
+There is no test for this module in
+.BR /appl/cmd .
+.IR Frame (2)
+underneath it is checked by
+.IR frametest (1);
+what is added here is handle bookkeeping and the endpoint extraction,
+exercised by the example above and by
+.BR /lib/demo/trusslab.sh .
+.PP
+A structure cannot be changed once parsed; a new handle is needed, which
+is what the demo does on every slider move.
+.PP
+.B Member
+reports only the two end positions, so a beam that bends between its
+ends is drawn as the straight line joining them.
+For a truss that is exact, since a bar really is straight; for a frame
+it is not.
