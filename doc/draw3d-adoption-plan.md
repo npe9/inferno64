@@ -1190,6 +1190,40 @@ then run at whatever rate the screen happens to be. The interface says
 so. `castlefrankenstein` is safe because nothing there advances per tick
 — walking is driven by key events and the monsters have their own clock.
 
+**And a worse one after it, found by another session.** Under the
+display-link default `INFERNO_METAL_STATS` printed nothing, which looked
+like a dark instrument and was not. The link had not fired at all — zero
+ticks and zero `present_on_main()` calls in twenty-five seconds — and
+since `mark_view_dirty()` had stopped presenting and only raised a flag,
+**nothing presented the screen after the first frame**. A pure 2-D Tk
+program animating continuously showed under 30 presents by default
+against 869 with `INFERNO_NOVSYNC=1`.
+
+`CADisplayLink` stops when its window is not being displayed, and that
+includes states a program never sees and did not ask for. It had been
+measured working repeatedly hours earlier, 16.667 ms gaps over a long
+run, and not at all later: **it works while someone is watching**, which
+is the worst kind of dependency. The link is created after
+`makeKeyAndOrderFront` and `activateIgnoringOtherApps` and emu does run
+`[NSApp run]`, so neither an inactive application nor a missing run loop
+explains it, and the cause is still not known. That is why the answer is
+a fallback and not a fix to the link.
+
+`mark_view_dirty()` presents for itself again when the link has been
+quiet for six refreshes — `gorge` goes from 0 stats blocks in 22 s to 43.
+`frameclock(2)`'s vsync mode runs a keep-alive beside the read and
+delivers a tick only when the display did not — `castlefrankenstein`,
+which paces off the display by default, went from 0 frames in 22 s
+(blocked in the read) to 41. While the link is healthy both cost nothing.
+
+The contract mattered most. `/dev/draw/vsync` existing is the check that
+lets a program pace off it safely, which is why it is absent when nothing
+will tick it — but it could exist and never tick, so the check that
+prevents an indefinite hang reported safe while the read hung. The
+fallback present path now ticks vsync readers too: a reader gets a tick
+per presented frame at worst. A passive reader with nothing else drawing
+still gets nothing, which is why the keep-alive is load-bearing.
+
 **A bug of mine in the middle of it, worth keeping.** `frameclock` treats
 "the file is not there" as "no display to ask" and falls back to a timer.
 The file was there whether or not a display link had been created, so
