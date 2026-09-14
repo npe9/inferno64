@@ -3192,8 +3192,14 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 {
 	int linuxstat = 0;	/* the answer is a 9P stat to be handed back as a Linux one */
 	int linuxdents = 0;	/* ... or 9P stats to be handed back as Linux directory entries */
+	int linuxrename = 0;	/* ... or two paths to be sent as a wstat naming the second */
 	enum {
 		Atfdcwd = -100,		/* openat's "relative to the working directory" */
+		Lexdev = 18,		/* a rename that would cross directories */
+		Lcreat = 0100,		/* O_CREAT */
+		Ltrunc = 01000,		/* O_TRUNC */
+		Lenosys = 38,
+		Lbadio = 5,		/* EIO, when a message this builds will not marshal */
 		Lstatroom = 512,	/* room asked of the buddy for a 9P stat message */
 	};
 	Ospreyproc *p;
@@ -3266,9 +3272,37 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 			 * answered as though the descriptor were not there.
 			 */
 			if((long)a[0] != Atfdcwd && ((char*)a[1])[0] != '/')
-				return -1;
+				return -Lenosys;
 			a[0] = a[1];		/* path where Plan 9's open wants it */
 			a[1] = a[2];		/* and the flags after it */
+			a[2] = a[3];		/* and the mode a create would want */
+			/*
+			 * Linux's flags are not Plan 9's, and passing them
+			 * through worked only because the two agree on the
+			 * bottom two bits: O_RDONLY, O_WRONLY and O_RDWR are
+			 * 0, 1 and 2, which is OREAD, OWRITE and ORDWR.
+			 * Nothing above those two bits agrees.  O_TRUNC is
+			 * 0x200 and OTRUNC is 16, so a program opening a file
+			 * to overwrite it handed Plan 9 a mode bit that means
+			 * nothing, and the open was refused.  And O_CREAT,
+			 * which is how a Linux program makes a file at all,
+			 * has no counterpart: Plan 9 creates with a call of
+			 * its own, so a create has to become one.
+			 */
+			{
+				ulong lf = (ulong)a[1];
+				ulong pm = lf & 3;		/* the two bits that agree */
+
+				if(lf & Ltrunc)
+					pm |= OTRUNC;
+				if(lf & Lcreat){
+					a[1] = pm & ~(ulong)OTRUNC;	/* create truncates by making */
+					a[2] = a[2] & 0777;
+					scallnr = Bcreate;
+					break;
+				}
+				a[1] = pm;
+			}
 			scallnr = Bopen;
 			break;
 		case 4:				/* stat(path, statbuf) */
@@ -3280,6 +3314,31 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 			linuxstat = 1;
 			a[2] = Lstatroom;
 			scallnr = Bfstat;
+			break;
+		case 82:			/* rename(oldpath, newpath) */
+		case 264:			/* renameat(olddirfd, old, newdirfd, new) */
+			/*
+			 * A rename is a wstat in Plan 9: the file named, and a
+			 * Dir whose every field is left alone but the name.
+			 * The message is built below rather than copied from
+			 * the program, because the program has no Dir to
+			 * build - it passed two paths.
+			 *
+			 * Only within one directory.  Linux's rename moves a
+			 * file between directories and a wstat does not, so a
+			 * new path naming another directory is refused with
+			 * EXDEV, which is the errno for exactly this - a
+			 * rename that would have to be a copy - and is what a
+			 * caller already knows how to handle.
+			 */
+			if(scallnr == 264){
+				if((long)a[0] != Atfdcwd || (long)a[2] != Atfdcwd)
+					return -Lexdev;
+				a[0] = a[1];	/* the two paths where rename has them */
+				a[1] = a[3];
+			}
+			linuxrename = 1;
+			scallnr = Bwstat;
 			break;
 		case 217:			/* getdents64(fd, buf, count) */
 			/*
@@ -3449,6 +3508,50 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 				nd[i] = name[i];
 			nd[i] = 0;
 		}
+		if(linuxrename){
+			/*
+			 * A Linux rename: the program passed two paths, so the
+			 * Dir is built here.  The new path's last element is
+			 * the name; anything before it would be a move between
+			 * directories, which a wstat is not.
+			 */
+			char *np = (char*)a[1], *base;
+			Dir d;
+			long dn;
+
+			ospreytouch(a[1], 256);
+			for(i = 0, base = np; i < 255 && np[i] != 0; i++)
+				if(np[i] == '/')
+					base = np + i + 1;
+			if(base != np && (base - np) > 0){
+				/*
+				 * A directory was named.  It is the same
+				 * directory only if the old path names it too;
+				 * comparing the two prefixes is what says so.
+				 */
+				char *op = (char*)nd;
+				long k = base - np - 1;
+				long ol = 0;
+
+				while(ol < 255 && op[ol] != 0)
+					ol++;
+				while(ol > 0 && op[ol-1] != '/')
+					ol--;
+				if(ol == 0 || ol - 1 != k || memcmp(op, np, k) != 0)
+					return -Lexdev;
+			}
+			dd = ospreydata(p, Bdataoff, Odbuddydatalen);
+			if(dd == nil)
+				return -1;
+			memset(&d, ~0, sizeof d);	/* every field: leave it alone */
+			d.name = base;
+			d.uid = d.gid = d.muid = "";
+			dn = convD2M(&d, dd, 512);
+			if(dn <= BIT16SZ)
+				return -Lbadio;
+			ab[1] = 0; ab[2] = Aint(dn); ab[3] = 0;
+			break;
+		}
 		/*
 		 * And the message itself goes out with the call, the way a
 		 * write's data does: this is the one call whose argument is a
@@ -3577,6 +3680,8 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 	if(status < 0)
 		return up->oslinux ? -ospreylinuxerrno(p) : -1;
 
+	if(linuxrename && status >= 0)
+		return 0;		/* Plan 9's wstat yields the message's length; Linux's rename yields 0 */
 	if(linuxdents && status > 0){
 		/*
 		 * A Linux directory read.  The buddy answered with 9P stat

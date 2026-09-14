@@ -115,6 +115,21 @@ def main():
         ("and a directory listing crosses the same way: getdents64 returns the buddy's 9P stat messages as dirent64 records, and the program walks them by reclen over as many calls as the buffer needs - fourteen entries of the buddy's root, each with the directory bit",
          gd is not None and int(gd.group(1)) == 14 and int(gd.group(2)) >= 2
          and re.search(r'getdents64 on /: boot/4 bin/4 dev/4 env/4 fd/4 mnt/4 n/4 net/4 net\.alt/4 proc/4 rc/4 root/4 srv/4 shr/4', t) is not None),
+        # Making a file and renaming one, which needed the flags translated
+        # rather than passed through.  Linux's flags are not Plan 9's: the
+        # two agree only on the bottom two bits (O_RDONLY, O_WRONLY,
+        # O_RDWR are OREAD, OWRITE, ORDWR), so O_TRUNC - 0x200, where
+        # OTRUNC is 16 - was a mode bit meaning nothing and the open was
+        # refused, and O_CREAT had no counterpart at all because Plan 9
+        # creates with a call of its own.  A rename is a wstat there and a
+        # call of its own here, so the kernel builds the Dir; a new path
+        # in another directory would have to be a copy and is refused with
+        # EXDEV, the errno for exactly that.
+        ("and a Linux program can make a file and rename one: O_CREAT becomes Plan 9's create with the mode it asked for, O_TRUNC becomes OTRUNC rather than a bit meaning nothing, and rename becomes a wstat naming the new name - with a rename into another directory refused as EXDEV, because a wstat does not move a file",
+         re.search(r'lfs: committed linuxname version 1, 27 bytes', t) is not None
+         and re.search(r'lfs: renamed linuxname to linuxmoved after version 1: 27 bytes carried over', t) is not None
+         and 'linux: rename returned 0 and /n/linuxmoved reads "renamed by a Linux program' in t
+         and 'linux: a rename into another directory returned -18 (EXDEV: a wstat does not move a file)' in t),
         # The rest of what a libc does before it reaches main.  writev is
         # the one that matters: a libc's stdout gathers its pieces and
         # writes them in one call, so without it a real binary prints

@@ -4489,6 +4489,52 @@ it so that reclamation has to run \- so those few sectors came out of a
 budget another test was counting, and eighteen criteria failed for it.
 The program asking is the thing worth showing anyway.
 .PP
+A Linux program can ask too, and getting there needed the open flags
+translated rather than passed through.  Linux's flags are not Plan 9's
+and the two agree on only the bottom two bits \-
+.CW O_RDONLY ,
+.CW O_WRONLY
+and
+.CW O_RDWR
+are 0, 1 and 2, which is
+.CW OREAD ,
+.CW OWRITE
+and
+.CW ORDWR
+\- so passing them through worked for exactly the opens this test had
+been making and nothing else.
+.CW O_TRUNC
+is 0x200 where
+.CW OTRUNC
+is 16, so a program opening a file to overwrite it handed Plan 9 a mode
+bit that means nothing and the open was refused; and
+.CW O_CREAT
+had no counterpart at all, because Plan 9 creates with a call of its
+own, so a Linux program could not make a file.  A create becomes
+.CW Bcreate
+with the mode it asked for now, and
+.CW O_TRUNC
+becomes
+.CW OTRUNC .
+.PP
+Then a rename, which is a
+.CW wstat
+on one side and a call of its own on the other.  The program passes two
+paths and has no
+.CW Dir
+to build, so the kernel builds it: the new path's last element is the
+name, and a new path naming another directory would have to be a copy
+and is refused with EXDEV, the errno for exactly that.  Plan 9's wstat
+yields the message's length and Linux's rename yields 0, so the reply
+says 0.  The program makes
+.CW /n/linuxname ,
+writes to it, renames it to
+.CW /n/linuxmoved ,
+reads its bytes back there, and is told EXDEV for a rename out of the
+directory.  Against the kernel before the change the create fails, the
+rename is ENOSYS, and nothing is renamed.  The p9linux check is twenty
+criteria.
+.PP
 That last sentence understated it: the bound was not merely unpaged, it
 was wrong.  The file server is handed a place in the client's data area
 to write its answer into, and the region is

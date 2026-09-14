@@ -442,6 +442,45 @@ lmain(void)
 
 		{
 			/*
+			 * A rename, which on Plan 9 is a wstat and on Linux is
+			 * a call of its own.  The kernel builds the Dir - the
+			 * program passed two paths and has no Dir to build -
+			 * and the buddy hands it to the store.  A new path in
+			 * another directory would have to be a copy, so it is
+			 * refused with EXDEV, which is the errno for exactly
+			 * that.
+			 */
+			long rr, rx, rfd3;
+			static char rb3[64];
+
+			rfd3 = sys6(257, Atfdcwd, (long)"/n/linuxname", 0x241, 0666, 0, 0);
+			if(rfd3 >= 0){
+				sys3(1, rfd3, (long)"renamed by a Linux program\n", 27);
+				sys3(3, rfd3, 0, 0);
+			}
+			rr = sys3(82, (long)"/n/linuxname", (long)"/n/linuxmoved", 0);
+			rx = sys3(82, (long)"/n/linuxmoved", (long)"/elsewhere/linuxmoved", 0);
+			rfd3 = sys6(257, Atfdcwd, (long)"/n/linuxmoved", 0, 0, 0, 0);
+			{
+				long m3 = rfd3 >= 0 ? sys3(0, rfd3, (long)rb3, sizeof rb3 - 1) : -1;
+				if(m3 < 0) m3 = 0;
+				rb3[m3] = 0;
+				if(rfd3 >= 0) sys3(3, rfd3, 0, 0);
+				p = cat(line, "linux: rename returned ");
+				p = num(p, rr);
+				p = cat(p, " and /n/linuxmoved reads \"");
+				p = cat(p, rb3);
+				*p = 0;
+				say(line);
+			}
+			p = cat(line, "\"\nlinux: a rename into another directory returned ");
+			p = num(p, rx);
+			p = cat(p, " (EXDEV: a wstat does not move a file)\n"); *p = 0;
+			say(line);
+		}
+
+		{
+			/*
 			 * The rest of what a libc does before it reaches main.
 			 * writev is the one that matters: a libc's stdout
 			 * gathers its pieces and writes them in one call, so
