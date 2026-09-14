@@ -1230,22 +1230,45 @@ delivers a tick only when the display did not — `castlefrankenstein`,
 which paces off the display by default, went from 0 frames in 22 s
 (blocked in the read) to 41.
 
-**Both fallbacks re-measured on the smooth path afterwards**, because the
-keep-alive was added *after* the run that justified the design and an
-untested interaction between the two would have been easy to ship. With
-the display awake and the link firing, `castlefrankenstein`'s frame gaps
-are 16462 to 16822 us — a 360 us spread against the 850 us measured
-before the keep-alive existed. It costs the smooth path nothing; it is
-slightly tighter, the earlier run having been taken with the display in a
-less reliable state. The whole sequence, one program:
+**The frame-gap figures above are single runs, and single runs of this
+are not reproducible.** Re-measured later the same day, three runs each,
+one sitting, same machine — `castlefrankenstein`'s own frame gaps:
 
 ```
-                                            min  median     max
-before any of this                         6275   15143   28374
-accurate timer, display-driven present    14914   16855   18444
-paced by the display                      16191   16702   17042
-paced by the display, with the keep-alive 16462   16665   16822
+                            min  median     max
+paced by the display       7528   16616   28138
+                           8063   16896   25979
+timer-paced (NOVSYNC)      4894   16062   33351
+                          13329   16517   20156
 ```
+
+Indistinguishable. The tight spreads reported above (360 us, 850 us) were
+lucky moments taken as properties, and the frame gap is dominated by the
+program's own work and by what else the machine is doing, not by how it
+is paced.
+
+**What does survive re-measurement, and it is the one that matters:** the
+interval between *presents* — when pixels actually change on the screen.
+
+```
+                     min  median     max
+display-driven     16660   16667   16679      (two runs, both)
+timer-driven        5561   16582   27773
+                    7640   16722   27379
+```
+
+Nineteen microseconds of spread against twenty-two milliseconds. That is
+the display link doing its job, it reproduces every time, and it is what
+makes motion even regardless of when the program happened to finish a
+frame. Pacing the *program* off the display is architecturally right —
+one clock instead of two, and a dynamic rate — but no measured smoothness
+win should be claimed for it on top of the present-side fix.
+
+That is also why `frameclock`'s display pacing stays opt-in at `hz` 0
+rather than being generalised to deliver any requested rate off the
+display, which was built and measured here and then dropped: it was
+indistinguishable from the timer, and it is not worth changing the
+behaviour of 85 callers for a difference that does not show up.
 
 The contract mattered most. `/dev/draw/vsync` existing is the check that
 lets a program pace off it safely, which is why it is absent when nothing
