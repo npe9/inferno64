@@ -3159,7 +3159,7 @@ long
 static int
 ospreylinuxerrno(Ospreyproc *p)
 {
-	enum { Lenoent = 2, Leacces = 13, Leio = 5 };
+	enum { Lenoent = 2, Leacces = 13, Leio = 5, Leinval = 22 };
 	uvlong *ab;
 	uchar *dd;
 	char buf[ERRMAX];
@@ -3181,6 +3181,16 @@ ospreylinuxerrno(Ospreyproc *p)
 	for(i = 0; i < n; i++)
 		buf[i] = dd[i];
 	buf[n] = 0;
+	/*
+	 * A buffer too small for what was asked for.  Plan 9 says so in
+	 * words ("i/o count too small", "read or write too small", "stat
+	 * buffer too small"); Linux says EINVAL, and a program that reads a
+	 * directory into a buffer too small for one entry is expected to
+	 * see that and try a bigger one.  EIO would tell it the disk is
+	 * broken, and it would stop.
+	 */
+	if(strstr(buf, "too small") != nil)
+		return Leinval;
 	if(strstr(buf, "does not exist") != nil || strstr(buf, "not found") != nil)
 		return Lenoent;
 	if(strstr(buf, "permission denied") != nil)

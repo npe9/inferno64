@@ -4586,6 +4586,22 @@ neither which process nor where nor which note.  They say all three now.
 The cost of not saying them is measured rather than guessed at: three
 boots and a bisection, above, to learn what one line would have said.
 .PP
+And the directory listing was swept, because a buffer boundary is where
+a directory read goes wrong and sweeping one found two faults in the
+Plan 9 union read earlier in this document.  The program lists the
+buddy's root through every buffer size from 32 bytes to 512: not one of
+them returns a different count.  Forty-two of them \- every size below
+the largest entry \- cannot hold a single entry and are refused, which
+is the right answer, and they were refused with EIO, which is not.
+Linux says EINVAL for a result buffer too small, and a program that
+reads a directory into one is expected to see that and try a bigger
+buffer; EIO tells it the disk is broken and it stops.  Plan 9 says so in
+words \- "i/o count too small", "read or write too small", "stat buffer
+too small" \- so the message the buddy sends is matched for "too small"
+and becomes EINVAL, beside the two names already matched there.  It is
+the same string-matching, and the same reason: the buddy has a message
+and the program wants a number.
+.PP
 That last sentence understated it: the bound was not merely unpaged, it
 was wrong.  The file server is handed a place in the client's data area
 to write its answer into, and the region is

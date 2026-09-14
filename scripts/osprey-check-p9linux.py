@@ -57,6 +57,8 @@ def main():
 
     m = re.search(r'linux: read\(fd, buf, \d+\) returned (\d+) bytes, served by the buddy', t)
     gd = re.search(r'linux: (\d+) entries in (\d+) calls, as dirent64 records', t)
+    sw = re.search(r'the same listing through every buffer size from 32 to 512: (\d+) gave a different '
+                   r'count \(first at (\d+)\), (\d+) were refused with (-?\d+)', t)
     pages = re.findall(r'osprey buddy: page 0x[0-9a-f]+ of the legacy image supplied by the buddy', t)
     results = [
         # The entry is read out of both messages and required to agree
@@ -130,6 +132,17 @@ def main():
          and re.search(r'lfs: renamed linuxname to linuxmoved after version 1: 27 bytes carried over', t) is not None
          and 'linux: rename returned 0 and /n/linuxmoved reads "renamed by a Linux program' in t
          and 'linux: a rename into another directory returned -18 (EXDEV: a wstat does not move a file)' in t),
+        # And the same listing through every buffer size, because a buffer
+        # boundary is where a directory read goes wrong: sweeping it found
+        # two faults in the Plan 9 union read, and this path had only ever
+        # been called with one size.  Every size that returns entries has
+        # to return all of them; the sizes too small for even one entry
+        # are refused, and refused with EINVAL, which is what Linux says
+        # and what a program retries on.  EIO would tell it the disk is
+        # broken and it would stop.
+        ("and that listing is the same through every buffer size from 32 bytes to 512: not one of them returns a different count, and the sizes too small to hold a single entry are refused with EINVAL - the errno Linux gives for exactly that, and the one a program retries on",
+         sw is not None and int(sw.group(1)) == 0 and int(sw.group(2)) == 0
+         and int(sw.group(3)) > 0 and int(sw.group(4)) == -22),
         # And removing one, which a program that can make a file ought to
         # be able to do and could not: create and rename were mapped and
         # unlink was not.  Plan 9's remove takes down a directory as

@@ -367,6 +367,57 @@ lmain(void)
 			p = cat(p, " calls, as dirent64 records the program walked by reclen\n"); *p = 0;
 			say(line);
 			sys3(3, dfd, 0, 0);
+
+			/*
+			 * And through every buffer size, because a buffer
+			 * boundary is where a directory read goes wrong: the
+			 * same listing read with 32 bytes to put it in must
+			 * have the same entries in it as one read with 512.
+			 * Sweeping the size is what found two faults in the
+			 * Plan 9 union read, and this path had only ever been
+			 * called with one.
+			 */
+			{
+				long sz, bad = 0, worst = 0, small = 0, why = 0;
+
+				for(sz = 32; sz <= 512; sz++){
+					long got = 0, c2 = 0, e2;
+
+					dfd = sys6(257, Atfdcwd, (long)"/", 0, 0, 0, 0);
+					while((e2 = sys3(217, dfd, (long)buf, sz)) > 0){
+						for(o = 0; o + 19 < e2; ){
+							long rl = *(unsigned short*)(buf + o + 16);
+							if(rl <= 0 || o + rl > e2)
+								break;
+							got++;
+							o += rl;
+						}
+						if(++c2 > 64)
+							break;
+					}
+					sys3(3, dfd, 0, 0);
+					if(e2 < 0){
+						small++;	/* told the buffer is too small, which is an answer */
+						if(why == 0)
+							why = e2;
+					}
+					else if(got != nent){
+						bad++;
+						if(worst == 0)
+							worst = sz;
+					}
+				}
+				p = cat(line, "linux: the same listing through every buffer size from 32 to 512: ");
+				p = num(p, bad);
+				p = cat(p, " gave a different count (first at ");
+				p = num(p, worst);
+				p = cat(p, "), ");
+				p = num(p, small);
+				p = cat(p, " were refused with ");
+				p = num(p, why);
+				p = cat(p, "\n"); *p = 0;
+				say(line);
+			}
 		}
 
 		{
