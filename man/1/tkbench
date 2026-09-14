@@ -42,6 +42,23 @@ image, so that every repaint ends in a Metal upload and present.
 Offscreen there is no present at all, which is what makes the default
 figures drawing-only.
 .PP
+.B -y
+reports how often the display asks for a frame, by reading
+.B #i/draw/vsync
+\(em where a read blocks until the next frame is wanted \(em and counting
+for three seconds.
+Nothing is drawn.
+Since
+.I emu
+presents the 2-D screen only from that callback, the rate this prints is
+the rate the screen can update at, and it is measurable without seeing
+the screen: a useful property, because
+.I readpixels
+returns
+.B "00 00 00"
+for anything on the display under the Metal present path, so looking is
+the one thing that cannot be done.
+.PP
 .B -i
 repaints slowly, 200 times at 25ms apart, leaving the processor idle
 between frames.

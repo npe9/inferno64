@@ -54,6 +54,7 @@ win: ref Image;
 verbose := 0;
 onscreen := 0;
 idle := 0;
+vsync := 0;
 
 init(nil: ref Draw->Context, argv: list of string)
 {
@@ -63,14 +64,19 @@ init(nil: ref Draw->Context, argv: list of string)
 	arg := load Arg Arg->PATH;
 	if(arg != nil){
 		arg->init(argv);
-		arg->setusage("tkbench [-isv]");
+		arg->setusage("tkbench [-isvy]");
 		while((c := arg->opt()) != 0)
 			case c {
 			'v' =>	verbose = 1;
 			's' =>	onscreen = 1;
 			'i' =>	idle = 1;
+			'y' =>	vsync = 1;
 			* =>	arg->usage();
 			}
+	}
+	if(vsync){
+		countvsync();
+		return;
 	}
 	if(tk == nil){
 		sys->print("tkbench: no tk: %r\n");
@@ -178,6 +184,54 @@ idlepresents()
 	for(i = 0; i < 200; i++){
 		tk->cmd(top, "style flat");
 		sys->sleep(25);
+	}
+}
+
+# How often does the display actually ask for a frame?
+#
+# draw(3) grew /dev/draw/vsync, where a read blocks until the display
+# next wants one, and emu now presents the 2-D screen ONLY from that
+# callback.  So the rate of those reads is the rate the screen can update
+# at, and it is measurable from here without seeing the screen at all -
+# which matters, because readpixels returns 00 00 00 for anything on the
+# display under the Metal present path, so looking is exactly what cannot
+# be done.
+#
+# A refresh-rate answer means the display link is firing and a slow screen
+# is somebody else's problem; an answer near zero means it is not, and an
+# animating 2-D window updates at whatever rate this prints.
+countvsync()
+{
+	# "#i" is the draw device itself; /dev/draw is where a window system
+	# binds it, and a bare emu running a shell has no such binding.
+	fd := sys->open("#i/draw/vsync", Sys->OREAD);
+	if(fd == nil)
+		fd = sys->open("/dev/draw/vsync", Sys->OREAD);
+	if(fd == nil){
+		sys->print("tkbench: no draw/vsync: %r\n");
+		sys->print("tkbench: (an emu without the display-link path, or one where it is off)\n");
+		return;
+	}
+	sys->print("tkbench: opened draw/vsync, waiting for the first frame request\n");
+	b := array[16] of byte;
+	# A first read on its own, before timing: it returns whenever the
+	# next frame is wanted, and counting the wait for it as part of a
+	# rate would understate the rate by up to one interval.
+	sys->read(fd, b, len b);
+	sys->print("tkbench: first frame request arrived\n");
+	for(secs := 1; secs <= 3; secs++){
+		n := 0;
+		t0 := sys->millisec();
+		while(sys->millisec() - t0 < 1000){
+			if(sys->read(fd, b, len b) < 0){
+				sys->print("tkbench: vsync read: %r\n");
+				return;
+			}
+			n++;
+		}
+		dt := sys->millisec() - t0;
+		sys->print("tkbench: second %d: %d frames wanted in %d ms (%d Hz)\n",
+			secs, n, dt, (n*1000)/dt);
 	}
 }
 
