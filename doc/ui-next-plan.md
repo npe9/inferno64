@@ -465,8 +465,13 @@ said so was the speech check printing
 `'General -variable nbv_nb -value 0 -command {send nbc_nb 0} radio button
 selected'`. `tk->quote` is the fix.
 
-What it does not do is *look* like a notebook: the tabs are radiobuttons
-in a row. Drawing them as tabs wants a canvas or a themed layer, which is
+~~What it does not do is *look* like a notebook: the tabs are radiobuttons
+in a row.~~ They now carry `-indicatoron 0`, which drops the circle and
+leaves a slab that the flat style fills in the accent when chosen — a
+**segmented control**, which is what a current system draws for this job.
+It is still a radiobutton underneath, so `voice(3)` announcement is
+unchanged; the circle was never what made that work. A tab *shape* — a
+page hanging off the selected one — still wants a canvas. Drawing them as tabs wants a canvas or a themed layer, which is
 the expensive half.
 
 **Done when:** each new widget has a `man/9/` page, like the ones there
@@ -577,8 +582,10 @@ than a constraint.
   already inset by it, so the pixel had been reserved and left blank all
   along. A focused button now reads 330 inked pixels against an
   unfocused one's 222.
-- **`tknotebook(2)`'s tabs are radiobuttons in a row**, because that is
-  what composition gets you. Making them look like tabs wants a canvas or
+- ~~**`tknotebook(2)`'s tabs are radiobuttons in a row**~~ — **done**,
+  with `-indicatoron 0`: a segmented control, filled in the accent when
+  chosen. Composition got there after all, because the style underneath
+  changed rather than the widget. Making them look like tabs wants a canvas or
   the themed layer below.
 
 **The order to do it in.** ~~The bevel and the focus ring~~ — both done;

@@ -49,9 +49,15 @@ new(top: ref Tk->Toplevel, path: string, tabs: array of string): ref Notebook
 		# the END of the line, so "-text 'General -variable ..." makes
 		# the label the whole rest of the command. Every tab was named
 		# after its own source until the announcement said so out loud.
+		# -indicatoron 0 drops the little circle, so a tab is a slab
+		# that is filled when chosen and not when it is not - which is
+		# a segmented control, and is what a current system draws for
+		# exactly this job.  It stays a radiobutton underneath, so
+		# libtk still announces it to voice(3) on arrival and on
+		# change; the circle was never what made that work.
 		tk->cmd(top, sys->sprint(
 			"radiobutton %s -text %s -variable %s -value %d" +
-			" -command {send %s %d}",
+			" -indicatoron 0 -command {send %s %d}",
 			t, tk->quote(tabs[i]), var(nb), i, chan_(nb), i));
 		tk->cmd(top, "pack " + t + " -side left");
 		tk->cmd(top, sys->sprint("frame %s.body.p%d", path, i));

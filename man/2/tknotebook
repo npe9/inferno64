@@ -72,9 +72,19 @@ Buttons would have been silent.
 .B /doc/ui-next-plan.md
 .SH BUGS
 The tabs are not drawn as tabs.
-They are radiobuttons in a row, so they look like radiobuttons; making
-them look like a notebook wants either a canvas or a themed-widget layer,
-which is the expensive half.
+They are radiobuttons with
+.B -indicatoron
+false, which under
+.IR style (9)'s
+flat look is a slab filled in the accent when chosen and unfilled when
+not \(em a segmented control, which is what a current system draws for
+this job, but not a row of tabs with a page hanging off the selected one.
+A tab SHAPE still wants a canvas or a themed-widget layer.
+.PP
+Under
+.B "style classic"
+they are the old raised and sunken slabs, which is closer to a tab and
+further from anything drawn this decade.
 .PP
 No keyboard traversal between tabs beyond what focus already does, and no
 way to add or remove one after

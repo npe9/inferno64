@@ -260,6 +260,20 @@ tkdrawlabel(Tk *tk, Point orig)
 
 	fgnd = TkCforegnd;
 	bgnd = TkCbackgnd;
+	/*
+	 * A menubutton and a choicebutton are CONTROLS, and are filled like
+	 * one - the same surface a push button gets in buton.c.  They share
+	 * this draw with a plain label, which is why they were not: the fill
+	 * went in where push buttons are drawn and these are drawn here, so
+	 * two of the three things a person clicks came out looking like
+	 * text on the page.
+	 *
+	 * A label is NOT filled.  It is text on the page and has nothing to
+	 * click, so a slab behind it would say otherwise.
+	 */
+	if (tkstyleflat(tk)
+	&& (tk->type == TKmenubutton || tk->type == TKchoicebutton))
+		bgnd = TkCfield;
 	if (tk->flag & Tkdisabled)
 		fgnd = TkCdisablefgnd;
 	else if (tk->flag & Tkactive) {
