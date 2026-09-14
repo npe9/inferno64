@@ -160,6 +160,17 @@ static uvlong	metal_blank_uploads;	/* full uploads of a screen of one colour */
 static int	metal_countblank = -1;	/* gated on INFERNO_METAL_STATS, read once */
 static uvlong	metal_torn_uploads;	/* presented uploads whose live bytes != the snapshot */
 /*
+ * How much of the screen changes from one presented frame to the next.
+ * A program that animates changes a little; a window that flashes changes
+ * most of itself, twice a frame - once to the clear and once back.  An
+ * average present interval cannot see that and neither can a torn-upload
+ * count, because a cleared screen that was properly flushed is not torn.
+ */
+static uchar	*present_prev;
+static int	present_prev_len;
+static uvlong	present_churn_big;	/* presents changing >40% of the screen */
+static uvlong	present_churn_small;
+/*
  * Does each frame the program finishes get shown exactly once?  soft_seq
  * counts frames flushed by the program; present records how many have
  * arrived since the last one it showed.  0 means the display repeated a
@@ -1388,6 +1399,43 @@ metal_upload_damage_body(id<MTLTexture> tex, int full)
 	 * shadow bytes.
 	 */
 	base = (!full && soft_shadow != nil) ? soft_shadow : gscreen->data->bdata;
+	/*
+	 * Churn: how much of the screen differs from the last one presented.
+	 * Outside the `full` test on purpose - after the snapshot fix a
+	 * present's upload is incremental, so gating this on `full` measured
+	 * only the flush's own upload and read zero for everything.
+	 */
+	if(metal_countblank != 0 && !mtl_materialising){
+		if(metal_countblank < 0)
+			metal_countblank = getenv("INFERNO_METAL_STATS") != nil;
+		if(metal_countblank > 0){
+			int nq2, need2;
+			u32 *q2, *pv;
+
+			nq2 = (gscreen->width * (int)sizeof(u32) / 4) * ph;
+			need2 = nq2 * 4;
+			q2 = (u32*)base;
+			if(present_prev_len < need2){
+				free(present_prev);
+				present_prev = malloc(need2);
+				present_prev_len = present_prev ? need2 : 0;
+				if(present_prev != nil)
+					memmove(present_prev, q2, need2);
+			}else{
+				int nd2 = 0;
+
+				pv = (u32*)present_prev;
+				for(i = 0; i < nq2; i++)
+					if(q2[i] != pv[i])
+						nd2++;
+				if(nd2 * 5 > nq2 * 2)	/* more than 40% */
+					present_churn_big++;
+				else
+					present_churn_small++;
+				memmove(present_prev, q2, need2);
+			}
+		}
+	}
 	/*
 	 * Is what we are about to upload a screen of one single colour?
 	 * That is what a frame caught between a program's clear and its
@@ -4610,7 +4658,7 @@ present_softscreen_body(void)
 			metal_presents ? metal_drawable_us/metal_presents : 0,
 			metal_presents ? metal_slotwait_us/metal_presents : 0,
 			metal_presents ? (metal_present_us - metal_drawable_us - metal_slotwait_us)/metal_presents : 0);
-		fprint(2, "METALSTATS frames=%d damage_calls=%llud damage_bytes=%llud full_uploads=%llud readbacks=%llud upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud largest_copy_bytes=%llud largest_dirty_bytes=%llud copy_notes=%llud rejected=%llud reject_storage=%llud reject_damage=%llud reject_geometry=%llud alias_storage=%llud armed=%llud cancelled=%llud g3_calls=%llud g3_tris=%llud fill_calls=%llud blank_uploads=%llud torn_uploads=%llud torn_pixels=%llud spr_calls=%llud soft_fallbacks=%llud teximg_alloced=%ud teximg_declined=%ud(chan=%ud small=%ud) teximg_freed=%ud live=%d\n",
+		fprint(2, "METALSTATS frames=%d damage_calls=%llud damage_bytes=%llud full_uploads=%llud readbacks=%llud upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud largest_copy_bytes=%llud largest_dirty_bytes=%llud copy_notes=%llud rejected=%llud reject_storage=%llud reject_damage=%llud reject_geometry=%llud alias_storage=%llud armed=%llud cancelled=%llud g3_calls=%llud g3_tris=%llud fill_calls=%llud blank_uploads=%llud churn_big=%llud churn_small=%llud torn_uploads=%llud torn_pixels=%llud spr_calls=%llud soft_fallbacks=%llud teximg_alloced=%ud teximg_declined=%ud(chan=%ud small=%ud) teximg_freed=%ud live=%d\n",
 			metal_stat_frames, metal_damage_calls, metal_damage_bytes,
 			metal_full_uploads, metal_readbacks, metal_upload_bytes,
 			metal_copy_bytes, metal_saved_bytes,
@@ -4620,6 +4668,7 @@ present_softscreen_body(void)
 			metal_copy_reject_damage, metal_copy_reject_geometry, metal_copy_alias_storage,
 			metal_copy_armed, metal_copy_cancelled, metal_g3_calls, metal_g3_tris,
 			metal_fill_calls, metal_blank_uploads,
+			present_churn_big, present_churn_small,
 			metal_torn_uploads, metal_torn_pixels, metal_spr_calls,
 			metal_soft_fallbacks, teximg_alloced, teximg_declined,
 			teximg_nchan, teximg_nsmall, teximg_freed, nteximg);
@@ -4627,6 +4676,7 @@ present_softscreen_body(void)
 		metal_fill_calls = 0;
 		metal_blank_uploads = 0;
 		metal_torn_uploads = metal_torn_pixels = 0;
+		present_churn_big = present_churn_small = 0;
 		{
 			int gi, gj, gt, gn;
 

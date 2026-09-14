@@ -200,6 +200,10 @@ init(ctxt: ref Draw->Context, argv: list of string)
 				a = tl a;
 				nbench = int hd a;
 			}
+		"-r" =>	if(tl a != nil){
+				a = tl a;
+				redrawhz = int hd a;
+			}
 		}
 	}
 	# -t and -s render with the SOFTWARE provider, and they need a
@@ -309,7 +313,13 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	target = win.image;
 	ctx = d3->context(target);
 	ticks := chan of int;
-	spawn fclock->ticker(ticks, 60);
+	# Redraw rate.  -r0 paces off the display instead of a timer, which
+	# is what castlefrankenstein(1) does by default and is the one
+	# structural difference between the two.  NOT the default here:
+	# step() advances a fixed amount per tick, so on a display that is
+	# not 60Hz this would change how fast the canyon comes at you.  On a
+	# 60Hz display the two rates are the same and it is safe.
+	spawn fclock->ticker(ticks, redrawhz);
 	for(;;) alt{
 	ctl := <-win.ctl or
 	ctl = <-win.ctxt.ctl =>
@@ -1004,6 +1014,7 @@ gpushot()
 # which is the only destination emu's GPU hook will take.  No frame
 # pacing: the number is the work.
 nbench := 240;
+redrawhz := 60;
 
 bench()
 {
