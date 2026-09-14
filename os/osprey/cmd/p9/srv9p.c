@@ -16,23 +16,43 @@
 enum { Qroot = 0, Msize = 8192 };
 
 /*
- * The served tree: a root directory and a handful of files, each a name
- * and a string literal (which lives in the text the flat loader maps).
- * A file's qid path is its index+1 into this table; Qroot is 0.
+ * The served tree: a root directory, a handful of files, and a directory
+ * with a file in it.  Each entry is a name, a string literal (which
+ * lives in the text the flat loader maps) and the qid path of the
+ * directory holding it; a file's own qid path is its index+1, and Qroot
+ * is 0.
+ *
+ * The subdirectory is not decoration.  Until it was here every name this
+ * server held was one walk from the root, so a Twalk of more than one
+ * name had never crossed the ring, and neither had a directory read of
+ * anything but the root.  Both are ordinary 9P and neither was tested.
  */
 static char *filename[] = {
 	"hello",
 	"motd",
 	"readme",
 	"scratch",		/* the one writable file; its bytes live in Srvstate */
+	"sub",			/* a directory */
+	"deep",			/* in it */
 };
 static char *filedata[] = {
 	"hello from the 9P server, a container across the ring\n",
 	"the microkernel routes 9P; the file server is a container of its own\n",
 	"three files, listed by a program over a file descriptor\n",
 	"",			/* scratch starts empty */
+	nil,			/* a directory has no bytes */
+	"one level down, reached by a walk of two names over the ring\n",
 };
-enum { Nfile = 4, Qscratch = 4 };	/* scratch is qid path Nfile (index 3 + 1) */
+/* the qid path of the directory each is in: 0 is the root */
+static int fileparent[] = { 0, 0, 0, 0, 0, 5 };
+enum { Nfile = 6, Qscratch = 4, Qsub = 5 };
+
+/* is this qid path a directory? */
+static int
+isdir(int which)
+{
+	return which == Qroot || (which > 0 && which <= Nfile && filedata[which-1] == nil);
+}
 
 static int
 findfid(Fidtab *ft, ulong fid)
@@ -66,16 +86,16 @@ setqid(Qid *q, int which)
 {
 	q->path = which;
 	q->vers = 0;
-	q->type = which == Qroot ? QTDIR : QTFILE;
+	q->type = isdir(which) ? QTDIR : QTFILE;
 }
 
-/* index of a name in the root directory, or -1 */
+/* the qid path of a name in the directory whose path is `in`, or -1 */
 static int
-lookup(char *name)
+lookup(int in, char *name)
 {
 	int i;
 	for(i = 0; i < Nfile; i++)
-		if(strcmp(name, filename[i]) == 0)
+		if(fileparent[i] == in && strcmp(name, filename[i]) == 0)
 			return i+1;		/* qid path = index+1 */
 	return -1;
 }
@@ -91,8 +111,13 @@ mkdir(Dir *d, int which)
 		d->length = 0;
 	} else {
 		d->name = filename[which-1];
-		d->mode = which == Qscratch ? 0666 : 0444;
-		d->length = which == Qscratch ? 0 : (vlong)strlen(filedata[which-1]);
+		if(isdir(which)){
+			d->mode = DMDIR|0555;
+			d->length = 0;
+		} else {
+			d->mode = which == Qscratch ? 0666 : 0444;
+			d->length = which == Qscratch ? 0 : (vlong)strlen(filedata[which-1]);
+		}
 	}
 	d->uid = d->gid = d->muid = "none";
 	d->type = 'L';
@@ -170,7 +195,11 @@ srv9p(Srvstate *st, uchar *msg, long n, uchar *rbuf, long rmax)
 		nf = st->fids.f[f].qid;
 		for(i = 0; i < t.nwname; i++){
 			int q;
-			if(nf == Qroot && (q = lookup(t.wname[i])) > 0)
+			if(!isdir(nf))
+				break;			/* only a directory has names under it */
+			if(strcmp(t.wname[i], "..") == 0)
+				nf = nf == Qroot ? Qroot : fileparent[nf-1];
+			else if((q = lookup(nf, t.wname[i])) > 0)
 				nf = q;
 			else
 				break;
@@ -208,7 +237,7 @@ srv9p(Srvstate *st, uchar *msg, long n, uchar *rbuf, long rmax)
 		 */
 		if(rmax > IOHDRSZ && cnt > (long)(rmax - IOHDRSZ))
 			cnt = rmax - IOHDRSZ;
-		if(st->fids.f[f].qid != Qroot){
+		if(!isdir(st->fids.f[f].qid)){
 			int q = st->fids.f[f].qid;
 			char *content; long len, off = t.offset;
 			if(q == Qscratch){ content = st->scratch; len = st->scratchlen; }
@@ -235,8 +264,10 @@ srv9p(Srvstate *st, uchar *msg, long n, uchar *rbuf, long rmax)
 			 * is what the kernel's own devdirread does.
 			 */
 			long total = 0, off = t.offset, at, end, dl;
-			int k;
+			int k, in = st->fids.f[f].qid;
 			for(k = 0; k < Nfile; k++){
+				if(fileparent[k] != in)
+					continue;	/* in another directory */
 				mkdir(&d, k+1);
 				total += convD2M(&d, dirbuf + total, sizeof dirbuf - total);
 			}

@@ -208,6 +208,15 @@ def main():
                     and int(bw.group(1)) == int(bw.group(2)) == 4096
                     and int(bw.group(3)) < 4096
                     and int(br.group(1)) == 4096 and int(br.group(2)) == 0))
+    # A name two walks down.  Every name the ring's server held used to be
+    # one walk from its root, so a Twalk of more than one name had never
+    # crossed the ring, and neither had a directory read of anything but
+    # the root.  Both are ordinary 9P and neither was tested.
+    sd = re.search(r'the listing of /sub spans (\d+) entries, read from a directory that is not the root', t)
+    results.append(("and a name two walks down the server's own tree: /sub/deep is reached by a Twalk of two names over the ring and reads back its bytes, and /sub - a directory that is not the root - lists what is in it",
+                    'p9: /sub/deep, two walks down and across the ring: "one level down, reached by a walk of two names over the ring' in t
+                    and 'p9:   /sub holds deep, 61 bytes' in t
+                    and sd is not None and int(sd.group(1)) == 1))
     # The personality's own error handling.  p9main installs a handler
     # before it sets up, and p9setup called p9init, which cleared the
     # count - so the handler was thrown away and everything after it ran
@@ -252,8 +261,8 @@ def main():
     sw = re.search(r'through every buffer size from 75 to 320 bytes: (\d+) of them gave the same (\d+) entries '
                    r'with "hello" at (\d+) bytes, and at (\d+) of those sizes the grown entry did not fit and '
                    r'went to the channel\'s rock, the first at (\d+) bytes', t)
-    results.append(("and the entry that replaces it can be longer than the one it replaces - the environment's file over the 9P server's grows it from 66 bytes to 72 - so what no longer fits the caller's buffer is kept in the channel's rock and handed out at the next read: the same listing read through all 246 buffer sizes from 75 to 320 bytes gives the same twenty entries and the same rewritten length every time, and at some of those sizes - 18 of them the day this was written - the entry no longer fits and the rock is what carries it",
-                    sw is not None and int(sw.group(1)) == 246 and int(sw.group(2)) == 20
+    results.append(("and the entry that replaces it can be longer than the one it replaces - the environment's file over the 9P server's grows it from 66 bytes to 72 - so what no longer fits the caller's buffer is kept in the channel's rock and handed out at the next read: the same listing read through all 246 buffer sizes from 75 to 320 bytes gives the same twenty-one entries and the same rewritten length every time, and at some of those sizes - 18 of them the day this was written - the entry no longer fits and the rock is what carries it",
+                    sw is not None and int(sw.group(1)) == 246 and int(sw.group(2)) == 21
                     and int(sw.group(3)) == 12 and int(sw.group(4)) >= 1
                     and int(sw.group(5)) >= 75))
     results.append(("and the name space carries a pipe - two ends of a channel a program talks through, written and read",

@@ -384,6 +384,45 @@ p9main(void)
 	}
 	print("p9: /hello resolved across #M, served by device type=%d (mnt=%d)\n",
 		c->type, mnttype);
+	{
+		/*
+		 * A name two walks down, which is a Twalk of two names over
+		 * the ring.  Every name this server held used to be one walk
+		 * from its root, so neither a walk of two nor a directory
+		 * read of anything but the root had ever crossed the ring.
+		 */
+		Chan *dc;
+		long dn;
+		int dent;
+		uchar *dp, *de;
+		Dir dd;
+		char dnames[256];
+		int dm;
+
+		dc = namec("/sub/deep", Aopen, OREAD, 0);
+		dn = devtab[dc->type]->read(dc, buf, sizeof buf, 0);
+		print("p9: /sub/deep, two walks down and across the ring: \"%.*s\"\n",
+			(int)dn, (char*)buf);
+		cclose(dc);
+
+		dc = namec("/sub", Aopen, OREAD, 0);
+		dent = 0;
+		while((dn = devtab[dc->type]->read(dc, buf, sizeof buf, dc->offset)) > 0){
+			dc->offset += dn;
+			dp = buf;
+			de = buf + dn;
+			while(dp < de){
+				dm = convM2D(dp, (uint)(de - dp), &dd, dnames);
+				if(dm <= 0)
+					break;
+				print("p9:   /sub holds %s, %lld bytes\n", dd.name, (vlong)dd.length);
+				dent++;
+				dp += dm;
+			}
+		}
+		print("p9: the listing of /sub spans %d entries, read from a directory that is not the root\n", dent);
+		cclose(dc);
+	}
 	n = devtab[c->type]->read(c, buf, sizeof buf, 0);
 	print("p9: read from the 9P server over the mount: \"%.*s\"\n", (int)n, (char*)buf);
 	cclose(c);

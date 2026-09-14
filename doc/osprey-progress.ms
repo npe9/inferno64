@@ -4424,6 +4424,22 @@ listed, read and written, but small; the ring's data area is about nine kilobyte
 are tens of bytes, so a larger tree would want the transport to page a
 big read rather than assume one fits.
 .PP
+One shape of it is closed.  Every name the ring's server held was one
+walk from its root, so a
+.CW Twalk
+of more than one name had never crossed the ring, and neither had a
+directory read of anything but the root; both are ordinary 9P and
+neither was tested.  The server has a directory now, with a file in it,
+and the boot reaches
+.CW /sub/deep
+\- two walks down, the second from a fid that is a directory and not the
+root \- reads its bytes back, and lists
+.CW /sub
+itself.  A walk now stops at anything that is not a directory rather
+than at anything that is not the root, and
+.CW ..
+goes to the parent the entry records.
+.PP
 That last sentence understated it: the bound was not merely unpaged, it
 was wrong.  The file server is handed a place in the client's data area
 to write its answer into, and the region is
@@ -4478,7 +4494,7 @@ nothing against it \- and the boot writes 4096 bytes of a pattern through
 it in messages of at most 744, reads them back into a fresh buffer, and
 compares every byte: none wrong.  The smaller message also costs more
 round trips per read, and this morning's buffer-size sweep is the check
-for that: all 246 sizes still give the same twenty entries.  The union directory read's rock fixup, which this paragraph used to
+for that: all 246 sizes still give the same twenty-one entries.  The union directory read's rock fixup, which this paragraph used to
 call stubbed, is ported and checked.  It is
 .CW sysfile.c 's
 own \-
@@ -4495,7 +4511,9 @@ and
 and
 .CW eqchantdqid
 the personality already links from
-.CW chan.c ,
+.CW chan.c .
+(The count is twenty-one rather than twenty since the ring's server
+gained a directory of its own; it was twenty when this was written.)
 and it is what makes a listing tell the truth about an entry that is
 itself a mount point: bind
 .CW /motd
@@ -4510,8 +4528,8 @@ carries the owner three times, so a bind across those two devices grows
 the entry from 66 bytes to 72); what no longer fits the caller's buffer
 goes into the channel's rock and comes back at the next read.  The check
 reads that listing through every buffer size from 75 bytes \- the largest
-single entry \- to 320, one byte at a time: all 246 give the same twenty
-entries and the same rewritten length, and at 18 of them the rock is what
+single entry \- to 320, one byte at a time: all 246 give the same
+twenty-one entries and the same rewritten length, and at 18 of them the rock is what
 carries it.  Sweeping the boundary rather than picking one size found two
 real faults that the size the demonstration had been using did not show.
 The 9P server was slicing a directory read at whatever byte count was
