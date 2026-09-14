@@ -4440,6 +4440,28 @@ than at anything that is not the root, and
 .CW ..
 goes to the parent the entry records.
 .PP
+And the store can rename a file, which it could not.  Its
+.CW wstat
+was
+.CW devwstat ,
+which is
+.CW "error(Eperm)" ,
+so every rename on this system came back "permission denied" \- and a
+rename is not an exotic thing to want.  A log expresses one without
+reading like a lie: a version of the file under the new name and a
+tombstone for the old, which is what every other change on this store
+is.  The bytes are carried over, because the record is where they live,
+so a rename costs a copy; for these files that is one sector.
+Everything else a
+.CW wstat
+can ask for is refused by name rather than accepted and dropped \- there
+are no owners here, the mode is the device's, and a length is changed by
+writing \- because a caller told its wstat succeeded when nothing
+happened is worse off than one told it cannot be done.  The boot makes a
+file, renames it, reads the bytes back under the name it was given, and
+finds the name it had gone; run against the store before the change the
+same line reads "the rename failed: permission denied".
+.PP
 That last sentence understated it: the bound was not merely unpaged, it
 was wrong.  The file server is handed a place in the client's data area
 to write its answer into, and the region is

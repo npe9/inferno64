@@ -677,6 +677,85 @@ lfsremove(Chan *c)
 	f->used = 0;
 }
 
+/*
+ * wstat, which this store answered with "permission denied" because
+ * devwstat is what it had.  A rename is the one thing a log can express
+ * without reading like a lie: a version of the file under the new name,
+ * and a tombstone for the old, which is what every other change here is
+ * too.  The bytes are carried over because that is where they live - the
+ * record holds them - so a rename costs a copy, which for this store's
+ * files is one sector.
+ *
+ * Everything else a wstat can ask for is refused by name rather than
+ * accepted and dropped: there are no owners here (the whole store is the
+ * personality's), the mode is what the device says it is, and a length
+ * change is a write's business.  A caller told its wstat succeeded when
+ * nothing happened is worse off than one told it cannot be done.
+ */
+static int
+lfswstat(Chan *c, uchar *dp, int n)
+{
+	Lfile *f, *nf;
+	Dir d;
+	char strs[512];
+	uchar *buf;
+	ulong len, i;
+	int was;
+
+	if(c->qid.type & QTDIR)
+		error(Eperm);
+	if(c->qid.path < 1 || c->qid.path > Nlfs)
+		error(Enonexist);
+	f = &files[c->qid.path - 1];
+	if(!f->used)
+		error(Enonexist);
+	if(convM2D(dp, n, &d, strs) != n)
+		error(Eshortstat);
+	if(d.mode != (ulong)~0 && d.mode != (DMDIR|0666) && d.mode != 0666)
+		error("lfs: the mode here is the device's, not a file's");
+	if(d.length != (vlong)~0 && d.length != (vlong)f->len)
+		error("lfs: a length is changed by writing, not by wstat");
+	if(d.name == nil || d.name[0] == 0)
+		return n;			/* nothing asked for */
+	if(strcmp(d.name, f->name) == 0)
+		return n;			/* the name it has */
+	if(strlen(d.name) >= Lnamelen)
+		error("lfs: that name is too long for a record");
+	for(i = 0; i < Nlfs; i++)
+		if(files[i].used && strcmp(files[i].name, d.name) == 0)
+			error(Eexist);
+	nf = nil;
+	for(i = 0; i < Nlfs; i++)
+		if(!files[i].used){
+			nf = &files[i];
+			break;
+		}
+	if(nf == nil)
+		error("lfs: no room for another file");
+
+	buf = smalloc(Lmaxdata);
+	if(waserror()){
+		free(buf);
+		nexterror();
+	}
+	lfsload(f, buf);
+	len = f->len;
+	was = f->vers;
+	memset(nf, 0, sizeof *nf);
+	nf->used = 1;
+	strcpy(nf->name, d.name);
+	lfsput(nf, buf, len, 1, 0);
+	poperror();
+	free(buf);
+
+	lfsput(f, nil, 0, f->vers + 1, 1);
+	print("lfs: renamed %s to %s after version %d: %lud bytes carried over, "
+		"a tombstone at sector %llud, %llud sectors free\n",
+		f->name, nf->name, was, len, f->lba, lfsfree());
+	f->used = 0;
+	return n;
+}
+
 Dev lfsdevtab = {
 	'l',
 	"lfs",
@@ -695,5 +774,5 @@ Dev lfsdevtab = {
 	lfswrite,
 	devbwrite,
 	lfsremove,
-	devwstat,
+	lfswstat,
 };

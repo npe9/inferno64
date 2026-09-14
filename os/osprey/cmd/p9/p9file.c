@@ -842,6 +842,29 @@ p9statraw(char *name, uchar *buf, int nbuf)
 }
 
 /*
+ * wstat by name: the raw message the caller marshalled, handed to the
+ * device the name resolves to.  The name is opened for access and not
+ * for reading, the way stat's is, because a wstat is not a read of the
+ * file and a file may be wstat-ed by someone who could not open it.
+ */
+long
+p9wstatraw(char *name, uchar *buf, int nbuf)
+{
+	Chan *c;
+	long n;
+
+	c = namec(name, Aaccess, 0, 0);
+	if(waserror()){
+		cclose(c);
+		nexterror();
+	}
+	n = devtab[c->type]->wstat(c, buf, nbuf);
+	poperror();
+	cclose(c);
+	return n;
+}
+
+/*
  * A pipe: two descriptors on the two ends of a #| channel, the same as
  * the kernel's syspipe but returning fd-layer descriptors.  fd[0] is the
  * read/write end, fd[1] the other; a write on one is read on the other.
