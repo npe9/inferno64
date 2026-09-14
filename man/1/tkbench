@@ -49,14 +49,28 @@ reports how often the display asks for a frame, by reading
 for three seconds.
 Nothing is drawn.
 .PP
-A reading of nothing \(em the first read never returning \(em does not
-mean the screen is frozen.
-It means the link is dead and something else is presenting:
-.I emu
-falls back to presenting on a flush, and
+A reading of nothing \(em the first read never returning \(em usually
+means the DISPLAY IS ASLEEP, and that is correct behaviour: a
+.B CADisplayLink
+does not ask for frames while the screen is off, because there is nothing
+to show a screen that is off.
+Check before concluding anything else:
+.EX
+ioreg \-c IOHIDSystem | awk '/HIDIdleTime/ {print $NF/1000000000" s"}'
+.EE
+.PP
+A large idle time means the reading says nothing about the link.
+.B "caffeinate \-d \-u"
+wakes the display and settles it \(em at the cost of turning somebody's
+screen on, so it is not a thing to do to an unattended machine for
+curiosity's sake.
+.PP
+Either way the screen is not frozen.
+.I Emu
+falls back to presenting on a flush when the link has been quiet, and
 .IR frameclock (2)
 delivers a tick of its own when the display did not.
-It does mean that a program reading
+What a zero DOES mean without qualification is that a program reading
 .B draw/vsync
 directly, rather than through
 .IR frameclock (2),
@@ -136,11 +150,9 @@ and the two do not cost the same or happen at the same times.
 The numbers above are the first.
 .PP
 Which one runs is not a thing this page can state, because it depends on
-whether the display link is firing, and on this machine it is not: with
-.B -y
-the first read of
-.B draw/vsync
-never returns.
+whether the display link is firing, and that is a property of the moment
+rather than of the machine: it stops while the display sleeps and starts
+again when it wakes.
 That is survivable rather than fatal only because
 .I emu
 presents for itself when the link has been quiet
