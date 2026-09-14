@@ -917,8 +917,8 @@ and 64 MiB gives
 .CW "panic: cannot allocate 125 procs (0MB)" ,
 which is the proc table sized from what is left.
 .PP
-.B "This section first said both thresholds were 66 MiB.  That was wrong,
-and the way it was wrong is worth more than the number."
+.B "This section first said both thresholds were 66 MiB, and that was wrong."
+The way it was wrong is worth more than the number.
 The second arm typed a command at the console and looked for its output
 with
 .CW "grep -q WORK-OK" .
