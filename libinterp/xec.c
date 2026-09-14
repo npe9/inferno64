@@ -2346,6 +2346,7 @@ isave(void)
 	p = delrun(Prelease);
 	p->reg = R;
 	REGSYNCED();
+	p->regsrc = 2;		/* INSTRUMENTATION: isave() */
 	curP->curprog = nil;
 	/*
 	 * The quantum is over as far as the collector is concerned: the
@@ -2456,6 +2457,30 @@ xec(Prog *p)
 
 	R = p->reg;
 	REGSYNCED();
+	{	/* INSTRUMENTATION - temporary */
+		static int told;
+
+		/*
+		 * Is one Prog being run by two executors at once?
+		 *
+		 * That would put two register files on one Dis stack, each
+		 * pushing and popping frames the other does not know about,
+		 * and would leave a Prog's saved SP above frames the other
+		 * has popped -- which is the shape rootset() reports:
+		 * frames 0..6 tiling, frame 7 holding whatever was left in
+		 * popped stack, and the bound coming from the Prog's own
+		 * p->reg rather than a context's.
+		 *
+		 * Cleared at the bottom of xec() with curprog.  A Prog that
+		 * leaves by longjmp keeps the mark, so this can report a
+		 * stale one; that is why it prints rather than asserts.
+		 */
+		if(p->xecby != nil && p->xecby != curP && told++ < 6)
+			print("xec: prog %d entered on ctx %#p, already on"
+				" ctx %#p (state %d)\n",
+				p->pid, curP, p->xecby, p->state);
+		p->xecby = curP;
+	}
 	curP->curprog = p;
 	curP->inxec = 1;
 	R.MP = R.M->MP;
@@ -2532,6 +2557,8 @@ xec(Prog *p)
 
 	p->reg = R;
 	REGSYNCED();
+	p->regsrc = 1;		/* INSTRUMENTATION: xec() exit */
+	p->xecby = nil;		/* INSTRUMENTATION - temporary */
 	curP->curprog = nil;
 	curP->inxec = 0;
 }

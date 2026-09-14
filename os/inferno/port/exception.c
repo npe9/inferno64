@@ -221,6 +221,7 @@ found:
 		R.PC = m->prog+newpc;
 	memmove(&p->reg, &R, sizeof(R));
 	REGSYNCED();
+	p->regsrc = 3;		/* INSTRUMENTATION: propex() */
 	p->kill = nil;
 	destroy(p->exval);
 	p->exval = H;

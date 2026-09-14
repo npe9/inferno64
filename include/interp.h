@@ -277,6 +277,8 @@ struct Progs
 struct Prog
 {
 	REG		reg;		/* Register set */
+	void*		xecby;		/* INSTRUMENTATION: context inside xec() */
+	int		regsrc;		/* INSTRUMENTATION: who last wrote reg */
 	Prog*		link;		/* Run queue */
 	Channel*		chan;	/* Channel pointer */
 	void*		ptr;		/* Channel data pointer */

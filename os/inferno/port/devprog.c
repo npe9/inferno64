@@ -1674,6 +1674,7 @@ save:
 
 	p->reg = R;
 	REGSYNCED();
+	p->regsrc = 4;		/* INSTRUMENTATION: devprog dbgxec */
 	curP->curprog = nil;
 
 	if(env->debug == nil) {

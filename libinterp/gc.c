@@ -690,17 +690,54 @@ rootset(Prog *root)
 						for(ci = 0; ci < npctx; ci++)
 							if(rr == &pctxs[ci]->reg)
 								break;
+						/*
+						 * Did progreg() miss a context
+						 * that is running this Prog?
+						 * It scans i < npctx, and
+						 * claimctx() publishes with
+						 * "pctxs[npctx++] = c" -- the
+						 * store and the increment are
+						 * not ordered and progreg reads
+						 * npctx without the lock.  A
+						 * missed context means the
+						 * stale entry snapshot is used
+						 * as the bound, which is a
+						 * stack that has moved on.
+						 *
+						 * Scanning the whole array, not
+						 * npctx, is the point.
+						 */
+						{
+							int cj;
+
+							for(cj = 0; cj < MAXPCTX; cj++)
+								if(pctxs[cj] != nil
+								&& pctxs[cj]->curprog == root){
+									print("rootset:"
+										" ctx %d IS"
+										" running pid"
+										" %d (npctx %d,"
+										" inxec %d)\n",
+										cj, root->pid,
+										npctx,
+										pctxs[cj]->inxec);
+									break;
+								}
+						}
 						print("rootset: frames do not"
 							" tile %#p..%#p,"
 							" stopped %#p, pid %d,"
-							" state %d, regs from"
-							" %s%d\n",
+							" state %d, gchalt %d,"
+							" regs from"
+							" %s%d (1 xec 2 isave"
+							" 3 propex 4 dbg)\n",
 							sx->reg.tos.fu, sp, fp,
 							root->pid, root->state,
+							gchalt,
 							rr == &root->reg
 							  ? "p->reg" : "ctx ",
 							rr == &root->reg
-							  ? 0 : ci);
+							  ? root->regsrc : ci);
 					}
 				}
 			}
