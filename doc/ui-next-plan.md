@@ -616,12 +616,29 @@ measurable under flat, because a widget's border now scales with the font
 too and by a different factor from the bitmap. 44% against 61%. Each of
 those now names the style it means, which they should have done all along.
 
-**One consequence not fixed:** a flat control is about 1.5× the width of
-a classic one (a checkbutton goes 44×20 to 66×34), so the `wm` toolbar
-holds about two thirds as many tasks before it overflows. That is the
-direction every current system has gone — a Dock or a Windows 11 taskbar
-is less dense than a 1995 one and handles overflow rather than shrinking —
-but this toolbar does not handle overflow, it just runs off the edge.
+**That consequence is now fixed.** A flat control is about 1.5× the width
+of a classic one, so the `wm` toolbar reached its edge sooner. It had no
+overflow handling at all: `condenselabel()` wrapped a long title onto four
+lines of fifteen characters, which makes a button *taller* and never
+narrower, so the bar's width was whatever the titles happened to add up
+to and the tasks past the end fell off.
+
+It now shares the bar out — each task gets an equal slice of what is left
+after the start menu, clamped to a floor and a ceiling, and its label is
+elided to fit. **Equal shares rather than proportional to title length**,
+because the point of a taskbar is that a task stays where you last saw
+it; giving one window more room for having a long title moves every other
+button whenever a title changes.
+
+`elide()` and `measure()` went into `tklayout(2)` rather than staying
+private to the toolbar, for a reason that paid off immediately: in the
+toolbar they were untestable, and in `tklayout(2)` `tkofftest(1)` swept
+budgets from 240px down to 20px and found the contract broken at the
+bottom — the ellipsis has a minimum width, so a 20px budget came back
+60px wide. `elide()` now never returns anything wider than it was given,
+returning the ellipsis alone or nothing at all, because a caller cannot
+tell that a result was too wide and one over-wide label costs a taskbar
+every task after it.
 
 **Still open in this section:** square corners, which want a
 rounded-rectangle primitive `libtk` does not have; and a second colour

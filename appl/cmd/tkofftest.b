@@ -294,6 +294,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	checkstyleenv();
 	checkbevelhue();
 	checkscene();
+	checkelide();
 	checkcolourwidth();
 	checkcanvastag();
 	checkplaintitle();
@@ -906,6 +907,51 @@ checkcolourwidth()
 	report(bad == nil, sys->sprint(
 		"a colour is stored in 32 bits, not sign-extended to 64%s",
 		badly(bad)));
+}
+
+
+# A label that does not fit has to be cut to a width, not wrapped.
+#
+# The window manager's toolbar used to wrap a long task title onto four
+# lines of fifteen characters, which made a button TALLER and never
+# narrower - so the bar's width was whatever the titles added up to, and
+# with a flat control half again as wide as a classic one the tasks past
+# the end simply fell off.  tklayout(2) does the cutting now, and this is
+# the check that it cuts to the width it was given.
+checkelide()
+{
+	if(tklayout == nil)
+		return;
+	blank();
+	top := offscreen();
+	if(top == nil)
+		return;
+	map(top);
+	long := "wm/edit /usr/inferno/appl/wm/toolbar.b";
+	bad := "";
+	# every budget from generous to absurd: the result must never be
+	# wider than asked, and must shrink as the budget does
+	prev := -1;
+	for(w := 240; w >= 20; w -= 20){
+		got := tklayout->elide(top, long, w);
+		gw := tklayout->measure(top, got);
+		if(gw > w)
+			bad += sys->sprint(" %d:%dpx", w, gw);
+		if(prev >= 0 && gw > prev)
+			bad += sys->sprint(" %d:grew", w);
+		prev = gw;
+	}
+	report(bad == nil, sys->sprint(
+		"an elided label never exceeds the width it was given%s", badly(bad)));
+
+	# it leaves a string that fits alone, and says it cut when it cut
+	short := "sh";
+	sw := tklayout->measure(top, short);
+	report(tklayout->elide(top, short, sw + 40) == short,
+		"and a label that already fits is returned unchanged");
+	cut := tklayout->elide(top, long, 120);
+	report(len cut < len long && cut[len cut - 3:] == "...",
+		sys->sprint("and a cut one ends in an ellipsis (%#q)", cut));
 }
 
 # libtk can draw a flat border two ways now: straight to draw(), or by

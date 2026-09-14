@@ -188,3 +188,52 @@ check(top: ref Tk->Toplevel, root: string): list of ref Problem
 
 	return probs;
 }
+
+# How wide a string would be, in this toplevel's font.
+#
+# By building the label and asking, because there is nothing else to ask:
+# a width in this Tk is a distance, and Limbo has no access to the font
+# metrics that would let it be computed.  The label is destroyed again,
+# so the only trace is the work.
+measure(top: ref Tk->Toplevel, s: string): int
+{
+	if(top == nil)
+		return 0;
+	tk->cmd(top, "label .tklayout_meas -text " + tk->quote(s));
+	r := tk->rect(top, ".tklayout_meas", Tk->Border|Tk->Required);
+	tk->cmd(top, "destroy .tklayout_meas");
+	return r.max.x - r.min.x;
+}
+
+Ell: con "...";
+
+elide(top: ref Tk->Toplevel, s: string, w: int): string
+{
+	if(top == nil || s == nil || measure(top, s) <= w)
+		return s;
+	# A proportional guess first, then walk.  It terminates because the
+	# guess is only ever reduced below len s, and each loop moves n one
+	# way only.
+	full := measure(top, s);
+	n := len s;
+	if(full > 0)
+		n = (len s * w) / full;
+	if(n >= len s)
+		n = len s - 1;
+	while(n > 1 && measure(top, s[0:n] + Ell) > w)
+		n--;
+	while(n + 1 < len s && measure(top, s[0:n+1] + Ell) <= w)
+		n++;
+	# Not even one character and an ellipsis will fit.  Return the
+	# ellipsis if THAT fits and nothing if it does not, rather than
+	# something wider than was asked for: a caller that gets back more
+	# than its budget has no way to know, and a taskbar handed one
+	# over-wide label loses every task after it.  A caller wanting a
+	# floor clamps its own budget, which is what wm/toolbar.b does.
+	if(n <= 0 || measure(top, s[0:1] + Ell) > w){
+		if(measure(top, Ell) <= w)
+			return Ell;
+		return "";
+	}
+	return s[0:n] + Ell;
+}

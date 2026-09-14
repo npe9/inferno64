@@ -127,6 +127,22 @@ and
 \(em and degrades to reporting nothing against a
 .B libtk
 without them.
+.SS Fitting a label to a width
+.B Measure
+gives the width of a string in a toplevel's font, by building a label and
+asking: a width in this Tk is a distance, and Limbo cannot reach the font
+metrics that would let one be computed.
+.PP
+.B Elide
+returns the widest prefix that fits, with an ellipsis if it had to cut,
+and NEVER returns something wider than it was given.
+If not even one character and an ellipsis fit it gives back the ellipsis
+alone, and if that does not fit either it gives back nothing \(em because
+a caller cannot tell that a result was too wide, and one over-wide label
+costs a taskbar every task after it.
+A caller wanting a floor clamps its own budget;
+.IR toolbar (1)
+does.
 .SH SOURCE
 .B /appl/lib/tklayout.b
 .SH SEE ALSO

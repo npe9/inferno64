@@ -8,6 +8,8 @@ include "draw.m";
 	Screen, Display, Image, Rect, Point, Wmcontext, Pointer: import draw;
 
 include "tk.m";
+include "tklayout.m";
+	tklayout: Tklayout;
 	tk: Tk;
 
 include "tkclient.m";
@@ -55,6 +57,17 @@ defaultscript :=
 tbtop: ref Tk->Toplevel;
 screenr: Rect;
 
+# id -> the task's full label, kept because eliding is lossy: a refit has
+# to start from the original every time, or a button that has been
+# shortened once can only ever get shorter.
+tasklabels: list of (string, string);
+
+# A task button is never allowed to be narrower than this, nor wider.
+# Below the floor a label is unreadable and the bar may as well overflow;
+# above the ceiling one long title starves every other task.
+Minbut:	con 48;
+Maxbut:	con 220;
+
 badmodule(p: string)
 {
 	sys->fprint(stderr(), "toolbar: cannot load %s: %r\n", p);
@@ -92,6 +105,9 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		badmodule(String->PATH);
 
 	tkclient = load Tkclient Tkclient->PATH;
+	tklayout = load Tklayout Tklayout->PATH;
+	if(tklayout != nil)
+		tklayout->init();
 	if(tkclient == nil)
 		badmodule(Tkclient->PATH);
 	tkclient->init();
@@ -343,18 +359,67 @@ handlerequest(clientid: string, args: list of string): string
 
 iconify(id, label: string)
 {
-	label = condenselabel(label);
 	e := tk->cmd(tbtop, "button .toolbar." +id+" -command {send task "+id+"} -takefocus 0");
-	cmd(tbtop, ".toolbar." +id+" configure" + font + " -text '" + label);
-	if(e[0] != '!')
+	if(e[0] != '!'){
+		tasklabels = (id, label) :: tasklabels;
 		cmd(tbtop, "pack .toolbar."+id+" -side left -fill y");
+	}
+	refit();
 	cmd(tbtop, "update");
+}
+
+# Share the bar out between the tasks on it.
+#
+# The old answer was condenselabel(), which wrapped a long title onto up
+# to four lines of fifteen characters - so a button got TALLER and never
+# narrower, and the bar's width was whatever the titles happened to add
+# up to.  That was survivable while a control was small.  A flat control
+# is about one and a half times the width of a classic one, so the same
+# titles now run off the edge sooner, and running off the edge is not a
+# thing this bar handles - it just loses the tasks past the end.
+#
+# So each task gets an equal share of what is left after the start menu,
+# and its label is elided to fit.  Equal shares rather than
+# proportional-to-title, because the point of a taskbar is that a task
+# stays where you last saw it; giving one window more room because it has
+# a long title moves every other button whenever a title changes.
+refit()
+{
+	n := len tasklabels;
+	if(n == 0)
+		return;
+	avail := screenr.dx() - startwidth() - 8;
+	budget := avail / n;
+	if(budget > Maxbut)
+		budget = Maxbut;
+	if(budget < Minbut)
+		budget = Minbut;
+	for(l := tasklabels; l != nil; l = tl l){
+		(id, full) := hd l;
+		lab := full;
+		if(tklayout != nil)
+			lab = tklayout->elide(tbtop, full, budget);
+		cmd(tbtop, ".toolbar." +id+" configure" + font + " -text " +
+			tk->quote(lab));
+	}
+}
+
+startwidth(): int
+{
+	r := tk->rect(tbtop, ".toolbar.start", Tk->Border|Tk->Required);
+	return r.dx();
 }
 
 deiconify(id: string)
 {
 	e := tk->cmd(tbtop, "destroy .toolbar."+id);
 	if(e == nil){
+		nl: list of (string, string);
+		for(l := tasklabels; l != nil; l = tl l)
+			if((hd l).t0 != id)
+				nl = hd l :: nl;
+		tasklabels = nl;
+		refit();
 		tkclient->wmctl(tbtop, sys->sprint("ctl %q untask", id));
 		tkclient->wmctl(tbtop, sys->sprint("ctl %q kbdfocus 1", id));
 	}
