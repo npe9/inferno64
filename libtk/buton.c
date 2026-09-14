@@ -235,6 +235,7 @@ tkdrawbutton(Tk *tk, Point orig)
 	Point p, u, v, pp[4];
 	Image *i, *dst, *cd, *cl, *ct, *img;
 	int relief, bgnd, fgnd;
+	TkScene *bsc;
 
 	e = tk->env;
 
@@ -278,12 +279,42 @@ tkdrawbutton(Tk *tk, Point orig)
 		bgnd = TkCactivebgnd;
 	}
 
-	i = tkitmp(e, r.max, bgnd);
-	if(i == nil)
-		return nil;
+	/*
+	 * The whole widget as one layer, when it is the simple case: a plain
+	 * button with text and no image, a run that reduces to one string(),
+	 * and the flat style.  Everything else keeps the scratch-and-blit it
+	 * has always used, because the indicator a checkbutton draws and the
+	 * bitmap path have no nodes yet.
+	 *
+	 * Nothing is translated: a button already draws its interior in
+	 * coordinates relative to its own top-left, which is exactly what a
+	 * layer wants.  The blit at the end becomes the layer's own
+	 * composite, so the destination has to be known here rather than
+	 * there - it is only tk->act plus orig, which is available either
+	 * way.
+	 */
+	bsc = nil;
+	if(tkviascene && tk->type == TKbutton && tkstyleflat(tk)
+	&& tkl->img == nil && tkl->bitmap == nil && tkl->text != nil
+	&& tkl->justify == Tkleft && tkl->ul < 0
+	&& strchr(tkl->text, '\n') == nil)
+		bsc = tkscenenew();
+	if(bsc != nil){
+		Rectangle dr;
 
-	if(tk->flag & Tkactive)
-		draw(i, r, tkgc(e, bgnd), nil, ZP);
+		dr = rectaddpt(r, Pt(tk->act.x + orig.x, tk->act.y + orig.y));
+		tkscenelayer(bsc, r.max, e->colors[bgnd], dr, ZP);
+		if(tk->flag & Tkactive)
+			tkscenecolour(bsc, r, e->colors[bgnd]);
+		i = nil;
+	}else{
+		i = tkitmp(e, r.max, bgnd);
+		if(i == nil)
+			return nil;
+
+		if(tk->flag & Tkactive)
+			draw(i, r, tkgc(e, bgnd), nil, ZP);
+	}
 
 	p = mainr.min;
 	h = tkl->h - 2 * tk->highlightwidth;
@@ -409,7 +440,12 @@ tkdrawbutton(Tk *tk, Point orig)
 		ct = tkgc(e, fgnd);
 		
 		p.y += (h - tkl->textheight) / 2;
-		tkdrawstring(tk, i, addpt(u, p), tkl->text, tkl->ul, ct, tkl->justify);
+		if(bsc != nil)
+			tkscenetext(bsc, addpt(u, p), tkl->text, e->font,
+				e->colors[fgnd]);
+		else
+			tkdrawstring(tk, i, addpt(u, p), tkl->text, tkl->ul, ct,
+				tkl->justify);
 	}
 
 	/*
@@ -423,6 +459,18 @@ tkdrawbutton(Tk *tk, Point orig)
 	 * widgets and mainr is already inset by it, so the ring has had its
 	 * pixel reserved all along and the space was simply left blank.
 	 */
+	if(bsc != nil){
+		/* a focus ring is a square stroke: the same node, radius 0 */
+		if(tkhaskeyfocus(tk))
+			tksceneborder(bsc, focusr, 0, tk->highlightwidth,
+				e->colors[TkChighlightfgnd]);
+		tkreliefnodes(bsc, tk, ZP, bgnd, relief);
+		tkscenelayerend(bsc);
+		tkscenerender(bsc, e->top->ctxt, dst);
+		tkscenefree(bsc);
+		return nil;
+	}
+
 	if(tkhaskeyfocus(tk))
 		tkbox(i, focusr, tk->highlightwidth, tkgc(e, TkChighlightfgnd));
 	tkdrawrelief(i, tk, ZP, bgnd, relief);

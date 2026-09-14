@@ -773,11 +773,24 @@ there was never speed on the table here anyway.
    which is much the easier thing to render and is why this is tractable
    at all. The node is declared in `tk.h` so the numbering does not move.
 
-   Do not start this by converting widgets. Start by making the layer
-   node and proving it on one widget that uses `tkitmp` (a `button` is
-   the smallest), against the same byte-identity check — the scratch is
-   shared mutable state and getting its extent or its blit point wrong is
-   exactly the kind of error that looks fine and is off by a pixel.
+   **Done as far as one widget.** `TkNlayer` exists and is proved on a
+   `frame` — which does *not* need one, and that is why: the result must
+   be identical to rendering in place, so an extent or offset error shows
+   as a difference rather than as a widget that looks fine. A `button` is
+   then the first widget that genuinely needs a layer, and its whole
+   interior is nodes in the simple case: fill, text, focus ring (a square
+   stroke is `TkNborder` with radius 0), relief, composite.
+
+   `tkreliefnodes()` was split out of `tkdrawrelief()` for that — a widget
+   building its own scene needs its border in the *same* tree, not a
+   second tree rendered into an image halfway through its own drawing.
+
+   **What is left is the rest of the widgets and then the walk.** Each
+   `tkitmp` user converts the same way, against the same byte check;
+   `entry`, `listbox`, `scale` and `scrollbar` are the remaining ones, and
+   the indicator a `checkbutton` draws needs an ellipse node first. Only
+   when a repaint produces one tree instead of one per widget is there
+   anything for a backend to batch.
 4. **A Metal backend.** Last, and only after 3: the measured hazard is
    94% command-buffer overhead for small work, so a backend that issues a
    draw call per node would be *slower* than the CPU, decisively. The

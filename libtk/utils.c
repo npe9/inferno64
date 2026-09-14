@@ -1045,6 +1045,43 @@ tkroundbox(Image *i, Tk *tk, Point o, int w, int h, int bd, Image *col)
 	}
 }
 
+/*
+ * The nodes a flat border is made of, appended to a scene the caller
+ * owns.
+ *
+ * Separated from tkdrawrelief() so that a widget building its own scene
+ * can put its border in the same tree as the rest of itself, rather than
+ * having tkdrawrelief() build and render a tree of its own into an image
+ * halfway through - which is right when the border is all there is and
+ * wrong once the widget is a layer.
+ */
+void
+tkreliefnodes(TkScene *sc, Tk *tk, Point o, int color, int rlf)
+{
+	TkEnv *e, *pe;
+	ulong brgba;
+	int w, h, bd;
+
+	if(sc == nil || tk->borderwidth == 0 || rlf == TKflat)
+		return;
+	e = tk->env;
+	w = tk->act.width;
+	h = tk->act.height;
+	bd = tk->borderwidth;
+	/*
+	 * The same two-way choice the direct path makes: only the three
+	 * background colours have a precomputed dark shade in the table
+	 * beside them; anything else has to be computed.
+	 */
+	if(color == TkCbackgnd || color == TkCselectbgnd || color == TkCactivebgnd)
+		brgba = e->colors[color+TkDarkshade];
+	else
+		brgba = tkrgbashade(e->colors[color], TkDarkshade);
+	pe = tkbehind(tk);
+	tksceneborderon(sc, Rect(o.x, o.y, o.x + w + 2*bd, o.y + h + 2*bd),
+		tkspace(tk)->corner, bd, brgba, pe->colors[TkCbackgnd]);
+}
+
 void
 tkdrawrelief(Image *i, Tk *tk, Point o, int color, int rlf)
 {
@@ -1083,35 +1120,10 @@ tkdrawrelief(Image *i, Tk *tk, Point o, int color, int rlf)
 			return;
 		if(tkviascene){
 			TkScene *sc;
-			TkEnv *pe;
 
-			pe = tkbehind(tk);
 			sc = tkscenenew();
 			if(sc != nil){
-				ulong brgba;
-
-				/*
-				 * The SAME two-way choice the direct path makes
-				 * above: only the three background colours have
-				 * a precomputed dark shade in the table beside
-				 * them; for anything else the shade has to be
-				 * computed.  Using the table index for both
-				 * left some borders drawn in whatever colour
-				 * happened to sit two slots along, which for an
-				 * entry was the background - so the border
-				 * simply vanished, on 200 pixels, and only a
-				 * byte-for-byte comparison found it.
-				 */
-				if(color == TkCbackgnd || color == TkCselectbgnd
-				|| color == TkCactivebgnd)
-					brgba = e->colors[color+TkDarkshade];
-				else
-					brgba = tkrgbashade(e->colors[color], TkDarkshade);
-				tksceneborderon(sc,
-					Rect(o.x, o.y, o.x + w + 2*bd, o.y + h + 2*bd),
-					tkspace(tk)->corner, bd,
-					brgba,
-					pe->colors[TkCbackgnd]);
+				tkreliefnodes(sc, tk, o, color, rlf);
 				tkscenerender(sc, e->top->ctxt, i);
 				tkscenefree(sc);
 				return;
@@ -1122,8 +1134,7 @@ tkdrawrelief(Image *i, Tk *tk, Point o, int color, int rlf)
 		return;
 	}
 
-	switch(rlf) {
-	case TKflat:
+	switch(rlf) {	case TKflat:
 		break;
 	case TKsunken:
 		tkbevel(i, o, w, h, bd, d, l);

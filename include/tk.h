@@ -758,6 +758,7 @@ extern	void		tksceneborderon(TkScene*, Rectangle, int, int, ulong, ulong);
 extern	void		tkscenetext(TkScene*, Point, char*, Font*, ulong);
 extern	void		tkscenelayer(TkScene*, Point, ulong, Rectangle, Point);
 extern	void		tkscenelayerend(TkScene*);
+extern	void		tkreliefnodes(TkScene*, Tk*, Point, int, int);
 extern	int		tkscenerender(TkScene*, TkCtxt*, Image*);
 extern	int		tkscenecount(TkScene*);
 extern	TkSpace*	tkspace(Tk*);
