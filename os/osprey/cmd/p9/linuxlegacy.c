@@ -442,6 +442,47 @@ lmain(void)
 
 		{
 			/*
+			 * The rest of what a libc does before it reaches main.
+			 * writev is the one that matters: a libc's stdout
+			 * gathers its pieces and writes them in one call, so
+			 * without it a real binary prints nothing at all.
+			 * ioctl is asked of the output to decide whether to
+			 * buffer a line at a time, and the honest answer here
+			 * is ENOTTY.  set_tid_address is called before
+			 * anything else and its answer kept as the thread id.
+			 */
+			struct { long base, len; } iov[2];
+			long wv, io, pid, tid;
+
+			iov[0].base = (long)"linux: writev wrote this in two pieces: ";
+			iov[0].len = 40;
+			iov[1].base = (long)"the second piece\n";
+			iov[1].len = 17;
+			wv = sys3(20, 2, (long)iov, 2);		/* writev(2, iov, 2) */
+			io = sys3(16, 1, 0x5401, 0);		/* ioctl(1, TCGETS) */
+			pid = sys3(39, 0, 0, 0);		/* getpid */
+			tid = sys3(218, (long)&iov[0], 0, 0);	/* set_tid_address */
+			/*
+			 * Two lines, because one would be longer than line[]
+			 * holds: the first version of this ran off the end of
+			 * it and printed "set_tid_a1dress", a digit of the
+			 * number that followed landing in the middle of the
+			 * word before it.
+			 */
+			p = cat(line, "linux: writev returned ");
+			p = num(p, wv);
+			p = cat(p, " for 40 + 17\n"); *p = 0;
+			say(line);
+			p = cat(line, "linux: ioctl(TCGETS) returned ");
+			p = num(p, io);
+			p = cat(p, " (ENOTTY), getpid and set_tid_address agree on ");
+			p = num(p, pid == tid && pid > 0 ? pid : -1);
+			*p++ = '\n'; *p = 0;
+			say(line);
+		}
+
+		{
+			/*
 			 * And a failure, which is the half of an ABI a test
 			 * usually leaves out.  Linux returns a small negative
 			 * number in rax and a libc turns it into -1 and errno;

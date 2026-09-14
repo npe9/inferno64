@@ -216,6 +216,7 @@ enum {
 	Leinval		= 22,
 	Leio		= 5,
 	Lenosys		= 38,
+	Lenotty		= 25,
 	Archsetfs	= 0x1002,
 	Archgetfs	= 0x1003,
 	Mapanon		= 0x20,
@@ -543,6 +544,91 @@ ospreylinuxsyscall(ulong scallnr, uintptr *retp)
 			return 0;
 		}
 		break;
+	case 20:			/* writev(fd, iov, iovcnt) */
+		{
+			/*
+			 * The call a libc's stdout actually makes: printf
+			 * gathers its pieces and writes them in one call, so
+			 * without this a real binary prints nothing at all.
+			 * Each piece is written the way write(2) writes one -
+			 * the console through the console task, anything else
+			 * forwarded to the buddy - and the count returned is
+			 * what went, which is how a caller knows to go on.
+			 * A short piece stops it, the way a short write does.
+			 */
+			uvlong *iov = (uvlong*)la[1];
+			long cnt = (long)la[2], k, tot = 0;
+			uintptr wa[3];
+
+			if(cnt < 0 || cnt > 1024){
+				*retp = (uintptr)-Leinval;
+				return 0;
+			}
+			if(!waserror()){
+				validaddr((uintptr)iov, cnt*2*sizeof(uvlong), 0);
+				poperror();
+			} else {
+				*retp = (uintptr)-Leinval;
+				return 0;
+			}
+			for(k = 0; k < cnt; k++){
+				uintptr base = (uintptr)iov[2*k];
+				long ln = (long)iov[2*k+1];
+				uintptr r;
+
+				if(ln <= 0)
+					continue;
+				wa[0] = la[0]; wa[1] = base; wa[2] = ln;
+				{
+					uvlong save[3];
+					uvlong *sa = (uvlong*)up->s.args;
+					long w;
+
+					save[0] = sa[0]; save[1] = sa[1]; save[2] = sa[2];
+					sa[0] = wa[0]; sa[1] = wa[1]; sa[2] = wa[2];
+					ospreylinuxsyscall(1, &r);
+					w = (long)r;
+					sa[0] = save[0]; sa[1] = save[1]; sa[2] = save[2];
+					if(w < 0){
+						if(tot == 0)
+							*retp = r;
+						else
+							*retp = (uintptr)tot;
+						return 0;
+					}
+					tot += w;
+					if(w < ln)
+						break;		/* short: the caller goes on from here */
+				}
+			}
+			*retp = (uintptr)tot;
+			return 0;
+		}
+	case 16:			/* ioctl(fd, request, ...) */
+		/*
+		 * ENOTTY, and nothing else.  A libc asks this of its output
+		 * at startup to decide whether to buffer a line at a time,
+		 * and the answer here is the honest one: there are no
+		 * terminal ioctls on this kernel, so nothing it has is a
+		 * terminal.  Answering 0 would tell it there was a terminal
+		 * it could then ask about.
+		 */
+		*retp = (uintptr)-Lenotty;
+		return 0;
+	case 39:			/* getpid */
+		*retp = (uintptr)up->pid;
+		return 0;
+	case 218:			/* set_tid_address(addr) */
+		/*
+		 * A libc calls this before anything else and keeps what it
+		 * returns as its thread id.  The address is where the kernel
+		 * would clear a word when the thread exits, which matters to
+		 * a thread that is joined; nothing here joins one, so the
+		 * address is not kept, and the honest part of the call - the
+		 * id - is answered.
+		 */
+		*retp = (uintptr)up->pid;
+		return 0;
 	case 60: case 231:		/* exit, exit_group */
 		ospreyexits((long)la[0]);
 		*retp = 0;

@@ -6631,8 +6631,40 @@ to
 as an integer, so the compiler cannot see that memory is written through
 it, and the first version read a stale
 .CW got
-back and reported a base sixteen bytes out.  The p9linux check is
-eighteen criteria.
+back and reported a base sixteen bytes out.
+.PP
+Four more are the rest of what a libc does before it reaches
+.CW main ,
+and one of them is not optional:
+.CW writev .
+A libc's standard output gathers the pieces of a line and writes them in
+one call, so a real binary prints nothing at all without it.  Each piece
+goes the way
+.CW write(2) 's
+one does \- the console through the console task, anything else
+forwarded to the buddy \- and the count returned is what went, so a
+short piece stops it the way a short write does.
+.CW ioctl
+is asked of the output at startup, to decide whether to buffer a line at
+a time, and the answer here is ENOTTY for everything: there are no
+terminal ioctls on this kernel, so nothing it has is a terminal, and
+answering 0 would tell a libc there was one it could then ask about.
+.CW set_tid_address
+is called before anything else and its answer kept as the thread id;
+this gives the process's id, and does not keep the address, which is
+where a kernel clears a word for a thread being joined and nothing here
+joins one.
+.CW getpid
+gives the same id.
+.PP
+What is honestly not here is a binary from a toolchain to try them
+against.  This host has the
+.CW x86_64-linux-gnu
+binutils and no Linux libc at all, so the program these calls are proven
+by is still the hand-written one, making the calls a libc would make
+rather than being a libc making them.  The ABI is the real one and the
+program is not, and that is the state to record.  The p9linux check is
+nineteen criteria.
 .NH 1
 Running real programs on the two personalities: a plan
 .PP

@@ -115,6 +115,20 @@ def main():
         ("and a directory listing crosses the same way: getdents64 returns the buddy's 9P stat messages as dirent64 records, and the program walks them by reclen over as many calls as the buffer needs - fourteen entries of the buddy's root, each with the directory bit",
          gd is not None and int(gd.group(1)) == 14 and int(gd.group(2)) >= 2
          and re.search(r'getdents64 on /: boot/4 bin/4 dev/4 env/4 fd/4 mnt/4 n/4 net/4 net\.alt/4 proc/4 rc/4 root/4 srv/4 shr/4', t) is not None),
+        # The rest of what a libc does before it reaches main.  writev is
+        # the one that matters: a libc's stdout gathers its pieces and
+        # writes them in one call, so without it a real binary prints
+        # nothing at all.  ioctl is asked of the output at startup to
+        # decide whether to buffer a line at a time, and the honest answer
+        # on this kernel is ENOTTY - there are no terminal ioctls, so
+        # nothing it has is a terminal, and answering 0 would tell it
+        # there was one it could then ask about.  set_tid_address is
+        # called before anything else and its answer kept as the thread
+        # id.
+        ("and the rest of a libc's own startup: writev gathers two pieces into one call and both land in order with the count of what went, ioctl of the output says ENOTTY because there are no terminal ioctls here, and getpid and set_tid_address agree on the process's id",
+         'linux: writev wrote this in two pieces: the second piece' in t
+         and 'linux: writev returned 57 for 40 + 17' in t
+         and re.search(r'ioctl\(TCGETS\) returned -25 \(ENOTTY\), getpid and set_tid_address agree on ([1-9]\d*)', t) is not None),
         # The thread pointer, which is the call standing between a program
         # that makes its own raw system calls and one built against a
         # libc: musl's __init_tp and glibc's TLS setup are both
