@@ -171,6 +171,65 @@ static int	present_prev_len;
 static uvlong	present_churn_big;	/* presents changing >40% of the screen */
 static uvlong	present_churn_small;
 /*
+ * And the same question asked of the glass: what did the drawable that
+ * was just shown actually contain?  This is the only instrument here that
+ * sees the geometry passes, which compose onto the drawable and never
+ * touch the softscreen - so for a program whose picture is mostly GPU
+ * geometry, it is the only one that sees the picture at all.
+ */
+static int	mtl_glass = -1;
+static id<MTLBuffer>	mtl_glass_buf;
+static uchar	*mtl_glass_prev;
+static int	mtl_glass_len;
+static uvlong	glass_blank, glass_churn_big, glass_frames;
+/*
+ * Geometry that reached the queue and then did not reach the screen.
+ * A batch whose scissor clamps to nothing is skipped silently, and a
+ * skipped batch is a hole in the picture - black, where whatever the
+ * batch was supposed to draw should have been.  Nothing counted that.
+ */
+static uvlong	geom_scissor_dropped, geom_batches_drawn;
+/* Which composition each present used: under+geometry+overlay, plain
+ * softscreen blit, or softscreen plus leftover geometry. */
+static uvlong	pres_overlay, pres_plain, pres_geom;
+static Lock	glass_lk;	/* the handler runs on a Metal thread */
+
+static void
+glass_measure(int pw, int ph, int bpl)
+{
+	uchar *p, *pv;
+	u32 *row, *prow, first;
+	int x, y, uniform, nd, tot;
+
+	lock(&glass_lk);
+	p = [mtl_glass_buf contents];
+	if(p == nil || mtl_glass_prev == nil){
+		unlock(&glass_lk);
+		return;
+	}
+	glass_frames++;
+	uniform = 1;
+	nd = 0;
+	tot = pw*ph;
+	first = ((u32*)p)[0];
+	for(y = 0; y < ph; y++){
+		row = (u32*)(p + y*bpl);
+		prow = (u32*)(mtl_glass_prev + y*bpl);
+		for(x = 0; x < pw; x++){
+			if(row[x] != first)
+				uniform = 0;
+			if(row[x] != prow[x])
+				nd++;
+		}
+	}
+	if(uniform)
+		glass_blank++;
+	if(glass_frames > 1 && nd*5 > tot*2)
+		glass_churn_big++;
+	memmove(mtl_glass_prev, p, bpl*ph);
+	unlock(&glass_lk);
+}
+/*
  * Does each frame the program finishes get shown exactly once?  soft_seq
  * counts frames flushed by the program; present records how many have
  * arrived since the last one it showed.  0 means the display repeated a
@@ -2189,6 +2248,7 @@ metal_present_geom(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	 * then loaded a stale depth buffer instead of a cleared one. */
 	mtl_zclear = 0;
 	if(clip != nil && !clip_scissor(enc, clip, pw, ph)){
+		geom_scissor_dropped++;
 		/* the window has no visible pixels left: nothing to draw, and
 		 * nothing for the caller to rasterise on the CPU either */
 		[enc endEncoding];
@@ -2337,8 +2397,11 @@ metal_present_tris3d(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	for(i = 0; i < nb; i++){
 		if(batches[i].count == 0)
 			continue;
-		if(!clip_scissor(enc, &batches[i].clip, pw, ph))
+		if(!clip_scissor(enc, &batches[i].clip, pw, ph)){
+			geom_scissor_dropped++;
 			continue;
+		}
+		geom_batches_drawn++;
 		[enc setVertexBufferOffset:voff + batches[i].start * sizeof(GPUVert3D) atIndex:0];
 		[enc setVertexBytes:&batches[i].xform length:sizeof(GPUXform) atIndex:1];
 		[enc drawPrimitives:MTLPrimitiveTypeTriangle
@@ -4540,6 +4603,8 @@ present_softscreen_body(void)
 	if(tex == nil)
 		return;
 	depthtex = metal_depth_tex(pw, ph);
+	if(mtl_glass < 0)
+		mtl_glass = getenv("INFERNO_METAL_GLASS") != nil;
 	validate = getenv("INFERNO_METAL_VALIDATE") != nil;
 	if(validate){
 		bpl = gscreen->width * (int)sizeof(u32);
@@ -4611,6 +4676,7 @@ present_softscreen_body(void)
 	}
 
 	if(overlay){
+		pres_overlay++;
 		/* under (pre-3D softscreen) → Metal 3D+sprites → softscreen where changed */
 		metal_blit_tex(cmd, drawable.texture, mtl_pipe, under, nil, samp);
 		metal_present_tris(cmd, drawable.texture, depthtex, pw, ph);
@@ -4619,6 +4685,10 @@ present_softscreen_body(void)
 		metal_present_sprites(cmd, drawable.texture, depthtex, pw, ph);
 		metal_overlay_soft(cmd, drawable.texture, tex, under, samp);
 	}else{
+		if(have_geom)
+			pres_geom++;
+		else
+			pres_plain++;
 		metal_blit_tex(cmd, drawable.texture, mtl_pipe, tex, nil, samp);
 		if(have_geom){
 			metal_present_tris(cmd, drawable.texture, depthtex, pw, ph);
@@ -4629,8 +4699,48 @@ present_softscreen_body(void)
 	}
 	mtl_have_under = 0;
 
+	if(mtl_glass){
+		id<MTLBlitCommandEncoder> gblit;
+		int gbpl = (pw*4 + 255) & ~255;
+
+		if(mtl_glass_buf == nil || mtl_glass_len < gbpl*ph){
+			mtl_glass_len = gbpl*ph;
+			mtl_glass_buf = [mtl_device newBufferWithLength:mtl_glass_len
+				options:MTLResourceStorageModeShared];
+			free(mtl_glass_prev);
+			mtl_glass_prev = malloc(mtl_glass_len);
+		}
+		if(mtl_glass_buf != nil){
+			gblit = [cmd blitCommandEncoder];
+			if(gblit != nil){
+				[gblit copyFromTexture:drawable.texture sourceSlice:0
+					sourceLevel:0 sourceOrigin:MTLOriginMake(0,0,0)
+					sourceSize:MTLSizeMake(pw, ph, 1)
+					toBuffer:mtl_glass_buf destinationOffset:0
+					destinationBytesPerRow:gbpl
+					destinationBytesPerImage:gbpl*ph];
+				[gblit endEncoding];
+			}
+		}
+		/*
+		 * Measure from a completion handler, NOT by waiting here.
+		 * Waiting serialises every present against the GPU, which is
+		 * a change to exactly the timing the measurement is about -
+		 * an instrument that stalls the thing it is watching can hide
+		 * a race rather than find one.  The handler runs on a Metal
+		 * thread once the buffer is done, so the copy is valid and
+		 * nothing on the present path waits for it.
+		 */
+		[cmd addCompletedHandler:^(id<MTLCommandBuffer> b){
+			USED(b);
+			glass_measure(pw, ph, gbpl);
+		}];
+		[cmd presentDrawable:drawable];
+		[cmd commit];
+	}else{
 	[cmd presentDrawable:drawable];
 	[cmd commit];
+	}
 	if(validate){
 		[cmd waitUntilCompleted];
 		vp = [metal_validate_buf contents];
@@ -4658,7 +4768,7 @@ present_softscreen_body(void)
 			metal_presents ? metal_drawable_us/metal_presents : 0,
 			metal_presents ? metal_slotwait_us/metal_presents : 0,
 			metal_presents ? (metal_present_us - metal_drawable_us - metal_slotwait_us)/metal_presents : 0);
-		fprint(2, "METALSTATS frames=%d damage_calls=%llud damage_bytes=%llud full_uploads=%llud readbacks=%llud upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud largest_copy_bytes=%llud largest_dirty_bytes=%llud copy_notes=%llud rejected=%llud reject_storage=%llud reject_damage=%llud reject_geometry=%llud alias_storage=%llud armed=%llud cancelled=%llud g3_calls=%llud g3_tris=%llud fill_calls=%llud blank_uploads=%llud churn_big=%llud churn_small=%llud torn_uploads=%llud torn_pixels=%llud spr_calls=%llud soft_fallbacks=%llud teximg_alloced=%ud teximg_declined=%ud(chan=%ud small=%ud) teximg_freed=%ud live=%d\n",
+		fprint(2, "METALSTATS frames=%d damage_calls=%llud damage_bytes=%llud full_uploads=%llud readbacks=%llud upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud largest_copy_bytes=%llud largest_dirty_bytes=%llud copy_notes=%llud rejected=%llud reject_storage=%llud reject_damage=%llud reject_geometry=%llud alias_storage=%llud armed=%llud cancelled=%llud g3_calls=%llud g3_tris=%llud fill_calls=%llud blank_uploads=%llud churn_big=%llud churn_small=%llud glass=%llud glassblank=%llud glasschurn=%llud geomdropped=%llud geomdrawn=%llud overlay=%llud plain=%llud presgeom=%llud torn_uploads=%llud torn_pixels=%llud spr_calls=%llud soft_fallbacks=%llud teximg_alloced=%ud teximg_declined=%ud(chan=%ud small=%ud) teximg_freed=%ud live=%d\n",
 			metal_stat_frames, metal_damage_calls, metal_damage_bytes,
 			metal_full_uploads, metal_readbacks, metal_upload_bytes,
 			metal_copy_bytes, metal_saved_bytes,
@@ -4669,6 +4779,9 @@ present_softscreen_body(void)
 			metal_copy_armed, metal_copy_cancelled, metal_g3_calls, metal_g3_tris,
 			metal_fill_calls, metal_blank_uploads,
 			present_churn_big, present_churn_small,
+			glass_frames, glass_blank, glass_churn_big,
+			geom_scissor_dropped, geom_batches_drawn,
+			pres_overlay, pres_plain, pres_geom,
 			metal_torn_uploads, metal_torn_pixels, metal_spr_calls,
 			metal_soft_fallbacks, teximg_alloced, teximg_declined,
 			teximg_nchan, teximg_nsmall, teximg_freed, nteximg);
@@ -4677,6 +4790,9 @@ present_softscreen_body(void)
 		metal_blank_uploads = 0;
 		metal_torn_uploads = metal_torn_pixels = 0;
 		present_churn_big = present_churn_small = 0;
+		glass_blank = glass_churn_big = glass_frames = 0;
+		geom_scissor_dropped = geom_batches_drawn = 0;
+		pres_overlay = pres_plain = pres_geom = 0;
 		{
 			int gi, gj, gt, gn;
 
@@ -5850,7 +5966,15 @@ createwindow(void)
 	}
 	mtl_layer.device = mtl_device;
 	mtl_layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
-	mtl_layer.framebufferOnly = YES;
+	/*
+	 * INFERNO_METAL_GLASS makes the drawable readable so that what is
+	 * actually put on the screen can be measured.  Everything else in
+	 * this file watches the softscreen, and for a program whose picture
+	 * is composed onto the drawable by the geometry passes - which never
+	 * touch the softscreen - that is watching the wrong thing.  Off by
+	 * default because a readable drawable gives up a real optimisation.
+	 */
+	mtl_layer.framebufferOnly = getenv("INFERNO_METAL_GLASS") == nil;
 	mtl_layer.contentsScale = 1.0;	/* 1 Inferno pixel = 1 point */
 	mtl_layer.opaque = YES;
 	mtl_layer.drawableSize = CGSizeMake(dx, dy);
