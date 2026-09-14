@@ -70,7 +70,15 @@ FS=${FS:-disk/kfs}
 # wrote a file, saw it in the session, and left the disk image
 # untouched.
 run 55 "mount -c {$FS -r -n main /dev/sdF0/data} /n; echo $NONCE > /n/proof; cat /n/proof; disk/kfscmd -n main sync; echo PHASE1-DONE" 1 > "$WORK/one.log"
-if ! grep -q PHASE1-DONE "$WORK/one.log"; then
+# -x, an exact line.  The console echoes the command it is given, and
+# that command ends with "echo PHASE1-DONE", so a substring match finds
+# the token whether or not the shell ever ran it.  Only execution
+# produces a line that is the token alone.  The check below -- the
+# nonce found in the host's copy of the disk image -- is what actually
+# proves the write path, and it is independent of anything the console
+# said; this gate only has to fail honestly when the boot did not get
+# that far.
+if ! grep -qx PHASE1-DONE "$WORK/one.log"; then
 	echo "check-pc64-disk: FAIL -- first boot did not finish" >&2
 	tail -20 "$WORK/one.log" >&2
 	exit 1
@@ -81,7 +89,10 @@ if ! strings "$WORK/disk.img" | grep -q "$NONCE"; then
 fi
 
 run 55 "mount {$FS -n main /dev/sdF0/data} /n; echo READBACK-FOLLOWS; cat /n/proof" 2 > "$WORK/two.log"
-if grep -q "$NONCE" "$WORK/two.log"; then
+# Sound either way -- the second boot's command does not contain the
+# nonce, so finding it means it came off the disk -- but exact, to match
+# the rest of this file.
+if grep -qx "$NONCE" "$WORK/two.log"; then
 	echo "check-pc64-disk: ok ($FS) -- $NONCE written, rebooted, read back"
 	exit 0
 fi

@@ -909,18 +909,62 @@ then cannot run anything is not a machine anyone can rent: the smallest
 that reaches the end of the bind list, and the smallest that runs a
 typed command and answers.
 .PP
-.B "Both are 66 MiB."
-At 65 MiB neither works and at 66 both do, checked by bisecting
-64\-66 as well as 56\-128.  Below that the kernel says what is wrong
-rather than wandering: 65 MiB gives
+.B "Boot is 66 MiB."
+Below that the kernel says what is wrong rather than wandering: 65 MiB
+gives
 .CW "panic: no memory"
 and 64 MiB gives
 .CW "panic: cannot allocate 125 procs (0MB)" ,
 which is the proc table sized from what is left.
 .PP
-That the two thresholds coincide is the useful part.  There is no band
-where this kernel boots and is useless; if it reaches a shell it can run
-a program.
+.B "This section first said both thresholds were 66 MiB.  That was wrong,
+and the way it was wrong is worth more than the number."
+The second arm typed a command at the console and looked for its output
+with
+.CW "grep -q WORK-OK" .
+A console
+.I echoes
+what is typed at it, so the token was in the log whether or not anything
+ran: the check was answering "were the characters delivered".  It has to
+be
+.CW "grep -qx" ,
+an exact line, which only execution can produce.
+.PP
+Underneath that, the harness waited for
+.CW "bound #S"
+before typing, and pc64 prints that well before
+.CW /dis/sh.dis
+is reading.  Characters typed then are echoed by the console driver and
+lost, and the shell starts afterwards and prints its first prompt
+.I below
+the echo.  Proved by writing explicitly to
+.CW /dev/cons
+and getting nothing; with the shell's prompt as the token the same
+kernel prints
+.CW WORKOK
+and
+.CW /dev/time 's
+four fields.  The token must be
+.CW "\en; "
+and not
+.CW ";" ,
+because the firmware's ANSI
+.CW ( [01;01H )
+carries a semicolon in the first line of every boot.
+.PP
+Two arms of a measurement agreeing exactly is a reason to check the
+predicate, not a result.
+.PP
+.B "Corrected, the two thresholds differ \(em and the boundary is not sharp."
+Bisecting 56\-128 gives 66 MiB to boot and 68 MiB to run a command.
+Bisecting 66\-68 immediately afterwards gives 67 for both, because the
+predicate near the boundary is not deterministic: the same size passes
+some runs and fails others.  A bisect assumes the property is monotone,
+and over a noisy predicate it returns an arbitrary point inside the
+noisy band while looking exact.  The script now takes
+.CW REPS
+to sweep with repeats and report a rate per size, which is the only
+honest way to state where the edge is.
 .PP
 .B "The floor is mostly the image."
 The kernel is 9.19 MB with its root compiled in and reserves memory up

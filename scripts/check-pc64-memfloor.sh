@@ -59,20 +59,46 @@ works() {	# works MiB -> 0 if a typed command runs and answers
 	rm -f "$WORK/w.in" "$WORK/w.out" "$WORK/w.log"
 	# Waits for the guest to say it is ready rather than guessing: a
 	# smaller machine boots slower, and a fixed delay measures the
-	# delay.  150s is a ceiling, not a plan.
-	INFERNO_CONSOLE_WAITFOR='bound #S' INFERNO_CONSOLE_HOLD=30 \
-	timeout 260 python3 "$ROOT/scripts/type-at-console.py" "$WORK/w" 150 \
-		'ls /dis | wc; echo WORK-OK' \
+	# delay.  180s is a ceiling, not a plan.
+	#
+	# The token is the shell's PROMPT, not the end of the bind list.
+	# "bound #S" is printed well before /dis/sh.dis is reading: type
+	# then and the console driver echoes the characters -- so they
+	# appear in the log, which is what makes this convincing and
+	# wrong -- while the shell, which starts afterwards, never sees
+	# them and prints its first prompt below the echo.  A whole run
+	# of this check passed that way, matching its own input.
+	#
+	# "\n; " and not ";", because the firmware's ANSI ("[01;01H")
+	# carries a semicolon in the first line of every boot.
+	INFERNO_CONSOLE_WAITFOR='
+; ' INFERNO_CONSOLE_HOLD=30 \
+	timeout 300 python3 "$ROOT/scripts/type-at-console.py" "$WORK/w" 180 \
+		'ls /dis | wc; echo WORKOK' \
 		qemu-system-x86_64 $QBASE -m "$1" $QDISK \
 		-drive if=pflash,format=raw,unit=1,file="$WORK/vars.fd" \
 		-cdrom "$WORK/m.iso" $QNET \
 		-chardev pipe,id=c0,path="$WORK/w" -serial chardev:c0 \
 		>"$WORK/w.log" 2>"$WORK/w.err" || true
-	grep -q WORK-OK "$WORK/w.log"
+	# -x, an exact line.  A substring match finds the token in the
+	# console's echo of the command that contains it, so the predicate
+	# answers "were the characters delivered" rather than "did the
+	# command run".  Only execution produces a line that is the token
+	# and nothing else.
+	grep -qx WORKOK "$WORK/w.log"
 }
 
-# Bisect rather than sweep: the property is monotone in memory, and a
-# bisect over 56..128 is seven boots instead of seventy.
+# Bisect rather than sweep, because a bisect over 56..128 is seven boots
+# instead of seventy -- but the bisect assumes the property is monotone
+# in memory and NEAR THE BOUNDARY IT IS NOT.  Measured: bisecting
+# 56..128 gave 66 to boot and 68 to run a command, while bisecting
+# 66..68 immediately afterwards gave 67 for both, because works(67)
+# succeeds some runs and fails others.  A bisect over a noisy predicate
+# returns an arbitrary point inside the noisy band and looks exact.
+#
+# So REPS makes it sweep instead, reporting how many of REPS runs pass
+# at each size.  Use the bisect to find the band cheaply and the sweep
+# to say how wide it is; quote the sweep.
 bisect() {	# bisect predicate lo hi -> smallest MiB satisfying it
 	p=$1; lo=$2; hi=$3
 	if ! $p $hi; then echo ""; return; fi
@@ -84,6 +110,23 @@ bisect() {	# bisect predicate lo hi -> smallest MiB satisfying it
 }
 
 echo "kernel `ls -l \"$KERN\" | awk '{print $5}'` bytes; searching $LO..$HI MiB"
+
+if [ -n "${REPS:-}" ]; then
+	echo "sweeping $LO..$HI, $REPS runs each"
+	echo "  MiB   boots   runs a command"
+	m=$LO
+	while [ $m -le $HI ]; do
+		b=0; w=0; i=1
+		while [ $i -le $REPS ]; do
+			boots $m && b=`expr $b + 1`
+			works $m && w=`expr $w + 1`
+			i=`expr $i + 1`
+		done
+		echo "  $m     $b/$REPS     $w/$REPS"
+		m=`expr $m + 1`
+	done
+	exit 0
+fi
 BF=`bisect boots $LO $HI`
 [ -n "$BF" ] || { echo "check-pc64-memfloor: does not boot even at $HI MiB" >&2; exit 1; }
 echo "boot to a shell:      $BF MiB"
