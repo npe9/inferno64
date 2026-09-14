@@ -290,6 +290,8 @@ root
 # makes a second instance able to mount this one's files
 	/dis/styxbench.dis
 	/dis/tcpserve.dis
+	/dis/metricfs.dis
+	/dis/supervise.dis
 	/dis/zerofs.dis
 	/dis/styxlisten.dis
 	/dis/export.dis

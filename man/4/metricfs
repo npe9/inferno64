@@ -1,0 +1,131 @@
+.TH METRICFS 4
+.SH NAME
+metricfs \- the machine's own numbers as a file tree
+.SH SYNOPSIS
+.B mount {metricfs} /n/metric
+.SH DESCRIPTION
+.I Metricfs
+serves one file per measurement, taken from files the kernel already
+keeps.  There is no metrics protocol here, no scrape endpoint and no
+exposition format: a monitor reads files, and because a namespace can
+be exported it reads them on another machine with the same code.
+.IP
+.EX
+# on the machine being watched
+mount {metricfs} /n/metric
+styxlisten -A 'tcp!*!6666' export /n/metric
+
+# anywhere else
+mount -A tcp!host!6666 /n/host
+cat /n/host/mem/main/used
+.EE
+.SH FILES
+Every leaf holds one number and a newline, except
+.B osversion
+and
+.B sysname
+which hold a string, and
+.B log
+which holds text.
+.TP
+.B uptime
+Seconds since this machine started.
+.TP
+.B time
+Seconds since the epoch.
+.TP
+.B procs
+How many processes exist.
+.TP
+.B osversion
+The kernel's build date, as
+.IR cons (3)
+reports it.
+.TP
+.B sysname
+The machine's name.
+.TP
+.B log
+The kernel message buffer,
+.BR /dev/kmesg .
+.TP
+.BI cpu/ n /
+One directory per processor, named by its number, holding
+.BR cs ,
+.BR intr ,
+.BR syscall ,
+.BR pfault ,
+.BR tlbfault ,
+.BR tlbpurge ,
+.B load
+and
+.BR idle .
+These are the columns of
+.B /dev/sysstat
+in order, named, so that a reader does not have to know which column is
+which.
+.TP
+.BI mem/ pool /
+One directory per memory pool, named by the pool, holding
+.BR used ,
+.BR max ,
+.BR highwater ,
+.BR nalloc ,
+.BR nfree ,
+.B nbrk
+and
+.BR largest .
+These are the columns of
+.BR /dev/memory .
+.SH SOURCE
+.B /appl/cmd/metricfs.b
+.SH SEE ALSO
+.IR cons (3),
+.IR styxlisten (1),
+.IR export (4),
+.IR supervise (1)
+.SH "A FILE IS OFFERED ONLY IF IT CAN BE MEASURED"
+A leaf exists only when its source can be read, so the tree has fewer
+files on some machines than others.  A metrics tree that answers 0 for
+something it cannot measure is worse than one that does not offer the
+file, because the zero is indistinguishable from a real reading.
+.PP
+Under hosted
+.IR emu (1)
+there is no
+.BR /dev/sysstat ,
+no
+.B /dev/osversion
+and no
+.BR /dev/kmesg ,
+so
+.BR cpu/ ,
+.B osversion
+and
+.B log
+are absent.  There is no uptime either:
+.I emu
+serves
+.B /dev/msec
+but it reads 0 forever, and
+.B /dev/time
+there is a single microsecond count of the wall clock, which says
+nothing about when the machine started.  The source is chosen by its
+value and not merely by whether the file opens.
+.SH BUGS
+The shape of the tree is fixed when
+.I metricfs
+starts, from the processors and pools the machine has then.  A
+processor started later does not appear until it is restarted.
+.PP
+Nothing is cached and nothing is sampled: a file has the value it had
+when the read happened.  Reading twenty files is twenty reads of the
+underlying source.
+.PP
+The column names promise something about the kernel.  If
+.BR devcons.c 's
+.B sysstat
+loop or
+.BR alloc.c 's
+.B poolread
+changes its order, the names here have to change with it.

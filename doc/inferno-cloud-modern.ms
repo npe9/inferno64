@@ -1012,3 +1012,90 @@ this kernel uses under a tenth of the memory before the workload starts.
 The cloud-economics claim in item 10 needs the other half, which is how
 many useful processes fit in what is left, and that is not measured
 here.
+.NH 2
+Phase 4 items 12 and 13: supervision, and metrics as files
+.PP
+.B "supervise(1)"
+keeps a set of commands running.  Item 12 says this should be a program
+and not a kernel change because
+.CW /prog
+already exposes every process as files, and it is: it opens its own
+.CW /prog/ pid /wait
+before it spawns anything and blocks reading it.
+.CW dis.c 's
+.CW newprog()
+gives each new process a pointer to its parent's wait queue and
+.CW delprog()
+posts
+.CW "pid \(dqmodule\(dq:cause"
+there when it ends.  Nothing is polled.
+.PP
+Only direct children appear, because a grandchild posts to its own
+parent's queue, which is empty unless that parent also opened its wait
+file.  That is what makes it a supervisor of the things it started.  It
+also has a consequence worth stating rather than hiding: a service given
+as a shell command line is supervised as the shell running it, so when
+that shell's child is killed the service restarts but the cause reported
+is the shell's
+.CW exited ,
+not the child's
+.CW killed .
+The console shows
+.CW "5 \(dqSleep\(dq:killed"
+while
+.CW supervise
+reports pid 4 exited.
+.PP
+.B "metricfs(4)"
+serves the machine's own numbers as one file per measurement.  Item 13
+asks for logs and metrics as a mountable file tree "so that observing a
+machine is the same operation as reading one", and that is the whole
+design: no scrape endpoint, no exposition format, no metrics protocol at
+all.  Each leaf is one column of a file the kernel already keeps \(em
+.CW /dev/sysstat ,
+.CW /dev/memory ,
+.CW /dev/time ,
+.CW /dev/kmesg ,
+.CW /prog
+\(em named, so that a reader does not have to know that
+.CW /dev/memory 's
+third column is the high-water mark.
+.PP
+.B "Demonstrated between two machines."
+A pc64 kernel under QEMU mounted it, exported it with
+.CW "styxlisten -A tcp!*!6666 export /n" ,
+and a separate Inferno mounted that over TCP and read the remote
+machine's numbers as files:
+.CW uptime
+83,
+.CW cpu/0/intr
+11183,
+.CW mem/main/used
+3804032.  Both processors appear as
+.CW /n/cpu/0
+and
+.CW /n/cpu/1 .
+The reading side is
+.CW cat .
+.PP
+.B "A file is offered only if it can be measured."
+A leaf exists only when its source can be read, so the tree is smaller
+on some machines than others.  A metrics tree that answers 0 for
+something it cannot measure is worse than one that omits the file,
+because the zero is indistinguishable from a reading.  Under
+.CW emu
+there is no
+.CW /dev/sysstat ,
+no
+.CW /dev/osversion
+and no
+.CW /dev/kmesg ,
+so those are absent; and there is no uptime, because
+.CW emu 's
+.CW /dev/msec
+reads 0 forever and its
+.CW /dev/time
+is a wall-clock microsecond count that says nothing about when the
+machine started.  The source is chosen by its value, not by whether the
+file opens \(em which is a distinction this document has had to learn
+twice today.

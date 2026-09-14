@@ -109,6 +109,7 @@ TARG=\
 	cloudinit.dis\
 	gcs.dis\
 	hget.dis\
+	metricfs.dis\
 	mntgen.dis\
 	mount.dis\
 	mouse.dis\

@@ -22,6 +22,7 @@ kfs kfs
 lockfs lockfs
 logfile logfile
 memfs memfs
+metricfs metricfs
 mntgen mntgen
 namespace namespace
 palmsrv palmsrv
