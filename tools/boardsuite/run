@@ -880,6 +880,22 @@ config_evidence() {
 		# was inside the pool.
 		echo '^[0-9a-f]+ 87e00000 [0-9]+';;
 	virtarm64)
+		# The console and the wall clock, from the tree rather than
+		# from mem.h.  Both had been discovered, printed beside the
+		# constant "for comparison", and never used -- the same
+		# defect the GIC line carried, and on the console it is the
+		# sharper one: a board pointed at the wrong serial port
+		# prints nothing at all, so there is no degraded mode to
+		# notice.
+		#
+		# The clock READING is the second half of the RTC line.
+		# QEMU answers a read of an unclaimed address with zero, so
+		# an address alone is not evidence: a board aimed at a hole
+		# prints a plausible line and a clock of zero.  A ten-digit
+		# second count cannot come from a hole.
+		echo 'uart: pl011 @ 0x9000000 from the tree, UART-ADDR-OK'
+		echo 'rtc: pl031 @ 0x9010000 from the tree, RTC-ADDR-OK'
+		echo 'rtc: clock reads 1[7-9][0-9]{8}'
 		# And where the GIC is, from the source that supplied it.
 		# The three bases used to be mem.h constants read at a
 		# dozen sites while the tree's and the MADT's values were
@@ -1000,6 +1016,28 @@ config_evidence() {
 		echo 'MSI-DOORBELL-OK'
 		;;
 	virtarm64-acpi)
+		# The console from the SPCR, which is the table whose whole
+		# purpose is telling a kernel with no device tree which of
+		# a machine's serial ports the firmware was using.  This is
+		# the arm that has no tree, so it is the only place the
+		# SPCR path runs.
+		#
+		# The RTC goes the other way and the line says so.  No ACPI
+		# table names a PL031 -- a SystemReady machine puts it in
+		# the DSDT as _HID ARMH0011, which needs AML, and its wall
+		# clock otherwise comes through firmware time services this
+		# kernel does not call -- so on an arm with no tree nothing
+		# vouches for mem.h's address and the clock is not read.
+		#
+		# Not caution for its own sake: the falsify run for this
+		# change set RTC0 wrong, and QEMU answers a read of an
+		# unclaimed address with an external abort rather than with
+		# zeroes, so the board took a data abort in rtctime() and
+		# died with the console already working.  Losing the wall
+		# clock on this arm costs no marker; that was measured, not
+		# assumed.
+		echo 'uart: pl011 @ 0x9000000 from the spcr, UART-ADDR-OK'
+		echo 'RTC-UNNAMED'
 		# And the redistributor frame walk on a machine with one
 		# range.  "of 1" rather than "of 123" is the evidence: the
 		# range is 0xf60000 bytes here too, so a count computed
@@ -1070,6 +1108,28 @@ config_evidence() {
 		# fact: type 5 is EfiRuntimeServicesCode here.
 		echo 'usable to 0x[0-9a-f]+, stopped by efi type 0x[0-9a-f]+';;
 	virtarm64-smmu)
+		# The console from the SPCR, which is the table whose whole
+		# purpose is telling a kernel with no device tree which of
+		# a machine's serial ports the firmware was using.  This is
+		# the arm that has no tree, so it is the only place the
+		# SPCR path runs.
+		#
+		# The RTC goes the other way and the line says so.  No ACPI
+		# table names a PL031 -- a SystemReady machine puts it in
+		# the DSDT as _HID ARMH0011, which needs AML, and its wall
+		# clock otherwise comes through firmware time services this
+		# kernel does not call -- so on an arm with no tree nothing
+		# vouches for mem.h's address and the clock is not read.
+		#
+		# Not caution for its own sake: the falsify run for this
+		# change set RTC0 wrong, and QEMU answers a read of an
+		# unclaimed address with an external abort rather than with
+		# zeroes, so the board took a data abort in rtctime() and
+		# died with the console already working.  Losing the wall
+		# clock on this arm costs no marker; that was measured, not
+		# assumed.
+		echo 'uart: pl011 @ 0x9000000 from the spcr, UART-ADDR-OK'
+		echo 'RTC-UNNAMED'
 		# And the redistributor frame walk on a machine with one
 		# range.  "of 1" rather than "of 123" is the evidence: the
 		# range is 0xf60000 bytes here too, so a count computed
@@ -1116,6 +1176,28 @@ config_evidence() {
 		echo 'DHCP-OK'
 		echo 'ACPI-OUTSIDE-HEAP';;
 	virtarm64-noscan)
+		# The console from the SPCR, which is the table whose whole
+		# purpose is telling a kernel with no device tree which of
+		# a machine's serial ports the firmware was using.  This is
+		# the arm that has no tree, so it is the only place the
+		# SPCR path runs.
+		#
+		# The RTC goes the other way and the line says so.  No ACPI
+		# table names a PL031 -- a SystemReady machine puts it in
+		# the DSDT as _HID ARMH0011, which needs AML, and its wall
+		# clock otherwise comes through firmware time services this
+		# kernel does not call -- so on an arm with no tree nothing
+		# vouches for mem.h's address and the clock is not read.
+		#
+		# Not caution for its own sake: the falsify run for this
+		# change set RTC0 wrong, and QEMU answers a read of an
+		# unclaimed address with an external abort rather than with
+		# zeroes, so the board took a data abort in rtctime() and
+		# died with the console already working.  Losing the wall
+		# clock on this arm costs no marker; that was measured, not
+		# assumed.
+		echo 'uart: pl011 @ 0x9000000 from the spcr, UART-ADDR-OK'
+		echo 'RTC-UNNAMED'
 		# And where the GIC is, from the source that supplied it.
 		# The three bases used to be mem.h constants read at a
 		# dozen sites while the tree's and the MADT's values were
@@ -1165,6 +1247,22 @@ config_evidence() {
 		# two device trees this arm actually got.
 		echo 'MSI-DOORBELL-OK';;
 	virtarm64-gicr)
+		# The console and the wall clock, from the tree rather than
+		# from mem.h.  Both had been discovered, printed beside the
+		# constant "for comparison", and never used -- the same
+		# defect the GIC line carried, and on the console it is the
+		# sharper one: a board pointed at the wrong serial port
+		# prints nothing at all, so there is no degraded mode to
+		# notice.
+		#
+		# The clock READING is the second half of the RTC line.
+		# QEMU answers a read of an unclaimed address with zero, so
+		# an address alone is not evidence: a board aimed at a hole
+		# prints a plausible line and a clock of zero.  A ten-digit
+		# second count cannot come from a hole.
+		echo 'uart: pl011 @ 0x9000000 from the tree, UART-ADDR-OK'
+		echo 'rtc: pl031 @ 0x9010000 from the tree, RTC-ADDR-OK'
+		echo 'rtc: clock reads 1[7-9][0-9]{8}'
 		# Two redistributor ranges, and this cpu's own frame found
 		# in the first of them by walking frames and comparing
 		# GICR_TYPER's Affinity Value against MPIDR.  The second
@@ -1190,6 +1288,22 @@ config_evidence() {
 		echo 'DHCP-OK'
 		;;
 	virtarm64-gicv3)
+		# The console and the wall clock, from the tree rather than
+		# from mem.h.  Both had been discovered, printed beside the
+		# constant "for comparison", and never used -- the same
+		# defect the GIC line carried, and on the console it is the
+		# sharper one: a board pointed at the wrong serial port
+		# prints nothing at all, so there is no degraded mode to
+		# notice.
+		#
+		# The clock READING is the second half of the RTC line.
+		# QEMU answers a read of an unclaimed address with zero, so
+		# an address alone is not evidence: a board aimed at a hole
+		# prints a plausible line and a clock of zero.  A ten-digit
+		# second count cannot come from a hole.
+		echo 'uart: pl011 @ 0x9000000 from the tree, UART-ADDR-OK'
+		echo 'rtc: pl031 @ 0x9010000 from the tree, RTC-ADDR-OK'
+		echo 'rtc: clock reads 1[7-9][0-9]{8}'
 		# And the redistributor frame walk on a machine with one
 		# range.  "of 1" rather than "of 123" is the evidence: the
 		# range is 0xf60000 bytes here too, so a count computed

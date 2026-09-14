@@ -18,6 +18,59 @@ static Ctlr virtarm64ctlr = {
 	.base	= (u32*)UART0,
 };
 
+/*
+ * Where the console is.
+ *
+ * mem.h's UART0 describes QEMU's virt machine.  The tree said where the
+ * PL011 was and fdtreport() printed it beside the constant "for
+ * comparison", which on this machine always agree; ACPI says it in the
+ * SPCR, which is the table whose entire purpose is telling a kernel
+ * with no tree which serial port the firmware was using -- a server
+ * with four of them is not a machine to guess on.  Neither was read by
+ * anything.
+ *
+ * uartdiscover() runs before the first serialputs(), which is the first
+ * output this kernel produces: there is no console yet to report a
+ * failure on, so it reads, records, and says nothing.  uartreport()
+ * prints later.
+ */
+static char *uartfrom = "mem.h";
+static int uartspcrtype = -1;
+
+void
+uartdiscover(void)
+{
+	extern int acpiuart(uvlong*, int*);
+	extern int acpiuartraw(uvlong*, int*, int*);
+	extern int fdtreg(char*, uvlong*, uvlong*);
+	uvlong b;
+	int type, ismem;
+
+	b = 0;
+	if(acpiuartraw(&b, &type, &ismem))
+		uartspcrtype = type;
+	b = 0;
+	if(acpiuart(&b, &type) && b != 0){
+		virtarm64ctlr.base = (u32*)(uintptr)b;
+		uartfrom = "the spcr";
+		return;
+	}
+	if(fdtreg("arm,pl011", &b, nil) && b != 0){
+		virtarm64ctlr.base = (u32*)(uintptr)b;
+		uartfrom = "the tree";
+	}
+}
+
+void
+uartreport(void)
+{
+	print("uart: pl011 @ %#p from %s, UART-ADDR-OK\n",
+		(uintptr)virtarm64ctlr.base, uartfrom);
+	if(uartspcrtype >= 0 && uartspcrtype != 3)
+		print("uart: the spcr describes interface type %d, which this"
+			" board does not drive\n", uartspcrtype);
+}
+
 static Uart virtarm64uart = {
 	.regs	= &virtarm64ctlr,
 	.name	= "eia0",

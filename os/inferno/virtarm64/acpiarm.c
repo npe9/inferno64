@@ -72,6 +72,19 @@ static int	gicversion;
 
 
 static int	tablesfound;
+
+/*
+ * The console serial port, from the SPCR.
+ *
+ * This is the table a SystemReady machine says "the console is here" in
+ * -- it is what tells a kernel with no device tree which of a machine's
+ * serial ports the firmware was using, which on a server with several
+ * is not a guess worth making.  Interface Type says what kind of part
+ * it is, and this board drives one kind.
+ */
+static uvlong	uartbase;
+static int	uarttype = -1;
+static int	uartmem;		/* the base is system memory, not I/O */
 static uvlong	rsdppa;			/* where the loader said they are */
 
 /*
@@ -113,6 +126,28 @@ le64(uchar *p)
  * length past the end of the table would walk off it, so both end the
  * walk rather than being worked around.
  */
+/*
+ * SPCR: header, then Interface Type at 36 and a 12-byte Generic Address
+ * Structure at 40 whose Address is at 44.  The GAS carries an address
+ * space id, and a console in I/O space is an x86 machine's answer --
+ * this board has no I/O space, so that is recorded and refused rather
+ * than dereferenced.
+ */
+static void
+spcr(void)
+{
+	extern void *acpitable(char*);
+	extern uint acpitablen(void*);
+	uchar *t;
+
+	t = acpitable("SPCR");
+	if(t == nil || acpitablen(t) < 52)
+		return;
+	uarttype = t[36];
+	uartmem = t[40] == 0;		/* 0 == system memory */
+	uartbase = le64(t+44);
+}
+
 static void
 madt(void)
 {
@@ -417,6 +452,7 @@ acpifind(void)
 	}
 	madt();
 	iort();
+	spcr();
 }
 
 /* how many of the windows came through an SMMU */
@@ -536,6 +572,39 @@ acpigic(uvlong *d, uvlong *c, int *version)
  * single redistributor rather than a range, which is what a GICC entry
  * carries, and the caller treats that as one frame.
  */
+/*
+ * The console, if the SPCR describes one this board can drive.
+ *
+ * Interface Type 3 is a full PL011.  0x0d and 0x0e are the SBSA generic
+ * UART, which is a PL011 with the baud-rate and most of the control
+ * registers removed -- close enough to read and write characters
+ * through and not close enough for this driver, which programs IBRD,
+ * FBRD and LCRH at enable.  Refused with its type named rather than
+ * driven halfway.
+ */
+int
+acpiuart(uvlong *base, int *type)
+{
+	*type = uarttype;
+	*base = 0;
+	if(uarttype != 3 || !uartmem || uartbase == 0)
+		return 0;
+	*base = uartbase;
+	return 1;
+}
+
+/*
+ * What the SPCR said, whether or not it was usable, for the report.
+ */
+int
+acpiuartraw(uvlong *base, int *type, int *ismem)
+{
+	*base = uartbase;
+	*type = uarttype;
+	*ismem = uartmem;
+	return uarttype >= 0;
+}
+
 int
 acpinredist(void)
 {

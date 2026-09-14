@@ -11,6 +11,73 @@ archreset(void)
 }
 
 /*
+ * Where the RTC is, on the same footing as the UART and the GIC: the
+ * tree says, mem.h is the fallback.  There is no ACPI table naming a
+ * PL031 -- a SystemReady machine's wall clock comes through the
+ * firmware's time services, which this kernel does not call -- so a
+ * board with tables and no tree keeps the constant and says so.
+ */
+uintptr rtcaddr = RTC0;
+static char *rtcfrom = "mem.h";
+static int rtcnamed;			/* a source actually named a pl031 */
+
+void
+rtcdiscover(void)
+{
+	extern int fdtreg(char*, uvlong*, uvlong*);
+	extern int fdtvalid(void);
+	uvlong b;
+
+	if(fdtreg("arm,pl031", &b, nil) && b != 0){
+		rtcaddr = (uintptr)b;
+		rtcfrom = "the tree";
+		rtcnamed = 1;
+		return;
+	}
+	/*
+	 * mem.h's constant is the fallback, and it is trusted only on a
+	 * machine that has a device tree -- where it is being checked
+	 * against one even if this particular node was missing.  A board
+	 * that got its hardware description from firmware tables is not
+	 * the machine mem.h was written for, and the cost of guessing is
+	 * not a wrong clock: QEMU answers a read of an unclaimed address
+	 * with an external abort, not with zeroes, so RTC0 pointing at a
+	 * hole is a data abort in rtctime() before the board has finished
+	 * booting.  Measured, in the falsify run for this change.
+	 *
+	 * There is no ACPI table naming a PL031.  A SystemReady machine
+	 * puts it in the DSDT as _HID ARMH0011, which needs an AML
+	 * interpreter to find, and its wall clock otherwise comes through
+	 * firmware time services this kernel does not call.  So on that
+	 * machine the answer is no wall clock, said out loud, rather than
+	 * an address nothing vouches for.
+	 */
+	rtcnamed = fdtvalid();
+}
+
+void
+rtcreport(void)
+{
+	extern vlong rtctime(void);
+	vlong t;
+
+	if(!rtcnamed){
+		print("rtc: no source named a pl031 and there is no tree to"
+			" check mem.h against; the clock is not read,"
+			" RTC-UNNAMED\n");
+		return;
+	}
+	print("rtc: pl031 @ %#p from %s, RTC-ADDR-OK\n", rtcaddr, rtcfrom);
+	/*
+	 * And what it reads, because the address alone is not evidence.
+	 * A ten-digit second count is the part that says a PL031 answered
+	 * rather than the read having gone somewhere harmless.
+	 */
+	t = rtctime() / 1000000000LL;
+	print("rtc: clock reads %lld\n", t);
+}
+
+/*
  * The PL031 RTC's data register (offset 0) is a 32-bit count of seconds
  * since the epoch.  main() seeds the time-of-day clock from it, scaled
  * to nanoseconds, so wall time is calendar-correct rather than relative
@@ -21,7 +88,9 @@ rtctime(void)
 {
 	u32int sec;
 
-	sec = *(volatile u32int*)(uintptr)(RTC0 + 0x00);	/* PL031 DR */
+	if(!rtcnamed)
+		return 0;
+	sec = *(volatile u32int*)(rtcaddr + 0x00);	/* PL031 DR */
 	return (vlong)sec * 1000000000LL;
 }
 

@@ -2282,6 +2282,14 @@ for the three details in the table that each produce a wrong answer
 quietly, and for what the arm proves \(em the coverage and the delivery,
 not the values, because QEMU's composed map is the identity.
 .IP
+The console is discovered too, from the SPCR where there is no device
+tree \(em which is the table a SystemReady machine names its serial port
+in, and the one place a server with four of them can be told apart.  The
+PL031 is the exception and is recorded as one: no ACPI table names it,
+so a board with tables and no tree does not read a wall clock rather
+than trusting a constant nothing checks.  An AML interpreter for the
+DSDT is what that needs.
+.IP
 The GIC's own three bases are discovered and used, not printed:
 .CW gicdiscover()
 takes the distributor, the redistributor range and the GICv2 cpu

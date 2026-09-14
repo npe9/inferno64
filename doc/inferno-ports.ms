@@ -23944,6 +23944,112 @@ and boots, and both arms fail on the missing
 Falling back to the first frame silently is the behaviour that was
 removed; a board that cannot find itself now says so on its own line.
 .NH 2
+The console, and the one read that killed the board
+.PP
+The same seam runs through the console.
+.CW fdtreport()
+printed
+.P1
+fdt: pl011 @ 0x9000000 size 0x1000 (mem.h UART0 0x9000000)
+fdt: pl031 @ 0x9010000 (mem.h RTC0 0x9010000)
+.P2
+and
+.CW uartvirtarm64.c
+initialised its one
+.CW Ctlr
+from
+.CW UART0 .
+On the console the defect is sharper than it was on the GIC, because
+there is no degraded mode to notice: a board pointed at the wrong serial
+port prints nothing at all.
+.PP
+ACPI has a table for exactly this.  The SPCR is what a SystemReady
+machine says "the console is here" in, and it is the answer to a
+question a server with four serial ports makes worth asking.  QEMU
+publishes one \(em the ACPI arm's signature line has read
+.CW "FACP APIC PPTT GTDT MCFG SPCR DBG2 IORT"
+since the table walk landed, and the SPCR in it was never opened.
+Interface Type at offset 36 says what kind of part it is and a
+twelve-byte Generic Address Structure at 40 says where.  Type 3 is a
+full PL011.  Types 0x0d and 0x0e are the SBSA generic UART, which is a
+PL011 with the baud-rate and most of the control registers taken out
+\(em close enough to put characters through and not close enough for
+this driver, which programs IBRD, FBRD and LCRH at enable, so it is
+refused with its type named rather than driven halfway.  The address
+space id is checked too: a console in I/O space is an x86 machine's
+answer and this board has none.
+.PP
+.CW uartdiscover()
+runs before the first
+.CW serialputs() ,
+which is the first output this kernel makes.  There is no console yet to
+report a failure on, so like
+.CW fdtfind()
+it reads, records and says nothing;
+.CW uartreport()
+prints later:
+.P1
+uart: pl011 @ 0x9000000 from the tree, UART-ADDR-OK
+uart: pl011 @ 0x9000000 from the spcr, UART-ADDR-OK
+.P2
+.PP
+The falsify run is the sharpest in this sequence.  With
+.CW UART0
+set to 0x09400000 and discovery left on, every arm boots and prints.
+With discovery turned off as well, the log is
+.I "zero bytes" .
+Not a board that limps: a board that says nothing, which is what one
+wrong constant in a file nobody edits had been one machine away from.
+.PP
+The RTC was going to be a footnote and was not.
+.CW rtcdiscover()
+takes the PL031 from the tree the same way, and the falsify run set
+.CW RTC0
+wrong alongside
+.CW UART0 .
+.CW virtarm64
+recovered from the tree and passed.
+.CW virtarm64-acpi
+printed its banner \(em the console recovered from the SPCR, which is
+that path proved on its own \(em and then died:
+.P1
+Inferno/arm64 virt
+trap type 0 esr 0x96000010 pc 0x40264d80
+ r0 0x1 r30 0x40201154
+ sp 0x403c60c0 tval 0x9410000
+panic: trap
+.P2
+.CW tval
+is the wrong
+.CW RTC0 .
+QEMU answers a read of an unclaimed address with an external abort, not
+with zeroes, so the assumption written into this document an hour
+earlier \(em that a board aimed at a hole would read zero and print a
+harmless line \(em was wrong, and the comment that said so has been
+corrected.
+.PP
+There is no ACPI table naming a PL031.  A SystemReady machine puts it in
+the DSDT as
+.CW _HID
+ARMH0011, which needs an AML interpreter to find, and its wall clock
+otherwise comes through firmware time services this kernel does not
+call.  So mem.h's constant is the only fallback, and the falsify run
+says what trusting it costs on a machine that is not the one mem.h
+describes: not a wrong clock, a data abort during boot.
+.PP
+So the constant is trusted only where something is checking it.  A board
+with a device tree uses it if the PL031 node was missing; a board with
+no tree does not read the RTC at all and says so:
+.P1
+rtc: no source named a pl031 and there is no tree to check mem.h against; the clock is not read, RTC-UNNAMED
+.P2
+What that costs was measured rather than assumed: the three tree-less
+arms lose the wall clock and no marker with it \(em 48, 36 and 49, the
+same as before less
+.CW RTC-ADDR-OK .
+With the guard in place the wrong-constant run passes on both arms.  The
+real fix is reading the DSDT, and that is an AML interpreter.
+.NH 2
 Memory, from the firmware's map
 .PP
 One thing was still coming from mem.h on a machine that had no business

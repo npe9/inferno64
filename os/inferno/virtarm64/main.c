@@ -250,11 +250,16 @@ fdtreport(void)
 	if(fdtmemory(&base, &size))
 		print("fdt: memory @ %#llux size %#llux (mem.h PHYSDRAM %#p DRAMSIZE %#p)\n",
 			base, size, (uintptr)PHYSDRAM, (uintptr)DRAMSIZE);
+	/*
+	 * Without mem.h beside them, for the reason gicreport() carries:
+	 * uartreport() and rtcreport() say which source was used, and a
+	 * comparison against a constant that agrees is what let these be
+	 * discovered and ignored.
+	 */
 	if(fdtreg("arm,pl011", &base, &size))
-		print("fdt: pl011 @ %#llux size %#llux (mem.h UART0 %#p)\n",
-			base, size, (uintptr)UART0);
+		print("fdt: pl011 @ %#llux size %#llux\n", base, size);
 	if(fdtreg("arm,pl031", &base, &size))
-		print("fdt: pl031 @ %#llux (mem.h RTC0 %#p)\n", base, (uintptr)RTC0);
+		print("fdt: pl031 @ %#llux\n", base);
 	/*
 	 * The distributor and whatever the node's second reg entry is --
 	 * the MMIO cpu interface on a v2, the redistributor range on a
@@ -351,6 +356,15 @@ main(void)
 	 * later, once print() works.
 	 */
 	fdtfind();
+	/*
+	 * Before the first serialputs() below, which is the first output
+	 * this kernel makes: a console discovered after it would print
+	 * the banner through mem.h's address and the rest through the
+	 * real one, and on a machine where those differ the banner is
+	 * the part that goes missing.
+	 */
+	uartdiscover();
+	rtcdiscover();
 	confinit();
 	fpinit();
 
@@ -380,6 +394,8 @@ main(void)
 	acpireport();
 	fdtreport();
 	gicreport();
+	uartreport();
+	rtcreport();
 	/*
 	 * Before pciarchinit(), because the PCI scan is what reaches the
 	 * drivers that ask for a vector, and a router set afterwards

@@ -913,6 +913,25 @@ correct here.  Falsified the other way instead -- with the target
 affinity altered so nothing can match, the board prints GICR-FRAME-NONE,
 boots on the fallback, and both arms fail on the missing GICR-FRAME-OK.
 
+THE CONSOLE, AND WHY ITS FALSIFY IS THE SHARPEST ONE HERE.  Every
+virtarm64 arm asserts where the PL011 came from -- "from the tree" where
+there is one, "from the spcr" on the three arms with tables and none.
+It had been mem.h's UART0 with the discovered value printed beside it,
+the same defect as the GIC line, except that on the console there is no
+degraded mode: a board aimed at the wrong serial port prints nothing.
+Falsified by setting UART0 wrong -- every arm still boots -- and then
+turning discovery off as well: the log is zero bytes.
+
+THE RTC IS NOT THE SAME SHAPE AND THE ARMS SAY SO.  No ACPI table names
+a PL031 (a SystemReady machine puts it in the DSDT as _HID ARMH0011,
+which needs AML), so on an arm with no tree nothing vouches for mem.h's
+RTC0 and the board does not read it: RTC-UNNAMED.  That is not caution
+for its own sake.  The same falsify run set RTC0 wrong, and QEMU answers
+an unclaimed read with an external abort rather than zeroes, so
+virtarm64-acpi printed its banner through the SPCR-discovered console
+and then took a data abort in rtctime().  Losing the wall clock on those
+arms costs no marker; that was measured before the guard went in.
+
 A SHARED SOURCE COUNTS ONLY IF THE BOARD COMPILED IT.  The staleness
 check scans os/inferno/port and os/inferno/ip for every board, because
 every board links most of what is in them -- but not all of it.
