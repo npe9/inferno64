@@ -182,6 +182,20 @@ static int	flush_gap[256];
 static int	nflush_gap;
 static int	mtl_materialising;	/* inside flush/readback: live bytes are the point */
 static id	mtl_dlink;		/* CADisplayLink: the display asks for frames */
+static vlong	mtl_dlink_us;		/* when it last fired; 0 = never */
+/*
+ * How long the display link may go quiet before a flush presents for
+ * itself again.  Six refreshes: long enough that an ordinary late tick
+ * does not cost the link its job, short enough that nothing is visibly
+ * stuck.  It has to exist at all because CADisplayLink stops when its
+ * window is not being displayed, and "not being displayed" includes
+ * states a program cannot see and did not ask for - measured here, a run
+ * whose window never came to the front got ZERO ticks in 25 seconds, so
+ * with presentation depending on the link alone the window held its first
+ * frame and nothing else.  Presentation must never depend on a signal
+ * that is allowed to stop.
+ */
+enum { DlinkStaleUs = 100000 };
 extern void	drawvsync(void);	/* devdraw.c: wake /dev/draw/vsync readers */
 extern void	drawvsyncavail(int);	/* devdraw.c: and whether it will ever tick */
 static id<MTLTexture>	mtl_rbtex;	/* readback target, kept like the others */
@@ -4689,13 +4703,30 @@ mark_view_dirty(void)
 
 	if(view == nil)
 		return;
-	if(mtl_dlink != nil){
-		/* The display will ask.  Just say there is something to show. */
+	/*
+	 * While the display is asking, let it: one present per refresh, in
+	 * step, which is the whole point.  If it has gone quiet, present
+	 * here as this did before, so a window that is not being refreshed
+	 * for us still updates.  Falling back costs smoothness and never
+	 * correctness; not falling back costs the picture.
+	 */
+	if(mtl_dlink != nil && mtl_dlink_us != 0
+	&& osusectime() - mtl_dlink_us < DlinkStaleUs){
 		lock(&present_lock);
 		present_dirty = 1;
 		unlock(&present_lock);
 		return;
 	}
+	/*
+	 * Presenting here instead, so also tick /dev/draw/vsync.  That file
+	 * means "the display is ready for another frame", and while the link
+	 * is quiet this is the only place that knows one has been shown.
+	 * Without it the file would exist, open, and never return - and the
+	 * existence check that is supposed to let a program avoid exactly
+	 * that would report safe.  A reader gets a tick per presented frame
+	 * at worst, which is a contract that can be relied on.
+	 */
+	drawvsync();
 	lock(&present_lock);
 	present_dirty = 1;
 	if([NSThread isMainThread]){
@@ -5099,6 +5130,7 @@ deliverchars(NSString *chars, unsigned short keyCode)
 - (void)vsynctick:(id)link
 {
 	USED(link);
+	mtl_dlink_us = osusectime();
 	present_on_main();
 	/* and let any program waiting on /dev/draw/vsync draw the next one */
 	drawvsync();

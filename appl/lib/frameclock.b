@@ -87,23 +87,51 @@ ticker(c: chan of int, hz: int)
 # and a frame that overruns simply misses one rather than shifting the
 # phase of every frame after it.
 #
+#
+# One tick per display refresh - with a keep-alive, because the display is
+# allowed to stop asking.  CADisplayLink stops when its window is not being
+# displayed, and that includes states a program never sees and did not ask
+# for: measured here, a run whose window never came to the front got zero
+# refreshes in 25 seconds, and a caller blocked on the read simply stopped.
+# So a timer runs alongside at the same nominal rate and delivers a tick
+# only when the display did not.  While the display is asking it costs a
+# channel operation a frame and changes nothing; when it goes quiet the
+# program keeps running, slightly less smoothly, instead of freezing.
+#
 vsyncrun(c: chan of int, fd: ref Sys->FD)
 {
 	frames = 0;
 	elapsed = 0;
-	period = 1000000/FPS;	# for rate(), until we have measured one
+	period = 1000000/FPS;
 	if(watching < 0){
 		watching = 0;
 		wfd := sys->open("/env/INFERNO_FPS", Sys->OREAD);
 		if(wfd != nil)
 			watching = 1;
 	}
-	buf := array[32] of byte;
+	vc := chan of int;
+	spawn vreader(fd, vc);
+	tk := chan of int;
+	spawn keepalive(tk, 1000/FPS);
 	start := sys->millisec();
 	last := start;
+	asked := 0;	# the display asked since the last keep-alive
 	for(;;){
-		if(sys->read(fd, buf, len buf) <= 0)
-			return;
+		deliver := 0;
+		alt{
+		<-vc =>
+			asked = 1;
+			deliver = 1;
+		<-tk =>
+			# Only when the display did not: while it is doing its
+			# job this arm resets the flag and delivers nothing.
+			if(asked)
+				asked = 0;
+			else
+				deliver = 1;
+		}
+		if(!deliver)
+			continue;
 		now := sys->millisec();
 		c <-= now - last;
 		last = now;
@@ -113,6 +141,25 @@ vsyncrun(c: chan of int, fd: ref Sys->FD)
 			period = (elapsed*1000)/frames;
 		if(watching && frames % (2*FPS) == 0)
 			report("frameclock");
+	}
+}
+
+# Blocks in the read so the loop above can select on it.
+vreader(fd: ref Sys->FD, c: chan of int)
+{
+	buf := array[32] of byte;
+	for(;;){
+		if(sys->read(fd, buf, len buf) <= 0)
+			return;
+		c <-= 1;
+	}
+}
+
+keepalive(c: chan of int, ms: int)
+{
+	for(;;){
+		sys->sleep(ms);
+		c <-= 1;
 	}
 }
 
