@@ -724,6 +724,43 @@ rootset(Prog *root)
 									break;
 								}
 						}
+						{
+							Bhdr *xb;
+
+							/*
+							 * Is the extent itself
+							 * still allocated?
+							 *
+							 * unextend() and
+							 * unframe() free(sx) a
+							 * stack extent back to
+							 * mainmem during
+							 * ordinary OP(ret), not
+							 * under gclock, and only
+							 * xec()'s exit, isave()
+							 * and propex() sync
+							 * p->reg -- so a
+							 * snapshot can name an
+							 * extent the program has
+							 * since freed and the
+							 * allocator has reused.
+							 * That is what memory
+							 * changing between two
+							 * reads looks like.
+							 *
+							 * MAGIC_A allocated,
+							 * MAGIC_F free; anything
+							 * else is not a block
+							 * header at all.
+							 */
+							xb = (Bhdr*)((uchar*)sx -
+								(BHDRSIZE - sizeof(Btail)));
+							print("rootset: extent %#p"
+								" hdr magic %#lux"
+								" (A %#ux F %#ux)\n",
+								sx, (ulong)xb->magic,
+								MAGIC_A, MAGIC_F);
+						}
 						print("rootset: frames do not"
 							" tile %#p..%#p,"
 							" stopped %#p, pid %d,"
