@@ -4568,6 +4568,24 @@ testing, and the reason it could be found in one boot rather than by
 bisection is the panic that now says what happened.  It is two lines
 now.  The p9linux check is twenty-one criteria.
 .PP
+And the message went to the configurations that were still saying
+nothing.  Five of the seven had a bare
+.CW "panic(\(dqmicrokernel: donotify\(dq)" ;
+two of them,
+.CW p964
+and
+.CW p9pair ,
+print the process, the pc and the note on the line before it and lose
+nothing by it, and three \-
+.CW xup64 ,
+.CW upc64 ,
+and the path in
+.CW p9buddy
+taken when the faulting process is not the legacy program \- said
+neither which process nor where nor which note.  They say all three now.
+The cost of not saying them is measured rather than guessed at: three
+boots and a bisection, above, to learn what one line would have said.
+.PP
 That last sentence understated it: the bound was not merely unpaged, it
 was wrong.  The file server is handed a place in the client's data area
 to write its answer into, and the region is
