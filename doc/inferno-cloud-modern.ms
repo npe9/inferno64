@@ -898,3 +898,55 @@ work and instrumentation this one deliberately did not take, and its
 own report is of Dis heap corruption on arm64 rather than of this.
 .CW parallelvm
 stays 0 here, which is what it was set to when the VM was merged.
+.NH 2
+Phase 3 item 10: the memory floor
+.PP
+.CW scripts/check-pc64-memfloor.sh
+bisects the smallest
+.CW -m
+this kernel runs on.  Two thresholds, because a kernel that boots and
+then cannot run anything is not a machine anyone can rent: the smallest
+that reaches the end of the bind list, and the smallest that runs a
+typed command and answers.
+.PP
+.B "Both are 66 MiB."
+At 65 MiB neither works and at 66 both do, checked by bisecting
+64\-66 as well as 56\-128.  Below that the kernel says what is wrong
+rather than wandering: 65 MiB gives
+.CW "panic: no memory"
+and 64 MiB gives
+.CW "panic: cannot allocate 125 procs (0MB)" ,
+which is the proc table sized from what is left.
+.PP
+That the two thresholds coincide is the useful part.  There is no band
+where this kernel boots and is useless; if it reaches a shell it can run
+a program.
+.PP
+.B "The floor is mostly the image."
+The kernel is 9.19 MB with its root compiled in and reserves memory up
+to
+.CW "MemMin 0xa93000" ,
+about 11.1 MB, before any of it is available.  A smaller root moves this
+number and a bigger one moves it the other way; 66 MiB is a fact about
+this kernel, not about Inferno.
+.PP
+.B "And it is a fact about one virtual machine."
+The first version of this measurement had the two arms on different
+hardware without noticing: one passed
+.CW "-netdev user -device virtio-net"
+and the other let QEMU attach its default e1000e.  With the e1000e the
+boot stalls just after
+.CW "link up"
+at 68 MiB and needs 80 MiB, where the virtio machine runs at 66.  So the
+driver is worth more than 10 MiB of the floor, which is a real result,
+and "two floors measured on two machines" was not one.  The script now
+defines the machine once and both arms use it.
+.PP
+.B "What it says about density."
+Nothing rentable is this small \(em Compute Engine's smallest shapes are
+around 0.6 to 1 GB \(em so the number does not buy a cheaper instance
+today.  What it measures is headroom: on the smallest shape GCE rents,
+this kernel uses under a tenth of the memory before the workload starts.
+The cloud-economics claim in item 10 needs the other half, which is how
+many useful processes fit in what is left, and that is not measured
+here.
