@@ -1228,7 +1228,24 @@ quiet for six refreshes — `gorge` goes from 0 stats blocks in 22 s to 43.
 `frameclock(2)`'s vsync mode runs a keep-alive beside the read and
 delivers a tick only when the display did not — `castlefrankenstein`,
 which paces off the display by default, went from 0 frames in 22 s
-(blocked in the read) to 41. While the link is healthy both cost nothing.
+(blocked in the read) to 41.
+
+**Both fallbacks re-measured on the smooth path afterwards**, because the
+keep-alive was added *after* the run that justified the design and an
+untested interaction between the two would have been easy to ship. With
+the display awake and the link firing, `castlefrankenstein`'s frame gaps
+are 16462 to 16822 us — a 360 us spread against the 850 us measured
+before the keep-alive existed. It costs the smooth path nothing; it is
+slightly tighter, the earlier run having been taken with the display in a
+less reliable state. The whole sequence, one program:
+
+```
+                                            min  median     max
+before any of this                         6275   15143   28374
+accurate timer, display-driven present    14914   16855   18444
+paced by the display                      16191   16702   17042
+paced by the display, with the keep-alive 16462   16665   16822
+```
 
 The contract mattered most. `/dev/draw/vsync` existing is the check that
 lets a program pace off it safely, which is why it is absent when nothing
