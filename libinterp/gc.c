@@ -725,6 +725,38 @@ rootset(Prog *root)
 								}
 						}
 						{
+							uchar *cf;
+							int cn;
+
+							/*
+							 * The f->fp chain is
+							 * authoritative about
+							 * which frames are live;
+							 * the walk above only
+							 * assumes they tile
+							 * tos.fu..sp.  If the
+							 * chain stops short of
+							 * sp then sp is too high
+							 * and the frames past
+							 * the chain are not
+							 * frames -- which is a
+							 * bound that is wrong,
+							 * not memory that is.
+							 */
+							print("rootset: fp chain"
+								" from %#p:", rr->FP);
+							cf = rr->FP;
+							for(cn = 0; cn < 16
+							    && cf >= sx->reg.tos.fu
+							    && cf < sp; cn++){
+								print(" %#p", cf);
+								cf = ((Frame*)cf)->fp;
+								if(cf == nil)
+									break;
+							}
+							print(" (%d shown)\n", cn);
+						}
+						{
 							Bhdr *xb;
 
 							/*
