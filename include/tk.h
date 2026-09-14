@@ -506,6 +506,8 @@ struct TkNode
 	short		width;
 	Rectangle	r;
 	ulong		rgba;
+	Font*		font;		/* TkNglyphs */
+	char*		text;		/* TkNglyphs, owned by the scene */
 	TkNode*		next;
 };
 
@@ -740,6 +742,7 @@ extern	void		tkscenecolour(TkScene*, Rectangle, ulong);
 extern	void		tksceneroundfill(TkScene*, Rectangle, int, ulong);
 extern	void		tksceneborder(TkScene*, Rectangle, int, int, ulong);
 extern	void		tksceneborderon(TkScene*, Rectangle, int, int, ulong, ulong);
+extern	void		tkscenetext(TkScene*, Point, char*, Font*, ulong);
 extern	int		tkscenerender(TkScene*, TkCtxt*, Image*);
 extern	int		tkscenecount(TkScene*);
 extern	TkSpace*	tkspace(Tk*);

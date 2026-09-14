@@ -929,6 +929,12 @@ checkscene()
 		"-relief raised -bg white");
 	tk->cmd(top, "button .b -text {Cancel}");
 	tk->cmd(top, "entry .e -width 150");
+	# A label, because a button draws its own text in buton.c and the
+	# text NODE is only on label.c's path - without one here the text
+	# node is never reached, and a control that perturbs it passes for
+	# that reason rather than because it is right.
+	tk->cmd(top, "label .t -text {Handgloves 123}");
+	tk->cmd(top, "pack .t -padx 6 -pady 6");
 	tk->cmd(top, "pack .f -padx 6 -pady 6");
 	tk->cmd(top, "pack .b -padx 6 -pady 6");
 	tk->cmd(top, "pack .e -padx 6 -pady 6");

@@ -320,7 +320,34 @@ tkdrawlabel(Tk *tk, Point orig)
 		ct = tkgc(e, fgnd);
 		
 		p.y += (h - tkl->textheight) / 2;
-		tkdrawstring(tk, i, addpt(u, p), tkl->text, tkl->ul, ct, tkl->justify);
+		/*
+		 * Through a node when the run is the simple one - left
+		 * justified, one line, no underline - because that is what
+		 * reduces to a single string() and so is what a text node can
+		 * be shown to reproduce exactly.  Everything else keeps
+		 * tkdrawstring(), which lays out lines and draws the underline
+		 * rule, and which a node cannot describe until it can carry
+		 * positioned glyphs rather than a string and a font.
+		 *
+		 * So a scene is still not a complete description of a label.
+		 * It is a complete description of the common one.
+		 */
+		if(tkviascene && tkl->justify == Tkleft && tkl->ul < 0
+		&& strchr(tkl->text, '\n') == nil){
+			TkScene *ts;
+
+			ts = tkscenenew();
+			if(ts != nil){
+				tkscenetext(ts, addpt(u, p), tkl->text,
+					e->font, e->colors[fgnd]);
+				tkscenerender(ts, e->top->ctxt, i);
+				tkscenefree(ts);
+			}else
+				tkdrawstring(tk, i, addpt(u, p), tkl->text,
+					tkl->ul, ct, tkl->justify);
+		}else
+			tkdrawstring(tk, i, addpt(u, p), tkl->text, tkl->ul, ct,
+				tkl->justify);
 	}
 
 	if(tkhaskeyfocus(tk))

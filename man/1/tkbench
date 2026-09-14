@@ -48,6 +48,19 @@ reports how often the display asks for a frame, by reading
 \(em where a read blocks until the next frame is wanted \(em and counting
 for three seconds.
 Nothing is drawn.
+.PP
+A reading of nothing \(em the first read never returning \(em does not
+mean the screen is frozen.
+It means the link is dead and something else is presenting:
+.I emu
+falls back to presenting on a flush, and
+.IR frameclock (2)
+delivers a tick of its own when the display did not.
+It does mean that a program reading
+.B draw/vsync
+directly, rather than through
+.IR frameclock (2),
+will block for ever.
 Since
 .I emu
 presents the 2-D screen only from that callback, the rate this prints is
@@ -116,18 +129,32 @@ On an idle machine a present of a 900\(mu700 screen costs about 200
 of which roughly 150 is work, 120 of that the upload, and the rest a
 wait for a drawable.
 .PP
-THOSE FIGURES NOW DESCRIBE ONLY THE OLD PATH, and are reached with
-.B INFERNO_NOVSYNC
-set.
-Since the display began asking for frames rather than being told when a
-program flushes, the timers report nothing at all: for a workload that
-makes 179 presents with
-.B INFERNO_NOVSYNC
-set, the same workload without it makes fewer than thirty, which is the
-count the counters print at.
-The present path that runs by default is therefore NOT measured by
-anything here, and no number in this page should be read as describing
-it.
+THOSE FIGURES DESCRIBE THE FLUSH-DRIVEN PATH, which is not the only one.
+.I Emu
+presents either because a program flushed or because the display asked,
+and the two do not cost the same or happen at the same times.
+The numbers above are the first.
+.PP
+Which one runs is not a thing this page can state, because it depends on
+whether the display link is firing, and on this machine it is not: with
+.B -y
+the first read of
+.B draw/vsync
+never returns.
+That is survivable rather than fatal only because
+.I emu
+presents for itself when the link has been quiet
+.RB ( 12a65b18 ),
+so the screen keeps updating and these counters have something to count
+\(em but what they then count is the flush-driven path, arriving by the
+fallback.
+.PP
+So a present figure is worth reading only beside a
+.B -y
+reading taken in the same conditions.
+A number from a machine whose link was firing and one from a machine
+whose link was dead are not comparable, and nothing in the output says
+which you have.
 .PP
 THOSE TIMERS ARE WALL CLOCK ON THE APPKIT THREAD, and that is a trap
 rather than a detail.

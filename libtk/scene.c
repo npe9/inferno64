@@ -68,9 +68,13 @@ void
 tkscenefree(TkScene *s)
 {
 	TkNodeblk *b, *nb;
+	TkNode *n;
 
 	if(s == nil)
 		return;
+	for(n = s->head; n != nil; n = n->next)
+		if(n->text != nil)
+			free(n->text);
 	for(b = s->blk; b != nil; b = nb){
 		nb = b->next;
 		free(b);
@@ -190,6 +194,41 @@ tksceneborderon(TkScene *s, Rectangle r, int radius, int width, ulong rgba, ulon
 	n->radius = radius;
 	n->rgba = out;
 	tksceneborder(s, r, radius, width, rgba);
+}
+
+/*
+ * A run of text at a point.
+ *
+ * This one carries a Font*, and so breaks the rule that a node holds
+ * values and never a resource.  GSK's glyph node does the same thing for
+ * the same reason: a font is not reducible to a number, and the
+ * alternative - laying the run out here into positioned glyph indices -
+ * needs the glyph atlas that does not exist yet.  When it does, this
+ * node becomes an atlas reference and a list of positions, and the Font*
+ * goes away.  Recording that now so the field is not mistaken for a
+ * decision.
+ *
+ * The string is copied because a retained tree may outlive its caller's
+ * buffer.  Today it does not - a scene is built and rendered in one call
+ * - so this is an allocation per text node per repaint, paid for a
+ * property nothing yet relies on.
+ */
+void
+tkscenetext(TkScene *s, Point p, char *text, Font *f, ulong rgba)
+{
+	TkNode *n;
+
+	if(text == nil || *text == '\0' || f == nil)
+		return;
+	if((n = newnode(s, TkNglyphs)) == nil)
+		return;
+	n->r.min = p;
+	n->r.max = p;
+	n->rgba = rgba;
+	n->font = f;
+	n->text = strdup(text);
+	if(n->text == nil)
+		n->type = TkNgroup;	/* a node that draws nothing */
 }
 
 int
@@ -351,6 +390,11 @@ tkscenerender(TkScene *s, TkCtxt *c, Image *dst)
 			break;
 		case TkNborder:
 			renderborder(c, dst, n);
+			break;
+		case TkNglyphs:
+			col = tkcolor(c, n->rgba);
+			if(col != nil)
+				string(dst, n->r.min, col, ZP, n->font, n->text);
 			break;
 		default:
 			/*
