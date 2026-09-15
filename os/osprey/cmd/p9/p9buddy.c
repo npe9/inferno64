@@ -927,6 +927,14 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 		else {
 			if(scallnr == PREAD && (vlong)a2 >= 0)
 				p9seek(bfd, (vlong)a2, 0);
+			/*
+			 * Clamped here too, and not only where the call is
+			 * built: this is the side that does the writing, and a
+			 * count larger than the block would put the answer
+			 * over whatever the data area holds next.
+			 */
+			if(a1 > Odbuddydatalen)
+				a1 = Odbuddydatalen;
 			r = p9read(bfd, cdata + Dataoff, (long)a1);
 		}
 		break;
@@ -945,6 +953,8 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 			long wn = (long)a1;
 			char sbuf[32];
 			int translated = 0;
+
+
 
 			/*
 			 * A descriptor number written to a srv file is the

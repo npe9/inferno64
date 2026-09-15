@@ -4602,6 +4602,66 @@ and becomes EINVAL, beside the two names already matched there.  It is
 the same string-matching, and the same reason: the buddy has a message
 and the program wants a number.
 .PP
+The same question asked of the Plan 9 buddy \- what happens at the
+boundary \- found something worse than an errno.  The buddy answers a
+read into a block of the container's data area,
+.CW Odbuddydata ,
+four kilobytes of it, and
+.CW ospreydata
+bounds a request against the container's whole data area rather than
+against that block.  So a read of eight kilobytes was answered with
+eight kilobytes written into four: over the migration staging that
+begins just past it, and the note window past that.  A legacy program
+asking for one read of its own image did it.  Nothing in these
+demonstrations had ever read more than a page at a time, so nothing had
+gone wrong.  Both directions are clamped to the block now, on both sides
+of the ring, and a program asking for 8192 is given 4096 \- a short
+read, which is what a caller expects and loops on.
+.PP
+Clamping was the wrong fix and the checks said so twice.  A short read
+is right for a file and wrong for a message, and both halves of this
+carry messages: rio's draw writes are one message each, and the 9P a
+window's container reads from rio's own file server is another.  Cutting
+them took the window system apart \- twelve criteria across the rio and
+riowin checks, in the sweep, which is what a sweep is for.
+.PP
+So the block was made big enough instead, which is what it should have
+been.  rio's largest write is 4270 bytes, measured by counting them, and
+the block was 4096: a page, which is the size a page fault needs and the
+number every other caller inherited.  It is eight kilobytes now, the
+migration staging and the note window move up past it, and the
+container's data area grows from two pages to four to hold them.  And
+the assertion that was missing is there: this header checks that regions
+sharing a data area do not overlap, and it checked the buddy's name
+block against its data block and then stopped \- the data block was
+never checked against the migration staging that follows it.  It ended
+at 5120, exactly where that begins, so every call carrying more than a
+page wrote past it, and rio did it every boot.  The check now asks for a
+read of sixteen kilobytes and is given the block's eight, which is the
+short read a caller loops on.
+.PP
+Writing that clamp broke every read in the boot, and what it uncovered
+is the more interesting half.  The count is a 32-bit
+.CW long
+in a 64-bit slot, and the top half of the slot is whatever the caller's
+stack held there \- which this file already knew, and says so a few
+lines above about int arguments.  The read case did not: it said "n is a
+long, its slot whole" and passed all eight bytes on, which worked only
+because the buddy casts to
+.CW (long)
+and throws the top half away.  A read of 512 arrives as
+.CW 0x7fff00000200 .
+Nobody had looked at it until a clamp compared the whole slot against
+four kilobytes, decided every read was the largest one, and handed back
+more than the caller's buffer could hold: "sys: bad address in syscall",
+on the first read of the boot.  The count is taken from the low half
+now, as a signed 32-bit long, so a negative one stays negative and is
+answered as it was.  Nothing else about the slot changed: the buddy
+still casts to
+.CW (long)
+and would still throw the top half away.  What changed is that the
+kernel no longer reads eight bytes where four were written.
+.PP
 That last sentence understated it: the bound was not merely unpaged, it
 was wrong.  The file server is handed a place in the client's data area
 to write its answer into, and the region is

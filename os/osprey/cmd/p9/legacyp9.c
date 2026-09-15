@@ -166,6 +166,24 @@ startboot(char *argv0, char **argv)
 				print("legacy: wstat rename refused: \"%s\"\n", ebuf);
 			}
 		}
+		{
+			/*
+			 * A read bigger than the block the buddy puts data in.
+			 * /boot/legacy is this program's own image in the
+			 * buddy's file system, which is tens of kilobytes, so
+			 * one read of eight can be asked for.  The buddy's
+			 * data block is four, and what follows it in the data
+			 * area is the migration staging and the note window.
+			 */
+			static uchar big[16384];
+			int bfd2 = open("/boot/legacy", OREAD);
+			long bn = bfd2 >= 0 ? read(bfd2, big, sizeof big) : -1;
+
+			if(bfd2 >= 0)
+				close(bfd2);
+			print("legacy: a read of %d bytes from /boot/legacy returned %ld\n",
+				(int)sizeof big, bn);
+		}
 		if(remove("/n/p9test") == 0)
 			print("legacy: removed /n/p9test through the buddy\n");
 		else {

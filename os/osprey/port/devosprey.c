@@ -3456,9 +3456,27 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 		if((long)a[0] >= 0 && (long)a[0] < 3)
 			up->buddyredir |= 1 << (int)a[0];
 		break;
-	case Bread: case Bpread:		/* read(fd,buf,n) / pread(fd,buf,n,off): n is a long, its slot whole */
+	case Bread: case Bpread:		/* read(fd,buf,n) / pread(fd,buf,n,off) */
+		/*
+		 * The count is a 32-bit long in a 64-bit slot, and the top
+		 * half is whatever the caller's stack held there.  This said
+		 * "n is a long, its slot whole" and passed all eight bytes
+		 * on, which worked only because the buddy casts to (long) and
+		 * throws the top half away: a read of 512 arrives here as
+		 * 0x7fff00000200.  It is taken from the low half now, as a
+		 * signed 32-bit long, so a negative one stays negative.
+		 *
+		 * It is not clamped to the buddy's data block, and the reason
+		 * is written down in doc/osprey-progress.ms: a short read is
+		 * right for a file and wrong for a message, and the 9P a
+		 * window's container reads from rio's file server is a
+		 * message.  Clamping it took rio apart.  A read or write
+		 * larger than the data area is still an overrun, and the fix
+		 * is to make the area hold what a program asks for rather
+		 * than to cut what it asked.
+		 */
 		ab[1] = Aint(a[0]);
-		ab[2] = a[2];
+		ab[2] = (uvlong)(long)(int)(a[2] & 0xffffffffULL);
 		ab[3] = scallnr == Bpread ? a[3] : (uvlong)-1;
 		break;
 	case Bwrite: case Bpwrite:		/* the data must already be at Bdataoff */
@@ -3469,6 +3487,20 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 		 * million pages of a segment first, to be told no, is not
 		 * work worth doing.
 		 */
+		/*
+		 * The count, taken from the low half of its slot for the
+		 * reason the read above gives.  It is NOT clamped to the
+		 * block, and that is deliberate: a short write is fine for a
+		 * file and wrong for a message.  rio's draw writes are
+		 * messages, larger than this block, and clamping them took
+		 * the window system apart - twelve criteria across the rio
+		 * and riowin checks, which is what the sweep is for.  So the
+		 * overrun a large write makes is still here, written down in
+		 * doc/osprey-progress.ms, and the fix for it is to carry a
+		 * large write in pieces the buddy joins again rather than to
+		 * cut it.
+		 */
+		a[2] = (uvlong)(long)(int)(a[2] & 0xffffffffULL);
 		ospreytouch(a[1], a[2] > Odbuddydatalen ? Odbuddydatalen : (ulong)a[2]);
 		dd = ospreydata(p, Bdataoff, a[2]);
 		if(dd != nil)
@@ -4769,8 +4801,8 @@ ospreyforkkern(Ospreyproc *parent, ulong flag)
  * nothing has moved for ten seconds.
  */
 enum {
-	Migoff		= 1024,		/* the sender's staging area in its data area: a header */
-	Migrxoff	= 5120,		/* the receiver's, clear of the sender's and the block device's ring */
+	Migoff		= Odmig,	/* the sender's staging area in its data area: a header */
+	Migrxoff	= Odmigrx,	/* the receiver's, clear of the sender's, the block ring and the buddy's data block */
 	Mighalf		= 2048,		/* the room a header has there */
 	Mighdrwords	= Odmighdrwords,	/* words before the segment array: count, flags, heap index, break; ospreydata.h holds the layout */
 	Nmigin		= 3,		/* arrivals being filled at once */
@@ -6468,7 +6500,7 @@ ospreyinit(void)
 	 * configuration can be asked to exec one, so all of them get it.
 	 */
 	if(ospreyp9)
-		ospreysetsize("data", 2*BY2PG, 0);
+		ospreysetsize("data", 4*BY2PG, 0);	/* the buddy's data block is eight kilobytes of it, and the migration staging and note window come after: ospreydata.h has the layout and asserts it */
 	/*
 	 * These two are every configuration's and not the personality's.
 	 * They were written under the branch above and indented as if they

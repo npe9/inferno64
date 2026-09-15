@@ -112,6 +112,16 @@ def main():
          and 'legacy: and renamed it back to /n/p9test' in t
          and re.search(r'lfs: renamed p9test to p9renamed after version 1: 46 bytes carried over', t) is not None
          and 'legacy: BUG' not in t),
+        # A read larger than the block the buddy answers in.  ospreydata
+        # bounds a request against the container's whole data area and not
+        # against that block, so a read of eight kilobytes was answered
+        # with eight kilobytes written into four - over the migration
+        # staging that begins just past it and the note window past that.
+        # Nothing in these demonstrations had read more than a page at a
+        # time, so nothing had gone wrong.  A short read is what a caller
+        # expects and loops on.
+        ("and a read larger than the block the buddy answers in comes back short rather than over its neighbours: the program asks for 16384 bytes of its own image and is given the block's 8192, where before a read of 8192 was given 8192 written into a block of 4096",
+         'legacy: a read of 16384 bytes from /boot/legacy returned 8192' in t),
         ("and a call the buddy refuses says why, in the program's own errstr(2)",
          'remove refused, errstr from the buddy: "file does not exist: \'/n/nosuchfile\'"' in t),
         ("and the name space is the program's to change: rfork(RFNAMEG) gives it one of its own, a bind in it shows in the names that follow, and a 9P server mounted at /mnt is read through and then unmounted away",
