@@ -16,6 +16,7 @@ static Clock0link *clock0link;
 static Lock clock0lock;
 
 extern void	timercheck(Ureg*);
+static void	sleepwatch(Ureg*);
 extern void	(*kproftick)(ulong);
 
 static uvlong
@@ -72,6 +73,7 @@ clockintr(Ureg *u)
 	m->ticks++;
 	checkalarms();
 	timercheck(u);
+	sleepwatch(u);
 
 	n = now();
 	hznext = n + m->cpuhz/HZ;
@@ -133,15 +135,46 @@ clockcheck(void)
 	clockpoll();
 }
 
-static void
-sleepcheck(void*)
-{
-	ulong t0;
+/*
+ * Boot sleep test.  On the Pi every timed sleep hung (DWC's 25ms tsleep,
+ * this test's first version in a kproc) while the tick counted at 100Hz.
+ * init0 now sleeps 100ms itself, and if that sleep is still pending a
+ * second and then five seconds past its deadline, the clock interrupt
+ * reports, straight to the UART, the state it can see without taking a
+ * lock: the sleeper's Proc state, whether its timer is still queued or
+ * has fired, whether its deadline is still ahead, and what the tick
+ * interrupted -- which process, at what pc, with interrupts masked or not.
+ */
+static Proc	*stp;
+static uvlong	stdeadline;
+static int	stdone, streports;
 
-	t0 = m->ticks;
-	tsleep(&up->sleep, return0, nil, 100);
-	print("SLEEP-OK tsleep 100ms returned after %lud ticks\n", m->ticks - t0);
-	pexit("", 0);
+static void
+sleepwatch(Ureg *u)
+{
+	uvlong now, hz;
+
+	if(stp == nil || stdone || streports >= 2)
+		return;
+	now = fastticks(&hz);
+	if(now < stdeadline + (streports == 0? hz: 5*hz))
+		return;
+	streports++;
+	serialputs("SLEEPSTUCK", -1);
+	serialputreg("state", stp->state, 2);
+	serialputreg("queued", stp->tt != nil, 1);
+	serialputreg("ahead", stp->twhen > (Tval)now, 1);
+	serialputreg("trend", stp->trend != nil, 1);
+	serialputreg("up=sleeper", up == stp, 1);
+	serialputreg("upstate", up != nil? up->state: 0xff, 2);
+	serialputreg("pc", u != nil? u->pc: 0, 8);
+	serialputreg("spsr", u != nil? u->status: 0, 3);
+	serialputreg("ticks", m->ticks, 8);
+	if(up != nil && up->text != nil){
+		serialputs(" up ", -1);
+		serialputs(up->text, -1);
+	}
+	serialputs("\n", -1);
 }
 
 /*
@@ -226,7 +259,15 @@ clockcheckboot(void)
 			*(volatile u32*)0x40000040, *(volatile u32*)0x40000060,
 			*(volatile u32*)0x4000000c);
 	}
-	kproc("sleepcheck", sleepcheck, nil, 0);
+	t0 = m->ticks;
+	stdeadline = fastticks(nil) + m->cpuhz/10;
+	stp = up;
+	serialputs("SLEEPTEST tsleep 100ms\n", -1);
+	tsleep(&up->sleep, return0, nil, 100);
+	stdone = 1;
+	serialputs("SLEEP-OK after ", -1);
+	serialputdec(m->ticks - t0);
+	serialputs(" ticks\n", -1);
 }
 
 uvlong

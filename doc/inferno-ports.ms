@@ -19318,3 +19318,30 @@ instantly, does not reproduce, and output left to it stalled.  kick() now
 sends everything staged or queued itself, waiting with a bound on TXFF
 for room, as the last image that reached the shell on this Pi did; TXIM
 stays armed only if the wait runs out.
+.PP
+.B "Output flows on silicon; timed sleeps do not return"
+.PP
+Build 1789466004, with kick() sending synchronously, reached the shell
+prompt on the Pi: IRQCHECK 50 interrupts and 50 ticks, TICK-OK 25 ticks in
+250ms, then init, RASPI3B-OK, DRAW-OK, USB-OK, RASPI3B-SH-OK and the
+prompt.  Two things still failed there and passed under QEMU.  A typed
+.CW "echo PL011_RX_OK"
+got no response, and no timed sleep ever returned: SLEEP-OK (a kproc's
+100ms tsleep) never printed, and neither did DWC-FIFO-OK, which follows the
+DWC driver's 25ms tsleep after DWC-CORE-RESET-OK \(em the same place
+Codex's polling process stopped.  The tick itself runs.  Giving QEMU the
+Pi's 19.2MHz CNTFRQ
+.CW -global "" ( cortex-a53-arm-cpu.cntfrq=19200000 )
+did not reproduce it.
+.PP
+The next image makes init0 do the 100ms sleep itself, and
+.CW sleepwatch() ,
+called from clockintr after timercheck(), writes a SLEEPSTUCK line
+straight to the UART one and five seconds past the deadline if it is still
+pending: the sleeper's Proc state, whether its timer is still queued,
+whether its deadline is still ahead, whether it still has a Rendez, and
+the process, pc and SPSR the tick interrupted.  Falsified under QEMU with
+a 7-second sleep watched against the 100ms deadline: SLEEPSTUCK state 08
+(Wakeme) queued 1 ahead 1, up nil at the idle loop's pc with SPSR 0x345,
+then SLEEP-OK after 589 ticks.  With timercheck() disabled QEMU stops
+after DWC-CORE-RESET-OK, the Pi's own stopping point.
