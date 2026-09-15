@@ -426,7 +426,7 @@ rootset(Prog *root)
 	Stkext *sx;
 	Modlink *ml;
 	REG *rr;
-	uchar *fp, *sp, *ex, *mp;
+	uchar *fp, *sp, *sp0, *ex, *mp;
 
 	mutator = gccolor % 3;
 	marker = (gccolor-1)%3;
@@ -482,6 +482,7 @@ rootset(Prog *root)
 		}
 
 		sp = rr->SP;
+		sp0 = sp;	/* INSTRUMENTATION: rr->SP as first read */
 		ex = rr->EX;
 		while(ex != nil) {
 			sx = (Stkext*)ex;
@@ -846,6 +847,58 @@ rootset(Prog *root)
 								 * frame at the bottom of
 								 * this extent.
 								 */
+								/*
+								 * Is the pair moving
+								 * under the read?
+								 *
+								 * rootset takes rr->SP
+								 * and rr->FP as
+								 * separate reads, and
+								 * propex() writes
+								 * p->reg with a memmove
+								 * that is not atomic --
+								 * from inside
+								 * vmachine()'s waserror
+								 * handler, which clears
+								 * inxec first, so
+								 * stoptheworld() does
+								 * not stop it.  A torn
+								 * pair would read
+								 * consistent at the
+								 * source and
+								 * inconsistent here.
+								 *
+								 * Re-read both.  Changed
+								 * means a live writer;
+								 * unchanged means the
+								 * snapshot really does
+								 * hold a mismatched
+								 * pair.
+								 */
+								/*
+								 * sp is a loop variable
+								 * -- reassigned to
+								 * sx->reg.SP for each
+								 * extent after the first
+								 * -- so comparing it
+								 * against a fresh
+								 * rr->SP compares two
+								 * different fields and
+								 * says nothing about
+								 * tearing.  sp0 is
+								 * rr->SP as first read;
+								 * this compares that
+								 * with rr->SP now.
+								 */
+								print("rootset: rr->SP"
+									" first %#p now %#p"
+									" %s; walk sp %#p"
+									" FP %#p\n",
+									sp0, rr->SP,
+									sp0 == rr->SP
+									  ? "UNCHANGED"
+									  : "CHANGED",
+									sp, rr->FP);
 								fs = (Frame*)sp;
 								print("rootset: frame at"
 									" SP: fp %#p t %#p"

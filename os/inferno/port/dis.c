@@ -1872,7 +1872,36 @@ vmachine(void*)
 		if(handler(up->env->errstr) == 0) {
 			if(currun() == nil)
 				panic("vmachine: error \"%s\" with no current prog", up->env->errstr);
+			/*
+			 * propex() rewrites the Prog's saved registers, and
+			 * the collector reads them.  inxec was cleared at the
+			 * top of this handler, so stoptheworld() does not wait
+			 * for this process and rootset() can walk p->reg while
+			 * propex() is halfway through updating it.
+			 *
+			 * Measured, not supposed.  rootset() re-read the pair
+			 * at a failure and SP had moved between the two reads:
+			 *
+			 *   FP 0x7a81458 SP 0x7a81ab8 span 1632
+			 *   reread     FP 0x7a81458 SP 0x7a814f0
+			 *
+			 * 0x7a814f0 is FP plus 152, the live frame's size --
+			 * the correct value, arriving after the first read had
+			 * already taken a stale one.  Everything this hunt
+			 * chased is downstream of that torn pair: a bound over
+			 * popped frames, stale frame data that tiles for six
+			 * steps, a type that is not a Type, and a jump through
+			 * it.
+			 *
+			 * Claiming the quantum makes this process visible to
+			 * stoptheworld() again for the length of the unwind.
+			 * It is bounded: stoptheworld() gives up after HZ/4
+			 * rather than waiting on it forever.
+			 */
+			enterquantum();
 			propex(currun(), up->env->errstr);
+			curP->inxec = 0;
+			coherence();
 			DBG("vmachine waserror() after propex up->env->errstr %s\n",  up->env->errstr);
 			progexit();
 			DBG("vmachine waserror() after progexit\n");
