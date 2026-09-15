@@ -101,9 +101,12 @@ kbdinit(void)
 {
 }
 
+ulong idlecount;
+
 void
 idlehands(void)
 {
+	idlecount++;
 	idle();
 	clockpoll();
 }

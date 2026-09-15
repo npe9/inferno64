@@ -19345,3 +19345,14 @@ a 7-second sleep watched against the 100ms deadline: SLEEPSTUCK state 08
 (Wakeme) queued 1 ahead 1, up nil at the idle loop's pc with SPSR 0x345,
 then SLEEP-OK after 589 ticks.  With timercheck() disabled QEMU stops
 after DWC-CORE-RESET-OK, the Pi's own stopping point.
+.PP
+Build 1789466616 on the Pi: SLEEPTEST's 100ms tsleep in init0 returned
+(SLEEP-OK after 11 ticks), and DWC-FIFO-OK then appeared as well.  Timers
+and wakeup work on silicon; the sleeps that never returned were in other
+processes, which got the CPU only once init0 itself blocked.  The shell
+prompt was reached again and typed input again got no answer.  The next
+image adds a heartbeat from clockintr every five seconds, written straight
+to the UART: ticks, PL011 interrupts, received bytes, idle-loop entries,
+and the interrupted pc, SPSR and process.  Under QEMU at the prompt it
+reads ticks 500, 17 interrupts for 17 received bytes, 440 idle entries,
+interrupted in the idle loop with no process.

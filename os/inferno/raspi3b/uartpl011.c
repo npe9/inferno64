@@ -40,6 +40,7 @@ pl011_pnp(void)
 }
 
 ulong pl011intrs;
+ulong pl011rxchars;
 
 static void
 uartintr(Ureg*, void *arg)
@@ -58,6 +59,7 @@ uartintr(Ureg*, void *arg)
 			if(csr32r(c, UartFR) & UartFRRXFE)
 				break;
 			ch = csr32r(c, UartDR) & 0xff;
+			pl011rxchars++;
 			uartrecv(uart, ch);
 		}
 	}

@@ -17,6 +17,7 @@ static Lock clock0lock;
 
 extern void	timercheck(Ureg*);
 static void	sleepwatch(Ureg*);
+static void	heartbeat(Ureg*);
 extern void	(*kproftick)(ulong);
 
 static uvlong
@@ -74,6 +75,7 @@ clockintr(Ureg *u)
 	checkalarms();
 	timercheck(u);
 	sleepwatch(u);
+	heartbeat(u);
 
 	n = now();
 	hznext = n + m->cpuhz/HZ;
@@ -148,6 +150,39 @@ clockcheck(void)
 static Proc	*stp;
 static uvlong	stdeadline;
 static int	stdone, streports;
+
+/*
+ * Every five seconds from the clock interrupt, straight to the UART: is
+ * the tick alive, have PL011 interrupts and received bytes arrived, has
+ * the idle loop run, and what process and pc the tick interrupted.  At
+ * the shell prompt on the Pi, typed input got no answer; this says
+ * whether it reached the kernel and what the CPU was doing instead.
+ */
+static void
+heartbeat(Ureg *u)
+{
+	extern ulong pl011intrs, pl011rxchars, idlecount;
+
+	if(m->ticks % (5*HZ) != 0)
+		return;
+	serialputs("HB ticks ", -1);
+	serialputdec(m->ticks);
+	serialputs(" uartintr ", -1);
+	serialputdec(pl011intrs);
+	serialputs(" rx ", -1);
+	serialputdec(pl011rxchars);
+	serialputs(" idle ", -1);
+	serialputdec(idlecount);
+	serialputreg("pc", u != nil? u->pc: 0, 8);
+	serialputreg("spsr", u != nil? u->status: 0, 3);
+	serialputs(" up ", -1);
+	if(up != nil && up->text != nil){
+		serialputs(up->text, -1);
+		serialputreg("pid", up->pid, 4);
+	}else
+		serialputs("-", 1);
+	serialputs("\n", -1);
+}
 
 static void
 sleepwatch(Ureg *u)
