@@ -75,6 +75,15 @@ enum {
 	Cfgwideext = 1<<2,
 	Cfgwideint = 1<<1,
 
+	/* SDEDM finite-state machine, bits 3:0 */
+	Edmfsmmask = 0xf,
+	Fsmident = 0x0,
+	Fsmdata	= 0x1,
+	Fsmreaddata = 0x2,
+	Fsmreadwait = 0x4,
+	Fsmwrstart1 = 0xa,
+	Edmforcedata = 1<<19,	/* force the FSM back to data mode */
+
 	Edmrdthreshsh = 14,	/* SDEDM FIFO read/write thresholds */
 	Edmwrthreshsh = 9,
 	Edmthreshmask = 0x1f,
@@ -98,6 +107,7 @@ struct Ctlr {
 	uvlong	sectors;
 	int	byteaddr;
 	int	inited;
+	int	errors;
 	uint	rca;
 };
 
@@ -227,24 +237,53 @@ fifofill(u32 *r)
 	return (r[SDEDM] >> Fifofillsh) & Fifofillmask;
 }
 
-static void
+static int
 fifospace(u32 *r)			/* wait until the FIFO can take a word */
 {
 	int i;
 
 	for(i = 0; i < 1000000; i++)
 		if(fifofill(r) < Fifodepth)
-			return;
+			return 1;
+	return 0;
 }
 
-static void
+static int
 fifodata(u32 *r)			/* wait until the FIFO holds a word */
 {
 	int i;
 
 	for(i = 0; i < 1000000; i++)
 		if(fifofill(r) > 0)
-			return;
+			return 1;
+	return 0;
+}
+
+/*
+ * Wait for the data phase to end.  The controller's FSM stays in a data
+ * state after the last word has moved, and a command issued while it is
+ * there never starts: on the Pi the first read after boot worked and
+ * every read after it returned nothing.  As in Linux's bcm2835-sdhost,
+ * identification and data mode mean done, and the states still waiting
+ * on the card are forced back to data mode.
+ */
+static int
+waitxfer(u32 *r)
+{
+	u32 edm, fsm;
+	int i;
+
+	for(i = 0; i < 1000000; i++){
+		edm = r[SDEDM];
+		fsm = edm & Edmfsmmask;
+		if(fsm == Fsmident || fsm == Fsmdata)
+			return 1;
+		if(fsm == Fsmreadwait || fsm == Fsmwrstart1 || fsm == Fsmreaddata){
+			r[SDEDM] = edm | Edmforcedata;
+			return 1;
+		}
+	}
+	return 0;
 }
 
 /*
@@ -410,6 +449,21 @@ sdhostonline(SDunit *u)
  * vectrap fixes it, and the periodic tick is now enabled in clockinit;
  * see l.s and clock.c.
  */
+/*
+ * A transfer that fails returns short, which devsd turns into a zero-byte
+ * read; say what the controller reported, at most a few times, so the
+ * console shows which command and block died and why.
+ */
+static void
+bioerror(Ctlr *c, int write, uvlong bno, u32 sts)
+{
+	if(c->errors++ > 5)
+		return;
+	print("sdhost: %s block %llud failed: sdhsts %#lux sdcmd %#lux sdedm %#lux\n",
+		write? "write": "read", bno, (ulong)sts, (ulong)c->r[SDCMD],
+		(ulong)c->r[SDEDM]);
+}
+
 static long
 sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 {
@@ -418,7 +472,7 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 	uchar *p = a;
 	long i;
 	int j;
-	u32 arg, w;
+	u32 arg, w, err;
 
 	USED(lun);
 	qlock(c);
@@ -426,18 +480,27 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 		arg = c->byteaddr? (u32)((bno+i)*Secsize): (u32)(bno+i);
 		r[SDHBCT] = Secsize;
 		r[SDHBLC] = 1;
+		/* WRITE_SINGLE_BLOCK / READ_SINGLE_BLOCK */
+		if(sdcmderr(r, write? 24: 17, arg, write? Writecmd: Readcmd, &err) < 0){
+			bioerror(c, write, bno+i, err);
+			break;
+		}
 		if(write){
-			sdcmd(r, 24, arg, Writecmd);	/* WRITE_SINGLE_BLOCK */
 			for(j = 0; j < Secsize; j += 4){
 				w = p[0] | p[1]<<8 | p[2]<<16 | p[3]<<24;
-				fifospace(r);		/* wait for FIFO room */
+				if(!fifospace(r)){	/* wait for FIFO room */
+					bioerror(c, write, bno+i, r[SDHSTS]);
+					goto out;
+				}
 				r[SDDATA] = w;
 				p += 4;
 			}
 		}else{
-			sdcmd(r, 17, arg, Readcmd);	/* READ_SINGLE_BLOCK */
 			for(j = 0; j < Secsize; j += 4){
-				fifodata(r);		/* wait for a FIFO word */
+				if(!fifodata(r)){	/* wait for a FIFO word */
+					bioerror(c, write, bno+i, r[SDHSTS]);
+					goto out;
+				}
 				w = r[SDDATA];
 				p[0] = w;
 				p[1] = w>>8;
@@ -446,9 +509,15 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 				p += 4;
 			}
 		}
-		if(r[SDCMD] & Failflag)
+		waitxfer(r);			/* let the data phase end */
+		err = r[SDHSTS] & Hstserror;
+		r[SDHSTS] = Hstsclear;
+		if(err != 0 || (r[SDCMD] & Failflag)){
+			bioerror(c, write, bno+i, err);
 			break;
+		}
 	}
+out:
 	qunlock(c);
 	return i * Secsize;
 }
