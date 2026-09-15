@@ -309,7 +309,16 @@ TEXT	seticceoir(SB), 1, $-4
 	MSR	R0, SPR(D_ICC_EOIR1_EL1)
 	RET	R30
 
+/*
+ * An LDXR/STXR pair on memory the MMU has not yet made Normal is
+ * UNPREDICTABLE, and on the Pi's Cortex-A53 it hangs; QEMU carries on.
+ * So refuse, loudly, any lock taken while SCTLR_EL1.M is clear: that
+ * turns a silent hang on the board into a message under QEMU too.
+ */
 TEXT	_tas(SB), 1, $-4
+	MRS	SPR(D_SCTLR_EL1), R1
+	AND	$1, R1, R1
+	CBZ	R1, tasnommu
 	MOV	R0, R3
 tas1:
 	LDXRW	(R3), R1
@@ -319,6 +328,8 @@ tas1:
 	DSB	$15
 	MOV	R1, R0
 	RET	R30
+tasnommu:
+	B	tasbeforemmu(SB)
 
 TEXT	setlabel(SB), 1, $-4
 	MOV	R0, R2

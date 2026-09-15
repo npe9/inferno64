@@ -10,6 +10,15 @@ archreset(void)
 {
 }
 
+/* l.s _tas branches here if a lock is taken before mmuinit(). */
+void
+tasbeforemmu(void)
+{
+	serialputs("PANIC: spinlock taken before mmuinit(); this hangs a Cortex-A53\n", -1);
+	for(;;)
+		;
+}
+
 /* A Pi 3B has no battery-backed clock; time of day starts at boot. */
 vlong
 rtctime(void)

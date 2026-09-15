@@ -56,6 +56,7 @@ void	timerie(void);
 void	uartconsole(void);
 void	uartconsolesetup(void);
 void	uartrxprobe(char*);
+void	serialputdec(ulong);
 void	clockcheckboot(void);
 void	serialputc(int);
 void	serialputs(char*, int);

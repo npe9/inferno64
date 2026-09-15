@@ -109,17 +109,17 @@ main(void)
 	confinit();
 	fpinit();
 
-	{
-		/*
-		 * The build's date stamp on the first line, so a serial log
-		 * says which image the Pi actually booted -- a stale
-		 * kernel8.img on the card looks exactly like a failed fix.
-		 */
-		char buf[64];
-
-		snprint(buf, sizeof buf, "Inferno/arm64 raspi3b build %lud\n", kerndate);
-		serialputs(buf, -1);
-	}
+	/*
+	 * The build's date stamp on the first line, so a serial log says
+	 * which image the Pi actually booted -- a stale kernel8.img on the
+	 * card looks exactly like a failed fix.  Not snprint: the first use
+	 * of a format verb runs fmtinstall(), which takes a spinlock, and an
+	 * LDXR/STXR lock before mmuinit() hangs a real Cortex-A53 (QEMU lets
+	 * it through).  Doing that here silenced two boots entirely.
+	 */
+	serialputs("Inferno/arm64 raspi3b build ", -1);
+	serialputdec(kerndate);
+	serialputs("\n", -1);
 
 	uartrxprobe("fw");
 	uartconsole();

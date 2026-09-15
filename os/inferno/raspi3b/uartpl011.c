@@ -259,6 +259,21 @@ consolerx(Queue*, int ch)
 	return kbdcr2nl(kbdq, ch);
 }
 
+/* Decimal to the console with no fmt and no lock: safe before mmuinit. */
+void
+serialputdec(ulong v)
+{
+	char buf[24];
+	int i;
+
+	i = sizeof buf;
+	do{
+		buf[--i] = '0' + v%10;
+		v /= 10;
+	}while(v != 0 && i > 0);
+	serialputs(buf+i, sizeof buf - i);
+}
+
 static void
 puthex(ulong v, int digits)
 {

@@ -19213,3 +19213,38 @@ nine RXPROBE stages received the injected key, TICK-OK, SLEEP-OK, a typed
 echoed at the shell, and the watchdog reboot.  QEMU keeps every pin at
 level 0 and GPFSEL at 0 regardless, so the pin columns mean something
 only on the Pi.  Not yet run on the Pi.
+.PP
+.B "The silent boots were a lock, not the UARTs"
+.PP
+Build 1789464598 on the PL011 printed nothing either, and so the common
+factor of both silent boots was not the mini UART.  It was the line added
+to name the build: an
+.CW snprint
+of
+.CW kerndate
+before
+.CW mmuinit() .
+The first use of a format verb runs
+.CW fmtinstall() ,
+which takes
+.CW lock(&fmtl) ,
+and an LDXR/STXR lock before the MMU has made RAM Normal memory hangs the
+Pi's Cortex-A53 \(em the failure found earlier with
+.CW xinit()
+\(em while QEMU lets it through.  The banner is now written with
+.CW serialputdec() ,
+which uses neither fmt nor a lock.  The mini UART result above is void:
+that image hung before it ever wrote to the UART, and says nothing about
+the mini UART.
+.PP
+So that QEMU catches this class of bug rather than only the board,
+.CW _tas
+in l.s now reads SCTLR_EL1 and, with the MMU off, branches to
+.CW tasbeforemmu() ,
+which prints
+.CW "PANIC: spinlock taken before mmuinit()"
+and stops.  Falsified: with the
+.CW snprint
+put back, the same kernel8.img under QEMU prints the banner and that
+panic line and goes no further; without it, it boots to the shell, all
+nine RXPROBE stages answer, TICK-OK, SLEEP-OK, and typed input echoes.
