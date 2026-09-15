@@ -1164,3 +1164,95 @@ so only the program can produce it.  The rule is not "always use
 .CW -x ";
 it is that the predicate must be something only the thing under test can
 satisfy.
+.NH 2
+Phase 2 item 7: two machines that have never met
+.PP
+Item 7 asks for authentication between instances "with a secret fetched
+from the metadata service or from object storage, so that two machines
+that have never met can agree on who they are".
+.PP
+Inferno's authentication already has the shape the cloud needs.  It is
+mutual and certificate-based: each side holds an
+.CW Authinfo
+signed by a common signer, exchanges it, and verifies the other against
+the signer's public key that its own certificate carries.  Neither side
+has to have met the other, and \(em this is the part that matters here
+\(em neither has to reach an authentication server while they talk.  On
+a provider the instance that has just booted may be the only one
+running, and an auth server that must be up before anything else is a
+dependency the design does not need.
+.PP
+So the whole problem is the bootstrap, and the provider already solves
+it.  An instance is created with metadata only it can read, served on a
+link-local address that asks for no credential of its own.
+.CW cloudauth(1)
+fetches a certificate from there \(em or from a signed object-storage
+URL, or from a file served by
+.CW cloudfs(4)
+\(em and installs it.
+.PP
+.B "Demonstrated, with the control that makes it mean something."
+.CW scripts/check-cloudauth.sh
+generates one signer and two certificates, serves them over HTTP, and
+has each party fetch its own with
+.CW cloudauth
+before doing anything else.  The server runs
+.CW styxlisten
+and the client
+.CW mount ,
+neither with
+.CW -A .
+The client reads the file.
+.PP
+Then a third party fetches a certificate from a
+.I different
+signer and is refused:
+.CW "mount: authentication failed: pk doesn't match certificate" .
+That arm is not decoration.  "The mount worked" is also exactly what it
+looks like when authentication is not happening at all, and without a
+party that must fail, a passing run is evidence of nothing.
+.PP
+.B "Where the identity lives on a kernel."
+The root is compiled into the image and read-only, so
+.CW /usr/inferno/keyring
+cannot be written until something writable is bound over it.  On an
+instance that is
+.CW memfs ,
+verified on the booted kernel:
+.CW "memfs /usr/inferno/keyring"
+and the directory takes writes.  The certificate then lives in memory
+and is gone at reboot, which is the right shape \(em the instance takes
+its identity from the provider every time it starts, so revoking it is
+a metadata change rather than a visit to the machine.
+.CW cloudauth ,
+.CW memfs
+and
+.CW styxlib
+are in the pc64 root now, with a
+.CW /usr/inferno/keyring
+to bind over.
+.PP
+.B "What is trusted."
+The certificate carries a private key, so it is exactly as secret as a
+password, and putting it in instance metadata makes the provider's
+access control the thing protecting it.  That is the same trust the
+instance already places in the provider to boot the right image, but it
+should be said rather than assumed: anything that can read the
+instance's metadata can be that instance.
+.PP
+.B "Two bugs found getting here, and neither was in the protocol."
+Nothing in this tree could generate a signer key at all on a 64-bit
+host:
+.CW libsec/dsaprimes.c 's
+.CW Hrand()
+wrote five
+.CW ulong s
+into a 20-byte seed, which is 20 bytes where
+.CW ulong
+is 32 bits and 40 where it is 64, and the stack protector aborted
+.CW emu
+silently.  And
+.CW auth/mkauthinfo
+computed the output file named in its own usage line and then ignored
+it, writing every certificate to standard output.  Both are fixed;
+neither is cryptography.

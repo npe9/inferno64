@@ -233,6 +233,9 @@ root
 	/fd	/
 	/forth
 	/n	/
+	/usr	/
+	/usr/inferno	/
+	/usr/inferno/keyring	/
 	/net	/
 	/net.alt	/
 	/nvfs	/
@@ -292,6 +295,8 @@ root
 	/dis/tcpserve.dis
 	/dis/metricfs.dis
 	/dis/supervise.dis
+	/dis/cloudauth.dis
+	/dis/memfs.dis
 	/dis/zerofs.dis
 	/dis/styxlisten.dis
 	/dis/export.dis
@@ -329,6 +334,7 @@ root
 	/dis/disk/calc.tab.dis
 	/dis/disk/pedit.dis
 	/dis/lib/arg.dis
+	/dis/lib/styxlib.dis
 	/dis/lib/auth.dis
 	/dis/lib/bufio.dis
 	/dis/lib/daytime.dis

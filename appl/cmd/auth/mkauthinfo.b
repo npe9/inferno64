@@ -83,7 +83,15 @@ init(nil: ref Draw->Context, args: list of string)
 	pkbuf := array of byte kr->pktostr(info.mypk);
 	state := kr->sha1(pkbuf, len pkbuf, nil, nil);
 	info.cert = kr->sign(sai.mysk, expiry, state, "sha1");
-	if(kr->writeauthinfo("/fd/1", info) < 0){
+	# dstfile, not "/fd/1".  The optional keyfile argument is in this
+	# program's own usage line and was computed into dstfile three
+	# dozen lines above, and then not used: every certificate went to
+	# standard output whatever was asked for, so
+	#	auth/mkauthinfo alice /usr/alice/keyring/default
+	# printed the certificate and wrote no file.  dstfile defaults to
+	# "/fd/1", so the old behaviour is what happens when the argument
+	# is omitted, which is what the usage line says.
+	if(kr->writeauthinfo(dstfile, info) < 0){
 		sys->fprint(stderr, "sign: error writing certificate: %r\n");
 		raise "fail:write error";
 	}

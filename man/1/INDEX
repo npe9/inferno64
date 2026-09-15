@@ -53,6 +53,7 @@ chmod chmod
 circletrace circletrace
 cleanname cleanname
 clock wm-misc
+cloudauth cloudauth
 cloudinit cloudinit
 cmp cmp
 coffee wm-misc

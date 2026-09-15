@@ -1,0 +1,140 @@
+.TH CLOUDAUTH 1
+.SH NAME
+cloudauth \- take this machine's identity from the provider
+.SH SYNOPSIS
+.B cloudauth
+[
+.B -v
+]
+[
+.B -k
+.I keyfile
+]
+(
+.B -m
+.I attribute
+|
+.B -u
+.I url
+|
+.B -f
+.I file
+)
+.SH DESCRIPTION
+.I Cloudauth
+fetches a certificate and installs it as this machine's identity, so
+that
+.IR styxlisten (1)
+and
+.IR mount (1)
+can authenticate without
+.BR -A .
+.PP
+Inferno's authentication is mutual and certificate-based: each side
+holds an
+.B Authinfo
+signed by a common signer, exchanges it, and verifies the other against
+the signer's public key that its own certificate carries.  Neither side
+has to have met the other, and neither has to reach an authentication
+server while they are talking \(em which is what makes it usable on a
+provider, where the instance that has just booted may be the only one
+running.
+.PP
+That leaves only the question of how each machine got its certificate,
+and the provider already answers it: an instance is created with
+metadata that only that instance can read, served on a link-local
+address that asks for no credential.
+.IP
+.EX
+gcloud compute instances create NAME \e
+	--metadata-from-file inferno-cert=alice.cert
+# then, on the instance
+cloudauth -m inferno-cert
+.EE
+.PP
+The source is given by exactly one of
+.TP
+.BI -m " attribute"
+An instance metadata attribute.  The request carries
+.BR "Metadata-Flavor: Google" ,
+which the service requires.
+.TP
+.BI -u " url"
+Any URL, including a signed object-storage URL.
+.TP
+.BI -f " file"
+A file, which may be one served by
+.IR cloudfs (4).
+.PP
+.B -k
+names the file to write; the default is
+.BI /usr/ user /keyring/default
+for the user in
+.BR /dev/user .
+.B -v
+reports the URL fetched and the owner and signer of what arrived.
+.SH "WHERE THE IDENTITY GOES ON A KERNEL"
+A kernel's root is compiled into the image and is read-only, so
+.B /usr/inferno/keyring
+cannot be written until something writable is bound over it.  On an
+instance that is
+.IR memfs (4):
+.IP
+.EX
+memfs /usr/inferno/keyring
+cloudauth -m inferno-cert
+.EE
+.PP
+The certificate then lives in memory and is gone at reboot, which is
+the right shape for an instance: it takes its identity from the
+provider every time it starts, so revoking it is a metadata change and
+not a visit to the machine.
+.SH "WHAT IS VERIFIED, AND WHAT IS TRUSTED"
+What arrives is parsed as an
+.B Authinfo
+before it is installed, and written beside the target and moved into
+place only if that succeeds.  A 404 page, an error document or a
+truncated fetch is still bytes, and writing it over a working identity
+would fail later at the next mount, a long way from the cause.
+.PP
+The certificate carries a private key, so it is exactly as secret as a
+password, and putting it in instance metadata means the provider's
+access control is what protects it.  That is the same trust the
+instance already places in the provider to boot the right image, but it
+is worth saying rather than assuming: anything that can read the
+instance's metadata can be that instance.
+.SH EXAMPLES
+Serve a directory to authenticated callers only:
+.IP
+.EX
+memfs /usr/inferno/keyring
+cloudauth -m inferno-cert
+styxlisten 'tcp!*!6666' export /n/metric
+.EE
+.PP
+Mount it from another instance that has done the same:
+.IP
+.EX
+mount tcp!other!6666 /n/host
+.EE
+.SH SOURCE
+.B /appl/cmd/cloudauth.b
+.SH SEE ALSO
+.IR styxlisten (1),
+.IR cloudfs (4),
+.IR memfs (4),
+.IR mkauthinfo (8),
+.IR createsignerkey (8)
+.SH BUGS
+It installs a certificate; it does not create one.  The signer and the
+certificates are made elsewhere with
+.IR createsignerkey (8)
+and
+.IR mkauthinfo (8),
+and getting them into instance metadata is the operator's job.
+.PP
+.B -m
+is exercised only on a real instance: the metadata service lives at a
+link-local address that does not exist on a development machine, so
+.B -u
+is what the local check uses.

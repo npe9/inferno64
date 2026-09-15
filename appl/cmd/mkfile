@@ -105,6 +105,7 @@ TARG=\
 	memfs.dis\
 	metamorph.dis\
 	mkdir.dis\
+	cloudauth.dis\
 	cloudfs.dis\
 	cloudinit.dis\
 	gcs.dis\
