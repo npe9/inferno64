@@ -19529,3 +19529,54 @@ copies the previous boot's table (still in RAM after a watchdog reset,
 until BSS is cleared) to crumb RAM before clearing BSS, and vectorbuild()
 compares it with the new one: VECCHECK prints how many of its 512 words
 differ and the first.  Under QEMU the boot after a reset reports 0.
+.PP
+The vector-table reading was wrong, and so was the earlier inference from
+the silent FIQ.  VECCHECK could not have settled it anyway: the dying
+kernel wrote RAM through the cache, and the watchdog reset throws away
+whatever sits in cache lines.  So the crumb block is now mapped as Device
+memory, which is uncached, and each tick stores, once it has set its next
+deadline, CNTP_CTL and the distance to the deadline, the BCM2836 local
+route and pending words, the BCM2835 pending, enable and FIQ words, VBAR,
+a fold of the vector table and the page tables, TTBR0, SCTLR, what
+.CW "AT S1E1R"
+makes of the vector and crumb addresses, and the longest gap between
+ticks.  The FIQ watchdog moved from one second to 50ms.
+.PP
+Build 1789510655 reached the shell on the Pi without the init sleeps and
+died a moment later.  After the watchdog reset, every tick-time word from
+tick 187 was sound (timer enabled with its deadline ahead, still routed,
+VBAR and both folds unchanged).  The exception record was not: 45,161,042
+exceptions in about ten seconds, the last with ESR 0x9a000000 \(em class
+0x26, SP alignment \(em at the first frame store in crumbentry, SPSR 0x3c5
+(taken from an exception, everything masked).  An endless loop of
+exceptions, each on an SP that was not a multiple of 16.
+.PP
+The cause is in main.c.
+.CW kprocchild()
+and
+.CW userinit()
+set a new process's
+.CW sched.sp
+to
+.CW "kstack+KSTACK-16" ,
+and the kstack comes from malloc, which only promises 8-byte alignment.
+SCTLR_EL1.SA is set, so the Cortex-A53 faults on any stack access through
+an SP that is not a multiple of 16.  The exception entry opens its frame
+on that same SP and faults again, forever.  Whether a boot died depended
+on where the allocator put a process's stack, which is why sleeps in init
+changed the outcome.  QEMU does not check SP alignment, so it booted every
+time.  The initial SP is now rounded down to 16 bytes.
+.PP
+Two guards stay.
+.CW gotolabel
+refuses a label whose sp is unaligned or outside the kernel's 256MB, and
+panics with the label while the stack is still good (BADLABEL).  Under
+QEMU, before the fix, it caught this bug on pid 4 (sp 0x3b400e8, kstack
+0x3b380f8), so the emulator now sees what it does not enforce.
+.CW crumbentry
+checks the SP before opening the frame.  An exception taken on a wild SP
+moves onto a 16KB wildstack, is recorded in crumb words 144 to 149, and
+trap() reports it (WILDSP) instead of looping.  Both guards were exercised
+under QEMU with a deliberately bad stack.  serialputreg printed only 32
+bits (its argument was a ulong); it now prints all 64.  With the fix,
+QEMU passes three boots with a reset between each, with no guard firing.
