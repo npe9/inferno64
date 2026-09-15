@@ -19466,3 +19466,16 @@ fault from a bad SP, then a monitor system_reset, and the next boot printed
 "CRUMB boots 2 last exception: count 6867485 type 0 esr 96000050 ... sp
 00000000623d6ad0".  The STEP sleeps are removed again so the failure can be
 caught.
+.PP
+Build 1789471048 on the Pi reproduced the failure without the STEP sleeps:
+the prompt appeared, a typed echo got no answer, and the last heartbeat
+was tick 100.  But its watchdog had stayed unarmed \(em "WATCHDOG not
+counting (wdog 655360 then 655360)": the SoC's WDOG does not count down
+until RSTC is armed, so the countdown test could not tell it from QEMU, and
+a power cycle then clears the crumb RAM (the cold boot read the power-up
+fill, boots 0x55555556).  wdarm() now leaves a marker in the crumb RAM,
+arms RSTC, and clears the marker once it has survived; a boot that finds
+the marker set was reset by arming itself (QEMU) and leaves the watchdog
+alone.  Under QEMU: the first boot resets at arming, the second prints
+"WATCHDOG reset the board when armed: left unarmed" and the first boot's
+crumb, and reaches the shell.

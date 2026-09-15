@@ -226,30 +226,31 @@ wdpet(void)
 }
 
 /*
- * Arm only a watchdog that counts.  RSTC's full-reset setting on the
- * SoC takes effect when WDOG runs out; QEMU's bcm2835_powermgt has no
- * countdown and resets the moment RSTC is written.  So load WDOG, wait,
- * and read it back: only if it went down is RSTC armed.
+ * Arm the watchdog, unless arming it resets the board on the spot.
+ * The SoC's WDOG does not count until RSTC is armed, so a countdown
+ * cannot be tested first; QEMU's bcm2835_powermgt resets the moment RSTC
+ * is written.  So leave a marker in the crumb RAM (which survives the
+ * reset), arm, and clear the marker: a boot that finds it still set was
+ * reset by the arming itself, and leaves the watchdog alone.
  */
+enum { Armmark = 0x41524d57 };
+
 static void
 wdarm(void)
 {
 	volatile u32 *pm = (volatile u32*)PM0;
-	u32 before, after;
+	volatile uvlong *c = (volatile uvlong*)0x20000000;
 
-	pm[0x24/4] = 0x5a000000 | (10<<16);
-	before = pm[0x24/4] & 0xfffff;
-	delay(50);
-	after = pm[0x24/4] & 0xfffff;
-	if(after >= before || after == 0){
-		serialputs("WATCHDOG not counting (wdog ", -1);
-		serialputdec(before);
-		serialputs(" then ", -1);
-		serialputdec(after);
-		serialputs("): left unarmed\n", -1);
+	if(c[13] == Armmark){
+		c[13] = 0;
+		serialputs("WATCHDOG reset the board when armed: left unarmed\n", -1);
 		return;
 	}
+	c[13] = Armmark;
+	pm[0x24/4] = 0x5a000000 | (10<<16);
 	pm[0x1c/4] = 0x5a000000 | (pm[0x1c/4] & ~0x30) | 0x20;
+	delay(20);
+	c[13] = 0;
 	wdarmed = 1;
 	serialputs("WATCHDOG armed, 10s\n", -1);
 }
