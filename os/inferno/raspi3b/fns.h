@@ -59,6 +59,7 @@ void	uartrxprobe(char*);
 void	serialputdec(ulong);
 void	serialputreg(char*, ulong, int);
 void	clockcheckboot(void);
+void	tkmark(char*);
 void	serialputc(int);
 void	serialputs(char*, int);
 void	(*screenputs)(char*, int);

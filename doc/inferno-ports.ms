@@ -19408,3 +19408,16 @@ CPTR_EL2 = 0x33ff (no FP/SIMD or trace traps), MDCR_EL2.HPMN = PMCR_EL0.N
 with no PMU or debug traps, and VPIDR_EL2/VMPIDR_EL2 from MIDR/MPIDR,
 encodings checked against GNU as.  The heartbeat runs every second for the
 first two minutes.
+.PP
+Build 1789469751, with the fuller EL2 setup, printed the first heartbeat
+seen on the board, at tick 100 during init0, and no other: none at the
+prompt in 45 seconds, and no watchdog report, while process-level output
+carried on to the prompt.  Both the generic-timer IRQ and the system-timer
+FIQ reach the core through the BCM2836 local controller, and both stopped
+somewhere between the init0 probe (about tick 140) and tick 200.  The
+next image prints a TK marker straight to the UART before and after the
+init0 probe, after arming the watchdog, and before disinit: each busy-waits
+50ms and reports the ticks and FIQs that arrived, DAIF, CNTP_CTL, whether
+the deadline is ahead, the local timer route, pending and GPU route
+registers, and the BCM2835 FIQ control.  Under QEMU every marker sees 4
+ticks in its 50ms.

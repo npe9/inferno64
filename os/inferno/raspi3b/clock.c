@@ -359,6 +359,50 @@ irqcheck(void)
 	serialputs("\n", -1);
 }
 
+/*
+ * Interrupt delivery at a named point: busy-wait 50ms with interrupts as
+ * they are and print, straight to the UART, how many ticks and FIQs
+ * arrived, DAIF, the timer's state, and the BCM2836 local controller's
+ * timer route, pending and GPU route registers plus the BCM2835 FIQ
+ * control.  On the Pi both the tick and the FIQ watchdog went silent
+ * somewhere between the init0 probe and the shell prompt; the first
+ * marker with no ticks names the step.
+ */
+void
+tkmark(char *label)
+{
+	uvlong hz, t, end, cval;
+	ulong t0, f0;
+	extern ulong fiqcount;
+	extern ulong getcntpctl(void), getdaif(void);
+	extern void getcntpcval(uvlong*);
+
+	t0 = m->ticks;
+	f0 = fiqcount;
+	cntfrq(&hz);
+	cycles(&t);
+	end = t + hz/20;
+	while(t < end)
+		cycles(&t);
+	getcntpcval(&cval);
+	serialputs("TK ", -1);
+	serialputs(label, -1);
+	serialputs(" ticks+", -1);
+	serialputdec(m->ticks - t0);
+	serialputs(" at ", -1);
+	serialputdec(m->ticks);
+	serialputs(" fiq+", -1);
+	serialputdec(fiqcount - f0);
+	serialputreg("daif", getdaif(), 3);
+	serialputreg("ctl", getcntpctl(), 1);
+	serialputreg("cval>now", cval > t, 1);
+	serialputreg("l40", *(volatile u32*)0x40000040, 2);
+	serialputreg("l60", *(volatile u32*)0x40000060, 3);
+	serialputreg("l0c", *(volatile u32*)0x4000000c, 2);
+	serialputreg("fiqctl", ((volatile u32*)IRQBASE)[0x0c/4], 2);
+	serialputs("\n", -1);
+}
+
 void
 clockcheckboot(void)
 {

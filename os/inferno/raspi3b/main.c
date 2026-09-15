@@ -223,11 +223,14 @@ init0(void)
 	poperror();
 
 	clockcheckboot();
+	tkmark("pre-probe");
 	uartrxprobe("init0");
+	tkmark("post-probe");
 	{
 		extern void fiqwatchinit(void);
 		fiqwatchinit();
 	}
+	tkmark("post-fiqarm");
 
 	/*
 	 * Publish the board MAC the firmware knows (mailbox.c) as
@@ -248,6 +251,7 @@ init0(void)
 			print("MBOX no board mac\n");
 		poperror();
 	}
+	tkmark("pre-disinit");
 	disinit("/osinit.dis");
 }
 
