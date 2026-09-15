@@ -223,6 +223,10 @@ init0(void)
 	poperror();
 
 	clockcheckboot();
+	{
+		extern void fiqwatchinit(void);
+		fiqwatchinit();
+	}
 	uartrxprobe("init0");
 
 	/*

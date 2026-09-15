@@ -218,6 +218,10 @@ TEXT	getvbar(SB), 1, $-4
 	MRS	SPR(D_VBAR_EL1), R0
 	RET	R30
 
+TEXT	fiqenable(SB), 1, $-4
+	MSR	$1, DAIFClr		/* imm bit0 = FIQ */
+	RET	R30
+
 TEXT	getdaif(SB), 1, $-4
 	MRS	DAIF, R0
 	RET	R30

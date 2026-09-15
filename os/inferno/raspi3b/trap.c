@@ -210,6 +210,7 @@ trapinit(void)
 }
 
 ulong irqentries;
+extern void fiqwatch(Ureg*);
 
 void
 trap(Ureg *ur)
@@ -219,6 +220,9 @@ trap(Ureg *ur)
 	void (*f)(Ureg*, void*);
 
 	switch(ur->type){
+	case TFiq:
+		fiqwatch(ur);
+		return;
 	case TIrq:
 		irqentries++;
 		if(getcntpctl() & CntpIStatus){

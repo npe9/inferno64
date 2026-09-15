@@ -161,7 +161,7 @@ static int	stdone, streports;
 static void
 heartbeat(Ureg *u)
 {
-	extern ulong pl011intrs, pl011rxchars, idlecount;
+	extern ulong pl011intrs, pl011rxchars, idlecount, fiqcount;
 
 	if(m->ticks % (5*HZ) != 0)
 		return;
@@ -169,12 +169,81 @@ heartbeat(Ureg *u)
 	serialputdec(m->ticks);
 	serialputs(" uartintr ", -1);
 	serialputdec(pl011intrs);
+	serialputs(" fiq ", -1);
+	serialputdec(fiqcount);
 	serialputs(" rx ", -1);
 	serialputdec(pl011rxchars);
 	serialputs(" idle ", -1);
 	serialputdec(idlecount);
 	serialputreg("pc", u != nil? u->pc: 0, 8);
 	serialputreg("spsr", u != nil? u->status: 0, 3);
+	serialputs(" up ", -1);
+	if(up != nil && up->text != nil){
+		serialputs(up->text, -1);
+		serialputreg("pid", up->pid, 4);
+	}else
+		serialputs("-", 1);
+	serialputs("\n", -1);
+}
+
+/*
+ * FIQ watchdog.  At the Pi's shell prompt the heartbeat above stopped:
+ * the clock interrupt was no longer being taken, so something is holding
+ * IRQs masked.  splhi() masks only IRQ, so a FIQ still arrives.  The
+ * BCM2835 system timer's compare channel 1 (channels 0 and 2 belong to
+ * the VideoCore) is routed to FIQ at 1Hz; if the tick has not advanced
+ * since the previous FIQ, the stuck pc, link register, SPSR, the caller
+ * of the last splhi() and the process go straight to the UART.
+ */
+enum {
+	StCs	= 0x00/4,
+	StClo	= 0x04/4,
+	StC1	= 0x10/4,
+	IcFiqctl	= 0x0c/4,
+};
+
+static ulong fiqlastticks;
+static int fiqreports;
+ulong fiqcount;
+
+static void
+fiqarm(void)
+{
+	volatile u32 *st = (volatile u32*)(BCMPERIPH + 0x3000);
+
+	st[StCs] = 1<<1;
+	st[StC1] = st[StClo] + 1000000;
+}
+
+void
+fiqwatchinit(void)
+{
+	extern void fiqenable(void);
+
+	fiqlastticks = m->ticks;
+	fiqarm();
+	((volatile u32*)IRQBASE)[IcFiqctl] = 0x80 | 1;	/* FIQ from GPU IRQ 1 */
+	fiqenable();
+	serialputs("FIQWATCH armed\n", -1);
+}
+
+void
+fiqwatch(Ureg *u)
+{
+	fiqarm();
+	fiqcount++;
+	if(m->ticks != fiqlastticks || fiqreports >= 30){
+		fiqlastticks = m->ticks;
+		return;
+	}
+	fiqreports++;
+	serialputs("FIQWATCH ticks stalled at ", -1);
+	serialputdec(m->ticks);
+	serialputreg("pc", u->pc, 8);
+	serialputreg("lr", u->r30, 8);
+	serialputreg("sp", u->sp, 8);
+	serialputreg("spsr", u->status, 3);
+	serialputreg("splpc", m->splpc, 8);
 	serialputs(" up ", -1);
 	if(up != nil && up->text != nil){
 		serialputs(up->text, -1);

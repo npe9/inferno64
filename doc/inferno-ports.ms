@@ -19356,3 +19356,18 @@ to the UART: ticks, PL011 interrupts, received bytes, idle-loop entries,
 and the interrupted pc, SPSR and process.  Under QEMU at the prompt it
 reads ticks 500, 17 interrupts for 17 received bytes, 440 idle entries,
 interrupted in the idle loop with no process.
+.PP
+Build 1789466839 on the Pi returned from SLEEPTEST again and reached the
+prompt, but printed no heartbeat at all in 45 seconds at the shell, with
+input typed twice: after the prompt the clock interrupt stopped being
+taken.  Something holds IRQs masked.  splhi() masks only IRQ, so the next
+image adds a FIQ watchdog: the BCM2835 system timer's compare channel 1
+(0 and 2 belong to the VideoCore) is routed to FIQ at 1Hz, F is unmasked
+in init0, and when the tick has not advanced since the last FIQ the stuck
+pc, link register, sp, SPSR,
+.CW m->splpc
+(the caller of the last splhi) and the process go straight to the UART.
+Falsified under QEMU with
+.CW "splhi(); for(;;);"
+after arming: "FIQWATCH ticks stalled at 73 pc 000f6f94 ... spsr 385 splpc
+000f6f94 up interp".
