@@ -19513,3 +19513,19 @@ tick, the watchdog pet, alarms, timers, the rearm and the clock links),
 the Ureg address, the process's kernel stack base and pid, and
 .CW m->splpc ,
 the caller of the last splhi/splx, which names the loop.
+.PP
+Build 1789509779's report after its reset on the Pi: the last exception,
+tick 175, reached step 13 \(em trap() returned \(em on pid 1's kernel
+stack (Ureg 0x38fe4c0, stack base 0x38f6d50, the same layout as QEMU),
+interrupting splx as called from
+.CW ainc() ,
+the atomic reference-count increment the Dis interpreter calls constantly.
+So pid 1 was running Dis, took the tick, returned cleanly, and never took
+another exception: not tick 176 and not the FIQ due within the second.
+Nothing in the kernel masks F, and nothing traps to EL2 (no HVC, the EL2
+traps are off).  An exception path that stops working between two ticks
+fits a vector table overwritten after tick 175's return.  main() now
+copies the previous boot's table (still in RAM after a watchdog reset,
+until BSS is cleared) to crumb RAM before clearing BSS, and vectorbuild()
+compares it with the new one: VECCHECK prints how many of its 512 words
+differ and the first.  Under QEMU the boot after a reset reports 0.

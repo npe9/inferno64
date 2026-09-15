@@ -177,6 +177,16 @@ main(void)
 {
 	long *p, *ep;
 
+	{
+		/* keep the previous boot's vector table for vectorcheck() */
+		extern u32 *vectable(void);
+		u32 *v = vectable();
+		volatile u32 *save = (volatile u32*)0x20001000;
+		int i;
+
+		for(i = 0; i < 512; i++)
+			save[i] = v[i];
+	}
 	p = (long*)edata;
 	ep = (long*)end;
 	while(p < ep)

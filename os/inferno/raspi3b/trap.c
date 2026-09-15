@@ -117,6 +117,50 @@ buildslot(u32 *slot, int class)
 	slot[2] = insn_b(&slot[2], (void*)crumbentry);
 }
 
+/* The vector table's address, usable before BSS is cleared. */
+u32*
+vectable(void)
+{
+	return (u32*)(((uintptr)rawvectab + VBAR_ALIGN-1) & ~(uintptr)(VBAR_ALIGN-1));
+}
+
+/*
+ * Compare the table just built with the copy main() took of the
+ * previous boot's table before clearing BSS (crumb RAM 0x20001000).  On
+ * the Pi, the last trap before the silent death returned cleanly and no
+ * exception was ever taken again: a vector table overwritten after that
+ * return would do exactly that.
+ */
+static void
+vectorcheck(u32 *v)
+{
+	volatile u32 *old = (volatile u32*)0x20001000;
+	int i, n, first;
+
+	n = 0;
+	first = -1;
+	for(i = 0; i < NSlot*SlotSize/4; i++)
+		if(old[i] != v[i]){
+			if(first < 0)
+				first = i;
+			n++;
+		}
+	serialputs("VECCHECK previous boot's vector table: ", -1);
+	serialputdec(n);
+	serialputs(" of ", -1);
+	serialputdec(NSlot*SlotSize/4);
+	serialputs(" words differ", -1);
+	if(first >= 0){
+		serialputs(", first slot ", -1);
+		serialputdec(first/(SlotSize/4));
+		serialputs(" word ", -1);
+		serialputdec(first%(SlotSize/4));
+		serialputreg("was", old[first], 8);
+		serialputreg("now", v[first], 8);
+	}
+	serialputs("\n", -1);
+}
+
 static void
 vectorbuild(void)
 {
@@ -148,6 +192,7 @@ vectorbuild(void)
 	 */
 	cacheflush(v, NSlot*SlotSize);
 	cacheiinv();
+	vectorcheck(v);
 	vectorinit(v);
 }
 
