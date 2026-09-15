@@ -1450,3 +1450,72 @@ context runs.
 .CW include/interp.h
 says so where the macro is defined.  Compiling Dis on a native board is
 a real piece of work and not a switch.
+.NH 2
+The density half of the second falsification criterion
+.PP
+The second thing that would sink this is "if the kernel cannot hold a
+useful working set in the memory of the smallest rentable instance".
+The memory floor above is half of that; the other half is what a
+working set costs, and it was not measured.
+.PP
+The unit measured is an idle
+.CW rpcserve (1)
+\(em a real Styx-era process that has announced a port and is blocked
+in
+.CW listen ,
+which is what a service on an idle machine is.  Counted with
+.CW metricfs ,
+reading
+.CW mem/main/used
+and
+.CW procs
+before and after:
+.PP
+.TS
+center box tab(;);
+c | c | c
+l | n | n .
+servers;pool growth;each
+_
+30;2 430 976 B;79.1 KiB
+60;4 800 896 B;78.1 KiB
+.TE
+.PP
+.B "About 78 KiB per service, and linear."
+Against the floor of 68 MiB that leaves roughly 7 000 such services on
+a 614 MB instance and 12 500 on a 1 GB one.  Memory is not the binding
+constraint, and the density half of the criterion is answered: it
+holds.
+.PP
+.B "What binds first is the Dis context pool, and it is not a failure."
+At 60 servers the kernel says
+.CW "claimctx: pool of 64 exhausted, sharing" .
+.CW MAXPCTX
+is 64 and beyond it interpreters share a register file.  The run
+completes and is correct: with the VM lock held, sharing is the
+behaviour every board had before
+.CW curP
+was made per-executor.  It is a ceiling on
+.I parallelism ,
+not on how many services a machine can hold.
+.PP
+That message used to read
+.CW "sharing (unsafe while parallelvm=0)" ,
+printing the value where a condition belongs, so it announced danger in
+exactly the case its own comment three lines above calls correct.  Read
+on a live run it stops the reader dead \(em it stopped this one \(em so
+it now says which case it is in.
+.PP
+.B "A measurement that lied, twice, the same way."
+The first run of this reported that 150 servers started and the machine
+survived, on the strength of
+.CW "grep -c DENSDONE" .
+The console echoes the command, the command ends in
+.CW "echo DENSDONE" ,
+and the count of one was the echo.  The run had not finished at all.
+This is the third time in this document that a substring match has
+found a token in the console's echo of the command that contains it,
+and the rule earned by now is: when the predicate can appear in the
+input, it must be
+.CW "grep -x" ,
+and when it cannot be, say why.

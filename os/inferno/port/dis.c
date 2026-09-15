@@ -112,10 +112,26 @@ claimctx(void)
 		 * line is the warning that the pool needs to be bigger or
 		 * that contexts need releasing when an interpreter blocks.
 		 */
-		if(said++ == 0)
-			print("claimctx: pool of %d exhausted, sharing"
-				" (unsafe while parallelvm=%d)\n",
-				MAXPCTX, parallelvm);
+		/*
+		 * Two messages, because one of them was saying the
+		 * opposite of what the comment above it says.  It printed
+		 * "unsafe while parallelvm=0" -- with the value, not a
+		 * condition -- exactly in the case the comment calls
+		 * correct.  Read on a real run of 150 processes it looks
+		 * like a warning that the machine is now unsound, and it
+		 * is not: with the VM lock held, sharing a register file
+		 * is the behaviour every board had before curP was made
+		 * per-executor.
+		 */
+		if(said++ == 0){
+			if(parallelvm)
+				print("claimctx: pool of %d exhausted, sharing"
+					" -- UNSAFE at parallelvm=1\n", MAXPCTX);
+			else
+				print("claimctx: pool of %d exhausted, sharing"
+					" (correct while the VM lock is held;"
+					" the pool wants to be bigger)\n", MAXPCTX);
+		}
 		unlock(&isched.l);
 		return pctxs[0];
 	}
