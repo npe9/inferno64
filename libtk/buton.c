@@ -272,8 +272,28 @@ tkdrawbutton(Tk *tk, Point orig)
 		bgnd = TkCfield;
 	if (tk->flag & Tkdisabled)
 		fgnd = TkCdisablefgnd;
-	else if ((tk->type == TKcheckbutton || tk->type == TKradiobutton) && tkl->indicator == BoolF && tkl->check)
+	else if ((tk->type == TKcheckbutton || tk->type == TKradiobutton) && tkl->indicator == BoolF && tkl->check) {
 		bgnd = TkCselect;
+		/*
+		 * Light text on the accent, and this is a contrast defect
+		 * rather than a preference.  The foreground here is the
+		 * near-black ink, which against #3D6A9A measures 2.80:1 -
+		 * WCAG AA asks 4.5:1 for body text.  The field colour gives
+		 * 5.63:1.
+		 *
+		 * It reaches further than the chip it was found on: a
+		 * tknotebook(2) tab is an indicator-less radiobutton, so
+		 * every chosen tab had the same 2.80:1.
+		 *
+		 * Left alone under classic, deliberately.  The same defect is
+		 * there - it is the same two colours - but classic is the
+		 * look this toolkit has always had, kept for compatibility
+		 * and asserted unchanged by tkofftest(1); changing it would
+		 * be changing the thing it exists to preserve.
+		 */
+		if (tkstyleflat(tk))
+			fgnd = TkCfield;
+	}
 	else if (tk->flag & Tkactive) {
 		fgnd = TkCactivefgnd;
 		bgnd = TkCactivebgnd;

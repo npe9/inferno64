@@ -662,6 +662,26 @@ from an unfocused one at all, whether two widgets in a row share an edge.
 None of that says a thing about taste, but it does catch a change that
 was meant to be cosmetic and was not.
 
+**Contrast is not taste, and the distinction earned its keep.** An
+indicator-less checkbutton drawn in the accent kept the near-black
+foreground: **2.80:1**, where WCAG AA asks 4.5:1 for body text. Light text
+gives 5.63:1. The same defect reached the notebook's chosen tab, because a
+tab is an indicator-less radiobutton — one fault in two places that look
+nothing alike. `tkofftest(1)` now computes the ratio from the rendered
+pixels and fails below 4.5.
+
+Two things about measuring it. The **raw-byte approximation said 2.38:1
+where the real figure is 2.80:1** — WCAG linearises each channel first,
+and had the defect been marginal the wrong formula would have decided it
+the wrong way. And the check first *reported* "6.-37:1", because Limbo's
+`int` on a `real` rounds rather than truncates; the comparison was never
+affected, but a check that reports a number nobody can read is a check
+nobody will trust.
+
+Classic is left with the defect, deliberately: it is the same two colours,
+but classic exists to preserve the look this toolkit has always had and is
+asserted unchanged.
+
 **A caution worth writing down.** This is the one item in this document
 where "better" is a matter of taste rather than measurement, and where
 the person whose taste matters is not the one writing the code. The

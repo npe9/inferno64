@@ -40,6 +40,8 @@ include "wmclient.m";
 include "tkclient.m";
 	tkclient: Tkclient;
 include "env.m";
+include "math.m";
+	math: Math;
 
 # ttffs(4) serves TrueType files from /fonts/ttf as Inferno subfonts at
 # any size.  It wants a draw context, but only for its display, so this
@@ -202,6 +204,7 @@ init(nil: ref Draw->Context, nil: list of string)
 		wmtheme->init();
 	tknotebook = load Tknotebook Tknotebook->PATH;
 	tkspinbox = load Tkspinbox Tkspinbox->PATH;
+	math = load Math Math->PATH;
 	if(tknotebook != nil)
 		tknotebook->init();
 	if(tk == nil){
@@ -295,6 +298,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	checkbevelhue();
 	checkscene();
 	checkelide();
+	checkcontrast();
 	checkcolourwidth();
 	checkcanvastag();
 	checkplaintitle();
@@ -909,6 +913,118 @@ checkcolourwidth()
 		badly(bad)));
 }
 
+
+
+# Text on the accent has to be READABLE, and that is measurable rather
+# than a matter of taste.
+#
+# WCAG asks 4.5:1 for body text, on a ratio computed from linearised
+# luminance - not from the raw bytes, which is a different number and the
+# one I got wrong first: the raw approximation said 2.38:1 where the real
+# figure was 2.80:1, and had the defect been marginal that error would
+# have decided it the wrong way.
+#
+# What was wrong: an indicator-less checkbutton drawn in the accent kept
+# the near-black foreground, 2.80:1.  A tknotebook(2) tab is an
+# indicator-less radiobutton, so every chosen tab had it too - one defect
+# in two places that look nothing alike.
+checkcontrast()
+{
+	if(math == nil){
+		sys->print("     no math module; contrast not checked\n");
+		return;
+	}
+	blank();
+	top := offscreen();
+	if(top == nil)
+		return;
+	tk->cmd(top, "checkbutton .c -text {Wrap lines} -indicatoron 0 -variable cv");
+	tk->cmd(top, "pack .c -padx 8 -pady 8");
+	map(top);
+	tk->cmd(top, ".c select");
+	tk->cmd(top, "update");
+
+	r := tk->rect(top, ".c", Tk->Border);
+	(br, bg, bb, fr, fg, fb) := twocolours(r);
+	cr := contrast(br, bg, bb, fr, fg, fb);
+	# int on a real ROUNDS in Limbo, it does not truncate, so `int cr'
+	# for 5.63 is 6 and the remainder comes out negative: this printed
+	# "6.-37:1".  The comparison above was never affected; only the way
+	# it was shown, which is its own kind of wrong - a check that reports
+	# a number nobody can read is a check nobody will trust.
+	whole := int cr;
+	if(real whole > cr)
+		whole--;
+	frac := int ((cr - real whole) * 100.0);
+	report(cr >= 4.5, sys->sprint(
+		"text on the accent meets WCAG AA (#%.2X%.2X%.2X on #%.2X%.2X%.2X is %d.%.2d:1, needs 4.50)",
+		fr, fg, fb, br, bg, bb, whole, frac));
+}
+
+# the two commonest colours in a rectangle, commonest first
+twocolours(r: Rect): (int, int, int, int, int, int)
+{
+	if(r.dx() <= 0 || r.dy() <= 0)
+		return (0,0,0,0,0,0);
+	n := r.dx()*r.dy();
+	b := array[n*3] of byte;
+	off.readpixels(r, b);
+	cnt := array[1<<12] of {* => 0};
+	for(i := 0; i < n*3; i += 3){
+		k := ((int b[i+2] >> 4) << 8) | ((int b[i+1] >> 4) << 4) | (int b[i] >> 4);
+		cnt[k]++;
+	}
+	b1 := 0;
+	b2 := 0;
+	for(i = 0; i < len cnt; i++)
+		if(cnt[i] > cnt[b1]){
+			b2 = b1;
+			b1 = i;
+		}else if(i != b1 && cnt[i] > cnt[b2])
+			b2 = i;
+	(r1, g1, l1) := exact(b, n, b1);
+	(r2, g2, l2) := exact(b, n, b2);
+	return (r1, g1, l1, r2, g2, l2);
+}
+
+# a real pixel matching a coarse bucket
+exact(b: array of byte, n, bucket: int): (int, int, int)
+{
+	for(i := 0; i < n*3; i += 3){
+		k := ((int b[i+2] >> 4) << 8) | ((int b[i+1] >> 4) << 4) | (int b[i] >> 4);
+		if(k == bucket)
+			return (int b[i+2], int b[i+1], int b[i]);
+	}
+	return (0, 0, 0);
+}
+
+# WCAG relative luminance.  The channel has to be LINEARISED first, and
+# that is the step that makes this different from averaging the bytes: on
+# the raw approximation this defect measured 2.38:1 and on the real one
+# 2.80:1.  Had it been marginal, the wrong formula would have decided it
+# the wrong way.
+lumin(r, g, b: int): real
+{
+	return 0.2126*linear(r) + 0.7152*linear(g) + 0.0722*linear(b);
+}
+
+# not chan(): that is a reserved word in Limbo, being the channel type
+linear(v: int): real
+{
+	c := real v / 255.0;
+	if(c <= 0.03928)
+		return c / 12.92;
+	return math->pow((c + 0.055) / 1.055, 2.4);
+}
+
+contrast(ar, ag, ab, br, bg, bb: int): real
+{
+	la := lumin(ar, ag, ab);
+	lb := lumin(br, bg, bb);
+	if(lb > la)
+		(la, lb) = (lb, la);
+	return (la + 0.05) / (lb + 0.05);
+}
 
 # A label that does not fit has to be cut to a width, not wrapped.
 #
