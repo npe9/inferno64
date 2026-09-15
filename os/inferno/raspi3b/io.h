@@ -43,6 +43,7 @@ enum {
 
 	UartIMSCRX	= 1<<4,
 	UartIMSCTX	= 1<<5,
+	UartIMSCRT	= 1<<6,		/* receive timeout: FIFO below its trigger and idle */
 
 	UartICRALL	= 0x7ff,
 };

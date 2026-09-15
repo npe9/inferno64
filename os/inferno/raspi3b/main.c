@@ -95,143 +95,49 @@ machinit(void)
 }
 
 /*
- * What the last boot left at 0x20000000 (l.s crumbentry, clockintr):
- * the last exception taken and the last tick, printed before anything
- * overwrites them.  "boots" counts starts, so a value that did not
- * survive the reset shows as 1.
+ * What the last boot left in the crumb record at 0x20000000 (l.s
+ * crumbentry, trap.c): the last exception taken, and any exception on
+ * a wild SP or label gotolabel refused.  RAM there survives a reset
+ * that is not a power cycle, so after a hang and a reset this says
+ * where the kernel was.  Printed before anything can overwrite it.
  */
 static void
 crumbdump(void)
 {
 	volatile uvlong *c = (volatile uvlong*)0x20000000;
-	int p, valid;
+	int i;
 
-	valid = c[0] == 0x43524d42ULL;	/* else power-on contents, not a record */
-	c[12]++;
-	serialputs("CRUMB boots ", -1);
-	serialputdec(c[12]);
-	if(c[0] == 0x43524d42ULL){
-		serialputs(" last exception: count ", -1);
-		serialputdec(c[1]);
-		serialputreg("type", c[7], 1);
-		serialputreg("esr", c[2], 8);
-		serialputreg("elr", c[3], 16);
-		serialputreg("far", c[4], 16);
-		serialputreg("spsr", c[5], 3);
-		serialputreg("sp", c[6], 16);
-		serialputs(" last tick ", -1);
-		serialputdec(c[10]);
-		serialputreg("pc", c[11], 16);
-		serialputs("\nCRUMB step ", -1);
-		serialputdec(c[17]);
-		serialputreg("ureg", c[18], 8);
-		serialputreg("kstack", c[19], 8);
-		serialputreg("pid", c[20], 4);
-		serialputreg("splpc", c[21], 8);
-		serialputs("\nCRUMB in-handler irq ", -1);
-		if(c[14] == ~0ULL)
-			serialputs("none", -1);
-		else
-			serialputdec(c[14]);
-		serialputs(" returns ", -1);
-		serialputdec(c[15]);
-		serialputs(" irqcounts", -1);
-		{
-			int i;
-			for(i = 0; i < 64; i++)
-				if(c[40+i] != 0 && c[40+i] < 100000000){
-					serialputs(" ", 1);
-					serialputdec(i);
-					serialputs(":", 1);
-					serialputdec(c[40+i]);
-				}
-		}
-		serialputs("\nCRUMB ring (oldest first, type irq pc):", -1);
-		{
-			int i;
-			uvlong e, n;
-			n = c[16];
-			for(i = 0; i < 16; i++){
-				e = c[24 + (n+i)%16];
-				if(e == 0)
-					continue;
-				serialputreg("", e>>56, 1);
-				serialputreg("", (e>>48)&0xff, 2);
-				serialputreg("", e & 0xffffffffffffULL, 8);
-			}
-		}
-	}
+	if(c[0] != 0x43524d42ULL)	/* power-on contents, not a record */
+		goto clear;
+	serialputs("CRUMB previous boot: exceptions ", -1);
+	serialputdec(c[1]);
+	serialputs(", last type ", -1);
+	serialputdec(c[7]);
+	serialputreg("esr", c[2], 8);
+	serialputreg("elr", c[3], 16);
+	serialputreg("spsr", c[5], 3);
+	serialputreg("sp", c[6], 16);
 	serialputs("\n", -1);
-	if(valid && c[112+22] != 0){
-		/* clock.c tickprobe: state after the last tick set its deadline */
-		serialputs("CRUMB probe tick ", -1);
-		serialputdec(c[112+22]);
-		serialputreg("ctl", c[112+0], 1);
-		serialputreg("cval-now", c[112+1], 16);
-		serialputreg("route", c[112+2], 2);
-		serialputreg("lpend", c[112+3], 3);
-		serialputreg("gpuroute", c[112+4], 1);
-		serialputreg("basic", c[112+5], 3);
-		serialputreg("p1", c[112+6], 8);
-		serialputreg("p2", c[112+7], 8);
-		serialputreg("fiqctl", c[112+8], 2);
-		serialputreg("en1", c[112+9], 8);
-		serialputreg("en2", c[112+10], 8);
-		serialputreg("benable", c[112+11], 2);
-		serialputs("\nCRUMB probe vbar", -1);
-		serialputreg("", c[112+12], 8);
-		serialputs(" foldchanged tick ", -1);
-		serialputdec(c[112+13]);
-		serialputreg("which", c[112+14], 1);
-		serialputreg("ttbr", c[112+15], 8);
-		serialputreg("sctlr", c[112+16], 8);
-		serialputreg("parvec", c[112+17], 16);
-		serialputreg("parcrumb", c[112+20], 16);
-		serialputreg("daif", c[112+21], 3);
-		serialputreg("cntpct", c[112+23], 16);
-		serialputs("\nCRUMB probe maxgap ", -1);
-		serialputdec(c[112+18]);
-		serialputs(" at tick ", -1);
-		serialputdec(c[112+19]);
-		serialputs(" kicktimeouts ", -1);
-		serialputdec(c[112+24]);
-		serialputs(" fiqs ", -1);
-		serialputdec(c[112+30]);
-		serialputreg("fiqpc", c[112+31], 8);
-		serialputs(" maxstall ", -1);
-		serialputdec(c[112+32]);
-		serialputs("\n", -1);
-	}
-	if(valid && c[147] != 0){
+	if(c[147] != 0){
 		serialputs("CRUMB wildsp elr", -1);
-		serialputreg("", c[144], 8);
+		serialputreg("", c[144], 16);
 		serialputreg("spsr", c[145], 3);
 		serialputreg("esr", c[146], 8);
 		serialputreg("sp", c[147], 16);
-		serialputreg("lr", c[148], 8);
-		serialputreg("fp", c[149], 16);
+		serialputreg("lr", c[148], 16);
 		serialputs("\n", -1);
 	}
-	if(valid && c[153] != 0){
+	if(c[153] != 0){
 		serialputs("CRUMB badlabel", -1);
-		serialputreg("", c[152], 8);
+		serialputreg("", c[152], 16);
 		serialputreg("sp", c[153], 16);
-		serialputreg("pc", c[154], 8);
-		serialputreg("caller", c[155], 8);
+		serialputreg("pc", c[154], 16);
+		serialputreg("caller", c[155], 16);
 		serialputs("\n", -1);
 	}
-	for(p = 104; p < 160; p++)
-		c[p] = 0;
-	c[0] = 0;
-	c[1] = 0;
-	{
-		int i;
-		c[14] = ~0ULL;
-		c[15] = 0;
-		c[16] = 0;
-		for(i = 24; i < 104; i++)
-			c[i] = 0;
-	}
+clear:
+	for(i = 0; i < 160; i++)
+		c[i] = 0;
 }
 
 void
@@ -239,16 +145,6 @@ main(void)
 {
 	long *p, *ep;
 
-	{
-		/* keep the previous boot's vector table for vectorcheck() */
-		extern u32 *vectable(void);
-		u32 *v = vectable();
-		volatile u32 *save = (volatile u32*)0x20001000;
-		int i;
-
-		for(i = 0; i < 512; i++)
-			save[i] = v[i];
-	}
 	p = (long*)edata;
 	ep = (long*)end;
 	while(p < ep)
@@ -272,10 +168,7 @@ main(void)
 	serialputs("\n", -1);
 	crumbdump();
 
-	uartrxprobe("fw");
 	uartconsole();
-	serialputs("PL011-OK\n", -1);
-	uartrxprobe("uart");
 	archconsole();
 
 	/*
@@ -285,14 +178,11 @@ main(void)
 	 * Establish the identity map before the first kernel lock.
 	 */
 	mmuinit();
-	serialputs("MMU-OK\n", -1);
-	uartrxprobe("mmu");
 	xinit();
 	poolinit();
 	poolsizeinit();
 	trapinit();
 	clockinit();
-	uartrxprobe("clock");
 	{	/* seed wall-clock from the PL031 RTC (calendar time) */
 		extern vlong rtctime(void);
 		vlong t = rtctime();
@@ -316,13 +206,11 @@ main(void)
 		extern void gpioinit(void);
 		gpioinit();
 	}
-	uartrxprobe("gpio");
 
 	{	/* VideoCore mailbox probe: verify the property channel */
 		extern void mailboxinit(void);
 		mailboxinit();
 	}
-	uartrxprobe("mbox");
 
 	procinit();
 	links();
@@ -335,10 +223,8 @@ main(void)
 		extern void fdtinit(void*);
 		fdtinit(dtbptr);
 	}
-	uartrxprobe("screen");
 	chandevreset();
 	uartconsolesetup();
-	uartrxprobe("devreset");
 
 	eve = strdup("inferno");
 	kbdinit();
@@ -374,14 +260,6 @@ init0(void)
 	poperror();
 
 	clockcheckboot();
-	tkmark("pre-probe");
-	uartrxprobe("init0");
-	tkmark("post-probe");
-	{
-		extern void fiqwatchinit(void);
-		fiqwatchinit();
-	}
-	tkmark("post-fiqarm");
 
 	/*
 	 * Publish the board MAC the firmware knows (mailbox.c) as
@@ -402,7 +280,6 @@ init0(void)
 			print("MBOX no board mac\n");
 		poperror();
 	}
-	tkmark("pre-disinit");
 	disinit("/osinit.dis");
 }
 

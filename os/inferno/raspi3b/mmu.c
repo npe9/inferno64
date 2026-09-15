@@ -67,7 +67,7 @@ mmuinit(void)
 		if(pa >= BCMPERIPH && pa < 0x40000000)
 			l2[i] = pa | Pdevice;		/* peripherals */
 		else if(pa == 0x20000000)
-			l2[i] = pa | Pdevice;		/* crumb RAM (clock.c, trap.c):
+			l2[i] = pa | Pdevice;		/* crumb RAM (l.s crumbentry, trap.c):
 							 * uncached, so a store lands in
 							 * DRAM before a watchdog reset */
 		else if(i == ptblk)

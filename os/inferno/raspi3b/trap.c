@@ -117,50 +117,6 @@ buildslot(u32 *slot, int class)
 	slot[2] = insn_b(&slot[2], (void*)crumbentry);
 }
 
-/* The vector table's address, usable before BSS is cleared. */
-u32*
-vectable(void)
-{
-	return (u32*)(((uintptr)rawvectab + VBAR_ALIGN-1) & ~(uintptr)(VBAR_ALIGN-1));
-}
-
-/*
- * Compare the table just built with the copy main() took of the
- * previous boot's table before clearing BSS (crumb RAM 0x20001000).  On
- * the Pi, the last trap before the silent death returned cleanly and no
- * exception was ever taken again: a vector table overwritten after that
- * return would do exactly that.
- */
-static void
-vectorcheck(u32 *v)
-{
-	volatile u32 *old = (volatile u32*)0x20001000;
-	int i, n, first;
-
-	n = 0;
-	first = -1;
-	for(i = 0; i < NSlot*SlotSize/4; i++)
-		if(old[i] != v[i]){
-			if(first < 0)
-				first = i;
-			n++;
-		}
-	serialputs("VECCHECK previous boot's vector table: ", -1);
-	serialputdec(n);
-	serialputs(" of ", -1);
-	serialputdec(NSlot*SlotSize/4);
-	serialputs(" words differ", -1);
-	if(first >= 0){
-		serialputs(", first slot ", -1);
-		serialputdec(first/(SlotSize/4));
-		serialputs(" word ", -1);
-		serialputdec(first%(SlotSize/4));
-		serialputreg("was", old[first], 8);
-		serialputreg("now", v[first], 8);
-	}
-	serialputs("\n", -1);
-}
-
 static void
 vectorbuild(void)
 {
@@ -192,7 +148,6 @@ vectorbuild(void)
 	 */
 	cacheflush(v, NSlot*SlotSize);
 	cacheiinv();
-	vectorcheck(v);
 	vectorinit(v);
 }
 
@@ -255,42 +210,13 @@ trapinit(void)
 	gicinit();
 }
 
-ulong irqentries;
-
 /*
- * Crumb record, continued (l.s crumbentry writes words 0-7, clockintr
- * 10-11, main 12, wdarm 13): word 14 is the peripheral IRQ whose handler
- * is running, or ~0 when none is; 15 counts handler returns; 16 is the
- * next slot of a 16-entry ring at 24-39 of the last exceptions seen by
- * trap(), each (type<<56 | irq<<48 | low 48 bits of pc); 40-103 count
- * dispatches per IRQ.  After a watchdog reset, main prints them.
+ * Crumb record (l.s crumbentry): words 0-7 are the last exception taken,
+ * 144-149 the first taken on a wild SP, 152-155 a label gotolabel refused.
+ * The block is mapped Device (mmu.c), uncached, so a record survives a
+ * reset that is not a power cycle.
  */
 enum { Crumbbase = 0x20000000 };
-
-static void
-crumbring(int type, int irq, uintptr pc)
-{
-	volatile uvlong *c = (volatile uvlong*)Crumbbase;
-	uvlong i;
-
-	i = c[16] % 16;
-	c[24+i] = (uvlong)type<<56 | (uvlong)(irq & 0xff)<<48 | (pc & 0xffffffffffffULL);
-	c[16] = i + 1;
-}
-
-static void
-crumbirq(Ureg *ur, int irq, void (*f)(Ureg*, void*), void *a)
-{
-	volatile uvlong *c = (volatile uvlong*)Crumbbase;
-
-	c[40+irq]++;
-	crumbring(1, irq, ur->pc);
-	c[14] = irq;
-	f(ur, a);
-	c[14] = ~0ULL;
-	c[15]++;
-}
-extern void fiqwatch(Ureg*);
 
 /*
  * l.s gotolabel found a label whose sp cannot be a kernel stack.
@@ -352,41 +278,7 @@ trap(Ureg *ur)
 	u32 pend;
 	int irq;
 	void (*f)(Ureg*, void*);
-	extern int fiqarmed;
 
-	/*
-	 * Once the FIQ watchdog is armed keep FIQ unmasked across every
-	 * exception return: an exception taken before init0 unmasked F
-	 * saved an SPSR with F set, and returning through it later (after
-	 * a context switch inside the handler) would mask FIQ again and
-	 * blind the watchdog exactly when interrupts stop.
-	 */
-	if(fiqarmed){
-		ur->status &= ~(uintptr)(1<<6);
-		/*
-		 * Exception entry masks FIQ as well as IRQ, so a handler that
-		 * never returns -- or a fault report that deadlocks -- would
-		 * blind the watchdog too.  Let the FIQ preempt any exception
-		 * handling but its own: fiqwatch() touches only the system
-		 * timer and the UART, and nests on this same stack.
-		 */
-		if(ur->type != TFiq){
-			extern void fiqenable(void);
-			fiqenable();
-		}
-	}
-
-	{
-		/* crumb words 17-22: progress through this trap, the Ureg
-		 * address, the process's kernel stack base, its pid, and the
-		 * caller of the last splhi/splx */
-		volatile uvlong *c = (volatile uvlong*)0x20000000;
-		c[17] = 1;
-		c[18] = (uintptr)ur;
-		c[19] = up != nil? (uintptr)up->kstack: 0;
-		c[20] = up != nil? up->pid: ~0ULL;
-		c[21] = m->splpc;
-	}
 	{
 		extern char wildstack[];
 		static int wildseen;
@@ -397,17 +289,9 @@ trap(Ureg *ur)
 		}
 	}
 	switch(ur->type){
-	case TFiq:		/* 20 a second: counted in fiqwatch, not the ring */
-		fiqwatch(ur);
-		return;
 	case TIrq:
-		irqentries++;
-		if((getcntpctl() & CntpIStatus) == 0)
-			crumbring(1, 0xff, ur->pc);
 		if(getcntpctl() & CntpIStatus){
-			((volatile uvlong*)0x20000000)[17] = 2;
 			clockintr(ur);
-			((volatile uvlong*)0x20000000)[17] = 13;
 			return;
 		}
 		pend = ((volatile u32*)IRQBASE)[IrqPending1/4];
@@ -415,14 +299,14 @@ trap(Ureg *ur)
 			if((pend & (1<<irq)) == 0)
 				continue;
 			if((f = irqhandler[irq]) != nil)
-				crumbirq(ur, irq, f, irqarg[irq]);
+				f(ur, irqarg[irq]);
 		}
 		pend = ((volatile u32*)IRQBASE)[IrqPending2/4];
 		for(irq = 32; irq < 64; irq++){
 			if((pend & (1<<(irq-32))) == 0)
 				continue;
 			if((f = irqhandler[irq]) != nil)
-				crumbirq(ur, irq, f, irqarg[irq]);
+				f(ur, irqarg[irq]);
 		}
 		return;
 	default:

@@ -39,9 +39,6 @@ pl011_pnp(void)
 	return &pl011uart;
 }
 
-ulong pl011intrs;
-ulong pl011rxchars;
-
 static void
 uartintr(Ureg*, void *arg)
 {
@@ -52,14 +49,17 @@ uartintr(Ureg*, void *arg)
 
 	uart = arg;
 	c = uart->regs;
-	pl011intrs++;
 	mis = csr32r(c, UartMIS);
-	if(mis & UartIMSCRX){
+	/*
+	 * RX fires only when the FIFO reaches its trigger level (half full,
+	 * 8 bytes); a shorter line waits for the receive timeout, 32 bits of
+	 * idle line after the last byte.
+	 */
+	if(mis & (UartIMSCRX|UartIMSCRT)){
 		for(i = 0; i < 128; i++){
 			if(csr32r(c, UartFR) & UartFRRXFE)
 				break;
 			ch = csr32r(c, UartDR) & 0xff;
-			pl011rxchars++;
 			uartrecv(uart, ch);
 		}
 	}
@@ -124,10 +124,8 @@ pl011_kick(Uart *uart)
 		for(i = 0; i < 1000000; i++)
 			if((csr32r(c, UartFR) & UartFRTXFF) == 0)
 				break;
-		if(csr32r(c, UartFR) & UartFRTXFF){
-			((volatile uvlong*)0x20000000)[112+24]++;	/* crumb: kick wait ran out */
+		if(csr32r(c, UartFR) & UartFRTXFF)
 			break;
-		}
 		csr32w(c, UartDR, *uart->op++);
 	}
 	if(uart->op < uart->oe || qlen(uart->oq) != 0)
@@ -319,69 +317,6 @@ serialputreg(char *name, uvlong v, int digits)
 	puthex(v, digits);
 }
 
-/*
- * Receive bisection, one call per boot stage.  Typed input reached the
- * PL011 early in boot (a polled probe saw it) but its receive FIFO was
- * empty at the shell, so something between the two stops bytes arriving.
- * Each call asks for a key on the console, polls the FIFO for up to four
- * seconds with interrupts masked (so no handler can take the byte first),
- * and prints what it got with the UART's configuration, the pin
- * functions of GPIO 14/15 (GPFSEL1) and 32/33 (GPFSEL3, the Bluetooth
- * UART pins), and the live levels of all four pins.  The first stage that
- * reports none, with the key sent, is where receive was lost.
- * Output goes straight to the data register, not the output queue.
- */
-void
-uartrxprobe(char *stage)
-{
-	volatile u32 *u, *g;
-	uvlong hz, t, end;
-	int s, ch;
-	u32 lev0, lev1;
-
-	u = (volatile u32*)UART0;
-	g = (volatile u32*)GPIO0;
-	s = splhi();
-	serialputs("RXPROBE ", -1);
-	serialputs(stage, -1);
-	serialputs(" send\n", -1);
-	cntfrq(&hz);
-	cycles(&t);
-	end = t + 4*hz;
-	ch = -1;
-	while(t < end){
-		if((u[UartFR] & UartFRRXFE) == 0){
-			ch = u[UartDR] & 0xfff;
-			break;
-		}
-		cycles(&t);
-	}
-	lev0 = g[0x34/4];
-	lev1 = g[0x38/4];
-	serialputs("RXPROBE ", -1);
-	serialputs(stage, -1);
-	if(ch >= 0){
-		serialputs(" got ", -1);
-		puthex(ch, 3);
-	}else
-		serialputs(" none", -1);
-	serialputreg("cr", u[UartCR], 4);
-	serialputreg("lcrh", u[UartLCRH], 2);
-	serialputreg("ibrd", u[UartIBRD], 4);
-	serialputreg("fbrd", u[UartFBRD], 2);
-	serialputreg("imsc", u[UartIMSC], 3);
-	serialputreg("fr", u[UartFR], 3);
-	serialputreg("ris", u[UartRIS], 3);
-	serialputreg("gpfsel1", g[1], 8);
-	serialputreg("gpfsel3", g[3], 8);
-	serialputreg("lev14", (lev0>>14)&1, 1);
-	serialputreg("lev15", (lev0>>15)&1, 1);
-	serialputreg("lev32", (lev1>>0)&1, 1);
-	serialputreg("lev33", (lev1>>1)&1, 1);
-	serialputs("\n", -1);
-	splx(s);
-}
-
 void
 uartconsole(void)
 {
@@ -414,6 +349,6 @@ uartconsolesetup(void)
 	 * output left over there and never needed the interrupt.  Kick once
 	 * more in case the FIFO drained while the mask was being changed.
 	 */
-	csr32w(c, UartIMSC, csr32r(c, UartIMSC) | UartIMSCRX);
+	csr32w(c, UartIMSC, csr32r(c, UartIMSC) | UartIMSCRX | UartIMSCRT);
 	uartkick(consuart);
 }

@@ -237,36 +237,8 @@ TEXT	getcntpcval(SB), 1, $-4
 	MOV	R1, 0(R0)
 	RET	R30
 
-TEXT	getcurrentel(SB), 1, $-4
-	MRS	CurrentEL, R0
-	LSR	$2, R0, R0
-	RET	R30
-
-TEXT	getvbar(SB), 1, $-4
-	MRS	SPR(D_VBAR_EL1), R0
-	RET	R30
-
-TEXT	fiqenable(SB), 1, $-4
-	MSR	$1, DAIFClr		/* imm bit0 = FIQ */
-	RET	R30
-
 TEXT	getdaif(SB), 1, $-4
 	MRS	DAIF, R0
-	RET	R30
-
-/* sysregs for the per-tick crumb snapshot (clock.c tickprobe) */
-TEXT	getttbr0(SB), 1, $-4
-	MRS	SPR(D_TTBR0_EL1), R0
-	RET	R30
-
-TEXT	getsctlr(SB), 1, $-4
-	MRS	SPR(D_SCTLR_EL1), R0
-	RET	R30
-
-/* attrans(va): PAR_EL1 after AT S1E1R -- what the MMU makes of va now */
-TEXT	attrans(SB), 1, $-4
-	WORD	$0xd5087800		/* AT S1E1R, X0 */
-	MRS	SPR(SYSARG5(3,0,7,4,0)), R0	/* PAR_EL1 */
 	RET	R30
 
 GLOBL	dtbptr(SB), $8
@@ -745,13 +717,6 @@ wildsp1:
 	ADD	$(16*1024), R9
 	MOV	R9, RSP
 	B	crumbframe
-
-/* badsp(sp): load sp and push -- a deliberate recursive fault, for tests */
-TEXT	badsp(SB), 1, $-4
-	MOV	R0, RSP
-	MOV	R30, -16(RSP)!
-	RET	R30
-
 TEXT	vectrap(SB), 1, $-4
 	CLREX				/* an exception clears the exclusive monitor,
 					 * so an interrupted _tas STXR fails and

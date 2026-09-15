@@ -185,15 +185,6 @@ kbdreport()
 	}
 }
 
-# Bring-up.  With a 100ms sleep after each of these, the Pi boots to a
-# working shell every time; without them (as here) interrupt delivery
-# died silently shortly after this program started.  The sleeps are
-# left out so that failure can be caught by the crumb record.
-step(name: string)
-{
-	sys->print("STEP %s\n", name);
-}
-
 init()
 {
 	shell: Shell;
@@ -206,13 +197,9 @@ init()
 	sys->print("RASPI3B-OK\n");
 
 	sys->bind("#S", "/dev", sys->MAFTER);
-	step("pre-sd");
 	sdcheck();
-	step("pre-draw");
 	drawtest();
-	step("pre-usb");
 	usbcheck();
-	step("pre-sh");
 	# sdfs() reams a kfs onto the SD card, mounts it over a pipe, and
 	# creates a file.  The ream and every SD write succeed, but the
 	# create-over-mount hangs: pid 1's Twalk gets its Rerror and then the
@@ -233,7 +220,6 @@ init()
 		sys->dup(cons.fd, 1);
 		sys->dup(cons.fd, 2);
 	}
-	step("pre-shinit");
 	sys->print("RASPI3B-SH-OK\n");
 	shell->init(nil, "sh" :: "-i" :: "-n" :: nil);
 }
