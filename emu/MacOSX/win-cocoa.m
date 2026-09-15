@@ -182,6 +182,11 @@ static id<MTLBuffer>	mtl_glass_buf;
 static uchar	*mtl_glass_prev;
 static int	mtl_glass_len;
 static uvlong	glass_blank, glass_churn_big, glass_frames;
+/* Pure black on the glass.  "Black messes" is a report about colour, not
+ * about timing, and nothing here was counting colour. */
+static uvlong	glass_black, glass_black_max;
+static uvlong	glass_said;	/* last frame we complained about */
+static int	glass_lastblack;
 /*
  * Geometry that reached the queue and then did not reach the screen.
  * A batch whose scissor clamps to nothing is skipped silently, and a
@@ -211,6 +216,20 @@ glass_measure(int pw, int ph, int bpl)
 	uniform = 1;
 	nd = 0;
 	tot = pw*ph;
+	{
+		int nblack = 0;
+
+		for(y = 0; y < ph; y++){
+			row = (u32*)(p + y*bpl);
+			for(x = 0; x < pw; x++)
+				if((row[x] & 0x00ffffff) == 0)
+					nblack++;
+		}
+		glass_black += nblack;
+		glass_lastblack = nblack;
+		if((uvlong)nblack > glass_black_max)
+			glass_black_max = nblack;
+	}
 	first = ((u32*)p)[0];
 	for(y = 0; y < ph; y++){
 		row = (u32*)(p + y*bpl);
@@ -226,6 +245,24 @@ glass_measure(int pw, int ph, int bpl)
 		glass_blank++;
 	if(glass_frames > 1 && nd*5 > tot*2)
 		glass_churn_big++;
+	/*
+	 * Say so, once in a while, when a presented frame is mostly black or
+	 * mostly different from the one before it.  Counting is enough when
+	 * the fault can be reproduced; when it cannot, the person who can
+	 * see it needs the process to tell them what it drew at the moment
+	 * they saw it, or the report stays "I saw black" and the measurement
+	 * stays "I did not".
+	 */
+	if(glass_said == 0 || glass_frames - glass_said > 60){
+		int pct = (int)(((vlong)glass_lastblack * 100) / tot);
+		int chg = (int)(((vlong)nd * 100) / tot);
+
+		if(pct >= 10 || chg >= 40 || uniform){
+			glass_said = glass_frames;
+			fprint(2, "METALGLASS frame %llud: %d%% black, %d%% changed%s\n",
+				glass_frames, pct, chg, uniform ? ", UNIFORM" : "");
+		}
+	}
 	memmove(mtl_glass_prev, p, bpl*ph);
 	unlock(&glass_lk);
 }
@@ -4768,7 +4805,7 @@ present_softscreen_body(void)
 			metal_presents ? metal_drawable_us/metal_presents : 0,
 			metal_presents ? metal_slotwait_us/metal_presents : 0,
 			metal_presents ? (metal_present_us - metal_drawable_us - metal_slotwait_us)/metal_presents : 0);
-		fprint(2, "METALSTATS frames=%d damage_calls=%llud damage_bytes=%llud full_uploads=%llud readbacks=%llud upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud largest_copy_bytes=%llud largest_dirty_bytes=%llud copy_notes=%llud rejected=%llud reject_storage=%llud reject_damage=%llud reject_geometry=%llud alias_storage=%llud armed=%llud cancelled=%llud g3_calls=%llud g3_tris=%llud fill_calls=%llud blank_uploads=%llud churn_big=%llud churn_small=%llud glass=%llud glassblank=%llud glasschurn=%llud geomdropped=%llud geomdrawn=%llud overlay=%llud plain=%llud presgeom=%llud torn_uploads=%llud torn_pixels=%llud spr_calls=%llud soft_fallbacks=%llud teximg_alloced=%ud teximg_declined=%ud(chan=%ud small=%ud) teximg_freed=%ud live=%d\n",
+		fprint(2, "METALSTATS frames=%d damage_calls=%llud damage_bytes=%llud full_uploads=%llud readbacks=%llud upload_bytes=%llud copy_bytes=%llud saved_upload_bytes=%llud copy_begins=%llud precopy_dirty_bytes=%llud precopy_clean_bytes=%llud largest_copy_bytes=%llud largest_dirty_bytes=%llud copy_notes=%llud rejected=%llud reject_storage=%llud reject_damage=%llud reject_geometry=%llud alias_storage=%llud armed=%llud cancelled=%llud g3_calls=%llud g3_tris=%llud fill_calls=%llud blank_uploads=%llud churn_big=%llud churn_small=%llud glass=%llud glassblank=%llud glasschurn=%llud glassblackavg=%llud glassblackmax=%llud geomdropped=%llud geomdrawn=%llud overlay=%llud plain=%llud presgeom=%llud torn_uploads=%llud torn_pixels=%llud spr_calls=%llud soft_fallbacks=%llud teximg_alloced=%ud teximg_declined=%ud(chan=%ud small=%ud) teximg_freed=%ud live=%d\n",
 			metal_stat_frames, metal_damage_calls, metal_damage_bytes,
 			metal_full_uploads, metal_readbacks, metal_upload_bytes,
 			metal_copy_bytes, metal_saved_bytes,
@@ -4780,6 +4817,7 @@ present_softscreen_body(void)
 			metal_fill_calls, metal_blank_uploads,
 			present_churn_big, present_churn_small,
 			glass_frames, glass_blank, glass_churn_big,
+			glass_frames ? glass_black/glass_frames : 0, glass_black_max,
 			geom_scissor_dropped, geom_batches_drawn,
 			pres_overlay, pres_plain, pres_geom,
 			metal_torn_uploads, metal_torn_pixels, metal_spr_calls,
@@ -4791,6 +4829,7 @@ present_softscreen_body(void)
 		metal_torn_uploads = metal_torn_pixels = 0;
 		present_churn_big = present_churn_small = 0;
 		glass_blank = glass_churn_big = glass_frames = 0;
+		glass_black = glass_black_max = 0;
 		geom_scissor_dropped = geom_batches_drawn = 0;
 		pres_overlay = pres_plain = pres_geom = 0;
 		{
