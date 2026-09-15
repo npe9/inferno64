@@ -231,11 +231,12 @@ trap(Ureg *ur)
 		ur->status &= ~(uintptr)(1<<6);
 		/*
 		 * Exception entry masks FIQ as well as IRQ, so a handler that
-		 * never returns would blind the watchdog too.  Let the FIQ
-		 * preempt IRQ handling: fiqwatch() touches only the system
+		 * never returns -- or a fault report that deadlocks -- would
+		 * blind the watchdog too.  Let the FIQ preempt any exception
+		 * handling but its own: fiqwatch() touches only the system
 		 * timer and the UART, and nests on this same stack.
 		 */
-		if(ur->type == TIrq){
+		if(ur->type != TFiq){
 			extern void fiqenable(void);
 			fiqenable();
 		}
@@ -280,6 +281,19 @@ trap(Ureg *ur)
 		 * mid-panic is still not something to invite.
 		 */
 		splhi();
+		/*
+		 * Straight to the UART first: iprint() also draws on the
+		 * framebuffer console and can wait on locks the faulting code
+		 * holds, and a report that never appears looks like a hang.
+		 */
+		serialputs("TRAP type ", -1);
+		serialputdec(ur->type);
+		serialputreg("esr", ur->cause, 8);
+		serialputreg("pc", ur->pc, 8);
+		serialputreg("lr", ur->r30, 8);
+		serialputreg("far", ur->tval, 16);
+		serialputreg("sp", ur->sp, 8);
+		serialputs("\n", -1);
 		/*
 		 * iprint(), not print(): print() takes kmesg.lk, and a fault
 		 * inside code holding it (poolfree() under the print lock, seen

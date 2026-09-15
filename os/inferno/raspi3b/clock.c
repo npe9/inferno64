@@ -163,7 +163,7 @@ heartbeat(Ureg *u)
 {
 	extern ulong pl011intrs, pl011rxchars, idlecount, fiqcount;
 
-	if(m->ticks % (5*HZ) != 0)
+	if(m->ticks % (m->ticks < 120*HZ? HZ: 10*HZ) != 0)
 		return;
 	serialputs("HB ticks ", -1);
 	serialputdec(m->ticks);

@@ -32,6 +32,12 @@
 #define	D_SPSR_EL2	SYSARG5(3,4,4,0,0)
 #define	D_ELR_EL2	SYSARG5(3,4,4,0,1)
 #define	D_CNTHCTL_EL2	SYSARG5(3,4,14,1,0)
+#define	D_CPTR_EL2	SYSARG5(3,4,1,1,2)
+#define	D_MDCR_EL2	SYSARG5(3,4,1,1,1)
+#define	D_PMCR_EL0	SYSARG5(3,3,9,12,0)
+#define	D_VPIDR_EL2	SYSARG5(3,4,0,0,0)
+#define	D_VMPIDR_EL2	SYSARG5(3,4,0,0,5)
+#define	D_MIDR_EL1	SYSARG5(3,0,0,0,0)
 #define	D_CNTVOFF_EL2	SYSARG5(3,4,14,0,3)
 #define	D_ICC_SRE_EL1	SYSARG5(3,0,12,12,5)
 #define	D_ICC_PMR_EL1	SYSARG5(3,0,4,6,0)
@@ -172,6 +178,25 @@ atel2:
 	MSR	R0, SPR(D_CNTHCTL_EL2)
 	MOV	$0, R0
 	MSR	R0, SPR(D_CNTVOFF_EL2)
+	/*
+	 * The rest of what Linux's el2_setup does before the same drop, so
+	 * nothing EL1 does can trap to an EL2 that has no vectors (armstub8
+	 * installs none, and such a trap hangs silently with every
+	 * exception masked): no FP/SIMD or trace traps (CPTR_EL2 RES1 bits
+	 * only), no PMU or debug traps with every counter left to EL1
+	 * (MDCR_EL2.HPMN = PMCR_EL0.N), and the real MIDR/MPIDR for EL1 to
+	 * read instead of the UNKNOWN reset values of their virtual copies.
+	 */
+	MOV	$0x33ff, R0
+	MSR	R0, SPR(D_CPTR_EL2)
+	MRS	SPR(D_PMCR_EL0), R0
+	LSR	$11, R0, R0
+	AND	$0x1f, R0, R0
+	MSR	R0, SPR(D_MDCR_EL2)
+	MRS	SPR(D_MIDR_EL1), R0
+	MSR	R0, SPR(D_VPIDR_EL2)
+	MRS	SPR(D_MPIDR_EL1), R0
+	MSR	R0, SPR(D_VMPIDR_EL2)
 	MOV	$(1<<31), R0		/* EL2 (real hardware): drop EL2 -> EL1 */
 	MSR	R0, SPR(D_HCR_EL2)
 	MOV	$0x3c5, R0		/* EL1h, DAIF masked */

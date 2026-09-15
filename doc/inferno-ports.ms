@@ -19392,3 +19392,19 @@ first ten kernel-text addresses on the stack above the stuck frame.
 Falsified under QEMU with an endless loop in clockintr after 400 ticks:
 the report named clockintr, with trap, vectrap, idle, idlehands, runproc
 and sched on the stack.
+.PP
+Build 1789468146 on the Pi hung at the prompt with the watchdog able to
+preempt IRQ handlers, and still reported nothing; no heartbeat has ever
+printed on the board, including between init0 and the prompt, where QEMU
+prints them.  Two blind spots remained.  A synchronous fault reports through
+iprint(), which also draws on the framebuffer console and can wait on locks,
+with FIQ masked by the exception entry: trap() now unmasks FIQ for every
+exception type except FIQ itself, and writes TRAP type, ESR, pc, lr, FAR
+and sp straight to the UART before iprint (falsified under QEMU by reading
+0x7fff00000000 after arming: "TRAP type 0 esr 96000004 pc 000f70b4").  And
+anything EL1 does that traps to EL2 hangs silently, because armstub8 installs
+no EL2 vectors: the EL2 drop now also does the rest of Linux's el2_setup,
+CPTR_EL2 = 0x33ff (no FP/SIMD or trace traps), MDCR_EL2.HPMN = PMCR_EL0.N
+with no PMU or debug traps, and VPIDR_EL2/VMPIDR_EL2 from MIDR/MPIDR,
+encodings checked against GNU as.  The heartbeat runs every second for the
+first two minutes.
