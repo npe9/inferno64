@@ -19307,3 +19307,14 @@ again and every later line, including TICK-OK and the shell, waited
 forever.  QEMU's PL011 empties its FIFO instantly, so kick() never left
 output behind there.  The setup now ORs the receive bit into the mask and
 kicks the queue once.
+.PP
+Build 1789465747 on the Pi drained the output queued at device reset
+once init0 enabled interrupts (the banner, conf and DWC lines appeared)
+and again showed 50 ticks in IRQCHECK, but the TICK-OK line queued right
+after it never appeared, IMSC read 0x010 at the next probe and no PL011
+interrupt came in that half second.  The PL011 raises its transmit
+interrupt as the FIFO level falls through the trigger, which QEMU, draining
+instantly, does not reproduce, and output left to it stalled.  kick() now
+sends everything staged or queued itself, waiting with a bound on TXFF
+for room, as the last image that reached the shell on this Pi did; TXIM
+stays armed only if the wait runs out.

@@ -104,14 +104,28 @@ pl011_kick(Uart *uart)
 	int i;
 
 	c = uart->regs;
-	for(i = 0; i < 128; i++){
-		if(csr32r(c, UartFR) & UartFRTXFF)
-			break;
+	/*
+	 * Send everything staged or queued now, waiting (bounded) for FIFO
+	 * room rather than leaving the rest to the transmit interrupt.  On
+	 * the Pi, output left to TXIM stopped: a TICK-OK line queued after
+	 * interrupts were on never appeared, IMSC read back with TXIM clear
+	 * and no PL011 interrupt arrived in the following half second.  The
+	 * PL011 raises TX only as its FIFO level falls through the trigger,
+	 * which QEMU (draining instantly, raising it as a level) never
+	 * reproduces.  kick() runs under ilock, so this holds interrupts off
+	 * for about 87us a byte; TXIM remains the fallback if the wait runs
+	 * out.
+	 */
+	for(;;){
 		if(uart->op >= uart->oe && uartstageoutput(uart) == 0)
+			break;
+		for(i = 0; i < 1000000; i++)
+			if((csr32r(c, UartFR) & UartFRTXFF) == 0)
+				break;
+		if(csr32r(c, UartFR) & UartFRTXFF)
 			break;
 		csr32w(c, UartDR, *uart->op++);
 	}
-	/* Keep TX interrupts armed only while staged/queued output remains. */
 	if(uart->op < uart->oe || qlen(uart->oq) != 0)
 		csr32w(c, UartIMSC, csr32r(c, UartIMSC) | UartIMSCTX);
 	else
