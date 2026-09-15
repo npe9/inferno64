@@ -187,6 +187,41 @@ static uvlong	glass_blank, glass_churn_big, glass_frames;
 static uvlong	glass_black, glass_black_max;
 static uvlong	glass_said;	/* last frame we complained about */
 enum { GlassStep = 4 };		/* sample every 4th pixel each way */
+static int	glass_dumped;	/* how many offending frames written out */
+static int	metal_blit_failed;	/* the compose pass did not happen */
+
+/*
+ * Write the evidence down as well as saying it.  A report that has to be
+ * relayed by the person watching loses the two things worth having - which
+ * frame, and WHERE on the screen the black was - and a whole-window flash
+ * and a black band look identical in a sentence.  glass.log and
+ * glassframe*.raw land in emu's working directory, which is the tree.
+ */
+static void
+glass_record(uchar *p, int pw, int ph, int bpl, uvlong frame, int pct, int chg, int uniform)
+{
+	FILE *fp;
+	char nm[64];
+	int y;
+
+	fp = fopen("glass.log", "a");
+	if(fp != nil){
+		fprintf(fp, "frame %llu: %d%% black, %d%% changed%s, %dx%d\n",
+			(unsigned long long)frame, pct, chg,
+			uniform ? ", UNIFORM" : "", pw, ph);
+		fclose(fp);
+	}
+	if(glass_dumped >= 4)
+		return;
+	snprintf(nm, sizeof nm, "glassframe%d.raw", glass_dumped);
+	fp = fopen(nm, "wb");
+	if(fp == nil)
+		return;
+	for(y = 0; y < ph; y++)
+		fwrite(p + y*bpl, 4, pw, fp);
+	fclose(fp);
+	glass_dumped++;
+}
 static int	glass_lastblack;
 /*
  * Geometry that reached the queue and then did not reach the screen.
@@ -275,6 +310,12 @@ glass_measure(int pw, int ph, int bpl)
 			glass_said = glass_frames;
 			fprint(2, "METALGLASS frame %llud: %d%% black, %d%% changed%s\n",
 				glass_frames, pct, chg, uniform ? ", UNIFORM" : "");
+			/* frame 1 is emu's own blank startup frame: it is the
+			 * proof the check works, not evidence of a fault, so
+			 * it does not use up one of the four dump slots */
+			if(glass_frames > 1)
+				glass_record(p, pw, ph, bpl, glass_frames,
+					pct, chg, uniform);
 		}
 	}
 	unlock(&glass_lk);
@@ -4563,6 +4604,22 @@ metal_blit_tex(id<MTLCommandBuffer> cmd, id<MTLTexture> drawabletex,
 	rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;
 	rp.colorAttachments[0].storeAction = MTLStoreActionStore;
 	enc = [cmd renderCommandEncoderWithDescriptor:rp];
+	if(enc == nil || t0 == nil){
+		/*
+		 * Nothing would be encoded, and the load action is DontCare -
+		 * so the drawable would go to the screen holding whatever was
+		 * in that memory, which is a black or garbage frame.  Say so
+		 * once rather than presenting it silently; the caller cannot
+		 * tell from here that the pass never happened.
+		 */
+		static int said;
+
+		if(!said++)
+			fprint(2, "metal: blit pass could not be encoded; "
+				"a frame was dropped rather than presented blank\n");
+		metal_blit_failed = 1;
+		return;
+	}
 	[enc setRenderPipelineState:pipe];
 	[enc setFragmentTexture:t0 atIndex:0];
 	if(t1 != nil)
