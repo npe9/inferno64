@@ -1277,7 +1277,7 @@ JSON-over-TCP service amount to.
 .CW styxbench 's
 .CW -r
 arm drives it over
-.B one connection, reused ,
+.B "one connection, reused" ,
 exactly as the Styx and raw arms are.  That detail decides the result:
 .CW httpclient (2)
 here sends
