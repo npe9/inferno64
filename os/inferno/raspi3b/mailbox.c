@@ -204,6 +204,35 @@ mboxgetmac(uchar *mac)
 }
 
 /*
+ * Ask the firmware for a clock's rate in Hz (GET_CLOCK_RATE, tag
+ * 0x00030002).  The SDHOST controller is clocked by the VPU core clock
+ * (id 4), and its divisor has to be computed from that rate: config.txt
+ * pins core_freq, but a kernel should ask rather than assume.  Returns 0
+ * if the firmware does not answer.
+ */
+u32
+mboxgetclock(int clkid)
+{
+	static u32 raw[8+4];
+	u32 *buf;
+
+	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
+	buf[0] = 8*4;			/* total bytes */
+	buf[1] = 0;			/* request */
+	buf[2] = 0x00030002;		/* tag: get clock rate */
+	buf[3] = 8;			/* value buffer size */
+	buf[4] = 0;			/* request code */
+	buf[5] = clkid;			/* clock id */
+	buf[6] = 0;			/* <- rate in Hz */
+	buf[7] = 0;			/* end tag */
+	if(mboxprop(buf) < 0)
+		return 0;
+	if((buf[4] & 0x80000000) == 0)
+		return 0;
+	return buf[6];
+}
+
+/*
  * Switch a firmware-managed power domain (USB HCD, SD, etc.) on or off
  * through SET_POWER_STATE (tag 0x00028001).  The value is the device id
  * plus a state word: bit0 = on, bit1 = wait for the domain to settle.

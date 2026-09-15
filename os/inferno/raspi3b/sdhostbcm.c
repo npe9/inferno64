@@ -40,6 +40,8 @@ enum {
 	SDRSP2	= 0x18/4,
 	SDRSP3	= 0x1c/4,
 	SDHSTS	= 0x20/4,
+	SDTOUT	= 0x28/4,	/* data timeout, in card clocks */
+	SDCDIV	= 0x2c/4,	/* card clock divisor: fclk/(div+2) */
 	SDVDD	= 0x30/4,
 	SDEDM	= 0x34/4,	/* extended data mode: FIFO fill level + FSM */
 	SDHCFG	= 0x38/4,
@@ -54,6 +56,32 @@ enum {
 	Longresp = 0x200,
 	Writecmd = 0x80,
 	Readcmd	= 0x40,
+
+	/* SDHSTS status/error bits, all write-1-to-clear */
+	Hstsbusy = 0x400,
+	Hstsblock = 0x200,
+	Hstssdio = 0x100,
+	Hstsrewtout = 0x80,
+	Hstscmdtout = 0x40,
+	Hstscrc16 = 0x20,
+	Hstscrc7 = 0x10,
+	Hstsfifo = 0x08,
+	Hstsclear = Hstsbusy|Hstsblock|Hstssdio|Hstsrewtout|Hstscmdtout|
+		Hstscrc16|Hstscrc7|Hstsfifo,
+	Hstserror = Hstsrewtout|Hstscmdtout|Hstscrc16|Hstscrc7|Hstsfifo,
+
+	/* SDHCFG */
+	Cfgslowcard = 1<<3,
+	Cfgwideext = 1<<2,
+	Cfgwideint = 1<<1,
+
+	Edmrdthreshsh = 14,	/* SDEDM FIFO read/write thresholds */
+	Edmwrthreshsh = 9,
+	Edmthreshmask = 0x1f,
+
+	Idclock	= 400000,	/* card identification clock */
+	Datclock = 25000000,	/* after identification */
+	Cdivmax	= 0x7ff,
 
 	Fifofillsh = 4,		/* SDEDM bits 8:4: words currently in the FIFO */
 	Fifofillmask = 0x1f,
@@ -76,13 +104,111 @@ struct Ctlr {
 static Ctlr sdctlr;
 extern SDifc sdhostbcmifc;
 
-/* Issue a command; the model completes it synchronously.  Returns SDRSP0. */
+/*
+ * Issue a command and wait for the controller to finish it.  QEMU's model
+ * completes a command inside the register write, so the original driver
+ * read SDRSP0 straight back and worked there; a real SDHOST clears
+ * NEW_FLAG when the command is done, sets FAIL_FLAG when it failed, and
+ * says why in SDHSTS.  Without the wait the response read is whatever the
+ * previous command left, which is why the Pi found no card at all.
+ * Returns 0, or -1 with the SDHSTS error bits in *errp.
+ */
+static int
+sdcmderr(u32 *r, int cmd, u32 arg, int flags, u32 *errp)
+{
+	int i;
+	u32 sts;
+
+	if(errp != nil)
+		*errp = 0;
+	for(i = 0; i < 100000; i++)		/* previous command still running? */
+		if((r[SDCMD] & Newflag) == 0)
+			break;
+	if(r[SDCMD] & Newflag)
+		return -1;
+	r[SDHSTS] = Hstsclear;
+	r[SDARG] = arg;
+	r[SDCMD] = cmd | flags | Newflag;
+	for(i = 0; i < 100000; i++)
+		if((r[SDCMD] & Newflag) == 0)
+			break;
+	if(r[SDCMD] & Newflag)
+		return -1;
+	sts = r[SDHSTS] & Hstserror;
+	if(errp != nil)
+		*errp = sts;
+	if(r[SDCMD] & Failflag)
+		return -1;
+	/*
+	 * A CRC7 error on the R3 responses (ACMD41, CMD58) is expected: the
+	 * card does not compute one for them.  Every other error is real.
+	 */
+	if(sts & ~(u32)Hstscrc7)
+		return -1;
+	return 0;
+}
+
+/* The same, for the callers that only want the response word. */
 static u32
 sdcmd(u32 *r, int cmd, u32 arg, int flags)
 {
-	r[SDARG] = arg;
-	r[SDCMD] = cmd | flags | Newflag;
+	sdcmderr(r, cmd, arg, flags, nil);
 	return r[SDRSP0];
+}
+
+/*
+ * Card clock: SDHOST divides the VPU core clock by (SDCDIV+2).  The
+ * firmware knows the core rate (config.txt pins core_freq=250, but ask).
+ */
+static void
+sdhostclock(u32 *r, ulong fclk, ulong want)
+{
+	ulong div;
+
+	if(fclk == 0)
+		fclk = 250000000;
+	div = fclk / want;
+	if(div < 2)
+		div = 2;
+	if(fclk / div > want)
+		div++;
+	div -= 2;
+	if(div > Cdivmax)
+		div = Cdivmax;
+	r[SDCDIV] = div;
+}
+
+/*
+ * Power-cycle and reset the controller, as Linux's bcm2835-sdhost does
+ * before identification: FIFO thresholds, power off, config and divisor
+ * while it is down, then power on.  QEMU needs none of this.
+ */
+static void
+sdhostreset(u32 *r, ulong fclk)
+{
+	u32 edm;
+
+	edm = r[SDEDM];
+	edm &= ~(u32)((Edmthreshmask<<Edmrdthreshsh)|(Edmthreshmask<<Edmwrthreshsh));
+	edm |= (4<<Edmrdthreshsh) | (4<<Edmwrthreshsh);
+	r[SDEDM] = edm;
+	delay(20);
+	r[SDVDD] = 0;				/* power off */
+	delay(20);
+	r[SDCMD] = 0;
+	r[SDARG] = 0;
+	r[SDTOUT] = 0xf00000;
+	r[SDCDIV] = 0;
+	r[SDHSTS] = Hstsclear;
+	r[SDHCFG] = 0;
+	r[SDHBCT] = 0;
+	r[SDHBLC] = 0;
+	delay(20);
+	r[SDVDD] = 1;				/* power on */
+	delay(20);
+	r[SDHCFG] = Cfgslowcard;
+	sdhostclock(r, fclk, Idclock);
+	delay(20);
 }
 
 /*
@@ -129,36 +255,62 @@ static int
 sdcardinit(Ctlr *c)
 {
 	u32 *r = c->r;
-	u32 ocr, csd[4];
+	u32 ocr, csd[4], err;
 	int i, rbl, cmult;
 	uvlong cap;
+	ulong fclk;
 	uchar b[16];
+	extern u32 mboxgetclock(int);
 
 	/* route the SD card from the default SDHCI to SDHOST */
 	for(i = 48; i <= 53; i++)
 		gpiofsel(i, Alt0);
 
-	r[SDVDD] = 1;				/* power on */
-	r[SDHCFG] = 0;
+	fclk = mboxgetclock(4);			/* VPU core clock */
+	sdhostreset(r, fclk);
 
-	sdcmd(r, 0, 0, Noresp);			/* CMD0 GO_IDLE */
-	if((sdcmd(r, 8, 0x1aa, 0) & 0xff) != 0xaa)	/* CMD8 SEND_IF_COND */
+	if(sdcmderr(r, 0, 0, Noresp, &err) < 0){	/* CMD0 GO_IDLE */
+		print("sdhost: CMD0 failed, sdhsts %#lux cmd %#lux\n",
+			(ulong)err, (ulong)r[SDCMD]);
+		return 0;
+	}
+	delay(2);
+	if(sdcmderr(r, 8, 0x1aa, 0, &err) < 0 || (r[SDRSP0] & 0xff) != 0xaa){
+		print("sdhost: no card answering CMD8 (rsp %#lux sdhsts %#lux)\n",
+			(ulong)r[SDRSP0], (ulong)err);
 		return 0;			/* no v2 card answering */
+	}
 	ocr = 0;
-	for(i = 0; i < 1000; i++){		/* ACMD41 init loop */
-		sdcmd(r, 55, 0, 0);
-		ocr = sdcmd(r, 41, 0x40ff8000, 0);
+	for(i = 0; i < 100; i++){		/* ACMD41 init loop, up to ~1s */
+		if(sdcmderr(r, 55, 0, 0, &err) < 0)
+			continue;
+		if(sdcmderr(r, 41, 0x40ff8000, 0, &err) < 0)
+			continue;
+		ocr = r[SDRSP0];
 		if(ocr & 0x80000000)
 			break;
+		delay(10);
 	}
-	if(!(ocr & 0x80000000))
+	if(!(ocr & 0x80000000)){
+		print("sdhost: card never left idle (ocr %#lux)\n", (ulong)ocr);
 		return 0;
+	}
 	c->byteaddr = (ocr & 0x40000000)? 0: 1;	/* CCS: 1 = block-addressed */
 
-	sdcmd(r, 2, 0, Longresp);		/* CMD2 ALL_SEND_CID */
-	c->rca = sdcmd(r, 3, 0, 0) >> 16;	/* CMD3 SEND_RELATIVE_ADDR */
+	if(sdcmderr(r, 2, 0, Longresp, &err) < 0){	/* CMD2 ALL_SEND_CID */
+		print("sdhost: CMD2 failed, sdhsts %#lux\n", (ulong)err);
+		return 0;
+	}
+	if(sdcmderr(r, 3, 0, 0, &err) < 0){	/* CMD3 SEND_RELATIVE_ADDR */
+		print("sdhost: CMD3 failed, sdhsts %#lux\n", (ulong)err);
+		return 0;
+	}
+	c->rca = r[SDRSP0] >> 16;
 
-	sdcmd(r, 9, c->rca<<16, Longresp);	/* CMD9 SEND_CSD */
+	if(sdcmderr(r, 9, c->rca<<16, Longresp, &err) < 0){	/* CMD9 SEND_CSD */
+		print("sdhost: CMD9 failed, sdhsts %#lux\n", (ulong)err);
+		return 0;
+	}
 	csd[0] = r[SDRSP3];			/* csd[0..3]  (big-endian in the word) */
 	csd[1] = r[SDRSP2];			/* csd[4..7]  */
 	csd[2] = r[SDRSP1];			/* csd[8..11] */
@@ -179,8 +331,17 @@ sdcardinit(Ctlr *c)
 		c->sectors = (cap+1) << 10;
 	}
 
-	sdcmd(r, 7, c->rca<<16, Busywait);	/* CMD7 SELECT */
-	sdcmd(r, 16, Secsize, 0);		/* CMD16 SET_BLOCKLEN */
+	if(sdcmderr(r, 7, c->rca<<16, Busywait, &err) < 0){	/* CMD7 SELECT */
+		print("sdhost: CMD7 select failed, sdhsts %#lux\n", (ulong)err);
+		return 0;
+	}
+	if(sdcmderr(r, 16, Secsize, 0, &err) < 0){	/* CMD16 SET_BLOCKLEN */
+		print("sdhost: CMD16 failed, sdhsts %#lux\n", (ulong)err);
+		return 0;
+	}
+	sdhostclock(r, fclk, Datclock);		/* identification done: speed up */
+	print("sdhost: card rca %#ux %s %llud sectors, core clock %lud Hz\n",
+		c->rca, c->byteaddr? "byte": "block", c->sectors, fclk);
 	return 1;
 }
 
