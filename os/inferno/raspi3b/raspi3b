@@ -1,15 +1,10 @@
-# virtarm64 - QEMU -M virt, 64-bit AArch64 (cortex-a72)
+# raspi3b - Raspberry Pi 3 Model B (BCM2837, 4x Cortex-A53, AArch64)
 #
-# The 64-bit analogue of os/inferno/armv7: one privilege level (EL1),
-# MMU off, the same QEMU virt machine (confirmed address-for-address
-# identical to armv7's board via -machine dumpdtb regardless of
-# -cpu cortex-a15 vs cortex-a72 -- see mem.h).  Genuinely 64-bit: a
-# real 7c/7l LP64 compiler, not a 32-bit core the way armv7 is, and
-# DISWORD is the tree default (8), the same word size riscv64/virt's
-# own Dis modules already use -- so this board's root file list
-# reuses /dis (not /dis32) and INIT=virtinit (riscv64's own init
-# program) directly, unlike virt32/armv7 which each needed a fresh
-# init module for their own 4-byte Dis word.
+# One kernel image, kernel8.img, for both the board and the emulator: the
+# Pi firmware loads it raw at 0x80000 and enters core 0 at EL2 with the
+# other cores in armstub8's spin table, and qemu-system-aarch64 -M raspi3b
+# -kernel kernel8.img does the same (see qemu.sh).  Console is the PL011
+# on GPIO 14/15 (config.txt: enable_uart=1, dtoverlay=disable-bt).
 
 dev
 	root
@@ -83,13 +78,12 @@ port
 	xalloc
 	swcursor
 
-	archvirtarm64
+	archbcm
 
 misc
-	uartmini
-	uartvirtarm64
+	uartpl011
 	screenbcm
-	randomvirtarm64
+	randombcm
 	sdhostbcm
 
 mod

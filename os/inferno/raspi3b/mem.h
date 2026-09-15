@@ -1,14 +1,9 @@
 /*
- * QEMU -M virt, AArch64 (cortex-a72) -- EL1 only, MMU off, identity/
- * physical addressing throughout, the same "bare and unmapped" model
- * os/inferno/armv7 uses for 32-bit ARM.  Addresses verified against
- * this host's own QEMU (10.1.3) via
- * qemu-system-aarch64 -M virt -machine dumpdtb=... ; dtc -I dtb -O dts,
- * not assumed from armv7's board even though the QEMU "virt" machine
- * model turned out to be address-for-address identical regardless of
- * -cpu (cortex-a15 vs cortex-a72): same PHYSDRAM, same pl011, same
- * GICv2 (armv7's "arm,cortex-a15-gic" compatible string, unchanged),
- * same virtio-mmio layout.  See doc/inferno-ports.ms.
+ * Raspberry Pi 3 Model B: BCM2837, Cortex-A53, AArch64 EL1, identity
+ * mapped (mmu.c).  RAM from 0; the kernel is loaded at 0x80000 by the
+ * Pi firmware and by QEMU -M raspi3b alike.  Peripherals are the BCM2835
+ * block at 0x3f000000 (bus 0x7e000000) and the BCM2836 per-core block at
+ * 0x40000000.
  */
 #define	BI2BY		8
 #define	BI2WD		64
@@ -27,16 +22,15 @@
 #define	HZ		100
 #define	KSTACK		(32*1024)
 
-/* Physical / virtual (identity, MMU off) */
+/* Physical = virtual (identity map) */
 #define	PHYSDRAM	((uintptr)0x0)
 #define	DRAMSIZE	(256*1024*1024)
 #define	KZERO		PHYSDRAM
 #define	KTZERO		((uintptr)0x80000)
 
-/* pl011@9000000, same as armv7's own board (same QEMU virt machine) */
 #define	UART0		((uintptr)0x3f201000)	/* PL011 */
 #define	AUX0		((uintptr)0x3f215000)	/* BCM2835 AUX: mini UART (UART1) */
-#define	RTC0		((uintptr)0x09010000)	/* arm,pl031 */
+#define	PM0		((uintptr)0x3f100000)	/* BCM2835 power manager / watchdog */
 
 #define	BCMPERIPH	((uintptr)0x3f000000)
 #define	IRQBASE		(BCMPERIPH + 0x00b200)	/* BCM2835 ARM IRQ controller */

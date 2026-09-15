@@ -55,7 +55,7 @@ void	gicinit(void);
 void	timerie(void);
 void	uartconsole(void);
 void	uartconsolesetup(void);
-void	uartearlyprobe(void);
+void	uartrxprobe(char*);
 void	clockcheckboot(void);
 void	serialputc(int);
 void	serialputs(char*, int);
@@ -90,4 +90,3 @@ void	cycles(uvlong*);		/* also in io.h; proc.c includes fns.h, not io.h */
 extern int	(*pcicfgrw8)(int, int, int, int);
 extern int	(*pcicfgrw16)(int, int, int, int);
 extern int	(*pcicfgrw32)(int, int, int, int);
-uvlong	psci(uvlong, uvlong, uvlong, uvlong);

@@ -1,5 +1,12 @@
 /*
- * BCM2835 AUX mini UART (UART1) at 0x3f215040: the raspi3b console.
+ * BCM2835 AUX mini UART (UART1) at 0x3f215040.
+ *
+ * NOT LINKED: the console is the PL011 (uartpl011.c), and this driver's
+ * enable takes GPIO 14/15 for itself, so it must not be opened while the
+ * PL011 owns the header.  One physical boot with it as the console
+ * (build 1789434335, config.txt without disable-bt) printed nothing at
+ * all; that has not been explained.  Kept for the Bluetooth arrangement
+ * below, where it would be the header UART again.
  *
  * On a Pi 3B the PL011 (UART0) is wired to the Bluetooth part and the
  * mini UART is what reaches GPIO 14/15 (header pins 8/10), which is
@@ -436,118 +443,3 @@ PhysUart miniphysuart = {
 	.getc		= minigetc,
 	.putc		= miniputc,
 };
-
-void
-serialputc(int c)
-{
-	miniputc(&miniuart, c);
-}
-
-void
-serialputs(char *s, int n)
-{
-	if(n < 0){
-		while(*s){
-			if(*s == '\n')
-				serialputc('\r');
-			serialputc(*s++);
-		}
-		return;
-	}
-	while(--n >= 0){
-		if(*s == '\n')
-			serialputc('\r');
-		serialputc(*s++);
-	}
-}
-
-void (*serwrite)(char*, int) = serialputs;
-
-static int
-consolerx(Queue*, int ch)
-{
-	extern Queue *kbdq;
-
-	if(kbdq == nil)
-		return 0;
-	return kbdcr2nl(kbdq, ch);
-}
-
-void
-uartconsole(void)
-{
-	Uart *uart;
-
-	uart = &miniuart;
-	(*uart->phys->enable)(uart, 0);
-	consuart = uart;
-	uart->console = 1;
-}
-
-static void
-puthex(ulong v, int digits)
-{
-	char buf[16];
-	int i;
-
-	if(digits > sizeof buf)
-		digits = sizeof buf;
-	for(i = digits-1; i >= 0; i--){
-		buf[i] = "0123456789abcdef"[v & 0xf];
-		v >>= 4;
-	}
-	serialputs(buf, digits);
-}
-
-/*
- * Bring-up probe, before the MMU, the allocator or any interrupt:
- * does a byte typed at the serial adapter reach the mini UART at
- * all?  Polled, bounded to three seconds, and the byte is consumed.
- * If this sees the key and the shell later does not, the fault is
- * in the kernel's handoff, not in the wire, the pins or the baud.
- */
-void
-uartearlyprobe(void)
-{
-	volatile u32 *ap;
-	uvlong hz, t, end;
-
-	ap = minictlr.reg;
-	cntfrq(&hz);
-	cycles(&t);
-	end = t + 3*hz;
-	serialputs("MINI-RX-EARLY: type a key within 3s\n", -1);
-	while(t < end){
-		if(ap[MuLsr] & RxRdy){
-			serialputs("MINI-RX-EARLY-OK 0x", -1);
-			puthex(ap[MuIo] & 0xff, 2);
-			serialputs("\n", -1);
-			return;
-		}
-		cycles(&t);
-	}
-	serialputs("MINI-RX-EARLY-NONE lsr 0x", -1);
-	puthex(ap[MuLsr], 2);
-	serialputs(" cntl 0x", -1);
-	puthex(ap[MuCntl], 2);
-	serialputs(" baud 0x", -1);
-	puthex(ap[MuBaud], 4);
-	serialputs("\n", -1);
-}
-
-void
-uartconsolesetup(void)
-{
-	Ctlr *c;
-
-	if(consuart == nil)
-		return;
-	consuart->putc = consolerx;
-	c = consuart->regs;
-	print("uart: eia0 mini uart at %#p irq %d: enables %#ux cntl %#ux lcr %#ux "
-		"divisor %ud%s (%d baud) ier %#ux lsr %#ux gpfsel1 %#ux\n",
-		(void*)AUX0, IRQaux, c->reg[Enables], c->reg[MuCntl], c->reg[MuLcr],
-		c->reg[MuBaud] & 0xffff, c->fwdivisor? " from firmware": "",
-		divrate(consuart, c->reg[MuBaud] & 0xffff),
-		c->ier, c->reg[MuLsr], ((volatile u32*)GPIO0)[1]);
-}

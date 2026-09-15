@@ -43,24 +43,20 @@ whose existing installation or data you need.  The normal raspi3b init opens
 the SD block device read-only and reports SD-READ-OK; it does not reformat the
 card or run the old destructive driver write test.
 
-config.txt sets arm_64bit=1, kernel=kernel8.img and enable_uart=1, and
-names no uart overlay.  That is the Pi 3's default pin arrangement: the
-AUX mini UART (UART1), which this kernel's console drives, is on GPIO
-14/15 (header pin 8 TX, pin 10 RX, pin 6 ground), and the PL011 stays on
-the Bluetooth part.  Do not add dtoverlay=disable-bt or miniuart-bt: both
-put the PL011 back on GPIO 14/15, where this kernel does not listen.  The
-mini UART's baud divisor counts the VideoCore core clock, so config.txt
-also pins core_freq=250.  Attach a 3.3 V USB-serial adapter, 115200 8N1.
+config.txt sets arm_64bit=1, kernel=kernel8.img, and routes the PL011
+UART (which this kernel's console drives, at 0x3f201000) to the GPIO
+header: on a Pi 3 the PL011 is wired to Bluetooth by default, so
+dtoverlay=disable-bt hands it back to GPIO 14/15 (header pin 8 TX, pin 10
+RX, pin 6 ground), 115200 8N1.  Attach a 3.3 V USB-serial adapter there.
 
-The first serial line names the build ("Inferno/arm64 raspi3b build
-N"), and the same N appears later on the "conf raspi3b (N)" line; if it
-is not the number the build just printed, the card holds a stale image.
-The kernel then gives three seconds to press a key: MINI-RX-EARLY-OK
-means the adapter's TX reaches the Pi before the kernel has set up
-anything else, so a shell that later ignores typing is the kernel's
-fault, not the wiring's.  TICK-OK/TICK-FAIL and SLEEP-OK report whether
-the scheduler tick and timed sleeps work, and cat '#t/eia0status' at the
-shell says how many bytes arrived by interrupt and how many by polling.
+The first serial line names the build ("Inferno/arm64 raspi3b build N"),
+and the same N appears later on the "conf raspi3b (N)" line; if it is not
+the number the build printed, the card holds a stale image.  This image
+also bisects console receive: at nine stages from the firmware's state to
+init0 it prints "RXPROBE stage send", polls the PL011 for four seconds for
+a key, and prints what arrived with the UART and GPIO pin state.  Press a
+key at each prompt.  TICK-OK/TICK-FAIL and SLEEP-OK report whether the
+scheduler tick and timed sleeps work.
 
 Exception level
 ---------------
@@ -82,28 +78,23 @@ PL011 and disable-bt, reached the shell prompt: transmit, the MMU and
 caches, the mailbox, the DWC2 root hub and the Dis shell all work on
 silicon.  Typed input never arrived (the PL011 receive FIFO stayed empty),
 and a kernel process's 10ms timed sleep never returned, so the timer
-tick was not waking sleepers either.  The console has since moved to the
-mini UART, the EL2 drop now enables EL1's access to the physical timer
-(CNTHCTL_EL2), and GPU interrupts are explicitly routed to core 0; the
-next physical boot is the test of all three, and its log should be kept
-whole.  The LAN9514/SMSC half of the USB Ethernet driver is implemented
+tick was not waking sleepers either.  One boot with the mini UART as the
+console (and no disable-bt) printed nothing at all, so the console stays
+on the PL011 while its receive path is bisected.  The EL2 drop now enables
+EL1's access to the physical timer (CNTHCTL_EL2), GPU interrupts are
+routed to core 0, microdelay() is timed by the counter, and reboot goes
+through the PM watchdog instead of PSCI, which a Pi does not have.  The LAN9514/SMSC half of the USB Ethernet driver is implemented
 but hardware-unverified, and usbd is not started by the default init.
 
-Emulator boot that mirrors the firmware
----------------------------------------
-QEMU's -kernel wants a Linux Image header for a raw binary, so to exercise
-the exact flat image the firmware would load, use an explicit loader that
-places it at 0x80000 and starts core 0 there:
-
-    qemu-system-aarch64 -M raspi3b -m 1G -display none -monitor none \
-      -serial null -serial stdio -sd disk.img \
-      -device loader,file=kernel8.img,addr=0x80000,force-raw=on \
-      -device loader,addr=0x80000,cpu-num=0
-
-QEMU's first serial port is the PL011 and its second the mini UART, so the
-console needs the -serial null -serial stdio pair.  QEMU ignores the mini
-UART's LCR, CNTL and BAUD registers (they read back zero), so it proves the
-driver's register protocol, interrupt and console path but not its baud
-rate or framing; only the Pi does.  (-M raspi3b still enters at EL3 there; the EL2 path above is only taken on
-real hardware.)  For day-to-day testing, -kernel iraspi3b (the ELF) is
-simpler and equivalent.
+Emulator boot: the same image
+-----------------------------
+QEMU and the board boot one file.  qemu-system-aarch64 -M raspi3b -kernel
+kernel8.img treats the raw image as an arm64 Linux kernel: it loads it at
+0x80000, starts core 0 at non-secure EL2 (checked with the monitor's info
+registers: PSTATE EL2h) with cores 1-3 waiting in a spin table at 0xd8,
+and puts the device tree address in x0 -- what the Pi firmware and its
+armstub8 do.  So the EL2 entry path, not an emulator-only EL3 one, is the
+one QEMU tests.  qemu.sh runs it; set DTB to the firmware's
+bcm2710-rpi-3-b.dtb from the boot partition to hand the kernel the same
+tree the card does.  Do not test with -kernel iraspi3b: QEMU loads an ELF
+at EL3 with all four cores running, which no Pi ever does.

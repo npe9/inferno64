@@ -121,9 +121,10 @@ main(void)
 		serialputs(buf, -1);
 	}
 
+	uartrxprobe("fw");
 	uartconsole();
-	serialputs("MINIUART-OK\n", -1);
-	uartearlyprobe();
+	serialputs("PL011-OK\n", -1);
+	uartrxprobe("uart");
 	archconsole();
 
 	/*
@@ -134,11 +135,13 @@ main(void)
 	 */
 	mmuinit();
 	serialputs("MMU-OK\n", -1);
+	uartrxprobe("mmu");
 	xinit();
 	poolinit();
 	poolsizeinit();
 	trapinit();
 	clockinit();
+	uartrxprobe("clock");
 	{	/* seed wall-clock from the PL031 RTC (calendar time) */
 		extern vlong rtctime(void);
 		vlong t = rtctime();
@@ -162,11 +165,13 @@ main(void)
 		extern void gpioinit(void);
 		gpioinit();
 	}
+	uartrxprobe("gpio");
 
 	{	/* VideoCore mailbox probe: verify the property channel */
 		extern void mailboxinit(void);
 		mailboxinit();
 	}
+	uartrxprobe("mbox");
 
 	procinit();
 	links();
@@ -179,8 +184,10 @@ main(void)
 		extern void fdtinit(void*);
 		fdtinit(dtbptr);
 	}
+	uartrxprobe("screen");
 	chandevreset();
 	uartconsolesetup();
+	uartrxprobe("devreset");
 
 	eve = strdup("inferno");
 	kbdinit();
@@ -216,6 +223,7 @@ init0(void)
 	poperror();
 
 	clockcheckboot();
+	uartrxprobe("init0");
 
 	/*
 	 * Publish the board MAC the firmware knows (mailbox.c) as

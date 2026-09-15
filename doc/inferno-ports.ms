@@ -19142,3 +19142,74 @@ the divisor line shows) and pull-up registers, so baud rate, framing and
 pulls are only testable on the Pi, and whether the tick fixes are the
 right ones is equally a physical result.  None of this has run on the Pi
 yet.
+.PP
+.B "Back to the PL011, and one image for QEMU and the board"
+.PP
+The mini UART image (build 1789434335, config.txt without disable-bt)
+printed nothing at all on the Pi, not even the first banner, which is
+written before the kernel touches the UART.  That is unexplained, and it
+adds new unknowns exactly where the PL011 transmit path is proven, so the
+console is the PL011 again and config.txt has disable-bt back.
+.CW uartmini.c
+stays in the tree, unlinked: its enable takes GPIO 14/15, so it must not
+share a boot with the PL011 console.
+.PP
+The history also narrows the PL011 fault.  Commit
+.CW 3b7706ac
+drained console output through the PL011 transmit interrupt, GPU IRQ 57,
+on silicon, so interrupt delivery from the PL011 works there; what never
+happens is a byte arriving in its receive FIFO.  A polled probe early in
+boot had seen input.  The image now bisects that in one boot:
+.CW uartrxprobe()
+runs at nine stages (firmware state, after the UART setup, the MMU, the
+clock, the I2C/SPI/GPIO probes, the mailbox, screen and device tree, device
+reset, and init0), asks for a key, polls the FIFO for four seconds with
+interrupts masked, and prints the character or none with CR, LCRH,
+IBRD/FBRD, IMSC, FR, RIS, GPFSEL1, GPFSEL3 and the live levels of GPIO 14,
+15, 32 and 33 \(em 32/33 being the Bluetooth UART pins, which can also
+carry PL011 RX.  The first stage reporting none locates the loss.
+.PP
+Until now this port was tested under QEMU with
+.CW "-kernel iraspi3b" ,
+which QEMU loads as an ELF at EL3 with all four cores running \(em a
+start no Pi ever makes, and the reason l.s parks cores itself.  QEMU's
+raspi3b loader treats a raw arm64 image as a Linux kernel instead: it
+loads
+.CW kernel8.img
+at 0x80000, enters core 0 at non-secure EL2 (the monitor reports PSTATE
+EL2h) with the other cores in a spin table at 0xd8, and passes the device
+tree in x0, which is what the Pi firmware and armstub8 do.  Testing is now
+done that way, with the firmware's own
+.CW bcm2710-rpi-3-b.dtb
+from the card, so the emulator runs the file that goes on the card through
+the entry path the card uses;
+.CW os/inferno/raspi3b/qemu.sh
+does it.
+.PP
+The board also shed the rest of its QEMU virt inheritance, each piece a
+hardware defect QEMU hid.
+.CW archvirtarm64.c ,
+.CW uartvirtarm64.c
+and
+.CW randomvirtarm64.c
+are now
+.CW archbcm.c ,
+.CW uartpl011.c
+and
+.CW randombcm.c .
+archreboot() and archshutdown() made PSCI calls through HVC, and a Pi's
+EL2 has no PSCI handler; they now use the BCM2835 power-manager watchdog
+(RSTC full reset with a short WDOG count, and partition 63 in RSTS for
+halt), the mechanism Linux uses on the Pi, and
+.CW "echo reboot > /dev/sysctl"
+under QEMU resets the machine and boots again.  microdelay() spun
+cpuhz/1000 empty iterations per millisecond, a count that took about as long as
+asked under QEMU and a small fraction of it on a real Cortex-A53; it is
+now timed on the generic timer's counter like delay().
+.PP
+Verified under QEMU 10.1.3 booting kernel8.img with the card's DTB: all
+nine RXPROBE stages received the injected key, TICK-OK, SLEEP-OK, a typed
+.CW "echo PL011_RX_OK"
+echoed at the shell, and the watchdog reboot.  QEMU keeps every pin at
+level 0 and GPFSEL at 0 regardless, so the pin columns mean something
+only on the Pi.  Not yet run on the Pi.

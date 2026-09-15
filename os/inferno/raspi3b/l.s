@@ -255,15 +255,6 @@ TEXT	getcallerpc(SB), 1, $-4
  * storing the real new value (R2, "1") instead of the stale R1.
  */
 /*
- * psci(fn, a1, a2, a3): a PSCI call through HVC, QEMU virt's conduit.
- * The four args are already in R0-R3 (x0-x3) where SMCCC wants them;
- * HVC #0 uses them and returns the result in x0.
- */
-TEXT	psci(SB), 1, $-4
-	HVC	$0
-	RET	R30
-
-/*
  * GICv3 CPU-interface accessors.  On a GICv3 the per-CPU interface is
  * a set of ICC_*_EL1 system registers, not the MMIO GICC page a GICv2
  * has, so acknowledge/EOI/priority-mask/group-enable are MSR/MRS here.

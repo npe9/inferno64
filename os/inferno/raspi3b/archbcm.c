@@ -10,16 +10,11 @@ archreset(void)
 {
 }
 
-/*
- * The PL031 RTC's data register (offset 0) is a 32-bit count of seconds
- * since the epoch.  main() seeds the time-of-day clock from it, scaled
- * to nanoseconds, so wall time is calendar-correct rather than relative
- * to boot.
- */
+/* A Pi 3B has no battery-backed clock; time of day starts at boot. */
 vlong
 rtctime(void)
 {
-	return -1;	/* raspi3b: no RTC here */
+	return -1;
 }
 
 void
@@ -41,20 +36,55 @@ archconsole(void)
 	/* uartconsole already set consuart / serwrite */
 }
 
-void
-archreboot(void)
+/*
+ * BCM2835 power manager watchdog (0x3f100000): the reset every Pi OS
+ * uses, since the Pi's armstub8 provides no PSCI.  Every write carries
+ * the 0x5a password; RSTC's WRCFG field set to full reset with a short
+ * WDOG count resets the SoC when the count runs out.  QEMU's
+ * bcm2835_powermgt models the same register.
+ */
+enum {
+	PmRstc		= 0x1c/4,
+	PmRsts		= 0x20/4,
+	PmWdog		= 0x24/4,
+	PmPasswd	= 0x5a000000,
+	PmWrcfgMask	= 0x30,
+	PmWrcfgFull	= 0x20,
+	PmRstsPart	= 0x555,	/* partition bits: 63 = halt */
+};
+
+static void
+pmreset(int halt)
 {
-	/* PSCI SYSTEM_RESET (0x84000009); QEMU restarts the machine */
-	psci(0x84000009ULL, 0, 0, 0);
+	volatile u32 *pm = (volatile u32*)PM0;
+	u32 v;
+
+	splhi();
+	if(halt){
+		v = pm[PmRsts] & ~PmRstsPart;
+		pm[PmRsts] = PmPasswd | v | PmRstsPart;
+	}
+	pm[PmWdog] = PmPasswd | 10;
+	v = pm[PmRstc] & ~PmWrcfgMask;
+	pm[PmRstc] = PmPasswd | v | PmWrcfgFull;
 	for(;;)
 		idle();
 }
 
 void
+archreboot(void)
+{
+	pmreset(0);
+}
+
+/*
+ * A Pi cannot switch its own power off.  Resetting into partition 63
+ * is how the firmware is told to halt instead of booting again.
+ */
+void
 archshutdown(void)
 {
-	/* PSCI SYSTEM_OFF (0x84000008); QEMU powers the machine off */
-	psci(0x84000008ULL, 0, 0, 0);
+	pmreset(1);
 }
 
 void
@@ -81,16 +111,30 @@ delay(int ms)
 		clockpoll();
 }
 
+/*
+ * Timed against the generic timer's counter, like delay(), not an
+ * uncalibrated loop: m->delayloop is cpuhz/1000 iterations, which took
+ * roughly as long as asked under QEMU and a small fraction of it on a
+ * real Cortex-A53.
+ */
 void
 microdelay(int us)
 {
-	int i, n;
+	uvlong now, end, hz;
 
-	n = (m->delayloop * us) / 1000;
-	if(n <= 0)
-		n = 1;
-	for(i = 0; i < n; i++)
-		;
+	if(us <= 0)
+		return;
+	cycles(&now);
+	hz = m->cpuhz;
+	if(hz == 0){
+		cntfrq(&hz);
+		if(hz == 0)
+			hz = 1000000;
+	}
+	end = now + ((uvlong)us * hz + 999999) / 1000000;
+	do
+		cycles(&now);
+	while(now < end);
 	if(us >= 100)
 		clockpoll();
 }
