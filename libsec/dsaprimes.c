@@ -9,10 +9,25 @@
 // arithmetic on unsigned ints mod 2**160, represented
 //    as 20-byte, little-endian uchar array
 
+/*
+ * u32int, not ulong.  s is 20 bytes (SHA1dlen) and this writes five
+ * words into it, which is 20 bytes where ulong is 32 bits -- Plan 9,
+ * where this came from -- and 40 bytes where it is 64, which is every
+ * host emu is built on.  It smashed the caller's stack: DSAprimes()
+ * declares s, Hs, Hs1, sj and sjk as adjacent 20-byte arrays, and the
+ * overrun ran off the end of the frame.  The stack protector caught it
+ * as __stack_chk_fail inside DSAprimes, which aborted emu with no
+ * message at all, so auth/createsignerkey simply died: this is why
+ * nothing in this tree could generate a signer key on a 64-bit host.
+ *
+ * fastrand() returns ulong, so each value is truncated to 32 bits on
+ * the way in.  That is the original intent -- the algorithm wants
+ * 160 bits of seed as five 32-bit words -- and not a loss.
+ */
 static void
 Hrand(uchar *s)
 {
-	ulong *u = (ulong*)s;
+	u32int *u = (u32int*)s;
 	*u++ = fastrand();
 	*u++ = fastrand();
 	*u++ = fastrand();
