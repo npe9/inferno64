@@ -1289,6 +1289,60 @@ a perfectly good frame either way, because **a frozen program still has
 the last thing it drew on the screen. A still frame is not evidence of
 animation.**
 
+### "gorge shows black between updates" — not reproduced, and what that rules out — 2026-09-14
+
+Reported from the screen, with `castlefrankenstein` fine in the same
+sitting. Not reproduced here at any level I can measure, and the measuring
+is the useful part: it says where the fault is *not*, so the next person
+does not spend the day I did.
+
+Every counter in this file watched the softscreen, which for a program
+whose picture is composed onto the drawable would be watching the wrong
+thing — so `INFERNO_METAL_GLASS` now makes the drawable readable and
+measures what was actually shown. It measures from a completion handler
+rather than by waiting on the command buffer: an instrument that
+serialises every present against the GPU changes exactly the timing it is
+meant to watch, and can hide a race rather than find one. My first
+version waited, and its result should not have been believed.
+
+Measured for `gorge`, under `wm` and standalone, at 1024x768, and while
+being resized underneath it with `INFERNO_RESIZE_TEST`:
+
+| | |
+| --- | --- |
+| black pixels on the glass | 168 of 786432, every frame, unmoving |
+| blank frames | 0 |
+| frames differing >40% from the last | 0 (2–9 during a resize, as a resize should) |
+| geometry batches dropped by an empty scissor | 0 |
+| torn uploads | 0 |
+| cadence | 1:1, no repeats, no skips |
+| present interval | 16660–16679 us |
+| composition used | **plain softscreen blit, every present** |
+
+That last row killed my main theory. `overlay=0, presgeom=0`: the Metal
+geometry passes never run at present time for `gorge` at all. Its 3-D
+reaches the screen through the softscreen, which these counters *can*
+see, and which is clean. So it is not an unobservable composition path.
+
+Ruled out by measurement rather than by argument: a flashing present, a
+half-drawn upload, dropped geometry, a present/readback race (every
+readback finds a non-empty queue), a mid-frame flush (one flush per frame,
+same as `castlefrankenstein`), the scissor under nested layers (the clip
+test passes under `wm` too, which it had only ever been run standalone),
+and the pacing difference between the two programs — they now take the
+same branch. `gorge` gained `-rHZ` so its pacing can be made identical to
+`castlefrankenstein`'s, which is `-r0`; not the default, because its
+`step()` advances a fixed amount per tick.
+
+**What is left is a report, not a counter.** With `INFERNO_METAL_GLASS`
+set, emu says on stderr when a presented frame is at least a tenth black,
+differs from the one before by 40%, or is a single colour — first
+occurrence always, then at most one line a second. It reports emu's own
+genuinely uniform first frame and nothing else in a thousand-frame run,
+which is the positive control. Whoever can see the fault can now say
+which frame and how black, and that separates "wrong picture drawn" from
+"right picture, something after it" in one line.
+
 ### Phase 2a — `litcolour` allocated a colour image per fill
 
 Fixed 2026-09-10, and it is the reason a Gouraud scene could not be run
