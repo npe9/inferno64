@@ -185,6 +185,16 @@ kbdreport()
 	}
 }
 
+# Bring-up: on the Pi the tick and FIQ stopped being delivered somewhere
+# in this program.  A timed sleep needs the tick, so the last STEP whose
+# "slept" line appears is where delivery was lost.
+step(name: string)
+{
+	sys->print("STEP %s\n", name);
+	sys->sleep(100);
+	sys->print("STEP %s slept\n", name);
+}
+
 init()
 {
 	shell: Shell;
@@ -197,9 +207,13 @@ init()
 	sys->print("RASPI3B-OK\n");
 
 	sys->bind("#S", "/dev", sys->MAFTER);
+	step("pre-sd");
 	sdcheck();
+	step("pre-draw");
 	drawtest();
+	step("pre-usb");
 	usbcheck();
+	step("pre-sh");
 	# sdfs() reams a kfs onto the SD card, mounts it over a pipe, and
 	# creates a file.  The ream and every SD write succeed, but the
 	# create-over-mount hangs: pid 1's Twalk gets its Rerror and then the
@@ -220,6 +234,7 @@ init()
 		sys->dup(cons.fd, 1);
 		sys->dup(cons.fd, 2);
 	}
+	step("pre-shinit");
 	sys->print("RASPI3B-SH-OK\n");
 	shell->init(nil, "sh" :: "-i" :: "-n" :: nil);
 }

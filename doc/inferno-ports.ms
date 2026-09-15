@@ -19421,3 +19421,12 @@ init0 probe, after arming the watchdog, and before disinit: each busy-waits
 the deadline is ahead, the local timer route, pending and GPU route
 registers, and the BCM2835 FIQ control.  Under QEMU every marker sees 4
 ticks in its 50ms.
+.PP
+Build 1789469929 on the Pi: every TK marker saw 5 ticks in its 50ms, the
+last at tick 167 just before disinit, and no heartbeat followed.  The
+probe, the watchdog arming and the mailbox MAC query are cleared; delivery
+stops inside the Dis init program.  raspi3binit now prints STEP before its
+SD, draw and USB checks, before loading the shell and before starting it,
+each followed by a 100ms sleep and a "slept" line: a sleep needs the tick,
+so the last "slept" line marks the step that stopped it.  QEMU prints them
+all.
