@@ -88,6 +88,8 @@ boot.  gotolabel now refuses an unaligned stack, so QEMU catches that one
 too.  Reboot goes through the PM watchdog, since a Pi has no PSCI.  The
 LAN9514/SMSC half of the USB Ethernet driver is implemented but
 hardware-unverified, and usbd is not started by the default init.
+Build 1789512030 passed seven boots out of seven (a power-on and six
+reboots from the shell), each answering at the shell 30 seconds in.
 
 Emulator boot: the same image
 -----------------------------

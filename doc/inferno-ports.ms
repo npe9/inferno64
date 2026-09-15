@@ -19580,3 +19580,23 @@ trap() reports it (WILDSP) instead of looping.  Both guards were exercised
 under QEMU with a deliberately bad stack.  serialputreg printed only 32
 bits (its argument was a ulong); it now prints all 64.  With the fix,
 QEMU passes three boots with a reset between each, with no guard firing.
+.PP
+On the Pi with the fix: build 1789511401, still instrumented, booted to
+the shell without the init sleeps and was still answering at tick 1100,
+where every earlier build without the sleeps had died by tick 187.  It
+then went through two reboots from the shell, each answering 30 seconds
+into the boot.  The instruments then came out (the RXPROBE stages,
+IRQCHECK, the TK markers, the heartbeat, the per-tick snapshot, the IRQ
+ring, VECCHECK, the FIQ and PM watchdog arming, init's STEP lines).  What
+stays is the build banner, the direct TRAP report, _tas's before-MMU
+panic, the one-line crumb record of the previous boot's last exception,
+and the WILDSP and BADLABEL guards.  The PL011 also takes its
+receive-timeout interrupt now, so input shorter than the FIFO trigger
+level arrives without waiting for more.  The cleaned build, 1789512030,
+passed seven boots out of seven on the Pi: one power-on and six
+.CW "echo reboot > /dev/sysctl"
+cycles.  Each printed TICK-OK and SLEEP-OK, reached the shell, and 30
+seconds later answered a typed
+.CW "cat /dev/time; echo"
+(kernel uptime 32 to 34 seconds, 109 seconds on the first), with no
+guard firing.
