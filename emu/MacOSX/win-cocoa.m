@@ -186,6 +186,7 @@ static uvlong	glass_blank, glass_churn_big, glass_frames;
  * about timing, and nothing here was counting colour. */
 static uvlong	glass_black, glass_black_max;
 static uvlong	glass_said;	/* last frame we complained about */
+enum { GlassStep = 4 };		/* sample every 4th pixel each way */
 static int	glass_lastblack;
 /*
  * Geometry that reached the queue and then did not reach the screen.
@@ -202,9 +203,9 @@ static Lock	glass_lk;	/* the handler runs on a Metal thread */
 static void
 glass_measure(int pw, int ph, int bpl)
 {
-	uchar *p, *pv;
-	u32 *row, *prow, first;
-	int x, y, uniform, nd, tot;
+	uchar *p;
+	u32 *row, *prev, first;
+	int x, y, uniform, nd, tot, nblack, gw;
 
 	lock(&glass_lk);
 	p = [mtl_glass_buf contents];
@@ -213,49 +214,62 @@ glass_measure(int pw, int ph, int bpl)
 		return;
 	}
 	glass_frames++;
+	/*
+	 * Every GlassStep'th pixel each way, not every pixel.  Scanning and
+	 * copying three megabytes a frame on the completion thread was
+	 * enough to change what it was measuring: with it on, the fault
+	 * being chased stopped happening and the picture went choppy
+	 * instead, which is an instrument reporting on itself.  A sixteenth
+	 * of the pixels answers "is a tenth of this black" and "did 40% of
+	 * it change" just as well, and a fixed grid cannot miss a region
+	 * large enough to matter.
+	 */
+	gw = (pw + GlassStep - 1) / GlassStep;
+	prev = (u32*)mtl_glass_prev;
+	first = ((u32*)p)[0];
 	uniform = 1;
 	nd = 0;
-	tot = pw*ph;
-	{
-		int nblack = 0;
-
-		for(y = 0; y < ph; y++){
-			row = (u32*)(p + y*bpl);
-			for(x = 0; x < pw; x++)
-				if((row[x] & 0x00ffffff) == 0)
-					nblack++;
-		}
-		glass_black += nblack;
-		glass_lastblack = nblack;
-		if((uvlong)nblack > glass_black_max)
-			glass_black_max = nblack;
-	}
-	first = ((u32*)p)[0];
-	for(y = 0; y < ph; y++){
+	nblack = 0;
+	tot = 0;
+	for(y = 0; y < ph; y += GlassStep){
 		row = (u32*)(p + y*bpl);
-		prow = (u32*)(mtl_glass_prev + y*bpl);
-		for(x = 0; x < pw; x++){
-			if(row[x] != first)
+		for(x = 0; x < pw; x += GlassStep){
+			u32 v = row[x];
+			int k = (y/GlassStep)*gw + x/GlassStep;
+
+			if((v & 0x00ffffff) == 0)
+				nblack++;
+			if(v != first)
 				uniform = 0;
-			if(row[x] != prow[x])
+			if(v != prev[k])
 				nd++;
+			prev[k] = v;
+			tot++;
 		}
 	}
+	if(tot == 0){
+		unlock(&glass_lk);
+		return;
+	}
+	glass_black += nblack;
+	glass_lastblack = nblack;
+	if((uvlong)nblack > glass_black_max)
+		glass_black_max = nblack;
 	if(uniform)
 		glass_blank++;
 	if(glass_frames > 1 && nd*5 > tot*2)
 		glass_churn_big++;
 	/*
-	 * Say so, once in a while, when a presented frame is mostly black or
-	 * mostly different from the one before it.  Counting is enough when
-	 * the fault can be reproduced; when it cannot, the person who can
-	 * see it needs the process to tell them what it drew at the moment
-	 * they saw it, or the report stays "I saw black" and the measurement
-	 * stays "I did not".
+	 * Say so when a presented frame is mostly black or mostly different
+	 * from the one before it.  Counting is enough when the fault can be
+	 * reproduced; when it cannot, the person who can see it needs the
+	 * process to tell them what it drew at the moment they saw it, or
+	 * the report stays "I saw black" and the measurement stays "I did
+	 * not".
 	 */
 	if(glass_said == 0 || glass_frames - glass_said > 60){
-		int pct = (int)(((vlong)glass_lastblack * 100) / tot);
-		int chg = (int)(((vlong)nd * 100) / tot);
+		int pct = (nblack * 100) / tot;
+		int chg = (nd * 100) / tot;
 
 		if(pct >= 10 || chg >= 40 || uniform){
 			glass_said = glass_frames;
@@ -263,7 +277,6 @@ glass_measure(int pw, int ph, int bpl)
 				glass_frames, pct, chg, uniform ? ", UNIFORM" : "");
 		}
 	}
-	memmove(mtl_glass_prev, p, bpl*ph);
 	unlock(&glass_lk);
 }
 /*
@@ -4745,7 +4758,8 @@ present_softscreen_body(void)
 			mtl_glass_buf = [mtl_device newBufferWithLength:mtl_glass_len
 				options:MTLResourceStorageModeShared];
 			free(mtl_glass_prev);
-			mtl_glass_prev = malloc(mtl_glass_len);
+			mtl_glass_prev = mallocz(((pw+GlassStep-1)/GlassStep)
+				* ((ph+GlassStep-1)/GlassStep) * 4, 1);
 		}
 		if(mtl_glass_buf != nil){
 			gblit = [cmd blitCommandEncoder];

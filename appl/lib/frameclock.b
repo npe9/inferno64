@@ -112,7 +112,16 @@ vsyncrun(c: chan of int, fd: ref Sys->FD)
 	vc := chan of int;
 	spawn vreader(fd, vc);
 	tk := chan of int;
-	spawn keepalive(tk, 1000/FPS);
+	# At TWICE the period, so it is a watchdog and not a competitor.  At
+	# the display's own rate the two interleave: its arm fires while the
+	# display's has not yet arrived, and it delivers a tick a few
+	# milliseconds after the last one - a short gap on the screen, which
+	# is the thing this is all about.  Measured, 2487us between frames
+	# where the refresh is 16667.  At twice the period two refreshes
+	# arrive per firing, so while the display is asking this delivers
+	# nothing at all; when the display stops, the caller drops to half
+	# rate rather than to nothing, which is the point of having it.
+	spawn keepalive(tk, 2*(1000/FPS));
 	start := sys->millisec();
 	last := start;
 	asked := 0;	# the display asked since the last keep-alive
