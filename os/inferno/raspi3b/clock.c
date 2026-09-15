@@ -31,6 +31,90 @@ now(void)
 	return u;
 }
 
+/*
+ * Per-tick snapshot into crumb words 112-141, taken after the tick has
+ * set its next deadline, so that after the silent death the next boot
+ * can tell a timer that was never going to fire (disabled, masked, not
+ * routed) from one that fired into a broken exception path (VBAR, the
+ * vector words, or the mapping of either changed).  The crumb block is
+ * mapped Device (mmu.c), so these stores reach DRAM at once instead of
+ * waiting in a cache line the watchdog reset discards.
+ */
+enum {
+	Cprobe	= 112,
+};
+static uvlong tickprev, vecfold0, ptfold0;
+static int probed;
+
+static uvlong
+fold(u32 *w, int n)
+{
+	uvlong f;
+
+	f = 0;
+	while(n-- > 0)
+		f = (f<<5 | f>>59) ^ *w++;
+	return f;
+}
+
+static void
+tickgap(uvlong n)
+{
+	volatile uvlong *c = (volatile uvlong*)0x20000000;
+
+	if(tickprev != 0 && n - tickprev > c[Cprobe+18]){
+		c[Cprobe+18] = n - tickprev;
+		c[Cprobe+19] = m->ticks;
+	}
+	tickprev = n;
+}
+
+static void
+tickprobe(uvlong n)
+{
+	extern uvlong getttbr0(void), getsctlr(void), attrans(uvlong), getvbar(void);
+	extern ulong getcntpctl(void), getdaif(void);
+	extern void getcntpcval(uvlong*);
+	extern u32 *vectable(void);
+	volatile uvlong *c = (volatile uvlong*)0x20000000;
+	volatile u32 *ic = (volatile u32*)IRQBASE;
+	uvlong cval, vf, pf, ttbr;
+
+	c[Cprobe+0] = getcntpctl();
+	getcntpcval(&cval);
+	c[Cprobe+1] = cval - n;
+	c[Cprobe+2] = *(volatile u32*)0x40000040;
+	c[Cprobe+3] = *(volatile u32*)0x40000060;
+	c[Cprobe+4] = *(volatile u32*)0x4000000c;
+	c[Cprobe+5] = ic[0x00/4];	/* basic pending */
+	c[Cprobe+6] = ic[0x04/4];
+	c[Cprobe+7] = ic[0x08/4];
+	c[Cprobe+8] = ic[0x0c/4];	/* FIQ control */
+	c[Cprobe+9] = ic[0x10/4];
+	c[Cprobe+10] = ic[0x14/4];
+	c[Cprobe+11] = ic[0x18/4];
+	c[Cprobe+12] = getvbar();
+	vf = fold(vectable(), 512);
+	ttbr = getttbr0() & ~0xfffULL;
+	pf = fold((u32*)ttbr, 2*512*2);	/* L1 and the L2 after it */
+	if(!probed){
+		vecfold0 = vf;
+		ptfold0 = pf;
+		probed = 1;
+	}
+	if((vf != vecfold0 || pf != ptfold0) && c[Cprobe+13] == 0){
+		c[Cprobe+13] = m->ticks;	/* first tick a fold changed */
+		c[Cprobe+14] = (vf != vecfold0) | (pf != ptfold0)<<1;
+	}
+	c[Cprobe+15] = ttbr;
+	c[Cprobe+16] = getsctlr();
+	c[Cprobe+17] = attrans((uvlong)vectable());
+	c[Cprobe+20] = attrans(0x20000000);
+	c[Cprobe+21] = getdaif();
+	c[Cprobe+22] = m->ticks;
+	c[Cprobe+23] = n;
+}
+
 /* Next deadline: HZ period, or sooner soft timer if one is pending. */
 uvlong
 timernext(uvlong hznext)
@@ -69,6 +153,7 @@ clockintr(Ureg *u)
 	#define STEP(x)	(((volatile uvlong*)0x20000000)[17] = (x))
 	STEP(3);
 	n = now();
+	tickgap(n);
 	hznext = n + m->cpuhz/HZ;
 	STEP(4);
 	hwtimerset(&hznext);		/* clear the condition; final deadline set below */
@@ -97,6 +182,7 @@ clockintr(Ureg *u)
 	if(when <= n)
 		when = n + 1;
 	hwtimerset(&when);
+	tickprobe(n);
 	STEP(11);
 
 	if(canlock(&clock0lock)){
@@ -277,7 +363,7 @@ fiqarm(void)
 	volatile u32 *st = (volatile u32*)(BCMPERIPH + 0x3000);
 
 	st[StCs] = 1<<1;
-	st[StC1] = st[StClo] + 1000000;
+	st[StC1] = st[StClo] + 50000;	/* 50ms: soon enough to see the death */
 }
 
 void
@@ -297,12 +383,23 @@ fiqwatchinit(void)
 void
 fiqwatch(Ureg *u)
 {
+	volatile uvlong *c = (volatile uvlong*)0x20000000;
+	static ulong stalled;
+
 	fiqarm();
 	fiqcount++;
-	if(m->ticks != fiqlastticks || fiqreports >= 30){
+	c[Cprobe+30] = fiqcount;
+	c[Cprobe+31] = u->pc;
+	if(m->ticks != fiqlastticks){
 		fiqlastticks = m->ticks;
+		stalled = 0;
 		return;
 	}
+	/* FIQs come every 50ms; report a tick stalled for 200ms or more */
+	if(++stalled > c[Cprobe+32])
+		c[Cprobe+32] = stalled;
+	if(stalled < 4 || fiqreports >= 30)
+		return;
 	fiqreports++;
 	serialputs("FIQWATCH ticks stalled at ", -1);
 	serialputdec(m->ticks);

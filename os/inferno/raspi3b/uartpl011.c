@@ -124,8 +124,10 @@ pl011_kick(Uart *uart)
 		for(i = 0; i < 1000000; i++)
 			if((csr32r(c, UartFR) & UartFRTXFF) == 0)
 				break;
-		if(csr32r(c, UartFR) & UartFRTXFF)
+		if(csr32r(c, UartFR) & UartFRTXFF){
+			((volatile uvlong*)0x20000000)[112+24]++;	/* crumb: kick wait ran out */
 			break;
+		}
 		csr32w(c, UartDR, *uart->op++);
 	}
 	if(uart->op < uart->oe || qlen(uart->oq) != 0)

@@ -254,6 +254,21 @@ TEXT	getdaif(SB), 1, $-4
 	MRS	DAIF, R0
 	RET	R30
 
+/* sysregs for the per-tick crumb snapshot (clock.c tickprobe) */
+TEXT	getttbr0(SB), 1, $-4
+	MRS	SPR(D_TTBR0_EL1), R0
+	RET	R30
+
+TEXT	getsctlr(SB), 1, $-4
+	MRS	SPR(D_SCTLR_EL1), R0
+	RET	R30
+
+/* attrans(va): PAR_EL1 after AT S1E1R -- what the MMU makes of va now */
+TEXT	attrans(SB), 1, $-4
+	WORD	$0xd5087800		/* AT S1E1R, X0 */
+	MRS	SPR(SYSARG5(3,0,7,4,0)), R0	/* PAR_EL1 */
+	RET	R30
+
 GLOBL	dtbptr(SB), $8
 GLOBL	stack(SB), $KSTACK
 GLOBL	mach0(SB), $(4*1024)

@@ -334,8 +334,7 @@ trap(Ureg *ur)
 		c[21] = m->splpc;
 	}
 	switch(ur->type){
-	case TFiq:
-		crumbring(2, 0, ur->pc);
+	case TFiq:		/* 20 a second: counted in fiqwatch, not the ring */
 		fiqwatch(ur);
 		return;
 	case TIrq:

@@ -66,6 +66,10 @@ mmuinit(void)
 		pa = (uintptr)i << L2SHIFT;
 		if(pa >= BCMPERIPH && pa < 0x40000000)
 			l2[i] = pa | Pdevice;		/* peripherals */
+		else if(pa == 0x20000000)
+			l2[i] = pa | Pdevice;		/* crumb RAM (clock.c, trap.c):
+							 * uncached, so a store lands in
+							 * DRAM before a watchdog reset */
 		else if(i == ptblk)
 			l2[i] = pa | Pnormal | Pro;	/* the page tables: RO, so a
 							 * wild store to them faults AT

@@ -104,6 +104,7 @@ static void
 crumbdump(void)
 {
 	volatile uvlong *c = (volatile uvlong*)0x20000000;
+	int p;
 
 	c[12]++;
 	serialputs("CRUMB boots ", -1);
@@ -160,6 +161,48 @@ crumbdump(void)
 		}
 	}
 	serialputs("\n", -1);
+	if(c[112+22] != 0){
+		/* clock.c tickprobe: state after the last tick set its deadline */
+		serialputs("CRUMB probe tick ", -1);
+		serialputdec(c[112+22]);
+		serialputreg("ctl", c[112+0], 1);
+		serialputreg("cval-now", c[112+1], 16);
+		serialputreg("route", c[112+2], 2);
+		serialputreg("lpend", c[112+3], 3);
+		serialputreg("gpuroute", c[112+4], 1);
+		serialputreg("basic", c[112+5], 3);
+		serialputreg("p1", c[112+6], 8);
+		serialputreg("p2", c[112+7], 8);
+		serialputreg("fiqctl", c[112+8], 2);
+		serialputreg("en1", c[112+9], 8);
+		serialputreg("en2", c[112+10], 8);
+		serialputreg("benable", c[112+11], 2);
+		serialputs("\nCRUMB probe vbar", -1);
+		serialputreg("", c[112+12], 8);
+		serialputs(" foldchanged tick ", -1);
+		serialputdec(c[112+13]);
+		serialputreg("which", c[112+14], 1);
+		serialputreg("ttbr", c[112+15], 8);
+		serialputreg("sctlr", c[112+16], 8);
+		serialputreg("parvec", c[112+17], 16);
+		serialputreg("parcrumb", c[112+20], 16);
+		serialputreg("daif", c[112+21], 3);
+		serialputreg("cntpct", c[112+23], 16);
+		serialputs("\nCRUMB probe maxgap ", -1);
+		serialputdec(c[112+18]);
+		serialputs(" at tick ", -1);
+		serialputdec(c[112+19]);
+		serialputs(" kicktimeouts ", -1);
+		serialputdec(c[112+24]);
+		serialputs(" fiqs ", -1);
+		serialputdec(c[112+30]);
+		serialputreg("fiqpc", c[112+31], 8);
+		serialputs(" maxstall ", -1);
+		serialputdec(c[112+32]);
+		serialputs("\n", -1);
+	}
+	for(p = 104; p < 160; p++)
+		c[p] = 0;
 	c[0] = 0;
 	c[1] = 0;
 	{
