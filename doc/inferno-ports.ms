@@ -19286,3 +19286,24 @@ timer deadline is still ahead, the BCM2836 timer route, pending and GPU
 route registers, and the BCM2835 pending and enable registers.  Under
 QEMU with the same kernel8.img it reads 40 interrupts and 40 ticks, EL 1,
 DAIF 0x340 (IRQ unmasked), and the board goes on to the shell.
+.PP
+.B "Interrupts work on silicon; the console mask did not"
+.PP
+With the caches flushed over the vectors, build 1789465363 on the Pi
+printed
+.CW "IRQCHECK 500ms: irqs 50 ticks 50"
+\(em the 100Hz tick exactly \(em at EL 1 with DAIF 0x340, VBAR at the built
+table, CNTP_CTL enabled with its deadline ahead, the BCM2836 timer route
+0x02 and GPU route 0; IRQ 57 enabled in the bank-2 enable register.  So
+the missing cache maintenance in vectorbuild() was what had silenced every
+interrupt on the board.  It still showed nothing queued: PL011 interrupts
+0 in that window, IRQ 57 not pending, and IMSC 0x010, receive only.
+.CW uartconsolesetup()
+wrote IMSC = RX after chandevreset had queued console output and
+.CW kick()
+had armed the transmit interrupt to drain it, clearing that bit; qio kicks
+a queue only when it goes from empty to non-empty, so nothing armed it
+again and every later line, including TICK-OK and the shell, waited
+forever.  QEMU's PL011 empties its FIFO instantly, so kick() never left
+output behind there.  The setup now ORs the receive bit into the mask and
+kicks the queue once.

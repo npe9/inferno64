@@ -386,5 +386,16 @@ uartconsolesetup(void)
 	/* BCM2837 PL011 is VideoCore/GPU interrupt 57 (pending bank 2). */
 	intrenable(57, uartintr, consuart, 0, "uart0");
 	c = consuart->regs;
-	csr32w(c, UartIMSC, UartIMSCRX);
+	/*
+	 * Add the receive interrupt; do not replace the mask.  The kernel
+	 * has already queued console output during chandevreset, and kick()
+	 * armed the transmit interrupt to drain it.  Writing IMSC = RX here
+	 * cleared that, and since qio only kicks a queue that was empty,
+	 * nothing re-armed it: on the Pi every later line stayed queued.
+	 * QEMU's PL011 empties its FIFO instantly, so kick() never had
+	 * output left over there and never needed the interrupt.  Kick once
+	 * more in case the FIFO drained while the mask was being changed.
+	 */
+	csr32w(c, UartIMSC, csr32r(c, UartIMSC) | UartIMSCRX);
+	uartkick(consuart);
 }
