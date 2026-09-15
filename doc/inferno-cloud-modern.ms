@@ -1413,7 +1413,7 @@ built into a kernel and profiled, place the remaining time exactly:
 costs 0.10 s and
 .CW "mount {mntgen} /n"
 0.07 s, and then
-.B 4.94 seconds passes defining six shell functions
+.B "4.94 seconds passes defining six shell functions"
 before the next statement runs.
 .PP
 That is not a slow parser.  The same six definitions under hosted
