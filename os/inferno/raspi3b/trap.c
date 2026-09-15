@@ -107,13 +107,14 @@ insn_b(u32 *at, void *target)
 	return 0x14000000 | (imm26 & 0x3FFFFFF);
 }
 
+extern void crumbentry(void);
+
 static void
 buildslot(u32 *slot, int class)
 {
-	slot[0] = insn_sub_sp_sp(UrSize);
-	slot[1] = insn_str_x_sp(9, Off_R9);
-	slot[2] = insn_movz(9, class);
-	slot[3] = insn_b(&slot[3], (void*)vectrap);
+	slot[0] = 0xd518d089;			/* MSR TPIDR_EL1, X9 */
+	slot[1] = insn_movz(9, class);
+	slot[2] = insn_b(&slot[2], (void*)crumbentry);
 }
 
 static void

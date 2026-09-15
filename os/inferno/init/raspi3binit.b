@@ -185,14 +185,13 @@ kbdreport()
 	}
 }
 
-# Bring-up: on the Pi the tick and FIQ stopped being delivered somewhere
-# in this program.  A timed sleep needs the tick, so the last STEP whose
-# "slept" line appears is where delivery was lost.
+# Bring-up.  With a 100ms sleep after each of these, the Pi boots to a
+# working shell every time; without them (as here) interrupt delivery
+# died silently shortly after this program started.  The sleeps are
+# left out so that failure can be caught by the crumb record.
 step(name: string)
 {
 	sys->print("STEP %s\n", name);
-	sys->sleep(100);
-	sys->print("STEP %s slept\n", name);
 }
 
 init()

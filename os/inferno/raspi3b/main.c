@@ -94,6 +94,38 @@ machinit(void)
 	active.machs[0] = 1;
 }
 
+/*
+ * What the last boot left at 0x20000000 (l.s crumbentry, clockintr):
+ * the last exception taken and the last tick, printed before anything
+ * overwrites them.  "boots" counts starts, so a value that did not
+ * survive the reset shows as 1.
+ */
+static void
+crumbdump(void)
+{
+	volatile uvlong *c = (volatile uvlong*)0x20000000;
+
+	c[12]++;
+	serialputs("CRUMB boots ", -1);
+	serialputdec(c[12]);
+	if(c[0] == 0x43524d42ULL){
+		serialputs(" last exception: count ", -1);
+		serialputdec(c[1]);
+		serialputreg("type", c[7], 1);
+		serialputreg("esr", c[2], 8);
+		serialputreg("elr", c[3], 16);
+		serialputreg("far", c[4], 16);
+		serialputreg("spsr", c[5], 3);
+		serialputreg("sp", c[6], 16);
+		serialputs(" last tick ", -1);
+		serialputdec(c[10]);
+		serialputreg("pc", c[11], 16);
+	}
+	serialputs("\n", -1);
+	c[0] = 0;
+	c[1] = 0;
+}
+
 void
 main(void)
 {
@@ -120,6 +152,7 @@ main(void)
 	serialputs("Inferno/arm64 raspi3b build ", -1);
 	serialputdec(kerndate);
 	serialputs("\n", -1);
+	crumbdump();
 
 	uartrxprobe("fw");
 	uartconsole();

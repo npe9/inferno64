@@ -17,6 +17,8 @@ static Lock clock0lock;
 
 extern void	timercheck(Ureg*);
 static void	sleepwatch(Ureg*);
+static void	wdpet(void);
+static void	wdarm(void);
 static void	heartbeat(Ureg*);
 extern void	(*kproftick)(ulong);
 
@@ -72,6 +74,9 @@ clockintr(Ureg *u)
 		kproftick((ulong)u->pc);
 
 	m->ticks++;
+	((volatile uvlong*)0x20000000)[10] = m->ticks;
+	((volatile uvlong*)0x20000000)[11] = u != nil? u->pc: 0;
+	wdpet();
 	checkalarms();
 	timercheck(u);
 	sleepwatch(u);
@@ -202,6 +207,53 @@ enum {
 	IcFiqctl	= 0x0c/4,
 };
 
+/*
+ * BCM2835 PM watchdog: armed once init0 is running, petted each second
+ * from the tick.  If the CPU goes silent the board resets itself ten
+ * seconds later, and the crumb record at 0x20000000 (l.s crumbentry and
+ * the tick above) tells the next boot where it was.
+ */
+static int wdarmed;
+
+static void
+wdpet(void)
+{
+	volatile u32 *pm = (volatile u32*)PM0;
+
+	if(!wdarmed || m->ticks % HZ != 0)
+		return;
+	pm[0x24/4] = 0x5a000000 | (10<<16);		/* WDOG: 10s from now */
+}
+
+/*
+ * Arm only a watchdog that counts.  RSTC's full-reset setting on the
+ * SoC takes effect when WDOG runs out; QEMU's bcm2835_powermgt has no
+ * countdown and resets the moment RSTC is written.  So load WDOG, wait,
+ * and read it back: only if it went down is RSTC armed.
+ */
+static void
+wdarm(void)
+{
+	volatile u32 *pm = (volatile u32*)PM0;
+	u32 before, after;
+
+	pm[0x24/4] = 0x5a000000 | (10<<16);
+	before = pm[0x24/4] & 0xfffff;
+	delay(50);
+	after = pm[0x24/4] & 0xfffff;
+	if(after >= before || after == 0){
+		serialputs("WATCHDOG not counting (wdog ", -1);
+		serialputdec(before);
+		serialputs(" then ", -1);
+		serialputdec(after);
+		serialputs("): left unarmed\n", -1);
+		return;
+	}
+	pm[0x1c/4] = 0x5a000000 | (pm[0x1c/4] & ~0x30) | 0x20;
+	wdarmed = 1;
+	serialputs("WATCHDOG armed, 10s\n", -1);
+}
+
 int fiqarmed;
 static ulong fiqlastticks;
 static int fiqreports;
@@ -226,6 +278,7 @@ fiqwatchinit(void)
 	((volatile u32*)IRQBASE)[IcFiqctl] = 0x80 | 1;	/* FIQ from GPU IRQ 1 */
 	fiqarmed = 1;
 	fiqenable();
+	wdarm();
 	serialputs("FIQWATCH armed\n", -1);
 }
 

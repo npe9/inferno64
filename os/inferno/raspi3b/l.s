@@ -38,6 +38,9 @@
 #define	D_VPIDR_EL2	SYSARG5(3,4,0,0,0)
 #define	D_VMPIDR_EL2	SYSARG5(3,4,0,0,5)
 #define	D_MIDR_EL1	SYSARG5(3,0,0,0,0)
+#define	D_TPIDR_EL1	SYSARG5(3,0,13,0,4)
+#define	D_TPIDRRO_EL0	SYSARG5(3,3,13,0,3)
+#define	CRUMB		0x20000000
 #define	D_CNTVOFF_EL2	SYSARG5(3,4,14,0,3)
 #define	D_ICC_SRE_EL1	SYSARG5(3,0,12,12,5)
 #define	D_ICC_PMR_EL1	SYSARG5(3,0,4,6,0)
@@ -633,6 +636,50 @@ TEXT	vectorinit(SB), 1, $-4
  * get a free pointer at all) -- SUB SP,SP,#UR_SIZE by itself, before
  * touching any GPR, is enough to make the frame safe to write into.
  */
+/*
+ * crumbentry: every vector slot branches here first (with the
+ * interrupted X9 in TPIDR_EL1 and the class in X9).  Before touching
+ * the stack it records ESR, ELR, FAR, SPSR, SP and a running count at
+ * CRUMB (0x20000000, RAM above the 256MB the kernel uses), which
+ * survives a watchdog reset: an exception that faults again inside the
+ * vector path -- silent, with every exception masked -- leaves its
+ * cause there for the next boot to print.  Then it does what the slot
+ * used to: open the Ureg frame, save X9 into it, and go to vectrap with
+ * the class in X9.
+ */
+TEXT	crumbentry(SB), 1, $-4
+	MSR	R10, SPR(D_TPIDRRO_EL0)
+	MOV	$CRUMB, R10
+	MOV	R9, 56(R10)
+	MRS	SPR(D_ESR_EL1), R9
+	MOV	R9, 16(R10)
+	MRS	ELR_EL1, R9
+	MOV	R9, 24(R10)
+	MRS	SPR(D_FAR_EL1), R9
+	MOV	R9, 32(R10)
+	MRS	SPSR_EL1, R9
+	MOV	R9, 40(R10)
+	MOV	RSP, R9
+	MOV	R9, 48(R10)
+	MOV	8(R10), R9
+	ADD	$1, R9
+	MOV	R9, 8(R10)
+	MOV	$0x43524d42, R9
+	MOV	R9, 0(R10)
+	MRS	SPR(D_TPIDRRO_EL0), R10
+	SUB	$UR_SIZE, RSP
+	MRS	SPR(D_TPIDR_EL1), R9
+	MOV	R9, UR_R9(RSP)
+	MOV	$CRUMB, R9
+	MOV	56(R9), R9
+	B	vectrap(SB)
+
+/* badsp(sp): load sp and push -- a deliberate recursive fault, for tests */
+TEXT	badsp(SB), 1, $-4
+	MOV	R0, RSP
+	MOV	R30, -16(RSP)!
+	RET	R30
+
 TEXT	vectrap(SB), 1, $-4
 	CLREX				/* an exception clears the exclusive monitor,
 					 * so an interrupted _tas STXR fails and

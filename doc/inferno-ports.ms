@@ -19430,3 +19430,39 @@ SD, draw and USB checks, before loading the shell and before starting it,
 each followed by a 100ms sleep and a "slept" line: a sleep needs the tick,
 so the last "slept" line marks the step that stopped it.  QEMU prints them
 all.
+.PP
+.B "The shell works on silicon; a timing-dependent death remains"
+.PP
+Build 1789470271 (raspi3binit's STEP lines each followed by a 100ms sleep)
+booted the Pi to a working shell: every step slept and returned, the
+heartbeat ran for over a minute at the prompt, and typed input was answered
+\(em
+.CW "echo PL011_RX_OK"
+printed PL011_RX_OK and
+.CW ls
+listed the root.  Input shorter than the PL011's 8-byte receive trigger
+arrives through the idle loop's clockpoll(); longer lines raise IRQ 57 (two
+interrupts for 16 bytes of a 21-byte line).
+.CW "echo reboot > /dev/sysctl"
+at that shell reset the board through the PM watchdog, and the second boot
+of the same image worked the same way.  The only difference from build
+1789469929, which lost every interrupt shortly after disinit, is those
+sleeps, so the death is real and depends on timing.  Ruled out on the way:
+SP alignment (every SP adjustment in the linked kernel is a multiple of 16),
+the DWC init racing init (it finishes before init0 ends), HVC/SMC (none in
+the kernel).
+.PP
+The failure silences everything that needs the CPU to take an exception, so
+the next instrument survives it.
+.CW crumbentry
+in l.s runs first on every exception, before the stack is touched, and
+writes ESR, ELR, FAR, SPSR, SP and a count to 0x20000000, RAM above the
+256MB the kernel uses; clockintr adds the tick and interrupted pc.  The PM
+watchdog is armed after init0 and petted each second, but only if WDOG is
+seen counting down \(em QEMU's bcm2835_powermgt has no countdown and resets
+the moment RSTC is written, so there it stays unarmed.  The next boot prints
+CRUMB before anything else.  Falsified under QEMU: a deliberate recursive
+fault from a bad SP, then a monitor system_reset, and the next boot printed
+"CRUMB boots 2 last exception: count 6867485 type 0 esr 96000050 ... sp
+00000000623d6ad0".  The STEP sleeps are removed again so the failure can be
+caught.
