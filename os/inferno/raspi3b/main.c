@@ -109,10 +109,21 @@ main(void)
 	confinit();
 	fpinit();
 
-	serialputs("Inferno/arm64 raspi3b\n", -1);
+	{
+		/*
+		 * The build's date stamp on the first line, so a serial log
+		 * says which image the Pi actually booted -- a stale
+		 * kernel8.img on the card looks exactly like a failed fix.
+		 */
+		char buf[64];
+
+		snprint(buf, sizeof buf, "Inferno/arm64 raspi3b build %lud\n", kerndate);
+		serialputs(buf, -1);
+	}
 
 	uartconsole();
-	serialputs("PL011-OK\n", -1);
+	serialputs("MINIUART-OK\n", -1);
+	uartearlyprobe();
 	archconsole();
 
 	/*
@@ -203,6 +214,8 @@ init0(void)
 
 	chandevinit();
 	poperror();
+
+	clockcheckboot();
 
 	/*
 	 * Publish the board MAC the firmware knows (mailbox.c) as

@@ -18,9 +18,13 @@ static Ctlr virtarm64ctlr = {
 	.base	= (u32*)UART0,
 };
 
+/*
+ * The PL011 is the Pi 3B's Bluetooth UART in the firmware's default
+ * pin arrangement, so it is eia1 and not the console; uartmini.c is.
+ */
 static Uart virtarm64uart = {
 	.regs	= &virtarm64ctlr,
-	.name	= "eia0",
+	.name	= "eia1",
 	.freq	= 48000000,	/* BCM2837 PL011 UART clock set by the firmware */
 	.phys	= &virtarm64physuart,
 };
@@ -64,7 +68,6 @@ virtarm64_enable(Uart *uart, int ie)
 	Ctlr *c;
 
 	c = uart->regs;
-	USED(ie);
 	/*
 	 * The firmware leaves UART0 usable, which is why main's first banner
 	 * appears on real hardware.  Do not then depend on its inherited baud
@@ -78,6 +81,11 @@ virtarm64_enable(Uart *uart, int ie)
 	csr32w(c, UartFBRD, 3);
 	csr32w(c, UartLCRH, UartLCRHWLEN8|UartLCRHFEN);
 	csr32w(c, UartCR, UartCRUARTEN|UartCRTXE|UartCRRXE);
+	if(ie){
+		/* BCM2837 PL011 is VideoCore/GPU interrupt 57 (pending bank 2). */
+		intrenable(57, uartintr, uart, 0, uart->name);
+		csr32w(c, UartIMSC, UartIMSCRX);
+	}
 }
 
 static void
@@ -217,64 +225,3 @@ PhysUart virtarm64physuart = {
 	.getc		= virtarm64_getc,
 	.putc		= virtarm64_putc,
 };
-
-void
-serialputc(int c)
-{
-	virtarm64_putc(&virtarm64uart, c);
-}
-
-void
-serialputs(char *s, int n)
-{
-	if(n < 0){
-		while(*s){
-			if(*s == '\n')
-				serialputc('\r');
-			serialputc(*s++);
-		}
-		return;
-	}
-	while(--n >= 0){
-		if(*s == '\n')
-			serialputc('\r');
-		serialputc(*s++);
-	}
-}
-
-void (*serwrite)(char*, int) = serialputs;
-
-static int
-consolerx(Queue*, int ch)
-{
-	extern Queue *kbdq;
-
-	if(kbdq == nil)
-		return 0;
-	return kbdcr2nl(kbdq, ch);
-}
-
-void
-uartconsole(void)
-{
-	Uart *uart;
-
-	uart = &virtarm64uart;
-	(*uart->phys->enable)(uart, 0);
-	consuart = uart;
-	uart->console = 1;
-}
-
-void
-uartconsolesetup(void)
-{
-	Ctlr *c;
-
-	if(consuart == nil)
-		return;
-	consuart->putc = consolerx;
-	/* BCM2837 PL011 is VideoCore/GPU interrupt 57 (pending bank 2). */
-	intrenable(57, uartintr, consuart, 0, "uart0");
-	c = consuart->regs;
-	csr32w(c, UartIMSC, UartIMSCRX);
-}

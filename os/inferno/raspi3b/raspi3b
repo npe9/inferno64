@@ -86,6 +86,7 @@ port
 	archvirtarm64
 
 misc
+	uartmini
 	uartvirtarm64
 	screenbcm
 	randomvirtarm64

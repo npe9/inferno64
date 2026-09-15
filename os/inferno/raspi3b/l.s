@@ -31,6 +31,8 @@
 #define	D_ELR_EL3	SYSARG5(3,6,4,0,1)
 #define	D_SPSR_EL2	SYSARG5(3,4,4,0,0)
 #define	D_ELR_EL2	SYSARG5(3,4,4,0,1)
+#define	D_CNTHCTL_EL2	SYSARG5(3,4,14,1,0)
+#define	D_CNTVOFF_EL2	SYSARG5(3,4,14,0,3)
 #define	D_ICC_SRE_EL1	SYSARG5(3,0,12,12,5)
 #define	D_ICC_PMR_EL1	SYSARG5(3,0,4,6,0)
 #define	D_ICC_BPR1_EL1	SYSARG5(3,0,12,12,3)
@@ -123,6 +125,8 @@
  * pseudo-op.
  */
 TEXT	_main(SB), 1, $-4
+	/* Preserve firmware's DTB pointer (x0) across early EL/core setup. */
+	MOV	R0, R19
 	/*
 	 * QEMU raspi3b is a quad-core Pi 3 and starts ALL FOUR cores at
 	 * 0x80000.  This kernel is MAXMACH 1, so the three secondaries must
@@ -157,6 +161,17 @@ TEXT	_main(SB), 1, $-4
 	MSR	R0, SPR(D_ELR_EL3)
 	ERET
 atel2:
+	/*
+	 * EL1 reads the physical counter and drives the physical timer, so
+	 * EL2 must not trap them: CNTHCTL_EL2.EL1PCTEN|EL1PCEN, which reset
+	 * UNKNOWN and which the Pi's armstub8 never sets (Linux and Circle
+	 * both set them on this same drop).  Zero the virtual offset too.
+	 */
+	MRS	SPR(D_CNTHCTL_EL2), R0
+	ORR	$3, R0, R0
+	MSR	R0, SPR(D_CNTHCTL_EL2)
+	MOV	$0, R0
+	MSR	R0, SPR(D_CNTVOFF_EL2)
 	MOV	$(1<<31), R0		/* EL2 (real hardware): drop EL2 -> EL1 */
 	MSR	R0, SPR(D_HCR_EL2)
 	MOV	$0x3c5, R0		/* EL1h, DAIF masked */
@@ -176,7 +191,7 @@ TEXT	boot1(SB), 1, $-4
 	MOV	$stack+KSTACK(SB), R2
 	MOV	R2, RSP
 	MOV	$setSB(SB), R28
-	MOV	$0, R0
+	MOV	R19, R0
 	MOV	R0, dtbptr(SB)
 	BL	main(SB)
 deadb:
@@ -187,6 +202,15 @@ deadb:
  * source register (0x40000000 is RAM here). */
 TEXT	getcntpctl(SB), 1, $-4
 	MRS	SPR(D_CNTP_CTL_EL0), R0
+	RET	R30
+
+TEXT	getcntpcval(SB), 1, $-4
+	MRS	SPR(D_CNTP_CVAL_EL0), R1
+	MOV	R1, 0(R0)
+	RET	R30
+
+TEXT	getdaif(SB), 1, $-4
+	MRS	DAIF, R0
 	RET	R30
 
 GLOBL	dtbptr(SB), $8

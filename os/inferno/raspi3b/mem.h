@@ -35,6 +35,7 @@
 
 /* pl011@9000000, same as armv7's own board (same QEMU virt machine) */
 #define	UART0		((uintptr)0x3f201000)	/* PL011 */
+#define	AUX0		((uintptr)0x3f215000)	/* BCM2835 AUX: mini UART (UART1) */
 #define	RTC0		((uintptr)0x09010000)	/* arm,pl031 */
 
 #define	BCMPERIPH	((uintptr)0x3f000000)

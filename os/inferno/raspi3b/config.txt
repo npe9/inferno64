@@ -5,13 +5,14 @@
 arm_64bit=1
 kernel=kernel8.img
 
-# Console: this kernel drives the PL011 (UART0) at 0x3f201000.  On a Pi 3
-# the PL011 is wired to Bluetooth by default and the GPIO header gets the
-# mini-UART; disable-bt frees the PL011 back onto GPIO 14/15 (pins 8/10)
-# so the kernel's console reaches the serial header.  115200 8N1.
+# Console: this kernel drives the AUX mini UART (UART1, 0x3f215040) on
+# GPIO 14/15 (header pins 8 TX, 10 RX), 115200 8N1.  That is the Pi 3's
+# default wiring once the UART is enabled, so no uart overlay is named:
+# the PL011 stays on the Bluetooth part.  (disable-bt and miniuart-bt
+# would each move the PL011 back onto GPIO 14/15, away from this driver.)
 enable_uart=1
-dtoverlay=disable-bt
 
-# Pin the core clock so the UART baud is stable (and don't let the firmware
-# downclock when idle, which would move the baud divisor under us).
+# The mini UART's baud divisor counts the VideoCore core clock, so pin it
+# (enable_uart=1 implies this on a Pi 3; say it anyway) and keep the
+# firmware from scaling it underneath the console.
 core_freq=250

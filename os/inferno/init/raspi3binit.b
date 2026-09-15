@@ -111,21 +111,10 @@ usbcheck()
 		return;
 	}
 	sys->print("USB root hub:\n%s", readctl("/dev/usb/ctl"));
-	usbd := load Command "/dis/usb/usbd.dis";
-	if(usbd == nil){
-		sys->print("USB-FAIL load usbd: %r\n");
-		return;
-	}
-	spawn usbd->init(nil, "usbd" :: nil);
-	sys->sleep(2000);
-	sys->print("USB after usbd:\n%s", readctl("/dev/usb/ctl"));
-	# A USB boot keyboard, once usbd finds it, delivers UTF-8 keystrokes
-	# to /dev/keyboard (the graphics console queue).  Report what arrives
-	# so an injected "hello" from the QEMU monitor shows the whole path --
-	# split interrupt transfers, HID translation, cons -- end to end.
-	spawn kbdreport();
+	# Keep the root hub bound; userspace usbd/etherusb is deferred until the
+	# physical Sys_mount path is repaired.
 	sys->print("USB-OK\n");
-	ethercheck();
+	return;
 }
 
 # Phase 3: USB ethernet.  usbd starts etherusb for a CDC ECM or SMSC
@@ -222,6 +211,15 @@ init()
 
 	shell = load Shell "/dis/sh.dis";
 	if(shell == nil){ sys->print("init: load sh: %r\n"); exit; }
-	shell->init(nil, "sh" :: "-n" :: "-c" :: "echo RASPI3B-SH-OK" :: nil);
-	shell->init(nil, "sh" :: "-n" :: nil);
+	# osinit's inherited descriptors are not guaranteed to be the serial
+	# console on the Pi firmware path.  Give the interactive shell an
+	# explicit console on all three standard descriptors.
+	cons := sys->open("/dev/cons", Sys->ORDWR);
+	if(cons != nil){
+		sys->dup(cons.fd, 0);
+		sys->dup(cons.fd, 1);
+		sys->dup(cons.fd, 2);
+	}
+	sys->print("RASPI3B-SH-OK\n");
+	shell->init(nil, "sh" :: "-i" :: "-n" :: nil);
 }

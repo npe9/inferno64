@@ -180,6 +180,16 @@ gicenable(int irq)
 void
 gicinit(void)
 {
+	/*
+	 * BCM2836 local controller GPU_INT_ROUTING: bits 1:0 pick the core
+	 * that takes the BCM2835 (GPU) peripheral IRQs, bits 3:2 the core
+	 * for their FIQ.  Only core 0 runs this kernel -- the others sit at
+	 * WFE -- so route both there rather than trusting the reset or
+	 * firmware value; a peripheral IRQ routed to a parked core is
+	 * simply never seen.
+	 */
+	*(volatile u32*)0x4000000c = 0;
+	coherence();
 }
 
 void

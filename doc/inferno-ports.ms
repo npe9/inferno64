@@ -19046,3 +19046,99 @@ returns a transaction error with the endpoint/channel printed.  QEMU's USB
 root hub still enumerates and reaches the shell after this change; the next
 Pi boot will report whether the failing operation is a real DWC channel,
 LAN9514 reset timing, or a cache/DMA visibility problem.
+.PP
+.B "The console moves to the mini UART, 14 September 2026"
+.PP
+Every later physical boot reached the shell prompt and none of them took
+a typed character.  The last register captures from the Pi, taken at the
+prompt after a key was pressed, read PL011 FR 0x91: receive FIFO empty,
+no receive interrupt pending, and the handler never entered.  The byte was
+not reaching the PL011 at all, so no interrupt-routing change could have
+made it arrive, and the several attempts that followed (polling from the
+idle loop, a polling kernel process, reprogramming the UART at the console
+handoff, arming its receive interrupt earlier, pinning init_uart_clock) all
+changed code downstream of an empty FIFO.  Some of those boots also ran a
+stale kernel8.img, which invalidated them.  The attempts are preserved,
+uncommitted, at
+.CW refs/wip/codex-pl011-rx-2026-09-14
+and are not part of the tree.
+.PP
+One of those boots still recorded something true about a different
+fault.  The polling process printed its start marker and then never the
+register line it was to print after its first 10ms
+.CW tsleep ,
+so on silicon a timed sleep never returned: the scheduler tick was not
+waking sleepers.  QEMU ticks normally.  Two hardware-only gaps fit it and
+are now closed.  The Pi's armstub8 drops to EL2 without setting
+CNTHCTL_EL2, whose EL1PCTEN and EL1PCEN bits reset UNKNOWN; Linux and
+Circle both set them on the same EL2-to-EL1 drop, and l.s now does too
+(with CNTVOFF_EL2 zeroed), encodings checked against GNU as.  And the
+BCM2836 GPU interrupt route register at 0x4000000c, which a Pi capture had
+shown non-zero, is now written to route GPU IRQ and FIQ to core 0, the only
+core running.
+.PP
+The console is now the AUX mini UART
+.CW os/inferno/raspi3b/uartmini.c ), (
+ported from 9front's
+.CW sys/src/9/bcm/uartmini.c .
+That is the Pi 3B's own default: with
+.CW enable_uart=1
+and no uart overlay the mini UART owns GPIO 14/15 and the PL011 stays on
+Bluetooth, which is where a later Bluetooth driver needs it.  The plan
+left uncommitted for this work had it backwards:
+.CW miniuart-bt ,
+like
+.CW disable-bt ,
+moves the PL011
+.I onto
+GPIO 14/15 (the firmware's own
+.CW overlays/README
+says so), and its register offsets were relative to 0x3f215040, not to the
+AUX block.  The PL011 remains compiled in as eia1 with its own interrupt.
+.PP
+What the driver adds to the donor: AUX_ENABLES is the first write, since
+until it is set every mini UART register reads zero; LCR is 3 for eight
+data bits; receive interrupts set IER bits 3:2 as well as bit 0, per the
+BCM2835 erratum; GPIO 14/15 are put in alt5 with the pulls the donor uses
+(a new
+.CW gpiopull()
+in
+.CW gpiobcm.c ,
+now volatile throughout); and a divisor the firmware has already
+programmed is kept if it gives 115200 within 2%, since the firmware knows
+its core clock and the driver only assumes 250MHz.  Receive is interrupt
+driven through BCM IRQ 29 and also polled from clockpoll(), with
+interrupts masked around each status-and-read.  Transmit paces itself on
+LSR with a bound and uses the transmit interrupt only when that bound
+runs out, because devuart calls kick() under ilock and the kernel prints
+most of its boot before init0 first enables interrupts.
+.PP
+Each boot now answers its own questions.  The first line is
+.CW "Inferno/arm64 raspi3b build N" ,
+matching the later
+.CW "conf raspi3b (N)" ,
+so a stale card image is visible.  Before the MMU is on, the kernel polls
+the mini UART for three seconds and prints MINI-RX-EARLY-OK with the key
+typed, or MINI-RX-EARLY-NONE with LSR, CNTL and the divisor: a key seen
+there and not at the shell is the kernel's fault, not the wiring's.  The
+console setup prints the AUX register state and GPFSEL1.  After chandevinit
+with interrupts on, TICK-OK or TICK-FAIL counts ticks across a 250ms busy
+wait and on failure prints DAIF, CNTP_CTL, the deadline against the counter
+and the BCM2836 route and pending registers; a kernel process then reports
+SLEEP-OK when a 100ms tsleep returns.  At the shell,
+.CW "cat '#t/eia0status'"
+gives interrupt and polled receive counts.
+.PP
+Verified under QEMU 10.1.3 with the mini UART as the only console
+.CW "-serial null -serial stdio" ): (
+through both the ELF and the firmware-equivalent raw kernel8.img load, the
+early probe read an injected key (MINI-RX-EARLY-OK 0x6b), GPFSEL1 read
+0x12000 (pins 14 and 15 in alt5), TICK-OK, SLEEP-OK, and
+.CW "echo MINI_UART_OK"
+typed at the shell echoed back; eia0status showed every received byte
+arriving by interrupt (rxintr 66, rxpoll 0).  What QEMU cannot show: its
+bcm2835_aux model ignores LCR, MCR, CNTL and BAUD (they read back zero, as
+the divisor line shows) and pull-up registers, so baud rate, framing and
+pulls are only testable on the Pi, and whether the tick fixes are the
+right ones is equally a physical result.  None of this has run on the Pi
+yet.

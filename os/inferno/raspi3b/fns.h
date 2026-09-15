@@ -55,6 +55,8 @@ void	gicinit(void);
 void	timerie(void);
 void	uartconsole(void);
 void	uartconsolesetup(void);
+void	uartearlyprobe(void);
+void	clockcheckboot(void);
 void	serialputc(int);
 void	serialputs(char*, int);
 void	(*screenputs)(char*, int);
