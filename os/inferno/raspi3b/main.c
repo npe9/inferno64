@@ -120,10 +120,50 @@ crumbdump(void)
 		serialputs(" last tick ", -1);
 		serialputdec(c[10]);
 		serialputreg("pc", c[11], 16);
+		serialputs("\nCRUMB in-handler irq ", -1);
+		if(c[14] == ~0ULL)
+			serialputs("none", -1);
+		else
+			serialputdec(c[14]);
+		serialputs(" returns ", -1);
+		serialputdec(c[15]);
+		serialputs(" irqcounts", -1);
+		{
+			int i;
+			for(i = 0; i < 64; i++)
+				if(c[40+i] != 0 && c[40+i] < 100000000){
+					serialputs(" ", 1);
+					serialputdec(i);
+					serialputs(":", 1);
+					serialputdec(c[40+i]);
+				}
+		}
+		serialputs("\nCRUMB ring (oldest first, type irq pc):", -1);
+		{
+			int i;
+			uvlong e, n;
+			n = c[16];
+			for(i = 0; i < 16; i++){
+				e = c[24 + (n+i)%16];
+				if(e == 0)
+					continue;
+				serialputreg("", e>>56, 1);
+				serialputreg("", (e>>48)&0xff, 2);
+				serialputreg("", e & 0xffffffffffffULL, 8);
+			}
+		}
 	}
 	serialputs("\n", -1);
 	c[0] = 0;
 	c[1] = 0;
+	{
+		int i;
+		c[14] = ~0ULL;
+		c[15] = 0;
+		c[16] = 0;
+		for(i = 24; i < 104; i++)
+			c[i] = 0;
+	}
 }
 
 void

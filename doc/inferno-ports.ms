@@ -19479,3 +19479,20 @@ the marker set was reset by arming itself (QEMU) and leaves the watchdog
 alone.  Under QEMU: the first boot resets at arming, the second prints
 "WATCHDOG reset the board when armed: left unarmed" and the first boot's
 crumb, and reaches the shell.
+.PP
+Build 1789508388 armed the watchdog on the Pi ("WATCHDOG armed, 10s") and
+then died and was reset by it ten times running, each boot printing the
+previous boot's crumb \(em RAM at 0x20000000 survives the watchdog reset
+(boots 1431655766, 67, 68, ... increment).  Every death has the same
+shape: 173 to 177 exceptions in the whole boot, the last tick at 175, and
+the last exception an IRQ that was not the tick (the tick crumb did not
+advance), after which no exception of any kind was taken again, including
+the watchdog FIQ.  The interrupted pc varies (memmove, checktracked in the
+draw code, and most often 0xf58dc, the instruction after
+.CW "MSR DAIFClr"
+in splx): an interrupt left pending while IRQs were masked, delivered the
+moment they were unmasked.  So one peripheral IRQ, taken during the SD,
+draw and USB checks, stops all delivery.  The next image records the IRQ
+number and a handler-running flag around every dispatch, per-IRQ counts,
+and a ring of the last 16 exceptions (type, IRQ, pc), all printed by the
+next boot.

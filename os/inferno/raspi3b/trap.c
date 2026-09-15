@@ -211,6 +211,40 @@ trapinit(void)
 }
 
 ulong irqentries;
+
+/*
+ * Crumb record, continued (l.s crumbentry writes words 0-7, clockintr
+ * 10-11, main 12, wdarm 13): word 14 is the peripheral IRQ whose handler
+ * is running, or ~0 when none is; 15 counts handler returns; 16 is the
+ * next slot of a 16-entry ring at 24-39 of the last exceptions seen by
+ * trap(), each (type<<56 | irq<<48 | low 48 bits of pc); 40-103 count
+ * dispatches per IRQ.  After a watchdog reset, main prints them.
+ */
+enum { Crumbbase = 0x20000000 };
+
+static void
+crumbring(int type, int irq, uintptr pc)
+{
+	volatile uvlong *c = (volatile uvlong*)Crumbbase;
+	uvlong i;
+
+	i = c[16] % 16;
+	c[24+i] = (uvlong)type<<56 | (uvlong)(irq & 0xff)<<48 | (pc & 0xffffffffffffULL);
+	c[16] = i + 1;
+}
+
+static void
+crumbirq(Ureg *ur, int irq, void (*f)(Ureg*, void*), void *a)
+{
+	volatile uvlong *c = (volatile uvlong*)Crumbbase;
+
+	c[40+irq]++;
+	crumbring(1, irq, ur->pc);
+	c[14] = irq;
+	f(ur, a);
+	c[14] = ~0ULL;
+	c[15]++;
+}
 extern void fiqwatch(Ureg*);
 
 void
@@ -245,10 +279,13 @@ trap(Ureg *ur)
 
 	switch(ur->type){
 	case TFiq:
+		crumbring(2, 0, ur->pc);
 		fiqwatch(ur);
 		return;
 	case TIrq:
 		irqentries++;
+		if((getcntpctl() & CntpIStatus) == 0)
+			crumbring(1, 0xff, ur->pc);
 		if(getcntpctl() & CntpIStatus){
 			clockintr(ur);
 			return;
@@ -258,14 +295,14 @@ trap(Ureg *ur)
 			if((pend & (1<<irq)) == 0)
 				continue;
 			if((f = irqhandler[irq]) != nil)
-				f(ur, irqarg[irq]);
+				crumbirq(ur, irq, f, irqarg[irq]);
 		}
 		pend = ((volatile u32*)IRQBASE)[IrqPending2/4];
 		for(irq = 32; irq < 64; irq++){
 			if((pend & (1<<(irq-32))) == 0)
 				continue;
 			if((f = irqhandler[irq]) != nil)
-				f(ur, irqarg[irq]);
+				crumbirq(ur, irq, f, irqarg[irq]);
 		}
 		return;
 	default:
