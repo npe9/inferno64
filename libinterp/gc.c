@@ -27,6 +27,7 @@ struct Ptrhash
 	int	gcdepthmax;	/* high-water mark of it, for #%/memgc */
 	ulong	gcdeferred;	/* frees the depth guard handed to the collector */
 	int	mflag;
+	int	fpchain = 0;	/* see rootset(); off, measured not assumed */
 	int	mutator = 0;
 	int	gccolor = 3;
 
@@ -486,6 +487,55 @@ rootset(Prog *root)
 			sx = (Stkext*)ex;
 			fp = sx->reg.tos.fu;
 			/*
+			 * fpchain: walk the frames the f->fp chain names
+			 * rather than the address range tos.fu..sp.
+			 *
+			 * The chain is what the frames are; the range is
+			 * where they are assumed to be, and a stale SP makes
+			 * the assumption false -- measured, one live frame
+			 * with a bound claiming eight frames' worth.  A chain
+			 * cannot be made wrong by a bad bound, so this is
+			 * correct whatever leaves SP stale.
+			 *
+			 * Off by default.  It changes what the root set is,
+			 * which is not a thing to alter on a spot check: too
+			 * few roots and the sweeper takes a live object, and
+			 * that failure is silent.  It is here to be measured
+			 * against the range walk, not to ship untested.
+			 */
+			if(fpchain){
+				uchar *cf;
+				int cn;
+
+				for(cf = rr->FP, cn = 0;
+				    cf >= sx->reg.tos.fu && cf < sp && cn < 4096;
+				    cn++){
+					f = (Frame*)cf;
+					t = f->t;
+					if(t == nil)
+						t = sx->reg.TR;
+					if(t == nil)
+						break;
+					t->mark(t, f);
+					ml = f->mr;
+					if(ml != nil) {
+						h = D2H(ml);
+						Setmark(h);
+						mp = ml->MP;
+						if(mp != H) {
+							h = D2H(mp);
+							Setmark(h);
+						}
+					}
+					cf = (uchar*)f->fp;
+					if(cf == nil)
+						break;
+				}
+				ex = sx->reg.EX;
+				sp = sx->reg.SP;
+				continue;
+			}
+			/*
 			 * Ordering, not equality.  The frames are meant to tile
 			 * tos.fu..sp exactly and fp advances by t->size, so one
 			 * wrong size steps past sp, "!=" never holds, and the walk
@@ -797,12 +847,13 @@ rootset(Prog *root)
 							" tile %#p..%#p,"
 							" stopped %#p, pid %d,"
 							" state %d, gchalt %d,"
+							" spsrc %#x,"
 							" regs from"
 							" %s%d (1 xec 2 isave"
 							" 3 propex 4 dbg)\n",
 							sx->reg.tos.fu, sp, fp,
 							root->pid, root->state,
-							gchalt,
+							gchalt, root->spsrc,
 							rr == &root->reg
 							  ? "p->reg" : "ctx ",
 							rr == &root->reg
