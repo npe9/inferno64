@@ -218,6 +218,17 @@ trap(Ureg *ur)
 	u32 pend;
 	int irq;
 	void (*f)(Ureg*, void*);
+	extern int fiqarmed;
+
+	/*
+	 * Once the FIQ watchdog is armed keep FIQ unmasked across every
+	 * exception return: an exception taken before init0 unmasked F
+	 * saved an SPSR with F set, and returning through it later (after
+	 * a context switch inside the handler) would mask FIQ again and
+	 * blind the watchdog exactly when interrupts stop.
+	 */
+	if(fiqarmed)
+		ur->status &= ~(uintptr)(1<<6);
 
 	switch(ur->type){
 	case TFiq:

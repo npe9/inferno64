@@ -223,11 +223,11 @@ init0(void)
 	poperror();
 
 	clockcheckboot();
+	uartrxprobe("init0");
 	{
 		extern void fiqwatchinit(void);
 		fiqwatchinit();
 	}
-	uartrxprobe("init0");
 
 	/*
 	 * Publish the board MAC the firmware knows (mailbox.c) as

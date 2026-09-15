@@ -202,6 +202,7 @@ enum {
 	IcFiqctl	= 0x0c/4,
 };
 
+int fiqarmed;
 static ulong fiqlastticks;
 static int fiqreports;
 ulong fiqcount;
@@ -223,6 +224,7 @@ fiqwatchinit(void)
 	fiqlastticks = m->ticks;
 	fiqarm();
 	((volatile u32*)IRQBASE)[IcFiqctl] = 0x80 | 1;	/* FIQ from GPU IRQ 1 */
+	fiqarmed = 1;
 	fiqenable();
 	serialputs("FIQWATCH armed\n", -1);
 }

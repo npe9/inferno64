@@ -19371,3 +19371,14 @@ Falsified under QEMU with
 .CW "splhi(); for(;;);"
 after arming: "FIQWATCH ticks stalled at 73 pc 000f6f94 ... spsr 385 splpc
 000f6f94 up interp".
+.PP
+Build 1789467529 on the Pi armed the FIQ watchdog, which duly reported the
+init0 RXPROBE's own four-second IRQ-masked poll (pc and splpc in
+uartrxprobe), and then at the shell prompt reported nothing, with no
+heartbeat either: FIQ as well as IRQ had stopped.  F had been unmasked
+only on the CPU, in init0, so any exception taken before then carried a
+saved SPSR with F set, and returning through it after a context switch
+masks FIQ again.  trap() now clears F in the saved SPSR on every exception
+once the watchdog is armed, and the watchdog arms after the init0 probe.
+Under QEMU the heartbeat at the prompt now shows the FIQ count climbing and
+the interrupted SPSR 0x305.
