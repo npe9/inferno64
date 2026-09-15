@@ -1099,3 +1099,68 @@ is a wall-clock microsecond count that says nothing about when the
 machine started.  The source is chosen by its value, not by whether the
 file opens \(em which is a distinction this document has had to learn
 twice today.
+.NH 2
+Phase 4 item 14: deployment with no image build
+.PP
+Item 14 offers two ways to update a machine \(em republish the image and
+recreate the instance, or mount a new
+.CW /dis
+and restart \(em and says the second is the interesting one.
+.CW scripts/check-pc64-redeploy.sh
+is the second, in the sharpest form available: the program it runs is
+not in the kernel, not in the kernel's compiled-in root, and never
+touches the machine's disk.  It is fetched over Styx from another
+machine at the moment it is run.
+.PP
+The deployment side is a directory and
+.CW styxlisten .
+There is no package format, no image registry and no agent on the
+target.  The target does
+.IP
+.EX
+mount -A tcp!host!port /n/remote
+bind -a /n/remote /dis
+hello
+.EE
+.PP
+and the next command resolves there.  Then
+.CW "supervise -n 2 hello"
+runs it twice more, which is the "and restart" half: a supervisor that
+has never seen the program either keeps it running.  The check requires
+all three runs.
+.PP
+.B "With a negative control, because the alternative is believing it."
+Run with the deployment server not started, the same check fails.  That
+is what makes the passing run evidence that the mount did the work
+rather than something in the image.
+.PP
+Two details that cost a run each, and both are about the harness rather
+than the system.
+.CW "bind -b"
+puts the remote directory
+.I before
+.CW /dis ,
+so every lookup of every other program asks a server that holds one
+file, and the console fills with
+.CW "mountrpc: Rerror file does not exist" .
+.CW "bind -a"
+searches the local
+.CW /dis
+first and is both quieter and the right meaning for "add programs this
+machine does not have".
+.PP
+And the test could not use an exact-line match for its token, which is
+the opposite of the correction two sections above.  The kernel prints
+mount diagnostics with no trailing newline, so a program's output can
+share a line with them.  A substring match is safe
+.I here
+for the reason the exact match was needed
+.I there :
+the token
+.CW HELLO-FROM-REMOTE-DIS
+does not appear in the command, which says
+.CW hello ,
+so only the program can produce it.  The rule is not "always use
+.CW -x ";
+it is that the predicate must be something only the thing under test can
+satisfy.
