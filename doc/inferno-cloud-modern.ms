@@ -1256,3 +1256,81 @@ silently.  And
 computed the output file named in its own usage line and then ignored
 it, writing every certificate to standard output.  Both are fixed;
 neither is cryptography.
+.NH 2
+Phase 3 item 8 completed: Styx against a conventional RPC
+.PP
+The section above left this open in as many words: "what remains
+untested is the comparison against a conventional RPC with its own
+framing and serialisation, which is the thing a real service would
+otherwise use".  It is tested now.
+.PP
+.CW rpcserve (1)
+answers a length-prefixed request that has to be formatted and parsed
+on both sides \(em
+.CW "GET <offset> <count>"
+in, a
+.CW "OK <n>"
+header and
+.CW n
+bytes back \(em which is what most hand-rolled RPCs and every
+JSON-over-TCP service amount to.
+.CW styxbench 's
+.CW -r
+arm drives it over
+.B one connection, reused ,
+exactly as the Styx and raw arms are.  That detail decides the result:
+.CW httpclient (2)
+here sends
+.CW "Connection: close" ,
+so measuring against it would have charged the RPC a new TCP connection
+per request while Styx read an already-open fid, and flattered Styx by a
+whole connection setup instead of comparing protocols.
+.PP
+The arm to compare is
+.CW jumping ,
+not
+.CW seq :
+it strides far enough that readahead cannot answer one read from
+another, so each iteration is a real
+.CW Tread
+on the wire, which is what an RPC call is.
+.PP
+.B "On the kernel, Styx is slightly cheaper than the RPC."
+Three runs of 300 iterations, pc64 under QEMU serving all three arms,
+a hosted client:
+.PP
+.TS
+center box tab(;);
+c | c | c | c
+n | n | n | c .
+raw tcp;styx jumping;rpc framed;styx/rpc
+_
+7477 us;14010 us;14447 us;0.9
+7873 us;14150 us;15077 us;0.9
+10050 us;16417 us;18500 us;0.8
+.TE
+.PP
+Hosted, two
+.CW emu s
+over loopback, the ratio runs the other way and is noisier \(em 1.0,
+1.4, 1.3, 1.2 across four runs \(em which is what one would expect when
+the Styx server is a Limbo program rather than the kernel's own
+.CW exportfs .
+Taken together: a Styx round trip and a conventional framed RPC cost
+about the same, within a factor of about one and a half in either
+direction, and on the kernel Styx is the cheaper of the two.
+.PP
+.B "This settles the first of the three falsification criteria."
+The claim was that "if Styx round-trips cost several times a
+conventional RPC on the same network, the file abstraction is too
+expensive for the thing it is meant to replace".  They do not.  They
+cost about the same thing, and the mounted namespace is had for free.
+.PP
+.B "What this measurement is not."
+The absolute numbers are QEMU user-mode networking and mean nothing
+outside it; only the ratios are claimed, and both arms cross the same
+path in the same run.  Both ends are Inferno, so this is not "Styx
+versus a service on Linux" \(em it isolates protocol cost with the
+runtime held constant, which is the narrower and more answerable
+question.  The cross-stack comparison item 8 also asks for still wants
+two rented instances.

@@ -292,6 +292,7 @@ root
 # export a namespace over a connection, and answer one: the pair that
 # makes a second instance able to mount this one's files
 	/dis/styxbench.dis
+	/dis/rpcserve.dis
 	/dis/tcpserve.dis
 	/dis/metricfs.dis
 	/dis/supervise.dis

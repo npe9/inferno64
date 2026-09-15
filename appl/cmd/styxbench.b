@@ -45,12 +45,14 @@ init(nil: ref Draw->Context, argv: list of string)
 
 	n := 200;
 	size := 64;
+	rpcaddr: string;
 	arg->init(argv);
-	arg->setusage("styxbench [-n count] [-s size] rawaddr file");
+	arg->setusage("styxbench [-n count] [-s size] [-r rpcaddr] rawaddr file");
 	while((o := arg->opt()) != 0)
 		case o {
 		'n' =>	n = int arg->earg();
 		's' =>	size = int arg->earg();
+		'r' =>	rpcaddr = arg->earg();
 		* =>	arg->usage();
 		}
 	argv = arg->argv();
@@ -116,15 +118,97 @@ init(nil: ref Draw->Context, argv: list of string)
 	}
 	jumpms := sys->millisec() - t0;
 
+	#
+	# A conventional RPC, against rpcserve(1): a length-prefixed
+	# request that has to be formatted and parsed on both sides, and a
+	# reply with a header that has to be parsed before the payload can
+	# be found.  This is the arm doc/inferno-cloud-modern.ms item 8
+	# names and the one that was missing -- raw TCP is the floor, with
+	# no protocol at all, and it is not what anyone would deploy.
+	#
+	# On one connection, reused, exactly as the Styx and raw arms are.
+	# Using httpclient(2) instead would have measured a new TCP
+	# connection per request, because it sends "Connection: close",
+	# and charged Styx nothing for the connection it already has.
+	#
+	rpcms := 0;
+	if(rpcaddr != nil){
+		rc := dial->dial(rpcaddr, nil);
+		if(rc == nil)
+			fail(sys->sprint("dial %s: %r", rpcaddr));
+		rpcexch(rc.dfd, size);		# not counted, as above
+		t0 = sys->millisec();
+		for(i = 0; i < n; i++)
+			rpcexch(rc.dfd, size);
+		rpcms = sys->millisec() - t0;
+		rc = nil;
+	}
+
 	sys->print("styxbench: %d iterations of %d bytes\n", n, size);
 	sys->print("  raw tcp        %6d ms, %s us each\n", rawms, per(rawms, n));
 	sys->print("  styx seq       %6d ms, %s us each\n", seqms, per(seqms, n));
 	sys->print("  styx jumping   %6d ms, %s us each\n", jumpms, per(jumpms, n));
+	if(rpcaddr != nil)
+		sys->print("  rpc framed     %6d ms, %s us each\n", rpcms, per(rpcms, n));
 	if(rawms > 0){
 		sys->print("  seq     costs %s x raw\n", ratio(seqms, rawms));
 		sys->print("  jumping costs %s x raw\n", ratio(jumpms, rawms));
+		if(rpcaddr != nil)
+			sys->print("  rpc     costs %s x raw\n", ratio(rpcms, rawms));
 	}else
 		sys->print("  raw too fast to time at this count; raise -n\n");
+	if(rpcaddr != nil && rpcms > 0){
+		sys->print("  jumping costs %s x rpc\n", ratio(jumpms, rpcms));
+		sys->print("  seq     costs %s x rpc\n", ratio(seqms, rpcms));
+	}
+}
+
+# One request and its reply: format, send, read the header, parse it,
+# read the payload it announces.  The parsing is the point.
+rpcexch(dfd: ref Sys->FD, size: int)
+{
+	req := array of byte sys->sprint("GET 0 %d\n", size);
+	buf := array[4 + len req] of byte;
+	p32(buf, len req);
+	buf[4:] = req;
+	if(sys->write(dfd, buf, len buf) != len buf)
+		fail(sys->sprint("rpc write: %r"));
+
+	hdr := array[4] of byte;
+	if(readn(dfd, hdr, 4) != 4)
+		fail("rpc: short reply length");
+	n := g32(hdr);
+	if(n <= 0 || n > 65536+64)
+		fail(sys->sprint("rpc: bad reply length %d", n));
+	rep := array[n] of byte;
+	if(readn(dfd, rep, n) != n)
+		fail("rpc: short reply");
+	# Find the end of the header line and check the status, which is
+	# what a client of such a protocol must do before it can use the
+	# payload at all.
+	for(i := 0; i < n; i++)
+		if(rep[i] == byte '\n')
+			break;
+	if(i >= n)
+		fail("rpc: reply has no header line");
+	(nf, flds) := sys->tokenize(string rep[0:i], " ");
+	if(nf < 2 || hd flds != "OK")
+		fail("rpc: reply not OK: " + string rep[0:i]);
+	if(int hd tl flds != n - (i+1))
+		fail("rpc: reply length disagrees with its header");
+}
+
+g32(a: array of byte): int
+{
+	return (int a[0] << 24) | (int a[1] << 16) | (int a[2] << 8) | int a[3];
+}
+
+p32(a: array of byte, v: int)
+{
+	a[0] = byte (v >> 24);
+	a[1] = byte (v >> 16);
+	a[2] = byte (v >> 8);
+	a[3] = byte v;
 }
 
 readn(fd: ref Sys->FD, a: array of byte, n: int): int

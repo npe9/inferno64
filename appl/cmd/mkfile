@@ -156,6 +156,7 @@ TARG=\
 	styxmon.dis\
 	styxlisten.dis\
 	supervise.dis\
+	rpcserve.dis\
 	styxbench.dis\
 	zerofs.dis\
 	tcpserve.dis\
