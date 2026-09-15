@@ -813,6 +813,8 @@ rootset(Prog *root)
 
 								if(t0 == nil)
 									t0 = sx->reg.TR;
+								Frame *fs;
+
 								print("rootset: FP %#p"
 									" SP %#p span %ld;"
 									" frame0 t %#p"
@@ -823,6 +825,35 @@ rootset(Prog *root)
 									f0->t ? "f->t"
 									      : "reg.TR",
 									t0 ? t0->size : -1);
+								/*
+								 * Two candidates, both
+								 * checkable here.
+								 *
+								 * propex()'s loop leaves
+								 * SP at the last frame it
+								 * popped and FP at that
+								 * frame's caller, so the
+								 * frame sitting at SP
+								 * should have fp == FP
+								 * and FP + caller size
+								 * should equal SP.  If
+								 * the frame at SP points
+								 * elsewhere, the chain
+								 * disagrees with the
+								 * bound; if it points at
+								 * FP, then reg.TR's 152
+								 * is not the size of the
+								 * frame at the bottom of
+								 * this extent.
+								 */
+								fs = (Frame*)sp;
+								print("rootset: frame at"
+									" SP: fp %#p t %#p"
+									" (FP is %#p); TR %#p"
+									" tos.fu %#p\n",
+									fs->fp, fs->t, rr->FP,
+									sx->reg.TR,
+									sx->reg.tos.fu);
 							}
 							print("rootset: fp chain"
 								" from %#p:", rr->FP);
