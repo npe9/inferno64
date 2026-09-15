@@ -389,12 +389,25 @@ init0(void)
 	kproc("alarm", alarmkproc, 0, 0);
 
 	/*
-	 * Run once, here, with interrupts on and before any Dis runs:
+	 * Run with interrupts on and before any Dis runs:
 	 * os/inferno/pc64/regtorture.s says whether an interrupt on this
-	 * machine gives every register back.  Temporary; see
-	 * doc/inferno-cloud-plan.ms.
+	 * machine gives every register back.  See doc/inferno-cloud-plan.ms.
+	 *
+	 * Off unless *regtorture=1 is set in plan9.ini.  It was written
+	 * for the interrupt heisenbug that _intrcommon's AX=0 turned out
+	 * to be, and that is fixed; what it costs is not small.  Measured
+	 * with scripts/boot-profile.py: 6.4 seconds, on a boot whose whole
+	 * kernel half is 14.6 -- the single largest gap in the profile and
+	 * getting on for half the time this image takes to reach a shell.
+	 * The comment below still says two million iterations "cost under
+	 * two", which was true when it was written and is not now.
+	 *
+	 * Kept rather than deleted because it is the reproducer for a
+	 * class of bug that cost this branch weeks, and a cloud image
+	 * whose entire argument is cold start should not pay for it on
+	 * every boot to keep it.
 	 */
-	{
+	if(getconf("*regtorture") != nil){
 		extern int regtorture(int);
 		extern int regtorturecli(int);
 		extern uvlong regtorturebad;

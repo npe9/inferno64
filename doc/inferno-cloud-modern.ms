@@ -1334,3 +1334,73 @@ versus a service on Linux" \(em it isolates protocol cost with the
 runtime held constant, which is the narrower and more answerable
 question.  The cross-stack comparison item 8 also asks for still wants
 two rented instances.
+.NH 2
+Phase 3 item 9 begun: where a cold start actually goes
+.PP
+Item 9 wants boot-to-shell against a minimal Linux image on the same
+instance shape.  The comparison needs two rented instances and a Linux
+image; what can be had now is the Inferno half, measured properly, and
+it turned out to be worth having on its own.
+.PP
+.B "The guest cannot time its own boot."
+The obvious method \(em read
+.CW /dev/time
+at the prompt \(em is wrong here.  pc64's tick counter runs from machine
+reset, so it counts the firmware as uptime.  Measured rather than
+assumed: the kernel's uptime at the prompt agrees with the host's own
+clock from the moment QEMU was launched, to within the harness's settle.
+So the timing has to come from outside, and
+.CW scripts/boot-profile.py
+does it \(em every console line stamped with seconds since launch and
+the gap since the previous line, so a stall is one large gap rather than
+something inferred from a total.
+.PP
+.B "Half the kernel's boot was a test."
+The largest single gap in the profile was 6.4 seconds in
+.CW regtorture ,
+a register torture test, on a boot whose entire kernel half was 14.6.
+It was written for the interrupt heisenbug that
+.CW _intrcommon 's
+.CW AX=0
+turned out to be; that is fixed, and the instrument had been running on
+every boot since.  Its own comment said two million iterations "cost
+under two" seconds, which was true when written and is not now \(em a
+number in a comment that nothing re-checked.
+.PP
+It is now behind
+.CW *regtorture=1
+in plan9.ini rather than deleted: it is the reproducer for a class of
+bug that cost this branch weeks, and keeping it costs nothing when it
+is not asked for.  Verified both ways \(em with the flag it reports
+"12 registers survived 2M iterations over 479 ticks, control clean" and
+costs 6.47 seconds; without it, it does not run at all.
+.PP
+.B "The numbers."
+Three runs each, one machine, OVMF firmware:
+.PP
+.TS
+center box tab(;);
+c | c | c | c
+l | n | n | n .
+;firmware;kernel+init;total
+_
+before;6.4\-7.5 s;14.6\-15.1 s;21.0\-22.6 s
+after;7.1\-8.8 s;10.1\-11.0 s;17.4\-19.8 s
+.TE
+.PP
+The firmware half is OVMF and is not this tree's to improve; it is
+reported separately for that reason, and because a cloud instance runs
+different firmware and will not pay the same.  What remains on the
+kernel side after
+.CW regtorture
+is 4.5 seconds around Dis start-up, where the profile shows
+interpreters queueing on the VM lock, and 1.8 seconds at
+.CW "Initial Dis" .
+Those are the next things to look at and have not been.
+.PP
+.B "And the premise has drifted."
+Item 9 says "a 2.1 MB image with its root compiled in".  The kernel is
+9.2 MB now, because this branch's own work \(em TLS, the cloud
+commands, metricfs, supervise, cloudauth \(em is in that root.  The
+cold-start argument is still a real one, but it should be made about
+the image that exists rather than the one the plan was written about.

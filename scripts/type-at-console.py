@@ -88,11 +88,37 @@ threading.Thread(target=reader, daemon=True).start()
 # time in this tree a fixed timeout has been read as a property of the
 # kernel; see doc/inferno-cloud-modern.ms.
 waitfor = os.environ.get('INFERNO_CONSOLE_WAITFOR')
+t_launch = time.time()
+
+# INFERNO_CONSOLE_MARK names a string whose first appearance is timed
+# and reported.  It exists to split a cold start in two: the guest's own
+# clock cannot do it, because pc64's tick counter runs from machine
+# reset and so counts the firmware as uptime -- measured, by comparing
+# /dev/time at the prompt against this process's clock and finding they
+# agree.  Timing the kernel's first line from outside is the only way to
+# say how much of a boot was firmware.
+mark = os.environ.get('INFERNO_CONSOLE_MARK')
+if mark:
+    mt = mark.encode()
+    def watchmark():
+        while True:
+            if mt in bytes(buf):
+                sys.stderr.write("MARK %r after %.2fs\n"
+                                 % (mark, time.time() - t_launch))
+                return
+            time.sleep(0.02)
+    threading.Thread(target=watchmark, daemon=True).start()
 if waitfor:
     target = waitfor.encode()
-    deadline = time.time() + wait
+    deadline = t_launch + wait
     while time.time() < deadline:
         if target in bytes(buf):
+            # How long the guest took to say it was ready, from this
+            # process's own clock.  Reported because it is the only
+            # boot-time number available from outside the guest, and
+            # because a caller measuring cold start needs it separated
+            # from the settle and typing that follow.
+            sys.stderr.write("READY after %.2fs\n" % (time.time() - t_launch))
             break
         time.sleep(0.1)
     else:
