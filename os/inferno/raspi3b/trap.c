@@ -277,6 +277,17 @@ trap(Ureg *ur)
 		}
 	}
 
+	{
+		/* crumb words 17-22: progress through this trap, the Ureg
+		 * address, the process's kernel stack base, its pid, and the
+		 * caller of the last splhi/splx */
+		volatile uvlong *c = (volatile uvlong*)0x20000000;
+		c[17] = 1;
+		c[18] = (uintptr)ur;
+		c[19] = up != nil? (uintptr)up->kstack: 0;
+		c[20] = up != nil? up->pid: ~0ULL;
+		c[21] = m->splpc;
+	}
 	switch(ur->type){
 	case TFiq:
 		crumbring(2, 0, ur->pc);
@@ -287,7 +298,9 @@ trap(Ureg *ur)
 		if((getcntpctl() & CntpIStatus) == 0)
 			crumbring(1, 0xff, ur->pc);
 		if(getcntpctl() & CntpIStatus){
+			((volatile uvlong*)0x20000000)[17] = 2;
 			clockintr(ur);
+			((volatile uvlong*)0x20000000)[17] = 13;
 			return;
 		}
 		pend = ((volatile u32*)IRQBASE)[IrqPending1/4];

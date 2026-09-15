@@ -66,21 +66,30 @@ clockintr(Ureg *u)
 	Clock0link *lp;
 	uvlong n, hznext, when;
 
+	#define STEP(x)	(((volatile uvlong*)0x20000000)[17] = (x))
+	STEP(3);
 	n = now();
 	hznext = n + m->cpuhz/HZ;
+	STEP(4);
 	hwtimerset(&hznext);		/* clear the condition; final deadline set below */
+	STEP(5);
 
 	if(kproftick != nil && u != nil)
 		kproftick((ulong)u->pc);
 
 	m->ticks++;
+	STEP(6);
 	((volatile uvlong*)0x20000000)[10] = m->ticks;
 	((volatile uvlong*)0x20000000)[11] = u != nil? u->pc: 0;
 	wdpet();
+	STEP(7);
 	checkalarms();
+	STEP(8);
 	timercheck(u);
+	STEP(9);
 	sleepwatch(u);
 	heartbeat(u);
+	STEP(10);
 
 	n = now();
 	hznext = n + m->cpuhz/HZ;
@@ -88,6 +97,7 @@ clockintr(Ureg *u)
 	if(when <= n)
 		when = n + 1;
 	hwtimerset(&when);
+	STEP(11);
 
 	if(canlock(&clock0lock)){
 		for(lp = clock0link; lp; lp = lp->link)
@@ -95,6 +105,7 @@ clockintr(Ureg *u)
 				lp->clock();
 		unlock(&clock0lock);
 	}
+	STEP(12);
 }
 
 void

@@ -120,6 +120,12 @@ crumbdump(void)
 		serialputs(" last tick ", -1);
 		serialputdec(c[10]);
 		serialputreg("pc", c[11], 16);
+		serialputs("\nCRUMB step ", -1);
+		serialputdec(c[17]);
+		serialputreg("ureg", c[18], 8);
+		serialputreg("kstack", c[19], 8);
+		serialputreg("pid", c[20], 4);
+		serialputreg("splpc", c[21], 8);
 		serialputs("\nCRUMB in-handler irq ", -1);
 		if(c[14] == ~0ULL)
 			serialputs("none", -1);

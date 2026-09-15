@@ -19496,3 +19496,20 @@ draw and USB checks, stops all delivery.  The next image records the IRQ
 number and a handler-running flag around every dispatch, per-IRQ counts,
 and a ring of the last 16 exceptions (type, IRQ, pc), all printed by the
 next boot.
+.PP
+Build 1789509388's report after its first reset on the Pi overturned the
+last reading: no peripheral IRQ was dispatched at all (in-handler none,
+no IRQ counts, the ring of non-tick IRQs and FIQs empty).  The last
+exception, number 176, was a timer tick taken at 0xf58dc (right after
+splx's DAIFClr), the same pc as tick 175, and the tick count never reached
+176: the CPU died between taking that tick and
+.CW m->ticks++ .
+Both ticks landing on splx's return means the interrupted code is a loop
+of splhi/splx.  Its SP, 0x38fe870, sits about 1.2KB below the top of
+pid 1's kernel stack as QEMU lays it out (0x38f6d50 to 0x38fed50), so not
+an overflow if the layouts match.  The next image records how far each
+trap got (trap entry, clockintr's steps through now(), hwtimerset(), the
+tick, the watchdog pet, alarms, timers, the rearm and the clock links),
+the Ureg address, the process's kernel stack base and pid, and
+.CW m->splpc ,
+the caller of the last splhi/splx, which names the loop.
