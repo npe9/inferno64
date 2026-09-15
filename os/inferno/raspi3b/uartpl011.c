@@ -296,7 +296,7 @@ serialputdec(ulong v)
 }
 
 static void
-puthex(ulong v, int digits)
+puthex(uvlong v, int digits)
 {
 	char buf[16];
 	int i;
@@ -311,7 +311,7 @@ puthex(ulong v, int digits)
 }
 
 void
-serialputreg(char *name, ulong v, int digits)
+serialputreg(char *name, uvlong v, int digits)
 {
 	serialputs(" ", 1);
 	serialputs(name, -1);

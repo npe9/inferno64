@@ -57,7 +57,7 @@ void	uartconsole(void);
 void	uartconsolesetup(void);
 void	uartrxprobe(char*);
 void	serialputdec(ulong);
-void	serialputreg(char*, ulong, int);
+void	serialputreg(char*, uvlong, int);
 void	clockcheckboot(void);
 void	tkmark(char*);
 void	serialputc(int);

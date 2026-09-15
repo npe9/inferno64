@@ -104,8 +104,9 @@ static void
 crumbdump(void)
 {
 	volatile uvlong *c = (volatile uvlong*)0x20000000;
-	int p;
+	int p, valid;
 
+	valid = c[0] == 0x43524d42ULL;	/* else power-on contents, not a record */
 	c[12]++;
 	serialputs("CRUMB boots ", -1);
 	serialputdec(c[12]);
@@ -161,7 +162,7 @@ crumbdump(void)
 		}
 	}
 	serialputs("\n", -1);
-	if(c[112+22] != 0){
+	if(valid && c[112+22] != 0){
 		/* clock.c tickprobe: state after the last tick set its deadline */
 		serialputs("CRUMB probe tick ", -1);
 		serialputdec(c[112+22]);
@@ -199,6 +200,24 @@ crumbdump(void)
 		serialputreg("fiqpc", c[112+31], 8);
 		serialputs(" maxstall ", -1);
 		serialputdec(c[112+32]);
+		serialputs("\n", -1);
+	}
+	if(valid && c[147] != 0){
+		serialputs("CRUMB wildsp elr", -1);
+		serialputreg("", c[144], 8);
+		serialputreg("spsr", c[145], 3);
+		serialputreg("esr", c[146], 8);
+		serialputreg("sp", c[147], 16);
+		serialputreg("lr", c[148], 8);
+		serialputreg("fp", c[149], 16);
+		serialputs("\n", -1);
+	}
+	if(valid && c[153] != 0){
+		serialputs("CRUMB badlabel", -1);
+		serialputreg("", c[152], 8);
+		serialputreg("sp", c[153], 16);
+		serialputreg("pc", c[154], 8);
+		serialputreg("caller", c[155], 8);
 		serialputs("\n", -1);
 	}
 	for(p = 104; p < 160; p++)
@@ -387,6 +406,8 @@ init0(void)
 	disinit("/osinit.dis");
 }
 
+static uintptr	kstacktop(Proc*);
+
 void
 userinit(void)
 {
@@ -416,7 +437,7 @@ userinit(void)
 	kstrdup(&p->text, "interp");
 	p->fpstate = FPINIT;
 	p->sched.pc = (uintptr)init0entry;
-	p->sched.sp = (uintptr)p->kstack+KSTACK-16;
+	p->sched.sp = kstacktop(p);
 	ready(p);
 }
 
@@ -431,6 +452,22 @@ exit(int inpanic)
 			clockpoll();
 	}
 	archreboot();
+}
+
+/*
+ * The initial kernel SP of a process, rounded down to 16 bytes.  malloc
+ * only promises 8-byte alignment, and SCTLR_EL1.SA makes the A53 take an
+ * SP-alignment fault on any stack access through an SP that is not a
+ * multiple of 16 -- after which the exception entry, on the same SP,
+ * faults again, forever, with every exception masked.  A process whose
+ * kstack happened to come back from malloc at ...8 silenced the Pi a
+ * few seconds into boot, depending on allocation order; QEMU does not
+ * check SP alignment, so it booted every time there.
+ */
+static uintptr
+kstacktop(Proc *p)
+{
+	return ((uintptr)p->kstack+KSTACK-16) & ~(uintptr)15;
 }
 
 static void
@@ -448,7 +485,7 @@ void
 kprocchild(Proc *p, void (*func)(void*), void *arg)
 {
 	p->sched.pc = (uintptr)linkproc;
-	p->sched.sp = (uintptr)p->kstack+KSTACK-16;
+	p->sched.sp = kstacktop(p);
 	p->kpfun = func;
 	p->kparg = arg;
 }

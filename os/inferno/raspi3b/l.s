@@ -272,6 +272,7 @@ TEXT	attrans(SB), 1, $-4
 GLOBL	dtbptr(SB), $8
 GLOBL	stack(SB), $KSTACK
 GLOBL	mach0(SB), $(4*1024)
+GLOBL	wildstack(SB), $(16*1024)
 
 TEXT	getcallerpc(SB), 1, $-4
 	MOV	0(RSP), R0
@@ -406,11 +407,32 @@ TEXT	setlabel(SB), 1, $-4
 TEXT	gotolabel(SB), 1, $-4
 	MOV	0(R0), R1
 	MOV	8(R0), R2
+	/*
+	 * A label whose sp is not an aligned address in the kernel's 256MB
+	 * would put the next exception into an endless SP-alignment fault
+	 * in the vector path (seen on the Pi: 45 million of them, every
+	 * exception masked, until the watchdog).  Stop here instead, while
+	 * the stack is still good, with the label in crumb words 152-155.
+	 */
+	CMP	$0x80000, R1
+	BLO	badlabelsp
+	LSR	$28, R1, R3
+	CBNZ	R3, badlabelsp
+	AND	$15, R1, R3
+	CBNZ	R3, badlabelsp
 	MOV	R1, RSP
 	MOV	$setSB(SB), R28
 	MOV	$1, R0
 	MOV	R2, R30
 	RET	R30
+
+badlabelsp:
+	MOV	$CRUMB, R3
+	MOV	R0, 1216(R3)
+	MOV	R1, 1224(R3)
+	MOV	R2, 1232(R3)
+	MOV	R30, 1240(R3)
+	B	badlabel(SB)
 
 /*
  * First process entry trampoline -- keeps SB set on the new stack,
@@ -681,6 +703,22 @@ TEXT	crumbentry(SB), 1, $-4
 	MOV	R9, 8(R10)
 	MOV	$0x43524d42, R9
 	MOV	R9, 0(R10)
+	/*
+	 * An exception on a wild SP (unaligned, or outside the kernel's
+	 * 256MB) faults again on the frame store below, and again on that
+	 * exception's, forever, with every exception masked.  Record the
+	 * first one in crumb words 144-149 and continue on wildstack, where
+	 * trap() sees the frame there and reports it.
+	 */
+	MOV	RSP, R9
+	CMP	$0x80000, R9
+	BLO	wildsp
+	LSR	$28, R9, R9
+	CBNZ	R9, wildsp
+	MOV	RSP, R9
+	AND	$15, R9, R9
+	CBNZ	R9, wildsp
+crumbframe:
 	MRS	SPR(D_TPIDRRO_EL0), R10
 	SUB	$UR_SIZE, RSP
 	MRS	SPR(D_TPIDR_EL1), R9
@@ -688,6 +726,25 @@ TEXT	crumbentry(SB), 1, $-4
 	MOV	$CRUMB, R9
 	MOV	56(R9), R9
 	B	vectrap(SB)
+
+wildsp:
+	MOV	1176(R10), R9		/* c[147]: keep the first */
+	CBNZ	R9, wildsp1
+	MRS	ELR_EL1, R9
+	MOV	R9, 1152(R10)
+	MRS	SPSR_EL1, R9
+	MOV	R9, 1160(R10)
+	MRS	SPR(D_ESR_EL1), R9
+	MOV	R9, 1168(R10)
+	MOV	RSP, R9
+	MOV	R9, 1176(R10)
+	MOV	R30, 1184(R10)
+	MOV	R29, 1192(R10)
+wildsp1:
+	MOV	$wildstack(SB), R9
+	ADD	$(16*1024), R9
+	MOV	R9, RSP
+	B	crumbframe
 
 /* badsp(sp): load sp and push -- a deliberate recursive fault, for tests */
 TEXT	badsp(SB), 1, $-4

@@ -292,6 +292,60 @@ crumbirq(Ureg *ur, int irq, void (*f)(Ureg*, void*), void *a)
 }
 extern void fiqwatch(Ureg*);
 
+/*
+ * l.s gotolabel found a label whose sp cannot be a kernel stack.
+ * Crumb words 152-155: the label, its sp and pc, gotolabel's caller.
+ */
+void
+badlabel(Label *l)
+{
+	volatile uvlong *c = (volatile uvlong*)Crumbbase;
+
+	splhi();
+	serialputs("BADLABEL", -1);
+	serialputreg("label", c[152], 8);
+	serialputreg("sp", c[153], 16);
+	serialputreg("pc", c[154], 8);
+	serialputreg("caller", c[155], 8);
+	if(up != nil){
+		serialputreg("pid", up->pid, 4);
+		serialputreg("up", (uintptr)up, 8);
+		serialputreg("kstack", (uintptr)up->kstack, 8);
+		serialputreg("errlab0", (uintptr)up->errlab, 8);
+		serialputreg("nerrlab", up->nerrlab, 4);
+		serialputreg("sched", (uintptr)&up->sched, 8);
+	}
+	serialputs("\n", -1);
+	USED(l);
+	panic("gotolabel: bad sp %#llux pc %#llux from %#llux", c[153], c[154], c[155]);
+}
+
+/*
+ * l.s crumbentry moved an exception taken on a wild SP onto wildstack;
+ * crumb words 144-149 hold the first such exception's ELR, SPSR, ESR,
+ * SP, X30 and X29.
+ */
+static void
+wildspreport(Ureg *ur)
+{
+	volatile uvlong *c = (volatile uvlong*)Crumbbase;
+
+	serialputs("WILDSP type ", -1);
+	serialputdec(ur->type);
+	serialputreg("elr", c[144], 8);
+	serialputreg("spsr", c[145], 3);
+	serialputreg("esr", c[146], 8);
+	serialputreg("sp", c[147], 16);
+	serialputreg("lr", c[148], 8);
+	serialputreg("fp", c[149], 16);
+	if(up != nil){
+		serialputreg("pid", up->pid, 4);
+		serialputreg("kstack", (uintptr)up->kstack, 8);
+	}
+	serialputs("\n", -1);
+	panic("exception on a wild sp %#llux at pc %#llux lr %#llux", c[147], c[144], c[148]);
+}
+
 void
 trap(Ureg *ur)
 {
@@ -332,6 +386,15 @@ trap(Ureg *ur)
 		c[19] = up != nil? (uintptr)up->kstack: 0;
 		c[20] = up != nil? up->pid: ~0ULL;
 		c[21] = m->splpc;
+	}
+	{
+		extern char wildstack[];
+		static int wildseen;
+		if(!wildseen && (uchar*)ur >= (uchar*)wildstack && (uchar*)ur < (uchar*)wildstack + 16*1024){
+			wildseen = 1;
+			splhi();
+			wildspreport(ur);
+		}
 	}
 	switch(ur->type){
 	case TFiq:		/* 20 a second: counted in fiqwatch, not the ring */
