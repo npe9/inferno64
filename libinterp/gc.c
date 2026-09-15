@@ -793,6 +793,37 @@ rootset(Prog *root)
 							 * bound that is wrong,
 							 * not memory that is.
 							 */
+							/*
+							 * SP - FP is 0x660 and
+							 * the chain holds one
+							 * frame, so that frame
+							 * is 0x660 -- and the
+							 * walk stepped seven
+							 * times inside it, so it
+							 * read a size far
+							 * smaller than the frame
+							 * is.  Print the first
+							 * frame's type and size
+							 * against the span it
+							 * has to cover.
+							 */
+							{
+								Frame *f0 = (Frame*)rr->FP;
+								Type *t0 = f0->t;
+
+								if(t0 == nil)
+									t0 = sx->reg.TR;
+								print("rootset: FP %#p"
+									" SP %#p span %ld;"
+									" frame0 t %#p"
+									" (%s) size %d\n",
+									rr->FP, sp,
+									(long)(sp - rr->FP),
+									t0,
+									f0->t ? "f->t"
+									      : "reg.TR",
+									t0 ? t0->size : -1);
+							}
 							print("rootset: fp chain"
 								" from %#p:", rr->FP);
 							cf = rr->FP;
