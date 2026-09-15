@@ -3650,3 +3650,138 @@ So every rate in this document is conditional on the bench, and two
 runs taken at different times cannot be compared \(em including the
 "2 failures in 96 boots" above.  Only an interleaved A/B within one run
 holds, which is why the later comparisons are built that way.
+.NH 2
+The frame walk's bound, and eight hypotheses that were not it
+.PP
+The
+.CW *parallelvm=1
+fault that outlasted everything else is not what any of its symptoms
+suggested.
+.CW rootset()
+assumes a stack extent's frames tile
+.CW tos.fu..sp
+and steps by
+.CW t->size .
+Frames also link through
+.CW f->fp ,
+and that chain says which are live.  Printing both at a failure ends the
+argument:
+.IP
+.nf
+frame 7 of 0x7a81358..0x7a819b8 at 0x7a81770, size 0, from f->t
+fp chain from 0x7a81358: 0x7a81358 (0 shown)
+.fi
+.PP
+.CW rr->FP
+is
+.CW tos.fu ,
+the bottom of the extent, and that frame's
+.CW fp
+is nil.  One live frame.
+.CW sp
+is 0x660 above it, so the walk covers eight frames' worth of address
+range, reads stale frame data that tiles for six steps because the
+sizes happen to be plausible, and then does not.
+.PP
+So the bound is wrong and the memory is not.  Every symptom this hunt
+chased is downstream of that: the bad frame type, the nil
+.CW t ,
+the zero size, the
+.CW mark
+inside the Dis heap, the jump through
+.CW t->mark ,
+the "panic: invalid opcode" at a heap address.  It also explains the
+geometry repeating across captures with different pids and extents --
+one program's stack layout against a bound that does not fit it, not a
+race window landing twice in the same place.
+.NH 2
+What was eliminated, and how
+.PP
+Eight, each by measurement rather than by argument.  The ratio is the
+point: the symptom was three layers from the cause, and every layer had
+a plausible story attached to it.
+.IP "a freed Type"
+.CW dtype()
+mallocs every Type into the kernel pool; the captured pointer is in the
+Dis heap, so it was never a Type.  This retired
+.CW freetype() Ns 's
+deferral, the completion of
+.CW framerefs
+across all three teardown paths, and a 120-boot-an-arm A/B that showed
+2 bad frames in 120 either way.
+.IP "a misaligned walk"
+Frames 0 to 6 tile exactly, so the walk keeps its place.
+.IP "a stale context register file"
+.CW progreg()
+returned
+.CW p->reg ,
+not a context's.
+.IP "two executors on one Prog"
+A mark on Prog recording the context inside
+.CW xec() :
+0 in 45 boots, with tile failures in the same run.
+.IP "a context missed by \f(CWprogreg\fP"
+It scans
+.CW "i < npctx"
+and
+.CW claimctx()
+publishes with
+.CW "pctxs[npctx++] = c" ,
+unordered and read unlocked.  The whole array is scanned at the failure
+and no context claims the Prog.
+.IP "a stack freed under \f(CWgclock\fP"
+.CW progexit()
+holds it across
+.CW destroystack() ,
+and
+.CW stoptheworld()
+waits on
+.CW inxec
+and never on
+.CW gchalt ,
+so a process freeing its stack is invisible to it.  Worth testing for
+that reason;
+.CW gchalt
+is 0 at every capture.
+.IP "a freed or recycled extent"
+.CW unextend()
+and
+.CW unframe()
+free one back to mainmem during ordinary
+.CW OP(ret) ,
+outside
+.CW gclock .
+The block header says
+.CW MAGIC_A :
+allocated.
+.IP "the write barrier"
+Covered earlier; a lost
+.CW Setmark
+predicts a swept block and the object was mutator-coloured.
+.NH 2
+Where it goes next
+.PP
+Two things, neither done.
+.PP
+.CW propex()
+is the last writer of the snapshot in every capture of this class, and
+its prologue has a path that leaves
+.CW R.SP
+alone:
+.CW "freeframe(R.EX+OA(Stkext, reg.tos.fr), 0)"
+passes
+.CW setsp
+as 0, where the other branch passes 1.  Whether that branch ran in
+these captures is not established and should not be guessed at -- this
+document has eight entries above explaining why.
+.PP
+The collector's own repair is to follow the
+.CW f->fp
+chain rather than assume tiling.  A chain cannot be made wrong by a
+stale
+.CW SP ,
+and walking it marks the frames that are live rather than the address
+range that ought to hold them.  It is a change to what the root set
+is, so it wants the 192-boot batch and a
+.CW parallelvm=1
+rate against the current 2 in 50, not a spot check.
