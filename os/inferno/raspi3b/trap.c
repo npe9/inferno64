@@ -227,8 +227,19 @@ trap(Ureg *ur)
 	 * a context switch inside the handler) would mask FIQ again and
 	 * blind the watchdog exactly when interrupts stop.
 	 */
-	if(fiqarmed)
+	if(fiqarmed){
 		ur->status &= ~(uintptr)(1<<6);
+		/*
+		 * Exception entry masks FIQ as well as IRQ, so a handler that
+		 * never returns would blind the watchdog too.  Let the FIQ
+		 * preempt IRQ handling: fiqwatch() touches only the system
+		 * timer and the UART, and nests on this same stack.
+		 */
+		if(ur->type == TIrq){
+			extern void fiqenable(void);
+			fiqenable();
+		}
+	}
 
 	switch(ur->type){
 	case TFiq:

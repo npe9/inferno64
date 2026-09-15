@@ -246,6 +246,24 @@ fiqwatch(Ureg *u)
 	serialputreg("sp", u->sp, 8);
 	serialputreg("spsr", u->status, 3);
 	serialputreg("splpc", m->splpc, 8);
+	serialputreg("esr", u->cause, 8);
+	{
+		/* return addresses on the stack above the stuck frame */
+		uintptr *sp, v;
+		int n;
+		extern char etext[];
+
+		sp = (uintptr*)u->sp;
+		serialputs(" stk", -1);
+		for(n = 0; n < 256 && (uintptr)sp < u->sp + 4096; sp++){
+			v = *sp;
+			if(v > KTZERO && v < (uintptr)etext && (v & 3) == 0){
+				serialputreg("", v, 8);
+				if(++n >= 10)
+					break;
+			}
+		}
+	}
 	serialputs(" up ", -1);
 	if(up != nil && up->text != nil){
 		serialputs(up->text, -1);

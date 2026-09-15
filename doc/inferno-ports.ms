@@ -19382,3 +19382,13 @@ masks FIQ again.  trap() now clears F in the saved SPSR on every exception
 once the watchdog is armed, and the watchdog arms after the init0 probe.
 Under QEMU the heartbeat at the prompt now shows the FIQ count climbing and
 the interrupted SPSR 0x305.
+.PP
+Build 1789467772 on the Pi armed the watchdog after the init0 probe and
+then, at the prompt, reported nothing again.  Exception entry masks FIQ as
+well as IRQ, so a handler that never returns would silence the tick, the
+heartbeat and the watchdog together.  trap() now unmasks FIQ at the start
+of IRQ handling once the watchdog is armed, and the report adds ESR and the
+first ten kernel-text addresses on the stack above the stuck frame.
+Falsified under QEMU with an endless loop in clockintr after 400 ticks:
+the report named clockintr, with trap, vectrap, idle, idlehands, runproc
+and sched on the stack.
