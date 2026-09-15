@@ -19592,7 +19592,9 @@ stays is the build banner, the direct TRAP report, _tas's before-MMU
 panic, the one-line crumb record of the previous boot's last exception,
 and the WILDSP and BADLABEL guards.  The PL011 also takes its
 receive-timeout interrupt now, so input shorter than the FIFO trigger
-level arrives without waiting for more.  The cleaned build, 1789512030,
+level need not wait for more.  That is shown only in QEMU so far: at an
+idle shell prompt the idle loop's clockpoll() drains the receive FIFO by
+polling, so the Pi runs below do not exercise the interrupt.  The cleaned build, 1789512030,
 passed seven boots out of seven on the Pi: one power-on and six
 .CW "echo reboot > /dev/sysctl"
 cycles.  Each printed TICK-OK and SLEEP-OK, reached the shell, and 30
