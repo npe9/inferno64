@@ -1404,3 +1404,49 @@ Item 9 says "a 2.1 MB image with its root compiled in".  The kernel is
 commands, metricfs, supervise, cloudauth \(em is in that root.  The
 cold-start argument is still a real one, but it should be made about
 the image that exists rather than the one the plan was written about.
+.PP
+.B "Where the rest of it goes, and why the local number cannot be quoted."
+Markers in
+.CW /dis/init ,
+built into a kernel and profiled, place the remaining time exactly:
+.CW "load std"
+costs 0.10 s and
+.CW "mount {mntgen} /n"
+0.07 s, and then
+.B 4.94 seconds passes defining six shell functions
+before the next statement runs.
+.PP
+That is not a slow parser.  The same six definitions under hosted
+.CW emu
+take 0.12 s with the JIT on and 0.30 s with it off \(em and the kernel
+is a further sixteen times slower than that, which is QEMU's TCG
+emulating x86-64 on an ARM host.  The interpreted-versus-compiled gap
+is real and measurable on its own (0.12, 0.14, 0.12 s for 6, 12 and 24
+functions compiled; 0.30, 0.51, 0.88 s interpreted), but the factor of
+sixteen on top of it is the emulator.
+.PP
+So the honest conclusion about this whole section is that
+.B "the local cold-start numbers are mostly TCG"
+and a native instance would be several times faster.  The
+.CW regtorture
+finding survives that \(em 6.4 seconds of pure waste is waste whatever
+the multiplier, and it was a test nobody meant to keep running \(em but
+"Inferno reaches a shell in 17 seconds" is a statement about this
+laptop emulating a foreign architecture, not about a cloud instance.
+Item 9's number still needs the rented machine.
+.PP
+.B "And the JIT is not the lever it looks like."
+.CW cflag
+is 0 on every native board and
+.CW comp-amd64.c
+is not linked into pc64 at all.  It should stay that way: the code
+generators bake
+.CW (uintptr)&R
+into the code they emit, and under the per-executor
+.CW curP
+the merge brought in, that address belongs to one executor rather than
+being a constant \(em a JIT built this way is wrong the moment a second
+context runs.
+.CW include/interp.h
+says so where the macro is defined.  Compiling Dis on a native board is
+a real piece of work and not a switch.
