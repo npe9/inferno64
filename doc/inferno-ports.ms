@@ -19248,3 +19248,41 @@ and stops.  Falsified: with the
 put back, the same kernel8.img under QEMU prints the banner and that
 panic line and goes no further; without it, it boots to the shell, all
 nine RXPROBE stages answer, TICK-OK, SLEEP-OK, and typed input echoes.
+.PP
+.B "Receive reaches init0 on silicon; interrupts are the fault"
+.PP
+Build 1789465024 on the Pi answered all nine RXPROBE stages with the
+key the harness sent through the serial adapter, from the firmware's
+state through device reset and init0, with the PL011 at CR 0x301, LCRH
+0x70, IBRD 26/FBRD 3, the receive interrupt armed from device reset on,
+GPFSEL1 0x24000 (GPIO 14 and 15 in alt0) and GPFSEL3 0 (GPIO 32 and 33
+inputs), all four pins idle high.  So bytes reach the receive FIFO all the
+way to init0, and the pins, the baud rate and the firmware routing are
+correct.  After init0 enabled interrupts the board printed nothing more:
+not TICK-OK, not any queued output, including the fault report a trap
+would give.  Console output after chandevreset drains only on the
+PL011 transmit interrupt, so silence there means interrupts are not being
+taken, or the first one never comes back.
+.PP
+One hardware-only cause is in
+.CW vectorbuild() :
+it writes the exception vector instructions into
+.CW rawvectab
+after the MMU and caches are on, and set VBAR_EL1 without cleaning those
+data-cache lines or invalidating the instruction cache.  The Cortex-A53
+fetches through its own L1 instruction cache from memory that may still
+hold what was there before, so the first exception can execute stale
+bytes, fault into the same stale table, and loop without a word; QEMU
+models no cache.  vectorbuild now calls
+.CW cacheflush()
+over the table and
+.CW cacheiinv()
+before
+.CW vectorinit() .
+The next boot also prints IRQCHECK straight to the data register half a
+second after interrupts are enabled: interrupt entries, ticks and PL011
+interrupts in that time, CurrentEL, DAIF, VBAR_EL1, CNTP_CTL, whether the
+timer deadline is still ahead, the BCM2836 timer route, pending and GPU
+route registers, and the BCM2835 pending and enable registers.  Under
+QEMU with the same kernel8.img it reads 40 interrupts and 40 ticks, EL 1,
+DAIF 0x340 (IRQ unmasked), and the board goes on to the shell.

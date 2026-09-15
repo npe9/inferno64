@@ -39,6 +39,8 @@ pl011_pnp(void)
 	return &pl011uart;
 }
 
+ulong pl011intrs;
+
 static void
 uartintr(Ureg*, void *arg)
 {
@@ -49,6 +51,7 @@ uartintr(Ureg*, void *arg)
 
 	uart = arg;
 	c = uart->regs;
+	pl011intrs++;
 	mis = csr32r(c, UartMIS);
 	if(mis & UartIMSCRX){
 		for(i = 0; i < 128; i++){
@@ -289,8 +292,8 @@ puthex(ulong v, int digits)
 	serialputs(buf, digits);
 }
 
-static void
-putreg(char *name, ulong v, int digits)
+void
+serialputreg(char *name, ulong v, int digits)
 {
 	serialputs(" ", 1);
 	serialputs(name, -1);
@@ -344,19 +347,19 @@ uartrxprobe(char *stage)
 		puthex(ch, 3);
 	}else
 		serialputs(" none", -1);
-	putreg("cr", u[UartCR], 4);
-	putreg("lcrh", u[UartLCRH], 2);
-	putreg("ibrd", u[UartIBRD], 4);
-	putreg("fbrd", u[UartFBRD], 2);
-	putreg("imsc", u[UartIMSC], 3);
-	putreg("fr", u[UartFR], 3);
-	putreg("ris", u[UartRIS], 3);
-	putreg("gpfsel1", g[1], 8);
-	putreg("gpfsel3", g[3], 8);
-	putreg("lev14", (lev0>>14)&1, 1);
-	putreg("lev15", (lev0>>15)&1, 1);
-	putreg("lev32", (lev1>>0)&1, 1);
-	putreg("lev33", (lev1>>1)&1, 1);
+	serialputreg("cr", u[UartCR], 4);
+	serialputreg("lcrh", u[UartLCRH], 2);
+	serialputreg("ibrd", u[UartIBRD], 4);
+	serialputreg("fbrd", u[UartFBRD], 2);
+	serialputreg("imsc", u[UartIMSC], 3);
+	serialputreg("fr", u[UartFR], 3);
+	serialputreg("ris", u[UartRIS], 3);
+	serialputreg("gpfsel1", g[1], 8);
+	serialputreg("gpfsel3", g[3], 8);
+	serialputreg("lev14", (lev0>>14)&1, 1);
+	serialputreg("lev15", (lev0>>15)&1, 1);
+	serialputreg("lev32", (lev1>>0)&1, 1);
+	serialputreg("lev33", (lev1>>1)&1, 1);
 	serialputs("\n", -1);
 	splx(s);
 }

@@ -137,6 +137,16 @@ vectorbuild(void)
 		else
 			slot[0] = insn_b(&slot[0], slot);	/* "b ." */
 	}
+	/*
+	 * These instructions were just written through the data cache,
+	 * with the MMU and caches already on.  The Cortex-A53's separate
+	 * L1 instruction cache fetches from memory, which may still hold
+	 * what was there before, so clean the written lines out to memory
+	 * and drop any instruction-cache state before the vectors can be
+	 * taken (as Linux's flush_icache_range does).  QEMU has no caches.
+	 */
+	cacheflush(v, NSlot*SlotSize);
+	cacheiinv();
 	vectorinit(v);
 }
 
@@ -199,6 +209,8 @@ trapinit(void)
 	gicinit();
 }
 
+ulong irqentries;
+
 void
 trap(Ureg *ur)
 {
@@ -208,6 +220,7 @@ trap(Ureg *ur)
 
 	switch(ur->type){
 	case TIrq:
+		irqentries++;
 		if(getcntpctl() & CntpIStatus){
 			clockintr(ur);
 			return;

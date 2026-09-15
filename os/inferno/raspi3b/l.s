@@ -209,6 +209,15 @@ TEXT	getcntpcval(SB), 1, $-4
 	MOV	R1, 0(R0)
 	RET	R30
 
+TEXT	getcurrentel(SB), 1, $-4
+	MRS	CurrentEL, R0
+	LSR	$2, R0, R0
+	RET	R30
+
+TEXT	getvbar(SB), 1, $-4
+	MRS	SPR(D_VBAR_EL1), R0
+	RET	R30
+
 TEXT	getdaif(SB), 1, $-4
 	MRS	DAIF, R0
 	RET	R30

@@ -154,6 +154,54 @@ sleepcheck(void*)
  * means timers never wake anyone, which is the same fault seen from a
  * process.
  */
+/*
+ * The first half second with interrupts on, reported straight to the
+ * UART data register: console output after chandevreset goes through
+ * a queue that only the transmit interrupt drains, so if interrupts do
+ * not arrive nothing queued ever appears and this is the only word.
+ */
+static void
+irqcheck(void)
+{
+	uvlong hz, t, end;
+	ulong t0, i0, u0;
+	extern ulong irqentries, pl011intrs;
+	extern ulong getcntpctl(void), getdaif(void), getcurrentel(void), getvbar(void);
+	extern void getcntpcval(uvlong*);
+	uvlong cval;
+	volatile u32 *ic = (volatile u32*)IRQBASE;
+
+	t0 = m->ticks;
+	i0 = irqentries;
+	u0 = pl011intrs;
+	cntfrq(&hz);
+	cycles(&t);
+	end = t + hz/2;
+	while(t < end)
+		cycles(&t);
+	getcntpcval(&cval);
+	serialputs("IRQCHECK 500ms: irqs ", -1);
+	serialputdec(irqentries - i0);
+	serialputs(" ticks ", -1);
+	serialputdec(m->ticks - t0);
+	serialputs(" uartintr ", -1);
+	serialputdec(pl011intrs - u0);
+	serialputreg("el", getcurrentel(), 1);
+	serialputreg("daif", getdaif(), 3);
+	serialputreg("vbar", getvbar(), 8);
+	serialputreg("cntp_ctl", getcntpctl(), 1);
+	serialputreg("cval>now", cval > t, 1);
+	serialputreg("l40", *(volatile u32*)0x40000040, 2);
+	serialputreg("l60", *(volatile u32*)0x40000060, 3);
+	serialputreg("l0c", *(volatile u32*)0x4000000c, 2);
+	serialputreg("basic", ic[0], 3);
+	serialputreg("pend1", ic[1], 8);
+	serialputreg("pend2", ic[2], 8);
+	serialputreg("en1", ic[4], 8);
+	serialputreg("en2", ic[5], 8);
+	serialputs("\n", -1);
+}
+
 void
 clockcheckboot(void)
 {
@@ -163,6 +211,7 @@ clockcheckboot(void)
 	extern ulong getdaif(void);
 	extern void getcntpcval(uvlong*);
 
+	irqcheck();
 	t0 = m->ticks;
 	delay(250);
 	n = m->ticks - t0;
