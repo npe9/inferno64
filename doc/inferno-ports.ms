@@ -19674,6 +19674,13 @@ and a Linux one after it \(em and sector 16384 is that filesystem's boot
 sector, "mkfs.fat", volume "bootfs", "FAT32", which is the volume the
 host mounts when the card is in its reader.  The card reports 30228480
 sectors, exactly what the host says.  Single reads of 64KB and 512KB
-(128 and 1024 sectors) return without an error.  Writing is implemented
-and deliberately untested: the only card here is the one the board boots
-from.
+(128 and 1024 sectors) return without an error.  Writing works too, tested
+without a spare card: ctl's wtest reads a sector, refuses it unless it
+is empty, writes a pattern, reads it back, restores the original bytes
+and checks the restore, so it can be aimed at the unused gap between the
+master boot record and the first partition.  On the Pi, sectors 4096 and
+8192 report 0 of 512 bytes wrong after the write and 0 after the
+restore, sector 0 is refused ("byte 0 is fa"), and the card's master
+boot record, its partition table and the FAT32 boot sector at 16384 are
+unchanged afterwards.  Under QEMU the same test leaves the image file
+byte-identical on the host.
