@@ -63,6 +63,7 @@ enum
 	 */
 	Slowbulkin	= 1,
 	Maxnak		= 2000,		/* ~2s of 1ms retries: not for bulk IN */
+	Maxiters	= 4000,		/* attempts at one transfer, likewise */
 };
 
 typedef struct Ctlr Ctlr;
@@ -362,7 +363,7 @@ static int
 chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 {
 	Ctlr *ctlr;
-	int nleft, n, nt, i, imask, maxpkt, npkt, chan, split, naks;
+	int nleft, n, nt, i, imask, maxpkt, npkt, chan, split, naks, iters;
 	uint hcdma, hctsiz;
 	Dwcregs *r;
 
@@ -400,9 +401,29 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 
 	nleft = len;
 	naks = 0;
+	iters = 0;
+	i = 0;
 	chan = hc - r->hchan;
 	hcdma = hctsiz = 0;
 	for(;;){
+		/*
+		 * Every way out of this loop is a condition the device has to
+		 * produce, and several of the continues above have no bound of
+		 * their own: a Nyet or a frame overrun that repeats, or a
+		 * completion that moves no bytes and leaves Pktcnt alone, will
+		 * go round for ever with nothing said.  That is how enumerating
+		 * the device behind the Pi's onboard hub stopped: no error, no
+		 * NAK report, usbd asleep in the kernel.  A bulk IN is the one
+		 * transfer allowed to take unbounded time, and it waits in
+		 * chanwait rather than spinning here.
+		 */
+		if(++iters > Maxiters && !(ep->ttype == Tbulk && dir == Epin)){
+			print("usbdwc: ep%d.%d type %d dir %s: %d attempts, last intr %8.8ux "
+				"hcchar %8.8ux hctsiz %8.8ux hcsplt %8.8ux\n",
+				ep->dev->nb, ep->nb, ep->ttype, dir == Epin? "in": "out",
+				iters, i, hc->hcchar, hc->hctsiz, hc->hcsplt);
+			error(Eio);
+		}
 		/*
 		 * Emulator gap.  QEMU keeps retrying a NAK'd bulk packet
 		 * after the channel was halted (Chdis does not cancel its
