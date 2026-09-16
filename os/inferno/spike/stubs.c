@@ -8,6 +8,9 @@
 #include "interp.h"
 #include <dynld.h>
 
+/* clock.c: the CLINT the tree named, not mem.h's guess */
+extern uintptr clintaddr;
+
 /* jl has no -x export table yet; empty table for dynld/kdynloadfd. */
 Dynsym _exporttab[] = { 0, 0, nil };
 
@@ -110,7 +113,7 @@ timerset(vlong when)
 	/* Never push MTIP past the next HZ tick — ticks/NOW must keep moving. */
 	if(w > hznext)
 		w = hznext;
-	*(volatile uvlong*)(uintptr)(CLINT + ClintMtimecmp + 8*BOOT_HART) = w;
+	*(volatile uvlong*)(clintaddr + ClintMtimecmp + 8*BOOT_HART) = w;
 }
 
 /*

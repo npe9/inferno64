@@ -2282,6 +2282,19 @@ for the three details in the table that each produce a wrong answer
 quietly, and for what the arm proves \(em the coverage and the delivery,
 not the values, because QEMU's composed map is the identity.
 .IP
+The riscv boards' consoles and CLINTs come from the tree as well, and
+the console through
+.CW /chosen/stdout-path
+rather than by compatible string \(em which
+.CW sifiveu-stdout
+proves rather than demonstrates, because
+.CW sifive_u
+has two serial ports and the arm boots a tree naming the second.
+.CW Uart0IRQ
+is the companion constant still unverified, and no marker in these arms
+can discriminate it: a wrong console interrupt is output that works and
+input that does not.
+.IP
 The console is discovered too, from the SPCR where there is no device
 tree \(em which is the table a SystemReady machine names its serial port
 in, and the one place a server with four of them can be told apart.  The

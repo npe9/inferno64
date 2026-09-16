@@ -932,6 +932,29 @@ virtarm64-acpi printed its banner through the SPCR-discovered console
 and then took a data abort in rtctime().  Losing the wall clock on those
 arms costs no marker; that was measured before the guard went in.
 
+THE RISCV CONSOLES AND CLINTS, AND THE ONE PROVED VALUE.  virt, virts,
+virt32, virt32s and sifiveu now assert where their console came from and
+(on the three M-mode boards) where the CLINT came from.  The console
+line says "from stdout-path", not "from the tree": /chosen/stdout-path
+is asked which port the FIRMWARE was printing on, because sifive_u has
+two sifive,uart0 nodes and fdtreg() returns whichever is first.
+
+sifiveu-stdout is the arm where that distinction is proved rather than
+demonstrated.  It boots the same kernel with a tree whose stdout-path
+has been rewritten to name the second port -- dumped from the QEMU that
+is about to boot it, not carried in the repository -- and takes serial0
+with -serial null so the log the suite reads is serial1.  A board that
+ignored stdout-path would print to serial0 and leave that log empty.
+Every other discovery arm in this suite compares a discovered value
+against a constant that agrees with it; this one does not.
+
+The CLINT falsify found a real miss.  With CLINT wrong and discovery on,
+virts and virt32s passed (S-mode, SBI timer, never touch it) and virt and
+virt32 died after GC-STRESS-OK at the broken address plus ClintMtimecmp
+-- a sixth use in stubs.c that the conversion had missed, and that a
+"does discovery work" run could not have caught, because on an unbroken
+mem.h the constant and the discovered address are equal.
+
 A SHARED SOURCE COUNTS ONLY IF THE BOARD COMPILED IT.  The staleness
 check scans os/inferno/port and os/inferno/ip for every board, because
 every board links most of what is in them -- but not all of it.

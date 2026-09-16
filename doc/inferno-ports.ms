@@ -24050,6 +24050,139 @@ same as before less
 With the guard in place the wrong-constant run passes on both arms.  The
 real fix is reading the DSDT, and that is an AML interpreter.
 .NH 2
+The riscv boards, and the first value actually proved
+.PP
+The same seam ran through five more boards.
+.CW virt ,
+.CW virts ,
+.CW virt32 ,
+.CW virt32s
+and
+.CW sifiveu
+each printed
+.P1
+fdt: uart @ 0x10000000 size 0x100 (mem.h UART0 0x10000000)
+fdt: clint @ 0x2000000 size 0x10000 (mem.h CLINT 0x2000000)
+.P2
+and used the constants \(em the console at one site per board, and the
+CLINT at five, read on every timer tick and every
+.CW clockpoll() .
+.PP
+The console lookup is not
+.CW fdtreg() ,
+and that is the interesting part of this change.  "The first node
+claiming to be this kind of part" is the wrong question:
+.CW sifive_u
+has two
+.CW sifive,uart0
+nodes, at 0x10010000 and 0x10011000, and a real board can have four.
+The tree says which one the firmware was printing on, in
+.CW /chosen/stdout-path ,
+and that is a
+.I path
+\(em so
+.CW os/inferno/port/fdt.c
+needed a lookup that takes one.
+.CW fdtpathreg()
+descends the structure block matching components (a component with no
+unit address matches a node with one, so
+.CW serial
+matches
+.CW serial@10010000 ,
+but
+.CW serial@10011000
+does not match the other port), and
+.CW fdtconsole()
+reads
+.CW stdout-path ,
+strips any
+.CW :options
+suffix, resolves an alias through
+.CW /aliases
+when the value is not a path, and returns that node's reg.  It is the
+device tree's answer to the question the SPCR answers.
+.PP
+And it is the one place in this suite where a discovered
+.I value
+is proved rather than demonstrated.  Everywhere else \(em the GIC bases,
+the IORT windows, the redistributor frame, the arm64 console \(em what
+the tree or the tables say happens to equal what mem.h says, so a board
+taking the discovered value cannot be told from a board ignoring it.
+Here the two candidates differ.  The tree QEMU builds for
+.CW sifive_u
+was dumped, its
+.CW stdout-path
+rewritten to name the
+.I second
+port (the two paths are the same length, so nothing in the blob moves),
+and the board booted with both serial ports going to separate files:
+.P1
+stdout-path = /soc/serial@10010000   serial0 1353 bytes   serial1 0 bytes
+stdout-path = /soc/serial@10011000   serial0    0 bytes   serial1 1353 bytes
+.P2
+The same kernel, on a different wire, because the tree said so.  The new
+arm is
+.CW sifiveu-stdout ,
+which builds that tree from the QEMU it is about to boot rather than
+carrying one in the repository, and takes serial0 with
+.CW "-serial null"
+so that the log the suite reads is serial1.  A board that ignored
+.CW stdout-path
+would leave that log empty.
+.PP
+The CLINT falsify then earned its keep by failing.  With
+.CW CLINT
+set to 0x02800000 and discovery on,
+.CW virts
+and
+.CW virt32s
+passed \(em they are S-mode boards and reach the timer through SBI, so
+they never touch it \(em and
+.CW virt
+and
+.CW virt32
+died after
+.CW GC-STRESS-OK :
+.P1
+exception cause 0x7 epc 0x80003458 tval 0x2804000
+.P2
+0x2804000 is the broken constant plus
+.CW ClintMtimecmp ,
+so a site was still reading it.  There were five CLINT uses in
+.CW clock.c
+and a sixth in
+.CW stubs.c ,
+which the conversion had missed.  A run that only checked "does
+discovery work" would have passed with that site live, because on an
+unbroken mem.h the constant and the discovered address are equal.  That
+is the whole argument for breaking the constant, made by the test
+finding something.
+.PP
+With the sixth site converted, both directions hold: wrong
+.CW UART0
+and wrong
+.CW CLINT
+with discovery on, all six arms pass; with discovery off as well, the
+.CW virt
+and
+.CW virt32
+logs are zero bytes.
+.PP
+One companion constant is left and is named here rather than changed.
+.CW Uart0IRQ
+in each board's
+.CW io.h
+is the console's interrupt, and no marker in these arms would catch it
+being wrong: a wrong console
+.I address
+is silence, but a wrong console
+.I interrupt
+is output that works and input that does not, and nothing in this suite
+types at a console.  Reading it from the uart node's
+.CW interrupts
+property is two lines; a test that discriminates it is a harness that
+drives the console, which is not two lines.
+.NH 2
 Memory, from the firmware's map
 .PP
 One thing was still coming from mem.h on a machine that had no business

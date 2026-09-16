@@ -45,6 +45,8 @@ void	plicinit(void);
 void	uartconsole(void);
 void	uartconsolesetup(void);
 void	serialputc(int);
+void	uartdiscover(void);
+void	uartreport(void);
 void	serialputs(char*, int);
 void	(*screenputs)(char*, int);
 ulong	va2pa(void*);

@@ -59,7 +59,7 @@ verbose=false
 record=false
 force=false
 
-configs='raspi3b raspi3b-4g raspi3b-usb raspi3b-2eth raspi4 raspi4-hot raspi4-usb raspi4-2eth virtarm64 virtarm64-msi virtarm64-nvme virtarm64-xhci virtarm64-gicv3 virtarm64-gicr virtarm64-efi virtarm64-noscan virtarm64-acpi virtarm64-smmu virtarm64-peer sifiveu virt virts virt32 virt32s virt-peer peer-mixed'
+configs='raspi3b raspi3b-4g raspi3b-usb raspi3b-2eth raspi4 raspi4-hot raspi4-usb raspi4-2eth virtarm64 virtarm64-msi virtarm64-nvme virtarm64-xhci virtarm64-gicv3 virtarm64-gicr virtarm64-efi virtarm64-noscan virtarm64-acpi virtarm64-smmu virtarm64-peer sifiveu sifiveu-stdout virt virts virt32 virt32s virt-peer peer-mixed'
 
 # Each configuration: the kernel, the QEMU arguments, the line that
 # says the board is done printing, and the evidence lines that make
@@ -209,7 +209,8 @@ config_kernel() {
 	# here is also what puts it under the staleness check.
 	virtarm64-efi|virtarm64-noscan|virtarm64-acpi|virtarm64-smmu)
 				echo "$root/os/inferno/virtarm64/ivirtarm64.a";;
-	sifiveu)		echo "$root/os/inferno/sifiveu/isifiveu";;
+	sifiveu|sifiveu-stdout)
+				echo "$root/os/inferno/sifiveu/isifiveu";;
 	virt|virt-peer|peer-mixed)
 				echo "$root/os/inferno/virt/ivirt";;
 	virts)			echo "$root/os/inferno/virts/ivirts";;
@@ -232,7 +233,7 @@ config_qemu() {
 	raspi*)			echo "$QEMU";;
 	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-gicr|virtarm64-efi|virtarm64-noscan|virtarm64-acpi|virtarm64-smmu|virtarm64-peer)
 				echo "${QEMU_AARCH64:-`command -v qemu-system-aarch64`}";;
-	sifiveu|virt|virts|virt-peer|peer-mixed)
+	sifiveu|sifiveu-stdout|virt|virts|virt-peer|peer-mixed)
 				echo "${QEMU_RISCV64:-`command -v qemu-system-riscv64`}";;
 	virt32|virt32s)		echo "${QEMU_RISCV32:-`command -v qemu-system-riscv32`}";;
 	esac
@@ -483,6 +484,27 @@ config_args() {
 		# and the reason was only ever that nothing handed it a
 		# card.
 		echo "-M sifive_u -m 128M -bios none -drive file=$work/sdspi.img,if=sd,format=raw";;
+	sifiveu-stdout)
+		# The same board booted with a device tree whose
+		# /chosen/stdout-path names the machine's SECOND serial
+		# port instead of its first.
+		#
+		# This is the one arm in this suite where a discovered
+		# value is proved rather than demonstrated.  Everywhere
+		# else -- the GIC bases, the IORT windows, the redistributor
+		# frame -- what the tree or the tables say happens to equal
+		# what mem.h says, so the board taking the discovered value
+		# cannot be told from the board ignoring it.  sifive_u has
+		# two sifive,uart0 nodes at 0x10010000 and 0x10011000, and
+		# fdtreg() returns the first.  With stdout-path rewritten
+		# to name the second, a board that reads it prints on a
+		# different wire.
+		#
+		# -serial null takes serial0, so the suite's own
+		# -serial file:$log lands on serial1.  A board that ignored
+		# stdout-path would print to serial0 and this arm's log
+		# would be empty.
+		echo "-M sifive_u -m 128M -bios none -drive file=$work/sdspi.img,if=sd,format=raw -dtb $work/sifiveu-stdout1.dtb -serial null";;
 	virt)
 		# This kernel is the other way round: it links sdvirtiommio
 		# and ethervirtiommio, so both devices are the mmio form.
@@ -669,7 +691,7 @@ config_last() {
 	raspi4-usb)		echo 'RASPI4-SH-OK';;
 	virtarm64|virtarm64-msi|virtarm64-nvme|virtarm64-xhci|virtarm64-gicv3|virtarm64-gicr|virtarm64-efi|virtarm64-noscan|virtarm64-acpi|virtarm64-smmu|virtarm64-peer)	echo 'ROOT-CMDS-OK';;
 	virt|virts|virt-peer|peer-mixed)	echo 'ROOT-CMDS-OK';;
-	sifiveu)		echo 'SIFIVEU-SH-OK';;
+	sifiveu|sifiveu-stdout)	echo 'SIFIVEU-SH-OK';;
 	virt32|virt32s)		echo 'VIRT32-INIT-OK';;
 	esac
 }
@@ -783,6 +805,18 @@ config_evidence() {
 		echo 'peer: 525400aaaa01 is 192\.168\.77\.1'
 		echo 'PEER-ARP-OK 192\.168\.77\.2';;
 	virts)
+		# The console and the CLINT, from the tree rather than from
+		# mem.h.  Both had been discovered, printed beside the
+		# constant "for comparison", and never used.  The console
+		# is the sharp one -- a board aimed at the wrong serial
+		# port prints nothing, so there is no degraded mode -- and
+		# the CLINT is the load-bearing one, read on every tick.
+		#
+		# "from stdout-path" and not "from the tree": the tree is
+		# asked which port the FIRMWARE was printing on, not which
+		# node comes first.  See sifiveu-stdout for why that
+		# distinction is not cosmetic.
+		echo 'uart: 16550 @ 0x10000000 from stdout-path, UART-ADDR-OK'
 		echo 'BLK-OK /dev/sdF0/data'	# see virtarm64-peer
 		# virt and virts share an init and a root, so they print
 		# the same marker set and only these tell them apart:
@@ -797,6 +831,18 @@ config_evidence() {
 		# blob, so at -m 256M it is 0x8fe00000.
 		echo '^[0-9a-f]+ 8fe00000 [0-9]+';;
 	virt32s)
+		# The console and the CLINT, from the tree rather than from
+		# mem.h.  Both had been discovered, printed beside the
+		# constant "for comparison", and never used.  The console
+		# is the sharp one -- a board aimed at the wrong serial
+		# port prints nothing, so there is no degraded mode -- and
+		# the CLINT is the load-bearing one, read on every tick.
+		#
+		# "from stdout-path" and not "from the tree": the tree is
+		# asked which port the FIRMWARE was printing on, not which
+		# node comes first.  See sifiveu-stdout for why that
+		# distinction is not cosmetic.
+		echo 'uart: 16550 @ 0x10000000 from stdout-path, UART-ADDR-OK'
 		# These two boards share an init, so they print the same
 		# five markers and the marker set cannot tell them
 		# apart.  Two different lines are needed and they say
@@ -818,6 +864,19 @@ config_evidence() {
 		# blob, so at -m 256M it is 0x8fe00000.
 		echo '^[0-9a-f]+ 8fe00000 [0-9]+';;
 	virt)
+		# The console and the CLINT, from the tree rather than from
+		# mem.h.  Both had been discovered, printed beside the
+		# constant "for comparison", and never used.  The console
+		# is the sharp one -- a board aimed at the wrong serial
+		# port prints nothing, so there is no degraded mode -- and
+		# the CLINT is the load-bearing one, read on every tick.
+		#
+		# "from stdout-path" and not "from the tree": the tree is
+		# asked which port the FIRMWARE was printing on, not which
+		# node comes first.  See sifiveu-stdout for why that
+		# distinction is not cosmetic.
+		echo 'uart: 16550 @ 0x10000000 from stdout-path, UART-ADDR-OK'
+		echo 'clint: @ 0x2000000 from the tree, CLINT-ADDR-OK'
 		echo 'BLK-OK /dev/sdF0/data'	# see virtarm64-peer
 		# conf virt, for the same reason virts has its own.
 		echo 'conf virt \('
@@ -832,6 +891,19 @@ config_evidence() {
 		# matched.
 		echo '^[0-9a-f]+ 8fe00000 [0-9]+';;
 	virt32)
+		# The console and the CLINT, from the tree rather than from
+		# mem.h.  Both had been discovered, printed beside the
+		# constant "for comparison", and never used.  The console
+		# is the sharp one -- a board aimed at the wrong serial
+		# port prints nothing, so there is no degraded mode -- and
+		# the CLINT is the load-bearing one, read on every tick.
+		#
+		# "from stdout-path" and not "from the tree": the tree is
+		# asked which port the FIRMWARE was printing on, not which
+		# node comes first.  See sifiveu-stdout for why that
+		# distinction is not cosmetic.
+		echo 'uart: 16550 @ 0x10000000 from stdout-path, UART-ADDR-OK'
+		echo 'clint: @ 0x2000000 from the tree, CLINT-ADDR-OK'
 		# conf virt32, for the same reason virt32s has its own:
 		# the two share an init and print the same markers, so
 		# the kernel's own banner is what says which one ran.
@@ -854,7 +926,37 @@ config_evidence() {
 		# conf.topofmem comes from the tree and stops at the
 		# blob, so at -m 256M it is 0x8fe00000.
 		echo '^[0-9a-f]+ 8fe00000 [0-9]+';;
+	sifiveu-stdout)
+		# The proof, and the only one in this suite of its kind.
+		#
+		# sifive_u has two sifive,uart0 nodes.  fdtreg() returns the
+		# first, at 0x10010000, which is also what mem.h says -- so
+		# on the ordinary sifiveu arm a board that reads the tree
+		# and a board that ignores it print the same line on the
+		# same wire.  Here /chosen/stdout-path has been rewritten to
+		# name the second port and the board follows it: the address
+		# is 0x10011000, and the output is on serial1 because that
+		# is where this log comes from.  A board that ignored
+		# stdout-path would have printed to serial0 and left this
+		# log empty, which is not a subtle failure.
+		echo 'uart: sifive uart0 @ 0x10011000 from stdout-path, UART-ADDR-OK'
+		echo 'clint: @ 0x2000000 from the tree, CLINT-ADDR-OK'
+		echo 'SIFIVEU-SH-OK'
+		;;
 	sifiveu)
+		# The console and the CLINT, from the tree rather than from
+		# mem.h.  Both had been discovered, printed beside the
+		# constant "for comparison", and never used.  The console
+		# is the sharp one -- a board aimed at the wrong serial
+		# port prints nothing, so there is no degraded mode -- and
+		# the CLINT is the load-bearing one, read on every tick.
+		#
+		# "from stdout-path" and not "from the tree": the tree is
+		# asked which port the FIRMWARE was printing on, not which
+		# node comes first.  See sifiveu-stdout for why that
+		# distinction is not cosmetic.
+		echo 'uart: sifive uart0 @ 0x10010000 from stdout-path, UART-ADDR-OK'
+		echo 'clint: @ 0x2000000 from the tree, CLINT-ADDR-OK'
 		# SIFIVEU-FDT-OK says the tree agreed with mem.h.  These
 		# two say the discovered numbers were the ones the board
 		# then used: the driver prints the base it was handed
@@ -1412,7 +1514,7 @@ config_card() {
 	raspi4)		echo "sd16b.img 16m";;
 	raspi4-hot)	echo "sd16c.img 16m";;
 	raspi4-usb)	echo "sd16e.img 16m";;
-	sifiveu)	echo "sdspi.img 16m";;
+	sifiveu|sifiveu-stdout)	echo "sdspi.img 16m";;
 	*)		;;		# no card
 	esac
 }
@@ -1573,6 +1675,62 @@ firmware() {
 # a mac, mkfs.vfat and mcopy elsewhere -- and rebuilt every run rather
 # than kept, because unlike a blank card its contents are the thing
 # under test.
+# A device tree whose /chosen/stdout-path names the machine's second
+# serial port rather than its first.
+#
+# Dumped from the same QEMU that will boot it -- a tree checked in here
+# would rot the moment QEMU changed its memory map -- and then patched
+# in place.  The two paths are the same length, so nothing in the blob
+# moves and no offset or length needs rewriting.
+makestdoutdtb() {
+	qemu=$1 out=$2
+	[ -f "$work/$out" ] && return 0
+	"$qemu" -M sifive_u,dumpdtb="$work/sifiveu.dtb" -display none \
+		>/dev/null 2>&1 || true
+	[ -s "$work/sifiveu.dtb" ] || { echo "no dtb from $qemu" >&2; return 1; }
+	python3 - "$work/sifiveu.dtb" "$work/$out" <<'EOF'
+import struct, sys
+d = open(sys.argv[1], 'rb').read()
+_, _, offs, offstr, _, _, _, _, sizestr, sizestruct = struct.unpack('>10I', d[:40])
+st = d[offstr:offstr+sizestr]
+s = d[offs:offs+sizestruct]
+out = bytearray(d)
+i = 0
+cur = []
+done = False
+while i < len(s):
+    tok = struct.unpack('>I', s[i:i+4])[0]
+    i += 4
+    if tok == 1:
+        e = s.index(b'\0', i)
+        cur.append(s[i:e].decode())
+        i = (e + 4) & ~3
+    elif tok == 2:
+        cur.pop()
+    elif tok == 3:
+        ln, no = struct.unpack('>II', s[i:i+8])
+        i += 8
+        off = i
+        val = s[i:i+ln]
+        i = (i + ln + 3) & ~3
+        pn = st[no:st.index(b'\0', no)].decode()
+        if cur and cur[-1] == 'chosen' and pn == 'stdout-path':
+            old = val.rstrip(b'\0').decode()
+            if not old.endswith('10010000'):
+                raise SystemExit('stdout-path is %s, not the first uart' % old)
+            new = (old[:-8] + '10011000').encode() + b'\0'
+            if len(new) != ln:
+                raise SystemExit('replacement changes the length')
+            out[offs+off:offs+off+ln] = new
+            done = True
+    elif tok == 9:
+        break
+if not done:
+    raise SystemExit('no /chosen/stdout-path in the dumped tree')
+open(sys.argv[2], 'wb').write(bytes(out))
+EOF
+}
+
 makeesp() {
 	f="$work/$1"
 	loader=$2
@@ -2146,6 +2304,11 @@ for c in $configs; do
 	fi
 
 	makecard `config_card $c`
+	if [ "$c" = sifiveu-stdout ] && ! makestdoutdtb "$qemu" sifiveu-stdout1.dtb; then
+		echo "$c: FAIL could not build the patched device tree"
+		status=1
+		continue
+	fi
 	# virts belongs on this list as much as virt does -- it carries the
 	# same fat16.img in its qemu line.  It ran only because virt comes
 	# before it in $configs and had already made the image; asked for

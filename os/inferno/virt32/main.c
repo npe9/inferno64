@@ -127,6 +127,14 @@ main(void)
 
 		fdtinit(dtbptr);
 	}
+	/*
+	 * Before the first serialputs() below, which is the first output
+	 * this kernel makes: a console discovered after it would print
+	 * the banner through mem.h's address and everything after it
+	 * through the real one, and on a machine where those differ the
+	 * banner is the part that goes missing.
+	 */
+	uartdiscover();
 	confinit();
 
 	serialputs("Inferno/riscv32 virt\n", -1);
@@ -157,10 +165,19 @@ main(void)
 		 */
 		if(fdtregmin("virtio,mmio", &base, &size) && base != 0)
 			virtiobase = (uintptr)base;
+		/* before clockinit(), which is the CLINT's first read */
+		clintdiscover();
 		print("fdt: plic base %#p (mem.h PLIC %#p)\n", plicbase, (uintptr)PLIC);
+		/*
+		 * Both discovered before clockinit() and
+		 * before the console, and reported here where
+		 * print() works.
+		 */
+		uartreport();
+		clintreport();
 		print("fdt: virtio base %#p (mem.h VIRTIO0 %#p)\n", virtiobase, (uintptr)VIRTIO0);
 		if(fdtreg("ns16550a", &base, &size))
-			print("fdt: uart @ %#llux (mem.h UART0 %#p)\n", base, (uintptr)UART0);
+			print("fdt: uart @ %#llux\n", base);
 	}
 
 	xinit();

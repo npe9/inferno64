@@ -15,16 +15,48 @@ struct Clock0link {
 static Clock0link *clock0link;
 static Lock clock0lock;
 
+/*
+ * Where the CLINT is.
+ *
+ * mem.h's constant again, and this one is read on every timer tick and
+ * every clockpoll() rather than once at boot -- main.c printed the
+ * tree's address beside it for comparison and nothing used it.  The
+ * node is "riscv,clint0"; QEMU's trees also claim "sifive,clint0" on
+ * the same node, so one lookup finds it on both machines.
+ *
+ * Before clockinit(), which is the first read.
+ */
+uintptr clintaddr = CLINT;
+static char *clintfrom = "mem.h";
+
+void
+clintdiscover(void)
+{
+	extern int fdtreg(char*, uvlong*, uvlong*);
+	uvlong b;
+
+	if(fdtreg("riscv,clint0", &b, nil) && b != 0){
+		clintaddr = (uintptr)b;
+		clintfrom = "the tree";
+	}
+}
+
+void
+clintreport(void)
+{
+	print("clint: @ %#p from %s, CLINT-ADDR-OK\n", clintaddr, clintfrom);
+}
+
 static uvlong
 clintmtime(void)
 {
-	return *(volatile uvlong*)(uintptr)(CLINT + ClintMtime);
+	return *(volatile uvlong*)(clintaddr + ClintMtime);
 }
 
 static void
 clintsetcmp(uvlong when)
 {
-	*(volatile uvlong*)(uintptr)(CLINT + ClintMtimecmp) = when;
+	*(volatile uvlong*)(clintaddr + ClintMtimecmp) = when;
 }
 
 /*
@@ -135,7 +167,7 @@ clockpoll(void)
 	}
 	mtimerie();	/* Bounce busy-path used to leave MTIE clear */
 	ticksync();
-	cmp = *(volatile uvlong*)(uintptr)(CLINT + ClintMtimecmp);
+	cmp = *(volatile uvlong*)(clintaddr + ClintMtimecmp);
 	if(clintmtime() >= cmp)
 		clockintr(nil);
 }

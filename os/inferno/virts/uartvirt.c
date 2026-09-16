@@ -18,6 +18,55 @@ static Ctlr virtctlr = {
 	.base	= (uchar*)(uintptr)UART0,
 };
 
+/*
+ * Where the console is.
+ *
+ * mem.h's UART0 describes the QEMU machine this board was written
+ * against.  The tree said where the uart was and main.c printed it
+ * beside the constant "for comparison", which on this machine always
+ * agree, and nothing used it.  On a console that is the sharp version
+ * of the defect: a board aimed at the wrong serial port prints nothing
+ * at all, so there is no degraded mode to notice.
+ *
+ * Two questions, in order.  /chosen/stdout-path says which port the
+ * firmware was printing on, which is the one that matters on a board
+ * with several -- QEMU's sifive_u has two and a real board can have
+ * four.  Failing that, the first node claiming to be this kind of part.
+ * Failing that, mem.h.
+ *
+ * uartdiscover() runs before the first serialputs(), which is the first
+ * output this kernel makes: there is no console yet to report a failure
+ * on, so it reads, records and says nothing.  uartreport() prints once
+ * print() works.
+ */
+static char *uartfrom = "mem.h";
+
+void
+uartdiscover(void)
+{
+	extern int fdtconsole(uvlong*, uvlong*);
+	extern int fdtreg(char*, uvlong*, uvlong*);
+	uvlong b;
+
+	b = 0;
+	if(fdtconsole(&b, nil) && b != 0){
+		virtctlr.base = (uchar*)(uintptr)b;
+		uartfrom = "stdout-path";
+		return;
+	}
+	if(fdtreg("ns16550a", &b, nil) && b != 0){
+		virtctlr.base = (uchar*)(uintptr)b;
+		uartfrom = "the tree";
+	}
+}
+
+void
+uartreport(void)
+{
+	print("uart: 16550 @ %#p from %s, UART-ADDR-OK\n",
+		(uintptr)virtctlr.base, uartfrom);
+}
+
 static Uart virtuart = {
 	.regs	= &virtctlr,
 	.name	= "eia0",

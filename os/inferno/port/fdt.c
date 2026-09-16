@@ -281,6 +281,221 @@ fdtreg(char *compat, uvlong *base, uvlong *size)
 }
 
 /*
+ * A node by absolute path, rather than by compatible string.
+ *
+ * fdtreg() answers "the first node claiming to be this kind of part",
+ * which is the wrong question for a console: QEMU's sifive_u has two
+ * sifive,uart0 nodes and a real board can have four.  The tree says
+ * which one the firmware was using, in /chosen/stdout-path, and that is
+ * a path -- so it needs a lookup that takes one.
+ *
+ * A separate descent rather than a flag on fdtwalk(), because the walk
+ * hands its visitor a node's own name and not its path, and giving it
+ * one would change the signature every visitor here is written to.
+ * This tracks #address-cells and #size-cells the same way, because a
+ * reg entry's width still comes from the parent.
+ */
+static int
+fdtnamematch(char *name, char *want)
+{
+	int n;
+
+	if(strcmp(name, want) == 0)
+		return 1;
+	/*
+	 * A component with no unit address matches a node with one:
+	 * "serial" matches "serial@10010000".  A component that has one
+	 * has to match it exactly, so "serial@10011000" does not match
+	 * the other port.
+	 */
+	if(strchr(want, '@') != nil)
+		return 0;
+	n = strlen(want);
+	return strncmp(name, want, n) == 0 && name[n] == '@';
+}
+
+static uchar*
+fdtpathprops(char *path, int *pac, int *psc)
+{
+	Fdthdr *h = fdt;
+	uchar *p, *e;
+	char *name, *comp;
+	int depth, cur, ac[32], sc[32];
+	u32int len, noff;
+
+	if(fdt == nil || path == nil || path[0] != '/')
+		return nil;
+	p = (uchar*)fdt + be32(&h->off_dt_struct);
+	e = p + be32(&h->size_dt_struct);
+	depth = 0;
+	cur = 0;
+	ac[0] = 2;
+	sc[0] = 2;
+	while(p+4 <= e){
+		switch(be32(p)){
+		case TBeginNode:
+			p += 4;
+			name = (char*)p;
+			p += (strlen(name)+4) & ~3;
+			depth++;
+			if(depth < nelem(ac)){
+				ac[depth] = ac[depth-1];
+				sc[depth] = sc[depth-1];
+			}
+			/*
+			 * comp is the cur'th component of the path.  The
+			 * root is depth 1 with no component, so a child at
+			 * depth 2 is component 0.
+			 */
+			if(depth == cur + 2){
+				char buf[64];
+				int i, n;
+
+				/* skip the components already matched */
+				comp = path + 1;
+				for(i = 0; i < cur; i++){
+					while(*comp != 0 && *comp != '/')
+						comp++;
+					if(*comp == '/')
+						comp++;
+				}
+				for(n = 0; comp[n] != 0 && comp[n] != '/'; n++)
+					;
+				if(n > 0 && n < nelem(buf)){
+					memmove(buf, comp, n);
+					buf[n] = 0;
+					if(fdtnamematch(name, buf)){
+						cur++;
+						if(comp[n] == 0){
+							if(pac != nil)
+								*pac = ac[depth-1];
+							if(psc != nil)
+								*psc = sc[depth-1];
+							return p;
+						}
+					}
+				}
+			}
+			break;
+		case TProp:
+			len = be32(p+4);
+			noff = be32(p+8);
+			if(depth < nelem(ac)){
+				if(strcmp(fdtstrat(noff), "#address-cells") == 0)
+					ac[depth] = be32(p+12);
+				else if(strcmp(fdtstrat(noff), "#size-cells") == 0)
+					sc[depth] = be32(p+12);
+			}
+			p += 12 + ((len+3) & ~3);
+			break;
+		case TEndNode:
+			p += 4;
+			if(depth > 0)
+				depth--;
+			if(depth - 1 < cur)
+				cur = depth - 1;
+			if(cur < 0)
+				cur = 0;
+			break;
+		case TNop:
+			p += 4;
+			break;
+		case TEnd:
+			return nil;
+		default:
+			return nil;
+		}
+	}
+	return nil;
+}
+
+/*
+ * The reg base and size of the node at an absolute path.
+ */
+int
+fdtpathreg(char *path, uvlong *base, uvlong *size)
+{
+	uchar *props, *rv;
+	u32int rlen;
+	int ac, sc;
+
+	ac = 2;
+	sc = 2;
+	props = fdtpathprops(path, &ac, &sc);
+	if(props == nil)
+		return 0;
+	rv = fdtprop(props, "reg", &rlen);
+	if(rv == nil || rlen < (u32int)(ac+sc)*4)
+		return 0;
+	if(base != nil)
+		*base = fdtbecells(rv, ac);
+	if(size != nil)
+		*size = fdtbecells(rv + ac*4, sc);
+	return 1;
+}
+
+/*
+ * A string property of the node at an absolute path, copied out.
+ */
+int
+fdtpathstring(char *path, char *prop, char *buf, int len)
+{
+	uchar *props, *v;
+	u32int vlen;
+
+	props = fdtpathprops(path, nil, nil);
+	if(props == nil)
+		return 0;
+	v = fdtprop(props, prop, &vlen);
+	if(v == nil || vlen == 0 || (int)vlen > len)
+		return 0;
+	memmove(buf, v, vlen);
+	buf[vlen-1] = 0;		/* the property is NUL-terminated */
+	return 1;
+}
+
+/*
+ * The console the firmware was using: /chosen/stdout-path.
+ *
+ * The value is a path, optionally followed by ":options" -- a baud rate
+ * and framing this reader has no use for -- or an alias name rather
+ * than a path, which /aliases resolves.  Both forms appear in trees
+ * QEMU builds.
+ *
+ * This is the device tree's answer to the same question ACPI's SPCR
+ * answers, and it matters for the same reason: a board with several
+ * serial ports has one the firmware was printing on, and "the first
+ * node claiming to be a uart" is not it.
+ */
+int
+fdtconsole(uvlong *base, uvlong *size)
+{
+	char path[128], alias[160];
+	int i;
+
+	if(!fdtpathstring("/chosen", "stdout-path", path, sizeof path))
+		return 0;
+	for(i = 0; path[i] != 0; i++)
+		if(path[i] == ':'){
+			path[i] = 0;
+			break;
+		}
+	if(path[0] == 0)
+		return 0;
+	if(path[0] != '/'){
+		if(strlen(path) + 10 > sizeof alias)
+			return 0;
+		memmove(alias, "/aliases", 9);
+		if(!fdtpathstring(alias, path, alias, sizeof alias))
+			return 0;
+		if(alias[0] != '/' || strlen(alias) >= sizeof path)
+			return 0;
+		memmove(path, alias, strlen(alias)+1);
+	}
+	return fdtpathreg(path, base, size);
+}
+
+/*
  * The i'th reg entry of the first node whose compatible list contains
  * compat.  fdtreg() is this with i == 0.
  */

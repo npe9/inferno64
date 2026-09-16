@@ -127,6 +127,14 @@ main(void)
 
 		fdtinit(dtbptr);
 	}
+	/*
+	 * Before the first serialputs() below, which is the first output
+	 * this kernel makes: a console discovered after it would print
+	 * the banner through mem.h's address and everything after it
+	 * through the real one, and on a machine where those differ the
+	 * banner is the part that goes missing.
+	 */
+	uartdiscover();
 	confinit();
 
 	serialputs("Inferno/riscv64 sifive_u\n", -1);
@@ -153,6 +161,8 @@ main(void)
 		fdtinit(dtbptr);
 		if(fdtreg("riscv,plic0", &base, &size) && base != 0)
 			plicbase = (uintptr)base;
+		/* before clockinit(), which is the CLINT's first read */
+		clintdiscover();
 		if(fdtreg("sifive,fu540-c000-gem", &base, &size) && base != 0)
 			gembase = (uintptr)base;
 	}
@@ -202,8 +212,7 @@ main(void)
 		print("fdt: dtb %#p\n", dtbptr);
 		ok = 1;
 		if(fdtreg("sifive,uart0", &base, &size))
-			print("fdt: uart @ %#llux size %#llux (mem.h UART0 %#p)\n",
-				base, size, (uintptr)UART0);
+			print("fdt: uart @ %#llux size %#llux\n", base, size);
 		else
 			ok = 0;
 		if(fdtreg("riscv,clint0", &base, &size))
@@ -212,6 +221,13 @@ main(void)
 		else
 			ok = 0;
 		print("fdt: plic base %#p (mem.h PLIC %#p)\n", plicbase, (uintptr)PLIC);
+		/*
+		 * Both discovered before clockinit() and
+		 * before the console, and reported here where
+		 * print() works.
+		 */
+		uartreport();
+		clintreport();
 		print("fdt: gem base %#p (mem.h GEM0 %#p)\n", gembase, (uintptr)GEM0);
 		/*
 		 * The marker asserts agreement, not merely that a node was

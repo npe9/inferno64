@@ -127,6 +127,14 @@ main(void)
 
 		fdtinit(dtbptr);
 	}
+	/*
+	 * Before the first serialputs() below, which is the first output
+	 * this kernel makes: a console discovered after it would print
+	 * the banner through mem.h's address and everything after it
+	 * through the real one, and on a machine where those differ the
+	 * banner is the part that goes missing.
+	 */
+	uartdiscover();
 	confinit();
 
 	serialputs("Inferno/riscv64 virt\n", -1);
@@ -180,7 +188,7 @@ main(void)
 		uvlong base, size;
 		fdtinit(dtbptr);
 		if(fdtreg("ns16550a", &base, &size))
-			print("fdt: uart @ %#llux size %#llux (mem.h UART0 %#p)\n", base, size, (uintptr)UART0);
+			print("fdt: uart @ %#llux size %#llux\n", base, size);
 		else if(fdtreg("virtio,mmio", &base, &size))
 			print("fdt: virtio-mmio @ %#llux (VIRTIO0 %#p)\n", base, (uintptr)VIRTIO0);
 		else
@@ -189,6 +197,7 @@ main(void)
 			extern uintptr plicbase, virtiobase;
 			print("fdt: plic base %#p (mem.h PLIC %#p)\n",
 				plicbase, (uintptr)PLIC);
+		uartreport();
 			print("fdt: virtio base %#p (mem.h VIRTIO0 %#p)\n",
 				virtiobase, (uintptr)VIRTIO0);
 		}
