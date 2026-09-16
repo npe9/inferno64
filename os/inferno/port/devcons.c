@@ -714,6 +714,7 @@ consread(Chan *c, void *buf, s32 n, s64 offset)
 				eol = 0;
 				switch(ch){
 					case '\b':
+					case 0x7f:	/* what a terminal's backspace key sends */
 						if(kbd.x)
 						kbd.x--;
 						break;
@@ -1422,6 +1423,16 @@ echo(Rune r, char *buf, int n)
 
         if(r == 0x15){
                 buf = "^U\n";
+                n = 3;
+        }
+        /*
+         * Erasing has to be shown: a lone backspace only moves the cursor
+         * left, and the delete a terminal's backspace key actually sends
+         * prints as nothing at all.  Back up, blank the character, back up
+         * again.
+         */
+        if(r == '\b' || r == 0x7f){
+                buf = "\b \b";
                 n = 3;
         }
 		putstrn(buf, n);
