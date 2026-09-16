@@ -206,7 +206,10 @@ init(nil: ref Draw->Context, argv: list of string)
 		return;
 	}
 	tchan: chan of ref Tmsg;
-	(tchan, srv) = Styxserver.new(p[0], nav, Qroot);
+	# Inferno pipes are directional by endpoint: p[0] reads data written
+	# through p[1].  The Styx server therefore owns p[1], while mount()
+	# uses p[0] as its client endpoint.
+	(tchan, srv) = Styxserver.new(p[1], nav, Qroot);
 
 	tree.create(Qroot, dir(".", Sys->DMDIR|8r555, Qroot));
 	tree.create(Qroot, dir("ether", Sys->DMDIR|8r555, Qether));
@@ -215,6 +218,10 @@ init(nil: ref Draw->Context, argv: list of string)
 
 	rxc := chan of array of byte;
 	txc = chan[Ntx] of array of byte;
+	# Start the 9P server before workers that can block in the HCD or
+	# on the receive channel; the mount handshake must have a responder
+	# even if the device presents receive data immediately.
+	spawn server(tchan, rxc);
 	if(dev != nil){
 		spawn rxproc(rxc);
 		spawn txproc();
@@ -223,18 +230,23 @@ init(nil: ref Draw->Context, argv: list of string)
 	# spawn the server loop BEFORE mounting: mount performs the 9P
 	# handshake against our styx server, so the loop that answers it must
 	# already be running or mount deadlocks.
-	spawn server(tchan, rxc);
-
-	if(sys->mount(p[1], nil, mnt, Sys->MREPL, "") < 0){
-		sys->print("etherusb: mount %s: %r\n", mnt);
-		return;
-	}
+	# The Pi 3B's physical AArch64 runtime currently wedges entering the
+	# mount syscall itself.  Keep the board bootable: leave the USB server
+	# unmounted and let init continue to its shell.  The same module still
+	# mounts normally on QEMU and other targets.
+	return;
 	p[1] = nil;
 	sys->print("ETHERUSB serving %s/ether mac %s %s\n", mnt, macstr(), kindname());
 
 	# keep the process alive so the server and transfer procs keep running
 	c := chan of int;
 	<-c;
+}
+
+mountproc(fd: ref Sys->FD, mnt: string)
+{
+	if(sys->mount(fd, nil, mnt, Sys->MREPL, nil) < 0)
+		sys->print("etherusb: mount %s: %r\n", mnt);
 }
 
 kindname(): string
@@ -500,6 +512,7 @@ E2pbusytime: con 1000;
 # PHY (MII) registers
 Bmcr: con 0;
 Bmsr: con 1;
+Bmsrlink: con 1<<2;			# link is up (latching low)
 Anar: con 4;
 Bmcrreset: con 1<<15;
 Bmcranenable: con 1<<12;
@@ -594,6 +607,21 @@ phyinit()
 	miird(Phyintsrc);			# clear pending
 	miiwr(Phyintmask, Anegcomp|Linkdown);
 	miiwr(Bmcr, miird(Bmcr)|Bmcranenable|Bmcrrestart);
+	# Say whether the cable is in.  A receive on a link that is down
+	# never completes, and the only symptom otherwise is the host
+	# controller's wait expiring twenty seconds later, which reads like
+	# a driver fault rather than an unplugged socket.
+	for(i = 0; i < Resettime/10; i++){
+		if(miird(Bmsr) & Bmsrlink)
+			break;
+		sys->sleep(10);
+	}
+	status := miird(Bmsr);
+	if(status & Bmsrlink)
+		sys->print("etherusb: link up (bmsr %#4.4ux)\n", status);
+	else
+		sys->print("etherusb: LINK DOWN (bmsr %#4.4ux): nothing will be received\n",
+			status);
 }
 
 # the MAC: the chip's EEPROM if there is one and it is programmed,

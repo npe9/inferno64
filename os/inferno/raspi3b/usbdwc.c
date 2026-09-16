@@ -284,12 +284,34 @@ chandone(void *a)
 static int
 chanwait(Ep *ep, Ctlr *ctlr, Hostchan *hc, int mask)
 {
-	int chan, i;
+	int chan, i, pending;
 
-	USED(ep, mask);
+	USED(mask);
 	chan = hc - ctlr->regs->hchan;
-	for(i = 0; i < 20 && (ctlr->hcintr[chan] & Chhltd) == 0; i++)
+	/*
+	 * A bulk IN is allowed to take as long as it likes: it is a read
+	 * from a device that has nothing to say until it does.  On the Pi
+	 * the first receive from the onboard NIC ran into the twenty-second
+	 * limit this used to impose, and the synthesised transaction error
+	 * stopped the ethernet driver for good -- an idle or unplugged
+	 * socket reported as a hardware fault.  In DMA mode the core
+	 * retries the device's NAKs itself and halts the channel when the
+	 * data finally arrives, so waiting is the whole of the work.  Every
+	 * other transfer keeps a bound: they are answers to something the
+	 * host asked for, and silence there is a fault.
+	 */
+	pending = ep->ttype == Tbulk && (hc->hcchar & Epdir) == Epin;
+	for(i = 0; (ctlr->hcintr[chan] & Chhltd) == 0; i++){
 		tsleep(&ctlr->chanintr[chan], chandone, &ctlr->hcintr[chan], 1000);
+		if(pending){
+			if(i > 0 && i % 60 == 0)
+				dprint("usbdwc: ep%d.%d still waiting for data, %d s\n",
+					ep->dev->nb, ep->nb, i);
+			continue;
+		}
+		if(i >= 20)
+			break;
+	}
 	if((ctlr->hcintr[chan] & Chhltd) == 0){
 		/* A missing completion must not strand Limbo in a forever wait.
 		 * Return a normal transaction error; the caller unwinds the
