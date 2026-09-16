@@ -196,6 +196,7 @@ portattach(h: ref Hub, p: int): ref Dev
 	d := h.dev;
 	pp := h.port[p];
 	sp: string;
+	step(h, p, "enable delay");
 	sys->sleep(Enabledelay);
 	if(d.isusb3){
 		sts := portstatus(h, p);
@@ -203,6 +204,7 @@ portattach(h: ref Hub, p: int): ref Dev
 			return portfail(h, p, nil, "not enabled");
 		sp = "super";
 	} else {
+		step(h, p, "port reset");
 		if(portfeature(h, p, Fportreset, 1) < 0)
 			return portfail(h, p, nil, "reset");
 		sys->sleep(Resetdelay);
@@ -219,6 +221,7 @@ portattach(h: ref Hub, p: int): ref Dev
 		if(sts & PShigh)
 			sp = "high";
 	}
+	step(h, p, "newdev");
 	if(devctl(d, sys->sprint("newdev %s %d", sp, p)) < 0)
 		return portfail(h, p, nil, "newdev");
 	# the next read of the hub's ctl names the new endpoint
@@ -234,6 +237,7 @@ portattach(h: ref Hub, p: int): ref Dev
 	nd.isusb3 = d.isusb3;
 	if(opendevdata(nd) < 0)
 		return portfail(h, p, nd, "open data");
+	step(h, p, "set address");
 	if(usbcmd(nd, Rh2d|Rstd|Rdev, Rsetaddress, nd.id, 0, nil, 0) < 0)
 		return portfail(h, p, nd, "set address");
 	if(devctl(nd, "address") < 0)
@@ -242,6 +246,7 @@ portattach(h: ref Hub, p: int): ref Dev
 	# this kernel only takes "maxpkt" while the data file is closed
 	mp := 512;
 	if(!nd.isusb3){
+		step(h, p, "device descriptor");
 		(r, dd) := usbin(nd, Rd2h|Rstd|Rdev, Rgetdesc, Ddev<<8, 0, 8);
 		if(r < 8)
 			return portfail(h, p, nd, "device descriptor");
@@ -251,18 +256,27 @@ portattach(h: ref Hub, p: int): ref Dev
 	devctl(nd, sys->sprint("maxpkt %d", mp));
 	if(opendevdata(nd) < 0)
 		return portfail(h, p, nd, "reopen data");
+	step(h, p, "full descriptor");
 	(r, dd) := usbin(nd, Rd2h|Rstd|Rdev, Rgetdesc, Ddev<<8, 0, 18);
 	if(r < 18)
 		return portfail(h, p, nd, "full device descriptor");
 	nd.class = int dd[4];
 	nd.vid = int dd[8] | int dd[9]<<8;
 	nd.did = int dd[10] | int dd[11]<<8;
+	step(h, p, "set configuration");
 	if(usbcmd(nd, Rh2d|Rstd|Rdev, Rsetconf, 1, 0, nil, 0) < 0)
 		return portfail(h, p, nd, "set configuration");
 	sys->print("usbd: %s: port %d: %s %s vid %4.4ux did %4.4ux class %d\n",
 		d.name, p, sp, nd.name, nd.vid, nd.did, nd.class);
 	pp.dev = nd;
 	return nd;
+}
+
+# with -d, name each step of an attach: the one that hangs is the last printed
+step(h: ref Hub, p: int, what: string)
+{
+	if(debug)
+		sys->print("usbd: %s: port %d: %s\n", h.dev.name, p, what);
 }
 
 portfail(h: ref Hub, p: int, nd: ref Dev, why: string): ref Dev
