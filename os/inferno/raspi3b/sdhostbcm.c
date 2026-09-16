@@ -108,6 +108,7 @@ struct Ctlr {
 	int	byteaddr;
 	int	inited;
 	int	errors;
+	ulong	fclk;
 	uint	rca;
 };
 
@@ -325,6 +326,7 @@ sdcardinit(Ctlr *c)
 		gpiofsel(i, Alt0);
 
 	fclk = mboxgetclock(4);			/* VPU core clock */
+	c->fclk = fclk;
 	sdhostreset(r, fclk);
 
 	if(sdcmderr(r, 0, 0, Noresp, &err) < 0){	/* CMD0 GO_IDLE */
@@ -549,6 +551,76 @@ out:
 	return i * Secsize;
 }
 
+/*
+ * Controller state through /dev/sdM0/ctl, and a few commands to drive it
+ * from a shell on the board.  Every question about this controller costs
+ * a card swap otherwise: the card cannot be in the reader and in the Pi
+ * at once, and only the Pi has the silicon that misbehaves.
+ */
+static char*
+sdhostrctl(SDunit *u, char *p, char *e)
+{
+	Ctlr *c = u->dev->ctlr;
+	u32 *r = c->r;
+
+	p = seprint(p, e, "geometry %llud %lud\n", u->sectors, u->secsize);
+	p = seprint(p, e, "sdhost rca %#ux %s sectors %llud coreclock %lud cdiv %lud\n",
+		c->rca, c->byteaddr? "byteaddr": "blockaddr", c->sectors,
+		c->fclk, (ulong)r[SDCDIV]);
+	p = seprint(p, e, "sdhost sdcmd %#lux sdhsts %#lux sdedm %#lux sdhcfg %#lux errors %d\n",
+		(ulong)r[SDCMD], (ulong)r[SDHSTS], (ulong)r[SDEDM],
+		(ulong)r[SDHCFG], c->errors);
+	return p;
+}
+
+static int
+sdhostwctl(SDunit *u, Cmdbuf *cb)
+{
+	Ctlr *c = u->dev->ctlr;
+	u32 *r = c->r;
+	u32 err, arg;
+	int cmd, flags, i;
+	uchar blk[Secsize];
+
+	if(strcmp(cb->f[0], "reinit") == 0){
+		qlock(c);
+		c->inited = 0;
+		c->sectors = 0;
+		c->errors = 0;
+		i = sdcardinit(c);
+		qunlock(c);
+		print("sdhost: reinit %s\n", i? "ok": "failed");
+		return 0;
+	}
+	if(strcmp(cb->f[0], "clock") == 0 && cb->nf == 2){
+		sdhostclock(r, c->fclk, strtoul(cb->f[1], nil, 0));
+		print("sdhost: cdiv %lud\n", (ulong)r[SDCDIV]);
+		return 0;
+	}
+	if(strcmp(cb->f[0], "cmd") == 0 && cb->nf >= 2){
+		cmd = atoi(cb->f[1]);
+		arg = cb->nf > 2? strtoul(cb->f[2], nil, 0): 0;
+		flags = cb->nf > 3? strtoul(cb->f[3], nil, 0): 0;
+		i = sdcmderr(r, cmd, arg, flags, &err);
+		print("sdhost: cmd %d arg %#lux -> %d rsp %#lux sdhsts %#lux sdcmd %#lux sdedm %#lux\n",
+			cmd, (ulong)arg, i, (ulong)r[SDRSP0], (ulong)err,
+			(ulong)r[SDCMD], (ulong)r[SDEDM]);
+		return 0;
+	}
+	if(strcmp(cb->f[0], "readblk") == 0 && cb->nf == 2){
+		uvlong bno = strtoull(cb->f[1], nil, 0);
+		long n;
+
+		memset(blk, 0, sizeof blk);
+		n = sdhostbio(u, 0, 0, blk, 1, bno);
+		print("sdhost: readblk %llud -> %ld %.2ux%.2ux%.2ux%.2ux\n",
+			bno, n, blk[0], blk[1], blk[2], blk[3]);
+		return 0;
+	}
+	error(Ebadctl);
+	return 0;
+}
+
 SDifc sdhostbcmifc = {
 	"sdhost",			/* name */
 
@@ -559,8 +631,8 @@ SDifc sdhostbcmifc = {
 	sdhostverify,			/* verify */
 	sdhostonline,			/* online */
 	nil,				/* rio */
-	nil,				/* rctl */
-	nil,				/* wctl */
+	sdhostrctl,			/* rctl */
+	sdhostwctl,			/* wctl */
 
 	sdhostbio,			/* bio */
 	nil,				/* probe */
