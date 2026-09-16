@@ -3489,19 +3489,26 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 		 */
 		/*
 		 * The count, taken from the low half of its slot for the
-		 * reason the read above gives.  It is NOT clamped to the
-		 * block, and that is deliberate: a short write is fine for a
-		 * file and wrong for a message.  rio's draw writes are
-		 * messages, larger than this block, and clamping them took
-		 * the window system apart - twelve criteria across the rio
-		 * and riowin checks, which is what the sweep is for.  So the
-		 * overrun a large write makes is still here, written down in
-		 * doc/osprey-progress.ms, and the fix for it is to carry a
-		 * large write in pieces the buddy joins again rather than to
-		 * cut it.
+		 * reason the read above gives, and clamped to the block the
+		 * data goes in.  Clamping it to a block of four kilobytes cut
+		 * rio's draw messages and took the window system apart; the
+		 * block is eight now, which is twice rio's largest write, so
+		 * the clamp is a bound and not a cut.  A write larger than
+		 * the block cannot be carried whole by this transport, and a
+		 * short write - which a caller loops on - is the honest
+		 * answer to it.  Without the clamp the buddy reads the count
+		 * it was given out of a block that does not hold it, which is
+		 * a read past the data area and bytes from somewhere else
+		 * written to the file.
 		 */
-		a[2] = (uvlong)(long)(int)(a[2] & 0xffffffffULL);
-		ospreytouch(a[1], a[2] > Odbuddydatalen ? Odbuddydatalen : (ulong)a[2]);
+		{
+			long n = (long)(int)(a[2] & 0xffffffffULL);
+
+			if(n > Odbuddydatalen)
+				n = Odbuddydatalen;
+			a[2] = (uvlong)n;
+		}
+		ospreytouch(a[1], (ulong)a[2]);
 		dd = ospreydata(p, Bdataoff, a[2]);
 		if(dd != nil)
 			for(i = 0; i < (long)a[2]; i++)

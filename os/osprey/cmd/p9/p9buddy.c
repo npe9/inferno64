@@ -954,6 +954,15 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 			char sbuf[32];
 			int translated = 0;
 
+			/*
+			 * And bounded here too, on the side that reads the
+			 * block: a count larger than it would read past the
+			 * data area and write whatever lies beyond to the
+			 * file.
+			 */
+			if(wn > Odbuddydatalen)
+				wn = Odbuddydatalen;
+
 
 
 			/*

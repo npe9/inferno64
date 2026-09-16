@@ -183,6 +183,23 @@ startboot(char *argv0, char **argv)
 				close(bfd2);
 			print("legacy: a read of %d bytes from /boot/legacy returned %ld\n",
 				(int)sizeof big, bn);
+
+			/*
+			 * And a write of the same size, which is the other
+			 * side of the block: more than it holds cannot cross
+			 * in one call, so the answer is a short write, which
+			 * is what a caller loops on.
+			 */
+			{
+				int wfd3 = create("/n/bigfile", OWRITE, 0666);
+				long wn3 = wfd3 >= 0 ? write(wfd3, big, sizeof big) : -1;
+
+				if(wfd3 >= 0)
+					close(wfd3);
+				print("legacy: a write of %d bytes returned %ld\n",
+					(int)sizeof big, wn3);
+				remove("/n/bigfile");
+			}
 		}
 		if(remove("/n/p9test") == 0)
 			print("legacy: removed /n/p9test through the buddy\n");

@@ -4638,7 +4638,17 @@ never checked against the migration staging that follows it.  It ended
 at 5120, exactly where that begins, so every call carrying more than a
 page wrote past it, and rio did it every boot.  The check now asks for a
 read of sixteen kilobytes and is given the block's eight, which is the
-short read a caller loops on.
+short read a caller loops on \- and writes sixteen and is told eight.
+.PP
+The write is bounded now for the same reason and with the opposite
+failure behind it: without the bound the buddy reads the count it was
+given out of a block that does not hold it, which is a read past the
+data area and bytes from somewhere else written to the file.  Clamping a
+write to a four-kilobyte block cut rio's messages; clamping it to an
+eight-kilobyte one does not, because rio's largest is 4270 and the
+clamp is twice that.  A message larger than the block still cannot cross
+whole, and that is the honest limit of this transport: what the block
+holds is what one call carries.
 .PP
 Writing that clamp broke every read in the boot, and what it uncovered
 is the more interesting half.  The count is a 32-bit
