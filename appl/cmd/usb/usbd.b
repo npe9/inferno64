@@ -861,8 +861,18 @@ newhub(name: string, d: ref Dev): ref Hub
 		h.port[i] = ref Port(0, nil, nil);
 	if(!h.isroot){
 		for(i = 1; i <= h.nport; i++)
-			portfeature(h, i, Fportpower, 1);
+			if(portfeature(h, i, Fportpower, 1) < 0)
+				sys->fprint(sys->fildes(2),
+					"usbd: %s: port %d: power: %r\n", h.dev.name, i);
 		sys->sleep(h.pwrms);
+		# Say what each port reports once it is powered.  A device that
+		# was already attached when usbd started is found by the first
+		# scan seeing it present, so a hub that reports nothing present
+		# is the whole of the failure and worth showing.
+		if(debug)
+			for(i = 1; i <= h.nport; i++)
+				sys->print("usbd: %s: port %d status %#ux\n",
+					h.dev.name, i, portstatus(h, i));
 	}
 	hubs = h :: hubs;
 	kind := "";
