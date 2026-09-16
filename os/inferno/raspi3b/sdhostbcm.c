@@ -472,6 +472,33 @@ sdhostonline(SDunit *u)
  * see l.s and clock.c.
  */
 /*
+ * Wait for the card to be ready for the next transfer.  CMD13 SEND_STATUS
+ * returns the card's state in bits 12:9 (4 = transfer) and "ready for
+ * data" in bit 8.  On the Pi a read issued straight after another read
+ * timed out with no response, while the card itself answered CMD13 from
+ * the transfer state and a read issued after that CMD13 worked: the card
+ * is still finishing the previous block when the next command goes out.
+ * QEMU completes a transfer inside the register access and is always
+ * ready.  Returns 0 if the card never reports itself ready.
+ */
+static int
+cardready(Ctlr *c)
+{
+	u32 *r = c->r, st;
+	int i;
+
+	for(i = 0; i < 1000; i++){
+		if(sdcmderr(r, 13, c->rca<<16, 0, nil) == 0){
+			st = r[SDRSP0];
+			if((st & (1<<8)) != 0 && ((st >> 9) & 0xf) == 4)
+				return 1;
+		}
+		delay(1);
+	}
+	return 0;
+}
+
+/*
  * A transfer that fails returns short, which devsd turns into a zero-byte
  * read; say what the controller reported, at most a few times, so the
  * console shows which command and block died and why.
@@ -511,6 +538,10 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 		 * deadlocked every transfer after the first.
 		 */
 		err = 0;
+		if(!cardready(c)){
+			bioerror(c, write, bno+i, r[SDHSTS]);
+			break;
+		}
 		if(sdcmdstart(r, write? 24: 17, arg, write? Writecmd: Readcmd) < 0){
 			bioerror(c, write, bno+i, r[SDHSTS]);
 			break;
