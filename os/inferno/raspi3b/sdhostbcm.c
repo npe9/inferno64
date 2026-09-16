@@ -124,13 +124,10 @@ extern SDifc sdhostbcmifc;
  * Returns 0, or -1 with the SDHSTS error bits in *errp.
  */
 static int
-sdcmderr(u32 *r, int cmd, u32 arg, int flags, u32 *errp)
+sdcmdstart(u32 *r, int cmd, u32 arg, int flags)
 {
 	int i;
-	u32 sts;
 
-	if(errp != nil)
-		*errp = 0;
 	for(i = 0; i < 100000; i++)		/* previous command still running? */
 		if((r[SDCMD] & Newflag) == 0)
 			break;
@@ -139,11 +136,23 @@ sdcmderr(u32 *r, int cmd, u32 arg, int flags, u32 *errp)
 	r[SDHSTS] = Hstsclear;
 	r[SDARG] = arg;
 	r[SDCMD] = cmd | flags | Newflag;
+	return 0;
+}
+
+static int
+sdcmdwait(u32 *r, u32 *errp)
+{
+	int i;
+	u32 sts;
+
 	for(i = 0; i < 100000; i++)
 		if((r[SDCMD] & Newflag) == 0)
 			break;
-	if(r[SDCMD] & Newflag)
+	if(r[SDCMD] & Newflag){
+		if(errp != nil)
+			*errp = r[SDHSTS] & Hstserror;
 		return -1;
+	}
 	sts = r[SDHSTS] & Hstserror;
 	if(errp != nil)
 		*errp = sts;
@@ -156,6 +165,16 @@ sdcmderr(u32 *r, int cmd, u32 arg, int flags, u32 *errp)
 	if(sts & ~(u32)Hstscrc7)
 		return -1;
 	return 0;
+}
+
+static int
+sdcmderr(u32 *r, int cmd, u32 arg, int flags, u32 *errp)
+{
+	if(errp != nil)
+		*errp = 0;
+	if(sdcmdstart(r, cmd, arg, flags) < 0)
+		return -1;
+	return sdcmdwait(r, errp);
 }
 
 /* The same, for the callers that only want the response word. */
@@ -480,9 +499,17 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 		arg = c->byteaddr? (u32)((bno+i)*Secsize): (u32)(bno+i);
 		r[SDHBCT] = Secsize;
 		r[SDHBLC] = 1;
-		/* WRITE_SINGLE_BLOCK / READ_SINGLE_BLOCK */
-		if(sdcmderr(r, write? 24: 17, arg, write? Writecmd: Readcmd, &err) < 0){
-			bioerror(c, write, bno+i, err);
+		/*
+		 * WRITE_SINGLE_BLOCK / READ_SINGLE_BLOCK.  A data command is
+		 * only started here, not waited for: on the Pi the controller
+		 * keeps NEW_FLAG set through the data phase, and with the
+		 * 16-word FIFO full it cannot finish until the words are moved
+		 * (sdcmd 0x8051, FIFO full, FSM in READDATA).  Waiting first
+		 * deadlocked every transfer after the first.
+		 */
+		err = 0;
+		if(sdcmdstart(r, write? 24: 17, arg, write? Writecmd: Readcmd) < 0){
+			bioerror(c, write, bno+i, r[SDHSTS]);
 			break;
 		}
 		if(write){
@@ -510,12 +537,12 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 			}
 		}
 		waitxfer(r);			/* let the data phase end */
-		err = r[SDHSTS] & Hstserror;
-		r[SDHSTS] = Hstsclear;
-		if(err != 0 || (r[SDCMD] & Failflag)){
+		if(sdcmdwait(r, &err) < 0){
 			bioerror(c, write, bno+i, err);
+			r[SDHSTS] = Hstsclear;
 			break;
 		}
+		r[SDHSTS] = Hstsclear;
 	}
 out:
 	qunlock(c);
