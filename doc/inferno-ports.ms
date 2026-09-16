@@ -19645,3 +19645,35 @@ after it, the last three faults were found in one boot.  Reads now work
 on the Pi at blocks 0, 1, 2, 1024, 2048, 4096, 8192, 8193 and the last
 sector, 30228479.  Writing to the card is implemented but deliberately
 untested on hardware: the only card here is the one the board boots from.
+.PP
+SDHOST never did hand over whole words on silicon.  Its FIFO fill level
+reads 0 throughout a transfer, its data flag is set from the first byte
+in, a read returns the same word again with one more byte shifted into
+it, pausing between reads freezes it (the controller stalling once its
+FIFO fills), and reading it a byte per read ends in a FIFO error.  None
+of that is visible under QEMU, whose model completes a transfer inside
+the register access, so the two would have needed different transfer
+loops \(em which is exactly what this port refuses to do.
+.PP
+The card can be wired to the other controller instead.  GPIO 48-53 in
+alt3 hand it to the Arasan SDHCI at 0x3f300000, an ordinary SD host
+controller that QEMU's raspi3b models as well, so one loop is right on
+both.  sdemmcbcm.c drives it: the firmware's SD power domain on, a host
+reset, the SDHCI 10-bit divided clock at 400kHz to identify and 25MHz
+after, commands through CMDTM with the response in RESP0..3, and the
+data through the buffer register paced by the READ_RDY/WRITE_RDY status
+bits, polled throughout.  One trap in it: a 136-bit response comes back
+without its CRC and low byte, so RESP3 holds CSD bits 127:104 and not
+the first four bytes; reading it a word at a time reported 30GB for a
+64MB card.
+.PP
+On the Pi it reads the card the board booted from.  Sector 0 comes back
+as its real master boot record \(em fa b8 00 10 8e d0 bc 00 ... ending in
+55 aa, with a partition table naming a FAT32 partition at sector 16384
+and a Linux one after it \(em and sector 16384 is that filesystem's boot
+sector, "mkfs.fat", volume "bootfs", "FAT32", which is the volume the
+host mounts when the card is in its reader.  The card reports 30228480
+sectors, exactly what the host says.  Single reads of 64KB and 512KB
+(128 and 1024 sectors) return without an error.  Writing is implemented
+and deliberately untested: the only card here is the one the board boots
+from.

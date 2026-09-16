@@ -88,11 +88,15 @@ boot.  gotolabel now refuses an unaligned stack, so QEMU catches that one
 too.  Reboot goes through the PM watchdog, since a Pi has no PSCI.  The
 LAN9514/SMSC half of the USB Ethernet driver is implemented but
 hardware-unverified, and usbd is not started by the default init.
-The SDHOST driver reads the card the Pi boots from: 30228480 sectors,
-the count the host reports for the same card.  /dev/sdM0/ctl reports the
-controller's live registers and accepts reinit, clock, cmd and readblk
-for working on it from the board.  Writing is implemented but untested
-on hardware.
+The card is read through the Arasan SDHCI (sdemmcbcm.c), which GPIO
+48-53 in alt3 select; QEMU models the same controller, so one driver
+serves both.  On the Pi it reports 30228480 sectors, the count the host
+reports for the same card, and reads its real MBR and the FAT32 boot
+sector of the "bootfs" partition at sector 16384.  /dev/sdM0/ctl reports
+the controller's registers and accepts reinit and readblk for working on
+it from the board.  Writing is implemented but untested on hardware.
+sdhostbcm.c, for the BCM2835's own SDHOST controller, stays in the tree
+unlinked: on silicon it never presented whole words (doc/inferno-ports.ms).
 Build 1789512030 passed seven boots out of seven (a power-on and six
 reboots from the shell), each answering at the shell 30 seconds in.
 
