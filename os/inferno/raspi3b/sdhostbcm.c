@@ -66,8 +66,9 @@ enum {
 	Hstscrc16 = 0x20,
 	Hstscrc7 = 0x10,
 	Hstsfifo = 0x08,
+	Hstsdata = 0x01,	/* the FIFO has data: set by a transfer, sticky */
 	Hstsclear = Hstsbusy|Hstsblock|Hstssdio|Hstsrewtout|Hstscmdtout|
-		Hstscrc16|Hstscrc7|Hstsfifo,
+		Hstscrc16|Hstscrc7|Hstsfifo|Hstsdata,
 	Hstserror = Hstsrewtout|Hstscmdtout|Hstscrc16|Hstscrc7|Hstsfifo,
 
 	/* SDHCFG */
