@@ -62,6 +62,7 @@ enum
 	 * Reading bulk input packets one at a time avoids it.
 	 */
 	Slowbulkin	= 1,
+	Maxnak		= 2000,		/* ~2s of 1ms retries: not for bulk IN */
 };
 
 typedef struct Ctlr Ctlr;
@@ -361,7 +362,7 @@ static int
 chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 {
 	Ctlr *ctlr;
-	int nleft, n, nt, i, imask, maxpkt, npkt, chan, split;
+	int nleft, n, nt, i, imask, maxpkt, npkt, chan, split, naks;
 	uint hcdma, hctsiz;
 	Dwcregs *r;
 
@@ -398,6 +399,7 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 		imask = Chhltd|Nak;
 
 	nleft = len;
+	naks = 0;
 	chan = hc - r->hchan;
 	hcdma = hctsiz = 0;
 	for(;;){
@@ -510,6 +512,24 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 			if(i & (Nyet|Frmovrun))
 				continue;
 			if(i & Nak){
+				/*
+				 * A device with nothing to send NAKs, and the
+				 * retry is the transfer.  That is fair for a
+				 * bulk IN, which is a read of whatever arrives
+				 * whenever it arrives, and wrong for everything
+				 * else: on the Pi, enumerating the device behind
+				 * the onboard hub stopped here and never came
+				 * back, because a control transfer that is NAK'd
+				 * for ever was retried for ever with nothing
+				 * said.  Bound the others and report.
+				 */
+				if(ep->ttype != Tbulk || dir != Epin)
+					if(++naks > Maxnak){
+						print("usbdwc: ep%d.%d type %d dir %s: %d NAKs, giving up\n",
+							ep->dev->nb, ep->nb, ep->ttype,
+							dir == Epin? "in": "out", naks);
+						error(Eio);
+					}
 				if(ep->ttype == Tintr)
 					tsleep(&up->sleep, return0, 0, ep->pollival);
 				else
