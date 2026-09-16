@@ -269,13 +269,21 @@ fifospace(volatile u32 *r)			/* wait until the FIFO can take a word */
 	return 0;
 }
 
+/*
+ * Wait until a whole word can be read.  SDHSTS's data flag (bit 0) is the
+ * gate: on the Pi, gating on SDEDM's fill level instead returned the same
+ * word again and again as its bytes arrived (fa000000, b8fa0000,
+ * 00b8fa00, 1000b8fa for an MBR beginning fa b8 00 10), so that counter
+ * does not mean a word is ready.  The fill level is still watched, as the
+ * controller can present data without the flag.
+ */
 static int
-fifodata(volatile u32 *r)			/* wait until the FIFO holds a word */
+fifodata(volatile u32 *r)
 {
 	int i;
 
 	for(i = 0; i < 1000000; i++)
-		if(fifofill(r) > 0)
+		if((r[SDHSTS] & Hstsdata) != 0 && fifofill(r) > 0)
 			return 1;
 	return 0;
 }
@@ -638,6 +646,48 @@ sdhostwctl(SDunit *u, Cmdbuf *cb)
 		print("sdhost: cmd %d arg %#lux -> %d rsp %#lux sdhsts %#lux sdcmd %#lux sdedm %#lux\n",
 			cmd, (ulong)arg, i, (ulong)r[SDRSP0], (ulong)err,
 			(ulong)r[SDCMD], (ulong)r[SDEDM]);
+		return 0;
+	}
+	if(strcmp(cb->f[0], "probe") == 0 && cb->nf == 2){
+		/*
+		 * Start a single-block read and report what the controller
+		 * says as the data arrives: eight samples of SDHSTS and
+		 * SDEDM taken without reading anything, then the first four
+		 * words as the data flag hands them over.
+		 */
+		uvlong bno = strtoull(cb->f[1], nil, 0);
+		u32 sts[8], edm[8], word[4];
+
+		qlock(c);
+		cardready(c);
+		r[SDHBCT] = Secsize;
+		r[SDHBLC] = 1;
+		arg = c->byteaddr? (u32)(bno*Secsize): (u32)bno;
+		sdcmdstart(r, 17, arg, Readcmd);
+		for(i = 0; i < 8; i++){
+			sts[i] = r[SDHSTS];
+			edm[i] = r[SDEDM];
+		}
+		for(i = 0; i < 4; i++){
+			fifodata(r);
+			word[i] = r[SDDATA];
+		}
+		for(i = 0; i < 1000000; i++){	/* drain the rest */
+			if((r[SDHSTS] & Hstsdata) == 0 && fifofill(r) == 0)
+				break;
+			(void)r[SDDATA];
+		}
+		waitxfer(r);
+		sdcmdwait(r, &err);
+		r[SDHSTS] = Hstsclear;
+		qunlock(c);
+		for(i = 0; i < 8; i++)
+			print("sdhost: probe sample %d sdhsts %#lux sdedm %#lux fill %d\n",
+				i, (ulong)sts[i], (ulong)edm[i],
+				(int)((edm[i] >> Fifofillsh) & Fifofillmask));
+		print("sdhost: probe words %.8lux %.8lux %.8lux %.8lux drained %d err %#lux\n",
+			(ulong)word[0], (ulong)word[1], (ulong)word[2], (ulong)word[3],
+			i, (ulong)err);
 		return 0;
 	}
 	if(strcmp(cb->f[0], "readblk") == 0 && (cb->nf == 2 || cb->nf == 3)){
