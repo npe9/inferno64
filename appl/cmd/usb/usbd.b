@@ -851,7 +851,12 @@ diskwrite(b: ref Bstate, off: big, data: array of byte): (int, string)
 #
 newhub(name: string, d: ref Dev): ref Hub
 {
-	h := ref Hub;
+	# every field explicitly: a bare "ref Hub" leaves them holding
+	# whatever the allocator had there, and this hub's failed flag came
+	# up non-zero on the Pi, so enumhub abandoned the onboard hub on its
+	# first line, for ever, without a word.  It reads as the hub having
+	# no device on any port.
+	h := ref Hub(nil, 0, nil, 0, 0, 0);
 	h.isroot = d == nil;
 	if(h.isroot){
 		h.dev = opendev(name);
@@ -976,7 +981,7 @@ portstatus(h: ref Hub, p: int): int
 #
 opendev(name: string): ref Dev
 {
-	d := ref Dev;
+	d := ref Dev("", 0, nil, nil, 0, 0, 0, 0);
 	d.name = name;
 	d.id = int name[2:];	# "epN.M"
 	d.cfd = sys->open("/dev/usb/" + name + "/ctl", Sys->ORDWR);

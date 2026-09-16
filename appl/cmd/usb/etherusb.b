@@ -1121,7 +1121,7 @@ deliver(f: array of byte)
 #
 opendev(name: string): ref Dev
 {
-	d := ref Dev;
+	d := ref Dev("", 0, nil, nil, 0, 0);	# every field: a bare ref keeps residue
 	d.name = name;
 	d.id = int name[2:];	# "epN.M"
 	d.cfd = sys->open("/dev/usb/" + name + "/ctl", Sys->ORDWR);
