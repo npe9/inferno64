@@ -104,7 +104,7 @@ enum {
 typedef struct Ctlr Ctlr;
 struct Ctlr {
 	QLock;			/* serialise bio across concurrent procs */
-	u32*	r;
+	volatile u32* r;	/* every register access must reach the SoC */
 	uvlong	sectors;
 	int	byteaddr;
 	int	inited;
@@ -126,7 +126,7 @@ extern SDifc sdhostbcmifc;
  * Returns 0, or -1 with the SDHSTS error bits in *errp.
  */
 static int
-sdcmdstart(u32 *r, int cmd, u32 arg, int flags)
+sdcmdstart(volatile u32 *r, int cmd, u32 arg, int flags)
 {
 	int i;
 
@@ -142,7 +142,7 @@ sdcmdstart(u32 *r, int cmd, u32 arg, int flags)
 }
 
 static int
-sdcmdwait(u32 *r, u32 *errp)
+sdcmdwait(volatile u32 *r, u32 *errp)
 {
 	int i;
 	u32 sts;
@@ -170,7 +170,7 @@ sdcmdwait(u32 *r, u32 *errp)
 }
 
 static int
-sdcmderr(u32 *r, int cmd, u32 arg, int flags, u32 *errp)
+sdcmderr(volatile u32 *r, int cmd, u32 arg, int flags, u32 *errp)
 {
 	if(errp != nil)
 		*errp = 0;
@@ -181,7 +181,7 @@ sdcmderr(u32 *r, int cmd, u32 arg, int flags, u32 *errp)
 
 /* The same, for the callers that only want the response word. */
 static u32
-sdcmd(u32 *r, int cmd, u32 arg, int flags)
+sdcmd(volatile u32 *r, int cmd, u32 arg, int flags)
 {
 	sdcmderr(r, cmd, arg, flags, nil);
 	return r[SDRSP0];
@@ -192,7 +192,7 @@ sdcmd(u32 *r, int cmd, u32 arg, int flags)
  * firmware knows the core rate (config.txt pins core_freq=250, but ask).
  */
 static void
-sdhostclock(u32 *r, ulong fclk, ulong want)
+sdhostclock(volatile u32 *r, ulong fclk, ulong want)
 {
 	ulong div;
 
@@ -215,7 +215,7 @@ sdhostclock(u32 *r, ulong fclk, ulong want)
  * while it is down, then power on.  QEMU needs none of this.
  */
 static void
-sdhostreset(u32 *r, ulong fclk)
+sdhostreset(volatile u32 *r, ulong fclk)
 {
 	u32 edm;
 
@@ -253,13 +253,13 @@ sdhostreset(u32 *r, ulong fclk)
  * Bounded so a wedged controller cannot spin the kernel forever.
  */
 static int
-fifofill(u32 *r)
+fifofill(volatile u32 *r)
 {
 	return (r[SDEDM] >> Fifofillsh) & Fifofillmask;
 }
 
 static int
-fifospace(u32 *r)			/* wait until the FIFO can take a word */
+fifospace(volatile u32 *r)			/* wait until the FIFO can take a word */
 {
 	int i;
 
@@ -270,7 +270,7 @@ fifospace(u32 *r)			/* wait until the FIFO can take a word */
 }
 
 static int
-fifodata(u32 *r)			/* wait until the FIFO holds a word */
+fifodata(volatile u32 *r)			/* wait until the FIFO holds a word */
 {
 	int i;
 
@@ -289,7 +289,7 @@ fifodata(u32 *r)			/* wait until the FIFO holds a word */
  * on the card are forced back to data mode.
  */
 static int
-waitxfer(u32 *r)
+waitxfer(volatile u32 *r)
 {
 	u32 edm, fsm;
 	int i;
@@ -314,7 +314,7 @@ waitxfer(u32 *r)
 static int
 sdcardinit(Ctlr *c)
 {
-	u32 *r = c->r;
+	volatile u32 *r = c->r;
 	u32 ocr, csd[4], err;
 	int i, rbl, cmult;
 	uvlong cap;
@@ -413,7 +413,7 @@ sdhostpnp(void)
 
 	if((uintptr)SDHOST == 0)
 		return nil;
-	sdctlr.r = (u32*)SDHOST;
+	sdctlr.r = (volatile u32*)SDHOST;
 	if((s = malloc(sizeof(*s))) == nil)
 		return nil;
 	s->ctlr = &sdctlr;
@@ -484,7 +484,8 @@ sdhostonline(SDunit *u)
 static int
 cardready(Ctlr *c)
 {
-	u32 *r = c->r, st;
+	volatile u32 *r = c->r;
+	u32 st;
 	int i;
 
 	for(i = 0; i < 1000; i++){
@@ -517,7 +518,7 @@ static long
 sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 {
 	Ctlr *c = u->dev->ctlr;
-	u32 *r = c->r;
+	volatile u32 *r = c->r;
 	uchar *p = a;
 	long i;
 	int j;
@@ -593,7 +594,7 @@ static char*
 sdhostrctl(SDunit *u, char *p, char *e)
 {
 	Ctlr *c = u->dev->ctlr;
-	u32 *r = c->r;
+	volatile u32 *r = c->r;
 
 	p = seprint(p, e, "geometry %llud %lud\n", u->sectors, u->secsize);
 	p = seprint(p, e, "sdhost rca %#ux %s sectors %llud coreclock %lud cdiv %lud\n",
@@ -609,7 +610,7 @@ static int
 sdhostwctl(SDunit *u, Cmdbuf *cb)
 {
 	Ctlr *c = u->dev->ctlr;
-	u32 *r = c->r;
+	volatile u32 *r = c->r;
 	u32 err, arg;
 	int cmd, flags, i;
 	uchar blk[Secsize];
