@@ -1869,43 +1869,44 @@ vmachine(void*)
 			acquire();
 		}
 		DBG("vmachine waserror() after acquire up->env->errstr %s\n",  up->env->errstr);
+		/*
+		 * handler() is what rewrites the Prog's saved registers --
+		 * its memmove(&p->reg, &R, sizeof(R)) -- and the collector
+		 * reads them.  inxec was cleared at the top of this handler,
+		 * so stoptheworld() does not wait for this process and
+		 * rootset() can walk p->reg while handler() is partway
+		 * through writing it.
+		 *
+		 * Measured with the corrected probe, which compares rr->SP
+		 * against itself rather than against the walk's loop
+		 * variable:
+		 *
+		 *   rr->SP first 0x7a80738 now 0x7a80170 CHANGED
+		 *
+		 * and 0x7a80170 is FP plus 152, the live frame's size: the
+		 * right value, arriving after the walk had taken a stale
+		 * one.  Everything downstream -- a bound over popped frames,
+		 * stale frame data tiling six steps, a type that is not a
+		 * Type, a jump through it -- follows from that.
+		 *
+		 * An earlier attempt put this around propex() instead, which
+		 * is group propagation and touches no registers, and duly
+		 * changed nothing over 70 boots.
+		 *
+		 * Bounded: stoptheworld() gives up after HZ/4 rather than
+		 * waiting on this forever.
+		 */
+		enterquantum();
 		if(handler(up->env->errstr) == 0) {
 			if(currun() == nil)
 				panic("vmachine: error \"%s\" with no current prog", up->env->errstr);
-			/*
-			 * propex() rewrites the Prog's saved registers, and
-			 * the collector reads them.  inxec was cleared at the
-			 * top of this handler, so stoptheworld() does not wait
-			 * for this process and rootset() can walk p->reg while
-			 * propex() is halfway through updating it.
-			 *
-			 * Measured, not supposed.  rootset() re-read the pair
-			 * at a failure and SP had moved between the two reads:
-			 *
-			 *   FP 0x7a81458 SP 0x7a81ab8 span 1632
-			 *   reread     FP 0x7a81458 SP 0x7a814f0
-			 *
-			 * 0x7a814f0 is FP plus 152, the live frame's size --
-			 * the correct value, arriving after the first read had
-			 * already taken a stale one.  Everything this hunt
-			 * chased is downstream of that torn pair: a bound over
-			 * popped frames, stale frame data that tiles for six
-			 * steps, a type that is not a Type, and a jump through
-			 * it.
-			 *
-			 * Claiming the quantum makes this process visible to
-			 * stoptheworld() again for the length of the unwind.
-			 * It is bounded: stoptheworld() gives up after HZ/4
-			 * rather than waiting on it forever.
-			 */
-			enterquantum();
 			propex(currun(), up->env->errstr);
-			curP->inxec = 0;
-			coherence();
 			DBG("vmachine waserror() after propex up->env->errstr %s\n",  up->env->errstr);
 			progexit();
 			DBG("vmachine waserror() after progexit\n");
 		}
+		curP->inxec = 0;	/* the claim taken before handler() */
+		coherence();
 		up->env = &up->defenv;
 	}
 
