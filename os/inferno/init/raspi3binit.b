@@ -111,10 +111,18 @@ usbcheck()
 		return;
 	}
 	sys->print("USB root hub:\n%s", readctl("/dev/usb/ctl"));
-	# Keep the root hub bound; userspace usbd/etherusb is deferred until the
-	# physical Sys_mount path is repaired.
+	# usbd enumerates whatever is attached and starts a driver for it: on
+	# this board the onboard hub and, behind it, the LAN9514 ethernet,
+	# which etherusb then serves at /net.alt/ether.  It runs in its own
+	# process and shares this namespace, so the mount it makes is the one
+	# ethercheck below looks for.
+	usbd := load Command "/dis/usb/usbd.dis";
+	if(usbd == nil){
+		sys->print("USB-NONE load usbd: %r\n");
+		return;
+	}
+	spawn usbd->init(nil, "usbd" :: nil);
 	sys->print("USB-OK\n");
-	return;
 }
 
 # Phase 3: USB ethernet.  usbd starts etherusb for a CDC ECM or SMSC
@@ -200,6 +208,7 @@ init()
 	sdcheck();
 	drawtest();
 	usbcheck();
+	ethercheck();
 	# sdfs() reams a kfs onto the SD card, mounts it over a pipe, and
 	# creates a file.  The ream and every SD write succeed, but the
 	# create-over-mount hangs: pid 1's Twalk gets its Rerror and then the
