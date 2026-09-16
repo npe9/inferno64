@@ -35,13 +35,13 @@ extern void gpiofsel(int, int);		/* gpiobcm.c */
 enum {
 	SDCMD	= 0x00/4,
 	SDARG	= 0x04/4,
-	SDRSP0	= 0x10/4,
+	SDRSP0	= 0x10/4,	/* the response registers start at 0x10 */
 	SDRSP1	= 0x14/4,
 	SDRSP2	= 0x18/4,
 	SDRSP3	= 0x1c/4,
+	SDTOUT	= 0x08/4,	/* data timeout, in card clocks */
+	SDCDIV	= 0x0c/4,	/* card clock divisor: fclk/(div+2) */
 	SDHSTS	= 0x20/4,
-	SDTOUT	= 0x28/4,	/* data timeout, in card clocks */
-	SDCDIV	= 0x2c/4,	/* card clock divisor: fclk/(div+2) */
 	SDVDD	= 0x30/4,
 	SDEDM	= 0x34/4,	/* extended data mode: FIFO fill level + FSM */
 	SDHCFG	= 0x38/4,
