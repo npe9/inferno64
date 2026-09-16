@@ -88,8 +88,11 @@ boot.  gotolabel now refuses an unaligned stack, so QEMU catches that one
 too.  Reboot goes through the PM watchdog, since a Pi has no PSCI.  The
 LAN9514/SMSC half of the USB Ethernet driver is implemented but
 hardware-unverified, and usbd is not started by the default init.
-On the board the SD check prints SD-NONE: no /dev/sdM0 appears, so the
-SDHOST driver does not yet find the card the Pi booted from.
+The SDHOST driver reads the card the Pi boots from: 30228480 sectors,
+the count the host reports for the same card.  /dev/sdM0/ctl reports the
+controller's live registers and accepts reinit, clock, cmd and readblk
+for working on it from the board.  Writing is implemented but untested
+on hardware.
 Build 1789512030 passed seven boots out of seven (a power-on and six
 reboots from the shell), each answering at the shell 30 seconds in.
 

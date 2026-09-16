@@ -19602,3 +19602,46 @@ seconds later answered a typed
 .CW "cat /dev/time; echo"
 (kernel uptime 32 to 34 seconds, 109 seconds on the first), with no
 guard firing.
+.SH
+Raspberry Pi SD storage
+.PP
+With the board booting reliably, the next fault was that the Pi never
+found the card it had just booted from: init printed SD-NONE and no
+/dev/sdM0 appeared.  The SDHOST driver had been written against QEMU,
+whose model completes a command inside the register write, so it wrote
+SDCMD and read the response back immediately, and nothing reset or
+clocked the controller.  Real identification needs the controller powered
+down and back up with its FIFO thresholds, timeout and divisor set, the
+400kHz identification clock, and a command that waits for NEW_FLAG to
+clear and then checks FAIL_FLAG and the SDHSTS error bits (the CRC7 error
+on the R3 responses excepted, which the card does not compute).  The
+divisor comes from the firmware's VPU core clock, asked for through a new
+mailbox GET_CLOCK_RATE.  With that the Pi reported its card: rca 0x1234,
+block addressed, 30228480 sectors, core clock 250MHz \(em a sector count
+the Mac confirms exactly for the same card.
+.PP
+Then only the first read after each identification worked and every read
+after it failed.  Three faults, each found from the board and none of
+them visible in QEMU, were in the way.  The first: the controller keeps
+NEW_FLAG set through the data phase and cannot finish until the FIFO is
+drained, so waiting for the command to complete before moving the words
+deadlocked (sdcmd 0x8051, FIFO full, FSM in READDATA).  A data command is
+now started, the words are moved, the FSM is let out of its data states,
+and only then is completion checked.  The second: SDHSTS bit 0, the data
+flag, is sticky and was missing from the clear mask.  The third, which
+the first two exposed: a read issued straight after another read timed
+out with no response (sdhsts 0x40) while the card answered CMD13 from the
+transfer state at that same moment, and a read issued after that CMD13
+worked \(em the card is still finishing the previous block.  Each
+transfer now polls CMD13 for the transfer state and READY_FOR_DATA first.
+.PP
+Every one of those was found by driving the controller from a shell on
+the Pi through /dev/sdM0/ctl, which reads the card and the live registers
+and can re-identify the card, set the clock, issue a raw command with its
+response, or read one block and dump bytes from it.  Before it existed
+each hypothesis cost a card swap (the card cannot be in the Mac's reader
+and in the Pi at once, and only the Pi has the silicon that misbehaves);
+after it, the last three faults were found in one boot.  Reads now work
+on the Pi at blocks 0, 1, 2, 1024, 2048, 4096, 8192, 8193 and the last
+sector, 30228479.  Writing to the card is implemented but deliberately
+untested on hardware: the only card here is the one the board boots from.
