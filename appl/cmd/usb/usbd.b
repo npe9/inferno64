@@ -167,6 +167,9 @@ enumhub(h: ref Hub, p: int): int
 	}
 	pp := h.port[p];
 	onhubs := len hubs;
+	if(debug)
+		sys->print("usbd: %s: poll port %d status %#ux was %#ux\n",
+			h.dev.name, p, sts, pp.sts);
 	if(!h.dev.isusb3 && (sts & PSsuspend) != 0){
 		portfeature(h, p, Fportsuspend, 0);
 		sys->sleep(Enabledelay);
