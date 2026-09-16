@@ -355,6 +355,37 @@ and USB control transfers -- usbd enumerates the onboard LAN9514 hub and
 its ethernet function by vendor and device id.  Reboot through the PM
 watchdog works.
 .NH 2
+Corrections to the two paragraphs below, 16 September 2026
+.PP
+Both were written from the board and both were wrong, in ways worth
+keeping as a caution.  The console was never wedged by a failing driver:
+usbd had been started in the foreground, so the shell was waiting for it,
+which looks identical to a hang.  And USB bulk transfers were not the
+blocker.  What stopped enumeration was in usbd itself: newhub allocated
+its Hub with a bare
+.CW "ref Hub" ,
+whose fields hold whatever the allocator had there, and on this board the
+failed flag came up non-zero (the walk printed -1793850332), so enumhub
+abandoned the hub on its first line, silently, for ever.  It worked the
+one time the residue happened to be zero, which is what made it look like
+a hardware race.  Naming every field fixed it, and opendev in both usbd
+and etherusb had the same bug (isusb3 as residue, enough to send
+enumeration down the USB3 path).
+.PP
+With that fixed the Pi enumerates its onboard hub and the LAN9514 behind
+it, etherusb starts, the PHY reports the link up, and the mount that this
+plan called impossible on the board succeeds: /net.alt/ether with the
+board's own MAC.  That mount had been disabled in the source because the
+Pi wedged entering the syscall; it was a casualty of the SP-alignment
+fault (doc/inferno-ports.ms), not a separate fault.  init now starts usbd
+at boot and runs the DHCP and ping check.
+.PP
+Three bounds were added to usbdwc.c along the way - a bulk IN may wait
+for ever because the wait is the read, while a NAK'd control transfer and
+the retry loop itself are bounded and report.  They were fixing the wrong
+layer, but they stand on their own: a driver written where every transfer
+completes will otherwise wait for ever on silicon, saying nothing.
+.NH 2
 The gap that blocks the most: USB bulk transfers
 .PP
 Control transfers work on silicon; bulk does not.  Starting usbd by hand
