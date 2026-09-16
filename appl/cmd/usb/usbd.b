@@ -145,6 +145,9 @@ work()
 		again := 0;
 		for(l := hubs; l != nil && !again; l = tl l){
 			h := hd l;
+			if(debug)
+				sys->print("usbd: walk %s: %d ports, failed %d\n",
+					h.dev.name, h.nport, h.failed);
 			for(p := 1; p <= h.nport; p++)
 				if(enumhub(h, p) < 0){
 					again = 1;	# the hub list changed
