@@ -168,8 +168,8 @@ enumhub(h: ref Hub, p: int): int
 	pp := h.port[p];
 	onhubs := len hubs;
 	if(debug)
-		sys->print("usbd: %s: poll port %d status %#ux was %#ux\n",
-			h.dev.name, p, sts, pp.sts);
+		sys->print("usbd: %s: poll port %d status %#ux was %#ux (%d hubs)\n",
+			h.dev.name, p, sts, pp.sts, len hubs);
 	if(!h.dev.isusb3 && (sts & PSsuspend) != 0){
 		portfeature(h, p, Fportsuspend, 0);
 		sys->sleep(Enabledelay);
@@ -892,6 +892,8 @@ newhub(name: string, d: ref Dev): ref Hub
 					h.dev.name, i, portstatus(h, i));
 	}
 	hubs = h :: hubs;
+	if(debug)
+		sys->print("usbd: %s: added to the hub list, %d now\n", h.dev.name, len hubs);
 	kind := "";
 	if(h.isroot)
 		kind = " (root)";
