@@ -324,3 +324,109 @@ and USB storage, over a firmware-loaded kernel8.img on real hardware.
 Phases 5-7 add Wi-Fi and the small peripherals.  Left out on purpose,
 until the machine is otherwise complete: Bluetooth, the CSI camera, DSI
 display, and anything GPU/OpenGL/VideoCore-accelerated.
+.NH 1
+Where the port stands on real silicon, 16 September 2026
+.PP
+Everything below was measured on the board this week, not inferred from
+QEMU.  The plan above was written when only the emulator had run the
+code; two of its assumptions are now wrong, and they are marked.
+.NH 2
+Working on the Pi
+.PP
+Boot and console: the firmware loads kernel8.img, the kernel drops to
+EL1, maps memory, enables caches, runs a 100Hz preemptive tick and
+reaches an interactive Dis shell over the PL011.  Seven boots out of
+seven, one power-on and six reboots through
+.CW /dev/sysctl ,
+each answering a typed command 30 seconds in.  The fault that made this
+unreliable was an SP-alignment one (doc/inferno-ports.ms).
+.PP
+SD storage: through the Arasan SDHCI, not SDHOST.  The card the board
+boots from reads as its real master boot record ending in 55 aa, with
+the FAT32 "bootfs" boot sector at sector 16384, and reports 30228480
+sectors, exactly what the host says of the same card.  Single reads of
+64KB and 512KB return clean.  Writes are verified too, by a ctl command
+that restores the sector it wrote and checks the restore.
+.PP
+Also verified on the board: the VideoCore mailbox (firmware revision,
+ARM memory, board MAC, power domains, clock rates, framebuffer
+allocation), GPIO, the DWC2 controller's probe, core init and root hub,
+and USB control transfers -- usbd enumerates the onboard LAN9514 hub and
+its ethernet function by vendor and device id.  Reboot through the PM
+watchdog works.
+.NH 2
+The gap that blocks the most: USB bulk transfers
+.PP
+Control transfers work on silicon; bulk does not.  Starting usbd by hand
+enumerates the hub and NIC, etherusb finds its bulk endpoints and starts,
+and then the first bulk IN fails:
+.CW "usbdwc: ep3.1 completion timeout channel 0" ,
+.CW "usbdwc: ep3.1 error intr 00000082" ,
+.CW "etherusb: ep3.0: receive stopped: i/o error" .
+So Phase 3 (ethernet) and Phase 4 (USB mass storage) are blocked on the
+board although both pass under QEMU, and Phase 2's keyboard, which rides
+interrupt transfers, is likewise unproven on silicon.
+.PP
+Worse than the failure is its blast radius: after etherusb stops, the
+console stops responding.  Characters still echo, so the kernel lives,
+but no process reads them.  A driver whose transfers fail should not
+take the shell with it; containing that is worth doing before chasing
+the transfer bug itself, because every future hardware experiment on
+this board depends on the shell surviving.
+.NH 2
+Wi-Fi and the SD card now want the same controller
+.PP
+The plan above says SDHOST drives the card and deliberately leaves the
+Arasan SDHCI free for the Wi-Fi SDIO.  That is no longer true and cannot
+easily be made true again.  SDHOST does not hand over whole words to a
+polled driver on this silicon: its FIFO fill level reads 0 throughout a
+transfer, its data flag is set from the first byte, each read returns the
+same word with one more byte shifted in, pausing between reads freezes
+it, and reading it a byte per read ends in a FIFO error.  The card
+therefore now goes through the Arasan, which is also where the BCM43430
+Wi-Fi hangs.  Before Phase 6 the board has to choose: make SDHOST work
+(interrupt- or DMA-driven, as Linux drives it), or keep the card on the
+Arasan and have no Wi-Fi.  Nothing in the emulator can settle it: QEMU's
+SDHOST model completes a transfer inside the register access and hides
+the whole difficulty.
+.NH 2
+Smaller gaps, roughly in the order they matter
+.IP 1.
+SD transfers are one command per sector and polled.  Multi-block
+(CMD18/CMD25) and DMA are not implemented, and a transfer holds the CPU.
+Performance only; correctness is established.
+.IP 2.
+I2C and SPI have drivers and their buses come up, but nothing is
+attached to this board to talk to: the I2C probe reports a DS1338
+mismatch and SPI reports no flash.  They are unverified against real
+peripherals.
+.IP 3.
+The framebuffer is allocated and the draw device renders into it
+(DRAW-OK 640x480), but nothing here has ever been seen on a monitor.
+Mode setting beyond the firmware's default, and hotplug, are absent.
+.IP 4.
+No wall-clock time: the Pi has no battery-backed clock, and nothing yet
+asks the firmware or a network for the time.
+.IP 5.
+The kernel is uniprocessor.  MAXMACH is 1 and cores 1-3 sit at WFE;
+arm64 SMP lives on another worktree.
+.IP 6.
+Bluetooth is absent and conflicts with the console: it needs the PL011,
+which the console uses.  uartmini.c exists for the mini UART but is
+unlinked and has never been shown to work on silicon.
+.IP 7.
+No audio (PWM or HDMI), no CSI camera, no DSI display, nothing
+GPU-accelerated.  These were out of scope in the plan above and remain
+so.
+.IP 8.
+The DMA controller is unused by any driver.
+.IP 9.
+The kfs create deadlock (the arm64 multi-kproc error-stack bug) still
+blocks a native writable filesystem on the card.
+.NH 2
+Suggested order
+.PP
+Contain a failing driver so it cannot wedge the console; fix DWC2 bulk
+transfers on silicon, which unblocks ethernet, USB storage and input;
+then decide the SD/Wi-Fi controller question; then multi-block and DMA
+for SD; then the peripherals nothing is currently attached to.
