@@ -84,7 +84,7 @@ misc
 	uartpl011
 	screenbcm
 	randombcm
-	sdhostbcm
+	sdemmcbcm
 
 mod
 	sys

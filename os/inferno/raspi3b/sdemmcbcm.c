@@ -1,0 +1,501 @@
+/*
+ * Arasan SDHCI controller ("EMMC", 0x3f300000) as an Inferno storage
+ * device on the Raspberry Pi 3.  The SD card can be wired either to the
+ * BCM2835's own SDHOST controller (sdhostbcm.c) or to this one; GPIO
+ * 48-53 in alt3 selects this one, and QEMU's raspi3b models the same
+ * routing.
+ *
+ * This is a standard SD host controller, unlike SDHOST: block size and
+ * count, argument and command in registers, the response in RESP0..3,
+ * and the data through a 32-bit buffer register paced by the READ_RDY /
+ * WRITE_RDY interrupt-status bits.  Everything here is polled; the
+ * kernel has no use for a transfer interrupt while it has nothing else
+ * to do, and polling keeps the same code working under QEMU, whose
+ * model completes a transfer inside the register access.
+ *
+ * The Arasan needs every register touched as a 32-bit word, so the
+ * 16-bit halves of BLKSIZECNT and the command register are written
+ * together.
+ */
+#include "u.h"
+#include "../port/lib.h"
+#include "mem.h"
+#include "dat.h"
+#include "fns.h"
+#include "io.h"
+#include "../port/error.h"
+#include "../port/sd.h"
+
+extern void gpiofsel(int, int);		/* gpiobcm.c */
+extern u32 mboxgetclock(int);		/* mailbox.c */
+extern int mboxsetpower(int, int);
+
+enum {
+	Rarg2		= 0x00/4,
+	Rblksizecnt	= 0x04/4,	/* block count<<16 | block size */
+	Rarg1		= 0x08/4,
+	Rcmdtm		= 0x0c/4,	/* command index<<24 | flags */
+	Rresp0		= 0x10/4,
+	Rresp1		= 0x14/4,
+	Rresp2		= 0x18/4,
+	Rresp3		= 0x1c/4,
+	Rdata		= 0x20/4,
+	Rstatus		= 0x24/4,
+	Rcontrol0	= 0x28/4,
+	Rcontrol1	= 0x2c/4,
+	Rinterrupt	= 0x30/4,
+	Rirptmask	= 0x34/4,
+	Rirpten		= 0x38/4,
+	Rcontrol2	= 0x3c/4,
+	Rslotisrver	= 0xfc/4,
+
+	/* Rstatus */
+	Scmdinhibit	= 1<<0,
+	Sdatinhibit	= 1<<1,
+
+	/* Rcontrol0 */
+	C0power		= 1<<8,
+	C0hctl4bit	= 1<<1,
+
+	/* Rcontrol1 */
+	C1clkintlen	= 1<<0,		/* internal clock enable */
+	C1clkstable	= 1<<1,
+	C1clken		= 1<<2,		/* clock to the card */
+	C1srsthost	= 1<<24,
+	C1srstdata	= 1<<26,
+	C1toutshift	= 16,
+
+	/* Rinterrupt and its masks */
+	Icmddone	= 1<<0,
+	Idatadone	= 1<<1,
+	Iwriterdy	= 1<<4,
+	Ireadrdy	= 1<<5,
+	Ierr		= 1<<15,
+	Ictoerr		= 1<<16,	/* command timeout */
+	Iall		= 0x017f7137,
+
+	/* Rcmdtm flags */
+	Trdata		= 1<<4,		/* transfer is card to host */
+	Tmblkcnt	= 1<<1,
+	Cmdisdata	= 1<<21,
+	Cmdcrcchk	= 1<<19,
+	Cmdixchk	= 1<<20,
+	Cmdresp136	= 1<<16,
+	Cmdresp48	= 2<<16,
+	Cmdresp48busy	= 3<<16,
+
+	Idclock		= 400000,
+	Datclock	= 25000000,
+	Secsize		= 512,
+	Alt3		= 7,		/* GPIO fsel alt3: card to this controller */
+};
+
+typedef struct Ctlr Ctlr;
+struct Ctlr {
+	QLock;
+	volatile u32* r;	/* every access must reach the SoC */
+	uvlong	sectors;
+	int	byteaddr;
+	int	inited;
+	int	errors;
+	ulong	fclk;
+	uint	rca;
+};
+
+static Ctlr emmcctlr;
+extern SDifc sdemmcbcmifc;
+
+/*
+ * Wait for a bit in the interrupt-status register, clearing it and any
+ * error bits.  Returns 0, or -1 with the status in *stsp.
+ */
+static int
+awaitirq(volatile u32 *r, u32 want, u32 *stsp)
+{
+	u32 sts;
+	int i;
+
+	for(i = 0; i < 1000000; i++){
+		sts = r[Rinterrupt];
+		if((sts & (want|Ierr)) != 0){
+			r[Rinterrupt] = sts & (want|Ierr|0xffff0000);
+			if(stsp != nil)
+				*stsp = sts;
+			if((sts & Ierr) != 0)
+				return -1;
+			return 0;
+		}
+	}
+	if(stsp != nil)
+		*stsp = r[Rinterrupt];
+	return -1;
+}
+
+static int
+cmd(Ctlr *c, int index, u32 arg, u32 flags, u32 *stsp)
+{
+	volatile u32 *r = c->r;
+	int i;
+
+	for(i = 0; i < 100000; i++)		/* the command line must be free */
+		if((r[Rstatus] & Scmdinhibit) == 0)
+			break;
+	if(r[Rstatus] & Scmdinhibit){
+		if(stsp != nil)
+			*stsp = r[Rstatus];
+		return -1;
+	}
+	r[Rinterrupt] = r[Rinterrupt];		/* clear what is left over */
+	r[Rarg1] = arg;
+	r[Rcmdtm] = (u32)index<<24 | flags;
+	return awaitirq(r, Icmddone, stsp);
+}
+
+/* Card clock: the SDHCI 10-bit divided clock, base/(2*div). */
+static void
+emmcclock(Ctlr *c, ulong want)
+{
+	volatile u32 *r = c->r;
+	ulong div, base;
+	u32 ctl;
+	int i;
+
+	base = c->fclk != 0? c->fclk: 250000000;
+	div = base / (2*want);
+	if(div * 2 * want < base)
+		div++;
+	if(div > 0x3ff)
+		div = 0x3ff;
+
+	ctl = r[Rcontrol1];
+	ctl &= ~(u32)(C1clken|0xffc0);		/* stop the clock, clear divisor */
+	r[Rcontrol1] = ctl;
+	delay(2);
+	ctl &= ~(u32)(0xf<<C1toutshift);
+	ctl |= 0xe<<C1toutshift;		/* longest data timeout */
+	ctl |= (div & 0xff)<<8 | ((div>>8) & 3)<<6;
+	ctl |= C1clkintlen;
+	r[Rcontrol1] = ctl;
+	for(i = 0; i < 100000; i++)		/* wait for the clock to settle */
+		if(r[Rcontrol1] & C1clkstable)
+			break;
+	r[Rcontrol1] = r[Rcontrol1] | C1clken;
+	delay(2);
+}
+
+static int
+emmcreset(Ctlr *c)
+{
+	volatile u32 *r = c->r;
+	int i;
+
+	r[Rcontrol0] = 0;
+	r[Rcontrol1] = C1srsthost;
+	for(i = 0; i < 100000; i++)
+		if((r[Rcontrol1] & C1srsthost) == 0)
+			break;
+	if(r[Rcontrol1] & C1srsthost)
+		return -1;
+	r[Rcontrol1] = 0;
+	emmcclock(c, Idclock);
+	r[Rirpten] = 0;				/* poll: no interrupts to the core */
+	r[Rirptmask] = Iall;			/* but every event visible in status */
+	r[Rinterrupt] = r[Rinterrupt];
+	return 0;
+}
+
+/*
+ * Identification, as for any SD card: idle, interface condition, the
+ * initialisation loop, then address, geometry, selection and a 512-byte
+ * block length.  Returns 1 with the card selected and sized.
+ */
+static int
+emmccardinit(Ctlr *c)
+{
+	volatile u32 *r = c->r;
+	u32 ocr, csd[4], sts;
+	int i, rbl, cmult;
+	uvlong cap;
+	uchar b[16];
+
+	for(i = 48; i <= 53; i++)		/* card to this controller */
+		gpiofsel(i, Alt3);
+	mboxsetpower(0, 1);			/* firmware power domain 0: SD */
+	c->fclk = mboxgetclock(1);		/* EMMC clock */
+	if(emmcreset(c) < 0){
+		print("emmc: controller will not reset (control1 %#lux)\n",
+			(ulong)r[Rcontrol1]);
+		return 0;
+	}
+	r[Rcontrol0] = C0power;
+	delay(10);
+
+	if(cmd(c, 0, 0, 0, &sts) < 0){		/* CMD0 GO_IDLE */
+		print("emmc: CMD0 failed, interrupt %#lux\n", (ulong)sts);
+		return 0;
+	}
+	delay(2);
+	if(cmd(c, 8, 0x1aa, Cmdresp48|Cmdcrcchk|Cmdixchk, &sts) < 0 ||
+	    (r[Rresp0] & 0xff) != 0xaa){
+		print("emmc: no card answering CMD8 (resp %#lux interrupt %#lux)\n",
+			(ulong)r[Rresp0], (ulong)sts);
+		return 0;
+	}
+	ocr = 0;
+	for(i = 0; i < 100; i++){		/* ACMD41 */
+		if(cmd(c, 55, 0, Cmdresp48, &sts) < 0)
+			continue;
+		if(cmd(c, 41, 0x40ff8000, Cmdresp48, &sts) < 0)
+			continue;
+		ocr = r[Rresp0];
+		if(ocr & 0x80000000)
+			break;
+		delay(10);
+	}
+	if((ocr & 0x80000000) == 0){
+		print("emmc: card never left idle (ocr %#lux)\n", (ulong)ocr);
+		return 0;
+	}
+	c->byteaddr = (ocr & 0x40000000)? 0: 1;
+
+	if(cmd(c, 2, 0, Cmdresp136|Cmdcrcchk, &sts) < 0){	/* CMD2 CID */
+		print("emmc: CMD2 failed, interrupt %#lux\n", (ulong)sts);
+		return 0;
+	}
+	if(cmd(c, 3, 0, Cmdresp48|Cmdcrcchk|Cmdixchk, &sts) < 0){ /* CMD3 RCA */
+		print("emmc: CMD3 failed, interrupt %#lux\n", (ulong)sts);
+		return 0;
+	}
+	c->rca = r[Rresp0] >> 16;
+
+	if(cmd(c, 9, c->rca<<16, Cmdresp136|Cmdcrcchk, &sts) < 0){ /* CMD9 CSD */
+		print("emmc: CMD9 failed, interrupt %#lux\n", (ulong)sts);
+		return 0;
+	}
+	/*
+	 * A 136-bit response comes back without its CRC and low byte: RESP3
+	 * holds CSD bits 127:104, RESP2 103:72, RESP1 71:40, RESP0 39:8.
+	 * Laying those out as bytes gives b[0] = CSD 127:120 as the decoding
+	 * below expects; b[15] (the CRC byte) is not returned at all.
+	 * Reading them a word at a time, as if RESP3 were the first four
+	 * bytes, shifts the whole CSD by a byte and gives a nonsense
+	 * capacity, which is what the first version of this reported.
+	 */
+	csd[0] = r[Rresp3];
+	csd[1] = r[Rresp2];
+	csd[2] = r[Rresp1];
+	csd[3] = r[Rresp0];
+	b[0] = csd[0]>>16;
+	b[1] = csd[0]>>8;
+	b[2] = csd[0];
+	for(i = 0; i < 3; i++){
+		b[3+i*4] = csd[1+i]>>24;
+		b[4+i*4] = csd[1+i]>>16;
+		b[5+i*4] = csd[1+i]>>8;
+		b[6+i*4] = csd[1+i];
+	}
+	b[15] = 0;
+	if((b[0]>>6) == 0){			/* CSD v1 (SDSC) */
+		rbl = b[5] & 0x0f;
+		cap = ((b[6]&3)<<10) | (b[7]<<2) | (b[8]>>6);
+		cmult = ((b[9]&3)<<1) | (b[10]>>7);
+		c->sectors = (cap+1) << (cmult+2+rbl-9);
+	}else{					/* CSD v2 (SDHC) */
+		cap = ((uvlong)(b[7]&0x3f)<<16) | (b[8]<<8) | b[9];
+		c->sectors = (cap+1) << 10;
+	}
+
+	if(cmd(c, 7, c->rca<<16, Cmdresp48busy|Cmdcrcchk|Cmdixchk, &sts) < 0){
+		print("emmc: CMD7 select failed, interrupt %#lux\n", (ulong)sts);
+		return 0;
+	}
+	if(cmd(c, 16, Secsize, Cmdresp48|Cmdcrcchk|Cmdixchk, &sts) < 0){
+		print("emmc: CMD16 failed, interrupt %#lux\n", (ulong)sts);
+		return 0;
+	}
+	emmcclock(c, Datclock);
+	print("emmc: card rca %#ux %s %llud sectors, clock %lud Hz\n",
+		c->rca, c->byteaddr? "byte": "block", c->sectors, c->fclk);
+	return 1;
+}
+
+static SDev*
+emmcpnp(void)
+{
+	SDev *s;
+
+	if((uintptr)EMMC == 0)
+		return nil;
+	emmcctlr.r = (volatile u32*)EMMC;
+	if((s = malloc(sizeof(*s))) == nil)
+		return nil;
+	s->ctlr = &emmcctlr;
+	s->idno = 'M';
+	s->ifc = &sdemmcbcmifc;
+	s->nunit = 1;
+	return s;
+}
+
+static int
+emmcverify(SDunit *u)
+{
+	USED(u);
+	return 1;
+}
+
+static int
+emmconline(SDunit *u)
+{
+	Ctlr *c = u->dev->ctlr;
+	int first;
+
+	first = 0;
+	if(!c->inited){
+		c->inited = 1;
+		emmccardinit(c);
+		first = 1;
+	}
+	if(c->sectors == 0)
+		return 0;			/* no media */
+	u->sectors = c->sectors;
+	u->secsize = Secsize;
+	return first? 2: 1;
+}
+
+static void
+bioerror(Ctlr *c, int write, uvlong bno, u32 sts)
+{
+	if(c->errors++ > 5)
+		return;
+	print("emmc: %s block %llud failed: interrupt %#lux status %#lux\n",
+		write? "write": "read", bno, (ulong)sts, (ulong)c->r[Rstatus]);
+}
+
+static long
+emmcbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
+{
+	Ctlr *c = u->dev->ctlr;
+	volatile u32 *r = c->r;
+	uchar *p = a;
+	long i;
+	int j;
+	u32 arg, w, sts, flags;
+
+	USED(lun);
+	qlock(c);
+	for(i = 0; i < nb; i++){
+		arg = c->byteaddr? (u32)((bno+i)*Secsize): (u32)(bno+i);
+		for(j = 0; j < 100000; j++)	/* the data line must be free */
+			if((r[Rstatus] & Sdatinhibit) == 0)
+				break;
+		r[Rblksizecnt] = 1<<16 | Secsize;
+		flags = Cmdisdata|Cmdresp48|Cmdcrcchk|Cmdixchk;
+		if(!write)
+			flags |= Trdata;
+		/* WRITE_SINGLE_BLOCK / READ_SINGLE_BLOCK */
+		if(cmd(c, write? 24: 17, arg, flags, &sts) < 0){
+			bioerror(c, write, bno+i, sts);
+			break;
+		}
+		if(awaitirq(r, write? Iwriterdy: Ireadrdy, &sts) < 0){
+			bioerror(c, write, bno+i, sts);
+			break;
+		}
+		if(write){
+			for(j = 0; j < Secsize; j += 4){
+				w = p[0] | p[1]<<8 | p[2]<<16 | p[3]<<24;
+				r[Rdata] = w;
+				p += 4;
+			}
+		}else{
+			for(j = 0; j < Secsize; j += 4){
+				w = r[Rdata];
+				p[0] = w;
+				p[1] = w>>8;
+				p[2] = w>>16;
+				p[3] = w>>24;
+				p += 4;
+			}
+		}
+		if(awaitirq(r, Idatadone, &sts) < 0){
+			bioerror(c, write, bno+i, sts);
+			break;
+		}
+	}
+	qunlock(c);
+	return i * Secsize;
+}
+
+static char*
+emmcrctl(SDunit *u, char *p, char *e)
+{
+	Ctlr *c = u->dev->ctlr;
+	volatile u32 *r = c->r;
+
+	p = seprint(p, e, "geometry %llud %lud\n", u->sectors, u->secsize);
+	p = seprint(p, e, "emmc rca %#ux %s sectors %llud clock %lud\n",
+		c->rca, c->byteaddr? "byteaddr": "blockaddr", c->sectors, c->fclk);
+	p = seprint(p, e, "emmc status %#lux control0 %#lux control1 %#lux interrupt %#lux ver %#lux errors %d\n",
+		(ulong)r[Rstatus], (ulong)r[Rcontrol0], (ulong)r[Rcontrol1],
+		(ulong)r[Rinterrupt], (ulong)r[Rslotisrver], c->errors);
+	return p;
+}
+
+static int
+emmcwctl(SDunit *u, Cmdbuf *cb)
+{
+	Ctlr *c = u->dev->ctlr;
+	uchar blk[Secsize];
+	int i, k;
+	long n;
+	char buf[3*32+1], *q;
+
+	if(strcmp(cb->f[0], "reinit") == 0){
+		qlock(c);
+		c->inited = 0;
+		c->sectors = 0;
+		c->errors = 0;
+		i = emmccardinit(c);
+		qunlock(c);
+		print("emmc: reinit %s\n", i? "ok": "failed");
+		return 0;
+	}
+	if(strcmp(cb->f[0], "readblk") == 0 && (cb->nf == 2 || cb->nf == 3)){
+		uvlong bno = strtoull(cb->f[1], nil, 0);
+		int off = cb->nf == 3? atoi(cb->f[2]): 0;
+
+		if(off < 0 || off > Secsize-1)
+			off = 0;
+		memset(blk, 0, sizeof blk);
+		n = emmcbio(u, 0, 0, blk, 1, bno);
+		q = buf;
+		for(k = off; k < off+32 && k < Secsize; k++)
+			q += sprint(q, "%.2ux", blk[k]);
+		*q = 0;
+		print("emmc: readblk %llud+%d -> %ld %s (510,511 %.2ux%.2ux)\n",
+			bno, off, n, buf, blk[510], blk[511]);
+		return 0;
+	}
+	error(Ebadctl);
+	return 0;
+}
+
+SDifc sdemmcbcmifc = {
+	"emmc",				/* name */
+
+	emmcpnp,			/* pnp */
+	nil,				/* enable */
+	nil,				/* disable */
+
+	emmcverify,			/* verify */
+	emmconline,			/* online */
+	nil,				/* rio */
+	emmcrctl,			/* rctl */
+	emmcwctl,			/* wctl */
+
+	emmcbio,			/* bio */
+	nil,				/* probe */
+	nil,				/* clear */
+	nil,				/* rtopctl */
+	nil,				/* wtopctl */
+};

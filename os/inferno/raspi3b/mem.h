@@ -37,6 +37,7 @@
 #define	MBOX0		(BCMPERIPH + 0x00b880)	/* BCM2835 VideoCore mailbox 0 */
 #define	GPIO0		(BCMPERIPH + 0x200000)	/* BCM2835 GPIO */
 #define	SDHOST		(BCMPERIPH + 0x202000)	/* BCM2835 SDHOST (native SD) */
+#define	EMMC		(BCMPERIPH + 0x300000)	/* Arasan SDHCI (the other SD path) */
 #define	I2C0		(BCMPERIPH + 0x205000)	/* BCM2835 BSC0 (i2c-bus.0) */
 #define	SPI0		(BCMPERIPH + 0x204000)	/* BCM2835 SPI0 */
 
