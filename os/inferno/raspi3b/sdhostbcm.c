@@ -648,6 +648,60 @@ sdhostwctl(SDunit *u, Cmdbuf *cb)
 			(ulong)r[SDCMD], (ulong)r[SDEDM]);
 		return 0;
 	}
+	if(strcmp(cb->f[0], "probe2") == 0 && cb->nf == 3){
+		/*
+		 * Read one block under a chosen pacing rule and show the first
+		 * eight words, to find which one hands over whole words:
+		 *   0  the data flag and a non-zero fill (what the driver does)
+		 *   1  a fill of four or more
+		 *   2  a fixed delay between words
+		 *   3  the fill level changing since the last word
+		 */
+		uvlong bno = strtoull(cb->f[1], nil, 0);
+		int mode = atoi(cb->f[2]);
+		u32 word[8];
+		int k, last;
+
+		qlock(c);
+		cardready(c);
+		r[SDHBCT] = Secsize;
+		r[SDHBLC] = 1;
+		arg = c->byteaddr? (u32)(bno*Secsize): (u32)bno;
+		sdcmdstart(r, 17, arg, Readcmd);
+		last = -1;
+		for(k = 0; k < 8; k++){
+			for(i = 0; i < 1000000; i++){
+				int fill = fifofill(r);
+				if(mode == 0 && (r[SDHSTS] & Hstsdata) != 0 && fill > 0)
+					break;
+				if(mode == 1 && fill >= 4)
+					break;
+				if(mode == 2){
+					microdelay(20);
+					break;
+				}
+				if(mode == 3 && fill != last && fill > 0){
+					last = fill;
+					break;
+				}
+			}
+			word[k] = r[SDDATA];
+		}
+		for(i = 0; i < 1000000; i++){	/* drain the rest */
+			if((r[SDHSTS] & Hstsdata) == 0 && fifofill(r) == 0)
+				break;
+			(void)r[SDDATA];
+		}
+		waitxfer(r);
+		sdcmdwait(r, &err);
+		r[SDHSTS] = Hstsclear;
+		qunlock(c);
+		print("sdhost: probe2 mode %d words %.8lux %.8lux %.8lux %.8lux %.8lux %.8lux %.8lux %.8lux\n",
+			mode, (ulong)word[0], (ulong)word[1], (ulong)word[2],
+			(ulong)word[3], (ulong)word[4], (ulong)word[5],
+			(ulong)word[6], (ulong)word[7]);
+		return 0;
+	}
 	if(strcmp(cb->f[0], "probe") == 0 && cb->nf == 2){
 		/*
 		 * Start a single-block read and report what the controller
