@@ -109,6 +109,7 @@ struct Ctlr {
 	int	byteaddr;
 	int	inited;
 	int	errors;
+	int	bytemode;	/* the data register hands over a byte per read */
 	ulong	fclk;
 	uint	rca;
 };
@@ -280,11 +281,16 @@ fifospace(volatile u32 *r)			/* wait until the FIFO can take a word */
 static int
 fifodata(volatile u32 *r)
 {
+	u32 edm;
 	int i;
 
-	for(i = 0; i < 1000000; i++)
-		if((r[SDHSTS] & Hstsdata) != 0 && fifofill(r) > 0)
+	for(i = 0; i < 1000000; i++){
+		if((r[SDHSTS] & Hstsdata) != 0)
 			return 1;
+		edm = r[SDEDM];
+		if((edm & Edmfsmmask) == Fsmreadwait)	/* stalled: let it run on */
+			r[SDEDM] = edm | Edmforcedata;
+	}
 	return 0;
 }
 
@@ -565,9 +571,28 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 				r[SDDATA] = w;
 				p += 4;
 			}
+		}else if(c->bytemode){
+			/*
+			 * One byte per read.  The Pi hands the data register
+			 * over a byte at a time: successive reads returned the
+			 * same 32-bit window shifted by one byte (000000fa,
+			 * 0000fab8, 00fab800, fab80010 for a sector beginning
+			 * fa b8 00 10), and with a pause between reads the
+			 * value froze, the controller stalling until drained.
+			 * Taking the newest byte, the low one, from each read
+			 * is what the silicon actually offers; SDEDM's fill
+			 * level stays 0 throughout and cannot pace it.
+			 */
+			for(j = 0; j < Secsize; j++){
+				if(!fifodata(r)){	/* wait for data */
+					bioerror(c, write, bno+i, r[SDHSTS]);
+					goto out;
+				}
+				*p++ = r[SDDATA];
+			}
 		}else{
 			for(j = 0; j < Secsize; j += 4){
-				if(!fifodata(r)){	/* wait for a FIFO word */
+				if(!fifodata(r)){	/* wait for a word */
 					bioerror(c, write, bno+i, r[SDHSTS]);
 					goto out;
 				}
@@ -646,6 +671,38 @@ sdhostwctl(SDunit *u, Cmdbuf *cb)
 		print("sdhost: cmd %d arg %#lux -> %d rsp %#lux sdhsts %#lux sdcmd %#lux sdedm %#lux\n",
 			cmd, (ulong)arg, i, (ulong)r[SDRSP0], (ulong)err,
 			(ulong)r[SDCMD], (ulong)r[SDEDM]);
+		return 0;
+	}
+	if(strcmp(cb->f[0], "thresh") == 0 && cb->nf == 3){
+		/* SDEDM's FIFO read and write thresholds, live */
+		u32 edm = r[SDEDM];
+		edm &= ~(u32)((Edmthreshmask<<Edmrdthreshsh)|(Edmthreshmask<<Edmwrthreshsh));
+		edm |= (strtoul(cb->f[1], nil, 0) & Edmthreshmask) << Edmrdthreshsh;
+		edm |= (strtoul(cb->f[2], nil, 0) & Edmthreshmask) << Edmwrthreshsh;
+		r[SDEDM] = edm;
+		print("sdhost: sdedm %#lux\n", (ulong)r[SDEDM]);
+		return 0;
+	}
+	if(strcmp(cb->f[0], "bytemode") == 0 && cb->nf == 2){
+		c->bytemode = atoi(cb->f[1]);
+		print("sdhost: bytemode %d\n", c->bytemode);
+		return 0;
+	}
+	if(strcmp(cb->f[0], "probe3") == 0 && cb->nf == 2){
+		/* read a block a byte at a time and show what came out */
+		uvlong bno = strtoull(cb->f[1], nil, 0);
+		long n;
+		int k;
+		char buf[3*16+1], *q;
+
+		memset(blk, 0, sizeof blk);
+		n = sdhostbio(u, 0, 0, blk, 1, bno);
+		q = buf;
+		for(k = 0; k < 16; k++)
+			q += sprint(q, "%.2ux", blk[k]);
+		*q = 0;
+		print("sdhost: probe3 %llud -> %ld %s (510,511 %.2ux%.2ux)\n",
+			bno, n, buf, blk[510], blk[511]);
 		return 0;
 	}
 	if(strcmp(cb->f[0], "probe2") == 0 && cb->nf == 3){
