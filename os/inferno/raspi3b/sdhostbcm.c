@@ -639,14 +639,23 @@ sdhostwctl(SDunit *u, Cmdbuf *cb)
 			(ulong)r[SDCMD], (ulong)r[SDEDM]);
 		return 0;
 	}
-	if(strcmp(cb->f[0], "readblk") == 0 && cb->nf == 2){
+	if(strcmp(cb->f[0], "readblk") == 0 && (cb->nf == 2 || cb->nf == 3)){
 		uvlong bno = strtoull(cb->f[1], nil, 0);
 		long n;
+		int off, k;
+		char buf[3*32+1], *q;
 
+		/* readblk <block> [offset]: dump 32 bytes from offset in it */
+		off = cb->nf == 3? atoi(cb->f[2]): 0;
+		if(off < 0 || off > Secsize-1)
+			off = 0;
 		memset(blk, 0, sizeof blk);
 		n = sdhostbio(u, 0, 0, blk, 1, bno);
-		print("sdhost: readblk %llud -> %ld %.2ux%.2ux%.2ux%.2ux\n",
-			bno, n, blk[0], blk[1], blk[2], blk[3]);
+		q = buf;
+		for(k = off; k < off+32 && k < Secsize; k++)
+			q += sprint(q, "%.2ux", blk[k]);
+		*q = 0;
+		print("sdhost: readblk %llud+%d -> %ld %s\n", bno, off, n, buf);
 		return 0;
 	}
 	error(Ebadctl);
