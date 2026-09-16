@@ -3785,3 +3785,100 @@ range that ought to hold them.  It is a change to what the root set
 is, so it wants the 192-boot batch and a
 .CW parallelvm=1
 rate against the current 2 in 50, not a spot check.
+.NH 2
+The fault, found: a torn register snapshot
+.PP
+.CW vmachine() Ns 's
+.CW waserror()
+block clears
+.CW inxec
+at the top, so
+.CW stoptheworld()
+stops waiting for that process, and then calls
+.CW handler() ,
+whose
+.CW "memmove(&p->reg, &R, sizeof(R))"
+rewrites the Prog's saved registers.  The collector could walk
+.CW p->reg
+while that memmove was partway through it.
+.PP
+Measured, with a probe comparing
+.CW rr->SP
+against itself \(em an earlier one compared it against the walk's loop
+variable and had to be retracted:
+.IP
+.nf
+rr->SP first 0x7a80738 now 0x7a80170 CHANGED; FP 0x7a800d8
+rr->SP first 0x7a755b8 now 0x7a74ff0 CHANGED; FP 0x7a74f58
+rr->SP first 0x7a75738 now 0x7a75170 CHANGED; FP 0x7a750d8
+.fi
+.PP
+Five of seventy boots, every one changed, every new value
+.CW FP
+plus 152 \(em the live frame's size, the right answer arriving after the
+walk had taken a stale one.  Claiming the quantum around
+.CW handler()
+takes that to one of seventy, and that one reports the pair
+.I unchanged ,
+which is a different fault.
+.PP
+The chain reads backwards cleanly.  A torn
+.CW SP
+gives a bound over popped frames; stale frame data tiles for six steps
+because the sizes it holds happen to be plausible; the seventh block is
+not a frame, so its
+.CW t
+is not a Type; calling
+.CW t->mark
+jumps into the Dis heap; "panic: invalid opcode" at a heap address.
+Eleven eliminated hypotheses were all downstream of one unprotected
+write.
+.NH 2
+Two corrections this cost, and they are the lesson
+.PP
+The first fix went around
+.CW propex() ,
+which is exception propagation to a process group and writes no
+registers at all.  It changed nothing over seventy boots, as it could
+not have.  The
+.CW regsrc
+tag saying "propex" was my own mislabel: the write is in
+.CW handler() ,
+and I named the tag after the call I had been reading in dis.c rather
+than the function the memmove sits in.  An instrument that names the
+wrong thing will keep confirming it.
+.PP
+The first torn-read probe compared the walk's
+.CW sp
+\(em a loop variable, reassigned to
+.CW sx->reg.SP
+at the foot of every extent \(em against a fresh read of
+.CW rr->SP .
+For any extent after the first those are different fields, and I read
+their difference as one field changing.  Same error as reading console
+lines as progress earlier in this document: a value that was in scope
+got used as the value that was meant.
+.NH 2
+A rare one, and not a regression
+.PP
+A
+.CW "math emu ... pc _fxsave+0x0"
+panic appeared once in 96 boots at
+.CW parallelvm=0 ,
+where the two previous batches were 192 of 192.  doc/inferno-ports.ms
+documents that signature and records it as rare \(em 880 boots once
+passed before it first showed.  The guard it describes is intact:
+.CW matherror()
+and
+.CW simderror()
+both
+.CW _clts()
+before
+.CW fpsave() .
+.PP
+Tested rather than assumed, the kernel before the
+.CW handler()
+claim against the kernel after it, sixty boots each, interleaved: 0 and
+0.  Rarer than one in sixty on both, so there is no evidence the change
+introduced it, and a single occurrence is what a low-rate fault looks
+like.
