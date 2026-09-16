@@ -476,6 +476,56 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 			bno, off, n, buf, blk[510], blk[511]);
 		return 0;
 	}
+	if(strcmp(cb->f[0], "wtest") == 0 && (cb->nf == 2 || cb->nf == 3)){
+		/*
+		 * Write test that puts the sector back.  It refuses a sector
+		 * that is not all zero unless told "force", so it can only be
+		 * pointed at unused space by accident: on this board that is
+		 * the gap between the master boot record and the first
+		 * partition.  Writes a pattern, reads it back, restores the
+		 * original bytes and reads again to check the restore.
+		 */
+		uvlong bno = strtoull(cb->f[1], nil, 0);
+		static uchar orig[Secsize], want[Secsize], got[Secsize];
+		int bad, badrestore, force;
+
+		force = cb->nf == 3 && strcmp(cb->f[2], "force") == 0;
+		if(emmcbio(u, 0, 0, orig, 1, bno) != Secsize){
+			print("emmc: wtest %llud: cannot read it first\n", bno);
+			return 0;
+		}
+		for(k = 0; k < Secsize; k++)
+			if(orig[k] != 0)
+				break;
+		if(k != Secsize && !force){
+			print("emmc: wtest %llud: sector is not empty (byte %d is %.2ux); "
+				"add force to write it anyway\n", bno, k, orig[k]);
+			return 0;
+		}
+		for(k = 0; k < Secsize; k++)
+			want[k] = 0x5a ^ (k + (int)bno);
+		if(emmcbio(u, 0, 1, want, 1, bno) != Secsize){
+			print("emmc: wtest %llud: write failed\n", bno);
+			return 0;
+		}
+		memset(got, 0, sizeof got);
+		emmcbio(u, 0, 0, got, 1, bno);
+		bad = 0;
+		for(k = 0; k < Secsize; k++)
+			if(got[k] != want[k])
+				bad++;
+		if(emmcbio(u, 0, 1, orig, 1, bno) != Secsize)
+			print("emmc: wtest %llud: RESTORE FAILED, sector left written\n", bno);
+		memset(got, 0, sizeof got);
+		emmcbio(u, 0, 0, got, 1, bno);
+		badrestore = 0;
+		for(k = 0; k < Secsize; k++)
+			if(got[k] != orig[k])
+				badrestore++;
+		print("emmc: wtest %llud: %d of %d bytes wrong after write, "
+			"%d wrong after restore\n", bno, bad, Secsize, badrestore);
+		return 0;
+	}
 	error(Ebadctl);
 	return 0;
 }
