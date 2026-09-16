@@ -230,11 +230,16 @@ init(nil: ref Draw->Context, argv: list of string)
 	# spawn the server loop BEFORE mounting: mount performs the 9P
 	# handshake against our styx server, so the loop that answers it must
 	# already be running or mount deadlocks.
-	# The Pi 3B's physical AArch64 runtime currently wedges entering the
-	# mount syscall itself.  Keep the board bootable: leave the USB server
-	# unmounted and let init continue to its shell.  The same module still
-	# mounts normally on QEMU and other targets.
-	return;
+	#
+	# This mount was disabled on the Pi because the board wedged entering
+	# the syscall.  That was before the kernel's SP-alignment fault was
+	# found (a process whose kernel stack came back 8-byte aligned from
+	# malloc faulted endlessly the first time it used it), which is the
+	# shape of fault that stops a process dead in a syscall, so it is
+	# tried again rather than assumed.  mountproc does it in its own
+	# process: if it does wedge, the server and the board keep running.
+	spawn mountproc(p[0], mnt);
+	p[0] = nil;
 	p[1] = nil;
 	sys->print("ETHERUSB serving %s/ether mac %s %s\n", mnt, macstr(), kindname());
 
