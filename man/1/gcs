@@ -87,9 +87,35 @@ then fails with 403.
 .PP
 The XML API is used, and the listing is scanned for
 .B <Key>
-elements rather than parsed.  A bucket with more objects than one
-reply carries is truncated silently, because continuation is not
-implemented.
+elements rather than parsed.
+.PP
+Continuation is implemented: a reply carrying
+.B <IsTruncated>true</IsTruncated>
+is followed by another request with the
+.B <NextContinuationToken>
+it returns, percent-encoded, until the listing ends.  A truncated reply
+with no token raises an error rather than returning a short listing as
+though it were whole \(em which is what this did before, and a listing
+that is silently short is the worst way for one to be wrong, because
+the output looks like a complete answer.
+.PP
+The continuation
+.I loop
+has not been run against a bucket with more than one page of objects;
+that needs an instance with storage credentials.  The parsing and the
+encoding it depends on are tested: a token containing
+.BR = ,
+.B +
+and
+.B /
+survives extraction and comes back as
+.BR %3D ,
+.B %2B
+and
+.BR %2F ,
+and a final page with
+.B <IsTruncated>false</IsTruncated>
+ends the loop.
 .PP
 The other route is not wired up:
 .B storage.googleapis.com

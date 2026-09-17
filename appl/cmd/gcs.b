@@ -157,22 +157,75 @@ call(method, url: string, body: array of byte): ref Resp
 #
 ls(bucket, prefix: string)
 {
-	url := "https://" + HOST + "/" + bucket + "?list-type=2";
+	base := "https://" + HOST + "/" + bucket + "?list-type=2";
 	if(prefix != "")
-		url += "&prefix=" + prefix;
-	r := call("GET", url, nil);
-	s := string r.body;
+		base += "&prefix=" + prefix;
+	# Continuation.  A listing reply carries at most a thousand keys and
+	# says so with <IsTruncated>true</IsTruncated>; the rest are fetched
+	# by asking again with the token it hands back.  Without this the
+	# command printed the first page and stopped, silently, which is
+	# the worst way for a listing to be wrong -- the output looks like
+	# a complete answer and there is nothing to notice.
+	token := "";
 	for(;;){
-		i := index(s, "<Key>");
-		if(i < 0)
-			break;
-		s = s[i+5:];
-		j := index(s, "</Key>");
-		if(j < 0)
-			break;
-		sys->print("%s\n", s[0:j]);
-		s = s[j+6:];
+		url := base;
+		if(token != "")
+			url += "&continuation-token=" + urlencode(token);
+		r := call("GET", url, nil);
+		s := string r.body;
+		body := s;
+		for(;;){
+			i := index(s, "<Key>");
+			if(i < 0)
+				break;
+			s = s[i+5:];
+			j := index(s, "</Key>");
+			if(j < 0)
+				break;
+			sys->print("%s\n", s[0:j]);
+			s = s[j+6:];
+		}
+		if(element(body, "IsTruncated") != "true")
+			return;
+		token = element(body, "NextContinuationToken");
+		if(token == ""){
+			# Truncated but no token to continue with: say so rather
+			# than return a short answer as though it were whole.
+			sys->fprint(sys->fildes(2),
+				"gcs: listing truncated and no continuation token\n");
+			raise "fail:truncated";
+		}
 	}
+}
+
+# The text of the first <name>...</name>, or "".
+element(s, name: string): string
+{
+	i := index(s, "<" + name + ">");
+	if(i < 0)
+		return "";
+	s = s[i + len name + 2:];
+	j := index(s, "</" + name + ">");
+	if(j < 0)
+		return "";
+	return s[0:j];
+}
+
+# A continuation token is opaque and base64-ish: it can hold "+", "/"
+# and "=", all of which change meaning in a query string.
+urlencode(s: string): string
+{
+	r := "";
+	for(i := 0; i < len s; i++){
+		c := s[i];
+		if(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z'
+		|| c >= '0' && c <= '9' || c == '-' || c == '_'
+		|| c == '.' || c == '~')
+			r[len r] = c;
+		else
+			r += sys->sprint("%%%.2X", c);
+	}
+	return r;
 }
 
 get(bucket, object: string)
