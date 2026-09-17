@@ -1807,3 +1807,48 @@ do not appear on demand and a mount wants
 .CW "mount {mntgen} /n"
 first.  Noted rather than fixed: the init is shared with the plain
 configuration and belongs to the other session's board.
+.NH 2
+Item 11 demonstrated: one Dis binary, two processor families
+.PP
+Item 11 asks for the same Dis binary, unmodified, on an amd64 instance
+and an arm64 instance sharing one namespace, on the grounds that
+"migrating between processor families is a live and expensive industry
+problem that is normally solved by recompiling and re-qualifying an
+entire stack; here there is nothing to recompile, and that is worth
+demonstrating rather than asserting".
+.PP
+The rented instances are still wanted.  But the claim does not need
+them: it needs two processor families, and QEMU has both.
+.CW scripts/check-crossarch.sh
+compiles one
+.CW crossarch.dis ,
+serves it from one directory, and has a pc64 guest under
+.CW qemu-system-x86_64
+and a virtarm64 guest under
+.CW qemu-system-aarch64
+each mount it and run it out of the mount.  Both print
+.CW CROSSARCH-RAN .
+.PP
+.EX
+md5 f39e82bf8cfd31a8cb484ed779b94d6c  crossarch.dis
+.EE
+.PP
+Three things keep that from being a demonstration of nothing.  The
+program is in
+.I neither
+kernel image, and the check refuses to run if it finds the name in one
+\(em otherwise finding it would prove nothing about the mount.  The
+token
+.CW CROSSARCH-RAN
+does not appear in the command, which says
+.CW crossarch ,
+so only the program can have printed it.  And the checksum is reported
+so that "the same binary" is a fact about bytes and not a turn of
+phrase.
+.PP
+.B "What the instances would still add."
+A real network between two real machines rather than one host emulating
+both, and the cloud's own cost for the mount.  What they would not add
+is the part that was in question: nothing was recompiled, nothing was
+re-qualified, and the file that ran on the amd64 machine is byte for
+byte the file that ran on the arm64 one.
