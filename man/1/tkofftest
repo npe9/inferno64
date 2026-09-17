@@ -230,8 +230,3 @@ That is the configuration
 exists for, but it is not the configuration a program runs in under
 .IR wm (1),
 and no check here covers the difference.
-.PP
-The render-node comparison draws every widget still, with no pointer
-over it.
-A scale's active slider band, and anything else drawn only while the
-pointer is on a widget, is never compared between the two paths.

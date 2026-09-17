@@ -1369,6 +1369,23 @@ checkscene()
 	map(top);
 	tk->cmd(top, "focus -global 1");
 	tk->cmd(top, "focus .e");
+	# The band behind a scale's slider is drawn only while the slider is
+	# under the pointer, which the widget learns from its own motion
+	# command - so put the pointer there through that command.  Not
+	# being able to is a failure: the band would go uncompared.
+	for(sw := 0; sw < 2; sw++){
+		w := array[] of {".s", ".v"};
+		(nil, xy) := sys->tokenize(tk->cmd(top, w[sw] + " coords"), " ");
+		if(len xy == 2){
+			pt := hd xy + " " + hd tl xy;
+			must(top, w[sw] + " tkScaleMotion " + pt);
+			xy = tk->cmd(top, w[sw] + " identify " + pt) :: nil;
+		}
+		report(len xy == 1 && hd xy == "slider", sys->sprint(
+			"a scale's slider can be put under the pointer (%s: %#q)",
+			w[sw], tk->cmd(top, w[sw] + " coords")));
+	}
+	tk->cmd(top, "update");
 
 	# Prove each path was actually SELECTED before comparing.  Without
 	# this the check passed with 0 of 1890000 bytes differing while the
@@ -1391,7 +1408,7 @@ checkscene()
 	# item's box - both are guarded by tkhaskeyfocus() - so a
 	# perturbation of either passes, which by the usual rule means the
 	# check never reached the code rather than that the code is right.
-	who := array[] of {".e", ".l", ".s"};
+	who := array[] of {".e", ".l", ".s", ".v"};
 	diff := 0;
 	first := -1;
 	for(k := 0; k < len who; k++){
