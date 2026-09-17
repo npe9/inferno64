@@ -12,6 +12,8 @@ uvlong	timersoon(void);
 uvlong	fastticks(uvlong*);
 ulong	tk2ms(ulong);
 void	coherence(void);
+void	fpregsave(void*);	/* ../armv7m/l.s: S0-S31 -> memory */
+void	fpregrestore(void*);	/* ../armv7m/l.s: memory -> S0-S31 */
 void	delay(int);
 void	dumpstack(void);
 void	fpinit(void);

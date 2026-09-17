@@ -276,6 +276,26 @@ TEXT	idle(SB), 1, $-4
  * bug that cost this tree a week on arm64, so this is a full DSB and not
  * a hint.
  */
+/*
+ * The floating point register file, out to memory and back.  128 bytes,
+ * word aligned, S0 first.  The first argument is in R0 here (the same
+ * convention _tas and setlabel below use).
+ *
+ * These touch no floating point arithmetic, only the transfers, so they
+ * work on a Cortex-M4 whose FPv4-SP cannot do double precision.  That is
+ * the point of them: os/inferno/armv7m/fpu.c turns FPCCR.ASPEN and
+ * FPCCR.LSPEN off, so an exception does not stack the floating point
+ * registers and they still hold the faulting instruction's operands when
+ * a handler runs.
+ */
+TEXT	fpregsave(SB), 1, $-4
+	VSTMIA32(0)
+	RET
+
+TEXT	fpregrestore(SB), 1, $-4
+	VLDMIA32(0)
+	RET
+
 TEXT	coherence(SB), 1, $-4
 	DSBSY
 	RET

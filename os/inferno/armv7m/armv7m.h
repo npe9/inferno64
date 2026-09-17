@@ -45,6 +45,26 @@
 #define	LDREXW(rt, rn)		T2(0xe850|(rn), ((rt)<<12)|0x0f00)
 #define	STREXW(rd, rt, rn)	T2(0xe840|(rn), ((rt)<<12)|((rd)<<8))
 
+/*
+ * VFP load and store multiple, the whole single-precision register file
+ * at once.  utils/5a has mnemonics for the double-precision arithmetic
+ * (MOVD, ADDD, ...) and none for these, so they are written out here.
+ *
+ * Bits of the first halfword, from the ARMv7-M architecture reference:
+ * 1110110 then P, U, D, W, L and Rn.  Increment-after with no writeback
+ * is P=0 U=1 W=0, so 0xec80 for a store and 0xec90 for a load, plus Rn.
+ * The second halfword is Vd=0, coproc=1010 (cp10, single precision), and
+ * an imm8 that counts registers: 32 of them, 0x20.
+ *
+ * Single precision on purpose.  A Cortex-M4's FPv4-SP has the 32 S
+ * registers but no double-precision arithmetic, so this moves the whole
+ * file -- D0-D15 included, since they alias S0-S31 -- on a core that
+ * cannot add two doubles.  That is what makes it usable from the fault
+ * handler that emulates the arithmetic.
+ */
+#define	VSTMIA32(rn)	T2(0xec80|(rn), 0x0a20)	/* VSTMIA rn, {S0-S31} */
+#define	VLDMIA32(rn)	T2(0xec90|(rn), 0x0a20)	/* VLDMIA rn, {S0-S31} */
+
 #define	WFI		HWORD	$0xbf30
 #define	NOOP		HWORD	$0xbf00
 #define	BXR(rm)		HWORD	$(0x4700|((rm)<<3))

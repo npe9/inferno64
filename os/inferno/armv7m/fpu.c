@@ -28,6 +28,44 @@
  * gotolabel, which do not touch the floating point registers -- the same
  * arrangement the RISC-V boards use.
  */
+/*
+ * Prove the register file can be moved out and back before anything
+ * depends on it.  This is the foundation the double-precision emulation
+ * stands on, and both instructions are hand-encoded
+ * (os/inferno/armv7m/armv7m.h), so it is checked rather than assumed.
+ *
+ * Deliberately no arithmetic: a pattern is written to memory, loaded
+ * into S0-S31 with VLDMIA, stored back out with VSTMIA, and compared.
+ * That runs on a Cortex-M4, which cannot add two doubles, as well as on
+ * a Cortex-M7 which can -- so the same check reports from both benches.
+ */
+static void
+fpregcheck(void)
+{
+	ulong out[32], in[32];
+	int i, bad;
+
+	for(i = 0; i < nelem(in); i++)
+		in[i] = 0xf0000000 | (i<<16) | (i^0x5a5a);
+	memset(out, 0, sizeof(out));
+
+	fpregrestore(in);		/* VLDMIA: memory -> S0-S31 */
+	fpregsave(out);			/* VSTMIA: S0-S31 -> memory */
+
+	bad = -1;
+	for(i = 0; i < nelem(in); i++)
+		if(out[i] != in[i]){
+			bad = i;
+			break;
+		}
+	if(bad >= 0){
+		print("FPREG-FAIL S%d wrote %.8lux read %.8lux\n",
+			bad, in[bad], out[bad]);
+		return;
+	}
+	print("FPREG-OK all 32 single-precision registers round-tripped\n");
+}
+
 void
 fpinit(void)
 {
@@ -40,6 +78,8 @@ fpinit(void)
 	fpccr = (ulong*)FPU_FPCCR;
 	*fpccr &= ~(FpccrAspen|FpccrLspen);
 	coherence();
+
+	fpregcheck();
 }
 
 void
