@@ -6192,7 +6192,7 @@ parks on
 one Rendez per context, so a context handed to another interpreter
 carries a sleeper's wake with it.
 .PP
-Recorded rather than kept: the change is reverted.  The pool limit is
+Recorded rather than kept at the time: that version was reverted.  The pool limit is
 pre-existing and is now the nearest wall at
 .CW "-smp 4" .
 Of the two obstacles the Rendez is the smaller one and should not be
@@ -6228,3 +6228,58 @@ columns move together \(em that is the capacity limit of the section
 above, and it is now the only thing between this kernel and a
 .CW parallelvm=1
 that behaves the same at four processors as at two.
+.NH 2
+Contexts, given back at both places an interpreter stops
+.PP
+The reverted version had the right idea and the wrong reclaim point.  It
+took the context again at the top of
+.CW vmachine() 's
+loop, which is
+.I after
+.CW vmacquire() ,
+so an interpreter with no context ran a whole pass against the shared
+.CW defpctx
+and pushed its placeholder Prog onto it \(em
+.CW "delrunq: prog 0 was on another context's queue"
+in 11 boots of 12.  Taken again immediately after the
+.CW sched()
+that parks it, before anything touches
+.CW curP ,
+that failure goes away: contexts reused about 11000 times a boot, and a
+counter on "queued a Prog with no context" reads 0.
+.PP
+That alone was not enough.  The high-water mark stayed at 50 to 64,
+because an interpreter blocked in a Dis system call never reaches the
+park point at all \(em it is inside
+.CW release() .
+So the context is given back there too, which is the same place Go hands
+back a P, and
+.CW acquire()
+takes one before it touches anything.
+.CW curP
+is pointed at
+.CW defpctx
+as the context is released, not left naming it until the next
+.CW sched() :
+another interpreter can claim it immediately, and
+.CW currun()
+is
+.CW curP->runhd .
+.PP
+Twelve boots each, 90 seconds,
+.CW parallelvm=1 :
+.TS
+center;
+l r r r r r.
+	panics	all 27 cases	pool exhausted	contexts held	bad frame
+-smp 4, before	5 of 8	1 of 8	6 of 8	63 to 64	0
+-smp 4, after	0 of 12	11 of 12	0	10 to 36	0
+-smp 2, after	0 of 12	9 of 12	0	12 to 23	0
+.TE
+.PP
+A 40-boot run of the same kernel before the
+.CW curP
+correction had one general protection violation in sixteen at
+.CW "-smp 4" ;
+with it, none in twelve.  That is not enough boots to call the
+difference, and it is recorded that way.

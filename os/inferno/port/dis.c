@@ -72,10 +72,13 @@ extern int parallelvm;		/* defined below, with stoptheworld() */
 static Pctx pctxpool[MAXPCTX];
 static int npctxused;
 
+ulong ctxreused, ctxreleased, ctxnone;	/* MULTICORE INSTRUMENTATION - temporary */
+
 static Pctx*
 claimctx(void)
 {
 	Pctx *c;
+	int i;
 
 	lock(&isched.l);
 	/*
@@ -93,6 +96,25 @@ claimctx(void)
 		unlock(&isched.l);
 		return pctxs[0];	/* == &_pctx, already in pctxs[] */
 	}
+	/*
+	 * A context an interpreter gave up when it parked.
+	 *
+	 * Contexts used to be claimed once and held for the life of the
+	 * kproc, so the pool only ever shrank: every blocking Dis system
+	 * call can spawn an interpreter (see release()), and with the
+	 * collector running continuously -smp 4 boots reached all 64 and
+	 * started sharing register files, which is the one thing the pool
+	 * exists to prevent.  An interpreter needs a context while it
+	 * interprets, not while it sleeps.
+	 */
+	for(i = 0; i < npctx; i++)
+		if(pctxs[i]->owner == nil){
+			c = pctxs[i];
+			c->owner = up;
+			ctxreused++;
+			unlock(&isched.l);
+			return c;
+		}
 	if(npctxused >= MAXPCTX){
 		static int said;
 
@@ -916,6 +938,41 @@ vmacquire(void)
 			}
 		}
 	}
+}
+
+/*
+ * Give the context back where an interpreter parks with no work.
+ *
+ * The caller holds isched.l, which claimctx() also takes, and
+ * vmrelease() has already flushed the local queue -- so the context
+ * holds nothing and another interpreter can have it.  It is taken again
+ * the instant this process is scheduled, before anything else touches
+ * curP: the first version of this reclaimed at the top of the loop,
+ * which is after vmacquire(), and an interpreter with no context ran
+ * against the shared defpctx and pushed its placeholder Prog onto it --
+ * "delrunq: prog 0 was on another context's queue" in 11 boots of 12,
+ * with panics to match.
+ */
+static void
+releasectx(void)
+{
+	Pctx *c;
+
+	if((c = (Pctx*)up->pctx) == nil)
+		return;
+	if(c->runhd != nil || c->inxec || c->inchan || c->curprog != nil)
+		return;		/* not idle after all; keep it */
+	c->owner = nil;
+	up->pctx = nil;
+	/*
+	 * curP must stop naming it here, not at the next sched(): another
+	 * interpreter can claim this context immediately, and currun() is
+	 * curP->runhd -- so a stale curP would hand this process somebody
+	 * else's current program for the length of a blocking system call.
+	 * defpctx is what a process with no context uses anyway.
+	 */
+	curP = defpctx;
+	ctxreleased++;
 }
 
 /*
@@ -1995,6 +2052,8 @@ static int chainok(Prog*);
 void
 addrun(Prog *p)
 {
+	if(up != nil && up->pctx == nil && up->type != Unknown)
+		ctxnone++;	/* INSTRUMENTATION: queueing with no context */
 	/*
 	 * MULTICORE INSTRUMENTATION - temporary.  A Prog made runnable
 	 * with a broken frame chain was broken while it sat blocked, by
@@ -2223,6 +2282,8 @@ acquire(void)
 {
 	Prog *p;
 
+	if(up->pctx == nil && up->type != Unknown)
+		up->pctx = claimctx();	/* given up in release(); see claimctx() */
 	vmacquire();
 
 	if(up->type == Interp) {
@@ -2309,6 +2370,19 @@ release(void)
 	unlock(&isched.l);
 
 	vmrelease();
+	/*
+	 * And the context, for the same reason it is given up at the park
+	 * point: this process is about to block in a Dis system call and
+	 * will not interpret again until acquire().  Holding one across a
+	 * blocking call is what kept the high-water mark at 50 to 64 even
+	 * once parking returned them -- an interpreter in a syscall never
+	 * reaches the park point.  vmrelease() above has flushed the local
+	 * queue, so the context holds nothing.  acquire() takes one again
+	 * before anything touches curP.
+	 */
+	lock(&isched.l);
+	releasectx();
+	unlock(&isched.l);
 	wakeidle();
 
 	if(spawn)
@@ -2626,8 +2700,11 @@ vmachine(void*)
 				isched.nidle++;
 				up->state = Queueing;
 				up->pc = getcallerpc(&r);
+				releasectx();	/* isched.l held; see claimctx() */
 				unlock(&isched.l);
 				sched();
+				if(up->pctx == nil)	/* before anything uses curP */
+					up->pctx = claimctx();
 			} else
 				unlock(&isched.l);
 			vmacquire();
@@ -3199,6 +3276,8 @@ stalldump(void)
 		print("stall: cpu%d ticks %lud proc %d\n", i, (ulong)mm->ticks,
 			mm->proc != nil ? mm->proc->pid : -1);
 	}
+	print("stall: contexts reused %lud, released %lud, queued with none"
+		" %lud\n", ctxreused, ctxreleased, ctxnone);
 	print("stall: gcsema locked %d head %d gcstw %d by %d npctx %d"
 		" phase %d\n",
 		gcsema.locked, gcsema.head != nil ? gcsema.head->pid : -1,
