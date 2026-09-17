@@ -893,6 +893,97 @@ which are not.  The table above credits the flash-able part and keeps
 the kernel pool floor as measured, which is the right side to err on but
 is not the same as having measured a pre-decoded kernel, because there
 is not one yet.
+.NH 2
+Is 254244 the floor?  No, and here is what is left in it
+.PP
+Categorising the whole of the minimal kernel's 181848 of
+.CW data
+plus
+.CW bss ,
+every byte accounted:
+.DS
+.CW "  90112  debug arrays (freehist + track)"
+.CW "  48164  everything else"
+.CW "  24856  C string literals (.string)"
+.CW "  16420  kmesg log buffer"
+.CW "   1584  Dis module tables"
+.CW "    712  root filesystem"
+.DE
+The third line is the one not yet counted anywhere above, and it is the
+same problem as the root file system: 24856 bytes of C string literals \-
+print formats, error messages, device names \- that the Plan 9 linkers
+put in the data segment, so
+.CW os/inferno/armv7m/l.s:/^_datacopy
+copies them into RAM although nothing ever writes one.  Whatever change
+emits the root read-only should emit these read-only too, and it is the
+same 24856 bytes off the RAM either way.
+.PP
+Below that the items are small and there is no third big one:
+.CW mntalloc
+8248,
+.CW cmsdkuart
+4416, the 4096 boot stack, the 4096
+.CW Mach ,
+.CW xlists
+2600, then nothing above 2112.
+.PP
+.CW sizeof(Proc)
+being 2740 is worth one look, since the
+.CW Proc
+array is
+.CW NPROC
+of them.  What is big inside it is fixed-size arrays sized by constants
+in
+.CW os/inferno/port/portdat.h :
+.CW "Label errlab[NERR]"
+with
+.CW NERR
+64,
+.CW errbuf0
+and
+.CW errbuf1
+at
+.CW ERRMAX
+each,
+.CW "genbuf[128]" ,
+and
+.CW "note[NNOTE]" .
+A board that will never nest 64
+.CW waserror()
+levels can cut
+.CW NERR
+and
+.CW NNOTE ,
+and the saving multiplies by
+.CW NPROC .
+.PP
+So the cuts that remain, none of them yet built: the string literals to
+flash (24856), the load-time Dis constants to flash behind an
+immortal-object convention (35200 of the 68224 heap), and
+.CW NERR / NNOTE
+against
+.CW NPROC
+(a few kilobytes).  Together they would take the 254244 to roughly 190K.
+.NH 3
+The part that is not understood
+.PP
+The honest gap is the kernel pool floor: 78208 bytes in 343 allocations
+with the minimal configuration and nothing loaded but a 512-byte init.
+Four kernel stacks at
+.CW KSTACK
+4K are 16384 of it.  The other 62K is not itemised \- it is
+.CW Chan ,
+.CW Osenv ,
+.CW Pgrp
+and the rest of the namespace, the device reset and init allocations, the
+osinit module, and the pools' own per-block headers and quanta rounding
+.CW ( os/inferno/port/alloc.c:/^poolalloc
+rounds every request up by
+.CW BHDRSIZE
+and the pool quantum, which over 343 blocks is not nothing).  It is now
+the largest single term in the budget and the only one nobody has looked
+inside.  Anything further than the 190K above should start there rather
+than with more trimming of what is already measured.
 .NH 1
 What is left
 .IP 1.
