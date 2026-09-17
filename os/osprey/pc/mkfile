@@ -1,20 +1,56 @@
-CONF=pc
-CONFLIST=pc pcf pccpuf
-EXTRACOPIES=
-#EXTRACOPIES=lookout boundary	# copy to these servers on install
+MKSHELL=rc
+<../../../mkconfig
 
-objtype=386
-</$objtype/mkfile
+CONF=u386
+CONFLIST=u386
+
+SYSTARG=Osprey
+OBJTYPE=386
+objtype=$OBJTYPE
+<$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
+
+FLAVOR=Osprey
+FLAVDIR=$ROOT/os/$FLAVOR
+TARGDIR=$ROOT/$FLAVOR
+PORTDIR=$FLAVDIR/port
+IPDIR=$FLAVDIR/ip
+BOOTDIR=$FLAVDIR/boot
+PCDIR=$FLAVDIR/pc
+TARGETLIB=$ROOT/$FLAVOR/$OBJTYPE/lib
+PORTLIB=$FLAVDIR/kernlib
+DEVCONF=$PORTDIR
+INSTALLDIR=$ROOT/$FLAVOR/$OBJTYPE
+KERNELSHELL=rc
+# The policy directory carries its own lib.h, error.h, portdat.h and
+# portfns.h for a future native port, and its headers include one another
+# by plain name.  The adapter is therefore compiled with the policy
+# directory on the include path and the port directory off it.
+POLICYCFLAGS=$CFLAGS -I$FLAVDIR/policy -I$PORTDIR
+CFLAGS=$CFLAGS -I$PORTDIR -I$IPDIR
 p=9
+
+default:V: $p$CONF
 
 # must match mem.h
 KTZERO=0xF0100020
 APBOOTSTRAP=0xF0007000
 REBOOTADDR=0x11000
 
-DEVS=`{rc ../port/mkdevlist $CONF}
+DEVS=`{$KERNELSHELL $DEVCONF/mkdevlist $CONF}
 
-PORT=\
+# The microkernel drops the name-space, process-group and file cluster;
+# the reduced list is chosen by CONF below.  What the remaining port
+# code still references from the cut sources is stubbed in upc64's own
+# port section.
+PORTOBJCUT=pgrp.$O sysfile.$O sysproc.$O syscallfmt.$O chan.$O cache.$O auth.$O rdb.$O
+# The Plan 9 personality's image - two megabytes of it - is linked only
+# into the configurations that load one.  p9progimg.c holds it and
+# p9progstub.c stands in its place elsewhere; p9progimg.c says why.
+# No configuration here loads a Plan 9 personality's image, so the stub
+# stands in for it always; p9progimg.c says what the two are.
+P9PROGOBJ=p9progstub.$O
+
+PORTOBJALL=\
 	alarm.$O\
 	alloc.$O\
 	allocb.$O\
@@ -45,6 +81,13 @@ PORT=\
 	tod.$O\
 	xalloc.$O\
 	userinit.$O\
+	$P9PROGOBJ\
+	kerncore.$O\
+	ospreyrt.$O\
+
+# Every configuration here is a microkernel one, so the cut is always
+# made: the name space, the process groups and the file cluster go.
+PORTOBJ=`{for o in $PORTOBJALL; do echo $o; done | grep -vxF -e pgrp.$O -e sysfile.$O -e sysproc.$O -e syscallfmt.$O -e chan.$O -e cache.$O -e auth.$O -e rdb.$O}
 
 OBJ=\
 	l.$O\
@@ -61,44 +104,37 @@ OBJ=\
 	$CONF.root.$O\
 	$CONF.rootc.$O\
 	$DEVS\
-	$PORT\
+	$PORTOBJ\
 
 LIB=\
-	/$objtype/lib/libmemlayer.a\
-	/$objtype/lib/libmemdraw.a\
-	/$objtype/lib/libdraw.a\
-	/$objtype/lib/libip.a\
-	/$objtype/lib/libsec.a\
-	/$objtype/lib/libmp.a\
-	/$objtype/lib/libc.a\
-	/$objtype/lib/libfis.a\
-	/$objtype/lib/libaml.a\
-	/$objtype/lib/libdtracy.a\
+	$TARGETLIB/libospreykern.a\
+	$TARGETLIB/libaml.a\
+	$TARGETLIB/libosprey.a\
+	$ROOT/Inferno/$OBJTYPE/lib/libsec.a\
+	$ROOT/Inferno/$OBJTYPE/lib/libmp.a\
+	$ROOT/Inferno/$OBJTYPE/lib/libfis.a\
+	$ROOT/Inferno/$OBJTYPE/lib/libkern.a\
 
-ETHER=`{echo devether.c ether*.c | sed 's/\.c/.'$O'/g'}
-AUDIO=`{echo devaudio.c audio*.c | sed 's/\.c/.'$O'/g'}
-VGA=`{echo devvga.c screen.c vga*.c | sed 's/\.c/.'$O'/g'}
-SDEV=`{echo sd*.c | sed 's/\.c/.'$O'/g'}
+$TARGETLIB/libospreykern.a:V:
+	{ cd $PORTLIB; mk install; }
+
+$TARGETLIB/libosprey.a:V:
+	{ cd $FLAVDIR/lib; mk install; }
+
+$TARGETLIB/libaml.a:V:
+	{ cd $FLAVDIR/libaml; mk install; }
+
+ETHER=`{cd $PCDIR; echo devether.c ether*.c | sed 's/\.c/.'$O'/g'}
+AUDIO=`{cd $PCDIR; echo devaudio.c audio*.c | sed 's/\.c/.'$O'/g'}
+VGA=`{cd $PCDIR; echo devvga.c screen.c vga*.c | sed 's/\.c/.'$O'/g'}
+SDEV=`{cd $PCDIR; echo sd*.c | sed 's/\.c/.'$O'/g'}
 
 $p$CONF:	$OBJ $CONF.$O $LIB
-	$LD -o $target -T$KTZERO -l $prereq
-	size $target
-
-# don't strip the gzipped kernels -- too frustrating when that's all you have!
-$p%.gz:D:	$p%
-	gzip -9 <$p$stem >$p$stem.gz
-
-
-# pcflop and pccd need all the space they can get
-9pcflop.gz:D: 9pcflop
-	strip -o /fd/1 9pcflop | gzip -9 >9pcflop.gz
-
-9pccd.gz:D: 9pccd
-	strip -o /fd/1 9pccd | gzip -9 >9pccd.gz
-
+	$LD $LDFLAGS -o $target -T$KTZERO -R4096 -l $prereq
+	$KSIZE $target
 
 install:V:	$p$CONF
-	cp $p$CONF /$objtype/
+	cp $p$CONF $INSTALLDIR/
 
 install.%:V:	$p$CONF
 	@{
@@ -108,56 +144,23 @@ install.%:V:	$p$CONF
 	cp $p$CONF /n/$stem/$p$CONF
 	}
 
-<../boot/bootmkfile
-<../port/portmkfile
-<|../port/mkbootrules $CONF
+# No rules to import the machine layer, where pc64's mkfile has them.
+# pc64 keeps its own machine sources and borrows the drivers from this
+# directory, so it copies the headers it needs and compiles what it does
+# not have locally; here the machine layer IS this directory, the
+# default rules compile it, and mkfilelist - which lists what a build
+# directory must import and not what it already has - answers with
+# nothing at all.  An empty answer makes an empty regular expression,
+# which mk reports as "missing operand for", and that is what those
+# rules do when the two directories are the same one.
 
-$ETHER: 			../port/etherif.h ../port/netif.h
-$AUDIO:				../port/audioif.h
-ether8003.$O ether8390.$O:	ether8390.h
-etheryuk.$O:			yukdump.h
-$VGA mouse.$O:			screen.h /sys/include/memdraw.h
-vgavesa.$O:			/386/include/ureg.h
-devfloppy.$O: 			floppy.h
-mp.$O:				apbootstrap.i
-apic.$O archmp.$O mp.$O:	mp.h
-squidboy.$O:			mp.h
-$SDEV pmmc.$O:			../port/sd.h
-sd53c8xx.$O:			sd53c8xx.i
-sdiahci.$O:			ahci.h ../port/led.h
-devaoe.$O sdaoe.$O:		../port/aoe.h
-sdvirtio10.$O:			../port/virtio10.h
-main.$O:			rebootcode.i
-wavelan.$O:			wavelan.c ../pc/wavelan.c ../pc/wavelan.h ../port/etherif.h ../port/netif.h
-etherwavelan.$O:		etherwavelan.c ../pc/wavelan.h
-devusb.$O usbuhci.$O usbohci.$O usbehci.$O usbehcipc.$O usbxhci.$O: ../port/usb.h
-usbehci.$O usbehcipc.$O:	usbehci.h
-trap.$O main.$O:		/sys/include/tos.h
-uartaxp.$O:			uartaxp.i
-ether8169.$O:			../port/ethermii.h
-etherdp83820.$O:		../port/ethermii.h
-etheri225.$O:			../port/ethermii.h
-etherigbe.$O:			../port/ethermii.h
-ethervgbe.$O:			../port/ethermii.h
-ethervt6102.$O:			../port/ethermii.h
-ethervt6105m.$O:		../port/ethermii.h
-etherm10g.$O:			etherm10g2k.i etherm10g4k.i
-etherwpi.$O:			../port/wifi.h
-etherrt2860.$O: 		../port/wifi.h
-ethervirtio10.$O:		../port/virtio10.h
-l.$O rebootcode.$O apbootstrap.$O:	mem.h
-pcipc.$O pcibios.$O:		../port/pci.h io.h
-virtio10pc.$O:			../port/virtio10.h
-
-initcode.out:		init9.$O initcode.$O /$objtype/lib/libc.a
-	$LD -l -R1 -s -o $target $prereq
-
-rebootcode.out:		rebootcode.$O
-	$LD -l -R4 -s -o $target -T$REBOOTADDR -H3 $prereq
-
-apbootstrap.out:	apbootstrap.$O
-	$LD -l -R4 -s -o $target -T$APBOOTSTRAP -H3 $prereq
-
+# The three generated .i files, kept as 9front wrote them.  They need
+# Plan 9's own aux/na and xd, which this host does not have, so they have
+# never been made here and the drivers that want them are in no
+# configuration.  They are here because pc64's mkfile says "cd $PCDIR &&
+# mk sd53c8xx.i" for them: without a rule of that name in this file, that
+# line would find the pattern rule it came from and recur, which is a
+# worse answer than "aux/na: not found".
 sd53c8xx.i:	sd53c8xx.n
 	aux/na $prereq > $target
 
@@ -175,26 +178,218 @@ etherm10g%.i:	etherm10g%.fw
 	 echo '};'
 	} > $target
 
+<$BOOTDIR/bootmkfile
+<$PORTDIR/portmkfile
+<|$KERNELSHELL $PORTDIR/mkbootrules $CONF
+
+l.$O rebootcode.$O apbootstrap.$O:	mem.h
+
+$ETHER: 			$PORTDIR/etherif.h $PORTDIR/netif.h
+$AUDIO:				$PORTDIR/audioif.h
+ether8003.$O ether8390.$O:	ether8390.h
+etheryuk.$O:			yukdump.h
+$VGA mouse.$O:			screen.h $TARGDIR/include/memdraw.h
+vgavesa.$O:			$TARGDIR/386/include/ureg.h
+
+mp.$O:				mp.h apbootstrap.i
+apic.$O squidboy.$O:		mp.h
+archmp.$O archacpi.$O:		mp.h
+
+sd53c8xx.$O:			$PCDIR/sd53c8xx.i
+$PCDIR/sd53c8xx.i:		$PCDIR/sd53c8xx.n
+	cd $PCDIR && mk sd53c8xx.i
+
+etherm10g.$O:			$PCDIR/etherm10g2k.i $PCDIR/etherm10g4k.i
+$PCDIR/etherm10g%.i:		$PCDIR/etherm10g%.fw
+	cd $PCDIR && mk etherm10g$stem.i
+
+$SDEV pmmc.$O:			$PORTDIR/sd.h
+sdiahci.$O:			ahci.h
+devaoe.$O sdaoe.$O:		$PORTDIR/aoe.h
+sdvirtio10.$O:			$PORTDIR/virtio10.h
+main.$O:			rebootcode.i
+
+devusb.$O usbuhci.$O usbohci.$O usbehci.$O usbehcipc.$O usbxhci.$O: $PORTDIR/usb.h
+usbehci.$O usbehcipc.$O:	usbehci.h
+
+trap.$O main.$O:		$TARGDIR/include/tos.h
+
+ether8169.$O:			$PORTDIR/ethermii.h
+etherdp83820.$O:		$PORTDIR/ethermii.h
+etheri225.$O:			$PORTDIR/ethermii.h
+etherigbe.$O:			$PORTDIR/ethermii.h
+ethervgbe.$O:			$PORTDIR/ethermii.h
+ethervt6102.$O:			$PORTDIR/ethermii.h
+ethervt6105m.$O:		$PORTDIR/ethermii.h
+
+etherwpi.$O:			$PORTDIR/wifi.h
+etherrt2860.$O: 		$PORTDIR/wifi.h
+
+ethervirtio10.$O:		$PORTDIR/virtio10.h
+
+pcipc.$O:	$PORTDIR/pci.h io.h
+virtio10pc.$O:	$PORTDIR/virtio10.h
+
+initcode.out:		init9.$O initcode.$O $TARGETLIB/libc.a
+	$LD -l -R1 -s -o $target $prereq
+
+# userinit.c embeds the boot programs as .i images; rebuild it when they change.
+#
+# The Plan 9 personality is two megabytes of them, and only four
+# configurations run it.  Carrying it in the other three cost them that
+# much of their image for nothing, and it was not free: 9pc64 grew past
+# the conventional memory below 8MB that the EFI loader claims its load
+# region from, and the loader halted with "the region the kernel links at
+# is not free".  So the image is compiled in only where it is used, and
+# ospreyloadp9 panics by name in a kernel built without it rather than
+# loading a stub.
+userinit.$O:	initcode.i userprog.i
+
+p9progimg.$O:	p9prog.i
+
+# userprog.i (the file-server container) and p9prog.i (the Plan 9
+# personality) are built by the scripts in cmd/p9: they compile against
+# the user headers, add the 9P server and its marshalling, supply the
+# libc members the host linker cannot read, and truncate to
+# header+text+data.  The generic %.i:D:%.out rule would instead run od
+# over a kernel-header build with none of that, so give them explicit
+# rules that run the scripts.  init9.$O is the entry a flat-loaded
+# program takes (one read-only text segment, no libc data to store into);
+# init9prog.$O is the entry a program with a data segment of its own
+# takes, which also gives libc its Tos and its private words.
+userprog.i:	init9.$O $ROOT/os/osprey/cmd/p9/buildserver.sh \
+		$ROOT/os/osprey/cmd/p9/srv9p.c $ROOT/os/osprey/cmd/p9/srv9p.h \
+		$ROOT/os/osprey/pc64/userregtorture.s \
+		$ROOT/os/osprey/port/userprog.c
+	sh $ROOT/os/osprey/cmd/p9/buildserver.sh
+
+p9prog.i:	init9.$O $ROOT/os/osprey/cmd/p9/build.sh \
+		$ROOT/os/osprey/cmd/p9/main.c $ROOT/os/osprey/cmd/p9/p9shim.c \
+		$ROOT/os/osprey/cmd/p9/dev9ploop.c $ROOT/os/osprey/cmd/p9/ring9p.c $ROOT/os/osprey/cmd/p9/p9pairsrv.c \
+		$ROOT/os/osprey/cmd/p9/p9file.c $ROOT/os/osprey/cmd/p9/p9srv.c $ROOT/os/osprey/cmd/p9/p9buddy.c \
+		$ROOT/os/osprey/port/devpipe.c $ROOT/os/osprey/port/devsrv.c $ROOT/os/osprey/cmd/p9/nsdat.h $ROOT/os/osprey/cmd/p9/dat.h \
+		$ROOT/os/osprey/cmd/p9/p9linuxfile.c linuxprog.i legacyprog.i faultprog.i catprog.i execprog.i shprog.i kbdsrvprog.i drawsrvprog.i rioprog.i prog2.i libcatprog.i libwcprog.i libnsprog.i rioprogp9.i libshprog.i libgenprog.i libdrawprog.i libthreadprog.i relocprog.i $ROOT/os/osprey/cmd/p9/p9exec.c $ROOT/os/osprey/cmd/p9/devtime.c $ROOT/os/osprey/cmd/p9/devnote.c $ROOT/os/osprey/cmd/p9/devinput.c $ROOT/os/osprey/cmd/p9/devdup.c $ROOT/os/osprey/cmd/p9/p9proc.c $ROOT/os/osprey/cmd/p9/p9lib.h $ROOT/os/osprey/cmd/p9/blkvirtio.c $ROOT/os/osprey/cmd/p9/devlfs.c $ROOT/os/osprey/cmd/p9/xcall.s $ROOT/os/osprey/cmd/p9/pipfsrv.c $ROOT/os/osprey/cmd/p9/p9ip.c $ROOT/os/osprey/cmd/p9/p9sched.c $ROOT/os/osprey/cmd/p9/p9kbd.c $ROOT/os/osprey/ip/loopbackmedium.c $ROOT/os/osprey/ip/ospreymedium.c
+	sh $ROOT/os/osprey/cmd/p9/build.sh
+
+# The four legacy programs link libc9.a - the C library this tree builds
+# itself from the 9front source vendored in 9front/src, with its own 6c.
+# The import is pinned and does not change under us, so the script that
+# builds the ten libraries is the prerequisite.
+$ROOT/9front/amd64/lib-src/libc9.a:	$ROOT/os/osprey/cmd/p9/build9front.sh
+	sh $ROOT/os/osprey/cmd/p9/build9front.sh
+
+catprog.i:	init9prog.$O init9tos.$O $ROOT/9front/amd64/lib-src/libc9.a $ROOT/os/osprey/cmd/p9/buildcat.sh \
+		$ROOT/os/osprey/cmd/p9/catp9.c
+	sh $ROOT/os/osprey/cmd/p9/buildcat.sh
+
+execprog.i:	init9prog.$O init9tos.$O $ROOT/9front/amd64/lib-src/libc9.a $ROOT/os/osprey/cmd/p9/buildexec.sh \
+		$ROOT/os/osprey/cmd/p9/execp9.c
+	sh $ROOT/os/osprey/cmd/p9/buildexec.sh
+
+shprog.i:	init9prog.$O init9tos.$O $ROOT/9front/amd64/lib-src/libc9.a $ROOT/os/osprey/cmd/p9/buildsh.sh \
+		$ROOT/os/osprey/cmd/p9/shp9.c
+	sh $ROOT/os/osprey/cmd/p9/buildsh.sh
+
+prog2.i:	$ROOT/os/osprey/cmd/p9/buildprog2.sh \
+		$ROOT/os/osprey/cmd/p9/prog2p9.c $ROOT/os/osprey/cmd/p9/p9lib.h
+	sh $ROOT/os/osprey/cmd/p9/buildprog2.sh
+
+libcatprog.i:	$ROOT/os/osprey/cmd/p9/buildlibcat.sh \
+		$ROOT/os/osprey/cmd/p9/p9crt.c $ROOT/os/osprey/cmd/p9/p9cons.s $ROOT/os/osprey/cmd/p9/catp9.c $ROOT/os/osprey/cmd/p9/p9lib.h
+	sh $ROOT/os/osprey/cmd/p9/buildlibcat.sh
+
+libdrawprog.i:	$ROOT/os/osprey/cmd/p9/buildlibdraw.sh $ROOT/os/osprey/cmd/p9/drawlibp9.c \
+		$ROOT/os/osprey/cmd/p9/p9crt.c $ROOT/os/osprey/cmd/p9/p9cons.s $ROOT/os/osprey/cmd/p9/p9lib.h
+	sh $ROOT/os/osprey/cmd/p9/buildlibdraw.sh
+
+relocprog.i:	$ROOT/os/osprey/cmd/p9/buildreloc.sh $ROOT/os/osprey/cmd/p9/relocp9.c \
+		$ROOT/os/osprey/cmd/p9/p9crt.c $ROOT/os/osprey/cmd/p9/p9cons.s $ROOT/os/osprey/cmd/p9/p9lib.h
+	sh $ROOT/os/osprey/cmd/p9/buildreloc.sh
+
+libthreadprog.i:	$ROOT/os/osprey/cmd/p9/buildlibthread.sh $ROOT/os/osprey/cmd/p9/libthreadp9.c \
+		$ROOT/os/osprey/cmd/p9/threadmain9.c \
+		$ROOT/os/osprey/cmd/p9/p9crt.c $ROOT/os/osprey/cmd/p9/p9cons.s $ROOT/os/osprey/cmd/p9/p9lib.h
+	sh $ROOT/os/osprey/cmd/p9/buildlibthread.sh
+
+libwcprog.i:	$ROOT/os/osprey/cmd/p9/buildlibwc.sh \
+		$ROOT/os/osprey/cmd/p9/p9crt.c $ROOT/os/osprey/cmd/p9/p9cons.s $ROOT/os/osprey/cmd/p9/wcp9.c $ROOT/os/osprey/cmd/p9/p9lib.h
+	sh $ROOT/os/osprey/cmd/p9/buildlibwc.sh
+
+rioprogp9.i:	$ROOT/os/osprey/cmd/p9/buildrio.sh \
+		$ROOT/os/osprey/cmd/p9/p9crt.c $ROOT/os/osprey/cmd/p9/p9cons.s $ROOT/os/osprey/cmd/p9/threadmain9.c $ROOT/os/osprey/cmd/p9/p9lib.h
+	sh $ROOT/os/osprey/cmd/p9/buildrio.sh
+
+libnsprog.i:	$ROOT/os/osprey/cmd/p9/buildlibns.sh \
+		$ROOT/os/osprey/cmd/p9/p9crt.c $ROOT/os/osprey/cmd/p9/p9cons.s $ROOT/os/osprey/cmd/p9/nsp9.c $ROOT/os/osprey/cmd/p9/p9lib.h
+	sh $ROOT/os/osprey/cmd/p9/buildlibns.sh
+
+libshprog.i:	$ROOT/os/osprey/cmd/p9/buildlibsh.sh \
+		$ROOT/os/osprey/cmd/p9/p9crt.c $ROOT/os/osprey/cmd/p9/p9cons.s $ROOT/os/osprey/cmd/p9/shlib.c $ROOT/os/osprey/cmd/p9/p9lib.h
+	sh $ROOT/os/osprey/cmd/p9/buildlibsh.sh
+
+libgenprog.i:	$ROOT/os/osprey/cmd/p9/buildlibgen.sh \
+		$ROOT/os/osprey/cmd/p9/p9crt.c $ROOT/os/osprey/cmd/p9/p9cons.s $ROOT/os/osprey/cmd/p9/genp9.c $ROOT/os/osprey/cmd/p9/p9lib.h
+	sh $ROOT/os/osprey/cmd/p9/buildlibgen.sh
+
+# The servers this tree builds itself, as boot files.  Their binaries
+# come from build9bin.sh, which links them against the source-built
+# 9front libraries; init9main.$O is their entry, an ordinary main().
+kbdsrvprog.i:	init9main.$O init9tos.$O $ROOT/9front/amd64/lib-src/libc9.a \
+		$ROOT/os/osprey/cmd/p9/build9bin.sh $ROOT/os/osprey/cmd/p9/build9prog.sh \
+		$ROOT/os/osprey/cmd/draw/kbd.c
+	sh $ROOT/os/osprey/cmd/p9/build9prog.sh kbdsrv
+
+rioprog.i:	init9main.$O init9tos.$O $ROOT/9front/amd64/lib-src/libc9.a \
+		$ROOT/os/osprey/cmd/p9/build9bin.sh $ROOT/os/osprey/cmd/p9/build9prog.sh \
+		$ROOT/9front/src/cmd/rio/rio.c $ROOT/9front/src/cmd/rio/wind.c \
+		$ROOT/9front/src/cmd/rio/fsys.c $ROOT/9front/src/cmd/rio/xfid.c
+	sh $ROOT/os/osprey/cmd/p9/build9prog.sh rio
+
+drawsrvprog.i:	init9main.$O init9tos.$O $ROOT/9front/amd64/lib-src/libc9.a \
+		$ROOT/os/osprey/cmd/p9/build9bin.sh $ROOT/os/osprey/cmd/p9/build9prog.sh \
+		$ROOT/os/osprey/cmd/draw/main.c $ROOT/os/osprey/cmd/draw/devdraw.c \
+		$ROOT/os/osprey/cmd/draw/kshim.c $ROOT/os/osprey/cmd/draw/cursor.c
+	sh $ROOT/os/osprey/cmd/p9/build9prog.sh drawsrv
+
+legacyprog.i:	init9prog.$O init9tos.$O $ROOT/9front/amd64/lib-src/libc9.a $ROOT/os/osprey/cmd/p9/buildlegacy.sh \
+		$ROOT/os/osprey/cmd/p9/legacyp9.c
+	sh $ROOT/os/osprey/cmd/p9/buildlegacy.sh
+
+faultprog.i:	init9prog.$O init9tos.$O $ROOT/9front/amd64/lib-src/libc9.a $ROOT/os/osprey/cmd/p9/buildfault.sh \
+		$ROOT/os/osprey/cmd/p9/faultp9.c
+	sh $ROOT/os/osprey/cmd/p9/buildfault.sh
+
+linuxprog.i:	$ROOT/os/osprey/cmd/p9/buildlinux.sh $ROOT/os/osprey/cmd/p9/linuxlegacy.c
+	sh $ROOT/os/osprey/cmd/p9/buildlinux.sh
+
+userprog.out:		init9.$O userprog.$O $TARGETLIB/libc.a
+	$LD -l -R1 -s -o $target $prereq
+
+$O.rebootcode:		rebootcode.$O
+	$LD -l -R1 -s -o $target -T$REBOOTADDR $prereq
+rebootcode.out:		$O.rebootcode
+	tail -c +41 < $prereq > $target
+
+$O.apbootstrap:		apbootstrap.$O
+	$LD -l -R1 -s -o $target -T$APBOOTSTRAP $prereq
+apbootstrap.out:	$O.apbootstrap
+	tail -c +41 < $prereq > $target
+
+sd53c8xx.i:	sd53c8xx.n
+	aux/na $prereq > $target
+
 acid:V:
-	8c -a -w -I. i8253.c>acid
+	$CC -a -w main.c>acid
 
-%.checkether:VQ:
-	for (i in ether*.c){
-		x=`{echo $i | sed 's/\.c//'}
-		if(! ~ $x ether8390 && ! grep -s '^	'^$x^'([ 	]|$)' $stem)
-			echo $x not included in $stem
-	}
-	exit 0
+%.clean:V:
+	rm -f $stem.c [9bz]$stem [9bz]$stem.gz boot$stem.* $O.rebootcode $O.apbootstrap $PCHEADERS
 
-%.checkvga:VQ:
-	for (i in vga*.c){
-		x=`{echo $i | sed 's/\.c//'}
-		if(! ~ $x vga vgax vgasavage && ! grep -s '^	'^$x^'([ 	]|$)' $stem)
-			echo $x not included in $stem
-	}
-	exit 0
+# The adapter embeds the policy layer's structures, so it must be rebuilt
+# whenever one of them changes; without this the library and the adapter
+# disagree about where a field is and the kernel walks wild pointers.
+POLICYHFILES=`{echo $FLAVDIR/policy/*.h}
 
-checkdist:VQ:
-	for(i in pcdisk pcflop)
-	for(j in checkvga checkether)
-		mk $i.$j
+ospreyrt.$O:	$FLAVDIR/adapter/ospreyrt.c $PORTDIR/osprey.h $POLICYHFILES
+	$CC $POLICYCFLAGS $FLAVDIR/adapter/ospreyrt.c
+
+devosprey.$O:	$PORTDIR/osprey.h

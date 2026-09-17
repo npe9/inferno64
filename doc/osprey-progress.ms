@@ -6029,6 +6029,67 @@ put in its boot filesystem before it needs anything else, and that is a
 .CW libc
 for the object type, which this tree does not have.
 .PP
+That paragraph was written about the full personality, and it is right
+about it and wrong about the microkernel, which is what should have been
+tried first: a microkernel configuration names no boot filesystem at all
+\-
+.CW upc64
+embeds one small program with
+.CW addbootfile
+and mounts nothing \- so it wants no
+.CW paqfs
+and no
+.CW factotum .
+.CW os/osprey/pc/mkfile
+is written in this tree's form now, taken from
+.CW pc64 's
+and pointed at 386, with one configuration in it:
+.CW u386 ,
+which is
+.CW upc64
+for the other object type.  Sixty-two objects of that kernel build,
+.CW l.8 ,
+.CW main.8
+and
+.CW devosprey.8
+among them: the machine layer, the port layer, the policy layer and the
+adapter all compile for 386 with this tree's own
+.CW 8c .
+.PP
+What stops it now is smaller than a userland and is named exactly.  The
+two programs a configuration embeds \-
+.CW initcode
+and
+.CW userprog ,
+the file server's \- are linked against
+.CW Osprey/386/lib/libc.a ,
+which does not exist, and
+.CW os/osprey/boot/bootsys.s ,
+which is the system-call glue those programs use, is written in
+.CW MOVQ
+and
+.CW RARG
+and is amd64 only.  So what a 386 microkernel needs is not a userland: it
+is a
+.CW libc
+for the object type and eight lines of syscall glue, for two programs of
+a few hundred bytes.  Where the paragraph above says "before it needs
+anything else", the measurement says the kernel builds first and wants
+those two things last.
+.PP
+One thing about the mkfile is worth writing down.  pc64 keeps its own
+machine sources and borrows the drivers from
+.CW os/osprey/pc ,
+so it has rules to copy the headers it needs and compile what it does not
+have locally, and it finds them with
+.CW mkfilelist ,
+which lists what a build directory must import rather than what it
+already has.  For 386 the machine layer IS that directory, so
+.CW mkfilelist
+answers with nothing, an empty answer makes an empty regular expression,
+and mk says "missing operand for".  Those rules are simply not there in
+the 386 mkfile.
+.PP
 The far one is a machine of another family.
 .CW os/inferno
 has riscv64 boards \-
