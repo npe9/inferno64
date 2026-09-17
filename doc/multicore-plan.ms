@@ -6135,3 +6135,50 @@ this and the one that would catch it coming back: whole from the last
 instruction and short from
 .CW p->reg
 is this fault's exact signature.
+.NH 2
+Contexts are not reclaimed, and recycling them at the park point is not the fix
+.PP
+The remaining
+.CW parallelvm=1
+.CW "-smp 4"
+failures are all in boots that printed
+.CW "claimctx: pool of 64 exhausted, sharing" ,
+which is two interpreters on one Dis register file \(em the one thing
+the per-context register file exists to prevent.  The pool only ever
+shrinks: a context is claimed when a kproc first interprets and held for
+the life of the kproc, while
+.CW release()
+spawns another interpreter whenever work is queued and none is idle.
+With the collector running continuously that reaches all 64.
+.PP
+The obvious shape \(em give the context back where an interpreter parks
+with no work, take one again when it wakes, as Go hands back a P around
+a blocking call \(em was built and measured, and it is worse:
+.TS
+center;
+l r r r.
+	panics	chantest FAIL	stray placeholder
+recycling at the park point	9 of 12 boots	2	11 of 12 boots
+.TE
+.PP
+Two reasons it is not that simple, both visible in the failures.  A
+parked interpreter still owns a placeholder Prog and an
+.CW iprog ,
+and
+.CW curP
+becomes
+.CW defpctx
+while it sleeps \(em which is shared, so anything queued through it
+between waking and re-claiming lands on a context another process owns.
+And
+.CW enterquantum()
+parks on
+.CW ctxr[c->idx] ,
+one Rendez per context, so a context handed to another interpreter
+carries a sleeper's wake with it.
+.PP
+Recorded rather than kept: the change is reverted.  The pool limit is
+pre-existing and is now the nearest wall at
+.CW "-smp 4" ,
+and closing it means giving an interpreter an identity that survives
+losing its context, not moving the claim.
