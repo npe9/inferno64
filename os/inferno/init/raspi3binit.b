@@ -156,29 +156,37 @@ netdebug()
 	# interesting case is a DHCP exchange that gets no answer, and
 	# waiting for the address it would have brought means logging
 	# nothing at all, which is what happened on the first router change.
+	# /net/log is one file, not a directory: reading it drains the log
+	# and writing it is the control channel.  Asking for /net/log/ctl,
+	# which is what a Plan 9 network device would have, got "file does
+	# not exist" on every one of 600 tries and logged nothing at all.
 	cfd: ref Sys->FD;
 	for(i := 0; i < 600; i++){
-		cfd = sys->open("/net/log/ctl", Sys->ORDWR);
+		cfd = sys->open("/net/log", Sys->ORDWR);
 		if(cfd != nil)
 			break;
 		sys->sleep(100);
 	}
 	if(cfd == nil){
-		sys->print("NETLOG-NONE /net/log/ctl: %r\n");
+		sys->print("NETLOG-NONE /net/log: %r\n");
 		return;
 	}
-	if(sys->fprint(cfd, "set ip icmp udp tcp ipmsg udpmsg") < 0){
+	# icmp and tcp only.  With udp and ipmsg on, other hosts' broadcast
+	# chatter filled the log faster than it could be printed and the
+	# reader hit its own limit within seconds of boot, so the one thing
+	# being looked for - a ping arriving - never appeared.
+	if(sys->fprint(cfd, "set icmp tcp") < 0){
 		sys->print("NETLOG-FAIL set: %r\n");
 		return;
 	}
 	spawn netcounters();
 	fd := sys->open("/net/log", Sys->OREAD);
 	if(fd == nil){
-		sys->print("NETLOG-NONE /net/log: %r\n");
+		sys->print("NETLOG-NONE read /net/log: %r\n");
 		return;
 	}
 	buf := array[2048] of byte;
-	for(i = 0; i < 400; i++){
+	for(i = 0; i < 20000; i++){
 		n := sys->read(fd, buf, len buf);
 		if(n <= 0)
 			break;
@@ -192,7 +200,10 @@ netdebug()
 netcounters()
 {
 	last := "";
-	for(i := 0; i < 40; i++){
+	lastarp := "";
+	lasticmp := "";
+	lasttx := "";
+	for(i := 0; i < 1200; i++){
 		fd := sys->open("/net/ipifc/0/status", Sys->OREAD);
 		if(fd == nil)
 			return;
@@ -213,6 +224,65 @@ netcounters()
 		if(now != last)
 			sys->print("NETCOUNT %s\n", now);
 		last = now;
+		# and what the ethernet server did with the frames the kernel
+		# handed it: the two counts either side of the bulk endpoint
+		tx := sys->open("/net.alt/ether/stats", Sys->OREAD);
+		if(tx != nil){
+			tb := array[512] of byte;
+			tn := sys->read(tx, tb, len tb);
+			tx = nil;
+			ts := "";
+			if(tn > 0){
+				(nil, tf) := sys->tokenize(string tb[0:tn], " \t\r\n");
+				for(tl2 := tf; tl2 != nil && tl tl2 != nil; tl2 = tl tl tl2)
+					ts += " " + hd tl2 + " " + hd tl tl2;
+			}
+			if(ts != lasttx && ts != "")
+				sys->print("NETTX%s\n", ts);
+			lasttx = ts;
+		}
+		# What ICMP itself saw: InMsgs counts echo requests that reached
+		# the protocol, OutMsgs the replies it handed back to IP.  A ping
+		# that is answered in the ARP table but not in ICMP is either not
+		# reaching icmpiput or not leaving after it does, and these two
+		# numbers say which.
+		st := sys->open("/net/icmp/stats", Sys->OREAD);
+		if(st != nil){
+			sb := array[1024] of byte;
+			sn := sys->read(st, sb, len sb);
+			st = nil;
+			ss := "";
+			if(sn > 0){
+				(nil, sf) := sys->tokenize(string sb[0:sn], " \t\r\n");
+				for(sl := sf; sl != nil && tl sl != nil; sl = tl tl sl)
+					if(hd sl == "InMsgs:" || hd sl == "OutMsgs:"
+					|| hd sl == "InErrors:" || hd sl == "CsumErrs:"
+					|| hd sl == "LenErrs:" || hd sl == "HlenErrs:")
+						ss += " " + hd sl + hd tl sl;
+			}
+			if(ss != lasticmp && ss != "")
+				sys->print("NETICMP%s\n", ss);
+			lasticmp = ss;
+		}
+		# Who the board thinks it can reach: an ARP table that stays
+		# empty says nothing on this wire ever answered, which is a
+		# different failure from packets that leave and are dropped.
+		arp := sys->open("/net/arp", Sys->OREAD);
+		if(arp != nil){
+			ab := array[2048] of byte;
+			an := sys->read(arp, ab, len ab);
+			arp = nil;
+			s := "";
+			if(an > 0)
+				s = string ab[0:an];
+			if(s != lastarp){
+				if(s == "")
+					sys->print("NETARP empty\n");
+				else
+					sys->print("NETARP %s", s);
+			}
+			lastarp = s;
+		}
 		sys->sleep(3000);
 	}
 }
@@ -248,14 +318,20 @@ kupdate()
 		sys->print("KUPDATE-FAIL want \"net!addr!port /path\" in kupdate.txt\n");
 		return;
 	}
-	addrs: list of string;
+	# built back to front and then reversed, so they are tried in the
+	# order they are written: the first address in the file is the one
+	# the board should be talking to now.
+	rev: list of string;
 	path := "";
 	for(l := f; l != nil; l = tl l){
 		if(tl l == nil)
 			path = hd l;
 		else
-			addrs = hd l :: addrs;
+			rev = hd l :: rev;
 	}
+	addrs: list of string;
+	for(l = rev; l != nil; l = tl l)
+		addrs = hd l :: addrs;
 	# Wait for the IP stack to exist and to have an address.  This runs
 	# from a process spawned while the network is still coming up, and
 	# dialling before /net is bound fails with "file does not exist",

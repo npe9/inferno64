@@ -61,7 +61,7 @@ Etherusb: module {
 # level down: root -> "ether" dir -> clone/addr/N.  bind is
 # "ether <mnt>/ether".  conversation n occupies three consecutive paths
 # from Cbase + n*3 (dir, ctl, data).
-Qroot, Qether, Qclone, Qaddr: con big iota;
+Qroot, Qether, Qclone, Qaddr, Qstats: con big iota;
 Cbase: con big 16;
 
 Nqueue: con 64;		# frames held per conversation when nobody is reading
@@ -85,6 +85,18 @@ debug := 0;		# raised by -d
 txc: chan of array of byte;
 promisc := 0;
 ndrop := 0;
+
+# Where a frame that never reached the wire was lost.  The kernel counts
+# what it hands the medium (ipifc pktout); these count what this server
+# did with it, so a packet that leaves the IP stack and is never seen by
+# the other end can be placed on one side of the bulk endpoint or the
+# other.
+ntx := 0;		# frames handed to transmit()
+nqueued := 0;		# frames accepted onto the transmit channel
+nwrit := 0;		# bulk writes that wrote the whole frame
+nwerr := 0;		# bulk writes that did not
+nrx := 0;		# frames delivered from the device
+lasterr := "";		# what the last failed write said
 
 # USB request type bits, standard requests and descriptor types
 Rh2d: con 0;
@@ -215,6 +227,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	tree.create(Qroot, dir("ether", Sys->DMDIR|8r555, Qether));
 	tree.create(Qether, dir("clone", 8r666, Qclone));
 	tree.create(Qether, dir("addr", 8r444, Qaddr));
+	tree.create(Qether, dir("stats", 8r444, Qstats));
 
 	rxc := chan of array of byte;
 	txc = chan[Ntx] of array of byte;
@@ -851,9 +864,12 @@ txproc()
 		if(debug)
 			sys->print("etherusb: tx write %d\n", len f);
 		if(sys->write(bout.dfd, f, len f) != len f){
+			nwerr++;
+			lasterr = sys->sprint("%r");
 			sys->print("etherusb: %s: transmit: %r\n", dev.name);
 			continue;
 		}
+		nwrit++;
 		if(debug)
 			sys->print("etherusb: tx done %d\n", len f);
 		if(len f % outmaxpkt == 0)
@@ -924,6 +940,12 @@ handle(gm: ref Tmsg): string
 		(cn, fk) := convof(fid.path);
 		if(fid.path == Qaddr){
 			srv.reply(styxservers->readstr(m, macstr()));
+			return nil;
+		}
+		if(fid.path == Qstats){
+			srv.reply(styxservers->readstr(m, sys->sprint(
+				"ntx %d\nnqueued %d\nnwrit %d\nnwerr %d\nndrop %d\nnrx %d\nlasterr %s\n",
+				ntx, nqueued, nwrit, nwerr, ndrop, nrx, lasterr)));
 			return nil;
 		}
 		if(fk == 1){			# ctl read -> conversation number
@@ -1080,11 +1102,12 @@ transmit(cn: int, frame: array of byte)
 		sys->print("ETHERTX conn %d %d bytes type %#4.4x\n", cn, len frame, t);
 		return;
 	}
+	ntx++;
 	f := array[len frame] of byte;
 	f[0:] = frame;
 	alt {
 	txc <-= f =>
-		;
+		nqueued++;
 	* =>
 		ndrop++;		# transmit queue full: drop, as a NIC would
 	}
@@ -1094,6 +1117,7 @@ transmit(cn: int, frame: array of byte)
 # that asked for all), answering a waiting read or queueing it
 deliver(f: array of byte)
 {
+	nrx++;
 	t := (int f[12] << 8) | int f[13];
 	if(debug)
 		sys->print("etherusb: rx %d bytes type %#4.4x\n", len f, t);
