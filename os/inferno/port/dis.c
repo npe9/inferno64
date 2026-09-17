@@ -268,9 +268,23 @@ void	safepoint(void);	/* defined below, with the rest of the handshake */
  * is a throughput bug and not a hang, which is the kind that survives a
  * batch.
  */
+/*
+ * *tearlock=0 on the boot line turns the exclusion off while leaving the
+ * rootset guard in place, so one kernel measures both halves.  With it
+ * on, rootset() should never meet a Prog mid-teardown and its guard
+ * should never fire; with it off, the guard's count IS the incidence of
+ * the case -- which is what the panics were.  Without this, "the guard
+ * never fired" cannot be told from "the case never arose", and the
+ * exclusion cannot be shown to be what prevented it.  Temporary, like
+ * *parallelvm and *chanlock.
+ */
+int tearlock = 1;
+
 static void
 entertear(void)
 {
+	if(tearlock == 0)
+		return;
 	for(;;){
 		curP->intear = 1;
 		coherence();
@@ -286,6 +300,8 @@ entertear(void)
 static void
 leavetear(void)
 {
+	if(tearlock == 0)
+		return;
 	curP->intear = 0;
 	coherence();
 	safepoint();
