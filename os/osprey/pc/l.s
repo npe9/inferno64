@@ -1007,6 +1007,85 @@ TEXT touser(SB), $0
 	IRETL
 
 /*
+ * The port layer's two ways into user mode, as pc64/l.s has them: the
+ * same interrupt return as touser, with the entry and the stack given.
+ *
+ *	touserv(argv, sp, entry)
+ *
+ * enters at entry with the stack at sp, which the caller puts two words
+ * below the argument vector.  On amd64 argv travels in RARG; here the
+ * entry (init9.c's _main(char **argv)) is an ordinary 8c function and
+ * reads its argument at 4(SP), above the word a return address would
+ * have.  So that word is written with argv before the return: it is the
+ * second of the two words the caller leaves, and the caller has just
+ * written the vector and the Tos into the same stack, so the page is
+ * there.  The general registers are cleared, so that nothing the kernel
+ * had in them is handed to the program.
+ */
+TEXT touserv(SB), $0
+	MOVL	argv+0(FP), AX
+	MOVL	sp+4(FP), BX
+	MOVL	entry+8(FP), CX
+	MOVL	AX, 4(BX)			/* the entry's argument */
+	JMP	_touserret(SB)
+
+/*
+ *	touserat(sp)
+ *
+ * enters at the loaded program's own entry, which the loader left in
+ * ospreyuserentry (an ELF binary enters at e_entry), with the stack at
+ * sp and nothing written into it: that program's start reads argc and
+ * the vectors from the stack as the kernel laid them.
+ */
+TEXT touserat(SB), $0
+	MOVL	sp+0(FP), BX
+	MOVL	ospreyuserentry(SB), CX
+	JMP	_touserret(SB)
+
+/* the return itself: BX the user stack, CX the entry */
+TEXT _touserret(SB), $0
+	PUSHL	$(UDSEL)			/* old ss */
+	PUSHL	BX				/* old sp */
+	PUSHL	$0x200				/* old flags: interrupts on */
+	PUSHL	$(UESEL)			/* old cs */
+	PUSHL	CX				/* old pc */
+	MOVL	$(UDSEL), AX
+	MOVW	AX, DS
+	MOVW	AX, ES
+	MOVW	AX, GS
+	MOVW	AX, FS
+	XORL	AX, AX
+	XORL	BX, BX
+	XORL	CX, CX
+	XORL	DX, DX
+	XORL	SI, SI
+	XORL	DI, DI
+	XORL	BP, BP
+	IRETL
+
+/*
+ *	taskswitch(from, to)
+ *
+ * devosprey.c's task switch, as pc64/l.s has it: store this task's stack
+ * pointer and the pc it resumes at into from, and resume to.  A Label is
+ * a stack pointer and a pc, and nothing else needs keeping, because 8c,
+ * like 6c, holds nothing in a register across a call.  On 386 m and up
+ * are not registers either, so there is less to leave alone than on
+ * amd64.  mmu.c has a static taskswitch of its own, which loads the
+ * TSS; a static C name is its file's alone, so the two do not meet.
+ */
+TEXT taskswitch(SB), $0
+	MOVL	from+0(FP), AX
+	MOVL	to+4(FP), BX			/* where we are going, first */
+	MOVL	SP, 0(AX)			/* store this task's SP */
+	MOVL	0(SP), CX			/* and the PC it resumes at */
+	MOVL	CX, 4(AX)
+	MOVL	0(BX), SP			/* the other task's SP */
+	MOVL	4(BX), CX			/* its PC, onto its own stack */
+	MOVL	CX, 0(SP)
+	RET
+
+/*
  * Interrupt/exception handling.
  * Each entry in the vector table calls either _strayintr or _strayintrx depending
  * on whether an error code has been automatically pushed onto the stack

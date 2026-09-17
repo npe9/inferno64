@@ -31,7 +31,7 @@ dev
 
 misc
 	headless
-	pci		pcipc
+	pci		pcipc pcibios bios32
 # archgeneric first: the fallback the others inherit unset entries from.
 	archgeneric	i8259 i8253
 	archacpi	mp apic squidboy ec

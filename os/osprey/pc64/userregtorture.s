@@ -225,3 +225,11 @@ _urbad11:
 _urdone:
 	ADDQ	$64, SP
 	RET
+
+/*
+ * How many registers the loop above compares, so the caller can say so
+ * without knowing which object type it was built for.
+ */
+TEXT userregcount(SB), 1, $0
+	MOVQ	$11, AX
+	RET

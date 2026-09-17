@@ -614,3 +614,88 @@ dbgpc(Proc *p)
 
 	return ureg->pc;
 }
+
+/*
+ * The adapter's view of a trap frame, for the port layer, which does not
+ * know the Ureg's shape: pc64/trap.c has the same six.  On 386 they are
+ * the same reads of different fields, with two differences, each noted
+ * where it falls.
+ */
+uintptr
+uregpc(void *a)
+{
+	return a == nil ? 0 : ((Ureg*)a)->pc;
+}
+
+int
+uregsize(void)
+{
+	return sizeof(Ureg);
+}
+
+uintptr
+uregax(void *a)
+{
+	return ((Ureg*)a)->ax;
+}
+
+int
+uregok(void *nureg)
+{
+	return okaddr((uintptr)nureg-BY2WD, BY2WD+sizeof(Ureg), 0);
+}
+
+/*
+ * A frame that came from elsewhere - a migrating process's - made safe
+ * to return to user mode through.  The selectors and the flags are
+ * forced as on amd64.  The pc is not masked: amd64 masks it to the
+ * canonical user half because a non-canonical pc faults in the kernel,
+ * on the return itself, and a 386 has no such addresses.  A pc in the
+ * kernel's half is returned to like any other and faults in user mode,
+ * on a supervisor page, which is the process's fault and not the
+ * kernel's.
+ */
+void
+uregsanitize(void *a)
+{
+	Ureg *u = a;
+
+	u->cs = UESEL;
+	u->ss = UDSEL;
+	u->ds = UDSEL;
+	u->es = UDSEL;
+	u->fs = UDSEL;
+	u->gs = UDSEL;
+	u->flags = (u->flags & 0x00ff) | 0x200;	/* the arithmetic flags are the process's; interrupts on */
+}
+
+/*
+ * The return value of a child forkchild made: forkchild above put the
+ * child's frame 2*BY2WD above its sched.sp, as pc64's does.
+ */
+void
+forkchildret(Proc *p, uintptr v)
+{
+	Ureg *cureg;
+
+	cureg = (Ureg*)(p->sched.sp+2*BY2WD);
+	cureg->ax = v;
+}
+
+/*
+ * rt_sigreturn for the Linux personality, as pc64's.  u386 does not
+ * carry that personality, but the port code that calls this is always
+ * linked, and the body is the same: the frame saved at delivery put
+ * back.  A 386 Ureg is smaller than the 256 bytes saved.
+ */
+void
+ospreylinuxsigreturn(void)
+{
+	Ureg *ureg;
+
+	ureg = up->dbgreg;
+	if(!up->linuxinsig || ureg == nil)
+		return;
+	memmove(ureg, up->linuxsigsave, sizeof(Ureg));
+	up->linuxinsig = 0;
+}

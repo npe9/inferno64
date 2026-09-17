@@ -453,3 +453,15 @@ notefpsave(Proc *p)
 	}
 	return p->fpsave->link;
 }
+
+/*
+ * The port layer leaves kernel floating point before it enters user
+ * mode, because pc64 lets the kernel use the FPU (fpukenter) and keeps
+ * a state for it apart from the process's.  This 386 layer, as 9front's,
+ * never uses the FPU in the kernel: there is no kernel state to put
+ * down, so there is nothing to do.
+ */
+void
+fpukexit(Ureg*)
+{
+}

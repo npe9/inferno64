@@ -199,6 +199,15 @@ typedef struct {
 	ulong	gs;
 	ulong	ldt;			/* selector for task's LDT */
 	ulong	iomap;			/* I/O map base address + T-bit */
+	/*
+	 * The I/O-permission bitmap, as pc64's Tss carries it: iomap's
+	 * upper half is its offset from the TSS base, and the TSS limit
+	 * (sizeof(Tss), in mmu.c) takes it in.  9front's 386 put iomap
+	 * past the limit, denying every port to every process; this
+	 * denies them by default instead, and iogrant opens them.
+	 */
+	uchar	iobm[128];		/* ports 0..0x3ff: bit 0 allows, 1 denies */
+	uchar	iobmterm;		/* the required trailing all-ones byte */
 } Tss;
 
 

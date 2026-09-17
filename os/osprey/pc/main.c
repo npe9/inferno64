@@ -384,3 +384,113 @@ reboot(void *entry, void *code, ulong size)
 
 	rebootjump((ulong)entry & ~0xF0000000UL, PADDR(code), size);
 }
+
+/*
+ * The adapter's console pieces, as pc64/main.c has them: the port layer
+ * (userinit.c's smark, and xpwrite in the microkernel) calls kdebugmark
+ * and kdebugputs on whichever machine it was built for.  The 8250 at
+ * 0x3F8 is the same part on a 386 as on an amd64, so this is that code
+ * unchanged.
+ */
+/*
+ * Last-resort console: a direct polled write to COM1, owing nothing to
+ * the uart driver or the console device.  This is the debug putchar seL4
+ * keeps - the one output that must work before any driver task exists
+ * and after the console has moved to userspace.  It is not the fast
+ * path; it is the path that must never depend on anything, so it drives
+ * the 8250 by hand rather than through consuart.
+ */
+enum {
+	Com1	= 0x3F8,	/* COM1 base */
+	Thr	= 0,		/* transmit holding (DLAB=0) */
+	Dll	= 0,		/* divisor latch low (DLAB=1) */
+	Dlm	= 1,		/* divisor latch high (DLAB=1) */
+	Ier	= 1,		/* interrupt enable */
+	Fcr	= 2,		/* FIFO control */
+	Lcr	= 3,		/* line control */
+	Lsr	= 5,		/* line status */
+	Thre	= 0x20,		/* transmit holding empty */
+	Dlab	= 0x80,		/* divisor latch access */
+};
+
+/*
+ * Configure COM1 for 115200 8N1 the first time the last-resort console
+ * is used, so it owes nothing to firmware or the uart driver having set
+ * the port up.  Idempotent: done once, guarded by a static flag.
+ */
+static void
+kdebugsetup(void)
+{
+	static int done;
+
+	if(done)
+		return;
+	done = 1;
+	outb(Com1+Ier, 0);		/* no interrupts: this is polled */
+	outb(Com1+Lcr, Dlab);		/* divisor latch */
+	outb(Com1+Dll, 1);		/* 115200 = 115200/1 */
+	outb(Com1+Dlm, 0);
+	outb(Com1+Lcr, 3);		/* 8 bits, no parity, 1 stop; DLAB off */
+	outb(Com1+Fcr, 0xC7);		/* enable and clear the FIFOs */
+}
+
+void
+kdebugputc(int c)
+{
+	int i;
+
+	kdebugsetup();
+	if(c == '\n')
+		kdebugputc('\r');
+	for(i = 0; i < 100000 && (inb(Com1+Lsr) & Thre) == 0; i++)
+		;
+	outb(Com1+Thr, c);
+}
+
+static Lock kdebuglock;
+
+/*
+ * A locked raw COM1 write for the boot marker (smark).  It shares
+ * kdebuglock with kdebugputs so the marker and the user tasks' console
+ * writes do not interleave, but it does NOT call kdebugsetup - that would
+ * disable COM1 interrupts, which is fatal to pc64's interrupt-driven
+ * console, and smark runs on every kernel.  It waits for the transmit
+ * register per byte, which is what keeps bytes from dropping.
+ */
+void
+kdebugmark(char *s, int n)
+{
+	int i;
+
+	lock(&kdebuglock);
+	while(n-- > 0){
+		for(i = 0; i < 100000 && (inb(0x3fd) & 0x20) == 0; i++)
+			;
+		outb(0x3f8, *s++);
+	}
+	unlock(&kdebuglock);
+}
+
+void
+kdebugputs(char *s, int n)
+{
+	extern uvlong kdebugputsbytes;
+	kdebugputsbytes += n;
+
+	/*
+	 * Serialise whole strings so the two user tasks' console writes do
+	 * not interleave: each waits for the UART per byte, and with both
+	 * writing at once their bytes would splice together mid-line, which
+	 * is legible to a person but splits a string a test greps for.
+	 *
+	 * Safe to lock here on this kernel: only the user write syscall
+	 * (xpwrite) reaches kdebugputs - panic and print take a different
+	 * path (putstrn -> screenputs), and the boot marker smark writes COM1
+	 * raw - so no panic or interrupt path waits on this lock, and the
+	 * per-byte wait it is held across is bounded.
+	 */
+	lock(&kdebuglock);
+	while(n-- > 0)
+		kdebugputc(*s++);
+	unlock(&kdebuglock);
+}

@@ -6198,6 +6198,125 @@ not that it is last: nothing after it has been attempted.  Where the
 paragraph above says "before it needs anything else", the measurement
 says the kernel builds first and wants its embedded programs after.
 .PP
+That was done, and so was what came after it, and the 386 microkernel
+now links and boots.
+.CW 9u386
+is 113280 bytes of text, and
+.CW scripts/osprey-check-micro386.py
+boots it under
+.CW qemu-system-i386 \-
+the 386 layer carries a multiboot header, so no ISO and no 9boot \- and
+applies the seven criteria
+.CW osprey-check-micro.py
+applies to upc64, read from the same lines: a task and not the Plan 9
+shell, four of four ring requests answered, the idle loop, a kernel
+task's teardown, the bare console, a select woken by the clock, a
+delegated open answered.  It adds an eighth, that the image is a 386
+a.out.  All eight pass, in about five seconds.  It is in the sweep.  What it does not reach is user mode:
+the microkernel boot enters none, on 386 as on amd64, so the pieces below
+that only a user program would run are linked and not yet exercised.
+.PP
+In the order the build met them:
+.IP \(bu
+.CW buildserver.sh
+takes the object type, and picks the toolchain, the kernel directory and
+the libc from it.  For amd64 the image it writes is byte for byte what it
+wrote before.  The 386 file server wanted much more libc than the boot
+programs did, and the list was found the same way, by linking and adding
+the file that defines each symbol still undefined: about thirty portable
+files, through fmt the floating point formatting as on amd64, libkern's
+386 64-bit arithmetic, three more syscall stubs, and
+.CW _tas ,
+the one piece of machine code, since 9front's libc here has only amd64's.
+.CW userprog.c
+asks its register check how many registers it compared, so it prints
+"eleven" and names
+.CW syscallentry
+on amd64, exactly as the user check reads, and "six" and
+.CW _syscallintr
+on 386, whose check is new: every register but AX, across
+.CW "INT $64" .
+The first way of writing that split the amd64 line into seven console
+writes instead of five, and xup64's user check then failed seven of its
+eleven, every time: the kernel said "double sleep" just after the file
+server began to select, and the console task reported slots changing
+between being filled and pushed.  Five writes, the same words, pass
+every time.  So the amd64 program makes exactly the calls it made
+before, and there is a race in the console hand-off or the select path
+that two more writes at that moment are enough to lose.  It is written
+down here and not fixed.
+.IP \(bu
+8c aborted on
+.CW devosprey.c
+with "out of fixed registers" \- an uvlong subtraction and division of
+two indexed fields, made inside an argument list, wants more than a 386
+has.  It left an empty object behind, which is how it hid.  The length
+is computed first now, on its own line.
+.IP \(bu
+The 386 kernel's rules for its three Osprey libraries ran
+.CW "mk install"
+without the object type, and each library's mkfile says amd64 unless
+told otherwise on the command line.  So they installed amd64 libraries,
+said they were up to date, and the 386 link took whatever 386 archives
+were left from August.  They pass the object type now.  Those archives,
+and
+.CW libsec ,
+.CW libmp
+and
+.CW libfis
+for 386, were all older than the opcode change and were rebuilt.
+.IP \(bu
+8l could not load
+.CW putdr :
+its move table has DR0, DR6 and DR7 and not DR1 to DR3.  They are added
+as 6l has them, and the six moves were assembled by 8l and by GNU as in
+32-bit mode and compared, byte for byte.
+.IP \(bu
+Then the adapter, which is what the plan is about: fifteen functions the
+port layer calls and only pc64 defined.  The Ureg readers,
+.CW forkchildret
+and
+.CW ospreylinuxsigreturn
+are pc64's with the 386 frame; the one difference is that
+.CW uregsanitize
+does not mask the pc, because a 386 has no non-canonical addresses to
+fault on the return.
+.CW fpukexit
+is empty, because this layer, like 9front's, never uses the FPU in the
+kernel.
+.CW iogrant
+needed the TSS to carry an I/O bitmap, which 9front's 386 did not \- it
+put the map past the TSS limit and so denied every port \- and
+.CW mmuswitch
+loads a process's.
+.CW kdebugputs
+and
+.CW kdebugmark
+are pc64's, the same 8250.
+.CW pcibiosinit
+was a line missing from
+.CW u386 ,
+which 9front's own
+.CW pc
+configuration has.  And in
+.CW l.s ,
+.CW taskswitch ,
+and
+.CW touserv
+and
+.CW touserat
+as interrupt returns: the first writes the argument vector where an 8c
+function reads its first argument, since on 386 there is no register it
+arrives in.
+.PP
+The library closure that said three more symbols were missing \-
+.CW _genrandomqlock ,
+.CW nsec ,
+.CW truerand
+\- counted every member of every archive; the linker takes only what is
+referenced, and did not want them.  The loader's own list, capped at
+twenty, was the right one.
+.PP
 One thing about the mkfile is worth writing down.  pc64 keeps its own
 machine sources and borrows the drivers from
 .CW os/osprey/pc ,

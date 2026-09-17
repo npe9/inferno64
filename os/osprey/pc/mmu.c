@@ -81,7 +81,9 @@ mmuinit(void)
 	m->tss = mallocz(sizeof(Tss), 1);
 	if(m->tss == nil)
 		panic("mmuinit: no memory for Tss");
-	m->tss->iomap = 0xDFFF<<16;
+	m->tss->iomap = ((uchar*)m->tss->iobm - (uchar*)m->tss)<<16;
+	memset(m->tss->iobm, 0xff, sizeof m->tss->iobm);	/* deny every port by default */
+	m->tss->iobmterm = 0xff;
 
 	/*
 	 * We used to keep the GDT in the Mach structure, but it
@@ -301,6 +303,12 @@ mmuswitch(Proc* proc)
 		taskswitch(proc->mmupdb->pa, (ulong)proc);
 	}else
 		taskswitch(PADDR(m->pdb), (ulong)proc);
+
+	/* the process's ports, or none: the bitmap is per processor */
+	if(proc->ioperm != nil)
+		memmove(m->tss->iobm, proc->ioperm, sizeof m->tss->iobm);
+	else
+		memset(m->tss->iobm, 0xff, sizeof m->tss->iobm);
 
 	memmove(&m->gdt[PROCSEG0], proc->gdt, sizeof(proc->gdt));
 	if((x = (ulong)proc->ldt) && (n = proc->nldt) > 0){
@@ -984,4 +992,28 @@ patwc(void *a, int n)
 		attr = (((PATWC&3)<<3) | ((PATWC&4)<<5) | ((PATWC&4)<<10));
 		*pte = (*pte & ~mask) | (attr & mask);
 	}
+}
+
+/*
+ * Open ports lo..hi to proc, as pc64's iogrant: the process keeps its
+ * own bitmap and mmuswitch loads it into the processor's TSS.
+ */
+void
+iogrant(Proc *proc, int lo, int hi)
+{
+	uchar *bm;
+	int port;
+
+	if(proc->ioperm == nil){
+		bm = mallocz(sizeof m->tss->iobm, 1);
+		if(bm == nil)
+			return;
+		memset(bm, 0xff, sizeof m->tss->iobm);	/* deny every port */
+		proc->ioperm = bm;
+	}
+	bm = proc->ioperm;
+	for(port = lo; port <= hi && port < 8*(int)sizeof m->tss->iobm; port++)
+		bm[port/8] &= ~(1 << (port & 7));
+	if(proc == up)
+		memmove(m->tss->iobm, bm, sizeof m->tss->iobm);
 }

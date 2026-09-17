@@ -106,6 +106,7 @@ oselect(int armoff, int narms)
 enum { Nsyscall = 100 };
 
 extern long userregtorture(long n, uvlong *badp);
+extern long userregcount(void);		/* how many it compares */
 
 /* the number, in decimal, into the end of buf; answers where it starts */
 static char*
@@ -156,11 +157,33 @@ regcheck(void)
 		 * "the registers survived" on its own says nothing about
 		 * how many calls were made.
 		 */
-		puts("osprey user: eleven registers survived ");
+		/*
+		 * Which object type this is shows only in what the loop
+		 * compared: eleven registers through syscallentry on
+		 * amd64, six through _syscallintr on 386.  The words are
+		 * chosen here, from the count, rather than stored, since
+		 * the program has no data segment to keep a table in.
+		 */
+		switch(userregcount()){
+		case 11:
+			puts("osprey user: eleven registers survived ");
+			break;
+		case 6:
+			puts("osprey user: six registers survived ");
+			break;
+		default:
+			puts("osprey user: ");
+			puts(putdec(vbuf, sizeof vbuf, (uvlong)userregcount()));
+			puts(" registers survived ");
+			break;
+		}
 		puts(putdec(nbuf, sizeof nbuf, bad));
 		puts(" of ");
 		puts(putdec(vbuf, sizeof vbuf, Nsyscall));
-		puts(" system calls, so syscallentry and forkret gave back every one they were not told to keep\n");
+		if(userregcount() == 6)
+			puts(" system calls, so _syscallintr and forkret gave back every one they were not told to keep\n");
+		else
+			puts(" system calls, so syscallentry and forkret gave back every one they were not told to keep\n");
 		return;
 	}
 	puts("osprey user: register ");

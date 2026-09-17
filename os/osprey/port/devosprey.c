@@ -5071,6 +5071,7 @@ ospreymigcall(int op, uvlong *arg, uvlong *ubuf)
 			qlock(&p->seglock);
 			for(i = 0; i < nseg; i++){
 				int type;
+				ulong npg;
 
 				if(ms[i].idx >= NSEG || ms[i].top <= ms[i].base)
 					continue;
@@ -5082,7 +5083,15 @@ ospreymigcall(int op, uvlong *arg, uvlong *ubuf)
 				type = (ms[i].type & ~Migshared);
 				/* a buddy image's data stays data, so that a page not carried is the buddy's to supply; other memory is bss, zero where nothing was carried */
 				type = type == SG_TEXT ? SG_TEXT : type == SG_STACK ? SG_STACK : (flags & Migimage) && type == SG_DATA ? SG_DATA : SG_BSS;
-				p->seg[ms[i].idx] = newseg(type, ms[i].base, (ms[i].top - ms[i].base)/BY2PG);
+				/*
+				 * The length first, on its own: on 386 the uvlong
+				 * subtraction and division of two indexed fields,
+				 * made inside the argument list, needs more registers
+				 * than 8c has, and it aborts with "out of fixed
+				 * registers" rather than compile it.
+				 */
+				npg = (ms[i].top - ms[i].base)/BY2PG;
+				p->seg[ms[i].idx] = newseg(type, ms[i].base, npg);
 				if(p->seg[ms[i].idx] != nil && type == SG_TEXT)
 					p->seg[ms[i].idx]->flushme = 1;	/* code is fetched from it: what exec marks a text segment with, and fault() insists on */
 			}
@@ -8538,11 +8547,8 @@ enum {
 };
 
 /*
- * The machine layer's, since a context is machine-shaped.  amd64 has
- * it; the 386 layer in os/osprey/pc has none, because nothing in this
- * tree assembles that file - 8a rejects the FXSAVE, FXRSTOR and
- * LDMXCSR in it - so putting one there would be a line nobody could
- * prove.  Osprey builds for amd64.
+ * The machine layer's, since a context is machine-shaped: pc64/l.s and
+ * pc/l.s each have one.
  */
 extern void taskswitch(Label*, Label*);
 

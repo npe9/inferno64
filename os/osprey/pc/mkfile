@@ -115,47 +115,74 @@ LIB=\
 	$ROOT/Inferno/$OBJTYPE/lib/libfis.a\
 	$ROOT/Inferno/$OBJTYPE/lib/libkern.a\
 
-# The libc the two embedded boot programs link against, and nothing
-# else: this is not 9front's libc for the object type.  9front's libc
-# here carries 9sys, amd64, fmt and port and no 386 machine directory,
-# so the whole archive cannot be built for 386 at all; what these two
-# programs want was measured instead, by linking them with no libc and
-# reading what was undefined.  initcode wants five symbols: bind, open,
-# exec and _exits, which are the syscall stubs, and rerrstr - which
-# wants errstr, another stub, and utfecpy, which wants memccpy.  Three
-# portable files and the stubs.
+# The libc the embedded programs link against, and nothing else: this is
+# not 9front's libc for the object type.  9front's libc here carries
+# 9sys, amd64, fmt and port and no 386 machine directory, so the whole
+# archive cannot be built for 386 at all; what the programs want was
+# measured instead, by linking them against what there was and adding
+# the file that defines each symbol still undefined until none was.
+#
+# initcode wants five symbols: bind, open, exec and _exits, which are
+# the syscall stubs, and rerrstr - which wants errstr, another stub, and
+# utfecpy, which wants memccpy.  The file server (userprog.i) wants the
+# rest: the string, rune and fmt files, and through fmt the floating
+# point formatting, as it does on amd64 where it links the whole libc.
+# Three things in it are not portable C.  _tas is libctas.s here.  The
+# 64-bit arithmetic 8c calls out to (_divvu, _modvu, _vasop and the
+# rest) is libkern's 386 pair, vlrt-386.c and vlop-386.s, which include
+# nothing and so compile the same against either set of headers.  And
+# the syscall stubs are bootsys-386.s.
 #
 # The amd64 side takes these out of a real libc.a of 263 members; this
-# archive holds what is used and says so in its name being the same.  A
-# program that needs more will say which symbol, which is how this list
-# was arrived at and how it should grow.
-LIBCBOOT=bootsys.$O rerrstr.$O utfecpy.$O memccpy.$O
+# archive holds what is used and has the same name.  A program that
+# needs more will say which symbol, which is how this list was arrived
+# at and how it should grow.
+LIBCPORT=exits fabs frexp lock memccpy memcmp memmove memset muldiv nan\
+	pow10 rune strchr strcmp strcpy strlen strtod toupper utfecpy utflen\
+	ctype
+LIBCFMT=errfmt fltfmt fmt fmtfd fmtlock sprint
+LIBC9SYS=abort rerrstr write
+LIBCBOOT=bootsys.$O libctas.$O libcvlrt.$O libcvlop.$O\
+	${LIBCPORT:%=libcport-%.$O}\
+	${LIBCFMT:%=libcfmt-%.$O}\
+	${LIBC9SYS:%=libc9sys-%.$O}
 LIBCSRC=$ROOT/9front/src/libc
 LIBCINC=-I$ROOT/9front/src/include -I$ROOT/9front/386/include
 
 # The source is named rather than taken from $prereq: every $O in this
 # directory also depends on the kernel's headers, so $prereq is the
 # source and a dozen .h files, and 8c would be asked to compile those
-# too.  These three are compiled with 9front's includes and none of the
-# kernel's, the way buildserver.sh compiles the amd64 side.
-rerrstr.$O:	$LIBCSRC/9sys/rerrstr.c
-	$CC $LIBCINC -o $target $LIBCSRC/9sys/rerrstr.c
-utfecpy.$O:	$LIBCSRC/port/utfecpy.c
-	$CC $LIBCINC -o $target $LIBCSRC/port/utfecpy.c
-memccpy.$O:	$LIBCSRC/port/memccpy.c
-	$CC $LIBCINC -o $target $LIBCSRC/port/memccpy.c
+# too.  These are compiled with 9front's includes and none of the
+# kernel's, the way buildserver.sh compiles the amd64 side.  The prefix
+# names the directory, so a file name in two of them cannot collide.
+libcport-%.$O:	$LIBCSRC/port/%.c
+	$CC $LIBCINC -o $target $LIBCSRC/port/$stem.c
+libcfmt-%.$O:	$LIBCSRC/fmt/%.c
+	$CC $LIBCINC -o $target $LIBCSRC/fmt/$stem.c
+libc9sys-%.$O:	$LIBCSRC/9sys/%.c
+	$CC $LIBCINC -o $target $LIBCSRC/9sys/$stem.c
+libcvlrt.$O:	$ROOT/libkern/vlrt-386.c
+	$CC -o $target $ROOT/libkern/vlrt-386.c
+libcvlop.$O:	$ROOT/libkern/vlop-386.s
+	$AS -o $target $ROOT/libkern/vlop-386.s
 
 $TARGETLIB/libc.a:	$LIBCBOOT
+	rm -f $target
 	$AR $ARFLAGS $target $LIBCBOOT
 
+# The three libraries each say amd64 unless told otherwise, and only a
+# variable given on mk's command line overrides one set in a mkfile - the
+# environment does not - so the object type is passed there.  Without it
+# these rules installed the amd64 libraries, said they were up to date,
+# and the 386 kernel linked whatever 386 archives were left over.
 $TARGETLIB/libospreykern.a:V:
-	{ cd $PORTLIB; mk install; }
+	{ cd $PORTLIB; mk OBJTYPE=$OBJTYPE install; }
 
 $TARGETLIB/libosprey.a:V:
-	{ cd $FLAVDIR/lib; mk install; }
+	{ cd $FLAVDIR/lib; mk OBJTYPE=$OBJTYPE install; }
 
 $TARGETLIB/libaml.a:V:
-	{ cd $FLAVDIR/libaml; mk install; }
+	{ cd $FLAVDIR/libaml; mk OBJTYPE=$OBJTYPE install; }
 
 ETHER=`{cd $PCDIR; echo devether.c ether*.c | sed 's/\.c/.'$O'/g'}
 AUDIO=`{cd $PCDIR; echo devaudio.c audio*.c | sed 's/\.c/.'$O'/g'}
@@ -292,9 +319,9 @@ p9progimg.$O:	p9prog.i
 # takes, which also gives libc its Tos and its private words.
 userprog.i:	init9.$O $ROOT/os/osprey/cmd/p9/buildserver.sh \
 		$ROOT/os/osprey/cmd/p9/srv9p.c $ROOT/os/osprey/cmd/p9/srv9p.h \
-		$ROOT/os/osprey/pc64/userregtorture.s \
+		userregtorture.s $TARGETLIB/libc.a \
 		$ROOT/os/osprey/port/userprog.c
-	sh $ROOT/os/osprey/cmd/p9/buildserver.sh
+	sh $ROOT/os/osprey/cmd/p9/buildserver.sh $OBJTYPE
 
 p9prog.i:	init9.$O $ROOT/os/osprey/cmd/p9/build.sh \
 		$ROOT/os/osprey/cmd/p9/main.c $ROOT/os/osprey/cmd/p9/p9shim.c \
