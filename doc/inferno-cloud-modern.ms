@@ -1733,3 +1733,77 @@ is in
 .CW check-all.sh 's
 slow tier and is expected to fail; it is there to notice the day it
 stops failing.
+.NH 2
+An arm64 image that can do what the amd64 one does
+.PP
+Item 11 wants the same Dis binary on an amd64 and an arm64 instance
+sharing one namespace.  Checking what was actually there first: the
+virtarm64 root carried
+.CW mount
+and nothing else of the cloud work \(em no
+.CW cloudinit ,
+no
+.CW styxlisten ,
+no
+.CW export ,
+no
+.CW metricfs .
+The arm64 half of item 11 could not have run.
+.PP
+.CW os/inferno/virtarm64/virtarm64cloud
+is a second configuration in that directory, the way
+.CW pc64dev
+is beside
+.CW pc64 .
+The plain
+.CW virtarm64
+config is untouched, because the arm64 board is another session's work
+and a list of file names is exactly the kind of change that collides for
+no reason.
+.PP
+Verified on the booted image: it mounts
+.CW metricfs
+and reads
+.CW procs ,
+mounts
+.CW ndb/registry
+at
+.CW /mnt/registry ,
+and gets a writable
+.CW /usr/inferno/keyring
+from
+.CW memfs ,
+which is what
+.CW cloudauth
+needs.  The Compute Engine tarball builds from it \(em a 1 GiB disk to a
+2.0 MB archive.
+.PP
+.B "Two numbers worth having before the instances are rented."
+The image is
+.B 2.18 MB
+against pc64's 8.81, and it reaches a shell in
+.B 9.5 seconds
+against pc64's 17 to 20 on the same host.  Some of that gap is the
+emulator rather than the kernel \(em this host is arm64, so
+.CW qemu-system-aarch64
+is much closer to native than
+.CW qemu-system-x86_64
+emulating a foreign architecture \(em and the rest is that the pc64 root
+has grown to carry everything this branch has built.  It does mean item
+9's premise, "a 2.1 MB image with its root compiled in", is still true
+of one of the two images.
+.PP
+.B "One gap left, and it is in the init rather than the image."
+.CW virtarm64init
+does not mount
+.CW mntgen
+on
+.CW /n ,
+which pc64's
+.CW /dis/init
+does, so names under
+.CW /n
+do not appear on demand and a mount wants
+.CW "mount {mntgen} /n"
+first.  Noted rather than fixed: the init is shared with the plain
+configuration and belongs to the other session's board.
