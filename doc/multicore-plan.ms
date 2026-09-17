@@ -4796,3 +4796,67 @@ than the torn one that
 produced.  It is now the largest remaining
 .CW parallelvm=1
 fault and it is next.
+.NH 2
+Retraction: the 40x, and the regression that was not one
+.PP
+Two claims in the sections above are wrong and are withdrawn here rather
+than quietly edited, because how they went wrong is the useful part.
+.PP
+.B "The forty-fold parking gain is not supported."
+The table records 11 shell iterations against 442 across sixteen boots
+each and reads that as a ratio.  It is not one.
+.CW /dis/init 's
+loop is exactly 300 iterations, so the count a boot can produce is
+essentially 0, a small partial, or 300 \(em bimodal, not continuous.
+Broken out per boot:
+.TS
+center;
+l r r r r.
+	ran all 300	partial	never got there	total
+spins	0	7	9	11
+parks	1	1	14	442
+.TE
+.PP
+The 442 is one boot that got through the loop and one that got part way.
+The spinning kernel had
+.I more
+boots make some progress and none finish.  One boot of sixteen is not a
+throughput measurement, and "40x" was a ratio of two numbers that a
+single boot moves by a factor of thirty.
+.PP
+What the batch does support is narrower: no parking boot and no spinning
+boot differed on correctness \(em 0 FAIL, chantest near saturation on
+both at 373 and 358 lines of 384 \(em and one parking boot completed a
+loop no spinning boot completed.  That is suggestive and it is not a
+multiplier.
+.PP
+.B "The clock fix is not a regression."
+That was announced from an interim read of a running batch, at six boots,
+where the fixed-clock arm happened to show 0.  At seven and eight boots
+the two arms are 300 and 300, with chantest slightly ahead on the fixed
+side (182 lines and 20 completions against 140 and 14).  Same bimodal
+metric, same trap, and this time acted on: the batch was stopped and a
+change was written on the strength of it.
+.PP
+The change written on that strength \(em parking the mutator side of the
+handshake \(em still removes a real spin and is kept, but its
+justification is now "enterquantum() spins while a collection runs",
+which is true from the code, and not "the clock fix regressed", which
+was not measured.
+.NH 2
+The metric was never checked against what it stands for
+.PP
+This document has now caught four metrics measuring something other than
+their name, and wrote a rule after the third: read the code that
+produces the line before counting it.  The fourth was the rule's own
+author not applying it to the column he had been quoting all session.
+The check takes one command \(em what values can this count actually
+take? \(em and it was never run on
+.CW "sh: true"
+until the numbers stopped making sense.
+.PP
+The fix for the measurement, not just for the record: the shell loop is
+only continuous if it gets time to run, and chantest eats the window
+first.  Throughput comparisons need a timeout long enough for the loop
+to be the thing being measured, and the per-boot distribution has to be
+printed rather than the total.
