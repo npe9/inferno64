@@ -4530,6 +4530,25 @@ which only
 .CW keyring.c
 calls.  The handler guards the sleep and nothing else, which is worth
 saying rather than claiming a pre-existing bug it does not fix.
+.NH 2
+Two things the counters will not say
+.PP
+.CW stwwaits
+changed units.  Before this change it counted
+.CW sched()
+spins; after it, it counts 20ms naps.  "stw waits 56500" on the old
+kernel and "stw waits 12" on the new one are not the same quantity, and
+comparing them as though they were would make a change that removes
+waiting look like a change that removes work.  Throughput is the metric;
+the counters are colour on the new side only.
+.PP
+The watermark starts at zero, so the first successful
+.CW stoptheworld()
+prints a
+.CW stw:
+line even when the collector never had to wait at all.  The presence of
+the line is not evidence that anything parked \(em the parks count inside
+it is.
 .PP
 One thing this does not touch: a context waiting in
 .CW enterquantum()
