@@ -1640,6 +1640,17 @@ chanunlock(void)
 	 * is why it cannot happen above this line.  A killcomm() that opens
 	 * a region of its own pushes above nchpend and pops back to it, so
 	 * draining by index is safe against that nesting.
+	 *
+	 * One case reads oddly and is nonetheless right.  killcomm() drops
+	 * the region around swiprog(), and the chanunlock() that does so
+	 * drains too -- so entries this loop has not reached yet can be
+	 * freed there, in the middle of killcomm()'s own loop, rather than
+	 * here.  That is the same condition either way: the lock is
+	 * released and the depth is zero, which is the whole contract.
+	 * They are freed once, earlier, and this loop then finds nothing
+	 * left.  Recursion terminates because every entry is a distinct
+	 * Channel whose count has already reached zero and the graph is
+	 * finite.
 	 */
 	while(curP->nchpend > 0)
 		destroy(curP->chpend[--curP->nchpend]);
