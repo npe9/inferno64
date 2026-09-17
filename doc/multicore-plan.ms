@@ -4760,3 +4760,39 @@ thing it was standing in for \(em after "reached the shell" at
 and the iteration counts across kernels with different workloads.  The
 pattern is consistent enough to state as a rule: before a column is put
 in a table, read the code that produces the line it counts.
+.NH 2
+What is left failing at parallelvm=1
+.PP
+The lock A/B answered a second question it was not run to answer.  Both
+arms panicked at the same rate with the same signature \(em two boots of
+sixteen with the lock on, three with it off \(em and in every case a
+.CW "panic: page fault"
+preceded by the
+.CW "registers for"
+report.  Resolved against the kernel that produced it, the faulting PC
+is
+.CW rootset+0x87 ,
+with
+.CW rungc ,
+.CW collect
+and
+.CW vmachine
+above it: the collector faulting in its own root-set walk.
+.PP
+Two things follow.  The channel lock neither causes it nor fixes it,
+which is what a fault appearing at the same rate on both arms means.
+And chantest reported
+.I no
+wrong values on either arm \(em 0 FAIL in 32 boots \(em so the channel
+semantics are right whether or not the lock is there; what the lock
+prevents is the corruption that does not announce itself as a wrong
+value.
+.PP
+This is the same family as the rootset fault this document spends a
+chapter on, whose cause was found and fixed.  The residue is the one
+recorded there as undiagnosed: a stable mismatched SP/FP pair rather
+than the torn one that
+.CW handler()
+produced.  It is now the largest remaining
+.CW parallelvm=1
+fault and it is next.
