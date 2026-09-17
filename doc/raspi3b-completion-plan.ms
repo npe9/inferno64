@@ -3482,10 +3482,47 @@ and fails on
 is worth more than one that passes on both, because it is the only
 place the two readings can be told apart.
 .NH 2
+The board, with the fix, 17 September 2026
+.PP
+The Pi boots the merged kernel to an interactive shell, brings up its
+LAN9514, takes 192.168.8.105 by DHCP and answers its own ping.  Six
+hundred pings at one a second over ten minutes: 600 answered, none
+lost.  At the end the ethernet server's counters read 2261 IPv4 frames
+in, 8 dropped, none held and a read outstanding; 1546 frames
+transmitted with no error; and the interface 2253 in, 1464 out.  The
+watchdog that reports a stopped reader printed nothing.  Before the
+fix the same board stopped handing frames up within eighty seconds and
+never started again.
+.PP
+SD is right on silicon too, in the same boot:
+.CW SD-OK ,
+.CW SD-MULTI-OK ,
+.CW SD-CAP-OK
+against a card that reports 30228480 sectors,
+.CW SD-FS-CREATE-OK
+for a kfs reamed in the gap below the first partition, and
+.CW FAT-OK
+and
+.CW FAT-WRITE-OK
+through dossrv on the boot partition.
+.PP
+.B "And the board now updates itself."
+.CW kupdate()
+dialled the Mac's
+.CW styxlisten ,
+mounted it, fetched
+.CW kernel8.img
+and installed it over the one on the card, keeping the old one as
+.CW kernel8.bak :
+.CW "KUPDATE-OK 1627816 bytes installed" .
+The card has not had to move since.  That is the practical end of the
+bring-up loop this document opened with: a kernel can be built here and
+booted there without carrying anything.
+.NH 2
 Suggested order
 .PP
-Confirm the transmit-queue fix on the board, and with the network up,
-take the kernel updates over it rather than by carrying the card.  Then
+The transmit-queue fix is confirmed on the board and kernel updates
+come over the network.  Next, then:
 the peripheral checks that fail on silicon and pass on the models \(em
 AUX, I2S, AUXSPI, SMI and the BSC slave \(em each of which is a model
 this tree wrote and a part it has now met; then USB storage and the
