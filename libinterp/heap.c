@@ -61,6 +61,7 @@ void	(*heapmonitor)(int, void*, ulong);
  * destroy() below for what it is for.
  */
 int	(*gcstopped)(void);
+int	(*chandefer)(void*);	/* set by the kernel; see chanlock() in dis.c */
 static int statictype(Type*);		/* named below; used by destroy() */
 /*
  * Names for what statictype() returns, which is a 1-based index into
@@ -561,6 +562,27 @@ destroy(void *v)
 			abort();
 		}
 		if(n > 0)
+			return;
+		if(chandefer != nil && h->t == &Tchannel && chandefer(h))
+			/*
+			 * This is a channel, and a channel operation is in
+			 * progress on this executor.  Freeing it here runs
+			 * freechan() -> killcomm(), which wakes every prog
+			 * queued on the dying channel: for a prog in an alt
+			 * that means altgone() -> altdone(), which walks that
+			 * prog's whole alt and unmarks it from every channel
+			 * in it -- not just this one.  Called from inside a
+			 * channel operation, that mutates the very queues the
+			 * outer operation is midway through, with the handoff
+			 * half done.
+			 *
+			 * chandefer() keeps it alive and hands it to
+			 * chanunlock(), which frees it once the region is
+			 * closed.  Returning 1 without keeping a reference is
+			 * the same handover as the two below: the count is
+			 * already zero, so the collector will find it
+			 * unreachable and sweep it.
+			 */
 			return;
 		if(gcdepth > 64){
 			/*

@@ -306,6 +306,8 @@ stoptheworld(void)
 static void
 enterquantum(void)
 {
+	if(curP->inchan)
+		panic("enterquantum: channel region still open");
 	for(;;){
 		curP->inxec = 1;
 		coherence();
@@ -1015,13 +1017,19 @@ exprog(Prog *p, char *exc)
 {
 	switch(p->state) {
 	case Palt:
+		chanlock();		/* p is queued on every channel of its alt */
 		altdone(p->reg.s, p, nil, -1);
+		chanunlock();
 		break;
 	case Psend:
+		chanlock();
 		cqdelp(&p->chan->send, p);
+		chanunlock();
 		break;
 	case Precv:
+		chanlock();
 		cqdelp(&p->chan->recv, p);
+		chanunlock();
 		break;
 	case Pready:
 		break;
@@ -1098,13 +1106,19 @@ killprog(Prog *p, char *cause)
 
 	switch(p->state) {
 	case Palt:
+		chanlock();
 		altdone(p->reg.s, p, nil, -1);
+		chanunlock();
 		break;
 	case Psend:
+		chanlock();
 		cqdelp(&p->chan->send, p);
+		chanunlock();
 		break;
 	case Precv:
+		chanlock();
 		cqdelp(&p->chan->recv, p);
+		chanunlock();
 		break;
 	case Pready:
 		delrunq(p);
@@ -1315,16 +1329,36 @@ killcomm(Progq **q)
 	Prog *p;
 	Progq *f;
 
+	/*
+	 * This wakes every prog queued on a channel that has just become
+	 * garbage, which means touching run queues and -- for a prog in an
+	 * alt -- every other channel that alt names.  It therefore runs
+	 * inside the region, and opens one itself: its callers (freechan()
+	 * from chanunlock()'s drain, or from the collector's sweep) are all
+	 * at depth 0.  chandefer() in this file is what makes that true.
+	 */
+	chanlock();
 	for (f = *q; f != nil; f = *q) {
 		*q = f->next;
 		p = f->prog;
 		free(f);
 		if(p == nil)
-			return;
+			break;
 		p->ptr = nil;
 		switch(p->state) {
 		case Prelease:
+			/*
+			 * swiprog() posts a note, and postnote() qlocks:
+			 * a sleeping lock cannot be taken under a spinlock.
+			 * Dropping the region here is safe because this
+			 * channel's count has already reached zero -- nothing
+			 * can reach it to queue on it while the lock is down,
+			 * and the queue head has already been advanced past
+			 * this cell.
+			 */
+			chanunlock();
 			swiprog(p);
+			chanlock();
 			break;
 		case Psend:
 		case Precv:
@@ -1336,6 +1370,7 @@ killcomm(Progq **q)
 			break;
 		}
 	}
+	chanunlock();
 }
 
 /*
@@ -1438,6 +1473,114 @@ cblock(Prog *p)
  * Go has the same case and the same answer: a wakeup from an M with no
  * P goes on the global queue (globrunqput), not on a P's local one.
  */
+/*
+ * The channel region.
+ *
+ * A Dis channel operation -- isend, irecv, alt -- reads a channel's send
+ * and recv queues, takes a prog off one of them, moves the value between
+ * the two progs' operands, and puts the woken prog on a run queue.  With
+ * one interpreter that needed no lock: nothing else could be inside a
+ * channel operation at the same time.  With more than one, two
+ * interpreters on the same channel both see `c->recv->prog == nil`, both
+ * queue themselves to send, and the second's `(*q)->prog = p` in cqadd()
+ * overwrites the first -- a prog queued on nothing, never woken -- or one
+ * hands the value over while the other is unmarking the same alt, and a
+ * prog is put on a run queue twice.  A Prog on two queues is the shape
+ * three separate faults in this tree resolved to: it gets freed while
+ * still linked, and the context that picks it calls through r->xec into
+ * freed memory.  "panic: invalid opcode".
+ *
+ * This is a single lock for every channel in the system, not one per
+ * channel.  An alt spans every channel in the alt at once, so per-channel
+ * locks would need an ordering to take them in, and the handoff touches
+ * two progs' queues besides.  One lock is the version whose correctness
+ * can be read off the code; making it per-channel is a separate change
+ * with a measurement to justify it.
+ *
+ * It is a Lock, not a QLock, so nothing inside the region may sleep or
+ * error().  That is not a hope: the three things in there that could
+ * were moved out.  cqadd()'s malloc/error(exNomem) became cqfill()
+ * before the region (xec.c); altrdy()'s error() became a string returned
+ * to xecalt(), raised after the unlock (alt.c); and freeing a Channel
+ * inside the region -- which reaches killcomm() and from there every alt
+ * the dying channel appears in -- is deferred to chanunlock() by
+ * chandefer() below.  What is left reaches lock(&isched.l) through
+ * addrun()/gput() and free() through poolfree, both leaf spinlocks; a
+ * transitive walk of the region's callees for error/sleep/qlock/malloc
+ * comes back with nothing else.
+ */
+static Lock chanl;
+int chanlockon = 1;		/* *chanlock=0 on the boot line; see main.c */
+ulong	chandeferred;		/* channel frees moved out of the region */
+static ulong chanpendfull;	/* chpend[] was not big enough */
+static ulong chanregions;	/* channel operations run */
+static ulong chancontend;	/* found another executor already inside one */
+
+void
+chanlock(void)
+{
+	chanregions++;
+	if(chanlockon){
+		/*
+		 * A deliberately racy read of the lock word: it is this
+		 * change's positive control.  A clean parallelvm=1 run says
+		 * nothing about whether the lock mattered unless something
+		 * says two executors were inside a channel operation at the
+		 * same time; without this line the measurement cannot tell
+		 * "the lock fixed it" from "the race never happened".
+		 * Reading key without the lock can only be wrong in the
+		 * direction of under-reporting, which is the safe one.
+		 */
+		if(chanl.key != 0 && chancontend++ == 0)
+			print("chanlock: first contention: two executors in a"
+				" channel operation at once\n");
+		lock(&chanl);		/* lock() bumps up->nlocks: no preemption */
+	}
+	curP->inchan = 1;
+}
+
+void
+chanunlock(void)
+{
+	curP->inchan = 0;
+	if(chanlockon)
+		unlock(&chanl);
+	/*
+	 * Now that the region is closed, free the channels destroy() handed
+	 * over.  This runs killcomm(), which takes the lock itself -- which
+	 * is why it cannot happen above this line.  A killcomm() that opens
+	 * a region of its own pushes above nchpend and pops back to it, so
+	 * draining by index is safe against that nesting.
+	 */
+	while(curP->nchpend > 0)
+		destroy(curP->chpend[--curP->nchpend]);
+}
+
+/*
+ * heap.c's destroy() asks this before freeing a Channel.  1 means "not
+ * here": either this took a reference and chanunlock() will free it, or
+ * the count is already zero and the collector will sweep it.
+ */
+static int
+chandeferfn(void *vh)
+{
+	Heap *h;
+
+	if(curP == nil || curP->inchan == 0)
+		return 0;
+	if(curP->nchpend >= nelem(curP->chpend)){
+		if(chanpendfull++ == 0)
+			print("chanlock: chpend full, channel left to the collector\n");
+		return 1;
+	}
+	h = vh;
+	AINC(&h->ref);		/* first: a count of zero is sweepable */
+	curP->chpend[curP->nchpend++] = H2D(void*, h);
+	if(chandeferred++ == 0)
+		print("chanlock: first channel free deferred past the region\n");
+	return 1;
+}
+
 static int
 ownctx(void)
 {
@@ -2182,6 +2325,14 @@ disinit(void *a)
 	Module *root;
 	char *initmod = a;
 
+	/*
+	 * Unconditionally, not under parallelvm: a channel operation takes
+	 * chanl whatever the setting, so a Channel freed inside one must be
+	 * deferred whatever the setting too.  Without this, freechan() ->
+	 * killcomm() -> chanlock() is a Lock taken twice by its own holder.
+	 */
+	chandefer = chandeferfn;
+
 	if(waserror()){
 		/*
 		 * Every "disinit error:" capture this hunt has ever seen
@@ -2302,10 +2453,28 @@ disdump(void)
 		gqput, gqget, isched.ngq, Runqmax);
 	print("dis: %d contexts claimed of %d, curP %#p, parallelvm %d, stw waits %d\n",
 		npctx, MAXPCTX, curP, parallelvm, stwwaits);
+	print("dis: chan regions %lud, contended %lud, frees deferred %lud,"
+		" pending overflow %lud, lock %s\n",
+		chanregions, chancontend, chandeferred, chanpendfull,
+		chanlockon ? "on" : "off");
 
-	for(p = curP->runhd; p != nil; p = p->link)
-		print("dis: runq prog %d %s\n", p->pid,
-			(uint)p->state < nelem(pstate)? pstate[p->state]: "?");
+	/*
+	 * Every context's queue, not just this one's.  A stall where a Prog
+	 * is Pready and nothing runs it is a question about which queue it
+	 * is on and who owns that queue; one context's runhd cannot answer
+	 * it.  MULTICORE INSTRUMENTATION - temporary.
+	 */
+	for(i = 0; i < npctx; i++){
+		Pctx *cx = pctxs[i];
+
+		print("dis: ctx %d %#p owner %#p nlocal %d inxec %d inchan %d%s",
+			i, cx, cx->owner, cx->nlocal, cx->inxec, cx->inchan,
+			cx == curP ? " (this one)" : "");
+		for(p = cx->runhd; p != nil; p = p->link)
+			print(" [prog %d %s]", p->pid,
+				(uint)p->state < nelem(pstate)? pstate[p->state]: "?");
+		print("\n");
+	}
 
 	for(p = isched.head; p != nil; p = p->next){
 		modstatus(&p->reg, mbuf, sizeof mbuf);

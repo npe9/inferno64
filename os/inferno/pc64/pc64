@@ -245,6 +245,9 @@ root
 # for custom initialization and shutdown
 	/dis/init
 	/dis/shutdown
+# TEMPORARY: channel stress, run from /dis/init.  appl/cmd/chantest.b,
+# doc/multicore-plan.ms.
+	/dis/chantest.dis
 # basic commands
 	/dis/basename.dis
 	/dis/bind.dis

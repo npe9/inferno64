@@ -9,8 +9,13 @@
 #define CANGET(c)	((c)->size > 0)
 #define CANPUT(c)	((c)->buf != H && (c)->size < (c)->buf->len)
 
-extern	OP(isend);
-extern	OP(irecv);
+/*
+ * altcomm() is inside the channel region already, so it calls the
+ * region-internal halves of send and receive, not the OP()s that open
+ * one; see isendx()/irecvx() in xec.c.
+ */
+extern	void	isendx(Channel*);
+extern	void	irecvx(Channel*);
 
 /*
  * Count the number of ready channels in an array of channels
@@ -73,8 +78,55 @@ altunmark(Channel *c, WORD *ptr, Prog *p, int sr, Channel **sel, int dn)
  * ALT Pass 1 - Count the number of ready channels and mark
  * each channel as ALT by this prog
  */
+/*
+ * How many queue cells altrdy() below can spend.  It must walk the same
+ * channels in the same shape as altrdy() does -- an array channel on the
+ * recv side expands to one cell per element, everything else is one cell
+ * -- or cqadd() will panic on an empty pool.  The two are kept adjacent
+ * for that reason.
+ */
+int
+altcells(Alt *a)
+{
+	int n;
+	Type *t;
+	Channel *c;
+	Altc *ac, *eac;
+
+	n = 0;
+	ac = a->ac + a->nsend;
+	eac = ac + a->nrecv;
+	while(ac < eac) {
+		c = ac->c;
+		ac++;
+		if(c == H)
+			continue;
+		t = D2H(c)->t;
+		if(t == &Tarray)
+			n += ((Array*)c)->len;
+		else
+			n++;
+	}
+
+	ac = a->ac;
+	eac = ac + a->nsend;
+	while(ac < eac) {
+		if(ac->c != H)
+			n++;
+		ac++;
+	}
+
+	return n;
+}
+
+/*
+ * ALT Pass 1 - as below, except that the two errors it can find are
+ * handed back through ep rather than raised here.  error() is a longjmp
+ * and this runs with the channel region held; xecalt() raises it once
+ * the region is closed.
+ */
 static int
-altrdy(Alt *a, Prog *p)
+altrdy(Alt *a, Prog *p, char **ep)
 {
 	char *e;
 	Type *t;
@@ -123,10 +175,9 @@ altrdy(Alt *a, Prog *p)
 		cqadd(&c->send, p);
 	}
 
-	if(e != nil) {
+	*ep = e;
+	if(e != nil)
 		altdone(a, p, nil, -1);
-		error(e);
-	}
 
 	return nrdy;
 }
@@ -203,8 +254,7 @@ altcomm(Alt *a, int which)
 		if((c->recv->prog != nil || CANPUT(c)) && which-- == 0) {
 			W(R.d) = n;
 			R.s = ac->ptr;
-			R.d = &c;
-			isend();
+			isendx(c);
 			return;
 		}
 		ac++;
@@ -224,11 +274,10 @@ altcomm(Alt *a, int which)
 				c = *ca;
 				if(c != H && (c->send->prog != nil || CANGET(c)) && which-- == 0) {
 					W(R.d) = n;
-					R.s = &c;
 					ptr = ac->ptr;
 					R.d = ptr + 1;
 					ptr[0] = an;
-					irecv();
+					irecvx(c);
 					return;
 				}
 				ca++;
@@ -238,9 +287,8 @@ altcomm(Alt *a, int which)
 		else
 		if((c->send->prog != nil || CANGET(c)) && which-- == 0) {
 			W(R.d) = n;
-			R.s = &c;
 			R.d = ac->ptr;
-			irecv();
+			irecvx(c);
 			return;
 		}
 		ac++;
@@ -276,28 +324,52 @@ xecalt(int block)
 {
 	Alt *a;
 	Prog *p;
+	char *e;
 	int nrdy;
 	static ulong xrand = 0x20342;
 
 	p = currun();
 
 	a = R.s;
-	nrdy = altrdy(a, p);
-	if(nrdy == 0) {
-		if(block) {
-			delrun(Palt);
-			p->reg.s = R.s;
-			p->reg.d = R.d;
-			R.IC = 1;
-			R.t = 1;
-			return;
+	/*
+	 * All three passes are one region.  Pass 1 marks this prog on every
+	 * channel of the alt and counts how many are ready; pass 2 does the
+	 * communication on one of them; pass 3 unmarks.  A second
+	 * interpreter arriving between passes sees a prog queued on
+	 * channels it is not going to use, or a readiness count that has
+	 * stopped being true -- the "altcomm: no channel matched" print
+	 * below is what that looks like from inside.
+	 *
+	 * cqfill() and the error() for a nil or self-referencing channel
+	 * are outside the region, at the two ends, because both can
+	 * longjmp.
+	 */
+	cqfill(altcells(a) + 1);	/* +1: altcomm()'s isendx/irecvx */
+	chanlock();
+	e = nil;
+	nrdy = altrdy(a, p, &e);
+	if(e == nil) {
+		if(nrdy == 0) {
+			if(block) {
+				delrun(Palt);
+				p->reg.s = R.s;
+				p->reg.d = R.d;
+				R.IC = 1;
+				R.t = 1;
+			}
+			else {
+				W(R.d) = a->nsend + a->nrecv;
+				altdone(a, p, nil, -1);
+			}
 		}
-		W(R.d) = a->nsend + a->nrecv;
-		altdone(a, p, nil, -1);
-		return;
+		else {
+			xrand = xrand*1103515245 + 12345;
+			altcomm(a, (xrand>>8)%nrdy);
+			altdone(a, p, nil, -1);
+		}
 	}
-
-	xrand = xrand*1103515245 + 12345;
-	altcomm(a, (xrand>>8)%nrdy);
-	altdone(a, p, nil, -1);
+	chanunlock();
+	cqtrim();
+	if(e != nil)
+		error(e);
 }

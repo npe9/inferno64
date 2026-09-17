@@ -261,6 +261,10 @@ struct Pctx
 	Inst*	syncpc;		/* the PC p->reg carries; see REGSYNCED() */
 	int	inxec;		/* a quantum is open on this context */
 	void*	owner;		/* the Proc that claimed it; Proc*, diagnosis */
+	int	inchan;		/* inside a channel region; see chanlock() */
+	Progq*	qpool;		/* spare queue cells, so cqadd() cannot error */
+	int	nchpend;	/* channels whose free chanlock() deferred */
+	void*	chpend[64];	/* 64 = destroy()'s own gcdepth recursion bound */
 };
 
 struct Progs
@@ -604,6 +608,7 @@ extern	int	gchalt;
 extern	int	gcdepth;
 extern	int	gcdepthmax;
 extern	ulong	gcdeferred;
+extern	ulong	chandeferred;
 extern	int	gccolor;
 extern	int	minvalid;
 
@@ -619,9 +624,17 @@ extern	void*		checktype(void*, Type*, char*, int);
 extern	void		cmovw(void*, void*);
 extern	Channel*	cnewc(Type*, void (*)(void), int);
 extern	int		compile(Module*, int, Modlink*);
+extern	int		altcells(Alt*);
+extern	void		chanlock(void);
+extern	void		chanunlock(void);
+extern	int		(*chandefer)(void*);	/* see heap.c, dis.c */
 extern	void		cqadd(Progq**, Prog*);
 extern	void		cqdel(Progq**);
 extern	void		cqdelp(Progq**, Prog*);
+extern	void		cqfill(int);
+extern	void		cqtrim(void);
+extern	void		isendx(Channel*);
+extern	void		irecvx(Channel*);
 extern	void		crecv(Channel*, void*);
 extern	void		csend(Channel*, void*);
 extern	int		csendalt(Channel*, void*, Type *, int);

@@ -237,6 +237,16 @@ main(void)
 		if((p = getconf("*parallelvm")) != nil)
 			parallelvm = strtol(p, nil, 0);
 	}
+	{	/* BISECTION, temporary: *chanlock=0 keeps the restructuring
+		 * (cqfill, isendx/irecvx, the deferral) but drops the lock,
+		 * so the two halves of the channel change can be measured
+		 * apart.  See chanlock() in os/inferno/port/dis.c. */
+		extern int chanlockon;
+		char *p;
+
+		if((p = getconf("*chanlock")) != nil)
+			chanlockon = strtol(p, nil, 0);
+	}
 	doc("procinit");
 	procinit();
 	doc("links");

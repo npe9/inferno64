@@ -1505,3 +1505,19 @@ pushrun(Prog *p)
 	if(p->link == nil)
 		curP->runtl = p;
 }
+
+/*
+ * The kernel's channel region; see chanlock() in os/inferno/port/dis.c.
+ * emu runs one Dis interpreter at a time behind its own VM lock, so a
+ * channel operation is already atomic here and these are the identity.
+ * chandefer stays nil, so destroy() frees channels exactly as it did.
+ */
+void
+chanlock(void)
+{
+}
+
+void
+chanunlock(void)
+{
+}

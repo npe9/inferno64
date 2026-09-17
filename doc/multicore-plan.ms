@@ -3882,3 +3882,404 @@ claim against the kernel after it, sixty boots each, interleaved: 0 and
 0.  Rarer than one in sixty on both, so there is no evidence the change
 introduced it, and a single occurrence is what a low-rate fault looks
 like.
+.NH 1
+The channel region
+.PP
+Two hazards were found by reading rather than by a failing boot, and
+neither can be exhibited at
+.CW parallelvm=0 :
+.CW OP(movp) 's
+read-modify-write on memory two Progs of one module share, and the
+channel send and recv queues, which nothing locked.
+.PP
+The first is small.
+.CW movp
+reads the pointer it is about to displace, stores the new one, then
+destroys what it read.  Module-level variables live in the Modlink's
+.CW MP ,
+and every Prog of a module shares one Modlink, so two Progs assigning
+the same variable both read the old value, both store, and both destroy
+it: one heap block released twice, the other leaked.
+.CW aswap()
+is
+.CW XCHGQ
+on a memory operand, which is atomic on amd64 without a
+.CW LOCK
+prefix, so each executor destroys exactly what its own store displaced.
+It is behind
+.CW ASWAPOK
+so only ports with the instruction take that path.
+.NH 2
+What the queues get wrong
+.PP
+A channel operation reads a channel's send and recv queues, takes a prog
+off one of them, moves the value between the two progs' operands, and
+puts the woken prog on a run queue.  With one interpreter that needs no
+lock, because nothing else can be inside a channel operation at the same
+time.  With more than one:
+.IP \(bu
+two interpreters on the same channel both find
+.CW c->recv->prog
+nil, both queue themselves to send, and the second's
+.CW "(*q)->prog = p"
+in
+.CW cqadd()
+overwrites the first \(em a prog queued on nothing, never woken;
+.IP \(bu
+one hands a value over while the other is unmarking the same alt, and a
+prog is put on a run queue twice.
+.PP
+A Prog on two queues is the shape three separate faults in this tree
+resolved to.  It gets freed while still linked, and the context that
+picks it calls through
+.CW r->xec
+into freed memory:
+.CW "panic: invalid opcode" .
+.NH 2
+One lock, not one per channel
+.PP
+.CW chanlock() /\c
+.CW chanunlock()
+in
+.CW os/inferno/port/dis.c
+take a single
+.CW Lock
+for every channel in the system.  An alt spans every channel in the alt
+at once, so per-channel locks would need an ordering to take them in,
+and the handoff touches two progs' queues besides.  One lock is the
+version whose correctness can be read off the code.  Making it
+per-channel is a separate change and wants a measurement to justify it.
+.NH 2
+Three longjmps, removed rather than handled
+.PP
+It is a
+.CW Lock ,
+not a
+.CW QLock ,
+so nothing in the region may sleep or
+.CW error() .
+Plan 9's answer to a longjmp in a critical region is the
+.CW waserror()
+idiom \(em
+.CW "lock(&l); if(waserror()){ unlock(&l); nexterror(); } ... poperror(); unlock(&l);"
+\(em which works because
+.CW error()
+longjmps to a label on the erroring process's own stack, so the handler
+is ordinary code that can release the lock before passing the error on.
+The kernel has about fourteen hundred of these;
+.CW chan.c:1288
+is typical.  A sleeping
+.CW QLock
+survives that idiom; a spin
+.CW Lock
+should not be held across anything that can block at all, which is why
+.CW qlock()
+prints a complaint when
+.CW up->nlocks
+is non-zero.
+.PP
+Where the allocation can be hoisted, the better answer is the one that
+removes the longjmp, and here all three could be:
+.IP \(bu
+.CW cqadd() 's
+.CW malloc() /\c
+.CW error(exNomem)
+became
+.CW cqfill() ,
+which takes the cells the operation can possibly need before the region
+opens.  A channel's queue head is allocated with the channel; only a
+second prog queueing on the same channel needs another cell.
+.CW cqdel() /\c
+.CW cqdelp()
+return cells to the same per-executor list instead of freeing them, so
+the region is out of the allocator in both directions and the usual
+operation finds its cell already waiting.
+.CW cqtrim()
+gives back what a large alt left over.
+.IP \(bu
+.CW altrdy() 's
+.CW error(e)
+for a nil or self-referencing channel became a string returned to
+.CW xecalt() ,
+which raises it after the unlock.
+.IP \(bu
+.CW isend() /\c
+.CW irecv() 's
+.CW error(exNilref)
+moved into the wrappers, ahead of the lock.
+.CW isendx() /\c
+.CW irecvx()
+are the operations proper and take the channel as an argument, which is
+also what
+.CW altcomm()
+needs: it is already inside a region, so it calls those directly.
+.PP
+.CW altcells()
+counts what
+.CW altrdy()
+can spend.  It has to walk the same channels in the same shape \(em an
+array channel on the recv side expands to one cell per element \(em or
+.CW cqadd()
+panics on an empty pool.  The two are kept adjacent for that reason, and
+.CW cqadd()
+panics rather than erroring because an empty pool there is a caller bug,
+not a runtime condition.
+.NH 2
+Why a recursive lock would have been wrong
+.PP
+The re-entrant path is
+.CW movtmp
+\(->
+.CW freeptrs
+\(->
+.CW destroy
+\(->
+.CW freechan
+\(->
+.CW killcomm ,
+reached when a handoff displaces the last reference to a Channel.
+.CW killcomm()
+wakes every prog queued on the dying channel, and for a prog in an alt
+that means
+.CW altgone()
+\(->
+.CW altdone() ,
+which walks that prog's whole alt and unmarks it from
+.I every
+channel in it \(em not just the dying one.
+.PP
+A recursive lock would let that through without deadlocking, and that is
+the trap: it would be mutating the very queues the outer
+.CW isend()
+is midway through, after the
+.CW cqdel()
+and before the
+.CW addrun() .
+Not deadlocking is not the same as being correct.  So the free is
+deferred instead.
+.CW destroy()
+asks
+.CW chandefer()
+before freeing a Channel; inside a region that takes a reference, parks
+the block on a small per-\c
+.CW Pctx
+list, and
+.CW chanunlock()
+frees it once the region is closed.  The reference is taken
+.I before
+the block is parked, because a count of zero is sweepable and the
+collector runs on another CPU.  The list is 64 entries, which is
+.CW destroy() 's
+own
+.CW gcdepth
+recursion bound; if it ever overflows, the block is left to the
+collector \(em the same handover the
+.CW gcdepth
+and
+.CW gcstopped
+arms next to it already do, and a counter says so.
+.PP
+The hook is installed in
+.CW disinit() ,
+not in
+.CW stoptheworld()
+where
+.CW gcstopped 's
+is.  A channel operation takes the lock whatever
+.CW parallelvm
+says, so a Channel freed inside one must be deferred whatever it says
+too; installing it under
+.CW parallelvm
+would have made
+.CW freechan
+\(->
+.CW killcomm
+\(->
+.CW chanlock
+a Lock taken twice by its own holder at
+.CW parallelvm=0 .
+.PP
+.CW killcomm()
+therefore opens a region itself: its callers \(em
+.CW chanunlock() 's
+drain, or the collector's sweep \(em are all at depth 0.  It drops the
+region around
+.CW swiprog() ,
+because that posts a note and
+.CW postnote()
+qlocks.  Dropping it there is safe because the channel's count has
+already reached zero: nothing can reach it to queue on it while the lock
+is down.
+.CW exprog()
+and
+.CW killprog()
+take the region around their
+.CW Palt /\c
+.CW Psend /\c
+.CW Precv
+arms only, which leaves their
+.CW Prelease
+arm's
+.CW swiprog()
+outside it.
+.NH 2
+The audit, not the hope
+.PP
+"Nothing in the region sleeps or errors" is checkable, so it was
+checked rather than asserted.  A transitive walk of the region's callees
+across
+.CW libinterp
+and
+.CW dis.c ,
+rooted at
+.CW isend ,
+.CW irecv ,
+.CW xecalt
+and the movers (which are reached through
+.CW c->mover() ,
+an indirect call no walker can see, so they are named as roots), reports
+sixty-two functions and finds:
+.CW error()
+in exactly the three places listed above,
+.CW malloc()
+in exactly one, no
+.CW sleep() ,
+no
+.CW qlock() ,
+and
+.CW lock(&isched.l)
+reached through
+.CW addrun() /\c
+.CW gput() .
+That last is a nesting, so the reverse edge matters: no
+.CW lock(&isched.l)
+region in
+.CW dis.c
+reaches
+.CW cqdelp ,
+.CW altdone ,
+.CW addrun ,
+.CW killprog ,
+.CW exprog
+or
+.CW swiprog ,
+and nothing outside
+.CW dis.c
+can take that lock \(em
+.CW isched
+is static to the file.
+.PP
+The first version of that walk reported a clean region and was wrong.
+Its function-body extractor tried a general
+.CW "name(" 
+pattern before the
+.CW "OP(name)"
+one, so every
+.CW OP()
+in the interpreter was recorded under the name
+.CW OP
+and
+.CW isend 's
+and
+.CW irecv 's
+bodies were never scanned at all.  A tool that reports "nothing found"
+because it looked at nothing reads exactly like a tool that found
+nothing.
+.PP
+With the deferral in place, the scary part of that subtree is not in the
+region at all:
+.CW destroy()
+returns early, so
+.CW freechan ,
+.CW freetype ,
+.CW freemod
+and
+.CW freejitcode
+are unreachable from inside one.
+.NH 2
+The stress, and what makes it evidence
+.PP
+.CW appl/cmd/chantest.b
+\(em which already carried four cases written before this locking landed,
+so that "still passes" would mean something now \(em gained four more,
+and is embedded in the pc64 image and run three times concurrently from
+.CW /dis/init ,
+because one prog doing channel operations on its own never puts two
+executors inside a channel operation at the same time, which is the
+thing being tested.  Each part asserts something a broken channel
+operation gets wrong rather than running traffic and hoping a panic falls
+out:
+.IP \(bu
+The four that were already there:
+.I two-senders-one-channel
+(every value sent arrives exactly once \(em a lost or duplicated handoff,
+which is what the
+.CW cqadd()
+overwrite produces, fails it),
+.I alt-against-send ,
+.I two-alts-opposite-order
+and
+.I buffered-two-senders .
+.IP \(bu
+.I channel-over-channel :
+a channel sent over a channel of channels, with the receiver's variable
+displaced each time and the sender dropping its own reference, so the
+displaced Channel's last reference goes while a channel operation is in
+progress.  This is the path that reaches
+.CW killcomm()
+from inside the region.
+.IP \(bu
+.I channel-in-adt :
+the same, with the channel inside an adt sent by value, so it is the
+type's pointer map and not a bare channel operand that gets freed.
+.IP \(bu
+.I alt-over-array :
+alt over an array of channels with an ordinary channel alongside \(em
+the one shape that queues a prog on one cell per element, which is what
+.CW altcells()
+has to count element-wise.  Every value carries the index it was sent
+from, so a mis-counted or mis-unmarked array alt shows up as a wrong tag
+rather than as silence.
+.IP \(bu
+.I kill-while-blocked :
+progs killed while blocked in send, in recv and in alt, then the
+channels used again afterwards.  This is what drives
+.CW cqdelp() /\c
+.CW altdone()
+from
+.CW exprog() /\c
+.CW killprog() ,
+and
+.CW killcomm() 's
+own arms when a killed prog's stack drops the last reference to a
+channel another prog is still queued on.
+.PP
+The first version of
+.I kill-while-blocked
+gave the recv-blocked and send-blocked progs the same channel.  They
+rendezvoused with each other and were gone before the kill, so two
+thirds of the kills reported "open /prog/N/ctl failed" and the arm
+tested nothing.  Each blocked prog now gets a channel nothing else uses.
+.PP
+Two one-shot prints are the positive controls, and they matter more than
+the PASS line.  A clean
+.CW parallelvm=1
+run says nothing about whether the lock mattered unless something says
+two executors were really inside a channel operation at once, so
+.CW chanlock()
+reads the lock word without the lock \(em deliberately racy, and it can
+only under-report \(em and prints
+.CW "chanlock: first contention"
+the first time it finds it taken.
+.CW chandefer()
+prints
+.CW "chanlock: first channel free deferred past the region"
+the first time the deferral fires.  Without those, a passing run cannot
+be told from a run where neither path was ever reached.
+.PP
+.CW *chanlock=0
+on the boot line keeps all the restructuring \(em the cell pool, the
+split operations, the deferral \(em and drops only the lock, so the two
+halves of the change can be measured apart from one kernel.  Temporary,
+like
+.CW *parallelvm .

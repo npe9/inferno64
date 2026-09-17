@@ -1565,6 +1565,75 @@ cqsize(Progq *q)
 	return n;
 }
 */
+/*
+ * A channel's send and recv queues are built out of Progq cells.  The
+ * head cell of each is allocated with the channel; a second prog
+ * queueing on the same channel needs another, and cqadd() used to
+ * malloc() it and error(exNomem) if that failed.
+ *
+ * error() is a longjmp.  Inside the channel region chanlock() now holds
+ * (see os/inferno/port/dis.c) it would jump out past the unlock, and
+ * with the lock never released every other interpreter would spin on it
+ * forever.  Plan 9's answer to a longjmp in a critical region is a
+ * waserror() handler that releases the lock and calls nexterror(); the
+ * better answer, where it is available, is to remove the longjmp, and
+ * here it is available.  cqfill() takes the cells the operation can
+ * possibly need before the region opens -- where erroring is harmless
+ * -- and cqadd() spends them, so nothing in the region can fail.
+ *
+ * cqdel()/cqdelp() return cells to the same list rather than free()ing
+ * them, which keeps the region out of the allocator in both directions
+ * and means the usual operation finds its cell already waiting.
+ * cqtrim(), called after the region, gives back what a large alt left
+ * over.
+ */
+enum {
+	Qspare = 8,	/* cells kept parked per executor; alt returns more */
+};
+
+void
+cqfill(int n)
+{
+	Progq *q;
+
+	for(q = curP->qpool; q != nil && n > 0; q = q->next)
+		n--;
+	while(n-- > 0) {
+		q = (Progq*)malloc(sizeof(Progq));
+		if(q == nil)
+			error(exNomem);
+		q->prog = nil;
+		q->next = curP->qpool;
+		curP->qpool = q;
+	}
+}
+
+void
+cqtrim(void)
+{
+	int n;
+	Progq **l, *q, *f;
+
+	n = 0;
+	for(l = &curP->qpool; (q = *l) != nil && ++n <= Qspare; l = &q->next)
+		;
+	q = *l;
+	*l = nil;
+	while(q != nil) {
+		f = q;
+		q = q->next;
+		free(f);
+	}
+}
+
+static void
+cqput(Progq *f)
+{
+	f->prog = nil;
+	f->next = curP->qpool;
+	curP->qpool = f;
+}
+
 void
 cqadd(Progq **q, Prog *p)
 {
@@ -1574,9 +1643,18 @@ cqadd(Progq **q, Prog *p)
 		(*q)->prog = p;
 		return;
 	}
-	n = (Progq*)malloc(sizeof(Progq));
-	if(n == nil)
-		error(exNomem);
+	n = curP->qpool;
+	if(n == nil){
+		/*
+		 * cqfill()'s count and this function's appetite have drifted
+		 * apart: a caller bug, not a runtime condition.  Saying so
+		 * here is better than erroring, which is what this change
+		 * exists to get rid of.
+		 */
+		extern void panic(char*, ...);
+		panic("cqadd: no spare queue cell");
+	}
+	curP->qpool = n->next;
 	n->prog = p;
 	n->next = nil;
 	for( ; *q != nil; q = &(*q)->next)
@@ -1594,7 +1672,7 @@ cqdel(Progq **q)
 	}
 	f = *q;
 	*q = f->next;
-	free(f);
+	cqput(f);
 }
 void
 cqdelp(Progq **q, Prog *p)
@@ -1610,20 +1688,25 @@ cqdelp(Progq **q, Prog *p)
 		if((*q)->prog == p){
 			f = *q;
 			*q = (*q)->next;
-			free(f);
+			cqput(f);
 		}
 		else
 			q = &(*q)->next;
 	}
 }	
-OP(isend)
+/*
+ * isendx()/irecvx() are the channel operations proper, and run with the
+ * channel region held: isend()/irecv() below open it, and altcomm()
+ * (alt.c) calls these directly because it is already inside one.
+ *
+ * Nothing in here may error() or sleep.  The nil-reference test and the
+ * queue-cell fill, which are the two things that could, are in the
+ * wrappers, before the lock.
+ */
+void
+isendx(Channel *c)
 {
-	Channel *c;
  	Prog *p;
-
-	c = C(d);
-	if(c == H)
-		error(exNilref);
 
 	if((p = c->recv->prog) == nil) {
 		if(c->buf != H && cputb(c, R.s))
@@ -1651,14 +1734,10 @@ OP(isend)
 	addrun(p);
 	R.t = 0;
 }
-OP(irecv)
+void
+irecvx(Channel *c)
 {
-	Channel *c;
 	Prog *p;
-
-	c = C(s);
-	if(c == H)
-		error(exNilref);
 
 	if((p = c->send->prog) == nil) {
 		if(c->buf != H && cgetb(c, R.d))
@@ -1692,6 +1771,30 @@ OP(irecv)
 	}
 	addrun(p);
 	R.t = 0;
+}
+OP(isend)
+{
+	Channel *c;
+
+	c = C(d);
+	if(c == H)
+		error(exNilref);
+	cqfill(1);		/* before the region: this may error */
+	chanlock();
+	isendx(c);
+	chanunlock();
+}
+OP(irecv)
+{
+	Channel *c;
+
+	c = C(s);
+	if(c == H)
+		error(exNilref);
+	cqfill(1);
+	chanlock();
+	irecvx(c);
+	chanunlock();
 }
 int
 csendalt(Channel *c, void *ip, Type *t, int len)
