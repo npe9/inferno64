@@ -64,7 +64,6 @@ int	(*gcstopped)(void);
 int	(*chandefer)(void*);	/* set by the kernel; see chanlock() in dis.c */
 void	(*atsafepoint)(void);	/* likewise; see stoptheworld() in dis.c */
 void	(*gcwalkdelay)(void);	/* INSTRUMENTATION - temporary; see rootset() */
-int	(*progqueued)(Prog*, int*);	/* likewise; set by the kernel */
 int	(*progchainok)(Prog*);		/* likewise; see chanbroke() */
 ulong	chanbroke;			/* deliveries that broke a chain */
 

@@ -14,117 +14,10 @@ enum
 static int quanta = Quanta;
 static int gce, gct = 1;
 
-ulong	rootfreedext;	/* INSTRUMENTATION - temporary */
 ulong	chainwalks, chainshort;	/* likewise; see rootset() */
-ulong	chainagain, chainboth;	/* second read: intact, or short again */
-ulong	shortstate[8], shortctx, shortfpge, shortfplow, shortnil;
-ulong	shortnotowned, shortunknownext;
+ulong	shortstate[8];
 ulong	shortringok, shortringshort, shortnoring, shortsynctold;
 
-/*
- * INSTRUMENTATION - temporary.  Who owns each live stack extent.
- * A Prog whose EX names an extent that now belongs to another Prog is
- * reading somebody else's stack, which the freed-extent ring cannot see
- * once the address has been handed out again.  Open addressing, no
- * deletion beyond clearing the slot; a miss is reported as a miss.
- */
-enum { NEXTOWN = 2048 };
-typedef struct Extown Extown;
-struct Extown
-{
-	void	*ex;
-	int	pid;
-};
-static Extown extowns[NEXTOWN];
-
-static Extown*
-extslot(void *ex)
-{
-	uintptr h;
-	int i;
-
-	h = ((uintptr)ex >> 5) % NEXTOWN;
-	for(i = 0; i < 64; i++){
-		if(extowns[h].ex == ex || extowns[h].ex == nil)
-			return &extowns[h];
-		h = (h + 1) % NEXTOWN;
-	}
-	return nil;
-}
-
-void
-extown(void *ex, int pid)
-{
-	Extown *e;
-
-	if((e = extslot(ex)) != nil){
-		e->ex = ex;
-		e->pid = pid;
-	}
-}
-
-void
-extdisown(void *ex)
-{
-	Extown *e;
-
-	if((e = extslot(ex)) != nil && e->ex == ex)
-		e->ex = nil;
-}
-
-int
-extowner(void *ex)
-{
-	Extown *e;
-
-	if((e = extslot(ex)) != nil && e->ex == ex)
-		return e->pid;
-	return -1;
-}
-
-/*
- * Record a stack extent as freed, and look one up.  A ring: the answer
- * wanted is "was this freed recently", and a miss is reported as a miss.
- */
-void
-markfreedext(void *ex, char *where)
-{
-	Freedext *fe;
-
-	fe = &freedexts[nfreedext % nelem(freedexts)];
-	fe->ex = ex;
-	fe->pid = currun() != nil ? currun()->pid : -1;
-	fe->where = where;
-	fe->seq = ++nfreedext;
-}
-
-/*
- * Forget any record of this address: it has been handed out as an
- * extent again, so a match against it would be the instrument's own
- * false positive -- which is what the first version reported, the same
- * early-boot address in every boot, a dead Prog's extent reused by a
- * live one.
- */
-void
-clearfreedext(void *ex)
-{
-	int i;
-
-	for(i = 0; i < nelem(freedexts); i++)
-		if(freedexts[i].ex == ex)
-			freedexts[i].ex = nil;
-}
-
-Freedext*
-freedext(void *ex)
-{
-	int i;
-
-	for(i = 0; i < nelem(freedexts); i++)
-		if(freedexts[i].ex == ex)
-			return &freedexts[i];
-	return nil;
-}
 
 typedef struct Ptrhash Ptrhash;
 struct Ptrhash
@@ -137,15 +30,6 @@ struct Ptrhash
 	int	gchalt;
 	ulong	rootnomod;	/* Progs skipped for having no module */
 	ulong	rootraced;	/* INSTRUMENTATION - temporary: see rootset() */
-	/*
-	 * INSTRUMENTATION - temporary.  The last extents freed, so that
-	 * rootset() can say whether the one it is walking is among them
-	 * rather than leaving "this looks like reused memory" as a
-	 * reading of the bytes.  Recorded by unextend(), unframe() and
-	 * destroystack(); see freedext().
-	 */
-	Freedext freedexts[256];
-	int	nfreedext;
 	int	gcdepth;	/* this context's destroy recursion depth */
 	int	gcdepthmax;	/* high-water mark of it, for #%/memgc */
 	ulong	gcdeferred;	/* frees the depth guard handed to the collector */
@@ -677,235 +561,52 @@ rootset(Prog *root)
 					break;
 			}
 			if(cf != cx->reg.tos.fu){
-				uchar *cf2, *ex2, *sp2, *fp2;
-
-				root->chainok0 = 2;	/* INSTRUMENTATION: seen short */
-				if((uint)root->state < 8)
-					shortstate[root->state]++;
-				if(rr != &root->reg)
-					shortctx++;
-				if(rr->FP >= rr->SP)
-					shortfpge++;
-				if(rr->FP < cx->reg.tos.fu)
-					shortfplow++;
-				if(cf == nil)
-					shortnil++;
-				{
-					/*
-					 * The same walk from where the Prog
-					 * last actually executed, which its
-					 * own instruction ring records.  If
-					 * that chain is whole and the one
-					 * from p->reg is not, the stack is
-					 * intact and the register file is
-					 * stale; if both are short, the
-					 * stack is really broken.
-					 */
-					uchar *rf;
-					int rn, rk, rwn;
-
-					rwn = nelem(root->wmtrace);
-					rk = (root->wmtracei - 1 + rwn) % rwn;
-					rf = root->wmtrace[rk].fp2;
-					if(shortsynctold++ < 6)
-						print("rootset: short-chain pid %d"
-							" ran %d instructions since"
-							" its last sync (regsrc %d),"
-							" state %d\n", root->pid,
-							root->wmtracen - root->syncn,
-							root->regsrc, root->state);
-					if(root->wmtracen == 0 || rf == nil)
-						shortnoring++;
-					else{
-						for(rn = 0; rn < 4096; rn++){
-							if(rf == cx->reg.tos.fu)
-								break;
-							if(rf < cx->reg.tos.fu
-							|| rf >= rr->SP)
-								break;
-							rf = ((Frame*)rf)->fp;
-							if(rf == nil)
-								break;
-						}
-						if(rf == cx->reg.tos.fu || rf == nil)
-							shortringok++;
-						else
-							shortringshort++;
-					}
-				}
-				{
-					int own;
-
-					own = extowner(ex0);
-					if(own == -1)
-						shortunknownext++;
-					else if(own != root->pid)
-						shortnotowned++;
-				}
-				int cn2;
+				uchar *rf;
+				int rn, rk, rwn;
 
 				/*
-				 * Read it again.  Everything else that can see
-				 * this Prog -- addrun(), the quantum entry and
-				 * exit checks in vmachine() -- says the chain
-				 * is intact, so the question is whether the
-				 * state is broken or this read raced somebody
-				 * writing it.  A second walk that succeeds
-				 * says the first one raced.
+				 * The same walk from where the Prog last
+				 * actually executed, which its own instruction
+				 * ring records.  Whole there and short here
+				 * means the stack is intact and the register
+				 * file stale, which is what this was; short
+				 * both ways would mean the stack really is
+				 * broken.  Kept: it is the check that would
+				 * catch the fault coming back.
 				 */
-				ex2 = rr->EX;
-				sp2 = rr->SP;
-				fp2 = rr->FP;
-				for(cf2 = fp2, cn2 = 0;
-				    cn2 < 4096 && ex2 != nil
-				    && cf2 >= ((Stkext*)ex2)->reg.tos.fu
-				    && cf2 < sp2; cn2++){
-					if(cf2 == ((Stkext*)ex2)->reg.tos.fu)
-						break;
-					cf2 = ((Frame*)cf2)->fp;
-					if(cf2 == nil)
-						break;
-				}
-				if(ex2 != nil && cf2 == ((Stkext*)ex2)->reg.tos.fu)
-					chainagain++;
-				else
-					chainboth++;
 				chainshort++;
-				if(chainshort < 6){
-					int ci, onctx;
-
-					onctx = -1;
-					for(ci = 0; ci < npctx; ci++)
-						if(pctxs[ci]->curprog == root)
-							onctx = ci;
-					{
-						int qctx = -1, qw;
-
-						qw = progqueued != nil ?
-							progqueued(root, &qctx) : -1;
-						{
-						uchar *lf;
-						int ln;
-
-						/* the frame the chain stops on */
-						lf = rr->FP;
-						for(ln = 0; ln < 4096; ln++){
-							uchar *nx;
-
-							nx = ((Frame*)lf)->fp;
-							if(nx == nil || nx < cx->reg.tos.fu
-							|| nx >= rr->SP)
-								break;
-							lf = nx;
-						}
-						print("rootset: short-chain pid %d"
-							" inst %ld; stops on frame"
-							" %#p (t %#p lr %#p mr %#p),"
-							" R.s %#p -> %#p, R.d %#p,"
-							" tos.fu %#p FP %#p SP %#p\n",
-							root->pid,
-							(rr->M != H && rr->M != nil
-							 && rr->M->m != nil
-							 && rr->M->m->prog != nil)
-							  ? (long)(rr->PC - rr->M->m->prog)
-							  : -1L,
-							lf, ((Frame*)lf)->t,
-							((Frame*)lf)->lr,
-							((Frame*)lf)->mr,
-							rr->s,
-							(rr->s != nil && rr->s != H)
-							  ? *(void**)rr->s : nil,
-							rr->d,
-							cx->reg.tos.fu, rr->FP, rr->SP);
-						{
-							Type *bt;
-
-							bt = ((Frame*)lf)->t;
-							if(bt != nil && ((uintptr)bt & 7) == 0
-							&& (uintptr)bt > 0x100000)
-								print("rootset: bottom frame type"
-									" %#p np %d map0 %#ux"
-									" (fp mapped %d, lr mapped"
-									" %d), size %d\n",
-									bt, bt->np,
-									bt->np > 0 ? bt->map[0] : 0,
-									bt->np > 0
-									 && (bt->map[0] & (1<<6)) != 0,
-									bt->np > 0
-									 && (bt->map[0] & (1<<7)) != 0,
-									bt->size);
-						}
-						{
-							int wi, wn, k;
-
-							/*
-							 * The Prog's own
-							 * instruction ring, newest
-							 * last: which instruction
-							 * moved FP, and what ran
-							 * between.  Written by
-							 * xec() for every
-							 * instruction already, so
-							 * this costs nothing until
-							 * something goes wrong.
-							 */
-							wn = nelem(root->wmtrace);
-							print("rootset: last insts"
-								" (pc op fp):");
-							for(k = 12; k > 0; k--){
-								wi = (root->wmtracei - k
-								      + wn) % wn;
-								print(" %d/%#ux/%#p",
-									root->wmtrace[wi].pc,
-									root->wmtrace[wi].op,
-									root->wmtrace[wi].fp);
-							}
-							print("\n");
-						}
-						print("rootset: chain:");
-						{
-							uchar *c3;
-							int n3;
-
-							for(c3 = rr->FP, n3 = 0; n3 < 8; n3++){
-								print(" %#p(fp %#p t %#p)",
-									c3, ((Frame*)c3)->fp,
-									((Frame*)c3)->t);
-								c3 = ((Frame*)c3)->fp;
-								if(c3 == nil || c3 == (uchar*)H
-								|| c3 < cx->reg.tos.fu
-								|| c3 >= rr->SP)
-									break;
-							}
-							print("\n");
-						}
+				if((uint)root->state < 8)
+					shortstate[root->state]++;
+				rwn = nelem(root->wmtrace);
+				rk = (root->wmtracei - 1 + rwn) % rwn;
+				rf = root->wmtrace[rk].fp2;
+				if(root->wmtracen == 0 || rf == nil)
+					shortnoring++;
+				else{
+					for(rn = 0; rn < 4096; rn++){
+						if(rf == cx->reg.tos.fu)
+							break;
+						if(rf < cx->reg.tos.fu || rf >= rr->SP)
+							break;
+						rf = ((Frame*)rf)->fp;
+						if(rf == nil)
+							break;
 					}
-					}
-					print("rootset: chain from FP %#p stops at"
-						" %#p, not tos.fu %#p (SP %#p, %d"
-						" frames), pid %d state %d torn %d"
-						" regs from %s regsrc %d spsrc %#p"
-						" curprog of ctx %d, addrun %#p,"
-						" module %s inst %ld, bottom t %#p"
-						" (fp %#p), tos.fu t %#p\n",
-						rr->FP, cf, cx->reg.tos.fu,
-						rr->SP, cn, root->pid, root->state,
-						root->torn,
-						rr == &root->reg ? "p->reg" : "ctx",
-						root->regsrc, root->spsrc, onctx,
-						root->addrun,
-						(rr->M != H && rr->M != nil
-						 && rr->M->m != nil)
-						  ? rr->M->m->name : "?",
-						(rr->M != H && rr->M != nil
-						 && rr->M->m != nil
-						 && rr->M->m->prog != nil)
-						  ? (long)(rr->PC - rr->M->m->prog)
-						  : -1L,
-						((Frame*)rr->FP)->t,
-						((Frame*)rr->FP)->fp,
-						((Frame*)cx->reg.tos.fu)->t);
+					if(rf == cx->reg.tos.fu || rf == nil)
+						shortringok++;
+					else
+						shortringshort++;
 				}
+				if(chainshort < 4)
+					print("rootset: pid %d chain from FP %#p"
+						" stops at %#p, not tos.fu %#p;"
+						" state %d regsrc %d, %d"
+						" instructions since its last"
+						" sync\n",
+						root->pid, rr->FP, cf,
+						cx->reg.tos.fu, root->state,
+						root->regsrc,
+						root->wmtracen - root->syncn);
 			}
 		}
 		/*
@@ -1493,22 +1194,6 @@ rootset(Prog *root)
 		 * reacquires, and so waits for the collection, first.
 		 * The kernel's entertear() counts the upper bound.
 		 */
-		if(ex0 != nil){
-			Freedext *fe;
-
-			if((fe = freedext(ex0)) != nil)
-				if(rootfreedext++ < 6)
-					print("rootset: extent %#p was freed by"
-						" pid %d in %s, %lud frees ago;"
-						" walking pid %d state %d torn %d,"
-						" regs from %s, p->reg.EX %#p"
-						" rr->EX %#p M %#p\n",
-						ex0, fe->pid, fe->where,
-						(ulong)(nfreedext - fe->seq),
-						root->pid, root->state, root->torn,
-						rr == &root->reg ? "p->reg" : "ctx",
-						root->reg.EX, rr->EX, rr->M);
-		}
 		if(ex0 != nil && (rr->EX == nil || root->torn))
 			if(rootraced++ == 0)
 				print("rootset: extents freed during the walk,"

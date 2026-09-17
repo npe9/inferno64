@@ -1984,8 +1984,12 @@ ulong quantumbroke;	/* likewise */
 ulong shortran;		/* progs the collector saw short that ran again */
 ulong regmoved;		/* saved registers changed between quanta */
 ulong regmovedsrc[8], spregress, regmovedtold;
-ulong spbadin, spbadout;
 ulong unsynced, unsyncedtold, unsyncedran, unsyncedrantold;
+/*
+ * *syncfix=0 turns the sync above off, so one kernel measures both
+ * arms of it in one batch.  Temporary, like *tearlock and *chanlock.
+ */
+int syncfix = 1;
 static int chainok(Prog*);
 
 void
@@ -2079,63 +2083,6 @@ ulong chainin, chainout;	/* quanta entered/left with a broken chain */
  * and again on the way out says whether a stack was already broken when
  * a context picked it up, or was broken by the quantum just run.
  */
-/*
- * MULTICORE INSTRUMENTATION - temporary.  Which queue is this Prog on?
- * A Prog that is Pready and on no queue is one nothing will ever run
- * again, which is a different fault from a corrupt stack and has to be
- * told apart from it.
- */
-int
-progqueue(Prog *p, int *ctxp)
-{
-	Prog *q;
-	int i;
-
-	for(i = 0; i < npctx; i++)
-		for(q = pctxs[i]->runhd; q != nil; q = q->link)
-			if(q == p){
-				*ctxp = i;
-				return 1;	/* a context's local queue */
-			}
-	for(q = isched.ghead; q != nil; q = q->link)
-		if(q == p)
-			return 2;		/* the global queue */
-	for(i = 0; i < npctx; i++)
-		if(pctxs[i]->curprog == p){
-			*ctxp = i;
-			return 3;		/* running */
-		}
-	return 0;
-}
-
-/*
- * MULTICORE INSTRUMENTATION - temporary.  Is SP above the end of the
- * frame FP names?  If it is not, the next frame this Prog allocates
- * lands on top of its own live frame, and initmem() writes H into that
- * frame's fp -- which is exactly the chain break rootset() reports.
- */
-int
-spok(Prog *r)
-{
-	Stkext *sx;
-	Frame *f;
-	Type *t;
-
-	if(r->reg.EX == nil || r->reg.FP == nil || r->reg.SP == nil)
-		return 1;
-	sx = (Stkext*)r->reg.EX;
-	if(r->reg.FP < sx->reg.tos.fu || r->reg.FP >= r->reg.SP)
-		return 1;	/* another extent, or nothing to say */
-	f = (Frame*)r->reg.FP;
-	t = f->t;
-	if(t == nil)
-		t = sx->reg.TR;
-	if(t == nil || ((uintptr)t & 7) != 0 || (uintptr)t < 0x100000
-	|| t->size <= 0)
-		return 1;
-	return r->reg.SP >= r->reg.FP + t->size;
-}
-
 int
 progchainokfn(Prog *r)
 {
@@ -2548,7 +2495,7 @@ vmachine(void*)
 			 * destroys the Prog; this only makes the snapshot
 			 * consistent for the window in between.
 			 */
-			if(was != nil){
+			if(was != nil && syncfix){
 				was->reg = R;
 				REGSYNCED();
 				was->regsrc = 5;	/* INSTRUMENTATION: here */
@@ -2907,14 +2854,6 @@ vmachine(void*)
 							r->lastsp, r->lastex,
 							r->state, r->regsrc);
 				}
-				if(!spok(r))
-					if(spbadin++ < 4)
-						print("vmachine: prog %d enters with"
-							" SP %#p below the end of the"
-							" frame at FP %#p, state %d"
-							" regsrc %d spsrc %#x\n",
-							r->pid, r->reg.SP, r->reg.FP,
-							r->state, r->regsrc, r->spsrc);
 				if(r->unsyncedmark){
 					r->unsyncedmark = 0;
 					unsyncedran++;
@@ -2958,13 +2897,6 @@ vmachine(void*)
 			r->xec(r);
 			up->env->fpuostate = fpusave();
 			r->onctx = 0;
-			if(!spok(r))
-				if(spbadout++ < 4)
-					print("vmachine: prog %d leaves with SP %#p"
-						" below the end of the frame at FP"
-						" %#p, state %d regsrc %d spsrc %#x\n",
-						r->pid, r->reg.SP, r->reg.FP,
-						r->state, r->regsrc, r->spsrc);
 			r->lastfp = r->reg.FP;
 			r->lastsp = r->reg.SP;
 			r->lastex = r->reg.EX;
@@ -3064,7 +2996,6 @@ disinit(void *a)
 	chandefer = chandeferfn;
 	kproc("fdclose", fdcloseproc, nil, KPDUP);	/* see deferfdclose() */
 	atsafepoint = safepoint;	/* see stoptheworld() */
-	progqueued = progqueue;		/* INSTRUMENTATION - temporary */
 	progchainok = progchainokfn;	/* INSTRUMENTATION - temporary */
 	if(gcwalkms > 0)
 		gcwalkdelay = gcwalkdelayfn;
@@ -3279,6 +3210,7 @@ stalldump(void)
 			" gcpartial %llud gaveup %d idlegaveup %d\n",
 			gcnruns, stwwaits, gcidlepass, gcpartial, stwgaveup,
 			gcidlegaveup);
+	}
 	{
 		extern ulong regstale, handlerbroke, regstalesrc[8];
 
@@ -3292,37 +3224,31 @@ stalldump(void)
 			handlerbroke, unsynced, unsyncedran);
 	}
 	{
-		extern ulong chainwalks, chainshort, chainagain, chainboth;
-		extern ulong shortstate[8], shortctx, shortfpge, shortfplow, shortnil;
-		extern ulong shortnotowned, shortunknownext;
+		extern ulong chainwalks, chainshort;
+		extern ulong shortstate[8];
 		extern ulong shortringok, shortringshort, shortnoring;
 		int si;
 
 		print("stall: stacks walked %lud, chain short of tos.fu %lud,"
 			" progs picked while running %d, quanta entered broken"
 			" %lud, left broken %lud, readied broken %lud;"
-			" second read intact %lud, short again %lud,"
 			" broken during a quantum %lud, short ones that ran"
 			" again %lud, registers moved between quanta %lud"
 			" (by regsrc %lud %lud %lud %lud %lud; SP alone went"
-			" back %lud); SP below its own frame, entering %lud,"
-			" leaving %lud\n",
+			" back %lud)\n",
 			chainwalks, chainshort, twoctx, chainin, chainout,
-			addrunbroken, chainagain, chainboth, quantumbroke,
+			addrunbroken, quantumbroke,
 			shortran, regmoved, regmovedsrc[0], regmovedsrc[1],
 			regmovedsrc[2], regmovedsrc[3], regmovedsrc[4],
-			spregress, spbadin, spbadout);
+			spregress);
 		print("stall: short by state:");
 		for(si = 0; si < 8; si++)
 			print(" %lud", shortstate[si]);
-		print("; from a context's reg %lud, FP>=SP %lud, FP below"
-			" tos.fu %lud, chain hit nil %lud, extent owned by"
-			" another prog %lud, owner unknown %lud; from where it"
-			" last ran: whole %lud, short %lud, no ring %lud\n",
-			shortctx, shortfpge, shortfplow, shortnil,
-			shortnotowned, shortunknownext,
+		print("; walked from where it last ran: whole %lud, short %lud,"
+			" no ring %lud\n",
 			shortringok, shortringshort, shortnoring);
 	}
+	{
 		print("stall: freeFD %lud, in the stopped world %lud, deferred %lud,"
 			" fddefer %d, interpreters spawned %lud\n",
 			freefds, freefdstw, fdclosedeferred, fddefer, vmspawns);

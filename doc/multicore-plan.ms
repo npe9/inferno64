@@ -6026,13 +6026,17 @@ p->reg.FP	short, 13 to 22 a boot
 the last instruction's FP	whole, every one
 .TE
 .PP
-Whole in every case, 0 short.  So the stack was never corrupt.  The
-saved register file was stale, and the range walk was reading a dead
-call sequence with a
+Whole in every case, 0 short.  So in every short-chain capture the stack
+was intact and the saved register file was stale, and the range walk was
+reading a dead call sequence with a
 .CW fp
 that a later frame's
 .CW initmem()
-had overwritten.
+had overwritten.  That is the scope of the claim: it covers the captures
+the double walk was run on, not the
+.CW alloc:D2B:destroy-entry
+and protection faults of the earlier batches, which are not attributed
+to this and may or may not be downstream of the roots it loses.
 .NH 2
 The window, and why nothing else could see it
 .PP
@@ -6075,20 +6079,59 @@ syncs again when it rewinds and
 destroys the Prog, so this only makes the snapshot consistent for the
 window in between.
 .PP
-Twelve boots,
-.CW parallelvm=1 ,
-against the same kernel before the change:
+.CW *syncfix=0
+turns the sync off, so one kernel measures both arms in one interleaved
+batch \(em the form the rest of this document uses, and the one the
+first version of this table did not: it compared two binaries built and
+run at different times, which this document has already said is not
+sound at these sample sizes.  Twelve boots each,
+.CW parallelvm=1
+.CW "-smp 2" :
 .TS
 center;
 l r r r r.
 	chain short	bad frame	panics	all 27 chantest cases
-before	8 to 22 a boot	11 of 16 boots	0	9 of 16
-after	0 of 24 dumps	0 of 12 boots	0	8 of 12
+*syncfix=0	8 to 17 a dump	11 of 12 boots	1	12 of 12
+*syncfix=1	0 of 24 dumps	0 of 12 boots	0	12 of 12
 .TE
 .PP
-Zero, on the instrument that had been reading 13 to 22, and the
-bad-frame tripwire silent for the first time at
+Zero on the instrument that reads 8 to 17 in the other arm of the same
+binary, and the bad-frame tripwire silent for the first time at
 .CW parallelvm=1 .
-At
-.CW "-smp 2"
-all six boots complete every chantest case.
+.PP
+Then 40 boots of the fixed kernel: at
+.CW "-smp 2" ,
+0 panics in 16 and every chantest case in 14 of them; at
+.CW parallelvm=0
+.CW "-smp 4" ,
+8 of 8 clean.  At
+.CW parallelvm=1
+.CW "-smp 4"
+three boots of sixteen still panic \(em and all three are boots that
+printed
+.CW "claimctx: pool of 64 exhausted" ,
+which is the capacity limit named earlier in this chapter and not this
+fault.  That is the next wall.
+.NH 2
+What the instruments cost, and which ones stayed
+.PP
+Nine were built for this.  The ones that answered their question and
+read zero are gone: the freed-extent ring, the per-extent owner table,
+the SP-below-its-own-frame check, the queue-membership lookup and the
+two-way frame dump.  They were not free \(em the owner table ran on
+every
+.CW newstack() /\c
+.CW extend() ,
+the ring on every free \(em and a table whose numbers are measured on a
+kernel carrying them measures them too.
+.PP
+What stays is the double walk in
+.CW rootset() ,
+.CW syncn
+and the
+.CW fp2
+the instruction ring already had room for.  That is the check that found
+this and the one that would catch it coming back: whole from the last
+instruction and short from
+.CW p->reg
+is this fault's exact signature.
