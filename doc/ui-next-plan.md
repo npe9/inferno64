@@ -992,13 +992,24 @@ there was never speed on the table here anyway.
    clip is gone by the time deferred nodes would render. Painter order
    is therefore unchanged, which is what the identity check measures.
 
-   The test pane is 13 widgets in 4 trees. Batching is invisible in the
+   Descents nest: a canvas's window item and a text widget's embedded
+   windows each descend from inside a draw method, so the walk is a
+   small stack rather than one state. An inner descent draws into
+   another window and must not join the outer tree, and with one state
+   its close left the outer descent with no walk at all — every widget
+   after a canvas built its own tree again. The pane holds a canvas with
+   a scale inside a window item for exactly that reason.
+
+   The test pane is 15 widgets in 6 trees. Batching is invisible in the
    pixels, which is the point of it, so `render count` answers the two
    numbers and the check asks that the trees be fewer than the widgets.
-   Three controls: batching off, and the check fails; the `tkitmp` flush
+   Four controls: batching off, and the check fails; the `tkitmp` flush
    removed, and the *pixels* differ by 4524 bytes, which is what says
    the flush points carry the painter order; the grid flush removed, and
-   8004 bytes differ. That last one was clean at first, because no
+   8004 bytes differ; the stack collapsed back to one state, and the
+   pixels are identical while 11 widgets batch instead of 15 — which is
+   the honest shape of that change, a batching improvement and not a
+   correctness fix. That last one was clean at first, because no
    widget in the pane was gridded — and then clean again with one
    gridded, because the frame grew to fit it and the clip cut nothing.
    It fails only with `grid propagate .g 0` and a 207-pixel scale in a

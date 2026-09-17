@@ -297,28 +297,46 @@ tksceneellipsefill(TkScene *s, Point c, Point rad, ulong rgba)
  * widgets is one tree, which is the case that matters; a pane that
  * alternates is no worse than before.
  *
- * The walk is a property of one repaint of one window, so it is one
- * static state and not a stack: tkupdate() opens it round each
- * toplevel's descent and closes it after.
+ * Descents NEST: a canvas's window item and a text widget's embedded
+ * windows each call tkdrawslaves() from inside a draw method, which is
+ * inside a descent already.  The inner one draws into a different window
+ * and must not join the outer tree, so the state is a small stack and
+ * not one struct - with one struct, the inner close left the outer
+ * descent with no walk at all and every widget after the canvas built
+ * its own tree again (13 widgets batched became 11).  Opening flushes
+ * what the outer walk had pending, so the order is still the order the
+ * widgets drew in.
  */
-static struct {
+typedef struct Walk Walk;
+struct Walk {
 	TkScene*	scene;
 	TkCtxt*		ctxt;
 	Image*		dst;
-	int		open;
-	int		runs;		/* trees rendered, for the test */
-	int		widgets;	/* widgets that joined one */
+};
+
+enum {
+	Maxwalk = 8,	/* a canvas in a text in a canvas ... */
+};
+
+static struct {
+	Walk	s[Maxwalk];
+	int	depth;		/* 0: no walk open */
+	int	runs;		/* trees rendered, for the test */
+	int	widgets;	/* widgets that joined one */
 } walk;
 
 void
 tkwalkopen(TkCtxt *c, Image *dst)
 {
-	if(walk.open)
-		tkwalkclose();
-	walk.scene = nil;
-	walk.ctxt = c;
-	walk.dst = dst;
-	walk.open = 1;
+	Walk *w;
+
+	tkwalkflush();		/* the enclosing walk's pending tree first */
+	if(walk.depth >= Maxwalk)
+		return;		/* deeper than this: no batching, still correct */
+	w = &walk.s[walk.depth++];
+	w->scene = nil;
+	w->ctxt = c;
+	w->dst = dst;
 }
 
 /*
@@ -329,14 +347,18 @@ void
 tkwalkflush(void)
 {
 	TkScene *s;
+	Walk *w;
 
-	if(!walk.open || walk.scene == nil)
+	if(walk.depth == 0)
 		return;
-	s = walk.scene;
-	walk.scene = nil;		/* before rendering: a layer's
+	w = &walk.s[walk.depth-1];
+	if(w->scene == nil)
+		return;
+	s = w->scene;
+	w->scene = nil;			/* before rendering: a layer's
 					 * scratch must not join the tree
 					 * it is rendering */
-	tkscenerender(s, walk.ctxt, walk.dst);
+	tkscenerender(s, w->ctxt, w->dst);
 	tkscenefree(s);
 	walk.runs++;
 }
@@ -345,9 +367,8 @@ void
 tkwalkclose(void)
 {
 	tkwalkflush();
-	walk.open = 0;
-	walk.ctxt = nil;
-	walk.dst = nil;
+	if(walk.depth > 0)
+		walk.depth--;
 }
 
 /*
@@ -358,12 +379,17 @@ tkwalkclose(void)
 TkScene*
 tkwalkjoin(TkCtxt *c, Image *dst)
 {
-	if(walk.open && walk.ctxt == c && walk.dst == dst){
-		if(walk.scene == nil)
-			walk.scene = tkscenenew();
-		if(walk.scene != nil)
-			walk.widgets++;
-		return walk.scene;
+	Walk *w;
+
+	if(walk.depth > 0){
+		w = &walk.s[walk.depth-1];
+		if(w->ctxt == c && w->dst == dst){
+			if(w->scene == nil)
+				w->scene = tkscenenew();
+			if(w->scene != nil)
+				walk.widgets++;
+			return w->scene;
+		}
 	}
 	return tkscenenew();
 }
@@ -377,7 +403,7 @@ tkscenefinish(TkScene *s, TkCtxt *c, Image *dst)
 {
 	if(s == nil)
 		return;
-	if(s == walk.scene)
+	if(walk.depth > 0 && s == walk.s[walk.depth-1].scene)
 		return;
 	tkscenerender(s, c, dst);
 	tkscenefree(s);

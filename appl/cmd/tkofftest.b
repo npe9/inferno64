@@ -1376,6 +1376,20 @@ checkscene()
 	tk->cmd(top, "pack .r1 -padx 6 -pady 6");
 	tk->cmd(top, "pack .s -padx 6 -pady 6");
 	tk->cmd(top, "pack .v -padx 6 -pady 6");
+	# A canvas holding a window item, because that is the one arrangement
+	# where a descent happens INSIDE another descent: the canvas's draw
+	# method calls tkdrawslaves for the embedded widget, which opens a
+	# walk of its own.  A node widget is packed after it, so anything
+	# the nesting did to the pending tree would show as paint landing in
+	# the wrong order.
+	must(top, "canvas .c -width 120 -height 40");
+	must(top, "frame .c.f -width 100 -height 30 -borderwidth 2 -relief sunken");
+	must(top, "scale .c.f.s -orient horizontal -from 0 -to 10 -length 90");
+	must(top, ".c.f.s set 7");
+	must(top, "pack .c.f.s");
+	must(top, ".c create window 4 4 -window .c.f -anchor nw");
+	tk->cmd(top, "pack .c -padx 6 -pady 6");
+
 	# A gridded widget, because a grid is the one thing that narrows the
 	# destination's clip rectangle around its children - and nodes are
 	# rendered after that has been put back unless the walk flushes

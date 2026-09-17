@@ -181,6 +181,17 @@ So does the grid clipping in
 .IR tkdrawslaves1 ,
 whose narrowed clip rectangle is gone by the time the nodes would
 otherwise be rendered.
+Descents nest \(em a canvas's window item and a text widget's embedded
+windows each descend from inside a draw method \(em so the walk is a
+small stack.
+An inner descent draws into a different window and must not join the
+outer tree, and with a single state its close left the outer descent
+with no walk at all: every widget after a canvas built its own tree
+again.
+That is a batching difference and not a drawing one, which is why the
+control for it draws the same pixels and reports 11 widgets batched
+instead of 15.
+.PP
 Painter order is therefore exactly what it was, which is what the
 identity check measures;
 .B "render count"
