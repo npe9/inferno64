@@ -3174,10 +3174,140 @@ and
 diagnostics every few seconds.  The console scrollback holds about 125
 lines, so those lines push the boot markers out of it within a minute.
 They should come out of the next build.
+.PP
+They are opt-in now: the merged init prints them only when the card's
+FAT partition holds a file named
+.CW netdebug .
+.NH 2
+One tree for the Pi, 17 September 2026
+.PP
+The board work above was done on the
+.CW osprey-port
+branch and the QEMU work in the chapters before it on
+.CW raspi3b-port .
+The two are merged, on
+.CW raspi3b-port .
+Where they disagreed, the version that had run on the board was taken.
+The card is
+.CW sdemmcbcm 's,
+on the Arasan controller.
+.CW sdhostbcm
+and
+.CW sdhcibcm
+are still in the tree and no longer linked: the first claimed the same
+unit letter and does not work from a polled driver on silicon, and the
+second drives the same Arasan block as
+.CW sdemmcbcm .
+The
+.CW SDHCI-*
+markers and the SDIO transport check go with them, which leaves Phase 6
+with no linked SDIO driver.
+The console, the interrupt dispatch, the DWC2 driver and init come from
+the board side, with this side's peripheral drivers, baud arithmetic,
+polled-console check, basic-bank dispatch and USB disk, mouse, tablet
+and keyboard checks added back.
+.PP
+The suite's Pi 3B cards now carry what the board's card carries: a
+partition table, and a FAT partition at sector 16384 holding a file
+named
+.CW kernel8.img .
+The init reads that table to find its FAT partition and the gap it may
+ream, so a blank card had made it report
+.CW FAT-NONE
+and skip the kfs check.  With the table,
+.CW FAT-OK ,
+.CW FAT-WRITE-OK
+and
+.CW SD-FS-CREATE-OK
+run under QEMU, and the multi-block read checks itself against the real
+FAT boot sector.  The 4GB card's partition is FAT32, which is the
+only place
+.CW dossrv 's
+FAT32 path runs off the board.  All four Pi 3B configurations pass:
+39, 39, 43 and 42 markers.
+.NH 2
+The IPv4 reader stops after a connection to a live host
+.PP
+The board can fetch a kernel for itself:
+.CW kupdate()
+in the init reads
+.CW kupdate.txt
+from the FAT partition, dials the addresses in it, mounts what answers
+and copies the named file over
+.CW kernel8.img ,
+keeping the old one as
+.CW kernel8.bak .
+On the Mac the tree is served with
+.P1
+emu -r $ROOT sh -c "styxlisten -A 'tcp!*!6666' export /; sleep 36000"
+.P2
+The card's file named a Mac address that no longer existed after the
+router change, so every boot until now dialled nothing and only ever
+sent ARP.  With the Mac's current address in it, the board rebooted,
+dialled, and within its first 80 seconds the IPv4 conversation stopped:
+.P1
+NETTX conv 0 etype 0x800 in 117 out 32 drop 20 held 8 waiting 0
+.P2
+Eight frames held, no read outstanding, and the count handed to the
+kernel frozen at 32 while ARP went on being answered
+.CW "in 171 out 171" ). (
+The Mac never saw a connection arrive, the board stopped answering
+ping, and a
+.CW mount
+typed at its shell to the same address never returned.  The same
+fetch under QEMU, over the same USB NIC model and a user-mode network
+to the same server, completes: 1622552 bytes, installed, and the IPv4
+reader still waiting for its next frame afterwards.
+.PP
+"No read outstanding" means the kernel's
+.CW etherread4
+is somewhere other than its read.  That process runs the whole input
+path under the interface's read lock, and a TCP segment can make it
+transmit, which on this board is a write through a mount to a Limbo
+server; so it is either blocked in the IP input path or in that write.
+Which one is what
+.CW "echo procdump >/dev/sysctl"
+is for: every process on one line, and the kernel text addresses on
+each sleeping process's stack, which a
+.CW "7l -a"
+listing of the same build turns into names.  The kernel carrying it is
+on the card; the next boot of the board answers the question.
+.NH 2
+Smaller things the board showed on 17 September
+.IP \(bu
+Characters typed at the console while the board is printing are lost
+.CW "cat /n/dosuaex hKRE" ). (
+The transmit kick waits for FIFO room with interrupts off, about 87
+microseconds a byte, so a burst of output holds off the receive
+interrupt for long enough to overrun a 16-byte receive FIFO.  Typing a
+character every 50 milliseconds gets through.
+.IP \(bu
+The first redirected command after boot fails:
+.CW "echo x > file"
+reports
+.CW "sh: x: file does not exist" ,
+and the same command a second time works.  It happens under QEMU too,
+it coincides every time with
+.CW "delprog: pid 2 opening window while pid 4's was still open" ,
+and the symptom is the shell's builtin table returning the
+.CW builtin
+builtin for
+.CW echo
+in the process forked for the redirection.
+.CW delprog()
+releases the Dis lock while it closes a process's groups; two of those
+windows overlapping is the lead.
+.IP \(bu
+A file
+.CW dossrv
+wrote on the board carries a date in 2097.  The Pi has no clock, and
+nothing yet gives it the time.
 .NH 2
 Suggested order
 .PP
-Contain a failing driver so it cannot wedge the console; fix DWC2 bulk
-transfers on silicon, which unblocks ethernet, USB storage and input;
-then decide the SD/Wi-Fi controller question; then multi-block and DMA
-for SD; then the peripherals nothing is currently attached to.
+Find where the IPv4 reader stops after a TCP connection, since the
+board's network, its kernel updates and any use of it as a terminal
+depend on it.  Then the console's lost input and the first-redirect
+race; then USB storage and the keyboard on the board; then the
+SD/Wi-Fi controller question; then DMA for SD; then the peripherals
+nothing is currently attached to.
