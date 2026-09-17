@@ -76,6 +76,8 @@ enum {
 
 	/* Rcmdtm flags */
 	Trdata		= 1<<4,		/* transfer is card to host */
+	Tmulti		= 1<<5,		/* more than one block */
+	Tautocmd12	= 1<<2,		/* the controller sends the stop itself */
 	Tmblkcnt	= 1<<1,
 	Cmdisdata	= 1<<21,
 	Cmdcrcchk	= 1<<19,
@@ -84,6 +86,7 @@ enum {
 	Cmdresp48	= 2<<16,
 	Cmdresp48busy	= 3<<16,
 
+	Maxblocks	= 64,		/* blocks in one multi-block command */
 	Idclock		= 400000,
 	Datclock	= 25000000,
 	Secsize		= 512,
@@ -377,51 +380,69 @@ emmcbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 	Ctlr *c = u->dev->ctlr;
 	volatile u32 *r = c->r;
 	uchar *p = a;
-	long i;
-	int j;
+	long i, nthis;
+	int j, k;
 	u32 arg, w, sts, flags;
 
 	USED(lun);
 	qlock(c);
-	for(i = 0; i < nb; i++){
+	/*
+	 * As many blocks per command as the controller's block count allows.
+	 * A single-block command per sector costs a command, a response and
+	 * a data phase for every 512 bytes; READ_MULTIPLE_BLOCK streams them
+	 * under one command, with the controller sending the stop itself
+	 * (auto CMD12).  The FIFO still moves a word at a time, so this is
+	 * fewer commands, not fewer reads.
+	 */
+	for(i = 0; i < nb; ){
+		nthis = nb - i;
+		if(nthis > Maxblocks)
+			nthis = Maxblocks;
 		arg = c->byteaddr? (u32)((bno+i)*Secsize): (u32)(bno+i);
 		for(j = 0; j < 100000; j++)	/* the data line must be free */
 			if((r[Rstatus] & Sdatinhibit) == 0)
 				break;
-		r[Rblksizecnt] = 1<<16 | Secsize;
-		flags = Cmdisdata|Cmdresp48|Cmdcrcchk|Cmdixchk;
+		r[Rblksizecnt] = (u32)nthis<<16 | Secsize;
+		flags = Cmdisdata|Cmdresp48|Cmdcrcchk|Cmdixchk|Tmblkcnt;
 		if(!write)
 			flags |= Trdata;
-		/* WRITE_SINGLE_BLOCK / READ_SINGLE_BLOCK */
-		if(cmd(c, write? 24: 17, arg, flags, &sts) < 0){
+		if(nthis > 1)
+			flags |= Tmulti|Tautocmd12;
+		/* READ/WRITE_SINGLE_BLOCK, or the MULTIPLE_BLOCK pair */
+		if(cmd(c, write? (nthis > 1? 25: 24): (nthis > 1? 18: 17),
+		    arg, flags, &sts) < 0){
 			bioerror(c, write, bno+i, sts);
 			break;
 		}
-		if(awaitirq(r, write? Iwriterdy: Ireadrdy, &sts) < 0){
-			bioerror(c, write, bno+i, sts);
-			break;
-		}
-		if(write){
-			for(j = 0; j < Secsize; j += 4){
-				w = p[0] | p[1]<<8 | p[2]<<16 | p[3]<<24;
-				r[Rdata] = w;
-				p += 4;
+		for(k = 0; k < nthis; k++){
+			if(awaitirq(r, write? Iwriterdy: Ireadrdy, &sts) < 0){
+				bioerror(c, write, bno+i+k, sts);
+				goto out;
 			}
-		}else{
-			for(j = 0; j < Secsize; j += 4){
-				w = r[Rdata];
-				p[0] = w;
-				p[1] = w>>8;
-				p[2] = w>>16;
-				p[3] = w>>24;
-				p += 4;
+			if(write){
+				for(j = 0; j < Secsize; j += 4){
+					w = p[0] | p[1]<<8 | p[2]<<16 | p[3]<<24;
+					r[Rdata] = w;
+					p += 4;
+				}
+			}else{
+				for(j = 0; j < Secsize; j += 4){
+					w = r[Rdata];
+					p[0] = w;
+					p[1] = w>>8;
+					p[2] = w>>16;
+					p[3] = w>>24;
+					p += 4;
+				}
 			}
 		}
 		if(awaitirq(r, Idatadone, &sts) < 0){
 			bioerror(c, write, bno+i, sts);
 			break;
 		}
+		i += nthis;
 	}
+out:
 	qunlock(c);
 	return i * Secsize;
 }
