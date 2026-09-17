@@ -19731,3 +19731,16 @@ reports to the console, and on a board whose only console is the serial
 line they interleave with the input echo and corrupt typed commands
 mid-word.  Two apparent hangs here were that, not the driver under test.
 Check the board from its init program instead.
+.PP
+The kfs create deadlock is gone, on both.  It was this board's oldest
+open bug \(em a file created over a mounted kfs hung, pid 1's Twalk
+taking its Rerror and the error unwinding past mntwalk's own waserror
+handler, so the Tcreate was never sent \(em and it was blamed on an arm64
+multi-kproc error-stack fault.  It was the SP-alignment fault: the same
+one that stopped the board a few seconds into boot and that had the
+etherusb mount disabled in the source.  With kernel stacks aligned, kfs
+reams, the pipe mounts and the create succeeds, under QEMU and on the Pi
+(SD-FS-CREATE-OK).  The test reams a partition carved from the card's
+unallocated gap, sectors 2048 to 16000, never the whole device: kfs -r
+reams what it is given, and this card holds the firmware and the kernel
+that booted it.
