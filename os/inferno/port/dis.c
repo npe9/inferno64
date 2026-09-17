@@ -306,16 +306,36 @@ stoptheworld(void)
 	gcstwproc = up;
 	gcstw = 1;
 	coherence();
-	start = m->ticks;
+	/*
+	 * MACHP(0)->ticks, not m->ticks.
+	 *
+	 * m is the per-CPU Mach and each CPU's clock handler increments its
+	 * own copy (portclock.c).  This loop reschedules every turn, so the
+	 * process can be on a different CPU when it reads the clock than it
+	 * was when it set `start' -- and then the subtraction is between two
+	 * unrelated counters.  One tick behind reads as 0xffffffff, which is
+	 * greater than HZ/4, so the collection is abandoned on the first
+	 * migration rather than after a quarter second.
+	 *
+	 * Measured, not reasoned: of 21 give-ups logged across the
+	 * parallelvm=1 batches, 13 printed an elapsed time of 4294967295 or
+	 * 4294967294 and only 8 printed the honest 26.  Nearly two thirds of
+	 * the collector's give-ups were this bug, and each one is a
+	 * collection that did not happen.
+	 *
+	 * proc.c uses MACHP(0)->ticks where it needs a system-wide count,
+	 * for the same reason.
+	 */
+	start = MACHP(0)->ticks;
 	for(tries = 0; othersrunning() > 0; tries++){
 		stwwaits++;
-		if((ulong)(m->ticks - start) > HZ/4){
+		if((ulong)(MACHP(0)->ticks - start) > HZ/4){
 			gcstw = 0;	/* let them run; collect next time */
 			coherence();
 			if(stwgaveup++ == 0)
 				print("stw: gave up after %d tries, %lud ticks,"
 					" cpu%d %s\n", tries,
-					(ulong)(m->ticks - start),
+					(ulong)(MACHP(0)->ticks - start),
 					m->machno, up->text);
 			return 0;
 		}

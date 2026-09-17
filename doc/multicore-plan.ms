@@ -4599,3 +4599,61 @@ The arm where the metric has room is
 where all three chantests complete inside the timeout.  That one is what
 decides whether the lock costs anything when the system is actually
 running.
+.NH 2
+The give-up bound was reading the wrong clock
+.PP
+The bound on
+.CW stoptheworld() 's
+wait was changed once already, from a count of tries to elapsed time,
+and this document records why: a count measures how fast the loop goes
+round, which is whatever the compiler and the console happen to make it.
+What it did not record is that the elapsed time was being read from the
+wrong clock.
+.PP
+.CW m
+is the per-CPU Mach, and each CPU's clock handler increments its own
+.CW ticks
+\(em
+.CW portclock.c
+line 146 is
+.CW "m->ticks++" ,
+and nothing shares it.  The wait loop reschedules every turn, so the
+process can read the clock on a different CPU from the one it set
+.CW start
+on, and then
+.CW "m->ticks - start"
+subtracts two unrelated counters.  One tick behind comes out as
+.CW 0xffffffff ,
+which is comfortably greater than
+.CW HZ/4 ,
+and the collection is abandoned on the first migration instead of after
+a quarter of a second.
+.PP
+The give-up print is what caught it, and only because it printed the
+elapsed value rather than just the fact of giving up:
+.TS
+center;
+l r.
+elapsed printed	times
+4294967295	10
+26	8
+4294967294	3
+.TE
+.PP
+Twenty-one give-ups across the
+.CW parallelvm=1
+batches; thirteen of them are this bug and eight are honest.  Nearly two
+thirds of the collections the collector abandoned, it abandoned for no
+reason \(em and an abandoned collection is heap that stays allocated
+until the next one, at a configuration whose whole problem is that it is
+slow.
+.PP
+.CW MACHP(0)->ticks
+is the system-wide count, which is what
+.CW proc.c
+uses where it needs one.
+.PP
+Worth saying plainly: this was visible in every batch run this session
+and went unread until a give-up line was looked at directly rather than
+counted.  A diagnostic that prints a number nobody reads is not much
+better than one that does not print it.
