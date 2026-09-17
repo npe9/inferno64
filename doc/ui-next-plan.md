@@ -912,10 +912,28 @@ there was never speed on the table here anyway.
    directions with an item wider than the widget, so a line starts at a
    negative x and the active box runs past both edges.
 
+   **The fourth is a `radiobutton`, and it needed the vocabulary to
+   grow.** Its indicator is a ring with a dot in it — the one shape in
+   the flat style that is not a rectangle — so `TkNellipse` and
+   `TkNellipsefill` came first. They take a centre and two radii rather
+   than a bounding rectangle, because a rectangle cannot say whether a
+   circle of radius *r* is *2r* or *2r+1* across, and they are numbered
+   after the six declared-and-unimplemented types rather than beside
+   `TkNroundfill`, because a node type's number must not move once a
+   backend has seen it. The same node is what the flat scale's knob will
+   need.
+
+   Both radiobutton states are in the check, and both controls fail as
+   they must — the ring by 912 bytes, the dot by 96. That second one is
+   also what proves the widget is *chosen*: the dot is emitted only when
+   it is, so a clean control there would have meant the variable never
+   took rather than that the node matched.
+
    **What is left is the rest of the widgets and then the walk.** Each
    `tkitmp` user converts the same way, against the same byte check;
-   `scale` and `scrollbar` are the remaining ones, and the indicator a
-   `checkbutton` draws needs an ellipse node first. Only when
+   `scale` and `scrollbar` are the remaining ones. A `checkbutton`'s
+   indicator is a filled box with a tick drawn by `bezspline`, and a
+   spline has no node yet. Only when
    a repaint produces one tree instead of one per widget is there
    anything for a backend to batch.
 4. **A Metal backend.** Last, and only after 3: the measured hazard is

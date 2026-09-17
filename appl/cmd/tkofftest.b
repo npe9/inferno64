@@ -1345,8 +1345,16 @@ checkscene()
 	# ordinary one - the two colours that reach the same nodes.
 	tk->cmd(top, ".l selection set 1 2");
 	tk->cmd(top, ".l activate 2");
+	# Both states of a radiobutton, because the ring is drawn either way
+	# and the dot only when it is chosen - one of the two is a node the
+	# other never reaches.
+	tk->cmd(top, "radiobutton .r0 -text {Off} -variable rv -value 0");
+	tk->cmd(top, "radiobutton .r1 -text {On} -variable rv -value 1");
+	tk->cmd(top, "variable rv 1");
 	tk->cmd(top, "pack .e -padx 6 -pady 6");
 	tk->cmd(top, "pack .l -padx 6 -pady 6");
+	tk->cmd(top, "pack .r0 -padx 6 -pady 6");
+	tk->cmd(top, "pack .r1 -padx 6 -pady 6");
 	map(top);
 	tk->cmd(top, "focus -global 1");
 	tk->cmd(top, "focus .e");

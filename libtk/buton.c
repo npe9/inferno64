@@ -314,7 +314,9 @@ tkdrawbutton(Tk *tk, Point orig)
 	 * way.
 	 */
 	bsc = nil;
-	if(tkviascene && tk->type == TKbutton && tkstyleflat(tk)
+	if(tkviascene && tkstyleflat(tk)
+	&& (tk->type == TKbutton
+		|| (tk->type == TKradiobutton && tkl->indicator != BoolF))
 	&& tkl->img == nil && tkl->bitmap == nil && tkl->text != nil
 	&& tkl->justify == Tkleft && tkl->ul < 0
 	&& strchr(tkl->text, '\n') == nil)
@@ -412,6 +414,23 @@ tkdrawbutton(Tk *tk, Point orig)
 		u.y = p.y + ButtonBorder + (h - CheckSpace) / 2;
 		v = Pt(u.x+CheckButton/2,u.y+CheckButton/2);
 		if(tkstyleflat(tk)) {
+			/*
+			 * A ring, filled when chosen.  This is the one shape
+			 * in the flat style that is not a rectangle, which is
+			 * why the node vocabulary had to grow an ellipse
+			 * before a radiobutton could be described by it.
+			 */
+			if(bsc != nil){
+				tksceneellipse(bsc, v,
+					Pt(CheckButton/2, CheckButton/2),
+					CheckButtonBW, e->colors[tkl->check ?
+					TkChighlightfgnd : TkCdisablefgnd]);
+				if(tkl->check)
+					tksceneellipsefill(bsc, v,
+						Pt(CheckButton/2-3, CheckButton/2-3),
+						e->colors[TkChighlightfgnd]);
+				break;
+			}
 			ellipse(i, v, CheckButton/2, CheckButton/2, CheckButtonBW,
 				tkgc(e, tkl->check ? TkChighlightfgnd : TkCdisablefgnd), ZP);
 			if(tkl->check)

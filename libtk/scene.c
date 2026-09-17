@@ -232,6 +232,50 @@ tkscenetext(TkScene *s, Point p, char *text, Font *f, ulong rgba)
 }
 
 /*
+ * An ellipse, stroked (tksceneellipse) or filled (tksceneellipsefill),
+ * about a centre with two radii.
+ *
+ * A radiobutton's indicator is a ring with a dot in it and the flat
+ * scale's knob is two filled circles, so this is the shape those widgets
+ * need before they can be described by nodes at all.  The centre and the
+ * radii are kept as they are passed rather than folded into a rectangle:
+ * ellipse() and fillellipse() take them that way, and a bounding box
+ * cannot say whether a circle of radius r is 2r or 2r+1 across.
+ *
+ * width is ellipse()'s thickness, where 0 means one pixel.
+ */
+void
+tksceneellipse(TkScene *s, Point c, Point rad, int width, ulong rgba)
+{
+	TkNode *n;
+
+	if(rad.x < 0 || rad.y < 0 || width < 0)
+		return;
+	if((n = newnode(s, TkNellipse)) == nil)
+		return;
+	n->r.min = c;
+	n->r.max = c;
+	n->sp = rad;
+	n->width = width;
+	n->rgba = rgba;
+}
+
+void
+tksceneellipsefill(TkScene *s, Point c, Point rad, ulong rgba)
+{
+	TkNode *n;
+
+	if(rad.x < 0 || rad.y < 0)
+		return;
+	if((n = newnode(s, TkNellipsefill)) == nil)
+		return;
+	n->r.min = c;
+	n->r.max = c;
+	n->sp = rad;
+	n->rgba = rgba;
+}
+
+/*
  * Open a layer: the nodes that follow, up to tkscenelayerend(), are drawn
  * into a scratch surface `size' big filled with `fill', and the result is
  * then blitted to `dstr' taking pixels from `sp'.
@@ -452,6 +496,18 @@ tkscenerender(TkScene *s, TkCtxt *c, Image *dst)
 			col = tkcolor(c, n->rgba);
 			if(col != nil)
 				string(target, n->r.min, col, ZP, n->font, n->text);
+			break;
+		case TkNellipse:
+			col = tkcolor(c, n->rgba);
+			if(col != nil)
+				ellipse(target, n->r.min, n->sp.x, n->sp.y,
+					n->width, col, ZP);
+			break;
+		case TkNellipsefill:
+			col = tkcolor(c, n->rgba);
+			if(col != nil)
+				fillellipse(target, n->r.min, n->sp.x, n->sp.y,
+					col, ZP);
 			break;
 		default:
 			/*

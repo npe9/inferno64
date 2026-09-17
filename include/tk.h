@@ -512,7 +512,22 @@ enum {
 	TkNshadow,
 	TkNclip,
 	TkNtransform,
-	TkNopacity
+	TkNopacity,
+
+	/*
+	 * An ellipse, stroked or filled.  Added after the six above rather
+	 * than beside its rectangular cousins because the numbering of a
+	 * node type must not move once a backend has seen it.
+	 *
+	 * It uses the fields differently from every other node and there is
+	 * no way round that: r.min is the CENTRE and sp is the two radii,
+	 * because an ellipse is a centre and two radii, and deriving them
+	 * from a bounding rectangle loses the distinction between a radius
+	 * of r and a box 2r+1 wide.  TkNellipse's width is the stroke
+	 * thickness, in ellipse()'s sense where 0 is one pixel.
+	 */
+	TkNellipse,
+	TkNellipsefill
 };
 
 struct TkNode
@@ -762,6 +777,8 @@ extern	void		tksceneroundfill(TkScene*, Rectangle, int, ulong);
 extern	void		tksceneborder(TkScene*, Rectangle, int, int, ulong);
 extern	void		tksceneborderon(TkScene*, Rectangle, int, int, ulong, ulong);
 extern	void		tkscenetext(TkScene*, Point, char*, Font*, ulong);
+extern	void		tksceneellipse(TkScene*, Point, Point, int, ulong);
+extern	void		tksceneellipsefill(TkScene*, Point, Point, ulong);
 extern	void		tkscenelayer(TkScene*, Point, ulong, Rectangle, Point);
 extern	void		tkscenelayerend(TkScene*);
 extern	void		tkreliefnodes(TkScene*, Tk*, Point, int, int);

@@ -44,9 +44,11 @@ to agree byte for byte.
 .IR tkofftest (1),
 .IR tkbench (1)
 .SH BUGS
-Four things go through it: a flat border, a plain
+Five things go through it: a flat border, a plain
 .IR button (9)
-with text, an
+with text, a
+.IR radiobutton (9)
+with an indicator and text, an
 .IR entry (9)
 that is not showing a selection and not substituting for its text with
 .BR -show ,
@@ -114,6 +116,31 @@ nodes in place, so an error in the scratch's extent or the blit's offset
 shows as a difference rather than as a widget that looks fine.  Every
 widget that genuinely needs a layer draws with something other than
 nodes, so none of them could have told us whether it worked.
+.PP
+The one shape in the flat style that is not a rectangle is a
+.IR radiobutton (9)'s
+indicator, a ring with a dot in it, and the flat
+.IR scale (9)'s
+knob, which is two filled circles.
+.B TkNellipse
+and
+.B TkNellipsefill
+exist for those.
+They use the fields differently from every other node \(em
+.B r.min
+is the centre and
+.B sp
+is the two radii \(em because an ellipse is a centre and two radii, and
+a bounding rectangle cannot say whether a circle of radius
+.I r
+is
+.I 2r
+or
+.I 2r+1
+across.
+They are numbered after the six below rather than beside their
+rectangular cousins, because the numbering of a node type must not move
+once a backend has seen it.
 .PP
 Six node types are declared and not implemented:
 .BR TkNtexture ,
