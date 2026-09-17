@@ -1694,7 +1694,7 @@ _
 6;done;two instances, one mounting the other
 7;done;cloudauth(1); check-cloudauth.sh, with a wrong-signer control
 8;done;Styx costs about what a framed RPC costs
-9;part;local profile done; the comparison needs an instance
+9;done;measured against Debian 12 on the same e2-micro
 10;done;66 MiB to boot, 68 to work, ~78 KiB a service
 11;done;two rented instances, one namespace, one binary on both
 12;done;supervise(1), out of /prog/<pid>/wait
@@ -2131,3 +2131,71 @@ reports
 .CW "rtt 0"
 on both kernels, in both directions.  That is its own timing on a
 native kernel, not the network.
+.NH 2
+Item 9: against a conventional system on the same instance
+.PP
+Item 9 asks how Inferno's boot and footprint compare with a
+conventional system's on the same instance shape.  Both sides are an
+.CW e2-micro
+in
+.CW us-central1-a
+with a 10 GB disk, both boot through Compute Engine's UEFI firmware,
+and both are timed from the same line \(em the one the firmware prints
+handing control to the boot loader \(em so the firmware is excluded from
+both and the loader onwards is counted.
+.PP
+.B "The instrument, and the one it replaces."
+.CW scripts/gce-boot-stamp.py
+holds the live console stream open, resets the instance, and stamps
+every line with the local clock.
+.CW scripts/gce-boot-race.py
+polls
+.CW get-serial-port-output
+instead, and is kept only for coarse work: the API returns the log in
+bursts, so a fast boot's first and last markers arrive in one poll and
+the answer comes out as
+.B 0
+seconds.  It also returns a window rather than the whole log, so
+counting occurrences of a marker goes
+.I down
+on a talkative guest; the polling version now reads by byte offset.
+.PP
+.B "Boot, three runs each."
+.TS
+box, tab(;);
+l l l.
+system;marker;seconds from the loader
+_
+Inferno;an interactive shell;4.0  2.4  9.5
+Debian 12;a login prompt;15.1  5.9  17.5
+Debian 12;systemd "Startup finished";18.7  9.2  20.3
+.TE
+Inferno is about three times quicker to something a person can type at,
+and the ranges overlap, because an
+.CW e2-micro
+is a shared-core burstable shape and a good part of this spread is the
+machine rather than the software.  Debian's own accounting of the same
+boots says 2.5 s of kernel and 9 to 13 s of userspace.  It is not a
+like-for-like comparison of equivalent function: Debian spends that
+userspace on cloud-init, ssh host keys, logging and guest agents, none
+of which Inferno does at all.  What it compares is what each system
+does by default on the same machine.
+.PP
+.B "Footprint, on the same machine."
+.TS
+box, tab(;);
+l l l.
+;Inferno;Debian 12
+_
+image archive;2.39 MB;\(em
+kernel;9.24 MB;14.2 MB (vmlinuz)
+disk in use;about 9 MB;2.1 GB
+memory in use at rest;8.7 MB of pool;288 MB used, 681 MB available
+.TE
+Inferno's memory figure is
+.CW /dev/memory
+at an idle shell on the instance: 8.67 MB of the main pool and 0.38 MB
+of heap.  That is pool memory, not the whole footprint \(em the kernel
+image and its fixed structures are outside it, and item 10's floor
+measurement, 66 MiB to boot and 68 to work, is the number to quote for
+how small a machine it needs.
