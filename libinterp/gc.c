@@ -473,6 +473,37 @@ rootset(Prog *root)
 		 */
 		rr = progreg(root);
 		ml = rr->M;
+		/*
+		 * A Prog on this list need not have a module.
+		 *
+		 * destroystack() ends with "reg->M = H" and both its callers
+		 * -- progexit()'s teardown and vmachine()'s error handler --
+		 * run it before delprog() unlinks the Prog.  With one
+		 * interpreter the VM lock meant no collection could be in
+		 * progress across that window, and gclock() covered the rest
+		 * by making rungc() decline to start.  gclock() only sets
+		 * gchalt, which rungc() tests on entry; it does not stop a
+		 * collection already running.  And vmachine()'s handler
+		 * clears inxec before it gets here, so stoptheworld() counts
+		 * that context as stopped and does not wait for it.
+		 *
+		 * So at parallelvm=1 this walk reaches a Prog whose register
+		 * file has M == H, takes D2H of it -- H is (void*)-1 and Heap
+		 * is 24 bytes, so that is exactly -25 -- and Setmark()
+		 * dereferences it.  Eight captured faults across two kernels,
+		 * every one of them CR2 ffffffffffffffe7 with CX holding the
+		 * same, at this instruction.
+		 *
+		 * A Prog with no module has no module roots to mark, so
+		 * skipping is not a lost root; it is the same guard that mp
+		 * has had three lines below all along.  nil as well as H,
+		 * because addprog()'s placeholder Prog is zeroed rather than
+		 * filled with H.
+		 */
+		if(ml == H || ml == nil) {
+			root = root->next;
+			continue;
+		}
 		h = D2H(ml);
 		Setmark(h);
 		mp = ml->MP;

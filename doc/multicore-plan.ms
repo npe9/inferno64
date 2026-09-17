@@ -4953,3 +4953,145 @@ The one-Rendez-per-context design depends on
 .CW claimctx()
 handing each interpreter its own context, and nothing in these ten boots
 violated it.
+.NH 1
+The residual root-set fault
+.PP
+The largest remaining
+.CW parallelvm=1
+failure was a
+.CW "panic: page fault"
+at
+.CW rootset+0x87 ,
+two or three boots in sixteen, present with the channel lock on and off
+alike.  It is solved, and the thing that solved it was reading the
+register dump instead of the stack trace.
+.PP
+Eight captures, two different kernels:
+.TS
+center;
+l l l l.
+	CX	DX	CR2
+every one	ffffffffffffffe7	ffffffffffffffff	ffffffffffffffe7
+.TE
+.PP
+The faulting address is the same value every time, and
+.CW CR2
+equals
+.CW CX ,
+so the dereference is through it.  A constant faulting address is not
+corruption; it is arithmetic.  And
+.CW "H is ((void*)(-1))"
+while
+.CW Heap
+is two ints and two pointers, 24 bytes on amd64 \(em so
+.CW D2H(H)
+is
+.CW -1-24 ,
+which is
+.CW -25 ,
+which is
+.CW 0xffffffffffffffe7 .
+.CW DX
+holding
+.CW -1
+is
+.CW H
+itself, still in a register from the comparison that was not made.
+.PP
+.CW rootset()
+had:
+.QP
+.CW "ml = rr->M;"
+.br
+.CW "h = D2H(ml);"
+.br
+.CW "Setmark(h);"
+.br
+.CW "mp = ml->MP;"
+.br
+.CW "if(mp != H) {"
+.PP
+The
+.CW MP
+is guarded against
+.CW H
+three lines below.  The Modlink it came from is not.
+.NH 2
+Why a Prog on that list can have no module
+.PP
+.CW destroystack()
+ends with
+.CW "reg->M = H" ,
+and both callers \(em
+.CW progexit() 's
+teardown and
+.CW vmachine() 's
+error handler \(em run it before
+.CW delprog()
+unlinks the Prog, so there is a window in which a Prog on
+.CW isched.head
+has no module.  Both wrap it in
+.CW gclock() ,
+which was enough when there was one interpreter.
+.PP
+It is not enough now, for two separate reasons.
+.CW gclock()
+only increments
+.CW gchalt ,
+which
+.CW rungc()
+tests when it starts \(em it cannot stop a collection already running on
+another CPU.  And
+.CW vmachine() 's
+handler clears
+.CW inxec
+before it reaches the teardown, so
+.CW stoptheworld()
+counts that context as already stopped and never waits for it.  The
+world is "stopped" while one context is dismantling a Prog.
+.PP
+This is the same shape as the fault this document spends a chapter on \(em
+.CW handler()
+rewriting
+.CW p->reg
+after
+.CW waserror
+cleared
+.CW inxec
+\(em one step further along the same teardown path.  The earlier fix
+claimed the quantum around
+.CW handler() ;
+it did not extend to what runs after it.
+.NH 2
+The guard, and what it does not do
+.PP
+.CW rootset()
+now skips a Prog whose
+.CW rr->M
+is
+.CW H
+or nil.  That loses nothing:
+.CW destroystack()
+nils
+.CW reg->EX
+before it frees a single extent and only sets
+.CW "M = H"
+at the end, so a Prog with no module has no stack roots either.  nil as
+well as
+.CW H
+because
+.CW addprog() 's
+placeholder Prog is zeroed rather than filled with
+.CW H ,
+and
+.CW D2H(nil)
+would fault at
+.CW -24
+by the same arithmetic.
+.PP
+What this does not do is stop the collector walking a Prog that is being
+dismantled.  It stops the crash that walk causes, which is the
+measurable part; whether any other field read during that window can be
+inconsistent is a separate question and is not answered here.  Claiming
+the race is closed because the panic stopped would be the same mistake
+as reading a metric without checking what it counts.
