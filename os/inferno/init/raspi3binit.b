@@ -27,6 +27,36 @@ sdcheck()
 	sys->print("SD block0 %02x%02x%02x%02x\n",
 		int buf[0], int buf[1], int buf[2], int buf[3]);
 	sys->print("SD-READ-OK\n");
+
+	# A multi-block transfer, checked by its last block.  Read 64 sectors
+	# ending at the FAT boot sector of the first partition (16384 on this
+	# card) in one call: if the run arrives in order, the last 512 bytes
+	# are that boot sector, which names itself.  Typing this at the shell
+	# is not an option while another session's libinterp debug output
+	# interleaves with the console echo and corrupts the command line.
+	nblk := 64;
+	big1 := array[nblk*512] of byte;
+	off := big (16385 - nblk) * big 512;
+	n := sys->pread(fd, big1, len big1, off);
+	if(n != len big1){
+		sys->print("SD-MULTI-FAIL %d of %d: %r\n", n, len big1);
+		return;
+	}
+	# the same block on its own: the run is in order if its tail matches
+	one := array[512] of byte;
+	if(sys->pread(fd, one, len one, big 16384 * big 512) != len one){
+		sys->print("SD-MULTI-FAIL single read of the last block: %r\n");
+		return;
+	}
+	last := big1[(nblk-1)*512:];
+	for(i := 0; i < 512; i++)
+		if(last[i] != one[i]){
+			sys->print("SD-MULTI-FAIL byte %d of the last block: %02x not %02x\n",
+				i, int last[i], int one[i]);
+			return;
+		}
+	sys->print("SD-MULTI-OK %d bytes, last block matches it read alone (%02x%02x%02x%02x)\n",
+		n, int one[0], int one[1], int one[2], int one[3]);
 }
 
 kfsproc(pfd: ref Sys->FD)
