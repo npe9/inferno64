@@ -540,7 +540,14 @@ extern	Type Treal;
  * A Pctx is a register file and a few pointers, so the whole pool is a
  * few tens of kilobytes.
  */
-enum { MAXPCTX = 64 };
+/*
+ * The pool contexts are handed out of.  The array is large; how much of
+ * it claimctx() will use is ctxcap, a runtime cap (*ctxcap on the boot
+ * line), so one kernel measures a pool of 64 against a larger one --
+ * every -smp 4 boot that panics is one that exhausted it, and recycling
+ * contexts turned out to make the peak worse rather than better.
+ */
+enum { MAXPCTX = 256 };
 extern	Pctx*	pctxs[MAXPCTX];
 extern	int	npctx;
 /*

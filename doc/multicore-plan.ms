@@ -6229,60 +6229,64 @@ above, and it is now the only thing between this kernel and a
 .CW parallelvm=1
 that behaves the same at four processors as at two.
 .NH 2
-Contexts, given back at both places an interpreter stops
+Recycling contexts does not work, and the pool size does
 .PP
-The reverted version had the right idea and the wrong reclaim point.  It
-took the context again at the top of
-.CW vmachine() 's
-loop, which is
-.I after
-.CW vmacquire() ,
-so an interpreter with no context ran a whole pass against the shared
-.CW defpctx
-and pushed its placeholder Prog onto it \(em
-.CW "delrunq: prog 0 was on another context's queue"
-in 11 boots of 12.  Taken again immediately after the
-.CW sched()
-that parks it, before anything touches
-.CW curP ,
-that failure goes away: contexts reused about 11000 times a boot, and a
-counter on "queued a Prog with no context" reads 0.
+Giving a context back where an interpreter stops \(em at the park point,
+and in
+.CW release()
+where it blocks in a Dis system call, which is where Go hands back its P
+\(em was built, and measured against a batch of the kernel before it.
+That table said it worked: no exhaustion, contexts held 10 to 36 rather
+than 63 to 64, and
+.CW "-smp 4"
+panics down from 5 in 8 to 0 in 12.
 .PP
-That alone was not enough.  The high-water mark stayed at 50 to 64,
-because an interpreter blocked in a Dis system call never reaches the
-park point at all \(em it is inside
-.CW release() .
-So the context is given back there too, which is the same place Go hands
-back a P, and
-.CW acquire()
-takes one before it touches anything.
-.CW curP
-is pointed at
-.CW defpctx
-as the context is released, not left naming it until the next
-.CW sched() :
-another interpreter can claim it immediately, and
-.CW currun()
-is
-.CW curP->runhd .
-.PP
-Twelve boots each, 90 seconds,
-.CW parallelvm=1 :
+It was wrong, for the reason this document has now given twice: the two
+numbers came from different binaries run at different times on a shared
+machine.  Put behind
+.CW *ctxrecycle
+so one kernel measures all three arms, interleaved, twelve boots each at
+.CW "-smp 4" :
 .TS
 center;
-l r r r r r.
-	panics	all 27 cases	pool exhausted	contexts held	bad frame
--smp 4, before	5 of 8	1 of 8	6 of 8	63 to 64	0
--smp 4, after	0 of 12	11 of 12	0	10 to 36	0
--smp 2, after	0 of 12	9 of 12	0	12 to 23	0
+l r r r.
+	panics	pool exhausted	contexts created
+none	5 of 12	5	21 to 53
+park point only	8 of 12	9	16 to 64
+park point and release()	6 of 12	6	16 to 64
 .TE
 .PP
-A 40-boot run of the same kernel before the
-.CW curP
-correction had one general protection violation in sixteen at
-.CW "-smp 4" ;
-with it, none in twelve.  That is not enough boots to call the
-difference, and it is recorded that way.
+No improvement, and the peak is
+.I worse
+with recycling on: 10000 to 30000 reuses a boot and the pool still grew
+further than it did without any.  The mechanism is plain once measured
+\(em a process that gives its context back has to take one again when it
+returns, and if every context is busy at that moment it creates a new
+one, where before it simply kept the one it had.  Reverted.
+.PP
+What the same batches do show is that every panicking boot is a boot
+that exhausted the pool.  So the question was never how to recycle but
+how many are needed, and the answer is measured: with the array raised
+and a runtime cap
+.CW ( *ctxcap )
+so one kernel measures both, sixteen boots each at
+.CW "-smp 4" :
+.TS
+center;
+l r r r r.
+	panics	pool exhausted	chantest lines	contexts created
+cap 64	8 of 16	8 of 16	408 of 432	22 to 64
+cap 256	0 of 16	0 of 16	416 of 432	23 to 83
+.TE
+.PP
+Eight panics to none, and all eight of the panicking boots are the eight
+that exhausted the pool.  The peak demand is 83 contexts, so 64 was
+simply too few for four processors with this workload; the cap is now
+the array size and
+.CW *ctxcap=64
+gets the old behaviour back.  The array costs about 190KB of kernel bss
+at 256 entries, which is the whole price.
+
 .NH 2
 Forty-six boots, and a heap that is bounded but not equal
 .PP
@@ -6332,3 +6336,23 @@ the VM-locked collector does: one boot of six sat at nine times the
 figure.  That is the honest state of it, and it is a throughput
 question about how often collections are abandoned, not a correctness
 one.
+.NH 2
+With the pool large enough
+.PP
+Twenty-four boots of the kernel as it now stands \(em both collector
+fixes, no context recycling, the pool at 256:
+.TS
+center;
+l r r r r.
+	panics	pool exhausted	bad frame	chantest lines
+-smp 4, parallelvm=1	0 of 12	0	0	311 of 324
+-smp 2, parallelvm=1	0 of 12	0	0	295 of 324
+-smp 4, parallelvm=0	0 of 4	0	0	108 of 108
+.TE
+.PP
+No panic in either
+.CW parallelvm=1
+arm.  The lines that are missing are boots that had not finished all
+three chantest instances when the 90-second timeout cut them off, not
+failures: no boot printed a
+.CW FAIL .

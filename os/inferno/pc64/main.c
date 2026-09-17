@@ -259,6 +259,10 @@ main(void)
 		extern int teardrop;
 		char *p;
 
+		if((p = getconf("*ctxcap")) != nil){
+			extern int ctxcap;
+			ctxcap = strtol(p, nil, 0);	/* claimctx() clamps it */
+		}
 		if((p = getconf("*syncfix")) != nil){
 			extern int syncfix;
 			syncfix = strtol(p, nil, 0);
