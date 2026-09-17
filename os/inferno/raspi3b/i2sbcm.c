@@ -85,6 +85,8 @@ enum {
 	Txe	= 1<<21,	/* TX FIFO empty */
 	Rxf	= 1<<22,	/* RX FIFO full */
 	Rxsex	= 1<<23,	/* sign-extend received samples */
+	/* the writable bits of CS_A; everything else in it is status */
+	Csctl	= Csen|Rxon|Txon|Txclr|Rxclr|(3<<Txthrshift)|(3<<Rxthrshift)|Dmaen|Rxsex,
 
 	/* Mode */
 	Fslenshift = 0,
@@ -330,8 +332,17 @@ i2sinit(void)
 	}
 	r[Mode] = 0;
 
-	if(r[Cs] != 0){
-		print("I2S-FAIL CS is %#ux at reset, expected 0\n", r[Cs]);
+	/*
+	 * Only the writable bits.  CS_A's top half is status -- FIFO
+	 * empty, FIFO has room, FIFO needs writing, and the two sync
+	 * bits -- and an idle block on the board reports 0x2a6000 there,
+	 * which is all five of them and entirely correct.  QEMU's model
+	 * reports zero, so "CS is 0 at reset" passed there and called a
+	 * working part broken here.
+	 */
+	if((r[Cs] & Csctl) != 0){
+		print("I2S-FAIL CS control bits are %#ux at reset, expected 0 (CS %#ux)\n",
+			r[Cs] & Csctl, r[Cs]);
 		return;
 	}
 
