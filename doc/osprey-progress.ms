@@ -6455,6 +6455,36 @@ pushing, and what found it was two more writes in
 .CW regcheck .
 The criterion is there for the next thing that writes that much.
 .PP
+And the other half of the register question, which amd64 has had since
+the trap entry was written: does an
+.I interrupt
+give every register back?
+.CW os/osprey/pc/regtorture.s
+asks it of this machine's entry, which is 9front's own
+.CW _strayintr
+and
+.CW intrcommon ,
+saving with PUSHAL and restoring with POPAL.  Six registers rather than
+amd64's twelve, because a 386 has seven and the loop counts with one,
+and none is reserved here the way R14 and R15 carry m and up.
+.CW init0
+runs it where pc64 runs its own, and the user check on 386 reads the
+line.  Mutation says it means something: with
+.CW trap()
+made to zero SI when it holds the loop's value, the criterion fails and
+the kernel prints "register 5 came back as 0x0 across an interrupt".
+.PP
+The count of iterations is forty million, and what the tick count in
+that line is worth is worth stating.  It is evidence that interrupts
+landed in the loop, not a duration: the counter jumps a few hundred as
+the clock starts, which is about where this runs, so a boot may report
+three hundred and sixty for a loop that took five.  A thousand
+iterations reports none at all, and the criterion asks only that the
+number is not zero.  The first reading of it here was wrong in the other
+direction \- a constant three hundred at every size was read as the
+interrupts-off loop polluting the window, the two calls were swapped to
+fix it, and the numbers did not move; the swap was undone.
+.PP
 The library closure that said three more symbols were missing \-
 .CW _genrandomqlock ,
 .CW nsec ,

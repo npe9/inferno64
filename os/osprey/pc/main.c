@@ -101,6 +101,50 @@ machinit(void)
 	m->loopconst = 100000;
 }
 
+/*
+ * Does an interrupt give back every register?  pc64/main.c asks it the
+ * same way and at the same moment.  Six registers here, not twelve:
+ * regtorture.s says which and why.
+ */
+extern long regtorture(long);		/* regtorture.s */
+extern long regtorturecli(long);
+extern ulong regtorturebad;
+
+static void
+regcheck(void)
+{
+	/*
+	 * Ten times amd64's count: this loop is six compares where that
+	 * one is twelve, and eight million measured at five clock ticks,
+	 * which is five interrupts for a clobber to be caught in.  Forty
+	 * million is twenty-five or so, for a quarter of a second of boot.
+	 *
+	 * The number printed is evidence that interrupts landed in the
+	 * loop and not a duration: some boots report a few hundred instead,
+	 * because the tick counter jumps as the clock starts and that is
+	 * about where this runs.  What the criterion asks is that it is
+	 * not zero.
+	 */
+	enum { Niter = 40*1000*1000 };
+	ulong t0, ticks;
+	long bad, clibad;
+
+	clibad = regtorturecli(100*1000);
+	t0 = MACHP(0)->ticks;
+	bad = regtorture(Niter);
+	ticks = MACHP(0)->ticks - t0;
+	if(bad != 0)
+		print("osprey regcheck: register %ld came back as %#lux across an interrupt, after %lud ticks\n",
+			bad, regtorturebad, ticks);
+	else if(clibad != 0)
+		print("osprey regcheck: the loop is wrong: a register moved with interrupts off\n");
+	else if(ticks == 0)
+		print("osprey regcheck: inconclusive, no clock tick passed while it ran\n");
+	else
+		print("osprey regcheck: six registers survived %d iterations over %lud clock ticks, and the same loop with interrupts off is clean\n",
+			Niter, ticks);
+}
+
 void
 init0(void)
 {
@@ -121,6 +165,7 @@ init0(void)
 		poperror();
 	}
 	alarmkprocstart();
+	regcheck();
 
 	/*
 	 * The stack and argument vector the entry is given, as pc64's init0

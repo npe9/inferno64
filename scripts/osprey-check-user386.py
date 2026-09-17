@@ -81,6 +81,18 @@ def main():
                     re.search(r'osprey user: six registers survived (\d+) of \1 system calls, '
                               r'so _syscallintr and forkret gave back every one they were not told to keep', t)
                     is not None))
+    #
+    # The interrupt half of the same question, measured in the kernel by
+    # os/osprey/pc/regtorture.s before user mode is entered: six
+    # registers held across real clock interrupts, and the same loop
+    # with interrupts off clean, so a clobber is the entry and not the
+    # loop.  The tick count is required to be non-zero: a loop no
+    # interrupt landed in has measured nothing.
+    #
+    results.append(("and an interrupt gives back every register too: six held across real clock interrupts in the kernel's own loop",
+                    re.search(r'osprey regcheck: six registers survived \d+ iterations over [1-9]\d* clock ticks, '
+                              r'and the same loop with interrupts off is clean', t)
+                    is not None))
     results.append(("and it maps its container's message ring through the microkernel's address-space service",
                     'message ring with segattach' in t))
     results.append(("and the library opens a file by name at a server over the ring",
