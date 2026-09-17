@@ -6288,9 +6288,13 @@ gets the old behaviour back.  The array costs about 190KB of kernel bss
 at 256 entries, which is the whole price.
 
 .NH 2
-Forty-six boots, and a heap that is bounded but not equal
+A heap that is bounded but not equal
 .PP
-The kernel with both fixes and the context recycling, 90 seconds a boot:
+These forty-six boots were of the recycled kernel, which is reverted, so
+the panic column belongs to a configuration that no longer exists and
+the table above supersedes it.  The two things worth keeping are the
+correction below and the heap figures, neither of which the recycling
+touches.  90 seconds a boot:
 .TS
 center;
 l r r r r.
