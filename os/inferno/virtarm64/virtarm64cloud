@@ -28,8 +28,6 @@ dev
 	ssl
 	cap
 	kprof
-	draw
-	pointer
 
 ip
 	tcp
@@ -41,9 +39,6 @@ ip
 lib
 	interp
 	keyring
-	memlayer
-	memdraw
-	draw
 	sec
 	mp
 	math
@@ -85,7 +80,6 @@ port
 	sysfile
 	taslock
 	xalloc
-	swcursor
 
 	archvirtarm64
 
@@ -94,14 +88,21 @@ misc
 	pci	pciecam
 	sdvirtio10	pci sdscsi virtio10mem
 	sdnvme	pci
-	screenarm
+# screennone, not screenarm.  screenarm drives QEMU's ramfb through
+# fw_cfg at the hardcoded address 0x9020000, which is where the arm64
+# "virt" machine puts it and is not fw_cfg anywhere else.  On a real
+# Compute Engine t2a instance this kernel reached procinit and then
+# stopped dead -- 92 lines of serial output, no banner, no shell -- and
+# that probe is the first thing after it that touches a fixed MMIO
+# address the machine need not have.  A cloud instance has no display
+# to drive anyway.
+	screennone
 	randomvirtarm64
 
 mod
 	sys
 	keyring
 	crypt
-	draw
 
 init
 	virtarm64init

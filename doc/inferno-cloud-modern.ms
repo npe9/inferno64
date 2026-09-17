@@ -1696,7 +1696,7 @@ _
 8;done;Styx costs about what a framed RPC costs
 9;part;local profile done; the comparison needs an instance
 10;done;66 MiB to boot, 68 to work, ~78 KiB a service
-11;blocked;needs an amd64 and an arm64 instance
+11;part;both images boot on rented instances; a t2a has only gVNIC
 12;done;supervise(1), out of /prog/<pid>/wait
 13;done;metricfs(4), read across a mount
 14;done;check-pc64-redeploy.sh, with a no-server control
@@ -1852,3 +1852,66 @@ both, and the cloud's own cost for the mount.  What they would not add
 is the part that was in question: nothing was recompiled, nothing was
 re-qualified, and the file that ran on the amd64 machine is byte for
 byte the file that ran on the arm64 one.
+.NH 2
+Item 11 on rented machines: both kernels boot, one cannot reach the network
+.PP
+An arm64 image went to a
+.CW t2a-standard-1
+instance and an amd64 one to an
+.CW e2-small ,
+and both reached an interactive shell.  Two things stood between the
+arm64 kernel and that shell, and a third is between it and item 11.
+.PP
+.B "The ramfb probe."
+The first arm64 instance printed 92 lines and stopped at
+.CW procinit .
+The configuration linked
+.CW screenarm ,
+which drives QEMU's ramfb through fw_cfg at the fixed address
+.CW 0x9020000 .
+That is where QEMU's
+.CW virt
+machine puts fw_cfg and nowhere else promises to.
+.CW virtarm64cloud
+now links
+.CW screennone
+and no draw devices; a cloud instance has no display to drive.  With
+that change the t2a boots through to
+.CW "ARM64-DISK-OK /dev/sdN0/data read 512 bytes, sig 55aa"
+off the NVMe boot disk and an interactive
+.CW sh .
+The ACPI reader agrees with
+.CW mem.h
+on the GIC distributor, redistributor and PL011 \(em Compute Engine's
+arm64 machine is laid out like QEMU's
+.CW virt
+there \(em and disagrees on the PCIe ECAM window, which the firmware puts
+at
+.CW 0x3f000000 ;
+the kernel already takes that one from the table.
+.PP
+.B "The boot is slow to watch, not slow."
+A serial log fetched a minute after creation ended inside
+.CW poolsize ,
+and looked like a hang in the first large allocation on a 4 GiB
+machine.  Fetched again it ran to the prompt.  The same kernel under
+QEMU with
+.CW "-m 4096"
+passes the same point at once.  Read a Compute Engine serial log twice
+before calling a stop.
+.PP
+.B "No network card this kernel can drive."
+The t2a's PCI bus holds three functions:
+.CW 1ae0/0042
+(Google's gVNIC),
+.CW 1af4/1005
+(a virtio entropy source) and
+.CW 1ae0/001f
+(NVMe).  Asking for a virtio NIC is refused:
+.CW "Only [[GVNIC, UNSPECIFIED_NIC_TYPE]] nic types are allowed at index 0" .
+So item 11's arm64 half cannot mount anything until there is a gVNIC
+driver, and that is the next piece of work.
+.PP
+.CW scripts/gce-console.py
+types at an instance's serial console, which is the only way into an
+Inferno image on a rented machine.

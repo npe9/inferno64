@@ -9,7 +9,7 @@
 
 #include "virtarm64cloud.root.h"
 
-ulong ndevs = 26;
+ulong ndevs = 24;
 extern Dev rootdevtab;
 extern Dev consdevtab;
 extern Dev progdevtab;
@@ -26,9 +26,7 @@ extern Dev ipdevtab;
 extern Dev ssldevtab;
 extern Dev capdevtab;
 extern Dev kprofdevtab;
-extern Dev drawdevtab;
-extern Dev pointerdevtab;
-Dev* devtab[26]={
+Dev* devtab[24]={
 	&rootdevtab,
 	&consdevtab,
 	&progdevtab,
@@ -45,8 +43,6 @@ Dev* devtab[26]={
 	&ssldevtab,
 	&capdevtab,
 	&kprofdevtab,
-	&drawdevtab,
-	&pointerdevtab,
 	nil,
 };
 
@@ -66,12 +62,10 @@ void links(void){
 extern void sysmodinit(void);
 extern void keyringmodinit(void);
 extern void cryptmodinit(void);
-extern void drawmodinit(void);
 void modinit(void){
 	sysmodinit();
 	keyringmodinit();
 	cryptmodinit();
-	drawmodinit();
 }
 
 #include "../port/sd.h"
