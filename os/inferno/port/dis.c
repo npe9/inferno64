@@ -348,7 +348,16 @@ worldrunning(void *a)
 	return gcstw == 0;
 }
 
-/* let the world run again, and wake everyone waiting to enter a quantum */
+/*
+ * Let the world run again, and wake everyone waiting to enter a quantum.
+ *
+ * npctx is read without isched.l, as othersrunning() and progreg() also
+ * do.  A context claimed between this read and the loop is missed, and
+ * that costs it the 5ms timeout on its own tsleep rather than anything
+ * worse -- which is the same reason the timeout is there.  wakeup() on a
+ * Rendez with no sleeper is a no-op, so the loop is safe to run over
+ * contexts that are not waiting.
+ */
 static void
 releaseworld(void)
 {
