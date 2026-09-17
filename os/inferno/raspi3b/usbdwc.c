@@ -326,8 +326,12 @@ chanwait(Ep *ep, Ctlr *ctlr, Hostchan *hc, int mask)
 				 * arrived.  Ask for a retry instead, which
 				 * re-arms the channel and keeps the data whole.
 				 */
-				dprint("usbdwc: ep%d.%d completion missed, retrying\n",
-					ep->dev->nb, ep->nb);
+				print("usbdwc: ep%d.%d completion missed: hcchar %8.8ux "
+					"hcint %8.8ux hcintmsk %8.8ux hctsiz %8.8ux "
+					"haint %8.8ux gintsts %8.8ux\n",
+					ep->dev->nb, ep->nb, hc->hcchar, hc->hcint,
+					hc->hcintmsk, hc->hctsiz,
+					ctlr->regs->haint, ctlr->regs->gintsts);
 				return Chhltd|Nak;
 			}
 			if(i > 0 && i % 60 == 0)
