@@ -110,6 +110,74 @@ fatpart(): (int, int)
 	return (0, 0);
 }
 
+# What the IP stack sees, printed to the console: with the router
+# changed, the question is whether the board's packets leave and whether
+# anything comes back, which the driver's own counters cannot answer.
+# devip's log carries ip, icmp, udp and tcp; the interface's pktin and
+# pktout say whether frames reach it at all.  Bounded, because this is a
+# diagnostic and the console is also the shell.
+netdebug()
+{
+	for(i := 0; i < 600; i++){		# wait for the stack
+		if(hasaddr())
+			break;
+		sys->sleep(100);
+	}
+	cfd := sys->open("/net/log/ctl", Sys->ORDWR);
+	if(cfd == nil){
+		sys->print("NETLOG-NONE /net/log/ctl: %r\n");
+		return;
+	}
+	if(sys->fprint(cfd, "set ip icmp udp tcp") < 0){
+		sys->print("NETLOG-FAIL set: %r\n");
+		return;
+	}
+	spawn netcounters();
+	fd := sys->open("/net/log", Sys->OREAD);
+	if(fd == nil){
+		sys->print("NETLOG-NONE /net/log: %r\n");
+		return;
+	}
+	buf := array[2048] of byte;
+	for(i = 0; i < 400; i++){
+		n := sys->read(fd, buf, len buf);
+		if(n <= 0)
+			break;
+		sys->print("NETLOG %s", string buf[0:n]);
+	}
+	cfd = nil;
+	sys->print("NETLOG-END\n");
+}
+
+# the interface's own counters, which say whether frames arrive at all
+netcounters()
+{
+	last := "";
+	for(i := 0; i < 40; i++){
+		fd := sys->open("/net/ipifc/0/status", Sys->OREAD);
+		if(fd == nil)
+			return;
+		b := array[512] of byte;
+		n := sys->read(fd, b, len b);
+		fd = nil;
+		if(n <= 0)
+			return;
+		(nil, f) := sys->tokenize(string b[0:n], " \t\r\n");
+		in := ""; out := "";
+		for(l := f; l != nil; l = tl l){
+			if(hd l == "pktin" && tl l != nil)
+				in = hd tl l;
+			if(hd l == "pktout" && tl l != nil)
+				out = hd tl l;
+		}
+		now := "pktin " + in + " pktout " + out;
+		if(now != last)
+			sys->print("NETCOUNT %s\n", now);
+		last = now;
+		sys->sleep(3000);
+	}
+}
+
 # Fetch a kernel over the network and install it on the partition the
 # firmware reads, so a new build reaches the board without its card being
 # carried to another machine.  /n/dos/kupdate.txt on that same partition
@@ -514,6 +582,7 @@ init()
 	# in its own process: the shell must not wait behind a DHCP lease and
 	# three pings, which take seconds and can be answered by nothing at all
 	spawn ethercheck();
+	spawn netdebug();
 	# A kfs in the card's unallocated gap, mounted over a pipe, with a
 	# file created in it.  The create used to hang here - pid 1's Twalk
 	# got its Rerror and the error unwound past mntwalk's own waserror
