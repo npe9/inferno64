@@ -216,7 +216,7 @@ init0(void)
 		setconfenv();
 		poperror();
 	}
-	kproc("alarm", alarmkproc, 0);
+	alarmkprocstart();
 	regcheck();
 	/*
 	 * The stack initcode is entered on.  The user entry (init9.c's

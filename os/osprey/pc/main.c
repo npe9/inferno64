@@ -120,7 +120,7 @@ init0(void)
 		setconfenv();
 		poperror();
 	}
-	kproc("alarm", alarmkproc, 0);
+	alarmkprocstart();
 
 	/*
 	 * The stack and argument vector the entry is given, as pc64's init0

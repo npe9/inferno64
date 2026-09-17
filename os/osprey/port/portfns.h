@@ -19,6 +19,7 @@ void		ospreylinuxsigreturn(void);
 void		addwatchdog(Watchdog*);
 Block*		adjustblock(Block*, int);
 void		alarmkproc(void*);
+void		alarmkprocstart(void);
 Block*		allocb(int);
 int		anyhigher(void);
 int		anyready(void);

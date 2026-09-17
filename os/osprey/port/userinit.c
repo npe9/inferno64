@@ -1045,9 +1045,11 @@ proc0(void*)
 		 * without it procalarm records the deadline and nothing ever
 		 * reads it, so a legacy program that sets an alarm waits for
 		 * a note that cannot arrive.  checkalarms, on the clock tick,
-		 * is what wakes it.
+		 * is what wakes it.  Once: the paths below that fall through
+		 * to init0 would otherwise start a second one, and alarmr
+		 * holds one sleeper.
 		 */
-		kproc("alarm", alarmkproc, 0);
+		alarmkprocstart();
 		ospreyuserprep();
 		ospreyframebuffer();
 		ospreypointerexpose();	/* where the personality with the mouse puts the pointer for the one with the screen */

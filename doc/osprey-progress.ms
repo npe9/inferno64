@@ -6389,10 +6389,31 @@ the image is
 which this program does not reach; if it ever does, the fault will say
 so.
 .PP
-The "double sleep" the amd64 user check showed when the program made two
-more console writes shows up on 386 too, in the same place \- just
-after the server begins to select \- and there it does not stop
-anything.  It is the same race, seen from a second machine.
+The "double sleep" both machines printed at every boot of these
+configurations was not a race at all.  proc0 starts the alarm kproc for
+the paths that enter user mode without the Plan 9 setup, and
+.CW init0
+starts it for the personality \- and the plain user path goes through
+proc0 and then calls
+.CW init0 ,
+so it asked twice.  Two kprocs then slept on
+.CW alarmr ,
+which holds one sleeper: the second overwrote the first, which sat in
+.CW Wakeme
+for ever.  The message named them, "alarm 2 -> alarm 6", and was read as
+noise for as long as it was.  There is one starter now,
+.CW alarmkprocstart
+in
+.CW port/alarm.c ,
+and neither machine prints it.
+.PP
+That was not what made the user check fail when the program wrote to the
+console seven times instead of five.  With the alarm fixed, the
+seven-write program was run three times again and failed six or seven of
+eleven each time, so the console corruption \- "slot 6 changed between
+being filled and being pushed (len 85 vs 6)" \- is its own bug and is
+still there.  What the double sleep did was sit in the same logs and
+look like the cause.
 .PP
 The library closure that said three more symbols were missing \-
 .CW _genrandomqlock ,

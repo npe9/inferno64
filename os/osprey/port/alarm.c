@@ -46,6 +46,30 @@ alarmkproc(void*)
 }
 
 /*
+ * Start it, once.  Two callers want it and one boot runs both: proc0
+ * starts it for the paths that enter user mode without the Plan 9
+ * setup, and init0 starts it for the personality - and the plain user
+ * path (xup64, xu386) goes through proc0 and then calls init0, so it
+ * asked twice.  Two of them sleep on alarmr, which holds one sleeper:
+ * the second overwrote the first, so one kproc sat in Wakeme for ever
+ * and the kernel said "double sleep called from ... alarm 2 -> alarm 6"
+ * at every boot of those configurations.
+ *
+ * No lock: both calls are proc0's, one after the other, on the one
+ * processor that runs it before any other kproc could ask.
+ */
+void
+alarmkprocstart(void)
+{
+	static int started;
+
+	if(started)
+		return;
+	started = 1;
+	kproc("alarm", alarmkproc, 0);
+}
+
+/*
  *  called every clock tick on cpu0
  */
 void
