@@ -110,6 +110,7 @@ root
 	/env	/
 	/fd	/
 	/n	/
+	/n/dos	/
 	/net	/
 	/net.alt	/
 	/nvfs	/
@@ -147,6 +148,7 @@ root
 	/dis/lib/random.dis
 	/dis/lib/timers.dis
 	/dis/unmount.dis
+	/dis/dossrv.dis
 	/dis/disk/kfs.dis
 	/dis/disk/kfs64.dis
 	/dis/lib/disks.dis

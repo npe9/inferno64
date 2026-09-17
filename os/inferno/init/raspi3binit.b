@@ -78,14 +78,136 @@ kfsproc(pfd: ref Sys->FD)
 
 KFSPART: con "/dev/sdM0/kfstest";
 
+# The first FAT partition in the master boot record: (start, sectors),
+# or (0, 0).  Everything that carves up this card starts here, because
+# the card holds the firmware and the kernel that booted it.
+fatpart(): (int, int)
+{
+	fd := sys->open("/dev/sdM0/data", Sys->OREAD);
+	if(fd == nil)
+		return (0, 0);
+	mbr := array[512] of byte;
+	if(sys->pread(fd, mbr, len mbr, big 0) != len mbr)
+		return (0, 0);
+	if(int mbr[510] != 16r55 || int mbr[511] != 16raa)
+		return (0, 0);
+	for(i := 0; i < 4; i++){
+		e := 446 + i*16;
+		t := int mbr[e+4];
+		if(t != 16r01 && t != 16r04 && t != 16r06 && t != 16r0b
+		&& t != 16r0c && t != 16r0e)
+			continue;
+		start := int mbr[e+8] | (int mbr[e+9]<<8) | (int mbr[e+10]<<16) |
+			(int mbr[e+11]<<24);
+		nsec := int mbr[e+12] | (int mbr[e+13]<<8) | (int mbr[e+14]<<16) |
+			(int mbr[e+15]<<24);
+		return (start, nsec);
+	}
+	return (0, 0);
+}
+
+# Write to the partition the firmware reads, which is the point of
+# mounting it: a board that can write here can replace its own kernel.
+# A new small file only - never a write over kernel8.img, which is what
+# the machine boots from.
+fatwrite()
+{
+	name := "/n/dos/inferno.txt";
+	msg := "written by inferno on the pi\n";
+	fd := sys->create(name, Sys->ORDWR, 8r666);
+	if(fd == nil){
+		sys->print("FAT-WRITE-FAIL create: %r\n");
+		return;
+	}
+	b := array of byte msg;
+	if(sys->write(fd, b, len b) != len b){
+		sys->print("FAT-WRITE-FAIL write: %r\n");
+		return;
+	}
+	fd = nil;
+	fd = sys->open(name, Sys->OREAD);
+	if(fd == nil){
+		sys->print("FAT-WRITE-FAIL reopen: %r\n");
+		return;
+	}
+	rb := array[len b] of byte;
+	n := sys->read(fd, rb, len rb);
+	if(n != len b || string rb != msg){
+		sys->print("FAT-WRITE-FAIL read back %d of %d\n", n, len b);
+		return;
+	}
+	sys->print("FAT-WRITE-OK %s holds %d bytes\n", name, n);
+}
+
+# The FAT partition the firmware boots from, found in the master boot
+# record rather than assumed: its start and length decide what the SD
+# device's ctl file is told, and dossrv then serves it.  Reaching it
+# matters beyond curiosity - kernel8.img lives there, so a board that can
+# write this partition can replace its own kernel instead of having its
+# card carried to another machine.
+fatcheck()
+{
+	(start, nsec) := fatpart();
+	if(nsec == 0){
+		sys->print("FAT-NONE (no FAT partition in the table)\n");
+		return;
+	}
+	sys->print("FAT partition at %d, %d sectors\n", start, nsec);
+	cfd := sys->open("/dev/sdM0/ctl", Sys->ORDWR);
+	if(cfd == nil || sys->fprint(cfd, "part dos %d %d", start, start+nsec) < 0){
+		sys->print("FAT-FAIL part: %r\n");
+		return;
+	}
+	cfd = nil;
+	# /n is in the kernel's read-only root and has no subdirectories, so
+	# there is nothing to mount onto: mntgen serves /n and makes each
+	# name appear as it is used.
+	mg := load Command "/dis/mntgen.dis";
+	if(mg == nil){
+		sys->print("FAT-FAIL load mntgen: %r\n");
+		return;
+	}
+	spawn mg->init(nil, "mntgen" :: "/n" :: nil);
+	sys->sleep(200);
+	dos := load Command "/dis/dossrv.dis";
+	if(dos == nil){
+		sys->print("FAT-FAIL load dossrv: %r\n");
+		return;
+	}
+	spawn dos->init(nil, "dossrv" :: "-f" :: "/dev/sdM0/dos" :: "-m" :: "/n/dos" :: nil);
+	for(i := 0; i < 100; i++){
+		(ok, d) := sys->stat("/n/dos/kernel8.img");
+		if(ok == 0){
+			sys->print("FAT-OK /n/dos/kernel8.img is %bd bytes\n", d.length);
+			fatwrite();
+			return;
+		}
+		sys->sleep(100);
+	}
+	sys->print("FAT-FAIL no /n/dos/kernel8.img: %r\n");
+}
+
 sdfs()
 {
 	p := array[2] of ref Sys->FD;
 
-	# carve the test partition out of the unallocated gap: sector 2048
-	# to 16000, below the first real partition at 16384
+	# The scratch partition is the gap between the master boot record and
+	# the first real partition, whose start comes from the table rather
+	# than from memory of this particular card: on an image whose
+	# filesystem begins at 2048 a hardcoded gap would ream the filesystem
+	# itself, which is exactly what it did once here.
+	(fstart, nsec) := fatpart();
+	if(nsec == 0){
+		sys->print("SD-FS skipped: no partition table to find a gap in\n");
+		return;
+	}
+	if(fstart < 2048+2048){
+		sys->print("SD-FS skipped: no room below the first partition at %d\n",
+			fstart);
+		return;
+	}
 	cfd := sys->open("/dev/sdM0/ctl", Sys->ORDWR);
-	if(cfd == nil || sys->fprint(cfd, "part kfstest 2048 16000") < 0){
+	if(cfd == nil || sys->fprint(cfd, "part kfstest 2048 %d", fstart-1) < 0){
 		sys->print("SD-FS part: %r\n");
 		return;
 	}
@@ -265,6 +387,7 @@ init()
 	# again; it runs in its own process either way, so a hang there
 	# leaves the board usable.
 	spawn sdfs();
+	spawn fatcheck();
 
 	shell = load Shell "/dis/sh.dis";
 	if(shell == nil){ sys->print("init: load sh: %r\n"); exit; }
