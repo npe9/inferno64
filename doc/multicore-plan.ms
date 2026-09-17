@@ -6280,12 +6280,38 @@ cap 256	0 of 16	0 of 16	416 of 432	23 to 83
 .TE
 .PP
 Eight panics to none, and all eight of the panicking boots are the eight
-that exhausted the pool.  The peak demand is 83 contexts, so 64 was
-simply too few for four processors with this workload; the cap is now
-the array size and
+that exhausted the pool.  The cap is now the array size, and
 .CW *ctxcap=64
-gets the old behaviour back.  The array costs about 190KB of kernel bss
-at 256 entries, which is the whole price.
+gets the old behaviour back; the array costs about 190KB of kernel bss
+at 256 entries.
+.PP
+Say what this is, though.  It is a mitigation with no ceiling, not a
+bound.  Peak demand in these boots was 83, and sorting the same sixteen
+boots by it shows what it tracks:
+.TS
+center;
+l l l.
+peak contexts	collector passes	chantest lines
+_
+23 to 30	about 6000	26 to 27 of 27
+54 to 83	700000 to 1000000	24 to 27 of 27
+.TE
+.PP
+Two clusters, the same amount of work done in both, and what separates
+them is how much the collector ran.  The chain is visible in this
+document already: a collection defers file closes,
+.CW fdcloseproc()
+makes them,
+.CW progclose()
+acquires and releases the interpreter, and
+.CW release()
+spawns an interpreter whenever work is queued and none is idle.  So the
+number of contexts a boot needs is set by collector activity, which
+varies boot to boot, and a workload that collects harder will exhaust
+256 exactly as it exhausted 64.  The sharing path in
+.CW claimctx()
+is still reachable; it is further away.  Bounding it means bounding the
+spawning, which is a separate piece of work.
 
 .NH 2
 A heap that is bounded but not equal
