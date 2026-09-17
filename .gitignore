@@ -428,6 +428,8 @@ os/osprey/pc/*.root.h
 os/osprey/pc/*.rootc.c
 os/osprey/pc/errstr.h
 os/osprey/pc/u386.c
+os/osprey/pc/xu386.c
+os/osprey/pc/boot
 # command binaries built beside their sources
 os/osprey/cmd/fb
 os/osprey/cmd/fpbits
