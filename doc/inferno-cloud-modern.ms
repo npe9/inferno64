@@ -1711,13 +1711,15 @@ not been reinvented \(em though a retry is genuinely needed, it is four
 lines, because re-establishing a mount is the same operation as
 establishing one.
 .PP
-.B "What is left needs a rented machine."
-Item 9's comparison wants a minimal Linux image on the same instance
-shape.  Item 11 wants one amd64 and one arm64 instance sharing a
-namespace; the build gap is closed \(em
-.CW scripts/mkinferno-efi-disk-arm64.sh
-emits a Compute Engine tarball and the disk it makes boots to a shell
-under AAVMF \(em so what remains is renting the two machines.
+.B "What was left needed a rented machine, and got one."
+Both remaining items were finished on rented instances on 17 September
+2026 and are written up at the end of this paper: item 9 against
+Debian 12 on the same
+.CW e2-micro ,
+and item 11 across an amd64 instance and an arm64 one sharing a
+namespace.  The arm64 half needed a driver first \(em a Compute Engine
+t2a offers gVNIC and refuses virtio \(em and it has one known limit: it
+does not boot on a single-vCPU t2a.
 .PP
 .B "And one thing that is known broken."
 The parallel Dis VM does not work on pc64:
