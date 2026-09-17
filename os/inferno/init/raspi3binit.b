@@ -135,6 +135,18 @@ kupdate()
 	}
 	addr := hd f;
 	path := hd tl f;
+	# Wait for the IP stack to exist.  This runs from a process spawned
+	# while the network is still coming up, and dialling before /net is
+	# bound fails with "file does not exist", which reads like a missing
+	# server rather than a missing namespace.
+	for(i := 0; i < 300; i++){
+		nfd := sys->open("/net/tcp/clone", Sys->OREAD);
+		if(nfd != nil){
+			nfd = nil;
+			break;
+		}
+		sys->sleep(100);
+	}
 	(ok, c) := sys->dial(addr, nil);
 	if(ok < 0){
 		sys->print("KUPDATE-FAIL dial %s: %r\n", addr);
