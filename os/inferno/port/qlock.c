@@ -31,6 +31,8 @@ eqlock(QLock *q)
 	rwstats.qlock++;
 	if(q->locked == 0) {
 		q->locked = 1;
+		q->owner = up;
+		q->opc = getcallerpc(&q);
 		unlock(&q->use);
 		return;
 	}
@@ -50,6 +52,7 @@ eqlock(QLock *q)
 	q->tail = up;
 	up->eql = q;
 	up->qnext = nil;
+	up->qwaitq = q;
 	up->qpc = getcallerpc(&q);
 	up->state = Queueing;
 	unlock(&q->use);
@@ -78,6 +81,8 @@ qlock(QLock *q)
 	rwstats.qlock++;
 	if(q->locked == 0) {
 		q->locked = 1;
+		q->owner = up;
+		q->opc = getcallerpc(&q);
 		unlock(&q->use);
 		return;
 	}
@@ -91,6 +96,7 @@ qlock(QLock *q)
 		p->qnext = up;
 	q->tail = up;
 	up->eql = nil;
+	up->qwaitq = q;
 	up->state = Queueing;
 	up->qpc = getcallerpc(&q);
 	unlock(&q->use);
@@ -107,6 +113,8 @@ canqlock(QLock *q)
 		return 0;
 	}
 	q->locked = 1;
+	q->owner = up;
+	q->opc = getcallerpc(&q);
 	unlock(&q->use);
 	return 1;
 }
@@ -126,11 +134,17 @@ qunlock(QLock *q)
 		q->head = p->qnext;
 		if(q->head == nil)
 			q->tail = nil;
+		/* qunlock hands the lock over rather than releasing it */
+		q->owner = p;
+		q->opc = p->qpc;
+		p->qwaitq = nil;
 		unlock(&q->use);
 		ready(p);
 		return;
 	}
 	q->locked = 0;
+	q->owner = nil;
+	q->opc = 0;
 	unlock(&q->use);
 }
 

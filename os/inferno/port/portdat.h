@@ -107,6 +107,15 @@ struct QLock
 	Proc	*head;	/* next process waiting for object */
 	Proc	*tail;	/* last process waiting for object */
 	s32	locked;		/* flag */
+	/*
+	 * Who holds it, for the process dump.  up->qpc says where a
+	 * waiting process called qlock, which is not the same question
+	 * and cannot answer "what is this waiting for": three processes
+	 * blocked on one conversation lock on the Pi each recorded their
+	 * own call site and none of them named the holder.
+	 */
+	Proc	*owner;
+	uintptr	opc;		/* where the owner acquired it */
 };
 
 struct RWlock
@@ -748,6 +757,7 @@ struct Proc
 	int	trace;		/* process being traced? */
 
 	uintptr	qpc;		/* pc calling last blocking qlock */
+	QLock	*qwaitq;	/* the qlock this process is queued on, for the dump */
 	QLock	*eql;		/* interruptable eqlock */
 
 	void	*ureg;		/* User registers for notes */

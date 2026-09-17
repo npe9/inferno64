@@ -92,6 +92,10 @@ kstackdump(void)
 		if(p->state == Dead)
 			continue;
 		dumpaproc(p);
+		if(p->state == Queueing && p->qwaitq != nil)
+			print("\tqlock %#p held by %ud acquired at %#p\n",
+				p->qwaitq, p->qwaitq->owner != nil? p->qwaitq->owner->pid: 0,
+				p->qwaitq->opc);
 		if(p == up || p->kstack == nil)
 			continue;
 		l = p->sched.sp;
