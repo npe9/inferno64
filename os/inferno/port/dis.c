@@ -269,14 +269,25 @@ void	safepoint(void);	/* defined below, with the rest of the handshake */
  * batch.
  */
 /*
- * *tearlock=0 on the boot line turns the exclusion off while leaving the
- * rootset guard in place, so one kernel measures both halves.  With it
- * on, rootset() should never meet a Prog mid-teardown and its guard
- * should never fire; with it off, the guard's count IS the incidence of
- * the case -- which is what the panics were.  Without this, "the guard
- * never fired" cannot be told from "the case never arose", and the
- * exclusion cannot be shown to be what prevented it.  Temporary, like
- * *parallelvm and *chanlock.
+ * *tearlock=0 on the boot line turns the exclusion off, leaving the
+ * rootset guard in place.
+ *
+ * Its first rationale was wrong and is corrected here rather than
+ * deleted.  It said that with the exclusion on, rootset() would never
+ * meet a Prog mid-teardown and the guard would fall silent, so a silent
+ * guard would prove the exclusion was what prevented the case.  Measured:
+ * the guard fires in three boots of twenty with the exclusion on.  It
+ * has to.  The two cover different windows -- the exclusion covers
+ * extents being freed under rootset()'s walk, while a Prog left on
+ * isched.head with M == H between destroystack() returning and delprog()
+ * unlinking it is the guard's alone, because delprog() blocks.
+ *
+ * What this flag does isolate is whether the exclusion's window is real:
+ * with it off, nothing stops rootset() walking Stkexts that free() is
+ * handing back, and that shows up as a fault or as the frame tripwires,
+ * not as a guard firing.  If turning it off changes nothing, the
+ * exclusion is pure cost -- it quadrupled abandoned collections -- and
+ * should go.  Temporary, like *parallelvm and *chanlock.
  */
 int tearlock = 1;
 
