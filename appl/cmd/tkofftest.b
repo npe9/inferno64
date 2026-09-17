@@ -299,6 +299,8 @@ init(nil: ref Draw->Context, nil: list of string)
 	checkscene();
 	checkelide();
 	checkcontrast();
+	checkmenu();
+	checkhover();
 	checkcolourwidth();
 	checkcanvastag();
 	checkplaintitle();
@@ -915,6 +917,125 @@ checkcolourwidth()
 
 
 
+
+
+# A widget under the pointer has to LOOK different, and how different is
+# a number rather than an opinion.
+#
+# The first flat hover tint was #E2E2DE on a #F0F0ED page: 1.14:1, which
+# is no feedback at all.  It went unnoticed because nothing tested hover
+# - and it was found sideways, by a control on the MENU highlight
+# reporting 1.14:1 and that number turning out to be the hover tint
+# rather than anything about menus.
+#
+# The pointer is delivered rather than simulated: tk->pointer() is the
+# same entry the window system uses, so this is the path a hand takes.
+checkhover()
+{
+	blank();
+	top := offscreen();
+	if(top == nil)
+		return;
+	tk->cmd(top, "button .b -text {Cancel}");
+	tk->cmd(top, "pack .b -padx 10 -pady 10");
+	map(top);
+	r := tk->rect(top, ".b", Tk->Border);
+	if(r.dx() <= 4 || r.dy() <= 4)
+		return;
+
+	# away, then over
+	tk->pointer(top, Draw->Pointer(0, Point(r.max.x + 40, r.max.y + 40), 0));
+	tk->cmd(top, "update");
+	(ar, ag, ab, nil, nil, nil) := twocolours(r);
+	tk->pointer(top, Draw->Pointer(0, Point((r.min.x+r.max.x)/2,
+		(r.min.y+r.max.y)/2), 0));
+	tk->cmd(top, "update");
+	(hr, hg, hb, nil, nil, nil) := twocolours(r);
+
+	cr := contrast(ar, ag, ab, hr, hg, hb);
+	moved := ar != hr || ag != hg || ab != hb;
+	report(moved && cr >= 1.25, sys->sprint(
+		"a widget under the pointer looks different (#%.2X%.2X%.2X to #%.2X%.2X%.2X, %d.%.2d:1)",
+		ar, ag, ab, hr, hg, hb, whole(cr), frac(cr)));
+}
+
+# A posted menu, and the item under the pointer.
+#
+# Menus are the last thing in this toolkit that looked untouched, and
+# they are also the last thing anybody thinks to test, because a popup is
+# awkward to get at.  It is not actually awkward: a menu can be posted
+# and an item activated by command, which is the same path a pointer
+# takes, and then it is pixels like anything else.
+checkmenu()
+{
+	blank();
+	top := offscreen();
+	if(top == nil)
+		return;
+	e := tk->cmd(top, "menu .m");
+	if(e != nil && len e > 0 && e[0] == '!'){
+		sys->print("     no menu: %s\n", e);
+		return;
+	}
+	for(l := list of {"Open", "Save as", "Close"}; l != nil; l = tl l)
+		tk->cmd(top, ".m add command -label " + tk->quote(hd l));
+	map(top);
+	tk->cmd(top, ".m post 40 40");
+	# A posted menu is a separate WINDOW and asks the window system for
+	# a backing image, which offscreen there is nobody to answer - so it
+	# has a rectangle and draws nothing.  Hand it one the same way the
+	# toplevel gets its own, under the id tkclient uses when there is no
+	# window manager.  Without this the check reported "0 pixels not the
+	# background" and would have read as a menu that draws nothing.
+	mw := scr.newwindow(Rect((40,40),(240,200)), Draw->Refbackup, Draw->Nofill);
+	if(mw != nil)
+		tk->putimage(top, ".m -1", mw, nil);
+	tk->cmd(top, ".m activate 1");
+	tk->cmd(top, "update");
+
+	r := tk->rect(top, ".m", Tk->Border);
+	if(r.dx() <= 0 || r.dy() <= 0){
+		sys->print("     menu has no rectangle; not checked\n");
+		tk->cmd(top, ".m unpost");
+		return;
+	}
+	# the highlighted row must be the accent, and readable on it
+	(br, bg, bb, fr, fg, fb) := twocolours(r);
+	cr := contrast(br, bg, bb, fr, fg, fb);
+	sys->print("     menu %dx%d, two commonest #%.2X%.2X%.2X and #%.2X%.2X%.2X\n",
+		r.dx(), r.dy(), br, bg, bb, fr, fg, fb);
+	report(lit(r) > 0, sys->sprint(
+		"a posted menu draws something (%d pixels not the background)", lit(r)));
+	# The two commonest colours across a whole menu are its BODY and the
+	# highlighted row, not text and its background - so this is the
+	# separation between the row and the menu, which is what it is named
+	# for now.  Text on the accent is the same code path as the
+	# checkbutton chip and is measured there, at 5.63:1.
+	report(cr >= 3.0 && (br != fr || bg != fg || bb != fb), sys->sprint(
+		"and the highlighted row stands out from the menu body (%d.%.2d:1)",
+		whole(cr), frac(cr)));
+	tk->cmd(top, ".m unpost");
+}
+
+# pixels in r that are not the commonest colour
+lit(r: Rect): int
+{
+	return ink(r);
+}
+
+whole(x: real): int
+{
+	w := int x;
+	if(real w > x)
+		w--;
+	return w;
+}
+
+frac(x: real): int
+{
+	return int ((x - real whole(x)) * 100.0);
+}
+
 # Text on the accent has to be READABLE, and that is measurable rather
 # than a matter of taste.
 #
@@ -952,13 +1073,9 @@ checkcontrast()
 	# "6.-37:1".  The comparison above was never affected; only the way
 	# it was shown, which is its own kind of wrong - a check that reports
 	# a number nobody can read is a check nobody will trust.
-	whole := int cr;
-	if(real whole > cr)
-		whole--;
-	frac := int ((cr - real whole) * 100.0);
 	report(cr >= 4.5, sys->sprint(
 		"text on the accent meets WCAG AA (#%.2X%.2X%.2X on #%.2X%.2X%.2X is %d.%.2d:1, needs 4.50)",
-		fr, fg, fb, br, bg, bb, whole, frac));
+		fr, fg, fb, br, bg, bb, whole(cr), frac(cr)));
 }
 
 # the two commonest colours in a rectangle, commonest first

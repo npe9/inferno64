@@ -1572,8 +1572,23 @@ drawmenu(Tk *tk, Point orig)
 		subr.min.y = p.y + sub->act.y - sub->borderwidth;
 		subr.max.y = p.y + sub->act.y + sub->act.height + sub->borderwidth;
 		bg = TkCbackgnd;
-		if (sub->flag & Tkactive)
-			bg = TkCactivebgnd;
+		if (sub->flag & Tkactive) {
+			/*
+			 * The item under the pointer is filled with the ACCENT
+			 * under the flat style, which is what a menu in any
+			 * current system does - a menu is a list you are
+			 * choosing from, and the choice wants to be obvious
+			 * rather than tasteful.  A button's hover keeps the
+			 * quiet tint: a button is not a list, and an accent
+			 * slab on every rollover is noise.
+			 *
+			 * label.c gives the item light text to sit on it; dark
+			 * ink on this blue is 2.80:1, which is the defect
+			 * fixed for the checkbutton chip and would have been
+			 * reintroduced here.
+			 */
+			bg = tkstyleflat(sub) ? TkCselect : TkCactivebgnd;
+		}
 		draw(dst, subr, tkgc(sub->env, bg), nil, ZP);
 		sub->dirty = tkrect(sub, 1);
 		sub->flag |= Tkrefresh;

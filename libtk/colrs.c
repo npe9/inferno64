@@ -120,7 +120,16 @@ enum
 {
 	fBackR = 0xf0, fBackG = 0xf0, fBackB = 0xed,	/* the page */
 	fFieldR = 0xff, fFieldG = 0xff, fFieldB = 0xfd,	/* a level above it */
-	fActiveR = 0xe2, fActiveG = 0xe2, fActiveB = 0xde,	/* hover */
+	/*
+	 * Hover.  Chosen by measurement, not by eye: the first value here
+	 * was #E2E2DE, which against the #F0F0ED page is 1.14:1 - a tint
+	 * nobody can see, so a widget under the pointer gave no feedback at
+	 * all.  Found when the menu control reported that separation and
+	 * the number turned out to apply to every widget, not just menus.
+	 * #CECEC6 is 1.39:1 against the page, and the ink stays at 9.98:1
+	 * on it.
+	 */
+	fActiveR = 0xce, fActiveG = 0xce, fActiveB = 0xc6,
 	fAccentR = 0x3d, fAccentG = 0x6a, fAccentB = 0x9a,
 	fWashR = 0xd7, fWashG = 0xe3, fWashB = 0xf1,	/* selection */
 	fInkR = 0x1f, fInkG = 0x23, fInkB = 0x28,

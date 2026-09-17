@@ -279,6 +279,17 @@ tkdrawlabel(Tk *tk, Point orig)
 	else if (tk->flag & Tkactive) {
 		fgnd = TkCactivefgnd;
 		bgnd = TkCactivebgnd;
+		/*
+		 * A menu item is the one label whose active background is the
+		 * accent - menus.c fills it - so it is the one that needs the
+		 * light foreground to go with it.  An item is recognised by
+		 * its parent being the menu, which tkappenditem() sets.
+		 */
+		if (tkstyleflat(tk) && tk->parent != nil
+		&& tk->parent->type == TKmenu) {
+			fgnd = TkCfield;
+			bgnd = TkCselect;
+		}
 	}
 
 	i = tkitmp(e, r.max, bgnd);

@@ -682,6 +682,30 @@ Classic is left with the defect, deliberately: it is the same two colours,
 but classic exists to preserve the look this toolkit has always had and is
 asserted unchanged.
 
+**Menus, and a hover nobody could see.** A menu's highlighted row is the
+accent under flat, with light text on it — a menu is a list you are
+choosing from, and the choice should be obvious. A button's hover keeps a
+quiet tint, because a button is not a list and an accent slab on every
+rollover is noise.
+
+The control for that change is what found the bigger problem. Reverting
+the menu highlight to the old `TkCactivebgnd` reported **1.14:1** against
+the menu body — and that number is not about menus. `#E2E2DE` on a
+`#F0F0ED` page is the *hover tint for every widget*, and 1.14:1 is no
+feedback at all. It had gone unnoticed because nothing tested hover.
+`#CECEC6` is 1.39:1 against the page and 1.58:1 against a control's own
+white, with ink at 9.98:1 on it.
+
+`tkofftest(1)` now delivers a pointer with `tk->pointer()` — the same
+entry the window system uses — and requires the widget under it to
+change perceptibly. And it posts a menu and checks the highlighted row,
+which needed one trick worth recording: **a posted menu is a separate
+window** and asks the window system for a backing image, so offscreen it
+has a rectangle and draws nothing. Handing it one with `putimage` under
+the no-window-manager id makes popups testable at all; without it the
+check read "0 pixels not the background" and looked like a menu that
+draws nothing.
+
 **A caution worth writing down.** This is the one item in this document
 where "better" is a matter of taste rather than measurement, and where
 the person whose taste matters is not the one writing the code. The
