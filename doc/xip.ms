@@ -127,7 +127,9 @@ does.  Emu's, in
 .CW emu/port/sysfile.c ,
 returns nil and says why: its files are the host's, reached through
 .CW read (2),
-so no address holds their contents.
+so no address holds their contents.  That side compiles clean but cannot
+be linked or run here, for a reason that has nothing to do with this
+work \- see the last section.
 .PP
 Handing
 .CW parsemod()
@@ -160,27 +162,108 @@ Read from
 .CW #c/memory
 at an interactive shell, same kernel built with and without the change:
 .DS
-.CW "                  without        with"
-.CW "main nalloc          7326        7316"
-.CW "main nfree           5653        5643"
-.CW "main hw           1526272     1524864"
-.CW "main cursize      1384064     1385088"
+.CW "                    without        with"
+.CW "at an interactive shell"
+.CW "  main nalloc          7332        7322"
+.CW "  main nfree           5659        5649"
+.CW "  main hw           1526272     1524864"
+.CW "  main cursize      1384064     1385088"
+.CW "after loading /dis/disk/kfs64.dis"
+.CW "  main nalloc          7914        7900"
+.CW "  main hw           1722112     1710720"
 .DE
-Ten fewer allocations and ten fewer frees, one pair per module loaded out
-of the built-in root, and eleven fewer after running one further command
-.CW ( cat ,
-itself a module).  Peak main-pool use falls 1408 bytes.
+At the shell, ten fewer allocations and ten fewer frees: one pair per
+module loaded out of the built-in root.  Peak main-pool use falls 1408
+bytes, which is small because
+.CW hw
+is a monotonic peak that early boot has already set elsewhere, and the
+ten modules a boot loads are small.
+.PP
+Forcing the largest bundled module to load is what makes the peak move.
+.CW /dis/disk/kfs64.dis
+is 65595 bytes, and loading it from the shell widens the gap from 1408
+bytes to
+.B 11392 :
+that is the transient buffer showing up in the peak, where it could not
+before.  It is not the whole 65595, because the peak at that moment is
+set by the buffer and the 211680-byte
+.CW Inst
+array together, and the pool grows in
+.CW brk
+chunks rather than by the byte.  11392 is what the measurement gives and
+so 11392 is what is claimed.
+.PP
+Absolute counts vary a little between boots \- DHCP and USB enumeration
+do not allocate identically every time, and an earlier pair of runs read
+7326 against 7316.  The
+.I difference
+is stable at ten at the shell and fourteen after the extra load, because
+it is one allocation per module load and nothing else.
 .PP
 Resident main-pool use is 1024 bytes
 .I higher .
 That is not a leak and not a regression to chase: the buffer this change
 removes was freed as soon as it was parsed, so it never sat in the steady
 state at all, and what moved is allocation pattern.  What the change
-actually buys is the transient \- up to 65595 bytes for a single load,
-the largest module in the root \- together with the copy and the
+actually buys is the transient, the copy, and the
 .CW malloc / free
-pair per load.  On a board with real memory-mapped flash it buys more,
-because there the file's bytes are not in RAM to begin with.
+pair, once per load.  On a board with real memory-mapped flash it buys
+more, because there the file's bytes are not in RAM to begin with.
+.NH 2
+Both boards, and the stale link that nearly hid the result
+.PP
+The change touches code every
+.CW os/inferno
+board links \-
+.CW port/portdat.h ,
+.CW port/devroot.c ,
+.CW port/sysfile.c
+\- and
+.CW libinterp/readmod.c ,
+which every target compiles.  Built and booted on a second board for
+that reason:
+.CW os/inferno/virt ,
+riscv64, through
+.CW "jc / jl"
+rather than
+.CW "7c / 7l" ,
+chosen because
+.CW doc/inferno-ports.ms
+catalogues a run of "long is 32 bits" wide-constant bugs on exactly that
+path and a new
+.CW u32 *
+out-parameter is that shape.  It links and reaches an interactive shell
+under
+.CW "qemu-system-riscv64 -M virt" ,
+with the board's own
+.CW DIS-STRESS-OK
+module-loading stress test passing.  Its
+.CW CMD-STRESS-FAIL " and " HEAVY-FAIL
+are unrelated: neither
+.CW mv.dis
+nor
+.CW tkclient
+is in that board's
+.CW root
+section, and that boot mounts nothing else, so "file does not exist" is
+the right answer.
+.PP
+Worth recording that the hazard the
+.CW os/inferno/raspi3b/mkfile
+comment warns about bit again while measuring this.  Rebuilding after
+swapping
+.CW readmod.c
+recompiled the file and refreshed
+.CW libinterp.a
+but did not relink the kernel, so two images built from different
+sources came out byte-for-byte identical.  Caught by comparing them,
+which is the only reason the numbers above are from a pair that really
+differ; both were rebuilt with
+.CW iraspi3b
+removed first, and the relink confirmed in the build log before either
+was booted.  Any future before-and-after on this board should do the
+same rather than trust an incremental
+.CW mk .
 .NH 2
 The fallback, verified separately
 .PP
@@ -301,7 +384,15 @@ and the second only in each board's
 so the hosted build has neither.  Present at this branch's starting
 point; the call came in with commit
 .CW 64ba3371 .
-This is why the nil-\c
+The emu side of this change is therefore compile-verified only:
+.CW emu/port/sysfile.c
+and
+.CW emu/port/fns.h
+compile clean, and the build gets as far as linking
+.CW emu
+before failing on those two symbols out of
+.CW libinterp.a .
+It is also why the nil-\c
 .CW xip
 path was verified against
 .CW devmnt

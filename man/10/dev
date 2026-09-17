@@ -25,6 +25,7 @@ struct Dev
     int     (*wstat)(Chan *c, uchar *db, int dbsize);
     void    (*power)(int on);        /* native only */
     int     (*config)(int on, char *spec, DevConf *cf); /* native */
+    void*   (*xip)(Chan *c, u32 *lenp);   /* native only */
 };
 .EE
 .SH DESCRIPTION
@@ -416,14 +417,49 @@ to be configured on and off dynamically.
 Leave the
 .B Dev
 entry null for now.
+.TP
+.BI xip( c ,\ lenp )
+Execute in place.
+Return a pointer to the whole of the open file's contents, in memory the
+processor can address directly, and set
+.BI * lenp
+to its length; return
+.B nil
+to decline.
+Declining is the normal case, and the only correct answer for a driver
+that would have to read, map or copy anything to answer, so almost every
+driver leaves the
+.B Dev
+entry null and every caller tests it before calling.
+.IP
+The memory must remain valid, and its contents unchanged, for the life of
+the kernel rather than the life of
+.IR c :
+a caller may close the channel and go on reading through the pointer.
+A file system built into the kernel image can promise that, and so can one
+in memory-mapped ROM or NOR flash; a driver that cannot promise it declines.
+.IP
+The point is to let a Dis module be loaded without first copying the file
+into the heap:
+.B readmod
+in
+.B /libinterp/readmod.c
+reaches this operation through
+.B kxip
+and, when it is answered, hands the pointer straight to
+.BR parsemod .
+.B /os/inferno/port/devroot.c
+is the one driver in the native kernel that implements it \- see
+.IR root (3).
 .PD
 .PP
 The elements
 .IR reset ,
 .IR shutdown ,
 .IR power ,
+.IR config ,
 and
-.IR config
+.IR xip
 are currently present only in the native kernels.
 .SH SEE ALSO
 .IR intro (2),

@@ -46,6 +46,24 @@ can be used by programs outside the kernel, for instance to implement
 .B newns
 in
 .IR newns (2).
+.PP
+In the native environment the built-in files are executed in place.
+Each one is a single contiguous run of bytes linked into the kernel
+image, so this device implements the
+.B xip
+operation of
+.IR dev (10.2):
+it hands out a pointer to a file's contents instead of a copy of them,
+and that pointer stays valid for the life of the kernel rather than the
+life of the channel.
+The effect is that loading a Dis module from here does not first copy
+the file into the heap \-
+.B readmod
+in
+.B /libinterp/readmod.c
+parses it where it lies.
+Directories are not offered this way, and neither is anything in the
+emulation environment, where the files are the host's.
 .SH SOURCE
 .B /emu/port/devroot.c
 .br
