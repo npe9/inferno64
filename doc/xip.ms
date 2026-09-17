@@ -1394,6 +1394,96 @@ already boots RV32 Inferno to a shell through zc/za/zl, and
 .CW os/inferno/riscv
 already holds the shared RISC-V code a second board would read.
 .NH 1
+Nanosatellites, and whether any of this is for them
+.PP
+Raised as a domain: the CubeSat and femtosatellite work out of Zac
+Manchester's group.  There are two very different targets in it and the
+answers are not the same.
+.PP
+The
+.B Sprite
+femtosatellites from KickSat are a single small board with an MSP430
+class part, memory in the tens of kilobytes.  That is orders of
+magnitude below anything in this document; the minimal kernel measured
+above is 181460 bytes and the interpreter alone does not fit.  Not a
+candidate, and no amount of the work listed here changes that.
+.PP
+.B PyCubed
+is the interesting one \- the open-source CubeSat flight computer
+Manchester co-authored with Holliday and others, flown on KickSat-2 and
+used since on V-R3X and after.  It is an ATSAMD51: a Cortex-M4F, up to
+1M of flash and up to 256K of SRAM, both with ECC, programmed entirely
+in CircuitPython.
+.NH 2
+It lands exactly on the boundary this document measured
+.PP
+The 256K budget above was not chosen with this board in mind and comes
+out at 181460 bytes for a minimal kernel plus a purpose-built Dis
+program.  On a 256K variant that fits with about 80K spare; on a 192K
+one it leaves nearer ten.  So the conclusion is the same as before and
+now it is about a real board: a kernel and one purpose-built module,
+never the shell, which costs 260992 by itself.
+.NH 2
+What actually blocks it is the floating point
+.PP
+The Cortex-M4 has FPv4-SP and no double precision, and
+.CW utils/tl/thumb.c
+gives every
+.CW F
+register a
+.CW D
+register, so
+.CW "tl -M -F"
+names every function that would fault \- the Dis interpreter's real
+arithmetic and all of libmath.  That is the same wall
+.CW os/inferno/nucleof303/NOTE
+records, and the same class as the one verified above for RV32 on the
+ESP32-P4.
+.PP
+On a microcontroller doing serial console work it is a footnote.  On a
+satellite flight computer it is the whole thing: attitude
+determination, orbit propagation and the convex and trajectory
+optimisation that is this group's actual research are floating point
+from end to end.  So for this domain software double precision is not
+an item on a list, it is the first item, and nothing else is worth
+doing before it.
+.NH 2
+Where execute in place earns its place here, and where it does not
+.PP
+Not capacity.  The honest argument in this domain is immutability: the
+decoded
+.CW Inst
+array is a large, long-lived, execution-critical structure sitting in
+writable memory \- 106284 bytes for three modules \- and in flash it can
+be checksummed, cannot be scribbled by a wild pointer or a stack that
+ran past its extent, and does not consume the SRAM budget at all.  The
+pure single-event-upset form of that argument is weaker than it first
+looks, because this part has ECC on both its SRAM and its flash; what
+survives is that the decoded form is 1.76 times the packed one, so a
+system that decodes into RAM spends 1.76 times the exposed, writable
+footprint for the same program.
+.PP
+The stronger case for Inferno on a constellation is not this branch at
+all.  It is Styx: per-node namespaces and one file interface over an
+unreliable crosslink is what the system was designed for, and a
+formation of satellites talking to each other is the case it was
+designed for.  A CircuitPython board gives you a language runtime and
+no distributed story.  That is the argument worth making, and execute in
+place is only what makes the interpreter small enough to be in the
+conversation.
+.NH 2
+What is true today
+.PP
+CircuitPython on PyCubed has flight heritage and published radiation
+test results.  Inferno on a Cortex-M has never run on real silicon in
+this tree:
+.CW os/inferno/teensy41
+is written and unverified for want of a board or an emulator, and
+.CW os/inferno/nucleof303
+does not fit.  So this is a research direction and not a substitution,
+and the ordering is: software double precision, then the cheap cuts and
+the read-only move, then a board that has actually been booted.
+.NH 1
 Unrelated breakage found on the way
 .PP
 Two things in the tree are broken independently of this work, found while
