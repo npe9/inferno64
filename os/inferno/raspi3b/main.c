@@ -400,7 +400,23 @@ userinit(void)
 void
 exit(int inpanic)
 {
+	extern void wdogset(int);	/* pmbcm.c */
+
 	up = 0;
+	/*
+	 * Arm the watchdog before shutting anything down, not after.
+	 *
+	 * The way out of here is archreboot(), which is the watchdog with
+	 * a short count -- and it is at the far end of chandevshutdown().
+	 * A device that hangs on the way out therefore leaves the machine
+	 * neither running nor restarting, which is what a reboot on this
+	 * board did twice: the console stopped and the network went, and
+	 * the board sat there until its power was pulled.  Eight seconds
+	 * is long enough for an orderly shutdown to beat it and short
+	 * enough not to be waited on.
+	 */
+	if(!inpanic)
+		wdogset(8000);
 	chandevshutdown();
 	if(inpanic){
 		print("Hit the reset button\n");

@@ -282,8 +282,18 @@ pl011_modemctl(Uart *uart, int on)
 
 	cr = csr32r(c, UartCR);
 	if(on){
-		gpiofsel(16, Altpl011);		/* CTS */
-		gpiofsel(17, Altpl011);		/* RTS */
+		/*
+		 * The bits only.  UART0's flow control can come out on
+		 * GPIO 16/17 or on GPIO 30/31, and on a Pi 3 with the
+		 * radio enabled the firmware has already put the whole
+		 * port -- data and flow control -- on 30 to 33, where the
+		 * BCM43438 is.  Routing 16 and 17 as well points two pads
+		 * at one CTS input, and CTS held is a transmitter that
+		 * never sends: the first try on the board got no answer
+		 * to HCI Reset with those two lines added.  Whoever owns
+		 * the port has routed it; this only turns the handshake
+		 * on.
+		 */
 		cr |= UartCRRTSEN|UartCRCTSEN;
 	} else
 		cr &= ~(UartCRRTSEN|UartCRCTSEN);

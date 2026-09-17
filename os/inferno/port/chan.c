@@ -234,8 +234,17 @@ chandevshutdown(void)
 	/* shutdown in reverse order */
 	for(i=0; devtab[i] != nil; i++)
 		;
-	for(i--; i >= 0; i--)
+	/*
+	 * Name each one, as chandevreset does.  A board that hangs on the
+	 * way out is worse than one that hangs coming up: there is no
+	 * shell left to ask, and on the Pi the reboot simply stopped --
+	 * console dead, network gone, and no clue which device it was in.
+	 */
+	for(i--; i >= 0; i--){
+		iprint("shutdown #%C\n", devtab[i]->dc);
 		devtab[i]->shutdown();
+	}
+	iprint("shutdown done\n");
 }
 
 void
