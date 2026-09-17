@@ -155,6 +155,65 @@ clue for whoever takes it: the same run prints
 passing its own check while printing the previous test's value, so the
 checking path and the printing path disagree about a register.
 .PP
+.CW appl/cmd/cvtchk.b
+is the minimal reproduction and judges without formatting a real, so a
+broken print cannot be mistaken for a broken conversion: all OK on
+.CW mps2-an500 ,
+all BAD on
+.CW mps2-an386 ,
+with
+.CW "CVT-R2I 2147483647"
+\- which is
+.CW fpii2w 's
+overflow arm, so the double handed to it is already wrong.
+.PP
+Ruled out, each with evidence rather than reasoning, so that none of it
+is chased twice:
+.IP \(bu
+The decode.
+.CW "tl -a"
+shows
+.CW cvtwf
+compiling to
+.CW "VMOV S30,R2"
+then
+.CW "VCVT.F64.S32 D1,S30" ,
+which is what the handler decodes.
+.IP \(bu
+The arithmetic.  Traced live, 3 becomes 40080000:00000000 and 1234567
+becomes 4132d687:00000000, both exact.
+.IP \(bu
+The C path.  A kernel probe after
+.CW spllo
+converts both correctly on the Cortex-M4, matching the M7.
+.IP \(bu
+The register transfers.
+.CW fpregcheck() 's
+round trip was self-consistent and would have passed even if the
+hand-encoded instructions addressed the wrong registers; it now also
+reads S2 back with a hardcoded
+.CW VMOV
+naming S2 alone, and both benches report
+.CW FPREG-S2-OK .
+.IP \(bu
+The restore.  Re-reading all 32 registers after
+.CW fpregrestore
+shows every one holding what was written.
+.IP \(bu
+The exception frame.
+.CW CONTROL
+reads 0, so FPCA is clear, and
+.CW EXC_RETURN
+is
+.CW fffffff9
+\- bit 4 set, the basic frame \- so the return does not unstack floating
+point state over the result.
+.PP
+What is left is narrow: the destination register holds the right value
+when the handler returns, no emulated instruction runs between, and the
+value the following comparison reads is garbage.  The next step wants
+single-stepping the native instructions after the exception return.
+.PP
 A second thing, found and not explained: none of this works from
 .CW fpinit() .
 A double-precision fault there escalates to a hard fault \-
