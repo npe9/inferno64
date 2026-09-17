@@ -111,6 +111,7 @@ root
 	/fd	/
 	/n	/
 	/n/dos	/
+	/n/remote	/
 	/net	/
 	/net.alt	/
 	/nvfs	/

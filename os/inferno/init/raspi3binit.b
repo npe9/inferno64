@@ -108,9 +108,13 @@ fatpart(): (int, int)
 
 # Fetch a kernel over the network and install it on the partition the
 # firmware reads, so a new build reaches the board without its card being
-# carried to another machine.  Where to fetch from is a line in
-# /n/dos/kupdate.txt on that same partition: "host port path".  The
-# current kernel is kept as kernel8.bak before the new one takes its
+# carried to another machine.  /n/dos/kupdate.txt on that same partition
+# says where from: "net!addr!port /path/to/kernel8.img".  The far end is
+# a Styx server - this system's own file protocol, so the remote tree is
+# simply mounted and the file read, with no second protocol to speak and
+# no client to write: on the other machine,
+#	styxlisten -A 'tcp!*!6666' export /
+# The current kernel is kept as kernel8.bak before the new one takes its
 # name, so a bad build costs one card swap rather than the board.
 kupdate()
 {
@@ -125,64 +129,54 @@ kupdate()
 		return;
 	}
 	(nf, f) := sys->tokenize(string b[0:n], " \t\r\n");
-	if(nf < 3){
-		sys->print("KUPDATE-FAIL want \"host port path\" in kupdate.txt\n");
+	if(nf < 2){
+		sys->print("KUPDATE-FAIL want \"net!addr!port /path\" in kupdate.txt\n");
 		return;
 	}
-	host := hd f;
-	port := hd tl f;
-	path := hd tl tl f;
-	addr := "tcp!" + host + "!" + port;
+	addr := hd f;
+	path := hd tl f;
 	(ok, c) := sys->dial(addr, nil);
 	if(ok < 0){
 		sys->print("KUPDATE-FAIL dial %s: %r\n", addr);
 		return;
 	}
-	req := array of byte ("GET " + path + " HTTP/1.0\r\nHost: " + host + "\r\n\r\n");
-	if(sys->write(c.dfd, req, len req) != len req){
-		sys->print("KUPDATE-FAIL request: %r\n");
+	if(sys->mount(c.dfd, nil, "/n/remote", Sys->MREPL, "") < 0){
+		sys->print("KUPDATE-FAIL mount %s: %r\n", addr);
 		return;
 	}
-	# read the reply, splitting the headers off at the blank line
-	inhdr := 1;
-	hdr := "";
-	body := array[0] of byte;
-	buf := array[8192] of byte;
-	for(;;){
-		n = sys->read(c.dfd, buf, len buf);
-		if(n <= 0)
-			break;
-		chunk := buf[0:n];
-		if(inhdr){
-			hdr += string chunk;
-			i := findhdrend(hdr);
-			if(i < 0)
-				continue;
-			inhdr = 0;
-			chunk = array of byte hdr[i:];
-			hdr = hdr[0:i];
-		}
-		nb := array[len body + len chunk] of byte;
-		nb[0:] = body;
-		nb[len body:] = chunk;
-		body = nb;
-	}
-	c.dfd = nil;
-	if(inhdr || len body == 0){
-		sys->print("KUPDATE-FAIL no body from %s%s\n", addr, path);
+	src := sys->open("/n/remote" + path, Sys->OREAD);
+	if(src == nil){
+		sys->print("KUPDATE-FAIL open %s: %r\n", path);
 		return;
 	}
-	fd := sys->create("/n/dos/kernel8.new", Sys->OWRITE, 8r666);
-	if(fd == nil){
+	dst := sys->create("/n/dos/kernel8.new", Sys->OWRITE, 8r666);
+	if(dst == nil){
 		sys->print("KUPDATE-FAIL create kernel8.new: %r\n");
 		return;
 	}
-	if(sys->write(fd, body, len body) != len body){
-		sys->print("KUPDATE-FAIL write kernel8.new: %r\n");
+	buf := array[8192] of byte;
+	total := 0;
+	for(;;){
+		n = sys->read(src, buf, len buf);
+		if(n < 0){
+			sys->print("KUPDATE-FAIL read %s: %r\n", path);
+			return;
+		}
+		if(n == 0)
+			break;
+		if(sys->write(dst, buf[0:n], n) != n){
+			sys->print("KUPDATE-FAIL write kernel8.new: %r\n");
+			return;
+		}
+		total += n;
+	}
+	src = nil;
+	dst = nil;
+	if(total == 0){
+		sys->print("KUPDATE-FAIL %s is empty\n", path);
 		return;
 	}
-	fd = nil;
-	sys->print("KUPDATE fetched %d bytes\n", len body);
+	sys->print("KUPDATE fetched %d bytes\n", total);
 	sys->remove("/n/dos/kernel8.bak");
 	if(rename("/n/dos/kernel8.img", "kernel8.bak") < 0){
 		sys->print("KUPDATE-FAIL keep the old kernel: %r\n");
@@ -193,19 +187,7 @@ kupdate()
 		return;
 	}
 	sys->print("KUPDATE-OK %d bytes installed; the old kernel is kernel8.bak\n",
-		len body);
-}
-
-# the end of the HTTP headers, or -1
-findhdrend(s: string): int
-{
-	for(i := 0; i+3 < len s; i++)
-		if(s[i] == '\r' && s[i+1] == '\n' && s[i+2] == '\r' && s[i+3] == '\n')
-			return i+4;
-	for(i = 0; i+1 < len s; i++)
-		if(s[i] == '\n' && s[i+1] == '\n')
-			return i+2;
-	return -1;
+		total);
 }
 
 rename(path: string, newname: string): int
