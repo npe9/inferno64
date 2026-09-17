@@ -127,28 +127,30 @@ static void
 pl011_kick(Uart *uart)
 {
 	Ctlr *c;
-	int i;
 
 	c = uart->regs;
 	/*
-	 * Send everything staged or queued now, waiting (bounded) for FIFO
-	 * room rather than leaving the rest to the transmit interrupt.  On
-	 * the Pi, output left to TXIM stopped: a TICK-OK line queued after
-	 * interrupts were on never appeared, IMSC read back with TXIM clear
-	 * and no PL011 interrupt arrived in the following half second.  The
-	 * PL011 raises TX only as its FIFO level falls through the trigger,
-	 * which QEMU (draining instantly, raising it as a level) never
-	 * reproduces.  kick() runs under ilock, so this holds interrupts off
-	 * for about 87us a byte; TXIM remains the fallback if the wait runs
-	 * out.
+	 * Fill the FIFO with what fits and stop; do not wait for room.
+	 *
+	 * This used to wait, bounded, for room after every byte, so that
+	 * everything queued left in one call.  kick() runs under ilock,
+	 * so a 500-byte burst held interrupts off for over 40ms, and the
+	 * receive FIFO -- 16 bytes, 1.4ms at 115200 -- overran behind it:
+	 * on the board, a command typed while it was printing arrived as
+	 * "cat /n/dosuaex hKRE".
+	 *
+	 * The wait was there because output left to the transmit
+	 * interrupt once stopped on the board.  That was
+	 * uartconsolesetup() overwriting IMSC and clearing TXIM, fixed
+	 * since.  The PL011 raises TX as its FIFO falls through the
+	 * trigger level, which a FIFO filled here is certain to do, and
+	 * uarttxpoll() below kicks again from the clock if an edge is
+	 * ever missed, so a stall costs at most a tick.
 	 */
 	for(;;){
-		if(uart->op >= uart->oe && uartstageoutput(uart) == 0)
-			break;
-		for(i = 0; i < 1000000; i++)
-			if((csr32r(c, UartFR) & UartFRTXFF) == 0)
-				break;
 		if(csr32r(c, UartFR) & UartFRTXFF)
+			break;
+		if(uart->op >= uart->oe && uartstageoutput(uart) == 0)
 			break;
 		csr32w(c, UartDR, *uart->op++);
 	}
@@ -156,6 +158,29 @@ pl011_kick(Uart *uart)
 		csr32w(c, UartIMSC, csr32r(c, UartIMSC) | UartIMSCTX);
 	else
 		csr32w(c, UartIMSC, csr32r(c, UartIMSC) & ~UartIMSCTX);
+}
+
+/*
+ * The transmit interrupt's safety net: on every clock tick, if output
+ * is waiting and the FIFO has drained, kick.  A transmit interrupt the
+ * PL011 did not raise -- its TX line is a transition through the
+ * trigger level, not a level -- would otherwise leave the rest of a
+ * line queued until some unrelated write came along.
+ */
+static void
+uarttxpoll(void)
+{
+	Uart *uart;
+	Ctlr *c;
+
+	uart = consuart;
+	if(uart == nil || uart->oq == nil)
+		return;
+	c = uart->regs;
+	if((csr32r(c, UartFR) & UartFRTXFE) == 0)
+		return;
+	if(uart->op < uart->oe || qlen(uart->oq) != 0)
+		uartkick(uart);
 }
 
 static void
@@ -440,4 +465,5 @@ uartconsolesetup(void)
 	 */
 	csr32w(c, UartIMSC, csr32r(c, UartIMSC) | UartIMSCRX | UartIMSCRT);
 	uartkick(consuart);
+	addclock0link(uarttxpoll, 0);
 }

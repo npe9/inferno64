@@ -31,6 +31,7 @@ enum {
 	UartICR		= 0x44/4,
 
 	UartFRTXFF	= 1<<5,		/* transmit fifo full */
+	UartFRTXFE	= 1<<7,		/* transmit fifo empty */
 	UartFRRXFE	= 1<<4,		/* receive fifo empty */
 	UartFRBUSY	= 1<<3,
 
