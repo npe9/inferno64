@@ -1105,57 +1105,181 @@ such a form the question is moot; if it does, that instruction would be
 written through, and code in flash would fault where code in the heap
 silently modified itself.  Not established either way here.
 .NH 1
-What is left
-.IP 1.
-Emit the built-in root read-only, so it stays in flash.  This is the one
-that turns the mechanism from working into paying, and the Cortex-M
-section above is why: today
-.CW utils/data2s/data2s.c
-emits
-.CW "DATA / GLOBL" ,
-the root lands in the data segment, and on a board that executes out of
-flash it is copied into RAM before anything runs \- so
-.CW rootxip()
-hands back a RAM address and the file occupies RAM whether or not it is
-ever loaded.  Emitting it into the text or a read-only section instead
-makes
-.CW rootxip()
-return a flash address and takes the file out of RAM entirely: 140404
-bytes on
+The tradespace
+.PP
+Everything above measured one system.  What follows is the space of
+things that could be done to it, because the choices are not
+independent and the cheap ones are not the interesting ones.
+.PP
+A loaded module costs RAM in three separate buckets, and they behave
+differently, which is what makes this a tradespace rather than a list:
+.IP \(bu
+.B Code.
+The decoded
+.CW Inst
+array, 1.76 times the packed file on a 32-bit target, 106284 bytes for
+.CW sh ,
+.CW sh/std
+and
+.CW lib/bufio .
+Immutable once relocated.
+.IP \(bu
+.B Metadata.
+Type, link, import and handler tables and the
+.CW Module .
+Mostly immutable, not separately measured; it is most of the difference
+between the 205056 main grows and the 106284 the
+.CW Inst
+arrays account for.
+.IP \(bu
+.B Mutable state.
+The
+.CW dsize
+data segment and the
+.CW ss
+stack extent, 8400 bytes for those three modules, plus Dis heap objects,
+68224 at a prompt of which 35200 are load-time constants.
+.PP
+Only the third bucket has to be in RAM, and only two thirds of that.
+.NH 2
+The cheap cuts, which are not choices
+.PP
+These are measured, carry no design risk, and none of them interacts
+with anything below.  Do them whatever else happens.
+.DS
+.CW "drop freehist + track            -90112   bss"
+.CW "kmesg 16420 -> 2048              -14372   bss"
+.CW "KSTACK 16K -> 4K                 -12288   per proc"
+.CW "NPROC -> 8                        -2740   per proc dropped"
+.CW "pool split 40/40/20 -> 60/25/15        0   enabling, not saving"
+.DE
+.CW KSTACK
+at 4K is verified to boot to a shell, and four procs hold stacks at a
+prompt, so that line is 49152 as measured.  The pool split saves nothing
+but a part this size does not work without it: the percentages are of
+what is left after the kernel, and 40% of the remainder is under what
+the main pool is measured to need, while the image pool measures zero in
+use.
+.NH 2
+The real choice: where the code lives
+.PP
+Five positions, and the columns are what distinguishes them.
+"Runtime" means whether it works for a module written to the board after
+the kernel was built, which is the case an execute-in-place file system
+exists for.
+.DS
+.CW "                     RAM saved   flash    work            speed  runtime"
+.CW "0 decode to heap             -       -    none              1.0      yes"
+.CW "A read-only data       165260   +same    linker/mkroot      1.0      n/a"
+.CW "B pre-decode, build    106284   +1.76x   trivial            1.0       no"
+.CW "C pre-decode, install  106284   +1.76x   small + writer     1.0      yes"
+.CW "D interpret packed     106284   +0/2B    decgen + branches  <1.0     yes"
+.CW "N compile to flash    106284+   +2-4x    port comp-arm.c   >>1.0      no"
+.DE
+.IP A
+The root file system and the C string literals, 140404 and 24856 on
 .CW teensy41 ,
-447361 on
-.CW mps2 .
-It touches
-.CW data2s ,
-.CW os/inferno/port/mkroot
-and the linkers' segment handling, none of which this branch changed,
-and it wants checking on every board that bundles a root, not just the
-ARMv7-M ones.
+both read-only, both copied into RAM today by
+.CW os/inferno/armv7m/l.s:/^_datacopy .
+One mechanism fixes both and it is not in the interpreter at all.
+Nothing else here is as cheap per byte.
+.IP B
+Emit the decoded
+.CW Inst
+array, tables and relocations into the image at build time and point
+.CW m->prog
+at flash.  No interpreter change.  The arithmetic that rejected this for
+.CW raspi3b
+inverts here: pre-decoding costs flash and saves RAM, and
+.CW teensy41
+has eight megabytes of the former and one of the latter.
+.IP C
+The same, done when a module is installed to flash rather than when the
+kernel is built, which is what makes it work for modules that arrive
+later.  Costs a flash writer and an erase-block dance; keeps full speed
+and zero RAM.
+.IP D
+Interpret the packed form.  Cheaper in flash than B or C and the only
+option that needs no wide form anywhere, but it charges operand decoding
+on every instruction forever and needs the branch-target problem solved
+\- byte-relative branches in the format, or a 2-byte-per-instruction
+index table, 12222 for
+.CW sh.dis .
+.IP N
+Skip the interpreter: compile Limbo to Thumb ahead of time into flash.
+.CW libinterp/comp-thumb.c
+is a deliberate 34-line stub, and its own comment gives the reason \- a
+JIT would put generated code in RAM, "competing with the heap for the
+scarcest thing on the board".  Ahead of time into flash inverts that
+exactly.
+.CW libinterp/comp-arm.c
+is 2280 lines of working ARM code generator to model it on, but ARMv7-M
+is Thumb-2 only, so this is a real port and not a recompile.  It buys
+the code bucket
+.I and
+the interpreter's dispatch, and it gives up what Dis is for: one
+portable, verifiable object form.
+.NH 2
+Orthogonal to all five
+.PP
+.B "Immortal heap objects."
+35200 of the 68224 heap is
+.CW String
+and array constants
+.CW parsemod()
+builds from a module's data segment before a line of it runs.  They
+cannot go in flash while every Dis heap object's
+.CW Heap
+header carries a
+.CW ref
+that reference counting writes and a
+.CW color
+that
+.CW Setmark
+writes.  A reserved value that
+.CW destroy()
+and the collector both skip would move them.  This composes with any of
+0 to N and is the second largest single win after the code itself.
+.PP
+.B "A smaller program."
+.CW sh
+and
+.CW sh/std
+are 96936 of the 106284.  Whatever happens to the code bucket, a
+purpose-built module in place of the shell is the largest single lever
+on this board, and it is the only one that needs no kernel work at all.
+.NH 2
+What to do, in order
+.IP 1.
+The cheap cuts.  Measured, no risk, and they are the difference between
+890K and roughly 580K on
+.CW teensy41 .
 .IP 2.
-A filesystem device over a memory-mapped flash or ROM window,
-implementing
-.CW Dev.xip
-from a region rather than from the kernel image.  This is the piece that
-makes the mechanism pay rather than merely work, and it needs a board
-with such a window;
-.CW -M raspi3b
-has none, so it cannot be tested here.  QEMU's
-.CW -M virt
-does model pflash, and
-.CW os/inferno/virtarm64
-is the board that could carry it.
+A, the read-only move.  One mechanism, two payoffs, no interpreter, and
+it is already item 1 of the work list for its own reasons.
 .IP 3.
-Pre-decoded modules in that window, per the section above \- gated on
-item 2, and worth it only there.
+B, for modules built into the image.  Small change, full RAM win, and it
+is where the execute-in-place property finally reaches the code rather
+than only the file.
 .IP 4.
-.CW Dev.xip
-on the flash and NAND filesystem devices already in
-.CW os/inferno/port
-.CW ( devflash.c ,
-.CW devftl.c ,
-.CW devlogfs.c )
-where the underlying part is addressable, which for NAND and for serial
-flash it is not.
+The immortal-object change, which is what is left of the heap.
+.IP 5.
+C, and only if modules really do have to arrive after the build \- which
+is the case a flash file system exists to serve, so probably yes,
+eventually.  D instead of C only if flash turns out to be the scarce
+side, which on none of these three boards is it.
+.IP 6.
+N only for speed, never for space, and not before someone wants Limbo
+fast on a Cortex-M more than they want it portable.
+.NH 2
+What gates any of it
+.PP
+The kernel pool floor: 78208 bytes in 343 allocations with the minimal
+configuration and a 512-byte init, of which 16384 is four kernel stacks
+and the other 62K has never been looked at.  It is larger than the code
+bucket this whole document is about.  Every number above is arithmetic
+on top of it, so it is the next thing to measure rather than the next
+thing to optimise.
 .NH 1
 Unrelated breakage found on the way
 .PP
