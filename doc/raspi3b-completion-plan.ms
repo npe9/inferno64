@@ -459,7 +459,49 @@ and kfs now reams and serves a partition carved from the card's
 unallocated gap; what is missing is a boot that mounts it as the root
 rather than as a test.
 .NH 2
-Ethernet on silicon: the board answers ARP and resolves nothing
+Ethernet on silicon: what was wrong and what fixed it
+.PP
+.B "The board is on the network."
+Twenty pings from another machine, twenty replies, no loss, eighteen
+milliseconds average; a connection to a closed port refused rather than
+ignored, so its TCP answers; DHCP takes an address from the router; and
+its own ping to the gateway is answered.  Two things had to change, and
+neither of them was the ethernet driver.
+.PP
+.B "The Dis heap watchdog was most of it."
+Every Dis instruction calls
+.CW checktracked() ,
+which reads all 1024 tracked slots, and every
+.CW initmem()
+registers its pointer words into them.  On a board whose ethernet driver
+and its file server are Limbo programs, that is charged to every frame
+that arrives.  The kernel was coming back for the next frame every 337
+milliseconds while frames arrived every 24, so both conversations sat
+permanently full, two thirds of everything was dropped, and what was
+delivered was seconds stale: the board answered every echo request it
+was sent and was still reported unreachable.  With the watchdog off that
+gap is 4 milliseconds.  It is not removed - heap.c has
+.CW distrack ,
+default 1, and only this board clears it.
+.PP
+.B "Then the receive channel stopped, for ever."
+With the interpreter fast, the onboard NIC's bulk IN sat with
+.CW Chen
+set and
+.CW NAK
+latched and no completion ever came: 130 seconds later not one further
+frame had been received.  A bulk IN was deliberately allowed to wait
+without limit, because an idle NIC NAKs and must not be called a fault;
+that is right about the waiting and wrong about the for ever.  After two
+seconds the channel is now halted and a NAK reported, which the caller
+already retries, so the transfer is re-armed.  An idle NIC costs a few
+register writes every couple of seconds.
+.PP
+The measurements that led there are below, and the shape of the failure
+is worth keeping: everything pointed at the driver, and the driver was
+writing every frame it was given.
+.NH 2
+How the ethernet failure was measured
 .PP
 The Pi enumerates its LAN9514, serves
 .CW /net.alt/ether ,
