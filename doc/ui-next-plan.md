@@ -978,8 +978,8 @@ there was never speed on the table here anyway.
    had only its *text* as a node before, rendered into a scratch, which
    under the walk meant every label ended a run: asking `tkitmp` for the
    scratch is exactly what says a widget is about to paint into the
-   window. Converting it took the test pane from 15 widgets and 106
-   nodes in 6 trees to 17 and 110 in 5 — 22 nodes a tree.
+   window. Converting it removed a flush per label and took the pane from
+   6 trees to 5.
 
    Four controls on its node path, all failing: text 5910 bytes of
    9450000, focus ring 480, relief 1740, fill 23535. The fill is the
@@ -1041,11 +1041,12 @@ there was never speed on the table here anyway.
    after a canvas built its own tree again. The pane holds a canvas with
    a scale inside a window item for exactly that reason.
 
-   The test pane is 15 widgets and 106 nodes in 6 trees — **17 nodes a
-   tree**, which is the number item 4 has to answer to. Against the
-   measured 94% command-buffer overhead for small work, a backend that
-   submitted once per tree would be paying a submission for seventeen
-   rectangles. So the unit of submission cannot be the tree; it has to
+   The test pane is **19 widgets and 123 nodes in 5 trees** as this is
+   written — about two dozen nodes a tree, which is the number item 4
+   has to answer to, and which the test prints on every run because it
+   moves each time a widget is converted. Against the measured 94%
+   command-buffer overhead for small work, a backend that submitted once
+   per tree would be paying a submission for two dozen rectangles. So the unit of submission cannot be the tree; it has to
    be the repaint, which means the flush points have to become
    *boundaries within* one submission rather than separate renders — and
    that is a harder change than the walk was, because a direct painter

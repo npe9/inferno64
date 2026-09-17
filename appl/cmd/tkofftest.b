@@ -1466,26 +1466,7 @@ checkscene()
 	# bottom and their node path was compared by nothing for a while.
 	# The pane is a fixed size, so this is answerable by asking each
 	# widget where it is.
-	out := "";
-	for(w := tk->cmd(top, "winfo children ."); w != nil;){
-		(nil, ws) := sys->tokenize(w, " ");
-		w = nil;
-		for(; ws != nil; ws = tl ws){
-			p := hd ws;
-			x := int tk->cmd(top, p + " cget -actx");
-			y := int tk->cmd(top, p + " cget -acty");
-			wd := int tk->cmd(top, p + " cget -actwidth");
-			ht := int tk->cmd(top, p + " cget -actheight");
-			# A widget that does not fit is not pushed outside:
-			# the packer hands it a NEGATIVE size and leaves it at
-			# the edge, so a check that only compared x+width
-			# against the pane passed while both scrollbars were
-			# 886 by -14.  Size first, then position.
-			if(wd <= 0 || ht <= 0
-			|| x < 0 || y < 0 || x+wd > W || y+ht > H)
-				out += sys->sprint(" %s(%d,%d %dx%d)", p, x, y, wd, ht);
-		}
-	}
+	out := offpane(top, ".");
 	report(out == nil, "every widget in the pane is inside it" + out);
 
 	# Prove each path was actually SELECTED before comparing.  Without
@@ -1544,6 +1525,40 @@ checkscene()
 	report(nr > 0 && nw > nr, sys->sprint(
 		"a repaint batches widgets into fewer trees (%d widgets and %d nodes in %d trees, %d nodes a tree)",
 		nw, nn, nr, nn/nr));
+}
+
+# Every widget under `who', named if it is not wholly inside the pane.
+#
+# Recursive, because a canvas's window item and a gridded child are two
+# and three levels down and a one-level walk cannot see them - and they
+# are the ones most likely to be clipped.  -actx and -acty are ALREADY
+# absolute: tkposn() walks up the masters, so adding each master's
+# position on the way down counts it twice, and the first recursive
+# version of this reported .c.f.s at (1180,1972) in a 900x1000 pane.
+offpane(top: ref Tk->Toplevel, who: string): string
+{
+	out := "";
+	kids := tk->cmd(top, "winfo children " + who);
+	if(kids == nil || len kids > 0 && kids[0] == '!')
+		return "";
+	(nil, ws) := sys->tokenize(kids, " ");
+	for(; ws != nil; ws = tl ws){
+		p := hd ws;
+		x := int tk->cmd(top, p + " cget -actx");
+		y := int tk->cmd(top, p + " cget -acty");
+		wd := int tk->cmd(top, p + " cget -actwidth");
+		ht := int tk->cmd(top, p + " cget -actheight");
+		# A widget that does not fit is not pushed outside: the packer
+		# hands it a NEGATIVE size and leaves it at the edge, so a
+		# check that only compared x+width against the pane passed
+		# while both scrollbars were 886 by -14.  Size first, then
+		# position.
+		if(wd <= 0 || ht <= 0
+		|| x < 0 || y < 0 || x+wd > W || y+ht > H)
+			out += sys->sprint(" %s(%d,%d %dx%d)", p, x, y, wd, ht);
+		out += offpane(top, p);
+	}
+	return out;
 }
 
 # `render count' answers two numbers in one string.
