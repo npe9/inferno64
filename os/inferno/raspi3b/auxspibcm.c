@@ -281,11 +281,17 @@ auxspiinit(void)
 			p[Cntl0] & Shiftlen);
 		return;
 	}
-	if((p[Stat] & Bitcount) != 12){
-		print("AUXSPI-FAIL STAT reports %ud bits, CNTL0 holds 12\n",
-			p[Stat] & Bitcount);
-		return;
-	}
+	/*
+	 * STAT's bit count is not a read-back of the configured shift
+	 * length: the datasheet calls it the number of bits still to be
+	 * processed, so an idle controller reports 0 and the board does
+	 * exactly that.  QEMU's model mirrors CNTL0 there, which is what
+	 * made "STAT reports 12" look like a fact about the part.  What
+	 * is checked is that CNTL0 holds the length, above; the count is
+	 * reported rather than asserted.
+	 */
+	print("auxspi: shift length 12 in CNTL0, STAT bit count %ud (idle)\n",
+		p[Stat] & Bitcount);
 	if((p[Stat] & Rxempty) == 0 || (p[Stat] & Txempty) == 0){
 		print("AUXSPI-FAIL FIFOs not empty after a clear (stat %#ux)\n",
 			p[Stat]);
