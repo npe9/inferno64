@@ -2587,7 +2587,21 @@ xputtime(d: ref Dosdir, s: int)
 	x := (t.hour<<11) | (t.min<<5) | (t.sec>>1);
 	d.time[0] = byte x;
 	d.time[1] = byte (x>>8);
-	x = ((t.year-80)<<9) | ((t.mon+1)<<5) | t.mday;
+	# A FAT date counts years from 1980 in seven bits, so it cannot
+	# hold an earlier one.  A machine with no clock starts at 1970,
+	# and the negative year wrapped into the field above it: a file
+	# the Pi wrote came back dated 2097.  Clamp to the first date
+	# FAT can express instead, which is wrong by a known amount
+	# rather than wrong by a century.
+	yr := t.year - 80;
+	if(yr < 0){
+		yr = 0;
+		t.mon = 0;
+		t.mday = 1;
+	}
+	if(yr > 127)
+		yr = 127;
+	x = (yr<<9) | ((t.mon+1)<<5) | t.mday;
 	d.date[0] = byte x;
 	d.date[1] = byte (x>>8);
 }
