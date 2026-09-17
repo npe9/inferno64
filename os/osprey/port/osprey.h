@@ -134,6 +134,7 @@ int		ospreysetreservation(Ospreyproc*, uvlong, uvlong, uvlong);
 int		ospreyaccount(Ospreyproc*, uvlong *budget, uvlong *used, uvlong *period, uvlong *periods);	/* this period's accounting, cycles, and which period */
 int		ospreyisserver(Ospreyproc*);
 int		ospreyoutputroom(Ospreyproc*);
+int		ospreymachfb(int*, int*, int*, uvlong*, ulong*);	/* the machine layer's own frame buffer, if it has one */
 int		ospreycall(Ospreyproc*, uvlong, uvlong*, long*);
 int		ospreyreplylater(Ospreyproc*, uvlong, uvlong, long, uvlong);
 int		ospreymapsizes(Ospreyproc*, uvlong *off, uvlong *n, uvlong *size);

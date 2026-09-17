@@ -6517,6 +6517,52 @@ Both 386 checks run two processors now, as the amd64 ones do, and each
 has a criterion that the second started.  micro386 is nine and user386
 thirteen.
 .PP
+The last two criteria wanted a frame buffer, and this is where the 386
+work stops being the same work.  Everything else in it was a thing built
+for one object type and not the other; a frame buffer is a thing neither
+machine had.  pc64 does not set a mode: the EFI loader sets one and
+leaves
+.CW *bootscreen
+in the configuration, and
+.CW ospreyframebuffer
+reads it there.  This tree has no BIOS loader, so a 386 kernel started
+by qemu's multiboot loader is handed no mode at all, and the program
+that draws was told there was none.
+.PP
+.CW os/osprey/pc/machfb.c
+sets one.  The card qemu gives a 386 carries the Bochs display
+interface \- an index port and a data port, and a register each for
+width, height, depth and an enable \- so a mode is set by writing them
+and no BIOS call is needed.  That matters, because the kernel's other
+road to a mode is
+.CW vgavesa.c ,
+which opens
+.CW /dev/realmode
+through
+.CW namec ,
+and a microkernel has no name space to open it in.  The ID register is
+read before anything is written, so a card that answers with something
+else is left alone rather than programmed blind; qemu's answers 0xb0c5.
+The port layer asks the machine layer only when the configuration named
+no
+.CW *bootscreen ,
+and pc64's answer is that it has none of its own.
+.PP
+With that, the 386 program draws its desktop and its keyboard and mouse
+drivers run, and the check is fifteen criteria to amd64's twelve \- the
+three extra being the 386 image, the second processor and the interrupt
+register loop.  What the graphics criterion says is what amd64's says:
+the driver wrote into the memory the kernel exposed.  Neither looks at
+pixels, and the machine is run with
+.CW "-display none" .
+.PP
+Still not exercised, and worth naming because it is code written blind:
+.CW iogrant
+and the TSS I/O-permission bitmap this adapter grew.  The drivers this
+program runs read rings the kernel's own handlers fill; the drivers that
+ask for ports are the personality's, and the personality is built for
+amd64 only.
+.PP
 The library closure that said three more symbols were missing \-
 .CW _genrandomqlock ,
 .CW nsec ,

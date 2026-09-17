@@ -2342,8 +2342,18 @@ ospreyframebuffer(void)
 
 	if(done)			/* register the segment once, however many callers */
 		return 0;
-	if((s = getconf("*bootscreen")) == nil)
-		return -1;
+	if((s = getconf("*bootscreen")) == nil){
+		/*
+		 * No loader left a mode.  The machine layer may be able to
+		 * set one itself - the 386's can, through the Bochs display
+		 * registers qemu's stdvga carries - and answers where the
+		 * memory is; pc64 is booted by firmware that always leaves
+		 * *bootscreen, and its own answer is -1.
+		 */
+		if(ospreymachfb(&x, &y, &z, &pa, &sz) < 0)
+			return -1;
+		goto have;
+	}
 	/* WIDTHxHEIGHTxDEPTH CHAN PA [SZ] */
 	x = strtoul(s, &s, 0);
 	if(x == 0 || *s++ != 'x')
@@ -2365,6 +2375,7 @@ ospreyframebuffer(void)
 	if(sz < (ulong)x*y*(z+7)/8)
 		sz = x*y*(z+7)/8;
 
+have:
 	ospreyfbw = x;
 	ospreyfbh = y;
 	ospreyfbd = z;

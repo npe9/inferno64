@@ -9,15 +9,22 @@ boots it with qemu-system-i386 through its multiboot header, and applies
 the criteria osprey-check-user.py applies to xup64, read from the same
 lines.
 
-Two of those are not here, and they are left out rather than failed.
-The program's graphics and input drivers want the frame buffer the
-kernel exposes, and xup64 exposes the one its EFI firmware gives it.
-This kernel is loaded by qemu's multiboot loader, which sets no video
-mode, so there is no frame buffer to expose: segattach(framebuffer)
-says so, and the program exits there, before the keyboard and mouse.
+All of xup64's criteria are here, including the graphics and input
+ones, and those two arrive by a different road: xup64's frame buffer is
+set by the EFI loader, and this kernel is loaded by qemu's multiboot
+loader, which sets no video mode.  os/osprey/pc/machfb.c sets one
+itself, through the Bochs display registers qemu's stdvga carries, and
+the port layer exposes that memory.  So the line is not "the same thing
+built for the other object type": it is a thing neither machine had,
+and it is why this check names -vga std rather than taking the default.
 
 The register criterion reads the 386 line: six registers, BX, CX, DX,
 SI, DI and BP, across INT $64 (os/osprey/pc/userregtorture.s).
+
+What no 386 check reaches yet: iogrant and the TSS I/O-permission
+bitmap in the machine layer.  The drivers this program runs read rings
+the kernel's own handlers fill; the drivers that ask for ports
+(ReqIoport) belong to the personality, which is built for amd64 only.
 
 usage: scripts/osprey-check-user386.py [-k]
 """
@@ -43,6 +50,7 @@ def main():
 
     log = tempfile.mktemp(prefix='osprey-user386-', suffix='.log')
     q = subprocess.Popen(['qemu-system-i386', '-m', '256', '-smp', '2',
+                          '-vga', 'std',	# named, not defaulted: machfb.c programs this card
                           '-display', 'none', '-monitor', 'none', '-no-reboot',
                           '-serial', 'file:' + log,
                           '-kernel', KERNEL, '-append', 'console=0'],
@@ -112,6 +120,19 @@ def main():
                     'a user-mode file server; its own ring and its client' in t))
     results.append(("and it waited for that request with select over its ring's arm, the talk's central call in user space",
                     'select over its ring' in t))
+    #
+    # The frame buffer, which on this machine the kernel sets for
+    # itself: no loader here leaves a mode, so os/osprey/pc/machfb.c
+    # programs qemu's stdvga through the Bochs display registers and the
+    # port layer exposes that memory as the segment the program maps.
+    # What this says is that the driver wrote into the memory the kernel
+    # exposed - which is what amd64's criterion says too; neither looks
+    # at pixels.
+    #
+    results.append(("and a user-level graphics driver draws to the frame buffer the microkernel exposed",
+                    'drew a windowed desktop to the frame buffer' in t))
+    results.append(("and user-level keyboard and mouse drivers select on the interrupt semaphores the microkernel exposes",
+                    'selecting on their interrupt semaphores' in t))
     results.append(("and it exits through the microkernel's minimal syscall interface, no Plan 9 personality",
                     'the program exited' in t and 'panic' not in t))
     #

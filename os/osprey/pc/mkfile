@@ -92,6 +92,7 @@ PORTOBJ=`{for o in $PORTOBJALL; do echo $o; done | grep -vxF -e pgrp.$O -e sysfi
 OBJ=\
 	l.$O\
 	regtorture.$O\
+	machfb.$O\
 	cga.$O\
 	fpu.$O\
 	i8253.$O\

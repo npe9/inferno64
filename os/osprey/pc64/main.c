@@ -197,6 +197,18 @@ regcheck(void)
 			Niter, ticks);
 }
 
+/*
+ * A frame buffer this layer can set for itself: there is none.  The EFI
+ * loader sets a mode and writes *bootscreen, and every boot of this
+ * machine comes through it, so the port layer's fallback has nothing to
+ * ask for here.  os/osprey/pc/machfb.c is the other machine's answer.
+ */
+int
+ospreymachfb(int*, int*, int*, uvlong*, ulong*)
+{
+	return -1;
+}
+
 void
 init0(void)
 {
