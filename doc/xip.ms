@@ -1545,13 +1545,69 @@ and a managed SPI wrapper, and it exists because CircuitPython is
 single-threaded.  Inferno has processes and channels.  That code is
 deleted, not ported.
 .IP \(bu
-.B "The drivers become Limbo programs."
-RFM9x 1078 lines, BMX160 729, bq25883 172, adm1176 111 \- about 2090
-lines, all of it register poking over SPI and I2C.  In Inferno those
-belong in Limbo over the SPI and I2C device files, not in kernel C, so
-they keep the memory safety CircuitPython gives them while becoming
-separate processes with their own namespaces.  A rewrite, but into the
-same shape and with something gained.
+.B "The drivers stay in C."
+An earlier version of this section said the opposite \- that RFM9x,
+BMX160, bq25883 and adm1176, about 2090 lines of register poking over
+SPI and I2C, should become Limbo programs over the bus device files,
+keeping the memory safety CircuitPython gives them.  That was wrong on
+this board, and wrong about what this tree does.  Three reasons, in
+increasing order of how much they settle it.
+.IP
+First, it is not the convention.  Every register-level driver in this
+tree is C in the kernel with a device-table entry, and the Limbo drivers
+that do exist sit on top of one:
+.CW appl/cmd/usb/usbd.b
+enumerates over
+.CW os/inferno/port/devusb.c ,
+and
+.CW appl/cmd/usb/etherusb.b
+runs a NIC over the same C driver.  Nothing in
+.CW appl
+pokes an I2C or SPI register.  The split Inferno actually draws is
+controller in C, protocol and policy in Limbo.
+.IP
+Second, interrupts.  The RFM9x's DIO0 is an interrupt line and the
+radio wants interrupt-driven receive.  Only the kernel can take an
+interrupt; a Limbo process can wait on a device file but cannot be the
+handler.  So at least the interrupt half has to be C whatever else
+happens.
+.IP
+Third, and this is the one that decides it: on this board a Limbo driver
+is
+.I RAM
+and a C driver is
+.I flash .
+A driver in C is text, and text lives in the 512K of internal flash
+whose kernel occupant measures 245192 \- there is room, and the RAM cost
+is only its own data.  For scale, the whole of
+.CW mps2 's
+UART driver is 5704 bytes of text.  A driver in Limbo is a Dis module,
+and its decoded
+.CW Inst
+array is in SRAM.  Measured across four Limbo programs in this tree
+.CW ( usbd.b ,
+.CW etherusb.b ,
+.CW dhcp.b ,
+.CW styx.b )
+a Limbo source line costs 12 to 17 bytes of packed
+.CW .dis ,
+about 14 on average; at 1.76 for the decode, 2090 lines is some 29K of
+.CW .dis
+and 51K of
+.CW Inst
+in RAM \- and that assumes Limbo matches Python line for line, which for
+a statically typed language it will not.  Against the roughly 35K of
+headroom this board has, moving the drivers into Limbo does not fit, and
+leaving them in C costs the scarcest memory nothing.
+.IP
+Which also makes the port more attractive rather than less: C drivers
+are text in flash, which is exactly what the execute-in-place
+arrangement above already handles.  What belongs in Limbo is the half of
+.CW lib/pycubed.py
+that is policy rather than registers \- the state machine, the beacon
+schedule, telemetry formatting, logging \- plus whatever mission code
+sits on it.  That is the part that gains from a safe language and from
+being restartable without taking the radio down with it.
 .IP \(bu
 .B "The board layer is the real work."
 .CW lib/pycubed.py
