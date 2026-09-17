@@ -19684,3 +19684,50 @@ restore, sector 0 is refused ("byte 0 is fa"), and the card's master
 boot record, its partition table and the FAT32 boot sector at 16384 are
 unchanged afterwards.  Under QEMU the same test leaves the image file
 byte-identical on the host.
+.SH
+The Pi on the network, and what the emulator had hidden
+.PP
+The board now boots, takes an address and answers for itself.  From a
+cold start with nothing typed: usbd enumerates the onboard LAN9514 hub
+and the ethernet behind it, etherusb starts, the PHY reports the link up,
+the styx server mounts at /net.alt/ether with the board's own MAC, devip
+binds it, DHCP returns 192.168.0.61 with gateway 192.168.0.1, and a ping
+reaches the gateway.  From this host, the Pi answers pings (four of five,
+its MAC in the host's ARP table), and the board's own counters read
+pktin 633, errin 0.
+.PP
+Two things had to be true first, and neither was the one the plan
+expected.  The mount that etherusb needed had been disabled in the
+source, because the board wedged entering the syscall; that was the
+SP-alignment fault, and with it fixed the mount works.  And enumeration
+stopped at the hub not because of the host controller but because usbd
+allocated its Hub with a bare
+.CW "ref Hub" ,
+leaving every field as allocation residue: the failed flag came up
+non-zero, so enumhub abandoned the hub on its first line, silently, and
+the one run that worked was the one where the residue happened to be
+zero.  The same bare allocation in opendev left isusb3 as residue in both
+usbd and etherusb.
+.PP
+Three bounds were added to usbdwc.c while the fault was still thought to
+be there.  They were the wrong layer but they stand: a bulk IN may wait
+for ever, because waiting is the read, while a NAK'd control transfer and
+the retry loop itself are bounded and say so.  A driver written where
+every transfer completes will otherwise wait for ever on silicon, saying
+nothing.
+.PP
+SD transfers are multi-block now, up to 64 blocks a command with the
+controller sending the stop, and the board checks it at boot: 64 sectors
+ending at the first partition's boot sector, with the last 512 bytes
+compared against the same block read alone (SD-MULTI-OK, eb 58 90 ...).
+The console's backspace works too \(em the line editor took ^H but not
+the delete a terminal actually sends, and the echo now backs up, blanks
+and backs up again.
+.PP
+One caution for anyone testing this board by hand: another session's
+libinterp watchdog prints
+.CW track:
+reports to the console, and on a board whose only console is the serial
+line they interleave with the input echo and corrupt typed commands
+mid-word.  Two apparent hangs here were that, not the driver under test.
+Check the board from its init program instead.
