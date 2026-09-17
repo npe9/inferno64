@@ -5244,3 +5244,28 @@ path reaches them either \(em
 .CW killcomm()
 posts notes, wakes progs and unmarks alts, and kills nothing.  Two
 contexts tearing down at once is not nesting: the flag is per-context.
+.NH 2
+The stress test turned out to be the reproducer
+.PP
+.CW chantest 's
+.I kill-while-blocked
+arm kills three progs a round, each blocked in send, recv or alt.  A
+killed prog goes through
+.CW killprog() ,
+which is one of the two
+.CW destroystack()
+sites this fault lives at \(em so the test written to stress the channel
+region is also what drives Prog teardown hard enough for the collector to
+meet one in progress.
+.PP
+That is why the fault shows up in boots where chantest runs and why it
+was rare before: nothing else in a boot kills progs in a loop.  It was
+not designed as a GC reproducer and works as one, which is an argument
+for stress tests that kill things rather than only exercising the happy
+path.
+.PP
+It also means the measured fault rates are rates
+.I under this workload ,
+not rates in general, and that raising the kill count would raise them.
+Left alone deliberately: changing the workload now would make every
+batch in this document incomparable with every other.
