@@ -110,6 +110,40 @@ fatpart(): (int, int)
 	return (0, 0);
 }
 
+# When DHCP gets no answer, take the address from the card instead:
+# /n/dos/ipconfig.txt holds "ip mask gw".  A board that cannot be reached
+# cannot be worked on, and a router that will not answer DHCP should not
+# be the end of it.
+staticip(cfd: ref Sys->FD)
+{
+	fd := sys->open("/n/dos/ipconfig.txt", Sys->OREAD);
+	if(fd == nil)
+		return;
+	b := array[128] of byte;
+	n := sys->read(fd, b, len b);
+	fd = nil;
+	if(n <= 0)
+		return;
+	(nf, f) := sys->tokenize(string b[0:n], " \t\r\n");
+	if(nf < 2){
+		sys->print("STATIC-FAIL want \"ip mask [gw]\" in ipconfig.txt\n");
+		return;
+	}
+	ip := hd f;
+	mask := hd tl f;
+	if(sys->fprint(cfd, "add %s %s", ip, mask) < 0){
+		sys->print("STATIC-FAIL add %s %s: %r\n", ip, mask);
+		return;
+	}
+	if(nf >= 3){
+		gw := hd tl tl f;
+		rfd := sys->open("/net/iproute", Sys->ORDWR);
+		if(rfd != nil && sys->fprint(rfd, "add 0.0.0.0 0.0.0.0 %s", gw) < 0)
+			sys->print("STATIC route %s: %r\n", gw);
+	}
+	sys->print("STATIC-OK %s %s\n", ip, mask);
+}
+
 # What the IP stack sees, printed to the console: with the router
 # changed, the question is whether the board's packets leave and whether
 # anything comes back, which the driver's own counters cannot answer.
@@ -118,17 +152,22 @@ fatpart(): (int, int)
 # diagnostic and the console is also the shell.
 netdebug()
 {
-	for(i := 0; i < 600; i++){		# wait for the stack
-		if(hasaddr())
+	# as soon as the stack exists, not once it has an address: the
+	# interesting case is a DHCP exchange that gets no answer, and
+	# waiting for the address it would have brought means logging
+	# nothing at all, which is what happened on the first router change.
+	cfd: ref Sys->FD;
+	for(i := 0; i < 600; i++){
+		cfd = sys->open("/net/log/ctl", Sys->ORDWR);
+		if(cfd != nil)
 			break;
 		sys->sleep(100);
 	}
-	cfd := sys->open("/net/log/ctl", Sys->ORDWR);
 	if(cfd == nil){
 		sys->print("NETLOG-NONE /net/log/ctl: %r\n");
 		return;
 	}
-	if(sys->fprint(cfd, "set ip icmp udp tcp") < 0){
+	if(sys->fprint(cfd, "set ip icmp udp tcp ipmsg udpmsg") < 0){
 		sys->print("NETLOG-FAIL set: %r\n");
 		return;
 	}
@@ -554,6 +593,7 @@ ethercheck()
 	(cfg, lease, err) = dhcpclient->dhcp("/net", cfd, addr, cfg, nil);
 	if(err != nil || cfg == nil || cfg.ip == nil){
 		sys->print("ETHER-DHCP-FAIL %s\n", err);
+		staticip(cfd);
 		return;
 	}
 	sys->print("ETHER-DHCP-OK ip=%s gw=%s\n", cfg.ip, cfg.ipgw);
