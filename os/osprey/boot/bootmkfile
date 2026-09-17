@@ -6,8 +6,11 @@ boot.$O:	$BOOTDIR/boot.c
 bootlib.$O:	$BOOTDIR/bootlib.c
 	$CC -I$BOOTDIR $CFLAGS $BOOTDIR/bootlib.c
 
-bootsys.$O:	$BOOTDIR/bootsys.s
-	$AS $AFLAGS $BOOTDIR/bootsys.s
+# Picked by object type, the way os/osprey/kernlib picks getcallerpc:
+# the stubs are the machine's calling convention and there is no way to
+# write them once.
+bootsys.$O:	$BOOTDIR/bootsys-$OBJTYPE.s
+	$AS $AFLAGS -o $target $BOOTDIR/bootsys-$OBJTYPE.s
 
 boot:	boot.$O bootlib.$O bootsys.$O $ROOT/Inferno/$OBJTYPE/lib/libkern.a
 	$LD -l -o $target $prereq

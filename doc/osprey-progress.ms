@@ -6073,7 +6073,64 @@ and is amd64 only.  So what a 386 microkernel needs is not a userland: it
 is a
 .CW libc
 for the object type and eight lines of syscall glue, for two programs of
-a few hundred bytes.  Where the paragraph above says "before it needs
+a few hundred bytes.
+.PP
+The glue is written.
+.CW bootsys.s
+is
+.CW bootsys-amd64.s
+and
+.CW bootsys-386.s
+now, picked by
+.CW OBJTYPE
+the way
+.CW os/osprey/kernlib
+picks
+.CW getcallerpc ,
+and the 386 half is the classic Plan 9 stub \- the number in
+.CW AX
+and
+.CW "INT $64" .
+It is not guessed at: this kernel's own trap entry names the convention.
+.CW os/osprey/pc/trap.c
+takes the number from
+.CW ureg->ax
+and the arguments from the user stack at
+.CW sp+BY2WD ,
+and
+.CW os/osprey/pc/l.s
+vectors
+.CW INT
+64 to
+.CW _syscallintr .
+That is why the 386 file has no counterpart to the amd64 one's moving
+the first argument: on amd64 it arrives in a register and has to be put
+where the kernel looks, and on 386 it is already there.
+.PP
+What is left is the
+.CW libc ,
+and it is smaller than its name.  Linking
+.CW initcode
+without one names what it actually wants: five symbols, and four of them
+\-
+.CW bind ,
+.CW open ,
+.CW exec ,
+.CW _exits
+\- are the stubs just written.  The fifth is
+.CW rerrstr .
+9front's
+.CW libc
+here carries
+.CW 9sys ,
+.CW amd64 ,
+.CW fmt
+and
+.CW port
+and no 386 machine directory, so the archive cannot simply be built for
+the other object type; what it needs instead is the few machine-dependent
+files written, or an archive holding only what these two programs use.
+That is the next piece and it is named rather than estimated.  Where the paragraph above says "before it needs
 anything else", the measurement says the kernel builds first and wants
 those two things last.
 .PP
