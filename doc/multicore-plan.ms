@@ -5095,3 +5095,101 @@ measurable part; whether any other field read during that window can be
 inconsistent is a separate question and is not answered here.  Claiming
 the race is closed because the panic stopped would be the same mistake
 as reading a metric without checking what it counts.
+.NH 2
+The window the guard does not close
+.PP
+Skipping a Prog whose
+.CW M
+is
+.CW H
+stops the crash that was measured.  It does not stop the race that
+produced it, and the orders say so exactly.
+.PP
+.CW destroystack()
+writes in this order:
+.CW "ex = reg->EX" ,
+.CW "reg->EX = nil" ,
+then a
+.CW free(sx)
+per extent, then
+.CW "reg->M = H"
+.I last .
+.CW rootset()
+reads in this order:
+.CW rr->M ,
+then
+.CW rr->SP ,
+then
+.CW rr->EX ,
+then it walks.
+.PP
+So the guard catches a teardown that has already finished.  The
+dangerous case is one that has just begun: the collector reads
+.CW M
+before it becomes
+.CW H
+and passes, reads
+.CW EX
+before the nil, and then walks Stkexts that
+.CW free()
+is handing back underneath it.  That is a use-after-free, and "bad frame
+type", "frames do not tile" and a jump into the Dis heap through
+.CW t->mark
+are what it looks like from the far end \(em which is to say it is
+probably the same root cause as several faults this document has already
+chased.
+.PP
+Neither existing guard covers it.
+.CW gclock()
+sets
+.CW gchalt ,
+which
+.CW rungc()
+tests at entry and which cannot stop a collection already running on
+another CPU.
+.CW inxec
+would, but
+.CW vmachine() 's
+handler clears it before reaching the teardown, so
+.CW stoptheworld()
+counts the context as stopped
+.I while
+it dismantles a Prog.
+.NH 2
+Excluding the teardown, and only the teardown
+.PP
+.CW entertear() /\c
+.CW leavetear()
+set a flag that
+.CW othersrunning()
+counts alongside
+.CW inxec ,
+with the same publish-then-recheck
+.CW enterquantum()
+uses so that neither ordering can miss.  A separate flag rather than
+reusing
+.CW inxec ,
+so it composes with whatever claim the caller already holds.
+.PP
+It waits with
+.CW sched()
+rather than
+.CW tsleep() ,
+deliberately: one of the two sites is inside
+.CW vmachine() 's
+error handler, and a note interrupting a sleep there would longjmp out
+of a path that is delicate enough already.  A Prog dying is rare and a
+collection is short, so a spin in that one place is the cheaper risk \(em
+the opposite call from the one made for the collector's own wait, and
+for the opposite reason.
+.PP
+It covers
+.CW destroystack()
+and not
+.CW delprog() .
+.CW delprog()
+releases and reacquires the interpreter, so making the collector wait for
+it would make every concurrent collection give up \(em the give-up path
+this document spent a chapter measuring.
+.CW destroystack()
+itself does not block.

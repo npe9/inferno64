@@ -208,7 +208,7 @@ othersrunning(void)
 
 	n = 0;
 	for(i = 0; i < npctx; i++)
-		if(pctxs[i] != curP && pctxs[i]->inxec)
+		if(pctxs[i] != curP && (pctxs[i]->inxec || pctxs[i]->intear))
 			n++;
 	return n;
 }
@@ -224,6 +224,61 @@ static int
 gcstwothers(void)
 {
 	return gcstw != 0 && up != gcstwproc;
+}
+
+void	safepoint(void);	/* defined below, with the rest of the handshake */
+
+/*
+ * Keep the collector out while a Prog's stack is dismantled.
+ *
+ * destroystack() nils reg->EX as its second statement, frees every
+ * extent, and sets reg->M = H last.  rootset() reads M, then SP, then
+ * EX, then walks.  So a collector that reads M before the teardown
+ * starts passes the guard there, reads EX before the nil, and then walks
+ * Stkexts that free() is handing back underneath it.  That is a
+ * use-after-free, and "bad frame type", "frames do not tile" and a jump
+ * into the Dis heap through t->mark are what it looks like from the
+ * other end.
+ *
+ * gclock() does not prevent it: it sets gchalt, which rungc() tests when
+ * it starts, and cannot stop a collection already running.  Nor does
+ * inxec, because vmachine()'s handler clears it before reaching the
+ * teardown -- so stoptheworld() counts the context as stopped while it
+ * is doing this.
+ *
+ * A separate flag rather than reusing inxec, so that it composes with
+ * whatever claim the caller already holds, and the same
+ * publish-then-recheck as enterquantum() so the two orderings cannot
+ * both miss.  sched() rather than tsleep() because this sits inside
+ * vmachine()'s error handler, where a note interrupting a sleep would
+ * longjmp out of a path that is delicate enough already; a Prog dying is
+ * rare and collections are short.
+ *
+ * It covers destroystack() only.  delprog() releases and reacquires the
+ * interpreter, so waiting for that would make every concurrent
+ * collection give up; destroystack() itself does not block.
+ */
+static void
+entertear(void)
+{
+	for(;;){
+		curP->intear = 1;
+		coherence();
+		if(gcstw == 0)
+			return;
+		curP->intear = 0;
+		coherence();
+		safepoint();
+		sched();
+	}
+}
+
+static void
+leavetear(void)
+{
+	curP->intear = 0;
+	coherence();
+	safepoint();
 }
 
 int stwgaveup;		/* MULTICORE INSTRUMENTATION - temporary */
@@ -1320,7 +1375,9 @@ killprog(Prog *p, char *cause)
 
 	p->state = Pexiting;
 	gclock();
+	entertear();
 	destroystack(&p->reg);
+	leavetear();
 	delprog(p, msg);
 	gcunlock();
 
@@ -2094,7 +2151,9 @@ progexit(void)
 		return;
 	}
 	gclock();
+	entertear();
 	destroystack(&R);
+	leavetear();
 	delprog(r, msg);
 	gcunlock();
 }
