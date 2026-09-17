@@ -345,6 +345,64 @@ altarray(n: int)
 	ok(name);
 }
 
+# --- 9. alt on buffered channels ------------------------------------
+# CANPUT()/CANGET() in altrdy() and cputb()/cgetb() reached through
+# altcomm() -- the buffered branches of isendx()/irecvx().  Case 4 has a
+# buffered channel with no alt and cases 2, 3 and 7 have alts with no
+# buffer; nothing before this reaches both at once, which is exactly the
+# combination the channel region rearranged.
+#
+# The alt is offered only while both arms can still be taken, so the
+# count is exact and a wrong answer fails rather than hangs.
+
+bufworker(a: chan of int, b: chan of int, done: chan of int, n: int)
+{
+	for(i := 0; i < n; i++)
+		b <-= <-a;		# echo, through both buffers
+	done <-= 1;
+}
+
+bufalt(n: int)
+{
+	name := "alt-on-buffered";
+	a := chan[4] of int;
+	b := chan[4] of int;
+	done := chan of int;
+	sent := 0;
+	got := 0;
+	sum := 0;
+
+	spawn bufworker(a, b, done, n);
+	while(sent < n || got < n){
+		if(sent < n && got < n){
+			alt {
+			a <-= sent =>
+				sent++;
+			v := <-b =>
+				sum += v;
+				got++;
+			}
+		}
+		else if(sent < n){
+			a <-= sent;
+			sent++;
+		}
+		else {
+			sum += <-b;
+			got++;
+		}
+	}
+	<-done;
+	want := 0;
+	for(i := 0; i < n; i++)
+		want += i;
+	if(sum != want){
+		fail(name, sys->sprint("sum %d, wanted %d", sum, want));
+		return;
+	}
+	ok(name);
+}
+
 # --- 8. progs killed while blocked ----------------------------------
 # What drives cqdelp()/altdone() from exprog()/killprog(), and
 # killcomm()'s own arms when a killed prog's stack drops the last
@@ -446,6 +504,7 @@ init(nil: ref Draw->Context, args: list of string)
 	chanofchan(n);
 	recchan(n);
 	altarray(n);
+	bufalt(n);
 	killblocked(n);
 
 	if(failed != 0){

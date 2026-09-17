@@ -4272,6 +4272,25 @@ has to count element-wise.  Every value carries the index it was sent
 from, so a mis-counted or mis-unmarked array alt shows up as a wrong tag
 rather than as silence.
 .IP \(bu
+.I alt-on-buffered :
+an alt whose arms are buffered channels, which is
+.CW CANPUT() /\c
+.CW CANGET()
+in
+.CW altrdy()
+and
+.CW cputb() /\c
+.CW cgetb()
+reached through
+.CW altcomm()
+\(em the buffered branches of
+.CW isendx() /\c
+.CW irecvx() .
+Found by asking which shapes the other eight cases miss rather than by a
+failure: one case had a buffered channel with no alt, three had alts with
+no buffer, and nothing reached both at once, which is precisely the
+combination the split rearranged.
+.IP \(bu
 .I kill-while-blocked :
 progs killed while blocked in send, in recv and in alt, then the
 channels used again afterwards.  This is what drives
