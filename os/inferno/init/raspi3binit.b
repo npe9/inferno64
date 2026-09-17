@@ -208,7 +208,9 @@ init()
 	sdcheck();
 	drawtest();
 	usbcheck();
-	ethercheck();
+	# in its own process: the shell must not wait behind a DHCP lease and
+	# three pings, which take seconds and can be answered by nothing at all
+	spawn ethercheck();
 	# sdfs() reams a kfs onto the SD card, mounts it over a pipe, and
 	# creates a file.  The ream and every SD write succeed, but the
 	# create-over-mount hangs: pid 1's Twalk gets its Rerror and then the
