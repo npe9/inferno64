@@ -89,10 +89,30 @@ auxuartinit(int baud)
 	r[Mcr] = 0;
 	r[Baud] = Coreclk / (8 * baud) - 1;
 
+	r[Cntl] = Cntltx | Cntlrx;
+}
+
+/*
+ * Route GPIO 14/15 to the mini UART.
+ *
+ * Separate from the init above, and called by nothing at boot, because
+ * on a Pi 3 with dtoverlay=disable-bt those two pins are the PL011's --
+ * the console this kernel talks on.  auxinit()'s check used to take
+ * them: on the board the console went silent mid-boot after DMA-OK and
+ * the serial line carried the mini UART's own AUXUART-HELLO at its own
+ * baud, which reads exactly like a crash.  QEMU never showed it, since
+ * its console is not attached to pins at all.
+ *
+ * A kernel that wants the mini UART as its console (uartmini.c, not
+ * linked) calls this; the boot check does not, and its bytes are
+ * clocked out of a transmitter whose pins go nowhere, which is all the
+ * check needs to see.
+ */
+void
+auxuartpins(void)
+{
 	gpiofsel(14, Alt5);		/* tx */
 	gpiofsel(15, Alt5);		/* rx */
-
-	r[Cntl] = Cntltx | Cntlrx;
 }
 
 void
@@ -154,5 +174,5 @@ auxinit(void)
 	}
 	print("aux: mini uart at %#p, 115200 8n1, divisor %ud\n",
 		(void*)AUX0, r[Baud]);
-	print("AUX-OK mini uart enabled and sent %d bytes\n", i);
+	print("AUX-OK mini uart enabled and sent %d bytes (pins left to the console)\n", i);
 }
