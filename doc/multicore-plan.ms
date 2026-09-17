@@ -5193,3 +5193,54 @@ it would make every concurrent collection give up \(em the give-up path
 this document spent a chapter measuring.
 .CW destroystack()
 itself does not block.
+.NH 2
+Two checks the exclusion rests on
+.PP
+.CW entertear()
+waits for
+.CW "gcstw == 0"
+and then makes
+.CW othersrunning()
+count this context.  That is only sufficient if every mark runs with
+.CW gcstw
+set, and only safe if it cannot nest.  Both were checked rather than
+assumed.
+.PP
+.B "Every mark runs under stoptheworld."
+In this kernel
+.CW rungc()
+has exactly one caller,
+.CW collect() ,
+and
+.CW stoptheworld()
+sets
+.CW gcstw
+before it.  There are three other calls in
+.CW devbench.c ,
+which call
+.CW rungc()
+directly with no stop at all \(em and
+.CW devbench
+is not in the pc64 configuration, so they do not apply here.  Recorded
+because they are a live exception to the invariant the exclusion depends
+on: enabling that device on a multicore kernel would break this without
+touching any of the code that assumes it.
+.PP
+.B "It cannot nest."
+The two sites are
+.CW killprog()
+and
+.CW progexit() .
+.CW delprog() ,
+which runs immediately after each, reaches neither, and nothing on the
+.CW destroystack()
+\(->
+.CW destroy()
+\(->
+.CW freechan()
+\(->
+.CW killcomm()
+path reaches them either \(em
+.CW killcomm()
+posts notes, wakes progs and unmarks alts, and kills nothing.  Two
+contexts tearing down at once is not nesting: the flag is per-context.
