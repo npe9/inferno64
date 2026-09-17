@@ -80,18 +80,42 @@ and it needs the M4's undefined-instruction path.
 Take route 1.  The board is 120MHz and the attitude work is a real
 workload, not a demonstration.
 .PP
-This phase is also the one place the emulator cannot help.  The ARMv7-M
-core is proven under QEMU through
-.CW os/inferno/mps2 ,
-but that is a Cortex-M7, which
-.I has
-double precision; the M4F difference from it is exactly the FPU.  So
-route 1 can be tested for correctness on
-.CW mps2
-(soft double gives the same answers as hardware double, and
+An earlier draft of this plan said this phase was the one place the
+emulator could not help, on the grounds that the only emulated ARMv7-M
+board here is a Cortex-M7 with double precision.  That was wrong, and
+the experiment that disproves it is now in
+.CW doc/armv7m-ports.ms :
+QEMU's AN386 model is the same MPS2 with a Cortex-M4, same memory map
+and same UART, so
+.CW imps2
+boots on it unchanged \-
+.CW os/inferno/mps2/qemu-m4.sh
+\- and
 .I fptest (1)
-already exists to say so) but the thing it exists to work around cannot
-be reproduced there.
+takes a usage fault there on a
+.CW VSUB.F64
+while passing all twenty-five lines on the M7.
+.PP
+So this phase is fully developable without hardware, and it is the best
+loop in the plan: write soft double in
+.CW tc ,
+run
+.CW fptest
+on
+.CW mps2-an386
+until the usage fault becomes
+.CW FPTEST-OK ,
+with the
+.CW mps2-an500
+run as the oracle for the answers.  Nothing about phase 0 waits for a
+PyCubed board.
+.PP
+It also confirms something the plan asserted and could not show: a
+console Cortex-M4 Inferno works today.  The kernel boots and a shell
+runs on a core that cannot execute the double-precision instructions in
+its own text, because an illegal instruction that is never executed
+never faults.  Only real arithmetic is blocked, which is exactly why
+this is a precondition for the flight software and not for the port.
 .NH 1
 Phase 1: the board
 .PP
@@ -369,11 +393,15 @@ Order, and what each phase proves
 .IP 0.
 Soft double in
 .CW tc ,
-verified against
+verified by
 .I fptest (1)
+going from a usage fault to
+.CW FPTEST-OK
 on
-.CW mps2 .
-Without it there is no flight software.
+.CW mps2-an386 ,
+with
+.CW mps2-an500
+as the oracle.  No hardware.  Without it there is no flight software.
 .IP 0a.
 The pool-floor histogram.  Cheap, and it either confirms the budget or
 changes the plan.
@@ -396,7 +424,8 @@ for the board and should not.
 The Limbo flight software, against the drivers.
 .PP
 Phases 0, 0a and 3 need no PyCubed hardware and are where the work
-should start.  Phases 1, 2 and 4 need the board, and per
+should start \- and phase 0 now has a bench of its own, which it did not
+when this plan was first written.  Phases 1, 2 and 4 need the board, and per
 .CW AGENTS.md
 writing them blind would produce another
 .CW os/inferno/teensy41 :

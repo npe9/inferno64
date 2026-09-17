@@ -1,6 +1,16 @@
 /*
  * ARM MPS2 with the AN500 FPGA image: a Cortex-M7 as QEMU models it.
  *
+ * One image serves more than that one.  QEMU's AN385 (Cortex-M3), AN386
+ * (Cortex-M4) and AN500 (Cortex-M7) models have the same memory map --
+ * mps.ssram1 at 0, mps.ssram23 at 0x20000000, four megabytes each,
+ * verified with "info mtree" on this host -- and the same CMSDK UART at
+ * the bases below.  So the same imps2 binary boots on AN386 as on
+ * AN500, and the only difference the kernel can see is the floating
+ * point unit: the M7 has double precision and the M4 has FPv4-SP and
+ * none.  qemu.sh runs the M7, qemu-m4.sh the M4; see
+ * doc/armv7m-ports.ms for what the difference costs.
+ *
  * There is no MMU, so every address here is both physical and virtual.
  * Two blocks of static RAM are wired up, four megabytes each, and the
  * kernel lives at the bottom of the first one because that is where the

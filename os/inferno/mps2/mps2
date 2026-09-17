@@ -9,6 +9,14 @@
 # os/inferno/armv7m.
 #
 # Serial only: no ip stack, no ethernet, no storage, no draw.
+#
+# The same kernel binary is also the Cortex-M4 test bench: QEMU's AN386
+# image has this board's memory map and UART and an M4 in place of the
+# M7, so qemu-m4.sh boots this image on a core with no double-precision
+# floating point.  A console shell works there; fptest takes a usage
+# fault.  That is the bench for the software double precision the
+# Cortex-M4 boards need -- see doc/armv7m-ports.ms and
+# doc/pycubed-plan.ms.
 
 dev
 	root

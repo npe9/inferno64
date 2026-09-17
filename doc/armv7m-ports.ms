@@ -48,6 +48,69 @@ lists itself, and
 .CW echo
 comes back.
 .PP
+.B "The same image is also a Cortex-M4 bench."
+QEMU's AN386 model is an MPS2 with a Cortex-M4 where the AN500 has a
+Cortex-M7, and its memory map and CMSDK UART are the same \- checked
+with
+.CW "info mtree" ,
+not assumed.  So
+.CW imps2
+boots on
+.CW "-M mps2-an386"
+unchanged and reaches the same interactive shell;
+.CW os/inferno/mps2/qemu-m4.sh
+runs it.  The only difference the kernel can see is the floating point,
+and that makes this the bench for the one thing every Cortex-M4 board
+here is blocked on.
+.PP
+What it shows, on the same binary, the two machines side by side:
+.I fptest (1)
+passes all twenty-five lines on
+.CW mps2-an500
+and on
+.CW mps2-an386
+takes
+.DS
+.CW "usage fault pc 0002ff24 psr 01000200"
+.CW "  cfsr 00010000 ..."
+.DE
+before printing a line.
+.CW CFSR
+0x00010000 is
+.CW UFSR
+bit 0,
+.CW UNDEFINSTR ,
+decoded from the register layout rather than named by
+.CW os/inferno/armv7m/trap.c ,
+which prints the word raw.  The instruction itself settles it: the
+halfwords at that address in the image are
+.CW ee30
+.CW 0b41 ,
+whose coprocessor field is 0xb \- cp11, double precision \- with
+.CW VLDR.64
+before it and
+.CW VSTR.64
+after, so a
+.CW VSUB.F64
+between them.  Read out of the raw
+.CW -H4
+image at that offset; the symbol table was not used, having proved
+unreliable to walk.
+.PP
+Two things follow.  The prediction that an unexecuted illegal
+instruction does not fault is confirmed: the kernel boots and a shell
+runs on a core that cannot execute the double-precision instructions
+sitting in its own text, and only reaching one faults.  And software
+double precision is now developable without hardware \- write it, watch
+.CW fptest
+go from this usage fault to
+.CW FPTEST-OK
+on
+.CW mps2-an386 ,
+with the
+.CW mps2-an500
+run as the oracle for the answers.
+.PP
 .B teensy41
 does not.  There is no emulator for an i.MX RT1062, and this was written
 without one of the boards.  What can be said is that it builds, that the
