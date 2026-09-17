@@ -78,6 +78,10 @@ kfsproc(pfd: ref Sys->FD)
 
 KFSPART: con "/dev/sdM0/kfstest";
 
+# the IP interface's control fd, held so the interface outlives the
+# function that made it
+ipctl: ref Sys->FD;
+
 # The first FAT partition in the master boot record: (start, sectors),
 # or (0, 0).  Everything that carves up this card starts here, because
 # the card holds the firmware and the kernel that booted it.
@@ -135,16 +139,13 @@ kupdate()
 	}
 	addr := hd f;
 	path := hd tl f;
-	# Wait for the IP stack to exist.  This runs from a process spawned
-	# while the network is still coming up, and dialling before /net is
-	# bound fails with "file does not exist", which reads like a missing
-	# server rather than a missing namespace.
+	# Wait for the IP stack to exist and to have an address.  This runs
+	# from a process spawned while the network is still coming up, and
+	# dialling before /net is bound fails with "file does not exist",
+	# which reads like a missing server rather than a missing namespace.
 	for(i := 0; i < 300; i++){
-		nfd := sys->open("/net/tcp/clone", Sys->OREAD);
-		if(nfd != nil){
-			nfd = nil;
+		if(hasaddr())
 			break;
-		}
 		sys->sleep(100);
 	}
 	(ok, c) := sys->dial(addr, nil);
@@ -200,6 +201,29 @@ kupdate()
 	}
 	sys->print("KUPDATE-OK %d bytes installed; the old kernel is kernel8.bak\n",
 		total);
+}
+
+# does the IP stack have an address yet?
+hasaddr(): int
+{
+	fd := sys->open("/net/ipifc/0/status", Sys->OREAD);
+	if(fd == nil)
+		return 0;
+	b := array[512] of byte;
+	n := sys->read(fd, b, len b);
+	if(n <= 0)
+		return 0;
+	(nf, f) := sys->tokenize(string b[0:n], " \t\r\n");
+	for(; f != nil; f = tl f){
+		s := hd f;
+		# an address line starts with a dotted quad that is not 0.0.0.0
+		if(len s >= 7 && s[0] >= '1' && s[0] <= '9')
+			for(i := 0; i < len s; i++)
+				if(s[i] == '.')
+					return 1;
+	}
+	nf = nf;
+	return 0;
 }
 
 rename(path: string, newname: string): int
@@ -419,7 +443,13 @@ ethercheck()
 		return;
 	}
 	sys->bind("#I", "/net", Sys->MAFTER);
-	cfd := sys->open("/net/ipifc/clone", Sys->ORDWR);
+	# The fd returned by opening the clone file IS the interface: when the
+	# last reference to it goes, devip unbinds the ether and the address
+	# with it.  Holding it in a module variable keeps the interface for
+	# the life of init - without that the board answered pings while this
+	# function ran and went silent the moment it returned, and anything
+	# dialling later got "file does not exist".
+	cfd := ipctl = sys->open("/net/ipifc/clone", Sys->ORDWR);
 	if(cfd == nil || sys->fprint(cfd, "bind ether /net.alt/ether") < 0){
 		sys->print("ETHER-FAIL bind ether: %r\n");
 		return;
