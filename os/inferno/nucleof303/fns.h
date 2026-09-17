@@ -12,6 +12,9 @@ uvlong	timersoon(void);
 uvlong	fastticks(uvlong*);
 ulong	tk2ms(ulong);
 void	coherence(void);
+ulong	fpscrget(void);		/* ../armv7m/l.s */
+void	fpscrset(ulong);	/* ../armv7m/l.s */
+int	fpiemu(Ureg*);		/* ../armv7m/fpiarmv7m.c */
 void	fpregsave(void*);	/* ../armv7m/l.s: S0-S31 -> memory */
 void	fpregrestore(void*);	/* ../armv7m/l.s: memory -> S0-S31 */
 void	delay(int);

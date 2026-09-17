@@ -296,6 +296,14 @@ TEXT	fpregrestore(SB), 1, $-4
 	VLDMIA32(0)
 	RET
 
+TEXT	fpscrget(SB), 1, $-4
+	VMRSFPSCR(0)
+	RET
+
+TEXT	fpscrset(SB), 1, $-4
+	VMSRFPSCR(0)
+	RET
+
 TEXT	coherence(SB), 1, $-4
 	DSBSY
 	RET

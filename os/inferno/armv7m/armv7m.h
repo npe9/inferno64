@@ -65,6 +65,15 @@
 #define	VSTMIA32(rn)	T2(0xec80|(rn), 0x0a20)	/* VSTMIA rn, {S0-S31} */
 #define	VLDMIA32(rn)	T2(0xec90|(rn), 0x0a20)	/* VLDMIA rn, {S0-S31} */
 
+/*
+ * FPSCR, to and from a core register.  Both are cp10, so both work on a
+ * Cortex-M4: it is only the double-precision arithmetic FPv4-SP lacks.
+ * The emulation needs these to publish a comparison's result, which is
+ * where VCMP leaves it and what a following VMRS reads.
+ */
+#define	VMRSFPSCR(rt)	T2(0xeef1, ((rt)<<12)|0x0a10)	/* rt = FPSCR */
+#define	VMSRFPSCR(rt)	T2(0xeee1, ((rt)<<12)|0x0a10)	/* FPSCR = rt */
+
 #define	WFI		HWORD	$0xbf30
 #define	NOOP		HWORD	$0xbf00
 #define	BXR(rm)		HWORD	$(0x4700|((rm)<<3))
@@ -107,6 +116,12 @@
 #define	  ShcsrBusfault	(1<<17)
 #define	  ShcsrUsgfault	(1<<18)
 #define	SCB_CFSR	(SCS+0xd28)
+/*
+ * CFSR is three fault status bytes in one word; the UsageFault byte is
+ * the top halfword, and its bit 0 -- so bit 16 here -- says the fault
+ * was an undefined instruction.  Written back to clear.
+ */
+#define	CfsrUndefinstr	(1<<16)
 #define	SCB_HFSR	(SCS+0xd2c)
 #define	SCB_MMFAR	(SCS+0xd34)
 #define	SCB_BFAR	(SCS+0xd38)

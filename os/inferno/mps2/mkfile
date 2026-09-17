@@ -40,6 +40,9 @@ OBJ=\
 	main.$O\
 	mmu.$O\
 	fpu.$O\
+	fpiarmv7m.$O\
+	fpi.$O\
+	fpimem.$O\
 	trap.$O\
 	tod.$O\
 	mul64fract.$O\
@@ -93,6 +96,17 @@ tod.$O:	../port/tod.c
 
 mul64fract.$O:	../port/mul64fract.c
 	$CC $CFLAGS ../port/mul64fract.c
+
+# The software floating point the Cortex-M4's missing double precision is
+# emulated with.  fpi.h is $ARCHDIR's copy; ../port/fpi.c includes it by
+# plain name, which -I$ARCHDIR resolves.
+fpi.$O:	../port/fpi.c $ARCHDIR/fpi.h
+	$CC $CFLAGS ../port/fpi.c
+
+fpimem.$O:	../port/fpimem.c $ARCHDIR/fpi.h
+	$CC $CFLAGS ../port/fpimem.c
+
+fpiarmv7m.$O:	$ARCHDIR/fpiarmv7m.c $ARCHDIR/fpi.h
 
 devuart.$O:	../port/devuart.c
 	$CC $CFLAGS ../port/devuart.c

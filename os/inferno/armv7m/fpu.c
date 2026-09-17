@@ -80,6 +80,7 @@ fpinit(void)
 	coherence();
 
 	fpregcheck();
+
 }
 
 void

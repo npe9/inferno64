@@ -154,6 +154,18 @@ trap(Ureg *ur)
 	case Excsystick:
 		clockintr(ur);
 		return;
+	case Excusage:
+		/*
+		 * A double-precision instruction on a core whose FPv4-SP
+		 * has none: emulate it and carry on.  fpiemu returns 0 for
+		 * anything else, including a real undefined instruction,
+		 * which then reports below as it always did.
+		 */
+		if((*(ulong*)SCB_CFSR & CfsrUndefinstr) != 0 && fpiemu(ur)){
+			*(ulong*)SCB_CFSR = CfsrUndefinstr;	/* write one to clear */
+			return;
+		}
+		break;
 	case Excsvc:
 	case Excpendsv:
 		/*
