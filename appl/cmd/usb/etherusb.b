@@ -64,7 +64,15 @@ Etherusb: module {
 Qroot, Qether, Qclone, Qaddr, Qstats: con big iota;
 Cbase: con big 16;
 
-Nqueue: con 64;		# frames held per conversation when nobody is reading
+# Frames held per conversation when nobody is reading.  This is a
+# staleness bound, not a buffer size: the reader here drains at tens of
+# frames a second, so sixty-four frames is seconds of queueing delay,
+# and a reply delivered seconds late is indistinguishable from one that
+# never came - the Pi answered every echo request it was sent and was
+# still reported unreachable.  Eight frames is a fifth of a second at
+# the measured drain rate, and what does not fit is dropped oldest
+# first.
+Nqueue: con 8;
 Ntx: con 32;		# frames queued for the transmit process
 
 Conn: adt {
@@ -73,6 +81,7 @@ Conn: adt {
 	promisc: int;
 	reads:	list of ref Tmsg.Read;	# deferred data reads
 	frames:	list of array of byte;	# queued frames, newest first
+	ready:	list of array of byte;	# reversed: oldest first, taken from here
 	nframes: int;
 	nin:	int;			# frames matched to this conversation
 	tlast:	int;			# when this conversation was last replied to
@@ -952,7 +961,7 @@ handle(gm: ref Tmsg): string
 				nc[0:] = conns;
 				conns = nc;
 			}
-			conns[n] = ref Conn(n, 0, 0, nil, nil, 0, 0, 0, 0, 0, 0, 0);
+			conns[n] = ref Conn(n, 0, 0, nil, nil, nil, 0, 0, 0, 0, 0, 0, 0);
 			cdir := Cbase + big(n*3);
 			tree.create(Qether, dir(string n, Sys->DMDIR|8r555, cdir));
 			tree.create(cdir, dir("ctl", 8r666, cdir+big 1));
@@ -1010,7 +1019,7 @@ handle(gm: ref Tmsg): string
 				c.ngap++;
 			}
 			c.tlast = t;
-			if(c.frames != nil){
+			if(c.nframes > 0){
 				f := oldest(c);
 				srv.reply(ref Rmsg.Read(m.tag, f[0:min(m.count, len f)]));
 			} else
@@ -1069,16 +1078,22 @@ min(a, b: int): int
 	return b;
 }
 
-# frames are kept newest-first; take the oldest
+# Frames arrive newest-first on one list and are taken oldest-first from
+# another, which is filled by reversing the first when it runs out: each
+# frame is moved once, so a read costs the same whatever the queue holds.
+# Reversing the whole queue on every read cost O(n) per frame, and since
+# that work is on the path that drains the queue, a queue that grew made
+# the server slower and so grew further: at sixty-four deep the kernel
+# came back for a frame every 177ms, at eight deep every 62ms.
 oldest(c: ref Conn): array of byte
 {
-	l: list of array of byte;
-	for(; tl c.frames != nil; c.frames = tl c.frames)
-		l = hd c.frames :: l;
-	f := hd c.frames;
-	c.frames = nil;
-	for(; l != nil; l = tl l)
-		c.frames = hd l :: c.frames;
+	if(c.ready == nil){
+		for(l := c.frames; l != nil; l = tl l)
+			c.ready = hd l :: c.ready;
+		c.frames = nil;
+	}
+	f := hd c.ready;
+	c.ready = tl c.ready;
 	c.nframes--;
 	return f;
 }
@@ -1220,7 +1235,7 @@ deliver(f: array of byte)
 		} else {
 			# The queue is full because the reader is behind, and the
 			# frame that matters most is the newest: an ARP reply
-			# thrown away behind sixty-four stale broadcasts leaves
+			# thrown away behind a queue of stale broadcasts leaves
 			# the interface unable to resolve anything, which is how
 			# the Pi came to answer ARP and reach nothing.  Drop the
 			# oldest instead and keep what just arrived.
