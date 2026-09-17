@@ -51,6 +51,9 @@
 #include "fns.h"
 
 extern void gpiofsel(int, int);		/* gpiobcm.c */
+
+/* run the checks that need the PCM clock; see i2sinit() */
+int i2sdeep = 0;
 extern uvlong systmrread(void);		/* systmrbcm.c */
 
 enum {
@@ -346,6 +349,23 @@ i2sinit(void)
 		return;
 	}
 
+	/*
+	 * Everything past here needs the PCM clock, and starting it means
+	 * killing and reprogramming a clock in the VideoCore's own clock
+	 * manager.  On the board that is not ours to take: the firmware
+	 * owns CPRMAN, and the first boot that got this far -- the CS
+	 * assertion above used to stop before it -- hung in screeninit(),
+	 * which is the next thing to ask the firmware for anything.  The
+	 * register-level checks above need no clock and still run.
+	 *
+	 * Set i2sdeep to run the timing checks on a board where the
+	 * firmware is not being asked for anything else.
+	 */
+	if(!i2sdeep){
+		print("I2S-NOCLOCK register checks pass; the timing checks want "
+			"the VideoCore's PCM clock and do not take it\n");
+		return;
+	}
 	i2spins();
 	rate = i2sconfig(48000);
 	if(rate == 0){
