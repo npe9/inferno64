@@ -93,6 +93,8 @@ freeframe(uchar *fp, int setsp)
 		R.SP = fp;
 }
 
+ulong handlerbroke, handlerbroketold;	/* INSTRUMENTATION - temporary */
+
 int
 handler(char *estr)
 {
@@ -239,9 +241,53 @@ found:
 		R.PC = (Inst*)((uintptr)m->prog+newpc);
 	else
 		R.PC = m->prog+newpc;
+	{	/* INSTRUMENTATION - temporary */
+		Stkext *sx;
+		uchar *cf;
+		int n, ok;
+
+		/*
+		 * Does the stack this handler leaves behind still have a
+		 * frame chain that reaches the bottom of its newest extent?
+		 * This is the one place a Prog's whole register file is
+		 * rewritten while it is not running, and the branch above
+		 * that passes setsp as 0 leaves R.SP alone -- which
+		 * doc/multicore-plan.ms has had flagged as a suspect since
+		 * before there was anything to test it with.
+		 */
+		ok = 1;
+		if(R.EX != nil && R.FP != nil && R.SP != nil){
+			sx = (Stkext*)R.EX;
+			ok = 0;
+			for(cf = R.FP, n = 0; n < 4096; n++){
+				if(cf == sx->reg.tos.fu){
+					ok = 1;
+					break;
+				}
+				if(cf < sx->reg.tos.fu || cf >= R.SP)
+					break;
+				cf = ((Frame*)cf)->fp;
+				if(cf == nil){
+					ok = 1;
+					break;
+				}
+			}
+			if(R.FP >= R.SP)
+				ok = 0;
+		}
+		if(!ok){
+			handlerbroke++;
+			if(handlerbroketold++ < 6)
+				print("handler: prog %d leaves FP %#p SP %#p"
+					" EX %#p with a chain that stops short,"
+					" spsrc %#x\n",
+					p->pid, R.FP, R.SP, R.EX, p->spsrc);
+		}
+	}
 	memmove(&p->reg, &R, sizeof(R));
 	REGSYNCED();
 	p->regsrc = 3;		/* INSTRUMENTATION: propex() */
+	p->syncn = p->wmtracen;
 	p->kill = nil;
 	destroy(p->exval);
 	p->exval = H;

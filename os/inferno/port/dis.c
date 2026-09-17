@@ -1982,6 +1982,10 @@ ownctx(void)
 ulong addrunbroken;	/* MULTICORE INSTRUMENTATION - temporary */
 ulong quantumbroke;	/* likewise */
 ulong shortran;		/* progs the collector saw short that ran again */
+ulong regmoved;		/* saved registers changed between quanta */
+ulong regmovedsrc[8], spregress, regmovedtold;
+ulong spbadin, spbadout;
+ulong unsynced, unsyncedtold, unsyncedran, unsyncedrantold;
 static int chainok(Prog*);
 
 void
@@ -2102,6 +2106,34 @@ progqueue(Prog *p, int *ctxp)
 			return 3;		/* running */
 		}
 	return 0;
+}
+
+/*
+ * MULTICORE INSTRUMENTATION - temporary.  Is SP above the end of the
+ * frame FP names?  If it is not, the next frame this Prog allocates
+ * lands on top of its own live frame, and initmem() writes H into that
+ * frame's fp -- which is exactly the chain break rootset() reports.
+ */
+int
+spok(Prog *r)
+{
+	Stkext *sx;
+	Frame *f;
+	Type *t;
+
+	if(r->reg.EX == nil || r->reg.FP == nil || r->reg.SP == nil)
+		return 1;
+	sx = (Stkext*)r->reg.EX;
+	if(r->reg.FP < sx->reg.tos.fu || r->reg.FP >= r->reg.SP)
+		return 1;	/* another extent, or nothing to say */
+	f = (Frame*)r->reg.FP;
+	t = f->t;
+	if(t == nil)
+		t = sx->reg.TR;
+	if(t == nil || ((uintptr)t & 7) != 0 || (uintptr)t < 0x100000
+	|| t->size <= 0)
+		return 1;
+	return r->reg.SP >= r->reg.FP + t->size;
 }
 
 int
@@ -2482,6 +2514,62 @@ vmachine(void*)
 		 * one: exception.c has already synced p->reg from R on the
 		 * path that carries on executing.
 		 */
+		{	/* MULTICORE INSTRUMENTATION - temporary */
+			Prog *was;
+
+			/*
+			 * Which longjmp out of xec() leaves a Prog alive with
+			 * registers older than its own stack?  The collector
+			 * reports Progs that ran hundreds of instructions
+			 * since their last sync and are still Pready; this
+			 * names the path, the state and the error.
+			 */
+			was = curP->curprog;
+			/*
+			 * Sync the registers before this context becomes
+			 * stoppable.
+			 *
+			 * xec()'s exit sync does not run when a Dis exception
+			 * leaves by longjmp, so the Prog keeps the register
+			 * file it entered the quantum with -- measured, up to
+			 * 359 instructions out of date -- while it sits Pready
+			 * on a run queue.  Clearing inxec two lines below then
+			 * lets a collection start, and rootset() walks that
+			 * snapshot: an FP into frames the Prog has since
+			 * popped and re-used, a chain that stops on a frame
+			 * whose fp a later frame's initmem() overwrote with H,
+			 * and the range walk reading a dead call sequence as
+			 * live frames.  That is the "bad frame type" tripwire,
+			 * and with it every root above the bad frame is lost.
+			 *
+			 * R is still this Prog's live state here: the longjmp
+			 * does not restore it, and handler() below reads it.
+			 * handler() syncs again when it rewinds, and progexit()
+			 * destroys the Prog; this only makes the snapshot
+			 * consistent for the window in between.
+			 */
+			if(was != nil){
+				was->reg = R;
+				REGSYNCED();
+				was->regsrc = 5;	/* INSTRUMENTATION: here */
+				was->syncn = was->wmtracen;
+			}
+			if(was != nil && was->wmtracen > was->syncn){
+				unsynced++;
+				was->unsyncedmark = 1;
+				if(unsyncedtold++ < 6)
+					print("vmachine: prog %d left xec without"
+						" syncing after %d instructions,"
+						" state %d, iprog pid %d, currun pid"
+						" %d, err \"%s\"\n",
+						was->pid,
+						was->wmtracen - was->syncn,
+						was->state,
+						up->iprog != nil ? ((Prog*)up->iprog)->pid : -1,
+						currun() != nil ? currun()->pid : -1,
+						up->env->errstr);
+			}
+		}
 		curP->curprog = nil;
 		/*
 		 * A Dis exception leaves xec() by longjmp, so the clear after
@@ -2491,8 +2579,10 @@ vmachine(void*)
 		 * it are masked.  chantest raises constantly, so the counter
 		 * was polluted both ways from the first exception on.
 		 */
-		if(currun() != nil)
+		if(currun() != nil){
 			currun()->onctx = 0;
+			currun()->xecby = nil;	/* same reason; see xec() */
+		}
 		curP->inxec = 0;	/* the quantum did not finish; see xec.c */
 		coherence();
 		safepoint();
@@ -2789,6 +2879,53 @@ vmachine(void*)
 			{	/* MULTICORE INSTRUMENTATION - temporary */
 				int was, okin;
 
+				/*
+				 * MULTICORE INSTRUMENTATION - temporary.  Are
+				 * the registers this quantum starts from the
+				 * ones the last quantum left?  A frame laid
+				 * over a live one is what a Prog resuming on a
+				 * stale SP would do, and this is the direct
+				 * test for that rather than another way of
+				 * finding the damage afterwards.
+				 */
+				if(r->lastsp != nil)
+				if(r->reg.FP != r->lastfp || r->reg.SP != r->lastsp
+				|| r->reg.EX != r->lastex){
+					regmoved++;
+					if((uint)r->regsrc < 8)
+						regmovedsrc[r->regsrc]++;
+					if(r->reg.FP == r->lastfp
+					&& r->reg.SP < r->lastsp)
+						spregress++;
+					if(regmovedtold++ < 4)
+						print("vmachine: prog %d resumes"
+							" with FP %#p SP %#p EX %#p,"
+							" left with %#p %#p %#p,"
+							" state %d regsrc %d\n",
+							r->pid, r->reg.FP, r->reg.SP,
+							r->reg.EX, r->lastfp,
+							r->lastsp, r->lastex,
+							r->state, r->regsrc);
+				}
+				if(!spok(r))
+					if(spbadin++ < 4)
+						print("vmachine: prog %d enters with"
+							" SP %#p below the end of the"
+							" frame at FP %#p, state %d"
+							" regsrc %d spsrc %#x\n",
+							r->pid, r->reg.SP, r->reg.FP,
+							r->state, r->regsrc, r->spsrc);
+				if(r->unsyncedmark){
+					r->unsyncedmark = 0;
+					unsyncedran++;
+					if(unsyncedrantold++ < 4)
+						print("vmachine: prog %d runs again"
+							" after leaving xec unsynced,"
+							" %d instructions behind,"
+							" state %d\n", r->pid,
+							r->wmtracen - r->syncn,
+							r->state);
+				}
 				okin = chainok(r);
 				if(r->chainok0 == 2){
 					r->chainok0 = 1;
@@ -2821,6 +2958,16 @@ vmachine(void*)
 			r->xec(r);
 			up->env->fpuostate = fpusave();
 			r->onctx = 0;
+			if(!spok(r))
+				if(spbadout++ < 4)
+					print("vmachine: prog %d leaves with SP %#p"
+						" below the end of the frame at FP"
+						" %#p, state %d regsrc %d spsrc %#x\n",
+						r->pid, r->reg.SP, r->reg.FP,
+						r->state, r->regsrc, r->spsrc);
+			r->lastfp = r->reg.FP;
+			r->lastsp = r->reg.SP;
+			r->lastex = r->reg.EX;
 			if(r->chainwasok && !chainok(r))
 				if(chainout++ < 3)
 					print("vmachine: prog %d left a quantum"
@@ -3133,9 +3280,22 @@ stalldump(void)
 			gcnruns, stwwaits, gcidlepass, gcpartial, stwgaveup,
 			gcidlegaveup);
 	{
+		extern ulong regstale, handlerbroke, regstalesrc[8];
+
+		print("stall: quanta resumed at an FP the Prog had left %lud"
+			" (by regsrc %lud %lud %lud %lud %lud),"
+			" handlers leaving a short chain %lud,"
+			" longjmps leaving a Prog unsynced %lud (of which ran"
+			" again %lud)\n",
+			regstale, regstalesrc[0], regstalesrc[1],
+			regstalesrc[2], regstalesrc[3], regstalesrc[4],
+			handlerbroke, unsynced, unsyncedran);
+	}
+	{
 		extern ulong chainwalks, chainshort, chainagain, chainboth;
 		extern ulong shortstate[8], shortctx, shortfpge, shortfplow, shortnil;
 		extern ulong shortnotowned, shortunknownext;
+		extern ulong shortringok, shortringshort, shortnoring;
 		int si;
 
 		print("stall: stacks walked %lud, chain short of tos.fu %lud,"
@@ -3143,18 +3303,25 @@ stalldump(void)
 			" %lud, left broken %lud, readied broken %lud;"
 			" second read intact %lud, short again %lud,"
 			" broken during a quantum %lud, short ones that ran"
-			" again %lud\n",
+			" again %lud, registers moved between quanta %lud"
+			" (by regsrc %lud %lud %lud %lud %lud; SP alone went"
+			" back %lud); SP below its own frame, entering %lud,"
+			" leaving %lud\n",
 			chainwalks, chainshort, twoctx, chainin, chainout,
 			addrunbroken, chainagain, chainboth, quantumbroke,
-			shortran);
+			shortran, regmoved, regmovedsrc[0], regmovedsrc[1],
+			regmovedsrc[2], regmovedsrc[3], regmovedsrc[4],
+			spregress, spbadin, spbadout);
 		print("stall: short by state:");
 		for(si = 0; si < 8; si++)
 			print(" %lud", shortstate[si]);
 		print("; from a context's reg %lud, FP>=SP %lud, FP below"
 			" tos.fu %lud, chain hit nil %lud, extent owned by"
-			" another prog %lud, owner unknown %lud\n",
+			" another prog %lud, owner unknown %lud; from where it"
+			" last ran: whole %lud, short %lud, no ring %lud\n",
 			shortctx, shortfpge, shortfplow, shortnil,
-			shortnotowned, shortunknownext);
+			shortnotowned, shortunknownext,
+			shortringok, shortringshort, shortnoring);
 	}
 		print("stall: freeFD %lud, in the stopped world %lud, deferred %lud,"
 			" fddefer %d, interpreters spawned %lud\n",

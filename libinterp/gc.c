@@ -19,6 +19,7 @@ ulong	chainwalks, chainshort;	/* likewise; see rootset() */
 ulong	chainagain, chainboth;	/* second read: intact, or short again */
 ulong	shortstate[8], shortctx, shortfpge, shortfplow, shortnil;
 ulong	shortnotowned, shortunknownext;
+ulong	shortringok, shortringshort, shortnoring, shortsynctold;
 
 /*
  * INSTRUMENTATION - temporary.  Who owns each live stack extent.
@@ -690,6 +691,49 @@ rootset(Prog *root)
 				if(cf == nil)
 					shortnil++;
 				{
+					/*
+					 * The same walk from where the Prog
+					 * last actually executed, which its
+					 * own instruction ring records.  If
+					 * that chain is whole and the one
+					 * from p->reg is not, the stack is
+					 * intact and the register file is
+					 * stale; if both are short, the
+					 * stack is really broken.
+					 */
+					uchar *rf;
+					int rn, rk, rwn;
+
+					rwn = nelem(root->wmtrace);
+					rk = (root->wmtracei - 1 + rwn) % rwn;
+					rf = root->wmtrace[rk].fp2;
+					if(shortsynctold++ < 6)
+						print("rootset: short-chain pid %d"
+							" ran %d instructions since"
+							" its last sync (regsrc %d),"
+							" state %d\n", root->pid,
+							root->wmtracen - root->syncn,
+							root->regsrc, root->state);
+					if(root->wmtracen == 0 || rf == nil)
+						shortnoring++;
+					else{
+						for(rn = 0; rn < 4096; rn++){
+							if(rf == cx->reg.tos.fu)
+								break;
+							if(rf < cx->reg.tos.fu
+							|| rf >= rr->SP)
+								break;
+							rf = ((Frame*)rf)->fp;
+							if(rf == nil)
+								break;
+						}
+						if(rf == cx->reg.tos.fu || rf == nil)
+							shortringok++;
+						else
+							shortringshort++;
+					}
+				}
+				{
 					int own;
 
 					own = extowner(ex0);
@@ -773,6 +817,51 @@ rootset(Prog *root)
 							  ? *(void**)rr->s : nil,
 							rr->d,
 							cx->reg.tos.fu, rr->FP, rr->SP);
+						{
+							Type *bt;
+
+							bt = ((Frame*)lf)->t;
+							if(bt != nil && ((uintptr)bt & 7) == 0
+							&& (uintptr)bt > 0x100000)
+								print("rootset: bottom frame type"
+									" %#p np %d map0 %#ux"
+									" (fp mapped %d, lr mapped"
+									" %d), size %d\n",
+									bt, bt->np,
+									bt->np > 0 ? bt->map[0] : 0,
+									bt->np > 0
+									 && (bt->map[0] & (1<<6)) != 0,
+									bt->np > 0
+									 && (bt->map[0] & (1<<7)) != 0,
+									bt->size);
+						}
+						{
+							int wi, wn, k;
+
+							/*
+							 * The Prog's own
+							 * instruction ring, newest
+							 * last: which instruction
+							 * moved FP, and what ran
+							 * between.  Written by
+							 * xec() for every
+							 * instruction already, so
+							 * this costs nothing until
+							 * something goes wrong.
+							 */
+							wn = nelem(root->wmtrace);
+							print("rootset: last insts"
+								" (pc op fp):");
+							for(k = 12; k > 0; k--){
+								wi = (root->wmtracei - k
+								      + wn) % wn;
+								print(" %d/%#ux/%#p",
+									root->wmtrace[wi].pc,
+									root->wmtrace[wi].op,
+									root->wmtrace[wi].fp);
+							}
+							print("\n");
+						}
 						print("rootset: chain:");
 						{
 							uchar *c3;

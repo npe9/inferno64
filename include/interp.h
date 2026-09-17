@@ -297,6 +297,9 @@ struct Prog
 	int		onctx;		/* INSTRUMENTATION: context running it, -1 idle */
 	int		chainwasok;	/* INSTRUMENTATION: chain intact at quantum entry */
 	int		chainok0;	/* INSTRUMENTATION: watch this one's chain */
+	uchar*		lastfp;		/* INSTRUMENTATION: reg at the last quantum exit */
+	uchar*		lastsp;
+	uchar*		lastex;
 	int		spsrc;		/* INSTRUMENTATION: propex's SP path */
 	Prog*		link;		/* Run queue */
 	Channel*		chan;	/* Channel pointer */
@@ -332,6 +335,7 @@ struct Prog
 		int	pc;
 		int	op;
 		void*	fp;
+		void*	fp2;	/* INSTRUMENTATION: R.FP after the instruction */
 		void*	mp;
 		void*	d;	/* decoded destination operand, R.d */
 		void*	s;
@@ -339,6 +343,8 @@ struct Prog
 	} wmtrace[256];
 	int	wmtracei;
 	int	wmtracen;
+	int	syncn;		/* INSTRUMENTATION: wmtracen at the last reg sync */
+	int	unsyncedmark;	/* INSTRUMENTATION: left xec without a sync */
 };
 
 struct Module

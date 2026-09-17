@@ -6002,3 +6002,93 @@ was put in for that.  What is still unexplained is the
 on the lowest live frame, and no change to the walk should be made while
 that is open: a frame that claims no caller is either a state the
 interpreter can legitimately be in, or the corruption itself.
+.NH 2
+Found: the registers are stale, not the stack
+.PP
+The instrument that answered it used what the Prog already carries.
+.CW xec()
+writes every instruction it runs into a 256-entry ring on the Prog \(em
+pc, opcode, and
+.CW R.FP
+\(em so the chain can be walked twice: once from the saved
+.CW p->reg.FP ,
+which is what
+.CW rootset()
+uses, and once from the
+.CW FP
+the Prog was actually last executing at.
+.TS
+center;
+l r.
+walked from	result
+_
+p->reg.FP	short, 13 to 22 a boot
+the last instruction's FP	whole, every one
+.TE
+.PP
+Whole in every case, 0 short.  So the stack was never corrupt.  The
+saved register file was stale, and the range walk was reading a dead
+call sequence with a
+.CW fp
+that a later frame's
+.CW initmem()
+had overwritten.
+.NH 2
+The window, and why nothing else could see it
+.PP
+A Dis exception leaves
+.CW xec()
+by longjmp, so the exit sync \(em
+.CW "p->reg = R"
+\(em never runs.  The Prog keeps the register file it entered the
+quantum with: measured, 359 instructions out of date, and about 500 such
+exits a boot.
+.CW vmachine() 's
+handler then clears
+.CW inxec
+before it does anything else, which makes this context stoppable, and a
+collection starting there walks the stale snapshot.
+.PP
+Every other check in the kernel looks at a Prog when it is made
+runnable, picked up, or left \(em and at all three the registers are
+consistent, because the sync that
+.CW handler()
+does on its way out has happened by then.  The window is between the
+longjmp and that sync, and only the collector is ever inside it.  That is
+why eight instruments in a row read zero.
+.NH 2
+The fix
+.PP
+.CW vmachine() 's
+handler syncs the Prog's registers before it clears
+.CW inxec .
+.CW R
+is still the Prog's live state there \(em the longjmp does not restore
+it, and
+.CW handler()
+reads it two lines later \(em so this is the same write
+.CW xec()
+would have made had it returned normally.
+.CW handler()
+syncs again when it rewinds and
+.CW progexit()
+destroys the Prog, so this only makes the snapshot consistent for the
+window in between.
+.PP
+Twelve boots,
+.CW parallelvm=1 ,
+against the same kernel before the change:
+.TS
+center;
+l r r r r.
+	chain short	bad frame	panics	all 27 chantest cases
+before	8 to 22 a boot	11 of 16 boots	0	9 of 16
+after	0 of 24 dumps	0 of 12 boots	0	8 of 12
+.TE
+.PP
+Zero, on the instrument that had been reading 13 to 22, and the
+bad-frame tripwire silent for the first time at
+.CW parallelvm=1 .
+At
+.CW "-smp 2"
+all six boots complete every chantest case.

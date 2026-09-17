@@ -2486,6 +2486,7 @@ isave(void)
 	p->reg = R;
 	REGSYNCED();
 	p->regsrc = 2;		/* INSTRUMENTATION: isave() */
+	p->syncn = p->wmtracen;
 	curP->curprog = nil;
 	/*
 	 * The quantum is over as far as the collector is concerned: the
@@ -2597,6 +2598,8 @@ showprog(Prog *p)
  * the rungc() assertion did exactly that before this existed.
  */
 
+ulong regstale, regstaletold, regstalesrc[8];	/* INSTRUMENTATION - temporary */
+
 void
 xec(Prog *p)
 {
@@ -2627,6 +2630,34 @@ xec(Prog *p)
 				" ctx %#p (state %d)\n",
 				p->pid, curP, p->xecby, p->state);
 		p->xecby = curP;
+	}
+	{	/* INSTRUMENTATION - temporary */
+		int wn, wi;
+
+		/*
+		 * Does the snapshot this quantum starts from agree with the
+		 * last instruction this Prog actually executed?  xec()'s
+		 * exit sync does not run when a Dis exception leaves by
+		 * longjmp, so a Prog can carry a register file older than
+		 * its own stack -- which is what rootset() reports as a
+		 * chain that stops before tos.fu, and what makes the next
+		 * frame it allocates land on a live one.
+		 */
+		wn = nelem(p->wmtrace);
+		wi = (p->wmtracei - 1 + wn) % wn;
+		if(p->wmtracen > 0 && p->wmtrace[wi].fp2 != nil
+		&& p->wmtrace[wi].fp2 != R.FP){
+			regstale++;
+			if((uint)p->regsrc < 8)
+				regstalesrc[p->regsrc]++;
+			if(regstaletold++ < 6)
+				print("xec: prog %d resumes at FP %#p, last ran"
+					" at FP %#p (pc %d op %#ux), regsrc %d"
+					" state %d\n",
+					p->pid, R.FP, p->wmtrace[wi].fp2,
+					p->wmtrace[wi].pc, p->wmtrace[wi].op,
+					p->regsrc, p->state);
+		}
 	}
 	curP->curprog = p;
 	curP->inxec = 1;
@@ -2682,6 +2713,7 @@ xec(Prog *p)
 		trackPC = R.PC - 1;
 		trackpoint = "instr";
 		optab[op]();
+		p->wmtrace[(p->wmtracei-1+nelem(p->wmtrace)) % nelem(p->wmtrace)].fp2 = R.FP;
 		/*
 		 * checkwatch() (below) held one frame instance at a time
 		 * and went to zero across 300+ boots -- superseded by
@@ -2705,6 +2737,7 @@ xec(Prog *p)
 	p->reg = R;
 	REGSYNCED();
 	p->regsrc = 1;		/* INSTRUMENTATION: xec() exit */
+	p->syncn = p->wmtracen;
 	p->xecby = nil;		/* INSTRUMENTATION - temporary */
 	curP->curprog = nil;
 	curP->inxec = 0;
