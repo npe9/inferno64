@@ -87,6 +87,15 @@ struct Frame
 	Type*		t;	/* REGTYPE */
 };
 
+typedef struct Freedext Freedext;
+struct Freedext		/* INSTRUMENTATION - temporary; see gc.c */
+{
+	void*	ex;
+	int	pid;
+	char*	where;
+	int	seq;
+};
+
 union Stkext
 {
 	uchar	stack[1];
@@ -285,6 +294,7 @@ struct Prog
 	void*		xecby;		/* INSTRUMENTATION: context inside xec() */
 	int		regsrc;		/* INSTRUMENTATION: who last wrote reg */
 	int		torn;		/* INSTRUMENTATION: teardown began; see rootset() */
+	int		onctx;		/* INSTRUMENTATION: context running it, -1 idle */
 	int		spsrc;		/* INSTRUMENTATION: propex's SP path */
 	Prog*		link;		/* Run queue */
 	Channel*		chan;	/* Channel pointer */
@@ -632,6 +642,12 @@ extern	void		chanunlock(void);
 extern	int		(*chandefer)(void*);	/* see heap.c, dis.c */
 extern	void		(*atsafepoint)(void);	/* see stoptheworld() in dis.c */
 extern	void		(*gcwalkdelay)(void);	/* INSTRUMENTATION - temporary */
+extern	void		markfreedext(void*, char*);
+extern	void		clearfreedext(void*);
+extern	Freedext*	freedext(void*);
+extern	Freedext	freedexts[256];
+extern	int		nfreedext;
+extern	ulong		rootfreedext;
 extern	void		cqadd(Progq**, Prog*);
 extern	void		cqdel(Progq**);
 extern	void		cqdelp(Progq**, Prog*);

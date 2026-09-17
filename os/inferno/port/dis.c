@@ -2047,6 +2047,7 @@ unlinkctx(Pctx *c, Prog *p)
 }
 
 int delrunqother;	/* MULTICORE INSTRUMENTATION - temporary */
+int twoctx;		/* progs picked while another context runs them */
 
 /*
  * Take p off whatever queue it is on.
@@ -2693,9 +2694,24 @@ vmachine(void*)
 						r->link, r->osenv, curP,
 						m->machno);
 			}
+			{	/* MULTICORE INSTRUMENTATION - temporary */
+				int was;
+
+				was = r->onctx;
+				if(was != 0 && was != curP->idx + 1){
+					if(twoctx++ < 4)
+						print("vmachine: prog %d picked by"
+							" ctx %d while running on"
+							" ctx %d, state %d\n",
+							r->pid, curP->idx,
+							was - 1, r->state);
+				}
+				r->onctx = curP->idx + 1;
+			}
 			fpurestore(up->env->fpuostate);
 			r->xec(r);
 			up->env->fpuostate = fpusave();
+			r->onctx = 0;
 
 			if(curP->runhd != nil)
 			if(r == curP->runhd)
@@ -2961,6 +2977,13 @@ stalldump(void)
 			" gcpartial %llud gaveup %d idlegaveup %d\n",
 			gcnruns, stwwaits, gcidlepass, gcpartial, stwgaveup,
 			gcidlegaveup);
+	{
+		extern ulong chainwalks, chainshort;
+
+		print("stall: stacks walked %lud, chain short of tos.fu %lud,"
+			" progs picked while running %d\n",
+			chainwalks, chainshort, twoctx);
+	}
 		print("stall: freeFD %lud, in the stopped world %lud, deferred %lud,"
 			" fddefer %d, interpreters spawned %lud\n",
 			freefds, freefdstw, fdclosedeferred, fddefer, vmspawns);

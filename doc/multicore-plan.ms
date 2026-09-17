@@ -5830,3 +5830,100 @@ What is left at
 is the bad frame \(em a frame whose type pointer is a heap address \(em
 in 11 boots of 16, and one boot in eight still not finished at 70
 seconds.
+.NH 1
+The bad frame is a frame allocated over a live one
+.PP
+With the collector alive, the
+.CW "rootset: bad frame type"
+tripwire fires in about two thirds of
+.CW parallelvm=1
+boots.  It is not the collector's bug, and the walk that finds it is not
+wrong about the memory; the stack it is walking has two frame layouts in
+it at once.
+.NH 2
+Two readings of one stack
+.PP
+Printing the same extent both ways \(em tiled up from
+.CW tos.fu ,
+which is what
+.CW rootset()
+does, and along the
+.CW f->fp
+chain from
+.CW FP ,
+which is what the frames say they are \(em gives this, the same shape in
+every capture:
+.QP
+.CW "tiled: 152 192 152 168 128 144 112 then garbage"
+.br
+.CW "chain: 112 336 152, and it stops 16 bytes below where the tiling ended"
+.PP
+Both tile.  Both are self-consistent.  They start in different places:
+the chain's lowest frame sits 0x408 bytes above
+.CW tos.fu ,
+and the seven frames below it are a deeper call sequence that is no
+longer live.
+.CW SP
+and
+.CW FP
+say the chain is the live one.
+.NH 2
+What the chain stops on
+.PP
+Not nil.
+.CW H .
+That is the value
+.CW initmem()
+writes into a frame's pointer slots when a frame is created, so the
+frame the chain ends on had its
+.CW fp
+overwritten by a
+.I later
+frame allocation at the same address \(em a new frame laid over a live
+caller.  A stack that has had a frame allocated over a live one is
+corrupt from that moment, and everything downstream \(em a type pointer
+that is a heap address, a size of 1868832869 (which is ASCII), a jump
+through
+.CW t->mark
+\(em follows from it.
+.NH 2
+It does not happen with the VM lock on
+.PP
+Counting, for every Prog walked, whether its chain reaches
+.CW tos.fu :
+.TS
+center;
+l r r r.
+	stacks walked	chain short	bad frame boots
+-smp 1, parallelvm=0	117888 to 141672 per boot	0	0 of 4
+-smp 4, parallelvm=0	110109 to 138048 per boot	0	0 of 4
+-smp 2, parallelvm=1	about 7000 per boot	13 to 19	4 of 4
+.TE
+.PP
+Half a million walks with the VM lock on and not one short chain.  So
+this is not a normal transient that the walk misreads; it is corruption
+that only the lock-free interpreter produces.
+.PP
+The Progs are shells, all at the same instruction \(em
+.CW sh.b:1144 ,
+the
+.CW fprint
+in
+.CW diagnostic() ,
+which the boot loop runs constantly \(em and at rest, Pready, not the
+current program of any context.
+.NH 2
+A Prog run by two contexts at once, once in six boots
+.PP
+A frame laid over a live one is what a Prog resuming on a stale
+.CW SP
+would do.  A check at the point a context picks a Prog \(em mark it with
+the context running it, complain if another finds the mark set \(em fired
+once in six boots:
+.QP
+.CW "vmachine: prog 5 picked by ctx 5 while running on ctx 1, state 4"
+.PP
+That is a real second bug and is far too rare to be the whole of this
+one (15 to 20 short chains a boot against one double-run in six).  The
+next question is whether a Prog can sit on two queues, which would
+produce both.

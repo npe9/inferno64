@@ -2455,6 +2455,7 @@ destroystack(REG *reg)
 			}
 		} while(f != fp);
 		ex = sx->reg.EX;
+		markfreedext(sx, "destroystack");
 		free(sx);
 	}
 	destroy(reg->M);

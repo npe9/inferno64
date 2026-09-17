@@ -80,6 +80,7 @@ newstack(Prog *p)
 	ns = mallocz(l, 1);
 	if(ns == nil)
 		error(exNomem);
+	clearfreedext(ns);	/* INSTRUMENTATION - temporary */
 
 	ns->reg.TR = t;
 	ns->reg.SP = nil;
@@ -119,6 +120,7 @@ extend(void)
 	ns = mallocz(l, 1);
 	if(ns == nil)
 		error(exNomem);
+	clearfreedext(ns);	/* INSTRUMENTATION - temporary */
 
 	ns->reg.TR = t;
 	ns->reg.SP = R.SP;
@@ -168,6 +170,7 @@ unextend(Frame *f)
 	trackclear(R.EX, (uchar*)R.TS - (uchar*)R.EX);
 	R.SP = sx->reg.SP;
 	R.TS = sx->reg.TS;
+	markfreedext(sx, "unextend");
 	R.EX = sx->reg.EX;
 	t = sx->reg.TR;
 	if (t->np)
@@ -195,6 +198,7 @@ unframe(void)
 		/* see unextend()'s comment above -- same free-time clear */
 		trackclear(R.EX, (uchar*)R.TS - (uchar*)R.EX);
 		R.TS = sx->reg.TS;
+		markfreedext(sx, "unframe");
 		R.EX = sx->reg.EX;
 		free(sx);
 	}

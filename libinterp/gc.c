@@ -14,6 +14,53 @@ enum
 static int quanta = Quanta;
 static int gce, gct = 1;
 
+ulong	rootfreedext;	/* INSTRUMENTATION - temporary */
+ulong	chainwalks, chainshort;	/* likewise; see rootset() */
+
+/*
+ * Record a stack extent as freed, and look one up.  A ring: the answer
+ * wanted is "was this freed recently", and a miss is reported as a miss.
+ */
+void
+markfreedext(void *ex, char *where)
+{
+	Freedext *fe;
+
+	fe = &freedexts[nfreedext % nelem(freedexts)];
+	fe->ex = ex;
+	fe->pid = currun() != nil ? currun()->pid : -1;
+	fe->where = where;
+	fe->seq = ++nfreedext;
+}
+
+/*
+ * Forget any record of this address: it has been handed out as an
+ * extent again, so a match against it would be the instrument's own
+ * false positive -- which is what the first version reported, the same
+ * early-boot address in every boot, a dead Prog's extent reused by a
+ * live one.
+ */
+void
+clearfreedext(void *ex)
+{
+	int i;
+
+	for(i = 0; i < nelem(freedexts); i++)
+		if(freedexts[i].ex == ex)
+			freedexts[i].ex = nil;
+}
+
+Freedext*
+freedext(void *ex)
+{
+	int i;
+
+	for(i = 0; i < nelem(freedexts); i++)
+		if(freedexts[i].ex == ex)
+			return &freedexts[i];
+	return nil;
+}
+
 typedef struct Ptrhash Ptrhash;
 struct Ptrhash
 {
@@ -25,6 +72,15 @@ struct Ptrhash
 	int	gchalt;
 	ulong	rootnomod;	/* Progs skipped for having no module */
 	ulong	rootraced;	/* INSTRUMENTATION - temporary: see rootset() */
+	/*
+	 * INSTRUMENTATION - temporary.  The last extents freed, so that
+	 * rootset() can say whether the one it is walking is among them
+	 * rather than leaving "this looks like reused memory" as a
+	 * reading of the bytes.  Recorded by unextend(), unframe() and
+	 * destroystack(); see freedext().
+	 */
+	Freedext freedexts[256];
+	int	nfreedext;
 	int	gcdepth;	/* this context's destroy recursion depth */
 	int	gcdepthmax;	/* high-water mark of it, for #%/memgc */
 	ulong	gcdeferred;	/* frees the depth guard handed to the collector */
@@ -533,6 +589,65 @@ rootset(Prog *root)
 		ex = rr->EX;
 		ex0 = ex;
 		/*
+		 * INSTRUMENTATION - temporary.  Does the frame chain reach
+		 * the bottom of the newest extent?  The range walk below
+		 * assumes it does -- that frames tile tos.fu..SP -- and the
+		 * bad-frame captures say otherwise for the Progs that fail.
+		 * Asking it of every Prog says whether that is the failure or
+		 * the normal case.
+		 */
+		if(ex != nil){
+			Stkext *cx;
+			uchar *cf;
+			int cn;
+
+			cx = (Stkext*)ex;
+			chainwalks++;
+			for(cf = rr->FP, cn = 0;
+			    cn < 4096 && cf >= cx->reg.tos.fu && cf < rr->SP; cn++){
+				if(cf == cx->reg.tos.fu)
+					break;
+				cf = ((Frame*)cf)->fp;
+				if(cf == nil)
+					break;
+			}
+			if(cf != cx->reg.tos.fu){
+				chainshort++;
+				if(chainshort < 6){
+					int ci, onctx;
+
+					onctx = -1;
+					for(ci = 0; ci < npctx; ci++)
+						if(pctxs[ci]->curprog == root)
+							onctx = ci;
+					print("rootset: chain from FP %#p stops at"
+						" %#p, not tos.fu %#p (SP %#p, %d"
+						" frames), pid %d state %d torn %d"
+						" regs from %s regsrc %d spsrc %#p"
+						" curprog of ctx %d, addrun %#p,"
+						" module %s inst %ld, bottom t %#p"
+						" (fp %#p), tos.fu t %#p\n",
+						rr->FP, cf, cx->reg.tos.fu,
+						rr->SP, cn, root->pid, root->state,
+						root->torn,
+						rr == &root->reg ? "p->reg" : "ctx",
+						root->regsrc, root->spsrc, onctx,
+						root->addrun,
+						(rr->M != H && rr->M != nil
+						 && rr->M->m != nil)
+						  ? rr->M->m->name : "?",
+						(rr->M != H && rr->M != nil
+						 && rr->M->m != nil
+						 && rr->M->m->prog != nil)
+						  ? (long)(rr->PC - rr->M->m->prog)
+						  : -1L,
+						((Frame*)rr->FP)->t,
+						((Frame*)rr->FP)->fp,
+						((Frame*)cx->reg.tos.fu)->t);
+				}
+			}
+		}
+		/*
 		 * INSTRUMENTATION - temporary.  The positive control for
 		 * rootraced below: widen the gap between reading EX and
 		 * walking it, so that a teardown which is not excluded lands
@@ -655,7 +770,12 @@ rootset(Prog *root)
 					|| (uintptr)t < 0x100000
 					|| (uintptr)t->mark < 0x200000
 					|| (uintptr)t->mark >= (uintptr)etext){
-						if(badtold++ == 0)
+						if(badtold++ == 0){
+							uchar *q;
+							Type *qt;
+							Frame *qf;
+							int qn;
+
 							print("rootset: bad frame"
 								" type t %#p mark %#p"
 								" size %d f %#p"
@@ -665,6 +785,63 @@ rootset(Prog *root)
 								t->size, f, f->t,
 								sx->reg.TR,
 								root->pid);
+							/*
+							 * The same stack read two
+							 * ways.  The walk tiles up
+							 * from tos.fu; the chain is
+							 * what the frames say they
+							 * are.  Where they part is
+							 * the question, and one
+							 * list beside the other is
+							 * the only way to see it.
+							 */
+							print("rootset: EX %#p TS %#p"
+								" FP %#p SP %#p walk sp %#p;"
+								" this extent %#p..%#p,"
+								" prior EX %#p, TR %#p\n",
+								rr->EX, rr->TS, rr->FP,
+								rr->SP, sp, (uchar*)sx,
+								sx->reg.TS, sx->reg.EX,
+								sx->reg.TR);
+							print("rootset: tiled from %#p:",
+								sx->reg.tos.fu);
+							for(q = sx->reg.tos.fu, qn = 0;
+							    q < sp && qn < 12; qn++){
+								qt = ((Frame*)q)->t;
+								if(qt == nil)
+									qt = sx->reg.TR;
+								if(qt == nil
+								|| ((uintptr)qt & 7) != 0
+								|| (uintptr)qt < 0x100000
+								|| qt->size <= 0){
+									print(" %#p t %#p BAD",
+										q, qt);
+									break;
+								}
+								print(" %#p t %#p sz %d",
+									q, qt, qt->size);
+								q += qt->size;
+							}
+							print("\n");
+							print("rootset: chain from %#p:",
+								rr->FP);
+							for(q = rr->FP, qn = 0;
+							    qn < 12 && q >= sx->reg.tos.fu
+							    && q < sp; qn++){
+								qf = (Frame*)q;
+								qt = qf->t;
+								print(" %#p t %#p sz %d",
+									q, qt,
+									(qt != nil
+									 && ((uintptr)qt & 7) == 0
+									 && (uintptr)qt >= 0x100000)
+									  ? qt->size : -1);
+								q = qf->fp;
+								if(q == nil)
+									break;
+							}
+							print("\n");
+						}
 						/*
 						 * Report and stop walking this
 						 * extent rather than abort.
@@ -1055,6 +1232,22 @@ rootset(Prog *root)
 		 * reacquires, and so waits for the collection, first.
 		 * The kernel's entertear() counts the upper bound.
 		 */
+		if(ex0 != nil){
+			Freedext *fe;
+
+			if((fe = freedext(ex0)) != nil)
+				if(rootfreedext++ < 6)
+					print("rootset: extent %#p was freed by"
+						" pid %d in %s, %lud frees ago;"
+						" walking pid %d state %d torn %d,"
+						" regs from %s, p->reg.EX %#p"
+						" rr->EX %#p M %#p\n",
+						ex0, fe->pid, fe->where,
+						(ulong)(nfreedext - fe->seq),
+						root->pid, root->state, root->torn,
+						rr == &root->reg ? "p->reg" : "ctx",
+						root->reg.EX, rr->EX, rr->M);
+		}
 		if(ex0 != nil && (rr->EX == nil || root->torn))
 			if(rootraced++ == 0)
 				print("rootset: extents freed during the walk,"
