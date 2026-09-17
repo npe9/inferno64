@@ -306,6 +306,19 @@ chanwait(Ep *ep, Ctlr *ctlr, Hostchan *hc, int mask)
 	for(i = 0; (ctlr->hcintr[chan] & Chhltd) == 0; i++){
 		tsleep(&ctlr->chanintr[chan], chandone, &ctlr->hcintr[chan], 1000);
 		if(pending){
+			/*
+			 * A bulk IN may wait for ever for data, but not for a
+			 * completion that has already been and gone: if the
+			 * channel is no longer enabled, the transfer ended
+			 * without its interrupt reaching this slot, and waiting
+			 * on it is waiting for nothing.  Report it halted and
+			 * let the caller look at what moved - on the Pi this is
+			 * the difference between a NIC that keeps receiving and
+			 * one that goes deaf after its first few packets, with
+			 * its reader asleep in here for ever.
+			 */
+			if(i >= 5 && (hc->hcchar & Chen) == 0)
+				return Chhltd;
 			if(i > 0 && i % 60 == 0)
 				dprint("usbdwc: ep%d.%d still waiting for data, %d s\n",
 					ep->dev->nb, ep->nb, i);
