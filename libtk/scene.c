@@ -279,6 +279,133 @@ tksceneellipsefill(TkScene *s, Point c, Point rad, ulong rgba)
 }
 
 /*
+ * THE WALK.  One tree for a run of widgets rather than one per widget.
+ *
+ * A repaint descends the widget tree and calls each widget's draw
+ * method (tkdrawslaves1() in windw.c).  Six widgets can describe
+ * themselves as nodes; the rest paint straight into the window with
+ * draw(2), and a tree that was still being built when one of those
+ * painted would land ON TOP of it, since it is rendered later.  So the
+ * walk is not one tree per repaint but one tree per RUN of consecutive
+ * node widgets: anything that paints directly flushes what is pending
+ * first, and so does the grid clipping in windw.c, whose replclipr()
+ * would otherwise be gone by the time the nodes were rendered.
+ *
+ * That leaves painter order exactly as it was - which is the property
+ * the identity check measures - while giving a backend runs of nodes to
+ * batch instead of single widgets.  A pane of nothing but converted
+ * widgets is one tree, which is the case that matters; a pane that
+ * alternates is no worse than before.
+ *
+ * The walk is a property of one repaint of one window, so it is one
+ * static state and not a stack: tkupdate() opens it round each
+ * toplevel's descent and closes it after.
+ */
+static struct {
+	TkScene*	scene;
+	TkCtxt*		ctxt;
+	Image*		dst;
+	int		open;
+	int		runs;		/* trees rendered, for the test */
+	int		widgets;	/* widgets that joined one */
+} walk;
+
+void
+tkwalkopen(TkCtxt *c, Image *dst)
+{
+	if(walk.open)
+		tkwalkclose();
+	walk.scene = nil;
+	walk.ctxt = c;
+	walk.dst = dst;
+	walk.open = 1;
+}
+
+/*
+ * Render what is pending and drop it, leaving the walk open.  Called
+ * before anything that draws into the window by itself.
+ */
+void
+tkwalkflush(void)
+{
+	TkScene *s;
+
+	if(!walk.open || walk.scene == nil)
+		return;
+	s = walk.scene;
+	walk.scene = nil;		/* before rendering: a layer's
+					 * scratch must not join the tree
+					 * it is rendering */
+	tkscenerender(s, walk.ctxt, walk.dst);
+	tkscenefree(s);
+	walk.runs++;
+}
+
+void
+tkwalkclose(void)
+{
+	tkwalkflush();
+	walk.open = 0;
+	walk.ctxt = nil;
+	walk.dst = nil;
+}
+
+/*
+ * The scene a widget should build into: the walk's own if one is open
+ * for this context and this window, otherwise a fresh one that the
+ * widget renders and frees itself through tkscenefinish().
+ */
+TkScene*
+tkwalkjoin(TkCtxt *c, Image *dst)
+{
+	if(walk.open && walk.ctxt == c && walk.dst == dst){
+		if(walk.scene == nil)
+			walk.scene = tkscenenew();
+		if(walk.scene != nil)
+			walk.widgets++;
+		return walk.scene;
+	}
+	return tkscenenew();
+}
+
+/*
+ * The end of a widget's contribution.  A scene that belongs to the walk
+ * stays for the next widget; one that does not is rendered now.
+ */
+void
+tkscenefinish(TkScene *s, TkCtxt *c, Image *dst)
+{
+	if(s == nil)
+		return;
+	if(s == walk.scene)
+		return;
+	tkscenerender(s, c, dst);
+	tkscenefree(s);
+}
+
+/*
+ * How many trees the last repaint rendered and how many widgets went
+ * into them.  Only tkofftest(1) reads these: a walk that batches
+ * nothing and a walk that batches everything draw the same pixels, so
+ * the identity check cannot tell them apart and something else has to.
+ */
+void
+tkwalkcount(int *runs, int *widgets)
+{
+	if(runs != nil)
+		*runs = walk.runs;
+	if(widgets != nil)
+		*widgets = walk.widgets;
+}
+
+void
+tkwalkreset(void)
+{
+	walk.runs = 0;
+	walk.widgets = 0;
+}
+
+/*
  * A filled polygon of np points, by the nonzero winding rule.
  *
  * The flat scrollbar's arrows are solid triangles, which is the reason

@@ -231,6 +231,13 @@ exists for, but it is not the configuration a program runs in under
 .IR wm (1),
 and no check here covers the difference.
 .PP
+The batching check reads
+.B "render count"
+and asks only that a repaint built fewer trees than the widgets that
+went into them.
+It does not say WHICH widgets shared a tree, so a walk that batched two
+widgets out of thirteen would pass it.
+.PP
 The render-node comparison never presses anything.
 A scrollbar arrow or slider held down with the mouse is drawn in the
 accent colour, the same shape as the unpressed one, and that colour is

@@ -653,7 +653,7 @@ tkdrawscale(Tk *tk, Point orig)
 	 */
 	sc = nil;
 	if(tkviascene && tkstyleflat(tk))
-		sc = tkscenenew();
+		sc = tkwalkjoin(env->top->ctxt, tkimageof(tk));
 	if(sc != nil){
 		Rectangle dr;
 
@@ -678,8 +678,7 @@ tkdrawscale(Tk *tk, Point orig)
 				tk->highlightwidth,
 				env->colors[TkChighlightfgnd]);
 		tkscenelayerend(sc);
-		tkscenerender(sc, env->top->ctxt, tkimageof(tk));
-		tkscenefree(sc);
+		tkscenefinish(sc, env->top->ctxt, tkimageof(tk));
 		return nil;
 	}
 

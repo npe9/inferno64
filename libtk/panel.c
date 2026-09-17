@@ -200,6 +200,11 @@ tkdrawpanel(Tk *tk, Point orig)
 	int any;
 	Point view, p;
 
+	/*
+	 * Anything that paints into the window itself has to render what
+	 * the walk has pending first, or the tree would land on top of it.
+	 */
+	tkwalkflush();
 	i = tkimageof(tk);
 	if (i == nil)
 		return nil;

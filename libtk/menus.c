@@ -1550,6 +1550,11 @@ drawmenu(Tk *tk, Point orig)
 	int bg;
 	Rectangle mainr, clientr, subr;
 
+	/*
+	 * Anything that paints into the window itself has to render what
+	 * the walk has pending first, or the tree would land on top of it.
+	 */
+	tkwalkflush();
 	tkw = TKobj(TkWin, tk);
 	dst = tkimageof(tk);
 

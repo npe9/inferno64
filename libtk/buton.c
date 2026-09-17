@@ -320,7 +320,7 @@ tkdrawbutton(Tk *tk, Point orig)
 	&& tkl->img == nil && tkl->bitmap == nil && tkl->text != nil
 	&& tkl->justify == Tkleft && tkl->ul < 0
 	&& strchr(tkl->text, '\n') == nil)
-		bsc = tkscenenew();
+		bsc = tkwalkjoin(e->top->ctxt, dst);
 	if(bsc != nil){
 		Rectangle dr;
 
@@ -505,8 +505,7 @@ tkdrawbutton(Tk *tk, Point orig)
 				e->colors[TkChighlightfgnd]);
 		tkreliefnodes(bsc, tk, ZP, bgnd, relief);
 		tkscenelayerend(bsc);
-		tkscenerender(bsc, e->top->ctxt, dst);
-		tkscenefree(bsc);
+		tkscenefinish(bsc, e->top->ctxt, dst);
 		return nil;
 	}
 

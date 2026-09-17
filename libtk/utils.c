@@ -1192,6 +1192,22 @@ tkrendercmd(TkTop *t, char *arg, char **ret)
 			return tkvalue(ret, "%s", tkviascene ? "scene" : "direct");
 		return nil;
 	}
+	/*
+	 * `render count' answers how many trees the repaints since the last
+	 * `render count' rendered, and how many widgets went into them, and
+	 * then starts counting again.  Two repaints that batch differently
+	 * draw the same pixels, so the identity check cannot see batching
+	 * at all and this is what a test asks instead.
+	 */
+	if(strcmp(buf, "count") == 0){
+		int runs, widgets;
+
+		tkwalkcount(&runs, &widgets);
+		tkwalkreset();
+		if(ret != nil)
+			return tkvalue(ret, "%d %d", runs, widgets);
+		return nil;
+	}
 	if(strcmp(buf, "scene") == 0)
 		tkviascene = 1;
 	else if(strcmp(buf, "direct") == 0)

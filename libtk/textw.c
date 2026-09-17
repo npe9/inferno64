@@ -422,6 +422,11 @@ tkdrawtext(Tk *tk, Point orig)
 	Rectangle oclipr;
 	int reldone = 1;
 	char *e;
+	/*
+	 * Anything that paints into the window itself has to render what
+	 * the walk has pending first, or the tree would land on top of it.
+	 */
+	tkwalkflush();
 	tkt = TKobj(TkText, tk);
 	dst = tkimageof(tk);
 	if (dst == nil)

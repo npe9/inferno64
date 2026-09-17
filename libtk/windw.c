@@ -51,6 +51,17 @@ tkfreectxt(TkCtxt *c)
 Image*
 tkitmp(TkEnv *e, Point p, int fillcol)
 {
+	/*
+	 * Asking for the scratch surface is what a widget does when it is
+	 * about to draw with draw(2) and blit the result in, so it is also
+	 * the moment the walk's pending tree has to be rendered: the blit
+	 * would otherwise be covered by nodes rendered after it.
+	 *
+	 * tkitmppix() below is deliberately NOT a flush point - the scene
+	 * renderer calls it for a layer's own scratch, and flushing there
+	 * would be the tree asking to render itself.
+	 */
+	tkwalkflush();
 	return tkitmppix(e->top->ctxt, p, e->colors[fillcol]);
 }
 
@@ -295,17 +306,27 @@ tkdrawslaves1(Tk *tk, Point orig, Image *dst, int *dirty)
 	 * grids need clipping
 	 * XXX BUG: they can't, 'cos text widgets don't clip appropriately.
 	 */
+	/*
+	 * A grid clips its children by narrowing the destination's clip
+	 * rectangle around them.  Nodes are rendered when the walk flushes,
+	 * which is after this has been put back, so what is pending has to
+	 * be rendered while the clip still says what it said when the nodes
+	 * were built - on the way in and on the way out.
+	 */
 	if (tk->grid != nil) {
 		r = rectaddpt(tkrect(tk, 0), worig);
 		if (rectclip(&r, dst->clipr) == 0)
 			return nil;
 		oclip = dst->clipr;
+		tkwalkflush();
 		replclipr(dst, 0, r);
 	}
 	for(f = tk->slave; e == nil && f; f = f->next)
 		e = tkdrawslaves1(f, worig, dst, dirty);
-	if (tk->grid != nil)
+	if (tk->grid != nil){
+		tkwalkflush();
 		replclipr(dst, 0, oclip);
+	}
 	return e;
 }
 	
@@ -317,7 +338,16 @@ tkdrawslaves(Tk *tk, Point orig, int *dirty)
 	i = tkimageof(tk);
 	if (i == nil)
 		return nil;
+	/*
+	 * One tree per run of node widgets, for the length of this
+	 * descent.  Opening it here rather than in tkupdate() covers the
+	 * other callers - a canvas window and a text widget's embedded
+	 * windows both descend by themselves - and closing it renders
+	 * whatever the last run left pending.
+	 */
+	tkwalkopen(tk->env->top->ctxt, i);
 	e =  tkdrawslaves1(tk, orig, i, dirty);
+	tkwalkclose();
 	return e;
 }
 

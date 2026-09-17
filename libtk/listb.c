@@ -187,7 +187,7 @@ tkdrawlistb(Tk *tk, Point orig)
 	 */
 	sc = nil;
 	if(tkviascene && tkstyleflat(tk))
-		sc = tkscenenew();
+		sc = tkwalkjoin(env->top->ctxt, tkimageof(tk));
 	if(sc != nil){
 		Rectangle dr;
 
@@ -266,8 +266,7 @@ tkdrawlistb(Tk *tk, Point orig)
 				env->colors[TkChighlightfgnd]);
 		tkreliefnodes(sc, tk, ZP, TkCbackgnd, tk->relief);
 		tkscenelayerend(sc);
-		tkscenerender(sc, env->top->ctxt, tkimageof(tk));
-		tkscenefree(sc);
+		tkscenefinish(sc, env->top->ctxt, tkimageof(tk));
 		return nil;
 	}
 

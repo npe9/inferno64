@@ -100,7 +100,7 @@ tkdrawframe(Tk *tk, Point orig)
 	 */
 	framescene = nil;
 	if(tkviascene && tkstyleflat(tk) && tk->type == TKframe)
-		framescene = tkscenenew();
+		framescene = tkwalkjoin(tk->env->top->ctxt, i);
 	if(framescene != nil){
 		ulong own, par;
 		TkEnv *pe;
@@ -151,8 +151,11 @@ tkdrawframe(Tk *tk, Point orig)
 		}
 		tksceneroundfill(framescene, rectaddpt(framebox, off),
 			tkspace(tk)->corner, own);
-	}else
+	}else{
+		/* a frame that is not nodes paints into the window itself */
+		tkwalkflush();
 		draw(i, rectaddpt(tk->dirty, p), tkgc(tk->env, TkCbackgnd), nil, ZP);
+	}
 
 	/*
 	 * doesn't matter about drawing TKseparator
@@ -199,8 +202,7 @@ tkdrawframe(Tk *tk, Point orig)
 				tk->borderwidth,
 				tk->env->colors[TkCbackgnd+TkDarkshade]);
 		tkscenelayerend(framescene);
-		tkscenerender(framescene, tk->env->top->ctxt, i);
-		tkscenefree(framescene);
+		tkscenefinish(framescene, tk->env->top->ctxt, i);
 		return nil;
 	}
 	if (!rectinrect(tk->dirty, tkrect(tk, 0)))

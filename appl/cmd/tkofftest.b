@@ -1376,6 +1376,18 @@ checkscene()
 	tk->cmd(top, "pack .r1 -padx 6 -pady 6");
 	tk->cmd(top, "pack .s -padx 6 -pady 6");
 	tk->cmd(top, "pack .v -padx 6 -pady 6");
+	# A gridded widget, because a grid is the one thing that narrows the
+	# destination's clip rectangle around its children - and nodes are
+	# rendered after that has been put back unless the walk flushes
+	# while it still holds.  The scale is wider than the frame it is
+	# gridded in, so the clip has something to cut.
+	must(top, "frame .g -width 60 -height 30");
+	must(top, "scale .g.s -orient horizontal -from 0 -to 10 -length 200");
+	must(top, ".g.s set 3");
+	must(top, "grid propagate .g 0");
+	must(top, "grid .g.s -row 0 -column 0");
+	must(top, ".g configure -width 60 -height 30");
+	tk->cmd(top, "pack .g -padx 6 -pady 6");
 	tk->cmd(top, "pack .hb -fill x -padx 6 -pady 6");
 	tk->cmd(top, "pack .vb -side right -fill y -padx 6 -pady 6");
 	map(top);
@@ -1436,6 +1448,34 @@ checkscene()
 	report(diff == 0, sys->sprint(
 		"a render-node tree draws a flat border identically to draw() (%d of %d bytes differ%s)",
 		diff, len who*W*H*3, at(first)));
+
+	# Whether a repaint built ONE tree for a run of widgets or one tree
+	# each cannot be seen in the pixels - both draw the same picture,
+	# which is the whole point - so the toolkit is asked instead.
+	tk->cmd(top, "render count");		# start counting here
+	tk->cmd(top, "render direct");
+	(dr, dw) := counts(tk->cmd(top, "render count"));
+	report(dr == 0 && dw == 0, sys->sprint(
+		"drawing directly builds no trees at all (%d trees, %d widgets)",
+		dr, dw));
+	tk->cmd(top, "render scene");
+	(nr, nw) := counts(tk->cmd(top, "render count"));
+	tk->cmd(top, "render direct");
+	# More widgets than trees is the claim.  If every widget rendered
+	# its own, the two numbers would be equal - which is what this said
+	# before the walk existed, and is the control for it.
+	report(nr > 0 && nw > nr, sys->sprint(
+		"a repaint batches widgets into fewer trees (%d widgets in %d trees)",
+		nw, nr));
+}
+
+# `render count' answers two numbers in one string.
+counts(s: string): (int, int)
+{
+	(n, f) := sys->tokenize(s, " ");
+	if(n != 2)
+		return (-1, -1);
+	return (int hd f, int hd tl f);
 }
 
 # One direct/scene comparison of the whole pane, with `who' holding the

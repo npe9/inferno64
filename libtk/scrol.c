@@ -427,7 +427,7 @@ tkdrawscrlb(Tk *tk, Point orig)
 	 */
 	sc = nil;
 	if(tkviascene && flatenv(e))
-		sc = tkscenenew();
+		sc = tkwalkjoin(e->top->ctxt, dst);
 	if(sc != nil){
 		tkscenelayer(sc, r.max, e->colors[TkCbackgnd],
 			rectaddpt(r, p), ZP);
@@ -446,8 +446,7 @@ tkdrawscrlb(Tk *tk, Point orig)
 	if(sc != nil){
 		tkreliefnodes(sc, tk, ZP, TkCbackgnd, tk->relief);
 		tkscenelayerend(sc);
-		tkscenerender(sc, e->top->ctxt, dst);
-		tkscenefree(sc);
+		tkscenefinish(sc, e->top->ctxt, dst);
 		return nil;
 	}
 

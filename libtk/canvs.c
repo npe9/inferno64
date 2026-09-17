@@ -391,6 +391,11 @@ tkdrawcanv(Tk *tk, Point orig)
 	Point rel, p;
 	TkCimeth *imeth;
 
+	/*
+	 * Anything that paints into the window itself has to render what
+	 * the walk has pending first, or the tree would land on top of it.
+	 */
+	tkwalkflush();
 	c = TKobj(TkCanvas, tk);
 	d = tk->env->top->display;
 	dst = tkimageof(tk);

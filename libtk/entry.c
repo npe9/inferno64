@@ -412,7 +412,7 @@ tkdrawentry(Tk *tk, Point orig)
 	sc = nil;
 	if(tkviascene && tkstyleflat(tk) && tke->show == 0
 	&& !(tke->sel0 < tke->v1 && tke->sel1 > tke->v0))
-		sc = tkscenenew();
+		sc = tkwalkjoin(env->top->ctxt, tkimageof(tk));
 
 	xp = tk->borderwidth + xinset(tk);
 	yp = tk->borderwidth + yinset(tk);
@@ -447,8 +447,7 @@ tkdrawentry(Tk *tk, Point orig)
 				tk->highlightwidth,
 				env->colors[TkChighlightfgnd]);
 		tkscenelayerend(sc);
-		tkscenerender(sc, env->top->ctxt, tkimageof(tk));
-		tkscenefree(sc);
+		tkscenefinish(sc, env->top->ctxt, tkimageof(tk));
 		return nil;
 	}
 

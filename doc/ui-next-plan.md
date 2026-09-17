@@ -977,9 +977,32 @@ there was never speed on the table here anyway.
    rendered into the scratch); a `checkbutton` (its tick is a
    `bezspline`, which has no node); a button or radiobutton with an
    image, a bitmap, several lines, an underline or text that is not
-   left-justified; and an `entry` showing a selection or `-show`. Only
-   when a repaint produces one tree instead of one per widget is there
-   anything for a backend to batch.
+   left-justified; and an `entry` showing a selection or `-show`.
+
+   **The walk is done, and it is one tree per *run*, not per repaint.**
+   `tkdrawslaves` opens a walk around its descent, `tkwalkjoin` hands a
+   widget the open tree, and `tkscenefinish` renders a tree only when it
+   is not the walk's. It cannot be one tree for the whole repaint while
+   any widget still paints directly: that widget's pixels would be
+   covered by nodes rendered after it. So everything that paints into
+   the window itself flushes what is pending first — every caller of
+   `tkitmp`, which is exactly the widgets that draw through a scratch,
+   plus the canvas, panel, text and menu painters, which draw straight
+   in — and so does the grid clipping in `tkdrawslaves1`, whose narrowed
+   clip is gone by the time deferred nodes would render. Painter order
+   is therefore unchanged, which is what the identity check measures.
+
+   The test pane is 13 widgets in 4 trees. Batching is invisible in the
+   pixels, which is the point of it, so `render count` answers the two
+   numbers and the check asks that the trees be fewer than the widgets.
+   Three controls: batching off, and the check fails; the `tkitmp` flush
+   removed, and the *pixels* differ by 4524 bytes, which is what says
+   the flush points carry the painter order; the grid flush removed, and
+   8004 bytes differ. That last one was clean at first, because no
+   widget in the pane was gridded — and then clean again with one
+   gridded, because the frame grew to fit it and the clip cut nothing.
+   It fails only with `grid propagate .g 0` and a 207-pixel scale in a
+   60-pixel frame, which is the arrangement where a clip is real.
 4. **A Metal backend.** Last, and only after 3: the measured hazard is
    94% command-buffer overhead for small work, so a backend that issues a
    draw call per node would be *slower* than the CPU, decisively. The

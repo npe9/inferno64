@@ -2,7 +2,7 @@
 .SH NAME
 render \- choose how a border reaches the page
 .SH SYNOPSIS
-\f5render\fP ?\f5direct\fP|\f5scene\fP?
+\f5render\fP ?\f5direct\fP|\f5scene\fP|\f5count\fP?
 .SH DESCRIPTION
 .B Render
 sets which drawing path a flat border takes, and reports which is in
@@ -16,6 +16,13 @@ This is the default.
 .TP
 \f5scene\fP
 By building a render-node tree and rendering that.
+.TP
+\f5count\fP
+Answers two numbers: how many trees the repaints since the last
+\f5render count\fP rendered, and how many widgets went into them.
+Counting then starts again.
+Batching cannot be seen in the pixels \(em that is the point of it \(em
+so this is what a test reads instead.
 .PP
 It exists to be compared against itself.
 A node tree is the first piece of a renderer shaped like GTK4's GSK \(em
@@ -153,6 +160,32 @@ neither a rectangle nor an ellipse, and
 exists for them.
 Its points are copied into the scene, as a glyph node's string is, and
 it always fills by the nonzero winding rule.
+.PP
+A repaint builds one tree for each RUN of consecutive widgets that can
+describe themselves as nodes, not one per widget and not one for the
+whole repaint.
+.I tkdrawslaves
+opens a walk round its descent;
+.I tkwalkjoin
+hands a widget the walk's tree if one is open for that context and that
+window, and
+.I tkscenefinish
+renders a tree only if it is not the walk's.
+Anything that paints into the window itself \(em every widget that asks
+.I tkitmp
+for the scratch surface, and the canvas, panel, text and menu painters,
+which draw straight into it \(em calls
+.I tkwalkflush
+first, or the tree, rendered later, would land on top of what it drew.
+So does the grid clipping in
+.IR tkdrawslaves1 ,
+whose narrowed clip rectangle is gone by the time the nodes would
+otherwise be rendered.
+Painter order is therefore exactly what it was, which is what the
+identity check measures;
+.B "render count"
+answers how many trees and how many widgets, which is what a test asks
+to see the batching, since the pixels cannot show it.
 .PP
 Six node types are declared and not implemented:
 .BR TkNtexture ,
