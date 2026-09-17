@@ -662,6 +662,7 @@ static QLock ospreylock;
  */
 static Rendez ospreyroomrend[16];
 static void ospreyconsdrained(Ospreyproc*);	/* the console FIFO, fed when its task frees a slot */
+static void ospreyconsrelease(Ospreyproc*, uvlong);	/* a slot given up rather than pushed */
 static void ospreyconscheck(Ospreyproc*, uvlong, uvlong);
 static void ospreyconspushed(Ospreyproc*, uvlong, uvlong);
 static Rendez ospreyreplyrend[16];
@@ -1109,11 +1110,13 @@ ospreyuartpush(Ospreyproc *p, Uart *uart, int x)
 	if(ospreyuartlen[x] <= 0)
 		return 0;
 	if(uart->phys->send == nil){	/* nothing to push it with */
+		ospreyconsrelease(p, ospreyuartoff[x] - (ospreyuartlen0[x] - ospreyuartlen[x]));
 		ospreyuartlen[x] = 0;
 		return 0;
 	}
 	b = ospreydata(p, ospreyuartoff[x], ospreyuartlen[x]);
 	if(b == nil){
+		ospreyconsrelease(p, ospreyuartoff[x] - (ospreyuartlen0[x] - ospreyuartlen[x]));
 		ospreyuartlen[x] = 0;
 		return 0;
 	}
@@ -4073,7 +4076,17 @@ enum {
 	Consid		= 6,
 	Consoff		= 1024,
 	Consslot	= 256,
-	Nconsslot	= 17,		/* Nqueue and one in flight */
+	/*
+	 * Slots enough that the task usually has one to take.  The number
+	 * is not arithmetic any more: it was "Nqueue and one in flight",
+	 * which is one short - with sixteen queued and one being pushed
+	 * there are seventeen out, and the next fill wants an eighteenth -
+	 * and the queue's length is a configuration knob besides, so no
+	 * constant here can be right by construction.  consslotbusy is
+	 * what makes it safe; this only says how far ahead the kernel may
+	 * run before it waits.
+	 */
+	Nconsslot	= 17,
 };
 static Ospreyproc *ospreyconsproc;
 static Lock ospreyconslock;
@@ -4109,9 +4122,21 @@ static char consfifo[Consfifo];
 static ulong consin, consout;		/* under ospreyconslock; consin - consout is what waits */
 static ulong consslotsum[Nconsslot];	/* a checksum of each slot as filled, checked when the task starts to push it */
 static ulong consslotlen[Nconsslot];
+/*
+ * Whether the task still has a slot: set when it is filled and queued,
+ * cleared when the task has pushed it whole.  The count of slots was
+ * meant to be enough on its own - seventeen, the queue's sixteen and
+ * the one being pushed - and the kernel refilled by that arithmetic
+ * rather than by knowing.  It was not enough, and a slot was rewritten
+ * under the task, which is what "changed between being filled and being
+ * pushed" was reporting.  The arithmetic is gone: a slot is reused when
+ * it comes back and not before.
+ */
+static uchar consslotbusy[Nconsslot];
 static int consslotbad;
 static int consinflight = -1;		/* the slot the console task is pushing now, or -1 */
 static int consreuse;			/* fills that landed on it */
+static int consstall;			/* flushes that stopped: every slot still out with the task */
 
 static ulong
 conssum(uchar *d, ulong n)
@@ -4137,7 +4162,20 @@ ospreyconsflush(Ospreyproc *p)
 			m = Consslot;
 		if(m > Consfifo - off)
 			m = Consfifo - off;	/* to the end of the FIFO; the rest next slot */
-		slot = ospreyconsnext++ % Nconsslot;
+		slot = ospreyconsnext % Nconsslot;
+		if(consslotbusy[slot]){
+			/*
+			 * Every slot is out with the task.  What is left stays
+			 * in the FIFO, and the next slot the task gives back
+			 * takes it (ospreyconsdrained); if the FIFO fills
+			 * meanwhile, ospreyconsput answers -1 and its caller
+			 * writes the port itself, which is where console
+			 * output goes when there is no task at all.
+			 */
+			consstall++;
+			return;
+		}
+		ospreyconsnext++;
 		if(slot == consinflight){
 			char dbg[80];
 			int k = snprint(dbg, sizeof dbg, "[console: slot %d refilled while in flight, next %d]\n", slot, ospreyconsnext);
@@ -4149,8 +4187,11 @@ ospreyconsflush(Ospreyproc *p)
 		memmove(d, consfifo + off, m);
 		consslotsum[slot] = conssum(d, m);
 		consslotlen[slot] = m;
-		if(ospreyoutput(p, Consoff + slot*Consslot, m) < 0)
+		consslotbusy[slot] = 1;
+		if(ospreyoutput(p, Consoff + slot*Consslot, m) < 0){
+			consslotbusy[slot] = 0;	/* it never went out */
 			return;
+		}
 		ospreyconsbytes += m;
 		consout += m;
 	}
@@ -4206,13 +4247,32 @@ ospreyconscheck(Ospreyproc *p, uvlong off, uvlong len)
 	}
 }
 
+/*
+ * A slot given up rather than pushed: the transmitter went away or the
+ * container's memory did.  The task will never report it, so it is
+ * freed here; without this the console would lose a slot for good and
+ * fall back to writing the port directly once it had lost them all.
+ */
+static void
+ospreyconsrelease(Ospreyproc *p, uvlong off)
+{
+	if(p != ospreyconsproc || off < Consoff || off >= Consoff + Nconsslot*Consslot)
+		return;
+	consslotbusy[(off - Consoff) / Consslot] = 0;
+	if(consinflight == (int)((off - Consoff) / Consslot))
+		consinflight = -1;
+}
+
 /* a slot the console task has pushed whole: checked, and no longer in flight */
 static void
 ospreyconspushed(Ospreyproc *p, uvlong off, uvlong len)
 {
 	ospreyconscheck(p, off, len);
-	if(p == ospreyconsproc)
+	if(p == ospreyconsproc){
+		if(off >= Consoff && off < Consoff + Nconsslot*Consslot)
+			consslotbusy[(off - Consoff) / Consslot] = 0;
 		consinflight = -1;
+	}
 }
 
 /* the console task took a message off its output queue: feed it what waits in the FIFO */
@@ -4267,6 +4327,8 @@ ospreyconsolestart(void)
 	ospreyuartbind(c, "eia0", 1, 1);
 	poperror();
 	ospreyconsproc = c;
+	memset(consslotbusy, 0, sizeof consslotbusy);	/* a new task holds none of them */
+	consinflight = -1;
 	consoletask = ospreyconsput;
 	print("osprey console: eia0 handed to container %llud; from here the console is its task\n", ospreyid(c));
 }

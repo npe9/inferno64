@@ -93,6 +93,21 @@ def main():
                     'select over its ring' in t))
     results.append(("and it exits through the microkernel's minimal syscall interface, no Plan 9 personality",
                     'the program exited' in t and 'panic' not in t))
+    #
+    # The console task's slots, which the kernel fills and it pushes.
+    # The kernel used to decide a slot was free by counting - the
+    # queue's length and one in flight - which is one short, so under
+    # load it rewrote a slot the task was still pushing and the console
+    # came out spliced.  A slot is given back now, and this says so.
+    #
+    # It does not discriminate on its own: with the program this check
+    # runs, the kernel before the fix passed it too, and so did the p9
+    # check, which writes far more.  What found the bug was userprog
+    # making two more console writes at that moment, and what this is
+    # for is the next thing that writes that much.
+    #
+    results.append(("and no console slot was rewritten under the task while it was pushing it",
+                    'changed between being filled and being pushed' not in t))
 
     bad = 0
     for what, ok in results:

@@ -6411,9 +6411,49 @@ That was not what made the user check fail when the program wrote to the
 console seven times instead of five.  With the alarm fixed, the
 seven-write program was run three times again and failed six or seven of
 eleven each time, so the console corruption \- "slot 6 changed between
-being filled and being pushed (len 85 vs 6)" \- is its own bug and is
-still there.  What the double sleep did was sit in the same logs and
-look like the cause.
+being filled and being pushed (len 85 vs 6)" \- was its own bug.  What
+the double sleep did was sit in the same logs and look like the cause.
+.PP
+That one is fixed now, and the arithmetic in it is worth writing down.
+The kernel gives the console task 256-byte slots in the container's own
+memory and puts a message on its output queue naming each; the task
+takes one message at a time and pushes it to the 8250.  Which slot to
+fill next was
+.CW "ospreyconsnext++ % Nconsslot" ,
+and
+.CW Nconsslot
+was 17, whose comment read "Nqueue and one in flight".  That is one
+short.  The queue holds sixteen, and the task is pushing a seventeenth,
+so seventeen slots are out and the next fill wants an eighteenth \- and
+it took the one being pushed.  Instrumenting the mismatch said so in one
+line:
+.CW "put 22 get 6 size 16" ,
+the queue full, and slot 5 being filled by fill 22 while the task pushed
+fill 5.  Seventeen apart, exactly one turn of the wheel.
+.PP
+A bigger constant would have been wrong as well, because the queue's
+length is a configuration knob (*ospreyqueue) and no number compiled in
+here can be right by construction.  So the count is not the guard any
+more:
+.CW consslotbusy
+marks a slot when it is filled and clears it when the task reports it
+pushed, and the flush stops rather than reuse one that is still out.
+What is left stays in the FIFO, and the slot the task gives back next
+takes it; if the FIFO fills first, the caller writes the port directly,
+which is where console output goes when there is no task at all.  A slot
+the task can never report \- the transmitter gone, or the container's
+memory \- is released where that is noticed, and a new console task
+starts with every slot its own.
+.PP
+The seven-write program passes eleven of eleven now, three runs, with no
+slot reported changed.  Both user checks have a criterion for it, and it
+is worth saying what that criterion is worth: it does not discriminate
+on its own.  With the program the checks run, the kernel before the fix
+passed it too, and so did the p9 check, which writes a great deal more.
+The bug wanted a burst that filled the queue at the moment the task was
+pushing, and what found it was two more writes in
+.CW regcheck .
+The criterion is there for the next thing that writes that much.
 .PP
 The library closure that said three more symbols were missing \-
 .CW _genrandomqlock ,
