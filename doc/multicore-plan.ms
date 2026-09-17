@@ -5766,3 +5766,67 @@ collector's own: bad frames whose type pointer is a heap address,
 general protection violations.  They are what a collector that runs a
 million passes a boot meets and one that died after a few thousand did
 not, and they are the next work.
+.NH 2
+Where the deferred close is made, and two wrong answers first
+.PP
+The first version drained the queue at the end of
+.CW collect() ,
+under the
+.CW release() /\c
+.CW acquire()
+.CW freeFD()
+had used.  That is correct in isolation and wrong here, and only a live
+collector shows why:
+.CW release()
+spawns an interpreter when work is queued and none is idle, the busy
+collector runs every 256 quanta, and the pool of contexts ran out \(em
+.CW "claimctx: pool of 64 exhausted, sharing (unsafe while parallelvm=1)"
+in every panicking boot, which is two interpreters on one Dis register
+file.  The Prog placeholder a collecting process pushes went astray at
+the same time:
+.CW "delrunq: prog 0 was on another context's queue" ,
+five boots of twelve, and none in any batch before this change.
+.PP
+The second version gave the queue its own kernel process, which needs no
+interpreter, no context and no quantum \(em and panicked
+.CW "incref: bad r 0x0"
+at
+.CW kproc+100
+in four boots of eight.  A close can reach
+.CW progclose() ,
+which
+.CW acquire() s
+the interpreter, and a plain
+.CW kproc
+has neither the process groups
+.CW release() 's
+spawn duplicates nor a context of its own to push its placeholder onto.
+Giving it
+.CW KPDUP
+and
+.CW claimctx()
+is the version that stands.
+.PP
+Eight boots each at
+.CW parallelvm=1 ,
+four at
+.CW parallelvm=0 ,
+90 seconds:
+.TS
+center;
+l r r r r r.
+	all 27 cases	panics	bad frame	pool exhausted	stray placeholder
+-smp 4	5 of 8	0	4	0	0
+-smp 2	6 of 8	0	7	0	0
+-smp 4, parallelvm=0	4 of 4	0	0	0	0
+.TE
+.PP
+Against the first version's 5 panics in 12 at
+.CW "-smp 4"
+and 3 in 12 at
+.CW "-smp 2" .
+What is left at
+.CW parallelvm=1
+is the bad frame \(em a frame whose type pointer is a heap address \(em
+in 11 boots of 16, and one boot in eight still not finished at 70
+seconds.

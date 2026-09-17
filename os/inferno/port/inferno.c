@@ -77,7 +77,7 @@ freeFD(Heap *h, int swept)
 			freefdstw++;
 			if(told++ < 3)
 				print("freeFD: in the stopped world, fd %d swept %d from %#p\n",
-					handle->fd.fd, swept, getcallerpc(&h));
+					(int)handle->fd.fd, swept, getcallerpc(&h));
 			if(fddefer && deferfdclose(handle->grp, handle->fd.fd))
 				return;
 		}

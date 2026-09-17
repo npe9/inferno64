@@ -611,9 +611,7 @@ int gcphase;	/* MULTICORE INSTRUMENTATION - temporary; see stalldump() */
  * one this collection has stopped -- and then the collector waits for a
  * program that waits for the collector.  So the close is not made
  * inside the stopped world at all: freeFD() queues it here and
- * collect() makes it once the world is running again, which is where
- * the VM-lock kernel made it too -- with every other interpreter free
- * to run.
+ * fdcloseproc() makes it once collect() has let the world go.
  */
 typedef struct Fdclose Fdclose;
 struct Fdclose
@@ -626,6 +624,7 @@ static Lock fdclosel;
 static Fdclose *fdcloseq;
 ulong fdclosedeferred;	/* MULTICORE INSTRUMENTATION - temporary */
 ulong freefds, freefdstw;	/* likewise; counted in freeFD() */
+ulong vmspawns;		/* interpreters made by release(); temporary */
 int fddefer = 1;	/* *fddefer=0: close inline, as before; temporary */
 
 /* this process is the collector and the world is stopped for it */
@@ -659,28 +658,58 @@ deferfdclose(Fgrp *grp, int fd)
 	return 1;
 }
 
+/*
+ * The queued closes are made by a kernel process of their own, not by
+ * the interpreter that collected.  The first version made them at the
+ * end of collect() under release()/acquire(), as freeFD() had, and
+ * that was wrong in a way only a live collector shows: every release()
+ * there may spawn an interpreter, the collector runs every 256 quanta,
+ * and the pool of contexts ran out -- "claimctx: pool of 64 exhausted,
+ * sharing" in every panicking -smp 4 boot of six, two interpreters on
+ * one register file.  A process that only closes needs no interpreter,
+ * no context and no quantum, and a close that blocks stalls nobody.
+ */
+static Rendez fdcloser;
+
+static int
+fdclosepending(void *a)
+{
+	USED(a);
+	return fdcloseq != nil;
+}
+
 static void
-drainfdclose(void)
+fdcloseproc(void *a)
 {
 	Fdclose *c, *next;
 
-	if(fdcloseq == nil)	/* unlocked peek; a miss waits for the next collection */
-		return;
-	lock(&fdclosel);
-	c = fdcloseq;
-	fdcloseq = nil;
-	unlock(&fdclosel);
-	if(c == nil)
-		return;
-	release();
-	for(; c != nil; c = next){
-		next = c->next;
-		if(c->fd >= 0)
-			kfgrpclose(c->grp, c->fd);
-		closefgrp(c->grp);
-		free(c);
+	USED(a);
+	/*
+	 * Its own context and the creator's groups, because a close can
+	 * reach progclose(), which acquire()s the interpreter: without a
+	 * context it would push its placeholder Prog onto whatever context
+	 * curP names, and without groups release()'s spawn incref()s a nil
+	 * Pgrp -- "incref: bad r 0x0 pc=kproc+100", four boots of eight.
+	 */
+	if(up->pctx == nil)
+		up->pctx = claimctx();
+	for(;;){
+		while(waserror())
+			;
+		sleep(&fdcloser, fdclosepending, nil);
+		poperror();
+		lock(&fdclosel);
+		c = fdcloseq;
+		fdcloseq = nil;
+		unlock(&fdclosel);
+		for(; c != nil; c = next){
+			next = c->next;
+			if(c->fd >= 0)
+				kfgrpclose(c->grp, c->fd);
+			closefgrp(c->grp);
+			free(c);
+		}
 	}
-	acquire();
 }
 
 int
@@ -715,7 +744,8 @@ collect(Prog *head)
 	gcphase = 4;
 	qunlock(&gcsema);
 	gcphase = 5;
-	drainfdclose();
+	if(fdcloseq != nil)	/* unlocked peek; the next collection catches a miss */
+		wakeup(&fdcloser);
 	return stopped;
 }
 
@@ -2045,9 +2075,13 @@ delrunq(Prog *p)
 		return;
 	for(i = 0; i < npctx; i++)
 		if(pctxs[i] != curP && unlinkctx(pctxs[i], p)){
-			if(delrunqother++ == 0)
+			if(delrunqother++ < 4)
 				print("delrunq: prog %d was on another "
-					"context's queue\n", p->pid);
+					"context's queue: ctx %d owner %d, by proc %d"
+					" type %d from %#p\n", p->pid, i,
+					pctxs[i]->owner != nil ?
+					  ((Proc*)pctxs[i]->owner)->pid : -1,
+					up->pid, up->type, getcallerpc(&p));
 			return;
 		}
 	gdel(p);	/* it may be on the global queue instead */
@@ -2170,6 +2204,17 @@ release(void)
 		up->iprog = isave();
 	}else{
 		if(((Prog *)up->prog)->state != Pready) panic("double release (GC)?");
+		{	/* MULTICORE INSTRUMENTATION - temporary */
+			static int told;
+
+			if(curP->runhd != (Prog*)up->prog && told++ < 4)
+				print("release: GC proc %d type %d, head is prog %d not its own"
+					" (ownctx %d nlocal %d gcworldheld %d) from %#p\n",
+					up->pid, up->type,
+					curP->runhd != nil ? curP->runhd->pid : -1,
+					ownctx(), curP->nlocal, gcworldheld(),
+					getcallerpc(&spawn));
+		}
 		delrun(Prelease);
 	}
 
@@ -2197,6 +2242,7 @@ release(void)
 	&& isched.nidle == 0 && isched.creating == 0){
 		isched.creating = 1;
 		spawn = 1;
+		vmspawns++;	/* MULTICORE INSTRUMENTATION - temporary */
 	}
 	unlock(&isched.l);
 
@@ -2700,6 +2746,7 @@ disinit(void *a)
 	 * killcomm() -> chanlock() is a Lock taken twice by its own holder.
 	 */
 	chandefer = chandeferfn;
+	kproc("fdclose", fdcloseproc, nil, KPDUP);	/* see deferfdclose() */
 	atsafepoint = safepoint;	/* see stoptheworld() */
 	if(gcwalkms > 0)
 		gcwalkdelay = gcwalkdelayfn;
@@ -2914,8 +2961,9 @@ stalldump(void)
 			" gcpartial %llud gaveup %d idlegaveup %d\n",
 			gcnruns, stwwaits, gcidlepass, gcpartial, stwgaveup,
 			gcidlegaveup);
-		print("stall: freeFD %lud, in the stopped world %lud, deferred %lud, fddefer %d\n",
-			freefds, freefdstw, fdclosedeferred, fddefer);
+		print("stall: freeFD %lud, in the stopped world %lud, deferred %lud,"
+			" fddefer %d, interpreters spawned %lud\n",
+			freefds, freefdstw, fdclosedeferred, fddefer, vmspawns);
 	}
 	for(i = 0; i < npctx; i++)
 		print("stall: ctx %d owner %d inxec %d inchan %d nlocal %d\n",
