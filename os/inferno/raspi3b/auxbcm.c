@@ -121,9 +121,20 @@ auxuartputc(int c)
 	u32 *r = aux();
 	int i;
 
-	for(i = 0; i < Timeout; i++)
+	/*
+	 * Wait in microseconds, not in iterations.  A spin count is a
+	 * guess about how long a loop takes, and on the board it ran out
+	 * long before the transmitter had room: a byte is 87us at 115200
+	 * and the FIFO is eight deep, so the check that follows found the
+	 * transmitter still full and called it a fault.  QEMU's mini UART
+	 * empties inside the register write, so the count never mattered
+	 * there.
+	 */
+	for(i = 0; i < 2000; i++){
 		if(r[Lsr] & Lsrtxempty)
 			break;
+		microdelay(10);
+	}
 	r[Io] = c & 0xff;
 }
 
@@ -153,7 +164,7 @@ auxinit(void)
 {
 	u32 *r = aux();
 	static char msg[] = "AUXUART-HELLO\r\n";
-	int i;
+	int i, j;
 
 	r[Enables] |= Enmuart;
 	if((r[Enables] & Enmuart) == 0){
@@ -168,8 +179,19 @@ auxinit(void)
 	}
 	for(i = 0; msg[i] != 0; i++)
 		auxuartputc(msg[i]);
-	if((r[Lsr] & Lsrtxempty) == 0){
-		print("AUX-FAIL transmitter never drained (lsr %#ux)\n", r[Lsr]);
+	/*
+	 * And give the last bytes their time on the wire: 15 bytes at
+	 * 115200 is 1.3ms, which is nothing to a part and forever to a
+	 * model that drains instantly.
+	 */
+	for(j = 0; j < 500; j++){
+		if(r[Lsr] & Lsrtxidle)
+			break;
+		microdelay(100);
+	}
+	if((r[Lsr] & Lsrtxidle) == 0){
+		print("AUX-FAIL transmitter never drained (lsr %#ux after %d ms)\n",
+			r[Lsr], j/10);
 		return;
 	}
 	print("aux: mini uart at %#p, 115200 8n1, divisor %ud\n",
