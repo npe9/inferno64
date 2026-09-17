@@ -13566,8 +13566,8 @@ check clean:
 .CW p964
 74,
 .CW p9legacy
-16, keyboard 8, rio 14, the window gestures 10, micro 7, micro on 386 8,
-user 12, user on 386 11, net 13, wire 14, pair 1, two-machine 20, the six
+16, keyboard 8, rio 14, the window gestures 10, micro 7, micro on 386 9,
+user 12, user on 386 13, net 13, wire 14, pair 1, two-machine 20, the six
 criteria of the userland the tree builds itself, and two portable builds.
 The two 386 checks are the second object type's, and they are the new
 ones: the microkernel boots there and a user program runs on it.  A
