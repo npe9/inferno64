@@ -65,7 +65,14 @@ default:V: i$CONF
 install:V: i$CONF
 	cp i$CONF $INSTALLDIR/i$CONF
 
-i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES
+# $LIBNAMES and $LIBFILES both, and the second is the point: lib%.a is a
+# virtual target (portmkfile), so it rebuilds a library but never counts
+# as newer than the kernel.  A kernel linked before a libinterp change
+# therefore stayed linked, and testing it tested the old code -- which
+# cost a probe hunt where the instrumented kernel never contained the
+# instrument.  $LIBFILES names the .a files themselves, which do have
+# times.
+i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES $LIBFILES
 	$CC $CFLAGS '-DKERNDATE='$KERNDATE $CONF.c
 	$LD -o $target -H7 -T$KTZERO -R4096 -l $OBJ $CONF.$O $LIBFILES
 	cp $target $INSTALLDIR/$target
