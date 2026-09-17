@@ -556,6 +556,185 @@ figures are from a running board: there is no emulator for an i.MX
 RT1062 and none of this tree's Cortex-M work has been on real silicon.
 They are link-time sizes plus a pool measurement taken on
 .CW mps2 .
+.NH 2
+Fitting 256K
+.PP
+Asked directly: what would have to change to run in a quarter of a
+megabyte.  On a part with no MMU it is all one flat SRAM, so the budget
+is
+.CW data
+plus
+.CW bss
+plus whatever
+.CW xalloc
+hands out \- and the pools come from
+.CW xalloc
+too
+.CW ( os/inferno/port/alloc.c:/^poolalloc
+grows by calling it), as does the
+.CW Proc
+array
+.CW ( os/inferno/port/proc.c:/^procinit ).
+262144 bytes has to cover all of it.
+.PP
+Struct sizes on this target, from
+.CW "tc -S"
+on a probe compiled with the board's own headers:
+.CW sizeof(Proc)
+is 2740,
+.CW sizeof(Chan)
+300,
+.CW sizeof(Osenv)
+328,
+.CW sizeof(Mach)
+152.  The
+.CW Proc
+array is
+.CW NPROC
+of those, xalloc'd at boot: 175360 bytes at
+.CW mps2 's
+.CW NPROC
+of 64, 21920 at
+.CW nucleof303 's
+8.
+.NH 3
+What the measurements say has to go
+.PP
+A deliberately minimal configuration was built and run to find the
+floor: the device and library set from
+.CW nucleof303 ,
+which is the smallest that links, on
+.CW mps2 ,
+which is the only board with an emulator, with a root file system of
+mount points and
+.CW /osinit.dis
+and nothing else, and
+.CW KSTACK
+cut from 16K to 4K.  It reaches its init and reports, from
+.CW #c/memory
+before anything else is loaded:
+.DS
+.CW "                    full mps2   minimal"
+.CW "text                  391184    244800"
+.CW "data                  581912     50192"
+.CW "bss                   144968    131656"
+.CW "main pool in use      158208     78208"
+.CW "heap pool in use        3840      3840"
+.DE
+Dropping the devices
+.CW ( ssl ,
+.CW cap ,
+.CW kprof ),
+the Dis modules past
+.CW sys
+and the 61-file root halves the pool floor and takes the data segment
+down by an order of magnitude.  Losing the
+.CW crypt
+and
+.CW math
+module tables is what stops libsec's prime tables being linked \- the
+40000-byte
+.CW smallprimes
+in
+.CW libsec/smallprimetest.c
+is simply absent from the minimal image, so that one is a configuration
+change and not source work.
+.PP
+What is left in the minimal
+.CW data + bss
+of 181848 is, in order, two debug arrays and a log buffer:
+.CW freehist
+65536,
+.CW track
+24576,
+.CW kmesg
+16420, then
+.CW mntalloc
+8248 and nothing else above 4416.
+.CW freehist
+is
+.CW os/inferno/port/alloc.c 's
+free-history ring and
+.CW track
+is
+.CW libinterp/heap.c 's
+.CW "Trackslot track[1024]" ,
+both pc64 debugging instrumentation, both marked temporary where they
+are declared, and together 90112 bytes \- half the minimal data and bss.
+.CW freehist 's
+cost was measured rather than computed, by rebuilding with
+.CW NFREEHIST
+at 1 and watching bss fall from 128840 to 63304.
+.NH 3
+The budget that results
+.PP
+Minimal configuration, the two debug arrays out,
+.CW kmesg
+cut to 2K,
+.CW KSTACK
+at 4K and
+.CW NPROC
+at 8:
+.DS
+.CW "data + bss                       77364"
+.CW "Proc array (8 x 2740)            21920"
+.CW "pid hash table                     128"
+.CW "main pool in use                 78208"
+.CW "heap pool in use                  3840"
+.CW "                                ------"
+.CW "                                181460"
+.DE
+That is 69% of 262144, leaving about 80K for a Limbo program.  So the
+answer is yes, with the cuts above \- and with one configuration change
+the arithmetic forces:
+.CW main_pool_pcnt
+and friends are percentages of the memory left after the kernel, and
+40/40/20 of the roughly 163K remaining gives the main pool a 65K
+ceiling, under the 78K it is measured to need.  The image pool is
+measured at zero in use on these boards, so something like 60/25/15 is
+what a part this size wants.
+.NH 3
+What 256K costs you: the shell
+.PP
+This is the part that matters more than any of the savings.  Measured on
+.CW mps2 ,
+the main and heap pools hold 162048 bytes before
+.CW /dis/sh.dis
+is loaded and 423040 after it and the shell's own dependencies are in.
+The shell costs
+.B 260992
+bytes \- more than the entire budget being discussed.
+.PP
+It is not close, and no trimming reaches it: at
+.CW DISWORD=4
+an
+.CW Inst
+is 12 bytes rather than 24, so the decoded-to-packed ratio on this
+target is 1.76 rather than the 3.10 measured for the 64-bit boards, and
+.CW sh.dis
+still decodes to 73332 bytes of
+.CW Inst
+with
+.CW sh/std.dis
+another 23604.  A quarter of a megabyte therefore does not buy Inferno
+with a smaller heap; it buys a kernel plus one purpose-built Dis program
+as
+.CW /osinit.dis ,
+with the 80K of headroom above to hold it.  Which is exactly the shape
+.CW os/inferno/nucleof303 's
+configuration already has, and the reason that configuration has no
+Limbo userland in it.
+.PP
+Two things this does not fix.  A Cortex-M4 still cannot do the
+interpreter's real arithmetic or link libmath, for the FPv4-SP reason
+above, whatever the memory.  And none of these numbers come from a
+256K part: they are a minimal configuration measured on an 8M board
+under QEMU, with the
+.CW Proc
+array and the pool ceilings computed rather than observed at that size.
+The pool figures are
+.I in use ,
+and a pool's xalloc'd chunk is at least that and rounded up.
 .NH 1
 What is left
 .IP 1.
