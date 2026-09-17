@@ -423,9 +423,10 @@ the whole difficulty.
 .NH 2
 Smaller gaps, roughly in the order they matter
 .IP 1.
-SD transfers are one command per sector and polled.  Multi-block
-(CMD18/CMD25) and DMA are not implemented, and a transfer holds the CPU.
-Performance only; correctness is established.
+SD transfers are polled and hold the CPU; DMA is not implemented.
+Multi-block (CMD18/CMD25) is, and is checked at every boot against the
+same block read alone (SD-MULTI-OK), so what is left here is DMA and
+the CPU a transfer costs, not correctness.
 .IP 2.
 I2C and SPI have drivers and their buses come up, but nothing is
 attached to this board to talk to: the I2C probe reports a DS1338
@@ -452,8 +453,11 @@ so.
 .IP 8.
 The DMA controller is unused by any driver.
 .IP 9.
-The kfs create deadlock (the arm64 multi-kproc error-stack bug) still
-blocks a native writable filesystem on the card.
+Nothing here turns the card into the board's own filesystem yet.  The
+kfs create deadlock that used to block it was the SP-alignment fault,
+and kfs now reams and serves a partition carved from the card's
+unallocated gap; what is missing is a boot that mounts it as the root
+rather than as a test.
 .NH 2
 Ethernet on silicon: the board answers ARP and resolves nothing
 .PP
