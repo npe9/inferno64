@@ -66,7 +66,50 @@ enum
 	CMnobroken,
 	CMconsole,
 	CMrdb,
+	CMprocdump,
 };
+
+/*
+ * Every process, one line each (procdump() would add its whole
+ * namespace, which a serial console cannot carry), and for each one
+ * that is not running, the kernel text addresses on
+ * its kernel stack above the saved sp, innermost first.  Not a real
+ * backtrace -- any word that looks like a text address is printed --
+ * but on a stripped kernel it is what says where a sleeping kproc is
+ * sleeping; a 7l -a listing of the same build turns the numbers into
+ * names.
+ */
+static void
+kstackdump(void)
+{
+	extern char etext[];
+	Proc *p;
+	uintptr l, e, v;
+	int i, n;
+
+	for(i = 0; i < conf.nproc; i++){
+		p = proctab(i);
+		if(p->state == Dead)
+			continue;
+		dumpaproc(p);
+		if(p == up || p->kstack == nil)
+			continue;
+		l = p->sched.sp;
+		e = (uintptr)p->kstack + KSTACK;
+		if(l < (uintptr)p->kstack || l >= e)
+			continue;
+		print("\t");
+		n = 0;
+		for(; l < e && n < 16; l += sizeof(uintptr)){
+			v = *(uintptr*)l;
+			if(v > (uintptr)KTZERO && v < (uintptr)etext){
+				print(" %#p", v);
+				n++;
+			}
+		}
+		print("\n");
+	}
+}
 
 static Cmdtab sysctlcmd[] =
 {
@@ -77,6 +120,7 @@ static Cmdtab sysctlcmd[] =
 	CMbroken,	"broken", 0,
 	CMnobroken,	"nobroken", 0,
 	CMrdb,		"rdb",		0,
+	CMprocdump,	"procdump",	0,
 };
 
 Cmdtab rebootmsg[] =
@@ -1119,6 +1163,14 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 			break;
 		case CMnobroken:
 			keepbroken = 0;
+			break;
+		case CMprocdump:
+			/*
+			 * Every process, kernel ones included, with its state
+			 * and saved pc: /prog shows only Dis processes, and a
+			 * wedged kproc is otherwise invisible from the shell.
+			 */
+			kstackdump();
 			break;
 		}
 		poperror();
