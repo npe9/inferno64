@@ -720,7 +720,14 @@ another 23604.  A quarter of a megabyte therefore does not buy Inferno
 with a smaller heap; it buys a kernel plus one purpose-built Dis program
 as
 .CW /osinit.dis ,
-with the 80K of headroom above to hold it.  Which is exactly the shape
+with the 80K of headroom above to hold it.
+.PP
+That is the verdict against
+.I this
+loader, which decodes every module into the heap, and it should not be
+read as a verdict on execute in place.  With the code in flash the
+shell's own mutable state is about eight kilobytes, and it fits; the
+next section does that arithmetic.  Which is exactly the shape
 .CW os/inferno/nucleof303 's
 configuration already has, and the reason that configuration has no
 Limbo userland in it.
@@ -735,6 +742,157 @@ array and the pool ceilings computed rather than observed at that size.
 The pool figures are
 .I in use ,
 and a pool's xalloc'd chunk is at least that and rounded up.
+.NH 2
+What the shell would cost if the code were in flash
+.PP
+The 260992 figure above is what the shell costs
+.I this
+loader, which decodes a module into the heap.  It is not what the shell
+has to cost.  Execute in place done properly means the code stays in
+flash and only the mutable per-instance state is in RAM, so the number
+worth having is how that 260992 divides.
+.PP
+Measured on
+.CW mps2
+by reading
+.CW #c/memory
+from the init program at three points: before
+.CW "load Shell \"/dis/sh.dis\"" ,
+after it with nothing yet run, and at the prompt with the shell's own
+dependencies in.
+.DS
+.CW "                        main      heap"
+.CW "before the load       195328      4096"
+.CW "after the load        303488     39296"
+.CW "at the prompt         400384     72320"
+.DE
+So loading the module is 108160 of main and 35200 of heap, and running
+it is another 96896 and 33024.  (This run has
+.CW KSTACK
+at its default 16K, which is why main starts higher than the 158208 in
+the section above.)
+.PP
+Against that, the immutable part.  From the Dis headers at
+.CW DISWORD=4 :
+.DS
+.CW "              Inst(12B)   dsize     ss"
+.CW "sh.dis            73332    2360   2240"
+.CW "sh/std.dis        23604     864   1920"
+.CW "lib/bufio.dis      9348      56    960"
+.DE
+.CW isize * sizeof(Inst)
+is 106284 bytes across the three, and it is read-only once relocated:
+.CW libinterp/load.c:/^brpatch
+rewrites branch targets at load time and after that
+.CW libinterp/xec.c
+only ever reads
+.CW m->prog
+\- it sets
+.CW R.PC
+from it and fetches through it, and never assigns into an
+.CW Inst .
+(The writes to
+.CW ip->reg
+in
+.CW libinterp/das-386.c
+and
+.CW das-amd64.c
+are the x86 disassembler's own
+.CW Instr ,
+a different type in files no ARM board links.  A JIT would be different:
+these boards run with
+.CW cflag
+0.)
+.PP
+What must be in RAM per instance is
+.CW dsize ,
+the module data segment, and
+.CW ss ,
+the stack extent
+.CW libinterp/stack.c:/^newstack
+allocates \- 4600 bytes for
+.CW sh ,
+2784 for
+.CW std ,
+1016 for
+.CW bufio ,
+8400 for all three.  That is the real answer to "only load its stack and
+frame pointer": on this target the mutable state of the shell is about
+eight kilobytes against a hundred and six of code.
+.NH 3
+The heap becomes the problem
+.PP
+Which leaves the third term, and it is the one that does not move.  The
+heap pool goes from 4096 to 72320, and 35200 of that is charged while
+.CW sh.dis
+is merely being loaded, before a line of it runs: those are the
+.CW String
+and array constants in its data segment, which
+.CW parsemod()
+builds as real Dis heap objects.  They cannot be put in flash as they
+stand, because every Dis heap object carries a
+.CW Heap
+header
+.CW ( include/interp.h )
+whose
+.CW ref
+is written by reference counting and whose
+.CW color
+is written by the collector's
+.CW Setmark .
+There is no immortal or static convention in this tree to exempt them \-
+no reserved
+.CW ref
+or
+.CW color
+that
+.CW destroy()
+and the collector both skip \- so a constant string in flash would fault
+on the first mark.  Adding one is a real piece of work in
+.CW libinterp/heap.c
+and the collector, and it is what the remaining 35200 waits on.
+.NH 3
+The budget again, with the code in flash
+.PP
+Minimal configuration, the two debug arrays out,
+.CW kmesg
+at 2K,
+.CW KSTACK
+4K,
+.CW NPROC
+8, and modules pre-decoded into flash:
+.DS
+.CW "kernel data + bss                77364"
+.CW "Proc array + pid hash            22048"
+.CW "kernel pool floor, no modules    78208"
+.CW "shell MP + stacks                 8400"
+.CW "Dis heap objects                 68224"
+.CW "                                ------"
+.CW "                                254244"
+.DE
+262144 is the budget, so that is a shell fitting with about eight
+kilobytes to spare \- where against today's loader it overruns the whole
+budget by itself.  That is the case for doing this, and it is the
+answer: the shell does not have to load.
+.PP
+Two honest qualifications.  The last line is the measured heap at a
+prompt, and 35200 of it is load-time constants that only the immortal-
+object change above would move to flash; without that change the figure
+stands as RAM.  And the main-side residue is not fully itemised: of the
+205056 bytes main grows between the first and last measurement, 106284
+is the
+.CW Inst
+arrays, and the rest is type, link, import and handler tables \- mostly
+immutable, so mostly flash-able \- together with the
+.CW Prog ,
+.CW Chan
+and
+.CW Osenv
+structures and the 16K kernel stacks of the processes the shell starts,
+which are not.  The table above credits the flash-able part and keeps
+the kernel pool floor as measured, which is the right side to err on but
+is not the same as having measured a pre-decoded kernel, because there
+is not one yet.
 .NH 1
 What is left
 .IP 1.
