@@ -459,6 +459,22 @@ extern	int	adec(int*);
 #define AINC(p)	ainc(p)
 #define ADEC(p)	adec(p)
 #endif
+/*
+ * Atomic exchange, for a Dis pointer assignment.  OP(movp) is read the
+ * old value, store the new, drop the old -- a read-modify-write on a
+ * slot two executors can share, since module-level variables live in
+ * the Modlink's MP and every Prog of that module has the same one.
+ * Swapping gives each executor exactly the value it displaced, so no
+ * value is dropped twice.
+ *
+ * Only amd64 has it (libkern/ainc-amd64.s).  ASWAP is defined only
+ * there; xec.c keeps the read-store-drop sequence where it is not, which
+ * is every board that does not run more than one interpreter at once.
+ */
+#ifdef ASWAPOK
+extern	void*	aswap(void**, void*);
+#define ASWAP(p, v)	aswap((void**)(p), (void*)(v))
+#endif
 
 extern	int	bflag;
 extern	int	cflag;

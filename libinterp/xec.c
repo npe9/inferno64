@@ -654,8 +654,28 @@ OP(movp)
 			}
 		}
 	}
+#ifdef ASWAPOK
+	/*
+	 * Swap, not store-then-drop.  Module-level variables live in the
+	 * Modlink's MP and every Prog of the module shares it, so two
+	 * executors can read the same dv above, both store, and both
+	 * destroy it: one object, two drops, which is a refcount taken
+	 * below zero and an object freed while it is still referred to.
+	 *
+	 * Exchanging means this executor destroys exactly the value it
+	 * displaced.  Whichever store lands second displaces the first
+	 * executor's sv, so every value that leaves the slot is dropped
+	 * once by whoever removed it.
+	 *
+	 * dv above is only used for the checks; the value dropped is the
+	 * one the exchange returns.
+	 */
+	dv = ASWAP(&P(d), sv);
+	destroy(dv);
+#else
 	P(d) = sv;
 	destroy(dv);
+#endif
 }
 OP(movmp)
 {
