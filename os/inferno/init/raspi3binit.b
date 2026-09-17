@@ -691,6 +691,47 @@ fatwrite()
 		return;
 	}
 	sys->print("FAT-WRITE-OK %s holds %d bytes\n", name, n);
+
+	# And rename it, which is where FAT32 is easiest to get wrong: the
+	# top half of a file's start cluster is kept in the directory
+	# entry's reserved area, away from the low half, so a rename that
+	# rewrites the entry without it points the new name at the cluster
+	# number mod 65536.  On the board that turned a 1.6MB kernel into
+	# 279704 bytes and emptied a directory whose clusters then looked
+	# free.  Nothing below 65536 clusters can show it, which is why the
+	# 4GB card's partition is 512MB.
+	(ok, before) := sys->stat(name);
+	if(ok < 0){
+		sys->print("FAT-RENAME-FAIL stat %s: %r\n", name);
+		return;
+	}
+	if(rename(name, "inferno2.txt") < 0){
+		sys->print("FAT-RENAME-FAIL rename: %r\n");
+		return;
+	}
+	(ok2, after) := sys->stat("/n/dos/inferno2.txt");
+	if(ok2 < 0){
+		sys->print("FAT-RENAME-FAIL stat after rename: %r\n");
+		return;
+	}
+	if(after.length != before.length){
+		sys->print("FAT-RENAME-FAIL %bd bytes before, %bd after\n",
+			before.length, after.length);
+		return;
+	}
+	rfd := sys->open("/n/dos/inferno2.txt", Sys->OREAD);
+	rbuf := array[64] of byte;
+	rn := 0;
+	if(rfd != nil)
+		rn = sys->read(rfd, rbuf, len rbuf);
+	rfd = nil;
+	if(rn != int after.length || string rbuf[0:rn] != msg){
+		sys->print("FAT-RENAME-FAIL the renamed file does not read back\n");
+		return;
+	}
+	sys->remove("/n/dos/inferno2.txt");
+	sys->print("FAT-RENAME-OK %bd bytes, contents intact across a rename\n",
+		after.length);
 }
 
 # The FAT partition the firmware boots from, found in the master boot

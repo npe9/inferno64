@@ -467,7 +467,7 @@ ropen(t: ref Tmsg.Open): ref Rmsg
 	return ref Rmsg.Open(t.tag, f.qid, Styx->MAXFDATA);
 }
 
-mkdentry(xf: ref Xfs, ndp: ref Dosptr, name: string, sname: string, islong: int, nattr: byte, start: array of byte, length: array of byte): int
+mkdentry(xf: ref Xfs, ndp: ref Dosptr, name: string, sname: string, islong: int, nattr: byte, start: int, length: array of byte): int
 {
 	ndp.p = getsect(xf, ndp.addr);
 	if(ndp.p == nil)
@@ -485,7 +485,16 @@ mkdentry(xf: ref Xfs, ndp: ref Dosptr, name: string, sname: string, islong: int,
 
 	nd.attr = nattr;
 	puttime(nd);
-	nd.start[0: ] = start[0: 2];
+	# putstart, not a copy of the low two bytes.  On FAT32 the top
+	# half of a start cluster lives in the entry's reserved area, and
+	# a rename that copied only the low half pointed the new name at
+	# the cluster number mod 65536: on the Pi's own 512MB boot
+	# partition that is a different cluster, and renaming kernel8.img
+	# to kernel8.bak left a 1.6MB file reading as 279704 bytes, with
+	# the overlays directory -- whatever lived in the clusters that
+	# then looked free -- emptied.  The board damaged the card it
+	# boots from, which is how its console came to vanish.
+	putstart(xf, nd, start);
 	nd.length[0: ] = length[0: 4];
 
 	if(islong)
@@ -968,7 +977,7 @@ rwstat(t: ref Tmsg.Wstat): ref Rmsg
 		d := dpd;
 #		od := *d;
 		# start := getstart(f.xf, d);
-		start := d.start;
+		start := getstart(f.xf, d);
 		length := d.length;
 		attr := d.attr;
 
@@ -1491,7 +1500,7 @@ fileclust(f: ref Xfile, iclust: int, cflag: int): int
 # area simply looks empty - which is how the Pi's own FAT32 boot
 # partition appeared before this.
 #
-rootsect(xf: ref Xfs, isect: int): int
+rootsect(xf: ref Xfs, isect: int, cflag: int): int
 {
 	bp := xf.ptr;
 
@@ -1502,9 +1511,26 @@ rootsect(xf: ref Xfs, isect: int): int
 	}
 	clust := bp.rootclust;
 	for(n := isect/bp.clustsize; n > 0; n--){
-		clust = getfat(xf, clust);
-		if(clust < FATRESRV || clust >= 16r0ffffff8)
-			return -1;
+		next := getfat(xf, clust);
+		if(next < FATRESRV || next >= 16r0ffffff8){
+			# The end of the chain.  A FAT12 or FAT16 root cannot
+			# grow -- it is a fixed area between the FATs and the
+			# data -- and this walked away from the end as if the
+			# same were true here.  It is not: a FAT32 root is a
+			# cluster chain like any other directory, and a root
+			# that cannot grow is a filesystem that stops accepting
+			# files.  With 512-byte clusters that is sixteen
+			# entries in, and every create and rename after it
+			# failed with "phase error -- directory entry not
+			# found".
+			if(!cflag)
+				return -1;
+			next = falloc(xf);
+			if(next <= 0)
+				return -1;
+			putfat(xf, clust, next);
+		}
+		clust = next;
 	}
 	if(clust < FATRESRV)
 		return -1;
@@ -1516,7 +1542,7 @@ fileaddr(f: ref Xfile, isect: int, cflag: int): int
 	bp := f.xf.ptr;
 	dp := f.ptr;
 	if(isroot(dp.addr))
-		return rootsect(f.xf, isect);
+		return rootsect(f.xf, isect, cflag);
 	clust := fileclust(f, isect/bp.clustsize, cflag);
 	if(clust < 0)
 		return -1;
@@ -1928,7 +1954,7 @@ walkup(f: ref Xfile): (int, ref Dosptr)
 	if(ppclust != 0)
 		k := clust2sect(bp, ppclust);
 	else
-		k = rootsect(f.xf, 0);
+		k = rootsect(f.xf, 0, 0);
 	p = getsect(f.xf, k);
 	if(p == nil) {
 		if(debug)
@@ -1989,7 +2015,7 @@ walkup(f: ref Xfile): (int, ref Dosptr)
 				so%bp.clustsize;
 		}
 		else {
-			k = rootsect(f.xf, so);
+			k = rootsect(f.xf, so, 0);
 			if(k < 0) { 
  				if(p != nil) 
 					putsect(p);

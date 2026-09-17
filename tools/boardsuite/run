@@ -1627,13 +1627,47 @@ makecard() {
 # kernel: the init only asks how big it is.
 PIKERNEL='boardsuite placeholder for kernel8.img'
 pipart() {
+	fatfill=
 	case $2 in
 	16m)	fatmb=8; fs16='MS-DOS'; fs32=; ptype=0e;;
-	4g)	fatmb=64; fs16=; fs32='MS-DOS FAT32'; ptype=0c;;
+	# FAT32 with one sector per cluster and a filler file, so that a
+	# file created afterwards starts above cluster 65535.
+	#
+	# That number is the whole point of this arm.  A FAT32 start
+	# cluster is split: the low half in the directory entry, the top
+	# half in the entry's reserved area, twelve bytes away.  Code that
+	# rewrites an entry and forgets the second half works perfectly
+	# until a file lands past cluster 65535 -- and the Pi's own rename
+	# did exactly that, turning a 1.6MB kernel into 279704 bytes on the
+	# real card and emptying the directory whose clusters then looked
+	# free.  A 64MB partition with 4KB clusters has 16000 of them and
+	# can never show it; this one has 131000 and a 34MB filler in front.
+	4g)	fatmb=64; fs16=; fs32='MS-DOS FAT32'; ptype=0c; fatfill=34;;
 	esac
 	img="$work/pifat.img"
 	rm -f "$img" "$img.dmg"
-	if command -v hdiutil >/dev/null 2>&1; then
+	if [ -n "$fatfill" ] && command -v newfs_msdos >/dev/null 2>&1; then
+		# hdiutil picks the cluster size and will not be told; newfs_msdos
+		# takes -c, so the partition that needs small clusters is made by
+		# formatting a raw image through a device.
+		dd if=/dev/zero of="$img" bs=1048576 count=0 seek=$fatmb 2>/dev/null
+		dev=`hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount "$img" 2>/dev/null | awk '{print $1; exit}'`
+		[ -z "$dev" ] && return 1
+		if ! newfs_msdos -F 32 -c 1 -v BOOTFS "$dev" >/dev/null 2>&1; then
+			hdiutil detach "$dev" >/dev/null 2>&1
+			return 1
+		fi
+		mnt="$work/pifatmnt"
+		mkdir -p "$mnt"
+		if ! diskutil mount -mountPoint "$mnt" "$dev" >/dev/null 2>&1; then
+			hdiutil detach "$dev" >/dev/null 2>&1
+			return 1
+		fi
+		printf '%s\n' "$PIKERNEL" > "$mnt/kernel8.img"
+		dd if=/dev/zero of="$mnt/filler.bin" bs=1048576 count=$fatfill 2>/dev/null
+		diskutil unmount "$mnt" >/dev/null 2>&1
+		hdiutil detach "$dev" >/dev/null 2>&1
+	elif command -v hdiutil >/dev/null 2>&1; then
 		hdiutil create -size ${fatmb}m -fs "${fs32:-$fs16}" -volname BOOTFS \
 			-layout NONE -ov "$img" >/dev/null 2>&1 || return 1
 		mv "$img.dmg" "$img" || return 1
@@ -1650,12 +1684,16 @@ pipart() {
 		mk=`command -v mkfs.vfat || command -v mkfs.fat` || return 1
 		command -v mcopy >/dev/null 2>&1 || return 1
 		if [ -n "$fs32" ]; then
-			$mk -F 32 "$img" >/dev/null 2>&1 || return 1
+			$mk -F 32 ${fatfill:+-s 1} "$img" >/dev/null 2>&1 || return 1
 		else
 			$mk "$img" >/dev/null 2>&1 || return 1
 		fi
 		printf '%s\n' "$PIKERNEL" > "$work/kernel8.img"
 		mcopy -i "$img" "$work/kernel8.img" ::kernel8.img >/dev/null 2>&1 || return 1
+		if [ -n "$fatfill" ]; then
+			dd if=/dev/zero of="$work/filler.bin" bs=1048576 count=$fatfill 2>/dev/null
+			mcopy -i "$img" "$work/filler.bin" ::filler.bin >/dev/null 2>&1 || return 1
+		fi
 	fi
 	python3 - "$1" "$img" $ptype <<'PIPART' || return 1
 import struct, sys
